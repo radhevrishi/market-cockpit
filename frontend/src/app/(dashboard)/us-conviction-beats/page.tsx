@@ -1313,7 +1313,6 @@ export default function UsConvictionBeatsPage() {
                     }}>
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                       <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-text-0)', fontFamily: 'ui-monospace,monospace' }}>{e.ticker}</span>
-                      <span style={{ fontSize: 9.5, fontWeight: 900, color: '#22C55E' }}>{e.composite_score ?? '·'}</span>
                     </div>
                     <div style={{ fontSize: 9.5, color: 'var(--mc-text-2)', marginTop: 2 }}>
                       {c.theme?.emoji} {c.theme?.name} · <b style={{ color: c.theme?.verdictColor }}>{c.theme?.verdict}</b>
@@ -1475,7 +1474,7 @@ export default function UsConvictionBeatsPage() {
           );
         })}
         <span style={rowLabel}>Sort</span>
-        {([['align', '🎯 Aligned'], ['fresh', 'Freshest'], ['score', 'Score'], ['pead', 'PEAD'], ['sales', 'Revenue'], ['eps', 'EPS'], ['drift', 'Since print'], ['mcap', 'Mkt cap'], ['pe', 'P/E'], ['addv', '$ Volume']] as Array<[SortKey, string]>).map(([v, l]) => (
+        {([['align', '🎯 Aligned'], ['fresh', 'Freshest'], ['score', 'Engine rank'], ['pead', 'PEAD'], ['sales', 'Revenue'], ['eps', 'EPS'], ['drift', 'Since print'], ['mcap', 'Mkt cap'], ['pe', 'P/E'], ['addv', '$ Volume']] as Array<[SortKey, string]>).map(([v, l]) => (
           <button key={v} onClick={() => setSortKey(v)} style={chip(sort === v)}>{l}{sort === v ? (sortDir === 'desc' ? ' ▼' : ' ▲') : ''}</button>
         ))}
         <span style={{ flex: 1 }} />
@@ -1846,7 +1845,7 @@ function BenchTable({ rows, sort, dir, onSort, onRemove }: { rows: UsConvictionE
             <H label="Rev YoY" k="sales" /><H label="EPS YoY" k="eps" /><th style={th('OPM Δ')}>OPM Δ</th><th style={th('CFO/NI')}>CFO/NI</th>
             <th style={th('R40')} title="Revenue growth % + FCF margin %, trailing twelve months. Blank where the filing does not support it.">R40</th>
             <th style={th('ROCE')} title="TTM operating income ÷ (total assets − current liabilities). Blank for a filer with no classified balance sheet.">ROCE</th>
-            <H label="PEAD" k="pead" /><H label="Score" k="score" /><th style={th('RS')}>RS</th><th style={th('Stg')}>Stg</th>
+            <H label="PEAD" k="pead" /><th style={th('RS')}>RS</th><th style={th('Stg')}>Stg</th>
             <H label="$Vol/d" k="addv" /><H label="Mkt cap" k="mcap" /><H label="P/E" k="pe" /><th style={th('D1')}>D1</th>
             <H label="Since" k="drift" /><H label="Filed" k="fresh" left /><th style={th('')} />
           </tr>
@@ -1898,8 +1897,10 @@ function BenchTable({ rows, sort, dir, onSort, onRemove }: { rows: UsConvictionE
                   title={roce == null ? undefined : `TTM EBIT $${roce.ebit_ttm_musd}M ÷ capital employed $${roce.capital_employed_musd}M`}>
                   {roce?.pct != null ? `${roce.pct.toFixed(0)}%` : ''}
                 </td>
-                <td style={td}>{e.pead_score ?? '—'}</td>
-                <td style={{ ...td, fontWeight: 800, color: 'var(--mc-text-0)' }}>{e.composite_score}</td>
+                {/* zzz804 — no visible 0–100 scores: PEAD as a word, the engine
+                    composite not shown at all (it still ranks the "Engine rank"
+                    sort). */}
+                <td style={td}>{e.pead_score == null ? '—' : e.pead_score >= 70 ? 'strong' : e.pead_score >= 50 ? 'moderate' : 'weak'}</td>
                 <td style={td}>{e.rs_rating ?? '—'}</td>
                 <td style={{ ...td, color: e.stage === 4 ? '#EF4444' : e.stage === 2 ? '#10B981' : undefined }}>{e.stage ?? '—'}</td>
                 <td style={{ ...td, color: (e.addv_musd ?? 0) < 2 ? '#EF4444' : undefined }}>{e.addv_musd != null ? `$${e.addv_musd.toFixed(1)}M` : '—'}</td>

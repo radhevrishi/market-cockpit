@@ -69,6 +69,25 @@ export interface AbfgInput {
   /** Order-book or backlog growth, YoY, in percent. Absent for almost every
    *  India row and most US ones; B is simply unavailable when it is missing. */
   orderGrowth?: number | null;
+  // ── zzz804 — THE EVIDENCE THE FORENSICS GATE NEEDS TO CLEAR ITSELF. ──
+  //
+  // F fired on the ratio alone: EPS growing more than 3x revenue, full stop.
+  // A company that took its operating margin from 8.9% to 20.6% on +26%
+  // revenue grows operating income ~190% — EPS +150% is then LESS than the
+  // operations explain, and if the cash came in with it (CFO/NI 0.86, positive
+  // FCF) there is nothing below the line to find. The gate now asks the
+  // question it exists for: is the profit explained by revenue × margin, and
+  // did the cash arrive? Only the US graded row carries the fields below
+  // (`operating_income_*_musd`, `fcf_curr_musd`), so the India rows — which
+  // carry neither — classify exactly as before.
+  /** Operating margin this quarter / a year ago, in percent. */
+  opmPct?: number | null;
+  opmPrevPct?: number | null;
+  /** Operating income growth YoY, in percent (from reported dollars). */
+  opIncomeY?: number | null;
+  /** Free cash flow this quarter (any unit — only the sign is read). Absent
+   *  (undefined) on rows that never carry it; null when unknown. */
+  fcf?: number | null;
 }
 
 export interface AbfgResult {
@@ -84,6 +103,12 @@ export interface AbfgResult {
    *  loosely (auto, labelled as such); 'manual' — set by the owner. Absent
    *  on older results means exact. */
   fit?: 'exact' | 'nearest' | 'manual';
+  /** zzz804 — when EPS outran revenue by 3x+: 'passed' (explained by revenue ×
+   *  margin and backed by cash), 'flagged' (not explained, or no cash), or
+   *  absent when the ratio test never fired. */
+  forensics?: 'passed' | 'flagged';
+  /** zzz804 — plain-language notes that travel with the type ("small base"). */
+  notes?: string[];
 }
 
 export const ABFG_META: Record<AbfgPattern, {
@@ -117,6 +142,62 @@ const num = (v: unknown): number | null =>
   typeof v === 'number' && Number.isFinite(v) ? v : null;
 
 /**
+ * zzz804 — the forensics question, asked properly. Returns:
+ *   'passed'  — the EPS jump is explained by revenue growth plus operating
+ *               margin expansion AND the cash arrived (CFO/NI >= 0.8, FCF > 0);
+ *   'flagged' — it is not explained, or the cash did not come with it;
+ *   null      — the row carries none of the evidence (India rows today), so the
+ *               old ratio-only reading stands unchanged.
+ * Low-base EPS alone is never the verdict: a small base is a note, not a flag.
+ */
+export function forensicsCheck(input: AbfgInput): 'passed' | 'flagged' | null {
+  const salesY = num(input.salesY);
+  const epsY = num(input.epsY);
+  if (input.fcf === undefined && input.opIncomeY === undefined) return null;
+  if (salesY == null || epsY == null) return null;
+  const opm = num(input.opmPct), opmPrev = num(input.opmPrevPct);
+  let opG = num(input.opIncomeY);
+  if (opG == null && opm != null && opmPrev != null && opmPrev > 0 && opm > 0) {
+    opG = ((1 + salesY / 100) * (opm / opmPrev) - 1) * 100;
+  }
+  // Profit growth within what the operating line explains (a little slack for
+  // interest and tax moving with it). Margin must actually have expanded.
+  const marginUp = opm != null && opmPrev != null ? opm - opmPrev >= 0.5 : (opG != null && opG > salesY);
+  const explained = opG != null && marginUp && epsY <= opG * 1.25 + 10;
+  const cfo = num(input.cfoToPat);
+  const fcf = num(input.fcf);
+  const cashBacked = cfo != null && cfo >= 0.8 && fcf != null && fcf > 0;
+  return explained && cashBacked ? 'passed' : 'flagged';
+}
+
+/** zzz804 — cash that contradicts the profit (US rows only: needs `fcf`). */
+function cashContradicts(input: AbfgInput): boolean {
+  if (input.fcf === undefined) return false;
+  const cfo = num(input.cfoToPat);
+  const fcf = num(input.fcf);
+  if (cfo != null && cfo < 0) return true;                       // profit, cash went out
+  if (cfo != null && cfo < 0.5 && fcf != null && fcf < 0) return true;
+  return false;
+}
+
+/** zzz804 — margin expansion material RELATIVE TO THE BUSINESS: +1pp, or a
+ *  15% relative step on a thin margin, with operating income outpacing
+ *  revenue. A 3% distributor's +0.5pp is fine, but it is an inflection only
+ *  if the operating line actually grew faster than sales. Unknown → true
+ *  (the old test stands for rows that do not carry the margin). */
+function marginMaterial(input: AbfgInput, salesY: number): boolean {
+  if (input.opIncomeY === undefined) return true;
+  const opm = num(input.opmPct), opmPrev = num(input.opmPrevPct);
+  const opG = num(input.opIncomeY);
+  if (opm == null || opmPrev == null) return true;
+  const d = opm - opmPrev;
+  const rel = opmPrev > 0 ? d / opmPrev : null;
+  const material = d >= 1 || (rel != null && rel >= 0.15);
+  const outpaces = opG == null || opG >= salesY * 1.2;
+  return material && outpaces;
+}
+
+/**
  * Classify one quarter. Returns null when nothing fits — which is the common
  * and correct answer, and must never be coerced into a label.
  */
@@ -132,12 +213,33 @@ export function classifyAbfg(input: AbfgInput): AbfgResult | null {
   // spec rejects percentages off meaningless bases everywhere else too.
   const ratio = (salesY != null && epsY != null && salesY >= 1) ? epsY / salesY : null;
 
-  const out = (pattern: AbfgPattern, because: string): AbfgResult =>
-    ({ pattern, ratio: ratio == null ? null : Math.round(ratio * 10) / 10, because, exitCondition: EXIT[pattern], fit: 'exact' });
+  // zzz804 — a per-share growth rate off a tiny base is exaggerated arithmetic.
+  // That is a NOTE, never on its own a red flag.
+  const notes: string[] = [];
+  let forensics: 'passed' | 'flagged' | undefined;
+  const out = (pattern: AbfgPattern, because: string): AbfgResult => ({
+    pattern, ratio: ratio == null ? null : Math.round(ratio * 10) / 10, because, exitCondition: EXIT[pattern], fit: 'exact',
+    ...(forensics ? { forensics } : {}), ...(notes.length ? { notes } : {}),
+  });
 
   // ── 1. F — the forensics gate, evaluated FIRST ────────────────────────
+  // zzz804: the gate CLEARS itself when the jump is explained by revenue ×
+  // margin and the cash arrived — then the quarter goes on to be classified on
+  // its operations. Where the row carries no such evidence, the ratio alone
+  // decides, exactly as before.
+  let forensicsCleared = false;
   if (ratio != null && epsY != null && ratio > 3 && epsY > 100) {
-    return out('F', `Earnings grew ${ratio.toFixed(1)}x revenue — a suspicion about accounting, not yet a conclusion about operations.`);
+    const fc = forensicsCheck(input);
+    notes.push('small base — a growth rate this far above revenue growth is magnified by a low prior-year figure');
+    if (fc === 'passed') {
+      forensics = 'passed';
+      forensicsCleared = true;
+    } else {
+      forensics = 'flagged';
+      return out('F', fc === 'flagged'
+        ? `Earnings grew ${ratio.toFixed(1)}x revenue and the operating line and the cash do not fully explain it — a suspicion about accounting, not yet a conclusion about operations.`
+        : `Earnings grew ${ratio.toFixed(1)}x revenue — a suspicion about accounting, not yet a conclusion about operations.`);
+    }
   }
 
   // ── 3. B — checked before A, because where order data exists and passes
@@ -148,9 +250,16 @@ export function classifyAbfg(input: AbfgInput): AbfgResult | null {
   }
 
   // ── 2. A — the core inflection test ───────────────────────────────────
+  // zzz804: an operating inflection also needs (a) margin expansion that is
+  // material for THIS business with operating income outpacing revenue, and
+  // (b) cash that does not contradict the profit. Both read only fields the
+  // US row carries; India rows are tested exactly as before.
   if (salesY != null && epsY != null && ratio != null
-      && salesY > 25 && epsY > 40 && ratio >= 1.5 && ratio <= 3) {
-    return out('A', `Revenue +${Math.round(salesY)}% with earnings +${Math.round(epsY)}% — profit compounding on volume at ${ratio.toFixed(1)}x.`);
+      && salesY > 25 && epsY > 40 && ratio >= 1.5 && (ratio <= 3 || forensicsCleared)
+      && marginMaterial(input, salesY) && !cashContradicts(input)) {
+    return out('A', forensicsCleared
+      ? `Revenue +${Math.round(salesY)}% with earnings +${Math.round(epsY)}% — explained by operating-margin expansion and backed by cash; forensics check passed.`
+      : `Revenue +${Math.round(salesY)}% with earnings +${Math.round(epsY)}% — profit compounding on volume at ${ratio.toFixed(1)}x.`);
   }
 
   // ── 4. G — all four conditions, the quiet reaction included ───────────
@@ -210,6 +319,7 @@ export function classifyWithFiling(row: any, summary: any): AbfgResult | null {
   const n = (v: unknown): number | null =>
     typeof v === 'number' && Number.isFinite(v) ? v : null;
   return classifyAbfg({
+    ...usOperatingEvidence(row),
     salesY: n(row?.sales_yoy_pct),
     epsY: n(row?.eps_yoy_pct) ?? n(row?.net_profit_yoy_pct),
     cfoToPat: n(row?.cfo_to_pat_ratio) ?? n(row?.ocf_to_pat_ratio),
@@ -218,11 +328,29 @@ export function classifyWithFiling(row: any, summary: any): AbfgResult | null {
   });
 }
 
+/** zzz804 — the operating/cash evidence, read ONLY from fields the US graded
+ *  row carries. Returns {} for any row without them (every India row), so the
+ *  classifier sees `undefined` and behaves exactly as before. */
+export function usOperatingEvidence(row: any): Partial<AbfgInput> {
+  if (!row || typeof row !== 'object') return {};
+  const has = (k: string) => Object.prototype.hasOwnProperty.call(row, k);
+  if (!has('fcf_curr_musd') && !has('operating_income_curr_musd')) return {};
+  const n = (v: unknown): number | null =>
+    typeof v === 'number' && Number.isFinite(v) ? v : null;
+  const oi = n(row.operating_income_curr_musd), oiP = n(row.operating_income_prev_musd);
+  return {
+    opmPct: n(row.opm_pct), opmPrevPct: n(row.opm_prev_pct),
+    opIncomeY: (oi != null && oiP != null && oiP > 0) ? ((oi - oiP) / oiP) * 100 : null,
+    fcf: n(row.fcf_curr_musd),
+  };
+}
+
 export function classifyGradedRow(row: any): AbfgResult | null {
   if (!row || typeof row !== 'object') return null;
   const n = (v: unknown): number | null =>
     typeof v === 'number' && Number.isFinite(v) ? v : null;
   return classifyAbfg({
+    ...usOperatingEvidence(row),
     salesY: n(row.sales_yoy_pct),
     epsY: n(row.eps_yoy_pct) ?? n(row.net_profit_yoy_pct),
     cfoToPat: n(row.cfo_to_pat_ratio) ?? n(row.ocf_to_pat_ratio),
@@ -271,8 +399,11 @@ export function nearestFit(input: AbfgInput): AbfgResult | null {
     pattern, ratio: ratio == null ? null : Math.round(ratio * 10) / 10, fit: 'nearest', exitCondition: EXIT[pattern],
     because: `Nearest fit (auto) — the figures fit ${pattern} · ${ABFG_META[pattern].name.toLowerCase()} loosely (${figures}); no exact test fired. ${NEAREST_FIT_NOTE[0].toUpperCase()}${NEAREST_FIT_NOTE.slice(1)}.`,
   });
-  if (ratio != null && epsY != null && ratio >= 2.5 && epsY >= 60) return out('F', `earnings ${fmt(epsY)}, ${ratio.toFixed(1)}× revenue ${fmt(salesY!)}`);
-  if (salesY != null && epsY != null && ratio != null && salesY >= 15 && ratio >= 1.1) return out('A', `revenue ${fmt(salesY)}, earnings ${fmt(epsY)} (${ratio.toFixed(1)}×)`);
+  // zzz804 — the same forensics question as the exact classifier: a jump the
+  // operating line and the cash explain is not a profit-jump suspicion.
+  const cleared = forensicsCheck(input) === 'passed';
+  if (ratio != null && epsY != null && ratio >= 2.5 && epsY >= 60 && !cleared) return out('F', `earnings ${fmt(epsY)}, ${ratio.toFixed(1)}× revenue ${fmt(salesY!)}`);
+  if (salesY != null && epsY != null && ratio != null && salesY >= 15 && ratio >= 1.1 && !cashContradicts(input)) return out('A', `revenue ${fmt(salesY)}, earnings ${fmt(epsY)} (${ratio.toFixed(1)}×)`);
   if (salesY != null && salesY >= 5 && salesY < 15 && cfo != null && cfo > 1 && (epsY == null || epsY >= 0)) return out('G', `revenue ${fmt(salesY)}, cash conversion ${cfo.toFixed(2)}×`);
   return null;
 }
@@ -283,6 +414,7 @@ export function classifyOrNearest(row: any): AbfgResult | null {
   if (exact || !row || typeof row !== 'object') return exact;
   const n = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
   return nearestFit({
+    ...usOperatingEvidence(row),
     salesY: n(row.sales_yoy_pct),
     epsY: n(row.eps_yoy_pct) ?? n(row.net_profit_yoy_pct),
     cfoToPat: n(row.cfo_to_pat_ratio) ?? n(row.ocf_to_pat_ratio),

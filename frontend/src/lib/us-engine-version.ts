@@ -47,4 +47,12 @@
 // LMT 4.1->12.4%. The tag spends the caveat budget the BLOCKBUSTER paths are
 // gated on and, with CFO/PAT under 1, trips the outrun-both ceiling to MIXED.
 // A disclosed GAAP-vs-adjusted gap still reports unconditionally.
-export const US_ENGINE_VERSION = '2026.09.17-c';
+// 2026.09.25-a (zzz804) — price never grades. The tier reads a price-free
+// composite (no technical term, no chart methods); the reaction ladder, the
+// stage-4 ceiling, "market rejected", thin float and the setup gates' "already
+// priced" / "setup does not confirm" demotions become market CONTEXT only.
+// PRELIM rows read the release's own three-month cash-flow statement (so a
+// −$917m operating cash quarter caps at MIXED instead of grading STRONG), the
+// street's revenue beat counts, and the sentence is rebuilt from the final
+// tier. Every cached grade can change.
+export const US_ENGINE_VERSION = '2026.09.25-a';

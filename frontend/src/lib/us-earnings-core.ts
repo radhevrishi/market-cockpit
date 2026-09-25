@@ -72,6 +72,7 @@ import {
   CAVEAT_PENALTY_DEFAULT,
   caveatPenaltyFor,
   countingCaveats,
+  INFORMATIONAL_CAVEATS,
   marginQualityDelta,
   decideTier,
   marketReactionDelta,
@@ -3224,6 +3225,10 @@ export interface UsGradedRow {
   tier: EarningsTier;
   methodology_tags: string[];
   caveat_tags: string[];
+  /** zzz804 — PRICE CONTEXT, shown beside the grade and never part of it: the
+   *  day's reaction, distance from the 52-week high, the trend stage, thin
+   *  float. None of these may raise or lower `tier`. */
+  market_context?: string[];
   narrative: string;
   /** The narrative WITHOUT its caveat clause. The caveat list is still being
    *  added to after this row is graded (the route attaches the guidance tags),
@@ -3282,6 +3287,13 @@ export interface UsGradeInput {
   /** The same surprise in dollars per share — the only form available when the
    *  estimate is under a dime. */
   consensus_beat_abs?: number | null;
+  /** zzz804 — revenue vs the street's revenue estimate for this exact period,
+   *  in %. A 12% revenue beat is fundamental evidence and counts. */
+  revenue_beat_pct?: number | null;
+  /** zzz804 — the release itself attributes negative operating cash flow to a
+   *  working-capital build (stated in the filer's own words). Softens the cash
+   *  cap from MIXED to STRONG; never removes the caveat. */
+  cash_explained_by_working_capital?: boolean;
   /** Daily closes behind the print, used to size the market reaction against
    *  the stock's OWN volatility rather than a fixed percentage. */
   close_30d?: number[] | null;
@@ -3426,6 +3438,13 @@ export function usQuarterLabel(periodEnd?: string | null, filingDate?: string | 
 /** The chip a card shows where an EPS growth rate would have been. */
 export const PER_SHARE_BLOCKED_TAG = 'per-share comparison unavailable';
 
+/** zzz804 — methodology tags that are read off the CHART (stage, RS, distance
+ *  from the high). They stay on the card as context; they never count towards
+ *  the grade. */
+export const PRICE_METHOD_TAGS: ReadonlySet<string> = new Set(['trend template', 'sepa', 'canslim']);
+/** zzz804 — the informational small-base note (zero penalty, not counted). */
+export const SMALL_BASE_TAG = 'small base — prior-year EPS under $0.10, so the per-share growth rate is magnified';
+
 export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   const f = input.fundamentals;
   const p = input.price || null;
@@ -3490,6 +3509,12 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   // Beating the street by ≥5% is a methodology in its own right for a US
   // print; for a PRELIM row it is the only growth evidence we have.
   if (prelimS != null && prelimS >= 5) methodology_tags.push('consensus beat');
+  // zzz804 — the street beat is fundamental evidence and counts at grade time
+  // (the route used to add the tag only after the tier was decided).
+  const epsBeatPct = input.consensus_beat_pct ?? null;
+  if (epsBeatPct != null && epsBeatPct >= 5 && !methodology_tags.includes('consensus beat')) methodology_tags.push('consensus beat');
+  const revBeatPct = input.revenue_beat_pct ?? null;
+  if (revBeatPct != null && revBeatPct >= 3) methodology_tags.push('revenue beat');
 
   // Caveats.
   // "OPTICAL EPS" NAMED, NOT JUST FLAGGED.
@@ -3568,6 +3593,11 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   }
   if (f.eps_prev != null && f.eps != null && Math.abs(f.eps_prev) < 0.05 && Math.abs(f.eps) > 0.2
       && !caveat_tags.includes(oneOffTag)) caveat_tags.push('low base · prior-year EPS near zero');
+  // zzz804 — a small base is a NOTE, not a red flag: $0.02 → $0.05 is "+150%"
+  // however good or bad the quarter was. Informational (zero penalty, not
+  // counted), so it tells the reader where to look without grading anything.
+  if (f.eps_prev != null && f.eps != null && f.eps_prev > 0 && f.eps_prev < 0.10 && f.eps > f.eps_prev
+      && !caveat_tags.includes('low base · prior-year EPS near zero')) caveat_tags.push(SMALL_BASE_TAG);
   // A PAT that doubles while operating profit barely moves is below-the-line
   // (tax / other income), not operating performance.
   if (patY != null && patY >= 100 && f.operating_income != null && f.operating_income_prev != null && f.operating_income_prev > 0) {
@@ -3694,8 +3724,14 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   // "low quality" put an identical chip on a company with a downtrend and on
   // one whose profits are an illusion — Argan's +62% revenue quarter carried
   // "low quality" purely because the stock sat 25% off its high.
-  if (stage === 4) caveat_tags.push('stage 4 downtrend');
-  else if (pct52 != null && pct52 < -25) caveat_tags.push('well off its highs');
+  // zzz804 — PRICE IS CONTEXT, NOT A CAVEAT. The owner's rule: no price in the
+  // fundamental engine. These used to sit in the caveat list, cost quality
+  // points, count against every BLOCKBUSTER path and appear in the verdict
+  // sentence ("prints a blockbuster … with caveat: well off its highs" on a card
+  // badged MIXED). They are now carried separately and cannot move the tier.
+  const market_context: string[] = [];
+  if (stage === 4) market_context.push('stage 4 downtrend');
+  else if (pct52 != null && pct52 < -25) market_context.push(`${Math.round(Math.abs(pct52))}% below its 52-week high`);
 
   // ── composite (identical weights + ladders to the India engine) ──
   const scoreYoy = (y: number) =>
@@ -3786,11 +3822,32 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
 
   const composite = Math.max(0, Math.min(100, magnitude * 0.35 + quality * 0.25 + technical * 0.25 + methodology * 0.15));
 
+  // zzz804 — THE TIER IS DECIDED WITHOUT THE CHART. The blended composite above
+  // carries 25% technical, and its methodology term counts trend template /
+  // SEPA / CANSLIM, all three of which are read off stage, RS and the 52-week
+  // high. So the fundamental grade moved with the price. The tier now reads a
+  // composite of magnitude, quality and FUNDAMENTAL methodology only (street
+  // beat, revenue beat, guidance raised, Bonde EP …), renormalised to 0-100 so
+  // every threshold in `decideTier` keeps its meaning. The blended number is
+  // still computed for ranking; it is not shown and it does not grade.
+  const fundMethods = methodology_tags.filter((t) => !PRICE_METHOD_TAGS.has(t));
+  const fundMCount = fundMethods.length;
+  let methodologyFund = fundMCount >= 4 ? 100 : fundMCount === 3 ? 80 : fundMCount === 2 ? 60 : fundMCount === 1 ? 35 : 10;
+  if (megaMagFloor) methodologyFund = Math.max(methodologyFund, 75);
+  if (exceptMagFloor) methodologyFund = Math.max(methodologyFund, 65);
+  const tierComposite = fundamentalComposite(magnitude, quality, methodologyFund);
+  /** Fundamental confirmation for BLOCKBUSTER Path A, in place of the chart
+   *  methods: the street beat on EPS or revenue. (Guidance raised is passed
+   *  separately.) */
+  const streetConfirm = ((epsBeatPct != null && epsBeatPct >= 5)
+    || (input.consensus_beat_pct == null && (input.consensus_beat_abs ?? null) != null && (input.consensus_beat_abs as number) >= 0.03)
+    || (revBeatPct != null && revBeatPct >= 3)) ? 1 : 0;
+
   // zzz673 — the quarter scored without the chart, and the chart graded on its
   // own as an ENTRY. COMPUTED AND RETURNED ONLY: `decideTier` below still gets
   // `composite`, so this deploy moves no verdict. See `fundamentalComposite` in
   // earnings-grade-shared for why the gate switch is a separate change.
-  const _fund_composite = fundamentalComposite(magnitude, quality, methodology);
+  const _fund_composite = tierComposite;   // zzz804 — price-free methodology
   const _setup_grade = setupGrade(technical, stage != null || rs != null);
 
   // WHAT "BROKEN" IS ALLOWED TO MEAN.
@@ -3822,16 +3879,18 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   const exceptMag = salesY != null && salesY >= 40 && patY != null && patY >= 50 && epsYMag != null && epsYMag >= 50;
   const megaMag = megaMagFloor;
   const marginInflection = patY != null && patY >= 100 && epsYMag != null && epsYMag >= 100 && salesY != null && salesY >= -5;
-  const marginInflectionLoose = patY != null && patY >= 75 && epsYMag != null && epsYMag >= 75 && salesY != null && salesY >= 0 && stage !== 4;
-  const chartOk = stage !== 4 && (pct52 == null || pct52 >= -25);
+  const marginInflectionLoose = patY != null && patY >= 75 && epsYMag != null && epsYMag >= 75 && salesY != null && salesY >= 0;
 
+  // zzz804 — no price input reaches the decision: composite is the price-free
+  // one, the chart is always "ok", the stage is unknown to it, and the method
+  // count is the fundamental one.
   let tier = decideTier({
-    composite, broken, stillLossMaking, turnaroundBase,
+    composite: tierComposite, broken, stillLossMaking, turnaroundBase,
     marginContracting: opmExp != null && opmExp <= -0.5,
     marginSevereContraction: opmExp != null && opmExp <= -1.5,
     // The measurement refusal is not a caveat about the BUSINESS, so it is not
     // counted towards the caveat budget the BLOCKBUSTER gates are scored on.
-    caveatCount: countingCaveats(caveat_tags), mCount, stage,   // zzz694 — shared informational-tag rule
+    caveatCount: countingCaveats(caveat_tags), mCount: fundMCount, stage: null,   // zzz694 / zzz804
     // `epsYMag` not `epsY` — the QUALITY-STRONG path (PATCH 1022) tests
     // `epsY >= 15`, and for a company with no year-ago per-share comparable
     // that test can only ever fail. Same substitution, same three guards, same
@@ -3839,9 +3898,9 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     salesY, patY, epsY: epsYMag, opmExp,
     cleanMag, exceptMag, megaMag,
     marginInflection, marginInflectionLoose, swingMag,
-    tier1MethodCount: t1,
+    tier1MethodCount: streetConfirm,                // zzz804 — street beat, not chart methods
     positiveGuidance: !!input.positive_guidance,   // from the 8-K press release (lib/us-guidance)
-    chartOk,
+    chartOk: true,
     consensusBeatPct: input.consensus_beat_pct ?? null,
     consensusBeatAbs: input.consensus_beat_abs ?? null,
     // A GAAP loss that NARROWED, or turned into a profit, is earnings moving the
@@ -3857,18 +3916,16 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   const worseOf = (a: EarningsTier, b: EarningsTier) =>
     TIER_ORDER.indexOf(a) >= TIER_ORDER.indexOf(b) ? a : b;
 
-  // What the FUNDAMENTALS alone said, before the tape got a vote. Kept so the
-  // floor below can tell a bad quarter from a good quarter the market disliked.
-  const tierOnFundamentals = tier;
+  // zzz804 — THE TAPE IS CONTEXT. The reaction ladder still names what the
+  // market did, but only into `market_context`; it no longer touches the tier.
   {
     const mr = marketReactionDelta(
       tier, p?.d1_pct, p?.gap_pct,
       typicalDailyMovePct(input.close_30d ?? null),
     );
-    tier = mr.tier;
-    for (const c of mr.addCaveats) if (!caveat_tags.includes(c)) caveat_tags.push(c);
+    for (const c of mr.addCaveats) if (!market_context.includes(c)) market_context.push(c);
   }
-  const reactionDemoted = TIER_ORDER.indexOf(tier) > TIER_ORDER.indexOf(tierOnFundamentals);
+
 
   // ═══════════════════════════════════════════════════════════════════════
   // HARD QUALITY CAPS — the caveats have to cost something.
@@ -3946,7 +4003,13 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   //    the other way is the oldest warning in accounting, and it is not a
   //    footnote on a "clean quality" print.
   if (f.cfo != null && f.cfo < 0 && niC != null && niC > 0) {
-    capTier('MIXED', 'profit without operating cash');
+    // zzz804 — unless the release itself explains it as a working-capital
+    // build, in which case it is still a caveat but the ceiling is STRONG.
+    if (input.cash_explained_by_working_capital) {
+      capTier('STRONG', 'negative operating cash — the release attributes it to working capital');
+    } else {
+      capTier('MIXED', 'profit without operating cash');
+    }
   } else if (cfoPat != null && cfoPat < 0.5 && fcfC != null && fcfC < 0 && niC != null && niC > 0) {
     // CASH THAT BACKS LESS THAN HALF THE PROFIT, AND NONE LEFT AFTER CAPEX.
     //
@@ -3972,12 +4035,12 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
 
   // 2. "Market confirming" has to mean the market confirmed it. A print the
   //    tape rejected on the day cannot be the top tier by definition.
-  if (p?.d1_pct != null && p.d1_pct <= -5) capTier('STRONG', 'market rejected the print', false);
+  // (zzz804 — the "market rejected the print" ceiling is gone: price is context.)
 
   // 3. A stage-4 downtrend is not a setup, whatever the quarter looked like.
   //    It is a CEILING, though, not a verdict — the tier below it is decided by
   //    the filing, exactly as with the price reaction. `fromFiling: false`.
-  if (stage === 4) capTier('MIXED', 'stage 4 downtrend', false);
+  // (zzz804 — the stage-4 ceiling is gone for the same reason.)
 
   // 4. Two or more critical quality flags at once — a one-off-driven EPS AND
   //    cash that does not back it, say — is not one caveat, it is a pattern.
@@ -4122,38 +4185,11 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   // cash flow, the trend or two quality flags say MIXED, MIXED it is, and the
   // floor never lifts a row above what those allow. This only undoes a
   // demotion the price alone caused.
-  const chartDemoted = stage === 4 || reactionDemoted;
-  if (chartDemoted) {
-    // The price may cost the top tier; the FILING sets how far down a row can
-    // go. A stage-4 chart floors at MIXED (it is a genuine risk and the tier
-    // should say so); a price reaction alone floors at STRONG.
-    const priceFloor: EarningsTier = stage === 4 ? 'MIXED' : 'STRONG';
-    const floor = worseOf(worseOf(tierOnFundamentals, filingCap), priceFloor);
-    if (TIER_ORDER.indexOf(tier) > TIER_ORDER.indexOf(floor)) {
-      tier = floor;
-      // "FUNDAMENTALS INTACT" IS A CLAIM, AND THE RELEASE CAN CONTRADICT IT.
-      // It is the right reading of Keysight — a clean print the market did not
-      // pay for. It is the wrong reading of Braze, where the thing the market
-      // sold was in the release: a guide that takes the margin down. Where the
-      // filing's own forward numbers are worse than the quarter just reported,
-      // the sell-off is not a mystery and the card must not call it one.
-      const forwardWorse = (gmDelta != null && gmDelta <= -1)
-        || (input.guide_next_vs_street_pct != null && input.guide_next_vs_street_pct <= -3);
-      const why = forwardWorse
-        ? (stage === 4 ? 'downtrend — and the guide is the reason' : 'sold off — on its own guide')
-        : stage === 4 && !reactionDemoted
-        ? 'downtrend — fundamentals intact' : 'sold off — fundamentals intact';
-      if (!caveat_tags.includes(why)) caveat_tags.push(why);
-    }
-  }
-
   // US thin-float gate — dollar volume, not ₹Cr. Missing ADDV is NOT punished.
   const addv = p?.addv_musd ?? null;
   const thinFloat = addv != null && addv < 2;      // < $2M traded/day
-  if (thinFloat) {
-    if (tier === 'BLOCKBUSTER' || tier === 'STRONG') tier = 'MIXED';
-    if (!caveat_tags.includes('thin float')) caveat_tags.push('thin float');
-  }
+  // zzz804 — tradeability is market context, not the quarter's quality.
+  if (thinFloat && !market_context.includes('thin float')) market_context.push('thin float');
 
   // ── PEAD (Bernard–Thomas drift proxy) ──
   const sc = (v: number | null | undefined, ranges: [number, number][]): number => {
@@ -4251,7 +4287,7 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   // whatever the tier finally is at the moment the sentence is composed. A
   // card cannot contradict itself if only one place decides the verdict.
   const narrative_stem = `(${metrics || 'figures pending'})`;
-  const narrative = composeUsNarrative(narrative_stem, uniqCav, uniqMeth, tier, co, ql.label);
+  const narrative = composeUsNarrative(narrative_stem, uniqCav, uniqMeth, tier, co, ql.label, market_context);
 
   // Share count cross-check. The cover-page count can be stale (see
   // sharesOutstandingFromFacts); the count implied by net income ÷ EPS is
@@ -4333,6 +4369,7 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
     composite_score: Math.round(composite), tier,
     fund_composite: Math.round(_fund_composite), setup_grade: _setup_grade,  // zzz673 — display only
     methodology_tags: uniqMeth, caveat_tags: uniqCav,
+    market_context: Array.from(new Set(market_context)),
     narrative, narrative_stem, is_elite, pead_score, multibagger_setup,
     quality_score: quadrant.quality,
     inflection_score: quadrant.inflection,
@@ -4459,16 +4496,37 @@ export function usNarrativeHead(tier: EarningsTier, co: string, quarter: string)
 export function composeUsNarrative(
   stem: string, caveats: string[], methods: string[],
   tier?: EarningsTier, co?: string, quarter?: string,
+  /** zzz804 — price context, stated AFTER the verdict and never inside it. */
+  context?: string[] | null,
 ): string {
   const full = (tier && co && quarter) ? `${usNarrativeHead(tier, co, quarter)} ${stem}` : stem;
-  return composeFromStem(full, caveats, methods);
+  const body = composeFromStem(full, caveats, methods);
+  const ctx = Array.from(new Set((context || []).filter(Boolean)));
+  return ctx.length ? `${body} Market context (not part of the grade): ${ctx.join(', ')}.` : body;
 }
 
+/** zzz804 — caveats that say the same thing as a stronger one on the list are
+ *  not repeated in the sentence (the chips still carry every tag). */
+const CAVEAT_SUBSUMED_BY: Record<string, string[]> = {
+  'ocf divergence': ['profit without operating cash', 'earnings not backed by cash — conversion under half, free cash flow negative',
+    'negative operating cash — the release attributes it to working capital'],
+};
+/** Price / reaction wording that must never appear as a fundamental caveat,
+ *  even on an older cached row that still carries it. */
+const PRICE_CAVEAT_RE = /^(sold off|market rejected|intraday reversal|well off its highs|stage 4 downtrend|downtrend —|thin float)/;
+
 function composeFromStem(stem: string, caveats: string[], methods: string[]): string {
-  const cav = Array.from(new Set((caveats || []).filter(Boolean)));
-  const meth = Array.from(new Set((methods || []).filter(Boolean)));
+  const cav0 = Array.from(new Set((caveats || []).filter(Boolean)))
+    .filter((t) => !PRICE_CAVEAT_RE.test(t));
+  const cav1 = cav0.filter((t) => !(CAVEAT_SUBSUMED_BY[t] || []).some((x) => cav0.includes(x)));
+  // zzz804 — an informational tag explains, it does not accuse, so it is not
+  // written as a "caveat" of the verdict; it follows as a note.
+  const notes = cav1.filter((t) => INFORMATIONAL_CAVEATS.has(t));
+  const cav = cav1.filter((t) => !INFORMATIONAL_CAVEATS.has(t));
+  const noteTail = notes.length ? ` Note: ${notes.join('; ')}.` : '';
+  const meth = Array.from(new Set((methods || []).filter(Boolean))).filter((t) => !PRICE_METHOD_TAGS.has(t));
   if (!cav.length) {
-    return `${stem}${meth.length >= 2 ? ` and ${meth.join('/')} all passing.` : '.'}`;
+    return `${stem}${meth.length >= 2 ? ` and ${meth.join('/')} all passing.` : '.'}${noteTail}`;
   }
   const severity = (t: string) => CAVEAT_PENALTY[t] ?? CAVEAT_PENALTY_DEFAULT;
   const ordered = cav
@@ -4478,7 +4536,7 @@ function composeFromStem(stem: string, caveats: string[], methods: string[]): st
   const shown = ordered.slice(0, NARRATIVE_CAVEAT_LIMIT);
   const rest = ordered.length - shown.length;
   const more = rest > 0 ? ` (+${rest} more under METHODOLOGY & CAVEATS)` : '';
-  return `${stem} with caveat${cav.length > 1 ? 's' : ''}: ${shown.join(' + ')}${more}.`;
+  return `${stem} with caveat${cav.length > 1 ? 's' : ''}: ${shown.join(' + ')}${more}.${noteTail}`;
 }
 
 /** Linear 0–100 between `lo` (=0) and `hi` (=100), clamped. */
@@ -4887,12 +4945,12 @@ export function applySetupGates(rows: any[]): { demoted: number; capped: number 
     //     Either the composite verdict says so, or valuation alone bottomed
     //     out: a P/E far above the day's cohort median with nothing in the
     //     structure to justify it.
-    if (v === 'beat already priced' || val === 0) {
-      r.tier = 'MIXED';
-      r.setup_gate = v === 'beat already priced' ? 'already priced in' : 'priced far above its cohort';
-      demoted++;
-      continue;
-    }
+    // zzz804 — REMOVED AS A GRADE INPUT. "Already priced" is read off P/E and
+    // the chart; the owner's rule is that price never lowers or raises the
+    // fundamental grade. The verdict stays on the card as ENTRY context, where
+    // it belongs — "a strong quarter, but the price already holds it" — and
+    // the tier says only how good the quarter was.
+    void v; void val;
 
     // 2 — AND A TOP TIER MEANS A TOP-TIER COMPOSITE.  (zzz683)
     //
@@ -4964,6 +5022,10 @@ export function applySetupGates(rows: any[]): { demoted: number; capped: number 
     if (floorScore != null && floorScore < 80) {
       r.tier = 'MIXED';
       r.setup_gate = 'fundamentals below the top-tier floor';
+      // zzz804 — the demotion is stated where the verdict is stated, so a
+      // MIXED card always says why it is MIXED.
+      const why = 'growth, quality and confirmation together fall short of the top-tier bar';
+      if (Array.isArray(r.caveat_tags) && !r.caveat_tags.includes(why)) r.caveat_tags.push(why);
       demoted++;
       continue;
     }
@@ -4976,12 +5038,9 @@ export function applySetupGates(rows: any[]): { demoted: number; capped: number 
 
     // 4 — THE TOP TIER MEANS THE SETUP CONFIRMS TOO.
     //     BLOCKBUSTER now requires the compounder verdict or a setup of 70+.
-    if (t === 'BLOCKBUSTER' && !(v === 'compounder setup' || (score != null && score >= 70))) {
-      r.tier = 'STRONG';
-      r.setup_gate = 'setup does not confirm';
-      capped++;
-      continue;
-    }
+    // zzz804 — REMOVED for the same reason: the setup score is breakout,
+    // volume and valuation — price. It no longer caps the quarter's grade.
+    void score; void capped;
 
   }
   return { demoted, capped };

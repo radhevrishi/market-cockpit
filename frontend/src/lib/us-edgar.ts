@@ -60,6 +60,7 @@ async function secGate(): Promise<void> {
   if (wait > 0) await new Promise((r) => setTimeout(r, wait));
 }
 
+const SEC_FETCH_TIMEOUT_MS = 20_000;
 async function secFetch(url: string, tries = 3): Promise<Response> {
   let lastErr: any = null;
   for (let a = 0; a < tries; a++) {
@@ -72,6 +73,9 @@ async function secFetch(url: string, tries = 3): Promise<Response> {
           'Accept-Encoding': 'gzip, deflate',
         },
         cache: 'no-store',
+        // zzz805 — a hung sec.gov socket used to hold a grade (and the one-at-
+        // a-time queue behind it) until the route's 900s ceiling. 20s per try.
+        signal: AbortSignal.timeout(SEC_FETCH_TIMEOUT_MS),
       });
       if (res.ok) return res;
       if (res.status === 404) return res;        // genuinely absent; don't retry
@@ -127,6 +131,10 @@ async function listings() {
       if (!byTicker.has(t)) byTicker.set(t, { cik, exchange: null });
     }
   }
+  // zzz805 — an EMPTY listing map is a failed download, not a market with no
+  // listed companies. Caching it for a day made every filer "not listed on a
+  // major US exchange" and every day "0 filers". Refuse it; the next call retries.
+  if (!byCik.size) throw new Error('SEC company ticker list could not be read');
   _listings = { at: Date.now(), byCik, byTicker };
   return _listings;
 }

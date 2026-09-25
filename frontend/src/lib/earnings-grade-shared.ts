@@ -84,6 +84,10 @@ export const CAVEAT_PENALTY: Record<string, number> = {
   // ₹7.61 Cr → ₹1.74 Cr — was stamped 'low quality' and graded MIXED for an
   // improvement, which is the opposite of what the numbers say.
   'still loss-making': 10,
+  // zzz804 — a NOTE, not a flag. "$0.02 → $0.05" is +150% whatever the quarter
+  // was; the reader is told the rate is magnified, and nothing is docked. Only
+  // the US engine emits it, so India pricing is unchanged.
+  'small base — prior-year EPS under $0.10, so the per-share growth rate is magnified': 0,
 };
 
 /**
@@ -221,6 +225,7 @@ export const CAVEAT_PENALTY_DEFAULT = 8;
 export const INFORMATIONAL_CAVEATS: ReadonlySet<string> = new Set([
   'per-share comparison unavailable',
   'profit leaked below the operating line',
+  'small base — prior-year EPS under $0.10, so the per-share growth rate is magnified',   // zzz804 (US only)
 ]);
 
 /** caveat_tags.length, less the tags that only explain. Use this for every

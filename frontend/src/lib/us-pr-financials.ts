@@ -71,15 +71,26 @@ export interface YearAgoRef {
   operating_income: number | null; // USD
   net_income: number | null;       // USD
   eps: number | null;              // $/share, GAAP diluted
+  /** zzz804 — the year-ago QUARTER's operating cash flow and capex (USD,
+   *  de-cumulated from XBRL). Optional: when absent, the release's cash-flow
+   *  lines are not read, exactly as before. */
+  cfo?: number | null;
+  capex?: number | null;
 }
 
-export type PrItem = 'revenue' | 'operating_income' | 'net_income' | 'eps';
+export type PrItem = 'revenue' | 'operating_income' | 'net_income' | 'eps' | 'cfo' | 'capex';
 
 export interface ReleaseFinancials {
   revenue: number | null; revenue_prev: number | null;
   operating_income: number | null; operating_income_prev: number | null;
   net_income: number | null; net_income_prev: number | null;
   eps: number | null; eps_prev: number | null;
+  /** zzz804 — THREE-MONTH operating cash flow and capex (capex as a positive
+   *  outflow), only when the release prints a three-month column that the
+   *  headers bind to the reported quarter and whose year-ago column reproduces
+   *  the year-ago XBRL. A year-to-date column is never read as the quarter. */
+  cfo?: number | null; cfo_prev?: number | null;
+  capex?: number | null; capex_prev?: number | null;
   matched: PrItem[];
   scale: number | null;
   labels: Partial<Record<PrItem, string>>;
@@ -232,6 +243,12 @@ const EPS_SUBROW = /^(?:diluted|(?:total\s+)?net\s+(?:income|earnings|loss|profi
  */
 /** The wording of a block that restates the same lines on a non-GAAP basis. */
 const ADJ_BLOCK = /\bnon[\s‐-―-]?gaap\b|\badjusted\b|\bpro\s*forma\b|\bas\s+adjusted\b/i;
+
+// zzz804 — the cash-flow statement lines.
+const CFO_LINE = /^(?:total\s+)?net\s+cash\b.{0,60}\boperating\s+activities\b(?:\s*\(.*\))?$/i;
+const CFO_EXCLUDE = /discontinued|investing|financing|continuing\s+and|non-?gaap|adjusted|free/i;
+const CAPEX_LINE = /^(?:(?:purchases?|acquisitions?|additions?|payments?\s+for)\s+(?:of|to|for)?\s*(?:property|premises|fixed\s+assets|plant)|capital\s+expenditures?(?:\s*\(.*\))?$)/i;
+const CAPEX_EXCLUDE = /held\s+for\s+sale|proceeds|sale\s+of|disposal|non-?gaap/i;
 
 const OUTLOOK_ZONE = /\b(?:range|approximately|around|about|expects?|expected|anticipate\w*|outlook|guidance|forecast|projected?|estimated?)\b|\bto\s*\$/i;
 
@@ -974,6 +991,21 @@ export function financialsFromReleaseHtml(html: string, yearAgo: YearAgoRef, opt
           if (h && Math.abs(h.cur) < 1000 && better(h, found.eps)) found.eps = h;
         }
       }
+      // zzz804 — operating cash flow and capex, validated like every other
+      // line: the header-bound three-month column, whose year-ago partner must
+      // reproduce the year-ago quarter's XBRL figure. Capex is compared on its
+      // magnitude because filers print it as an outflow "(58,884)".
+      if (yearAgo.cfo != null && CFO_LINE.test(lbl) && !CFO_EXCLUDE.test(lbl)) {
+        const h = match(r, toks, yearAgo.cfo, false, preferScale, lbl);
+        if (h && (revCur == null || Math.abs(h.cur) < revCur * 3) && better(h, found.cfo)) found.cfo = h;
+      }
+      if (yearAgo.capex != null && yearAgo.capex !== 0 && CAPEX_LINE.test(lbl) && !CAPEX_EXCLUDE.test(lbl)) {
+        const absToks = toks.map((v) => Math.abs(v));
+        const h = bind
+          ? (() => { const pairs = bind.pick(r).map((pp) => ({ cur: Math.abs(pp.cur), prev: Math.abs(pp.prev) })); return matchBound(pairs, Math.abs(yearAgo.capex!), false, preferScale, lbl, ti); })()
+          : matchRow(absToks, Math.abs(yearAgo.capex), false, preferScale, lbl, ti);
+        if (h && (revCur == null || h.cur < revCur) && better(h, found.capex)) found.capex = h;
+      }
       // Keep the most recent header-ish label for the two-row EPS form; a row
       // with numbers is not a header.
     }
@@ -991,5 +1023,26 @@ export function financialsFromReleaseHtml(html: string, yearAgo: YearAgoRef, opt
   put('operating_income', found.operating_income);
   put('net_income', found.net_income);
   put('eps', found.eps);
+  put('cfo', found.cfo);
+  put('capex', found.capex);
   return out;
+}
+
+/**
+ * zzz804 — does the release ITSELF explain a cash outflow as working capital?
+ *
+ * Negative operating cash on a reported profit caps a quarter at MIXED. The one
+ * thing that softens it is the filer's own explanation — "operating cash flow
+ * reflected an investment in working capital to support growth" — stated in
+ * the release. Only a sentence that names operating cash AND working capital
+ * (or an inventory / receivables build) together counts; a cash-flow table
+ * showing receivables moving is data, not an explanation, and is not read here.
+ */
+export function releaseAttributesCashToWorkingCapital(html: string | null | undefined): boolean {
+  if (!html) return false;
+  const text = decode(html.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ');
+  const sentences = text.split(/(?<=[.!?])\s+/);
+  const cash = /\b(?:operating\s+cash|cash\s+(?:flow\s+)?(?:from|used\s+in|provided\s+by)\s+operat\w*|cash\s+flow)/i;
+  const wc = /\bworking\s+capital\b|\binventor(?:y|ies)\s+(?:build|investment|increase)|\binvestment\s+in\s+inventor|\b(?:higher|increase\w*\s+in)\s+(?:accounts\s+)?receivables/i;
+  return sentences.some((sn) => sn.length < 600 && cash.test(sn) && wc.test(sn) && !/\bnon-?gaap\s+measure|\bdefin/i.test(sn));
 }

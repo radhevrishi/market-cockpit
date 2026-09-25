@@ -63,9 +63,10 @@ import {
 import { usTechnicals, spyReturn12m, pooled, yahooLastError, yahooEarningsHistory, yahooForwardEstimates, type UsTechnicals, type EpsHistoryRow, type ForwardEstimate } from '@/lib/us-prices';
 import { nasdaqEarningsOnDetailed, type ExpectedReporter } from '@/lib/us-nasdaq';
 import { guidanceFromFiling, releaseDocument, type Guidance } from '@/lib/us-guidance';
-import { financialsFromReleaseHtml, periodEndFromReleaseHtml } from '@/lib/us-pr-financials';
+import { financialsFromReleaseHtml, periodEndFromReleaseHtml, releaseAttributesCashToWorkingCapital } from '@/lib/us-pr-financials';
 import { balanceSheetFromReleaseHtml } from '@/lib/us-pr-balance';
 import { US_ENGINE_VERSION } from '@/lib/us-engine-version';
+import { GradeQueue, decideCacheOnly, classifyFilerFetch } from '@/lib/us-rescan';
 import { readEstimateSnapshot } from '@/lib/us-estimate-snapshot';
 import { oneOffsFromReleaseHtml, absoluteOneOffsFromReleaseHtml, epsExOneOffs, type OneOff, type AbsoluteOneOff } from '@/lib/us-one-offs';
 import { adjustedEpsFromReleaseHtml, epsEstimateBasisConflict, vendorSurpriseUsable, type AdjustedEps, type VendorEpsRow } from '@/lib/us-pr-adjusted';
@@ -108,6 +109,9 @@ const MAX_CANDIDATES = 240;
 /** A quarter older than this relative to the filing date means XBRL hasn't caught up. */
 const MAX_QUARTER_LAG_DAYS = 110;
 const DEFAULT_WINDOW_DAYS = 5;
+/** zzz805 — a grade stops pulling new filers after this and publishes what it
+ *  has, naming the rest; the route's own ceiling is 900s. */
+const RUN_BUDGET_MS = 10 * 60_000;
 
 /** A company that announced in the window but could not be graded yet. Listed
  *  rather than silently dropped — "nothing was lost, the numbers just aren't
@@ -118,7 +122,7 @@ interface PendingFiler {
   form: string;
   filed: string;
   filing_url: string;
-  reason: 'xbrl-not-posted' | 'quarter-stale' | 'no-price' | 'reported-earlier';
+  reason: 'xbrl-not-posted' | 'quarter-stale' | 'no-price' | 'reported-earlier' | 'time-budget';
 }
 
 interface UsGradedPayload {
@@ -144,6 +148,12 @@ interface UsGradedPayload {
   notes: string[];
   /** EDGAR earnings filers in the window left out before grading, by reason. */
   excluded?: ExclusionCounts;
+  /** zzz805 — whether the filer LIST itself was read: 'none-yet' is an empty
+   *  day on EDGAR so far (today), never a failed fetch. */
+  filers_status?: 'ok' | 'none-yet' | 'partial' | 'failed';
+  filers_found?: number;
+  source_failed_dates?: string[];
+  time_budget_skipped?: number;
 }
 
 // ─── server-side cache ─────────────────────────────────────────────────────
@@ -178,42 +188,36 @@ const CACHE_MAX = 60;
 // starts now FINISHES, is written to Redis, and never has to be graded again.
 // The queue's position is reported back so the page can say something true
 // about what is happening instead of listing fourteen days as "in progress".
-const BG_MAX = 1;
-const _bgQueue: string[] = [];             // cacheKeys waiting their turn
-const _bgKnown = new Set<string>();        // queued OR running OR grading in the foreground
-let _bgRunning = 0;
-
-/** Marks a key as being computed right now, whoever asked for it. A cache_only
- *  probe must not launch a second copy of a grade that is already under way on
- *  a real request's clock. */
-function bgClaim(key: string): boolean {
-  if (_bgKnown.has(key)) return false;
-  _bgKnown.add(key);
-  return true;
-}
-function bgRelease(key: string) { _bgKnown.delete(key); }
-
-function bgPump(origin: string) {
-  while (_bgRunning < BG_MAX && _bgQueue.length > 0) {
-    const key = _bgQueue.shift()!;
-    const [d, n] = key.split('|');
-    _bgRunning++;
-    // LOOPBACK, NEVER THE PUBLIC EDGE. The edge cuts long requests with a 502,
-    // which does not throw, so an edge-bound background grade dies silently at
-    // ~300s — exactly the heavy days that most need grading. Nobody is waiting
-    // on this response and the route's own ceiling is 900s.
-    const port = process.env.PORT;
-    const self = port ? `http://127.0.0.1:${port}` : origin;
-    void fetch(`${self}/api/v1/earnings/graded-us?date=${d}&days=${n}`,
-      { cache: 'no-store', headers: { 'x-mc-prewarm': 'background' } })
-      .catch(() => {})
-      .finally(() => {
-        _bgRunning--;
-        bgRelease(key);
-        setTimeout(() => bgPump(origin), 500);
-      });
+// zzz805 — the queue now lives in lib/us-rescan.ts (`GradeQueue`): same
+// one-at-a-time rule, but every run records how it ENDED, so a failed grade is
+// reported as failed instead of being polled as "grading" for ever, and a
+// forced re-grade is queued once rather than on every poll.
+let _bgOrigin = '';
+/** A background grade gets the route's whole budget plus a margin, then is
+ *  abandoned — the queue must never wedge behind one stuck request. */
+const BG_RUN_TIMEOUT_MS = 16 * 60_000;
+const _queue = new GradeQueue(async (key, force) => {
+  const [d, n] = key.split('|');
+  // LOOPBACK, NEVER THE PUBLIC EDGE. The edge cuts long requests with a 502,
+  // which does not throw, so an edge-bound background grade dies silently at
+  // ~300s — exactly the heavy days that most need grading. Nobody is waiting
+  // on this response and the route's own ceiling is 900s.
+  const port = process.env.PORT;
+  const self = port ? `http://127.0.0.1:${port}` : _bgOrigin;
+  try {
+    const res = await fetch(`${self}/api/v1/earnings/graded-us?date=${d}&days=${n}${force ? '&force=1' : ''}`,
+      { cache: 'no-store', headers: { 'x-mc-prewarm': 'background' }, signal: AbortSignal.timeout(BG_RUN_TIMEOUT_MS) });
+    let body: any = null;
+    try { body = await res.json(); } catch { body = null; }
+    if (!res.ok || !body?.by_tier) {
+      return { ok: false, error: String(body?.error || `HTTP ${res.status}`) };
+    }
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e?.name === 'TimeoutError' ? 'the grade ran past its time budget' : String(e?.message || e) };
   }
-}
+}, 1);
+function bgClaim(key: string): boolean { return _queue.claim(key); }
 
 // ═══ THE SHARED-CACHE READ GATE  (zzz604) ══════════════════════════════════
 //
@@ -247,19 +251,6 @@ async function sharedRead(key: string): Promise<any> {
     const next = _kvWaiters.shift();
     if (next) next();
   }
-}
-
-/** Queue a cold session. Returns its 1-based place in line, or 0 if it was
- *  already known (queued, running, or being graded by a live request). */
-function bgEnqueue(key: string, origin: string): number {
-  if (!bgClaim(key)) {
-    const i = _bgQueue.indexOf(key);
-    return i >= 0 ? i + 1 + _bgRunning : 0;
-  }
-  _bgQueue.push(key);
-  const place = _bgQueue.length + _bgRunning;
-  bgPump(origin);
-  return place;
 }
 
 /** The US Eastern session date — see lib/us-earnings-dates.ts. */
@@ -807,6 +798,25 @@ function guideChange(
   return out;
 }
 
+/** zzz805 — the pending reply: queue place AND measured progress for the day. */
+function pendingBody(date: string, days: number, key: string) {
+  const pr = _queue.getProgress(key);
+  const last = _queue.lastRun(key);
+  return {
+    pending: true,
+    filing_date: date,
+    window_days: days,
+    engine_version: US_ENGINE_VERSION,
+    // Honest arithmetic for the progress line: how many sessions are ahead of
+    // this one, how many the server is working through, and — for the one in
+    // progress — how many of its filers are done.
+    queue_place: _queue.place(key) || 1,
+    queue_length: _queue.length(),
+    progress: pr ? { stage: pr.stage, done: pr.done, total: pr.total, elapsed_s: Math.round((Date.now() - pr.started_at) / 1000) } : null,
+    last_error: last && !last.ok ? last.error : null,
+  };
+}
+
 export async function GET(req: Request) {
   const t0 = Date.now();
   const { searchParams } = new URL(req.url);
@@ -839,6 +849,23 @@ export async function GET(req: Request) {
   // asked for it has already walked away. The retry then costs one read.
   const kvKey = `us-graded:${US_ENGINE_VERSION}:${cacheKey}`;
   const cacheOnlyParam = searchParams.get('cache_only') === '1';
+  // zzz805 — A DAY ALREADY QUEUED OR RUNNING IS A PROGRESS QUESTION. Checked
+  // before any cache: during a forced re-grade the previous payload is still in
+  // the caches, and serving it would end the re-scan with the old answer.
+  if (cacheOnlyParam && !explicit && _queue.known(cacheKey)) {
+    return NextResponse.json(pendingBody(date, days, cacheKey), { headers: { 'x-mc-cache': 'pending', 'Cache-Control': 'no-store' } });
+  }
+  // zzz805 — `force` on a cache_only probe means "re-grade this day ONCE": the
+  // in-memory copy is dropped and the grade is queued with force (so it also
+  // skips the shared cache). The page sends force only on the first request
+  // of a re-scan; every later poll is a plain probe and is served the new
+  // result the moment it lands. This used to re-queue the day on every poll.
+  if (cacheOnlyParam && !explicit && force) {
+    _cache.delete(cacheKey);
+    _bgOrigin = new URL(req.url).origin;
+    _queue.enqueue(cacheKey, true);
+    return NextResponse.json(pendingBody(date, days, cacheKey), { headers: { 'x-mc-cache': 'pending', 'Cache-Control': 'no-store' } });
+  }
   if (!force) {
     const hit = _cache.get(cacheKey);
     // A window graded while `date` was still running is not reused once that
@@ -881,7 +908,7 @@ export async function GET(req: Request) {
         if (cacheOnlyParam) {
           return NextResponse.json(
             { pending: true, filing_date: date, window_days: days, engine_version: US_ENGINE_VERSION,
-              cache_read_failed: true, queue_place: 0, queue_length: _bgQueue.length + _bgRunning },
+              cache_read_failed: true, queue_place: 0, queue_length: _queue.length() },
             { headers: { 'x-mc-cache': 'read-failed', 'Cache-Control': 'no-store' } },
           );
         }
@@ -906,22 +933,23 @@ export async function GET(req: Request) {
   // that is on screen instantly with a few days still filling in.
   const cacheOnly = cacheOnlyParam;
   if (cacheOnly && !explicit) {
-    const place = bgEnqueue(cacheKey, new URL(req.url).origin);
-    return NextResponse.json(
-      {
-        pending: true,
-        filing_date: date,
-        window_days: days,
-        engine_version: US_ENGINE_VERSION,
-        // Honest arithmetic for the progress line: how many sessions are ahead
-        // of this one, and how many the server is working through in total.
-        // One at a time, because the SEC gate means concurrency buys nothing
-        // and memory pressure costs everything.
-        queue_place: place || 1,
-        queue_length: _bgQueue.length + _bgRunning,
-      },
-      { headers: { 'x-mc-cache': 'pending', 'Cache-Control': 'no-store' } },
-    );
+    // zzz805 — a day whose last grade FAILED is reported as failed, with when
+    // it will be retried, instead of being queued again on every poll.
+    const decision = decideCacheOnly({
+      known: _queue.known(cacheKey), force: false, cacheHit: false,
+      last: _queue.lastRun(cacheKey), now: Date.now(),
+    });
+    if (decision.kind === 'failed') {
+      return NextResponse.json(
+        { pending: false, source_failed: true, filing_date: date, window_days: days,
+          engine_version: US_ENGINE_VERSION, error: decision.error,
+          retry_in_s: Math.round(decision.retryInMs / 1000) },
+        { headers: { 'x-mc-cache': 'failed', 'Cache-Control': 'no-store' } },
+      );
+    }
+    _bgOrigin = new URL(req.url).origin;
+    _queue.enqueue(cacheKey, false);
+    return NextResponse.json(pendingBody(date, days, cacheKey), { headers: { 'x-mc-cache': 'pending', 'Cache-Control': 'no-store' } });
   }
 
   // A live (non-cache_only) grade of a cold day claims the same slot, so a
@@ -931,6 +959,16 @@ export async function GET(req: Request) {
 
   const notes: string[] = [];
   let truncated = false;
+  // zzz805 — how this run ended, for the queue's record; and a hard budget so
+  // a run always FINISHES with what it has rather than being killed with
+  // nothing (the route's ceiling is 900s).
+  let _outcome: { ok: boolean; error?: string | null } | null = null;
+  const deadline = t0 + RUN_BUDGET_MS;
+  const overBudget = () => Date.now() > deadline;
+  let budgetSkipped = 0;
+  const prog = (stage: string, done?: number, total?: number) => {
+    if (!explicit) _queue.setProgress(cacheKey, { stage, ...(done != null ? { done } : {}), ...(total != null ? { total } : {}) });
+  };
 
   try {
     // ── 1. gather the filer set ──────────────────────────────────────────
@@ -938,6 +976,7 @@ export async function GET(req: Request) {
     let windowStart: string | null = null;
     let reportedEarlier: EdgarFiling[] = [];
     let excluded: ExclusionCounts = {};
+    let filerFetch: ReturnType<typeof classifyFilerFetch> | null = null;
 
     if (explicit) {
       // Debug / verification path: grade an explicit ticker list off each
@@ -984,7 +1023,18 @@ export async function GET(req: Request) {
         if (!isWeekend(d)) dates.push(d);               // EDGAR generates nothing on weekends
       }
       windowStart = dates.length ? dates[dates.length - 1] : date;
+      prog('finding the earnings filers on EDGAR');
+      // `pooled` turns a thrown fetch into `undefined`. That is NOT an empty
+      // day, and treating it as one is how a 403 from SEC became "0 filers"
+      // — cached for a month when the date was in the past. (zzz805)
       const perDay = await pooled(dates, 3, (d) => earningsFilersOn(d));
+      filerFetch = classifyFilerFetch(dates, perDay as any, today);
+      if (filerFetch.status === 'failed') {
+        throw Object.assign(new Error(`SEC EDGAR filer list could not be fetched for ${filerFetch.failed.join(', ')} — will retry`), { sourceFailed: true });
+      }
+      if (filerFetch.status === 'partial') {
+        notes.push(`SEC EDGAR filer list could not be fetched for ${filerFetch.failed.join(', ')} — those days are missing from this window and will be retried`);
+      }
       // Say how many filers each day left out and why (OTC / unlisted, shells)
       // — a thin day must not look complete when it is not.
       excluded = mergeExclusions(...dates.map((d) => earningsFilerExclusions(d)));
@@ -1040,6 +1090,7 @@ export async function GET(req: Request) {
     }
 
     // ── 2. prices + technicals (cheap, parallel) ─────────────────────────
+    prog('reading prices', 0, listed.length);
     const spy12 = await spyReturn12m();
     const techs = await pooled(listed, 8, (f) => usTechnicals(f.ticker!, f.filed));
 
@@ -1061,7 +1112,14 @@ export async function GET(req: Request) {
     }
 
     // ── 3. fundamentals from companyfacts ────────────────────────────────
-    const facts = await pooled(withPrice, 5, (x) => companyFacts(x.f.cikNum));
+    prog('reading each filer\u2019s XBRL', 0, listed.length);
+    const budgetMiss = new Set<number>();
+    const facts = await pooled(withPrice, 5, async (x, i) => {
+      // zzz805 — past the run budget, stop pulling new filers; they are
+      // listed as not graded (time budget) instead of the run dying at 900s.
+      if (overBudget()) { budgetMiss.add(i); _queue.tick(cacheKey); return null; }
+      try { return await companyFacts(x.f.cikNum); } finally { if (!explicit) _queue.tick(cacheKey); }
+    });
 
     interface Prepared {
       f: EdgarFiling; t: UsTechnicals; shares: number | null; facts: any;
@@ -1073,6 +1131,7 @@ export async function GET(req: Request) {
     for (let i = 0; i < withPrice.length; i++) {
       const fx = facts[i];
       const { f, t } = withPrice[i];
+      if (budgetMiss.has(i)) { budgetSkipped++; addPending(f, 'time-budget'); continue; }
       if (!fx) { pendingXbrl++; addPending(f, 'xbrl-not-posted'); awaitingXbrl.push({ f, t, facts: null }); continue; }
       // For a 10-Q/10-K the reported period IS the fiscal period; for an 8-K,
       // `period_ending` is the event date, so let the extractor take the newest.
@@ -1136,7 +1195,7 @@ export async function GET(req: Request) {
       // and for six filers it returned a modelled number that appears nowhere
       // in any filing at all. A number narrated as "the company's adjusted EPS"
       // has to come from the company.
-      pooled(prepared, 4, async (p): Promise<{ read: boolean; adj: AdjustedEps | null; oneOffs: OneOff[]; absOneOffs: AbsoluteOneOff[]; formerName: string | null }> => {
+      pooled(prepared, 4, async (p): Promise<{ read: boolean; adj: AdjustedEps | null; oneOffs: OneOff[]; absOneOffs: AbsoluteOneOff[]; formerName: string | null; wc?: boolean }> => {
         // A NAME NOBODY RECOGNISES IS READ AS A BUG.
         //
         // Ticker P is Everpure, Inc. on NYSE — which is Pure Storage, renamed
@@ -1152,6 +1211,8 @@ export async function GET(req: Request) {
           return {
             read: true,
             formerName,
+            // zzz804 — the release's own words on a working-capital cash drain.
+            wc: releaseAttributesCashToWorkingCapital(doc.html),
             adj: adjustedEpsFromReleaseHtml(doc.html, {
               gaapEps: p.fundamentals.eps ?? null,
               periodEndISO: p.fundamentals.q_end ?? null,
@@ -1403,6 +1464,15 @@ export async function GET(req: Request) {
         // the grade through the cents door.
         consensus_beat_abs: (adjForBeat != null && estForSurprise != null)
           ? adjForBeat - estForSurprise : null,
+        // zzz804 — the revenue beat reaches the grade too (same estimate the
+        // signal row prints: the live feed bound to this period, else the
+        // snapshot captured before the print).
+        revenue_beat_pct: (() => {
+          const est = streetRevenueFor(forwards[pi] || [], p.fundamentals.q_end) ?? (snapshots[pi]?.revenue ?? null);
+          const act = p.fundamentals.revenue;
+          return (est != null && est > 0 && act != null) ? ((act - est) / est) * 100 : null;
+        })(),
+        cash_explained_by_working_capital: !!(prRead as any).wc,
         // A full-year raise that passes a beat through, alongside a next-quarter
         // guide below the street, is not a raise for grading purposes.
         positive_guidance: g.label === 'RAISED' && !(guideVsStreet != null && guideVsStreet <= -3),
@@ -1502,6 +1572,14 @@ export async function GET(req: Request) {
         if (ourFcf != null && Math.abs(ourFcf) > 1e6
             && Math.abs(m.value - ourFcf) > Math.abs(ourFcf) * 0.15) return false;
         return true;
+      }).map((m: KeyMetric) => {
+        // zzz804 — say WHICH period the release's FCF is: agreeing with our own
+        // quarter CFO − capex makes it the quarter; otherwise it is shown with
+        // its period unconfirmed and never compared to the quarter's profit.
+        if (m.id !== 'free_cash_flow') return m;
+        const ourFcf = p.fundamentals.cfo != null && p.fundamentals.capex != null
+          ? p.fundamentals.cfo - Math.abs(p.fundamentals.capex) : null;
+        return { ...m, period: ourFcf != null ? 'quarter' : 'unconfirmed' } as any;
       });
       if (g.label === 'RAISED' && !row.methodology_tags.includes('guidance raised')) row.methodology_tags.push('guidance raised');
       if ((g.label === 'LOWERED' || g.label === 'WITHDRAWN') && !row.caveat_tags.includes('guidance cut')) row.caveat_tags.push('guidance cut');
@@ -1791,7 +1869,7 @@ export async function GET(req: Request) {
       // carried "sold off — fundamentals intact". One recomposition here, off
       // the same arrays the chips render, and there is only one list again.
       row.narrative = composeUsNarrative(row.narrative_stem, row.caveat_tags, row.methodology_tags,
-        row.tier, row.company || row.ticker, row.quarter);   // zzz697 — head follows the FINAL tier
+        row.tier, row.company || row.ticker, row.quarter, row.market_context);   // zzz697 — head follows the FINAL tier
       graded.push(row);
     }
 
@@ -1807,6 +1885,8 @@ export async function GET(req: Request) {
       let dbgRows = 0, dbgMatch = 0, dbgEps = 0, dbgRow = 0;
       for (let i = 0; i < awaitingXbrl.length; i++) {
         const { f, t, facts: facts0 } = awaitingXbrl[i];
+        if (overBudget()) { budgetSkipped++; addPending(f, 'time-budget'); continue; }
+        prog('reading earnings releases (10-Q not posted yet)');
         const rows = sur[i] || [];
         if (rows.length) dbgRows++;
         if (f.form !== '8-K') continue;
@@ -1853,6 +1933,9 @@ export async function GET(req: Request) {
             pr = financialsFromReleaseHtml(doc.html, {
               revenue: ya.revenue, operating_income: ya.operating_income,
               net_income: ya.net_income, eps: ya.eps,
+              // zzz804 — the release's own three-month cash-flow column,
+              // validated against the year-ago quarter's XBRL like every line.
+              cfo: ya.cfo ?? null, capex: ya.capex != null ? Math.abs(ya.capex) : null,
             }, { reportedPeriodEnd: qEnd });
           } catch { pr = null; }
         }
@@ -1923,9 +2006,15 @@ export async function GET(req: Request) {
           // GAAP diluted EPS from the release when it validated; the street
           // (adjusted) figure stays on `eps_adj`, never mixed into the YoY tile.
           eps: pr?.eps ?? null, eps_prev: pr?.eps_prev ?? null, eps_derived: false,
-          cfo: null, cfo_prev: null, capex: null, capex_prev: null, tags: {},
+          // zzz804 — the quarter's cash flow when the release prints a
+          // validated three-month column; unknown (null, never zero) otherwise.
+          cfo: pr?.cfo ?? null, cfo_prev: pr?.cfo_prev ?? null,
+          capex: pr?.capex ?? null, capex_prev: pr?.capex_prev ?? null, tags: {},
           quarters_revenue: null, quarters_eps: null, quarters_opm: null,
         };
+        const fwdP = await yahooForwardEstimates(f.ticker!).catch(() => [] as ForwardEstimate[]);
+        const revEstP = streetRevenueFor(fwdP, qEnd)
+          ?? (await readEstimateSnapshot(f.ticker || '', qEnd).catch(() => null))?.revenue ?? null;
         const row = gradeUsRow({
           ticker: f.ticker!, company: f.company, sector: sectorFromSic(f.sic, f.company, { facts: facts0 }),
           filing_date: f.filed, form: f.form, items: f.items, filing_url: f.filing_url,
@@ -1948,6 +2037,9 @@ export async function GET(req: Request) {
           consensus_beat_abs: (adjNowP != null && estUsableP && (latest?.eps_estimate ?? null) != null)
             ? adjNowP - (latest!.eps_estimate as number) : null,
           positive_guidance: gPre?.label === 'RAISED',
+          revenue_beat_pct: (revEstP != null && revEstP > 0 && pr?.revenue != null)
+            ? ((pr.revenue - revEstP) / revEstP) * 100 : null,
+          cash_explained_by_working_capital: releaseAttributesCashToWorkingCapital(doc?.html ?? null),
           close_30d: t.close_30d,
           // Same ladder as the full path: the filer's own label, then the year
           // implied by the year-ago quarter's XBRL, then the bare ordinal —
@@ -1981,7 +2073,17 @@ export async function GET(req: Request) {
               fiscal_q: g.fiscal_q ?? fiscalNow.q ?? null,
               fiscal_fy: g.fiscal_fy ?? fiscalNow.fy ?? null,
             });
-            (row as any).key_metrics = g.metrics;
+            // zzz804 — same period discipline as the full path. Where the
+            // release's own cash-flow statement gave us the quarter, a stated
+            // FCF that disagrees with CFO − capex is a different period and is
+            // dropped; one that agrees is labelled the quarter; with no quarter
+            // figure to check against, it is shown with its period unconfirmed.
+            (row as any).key_metrics = (g.metrics || []).filter((m: KeyMetric) => {
+              if (m.id !== 'free_cash_flow' || fund.cfo == null || fund.capex == null) return true;
+              const ours = fund.cfo - Math.abs(fund.capex);
+              return !(Math.abs(ours) > 1e6 && Math.abs(m.value - ours) > Math.abs(ours) * 0.15);
+            }).map((m: KeyMetric) => m.id !== 'free_cash_flow' ? m
+              : ({ ...m, period: (fund.cfo != null && fund.capex != null) ? 'quarter' : 'unconfirmed' } as any));
             if (g.label === 'RAISED' && !row.methodology_tags.includes('guidance raised')) row.methodology_tags.push('guidance raised');
             if ((g.label === 'LOWERED' || g.label === 'WITHDRAWN') && !row.caveat_tags.includes('guidance cut')) row.caveat_tags.push('guidance cut');
           }
@@ -2002,8 +2104,8 @@ export async function GET(req: Request) {
               ser0.operating_income.push(pr.operating_income != null ? Math.round(pr.operating_income / 1e4) / 100 : null);
               ser0.net_income.push(pr.net_income != null ? Math.round(pr.net_income / 1e4) / 100 : null);
               ser0.eps.push(pr.eps ?? null);
-              ser0.cfo.push(null);
-              ser0.fcf.push(null);
+              ser0.cfo.push(pr.cfo != null ? Math.round(pr.cfo / 1e4) / 100 : null);
+              ser0.fcf.push(pr.cfo != null && pr.capex != null ? Math.round((pr.cfo - Math.abs(pr.capex)) / 1e4) / 100 : null);
               (row as any).series = ser0;
             }
             // No validated release figures → the series would end on the wrong
@@ -2177,13 +2279,30 @@ export async function GET(req: Request) {
         // caveats ("prelim · 10-Q pending", "missed consensus") since the
         // sentence was composed, and the sentence has to carry the final list
         // before the PRELIM tail is appended to it.
+        // zzz804 — the cash-flow sentence says what is actually on the card.
+        // "Cash flow arrives with the 10-Q" beside a −$975.6M FREE CASH FLOW
+        // tile was a contradiction: the release had printed its own statement
+        // of cash flows. Now: read from the release when we read it; stated
+        // but period-unconfirmed when only a headline FCF figure exists; and
+        // "arrives with the 10-Q" only when there genuinely is none.
+        const fcfStated = ((row as any).key_metrics || []).find((m: any) => m?.id === 'free_cash_flow');
+        const cashLine = fund.cfo != null
+          ? ` Operating cash flow ${fund.cfo < 0 ? '−' : ''}$${(Math.abs(fund.cfo) / 1e6).toFixed(1)}m for the quarter, read from the release's own cash-flow statement.`
+          : fcfStated
+          ? ' The release states a free-cash-flow figure, but its period could not be tied to this quarter, so it is shown and not graded; the full cash-flow statement arrives with the 10-Q.'
+          : ' Cash flow arrives with the 10-Q.';
+        const prelimTail = (pr && pr.matched.length)
+          ? ` Read from the earnings release and checked against last year's filing${adjLine ? `; ${adjLine}` : ' (no analyst consensus covers this name)'}.${cashLine}`
+          : null;
+        (row as any).narrative_tail = prelimTail;
         row.narrative = composeUsNarrative(row.narrative_stem, row.caveat_tags, row.methodology_tags,
-        row.tier, row.company || row.ticker, row.quarter);   // zzz697 — head follows the FINAL tier
+        row.tier, row.company || row.ticker, row.quarter, row.market_context);   // zzz697 — head follows the FINAL tier
         row.narrative = (pr && pr.matched.length)
           // We have the release's own GAAP statement — keep the normal
           // narrative and add the street line plus what is still missing.
-          ? `${row.narrative} Read from the earnings release and checked against last year's filing${adjLine ? `; ${adjLine}` : ' (no analyst consensus covers this name)'}. Cash flow arrives with the 10-Q.`
+          ? `${row.narrative}${prelimTail}`
           : `${f.company} reported ${row.quarter}: ${adjLine ?? 'no GAAP statement could be verified'}. Revenue, margins and cash flow will fill in when the 10-Q posts to EDGAR.`;
+        if (!(pr && pr.matched.length)) (row as any).narrative_fixed = true;
         graded.push(row);
         prelimCiks.add(f.cikNum);
       }
@@ -2243,7 +2362,8 @@ export async function GET(req: Request) {
     // because the verdict it reads does not exist until then.
     const _gates = applySetupGates(graded as any[]);
     if (_gates.demoted || _gates.capped) {
-      notes.push(`setup gates: ${_gates.demoted} demoted to MIXED (already priced in), ${_gates.capped} capped at STRONG (setup does not confirm)`);
+      // zzz804 — only the fundamental floor remains; price no longer gates.
+      notes.push(`${_gates.demoted} top-tier row${_gates.demoted === 1 ? '' : 's'} moved to MIXED: growth, quality and confirmation together fall short of the top-tier bar`);
     }
 
     // ── THE COMPANY'S OWN NEXT-QUARTER GUIDE.                      (zzz698)
@@ -2283,6 +2403,19 @@ export async function GET(req: Request) {
       notes.push(`${_guideDown} row${_guideDown > 1 ? 's' : ''} guide the coming quarter below the quarter just reported (measured against the company's own figures, not consensus)`);
     }
 
+    // ── ONE VERDICT, ONE SENTENCE.                                    (zzz804)
+    //
+    // The setup gate and the guide-down pass above both move tiers AFTER the
+    // narrative was composed, so a card could read "prints a blockbuster" under
+    // a MIXED badge. The sentence is rebuilt here, last, from the final tier,
+    // the final caveats and the price context — so the adjective always comes
+    // from the verdict it sits under.
+    for (const row of graded as any[]) {
+      if (row.narrative_fixed || !row.narrative_stem) continue;
+      row.narrative = composeUsNarrative(row.narrative_stem, row.caveat_tags || [], row.methodology_tags || [],
+        row.tier, row.company || row.ticker, row.quarter, row.market_context || []) + (row.narrative_tail || '');
+    }
+
     const by_tier: Record<EarningsTier, UsGradedRow[]> = {
       BLOCKBUSTER: [], STRONG: [], MIXED: [], AVOID: [],
     };
@@ -2294,6 +2427,12 @@ export async function GET(req: Request) {
         b.filing_date.localeCompare(a.filing_date));
     }
 
+    if (budgetSkipped > 0) {
+      notes.push(`${budgetSkipped} filer${budgetSkipped > 1 ? 's were' : ' was'} not graded in this pass — the run reached its ${Math.round(RUN_BUDGET_MS / 60_000)}-minute budget; they are listed as pending and a re-scan picks them up`);
+    }
+    if (filerFetch?.status === 'none-yet') {
+      notes.push(`SEC EDGAR has no earnings filings for ${date} yet — releases usually appear in EDGAR's search index within minutes of filing, most before 9:30 or after 16:00 ET; this day is re-checked every few minutes`);
+    }
     if (pendingXbrl > 0) {
       notes.push(`${pendingXbrl} filer${pendingXbrl > 1 ? 's' : ''} announced but XBRL not yet posted (the 10-Q usually follows the 8-K by days to weeks)`);
     }
@@ -2333,10 +2472,17 @@ export async function GET(req: Request) {
       truncated,
       notes,
       excluded,
-    };
+      filers_status: filerFetch?.status ?? 'ok',
+      filers_found: filerFetch?.found ?? rawTotal,
+      source_failed_dates: filerFetch?.failed?.length ? filerFetch.failed : undefined,
+      time_budget_skipped: budgetSkipped || undefined,
+    } as UsGradedPayload;
 
     const includesToday = date >= today;
-    const ttl = explicit ? 15 * 60_000 : includesToday ? 15 * 60_000 : 90 * 24 * 3600_000;
+    // zzz805 — an incomplete window (a day whose filer list failed, or filers
+    // left for the time budget) is not final: short-lived, never shared.
+    const incomplete = (filerFetch?.failed?.length ?? 0) > 0 || budgetSkipped > 0;
+    const ttl = explicit ? 15 * 60_000 : (includesToday || incomplete) ? 15 * 60_000 : 90 * 24 * 3600_000;
     if (_cache.size >= CACHE_MAX) {
       const oldest = Array.from(_cache.entries()).sort((a, b) => a[1].at - b[1].at).slice(0, 15);
       for (const [k] of oldest) _cache.delete(k);
@@ -2346,7 +2492,8 @@ export async function GET(req: Request) {
     // write is not awaited: a client still holding the connection should not
     // wait on Redis, and a client that has already timed out is exactly who
     // this write is for. Today's date is excluded — it is still filling up.
-    if (!explicit && !includesToday) {
+    _outcome = { ok: true };
+    if (!explicit && !includesToday && !incomplete) {
       void kvSet(kvKey, zipPayload(payload), 30 * 24 * 3600).catch(() => {});
     }
 
@@ -2358,7 +2505,9 @@ export async function GET(req: Request) {
       },
     });
   } catch (err: any) {
+    _outcome = { ok: false, error: String(err?.message || err) };
     return NextResponse.json({
+      source_failed: !!err?.sourceFailed,
       filing_date: date,
       window_days: days,
       window_start: null,
@@ -2380,6 +2529,6 @@ export async function GET(req: Request) {
     // Whatever happened — success, error, or a thrown timeout — this key is no
     // longer being computed. Leaving it claimed would make the page report a
     // session as "grading" for ever and stop anything from ever retrying it.
-    if (claimedHere) bgRelease(cacheKey);
+    if (claimedHere) _queue.release(cacheKey, _outcome ?? { ok: false, error: 'the grade did not finish' });
   }
 }

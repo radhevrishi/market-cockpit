@@ -18,7 +18,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getCachedDay, putCachedDay, clearDayCache, scrubLegacyDayCaches } from '@/lib/us-day-cache';
+import { getCachedDay, putCachedDay, scrubLegacyDayCaches } from '@/lib/us-day-cache';
+import { planDayRequest, pollDelayMs, dayStatusLine } from '@/lib/us-rescan';
 import Link from 'next/link';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Star, ExternalLink, RefreshCw, ChevronDown, ChevronRight, Award, AlertTriangle } from 'lucide-react';
@@ -271,102 +272,79 @@ export default function UsEarningsOpportunitiesPage() {
   // How many times each session has been fetched in this sweep, so a retry can
   // be given a longer clock than the attempt that timed out.
   const attemptsRef = useRef<Map<string, number>>(new Map());
+  // zzz805 — `${forceKey}|${day}` for which the one forced request of a
+  // re-scan has been sent, and the days still waiting on the server.
+  const forcedRef = useRef<Set<string>>(new Set());
+  const awaitingRef = useRef<Set<string>>(new Set());
   useEffect(() => { attemptsRef.current = new Map(); }, [date, days, forceKey]);
 
   const dayQueries = useQueries({
     queries: sessions.map((d, i) => ({
       queryKey: ['graded-us-day', d, forceKey],
       queryFn: async (): Promise<DayPayload> => {
-        // THE CACHE IS CONSULTED ON EVERY RUN, hard refresh included. The hard
-        // refresh empties the store BEFORE it bumps `forceKey` (see `refetch`),
-        // so its misses are real; and a day that was swept at 40/60 before the
-        // user pressed "retry" is served from the store rather than swept
-        // again. This used to be `if (forceKey === 0)`, which is why any retry
-        // started the whole window over from 0.
+        // ── zzz805 — ONE PLAN PER DAY (see `planDayRequest`) ─────────────
+        //
+        // A hard re-scan sends `force` ONCE per day and then polls plainly;
+        // it used to send force on every poll, which made the server re-grade
+        // the same day for ever and the page show "0 filers · grading" until
+        // someone gave up. A day being re-graded (re-scan, or a new engine
+        // version) keeps its previous grade on screen until the new one lands;
+        // nothing is wiped first and nothing bypasses the server's queue.
         const cached = await getCachedDay(d, d >= today);
-        // FRESH CACHE: paint it, done.
-        if (cached && !cached._stale_engine) return cached as unknown as DayPayload;
-        // STALE CACHE (graded by an older engine): paint it NOW and correct it
-        // in the background. The alternative — refusing it — is what made a
-        // deployed fix look like an empty page and a twenty-minute wait.
-        if (cached) {
-          void (async () => {
-            try {
-              const res = await fetch(`/api/v1/earnings/graded-us?date=${d}&days=1`, { cache: 'no-store' });
-              if (!res.ok) return;
-              const fresh = await res.json();
-              if (!fresh?.by_tier) return;
-              void putCachedDay(d, fresh);
-              qc.setQueryData(['graded-us-day', d, forceKey], fresh);
-            } catch { /* the stale day stays on screen; nothing is lost */ }
-          })();
-          return cached as unknown as DayPayload;
-        }
-        // ── A PENDING SESSION SETTLES IMMEDIATELY ───────────────────────
-        //
-        // `cache_only=1` answers in about a second, always: the session if it
-        // is cached, otherwise `pending` while the server grades it in the
-        // background over loopback, where no timeout can kill it.
-        //
-        // The first version of this then POLLED inside the query for up to
-        // eight minutes — which freed the connection but still held the
-        // sweep slot, so four heavy days clogged the same gate as before and
-        // the counter still crawled at "10 of 30". A query that has not
-        // settled blocks the stagger behind it, however little work it is
-        // doing.
-        //
-        // So a pending session RESOLVES — with an empty placeholder that
-        // contributes nothing to the merge and is never written to the day
-        // cache. The slot is released at once, every warm session in the
-        // window paints within seconds, and the placeholder re-fetches itself
-        // on a timer until the real payload is ready. Nothing is lost and
-        // nothing waits on anything else.
+        const plan = planDayRequest({
+          cached: cached ? { stale: !!cached._stale_engine } : null,
+          rescanRequested: forceKey > 0,
+          forceAlreadySent: forcedRef.current.has(`${forceKey}|${d}`),
+          awaitingServer: awaitingRef.current.has(d),
+        });
+        if (plan.action === 'use-cache') return cached as unknown as DayPayload;
+        if (plan.force) forcedRef.current.add(`${forceKey}|${d}`);
+        awaitingRef.current.add(d);
         const r = await fetch(
-          `/api/v1/earnings/graded-us?date=${d}&days=1&cache_only=1${forceKey > 0 ? '&force=1' : ''}`,
-          { cache: 'no-store' },
+          `/api/v1/earnings/graded-us?date=${d}&days=1&cache_only=1${plan.force ? '&force=1' : ''}`,
+          { cache: 'no-store', signal: AbortSignal.timeout(30_000) },
         );
-        if (!r.ok) throw new Error(`Grading failed for ${d} (HTTP ${r.status})`);
-        const j = await r.json();
-        // ── WHAT COUNTS AS A GRADED SESSION  (zzz605) ─────────────────────
-        //
-        // This test used to be `if (!j.pending)`, and it was wrong in the worst
-        // possible way — silently, and only on the days that matter.
-        //
-        // `pending` means two different things in this payload. The server's
-        // "still grading" reply sets `pending: true`; a FINISHED session sets
-        // `pending: [...]` — the list of filers in the window whose XBRL was
-        // not posted yet. A quiet day finishes with `pending: []`, which is
-        // falsy, so it passed. A BUSY day finishes with fifty-odd un-graded
-        // micro-caps in that array, which is truthy — so the finished payload,
-        // all hundred and fifty graded companies of it, was thrown away and
-        // replaced with an empty "still grading" placeholder. Every time.
-        //
-        // That is the whole of "fast to sixteen, then nothing": the only
-        // sessions that ever landed were the ones with nothing much in them,
-        // and the page then re-fetched the busy days for ever, discarding a
-        // correct answer on each pass.
-        //
-        // So the test is now the thing that actually distinguishes them: a
-        // graded session has `by_tier`. A placeholder never does.
-        if (j?.by_tier) { void putCachedDay(d, j); return j; }
-        return {
+        let j: any = null;
+        try { j = await r.json(); } catch { j = null; }
+        // WHAT COUNTS AS A GRADED SESSION (zzz605): a payload with `by_tier`.
+        // `pending` is overloaded (true while grading; a filer list once done).
+        if (r.ok && j?.by_tier) {
+          awaitingRef.current.delete(d);
+          void putCachedDay(d, j);
+          return j;
+        }
+        if (!r.ok && !j?.source_failed) throw new Error(`Grading failed for ${d} (HTTP ${r.status})`);
+        const empty = {
           filing_date: d, window_days: 1, window_start: d,
           candidates_total: 0, raw_items_total: 0, pending_xbrl_total: 0, no_price_total: 0,
           by_tier: { BLOCKBUSTER: [], STRONG: [], MIXED: [], AVOID: [] },
           pending: [], scheduled: [], generated_at: new Date().toISOString(),
           sources_polled: 0, truncated: false, notes: [],
+        };
+        // The previous grade (if any) stays on screen while this day is
+        // re-graded; it is never written back to the cache from here.
+        const base: any = plan.keepShowing && cached ? { ...cached, _stale_engine: undefined } : empty;
+        if (j?.source_failed) {
+          // SILENCE NEVER PASSES: a filer list SEC would not give us is said
+          // out loud, with when it will be retried — never shown as 0 filers.
+          return {
+            ...base, _grading: false, _failed: true,
+            _error: String(j?.error || 'SEC EDGAR could not be read'),
+            _retryInMs: typeof j?.retry_in_s === 'number' ? j.retry_in_s * 1000 : null,
+          } as unknown as DayPayload;
+        }
+        return {
+          ...base,
           _grading: true,
-          // The server grades cold sessions ONE at a time — they all queue
-          // behind the same SEC rate limit, so running fourteen at once only
-          // exhausted the container's memory and killed all fourteen. These
-          // two numbers are the server's own queue, so the page can say where
-          // this day stands instead of implying fourteen are in progress.
+          _showing_previous: base !== empty,
+          // The server grades cold sessions ONE at a time behind SEC's rate
+          // limit; its queue place and the measured progress of the day in
+          // hand are what the status line prints.
           _queue_place: typeof j?.queue_place === 'number' ? j.queue_place : null,
           _queue_length: typeof j?.queue_length === 'number' ? j.queue_length : null,
-          // The server could not READ its cache for this day — which is not the
-          // same as the day not being cached. It is warm, the read simply lost a
-          // race with twenty-nine others; asking again in a moment costs one
-          // read instead of a ten-minute regrade.
+          _progress: j?.progress ?? null,
+          _last_error: j?.last_error ?? null,
+          // A lost cache READ is warm data one retry away, not a re-grade.
           _readFailed: !!j?.cache_read_failed,
         } as unknown as DayPayload;
       },
@@ -382,11 +360,10 @@ export default function UsEarningsOpportunitiesPage() {
       // every half-minute is a request that cannot possibly have news.
       refetchInterval: (q: any) => {
         const p = (q?.state?.data as any);
-        if (!p?._grading) return false;
-        // A lost cache read is warm data one retry away — come straight back.
-        if (p._readFailed) return 2_500;
-        const place = typeof p._queue_place === 'number' ? p._queue_place : 1;
-        return Math.min(150_000, 20_000 * Math.max(1, place));
+        // zzz805 — a failed day is re-asked after the server's own back-off,
+        // so polling slows down instead of hammering; a final day never polls.
+        if (!p?._grading && !p?._failed) return false;
+        return pollDelayMs({ failed: !!p._failed, retryInMs: p._retryInMs, readFailed: !!p._readFailed, place: p._queue_place });
       },
       staleTime: d >= today ? 3 * 60_000 : 24 * 3600_000,
       refetchOnWindowFocus: false,
@@ -430,6 +407,18 @@ export default function UsEarningsOpportunitiesPage() {
   const gradingDays = sessions.filter((_, i) => { const p = (dayQueries[i] as any)?.data as any; return p?._grading && !p?._readFailed; });
   const rereadDays = sessions.filter((_, i) => { const p = (dayQueries[i] as any)?.data as any; return p?._grading && p?._readFailed; });
   const failedDays = sessions.filter((_, i) => (dayQueries[i] as any)?.isError);
+  // zzz805 — days whose FILER LIST could not be fetched from SEC (not "no
+  // filers"): said by name, with when the server will try again.
+  const sourceFailedDays = sessions
+    .map((d, i) => ({ d, p: (dayQueries[i] as any)?.data as any }))
+    .filter((x) => x.p?._failed);
+  /** One honest line per day still in flight: "graded X of Y filers for <date>". */
+  const inFlightLines = sessions
+    .map((d, i) => ({ d, p: (dayQueries[i] as any)?.data as any }))
+    .filter((x) => x.p?._grading && !x.p?._readFailed)
+    .map((x) => dayStatusLine({ date: x.d, grading: true, progress: x.p._progress, place: x.p._queue_place, length: x.p._queue_length })
+      + (x.p._showing_previous ? ' The previous grade stays on screen until the new one lands.' : '')
+      + (x.p._last_error ? ` Last attempt failed: ${x.p._last_error}.` : ''));
   // The session the server is actually working on right now — queue place 1.
   // Everything else with a placeholder is waiting its turn, not in progress.
   const gradingNow = useMemo(() => {
@@ -458,7 +447,11 @@ export default function UsEarningsOpportunitiesPage() {
   // THE ONLY THING THAT SHOULD EVER RE-SWEEP A WHOLE WINDOW. Ordinary visits
   // read every completed session out of the cache; this button is the user
   // saying "throw it away and rebuild", so it empties the store first.
-  const refetch = async () => { await clearDayCache(); setForceKey((k) => k + 1); };
+  // zzz805 — the re-scan no longer empties the whole store (every day of every
+  // window) before starting: each day in THIS window is re-graded once, its
+  // previous grade stays on screen until the new one replaces it, and days
+  // outside the window are untouched.
+  const refetch = async () => { setForceKey((k) => k + 1); };
   // RETRY MEANS THE FAILED DAYS, NOT THE WINDOW. Re-running only the queries
   // that errored keeps the 40 that loaded on screen and in the store; bumping
   // `forceKey` would give every day a new key and a `force=1` sweep.
@@ -988,7 +981,9 @@ export default function UsEarningsOpportunitiesPage() {
           backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-bg-4)',
           fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)',
         }}>
-          <span><b style={{ color: 'var(--mc-text-0)' }}>{data.raw_items_total}</b> filers {data.window_start ? `${data.window_start} → ${data.filing_date}` : ''}</span>
+          {/* zzz805 — a day still grading has not been COUNTED; "0 filers" there
+              was a placeholder read as a measurement. */}
+          <span><b style={{ color: 'var(--mc-text-0)' }}>{data.raw_items_total}</b> filers{(gradingDays.length + sourceFailedDays.length) > 0 ? ` so far (${gradingDays.length + sourceFailedDays.length} session${gradingDays.length + sourceFailedDays.length > 1 ? 's' : ''} not counted yet)` : ''} {data.window_start ? `${data.window_start} → ${data.filing_date}` : ''}</span>
           <span><b style={{ color: 'var(--mc-text-0)' }}>{data.candidates_total}</b> graded</span>
           <span><b style={{ color: 'var(--mc-text-0)' }}>{shownTotal}</b> shown after filters</span>
           {data.pending_xbrl_total > 0 && (
@@ -1081,7 +1076,7 @@ export default function UsEarningsOpportunitiesPage() {
                           <span style={{ fontSize: 9.5, fontWeight: 900, color: meta.color || 'var(--mc-text-2)', border: `1px solid ${meta.color || 'var(--mc-bg-4)'}`, borderRadius: 5, padding: '1px 6px' }}>{r.tier}</span>
                           <span style={{ color: 'var(--mc-text-4)' }}>{r.quarter} · filed {r.filing_date}</span>
                           <span style={{ marginLeft: 'auto', fontFamily: 'ui-monospace,monospace', color: 'var(--mc-text-2)' }}>
-                            score {r.composite_score ?? '·'} · PEAD {r.pead_score ?? '·'}
+                            {r.market_cap_musd != null ? fmtUsd(r.market_cap_musd) : ''}
                           </span>
                         </button>
                       );
@@ -1138,7 +1133,9 @@ export default function UsEarningsOpportunitiesPage() {
               <> The server is grading <b style={{ color: 'var(--mc-text-0)' }}>{gradingNow?.d ?? gradingDays[0]}</b>
                 {gradingDays.length > 1 && <> with {gradingDays.length - 1} more session{gradingDays.length > 2 ? 's' : ''} behind it</>},
                 one at a time — running them together buys nothing against SEC's rate limit. Each lands here on its own;
-                nothing is waiting on this page, and you can leave and come back.</>
+                nothing is waiting on this page, and you can leave and come back.
+                {/* zzz805 — measured progress, not a spinner. */}
+                {inFlightLines.slice(0, 3).map((l) => <span key={l} style={{ display: 'block', color: 'var(--mc-text-1)', marginTop: 2 }}>{l}</span>)}</>
             )}
             {etaText && loadedCount < sessions.length && <b style={{ color: 'var(--mc-cyan)' }}> {etaText}.</b>} Days already scanned are read from cache and never re-fetched.
           </span>
@@ -1154,6 +1151,18 @@ export default function UsEarningsOpportunitiesPage() {
               here, and nothing is scanned twice — reopening this window later is instant.
             </span>
           )}
+        </div>
+      )}
+      {viewMode === 'GRADED' && sourceFailedDays.length > 0 && (
+        <div style={{
+          marginBottom: 12, borderRadius: 'var(--mc-radius)', padding: '8px 12px',
+          backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderLeft: '3px solid #EF4444',
+          fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)',
+        }}>
+          {sourceFailedDays.map((x) => (
+            <div key={x.d}>⚠ {dayStatusLine({ date: x.d, failed: true, error: x.p._error, retryInMs: x.p._retryInMs })}
+              {x.p?.by_tier && (x.p.candidates_total ?? 0) > 0 ? ' The previous grade for this day is still shown.' : ''}</div>
+          ))}
         </div>
       )}
       {viewMode === 'GRADED' && failedDays.length > 0 && loadedCount > 0 && (
@@ -1505,8 +1514,17 @@ export default function UsEarningsOpportunitiesPage() {
         <div style={panel()}>
           <div style={{ fontWeight: 700, color: 'var(--mc-text-0)', marginBottom: 6 }}>Nothing graded in this window</div>
           <div style={{ color: 'var(--mc-text-2)', fontSize: 'var(--mc-text-sm)' }}>
-            {data.raw_items_total > 0
+            {/* zzz805 — never "no filings" while a day is still grading or its
+                filer list failed: that is not an empty window, it is an
+                unfinished one, and the lines above say which. */}
+            {gradingDays.length > 0 || rereadDays.length > 0
+              ? `Still grading ${[...gradingDays, ...rereadDays].join(', ')} — the filer count and names appear when the day finishes. Progress is shown above.`
+              : sourceFailedDays.length > 0
+              ? `The filer list for ${sourceFailedDays.map((x) => x.d).join(', ')} could not be fetched from SEC EDGAR — this is a source failure, not an empty day. It is retried automatically.`
+              : data.raw_items_total > 0
               ? `${data.raw_items_total} companies filed, but none cleared the filters (or their XBRL has not posted yet). Try widening the window to 10d, or clearing the market-cap filter.`
+              : (data as any).filers_status === 'none-yet' || (data.notes || []).some((n: string) => /has no earnings filings for .* yet/.test(n))
+              ? `SEC EDGAR has no earnings filings for ${data.filing_date} yet. Releases usually appear within minutes of filing (most before 9:30 or after 16:00 ET); this day is re-checked every few minutes.`
               : 'No US earnings filings in this window — try a weekday during earnings season (the fortnight after each quarter end is the dense stretch).'}
           </div>
         </div>
@@ -1535,7 +1553,7 @@ export default function UsEarningsOpportunitiesPage() {
               <span style={{
                 fontWeight: 800, fontSize: 'var(--mc-text-xs)', padding: '2px 8px', borderRadius: 999,
                 backgroundColor: `color-mix(in srgb, ${meta.color} 15%, transparent)`, color: meta.color,
-              }}>{rows.length}</span>
+              }} title="Number of companies in this group">{rows.length} {rows.length === 1 ? 'company' : 'companies'}</span>
               <span style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-xs)' }}>{meta.tagline}</span>
             </button>
             {open && (

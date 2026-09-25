@@ -88,8 +88,8 @@ export { QUADRANT_META };
 export function quadrantTitle(q: EarningsQuadrant, quality: number | null, inflection: number | null): string {
   const m = QUADRANT_META[q];
   const scores = (quality != null && inflection != null)
-    ? `Quality ${quality}/100 (returns, cash, margin level, whether it makes money) · `
-      + `Inflection ${inflection}/100 (growth, the CHANGE in margin, the direction of the guide). `
+    ? `Quality (returns, cash, margin level, whether it makes money) · `
+      + `Inflection (growth, the CHANGE in margin, the direction of the guide) — the bars show how much of each was earned. `
     : '';
   return `${scores}${m.tagline} Open the card for the component-by-component breakdown.`;
 }
@@ -138,13 +138,13 @@ export function QuadrantBadge({ r }: { r: UsGradedRow }) {
         }}>
           {ql != null && (
             <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
-              <span>Q {ql}</span><AxisBar v={ql} color={m.color} />
+              <span>Q</span><AxisBar v={ql} color={m.color} />
             </span>
           )}
           {ql != null && inf != null && <span style={{ opacity: 0.5 }}>·</span>}
           {inf != null && (
             <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
-              <span>I {inf}</span><AxisBar v={inf} color={m.color} />
+              <span>I</span><AxisBar v={inf} color={m.color} />
             </span>
           )}
         </span>
@@ -361,7 +361,10 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
             <span style={{ color: 'var(--mc-text-4)' }}> · formerly {(r as any).former_name}</span>
           )}
         </span>
-        <span style={{ fontWeight: 800, fontSize: 13, color: meta.color }}>{r.composite_score}</span>
+        {/* zzz804 — the 0–100 composite used to sit here ("83", "86") and read as
+            a score out of 100 beside the verdict. The owner's rule is no visible
+            0–100 scores: the verdict is the word in the tier tag. The number is
+            kept on the row for ranking only. */}
       </div>
 
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '6px 0 9px' }}>
@@ -471,10 +474,11 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
             color={(r as any).roce.pct >= 20 ? 'var(--mc-bullish)' : (r as any).roce.pct < 8 ? 'var(--mc-bearish)' : undefined} />
         )}
         {num((r as any).setup?.score) != null && (
-          <Chip text={`SETUP ${(r as any).setup.score} · ${(r as any).setup.verdict}`}
+          <Chip text={`ENTRY · ${(r as any).setup.verdict}`}
+            title="Price and valuation context around the print (breakout, volume, P/E vs peers). It never changes the grade above."
             color={SETUP_VERDICT_COLOR[(r as any).setup.verdict] || undefined} />
         )}
-        {(r.pead_score ?? 0) >= 70 && <Chip text={`🔥 PEAD ${r.pead_score}`} color="#EF4444" />}
+        {(r.pead_score ?? 0) >= 70 && <Chip text="🔥 PEAD drift likely" color="#EF4444" title="Post-earnings drift proxy — price context, not part of the grade." />}
         </>}
       </div>
 
@@ -560,7 +564,6 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', margin: '9px 0 0', fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)' }}>
         <span>Reaction <b style={{ color: r.d1_pct == null ? 'var(--mc-text-3)' : r.d1_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(r.d1_pct, 1)}</b></span>
         <span>Since <b style={{ color: r.move_pct == null ? 'var(--mc-text-3)' : r.move_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(r.move_pct, 1)}</b></span>
-        <span>PEAD <b style={{ color: 'var(--mc-text-0)' }}>{r.pead_score}</b></span>
         <span>RS <b style={{ color: 'var(--mc-text-0)' }}>{r.rs_rating ?? '—'}</b></span>
         <span>Stage <b style={{ color: r.stage === 4 ? 'var(--mc-bearish)' : r.stage === 2 ? 'var(--mc-bullish)' : 'var(--mc-text-0)' }}>{r.stage ?? '—'}</b></span>
         {/* zzz690 — DISTANCE FROM THE 52-WEEK HIGH, which was the strongest
@@ -590,6 +593,11 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
           </span>
         )}
         <span>{fmtPx(r.price)}{r.pe ? ` · P/E ${r.pe}` : ''}</span>
+        {/* zzz804 — everything on this line is PRICE CONTEXT. It is shown so
+            the reader sees what the market did, and it never moves the grade. */}
+        <span style={{ color: 'var(--mc-text-4)', fontStyle: 'italic' }} title="Reaction, distance from the high, stage, RS, P/E and liquidity are market context. None of them raises or lowers the grade.">
+          price context · not graded
+        </span>
       </div>
 
       <div style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', marginTop: 9, lineHeight: 1.5 }}>
@@ -928,7 +936,7 @@ export function SecondaryTiles({ r }: { r: UsGradedRow }) {
     parts.push({ w: relFcf.value < 0 ? 58 : Math.min(45, moveWeight(relFcf.yoy_pct) * 0.5), node: (size) => (
       <Tile key="fcf" label="FREE CASH FLOW" size={size} value={fmtKeyMetric(relFcf)}
         color={relFcf.value >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}
-        sub={<>{relFcf.yoy_pct != null ? `${fmtPct(relFcf.yoy_pct)} YoY · as reported` : 'as reported'}
+        sub={<>{relFcf.yoy_pct != null ? `${fmtPct(relFcf.yoy_pct)} YoY · ` : ''}{(relFcf as any).period === 'quarter' ? 'as reported · this quarter' : (relFcf as any).period === 'unconfirmed' ? 'as reported · period not confirmed' : 'as reported'}
           <RefSub ref={refFor(r, 'free_cash_flow:adjusted', 'free_cash_flow')} /></>} />
     ) });
   } else if (fcf != null) {
@@ -1692,8 +1700,6 @@ export function CommentaryScoreBlock({ c, hasTranscript }: { c: CommentaryScore;
         <SectionLabel>COMMENTARY SCORE</SectionLabel>
       </div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 22, fontWeight: 800, color: col, lineHeight: 1 }}>{c.score}</span>
-        <span style={{ fontSize: 11, color: 'var(--mc-text-3)' }}>/ 100</span>
         <span style={{
           fontSize: 11, fontWeight: 800, color: col, padding: '2px 7px', borderRadius: 999,
           border: `1px solid color-mix(in srgb, ${col} 45%, transparent)`,
@@ -2676,9 +2682,8 @@ export function SetupBlock({ setup }: { setup: any }) {
         POST-EARNINGS SETUP
       </PanelH>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
-        <span style={{ fontSize: 18, fontWeight: 800, color: total == null ? 'var(--mc-text-3)' : bar(total) }}>
-          {total ?? '—'}
-        </span>
+        {/* zzz804 — no visible 0–100 score; the verdict word carries it. */}
+        {total == null && <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-text-3)' }}>—</span>}
         {setup.verdict && (
           <span style={{ fontSize: 11, fontWeight: 700, color: SETUP_VERDICT_COLOR[setup.verdict] || 'var(--mc-text-2)' }}>
             {setup.verdict}
@@ -2705,7 +2710,6 @@ export function SetupBlock({ setup }: { setup: any }) {
                   <span style={{ flex: 1, height: 4, borderRadius: 2, backgroundColor: 'var(--mc-bg-4)', overflow: 'hidden' }}>
                     <span style={{ display: 'block', height: '100%', width: `${Math.round(s)}%`, backgroundColor: bar(s) }} />
                   </span>
-                  <b style={{ color: bar(s), fontSize: 9.5, minWidth: 16, textAlign: 'right' }}>{Math.round(s)}</b>
                 </span>
               )}
               <span style={{ color: 'var(--mc-text-4)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -3185,8 +3189,7 @@ function QuadrantColumn({ title, note, parts, score, color }: {
     <div style={{ minWidth: 0 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 4 }}>
         <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.4, color: 'var(--mc-text-3)' }}>{title}</span>
-        <b style={{ fontSize: 15, color, fontVariantNumeric: 'tabular-nums' }}>{score ?? '—'}</b>
-        <span style={{ fontSize: 9, color: 'var(--mc-text-4)' }}>/100</span>
+        {score == null && <b style={{ fontSize: 15, color }}>—</b>}
       </div>
       <div style={{ fontSize: 9.5, color: 'var(--mc-text-4)', lineHeight: 1.45, marginBottom: 5 }}>{note}</div>
       {parts.length === 0 ? (
@@ -4084,7 +4087,7 @@ export function DetailPanel({ r }: { r: UsRowX }) {
             CAPPED
           </span>
           <span style={{ fontSize: 11, lineHeight: 1.45, color: 'var(--mc-text-2)' }}>
-            {String((r as any).setup_gate)} — the filings earned a higher grade than this; the setup did not support it.
+            {String((r as any).setup_gate)} — growth, quality and confirmation from the filing together fall short of the top-tier bar. Price never enters this.
           </span>
         </div>
       )}
@@ -4100,11 +4103,20 @@ export function DetailPanel({ r }: { r: UsRowX }) {
               {r.caveat_tags.map((t) => <Chip key={`c-${t}`} text={t} color="#EF4444" />)}
             </div>
           )}
+          {/* zzz804 — price context, never part of the grade. */}
+          {Array.isArray((r as any).market_context) && (r as any).market_context.length > 0 && (
+            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center', margin: '6px 0' }}>
+              <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.4, color: 'var(--mc-text-4)' }}>PRICE CONTEXT · NOT GRADED</span>
+              {((r as any).market_context as string[]).map((t) => <Chip key={`x-${t}`} text={t} />)}
+            </div>
+          )}
           {r.prelim && (
             <Quiet>
               {Array.isArray(r.prelim_matched) && r.prelim_matched.length > 0
                 ? <>Figures read from the earnings release ({r.prelim_matched.map((m) => m.replace(/_/g, ' ')).join(', ')}) and
-                    checked against last year&apos;s XBRL before display. Cash flow and the full tag set arrive with the 10-Q.</>
+                    checked against last year&apos;s XBRL before display. {r.prelim_matched.includes('cfo')
+                      ? 'Operating cash flow and capex were read from the release\u2019s own three-month cash-flow column; the full tag set arrives with the 10-Q.'
+                      : 'Cash flow and the full tag set arrive with the 10-Q.'}</>
                 : <>Consensus and the price reaction only — the release&apos;s statement of operations could not be verified
                     against last year&apos;s filing, so no revenue or margin is shown.</>}
             </Quiet>

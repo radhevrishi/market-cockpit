@@ -275,7 +275,8 @@ export function bucketFor(e: UsConvictionEntry): BucketVerdict {
   // Every derived figure is disclosed on the card next to the verdict it
   // helped reach, so nobody reads a computed margin as a reported one.
   if (D.derived.length) against.push(...D.derived.map((d) => `Derived, not reported — ${d}`));
-  const caveats = (e.caveat_tags || []).map((c) => String(c).toLowerCase());
+  // zzz804 — the reaction tags now live in `market_context`, not the caveats.
+  const caveats = [...(e.caveat_tags || []), ...((e as any).market_context || [])].map((c: any) => String(c).toLowerCase());
   const has = (frag: string) => caveats.some((c) => c.includes(frag));
   const growth = growthEvidenceOf(e);
   const pctile = opmPercentile(e);

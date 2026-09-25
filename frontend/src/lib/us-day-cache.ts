@@ -204,6 +204,12 @@ export async function putCachedDay(day: string, payload: any): Promise<void> {
   // rows, and storing it would make an empty day look like a scanned one for
   // the next thirty days.
   if ((payload as any)._grading) return;
+  // zzz805 — nor a day that is not final: a filer list SEC would not give us,
+  // or filers left ungraded by the run's time budget. Kept 30 days, either
+  // would freeze a hole into the window.
+  if ((payload as any)._failed) return;
+  if (Array.isArray(payload.source_failed_dates) && payload.source_failed_dates.length) return;
+  if ((payload.time_budget_skipped ?? 0) > 0) return;
   if ((payload.raw_items_total ?? 0) > 0 && (payload.candidates_total ?? 0) === 0) return;
   const rec: DayRecord = { day, payload, cachedAt: Date.now(), bytes: sizeOf(payload) };
   const db = await openDb();
