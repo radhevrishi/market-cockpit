@@ -21,6 +21,7 @@ import api from '@/lib/api';
 import { syncFromEarningsOps, type ConvictionTier } from '@/lib/conviction-beats';
 // zzz276 — Institutional-style typeahead search (Asian → Asian Paints / Asian Energy / …)
 import EarningsSearch, { type EarningsSearchResult } from './EarningsSearch';
+import { hiddenNote } from '@/lib/earnings-search';
 // PATCH 0545 — AUDIT #95 debounced LS writes for the hot graded payload writer.
 // getItemSync is race-aware: if a write is still queued within the 250ms idle
 // window, the read returns the pending value instead of the stale LS string.
@@ -2259,6 +2260,58 @@ export default function EarningsOpportunitiesPage() {
     };
   }, [baseView, forcedCards]);
 
+  // ═══ SEARCH  (zzz812) ═══════════════════════════════════════════════════
+  // Every graded row on the loaded date, filters ignored — the search looks
+  // here first. A match the filters hide is reported with the reason and can
+  // be PINNED: shown in its tier despite the filters, with a note saying so.
+  const searchWindowRows = useMemo(
+    () => TIER_ORDER.flatMap((t) => view.by_tier[t] || []),
+    [view],
+  );
+  const searchHiddenReasons = useCallback((s: any): string[] => {
+    const out: string[] = [];
+    // Mirrors the else-if chain in the tier render below — only ONE of these
+    // quality filters is ever applied at a time.
+    if (eliteOnly) { if (!s.is_elite) out.push('ELITE only'); }
+    else if (peadOnly) { if ((s.pead_score ?? 0) < 70) out.push('PEAD ≥ 70'); }
+    else if (multibaggerOnly) { if (!s.multibagger_setup) out.push('multibagger setup'); }
+    else if (turnaroundOnly) { if (s.quadrant !== 'TURNAROUND ACCELERATOR') out.push('turnaround quadrant'); }
+    else if (radarOnly) { if (!radarMap.has(String(s.ticker || '').toUpperCase())) out.push('transformation radar'); }
+    else if (beatCheapOnly) { if (!(typeof s.pe === 'number' && s.pe > 0 && s.pe <= 35)) out.push('Beat + Cheap (PE ≤ 35)'); }
+    if (capFilter !== 'all' && !capInRange(s.market_cap_cr, capFilter)) out.push(`cap filter: ${capFilter}`);
+    if (patternOnly && classifyGradedRow(s)?.pattern !== patternOnly) out.push(`pattern ${patternOnly}`);
+    const anyFilter = eliteOnly || peadOnly || multibaggerOnly || turnaroundOnly || radarOnly || beatCheapOnly || capFilter !== 'all' || !!patternOnly;
+    if (!anyFilter && s.tier && !expanded[s.tier as EarningsTier]) out.push(`tier ${s.tier} collapsed`);
+    if (viewMode !== 'GRADED') out.push('Calendar view open');
+    return out;
+  }, [eliteOnly, peadOnly, multibaggerOnly, turnaroundOnly, radarOnly, beatCheapOnly, capFilter, patternOnly, radarMap, expanded, viewMode]);
+  const [searchPin, setSearchPin] = useState<{ ticker: string; nonce: number } | null>(null);
+  const pinTicker = useCallback((ticker: string) => {
+    setViewMode('GRADED');
+    setSearchPin({ ticker: String(ticker).toUpperCase(), nonce: Date.now() });
+  }, []);
+  // Scroll to the pinned card once it mounts (a date jump may take a while to
+  // load, so keep looking for ~12 s), then pulse it.
+  useEffect(() => {
+    if (!searchPin) return;
+    let attempts = 0;
+    let timer: ReturnType<typeof setTimeout>;
+    const tryScroll = () => {
+      const el = document.getElementById('eo-card-' + searchPin.ticker);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        const prev = el.style.boxShadow;
+        el.style.transition = 'box-shadow 0.3s';
+        el.style.boxShadow = '0 0 0 3px var(--mc-cyan), 0 0 24px color-mix(in srgb, var(--mc-cyan) 40%, transparent)';
+        setTimeout(() => { el.style.boxShadow = prev; }, 3000);
+        return;
+      }
+      if (++attempts < 60) timer = setTimeout(tryScroll, 200);
+    };
+    timer = setTimeout(tryScroll, 150);
+    return () => clearTimeout(timer);
+  }, [searchPin]);
+
   // PATCH 0183: header date label now uses resolvedDateForGrading FIRST so the
   // navigation header updates INSTANTLY when user clicks ←/→. Previous logic
   // used view.filing_date which lagged behind by the entire fetch duration —
@@ -2678,39 +2731,35 @@ export default function EarningsOpportunitiesPage() {
           {/* zzz276 — Search across the last 120 business days of graded filings.
               Institutional pattern: debounced typeahead, keyboard nav, recent picks.
               Click a result → jump to that filing date + scroll to the card. */}
-          <EarningsSearch onSelect={async (r: EarningsSearchResult) => {
-            // zzz280 — scan-fallback results have no reliable filing date.
-            // Force-include the ticker on the currently-loaded date; the enrich
-            // pipeling will surface it as a card using the latest fundamentals.
-            if (r.via_scan) {
-              addForceInclude(r.ticker);
-              try { window.location.hash = 'eo-card-' + r.ticker; } catch {}
-              return;
-            }
-            // zzz282 — VERIFY the graded payload for r.filing_date actually
-            // contains this ticker. Stale local-bench entries can point at
-            // dates where the ticker never filed (e.g. THERMAX bench with
-            // filing_date=2026-07-15 when the real Q1 print was on 07-22).
-            // If not present, fall back to force-include on current date.
-            try {
-              const vr = await fetch(`/api/v1/earnings/graded?date=${r.filing_date}`, { cache: 'no-store' });
-              if (vr.ok) {
-                const vj = await vr.json();
-                const bt = vj.by_tier || {};
-                const has = ['BLOCKBUSTER','STRONG','MIXED','AVOID'].some((t) => {
-                  const arr = bt[t];
-                  return Array.isArray(arr) && arr.some((e: any) => e && String(e.ticker || '').toUpperCase() === r.ticker.toUpperCase());
-                });
-                if (!has) {
-                  addForceInclude(r.ticker);
-                  try { window.location.hash = 'eo-card-' + r.ticker; } catch {}
-                  return;
-                }
+          <EarningsSearch
+            windowRows={searchWindowRows}
+            windowLabel={effectiveDate ? `the ${effectiveDate} results` : 'the loaded results'}
+            hiddenReasons={searchHiddenReasons}
+            onRevealInWindow={(row: any) => pinTicker(row.ticker)}
+            onGradeNow={(t: string) => { addForceInclude(t); pinTicker(t); }}
+            onJumpToDate={async (r: EarningsSearchResult) => {
+              // zzz282/zzz812 — confirm the graded day really holds this ticker
+              // before jumping (bench entries can carry a stale date). Cache
+              // only: this must never start a grading sweep on its own.
+              if (r.filing_date && /^\d{4}-\d{2}-\d{2}$/.test(r.filing_date)) {
+                try {
+                  const vr = await fetch(`/api/v1/earnings/graded?date=${r.filing_date}&cache_only=1`, { cache: 'no-store' });
+                  if (vr.ok) {
+                    const vj = await vr.json();
+                    const bt = vj?.by_tier;
+                    const has = !bt || ['BLOCKBUSTER','STRONG','MIXED','AVOID'].some((t) =>
+                      Array.isArray(bt[t]) && bt[t].some((e: any) => e && String(e.ticker || '').toUpperCase() === r.ticker.toUpperCase()));
+                    if (bt && !has) { addForceInclude(r.ticker); pinTicker(r.ticker); return; }
+                  }
+                } catch {}
+                setFilterDate(r.filing_date);
+                pinTicker(r.ticker);
+                return;
               }
-            } catch {}
-            setFilterDate(r.filing_date);
-            try { window.location.hash = 'eo-card-' + r.ticker; } catch {}
-          }} />
+              addForceInclude(r.ticker);
+              pinTicker(r.ticker);
+            }}
+          />
           {/* PATCH 0916 — FILING DATE box now includes an inline native
               date picker so user can jump to ANY date with one click + one
               calendar pick. Plus quick-jump chips for Today / Yesterday /
@@ -3598,11 +3647,16 @@ Source label: ${coverageStats.source}`}
           if (patternOnly) {
             stocks = stocks.filter((s: any) => classifyGradedRow(s)?.pattern === patternOnly);
           }
+          // zzz812 — a searched-for card is shown even when the filters hide
+          // it, with a note naming the filters. Never a silent miss.
+          const pinnedRow = searchPin ? (view.by_tier[tier] || []).find((x) => x.ticker.toUpperCase() === searchPin.ticker) : undefined;
+          const pinnedReasons = pinnedRow ? searchHiddenReasons(pinnedRow).filter((r) => !/collapsed|Calendar view/.test(r)) : [];
+          if (pinnedRow && !stocks.some((x) => x.ticker === pinnedRow.ticker)) stocks = [pinnedRow, ...stocks];
           if (stocks.length === 0) return null;
           const meta = TIER_META[tier];
           // PATCH 1017 — force-expand tiers when a filter is active so matches show immediately
           const _filterActive = eliteOnly || peadOnly || multibaggerOnly || turnaroundOnly || radarOnly || beatCheapOnly || capFilter !== 'all' || !!patternOnly;
-          const isOpen = _filterActive ? true : expanded[tier];
+          const isOpen = _filterActive || !!pinnedRow ? true : expanded[tier];
           return (
             <div key={tier} style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderLeft: `4px solid ${meta.color}`, borderRadius: 12 }}>
               <button onClick={() => setExpanded((s) => ({ ...s, [tier]: !s[tier] }))}
@@ -3613,8 +3667,16 @@ Source label: ${coverageStats.source}`}
                 <span style={{ fontSize: 11, color: 'var(--mc-text-4)' }}>· {meta.tagline}</span>
               </button>
               {isOpen && (
-                <div style={{ padding: '0 18px 16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 12 }}>
-                  {stocks.map((s) => <EarningsCard key={s.ticker + ':' + s.company} stock={s} isFresh={freshTickers.has(s.ticker)} radar={radarMap.get(String(s.ticker || '').toUpperCase())} />)}
+                <div style={{ padding: '0 18px 16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(360px, 100%), 1fr))', gap: 12 }}>
+                  {stocks.map((s) => (pinnedRow && s.ticker === pinnedRow.ticker && pinnedReasons.length > 0) ? (
+                    <div key={s.ticker + ':' + s.company} style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+                      <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--mc-warn, #F59E0B)' }}>
+                        🔍 {s.ticker} {hiddenNote(pinnedReasons)} ·{' '}
+                        <button onClick={() => setSearchPin(null)} style={{ background: 'none', border: 'none', padding: 0, color: 'var(--mc-cyan)', cursor: 'pointer', fontSize: 10.5, fontWeight: 800 }}>hide</button>
+                      </div>
+                      <EarningsCard stock={s} isFresh={freshTickers.has(s.ticker)} radar={radarMap.get(String(s.ticker || '').toUpperCase())} />
+                    </div>
+                  ) : <EarningsCard key={s.ticker + ':' + s.company} stock={s} isFresh={freshTickers.has(s.ticker)} radar={radarMap.get(String(s.ticker || '').toUpperCase())} />)}
                 </div>
               )}
             </div>

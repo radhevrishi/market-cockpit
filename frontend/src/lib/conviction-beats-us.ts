@@ -2432,3 +2432,83 @@ export async function mergeServerUsBench(): Promise<{
     stale_engine: false,
   };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz811 — THE OWNER'S US CONVICTION BEATS CRITERIA, FOR OTHER PAGES.
+// US Portfolio Catalysts selects its bench with the SAME criteria the US
+// Conviction Beats page opens with: his saved filters (mc:us-cb:filters:v1,
+// brought up to date exactly as the page's initializer does), else the
+// preset (+ Small/Mid) unless he switched it off, applied by the SAME
+// passesUsConvictionFilter over the SAME list (this browser's bench after
+// the server merge). Only per-session chips (funnel stage, bucket,
+// confidence, pattern) are not stored and so not applied.
+// ═══════════════════════════════════════════════════════════════════════════
+export const US_CB_FILTERS_KEY = 'mc:us-cb:filters:v1';
+export const US_CB_OPTOUT_KEY = 'mc:us-cb:preset:v1:optout';
+export const US_CB_SMID_FLAG_KEY = 'mc:us-cb:smid-default:v1';
+
+/** The page's useState initializer, verbatim: a saved set, migrated when it
+ *  is an older edition of the preset (zzz662). Null when nothing is saved. */
+export function usCbSavedFilters(raw: string | null | undefined): UsConvFilters | null {
+  if (!raw) return null;
+  let saved: UsConvFilters;
+  try { saved = { ...US_FILTER_DEFAULT, ...JSON.parse(raw) } as UsConvFilters; } catch { return null; }
+  const legacyMatchesPreset =
+    saved.sales === US_PRESET.sales
+    && saved.eps === US_PRESET.eps
+    && saved.opmDelta === US_PRESET.opmDelta
+    && saved.cfoPatMin === US_PRESET.cfoPatMin
+    && saved.mktCapMin === US_PRESET.mktCapMinMusd
+    && JSON.stringify((saved.verdicts || []).slice().sort()) === JSON.stringify(['BUY', 'STRONG BUY', 'WATCH']);
+  if (legacyMatchesPreset) return { ...saved, ...usPresetFilters(), cap: saved.cap, sector: saved.sector, q: saved.q };
+  return saved;
+}
+
+/** What the US Conviction Beats page ends up applying on open: initializer,
+ *  then the preset auto-apply (unless opted out), then the one-time Small/Mid
+ *  migration — read-only here (the page itself records its flags). */
+export function usCbFiltersForOwner(get: (key: string) => string | null): UsConvFilters {
+  let f = usCbSavedFilters(get(US_CB_FILTERS_KEY)) || { ...US_FILTER_DEFAULT };
+  if (get(US_CB_OPTOUT_KEY) !== '1') {
+    if (f.sales == null && f.eps == null && f.pead == null && f.opmDelta == null && f.cfoPatMin == null && f.mktCapMin == null && f.verdicts == null) {
+      f = { ...usPresetFilters(), cap: 'smid' };
+    }
+  }
+  if (get(US_CB_SMID_FLAG_KEY) !== '1' && isUsPresetActive(f) && (!f.cap || f.cap === 'all')) f = { ...f, cap: 'smid' };
+  return f;
+}
+
+const usFmt = (n: unknown) => (typeof n === 'number' && Number.isFinite(n) ? `${Math.round(n * 10) / 10}` : 'not known');
+
+/** Which active criteria a US name misses — each probed ALONE through
+ *  passesUsConvictionFilter. No BUY/SELL words, no 0–100 scores. */
+export function usCbFailReasons(e: UsConvictionEntry, f: UsConvFilters, win?: NewWindow): string[] {
+  if (passesUsConvictionFilter(e, f, win)) return [];
+  const x: any = e;
+  const W: Record<string, () => string> = {
+    sales: () => `revenue growth ${usFmt(x.sales_yoy_pct)}% (needs ${f.sales}%)`,
+    eps: () => `EPS growth ${usFmt(x.eps_yoy_pct)}% (needs ${f.eps}%)`,
+    pat: () => `net income growth ${usFmt(x.net_profit_yoy_pct)}% (needs ${f.pat}%)`,
+    pead: () => 'post-results drift reading below your threshold',
+    opmDelta: () => 'operating margin did not widen as your criteria require (or not known)',
+    opmMin: () => `operating margin below ${f.opmMin}%`,
+    cfoPatMin: () => `operating cash ${usFmt(x.cfo_to_pat_ratio)}x net income (needs ${f.cfoPatMin}x)`,
+    mktCapMin: () => `market cap $${usFmt(x.market_cap_musd)}M (needs $${f.mktCapMin}M)`,
+    peMax: () => `P/E above ${f.peMax}`, score: () => 'composite below your threshold', opLev: () => `income growth not ${f.opLev}x revenue growth`,
+    winMin: () => 'scorecard below your threshold', aboveMa50: () => 'price not above its 50-day average', aboveMa200: () => 'price not above its 200-day average',
+    d1Bucket: () => 'day-one move outside your chip', driftBucket: () => 'move since results outside your chip',
+    guidance: () => `guidance is not ${f.guidance}`, guideBeatOnly: () => 'did not beat its own prior guide', marginSlopeUp: () => 'margin not still widening',
+    shareShrinkOnly: () => 'share count not falling', thesis: () => `thesis not ${f.thesis}`, cap: () => `market-cap band not ${f.cap === 'smid' ? 'small/mid' : f.cap}`,
+    tiers: () => 'tier outside your list', verdicts: () => 'quality verdict outside your chosen list', elite: () => 'not marked elite', multibagger: () => 'no multibagger setup',
+    rule40: () => 'Rule of 40 not met (or not computable)', roce20: () => 'return on capital below 20% (or not known)', turnaround: () => 'not a turnaround', compounder: () => 'not a compounder',
+    prelimOnly: () => 'not a preliminary release', sector: () => `sector not ${f.sector}`, quarter: () => 'another fiscal quarter', fy: () => 'another fiscal year', fromDate: () => 'filed outside your dates', toDate: () => 'filed outside your dates',
+  };
+  const out: string[] = [];
+  for (const k of Object.keys(W)) {
+    const v: any = (f as any)[k];
+    const active = k === 'cap' ? !!v && v !== 'all' : Array.isArray(v) ? v.length > 0 : typeof v === 'boolean' ? v : v != null && v !== '';
+    if (!active) continue;
+    if (!passesUsConvictionFilter(e, { ...US_FILTER_DEFAULT, [k]: v } as UsConvFilters, win)) out.push(W[k]());
+  }
+  return out.length ? Array.from(new Set(out)) : ['another active criterion'];
+}

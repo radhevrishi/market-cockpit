@@ -176,14 +176,16 @@ export function nextWindow(current: number, total: number, step = PC_PAGE_STEP):
 /**
  * zzz811 — what the bulk read buttons cover. By default only the book plus
  * the bench names that PASS the preset (India). The rest of the bench is a
- * separate, manual button — never automatic. On the US page the preset is
- * not applied (it reads price), so the default is the US book and every
- * bench name is in the separate button.
+ * separate, manual button — never automatic. "Pass" = meets the owner's
+ * Conviction Beats criteria (India and US alike).
  */
 export function readScope<T extends { origin: string; preset?: { state?: string } | null }>(rows: T[], market: 'IN' | 'US' = 'IN'): { primary: T[]; otherBench: T[] } {
   const primary: T[] = [], otherBench: T[] = [];
   for (const r of rows) {
-    const inDefault = r.origin !== 'bench' || (market === 'IN' && r.preset?.state === 'pass');
+    // zzz811: both pages now label bench names with the owner's Conviction
+    // Beats criteria, so the rule is the same on both.
+    void market;
+    const inDefault = r.origin !== 'bench' || r.preset?.state === 'pass';
     (inDefault ? primary : otherBench).push(r);
   }
   return { primary, otherBench };
@@ -192,4 +194,109 @@ export function readScope<T extends { origin: string; preset?: { state?: string 
 /** "Also read the other 212 bench names (about 212 AI reads)". */
 export function otherBenchLabel(n: number): string {
   return `Also read the other ${n} bench name${n === 1 ? '' : 's'} (about ${n} AI read${n === 1 ? '' : 's'})`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz811 (owner follow-up) — "preset on criteria also, as I set on Conviction
+// Beats". The bench is the Conviction Beats page's OWN list, selected by the
+// owner's OWN criteria with the page's OWN function:
+//   India: lib/conviction-filter-india (passesConvictionFilter; the preset,
+//          or none when he switched it off) over this browser's list merged
+//          with the server bench — exactly the Conviction Beats tab.
+//   US:    lib/conviction-beats-us (passesUsConvictionFilter; his saved US
+//          filters, else the preset + Small/Mid) over the US bench list.
+// Membership is not the thesis engine: the US criteria may read price (50/200-
+// day averages) to CHOOSE names; the thesis engine still reads no price.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface CbSelection {
+  /** Names on the Conviction Beats list (before criteria). */
+  listTotal: number;
+  /** Names passing his criteria — what the Conviction Beats page shows. */
+  passing: string[];
+  failing: string[];
+  /** Passing names he does not hold → the default bench. */
+  bench: string[];
+  /** Failing names he does not hold → only with "Also show names failing your criteria". */
+  benchFailing: string[];
+  heldPassing: string[];
+  labels: Record<string, PresetLabel>;
+  companies: Record<string, string | null>;
+}
+
+function selectByCriteria<E>(
+  entries: E[], held: Set<string>, key: (e: E) => string,
+  passes: (e: E) => boolean, reasons: (e: E) => string[], company: (e: E) => string | null, criteriaOff: boolean,
+): CbSelection {
+  // One verdict per ticker: a ticker passes when any of its entries passes
+  // (the Conviction Beats page lists it then).
+  const by = new Map<string, { pass: boolean; reasons: string[]; company: string | null }>();
+  for (const e of entries) {
+    const t = key(e);
+    if (!t) continue;
+    const p = passes(e);
+    const had = by.get(t);
+    if (had && (had.pass || !p)) continue;
+    by.set(t, { pass: p, reasons: p ? [] : reasons(e), company: company(e) || had?.company || null });
+  }
+  const passing: string[] = [], failing: string[] = [], bench: string[] = [], benchFailing: string[] = [], heldPassing: string[] = [];
+  const labels: Record<string, PresetLabel> = {}, companies: Record<string, string | null> = {};
+  for (const t of Array.from(by.keys()).sort()) {
+    const v = by.get(t)!;
+    companies[t] = v.company;
+    labels[t] = v.pass
+      ? { state: 'pass', reasons: [], text: criteriaOff ? 'on your Conviction Beats list (your preset is switched off there, so every name is listed)' : 'meets your Conviction Beats criteria' }
+      : { state: 'fail', reasons: v.reasons, text: `misses your Conviction Beats criteria — ${v.reasons.join('; ')}` };
+    (v.pass ? passing : failing).push(t);
+    if (held.has(t)) { if (v.pass) heldPassing.push(t); continue; }
+    (v.pass ? bench : benchFailing).push(t);
+  }
+  return { listTotal: by.size, passing, failing, bench, benchFailing, heldPassing, labels, companies };
+}
+
+/** India: the Conviction Beats tab's list and verdict. `passes`/`reasons` are
+ *  passesConvictionFilter / cbFailReasons bound to his filters. */
+export function selectIndiaCb<E extends { ticker?: string | null; company?: string | null }>(input: {
+  held: Iterable<string>; list: E[]; passes: (e: E) => boolean; reasons: (e: E) => string[]; criteriaOff: boolean;
+}): CbSelection {
+  const held = new Set(Array.from(input.held, (s) => cbTicker(s)).filter(Boolean));
+  return selectByCriteria(input.list, held, (e) => cbTicker(e?.ticker), input.passes, input.reasons, (e) => (e?.company ? String(e.company) : null), input.criteriaOff);
+}
+
+/** US: same shape; tickers are compared as the US engine keys them. */
+export function selectUsCb<E extends { ticker?: string | null; company?: string | null }>(input: {
+  held: Iterable<string>; list: E[]; key: (t: string) => string; passes: (e: E) => boolean; reasons: (e: E) => string[]; criteriaOff: boolean;
+}): CbSelection {
+  const held = new Set(Array.from(input.held, (s) => input.key(String(s).split('@')[0])).filter(Boolean));
+  return selectByCriteria(input.list, held, (e) => input.key(String(e?.ticker || '').split('@')[0]), input.passes, input.reasons, (e) => (e?.company ? String(e.company) : null), input.criteriaOff);
+}
+
+export interface CbCriteriaInfo {
+  market: 'IN' | 'US';
+  listTotal: number;
+  passing: number;
+  failing: number;
+  heldPassing: number;
+  /** Plain words for the criteria in force ("your quality preset", "preset switched off", "your saved US filters"). */
+  criteria: string;
+  source: string;
+  error: string | null;
+}
+
+/**
+ * The header: what the bench is and whether it matches the Conviction Beats
+ * page. `onPage` = passing names actually present on this page (book + bench,
+ * before the size filter). A mismatch is said, never hidden.
+ */
+export function cbCriteriaLine(info: CbCriteriaInfo | null | undefined, onPage: number, showingFailing: boolean): string {
+  const label = info?.market === 'US' ? 'Conviction Beats (US)' : 'Conviction Beats (India)';
+  if (!info) return `${label}: loading the list…`;
+  if (!info.listTotal) return `${label} under your criteria: 0 — the Conviction Beats list is empty${info.error ? ` (${info.error})` : ''}`;
+  const match = onPage === info.passing
+    ? `matches Conviction Beats page: ${info.passing} names`
+    : `⚠ does NOT match the Conviction Beats page: ${onPage} here vs ${info.passing} there`;
+  return `${label} under your criteria: ${info.passing} — same list as the Conviction Beats page · selected by your Conviction Beats criteria (${info.criteria})`
+    + ` · ${match} = ${info.heldPassing} you hold (in My book) + ${info.passing - info.heldPassing} on the bench`
+    + ` · ${info.failing} of the ${info.listTotal} on the list miss your criteria${showingFailing ? ' (shown, labelled)' : ' (hidden — use the chip to show them)'}`
+    + ` · source: ${info.source}`;
 }

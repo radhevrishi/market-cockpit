@@ -6,25 +6,32 @@
 // Returns  { q, count, results: [{ ticker, company, filing_date, tier, sector,
 //            market_cap_cr, quarter, composite_score }] }
 //
-// Ranking:  tickerExact (100) + tickerStartsWith (70) + tickerContains (35)
-//         + companyStartsWith (50) + companyContains (20)
-//         + tier bonus (BB +10 / ST +5) + recency (linear decay by days)
+// Ranking (zzz812): lib/earnings-search.ts rankMatches — exact ticker, then
+// ticker prefix, then company-name words; newest filing breaks ties. Also
+// returns lookback_business_days / oldest_indexed so the page can say how far
+// back "not found" looked.
 
 import { NextRequest } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
+import { gradedKeyCandidates } from '@/lib/graded-cache-key';
+import { rankMatches, normalizeTicker } from '@/lib/earnings-search';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const CACHE_PREFIX = 'graded:v10:';
-const INDEX_KEY = 'search:idx:v2';
+// zzz812 — THE INDEX READ A DEAD NAMESPACE. It was hard-coded to
+// `graded:v10:<date>`, which nothing has written since the India engine moved
+// on (now v23, see lib/graded-cache-key.ts). Every result graded after that
+// bump — FCL's Q1 FY27 among them — was invisible to search. It now reads the
+// CURRENT key per date and falls back through the legacy namespaces only when
+// the current one is empty, exactly like the bench cron.
+const INDEX_KEY = 'search:idx:v3';
 const INDEX_TTL_SECONDS = 15 * 60; // 15 minutes — daily grading is once/day, so 15min is plenty
 const LOOKBACK_BUSINESS_DAYS = 120;
 const DEFAULT_LIMIT = 25;
 
 type Tier = 'BLOCKBUSTER' | 'STRONG' | 'MIXED' | 'AVOID';
 const TIERS: Tier[] = ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID'];
-const TIER_BONUS: Record<Tier, number> = { BLOCKBUSTER: 10, STRONG: 5, MIXED: 0, AVOID: -5 };
 
 type IndexEntry = {
   t: string;    // ticker (uppercase)
@@ -36,14 +43,16 @@ type IndexEntry = {
   q: string | null;
   cs: number | null;
   db: number;   // days-back at index time (for recency scoring)
+  bse?: string | null;
 };
 
 function businessDaysBack(n: number): string[] {
   const out: string[] = [];
-  const now = new Date();
+  // IST calendar dates — India files on IST days; a UTC date lags by 5h30.
+  const now = new Date(Date.now() + 330 * 60_000);
   for (let i = 0; out.length < n && i < n * 2; i++) {
     const d = new Date(now.getTime() - i * 24 * 3600_000);
-    const dow = d.getDay();
+    const dow = d.getUTCDay();
     if (dow === 0 || dow === 6) continue;
     out.push(d.toISOString().slice(0, 10));
   }
@@ -59,16 +68,20 @@ async function buildIndex(): Promise<IndexEntry[]> {
     const batch = dates.slice(i, i + CONC);
     await Promise.all(batch.map(async (d, batchIdx) => {
       const daysBack = i + batchIdx;
-      const key = CACHE_PREFIX + d;
+      // Current namespace first; a legacy one only if the current is empty.
       let payload: any = null;
-      try { payload = await kvGet(key); } catch { return; }
+      for (const key of gradedKeyCandidates(d)) {
+        try { payload = await kvGet(key); } catch { payload = null; }
+        if (payload && payload.by_tier) break;
+        payload = null;
+      }
       if (!payload || !payload.by_tier) return;
       for (const tier of TIERS) {
         const arr = payload.by_tier[tier];
         if (!Array.isArray(arr)) continue;
         for (const e of arr) {
           if (!e || !e.ticker) continue;
-          const ticker = String(e.ticker).toUpperCase();
+          const ticker = normalizeTicker(String(e.ticker));
           const quarter = e.quarter || '';
           const dedupKey = quarter ? `${ticker}@${quarter}` : ticker;
           if (seen.has(dedupKey)) continue;
@@ -83,6 +96,7 @@ async function buildIndex(): Promise<IndexEntry[]> {
             q: e.quarter || null,
             cs: typeof e.composite_score === 'number' ? e.composite_score : null,
             db: daysBack,
+            bse: e.bse_code != null ? String(e.bse_code) : (e.scrip_code != null ? String(e.scrip_code) : null),
           });
         }
       }
@@ -91,15 +105,29 @@ async function buildIndex(): Promise<IndexEntry[]> {
   return flat;
 }
 
-async function getIndex(force: boolean): Promise<{ index: IndexEntry[]; cache: 'hit' | 'miss' | 'stale' }> {
+// Warm-instance memo in front of KV: a typeahead fires many queries a minute
+// and each KV read of the index is ~1 MB.
+let _memo: { at: number; index: IndexEntry[] } | null = null;
+let _building: Promise<IndexEntry[]> | null = null;
+
+async function getIndex(force: boolean): Promise<{ index: IndexEntry[]; cache: 'hit' | 'miss' | 'stale' | 'memo' }> {
+  if (!force && _memo && Date.now() - _memo.at < INDEX_TTL_SECONDS * 1000) return { index: _memo.index, cache: 'memo' };
   if (!force) {
     try {
       const cached = await kvGet(INDEX_KEY);
-      if (Array.isArray(cached) && cached.length > 0) return { index: cached as IndexEntry[], cache: 'hit' };
+      if (Array.isArray(cached) && cached.length > 0) {
+        _memo = { at: Date.now(), index: cached as IndexEntry[] };
+        return { index: cached as IndexEntry[], cache: 'hit' };
+      }
     } catch {}
   }
-  const idx = await buildIndex();
-  try { await kvSet(INDEX_KEY, idx, INDEX_TTL_SECONDS); } catch {}
+  // One build at a time per instance — concurrent keystrokes share it.
+  if (!_building) _building = buildIndex().finally(() => { _building = null; });
+  const idx = await _building;
+  // An empty index usually means KV was unreachable, not that nothing was
+  // ever graded — hold it for 30 s only, and never write it to KV.
+  _memo = { at: idx.length ? Date.now() : Date.now() - (INDEX_TTL_SECONDS - 30) * 1000, index: idx };
+  if (idx.length) { try { await kvSet(INDEX_KEY, idx, INDEX_TTL_SECONDS); } catch {} }
   return { index: idx, cache: force ? 'stale' : 'miss' };
 }
 
@@ -108,40 +136,42 @@ export async function GET(req: NextRequest) {
   const limit = Math.min(50, Math.max(1, Number(req.nextUrl.searchParams.get('limit') || DEFAULT_LIMIT)));
   const force = req.nextUrl.searchParams.get('refresh') === '1';
 
-  if (q.length < 2) {
-    return Response.json({ q, count: 0, results: [], _note: 'need at least 2 chars' });
+  // zzz812 — one character is enough for an exact ticker ("L", "M").
+  if (q.length < 1) {
+    return Response.json({ q, count: 0, results: [], _note: 'empty query' });
   }
 
   const t0 = Date.now();
   const { index, cache } = await getIndex(force);
-  const Q = q.toUpperCase();
-  const scored: { e: IndexEntry; s: number }[] = [];
-  for (const e of index) {
-    const t = e.t;
-    const c = (e.c || '').toUpperCase();
-    let s = 0;
-    if (t === Q) s += 100;
-    else if (t.startsWith(Q)) s += 70;
-    else if (t.includes(Q)) s += 35;
-    if (c.startsWith(Q)) s += 50;
-    else if (c.includes(Q)) s += 20;
-    if (s === 0) continue;
-    s += TIER_BONUS[e.tier] || 0;
-    const recency = Math.max(0, 25 - Math.floor((e.db / LOOKBACK_BUSINESS_DAYS) * 25));
-    s += recency;
-    scored.push({ e, s });
-  }
-  scored.sort((a, b) => b.s - a.s || b.e.fd.localeCompare(a.e.fd));
-  const results = scored.slice(0, limit).map(({ e }) => ({
-    ticker: e.t,
-    company: e.c,
-    filing_date: e.fd,
-    tier: e.tier,
-    sector: e.sec || undefined,
-    market_cap_cr: e.mc,
-    quarter: e.q || undefined,
-    composite_score: e.cs != null ? e.cs : undefined,
+  // zzz812 — one matcher for both pages (lib/earnings-search.ts): exact ticker
+  // (after stripping NSE:/.NS/-EQ) first, then ticker prefix, then company
+  // words. No mid-ticker substring matches, so "FCL" is not buried under
+  // unrelated tickers. Ties go to the NEWEST filing.
+  const rows = index.map((e) => ({
+    ticker: e.t, company: e.c, filing_date: e.fd, tier: e.tier, bse_code: e.bse || null, _e: e,
   }));
+  const ranked = rankMatches(rows, q, limit);
+  const results = ranked.map(({ row }) => {
+    const e = row._e as IndexEntry;
+    return {
+      ticker: e.t,
+      company: e.c,
+      filing_date: e.fd,
+      tier: e.tier,
+      sector: e.sec || undefined,
+      market_cap_cr: e.mc,
+      quarter: e.q || undefined,
+      composite_score: e.cs != null ? e.cs : undefined,
+    };
+  });
+  let oldest = '';
+  for (const e of index) if (e.fd && (!oldest || e.fd < oldest)) oldest = e.fd;
+  const span = businessDaysBack(LOOKBACK_BUSINESS_DAYS);
+  const lookbackDays = Math.round((Date.parse(span[0]) - Date.parse(span[span.length - 1])) / 86_400_000) + 1;
 
-  return Response.json({ q, count: results.length, results, _took_ms: Date.now() - t0, _cache: cache, _idx: index.length });
+  return Response.json({
+    q, count: results.length, results,
+    lookback_business_days: LOOKBACK_BUSINESS_DAYS, lookback_days: lookbackDays, oldest_indexed: oldest || null,
+    _took_ms: Date.now() - t0, _cache: cache, _idx: index.length,
+  });
 }

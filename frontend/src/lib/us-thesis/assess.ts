@@ -160,6 +160,8 @@ export interface UsRow {
   sec?: UsSecProfile | null;
   /** zzz793: where a bench name came from ("Conviction Beats (US)", "US bench"). */
   benchSource?: string | null;
+  /** zzz811: meets / misses the owner's US Conviction Beats criteria (membership only — never read by the thesis engine). */
+  preset?: { state: 'pass' | 'fail' | 'unknown'; reasons: string[]; text: string } | null;
 }
 
 export const usPromiseKey = (sym: string) => `US:${String(sym).toUpperCase()}`;

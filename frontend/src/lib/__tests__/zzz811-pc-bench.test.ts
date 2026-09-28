@@ -109,20 +109,13 @@ describe('zzz811 — all Conviction Beats names join the India bench', () => {
     }
   });
 
-  test('assessed rows carry the label, and every bench row stays on the page', () => {
-    const rows = b.bench.map((s) => {
-      const i = Number(s.slice(3));
-      const g = i < 300 ? graded(i) : null;
-      return assessBookRow({ symbol: s, origin: 'bench', market: 'IN', graded: g, tier: g?.tier || null, pattern: g ? classifyOrNearest(g) : null,
-        radarScore: null, summary: null, sourceUrl: null, state: 'idle', assessment: null, capex: null, promiseNote: null } as any);
-    });
-    assert.equal(rows.length, b.bench.length);
-    const pc = benchPresetCounts(rows);
-    assert.equal(pc.bench, rows.length);
-    assert.equal(pc.pass + pc.fail + pc.unknown, pc.bench);
-    assert.ok(pc.pass > 50 && pc.fail > 100 && pc.unknown > 50);
-    // provisional (nearest-fit) is never affirmative on a bench name with no filing read
-    for (const r of rows) assert.ok(!['STRENGTHENING', 'ON_TRACK'].includes(String(r.assessment?.status)) || r.pattern?.fit !== 'nearest');
+  test('assessed rows keep a label set on them (the label is membership, not the thesis engine)', () => {
+    const lab = presetLabelIndia(graded(1));
+    const r = assessBookRow({ symbol: 'SYN001', origin: 'bench', market: 'IN', graded: graded(1), tier: 'STRONG', pattern: classifyOrNearest(graded(1)),
+      radarScore: null, summary: null, sourceUrl: null, state: 'idle', assessment: null, capex: null, promiseNote: null, preset: lab } as any);
+    assert.equal((r as any).preset, lab);
+    const pc = benchPresetCounts([{ origin: 'bench', preset: lab }, { origin: 'bench', preset: presetLabelIndia(graded(0)) }, { origin: 'bench', preset: null }, { origin: 'book', preset: null }]);
+    assert.deepEqual(pc, { bench: 3, pass: 1, fail: 1, unknown: 1 });
   });
 
   test('the header counts add up and say what they cover', () => {
@@ -185,10 +178,10 @@ describe('zzz811 — bulk reads: book + preset-passing bench by default, the res
     assert.deepEqual(s.otherBench.map((r) => r.symbol), ['D', 'E', 'F']);
     assert.equal(s.primary.length + s.otherBench.length, rows.length);
   });
-  test('US: default = the US book; every bench name is in the separate button (preset not applied)', () => {
+  test('US: the same rule — book + bench meeting his US Conviction Beats criteria', () => {
     const s = readScope(rows, 'US');
-    assert.deepEqual(s.primary.map((r) => r.symbol), ['A', 'B']);
-    assert.deepEqual(s.otherBench.map((r) => r.symbol), ['C', 'D', 'E', 'F']);
+    assert.deepEqual(s.primary.map((r) => r.symbol), ['A', 'B', 'C']);
+    assert.deepEqual(s.otherBench.map((r) => r.symbol), ['D', 'E', 'F']);
   });
   test('the separate button says what it costs', () => {
     assert.equal(otherBenchLabel(212), 'Also read the other 212 bench names (about 212 AI reads)');
@@ -218,16 +211,17 @@ describe('zzz811 — pages: no gate, no silent removal, US wording on the US pag
   const useUs = read('lib/us-thesis/use-us-book.ts');
 
   test('India: the bench reads the server Conviction Beats list and no longer gates on the preset', () => {
-    assert.match(useBook, /\/api\/v1\/bench\?view=tickers/);
+    assert.match(useBook, /fetch\('\/api\/v1\/bench'/);
     assert.doesNotMatch(useBook, /benchPassingPreset\(/);
-    assert.match(inPage, /Bench passing preset/);
+    assert.match(inPage, /Also show names failing your criteria/);
     assert.match(inPage, /bench-preset-label/);
     assert.match(inPage, /large caps hidden/, 'the size filter says what it hides');
     assert.match(inPage, /visible\.map\(/, 'cards render from the progressive window');
   });
 
   test('US: US data and US wording only', () => {
-    assert.match(useUs, /\/api\/v1\/bench-us\?view=tickers/);
+    assert.match(useUs, /mergeServerUsBench\(\)/);
+    assert.match(useUs, /\/api\/v1\/bench-us/);
     assert.doesNotMatch(useUs, /\/api\/v1\/bench[?'"`]/);
     assert.doesNotMatch(useUs, /use-book'|readConvictionBeats\(/, 'never reads the India book or India Conviction Beats');
     assert.match(usPage, /SEC/);
@@ -246,5 +240,157 @@ describe('zzz811 — pages: no gate, no silent removal, US wording on the US pag
       const named = src.match(/^export\s+(?!default\b)(const|function|interface|type|class|async)\b.*$/gm) || [];
       assert.deepEqual(named, []);
     }
+  });
+});
+
+// ── The owner's Conviction Beats criteria (follow-up) ────────────────────────
+import {
+  passesConvictionFilter, cbFiltersForOwner, cbFailReasons, mergeCbEntries, serverBenchToCbEntries, FILTER_DEFAULT, indiaPresetFilters, CB_PRESET_OPTOUT_KEY,
+} from '../conviction-filter-india';
+import {
+  passesUsConvictionFilter, usCbFiltersForOwner, usCbFailReasons, usCbSavedFilters, usPresetFilters, US_FILTER_DEFAULT,
+  US_CB_FILTERS_KEY, US_CB_OPTOUT_KEY, computeUsNewWindow,
+} from '../conviction-beats-us';
+import { selectIndiaCb, selectUsCb, cbCriteriaLine } from '../thesis/pc-bench';
+import { usTickerKey } from '../us-thesis/sanitize';
+
+// Synthetic India Conviction Beats entries with a spread of outcomes.
+function cbEntry(i: number, over: any = {}): any {
+  return {
+    ticker: sym(i), company: `Synthetic Co ${i}`, tier: i % 2 ? 'STRONG' : 'BLOCKBUSTER', composite_score: 70, filing_date: '2026-08-12',
+    sales_yoy_pct: 34, net_profit_yoy_pct: 44, eps_yoy_pct: 41, opm_pct: 18, opm_prev_pct: 15, cfo_to_pat_ratio: 1.1,
+    market_cap_cr: 6000 + i, pe: 20, roce: 24, move_pct: 3, pead_score: 70, ...over,
+  };
+}
+const IN_LOCAL = Array.from({ length: 150 }, (_, i) => cbEntry(i, i % 5 === 1 ? { sales_yoy_pct: 8 } : i % 5 === 2 ? { sales_yoy_pct: null } : {}));
+const IN_SERVER_RAW = Array.from({ length: 200 }, (_, i) => cbEntry(i + 100, (i + 100) % 7 === 3 ? { opm_pct: 10 } : {}))
+  .concat([{ ...cbEntry(5), filing_date: '2026-05-01' }, { ticker: 'MIXEDCO', tier: 'MIXED' }]);
+
+/** The Conviction Beats tab, exactly: merged list, filters on open, same function. */
+function cbPageTickers(optedOut: boolean): string[] {
+  const f = cbFiltersForOwner(optedOut);
+  const list = mergeCbEntries(IN_LOCAL, serverBenchToCbEntries(IN_SERVER_RAW));
+  return Array.from(new Set(list.filter((e) => passesConvictionFilter(e, f)).map((e) => String(e.ticker).toUpperCase()))).sort();
+}
+
+describe('zzz811 — the bench is the Conviction Beats page under the owner\'s criteria', () => {
+  const HELD_IN = ['SYN000', 'SYN007', 'SYN001', 'HOLDX'];
+  const pick = (optedOut: boolean) => {
+    const f = cbFiltersForOwner(optedOut);
+    return selectIndiaCb({
+      held: HELD_IN, criteriaOff: optedOut,
+      list: mergeCbEntries(IN_LOCAL, serverBenchToCbEntries(IN_SERVER_RAW)),
+      passes: (e: any) => passesConvictionFilter(e, f), reasons: (e: any) => cbFailReasons(e, f),
+    });
+  };
+
+  test('India: PC passing set == the Conviction Beats page\'s filtered set (same list, same filters, same function)', () => {
+    const sel = pick(false);
+    assert.deepEqual(sel.passing, cbPageTickers(false));
+    assert.equal(sel.listTotal, 300);
+    assert.ok(sel.passing.length > 100 && sel.failing.length > 50);
+    assert.equal(sel.bench.length + sel.heldPassing.length, sel.passing.length, 'held passing names appear once, as book');
+    assert.ok(sel.bench.every((t) => !HELD_IN.includes(t)));
+    assert.ok(!sel.passing.includes('MIXEDCO'));
+  });
+
+  test('India: the owner\'s own setting is used, not the defaults — preset switched off lists every name', () => {
+    assert.deepEqual(cbFiltersForOwner(true), { ...FILTER_DEFAULT });
+    assert.deepEqual(cbFiltersForOwner(false), { ...FILTER_DEFAULT, ...indiaPresetFilters() });
+    const off = pick(true);
+    assert.deepEqual(off.passing, cbPageTickers(true));
+    assert.equal(off.passing.length, 300);
+    assert.equal(off.failing.length, 0);
+    assert.equal(CB_PRESET_OPTOUT_KEY, 'mc:cb:preset:v3:optout');
+    assert.match(read('lib/thesis/use-book.ts'), /readCbPresetOptOut\(\)/);
+  });
+
+  test('India: the Conviction Beats function decides, not the alert preset (they differ on a null sales figure)', () => {
+    const e = cbEntry(2, { sales_yoy_pct: null });
+    assert.equal(passesIndiaPreset(e), true, 'the alert preset lets an unknown sales figure through');
+    assert.equal(passesConvictionFilter(e, cbFiltersForOwner(false)), false, 'the Conviction Beats tab does not');
+    assert.ok(pick(false).failing.includes(sym(2)));
+    assert.match(pick(false).labels[sym(2)].text, /misses your Conviction Beats criteria — sales growth not known% \(needs 20%\)/);
+  });
+
+  test('India: one filter module shared by the Conviction Beats tab and PC', () => {
+    const wl = read('app/(dashboard)/watchlists/page.tsx');
+    assert.match(wl, /from '@\/lib\/conviction-filter-india'/);
+    assert.doesNotMatch(wl, /^function passesConvictionFilter/m);
+    assert.match(wl, /mergeCbEntries\(convictionEntries, serverBench\)/);
+    assert.match(read('lib/thesis/use-book.ts'), /passesConvictionFilter\(e, filters\)/);
+  });
+
+  test('the failing-names chip is off by default on both pages; sizes default to all (like the CB page)', () => {
+    const inPage = read('app/(dashboard)/portfolio-catalysts/page.tsx');
+    const usPage = read('app/(dashboard)/us-portfolio-catalysts/page.tsx');
+    assert.match(inPage, /const \[showFailing, setShowFailing\] = useState\(false\)/);
+    assert.match(usPage, /const \[showFailing, setShowFailing\] = useState\(false\)/);
+    assert.match(inPage, /const \[smallMidOnly, setSmallMidOnly\] = useState\(false\)/);
+    assert.match(inPage, /Also show names failing your criteria \(\{failingBench\.length\}\)/);
+    assert.match(usPage, /Also show names failing your criteria \(\{failingBench\.length\}\)/);
+  });
+
+  test('header: "under your criteria", same list, and a visible match / mismatch', () => {
+    const info = { market: 'IN' as const, listTotal: 300, passing: 180, failing: 120, heldPassing: 3, criteria: 'your quality preset', source: 'x', error: null };
+    const ok = cbCriteriaLine(info, 180, false);
+    assert.match(ok, /^Conviction Beats \(India\) under your criteria: 180 — same list as the Conviction Beats page/);
+    assert.match(ok, /matches Conviction Beats page: 180 names = 3 you hold \(in My book\) \+ 177 on the bench/);
+    assert.match(ok, /120 of the 300 on the list miss your criteria \(hidden — use the chip to show them\)/);
+    assert.match(cbCriteriaLine(info, 175, false), /⚠ does NOT match the Conviction Beats page: 175 here vs 180 there/);
+    assert.match(cbCriteriaLine({ ...info, market: 'US' }, 180, true), /^Conviction Beats \(US\) under your criteria: 180 .*selected by your Conviction Beats criteria/);
+  });
+});
+
+describe('zzz811 — US: his US Conviction Beats criteria are applied, price criteria included', () => {
+  const usE = (t: string, over: any = {}) => ({
+    ticker: t, company: `${t} Inc`, tier: 'STRONG', filing_date: '2026-08-06', composite_score: 70,
+    sales_yoy_pct: 30, eps_yoy_pct: 40, net_profit_yoy_pct: 40, opm_pct: 20, opm_prev_pct: 18, cfo_to_pat_ratio: 1.2,
+    market_cap_musd: 2500, pead_score: 60, pct_vs_ma50: 4, pct_vs_ma200: 9, stage: 2, ...over,
+  });
+  const LIST = [usE('AAA'), usE('BBB', { pct_vs_ma50: -3 }), usE('CCC', { sales_yoy_pct: 60 }), usE('DDD', { market_cap_musd: 150 }), usE('EEE', { sales_yoy_pct: 70, pct_vs_ma50: -1 })];
+
+  test('no saved filters and no opt-out → the preset + small/mid, incl. the 50/200-day price legs', () => {
+    const f = usCbFiltersForOwner(() => null);
+    assert.deepEqual(f, { ...usPresetFilters(), cap: 'smid' });
+    assert.equal(f.aboveMa50, true);
+    assert.equal(US_CB_FILTERS_KEY, 'mc:us-cb:filters:v1');
+    assert.equal(US_CB_OPTOUT_KEY, 'mc:us-cb:preset:v1:optout');
+  });
+
+  test('his CUSTOM saved filters are used, not the defaults — PC set == the US CB page set', () => {
+    const saved = JSON.stringify({ ...US_FILTER_DEFAULT, sales: 50, aboveMa50: true, cap: 'all' });
+    const store: Record<string, string> = { [US_CB_FILTERS_KEY]: saved };
+    const f = usCbFiltersForOwner((k) => store[k] ?? null);
+    assert.equal(f.sales, 50, 'his 50%, not the preset\'s threshold');
+    assert.deepEqual(f, usCbSavedFilters(saved), 'the page initializer and PC read the same thing');
+    const win = computeUsNewWindow(LIST);
+    const cbPage = LIST.filter((e: any) => passesUsConvictionFilter(e, f, win)).map((e) => e.ticker).sort();
+    assert.deepEqual(cbPage, ['CCC']);
+    const sel = selectUsCb({ held: ['AAA'], list: LIST, key: usTickerKey, criteriaOff: false,
+      passes: (e: any) => passesUsConvictionFilter(e, f, win), reasons: (e: any) => usCbFailReasons(e, f, win) });
+    assert.deepEqual(sel.passing, cbPage);
+    assert.deepEqual(sel.bench, ['CCC']);
+    assert.ok(sel.labels.EEE.reasons.includes('price not above its 50-day average'), 'the price criterion is applied and named');
+    assert.ok(sel.labels.AAA.reasons.some((r) => /revenue growth 30% \(needs 50%\)/.test(r)));
+    for (const l of Object.values(sel.labels)) assert.doesNotMatch(l.text, /\b(BUY|SELL)\b/);
+  });
+
+  test('US opt-out with no saved filters → every name listed', () => {
+    const f = usCbFiltersForOwner((k) => (k === US_CB_OPTOUT_KEY ? '1' : null));
+    assert.deepEqual(f, { ...US_FILTER_DEFAULT });
+    const win = computeUsNewWindow(LIST);
+    assert.equal(LIST.filter((e: any) => passesUsConvictionFilter(e, f, win)).length, LIST.length);
+  });
+
+  test('the US page reads his criteria through the shared helpers, and the thesis engine still reads no price', () => {
+    const useUs = read('lib/us-thesis/use-us-book.ts');
+    assert.match(useUs, /usCbFiltersForOwner\(get\)/);
+    assert.match(useUs, /passesUsConvictionFilter\(e, filters, win\)/);
+    assert.match(read('app/(dashboard)/us-conviction-beats/page.tsx'), /usCbSavedFilters\(localStorage\.getItem\(FILTERS_KEY\)\)/);
+    const usPage = read('app/(dashboard)/us-portfolio-catalysts/page.tsx');
+    assert.match(usPage, /selected by your Conviction Beats criteria/);
+    assert.match(usPage, /The thesis engine on this page reads no price/);
+    for (const f of ['lib/us-thesis/assess.ts', 'lib/thesis/status.ts']) assert.doesNotMatch(read(f), /pct_vs_ma50|pct_vs_ma200/);
   });
 });

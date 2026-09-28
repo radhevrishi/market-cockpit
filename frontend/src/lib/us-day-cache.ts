@@ -283,3 +283,47 @@ export function scrubLegacyDayCaches(): void {
     localStorage.setItem(MARK, '1');
   } catch { /* storage unavailable */ }
 }
+
+/**
+ * zzz812 — SEARCH THE DAYS ALREADY ON FILE. The search box on the US page
+ * falls back to this when a name is not in the loaded window: every session
+ * this browser has graded (up to 120 of them), without asking EDGAR or the
+ * server for anything. Rows whose day was graded by an older engine are still
+ * returned — the grade shown on the card is refreshed when the window loads.
+ *
+ * `match` is called on every row and should be cheap; matching rows come back
+ * with `session_day` (the cache key, i.e. the session the row belongs to) and
+ * newest session first. Never throws.
+ */
+export async function searchCachedDays<T = any>(match: (row: any) => boolean): Promise<{ rows: Array<T & { session_day: string }>; days: number; oldest: string | null }> {
+  const out: Array<T & { session_day: string }> = [];
+  let records: DayRecord[] = [];
+  try {
+    const all = await tx<DayRecord[]>('readonly', (s) => s.getAll() as IDBRequest<DayRecord[]>);
+    if (all) records = all;
+  } catch { /* no IndexedDB */ }
+  if (!records.length) {
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(LS_FALLBACK_PREFIX)) {
+          const rec = lsGet(k.slice(LS_FALLBACK_PREFIX.length));
+          if (rec) records.push(rec);
+        }
+      }
+    } catch { /* storage unavailable */ }
+  }
+  records.sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : 0));
+  for (const rec of records) {
+    const bt: any = (rec.payload as any)?.by_tier;
+    if (!bt) continue;
+    for (const t of Object.keys(bt)) {
+      const arr = bt[t];
+      if (!Array.isArray(arr)) continue;
+      for (const r of arr) {
+        try { if (r && match(r)) out.push({ ...r, tier: r.tier || t, session_day: rec.day }); } catch { /* skip row */ }
+      }
+    }
+  }
+  return { rows: out, days: records.length, oldest: records.length ? records[records.length - 1].day : null };
+}

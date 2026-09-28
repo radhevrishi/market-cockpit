@@ -34,7 +34,8 @@ import { assessUsRow, applyUsLedger, newUsRow, usPromiseKey, autoPattern, type U
 import { usFreshness } from './calendar';
 import { usTickerKey } from './sanitize';
 import type { UsUniverseEntry } from '@/lib/us-book/model';
-import { mergeUsBench, type UsBenchName } from './us-bench';
+import { type UsBenchName } from './us-bench';
+import { selectUsCb, type CbCriteriaInfo, type CbSelection } from '@/lib/thesis/pc-bench';
 
 export type { UsRow } from './assess';
 
@@ -73,40 +74,49 @@ export interface UsCbInfo {
 }
 
 /**
- * The US Conviction Beats bench (zzz797). The SERVER list is the source of
- * truth — /api/v1/bench-us, which rebuilds itself from the graded-US cache
- * when the nightly list was never built — so a fresh phone or browser gets
- * the full list. This browser's list (IndexedDB, read only after it has
- * hydrated) adds the names graded here and not yet on the server; names the
- * owner removed on the US Conviction Beats page stay off.
+ * zzz811 — the US Conviction Beats page's OWN list under the owner's OWN
+ * criteria, in the page's own source order: this browser's bench (IndexedDB,
+ * hydrated) after the server bench is merged into it (mergeServerUsBench —
+ * exactly what the page does on open), filtered by passesUsConvictionFilter
+ * with his saved filters (usCbFiltersForOwner). If this browser holds no
+ * list at all (a fresh phone), the server bench is used directly.
+ * Membership only: the criteria may read price to CHOOSE names; the thesis
+ * engine still reads no price.
  */
-async function loadUsConvictionBench(): Promise<{ names: UsBenchName[]; info: UsCbInfo }> {
-  let server: any[] = [];
-  let serverSource: UsCbInfo['serverSource'] = null, serverNote: string | null = null, serverError: string | null = null, updatedAt: string | null = null;
-  // The server list first, retried once (a cold rebuild can take a while).
-  for (let attempt = 0; attempt < 2; attempt++) {
+async function loadUsCbSelection(held: string[]): Promise<{ sel: CbSelection; info: CbCriteriaInfo }> {
+  const m = await import('@/lib/conviction-beats-us');
+  let error: string | null = null;
+  try { await m.hydrateUsConviction(); } catch { /* memory-only */ }
+  let merged: { server_count: number; updatedAt: string | null; stale_engine: boolean } | null = null;
+  try { merged = await m.mergeServerUsBench(); } catch (e: any) { error = humanError(e); }
+  let list: any[] = m.getUsConvictionList();
+  let source = `this browser's US bench ${list.length} (server bench ${merged?.server_count ?? 0} merged in${merged?.updatedAt ? `, updated ${String(merged.updatedAt).slice(0, 10)}` : ''}${merged?.stale_engine ? '; server list built by an older engine — not merged' : ''})`;
+  if (!list.length) {
     try {
-      const r = await fetch('/api/v1/bench-us?view=tickers', { cache: 'no-store' });
-      const j = await readJson(r);
-      if (!r.ok || j?.ok === false) throw new Error(j?.error || `HTTP ${r.status}`);
-      server = Array.isArray(j?.entries) ? j.entries : [];
-      serverSource = j?.source || (server.length ? 'kv' : 'empty');
-      serverNote = j?.note || null; updatedAt = j?.updatedAt || null; serverError = null;
-      break;
-    } catch (e: any) { serverError = humanError(e); }
+      const j = await readJson(await fetch('/api/v1/bench-us', { cache: 'no-store' }));
+      const removed = new Set(m.readUsConvictionBin().map((e: any) => String(e?.ticker || '').toUpperCase()));
+      list = (Array.isArray(j?.entries) ? j.entries : []).filter((e: any) => !removed.has(String(e?.ticker || '').toUpperCase()));
+      source = `server bench ${list.length} (this browser holds no US list)`;
+    } catch (e: any) { error = humanError(e); }
   }
-  let local: any[] = [];
-  let removed: string[] = [];
-  try {
-    const m = await import('@/lib/conviction-beats-us');
-    await m.hydrateUsConviction().catch(() => 0);          // read AFTER hydration, never before
-    local = Object.entries(m.readUsConviction()).map(([k, e]) => ({ ...(e as any), ticker: String((e as any)?.ticker || k) }));
-    removed = m.readUsConvictionBin().map((e: any) => String(e?.ticker || '')).filter(Boolean);
-  } catch { /* no local list in this browser (an installed app has its own, empty storage) */ }
-  const mg = mergeUsBench(server, local, removed);
+  const get = (k: string) => { try { return typeof window === 'undefined' ? null : window.localStorage.getItem(k); } catch { return null; } };
+  const filters = m.usCbFiltersForOwner(get);
+  const win = m.computeUsNewWindow(list);
+  const criteriaOff = !m.isUsPresetActive(filters) && get(m.US_CB_OPTOUT_KEY) === '1'
+    && [filters.sales, filters.eps, filters.pead, filters.opmDelta, filters.cfoPatMin, filters.mktCapMin].every((v) => v == null)
+    && !(filters.verdicts && filters.verdicts.length) && (!filters.cap || filters.cap === 'all');
+  const sel = selectUsCb({
+    held, list, key: usTickerKey, criteriaOff,
+    passes: (e: any) => m.passesUsConvictionFilter(e, filters, win),
+    reasons: (e: any) => m.usCbFailReasons(e, filters, win),
+  });
+  const criteria = m.isUsPresetActive(filters)
+    ? `your US quality preset${filters.cap === 'smid' ? ' + small/mid caps' : ''}, incl. price above its 50- and 200-day averages`
+    : criteriaOff ? 'your US preset is switched OFF on US Conviction Beats — every name is listed' : 'your saved US Conviction Beats filters';
   return {
-    names: mg.names,
-    info: { total: mg.names.length, server: mg.server, local: mg.local, localOnly: mg.localOnly, removed: mg.removed.length, updatedAt, serverSource, serverNote, serverError },
+    sel,
+    info: { market: 'US', listTotal: sel.listTotal, passing: sel.passing.length, failing: sel.failing.length, heldPassing: sel.heldPassing.length,
+      criteria: `${criteria}${filters.q ? ` (the search text "${filters.q}" is applied too)` : ''}`, source, error },
   };
 }
 
@@ -122,6 +132,8 @@ export function useUsBook() {
   const [thesisTypes, setThesisTypes] = useState<Record<string, AbfgPattern>>({});
   const [cbCount, setCbCount] = useState<number>(0);
   const [cbInfo, setCbInfo] = useState<UsCbInfo | null>(null);
+  const [cbCriteria, setCbCriteria] = useState<CbCriteriaInfo | null>(null);
+  const [cbPassing, setCbPassing] = useState<string[]>([]);
   const rowsRef = useRef<Record<string, UsRow>>({});
   const typesRef = useRef<Record<string, AbfgPattern>>({});
   const stopRef = useRef(false);
@@ -154,20 +166,28 @@ export function useUsBook() {
         return;
       }
       if (cancelled) return;
-      const { names: cb, info } = await loadUsConvictionBench();
+      // zzz811: the bench is the US Conviction Beats page's list under his
+      // own criteria (loadUsCbSelection). Names missing them join the
+      // universe labelled, and the page hides them unless he asks.
+      const heldTickers = uni.filter((u) => u.origin !== 'bench').map((u) => u.ticker);
+      const { sel, info: crit } = await loadUsCbSelection(heldTickers);
       if (cancelled) return;
-      const cbSet = new Set(cb.map((e) => usTickerKey(String(e.ticker).split('@')[0])));
+      const cb: UsBenchName[] = [...sel.passing, ...sel.failing].map((t) => ({ ticker: t, tier: null, company: sel.companies[t] || null, filing_date: null, exchange: null }));
+      const cbSet = new Set(cb.map((e) => e.ticker));
       const adds = convictionBenchAdds(uni, cb);
-      setCbCount(cbSet.size);
-      setCbInfo(info);
+      setCbCount(sel.passing.length);
+      setCbCriteria(crit);
+      setCbPassing(sel.passing);
+      setCbInfo({ total: sel.listTotal, server: 0, local: sel.listTotal, localOnly: 0, removed: 0, updatedAt: null, serverSource: null, serverNote: null, serverError: crit.error });
       const us = uni.filter((u) => u.listing === 'US');
       setExcluded(uni.filter((u) => u.listing !== 'US'));
       const first: Record<string, UsRow> = {};
       for (const u of us) {
-        const onCb = cbSet.has(usTickerKey(u.ticker));
-        first[u.ticker] = { ...newUsRow(u.ticker, u.origin, null, null, u.exchange), benchSource: u.origin === 'book' ? (onCb ? US_CB_SOURCE : null) : onCb ? US_CB_SOURCE : 'US bench (your list)' };
+        const k = usTickerKey(u.ticker);
+        const onCb = cbSet.has(k);
+        first[u.ticker] = { ...newUsRow(u.ticker, u.origin, null, null, u.exchange), benchSource: u.origin === 'book' ? (onCb ? US_CB_SOURCE : null) : onCb ? US_CB_SOURCE : 'US bench (your list)', preset: sel.labels[k] || null };
       }
-      for (const a of adds) first[a.ticker] = { ...newUsRow(a.ticker, 'bench', null, null, a.exchange), benchSource: US_CB_SOURCE };
+      for (const a of adds) first[a.ticker] = { ...newUsRow(a.ticker, 'bench', null, null, a.exchange), benchSource: US_CB_SOURCE, preset: sel.labels[a.ticker] || null };
       commit(first);
       setLoading(false);
 
@@ -401,7 +421,7 @@ export function useUsBook() {
     try { await fetch('/api/v1/us-thesis/evidence', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'thesis_type', ticker: key, pattern: p }) }); } catch { /* kept for this session */ }
   }, []);
 
-  return { rows, excluded, universeError, loading, evidenceLoading, batch, priorBatch, checkBatch, readFiling, readAll, checkAll, readPriorPeriods, stop, thesisTypes, setThesisType, needsPrior, cbCount, cbInfo };
+  return { rows, excluded, universeError, loading, evidenceLoading, batch, priorBatch, checkBatch, readFiling, readAll, checkAll, readPriorPeriods, stop, thesisTypes, setThesisType, needsPrior, cbCount, cbInfo, cbCriteria, cbPassing };
 }
 
 async function postStatus(row: UsRow): Promise<void> {

@@ -18,7 +18,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getCachedDay, putCachedDay, scrubLegacyDayCaches } from '@/lib/us-day-cache';
+import { getCachedDay, putCachedDay, scrubLegacyDayCaches, searchCachedDays } from '@/lib/us-day-cache';
 import { planDayRequest, pollDelayMs, dayStatusLine, rescanNoteText, windowStatusLine } from '@/lib/us-rescan';
 import Link from 'next/link';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -36,6 +36,8 @@ import { usEasternDate, snapshotFresh, encodeSelectedDate, restoreSelectedDate }
 import { UsEarningsCard, TIER_META, QUADRANT_META, rowKey, panelId, num, setAllAiSummaries, useAiSummaryQueue } from '@/components/us-earnings-card';
 import { CardBadgesToggle } from '@/components/card-badges';
 import { classifyGradedRow, ABFG_META, type AbfgPattern } from '@/lib/earnings/pattern-abfg';
+import { resolveSearch, scoreRow, hiddenNote, type SearchOutcome, type WindowHit, type RankedHit } from '@/lib/earnings-search';
+import { useUrlSearchQuery, SearchResultsPanel } from '@/components/earnings-search-kit';
 
 interface PendingFiler {
   ticker: string; company: string; form: string; filed: string;
@@ -239,7 +241,9 @@ export default function UsEarningsOpportunitiesPage() {
   // is the only identity that survives all three; filing_date stands in for the
   // handful of rows whose period end is not tagged yet.
   const [openCards, setOpenCards] = useState<Set<string>>(() => new Set());
-  const [find, setFind] = useState('');
+  // zzz812 — the search text lives in ?q= (survives refresh, shareable) and
+  // is debounced 150 ms; polling re-renders never touch it.
+  const { q: find, setQ: setFind, debounced: findQ } = useUrlSearchQuery();
   const [findLoading, setFindLoading] = useState(false);
   const [findAdhoc, setFindAdhoc] = useState<any | null>(null);
   const [findErr, setFindErr] = useState<string | null>(null);
@@ -717,16 +721,101 @@ export default function UsEarningsOpportunitiesPage() {
   const [allAiOpen, setAllAiOpen] = useState(false);
   const aiLeft = useAiSummaryQueue();
 
-  // Matches across the whole window, filters or no filters.
-  const findHits = useMemo(() => {
-    const q = find.trim().toUpperCase();
-    if (q.length < 1) return [];
-    return allRows
-      .filter((r: any) => String(r.ticker || '').toUpperCase().includes(q)
-        || String(r.company || '').toUpperCase().includes(q))
-      .sort((a: any, b: any) => String(b.filing_date).localeCompare(String(a.filing_date)))
-      .slice(0, 12);
-  }, [find, allRows]);
+  // ═══ SEARCH  (zzz812) ═══════════════════════════════════════════════════
+  // Order: the loaded window (exact ticker, then ticker prefix, then company
+  // words — lib/earnings-search.ts), with any match the filters hide flagged
+  // and showable; then the sessions already cached in this browser (the day
+  // cache keeps every graded day, up to 120); then an honest "not on file"
+  // with the existing single-ticker grade as the one action.
+  const findHiddenReasons = useCallback((r: any): string[] => {
+    const out: string[] = [];
+    if (minCap != null && (r.market_cap_musd == null || r.market_cap_musd < minCap)) out.push(`min cap ${fmtUsd(minCap)}`);
+    if (capBucket !== 'all') {
+      const b = r.market_cap_bucket;
+      const ok = capBucket === 'smid' ? (b === 'small' || b === 'mid') : b === capBucket;
+      if (!ok) out.push(`cap filter: ${capBucket}`);
+    }
+    if (quality.elite && !r.is_elite) out.push('ELITE only');
+    if (quality.rule40 && !(r.rule40?.passes === true)) out.push('Rule of 40');
+    if (quality.roce20 && !(num(r.roce?.pct) != null && r.roce.pct >= 20)) out.push('ROCE ≥ 20');
+    if (quality.turnaround && r.quadrant !== 'TURNAROUND ACCELERATOR') out.push('turnaround quadrant');
+    if (quality.compounder && r.quadrant !== 'COMPOUNDER') out.push('compounder quadrant');
+    if (quality.pead70 && (r.pead_score ?? 0) < 70) out.push('PEAD ≥ 70');
+    if (quality.multibagger && !r.multibagger_setup) out.push('multibagger setup');
+    if (quality.beatCheap && ((r.sales_yoy_pct ?? -1) < 15 || r.pe == null || r.pe <= 0 || r.pe > 30)) out.push('Beat + Cheap');
+    if (patternOnly && classifyGradedRow(r)?.pattern !== patternOnly) out.push(`pattern ${patternOnly}`);
+    if (!out.length && r.tier && !expanded[r.tier]) out.push(`tier ${r.tier} collapsed`);
+    return out;
+  }, [minCap, capBucket, quality, patternOnly, expanded]);
+
+  const [findOutcome, setFindOutcome] = useState<SearchOutcome<UsGradedRow, any> | null>(null);
+  const [findBusy, setFindBusy] = useState(false);
+  const [findPin, setFindPin] = useState<{ key: string; id: string; nonce: number } | null>(null);
+  const findRowsRef = useRef(allRows);
+  findRowsRef.current = allRows;
+  const findRowsSig = useMemo(() => allRows.map((r: any) => `${r.ticker}:${r.filing_date}:${r.tier}`).join(','), [allRows]);
+  const findHistMemo = useRef<Map<string, { at: number; v: any }>>(new Map());
+  useEffect(() => {
+    const text = findQ.trim();
+    if (!text) { setFindOutcome(null); setFindBusy(false); return; }
+    let alive = true;
+    setFindBusy(true);
+    resolveSearch<UsGradedRow, any>({
+      q: text,
+      windowRows: findRowsRef.current,
+      hiddenReasons: findHiddenReasons,
+      lookbackDays: days,
+      fetchHistory: async (pq) => {
+        const mk = pq.ticker + '|' + pq.words.join(' ');
+        const m = findHistMemo.current.get(mk);
+        if (m && Date.now() - m.at < 60_000) return m.v;
+        const got = await searchCachedDays((r: any) => scoreRow(pq, r) > 0);
+        const lookbackDays = got.oldest
+          ? Math.max(days, Math.round((Date.parse(today) - Date.parse(got.oldest)) / 86_400_000) + 1)
+          : days;
+        const v = {
+          rows: got.rows.map((r: any) => ({ ...r, filing_date: r.filing_date || r.session_day })),
+          lookbackDays,
+          reason: got.days === 0 ? 'no graded US sessions are cached in this browser yet' : null,
+        };
+        findHistMemo.current.set(mk, { at: Date.now(), v });
+        return v;
+      },
+    }).then((o) => { if (alive) setFindOutcome(o); })
+      .catch(() => {})
+      .finally(() => { if (alive) setFindBusy(false); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [findQ, findRowsSig, findHiddenReasons, days, today]);
+
+  // Scroll to a picked card once it has mounted — a date jump has to load
+  // first, so keep looking for ~12 s.
+  useEffect(() => {
+    if (!findPin) return;
+    let n = 0;
+    let timer: ReturnType<typeof setTimeout>;
+    const go = () => {
+      const el = document.getElementById(findPin.id);
+      if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+      if (++n < 60) timer = setTimeout(go, 200);
+    };
+    timer = setTimeout(go, 120);
+    return () => clearTimeout(timer);
+  }, [findPin]);
+
+  const pinFindRow = (r: any) => {
+    setExpanded((e) => ({ ...e, [r.tier]: true }));
+    const k = rowKey(r);
+    setOpenCards((o: Set<string>) => new Set(o).add(k));
+    setFindPin({ key: k, id: `find-${r.ticker}-${r.filing_date}`, nonce: Date.now() });
+  };
+  const onPickFindWindow = (h: WindowHit<UsGradedRow>) => pinFindRow(h.row);
+  const onPickFindHistory = (h: RankedHit<any>) => {
+    const day = String(h.row.session_day || h.row.filing_date || '').slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(day)) setDate(day > today ? today : day);
+    setViewMode('GRADED');
+    pinFindRow(h.row);
+  };
 
   /** Grade one ticker off its own latest filing, for a name the window misses. */
   const gradeOnDemand = useCallback(async (tkr: string) => {
@@ -1043,74 +1132,41 @@ export default function UsEarningsOpportunitiesPage() {
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <input
               value={find} onChange={(e) => { setFind(e.target.value); setFindAdhoc(null); setFindErr(null); }}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !findHits.length && find.trim()) void gradeOnDemand(find); }}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter' || !find.trim()) return;
+                const o = findOutcome;
+                if (o?.kind === 'window' && o.hits[0]) onPickFindWindow(o.hits[0]);
+                else if (o?.kind === 'history' && o.hits[0]) onPickFindHistory(o.hits[0]);
+                else if (o?.kind === 'none') void gradeOnDemand(find);
+              }}
               placeholder="Find a company — ticker or name (searches the whole window, ignoring filters)"
+              aria-label="Find a company by ticker or name"
+              inputMode="search" autoCapitalize="characters" autoCorrect="off" spellCheck={false}
               style={{
-                flex: '1 1 340px', minWidth: 240, padding: '8px 11px', borderRadius: 'var(--mc-radius)',
+                flex: '1 1 340px', minWidth: 0, width: '100%', boxSizing: 'border-box', padding: '8px 11px', borderRadius: 'var(--mc-radius)',
                 border: '1px solid var(--mc-bg-4)', backgroundColor: 'var(--mc-bg-1)',
                 color: 'var(--mc-text-0)', fontSize: 'var(--mc-text-sm)',
               }} />
             {find && (
-              <button onClick={() => { setFind(''); setFindAdhoc(null); setFindErr(null); }}
+              <button onClick={() => { setFind(''); setFindAdhoc(null); setFindErr(null); setFindPin(null); }}
                 style={{ fontSize: 11, fontWeight: 800, padding: '7px 12px', borderRadius: 7, cursor: 'pointer', border: '1px solid var(--mc-bg-4)', background: 'transparent', color: 'var(--mc-text-2)' }}>clear</button>
             )}
           </div>
 
           {find.trim().length > 0 && (
-            <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: 'var(--mc-radius)', border: '1px solid var(--mc-bg-4)', backgroundColor: 'var(--mc-bg-1)' }}>
-              {findHits.length > 0 ? (
-                <>
-                  <div style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-3)', marginBottom: 7 }}>
-                    {findHits.length} match{findHits.length > 1 ? 'es' : ''} in this window. The tier is where the name actually sits —
-                    if your filters exclude that tier, the card is on the page but hidden by them.
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                    {findHits.map((r: any) => {
-                      const meta = (TIER_META as any)[r.tier] || {};
-                      return (
-                        <button key={`${r.ticker}:${r.filing_date}`}
-                          onClick={() => {
-                            // Open the tier section the match lives in before
-                            // scrolling: taking the reader to a card inside a
-                            // collapsed section is a broken promise.
-                            setExpanded((e) => ({ ...e, [r.tier]: true }));
-                            const k = rowKey(r);
-                            setOpenCards((o: Set<string>) => new Set(o).add(k));
-                            setTimeout(() => {
-                              document.getElementById(`find-${r.ticker}-${r.filing_date}`)
-                                ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            }, 120);
-                          }}
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', textAlign: 'left',
-                            padding: '6px 9px', borderRadius: 7, cursor: 'pointer',
-                            border: '1px solid var(--mc-bg-4)', background: 'var(--mc-bg-2)', color: 'var(--mc-text-1)',
-                            fontSize: 'var(--mc-text-xs)',
-                          }}>
-                          <b style={{ color: 'var(--mc-text-0)', fontSize: 13 }}>{r.ticker}</b>
-                          <span style={{ color: 'var(--mc-text-2)' }}>{r.company}</span>
-                          <span style={{ fontSize: 9.5, fontWeight: 900, color: meta.color || 'var(--mc-text-2)', border: `1px solid ${meta.color || 'var(--mc-bg-4)'}`, borderRadius: 5, padding: '1px 6px' }}>{r.tier}</span>
-                          <span style={{ color: 'var(--mc-text-4)' }}>{r.quarter} · filed {r.filing_date}</span>
-                          <span style={{ marginLeft: 'auto', fontFamily: 'ui-monospace,monospace', color: 'var(--mc-text-2)' }}>
-                            {r.market_cap_musd != null ? fmtUsd(r.market_cap_musd) : ''}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </>
-              ) : (
-                <div style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', lineHeight: 1.6 }}>
-                  <b style={{ color: 'var(--mc-text-0)' }}>{find.trim().toUpperCase()}</b> did not report inside this {days}-session window.
-                  It may have reported earlier, or its XBRL may not be posted yet.{' '}
-                  <button onClick={() => void gradeOnDemand(find)} disabled={findLoading}
-                    style={{ fontSize: 11, fontWeight: 800, padding: '5px 11px', borderRadius: 7, marginLeft: 4, cursor: findLoading ? 'wait' : 'pointer', border: '1px solid var(--mc-cyan)', background: 'transparent', color: 'var(--mc-cyan)' }}>
-                    {findLoading ? 'grading…' : `grade ${find.trim().toUpperCase()} from its latest filing`}
-                  </button>
-                  {findErr && <div style={{ marginTop: 7, color: 'var(--mc-caution,#F59E0B)' }}>{findErr}</div>}
-                </div>
-              )}
-            </div>
+            <SearchResultsPanel<UsGradedRow, any>
+              outcome={findOutcome}
+              loading={findBusy || findQ !== find}
+              windowLabel={`this ${days}-session window`}
+              onPickWindow={onPickFindWindow}
+              onPickHistory={onPickFindHistory}
+              gradeNow={{
+                label: `grade ${find.trim().toUpperCase()} from its latest filing`,
+                onClick: () => void gradeOnDemand(find),
+                busy: findLoading,
+                message: findErr,
+              }}
+            />
           )}
 
           {/* A name graded on demand is shown as a full card, right here. */}
@@ -1554,10 +1610,14 @@ export default function UsEarningsOpportunitiesPage() {
 
       {/* ── tier sections ── */}
       {viewMode === 'GRADED' && US_TIER_ORDER.map((tier) => {
-        const rows = view[tier];
+        // zzz812 — a searched-for card is shown even when the filters hide
+        // it, with a note naming the filters.
+        const pinned = findPin ? (data?.by_tier?.[tier] || []).find((r: any) => rowKey(r) === findPin.key) : undefined;
+        const pinnedReasons = pinned ? findHiddenReasons(pinned).filter((x) => !/collapsed/.test(x)) : [];
+        const rows = pinned && !view[tier].some((r) => rowKey(r) === findPin!.key) ? [pinned, ...view[tier]] : view[tier];
         if (!rows.length) return null;
         const meta = TIER_META[tier];
-        const open = expanded[tier];
+        const open = expanded[tier] || !!pinned;
         return (
           <div key={tier} style={{
             marginBottom: 18, borderRadius: 'var(--mc-radius)', overflow: 'hidden',
@@ -1591,7 +1651,13 @@ export default function UsEarningsOpportunitiesPage() {
                 {rows.map((r) => {
                   const k = rowKey(r);
                   return (
-                    <div key={`${r.ticker}:${r.filing_date}`} id={`find-${r.ticker}-${r.filing_date}`}>
+                    <div key={`${r.ticker}:${r.filing_date}`} id={`find-${r.ticker}-${r.filing_date}`} style={{ minWidth: 0 }}>
+                      {pinned && k === findPin?.key && pinnedReasons.length > 0 && (
+                        <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--mc-warn, #F59E0B)', marginBottom: 4 }}>
+                          🔍 {r.ticker} {hiddenNote(pinnedReasons)} ·{' '}
+                          <button onClick={() => setFindPin(null)} style={{ background: 'none', border: 'none', padding: 0, color: 'var(--mc-cyan)', cursor: 'pointer', fontSize: 10.5, fontWeight: 800 }}>hide</button>
+                        </div>
+                      )}
                       <UsEarningsCard r={r}
                         open={openCards.has(k)} onToggle={() => toggleCard(k)} panelId={panelId(k)} />
                     </div>

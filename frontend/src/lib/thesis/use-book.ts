@@ -27,7 +27,10 @@ import {
   originCounts, type BookOrigin,
 } from './universe';
 import { readConvictionBeats } from '@/lib/conviction-beats';
-import { buildIndiaBench, presetLabelIndia, cbTicker, IN_CB_SOURCE, type PresetLabel, type IndiaCbInfo } from './pc-bench';
+import { selectIndiaCb, cbTicker, IN_CB_SOURCE, type PresetLabel, type CbCriteriaInfo } from './pc-bench';
+import {
+  serverBenchToCbEntries, mergeCbEntries, cbFiltersForOwner, readCbPresetOptOut, passesConvictionFilter, cbFailReasons,
+} from '@/lib/conviction-filter-india';
 import { classifyOrNearest, classifyWithFiling, type AbfgResult, manualPattern, type AbfgPattern } from '@/lib/earnings/pattern-abfg';
 import { extractVariables } from './variables';
 import { buildComparisons, historyDepth, type MetricComparison } from './comparison';
@@ -194,18 +197,20 @@ async function postStatus(row: BookRow): Promise<void> {
 }
 
 /**
- * zzz811 — India Conviction Beats, as the Conviction Beats pages know it:
- * the SERVER list (/api/v1/bench?view=tickers — names only, no grade cards;
- * works on a fresh phone) plus this browser's list.
+ * zzz811 — India Conviction Beats, as the Conviction Beats tab reads it:
+ * the SERVER bench (/api/v1/bench, full cards; works on a fresh phone) plus
+ * this browser's list, merged the tab's way (mergeCbEntries).
  * A failed server read is reported, never returned as an empty list.
  */
-async function loadIndiaConvictionBench(): Promise<{ server: any[]; local: Array<{ ticker: string; company: string | null }>; removed: string[]; updatedAt: string | null; error: string | null }> {
+async function loadIndiaConvictionBench(): Promise<{ server: any[]; local: any[]; updatedAt: string | null; error: string | null }> {
+  // The FULL server bench (the Conviction Beats tab reads the same route in
+  // full — its criteria need the graded fields, not just the names).
   let server: any[] = [];
   let updatedAt: string | null = null;
   let error: string | null = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const r = await fetch('/api/v1/bench?view=tickers', { cache: 'no-store' });
+      const r = await fetch('/api/v1/bench', { cache: 'no-store' });
       const j = await readJson(r);
       if (!r.ok || j?.ok === false) throw new Error(j?.error || `HTTP ${r.status}`);
       server = Array.isArray(j?.entries) ? j.entries : [];
@@ -214,15 +219,12 @@ async function loadIndiaConvictionBench(): Promise<{ server: any[]; local: Array
       break;
     } catch (e: any) { error = humanError(e); }
   }
-  // The recycle bin is NOT subtracted: the Conviction Beats tab itself shows
-  // every server-confirmed name regardless of the bin (zzz426), and the bin
-  // also holds automatic demotions the owner never chose. Same list here.
-  let local: Array<{ ticker: string; company: string | null }> = [];
+  let local: any[] = [];
   try {
     const m = await import('@/lib/conviction-beats');
-    local = m.getConvictionList().map((e: any) => ({ ticker: String(e?.ticker || ''), company: e?.company || null })).filter((e) => !!e.ticker);
+    local = m.getConvictionList();
   } catch { /* no list in this browser (an installed app starts empty) */ }
-  return { server, local, removed: [], updatedAt, error };
+  return { server, local, updatedAt, error };
 }
 
 /** zzz774: thesis types the owner set by hand, keyed by symbol. Loaded from
@@ -325,7 +327,6 @@ function assess(row0: BookRow): BookRow {
   const rowP: BookRow = pattern === row.pattern ? row : { ...row, pattern };
   return {
     ...rowP,
-    preset: row.market === 'US' ? null : presetLabelIndia(row.graded),
     comparisons,
     assessment: withThesisSet(rowP, a0),
     capex,
@@ -343,11 +344,13 @@ export interface UniverseNote {
   /** Held AND benched. Counted inside both figures above, never double-added
    *  to the total. */
   both: number;
-  /** zzz811: the India Conviction Beats list behind the bench — where it
-   *  came from and how it adds up. Null until loaded (or on Exit Radar). */
-  cb: IndiaCbInfo | null;
-  /** Conviction Beats names the owner holds (shown once, as book). */
+  /** zzz811: the India Conviction Beats list behind the bench, selected by
+   *  the owner's own Conviction Beats criteria. Null until loaded (or on Exit Radar). */
+  cb: CbCriteriaInfo | null;
+  /** Conviction Beats names passing his criteria that he holds (shown once, as book). */
   heldOnCb: number;
+  /** Tickers passing his criteria (what the Conviction Beats page lists). */
+  cbPassing: string[];
   /** Non-null when the server book could not be read. */
   serverError: string | null;
 }
@@ -390,7 +393,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
     at: string | null;
   }>({ state: 'idle', days: 10, plan: null, error: null, feedNote: null, feed: null, usSkipped: 0, at: null });
   const [note, setNote] = useState<UniverseNote>({
-    book: 0, bench: 0, both: 0, cb: null, heldOnCb: 0, serverError: null,
+    book: 0, bench: 0, both: 0, cb: null, heldOnCb: 0, cbPassing: [], serverError: null,
   });
   const rowsRef = useRef<Record<string, BookRow>>({});
   const stopRef = useRef(false);
@@ -487,30 +490,45 @@ export function useBook(opts?: { includeBench?: boolean }) {
       // No preset gate: every name joins; the preset is a label on its card.
       let candidates: string[] = [];
       let heldOnCb = 0;
-      let cbInfo: IndiaCbInfo | null = null;
-      let cbCompanies: Record<string, string | null> = {};
+      let cbInfo: CbCriteriaInfo | null = null;
+      let cbPassing: string[] = [];
       if (includeBench) {
+        // ── THE CONVICTION BEATS TAB'S OWN LIST, UNDER HIS OWN CRITERIA.
+        // Same merge (this browser's list + the server bench), same filters
+        // (the preset, or none when he switched it off there), same function.
         const cb = await loadIndiaConvictionBench();
         if (cancelled) return;
-        const built = buildIndiaBench({
-          held, server: cb.server, local: cb.local, removed: cb.removed,
-          synced: server.benched, updatedAt: cb.updatedAt, serverError: cb.error,
+        const optedOut = readCbPresetOptOut();
+        const filters = cbFiltersForOwner(optedOut);
+        const list = mergeCbEntries(cb.local as any, serverBenchToCbEntries(cb.server));
+        const sel = selectIndiaCb({
+          held, list, criteriaOff: optedOut,
+          passes: (e: any) => passesConvictionFilter(e, filters),
+          reasons: (e: any) => cbFailReasons(e, filters),
         });
-        candidates = built.bench;
-        heldOnCb = built.heldOnCb.length;
-        cbInfo = built.info;
-        cbCompanies = built.companies;
+        // Every name joins the universe (evidence loads for all, batched);
+        // the page shows the failing ones only when he asks.
+        candidates = [...sel.bench, ...sel.benchFailing];
+        heldOnCb = sel.heldPassing.length;
+        cbPassing = sel.passing;
+        cbInfo = {
+          market: 'IN', listTotal: sel.listTotal, passing: sel.passing.length, failing: sel.failing.length, heldPassing: sel.heldPassing.length,
+          criteria: optedOut ? 'your quality preset is switched OFF on Conviction Beats — every name is listed' : 'your quality preset, as the Conviction Beats tab applies it',
+          source: `this browser's list ${cb.local.length} + server bench ${cb.server.length}${cb.updatedAt ? ` (updated ${String(cb.updatedAt).slice(0, 10)})` : ''}${cb.error ? ` — server not read: ${cb.error}` : ''}`,
+          error: cb.error,
+        };
         universe = mergeUniverse(held, candidates);
         paint(universe);
         setRows((cur) => {
           const out = { ...cur };
-          for (const s of candidates) if (out[s]) out[s] = { ...out[s], benchSource: IN_CB_SOURCE };
+          for (const s of candidates) if (out[s]) out[s] = { ...out[s], benchSource: IN_CB_SOURCE, preset: sel.labels[s] || null };
+          for (const s of sel.heldPassing) if (out[s]) out[s] = { ...out[s], preset: sel.labels[s] || null };
           return out;
         });
       }
 
       setNote((n) => ({
-        ...n, ...originCounts(universe.values()), serverError: server.error, cb: cbInfo, heldOnCb,
+        ...n, ...originCounts(universe.values()), serverError: server.error, cb: cbInfo, heldOnCb, cbPassing,
       }));
 
       // ── STAGE 3 — graded rows for everything, and the preset gate.

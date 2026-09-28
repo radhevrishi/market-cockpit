@@ -41,7 +41,7 @@ import { priorBackfillPlan } from '@/lib/thesis/prior-period';
 import { evidenceCounts, universeCounts, researchPriorityEligible, researchPriorityTitle, researchWhyLine, exportCounts, evidenceAttention, RESEARCH_EXPORT_STATUSES } from '@/lib/thesis/evidence-counts';
 import NewCatalystsTab from '@/components/catalyst/new-catalysts-tab';
 import { buildRecentCatalysts, rawFromLedger, rawFromPersistent, rawFromFeed, localToday, type RawEvent } from '@/lib/catalyst/recent-events';
-import { benchPresetCounts, indiaBenchLine, nextWindow, PC_PAGE_STEP, readScope, otherBenchLabel } from '@/lib/thesis/pc-bench';
+import { cbCriteriaLine, nextWindow, PC_PAGE_STEP, readScope, otherBenchLabel } from '@/lib/thesis/pc-bench';
 
 const C = {
   bg: 'var(--mc-bg-1)', border: 'var(--mc-bg-4)', text: 'var(--tc-text, #F1F5F9)',
@@ -71,22 +71,29 @@ export default function PortfolioCatalystsPage() {
   // are always stated separately — a holding and a candidate are different
   // objects and the header never adds them into a single "holdings" figure
   // the way this page used to.
-  // zzz811: + 'benchPass' — the bench names that pass the quality preset.
-  // The preset is a filter you choose, never a silent removal.
-  const [source, setSource] = useState<'all' | 'book' | 'bench' | 'benchPass'>('all');
+  const [source, setSource] = useState<'all' | 'book' | 'bench'>('all');
+  // zzz811: the bench is the Conviction Beats list under HIS Conviction Beats
+  // criteria. Names failing them are off by default and one chip away.
+  const [showFailing, setShowFailing] = useState(false);
   // zzz811: progressive rendering — 300+ bench cards never render at once.
   const [shownN, setShownN] = useState(PC_PAGE_STEP);
   const moreRef = useRef<HTMLDivElement | null>(null);
-  // The preset has a market-cap floor and no ceiling, so it admits TITAN and
-  // HINDALCO. This is on by default and the count it hides is printed beside
-  // it — a size filter is allowed to be opinionated, not allowed to be quiet.
-  // A HOLDING IS NEVER HIDDEN BY IT.
-  const [smallMidOnly, setSmallMidOnly] = useState(true);
+  // A size filter you can switch on; the count it hides is printed beside it.
+  // zzz811: OFF by default, so the bench equals the Conviction Beats page
+  // (which opens on all sizes). A HOLDING IS NEVER HIDDEN BY IT.
+  const [smallMidOnly, setSmallMidOnly] = useState(false);
   const [showAllTop, setShowAllTop] = useState(false);
   // zzz808: the catalyst board, or "New · last 10 days".
   const [view, setView] = useState<'board' | 'new'>('board');
 
-  const all = useMemo(() => Object.values(rows), [rows]);
+  const all0 = useMemo(() => Object.values(rows), [rows]);
+  // zzz811: bench names failing his Conviction Beats criteria are hidden
+  // unless he asks — every count below is over what is in view.
+  const failingBench = useMemo(() => all0.filter((r) => r.origin === 'bench' && r.preset?.state === 'fail'), [all0]);
+  const all = useMemo(() => (showFailing ? all0 : all0.filter((r) => !(r.origin === 'bench' && r.preset?.state === 'fail'))), [all0, showFailing]);
+  // Names passing his criteria that are on this page (book + bench, before
+  // the size filter) — must equal the Conviction Beats page's count.
+  const cbOnPage = useMemo(() => { const p = new Set(note.cbPassing || []); return all0.filter((r) => p.has(r.symbol)).length; }, [all0, note.cbPassing]);
 
   const sized = useMemo(() => all.filter((r) =>
     // Held names bypass the size filter entirely.
@@ -95,14 +102,11 @@ export default function PortfolioCatalystsPage() {
 
   // zzz811: a held name is shown ONCE, in My book; "Bench" is the names you
   // do not hold, so All = My book + Bench exactly.
-  const inView = (r: { origin: string; preset?: { state?: string } | null }) =>
+  const inView = (r: { origin: string }) =>
     source === 'all' ? true
       : source === 'book' ? (r.origin === 'book' || r.origin === 'both')
-      : source === 'bench' ? r.origin === 'bench'
-      : r.origin === 'bench' && r.preset?.state === 'pass';
+      : r.origin === 'bench';
   const inSource = useMemo(() => sized.filter(inView), [sized, source]);
-  const presetAll = useMemo(() => benchPresetCounts(all), [all]);
-  const presetShown = useMemo(() => benchPresetCounts(sized), [sized]);
 
   // zzz784: one set of header numbers from the same arrays; a row without an
   // assessment is "not yet assessed", never counted into NO MATERIAL CHANGE.
@@ -132,7 +136,7 @@ export default function PortfolioCatalystsPage() {
 
   // zzz811: the card window resets when the view changes and grows as you
   // scroll (or click "show more") — the page never mounts 300 cards at once.
-  useEffect(() => { setShownN(PC_PAGE_STEP); }, [source, filter, onlyRead, smallMidOnly]);
+  useEffect(() => { setShownN(PC_PAGE_STEP); }, [source, filter, onlyRead, smallMidOnly, showFailing]);
   useEffect(() => {
     const el = moreRef.current;
     if (!el || typeof IntersectionObserver === 'undefined') return;
@@ -178,7 +182,7 @@ export default function PortfolioCatalystsPage() {
   // zzz790: ONE definition of "needs attention" for the header and the button
   // (unread = no persisted period; requires update = newer / stale / failed).
   const attention = evidenceAttention(inSource as any);
-  // zzz811: bulk reads cover the book + preset-passing bench by default; the
+  // zzz811: bulk reads cover the book + bench meeting your Conviction Beats criteria by default; the
   // rest of the bench is its own manual button (see readScope).
   const scope = readScope(list);
   const attentionInList = evidenceAttention(scope.primary as any);
@@ -250,7 +254,7 @@ export default function PortfolioCatalystsPage() {
         {note.serverError
           ? <>Your book could not be read — the server answered: <i>{note.serverError}</i>. This is not the same as an
             empty book, and nothing has been assessed. Reload once the connection is back.</>
-          : <>Your book is empty and the India Conviction Beats list is empty{note.cb?.serverError ? <> (the server list could not be read: <i>{note.cb.serverError}</i>)</> : null}, so there is nothing to watch. Add holdings on the
+          : <>Your book is empty and the India Conviction Beats list is empty{note.cb?.error ? <> (the server list could not be read: <i>{note.cb.error}</i>)</> : null}, so there is nothing to watch. Add holdings on the
             Portfolio page and each one will appear here with its thesis, the variables that thesis rests on, and the
             conditions that would end it.</>}
       </div>
@@ -266,9 +270,10 @@ export default function PortfolioCatalystsPage() {
           and each quarter&apos;s evidence is checked against them. Capex is tracked as a chain to whether it actually
           earned, not as an announcement. <b style={{ color: C.text }}>A price move is never an exit reason</b>, and no
           price is read anywhere in this engine. Your <b style={{ color: C.text }}>book</b> is watched in full,
-          whatever it grades at; <b style={{ color: C.text }}>every India Conviction Beats name</b> joins it on the
-          bench. Your quality preset is a label on each bench card and a filter you can choose — it never hides a
-          name. A bench name is a candidate, not a holding, and every card says which it is.
+          whatever it grades at; the <b style={{ color: C.text }}>bench</b> is your India Conviction Beats list
+          selected by <b style={{ color: C.text }}>your Conviction Beats criteria</b> — the same list the Conviction
+          Beats page shows. Names that miss those criteria are one chip away, each labelled with what it misses.
+          A bench name is a candidate, not a holding, and every card says which it is.
         </div>
       </div>
 
@@ -295,10 +300,9 @@ export default function PortfolioCatalystsPage() {
         {([
           // zzz784: the chips count the same rows the reconciliation line sums
           // (after the size filter), so "All" = book + bench on screen.
-          ['all', `All ${uc.shown}`, 'Everything below: your book, plus every India Conviction Beats name you do not hold (after the size filter).'],
+          ['all', `All ${uc.shown}`, 'Everything below: your book, plus the India Conviction Beats names you do not hold that pass your Conviction Beats criteria (after the size filter).'],
           ['book', `\uD83D\uDCD7 My book ${uc.book}`, 'Only what you own. Nothing is filtered out of this list — a holding is watched whatever it grades at.'],
-          ['bench', `\uD83C\uDFC6 Bench ${uc.bench}`, 'Every India Conviction Beats name you do not hold (after the size filter), whether or not it passes the quality preset. You do not own these.'],
-          ['benchPass', `\u2705 Bench passing preset ${presetShown.pass}`, 'Bench names whose graded row passes your quality preset (the same rule the alerts use). Names not checked yet are not counted as failing.'],
+          ['bench', `\uD83C\uDFC6 Bench ${uc.bench}`, 'India Conviction Beats names you do not hold, selected by your Conviction Beats criteria — the same list as the Conviction Beats page. You do not own these.'],
         ] as Array<[typeof source, string, string]>).map(([k, label, hint]) => {
           const on = source === k;
           return (
@@ -322,16 +326,19 @@ export default function PortfolioCatalystsPage() {
           )}
         </button>
 
-        {presetShown.bench > 0 && (
-          <span data-testid="bench-preset-split" style={{ fontSize: 13, color: C.faint }}
-            title="The preset is the same one the alerts use (lib/quality-preset), applied to the same graded row the thesis engine reads. It labels bench names; it never hides them.">
-            Bench {presetShown.bench} = {presetShown.pass} pass the preset + {presetShown.fail} do not + {presetShown.unknown} not checked yet (no graded row — not a fail)
-          </span>
+        {(failingBench.length > 0 || showFailing) && (
+          <button data-testid="show-failing-chip" onClick={() => setShowFailing((v) => !v)}
+            title="Conviction Beats names you do not hold that miss your Conviction Beats criteria. Off by default; each card says which criteria it misses."
+            style={{
+              fontSize: 13.5, fontWeight: 800, padding: '5px 12px', borderRadius: 999, cursor: 'pointer',
+              border: `1px solid ${showFailing ? C.amber : C.border}`, color: showFailing ? C.amber : C.dim,
+              background: showFailing ? 'color-mix(in srgb, var(--mc-verdict-warn) 14%, transparent)' : C.bg,
+            }}>{showFailing ? '\u2713 ' : ''}Also show names failing your criteria ({failingBench.length})</button>
         )}
       </div>
       {!loading && (
-        <div data-testid="cb-bench-line" style={{ fontSize: 13, color: C.dim, lineHeight: 1.5 }}>
-          <b style={{ color: C.text }}>{indiaBenchLine(note.cb, note.heldOnCb, presetAll.bench, presetShown, hiddenByCap)}</b>
+        <div data-testid="cb-bench-line" style={{ fontSize: 13, color: note.cb && cbOnPage !== note.cb.passing ? C.amber : C.dim, lineHeight: 1.5 }}>
+          <b style={{ color: note.cb && cbOnPage !== note.cb.passing ? C.amber : C.text }}>{cbCriteriaLine(note.cb, cbOnPage, showFailing)}</b>
         </div>
       )}
 
@@ -341,7 +348,7 @@ export default function PortfolioCatalystsPage() {
           title="total − large caps hidden = shown = book + bench; status buckets + not yet assessed = shown; exportable + excluded = evaluated">
           <b style={{ color: C.text }}>{uc.line}</b>
           {' '}· status buckets {ORDER.filter((s) => uc.byStatus[s]).map((s) => uc.byStatus[s]).join(' + ') || 0}{uc.notAssessed ? ` + ${uc.notAssessed} not yet assessed` : ''} = {uc.statusSum + uc.notAssessed} shown
-          {source !== 'all' && <span style={{ color: C.faint }}> · view {source === 'book' ? 'my book' : source === 'bench' ? 'bench' : 'bench passing preset'}: {ucView.shown} shown, buckets {ucView.statusSum}{ucView.notAssessed ? ` + ${ucView.notAssessed} not yet assessed` : ''}</span>}
+          {source !== 'all' && <span style={{ color: C.faint }}> · view {source === 'book' ? 'my book' : 'bench'}: {ucView.shown} shown, buckets {ucView.statusSum}{ucView.notAssessed ? ` + ${ucView.notAssessed} not yet assessed` : ''}</span>}
         </div>
       )}
       {/* Until the stored evidence is in, every card reads "incomplete" and
@@ -517,14 +524,14 @@ export default function PortfolioCatalystsPage() {
         {evidenceLoading ? null : !batch.running ? (
           <>
           <button onClick={() => readAll(primarySyms)}
-            title="Your book plus the bench names that pass the quality preset. Reads and PERSISTS the evidence behind each name that needs it — never read, failed, or with newer documents at a source. Names whose evidence is current are skipped without a model call. Three at a time; resumable after a reload."
+            title="Your book plus the bench names meeting your Conviction Beats criteria. Reads and PERSISTS the evidence behind each name that needs it — never read, failed, or with newer documents at a source. Names whose evidence is current are skipped without a model call. Three at a time; resumable after a reload."
             style={{
               fontSize: 13.5, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
               border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan,
-            }}>&#10024; {attentionInList.total ? `Read evidence for ${attentionInList.total} that need it (${attentionInList.unread.length} unread, ${attentionInList.update.length} update) — book + bench passing preset` : 'All evidence current (book + bench passing preset)'}</button>
+            }}>&#10024; {attentionInList.total ? `Read evidence for ${attentionInList.total} that need it (${attentionInList.unread.length} unread, ${attentionInList.update.length} update) — book + bench meeting your criteria` : 'All evidence current (book + bench meeting your criteria)'}</button>
           {attentionOther.total > 0 && (
             <button data-testid="read-other-bench" onClick={() => readAll(otherSyms)}
-              title="The bench names that do not pass the preset or are not checked yet. Manual only — never started automatically. Three at a time; Stop works."
+              title="Bench names that miss your Conviction Beats criteria (shown with the chip). Manual only — never started automatically. Three at a time; Stop works."
               style={{
                 fontSize: 13.5, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
                 border: `1px solid ${C.border}`, background: 'transparent', color: C.dim,
@@ -654,7 +661,7 @@ export default function PortfolioCatalystsPage() {
         <div style={{ fontSize: 14, color: C.dim, background: C.bg, border: `1px solid ${C.cyan}`, borderRadius: 8, padding: '9px 13px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <b style={{ color: C.text }}>Last batch: {batch.done} updated · {batch.resumable} remaining{batch.failed ? ` · ${batch.failed} failed` : ''}</b>
           <span>— persisted; nothing here was lost on reload.</span>
-          <button onClick={() => readAll(primarySyms)} title="Resumes over your book + the bench names that pass the preset." style={{
+          <button onClick={() => readAll(primarySyms)} title="Resumes over your book + the bench names meeting your criteria." style={{
             fontSize: 13.5, fontWeight: 800, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
             border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan,
           }}>Resume</button>
@@ -681,7 +688,7 @@ export default function PortfolioCatalystsPage() {
               {primaryUnread > 0 && <button onClick={() => readAll(primarySyms)} style={{
                 fontSize: 14, fontWeight: 800, padding: '5px 13px', borderRadius: 999, cursor: 'pointer',
                 border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan,
-              }}>&#10024; Read the {primaryUnread} remaining (book + bench passing preset)</button>}
+              }}>&#10024; Read the {primaryUnread} remaining (book + bench meeting your criteria)</button>}
               {attentionOther.unread.length > 0 && <button onClick={() => readAll(otherSyms)} style={{
                 fontSize: 14, fontWeight: 700, padding: '5px 13px', borderRadius: 999, cursor: 'pointer', marginLeft: 8,
                 border: `1px solid ${C.border}`, background: 'transparent', color: C.dim,
@@ -720,10 +727,10 @@ export default function PortfolioCatalystsPage() {
         <div key={r.symbol} id={`pc-${r.symbol}`} style={{ scrollMarginTop: 70 }}>
         {r.origin === 'bench' && (
           <div data-testid="bench-preset-label" style={{ fontSize: 12.5, color: C.faint, padding: '2px 4px', lineHeight: 1.5 }}>
-            <b style={{ color: C.text }}>{r.symbol}</b> · 🏆 bench · on {r.benchSource || 'Conviction Beats (India)'} · not held
+            <b style={{ color: C.text }}>{r.symbol}</b> · 🏆 bench · from {r.benchSource || 'Conviction Beats (India)'} · not held
             {' · '}
             <span style={{ fontWeight: 800, color: r.preset?.state === 'pass' ? C.green : r.preset?.state === 'fail' ? C.amber : C.dim }}>
-              {r.preset?.state === 'pass' ? '✅ ' : r.preset?.state === 'fail' ? '✖ ' : '◌ '}{r.preset?.text || 'preset not checked yet'}
+              {r.preset?.state === 'pass' ? '✅ ' : r.preset?.state === 'fail' ? '✖ ' : '◌ '}{r.preset?.text || 'Conviction Beats criteria not checked yet'}
             </span>
             {r.pattern?.fit === 'nearest' && !thesisTypes[r.symbol.toUpperCase()] ? <> · thesis type is provisional (nearest fit)</> : null}
           </div>
