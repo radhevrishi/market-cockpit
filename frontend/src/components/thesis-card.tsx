@@ -744,10 +744,10 @@ export function ThesisCard(p: ThesisCardProps) {
                     fontSize: 12.5, fontWeight: 700, padding: '2px 8px', borderRadius: 999, border: `1px solid ${C.border}`, background: 'transparent', color: C.dim, cursor: 'pointer',
                   }}>↻ Check for new evidence</button>
                 )}
-                {p.onRead && (pr || !p.needsRead) && (p.aiRead ? p.aiRead.needsAi : !!pr && isQuickReadPeriod(pr)) && fr?.state !== 'NEW_EVIDENCE_AVAILABLE' && (
-                  <button data-testid="read-with-ai" onClick={p.onRead} title="Read this quarter's documents with AI (one model call, on click). Its facts supersede the ones read without AI; nothing is lost — the deterministic facts are kept in history. An incomplete read is read again." style={{
+                {p.onRead && (pr || !p.needsRead) && (p.aiRead ? (p.aiRead.needsAi || (a?.coverage?.missingCore?.length || 0) > 0) : !!pr && isQuickReadPeriod(pr)) && fr?.state !== 'NEW_EVIDENCE_AVAILABLE' && (
+                  <button data-testid="read-with-ai" onClick={p.aiRead && !p.aiRead.needsAi && p.onReread ? p.onReread : p.onRead} title="Read this quarter's documents with AI (one model call, on click). Its facts supersede the ones read without AI; nothing is lost — the deterministic facts are kept in history. An incomplete read is read again." style={{
                     fontSize: 12.5, fontWeight: 800, padding: '2px 8px', borderRadius: 999, border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan, cursor: 'pointer',
-                  }}>✨ Read evidence with AI</button>
+                  }}>{p.aiRead && !p.aiRead.needsAi && (a?.coverage?.missingCore?.length || 0) > 0 ? `✨ Fill ${a!.coverage.missingCore.length} missing detail${a!.coverage.missingCore.length === 1 ? '' : 's'} with AI` : '✨ Read evidence with AI'}</button>
                 )}
                 {p.onRead && pr && fr?.state === 'NEW_EVIDENCE_AVAILABLE' && (
                   <button onClick={p.onRead} title="Read the newer documents, add the new period to the ledger, keep the old one." style={{

@@ -167,8 +167,8 @@ export default function UsPortfolioCatalystsPage() {
   // zzz830: who has no AI read yet (never read / incomplete / read by rules only).
   const aiPlan = useMemo(() => aiReadPlan(list as any), [list]);
   const aiPage = useMemo(() => aiReadPlan(inSource as any), [inSource]);
-  const [aiPick, setAiPick] = useState<'all' | 'incomplete' | 'withoutAi'>('all');
-  const aiSyms = aiPick === 'incomplete' ? aiPlan.incomplete : aiPick === 'withoutAi' ? aiPlan.withoutAi : aiPlan.all;
+  const [aiPick, setAiPick] = useState<'all' | 'incomplete' | 'withoutAi' | 'withGaps'>('all');
+  const aiSyms = aiPick === 'incomplete' ? aiPlan.incomplete : aiPick === 'withoutAi' ? aiPlan.withoutAi : aiPick === 'withGaps' ? aiPlan.withGaps : aiPlan.all;
   const needPrior = list.filter((r) => needsPrior(r));
   const anyRunning = batch.running || priorBatch.running || checkBatch.running;
   const excludedBook = excluded.filter((e) => e.origin !== 'bench').length;
@@ -378,7 +378,7 @@ export default function UsPortfolioCatalystsPage() {
           const m = STATUS_META[s];
           const on = filter === s;
           return (
-            <button key={s} onClick={() => setFilter(on ? null : s)} title={m.meaning} style={{ display: 'flex', alignItems: 'baseline', gap: 7, padding: '6px 12px', borderRadius: 8, cursor: 'pointer', border: `1px solid ${on ? m.color : C.border}`, background: on ? `${m.color}18` : C.bg }}>
+            <button key={s} data-testid={`pc-status-${s}`} onClick={() => { setFilter(on ? null : s); if (!on && typeof window !== 'undefined') setTimeout(() => document.getElementById('pc-cards-top')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60); }} title={`${m.meaning}${(ucView.byStatus[s] || 0) === 0 ? ' — none in this view' : ''}`} style={{ display: 'flex', alignItems: 'baseline', gap: 7, padding: '6px 12px', borderRadius: 8, cursor: 'pointer', border: `${on ? 2 : 1}px solid ${on ? m.color : C.border}`, background: on ? `${m.color}30` : C.bg, opacity: !on && !evidenceLoading && (ucView.byStatus[s] || 0) === 0 ? 0.55 : 1 }}>
               <span style={{ fontSize: 19, fontWeight: 900, color: `color-mix(in srgb, ${m.color} 65%, var(--tc-text, #F1F5F9))` }}>{evidenceLoading ? '…' : (ucView.byStatus[s] || 0)}</span>
               <span style={{ fontSize: 12.5, fontWeight: 800, color: C.dim }}>{m.dot} {m.label}</span>
             </button>
@@ -453,6 +453,7 @@ export default function UsPortfolioCatalystsPage() {
               <option value="all">everything that needs it ({aiPlan.total})</option>
               <option value="incomplete">{aiPlan.incompleteLabel}</option>
               <option value="withoutAi">{aiPlan.withoutAiLabel}</option>
+              <option value="withGaps">{aiPlan.withGapsLabel}</option>
             </select>
             <span style={{ fontSize: 12.5, color: C.faint }}>{aiPlan.breakdown}</span>
           </span>
@@ -523,6 +524,14 @@ export default function UsPortfolioCatalystsPage() {
 
       {loading && <div style={{ fontSize: 14, color: C.dim }}>Reading your US book…</div>}
 
+      <div id="pc-cards-top" data-testid="pc-cards-top" style={{ scrollMarginTop: 70 }} />
+      {filter && !loading && (
+        <div data-testid="pc-filter-bar" style={{ fontSize: 14, fontWeight: 800, color: C.text, border: `1px solid ${STATUS_META[filter].color}`, borderRadius: 8, padding: '8px 12px', display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span>Showing only {STATUS_META[filter].dot} {STATUS_META[filter].label}: {list.length} card{list.length === 1 ? '' : 's'} in this view</span>
+          {list.length === 0 && <span style={{ color: C.dim, fontWeight: 700 }}>None in “{source === 'all' ? 'All' : source}”. {source !== 'all' ? 'Try All.' : 'No name has this status.'}</span>}
+          <button onClick={() => setFilter(null)} style={pill(false)}>✕ Clear filter</button>
+        </div>
+      )}
       {visible.map((r0) => { const r = displayBySymbol.get(r0.symbol) || r0; return (
         <div key={r0.symbol} id={`uspc-${r0.symbol}`} data-testid="us-card-block" style={{ scrollMarginTop: 70, border: `1px solid ${C.border}`, borderRadius: 10, padding: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
           {/* zzz793: ONE block per company, top to bottom — the company's

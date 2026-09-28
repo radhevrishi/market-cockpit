@@ -373,6 +373,13 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
   // same merged count they use: server list + names only in this browser −
   // names removed here (mergeIndiaBench).
   const [convictionTitle, setConvictionTitle] = useState<string>('');
+  // zzz833: one number, two markets, both named — the US bench comes from the same server list the US pages use
+  const [usBenchCount, setUsBenchCount] = useState<number | null>(null);
+  useEffect(() => {
+    fetch('/api/v1/bench-us?view=tickers', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (j && Array.isArray(j.entries)) setUsBenchCount(new Set(j.entries.map((e: any) => String(e?.ticker || '').toUpperCase()).filter(Boolean)).size); })
+      .catch(() => { /* chip shows the India count and says the US list is not read */ });
+  }, []);
   useEffect(() => {
     if (typeof window === 'undefined') return;
     let server: Array<{ ticker: string; company: string | null; tier: string | null; filing_date: string | null }> | null = null;
@@ -835,7 +842,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
               {convictionCount > 0 && (
                 <Link
                   href="/earnings-opportunities"
-                  title={`Conviction Beats bench — ${convictionTitle || `${convictionCount} tickers`}. Open Earnings Opportunities to view the bench.`}
+                  title={`Conviction Beats bench — India ${convictionTitle || `${convictionCount} tickers`}${usBenchCount != null ? `; US ${usBenchCount} on the server list` : '; US list not read yet'}. Open Earnings Opportunities to view the India bench.`}
                   style={{
                     display: 'inline-flex', alignItems: 'center', gap: 5,
                     padding: '5px 10px', borderRadius: 8,
@@ -845,7 +852,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
                     letterSpacing: '0.4px', textDecoration: 'none',
                     fontVariantNumeric: 'tabular-nums',
                   }}
-                >🏆 CB {convictionCount}</Link>
+                >🏆 CB {convictionCount + (usBenchCount || 0)}<span style={{ fontWeight: 600, opacity: 0.85 }}> · India {convictionCount}{usBenchCount != null ? ` · US ${usBenchCount}` : ' · US …'}</span></Link>
               )}
 
               {/* PATCH 0074: theme cycler + PDF export — visible on every tab */}

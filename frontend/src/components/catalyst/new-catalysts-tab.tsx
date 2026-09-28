@@ -21,7 +21,7 @@ import {
   EVENT_TYPES, daysAgo, windowRange, dayLabel, inRange, rowAnchor, compareWithinDay, WINDOW_SPANS, normUrl,
   type RecentCatalystResult, type TypeFilter, type RecentEvent, type WindowSpan,
 } from '@/lib/catalyst/recent-events';
-import { IMPACTS, ledgerView, type Impact, type EvidenceQuality } from '@/lib/catalyst/event-card';
+import { IMPACTS, ledgerView, calculateCatalystCounts, type Impact, type EvidenceQuality } from '@/lib/catalyst/event-card';
 import { STATUS_META } from '@/lib/thesis/status';
 import type { ReadProgress } from './use-filing-reads';
 
@@ -34,6 +34,7 @@ const C = {
 
 const IMPACT_COLOR: Record<Impact, string> = { Supports: C.green, Neutral: C.dim, Weakens: C.red, Broken: C.alarm, 'Evidence incomplete': C.absent };
 const QUALITY_COLOR: Record<EvidenceQuality, string> = { Direct: C.green, Static: C.dim, Indirect: C.dim, Unproven: C.amber, Conflicting: C.amber };
+const CONN_COLOR: Record<string, string> = { Direct: C.green, Indirect: C.dim, 'No established connection': C.faint, 'Evidence incomplete': C.amber };
 const MAT_RANK: Record<string, number> = { Material: 0, Notable: 1, Minor: 2, Routine: 3 };
 const VERDICT_WORD: Record<string, string> = { improving: 'improving', deteriorating: 'getting worse', flat: 'no material change', stated: 'level only', unknown: 'not disclosed' };
 
@@ -115,7 +116,7 @@ function Chain({ e }: { e: RecentEvent }) {
       {ch.map((l, i) => (
         <span key={l.label}>
           {i > 0 && <span style={{ color: C.faint, fontWeight: 500 }}> → </span>}
-          <span style={{ color: l.ok ? C.green : C.faint }}>{l.label} {l.ok ? '✓' : '?'}</span>
+          <span style={{ color: l.ok ? C.green : l.contradicted ? C.red : C.faint }}>{l.label} {l.ok ? '✓' : l.contradicted ? '✗' : '?'}</span>
         </span>
       ))}
     </div>
@@ -165,18 +166,23 @@ function EventCardView({ e, holding, today, market, onJump, onLedger }: { e: Rec
       <div style={{ ...ROW, color: C.text, fontWeight: material ? 700 : 500 }} title={c.event}>
         {c.event}{e.read === 'pending' && <span style={{ color: C.cyan, fontWeight: 500 }}> · reading…</span>}
       </div>
-      {/* 3 · thesis — impact: why */}
-      <div style={ROW} title={`${c.impact}: ${c.why}`}>
+      {/* 3 · thesis · connection · impact — three separate facts; a variable is named only when the thesis registers it */}
+      <div style={ROW} title={`${c.connection} · ${c.impact}: ${c.why}`}>
         <K>THESIS</K>{c.thesisType
-          ? <><b style={{ color: C.text }}>{c.thesisType}</b>{c.thesisVariableLabel ? ` · ${c.thesisVariableLabel.toLowerCase()}${c.mapped ? '' : ' (not a thesis variable)'}` : ''}</>
+          ? <><b style={{ color: C.text }}>{c.thesisType}{c.thesisName ? ` · ${c.thesisName.toLowerCase()}` : ''}</b>{c.mapped && c.thesisVariableLabel ? ` · ${c.thesisVariableLabel.toLowerCase()}` : ''}</>
           : <span style={{ color: C.faint }}>not set</span>}
-        <span style={{ color: C.faint }}> — </span><K>IMPACT</K><b style={{ color: IMPACT_COLOR[c.impact] }}>{c.impact}</b>: {c.why}
+        <span style={{ color: C.faint }}> · </span><K>CONNECTION</K><b style={{ color: CONN_COLOR[c.connection] }}>{c.connection}</b>
+        {c.observed && !c.mapped && <span style={{ color: C.faint }}> (observed: {c.observed.toLowerCase()})</span>}
+        <span style={{ color: C.faint }}> · </span><K>IMPACT</K><b style={{ color: IMPACT_COLOR[c.impact] }}>{c.impact}</b>
       </div>
+      {c.whyMatters && <div style={{ ...ROW, whiteSpace: 'normal' }} title={c.whyMatters}><K>WHY THIS MATTERS</K><span style={{ color: C.text }}>{c.whyMatters}</span></div>}
+      <div style={{ ...ROW, whiteSpace: 'normal', color: C.faint }}><K>WHY IMPACT</K>{c.why}</div>
       {/* 4 · quality · delta (· evidence when it says more than the type) */}
       <div style={ROW} title={`${c.qualityWhy} · ${c.delta.text}${showEvidence ? ` · ${c.evidence}` : ''}`}>
         <K>QUALITY</K><b style={{ color: QUALITY_COLOR[c.quality] }}>{c.quality}</b>
         <span style={{ color: C.faint }}> · </span><K>DELTA</K><span style={{ color: c.delta.kind === 'change' ? C.text : C.faint, fontWeight: c.delta.kind === 'change' ? 800 : 500 }}>{c.delta.kind === 'change' ? c.delta.text.replace(/^CHANGE:\s*/, '') : c.delta.text.replace(/^LEVEL ONLY/, 'level only')}</span>
         {showEvidence && <><span style={{ color: C.faint }}> · </span><K>EVIDENCE</K>{c.evidence}</>}
+        <span style={{ color: C.faint }} title="filing on file · parsed · financial figure · mechanism evidence · thesis evidence"> · {[['filed', c.evidenceStatus.filed], ['parsed', c.evidenceStatus.parsed], ['financial', c.evidenceStatus.financial], ['mechanism', c.evidenceStatus.mechanism], ['thesis', c.evidenceStatus.thesis]].map(([k, v]) => `${k} ${v ? '✓' : '·'}`).join(' ')}</span>
       </div>
       {e.readNote && <div style={{ ...ROW, fontSize: 12, color: C.amber }} title={e.readNote}>{e.readNote}</div>}
       {/* zzz829: the other events and changes stated in the SAME filing — one filing, one card */}
@@ -369,8 +375,10 @@ export default function NewCatalystsTab({ result, loading, names, sourceNotes, m
   const notable = list.filter((e) => e.card!.materiality === 'Notable');
   const minor = list.filter((e) => e.card!.materiality === 'Minor');
   const attention = list.filter((e) => e.card!.attention);
-  const thesisEvidence = list.filter((e) => e.card!.quality === 'Direct' && e.card!.mapped);
-  const investigate = list.filter((e) => e.card!.attention || (e.card!.materiality === 'Material' && e.card!.quality === 'Unproven'));
+  const thesisEvidence = list.filter((e) => e.card!.evidenceStatus.thesis);
+  const investigate = list.filter((e) => e.card!.attention || (e.card!.materiality === 'Material' && (e.card!.quality === 'Unproven' || e.card!.impact === 'Evidence incomplete')));
+  const incompleteN = list.filter((e) => e.card!.impact === 'Evidence incomplete').length;
+  const cnt = calculateCatalystCounts({ names, filingsRead: rd.read, filingsTotal: rd.total, routine: routineWin.length, cards: inWin.map((e) => e.card!) });
   const highlights = list.filter((e) => e.card!.materiality !== 'Minor')
     .sort((a, b) => (a.card!.attention ? 0 : 1) - (b.card!.attention ? 0 : 1)
       || (/Supports|Weakens|Broken/.test(a.card!.impact) ? 0 : 1) - (/Supports|Weakens|Broken/.test(b.card!.impact) ? 0 : 1)
@@ -394,7 +402,7 @@ export default function NewCatalystsTab({ result, loading, names, sourceNotes, m
       <div>
         <div style={{ fontSize: 15, fontWeight: 900, color: C.text }}>Evidence-driven monitoring of thesis variables across the book</div>
         <div data-testid="nc-meta" style={{ fontSize: 12.5, color: C.faint, lineHeight: 1.45 }}>
-          <b style={{ color: C.dim }}>{names}</b> names · <b style={{ color: C.dim }}>{rd.read}</b> filings read · <b style={{ color: C.dim }}>{inWin.length}</b> events ({inWin.filter((e) => e.card!.materiality === 'Material').length} Material{routineWin.length ? `, ${routineWin.length} routine` : ''}) · {rangeWords}
+          <b style={{ color: C.dim }}>{cnt.line}</b> · {rangeWords}
           <span> · read by rule, no AI · a figure appears only when the filing states it</span>
         </div>
         {rd.total > 0 && (
@@ -477,8 +485,9 @@ export default function NewCatalystsTab({ result, loading, names, sourceNotes, m
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'baseline' }}>
             <span style={{ fontSize: 13, fontWeight: 900, letterSpacing: 0.6, color: C.text }}>WHAT CHANGED</span>
             <span style={{ fontSize: 13, color: C.dim }}><b style={{ color: C.text, fontSize: 15 }}>{material.length}</b> Material</span>
-            <span style={{ fontSize: 13, color: C.dim }} title="Events whose filing states a change, with its prior, in a variable the thesis rests on"><b style={{ color: C.text, fontSize: 15 }}>{thesisEvidence.length}</b> thesis evidence</span>
+            <span style={{ fontSize: 13, color: C.dim }} title="Events whose filing states a change, with its prior, in a variable the thesis rests on"><b style={{ color: C.text, fontSize: 15 }}>{thesisEvidence.length}</b> direct thesis evidence</span>
             <span style={{ fontSize: 13, color: C.dim }} title="Needs attention, or a Material filing whose evidence is unproven"><b style={{ color: investigate.length ? C.amber : C.text, fontSize: 15 }}>{investigate.length}</b> need investigation</span>
+            <span style={{ fontSize: 13, color: C.dim }} title="Impact could not be established: the filing could not be read, or the extraction was low-confidence"><b style={{ color: C.text, fontSize: 15 }}>{incompleteN}</b> evidence incomplete</span>
           </div>
           {highlights.length > 0 && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 6, marginTop: 6 }}>
@@ -523,7 +532,7 @@ export default function NewCatalystsTab({ result, loading, names, sourceNotes, m
                         <a href={`#${rowAnchor(e)}`} onClick={(ev) => { ev.preventDefault(); jumpTo(e); }} style={{ color: C.text, fontWeight: 900, textDecoration: 'none' }}>{e.ticker}</a>
                         <span style={{ color: C.faint }}> · {e.card!.eventType}</span>
                       </td>
-                      <td style={{ padding: '5px 8px', color: C.dim }}>{e.card!.thesisType}{e.card!.thesisVariableLabel ? ` · ${e.card!.thesisVariableLabel.toLowerCase()}` : ''}</td>
+                      <td style={{ padding: '5px 8px', color: C.dim }}>{e.card!.thesisType}{e.card!.mapped && e.card!.thesisVariableLabel ? ` · ${e.card!.thesisVariableLabel.toLowerCase()}` : ` · ${e.card!.connection.toLowerCase()}`}{e.card!.eventSubtype ? <span style={{ color: C.faint }}> ({e.card!.eventSubtype.toLowerCase()})</span> : null}</td>
                       <td style={{ padding: '5px 8px', color: C.text, fontWeight: 800, whiteSpace: 'nowrap' }}>{e.card!.gap}</td>
                       <td style={{ padding: '5px 8px', color: C.dim }}>{e.card!.next}</td>
                     </tr>

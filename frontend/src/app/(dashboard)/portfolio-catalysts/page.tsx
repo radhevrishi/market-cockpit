@@ -221,8 +221,8 @@ export default function PortfolioCatalystsPage() {
   // the bulk AI button reads the names in view, the page line counts the source.
   const aiPlan = useMemo(() => aiReadPlan(list as any), [list]);
   const aiPage = useMemo(() => aiReadPlan(inSource as any), [inSource]);
-  const [aiPick, setAiPick] = useState<'all' | 'incomplete' | 'withoutAi'>('all');
-  const aiSyms = aiPick === 'incomplete' ? aiPlan.incomplete : aiPick === 'withoutAi' ? aiPlan.withoutAi : aiPlan.all;
+  const [aiPick, setAiPick] = useState<'all' | 'incomplete' | 'withoutAi' | 'withGaps'>('all');
+  const aiSyms = aiPick === 'incomplete' ? aiPlan.incomplete : aiPick === 'withoutAi' ? aiPlan.withoutAi : aiPick === 'withGaps' ? aiPlan.withGaps : aiPlan.all;
   // EVIDENCE INCOMPLETE because a core financial has no grader row — and the
   // stored read predates the headline prompt (india-ai-summary-v9), so a
   // re-read can fill it. A v9 read that still shows ⊘ is a filing that does
@@ -437,11 +437,14 @@ export default function PortfolioCatalystsPage() {
           const m = STATUS_META[s];
           const on = filter === s;
           return (
-            <button key={s} onClick={() => setFilter(on ? null : s)} title={m.meaning}
+            <button key={s} data-testid={`pc-status-${s}`}
+              onClick={() => { setFilter(on ? null : s); if (!on && typeof window !== 'undefined') setTimeout(() => document.getElementById('pc-cards-top')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60); }}
+              title={`${m.meaning}${(counts[s] || 0) === 0 ? ' — none in this view' : ''}`}
               style={{
                 display: 'flex', alignItems: 'baseline', gap: 7, padding: '6px 12px', borderRadius: 8,
-                cursor: 'pointer', border: `1px solid ${on ? m.color : C.border}`,
-                background: on ? `${m.color}18` : C.bg,
+                cursor: 'pointer', border: `${on ? 2 : 1}px solid ${on ? m.color : C.border}`,
+                background: on ? `${m.color}30` : C.bg,
+                opacity: !on && !evidenceLoading && (counts[s] || 0) === 0 ? 0.55 : 1,
               }}>
               <span style={{ fontSize: 19, fontWeight: 900, color: `color-mix(in srgb, ${m.color} 65%, var(--tc-text, #F1F5F9))` }}>{evidenceLoading ? '…' : (counts[s] || 0)}</span>
               <span style={{ fontSize: 12.5, fontWeight: 800, color: on ? `color-mix(in srgb, ${m.color} 65%, var(--tc-text, #F1F5F9))` : C.dim }}>{m.dot} {m.label}</span>
@@ -638,6 +641,7 @@ export default function PortfolioCatalystsPage() {
               <option value="all">everything that needs it ({aiPlan.total})</option>
               <option value="incomplete">{aiPlan.incompleteLabel}</option>
               <option value="withoutAi">{aiPlan.withoutAiLabel}</option>
+              <option value="withGaps">{aiPlan.withGapsLabel}</option>
             </select>
             <span style={{ fontSize: 12.5, color: C.faint }}>{aiPlan.breakdown}</span>
           </span>
@@ -838,6 +842,14 @@ export default function PortfolioCatalystsPage() {
           </div>
         ) : null;
       })()}
+      <div id="pc-cards-top" data-testid="pc-cards-top" style={{ scrollMarginTop: 70 }} />
+      {filter && !loading && (
+        <div data-testid="pc-filter-bar" style={{ fontSize: 14, fontWeight: 800, color: C.text, border: `1px solid ${STATUS_META[filter].color}`, borderRadius: 8, padding: '8px 12px', display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span>Showing only {STATUS_META[filter].dot} {STATUS_META[filter].label}: {list.length} card{list.length === 1 ? '' : 's'} in this view</span>
+          {list.length === 0 && <span style={{ color: C.dim, fontWeight: 700 }}>None in “{source === 'all' ? 'All' : source}”. {source !== 'all' ? 'Try All.' : 'No name has this status.'}</span>}
+          <button onClick={() => setFilter(null)} style={{ fontSize: 13, fontWeight: 800, padding: '4px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.border}`, color: C.dim, background: C.bg }}>✕ Clear filter</button>
+        </div>
+      )}
       {visible.map((r) => (
         <div key={r.symbol} id={`pc-${r.symbol}`} style={{ scrollMarginTop: 70 }}>
         {source === 'cb' && cbViewTag(r.origin) && (

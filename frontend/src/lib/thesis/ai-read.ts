@@ -36,6 +36,8 @@ export interface AiReadRow extends CountableRow {
   dataSource?: string | null;
   /** US: the no-AI SEC reader's result for this name. */
   det?: { state?: string | null } | null;
+  /** The card's assessment — only its list of unknown core variables is read. */
+  assessment?: { coverage?: { missingCore?: string[] | null } | null } | null;
 }
 
 export interface AiReadStatus {
@@ -51,6 +53,8 @@ export interface AiReadStatus {
   /** How a click should read it: a name already read by AI but incomplete is
    *  re-read (force); every other name takes the normal incremental read. */
   mode: 'incremental' | 'force';
+  /** Thesis-critical variables still unknown (not disclosed / not searched). */
+  gaps: number;
   figuresWords: string;
   evidenceWords: string;
 }
@@ -100,8 +104,9 @@ export function aiReadStatus(r: AiReadRow, now?: Date | string): AiReadStatus {
           : p ? `Evidence: incomplete — read by rules (no AI), no structural fact found${aiOlder}`
             : 'Evidence: incomplete — searched, nothing read yet (no AI used)')
         : 'Evidence: not read yet (no AI used)';
+  const gaps = (r.assessment?.coverage?.missingCore || []).length;
   return {
-    kind, needsAi: kind !== 'ai_read', hasAi, hasRules, aiAt,
+    kind, needsAi: kind !== 'ai_read', hasAi, gaps, hasRules, aiAt,
     mode: hasAi ? 'force' : 'incremental',
     figuresWords: figuresWords(r.dataSource, r.market, hasAi),
     evidenceWords,
@@ -109,12 +114,14 @@ export function aiReadStatus(r: AiReadRow, now?: Date | string): AiReadStatus {
 }
 
 export interface AiReadPlan {
-  /** Every name in view that needs an AI read (never read + incomplete + rules only). */
+  /** Every name in view that needs an AI read (never read + incomplete + rules only + read but with missing core details). */
   all: string[];
   /** The evidence-incomplete names only. */
   incomplete: string[];
   /** Names with no AI read of the latest quarter (never read, rules only, incomplete without AI). */
   withoutAi: string[];
+  /** Names (any read state) with core thesis variables still unknown. */
+  withGaps: string[];
   neverRead: number;
   rulesOnly: number;
   aiRead: number;
@@ -127,6 +134,7 @@ export interface AiReadPlan {
   label: string;
   incompleteLabel: string;
   withoutAiLabel: string;
+  withGapsLabel: string;
   /** "AI is used only when you click. Of 69 names: 59 read by AI, 7 read by rules only, 3 incomplete." */
   pageLine: string;
 }
@@ -141,12 +149,18 @@ export function aiReadLabel(n: number): string {
 /** Pure: who the bulk AI button reads, and the page-level line. A name being
  *  read right now is left out of the button (it is already in hand). */
 export function aiReadPlan(rows: AiReadRow[], now?: Date | string): AiReadPlan {
-  const all: string[] = [], incomplete: string[] = [], withoutAi: string[] = [];
+  const all: string[] = [], incomplete: string[] = [], withoutAi: string[] = [], withGaps: string[] = [];
   const modeOf: Record<string, 'incremental' | 'force'> = {};
   let neverRead = 0, rulesOnly = 0, aiRead = 0, inc = 0;
   for (const r of rows) {
     const st = aiReadStatus(r, now);
-    if (st.kind === 'ai_read') { aiRead++; continue; }
+    if (st.gaps > 0 && r.state !== 'loading') { withGaps.push(r.symbol); modeOf[r.symbol] = st.hasAi ? 'force' : 'incremental'; }
+    if (st.kind === 'ai_read') {
+      aiRead++;
+      // Read by AI but core details are still unknown → one more AI pass is offered.
+      if (st.gaps > 0 && r.state !== 'loading') { all.push(r.symbol); modeOf[r.symbol] = 'force'; }
+      continue;
+    }
     if (st.kind === 'never_read') neverRead++;
     else if (st.kind === 'rules_only') rulesOnly++;
     else inc++;
@@ -160,10 +174,11 @@ export function aiReadPlan(rows: AiReadRow[], now?: Date | string): AiReadPlan {
   const breakdown = `${inc} incomplete · ${rulesOnly} read without AI · ${neverRead} never read`;
   const pageLine = `AI is used only when you click. Of ${n} name${s(n)}: ${aiRead} read by AI, ${rulesOnly} read by rules only, ${inc} incomplete${neverRead ? `, ${neverRead} not read yet` : ''}.`;
   return {
-    all, incomplete, withoutAi, neverRead, rulesOnly, aiRead, modeOf, total: all.length, breakdown,
+    all, incomplete, withoutAi, withGaps, neverRead, rulesOnly, aiRead, modeOf, total: all.length, breakdown,
     label: aiReadLabel(all.length),
     incompleteLabel: `incomplete only (${incomplete.length})`,
     withoutAiLabel: `all without an AI read (${withoutAi.length})`,
+    withGapsLabel: `names with missing details (${withGaps.length})`,
     pageLine,
   };
 }

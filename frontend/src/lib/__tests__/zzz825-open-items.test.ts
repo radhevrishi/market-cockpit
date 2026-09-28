@@ -102,7 +102,9 @@ describe('2 · US filings: 8-K items type the event, US evidence chains', () => 
     const all = [...r.items, ...r.minor];
     const e502 = all.find((e) => e.ticker === 'ZZUS')!;
     assert.equal(e502.type, 'Management change');
-    assert.equal(e502.card!.attention, 'senior management change');
+    assert.equal(e502.card!.attention, null, 'a bare Item 5.02 (role not stated) is Monitor, never Needs attention');
+    assert.equal(e502.card!.priority, 'Monitor');
+    assert.equal(e502.card!.connection, 'Evidence incomplete', 'unread filing → incomplete, never a thesis link');
     const e424 = all.find((e) => e.ticker === 'ZZUS2')!;
     assert.equal(e424.type, 'Fund raise');
     assert.match(e424.card!.evidence, /dilution/);

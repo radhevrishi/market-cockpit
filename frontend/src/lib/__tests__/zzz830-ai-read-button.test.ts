@@ -142,7 +142,7 @@ describe('zzz830 page wiring', () => {
     }
   });
   test('card: AI button on every card with no AI read; source line', () => {
-    assert.match(card, /p\.aiRead \? p\.aiRead\.needsAi/);
+    assert.match(card, /p\.aiRead \? \(p\.aiRead\.needsAi/);
     assert.match(card, /data-testid="card-sources"/);
     assert.match(card, /✨ Read evidence with AI/);
   });
