@@ -25,20 +25,35 @@
 import { NextResponse } from 'next/server';
 import { railwaySelfFetch } from '@/lib/railway-self-fetch';
 import { kvGet, kvSet } from '@/lib/kv';
-import { recheckableDrops, unconfirmedRows } from '@/lib/india-eo-card-data';  // zzz820
+import { recheckableDrops, unconfirmedRows, missingDetailCounts, pickStaleRebuild } from '@/lib/india-eo-card-data';  // zzz820 / zzz822
+import { GRADED_CACHE_VERSION, GRADED_CACHE_LEGACY } from '@/lib/graded-cache-key';
+import { INDIA_REGRADABLE_FROM } from '@/lib/india-regrade';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;  // 5 min
 
-const WINDOW_DAYS = 45;
+const WINDOW_DAYS = 60;   // zzz822 — was 45; the page's 60-session window reaches back ~60 days
 const RECENT_DAYS = 2;
 const HEAL_BUDGET = 5;         // max force-rebuilds (missing cards) per run
 const FILL_BUDGET = 5;         // max refreshMissing passes (missing detail) per run
 const DEADLINE_MS = 250_000;   // stop starting new work after ~4m10s
 const UNDERCOUNT_RATIO = 0.6;
 const MIN_RAW = 8;
-const FILL_THRESHOLD = 8;      // # of un-enriched cards that triggers a fill pass
+// zzz822 — was 8: a date with 1–7 cards missing numbers was never refilled
+// ("51 companies listed without numbers"). Any such card now qualifies; the
+// per-date lock and the per-run budget keep it bounded.
+const FILL_THRESHOLD = 1;      // # of un-enriched cards that triggers a fill pass
+const FILL_LOCK_S = 20 * 3600;
+// zzz822 — STALE REBUILD: days stored only under rules too old to regrade
+// in-process (below INDIA_REGRADABLE_FROM — v14, v10 …) kept their old,
+// ungated grades for ever. They are rebuilt under the current rules, oldest
+// rules first, STALE_BUDGET per run, each date at most once per lock period.
+// The scan (EXISTS only, never the payloads) is cached for STALE_SCAN_TTL_S.
+const STALE_WINDOW_DAYS = 90;
+const STALE_BUDGET = 1;
+const STALE_LOCK_S = 20 * 3600;
+const STALE_SCAN_TTL_S = 6 * 3600;
 // zzz820 — RE-CHECK (companies the grader DROPPED): a company whose new quarter
 // was not on Screener at the first scan, or whose filing was not yet confirmed,
 // used to stay dropped for good — the health check above never looked at
@@ -53,6 +68,27 @@ const RECHECK_BUDGET = 2;
 const RECHECK_MIN = 3;
 const RECHECK_MAX_AGE_DAYS = 60;
 const RECHECK_LOCK_S = 20 * 3600;
+
+/** EXISTS for many keys in one Upstash pipeline call (never reads payloads).
+ *  Null when the REST backend is not configured. */
+async function kvExistsMany(keys: string[]): Promise<boolean[] | null> {
+  if (keys.length === 0) return [];
+  const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+  if (!url || !token) return null;
+  try {
+    const r = await fetch(`${url.replace(/\/+$/, '')}/pipeline`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(keys.map((k) => ['EXISTS', k])),
+      cache: 'no-store', signal: AbortSignal.timeout(15_000),
+    });
+    if (!r.ok) return null;
+    const j: any = await r.json();
+    if (!Array.isArray(j) || j.length !== keys.length) return null;
+    return j.map((x: any) => Number(x?.result) > 0);
+  } catch { return null; }
+}
 
 function tierTotal(g: any): number {
   return Object.values(g?.by_tier || {}).reduce<number>(
@@ -134,6 +170,64 @@ export async function GET(req: Request) {
     return r.ok ? await r.json() : null;
   };
 
+  const lockedFor = async (key: string, ttlS: number): Promise<boolean> => {
+    try {
+      const t = await kvGet<number>(key);
+      return !!t && Date.now() - Number(t) < ttlS * 1000;
+    } catch { return false; }
+  };
+
+  // ── zzz822 — STALE REBUILD (oldest rules first), before the daily sweep ──
+  let staleRebuilt: any = null;
+  if (STALE_BUDGET > 0 && Date.now() - start < 120_000) {
+    try {
+      const scanKey = `graded:stale-scan:${GRADED_CACHE_VERSION}`;
+      let scan: { at: number; stale: Array<{ date: string; version: string }> } | null = null;
+      try { scan = await kvGet<any>(scanKey); } catch { scan = null; }
+      if (!scan || !Array.isArray(scan.stale) || Date.now() - Number(scan.at) > STALE_SCAN_TTL_S * 1000) {
+        const dates: string[] = [];
+        for (let k = RECENT_DAYS + 1; k <= STALE_WINDOW_DAYS; k++) {
+          const d = new Date(today); d.setDate(d.getDate() - k); dates.push(d.toISOString().slice(0, 10));
+        }
+        const cur = await kvExistsMany(dates.map((d) => `graded:${GRADED_CACHE_VERSION}:${d}`));
+        if (cur) {
+          let left = dates.filter((_, k) => !cur[k]);
+          // Fast-regradable namespaces are handled in-process by graded-window.
+          const fast = INDIA_REGRADABLE_FROM.filter((v) => v !== GRADED_CACHE_VERSION);
+          if (left.length && fast.length) {
+            const keys = left.flatMap((d) => fast.map((v) => `graded:${v}:${d}`));
+            const ex = await kvExistsMany(keys);
+            if (ex) left = left.filter((_, k) => !fast.some((__, m) => ex[k * fast.length + m]));
+          }
+          const old = GRADED_CACHE_LEGACY.filter((v) => !INDIA_REGRADABLE_FROM.includes(v));
+          const stale: Array<{ date: string; version: string }> = [];
+          if (left.length && old.length) {
+            const keys = left.flatMap((d) => old.map((v) => `graded:${v}:${d}`));
+            const ex = await kvExistsMany(keys);
+            if (ex) left.forEach((d, k) => {
+              const m = old.findIndex((_, mm) => ex[k * old.length + mm]);   // newest old namespace present
+              if (m >= 0) stale.push({ date: d, version: old[m] });
+            });
+          }
+          scan = { at: Date.now(), stale };
+          try { await kvSet(scanKey, scan, STALE_SCAN_TTL_S); } catch {}
+        }
+      }
+      const pick = scan ? await pickStaleRebuild(scan.stale, GRADED_CACHE_LEGACY, (d) => lockedFor(`graded:stale-rebuild-lock:${d}`, STALE_LOCK_S)) : null;
+      if (pick) {
+        try { await kvSet(`graded:stale-rebuild-lock:${pick.date}`, Date.now(), STALE_LOCK_S); } catch {}
+        const g = await forceGraded(pick.date);
+        staleRebuilt = { date: pick.date, from: pick.version, ok: !!g, total: g ? tierTotal(g) : null, remaining: (scan?.stale.length || 1) - 1 };
+        if (g && scan) {
+          scan = { at: scan.at, stale: scan.stale.filter((x) => x.date !== pick.date) };
+          try { await kvSet(`graded:stale-scan:${GRADED_CACHE_VERSION}`, scan, STALE_SCAN_TTL_S); } catch {}
+        }
+      } else {
+        staleRebuilt = { none: true, stale_known: scan?.stale.length ?? null };
+      }
+    } catch (e: any) { staleRebuilt = { error: e?.message || String(e) }; }
+  }
+
   const recentlyRechecked = async (date: string): Promise<boolean> => {
     try {
       const t = await kvGet<number>(`graded:recheck-lock:${date}`);
@@ -172,12 +266,16 @@ export async function GET(req: Request) {
         let cand = 0, raw = 0, failed = 0;
         let waiting = 0;
         let unconfirmed = 0;   // zzz820b — rows whose growth used an unverified year-ago quarter
+        let noData = 0, noPrice = 0;   // zzz822
         if (chk.ok) {
           const j = await chk.json();
           waiting = recheckableDrops(j?._dropped);
           entry.waiting_for_data = waiting;
           unconfirmed = unconfirmedRows(j);
           if (unconfirmed) entry.unconfirmed_rows = unconfirmed;
+          ({ noData, noPrice } = missingDetailCounts(j));
+          if (noData) entry.no_data = noData;
+          if (noPrice) entry.no_price = noPrice;
           cand = Number(j?.candidates_total) || tierTotal(j);
           raw = Number(j?.raw_items_total) || 0;
           failed = Array.isArray(j?._failed_tickers) ? j._failed_tickers.length : 0;
@@ -190,11 +288,15 @@ export async function GET(req: Request) {
           // a fresh rebuild often leaves an enrichment tail — fill it if budget allows
           if (fillsUsed < fillBudgetMax) { const f = await fillGraded(date); if (f) { entry.graded_total_after = tierTotal(f); entry.refresh_msg = f?._refresh; } fillsUsed++; }
           entry.action = 'healed'; healsUsed++; healed++;
-        } else if (failed >= FILL_THRESHOLD && fillsUsed < fillBudgetMax) {
+        } else if (Math.max(failed, noData) >= FILL_THRESHOLD && fillsUsed < fillBudgetMax
+                   && !(await lockedFor(`graded:fill-lock:${date}`, FILL_LOCK_S))) {
+          try { await kvSet(`graded:fill-lock:${date}`, Date.now(), FILL_LOCK_S); } catch {}
           const f = await fillGraded(date);
           if (f) { entry.graded_total = tierTotal(f); entry.refresh_msg = f?._refresh; entry.failed_after = Array.isArray(f?._failed_tickers) ? f._failed_tickers.length : undefined; }
           entry.action = 'filled'; fillsUsed++; filled++;
-        } else if ((waiting >= RECHECK_MIN || unconfirmed > 0) && i <= RECHECK_MAX_AGE_DAYS && rechecksUsed < recheckBudgetMax
+        // zzz822 — cards with no share price are re-fetched by a rebuild (the
+        // fill pass only targets cards missing financial numbers).
+        } else if ((waiting >= RECHECK_MIN || unconfirmed > 0 || noPrice > 0) && i <= RECHECK_MAX_AGE_DAYS && rechecksUsed < recheckBudgetMax
                    && !(await recentlyRechecked(date))) {
           // zzz820 — rebuild so dropped companies are graded once their data lands.
           try { await kvSet(`graded:recheck-lock:${date}`, Date.now(), RECHECK_LOCK_S); } catch {}
@@ -203,8 +305,8 @@ export async function GET(req: Request) {
           entry.action = 'rechecked-dropped'; rechecksUsed++; rechecked++;
         } else if (undercounted) {
           entry.action = 'heal-deferred (budget)'; budgetStopped = true;
-        } else if (failed >= FILL_THRESHOLD) {
-          entry.action = 'fill-deferred (budget)';
+        } else if (Math.max(failed, noData) >= FILL_THRESHOLD) {
+          entry.action = 'fill-deferred (budget or locked)';
         } else {
           entry.action = 'healthy'; healthy++;
         }
@@ -222,6 +324,7 @@ export async function GET(req: Request) {
     theme_rotation_warm: themeRotationWarmed,   // zzz483
     window_days: windowDays,
     scanned: results.length,
+    stale_rebuild: staleRebuilt,   // zzz822
     refreshed, healed, filled, healthy, rechecked,
     heals_used: healsUsed, fills_used: fillsUsed, rechecks_used: rechecksUsed,
     budget_stopped: budgetStopped,

@@ -153,7 +153,7 @@ describe('zzz788 · 2 — near-miss count and list reconcile', () => {
   });
   test('the panel uses nearMissList for both the count and the rows', () => {
     const src = readFileSync(join(ROOT, 'src/components/special-focus-panel.tsx'), 'utf8');
-    assert.match(src, /nearMissList<FocusRow>\(live, entries\)/);
+    assert.match(src, /nearMissList<FocusRow>\(live, onLists\)/ /* zzz823: entries still on your lists */);
     assert.match(src, /focusButtonWords\(shown\.length, near\.length\)\.near/);
     assert.match(src, /focusButtonWords\(shown\.length, near\.length\)\.all/);
     assert.doesNotMatch(src, /`Show all \$\{shown\.length\}`/);

@@ -347,7 +347,17 @@ function executionOf(text: string): string | null {
     /within (\d+\s*(?:working )?(?:days|months|weeks))/i,
     /over (?:a period of )?(\d+\s*(?:months|years))/i,
   ];
-  for (const p of pats) { const m = p.exec(text); if (m) return clean(m[1], 80); }
+  for (const p of pats) {
+    const m = p.exec(text);
+    if (!m) continue;
+    // zzz824: "over 38 years" is the company's history, not an execution period — implausible durations are dropped
+    const d = /(\d+)\s*(?:working\s+)?(years?|months?|weeks?|days?)/i.exec(m[1]);
+    if (d) {
+      const v = Number(d[1]), u = d[2].toLowerCase();
+      if ((/^y/.test(u) && v > 15) || (/^mo/.test(u) && v > 180) || (/^w/.test(u) && v > 520) || (/^d/.test(u) && v > 3650)) continue;
+    }
+    return clean(m[1], 80);
+  }
   return null;
 }
 

@@ -38,7 +38,7 @@ const TIERS = ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID'] as const;
 type Tier = typeof TIERS[number];
 
 /** Engines whose CARDS carry every figure a card-basis regrade needs. */
-export const INDIA_REGRADABLE_FROM: readonly string[] = ['v23', 'v22', 'v21', 'v20'];
+export const INDIA_REGRADABLE_FROM: readonly string[] = ['v24', 'v23', 'v22', 'v21', 'v20'];
 
 /** Filing-derived flags a stored card holds but cannot re-derive. */
 const CARRYABLE = [
@@ -46,6 +46,9 @@ const CARRYABLE = [
   'profit without operating cash', 'headline leans on a one-off',
   'lender — operating cash flow is loan growth',
 ];
+
+/** Cash flags that survive a regrade whose stored input predates same-FY cash. */
+const CASH_CARRY = ['ocf divergence', 'profit without operating cash'];
 
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
@@ -67,6 +70,18 @@ export function indiaInputFromCard(c: any, fromVersion: string | null):
   if (!c || typeof c !== 'object' || !c.ticker) return null;
   const gi = c.grade_input;
   if (gi && typeof gi === 'object' && gi.v === INDIA_GRADE_INPUT_V) {
+    // zzz821 — an input stored before the cash fix has no fiscal-year label,
+    // so its cash figures are now "unknown". The cash FLAGS the old grade
+    // raised are still true (a ratio that was inflated 4× and STILL fell
+    // below 0.6, or cash negative against a profit, is only worse at the
+    // right scale), so they are carried rather than silently dropped.
+    if (!gi.cash_fy) {
+      const cav: string[] = Array.isArray(c.caveat_tags) ? c.caveat_tags.map(String) : [];
+      const carried = Array.from(new Set([...(Array.isArray(gi._carried_caveats) ? gi._carried_caveats : []),
+        ...CASH_CARRY.filter((t) => cav.includes(t))]));
+      const gi2 = carried.length ? { ...gi, _carried_caveats: carried } : gi;
+      return { row: { ...gi2, _regrade: true, _stored_input: gi2 }, basis: 'stored_input' };
+    }
     return { row: { ...gi, _regrade: true, _stored_input: gi }, basis: 'stored_input' };
   }
   if (!fromVersion || !INDIA_REGRADABLE_FROM.includes(fromVersion)) return null;
@@ -91,6 +106,7 @@ export function indiaInputFromCard(c: any, fromVersion: string | null):
     trend_template_passes: meth.includes('trend template'),
     quarters_sales: c.quarters_sales ?? null, quarters_eps: c.quarters_eps ?? null, quarters_pat: c.quarters_pat ?? null,
     source_url: c.filing_url, financials_source: c.source,
+    industry: c.industry ?? null, broad_industry: c.broad_industry ?? null,
     _carried_caveats: carried,
   };
   if (carried.includes('headline leans on a one-off')) {
@@ -111,6 +127,8 @@ export function regradeIndiaCard(old: any, fromVersion: string | null): any | nu
   const out: any = { ...old, ...fresh };
   // Keys the new grade no longer emits must not linger from the old card.
   if (fresh.tier_cap_reason == null) out.tier_cap_reason = null;
+  if (!fresh._tier_unconfirmed) delete out._tier_unconfirmed;
+  for (const k of ['growth_basis_note', 'figures_conflict', 'forensic_check', 'market_driven', 'problem_kinds', 'bb_gate_misses', 'cash_note', 'cash_basis', 'cash_fy']) if (!(k in fresh)) delete out[k];
   if (inp.basis === 'card') {
     // The drift score reads the volume ratio, which a card does not hold; the
     // stored score was computed from the real one, so it is kept.

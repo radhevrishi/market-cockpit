@@ -13,7 +13,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { rankOf, persistenceWords, catalystThesisLine, type PersistentCatalyst } from '@/lib/catalyst/persistence';
-import { specialFocusQueue, nearMissList, focusButtonWords } from '@/lib/catalyst/cross-view';
+import { specialFocusQueue, nearMissList, focusButtonWords, splitOffLists } from '@/lib/catalyst/cross-view';
 import { type FocusRow } from '@/components/special-focus-panel';
 import { usDetect } from '@/lib/us-thesis/persist-us';
 import { catalystIsolated } from '@/lib/us-thesis/sanitize';
@@ -50,8 +50,11 @@ function rowCik(r: FocusRow | null | undefined): string | null {
   return Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
 }
 
-export function UsSpecialFocusPanel({ rows, ready, thesisLabel, onJump, onReadPrior, priorRunning, display }: {
+export function UsSpecialFocusPanel({ rows, lookup, ready, thesisLabel, onJump, onReadPrior, priorRunning, display }: {
   rows: FocusRow[]; ready: boolean;
+  /** zzz823: every row on the page (all sources, failing bench) — a company is
+   *  "no longer on your lists" only when it is in none of them. */
+  lookup?: FocusRow[];
   /** zzz793: the company's own fiscal periods and SEC wording for what is printed. */
   display?: (ticker: string, x: any) => any;
   thesisLabel: (r: FocusRow) => string;
@@ -95,15 +98,19 @@ export function UsSpecialFocusPanel({ rows, ready, thesisLabel, onJump, onReadPr
   };
 
   const queue = useMemo(() => {
-    const rowOf = new Map(rows.map((r) => [r.symbol.toUpperCase(), r] as const));
-    return specialFocusQueue<FocusRow>(live, stored as any, (t) => rowOf.get(t) || null);
-  }, [live, stored, rows]);
+    const rowOf = new Map((lookup && lookup.length ? lookup : rows).map((r) => [r.symbol.toUpperCase(), r] as const));
+    return specialFocusQueue<FocusRow>(live, stored as any, (t) => rowOf.get(String(t).toUpperCase()) || null);
+  }, [live, stored, rows, lookup]);
   const entries = useMemo(() => queue.entries.map((e) => ({ ...e, st: e.st as Stored | null }))
     .sort((a, b) => (Number(b.st?.user?.state === 'confirmed') - Number(a.st?.user?.state === 'confirmed')) || (Number(a.decayed) - Number(b.decayed)) || (rankOf(b.pc) - rankOf(a.pc))), [queue]);
-  const nearInfo = useMemo(() => nearMissList<FocusRow>(live, entries), [live, entries]);
+  // zzz823: records whose company is on neither the US book nor the bench now
+  // are kept, collapsed, and never counted.
+  const { onLists, offLists } = useMemo(() => splitOffLists(entries), [entries]);
+  const [showOff, setShowOff] = useState(false);
+  const nearInfo = useMemo(() => nearMissList<FocusRow>(live, onLists), [live, onLists]);
   const near = nearInfo.near;
   const priorable = near.filter((x) => Object.keys(x.row.ledger?.periods || {}).length <= 1).map((x) => x.pc.ticker);
-  const shown = entries.filter((e) => !e.dismissed);
+  const shown = onLists.filter((e) => !e.dismissed);
   const visible = showAll ? shown : shown.slice(0, 8);
   const btn = (id: string, u: string | null, label: string, state: string, color: string) => (
     <button key={label} onClick={() => act(id, u === state ? null : state)} style={{ fontSize: 12, fontWeight: 800, padding: '2px 9px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${u === state ? color : C.border}`, background: 'transparent', color }}>{u === state ? `✓ ${label}` : label}</button>
@@ -168,8 +175,20 @@ export function UsSpecialFocusPanel({ rows, ready, thesisLabel, onJump, onReadPr
       </div>
       <div style={{ display: 'flex', gap: 10, marginTop: 6, flexWrap: 'wrap' }}>
         {near.length > 0 && <button onClick={() => setShowNear((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.amber}`, background: 'transparent', color: C.amber }}>{showNear ? 'Hide near misses' : focusButtonWords(shown.length, near.length).near}</button>}
+        {offLists.length > 0 && <button data-testid="us-sf-off-lists-button" onClick={() => setShowOff((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px dashed ${C.border}`, background: 'transparent', color: C.faint }}>{showOff ? 'Hide' : `${offLists.length} no longer on your US book or bench (not counted)`}</button>}
         {shown.length > 8 && <button onClick={() => setShowAll((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.border}`, background: 'transparent', color: C.dim }}>{showAll ? 'Show top 8 Special Focus' : focusButtonWords(shown.length, near.length).all}</button>}
       </div>
+      {showOff && offLists.length > 0 && (
+        <div data-testid="us-sf-off-lists" style={{ marginTop: 6, borderTop: `1px solid ${C.border}`, paddingTop: 6, fontSize: 12.5, color: C.faint }}>
+          No longer on your lists — detected earlier, but now neither in your US book nor on the US bench. Kept with its history; not counted.
+          {offLists.map((e) => (
+            <div key={e.id} style={{ fontSize: 13, color: C.dim, padding: '3px 0', borderTop: `1px solid ${C.border}` }}>
+              <b style={{ color: C.text }}>{e.pc.ticker}</b> <span style={{ color: C.faint }}>· {e.pc.label}</span>
+              <button onClick={() => act(e.id, 'dismissed')} style={{ all: 'unset', cursor: 'pointer', color: C.faint, fontWeight: 800, fontSize: 12, marginLeft: 8 }}>Dismiss</button>
+            </div>
+          ))}
+        </div>
+      )}
       {showNear && near.length > 0 && (
         <div style={{ marginTop: 6, borderTop: `1px solid ${C.border}`, paddingTop: 6 }}>
           <div data-testid="us-near-miss-count" style={{ fontSize: 12.5, color: C.faint, marginBottom: 4 }}>

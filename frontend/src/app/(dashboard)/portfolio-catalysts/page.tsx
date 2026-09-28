@@ -44,6 +44,8 @@ import { buildRecentCatalysts, rawFromLedger, rawFromPersistent, rawFromFeed, lo
 import { useFilingReads } from '@/components/catalyst/use-filing-reads';
 import { cbCriteriaLine, nextWindow, PC_PAGE_STEP, readScope, otherBenchLabel } from '@/lib/thesis/pc-bench';
 import { quickProgressLine } from '@/lib/thesis/quick-read';
+import BookCheckPanel from '@/components/BookCheckPanel';
+import { buildBookCheck } from '@/lib/thesis/book-membership';
 
 const C = {
   bg: 'var(--mc-bg-1)', border: 'var(--mc-bg-4)', text: 'var(--tc-text, #F1F5F9)',
@@ -96,6 +98,12 @@ export default function PortfolioCatalystsPage() {
   // Names passing his criteria that are on this page (book + bench, before
   // the size filter) — must equal the Conviction Beats page's count.
   const cbOnPage = useMemo(() => { const p = new Set(note.cbPassing || []); return all0.filter((r) => p.has(r.symbol)).length; }, [all0, note.cbPassing]);
+
+  // zzz823: the Book check — every source, why each name is here, and the
+  // two lists that must be empty (saved-not-shown, shown-not-saved).
+  const bookCheck = useMemo(() => (note.resolved && !loading
+    ? buildBookCheck({ saved: note.resolved.names, rows: all0 as any, sources: note.resolved.sources, rule: note.resolved.rule, ignored: note.resolved.ignored })
+    : null), [note.resolved, all0, loading]);
 
   const sized = useMemo(() => all.filter((r) =>
     // Held names bypass the size filter entirely.
@@ -314,6 +322,7 @@ export default function PortfolioCatalystsPage() {
 
       {view === 'new' ? (
         <NewCatalystsTab result={recentNew} loading={loading || evidenceLoading} names={sized.length} sourceNotes={recentNotes} market="IN" progress={readProgress} win={newWin} onWin={setNewWin}
+          holdingOf={(t) => { const r = sized.find((x) => x.symbol.toUpperCase() === t.toUpperCase()); return r ? (r.origin === 'bench' ? 'bench' : 'book') : null; }}
           onJump={(t) => { setView('board'); setSource('all'); jumpTo(t); }} />
       ) : (<>
       {/* ── WHICH POPULATION. Two numbers, never merged into one. ───────── */}
@@ -362,6 +371,8 @@ export default function PortfolioCatalystsPage() {
           <b style={{ color: note.cb && cbOnPage !== note.cb.passing ? C.amber : C.text }}>{cbCriteriaLine(note.cb, cbOnPage, showFailing)}</b>
         </div>
       )}
+
+      {!loading && <BookCheckPanel check={bookCheck} market="IN" />}
 
       {/* ── THE ARITHMETIC, VISIBLY. (zzz784) Every figure from the same rows. */}
       {!evidenceLoading && !loading && (

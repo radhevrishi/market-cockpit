@@ -264,7 +264,7 @@ describe('8 · feed and export', () => {
     assert.ok(!/arr\[arr\.length - 5\]/.test(src), 'positional year-ago removed');
     assert.match(src, /isQuarterEndStale\(worker\.latest_quarter_end_iso\)/);
     assert.match(src, /_scSameBasis && out\.sales_yoy_pct == null/);
-    assert.match(src, /enrich:v16:/);
+    assert.match(src, /enrich:v17:/);   // zzz821 — bumped for same-FY cash (cash_fy)
     const named = src.split('\n').filter((l) => /^export\s+(?!(async\s+)?function\s+(GET|POST)\b|const\s+(runtime|dynamic|maxDuration)\b)/.test(l));
     assert.deepEqual(named, []);
   });
@@ -309,7 +309,7 @@ describe('zzz820b · engine v24 follow-ups', () => {
   });
   test('card shows the cap reason, price-context chips, the unconfirmed badge; bench skips unconfirmed', () => {
     const page = read('(dashboard)', 'earnings-opportunities', 'page.tsx');
-    assert.ok(page.includes('(stock as any).tier_cap_reason'));
+    assert.ok(page.includes('{capReasonOf(stock)}'));   // zzz822 — via the shared helper
     assert.ok(page.includes('Price context — not part of the grade:'));
     assert.ok(page.includes('{UNCONFIRMED_LABEL}'));
     assert.ok(page.includes('if ((c as any)._tier_unconfirmed || yearAgoUnverified(c)) continue;'));
@@ -318,7 +318,7 @@ describe('zzz820b · engine v24 follow-ups', () => {
   });
   test('prewarm re-check also picks dates holding unconfirmed rows', () => {
     const cron = read('api', 'v1', 'cron', 'prewarm-earnings', 'route.ts');
-    assert.match(cron, /\(waiting >= RECHECK_MIN \|\| unconfirmed > 0\)/);
+    assert.match(cron, /\(waiting >= RECHECK_MIN \|\| unconfirmed > 0/);
     assert.match(cron, /unconfirmedRows\(j\)/);
   });
 });

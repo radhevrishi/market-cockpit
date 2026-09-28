@@ -29,7 +29,7 @@ import {
   getUsConvictionList, removeUsConviction, clearUsConviction, syncUsConviction,
   restoreUsConvictionBin, readUsConvictionBin, hydrateUsConviction, usBenchPersistError, mergeServerUsBench, usCbSavedFilters, US_CB_OPTOUT_KEY, US_CB_FILTERS_KEY, US_CB_SMID_FLAG_KEY,
   usFilingAgeDays, computeUsNewWindow, usVerdict, usRule40, usRoce,
-  passesUsConvictionFilter, usPresetFilters, isUsPresetActive,
+  passesUsConvictionFilter, usPresetFilters, isUsPresetActive, usCbCriteriaCheck,
   US_FILTER_DEFAULT, US_PRESET,
   type UsConvictionEntry, type UsConvFilters,
 } from '@/lib/conviction-beats-us';
@@ -704,8 +704,17 @@ export default function UsConvictionBeatsPage() {
     return c;
   }, [funnel]);
 
+  // zzz823: pass / fail / NOT CHECKED — the shared check US Portfolio
+  // Catalysts uses. A name missing the figure a criterion needs is shown and
+  // counted as "not checked", never silently dropped as failing.
+  const usCheckOf = useMemo(() => {
+    const m = new Map<UsConvictionEntry, ReturnType<typeof usCbCriteriaCheck>>();
+    for (const e of entries) m.set(e, usCbCriteriaCheck(e, filters, newWindow));
+    return m;
+  }, [entries, filters, newWindow]);
+  const usNotChecked = useMemo(() => entries.filter((e) => usCheckOf.get(e)?.state === 'unknown'), [entries, usCheckOf]);
   const filtered = useMemo(() => {
-    let rows = entries.filter((e) => passesUsConvictionFilter(e, filters, newWindow));
+    let rows = entries.filter((e) => usCheckOf.get(e)?.state !== 'fail');
     // The funnel and the bucket chips are filters like any other — clicking a
     // stage shows exactly what survived it, which is the only way to check the
     // staircase rather than take its word for it.
@@ -748,7 +757,7 @@ export default function UsConvictionBeatsPage() {
       if (c !== 0) return c * dir;
       return (b.composite_score ?? 0) - (a.composite_score ?? 0);
     });
-  }, [entries, filters, sort, sortDir, newWindow, bucketFilter, funnelStop, funnel, confFilter, confOf, patternOnly]);
+  }, [entries, filters, sort, sortDir, newWindow, bucketFilter, funnelStop, funnel, confFilter, confOf, patternOnly, usCheckOf]);
 
   // ═══ NAMES THE SIZE FILTER IS HIDING  (zzz623) ══════════════════════════
   //
@@ -1003,6 +1012,10 @@ export default function UsConvictionBeatsPage() {
             onClick: () => setConfFilter(confFilter === 'against' ? null : 'against'),
             hint: 'The quarter qualifies and the theme is rated TRIM or AVOID — real prints nobody is paying for right now. Click to filter.' },
           { value: filtered.length, label: 'passing filters', hint: 'What survives every chip and threshold currently set.' },
+          ...(usNotChecked.length > 0 ? [{
+            value: usNotChecked.length, label: 'not checked (figure missing)', color: '#94A3B8',
+            hint: `Shown, not failed: a criterion's figure is missing for these names, and unknown is not a fail — ${usNotChecked.slice(0, 40).map((e) => `${e.ticker}: ${(usCheckOf.get(e)?.missing || []).join(', ')} missing`).join(' · ')}`,
+          }] : []),
           ...(maUnverified > 0 ? [{
             value: maUnverified, label: 'trend unverified', color: '#F59E0B',
             hint: `${maUnverified} of the names passing the filters were benched before the 50-day distance was captured, so the trend gate could not test them and let them through rather than dropping them. Each sweep re-prices older entries, so this falls to zero on its own.`,

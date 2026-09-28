@@ -22,7 +22,13 @@ import {
   resolveSector, type ConvFilters, FILTER_DEFAULT, indiaPresetFilters, isIndiaPresetActive, filingAgeDays,
   __NEW_WIN, computeNewWindow, setNewWindow, deriveQuarterFY, deriveGuidanceLabel, getD2Pct,
   cbIsFinancial, cbComputeQuality, passesConvictionFilter, mergeCbEntries, serverBenchToCbEntries, CB_PRESET_OPTOUT_KEY,
+  cbCriteriaCheck, cbFiltersForOwner, readCbPresetOptOut,
 } from '@/lib/conviction-filter-india';
+// zzz823 — the SAME selection Portfolio Catalysts makes (book overlap + bench), and the saved-holdings book.
+import { selectIndiaCb } from '@/lib/thesis/pc-bench';
+import { resolveIndiaBook, type BookName } from '@/lib/thesis/book-membership';
+import { loadIndiaBookInput, readLocalBookInput } from '@/lib/thesis/book-sources';
+import { notCheckedText, type CriteriaCheck } from '@/lib/criteria-check';
 
 // zzz254 — Sector color palette for the sector-dot chip. Stable, distinctive
 // hues so an analyst scanning 42 cards instantly clusters by industry.
@@ -2375,33 +2381,46 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
       return new Set((Array.isArray(arr) ? arr : []).map((t: string) => String(t).toUpperCase()));
     } catch { return new Set(); }
   });
+  // zzz823: "held" = the saved holdings (Portfolio page), never the old
+  // 'mc_portfolio_tickers' / 'mc_portfolio_holdings_v1' lists this read before.
   const [portfolioSet] = useState<Set<string>>(() => {
     if (typeof window === 'undefined') return new Set();
-    try {
-      // Try the common portfolio keys; fall back to empty.
-      for (const key of ['mc_portfolio_tickers', 'mc_portfolio_holdings_v1']) {
-        const raw = localStorage.getItem(key);
-        if (raw) {
-          const arr = JSON.parse(raw);
-          if (Array.isArray(arr)) {
-            return new Set(arr.map((t: any) => String(typeof t === 'string' ? t : (t?.ticker || '')).toUpperCase()).filter(Boolean));
-          }
-          if (arr && typeof arr === 'object') {
-            return new Set(Object.keys(arr).map(k => k.toUpperCase()));
-          }
-        }
-      }
-    } catch {}
-    return new Set();
+    try { return new Set(readLocalBookInput().browser); } catch { return new Set(); }
   });
+  // zzz823: the saved-holdings book (server + this browser), resolved exactly
+  // as Portfolio Catalysts resolves it — for the "same list" line below.
+  const [savedBook, setSavedBook] = useState<BookName[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    loadIndiaBookInput().then((inp) => { if (!cancelled) setSavedBook(resolveIndiaBook(inp).names); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   // zzz544 — compute the adaptive NEW window ONCE per render (synchronously)
   // before any passesConvictionFilter() call reads __NEW_WIN, so the filter, the
   // chip label, and every count-probe agree on the same effective window.
   setNewWindow(computeNewWindow(entries));
 
+  // zzz823: pass / fail / NOT CHECKED — the shared check Portfolio
+  // Catalysts uses. A name missing the data a criterion needs is shown and
+  // labelled "not checked: … missing", never silently dropped as failing.
+  const cbCheckOf = useMemo(() => {
+    const m = new Map<ConvictionEntry, CriteriaCheck>();
+    for (const e of entries) m.set(e, cbCriteriaCheck(e, filters));
+    return m;
+  }, [entries, filters]);
+  const notChecked = entries.filter((e) => cbCheckOf.get(e)?.state === 'unknown');
+  // The same selection Portfolio Catalysts makes from this list.
+  const pcSame = useMemo(() => {
+    if (!savedBook) return null;
+    // His saved choice (preset on, or switched off) — exactly what Portfolio Catalysts applies.
+    const off = readCbPresetOptOut();
+    const own = cbFiltersForOwner(off);
+    return selectIndiaCb({ held: savedBook.map((n) => n.symbol), list: entries, criteriaOff: off, check: (e) => cbCriteriaCheck(e as ConvictionEntry, own) });
+  }, [savedBook, entries]);
+
   // Apply filters + optional PEAD sort
-  let filteredEntries = entries.filter((e) => passesConvictionFilter(e, filters));
+  let filteredEntries = entries.filter((e) => cbCheckOf.get(e)?.state !== 'fail');
   if (filters.sortByPead) {
     filteredEntries = [...filteredEntries].sort((a, b) => peadScore(b).score - peadScore(a).score);
   }
@@ -2604,6 +2623,18 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
           <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-text-1)', letterSpacing: '0.4px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span>FILTERS</span>
             <span style={{ color: 'var(--mc-text-4)', fontWeight: 600 }}>· {filteredEntries.length} of {entries.length}</span>
+            {notChecked.length > 0 && (
+              <span data-testid="cb-not-checked" title={notChecked.map((e) => `${e.ticker}: ${notCheckedText(cbCheckOf.get(e)?.missing || [])}`).join('\n')}
+                style={{ color: 'var(--mc-text-3)', fontWeight: 700, cursor: 'help' }}>
+                · incl. {notChecked.length} not checked (a figure is missing — shown, not failed)
+              </span>
+            )}
+            {pcSame && (
+              <span data-testid="cb-same-as-pc" style={{ color: 'var(--mc-text-3)', fontWeight: 700 }}
+                title="Portfolio Catalysts selects its bench from this same list with this same check: names you hold appear there once, in My book; the rest are its bench.">
+                · under your saved criteria {pcSame.passing.length} = {pcSame.heldPassing.length} you hold (Portfolio Catalysts: My book) + {pcSame.bench.length} (its bench){isIndiaPresetActive(filters) ? '' : ' — your chips here differ from your saved criteria'}
+              </span>
+            )}
             {/* Always-visible DRIFT summary — count of BLOCKBUSTER/STRONG bench
                 names fading <= -12% since their print. Independent of any filter
                 toggle; also armed to Book Watch as BENCH_DRIFT. */}
@@ -3523,7 +3554,9 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                   ⭐ BLOCKBUSTER · {blockbusters.length}
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${density === 'ultra' ? 300 : density === 'compact' ? 340 : 380}px, 1fr))`, gap: density === 'ultra' ? 6 : 10 }}>
-                  {blockbusters.map((e) => <ConvictionRow key={e.ticker} entry={e} onRemove={onRemove} density={density} radarEntry={radarMap.get(String(e.ticker || '').toUpperCase())} />)}
+                  {blockbusters.map((e) => { const ck = cbCheckOf.get(e); return ck?.state === 'unknown'
+                    ? <div key={e.ticker}><div data-testid="cb-row-not-checked" style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-text-3)', padding: '0 4px 2px' }}>◌ {notCheckedText(ck.missing)} — shown, not failed</div><ConvictionRow entry={e} onRemove={onRemove} density={density} radarEntry={radarMap.get(String(e.ticker || '').toUpperCase())} /></div>
+                    : <ConvictionRow key={e.ticker} entry={e} onRemove={onRemove} density={density} radarEntry={radarMap.get(String(e.ticker || '').toUpperCase())} />; })}
                 </div>
               </div>
             )}
@@ -3537,7 +3570,9 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                   🟢 STRONG · {strongs.length}
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${density === 'ultra' ? 300 : density === 'compact' ? 340 : 380}px, 1fr))`, gap: density === 'ultra' ? 6 : 10 }}>
-                  {strongs.map((e) => <ConvictionRow key={e.ticker} entry={e} onRemove={onRemove} density={density} radarEntry={radarMap.get(String(e.ticker || '').toUpperCase())} />)}
+                  {strongs.map((e) => { const ck = cbCheckOf.get(e); return ck?.state === 'unknown'
+                    ? <div key={e.ticker}><div data-testid="cb-row-not-checked" style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-text-3)', padding: '0 4px 2px' }}>◌ {notCheckedText(ck.missing)} — shown, not failed</div><ConvictionRow entry={e} onRemove={onRemove} density={density} radarEntry={radarMap.get(String(e.ticker || '').toUpperCase())} /></div>
+                    : <ConvictionRow key={e.ticker} entry={e} onRemove={onRemove} density={density} radarEntry={radarMap.get(String(e.ticker || '').toUpperCase())} />; })}
                 </div>
               </div>
             )}

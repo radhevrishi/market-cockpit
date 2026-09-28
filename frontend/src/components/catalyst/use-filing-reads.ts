@@ -17,12 +17,12 @@ import { useEffect, useRef, useState } from 'react';
 import { normUrl, type ReadRequest } from '@/lib/catalyst/recent-events';
 import type { FilingRead } from '@/lib/catalyst/filing-read-types';
 
-const VERSION = 'r2';
+const VERSION = 'r3';
 const BATCH = 5;
 const CLIENT_TIMEOUT_MS = 55_000;
 const LS_MAX = 800;
 
-const lsKey = (market: 'IN' | 'US') => `mc:pc-new-reads:v2:${market}`;
+const lsKey = (market: 'IN' | 'US') => `mc:pc-new-reads:v3:${market}`;
 
 function loadLocal(market: 'IN' | 'US'): Record<string, FilingRead> {
   try {

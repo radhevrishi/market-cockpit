@@ -32,6 +32,7 @@ import {
   type EarningsTier,
 } from '@/lib/earnings-grade-shared';
 import { peadScore } from '@/lib/pead-score';
+import { financialKind, type FinancialKind } from '@/lib/india-eo-card-data';
 
 /** The graded card this produces. Deliberately loose: the two callers have
  *  historically disagreed about optional fields, and narrowing it here would
@@ -101,6 +102,8 @@ const GRADE_INPUT_FIELDS = [
   'pe', 'stockPE', 'current_price', 'gap_pct', 'd1_pct', 'move_pct', 'pct_from_52w_high',
   'rs_rating', 'stage', 'trend_template_passes', 'ocf_annual_cr', 'pat_annual_cr',
   'ocf_to_pat_ratio', 'roce', 'latest_quarter_end_iso', 'financials_source',
+  // zzz821 — the fiscal year of the cash figures, and the industry chain.
+  'cash_fy', 'cash_basis', 'industry', 'broad_industry', 'broad_sector', 'sector_name',
 ] as const;
 const GRADE_INPUT_TEXT_FIELDS = ['guidance_text', 'narrative_text', 'announcement_text', 'attachment', 'headline', 'title'] as const;
 
@@ -128,35 +131,164 @@ function attachGradeInput(card: any, row: any): void {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// THE INDIA BLOCKBUSTER CONFIRMATION GATE.                          (zzz819)
+// CASH, READ HONESTLY.                                              (zzz821)
+//
+// Indian companies publish no quarterly cash flow. The only cash figure that
+// means anything is last fiscal year's operating cash flow against the SAME
+// year's profit — and the live page was dividing annual CFO by ONE QUARTER's
+// profit (PAKKA: FY26 CFO ₹75 Cr ÷ Jun-26 quarter PAT ₹5.89 Cr = "12.7x"),
+// which made "earnings are cash-backed" pass almost everywhere. Enrichment
+// now builds the ratio only from the two columns carrying the same fiscal-
+// year label and sends that label as `cash_fy`. Here: no label → unknown. A
+// ratio that disagrees with its own two figures → unknown. A CFO of exactly
+// zero is Screener's "no figure" → unknown. For a bank, NBFC or insurer the
+// test is not meaningful at all (loan growth and premiums ARE operating cash
+// flows), so it is skipped and says so.
+// ═══════════════════════════════════════════════════════════════════════════
+export interface IndiaCashView {
+  /** Same-FY annual operating cash flow, ₹ Cr, or null. */
+  ocf: number | null;
+  /** Same-FY annual PAT, ₹ Cr, or null. */
+  pat: number | null;
+  /** ocf ÷ pat when meaningful, else null. */
+  ratio: number | null;
+  /** "FY26 full year" — the period the figures are for, or null. */
+  basis: string | null;
+  fy: string | null;
+  /** Why there is no ratio, when there is a reason worth saying. */
+  note: string | null;
+}
+
+/** Everything the engine and the card need to tell a financial company apart. */
+export function indiaFinancialKind(row: any): FinancialKind | null {
+  return financialKind({
+    sector: row?.sector, industry: row?.industry,
+    // Screener's "Broad Industry" (e.g. "Finance", "Insurance").
+    sub_sector: row?.broad_industry ?? row?.sub_sector,
+    company: row?.company,
+  });
+}
+
+export function indiaCashView(row: any): IndiaCashView {
+  const n = (v: any): number | null => (typeof v === 'number' && Number.isFinite(v)) ? v : null;
+  const none = (note: string | null, fy: string | null = null): IndiaCashView =>
+    ({ ocf: null, pat: null, ratio: null, basis: null, fy, note });
+  if (indiaFinancialKind(row)) return none('not meaningful for lenders');
+  const fy = typeof row?.cash_fy === 'string' && row.cash_fy.trim() ? row.cash_fy.trim() : null;
+  if (!fy) return none(null);
+  let ocf = n(row?.ocf_annual_cr);
+  const pat = n(row?.pat_annual_cr);
+  if (ocf === 0) ocf = null;
+  if (ocf == null || pat == null || pat === 0) return none(null, fy);
+  let ratio = n(row?.ocf_to_pat_ratio);
+  if (ratio === 0) ratio = null;
+  if (ratio != null && pat > 0 && Math.abs(ratio - ocf / pat) > Math.max(0.05, Math.abs(ocf / pat) * 0.05)) ratio = null;
+  const basis = typeof row?.cash_basis === 'string' && row.cash_basis ? row.cash_basis
+    : (/^mar\s/i.test(fy) ? `FY${fy.slice(-2)} full year` : `year to ${fy}`);
+  return { ocf, pat, ratio, basis, fy, note: null };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MARKET-DRIVEN EARNINGS.                                          (zzz821)
+//
+// An investment holding company, a proprietary / algorithmic trader or a
+// stockbroker reports profit that moves with the market: a year of investment
+// gains or trading volumes is not an operating business compounding. Such a
+// company can have a very good quarter, but not a BLOCKBUSTER one. Detected
+// from Screener's industry text first (Investment Company, Holding Company,
+// Stockbroking), then from the company's registered name (an "Investments"
+// company that is not a finance/bank/insurer, or an "Algo…" trading house).
+// Never from a ticker list.
+// ═══════════════════════════════════════════════════════════════════════════
+export function marketDrivenKind(row: any): string | null {
+  const ind = [row?.industry, row?.broad_industry, row?.sector, row?.sub_sector].filter(Boolean).map(String).join(' | ');
+  if (/\binvestment\s+compan/i.test(ind)) return 'investment company';
+  if (/\bholding\s+compan/i.test(ind)) return 'holding company';
+  if (/\bstock\s*-?\s*broking|\bproprietary\s+trading/i.test(ind)) return 'broking / trading';
+  const name = String(row?.company || '');
+  if (/\balgo[a-z]*/i.test(name)) return 'algorithmic trading';
+  if (/\binvestments?\b|\binvestment\s+(corporation|company|trust)\b/i.test(name)
+      && !/\b(financ\w*|bank\w*|insurance|housing|credit|lending)\b/i.test(name)) return 'investment company';
+  return null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE F ("PROFIT JUMP · FORENSICS") CHECK, FOR INDIA.               (zzz821)
+//
+// The card's pattern badge fires F when EPS grew more than 3× revenue growth
+// and more than 100%: a profit jump that the top line does not explain. On
+// the India side it could never clear — the US check needs free cash flow,
+// which India does not have — so BLOCKBUSTER cards sat under an unresolved
+// forensics badge. The check now runs HERE, on India's own evidence, and the
+// result travels on the row (`forensic_check`) so the badge can say which:
+//   · explained by operations — revenue growth × the operating-margin step
+//     (5+ pts of slack for interest and tax) covers the EPS growth;
+//   · backed by cash — same-year CFO ÷ PAT of at least 0.8.
+// Both → 'passed'. Either one contradicted by a reported figure →
+// 'not_passed'. Either one not measurable → 'unverified' (unknown, not
+// negative). BLOCKBUSTER requires 'passed'; 'not_passed' also counts as a
+// growth-quality problem for the tier.
+// ═══════════════════════════════════════════════════════════════════════════
+export interface IndiaForensicCheck {
+  status: 'passed' | 'not_passed' | 'unverified';
+  reason: string;
+}
+export function indiaForensicCheck(i: {
+  salesY: number | null; epsY: number | null; patY: number | null;
+  opmPct: number | null; opmPrevPct: number | null;
+  cfoToPat: number | null; isFinancial: boolean;
+}): IndiaForensicCheck | null {
+  const g = i.epsY ?? i.patY;
+  if (i.salesY == null || g == null || i.salesY < 1) return null;
+  if (!(g > 100 && g / i.salesY > 3)) return null;
+  let explained: boolean | null = null;
+  if (!i.isFinancial && i.opmPct != null && i.opmPrevPct != null && i.opmPct > 0 && i.opmPrevPct > 0) {
+    const opG = ((1 + i.salesY / 100) * (i.opmPct / i.opmPrevPct) - 1) * 100;
+    explained = i.opmPct - i.opmPrevPct >= 0.5 && g <= opG * 1.25 + 10;
+  } else if (!i.isFinancial && i.opmPct != null && i.opmPrevPct != null && i.opmPct <= i.opmPrevPct) {
+    explained = false;   // margin did not rise, so operations cannot explain the jump
+  }
+  let cash: boolean | null = null;
+  if (!i.isFinancial && i.cfoToPat != null) cash = i.cfoToPat >= 0.8;
+  if (explained === false || cash === false) {
+    return { status: 'not_passed', reason: explained === false
+      ? 'profit grew far faster than revenue and the operating margin does not explain it'
+      : 'profit grew far faster than revenue and the cash flow does not back it' };
+  }
+  if (explained === true && cash === true) {
+    return { status: 'passed', reason: 'the profit jump is explained by the operating margin and backed by same-year cash flow' };
+  }
+  return { status: 'unverified', reason: explained == null
+    ? 'profit grew far faster than revenue; the operating figures needed to explain it are not on file'
+    : 'profit grew far faster than revenue; explained by the margin, but same-year cash flow is not on file' };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE INDIA BLOCKBUSTER CONFIRMATION GATE, AND THE STRONG FLOOR.
+//                                                     (zzz819, zzz821)
 //
 // Every BLOCKBUSTER path in `decideTier` is a PERCENTAGE test, and a
-// percentage off a tiny base clears any of them. So the live page published
-// BLOCKBUSTER on revenue +5% with profit up 500% off almost nothing, on a
-// lender whose cash flow ran the other way, on a 2%-margin distributor with a
-// cash divergence, and on rows the engine itself had flagged 'low quality'.
+// percentage off a tiny base clears any of them. A row the magnitude paths
+// call BLOCKBUSTER must ALSO show, from the filing (price never counts):
+//   1. revenue growth of at least 15%;
+//   2. profit growth that is real — not a first profit after a loss (that
+//      needs another quarter to confirm), not a jump off a small year-ago
+//      profit (under ₹2 Cr or under 2% of sales) unless revenue +25% and a
+//      3-pt margin gain carry it, not flagged 'optical eps', and — when the F
+//      pattern fires — a forensic check that PASSED;
+//   3. a healthy margin: operating 12%+ (or a large step-up) for a company,
+//      net 10%+ for a bank / NBFC / insurer;
+//   4. cash backing when same-year figures exist (CFO ≥ 0.6× PAT, never
+//      negative against a profit) — skipped for financial companies;
+//   5. no other open quality flag;
+//   6. not a market-driven earner (investment / trading company).
 //
-// The US engine closed the same hole in zzz806. A row the magnitude paths
-// call BLOCKBUSTER must now ALSO show, from the filing (price never counts):
-//   1. real revenue growth — at least 15% year on year;
-//   2. profit growth that is not small-base arithmetic — when the year-ago
-//      profit was a loss, under ₹2 Cr, or under 2% of revenue, the profit
-//      jump counts for nothing and the quarter must stand on revenue growth
-//      of 25%+ and (for a non-lender) a margin gain of 3+ points;
-//   3. a healthy operating margin (12%+) or a large expansion (5+ points and
-//      at least half the starting margin). Banks, NBFCs and insurers are
-//      judged on net margin instead (profit ÷ revenue, 10%+), because an
-//      operating margin means nothing for a lender. A margin we do not have
-//      is not held against the company — it simply cannot confirm the top
-//      tier;
-//   4. cash backing, when the cash-flow figures exist: operating cash below
-//      0.6× profit, or negative against a profit, blocks it (lenders exempt:
-//      their loan growth IS their operating cash outflow). No cash data is no
-//      evidence either way and does not block;
-//   5. no open forensic / quality flag on the row.
-// Failing caps the row at STRONG — or at MIXED when the growth itself is
-// weak (revenue up less than 5%, or up less than 15% with a profit jump that
-// is only small-base arithmetic). Every miss is named on the card.
+// PROBLEMS ARE COUNTED BY KIND, not by line: growth quality (small base,
+// optical EPS, first profit, an unexplained jump), thin margin, weak or
+// negative cash, other quality flags. Revenue below the 15% floor and data we
+// do not have are reasons, not problems. One problem → STRONG. Two or more
+// distinct problems → MIXED. Weak growth itself (revenue under +5%, or under
+// +15% with only small-base profit growth) → MIXED.
 // ═══════════════════════════════════════════════════════════════════════════
 export const IN_BB_MIN_REVENUE_GROWTH = 15;
 export const IN_BB_WEAK_REVENUE_GROWTH = 5;
@@ -165,12 +297,19 @@ export const IN_BB_SMALL_BASE_MARGIN_PCT = 2;
 export const IN_BB_HEALTHY_OPM_PCT = 12;
 export const IN_BB_LENDER_NET_MARGIN_PCT = 10;
 export const IN_BB_MIN_CASH_CONVERSION = 0.6;
+/** STRONG floor (zzz821). */
+export const IN_STRONG_MIN_OPM_PCT = 5;
+export const IN_STRONG_SLOW_REVENUE_PCT = 10;
+export const IN_STRONG_SLOW_REVENUE_MIN_OPM = 10;
+export const IN_STRONG_SLOW_REVENUE_MIN_STEP = 2;
+export const IN_STRONG_MAX_LOSS_TO_REVENUE = 0.25;
+
+const CASH_FLAGS = ['ocf divergence', 'profit without operating cash', 'earnings outrun both revenue and cash'];
+const OTHER_FLAGS = ['low quality', 'tax distortion', 'exceptional item', 'headline leans on a one-off', 'multiple quality flags'];
 /** Flags that say the engine found something wrong in the filing. */
-export const IN_BB_BLOCKING_FLAGS: readonly string[] = [
-  'low quality', 'ocf divergence', 'optical eps', 'tax distortion', 'exceptional item',
-  'profit without operating cash', 'earnings outrun both revenue and cash',
-  'headline leans on a one-off', 'multiple quality flags',
-];
+export const IN_BB_BLOCKING_FLAGS: readonly string[] = ['optical eps', ...CASH_FLAGS, ...OTHER_FLAGS];
+
+export type IndiaProblemKind = 'growth quality' | 'thin margin' | 'cash' | 'quality flag';
 
 export interface IndiaBlockbusterGateInput {
   salesY: number | null;
@@ -179,14 +318,21 @@ export interface IndiaBlockbusterGateInput {
   salesCurCr: number | null; salesPrevCr: number | null;
   patCurCr: number | null; patPrevCr: number | null;
   epsPrev: number | null;
+  /** Same-year CFO ÷ PAT (see indiaCashView); null when unknown. */
   cfoToPat: number | null;
   ocfAnnualCr: number | null; patAnnualCr: number | null;
   isLender: boolean;
   caveatTags: readonly string[];
+  /** zzz821 — see indiaForensicCheck. Undefined/null when F did not fire. */
+  forensic?: IndiaForensicCheck | null;
+  /** zzz821 — see marketDrivenKind. */
+  marketDriven?: string | null;
 }
 export interface IndiaBlockbusterGateResult {
   tier: 'BLOCKBUSTER' | 'STRONG' | 'MIXED';
   misses: string[];
+  /** The distinct problem kinds found (reasons like "revenue below 15%" are not problems). */
+  problems: IndiaProblemKind[];
   /** One plain line, e.g. "Capped at STRONG: revenue grew only 5%". Null when passed. */
   reason: string | null;
 }
@@ -195,74 +341,127 @@ const _pct = (v: number): string => {
   const r = Math.round(v);
   return r === 0 ? '0' : `${r}`;
 };
+const _cr = (v: number): string => `₹${Math.abs(v) >= 100 ? Math.round(Math.abs(v)) : Math.round(Math.abs(v) * 100) / 100} Cr`;
+const _one = (v: number): string => `${Math.round(v * 10) / 10}`;
+
+/** The problems a quarter carries, by kind — shared by the gate and the STRONG floor. */
+function indiaProblems(i: IndiaBlockbusterGateInput): { items: Array<{ kind: IndiaProblemKind; text: string }>; smallBase: boolean; firstProfit: boolean } {
+  const items: Array<{ kind: IndiaProblemKind; text: string }> = [];
+  const opmExp = i.opmPct != null && i.opmPrevPct != null ? i.opmPct - i.opmPrevPct : null;
+  const revKnown = i.salesY != null && Number.isFinite(i.salesY);
+
+  // Growth quality.
+  const firstProfit = i.patPrevCr != null && i.patPrevCr <= 0 && i.patCurCr != null && i.patCurCr > 0;
+  if (firstProfit) items.push({ kind: 'growth quality', text: 'first profit after a loss — needs another quarter to confirm' });
+  const priorMargin = (i.patPrevCr != null && i.salesPrevCr != null && i.salesPrevCr > 0)
+    ? (i.patPrevCr / i.salesPrevCr) * 100 : null;
+  const smallBase = !firstProfit && (
+    (i.patPrevCr != null && i.patPrevCr > 0 && (i.patPrevCr < IN_BB_SMALL_BASE_PAT_CR
+      || (priorMargin != null && priorMargin < IN_BB_SMALL_BASE_MARGIN_PCT)))
+    || (i.patPrevCr == null && i.epsPrev != null && Math.abs(i.epsPrev) < 0.5));
+  let smallBaseProblem = false;
+  if (smallBase) {
+    const growthOk = revKnown && (i.salesY as number) >= 25;
+    const marginOk = i.isLender || (opmExp != null && opmExp >= 3);
+    if (!growthOk || !marginOk) {
+      smallBaseProblem = true;
+      const base = i.patPrevCr != null
+        ? `small year-ago profit (${_cr(i.patPrevCr)}${priorMargin != null ? `, ${_one(priorMargin)}% of sales` : ''})`
+        : 'small year-ago EPS';
+      items.push({ kind: 'growth quality', text: `profit rose from a ${base}, so the growth rate overstates the change` });
+    }
+  }
+  if (i.caveatTags.includes('optical eps')) items.push({ kind: 'growth quality', text: 'EPS grew far faster than the business explains (optical EPS)' });
+  if (i.forensic?.status === 'not_passed') items.push({ kind: 'growth quality', text: `forensic check not passed: ${i.forensic.reason}` });
+
+  // Margin.
+  if (i.isLender) {
+    const nm = (i.patCurCr != null && i.salesCurCr != null && i.salesCurCr > 0) ? (i.patCurCr / i.salesCurCr) * 100 : null;
+    if (nm != null && nm < IN_BB_LENDER_NET_MARGIN_PCT) items.push({ kind: 'thin margin', text: `thin net margin for a lender (${_one(nm)}%)` });
+  } else if (i.opmPct != null) {
+    const bigStep = opmExp != null && opmExp >= 5 && i.opmPrevPct != null && i.opmPrevPct > 0 && opmExp / i.opmPrevPct >= 0.5;
+    if (i.opmPct < IN_BB_HEALTHY_OPM_PCT && !bigStep) items.push({ kind: 'thin margin', text: `thin operating margin (${_one(i.opmPct)}%)` });
+  }
+
+  // Cash (companies only; figures are same-year or absent).
+  if (!i.isLender) {
+    if (i.ocfAnnualCr != null && i.ocfAnnualCr < 0 && i.patAnnualCr != null && i.patAnnualCr > 0) {
+      items.push({ kind: 'cash', text: 'operating cash flow was negative against a reported profit' });
+    } else if (i.cfoToPat != null && i.cfoToPat < IN_BB_MIN_CASH_CONVERSION) {
+      items.push({ kind: 'cash', text: i.cfoToPat < 0
+        ? 'operating cash flow was negative against a reported profit'
+        : `cash does not back the profit (operating cash ${Math.round(i.cfoToPat * 100) / 100}× profit)` });
+    }
+    const cf = CASH_FLAGS.filter((t) => i.caveatTags.includes(t));
+    if (cf.length && !items.some((x) => x.kind === 'cash')) items.push({ kind: 'cash', text: `open flag${cf.length > 1 ? 's' : ''}: ${cf.join(', ')}` });
+  }
+
+  // Other open quality flags.
+  const of = OTHER_FLAGS.filter((t) => i.caveatTags.includes(t));
+  if (of.length) items.push({ kind: 'quality flag', text: `open flag${of.length > 1 ? 's' : ''}: ${of.join(', ')}` });
+
+  return { items, smallBase: smallBaseProblem, firstProfit };
+}
+
+const _distinct = (items: Array<{ kind: IndiaProblemKind }>): IndiaProblemKind[] => Array.from(new Set(items.map((x) => x.kind)));
 
 export function indiaBlockbusterGate(i: IndiaBlockbusterGateInput): IndiaBlockbusterGateResult {
   const misses: string[] = [];
-  const opmExp = i.opmPct != null && i.opmPrevPct != null ? i.opmPct - i.opmPrevPct : null;
-
-  // 1 — real revenue growth.
   const revKnown = i.salesY != null && Number.isFinite(i.salesY);
-  const revOk = revKnown && (i.salesY as number) >= IN_BB_MIN_REVENUE_GROWTH;
+  // Reasons that are not problems: revenue below the floor, data not on file,
+  // a market-driven business.
   if (!revKnown) misses.push('revenue growth not reported, so the top tier cannot be confirmed');
-  else if (!revOk) {
+  else if ((i.salesY as number) < IN_BB_MIN_REVENUE_GROWTH) {
     const y = i.salesY as number;
     misses.push(Math.round(y) === 0 ? 'revenue was flat'
       : y < 0 ? `revenue fell ${_pct(Math.abs(y))}%`
       : `revenue grew only ${_pct(y)}%`);
   }
+  if (i.isLender && !(i.patCurCr != null && i.salesCurCr != null && i.salesCurCr > 0)) misses.push('net margin not measurable from the figures on file');
+  if (!i.isLender && i.opmPct == null) misses.push('operating margin not reported, so the top tier cannot be confirmed');
+  if (i.forensic?.status === 'unverified') misses.push(`forensic check not yet possible — ${i.forensic.reason}`);
+  if (i.marketDriven) misses.push(`market-driven earnings (${i.marketDriven}) — profit moves with investment gains and markets`);
 
-  // 2 — profit growth that is not small-base arithmetic.
-  const priorMargin = (i.patPrevCr != null && i.salesPrevCr != null && i.salesPrevCr > 0)
-    ? (i.patPrevCr / i.salesPrevCr) * 100 : null;
-  const smallBase =
-    (i.patPrevCr != null && (i.patPrevCr <= 0 || i.patPrevCr < IN_BB_SMALL_BASE_PAT_CR
-      || (priorMargin != null && priorMargin < IN_BB_SMALL_BASE_MARGIN_PCT)))
-    || (i.patPrevCr == null && i.epsPrev != null && Math.abs(i.epsPrev) < 0.5);
-  let smallBaseMiss = false;
-  if (smallBase) {
-    const growthOk = revKnown && (i.salesY as number) >= 25;
-    const marginOk = i.isLender || (opmExp != null && opmExp >= 3);
-    if (!growthOk || !marginOk) {
-      smallBaseMiss = true;
-      const base = i.patPrevCr != null
-        ? (i.patPrevCr <= 0 ? `a year-ago loss (₹${Math.abs(Math.round(i.patPrevCr * 100) / 100)} Cr)` : `a tiny year-ago profit (₹${Math.round(i.patPrevCr * 100) / 100} Cr)`)
-        : 'a tiny year-ago EPS';
-      misses.push(`profit jump is off ${base}, so the % is arithmetic, not growth`);
-    }
-  }
-
-  // 3 — margin level (operating for companies, net for lenders).
-  if (i.isLender) {
-    const nm = (i.patCurCr != null && i.salesCurCr != null && i.salesCurCr > 0) ? (i.patCurCr / i.salesCurCr) * 100 : null;
-    if (nm == null) misses.push('lender profitability not measurable from the figures on file');
-    else if (nm < IN_BB_LENDER_NET_MARGIN_PCT) misses.push(`thin net margin for a lender (${_pct(nm)}%)`);
-  } else if (i.opmPct == null) {
-    misses.push('operating margin not reported, so the top tier cannot be confirmed');
-  } else {
-    const bigStep = opmExp != null && opmExp >= 5 && i.opmPrevPct != null && i.opmPrevPct > 0 && opmExp / i.opmPrevPct >= 0.5;
-    if (i.opmPct < IN_BB_HEALTHY_OPM_PCT && !bigStep) misses.push(`thin operating margin (${Math.round(i.opmPct * 10) / 10}%)`);
-  }
-
-  // 4 — cash backing, when the figures exist. Lenders exempt.
-  if (!i.isLender) {
-    if (i.ocfAnnualCr != null && i.ocfAnnualCr < 0 && i.patAnnualCr != null && i.patAnnualCr > 0) {
-      misses.push('operating cash flow was negative against a reported profit');
-    } else if (i.cfoToPat != null && i.cfoToPat < IN_BB_MIN_CASH_CONVERSION) {
-      misses.push(i.cfoToPat < 0
-        ? 'operating cash flow was negative against a reported profit'
-        : `cash does not back the profit (operating cash ${Math.round(i.cfoToPat * 100) / 100}× profit)`);
-    }
-  }
-
-  // 5 — open forensic / quality flags.
-  const open = IN_BB_BLOCKING_FLAGS.filter((t) => i.caveatTags.includes(t));
-  if (open.length) misses.push(`open flag${open.length > 1 ? 's' : ''}: ${open.join(', ')}`);
-
-  if (misses.length === 0) return { tier: 'BLOCKBUSTER', misses, reason: null };
+  const pr = indiaProblems(i);
+  for (const x of pr.items) misses.push(x.text);
+  const problems = _distinct(pr.items);
+  if (misses.length === 0) return { tier: 'BLOCKBUSTER', misses, problems, reason: null };
   const weakGrowth = (revKnown && (i.salesY as number) < IN_BB_WEAK_REVENUE_GROWTH)
-    || (smallBaseMiss && revKnown && (i.salesY as number) < IN_BB_MIN_REVENUE_GROWTH);
-  const tier = weakGrowth ? 'MIXED' : 'STRONG';
-  return { tier, misses, reason: `Capped at ${tier}: ${misses.join('; ')}` };
+    || (pr.smallBase && revKnown && (i.salesY as number) < IN_BB_MIN_REVENUE_GROWTH);
+  const tier = (weakGrowth || problems.length >= 2) ? 'MIXED' : 'STRONG';
+  return { tier, misses, problems, reason: `Capped at ${tier}: ${misses.join('; ')}` };
+}
+
+export interface IndiaStrongFloorInput extends IndiaBlockbusterGateInput {
+  epsY: number | null;
+}
+/**
+ * zzz821 — what a STRONG quarter may not be. Applied to every row the ladder
+ * (or the BLOCKBUSTER gate) left at STRONG. Unknown figures never demote.
+ */
+export function indiaStrongFloor(i: IndiaStrongFloorInput): { tier: 'STRONG' | 'MIXED'; misses: string[]; problems: IndiaProblemKind[] } {
+  const misses: string[] = [];
+  const opmExp = i.opmPct != null && i.opmPrevPct != null ? i.opmPct - i.opmPrevPct : null;
+  // (a) an operating loss.
+  if (!i.isLender && i.opmPct != null && i.opmPct < 0) misses.push(`operating margin is negative (${_one(i.opmPct)}%)`);
+  // (e) a margin too thin to carry a strong grade.
+  else if (!i.isLender && i.opmPct != null && i.opmPct < IN_STRONG_MIN_OPM_PCT) misses.push(`very thin operating margin (${_one(i.opmPct)}%)`);
+  // (b) profit fell.
+  if (i.patY != null && i.patY < 0) misses.push(`profit fell ${_pct(Math.abs(i.patY))}% year on year`);
+  // (c) a loss that is large against the business.
+  if (i.patCurCr != null && i.patCurCr < 0 && i.salesCurCr != null && i.salesCurCr > 0
+      && -i.patCurCr > IN_STRONG_MAX_LOSS_TO_REVENUE * i.salesCurCr) {
+    misses.push(`still loss-making — a loss of ${_cr(i.patCurCr)} on ${_cr(i.salesCurCr)} of revenue`);
+  }
+  // (f) slow revenue needs a real margin, and a real margin step-up.
+  if (!i.isLender && i.salesY != null && i.salesY < IN_STRONG_SLOW_REVENUE_PCT && i.opmPct != null
+      && (i.opmPct < IN_STRONG_SLOW_REVENUE_MIN_OPM || (opmExp != null && opmExp < IN_STRONG_SLOW_REVENUE_MIN_STEP))) {
+    misses.push(`revenue grew only ${_pct(i.salesY)}% without a strong margin to carry it (operating margin ${_one(i.opmPct)}%${opmExp != null ? `, ${opmExp >= 0 ? '+' : '−'}${_one(Math.abs(opmExp))} pts` : ''})`);
+  }
+  const pr = indiaProblems(i);
+  const problems = _distinct(pr.items);
+  if (problems.length >= 2) misses.push(`${problems.length} separate problems: ${pr.items.map((x) => x.text).join('; ')}`);
+  return { tier: misses.length ? 'MIXED' : 'STRONG', misses, problems };
 }
 
 /** IST calendar date (YYYY-MM-DD). Pure — no Intl, no env. */
@@ -270,7 +469,16 @@ function istTodayIso(nowMs: number = Date.now()): string {
   return new Date(nowMs + 330 * 60_000).toISOString().slice(0, 10);
 }
 
-function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRow | null {
+function _gradeIndiaRow(rowIn: any, drop: (reason: string) => null): IndiaGradedRow | null {
+  // zzz821 — every rule below reads cash through these three fields, so they
+  // are replaced ONCE, here, by the same-fiscal-year view (or nulls). No rule
+  // can see an annual-CFO ÷ quarterly-PAT ratio again.
+  const _cashView = indiaCashView(rowIn);
+  const _finKind = indiaFinancialKind(rowIn);
+  const row: any = {
+    ...rowIn,
+    ocf_annual_cr: _cashView.ocf, pat_annual_cr: _cashView.pat, ocf_to_pat_ratio: _cashView.ratio,
+  };
   const salesY = row?.sales_yoy_pct ?? null;
   // ═══════════════════════════════════════════════════════════════════════
   // NO GROWTH RATE OFF A LOSS.                                     (zzz800)
@@ -289,8 +497,30 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
   const _epsCurA = _numA(row?.eps_curr), _epsPrevA = _numA(row?.eps_prev);
   const _patNegBase = (_patPrevA != null && _patPrevA < 0) || (_patPrevA == null && _epsPrevA != null && _epsPrevA < 0);
   const _epsNegBase = (_epsPrevA != null && _epsPrevA < 0) || (_epsPrevA == null && _patPrevA != null && _patPrevA < 0);
-  const patY = _patNegBase ? null : (row?.pat_yoy_pct ?? null);
-  const epsY = _epsNegBase ? null : (row?.eps_yoy_pct ?? null);
+  const patYRaw: number | null = _patNegBase ? null : _numA(row?.pat_yoy_pct);
+  const epsYRaw: number | null = _epsNegBase ? null : _numA(row?.eps_yoy_pct);
+  // ═══════════════════════════════════════════════════════════════════════
+  // PROFIT AND EPS MUST TELL THE SAME STORY.                       (zzz821)
+  //
+  // PAT +274% with EPS +64% (or PAT +21% with EPS +111%) means the share
+  // count, a minority interest or a mis-read line moved one of them. The
+  // quarter is graded on the LOWER of the two and the card says so. When they
+  // point in OPPOSITE directions the figures themselves are in doubt: the row
+  // is held (see `figures_conflict` below) rather than graded on either.
+  // ═══════════════════════════════════════════════════════════════════════
+  let growth_basis_note: string | null = null;
+  let figures_conflict: string | null = null;
+  let patY: number | null = patYRaw, epsY: number | null = epsYRaw;
+  if (patYRaw != null && epsYRaw != null) {
+    const sgn = (v: number) => (v > 0.5 ? 1 : v < -0.5 ? -1 : 0);
+    if (sgn(patYRaw) * sgn(epsYRaw) < 0) {
+      figures_conflict = `profit and EPS moved in opposite directions (PAT ${patYRaw >= 0 ? '+' : ''}${Math.round(patYRaw)}%, EPS ${epsYRaw >= 0 ? '+' : ''}${Math.round(epsYRaw)}%) — held until the figures are re-checked`;
+    } else if (patYRaw > 0 && epsYRaw > 0 && Math.max(patYRaw, epsYRaw) > 1.5 * Math.min(patYRaw, epsYRaw)) {
+      const lo = Math.min(patYRaw, epsYRaw);
+      patY = lo; epsY = lo;
+      growth_basis_note = `graded on the lower of PAT (+${Math.round(patYRaw)}%) and EPS (+${Math.round(epsYRaw)}%) growth — the two disagree`;
+    }
+  }
   const opmExp = row?.opm_pct != null && row?.opm_prev_pct != null ? row.opm_pct - row.opm_prev_pct : null;
   // Financials are PRESENT even when the percentage was refused — a turnaround
   // with a negative base must not fall into the no-financials preview path.
@@ -682,8 +912,9 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
   if (opmExp != null && opmExp <= -0.5 && !caveat_tags.includes('segment mix shift')) {
     caveat_tags.push('segment mix shift');
   }
-  const _LENDER_RE = /\b(bank|banking|finance|financial|fincorp|finserv|capital|housing\s+finance|microfin\w*|nbfc|leasing|credit|investments?|securities|broking|insurance|asset\s+manage\w*|mutual\s+fund|chit\s+fund)\b/i;
-  const _isLender = _LENDER_RE.test(String(row?.company || ''));
+  // zzz821 — ONE detection for engine and card (lib/india-eo-card-data
+  // `financialKind`, fed Screener's industry chain when enrichment has it).
+  const _isLender = _finKind != null;
   if (row?.ocf_to_pat_ratio != null && !_isLender) {
     if (row.ocf_to_pat_ratio < 0.6 && (row.pat_annual_cr ?? 0) > 0) caveat_tags.push('ocf divergence');
     if (row.ocf_annual_cr != null && row.ocf_annual_cr < 0 && (row.pat_annual_cr ?? 0) > 0 && !caveat_tags.includes('ocf divergence')) caveat_tags.push('ocf divergence');
@@ -787,6 +1018,8 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
   // invented, never dropped.
   const _carried: string[] = Array.isArray(row?._carried_caveats) ? row._carried_caveats.map(String) : [];
   for (const t of ['ocf divergence', 'exceptional item', 'tax distortion']) {
+    // zzz821 — cash flags never apply to a bank / NBFC / insurer.
+    if (t === 'ocf divergence' && _finKind) continue;
     if (_carried.includes(t) && !caveat_tags.includes(t)) caveat_tags.push(t);
   }
 
@@ -1109,8 +1342,7 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
     //
     // `\bfin\b` and friends are word-bounded deliberately: "Infinite
     // Computer Solutions" and "Fincorp" must not both match on a substring.
-    const _LENDER_NAME = /\b(bank|banking|finance|financial|fincorp|finserv|capital|housing\s+finance|microfin\w*|nbfc|leasing|credit|investments?|securities|broking|insurance|asset\s+manage\w*|mutual\s+fund|chit\s+fund)\b/i;
-    const _looksLikeLender = _LENDER_NAME.test(String(row?.company || '')) ;
+    const _looksLikeLender = _isLender;   // zzz821 — the shared detection
 
     const _ocfAnnual = typeof row?.ocf_annual_cr === 'number' ? row.ocf_annual_cr : null;
     const _patAnnual = typeof row?.pat_annual_cr === 'number' ? row.pat_annual_cr : null;
@@ -1259,24 +1491,53 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
     }
   }
 
-  // ── zzz819 — THE INDIA BLOCKBUSTER CONFIRMATION GATE (see `indiaBlockbusterGate`)
+  // ── zzz819 / zzz821 — THE BLOCKBUSTER GATE, THE STRONG FLOOR, THE HOLD ──
+  const _forensic = indiaForensicCheck({
+    salesY, epsY: epsYRaw, patY: patYRaw, opmPct: _opmNow, opmPrevPct: _opmPre,
+    cfoToPat: _cashView.ratio, isFinancial: _isLender,
+  });
+  const _marketDriven = marketDrivenKind(rowIn);
+  const _gateInput: IndiaStrongFloorInput = {
+    salesY, patY, epsY, opmPct: _opmNow, opmPrevPct: _opmPre,
+    salesCurCr: _sCur, salesPrevCr: _sPrev,
+    patCurCr: _patCurA, patPrevCr: _patPrevA, epsPrev: _epsPrevA,
+    cfoToPat: _cashView.ratio,
+    ocfAnnualCr: _cashView.ocf, patAnnualCr: _cashView.pat,
+    isLender: _isLender,
+    caveatTags: caveat_tags,
+    forensic: _forensic,
+    marketDriven: _marketDriven,
+  };
   let _bbGate: IndiaBlockbusterGateResult | null = null;
-  let tier_cap_reason: string | null = null;
+  const _capMisses: string[] = [];
+  let _problemKinds: IndiaProblemKind[] = [];
+  const _tierBeforeChecks: EarningsTier = tier;
   if (tier === 'BLOCKBUSTER') {
-    _bbGate = indiaBlockbusterGate({
-      salesY, patY, opmPct: _opmNow, opmPrevPct: _opmPre,
-      salesCurCr: _sCur, salesPrevCr: _sPrev,
-      patCurCr: _patCurA, patPrevCr: _patPrevA, epsPrev: _epsPrevA,
-      cfoToPat: _cfoRatio,
-      ocfAnnualCr: _numA(row?.ocf_annual_cr), patAnnualCr: _numA(row?.pat_annual_cr),
-      isLender: _isLender,
-      caveatTags: caveat_tags,
-    });
+    _bbGate = indiaBlockbusterGate(_gateInput);
+    _problemKinds = _bbGate.problems;
     if (_bbGate.tier !== 'BLOCKBUSTER') {
       tier = _bbGate.tier;
-      tier_cap_reason = _bbGate.reason;
-      if (tier_cap_reason && !caveat_tags.includes(tier_cap_reason)) caveat_tags.push(tier_cap_reason);
+      _capMisses.push(..._bbGate.misses);
     }
+  }
+  if (tier === 'STRONG') {
+    const fl = indiaStrongFloor(_gateInput);
+    if (!_problemKinds.length) _problemKinds = fl.problems;
+    if (fl.tier === 'MIXED') {
+      tier = 'MIXED';
+      for (const m of fl.misses) if (!_capMisses.includes(m)) _capMisses.push(m);
+    }
+  }
+  // One line, stated once (zzz821 — never repeated in the caveats or summary).
+  const tier_cap_reason: string | null = (_capMisses.length && tier !== _tierBeforeChecks)
+    ? `Capped at ${tier}: ${_capMisses.join('; ')}` : null;
+  // PAT and EPS in opposite directions: the figures are in doubt, so a top
+  // tier is HELD — the display's UNCONFIRMED treatment (`_tier_unconfirmed`)
+  // — until they are re-checked. The stored tier is kept beside it.
+  let _tierUnconfirmed: string | null = null;
+  if (figures_conflict && (tier === 'BLOCKBUSTER' || tier === 'STRONG')) {
+    _tierUnconfirmed = tier;
+    tier = 'MIXED';
   }
 
   // Narrative
@@ -1293,10 +1554,17 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
                tier === 'MIXED' ? `${co} ${q} is a mixed print` : `${co} ${q} fails the bar`;
   // zzz800 — whenever either quarter is a loss, the profit line is a DIRECTION
   // with both absolutes, never a percentage.
-  const _patBit = patTraj ? patTraj.label : fmtP('PAT', patY);
-  const _epsBit = patTraj ? '' : (epsTraj ? epsTraj.label.replace(/^loss per share/, 'EPS loss').replace(/^turned profitable/, 'EPS turned positive').replace(/^swung to a loss per share/, 'EPS swung to a loss') : fmtP('EPS', epsY));
-  const _opmBit = ((patTraj || epsTraj) && typeof row?.opm_pct === 'number' && typeof row?.opm_prev_pct === 'number' && opmExp != null && Math.abs(opmExp) >= 3)
-    ? `operating margin ${row.opm_prev_pct}% → ${row.opm_pct}%` : '';
+  const _patBit = patTraj ? patTraj.label : fmtP('PAT', patYRaw);
+  const _epsBit = patTraj ? '' : (epsTraj ? epsTraj.label.replace(/^loss per share/, 'EPS loss').replace(/^turned profitable/, 'EPS turned positive').replace(/^swung to a loss per share/, 'EPS swung to a loss') : fmtP('EPS', epsYRaw));
+  // zzz821 — a lender's summary speaks of NET margin (profit ÷ income); an
+  // operating margin means nothing for a bank, NBFC or insurer.
+  const _netM = (pc: number | null, sc: number | null) => (pc != null && sc != null && sc > 0) ? Math.round((pc / sc) * 1000) / 10 : null;
+  const _nmNow = _netM(_patCurA, _sCur), _nmPrev = _netM(_patPrevA, _sPrev);
+  const _opmBit = !(patTraj || epsTraj) ? ''
+    : _isLender
+      ? ((_nmNow != null && _nmPrev != null && Math.abs(_nmNow - _nmPrev) >= 3) ? `net margin ${_nmPrev}% → ${_nmNow}%` : '')
+      : ((typeof row?.opm_pct === 'number' && typeof row?.opm_prev_pct === 'number' && opmExp != null && Math.abs(opmExp) >= 3)
+        ? `operating margin ${row.opm_prev_pct}% → ${row.opm_pct}%` : '');
   const metrics = [fmtP('revenue', salesY), _patBit, _epsBit, _opmBit].filter(Boolean).join(', ');
   // Price-reaction tags are NOT fundamental caveats: they go in their own
   // clearly labelled sentence so "with caveats" only ever describes the filing.
@@ -1319,7 +1587,8 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
   // verdict and labelled as not part of it.
   const _ctxOther = market_context.filter((t) => !MARKET_REACTION_CAVEATS.has(t));
   const _ctxNote = _ctxOther.length ? ` Price context (not part of the grade): ${_ctxOther.join(', ')}.` : '';
-  const narrative = `${head} (${metrics})${flavor}${market_reaction ? ' ' + market_reaction.note : ''}${_ctxNote}`;
+  const _basisNote = growth_basis_note ? ` Growth ${growth_basis_note}.` : '';
+  const narrative = `${head} (${metrics})${flavor}${_basisNote}${market_reaction ? ' ' + market_reaction.note : ''}${_ctxNote}`;
 
   // PATCH 1006 — compute ELITE / PEAD / MULTIBAGGER flags from available data
   const _stillLoss = (row?.pat_curr_cr != null && row.pat_curr_cr <= 0) || (row?.eps_curr != null && row.eps_curr <= 0);
@@ -1453,7 +1722,7 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
     adtv_cr: _adtv,  // PATCH 1034 — liquidity (median ₹Cr/day)
     pe: row.pe ?? null,
     price: row.current_price ?? null,
-    sales_yoy_pct: salesY, net_profit_yoy_pct: patY, eps_yoy_pct: epsY,
+    sales_yoy_pct: salesY, net_profit_yoy_pct: patYRaw, eps_yoy_pct: epsYRaw,
     sales_curr_cr: row.sales_curr_cr ?? null, sales_prev_cr: row.sales_prev_cr ?? null,
     pat_curr_cr: row.pat_curr_cr ?? null, pat_prev_cr: row.pat_prev_cr ?? null,
     eps_curr: row.eps_curr ?? null, eps_prev: row.eps_prev ?? null,
@@ -1474,7 +1743,24 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
     // zzz819 — why a BLOCKBUSTER-on-the-numbers quarter was held lower, in one
     // plain line ("Capped at STRONG: revenue grew only 5%"). Null otherwise.
     tier_cap_reason,
-    bb_gate_misses: _bbGate && _bbGate.tier !== 'BLOCKBUSTER' ? _bbGate.misses : null,
+    bb_gate_misses: _capMisses.length && tier_cap_reason ? _capMisses : null,
+    // zzz821 — distinct problem kinds found (growth quality / thin margin /
+    // cash / quality flag); 2+ means MIXED.
+    problem_kinds: _problemKinds.length ? _problemKinds : null,
+    // zzz821 — the India F-pattern forensic check (null when F does not fire):
+    // { status: 'passed' | 'not_passed' | 'unverified', reason }.
+    forensic_check: _forensic,
+    // zzz821 — an investment / trading company whose profit moves with markets.
+    market_driven: _marketDriven,
+    // zzz821 — PAT and EPS disagree: the lower one graded, stated here.
+    growth_basis_note,
+    // zzz821 — PAT and EPS moved in opposite directions: top tier held.
+    figures_conflict,
+    ...(_tierUnconfirmed ? { _tier_unconfirmed: _tierUnconfirmed } : {}),
+    // zzz821 — 'lender' | 'insurer' | null, from the shared detection.
+    fin_kind: _finKind,
+    industry: rowIn?.industry ?? null,
+    broad_industry: rowIn?.broad_industry ?? null,
     // PATCH 1006
     is_elite: _is_elite,
     pead_score: _pead_score,
@@ -1492,8 +1778,13 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
     // couldn't render a CFO/PAT chip. Expose it here under two aliases:
     // ocf_to_pat_ratio (matches the internal field name) and
     // cfo_to_pat_ratio (matches downstream sync + display code).
-    ocf_to_pat_ratio: row.ocf_to_pat_ratio ?? null,
-    cfo_to_pat_ratio: row.ocf_to_pat_ratio ?? null,
+    // zzz821 — same-fiscal-year CFO ÷ PAT only (null = unknown or not
+    // meaningful); `cash_basis` names the year, `cash_note` says why not.
+    ocf_to_pat_ratio: _cashView.ratio,
+    cfo_to_pat_ratio: _cashView.ratio,
+    cash_basis: _cashView.basis,
+    cash_fy: _cashView.fy,
+    cash_note: _cashView.note,
     // QUALITY × INFLECTION — second axis, alongside (never instead of) the tier.
     quality_score: _q.quality,
     inflection_score: _q.inflection,

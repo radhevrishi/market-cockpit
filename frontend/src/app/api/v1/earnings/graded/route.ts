@@ -542,6 +542,8 @@ export async function GET(req: Request) {
             rs_rating: e.rs_rating ?? c.rs_rating, stage: e.stage ?? c.stage,
             trend_template_passes: e.trend_template_passes,
             ocf_annual_cr: e.ocf_annual_cr, pat_annual_cr: e.pat_annual_cr, ocf_to_pat_ratio: e.ocf_to_pat_ratio,
+            cash_fy: e.cash_fy ?? null, cash_basis: e.cash_basis ?? null,   // zzz821
+            industry: e.industry ?? null, broad_industry: e.broad_industry ?? null, broad_sector: e.broad_sector ?? null,
             period_ended: e.period_ended, latest_quarter_end_iso: e.latest_quarter_end_iso ?? _isoFromQuarterLabel(e.latest_quarter_label),  // zzz414
             announce_date_iso: e.announce_date_iso,
             financials_source: e.financials_source,
@@ -1235,6 +1237,11 @@ export async function GET(req: Request) {
       rs_rating: e.rs_rating ?? null, stage: e.stage ?? null,
       trend_template_passes: e.trend_template_passes ?? false,
       ocf_annual_cr: e.ocf_annual_cr ?? null, pat_annual_cr: e.pat_annual_cr ?? null, ocf_to_pat_ratio: e.ocf_to_pat_ratio ?? null,
+      // zzz821 — the fiscal year the cash figures belong to; without it the
+      // grader treats cash as unknown. Industry chain for lender / investment-
+      // company detection.
+      cash_fy: e.cash_fy ?? null, cash_basis: e.cash_basis ?? null,
+      industry: e.industry ?? null, broad_industry: e.broad_industry ?? null, broad_sector: e.broad_sector ?? null,
       period_ended: e.period_ended,
       // zzz414 — fall back to deriving the quarter-end from the Screener
       // quarter label when the enrich payload predates the enrich-side fix

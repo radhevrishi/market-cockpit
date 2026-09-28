@@ -10,7 +10,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { detectPersistentCatalysts, rankOf, persistenceWords, catalystThesisLine, type PersistentCatalyst } from '@/lib/catalyst/persistence';
-import { specialFocusQueue, nearMissList, focusButtonWords, splitDroppedOut, focusRowIndex, focusSourceLabel } from '@/lib/catalyst/cross-view';
+import { specialFocusQueue, nearMissList, focusButtonWords, splitDroppedOut, splitOffLists, focusRowIndex, focusSourceLabel } from '@/lib/catalyst/cross-view';
 
 const C = {
   bg: 'var(--mc-bg-1)', bg2: 'var(--mc-bg-2, var(--mc-bg-1))', border: 'var(--mc-bg-4)', text: 'var(--tc-text, #F1F5F9)',
@@ -127,7 +127,11 @@ export function SpecialFocusPanel({ rows, lookup, ready, thesisLabel, onJump, on
   const [showNear, setShowNear] = useState(false);
   // zzz788: ONE list feeds the near-miss count and the near-miss rows, and the
   // companies already in Special Focus are excluded (and counted) in one place.
-  const nearInfo = useMemo(() => nearMissList<FocusRow>(live, entries), [live, entries]);
+  // zzz823: a record whose company is on neither your book nor the bench now
+  // is kept, collapsed, and never counted.
+  const { onLists, offLists } = useMemo(() => splitOffLists(entries), [entries]);
+  const [showOff, setShowOff] = useState(false);
+  const nearInfo = useMemo(() => nearMissList<FocusRow>(live, onLists), [live, onLists]);
   const near = nearInfo.near;
   // zzz782 — TRACKED POTENTIAL: enabling steps (MoU / JDA / LoI) remembered from
   // Daily Gainers with their conversion chain. Never in the queue on their own.
@@ -136,7 +140,7 @@ export function SpecialFocusPanel({ rows, lookup, ready, thesisLabel, onJump, on
   const priorable = near.filter((x) => (x.row.market || 'IN') !== 'US' && Object.keys(x.row.ledger?.periods || {}).length <= 1).map((x) => x.pc.ticker);
   // zzz802: the list is what MEETS the gate; a decayed record the owner did not
   // choose to keep goes to its own "dropped out" section, with the reason.
-  const { inFocus: shown, droppedOut } = splitDroppedOut(entries);
+  const { inFocus: shown, droppedOut } = splitDroppedOut(onLists);
   const [showDropped, setShowDropped] = useState(false);
   const visible = showAll ? shown : shown.slice(0, 8);
 
@@ -242,8 +246,25 @@ export function SpecialFocusPanel({ rows, lookup, ready, thesisLabel, onJump, on
         {tracked.length > 0 && <button onClick={() => setShowTracked((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px dashed ${C.cyan}`, background: 'transparent', color: C.cyan }}>{showTracked ? 'Hide tracked potential' : `◌ ${tracked.length} tracked potential catalyst${tracked.length === 1 ? '' : 's'} (enabling steps)`}</button>}
         {shown.length > 8 && <button onClick={() => setShowAll((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.border}`, background: 'transparent', color: C.dim }}>{showAll ? 'Show top 8 Special Focus' : focusButtonWords(shown.length, near.length).all}</button>}
         {droppedOut.length > 0 && <button data-testid="sf-dropped-button" onClick={() => setShowDropped((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px dashed ${C.amber}`, background: 'transparent', color: C.amber }}>{showDropped ? 'Hide dropped out' : `${droppedOut.length} dropped out of Special Focus (reason shown)`}</button>}
+        {offLists.length > 0 && <button data-testid="sf-off-lists-button" onClick={() => setShowOff((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px dashed ${C.border}`, background: 'transparent', color: C.faint }}>{showOff ? 'Hide' : `${offLists.length} no longer on your book or bench (not counted)`}</button>}
         {hiddenByUser.length > 0 && <button onClick={() => setShowHidden((v) => !v)} style={{ fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.border}`, background: 'transparent', color: C.faint }}>{showHidden ? 'Hide' : `${hiddenByUser.length} dismissed / archived`}</button>}
       </div>
+      {showOff && offLists.length > 0 && (
+        <div data-testid="sf-off-lists" style={{ marginTop: 6, borderTop: `1px solid ${C.border}`, paddingTop: 6 }}>
+          <div style={{ fontSize: 12.5, color: C.faint, marginBottom: 4 }}>
+            No longer on your lists — each was detected earlier, but the company is now neither a saved holding nor on the Conviction Beats bench on this page. Kept here with its history; not counted in Special Focus. Dismiss removes it for good.
+          </div>
+          {offLists.map((e) => (
+            <div key={e.id} style={{ fontSize: 13, color: C.dim, padding: '3px 0', borderTop: `1px solid ${C.border}` }}>
+              <b style={{ color: C.text }}>{e.pc.ticker}</b>
+              <span style={{ color: C.faint }}> · {e.pc.label}{e.st?.sfId ? ` · was #${e.st.sfId}` : ''} · {focusSourceLabel(null, { inView: false, origins: e.pc.origins })}</span>
+              <span style={{ display: 'inline-flex', gap: 8, marginLeft: 8 }}>
+                <button onClick={() => act(e.id, 'dismissed')} style={{ all: 'unset', cursor: 'pointer', color: C.faint, fontWeight: 800, fontSize: 12 }}>Dismiss</button>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       {showDropped && droppedOut.length > 0 && (
         <div data-testid="sf-dropped" style={{ marginTop: 6, borderTop: `1px solid ${C.border}`, paddingTop: 6 }}>
           <div style={{ fontSize: 12.5, color: C.faint, marginBottom: 4 }}>

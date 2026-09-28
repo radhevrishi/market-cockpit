@@ -36,14 +36,16 @@
 import { VAR_LABEL } from '../thesis/taxonomy';
 import { THESES } from '../thesis/ledger';
 import type { FilingRead, Touch } from './filing-read-types';
+import { buildCard, pairVerified, tidyFigure, type Claim, type EventCard } from './event-card';
 
 export type { FilingRead, Touch } from './filing-read-types';
+export type { EventCard, Impact, EvidenceQuality, Claim } from './event-card';
 
 export const EVENT_TYPES = [
   'Results', 'Order win', 'Capex / capacity', 'Corporate restructuring', 'Acquisition', 'Divestment',
   'Regulatory approval', 'Fund raise', 'Guidance', 'Management change', 'Concall / business update',
-  'Regulatory / legal action', 'Exchange clarification', 'Shareholding disclosure', 'Promoter holding change',
-  'Other filing',
+  'Regulatory / legal action', 'Credit rating', 'Corporate action', 'Exchange clarification', 'Shareholding disclosure',
+  'Promoter holding change', 'Other filing',
 ] as const;
 export type RecentEventType = typeof EVENT_TYPES[number];
 export type TypeFilter = RecentEventType | 'All';
@@ -75,6 +77,11 @@ export interface RawEvent {
   direction?: string | null;
   text?: string | null;
   figure?: string | null;
+  /** zzz824: the stated prior / latest behind `figure`, and the source quote — a change is verified only when the
+   *  quote carries both numbers. */
+  before?: string | null;
+  after?: string | null;
+  quote?: string | null;
   url?: string | null;
   source?: string | null;
   badge?: SourceBadge;
@@ -119,6 +126,12 @@ export interface RecentEvent {
   readNote: string | null;
   /** Every filing merged into this event (≥ 1). */
   filings: FilingRef[];
+  /** zzz824: the decision card — every field computed separately (lib/catalyst/event-card). */
+  card?: EventCard;
+  /** zzz824: the name's thesis context (type + assessment) — the ledger side panel reads it. */
+  ctx?: ThesisCtx | null;
+  /** zzz824: NSE / BSE / SEC, from the document address. */
+  exchange?: string | null;
 }
 
 export interface RecentCatalystResult {
@@ -192,11 +205,15 @@ const ROUTINE: Array<[RegExp, string]> = [
   [/change\s+in\s+(registered|corporate)\s+office\s+address|change\s+of\s+(e-?mail|website|contact)/i, 'address / contact change'],
 ];
 
-const SENIOR = /\b(ceo|chief\s+executive|cfo|chief\s+financial|managing\s+director|\bmd\b|chairman|chairperson|whole[-\s]time\s+director|executive\s+director|coo|chief\s+operating|president|jt\.?\s+managing|joint\s+managing)\b/i;
+const SENIOR = /\b(ceo|chief\s+executive|cfo|chief\s+financial|managing\s+director|\bmd\b|chairman|chairperson|whole[-\s]time\s+director|executive\s+director|coo|chief\s+operating|president|jt\.?\s+managing|joint\s+managing|company\s+secretary)\b/i;
 
 const RULES: Array<[RegExp, RecentEventType, { generic?: boolean }?]> = [
   // exchange questions first: "Reply to Clarification- Financial results" is a reply, not results
   [/clarification|spurt\s+in\s+(volume|price)|(price|volume)\s+movement|movement\s+in\s+(price|volume)|significant\s+(increase|movement)\s+in\s+(price|volume)|query\s+from\s+the\s+exchange/i, 'Exchange clarification'],
+  // zzz824: a rating letter is its own event — never Results (a rationale quotes annual figures) or an acquisition
+  [/credit\s+rating|rating\s+(?:rationale|action|letter)|ratings?\s+(?:re-?)?affirm|\b(?:CRISIL|ICRA|CARE\s+Ratings|CARE\s+Edge|India\s+Ratings|Acuit[eé]|Brickwork|Infomerics)\b/i, 'Credit rating'],
+  // zzz824: bonus / split — a corporate action with no cash raised; never a rights fund raise
+  [/\bbonus\s+(?:issue|shares?|equity|allotment)|\ballotment\s+of\s+bonus|\bsub[-\s]?division|stock\s+split|split\s+of\s+(?:the\s+)?(?:equity\s+)?shares|consolidation\s+of\s+shares/i, 'Corporate action'],
   [/scheme\s+of\s+(arrangement|amalgamation)|demerg|amalgamat|\bmerger\b|composite\s+scheme|hive[-\s]off|resulting\s+company|transferor|transferee/i, 'Corporate restructuring'],
   // a regulator / court / tax authority acting — never an order win
   [/action\(?s?\)?\s+initiated|orders?\s+passed|penalt|show[-\s]cause|demand\s+(notice|order)|tax\s+demand|notice\s+(from|under|of|received)|litigation|\bdispute\b|court\b|tribunal|\bsearch\b|\bseizure|\bfine\b|levied|enforcement|warning\s+letter|import\s+alert|form\s+483|\b483\b|suspension|insolvency|\bCIRP\b|default/i, 'Regulatory / legal action'],
@@ -204,7 +221,7 @@ const RULES: Array<[RegExp, RecentEventType, { generic?: boolean }?]> = [
   [/\bSAST\b|regulation\s*29\s*\(|reg\.?\s*29\s*\(|regulation\s*31\s*\(|takeover\s+regulations?|substantial\s+acquisition|\bpledge|encumbrance|regulation\s*7\s*\(\s*2\s*\)|insider\s+trading|\bPIT\b|form\s+(3|4|5)\b|schedule\s+13[dg]|\b13[dg]\b/i, 'Shareholding disclosure'],
   [/sale\s+or\s+disposal|disposal\s+of|divest|slump\s+sale|sale\s+of\s+(stake|business|undertaking|unit|division|subsidiary|shares?\s+(in|of)\s+(its\s+)?(subsidiary|associate|jv))|transfer\s+of\s+(business|undertaking)|item\s*2\.01.*dispos/i, 'Divestment'],
   [/acqui(re|red|res|ring|sition)|takeover\s+(bid|offer)|stake\s+(purchase|acquisition)|open\s+offer|definitive\s+agreement\s+to\s+(acquire|purchase)|item\s*2\.01/i, 'Acquisition'],
-  [/\bQIP\b|qualified\s+institutions?\s+placement|preferential\s+(issue|allotment)|rights\s+issue|fund[\s-]*rais|private\s+placement|\bwarrants?\b|allotment\s+of\s+(equity|shares|securities)|issue\s+of\s+(equity|securities)|public\s+offering|registered\s+direct|\bATM\s+(program|offering)|convertible\s+notes?|item\s*3\.02/i, 'Fund raise'],
+  [/\bQIP\b|qualified\s+institutions?\s+placement|preferential\s+(issue|allotment)|rights\s+issue|fund[\s-]*rais|private\s+placement|\bwarrants?\b|allotment\s+of\s+(equity|shares|securities)|issue\s+of\s+(equity|securities)|\ballot(?:ment|ted)\b|public\s+offering|registered\s+direct|\bATM\s+(program|offering)|convertible\s+notes?|item\s*3\.02/i, 'Fund raise'],
   [/appoint(ment|ed)?|resign(ation|ed|s)?|cessation|re-?designat|change\s+in\s+(directors?|management|key\s+managerial|kmp|senior\s+management|auditor|ceo|cfo)|item\s*5\.02/i, 'Management change'],
   [/bagging|receiving\s+of\s+(orders?|contracts?)|receipt\s+of\s+(an?\s+)?(new\s+)?(purchase\s+|work\s+|export\s+)?(order|contract|loa)|orders?\s+(received|win|won|bagged|worth|valued|from|for)|contract\s+(award|win|worth|valued|from|for|signed)|letter\s+of\s+(award|intent)|\bLOA\b|\bLOI\b|work\s+order|purchase\s+order|\bL-?1\b|awarded|secur(es|ed)\s+(an?\s+)?(new\s+)?(order|contract)|order\s+book/i, 'Order win'],
   [/transcript|con[\s.-]*call|conference\s+call|earnings\s+call|investor\s+(presentation|update|day)|analyst\s+(presentation|day)|business\s+update|earnings\s+(presentation|deck)|regulation\s+fd|item\s*7\.01/i, 'Concall / business update'],
@@ -371,6 +388,8 @@ export function importanceOf(e: { type: RecentEventType; figure: string | null; 
     case 'Management change': return e.senior ? 'Notable' : 'Minor';
     case 'Concall / business update': return fig ? 'Notable' : e.read === 'read' || e.line ? 'Notable' : 'Minor';
     case 'Regulatory / legal action': return e.noImpact ? 'Minor' : 'Notable';
+    case 'Credit rating': return /upgrad|downgrad|outlook\s+(?:revised|changed)|placed\s+on\s+(?:rating\s+)?watch/i.test(line) ? 'Notable' : 'Minor';
+    case 'Corporate action': return /bonus|split|sub-?division/i.test(line) ? 'Notable' : 'Minor';
     default: return 'Minor';
   }
 }
@@ -413,6 +432,7 @@ export function rawFromLedger(ticker: string, company: string | null, ledger: an
       out.push({
         ticker, company, date: d.date_iso, title: String(d.label || ''), kind: d.kind || null, url: d.url || null, source: d.source || null,
         variable: e.variable || null, direction: e.direction || null, figure: fig,
+        before: e.before != null ? String(e.before) : null, after: e.after != null ? String(e.after) : null, quote: quote || null,
         text: fig ? `${varLabel(e.variable)}: ${fig}` : (quote ? `${varLabel(e.variable)} — “${quote.slice(0, 110)}${quote.length > 110 ? '…' : ''}”` : varLabel(e.variable)),
         origin: 'ledger-event', ctx: c,
       });
@@ -442,6 +462,7 @@ export function rawFromPersistent(ticker: string, company: string | null, pcs: a
       out.push({
         ticker, company, date, title: String(it.text || ''), variable: it.metric || null, direction: dir,
         text: String(it.text || ''), figure: fig, url: src?.url || null, source: src?.name || null,
+        before: it.before != null ? String(it.before) : null, after: it.after != null ? String(it.after) : null, quote: String(it.quote || it.text || '') || null,
         badge: it.origin === 'gainer' ? badgeOf(src?.name, src?.url) : 'filed',
         origin: 'persistent', ctx: c,
       });
@@ -544,6 +565,12 @@ interface Resolved {
   noImpact: boolean;
   /** Read, but no line passed the quality gate — show "<type> — see filing". */
   seeFiling?: boolean;
+  /** zzz824: what the evidence says about thesis variables — verified only with a stated prior. */
+  claims: Claim[];
+  docType: string | null;
+  lowConfidence: boolean;
+  ratingAction: string | null;
+  market: 'IN' | 'US';
 }
 
 function resolve(f: FilingItem, readMap: Map<string, FilingRead>, market: 'IN' | 'US'): Resolved {
@@ -589,11 +616,67 @@ function resolve(f: FilingItem, readMap: Map<string, FilingRead>, market: 'IN' |
   for (const t of r?.status === 'read' ? r.touches || [] : []) if (touchAllowed(type, t.key)) touches.push(t);
   for (const e of evs) if (e.variable && touchAllowed(type, e.variable)) touches.push({ key: e.variable, dir: DIR[String(e.direction || '')] || 'stated' });
   const readNote = r && r.status !== 'read' ? `couldn't open the document (${r.reason || 'no reason given'})` : null;
+  // zzz824: claims — a change the filing states with its prior is verified; a direction with no prior is not
+  const claims: Claim[] = [];
+  if (r?.status === 'read') {
+    for (const c of r.changes || []) if (touchAllowed(type, c.key)) claims.push({ key: c.key, dir: c.dir, verified: true, text: tidyFigure(c.text, market), source: 'filing' });
+    for (const t of r.touches || []) if (touchAllowed(type, t.key)) claims.push({ key: t.key, dir: t.dir, verified: false, source: 'filing' });
+  }
+  for (const e of evs) {
+    if (!e.variable || !touchAllowed(type, e.variable)) continue;
+    const dir = DIR[String(e.direction || '')] || 'stated';
+    const ok = dir !== 'stated' && pairVerified(e.before, e.after, `${e.quote || ''} ${e.origin === 'persistent' ? e.text || '' : ''}`);
+    const b = tidyFigure(e.before, market), a = tidyFigure(e.after, market);
+    claims.push({ key: e.variable, dir, verified: ok, source: 'ledger', text: ok && b && a ? `${varLabel(e.variable)} ${b} → ${a}${pctOf(b, a)}` : null });
+  }
+  if (line) line = tidyFigure(line, market) || line;
+  if (figure) figure = tidyFigure(figure, market);
+  const kindDoc = r?.status === 'read' ? r.docType || null : null;
   return {
     f, type, line, figure, routine, touches, read, readNote,
     senior: !!(f.subject.senior || r?.senior), noImpact: !!r?.noImpact,
     seeFiling: r?.status === 'read' && !line,
+    claims, docType: kindDoc, lowConfidence: !!(r?.status === 'read' && (r.lowConfidence || (!line && r.rejected))),
+    ratingAction: r?.status === 'read' ? r.ratingAction || null : null, market,
   };
+}
+
+/** " (+22.7%)" from two figures in the same unit, else "". */
+function pctOf(b: string, a: string): string {
+  const u = (s: string) => (/\bbn\b/.test(s) ? 'bn' : /\bCr\b/.test(s) ? 'Cr' : /\bmn\b/.test(s) ? 'mn' : /%/.test(s) ? '%' : /[A-Za-z]/.test(s.replace(/^[₹$]/, '')) ? s.replace(/[\d,.\s₹$+~]/g, '') : '');
+  if (u(b) !== u(a) || u(a) === '%') return '';
+  const x = parseFloat(b.replace(/[^\d.]/g, '')), y = parseFloat(a.replace(/[^\d.]/g, ''));
+  if (!(x > 0) || !Number.isFinite(y)) return '';
+  const p = Math.round(((y - x) / x) * 1000) / 10;
+  return Math.abs(p) < 1000 ? ` (${p >= 0 ? '+' : ''}${p}%)` : '';
+}
+
+/** zzz824: NSE / BSE / SEC from the document address or the source name. */
+export function exchangeOf(url: string | null | undefined, source?: string | null): string | null {
+  const u = String(url || '');
+  if (/bseindia\.com/i.test(u)) return 'BSE';
+  if (/nseindia\.com|nsearchives/i.test(u)) return 'NSE';
+  if (/sec\.gov/i.test(u)) return 'SEC';
+  const s = String(source || '');
+  if (/\bNSE\b/i.test(s)) return 'NSE';
+  if (/\bBSE\b/i.test(s)) return 'BSE';
+  if (/edgar|\bSEC\b/i.test(s)) return 'SEC';
+  return null;
+}
+
+/** zzz824: the document kind in words, from the read or the subject. */
+function sourceDocOf(x: Resolved): string {
+  if (x.docType) return x.docType;
+  const t = x.f.title;
+  if (/credit rating|rating rationale/i.test(t)) return 'Credit rating letter';
+  if (/transcript/i.test(t) || x.f.kind === 'transcript') return 'Concall transcript';
+  if (/presentation/i.test(t) || x.f.kind === 'investor_presentation') return 'Investor presentation';
+  if (/financial results|quarterly results/i.test(t) || x.f.kind === 'results') return 'Results filing';
+  if (/allot/i.test(t)) return 'Allotment intimation';
+  if (/press release/i.test(t)) return 'Press release';
+  if (/form\s+8-?k|8-K/i.test(t)) return 'Form 8-K';
+  if (x.f.badge === 'press') return 'Press report';
+  return x.market === 'US' ? 'SEC filing' : 'Exchange filing';
 }
 
 const TOUCH_BY_TYPE: Partial<Record<RecentEventType, RegExp>> = {
@@ -625,7 +708,7 @@ function toEvent(list: Resolved[]): RecentEvent {
   const what = lead.line || (lead.seeFiling ? `${lead.type} — see filing` : cleanTitle) || '(untitled filing)';
   const imp = list.map((x) => importanceOf({ type: x.type, figure: x.figure, line: x.line, senior: x.senior, read: x.read, noImpact: x.noImpact }))
     .sort((a, b) => IMP_RANK[a] - IMP_RANK[b])[0];
-  return {
+  const ev: RecentEvent = {
     id: `${lead.f.ticker}|${newest}|${lead.type}|${lead.f.url ? normUrl(lead.f.url) : normTitle(lead.f.title)}`,
     date: newest, ticker: lead.f.ticker, company: list.find((x) => x.f.company)?.f.company || null,
     type: lead.type, title: cleanTitle, what: cleanClip(what, 240),
@@ -635,7 +718,21 @@ function toEvent(list: Resolved[]): RecentEvent {
     origins: Array.from(new Set(list.flatMap((x) => x.f.origins))),
     routine: false, routineWhy: null, read, readNote: lead.readNote || (read === 'failed' ? list.find((x) => x.readNote)?.readNote || null : null),
     filings: [...list].sort((a, b) => b.f.date.localeCompare(a.f.date)).map((x) => ({ date: x.f.date, title: x.f.title, url: x.f.url, badge: x.f.badge, line: x.line, read: x.read, readNote: x.readNote })),
+    ctx: lead.f.ctx, exchange: exchangeOf(lead.f.url || list.find((x) => x.f.url)?.f.url, lead.f.source),
   };
+  ev.card = buildCard({
+    type: ev.type, importance: ev.importance, read, badge: ev.badge, title: cleanTitle, what: ev.what, line: lead.line, figure: lead.figure,
+    claims: dedupeClaims(list.flatMap((x) => x.claims)), ctx: lead.f.ctx, noImpact: list.some((x) => x.noImpact), senior: list.some((x) => x.senior),
+    lowConfidence: lead.lowConfidence || !!lead.seeFiling || (!lead.line && list.some((x) => x.lowConfidence)),
+    sourceDoc: sourceDocOf(lead), exchange: ev.exchange || null, date: newest, ratingAction: list.find((x) => x.ratingAction)?.ratingAction || null, market: lead.market,
+  });
+  return ev;
+}
+
+function dedupeClaims(c: Claim[]): Claim[] {
+  const m = new Map<string, Claim>();
+  for (const x of c) { const k = `${x.key}|${x.dir}|${x.verified}`; if (!m.has(k) || (x.text && !m.get(k)!.text)) m.set(k, x); }
+  return Array.from(m.values());
 }
 
 function dedupeTouches(t: Touch[]): Touch[] {
@@ -645,13 +742,17 @@ function dedupeTouches(t: Touch[]): Touch[] {
 }
 
 function routineEvent(x: Resolved, why: string): RecentEvent {
-  return {
+  const ev: RecentEvent = {
     id: `r|${x.f.key}`, date: x.f.date, ticker: x.f.ticker, company: x.f.company, type: x.type, title: x.f.title,
     what: x.line || x.f.title, figure: null, badge: x.f.badge, url: x.f.url, source: x.f.source, importance: 'Minor',
     thesis: 'neutral', thesisWhy: 'routine filing', origins: x.f.origins, routine: true, routineWhy: why,
     read: x.read, readNote: x.readNote,
     filings: [{ date: x.f.date, title: x.f.title, url: x.f.url, badge: x.f.badge, line: x.line, read: x.read, readNote: x.readNote }],
+    ctx: x.f.ctx, exchange: exchangeOf(x.f.url, x.f.source),
   };
+  ev.card = buildCard({ type: ev.type, importance: 'Minor', routine: true, read: x.read, badge: x.f.badge, title: x.f.title, what: ev.what, line: x.line, figure: null,
+    claims: [], ctx: x.f.ctx, sourceDoc: sourceDocOf(x), exchange: ev.exchange || null, date: x.f.date, market: x.market });
+  return ev;
 }
 
 /** Pure: same ticker, same event type, filed within GROUP_DAYS of each other → one event. */
@@ -733,6 +834,10 @@ export function buildRecentCatalysts(raws: RawEvent[], today: string, daysOrOpts
     else live.push(x);
   }
   const events = groupResolved(live).map(toEvent).sort(sortByImportance);
+  // zzz824: one name per ticker — a row whose filing carried no company name takes it from the ticker's other rows
+  const names = new Map<string, string>();
+  for (const r of raws) if (r.company && r.ticker && !names.has(r.ticker.toUpperCase())) names.set(r.ticker.toUpperCase(), r.company);
+  for (const e of [...events, ...hidden]) if (!e.company) e.company = names.get(e.ticker.toUpperCase()) || null;
   const items = events.filter((e) => e.importance !== 'Minor');
   const minor = events.filter((e) => e.importance === 'Minor');
   hidden.sort((a, b) => b.date.localeCompare(a.date) || a.ticker.localeCompare(b.ticker));
@@ -947,6 +1052,7 @@ export function lineQuality(line: string | null | undefined): { ok: boolean; why
   if ((tokens.length >= 6 && numeric / tokens.length > 0.3) || maxRun >= 4) return { ok: false, why: 'mostly numbers / table text' };
   if ((s.match(/\b(?:Not\s+Applicable|N\.?A\.?|No|Nil)\b(?=[\s,.;]|$)/gi) || []).length >= 3) return { ok: false, why: 'disclosure-table text' };
   if (/\b(?:If yes|whether the (?:same|sale|transaction|acquisition)|arm'?\s?s length|related party transaction)\b/i.test(s) && !/₹|Rs\.?\s?\d|crore/i.test(s)) return { ok: false, why: 'disclosure-table text' };
+  if (/\bParticulars\s+Details\b|\bName of the listed (?:company|entity)\b|^(?:Sr\.?|S\.?)?\s*No\.?\s+Particulars\b/i.test(s)) return { ok: false, why: 'disclosure-table text' };
   if (LETTERHEAD_HINT.test(s)) return { ok: false, why: 'letterhead text' };
   if (/[A-Za-z]\d+[A-Za-z]{2,}|\b[A-Za-z]{3,}\d\s[a-z]\b/.test(s.replace(/\b(?:FY|Q[1-4]|H[12]|9M)[-']?\d+|\d+(?:MTPA|TPA|MW|GW|KLPD|MT|mn|bn|cr)\b|\b(?:[A-Z]{1,4}\d{1,4}[A-Z]{0,3})\b/g, ''))) return { ok: false, why: 'broken OCR text' };
   if (/(?:[A-Z]{2,}\s+){6,}/.test(s)) return { ok: false, why: 'slide heading text' };

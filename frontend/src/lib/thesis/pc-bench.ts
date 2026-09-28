@@ -28,6 +28,7 @@
 import { normSymbol } from '@/lib/portfolio-symbols';
 import { indiaPresetCheck } from '@/lib/quality-preset';
 import { compactIndiaBench, mergeIndiaBench, type IndiaBenchName } from '@/lib/fundamentals/universe';
+import { notCheckedText, criteriaCheckText, type CriteriaCheck, type CriteriaState } from '@/lib/criteria-check';
 
 export const IN_CB_SOURCE = 'Conviction Beats (India)';
 
@@ -212,8 +213,12 @@ export function otherBenchLabel(n: number): string {
 export interface CbSelection {
   /** Names on the Conviction Beats list (before criteria). */
   listTotal: number;
-  /** Names passing his criteria — what the Conviction Beats page shows. */
+  /** Names the Conviction Beats page shows under his criteria: those that
+   *  meet them PLUS those not checked for want of data (zzz823 — unknown is
+   *  not a fail). `unknown` lists the second group. */
   passing: string[];
+  /** zzz823: shown but not checked — a criterion's data is missing. */
+  unknown: string[];
   failing: string[];
   /** Passing names he does not hold → the default bench. */
   bench: string[];
@@ -224,51 +229,80 @@ export interface CbSelection {
   companies: Record<string, string | null>;
 }
 
+/** zzz823: the key two tickers are compared by when deciding "held" — case,
+ *  exchange prefix / suffix and the NSE series suffix (-BE, -SM …) never make
+ *  a held name look unheld (it would then show twice: once in the book and
+ *  once on the bench). */
+export function heldKey(t: unknown): string {
+  return String(t ?? '').toUpperCase().trim()
+    .replace(/^(NSE|BSE|NYSE|NASDAQ|AMEX):/, '')
+    .replace(/\.(NS|BO|BSE|NSE)$/, '')
+    .replace(/-(BE|SM|ST|BZ|E1|EQ)$/, '');
+}
+
+const RANK: Record<CriteriaState, number> = { pass: 2, unknown: 1, fail: 0 };
+
 function selectByCriteria<E>(
   entries: E[], held: Set<string>, key: (e: E) => string,
-  passes: (e: E) => boolean, reasons: (e: E) => string[], company: (e: E) => string | null, criteriaOff: boolean,
+  check: (e: E) => CriteriaCheck, company: (e: E) => string | null, criteriaOff: boolean,
+  heldOf: (t: string) => string = heldKey,
 ): CbSelection {
-  // One verdict per ticker: a ticker passes when any of its entries passes
-  // (the Conviction Beats page lists it then).
-  const by = new Map<string, { pass: boolean; reasons: string[]; company: string | null }>();
+  // One verdict per ticker: the best of its entries (pass > not checked > fail)
+  // — the Conviction Beats page lists it then.
+  const by = new Map<string, { c: CriteriaCheck; company: string | null }>();
   for (const e of entries) {
     const t = key(e);
     if (!t) continue;
-    const p = passes(e);
+    const c = check(e);
     const had = by.get(t);
-    if (had && (had.pass || !p)) continue;
-    by.set(t, { pass: p, reasons: p ? [] : reasons(e), company: company(e) || had?.company || null });
+    if (had && RANK[had.c.state] >= RANK[c.state]) continue;
+    by.set(t, { c, company: company(e) || had?.company || null });
   }
-  const passing: string[] = [], failing: string[] = [], bench: string[] = [], benchFailing: string[] = [], heldPassing: string[] = [];
+  const passing: string[] = [], unknown: string[] = [], failing: string[] = [], bench: string[] = [], benchFailing: string[] = [], heldPassing: string[] = [];
   const labels: Record<string, PresetLabel> = {}, companies: Record<string, string | null> = {};
   for (const t of Array.from(by.keys()).sort()) {
     const v = by.get(t)!;
     companies[t] = v.company;
-    labels[t] = v.pass
+    const shown = v.c.state !== 'fail';
+    labels[t] = v.c.state === 'pass'
       ? { state: 'pass', reasons: [], text: criteriaOff ? 'on your Conviction Beats list (your preset is switched off there, so every name is listed)' : 'meets your Conviction Beats criteria' }
-      : { state: 'fail', reasons: v.reasons, text: `misses your Conviction Beats criteria — ${v.reasons.join('; ')}` };
-    (v.pass ? passing : failing).push(t);
-    if (held.has(t)) { if (v.pass) heldPassing.push(t); continue; }
-    (v.pass ? bench : benchFailing).push(t);
+      : v.c.state === 'unknown'
+        ? { state: 'unknown', reasons: v.c.missing, text: `${notCheckedText(v.c.missing)} — shown, not failed` }
+        : { state: 'fail', reasons: v.c.failed, text: criteriaCheckText(v.c, '') };
+    (shown ? passing : failing).push(t);
+    if (v.c.state === 'unknown') unknown.push(t);
+    if (held.has(heldOf(t))) { if (shown) heldPassing.push(t); continue; }
+    (shown ? bench : benchFailing).push(t);
   }
-  return { listTotal: by.size, passing, failing, bench, benchFailing, heldPassing, labels, companies };
+  return { listTotal: by.size, passing, unknown, failing, bench, benchFailing, heldPassing, labels, companies };
 }
 
-/** India: the Conviction Beats tab's list and verdict. `passes`/`reasons` are
- *  passesConvictionFilter / cbFailReasons bound to his filters. */
+/** A yes/no filter as a check (no "not checked" state) — for callers that
+ *  have no per-criterion probe. */
+function yesNo<E>(passes: (e: E) => boolean, reasons: (e: E) => string[]): (e: E) => CriteriaCheck {
+  return (e) => (passes(e) ? { state: 'pass', failed: [], missing: [] } : { state: 'fail', failed: reasons(e), missing: [] });
+}
+
+/** India: the Conviction Beats tab's list and verdict. `check` is
+ *  cbCriteriaCheck bound to his filters (or `passes`/`reasons` for a plain
+ *  yes/no). Held names are compared by heldKey. */
 export function selectIndiaCb<E extends { ticker?: string | null; company?: string | null }>(input: {
-  held: Iterable<string>; list: E[]; passes: (e: E) => boolean; reasons: (e: E) => string[]; criteriaOff: boolean;
+  held: Iterable<string>; list: E[]; criteriaOff: boolean;
+  check?: (e: E) => CriteriaCheck; passes?: (e: E) => boolean; reasons?: (e: E) => string[];
 }): CbSelection {
-  const held = new Set(Array.from(input.held, (s) => cbTicker(s)).filter(Boolean));
-  return selectByCriteria(input.list, held, (e) => cbTicker(e?.ticker), input.passes, input.reasons, (e) => (e?.company ? String(e.company) : null), input.criteriaOff);
+  const held = new Set(Array.from(input.held, (s) => heldKey(cbTicker(s))).filter(Boolean));
+  const check = input.check || yesNo(input.passes || (() => true), input.reasons || (() => []));
+  return selectByCriteria(input.list, held, (e) => cbTicker(e?.ticker), check, (e) => (e?.company ? String(e.company) : null), input.criteriaOff);
 }
 
 /** US: same shape; tickers are compared as the US engine keys them. */
 export function selectUsCb<E extends { ticker?: string | null; company?: string | null }>(input: {
-  held: Iterable<string>; list: E[]; key: (t: string) => string; passes: (e: E) => boolean; reasons: (e: E) => string[]; criteriaOff: boolean;
+  held: Iterable<string>; list: E[]; key: (t: string) => string; criteriaOff: boolean;
+  check?: (e: E) => CriteriaCheck; passes?: (e: E) => boolean; reasons?: (e: E) => string[];
 }): CbSelection {
   const held = new Set(Array.from(input.held, (s) => input.key(String(s).split('@')[0])).filter(Boolean));
-  return selectByCriteria(input.list, held, (e) => input.key(String(e?.ticker || '').split('@')[0]), input.passes, input.reasons, (e) => (e?.company ? String(e.company) : null), input.criteriaOff);
+  const check = input.check || yesNo(input.passes || (() => true), input.reasons || (() => []));
+  return selectByCriteria(input.list, held, (e) => input.key(String(e?.ticker || '').split('@')[0]), check, (e) => (e?.company ? String(e.company) : null), input.criteriaOff, (t) => t);
 }
 
 export interface CbCriteriaInfo {
@@ -277,6 +311,8 @@ export interface CbCriteriaInfo {
   passing: number;
   failing: number;
   heldPassing: number;
+  /** zzz823: of `passing`, names shown but not checked (a criterion's data is missing). */
+  unknown?: number;
   /** Plain words for the criteria in force ("your quality preset", "preset switched off", "your saved US filters"). */
   criteria: string;
   source: string;
@@ -295,7 +331,8 @@ export function cbCriteriaLine(info: CbCriteriaInfo | null | undefined, onPage: 
   const match = onPage === info.passing
     ? `matches Conviction Beats page: ${info.passing} names`
     : `⚠ does NOT match the Conviction Beats page: ${onPage} here vs ${info.passing} there`;
-  return `${label} under your criteria: ${info.passing} — same list as the Conviction Beats page · selected by your Conviction Beats criteria (${info.criteria})`
+  const unk = info.unknown ? ` (${info.passing - info.unknown} meet them + ${info.unknown} not checked — a figure is missing, so shown and labelled, never failed)` : '';
+  return `${label} under your criteria: ${info.passing}${unk} — same list as the Conviction Beats page · selected by your Conviction Beats criteria (${info.criteria})`
     + ` · ${match} = ${info.heldPassing} you hold (in My book) + ${info.passing - info.heldPassing} on the bench`
     + ` · ${info.failing} of the ${info.listTotal} on the list miss your criteria${showingFailing ? ' (shown, labelled)' : ' (hidden — use the chip to show them)'}`
     + ` · source: ${info.source}`;

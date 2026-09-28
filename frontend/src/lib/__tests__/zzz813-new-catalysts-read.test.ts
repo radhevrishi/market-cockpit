@@ -63,7 +63,9 @@ describe('type mapping — real subject lines', () => {
   });
   test('CEO / CFO / MD level is recognised', () => {
     assert.equal(subjectClass('Appointment of Chief Financial Officer').senior, true);
-    assert.equal(subjectClass('Appointment of Company Secretary').senior, false);
+    // zzz824: the owner counts the company secretary as senior management (Notable + needs attention)
+    assert.equal(subjectClass('Appointment of Company Secretary').senior, true);
+    assert.equal(subjectClass('Appointment of Independent Director').senior, false);
   });
 });
 

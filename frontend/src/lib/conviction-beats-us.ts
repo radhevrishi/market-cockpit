@@ -42,6 +42,7 @@
 
 import { rule40From, roceFrom, type SwingKind } from '@/lib/us-earnings-core';
 import type { EarningsQuadrant } from '@/lib/earnings-grade-shared';
+import { runCriteriaCheck, type CriteriaCheck } from '@/lib/criteria-check';
 
 export type ConvictionTier = 'BLOCKBUSTER' | 'STRONG';
 
@@ -2511,4 +2512,43 @@ export function usCbFailReasons(e: UsConvictionEntry, f: UsConvFilters, win?: Ne
     if (!passesUsConvictionFilter(e, { ...US_FILTER_DEFAULT, [k]: v } as UsConvFilters, win)) out.push(W[k]());
   }
   return out.length ? Array.from(new Set(out)) : ['another active criterion'];
+}
+
+// ── zzz823: pass / fail / NOT CHECKED (US) ──────────────────────────────────
+// Same rule as India (lib/conviction-filter-india cbCriteriaCheck): the
+// preset's growth, drift, margin and size criteria read a MISSING figure as a
+// fail (`sales ?? 0`, a missing market cap outside every band). A name whose
+// only misses are criteria it had no data for is 'unknown' — shown, labelled
+// "not checked: <field> missing", never failed. Hand-set chips stay strict.
+const US_LENIENT = new Set(['sales', 'eps', 'pead', 'opmDelta', 'mktCapMin', 'cap']);
+
+function usMissingFor(e: UsConvictionEntry, k: string): string[] {
+  const x: any = e;
+  const need = (pairs: Array<[string, string]>) => pairs.filter(([field]) => num(x[field]) == null).map(([, w]) => w);
+  switch (k) {
+    case 'sales': return need([['sales_yoy_pct', 'revenue growth']]);
+    // A loss→profit swing has no percentage, and a loss is not a missing figure.
+    case 'eps': return x.eps_swing ? [] : need([['eps_yoy_pct', 'EPS growth']]);
+    case 'pead': return need([['pead_score', 'post-results drift reading']]);
+    case 'opmDelta': return need([['opm_pct', 'operating margin'], ['opm_prev_pct', 'last year’s operating margin']]);
+    case 'mktCapMin': case 'cap': return need([['market_cap_musd', 'market cap']]);
+    default: return [];
+  }
+}
+
+/** Pass / fail / not checked, from passesUsConvictionFilter's own probes. */
+export function usCbCriteriaCheck(e: UsConvictionEntry, f: UsConvFilters, win?: NewWindow): CriteriaCheck {
+  const keys = Object.keys(f).filter((k) => {
+    const v: any = (f as any)[k];
+    if (k === 'q') return !!v;
+    return k === 'cap' ? !!v && v !== 'all' : Array.isArray(v) ? v.length > 0 : typeof v === 'boolean' ? v : v != null && v !== '';
+  });
+  const probeF = (k: string) => ({ ...US_FILTER_DEFAULT, [k]: (f as any)[k] } as UsConvFilters);
+  return runCriteriaCheck(
+    keys,
+    passesUsConvictionFilter(e, f, win),
+    (k) => passesUsConvictionFilter(e, probeF(k), win),
+    (k) => (US_LENIENT.has(k) ? usMissingFor(e, k) : []),
+    (k) => { const r = usCbFailReasons(e, probeF(k), win); return r[0] === 'another active criterion' ? `${k} criterion` : r.join('; '); },
+  );
 }

@@ -16,6 +16,7 @@ import { NextResponse } from 'next/server';
 import { isQuarterEndStale, yoyFromDatedSeries, sameFigure } from '@/lib/india-eo-card-data';  // zzz820
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { proxiedFetch, fetchWorkerStock } from '@/lib/proxy-fetch';
+import { sameFyCash } from '@/lib/india-cash';
 import { fetchCompanyFinancialResults } from '@/lib/nse';
 
 export const runtime = 'nodejs';
@@ -331,6 +332,32 @@ function parseSector(html: string): string | null {
   return null;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// CASH: ANNUAL CFO ÷ ANNUAL PAT OF THE SAME FISCAL YEAR, OR NOTHING.  (zzz821)
+//
+// The live page showed CFO/PAT of 97x, 26.6x, 25.7x, 13.8x, 12.7x, 11.9x and
+// 2–9x on most cards. Checked against Screener's own tables, every one of those
+// is last fiscal year's operating cash flow divided by ONE QUARTER's profit
+// (PAKKA: FY26 CFO ₹75 Cr ÷ Jun-26 quarter PAT ₹5.89 Cr = 12.7x; the same-year
+// figure is ₹75 ÷ ₹6 Cr). Indian companies publish no quarterly cash flow, so
+// any ratio built with a quarterly denominator is roughly 4× too high and
+// "earnings are cash-backed" passed almost everywhere. The source that mixed
+// periods (the Worker merge won over the direct scrape, and the direct scrape
+// fell back to a page-wide row scan that finds the QUARTERS table first) is
+// no longer trusted: the ratio is now built only here, only from the
+// cash-flow and profit-and-loss columns carrying the SAME fiscal-year label,
+// and it travels with that label (`cash_fy`). No label, no ratio — unknown.
+// ═══════════════════════════════════════════════════════════════════════════
+/** zzz821 — Screener's industry chain ("Financial Services › Finance ›
+ *  Investment Company"), read from the peer-comparison breadcrumb. */
+function parseIndustryPath(html: string): { broad_sector: string | null; sector_name: string | null; broad_industry: string | null; industry: string | null } {
+  const get = (title: string): string | null => {
+    const m = html.match(new RegExp('title=["\']' + title + '["\'][^>]*>([^<]{1,80})<', 'i'));
+    return m ? stripTags(m[1]) || null : null;
+  };
+  return { broad_sector: get('Broad Sector'), sector_name: get('Sector'), broad_industry: get('Broad Industry'), industry: get('Industry') };
+}
+
 async function fetchScreenerHtml(url: string): Promise<string | null> {
   // PATCH 0404 — three attempts with rotated UA + browser-mimic headers
   // + jittered backoff. Cloudflare's lightweight challenge almost always
@@ -569,45 +596,10 @@ async function fetchScreenerForUrl(url: string): Promise<any | null> {
           inventory_yoy_pct: pct(invCurr, invPrev),
         };
       })(),
-      // zzz316 — CFO/PAT from cash-flow + profit-loss annual tables. Same HTML,
-      // same source of truth Screener shows users. Ratio > 0.8 = healthy cash
-      // conversion; <0.5 = profits not translating to cash (earnings-quality flag).
-      ...(() => {
-        const cf = parseSectionTable(html, 'cash-flow');
-        const pl = parseSectionTable(html, 'profit-loss');
-        const cfLatest = cf && cf.labels.length > 0 ? cf.labels.length - 1 : -1;
-        const plLatest = pl && pl.labels.length > 0 ? pl.labels.length - 1 : -1;
-        const getRow = (t: { rows: Record<string, (number | null)[]> } | null, kw: string, idx: number): number | null => {
-          if (!t || idx < 0) return null;
-          const k = Object.keys(t.rows).find((kk) => kk.toLowerCase().includes(kw.toLowerCase()));
-          return k ? (t.rows[k]?.[idx] ?? null) : null;
-        };
-        const ocfAnnual = getRow(cf, 'Cash from Operating', cfLatest);
-        // Try TTM last (right-most) column of P&L first; fall back to latest annual.
-        const patAnnual = getRow(pl, 'Net Profit', plLatest) ?? getRow(pl, 'Profit', plLatest);
-        // zzz364 — annual sales for the meaningfulness gate below.
-        const salesAnnual = getRow(pl, 'Sales', plLatest) ?? getRow(pl, 'Revenue', plLatest);
-        let ratio = (typeof ocfAnnual === 'number' && typeof patAnnual === 'number' && patAnnual > 0)
-          ? Math.round((ocfAnnual / patAnnual) * 100) / 100
-          : null;
-        // zzz364 BUG B FIX — CFO/PAT explodes into artifacts (-65.58, 21.75,
-        // -12.84) when PAT is tiny/near-zero. Null the ratio out when it is not
-        // a meaningful earnings-quality signal: (a) |PAT| is a rounding-scale
-        // sliver of sales (< 2% of |sales|, when sales is known), or (b) the
-        // ratio magnitude exceeds 8 (clearly an artifact, not real cash
-        // conversion). Genuine values in [-8, 8] are kept.
-        if (ratio != null) {
-          const patTinyVsSales = typeof salesAnnual === 'number' && salesAnnual !== 0
-            && typeof patAnnual === 'number'
-            && Math.abs(patAnnual) < 0.02 * Math.abs(salesAnnual);
-          if (patTinyVsSales || Math.abs(ratio) > 8) ratio = null;
-        }
-        return {
-          ocf_annual_cr: ocfAnnual,
-          pat_annual_cr: patAnnual,
-          ocf_to_pat_ratio: ratio,
-        };
-      })(),
+      // zzz316 — CFO/PAT from cash-flow + profit-loss annual tables.
+      // zzz821 — same fiscal year only, matched by column label (see sameFyCash).
+      ...sameFyCash(parseSectionTable(html, 'cash-flow'), parseSectionTable(html, 'profit-loss')),
+      ...parseIndustryPath(html),
       // zzz358 — Tier 2 P&L quality fields, computed from the SAME quarterly
       // table (`q` / `get` / `salesCurr` etc.) we already parsed above. No extra
       // fetch. Every field is null-safe: when a source row is absent get(...)
@@ -1373,7 +1365,7 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   // zzz820 v15->v16: year-ago matched by DATE (not 4 columns back), stale
   // consolidated pages no longer win over a fresh standalone page, and
   // Screener cherry-picks must be the same statement/quarter as the primary.
-  const cacheKey = filedHint ? `enrich:v16:${symbol}:${filedHint}` : `enrich:v16:${symbol}`;  // zzz377 v14->v15: flush so worker-sourced quarterly trends land. zzz375 v13->v14. zzz372 v12->v13
+  const cacheKey = filedHint ? `enrich:v17:${symbol}:${filedHint}` : `enrich:v17:${symbol}`;  // zzz821 v16→v17: same-FY cash basis (cash_fy)  // zzz377 v14->v15: flush so worker-sourced quarterly trends land. zzz375 v13->v14. zzz372 v12->v13
   if (isRedisAvailable() && !bypassCache) {
     try {
       const cached = await kvGet(cacheKey);
@@ -1414,7 +1406,7 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     // cfo payload (that KV read was silently defeating zzz370's retry). Also: a cached
     // payload that has NO trends is never a valid hit for the trend consumers — fall
     // through and re-scrape so a transient miss self-heals.
-    const kvKey = `cfo:v5:${sym}`;
+    const kvKey = `cfo:v6:${sym}`;   // zzz821 v5→v6: same-FY cash + industry path
     if (!bypassCache) {
       try {
         const cached = await kvGet<any>(kvKey);
@@ -1472,50 +1464,14 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
       }
       return null;
     };
-    // zzz322 — loosened label match
-    const ocf = findLastNum(/(cash\s+from\s+operating|cash\s+from\s+operations|operating\s+cash\s+flow|net\s+cash\s+from\s+operating)/i);
-    // zzz371 — VALUE FIX (audit): the page-wide row scan matched the QUARTERS table's
-    // "Net Profit" first (a single-quarter figure), and even on the P&L it took the
-    // trailing TTM cell — so annual CFO was being divided by a quarterly/TTM PAT
-    // (KMEW showed 1.17 top-line vs 0.62 in the annual pill from the same data).
-    // Read the P&L section's latest FY column (label "Mon YYYY", skip TTM) so
-    // numerator and denominator are the SAME fiscal year. Falls back to the old
-    // scan only when the section parser can't find the P&L table.
-    const plT = parseTableLoose(html, 'profit-loss');
-    const fyIdxOf = (t: { labels: string[] } | null): number => {
-      if (!t) return -1;
-      for (let i = t.labels.length - 1; i >= 0; i--) if (/^[A-Za-z]{3}\s+\d{4}$/.test(String(t.labels[i]).trim())) return i;
-      return -1;
-    };
-    const plFy = fyIdxOf(plT);
-    const plRow = (kw: RegExp): number | null => {
-      if (!plT || plFy < 0) return null;
-      const k = Object.keys(plT.rows).find((kk) => kw.test(kk));
-      const v = k ? plT.rows[k][plFy] : null;
-      return typeof v === 'number' && Number.isFinite(v) ? v : null;
-    };
-    const netProfit = plRow(/^\s*Net Profit/i) ?? plRow(/^\s*Profit for/i)
-                   ?? findLastNum(/^\s*Net Profit\s*[+\-]?\s*$/i)
-                   ?? findLastNum(/^\s*Profit for (the )?year\s*[+\-]?\s*$/i)
-                   ?? findLastNum(/^\s*Net Profit\b/i);
-    // zzz364 — annual sales for the meaningfulness gate below.
-    const salesAnnual = plRow(/^\s*Sales/i) ?? plRow(/^\s*Revenue/i) ?? findLastNum(/^\s*Sales\b/i) ?? findLastNum(/^\s*Revenue\b/i);
-    let ratio = (typeof ocf === 'number' && typeof netProfit === 'number' && netProfit > 0)
-      ? Math.round((ocf / netProfit) * 100) / 100
-      : null;
-    // zzz364 BUG B FIX — same artifact guard as the zzz316 annual path: when
-    // PAT is tiny/near-zero the CFO/PAT ratio explodes (-65.58, 21.75, -12.84).
-    // Null it out when it is not a meaningful quality signal: |PAT| < 2% of
-    // |sales| (when sales is known) OR |ratio| > 8. Keep genuine [-8, 8] values.
-    if (ratio != null) {
-      const patTinyVsSales = typeof salesAnnual === 'number' && salesAnnual !== 0
-        && typeof netProfit === 'number'
-        && Math.abs(netProfit) < 0.02 * Math.abs(salesAnnual);
-      if (patTinyVsSales || Math.abs(ratio) > 8) ratio = null;
-    }
+    // zzz821 — the page-wide row scan that used to live here found the
+    // QUARTERS table's "Net Profit" first, so annual CFO was divided by one
+    // quarter's profit. Only the label-matched same-year pair is used now.
+    void findLastNum;
+    const cash = sameFyCash(parseTableLoose(html, 'cash-flow'), parseTableLoose(html, 'profit-loss'));
     // zzz367 — extract the trend/pledge/one-off fields from the SAME html.
     const trends = extractScreenerTrends(html);
-    const result: any = { ocf_annual_cr: ocf, pat_annual_cr: netProfit, ocf_to_pat_ratio: ratio, ...trends };
+    const result: any = { ...cash, ...parseIndustryPath(html), ...trends };
     if (Object.keys(trends).length > 0) result._trends = true;
     // zzz376 — a page loaded (anyPageLoaded) but no quarters table → GENUINELY absent.
     result._trends_status = result._trends ? 'ok' : (anyPageLoaded ? 'no-table' : 'fetch-failed');
@@ -1523,8 +1479,8 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     // Screener miss) so the next fetch retries and self-heals, instead of pinning
     // a trend-less CFO payload for 24h and starving the enrich hoist.
     const cfoTtl = result._trends ? 24 * 3600 : 30 * 60;
-    if (typeof ocf === 'number' || typeof netProfit === 'number' || result._trends) {
-      try { await kvSet(`cfo:v5:${sym}`, result, cfoTtl); } catch {}
+    if (typeof cash.ocf_annual_cr === 'number' || result._trends) {
+      try { await kvSet(`cfo:v6:${sym}`, result, cfoTtl); } catch {}
     }
     return result;
   };
@@ -1748,6 +1704,30 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
       || Array.isArray((out as any).quarters_other_income_pct)) {
     (out as any)._trends_status = 'ok';
     if (out._screener_overlay == null) out._screener_overlay = 'zzz377-worker-quarters';
+  }
+
+  // zzz821 — CASH IS SAME-YEAR OR UNKNOWN. Whatever the merge above put in
+  // the cash fields (the Worker's figures carry no fiscal-year label and were
+  // the source of the annual-CFO ÷ quarterly-PAT ratios), they are replaced
+  // by the label-matched pair from the direct Screener read, or cleared.
+  {
+    const src = [screener, cfoOnly].find((x: any) => x && typeof x.cash_fy === 'string'
+      && typeof x.ocf_annual_cr === 'number' && typeof x.pat_annual_cr === 'number') as any;
+    out.ocf_annual_cr = src ? src.ocf_annual_cr : null;
+    out.pat_annual_cr = src ? src.pat_annual_cr : null;
+    out.ocf_to_pat_ratio = src ? src.ocf_to_pat_ratio : null;
+    out.cash_fy = src ? src.cash_fy : null;
+    out.cash_basis = src ? src.cash_basis : null;
+    if (!src) delete out._cfo_source;
+    // Industry chain (Screener breadcrumb) — used to tell lenders, insurers and
+    // investment / trading companies apart. Fill only where absent.
+    for (const x of [screener, cfoOnly] as any[]) {
+      if (!x) continue;
+      for (const f of ['broad_sector', 'sector_name', 'broad_industry', 'industry']) {
+        if (out[f] == null && typeof x[f] === 'string') out[f] = x[f];
+      }
+    }
+    if (!out.sector && typeof out.sector_name === 'string') out.sector = out.sector_name;
   }
 
   // zzz366 — CRITICAL FIX (root cause of "I still don't see Other Income / Tax /

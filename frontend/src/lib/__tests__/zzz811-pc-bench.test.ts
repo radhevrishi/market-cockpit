@@ -318,7 +318,7 @@ describe('zzz811 — the bench is the Conviction Beats page under the owner\'s c
     assert.match(wl, /from '@\/lib\/conviction-filter-india'/);
     assert.doesNotMatch(wl, /^function passesConvictionFilter/m);
     assert.match(wl, /mergeCbEntries\(convictionEntries, serverBench\)/);
-    assert.match(read('lib/thesis/use-book.ts'), /passesConvictionFilter\(e, filters\)/);
+    assert.match(read('lib/thesis/use-book.ts'), /cbCriteriaCheck\(e, filters\)/ /* zzz823: the tri-state check built on passesConvictionFilter */);
   });
 
   test('the failing-names chip is off by default on both pages; sizes default to all (like the CB page)', () => {
@@ -386,7 +386,7 @@ describe('zzz811 — US: his US Conviction Beats criteria are applied, price cri
   test('the US page reads his criteria through the shared helpers, and the thesis engine still reads no price', () => {
     const useUs = read('lib/us-thesis/use-us-book.ts');
     assert.match(useUs, /usCbFiltersForOwner\(get\)/);
-    assert.match(useUs, /passesUsConvictionFilter\(e, filters, win\)/);
+    assert.match(useUs, /usCbCriteriaCheck\(e, filters, win\)/ /* zzz823 */);
     assert.match(read('app/(dashboard)/us-conviction-beats/page.tsx'), /usCbSavedFilters\(localStorage\.getItem\(FILTERS_KEY\)\)/);
     const usPage = read('app/(dashboard)/us-portfolio-catalysts/page.tsx');
     assert.match(usPage, /selected by your Conviction Beats criteria/);

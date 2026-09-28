@@ -23,10 +23,12 @@ import { classifyIndiaEvents, inSentences, inFiguresIn, type InEventHit } from '
 import { classifyUsEvents, eventSentences, figuresIn, BOILERPLATE, type UsEventHit } from '../ai-gainers/us-event-taxonomy';
 import { extractIndiaFacts, type IndiaFacts } from '../ai-gainers/india-extract';
 import { subjectClass, stripLetterhead, lineQuality, cleanClip, nameBroken, type RecentEventType } from './recent-events';
-import type { FilingRead, Touch } from './filing-read-types';
+import type { FilingRead, Touch, FilingChange } from './filing-read-types';
 
 // r2 (zzz815): letterhead stripped, disclosure tables parsed, OCR names repaired, quality gate — cached reads re-parse.
-export const FILING_READ_VERSION = 'r2';
+// r3 (zzz824): rating letters / bonus / allotments typed by the document, period labels checked against the filing
+// date, stated changes carried separately from levels, low-confidence extraction flagged — cached reads re-parse.
+export const FILING_READ_VERSION = 'r3';
 export const MIN_TEXT = 200;
 
 export type ReadCore = Omit<FilingRead, 'url' | 'status' | 'version' | 'readAt'>;
@@ -59,24 +61,84 @@ function unitWord(m: string): string {
     .replace(/\s?million\b/i, ' million').replace(/\s?billion\b/i, ' billion').replace(/^Rs\.?\s?|^INR\s?/i, '₹').replace(/\s{2,}/g, ' ').trim();
 }
 
-/** Period named in the document ("Q1 FY27", "H1 FY27", "second quarter 2026"). */
-export function periodOf(text: string): string | null {
+// zzz824: a period label is checked against the filing date (Indian FY runs Apr–Mar). A rating letter dated
+// Sep 2026 that says "first quarter 2028" names no quarter that can have been reported — the label is dropped.
+const MON: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+const ymd = (y: number, m: number, d: number) => Date.UTC(y, m - 1, d) / 86_400_000;
+/** Pure: the day a named period ends (days since epoch), every reading the label allows (FY and calendar). */
+export function periodEnds(label: string): number[] {
+  const t = String(label || '');
+  const fy = /\b(Q[1-4]|H[12]|9M)\s?[-']?\s?FY\s?'?(\d{2,4})\b/i.exec(t);
+  if (fy) {
+    const y = Number(fy[2].length === 2 ? `20${fy[2]}` : fy[2]); // FY27 = Apr 2026 – Mar 2027
+    const p = fy[1].toUpperCase();
+    const end: Record<string, [number, number, number]> = { Q1: [y - 1, 6, 30], Q2: [y - 1, 9, 30], Q3: [y - 1, 12, 31], Q4: [y, 3, 31], H1: [y - 1, 9, 30], H2: [y, 3, 31], '9M': [y - 1, 12, 31] };
+    const e = end[p];
+    return e ? [ymd(e[0], e[1], e[2])] : [];
+  }
+  const q = /\b(?:(Q[1-4])|(first|second|third|fourth) quarter)(?: of)?(?: fiscal(?: year)?)?\s?(?:FY)?\s?'?(20\d\d)\b/i.exec(t);
+  if (q) {
+    const n = q[1] ? Number(q[1].slice(1)) : ['first', 'second', 'third', 'fourth'].indexOf(q[2].toLowerCase()) + 1;
+    const y = Number(q[3]);
+    const cal = ymd(y, n * 3, n === 1 || n === 4 ? 31 : 30);               // calendar quarter
+    const fiscal = [ymd(y - 1, 6, 30), ymd(y - 1, 9, 30), ymd(y - 1, 12, 31), ymd(y, 3, 31)][n - 1]; // Indian FY
+    return [cal, fiscal];
+  }
+  const e = /ended\s+(?:on\s+)?(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3})[a-z]*,?\s+(\d{4})/i.exec(t) || null;
+  if (e && MON[e[2].toLowerCase()]) return [ymd(Number(e[3]), MON[e[2].toLowerCase()], Number(e[1]))];
+  const e2 = /ended\s+(?:on\s+)?([A-Za-z]{3})[a-z]*\s+(\d{1,2}),?\s+(\d{4})/i.exec(t);
+  if (e2 && MON[e2[1].toLowerCase()]) return [ymd(Number(e2[3]), MON[e2[1].toLowerCase()], Number(e2[2]))];
+  return [];
+}
+/** Pure: can a period with this label have been reported in a filing dated `filed`? (ends on or before the
+ *  filing, at most 18 months before it). No date or no parseable end → accepted as written. */
+export function plausiblePeriod(label: string, filed?: string | null): boolean {
+  const d = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(filed || ''));
+  if (!d) return true;
+  const ends = periodEnds(label);
+  if (!ends.length) return true;
+  const f = ymd(Number(d[1]), Number(d[2]), Number(d[3]));
+  return ends.some((x) => x <= f + 3 && x >= f - 550);
+}
+
+/** Period named in the document ("Q1 FY27", "H1 FY27", "second quarter 2026") — dropped when the filing date rules it out. */
+export function periodOf(text: string, filed?: string | null): string | null {
   const t = String(text || '').slice(0, 6000);
+  const ok = (p: string | null) => (p && plausiblePeriod(p, filed) ? p : null);
   const q = /\b(Q[1-4]|H[12]|9M)\s?[-']?\s?FY\s?'?(\d{2,4})\b/i.exec(t);
-  if (q) return `${q[1].toUpperCase()} FY${q[2].slice(-2)}`;
+  if (q) return ok(`${q[1].toUpperCase()} FY${q[2].slice(-2)}`);
   const q2 = /\b(Q[1-4])\s?(?:FY)?\s?'?(20\d\d)\b/.exec(t);
-  if (q2) return `${q2[1]} ${q2[2]}`;
+  if (q2) return ok(`${q2[1]} ${q2[2]}`);
   const e = /(?:quarter|period|half[- ]year|year) ended\s+(?:on\s+)?(\d{1,2}(?:st|nd|rd|th)?\s+[A-Z][a-z]+,?\s+\d{4}|[A-Z][a-z]+\s+\d{1,2},?\s+\d{4}|\d{1,2}[./-]\d{1,2}[./-]\d{2,4})/i.exec(t);
-  if (e) return `period ended ${e[1].replace(/\s+/g, ' ')}`;
+  if (e) return ok(`period ended ${e[1].replace(/\s+/g, ' ')}`);
   const w = /\b(first|second|third|fourth) quarter(?: of)?(?: fiscal(?: year)?)?\s+(20\d\d)\b/i.exec(t);
-  if (w) return `${w[1][0].toUpperCase()}${w[1].slice(1).toLowerCase()} quarter ${w[2]}`;
+  if (w) return ok(`${w[1][0].toUpperCase()}${w[1].slice(1).toLowerCase()} quarter ${w[2]}`);
   return null;
 }
 
 /** Pure: "Q1 FY27: Revenue ₹781.05 Cr (up 9%), PAT ₹58.2 Cr (vs ₹41 Cr)" — only stated figures. */
-export function resultsLine(text: string, market: 'IN' | 'US' = 'IN'): string | null {
+export function resultsLine(text: string, market: 'IN' | 'US' = 'IN', filed?: string | null): string | null {
+  return resultsParts(text, market, filed).line;
+}
+
+const METRIC_KEY: Record<string, string> = { Revenue: 'revenue_growth', PAT: 'earnings_growth' };
+/** Crore value of a money string with a unit, else null (so "₹41 Cr" vs "₹58.2 Cr" compare; "₹4,100 lakh" too). */
+export function moneyValue(m: string): { v: number; unit: string } | null {
+  const x = /([\d,]+(?:\.\d+)?)\s*(crores?|cr\b|lakhs?|lacs?|lakh|million|mn\b|billion|bn\b)?/i.exec(String(m || '').replace(/^(?:₹|Rs\.?|INR|US\$|\$)\s?/i, ''));
+  if (!x) return null;
+  const n = parseFloat(x[1].replace(/,/g, ''));
+  if (!Number.isFinite(n)) return null;
+  const u = (x[2] || '').toLowerCase();
+  const unit = /^cr/.test(u) ? 'cr' : /^la|^lac/.test(u) ? 'lakh' : /^m/.test(u) ? 'mn' : /^b/.test(u) ? 'bn' : '';
+  return { v: n, unit };
+}
+const toBase = (x: { v: number; unit: string }): number | null => (x.unit === 'cr' ? x.v * 1e7 : x.unit === 'lakh' ? x.v * 1e5 : x.unit === 'mn' ? x.v * 1e6 : x.unit === 'bn' ? x.v * 1e9 : null);
+
+/** Pure: the results line and the changes it states (a growth % or a stated prior — never a bare level). */
+export function resultsParts(text: string, market: 'IN' | 'US' = 'IN', filed?: string | null): { line: string | null; changes: FilingChange[] } {
   const sents = (market === 'US' ? eventSentences(text) : inSentences(text)).slice(0, 400);
   const parts = new Map<string, string>();
+  const changes: FilingChange[] = [];
   let marginPart: string | null = null;
   const moneyRe = new RegExp(MONEY, 'i');
   for (const s0 of sents) {
@@ -96,21 +158,64 @@ export function resultsLine(text: string, market: 'IN' | 'US' = 'IN'): string | 
       const rest = after.slice(mm.index + mm[0].length, mm.index + mm[0].length + 120);
       const g = GROWTH.exec(rest.split(ANY_METRIC)[0]);
       const gp = GROWTH_PRE.exec(rest.split(ANY_METRIC)[0]);
-      if (g) part += ` (${NEG.test(g[1]) ? 'down' : 'up'} ${g[2]}%)`;
-      else if (gp) part += ` (${/decline|de-?growth|drop|fall/i.test(gp[2]) ? 'down' : 'up'} ${gp[1]}%)`;
-      else { const pr = PRIOR.exec(rest.split(ANY_METRIC)[0]); if (pr) part += ` (vs ${unitWord(pr[1])})`; }
+      let dir: 'up' | 'down' | null = null;
+      if (g) { dir = NEG.test(g[1]) ? 'down' : 'up'; part += ` (${dir} ${g[2]}%)`; }
+      else if (gp) { dir = /decline|de-?growth|drop|fall/i.test(gp[2]) ? 'down' : 'up'; part += ` (${dir} ${gp[1]}%)`; }
+      else {
+        const pr = PRIOR.exec(rest.split(ANY_METRIC)[0]);
+        if (pr) {
+          part += ` (vs ${unitWord(pr[1])})`;
+          const a = moneyValue(mm[0]), b = moneyValue(pr[1]);
+          const av = a && toBase(a), bv = b && toBase(b);
+          if (av != null && bv != null && av !== bv) dir = av > bv ? 'up' : 'down';
+        }
+      }
       parts.set(name, part);
+      if (dir && METRIC_KEY[name]) changes.push({ key: METRIC_KEY[name], dir, text: part });
     }
     if (!marginPart) {
+      const mc = /\b(EBITDA|operating|PAT|net profit) margins?\b[^.;%]{0,40}?(?:from|vs\.?|against)\s+(\d+(?:\.\d+)?)\s?%\s*(?:to|→)\s*(\d+(?:\.\d+)?)\s?%/i.exec(s);
       const mg = /\bEBITDA margins?\b[^.;%]{0,40}?(\d+(?:\.\d+)?)\s?%/i.exec(s);
-      if (mg) marginPart = `EBITDA margin ${mg[1]}%`;
+      if (mc) {
+        const x = Number(mc[2]), y = Number(mc[3]);
+        marginPart = `${mc[1].toUpperCase() === 'EBITDA' ? 'EBITDA' : mc[1]} margin ${mc[2]}% → ${mc[3]}%`;
+        if (x !== y) changes.push({ key: 'margin', dir: y > x ? 'up' : 'down', text: marginPart, before: `${mc[2]}%`, after: `${mc[3]}%` });
+      } else if (mg) marginPart = `EBITDA margin ${mg[1]}%`;
     }
   }
   const out = ['Revenue', 'EBITDA', 'PAT'].filter((k) => parts.has(k)).map((k) => parts.get(k) as string);
   if (marginPart && out.length) out.push(marginPart);
-  if (!out.length) return null;
-  const p = periodOf(text);
-  return `${p ? `${p}: ` : ''}${out.join(', ')}`;
+  if (!out.length) return { line: null, changes: [] };
+  const p = periodOf(text, filed);
+  return { line: `${p ? `${p}: ` : ''}${out.join(', ')}`, changes };
+}
+
+// ── order book: a change only when the filing states the prior ────────────
+const MONEY_OB = String.raw`(?:(?:₹|Rs\.?|INR|US\$|\$)\s?)?\d[\d,]*(?:\.\d+)?\s?(?:crores?|cr\b\.?|lakhs?|million|mn\b|billion|bn\b)`;
+/** Pure: "Order book ₹150 bn → ₹184 bn (+22.7%)" when the filing states both figures with a comparison word. */
+export function orderBookChange(text: string, market: 'IN' | 'US' = 'IN'): FilingChange | null {
+  const t = String(text || '').replace(/\s+/g, ' ');
+  const a = new RegExp(String.raw`\border\s*(?:book|backlog)\b[^.;]{0,80}?\bfrom\s+(${MONEY_OB})\s*(?:to|→)\s*(${MONEY_OB})`, 'i').exec(t);
+  const b = new RegExp(String.raw`\border\s*(?:book|backlog)\b[^.;]{0,60}?(?:stood at|stands at|of|at|is|was)\s+(${MONEY_OB})[^.;]{0,40}?(?:as against|against|compared (?:to|with)|vs\.?|versus|up from|from)\s+(${MONEY_OB})`, 'i').exec(t);
+  const before = a ? a[1] : b ? b[2] : null;
+  const after = a ? a[2] : b ? b[1] : null;
+  if (!before || !after) return null;
+  const x = moneyValue(before), y = moneyValue(after);
+  const xv = x && toBase(x), yv = y && toBase(y);
+  if (xv == null || yv == null || xv === yv) return null;
+  const f = (m: string) => fmtMoney(m, market);
+  const pct = Math.round(((yv - xv) / xv) * 1000) / 10;
+  return { key: 'order_book', dir: yv > xv ? 'up' : 'down', before: f(before), after: f(after), text: `Order book ${f(before)} → ${f(after)} (${pct >= 0 ? '+' : ''}${pct}%)` };
+}
+/** Pure: one money spelling — "₹150 bn", "₹2,073 Cr", "$4.2 bn". A bare figure in an Indian filing is rupees. */
+export function fmtMoney(m: string, market: 'IN' | 'US' = 'IN'): string {
+  const s = String(m || '').trim();
+  const cur = /^(?:US\$|\$)/i.test(s) ? '$' : /^(?:₹|Rs\.?|INR)/i.test(s) ? '₹' : market === 'US' ? '$' : '₹';
+  const x = moneyValue(s);
+  if (!x) return s;
+  const n = String(s.replace(/^(?:₹|Rs\.?|INR|US\$|\$)\s?/i, '').match(/[\d,]+(?:\.\d+)?/)?.[0] || x.v);
+  const u = x.unit === 'cr' ? ' Cr' : x.unit === 'lakh' ? ' lakh' : x.unit === 'mn' ? ' mn' : x.unit === 'bn' ? ' bn' : '';
+  return `${cur}${n}${u}`;
 }
 
 // ── capacity ───────────────────────────────────────────────────────────────
@@ -224,15 +329,28 @@ export function tableValue(text: string, label: RegExp, max = 160): string | nul
   const m = new RegExp(label.source + String.raw`(?:(?![a-z]\)\s)[^:]){0,140}?:\s*`, fl).exec(text) || new RegExp(label.source + String.raw`[^:]{0,40}?(?:\?|-)?\s*`, fl).exec(text);
   if (!m) return null;
   let v = text.slice(m.index + m[0].length, m.index + m[0].length + max);
-  v = v.split(/\s(?:[a-z]\)|\(?[ivx]{1,4}\)|\d{1,2}[.)])\s|\s(?:Name of|Amount and percentage|Date on which|Expected date|Consideration|Brief details|Whether|Cost of|Percentage of|Indicative time|Nature of|Size|Details of|Type of|Industry to which)\b/)[0];
+  v = v.split(/\s\d{1,2}\s(?=(?:Name|Nature|Date|Details|Impact|Brief|Amount|Whether|Expected|Consideration|Cost|Percentage|Indicative|Size|Type|Industry|Particulars)\b)|\s(?:[a-z]\)|\(?[ivx]{1,4}\)|\d{1,2}[.)])\s|\s(?:Name of|Amount and percentage|Date on which|Expected date|Consideration|Brief details|Whether|Cost of|Percentage of|Indicative time|Nature of|Size|Details of|Type of|Industry to which)\b/)[0];
   v = v.split(/\.\s+(?=[A-Z])/)[0].replace(/\s+/g, ' ').replace(/[;,.\s]+$/, '').trim();
   if (!v || EMPTY_VALUE.test(v) || v.length < 2) return null;
   if (!lineQuality(v).ok) return null;
+  // zzz824: a value that is the rest of the question ("and whether any of the buyers belong to …") or the next
+  // sentence ("The Company will …") is not a value — the label had no answer in this layout
+  if (/^(?:and|or|if|whether|the same|such|any)\b/i.test(v) || /\bwhether\b|\bbelongs? to the promoter|\bif yes\b|\bif so\b/i.test(v)) return null;
+  if (/^(?:The|This|We|It)\s+(?:Company|company|is|will|has|was|are)\b/.test(v)) return null;
   return cleanClip(v, 90);
 }
 
 const MONEY_TXT = /(?:₹|Rs\.?|INR)\s?\d[\d,]*(?:\.\d+)?(?:\s?(?:crores?|cr\b\.?|lakhs?|lacs?|million|mn\b|billion|bn\b))?(?:\s?\/-)?|\d[\d,]*(?:\.\d+)?\s?(?:crores?|cr\b\.?)/i;
 const moneyIn = (s: string | null): string | null => { const m = s ? MONEY_TXT.exec(s) : null; return m ? m[0].replace(/\s?\/-$/, '').trim() : null; };
+/** zzz824: a consideration without crore / lakh / million, below ₹1 lakh as written ("INR 26,000"), is not sized — dropped. */
+const scaledMoney = (s: string | null): string | null => {
+  const m = moneyIn(s);
+  if (!m) return null;
+  if (/crore|cr\b|lakh|lac|million|mn\b|billion|bn\b/i.test(m)) return m;
+  const n = parseFloat(m.replace(/^(?:₹|Rs\.?|INR)\s?/i, '').replace(/,/g, ''));
+  return Number.isFinite(n) && n >= 100000 ? m : null;
+};
+const DATE_LIKE = /\b(?:\d{1,2}(?:st|nd|rd|th)?[\s./-]+(?:[A-Za-z]{3,9}|\d{1,2})[\s.,/-]+\d{2,4}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})\b/;
 
 /** Pure: "Divestment: <undertaking> to <buyer> for ₹X Cr; agreement dated …" from the Reg 30 sale/disposal table. */
 export function divestmentLine(text: string): string | null {
@@ -240,8 +358,9 @@ export function divestmentLine(text: string): string | null {
   const what = tableValue(t, /name of the (?:entity|undertaking|unit|division)(?:\(s\))?(?: forming part of the undertaking)?/i)
     || tableValue(t, /(?:sale|disposal) of (?:the )?(?:undertaking|unit|division|business)/i);
   const buyer = tableValue(t, /brief details of (?:the )?buyers?/i);
-  const cons = moneyIn(tableValue(t, /consideration (?:received|receivable)?/i, 200)) || moneyIn(tableValue(t, /(?:sale|total) consideration/i, 200));
-  const date = tableValue(t, /date on which the agreement (?:for sale )?(?:has been )?entered into/i, 60);
+  const cons = scaledMoney(tableValue(t, /consideration (?:received|receivable)?/i, 200)) || scaledMoney(tableValue(t, /(?:sale|total) consideration/i, 200));
+  const dv = tableValue(t, /date on which the agreement (?:for sale )?(?:has been )?entered into/i, 60);
+  const date = dv && DATE_LIKE.test(dv) ? dv : null;
   const bits: string[] = [];
   if (what) bits.push(what);
   if (buyer) bits.push(`to ${buyer}`);
@@ -300,6 +419,100 @@ export function approvalLine(text: string): string | null {
   // "received the approval" says nothing — it must say what, or from whom
   if (v.split(/\s+/).length < 4) return null;
   return lineQuality(v).ok ? `${v.charAt(0).toUpperCase()}${v.slice(1)}` : null;
+}
+
+// ── zzz824: document types the owner saw mislabelled ─────────────────────
+
+const AGENCY = /\b(CRISIL|ICRA|CARE(?:\s*Edge)?|India Ratings(?:\s*(?:&|and)\s*Research)?|Ind-?Ra|Acuit[eé]|Brickwork|Infomerics|Fitch|Moody'?s|S&P)\b/i;
+/** Pure: the body is a credit-rating letter / rationale. */
+export function isRatingDoc(text: string): boolean {
+  const t = String(text || '').slice(0, 8000);
+  return /rating rationale|credit rating|ratings? (?:has|have) been (?:re-?affirmed|assigned|upgraded|downgraded|revised)|(?:re-?affirmed|assigned|upgraded|downgraded)\s+(?:the\s+)?(?:long|short)[- ]term (?:rating|bank)/i.test(t)
+    && (AGENCY.test(t) || /\b(?:CRISIL|ICRA|CARE|IND|IVR|BWR|ACUITE)\s?(?:AAA|AA|A|BBB|BB|B|C|D|A1|A2|A3|A4)[+-]?\b/.test(t));
+}
+/** Pure: "Credit rating: CRISIL AA+/Stable reaffirmed — long-term bank facilities". Only what the letter states. */
+export function ratingLine(text: string): { line: string | null; action: FilingRead['ratingAction'] } {
+  const t = String(text || '').replace(/\s+/g, ' ');
+  const ag = AGENCY.exec(t)?.[1] || null;
+  const act = /\bupgrad/i.test(t) ? 'upgrade' : /\bdowngrad/i.test(t) ? 'downgrade' : /\bwithdr[ae]w/i.test(t) ? 'withdraw'
+    : /\bre-?affirm/i.test(t) ? 'reaffirm' : /\bassign/i.test(t) ? 'assign' : /\brevis/i.test(t) ? 'revise' : null;
+  const sym = /(?:\[\s?ICRA\s?\]|\b(?:CRISIL|CARE|IND|IVR|BWR|ACUITE|Ind-?Ra))\s?(AAA|AA|A|BBB|BB|B|C|D|A1|A2|A3|A4)([+-]?)(?:\s?\(\s?CE\s?\))?(?:\s*[/;,(]\s*(Stable|Positive|Negative|Developing))?/.exec(t);
+  const outlook = sym?.[3] || /\boutlook[^.]{0,30}?\b(Stable|Positive|Negative|Developing)\b/i.exec(t)?.[1] || null;
+  const inst = /\b(long[- ]term bank (?:loan )?facilities|short[- ]term bank facilities|long[- ]term (?:\/ ?short[- ]term )?bank facilities|non[- ]convertible debentures|commercial paper(?: programme)?|fixed deposits?|term loans?)\b/i.exec(t)?.[1] || null;
+  const word: Record<string, string> = { upgrade: 'upgraded', downgrade: 'downgraded', withdraw: 'withdrawn', reaffirm: 'reaffirmed', assign: 'assigned', revise: 'revised' };
+  const bits: string[] = [];
+  if (sym) bits.push(`${sym[0].split(/\s*[/;,(]\s*(?:Stable|Positive|Negative|Developing)/)[0].replace(/\s+/g, ' ').trim()}${outlook ? `/${outlook[0].toUpperCase()}${outlook.slice(1).toLowerCase()}` : ''}`);
+  else if (ag) bits.push(ag);
+  if (act) bits.push(word[act]);
+  let line = bits.length ? `Credit rating: ${bits.join(' ')}` : null;
+  if (line && inst) line += ` — ${inst.toLowerCase()}`;
+  return { line, action: act as FilingRead['ratingAction'] };
+}
+
+/** Pure: "Bonus issue: 1 bonus share for every 1 held; 10,46,16,204 shares; record date …" — only what is stated. */
+export function bonusLine(text: string): string | null {
+  const t = String(text || '').replace(/\s+/g, ' ');
+  if (!/\bbonus\b/i.test(t)) return null;
+  const ratio = /(\d+)\s*(?:\([A-Za-z ]+\)\s*)?(?:fully paid[- ]up\s+)?(?:bonus\s+)?(?:equity\s+)?shares?[^.;]{0,60}?\bfor every\s+(\d+)\s*(?:\([A-Za-z ]+\)\s*)?(?:fully paid[- ]up\s+)?(?:existing\s+)?(?:equity\s+)?shares?/i.exec(t)
+    || /\b(?:in the ratio of|ratio of)\s+(\d+)\s*:\s*(\d+)/i.exec(t);
+  const count = /([\d,]{5,})\s+(?:fully paid[- ]up\s+)?bonus\s+(?:equity\s+)?shares/i.exec(t) || /allot(?:ment|ted)\s+of\s+([\d,]{5,})\s+(?:fully paid[- ]up\s+)?(?:bonus\s+)?equity shares[^.]{0,80}\bbonus/i.exec(t);
+  const rec = /record date[^.;]{0,30}?(\d{1,2}(?:st|nd|rd|th)?\s+[A-Z][a-z]+,?\s+\d{4}|[A-Z][a-z]+\s+\d{1,2},?\s+\d{4}|\d{1,2}[./-]\d{1,2}[./-]\d{4})/i.exec(t);
+  const bits: string[] = [];
+  if (ratio) bits.push(`${ratio[1]} bonus share${ratio[1] === '1' ? '' : 's'} for every ${ratio[2]} held`);
+  if (count) bits.push(`${count[1]} shares`);
+  if (rec) bits.push(`record date ${rec[1]}`);
+  return `Bonus issue${bits.length ? `: ${bits.join('; ')}` : ' — terms in the filing'}`;
+}
+
+/** Pure: a securities allotment (NCDs, CP, equity, warrants) — the body shows securities were allotted. */
+export function isAllotmentDoc(subject: string, text: string): boolean {
+  return /\ballot(?:ment|ted)\b/i.test(subject) || /\b(?:has|have)\s+(?:been\s+)?allotted\b[^.]{0,160}\b(?:NCDs?|non[- ]convertible debentures|debentures|commercial papers?|equity shares|warrants|bonds)\b/i.test(String(text || '').slice(0, 6000));
+}
+
+/** Pure: "Order from <authority>: <nature>; ₹X" from the SEBI annexure for actions taken / orders passed. */
+export function legalLine(text: string): string | null {
+  const t = String(text || '').replace(/\s+/g, ' ');
+  const who = tableValue(t, /name of the (?:authority|regulat\w+|statutory authority)(?: from which| issuing)?/i, 120);
+  const what = tableValue(t, /nature and details of the action\(?s?\)?(?: taken)?(?:,? (?:initiated )?or order\(?s?\)? passed)?/i, 200)
+    || tableValue(t, /details of the violation\(?s?\)?(?: \/ contravention\(?s?\)?)?(?: committed| alleged)?/i, 200);
+  const amt = /(?:₹|Rs\.?|INR)\s?[\d,]+(?:\.\d+)?(?:\s?(?:crores?|cr\b\.?|lakhs?|lacs?))?(?:\s?\/-)?/i.exec(tableValue(t, /impact on financial,? operation(?:s|al)? or other activities/i, 220) || what || '')?.[0] || null;
+  if (!who && !what) return null;
+  let line = who ? `${who}${what ? `: ${what}` : ''}` : String(what);
+  if (amt && !line.includes(amt)) line += `; ${amt.replace(/\s?\/-$/, '')}`;
+  return lineQuality(line).ok ? line : null;
+}
+
+/** zzz824: CEO / CFO / MD / whole-time director / company secretary — senior management. */
+const SENIOR_ROLE = /\b(?:ceo|chief executive(?: officer)?|cfo|chief financial(?: officer)?|managing director|\bmd\b|chairman|chairperson|whole[- ]time director|executive director|coo|chief operating(?: officer)?|company secretary|joint managing director)\b/i;
+/** Pure: the RAW text (before letterhead is cut — a company-secretary appointment reads like a signature)
+ *  appoints / accepts the resignation of a senior role in the same sentence. */
+export function seniorChange(raw: string): boolean {
+  const role = SENIOR_ROLE.source;
+  const re = new RegExp(String.raw`\b(?:appoint\w*|resign\w*|cessation|re-?designat\w*|steps? down|superannuat\w*)\b[^.;]{0,160}` + role + String.raw`|` + role + String.raw`[^.;]{0,160}\b(?:appoint\w*|resign\w*|cessation|re-?designat\w*|steps? down|superannuat\w*)\b`, 'i');
+  // "Mr. A. Kumar" — honorific and initial full stops are not sentence ends
+  return re.test(String(raw || '').replace(/\s+/g, ' ').replace(/\b(Mr|Ms|Mrs|Dr|Shri|Smt|Prof|[A-Z])\./g, '$1'));
+}
+
+/** Marketing text from a deck ("largest manufacturer", "leading player") is never an event line. */
+export const MARKETING = /\b(?:largest|leading|market leader|one of the (?:largest|leading|top)|pioneer|world[- ]class|best[- ]in[- ]class|trusted partner|state[- ]of[- ]the[- ]art|unique|No\.\s?1)\b/i;
+
+/** Pure: what kind of document this is, in words (subject first, then the body). */
+export function docTypeOf(subject: string, text: string): string {
+  const s = String(subject || '');
+  const t = String(text || '').slice(0, 5000);
+  if (/credit rating|rating rationale/i.test(s) || isRatingDoc(t)) return 'Credit rating letter';
+  if (/transcript/i.test(s) || /\btranscript\b/i.test(t.slice(0, 600))) return 'Concall transcript';
+  if (/investor presentation|earnings presentation|analyst presentation/i.test(s) || /investor presentation/i.test(t.slice(0, 800))) return 'Investor presentation';
+  if (/bonus|split|sub-?division/i.test(s)) return 'Corporate action notice';
+  if (/\ballot(?:ment|ted)\b/i.test(s)) return 'Allotment intimation';
+  if (/financial results|quarterly results|results for the/i.test(s)) return 'Results filing';
+  if (/press release|media release/i.test(s)) return 'Press release';
+  if (/clarification|spurt|movement in/i.test(s)) return 'Reply to exchange';
+  if (/outcome of (?:the )?board meeting/i.test(s)) return 'Board meeting outcome';
+  if (/action\(?s?\)? initiated|orders? passed/i.test(s)) return 'Authority action disclosure';
+  if (/bagging|receiv\w* of orders?|\border(?:s)? (?:win|received|worth)|letter of (?:award|intent)|work order|purchase order/i.test(s)) return 'Order intimation';
+  if (/regulation 30|reg\.? 30|lodr|disclosure/i.test(s)) return 'Reg 30 disclosure';
+  return 'Exchange filing';
 }
 
 // ── other lines ────────────────────────────────────────────────────────────
@@ -432,11 +645,38 @@ function lineOut(core: ReadCore, market: 'IN' | 'US', type?: RecentEventType): R
   // the one computed figure: a capacity change % from two stated capacities
   const cap = line && /^Capacity .*→.*\(([+-]?\d+)%\)/.exec(line);
   if (cap && !figs.some((f) => f.replace(/\s/g, '') === `${cap[1]}%`)) figs.push(`${cap[1]}%`);
-  return { ...core, line, figures: figs, touches, rejected };
+  return { ...core, line, figures: figs, touches, rejected, lowConfidence: !!core.lowConfidence || (!line && !!rejected) };
+}
+
+/** Pure: an execution period no order runs for ("to be executed in 38 years") is a parse error — the clause goes. */
+export function saneDurations(line: string): string {
+  return String(line || '').replace(/,?\s*(?:to be executed|executed|to be completed|execution)\s+(?:in|within|over|by)\s+(\d+)\s*(years?|months?|days?|weeks?)\b/gi, (m, n, u) => {
+    const v = Number(n);
+    const ok = /^y/i.test(u) ? v <= 15 : /^mo/i.test(u) ? v <= 180 : /^w/i.test(u) ? v <= 520 : v <= 3650;
+    return ok ? m : '';
+  }).replace(/\s{2,}/g, ' ').trim();
 }
 
 function readIn(inp: ReadInput, text: string): ReadCore {
   const subj = subjectClass(inp.subject);
+  const docType = docTypeOf(inp.subject, text);
+  const open = subj.generic || subj.type === 'Other filing';
+  const noImpact0 = NO_IMPACT.test(text);
+  // zzz824: a rating letter is a rating action — whatever figures its rationale quotes, it is never "Results"
+  if (subj.type === 'Credit rating' || (open && isRatingDoc(text))) {
+    const r = ratingLine(text);
+    return lineOut({ kind: 'Credit rating', line: r.line, routine: null, touches: [], chars: text.length, senior: false, noImpact: noImpact0, docType: 'Credit rating letter', ratingAction: r.action, changes: [] }, 'IN', 'Credit rating');
+  }
+  // zzz824: a bonus / split is a corporate action — never a rights issue
+  if (subj.type === 'Corporate action' || (open && /\bbonus\s+(?:issue|shares?|equity shares)\b/i.test(text) && !/\brights issue\b[^.]{0,80}\b(?:price|entitlement|renunciation)/i.test(text))) {
+    const line = /\bbonus\b/i.test(`${inp.subject} ${text.slice(0, 3000)}`) ? bonusLine(text) : (sentenceWith(text, /sub-?division|split of|stock split/i, 'IN', false) || null);
+    return lineOut({ kind: 'Corporate action', line, routine: null, touches: [], chars: text.length, senior: false, noImpact: noImpact0, docType: 'Corporate action notice', changes: [] }, 'IN', 'Corporate action');
+  }
+  // zzz824: an allotment of NCDs / CP / shares is a fund raise (securities allotted) — never legal action
+  if ((open || subj.type === 'Fund raise') && isAllotmentDoc(inp.subject, text)) {
+    const line = fundLine(text);
+    return lineOut({ kind: 'Fund raise', line, routine: null, touches: [], chars: text.length, senior: false, noImpact: noImpact0, docType: 'Allotment intimation', changes: [], lowConfidence: !line }, 'IN', 'Fund raise');
+  }
   const hits = classifyIndiaEvents(text, { max: 16 });
   const real = hits.filter((h) => !h.routine && h.id !== 'commodity_price');
   let facts: IndiaFacts[] = [];
@@ -451,7 +691,8 @@ function readIn(inp: ReadInput, text: string): ReadCore {
   if (/\bnew\s+(?:[A-Z]{2,6}\s+|global\s+|international\s+|marquee\s+|large\s+)*(?:customers?|clients?)\b|added\s+\d+\s+new\s+(?:customers?|clients?)/i.test(text)) touches.push({ key: 'new_customer', dir: 'up' });
   if (/\b(?:site|facility|plant|unit)s?\b[^.]{0,60}\b(?:approved|qualified|audited successfully)\s+by\b|\bqualified\s+(?:as\s+a\s+)?(?:vendor|supplier)\b/i.test(text)) touches.push({ key: 'qualification', dir: 'up' });
   const noImpact = NO_IMPACT.test(text);
-  const senior = /\b(?:ceo|chief executive|cfo|chief financial|managing director|chairman|chairperson|whole[- ]time director|executive director|coo|chief operating)\b/i.test(`${inp.subject} ${real.filter((h) => /kmp|auditor|director/.test(h.id)).map((h) => h.sentence).join(' ')}`);
+  const senior = SENIOR_ROLE.test(`${inp.subject} ${real.filter((h) => /kmp|auditor|director/.test(h.id)).map((h) => h.sentence).join(' ')}`)
+    || seniorChange(inp.text);
 
   // what the document shows
   const resultsHit = real.find((h) => h.category === 'Results' && h.id !== 'guidance' && h.id !== 'order_book');
@@ -461,6 +702,9 @@ function readIn(inp: ReadInput, text: string): ReadCore {
   else if (fact && FACT_KIND[fact.event.kind] && fact.event.kind !== 'results') kind = FACT_KIND[fact.event.kind];
   else if (resultsHit && (resultsHit.id !== 'results_filed' || /financial results|results for the quarter/i.test(text))) kind = 'Results';
   else if (real[0]) kind = IN_HIT_KIND[real[0].id] || (real[0].category === 'Results' ? 'Results' : null);
+  // zzz824: a deck's marketing line ("Largest manufacturer …") is not a regulatory approval
+  const deck = /presentation|transcript/i.test(docType);
+  if (deck && kind === 'Regulatory approval' && !approvalLine(text)) kind = null;
   const type: RecentEventType = subj.generic || subj.type === 'Other filing' ? (kind || 'Other filing') : subj.type;
 
   // nothing material: a generic subject whose body names no event
@@ -471,10 +715,11 @@ function readIn(inp: ReadInput, text: string): ReadCore {
   }
 
   let line: string | null = null;
+  const changes: FilingChange[] = [];
   const hitLine = (ids: RegExp) => { const h = real.find((x) => ids.test(x.id)); return h ? h.sentence : null; };
   switch (type) {
-    case 'Results': line = resultsLine(text, 'IN') || (resultsHit ? `${resultsHit.label}: ${clip(resultsHit.sentence, 170)}` : 'Results filed — the figures are in the statement tables, no headline sentence'); break;
-    case 'Order win': line = fact?.event.kind === 'order' && lineQuality(fact.headline).ok ? fact.headline : hitLine(/order_win|order_book/); break;
+    case 'Results': { const rp = resultsParts(text, 'IN', inp.date); changes.push(...rp.changes); line = rp.line || (resultsHit ? `${resultsHit.label}: ${clip(resultsHit.sentence, 170)}` : 'Results filed — the figures are in the statement tables, no headline sentence'); break; }
+    case 'Order win': { const l0 = fact?.event.kind === 'order' && lineQuality(fact.headline).ok ? fact.headline : hitLine(/order_win|order_book/); line = l0 ? saneDurations(l0) : null; break; }
     case 'Capex / capacity': line = capacityLine(text) || (fact?.event.kind === 'capacity' && lineQuality(fact.headline).ok ? fact.headline : hitLine(/capacity/)); break;
     case 'Corporate restructuring': line = schemeLine(text, inp.company); break;
     case 'Acquisition': line = acquisitionLine(text, inp.company); break;
@@ -482,6 +727,8 @@ function readIn(inp: ReadInput, text: string): ReadCore {
     case 'Fund raise': line = fundLine(text); break;
     case 'Regulatory approval': line = approvalLine(text); break;
     case 'Regulatory / legal action': {
+      const tbl = legalLine(text);
+      if (tbl) { line = `${clip(tbl, 170)}${noImpact ? ' — company says no material impact' : ''}`; break; }
       const acted = sentenceWith(text, /\b(?:received|issued|served|passed|levied|imposed|raised)\b[^.]{0,140}\b(?:demand|penalt\w*|notice|order|fine|communication)\b|\b(?:demand|penalt\w*|notice|order|fine|communication)\b[^.]{0,140}\b(?:received|issued|served|passed|levied|imposed|raised)\b/i, 'IN');
       const base = fact && (fact.event.kind === 'tax_litigation' || fact.event.kind === 'governance') && lineQuality(fact.headline).ok && /\d/.test(fact.headline) ? fact.headline
         : acted || sentenceWith(text, /\b(?:demand|penalt|notice|order|fine|levied|assessment|show cause|proceeding)\b/i, 'IN');
@@ -501,18 +748,28 @@ function readIn(inp: ReadInput, text: string): ReadCore {
       const bits: string[] = [];
       if (cap) bits.push(cap);
       // a deck's hit sentences are often slide text — only clean ones are kept
-      for (const h of top) { const b = `${h.label}: ${clip(h.sentence, 110)}`; if (bits.length < 2 && !(cap && /capacity/.test(h.id)) && lineQuality(b).ok) bits.push(b); }
+      for (const h of top) {
+        const b = `${h.label}: ${clip(h.sentence, 110)}`;
+        if (MARKETING.test(h.sentence) || (h.id === 'regulatory_approval' && !approvalLine(h.sentence))) continue;
+        if (bits.length < 2 && !(cap && /capacity/.test(h.id)) && lineQuality(b).ok) bits.push(b);
+      }
       const cust = sentenceWith(text, /\bnew\s+(?:[A-Z]{2,6}\s+|global\s+|international\s+|marquee\s+|large\s+)*(?:customers?|clients?)\b/i, 'IN', false);
       if (cust && bits.length < 3 && lineQuality(cust).ok) bits.push(clip(cust, 90));
       const appr = sentenceWith(text, /\b(?:site|facility|plant|unit)s?\b[^.]{0,60}\b(?:approved|qualified)\s+by\b/i, 'IN', false);
       if (appr && bits.length < 3 && appr !== cust && lineQuality(appr).ok) bits.push(clip(appr, 90));
-      line = bits.join('; ') || (real[0] ? `${real[0].label}: ${clip(real[0].sentence, 150)}` : null);
+      line = bits.join('; ') || (real[0] && !MARKETING.test(real[0].sentence) ? `${real[0].label}: ${clip(real[0].sentence, 150)}` : null);
       break;
     }
     default: line = real[0] ? `${real[0].label}: ${clip(real[0].sentence, 200)}` : leadSentence(text);
   }
   if (line && !lineQuality(line).ok && type !== 'Concall / business update') line = leadSentence(text) || line;
-  return lineOut({ kind, line, routine: null, touches, chars: text.length, senior, noImpact }, 'IN', type);
+  // changes the filing states with a prior: capacity from → to, order book with a stated comparison
+  const capM = capacityLine(text);
+  if (capM && /→/.test(capM) && /\(\+?\d+%\)/.test(capM)) changes.push({ key: 'capacity_addition', dir: /\(-/.test(capM) ? 'down' : 'up', text: capM.replace(/, commissioned|, approved by the board/, '') });
+  const ob = orderBookChange(text, 'IN');
+  if (ob) changes.push(ob);
+  const lowConfidence = !!line && (MARKETING.test(line) || /details in the filing|see filing/i.test(line));
+  return lineOut({ kind, line, routine: null, touches, chars: text.length, senior, noImpact, docType, changes, lowConfidence }, 'IN', type);
 }
 
 function readUs(inp: ReadInput, text: string): ReadCore {
@@ -529,8 +786,11 @@ function readUs(inp: ReadInput, text: string): ReadCore {
     return { kind: null, line: null, figures: [], routine: 'nothing material stated in the filing', touches: [], chars: text.length, senior, noImpact };
   }
   let line: string | null = null;
+  const changes: FilingChange[] = [];
   if (type === 'Results') {
-    const r = resultsLine(text, 'US');
+    const rp = resultsParts(text, 'US', inp.date);
+    changes.push(...rp.changes);
+    const r = rp.line;
     const g = hits.find((h) => /^guidance_(raise|cut)/.test(h.id));
     line = r ? `${r}${g ? `; ${g.label.toLowerCase()}` : ''}` : (earn ? `${earn.label}: ${clip(earn.sentence, 170)}` : null);
   } else {
@@ -538,7 +798,7 @@ function readUs(inp: ReadInput, text: string): ReadCore {
     line = lead ? `${lead.label}: ${clip(lead.sentence, 180)}` : null;
     if (type === 'Regulatory / legal action' && line && noImpact) line += ' — company says no material impact';
   }
-  return lineOut({ kind, line, routine: null, touches, chars: text.length, senior, noImpact }, 'US', type);
+  return lineOut({ kind, line, routine: null, touches, chars: text.length, senior, noImpact, changes, docType: /8-?K/i.test(inp.subject) ? 'Form 8-K' : 'SEC filing' }, 'US', type);
 }
 
 /** Pure: the cache / response record for one filing. */

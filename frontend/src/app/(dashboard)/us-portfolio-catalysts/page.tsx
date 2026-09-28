@@ -43,6 +43,8 @@ import NewCatalystsTab from '@/components/catalyst/new-catalysts-tab';
 import { buildRecentCatalysts, rawFromLedger, rawFromPersistent, localToday, windowRange, countInRange, type RawEvent, type ThesisCtx, type WindowSpan } from '@/lib/catalyst/recent-events';
 import { useFilingReads } from '@/components/catalyst/use-filing-reads';
 import { nextWindow, PC_PAGE_STEP, readScope, otherBenchLabel, cbCriteriaLine } from '@/lib/thesis/pc-bench';
+import BookCheckPanel from '@/components/BookCheckPanel';
+import { buildBookCheck } from '@/lib/thesis/book-membership';
 
 const C = {
   bg: 'var(--mc-bg-1)', border: 'var(--mc-bg-4)', text: 'var(--tc-text, #F1F5F9)',
@@ -61,7 +63,7 @@ const pill = (on: boolean, color = C.cyan): React.CSSProperties => ({
 });
 
 export default function UsPortfolioCatalystsPage() {
-  const { rows, excluded, universeError, loading, evidenceLoading, batch, priorBatch, checkBatch, readFiling, readAll, checkAll, readPriorPeriods, stop, thesisTypes, setThesisType, needsPrior, cbCriteria, cbPassing, retryFigures, detBatch } = useUsBook();
+  const { rows, excluded, universeError, loading, evidenceLoading, batch, priorBatch, checkBatch, readFiling, readAll, checkAll, readPriorPeriods, stop, thesisTypes, setThesisType, needsPrior, cbCriteria, cbPassing, retryFigures, detBatch, usBook } = useUsBook();
   const [filter, setFilter] = useState<ThesisStatus | null>(null);
   const [source, setSource] = useState<'all' | 'book' | 'bench'>('all');
   const [copied, setCopied] = useState<string | null>(null);
@@ -73,6 +75,25 @@ export default function UsPortfolioCatalystsPage() {
   const [showFailing, setShowFailing] = useState(false);
   const all0 = useMemo(() => Object.values(rows), [rows]);
   const failingBench = useMemo(() => all0.filter((r) => r.origin === 'bench' && r.preset?.state === 'fail'), [all0]);
+  // zzz823: the Book check — My US book = the US Portfolio Book's saved
+  // holdings, nothing else; a non-US listing is saved but not assessed (no SEC).
+  const bookCheck = useMemo(() => {
+    if (!usBook || loading) return null;
+    const held = usBook.universe.filter((u) => u.origin !== 'bench');
+    const ownBench = usBook.universe.filter((u) => u.origin !== 'book').length;
+    return buildBookCheck({
+      saved: held.map((u) => ({ symbol: u.ticker, key: usTickerKey(u.ticker), sources: ['server' as const], merged: [] })),
+      rows: all0 as any,
+      keyOf: usTickerKey,
+      savedElsewhere: held.filter((u) => u.listing !== 'US').map((u) => ({ symbol: u.ticker, reason: `saved, but not assessed here: ${u.excludedReason || 'not a US listing'} — no SEC filings (listed at the bottom of the page)` })),
+      sources: [
+        { label: 'US Portfolio Book — saved holdings (server)', count: held.length, used: true, note: `used${usBook.updatedAt ? ` · saved ${String(usBook.updatedAt).slice(0, 10)}` : ''} · the only source of My US book` },
+        { label: 'US Portfolio Book — your own bench list', count: ownBench, used: true, note: 'bench only (never a holding)' },
+        { label: 'US Conviction Beats list', count: cbCriteria?.listTotal ?? null, used: true, note: `bench only (never a holding) · ${cbCriteria?.source || 'loading'}` },
+      ],
+      rule: 'My US book = the holdings saved on the US Portfolio Book page (server), one row per ticker (BRK.B = BRK-B = BRK B). Never filtered by Conviction Beats criteria or size. The bench is your own US bench list plus US Conviction Beats names you do not hold.',
+    });
+  }, [usBook, loading, all0, cbCriteria]);
   const cbOnPageCount = useMemo(() => { const p = new Set(cbPassing); return all0.filter((r) => p.has(usTickerKey(r.symbol))).length; }, [all0, cbPassing]);
   // zzz811: a held name is shown once, in My US book — "US bench" is the
   // names you do not hold, so All = book + bench exactly (the chip counts).
@@ -243,6 +264,8 @@ export default function UsPortfolioCatalystsPage() {
         </div>
       )}
 
+      {!loading && <BookCheckPanel check={bookCheck} market="US" />}
+
       {!loading && cbCriteria && cbCriteria.listTotal === 0 && (
         <div data-testid="us-cb-empty" style={{ fontSize: 13.5, color: C.dim, border: `1px solid ${C.amber}`, borderRadius: 8, padding: '8px 12px', lineHeight: 1.5 }}>
           <b style={{ color: C.amber }}>🏆 US bench is empty.</b> The US Conviction Beats list is empty{cbCriteria.error ? ` (${cbCriteria.error})` : ''} — open US Conviction Beats once to fill it; the server list fills itself after the nightly US grading runs.{' '}
@@ -294,7 +317,7 @@ export default function UsPortfolioCatalystsPage() {
         </div>
       )}
 
-      <UsSpecialFocusPanel rows={inSource as any} ready={!evidenceLoading && !loading}
+      <UsSpecialFocusPanel rows={inSource as any} lookup={all0 as any} ready={!evidenceLoading && !loading}
         display={(t, x) => (displayerBySymbol.get(String(t).toUpperCase()) || displayerBySymbol.get(t) || ((y: any) => y))(x)}
         onReadPrior={(t) => readPriorPeriods(t)} priorRunning={priorBatch.running}
         thesisLabel={(r: any) => {
@@ -413,7 +436,7 @@ export default function UsPortfolioCatalystsPage() {
             {(r0.graded?.rpo || r0.sec?.rpo) ? <> · order backlog (RPO, SEC XBRL) <b style={{ color: C.dim }}>{usdWords((r0.graded?.rpo || r0.sec?.rpo).cur.value)}</b>{(r0.graded?.rpo || r0.sec?.rpo).pct != null ? ` (${(r0.graded?.rpo || r0.sec?.rpo).pct >= 0 ? '+' : ''}${(r0.graded?.rpo || r0.sec?.rpo).pct}% on a year earlier)` : ''}</> : null}
             {r0.benchSource ? <> · on the bench from <b style={{ color: C.dim }}>{r0.benchSource}</b></> : null}
             {!r0.summary && r0.det ? <> · <span data-testid="us-det-label" style={{ color: C.dim }}>SEC documents <b>read without AI</b>: {r0.det.note}</span></> : null}
-            {r0.origin === 'bench' && r0.preset ? <> · <b data-testid="us-bench-criteria-label" style={{ color: r0.preset.state === 'pass' ? C.green : C.amber }}>{r0.preset.state === 'pass' ? '✅ ' : '✖ '}{r0.preset.text}</b></> : null}
+            {r0.origin === 'bench' && r0.preset ? <> · <b data-testid="us-bench-criteria-label" style={{ color: r0.preset.state === 'pass' ? C.green : r0.preset.state === 'fail' ? C.amber : C.dim }}>{r0.preset.state === 'pass' ? '✅ ' : r0.preset.state === 'fail' ? '✖ ' : '◌ '}{r0.preset.text}</b></> : null}
           </div>
           {!evidenceLoading && <PersistentStrip ticker={r0.symbol} pcs={persistBySymbol.get(r0.symbol) || []} onOpenFocus={() => document.getElementById('us-special-focus')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />}
           {!usFiguresSettled(r0) ? (

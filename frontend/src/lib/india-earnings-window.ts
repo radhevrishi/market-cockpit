@@ -31,7 +31,7 @@
 // a holiday is simply a date with no filings.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { withHonestQuarter, growthView, holdUnconfirmed } from './india-eo-card-data';
+import { withHonestQuarter, growthView, prepareDisplayRow, decodeEntities } from './india-eo-card-data';
 
 export type WindowTier = 'BLOCKBUSTER' | 'STRONG' | 'MIXED' | 'AVOID';
 export const WINDOW_TIER_ORDER: readonly WindowTier[] = ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID'];
@@ -262,7 +262,8 @@ export function windowEntries<R extends WindowRowBase>(days: ReadonlyArray<Windo
         // zzz820 — an impossible stored quarter label (a quarter that had not
         // ended on the filing date) is replaced by the one the date implies.
         // zzz820b — a top tier built on unverified growth is held (see holdUnconfirmed).
-        entries.push(holdUnconfirmed({
+        // zzz822 — …and every text field decoded (no "&amp;" on screen).
+        entries.push(prepareDisplayRow({
           ...withHonestQuarter({ ...raw, _window_date: day.date }), ticker, tier,
           _window_date: day.date,
           _engine_stale: !!day.engine_stale,
@@ -671,7 +672,7 @@ export function windowCsv(rows: ReadonlyArray<any>, dateOf: (r: any) => string =
   const lines = [WINDOW_CSV_HEADER.join(',')];
   for (const c of rows) {
     lines.push([
-      dateOf(c), c._tier_unconfirmed ? `UNCONFIRMED (stored ${c._tier_unconfirmed})` : c.tier, c.ticker, c.company, c.quarter, c.quadrant ?? '',
+      dateOf(c), c._tier_unconfirmed ? `UNCONFIRMED (stored ${c._tier_unconfirmed})` : c.tier, c.ticker, decodeEntities(String(c.company ?? '')), c.quarter, c.quadrant ?? '',
       // zzz820 — the same honest growth the card shows (withheld when the
       // year-ago quarter could not be matched).
       numCell(growthView(c).sales), numCell(growthView(c).pat), numCell(growthView(c).eps), numCell(c.market_cap_cr),

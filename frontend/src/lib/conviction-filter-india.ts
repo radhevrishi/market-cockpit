@@ -19,6 +19,7 @@
 import { peadScore } from '@/lib/pead-score';
 import { INDIA_PRESET } from '@/lib/quality-preset';
 import type { ConvictionEntry } from '@/lib/conviction-beats';
+import { runCriteriaCheck, type CriteriaCheck } from '@/lib/criteria-check';
 
 // zzz253 — hardcoded sector map for known NSE tickers. Backend enrichment
 // often returns null sector; this fallback ensures peer comparison + sector-
@@ -843,4 +844,65 @@ export function cbFailReasons(e: ConvictionEntry, f: ConvFilters): string[] {
     if (!passesConvictionFilter(e, { ...base, [k]: v } as ConvFilters)) out.push(words[k as string]());
   }
   return out.length ? out : ['another active criterion'];
+}
+
+// ── zzz823: pass / fail / NOT CHECKED ───────────────────────────────────────
+// The preset's criteria read `sales ?? 0`, a missing market cap or margin as
+// a fail, and a quality verdict built from missing inputs as HIGH RISK — so a
+// name whose data had simply not been filled in was dropped as "failing".
+// cbCriteriaCheck keeps passesConvictionFilter's verdict for every name whose
+// data is there, and says "not checked: <field> missing" (state 'unknown',
+// shown, never failed) when the only criteria it misses are ones it had no
+// data for. Only the PRESET's criteria are treated this way; a chip the owner
+// sets by hand (D1 / drift / quarter / dates …) stays strict.
+
+const has = (v: unknown) => typeof v === 'number' && Number.isFinite(v);
+
+/** The data words a preset criterion needed and this entry lacks. */
+function cbMissingFor(e: ConvictionEntry, k: string, f: ConvFilters): string[] {
+  const x: any = e;
+  const need = (pairs: Array<[string, string]>) => pairs.filter(([field]) => !has(x[field])).map(([, word]) => word);
+  switch (k) {
+    case 'sales': return need([['sales_yoy_pct', 'sales growth']]);
+    case 'eps': return need([['eps_yoy_pct', 'EPS growth']]);
+    case 'pead': return need([['sales_yoy_pct', 'sales growth'], ['net_profit_yoy_pct', 'profit growth'], ['eps_yoy_pct', 'EPS growth']]);
+    case 'opmDelta': return need([['opm_pct', 'operating margin'], ['opm_prev_pct', 'last year’s operating margin']]);
+    case 'mktCapMin': return need([['market_cap_cr', 'market cap']]);
+    case 'verdicts': {
+      // A verdict of AVOID is built from data that IS there (negative EPS
+      // growth, three red flags, a sharp fall) — a real fail. A weak verdict
+      // with quality inputs missing is not checked.
+      const q = cbComputeQuality(e);
+      if (q.verdictLabel === 'AVOID' || (f.verdicts || []).includes(q.verdictLabel)) return [];
+      const fin = cbIsFinancial(e);
+      const pairs: Array<[string, string]> = [['sales_yoy_pct', 'sales growth'], ['net_profit_yoy_pct', 'profit growth'], ['eps_yoy_pct', 'EPS growth'], ['roce', 'ROCE']];
+      if (!fin) pairs.push(['cfo_to_pat_ratio', 'cash conversion'], ['opm_pct', 'operating margin'], ['opm_prev_pct', 'last year’s operating margin']);
+      const m = need(pairs);
+      return m.length ? m.map((w) => `${w} (for the quality verdict)`) : [];
+    }
+    default: return [];
+  }
+}
+
+const CB_LENIENT = new Set(['sales', 'eps', 'pead', 'opmDelta', 'mktCapMin', 'verdicts']);
+
+/** Pass / fail / not checked, from passesConvictionFilter's own probes. */
+export function cbCriteriaCheck(e: ConvictionEntry, f: ConvFilters): CriteriaCheck {
+  const keys = Object.keys(f).filter((k) => {
+    if (k === 'sortByPead') return false;
+    const v: any = (f as any)[k];
+    return k === 'cap' ? !!v && v !== 'all' : Array.isArray(v) ? v.length > 0 : typeof v === 'boolean' ? v : v != null && v !== '';
+  });
+  const base: ConvFilters = { ...FILTER_DEFAULT };
+  const words = (k: string): string => {
+    const r = cbFailReasons(e, { ...base, [k]: (f as any)[k] } as ConvFilters);
+    return r[0] === 'another active criterion' ? `${k} criterion` : r.join('; ');
+  };
+  return runCriteriaCheck(
+    keys,
+    passesConvictionFilter(e, f),
+    (k) => passesConvictionFilter(e, { ...base, [k]: (f as any)[k] } as ConvFilters),
+    (k) => (CB_LENIENT.has(k) ? cbMissingFor(e, k, f) : []),
+    words,
+  );
 }

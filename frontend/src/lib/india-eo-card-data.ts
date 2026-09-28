@@ -106,7 +106,7 @@ export function checkQuarterLabel(stored: string | null | undefined, filingIso: 
 
 // ─── 3. Financial companies (banks, NBFCs, insurers) ──────────────────────
 
-const FIN_TEXT_RE = /\b(bank|banks|banking|nbfc|non[- ]banking|lending|lender|micro ?finance|housing finance|finance|financiers?|financial services|fincorp|finserv|finvest|finlease|leasing|credit|insurance|assurance)\b/i;
+const FIN_TEXT_RE = /\b(bank|banks|banking|nbfc|non[- ]banking|lending|lender|micro ?finance|housing finance|finance|financiers?|financial services|financial holdings?|finance holdings?|capital holdings?|investment corporation|holdings? (?:&|and) investments?|fincorp|finserv|finvest|finlease|leasing|credit|insurance|assurance|life insurance|general insurance)\b/i;
 
 export type FinancialKind = 'lender' | 'insurer';
 
@@ -117,14 +117,33 @@ export type FinancialKind = 'lender' | 'insurer';
  * Ltd", "… Small Finance Bank", "… Housing Finance", "… Fincorp"). Never from
  * a ticker list.
  */
-export function financialKind(r: { sector?: any; industry?: any; sub_sector?: any; company?: any } | null | undefined): FinancialKind | null {
+export function financialKind(r: { sector?: any; industry?: any; sub_sector?: any; broad_industry?: any; company?: any } | null | undefined): FinancialKind | null {
   if (!r) return null;
-  const text = [r.sector, r.industry, r.sub_sector, r.company].filter(Boolean).map(String).join(' | ');
+  const text = [r.sector, r.industry, r.sub_sector, r.broad_industry, r.company].filter(Boolean).map((x) => decodeEntities(String(x))).join(' | ');
   if (!text) return null;
   if (/\b(insurance|assurance)\b/i.test(text) && !/\bbank\b/i.test(text)) return 'insurer';
   // "Capital" alone is NOT enough (CP Capital is an education company); it
   // needs a finance word.
   return FIN_TEXT_RE.test(text) ? 'lender' : null;
+}
+
+/**
+ * zzz822 — the card's financial-company test: the shared name/industry test,
+ * OR what the engine already concluded about this row (a `financial_kind` /
+ * `is_lender` field, or its lender cash tag), so card and grade never
+ * disagree (Cholamandalam Financial Holdings was flagged a lender by the
+ * engine and shown an operating margin by the card).
+ */
+export function financialKindOfRow(r: any): FinancialKind | null {
+  if (!r) return null;
+  const k = financialKind(r);
+  if (k) return k;
+  const fk = String(r.financial_kind || r.fin_kind || '').toLowerCase();
+  if (fk === 'insurer') return 'insurer';
+  if (fk === 'lender' || r.is_lender === true) return 'lender';
+  const tags: any[] = Array.isArray(r.caveat_tags) ? r.caveat_tags : [];
+  if (tags.some((t) => /^lender\b/i.test(String(t)))) return 'lender';
+  return null;
 }
 
 export interface MarginView {
@@ -144,7 +163,7 @@ const pctOf = (num: any, den: any): number | null =>
 
 /** What the margin tile shows. See header §3. */
 export function marginView(r: any, opts: { newlyListed?: boolean } = {}): MarginView {
-  const kind = financialKind(r);
+  const kind = financialKindOfRow(r);
   if (kind) {
     const value = pctOf(r?.pat_curr_cr, r?.sales_curr_cr);
     const prev = pctOf(r?.pat_prev_cr, r?.sales_prev_cr);
@@ -343,7 +362,8 @@ export function recheckableDrops(dropped: any): number {
 /** The stored one-line narrative, minus its growth percentages when those
  *  were withheld on the card (so the text never contradicts the tiles). */
 export function narrativeForDisplay(r: any): string {
-  let n = String(r?.narrative || '');
+  // zzz822 — entities decoded; the cap reason is shown once, under the badge.
+  let n = stripCapReasonFromText(decodeEntities(String(r?.narrative || '')), capReasonOf(r));
   // A corrected quarter label is corrected in the sentence too.
   const q = checkQuarterLabel(r?._quarter_stored || r?.quarter, r?._window_date || r?.filing_date);
   if (q.corrected && q.stored && q.label) n = n.split(q.stored).join(q.label);
@@ -416,4 +436,206 @@ export function stripGradeInputForStorage<P extends { by_tier?: any }>(p: P): P 
       : list;
   }
   return { ...p, by_tier };
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz822 — ROUND 2: entities, liquidity, size labels, cash tile, cap reason
+// ═══════════════════════════════════════════════════════════════════════════
+
+const NAMED_ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', ndash: '–', mdash: '—', rsquo: '’', lsquo: '‘', rdquo: '”', ldquo: '“' };
+
+/** "B&amp;B Triplewall" → "B&B Triplewall"; also &#38; / &#x26; and doubly
+ *  encoded "&amp;amp;". Text without entities is returned unchanged. */
+export function decodeEntities(s: string): string {
+  if (!s || s.indexOf('&') < 0) return s;
+  let out = s;
+  for (let i = 0; i < 3 && /&(#\d+|#x[0-9a-f]+|[a-z]+);/i.test(out); i++) {
+    out = out.replace(/&(#\d+|#x[0-9a-f]+|[a-z]+);/gi, (m, e: string) => {
+      if (e[0] === '#') {
+        const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+        return Number.isFinite(code) && code > 0 && code < 0x110000 ? String.fromCodePoint(code) : m;
+      }
+      const v = NAMED_ENTITIES[e.toLowerCase()];
+      return v ?? m;
+    });
+  }
+  return out;
+}
+
+const decodeAny = (v: any) => (typeof v === 'string' ? decodeEntities(v) : v);
+
+/** The cap reason a row carries (engine v24+), or null. */
+export function capReasonOf(r: any): string | null {
+  const x = r?.tier_cap_reason;
+  return typeof x === 'string' && x.trim() ? decodeEntities(x.trim()) : null;
+}
+
+/** Caveat chips without the cap reason (it is shown once, under the badge). */
+export function caveatTagsForDisplay(r: any): string[] {
+  const tags: any[] = Array.isArray(r?.caveat_tags) ? r.caveat_tags : [];
+  const cap = capReasonOf(r);
+  return tags.map((t) => decodeEntities(String(t)))
+    .filter((t) => t && t !== cap && !/^Capped at (BLOCKBUSTER|STRONG|MIXED|AVOID)\b/i.test(t));
+}
+
+/** The summary sentence without the cap reason (old rows carry it inline:
+ *  "… with caveats: optical eps + Capped at STRONG: …."). */
+export function stripCapReasonFromText(text: string, cap: string | null): string {
+  let n = String(text || '');
+  if (cap) n = n.split(cap).join('');
+  // Any other "Capped at X: …" clause, up to the end of the sentence.
+  n = n.replace(/Capped at (?:BLOCKBUSTER|STRONG|MIXED|AVOID):[^+]*?(?=\s\+\s|\.(?:\s|$)|$)/g, '');
+  n = n.replace(/\s\+\s(?=\s*(?:\.|$))/g, '')
+    .replace(/:\s*\+\s*/g, ': ')
+    .replace(/\s\+\s+\+\s/g, ' + ')
+    .replace(/\s+with caveats?:\s*(?=\.|$)/gi, '')
+    .replace(/caveats: ([^+.]+)\./g, (m, one) => (one.includes(' + ') ? m : `caveat: ${one}.`))
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+\./g, '.')
+    .replace(/\.{2,}/g, '.')
+    .trim();
+  return n;
+}
+
+/**
+ * The row with every text field decoded (company, narrative, caveat chips,
+ * cap reason, market context) — so "&amp;" never reaches the screen or the
+ * CSV. Idempotent.
+ */
+export function decodeRowText<R>(r: R): R {
+  if (!r || typeof r !== 'object') return r;
+  const x: any = r;
+  const out: any = { ...x };
+  for (const k of ['company', 'narrative', 'tier_cap_reason', 'sector', 'industry']) if (typeof x[k] === 'string') out[k] = decodeEntities(x[k]);
+  if (Array.isArray(x.caveat_tags)) out.caveat_tags = x.caveat_tags.map(decodeAny);
+  if (Array.isArray(x.market_context)) out.market_context = x.market_context.map(decodeAny);
+  if (Array.isArray(x.methodology_tags)) out.methodology_tags = x.methodology_tags.map(decodeAny);
+  return out;
+}
+
+/** Everything a stored row needs before display: decoded text, then the
+ *  unconfirmed hold. */
+export function prepareDisplayRow<R extends { tier?: any }>(r: R): R & { _tier_unconfirmed?: string } {
+  return holdUnconfirmed(decodeRowText(r));
+}
+
+/** prepareDisplayRow over a payload's by_tier (rows move bucket with their tier). */
+export function prepareDisplayPayload<P extends { by_tier?: any }>(p: P): P {
+  if (!p || !p.by_tier) return p;
+  const decoded: Record<string, any> = {};
+  for (const [k, list] of Object.entries(p.by_tier as Record<string, any>)) decoded[k] = Array.isArray(list) ? list.map((r) => decodeRowText(r)) : list;
+  return holdUnconfirmedPayload({ ...p, by_tier: decoded });
+}
+
+// ─── Liquidity ────────────────────────────────────────────────────────────
+
+/** An AVERAGE day's trading above this share of the company's market cap is
+ *  not believable as an average (it is a results-day spike or a unit slip). */
+export const MAX_PLAUSIBLE_DAILY_TURNOVER_PCT = 5;
+
+export interface LiquidityView { cr: number | null; note: string | null; title: string }
+
+/**
+ * The 💧 traded-value chip. Prefers an explicit multi-day average when the
+ * feed carries one (adtv_20d_cr / avg_traded_value_cr), else the stored
+ * adtv_cr. Shown as '—' when unknown or implausible (above 5% of market cap
+ * per day) — the stored figure is sometimes the RESULTS-DAY turnover (the
+ * feed's fallback when the multi-day history is blocked), not an average.
+ */
+export function liquidityView(r: any): LiquidityView {
+  const avg = [r?.adtv_20d_cr, r?.avg_traded_value_cr].find(fin);
+  const raw = avg != null ? avg : (fin(r?.adtv_cr) ? r.adtv_cr : null);
+  const mcap = fin(r?.market_cap_cr) && r.market_cap_cr > 0 ? r.market_cap_cr : null;
+  const base = 'Average value of shares traded per day (₹ Cr).';
+  if (raw == null || raw <= 0) return { cr: null, note: 'not in source', title: `${base} Not available for this company.` };
+  if (mcap != null && (raw / mcap) * 100 > MAX_PLAUSIBLE_DAILY_TURNOVER_PCT) {
+    return {
+      cr: null, note: 'not a daily average',
+      title: `${base} The stored figure (₹${Math.round(raw).toLocaleString('en-IN')} Cr) is ${((raw / mcap) * 100).toFixed(1)}% of the market cap in one day — not believable as an average (it is most likely the results-day turnover), so it is not shown.`,
+    };
+  }
+  return { cr: raw, note: null, title: avg != null ? `${base} Multi-day average.` : `${base} Median of recent sessions where available.` };
+}
+
+// ─── Size labels: ONE threshold set, shared with the Mkt Cap filter ───────
+
+export type CapBucket = 'MEGA' | 'LARGE' | 'MID' | 'SMALL' | 'MICRO';
+/** Market-cap size bands in ₹ Cr (lower bound inclusive). The Mkt Cap filter
+ *  and every card label read this one table. */
+export const CAP_BUCKETS: ReadonlyArray<{ key: CapBucket; min: number; label: string }> = [
+  { key: 'MEGA', min: 200_000, label: '≥ ₹2,00,000 Cr' },
+  { key: 'LARGE', min: 20_000, label: '₹20,000 – 2,00,000 Cr' },
+  { key: 'MID', min: 5_000, label: '₹5,000 – 20,000 Cr' },
+  { key: 'SMALL', min: 500, label: '₹500 – 5,000 Cr' },
+  { key: 'MICRO', min: 0, label: '< ₹500 Cr' },
+];
+
+/** The size band of a market cap, or null when the cap is unknown. */
+export function capBucket(cr: any): CapBucket | null {
+  if (!fin(cr) || cr <= 0) return null;
+  for (const b of CAP_BUCKETS) if (cr >= b.min) return b.key;
+  return 'MICRO';
+}
+
+/** Filter test: 'all', a band, or 'sweet' (the ₹5k–50k Cr multibagger band). */
+export function capInBand(cr: any, f: string): boolean {
+  if (f === 'all') return true;
+  if (!fin(cr)) return false;
+  if (f === 'sweet') return cr >= 5_000 && cr <= 50_000;
+  return capBucket(cr) === String(f).toUpperCase();
+}
+
+// ─── Cash tile ────────────────────────────────────────────────────────────
+
+export interface CashTileView { text: string; note: string; color: 'good' | 'warn' | 'bad' | 'none'; basis: string | null }
+
+/**
+ * The CFO/PAT tile. '—' when the ratio is missing or exactly 0.00 (the feed's
+ * "no figure"); "not meaningful for lenders" for banks / NBFCs / insurers
+ * (their operating cash flow is loan growth); the engine's cash basis
+ * ("FY26 full year") shown under the ratio when present.
+ */
+export function cashTileView(r: any): CashTileView {
+  const basis = typeof r?.cash_basis === 'string' && r.cash_basis.trim() ? r.cash_basis.trim()
+    : (typeof r?.cash_fy === 'string' && r.cash_fy.trim() ? `${r.cash_fy.trim()} full year` : null);
+  if (financialKindOfRow(r)) return { text: '—', note: 'not meaningful for lenders', color: 'none', basis: null };
+  const v = [r?.ocf_to_pat_ratio, r?.cfo_to_pat_ratio].find(fin);
+  if (v == null || v === 0) return { text: '—', note: 'not in source', color: 'none', basis };
+  const note = v < 0 ? 'operations burned cash' : v < 0.6 ? 'below the divergence line' : v < 1 ? 'partly cash-backed' : 'earnings are cash-backed';
+  return { text: `${v.toFixed(2)}x`, note, color: v < 0.6 ? 'bad' : v < 1 ? 'warn' : 'good', basis };
+}
+
+// ─── Refill / rebuild counts (prewarm) ────────────────────────────────────
+
+/** Cards on a stored day with no financial numbers / no share price. */
+export function missingDetailCounts(p: any): { noData: number; noPrice: number } {
+  let noData = 0, noPrice = 0;
+  for (const list of Object.values(p?.by_tier || {})) {
+    if (!Array.isArray(list)) continue;
+    for (const r of list as any[]) {
+      const hasFin = ['sales_yoy_pct', 'net_profit_yoy_pct', 'pat_yoy_pct', 'eps_yoy_pct', 'sales_curr_cr', 'pat_curr_cr', 'eps_curr'].some((k) => fin(r?.[k]));
+      if (!hasFin) noData++;
+      if (!(fin(r?.price) && r.price > 0) && !(fin(r?.current_price) && r.current_price > 0)) noPrice++;
+    }
+  }
+  return { noData, noPrice };
+}
+
+/**
+ * Stored days graded under rules too old to regrade in-process, in rebuild
+ * order: OLDEST RULES first (furthest back in `legacyOrder`, which is newest
+ * first), then the oldest date. Returns the first not locked, or null.
+ */
+export function orderStaleRebuilds(stale: ReadonlyArray<{ date: string; version: string }>, legacyOrder: readonly string[]): Array<{ date: string; version: string }> {
+  const rank = (v: string) => { const i = legacyOrder.indexOf(v); return i < 0 ? -1 : i; };
+  return [...stale].sort((a, b) => (rank(b.version) - rank(a.version)) || (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+}
+export async function pickStaleRebuild(
+  stale: ReadonlyArray<{ date: string; version: string }> | null | undefined,
+  legacyOrder: readonly string[],
+  isLocked: (date: string) => Promise<boolean>,
+): Promise<{ date: string; version: string } | null> {
+  for (const x of orderStaleRebuilds(stale || [], legacyOrder)) if (!(await isLocked(x.date))) return x;
+  return null;
 }

@@ -154,17 +154,18 @@ async function loadUsCbSelection(held: string[]): Promise<{ sel: CbSelection; in
   const criteriaOff = !m.isUsPresetActive(filters) && get(m.US_CB_OPTOUT_KEY) === '1'
     && [filters.sales, filters.eps, filters.pead, filters.opmDelta, filters.cfoPatMin, filters.mktCapMin].every((v) => v == null)
     && !(filters.verdicts && filters.verdicts.length) && (!filters.cap || filters.cap === 'all');
+  // zzz823: pass / fail / NOT CHECKED — the same shared check the US
+  // Conviction Beats page applies (a missing figure is never a fail).
   const sel = selectUsCb({
     held, list, key: usTickerKey, criteriaOff,
-    passes: (e: any) => m.passesUsConvictionFilter(e, filters, win),
-    reasons: (e: any) => m.usCbFailReasons(e, filters, win),
+    check: (e: any) => m.usCbCriteriaCheck(e, filters, win),
   });
   const criteria = m.isUsPresetActive(filters)
     ? `your US quality preset${filters.cap === 'smid' ? ' + small/mid caps' : ''}, incl. price above its 50- and 200-day averages`
     : criteriaOff ? 'your US preset is switched OFF on US Conviction Beats — every name is listed' : 'your saved US Conviction Beats filters';
   return {
     sel,
-    info: { market: 'US', listTotal: sel.listTotal, passing: sel.passing.length, failing: sel.failing.length, heldPassing: sel.heldPassing.length,
+    info: { market: 'US', listTotal: sel.listTotal, passing: sel.passing.length, failing: sel.failing.length, heldPassing: sel.heldPassing.length, unknown: sel.unknown.length,
       criteria: `${criteria}${filters.q ? ` (the search text "${filters.q}" is applied too)` : ''}`, source, error },
   };
 }
@@ -183,6 +184,8 @@ export function useUsBook() {
   const [cbInfo, setCbInfo] = useState<UsCbInfo | null>(null);
   const [cbCriteria, setCbCriteria] = useState<CbCriteriaInfo | null>(null);
   const [cbPassing, setCbPassing] = useState<string[]>([]);
+  // zzz823: the saved US book as read (holdings + his own bench list), for the Book check.
+  const [usBook, setUsBook] = useState<{ updatedAt: string | null; universe: UsUniverseEntry[] } | null>(null);
   const rowsRef = useRef<Record<string, UsRow>>({});
   const typesRef = useRef<Record<string, AbfgPattern>>({});
   const stopRef = useRef(false);
@@ -298,6 +301,7 @@ export function useUsBook() {
         const j = await readJson(r);
         if (!r.ok || !j?.ok) throw new Error(j?.error || `HTTP ${r.status}`);
         uni = Array.isArray(j.universe) ? j.universe : [];
+        if (!cancelled) setUsBook({ updatedAt: j.updatedAt || null, universe: uni });
       } catch (e: any) {
         if (!cancelled) { setUniverseError(humanError(e)); setLoading(false); setEvidenceLoading(false); }
         return;
@@ -570,7 +574,7 @@ export function useUsBook() {
     try { await fetch('/api/v1/us-thesis/evidence', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'thesis_type', ticker: key, pattern: p }) }); } catch { /* kept for this session */ }
   }, []);
 
-  return { rows, excluded, universeError, loading, evidenceLoading, batch, priorBatch, checkBatch, readFiling, readAll, checkAll, readPriorPeriods, stop, thesisTypes, setThesisType, needsPrior, cbCount, cbInfo, cbCriteria, cbPassing, retryFigures, detBatch };
+  return { rows, excluded, universeError, loading, evidenceLoading, batch, priorBatch, checkBatch, readFiling, readAll, checkAll, readPriorPeriods, stop, thesisTypes, setThesisType, needsPrior, cbCount, cbInfo, cbCriteria, cbPassing, retryFigures, detBatch, usBook };
 }
 
 async function postStatus(row: UsRow): Promise<void> {

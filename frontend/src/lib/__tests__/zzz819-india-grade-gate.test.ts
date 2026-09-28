@@ -63,8 +63,10 @@ describe('BLOCKBUSTER on weak fundamentals is capped, with one plain reason', ()
     }))!;
     assert.equal(g.tier, 'MIXED');
     assert.match(g.tier_cap_reason, /^Capped at MIXED: revenue grew only 5%/);
-    assert.ok(g.bb_gate_misses.some((m: string) => /tiny year-ago profit/.test(m)), g.bb_gate_misses.join(' | '));
-    assert.ok(g.caveat_tags.includes(g.tier_cap_reason));
+    assert.ok(g.bb_gate_misses.some((m: string) => /small year-ago profit/.test(m)), g.bb_gate_misses.join(' | '));
+    // zzz821 — stated once, in tier_cap_reason; never repeated in the caveats or the summary.
+    assert.ok(!g.caveat_tags.includes(g.tier_cap_reason));
+    assert.ok(!g.narrative.includes('Capped at'));
   });
   test('revenue flat (−0%), profit +120% → MIXED, "revenue was flat"', () => {
     const g = gradeIndiaRow(row({
@@ -94,7 +96,10 @@ describe('BLOCKBUSTER on weak fundamentals is capped, with one plain reason', ()
     assert.equal(g.tier, 'STRONG');
     assert.equal(g.tier_cap_reason, 'Capped at STRONG: revenue grew only 9%');
   });
-  test('a 2%-margin distributor whose cash does not back the profit → STRONG, both named', () => {
+  // zzz821 — a 2% operating margin is below the STRONG floor (5%), so this
+  // is MIXED now; the cash figures carry no fiscal-year label, so cash is
+  // unknown and is not named.
+  test('a 2%-margin distributor → MIXED (below the STRONG margin floor)', () => {
     const g = gradeIndiaRow(row({
       company: 'Synthetic Distribution Ltd',
       sales_yoy_pct: 20, sales_curr_cr: 24000, sales_prev_cr: 20000,
@@ -102,11 +107,10 @@ describe('BLOCKBUSTER on weak fundamentals is capped, with one plain reason', ()
       opm_pct: 2, opm_prev_pct: 1.8,
       ocf_to_pat_ratio: 0.3, ocf_annual_cr: 350, pat_annual_cr: 1200,
     }))!;
-    assert.equal(g.tier, 'STRONG');
+    assert.equal(g.tier, 'MIXED');
     const why = g.tier_cap_reason as string;
     assert.match(why, /thin operating margin \(2%\)/);
-    assert.match(why, /cash does not back the profit/);
-    assert.match(why, /open flag: ocf divergence/);
+    assert.equal(g.ocf_to_pat_ratio, null);
   });
   test('a 5%-margin quarter the engine flagged (optical eps) → not BLOCKBUSTER', () => {
     const g = gradeIndiaRow(row({
@@ -128,7 +132,7 @@ describe('lenders: no operating-margin or cash test, but no pass on missing data
       ocf_to_pat_ratio: -34, ocf_annual_cr: -6800, pat_annual_cr: 1500,
     }))!;
     assert.equal(g.tier, 'MIXED');
-    assert.ok(g.caveat_tags.includes('lender — operating cash flow is loan growth'));
+    assert.equal(g.cash_note, 'not meaningful for lenders');   // zzz821
   });
   test('unit: for a lender the gate judges growth, not cash (loan growth IS operating outflow)', () => {
     const r = indiaBlockbusterGate({
@@ -155,7 +159,7 @@ describe('lenders: no operating-margin or cash test, but no pass on missing data
       isLender: true, caveatTags: [],
     });
     assert.equal(r.tier, 'STRONG');
-    assert.match(r.reason!, /lender profitability not measurable/);
+    assert.match(r.reason!, /net margin not measurable/);
   });
 });
 
@@ -233,11 +237,11 @@ describe('the quadrant label no longer reads as a verdict', () => {
   });
 });
 
-describe('v23 → v24, and stored days regrade in-process', () => {
-  test('the key is v24 and v23 is the first legacy namespace', () => {
-    assert.equal(GRADED_CACHE_VERSION, 'v24');
-    assert.equal(GRADED_CACHE_LEGACY[0], 'v23');
-    assert.deepEqual(gradedKeyCandidates('2026-09-01').slice(0, 2), ['graded:v24:2026-09-01', 'graded:v23:2026-09-01']);
+describe('v23 → v24 (now v25, zzz821), and stored days regrade in-process', () => {
+  test('the key is current and v23 is still a legacy namespace', () => {
+    assert.equal(GRADED_CACHE_VERSION, 'v25');
+    assert.ok(GRADED_CACHE_LEGACY.includes('v23'));
+    assert.deepEqual(gradedKeyCandidates('2026-09-01').slice(0, 3), ['graded:v25:2026-09-01', 'graded:v24:2026-09-01', 'graded:v23:2026-09-01']);
     assert.equal(versionOfGradedKey('graded:v23:2026-09-01'), 'v23');
   });
 
@@ -306,15 +310,15 @@ describe('v23 → v24, and stored days regrade in-process', () => {
       by_tier: { BLOCKBUSTER: [b], STRONG: [a], MIXED: [], AVOID: [] }, engine_stale: true };
     const re = regradeIndiaDayPayload(day, 'v23')!;
     assert.ok(re);
-    assert.equal(re.grade_engine, 'v24');
+    assert.equal(re.grade_engine, 'v25');
     assert.equal(re.regraded_from, 'v23');
     assert.equal(re.generated_at, '2026-08-20T18:00:00Z');
     assert.equal(re.engine_stale, undefined);
     assert.deepEqual(re.by_tier.BLOCKBUSTER.map((r: any) => r.ticker), ['AAA']);
     assert.ok(!re.by_tier.BLOCKBUSTER.some((r: any) => r.ticker === 'BBB'));
     // withCurrentIndiaRules does the same from a key, and leaves a current day alone.
-    assert.equal(withCurrentIndiaRules(day, 'graded:v23:2026-08-20').grade_engine, 'v24');
-    assert.equal(withCurrentIndiaRules(re, 'graded:v24:2026-08-20'), re);
+    assert.equal(withCurrentIndiaRules(day, 'graded:v23:2026-08-20').grade_engine, 'v25');
+    assert.equal(withCurrentIndiaRules(re, 'graded:v25:2026-08-20'), re);
     // The page never gets the stored input.
     const stripped = stripGradeInput(re);
     assert.ok(stripped.by_tier.BLOCKBUSTER.every((r: any) => !('grade_input' in r)));

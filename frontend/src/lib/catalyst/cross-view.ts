@@ -97,6 +97,17 @@ export function specialFocusQueue<R>(
 // entry the owner chose to keep (confirmed / watch) stays in the list — the
 // owner's choice is the reason, and its note says so.
 // ═══════════════════════════════════════════════════════════════════════════
+/**
+ * zzz823 — ONLY BOOK + BENCH COUNT. A stored Special Focus record whose
+ * company is no longer on the page at all (sold, or off the Conviction Beats
+ * list — IMFA, MILKYMIST "was detected earlier") was listed and counted as if
+ * current. It is split off into its own collapsed "no longer on your lists"
+ * section, kept with its history, never counted in the Special Focus number.
+ */
+export function splitOffLists<E extends { row: unknown | null; dismissed: boolean }>(entries: E[]): { onLists: E[]; offLists: E[] } {
+  return { onLists: entries.filter((e) => !!e.row), offLists: entries.filter((e) => !e.row && !e.dismissed) };
+}
+
 export function splitDroppedOut<E extends { dismissed: boolean; decayed: boolean; st: { user: { state: string } | null } | null }>(entries: E[]): { inFocus: E[]; droppedOut: E[] } {
   const kept = (e: E) => e.st?.user?.state === 'confirmed' || e.st?.user?.state === 'watch';
   const live = entries.filter((e) => !e.dismissed);

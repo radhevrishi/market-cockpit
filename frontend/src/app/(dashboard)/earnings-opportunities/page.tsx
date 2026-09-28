@@ -58,7 +58,10 @@ import { useIndiaEarningsWindow } from './useIndiaEarningsWindow';
 // for lenders / "0.0%" unknowns, words instead of 0–100 numbers).
 import {
   checkQuarterLabel, growthView, marginView, axisWord, driftWord, partWord, notRecordedNote, narrativeForDisplay,
-  holdUnconfirmedPayload, yearAgoUnverified, stripGradeInputForStorage, UNCONFIRMED_LABEL,
+  prepareDisplayPayload, yearAgoUnverified, stripGradeInputForStorage, UNCONFIRMED_LABEL,
+  // zzz822 — round 2: entities, liquidity, one size-band table, cash tile, cap reason once.
+  capReasonOf, caveatTagsForDisplay, liquidityView, decodeEntities, capBucket, capInBand, CAP_BUCKETS, cashTileView,
+  type CashTileView,
   type MarginView,
 } from '@/lib/india-eo-card-data';
 import { GRADED_CACHE_VERSION } from '@/lib/graded-cache-key';
@@ -363,22 +366,12 @@ interface OpportunitiesPayload {
   sources_polled: number;
 }
 
-// PATCH 1022 — market-cap range matcher (value in ₹ Cr). Buckets mirror the
-// enrich-route thresholds: MEGA ≥2L Cr, LARGE 20k–2L, MID 5k–20k,
-// SMALL 500–5k, MICRO <500. Null market cap never matches a specific range.
+// PATCH 1022 — market-cap range matcher (value in ₹ Cr).
+// zzz822 — the bands now live in ONE table (CAP_BUCKETS in
+// lib/india-eo-card-data), read by this filter AND every card's size label,
+// so a card's label always matches the filter that finds it.
 function capInRange(cr: number | null | undefined, f: 'all' | 'sweet' | 'mega' | 'large' | 'mid' | 'small' | 'micro'): boolean {
-  if (f === 'all') return true;
-  if (cr == null || !Number.isFinite(cr)) return false;
-  switch (f) {
-    // PATCH 1024 — user multibagger sweet-spot band ₹5k–50k Cr.
-    case 'sweet': return cr >= 5_000 && cr <= 50_000;
-    case 'mega': return cr >= 200_000;
-    case 'large': return cr >= 20_000 && cr < 200_000;
-    case 'mid': return cr >= 5_000 && cr < 20_000;
-    case 'small': return cr >= 500 && cr < 5_000;
-    case 'micro': return cr < 500;
-    default: return true;
-  }
+  return capInBand(cr, f);
 }
 
 const TIER_META: Record<EarningsTier, { label: string; color: string; icon: string; tagline: string }> = {
@@ -2343,7 +2336,7 @@ export default function EarningsOpportunitiesPage() {
       candidates_total: baseView.candidates_total + injected,
     };
   }, [baseView, forcedCards]);
-  const view: OpportunitiesPayload = useMemo(() => holdUnconfirmedPayload(viewMerged), [viewMerged]);
+  const view: OpportunitiesPayload = useMemo(() => prepareDisplayPayload(viewMerged), [viewMerged]);
 
   // zzz814 — what the counts, filter chips, search and exports read: the
   // single date as before, or the merged window (one row per company).
@@ -2673,7 +2666,8 @@ export default function EarningsOpportunitiesPage() {
           })()}
           {/* AUDIT_100 #26 — confidence band: show "X of Y enriched · M missing" chip
               next to the refresh button so users see coverage at a glance. */}
-          {resolvedDateForGrading && (() => {
+          {resolvedDateForGrading && !windowOn && (() => {
+            // zzz822 — single-date coverage chip; the window has its own counts.
             const allCards = ((view.by_tier?.BLOCKBUSTER ?? []) as ParsedEarning[])
               .concat(view.by_tier?.STRONG ?? [])
               .concat(view.by_tier?.MIXED ?? [])
@@ -2769,9 +2763,12 @@ export default function EarningsOpportunitiesPage() {
             const isMarketOpen = isIndianMarketOpenLocal();
             return (
               <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--mc-text-4)' }}>
-                {isMarketOpen
-                  ? `Live · ${view.sources_polled} sources polling`
-                  : `Market closed · historical data only · ${view.sources_polled} sources polled`}
+                {windowOn
+                  // zzz822 — the sources-polled count belongs to one date, not the window.
+                  ? (isMarketOpen ? 'Market open · window shows stored grades' : 'Market closed · window shows stored grades')
+                  : isMarketOpen
+                    ? `Live · ${view.sources_polled} sources polling`
+                    : `Market closed · historical data only · ${view.sources_polled} sources polled`}
               </span>
             );
           })()}
@@ -3324,11 +3321,9 @@ Source label: ${coverageStats.source}`}
                   }}>
                   <option value="all">🏦 Mkt Cap · All</option>
                   <option value="sweet">🎯 Multibagger ₹5k–50k Cr</option>
-                  <option value="mega">MEGA ≥ ₹2,00,000 Cr</option>
-                  <option value="large">LARGE ₹20k–2L Cr</option>
-                  <option value="mid">MID ₹5k–20k Cr</option>
-                  <option value="small">SMALL ₹500–5k Cr</option>
-                  <option value="micro">MICRO &lt; ₹500 Cr</option>
+                  {CAP_BUCKETS.map((b) => (
+                    <option key={b.key} value={b.key.toLowerCase()}>{b.key} {b.label}</option>
+                  ))}
                 </select>
               </>
             );
@@ -4035,7 +4030,7 @@ Source label: ${coverageStats.source}`}
                 )}
                 {staleDates.length > 0 && (
                   <div style={{ fontSize: 11, color: 'var(--mc-warn)', lineHeight: 1.5 }}>
-                    {staleDates.length} {staleDates.length === 1 ? 'date was' : 'dates were'} graded under the previous rules ({Array.from(new Set(staleDates.map((d) => win.days.find((x) => x.date === d)?.engine).filter(Boolean))).join(', ')}; current {GRADED_ENGINE_LABEL}) and {staleDates.length === 1 ? 'is' : 'are'} shown as stored — every company on them is listed — rather than re-grading the whole window. Open a single date to re-grade it under the current rules.
+                    {staleDates.length} {staleDates.length === 1 ? 'date was' : 'dates were'} graded under the previous rules ({Array.from(new Set(staleDates.map((d) => win.days.find((x) => x.date === d)?.engine).filter(Boolean))).join(', ')}; current {GRADED_ENGINE_LABEL}) and {staleDates.length === 1 ? 'is' : 'are'} shown as stored — every company on them is listed. {staleDates.length === 1 ? 'It is' : 'They are'} being rebuilt automatically under the current rules, oldest rules first, a few dates per run (several runs a day), so the older grades catch up over a few days. Open a single date to rebuild it now.
                   </div>
                 )}
                 {failedDates.length > 0 && (
@@ -4427,6 +4422,8 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
   // Sales/EPS tiles to QUARTER-ON-QUARTER (QoQ) — the correct comparison for an
   // IPO — and fill them with real momentum instead of a blank.
   const _isNewCard = (stock.caveat_tags || []).includes('newly listed');
+  // zzz822 — caveat chips without the cap reason (shown once, under the badge).
+  const _cavs = caveatTagsForDisplay(stock);
   const _qs: number[] = Array.isArray((stock as any).quarters_sales) ? (stock as any).quarters_sales.filter((x: any) => typeof x === 'number') : [];
   const _qe: number[] = Array.isArray((stock as any).quarters_eps) ? (stock as any).quarters_eps.filter((x: any) => typeof x === 'number') : [];
   const _salesQoQ = (_qs.length >= 2 && _qs[_qs.length - 2] > 0) ? (_qs[_qs.length - 1] / _qs[_qs.length - 2] - 1) * 100 : null;
@@ -4488,7 +4485,7 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
               <span style={{ fontWeight: 600, color: 'var(--mc-text-4)', letterSpacing: 0 }}>(was {_unconf})</span>
             </span>
           : <TierBadge tier={stock.tier} />}
-        {stock.company}
+        {decodeEntities(String(stock.company || ''))}
         <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 600, marginLeft: 6, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
           {stock.ticker}
         </span>
@@ -4506,9 +4503,9 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
         )}
       </div>
       {/* zzz820b — why a top-tier quarter was held at a lower tier (engine v24). */}
-      {typeof (stock as any).tier_cap_reason === 'string' && (stock as any).tier_cap_reason && (
+      {capReasonOf(stock) && (
         <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--mc-text-2)', marginBottom: 4, lineHeight: 1.35 }}>
-          {(stock as any).tier_cap_reason}
+          {capReasonOf(stock)}
         </div>
       )}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', fontSize: 10.5, marginBottom: 8 }}>
@@ -4565,21 +4562,18 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
             {_q.label}
           </span>
         )}
-        {(stock.market_cap_bucket && stock.market_cap_bucket !== 'UNKNOWN') || stock.market_cap_cr != null ? (
-          <span style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-3)', border: '1px solid #334155', color: 'var(--mc-text-3)', fontWeight: 800, letterSpacing: '0.3px' }}>
-            {stock.market_cap_bucket && stock.market_cap_bucket !== 'UNKNOWN' ? stock.market_cap_bucket : ''}
-            {stock.market_cap_cr != null && (
-              <span style={{ fontWeight: 700, color: 'var(--mc-text-2)', marginLeft: (stock.market_cap_bucket && stock.market_cap_bucket !== 'UNKNOWN') ? 5 : 0 }}>
-                ₹{Math.round(stock.market_cap_cr).toLocaleString('en-IN')} Cr
-              </span>
-            )}
-          </span>
-        ) : null}
-        {(stock as any).adtv_cr != null && (
-          <span title="Median daily traded value over ~30 sessions (liquidity / free-float proxy)" style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-1)', border: `1px solid ${(stock as any).adtv_cr < 1 ? '#7F1D1D' : 'var(--mc-bg-4)'}`, color: (stock as any).adtv_cr < 1 ? '#F87171' : 'var(--mc-text-3)', fontWeight: 700 }}>
-            💧 {(stock as any).adtv_cr >= 1 ? `₹${(stock as any).adtv_cr.toFixed(1)} Cr/d` : `₹${Math.round((stock as any).adtv_cr * 100)} L/d`}{(stock as any).adtv_cr < 1 ? ' · thin' : ''}
-          </span>
-        )}
+        {/* zzz822 — 💧 only a believable DAILY AVERAGE; a results-day spike
+            (or anything above 5% of market cap a day) shows '—'. */}
+        {(() => {
+          const lv = liquidityView(stock);
+          if (lv.cr == null && lv.note === 'not in source') return null;
+          const thin = lv.cr != null && lv.cr < 1;
+          return (
+            <span title={lv.title} style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-1)', border: `1px solid ${thin ? '#7F1D1D' : 'var(--mc-bg-4)'}`, color: thin ? '#F87171' : 'var(--mc-text-3)', fontWeight: 700 }}>
+              💧 {lv.cr == null ? '— (not a daily average)' : lv.cr >= 1 ? `₹${lv.cr.toFixed(1)} Cr/d avg` : `₹${Math.round(lv.cr * 100)} L/d avg`}{thin ? ' · thin' : ''}
+            </span>
+          );
+        })()}
         {stock.sector && (
           <span style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-3)' }}>
             {stock.sector}
@@ -4589,6 +4583,18 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
           <span style={{ fontSize: 12 }}>{timing}</span>
         )}
         </>}
+        {/* zzz822 — size label on EVERY card with a market cap, from the one
+            band table the Mkt Cap filter uses (stored labels were set by
+            other thresholds, or missing). */}
+        {stock.market_cap_cr != null && Number.isFinite(stock.market_cap_cr) && stock.market_cap_cr > 0 && (
+          <span title={`Market cap band: ${CAP_BUCKETS.find((b) => b.key === capBucket(stock.market_cap_cr))?.label ?? ''} (same bands as the Mkt Cap filter)`}
+            style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-3)', border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-3)', fontWeight: 800, letterSpacing: '0.3px' }}>
+            {capBucket(stock.market_cap_cr)}
+            <span style={{ fontWeight: 700, color: 'var(--mc-text-2)', marginLeft: 5 }}>
+              ₹{Math.round(stock.market_cap_cr).toLocaleString('en-IN')} Cr
+            </span>
+          </span>
+        )}
         {stock.price != null && (
           <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 800, color: 'var(--mc-text-1)' }}>
             {fmtPx(stock.price)}
@@ -4688,7 +4694,7 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
             tier is on the card rather than only in the caveat pills. The score
             gives up its full-width row for it; a 94 that is capped by cash is
             better read next to the cash than alone. */}
-        <CashTile ratio={stock.ocf_to_pat_ratio ?? stock.cfo_to_pat_ratio ?? null} />
+        <CashTile v={cashTileView(stock)} />
         {/* zzz820 — the 0–100 composite is no longer printed (owner rule: no
             visible scores). The tile says the grade in words instead. */}
         <div title={TIER_META[stock.tier].tagline} style={{ padding: '6px 10px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: `1px solid ${tierColor}40`, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
@@ -4713,12 +4719,12 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
       <IndiaAiSummary stock={stock} />
 
       {/* ── Methodology + caveat pills ────────────────────────────────────── */}
-      {(stock.methodology_tags.length > 0 || stock.caveat_tags.length > 0) && (
+      {(stock.methodology_tags.length > 0 || _cavs.length > 0) && (
         <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 5 }}>
           {stock.methodology_tags.map((t) => (
             <span key={t} style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 3, backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', color: 'var(--mc-bullish)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 25%, transparent)', fontWeight: 700 }}>✓ {t}</span>
           ))}
-          {stock.caveat_tags.map((t) => {
+          {_cavs.map((t) => {
             // zzz503 — "newly listed" / "no YoY yet" are CONTEXT, not risk
             // flags. Render them as neutral/informational cyan pills (ℹ) so a
             // recent IPO's card reads as "just listed" rather than a scary
@@ -4923,7 +4929,7 @@ function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarP
                   // date+symbol+company+index is guaranteed unique and durable.
                   <a key={`${d}::${it.symbol || 'nosym'}::${it.company || ''}::${i}`} href={it.source_url} target="_blank" rel="noopener noreferrer"
                     onClick={(e) => e.stopPropagation()}
-                    title={`${it.company} · ${it.quarter || ''}`}
+                    title={`${decodeEntities(String(it.company || ''))} · ${it.quarter || ''}`}
                     style={{ fontSize: 10, padding: '1px 5px', borderRadius: 3, backgroundColor: 'color-mix(in srgb, var(--mc-accent) 8%, transparent)', color: '#38A9E8', border: '1px solid color-mix(in srgb, var(--mc-accent) 25%, transparent)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', textDecoration: 'none', fontWeight: 700 }}>
                     {it.symbol}
                   </a>
@@ -5001,30 +5007,25 @@ function MarginTile({ m }: { m: MarginView }) {
 // grader uses: >= 1.0 the earnings are cash-backed, >= 0.6 a working-capital
 // quarter, below that the divergence caveat fires, and below zero operations
 // consumed cash and the MIXED ceiling is unconditional.
-function CashTile({ ratio }: { ratio: number | null | undefined }) {
-  const has = typeof ratio === 'number' && Number.isFinite(ratio);
-  const r = has ? (ratio as number) : null;
-  const color = r == null ? '#6B7A8D'
-              : r < 0 ? '#EF4444'
-              : r < 0.6 ? '#EF4444'
-              : r < 1 ? '#F59E0B'
-              : '#10B981';
-  const note = r == null ? 'not reported'
-             : r < 0 ? 'operations burned cash'
-             : r < 0.6 ? 'below the divergence line'
-             : r < 1 ? 'partly cash-backed'
-             : 'earnings are cash-backed';
+// zzz822 — driven by cashTileView(): 0.00x is missing data ('—'), lenders
+// and insurers read 'not meaningful for lenders', and the engine's cash basis
+// (e.g. 'FY26 full year') is shown under the ratio when it sends one.
+function CashTile({ v }: { v: CashTileView }) {
+  const color = v.color === 'good' ? '#10B981' : v.color === 'warn' ? '#F59E0B' : v.color === 'bad' ? '#EF4444' : '#6B7A8D';
   return (
-    <div style={{ padding: '6px 10px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: '1px solid var(--mc-bg-4)', display: 'flex', flexDirection: 'column', gap: 1 }}>
+    <div title="Operating cash flow ÷ net profit for the year: does cash back the reported profit?" style={{ padding: '6px 10px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: '1px solid var(--mc-bg-4)', display: 'flex', flexDirection: 'column', gap: 1 }}>
       <div style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.6px' }}>CASH  CFO/PAT</div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-        <div style={{ fontSize: 16, fontWeight: 800, color, lineHeight: 1 }}>
-          {r == null ? '—' : `${r.toFixed(2)}x`}
-        </div>
+        <div style={{ fontSize: 16, fontWeight: 800, color, lineHeight: 1 }}>{v.text}</div>
       </div>
       <div style={{ fontSize: 9, color: 'var(--mc-text-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {note}
+        {v.note}
       </div>
+      {v.basis && (
+        <div style={{ fontSize: 9, color: 'var(--mc-text-4)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {v.basis}
+        </div>
+      )}
     </div>
   );
 }

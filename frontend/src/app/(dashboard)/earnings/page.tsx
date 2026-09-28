@@ -3082,8 +3082,11 @@ export default function EarningsPage() {
                         // 4) Got data — directly update state, no reload needed
                         if (key === 'portfolio') {
                           setPortfolioSymbols(merged);
-                          // also write back to canonical LS key so next reload finds it
-                          try { localStorage.setItem('mc_portfolio_holdings', JSON.stringify(merged.map(s => ({ symbol: s })))); } catch {}
+                          // zzz823: NOT written back to 'mc_portfolio_holdings' any more —
+                          // that key is the Portfolio page's saved holdings (the book).
+                          // Writing this union into it replaced every holding's quantity
+                          // and price with a bare symbol, and could carry a name from an
+                          // old list into the book. This page only reads the book.
                         } else {
                           setWatchlistSymbols(merged);
                           try { localStorage.setItem('mc_watchlist_tickers', JSON.stringify(merged)); } catch {}

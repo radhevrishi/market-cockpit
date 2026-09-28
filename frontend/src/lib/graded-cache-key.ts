@@ -101,7 +101,16 @@
 //     rules change regrades stored days in-process (lib/india-regrade.ts)
 //     instead of re-queuing the whole window. v23/v22/v21/v20 days are
 //     regraded from their card figures on first read.
-export const GRADED_CACHE_VERSION = 'v24';
+// zzz821 — v24 → v25. Cash is same-fiscal-year CFO ÷ PAT or unknown (the
+//   ratio had been annual CFO ÷ ONE quarter's profit, ~4× too high); a first
+//   profit after a loss, a market-driven earner (investment / trading
+//   company) and an unexplained profit jump (F forensic check not passed)
+//   cannot be BLOCKBUSTER; problems are counted by kind and two or more make
+//   MIXED; a STRONG floor (no operating loss, no falling profit, no large
+//   loss, OPM ≥ 5%, slow revenue needs a real margin); PAT vs EPS graded on
+//   the lower, or held when they point opposite ways; one lender detection
+//   shared with the card. v24 and v20–v23 days regrade in-process.
+export const GRADED_CACHE_VERSION = 'v25';
 
 /** The KV key holding one fully graded India session. */
 export const gradedKey = (date: string): string => `graded:${GRADED_CACHE_VERSION}:${date}`;
@@ -114,7 +123,7 @@ export const gradedKey = (date: string): string => `graded:${GRADED_CACHE_VERSIO
  * nothing has been written to the new namespace yet. Nothing should WRITE to
  * them, and a reader that uses them must prefer the current key first.
  */
-export const GRADED_CACHE_LEGACY: readonly string[] = ['v23', 'v22', 'v21', 'v20', 'v19', 'v18', 'v17', 'v16', 'v15', 'v14', 'v13', 'v12', 'v11', 'v10'];
+export const GRADED_CACHE_LEGACY: readonly string[] = ['v24', 'v23', 'v22', 'v21', 'v20', 'v19', 'v18', 'v17', 'v16', 'v15', 'v14', 'v13', 'v12', 'v11', 'v10'];
 
 /** Current key first, then the abandoned ones — for readers that tolerate age. */
 export function gradedKeyCandidates(date: string): string[] {

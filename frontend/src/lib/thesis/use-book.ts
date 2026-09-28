@@ -22,14 +22,13 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { normSymbol } from '@/lib/portfolio-symbols';
-import {
-  readHoldingSymbols, fetchServerBook, mergeUniverse,
-  originCounts, type BookOrigin,
-} from './universe';
+import { originCounts, type BookOrigin } from './universe';
+import { resolveIndiaBook, bookUniverse, type ResolvedBook } from './book-membership';
+import { readLocalBookInput, fetchSavedHoldings, fetchSyncedHeld } from './book-sources';
 import { readConvictionBeats } from '@/lib/conviction-beats';
-import { selectIndiaCb, cbTicker, IN_CB_SOURCE, type PresetLabel, type CbCriteriaInfo } from './pc-bench';
+import { selectIndiaCb, cbTicker, heldKey, IN_CB_SOURCE, type PresetLabel, type CbCriteriaInfo } from './pc-bench';
 import {
-  serverBenchToCbEntries, mergeCbEntries, cbFiltersForOwner, readCbPresetOptOut, passesConvictionFilter, cbFailReasons,
+  serverBenchToCbEntries, mergeCbEntries, cbFiltersForOwner, readCbPresetOptOut, cbCriteriaCheck,
 } from '@/lib/conviction-filter-india';
 import { classifyOrNearest, classifyWithFiling, type AbfgResult, manualPattern, type AbfgPattern } from '@/lib/earnings/pattern-abfg';
 import { extractVariables } from './variables';
@@ -370,6 +369,8 @@ export interface UniverseNote {
   cbPassing: string[];
   /** Non-null when the server book could not be read. */
   serverError: string | null;
+  /** zzz823: the saved-holdings book, every source counted (the Book check). */
+  resolved?: ResolvedBook | null;
 }
 
 /**
@@ -468,7 +469,11 @@ export function useBook(opts?: { includeBench?: boolean }) {
       });
 
       // ── STAGE 1 — the local book, instantly.
-      const localHeld = readHoldingSymbols();
+      // zzz823: ONLY the Portfolio page's saved holdings (this browser's
+      // copy now, the server copy next) — never the old lists or the synced
+      // snapshot (see lib/thesis/book-membership).
+      const local = readLocalBookInput();
+      let resolved = resolveIndiaBook({ server: null, browser: local.browser, legacy: local.legacy });
       const paint = (universe: Map<string, BookOrigin>) => {
         if (cancelled) return;
         // zzz782: the rows ARE the universe — a name that left it (a bench
@@ -489,16 +494,19 @@ export function useBook(opts?: { includeBench?: boolean }) {
         setLoading(false);
       };
 
-      let universe = mergeUniverse(localHeld, []);
+      let universe: Map<string, BookOrigin> = bookUniverse(resolved.names, []);
       paint(universe);
-      setNote((n) => ({ ...n, ...originCounts(universe.values()) }));
+      setNote((n) => ({ ...n, ...originCounts(universe.values()), resolved }));
 
-      // ── STAGE 2 — the server book. localStorage is per-browser; the book
-      // is not. A name added on another machine is still a holding.
-      const server = await fetchServerBook();
+      // ── STAGE 2 — the saved holdings on the server (/api/portfolio, what
+      // the Portfolio page saves). A name saved on another machine is still a
+      // holding; a name only on an old list is not.
+      const [serverSaved, synced] = await Promise.all([fetchSavedHoldings(), fetchSyncedHeld()]);
       if (cancelled) return;
-      const held = new Set<string>([...localHeld, ...server.held]);
-      universe = mergeUniverse(held, []);
+      resolved = resolveIndiaBook({ server: serverSaved, browser: local.browser, legacy: local.legacy, synced });
+      const held = new Set<string>(resolved.names.map((n) => n.symbol));
+      const heldByKey = new Map(resolved.names.map((n) => [n.key, n.symbol] as const));
+      universe = bookUniverse(resolved.names, []);
       paint(universe);
 
       // ── THE BENCH IS ALL OF INDIA CONVICTION BEATS.              (zzz811)
@@ -518,34 +526,36 @@ export function useBook(opts?: { includeBench?: boolean }) {
         const optedOut = readCbPresetOptOut();
         const filters = cbFiltersForOwner(optedOut);
         const list = mergeCbEntries(cb.local as any, serverBenchToCbEntries(cb.server));
+        // zzz823: pass / fail / NOT CHECKED — the same shared check the
+        // Conviction Beats tab now applies (unknown data is never a fail).
         const sel = selectIndiaCb({
           held, list, criteriaOff: optedOut,
-          passes: (e: any) => passesConvictionFilter(e, filters),
-          reasons: (e: any) => cbFailReasons(e, filters),
+          check: (e: any) => cbCriteriaCheck(e, filters),
         });
         // Every name joins the universe (evidence loads for all, batched);
         // the page shows the failing ones only when he asks.
         candidates = [...sel.bench, ...sel.benchFailing];
         heldOnCb = sel.heldPassing.length;
-        cbPassing = sel.passing;
         cbInfo = {
-          market: 'IN', listTotal: sel.listTotal, passing: sel.passing.length, failing: sel.failing.length, heldPassing: sel.heldPassing.length,
+          market: 'IN', listTotal: sel.listTotal, passing: sel.passing.length, failing: sel.failing.length, heldPassing: sel.heldPassing.length, unknown: sel.unknown.length,
           criteria: optedOut ? 'your quality preset is switched OFF on Conviction Beats — every name is listed' : 'your quality preset, as the Conviction Beats tab applies it',
           source: `this browser's list ${cb.local.length} + server bench ${cb.server.length}${cb.updatedAt ? ` (updated ${String(cb.updatedAt).slice(0, 10)})` : ''}${cb.error ? ` — server not read: ${cb.error}` : ''}`,
           error: cb.error,
         };
-        universe = mergeUniverse(held, candidates);
+        universe = bookUniverse(resolved.names, candidates);
         paint(universe);
         setRows((cur) => {
           const out = { ...cur };
           for (const s of candidates) if (out[s]) out[s] = { ...out[s], benchSource: IN_CB_SOURCE, preset: sel.labels[s] || null };
-          for (const s of sel.heldPassing) if (out[s]) out[s] = { ...out[s], preset: sel.labels[s] || null };
+          // A held name on the list under another spelling (ABC-BE / ABC) gets its label on the book row.
+          for (const s of sel.heldPassing) { const h = heldByKey.get(heldKey(s)) || s; if (out[h]) out[h] = { ...out[h], preset: sel.labels[s] || null }; }
           return out;
         });
+        cbPassing = sel.passing.map((s) => heldByKey.get(heldKey(s)) || s);
       }
 
       setNote((n) => ({
-        ...n, ...originCounts(universe.values()), serverError: server.error, cb: cbInfo, heldOnCb, cbPassing,
+        ...n, ...originCounts(universe.values()), serverError: resolved.serverError, cb: cbInfo, heldOnCb, cbPassing, resolved,
       }));
 
       // ── STAGE 3 — graded rows for everything, and the preset gate.

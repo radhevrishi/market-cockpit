@@ -165,7 +165,8 @@ describe('type mapping', () => {
     assert.equal(eventTypeOf('Document', null, 'transcript'), 'Concall / business update');
   });
   test('every type is a plain-words label from the fixed list', () => {
-    assert.equal(EVENT_TYPES.length, 16);
+    // zzz824: + 'Credit rating' and 'Corporate action' (a rating letter is not results; a bonus is not a rights raise)
+    assert.equal(EVENT_TYPES.length, 18);
     assert.ok(EVENT_TYPES.includes('Other filing'));
   });
 });
