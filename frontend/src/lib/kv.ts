@@ -93,6 +93,56 @@ export async function kvGet<T = any>(key: string): Promise<T | null> {
 }
 
 /**
+ * zzz814 — read MANY keys in ONE Upstash command (MGET). A 60-day India
+ * earnings window is ~84 graded days; reading them one GET at a time would be
+ * 84 commands per page open against a request-metered quota. Uses the raw
+ * REST endpoint (the same path kvGet falls back to for large blobs, which the
+ * client sometimes returns empty for), then the client's mget, then per-key
+ * kvGet (in-memory mode / REST unavailable). Returns values in key order,
+ * null for a missing key.
+ */
+export async function kvMGet<T = any>(keys: string[]): Promise<Array<T | null>> {
+  if (keys.length === 0) return [];
+  const parse = (raw: any): any => {
+    if (raw === null || raw === undefined) return null;
+    if (typeof raw === 'string') {
+      try { let p: any = JSON.parse(raw); if (typeof p === 'string') p = JSON.parse(p); return p; }
+      catch { return raw; }
+    }
+    return raw;
+  };
+  const _url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
+  const _token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+  if (_url && _token) {
+    try {
+      const resp = await fetch(`${_url.replace(/\/+$/, '')}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(['MGET', ...keys]),
+        cache: 'no-store',
+        signal: AbortSignal.timeout(15000),
+      });
+      if (resp.ok) {
+        const j: any = await resp.json().catch(() => null);
+        if (Array.isArray(j?.result) && j.result.length === keys.length) {
+          return j.result.map((v: any) => parse(v) as T | null);
+        }
+      }
+    } catch { /* fall through */ }
+  }
+  const r = getRedis();
+  if (r) {
+    try {
+      const vals = await r.mget<any[]>(...keys);
+      if (Array.isArray(vals) && vals.length === keys.length) return vals.map((v) => parse(v) as T | null);
+    } catch (e) {
+      console.error('[KV] Redis MGET failed:', e);
+    }
+  }
+  return Promise.all(keys.map((k) => kvGet<T>(k)));
+}
+
+/**
  * Set a value in the KV store with optional TTL (seconds).
  *
  * PATCH 1018 — Upstash imposes a 10 MB Max Request Size on the REST API.

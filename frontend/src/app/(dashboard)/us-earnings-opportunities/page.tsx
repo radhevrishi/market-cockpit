@@ -37,6 +37,7 @@ import { UsEarningsCard, TIER_META, QUADRANT_META, rowKey, panelId, num, setAllA
 import { CardBadgesToggle } from '@/components/card-badges';
 import { classifyGradedRow, ABFG_META, type AbfgPattern } from '@/lib/earnings/pattern-abfg';
 import { resolveSearch, scoreRow, hiddenNote, type SearchOutcome, type WindowHit, type RankedHit } from '@/lib/earnings-search';
+import { freshestFirst } from '@/lib/india-earnings-window';
 import { useUrlSearchQuery, SearchResultsPanel } from '@/components/earnings-search-kit';
 
 interface PendingFiler {
@@ -688,7 +689,10 @@ export default function UsEarningsOpportunitiesPage() {
       // zzz703 — pattern filter applied last so it composes with the quality
       // preset and the cap filters rather than replacing them.
       if (patternOnly) rows = rows.filter((r: any) => classifyGradedRow(r)?.pattern === patternOnly);
-      out[t] = rows;
+      // zzz815 — freshest first within a tier by default (the owner: "fresh
+      // should be at the top"): newest filing date first; the rows carry no
+      // filing time, so within a date the score decides, as before.
+      out[t] = rows.slice().sort(freshestFirst);
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps

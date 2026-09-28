@@ -14,8 +14,8 @@
 
 import { Fragment, useMemo, useState } from 'react';
 import {
-  EVENT_TYPES, filterByType, daysAgo,
-  type RecentCatalystResult, type TypeFilter, type ThesisTouch, type RecentEvent, type Importance,
+  EVENT_TYPES, filterByType, daysAgo, typeCounts, windowRange, groupByDay, topOfWindow, rowAnchor, dayLabel, inRange, WINDOW_SPANS,
+  type RecentCatalystResult, type TypeFilter, type ThesisTouch, type RecentEvent, type Importance, type WindowSpan,
 } from '@/lib/catalyst/recent-events';
 import type { ReadProgress } from './use-filing-reads';
 
@@ -46,14 +46,27 @@ export interface NewCatalystsTabProps {
   market: 'IN' | 'US';
   progress?: ReadProgress | null;
   onJump?: (ticker: string) => void;
+  /** zzz814: the selected days — controlled by the page so the tab label counts the same window. */
+  win?: { span: WindowSpan; anchor: string | null };
+  onWin?: (w: { span: WindowSpan; anchor: string | null }) => void;
 }
 
-export default function NewCatalystsTab({ result, loading, names, sourceNotes, market, progress, onJump }: NewCatalystsTabProps) {
+const SPAN_LABEL: Record<number, string> = { 1: 'Today', 3: '3d', 5: '5d', 10: '10d' };
+const shift = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+
+export default function NewCatalystsTab({ result, loading, names, sourceNotes, market, progress, onJump, win, onWin }: NewCatalystsTabProps) {
   const [type, setType] = useState<TypeFilter>('All');
-  const [showMinor, setShowMinor] = useState(false);
+  const [showMinor, setShowMinor] = useState<Record<string, boolean>>({});
   const [open, setOpen] = useState<Record<string, boolean>>({});
-  const items = useMemo(() => (result ? filterByType(result.items, type) : []), [result, type]);
-  const minor = useMemo(() => (result ? filterByType(result.minor, type) : []), [result, type]);
+  const [ownWin, setOwnWin] = useState<{ span: WindowSpan; anchor: string | null }>({ span: 10, anchor: null });
+  const w = win || ownWin;
+  const setW = (x: { span: WindowSpan; anchor: string | null }) => { if (onWin) onWin(x); else setOwnWin(x); };
+  const today0 = result?.window.to || '';
+  const range = useMemo(() => (today0 ? windowRange(today0, w.span, w.anchor, result?.window.days) : { from: '', to: '', days: 0 }), [today0, w.span, w.anchor, result?.window.days]);
+  const inWin = useMemo(() => (result ? result.items.filter((e) => inRange(e.date, range, today0)) : []), [result, range, today0]);
+  const counts = useMemo(() => typeCounts(inWin), [inWin]);
+  const days = useMemo(() => (result ? groupByDay({ items: filterByType(result.items, type), minor: filterByType(result.minor, type), hidden: type === 'All' ? result.hidden : [] }, range, today0) : []), [result, type, range, today0]);
+  const top = useMemo(() => topOfWindow(filterByType(inWin, type), range, 5, today0), [inWin, type, range, today0]);
 
   if (loading || !result) {
     return (
@@ -64,7 +77,8 @@ export default function NewCatalystsTab({ result, loading, names, sourceNotes, m
   }
 
   const today = result.window.to;
-  const chips: TypeFilter[] = ['All', ...EVENT_TYPES.filter((t) => result.counts[t] > 0)];
+  const chips: TypeFilter[] = ['All', ...EVENT_TYPES.filter((t) => counts[t] > 0 || t === type)];
+  const oldest = shift(today, -(result.window.days - 1));
   const rd = result.reading;
   const reading = rd.pending > 0 && (progress?.running ?? true);
 
@@ -73,7 +87,7 @@ export default function NewCatalystsTab({ result, loading, names, sourceNotes, m
     const isOpen = !!open[e.id];
     return (
       <Fragment key={e.id}>
-        <tr style={{ borderTop: `1px solid ${C.border}`, verticalAlign: 'top' }}>
+        <tr id={rowAnchor(e)} style={{ borderTop: `1px solid ${C.border}`, verticalAlign: 'top', scrollMarginTop: 80 }}>
           <td style={{ padding: '6px 8px', color: C.faint, fontWeight: 800 }}>{i + 1}</td>
           <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', color: C.dim }}>
             {e.date}<div style={{ fontSize: 12, color: C.faint }}>{when(e.date, today)}</div>
@@ -153,8 +167,6 @@ export default function NewCatalystsTab({ result, loading, names, sourceNotes, m
     </div>
   );
 
-  const behind = result.minor.length + result.hidden.length;
-
   return (
     <div data-testid="new-catalysts-tab" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ fontSize: 13.5, color: C.dim, lineHeight: 1.55, maxWidth: 900 }}>
@@ -187,41 +199,90 @@ export default function NewCatalystsTab({ result, loading, names, sourceNotes, m
               fontSize: 13, fontWeight: 800, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
               border: `1px solid ${on ? C.cyan : C.border}`, color: on ? C.cyan : C.dim,
               background: on ? 'color-mix(in srgb, var(--mc-cyan) 14%, transparent)' : C.bg,
-            }}>{t} ({result.counts[t]})</button>
+            }}>{t} ({counts[t]})</button>
           );
         })}
         {type !== 'All' && <span style={{ fontSize: 12.5, color: C.faint }}>Showing: {type}</span>}
       </div>
 
-      {result.items.length === 0 ? (
-        <div data-testid="new-catalysts-empty" style={{ fontSize: 14, color: C.dim, border: `1px dashed ${C.border}`, borderRadius: 8, padding: '12px 14px', lineHeight: 1.55 }}>
-          <b style={{ color: C.text }}>No new catalysts in the last {result.window.days} days for your {names} names</b>
-          {result.lastItem
-            ? <> — last new item was {result.lastItem.date} ({result.lastItem.ticker}).</>
-            : <> — no dated filing is on file for any of them yet.</>}
-          {reading && <div style={{ color: C.cyan, marginTop: 4 }}>Filings are still being read — this may change.</div>}
-          {sourceNotes.length > 0 && <div style={{ color: C.amber, marginTop: 4 }}>Some sources failed (see above), so this may be incomplete.</div>}
-        </div>
-      ) : items.length === 0 ? (
-        <div style={{ fontSize: 13.5, color: C.dim }}>No {type} items in the window. <button onClick={() => setType('All')} style={{ fontSize: 13, color: C.cyan, background: 'transparent', border: 'none', cursor: 'pointer', padding: 0 }}>Show all</button></div>
-      ) : table(items)}
+      {/* ── WHICH DAYS. Like Earnings Opportunities: newest day on top. ─── */}
+      <div className="mc-wrap-mobile" role="group" aria-label="Date window" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+        {WINDOW_SPANS.map((sp) => {
+          const on = w.span === sp;
+          return (
+            <button key={sp} onClick={() => setW({ span: sp, anchor: w.anchor })} aria-pressed={on} style={{
+              fontSize: 13, fontWeight: 800, padding: '4px 11px', borderRadius: 8, cursor: 'pointer',
+              border: `1px solid ${on ? C.cyan : C.border}`, color: on ? C.cyan : C.dim, background: C.bg,
+            }}>{SPAN_LABEL[sp]}</button>
+          );
+        })}
+        <button aria-label="One day earlier" disabled={range.to <= oldest} onClick={() => setW({ span: w.span, anchor: shift(range.to, -1) })}
+          style={{ fontSize: 13, fontWeight: 800, padding: '4px 10px', borderRadius: 8, cursor: range.to <= oldest ? 'default' : 'pointer', border: `1px solid ${C.border}`, color: range.to <= oldest ? C.faint : C.dim, background: C.bg }}>←</button>
+        <input type="date" aria-label="Jump to date" min={oldest} max={today} value={range.to}
+          onChange={(ev) => { const v = ev.target.value; if (v) setW({ span: w.span, anchor: v >= today ? null : v }); }}
+          style={{ fontSize: 13, padding: '3px 6px', borderRadius: 8, border: `1px solid ${C.border}`, color: C.text, background: C.bg }} />
+        <button aria-label="One day later" disabled={range.to >= today} onClick={() => { const nx = shift(range.to, 1); setW({ span: w.span, anchor: nx >= today ? null : nx }); }}
+          style={{ fontSize: 13, fontWeight: 800, padding: '4px 10px', borderRadius: 8, cursor: range.to >= today ? 'default' : 'pointer', border: `1px solid ${C.border}`, color: range.to >= today ? C.faint : C.dim, background: C.bg }}>→</button>
+        <span data-testid="new-catalysts-range" style={{ fontSize: 12.5, color: C.faint }}>
+          {range.from === range.to ? dayLabel(range.to) : `${dayLabel(range.from)} – ${dayLabel(range.to)}`} · {inWin.length} event{inWin.length === 1 ? '' : 's'}
+          {w.anchor && <> · <button onClick={() => setW({ span: w.span, anchor: null })} style={{ fontSize: 12.5, color: C.cyan, background: 'transparent', border: 'none', padding: 0, cursor: 'pointer' }}>back to today</button></>}
+        </span>
+      </div>
 
-      {behind > 0 && (
-        <div style={{ fontSize: 12.5, color: C.faint }}>
-          <button onClick={() => setShowMinor((v) => !v)} style={{ fontSize: 12.5, color: C.faint, background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', textDecoration: 'underline' }}>
-            {showMinor ? 'Hide' : 'Show'} {result.minor.length} minor item{result.minor.length === 1 ? '' : 's'} and {result.hidden.length} routine filing{result.hidden.length === 1 ? '' : 's'} hidden
-          </button>
-          <span> (clarifications, shareholding disclosures, trading window, meet intimations, AGM, newspaper ads, CP/NCD repayments, duplicates)</span>
-        </div>
-      )}
-      {showMinor && minor.length > 0 && table(minor)}
-      {showMinor && result.hidden.length > 0 && (
-        <div style={{ fontSize: 12.5, color: C.faint, lineHeight: 1.5 }}>
-          {result.hidden.map((e) => (
-            <div key={e.id}>{e.date} · <b style={{ color: C.dim }}>{e.ticker}</b> · {e.routineWhy} — {e.url ? <a href={e.url} target="_blank" rel="noreferrer" style={{ color: C.faint }}>{e.title || e.what}</a> : (e.title || e.what)}</div>
+      {/* ── TOP OF THE WINDOW: up to 5 Material items, newest first. ─────── */}
+      {top.length > 0 && (
+        <div data-testid="new-catalysts-top" style={{ border: `1px solid ${C.cyan}`, borderRadius: 8, padding: '8px 12px', background: C.bg }}>
+          <div style={{ fontSize: 13, fontWeight: 900, color: C.text, marginBottom: 4 }}>Top of the window — {top.length} Material</div>
+          {top.map((e) => (
+            <div key={e.id} style={{ fontSize: 13, lineHeight: 1.45, color: C.dim }}>
+              <span style={{ color: C.faint }}>{dayLabel(e.date)}</span>{' · '}
+              <a href={`#${rowAnchor(e)}`} onClick={(ev) => { ev.preventDefault(); document.getElementById(rowAnchor(e))?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
+                style={{ color: C.text, fontWeight: 800, textDecoration: 'none' }}>{e.ticker}</a>
+              {' · '}{e.type}{' — '}<span style={{ color: C.text }}>{e.what.length > 150 ? `${e.what.slice(0, 149)}…` : e.what}</span>
+              {e.thesis !== 'not assessed' && <span style={{ color: TOUCH[e.thesis].color, fontWeight: 800 }}> · {TOUCH[e.thesis].label}</span>}
+            </div>
           ))}
         </div>
       )}
+
+      {inWin.length === 0 && days.every((d) => !d.minor.length) ? (
+        <div data-testid="new-catalysts-empty" style={{ fontSize: 14, color: C.dim, border: `1px dashed ${C.border}`, borderRadius: 8, padding: '12px 14px', lineHeight: 1.55 }}>
+          <b style={{ color: C.text }}>No new catalysts {range.from === range.to ? `on ${dayLabel(range.to)}` : `in the last ${range.days} days`} for your {names} names</b>
+          {result.lastItem
+            ? <> — last new item was {result.lastItem.date} ({result.lastItem.ticker}).</>
+            : <> — no dated filing is on file for any of them yet.</>}
+          {w.span < result.window.days && result.items.length > 0 && <div style={{ marginTop: 4 }}><button onClick={() => setW({ span: 10, anchor: null })} style={{ fontSize: 13, color: C.cyan, background: 'transparent', border: 'none', padding: 0, cursor: 'pointer' }}>Show all 10 days ({result.items.length})</button></div>}
+          {reading && <div style={{ color: C.cyan, marginTop: 4 }}>Filings are still being read — this may change.</div>}
+          {sourceNotes.length > 0 && <div style={{ color: C.amber, marginTop: 4 }}>Some sources failed (see above), so this may be incomplete.</div>}
+        </div>
+      ) : days.map((d) => {
+        const behind = d.minor.length + d.hidden.length;
+        const on = !!showMinor[d.date];
+        if (!d.items.length && !behind) return null;
+        return (
+          <div key={d.date} data-testid="new-catalysts-day" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ fontSize: 14, fontWeight: 900, color: C.text, borderBottom: `1px solid ${C.border}`, paddingBottom: 3, marginTop: 4 }}>
+              {d.header}{d.date === today ? <span style={{ color: C.faint, fontWeight: 600 }}> · today</span> : null}
+            </div>
+            {d.items.length > 0 ? table(d.items) : <div style={{ fontSize: 12.5, color: C.faint }}>Nothing Material or Notable this day.</div>}
+            {behind > 0 && (
+              <div style={{ fontSize: 12.5, color: C.faint }}>
+                <button onClick={() => setShowMinor((m) => ({ ...m, [d.date]: !m[d.date] }))} style={{ fontSize: 12.5, color: C.faint, background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', textDecoration: 'underline' }}>
+                  {on ? 'Hide' : 'Show'} {d.minor.length} minor item{d.minor.length === 1 ? '' : 's'} and {d.hidden.length} routine filing{d.hidden.length === 1 ? '' : 's'}
+                </button>
+              </div>
+            )}
+            {on && d.minor.length > 0 && table(d.minor)}
+            {on && d.hidden.length > 0 && (
+              <div style={{ fontSize: 12.5, color: C.faint, lineHeight: 1.5 }}>
+                {d.hidden.map((e) => (
+                  <div key={e.id}><b style={{ color: C.dim }}>{e.ticker}</b> · {e.routineWhy} — {e.url ? <a href={e.url} target="_blank" rel="noreferrer" style={{ color: C.faint }}>{e.title || e.what}</a> : (e.title || e.what)}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

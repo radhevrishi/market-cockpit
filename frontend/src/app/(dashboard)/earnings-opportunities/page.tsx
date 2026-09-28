@@ -36,6 +36,14 @@ import { classifyGradedRow, ABFG_META, type AbfgPattern } from '@/lib/earnings/p
 // PATCH 0715 — centralized IST helpers.
 import { istToday as _istToday, isIndianMarketOpen as isIndianMarketOpenLocal } from '@/lib/market-hours';
 import { gradeIndiaRow as gradeRow } from '@/lib/india-grade';
+// zzz814 — multi-day window (1d … 60d), as on the US page.
+import {
+  IN_WINDOWS, parseWindowParam, parseWindowViewParam, withWindowParams, rowsByTier,
+  sortByDate, sortByTier, windowCsv, tradingViewList, fmtShortDate, freshestFirst,
+  type WindowView, type WindowRow,
+} from '@/lib/india-earnings-window';
+import { useIndiaEarningsWindow } from './useIndiaEarningsWindow';
+import { GRADED_CACHE_VERSION } from '@/lib/graded-cache-key';
 
 // ─── Calendar payload types ────────────────────────────────────────────────
 interface CalendarItem {
@@ -781,6 +789,47 @@ export default function EarningsOpportunitiesPage() {
     else if (dow === 6) dt.setUTCDate(dt.getUTCDate() - 1); // Sat → Fri
     return dt.toISOString().slice(0, 10);
   }, [filterDate, todayIso]);
+
+  // ═══ MULTI-DAY WINDOW  (zzz814) ═════════════════════════════════════════
+  // 1d is the page as it always was (one date). 3d…60d = that many IST
+  // trading sessions back from the selected date, weekends in between
+  // included (Indian companies file on them) — see lib/india-earnings-window.
+  // ?w= and ?wv= live in the URL alongside ?q=; read after mount so SSR and
+  // the first client render agree.
+  const [windowDays, setWindowDays] = useState<number>(1);
+  const [windowView, setWindowView] = useState<WindowView>('date');
+  const [windowUrlReady, setWindowUrlReady] = useState(false);
+  useEffect(() => {
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      setWindowDays(parseWindowParam(sp.get('w')));
+      setWindowView(parseWindowViewParam(sp.get('wv')));
+    } catch { /* no window */ }
+    setWindowUrlReady(true);
+  }, []);
+  useEffect(() => {
+    if (!windowUrlReady) return;
+    try {
+      const cur = window.location.pathname + window.location.search + window.location.hash;
+      const next = withWindowParams(cur, windowDays, windowView);
+      if (next !== cur) window.history.replaceState(window.history.state, '', next);
+    } catch { /* ignore */ }
+  }, [windowUrlReady, windowDays, windowView]);
+  const windowOn = windowDays > 1;
+  const win = useIndiaEarningsWindow<ParsedEarning>({
+    anchor: resolvedDateForGrading, sessions: windowDays, today: todayIso, enabled: windowOn,
+  });
+  const windowPayload: OpportunitiesPayload | null = useMemo(() => (windowOn ? {
+    filing_date: resolvedDateForGrading || null,
+    candidates_total: win.rows.length,
+    raw_items_total: win.rows.length,
+    by_tier: rowsByTier(win.rows) as unknown as Record<EarningsTier, ParsedEarning[]>,
+    generated_at: '',
+    sources_polled: 0,
+  } : null), [windowOn, win.rows, resolvedDateForGrading]);
+  const [windowRenderLimit, setWindowRenderLimit] = useState(120);
+  const [tvCopyNote, setTvCopyNote] = useState<string | null>(null);
+  useEffect(() => { setWindowRenderLimit(120); }, [windowDays, windowView, resolvedDateForGrading]);
 
   // PATCH 0187 — localStorage cache (v9). Past dates: 7 days fresh, today: 15 min.
   // User: "I always open link all loads even when data is there before."
@@ -1700,7 +1749,12 @@ export default function EarningsOpportunitiesPage() {
   // viewed — the storage layer dedupes by ticker + filing_date so this is
   // safe to call repeatedly.
   useEffect(() => {
-    if (!data?.by_tier) return;
+    // zzz814 — in a window, the bench is fed from the window's merged rows
+    // (one per company, its LATEST result), so every BLOCKBUSTER/STRONG in the
+    // window reaches Conviction Beats, and an older STRONG a company has since
+    // replaced with a weaker print is not re-added.
+    const syncSource = windowPayload || data;
+    if (!syncSource?.by_tier) return;
     // USER-REQ — Guidance in Conviction tab. Derive a Positive/Neutral/Negative
     // label + signed score per card using the same lexicon the Earnings Hub
     // Scan tab uses. Server `guidance` field is preferred when present (it
@@ -1803,7 +1857,7 @@ export default function EarningsOpportunitiesPage() {
       cfo_to_pat_ratio?: number | null;
     }> = [];
     for (const tier of ['BLOCKBUSTER', 'STRONG'] as const) {
-      for (const c of (data.by_tier[tier] || [])) {
+      for (const c of (syncSource.by_tier[tier] || [])) {
         const g = deriveGuidance(c);
         // PATCH 0911 — Parse the graded payload's "quarter" string (e.g.
         // "Q4 FY26" or "Q1 FY27" or just "Q4") into explicit fields so the
@@ -1857,7 +1911,7 @@ export default function EarningsOpportunitiesPage() {
       }
     }
     if (entries.length > 0) syncFromEarningsOps(entries);
-  }, [data]);
+  }, [data, windowPayload]);
 
   // PATCH 0188 — Auto-fill REMOVED entirely (was 0177, disabled in 0179).
   // It had no way to verify a ticker actually filed on the target date —
@@ -2260,13 +2314,60 @@ export default function EarningsOpportunitiesPage() {
     };
   }, [baseView, forcedCards]);
 
+  // zzz814 — what the counts, filter chips, search and exports read: the
+  // single date as before, or the merged window (one row per company).
+  const activeView: OpportunitiesPayload = windowPayload || view;
+
+  // The page's filters as ONE function, used by the single-date tiers and the
+  // window alike. Only one quality filter applies at a time (the chips are
+  // mutually exclusive), then market cap, then the A/B/F/G pattern — the same
+  // order as before, so a single date renders exactly as it did.
+  const applyRowFilters = <T extends ParsedEarning>(input: T[]): T[] => {
+    let stocks = input;
+    if (eliteOnly) stocks = stocks.filter((s: any) => s.is_elite);
+    else if (peadOnly) stocks = stocks.filter((s: any) => (s.pead_score ?? 0) >= 70);
+    else if (multibaggerOnly) stocks = stocks.filter((s: any) => s.multibagger_setup);
+    // QUALITY × INFLECTION — sort the survivors by inflection so the fastest
+    // rate of change leads; within this quadrant that IS the ranking.
+    else if (turnaroundOnly) stocks = stocks
+      .filter((s: any) => s.quadrant === 'TURNAROUND ACCELERATOR')
+      .slice()
+      .sort((a: any, b: any) => (b.inflection_score ?? 0) - (a.inflection_score ?? 0));
+    else if (radarOnly) stocks = stocks.filter((s: any) => radarMap.has(String(s.ticker || '').toUpperCase()));
+    else if (beatCheapOnly) {
+      stocks = stocks
+        .filter((s: any) => typeof s.pe === 'number' && s.pe > 0 && s.pe <= 35)
+        .slice()
+        .sort((a: any, b: any) => (a.pe ?? 0) - (b.pe ?? 0));
+    }
+    // PATCH 1022 — market-cap range filter (₹ Cr)
+    if (capFilter !== 'all') stocks = stocks.filter((s: any) => capInRange(s.market_cap_cr, capFilter));
+    // zzz703 — pattern filter, applied last so it composes with the rest.
+    if (patternOnly) stocks = stocks.filter((s: any) => classifyGradedRow(s)?.pattern === patternOnly);
+    return stocks;
+  };
+  const anyRowFilter = eliteOnly || peadOnly || multibaggerOnly || turnaroundOnly || radarOnly || beatCheapOnly || capFilter !== 'all' || !!patternOnly;
+  /** Within one tier, the order the active filter implies — else FRESHEST
+   *  FIRST (zzz815, the owner's default): latest filing time on top, a card
+   *  with only a date goes last within that date. */
+  const withinTierOrder = (a: any, b: any): number =>
+    turnaroundOnly ? (b.inflection_score ?? 0) - (a.inflection_score ?? 0)
+      : beatCheapOnly ? (a.pe ?? 0) - (b.pe ?? 0)
+      : freshestFirst(a, b);
+  /** Every row that passes the filters, tier order — what the exports hand out. */
+  const exportRows = (): any[] => {
+    const rows = TIER_ORDER.flatMap((t) => applyRowFilters((activeView.by_tier[t] || []) as ParsedEarning[]).slice().sort(withinTierOrder));
+    return windowOn ? sortByDate(rows as unknown as WindowRow<ParsedEarning>[], withinTierOrder).flatMap((g) => g.rows) : rows;
+  };
+
   // ═══ SEARCH  (zzz812) ═══════════════════════════════════════════════════
   // Every graded row on the loaded date, filters ignored — the search looks
   // here first. A match the filters hide is reported with the reason and can
   // be PINNED: shown in its tier despite the filters, with a note saying so.
+  // zzz814 — in a window, every company in the window (its latest result).
   const searchWindowRows = useMemo(
-    () => TIER_ORDER.flatMap((t) => view.by_tier[t] || []),
-    [view],
+    () => TIER_ORDER.flatMap((t) => activeView.by_tier[t] || []),
+    [activeView],
   );
   const searchHiddenReasons = useCallback((s: any): string[] => {
     const out: string[] = [];
@@ -2347,12 +2448,12 @@ export default function EarningsOpportunitiesPage() {
     const tm = setTimeout(() => setLoadingBadgeForceHide(true), 12_000);
     return () => clearTimeout(tm);
   }, [resolvedDateForGrading]);
-  const isStaleView = !loadingBadgeForceHide && gradedFetching &&
+  const isStaleView = !windowOn && !loadingBadgeForceHide && gradedFetching &&
     !!view.filing_date &&
     !!resolvedDateForGrading &&
     view.filing_date !== resolvedDateForGrading;
 
-  const counts = TIER_ORDER.map((t) => ({ tier: t, n: view.by_tier[t]?.length || 0 }));
+  const counts = TIER_ORDER.map((t) => ({ tier: t, n: activeView.by_tier[t]?.length || 0 }));
 
   // PATCH 0482 — INVERTED from 0193. Indian companies routinely file
   // quarterly results on Saturdays (board meetings often run weekends)
@@ -2733,7 +2834,7 @@ export default function EarningsOpportunitiesPage() {
               Click a result → jump to that filing date + scroll to the card. */}
           <EarningsSearch
             windowRows={searchWindowRows}
-            windowLabel={effectiveDate ? `the ${effectiveDate} results` : 'the loaded results'}
+            windowLabel={windowOn ? `this ${windowDays}-session window (${win.dates.length} dates to ${effectiveDate})` : effectiveDate ? `the ${effectiveDate} results` : 'the loaded results'}
             hiddenReasons={searchHiddenReasons}
             onRevealInWindow={(row: any) => pinTicker(row.ticker)}
             onGradeNow={(t: string) => { addForceInclude(t); pinTicker(t); }}
@@ -2828,6 +2929,29 @@ export default function EarningsOpportunitiesPage() {
               title="Jump to 7 days ago"
               style={{ padding: '4px 8px', background: 'transparent', border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-3)', fontSize: 10, fontWeight: 700, borderRadius: 4, cursor: 'pointer' }}
             >−7d</button>
+            {/* zzz814 — multi-day window, as on the US page. Counted in IST
+                trading sessions (Mon–Fri) back from the date above; the
+                weekends in between are read too, because Indian companies
+                file on them. 1d is the single-date view. */}
+            <span className="mc-no-print" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 6, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.4px', marginRight: 2 }}>WINDOW</span>
+              {IN_WINDOWS.map((d) => {
+                const on = windowDays === d;
+                return (
+                  <button key={d}
+                    onClick={() => { setWindowDays(d); if (d > 1) setViewMode('GRADED'); }}
+                    title={d === 1
+                      ? 'One date — the date above'
+                      : `${d} trading sessions (Mon–Fri, IST) back from the date above, plus the weekends in between — Indian companies file on Saturdays and Sundays too. Days already graded load from the server store at once; days never graded are graded one at a time, newest first.`}
+                    style={{
+                      padding: '3px 7px', borderRadius: 4, fontSize: 10.5, fontWeight: 800, cursor: 'pointer',
+                      border: `1px solid ${on ? 'var(--mc-cyan)' : 'var(--mc-bg-4)'}`,
+                      background: on ? 'color-mix(in srgb, var(--mc-cyan) 16%, transparent)' : 'transparent',
+                      color: on ? 'var(--mc-cyan)' : 'var(--mc-text-3)',
+                    }}>{d}d</button>
+                );
+              })}
+            </span>
           </div>
           {/* PATCH 0736 — surface server timeout / date mismatch so user
               doesn't see the same data on multiple consecutive dates and
@@ -2931,60 +3055,69 @@ export default function EarningsOpportunitiesPage() {
               {forceRescanning ? '⏳ Scanning…' : '🔄 Force NSE+BSE'}
             </button>
           )}
-          {/* AUDIT_100 #57 — Export today's BLOCKBUSTER + STRONG tiers to CSV.
-              Hot ask for buy-side desk hand-off. One button, no dialog. */}
-          {resolvedDateForGrading && view.by_tier && (
-            (view.by_tier.BLOCKBUSTER?.length || 0) + (view.by_tier.STRONG?.length || 0) > 0
+          {/* AUDIT_100 #57 — Export the graded tiers to CSV. zzz814 — one builder
+              for a single date and a window (lib/india-earnings-window): the
+              rows that pass the active filters, all four tiers, with the date
+              each was graded on, the quadrant scores, "also reported" dates in
+              a window and which engine graded it. The old column mapping read
+              fields the payload never carried (company_name, score, sales_yoy)
+              and wrote blank Company / Score / YoY cells. */}
+          {resolvedDateForGrading && activeView.by_tier && (
+            TIER_ORDER.reduce((n, t) => n + (activeView.by_tier[t]?.length || 0), 0) > 0
           ) && (
-            <button
-              onClick={() => {
-                const tiers = ['BLOCKBUSTER','STRONG','MIXED','AVOID'] as const;
-                // QUALITY × INFLECTION columns ride along with the tier so a
-                // desk reading the CSV can sort on rate of change, not only on
-                // the grade. Unscored rows export as an EMPTY cell — never a 0,
-                // which a spreadsheet would happily sort as "worst".
-                const header = ['Tier','Ticker','Company','Quarter','Score','Quadrant','Quality_Score','Inflection_Score','Sales_YoY','EBITDA_YoY','PAT_YoY','EPS_YoY','Filing_Date','Source'];
-                const lines = [header.join(',')];
-                for (const t of tiers) {
-                  for (const c of ((view.by_tier?.[t] ?? []) as any[])) {
-                    const row = [
-                      t,
-                      c.ticker || '',
-                      (c.company_name || c.symbol || '').replace(/,/g,';'),
-                      c.quarter || '',
-                      c.score ?? '',
-                      c.quadrant ?? '',
-                      typeof c.quality_score === 'number' ? c.quality_score : '',
-                      typeof c.inflection_score === 'number' ? c.inflection_score : '',
-                      c.metrics?.sales_yoy ?? c.sales_yoy ?? '',
-                      c.metrics?.ebitda_yoy ?? c.ebitda_yoy ?? '',
-                      c.metrics?.pat_yoy ?? c.pat_yoy ?? '',
-                      c.metrics?.eps_yoy ?? c.eps_yoy ?? '',
-                      c.filing_date || resolvedDateForGrading || '',
-                      (c.source || c.attribution_source || '').toString().replace(/,/g,';'),
-                    ];
-                    lines.push(row.join(','));
+            <span className="mc-no-print" style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
+              <button
+                onClick={() => {
+                  const csv = windowCsv(exportRows(), (r: any) => r._window_date || r.filing_date || resolvedDateForGrading || '');
+                  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = windowOn
+                    ? `earnings-opportunities-${win.dates[win.dates.length - 1] || ''}_to_${resolvedDateForGrading}-${windowDays}d.csv`
+                    : `earnings-opportunities-${resolvedDateForGrading}.csv`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                title={windowOn
+                  ? `Download every company in this ${windowDays}-session window that passes the current filters (latest result per company) as CSV`
+                  : 'Download all 4 tiers (BLOCKBUSTER/STRONG/MIXED/AVOID) for this date as CSV — the current filters apply'}
+                style={{
+                  padding: '6px 12px', borderRadius: 8,
+                  border: '1px solid color-mix(in srgb, var(--mc-warn) 50%, transparent)',
+                  backgroundColor: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)',
+                  color: 'var(--mc-warn)', fontSize: 11, fontWeight: 800, cursor: 'pointer',
+                  letterSpacing: '0.3px', display: 'inline-flex', alignItems: 'center', gap: 6,
+                }}
+              >
+                📊 Export CSV{windowOn ? ` · ${windowDays}d` : ''}
+              </button>
+              <button
+                onClick={async () => {
+                  const txt = tradingViewList(exportRows());
+                  try { await navigator.clipboard.writeText(txt); } catch {
+                    try {
+                      const ta = document.createElement('textarea');
+                      ta.value = txt; ta.style.position = 'fixed'; ta.style.top = '-1000px';
+                      document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+                      document.body.removeChild(ta);
+                    } catch {}
                   }
-                }
-                const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `earnings-opportunities-${resolvedDateForGrading}.csv`;
-                a.click();
-                URL.revokeObjectURL(url);
-              }}
-              title="Download all 4 tiers (BLOCKBUSTER/STRONG/MIXED/AVOID) as CSV for this date"
-              style={{
-                padding: '6px 12px', borderRadius: 8,
-                border: '1px solid color-mix(in srgb, var(--mc-warn) 50%, transparent)',
-                backgroundColor: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)',
-                color: 'var(--mc-warn)', fontSize: 11, fontWeight: 800, cursor: 'pointer',
-                letterSpacing: '0.3px', display: 'inline-flex', alignItems: 'center', gap: 6,
-              }}
-            >
-              📊 Export CSV
-            </button>
+                  setTvCopyNote(`✓ Copied ${txt ? txt.split(',').length : 0}`);
+                  setTimeout(() => setTvCopyNote(null), 4000);
+                }}
+                title="Copy the companies that pass the current filters as NSE:TICKER,NSE:TICKER (TradingView watchlist import), in the order shown"
+                style={{
+                  padding: '6px 12px', borderRadius: 8,
+                  border: '1px solid color-mix(in srgb, var(--mc-cyan) 50%, transparent)',
+                  backgroundColor: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)',
+                  color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 800, cursor: 'pointer',
+                  letterSpacing: '0.3px', display: 'inline-flex', alignItems: 'center', gap: 6,
+                }}
+              >
+                {tvCopyNote || '📈 TradingView'}
+              </button>
+            </span>
           )}
           {/* PATCH 0503 — Source coverage telemetry chip. Surfaces which
               exchange provided how many filings + the merged total so the
@@ -3056,7 +3189,7 @@ Source label: ${coverageStats.source}`}
           ))}
           {/* PATCH 1017 — ELITE / PEAD / MULTIBAGGER filter chips (clickable toggles) */}
           {(() => {
-            const allC = TIER_ORDER.flatMap((t) => (view.by_tier[t] || []) as any[]);
+            const allC = TIER_ORDER.flatMap((t) => (activeView.by_tier[t] || []) as any[]);
             const eliteN = allC.filter((s) => s.is_elite).length;
             const peadN = allC.filter((s) => (s.pead_score ?? 0) >= 70).length;
             const mbN = allC.filter((s) => s.multibagger_setup).length;
@@ -3402,7 +3535,7 @@ Source label: ${coverageStats.source}`}
           <FileText style={{ width: 12, height: 12 }} /> Graded Tiers
         </button>
         <span style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--mc-text-4)', alignSelf: 'center' }}>
-          {viewMode === 'CALENDAR' ? `${calRange.from} → ${calRange.to} · ${calData?.total ?? 0} filings` : `${view.candidates_total} graded`}
+          {viewMode === 'CALENDAR' ? `${calRange.from} → ${calRange.to} · ${calData?.total ?? 0} filings` : (windowOn ? `${win.rows.length} companies · ${win.progress.ready}/${win.progress.total} days` : `${view.candidates_total} graded`)}
         </span>
       </div>
 
@@ -3417,7 +3550,7 @@ Source label: ${coverageStats.source}`}
         {viewMode === 'CALENDAR' && (
           <CalendarView data={calData} loading={calLoading} from={calRange.from} to={calRange.to} onPickDate={(d) => { setFilterDate(d); setViewMode('GRADED'); }} />
         )}
-        {viewMode === 'GRADED' && isLoading && view.candidates_total === 0 && (
+        {viewMode === 'GRADED' && !windowOn && isLoading && view.candidates_total === 0 && (
           <div style={{ color: 'var(--mc-text-4)', fontSize: 13, padding: 40, textAlign: 'center' }}>Fetching live results from BSE/NSE + 12 Indian results feeds…</div>
         )}
         {viewMode === 'GRADED' && error && (
@@ -3425,7 +3558,7 @@ Source label: ${coverageStats.source}`}
             Error fetching earnings pipeline. Retry in a moment.
           </div>
         )}
-        {viewMode === 'GRADED' && !isLoading && view.candidates_total === 0 && !error && (() => {
+        {viewMode === 'GRADED' && !windowOn && !isLoading && view.candidates_total === 0 && !error && (() => {
           // PATCH 0152.2 / PATCH 0495 / PATCH 0497 — when picked date has
           // nothing, surface the busiest of the past 14 days as one-click jumps.
           //
@@ -3620,33 +3753,11 @@ Source label: ${coverageStats.source}`}
             </div>
           );
         })()}
-        {viewMode === 'GRADED' && TIER_ORDER.map((tier) => {
-          let stocks = view.by_tier[tier] || [];
-          // PATCH 1017 — apply ELITE / PEAD / MULTIBAGGER filters
-          if (eliteOnly) stocks = stocks.filter((s: any) => s.is_elite);
-          else if (peadOnly) stocks = stocks.filter((s: any) => (s.pead_score ?? 0) >= 70);
-          else if (multibaggerOnly) stocks = stocks.filter((s: any) => s.multibagger_setup);
-          // QUALITY × INFLECTION — sort the survivors by inflection so the fastest
-          // rate of change leads; within this quadrant that IS the ranking.
-          else if (turnaroundOnly) stocks = stocks
-            .filter((s: any) => s.quadrant === 'TURNAROUND ACCELERATOR')
-            .slice()
-            .sort((a: any, b: any) => (b.inflection_score ?? 0) - (a.inflection_score ?? 0));
-          else if (radarOnly) stocks = stocks.filter((s: any) => radarMap.has(String(s.ticker || '').toUpperCase()));
-          else if (beatCheapOnly) {
-            stocks = stocks
-              .filter((s: any) => typeof s.pe === 'number' && s.pe > 0 && s.pe <= 35)
-              .slice()
-              .sort((a: any, b: any) => (a.pe ?? 0) - (b.pe ?? 0));
-          }
-          // PATCH 1022 — market-cap range filter (₹ Cr)
-          if (capFilter !== 'all') {
-            stocks = stocks.filter((s: any) => capInRange(s.market_cap_cr, capFilter));
-          }
-          // zzz703 — pattern filter, applied last so it composes with the rest.
-          if (patternOnly) {
-            stocks = stocks.filter((s: any) => classifyGradedRow(s)?.pattern === patternOnly);
-          }
+        {viewMode === 'GRADED' && !windowOn && TIER_ORDER.map((tier) => {
+          // PATCH 1017 / 1022 / zzz703 — ELITE · PEAD · MULTIBAGGER · turnaround ·
+          // radar · beat+cheap, then market cap, then pattern (applyRowFilters).
+          // zzz815 — freshest filing first within the tier by default.
+          let stocks = applyRowFilters(view.by_tier[tier] || []).slice().sort(withinTierOrder);
           // zzz812 — a searched-for card is shown even when the filters hide
           // it, with a note naming the filters. Never a silent miss.
           const pinnedRow = searchPin ? (view.by_tier[tier] || []).find((x) => x.ticker.toUpperCase() === searchPin.ticker) : undefined;
@@ -3655,7 +3766,7 @@ Source label: ${coverageStats.source}`}
           if (stocks.length === 0) return null;
           const meta = TIER_META[tier];
           // PATCH 1017 — force-expand tiers when a filter is active so matches show immediately
-          const _filterActive = eliteOnly || peadOnly || multibaggerOnly || turnaroundOnly || radarOnly || beatCheapOnly || capFilter !== 'all' || !!patternOnly;
+          const _filterActive = anyRowFilter;
           const isOpen = _filterActive || !!pinnedRow ? true : expanded[tier];
           return (
             <div key={tier} style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderLeft: `4px solid ${meta.color}`, borderRadius: 12 }}>
@@ -3682,10 +3793,201 @@ Source label: ${coverageStats.source}`}
             </div>
           );
         })}
+        {/* ═══ MULTI-DAY WINDOW  (zzz814) ═══════════════════════════════════
+            One row per company (its latest result in the window). By date:
+            newest date first, BLOCKBUSTER → STRONG → MIXED → AVOID inside a
+            day. By tier: every BLOCKBUSTER first, newest first inside a tier.
+            The same filters as a single date; collapsed tiers stay collapsed
+            (MIXED and AVOID by default) and say how many they hold. */}
+        {viewMode === 'GRADED' && windowOn && (() => {
+          const p = win.progress;
+          const failedDates = win.dates.filter((d) => win.states[d] === 'failed');
+          const staleDates = win.dates.filter((d) => win.states[d] === 'stale');
+          const oldest = win.dates[win.dates.length - 1] || resolvedDateForGrading;
+          const weekendDates = win.dates.filter((d) => { const w = new Date(d + 'T00:00:00Z').getUTCDay(); return w === 0 || w === 6; }).length;
+          const fmtLong = (iso: string) => {
+            const dt = new Date(iso + 'T00:00:00Z');
+            return `${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dt.getUTCDay()]} ${fmtShortDate(iso)} ${dt.getUTCFullYear()}`;
+          };
+          type WRow = WindowRow<ParsedEarning>;
+          let rows = applyRowFilters(win.rows as unknown as ParsedEarning[]) as unknown as WRow[];
+          const pinnedRow = searchPin ? win.rows.find((r) => r.ticker.toUpperCase() === searchPin.ticker) : undefined;
+          const pinnedReasons = pinnedRow ? searchHiddenReasons(pinnedRow).filter((r) => !/collapsed|Calendar view/.test(r)) : [];
+          if (pinnedRow && !rows.some((r) => r.ticker === pinnedRow.ticker)) rows = [pinnedRow, ...rows];
+          const tierOpen = (t: string) => anyRowFilter || !!expanded[t as EarningsTier];
+          const hiddenByTier: Record<string, number> = { BLOCKBUSTER: 0, STRONG: 0, MIXED: 0, AVOID: 0 };
+          const shown = rows.filter((r) => {
+            if ((pinnedRow && r.ticker === pinnedRow.ticker) || tierOpen(r.tier)) return true;
+            hiddenByTier[r.tier] = (hiddenByTier[r.tier] || 0) + 1;
+            return false;
+          });
+          const allByDate = new Map<string, WRow[]>();
+          for (const r of rows) (allByDate.get(r._window_date) || allByDate.set(r._window_date, []).get(r._window_date)!).push(r);
+          let budget = windowRenderLimit;
+          const cardFor = (s: WRow, showDate: boolean) => {
+            const notes: string[] = [];
+            if (showDate) notes.push(`📅 ${fmtLong(s._window_date)}`);
+            if (s._also_reported.length) notes.push(`also reported ${s._also_reported.map(fmtShortDate).join(', ')} — showing the latest`);
+            if (s._engine_stale) notes.push(`graded under the previous rules (${s._engine || 'older engine'})`);
+            const isPinned = !!pinnedRow && s.ticker === pinnedRow.ticker && pinnedReasons.length > 0;
+            return (
+              <div key={s._window_date + ':' + s.ticker + ':' + s.company} style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+                {isPinned && (
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--mc-warn, #F59E0B)' }}>
+                    🔍 {s.ticker} {hiddenNote(pinnedReasons)} ·{' '}
+                    <button onClick={() => setSearchPin(null)} style={{ background: 'none', border: 'none', padding: 0, color: 'var(--mc-cyan)', cursor: 'pointer', fontSize: 10.5, fontWeight: 800 }}>hide</button>
+                  </div>
+                )}
+                {notes.length > 0 && (
+                  <div style={{ fontSize: 10.5, fontWeight: 600, color: s._engine_stale ? 'var(--mc-warn)' : 'var(--mc-text-3)' }}>{notes.join(' · ')}</div>
+                )}
+                <EarningsCard stock={s} isFresh={freshTickers.has(s.ticker)} radar={radarMap.get(String(s.ticker || '').toUpperCase())} />
+              </div>
+            );
+          };
+          const takeCards = (list: WRow[], showDate: boolean) => {
+            const out = list.slice(0, Math.max(0, budget)).map((s) => cardFor(s, showDate));
+            budget -= out.length;
+            return out;
+          };
+          const gridStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(360px, 100%), 1fr))', gap: 12 } as const;
+          const toggleBtn = (v: WindowView, label: string) => (
+            <button key={v} onClick={() => setWindowView(v)}
+              style={{
+                padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 800, cursor: 'pointer',
+                border: `1px solid ${windowView === v ? 'var(--mc-cyan)' : 'var(--mc-bg-4)'}`,
+                background: windowView === v ? 'color-mix(in srgb, var(--mc-cyan) 14%, transparent)' : 'transparent',
+                color: windowView === v ? 'var(--mc-cyan)' : 'var(--mc-text-3)',
+              }}>{label}</button>
+          );
+          const collapsedTiers = TIER_ORDER.filter((t) => hiddenByTier[t] > 0);
+          const tierCountChips = (list: WRow[]) => TIER_ORDER.map((t) => {
+            const n = list.filter((r) => r.tier === t).length;
+            return n > 0 ? <span key={t} style={{ color: TIER_META[t].color, fontWeight: 800 }}>{TIER_META[t].icon} {n}</span> : null;
+          });
+          return (
+            <>
+              <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderLeft: '4px solid var(--mc-cyan)', borderRadius: 12, padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--mc-text-1)' }}>
+                    🗓 {windowDays}-session window · {fmtShortDate(oldest)} → {fmtShortDate(resolvedDateForGrading)}
+                  </span>
+                  <span style={{ fontSize: 11, color: 'var(--mc-text-4)' }}>
+                    {win.dates.length} dates{weekendDates > 0 ? ` (${weekendDates} weekend days included — Indian companies file on them)` : ''} · {win.rows.length} {win.rows.length === 1 ? 'company' : 'companies'} graded
+                  </span>
+                  <span className="mc-no-print" style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
+                    {toggleBtn('date', '📅 By date')}
+                    {toggleBtn('tier', '🏆 By tier')}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: p.done ? 'var(--mc-bullish)' : 'var(--mc-text-2)', fontWeight: 700 }}>
+                  {p.done && p.failed === 0 ? '✓ ' : ''}{p.line}
+                </div>
+                {!p.done && (
+                  <div className="mc-no-print" style={{ height: 4, borderRadius: 2, background: 'var(--mc-bg-3)', overflow: 'hidden' }}>
+                    <div style={{ width: `${p.total ? Math.round((p.ready / p.total) * 100) : 0}%`, height: '100%', background: 'var(--mc-cyan)', transition: 'width 0.3s' }} />
+                  </div>
+                )}
+                {(p.queued > 0 || p.grading) && (
+                  <div style={{ fontSize: 11, color: 'var(--mc-text-4)', lineHeight: 1.5 }}>
+                    Days already graded appear at once. Days never graded are graded here one at a time, newest first, through the same India path as a single date (NSE/BSE list + Screener enrichment, rate-limited) — typically 20–60 seconds each. Results show as each day lands; nothing is graded twice.
+                  </div>
+                )}
+                {staleDates.length > 0 && (
+                  <div style={{ fontSize: 11, color: 'var(--mc-warn)', lineHeight: 1.5 }}>
+                    {staleDates.length} {staleDates.length === 1 ? 'date was' : 'dates were'} graded under the previous rules ({Array.from(new Set(staleDates.map((d) => win.days.find((x) => x.date === d)?.engine).filter(Boolean))).join(', ')}; current {GRADED_ENGINE_LABEL}) and {staleDates.length === 1 ? 'is' : 'are'} shown as stored rather than re-grading the whole window. Open a single date to re-grade it under the current rules.
+                  </div>
+                )}
+                {failedDates.length > 0 && (
+                  <div style={{ fontSize: 11, color: 'var(--mc-bearish)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <span>⚠ Not loaded: {failedDates.map((d) => (
+                      <span key={d} title={win.errors[d] || ''} style={{ textDecoration: 'underline dotted', marginRight: 4 }}>{fmtShortDate(d)}</span>
+                    ))}</span>
+                    <button className="mc-no-print" onClick={win.retryFailed}
+                      style={{ padding: '3px 10px', borderRadius: 5, border: '1px solid var(--mc-bearish)', background: 'transparent', color: 'var(--mc-bearish)', fontSize: 11, fontWeight: 800, cursor: 'pointer' }}>
+                      ↻ Retry {failedDates.length}
+                    </button>
+                  </div>
+                )}
+                {collapsedTiers.length > 0 && (
+                  <div className="mc-no-print" style={{ fontSize: 11, color: 'var(--mc-text-3)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <span>Collapsed:</span>
+                    {collapsedTiers.map((t) => (
+                      <button key={t} onClick={() => setExpanded((s) => ({ ...s, [t]: true }))}
+                        style={{ padding: '2px 9px', borderRadius: 12, border: `1px solid ${TIER_META[t].color}60`, background: `${TIER_META[t].color}12`, color: TIER_META[t].color, fontSize: 10.5, fontWeight: 800, cursor: 'pointer' }}>
+                        show {hiddenByTier[t]} {TIER_META[t].label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {win.rows.length === 0 && p.done && (
+                <div style={{ color: 'var(--mc-text-3)', fontSize: 13, padding: '28px', textAlign: 'center', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 10 }}>
+                  {p.failed > 0 ? 'Nothing could be loaded for this window yet — retry the dates above.' : 'No graded results in this window.'}
+                </div>
+              )}
+              {win.rows.length > 0 && rows.length === 0 && (
+                <div style={{ color: 'var(--mc-text-3)', fontSize: 13, padding: '28px', textAlign: 'center', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 10 }}>
+                  {win.rows.length} companies in the window — none pass the current filters.
+                </div>
+              )}
+
+              {windowView === 'date' && sortByDate(shown, withinTierOrder).map((g) => {
+                if (budget <= 0) return null;
+                const all = allByDate.get(g.date) || g.rows;
+                const stale = win.states[g.date] === 'stale';
+                return (
+                  <div key={g.date} style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 12, padding: '12px 16px 16px' }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+                      <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--mc-text-1)' }}>📅 {fmtLong(g.date)}</span>
+                      <span style={{ fontSize: 11.5, color: 'var(--mc-text-3)' }}>{all.length} {all.length === 1 ? 'company' : 'companies'}</span>
+                      <span style={{ fontSize: 11.5, display: 'inline-flex', gap: 8 }}>{tierCountChips(all)}</span>
+                      {stale && <span style={{ fontSize: 10.5, color: 'var(--mc-warn)', fontWeight: 700 }}>· graded under the previous rules</span>}
+                      <button className="mc-no-print" onClick={() => { setWindowDays(1); setFilterDate(g.date); }}
+                        title="Open this date on its own (single-date view, where it can be refreshed or re-graded)"
+                        style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 700, cursor: 'pointer', padding: 0 }}>open date →</button>
+                    </div>
+                    <div style={gridStyle}>{takeCards(g.rows, false)}</div>
+                  </div>
+                );
+              })}
+
+              {windowView === 'tier' && sortByTier(rows, withinTierOrder).map((g) => {
+                const meta = TIER_META[g.tier];
+                const open = tierOpen(g.tier) || (!!pinnedRow && pinnedRow.tier === g.tier);
+                const list = open ? g.rows.filter((r) => tierOpen(r.tier) || (pinnedRow && r.ticker === pinnedRow.ticker)) : [];
+                const cards = budget > 0 ? takeCards(list, true) : [];
+                return (
+                  <div key={g.tier} style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderLeft: `4px solid ${meta.color}`, borderRadius: 12 }}>
+                    <button onClick={() => setExpanded((s) => ({ ...s, [g.tier]: !s[g.tier] }))}
+                      style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', color: 'inherit' }}>
+                      {open ? <ChevronDown style={{ width: 16, height: 16, color: 'var(--mc-text-4)' }} /> : <ChevronRight style={{ width: 16, height: 16, color: 'var(--mc-text-4)' }} />}
+                      <span style={{ fontSize: 16, fontWeight: 800, color: meta.color }}>{meta.icon} {meta.label}</span>
+                      <span style={{ fontSize: 12, color: 'var(--mc-text-3)' }}>{g.rows.length} {g.rows.length === 1 ? 'company' : 'companies'} across the window</span>
+                      <span style={{ fontSize: 11, color: 'var(--mc-text-4)' }}>· newest first</span>
+                    </button>
+                    {cards.length > 0 && <div style={{ ...gridStyle, padding: '0 18px 16px' }}>{cards}</div>}
+                  </div>
+                );
+              })}
+
+              {shown.length > windowRenderLimit && (
+                <button className="mc-no-print" onClick={() => setWindowRenderLimit((n) => n + 120)}
+                  style={{ alignSelf: 'center', padding: '8px 18px', borderRadius: 8, border: '1px solid var(--mc-cyan)', background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', color: 'var(--mc-cyan)', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>
+                  Show more — {windowRenderLimit} of {shown.length} cards shown
+                </button>
+              )}
+            </>
+          );
+        })()}
       </div>
     </div>
   );
 }
+
+// zzz814 — engine label for the "previous rules" note (the current namespace).
+const GRADED_ENGINE_LABEL = GRADED_CACHE_VERSION;
 
 // PATCH 0144 — Pro card matching EarningsPulse layout:
 // COMPANY  ·  PE · Q4 · CAP-BUCKET · SECTOR · ☀️/🌙 · ₹PRICE

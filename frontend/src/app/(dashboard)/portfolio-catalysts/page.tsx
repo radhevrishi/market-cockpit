@@ -40,7 +40,7 @@ import { isSmallMidCap, SMALL_MID_CAP_MAX_CR } from '@/lib/thesis/universe';
 import { priorBackfillPlan } from '@/lib/thesis/prior-period';
 import { evidenceCounts, universeCounts, researchPriorityEligible, researchPriorityTitle, researchWhyLine, exportCounts, evidenceAttention, RESEARCH_EXPORT_STATUSES } from '@/lib/thesis/evidence-counts';
 import NewCatalystsTab from '@/components/catalyst/new-catalysts-tab';
-import { buildRecentCatalysts, rawFromLedger, rawFromPersistent, rawFromFeed, localToday, type RawEvent, type ThesisCtx } from '@/lib/catalyst/recent-events';
+import { buildRecentCatalysts, rawFromLedger, rawFromPersistent, rawFromFeed, localToday, windowRange, countInRange, type RawEvent, type ThesisCtx, type WindowSpan } from '@/lib/catalyst/recent-events';
 import { useFilingReads } from '@/components/catalyst/use-filing-reads';
 import { cbCriteriaLine, nextWindow, PC_PAGE_STEP, readScope, otherBenchLabel } from '@/lib/thesis/pc-bench';
 
@@ -242,6 +242,14 @@ export default function PortfolioCatalystsPage() {
   const readQueue = useMemo(() => (recentRaws ? buildRecentCatalysts(recentRaws, today, { market: 'IN' }).toRead : []), [recentRaws, today]);
   const { reads: filingReads, progress: readProgress } = useFilingReads(readQueue, 'IN', !!recentRaws);
   const recentNew = useMemo(() => (recentRaws ? buildRecentCatalysts(recentRaws, today, { market: 'IN', reads: filingReads }) : null), [recentRaws, today, filingReads]);
+  // zzz814: the selected days (Today · 3d · 5d · 10d, stepped / jumped) — the tab label counts the same window.
+  const [newWin, setNewWin] = useState<{ span: WindowSpan; anchor: string | null }>({ span: 10, anchor: null });
+  const newLabel = useMemo(() => {
+    if (!recentNew) return 'New \u00B7 last 10 days (\u2026)';
+    const r = windowRange(today, newWin.span, newWin.anchor, recentNew.window.days);
+    const words = newWin.anchor ? (r.from === r.to ? r.to : `${r.from} to ${r.to}`) : newWin.span === 1 ? 'today' : `last ${newWin.span} days`;
+    return `New \u00B7 ${words} (${countInRange(recentNew.items, r, today)})`;
+  }, [recentNew, newWin, today]);
   const recentNotes = useMemo(() => {
     const n: string[] = [];
     if (note.serverError) n.push(`Your book could not be read from the server (${note.serverError}) — only names held in this browser are covered.`);
@@ -289,7 +297,7 @@ export default function PortfolioCatalystsPage() {
 
       {/* ── THE VIEWS. (zzz808) The catalyst board, or what is new. ─────── */}
       <div className="mc-wrap-mobile" role="tablist" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        {([['board', 'Catalyst board'], ['new', `New \u00B7 last 10 days (${recentNew ? recentNew.items.length : '\u2026'})`]] as Array<[typeof view, string]>).map(([k, label]) => {
+        {([['board', 'Catalyst board'], ['new', newLabel]] as Array<[typeof view, string]>).map(([k, label]) => {
           const on = view === k;
           return (
             <button key={k} role="tab" aria-selected={on} onClick={() => setView(k)} style={{
@@ -302,7 +310,7 @@ export default function PortfolioCatalystsPage() {
       </div>
 
       {view === 'new' ? (
-        <NewCatalystsTab result={recentNew} loading={loading || evidenceLoading} names={sized.length} sourceNotes={recentNotes} market="IN" progress={readProgress}
+        <NewCatalystsTab result={recentNew} loading={loading || evidenceLoading} names={sized.length} sourceNotes={recentNotes} market="IN" progress={readProgress} win={newWin} onWin={setNewWin}
           onJump={(t) => { setView('board'); setSource('all'); jumpTo(t); }} />
       ) : (<>
       {/* ── WHICH POPULATION. Two numbers, never merged into one. ───────── */}

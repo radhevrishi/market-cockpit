@@ -11,7 +11,8 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  subjectClass, buildRecentCatalysts, thesisFor, importanceOf, normUrl, type RawEvent, type FilingRead, type ThesisCtx,
+  subjectClass, buildRecentCatalysts, thesisFor, importanceOf, normUrl, windowRange, inRange, groupByDay, topOfWindow,
+  countInRange, compareWithinDay, dayLabel, rowAnchor, type RawEvent, type FilingRead, type ThesisCtx, type RecentEvent,
 } from '../catalyst/recent-events';
 import { readFilingText, resultsLine, capacityLine, schemeLine, toFilingRead, FILING_READ_VERSION } from '../catalyst/filing-read';
 
@@ -295,5 +296,73 @@ describe('thesis mapping — deterministic', () => {
     assert.equal(e.what, 'Capacity 5,000 → 9,600+ MTPA (+92%), commissioned');
     assert.equal(e.thesis, 'supports');
     assert.equal(e.importance, 'Material');
+  });
+});
+
+// ── 5. by calendar day, like Earnings Opportunities (zzz814) ─────────────
+describe('window selector', () => {
+  test('10d = today and the 9 days before; Today = one day', () => {
+    assert.deepEqual(windowRange(TODAY, 10), { from: '2026-09-19', to: TODAY, days: 10 });
+    assert.deepEqual(windowRange(TODAY, 1), { from: TODAY, to: TODAY, days: 1 });
+    assert.deepEqual(windowRange(TODAY, 3), { from: '2026-09-26', to: TODAY, days: 3 });
+    assert.deepEqual(windowRange(TODAY, 5), { from: '2026-09-24', to: TODAY, days: 5 });
+  });
+  test('stepping back moves the window; it never runs before the 10-day floor or past today', () => {
+    assert.deepEqual(windowRange(TODAY, 3, '2026-09-25'), { from: '2026-09-23', to: '2026-09-25', days: 3 });
+    assert.deepEqual(windowRange(TODAY, 5, '2026-09-20'), { from: '2026-09-19', to: '2026-09-20', days: 2 });
+    assert.deepEqual(windowRange(TODAY, 1, '2026-09-01'), { from: '2026-09-19', to: '2026-09-19', days: 1 });
+    assert.deepEqual(windowRange(TODAY, 1, '2026-10-05'), { from: TODAY, to: TODAY, days: 1 });
+  });
+  test('range boundaries are inclusive; an IST "tomorrow" counts as today only when the window ends today', () => {
+    const r = windowRange(TODAY, 3);
+    assert.equal(inRange('2026-09-26', r), true);
+    assert.equal(inRange('2026-09-25', r), false);
+    assert.equal(inRange('2026-09-29', r, TODAY), true);
+    assert.equal(inRange('2026-09-26', windowRange(TODAY, 1, '2026-09-25')), false);
+  });
+});
+
+describe('grouped by calendar day, newest day first', () => {
+  const text = 'The Company reports Q1 FY27 results. Revenue from Operations at Rs. 78.4 Crores, up 32% YoY.' + PAD;
+  const res = filing({ ticker: 'RES', date: '2026-09-22', title: 'Press Release' });
+  const raws = [
+    filing({ ticker: 'CLAR', date: '2026-09-22', title: 'Spurt in Volume' }),
+    filing({ ticker: 'ORD', date: '2026-09-22', title: 'Bagging/Receiving of orders/contracts' }),
+    filing({ ticker: 'SCH', date: '2026-09-22', title: 'Scheme of Arrangement - demerger' }),
+    res,
+    filing({ ticker: 'ESG', date: '2026-09-22', title: 'Intimation Regarding ESG Rating' }),
+    filing({ ticker: 'NEW', date: '2026-09-27', title: 'Bagging/Receiving of orders/contracts' }),
+    filing({ ticker: 'OLD', date: '2026-09-19', title: 'Acquisition of a subsidiary' }),
+  ];
+  const r = buildRecentCatalysts(raws, TODAY, { reads: { [res.url!]: read(res.url!, text, res.title) } });
+  const days = groupByDay(r, windowRange(TODAY, 10), TODAY);
+  test('one group per day, newest first, with a plain header', () => {
+    assert.deepEqual(days.map((d) => d.date), ['2026-09-27', '2026-09-22', '2026-09-19']);
+    assert.equal(dayLabel('2026-09-22'), 'Tue 22 Sep');
+    assert.equal(days[1].header, 'Tue 22 Sep · 4 events (2 Material)');
+  });
+  test('inside a day: Material with a figure first, then Material, then Notable; minor and routine apart', () => {
+    assert.deepEqual(days[1].items.map((e) => e.ticker), ['RES', 'SCH', 'ORD']);
+    assert.deepEqual(days[1].minor.map((e) => e.ticker), ['CLAR']);
+    assert.deepEqual(days[1].hidden.map((e) => e.ticker), ['ESG']);
+  });
+  test('compareWithinDay: importance, then a stated figure, then weight', () => {
+    const e = (o: Partial<RecentEvent>) => ({ ticker: 'T', importance: 'Notable', figure: null, thesis: 'neutral', type: 'Other filing', ...o }) as RecentEvent;
+    const list = [e({ ticker: 'N' }), e({ ticker: 'MO', importance: 'Material', type: 'Acquisition' }), e({ ticker: 'MF', importance: 'Material', type: 'Order win', figure: '₹450 Cr' }), e({ ticker: 'MR', importance: 'Material', type: 'Results' })];
+    assert.deepEqual([...list].sort(compareWithinDay).map((x) => x.ticker), ['MF', 'MR', 'MO', 'N']);
+  });
+  test('a shorter window keeps only its days; the label count matches', () => {
+    const w3 = windowRange(TODAY, 3);
+    assert.deepEqual(groupByDay(r, w3, TODAY).map((d) => d.date), ['2026-09-27']);
+    assert.equal(countInRange(r.items, w3, TODAY), 1);
+    assert.equal(countInRange(r.items, windowRange(TODAY, 10), TODAY), r.items.length);
+  });
+  test('top of the window: up to 5 Material, newest first', () => {
+    const top = topOfWindow(r.items, windowRange(TODAY, 10), 5, TODAY);
+    assert.deepEqual(top.map((e) => e.ticker), ['RES', 'SCH', 'OLD']);
+    assert.ok(top.every((e) => e.importance === 'Material'));
+    assert.deepEqual(topOfWindow(r.items, windowRange(TODAY, 10), 2, TODAY).map((e) => e.ticker), ['RES', 'SCH']);
+    assert.deepEqual(topOfWindow(r.items, windowRange(TODAY, 3), 5, TODAY), []);
+    assert.match(rowAnchor(top[0]), /^nc-[A-Za-z0-9-]+$/);
   });
 });

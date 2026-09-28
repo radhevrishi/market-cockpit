@@ -512,6 +512,8 @@ export async function GET(req: Request) {
             financials_source: e.financials_source,
           };
           const g = gradeRow(row);
+          // zzz815 — keep the filing timestamp across a partial refresh.
+          if (g && (c as any).filing_time_iso) (g as any).filing_time_iso = (c as any).filing_time_iso;
           // PATCH 0359 — only count a card as "replaced" when enrich produced
           // a card with meaningful financial data (YoY %s present, not just
           // a raw sales_curr_cr). Previously gradeRow could return a card
@@ -1205,6 +1207,10 @@ export async function GET(req: Request) {
       financials_source: e.financials_source,
     };
     const { card: g, dropReason } = gradeIndiaRowExplained(row);
+    // zzz815 — carry the exchange filing TIMESTAMP (when the source has one)
+    // so the page can put the freshest filing on top. A date-only value is
+    // not a time and is not copied.
+    if (g) { const _ft = (m as any).filing_iso; if (typeof _ft === 'string' && /\d{2}:\d{2}/.test(_ft)) (g as any).filing_time_iso = _ft; }
     if (g) graded.push(g);
     else dropped.push({ ticker: m.ticker, reason: dropReason || 'unknown', source: m.__source });
   }

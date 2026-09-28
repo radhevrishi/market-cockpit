@@ -729,3 +729,103 @@ export function localToday(now: Date = new Date()): string {
   const y = now.getFullYear(), m = String(now.getMonth() + 1).padStart(2, '0'), d = String(now.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BY CALENDAR DAY, LIKE EARNINGS OPPORTUNITIES.                      (zzz814)
+// The owner: "keep latest at top, similar to India Earnings Opportunities
+// based on calendar dates selected — inside that, BLOCKBUSTER / most important
+// first". A window selector (Today · 3d · 5d · 10d, ← → one day, jump to a
+// date inside the last 10 days) picks the days; each day is a group, newest
+// day first; inside a day Material → Notable → Minor, then event weight.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const WINDOW_SPANS = [1, 3, 5, 10] as const;
+export type WindowSpan = typeof WINDOW_SPANS[number];
+
+const addDays = (d: string, n: number): string => new Date((dayNum(d) + n) * 86_400_000).toISOString().slice(0, 10);
+
+/** Pure: the selected days. `anchor` is the newest day shown (default today), clamped to the last
+ *  `maxDays` days; the range never reaches before the oldest day the tab holds. */
+export function windowRange(today: string, span: WindowSpan | number, anchor?: string | null, maxDays: number = DEFAULT_WINDOW_DAYS): { from: string; to: string; days: number } {
+  const oldest = addDays(today, -(maxDays - 1));
+  let to = isoDay(anchor) || today;
+  if (to > today) to = today;
+  if (to < oldest) to = oldest;
+  let from = addDays(to, -(Math.max(1, span) - 1));
+  if (from < oldest) from = oldest;
+  return { from, to, days: daysAgo(from, to) + 1 };
+}
+
+/** Pure: is the day inside the range (one day ahead of `to` is tolerated when `to` is today — IST vs Europe). */
+export function inRange(date: string, r: { from: string; to: string }, today?: string): boolean {
+  const d = isoDay(date);
+  if (!d) return false;
+  const top = today && r.to === today ? addDays(today, 1) : r.to;
+  return d >= r.from && d <= top;
+}
+
+/** Pure: the order inside one day — Material → Notable → Minor, then a stated figure first (the
+ *  "blockbuster" — results with numbers, an order with a value), then event weight, then ticker. */
+export function compareWithinDay(a: RecentEvent, b: RecentEvent): number {
+  return IMP_RANK[a.importance] - IMP_RANK[b.importance]
+    || (a.figure ? 0 : 1) - (b.figure ? 0 : 1)
+    || (a.thesis === 'supports' ? 0 : 1) - (b.thesis === 'supports' ? 0 : 1)
+    || TYPE_RANK[a.type] - TYPE_RANK[b.type]
+    || a.ticker.localeCompare(b.ticker);
+}
+
+const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** "Mon 22 Sep" */
+export function dayLabel(date: string): string {
+  const d = new Date(dayNum(date) * 86_400_000);
+  return `${WD[d.getUTCDay()]} ${d.getUTCDate()} ${MO[d.getUTCMonth()]}`;
+}
+
+export interface DayGroup {
+  date: string;
+  label: string;
+  /** Material + Notable, most important first. */
+  items: RecentEvent[];
+  minor: RecentEvent[];
+  hidden: RecentEvent[];
+  /** "Mon 22 Sep · 5 events (2 Material)" — events counts items + minor, never routine. */
+  header: string;
+}
+
+/** Pure: one group per calendar day in the range, newest day first. A day with nothing but
+ *  routine paperwork still gets its group (so "3 routine filings hidden" is said per day). */
+export function groupByDay(res: Pick<RecentCatalystResult, 'items' | 'minor' | 'hidden'>, range: { from: string; to: string }, today?: string): DayGroup[] {
+  const map = new Map<string, DayGroup>();
+  const at = (d: string) => {
+    const k = d > range.to ? range.to : d;          // an IST "tomorrow" sits with today
+    if (!map.has(k)) map.set(k, { date: k, label: dayLabel(k), items: [], minor: [], hidden: [], header: '' });
+    return map.get(k)!;
+  };
+  for (const e of res.items) if (inRange(e.date, range, today)) at(e.date).items.push(e);
+  for (const e of res.minor) if (inRange(e.date, range, today)) at(e.date).minor.push(e);
+  for (const e of res.hidden) if (inRange(e.date, range, today)) at(e.date).hidden.push(e);
+  const out = Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
+  for (const g of out) {
+    g.items.sort(compareWithinDay);
+    g.minor.sort(compareWithinDay);
+    const n = g.items.length + g.minor.length;
+    const mat = g.items.filter((e) => e.importance === 'Material').length;
+    g.header = `${g.label} · ${n} event${n === 1 ? '' : 's'}${mat ? ` (${mat} Material)` : ''}`;
+  }
+  return out;
+}
+
+/** Pure: up to `n` Material items across the range, newest first (weight breaks a tie). */
+export function topOfWindow(items: RecentEvent[], range: { from: string; to: string }, n = 5, today?: string): RecentEvent[] {
+  return items.filter((e) => e.importance === 'Material' && inRange(e.date, range, today))
+    .sort((a, b) => b.date.localeCompare(a.date) || compareWithinDay(a, b)).slice(0, n);
+}
+
+/** Pure: the default-visible count for a range (the tab label). */
+export function countInRange(items: RecentEvent[], range: { from: string; to: string }, today?: string): number {
+  return items.filter((e) => inRange(e.date, range, today)).length;
+}
+
+/** A DOM-safe anchor id for a row. */
+export const rowAnchor = (e: Pick<RecentEvent, 'id'>): string => `nc-${e.id.replace(/[^a-z0-9]+/gi, '-').slice(0, 120)}`;
