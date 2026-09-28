@@ -337,3 +337,33 @@ export function cbCriteriaLine(info: CbCriteriaInfo | null | undefined, onPage: 
     + ` · ${info.failing} of the ${info.listTotal} on the list miss your criteria${showingFailing ? ' (shown, labelled)' : ' (hidden — use the chip to show them)'}`
     + ` · source: ${info.source}`;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz827 — THE WHOLE CONVICTION BEATS LIST ON PORTFOLIO CATALYSTS.
+//
+// "Not all companies in that tab are in Portfolio Catalysts' conviction
+// beats": the tab listed 84 names (15 he holds + 69 not held) while this page
+// only offered "My book 81" and "Bench 69" — the 15 held names were inside
+// My book, so no view here showed the tab's 84. The "🏆 Conviction Beats"
+// view is every name passing his criteria, held ones included and tagged
+// "📗 also in My book"; "Bench" stays the names he does not hold.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const CB_VIEW_ALSO_HELD = '📗 also in My book';
+
+/** Rows on the Conviction Beats list under his criteria (held + bench), by heldKey. */
+export function cbViewRows<T extends { symbol: string }>(rows: T[], cbPassing: Iterable<string>): T[] {
+  const want = new Set(Array.from(cbPassing, (t) => heldKey(t)));
+  return rows.filter((r) => want.has(heldKey(r.symbol)));
+}
+
+/** The tag a card carries in the Conviction Beats view. */
+export function cbViewTag(origin: string): string | null {
+  return origin === 'book' || origin === 'both' ? CB_VIEW_ALSO_HELD : null;
+}
+
+/** "🏆 Conviction Beats 84" = held 15 + bench 69, said in one line. */
+export function cbViewLine(rows: Array<{ origin: string }>): string {
+  const held = rows.filter((r) => r.origin === 'book' || r.origin === 'both').length;
+  return `Conviction Beats ${rows.length} = ${held} you hold (${CB_VIEW_ALSO_HELD}) + ${rows.length - held} on the bench`;
+}

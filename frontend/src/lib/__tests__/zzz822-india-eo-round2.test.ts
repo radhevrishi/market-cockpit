@@ -45,14 +45,14 @@ describe('D1 · HTML entities decoded everywhere', () => {
 describe('D2 · liquidity: a believable daily average or —', () => {
   test('the five impossible figures are not shown (results-day turnover)', () => {
     for (const [adtv, mcap] of [[1415, 12242], [1611, 15269], [1652, 21227], [532, 2864], [382, 2846]]) {
-      const v = liquidityView({ adtv_cr: adtv, market_cap_cr: mcap });
+      const v = liquidityView({ adtv_cr: adtv, adtv_days: 20, market_cap_cr: mcap });
       assert.equal(v.cr, null, `${adtv}/${mcap}`);
       assert.equal(v.note, 'not a daily average');
     }
     assert.equal(MAX_PLAUSIBLE_DAILY_TURNOVER_PCT, 5);
   });
   test('plausible averages are kept; an explicit multi-day average wins; unknown is —', () => {
-    assert.equal(liquidityView({ adtv_cr: 779, market_cap_cr: 127810 }).cr, 779);
+    assert.equal(liquidityView({ adtv_cr: 779, adtv_days: 20, market_cap_cr: 127810 }).cr, 779);
     assert.equal(liquidityView({ adtv_cr: 1415, adtv_20d_cr: 60, market_cap_cr: 12242 }).cr, 60);
     assert.equal(liquidityView({}).cr, null);
     assert.equal(liquidityView({}).note, 'not in source');

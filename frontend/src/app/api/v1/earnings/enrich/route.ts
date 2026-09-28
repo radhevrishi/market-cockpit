@@ -16,7 +16,8 @@ import { NextResponse } from 'next/server';
 import { isQuarterEndStale, yoyFromDatedSeries, sameFigure } from '@/lib/india-eo-card-data';  // zzz820
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { proxiedFetch, fetchWorkerStock } from '@/lib/proxy-fetch';
-import { sameFyCash } from '@/lib/india-cash';
+import { sameFyCash, CASH_RULE_V } from '@/lib/india-cash';
+import { YOY_RULE_V } from '@/lib/india-eo-card-data';  // zzz826
 import { fetchCompanyFinancialResults } from '@/lib/nse';
 
 export const runtime = 'nodejs';
@@ -953,8 +954,14 @@ async function fetchYahooForSymbol(symbol: string, filedHint?: string): Promise<
       const m = Math.floor(a.length / 2);
       return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
     };
-    const _medTvR = _median(_tv);
+    // zzz826 — the liquidity average is the MEDIAN of the last 20 sessions'
+    // traded value (at least 10 real sessions), and it says how many days it
+    // covers (`adtv_days`). Only a figure carrying `adtv_days` is treated as a
+    // daily average anywhere downstream; a single day's turnover never is.
+    const _tv20 = _tv.slice(0, 20);
+    const _medTvR = _tv20.length >= 10 ? _median(_tv20) : null;
     const adtv_cr: number | null = _medTvR != null ? _medTvR / 1e7 : null;
+    const adtv_days: number | null = adtv_cr != null ? _tv20.length : null;
     const _medVol = _median(_volWindow);
     const _reactVol = (reactionIdx >= 0 && volumes[reactionIdx] != null && Number.isFinite(volumes[reactionIdx] as number)) ? (volumes[reactionIdx] as number) : null;
     const rvol: number | null = (_reactVol != null && _medVol != null && _medVol > 0) ? _reactVol / _medVol : null;
@@ -989,7 +996,7 @@ async function fetchYahooForSymbol(symbol: string, filedHint?: string): Promise<
       ma_50: ma50, ma_150: ma150, ma_200: ma200, ma_200_slope_30d: ma200_slope,
       return_12w_pct: ret12w,
       stage, trend_template_passes: trendTemplate,
-      adtv_cr, rvol, atr_pct,  // PATCH 1034
+      adtv_cr, adtv_days, rvol, atr_pct,  // PATCH 1034 · zzz826 adtv_days
       close_30d: _close30d.length >= 2 ? _close30d : null,  // zzz248
       // zzz356 — 20-day avg volume + latest/avg ratio for institutional-
       // demand confirmation. Yahoo 52W high already present on Screener
@@ -1365,7 +1372,7 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   // zzz820 v15->v16: year-ago matched by DATE (not 4 columns back), stale
   // consolidated pages no longer win over a fresh standalone page, and
   // Screener cherry-picks must be the same statement/quarter as the primary.
-  const cacheKey = filedHint ? `enrich:v17:${symbol}:${filedHint}` : `enrich:v17:${symbol}`;  // zzz821 v16→v17: same-FY cash basis (cash_fy)  // zzz377 v14->v15: flush so worker-sourced quarterly trends land. zzz375 v13->v14. zzz372 v12->v13
+  const cacheKey = filedHint ? `enrich:v18:${symbol}:${filedHint}` : `enrich:v18:${symbol}`;  // zzz826 v17→v18: adtv only as a real multi-day average (turnover_1d_cr apart), cash ratios up to ±50x, cash_rule_v, yoy_basis  // zzz821 v16→v17: same-FY cash basis (cash_fy)  // zzz377 v14->v15: flush so worker-sourced quarterly trends land. zzz375 v13->v14. zzz372 v12->v13
   if (isRedisAvailable() && !bypassCache) {
     try {
       const cached = await kvGet(cacheKey);
@@ -1406,7 +1413,7 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     // cfo payload (that KV read was silently defeating zzz370's retry). Also: a cached
     // payload that has NO trends is never a valid hit for the trend consumers — fall
     // through and re-scrape so a transient miss self-heals.
-    const kvKey = `cfo:v6:${sym}`;   // zzz821 v5→v6: same-FY cash + industry path
+    const kvKey = `cfo:v7:${sym}`;   // zzz821 v5→v6: same-FY cash + industry path · zzz826 v6→v7: ±50x cash limit
     if (!bypassCache) {
       try {
         const cached = await kvGet<any>(kvKey);
@@ -1480,7 +1487,7 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     // a trend-less CFO payload for 24h and starving the enrich hoist.
     const cfoTtl = result._trends ? 24 * 3600 : 30 * 60;
     if (typeof cash.ocf_annual_cr === 'number' || result._trends) {
-      try { await kvSet(`cfo:v6:${sym}`, result, cfoTtl); } catch {}
+      try { await kvSet(`cfo:v7:${sym}`, result, cfoTtl); } catch {}
     }
     return result;
   };
@@ -1842,15 +1849,19 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
         out._price_source = 'bhavcopy-returned-null';
       }
       // PATCH 1035 — Liquidity fallback. Yahoo's chart (our median-ADTV source) is
-      // usually IP-blocked on Railway, so derive traded value from the NSE bhavcopy
-      // we already fetched: filing-day turnover (qty × close) in ₹Cr. It's a
-      // conservative thin-float proxy — earnings day is typically the heaviest
-      // volume day, so if even that is thin the stock is genuinely illiquid.
-      if ((out.adtv_cr == null || !Number.isFinite(out.adtv_cr)) && px.volume != null && px.volume > 0) {
+      // usually IP-blocked on Railway, so the NSE bhavcopy we already fetched is
+      // the only volume figure left.
+      // zzz826 — that figure is ONE day's turnover (usually the results day,
+      // the busiest day of the quarter) and it used to be stored as the daily
+      // AVERAGE (`adtv_cr`). It is now stored under its own name and never as
+      // the average: fetching 20 more full-market bhavcopy files per company
+      // would blow the per-ticker time budget, so without Yahoo's history the
+      // average is simply unknown.
+      if (px.volume != null && px.volume > 0) {
         const _p = (px.current_price ?? out.current_price);
         if (_p != null && Number.isFinite(_p) && _p > 0) {
-          out.adtv_cr = (px.volume * _p) / 1e7;
-          out._adtv_source = 'nse-bhavcopy';
+          out.turnover_1d_cr = (px.volume * _p) / 1e7;
+          out._turnover_1d_source = 'nse-bhavcopy';
         }
       }
     } catch (e: any) {
@@ -1859,6 +1870,15 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
       out._price_error = String(e?.message || e).slice(0, 200);
     }
   }
+
+  // zzz826 — an average without the days it covers is not an average.
+  if (!(typeof out.adtv_days === 'number' && out.adtv_days >= 10)) { out.adtv_cr = null; out.adtv_days = null; }
+  // zzz826 — marks figures built under the current cash rule (same-FY, ±50x),
+  // so a stored row graded before it can be told apart and re-fetched.
+  out.cash_rule_v = CASH_RULE_V;
+  // zzz826 — and figures whose year-ago quarter was matched BY DATE (zzz820):
+  // the positional look-back that produced UNCONFIRMED rows no longer exists.
+  out.yoy_rule_v = YOY_RULE_V;
 
   // PATCH 1005 — OPM compute fallback + sanity clamp.
   // Many tickers (EIFFL etc.) come back with opm_pct=null even when

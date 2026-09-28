@@ -2797,6 +2797,10 @@ export default function EarningsOpportunitiesPage() {
                 <strong style={{ color: 'var(--mc-cyan)' }}>📐 HOW THE TIER IS DECIDED — from the company&apos;s numbers only</strong><br/>
                 The tier looks only at what the company reported: how much sales, profit and earnings per share (EPS) grew against the same quarter last year, the operating margin and whether it widened, whether cash backs the profit, and any warning flags found in the filing.<br/>
                 <strong>Price is not part of the grade.</strong> The chart (stage and relative strength), the share-price move on the day after results (Day-1 reaction), how far the price is from its 52-week high, and thin trading are shown on each card as small grey <em>&ldquo;Price context — not part of the grade&rdquo;</em> chips. A falling share price never lowers a tier, and a rising one never lifts it.<br/>
+                <strong>Very small company / Barely trades.</strong> A company worth under ₹100 Cr gets an orange <em>&ldquo;Very small company&rdquo;</em> chip; one under ₹500 Cr whose shares trade less than ₹10 lakh a day on average gets <em>&ldquo;Barely trades&rdquo;</em>. These come from the share price (market cap and trading value), so they sit beside the tier and never change it. To hide small companies, use the <em>Mkt Cap</em> filter.<br/>
+                <strong>Trading value (💧).</strong> Shown only as a real average of recent trading days, e.g. &ldquo;₹2.4 Cr/d avg (20d)&rdquo;. When only one day&apos;s figure is known (usually results day, the busiest day), the chip shows &ldquo;—&rdquo;: one day is not an average. Unknown trading never counts as &ldquo;thin&rdquo; or &ldquo;barely trades&rdquo;.<br/>
+                <strong>Cash (CFO/PAT).</strong> Operating cash flow ÷ net profit for the same full year. Example: cash ₹60 Cr, profit ₹50 Cr → 1.2x, the profit is backed by cash. A very high ratio (8x or more) means profit was small next to cash flow, and the card says &ldquo;profit small vs cash&rdquo;.<br/>
+                <strong>Guidance.</strong> If we have no guidance for a company, it is shown as unknown — never as &ldquo;not raised&rdquo;. Unknown guidance can stop a top-tier result that needs it; it never lowers a grade.<br/>
                 An internal number is used behind the scenes only to order cards within a tier; it is not shown.
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
@@ -2821,7 +2825,7 @@ export default function EarningsOpportunitiesPage() {
                   <strong style={{ color: 'var(--mc-bullish)' }}>🟢 STRONG</strong> — good, clean growth in the numbers with few warning flags, or a BLOCKBUSTER-sized quarter that missed one of the five checks. A loss that is shrinking fast on strongly rising sales can reach STRONG, never higher.
                 </div>
                 <div style={{ padding: '8px 12px', background: 'color-mix(in srgb, #FACC15 6%, transparent)', border: '1px solid color-mix(in srgb, #FACC15 30%, transparent)', borderRadius: 8 }}>
-                  <strong style={{ color: '#FACC15' }}>🟡 MIXED</strong> — some good numbers but not enough, too many warning flags, still loss-making, margins shrinking sharply, or a company too small to invest in (under ₹100 Cr, or under ₹500 Cr and barely trading).
+                  <strong style={{ color: '#FACC15' }}>🟡 MIXED</strong> — some good numbers but not enough, too many warning flags, still loss-making, or margins shrinking sharply.
                 </div>
                 <div style={{ padding: '8px 12px', background: 'color-mix(in srgb, var(--mc-bearish) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 30%, transparent)', borderRadius: 8 }}>
                   <strong style={{ color: 'var(--mc-bearish)' }}>🔴 AVOID</strong> — the numbers went the wrong way (e.g. EPS down and profit down more than 10%) or were weak overall.
@@ -4508,6 +4512,13 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
           {capReasonOf(stock)}
         </div>
       )}
+      {/* zzz826 — guidance we do not have is said to be unknown, never "not raised". */}
+      {typeof (stock as any).guidance_note === 'string' && (stock as any).guidance_note && (
+        <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginBottom: 4, lineHeight: 1.35 }}
+          title="Guidance status: unknown. Unknown guidance can hold back a top-tier result that needs it; it never lowers a grade.">
+          Guidance: unknown{String((stock as any).guidance_note).startsWith('so ') ? ', ' : ' — '}{(stock as any).guidance_note}
+        </div>
+      )}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', fontSize: 10.5, marginBottom: 8 }}>
         {/* zzz696 — everything from the quadrant badge to the sector chip is
             opt-in. The PRICE below is not: it shares this row but it is a
@@ -4564,13 +4575,14 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
         )}
         {/* zzz822 — 💧 only a believable DAILY AVERAGE; a results-day spike
             (or anything above 5% of market cap a day) shows '—'. */}
+        {/* zzz826 — only a real multi-day average ("avg (20d)"); else '—'. A
+            single day's turnover is named in the tooltip, never shown as an average. */}
         {(() => {
           const lv = liquidityView(stock);
-          if (lv.cr == null && lv.note === 'not in source') return null;
           const thin = lv.cr != null && lv.cr < 1;
           return (
             <span title={lv.title} style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-1)', border: `1px solid ${thin ? '#7F1D1D' : 'var(--mc-bg-4)'}`, color: thin ? '#F87171' : 'var(--mc-text-3)', fontWeight: 700 }}>
-              💧 {lv.cr == null ? '— (not a daily average)' : lv.cr >= 1 ? `₹${lv.cr.toFixed(1)} Cr/d avg` : `₹${Math.round(lv.cr * 100)} L/d avg`}{thin ? ' · thin' : ''}
+              💧 {lv.cr == null ? '—' : `${lv.cr >= 1 ? `₹${lv.cr.toFixed(1)} Cr/d` : `₹${Math.round(lv.cr * 100)} L/d`} ${lv.label ?? 'avg'}`}{thin ? ' · thin' : ''}
             </span>
           );
         })()}
@@ -4640,6 +4652,20 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
           <span style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700 }}>Price context — not part of the grade:</span>
           {_ctx.map((t) => (
             <span key={t} style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 3, border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-3)', fontWeight: 600 }}>{t}</span>
+          ))}
+        </div>
+      )}
+
+      {/* zzz826 — shell-company flags: market cap / trading based, so context
+          like the price chips, never the tier. The Mkt Cap filter hides them. */}
+      {Array.isArray((stock as any).size_flags) && (stock as any).size_flags.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center', marginBottom: 6 }}
+          title="Size flags: from market cap and trading value (share-price figures), so they do not change the tier. Use the Mkt Cap filter to hide small companies.">
+          <span style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700 }}>Size — not part of the grade:</span>
+          {((stock as any).size_flags as string[]).map((t) => (
+            <span key={t} style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 3, border: '1px solid var(--mc-warn)', color: 'var(--mc-warn)', fontWeight: 700 }}>
+              {t === 'very small company' ? 'Very small company' : t === 'barely trades' ? 'Barely trades' : t}
+            </span>
           ))}
         </div>
       )}

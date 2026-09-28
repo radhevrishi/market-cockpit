@@ -23,10 +23,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { normSymbol } from '@/lib/portfolio-symbols';
 import { originCounts, type BookOrigin } from './universe';
-import { resolveIndiaBook, bookUniverse, type ResolvedBook } from './book-membership';
+import { resolveIndiaBook, bookUniverse, isBseCode, type ResolvedBook, type BseMatch } from './book-membership';
+import { cachedBseMatches, lookupBseCodes } from './bse-nse-lookup';
 import { readLocalBookInput, fetchSavedHoldings, fetchSyncedHeld } from './book-sources';
 import { readConvictionBeats } from '@/lib/conviction-beats';
 import { selectIndiaCb, cbTicker, heldKey, IN_CB_SOURCE, type PresetLabel, type CbCriteriaInfo } from './pc-bench';
+import { tierNowLabel } from '@/lib/india-cb-view';
 import {
   serverBenchToCbEntries, mergeCbEntries, cbFiltersForOwner, readCbPresetOptOut, cbCriteriaCheck,
 } from '@/lib/conviction-filter-india';
@@ -473,7 +475,10 @@ export function useBook(opts?: { includeBench?: boolean }) {
       // copy now, the server copy next) — never the old lists or the synced
       // snapshot (see lib/thesis/book-membership).
       const local = readLocalBookInput();
-      let resolved = resolveIndiaBook({ server: null, browser: local.browser, legacy: local.legacy });
+      // zzz825: a holding saved as a BSE code is matched to its NSE symbol (cached answers now, the lookup next)
+      const codesIn = (xs: string[]) => xs.map((x) => String(x || '').toUpperCase().trim().replace(/^(?:NSE|BSE|BOM):/, '').replace(/\.(?:NS|BO|BSE|NSE)$/, '')).filter(isBseCode);
+      let bseMap: Record<string, BseMatch> = cachedBseMatches(codesIn(local.browser));
+      let resolved = resolveIndiaBook({ server: null, browser: local.browser, legacy: local.legacy, bseMap });
       const paint = (universe: Map<string, BookOrigin>) => {
         if (cancelled) return;
         // zzz782: the rows ARE the universe — a name that left it (a bench
@@ -503,7 +508,10 @@ export function useBook(opts?: { includeBench?: boolean }) {
       // holding; a name only on an old list is not.
       const [serverSaved, synced] = await Promise.all([fetchSavedHoldings(), fetchSyncedHeld()]);
       if (cancelled) return;
-      resolved = resolveIndiaBook({ server: serverSaved, browser: local.browser, legacy: local.legacy, synced });
+      const codes = codesIn([...(serverSaved.ok ? serverSaved.symbols : []), ...local.browser]);
+      if (codes.length) { try { bseMap = { ...bseMap, ...(await lookupBseCodes(codes)) }; } catch { /* stays flagged */ } }
+      if (cancelled) return;
+      resolved = resolveIndiaBook({ server: serverSaved, browser: local.browser, legacy: local.legacy, synced, bseMap });
       const held = new Set<string>(resolved.names.map((n) => n.symbol));
       const heldByKey = new Map(resolved.names.map((n) => [n.key, n.symbol] as const));
       universe = bookUniverse(resolved.names, []);
@@ -532,6 +540,13 @@ export function useBook(opts?: { includeBench?: boolean }) {
           held, list, criteriaOff: optedOut,
           check: (e: any) => cbCriteriaCheck(e, filters),
         });
+        // zzz827: a name the current grading puts below STRONG carries the
+        // same "now MIXED under current rules" note it has on the tab.
+        for (const e of list as any[]) {
+          const tn = tierNowLabel(e);
+          const t = cbTicker(e?.ticker);
+          if (tn && sel.labels[t] && !sel.labels[t].text.includes(tn)) sel.labels[t] = { ...sel.labels[t], text: `${sel.labels[t].text} · ${tn}` };
+        }
         // Every name joins the universe (evidence loads for all, batched);
         // the page shows the failing ones only when he asks.
         candidates = [...sel.bench, ...sel.benchFailing];
@@ -935,7 +950,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
    *   · The job header is recorded server-side before the first read, so a
    *     reload derives "37 updated · 77 remaining" from the ledgers.
    */
-  const readAll = useCallback(async (syms: string[], concurrency = 3, opts?: { reprocess?: boolean; exact?: boolean; filingDates?: Record<string, string> }) => {
+  const readAll = useCallback(async (syms: string[], concurrency = 3, opts?: { reprocess?: boolean; exact?: boolean; filingDates?: Record<string, string>; modeOf?: Record<string, 'incremental' | 'force'> }) => {
     const todo = syms.filter((s) => {
       const row = rowsRef.current[s];
       if (!row) return false;
@@ -968,7 +983,9 @@ export function useBook(opts?: { includeBench?: boolean }) {
         // A throw here used to end the worker silently and the batch with it
         // — three names in, "finished". Every name is attempted; a failure is
         // recorded on its row and the loop continues. (zzz744)
-        try { await readFiling(todo[k], opts?.reprocess ? 'force' : 'incremental', { filingDate: opts?.filingDates?.[todo[k]] || null }); }
+        // zzz830: the bulk AI read names the mode per name (an AI-read but
+        // incomplete name is re-read; the rest take the incremental read).
+        try { await readFiling(todo[k], opts?.modeOf?.[todo[k]] || (opts?.reprocess ? 'force' : 'incremental'), { filingDate: opts?.filingDates?.[todo[k]] || null }); }
         catch (e: any) {
           const sym = todo[k];
           setRows((r) => (r[sym] ? { ...r, [sym]: { ...r[sym], state: r[sym].summary ? 'done' : 'error', error: `batch: ${humanError(e)}` } } : r));

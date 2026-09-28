@@ -132,8 +132,33 @@ export interface UsCbInfo {
  * Membership only: the criteria may read price to CHOOSE names; the thesis
  * engine still reads no price.
  */
-async function loadUsCbSelection(held: string[]): Promise<{ sel: CbSelection; info: CbCriteriaInfo }> {
+/** zzz828: the whole selection ends — a hung browser database or server
+ *  answer becomes "not available", never "loading…" for ever. */
+export const US_CB_SELECTION_DEADLINE_MS = 45_000;
+
+/** What the US Conviction Beats page shows beyond the selection itself: the
+ *  per-ticker "now MIXED under current rules" labels, company names (decoded)
+ *  and how many names are still on an older grading engine. */
+export interface UsCbExtras { nowTier: Record<string, string>; companies: Record<string, string>; staleEngine: number }
+
+export function emptyCbSelection(): CbSelection {
+  return { listTotal: 0, passing: [], unknown: [], failing: [], bench: [], benchFailing: [], heldPassing: [], labels: {}, companies: {} };
+}
+
+async function loadUsCbSelection(held: string[]): Promise<{ sel: CbSelection; info: CbCriteriaInfo; extras: UsCbExtras }> {
+  let timer: any = null;
+  const deadline = new Promise<{ sel: CbSelection; info: CbCriteriaInfo; extras: UsCbExtras }>((res) => {
+    timer = setTimeout(() => res({
+      sel: emptyCbSelection(), extras: { nowTier: {}, companies: {}, staleEngine: 0 },
+      info: { market: 'US', listTotal: 0, passing: 0, failing: 0, heldPassing: 0, unknown: 0, criteria: 'not available', source: 'not available', error: `the US Conviction Beats list did not load within ${US_CB_SELECTION_DEADLINE_MS / 1000}s — not available this time (reload to try again)` },
+    }), US_CB_SELECTION_DEADLINE_MS);
+  });
+  try { return await Promise.race([loadUsCbSelection0(held), deadline]); } finally { clearTimeout(timer); }
+}
+
+async function loadUsCbSelection0(held: string[]): Promise<{ sel: CbSelection; info: CbCriteriaInfo; extras: UsCbExtras }> {
   const m = await import('@/lib/conviction-beats-us');
+  const { decodeHTMLEntities } = await import('@/lib/html-decode');
   let error: string | null = null;
   try { await m.hydrateUsConviction(); } catch { /* memory-only */ }
   let merged: { server_count: number; updatedAt: string | null; stale_engine: boolean } | null = null;
@@ -142,7 +167,7 @@ async function loadUsCbSelection(held: string[]): Promise<{ sel: CbSelection; in
   let source = `this browser's US bench ${list.length} (server bench ${merged?.server_count ?? 0} merged in${merged?.updatedAt ? `, updated ${String(merged.updatedAt).slice(0, 10)}` : ''}${merged?.stale_engine ? '; server list built by an older engine — not merged' : ''})`;
   if (!list.length) {
     try {
-      const j = await readJson(await fetch('/api/v1/bench-us', { cache: 'no-store' }));
+      const j = await readJson(await fetch('/api/v1/bench-us', { cache: 'no-store', signal: AbortSignal.timeout(20_000) }));
       const removed = new Set(m.readUsConvictionBin().map((e: any) => String(e?.ticker || '').toUpperCase()));
       list = (Array.isArray(j?.entries) ? j.entries : []).filter((e: any) => !removed.has(String(e?.ticker || '').toUpperCase()));
       source = `server bench ${list.length} (this browser holds no US list)`;
@@ -163,8 +188,19 @@ async function loadUsCbSelection(held: string[]): Promise<{ sel: CbSelection; in
   const criteria = m.isUsPresetActive(filters)
     ? `your US quality preset${filters.cap === 'smid' ? ' + small/mid caps' : ''}, incl. price above its 50- and 200-day averages`
     : criteriaOff ? 'your US preset is switched OFF on US Conviction Beats — every name is listed' : 'your saved US Conviction Beats filters';
+  // zzz828: labels the page shows beside each name.
+  const extras: UsCbExtras = { nowTier: {}, companies: {}, staleEngine: 0 };
+  for (const e of list) {
+    const t = usTickerKey(String(e?.ticker || '').split('@')[0]);
+    if (!t) continue;
+    if (e?.company && !extras.companies[t]) extras.companies[t] = decodeHTMLEntities(String(e.company));
+    const nt = m.usNowTierText(e);
+    if (nt && !String(e?.bench_key || '').includes('@')) extras.nowTier[t] = nt;
+    if (m.usEngineStale(e)) extras.staleEngine++;
+  }
+  for (const t of Object.keys(sel.companies)) if (sel.companies[t]) sel.companies[t] = decodeHTMLEntities(sel.companies[t] as string);
   return {
-    sel,
+    sel, extras,
     info: { market: 'US', listTotal: sel.listTotal, passing: sel.passing.length, failing: sel.failing.length, heldPassing: sel.heldPassing.length, unknown: sel.unknown.length,
       criteria: `${criteria}${filters.q ? ` (the search text "${filters.q}" is applied too)` : ''}`, source, error },
   };
@@ -184,6 +220,7 @@ export function useUsBook() {
   const [cbInfo, setCbInfo] = useState<UsCbInfo | null>(null);
   const [cbCriteria, setCbCriteria] = useState<CbCriteriaInfo | null>(null);
   const [cbPassing, setCbPassing] = useState<string[]>([]);
+  const [cbExtras, setCbExtras] = useState<UsCbExtras | null>(null);
   // zzz823: the saved US book as read (holdings + his own bench list), for the Book check.
   const [usBook, setUsBook] = useState<{ updatedAt: string | null; universe: UsUniverseEntry[] } | null>(null);
   const rowsRef = useRef<Record<string, UsRow>>({});
@@ -248,7 +285,7 @@ export function useUsBook() {
   const runDetEvidence = async (ordered: string[], stopped: () => boolean) => {
     try {
       for (let i = 0; i < ordered.length && !stopped(); i += 100) {
-        const j = await readJson(await fetch(`/api/v1/us-thesis/det-evidence?tickers=${encodeURIComponent(ordered.slice(i, i + 100).join(','))}`, { cache: 'no-store' }));
+        const j = await readJson(await fetch(`/api/v1/us-thesis/det-evidence?tickers=${encodeURIComponent(ordered.slice(i, i + 100).join(','))}`, { cache: 'no-store', signal: AbortSignal.timeout(US_FACTS_CLIENT_MS) }));
         const recs: Record<string, UsDetEvidence> = j?.records || {};
         const next: Record<string, UsRow> = { ...rowsRef.current };
         for (const [t, rec] of Object.entries(recs)) if (next[t]) next[t] = withDet(next[t], rec);
@@ -289,7 +326,7 @@ export function useUsBook() {
     (async () => {
       // thesis types first, so the first paint already honours them
       try {
-        const j = await readJson(await fetch('/api/v1/us-thesis/evidence?thesis_types=1', { cache: 'no-store' }));
+        const j = await readJson(await fetch('/api/v1/us-thesis/evidence?thesis_types=1', { cache: 'no-store', signal: AbortSignal.timeout(20_000) }));
         typesRef.current = (j?.thesis_types || {}) as Record<string, AbfgPattern>;
         if (!cancelled) setThesisTypes(typesRef.current);
       } catch { /* automatic classification stands */ }
@@ -297,7 +334,7 @@ export function useUsBook() {
       // ── STAGE 1 — the universe (no price in it) + US Conviction Beats
       let uni: UsUniverseEntry[] = [];
       try {
-        const r = await fetch('/api/v1/us-book?view=universe', { cache: 'no-store' });
+        const r = await fetch('/api/v1/us-book?view=universe', { cache: 'no-store', signal: AbortSignal.timeout(US_FACTS_CLIENT_MS) });
         const j = await readJson(r);
         if (!r.ok || !j?.ok) throw new Error(j?.error || `HTTP ${r.status}`);
         uni = Array.isArray(j.universe) ? j.universe : [];
@@ -311,7 +348,7 @@ export function useUsBook() {
       // own criteria (loadUsCbSelection). Names missing them join the
       // universe labelled, and the page hides them unless he asks.
       const heldTickers = uni.filter((u) => u.origin !== 'bench').map((u) => u.ticker);
-      const { sel, info: crit } = await loadUsCbSelection(heldTickers);
+      const { sel, info: crit, extras } = await loadUsCbSelection(heldTickers);
       if (cancelled) return;
       const cb: UsBenchName[] = [...sel.passing, ...sel.failing].map((t) => ({ ticker: t, tier: null, company: sel.companies[t] || null, filing_date: null, exchange: null }));
       const cbSet = new Set(cb.map((e) => e.ticker));
@@ -319,6 +356,7 @@ export function useUsBook() {
       setCbCount(sel.passing.length);
       setCbCriteria(crit);
       setCbPassing(sel.passing);
+      setCbExtras(extras);
       setCbInfo({ total: sel.listTotal, server: 0, local: sel.listTotal, localOnly: 0, removed: 0, updatedAt: null, serverSource: null, serverNote: null, serverError: crit.error });
       const us = uni.filter((u) => u.listing === 'US');
       setExcluded(uni.filter((u) => u.listing !== 'US'));
@@ -349,7 +387,7 @@ export function useUsBook() {
         let bi: any = null, pi: any = null;
         try {
           for (let i = 0; i < ordered.length && !cancelled; i += 100) {
-            const j = await readJson(await fetch(`/api/v1/us-thesis/evidence?tickers=${encodeURIComponent(ordered.slice(i, i + 100).join(','))}`, { cache: 'no-store' }));
+            const j = await readJson(await fetch(`/api/v1/us-thesis/evidence?tickers=${encodeURIComponent(ordered.slice(i, i + 100).join(','))}`, { cache: 'no-store', signal: AbortSignal.timeout(US_FACTS_CLIENT_MS) }));
             Object.assign(ledgers, j?.ledgers || {});
             Object.assign(fresh, j?.freshness || {});
             if (j?.batch) bi = j.batch;
@@ -574,7 +612,7 @@ export function useUsBook() {
     try { await fetch('/api/v1/us-thesis/evidence', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'thesis_type', ticker: key, pattern: p }) }); } catch { /* kept for this session */ }
   }, []);
 
-  return { rows, excluded, universeError, loading, evidenceLoading, batch, priorBatch, checkBatch, readFiling, readAll, checkAll, readPriorPeriods, stop, thesisTypes, setThesisType, needsPrior, cbCount, cbInfo, cbCriteria, cbPassing, retryFigures, detBatch, usBook };
+  return { rows, excluded, universeError, loading, evidenceLoading, batch, priorBatch, checkBatch, readFiling, readAll, checkAll, readPriorPeriods, stop, thesisTypes, setThesisType, needsPrior, cbCount, cbInfo, cbCriteria, cbPassing, cbExtras, retryFigures, detBatch, usBook };
 }
 
 async function postStatus(row: UsRow): Promise<void> {

@@ -240,7 +240,7 @@ describe('zzz790 · A — the live ledger harness, every card', { skip: HAVE_LIV
     const at = evidenceAttention(sized);
     assert.equal(at.unread.length, sized.length - ec.evidence_read, 'unread = shown − evidence read');
     assert.equal(at.total, at.unread.length + at.update.length);
-    assert.match(at.line, at.total ? new RegExp(`^${at.total} needs? attention — ${at.unread.length} unread, ${at.update.length} requires? update$`) : /^All evidence current$/);
+    assert.match(at.line, at.total ? new RegExp(`^${at.total} needs? attention — ${at.unread.length} unread, ${at.update.length} requires? update$`) : /^Evidence up to date \(latest filings on file\)$/);
     assert.ok(at.update.includes('MINDSPACE'), 'MINDSPACE has a newer document unread');
     const page = readFileSync(join(ROOT, 'src/app/(dashboard)/portfolio-catalysts/page.tsx'), 'utf8');
     assert.doesNotMatch(page, /needRead/);

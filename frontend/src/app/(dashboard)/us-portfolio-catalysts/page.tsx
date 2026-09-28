@@ -40,11 +40,15 @@ import { UsSpecialFocusPanel } from '@/components/us-special-focus-panel';
 import { STATUS_META, type ThesisStatus } from '@/lib/thesis/status';
 import { evidenceCounts, universeCounts, researchPriorityEligible, researchPriorityTitle } from '@/lib/thesis/evidence-counts';
 import NewCatalystsTab from '@/components/catalyst/new-catalysts-tab';
-import { buildRecentCatalysts, rawFromLedger, rawFromPersistent, localToday, windowRange, countInRange, type RawEvent, type ThesisCtx, type WindowSpan } from '@/lib/catalyst/recent-events';
+import { buildRecentCatalysts, rawFromLedger, rawFromPersistent, localToday, windowRange, countInRange, nameMapOf, normUrl, type RawEvent, type ThesisCtx, type WindowSpan } from '@/lib/catalyst/recent-events';
+import { rawFromUsFilings, type UsFilingMeta } from '@/lib/catalyst/us-filings';
 import { useFilingReads } from '@/components/catalyst/use-filing-reads';
 import { nextWindow, PC_PAGE_STEP, readScope, otherBenchLabel, cbCriteriaLine } from '@/lib/thesis/pc-bench';
 import BookCheckPanel from '@/components/BookCheckPanel';
+import { usCbReconcile } from '@/lib/conviction-beats-us';
+import { decodeHTMLEntities } from '@/lib/html-decode';
 import { buildBookCheck } from '@/lib/thesis/book-membership';
+import { aiReadPlan, aiReadStatus, aiSourcesExplainer } from '@/lib/thesis/ai-read';
 
 const C = {
   bg: 'var(--mc-bg-1)', border: 'var(--mc-bg-4)', text: 'var(--tc-text, #F1F5F9)',
@@ -63,9 +67,9 @@ const pill = (on: boolean, color = C.cyan): React.CSSProperties => ({
 });
 
 export default function UsPortfolioCatalystsPage() {
-  const { rows, excluded, universeError, loading, evidenceLoading, batch, priorBatch, checkBatch, readFiling, readAll, checkAll, readPriorPeriods, stop, thesisTypes, setThesisType, needsPrior, cbCriteria, cbPassing, retryFigures, detBatch, usBook } = useUsBook();
+  const { rows, excluded, universeError, loading, evidenceLoading, batch, priorBatch, checkBatch, readFiling, readAll, checkAll, readPriorPeriods, stop, thesisTypes, setThesisType, needsPrior, cbCriteria, cbPassing, cbExtras, retryFigures, detBatch, usBook } = useUsBook();
   const [filter, setFilter] = useState<ThesisStatus | null>(null);
-  const [source, setSource] = useState<'all' | 'book' | 'bench'>('all');
+  const [source, setSource] = useState<'all' | 'book' | 'bench' | 'cb'>('all');
   const [copied, setCopied] = useState<string | null>(null);
   // zzz808: the catalyst board, or "New · last 10 days".
   const [view, setView] = useState<'board' | 'new'>('board');
@@ -95,10 +99,25 @@ export default function UsPortfolioCatalystsPage() {
     });
   }, [usBook, loading, all0, cbCriteria]);
   const cbOnPageCount = useMemo(() => { const p = new Set(cbPassing); return all0.filter((r) => p.has(usTickerKey(r.symbol))).length; }, [all0, cbPassing]);
+  // zzz828: the whole US Conviction Beats list as a view — held names included.
+  const cbKeys = useMemo(() => new Set(cbPassing), [cbPassing]);
+  const cbHeldOnPage = useMemo(() => all0.filter((r) => cbKeys.has(usTickerKey(r.symbol)) && r.origin !== 'bench').length, [all0, cbKeys]);
+  // zzz828: name for name against the US Conviction Beats page (should be none off).
+  const cbRecon = useMemo(() => {
+    if (loading || !cbCriteria) return null;
+    const here = all0.filter((r) => cbKeys.has(usTickerKey(r.symbol))).map((r) => usTickerKey(r.symbol));
+    const excl = new Map(excluded.map((e) => [usTickerKey(e.ticker), e] as const));
+    return usCbReconcile(cbPassing, here, (t) => {
+      const x = excl.get(t);
+      if (x) return `saved in your book on a non-US venue (${x.exchange || 'venue not stated'}) — no SEC filer, so it is listed at the bottom instead of assessed`;
+      if (!/^[A-Z0-9][A-Z0-9-]{0,11}$/.test(t)) return 'its ticker spelling cannot be read on SEC EDGAR';
+      return 'not loaded on this page yet — reload';
+    });
+  }, [loading, cbCriteria, all0, cbKeys, cbPassing, excluded]);
   // zzz811: a held name is shown once, in My US book — "US bench" is the
   // names you do not hold, so All = book + bench exactly (the chip counts).
   // zzz815: one pure rule for what is shown (lib/us-thesis/page-words usPcView).
-  const view0 = useMemo(() => usPcView(all0, { source, showFailing, filter, order: ORDER }), [all0, source, showFailing, filter]);
+  const view0 = useMemo(() => usPcView(all0, { source, showFailing, filter, order: ORDER, cbKeys, keyOf: usTickerKey }), [all0, source, showFailing, filter, cbKeys]);
   const all = view0.all;
   const inSource = view0.inSource;
   const uc = useMemo(() => universeCounts(all as any, all as any, CONSTRUCTIVE, { market: 'US' }), [all]);
@@ -145,6 +164,11 @@ export default function UsPortfolioCatalystsPage() {
   const needRead = scope.primary.filter(needsIt);
   const needReadOther = scope.otherBench.filter(needsIt);
   const primarySyms = scope.primary.map((r) => r.symbol);
+  // zzz830: who has no AI read yet (never read / incomplete / read by rules only).
+  const aiPlan = useMemo(() => aiReadPlan(list as any), [list]);
+  const aiPage = useMemo(() => aiReadPlan(inSource as any), [inSource]);
+  const [aiPick, setAiPick] = useState<'all' | 'incomplete' | 'withoutAi'>('all');
+  const aiSyms = aiPick === 'incomplete' ? aiPlan.incomplete : aiPick === 'withoutAi' ? aiPlan.withoutAi : aiPlan.all;
   const needPrior = list.filter((r) => needsPrior(r));
   const anyRunning = batch.running || priorBatch.running || checkBatch.running;
   const excludedBook = excluded.filter((e) => e.origin !== 'bench').length;
@@ -155,11 +179,42 @@ export default function UsPortfolioCatalystsPage() {
   // screen (book + bench), plus the persistent-catalyst items.
   // zzz813: every 8-K in the window is opened (EX-99.1 + the 8-K body) and read deterministically.
   const today = useMemo(() => localToday(), []);
+  // zzz825: every SEC filing of the names on screen in the window, by metadata (form + 8-K items) — an officer
+  // change, a closing, an offering the ledger never files. Fetched once the page is in; never blocks the tab.
+  const [secRows, setSecRows] = useState<{ rows: UsFilingMeta[]; failed: number; error: string | null } | null>(null);
+  const secKey = useMemo(() => (loading || evidenceLoading ? '' : all.map((r) => r.symbol).sort().join(',')), [all, loading, evidenceLoading]);
+  useEffect(() => {
+    if (!secKey) return;
+    let dead = false;
+    (async () => {
+      const tickers = secKey.split(',').filter(Boolean);
+      const rows: UsFilingMeta[] = [];
+      let failed = 0; let error: string | null = null;
+      for (let i = 0; i < tickers.length && !dead; i += 60) {
+        try {
+          const r = await fetch('/api/v1/catalyst/us-filings', { method: 'POST', headers: { 'content-type': 'application/json' }, cache: 'no-store', body: JSON.stringify({ tickers: tickers.slice(i, i + 60), days: 10 }) });
+          if (!r.ok) { error = `the SEC filing list answered HTTP ${r.status}`; failed += Math.min(60, tickers.length - i); continue; }
+          const j = await r.json();
+          rows.push(...(Array.isArray(j?.filings) ? j.filings : []));
+          failed += (Array.isArray(j?.failed) ? j.failed.filter((f: any) => !/not an SEC filer/.test(String(f?.error || ''))).length : 0);
+        } catch (e: any) { error = `the SEC filing list could not be reached (${String(e?.message || e).slice(0, 80)})`; failed += Math.min(60, tickers.length - i); }
+        if (!dead) setSecRows({ rows: [...rows], failed, error });
+      }
+    })();
+    return () => { dead = true; };
+  }, [secKey]);
+  // zzz825: company names the page already holds (SEC / graded rows, US Conviction Beats)
+  const nameMap = useMemo(() => nameMapOf(all.map((r) => {
+    const co = r.sec?.company || r.graded?.company || cbExtras?.companies[usTickerKey(r.symbol)] || null;
+    return { ticker: r.symbol, company: co ? decodeHTMLEntities(String(co)) : null };
+  })), [all, cbExtras]);
   const recentRaws = useMemo(() => {
     if (loading || evidenceLoading) return null;
     const raws: RawEvent[] = [];
+    const ctxBy = new Map<string, ThesisCtx>();
     for (const r of all) {
-      const co0 = r.sec?.company || r.graded?.company || null;
+      const co00 = r.sec?.company || r.graded?.company || null;
+      const co0 = co00 ? decodeHTMLEntities(String(co00)) : null;
       const co = co0 && String(co0).toUpperCase() !== r.symbol.toUpperCase() ? String(co0) : null;
       const set = thesisTypes[r.symbol.toUpperCase()];
       const ctx: ThesisCtx = set ? { pattern: String(set), fit: 'exact', assessment: r.assessment }
@@ -169,12 +224,19 @@ export default function UsPortfolioCatalystsPage() {
       let pcs: any[] = [];
       try { pcs = usDetect(r as any); } catch { pcs = []; }
       raws.push(...rawFromPersistent(r.symbol, co, pcs, r.assessment, ctx));
+      ctxBy.set(r.symbol.toUpperCase(), ctx);
     }
+    raws.push(...rawFromUsFilings(secRows?.rows, { companyOf: (t) => nameMap[t.toUpperCase()] || null, ctxOf: (t) => ctxBy.get(t.toUpperCase()) || null, knownUrls: raws.map((x) => x.url) }));
     return raws;
-  }, [all, loading, evidenceLoading, thesisTypes]);
-  const readQueue = useMemo(() => (recentRaws ? buildRecentCatalysts(recentRaws, today, { market: 'US' }).toRead : []), [recentRaws, today]);
+  }, [all, loading, evidenceLoading, thesisTypes, secRows, nameMap]);
+  // zzz825 (§34): Material + Notable read first; known-Minor documents only when the owner opens Minor / clicks
+  const [wantedReads, setWantedReads] = useState<Set<string>>(() => new Set());
+  const addWanted = (urls: string[]) => setWantedReads((prev) => { const n = new Set(prev); for (const u of urls) n.add(normUrl(u)); return n; });
+  const readQueue = useMemo(() => (recentRaws ? buildRecentCatalysts(recentRaws, today, { market: 'US', names: nameMap }).toRead.filter((q) => q.tier !== 'minor' || wantedReads.has(normUrl(q.url))) : []), [recentRaws, today, nameMap, wantedReads]);
   const { reads: filingReads, progress: readProgress } = useFilingReads(readQueue, 'US', !!recentRaws);
-  const recentNew = useMemo(() => (recentRaws ? buildRecentCatalysts(recentRaws, today, { market: 'US', reads: filingReads }) : null), [recentRaws, today, filingReads]);
+  // zzz829: each name's SEC XBRL quarter — a results 8-K's year-ago comparison and materiality by company size
+  const factsMap = useMemo(() => Object.fromEntries(all.filter((r) => r.graded).map((r) => [r.symbol.toUpperCase(), r.graded])), [all]);
+  const recentNew = useMemo(() => (recentRaws ? buildRecentCatalysts(recentRaws, today, { market: 'US', reads: filingReads, names: nameMap, facts: factsMap }) : null), [recentRaws, today, filingReads, nameMap, factsMap]);
   // zzz814: the selected days (Today · 3d · 5d · 10d, stepped / jumped) — the tab label counts the same window.
   const [newWin, setNewWin] = useState<{ span: WindowSpan; anchor: string | null }>({ span: 10, anchor: null });
   const newLabel = useMemo(() => {
@@ -191,8 +253,10 @@ export default function UsPortfolioCatalystsPage() {
     const never = all.filter((r) => !r.ledger).length;
     if (never > 0) n.push(`${never} name${never === 1 ? ' has' : 's have'} never been checked on EDGAR, so nothing new can show for ${never === 1 ? 'it' : 'them'} yet.`);
     if (excluded.length > 0) n.push(`${excluded.length} non-US listing${excluded.length === 1 ? ' is' : 's are'} not covered (no SEC filer).`);
+    if (secRows?.error) n.push(`${secRows.error} — officer changes, closings and offerings may be missing.`);
+    else if (secRows && secRows.failed > 0) n.push(`${secRows.failed} name${secRows.failed === 1 ? '' : 's'}: the SEC filing list could not be read this time, so an 8-K or offering may be missing.`);
     return n;
-  }, [all, excluded.length]);
+  }, [all, excluded.length, secRows]);
 
   if (universeError) {
     return <div style={{ padding: 24, color: C.dim, fontSize: 15 }}><h1 style={{ fontSize: 20, fontWeight: 800, color: C.text }}>US Portfolio Catalysts</h1>
@@ -229,6 +293,9 @@ export default function UsPortfolioCatalystsPage() {
           Backlog, capacity, utilization, capex and guidance come from the filings, read on click. <b style={{ color: C.text }}>No price is read anywhere in this engine.</b>{' '}
           Separate from the India book and ledgers. <a href="/portfolio-catalysts" style={{ color: C.cyan }}>India Portfolio Catalysts →</a>
         </div>
+        <div data-testid="ai-sources-explainer" style={{ fontSize: 13.5, color: C.dim, marginTop: 4, lineHeight: 1.55, maxWidth: 860 }}>
+          <b style={{ color: C.text }}>Is it all from AI? No.</b> {aiSourcesExplainer('US')}
+        </div>
       </div>
 
       {/* ── THE VIEWS. (zzz808) The catalyst board, or what is new. ─────── */}
@@ -241,11 +308,14 @@ export default function UsPortfolioCatalystsPage() {
 
       {view === 'new' ? (
         <NewCatalystsTab result={recentNew} loading={loading || evidenceLoading} names={all.length} sourceNotes={recentNotes} market="US" progress={readProgress} win={newWin} onWin={setNewWin}
+          onRead={addWanted} wanted={wantedReads}
+          holdingOf={(t) => { const r = all.find((x) => x.symbol.toUpperCase() === t.toUpperCase()); return r ? (r.origin === 'bench' ? 'bench' : 'book') : null; }}
           onJump={(t) => { setView('board'); setSource('all'); jumpTo(t); }} />
       ) : (<>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        {([['all', `All US-listed ${uc.shown}`], ['book', `📗 My US book ${uc.book}`], ['bench', `🏆 US bench ${uc.bench}${cbOnPage ? ` (incl. ${cbOnPage} ${US_CB_SOURCE})` : ''}`]] as Array<[typeof source, string]>).map(([k, label]) => (
-          <button key={k} onClick={() => setSource(k)} style={pill(source === k)}>{label}</button>
+        {([['all', `All US-listed ${uc.shown}`], ['book', `📗 My US book ${uc.book}`], ['bench', `Bench ${uc.bench}${cbOnPage ? ` (${cbOnPage} Conviction Beats names you do not hold${uc.bench > cbOnPage ? ` + ${uc.bench - cbOnPage} from your own bench list` : ''})` : ''}`], ['cb', `🏆 Conviction Beats (${cbCriteria ? cbCriteria.passing : '…'})`]] as Array<[typeof source, string]>).map(([k, label]) => (
+          <button key={k} data-testid={`us-source-${k}`} onClick={() => setSource(k)} style={pill(source === k)}
+            title={k === 'cb' ? 'Every name the US Conviction Beats page shows under your saved criteria — the ones you hold (tagged “📗 also in My book”) and the ones you do not.' : undefined}>{label}</button>
         ))}
         {(failingBench.length > 0 || showFailing) && (
           <button data-testid="us-show-failing-chip" onClick={() => setShowFailing((v) => !v)} style={pill(showFailing, C.amber)}
@@ -258,6 +328,13 @@ export default function UsPortfolioCatalystsPage() {
       {!loading && (
         <div data-testid="us-cb-criteria-line" style={{ fontSize: 13, lineHeight: 1.5, color: cbCriteria && cbOnPageCount !== cbCriteria.passing ? C.amber : C.dim }}>
           <b style={{ color: cbCriteria && cbOnPageCount !== cbCriteria.passing ? C.amber : C.text }}>{cbCriteriaLine(cbCriteria, cbOnPageCount, showFailing)}</b>
+          {cbRecon && (
+            <div data-testid="us-cb-reconciliation" style={{ fontSize: 12.5, color: cbRecon.matches ? C.faint : C.amber }}>
+              {cbRecon.line}{cbCriteria ? ` 🏆 ${cbCriteria.passing} = ${cbHeldOnPage} you hold + ${cbCriteria.passing - cbHeldOnPage} on the bench.` : ''}
+              {cbExtras && cbExtras.staleEngine > 0 ? ` ${cbExtras.staleEngine} of the list's names are still on an older grading engine — open US Conviction Beats to re-grade them (it runs by itself).` : ''}
+              {' '}<a href="/us-conviction-beats" style={{ color: C.cyan }}>Why names are hidden →</a>
+            </div>
+          )}
           <div data-testid="us-preset-note" style={{ fontSize: 12.5, color: C.faint }}>
             The bench is selected by your Conviction Beats criteria, which may read price (50- and 200-day averages) to choose names. The thesis engine on this page reads no price.
           </div>
@@ -358,8 +435,27 @@ export default function UsPortfolioCatalystsPage() {
           {!evidenceLoading && ec.retrieval_failed > 0 && <> · {ec.retrieval_failed} retrieval failed</>}
         </span>
         {!evidenceLoading && !batch.running && (
-          <button onClick={() => readAll(primarySyms)} title="Your US book plus bench names meeting your Conviction Beats criteria. Reads and persists the SEC evidence of each name that needs it — never read, failed, or with a newer filing. Current names are skipped without a model call. Two at a time; a failed read is retried once."
-            style={pill(true)}>&#10024; {needRead.length ? `Read SEC evidence for ${needRead.length} that need it (uses AI) — book + bench meeting your criteria` : 'All evidence current (book + bench meeting your criteria)'}</button>
+          <button onClick={() => readAll(primarySyms)} disabled={!needRead.length} title="Your US book plus bench names meeting your Conviction Beats criteria. Reads and persists the SEC evidence of each name that needs it — never read, failed, or with a newer filing. Current names are skipped without a model call. Two at a time; a failed read is retried once."
+            style={pill(!!needRead.length)}>{needRead.length ? `\u2728 Read SEC evidence for ${needRead.length} that need it (uses AI) — book + bench meeting your criteria` : 'Evidence up to date (latest filings on file)'}</button>
+        )}
+        {/* ── ✨ READ WITH AI — THE NAMES WITH NO AI READ. Click only. (zzz830)
+            Always here while any US name in view is never read, incomplete,
+            or read only by rules (no AI). One model call per name, two at a
+            time, a failed read retried once, Stop works. */}
+        {!evidenceLoading && !batch.running && aiPlan.total > 0 && (
+          <span data-testid="ai-read-bulk" style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button data-testid="ai-read-bulk-go" onClick={() => readAll(aiSyms, { reprocess: true })}
+              disabled={!aiSyms.length || priorBatch.running || checkBatch.running}
+              title={`${aiPlan.breakdown}. Reads each name's latest SEC filings with AI and saves the facts (the no-AI rows stay). An incomplete name already read by AI is read again. Two at a time; Stop works. Never started automatically.`}
+              style={{ ...pill(true), fontWeight: 800 }}>{aiPick === 'all' ? aiPlan.label : `\u2728 Read with AI — ${aiSyms.length} name${aiSyms.length === 1 ? '' : 's'} (uses AI · ${aiSyms.length} call${aiSyms.length === 1 ? '' : 's'}, only on click)`}</button>
+            <select aria-label="Which names to read with AI" value={aiPick} onChange={(e) => setAiPick(e.target.value as any)}
+              style={{ fontSize: 12.5, fontWeight: 700, padding: '2px 4px', borderRadius: 6, background: 'transparent', color: C.dim, border: `1px solid ${C.border}`, cursor: 'pointer' }}>
+              <option value="all">everything that needs it ({aiPlan.total})</option>
+              <option value="incomplete">{aiPlan.incompleteLabel}</option>
+              <option value="withoutAi">{aiPlan.withoutAiLabel}</option>
+            </select>
+            <span style={{ fontSize: 12.5, color: C.faint }}>{aiPlan.breakdown}</span>
+          </span>
         )}
         {!evidenceLoading && !batch.running && needReadOther.length > 0 && (
           <button data-testid="us-read-other-bench" onClick={() => readAll(needReadOther.map((r) => r.symbol))}
@@ -382,9 +478,15 @@ export default function UsPortfolioCatalystsPage() {
         <a href="/us-portfolio-book" style={{ marginLeft: 'auto', fontSize: 13.5, fontWeight: 700, padding: '4px 11px', borderRadius: 999, border: `1px solid ${C.border}`, color: C.dim, textDecoration: 'none' }}>US Portfolio Book →</a>
       </div>
 
+      {!evidenceLoading && !loading && (
+        <div data-testid="ai-page-line" style={{ fontSize: 13, color: C.dim, lineHeight: 1.5 }}>
+          <b style={{ color: C.text }}>{aiPage.pageLine}</b> Figures are filed numbers (SEC XBRL — no AI); each card says whether its evidence was read by rules or by AI.
+        </div>
+      )}
+
       {source !== 'all' && (
         <div data-testid="us-view-note" style={{ fontSize: 13, color: C.dim }}>
-          View: <b style={{ color: C.text }}>{source === 'book' ? `📗 My US book only — ${uc.bench} bench name${uc.bench === 1 ? ' is' : 's are'} not in this view` : `🏆 US bench only — ${uc.book} held name${uc.book === 1 ? ' is' : 's are'} not in this view`}</b>{' '}
+          View: <b style={{ color: C.text }}>{source === 'book' ? `📗 My US book only — ${uc.bench} bench name${uc.bench === 1 ? ' is' : 's are'} not in this view` : source === 'cb' ? `🏆 US Conviction Beats — ${inSource.length} name${inSource.length === 1 ? '' : 's'} (${cbHeldOnPage} also in My book + ${inSource.length - cbHeldOnPage} on the bench), the same list as the US Conviction Beats page` : `Bench only — ${uc.book} held name${uc.book === 1 ? ' is' : 's are'} not in this view`}</b>{' '}
           <button onClick={() => setSource('all')} style={{ ...pill(false), fontSize: 12.5 }}>Show all {uc.shown}</button>
         </div>
       )}
@@ -430,13 +532,15 @@ export default function UsPortfolioCatalystsPage() {
           <div style={{ fontSize: 12, color: C.faint, padding: '2px 4px', lineHeight: 1.5 }}>
             <b style={{ color: C.text }}>{r0.symbol}</b>{' · '}
             {r0.graded?.period
-              ? <>SEC XBRL figures: <b style={{ color: C.dim }}>{String(r0.graded.period)}</b> vs the same quarter a year earlier{r0.graded.xbrl_derived ? ` · ${String(r0.graded.xbrl_derived)}` : ''}{r0.graded.currency && r0.graded.currency !== 'USD' ? ` · reported in ${String(r0.graded.currency)} (growth rates only)` : ''}</>
+              ? <>SEC XBRL figures: <b style={{ color: C.dim }}>{String(r0.graded.period)}</b> vs the same quarter a year earlier{r0.graded.xbrl_derived ? ` · ${String(r0.graded.xbrl_derived)}` : ''}{r0.graded.currency && r0.graded.currency !== 'USD' ? ` · reported in ${String(r0.graded.currency)} (growth rates only)` : ''}{r0.graded.xbrl_behind ? <b data-testid="us-xbrl-behind" style={{ color: C.amber }}> · ⚠ not the latest quarter: {String(r0.graded.xbrl_behind)}</b> : null}</>
               : <span data-testid="us-card-figures-line" style={{ color: r0.figures && (r0.figures.state === 'retrying' || r0.figures.state === 'failed') ? C.amber : undefined }}>{usCardFiguresWords(r0)}</span>}
             {r0.sec?.forms_line ? ` · ${r0.sec.forms_line}` : ''}
             {(r0.graded?.rpo || r0.sec?.rpo) ? <> · order backlog (RPO, SEC XBRL) <b style={{ color: C.dim }}>{usdWords((r0.graded?.rpo || r0.sec?.rpo).cur.value)}</b>{(r0.graded?.rpo || r0.sec?.rpo).pct != null ? ` (${(r0.graded?.rpo || r0.sec?.rpo).pct >= 0 ? '+' : ''}${(r0.graded?.rpo || r0.sec?.rpo).pct}% on a year earlier)` : ''}</> : null}
             {r0.benchSource ? <> · on the bench from <b style={{ color: C.dim }}>{r0.benchSource}</b></> : null}
             {!r0.summary && r0.det ? <> · <span data-testid="us-det-label" style={{ color: C.dim }}>SEC documents <b>read without AI</b>: {r0.det.note}</span></> : null}
             {r0.origin === 'bench' && r0.preset ? <> · <b data-testid="us-bench-criteria-label" style={{ color: r0.preset.state === 'pass' ? C.green : r0.preset.state === 'fail' ? C.amber : C.dim }}>{r0.preset.state === 'pass' ? '✅ ' : r0.preset.state === 'fail' ? '✖ ' : '◌ '}{r0.preset.text}</b></> : null}
+            {r0.origin !== 'bench' && cbKeys.has(usTickerKey(r0.symbol)) ? <> · <b data-testid="us-cb-held-label" style={{ color: C.green }}>🏆 on US Conviction Beats · 📗 also in My book</b>{r0.preset?.state === 'unknown' ? <span style={{ color: C.dim }}> ({r0.preset.text})</span> : null}</> : null}
+            {cbExtras?.nowTier[usTickerKey(r0.symbol)] ? <> · <b data-testid="us-cb-now-tier" style={{ color: C.amber }}>{cbExtras.nowTier[usTickerKey(r0.symbol)]}</b></> : null}
           </div>
           {!evidenceLoading && <PersistentStrip ticker={r0.symbol} pcs={persistBySymbol.get(r0.symbol) || []} onOpenFocus={() => document.getElementById('us-special-focus')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />}
           {!usFiguresSettled(r0) ? (
@@ -452,9 +556,10 @@ export default function UsPortfolioCatalystsPage() {
             radarScore={null} assessment={r.assessment} capex={r.capex} origin={r.origin}
             documentsRead={r.documentsRead} discoveryAttempts={r.discoveryAttempts} discoveryState={r.discoveryState} documentOutcomes={r.documentOutcomes}
             needsRead={!r.summary && r.state !== 'loading'} reading={r.state === 'loading'}
-            onRead={() => readFiling(r.symbol, r.summary ? 'incremental' : 'read')}
+            onRead={() => readFiling(r.symbol, aiReadStatus(r as any).mode === 'force' ? 'force' : r.summary ? 'incremental' : 'read')}
             onCheck={() => readFiling(r.symbol, 'check')}
             onReread={() => readFiling(r.symbol, 'force')}
+            aiRead={evidenceLoading ? null : aiReadStatus(r as any)}
             error={r.error} ledger={r.ledger} freshness={r.freshness} reportingPeriod={r.reportingPeriod}
             changed={r.changed} changedFrom={r.changedFrom} persisted={r.persisted} readNote={r.readNote}
             promiseNote={r.state === 'done' ? r.promiseNote : null}

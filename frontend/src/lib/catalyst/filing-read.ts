@@ -22,13 +22,21 @@
 import { classifyIndiaEvents, inSentences, inFiguresIn, type InEventHit } from '../ai-gainers/in-event-taxonomy';
 import { classifyUsEvents, eventSentences, figuresIn, BOILERPLATE, type UsEventHit } from '../ai-gainers/us-event-taxonomy';
 import { extractIndiaFacts, type IndiaFacts } from '../ai-gainers/india-extract';
-import { subjectClass, stripLetterhead, lineQuality, cleanClip, nameBroken, type RecentEventType } from './recent-events';
+import { subjectClass, stripLetterhead, lineQuality, cleanClip, nameBroken, usItemsIn, type RecentEventType } from './recent-events';
+import { usScaleAmounts, usTableScale } from './event-card';
+import { isHypotheticalUs } from '../us-thesis/sanitize';
 import type { FilingRead, Touch, FilingChange } from './filing-read-types';
 
 // r2 (zzz815): letterhead stripped, disclosure tables parsed, OCR names repaired, quality gate — cached reads re-parse.
 // r3 (zzz824): rating letters / bonus / allotments typed by the document, period labels checked against the filing
 // date, stated changes carried separately from levels, low-confidence extraction flagged — cached reads re-parse.
 export const FILING_READ_VERSION = 'r3';
+// r4-us (zzz829, US only): 8-K acquisitions / debt offerings typed by the document, table scale ("in thousands")
+// applied to figures, bank-capital / statistical tables rejected, clinical data only with trial language,
+// hypothetical wording never an event line — cached US reads re-parse. India stays on r3.
+export const FILING_READ_VERSION_US = 'r4-us';
+/** The read version of a market (a cached read of another version is re-read). */
+export const filingReadVersion = (market: 'IN' | 'US'): string => (market === 'US' ? FILING_READ_VERSION_US : FILING_READ_VERSION);
 export const MIN_TEXT = 200;
 
 export type ReadCore = Omit<FilingRead, 'url' | 'status' | 'version' | 'readAt'>;
@@ -657,6 +665,24 @@ export function saneDurations(line: string): string {
   }).replace(/\s{2,}/g, ' ').trim();
 }
 
+/** zzz825: the subject names a restructuring. */
+const RESTRUCT_SUBJECT = /scheme\s+of\s+(?:arrangement|amalgamation)|demerg|amalgamat|\bmerger\b|composite\s+scheme|hive[-\s]off|spin-?off/i;
+const RESTRUCT_WORD = String.raw`(?:scheme\s+of\s+(?:arrangement|amalgamation)|composite\s+scheme|demerg\w*|amalgamation|merger|hive[-\s]off|spin-?off|separation)`;
+/** Pure: an explicit sentence that the board approved (or the NCLT / court sanctioned) a scheme — "The Board
+ *  of Directors at its meeting held today approved the Scheme of Arrangement for demerger of …". A deck line
+ *  ("Demerger of the chemicals business to unlock value") is not one. */
+export function restructuringApproved(text: string): boolean {
+  const t = String(text || '').replace(/\s+/g, ' ');
+  const board = new RegExp(String.raw`\bboard(?:\s+of\s+directors)?\b[^.]{0,160}?\b(?:approved|considered and approved|has approved|accorded (?:its )?approval)\b[^.]{0,200}?${RESTRUCT_WORD}`, 'i');
+  const passive = new RegExp(String.raw`${RESTRUCT_WORD}[^.]{0,200}?\b(?:(?:was|were|has been|have been|is)\s+)?(?:approved|sanctioned)\s+by\s+(?:the\s+)?(?:board|NCLT|National Company Law Tribunal|Tribunal|Hon'?ble)`, 'i');
+  const sanction = new RegExp(String.raw`\b(?:NCLT|National Company Law Tribunal|Tribunal)\b[^.]{0,120}?\b(?:sanctioned|approved)\b[^.]{0,160}?${RESTRUCT_WORD}`, 'i');
+  return board.test(t) || passive.test(t) || sanction.test(t);
+}
+/** Pure: may this filing be read as a restructuring? Subject, or an explicit approval sentence. */
+export function restructuringStated(subject: string, text: string): boolean {
+  return RESTRUCT_SUBJECT.test(String(subject || '')) || restructuringApproved(text);
+}
+
 function readIn(inp: ReadInput, text: string): ReadCore {
   const subj = subjectClass(inp.subject);
   const docType = docTypeOf(inp.subject, text);
@@ -678,12 +704,14 @@ function readIn(inp: ReadInput, text: string): ReadCore {
     return lineOut({ kind: 'Fund raise', line, routine: null, touches: [], chars: text.length, senior: false, noImpact: noImpact0, docType: 'Allotment intimation', changes: [], lowConfidence: !line }, 'IN', 'Fund raise');
   }
   const hits = classifyIndiaEvents(text, { max: 16 });
-  const real = hits.filter((h) => !h.routine && h.id !== 'commodity_price');
+  // zzz825: a scheme / demerger is an event only when the subject says so or the board approved it in a sentence
+  const restructOk = subj.type === 'Corporate restructuring' || restructuringStated(inp.subject, text);
+  const real = hits.filter((h) => !h.routine && h.id !== 'commodity_price' && (restructOk || !/^(?:merger|demerger)$/.test(h.id)));
   let facts: IndiaFacts[] = [];
   let factRoutine: string | null = null;
   try {
     const x = extractIndiaFacts({ text, issuer: inp.issuer || '', date: inp.date || null, url: inp.url || null, title: inp.subject });
-    facts = x.facts; factRoutine = x.routineReason;
+    facts = x.facts.filter((f) => restructOk || f.event.kind !== 'merger'); factRoutine = x.routineReason;
   } catch { facts = []; }
   const touches = inTouches(real);
   // facts the taxonomy has no rule for, read from the body the same way (stated, never inferred)
@@ -698,7 +726,7 @@ function readIn(inp: ReadInput, text: string): ReadCore {
   const resultsHit = real.find((h) => h.category === 'Results' && h.id !== 'guidance' && h.id !== 'order_book');
   const fact = facts[0] || null;
   let kind: RecentEventType | null = null;
-  if (/scheme of (?:arrangement|amalgamation)|demerged company|resulting company|transferor company/i.test(text)) kind = 'Corporate restructuring';
+  if (restructOk && /scheme of (?:arrangement|amalgamation)|demerged company|resulting company|transferor company|demerg|amalgamat/i.test(`${inp.subject} ${text}`)) kind = 'Corporate restructuring';
   else if (fact && FACT_KIND[fact.event.kind] && fact.event.kind !== 'results') kind = FACT_KIND[fact.event.kind];
   else if (resultsHit && (resultsHit.id !== 'results_filed' || /financial results|results for the quarter/i.test(text))) kind = 'Results';
   else if (real[0]) kind = IN_HIT_KIND[real[0].id] || (real[0].category === 'Results' ? 'Results' : null);
@@ -769,41 +797,79 @@ function readIn(inp: ReadInput, text: string): ReadCore {
   const ob = orderBookChange(text, 'IN');
   if (ob) changes.push(ob);
   const lowConfidence = !!line && (MARKETING.test(line) || /details in the filing|see filing/i.test(line));
-  return lineOut({ kind, line, routine: null, touches, chars: text.length, senior, noImpact, docType, changes, lowConfidence }, 'IN', type);
+  return lineOut({ kind, line, routine: null, touches, chars: text.length, senior, noImpact, docType, changes, lowConfidence, restructuringStated: restructOk }, 'IN', type);
 }
+
+// ── zzz829: US typing and extraction hygiene ────────────────────────────────
+/** A bank regulatory-capital table / a ratio table read as a sentence — never an event line. */
+export const US_TABLE_TEXT = /risk[- ]weighted assets|well[- ]capitali[sz]ed|\btier\s?1\s+(?:leverage|capital|common|risk)|common equity tier\s?1|capital adequacy|\bminimum\s+(?:capital\s+)?(?:ratio|requirement)s?\b|for capital adequacy purposes|\bCET1\b/i;
+/** Clinical language: a phase, a trial / study, an endpoint, patients, placebo, the FDA. A bare "p<0.001" is a footnote. */
+const CLINICAL = /\bphase\s?(?:[1-3][ab]?|i{1,3}[ab]?|1\/2|2\/3)\b|\bclinical (?:trial|study|studies|data|program)\b|\b(?:pivotal|registrational|randomi[sz]ed|double[- ]blind|placebo[- ]controlled)\b|\b(?:primary|secondary|co-primary) (?:efficacy )?endpoints?\b|\btopline (?:results|data)\b|\bpatients?\b|\bplacebo\b|\binvestigational\b|\b(?:FDA|EMA)\b/i;
+/** The release headline says the company acquires / completes an acquisition. */
+const ACQ_HEAD = /\b(?:acquires|to acquire|agrees to acquire|agreed to acquire|agreement to acquire|complet(?:es|ed) (?:the |its |an? )?(?:previously announced )?acquisition|clos(?:es|ed) (?:the |its |an? )?(?:previously announced )?acquisition|has acquired)\b/i;
+/** A debt offering: notes / debentures / bonds priced, closed or completed (never new shares). */
+const DEBT_OFFER = /\b(?:pricing of|prices|priced|announces? (?:the )?(?:pricing|closing)|closing of|closes|completes?|completed|launch(?:es)? of)\b[^.]{0,120}\b(?:offering|private placement|issuance|sale)\b[^.]{0,100}\b(?:senior (?:secured |unsecured |subordinated )?notes|notes due|convertible (?:senior )?notes|debentures|bonds)\b|\b(?:senior (?:secured |unsecured |subordinated )?notes|notes due \d{4}|convertible (?:senior )?notes)\b[^.]{0,80}\b(?:offering|private placement)\b/i;
 
 function readUs(inp: ReadInput, text: string): ReadCore {
   const subj = subjectClass(inp.subject);
-  const hits: UsEventHit[] = classifyUsEvents(text, { max: 12 });
+  const items = usItemsIn(inp.subject);
+  const scale = usTableScale(text);
+  const sents = eventSentences(text);
+  const head = `${inp.subject} ${sents.slice(0, 3).join(' ')}`;
+  // zzz829: a statistical footnote ("p<0.001") in a non-drug filing is not clinical data; a regulatory-capital
+  // table is not an event; a hypothetical sentence ("may result from …") is not an event
+  const hits: UsEventHit[] = classifyUsEvents(text, { max: 12 }).filter((h) =>
+    !US_TABLE_TEXT.test(h.sentence)
+    && !(/^(?:trial_results|trial_milestone)$/.test(h.id) && !CLINICAL.test(h.sentence))
+    && (h.category === 'Earnings' || !isHypotheticalUs(h.sentence)));
   const touches: Touch[] = hits.map((h) => US_TOUCH[h.id]).filter(Boolean).map(([key, dir]) => ({ key, dir }));
   const noImpact = NO_IMPACT.test(text);
   const senior = /\b(?:ceo|chief executive|cfo|chief financial|president|chairman|coo|chief operating)\b/i.test(`${inp.subject} ${hits.filter((h) => h.id === 'management_change').map((h) => h.sentence).join(' ')}`);
   const earn = hits.find((h) => h.category === 'Earnings' && !/^guidance/.test(h.id));
   let kind: RecentEventType | null = earn ? 'Results' : hits[0] ? (US_HIT_KIND[hits[0].id] || null) : null;
-  if (/scheme of arrangement|spin-?off|separation/i.test(text) && !kind) kind = 'Corporate restructuring';
-  const type: RecentEventType = subj.generic || subj.type === 'Other filing' ? (kind || 'Other filing') : subj.type;
-  if (!hits.length && (subj.generic || subj.type === 'Other filing')) {
+  let strongKind = false;
+  // zzz825: "separation" / "spin-off" in body text is a restructuring only when the subject or a board sentence says so
+  const restructOk = restructuringStated(inp.subject, text);
+  if (kind === 'Corporate restructuring' && hits[0]?.id === 'restructuring' && !restructOk) kind = null;
+  if (/scheme of arrangement|spin-?off|separation/i.test(text) && !kind && restructOk) kind = 'Corporate restructuring';
+  // zzz829: an acquisition 8-K (Item 2.01 / 1.01, or a release headline that says acquires / completes the
+  // acquisition) is an Acquisition — never "Concall / business update"
+  const acqHit = hits.find((h) => h.id === 'acquisition' || h.id === 'merger_agreement');
+  const acqItem = items.includes('2.01') || (items.includes('1.01') && !!acqHit);
+  if (!earn && (acqItem || (acqHit && ACQ_HEAD.test(head))) && !/\bdispos|\bdivest|\bsale of (?:its|the|our)\b/i.test(inp.subject.replace(/acquisition or disposition(?: of assets)?/gi, ''))) { kind = 'Acquisition'; strongKind = true; }
+  // zzz829: a notes / debenture offering is a DEBT fund raise (no new shares) — never a business update
+  const debtSent = !earn ? sents.slice(0, 6).find((x) => DEBT_OFFER.test(x)) || (DEBT_OFFER.test(inp.subject) ? inp.subject : null) : null;
+  if (debtSent) { kind = 'Fund raise'; strongKind = true; }
+  const type: RecentEventType = subj.generic || subj.type === 'Other filing' || (strongKind && /^(?:Concall \/ business update|Order win)$/.test(subj.type)) ? (kind || 'Other filing') : subj.type;
+  if (!hits.length && !strongKind && (subj.generic || subj.type === 'Other filing')) {
     return { kind: null, line: null, figures: [], routine: 'nothing material stated in the filing', touches: [], chars: text.length, senior, noImpact };
   }
   let line: string | null = null;
+  let lowConfidence = false;
   const changes: FilingChange[] = [];
   if (type === 'Results') {
     const rp = resultsParts(text, 'US', inp.date);
-    changes.push(...rp.changes);
+    changes.push(...rp.changes.map((c) => ({ ...c, text: usScaleAmounts(c.text, scale) })));
     const r = rp.line;
     const g = hits.find((h) => /^guidance_(raise|cut)/.test(h.id));
     line = r ? `${r}${g ? `; ${g.label.toLowerCase()}` : ''}` : (earn ? `${earn.label}: ${clip(earn.sentence, 170)}` : null);
+  } else if (type === 'Fund raise' && debtSent) {
+    line = `Debt raise (notes — no new shares): ${clip(debtSent, 170)}`;
   } else {
-    const lead = hits.find((h) => US_HIT_KIND[h.id] === type) || hits[0];
+    const lead = hits.find((h) => US_HIT_KIND[h.id] === type) || (type === 'Acquisition' ? acqHit : null) || (strongKind ? null : hits[0]);
     line = lead ? `${lead.label}: ${clip(lead.sentence, 180)}` : null;
+    if (!line && strongKind) lowConfidence = true;   // typed by the 8-K item; no clean sentence — the subject is shown
     if (type === 'Regulatory / legal action' && line && noImpact) line += ' — company says no material impact';
   }
-  return lineOut({ kind, line, routine: null, touches, chars: text.length, senior, noImpact, changes, docType: /8-?K/i.test(inp.subject) ? 'Form 8-K' : 'SEC filing' }, 'US', type);
+  // a table read as a sentence (regulatory-capital ratios, a run of figures) is low-confidence: the subject is shown
+  if (line && US_TABLE_TEXT.test(line)) { line = null; lowConfidence = true; }
+  if (line) line = usScaleAmounts(line, scale);
+  return lineOut({ kind, line, routine: null, touches, chars: text.length, senior, noImpact, changes, docType: /8-?K/i.test(inp.subject) ? 'Form 8-K' : 'SEC filing', restructuringStated: restructOk, strongKind, lowConfidence }, 'US', type);
 }
 
 /** Pure: the cache / response record for one filing. */
-export function toFilingRead(url: string, core: ReadCore | null, failure: string | null, now: Date = new Date()): FilingRead {
-  if (!core || failure) return { url, status: 'failed', reason: failure || 'no readable text', version: FILING_READ_VERSION, readAt: now.toISOString() };
-  if ((core.chars || 0) < MIN_TEXT) return { url, status: 'failed', reason: 'no readable text in the document (scanned image or empty)', version: FILING_READ_VERSION, readAt: now.toISOString() };
-  return { url, status: 'read', ...core, version: FILING_READ_VERSION, readAt: now.toISOString() };
+export function toFilingRead(url: string, core: ReadCore | null, failure: string | null, now: Date = new Date(), version: string = FILING_READ_VERSION): FilingRead {
+  if (!core || failure) return { url, status: 'failed', reason: failure || 'no readable text', version, readAt: now.toISOString() };
+  if ((core.chars || 0) < MIN_TEXT) return { url, status: 'failed', reason: 'no readable text in the document (scanned image or empty)', version, readAt: now.toISOString() };
+  return { url, status: 'read', ...core, version, readAt: now.toISOString() };
 }

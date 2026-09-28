@@ -17,7 +17,8 @@ import { useEffect, useRef, useState } from 'react';
 import { normUrl, type ReadRequest } from '@/lib/catalyst/recent-events';
 import type { FilingRead } from '@/lib/catalyst/filing-read-types';
 
-const VERSION = 'r3';
+// zzz829: the server's read version per market (lib/catalyst/filing-read filingReadVersion) — US re-reads on r4-us
+const versionOf = (market: 'IN' | 'US') => (market === 'US' ? 'r4-us' : 'r3');
 const BATCH = 5;
 const CLIENT_TIMEOUT_MS = 55_000;
 const LS_MAX = 800;
@@ -30,7 +31,7 @@ function loadLocal(market: 'IN' | 'US'): Record<string, FilingRead> {
     if (!raw) return {};
     const j = JSON.parse(raw);
     const out: Record<string, FilingRead> = {};
-    for (const [k, v] of Object.entries(j || {})) if (v && (v as any).status === 'read' && (v as any).version === VERSION) out[k] = v as FilingRead;
+    for (const [k, v] of Object.entries(j || {})) if (v && (v as any).status === 'read' && (v as any).version === versionOf(market)) out[k] = v as FilingRead;
     return out;
   } catch { return {}; }
 }
@@ -97,7 +98,7 @@ export function useFilingReads(queue: ReadRequest[] | null | undefined, market: 
           lastError = e?.name === 'AbortError' ? 'the reader did not answer in time' : (e?.message || 'the reader could not be reached');
           // a second failure for the same documents marks them failed with the reason, never blank
           got = batch.filter((q) => (attempts.current.get(normUrl(q.url)) || 0) >= 2)
-            .map((q) => ({ url: q.url, status: 'failed' as const, reason: lastError, version: VERSION }));
+            .map((q) => ({ url: q.url, status: 'failed' as const, reason: lastError, version: versionOf(market) }));
         }
         if (!alive.current) break;
         const next = { ...readsRef.current };

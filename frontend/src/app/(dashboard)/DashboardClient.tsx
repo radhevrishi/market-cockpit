@@ -13,6 +13,7 @@ import api from '@/lib/api';
 import TickerDrawer from '@/components/TickerDrawer';
 import GlobalSearch from '@/components/GlobalSearch';
 import { PdfExportButton } from '@/components/PdfExportButton';
+import ScreenThemeToggle from '@/components/ScreenThemeToggle';
 import MarketHours from '@/components/MarketHours';
 import RegimeBanner from '@/components/RegimeBanner'; // zzz524 — portal-wide market regime
 import StockPassport from '@/components/StockPassport'; // zzz524 — global one-symbol overlay
@@ -849,6 +850,8 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
 
               {/* PATCH 0074: theme cycler + PDF export — visible on every tab */}
               {/* ThemeSwitcher removed — light/pro themes were never wired to page styles */}
+              {/* zzz825: ☀/🌙 — light (white, ink-friendly) screens via the --mc-* variable set */}
+              <ScreenThemeToggle />
               <PdfExportButton />
 
               <button

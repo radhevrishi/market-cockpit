@@ -129,6 +129,14 @@ export interface ConvictionEntry {
   cb_enrich_v?: number | null;                     // zzz361
   cb_trend_attempts?: number | null;               // zzz369 — bounded trend re-fetch counter
   _trends_status?: string | null;                  // zzz376 — 'ok' | 'no-table' | 'fetch-failed'
+  // zzz827 — same-year cash (EO engine) and the current-grade note.
+  cash_fy?: string | null;
+  cash_basis?: string | null;
+  cash_rule_v?: number | null;
+  ocf_annual_cr?: number | null;
+  pat_annual_cr?: number | null;
+  /** Set when the current grading puts this filing below STRONG (kept, labelled). */
+  _tier_now?: string | null;
 }
 
 const LS_KEY = 'mc:conviction-beats:v1';
@@ -385,6 +393,8 @@ export function syncFromEarningsOps(entries: Array<SyncEntry>): number {
           fill('d1_pct'); fill('gap_pct'); fill('move_pct'); fill('d2_pct' as any);   // zzz230/231
           fill('pead_score'); fill('market_cap_cr'); fill('pe');  // zzz242
           fill('cfo_to_pat_ratio' as any);  // zzz306 — earnings quality (CFO/PAT ratio)
+          // zzz827 — the same-year cash pair and its year label (EO rule).
+          fill('cash_fy' as any); fill('cash_basis' as any); fill('ocf_annual_cr' as any); fill('pat_annual_cr' as any); fill('cash_rule_v' as any);
           // QUALITY × INFLECTION — without these three in the backfill list a
           // same-filing sync would skip the overwrite path and an entry benched
           // before this feature could never pick the quadrant up.
@@ -597,6 +607,34 @@ export function patchConvictionEntries(patches: Array<Record<string, any> & { ti
       if ((cur as any)[k] !== v) { (cur as any)[k] = v; changed = true; }
     }
     if (changed) { map[key] = { ...cur }; count++; }
+  }
+  if (count > 0) {
+    writeConvictionBeats(map);
+    window.dispatchEvent(new CustomEvent('conviction-beats:updated'));
+  }
+  return count;
+}
+
+/** zzz827 — like patchConvictionEntries, but a null in the patch IS written
+ *  (and `undefined` is skipped). Used by the stale-tier re-sync: a figure the
+ *  current grading withholds (an old inflated cash ratio) must not survive
+ *  next to the new ones. Only existing bare-ticker entries are touched; a
+ *  name is never added or removed here. One write + one event. */
+export function replaceConvictionFields(patches: Array<{ ticker: string; patch: Record<string, any> }>): number {
+  if (typeof window === 'undefined') return 0;
+  const map = readConvictionBeats();
+  let count = 0;
+  for (const { ticker, patch } of patches) {
+    const key = String(ticker || '').toUpperCase();
+    const cur = map[key];
+    if (!cur) continue;
+    const next: any = { ...cur };
+    let changed = false;
+    for (const [k, v] of Object.entries(patch || {})) {
+      if (k === 'ticker' || v === undefined) continue;
+      if (JSON.stringify(next[k] ?? null) !== JSON.stringify(v ?? null)) { next[k] = v; changed = true; }
+    }
+    if (changed) { map[key] = next; count++; }
   }
   if (count > 0) {
     writeConvictionBeats(map);

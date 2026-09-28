@@ -242,6 +242,6 @@ export function evidenceAttention(rows: AttentionRow[], now?: Date | string): { 
       || es === 'NEW_EVIDENCE_AVAILABLE' || es === 'STALE' || es === 'RETRIEVAL_FAILED' || es === 'SOURCE_UNAVAILABLE') update.push(String(r.symbol || ''));
   }
   const total = unread.length + update.length;
-  const line = total ? `${total} need${total === 1 ? 's' : ''} attention — ${unread.length} unread, ${update.length} require${update.length === 1 ? 's' : ''} update` : 'All evidence current';
+  const line = total ? `${total} need${total === 1 ? 's' : ''} attention — ${unread.length} unread, ${update.length} require${update.length === 1 ? 's' : ''} update` : 'Evidence up to date (latest filings on file)';
   return { unread, update, total, line };
 }

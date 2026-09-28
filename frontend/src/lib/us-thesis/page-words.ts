@@ -92,9 +92,15 @@ type ViewRow = { symbol: string; origin: string; preset?: { state?: string } | n
  * a bench name whose figures are still loading is shown (as loading). The
  * view chip picks book / bench / all; the status filter narrows further.
  */
-export function usPcView<T extends ViewRow>(rows: T[], o: { source: 'all' | 'book' | 'bench'; showFailing: boolean; filter: string | null; order: readonly string[] }): { all: T[]; inSource: T[]; list: T[] } {
+export function usPcView<T extends ViewRow>(rows: T[], o: { source: 'all' | 'book' | 'bench' | 'cb'; showFailing: boolean; filter: string | null; order: readonly string[]; cbKeys?: ReadonlySet<string>; keyOf?: (t: string) => string }): { all: T[]; inSource: T[]; list: T[] } {
   const all = o.showFailing ? rows : rows.filter((r) => !(r.origin === 'bench' && r.preset?.state === 'fail'));
-  const inSource = all.filter((r) => (o.source === 'all' ? true : o.source === 'book' ? r.origin !== 'bench' : r.origin === 'bench'));
+  // zzz828: 'cb' = every name the US Conviction Beats page shows under the
+  // saved criteria, HELD ONES INCLUDED (held + not held), from ALL rows —
+  // never narrowed by the failing chip (a CB name never fails its own list).
+  const key = o.keyOf || ((t: string) => t.toUpperCase());
+  const inSource = o.source === 'cb'
+    ? rows.filter((r) => !!o.cbKeys && o.cbKeys.has(key(r.symbol)))
+    : all.filter((r) => (o.source === 'all' ? true : o.source === 'book' ? r.origin !== 'bench' : r.origin === 'bench'));
   const f = o.filter ? inSource.filter((r) => r.assessment?.status === o.filter) : inSource;
   const list = [...f].sort((a, b) => {
     const ai = o.order.indexOf(a.assessment?.status || 'NEUTRAL'), bi = o.order.indexOf(b.assessment?.status || 'NEUTRAL');

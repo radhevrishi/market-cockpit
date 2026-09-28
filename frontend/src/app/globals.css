@@ -282,8 +282,6 @@ html[data-theme="professional"] body {
    uppercase + lowercase forms for every hex. */
 
 /* ALL near-black page backgrounds → white */
-html[data-theme="light"] [style*="var(--mc-bg-0)"],
-html[data-theme="light"] [style*="var(--mc-bg-0)"],
 html[data-theme="light"] [style*="#0a0a0f"],
 html[data-theme="light"] [style*="#0A0A0F"],
 html[data-theme="light"] [style*="#0d1117"],
@@ -304,12 +302,6 @@ html[data-theme="light"] [style*="rgb(6, 14, 26)"] {
   background-color: #f0f3f7 !important;
 }
 /* Header bg var(--mc-bg-1), var(--mc-bg-1) → light panel */
-html[data-theme="light"] [style*="var(--mc-bg-1)"],
-html[data-theme="light"] [style*="var(--mc-bg-1)"],
-html[data-theme="light"] [style*="var(--mc-bg-1)"],
-html[data-theme="light"] [style*="var(--mc-bg-1)"],
-html[data-theme="light"] [style*="var(--mc-bg-2)"],
-html[data-theme="light"] [style*="var(--mc-bg-2)"],
 html[data-theme="light"] [style*="rgb(13, 22, 35)"],
 html[data-theme="light"] [style*="rgb(13, 27, 46)"],
 html[data-theme="light"] [style*="rgb(17, 27, 53)"] {
@@ -317,20 +309,6 @@ html[data-theme="light"] [style*="rgb(17, 27, 53)"] {
   border-color: rgba(0,0,0,0.08) !important;
 }
 /* Inner panel var(--mc-bg-4), var(--mc-border-1), var(--mc-bg-2), var(--mc-border-2), var(--mc-bg-4), var(--mc-bg-0), #0A1628 etc */
-html[data-theme="light"] [style*="var(--mc-bg-4)"],
-html[data-theme="light"] [style*="var(--mc-bg-4)"],
-html[data-theme="light"] [style*="var(--mc-border-1)"],
-html[data-theme="light"] [style*="var(--mc-border-1)"],
-html[data-theme="light"] [style*="var(--mc-bg-2)"],
-html[data-theme="light"] [style*="var(--mc-bg-2)"],
-html[data-theme="light"] [style*="var(--mc-bg-3)"],
-html[data-theme="light"] [style*="var(--mc-bg-3)"],
-html[data-theme="light"] [style*="var(--mc-border-2)"],
-html[data-theme="light"] [style*="var(--mc-border-2)"],
-html[data-theme="light"] [style*="var(--mc-bg-4)"],
-html[data-theme="light"] [style*="var(--mc-bg-4)"],
-html[data-theme="light"] [style*="var(--mc-bg-0)"],
-html[data-theme="light"] [style*="var(--mc-bg-0)"],
 html[data-theme="light"] [style*="#0A1628"],
 html[data-theme="light"] [style*="#0a1628"],
 html[data-theme="light"] [style*="rgb(26, 40, 64)"],
@@ -340,38 +318,19 @@ html[data-theme="light"] [style*="rgb(30, 45, 69)"] {
   color: #0f172a;
 }
 /* Primary text var(--mc-text-0) → dark text */
-html[data-theme="light"] [style*="var(--mc-text-0)"],
-html[data-theme="light"] [style*="var(--mc-text-0)"],
-html[data-theme="light"] [style*="var(--mc-text-1)"],
-html[data-theme="light"] [style*="var(--mc-text-1)"],
 html[data-theme="light"] [style*="rgb(245, 247, 250)"],
 html[data-theme="light"] [style*="rgb(230, 237, 243)"] {
   color: #0f172a !important;
 }
 /* Muted text var(--mc-text-3), var(--mc-text-4), var(--mc-text-3) → mid-slate */
-html[data-theme="light"] [style*="var(--mc-text-3)"],
-html[data-theme="light"] [style*="var(--mc-text-3)"],
-html[data-theme="light"] [style*="var(--mc-text-4)"],
-html[data-theme="light"] [style*="var(--mc-text-4)"],
-html[data-theme="light"] [style*="var(--mc-text-3)"],
-html[data-theme="light"] [style*="var(--mc-text-3)"],
 html[data-theme="light"] [style*="rgb(148, 163, 184)"],
 html[data-theme="light"] [style*="rgb(107, 122, 141)"] {
   color: var(--mc-text-4) !important;
 }
 /* PATCH 0076: ALL faint text colors → readable dark slate on white.
    These were near-invisible on white in patch 0075. */
-html[data-theme="light"] [style*="var(--mc-text-4)"],
-html[data-theme="light"] [style*="var(--mc-text-4)"],
-html[data-theme="light"] [style*="var(--mc-text-2)"],
-html[data-theme="light"] [style*="var(--mc-text-2)"],
-html[data-theme="light"] [style*="var(--mc-text-3)"],
-html[data-theme="light"] [style*="var(--mc-text-3)"],
-html[data-theme="light"] [style*="var(--mc-text-3)"],
-html[data-theme="light"] [style*="var(--mc-text-3)"],
 html[data-theme="light"] [style*="#7d8590"],
 html[data-theme="light"] [style*="#7D8590"],
-html[data-theme="light"] [style*="var(--mc-text-4)"],
 html[data-theme="light"] [style*="#334155"],
 html[data-theme="light"] [style*="#3B4754"],
 html[data-theme="light"] [style*="#3b4754"],
@@ -379,12 +338,8 @@ html[data-theme="light"] [style*="rgb(74, 91, 108)"] {
   color: #334155 !important;        /* mid-dark slate — readable */
 }
 /* And brighter text colors that are too pale on white */
-html[data-theme="light"] [style*="var(--mc-text-1)"],
-html[data-theme="light"] [style*="var(--mc-text-1)"],
 html[data-theme="light"] [style*="#E2E8F0"],
-html[data-theme="light"] [style*="#e2e8f0"],
-html[data-theme="light"] [style*="var(--mc-text-0)"],
-html[data-theme="light"] [style*="var(--mc-text-0)"] {
+html[data-theme="light"] [style*="#e2e8f0"] {
   color: #0f172a !important;        /* near-black — primary heading */
 }
 /* Catch-all aggressive: any element whose inline style uses a near-white
@@ -393,15 +348,9 @@ html[data-theme="light"] [style*="#FFFFFF"] {
   color: #0f172a !important;
 }
 /* Accent blue var(--mc-accent) / #38A9E8 — keep but tone down */
-html[data-theme="light"] [style*="var(--mc-accent)"],
-html[data-theme="light"] [style*="var(--mc-accent)"] {
-  color: #0369a1 !important;
-}
+/* zzz825: var-based selectors removed — the light theme now swaps the --mc-* variables themselves (styles/design-system.css) */
 /* Body text fallback */
-html[data-theme="light"] [style*="var(--mc-text-2)"],
-html[data-theme="light"] [style*="var(--mc-text-2)"] {
-  color: #334155 !important;
-}
+/* zzz825: var-based selectors removed — the light theme now swaps the --mc-* variables themselves (styles/design-system.css) */
 
 /* ─── PROFESSIONAL THEME — Bloomberg-terminal black + orange + monospace ── */
 /* PATCH 0076: Make Pro VISIBLY distinct from Dark.
@@ -740,37 +689,9 @@ main [role="dialog"] [style*="maxWidth"] {
    filter). The filter alone gives a clean readable light theme.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-html[data-theme="light"] main {
-  filter: invert(0.92) hue-rotate(180deg);
-  background: #ffffff !important;
-}
-/* Re-invert images, videos, SVG, canvas so they look correct */
-html[data-theme="light"] main img,
-html[data-theme="light"] main video,
-html[data-theme="light"] main svg,
-html[data-theme="light"] main canvas,
-html[data-theme="light"] main picture,
-html[data-theme="light"] main iframe,
-html[data-theme="light"] main [data-no-invert],
-html[data-theme="light"] main [class*="recharts"],
-html[data-theme="light"] main [class*="lightweight-charts"] {
-  filter: invert(1) hue-rotate(180deg);
-}
-/* The Cowork header sidebar should also flip */
-html[data-theme="light"] aside {
-  filter: invert(0.92) hue-rotate(180deg);
-}
-html[data-theme="light"] aside img,
-html[data-theme="light"] aside svg {
-  filter: invert(1) hue-rotate(180deg);
-}
-html[data-theme="light"] header {
-  filter: invert(0.92) hue-rotate(180deg);
-}
-html[data-theme="light"] header img,
-html[data-theme="light"] header svg {
-  filter: invert(1) hue-rotate(180deg);
-}
+/* zzz825: the invert(0.92) hue-rotate(180deg) filters on main / aside / header are gone. The light theme
+   now swaps the --mc-* / --tc-* variables themselves (styles/design-system.css), so an inversion on top
+   would turn the white screens back to black. */
 
 /* The body itself stays white so any unrendered space is light */
 html[data-theme="light"] body {

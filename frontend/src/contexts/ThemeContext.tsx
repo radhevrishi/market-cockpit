@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { THEMES, DEFAULT_THEME, THEME_STORAGE_KEY, type ThemeName, type ThemePalette } from '@/lib/theme';
+import { THEMES, DEFAULT_THEME, THEME_STORAGE_KEY, SCREEN_THEME_KEY, type ThemeName, type ThemePalette } from '@/lib/theme';
 
 interface ThemeContextValue {
   theme: ThemeName;
@@ -18,11 +18,10 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     try {
-      const saved = window.localStorage.getItem(THEME_STORAGE_KEY) as ThemeName | null;
-      // Light/Pro were removed from the UI — only restore a saved dark theme.
-      if (saved && saved in THEMES && saved === 'dark') {
-        setThemeState(saved);
-      }
+      // zzz825: the header's ☀/🌙 toggle — light (ink-friendly, white) or the default dark. Stored under its
+      // own key so an old 'light'/'professional' choice from the removed three-way switcher never comes back.
+      const saved = window.localStorage.getItem(SCREEN_THEME_KEY);
+      if (saved === 'light' || saved === 'dark') setThemeState(saved);
     } catch {
       // ignore localStorage failures
     }
@@ -33,6 +32,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (typeof document === 'undefined') return;
     document.documentElement.dataset.theme = theme;
+    document.documentElement.classList.toggle('dark', theme !== 'light');
+    document.documentElement.style.colorScheme = theme === 'light' ? 'light' : 'dark';
     const palette = THEMES[theme];
     const root = document.documentElement;
     // Expose palette as CSS variables — components can use var(--mc-bg) etc.
@@ -56,6 +57,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     setThemeState(next);
     try {
       window.localStorage.setItem(THEME_STORAGE_KEY, next);
+      if (next === 'light' || next === 'dark') window.localStorage.setItem(SCREEN_THEME_KEY, next);
     } catch {
       // ignore
     }

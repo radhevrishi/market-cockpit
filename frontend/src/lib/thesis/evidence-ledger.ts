@@ -979,8 +979,9 @@ export function formatDeltaAbs(d: number, unit: string | null): string {
     case '₹ crore': return `${sign}₹${num(r1)} Cr`;
     case 'days': return `${sign}${num(Math.round(abs))} days`;
     case 'x': return `${sign}${r1}×`;
-    case 'USD million': return `${sign}$${num(r1)} mn`;
-    case 'EUR million': return `${sign}€${num(r1)} mn`;
+    // zzz829: a sub-million change is written in the currency itself — "$551 vs $455" is "+$96", never "+$0 mn"
+    case 'USD million': return abs < 0.05 ? `${sign}$${Math.round(abs * 1e6).toLocaleString('en-US')}` : `${sign}$${num(abs < 1 ? Math.round(abs * 100) / 100 : r1)} mn`;
+    case 'EUR million': return abs < 0.05 ? `${sign}€${Math.round(abs * 1e6).toLocaleString('en-US')}` : `${sign}€${num(abs < 1 ? Math.round(abs * 100) / 100 : r1)} mn`;
     default: return `${sign}${num(abs >= 100 ? Math.round(abs) : r1)}${unit ? ` ${unit}` : ''}`;
   }
 }

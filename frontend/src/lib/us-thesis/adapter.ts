@@ -394,6 +394,12 @@ export function usGradedRow(ticker: string, f: UsFundamentalsLike, meta: { compa
     operating_income_curr_musd: m1(f.operating_income), cfo_curr_musd: m1(f.cfo),
     capex_curr_musd: m1(f.capex ?? null),
   };
+  // zzz829: a cash-to-profit ratio off a tiny profit (ACTG 83×, TXNM 19×) says nothing about cash quality — the
+  // profit is small against the cash, not the cash large. Kept, labelled, never judged.
+  const cfoPat = row.cfo_to_pat_ratio;
+  if (typeof cfoPat === 'number' && cfoPat > 5 && ni != null && ni > 0 && (rev == null || rev <= 0 || ni / rev < 0.03)) {
+    row.cfo_to_pat_note = `profit small vs cash — operating cash flow ${m1(f.cfo)} mn against net income ${m1(ni)} mn for the same quarter; the ratio is not a reading of cash quality`;
+  }
   // Nothing usable: say so rather than hand the engine an empty row.
   if (row.sales_yoy_pct == null && row.opm_pct == null && row.net_income_curr_musd == null) return null;
   return row;

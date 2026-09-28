@@ -40,12 +40,15 @@ import { isSmallMidCap, SMALL_MID_CAP_MAX_CR } from '@/lib/thesis/universe';
 import { priorBackfillPlan } from '@/lib/thesis/prior-period';
 import { evidenceCounts, universeCounts, researchPriorityEligible, researchPriorityTitle, researchWhyLine, exportCounts, evidenceAttention, RESEARCH_EXPORT_STATUSES } from '@/lib/thesis/evidence-counts';
 import NewCatalystsTab from '@/components/catalyst/new-catalysts-tab';
-import { buildRecentCatalysts, rawFromLedger, rawFromPersistent, rawFromFeed, localToday, windowRange, countInRange, type RawEvent, type ThesisCtx, type WindowSpan } from '@/lib/catalyst/recent-events';
+import { buildRecentCatalysts, rawFromLedger, rawFromPersistent, rawFromFeed, localToday, windowRange, countInRange, nameMapOf, normUrl, type RawEvent, type ThesisCtx, type WindowSpan } from '@/lib/catalyst/recent-events';
+import { getConvictionList } from '@/lib/conviction-beats';
 import { useFilingReads } from '@/components/catalyst/use-filing-reads';
-import { cbCriteriaLine, nextWindow, PC_PAGE_STEP, readScope, otherBenchLabel } from '@/lib/thesis/pc-bench';
+import { cbCriteriaLine, nextWindow, PC_PAGE_STEP, readScope, otherBenchLabel, cbViewRows, cbViewTag, cbViewLine, heldKey } from '@/lib/thesis/pc-bench';
+import { readCbTabSnapshot, reconcileCbLists, type CbTabSnapshot } from '@/lib/india-cb-view';
 import { quickProgressLine } from '@/lib/thesis/quick-read';
 import BookCheckPanel from '@/components/BookCheckPanel';
 import { buildBookCheck } from '@/lib/thesis/book-membership';
+import { aiReadPlan, aiReadStatus, aiSourcesExplainer } from '@/lib/thesis/ai-read';
 
 const C = {
   bg: 'var(--mc-bg-1)', border: 'var(--mc-bg-4)', text: 'var(--tc-text, #F1F5F9)',
@@ -75,7 +78,8 @@ export default function PortfolioCatalystsPage() {
   // are always stated separately — a holding and a candidate are different
   // objects and the header never adds them into a single "holdings" figure
   // the way this page used to.
-  const [source, setSource] = useState<'all' | 'book' | 'bench'>('all');
+  // zzz827: 'cb' = the whole Conviction Beats list under his criteria (held names included).
+  const [source, setSource] = useState<'all' | 'book' | 'bench' | 'cb'>('all');
   // zzz811: the bench is the Conviction Beats list under HIS Conviction Beats
   // criteria. Names failing them are off by default and one chip away.
   const [showFailing, setShowFailing] = useState(false);
@@ -102,7 +106,7 @@ export default function PortfolioCatalystsPage() {
   // zzz823: the Book check — every source, why each name is here, and the
   // two lists that must be empty (saved-not-shown, shown-not-saved).
   const bookCheck = useMemo(() => (note.resolved && !loading
-    ? buildBookCheck({ saved: note.resolved.names, rows: all0 as any, sources: note.resolved.sources, rule: note.resolved.rule, ignored: note.resolved.ignored })
+    ? buildBookCheck({ saved: note.resolved.names, rows: all0 as any, sources: note.resolved.sources, rule: note.resolved.rule, ignored: note.resolved.ignored, bseUnmatched: note.resolved.bseUnmatched })
     : null), [note.resolved, all0, loading]);
 
   const sized = useMemo(() => all.filter((r) =>
@@ -112,11 +116,22 @@ export default function PortfolioCatalystsPage() {
 
   // zzz811: a held name is shown ONCE, in My book; "Bench" is the names you
   // do not hold, so All = My book + Bench exactly.
-  const inView = (r: { origin: string }) =>
+  const cbSet = useMemo(() => new Set((note.cbPassing || []).map((t) => heldKey(t))), [note.cbPassing]);
+  const inView = (r: { origin: string; symbol: string }) =>
     source === 'all' ? true
       : source === 'book' ? (r.origin === 'book' || r.origin === 'both')
+      : source === 'cb' ? cbSet.has(heldKey(r.symbol))
       : r.origin === 'bench';
-  const inSource = useMemo(() => sized.filter(inView), [sized, source]);
+  const inSource = useMemo(() => sized.filter(inView), [sized, source, cbSet]);
+  // zzz827: the Conviction Beats view and its name-for-name reconciliation
+  // with the Conviction Beats tab (the tab saves what it lists in this browser).
+  const cbRows = useMemo(() => cbViewRows(sized, note.cbPassing || []), [sized, note.cbPassing]);
+  const [tabSnap, setTabSnap] = useState<CbTabSnapshot | null>(null);
+  useEffect(() => { setTabSnap(readCbTabSnapshot()); }, [note.cbPassing]);
+  const cbRecon = useMemo(() => (loading || !note.cb ? null : reconcileCbLists(tabSnap, cbRows.map((r) => r.symbol), (t) => {
+    const r = all0.find((x) => heldKey(x.symbol) === heldKey(t));
+    return r ? { state: r.preset?.state || (r.origin === 'bench' ? 'unknown' : 'pass'), text: r.preset?.text || '' } : null;
+  })), [loading, note.cb, tabSnap, cbRows, all0]);
 
   // zzz784: one set of header numbers from the same arrays; a row without an
   // assessment is "not yet assessed", never counted into NO MATERIAL CHANGE.
@@ -202,6 +217,12 @@ export default function PortfolioCatalystsPage() {
   const primarySyms = scope.primary.map((r) => r.symbol);
   const otherSyms = scope.otherBench.map((r) => r.symbol);
   const primaryUnread = attentionInList.unread.length;
+  // zzz830: who has no AI read yet (never read / incomplete / rules only) —
+  // the bulk AI button reads the names in view, the page line counts the source.
+  const aiPlan = useMemo(() => aiReadPlan(list as any), [list]);
+  const aiPage = useMemo(() => aiReadPlan(inSource as any), [inSource]);
+  const [aiPick, setAiPick] = useState<'all' | 'incomplete' | 'withoutAi'>('all');
+  const aiSyms = aiPick === 'incomplete' ? aiPlan.incomplete : aiPick === 'withoutAi' ? aiPlan.withoutAi : aiPlan.all;
   // EVIDENCE INCOMPLETE because a core financial has no grader row — and the
   // stored read predates the headline prompt (india-ai-summary-v9), so a
   // re-read can fill it. A v9 read that still shows ⊘ is a filing that does
@@ -250,9 +271,18 @@ export default function PortfolioCatalystsPage() {
       (t) => bySym.get(bare(t))?.company || null, (t) => bySym.get(bare(t))?.ctx || null));
     return raws;
   }, [sized, loading, evidenceLoading, recent.plan, thesisTypes]);
-  const readQueue = useMemo(() => (recentRaws ? buildRecentCatalysts(recentRaws, today, { market: 'IN' }).toRead : []), [recentRaws, today]);
+  // zzz825: company names the page already holds — graded rows (book + bench) and the Conviction Beats list
+  const nameMap = useMemo(() => {
+    let cb: Array<{ ticker: string; company: string }> = [];
+    try { cb = getConvictionList(); } catch { cb = []; }
+    return nameMapOf(all0.map((r) => ({ ticker: r.symbol, company: r.graded?.company || r.graded?.company_name || null })), cb);
+  }, [all0]);
+  // zzz825 (§34): Material + Notable read first; known-Minor documents only when the owner opens Minor / clicks
+  const [wantedReads, setWantedReads] = useState<Set<string>>(() => new Set());
+  const addWanted = (urls: string[]) => setWantedReads((prev) => { const n = new Set(prev); for (const u of urls) n.add(normUrl(u)); return n; });
+  const readQueue = useMemo(() => (recentRaws ? buildRecentCatalysts(recentRaws, today, { market: 'IN', names: nameMap }).toRead.filter((q) => q.tier !== 'minor' || wantedReads.has(normUrl(q.url))) : []), [recentRaws, today, nameMap, wantedReads]);
   const { reads: filingReads, progress: readProgress } = useFilingReads(readQueue, 'IN', !!recentRaws);
-  const recentNew = useMemo(() => (recentRaws ? buildRecentCatalysts(recentRaws, today, { market: 'IN', reads: filingReads }) : null), [recentRaws, today, filingReads]);
+  const recentNew = useMemo(() => (recentRaws ? buildRecentCatalysts(recentRaws, today, { market: 'IN', reads: filingReads, names: nameMap }) : null), [recentRaws, today, filingReads, nameMap]);
   // zzz814: the selected days (Today · 3d · 5d · 10d, stepped / jumped) — the tab label counts the same window.
   const [newWin, setNewWin] = useState<{ span: WindowSpan; anchor: string | null }>({ span: 10, anchor: null });
   const newLabel = useMemo(() => {
@@ -304,6 +334,9 @@ export default function PortfolioCatalystsPage() {
           Beats page shows. Names that miss those criteria are one chip away, each labelled with what it misses.
           A bench name is a candidate, not a holding, and every card says which it is.
         </div>
+        <div data-testid="ai-sources-explainer" style={{ fontSize: 13.5, color: C.dim, marginTop: 4, lineHeight: 1.55, maxWidth: 820 }}>
+          <b style={{ color: C.text }}>Is it all from AI? No.</b> {aiSourcesExplainer('IN')}
+        </div>
       </div>
 
       {/* ── THE VIEWS. (zzz808) The catalyst board, or what is new. ─────── */}
@@ -323,6 +356,7 @@ export default function PortfolioCatalystsPage() {
       {view === 'new' ? (
         <NewCatalystsTab result={recentNew} loading={loading || evidenceLoading} names={sized.length} sourceNotes={recentNotes} market="IN" progress={readProgress} win={newWin} onWin={setNewWin}
           holdingOf={(t) => { const r = sized.find((x) => x.symbol.toUpperCase() === t.toUpperCase()); return r ? (r.origin === 'bench' ? 'bench' : 'book') : null; }}
+          onRead={addWanted} wanted={wantedReads}
           onJump={(t) => { setView('board'); setSource('all'); jumpTo(t); }} />
       ) : (<>
       {/* ── WHICH POPULATION. Two numbers, never merged into one. ───────── */}
@@ -332,7 +366,8 @@ export default function PortfolioCatalystsPage() {
           // (after the size filter), so "All" = book + bench on screen.
           ['all', `All ${uc.shown}`, 'Everything below: your book, plus the India Conviction Beats names you do not hold that pass your Conviction Beats criteria (after the size filter).'],
           ['book', `\uD83D\uDCD7 My book ${uc.book}`, 'Only what you own. Nothing is filtered out of this list — a holding is watched whatever it grades at.'],
-          ['bench', `\uD83C\uDFC6 Bench ${uc.bench}`, 'India Conviction Beats names you do not hold, selected by your Conviction Beats criteria — the same list as the Conviction Beats page. You do not own these.'],
+          ['cb', `\uD83C\uDFC6 Conviction Beats ${cbRows.length}`, 'Every name on your India Conviction Beats list that meets your Conviction Beats criteria — the same list as the Conviction Beats tab, name for name. Names you hold are included and tagged "📗 also in My book".'],
+          ['bench', `Bench ${uc.bench}`, 'India Conviction Beats names you do not hold, selected by your Conviction Beats criteria. You do not own these.'],
         ] as Array<[typeof source, string, string]>).map(([k, label, hint]) => {
           const on = source === k;
           return (
@@ -372,6 +407,12 @@ export default function PortfolioCatalystsPage() {
         </div>
       )}
 
+      {!loading && cbRecon && (
+        <div data-testid="cb-reconciliation" style={{ fontSize: 13, color: cbRecon.onlyTab.length || cbRecon.onlyPc.length ? C.amber : C.dim, lineHeight: 1.5 }}>
+          <b style={{ color: C.text }}>{cbViewLine(cbRows)}</b> · {cbRecon.line}
+        </div>
+      )}
+
       {!loading && <BookCheckPanel check={bookCheck} market="IN" />}
 
       {/* ── THE ARITHMETIC, VISIBLY. (zzz784) Every figure from the same rows. */}
@@ -380,7 +421,7 @@ export default function PortfolioCatalystsPage() {
           title="total − large caps hidden = shown = book + bench; status buckets + not yet assessed = shown; exportable + excluded = evaluated">
           <b style={{ color: C.text }}>{uc.line}</b>
           {' '}· status buckets {ORDER.filter((s) => uc.byStatus[s]).map((s) => uc.byStatus[s]).join(' + ') || 0}{uc.notAssessed ? ` + ${uc.notAssessed} not yet assessed` : ''} = {uc.statusSum + uc.notAssessed} shown
-          {source !== 'all' && <span style={{ color: C.faint }}> · view {source === 'book' ? 'my book' : 'bench'}: {ucView.shown} shown, buckets {ucView.statusSum}{ucView.notAssessed ? ` + ${ucView.notAssessed} not yet assessed` : ''}</span>}
+          {source !== 'all' && <span style={{ color: C.faint }}> · view {source === 'book' ? 'my book' : source === 'cb' ? 'Conviction Beats' : 'bench'}: {ucView.shown} shown, buckets {ucView.statusSum}{ucView.notAssessed ? ` + ${ucView.notAssessed} not yet assessed` : ''}</span>}
         </div>
       )}
       {/* Until the stored evidence is in, every card reads "incomplete" and
@@ -540,7 +581,7 @@ export default function PortfolioCatalystsPage() {
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={{ fontSize: 13.5, color: C.faint }}>
           {list.length} of {inSource.length} shown · {ec.held} held · {ec.bench} bench ·{' '}
-          {evidenceLoading ? <b style={{ color: C.text }}>loading stored evidence…</b> : <><b style={{ color: C.text }}>{readCount} of {inSource.length} companies have evidence read</b>{ec.quick_read > 0 ? <> ({ec.quick_read} read without AI — an AI read is one click on the card)</> : null} · {attention.line} · {docsRead} documents read</>}
+          {evidenceLoading ? <b style={{ color: C.text }}>loading stored evidence…</b> : <><b style={{ color: C.text }}>{readCount} of {inSource.length} companies have evidence read</b>{ec.quick_read > 0 ? <> ({ec.quick_read} read without AI — an AI read is one click on the card or the ✨ Read with AI button)</> : null} · {attention.line} · {docsRead} documents read</>}
           {!evidenceLoading && ec.incomplete > 0 && <> · {ec.incomplete} evidence incomplete</>}
           {newEvidence > 0 && <> · <b style={{ color: C.amber }}>{newEvidence} with new evidence available</b></>}
           {!evidenceLoading && ec.stale > 0 && <> · {ec.stale} stale</>}
@@ -555,12 +596,12 @@ export default function PortfolioCatalystsPage() {
 
         {evidenceLoading ? null : !batch.running ? (
           <>
-          <button onClick={() => readAll(primarySyms)}
+          <button onClick={() => readAll(primarySyms)} disabled={!attentionInList.total}
             title="Your book plus the bench names meeting your Conviction Beats criteria. Reads and PERSISTS the evidence behind each name that needs it — never read, failed, or with newer documents at a source. Names whose evidence is current are skipped without a model call. Three at a time; resumable after a reload."
             style={{
               fontSize: 13.5, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
               border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan,
-            }}>&#10024; {attentionInList.total ? `Read evidence for ${attentionInList.total} that need it (${attentionInList.unread.length} unread, ${attentionInList.update.length} update) — book + bench meeting your criteria` : 'All evidence current (book + bench meeting your criteria)'}</button>
+            }}>{attentionInList.total ? `\u2728 Read evidence for ${attentionInList.total} that need it (${attentionInList.unread.length} unread, ${attentionInList.update.length} update · uses AI) — book + bench meeting your criteria` : 'Evidence up to date (latest filings on file)'}</button>
           {attentionOther.total > 0 && (
             <button data-testid="read-other-bench" onClick={() => readAll(otherSyms)}
               title="Bench names that miss your Conviction Beats criteria (shown with the chip). Manual only — never started automatically. Three at a time; Stop works."
@@ -578,6 +619,28 @@ export default function PortfolioCatalystsPage() {
               border: `1px solid ${C.amber}`, background: 'transparent', color: C.amber,
             }}>Stop</button>
           </>
+        )}
+        {/* ── ✨ READ WITH AI — THE NAMES WITH NO AI READ. Click only. (zzz830)
+            Always here while any name in view is never read, incomplete, or
+            read only by rules (no AI). One model call per name, three at a
+            time, Stop works; nothing starts on its own. */}
+        {!evidenceLoading && !batch.running && aiPlan.total > 0 && (
+          <span data-testid="ai-read-bulk" style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button data-testid="ai-read-bulk-go" onClick={() => readAll(aiSyms, 3, { exact: true, modeOf: aiPlan.modeOf })}
+              disabled={!aiSyms.length || priorBatch.running || checkBatch.running}
+              title={`${aiPlan.breakdown}. Reads each name's latest documents with AI and saves the facts; a name read by rules (no AI) keeps those facts in history. An incomplete name already read by AI is read again. Three at a time; Stop works. Never started automatically.`}
+              style={{
+                fontSize: 13.5, fontWeight: 800, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
+                border: `1px solid ${C.cyan}`, background: 'color-mix(in srgb, var(--mc-cyan) 10%, transparent)', color: C.cyan,
+              }}>{aiPick === 'all' ? aiPlan.label : `\u2728 Read with AI — ${aiSyms.length} name${aiSyms.length === 1 ? '' : 's'} (uses AI · ${aiSyms.length} call${aiSyms.length === 1 ? '' : 's'}, only on click)`}</button>
+            <select aria-label="Which names to read with AI" value={aiPick} onChange={(e) => setAiPick(e.target.value as any)}
+              style={{ fontSize: 12.5, fontWeight: 700, padding: '2px 4px', borderRadius: 6, background: 'transparent', color: C.dim, border: `1px solid ${C.border}`, cursor: 'pointer' }}>
+              <option value="all">everything that needs it ({aiPlan.total})</option>
+              <option value="incomplete">{aiPlan.incompleteLabel}</option>
+              <option value="withoutAi">{aiPlan.withoutAiLabel}</option>
+            </select>
+            <span style={{ fontSize: 12.5, color: C.faint }}>{aiPlan.breakdown}</span>
+          </span>
         )}
         {/* ── RECENT REPORTERS. Click only. (zzz763)
             Re-reads the names that filed results in the last 10 days and
@@ -662,6 +725,12 @@ export default function PortfolioCatalystsPage() {
           border: `1px solid ${C.border}`, color: C.dim, textDecoration: 'none',
         }}>Exit Radar →</a>
       </div>
+
+      {!evidenceLoading && !loading && (
+        <div data-testid="ai-page-line" style={{ fontSize: 13, color: C.dim, lineHeight: 1.5 }}>
+          <b style={{ color: C.text }}>{aiPage.pageLine}</b> Figures are filed numbers (Screener / exchange results — no AI); each card says whether its evidence was read by rules or by AI.
+        </div>
+      )}
 
       {recent.state !== 'idle' && recent.state !== 'checking' && (
         <RecentReportersStrip recent={recent} />
@@ -771,6 +840,12 @@ export default function PortfolioCatalystsPage() {
       })()}
       {visible.map((r) => (
         <div key={r.symbol} id={`pc-${r.symbol}`} style={{ scrollMarginTop: 70 }}>
+        {source === 'cb' && cbViewTag(r.origin) && (
+          <div data-testid="cb-also-held" style={{ fontSize: 12.5, color: C.faint, padding: '2px 4px', lineHeight: 1.5 }}>
+            <b style={{ color: C.text }}>{r.symbol}</b> · 🏆 on your Conviction Beats list · <b style={{ color: C.green }}>{cbViewTag(r.origin)}</b>
+            {r.preset?.state === 'unknown' ? <> · ◌ {r.preset.text}</> : null}
+          </div>
+        )}
         {r.origin === 'bench' && (
           <div data-testid="bench-preset-label" style={{ fontSize: 12.5, color: C.faint, padding: '2px 4px', lineHeight: 1.5 }}>
             <b style={{ color: C.text }}>{r.symbol}</b> · 🏆 bench · from {r.benchSource || 'Conviction Beats (India)'} · not held
@@ -794,9 +869,10 @@ export default function PortfolioCatalystsPage() {
           documentOutcomes={r.documentOutcomes}
           needsRead={!r.summary && r.state !== 'loading'}
           reading={r.state === 'loading'}
-          onRead={() => readFiling(r.symbol, r.summary ? 'incremental' : 'read')}
+          onRead={() => readFiling(r.symbol, aiReadStatus(r as any).mode === 'force' ? 'force' : r.summary ? 'incremental' : 'read')}
           onCheck={() => readFiling(r.symbol, 'check')}
           onReread={() => readFiling(r.symbol, 'force')}
+          aiRead={evidenceLoading ? null : aiReadStatus(r as any)}
           error={r.error}
           ledger={r.ledger}
           freshness={r.freshness}

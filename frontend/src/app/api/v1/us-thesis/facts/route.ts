@@ -11,7 +11,7 @@
 // its fiscal calendar and, for a foreign filer, its latest half-year or
 // annual figures labelled as such. NO model call, NO price, NO market value.
 //
-// Cached per ticker (`us-thesis:facts:v4:<T>`): a row for 12 hours, a
+// Cached per ticker (`us-thesis:facts:v5:<T>`, zzz829): a row for 12 hours, a
 // "no figures" answer for 1 hour, a retrieval failure not at all.
 
 // zzz815: the work lives in lib/us-thesis/facts-server (shared, bounded):

@@ -162,7 +162,8 @@ describe('bench cards render', () => {
   });
   test('the page uses the shared view, shows "N of M cards", and names a narrowed view', () => {
     const page = read('app/(dashboard)/us-portfolio-catalysts/page.tsx');
-    assert.match(page, /usPcView\(all0, \{ source, showFailing, filter, order: ORDER \}\)/);
+    // zzz828: the view also carries the Conviction Beats keys (the 🏆 view).
+    assert.match(page, /usPcView\(all0, \{ source, showFailing, filter, order: ORDER, cbKeys, keyOf: usTickerKey \}\)/);
     assert.match(page, /\{visible\.length\} of \{list\.length\} card/);
     assert.match(page, /data-testid="us-view-note"/);
     assert.match(page, /Show \{Math\.min\(PC_PAGE_STEP, list\.length - visible\.length\)\} more/);

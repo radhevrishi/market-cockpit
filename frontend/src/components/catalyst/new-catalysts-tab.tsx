@@ -18,7 +18,7 @@
 
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import {
-  EVENT_TYPES, daysAgo, windowRange, dayLabel, inRange, rowAnchor, compareWithinDay, WINDOW_SPANS,
+  EVENT_TYPES, daysAgo, windowRange, dayLabel, inRange, rowAnchor, compareWithinDay, WINDOW_SPANS, normUrl,
   type RecentCatalystResult, type TypeFilter, type RecentEvent, type WindowSpan,
 } from '@/lib/catalyst/recent-events';
 import { IMPACTS, ledgerView, type Impact, type EvidenceQuality } from '@/lib/catalyst/event-card';
@@ -56,6 +56,10 @@ export interface NewCatalystsTabProps {
   onWin?: (w: { span: WindowSpan; anchor: string | null }) => void;
   /** zzz824: which population a ticker is in — your book or the Conviction Beats bench. Omit to hide the book filter. */
   holdingOf?: (ticker: string) => Holding;
+  /** zzz825 (§34): known-Minor documents are read only on demand — the page queues these URLs when asked. */
+  onRead?: (urls: string[]) => void;
+  /** zzz825: URLs (normUrl) the owner has already asked to read. */
+  wanted?: ReadonlySet<string>;
 }
 
 const SPAN_LABEL: Record<number, string> = { 1: 'Today', 3: '3d', 5: '5d', 10: '10d' };
@@ -149,6 +153,7 @@ function EventCardView({ e, holding, today, market, onJump, onLedger }: { e: Rec
         {onJump
           ? <a href="#" onClick={(ev) => { ev.preventDefault(); onJump(e.ticker); }} title={e.company || undefined} style={{ fontSize: 14, fontWeight: 900, color: C.text, textDecoration: 'none' }}>{e.ticker}</a>
           : <b title={e.company || undefined} style={{ fontSize: 14, color: C.text }}>{e.ticker}</b>}
+        {e.company && <span data-testid="nc-company" title={e.company} style={{ color: C.faint, maxWidth: 220, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.company}</span>}
         <HoldingBadge h={holding} />
         <b style={{ color: C.dim }}>{c.eventType}</b>
         <span style={{ color: C.faint }}>· {dayLabel(e.date)} ({when(e.date, today)})</span>
@@ -174,6 +179,17 @@ function EventCardView({ e, holding, today, market, onJump, onLedger }: { e: Rec
         {showEvidence && <><span style={{ color: C.faint }}> · </span><K>EVIDENCE</K>{c.evidence}</>}
       </div>
       {e.readNote && <div style={{ ...ROW, fontSize: 12, color: C.amber }} title={e.readNote}>{e.readNote}</div>}
+      {/* zzz829: the other events and changes stated in the SAME filing — one filing, one card */}
+      {e.also && e.also.length > 0 && (
+        <div data-testid="nc-also" style={{ fontSize: 12, color: C.dim, lineHeight: 1.45, minWidth: 0 }}>
+          <K>ALSO IN THIS FILING</K>
+          {e.also.map((a, i) => (
+            <div key={i} style={{ ...ROW, fontSize: 12, paddingLeft: 8 }} title={`${a.type}: ${a.line}`}>
+              · <b style={{ color: a.dir === 'down' ? C.red : a.dir === 'up' ? C.green : C.dim }}>{a.type}</b>: {a.line}
+            </div>
+          ))}
+        </div>
+      )}
       {/* 5 · the chain, one line (scrolls on a phone) */}
       {c.chain && <div style={{ display: 'flex', gap: 4, alignItems: 'center', minWidth: 0 }}><K>CHAIN</K><div style={{ minWidth: 0, flex: 1 }}><Chain e={e} /></div></div>}
       {/* 6 · next · source · buttons */}
@@ -209,14 +225,15 @@ function EventCardView({ e, holding, today, market, onJump, onLedger }: { e: Rec
 }
 
 /** Minor and routine: one line each. */
-function OneLine({ e, today, routine }: { e: RecentEvent; today: string; routine?: boolean }) {
+function OneLine({ e, today, routine, onReadNow }: { e: RecentEvent; today: string; routine?: boolean; onReadNow?: (() => void) | null }) {
   const c = e.card;
   return (
     <div style={{ fontSize: 12.5, color: C.faint, lineHeight: 1.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-      <b style={{ color: C.dim }}>{e.ticker}</b>{' · '}{routine ? (e.routineWhy || 'routine') : (c?.eventType || e.type)}{' · '}{dayLabel(e.date)}{' · '}
+      <b style={{ color: C.dim }} title={e.company || undefined}>{e.ticker}</b>{e.company ? <span> ({clip(e.company, 40)})</span> : null}{' · '}{routine ? (e.routineWhy || 'routine') : (c?.eventType || e.type)}{' · '}{dayLabel(e.date)}{' · '}
       <span style={{ color: C.dim }}>{clip(routine ? (e.title || e.what) : (c?.event || e.what), 150)}</span>
       {e.url && <> · <a href={e.url} target="_blank" rel="noreferrer" style={{ color: C.faint }}>open ↗</a></>}
       {!routine && c && <span style={{ color: IMPACT_COLOR[c.impact] }}> · {c.impact}</span>}
+      {onReadNow && <> · <button data-testid="nc-read-now" onClick={onReadNow} style={{ fontSize: 12, color: C.cyan, background: 'transparent', border: 'none', padding: 0, cursor: 'pointer' }}>read now</button></>}
       <span style={{ color: C.faint }}> ({when(e.date, today)})</span>
     </div>
   );
@@ -299,7 +316,7 @@ function LedgerPanel({ e, all, onClose, holding }: { e: RecentEvent; all: Recent
 
 // ── the tab ───────────────────────────────────────────────────────────────
 
-export default function NewCatalystsTab({ result, loading, names, sourceNotes, market, progress, onJump, win, onWin, holdingOf }: NewCatalystsTabProps) {
+export default function NewCatalystsTab({ result, loading, names, sourceNotes, market, progress, onJump, win, onWin, holdingOf, onRead, wanted }: NewCatalystsTabProps) {
   const [book, setBook] = useState<BookF>('all');
   const [mat, setMat] = useState<MatF>('All');
   const [type, setType] = useState<TypeFilter>('All');
@@ -315,6 +332,8 @@ export default function NewCatalystsTab({ result, loading, names, sourceNotes, m
   const today0 = result?.window.to || '';
   const range = useMemo(() => (today0 ? windowRange(today0, w.span, w.anchor, result?.window.days) : { from: '', to: '', days: 0 }), [today0, w.span, w.anchor, result?.window.days]);
   const hOf = (t: string): Holding => (holdingOf ? holdingOf(t) : null);
+  // zzz825 (§34): a known-Minor document not yet asked for — read only when the Minor section opens or on click
+  const lazyUrl = (e: RecentEvent): string | null => (onRead && e.read === 'pending' && e.readTier === 'minor' && e.url && !(wanted && wanted.has(normUrl(e.url))) ? e.url : null);
 
   // every non-routine event in the chosen days, then the filters
   const inWin = useMemo(() => (result ? [...result.items, ...result.minor].filter((e) => inRange(e.date, range, today0) && e.card) : []), [result, range, today0]);
@@ -344,7 +363,7 @@ export default function NewCatalystsTab({ result, loading, names, sourceNotes, m
   const today = result.window.to;
   const oldest = shift(today, -(result.window.days - 1));
   const rd = result.reading;
-  const reading = rd.pending > 0 && (progress?.running ?? true);
+  const reading = rd.pending - (onRead ? rd.lazy || 0 : 0) > 0 && (progress?.running ?? true);
 
   const material = list.filter((e) => e.card!.materiality === 'Material');
   const notable = list.filter((e) => e.card!.materiality === 'Notable');
@@ -381,8 +400,8 @@ export default function NewCatalystsTab({ result, loading, names, sourceNotes, m
         {rd.total > 0 && (
           <div data-testid="new-catalysts-reading" role="status" style={{ fontSize: 12.5, color: reading ? C.cyan : C.faint, fontWeight: reading ? 700 : 500 }}>
             {reading
-              ? <>Reading {Math.min(rd.total, rd.read + rd.failed + 1)} of {rd.total} filings… cards fill in as each document is read.</>
-              : <>Read {rd.read} of {rd.total} filings{rd.failed ? ` · ${rd.failed} could not be opened (subject shown)` : ''}{rd.pending ? ` · ${rd.pending} not read yet` : ''}.</>}
+              ? <>Reading {Math.min(rd.total, rd.read + rd.failed + 1)} of {rd.total} filings… cards fill in as each document is read.{onRead && rd.lazy ? ` (${rd.lazy} minor — read when you open Minor)` : ''}</>
+              : <>Read {rd.read} of {rd.total} filings{rd.failed ? ` · ${rd.failed} could not be opened (subject shown)` : ''}{rd.pending ? ` · ${rd.pending} not read yet` : ''}{onRead && rd.lazy ? ` (${rd.lazy} minor — read when you open Minor)` : ''}.</>}
             {progress?.error && <span style={{ color: C.amber }}> · {progress.error}</span>}
           </div>
         )}
@@ -399,7 +418,7 @@ export default function NewCatalystsTab({ result, loading, names, sourceNotes, m
           <Group label="Book">
             <Chip on={book === 'all'} onClick={() => setBook('all')}>All ({count('book', () => true)})</Chip>
             <Chip on={book === 'book'} onClick={() => setBook('book')} title="Names you hold">My Book ({count('book', (e) => hOf(e.ticker) === 'book')})</Chip>
-            <Chip on={book === 'bench'} onClick={() => setBook('bench')} title="India Conviction Beats names you do not hold">Conviction Beats ({count('book', (e) => hOf(e.ticker) === 'bench')})</Chip>
+            <Chip on={book === 'bench'} onClick={() => setBook('bench')} title={`${market === 'US' ? 'US' : 'India'} Conviction Beats names you do not hold`}>Conviction Beats ({count('book', (e) => hOf(e.ticker) === 'bench')})</Chip>
           </Group>
         )}
         <Group label="Materiality">
@@ -466,8 +485,8 @@ export default function NewCatalystsTab({ result, loading, names, sourceNotes, m
               {highlights.map((e) => (
                 <button key={e.id} onClick={() => jumpTo(e)} style={{ textAlign: 'left', cursor: 'pointer', border: `1px solid ${e.card!.attention ? C.amber : C.border}`, borderRadius: 6, background: C.bg, padding: '5px 8px', minWidth: 0 }}>
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <b style={{ color: C.text, fontSize: 13 }}>{e.ticker}</b>
-                    <span style={{ fontSize: 11.5, color: C.faint, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.card!.eventType}</span>
+                    <b style={{ color: C.text, fontSize: 13 }} title={e.company || undefined}>{e.ticker}</b>
+                    <span style={{ fontSize: 11.5, color: C.faint, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.card!.eventType}{e.company ? ` · ${e.company}` : ''}</span>
                     <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 900, color: IMPACT_COLOR[e.card!.impact] }}>{e.card!.impact}</span>
                   </div>
                   <div style={{ fontSize: 12, color: C.dim, lineHeight: 1.35 }}>{e.card!.keyNumber ? <b style={{ color: C.text }}>{e.card!.keyNumber} · </b> : null}{clip(e.card!.event, 90)}</div>
@@ -543,11 +562,11 @@ export default function NewCatalystsTab({ result, loading, names, sourceNotes, m
         {(minor.length > 0 || routineWin.length > 0) && (
           <section data-testid="nc-minor" style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 4 }}>
             {minor.length > 0 && (
-              <button onClick={() => setShowMinor((v) => !v)} style={{ alignSelf: 'flex-start', fontSize: 12.5, fontWeight: 800, color: C.faint, background: 'transparent', border: 'none', padding: 0, cursor: 'pointer' }}>
+              <button data-testid="nc-minor-toggle" onClick={() => { const open = !showMinor; setShowMinor(open); if (open && onRead) { const us = minor.map(lazyUrl).filter((u): u is string => !!u); if (us.length) onRead(us); } }} style={{ alignSelf: 'flex-start', fontSize: 12.5, fontWeight: 800, color: C.faint, background: 'transparent', border: 'none', padding: 0, cursor: 'pointer' }}>
                 {showMinor ? '▾' : '▸'} MINOR · {minor.length}
               </button>
             )}
-            {showMinor && minor.map((e) => <OneLine key={e.id} e={e} today={today} />)}
+            {showMinor && minor.map((e) => { const u = lazyUrl(e); return <OneLine key={e.id} e={e} today={today} onReadNow={u ? () => onRead!([u]) : null} />; })}
             {routineWin.length > 0 && !filtered && (
               <button onClick={() => setShowRoutine((v) => !v)} style={{ alignSelf: 'flex-start', fontSize: 12.5, fontWeight: 800, color: C.faint, background: 'transparent', border: 'none', padding: 0, cursor: 'pointer' }}>
                 {showRoutine ? '▾' : '▸'} ROUTINE PAPERWORK · {routineWin.length}

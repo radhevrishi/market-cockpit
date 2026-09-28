@@ -43,7 +43,13 @@ export interface BookName {
   sources: BookSource[];
   /** Other spellings of the same company, merged into this row. */
   merged: string[];
+  /** zzz825: saved as a 6-digit BSE code and matched to this NSE symbol — the code, and where the match came from. */
+  bse?: { code: string; via: string } | null;
 }
+
+/** zzz825: one BSE scrip code → its NSE symbol, from an in-app source (graded / earnings index, screener.in
+ *  company page). `symbol: null` = looked up, no NSE listing found. */
+export interface BseMatch { symbol: string | null; company?: string | null; via?: string | null }
 
 export interface ReadList { ok: boolean; symbols: string[]; updatedAt?: string | null; error?: string | null }
 
@@ -56,6 +62,8 @@ export interface IndiaBookInput {
   legacy?: Record<string, string[]>;
   /** /api/v1/book/state held flags — reported, never used. */
   synced?: ReadList | null;
+  /** zzz825: BSE code → NSE symbol matches (lib/thesis/bse-nse-lookup). A code absent here is not looked up yet. */
+  bseMap?: Record<string, BseMatch | null | undefined> | null;
 }
 
 export interface SourceLine { label: string; count: number | null; used: boolean; note: string }
@@ -70,7 +78,12 @@ export interface ResolvedBook {
   /** True once the server copy has answered (or failed) — before that the book is this browser's list only. */
   settled: boolean;
   serverError: string | null;
+  /** zzz825: saved 6-digit BSE codes with no NSE symbol found — kept under the code and flagged by the Book check. */
+  bseUnmatched?: IgnoredName[];
 }
+
+/** Pure: a 6-digit BSE scrip code. */
+export const isBseCode = (s: string): boolean => /^\d{6}$/.test(String(s || '').trim());
 
 const SERIES = /-(BE|SM|ST|BZ|E1|EQ)$/;
 
@@ -78,11 +91,18 @@ const SERIES = /-(BE|SM|ST|BZ|E1|EQ)$/;
 export function resolveIndiaBook(input: IndiaBookInput): ResolvedBook {
   const byKey = new Map<string, BookName>();
   const add = (raw: string, src: BookSource) => {
-    const sym = String(raw || '').toUpperCase().trim().replace(/^(NSE|BSE):/, '').replace(/\.(NS|BO|BSE|NSE)$/, '');
+    let sym = String(raw || '').toUpperCase().trim().replace(/^(NSE|BSE|BOM):/, '').replace(/\.(NS|BO|BSE|NSE)$/, '');
+    // zzz825: a saved BSE code is the same company as its NSE symbol — normalised when an in-app source names it
+    let bse: BookName['bse'] = null;
+    if (isBseCode(sym)) {
+      const m = input.bseMap?.[sym];
+      if (m?.symbol && !isBseCode(m.symbol)) { bse = { code: sym, via: m.via || 'in-app list' }; sym = String(m.symbol).toUpperCase().trim(); }
+    }
     const key = heldKey(sym);
     if (!key) return;
     const cur = byKey.get(key);
-    if (!cur) { byKey.set(key, { symbol: sym, key, sources: [src], merged: [] }); return; }
+    if (!cur) { byKey.set(key, { symbol: sym, key, sources: [src], merged: bse ? [bse.code] : [], bse }); return; }
+    if (bse) { if (!cur.merged.includes(bse.code)) cur.merged.push(bse.code); if (!cur.bse) cur.bse = bse; }
     if (!cur.sources.includes(src)) cur.sources.push(src);
     if (sym === cur.symbol) return;
     // Keep the plain spelling; the series-suffixed one is listed as merged.
@@ -128,8 +148,14 @@ export function resolveIndiaBook(input: IndiaBookInput): ResolvedBook {
   if (input.synced) {
     sources.push({ label: 'Synced book snapshot (/api/v1/book/state)', count: input.synced.ok ? input.synced.symbols.length : null, used: false, note: input.synced.ok ? `NOT used — a copy from the last device that synced${input.synced.updatedAt ? ` (${String(input.synced.updatedAt).slice(0, 10)})` : ''}` : `NOT used (not read: ${input.synced.error || 'error'})` });
   }
+  const bseUnmatched: IgnoredName[] = names.filter((n) => isBseCode(n.symbol)).map((n) => {
+    const m = input.bseMap?.[n.symbol];
+    return { symbol: n.symbol, reason: m === undefined
+      ? 'saved as a BSE code — the NSE symbol is still being looked up, so it cannot be matched to Conviction Beats (NSE symbols) yet'
+      : 'saved as a BSE code — no NSE symbol found in the app\'s lists (earnings index, screener.in), so it cannot be matched to Conviction Beats; shown under the code' };
+  });
   return {
-    names, sources, ignored,
+    names, sources, ignored, bseUnmatched,
     rule: 'My book = your saved holdings on the Portfolio page: the server copy plus anything saved in this browser that has not reached the server yet (the Portfolio page merges the same way). Old lists and the synced snapshot are never used. One company = one row (ABC and ABC-BE are the same). Never filtered by Conviction Beats criteria, size or preset.',
     settled: !!server,
     serverError: server && !server.ok ? (server.error || 'error') : null,
@@ -142,7 +168,9 @@ export function bookWhy(n: BookName): string {
     : n.sources.includes('server') ? 'saved holding (server)'
     : 'saved holding in this browser only — not on the server yet';
   const bse = /^\d{6}$/.test(n.symbol) ? ' · a BSE code: Conviction Beats uses NSE symbols, so it cannot be matched to the bench' : '';
-  return `${src}${n.merged.length ? ` · also saved as ${n.merged.join(', ')} (same company, shown once)` : ''}${bse}`;
+  const matched = n.bse ? ` · saved as BSE code ${n.bse.code}, matched to NSE ${n.symbol} (${n.bse.via})` : '';
+  const others = n.merged.filter((m) => !n.bse || m !== n.bse.code);
+  return `${src}${matched}${others.length ? ` · also saved as ${others.join(', ')} (same company, shown once)` : ''}${bse}`;
 }
 
 /** Pure: the universe — book first, then the bench names (already not held). */
@@ -172,6 +200,8 @@ export interface BookCheck {
   /** Book rows NOT in the saved holdings — must be zero. */
   notSaved: IgnoredName[];
   ignored: IgnoredName[];
+  /** zzz825: saved BSE codes with no NSE symbol — flagged, with the reason. */
+  bseUnmatched: IgnoredName[];
   line: string;
 }
 
@@ -182,12 +212,13 @@ export interface BookCheck {
  */
 export function buildBookCheck(o: {
   saved: BookName[]; rows: CheckRow[]; sources: SourceLine[]; rule: string; ignored?: IgnoredName[];
-  savedElsewhere?: IgnoredName[]; keyOf?: (s: string) => string;
+  savedElsewhere?: IgnoredName[]; keyOf?: (s: string) => string; bseUnmatched?: IgnoredName[];
 }): BookCheck {
   const keyOf = o.keyOf || heldKey;
   const rowByKey = new Map<string, CheckRow>();
   for (const r of o.rows) { const k = keyOf(r.symbol); if (k && !rowByKey.has(k)) rowByKey.set(k, r); }
-  const savedKeys = new Set(o.saved.map((n) => keyOf(n.symbol)));
+  const savedKeys = new Set<string>();
+  for (const n of o.saved) { savedKeys.add(keyOf(n.symbol)); for (const m of n.merged) savedKeys.add(keyOf(m)); }
   const elsewhere = new Set((o.savedElsewhere || []).map((x) => keyOf(x.symbol)));
   const notShown: IgnoredName[] = [...(o.savedElsewhere || [])];
   const book: Array<{ symbol: string; why: string }> = [];
@@ -213,6 +244,7 @@ export function buildBookCheck(o: {
     + `${notShown.length ? ` · ${notShown.length} saved but not shown (reason below)` : ' · every saved holding is shown'}`
     + ` · shown as a holding but not saved: ${notSaved.length}${notSaved.length ? ' ⚠' : ' ✓'}`
     + ` · bench ${bench.length} (Conviction Beats names you do not hold)`
-    + `${(o.ignored || []).length ? ` · ${(o.ignored || []).length} names on old lists ignored` : ''}`;
-  return { sources: o.sources, rule: o.rule, book, bench, notShown, notSaved, ignored: o.ignored || [], line };
+    + `${(o.ignored || []).length ? ` · ${(o.ignored || []).length} names on old lists ignored` : ''}`
+    + `${(o.bseUnmatched || []).length ? ` · ${(o.bseUnmatched || []).length} saved BSE code${(o.bseUnmatched || []).length === 1 ? '' : 's'} with no NSE match ⚠` : ''}`;
+  return { sources: o.sources, rule: o.rule, book, bench, notShown, notSaved, ignored: o.ignored || [], bseUnmatched: o.bseUnmatched || [], line };
 }

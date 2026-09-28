@@ -110,7 +110,13 @@
 //   loss, OPM ≥ 5%, slow revenue needs a real margin); PAT vs EPS graded on
 //   the lower, or held when they point opposite ways; one lender detection
 //   shared with the card. v24 and v20–v23 days regrade in-process.
-export const GRADED_CACHE_VERSION = 'v25';
+// zzz826 — v25 → v26. The size / trading caps ('below investable size',
+//   'barely trades') leave the tier — they read market cap and traded value,
+//   which are price figures — and become plain flags beside it; liquidity
+//   counts only as a real multi-day average; same-year cash ratios up to ±50x
+//   are shown; unknown guidance is recorded as unknown and never demotes.
+//   v25 days regrade in-process from their stored input.
+export const GRADED_CACHE_VERSION = 'v26';
 
 /** The KV key holding one fully graded India session. */
 export const gradedKey = (date: string): string => `graded:${GRADED_CACHE_VERSION}:${date}`;
@@ -123,7 +129,7 @@ export const gradedKey = (date: string): string => `graded:${GRADED_CACHE_VERSIO
  * nothing has been written to the new namespace yet. Nothing should WRITE to
  * them, and a reader that uses them must prefer the current key first.
  */
-export const GRADED_CACHE_LEGACY: readonly string[] = ['v24', 'v23', 'v22', 'v21', 'v20', 'v19', 'v18', 'v17', 'v16', 'v15', 'v14', 'v13', 'v12', 'v11', 'v10'];
+export const GRADED_CACHE_LEGACY: readonly string[] = ['v25', 'v24', 'v23', 'v22', 'v21', 'v20', 'v19', 'v18', 'v17', 'v16', 'v15', 'v14', 'v13', 'v12', 'v11', 'v10'];
 
 /** Current key first, then the abandoned ones — for readers that tolerate age. */
 export function gradedKeyCandidates(date: string): string[] {

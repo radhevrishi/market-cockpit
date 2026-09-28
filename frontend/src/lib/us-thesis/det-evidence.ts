@@ -22,7 +22,8 @@ import { sanitizeUsEvents } from './sanitize';
 import { usdWords, niceDate, type UsInstantYoY } from './xbrl';
 
 export const US_DET_LABEL = 'read without AI';
-export const US_DET_VERSION = 1;
+// zzz829: v2 — boilerplate / hypothetical / description sentences are no longer evidence (re-read on the new version)
+export const US_DET_VERSION = 2;
 export const US_DET_KEY = (t: string) => `us-thesis:det:v${US_DET_VERSION}:${t}`;
 
 export interface UsDetDoc { label: string; url: string | null; outcome: 'read' | 'download_failed' | 'too_short' | 'not_reached'; chars?: number; detail?: string | null }
@@ -89,7 +90,8 @@ export function usInventoryEvent(inv: UsInstantYoY | null | undefined): Structur
  */
 export function withUsDetEvidence(summary: any | null, det: UsDetEvidence | null | undefined, inventory?: UsInstantYoY | null): any | null {
   const inv = usInventoryEvent(inventory);
-  const extra: StructuralEvent[] = [...(summary ? [] : (det?.events || [])), ...(inv ? [inv] : [])];
+  // zzz829: a stored record is re-checked with today's hygiene (a boilerplate sentence stored earlier is dropped)
+  const extra: StructuralEvent[] = [...(summary ? [] : sanitizeUsEvents(det?.events || [])), ...(inv ? [inv] : [])];
   if (!extra.length) return summary;
   const base: StructuralEvent[] = Array.isArray(summary?.events) ? summary.events : [];
   return { ...(summary || {}), events: mergeUsEvents(base, extra), ...(summary ? {} : { read_without_ai: true, read_without_ai_note: det?.note || null }) };

@@ -38,7 +38,7 @@ const TIERS = ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID'] as const;
 type Tier = typeof TIERS[number];
 
 /** Engines whose CARDS carry every figure a card-basis regrade needs. */
-export const INDIA_REGRADABLE_FROM: readonly string[] = ['v24', 'v23', 'v22', 'v21', 'v20'];
+export const INDIA_REGRADABLE_FROM: readonly string[] = ['v25', 'v24', 'v23', 'v22', 'v21', 'v20'];
 
 /** Filing-derived flags a stored card holds but cannot re-derive. */
 const CARRYABLE = [
@@ -92,7 +92,10 @@ export function indiaInputFromCard(c: any, fromVersion: string | null):
     _regrade: true,
     symbol: c.ticker, company: c.company, sector: c.sector, filing_date: c.filing_date,
     quarter: c.quarter, market_cap_bucket: c.market_cap_bucket,
-    market_cap_cr: num(c.market_cap_cr), adtv_cr: num(c.adtv_cr), pe: num(c.pe), current_price: num(c.price),
+    // zzz826 — liquidity counts only with the days it covers (a v20–v25 card
+    // never carries them, so its stored figure — possibly one day's turnover —
+    // is unknown, not thin).
+    market_cap_cr: num(c.market_cap_cr), adtv_cr: num(c.adtv_cr), adtv_days: num(c.adtv_days), pe: num(c.pe), current_price: num(c.price),
     sales_yoy_pct: num(c.sales_yoy_pct), pat_yoy_pct: num(c.net_profit_yoy_pct), eps_yoy_pct: num(c.eps_yoy_pct),
     sales_curr_cr: num(c.sales_curr_cr), sales_prev_cr: num(c.sales_prev_cr),
     pat_curr_cr: num(c.pat_curr_cr), pat_prev_cr: num(c.pat_prev_cr),
@@ -108,6 +111,13 @@ export function indiaInputFromCard(c: any, fromVersion: string | null):
     source_url: c.filing_url, financials_source: c.source,
     industry: c.industry ?? null, broad_industry: c.broad_industry ?? null,
     _carried_caveats: carried,
+    // zzz826 — a card does not hold the guidance evidence its grade used.
+    // The tier that evidence produced is carried, so a missing figure can
+    // block a promotion but never demote the stored grade (see india-grade).
+    // Only when the old tier cannot have come from a chart method instead
+    // (the price-free rules removed those; guidance was the other way in).
+    _guidance_prior_tier: typeof c.tier === 'string' && !c._tier_unconfirmed
+      && !meth.some((m) => /trend template|sepa|canslim/i.test(m)) ? c.tier : null,
   };
   if (carried.includes('headline leans on a one-off')) {
     // ≥ 50% of pre-tax profit capped at MIXED, 25–50% at STRONG. A stored

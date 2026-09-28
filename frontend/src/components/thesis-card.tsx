@@ -446,6 +446,9 @@ export interface ThesisCardProps {
   onCheck?: () => void;
   /** Re-read the current period regardless (debug / manual refresh). */
   onReread?: () => void;
+  /** zzz830: where this card's figures and evidence came from (lib/thesis/ai-read),
+   *  and whether it still has no AI read — then the AI button is always on the card. */
+  aiRead?: { needsAi: boolean; figuresWords: string; evidenceWords: string } | null;
   error?: string | null;
   // ── THE PERSISTENT LEDGER.                                     (zzz740)
   ledger?: CompanyLedger | null;
@@ -686,7 +689,7 @@ export function ThesisCard(p: ThesisCardProps) {
             <button onClick={p.onRead} style={{
               fontSize: 13, fontWeight: 700, padding: '3px 10px', borderRadius: 999,
               border: `1px solid ${C.border}`, background: 'transparent', color: C.cyan, cursor: 'pointer',
-            }}>✨ Read evidence</button>
+            }}>✨ Read evidence with AI</button>
           )}
           {p.reading && <span style={{ fontSize: 13, color: C.dim }}>Reading the latest document…</span>}
           {a && (
@@ -741,8 +744,8 @@ export function ThesisCard(p: ThesisCardProps) {
                     fontSize: 12.5, fontWeight: 700, padding: '2px 8px', borderRadius: 999, border: `1px solid ${C.border}`, background: 'transparent', color: C.dim, cursor: 'pointer',
                   }}>↻ Check for new evidence</button>
                 )}
-                {p.onRead && pr && isQuickReadPeriod(pr) && fr?.state !== 'NEW_EVIDENCE_AVAILABLE' && (
-                  <button data-testid="read-with-ai" onClick={p.onRead} title="Read this quarter's documents with AI (one model call, on click). Its facts supersede the ones read without AI; nothing is lost — the deterministic facts are kept in history." style={{
+                {p.onRead && (pr || !p.needsRead) && (p.aiRead ? p.aiRead.needsAi : !!pr && isQuickReadPeriod(pr)) && fr?.state !== 'NEW_EVIDENCE_AVAILABLE' && (
+                  <button data-testid="read-with-ai" onClick={p.onRead} title="Read this quarter's documents with AI (one model call, on click). Its facts supersede the ones read without AI; nothing is lost — the deterministic facts are kept in history. An incomplete read is read again." style={{
                     fontSize: 12.5, fontWeight: 800, padding: '2px 8px', borderRadius: 999, border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan, cursor: 'pointer',
                   }}>✨ Read evidence with AI</button>
                 )}
@@ -752,7 +755,7 @@ export function ThesisCard(p: ThesisCardProps) {
                   }}>✨ Read latest evidence</button>
                 )}
                 {p.onReread && pr && (
-                  <button onClick={p.onReread} title="Re-run extraction on the current period's documents and update the persisted record. Debug / manual refresh; the normal path is incremental." style={{
+                  <button onClick={p.onReread} title="Re-run extraction on the current period's documents with AI (one model call, on click) and update the persisted record. Debug / manual refresh; the normal path is incremental." style={{
                     fontSize: 12.5, fontWeight: 700, padding: '2px 8px', borderRadius: 999, border: `1px solid ${C.border}`, background: 'transparent', color: C.faint, cursor: 'pointer',
                   }}>↻ Re-read current period</button>
                 )}
@@ -762,6 +765,22 @@ export function ThesisCard(p: ThesisCardProps) {
           </div>
         );
       })()}
+
+      {/* ── WHERE THIS CARD'S INFORMATION CAME FROM. (zzz830) Figures are
+          filed numbers; evidence is read by rules, AI only on a click. */}
+      {p.aiRead && (
+        <div data-testid="card-sources" style={{ marginTop: 5, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 12.5, color: C.dim }}>
+          <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.4, color: C.faint }}>SOURCES</span>
+          <span>{p.aiRead.figuresWords}</span>
+          <span style={{ color: C.faint }}>·</span>
+          <span style={{ color: p.aiRead.needsAi ? C.amber : C.dim }}>{p.aiRead.evidenceWords}</span>
+          {!p.ledger && !p.freshness && p.onRead && p.aiRead.needsAi && !p.needsRead && !p.reading && (
+            <button data-testid="read-with-ai" onClick={p.onRead} title="Read this quarter's documents with AI (one model call, on click)." style={{
+              fontSize: 12.5, fontWeight: 800, padding: '2px 8px', borderRadius: 999, border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan, cursor: 'pointer',
+            }}>✨ Read evidence with AI</button>
+          )}
+        </div>
+      )}
 
       {/* ── WHAT CHANGED vs EVIDENCE FOUND.                         (zzz773)
           "WHAT CHANGED · Q1 FY27 (first read)" printed "Capacity added:

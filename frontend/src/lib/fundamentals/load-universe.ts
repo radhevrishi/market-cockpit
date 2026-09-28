@@ -9,9 +9,9 @@
 
 'use client';
 
-import { CHAT_ID } from '@/lib/config';
 import { readJson, humanError } from '@/lib/thesis/safe-json';
-import { readHoldingSymbols } from '@/lib/thesis/universe';
+import { loadIndiaBookInput } from '@/lib/thesis/book-sources';
+import { resolveIndiaBook } from '@/lib/thesis/book-membership';
 import { mergeUsBench } from '@/lib/us-thesis/us-bench';
 import {
   fetchManifest, fetchCsvText, fetchTradingviewManifest, fetchTradingviewCsvText, SYNC_ROUTING,
@@ -43,19 +43,17 @@ const when = (iso: string | null | undefined) => {
 async function loadIndia(): Promise<FundUniverse> {
   const errors: string[] = [];
   const sources: string[] = [];
-  // 1. India Portfolio Book — the /portfolio page's own server store.
-  let bookServer: string[] = [];
-  let bookOk = false;
-  try {
-    const j = await getJson(`/api/portfolio?chatId=${encodeURIComponent(String(CHAT_ID))}`);
-    bookServer = (Array.isArray(j?.holdings) ? j.holdings : []).map((h: any) => String(h?.symbol || '')).filter(Boolean);
-    bookOk = true;
-  } catch (e) { errors.push(`India Portfolio Book could not be read from the server (${humanError(e)})`); }
-  const local = Array.from(readHoldingSymbols());
-  const serverSet = new Set(bookServer.map((s) => s.toUpperCase()));
-  const localOnly = local.filter((s) => !serverSet.has(s.toUpperCase()));
-  const book = [...bookServer, ...localOnly].map((symbol) => ({ symbol }));
-  sources.push(`India Portfolio Book: ${bookServer.length} from the server${localOnly.length ? ` + ${localOnly.length} only in this browser` : ''}${bookOk ? '' : ' (server not read)'}`);
+  // 1. India Portfolio Book — zzz825: the canonical saved holdings (lib/thesis/book-membership, the same rule
+  // Portfolio Catalysts and the Conviction tab use): the Portfolio page's server copy (/api/portfolio?chatId=…,
+  // read by lib/thesis/book-sources fetchSavedHoldings) plus this browser's
+  // mc_portfolio_holdings; the old leftover lists are never members. A BSE code is matched to its NSE symbol.
+  const input = await loadIndiaBookInput();
+  const resolved = resolveIndiaBook(input);
+  if (input.server && !input.server.ok) errors.push(`India Portfolio Book could not be read from the server (${input.server.error || 'error'}) — this browser's saved list only`);
+  const book = resolved.names.map((n) => ({ symbol: n.symbol }));
+  const onServer = resolved.names.filter((n) => n.sources.includes('server')).length;
+  const localOnly = resolved.names.length - onServer;
+  sources.push(`India Portfolio Book: ${onServer} from the server${localOnly ? ` + ${localOnly} only in this browser` : ''}${input.server?.ok ? '' : ' (server not read)'}${resolved.ignored.length ? ` · ${resolved.ignored.length} on old lists ignored` : ''}${(resolved.bseUnmatched || []).length ? ` · ${(resolved.bseUnmatched || []).length} BSE code(s) with no NSE match` : ''}`);
 
   // 2. India Conviction Beats — the server bench, plus this browser's list, minus removals.
   let server: IndiaBenchName[] = [];

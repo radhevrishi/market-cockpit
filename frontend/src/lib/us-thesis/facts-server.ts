@@ -22,7 +22,8 @@ import { cikForTicker, companyFacts, submissions, SecTickerMapError } from '@/li
 import { usFactsResult } from './facts-row';
 import { fetchCompanyFactsFresh } from './sec-docs';
 
-export const US_FACTS_KEY = (t: string) => `us-thesis:facts:v4:${t}`;
+// zzz829: v5 — a row carries the newest 10-Q / 10-K on EDGAR; a row whose XBRL quarter is older is re-fetched fresh
+export const US_FACTS_KEY = (t: string) => `us-thesis:facts:v5:${t}`;
 const TTL_ROW_S = 12 * 3600;
 const TTL_NONE_S = 3600;
 
@@ -59,9 +60,39 @@ export const liveUsFactsDeps: UsFactsDeps = {
   kvSet: (k, v, ttl) => kvSet(k, v, ttl),
 };
 
-/** One name's row from the cache, or null. */
+/** Pure (zzz829): the newest periodic report (10-Q / 10-K / 20-F / 40-F) in a submissions list. */
+export function latestPeriodic(recent: Array<{ form: string; filingDate: string; reportDate?: string | null }> | null | undefined): { form: string; filed: string; report_date: string | null } | null {
+  let best: { form: string; filed: string; report_date: string | null } | null = null;
+  for (const r of recent || []) {
+    if (!/^(?:10-Q|10-K|20-F|40-F)(?:\/A)?$/i.test(String(r?.form || '')) || /\/A$/i.test(String(r.form))) continue;
+    if (!best || String(r.filingDate) > best.filed) best = { form: String(r.form), filed: String(r.filingDate), report_date: r.reportDate ? String(r.reportDate) : null };
+  }
+  return best;
+}
+
+/** Pure (zzz829): the row's XBRL quarter is older than the newest 10-Q / 10-K on EDGAR — the words for the card, or null. */
+export function xbrlBehindNote(row: { q_end?: string | null; period?: string | null } | null | undefined, latest: { form: string; filed: string; report_date: string | null } | null): string | null {
+  const q = String(row?.q_end || '').slice(0, 10);
+  const r = String(latest?.report_date || '').slice(0, 10);
+  if (!q || !r || !/^\d{4}-\d{2}-\d{2}$/.test(q) || !/^\d{4}-\d{2}-\d{2}$/.test(r)) return null;
+  if (Date.parse(r) - Date.parse(q) <= 10 * 86_400_000) return null;
+  return `the ${latest!.form} for the period ended ${r} (filed ${latest!.filed}) is on EDGAR, but its XBRL figures are not in the SEC data yet — these are the latest figures SEC serves`;
+}
+
+/** Pure (zzz829): a cached row is stale when a newer quarter should be (or is known to be) filed. */
+export function usFactsRowStale(hit: any, now: number = Date.now()): boolean {
+  if (!hit || hit.source !== 'sec-xbrl') return false;
+  const at = Date.parse(String(hit.fetched_at || '')) || 0;
+  const age = now - at;
+  if (hit.xbrl_behind && age > 2 * 3600_000) return true;
+  const q = Date.parse(String(hit.q_end || ''));
+  return Number.isFinite(q) && now - q > 135 * 86_400_000 && age > 6 * 3600_000;
+}
+
+/** One name's row from the cache, or null (also null when stale — see usFactsRowStale). */
 export async function cachedUsFactsRow(t: string, deps: UsFactsDeps = liveUsFactsDeps): Promise<any | null> {
   const hit = await deps.kvGet(US_FACTS_KEY(t)).catch(() => null);
+  if (usFactsRowStale(hit)) return null;
   return hit && (hit.source === 'sec-xbrl' || (hit.source === 'none' && !hit.retrieval_failed)) ? { ...hit, cached: true } : null;
 }
 
@@ -87,7 +118,17 @@ export async function fetchUsFactsRow(t: string, deps: UsFactsDeps = liveUsFacts
     facts = (await deps.companyFactsFresh(cik).catch(() => null)) || facts;
   }
   if (!facts && !subs) return usFactsFailure(t, 'SEC EDGAR did not answer');
-  const res = usFactsResult(t, facts, { cik, company: subs?.name || facts?.entityName || null, sic: subs?.sic || null, sicDescription: subs?.sicDescription || null, forms });
+  const meta = { cik, company: subs?.name || facts?.entityName || null, sic: subs?.sic || null, sicDescription: subs?.sicDescription || null, forms };
+  let res = usFactsResult(t, facts, meta);
+  // zzz829: the newest 10-Q / 10-K on EDGAR is for a later quarter than the XBRL row — fetch companyfacts fresh
+  // (bypassing the in-memory copy); if SEC still serves the older quarter, the row says so
+  const latest = latestPeriodic(subs?.recent || []);
+  if (res.row && xbrlBehindNote(res.row, latest)) {
+    const fresh = await deps.companyFactsFresh(cik).catch(() => null);
+    if (hasStatements(fresh)) { facts = fresh; res = usFactsResult(t, facts, meta); }
+  }
+  const behind = res.row ? xbrlBehindNote(res.row, latest) : null;
+  if (res.row) { res.row.latest_periodic = latest; res.row.xbrl_behind = behind; res.row.fetched_at = new Date().toISOString(); }
   const out = res.row ? { ...res.row, us_profile: res.profile }
     : facts ? { ticker: t, requested: t, market: 'US', source: 'none', why: res.why, us_profile: res.profile }
       : { ...usFactsFailure(t, 'SEC XBRL figures did not download'), us_profile: res.profile };

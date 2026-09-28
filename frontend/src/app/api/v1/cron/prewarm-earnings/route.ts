@@ -25,7 +25,7 @@
 import { NextResponse } from 'next/server';
 import { railwaySelfFetch } from '@/lib/railway-self-fetch';
 import { kvGet, kvSet } from '@/lib/kv';
-import { recheckableDrops, unconfirmedRows, missingDetailCounts, pickStaleRebuild } from '@/lib/india-eo-card-data';  // zzz820 / zzz822
+import { recheckableDrops, unconfirmedRows, missingDetailCounts, pickStaleRebuild, cashRefetchRows } from '@/lib/india-eo-card-data';  // zzz820 / zzz822 / zzz826
 import { GRADED_CACHE_VERSION, GRADED_CACHE_LEGACY } from '@/lib/graded-cache-key';
 import { INDIA_REGRADABLE_FROM } from '@/lib/india-regrade';
 
@@ -64,6 +64,11 @@ const STALE_SCAN_TTL_S = 6 * 3600;
 // zzz820b — a date holding ANY row whose growth was measured against an
 // unverified year-ago quarter (the gappy-Screener positional bug) is re-checked
 // under the same bounds, so its tier is rebuilt from date-matched figures.
+// zzz826 — a date holding ANY row whose cash figures predate the current cash
+// rule (no same-year basis, or a real ratio hidden by the old ±8x limit) is
+// re-checked under the same bounds. A re-check is a REFETCH: the rebuild asks
+// the graded route (refetch=1) to fetch the flagged tickers with the
+// enrichment cache bypassed, so corrected figures actually come back.
 const RECHECK_BUDGET = 2;
 const RECHECK_MIN = 3;
 const RECHECK_MAX_AGE_DAYS = 60;
@@ -159,6 +164,12 @@ export async function GET(req: Request) {
 
   const forceGraded = async (date: string) => {
     const r = await railwaySelfFetch(`${origin}/api/v1/earnings/graded?date=${date}&force=1`, {
+      cache: 'no-store', signal: AbortSignal.timeout(180_000),
+    });
+    return r.ok ? await r.json() : null;
+  };
+  const recheckGraded = async (date: string) => {
+    const r = await railwaySelfFetch(`${origin}/api/v1/earnings/graded?date=${date}&force=1&refetch=1`, {
       cache: 'no-store', signal: AbortSignal.timeout(180_000),
     });
     return r.ok ? await r.json() : null;
@@ -267,12 +278,15 @@ export async function GET(req: Request) {
         let waiting = 0;
         let unconfirmed = 0;   // zzz820b — rows whose growth used an unverified year-ago quarter
         let noData = 0, noPrice = 0;   // zzz822
+        let cashStale = 0;             // zzz826 — rows whose cash figures predate the current rule
         if (chk.ok) {
           const j = await chk.json();
           waiting = recheckableDrops(j?._dropped);
           entry.waiting_for_data = waiting;
           unconfirmed = unconfirmedRows(j);
           if (unconfirmed) entry.unconfirmed_rows = unconfirmed;
+          cashStale = cashRefetchRows(j);
+          if (cashStale) entry.cash_stale_rows = cashStale;
           ({ noData, noPrice } = missingDetailCounts(j));
           if (noData) entry.no_data = noData;
           if (noPrice) entry.no_price = noPrice;
@@ -296,12 +310,13 @@ export async function GET(req: Request) {
           entry.action = 'filled'; fillsUsed++; filled++;
         // zzz822 — cards with no share price are re-fetched by a rebuild (the
         // fill pass only targets cards missing financial numbers).
-        } else if ((waiting >= RECHECK_MIN || unconfirmed > 0 || noPrice > 0) && i <= RECHECK_MAX_AGE_DAYS && rechecksUsed < recheckBudgetMax
+        } else if ((waiting >= RECHECK_MIN || unconfirmed > 0 || noPrice > 0 || cashStale > 0) && i <= RECHECK_MAX_AGE_DAYS && rechecksUsed < recheckBudgetMax
                    && !(await recentlyRechecked(date))) {
           // zzz820 — rebuild so dropped companies are graded once their data lands.
+          // zzz826 — with the flagged tickers re-fetched, not re-read from cache.
           try { await kvSet(`graded:recheck-lock:${date}`, Date.now(), RECHECK_LOCK_S); } catch {}
-          const g = await forceGraded(date);
-          if (g) { entry.graded_total_after = tierTotal(g); entry.waiting_after = recheckableDrops(g?._dropped); entry.unconfirmed_after = unconfirmedRows(g); }
+          const g = await recheckGraded(date);
+          if (g) { entry.graded_total_after = tierTotal(g); entry.waiting_after = recheckableDrops(g?._dropped); entry.unconfirmed_after = unconfirmedRows(g); entry.cash_stale_after = cashRefetchRows(g); }
           entry.action = 'rechecked-dropped'; rechecksUsed++; rechecked++;
         } else if (undercounted) {
           entry.action = 'heal-deferred (budget)'; budgetStopped = true;

@@ -5,6 +5,7 @@ import '@/styles/design-system.css';
 import { ToastProvider, CommandPalette } from '@/components/design-system';
 import PwaRegister from '@/components/pwa/PwaRegister';
 import { pwaBuildVersion } from '@/components/pwa/build-version';
+import { SCREEN_THEME_EARLY } from '@/lib/theme';
 
 export const metadata: Metadata = {
   title: 'Market Cockpit — Bloomberg-lite for India + US Markets',
@@ -35,6 +36,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
         <link rel="manifest" href="/manifest.json" />
         <script dangerouslySetInnerHTML={{ __html: PWA_EARLY }} />
+        <script dangerouslySetInnerHTML={{ __html: SCREEN_THEME_EARLY }} />
       </head>
       <body className="font-sans antialiased" style={{
         backgroundColor: 'var(--mc-bg, var(--mc-bg-0))',

@@ -36,7 +36,9 @@
 import { VAR_LABEL } from '../thesis/taxonomy';
 import { THESES } from '../thesis/ledger';
 import type { FilingRead, Touch } from './filing-read-types';
-import { buildCard, pairVerified, tidyFigure, type Claim, type EventCard } from './event-card';
+import { buildCard, pairVerified, tidyFigure, usdShort, usdAmountIn, type Claim, type EventCard } from './event-card';
+import { accessionOf } from './us-filings';
+import { usBoilerplateEvidence } from '../us-thesis/sanitize';
 
 export type { FilingRead, Touch } from './filing-read-types';
 export type { EventCard, Impact, EvidenceQuality, Claim } from './event-card';
@@ -132,6 +134,11 @@ export interface RecentEvent {
   ctx?: ThesisCtx | null;
   /** zzz824: NSE / BSE / SEC, from the document address. */
   exchange?: string | null;
+  /** zzz825: when the lead document is still unread, which reading tier it sits in (see ReadTier). */
+  readTier?: ReadTier | null;
+  /** zzz829: other events stated in the SAME filing (one 8-K = one card) and changes it states in a metric other
+   *  than the headline's — listed under the headline as "also in this filing". */
+  also?: Array<{ type: string; line: string; dir?: 'up' | 'down' | null }>;
 }
 
 export interface RecentCatalystResult {
@@ -148,10 +155,17 @@ export interface RecentCatalystResult {
   window: { from: string; to: string; days: number };
   /** Documents in the window the reader should open (newest first), for the page's reading queue. */
   toRead: ReadRequest[];
-  reading: { total: number; read: number; failed: number; pending: number };
+  /** `lazy`: known-Minor documents left for the owner to open (Minor section / "read now"). */
+  reading: { total: number; read: number; failed: number; pending: number; lazy?: number };
 }
 
-export interface ReadRequest { url: string; ticker: string; subject: string; date: string; company: string | null }
+/** zzz825 (owner spec §34): the reading order. `first` = Material / Notable by what is already on file;
+ *  `open` = the subject names no event, or the document can still raise it (a deck, a rating letter, a
+ *  bonus notice) — read after `first`; `minor` = Minor whatever the document says (a non-senior
+ *  appointment, a shareholding form) — read ONLY when the Minor section is opened or the row is clicked.
+ *  Routine paperwork is never read. */
+export type ReadTier = 'first' | 'open' | 'minor';
+export interface ReadRequest { url: string; ticker: string; subject: string; date: string; company: string | null; tier?: ReadTier }
 
 export const DEFAULT_WINDOW_DAYS = 10;
 export const GROUP_DAYS = 2;
@@ -251,6 +265,49 @@ export function subjectClass(title: string | null | undefined): SubjectClass {
     if (re.test(t)) return { type: ty, routine: null, generic: false, senior };
   }
   return { type: 'Other filing', routine: null, generic: true, senior };
+}
+
+// ── zzz825: SEC event typing (8-K items, offerings) ──────────────────────
+//
+// The SEC's own item numbers say what KIND of event an 8-K is. Used for the US
+// tab only (buildRecentCatalysts with market 'US'); India subjects never carry
+// "8-K". A subject that names no event (1.01, 7.01, 8.01) stays GENERIC so the
+// read document can decide.
+
+const US_OFFERING_FORM = /^(?:Form\s+)?(424B\d|S-1|S-3|F-1|F-3|FWP)(?:\/A|ASR|MEF)?\b/i;
+const US_ROUTINE_ITEMS = new Set(['5.03', '5.05', '5.07', '5.08', '9.01', '3.03', '2.03', '1.02']);
+
+/** Pure: 8-K item numbers in a subject ("8-K: … [Item 1.01, Item 9.01]", "8-K Item 1.01 / 7.01 (…)"). */
+export function usItemsIn(title: string | null | undefined): string[] {
+  const t = String(title || '');
+  if (!/\b8-?K\b/i.test(t)) return [];
+  return Array.from(new Set(Array.from(t.matchAll(/(?<![\d.])(\d\.\d\d)(?![\d])/g)).map((m) => m[1])));
+}
+
+/** Pure: what an SEC filing's form / 8-K items say it is — null when the subject is not an SEC form this
+ *  rule knows (a 10-Q, a press report), so the shared classifier decides. */
+export function usSubjectClass(title: string | null | undefined): SubjectClass | null {
+  const t = String(title || '').replace(/\s+/g, ' ').trim();
+  if (US_OFFERING_FORM.test(t)) return { type: 'Fund raise', routine: null, generic: false, senior: false };
+  const it = usItemsIn(t);
+  if (!it.length) return null;
+  const has = (x: string) => it.includes(x);
+  if (has('2.02')) return { type: 'Results', routine: null, generic: false, senior: false };
+  if (has('2.01')) return { type: /dispos|\bsale of\b|divest/i.test(t.replace(/acquisition or disposition(?: of assets)?/gi, '')) ? 'Divestment' : 'Acquisition', routine: null, generic: false, senior: false };
+  if (has('1.01') && /business combination|merger (?:agreement|communication)/i.test(t)) return { type: 'Acquisition', routine: null, generic: false, senior: false };
+  if (has('3.02')) return { type: 'Fund raise', routine: null, generic: false, senior: false };
+  if (has('1.01')) return { type: 'Order win', routine: null, generic: true, senior: false };
+  if (has('5.02')) return { type: 'Management change', routine: null, generic: false, senior: true };
+  if (has('7.01') || has('8.01')) return { type: 'Other filing', routine: null, generic: true, senior: false };
+  if (it.every((x) => US_ROUTINE_ITEMS.has(x))) return { type: 'Other filing', routine: `8-K Item ${it.join(', ')} — governance / administrative`, generic: false, senior: false };
+  return null;
+}
+
+/** The subject class for a merged filing in a market (US: the SEC item rule first). */
+function subjectIn(f: FilingItem, market: 'IN' | 'US'): SubjectClass {
+  if (market !== 'US') return f.subject;
+  if (!f.origins.some((o) => o !== 'ledger-event' && o !== 'persistent')) return f.subject;
+  return usSubjectClass(f.title) || f.subject;
 }
 
 /** v1 compatibility: the plain-words type from a title (and variable / kind when the title is silent). */
@@ -543,9 +600,11 @@ export function mergeFilings(raws: RawEvent[]): FilingItem[] {
 /** Pure: whether a filing's document should be opened (URL, not routine by subject). */
 export function needsRead(f: FilingItem, market: 'IN' | 'US' = 'IN'): boolean {
   if (!f.url) return false;
-  if (f.subject.routine) return false;
+  if (subjectIn(f, market).routine) return false;
   // a periodic report (10-Q / 10-K) is long and its figures are on the card already
   if (market === 'US' && /form\s+(10-?q|10-?k|20-?f|40-?f)/i.test(f.title)) return false;
+  // zzz825: a prospectus / shelf is hundreds of pages — the form says what it is (an offering)
+  if (market === 'US' && US_OFFERING_FORM.test(f.title)) return false;
   if (!/^https:\/\//i.test(f.url)) return false;
   return true;
 }
@@ -571,30 +630,42 @@ interface Resolved {
   lowConfidence: boolean;
   ratingAction: string | null;
   market: 'IN' | 'US';
+  /** zzz829 (US): the SEC accession the document belongs to — one filing, one card. */
+  acc: string | null;
+  /** zzz829 (US): an SEC XBRL filed figure (the RPO reading), not a document. */
+  xbrlFact: boolean;
 }
 
 function resolve(f: FilingItem, readMap: Map<string, FilingRead>, market: 'IN' | 'US'): Resolved {
   const r = f.url ? readMap.get(normUrl(f.url)) || null : null;
   const want = needsRead(f, market);
   const read: ReadState = r ? (r.status === 'read' ? 'read' : 'failed') : want ? 'pending' : 'not-needed';
-  let type: RecentEventType = f.subject.type;
-  let routine = f.subject.routine;
+  const subj = subjectIn(f, market);
+  let type: RecentEventType = subj.type;
+  let routine = subj.routine;
   // the document decides a generic subject ("Press Release", "General Updates", "material issue")
-  if (r?.status === 'read' && (f.subject.generic || type === 'Other filing') && !routine) {
+  if (r?.status === 'read' && (subj.generic || type === 'Other filing') && !routine) {
     if (r.routine) routine = r.routine;
-    else if (r.kind) type = r.kind as RecentEventType;
+    else if (r.kind && restructuringAllowed(r, subj)) type = r.kind as RecentEventType;
   }
   // a concall / presentation that states a hard fact is filed under that fact (capacity commissioned,
   // results figures, an order with value) — the deck is the wrapper, the fact is the event
   if (r?.status === 'read' && type === 'Concall / business update' && r.kind && (r.figures || []).length
     && ['Capex / capacity', 'Order win', 'Results', 'Regulatory approval', 'Guidance'].includes(r.kind)) type = r.kind as RecentEventType;
-  if (!f.subject.routine && !r && f.events.length && type === 'Other filing') {
+  if (!subj.routine && !r && f.events.length && type === 'Other filing') {
     const v = f.events.find((e) => e.variable && VAR_TYPE[e.variable]);
     if (v) type = VAR_TYPE[v.variable as string];
   }
   if (type === 'Other filing' && !r && f.kind && KIND_TYPE[f.kind]) type = KIND_TYPE[f.kind];
-  // the line that matters — only a clean one (quality gate); the ledger's extracted events next
-  const evs = f.events.filter((e) => !e.text || lineQuality(e.text).ok);
+  // zzz829 (US): the document typed the event beyond doubt (an Item 2.01 / "acquires" headline, a notes offering) —
+  // a subject that only says "business update" / "Regulation FD" does not decide it
+  if (market === 'US' && r?.status === 'read' && r.strongKind && r.kind && !routine
+    && (subj.generic || /^(?:Concall \/ business update|Other filing|Order win)$/.test(type))) type = r.kind as RecentEventType;
+  // the line that matters — only a clean one (quality gate); the ledger's extracted events next.
+  // zzz829 (US): a hypothetical / risk-factor / business-description sentence is mentioned, not evidence
+  const evs = f.events.filter((e) => (!e.text || lineQuality(e.text).ok)
+    && !(market === 'US' && usBoilerplateEvidence(e.variable, e.quote || e.text)))
+    .map((e) => (market === 'US' ? usCashAmount(e) : e));
   const withFig = evs.filter((e) => e.figure);
   const best = withFig.find((e) => e.variable && VAR_TYPE[e.variable] === type) || withFig[0] || evs[0] || null;
   let line: string | null = null;
@@ -631,14 +702,49 @@ function resolve(f: FilingItem, readMap: Map<string, FilingRead>, market: 'IN' |
   }
   if (line) line = tidyFigure(line, market) || line;
   if (figure) figure = tidyFigure(figure, market);
+  if (market === 'US') { line = usPeriodWords(line); figure = usPeriodWords(figure); }
   const kindDoc = r?.status === 'read' ? r.docType || null : null;
   return {
     f, type, line, figure, routine, touches, read, readNote,
-    senior: !!(f.subject.senior || r?.senior), noImpact: !!r?.noImpact,
+    senior: !!(subj.senior || r?.senior), noImpact: !!r?.noImpact,
     seeFiling: r?.status === 'read' && !line,
     claims, docType: kindDoc, lowConfidence: !!(r?.status === 'read' && (r.lowConfidence || (!line && r.rejected))),
     ratingAction: r?.status === 'read' ? r.ratingAction || null : null, market,
+    acc: market === 'US' && /sec\.gov\/Archives/i.test(String(f.url || '')) ? accessionOf(f.url) : null,
+    xbrlFact: market === 'US' && (/SEC XBRL/i.test(String(f.source || '')) || /browse-edgar/i.test(String(f.url || ''))),
   };
+}
+
+/** zzz829: "(three months ended June 30, 2026)" → "(3 months)". */
+function usPeriodWords(s: string | null): string | null {
+  if (!s) return s;
+  const n: Record<string, string> = { three: '3', six: '6', nine: '9', twelve: '12' };
+  return s.replace(/\(\s*(three|six|nine|twelve)\s+months(?:\s+ended[^)]*)?\)/gi, (_m, w) => `(${n[w.toLowerCase()]} months)`);
+}
+
+const MONEYLIKE = /[$₹€£]\s?\d|\d\s?(?:mn|bn|million|billion|thousand|Cr)\b|\d\s?[MB]\b/i;
+/** zzz829 (US): "Cash conversion $46.0M (three months ended …)" is an AMOUNT — operating cash flow — not a ratio of
+ *  cash to profit. Shown as "Operating cash flow $46.0 mn (3 months)" and never read as cash conversion. */
+function usCashAmount(e: RawEvent): RawEvent {
+  if (e.variable !== 'cash_conversion') return e;
+  const val = String(e.after || e.figure || e.text || '');
+  if (!MONEYLIKE.test(val) || /[×x]\s*$|\d\s?[×x]\b|%/.test(String(e.after || e.figure || ''))) return e;
+  const fig = tidyFigure(e.after || e.figure, 'US') || (e.figure || '');
+  const months = /\b(three|six|nine|twelve)\s+months\b/i.exec(`${e.after || ''} ${e.text || ''} ${e.quote || ''}`)?.[1] || null;
+  const mw: Record<string, string> = { three: '3', six: '6', nine: '9', twelve: '12' };
+  const text = `Operating cash flow ${String(fig).replace(/\s*\((?:three|six|nine|twelve) months[^)]*\)/i, '')}${months ? ` (${mw[months.toLowerCase()]} months)` : ''}`;
+  return { ...e, variable: null, direction: null, before: null, text, figure: fig || null };
+}
+
+/** zzz825: a read may call a filing a restructuring only when the SUBJECT says so, or the reader found an
+ *  explicit board-approval / sanction sentence (restructuringStated). A read cached before that flag existed
+ *  is trusted only when it was not an investor deck or transcript — "Demerger" on a slide is marketing text. */
+export function restructuringAllowed(r: Pick<FilingRead, 'kind' | 'docType' | 'restructuringStated'>, subj: Pick<SubjectClass, 'type'>): boolean {
+  if (r.kind !== 'Corporate restructuring') return true;
+  if (subj.type === 'Corporate restructuring') return true;
+  if (r.restructuringStated === true) return true;
+  if (r.restructuringStated === false) return false;
+  return !/presentation|transcript|deck/i.test(String(r.docType || ''));
 }
 
 /** " (+22.7%)" from two figures in the same unit, else "". */
@@ -695,19 +801,141 @@ export function touchAllowed(type: RecentEventType, key: string): boolean {
 
 // ── grouping and ranking ───────────────────────────────────────────────────
 
-function toEvent(list: Resolved[]): RecentEvent {
+/** zzz829 (US): the SEC XBRL grader row the card carries — the year-ago comparison for a results event and the
+ *  company's size for materiality. Only filed figures; no price. */
+export interface UsCardFacts {
+  period?: string | null;
+  fiscal_label?: string | null;
+  q_end?: string | null;
+  revenue_curr_musd?: number | null; revenue_prev_musd?: number | null;
+  net_income_curr_musd?: number | null; net_income_prev_musd?: number | null;
+  opm_pct?: number | null; opm_prev_pct?: number | null;
+  sales_yoy_pct?: number | null; net_profit_yoy_pct?: number | null;
+}
+
+interface BuildCtx { market: 'IN' | 'US'; facts: Map<string, UsCardFacts> }
+
+/** Which event of one filing is the headline (lower first). */
+const HEAD_RANK: Partial<Record<RecentEventType, number>> = {
+  'Results': 0, 'Acquisition': 1, 'Divestment': 2, 'Corporate restructuring': 3, 'Fund raise': 4, 'Order win': 5,
+  'Regulatory approval': 6, 'Capex / capacity': 7, 'Guidance': 8, 'Regulatory / legal action': 9, 'Management change': 10,
+  'Credit rating': 11, 'Corporate action': 12, 'Concall / business update': 20, 'Exchange clarification': 25, 'Other filing': 30,
+};
+const headRank = (t: RecentEventType) => HEAD_RANK[t] ?? 15;
+
+const pctTxt = (a: number, b: number) => { const p = Math.round(((a - b) / Math.abs(b)) * 1000) / 10; return `${p >= 0 ? '+' : ''}${p}%`; };
+
+/** Pure (zzz829): a US results event's year-ago comparison from the card's SEC XBRL figures — the SAME fiscal
+ *  quarter a year earlier — when the XBRL quarter is the one the filing reports (filed within ~110 days of the
+ *  quarter end, and the revenue the filing states agrees). Otherwise no claim, and a note saying why. */
+export function xbrlResultsClaims(fx: UsCardFacts | null | undefined, filed: string, line: string | null): { claims: Claim[]; note: string | null } {
+  if (!fx) return { claims: [], note: null };
+  const qEnd = isoDay(fx.q_end);
+  const label = String(fx.fiscal_label || fx.period || (qEnd ? `quarter ended ${qEnd}` : '') || 'an earlier quarter').replace(/\s*\(quarter ended[^)]*\)/, '');
+  if (!qEnd) return { claims: [], note: null };
+  const lag = daysAgo(qEnd, filed);
+  if (lag < -5) return { claims: [], note: `the SEC XBRL figures on the card are for a later quarter (${label}) — no year-ago comparison drawn for this filing` };
+  if (lag > 110) return { claims: [], note: `the SEC XBRL figures for this quarter are not in yet (the card still has ${label}) — no year-ago comparison drawn` };
+  const rev = fx.revenue_curr_musd, revP = fx.revenue_prev_musd;
+  const stated = /\bRevenue\s+(\$[\d,.]+\s?(?:mn|bn|million|billion)?)/i.exec(String(line || ''))?.[1] || null;
+  const sv = stated ? usdAmountIn(stated) : null;
+  if (sv != null && typeof rev === 'number' && rev > 0 && Math.abs(sv / 1e6 - rev) / rev > 0.03) {
+    return { claims: [], note: `the revenue this filing states (${stated}) is not the SEC XBRL quarter's (${usdShort(rev * 1e6)}) — no year-ago comparison drawn` };
+  }
+  const out: Claim[] = [];
+  const src = `same quarter a year earlier, SEC XBRL (${label})`;
+  if (typeof rev === 'number' && typeof revP === 'number' && revP > 0 && rev !== revP) {
+    out.push({ key: 'revenue_growth', dir: rev > revP ? 'up' : 'down', verified: true, source: 'xbrl', text: `Revenue ${usdShort(revP * 1e6)} → ${usdShort(rev * 1e6)} (${pctTxt(rev, revP)}) · ${src}` });
+  }
+  const ni = fx.net_income_curr_musd, niP = fx.net_income_prev_musd;
+  if (typeof ni === 'number' && typeof niP === 'number' && ni !== niP) {
+    const tail = niP > 0 && ni > 0 ? ` (${pctTxt(ni, niP)})` : niP <= 0 && ni > 0 ? ' (loss → profit)' : niP > 0 && ni <= 0 ? ' (profit → loss)' : '';
+    out.push({ key: 'earnings_growth', dir: ni > niP ? 'up' : 'down', verified: true, source: 'xbrl', text: `Net income ${usdShort(niP * 1e6)} → ${usdShort(ni * 1e6)}${tail} · ${src}` });
+  }
+  const m = fx.opm_pct, mP = fx.opm_prev_pct;
+  if (typeof m === 'number' && typeof mP === 'number' && Math.abs(m - mP) >= 0.5) {
+    out.push({ key: 'margin', dir: m > mP ? 'up' : 'down', verified: true, source: 'xbrl', text: `Operating margin ${mP}% → ${m}% · ${src}` });
+  }
+  return { claims: out, note: out.length ? null : `the SEC XBRL figures carry no year-ago comparison for ${label}` };
+}
+
+/** Pure (zzz829): US materiality scaled to the company — a $ amount against the card's annual revenue (latest
+ *  quarter × 4): ≥ 5% Material, ≥ 1% Notable, else Minor; under $1 mn Minor. Guidance without a metric and a
+ *  direction is Minor (a fragment, level only). Results keep their own rule. */
+export function usMateriality(type: RecentEventType, base: Importance, text: string | null, fx: UsCardFacts | null | undefined): Importance {
+  if (type === 'Results' || base === 'Minor') return base;
+  const t = String(text || '');
+  if (type === 'Guidance') {
+    // the reader's label ("Outlook issued / reaffirmed:") is not the filing's words — only the sentence counts
+    const t = String(text || '').replace(/^(?:[^:·]{0,40}·\s*)?(?:Outlook issued \/ reaffirmed|Guidance)\s*:\s*/i, '');
+    const metric = /\b(?:revenue|sales|EPS|earnings|EBITDA|margin|net income|operating income|cash flow|bookings|backlog|free cash)\b/i.test(t);
+    const dir = /\b(?:rais\w*|increas\w*|lower\w*|reduc\w*|cut|narrow\w*|reaffirm\w*|maintain\w*|above|below|withdr[ae]w\w*)\b|→|\bfrom\b[^.]{0,40}\bto\b/i.test(t);
+    return metric && dir ? base : 'Minor';
+  }
+  if (!/^(?:Order win|Capex \/ capacity|Acquisition|Divestment|Fund raise|Concall \/ business update|Corporate restructuring|Regulatory \/ legal action)$/.test(type)) return base;
+  const amt = usdAmountIn(t);
+  if (amt == null || amt <= 0) return base;
+  if (amt < 1e6) return 'Minor';
+  const q = typeof fx?.revenue_curr_musd === 'number' && fx.revenue_curr_musd > 0 ? fx.revenue_curr_musd : null;
+  if (q) { const r = amt / (q * 4 * 1e6); return r >= 0.05 ? 'Material' : r >= 0.01 ? 'Notable' : 'Minor'; }
+  return amt >= 1e8 ? base : 'Notable';
+}
+
+/** zzz829 (US): the metrics a headline can carry a delta for — an award is order intake; only a backlog line
+ *  carries an order-book change. Null = no restriction beyond the event type. */
+function headKeysOf(type: RecentEventType, line: string | null): string[] | null {
+  const l = String(line || '');
+  if (type === 'Order win') return /backlog|order book|remaining performance|\bRPOs?\b|book[- ]to[- ]bill/i.test(l) ? ['order_book', 'book_to_bill', 'revenue_visibility'] : ['order_intake'];
+  if (type === 'Results') return ['revenue_growth', 'earnings_growth', 'margin', 'operating_leverage', 'guidance'];
+  if (type === 'Capex / capacity') return ['capacity', 'capacity_addition', 'utilisation', 'new_plant', 'commissioning', 'capex', 'capex_status', 'capex_earning'];
+  if (type === 'Guidance') return ['guidance', 'management_target'];
+  return null;
+}
+
+/** Pure: one event from its filings. `units` = one entry per filing (US: every document of one SEC accession). */
+function toEvent(units: Resolved[][], bx: BuildCtx = { market: 'IN', facts: new Map() }): RecentEvent {
   // lead = the filing with the most substance (a read line with a figure, then any line, then newest)
   const score = (x: Resolved) => (x.figure ? 4 : 0) + (x.line ? 2 : 0) + (x.read === 'read' ? 1 : 0);
-  const sorted = [...list].sort((a, b) => score(b) - score(a) || b.f.date.localeCompare(a.f.date));
-  const lead = sorted[0];
+  // inside one filing the headline is the most important event type (results over an order over a business update)
+  const unitLead = (u: Resolved[]) => [...u].sort((a, b) => headRank(a.type) - headRank(b.type) || score(b) - score(a) || b.f.date.localeCompare(a.f.date))[0];
+  const leadUnit = [...units].sort((a, b) => score(unitLead(b)) - score(unitLead(a)) || unitLead(b).f.date.localeCompare(unitLead(a).f.date))[0];
+  const lead = unitLead(leadUnit);
+  const list = units.flat();
+  const us = bx.market === 'US';
   const newest = list.reduce((m, x) => (x.f.date > m ? x.f.date : m), list[0].f.date);
   const touches = list.flatMap((x) => x.touches);
   const read: ReadState = list.some((x) => x.read === 'read') ? 'read' : list.some((x) => x.read === 'pending') ? 'pending' : list.some((x) => x.read === 'failed') ? 'failed' : 'not-needed';
   const th = thesisFor(dedupeTouches(touches), lead.f.ctx, read);
   const cleanTitle = stripLetterhead(lead.f.title) || lead.f.title;
   const what = lead.line || (lead.seeFiling ? `${lead.type} — see filing` : cleanTitle) || '(untitled filing)';
-  const imp = list.map((x) => importanceOf({ type: x.type, figure: x.figure, line: x.line, senior: x.senior, read: x.read, noImpact: x.noImpact }))
+  const parts = us ? units.map(unitLead).filter((x) => x.type === lead.type) : list;
+  let imp = parts.map((x) => importanceOf({ type: x.type, figure: x.figure, line: x.line, senior: x.senior, read: x.read, noImpact: x.noImpact }))
     .sort((a, b) => IMP_RANK[a] - IMP_RANK[b])[0];
+  const fx = us ? bx.facts.get(bareTicker(lead.f.ticker)) || null : null;
+  if (us) imp = usMateriality(lead.type, imp, [lead.figure, lead.line].filter(Boolean).join(' · ') || null, fx);
+  // zzz829 (US): other events in the SAME filing — "also in this filing", never a card of their own
+  const also: NonNullable<RecentEvent['also']> = [];
+  if (us) {
+    for (const u of units) for (const x of u) {
+      if (x === lead || x.type === lead.type) continue;
+      const l = x.line || stripLetterhead(x.f.title) || x.f.title;
+      if (l && !also.some((a) => a.type === x.type && a.line === l)) also.push({ type: x.type, line: cleanClip(l, 160) });
+    }
+  }
+  // zzz829 (US): claims only from the headline's own filing (never another document grouped beside it); a US
+  // results event takes its year-ago comparison from the card's SEC XBRL quarter when that quarter is this one
+  let claims = dedupeClaims((us ? leadUnit : list).flatMap((x) => x.claims));
+  let xbrlNote: string | null = null;
+  if (us && lead.type === 'Results') {
+    const xr = xbrlResultsClaims(fx, lead.f.date, lead.line);
+    xbrlNote = xr.note;
+    const have = new Set(claims.filter((c) => c.verified).map((c) => c.key));
+    claims = dedupeClaims([...claims, ...xr.claims.filter((c) => !have.has(c.key))]);
+  }
+  const headKeys = us ? headKeysOf(lead.type, lead.line) : null;
+  if (us && headKeys) {
+    for (const c of claims) if (c.verified && c.dir !== 'stated' && !headKeys.includes(c.key) && c.text && !also.some((a) => a.line === c.text)) also.push({ type: 'Stated change', line: c.text, dir: c.dir });
+  }
   const ev: RecentEvent = {
     id: `${lead.f.ticker}|${newest}|${lead.type}|${lead.f.url ? normUrl(lead.f.url) : normTitle(lead.f.title)}`,
     date: newest, ticker: lead.f.ticker, company: list.find((x) => x.f.company)?.f.company || null,
@@ -717,16 +945,25 @@ function toEvent(list: Resolved[]): RecentEvent {
     importance: imp, thesis: th.touch, thesisWhy: th.why,
     origins: Array.from(new Set(list.flatMap((x) => x.f.origins))),
     routine: false, routineWhy: null, read, readNote: lead.readNote || (read === 'failed' ? list.find((x) => x.readNote)?.readNote || null : null),
-    filings: [...list].sort((a, b) => b.f.date.localeCompare(a.f.date)).map((x) => ({ date: x.f.date, title: x.f.title, url: x.f.url, badge: x.f.badge, line: x.line, read: x.read, readNote: x.readNote })),
+    filings: dedupeFilings([...list].sort((a, b) => b.f.date.localeCompare(a.f.date)).map((x) => ({ date: x.f.date, title: x.f.title, url: x.f.url, badge: x.f.badge, line: x.line, read: x.read, readNote: x.readNote }))),
     ctx: lead.f.ctx, exchange: exchangeOf(lead.f.url || list.find((x) => x.f.url)?.f.url, lead.f.source),
+    ...(also.length ? { also: also.slice(0, 6) } : {}),
   };
+  const leadParts = us ? leadUnit : list;
   ev.card = buildCard({
     type: ev.type, importance: ev.importance, read, badge: ev.badge, title: cleanTitle, what: ev.what, line: lead.line, figure: lead.figure,
-    claims: dedupeClaims(list.flatMap((x) => x.claims)), ctx: lead.f.ctx, noImpact: list.some((x) => x.noImpact), senior: list.some((x) => x.senior),
-    lowConfidence: lead.lowConfidence || !!lead.seeFiling || (!lead.line && list.some((x) => x.lowConfidence)),
+    claims, ctx: lead.f.ctx, noImpact: leadParts.some((x) => x.noImpact), senior: leadParts.some((x) => x.senior),
+    lowConfidence: lead.lowConfidence || !!lead.seeFiling || (!lead.line && leadParts.some((x) => x.lowConfidence)),
     sourceDoc: sourceDocOf(lead), exchange: ev.exchange || null, date: newest, ratingAction: list.find((x) => x.ratingAction)?.ratingAction || null, market: lead.market,
+    ...(headKeys ? { headKeys } : {}), ...(xbrlNote ? { xbrlNote } : {}),
   });
   return ev;
+}
+
+/** US: one filing's documents (8-K body + EX-99.1) are one row in the filings list, keyed by URL. */
+function dedupeFilings(f: FilingRef[]): FilingRef[] {
+  const seen = new Set<string>();
+  return f.filter((x) => { const k = x.url ? normUrl(x.url) : `${x.date}|${x.title}`; if (seen.has(k)) return false; seen.add(k); return true; });
 }
 
 function dedupeClaims(c: Claim[]): Claim[] {
@@ -772,6 +1009,41 @@ export function groupResolved(list: Resolved[]): Resolved[][] {
   return out;
 }
 
+/** Pure (zzz829): every filing's documents as one unit — US: the same SEC accession (8-K body, EX-99.1, the ledger's
+ *  read of either) is ONE filing; India: every resolved filing is its own unit. */
+function unitsOf(live: Resolved[]): Resolved[][] {
+  const out: Resolved[][] = [];
+  const by = new Map<string, Resolved[]>();
+  for (const x of live) {
+    if (!x.acc) { out.push([x]); continue; }
+    const k = `${x.f.ticker}|${x.acc}`;
+    if (!by.has(k)) { const u: Resolved[] = []; by.set(k, u); out.push(u); }
+    by.get(k)!.push(x);
+  }
+  return out;
+}
+
+/** Pure: units of the same ticker and headline type within GROUP_DAYS → one event. A filed SEC XBRL figure (the RPO
+ *  reading) never joins a document's event — its change is not the document's. */
+function groupUnits(units: Resolved[][]): Resolved[][][] {
+  const lead = (u: Resolved[]) => [...u].sort((a, b) => headRank(a.type) - headRank(b.type))[0];
+  const keyOf = (u: Resolved[]) => { const l = lead(u); return `${l.f.ticker}|${l.type}|${u.every((x) => x.xbrlFact) ? 'x' : ''}`; };
+  const by = new Map<string, Resolved[][]>();
+  for (const u of units) by.set(keyOf(u), [...(by.get(keyOf(u)) || []), u]);
+  const out: Resolved[][][] = [];
+  const dateOf = (u: Resolved[]) => u.reduce((m, x) => (x.f.date > m ? x.f.date : m), u[0].f.date);
+  for (const g of by.values()) {
+    const s = [...g].sort((a, b) => dateOf(a).localeCompare(dateOf(b)));
+    let cur: Resolved[][] = [];
+    for (const u of s) {
+      if (cur.length && Math.abs(daysAgo(dateOf(cur[cur.length - 1]), dateOf(u))) > GROUP_DAYS) { out.push(cur); cur = []; }
+      cur.push(u);
+    }
+    if (cur.length) out.push(cur);
+  }
+  return out;
+}
+
 export function sortByImportance(a: RecentEvent, b: RecentEvent): number {
   return IMP_RANK[a.importance] - IMP_RANK[b.importance] || TYPE_RANK[a.type] - TYPE_RANK[b.type]
     || b.date.localeCompare(a.date) || a.ticker.localeCompare(b.ticker);
@@ -796,7 +1068,37 @@ export interface BuildOptions {
   /** Document reads keyed by URL (any spelling — normalised here). */
   reads?: Record<string, FilingRead> | Map<string, FilingRead> | null;
   market?: 'IN' | 'US';
+  /** zzz825: company names the page already holds (book rows, bench rows, Conviction Beats lists), by ticker —
+   *  used when no filing row carries one. A "name" equal to the ticker is ignored. */
+  names?: Record<string, string | null | undefined> | Map<string, string | null | undefined> | null;
+  /** zzz829 (US): each ticker's SEC XBRL grader row (the card's figures) — a results event's year-ago comparison,
+   *  and the company's size for materiality. */
+  facts?: Record<string, UsCardFacts | null | undefined> | Map<string, UsCardFacts | null | undefined> | null;
 }
+
+const bareTicker = (t: string): string => String(t || '').toUpperCase().trim().replace(/^(?:NSE|BSE|NYSE|NASDAQ):/, '').replace(/-(?:BE|SM|ST|BZ|E1|EQ)$/, '');
+
+/** Pure: one ticker → company-name map from any number of lists; the first real name wins. */
+export function nameMapOf(...lists: Array<Array<{ ticker?: string | null; symbol?: string | null; company?: string | null; name?: string | null }> | null | undefined>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const list of lists) for (const x of list || []) {
+    const t = bareTicker(String(x?.ticker || x?.symbol || ''));
+    const n = String(x?.company || x?.name || '').replace(/\s+/g, ' ').trim();
+    if (!t || !n || out[t] || bareTicker(n) === t || /^\d+$/.test(n)) continue;
+    out[t] = n;
+  }
+  return out;
+}
+
+/** Pure: the reading tier of one resolved filing (see ReadTier). */
+function tierOf(x: Resolved): ReadTier {
+  const subj = subjectIn(x.f, x.market);
+  if (subj.generic) return 'open';
+  const imp = importanceOf({ type: x.type, figure: x.figure, line: x.line, senior: x.senior, read: x.read, noImpact: x.noImpact });
+  if (imp !== 'Minor') return 'first';
+  return /^(?:Management change|Shareholding disclosure|Promoter holding change|Exchange clarification|Other filing)$/.test(x.type) ? 'minor' : 'open';
+}
+const TIER_RANK: Record<ReadTier, number> = { first: 0, open: 1, minor: 2 };
 
 /** Pure: the whole tab's data from every observation on the page. */
 export function buildRecentCatalysts(raws: RawEvent[], today: string, daysOrOpts: number | BuildOptions = {}): RecentCatalystResult {
@@ -833,21 +1135,41 @@ export function buildRecentCatalysts(raws: RawEvent[], today: string, daysOrOpts
     else if (dupes.has(x)) hidden.push(routineEvent(x, 'duplicate filing'));
     else live.push(x);
   }
-  const events = groupResolved(live).map(toEvent).sort(sortByImportance);
+  // zzz829: the card's SEC XBRL figures by ticker (US results comparison, materiality by company size)
+  const facts = new Map<string, UsCardFacts>();
+  const fsrc = o.facts instanceof Map ? Array.from(o.facts.entries()) : Object.entries(o.facts || {});
+  for (const [k, v] of fsrc) if (k && v) facts.set(bareTicker(k), v);
+  const bx: BuildCtx = { market, facts };
+  const events = market === 'US'
+    ? groupUnits(unitsOf(live)).map((g) => toEvent(g, bx)).sort(sortByImportance)
+    : groupResolved(live).map((g) => toEvent(g.map((x) => [x]), bx)).sort(sortByImportance);
   // zzz824: one name per ticker — a row whose filing carried no company name takes it from the ticker's other rows
   const names = new Map<string, string>();
   for (const r of raws) if (r.company && r.ticker && !names.has(r.ticker.toUpperCase())) names.set(r.ticker.toUpperCase(), r.company);
-  for (const e of [...events, ...hidden]) if (!e.company) e.company = names.get(e.ticker.toUpperCase()) || null;
+  // zzz825: then the page's own name map (book / bench / Conviction Beats lists); unknown stays null
+  const given = new Map<string, string>();
+  const gsrc = o.names instanceof Map ? Array.from(o.names.entries()) : Object.entries(o.names || {});
+  for (const [k, v] of gsrc) { const n = String(v || '').trim(); if (k && n && bareTicker(n) !== bareTicker(k)) given.set(bareTicker(k), n); }
+  for (const e of [...events, ...hidden]) {
+    if (!e.company) e.company = names.get(e.ticker.toUpperCase()) || given.get(bareTicker(e.ticker)) || null;
+    if (e.company && bareTicker(e.company) === bareTicker(e.ticker)) e.company = null;
+  }
+  // zzz825: the reading tier of each still-unread event (the tab offers "read now" for the lazy ones)
+  const tierByUrl = new Map<string, ReadTier>();
+  for (const x of win) if (x.f.url && x.read === 'pending') tierByUrl.set(normUrl(x.f.url), tierOf(x));
+  for (const e of events) e.readTier = e.read === 'pending' && e.url ? tierByUrl.get(normUrl(e.url)) || null : null;
   const items = events.filter((e) => e.importance !== 'Minor');
   const minor = events.filter((e) => e.importance === 'Minor');
   hidden.sort((a, b) => b.date.localeCompare(a.date) || a.ticker.localeCompare(b.ticker));
 
   const lastAny = resolved.filter((x) => !x.routine && daysAgo(x.f.date, today) >= -1).sort((a, b) => b.f.date.localeCompare(a.f.date))[0] || null;
 
+  // zzz825 (§34): Material + Notable first, then the undecided, the known-Minor last (the page reads those on demand)
   const toRead: ReadRequest[] = win
     .filter((x) => needsRead(x.f, market) && !readMap.has(normUrl(x.f.url)))
-    .sort((a, b) => b.f.date.localeCompare(a.f.date))
-    .map((x) => ({ url: x.f.url as string, ticker: x.f.ticker, subject: x.f.title, date: x.f.date, company: x.f.company }));
+    .map((x) => ({ x, tier: tierOf(x) }))
+    .sort((a, b) => TIER_RANK[a.tier] - TIER_RANK[b.tier] || b.x.f.date.localeCompare(a.x.f.date))
+    .map(({ x, tier }) => ({ url: x.f.url as string, ticker: x.f.ticker, subject: x.f.title, date: x.f.date, company: x.f.company || given.get(bareTicker(x.f.ticker)) || null, tier }));
   const wantRead = win.filter((x) => needsRead(x.f, market));
   const readN = wantRead.filter((x) => readMap.get(normUrl(x.f.url))?.status === 'read').length;
   const failN = wantRead.filter((x) => readMap.get(normUrl(x.f.url))?.status === 'failed').length;
@@ -857,7 +1179,7 @@ export function buildRecentCatalysts(raws: RawEvent[], today: string, daysOrOpts
     lastItem: lastAny ? { date: lastAny.f.date, ticker: lastAny.f.ticker } : null,
     window: { from: windowStartDay(today, days), to: today, days },
     toRead,
-    reading: { total: wantRead.length, read: readN, failed: failN, pending: wantRead.length - readN - failN },
+    reading: { total: wantRead.length, read: readN, failed: failN, pending: wantRead.length - readN - failN, lazy: toRead.filter((q) => q.tier === 'minor').length },
   };
 }
 

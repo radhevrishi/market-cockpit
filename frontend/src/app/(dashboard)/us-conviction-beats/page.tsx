@@ -31,6 +31,9 @@ import {
   usFilingAgeDays, computeUsNewWindow, usVerdict, usRule40, usRoce,
   passesUsConvictionFilter, usPresetFilters, isUsPresetActive, usCbCriteriaCheck,
   US_FILTER_DEFAULT, US_PRESET,
+  // zzz828 — words not scores, same-period cash ratio, engine re-sync, hidden-names audit
+  usVerdictWord, usScoreWord, usPeadWord, usRsWord, usCashRatio, usNowTierText, usCbHiddenReport,
+  resyncUsBenchToEngine, usEngineResyncQueue,
   type UsConvictionEntry, type UsConvFilters,
 } from '@/lib/conviction-beats-us';
 import { fmtUsd, fmtPct } from '@/lib/us-earnings-core';
@@ -50,6 +53,8 @@ import { classifyTheme } from '@/lib/theme-classify';
 import { useThemeVerdicts, confluenceFor, type ConfluenceKind } from '@/lib/theme-confluence';
 import { DeskHeader, deskNumerals } from '@/components/desk-chrome';
 import { usEasternDate } from '@/lib/us-earnings-dates';
+import { decodeHTMLEntities } from '@/lib/html-decode';
+import { US_ENGINE_VERSION } from '@/lib/us-engine-version';
 
 const OPT_OUT_KEY = US_CB_OPTOUT_KEY; // zzz811 — shared with US Portfolio Catalysts
 const SWEEP_KEY = 'mc:us-cb:lastsweep:v1';
@@ -145,7 +150,8 @@ export default function UsConvictionBeatsPage() {
     if (!tk) return;
     setLookup({ state: 'busy' });
     try {
-      const res = await fetch(`/api/v1/earnings/graded-us?tickers=${encodeURIComponent(tk)}`, { cache: 'no-store' });
+      // zzz828: every read ends — a lookup that hangs says "not available".
+      const res = await fetch(`/api/v1/earnings/graded-us?tickers=${encodeURIComponent(tk)}`, { cache: 'no-store', signal: AbortSignal.timeout(90_000) });
       const j = await res.json();
       const rows: any[] = [];
       for (const tier of ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID']) rows.push(...(j?.by_tier?.[tier] || []));
@@ -158,7 +164,8 @@ export default function UsConvictionBeatsPage() {
           : `No recent earnings filing was found on EDGAR for ${tk}.`,
       });
     } catch (e: any) {
-      setLookup({ state: 'error', msg: `Could not grade ${tk} (${String(e?.message || e)}).` });
+      const timedOut = /timeout|abort/i.test(String(e?.name || '') + String(e?.message || ''));
+      setLookup({ state: 'error', msg: timedOut ? `${tk}: not available — EDGAR did not answer within 90 seconds. Try again later.` : `Could not grade ${tk} (${String(e?.message || e)}).` });
     }
   }, []);
   const reload = useCallback(() => {
@@ -194,6 +201,43 @@ export default function UsConvictionBeatsPage() {
       .finally(() => { hydratedRef.current = true; if (alive) reload(); });
     return () => { alive = false; };
   }, [reload]);
+
+  // ═══ STALE TIERS: RE-GRADE UNDER THE CURRENT ENGINE  (zzz828) ═══════════
+  // A record carries the engine version that graded it. When the engine
+  // changes, the stale part of the bench is re-graded from its latest filing
+  // (graded-us explicit mode, price-free grade), bounded: at most
+  // US_ENGINE_RESYNC_CAP names per visit, 25 per request, one request at a
+  // time, each with a deadline, two tries per name per engine version. A name
+  // whose SAME filing now grades MIXED / AVOID stays on the bench, labelled
+  // "now MIXED under current rules" — never silently removed.
+  const [engineMsg, setEngineMsg] = useState<string | null>(null);
+  const engineRunRef = useRef(false);
+  useEffect(() => {
+    let alive = true;
+    const t = setTimeout(async () => {
+      if (engineRunRef.current) return;
+      if (!hydratedRef.current) { try { await hydrateUsConviction(); } catch { /* memory-only */ } hydratedRef.current = true; }
+      const queue = usEngineResyncQueue(getUsConvictionList());
+      if (!queue.length) return;
+      engineRunRef.current = true;
+      setEngineMsg(`Re-grading ${queue.length} name${queue.length === 1 ? '' : 's'} graded by an older engine under the current rules (engine ${US_ENGINE_VERSION}, price-free)…`);
+      const r = await resyncUsBenchToEngine(async (tickers) => {
+        try {
+          const res = await fetch(`/api/v1/earnings/graded-us?tickers=${encodeURIComponent(tickers.join(','))}`, { cache: 'no-store', signal: AbortSignal.timeout(120_000) });
+          if (!res.ok) return null;
+          const p = await res.json();
+          const rows: any[] = [];
+          for (const tier of ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID']) for (const c of (p?.by_tier?.[tier] || [])) rows.push({ ...c, source_url: c.filing_url });
+          return rows;
+        } catch { return null; }
+      }, (done, total) => { if (alive) setEngineMsg(`Re-grading under the current rules: ${done} of ${total}…`); });
+      if (!alive) return;
+      reload();
+      setEngineMsg(`Re-graded ${r.regraded} of ${r.asked} under the current engine${r.nowMixed.length ? ` · ${r.nowMixed.length} now below STRONG (kept, labelled): ${r.nowMixed.slice(0, 12).join(', ')}${r.nowMixed.length > 12 ? '…' : ''}` : ''}${r.unanswered ? ` · ${r.unanswered} not re-graded this time (no answer from EDGAR — tried again next visit, twice at most)` : ''}.`);
+    }, 4_000);
+    return () => { alive = false; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     reload();
@@ -510,7 +554,8 @@ export default function UsConvictionBeatsPage() {
       const stale = getUsConvictionList().filter((e) => !e.ticker.includes('@') && e.filing_date < cutoff).map((e) => e.ticker);
       for (let i = 0; i < stale.length && i < 150; i += 25) {
         const slice = stale.slice(i, i + 25);
-        const res = await fetch(`/api/v1/earnings/graded-us?tickers=${encodeURIComponent(slice.join(','))}`, { cache: 'no-store' });
+        let res: Response;
+        try { res = await fetch(`/api/v1/earnings/graded-us?tickers=${encodeURIComponent(slice.join(','))}`, { cache: 'no-store', signal: AbortSignal.timeout(120_000) }); } catch { continue; }
         if (!res.ok) continue;
         const p = await res.json();
         const batch: any[] = [];
@@ -629,7 +674,16 @@ export default function UsConvictionBeatsPage() {
   // so the reader stops doing it by hand across two tabs. See
   // lib/theme-confluence.ts for why the intersection is the only combination
   // that is a position.
-  const { byId: themeVerdicts, loading: tvLoading } = useThemeVerdicts('us');
+  const { byId: themeVerdicts, loading: tvLoading0 } = useThemeVerdicts('us');
+  // zzz828: the theme read ends — after 30 s the strip renders without it
+  // ("not available") instead of waiting for ever.
+  const [tvTimedOut, setTvTimedOut] = useState(false);
+  useEffect(() => {
+    if (!tvLoading0) return;
+    const t = setTimeout(() => setTvTimedOut(true), 30_000);
+    return () => clearTimeout(t);
+  }, [tvLoading0]);
+  const tvLoading = tvLoading0 && !tvTimedOut;
   const [confFilter, setConfFilter] = useState<ConfluenceKind | null>(null);
   const confOf = useCallback((e: UsConvictionEntry) => {
     const b = funnel.bucketOf.get(`${e.ticker}|${e.filing_date}`);
@@ -644,7 +698,7 @@ export default function UsConvictionBeatsPage() {
   // itself and the line disappears with it.
   const maUnverified = useMemo(() => {
     if (!filters.aboveMa50 && !filters.aboveMa200) return 0;
-    return entries.filter((e) => passesUsConvictionFilter(e, filters, newWindow)
+    return entries.filter((e) => usCbCriteriaCheck(e, filters, newWindow).state !== 'fail'
       && (e as any).pct_vs_ma50 == null).length;
   }, [entries, filters, newWindow]);
 
@@ -759,6 +813,15 @@ export default function UsConvictionBeatsPage() {
     });
   }, [entries, filters, sort, sortDir, newWindow, bucketFilter, funnelStop, funnel, confFilter, confOf, patternOnly, usCheckOf]);
 
+  // ═══ WHY NAMES ARE HIDDEN  (zzz828) ════════════════════════════════════
+  // Per criterion, how many names it hides, each with its failing figure
+  // against the threshold; names not checked for want of a figure listed on
+  // their own. Names are unique tickers (an archived quarter folds into its
+  // ticker) — the same count US Portfolio Catalysts shows.
+  const [showHidden, setShowHidden] = useState(false);
+  const hiddenReport = useMemo(() => usCbHiddenReport(entries, filters, newWindow), [entries, filters, newWindow]);
+  const filteredNames = useMemo(() => new Set(filtered.map((e) => e.ticker.split('@')[0].toUpperCase())).size, [filtered]);
+
   // ═══ NAMES THE SIZE FILTER IS HIDING  (zzz623) ══════════════════════════
   //
   // The Quality Preset defaults to Small+Mid, which is the right default: the
@@ -776,7 +839,7 @@ export default function UsConvictionBeatsPage() {
     const shown = new Set(filtered.map((e) => `${e.ticker}|${e.filing_date}`));
     return entries
       .filter((e) => (e.tier === 'BLOCKBUSTER' || e.tier === 'STRONG')
-        && passesUsConvictionFilter(e, anyCap as UsConvFilters, newWindow)
+        && usCbCriteriaCheck(e, anyCap as UsConvFilters, newWindow).state !== 'fail'
         && !shown.has(`${e.ticker}|${e.filing_date}`))
       .sort((a, b) => (b.composite_score ?? 0) - (a.composite_score ?? 0));
   }, [entries, filters, filtered, newWindow]);
@@ -785,7 +848,9 @@ export default function UsConvictionBeatsPage() {
   const countWith = useCallback((patch: Partial<UsConvFilters>) => {
     const f = { ...filters, ...patch };
     let n = 0;
-    for (const e of entries) if (passesUsConvictionFilter(e, f, newWindow)) n++;
+    // zzz828: counted exactly as the list shows — a name not checked for want
+    // of a figure is shown, so it is counted.
+    for (const e of entries) if (usCbCriteriaCheck(e, f, newWindow).state !== 'fail') n++;
     return n;
   }, [entries, filters, newWindow]);
 
@@ -803,7 +868,7 @@ export default function UsConvictionBeatsPage() {
     const f: any = { ...US_FILTER_DEFAULT, cap: 'all', q: '' };
     f[key] = v;
     let n = 0;
-    for (const e of entries) if (passesUsConvictionFilter(e, f, newWindow)) n++;
+    for (const e of entries) if (usCbCriteriaCheck(e, f, newWindow).state !== 'fail') n++;
     return n;
   }, [entries, newWindow]);
 
@@ -883,18 +948,21 @@ export default function UsConvictionBeatsPage() {
 
   const exportCsv = () => {
     const esc = (v: any) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const head = ['Ticker', 'Company', 'Tier', 'Quadrant', 'Quality', 'Inflection', 'Verdict', 'Score', 'Quarter', 'Filed', 'Rev YoY %', 'NI YoY %', 'EPS YoY %',
-      'OPM %', 'OPM prev %', 'CFO/NI', 'Rule of 40', 'R40 basis', 'ROCE %', 'PEAD', 'RS', 'Stage', '% from 52w high', 'ADDV $M', 'Mkt cap $M', 'Price', 'P/E',
+    // zzz828: no 0–100 scores and no BUY/SELL words in the file either —
+    // quality / inflection / engine rank / drift / RS as words, the verdict
+    // as its neutral label, the cash ratio on one period (basis stated).
+    const head = ['Ticker', 'Company', 'Tier', 'Now under current rules', 'Quadrant', 'Quality', 'Inflection', 'Quality read', 'Engine rank', 'Quarter', 'Filed', 'Rev YoY %', 'NI YoY %', 'EPS YoY %',
+      'OPM %', 'OPM prev %', 'CFO/NI', 'CFO/NI period', 'Rule of 40', 'R40 basis', 'ROCE %', 'Post-results drift', 'Relative strength', 'Stage', '% from 52w high', 'ADDV $M', 'Mkt cap $M', 'Price', 'P/E',
       'D1 %', 'Since %', 'Sector', 'Caveats', 'SEC'];
-    const body = filtered.map((e) => [e.ticker, e.company, e.tier,
-      e.quadrant ?? '', e.quality_score ?? '', e.inflection_score ?? '',
-      usVerdict(e).verdictLabel, e.composite_score, e.quarter, e.filing_date,
+    const body = filtered.map((e) => { const cr = usCashRatio(e); return [e.ticker, decodeHTMLEntities(e.company), e.tier, e.now_tier ?? '',
+      e.quadrant ?? '', e.quality_score != null ? usScoreWord(e.quality_score) : '', e.inflection_score != null ? usScoreWord(e.inflection_score) : '',
+      usVerdictWord(usVerdict(e).verdictLabel), usScoreWord(e.composite_score), e.quarter, e.filing_date,
       e.sales_yoy_pct?.toFixed(1), e.net_profit_yoy_pct?.toFixed(1), e.eps_yoy_pct?.toFixed(1),
-      e.opm_pct?.toFixed(2), e.opm_prev_pct?.toFixed(2), e.cfo_to_pat_ratio?.toFixed(2),
+      e.opm_pct?.toFixed(2), e.opm_prev_pct?.toFixed(2), cr.ratio?.toFixed(2) ?? (cr.lossMaking ? 'loss' : ''), cr.basis === 'ttm' ? 'last twelve months' : cr.basis === 'quarter' ? 'this quarter' : cr.why,
       usRule40(e)?.score, usRule40(e)?.basis, usRoce(e)?.pct,
-      e.pead_score, e.rs_rating, e.stage,
+      e.pead_score != null ? usPeadWord(e.pead_score) : '', e.rs_rating != null ? usRsWord(e.rs_rating) : '', e.stage,
       e.pct_from_52w_high?.toFixed(1), e.addv_musd?.toFixed(1), e.market_cap_musd?.toFixed(0), e.price?.toFixed(2), e.pe,
-      e.d1_pct?.toFixed(2), e.move_pct?.toFixed(2), e.sector, (e.caveat_tags || []).join(' | '), e.source_url].map(esc).join(','));
+      e.d1_pct?.toFixed(2), e.move_pct?.toFixed(2), e.sector, (e.caveat_tags || []).join(' | '), e.source_url].map(esc).join(','); });
     download(`us-conviction-beats-${etToday()}.csv`, [head.map(esc).join(','), ...body].join('\n'));
   };
   /**
@@ -1098,7 +1166,7 @@ export default function UsConvictionBeatsPage() {
       {/* ── quality preset + quick toggles ── */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
         <button onClick={togglePreset}
-          title={`Sales YoY ≥${US_PRESET.sales}% · EPS YoY ≥${US_PRESET.eps}% · PEAD ≥${US_PRESET.pead} · OPM Δ ≥${US_PRESET.opmDelta}pp · CFO/NI ≥${US_PRESET.cfoPatMin} (skipped for banks, insurers and REITs) · Market cap ≥ $${US_PRESET.mktCapMinMusd}M · price above BOTH its 50-day and 200-day averages · Verdict STRONG BUY / BUY / WATCH. No promoter-pledge gate — that concept does not exist in US markets. The 200-day leg falls back to the Weinstein stage for entries benched before the figure was captured (stages 2 and 3 are above it); the 50-day leg has no fallback, so an entry carrying neither passes it and is counted as unverified rather than silently dropped.`}
+          title={`Sales YoY ≥${US_PRESET.sales}% · EPS YoY ≥${US_PRESET.eps}% · PEAD ≥${US_PRESET.pead} · OPM Δ ≥${US_PRESET.opmDelta}pp · CFO/NI ≥${US_PRESET.cfoPatMin} — operating cash and net income over the SAME period, the last twelve months where the filing gives four quarters, else this quarter; a missing ratio is shown as not checked, a loss fails (skipped for banks, insurers and REITs) · Market cap ≥ $${US_PRESET.mktCapMinMusd}M · price above BOTH its 50-day and 200-day averages · Quality read ${US_PRESET.verdicts.map((v) => usVerdictWord(v)).join(' / ')}. No promoter-pledge gate — that concept does not exist in US markets. The 200-day leg falls back to the Weinstein stage for entries benched before the figure was captured (stages 2 and 3 are above it); the 50-day leg has no fallback, so an entry carrying neither passes it and is counted as unverified rather than silently dropped.`}
           style={{ fontSize: 'var(--mc-text-xs)', fontWeight: 800, padding: '7px 12px', borderRadius: 999, cursor: 'pointer', border: '1px solid #F59E0B', color: '#F59E0B', backgroundColor: presetOn ? 'color-mix(in srgb, #F59E0B 14%, transparent)' : 'var(--mc-bg-2)' }}>
           ⚡ QUALITY PRESET · Sales≥{filters.sales ?? US_PRESET.sales} · EPS≥{filters.eps ?? US_PRESET.eps} · PEAD≥{filters.pead ?? US_PRESET.pead} · OPM Δ≥{filters.opmDelta ?? US_PRESET.opmDelta} · CFO/NI≥{filters.cfoPatMin ?? US_PRESET.cfoPatMin} · MktCap≥${filters.mktCapMin ?? US_PRESET.mktCapMinMusd}M · &gt;50DMA · &gt;200DMA{' '}
           {presetOn ? '✓ ON' : presetCustom ? '✓ ON · customised' : '· OFF — click to enable'}
@@ -1174,7 +1242,7 @@ export default function UsConvictionBeatsPage() {
                 return next;
               })} style={chip(false)}>Turn every gate off</button>
               <span style={{ fontSize: 10.5, color: 'var(--mc-text-4)' }}>
-                Verdict gate: STRONG BUY / BUY / WATCH{filters.verdicts ? '' : ' — currently off'}. No promoter-pledge gate — that concept does not exist in US markets.
+                Quality-read gate: {US_PRESET.verdicts.map((v) => usVerdictWord(v)).join(' / ')}{filters.verdicts ? '' : ' — currently off'}. No promoter-pledge gate — that concept does not exist in US markets.
               </span>
             </div>
           </div>
@@ -1218,12 +1286,12 @@ export default function UsConvictionBeatsPage() {
           <ChipRow label="OPM Δ ≥" value={filters.opmDelta} opts={[-2, 0, 1, 3, 5]} fmt={(v) => `${v >= 0 ? '+' : ''}${v}pp`} onSet={(v) => setFilters((p) => ({ ...p, opmDelta: v }))} count={(v) => countWith({ opmDelta: v })} />
           <ChipRow label="OPM ≥" value={filters.opmMin} opts={[5, 10, 15, 20, 30]} fmt={(v) => `${v}%`} onSet={(v) => setFilters((p) => ({ ...p, opmMin: v }))} count={(v) => countWith({ opmMin: v })} />
           <ChipRow label="CFO/NI ≥" value={filters.cfoPatMin} opts={[0.5, 0.8, 1, 1.2]} fmt={(v) => `${v}×`} onSet={(v) => setFilters((p) => ({ ...p, cfoPatMin: v }))} count={(v) => countWith({ cfoPatMin: v })} />
-          <ChipRow label="PEAD ≥" value={filters.pead} opts={[40, 60, 70, 80]} fmt={(v) => `${v}`} onSet={(v) => setFilters((p) => ({ ...p, pead: v }))} count={(v) => countWith({ pead: v })} />
-          <ChipRow label="Score ≥" value={filters.score} opts={[60, 70, 78, 85]} fmt={(v) => `${v}`} onSet={(v) => setFilters((p) => ({ ...p, score: v }))} count={(v) => countWith({ score: v })} />
+          <ChipRow label="Post-results drift at least" value={filters.pead} opts={[40, 60, 70, 80]} fmt={(v) => (v >= 80 ? 'very strong' : v >= 70 ? 'strong' : v >= 60 ? 'firm' : 'some')} onSet={(v) => setFilters((p) => ({ ...p, pead: v }))} count={(v) => countWith({ pead: v })} />
+          <ChipRow label="Engine rank at least" value={filters.score} opts={[60, 70, 78, 85]} fmt={(v) => (v >= 85 ? 'top' : v >= 78 ? 'very strong' : v >= 70 ? 'strong' : 'fair')} onSet={(v) => setFilters((p) => ({ ...p, score: v }))} count={(v) => countWith({ score: v })} />
           <ChipRow label="Mkt cap ≥" value={filters.mktCapMin} opts={[300, 1000, 2000, 5000, 10000]} fmt={(v) => (v >= 1000 ? `$${v / 1000}B` : `$${v}M`)} onSet={(v) => setFilters((p) => ({ ...p, mktCapMin: v }))} count={(v) => countWith({ mktCapMin: v })} />
           <ChipRow label="P/E ≤" value={filters.peMax} opts={[15, 20, 30, 40]} fmt={(v) => `${v}×`} onSet={(v) => setFilters((p) => ({ ...p, peMax: v }))} count={(v) => countWith({ peMax: v })} />
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-            <span style={rowLabel}>Verdict</span>
+            <span style={rowLabel}>Quality read</span>
             {VERDICTS.map((v) => {
               const on = (filters.verdicts || []).includes(v);
               return (
@@ -1231,7 +1299,7 @@ export default function UsConvictionBeatsPage() {
                   const cur = p.verdicts || [];
                   const next = on ? cur.filter((x) => x !== v) : [...cur, v];
                   return { ...p, verdicts: next.length ? next : null };
-                })} style={chip(on, VERDICT_COLOR[v])}>{v} ({countWith({ verdicts: [v] })})</button>
+                })} style={chip(on, VERDICT_COLOR[v])}>{usVerdictWord(v)} ({countWith({ verdicts: [v] })})</button>
               );
             })}
             <button onClick={() => setFilters((p) => ({ ...p, verdicts: null }))} style={chip(!filters.verdicts)}>Any</button>
@@ -1260,6 +1328,11 @@ export default function UsConvictionBeatsPage() {
           could say this alone. The two disagreements are one click away and
           deliberately not hidden: a screen that shows only its agreements is
           a screen that flatters you. */}
+      {tvTimedOut && tvLoading0 && (
+        <div data-testid="us-cb-theme-timeout" style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-3)', marginBottom: 8 }}>
+          Theme reading (aligned / tape against): not available — the rotation board did not answer within 30 seconds. Every other part of the page is unaffected.
+        </div>
+      )}
       {entries.length > 0 && !tvLoading && (
         <div style={{
           padding: 13, borderRadius: 'var(--mc-radius)', marginBottom: 12,
@@ -1518,6 +1591,7 @@ export default function UsConvictionBeatsPage() {
         <span><b style={{ color: '#F59E0B' }}>{tierCounts.BLOCKBUSTER}</b> blockbuster</span>
         <span><b style={{ color: '#10B981' }}>{tierCounts.STRONG}</b> strong</span>
         <span><b style={{ color: 'var(--mc-text-0)' }}>{filtered.length}</b> passing filters</span>
+        <span data-testid="us-cb-names" title="Unique names — an archived quarter of a name already shown is not a second name. US Portfolio Catalysts' 🏆 Conviction Beats view shows these same names."><b style={{ color: 'var(--mc-text-0)' }}>{filteredNames}</b> names</span>
         <span style={{ flex: 1 }} />
         <span style={{ color: 'var(--mc-text-3)' }}>
           {sweeping ? 'reloading…' : `window ${WINDOWS.find(([, n]) => n === benchWindow)?.[0] ?? `${benchWindow} sessions`}`}
@@ -1534,6 +1608,47 @@ export default function UsConvictionBeatsPage() {
           </button>
         </div>
       )}
+      {engineMsg && (
+        <div data-testid="us-cb-engine-msg" style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', marginBottom: 10, padding: '7px 12px', borderRadius: 'var(--mc-radius)', border: '1px dashed var(--mc-bg-4)' }}>{engineMsg}</div>
+      )}
+      {(hiddenReport.hidden.length > 0 || hiddenReport.notChecked.length > 0) && (
+        <div data-testid="us-cb-hidden-panel" style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 'var(--mc-radius)', border: '1px solid var(--mc-bg-4)', backgroundColor: 'var(--mc-bg-1)', fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', lineHeight: 1.55 }}>
+          <button onClick={() => setShowHidden((v) => !v)} style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--mc-text-0)', fontWeight: 800, fontSize: 'var(--mc-text-xs)' }}>
+            {showHidden ? '▾' : '▸'} Why {hiddenReport.hidden.length} name{hiddenReport.hidden.length === 1 ? ' is' : 's are'} hidden
+            {hiddenReport.notChecked.length ? ` · ${hiddenReport.notChecked.length} shown but not checked (a figure is missing)` : ''}
+            {` · ${hiddenReport.shown} of ${hiddenReport.total} names shown`}
+          </button>
+          {showHidden && (
+            <div style={{ marginTop: 6 }}>
+              <div style={{ color: 'var(--mc-text-3)', marginBottom: 4 }}>Each hidden name misses at least one of your criteria on figures that are there. A missing figure is never a miss — those names are shown and listed separately below. A name can appear under more than one criterion.</div>
+              {hiddenReport.byCriterion.map((c) => (
+                <details key={c.key} style={{ marginBottom: 3 }}>
+                  <summary style={{ cursor: 'pointer' }}><b style={{ color: 'var(--mc-text-0)' }}>{c.label}</b> — hides {c.count}</summary>
+                  <div style={{ paddingLeft: 14, color: 'var(--mc-text-3)' }}>
+                    {c.names.map((n) => <div key={n.ticker}><b style={{ color: 'var(--mc-text-1)' }}>{n.ticker}</b> — {n.text}</div>)}
+                  </div>
+                </details>
+              ))}
+              {hiddenReport.hidden.length > 0 && (
+                <details style={{ marginTop: 4 }}>
+                  <summary style={{ cursor: 'pointer' }}><b style={{ color: 'var(--mc-text-0)' }}>By name</b> ({hiddenReport.hidden.length})</summary>
+                  <div style={{ paddingLeft: 14, color: 'var(--mc-text-3)' }}>
+                    {hiddenReport.hidden.map((n) => <div key={n.ticker}><b style={{ color: 'var(--mc-text-1)' }}>{n.ticker}</b>{n.company && n.company !== n.ticker ? ` (${n.company})` : ''} — {n.reasons.join('; ')}</div>)}
+                  </div>
+                </details>
+              )}
+              {hiddenReport.notChecked.length > 0 && (
+                <details style={{ marginTop: 4 }}>
+                  <summary style={{ cursor: 'pointer' }}><b style={{ color: 'var(--mc-text-0)' }}>Not checked — shown, not failed</b> ({hiddenReport.notChecked.length})</summary>
+                  <div style={{ paddingLeft: 14, color: 'var(--mc-text-3)' }}>
+                    {hiddenReport.notChecked.map((n) => <div key={n.ticker}><b style={{ color: 'var(--mc-text-1)' }}>{n.ticker}</b> — {n.missing.join(', ')} missing</div>)}
+                  </div>
+                </details>
+              )}
+            </div>
+          )}
+        </div>
+      )}
       {lookup.state === 'busy' && (
         <div style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-3)', marginBottom: 12 }}>Reading its latest filing from EDGAR…</div>
       )}
@@ -1545,7 +1660,7 @@ export default function UsConvictionBeatsPage() {
       {lookup.state === 'done' && lookup.row && (
         <div style={{ marginBottom: 14 }}>
           <div style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', marginBottom: 7, lineHeight: 1.6 }}>
-            <b style={{ color: 'var(--mc-text-0)' }}>{lookup.row.ticker}</b> graded{' '}
+            <b style={{ color: 'var(--mc-text-0)' }}>{lookup.row.ticker}</b>{lookup.row.company ? ` (${decodeHTMLEntities(String(lookup.row.company))})` : ''} graded{' '}
             <b style={{ color: lookup.row.tier === 'BLOCKBUSTER' ? '#F59E0B' : lookup.row.tier === 'STRONG' ? '#10B981' : 'var(--mc-text-2)' }}>{lookup.row.tier}</b>{' '}
             on its {lookup.row.quarter} filing of {lookup.row.filing_date}.
             {(lookup.row.tier === 'MIXED' || lookup.row.tier === 'AVOID')
@@ -1555,7 +1670,7 @@ export default function UsConvictionBeatsPage() {
               style={{ fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 7, marginLeft: 8, cursor: 'pointer', border: '1px solid var(--mc-bg-4)', background: 'transparent', color: 'var(--mc-text-2)' }}>dismiss</button>
           </div>
           <div style={{ maxWidth: 460 }}>
-            <UsEarningsCard r={lookup.row} open onToggle={() => setLookup({ state: 'idle' })} panelId="cb-lookup-card" />
+            <UsEarningsCard r={{ ...lookup.row, company: decodeHTMLEntities(String(lookup.row.company || lookup.row.ticker)) }} open onToggle={() => setLookup({ state: 'idle' })} panelId="cb-lookup-card" />
           </div>
         </div>
       )}
@@ -1779,8 +1894,11 @@ function BenchCard({ e, open, onToggle, onRemove, conf }: {
               line of prose under every one of them is what made the old bench
               card twice as tall as it needed to be. */}
           <span title={v.reasons.length ? v.reasons.join(' · ') : undefined}>
-            <Chip text={v.verdictLabel} color={VERDICT_COLOR[v.verdictLabel]} />
+            <Chip text={usVerdictWord(v.verdictLabel)} color={VERDICT_COLOR[v.verdictLabel]} />
           </span>
+          {e.now_tier && (
+            <span title="The same filing, re-graded under the current engine, falls below STRONG. Kept on the bench and labelled rather than removed."><Chip text={`NOW ${e.now_tier} under current rules`} color="#F59E0B" /></span>
+          )}
           {ds && ds !== 'HOLDING' && (
             <Chip text={`${ds === 'DRIFTING' ? '⚠ ' : ''}${ds} ${fmtPct(e.move_pct, 0)}`} color={driftColor} />
           )}
@@ -1826,8 +1944,8 @@ function BenchTable({ rows, sort, dir, onSort, onRemove }: { rows: UsConvictionE
             <H label="Ticker" left /><H label="Company" left /><H label="Tier" left />
             <th style={th('Quadrant', undefined, true)}
               title="Quality × Inflection — what the business IS against what it is BECOMING. Blank on an entry benched before the second axis existed.">Quadrant</th>
-            <th style={th('Q · I')} title="Quality score · Inflection score, each out of 100.">Q · I</th>
-            <H label="Verdict" left />
+            <th style={th('Q · I')} title="Quality · Inflection, in words.">Q · I</th>
+            <H label="Quality read" left />
             <H label="Rev YoY" k="sales" /><H label="EPS YoY" k="eps" /><th style={th('OPM Δ')}>OPM Δ</th><th style={th('CFO/NI')}>CFO/NI</th>
             <th style={th('R40')} title="Revenue growth % + FCF margin %, trailing twelve months. Blank where the filing does not support it.">R40</th>
             <th style={th('ROCE')} title="TTM operating income ÷ (total assets − current liabilities). Blank for a filer with no classified balance sheet.">ROCE</th>
@@ -1839,6 +1957,7 @@ function BenchTable({ rows, sort, dir, onSort, onRemove }: { rows: UsConvictionE
         <tbody>
           {rows.map((e) => {
             const v = usVerdict(e);
+            const cr = usCashRatio(e);
             const opmD = (e.opm_pct != null && e.opm_prev_pct != null) ? e.opm_pct - e.opm_prev_pct : null;
             const tierColor = e.tier === 'BLOCKBUSTER' ? '#F59E0B' : '#10B981';
             const ds = driftState(e);
@@ -1851,7 +1970,7 @@ function BenchTable({ rows, sort, dir, onSort, onRemove }: { rows: UsConvictionE
                   {e.source_url ? <a href={e.source_url} target="_blank" rel="noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>{e.ticker}</a> : e.ticker}
                 </td>
                 <td style={{ ...td, textAlign: 'left', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }} title={e.company}>{e.company}</td>
-                <td style={{ ...td, textAlign: 'left', color: tierColor, fontWeight: 800 }}>{e.tier}</td>
+                <td style={{ ...td, textAlign: 'left', color: tierColor, fontWeight: 800 }} title={usNowTierText(e) || undefined}>{e.tier}{e.now_tier ? <span style={{ color: '#F59E0B' }}> → now {e.now_tier}</span> : null}</td>
                 {/* A blank cell is the honest rendering of "this entry carries
                     no quadrant"; a dash or a zero would both read as a
                     measurement that was actually taken. */}
@@ -1861,13 +1980,13 @@ function BenchTable({ rows, sort, dir, onSort, onRemove }: { rows: UsConvictionE
                 </td>
                 <td style={{ ...td, fontVariantNumeric: 'tabular-nums', color: 'var(--mc-text-2)' }}>
                   {e.quality_score != null || e.inflection_score != null
-                    ? `${e.quality_score ?? '—'} · ${e.inflection_score ?? '—'}` : ''}
+                    ? `${e.quality_score != null ? usScoreWord(e.quality_score) : '—'} · ${e.inflection_score != null ? usScoreWord(e.inflection_score) : '—'}` : ''}
                 </td>
-                <td style={{ ...td, textAlign: 'left', color: VERDICT_COLOR[v.verdictLabel], fontWeight: 800 }}>{v.verdictLabel}</td>
+                <td style={{ ...td, textAlign: 'left', color: VERDICT_COLOR[v.verdictLabel], fontWeight: 800 }}>{usVerdictWord(v.verdictLabel)}</td>
                 <td style={td}>{fmtPct(e.sales_yoy_pct)}</td>
                 <td style={td}>{fmtPct(e.eps_yoy_pct)}</td>
                 <td style={td}>{opmD != null ? `${opmD >= 0 ? '+' : ''}${opmD.toFixed(1)}pp` : '—'}</td>
-                <td style={td}>{e.cfo_to_pat_ratio != null ? e.cfo_to_pat_ratio.toFixed(2) : (e.is_financial ? 'n/a' : '—')}</td>
+                <td style={td} title={cr.why}>{e.is_financial ? 'n/a' : cr.ratio != null ? `${cr.ratio.toFixed(2)}${cr.basis === 'ttm' ? ' (12m)' : ' (qtr)'}` : cr.lossMaking ? 'loss' : '—'}</td>
                 {/* A blank cell is the honest rendering of "the filing does not
                     support this figure"; a zero or a dash would both read as a
                     measurement that was actually taken. */}
@@ -1887,7 +2006,7 @@ function BenchTable({ rows, sort, dir, onSort, onRemove }: { rows: UsConvictionE
                     composite not shown at all (it still ranks the "Engine rank"
                     sort). */}
                 <td style={td}>{e.pead_score == null ? '—' : e.pead_score >= 70 ? 'strong' : e.pead_score >= 50 ? 'moderate' : 'weak'}</td>
-                <td style={td}>{e.rs_rating ?? '—'}</td>
+                <td style={td}>{e.rs_rating != null ? usRsWord(e.rs_rating) : '—'}</td>
                 <td style={{ ...td, color: e.stage === 4 ? '#EF4444' : e.stage === 2 ? '#10B981' : undefined }}>{e.stage ?? '—'}</td>
                 <td style={{ ...td, color: (e.addv_musd ?? 0) < 2 ? '#EF4444' : undefined }}>{e.addv_musd != null ? `$${e.addv_musd.toFixed(1)}M` : '—'}</td>
                 <td style={td}>{fmtUsd(e.market_cap_musd)}</td>

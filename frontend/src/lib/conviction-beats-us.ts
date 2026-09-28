@@ -43,6 +43,8 @@
 import { rule40From, roceFrom, type SwingKind } from '@/lib/us-earnings-core';
 import type { EarningsQuadrant } from '@/lib/earnings-grade-shared';
 import { runCriteriaCheck, type CriteriaCheck } from '@/lib/criteria-check';
+import { decodeHTMLEntities } from '@/lib/html-decode';
+import { US_ENGINE_VERSION } from '@/lib/us-engine-version';
 
 export type ConvictionTier = 'BLOCKBUSTER' | 'STRONG';
 
@@ -368,6 +370,17 @@ export interface UsConvictionEntry {
   added_at: string;
   source_url?: string;
 
+  /** zzz828 — the US grading engine (lib/us-engine-version) that produced the
+   *  tier and figures on this record. Missing = graded before the stamp. */
+  engine_version?: string | null;
+  /** zzz828 — the SAME filing re-graded under the current engine fell below
+   *  STRONG. The record stays on the bench (never silently removed), labelled
+   *  "now MIXED under current rules". Cleared when it grades STRONG again. */
+  now_tier?: 'MIXED' | 'AVOID' | null;
+  /** zzz828 — a bounded re-grade attempt for an engine version: how many
+   *  times it was asked and got no answer (stops at US_ENGINE_RESYNC_TRIES). */
+  engine_check?: { version: string; attempts: number; at: string } | null;
+
   /** DERIVED at read time, never persisted: the localStorage map key this
    *  entry lives under. An archived quarter shares its ticker with the live
    *  entry, so `ticker` alone cannot address a row — removing by ticker used
@@ -441,7 +454,8 @@ export function usBenchFields(rawIn: Record<string, any>): Record<string, any> {
   const adjCurr = num(r.eps_adj_curr) ?? num(r.eps_adj);
   return {
     ticker: String(r.ticker || '').toUpperCase(),
-    company: str(r.company) ?? String(r.ticker || '').toUpperCase(),
+    // zzz828: "Johnson &amp; Johnson" → "Johnson & Johnson", once, on write.
+    company: (str(r.company) ? decodeHTMLEntities(str(r.company)) : null) ?? String(r.ticker || '').toUpperCase(),
     tier: r.tier,
     composite_score: num(r.composite_score) ?? 0,
 
@@ -695,6 +709,10 @@ function idbOpen(): Promise<IDBDatabase | null> {
       rq.onupgradeneeded = () => { try { rq.result.createObjectStore(IDB_STORE); } catch { /* exists */ } };
       rq.onsuccess = () => res(rq.result);
       rq.onerror = () => res(null);
+      // zzz828: a database blocked by another tab never answers — the bench
+      // falls back to the localStorage mirror instead of "loading…" for ever.
+      rq.onblocked = () => res(null);
+      setTimeout(() => res(null), 6_000);
     } catch { res(null); }
   });
 }
@@ -881,7 +899,7 @@ function emit() {
 const compositeKey = (ticker: string, q?: string | null, fy?: number | null) =>
   (!q || !fy) ? ticker.toUpperCase() : `${ticker.toUpperCase()}@${q}-${fy}`;
 
-type UsSyncEntry = Record<string, any> & {
+export type UsSyncEntry = Record<string, any> & {
   ticker: string;
   filing_date: string;
   tier: 'BLOCKBUSTER' | 'STRONG' | 'MIXED' | 'AVOID';
@@ -952,7 +970,29 @@ function pushBeatHistory(history: UsGuideBeatRecord[] | null | undefined, rec: U
  */
 export function syncUsConviction(entries: UsSyncEntry[]): number {
   if (typeof window === 'undefined') return 0;
-  const map = readUsConviction();
+  const r = syncUsConvictionMap(readUsConviction(), entries);
+  if (r.binned.length) binPush(r.binned);
+  if (r.count > 0) { writeUsConviction(r.map); emit(); }
+  return r.count;
+}
+
+/**
+ * zzz828 — the upsert, PURE (no window, no storage) so it can be tested.
+ * Every record it writes is stamped with the current engine version.
+ *
+ * THE ONE CHANGE IN BEHAVIOUR: the SAME filing re-graded MIXED / AVOID (an
+ * engine change re-reading a quarter it already benched) no longer deletes
+ * the record. It stays, with its figures refreshed and `now_tier` set, so the
+ * page can say "now MIXED under current rules" — never silently removed. A
+ * NEWER filing that grades MIXED / AVOID still demotes (recoverably, via the
+ * bin), exactly as before: that is a new quarter, not a rule change.
+ */
+export function syncUsConvictionMap(
+  mapIn: Record<string, UsConvictionEntry>, entries: UsSyncEntry[], engineVersion: string = US_ENGINE_VERSION,
+): { map: Record<string, UsConvictionEntry>; count: number; binned: UsConvictionEntry[]; nowMixed: string[] } {
+  const map: Record<string, UsConvictionEntry> = { ...mapIn };
+  const binned: UsConvictionEntry[] = [];
+  const nowMixed: string[] = [];
   let count = 0;
 
   for (const raw of entries) {
@@ -963,15 +1003,31 @@ export function syncUsConviction(entries: UsSyncEntry[]): number {
 
     if (tier === 'MIXED' || tier === 'AVOID') {
       const fd = String(raw.filing_date || '').slice(0, 10);
+      if (existing && fd && fd === existing.filing_date) {
+        // Same filing, lower tier under today's rules: keep, refresh, label.
+        const e = usBenchFields(raw) as any;
+        const next: any = { ...existing };
+        for (const k of Object.keys(e)) {
+          if (k === 'ticker' || k === 'added_at' || k === 'tier') continue;
+          if (e[k] != null) next[k] = e[k];
+        }
+        next.now_tier = tier;
+        next.engine_version = engineVersion;
+        next.engine_check = null;
+        if (JSON.stringify(next) !== JSON.stringify(existing)) { map[ticker] = next; count++; }
+        nowMixed.push(ticker);
+        continue;
+      }
       if (existing && fd >= existing.filing_date) {
-        binPush([existing]); delete map[ticker]; count++;
+        binned.push(existing); delete map[ticker]; count++;
       }
       if (raw.quarter && raw.fiscal_year) {
         const cKey = `${ticker}@${raw.quarter}-${raw.fiscal_year}`;
-        if (map[cKey]) { binPush([map[cKey]]); delete map[cKey]; count++; }
+        if (map[cKey]) { binned.push(map[cKey]); delete map[cKey]; count++; }
       }
       continue;
     }
+
     if (tier !== 'BLOCKBUSTER' && tier !== 'STRONG') continue;
 
     // ONE mapping for every path — see the header note.
@@ -988,7 +1044,7 @@ export function syncUsConviction(entries: UsSyncEntry[]): number {
         if (e.quarter && e.fiscal_year && !samePeriod) {
           const cKey = compositeKey(ticker, e.quarter, e.fiscal_year);
           if (!map[cKey]) {
-            const rec: any = { ...e, ticker, added_at: new Date().toISOString(), schema_v: US_BENCH_SCHEMA_V };
+            const rec: any = { ...e, ticker, added_at: new Date().toISOString(), schema_v: US_BENCH_SCHEMA_V, engine_version: engineVersion };
             rec.anchor = anchorFrom(rec);
             rec.beat_history = pushBeatHistory([], beatRecordFrom(rec));
             map[cKey] = rec;
@@ -1022,6 +1078,9 @@ export function syncUsConviction(entries: UsSyncEntry[]): number {
           }
         }
         if (cur.schema_v !== US_BENCH_SCHEMA_V) patch.schema_v = US_BENCH_SCHEMA_V;
+        if (cur.engine_version !== engineVersion) patch.engine_version = engineVersion;
+        if (cur.now_tier) patch.now_tier = null;
+        if (cur.engine_check) patch.engine_check = null;
         if (Object.keys(patch).length) {
           const next = { ...cur, ...patch };
           if (!next.anchor) next.anchor = anchorFrom(next);
@@ -1041,7 +1100,7 @@ export function syncUsConviction(entries: UsSyncEntry[]): number {
       }
     }
 
-    const rec: any = { ...e, ticker, added_at: existing?.added_at || new Date().toISOString(), schema_v: US_BENCH_SCHEMA_V };
+    const rec: any = { ...e, ticker, added_at: existing?.added_at || new Date().toISOString(), schema_v: US_BENCH_SCHEMA_V, engine_version: engineVersion, now_tier: null, engine_check: null };
     // The anchor is WHY the name is on the bench — it survives every later
     // quarter. Only a name that was never benched before gets a fresh one.
     rec.anchor = existing?.anchor || anchorFrom(rec);
@@ -1053,9 +1112,9 @@ export function syncUsConviction(entries: UsSyncEntry[]): number {
     count++;
   }
 
-  if (count > 0) { writeUsConviction(map); emit(); }
-  return count;
+  return { map, count, binned, nowMixed };
 }
+
 
 /** Remove one entry. Pass the entry's `bench_key` — passing a bare ticker also
  *  removes every archived quarter for it, which is what the × on the live card
@@ -1102,7 +1161,12 @@ export function clearUsConviction() {
 export function getUsConvictionList(): UsConvictionEntry[] {
   const map = readUsConviction();
   const out: UsConvictionEntry[] = [];
-  for (const k of Object.keys(map)) out.push({ ...map[k], bench_key: k });
+  // zzz828: a record saved before the write-time decode still reads cleanly.
+  for (const k of Object.keys(map)) {
+    const e = map[k];
+    const co = typeof e.company === 'string' && e.company.includes('&') ? decodeHTMLEntities(e.company) : e.company;
+    out.push({ ...e, company: co, bench_key: k });
+  }
   return out.sort((a, b) => {
     if (a.filing_date !== b.filing_date) return b.filing_date.localeCompare(a.filing_date);
     if (a.tier !== b.tier) return a.tier === 'BLOCKBUSTER' ? -1 : 1;
@@ -2048,7 +2112,8 @@ export function usVerdict(e: UsConvictionEntry): { score: number; verdictLabel: 
   if (ep == null && e.eps_swing === 'loss-widened') { score -= 8; reasons.push('loss widened'); }
   const od = (num(e.opm_pct) != null && num(e.opm_prev_pct) != null) ? (e.opm_pct as number) - (e.opm_prev_pct as number) : null;
   if (od != null) { score += od >= 3 ? 10 : od >= 1 ? 6 : od >= 0 ? 2 : od >= -1.5 ? -5 : -12; if (od >= 1) reasons.push(`margins +${od.toFixed(1)}pp`); }
-  const c = num(e.cfo_to_pat_ratio);
+  // zzz828: cash and income on one period (usCashRatio), never a stored ratio of unknown period.
+  const c = usCashRatio(e).ratio;
   if (!e.is_financial && c != null) { score += c >= 1 ? 8 : c >= 0.7 ? 4 : c >= 0.5 ? 0 : -12; if (c < 0.5) reasons.push('earnings not cash-backed'); }
   if (e.tier === 'BLOCKBUSTER') score += 6;
   if (e.guidance === 'RAISED') { score += 8; reasons.push('guidance raised'); }
@@ -2224,8 +2289,11 @@ export function passesUsConvictionFilter(e: UsConvictionEntry, f: UsConvFilters,
   const pat = num(e.net_profit_yoy_pct) ?? 0;
   const eps = num(e.eps_yoy_pct) ?? 0;
   if (f.sales != null && sales < f.sales) return false;
-  if (f.pat != null && pat < f.pat) return false;
-  if (f.eps != null && eps < f.eps) return false;
+  // zzz828: a loss → profit turn has no growth percentage and is not a miss —
+  // it clears a growth gate (the turn itself is the growth). A loss that
+  // narrowed or widened is still no percentage and still fails.
+  if (f.pat != null && pat < f.pat && !(num(e.net_profit_yoy_pct) == null && e.net_income_swing === 'loss-to-profit')) return false;
+  if (f.eps != null && eps < f.eps && !(num(e.eps_yoy_pct) == null && e.eps_swing === 'loss-to-profit')) return false;
   if (f.score != null && (num(e.composite_score) ?? 0) < f.score) return false;
   if (f.opLev != null) {
     // Skipped when revenue growth is not positive — the ratio is meaningless
@@ -2241,26 +2309,16 @@ export function passesUsConvictionFilter(e: UsConvictionEntry, f: UsConvFilters,
     if (f.opmDelta >= 0 ? d < f.opmDelta : d > f.opmDelta) return false;
   }
   if (f.cfoPatMin != null && !e.is_financial) {
-    // A null ratio PASSES (a data gap is not evidence of poor quality) —
-    // identical to the India rule.
-    //
-    // ═══ BUT A LOSS IS NOT A DATA GAP  (zzz662) ═════════════════════════
-    // The ratio is also null when net income is NEGATIVE, because cash flow
-    // divided by a loss is not a number. Treating that as "missing" let every
-    // loss-making company through a gate that exists to ask whether earnings
-    // turn into cash — and the honest answer for a loss-maker is not "unknown",
-    // it is "there are no earnings to convert". So the two cases are now told
-    // apart by the one thing that distinguishes them: whether the filing shows
-    // a loss. A genuine gap still passes; a loss does not.
-    const c = num(e.cfo_to_pat_ratio);
-    if (c != null) {
-      if (c < f.cfoPatMin) return false;
-    } else {
-      const epsNow = num(e.eps_curr);
-      const lossMaking = (epsNow != null && epsNow < 0)
-        || e.eps_swing === 'loss-widened' || e.eps_swing === 'loss-narrowed';
-      if (lossMaking) return false;
-    }
+    // zzz828 — ONE PERIOD ON BOTH SIDES. `usCashRatio` reads the trailing
+    // twelve months of BOTH from the filing's own quarterly series, else this
+    // quarter's cash against this quarter's income, and says which. A loss is
+    // "no earnings to convert" (a fail, zzz662); a ratio that cannot be built
+    // on one period FAILS HERE — and usCbCriteriaCheck reports that as
+    // "not checked: cash ratio missing", never as a miss.
+    const cr = usCashRatio(e);
+    if (cr.lossMaking) return false;
+    if (cr.ratio == null) return false;
+    if (cr.ratio < f.cfoPatMin) return false;
   }
   if (f.mktCapMin != null) {
     if (num(e.market_cap_musd) == null || (e.market_cap_musd as number) < f.mktCapMin) return false;
@@ -2340,7 +2398,7 @@ export function passesUsConvictionFilter(e: UsConvictionEntry, f: UsConvFilters,
     if (sc.composite == null || sc.composite < f.winMin) return false;
   }
   if (f.verdicts && f.verdicts.length) {
-    if (!f.verdicts.includes(usVerdict(e).verdictLabel)) return false;
+    if (!normalizeUsVerdictKeys(f.verdicts).includes(usVerdict(e).verdictLabel)) return false;
   }
   return true;
 }
@@ -2399,7 +2457,8 @@ export async function mergeServerUsBench(): Promise<{
 
   let payload: any = null;
   try {
-    const res = await fetch('/api/v1/bench-us', { cache: 'no-store' });
+    // zzz828: a server that never answers must not hold the page on "loading".
+    const res = await fetch('/api/v1/bench-us', { cache: 'no-store', signal: AbortSignal.timeout(20_000) });
     if (!res.ok) return empty;
     payload = await res.json();
   } catch { return empty; }
@@ -2454,6 +2513,9 @@ export function usCbSavedFilters(raw: string | null | undefined): UsConvFilters 
   if (!raw) return null;
   let saved: UsConvFilters;
   try { saved = { ...US_FILTER_DEFAULT, ...JSON.parse(raw) } as UsConvFilters; } catch { return null; }
+  // zzz828: a saved verdict list written with display words (or odd spelling)
+  // is read back as the engine's keys, so the preset keeps matching.
+  if (Array.isArray(saved.verdicts)) saved.verdicts = normalizeUsVerdictKeys(saved.verdicts);
   const legacyMatchesPreset =
     saved.sales === US_PRESET.sales
     && saved.eps === US_PRESET.eps
@@ -2493,14 +2555,14 @@ export function usCbFailReasons(e: UsConvictionEntry, f: UsConvFilters, win?: Ne
     pead: () => 'post-results drift reading below your threshold',
     opmDelta: () => 'operating margin did not widen as your criteria require (or not known)',
     opmMin: () => `operating margin below ${f.opmMin}%`,
-    cfoPatMin: () => `operating cash ${usFmt(x.cfo_to_pat_ratio)}x net income (needs ${f.cfoPatMin}x)`,
+    cfoPatMin: () => { const cr = usCashRatio(e); return cr.lossMaking ? `a net loss${cr.basis === 'ttm' ? ' over the last twelve months' : ' this quarter'} — no earnings to turn into cash` : `operating cash ${usFmt(cr.ratio)}x net income, ${cr.basis === 'ttm' ? 'last twelve months' : 'this quarter'} (needs ${f.cfoPatMin}x)`; },
     mktCapMin: () => `market cap $${usFmt(x.market_cap_musd)}M (needs $${f.mktCapMin}M)`,
     peMax: () => `P/E above ${f.peMax}`, score: () => 'composite below your threshold', opLev: () => `income growth not ${f.opLev}x revenue growth`,
     winMin: () => 'scorecard below your threshold', aboveMa50: () => 'price not above its 50-day average', aboveMa200: () => 'price not above its 200-day average',
     d1Bucket: () => 'day-one move outside your chip', driftBucket: () => 'move since results outside your chip',
     guidance: () => `guidance is not ${f.guidance}`, guideBeatOnly: () => 'did not beat its own prior guide', marginSlopeUp: () => 'margin not still widening',
     shareShrinkOnly: () => 'share count not falling', thesis: () => `thesis not ${f.thesis}`, cap: () => `market-cap band not ${f.cap === 'smid' ? 'small/mid' : f.cap}`,
-    tiers: () => 'tier outside your list', verdicts: () => 'quality verdict outside your chosen list', elite: () => 'not marked elite', multibagger: () => 'no multibagger setup',
+    tiers: () => 'tier outside your list', verdicts: () => `quality read "${usVerdictWord(usVerdict(e).verdictLabel)}" is outside your chosen list (${(f.verdicts || []).map((v) => usVerdictWord(v)).join(' / ')})`, elite: () => 'not marked elite', multibagger: () => 'no multibagger setup',
     rule40: () => 'Rule of 40 not met (or not computable)', roce20: () => 'return on capital below 20% (or not known)', turnaround: () => 'not a turnaround', compounder: () => 'not a compounder',
     prelimOnly: () => 'not a preliminary release', sector: () => `sector not ${f.sector}`, quarter: () => 'another fiscal quarter', fy: () => 'another fiscal year', fromDate: () => 'filed outside your dates', toDate: () => 'filed outside your dates',
   };
@@ -2520,7 +2582,7 @@ export function usCbFailReasons(e: UsConvictionEntry, f: UsConvFilters, win?: Ne
 // fail (`sales ?? 0`, a missing market cap outside every band). A name whose
 // only misses are criteria it had no data for is 'unknown' — shown, labelled
 // "not checked: <field> missing", never failed. Hand-set chips stay strict.
-const US_LENIENT = new Set(['sales', 'eps', 'pead', 'opmDelta', 'mktCapMin', 'cap']);
+const US_LENIENT = new Set(['sales', 'eps', 'pat', 'pead', 'opmDelta', 'mktCapMin', 'cap', 'cfoPatMin']);
 
 function usMissingFor(e: UsConvictionEntry, k: string): string[] {
   const x: any = e;
@@ -2529,6 +2591,9 @@ function usMissingFor(e: UsConvictionEntry, k: string): string[] {
     case 'sales': return need([['sales_yoy_pct', 'revenue growth']]);
     // A loss→profit swing has no percentage, and a loss is not a missing figure.
     case 'eps': return x.eps_swing ? [] : need([['eps_yoy_pct', 'EPS growth']]);
+    case 'pat': return x.net_income_swing ? [] : need([['net_profit_yoy_pct', 'net income growth']]);
+    // zzz828: no same-period cash ratio (and not a loss) → not checked.
+    case 'cfoPatMin': { const cr = usCashRatio(e); return x.is_financial || cr.lossMaking || cr.ratio != null ? [] : [`cash ratio (${cr.why})`]; }
     case 'pead': return need([['pead_score', 'post-results drift reading']]);
     case 'opmDelta': return need([['opm_pct', 'operating margin'], ['opm_prev_pct', 'last year’s operating margin']]);
     case 'mktCapMin': case 'cap': return need([['market_cap_musd', 'market cap']]);
@@ -2551,4 +2616,303 @@ export function usCbCriteriaCheck(e: UsConvictionEntry, f: UsConvFilters, win?: 
     (k) => (US_LENIENT.has(k) ? usMissingFor(e, k) : []),
     (k) => { const r = usCbFailReasons(e, probeF(k), win); return r[0] === 'another active criterion' ? `${k} criterion` : r.join('; '); },
   );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz828 — THE "MISSING STOCKS" AUDIT, US SIDE.
+//
+// The owner's report (India, "fix in USA and India always both"): the
+// Conviction Beats list with the preset on was missing many names, Portfolio
+// Catalysts' Conviction Beats view did not match it, and the page said little
+// about why. On the US side the same audit found:
+//   · the cash gate read ONE quarter's operating cash — a single working-
+//     capital swing failed a name whose trailing year converts fine — and a
+//     missing ratio passed SILENTLY instead of being said. It now reads the
+//     last twelve months of cash AND income (same period, both sides) where
+//     the filing's series has four quarters, else the same quarter of both;
+//     missing = "not checked";
+//   · a loss → profit turn failed the EPS / net-income growth gates (it has no
+//     percentage — the turn is the growth);
+//   · a verdict list saved with other spellings stopped matching the preset;
+//   · a same-filing re-grade under a new engine DELETED the name.
+// Everything below is PURE (no window) so it is tested directly.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface UsCashRatio {
+  /** Operating cash ÷ net income, both over `basis`. Null when not buildable. */
+  ratio: number | null;
+  basis: 'ttm' | 'quarter' | null;
+  /** Net income is a loss over `basis` — "no earnings to convert", a real fail. */
+  lossMaking: boolean;
+  /** Plain words: which period, or why there is no ratio. */
+  why: string;
+}
+
+const r2 = (x: number) => Math.round(x * 100) / 100;
+
+/**
+ * Cash conversion on ONE period for both sides: the last twelve months of
+ * operating cash against the last twelve months of net income, from the
+ * filing's own quarterly series (four consecutive quarters of both); else this
+ * quarter's operating cash against this quarter's net income (both taken from
+ * the same graded quarter, or the engine's stored same-quarter ratio). Never
+ * a twelve-month cash figure over one quarter's income, or the reverse.
+ */
+export function usCashRatio(e: UsConvictionEntry): UsCashRatio {
+  const s = e.series;
+  if (s && Array.isArray(s.ends) && Array.isArray(s.cfo) && Array.isArray(s.net_income)) {
+    const last = Math.min(s.ends.length, s.cfo.length, s.net_income.length) - 1;
+    const cfo = last >= 3 ? ttmAt(s.cfo, last) : null;
+    const ni = last >= 3 ? ttmAt(s.net_income, last) : null;
+    if (cfo != null && ni != null) {
+      if (ni <= 0) return { ratio: null, basis: 'ttm', lossMaking: true, why: 'net loss over the last twelve months' };
+      const rev = Array.isArray(s.revenue) && last >= 3 ? ttmAt(s.revenue, last) : null;
+      if (rev != null && rev > 0 && ni < rev * 0.01) return { ratio: null, basis: 'ttm', lossMaking: false, why: 'net income under 1% of revenue — too small to divide by' };
+      return { ratio: r2(cfo / ni), basis: 'ttm', lossMaking: false, why: `last twelve months to ${s.ends[last]}, cash and income both` };
+    }
+  }
+  const cq = num(e.cfo_curr_musd), nq = num(e.net_income_curr_musd);
+  if (cq != null && nq != null) {
+    if (nq <= 0) return { ratio: null, basis: 'quarter', lossMaking: true, why: 'net loss this quarter' };
+    const rq = num(e.revenue_curr_musd);
+    if (rq != null && rq > 0 && nq < rq * 0.01) return { ratio: null, basis: 'quarter', lossMaking: false, why: 'net income under 1% of revenue — too small to divide by' };
+    return { ratio: r2(cq / nq), basis: 'quarter', lossMaking: false, why: `this quarter${e.quarter ? ` (${e.quarter})` : ''}, cash and income both` };
+  }
+  // No same-period figures. A loss is still a loss (zzz662).
+  const epsNow = num(e.eps_curr);
+  if ((epsNow != null && epsNow < 0) || e.eps_swing === 'loss-widened' || e.eps_swing === 'loss-narrowed' || (nq != null && nq <= 0)) {
+    return { ratio: null, basis: null, lossMaking: true, why: 'a net loss' };
+  }
+  // The engine's own ratio (gradeUsRow) divides the quarter's operating cash
+  // by the SAME quarter's net income (both de-cumulated from EDGAR), and it
+  // refuses a loss or a near-zero income — so a stored ratio with no figures
+  // beside it is still one period on both sides.
+  const stored = num(e.cfo_to_pat_ratio);
+  if (stored != null) return { ratio: stored, basis: 'quarter', lossMaking: false, why: 'this quarter, as graded (cash and income both)' };
+  return { ratio: null, basis: null, lossMaking: false, why: 'operating cash or net income not in the filing data' };
+}
+
+// ── verdict words (no BUY / SELL on screen) ────────────────────────────────
+// The engine's keys stay exactly as they are — saved presets store them — and
+// only what is PRINTED changes. Every surface (cards, table, chips, CSV, copy)
+// goes through usVerdictWord.
+export const US_VERDICT_WORDS: Record<UsVerdict, string> = {
+  'STRONG BUY': 'Top setup', BUY: 'Good setup', WATCH: 'Watch', AVOID: 'High risk',
+};
+
+export function usVerdictWord(key: string | null | undefined): string {
+  const k = normalizeUsVerdictKeys([String(key ?? '')])[0];
+  return k ? US_VERDICT_WORDS[k as UsVerdict] : String(key ?? '');
+}
+
+/** Any spelling of a verdict — the engine key, a display word, underscores,
+ *  lower case, "HIGH RISK" — back to the engine key. Unknown words dropped. */
+export function normalizeUsVerdictKeys(list: readonly string[] | null | undefined): UsVerdict[] {
+  const out: UsVerdict[] = [];
+  for (const v0 of list || []) {
+    const v = String(v0 || '').trim().toUpperCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
+    const k: UsVerdict | null = v === 'STRONG BUY' || v === 'TOP SETUP' || v === 'STRONGBUY' ? 'STRONG BUY'
+      : v === 'BUY' || v === 'GOOD SETUP' ? 'BUY'
+      : v === 'WATCH' ? 'WATCH'
+      : v === 'AVOID' || v === 'HIGH RISK' || v === 'SELL' ? 'AVOID' : null;
+    if (k && !out.includes(k)) out.push(k);
+  }
+  return out;
+}
+
+/** "now MIXED under current rules", or null. */
+export function usNowTierText(e: Pick<UsConvictionEntry, 'now_tier' | 'tier'>): string | null {
+  return e.now_tier ? `now ${e.now_tier} under current rules (was ${e.tier})` : null;
+}
+
+// ── engine re-sync (stale tiers) ───────────────────────────────────────────
+/** At most this many names are re-graded per page open; each is asked at
+ *  most this many times per engine version. Bounded by design. */
+export const US_ENGINE_RESYNC_CAP = 100;
+export const US_ENGINE_RESYNC_TRIES = 2;
+export const US_ENGINE_RESYNC_BATCH = 25;
+
+/** A live entry graded by an engine that is not the current one. */
+export function usEngineStale(e: UsConvictionEntry, version: string = US_ENGINE_VERSION): boolean {
+  const live = !String(e.bench_key || '').includes('@');
+  return live && (e.engine_version || null) !== version;
+}
+
+/** The tickers to re-grade this time: stale, not yet given up on, newest first. */
+export function usEngineResyncQueue(list: UsConvictionEntry[], version: string = US_ENGINE_VERSION, cap = US_ENGINE_RESYNC_CAP): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const e of [...list].sort((a, b) => String(b.filing_date || '').localeCompare(String(a.filing_date || '')))) {
+    if (!usEngineStale(e, version)) continue;
+    if (e.engine_check && e.engine_check.version === version && e.engine_check.attempts >= US_ENGINE_RESYNC_TRIES) continue;
+    const t = String(e.ticker || '').toUpperCase();
+    if (!t || seen.has(t)) continue;
+    seen.add(t); out.push(t);
+    if (out.length >= cap) break;
+  }
+  return out;
+}
+
+/** Names still on an older engine after a pass: one more attempt recorded. */
+export function markUsEngineChecked(map: Record<string, UsConvictionEntry>, asked: string[], version: string = US_ENGINE_VERSION, at = new Date().toISOString()): Record<string, UsConvictionEntry> {
+  const out = { ...map };
+  for (const t0 of asked) {
+    const t = String(t0).toUpperCase();
+    const e = out[t];
+    if (!e || e.engine_version === version) continue;
+    const prev = e.engine_check && e.engine_check.version === version ? e.engine_check.attempts : 0;
+    out[t] = { ...e, engine_check: { version, attempts: prev + 1, at } };
+  }
+  return out;
+}
+
+/** One re-grade pass over `rows` (graded-us rows for the asked tickers). */
+export function applyUsEngineResync(map: Record<string, UsConvictionEntry>, asked: string[], rows: UsSyncEntry[], version: string = US_ENGINE_VERSION): {
+  map: Record<string, UsConvictionEntry>; binned: UsConvictionEntry[]; regraded: string[]; nowMixed: string[]; unanswered: string[];
+} {
+  const r = syncUsConvictionMap(map, rows, version);
+  const marked = markUsEngineChecked(r.map, asked, version);
+  const regraded = asked.filter((t) => marked[t.toUpperCase()]?.engine_version === version);
+  const unanswered = asked.filter((t) => marked[t.toUpperCase()] && marked[t.toUpperCase()].engine_version !== version);
+  return { map: marked, binned: r.binned, regraded, nowMixed: r.nowMixed, unanswered };
+}
+
+/**
+ * Browser: re-grade the stale part of the bench under the current engine —
+ * `US_ENGINE_RESYNC_CAP` names at most, `US_ENGINE_RESYNC_BATCH` per request,
+ * one request at a time. `fetchRows` must end (it is given a deadline).
+ */
+export async function resyncUsBenchToEngine(fetchRows: (tickers: string[]) => Promise<UsSyncEntry[] | null>, onProgress?: (done: number, total: number) => void): Promise<{
+  asked: number; regraded: number; nowMixed: string[]; unanswered: number; failedBatches: number;
+}> {
+  const res = { asked: 0, regraded: 0, nowMixed: [] as string[], unanswered: 0, failedBatches: 0 };
+  if (typeof window === 'undefined') return res;
+  const queue = usEngineResyncQueue(getUsConvictionList());
+  res.asked = queue.length;
+  for (let i = 0; i < queue.length; i += US_ENGINE_RESYNC_BATCH) {
+    const slice = queue.slice(i, i + US_ENGINE_RESYNC_BATCH);
+    let rows: UsSyncEntry[] | null = null;
+    try { rows = await fetchRows(slice); } catch { rows = null; }
+    if (rows == null) res.failedBatches++;
+    const r = applyUsEngineResync(readUsConviction(), slice, rows || []);
+    if (r.binned.length) binPush(r.binned);
+    writeUsConviction(r.map);
+    emit();
+    res.regraded += r.regraded.length;
+    res.unanswered += r.unanswered.length;
+    res.nowMixed.push(...r.nowMixed);
+    onProgress?.(Math.min(queue.length, i + slice.length), queue.length);
+  }
+  return res;
+}
+
+// ── why names are hidden ───────────────────────────────────────────────────
+const US_CRITERION_WORDS: Record<string, string> = {
+  sales: 'Revenue growth', eps: 'EPS growth', pat: 'Net income growth', pead: 'Post-results drift',
+  opmDelta: 'Operating margin widening', opmMin: 'Operating margin level', cfoPatMin: 'Cash conversion',
+  mktCapMin: 'Market cap', cap: 'Size band', peMax: 'P/E ceiling', score: 'Engine rank', opLev: 'Operating leverage',
+  winMin: 'Winners scorecard', aboveMa50: 'Above 50-day average', aboveMa200: 'Above 200-day average',
+  d1Bucket: 'Day-one move', driftBucket: 'Move since results', guidance: 'Guidance', guideBeatOnly: 'Beat own guide',
+  marginSlopeUp: 'Margin still widening', shareShrinkOnly: 'Share count falling', thesis: 'Thesis check',
+  tiers: 'Tier', verdicts: 'Quality read', elite: 'Elite', multibagger: 'Multibagger setup', rule40: 'Rule of 40',
+  roce20: 'Return on capital', turnaround: 'Turnaround', compounder: 'Compounder', prelimOnly: 'Preliminary only',
+  sector: 'Sector', quarter: 'Fiscal quarter', fy: 'Fiscal year', fromDate: 'Filed from', toDate: 'Filed to', q: 'Search text', newOnly: 'New only',
+};
+export function usCriterionWord(k: string): string { return US_CRITERION_WORDS[k] || k; }
+
+export interface UsCbHiddenReport {
+  /** Unique names on the list (archived quarters fold into their ticker). */
+  total: number;
+  /** Names shown: pass + not checked. */
+  shown: number;
+  hidden: Array<{ ticker: string; company: string; reasons: string[] }>;
+  notChecked: Array<{ ticker: string; company: string; missing: string[] }>;
+  byCriterion: Array<{ key: string; label: string; count: number; names: Array<{ ticker: string; text: string }> }>;
+}
+
+function activeKeys(f: UsConvFilters): string[] {
+  return Object.keys(f).filter((k) => {
+    const v: any = (f as any)[k];
+    if (k === 'q') return !!v;
+    return k === 'cap' ? !!v && v !== 'all' : Array.isArray(v) ? v.length > 0 : typeof v === 'boolean' ? v : v != null && v !== '';
+  });
+}
+
+/**
+ * Per ticker the BEST of its entries (pass > not checked > fail — what the
+ * Conviction Beats page shows), then: which criterion hides each hidden name,
+ * with its failing figure against the threshold, and the "not checked" names
+ * listed separately with the figure that is missing.
+ */
+export function usCbHiddenReport(list: UsConvictionEntry[], f: UsConvFilters, win?: NewWindow): UsCbHiddenReport {
+  const RANK = { pass: 2, unknown: 1, fail: 0 } as const;
+  const by = new Map<string, { e: UsConvictionEntry; c: CriteriaCheck }>();
+  for (const e of list) {
+    const t = String(e?.ticker || '').split('@')[0].toUpperCase();
+    if (!t) continue;
+    const c = usCbCriteriaCheck(e, f, win);
+    const had = by.get(t);
+    if (had && RANK[had.c.state] >= RANK[c.state]) continue;
+    by.set(t, { e, c });
+  }
+  const keys = activeKeys(f);
+  const hidden: UsCbHiddenReport['hidden'] = [];
+  const notChecked: UsCbHiddenReport['notChecked'] = [];
+  const crit = new Map<string, Array<{ ticker: string; text: string }>>();
+  for (const t of Array.from(by.keys()).sort()) {
+    const { e, c } = by.get(t)!;
+    const company = e.company || t;
+    if (c.state === 'unknown') { notChecked.push({ ticker: t, company, missing: c.missing }); continue; }
+    if (c.state !== 'fail') continue;
+    const reasons: string[] = [];
+    for (const k of keys) {
+      const probe = { ...US_FILTER_DEFAULT, [k]: (f as any)[k] } as UsConvFilters;
+      if (passesUsConvictionFilter(e, probe, win)) continue;
+      if (US_LENIENT.has(k) && usMissingFor(e, k).length) continue;   // not checked, not a miss
+      const r = usCbFailReasons(e, probe, win);
+      const text = r[0] === 'another active criterion' ? `${usCriterionWord(k)} not met` : r.join('; ');
+      reasons.push(text);
+      const arr = crit.get(k) || [];
+      arr.push({ ticker: t, text });
+      crit.set(k, arr);
+    }
+    const nt = usNowTierText(e);
+    hidden.push({ ticker: t, company, reasons: [...(reasons.length ? reasons : c.failed), ...(nt ? [nt] : [])] });
+  }
+  const byCriterion = Array.from(crit.entries())
+    .map(([key, names]) => ({ key, label: usCriterionWord(key), count: names.length, names }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+  return { total: by.size, shown: by.size - hidden.length, hidden, notChecked, byCriterion };
+}
+
+/** Name-for-name: the Conviction Beats page's names against another view's. */
+export function usCbReconcile(cbNames: Iterable<string>, viewNames: Iterable<string>, whyMissing: (t: string) => string, whyExtra: (t: string) => string = () => 'not on the Conviction Beats list under your criteria'): {
+  onlyCb: Array<{ ticker: string; why: string }>; onlyView: Array<{ ticker: string; why: string }>; matches: boolean; line: string;
+} {
+  const a = new Set(Array.from(cbNames, (t) => String(t).toUpperCase()));
+  const b = new Set(Array.from(viewNames, (t) => String(t).toUpperCase()));
+  const onlyCb = Array.from(a).filter((t) => !b.has(t)).sort().map((t) => ({ ticker: t, why: whyMissing(t) }));
+  const onlyView = Array.from(b).filter((t) => !a.has(t)).sort().map((t) => ({ ticker: t, why: whyExtra(t) }));
+  const matches = !onlyCb.length && !onlyView.length;
+  const line = matches
+    ? `Reconciliation: all ${a.size} names match the US Conviction Beats page, name for name.`
+    : `Reconciliation: ${[...onlyCb.map((x) => `${x.ticker} on Conviction Beats but not here (${x.why})`), ...onlyView.map((x) => `${x.ticker} here but not on Conviction Beats (${x.why})`)].join('; ')}.`;
+  return { onlyCb, onlyView, matches, line };
+}
+
+// ── words, not 0–100 numbers, on screen and in exports (zzz828) ────────────
+/** An engine 0–100 read as a word. */
+export function usScoreWord(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return 'not known';
+  return n >= 80 ? 'very strong' : n >= 65 ? 'strong' : n >= 50 ? 'fair' : 'weak';
+}
+/** Post-results drift reading as a word (same bands as the bench table). */
+export function usPeadWord(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return 'not known';
+  return n >= 70 ? 'strong' : n >= 50 ? 'moderate' : 'weak';
+}
+/** Relative strength (1–99) as a word. */
+export function usRsWord(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return 'not known';
+  return n >= 80 ? 'leading' : n >= 50 ? 'average' : 'lagging';
 }

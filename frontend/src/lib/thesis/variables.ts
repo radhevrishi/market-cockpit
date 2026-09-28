@@ -1256,7 +1256,18 @@ export function extractVariables(
     // ratio's own period, so it is a validation question, not a verdict.
     const cashVal = validateCashConversion(cfoToPat, { profitSign: patSign == null ? null : Math.sign(patSign), ratioPeriodMatchesProfit: !annual });
     const cashUnclear = negative && cashVal.state === 'UNCLEAR' && patSign != null;
-    push({
+    // zzz829: a ratio off a tiny profit (the row says so) is shown, labelled, and not read either way
+    const smallProfit = typeof graded?.cfo_to_pat_note === 'string' && graded.cfo_to_pat_note ? String(graded.cfo_to_pat_note) : null;
+    if (smallProfit) {
+      push({
+        key: 'cash_conversion', label: VAR_LABEL.cash_conversion,
+        before: null, after: `${cfoToPat.toFixed(2)}× (profit small vs cash)`, delta: null,
+        unjudged: 'profit small vs cash — the ratio says nothing about cash quality',
+        verdict: 'stated',
+        evidence: `Cash-to-profit reads ${cfoToPat.toFixed(2)}×: ${smallProfit}. Not counted either way.`,
+        source: 'grader',
+      });
+    } else push({
       key: 'cash_conversion', label: VAR_LABEL.cash_conversion,
       before: null, after: `${cfoToPat.toFixed(2)}×${annual ? ' (last FY)' : ''}`, delta: null,
       unjudged: cashUnclear ? cashVal.reason

@@ -12,10 +12,11 @@ import { CHAT_ID, BOT_SECRET } from '@/lib/config';
 import {
   getConvictionList, removeConviction, syncFromEarningsOps,
   patchConvictionEntries,  // zzz372
+  replaceConvictionFields, readConvictionBeats, // zzz827
   readConvictionBin, restoreConvictionBin,
   type ConvictionEntry,
 } from '@/lib/conviction-beats';
-import { peadScore, peadColor, peadLabel } from '@/lib/pead-score';
+import { peadScore, peadColor } from '@/lib/pead-score';
 import { armBookFlag } from '@/lib/book-flags-client';
 // zzz811 — the Conviction Beats filter lives in one module, shared with Portfolio Catalysts.
 import {
@@ -23,7 +24,16 @@ import {
   __NEW_WIN, computeNewWindow, setNewWindow, deriveQuarterFY, deriveGuidanceLabel, getD2Pct,
   cbIsFinancial, cbComputeQuality, passesConvictionFilter, mergeCbEntries, serverBenchToCbEntries, CB_PRESET_OPTOUT_KEY,
   cbCriteriaCheck, cbFiltersForOwner, readCbPresetOptOut,
+  cbCashView, cbVerdictLabel, cbPeadWord, // zzz827
 } from '@/lib/conviction-filter-india';
+// zzz827 — words not numbers, EO growth text, the hidden-names report, the stale-tier re-sync, the PC snapshot.
+import {
+  cbStrengthWord, cbQualityWord, cbQualityBitWord, cbGrowthText, cbCompany, qTrendsState,
+  buildHiddenReport, hiddenReportLine, presetBarText, CB_GRADED_V_KEY, CB_RESYNC_MAX_DATES, needsCbResync,
+  cbResyncPatch, resyncSummary, tierNowLabel, writeCbTabSnapshot, filtersMatchSaved, cbExportWords, type ResyncPatch,
+} from '@/lib/india-cb-view';
+import { GRADED_CACHE_VERSION } from '@/lib/graded-cache-key';
+import { CASH_RULE_V } from '@/lib/india-cash';
 // zzz823 — the SAME selection Portfolio Catalysts makes (book overlap + bench), and the saved-holdings book.
 import { selectIndiaCb } from '@/lib/thesis/pc-bench';
 import { resolveIndiaBook, type BookName } from '@/lib/thesis/book-membership';
@@ -1633,6 +1643,9 @@ function cbDriftState(e: ConvictionEntry): { drifting: boolean; movePct: number 
   return { drifting: tierMatch && m != null && m <= -12, movePct: m };
 }
 
+// zzz827 — true while a fill pass runs; a card says "Q-TRENDS loading…" only then.
+let __cbFillRunning = false;
+
 function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: ConvictionEntry[]; onRemove: (t: string) => void; onClearAll?: () => void }) {
   // PATCH zzz99 — bulk Clear All button for Conviction Beats.
   // User flow: starting fresh for next earnings cycle, drain the entire
@@ -1731,6 +1744,10 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
   // progress). The mount effect below calls it once with manual=false.
   const [fillProgress, setFillProgress] = useState<string | null>(null);
   const fillRunningRef = useRef(false);
+  // zzz827 — the merged list (this browser + server), so the fill pass also
+  // reaches names that are only on the server bench.
+  const entriesRef = useRef<ConvictionEntry[]>(entries);
+  entriesRef.current = entries;
   const runEnrichWalk = useCallback(async (manual: boolean) => {
     if (typeof window === 'undefined') return;
     // zzz374 — a manual click must ALWAYS give feedback. Previously, if the
@@ -1744,6 +1761,17 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
     }
     setFillProgress(manual ? 'Scanning bench for missing data…' : 'Auto-filling missing data…');
     fillRunningRef.current = true;
+    __cbFillRunning = true;
+    // zzz827 — a name only on the server bench was never filled (the pass read
+    // this browser's list only), so its card showed ROCE "—" and "Q-TRENDS
+    // loading…" for ever. Add those names to this browser's list first (their
+    // full server card; add-only), then fill everything the same way.
+    try {
+      const localKeys = new Set(getConvictionList().map((e) => String(e.ticker || '').toUpperCase()));
+      const seed = (entriesRef.current || []).filter((e: any) => e?.ticker && e?.filing_date && !localKeys.has(String(e.ticker).toUpperCase())
+        && (e.tier === 'BLOCKBUSTER' || e.tier === 'STRONG'));
+      if (seed.length) syncFromEarningsOps(seed.map((e: any) => { const { added_at: _a, _cb_src: _s, ...rest } = e; void _a; void _s; return rest; }) as any);
+    } catch { /* seeding is best-effort */ }
     const list = getConvictionList();
     let done = 0, total = 0;
     // zzz375 — report for BOTH manual and the mount auto-walk so a background
@@ -1765,18 +1793,22 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         || Array.isArray(e.quarters_other_income_pct) || Array.isArray(e.annual_cfo_pat);
       return !hasTrend && (manual || (e.cb_trend_attempts || 0) < 6);
     };
+    // zzz827 — the same-year cash figure (EO rule v3) is fetched once per name
+    // (twice at most); ROCE missing retries are bounded like the trend retries.
+    const needsCash = (e: any): boolean => !cbIsFinancial(e) && !((e.cash_rule_v || 0) >= CASH_RULE_V) && (manual || (e.cb_cash_attempts || 0) < 2);
     const stale = list.filter(e =>
       e.ticker && e.filing_date &&
       (typeof (e as any).move_pct !== 'number'
         || typeof (e as any).d2_pct !== 'number'
         || typeof (e as any).pe !== 'number'
-        || typeof (e as any).roce !== 'number'  // zzz255
+        || (typeof (e as any).roce !== 'number' && (manual || ((e as any).cb_trend_attempts || 0) < 6))  // zzz255 — zzz827: bounded
+        || needsCash(e)
         || (e as any).cb_enrich_v !== 377  // zzz377 (was 375) — re-enrich once so worker-sourced Q-TRENDS land (Screener direct scrape is IP-blocked on Railway). zzz375 (was 371) — re-enrich once so the Screener standalone-page fallback fills names that only had /consolidated/ misses. zzz372 (was 369) — one-time re-enrich so zzz371 CFO/PAT value fixes propagate. zzz367 — one-time re-enrich (v11 cache: trends now extracted on the proven fetchScreenerCFO path, which actually works in prod)
         || needsTrends(e)  // zzz369 — keep retrying until the trend series lands
         || !Array.isArray((e as any).close_30d)
         || (e as any).close_30d.length < 2)
     );
-    if (stale.length === 0) { fillRunningRef.current = false; if (manual) { setFillProgress('✓ Nothing missing — every card already has trends / P/E / DRIFT (or is a financial).'); setTimeout(() => setFillProgress(null), 8000); } else { setFillProgress(null); } return; }
+    if (stale.length === 0) { fillRunningRef.current = false; __cbFillRunning = false; if (manual) { setFillProgress('✓ Nothing missing — every card already has trends / P/E / DRIFT (or is a financial).'); setTimeout(() => setFillProgress(null), 8000); } else { setFillProgress(null); } return; }
     total = stale.length;
     report(`Filling 0/${total}…`);
     // zzz370 — walk is a reusable pass so we can run a RETRY SWEEP after the first
@@ -1922,6 +1954,23 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
               };
             });
             try { patchConvictionEntries(live); } catch {}
+            // zzz827 — the same-year cash pair, written as-is (a null clears an
+            // old annual-CFO ÷ one-quarter ratio instead of leaving it behind).
+            try {
+              replaceConvictionFields(syncEntries.map((se) => {
+                const enr = data[se.ticker] || {};
+                const n = (v: any) => (typeof v === 'number' && Number.isFinite(v)) ? v : null;
+                const cur: any = getConvictionList().find((x) => x.ticker === se.ticker) || {};
+                return { ticker: se.ticker, patch: {
+                  cash_fy: typeof enr.cash_fy === 'string' ? enr.cash_fy : null,
+                  cash_basis: typeof enr.cash_basis === 'string' ? enr.cash_basis : null,
+                  ocf_annual_cr: n(enr.ocf_annual_cr), pat_annual_cr: n(enr.pat_annual_cr),
+                  ocf_to_pat_ratio: n(enr.ocf_to_pat_ratio), cfo_to_pat_ratio: n(enr.ocf_to_pat_ratio),
+                  cash_rule_v: n(enr.cash_rule_v),
+                  cb_cash_attempts: (cur.cb_cash_attempts || 0) + 1,
+                } };
+              }));
+            } catch {}
           }
           } catch {}
           // Throttle between chunks
@@ -1952,10 +2001,26 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         // Background walk finished — clear the "Auto-filling…" indicator.
         setFillProgress(null);
       }
-    } finally { fillRunningRef.current = false; }
+    } finally { fillRunningRef.current = false; __cbFillRunning = false; }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => { runEnrichWalk(false); }, [runEnrichWalk]);
+  // zzz827 — the server bench arrives after mount; once it has, one more
+  // (bounded, background) pass fills the names only it carries.
+  const serverSeenRef = useRef(false);
+  useEffect(() => {
+    if (serverSeenRef.current) return;
+    if (!entries.some((e: any) => e?._cb_src === 'server')) return;
+    serverSeenRef.current = true;
+    // Wait for any pass already running, then run once (bounded: 10 minutes).
+    let tries = 0;
+    const iv = setInterval(() => {
+      if (fillRunningRef.current && ++tries < 60) return;
+      clearInterval(iv);
+      runEnrichWalk(false);
+    }, 10_000);
+    return () => clearInterval(iv);
+  }, [entries, runEnrichWalk]);
 
   // zzz429 — DURABLE bench-card completion (self-healing, no manual click).
   // Root cause of the "⏳ Results Pending / QUALITY 0 / ROCE —" cards (RUBICON,
@@ -2055,74 +2120,72 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
   }, [entries]);
 
   const [revalProgress, setRevalProgress] = useState<string | null>(null);
-  const runRevalidate = useCallback(async () => {
-    if (revalidating) return;
+  // zzz827 — STALE TIERS. A bench row kept the tier and figures it had the
+  // day it was benched; the grading engine has moved on since (v26), so a
+  // name the EO page now grades STRONG ("thin operating margin") still read
+  // BLOCKBUSTER here. The re-sync reads the current graded row for each
+  // filing date on this browser's bench and takes its tier and figures. A
+  // name now below STRONG is KEPT and labelled "now MIXED under current
+  // rules" — never deleted by this pass (× still removes it).
+  //   • automatic, once, when the stored engine version is older than the
+  //     current one — bounded to CB_RESYNC_MAX_DATES dates per visit;
+  //   • the "Re-validate bench" button runs it over every date.
+  const resyncRunningRef = useRef(false);
+  const runResync = useCallback(async (auto: boolean): Promise<void> => {
+    if (resyncRunningRef.current) return;
+    resyncRunningRef.current = true;
     setRevalidating(true);
-    setRevalProgress('Collecting bench dates…');
     try {
-      // Unique filing dates across the bench
-      const dates = Array.from(new Set(entries.map((e) => e.filing_date).filter(Boolean))).sort();
-      if (dates.length === 0) { setRevalProgress('Bench is empty.'); return; }
-      let prunedTotal = 0;
-      const before = getConvictionList().length;
+      // Bare keys only: a "TICKER@Q3-2026" history row is another quarter.
+      const bare = (): ConvictionEntry[] => Object.entries(readConvictionBeats()).filter(([k]) => !k.includes('@')).map(([, v]) => v);
+      const local = bare();
+      const allDates = Array.from(new Set(local.map((e) => e.filing_date).filter(Boolean))).sort().reverse();
+      const dates = auto ? allDates.slice(0, CB_RESYNC_MAX_DATES) : allDates;
+      if (!dates.length) { if (!auto) setRevalProgress('Bench is empty.'); return; }
+      const patches: ResyncPatch[] = [];
+      let read = 0;
       for (let i = 0; i < dates.length; i++) {
         const d = dates[i];
-        setRevalProgress(`Re-validating ${i + 1}/${dates.length} · ${d}`);
+        setRevalProgress(`${auto ? 'Updating bench to the current grading' : 'Re-validating'} ${i + 1}/${dates.length} · ${d}`);
         try {
-          // zzz306 — force fresh grade for the LAST 3 dates so cfo_to_pat_ratio (added in
-          // zzz304a) actually populates cached payloads that were built before it. Older
-          // dates use existing cache to keep the rebuild cheap.
-          const _force = i < 3 ? '&force=1' : '';
-          const res = await fetch(`/api/v1/earnings/graded?date=${d}${_force}`, { cache: 'no-store' });
+          const res = await fetch(`/api/v1/earnings/graded?date=${d}`, { cache: 'no-store', signal: AbortSignal.timeout(60_000) });
           if (!res.ok) continue;
           const j = await res.json();
-          const bt = j?.by_tier || {};
-          const syncEntries: any[] = [];
+          read++;
+          const rows = new Map<string, any>();
           for (const tier of ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID']) {
-            for (const c of (bt[tier] || [])) {
-              const qm = typeof c.quarter === 'string' ? c.quarter.match(/Q([1-4])/i) : null;
-              const fm = typeof c.quarter === 'string' ? c.quarter.match(/FY\s?(\d{2})/i) : null;
-              syncEntries.push({
-                ticker: c.ticker, company: c.company, tier,
-                composite_score: c.composite_score,
-                sales_yoy_pct: c.sales_yoy_pct, net_profit_yoy_pct: c.net_profit_yoy_pct, eps_yoy_pct: c.eps_yoy_pct,
-                filing_date: c.filing_date || d, sector: c.sector, market_cap_bucket: c.market_cap_bucket,
-                market_cap_cr: typeof c.market_cap_cr === 'number' ? c.market_cap_cr : null,
-                source_url: c.filing_url,
-                ...(qm ? { quarter: ('Q' + qm[1]) as any } : {}),
-                ...(fm ? { fiscal_year: (parseInt(fm[1], 10) < 50 ? 2000 + parseInt(fm[1], 10) : 1900 + parseInt(fm[1], 10)) } : {}),
-                d1_pct: typeof c.d1_pct === 'number' ? c.d1_pct : null,
-                gap_pct: typeof c.gap_pct === 'number' ? c.gap_pct : null,
-                // zzz236 — carry d2_pct + move_pct from graded response into bench entry.
-                // Previously dropped — that's why 2D chip stayed at ⏳ even after backend enrich shipped.
-                d2_pct: typeof c.d2_pct === 'number' ? c.d2_pct : null,
-                move_pct: typeof c.move_pct === 'number' ? c.move_pct : null,
-                is_elite: c.is_elite === true,
-                pead_score: typeof c.pead_score === 'number' ? c.pead_score : null,
-                multibagger_setup: c.multibagger_setup === true,
-                // zzz223 — OPM margin for the CB tab
-                opm_pct: typeof c.opm_pct === 'number' ? c.opm_pct : null,
-                opm_prev_pct: typeof c.opm_prev_pct === 'number' ? c.opm_prev_pct : null,
-                // zzz242 — carry trailing P/E for valuation chip
-                pe: typeof c.pe === 'number' ? c.pe : null,
-                // zzz306 — carry CFO/PAT so bench cards can render the earnings-quality chip.
-                cfo_to_pat_ratio: typeof c.cfo_to_pat_ratio === 'number' ? c.cfo_to_pat_ratio : null,
-              });
-            }
+            for (const c of (j?.by_tier?.[tier] || [])) if (c?.ticker) rows.set(String(c.ticker).toUpperCase(), { ...c, tier, filing_date: c.filing_date || d });
           }
-          if (syncEntries.length > 0) syncFromEarningsOps(syncEntries);
-        } catch {}
-        // Throttle ~1.2s between dates to respect rate limits
-        await new Promise((r) => setTimeout(r, 1200));
+          for (const e of bare()) {
+            if (e.filing_date !== d) continue;
+            const row = rows.get(String(e.ticker || '').toUpperCase());
+            const p = row ? cbResyncPatch(e, row) : null;
+            if (p && p.change !== 'none') patches.push(p);
+          }
+          if (patches.length) replaceConvictionFields(patches.filter((p, k, arr) => arr.findIndex((q) => q.ticker === p.ticker) === k));
+        } catch { /* one date failing never blocks the rest */ }
+        await new Promise((r) => setTimeout(r, auto ? 500 : 800));
       }
-      const after = getConvictionList().length;
-      prunedTotal = Math.max(0, before - after);
-      setRevalProgress(`✓ Done — ${prunedTotal} stale ${prunedTotal === 1 ? 'entry' : 'entries'} pruned across ${dates.length} dates.`);
+      if (read === dates.length && dates.length === allDates.length) {
+        try { localStorage.setItem(CB_GRADED_V_KEY, GRADED_CACHE_VERSION); } catch {}
+      }
+      setRevalProgress(`\u2713 ${resyncSummary(patches, GRADED_CACHE_VERSION, read, allDates.length)}`);
     } finally {
+      resyncRunningRef.current = false;
       setRevalidating(false);
-      setTimeout(() => setRevalProgress(null), 12_000);
+      setTimeout(() => setRevalProgress(null), 15_000);
     }
-  }, [entries, revalidating]);
+  }, []);
+  const runRevalidate = useCallback(() => { runResync(false); }, [runResync]);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let stored: string | null = null;
+    try { stored = localStorage.getItem(CB_GRADED_V_KEY); } catch { stored = null; }
+    if (!needsCbResync(stored, GRADED_CACHE_VERSION)) return;
+    // After the mount fill pass has had a head start.
+    const t = setTimeout(() => { runResync(true); }, 2500);
+    return () => clearTimeout(t);
+  }, [runResync]);
   // zzz229 — REBUILD bench from server history. The bench lives only in
   // browser storage; if the browser evicts the origin's storage (quota
   // pressure from the big multibagger payloads) or grading-rule changes
@@ -2320,31 +2383,37 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
     };
     const header = [
       '#','Tier','Ticker','Company','Filed Date','Days Since','Sector','Market Cap (Cr)',
-      'Composite','PEAD','Sales YoY %','PAT YoY %','EPS YoY %','OPM %','OPM prev %','OPM Δ (pp)',
+      // zzz827 — words, not 0–100 numbers; neutral setup labels; same-year cash.
+      'Grade strength','Post-results drift','Setup','Sales YoY %','PAT YoY %','EPS YoY %','OPM %','OPM prev %','OPM Δ (pp)',
+      'Cash from operations ÷ profit (same year)','Current grade note',
       'P/E','Gap %','D1 %','D2 %','DRIFT %','Guidance','Guidance Score','Filing URL'
     ];
     const rows: any[][] = [header];
     list.forEach((e: any, i: number) => {
       const p = peadScore(e).score;
+      const w = cbExportWords(e, cbComputeQuality(e).verdictLabel, p);
       const omP = e.opm_pct, omPr = e.opm_prev_pct;
       const opmD = (typeof omP === 'number' && typeof omPr === 'number') ? +(omP - omPr).toFixed(2) : '';
       rows.push([
         i + 1,
         e.tier || '',
         e.ticker || '',
-        e.company || '',
+        cbCompany(e),
         e.filing_date || '',
         daysSince(e.filing_date, e.added_at) ?? '',
         e.sector || '',
         typeof e.market_cap_cr === 'number' ? Math.round(e.market_cap_cr) : '',
-        typeof e.composite_score === 'number' ? e.composite_score : '',
-        p,
+        w.strength,
+        w.drift,
+        w.setup,
         typeof e.sales_yoy_pct === 'number' ? +e.sales_yoy_pct.toFixed(2) : '',
         typeof e.net_profit_yoy_pct === 'number' ? +e.net_profit_yoy_pct.toFixed(2) : '',
         typeof e.eps_yoy_pct === 'number' ? +e.eps_yoy_pct.toFixed(2) : '',
         typeof omP === 'number' ? +omP.toFixed(2) : '',
         typeof omPr === 'number' ? +omPr.toFixed(2) : '',
         opmD,
+        w.cash,
+        w.tierNow,
         typeof e.pe === 'number' ? +e.pe.toFixed(2) : '',
         typeof e.gap_pct === 'number' ? +e.gap_pct.toFixed(2) : '',
         typeof e.d1_pct === 'number' ? +e.d1_pct.toFixed(2) : '',
@@ -2358,7 +2427,8 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
     const ws = XLSX.utils.aoa_to_sheet(rows);
     ws['!cols'] = [
       {wch:4},{wch:12},{wch:12},{wch:32},{wch:11},{wch:11},{wch:16},{wch:14},
-      {wch:9},{wch:6},{wch:11},{wch:11},{wch:11},{wch:8},{wch:11},{wch:10},
+      {wch:12},{wch:12},{wch:12},{wch:11},{wch:11},{wch:11},{wch:8},{wch:11},{wch:10},
+      {wch:26},{wch:26},
       {wch:8},{wch:8},{wch:8},{wch:8},{wch:9},{wch:11},{wch:14},{wch:60}
     ];
     ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: {r:0,c:0}, e: {r:rows.length-1,c:header.length-1} }) };
@@ -2410,6 +2480,20 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
     return m;
   }, [entries, filters]);
   const notChecked = entries.filter((e) => cbCheckOf.get(e)?.state === 'unknown');
+  // zzz827 — "Why N names are hidden": per criterion and per name, from the
+  // same probes the filter uses. Built only when the panel is opened.
+  const [showHidden, setShowHidden] = useState(false);
+  const hiddenReport = useMemo(() => (showHidden ? buildHiddenReport(entries, filters) : null), [showHidden, entries, filters]);
+  const hiddenCount = useMemo(() => entries.filter((e) => cbCheckOf.get(e)?.state === 'fail').length, [entries, cbCheckOf]);
+  const mktCapExcludedCount = useMemo(() => (filters.mktCapMin == null ? 0
+    : entries.filter((e) => typeof (e as any).market_cap_cr === 'number' && (e as any).market_cap_cr < (filters.mktCapMin as number)).length), [entries, filters.mktCapMin]);
+  // zzz827 — what this tab lists under its criteria, for Portfolio
+  // Catalysts' name-for-name reconciliation (same browser).
+  useEffect(() => {
+    if (!entries.length) return;
+    const tickers = Array.from(new Set(entries.filter((e) => cbCheckOf.get(e)?.state !== 'fail').map((e) => String(e.ticker || '').toUpperCase()))).sort();
+    writeCbTabSnapshot({ tickers, savedCriteria: filtersMatchSaved(filters, readCbPresetOptOut()), at: new Date().toISOString() });
+  }, [entries, filters, cbCheckOf]);
   // The same selection Portfolio Catalysts makes from this list.
   const pcSame = useMemo(() => {
     if (!savedBook) return null;
@@ -2629,6 +2713,13 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                 · incl. {notChecked.length} not checked (a figure is missing — shown, not failed)
               </span>
             )}
+            {hiddenCount > 0 && (
+              <button data-testid="cb-why-hidden" onClick={() => setShowHidden((v) => !v)}
+                title="Open the list of names your criteria hide, with the exact figure each one misses by."
+                style={{ fontSize: 10.5, fontWeight: 800, padding: '1px 8px', borderRadius: 10, cursor: 'pointer', border: '1px solid var(--mc-bg-4)', background: 'transparent', color: 'var(--mc-text-2)' }}>
+                {showHidden ? '▾' : '▸'} Why {hiddenCount} name{hiddenCount === 1 ? ' is' : 's are'} hidden
+              </button>
+            )}
             {pcSame && (
               <span data-testid="cb-same-as-pc" style={{ color: 'var(--mc-text-3)', fontWeight: 700 }}
                 title="Portfolio Catalysts selects its bench from this same list with this same check: names you hold appear there once, in My book; the rest are its bench.">
@@ -2766,7 +2857,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             )}
             {/* PATCH 1019 — Re-validate bench (prune stocks no longer BB/ST) */}
             <button onClick={runRevalidate} disabled={revalidating}
-              title="Re-fetch grading for every bench date and prune any stock that dropped out of BLOCKBUSTER/STRONG under current logic (e.g. demoted to MIXED). Takes ~1s per date."
+              title="Re-read the current grading for every filing date on the bench and bring each name's tier and figures up to date. A name the current rules put below STRONG stays on the bench, labelled 'now MIXED under current rules' — remove it with × if you want it gone. Runs by itself when the grading version changes. About a second per date."
               style={{ ...(revalidating ? chipActive('var(--mc-state-persistent)') : chipBase), cursor: revalidating ? 'wait' : 'pointer' }}>
               🔄 {revalidating ? 'Re-validating…' : 'Re-validate bench'}
             </button>
@@ -2824,6 +2915,37 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             </button>
           </div>
         </div>
+        {/* zzz827 — WHY N NAMES ARE HIDDEN. Collapsed by default. Per criterion
+            (a name can miss several), then per name with the figure against
+            the threshold, then the names shown but not checked. */}
+        {showHidden && hiddenReport && (
+          <div data-testid="cb-hidden-panel" style={{ padding: '8px 10px', border: '1px dashed var(--mc-bg-4)', borderRadius: 6, fontSize: 11, color: 'var(--mc-text-2)', lineHeight: 1.5, maxHeight: 420, overflow: 'auto' }}>
+            <div style={{ fontWeight: 800, color: 'var(--mc-text-1)' }}>{hiddenReportLine(hiddenReport)}</div>
+            {hiddenReport.byCriterion.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '4px 0' }}>
+                {hiddenReport.byCriterion.map((c) => (
+                  <span key={c.key} style={{ padding: '1px 7px', borderRadius: 10, border: '1px solid var(--mc-bg-4)' }}>{c.name}: <b>{c.count}</b></span>
+                ))}
+              </div>
+            )}
+            {hiddenReport.names.length > 0 && (
+              <div style={{ marginTop: 4 }}>
+                <div style={{ fontWeight: 700, color: 'var(--mc-text-3)' }}>Hidden names — each with what it misses</div>
+                {hiddenReport.names.map((n) => (
+                  <div key={n.ticker}><b style={{ fontFamily: 'ui-monospace, monospace' }}>{n.ticker}</b> <span style={{ color: 'var(--mc-text-3)' }}>{n.company}</span> — {n.fails.join(' · ')}{n.notChecked.length ? <span style={{ color: 'var(--mc-text-4)' }}> · also not checked: {n.notChecked.join(' · ')}</span> : null}</div>
+                ))}
+              </div>
+            )}
+            {hiddenReport.notChecked.length > 0 && (
+              <div style={{ marginTop: 6 }}>
+                <div style={{ fontWeight: 700, color: 'var(--mc-text-3)' }}>Shown but not checked ({hiddenReport.notChecked.length}) — a figure is missing, so the name stays on the list</div>
+                {hiddenReport.notChecked.map((n) => (
+                  <div key={n.ticker}><b style={{ fontFamily: 'ui-monospace, monospace' }}>{n.ticker}</b> <span style={{ color: 'var(--mc-text-3)' }}>{n.company}</span> — {notCheckedText(n.missing)}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         {/* zzz226 — ⚡ QUALITY PRESET: one click applies PAT≥30 · EPS≥40 ·
             OPM Δ≥0 · Composite≥65 · D1≥0. Click again to clear. Detail chips
             below stay collapsed unless expanded. */}
@@ -2850,12 +2972,18 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <button
                 onClick={handleToggle}
-                title="One-click institutional screen: Sales YoY ≥20% · EPS YoY ≥25% · PEAD score ≥40 · OPM Δ ≥0pp · CFO/PAT ≥0.5 · MktCap ≥₹3k Cr · Promoter pledge 0% (zzz360; null pledge passes). Auto-applied on first visit; disable it here to opt out permanently. Click again to re-enable."
+                title="Your saved screen: sales growth at least 20% · EPS growth at least 25% · PEAD (post-results drift) 40 or more · operating margin not falling · cash from operations at least half of profit (same fiscal year; not checked when the figure is missing; skipped for lenders) · market cap at least ₹3,000 Cr (your setting) · no promoter pledge (an unknown pledge is not a fail) · setup Top / Good / Watch. A missing figure is 'not checked', never a fail. Auto-applied on first visit; click to switch it off (remembered) or on again."
                 style={presetActive
                   ? chipActive('#F59E0B')
                   : { ...chipBase, border: '1px solid #F59E0B', color: '#F59E0B', fontWeight: 800 }}>
-                ⚡ QUALITY PRESET · Sales≥20 · EPS≥25 · PEAD≥40 · OPM Δ≥0 · CFO/PAT≥0.5 · MktCap≥₹3k Cr · Pledge 0% · Verdict: STRONG BUY·BUY·WATCH {presetActive ? '✓ ON' : '· OFF — click to enable'}
+                ⚡ QUALITY PRESET · {presetBarText()} {presetActive ? '✓ ON' : '· OFF — click to enable'}
               </button>
+              {filters.mktCapMin != null && (
+                <span data-testid="cb-mktcap-excluded" style={{ fontSize: 10.5, color: 'var(--mc-text-3)', fontWeight: 700 }}
+                  title="Market cap is your own setting. This is how many names on the list sit below it (a name with no market cap figure is 'not checked', not excluded).">
+                  · market cap ≥₹{Number(filters.mktCapMin).toLocaleString('en-IN')} Cr excludes {mktCapExcludedCount}
+                </span>
+              )}
               <button onClick={() => setShowAdvFilters((v) => !v)} style={chipBase}>
                 {showAdvFilters ? '▴ Hide detail filters' : '▾ Show detail filters'}
               </button>
@@ -2898,7 +3026,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
             cbComputeQuality verdict == that label. Custom row (not renderChipGroup)
             because the value is an array, not a scalar. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>VERDICT</span>
+          <span style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>SETUP</span>
           {([
             { label: 'STRONG BUY', color: '#22C55E' },
             { label: 'BUY', color: '#84CC16' },
@@ -2916,7 +3044,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                   return { ...prev, verdicts: next.length ? next : null };
                 })}
                 style={active ? chipActive(o.color) : chipBase}>
-                {o.label} <span style={{ color: active ? o.color : 'var(--mc-text-4)', marginLeft: 3 }}>({n})</span>
+                {cbVerdictLabel(o.label) /* zzz827 — the key stays in the filter; only the label shows */} <span style={{ color: active ? o.color : 'var(--mc-text-4)', marginLeft: 3 }}>({n})</span>
               </button>
             );
           })}
@@ -2932,12 +3060,13 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         {/* zzz332 FRESH 3D bypass toggle */}
         <button onClick={() => setFilters(prev => ({ ...prev, freshBypass: !prev.freshBypass }))} title="When ON, entries filed within last 3 business days ALWAYS show regardless of preset gates (Sales/EPS/PEAD/OPM/CFO-PAT). Off by default so preset applies uniformly." style={{ padding: '4px 10px', borderRadius: 6, cursor: 'pointer', background: filters.freshBypass ? '#F59E0B22' : 'transparent', border: '1px solid ' + (filters.freshBypass ? '#F59E0B' : '#334155'), color: filters.freshBypass ? '#F59E0B' : '#94A3B8', fontSize: 11, fontWeight: 700, letterSpacing: '0.5px' }}>{filters.freshBypass ? '✓ 🆕 FRESH 3D' : '🆕 FRESH 3D'}</button>
         {/* zzz225 — composite tier score chips (the big number on each card) */}
-        {renderChipGroup('COMPOSITE SCORE', '#FBBF24', 'score', [
-          { v: 60, lbl: '≥60' }, { v: 65, lbl: '≥65' }, { v: 70, lbl: '≥70' }, { v: 75, lbl: '≥75' }, { v: 80, lbl: '≥80' },
+        {/* zzz827 — words, not the 0–100 number */}
+        {renderChipGroup('GRADE STRENGTH', '#FBBF24', 'score', [
+          { v: 60, lbl: 'fair or better' }, { v: 70, lbl: 'high or better' }, { v: 80, lbl: 'very high' },
         ])}
         {/* USER-REQ — PEAD score threshold filter (composable with all others) */}
-        {renderChipGroup('PEAD SCORE', '#22D3EE', 'pead', [
-          { v: 50, lbl: '≥50' }, { v: 60, lbl: '≥60' }, { v: 70, lbl: '≥70' }, { v: 80, lbl: '≥80' },
+        {renderChipGroup('POST-RESULTS DRIFT', '#22D3EE', 'pead', [
+          { v: 40, lbl: 'PEAD 40 or more' }, { v: 70, lbl: 'PEAD 70 or more' },
         ])}
         {/* PATCH 0945 — 1D CLOSE filter chips, matching the /earnings Hub UX.
             Composes AND with every other filter above. Signed threshold:
@@ -3426,7 +3555,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
         filenameHint="conviction-beats"
         tickerCompanyMap={
           [...blockbusters, ...strongs].reduce<Record<string, string>>((acc, e) => {
-            if (e.ticker && e.company) acc[e.ticker.toUpperCase()] = e.company;
+            if (e.ticker && e.company) acc[e.ticker.toUpperCase()] = cbCompany(e); // zzz827 — "&amp;" decoded
             return acc;
           }, {})
         }
@@ -4248,8 +4377,8 @@ function ConvictionTable({ entries, onRemove, sort, setSort }: {
     { key: 'filed',     label: 'Filed',   get: (e) => e.filing_date || '' },
     { key: 'sector',    label: 'Sector',  get: (e) => resolveSector(e) || '' },
     { key: 'mcap',      label: 'MktCap',  align: 'right', get: (e) => e.market_cap_cr ?? 0 },
-    { key: 'composite', label: 'Comp',    align: 'right', get: (e) => e.composite_score ?? 0 },
-    { key: 'pead',      label: 'PEAD',    align: 'right', get: (e) => peadScore(e).score },
+    { key: 'composite', label: 'Strength', align: 'right', get: (e) => e.composite_score ?? 0 },
+    { key: 'pead',      label: 'Drift',   align: 'right', get: (e) => peadScore(e).score },
     { key: 'sales',     label: 'Sales',   align: 'right', get: (e) => e.sales_yoy_pct ?? -999 },
     { key: 'pat',       label: 'PAT',     align: 'right', get: (e) => e.net_profit_yoy_pct ?? -999 },
     { key: 'eps',       label: 'EPS',     align: 'right', get: (e) => e.eps_yoy_pct ?? -999 },
@@ -4305,15 +4434,15 @@ function ConvictionTable({ entries, onRemove, sort, setSort }: {
                     <a href={e.source_url} target="_blank" rel="noreferrer" style={{ color: 'var(--mc-text-2)', textDecoration: 'none', borderBottom: '1px dotted var(--mc-text-4)' }}>{e.ticker}</a>
                   ) : e.ticker}
                 </td>
-                <td style={{ ...td, color: 'var(--mc-text-1)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.company}</td>
+                <td style={{ ...td, color: 'var(--mc-text-1)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>{cbCompany(e)}{tierNowLabel(e) ? <span style={{ color: '#F59E0B', fontWeight: 700 }}> · {tierNowLabel(e)}</span> : null}</td>
                 <td style={{ ...td, color: 'var(--mc-text-3)' }}>{e.filing_date || '—'}</td>
                 <td style={{ ...td, color: 'var(--mc-text-3)' }}>{resolveSector(e) || '—'}</td>
                 <td style={{ ...td, textAlign: 'right', color: 'var(--mc-text-3)' }}>{fmtMcap((e as any).market_cap_cr)}</td>
-                <td style={{ ...td, textAlign: 'right', color: tierColor, fontWeight: 800 }}>{e.composite_score}</td>
-                <td style={{ ...td, textAlign: 'right', color: peadColor(peadScore(e).score), fontWeight: 700 }}>{peadScore(e).score}</td>
-                <td style={{ ...td, textAlign: 'right', color: pctColor(e.sales_yoy_pct) }}>{fmtPct(e.sales_yoy_pct)}</td>
-                <td style={{ ...td, textAlign: 'right', color: pctColor(e.net_profit_yoy_pct) }}>{fmtPct(e.net_profit_yoy_pct)}</td>
-                <td style={{ ...td, textAlign: 'right', color: pctColor(e.eps_yoy_pct) }}>{fmtPct(e.eps_yoy_pct)}</td>
+                <td style={{ ...td, textAlign: 'right', color: tierColor, fontWeight: 800 }}>{cbStrengthWord(e.composite_score)}</td>
+                <td style={{ ...td, textAlign: 'right', color: peadColor(peadScore(e).score), fontWeight: 700 }}>{cbPeadWord(peadScore(e).score)}</td>
+                <td style={{ ...td, textAlign: 'right', color: pctColor(e.sales_yoy_pct) }}>{cbGrowthText(e.sales_yoy_pct)}</td>
+                <td style={{ ...td, textAlign: 'right', color: pctColor(e.net_profit_yoy_pct) }}>{cbGrowthText(e.net_profit_yoy_pct)}</td>
+                <td style={{ ...td, textAlign: 'right', color: pctColor(e.eps_yoy_pct) }}>{cbGrowthText(e.eps_yoy_pct)}</td>
                 <td style={{ ...td, textAlign: 'right' }}>{typeof (e as any).opm_pct === 'number' ? `${(e as any).opm_pct.toFixed(1)}%` : '—'}</td>
                 <td style={{ ...td, textAlign: 'right', color: 'var(--mc-text-2)' }}>{fmtNum((e as any).pe) === '—' ? '—' : fmtNum((e as any).pe) + 'x'}</td>
                 <td style={{ ...td, textAlign: 'right', color: pctColor((e as any).d1_pct) }}>{fmtPct((e as any).d1_pct)}</td>
@@ -4333,13 +4462,14 @@ function ConvictionTable({ entries, onRemove, sort, setSort }: {
 
 function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { entry: ConvictionEntry; onRemove: (t: string) => void; density?: 'comfy'|'compact'|'ultra'; radarEntry?: any }) {
   const tierColor = entry.tier === 'BLOCKBUSTER' ? '#F59E0B' : '#10B981';
-  const pct = (v: number | null) => v == null ? '—' : `${v >= 0 ? '+' : ''}${Math.round(v)}%`;
-  // USER-REQ — PEAD score chip (formula from PEAD_Strategy_vF + checklists).
+  // zzz827 — growth the EO way: '>500% (low base)' instead of '+2810%'.
+  const pct = (v: number | null) => cbGrowthText(v);
+  // USER-REQ — PEAD chip. zzz827 — shown as a word; no 0–100 number anywhere on the card.
   const pead = peadScore(entry);
   const peadClr = peadColor(pead.score);
-  const peadTip = `PEAD ${pead.score} (${peadLabel(pead.score)}) — ${pead.drift_phase} phase, ${pead.days_since_filing}d since filing\n` +
-    `Sales norm ${pead.sales_norm}, PAT norm ${pead.pat_norm}, EPS norm ${pead.eps_norm}, base ${pead.raw}\n` +
-    `Op-leverage +${pead.op_leverage_bonus}, Quality +${pead.quality_signal}, Tier +${pead.tier_bonus}, decay ×${pead.drift_decay}`;
+  const peadTip = `Post-results drift reading: ${cbPeadWord(pead.score)} — ${pead.drift_phase} phase, ${pead.days_since_filing} day${pead.days_since_filing === 1 ? '' : 's'} since filing. Built from sales, profit and EPS growth, operating leverage and the result's grade, fading with time.`;
+  const tierNow = tierNowLabel(entry);
+  const company = cbCompany(entry);
   return (
     <div
       onMouseEnter={(ev) => { const t = ev.currentTarget as HTMLElement; t.style.transform = 'translateY(-2px)'; t.style.boxShadow = '0 4px 12px rgba(0,0,0,0.25)'; t.style.borderColor = tierColor; }}
@@ -4355,8 +4485,12 @@ function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { ent
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: density === 'ultra' ? 12 : 13, fontWeight: 800, color: 'var(--mc-text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {entry.company}
+            {company}
           </div>
+          {tierNow && (
+            <div data-testid="cb-tier-now" title="The grading engine has changed since this name was benched; under the current rules this filing grades below STRONG. It stays on your bench, labelled — remove it with × if you want it gone."
+              style={{ fontSize: 10, fontWeight: 800, color: '#F59E0B' }}>⚠ {tierNow}</div>
+          )}
           <div style={{ fontSize: 10, fontFamily: 'ui-monospace, monospace', color: 'var(--mc-text-3)', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'baseline', rowGap: 2 }}>
             {entry.source_url ? (
               <a href={entry.source_url} target="_blank" rel="noreferrer" title="Open filing on NSE"
@@ -4397,14 +4531,14 @@ function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { ent
             <button onClick={() => onRemove(entry.ticker)} title="Remove from Conviction Beats"
               style={{ background: 'none', border: 'none', color: 'var(--mc-text-4)', cursor: 'pointer', padding: '2px 6px', fontSize: 15, lineHeight: 1, marginLeft: 2 }}>×</button>
           </div>
-          <div title={`Composite Score: ${entry.composite_score} — magnitude 35% + quality 25% + technical 25% + methodology 15%`}
+          <div title="Grade strength — how big and how clean the result was (size of growth, quality, price trend, method checks), in words."
             style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
             <MiniBar value={entry.composite_score} width={44} height={5} />
-            <span style={{ fontSize: 11, fontWeight: 800, color: tierColor, fontFamily: 'ui-monospace, monospace', minWidth: 22, textAlign: 'right' }}>{entry.composite_score}</span>
+            <span style={{ fontSize: 10.5, fontWeight: 800, color: tierColor, whiteSpace: 'nowrap' }}>strength {cbStrengthWord(entry.composite_score)}</span>
           </div>
           <div title={peadTip} style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'help' }}>
             <MiniBar value={pead.score} width={44} height={5} />
-            <span style={{ fontSize: 11, fontWeight: 800, color: peadClr, fontFamily: 'ui-monospace, monospace', minWidth: 22, textAlign: 'right' }}>{pead.score}</span>
+            <span style={{ fontSize: 10.5, fontWeight: 800, color: peadClr, whiteSpace: 'nowrap' }}>PEAD {cbPeadWord(pead.score)}</span>
           </div>
         </div>
       </div>
@@ -4451,7 +4585,7 @@ function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { ent
                 fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 4, cursor: 'help',
                 background: `${col}1A`, color: col, border: `1px solid ${col}66`, letterSpacing: '0.3px',
               }}
-            >🚀 Radar{typeof tscore === 'number' ? ` · T-${tscore}` : ''}</span>
+            >🚀 Radar{typeof tscore === 'number' ? ` · ${tscore >= 70 ? 'strong' : tscore >= 45 ? 'moderate' : 'early'} change` : ''}</span>
           </div>
         );
       })()}
@@ -4525,63 +4659,40 @@ function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { ent
                 BLOCKBUSTER/STRONG grade. Label + tooltip make the annual scope
                 explicit so it isn't misread against quarterly PAT growth. */}
             {(() => {
-              // zzz374 — reconcile the header "CFO/PAT FY" with the Q-TRENDS
-              // "CFO/PAT (annual)" pill. They used two different sources:
-              //   header  = cfo_to_pat_ratio (a single graded/enrich number, often
-              //             a year older than the fresh Screener series)
-              //   pill    = latest of annual_cfo_pat[] (zzz371-aligned by FY label)
-              // That's why KMEW showed header 1.17 next to pill 0.94. Prefer the
-              // annual-series latest value (the accurate one) for the header too;
-              // fall back to cfo_to_pat_ratio only when the series is absent.
-              const arr = Array.isArray((entry as any).annual_cfo_pat)
-                ? (entry as any).annual_cfo_pat.filter((x: any) => typeof x === 'number' && Number.isFinite(x) && Math.abs(x) <= 5)
-                : null;
-              const seriesLatest = arr && arr.length >= 1 ? arr[arr.length - 1] as number : null;
-              const rSrc = seriesLatest != null ? seriesLatest : (entry as any).cfo_to_pat_ratio;
-              if (typeof rSrc !== 'number') return null;
-              const r = rSrc as number;
-              // zzz364 (BUG 2c) — financials: CFO/PAT is not meaningful for lenders/NBFCs.
-              if (cbIsFinancial(entry)) {
+              // zzz827 — ONE CASH FIGURE: same fiscal year CFO ÷ PAT, as the EO
+              // engine builds it (cbCashView). The old chip preferred a series
+              // value or the stored ratio, which on older rows was last year's
+              // cash flow ÷ ONE quarter's profit (e.g. "2.66×"). Unknown → "not
+              // checked"; lenders → not meaningful.
+              const cv = cbCashView(entry);
+              if (cv.state === 'na') {
                 return (
-                  <span title="Cash conversion (CFO/PAT) is not meaningful for lenders / NBFCs — their cash flow is dominated by financing activity, not operations.">
+                  <span title="Cash conversion (CFO ÷ profit) is not meaningful for lenders / NBFCs / insurers — their operating cash flow is loan growth or premiums. Skipped by the preset.">
                     <span style={{ color: 'var(--mc-text-4)' }}>·</span>{' '}
-                    <span style={{ color: 'var(--mc-text-4)' }}>💵 CASH</span>{' '}
-                    <strong style={{ color: 'var(--mc-text-4)' }}>n/m</strong>
+                    <span style={{ color: 'var(--mc-text-4)' }}>CASH</span>{' '}
+                    <strong style={{ color: 'var(--mc-text-4)' }}>not meaningful (lender)</strong>
                   </span>
                 );
               }
-              // zzz364 (BUG 6) — |ratio|>5× is an artifact (depressed PAT / WC swing),
-              // not a real cash-conversion read. Render n/m rather than an absurd number.
-              if (Math.abs(r) > 5) {
+              if (cv.state === 'unknown' || cv.ratio == null) {
                 return (
-                  <span title={`Annual CFO/PAT ${r.toFixed(2)} is outside the meaningful range (|ratio| > 5×) — likely a depressed-PAT or working-capital artifact, not a genuine cash-conversion signal.`}>
+                  <span data-testid="cb-cash-not-checked" title={`${cv.text}. The preset treats this as "not checked" — never a fail. The fill pass fetches the same-year figure.`}>
                     <span style={{ color: 'var(--mc-text-4)' }}>·</span>{' '}
-                    <span style={{ color: 'var(--mc-text-4)' }}>💵 CASH</span>{' '}
-                    <strong style={{ color: 'var(--mc-text-4)' }}>n/m</strong>
+                    <span style={{ color: 'var(--mc-text-4)' }}>CASH</span>{' '}
+                    <strong style={{ color: 'var(--mc-text-4)' }}>not checked</strong>
                   </span>
                 );
               }
+              const r = cv.ratio;
               const col = r >= 0.8 ? 'var(--mc-bullish)' : r >= 0.5 ? '#F59E0B' : 'var(--mc-bearish)';
-              // zzz502 — make cash-backed profit read at a glance: 💵/◐/⚠ icon + a
-              // one-word verdict, plus multi-year consistency (how many of the last
-              // N years converted ≥0.8×) in the tooltip. Same value as before, just
-              // legible — this is THE earnings-quality signal, so it earns the space.
-              const icon = r >= 0.8 ? '💵' : r >= 0.5 ? '◐' : '⚠';
-              const tag = r >= 1 ? 'cash-rich' : r >= 0.8 ? 'backed' : r >= 0.5 ? 'partial' : 'accrual risk';
-              const series = arr && arr.length ? (arr as number[]) : [];
-              const backed = series.filter((x) => x >= 0.8).length;
-              const consistency = series.length >= 2 ? ` · consistency ${backed}/${series.length} yrs ≥0.8× (per-yr ${series.map((v) => v.toFixed(1)).join(', ')})` : '';
-              const base = 'Cash-backed profit — annual Cash-from-Operations ÷ Net Profit = ' + r.toFixed(2) + '× (Screener FY figures; cash flow is published annually). ';
-              const tip = (r >= 1 ? base + 'Pristine — CFO ≥ reported profit.'
-                : r >= 0.8 ? base + 'Healthy multi-year cash conversion.'
-                : r >= 0.5 ? base + 'Below reported profit — watch working-capital days.'
-                : base + 'WEAK — profits not converting to cash. An earnings-quality red flag that predates this quarter.') + consistency;
+              const tag = r < 0 ? 'operations used cash' : r >= 8 ? 'profit small vs cash' : r >= 1 ? 'cash-backed' : r >= 0.8 ? 'mostly backed' : r >= 0.5 ? 'partly backed' : 'weak cash conversion';
               return (
-                <span title={tip}>
+                <span data-testid="cb-cash" title={`Cash from operations ÷ net profit for the same fiscal year (${cv.basis}): ${r.toFixed(2)}×. Cash flow is published once a year, so this is a full-year figure, not this quarter's.`}>
                   <span style={{ color: 'var(--mc-text-4)' }}>·</span>{' '}
-                  <span style={{ color: 'var(--mc-text-4)' }}>{icon} CASH</span>{' '}
+                  <span style={{ color: 'var(--mc-text-4)' }}>CASH</span>{' '}
                   <strong style={{ color: col }}>{r.toFixed(2)}×</strong>
                   <span style={{ color: col, opacity: 0.85 }}> {tag}</span>
+                  <span style={{ color: 'var(--mc-text-4)', fontSize: 9 }}> ({cv.basis})</span>
                 </span>
               );
             })()}
@@ -4691,12 +4802,13 @@ function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { ent
       {density !== 'ultra' && (() => {
         const roce = (entry as any).roce, roe = (entry as any).roe;
         const qCol = (v: any, thr: number) => (typeof v === 'number' && Number.isFinite(v) && v >= thr) ? 'var(--mc-bullish)' : (typeof v === 'number' ? '#F59E0B' : 'var(--mc-text-4)');
-        const val = (v: any, suffix = '') => (typeof v === 'number' && Number.isFinite(v)) ? (v.toFixed(1) + suffix) : '—';
+        // zzz827 — a missing ROCE / ROE says so ("n/a"), never a bare dash.
+        const val = (v: any, suffix = '') => (typeof v === 'number' && Number.isFinite(v)) ? (v.toFixed(1) + suffix) : 'n/a';
         return (
           <div style={{ display: 'flex', gap: '6px 14px', fontSize: 10, flexWrap: 'wrap', alignItems: 'baseline', color: 'var(--mc-text-3)', paddingTop: 2, borderTop: '1px dashed var(--mc-bg-3)', marginTop: 2 }}>
-            <span title="ROCE — Return on Capital Employed. ≥25% = capital-efficient compounder. Screener/Yahoo may not report ROCE for banks/NBFCs — shown as — when unavailable."><span style={{ color: 'var(--mc-text-4)' }}>ROCE</span> <strong style={{ color: qCol(roce, 25) }}>{val(roce, '%')}</strong></span>
+            <span title={typeof roce === 'number' ? 'ROCE — return on capital employed. 25% or more = capital-efficient.' : 'ROCE not available yet — not in the source for this name (or not fetched yet). The quality check treats it as not checked, never a fail.'}><span style={{ color: 'var(--mc-text-4)' }}>ROCE</span> <strong style={{ color: qCol(roce, 25) }}>{val(roce, '%')}</strong></span>
             <span style={{ color: 'var(--mc-text-4)', opacity: 0.4 }}>·</span>
-            <span title="ROE — Return on Equity. ≥18% = strong equity productivity."><span style={{ color: 'var(--mc-text-4)' }}>ROE</span> <strong style={{ color: qCol(roe, 18) }}>{val(roe, '%')}</strong></span>
+            <span title={typeof roe === 'number' ? 'ROE — return on equity. 18% or more = strong.' : 'ROE not available yet — not in the source for this name (or not fetched yet). Not a fail.'}><span style={{ color: 'var(--mc-text-4)' }}>ROE</span> <strong style={{ color: qCol(roe, 18) }}>{val(roe, '%')}</strong></span>
             {/* zzz360 — promoter-pledge chip. 0% = clean (green); any pledge = red
                 governance flag. Guarded on typeof number so unknown pledge omits. */}
             {typeof (entry as any).pledged_pct === 'number' && Number.isFinite((entry as any).pledged_pct) && (() => {
@@ -4734,12 +4846,12 @@ function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { ent
 
         return (
           <div style={{ display: 'flex', gap: '8px 10px', flexWrap: 'wrap', alignItems: 'center', paddingTop: 3, marginTop: 2, borderTop: '1px dashed var(--mc-bg-3)', fontSize: 10 }}>
-            <span title={'Earnings Quality Score (0-100). Composite of: ' + bits.join(' | ')} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'help' }}>
-              <span style={{ color: 'var(--mc-text-4)', letterSpacing: '0.3px' }}>QUALITY</span>
+            <span title={'Earnings quality, in words. Built from: ' + (bits.map(cbQualityBitWord).join(' · ') || 'no inputs yet')} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'help' }}>
+              <span style={{ color: 'var(--mc-text-4)', letterSpacing: '0.3px' }}>quality</span>
               <span style={{ position: 'relative', width: 44, height: 5, background: 'var(--mc-bg-3)', borderRadius: 2 }}>
                 <span style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: qScore + '%', background: qCol, borderRadius: 2 }} />
               </span>
-              <strong style={{ color: qCol, fontWeight: 800, fontVariantNumeric: 'tabular-nums', minWidth: 22 }}>{qScore}</strong>
+              <strong style={{ color: qCol, fontWeight: 800 }}>{cbQualityWord(qScore) /* zzz827 — word, never the number */}</strong>
             </span>
             {triLabel && (
               <span title="Growth Triangulation: are Sales+PAT+EPS all coherent? GROWTH TRIPLE = healthy across the board. MARGIN-LED = PAT strong but Sales weak (watch sustainability). VOLUME-ONLY = Sales up but margins compressing." style={{ padding: '1px 6px', borderRadius: 3, background: triCol + '22', color: triCol, fontWeight: 700, border: '1px solid ' + triCol + '55', fontSize: 9.5, letterSpacing: '0.3px' }}>{triLabel}</span>
@@ -4750,7 +4862,7 @@ function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { ent
               background: verdictColor + '22', color: verdictColor, fontWeight: 800,
               border: '1px solid ' + verdictColor + '66', fontSize: 10.5, letterSpacing: '0.5px',
               marginLeft: 'auto',
-            }}>{verdictIcon} {verdictLabel}</span>
+            }}>{verdictIcon ? verdictIcon + ' ' : ''}{cbVerdictLabel(verdictLabel) /* zzz827 — neutral label; the key stays for the filter */}</span>
           </div>
         );
       })()}
@@ -4857,7 +4969,7 @@ function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { ent
         // depreciation asset base adding back), and it was sitting contradictorily
         // next to a cash-backed beat. Rendered neutral grey as an informational note,
         // not a red/amber warning, with a caveat to check the driver.
-        const cfoR = num(e.cfo_to_pat_ratio);
+        const cfoR = cbCashView(e).ratio; // zzz827 — same-year ratio only
         // zzz371 (audit) — cap at the same 5x artifact ceiling the top-line uses, so a card
         // can never show "CFO/PAT FY n/m" AND "CASH-RICH 8.7x" at once (TVSSRICHAK).
         if (cfoR !== null && cfoR > 3 && cfoR <= 5 && !cbIsFinancial(e)) { // zzz362 — financials: CFO/PAT not meaningful
@@ -4887,10 +4999,7 @@ function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { ent
         })();
         const isQ1Filing = String(e.quarter || '').toUpperCase() === 'Q1'
           || (filingMonth !== null && filingMonth >= 4 && filingMonth <= 6);
-        if (cfoR === null && isQ1Filing) {
-          chips.push({ icon: '', label: 'CFO N/A (Q1)', color: 'var(--mc-text-4)',
-            tip: `CFO/PAT unavailable — Q1 filings rarely disclose cash-flow statements (annual/H1 cadence). Not a red flag; earnings-quality proxy pending H1.` });
-        }
+        void isQ1Filing; // zzz827 — the CASH figure itself now says "not checked" with the reason
 
         // ⚠ DEGRADED — BLOCKBUSTER tier but genuinely broken (3+ red flags, the
         // same conditions that drive the AVOID verdict). zzz361 — ROCE<15 alone
@@ -5030,7 +5139,7 @@ function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { ent
         const matRising = !!mat && mat.latest > mat.prev;
         const taxDrop = !!tax && (tax.latest - tax.prev) < -5;
         const oiRising = !!oi && (oi.latest - oi.prev) > 1;
-        const cfoRatio = (typeof e.cfo_to_pat_ratio === 'number' && Number.isFinite(e.cfo_to_pat_ratio)) ? e.cfo_to_pat_ratio as number : null;
+        const cfoRatio = cbCashView(e).ratio; // zzz827 — same-year ratio only
         const cfoWeak = cfoRatio != null && cfoRatio < 0.8 && !cbIsFinancial(e); // zzz362 — financials: CFO/PAT not meaningful
         const pledgeNum = (typeof e.pledged_pct === 'number' && Number.isFinite(e.pledged_pct)) ? e.pledged_pct as number : null;
         // zzz363 — large exceptional/one-off gain flattering the beat (signed % of PBT).
@@ -5046,9 +5155,10 @@ function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { ent
         // cash — zzz364 (BUG 2b) — financials: CFO/PAT not meaningful, suppress the
         // cash-backed / weak-cash-conversion conclusion clause for lenders/NBFCs.
         let cashWeak = false;
-        if (cfoAnnLatest != null && !cbIsFinancial(e)) {
-          if (cfoAnnLatest >= 1) { concl.push('cash-backed'); firedTips.push('annual CFO/PAT ≥1'); }
-          else if (cfoAnnLatest < 0.5) { concl.push('weak cash conversion'); cashWeak = true; firedTips.push('annual CFO/PAT <0.5'); }
+        void cfoAnnLatest;
+        if (cfoRatio != null && !cbIsFinancial(e)) { // zzz827 — the same figure the CASH chip shows
+          if (cfoRatio >= 1) { concl.push('cash-backed'); firedTips.push('same-year CFO/PAT ≥1'); }
+          else if (cfoRatio < 0.5) { concl.push('weak cash conversion'); cashWeak = true; firedTips.push('same-year CFO/PAT <0.5'); }
         }
         // quality flags
         const qbits: string[] = [];
@@ -5116,48 +5226,46 @@ function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { ent
           NOT "the Fill button is broken / data is missing". */}
       {density !== 'ultra' && (() => {
         const e: any = entry;
-        const hasTrend = Array.isArray(e.quarters_opm) || Array.isArray(e.quarters_tax_pct)
-          || Array.isArray(e.quarters_other_income_pct) || Array.isArray(e.annual_cfo_pat);
-        if (hasTrend) return null; // real Q-TRENDS pills already rendered above
+        // zzz827 — one pure rule (qTrendsState): "loading…" only while a fill
+        // pass is actually running; afterwards the card says "not available".
+        const qs = qTrendsState(e, __cbFillRunning);
+        if (qs === 'present') return null; // real Q-TRENDS pills already rendered above
         // zzz376 — ALWAYS say WHY the Q-TRENDS strip is absent instead of leaving a
         // blank gap the user reads as a bug. Three honest states:
         const base = { fontSize: 8.5, color: 'var(--mc-text-4)', fontStyle: 'italic' as const, paddingTop: 2 };
-        if (cbIsFinancial(entry)) {
+        if (qs === 'financial') {
           return (
             <div style={base} title="Q-TRENDS (OPM / Other-Income / Tax / CFO-PAT-annual) measure operating-margin & cash quality. For banks / NBFCs / holding & investment companies those aren't meaningful (their 'operating margin' and 'cash from operations' mix financing flows), so the strip is intentionally omitted — same reason CFO/PAT shows n/m.">
               Q-TRENDS n/a — financial company (margin/tax trends not meaningful)
             </div>
           );
         }
-        const status = e._trends_status as string | undefined;
-        const tried = ((e.cb_enrich_v || 0) >= 375) || ((e.cb_trend_attempts || 0) >= 2);
         // zzz376 — three distinct, honest states, colour-coded so GENUINELY-ABSENT
         // (grey) is visually different from a FETCH BUG (amber) the user can retry.
-        if (status === 'no-table') {
+        if (qs === 'no-table') {
           return (
             <div style={base} title="A Screener page DID load for this ticker but it has no quarterly results table — so the trend data is GENUINELY absent, not a fetch error. Nothing to retry. (Header stats like OPM / ROCE / CFO-PAT come from a different source and are unaffected.)">
               Q-TRENDS n/a — genuinely absent (Screener has no quarterly table)
             </div>
           );
         }
-        if (status === 'fetch-failed') {
+        if (qs === 'fetch-failed') {
           return (
             <div style={{ ...base, color: '#F59E0B', fontStyle: 'normal' }} title="Screener could NOT be reached for this ticker (403 / rate-limit / timeout) — so we don't yet know if trends exist. This is a TRANSIENT fetch failure, not missing data. Click ⟳ Fill missing to retry, or reload in a minute.">
               ⚠ Q-TRENDS unavailable — Screener fetch failed (transient · click ⟳ Fill missing to retry)
             </div>
           );
         }
-        if (!tried) {
+        if (qs === 'loading') {
           return (
-            <div style={base} title="Q-TRENDS come from Screener's quarterly table and are still being fetched. If they don't appear after a moment, click ⟳ Fill missing to force a fresh scrape.">
-              ⟳ Q-TRENDS loading… (auto-filling from Screener)
+            <div style={base} title="Q-TRENDS come from Screener's quarterly table; the fill pass is running now.">
+              ⟳ Q-TRENDS loading… (fill pass running)
             </div>
           );
         }
-        // Tried, but the server never told us why (older cached entry). Neutral wording.
         return (
-          <div style={base} title="Q-TRENDS (OPM / Other-Income / Tax / CFO-PAT-annual) come from Screener's quarterly table and haven't been captured for this ticker yet. Click ⟳ Fill missing to force a fresh scrape; if it still doesn't appear, Screener likely has no quarterly table for it.">
-            Q-TRENDS not captured yet — click ⟳ Fill missing to retry
+          <div data-testid="cb-qtrends-na" style={base} title="Q-TRENDS (margin / other income / tax by quarter) are not available for this name yet — not in the source, or not fetched. Nothing here is a fail. Click ⟳ Fill missing to try again.">
+            Q-TRENDS not available
           </div>
         );
       })()}
@@ -5170,7 +5278,7 @@ function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { ent
                  (5) DRIFT negative post beat = market disbelief. */}
       {density !== 'ultra' && (() => {
         const flags: Array<{icon: string; label: string; tip: string}> = [];
-        const cfoR = (entry as any).cfo_to_pat_ratio;
+        const cfoR = cbCashView(entry).ratio; // zzz827 — same-year ratio only
         const sales = entry.sales_yoy_pct;
         const pat = entry.net_profit_yoy_pct;
         const eps = entry.eps_yoy_pct;
@@ -5178,7 +5286,7 @@ function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { ent
           ? ((entry as any).opm_pct - (entry as any).opm_prev_pct) : null;
         const drift = (entry as any).move_pct;
         if (typeof cfoR === 'number' && cfoR > 0 && cfoR < 0.5 && !cbIsFinancial(entry)) { // zzz362/zzz364 (BUG 6) — only genuine weak-but-positive (0<r<0.5); negative/huge are artifacts, financials exempt
-          flags.push({icon:'🚩', label:'CASH-CONV', tip:`CFO/PAT ${cfoR.toFixed(2)} — annual cash conversion below 0.5 (but positive). Reported profit isn't translating into cash. Investigate receivables/inventory build.`});
+          flags.push({icon:'🚩', label:'CASH-CONV', tip:`Cash from operations ${cfoR.toFixed(2)}× profit, same fiscal year — below 0.5 (but positive). Reported profit isn't translating into cash. Investigate receivables/inventory build.`});
         }
         // zzz366 — mirror cbComputeQuality: a cash-confirmed beat (CFO/PAT ≥1.5)
         // has its profit spike validated by real cash, so MARGIN-SPIKE would be a
@@ -5233,11 +5341,11 @@ function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { ent
         const peadDelta = medPead != null ? myPead - medPead : null;
         const driftDelta = medDrift != null && myDrift != null ? myDrift - medDrift : null;
         return (
-          <div title={`Sector peers (${peers.length} in bench): median PEAD ${medPead?.toFixed(0) ?? '—'}, median DRIFT ${medDrift != null ? (medDrift >= 0 ? '+' : '') + medDrift.toFixed(1) + '%' : '—'}. Positive delta = you're beating sector.`}
+          <div title={`Sector peers (${peers.length} in bench): median post-results drift ${medPead != null ? cbPeadWord(medPead) : '—'}, median DRIFT ${medDrift != null ? (medDrift >= 0 ? '+' : '') + medDrift.toFixed(1) + '%' : '—'}. Positive delta = you're beating sector.`}
             style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9, color: 'var(--mc-text-4)', letterSpacing: '0.3px' }}>
             <span style={{ display: 'inline-block', width: 5, height: 5, borderRadius: '50%', background: sectorColor(mySec) }} />
             <span style={{ fontWeight: 700, marginRight: 4 }}>vs {peers.length} {mySec.slice(0, 18)} peer{peers.length === 1 ? '' : 's'}:</span>
-            {peadDelta != null && (<span style={{ marginRight: 6 }}>PEAD <strong style={{ color: peadDelta >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{peadDelta >= 0 ? '+' : ''}{peadDelta.toFixed(0)}</strong></span>)}
+            {peadDelta != null && (<span style={{ marginRight: 6 }}>PEAD <strong style={{ color: peadDelta >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{Math.abs(peadDelta) < 5 ? 'in line' : peadDelta > 0 ? 'stronger' : 'weaker'}</strong></span>)}
             {driftDelta != null && (<span>DRIFT <strong style={{ color: driftDelta >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{driftDelta >= 0 ? '+' : ''}{driftDelta.toFixed(1)}%</strong></span>)}
           </div>
         );

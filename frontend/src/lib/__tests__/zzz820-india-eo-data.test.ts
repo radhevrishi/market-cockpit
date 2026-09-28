@@ -264,7 +264,7 @@ describe('8 · feed and export', () => {
     assert.ok(!/arr\[arr\.length - 5\]/.test(src), 'positional year-ago removed');
     assert.match(src, /isQuarterEndStale\(worker\.latest_quarter_end_iso\)/);
     assert.match(src, /_scSameBasis && out\.sales_yoy_pct == null/);
-    assert.match(src, /enrich:v17:/);   // zzz821 — bumped for same-FY cash (cash_fy)
+    assert.match(src, /enrich:v18:/);   // zzz821 v17 same-FY cash · zzz826 v18 liquidity/cash rule
     const named = src.split('\n').filter((l) => /^export\s+(?!(async\s+)?function\s+(GET|POST)\b|const\s+(runtime|dynamic|maxDuration)\b)/.test(l));
     assert.deepEqual(named, []);
   });

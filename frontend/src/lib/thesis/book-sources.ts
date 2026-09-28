@@ -6,7 +6,8 @@
 
 import { CHAT_ID } from '@/lib/config';
 import { symbolsFromStoredValue } from './universe';
-import type { IndiaBookInput, ReadList } from './book-membership';
+import { isBseCode, type IndiaBookInput, type ReadList } from './book-membership';
+import { lookupBseCodes } from './bse-nse-lookup';
 
 export const SAVED_HOLDINGS_KEY = 'mc_portfolio_holdings';
 export const OLD_HOLDING_KEYS = ['portfolioHoldings', 'mc_portfolio_tickers', 'mc_portfolio_holdings_v1'] as const;
@@ -49,8 +50,13 @@ export async function fetchSyncedHeld(): Promise<ReadList> {
   }
 }
 
-/** Everything, for one resolveIndiaBook call. */
+/** Everything, for one resolveIndiaBook call — with saved BSE codes matched to NSE symbols (zzz825). */
 export async function loadIndiaBookInput(): Promise<IndiaBookInput> {
   const [server, synced] = await Promise.all([fetchSavedHoldings(), fetchSyncedHeld()]);
-  return { ...readLocalBookInput(), server, synced };
+  const local = readLocalBookInput();
+  const codes = [...(server.ok ? server.symbols : []), ...local.browser]
+    .map((x) => String(x || '').toUpperCase().trim().replace(/^(?:NSE|BSE|BOM):/, '').replace(/\.(?:NS|BO|BSE|NSE)$/, '')).filter(isBseCode);
+  let bseMap: IndiaBookInput['bseMap'] = null;
+  if (codes.length) { try { bseMap = await lookupBseCodes(codes); } catch { bseMap = null; } }
+  return { ...local, server, synced, bseMap };
 }

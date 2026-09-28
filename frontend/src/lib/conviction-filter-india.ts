@@ -20,6 +20,8 @@ import { peadScore } from '@/lib/pead-score';
 import { INDIA_PRESET } from '@/lib/quality-preset';
 import type { ConvictionEntry } from '@/lib/conviction-beats';
 import { runCriteriaCheck, type CriteriaCheck } from '@/lib/criteria-check';
+import { decodeEntities, financialKindOfRow, driftBand } from '@/lib/india-eo-card-data';
+import { CASH_RATIO_MAX } from '@/lib/india-cash';
 
 // zzz253 — hardcoded sector map for known NSE tickers. Backend enrichment
 // often returns null sector; this fallback ensures peer comparison + sector-
@@ -193,7 +195,7 @@ export function isIndiaPresetActive(f: ConvFilters): boolean {
     && f.mktCapMin === INDIA_PRESET.mktCapMin
     && f.pledgedMax === INDIA_PRESET.pledgedMax
     && f.driftBucket == null
-    && JSON.stringify((f.verdicts || []).slice().sort()) === VERDICTS_SORTED;
+    && JSON.stringify((f.verdicts || []).map((v) => normalizeVerdictKey(v) || String(v)).sort()) === VERDICTS_SORTED;
 }
 
 // zzz543 — SINGLE source of truth for "days since filing". The NEW·Nd filter and
@@ -443,6 +445,80 @@ export function cbIsFinancial(e: any): boolean {
   return false;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz827 — ONE CASH FIGURE, THE SAME YEAR.
+//
+// The card used to show `cfo_to_pat_ratio` as stored. On a row graded before
+// the same-year fix (zzz821) that figure was last fiscal year's operating
+// cash flow divided by ONE QUARTER's profit ("2.66x"), and the preset's
+// CFO/PAT ≥ 0.5 gate and the quality verdict both read it. Now the tab, the
+// preset and the verdict read only the same-fiscal-year pair the EO engine
+// builds (lib/india-cash): a ratio with its year label (`cash_fy`) and its two
+// figures (`ocf_annual_cr`, `pat_annual_cr`) that agree with it. Anything else
+// is UNKNOWN — "not checked", never a fail. A lender's cash flow is loan
+// growth, so for banks / NBFCs / insurers the test is skipped.
+// ═══════════════════════════════════════════════════════════════════════════
+export interface CbCashView {
+  /** Same-year CFO ÷ PAT, or null. */
+  ratio: number | null;
+  /** 'ok' = a same-year ratio; 'unknown' = not checked; 'na' = not meaningful (lender). */
+  state: 'ok' | 'unknown' | 'na';
+  /** "FY26 full year" — the year the ratio is for. */
+  basis: string | null;
+  /** Plain words for the card / a tooltip. */
+  text: string;
+}
+
+const finN = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+export function cbCashView(e: any): CbCashView {
+  if (cbIsFinancial(e) || financialKindOfRow(e) || e?.cash_note === 'not meaningful for lenders') {
+    return { ratio: null, state: 'na', basis: null, text: 'cash conversion not meaningful for lenders (skipped)' };
+  }
+  const fy = typeof e?.cash_fy === 'string' && e.cash_fy.trim() ? e.cash_fy.trim() : null;
+  const basis = typeof e?.cash_basis === 'string' && e.cash_basis.trim() ? e.cash_basis.trim()
+    : fy ? (/^mar\s/i.test(fy) ? `FY${fy.slice(-2)} full year` : `year to ${fy}`) : null;
+  const unknown = (why: string): CbCashView => ({ ratio: null, state: 'unknown', basis, text: `cash conversion not checked — ${why}` });
+  if (!fy) return unknown('the same-year cash figure has not been fetched yet');
+  const ocf = finN(e?.ocf_annual_cr) && e.ocf_annual_cr !== 0 ? e.ocf_annual_cr : null;
+  const pat = finN(e?.pat_annual_cr) && e.pat_annual_cr !== 0 ? e.pat_annual_cr : null;
+  const r0 = [e?.ocf_to_pat_ratio, e?.cfo_to_pat_ratio].find((v) => finN(v) && v !== 0) as number | undefined;
+  if (ocf == null || pat == null || r0 == null) return unknown(`no ${basis || fy} cash figure in the source`);
+  // The stored ratio must be the ratio of its own two figures (an older
+  // inflated ratio left on the row next to newer figures is not used).
+  if (pat > 0 && Math.abs(r0 - ocf / pat) > Math.max(0.05, Math.abs(ocf / pat) * 0.05)) return unknown('the stored ratio does not match its own figures');
+  if (Math.abs(r0) > CASH_RATIO_MAX) return unknown('ratio outside the meaningful range');
+  return { ratio: r0, state: 'ok', basis, text: `cash from operations ${r0.toFixed(2)}x profit (${basis})` };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz827 — VERDICT KEYS vs LABELS.
+//
+// The stored preset and the filter keep the original keys (STRONG BUY / BUY /
+// WATCH / AVOID / HIGH RISK) so every saved preset keeps working. The screen,
+// exports and copies show neutral labels only. A label or a differently-cased
+// key that reaches the filter is mapped back to its key — a renamed label can
+// never silently drop names from the verdict gate.
+// ═══════════════════════════════════════════════════════════════════════════
+export const CB_VERDICT_KEYS = ['STRONG BUY', 'BUY', 'WATCH', 'AVOID', 'HIGH RISK'] as const;
+export const CB_VERDICT_LABEL: Record<string, string> = {
+  'STRONG BUY': 'Top setup', 'BUY': 'Good setup', 'WATCH': 'Watch', 'AVOID': 'Weak setup', 'HIGH RISK': 'High risk',
+};
+/** A key or a label (any case) → the stored key; unknown text → null. */
+export function normalizeVerdictKey(v: unknown): string | null {
+  const s = String(v ?? '').trim().replace(/^[^A-Za-z]+/, '').replace(/\s+/g, ' ');
+  if (!s) return null;
+  const up = s.toUpperCase();
+  if ((CB_VERDICT_KEYS as readonly string[]).includes(up)) return up;
+  for (const [k, lbl] of Object.entries(CB_VERDICT_LABEL)) if (lbl.toUpperCase() === up) return k;
+  return null;
+}
+/** The neutral label for a key ('STRONG BUY' → 'Top setup'). */
+export function cbVerdictLabel(key: unknown): string {
+  const k = normalizeVerdictKey(key);
+  return k ? CB_VERDICT_LABEL[k] : String(key ?? '');
+}
+
 // zzz362 — extracted module-level pure earnings-quality helper. Behavior-
 // preserving move of the zzz355 SCORES IIFE (incl. zzz357 ROCE weight +
 // ROCE/ROE cap-at-55 + zzz357 absolute-P/E isOvervalued). Reused by the
@@ -454,7 +530,8 @@ export function cbComputeQuality(e: any): {
   verdictLabel: string; verdictIcon: string; verdictColor: string; verdictTip: string;
   isOvervalued: boolean; triLabel: string | null; triCol: string;
 } {
-  const cfo = e.cfo_to_pat_ratio;
+  // zzz827 — the same-year cash ratio only (cbCashView); unknown = no input.
+  const cfo = cbCashView(e).ratio;
   const opm = e.opm_pct, opmP = e.opm_prev_pct;
   const sales = e.sales_yoy_pct, pat = e.net_profit_yoy_pct, eps = e.eps_yoy_pct;
   const pe = e.pe;
@@ -560,16 +637,18 @@ export function cbComputeQuality(e: any): {
   const isCheap = valPE != null && valGrowthCap != null && valGrowthCap > 0 && valPE < 0.5 * valGrowthCap && !roceNeg;
   const driftBad = typeof drift === 'number' && drift < -8;
   let verdict: {label: string; icon: string; color: string; tip: string};
+  // zzz827 — tips in words: no 0–100 number, no buy / sell wording.
+  const qw = qScore >= 70 ? 'high' : qScore >= 45 ? 'fair' : 'low';
   if (rf >= 3 || (typeof drift === 'number' && drift < -12) || (valGrowth != null && valGrowth <= 0)) {
-    verdict = { label: 'AVOID', icon: '🚫', color: '#EF4444', tip: 'Multiple red flags OR sharp market disbelief OR negative EPS growth. Downside heavy.' };
+    verdict = { label: 'AVOID', icon: '', color: '#EF4444', tip: 'Weak setup: several quality warnings, a sharp fall since results, or EPS not growing.' };
   } else if (qScore >= 80 && !isOvervalued && rf <= 1 && !driftBad) {
-    verdict = { label: 'STRONG BUY', icon: '🚀', color: '#22C55E', tip: 'Composite: high earnings quality (' + qScore + ') + reasonable valuation + no serious flags + no market disbelief. Institutional-grade setup.' };
-  } else if (qScore >= 65 && rf <= 2 && !driftBad && !isOvervalued) { // zzz371 — BUY must not ignore the valuation gate STRONG BUY already applies
-    verdict = { label: 'BUY', icon: '📈', color: '#84CC16', tip: 'Quality (' + qScore + ') solid, risk manageable. Position sizing at conviction.' };
+    verdict = { label: 'STRONG BUY', icon: '', color: '#22C55E', tip: 'Top setup: high earnings quality, valuation not stretched, no serious warning, and the market has not faded the result.' };
+  } else if (qScore >= 65 && rf <= 2 && !driftBad && !isOvervalued) { // zzz371 — the valuation gate applies here too
+    verdict = { label: 'BUY', icon: '', color: '#84CC16', tip: 'Good setup: solid earnings quality and manageable warnings.' };
   } else if (qScore >= 45 && rf <= 3) {
-    verdict = { label: 'WATCH', icon: '👁', color: '#F59E0B', tip: 'Mixed signals — quality ' + qScore + '/100, ' + rf + ' red flags. Track catalyst/management commentary before sizing.' };
+    verdict = { label: 'WATCH', icon: '', color: '#F59E0B', tip: `Watch: mixed signals — quality ${qw}, ${rf} warning${rf === 1 ? '' : 's'}. Check what management says next.` };
   } else {
-    verdict = { label: 'HIGH RISK', icon: '⚠️', color: '#EF4444', tip: 'Weak composite — quality ' + qScore + ', ' + rf + ' red flags. High probability of downside surprise.' };
+    verdict = { label: 'HIGH RISK', icon: '', color: '#EF4444', tip: `High risk: quality ${qw}, ${rf} warning${rf === 1 ? '' : 's'}.` };
   }
   void isCheap; // zzz362 — preserved from original inline (computed, not used in the chain)
 
@@ -578,6 +657,17 @@ export function cbComputeQuality(e: any): {
     verdictLabel: verdict.label, verdictIcon: verdict.icon, verdictColor: verdict.color, verdictTip: verdict.tip,
     isOvervalued, triLabel, triCol,
   };
+}
+
+/** zzz827 — year-ago vs now for a profit / EPS figure:
+ *  'turned' = a loss (or zero) a year ago, a profit now;
+ *  'stillLoss' = a loss a year ago and still a loss (at most narrowed);
+ *  null = no such case, or a figure is missing. */
+export function cbTurn(curr: unknown, prev: unknown): 'turned' | 'stillLoss' | null {
+  if (!finN(curr) || !finN(prev)) return null;
+  if (prev <= 0 && curr > 0) return 'turned';
+  if (prev < 0 && curr <= 0) return 'stillLoss';
+  return null;
 }
 
 export function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
@@ -597,6 +687,7 @@ export function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): bool
   const sales = e.sales_yoy_pct ?? 0;
   const pat = e.net_profit_yoy_pct ?? 0;
   const eps = e.eps_yoy_pct ?? 0;
+  const x0: any = e;
   // zzz340 FRESH-3D as POSITIVE filter (not bypass). When chip is ON, drop any entry NOT filed within last ~3 biz days (5 calendar days).
   // All other filters including CFO/PAT, PEAD, etc. apply strictly regardless.
   if (f.freshBypass) {
@@ -607,8 +698,10 @@ export function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): bool
     if (__d < 0 || __d > 5) return false;
   }
   if (f.sales != null && sales < f.sales) return false;
-  if (f.pat != null && pat < f.pat) return false;
-  if (f.eps != null && eps < f.eps) return false;
+  // zzz827 — a turn from loss to profit meets a growth gate (no % exists);
+  // a loss that only narrowed never does, whatever % the feed computed.
+  if (f.pat != null) { const t = cbTurn(x0.pat_curr_cr, x0.pat_prev_cr); if (t === 'stillLoss' || (t !== 'turned' && pat < f.pat)) return false; }
+  if (f.eps != null) { const t = cbTurn(x0.eps_curr, x0.eps_prev); if (t === 'stillLoss' || (t !== 'turned' && eps < f.eps)) return false; }
   if (f.opLev != null && sales > 0) { // zzz364 (BUG 3) — sales<=0 makes the op-leverage ratio absurd; skip the gate for that entry
     const ratio = pat / sales;
     if (!(ratio >= f.opLev)) return false;
@@ -629,11 +722,9 @@ export function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): bool
   if (f.cfoPatMin != null) {
     // zzz364 (BUG 2d) — CFO/PAT is not meaningful for lenders/NBFCs, so the
     // cfoPatMin gate must not drop financials on a metric that doesn't apply.
-    if (cbIsFinancial(e)) { /* skip cfoPatMin for financials */ }
-    else {
-      const c = (e as any).cfo_to_pat_ratio;
-      if (typeof c === 'number' && c < f.cfoPatMin) return false;
-    }
+    // zzz827 — the same-year ratio only; unknown and lenders pass (not checked / skipped).
+    const cv = cbCashView(e);
+    if (cv.state === 'ok' && (cv.ratio as number) < f.cfoPatMin) return false;
   }
   // zzz360 — max promoter-pledge % filter. Null pledged_pct passes (unknown ≠
   // fail — mirrors the zzz359 CFO/PAT null-safe philosophy). 0 = valid/good.
@@ -738,7 +829,9 @@ export function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): bool
   // matches the rendered SCORES verdict pill exactly. Empty/null = no filter.
   if (f.verdicts && f.verdicts.length > 0) {
     const { verdictLabel } = cbComputeQuality(e);
-    if (!f.verdicts.includes(verdictLabel)) return false;
+    // zzz827 — keys and labels (any case) both map to the stored key.
+    const want = f.verdicts.map(normalizeVerdictKey).filter(Boolean) as string[];
+    if (want.length && !want.includes(verdictLabel)) return false;
   }
   return true;
 }
@@ -780,7 +873,8 @@ export function serverBenchToCbEntries(ents: unknown): ConvictionEntry[] {
       return {
         ...(e as any),
         ticker: String(e.ticker).toUpperCase(),
-        company: e.company || e.ticker,
+        company: decodeEntities(String(e.company || e.ticker)), // zzz827 — "&amp;" never reaches the tab
+        _cb_src: 'server',
         added_at: new Date().toISOString(),
         ...(q ? { quarter: q } : {}), ...(fy ? { fiscal_year: fy } : {}),
       } as ConvictionEntry;
@@ -788,21 +882,64 @@ export function serverBenchToCbEntries(ents: unknown): ConvictionEntry[] {
 }
 
 /** The tab's list: this browser's entries + the server bench, one per ticker —
- *  newest filing wins, a tie goes to the higher composite. (zzz426) */
+ *  newest filing wins, a tie goes to the higher composite. (zzz426)
+ *
+ *  zzz827 — FIELDS ARE MERGED, NOT ONE ROW PICKED WHOLE. The old merge kept
+ *  one entry per ticker. When the server's card won (a newer filing, or the
+ *  same filing with a higher composite) every field this browser had filled
+ *  in — ROCE, ROE, pledge, the quarterly trend series, the fill-pass markers —
+ *  was dropped, so ROCE / ROE read "—" and "Q-TRENDS loading…" never cleared
+ *  on those cards; when this browser's copy won, its tier stayed whatever it
+ *  was when benched. Now:
+ *    • newer filing wins, as before;
+ *    • SAME filing: the server row (graded under the current rules) supplies
+ *      the grade — tier, growth, margin, cash, composite — and this browser's
+ *      row keeps the fields the server does not carry;
+ *    • a newer filing keeps only the slow-moving fields (ROCE / ROE / pledge /
+ *      trend series) from the older row — never its cash ratio or its grade. */
+const CB_SLOW_FIELDS = ['roce', 'roe', 'debtToEquity', 'pledged_pct', 'roic', 'int_coverage', 'sector', 'market_cap_cr',
+  'debtor_days', 'inventory_days', 'wc_days', 'quarters_sales', 'quarters_eps', 'quarters_opm',
+  'quarters_material_cost_pct', 'quarters_other_income_pct', 'quarters_tax_pct', 'annual_cfo_pat',
+  'cb_enrich_v', 'cb_trend_attempts', '_trends_status', 'close_30d'];
+
+function cbMergeTwo(a: any, b: any): any {
+  const aDate = String(a?.filing_date || ''), bDate = String(b?.filing_date || '');
+  const aSrv = a?._cb_src === 'server', bSrv = b?._cb_src === 'server';
+  if (aDate !== bDate || aSrv === bSrv) {
+    // Different filings, or two rows from the same side: the newer (then the
+    // higher composite) wins; the other only lends its slow fields.
+    let win = a, lose = b;
+    if (bDate > aDate) { win = b; lose = a; }
+    else if (bDate === aDate && ((b?.composite_score ?? -1) > (a?.composite_score ?? -1))) { win = b; lose = a; }
+    const out: any = { ...win };
+    for (const k of CB_SLOW_FIELDS) if (out[k] == null && lose?.[k] != null) out[k] = lose[k];
+    return out;
+  }
+  // Same filing, one row from each side: server grade over the browser's extras.
+  const srv = aSrv ? a : b, loc = aSrv ? b : a;
+  const out: any = { ...loc };
+  for (const [k, v] of Object.entries(srv)) if (v != null && k !== 'added_at') out[k] = v;
+  // The server row IS the current grade, so a "now MIXED" note from an older
+  // pass no longer applies.
+  delete out._tier_now;
+  if (!out.added_at) out.added_at = srv.added_at;
+  return out;
+}
+
 export function mergeCbEntries(local: ConvictionEntry[], server: ConvictionEntry[]): ConvictionEntry[] {
   const map = new Map<string, any>();
   for (const e of [...local, ...server]) {
     const t = String((e as any)?.ticker || '').toUpperCase();
     if (!t) continue;
     const cur = map.get(t);
-    if (!cur) { map.set(t, e); continue; }
-    const eDate = String((e as any).filing_date || ''); const cDate = String((cur as any).filing_date || '');
-    if (eDate > cDate) { map.set(t, e); continue; }
-    if (eDate < cDate) continue;
-    const eScore = (e as any).composite_score ?? -1; const cScore = (cur as any).composite_score ?? -1;
-    if (eScore > cScore) map.set(t, e);
+    map.set(t, cur ? cbMergeTwo(cur, e) : e);
   }
-  return Array.from(map.values());
+  return Array.from(map.values()).map((e: any) => (typeof e.company === 'string' && e.company.includes('&') ? { ...e, company: decodeEntities(e.company) } : e));
+}
+
+/** zzz827 — the drift reading in words: EO's own banding (driftBand), not a copy. */
+export function cbPeadWord(score: number): string {
+  return driftBand(score) ?? 'not known';
 }
 
 const fmtN = (n: unknown) => (typeof n === 'number' && Number.isFinite(n) ? `${Math.round(n * 10) / 10}` : 'not known');
@@ -815,22 +952,28 @@ const fmtN = (n: unknown) => (typeof n === 'number' && Number.isFinite(n) ? `${M
 export function cbFailReasons(e: ConvictionEntry, f: ConvFilters): string[] {
   if (passesConvictionFilter(e, f)) return [];
   const x: any = e;
+  const cash = cbCashView(e);
   const words: Record<string, () => string> = {
     sales: () => `sales growth ${fmtN(x.sales_yoy_pct)}% (needs ${f.sales}%)`,
-    pat: () => `profit growth ${fmtN(x.net_profit_yoy_pct)}% (needs ${f.pat}%)`,
-    eps: () => `EPS growth ${fmtN(x.eps_yoy_pct)}% (needs ${f.eps}%)`,
+    pat: () => (cbTurn(x.pat_curr_cr, x.pat_prev_cr) === 'stillLoss'
+      ? `profit still a loss (₹${fmtN(x.pat_curr_cr)} Cr vs ₹${fmtN(x.pat_prev_cr)} Cr a year ago — a narrower loss is not growth)`
+      : `profit growth ${fmtN(x.net_profit_yoy_pct)}% (needs ${f.pat}%)`),
+    eps: () => (cbTurn(x.eps_curr, x.eps_prev) === 'stillLoss'
+      ? `EPS still a loss (${fmtN(x.eps_curr)} vs ${fmtN(x.eps_prev)} a year ago — a narrower loss is not growth)`
+      : `EPS growth ${fmtN(x.eps_yoy_pct)}% (needs ${f.eps}%)`),
     opLev: () => `profit growth not ${f.opLev}x sales growth`,
-    pead: () => 'post-results drift reading below your threshold',
+    // zzz827 — words, never the 0–100 drift number.
+    pead: () => `post-results drift reading ${cbPeadWord(peadScore(e).score)} (needs PEAD ${f.pead} or more)`,
     opmDelta: () => (typeof x.opm_pct === 'number' && typeof x.opm_prev_pct === 'number'
       ? `operating margin change ${fmtN(x.opm_pct - x.opm_prev_pct)} points (needs ${f.opmDelta} or better)`
       : 'operating margin change not known'),
-    cfoPatMin: () => `cash from operations ${fmtN(x.cfo_to_pat_ratio)}x profit (needs ${f.cfoPatMin}x)`,
-    pledgedMax: () => `promoter pledge ${fmtN(x.pledged_pct)}%`,
-    mktCapMin: () => `market cap \u20B9${fmtN(x.market_cap_cr)} Cr (needs \u20B9${f.mktCapMin} Cr)`,
+    cfoPatMin: () => `cash from operations ${finN(cash.ratio) ? cash.ratio.toFixed(2) : 'not known'}x profit${cash.basis ? `, ${cash.basis}` : ''} (needs ${f.cfoPatMin}x)`,
+    pledgedMax: () => `promoter pledge ${fmtN(x.pledged_pct)}% (needs ${f.pledgedMax}% or less)`,
+    mktCapMin: () => `market cap ₹${fmtN(x.market_cap_cr)} Cr (needs ₹${f.mktCapMin} Cr)`,
     peMax: () => `P/E above ${f.peMax}`,
-    score: () => 'composite below your threshold',
+    score: () => 'grade strength below your chip',
     opmMin: () => `operating margin below ${f.opmMin}%`,
-    verdicts: () => 'quality verdict outside your chosen list',
+    verdicts: () => `setup reads "${cbVerdictLabel(cbComputeQuality(e).verdictLabel)}" (needs ${(f.verdicts || []).map(cbVerdictLabel).join(' / ')})`,
     guidance: () => `guidance is not ${f.guidance}`,
     d1Bucket: () => 'day-one move outside your chip', d2Bucket: () => 'two-day move outside your chip', driftBucket: () => 'move since results outside your chip',
     cap: () => 'market-cap band outside your chip',
@@ -864,7 +1007,8 @@ function cbMissingFor(e: ConvictionEntry, k: string, f: ConvFilters): string[] {
   const need = (pairs: Array<[string, string]>) => pairs.filter(([field]) => !has(x[field])).map(([, word]) => word);
   switch (k) {
     case 'sales': return need([['sales_yoy_pct', 'sales growth']]);
-    case 'eps': return need([['eps_yoy_pct', 'EPS growth']]);
+    case 'eps': return cbTurn(x.eps_curr, x.eps_prev) ? [] : need([['eps_yoy_pct', 'EPS growth']]);
+    case 'pat': return cbTurn(x.pat_curr_cr, x.pat_prev_cr) ? [] : need([['net_profit_yoy_pct', 'profit growth']]);
     case 'pead': return need([['sales_yoy_pct', 'sales growth'], ['net_profit_yoy_pct', 'profit growth'], ['eps_yoy_pct', 'EPS growth']]);
     case 'opmDelta': return need([['opm_pct', 'operating margin'], ['opm_prev_pct', 'last year’s operating margin']]);
     case 'mktCapMin': return need([['market_cap_cr', 'market cap']]);
@@ -876,15 +1020,17 @@ function cbMissingFor(e: ConvictionEntry, k: string, f: ConvFilters): string[] {
       if (q.verdictLabel === 'AVOID' || (f.verdicts || []).includes(q.verdictLabel)) return [];
       const fin = cbIsFinancial(e);
       const pairs: Array<[string, string]> = [['sales_yoy_pct', 'sales growth'], ['net_profit_yoy_pct', 'profit growth'], ['eps_yoy_pct', 'EPS growth'], ['roce', 'ROCE']];
-      if (!fin) pairs.push(['cfo_to_pat_ratio', 'cash conversion'], ['opm_pct', 'operating margin'], ['opm_prev_pct', 'last year’s operating margin']);
+      if (!fin) pairs.push(['opm_pct', 'operating margin'], ['opm_prev_pct', 'last year’s operating margin']);
       const m = need(pairs);
+      // zzz827 — cash counts as present only as a same-year ratio.
+      if (!fin && cbCashView(e).state === 'unknown') m.push('same-year cash conversion');
       return m.length ? m.map((w) => `${w} (for the quality verdict)`) : [];
     }
     default: return [];
   }
 }
 
-const CB_LENIENT = new Set(['sales', 'eps', 'pead', 'opmDelta', 'mktCapMin', 'verdicts']);
+const CB_LENIENT = new Set(['sales', 'eps', 'pat', 'pead', 'opmDelta', 'mktCapMin', 'verdicts']);
 
 /** Pass / fail / not checked, from passesConvictionFilter's own probes. */
 export function cbCriteriaCheck(e: ConvictionEntry, f: ConvFilters): CriteriaCheck {
@@ -905,4 +1051,42 @@ export function cbCriteriaCheck(e: ConvictionEntry, f: ConvFilters): CriteriaChe
     (k) => (CB_LENIENT.has(k) ? cbMissingFor(e, k, f) : []),
     words,
   );
+}
+
+// ── zzz827: per-criterion results, for the "Why N names are hidden" panel ───
+
+export interface CbCriterionResult {
+  key: string;
+  /** 'pass' | 'fail' (on data that is there) | 'unknown' (its data is missing). */
+  state: 'pass' | 'fail' | 'unknown';
+  /** Plain words: the failing figure against the threshold, or what is missing. */
+  text: string;
+}
+
+/** The active criteria of `f` (same rule cbCriteriaCheck uses). */
+export function cbActiveKeys(f: ConvFilters): string[] {
+  return Object.keys(f).filter((k) => {
+    if (k === 'sortByPead') return false;
+    const v: any = (f as any)[k];
+    return k === 'cap' ? !!v && v !== 'all' : Array.isArray(v) ? v.length > 0 : typeof v === 'boolean' ? v : v != null && v !== '';
+  });
+}
+
+/**
+ * Each active criterion probed ALONE through passesConvictionFilter (so it can
+ * never disagree with the filter), with the same "missing data is not a fail"
+ * rule as cbCriteriaCheck.
+ */
+export function cbCriterionResults(e: ConvictionEntry, f: ConvFilters): CbCriterionResult[] {
+  const base: ConvFilters = { ...FILTER_DEFAULT };
+  const out: CbCriterionResult[] = [];
+  for (const k of cbActiveKeys(f)) {
+    const probe = { ...base, [k]: (f as any)[k] } as ConvFilters;
+    if (passesConvictionFilter(e, probe)) { out.push({ key: k, state: 'pass', text: '' }); continue; }
+    const miss = CB_LENIENT.has(k) ? cbMissingFor(e, k, f) : [];
+    if (miss.length) { out.push({ key: k, state: 'unknown', text: `${miss.join(', ')} missing` }); continue; }
+    const r = cbFailReasons(e, probe);
+    out.push({ key: k, state: 'fail', text: r[0] === 'another active criterion' ? `${k} criterion` : r.join('; ') });
+  }
+  return out;
 }

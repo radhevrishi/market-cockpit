@@ -3,6 +3,14 @@
 // app/api/v1/earnings/enrich/route.ts. Pure; kept here so it can be tested.
 // ═══════════════════════════════════════════════════════════════════════════
 
+/** Beyond this, CFO ÷ PAT says nothing about cash conversion (zzz826; was 8). */
+export const CASH_RATIO_MAX = 50;
+/** At or above this, the ratio is real but profit is small next to cash. */
+export const CASH_RATIO_HIGH = 8;
+/** Version of the cash rule enrichment applied (zzz821 same-FY = 2, zzz826
+ *  ±50x = 3). A stored row below it is re-fetched by the prewarm re-check. */
+export const CASH_RULE_V = 3;
+
 export type LabelledTable = { labels: string[]; rows: Record<string, (number | null)[]> } | null;
 export function sameFyCash(cf: LabelledTable, pl: LabelledTable): {
   ocf_annual_cr: number | null; pat_annual_cr: number | null; ocf_to_pat_ratio: number | null;
@@ -34,9 +42,12 @@ export function sameFyCash(cf: LabelledTable, pl: LabelledTable): {
     if (p == null || p === 0) return none;
     const sv = sales && sales.length === pl.labels.length ? sales[j] : null;
     let ratio: number | null = p > 0 ? Math.round((c / p) * 100) / 100 : null;
-    // zzz364 meaningfulness guard, kept: a profit under 2% of sales, or a ratio
-    // beyond ±8x, says nothing about cash conversion.
-    if (ratio != null && ((typeof sv === 'number' && sv !== 0 && Math.abs(p) < 0.02 * Math.abs(sv)) || Math.abs(ratio) > 8)) ratio = null;
+    // zzz364 meaningfulness guard, kept: a profit under 2% of sales says
+    // nothing about cash conversion.
+    // zzz826 — the old ±8x limit existed to hide the period-mismatch bug
+    // (annual CFO ÷ one quarter). Both figures are now the same fiscal year,
+    // so a real 12x is shown; only beyond ±CASH_RATIO_MAX is it unknown.
+    if (ratio != null && ((typeof sv === 'number' && sv !== 0 && Math.abs(p) < 0.02 * Math.abs(sv)) || Math.abs(ratio) > CASH_RATIO_MAX)) ratio = null;
     const [mon, yr] = lb.split(/\s+/);
     const basis = /^mar$/i.test(mon) ? `FY${yr.slice(-2)} full year` : `year to ${lb}`;
     return { ocf_annual_cr: c, pat_annual_cr: p, ocf_to_pat_ratio: ratio, cash_fy: lb, cash_basis: basis };

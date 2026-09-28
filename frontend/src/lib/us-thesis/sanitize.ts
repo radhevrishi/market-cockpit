@@ -140,6 +140,45 @@ export function isShareCountNotGuidance(s: unknown): boolean {
   return true;
 }
 
+// ── BOILERPLATE / HYPOTHETICAL TEXT IS NOT EVIDENCE.                   (zzz829)
+// The 10-day tab confirmed risk-factor and business-description sentences as
+// structural evidence: "New customer: Changes to recurring revenue may result
+// from … new customer acquisition" (a hypothetical), "Our Industrial segment
+// provides on-site services that support new plant construction" (a segment
+// description), "New plant: Mercury Financial LLC" (an entity name, no event),
+// "$73.8 million in new customer non-maturity deposits" (a bank deposit line),
+// an agreement "to sell its dormant exchange" (a disposal, not a customer).
+// A sentence is evidence of a thesis variable only when it states an EVENT:
+// no may / could / might, no risk-factor wording, and — for a new customer or
+// a new plant — an event verb in the same sentence.
+const HYPOTHETICAL = /\b(?:may|might|could)\s+(?:(?:not|also|further|continue to|in turn|potentially|materially|significantly)\s+)?(?:be|result|change|affect|vary|cause|include|have|increase|decrease|decline|fluctuate|differ|depend|require|impact|reduce|lead|occur|arise|experience|lose|need|adversely)\b|\bresults? may\b|\bif (?:we|the company|our)\b|\bin the event (?:that|of)\b|\bthere (?:can|may) be no assurance\b|\bno assurance\b|\bwe cannot (?:assure|guarantee|predict)\b|\brisk factors?\b|\bsubject to (?:risks|uncertaint)/i;
+const DESCRIPTION = /\b(?:our|the|its) [A-Za-z&-]+(?: [A-Za-z&-]+)? (?:segment|business|division) (?:provides|offers|serves|includes|consists of|delivers|supports)\b|\bservices that support\b|\bwe (?:provide|offer|serve|design|develop|manufacture|market|sell|operate)\b[^.]{0,80}\b(?:to|for|in)\b(?![^.]{0,40}\b(?:new|first|signed|selected|awarded)\b)|\b(?:is|are) (?:a|an|the) (?:leading |global |diversified )?(?:provider|manufacturer|supplier|developer) of\b/i;
+const CUSTOMER_EVENT = /\b(?:signed|selected|awarded|won|wins|added|adds|onboarded|secured|entered into|expanded|launched with|went live|chosen by|contracted with)\b/i;
+const NOT_A_CUSTOMER = /\bnew customer (?:acquisition|growth|deposits?|accounts?|relationships?|additions? (?:may|could))\b|\b(?:non-maturity|core|customer) deposits?\b|\bto sell\b|\bsale of\b|\bdispos\w*\b|\bto (?:acquire|purchase)\b|\bmerger\b|\bcredit (?:agreement|facility)\b|\bloan agreement\b|\bsettlement agreement\b|\bemployment agreement\b|\blease (?:agreement)?\b|\bindenture\b|\bunderwriting agreement\b/i;
+const PLANT_EVENT = /\b(?:opened|opens|commissioned|completed (?:construction|the (?:construction|build|expansion))|began (?:production|operations|shipments|manufacturing)|begins (?:production|operations)|started (?:production|operations)|broke ground|is now operational|became operational|came online|ramped|expanded (?:its|our) (?:plant|facility|capacity))\b/i;
+const PLANT_NOUN = /\b(?:plant|facility|factory|fab|campus|line|site|data cent(?:er|re)|warehouse|mill)\b/i;
+
+/** Pure: the sentence is hypothetical / risk-factor wording ("may result from", "no assurance", "if we fail"). */
+export const isHypotheticalUs = (s: string | null | undefined): boolean => HYPOTHETICAL.test(String(s || ''));
+
+/** Pure: why this sentence is NOT evidence of `variable` (boilerplate, hypothetical, description, no event), or null. */
+export function usBoilerplateEvidence(variable: string | null | undefined, text: string | null | undefined): string | null {
+  const v = String(variable || '');
+  const s = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!s) return null;
+  if (!/^(?:guidance|management_target)$/.test(v) && HYPOTHETICAL.test(s)) return 'hypothetical / risk-factor wording — mentioned, not evidence';
+  if (v === 'new_customer') {
+    if (NOT_A_CUSTOMER.test(s)) return 'not a customer event (deposits, a disposal, financing or customer-acquisition wording) — mentioned, not evidence';
+    if (!CUSTOMER_EVENT.test(s)) return 'no customer event stated (no signed / selected / awarded / added) — mentioned, not evidence';
+  }
+  if (v === 'new_plant' || v === 'capacity_addition' || v === 'commissioning') {
+    if (DESCRIPTION.test(s) && !PLANT_EVENT.test(s)) return 'a business / segment description — mentioned, not evidence';
+    if (v === 'new_plant' && (!PLANT_EVENT.test(s) || !PLANT_NOUN.test(s))) return 'no plant event stated (opened / commissioned / began production) — mentioned, not evidence';
+  }
+  if (DESCRIPTION.test(s) && /^(?:new_customer|new_plant|new_product|capacity|capacity_addition|volume)$/.test(v)) return 'a business / segment description — mentioned, not evidence';
+  return null;
+}
+
 const SUMMARY_FIELDS: Array<[string, string, string]> = [
   ['volume_price_mix', 'volume', 'volume'], ['volume_price_mix', 'price', 'price'], ['volume_price_mix', 'mix', 'mix'], ['volume_price_mix', 'exports', 'exports'],
   ['balance', 'working_capital', 'working_capital'], ['balance', 'fcf', 'fcf'], ['balance', 'debt', 'debt'],
@@ -191,6 +230,9 @@ export function sanitizeUsSummary(summary: any): { summary: any; dropped: string
     const sc = usScaleMoney(variable, o[key], null);
     if (sc.value == null) { dropped.push(`${grp}.${key} "${String(o[key]).slice(0, 40)}" — ${sc.why}`); o[key] = ''; continue; }
     o[key] = sc.value;
+    // zzz829: "Mercury Financial LLC" as a new plant — an entity name, no plant and no event
+    if (variable === 'new_plant' && !PLANT_NOUN.test(o[key]) && !PLANT_EVENT.test(o[key])) { dropped.push(`${grp}.${key} "${String(o[key]).slice(0, 40)}" — no plant or plant event named`); o[key] = ''; continue; }
+    if (HYPOTHETICAL.test(o[key]) || (DESCRIPTION.test(o[key]) && !PLANT_EVENT.test(o[key]))) { dropped.push(`${grp}.${key} "${String(o[key]).slice(0, 40)}" — hypothetical / description, not evidence`); o[key] = ''; continue; }
     const r = plausibleUsFigure(variable, o[key], null);
     if (!r.ok) { dropped.push(`${grp}.${key} "${String(o[key]).slice(0, 40)}" — ${r.why}`); o[key] = ''; }
   }
@@ -210,6 +252,8 @@ export function sanitizeUsEvents<T extends { variable: string; after: string | n
     const v = String(e0.variable || '');
     if (isTableFragment(e0.after) || isTableFragment(e0.before)) continue;
     if (/guidance|target/i.test(v) && isShareCountNotGuidance(e0.after)) continue;
+    // zzz829: a hypothetical / risk-factor / description sentence is not evidence
+    if (usBoilerplateEvidence(v, e0.evidence_text || e0.after)) continue;
     const a = usScaleMoney(v, e0.after, e0.evidence_text);
     if (e0.after && a.value == null) continue;
     const b = e0.before ? usScaleMoney(v, e0.before, e0.evidence_text) : { value: e0.before ?? null };
@@ -245,7 +289,8 @@ export function isolateUsLedger(ledger: CompanyLedger | null | undefined, ticker
     const docs = (p.documents || []).filter((d) => mine(d.url));
     const facts = (p.facts || []).filter((f: any) => (!f.ticker || usTickerKey(f.ticker) === want) && mine(f.source_url))
       .filter((f: any) => !isTableFragment(f.after_value) && !isTableFragment(f.before_value) && !isTableFragment(f.value)
-        && !(/guidance|target/i.test(String(f.metric_name || '')) && isShareCountNotGuidance(f.after_value ?? f.value)))
+        && !(/guidance|target/i.test(String(f.metric_name || '')) && isShareCountNotGuidance(f.after_value ?? f.value))
+        && !usBoilerplateEvidence(String(f.metric_name || ''), f.source_quote || f.after_value || f.value))
       .map((f: any) => {
         const m = String(f.metric_name || '');
         const a = usScaleMoney(m, f.after_value, f.source_quote);

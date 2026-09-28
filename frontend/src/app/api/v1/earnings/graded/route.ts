@@ -29,7 +29,7 @@ import { regradeIndiaDayPayload, versionOfGradedKey } from '@/lib/india-regrade'
 // with the Earnings Opportunities page. See lib/india-grade.ts for why.
 import { gradeIndiaRow as gradeRow, gradeIndiaRowExplained, deriveQuarterLabel } from '@/lib/india-grade';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
-import { checkQuarterLabel } from '@/lib/india-eo-card-data';  // zzz820
+import { checkQuarterLabel, refetchTickers } from '@/lib/india-eo-card-data';  // zzz820 · zzz826
 import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta, decideTier, marketReactionDelta, typicalDailyMovePct, thinFloatGate, quadrantForIndiaRow } from '@/lib/earnings-grade-shared';
 
 // zzz379 — derive the correct RESULT quarter from a filing date instead of the
@@ -505,6 +505,10 @@ export async function GET(req: Request) {
             market_cap_bucket: e.market_cap_bucket || c.market_cap_bucket,
             market_cap_cr: e.market_cap_cr ?? (c as any).market_cap_cr ?? null,
             adtv_cr: e.adtv_cr ?? null,  // PATCH 1037 — carry liquidity into grader
+            // zzz826 — the average counts only with the days it covers; a
+            // single day's turnover travels under its own name.
+            adtv_days: e.adtv_days ?? null, turnover_1d_cr: e.turnover_1d_cr ?? null,
+            cash_rule_v: e.cash_rule_v ?? null, yoy_rule_v: e.yoy_rule_v ?? null,
       announcement_text: (c as any).announcement_text ?? null,  // zzz668
       guidance_text: e.guidance_text ?? null,                    // zzz669
       guidance_raised: e.guidance_raised ?? null,
@@ -1047,8 +1051,6 @@ export async function GET(req: Request) {
 
   // Fetch enrichment for all tickers (chunk to 40 per request)
   const symbols: string[] = dayList.map((r: any) => r.ticker);
-  const chunks: string[][] = [];
-  for (let i = 0; i < symbols.length; i += 40) chunks.push(symbols.slice(i, i + 40));
 
   // PATCH 1021 — revert Patch 1014's blanket nocache=1 on the MAIN path.
   // 1014 forced an uncached full enrichment (worker+NSE+Screener+bhavcopy) for
@@ -1058,13 +1060,57 @@ export async function GET(req: Request) {
   // (1013) + gradeRow now emitting opm (1015). So we can safely use the enrich
   // KV cache here for speed. The refreshMissing path (line ~601) keeps
   // nocache=1 for targeted, user-triggered re-fetches.
-  const enrichResponses = await Promise.all(chunks.map((chunk) =>
-    _doEnrichSelfFetch(`${base.protocol}//${base.host}/api/v1/earnings/enrich?symbols=${chunk.map(encodeURIComponent).join(',')}&filed=${date}`, { cache: 'no-store' })
-      .then((r) => r.ok ? r.json() : { data: {} })
-      .catch(() => ({ data: {} }))
-  ));
+  // zzz826 — RE-CHECK = RE-FETCH. The prewarm re-check (force=1&refetch=1)
+  // exists to replace figures that were wrong or incomplete when stored: growth
+  // against an unverified year-ago quarter, cash from an older rule. Reading
+  // the enrichment cache would re-serve the same figures, so those tickers
+  // (and only those — the day's others keep the cache) are fetched with the
+  // cache bypassed, in the same chunk size and route limits as refreshMissing.
+  const refetchSet = new Set<string>();
+  if (force && searchParams.get('refetch') === '1' && isRedisAvailable()) {
+    try {
+      for (const k of gradedKeyCandidates(date)) {
+        const prior: any = await kvGet<any>(k);
+        if (!prior?.by_tier) continue;
+        for (const t of refetchTickers(prior)) if (symbols.includes(t)) refetchSet.add(t);
+        break;
+      }
+    } catch { /* best effort */ }
+  }
+  // At most REFETCH_MAX per rebuild, in the refreshMissing pacing (serial
+  // batches of 8, a pause between) so Screener is not burst; the rest stay
+  // flagged and are taken by the next re-check.
+  const REFETCH_MAX = 24, REFETCH_CHUNK = 8;
+  const freshSyms = symbols.filter((s) => refetchSet.has(s)).slice(0, REFETCH_MAX);
+  const cachedSyms = symbols.filter((s) => !freshSyms.includes(s));
+  const _enrichUrl = (syms: string[], nocache: boolean) =>
+    `${base.protocol}//${base.host}/api/v1/earnings/enrich?symbols=${syms.map(encodeURIComponent).join(',')}&filed=${date}${nocache ? '&nocache=1' : ''}`;
+  const _enrichCall = (syms: string[], nocache: boolean): Promise<any> =>
+    _doEnrichSelfFetch(_enrichUrl(syms, nocache), { cache: 'no-store' })
+      .then((r: Response) => r.ok ? r.json() : { data: {} })
+      .catch(() => ({ data: {} }));
+  const cachedChunks: string[][] = [];
+  for (let i = 0; i < cachedSyms.length; i += 40) cachedChunks.push(cachedSyms.slice(i, i + 40));
+  const enrichResponses: any[] = await Promise.all(cachedChunks.map((chunk) => _enrichCall(chunk, false)));
   const enrich: Record<string, any> = {};
   for (const r of enrichResponses) Object.assign(enrich, r.data || {});
+  if (freshSyms.length) {
+    const fresh: Record<string, any> = {};
+    for (let i = 0; i < freshSyms.length; i += REFETCH_CHUNK) {
+      const r = await _enrichCall(freshSyms.slice(i, i + REFETCH_CHUNK), true);
+      Object.assign(fresh, r?.data || {});
+      if (i + REFETCH_CHUNK < freshSyms.length) await new Promise((res) => setTimeout(res, 1000));
+    }
+    const hasFin = (e: any) => e && (e.sales_curr_cr != null || e.pat_curr_cr != null || e.eps_curr != null);
+    Object.assign(enrich, fresh);
+    // A re-fetch that came back empty must not cost the card its figures:
+    // those tickers fall back to the ordinary (cached) enrichment.
+    const missed = freshSyms.filter((t) => !hasFin(fresh[t]));
+    if (missed.length) {
+      const r = await _enrichCall(missed, false);
+      for (const [k, v] of Object.entries(r?.data || {})) if (hasFin(v) || !enrich[k]) enrich[k] = v;
+    }
+  }
 
   // Join + grade
   // PATCH 0403 — Defensive guard against today-live ghost-filings.
@@ -1198,6 +1244,9 @@ export async function GET(req: Request) {
         (m.marketCap === 'L' ? 'LARGE' : m.marketCap === 'M' ? 'MID' : m.marketCap === 'S' ? 'SMALL' : m.marketCap === 'Micro' ? 'MICRO' : null),
       market_cap_cr: e.market_cap_cr ?? null,
       adtv_cr: e.adtv_cr ?? null,  // PATCH 1037 — carry liquidity into grader
+      // zzz826 — same four fields as the partial-refresh builder.
+      adtv_days: e.adtv_days ?? null, turnover_1d_cr: e.turnover_1d_cr ?? null,
+      cash_rule_v: e.cash_rule_v ?? null, yoy_rule_v: e.yoy_rule_v ?? null,
       // ─── zzz668 — THIS IS THE BUILDER THE NORMAL GRADING PATH USES ───────
       //
       // There are TWO row builders in this file: this one, and a second inside

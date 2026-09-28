@@ -35,7 +35,13 @@ export interface FilingRead {
   docType?: string | null;
   /** zzz824: the reader's extraction is low-confidence (garbled table, marketing text) — show the subject + "details in filing". */
   lowConfidence?: boolean;
+  /** zzz825: a restructuring (scheme / demerger / amalgamation) is stated by the SUBJECT or by an explicit
+   *  board-approval / sanction sentence — not by a deck or transcript that merely mentions the word. */
+  restructuringStated?: boolean;
   /** zzz824: a credit-rating action, when the document is a rating letter. */
+  /** zzz829 (US): the DOCUMENT types the event beyond doubt (an 8-K Item 2.01 / an "acquires" headline, a notes
+   *  offering) — it overrides a subject that only says "business update" / "Regulation FD". */
+  strongKind?: boolean;
   ratingAction?: 'upgrade' | 'downgrade' | 'reaffirm' | 'assign' | 'withdraw' | 'revise' | null;
   chars?: number;
   version: string;

@@ -32,7 +32,7 @@ import {
   type EarningsTier,
 } from '@/lib/earnings-grade-shared';
 import { peadScore } from '@/lib/pead-score';
-import { financialKind, type FinancialKind } from '@/lib/india-eo-card-data';
+import { financialKind, realAdtv, type FinancialKind } from '@/lib/india-eo-card-data';
 
 /** The graded card this produces. Deliberately loose: the two callers have
  *  historically disagreed about optional fields, and narrowing it here would
@@ -104,6 +104,9 @@ const GRADE_INPUT_FIELDS = [
   'ocf_to_pat_ratio', 'roce', 'latest_quarter_end_iso', 'financials_source',
   // zzz821 — the fiscal year of the cash figures, and the industry chain.
   'cash_fy', 'cash_basis', 'industry', 'broad_industry', 'broad_sector', 'sector_name',
+  // zzz826 — days the liquidity average covers, the one-day turnover kept
+  // apart from it, and the cash / year-ago rule versions of the figures.
+  'adtv_days', 'turnover_1d_cr', 'cash_rule_v', 'yoy_rule_v',
 ] as const;
 const GRADE_INPUT_TEXT_FIELDS = ['guidance_text', 'narrative_text', 'announcement_text', 'attachment', 'headline', 'title'] as const;
 
@@ -121,6 +124,7 @@ export function pickIndiaGradeInput(row: any): Record<string, any> {
   // could not re-derive; they must survive into the next regrade too.
   if (Array.isArray(row?._carried_caveats) && row._carried_caveats.length) out._carried_caveats = row._carried_caveats.slice();
   if (row?._carried_oneoff_cap) out._carried_oneoff_cap = row._carried_oneoff_cap;
+  if (row?._guidance_prior_tier) out._guidance_prior_tier = row._guidance_prior_tier;
   return out;
 }
 
@@ -290,6 +294,10 @@ export function indiaForensicCheck(i: {
 // distinct problems → MIXED. Weak growth itself (revenue under +5%, or under
 // +15% with only small-base profit growth) → MIXED.
 // ═══════════════════════════════════════════════════════════════════════════
+/** zzz826 — shell-company flags (context only, never the tier). */
+export const IN_VERY_SMALL_MCAP_CR = 100;
+export const IN_BARELY_TRADES_MCAP_CR = 500;
+export const IN_BARELY_TRADES_ADTV_CR = 0.10;
 export const IN_BB_MIN_REVENUE_GROWTH = 15;
 export const IN_BB_WEAK_REVENUE_GROWTH = 5;
 export const IN_BB_SMALL_BASE_PAT_CR = 2;
@@ -1188,6 +1196,18 @@ function _gradeIndiaRow(rowIn: any, drop: (reason: string) => null): IndiaGraded
   const positiveGuidance = _gCut === true ? false
     : _gRaised === true ? true
     : _guidanceMatches >= 2;
+  // zzz826 — WHAT WE KNOW ABOUT GUIDANCE, SAID PLAINLY. "Not raised" needs
+  // evidence: an explicit overlay answer, or filing text that was read and
+  // holds no raise. With neither (a card-figure regrade, a company the
+  // overlay has not seen and no text) guidance is UNKNOWN — it can hold back
+  // the one top-tier path that needs a confirmation, but it is never a
+  // reason for a lower grade and is never written as "not raised".
+  const guidance_status: 'raised' | 'cut' | 'positive outlook' | 'not raised' | 'unknown' =
+    _gCut === true ? 'cut'
+    : _gRaised === true ? 'raised'
+    : _guidanceMatches >= 2 ? 'positive outlook'
+    : (_gRaised === false || _gCut === false || guidanceText.trim().length > 0) ? 'not raised'
+    : 'unknown';
 
   // zzz800 — the loss-narrowing operating turnaround (see decideTier). Every
   // input is a reported figure: the prior loss at least halved, revenue up
@@ -1209,7 +1229,7 @@ function _gradeIndiaRow(rowIn: any, drop: (reason: string) => null): IndiaGraded
   // method count is the fundamental one, and the Tier-1 methods (which are
   // chart methods) count for nothing. India has no street consensus, so the
   // only Path-A confirmation left is guidance — as it should be.
-  tier = decideTier({
+  const _decideIn = {
     composite: tierComposite,
     broken,
     stillLossMaking,
@@ -1251,7 +1271,28 @@ function _gradeIndiaRow(rowIn: any, drop: (reason: string) => null): IndiaGraded
     tier1MethodCount: 0,
     positiveGuidance,
     chartOk: true,
-  }).tier;
+  };
+  tier = decideTier(_decideIn).tier;
+  // zzz826 — unknown guidance BLOCKS, never DEMOTES. If the only thing
+  // between this quarter and a higher tier is a guidance confirmation we do
+  // not have, a fresh grade stays at the lower tier (the confirmation is
+  // missing — that is a block, stated in `guidance_note`). A REGRADE of a
+  // stored card whose original grade HAD the guidance evidence (and reached
+  // the higher tier with it) keeps that tier: losing a figure in storage is
+  // not new information about the company.
+  let guidance_note: string | null = null;
+  if (guidance_status === 'unknown') {
+    const _withG = decideTier({ ..._decideIn, positiveGuidance: true }).tier;
+    if (_withG !== tier) {
+      const _prior = typeof rowIn?._guidance_prior_tier === 'string' ? rowIn._guidance_prior_tier : null;
+      if (_prior === _withG) {
+        tier = _withG;
+        guidance_note = 'not on file for this regrade; the original grade had it, so its tier is kept';
+      } else {
+        guidance_note = `so it could not confirm ${_withG}; it does not lower the grade`;
+      }
+    }
+  }
   if (lossTurnaround && tier === 'STRONG' && !methodology_tags.includes('operating turnaround')) {
     // Pushed AFTER composite, so it describes the verdict without scoring it.
     methodology_tags.push('operating turnaround');
@@ -1279,7 +1320,10 @@ function _gradeIndiaRow(rowIn: any, drop: (reason: string) => null): IndiaGraded
   // PATCH 1034 — liquidity. zzz819: a thin float is a fact about TRADING the
   // stock, not about the quarter, so it is market context (as on the US side
   // since zzz804) and no longer demotes the tier. Missing ADTV says nothing.
-  const _adtv = (typeof row?.adtv_cr === 'number' && Number.isFinite(row.adtv_cr)) ? row.adtv_cr : null;
+  // zzz826 — only a REAL multi-day average counts (realAdtv: `adtv_cr` with
+  // the days it covers). A stored one-day turnover, or nothing, is unknown,
+  // and unknown liquidity never says "thin float" or "barely trades".
+  const _adtv = realAdtv(row).cr;
   const _thinFloat = _adtv != null && _adtv < 1;  // < ₹1 Cr/day median traded value = thin float
   if (_thinFloat) market_context.push('thin float');
 
@@ -1482,13 +1526,16 @@ function _gradeIndiaRow(rowIn: any, drop: (reason: string) => null): IndiaGraded
         && !caveat_tags.includes('lender — operating cash flow is loan growth')) {
       caveat_tags.push('lender — operating cash flow is loan growth');
     }
-    const _mcap = typeof row?.market_cap_cr === 'number' ? row.market_cap_cr : null;
-    const _adtv = typeof row?.adtv_cr === 'number' ? row.adtv_cr : null;
-    if (_mcap != null && _mcap < 100) {
-      capTier('MIXED', 'below investable size');
-    } else if (_mcap != null && _mcap < 500 && _adtv != null && _adtv < 0.10) {
-      capTier('MIXED', 'barely trades');
-    }
+    // zzz826 — MOVED OUT OF THE TIER. Market cap and traded value are both
+    // share-price figures, and the India tier is price-free. The shell filter
+    // survives as two plain flags beside the grade (`size_flags`, below); the
+    // page's Mkt Cap filter is what hides small companies.
+  }
+  const size_flags: string[] = [];
+  {
+    const _mcap = typeof row?.market_cap_cr === 'number' && Number.isFinite(row.market_cap_cr) && row.market_cap_cr > 0 ? row.market_cap_cr : null;
+    if (_mcap != null && _mcap < IN_VERY_SMALL_MCAP_CR) size_flags.push('very small company');
+    else if (_mcap != null && _mcap < IN_BARELY_TRADES_MCAP_CR && _adtv != null && _adtv < IN_BARELY_TRADES_ADTV_CR) size_flags.push('barely trades');
   }
 
   // ── zzz819 / zzz821 — THE BLOCKBUSTER GATE, THE STRONG FLOOR, THE HOLD ──
@@ -1586,7 +1633,8 @@ function _gradeIndiaRow(rowIn: any, drop: (reason: string) => null): IndiaGraded
   // Chart / liquidity facts other than the Day-1 reaction, stated AFTER the
   // verdict and labelled as not part of it.
   const _ctxOther = market_context.filter((t) => !MARKET_REACTION_CAVEATS.has(t));
-  const _ctxNote = _ctxOther.length ? ` Price context (not part of the grade): ${_ctxOther.join(', ')}.` : '';
+  const _ctxNote = (_ctxOther.length ? ` Price context (not part of the grade): ${_ctxOther.join(', ')}.` : '')
+    + (size_flags.length ? ` Size context (not part of the grade): ${size_flags.join(', ')}.` : '');
   const _basisNote = growth_basis_note ? ` Growth ${growth_basis_note}.` : '';
   const narrative = `${head} (${metrics})${flavor}${_basisNote}${market_reaction ? ' ' + market_reaction.note : ''}${_ctxNote}`;
 
@@ -1740,6 +1788,20 @@ function _gradeIndiaRow(rowIn: any, drop: (reason: string) => null): IndiaGraded
     market_reaction,
     // zzz819 — price facts shown beside the grade, never part of it.
     market_context: Array.from(new Set(market_context)),
+    // zzz826 — shell-company flags (market-cap / traded-value based, so they
+    // are price context too): 'very small company' | 'barely trades'.
+    size_flags: size_flags.length ? size_flags : null,
+    // zzz826 — liquidity: the real multi-day average only, with its days; the
+    // one-day turnover kept apart and never used as the average.
+    adtv_days: _adtv != null ? (realAdtv(row).days ?? null) : null,
+    turnover_1d_cr: (typeof row?.turnover_1d_cr === 'number' && Number.isFinite(row.turnover_1d_cr)) ? row.turnover_1d_cr : null,
+    // zzz826 — 'raised' | 'cut' | 'positive outlook' | 'not raised' | 'unknown'.
+    guidance_status,
+    guidance_note,
+    // zzz826 — rule versions of the figures (for the prewarm re-fetch).
+    cash_rule_v: typeof row?.cash_rule_v === 'number' ? row.cash_rule_v : null,
+    yoy_rule_v: typeof row?.yoy_rule_v === 'number' ? row.yoy_rule_v : null,
+    ocf_annual_cr: _cashView.ocf, pat_annual_cr: _cashView.pat,
     // zzz819 — why a BLOCKBUSTER-on-the-numbers quarter was held lower, in one
     // plain line ("Capped at STRONG: revenue grew only 5%"). Null otherwise.
     tier_cap_reason,

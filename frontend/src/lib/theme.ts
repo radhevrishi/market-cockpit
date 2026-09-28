@@ -120,3 +120,7 @@ export const THEMES: Record<ThemeName, ThemePalette> = {
 
 export const DEFAULT_THEME: ThemeName = 'dark';
 export const THEME_STORAGE_KEY = 'mc-theme';
+/** zzz825: the header ☀/🌙 toggle — 'light' | 'dark' (default dark). */
+export const SCREEN_THEME_KEY = 'mc:screen-theme:v1';
+/** zzz825: runs before React paints, so a light choice never flashes dark. No data, no network. */
+export const SCREEN_THEME_EARLY = "try{var t=window.localStorage.getItem('mc:screen-theme:v1');if(t==='light'){var h=document.documentElement;h.setAttribute('data-theme','light');h.classList.remove('dark');h.style.colorScheme='light';}}catch(e){}";

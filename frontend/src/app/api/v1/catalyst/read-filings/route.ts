@@ -23,7 +23,7 @@ import { createHash } from 'crypto';
 import { kvGet, kvSet } from '@/lib/kv';
 import { extractPdfText } from '@/lib/pdf-text-extractor';
 import { fetchEdgarDocuments, htmlToText } from '@/lib/ai-gainers/edgar-research';
-import { readFilingText, toFilingRead, FILING_READ_VERSION } from '@/lib/catalyst/filing-read';
+import { readFilingText, toFilingRead, filingReadVersion } from '@/lib/catalyst/filing-read';
 import type { FilingRead } from '@/lib/catalyst/filing-read-types';
 
 export const runtime = 'nodejs';
@@ -42,7 +42,7 @@ const ALLOWED_HOST = /(^|\.)(bseindia\.com|nseindia\.com|sec\.gov)$/i;
 const mem = new Map<string, FilingRead>();
 const failMemo = new Map<string, { at: number; read: FilingRead }>();
 
-const keyOf = (url: string) => `pc-filing-read:${FILING_READ_VERSION}:${createHash('sha1').update(url.trim()).digest('hex').slice(0, 20)}`;
+const keyOf = (url: string, market: 'IN' | 'US') => `pc-filing-read:${filingReadVersion(market)}:${createHash('sha1').update(url.trim()).digest('hex').slice(0, 20)}`;
 
 /** Exchange / SEC hosts, or a company's own published PDF (screener.in concall links point there).
  *  Never a bare IP, localhost or an internal name. */
@@ -102,24 +102,25 @@ async function usText(url: string): Promise<{ text: string; failure: string | nu
 interface Item { url: string; ticker: string; subject: string; date: string | null; company: string | null }
 
 async function readOne(it: Item, market: 'IN' | 'US'): Promise<FilingRead> {
-  const k = keyOf(it.url);
+  const k = keyOf(it.url, market);
+  const ver = filingReadVersion(market);
   const m = mem.get(k);
   if (m) return m;
   const f = failMemo.get(k);
   if (f && Date.now() - f.at < FAIL_MEMO_MS) return f.read;
   try {
     const hit = await kvGet<FilingRead>(k);
-    if (hit && hit.status === 'read' && hit.version === FILING_READ_VERSION) { mem.set(k, hit); return hit; }
+    if (hit && hit.status === 'read' && hit.version === ver) { mem.set(k, hit); return hit; }
   } catch { /* cold cache */ }
-  if (!allowed(it.url)) return toFilingRead(it.url, null, 'not an exchange, SEC or company PDF address — not fetched');
+  if (!allowed(it.url)) return toFilingRead(it.url, null, 'not an exchange, SEC or company PDF address — not fetched', new Date(), ver);
   const got = market === 'US' ? await usText(it.url) : await indiaText(it.url);
   if (got.failure) {
-    const read = toFilingRead(it.url, null, got.failure);
+    const read = toFilingRead(it.url, null, got.failure, new Date(), ver);
     failMemo.set(k, { at: Date.now(), read });
     return read;
   }
   const core = readFilingText({ subject: it.subject, text: got.text, market, company: it.company, issuer: it.ticker, date: it.date, url: it.url });
-  const read = toFilingRead(it.url, core, null);
+  const read = toFilingRead(it.url, core, null, new Date(), ver);
   if (read.status === 'read') {
     mem.set(k, read);
     if (mem.size > 2000) mem.delete(mem.keys().next().value as string);
@@ -144,12 +145,12 @@ export async function POST(req: NextRequest) {
     while (next < items.length) {
       const i = next++;
       const left = CALL_BUDGET_MS - (Date.now() - t0);
-      if (left < 3_000) { out[i] = toFilingRead(items[i].url, null, 'not reached in this pass — will retry'); continue; }
+      if (left < 3_000) { out[i] = toFilingRead(items[i].url, null, 'not reached in this pass — will retry', new Date(), filingReadVersion(market)); continue; }
       out[i] = await withTimeout(readOne(items[i], market), Math.min(left - 1_000, DOC_TIMEOUT_MS * 2 + 2_000),
-        toFilingRead(items[i].url, null, 'timed out reading the document — will retry'));
+        toFilingRead(items[i].url, null, 'timed out reading the document — will retry', new Date(), filingReadVersion(market)));
     }
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, items.length) }, worker));
-  return NextResponse.json({ ok: true, market, version: FILING_READ_VERSION, reads: out, ms: Date.now() - t0 },
+  return NextResponse.json({ ok: true, market, version: filingReadVersion(market), reads: out, ms: Date.now() - t0 },
     { headers: { 'Cache-Control': 'no-store' } });
 }

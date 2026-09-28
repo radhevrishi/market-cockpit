@@ -60,6 +60,7 @@ export default function BookCheckPanel({ check, market }: { check: BookCheck | n
       <NameList title="Saved holdings NOT shown in My book (reason)" items={check.notShown.map((x) => ({ symbol: x.symbol, text: x.reason }))} empty="none — every saved holding is shown" warn />
       <NameList title="Shown as a holding but NOT in your saved holdings (should be zero)" items={check.notSaved.map((x) => ({ symbol: x.symbol, text: x.reason }))} empty="none ✓" warn />
       <NameList title="On the bench, and why (you do not hold these)" items={check.bench.map((x) => ({ symbol: x.symbol, text: x.why }))} empty="no bench names" />
+      {(check.bseUnmatched || []).length > 0 && <NameList title="Saved as a BSE code — no NSE symbol found (reason)" items={check.bseUnmatched.map((x) => ({ symbol: x.symbol, text: x.reason }))} empty="" warn />}
       {check.ignored.length > 0 && <NameList title="Ignored — on an old list only, not a saved holding" items={check.ignored.map((x) => ({ symbol: x.symbol, text: x.reason }))} empty="" />}
     </details>
   );

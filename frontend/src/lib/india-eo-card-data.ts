@@ -1,3 +1,4 @@
+import { CASH_RATIO_HIGH, CASH_RULE_V } from './india-cash';  // zzz826
 // ═══════════════════════════════════════════════════════════════════════════
 // INDIA EARNINGS OPPORTUNITIES — WHAT A CARD MAY HONESTLY SHOW  (zzz820)
 //
@@ -206,8 +207,15 @@ export function marginView(r: any, opts: { newlyListed?: boolean } = {}): Margin
  * year-ago block carries all three together; only the positional fallback
  * fills sales and EPS without profit).
  */
+/** Version of the year-ago matching rule enrichment applied (zzz820 date
+ *  match = 2). A row carrying it was matched by date, so it is never
+ *  UNCONFIRMED, whatever shape its figures have. */
+export const YOY_RULE_V = 2;
+
 export function yearAgoUnverified(r: any): boolean {
   if (!r) return false;
+  if (fin(r.yoy_rule_v) && r.yoy_rule_v >= YOY_RULE_V) return false;
+  if (fin(r.grade_input?.yoy_rule_v) && r.grade_input.yoy_rule_v >= YOY_RULE_V) return false;
   const src = String(r.source || r.financials_source || '');
   if (src !== 'screener-worker') return false;
   if (!fin(r.pat_curr_cr) || fin(r.pat_prev_cr)) return false;
@@ -260,10 +268,17 @@ export function axisWord(v: any, kind: 'quality' | 'inflection'): string | null 
   return v >= 70 ? 'strong inflection' : v >= 45 ? 'some inflection' : 'little inflection';
 }
 
+/** zzz827 — THE drift banding, shared by EO and the Conviction Beats tab
+ *  (so one stock reads the same word on both pages). */
+export function driftBand(v: any): 'strong' | 'moderate' | 'weak' | null {
+  if (!fin(v)) return null;
+  return v >= 70 ? 'strong' : v >= 50 ? 'moderate' : 'weak';
+}
+
 /** Post-earnings drift signal as a word. */
 export function driftWord(v: any): string | null {
-  if (!fin(v)) return null;
-  return v >= 70 ? 'strong drift signal' : v >= 50 ? 'moderate drift signal' : 'weak drift signal';
+  const b = driftBand(v);
+  return b ? `${b} drift signal` : null;
 }
 
 /** A quadrant component ("cash conversion 20/20") as words. */
@@ -421,6 +436,60 @@ export function unconfirmedRows(p: any): number {
   return n;
 }
 
+// ─── zzz826 — stored rows whose cash figures predate the current rule ────
+
+/**
+ * True when a stored row's cash figures were fetched under an older cash rule
+ * and a fresh fetch could change them: no fiscal-year basis at all (graded
+ * before the same-year fix, or regraded from card figures), or a same-year
+ * pair whose ratio was hidden by the old ±8x limit. Never for a lender or
+ * insurer (the test does not apply) and never once the row carries the
+ * current `cash_rule_v` (a fresh fetch already ran; a Screener page with no
+ * cash figures stays unknown rather than being re-fetched for ever).
+ */
+export function needsCashRefetch(r: any): boolean {
+  if (!r || typeof r !== 'object') return false;
+  const v = fin(r.cash_rule_v) ? r.cash_rule_v : fin(r.grade_input?.cash_rule_v) ? r.grade_input.cash_rule_v : 0;
+  if (v >= CASH_RULE_V) return false;
+  if (r.fin_kind || r.cash_note === 'not meaningful for lenders' || financialKindOfRow(r)) return false;
+  const hasFigures = [r.sales_curr_cr, r.pat_curr_cr, r.eps_curr].some(fin);
+  if (!hasFigures) return false;   // a preview card; the fill pass handles those
+  const basis = typeof r.cash_basis === 'string' && r.cash_basis.trim();
+  if (!basis) return true;
+  const ratio = [r.ocf_to_pat_ratio, r.cfo_to_pat_ratio].find(fin);
+  const gi = r.grade_input || {};
+  const ocf = fin(gi.ocf_annual_cr) ? gi.ocf_annual_cr : fin(r.ocf_annual_cr) ? r.ocf_annual_cr : null;
+  const pat = fin(gi.pat_annual_cr) ? gi.pat_annual_cr : fin(r.pat_annual_cr) ? r.pat_annual_cr : null;
+  return ratio == null && ocf != null && pat != null && pat > 0 && Math.abs(ocf / pat) > CASH_RATIO_HIGH;
+}
+
+/** How many rows of a stored day need a cash re-fetch (for the prewarm re-check). */
+export function cashRefetchRows(p: any): number {
+  let n = 0;
+  for (const list of Object.values(p?.by_tier || {})) {
+    if (Array.isArray(list)) for (const r of list) if (needsCashRefetch(r)) n++;
+  }
+  return n;
+}
+
+/**
+ * The tickers of a stored day whose figures must be fetched FRESH (enrichment
+ * cache bypassed) on a re-check: growth measured against an unverified
+ * year-ago quarter, or cash figures from an older rule. A plain rebuild would
+ * read the enrichment cache and could re-serve the same figures.
+ */
+export function refetchTickers(p: any): string[] {
+  const out = new Set<string>();
+  for (const list of Object.values(p?.by_tier || {})) {
+    if (!Array.isArray(list)) continue;
+    for (const r of list) {
+      const t = String(r?.ticker || '').trim().toUpperCase();
+      if (t && (yearAgoUnverified(r) || needsCashRefetch(r))) out.add(t);
+    }
+  }
+  return Array.from(out);
+}
+
 /** A graded payload without the grader's stored input (never kept in the
  *  browser — it is large and only the server regrade reads it). */
 export function stripGradeInputForStorage<P extends { by_tier?: any }>(p: P): P {
@@ -534,28 +603,51 @@ export function prepareDisplayPayload<P extends { by_tier?: any }>(p: P): P {
  *  not believable as an average (it is a results-day spike or a unit slip). */
 export const MAX_PLAUSIBLE_DAILY_TURNOVER_PCT = 5;
 
-export interface LiquidityView { cr: number | null; note: string | null; title: string }
+export interface LiquidityView {
+  cr: number | null; note: string | null; title: string;
+  /** "avg (20d)" when the figure is a real multi-day average, else null. */
+  label: string | null;
+  /** The one-day (usually results-day) turnover, when that is all we have. */
+  oneDayCr: number | null;
+}
+
+/** Fewest sessions a traded-value figure must cover to count as an average. */
+export const MIN_ADTV_DAYS = 10;
 
 /**
- * The 💧 traded-value chip. Prefers an explicit multi-day average when the
- * feed carries one (adtv_20d_cr / avg_traded_value_cr), else the stored
- * adtv_cr. Shown as '—' when unknown or implausible (above 5% of market cap
- * per day) — the stored figure is sometimes the RESULTS-DAY turnover (the
- * feed's fallback when the multi-day history is blocked), not an average.
+ * The real multi-day average traded value (₹ Cr/day) and the days it covers,
+ * or nulls. zzz826 — `adtv_cr` counts only when it carries `adtv_days`
+ * (enrichment sets that from Yahoo's daily history). A stored `adtv_cr`
+ * without it may be ONE day's turnover (the bhavcopy fallback before zzz826
+ * stored the results-day figure there), so it is unknown, not small.
+ */
+export function realAdtv(r: any): { cr: number | null; days: number | null } {
+  const explicit = [r?.adtv_20d_cr, r?.avg_traded_value_cr].find(fin);
+  if (explicit != null && explicit > 0) return { cr: explicit, days: fin(r?.adtv_days) ? r.adtv_days : 20 };
+  if (fin(r?.adtv_cr) && r.adtv_cr > 0 && fin(r?.adtv_days) && r.adtv_days >= MIN_ADTV_DAYS) return { cr: r.adtv_cr, days: r.adtv_days };
+  return { cr: null, days: null };
+}
+
+/**
+ * The 💧 traded-value chip. Only a real multi-day average is shown ("avg
+ * (20d)"); anything else is '—'. Still hidden when implausible (above 5% of
+ * market cap per day). A one-day turnover is named as such in the tooltip.
  */
 export function liquidityView(r: any): LiquidityView {
-  const avg = [r?.adtv_20d_cr, r?.avg_traded_value_cr].find(fin);
-  const raw = avg != null ? avg : (fin(r?.adtv_cr) ? r.adtv_cr : null);
+  const { cr: raw, days } = realAdtv(r);
+  const oneDay = fin(r?.turnover_1d_cr) && r.turnover_1d_cr > 0 ? r.turnover_1d_cr : null;
   const mcap = fin(r?.market_cap_cr) && r.market_cap_cr > 0 ? r.market_cap_cr : null;
   const base = 'Average value of shares traded per day (₹ Cr).';
-  if (raw == null || raw <= 0) return { cr: null, note: 'not in source', title: `${base} Not available for this company.` };
+  const oneDayBit = oneDay != null ? ` One day's turnover (usually results day) was ₹${oneDay >= 1 ? oneDay.toFixed(1) + ' Cr' : Math.round(oneDay * 100) + ' L'} — one day is not an average, so it is not used.` : '';
+  if (raw == null) return { cr: null, note: 'not in source', label: null, oneDayCr: oneDay, title: `${base} No multi-day average is on file for this company.${oneDayBit}` };
   if (mcap != null && (raw / mcap) * 100 > MAX_PLAUSIBLE_DAILY_TURNOVER_PCT) {
     return {
-      cr: null, note: 'not a daily average',
-      title: `${base} The stored figure (₹${Math.round(raw).toLocaleString('en-IN')} Cr) is ${((raw / mcap) * 100).toFixed(1)}% of the market cap in one day — not believable as an average (it is most likely the results-day turnover), so it is not shown.`,
+      cr: null, note: 'not a daily average', label: null, oneDayCr: oneDay,
+      title: `${base} The stored figure (₹${Math.round(raw).toLocaleString('en-IN')} Cr) is ${((raw / mcap) * 100).toFixed(1)}% of the market cap in one day — not believable as an average, so it is not shown.`,
     };
   }
-  return { cr: raw, note: null, title: avg != null ? `${base} Multi-day average.` : `${base} Median of recent sessions where available.` };
+  const d = days ?? 20;
+  return { cr: raw, note: null, label: `avg (${d}d)`, oneDayCr: oneDay, title: `${base} Median of the last ${d} trading sessions.` };
 }
 
 // ─── Size labels: ONE threshold set, shared with the Mkt Cap filter ───────
@@ -602,7 +694,10 @@ export function cashTileView(r: any): CashTileView {
   if (financialKindOfRow(r)) return { text: '—', note: 'not meaningful for lenders', color: 'none', basis: null };
   const v = [r?.ocf_to_pat_ratio, r?.cfo_to_pat_ratio].find(fin);
   if (v == null || v === 0) return { text: '—', note: 'not in source', color: 'none', basis };
-  const note = v < 0 ? 'operations burned cash' : v < 0.6 ? 'below the divergence line' : v < 1 ? 'partly cash-backed' : 'earnings are cash-backed';
+  // zzz826 — ratios up to ±50x are real now (same-year figures); a very high
+  // one means profit is small next to cash flow, not "super cash-backed".
+  const note = v < 0 ? 'operations burned cash' : v < 0.6 ? 'below the divergence line' : v < 1 ? 'partly cash-backed'
+    : v >= CASH_RATIO_HIGH ? 'profit small vs cash' : 'earnings are cash-backed';
   return { text: `${v.toFixed(2)}x`, note, color: v < 0.6 ? 'bad' : v < 1 ? 'warn' : 'good', basis };
 }
 
