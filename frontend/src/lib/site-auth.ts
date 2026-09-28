@@ -34,6 +34,7 @@ export const PROTECTED_API_PREFIXES = [
   '/api/v1/haiku/',
   '/api/v1/special-focus',       // zzz780 — research memory
   '/api/v1/us-book',             // zzz790 — US book: holdings, cash, bench
+  '/api/v1/catalyst/',            // zzz809 — filing reader (fetches documents; owner only)
   '/api/v1/us-thesis',           // zzz790 — US ledgers, reads (paid AI), special focus
 ] as const;
 

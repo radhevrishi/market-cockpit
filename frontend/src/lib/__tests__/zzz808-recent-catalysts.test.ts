@@ -9,7 +9,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   inWindow, daysAgo, windowStartDay, isRoutine, routineReason, eventTypeOf, badgeOf, thesisTouchFor,
-  mergeRaw, buildRecentCatalysts, filterByType, typeCounts, rawFromLedger, rawFromPersistent, rawFromFeed,
+  mergeFilings, buildRecentCatalysts, filterByType, typeCounts, rawFromLedger, rawFromPersistent, rawFromFeed,
   EVENT_TYPES, type RawEvent,
 } from '../catalyst/recent-events';
 
@@ -47,16 +47,15 @@ describe('10-day window boundary', () => {
   });
 });
 
-describe('newest first', () => {
-  test('sorted by date descending, then by type order', () => {
+describe('newest first (within the same importance and kind)', () => {
+  test('sorted by date descending', () => {
     const r = buildRecentCatalysts([
-      doc({ ticker: 'BETA', date: '2026-09-21', title: 'Investor Presentation' }),
-      doc({ ticker: 'ALPHA', date: '2026-09-27', title: 'Financial Results' }),
-      doc({ ticker: 'GAMMA', date: '2026-09-27', title: 'Bagging/Receiving of orders/contracts' }),
-      doc({ ticker: 'DELTA', date: '2026-09-24', title: 'Commissioning of new plant' }),
+      doc({ ticker: 'BETA', date: '2026-09-21', title: 'Bagging/Receiving of orders/contracts' }),
+      doc({ ticker: 'ALPHA', date: '2026-09-27', title: 'Bagging/Receiving of orders/contracts' }),
+      doc({ ticker: 'DELTA', date: '2026-09-24', title: 'Bagging/Receiving of orders/contracts' }),
     ], TODAY);
-    assert.deepEqual(r.items.map((e) => e.ticker), ['GAMMA', 'ALPHA', 'DELTA', 'BETA']);
-    assert.deepEqual(r.items.map((e) => e.date), ['2026-09-27', '2026-09-27', '2026-09-24', '2026-09-21']);
+    assert.deepEqual(r.items.map((e) => e.ticker), ['ALPHA', 'DELTA', 'BETA']);
+    assert.deepEqual(r.items.map((e) => e.date), ['2026-09-27', '2026-09-24', '2026-09-21']);
   });
 });
 
@@ -102,11 +101,12 @@ describe('routine filtering', () => {
 describe('dedupe across sources', () => {
   const url = 'https://www.bseindia.com/xml-data/corpfiling/AttachLive/abc.pdf';
   test('ledger doc + pending doc + extracted event on the same URL → one row', () => {
-    const rows = mergeRaw([
-      doc({ url, title: 'Bagging/Receiving of orders/contracts', origin: 'ledger-doc' }),
-      doc({ url: url.replace('https://www.', 'http://') + '?x=1', title: 'Bagging/Receiving of orders/contracts', origin: 'pending-doc' }),
-      doc({ url, title: 'Bagging/Receiving of orders/contracts', origin: 'ledger-event', variable: 'order_intake', figure: '₹450 Cr', text: 'Order intake: ₹450 Cr', thesis: 'supports' }),
-    ]);
+    const ctx = { pattern: 'B', fit: 'exact' as const, assessment: null };
+    const rows = buildRecentCatalysts([
+      doc({ url, title: 'Bagging/Receiving of orders/contracts', origin: 'ledger-doc', ctx }),
+      doc({ url: url.replace('https://www.', 'http://') + '?x=1', title: 'Bagging/Receiving of orders/contracts', origin: 'pending-doc', ctx }),
+      doc({ url, title: 'Bagging/Receiving of orders/contracts', origin: 'ledger-event', variable: 'order_intake', direction: 'up', figure: '₹450 Cr', text: 'Order intake: ₹450 Cr', ctx }),
+    ], TODAY).items;
     assert.equal(rows.length, 1);
     assert.equal(rows[0].figure, '₹450 Cr');
     assert.equal(rows[0].thesis, 'supports');
@@ -114,7 +114,7 @@ describe('dedupe across sources', () => {
     assert.deepEqual(rows[0].origins.sort(), ['ledger-doc', 'ledger-event', 'pending-doc']);
   });
   test('the exchange feed (no URL) joins the same-day results PDF', () => {
-    const rows = mergeRaw([
+    const rows = mergeFilings([
       doc({ url, title: 'Financial Results for the quarter ended June 2026', kind: 'results' }),
       ...rawFromFeed([{ ticker: 'ALPHA', reported_at: TODAY, subject: 'Outcome of Board Meeting - Financial Results' }]),
     ]);
@@ -131,7 +131,7 @@ describe('dedupe across sources', () => {
     assert.equal(r.hidden[0].routineWhy, 'duplicate filing');
   });
   test('different names on the same day never merge', () => {
-    const rows = mergeRaw([doc({ ticker: 'ALPHA', url }), doc({ ticker: 'BETA', url })]);
+    const rows = mergeFilings([doc({ ticker: 'ALPHA', url }), doc({ ticker: 'BETA', url })]);
     assert.equal(rows.length, 2);
   });
 });
@@ -154,17 +154,18 @@ describe('type mapping', () => {
     ['Receipt of USFDA approval for ANDA', 'Regulatory approval'],
     ['Preferential allotment of warrants', 'Fund raise'],
     ['Qualified Institutions Placement - launch', 'Fund raise'],
-    ['Disclosure under SEBI Takeover Regulations 29(2)', 'Acquisition'],
-    ['Clarification sought by exchange', 'Other filing'],
+    ['Disclosure under SEBI Takeover Regulations 29(2)', 'Shareholding disclosure'],
+    ['Clarification sought by exchange', 'Exchange clarification'],
+    ['Intimation of a new corporate identity', 'Other filing'],
   ];
   for (const [t, want] of cases) test(`${t} → ${want}`, () => assert.equal(eventTypeOf(t), want));
   test('variable decides when the title does not', () => {
-    assert.equal(eventTypeOf('Clarification', 'order_book'), 'Order win');
+    assert.equal(eventTypeOf('Update', 'order_book'), 'Order win');
     assert.equal(eventTypeOf('Update', 'utilisation'), 'Capex / capacity');
     assert.equal(eventTypeOf('Document', null, 'transcript'), 'Concall / business update');
   });
   test('every type is a plain-words label from the fixed list', () => {
-    assert.equal(EVENT_TYPES.length, 10);
+    assert.equal(EVENT_TYPES.length, 16);
     assert.ok(EVENT_TYPES.includes('Other filing'));
   });
 });
@@ -201,11 +202,14 @@ describe('filter counts', () => {
     doc({ ticker: 'A4', title: 'Transcript of Earnings Call' }),
     doc({ ticker: 'A5', title: 'Closure of Trading Window' }),
   ], TODAY);
-  test('counts per type sum to All and exclude routine', () => {
-    assert.equal(r.counts.All, 4);
+  test('counts per type sum to All and exclude routine and minor', () => {
+    // the transcript is not read yet and has no extracted line → Minor, behind the toggle
+    assert.equal(r.counts.All, 3);
     assert.equal(r.counts['Order win'], 2);
     assert.equal(r.counts.Results, 1);
-    assert.equal(r.counts['Concall / business update'], 1);
+    assert.equal(r.counts['Concall / business update'], 0);
+    assert.equal(r.minor.length, 1);
+    assert.equal(r.hidden.length, 1);
     assert.equal(r.counts['Fund raise'], 0);
     const sum = EVENT_TYPES.reduce((s, t) => s + r.counts[t], 0);
     assert.equal(sum, r.counts.All);
@@ -228,7 +232,7 @@ describe('ledger + persistent adapters', () => {
           { id: 'd4', url: 'https://www.bseindia.com/nodate.pdf', label: 'Something', kind: 'other', source: 'BSE', date_iso: null, outcome: 'read' },
         ],
         events: [
-          { id: 'e1', variable: 'utilisation', before: '68%', after: '81%', unit: '%', evidence_text: 'Utilisation rose to 81% from 68%.', source_document_id: 'd2' },
+          { id: 'e1', variable: 'utilisation', direction: 'up', before: '68%', after: '81%', unit: '%', evidence_text: 'Utilisation rose to 81% from 68%.', source_document_id: 'd2' },
           { id: 'e2', variable: 'order_book', before: null, after: null, unit: null, evidence_text: 'Order book remains healthy.', source_document_id: 'd2' },
           { id: 'e3', variable: 'capex', after: '₹200 Cr', source_document_id: 'd2', record_status: 'SUPERSEDED' },
         ],
@@ -238,11 +242,12 @@ describe('ledger + persistent adapters', () => {
   };
   const assessment = { status: 'STRENGTHENING', checked: [{ key: 'utilisation', verdict: 'improving' }] };
   test('one row per document; figures only from the source; superseded ignored', () => {
-    const r = buildRecentCatalysts(rawFromLedger('ALPHA', 'Alpha Industries', ledger, assessment), TODAY);
-    assert.deepEqual(r.items.map((e) => e.type), ['Order win', 'Concall / business update', 'Results']);
+    const r = buildRecentCatalysts(rawFromLedger('ALPHA', 'Alpha Industries', ledger, assessment, { pattern: 'A', fit: 'exact', assessment }), TODAY);
+    assert.deepEqual(r.items.map((e) => e.type), ['Results', 'Order win', 'Concall / business update']);
     const tr = r.items.find((e) => e.type === 'Concall / business update')!;
     assert.equal(tr.figure, '68% → 81%');
     assert.equal(tr.thesis, 'supports');
+    assert.match(tr.thesisWhy, /utilisation up \(card: improving\)/);
     assert.equal(tr.company, 'Alpha Industries');
     assert.match(tr.what, /\+1 more point/);
     const res = r.items.find((e) => e.type === 'Results')!;

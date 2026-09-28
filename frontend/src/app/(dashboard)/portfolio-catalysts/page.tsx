@@ -40,7 +40,8 @@ import { isSmallMidCap, SMALL_MID_CAP_MAX_CR } from '@/lib/thesis/universe';
 import { priorBackfillPlan } from '@/lib/thesis/prior-period';
 import { evidenceCounts, universeCounts, researchPriorityEligible, researchPriorityTitle, researchWhyLine, exportCounts, evidenceAttention, RESEARCH_EXPORT_STATUSES } from '@/lib/thesis/evidence-counts';
 import NewCatalystsTab from '@/components/catalyst/new-catalysts-tab';
-import { buildRecentCatalysts, rawFromLedger, rawFromPersistent, rawFromFeed, localToday, type RawEvent } from '@/lib/catalyst/recent-events';
+import { buildRecentCatalysts, rawFromLedger, rawFromPersistent, rawFromFeed, localToday, type RawEvent, type ThesisCtx } from '@/lib/catalyst/recent-events';
+import { useFilingReads } from '@/components/catalyst/use-filing-reads';
 import { cbCriteriaLine, nextWindow, PC_PAGE_STEP, readScope, otherBenchLabel } from '@/lib/thesis/pc-bench';
 
 const C = {
@@ -214,24 +215,33 @@ export default function PortfolioCatalystsPage() {
   // event already on file for the names on screen (book + bench after the
   // size filter), plus the persistent-catalyst items and — when it has been
   // run — the exchange results feed. Pure merge in lib/catalyst/recent-events.
+  // zzz813: every non-routine filing in the window is opened and read (server-side, cached per
+  // document, no AI) — the row shows what the document says, not its subject line.
   const today = useMemo(() => localToday(), []);
-  const recentNew = useMemo(() => {
+  const recentRaws = useMemo(() => {
     if (loading || evidenceLoading) return null;
     const raws: RawEvent[] = [];
     const bare = (t: string) => t.toUpperCase().replace(/-(BE|SM|ST|BZ|E1)$/i, '');
-    const bySym = new Map<string, { symbol: string; company: string | null }>();
+    const bySym = new Map<string, { symbol: string; company: string | null; ctx: ThesisCtx }>();
     for (const r of sized) {
       const co = r.graded?.company && String(r.graded.company).toUpperCase() !== r.symbol.toUpperCase() ? String(r.graded.company) : null;
-      bySym.set(bare(r.symbol), { symbol: r.symbol, company: co });
-      raws.push(...rawFromLedger(r.symbol, co, r.ledger, r.assessment));
-      raws.push(...rawFromPersistent(r.symbol, co, detectForRow(r as any), r.assessment));
+      const set = thesisTypes[r.symbol.toUpperCase()];
+      const ctx: ThesisCtx = set ? { pattern: String(set), fit: 'exact', assessment: r.assessment }
+        : r.pattern?.pattern ? { pattern: String(r.pattern.pattern), fit: r.pattern.fit === 'nearest' ? 'provisional' : 'exact', assessment: r.assessment }
+        : { pattern: null, assessment: r.assessment };
+      bySym.set(bare(r.symbol), { symbol: r.symbol, company: co, ctx });
+      raws.push(...rawFromLedger(r.symbol, co, r.ledger, r.assessment, ctx));
+      raws.push(...rawFromPersistent(r.symbol, co, detectForRow(r as any), r.assessment, ctx));
     }
     const feed = recent.plan ? [...recent.plan.due, ...recent.plan.current] : [];
     raws.push(...rawFromFeed(
       feed.filter((f) => bySym.has(bare(f.ticker))).map((f) => ({ ...f, ticker: bySym.get(bare(f.ticker))!.symbol })),
-      (t) => bySym.get(bare(t))?.company || null));
-    return buildRecentCatalysts(raws, today);
-  }, [sized, loading, evidenceLoading, recent.plan, today]);
+      (t) => bySym.get(bare(t))?.company || null, (t) => bySym.get(bare(t))?.ctx || null));
+    return raws;
+  }, [sized, loading, evidenceLoading, recent.plan, thesisTypes]);
+  const readQueue = useMemo(() => (recentRaws ? buildRecentCatalysts(recentRaws, today, { market: 'IN' }).toRead : []), [recentRaws, today]);
+  const { reads: filingReads, progress: readProgress } = useFilingReads(readQueue, 'IN', !!recentRaws);
+  const recentNew = useMemo(() => (recentRaws ? buildRecentCatalysts(recentRaws, today, { market: 'IN', reads: filingReads }) : null), [recentRaws, today, filingReads]);
   const recentNotes = useMemo(() => {
     const n: string[] = [];
     if (note.serverError) n.push(`Your book could not be read from the server (${note.serverError}) — only names held in this browser are covered.`);
@@ -292,7 +302,7 @@ export default function PortfolioCatalystsPage() {
       </div>
 
       {view === 'new' ? (
-        <NewCatalystsTab result={recentNew} loading={loading || evidenceLoading} names={sized.length} sourceNotes={recentNotes} market="IN"
+        <NewCatalystsTab result={recentNew} loading={loading || evidenceLoading} names={sized.length} sourceNotes={recentNotes} market="IN" progress={readProgress}
           onJump={(t) => { setView('board'); setSource('all'); jumpTo(t); }} />
       ) : (<>
       {/* ── WHICH POPULATION. Two numbers, never merged into one. ───────── */}

@@ -17,7 +17,8 @@ import MarketHours from '@/components/MarketHours';
 import RegimeBanner from '@/components/RegimeBanner'; // zzz524 — portal-wide market regime
 import StockPassport from '@/components/StockPassport'; // zzz524 — global one-symbol overlay
 // PATCH 0283 — Surface Conviction Beats count in the global header.
-import { getConvictionTickers } from '@/lib/conviction-beats';
+import { getConvictionTickers, getConvictionList, readConvictionBin } from '@/lib/conviction-beats';
+import { mergeIndiaBench } from '@/lib/fundamentals/universe';
 import { scheduleBookSync } from '@/lib/book-sync-client';
 // zzz796 — installable app: phone tab bar, favourites sheet, menu drawer, install help.
 import MobileNav from '@/components/pwa/MobileNav';
@@ -365,13 +366,31 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
   // the existing lib + listens for cross-tab updates. Clicking jumps to
   // /earnings-opportunities where the bench lives.
   const [convictionCount, setConvictionCount] = useState<number>(0);
+  // zzz813: the badge used to count only THIS BROWSER's copy of the bench
+  // (localStorage, often a handful of names) while the Conviction Beats page
+  // and Portfolio Catalysts read the SERVER list (~300). It now shows the
+  // same merged count they use: server list + names only in this browser −
+  // names removed here (mergeIndiaBench).
+  const [convictionTitle, setConvictionTitle] = useState<string>('');
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const refresh = () => {
-      try { setConvictionCount(getConvictionTickers().size); }
-      catch { setConvictionCount(0); }
+    let server: Array<{ ticker: string; company: string | null; tier: string | null; filing_date: string | null }> | null = null;
+    const recount = () => {
+      try {
+        const local = (getConvictionList() as any[]).map((e) => ({ ticker: String(e?.ticker || ''), company: e?.company || null }));
+        const removed = (readConvictionBin() as any[]).map((e) => String(e?.ticker || '')).filter(Boolean);
+        if (!server) { setConvictionCount(getConvictionTickers().size); setConvictionTitle(`${getConvictionTickers().size} in this browser (server list not read yet)`); return; }
+        const mg = mergeIndiaBench(server, local, removed);
+        setConvictionCount(mg.names.length);
+        setConvictionTitle(`${mg.names.length} names: ${mg.server} on the server list${mg.localOnly ? ` + ${mg.localOnly} only in this browser` : ''}${mg.removed ? ` − ${mg.removed} removed here` : ''}`);
+      } catch { try { setConvictionCount(getConvictionTickers().size); } catch { setConvictionCount(0); } }
     };
-    refresh();
+    const refresh = () => recount();
+    recount();
+    fetch('/api/v1/bench?view=tickers', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (j && Array.isArray(j.entries)) { server = j.entries; recount(); } })
+      .catch(() => { /* badge keeps the browser count, title says so */ });
     window.addEventListener('storage', refresh);
     window.addEventListener('conviction-beats:updated', refresh);
     return () => {
@@ -815,7 +834,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
               {convictionCount > 0 && (
                 <Link
                   href="/earnings-opportunities"
-                  title={`Conviction Beats bench (${convictionCount} tickers). Open Earnings Opportunities to view the bench.`}
+                  title={`Conviction Beats bench — ${convictionTitle || `${convictionCount} tickers`}. Open Earnings Opportunities to view the bench.`}
                   style={{
                     display: 'inline-flex', alignItems: 'center', gap: 5,
                     padding: '5px 10px', borderRadius: 8,

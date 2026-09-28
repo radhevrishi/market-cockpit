@@ -38,7 +38,8 @@ import { UsSpecialFocusPanel } from '@/components/us-special-focus-panel';
 import { STATUS_META, type ThesisStatus } from '@/lib/thesis/status';
 import { evidenceCounts, universeCounts, researchPriorityEligible, researchPriorityTitle } from '@/lib/thesis/evidence-counts';
 import NewCatalystsTab from '@/components/catalyst/new-catalysts-tab';
-import { buildRecentCatalysts, rawFromLedger, rawFromPersistent, localToday, type RawEvent } from '@/lib/catalyst/recent-events';
+import { buildRecentCatalysts, rawFromLedger, rawFromPersistent, localToday, type RawEvent, type ThesisCtx } from '@/lib/catalyst/recent-events';
+import { useFilingReads } from '@/components/catalyst/use-filing-reads';
 import { nextWindow, PC_PAGE_STEP, readScope, otherBenchLabel, cbCriteriaLine } from '@/lib/thesis/pc-bench';
 
 const C = {
@@ -132,20 +133,28 @@ export default function UsPortfolioCatalystsPage() {
   // ── NEW IN THE LAST 10 DAYS. (zzz808) Every dated SEC filing (8-K, 10-Q,
   // 10-K, 20-F, 6-K) and extracted event already on file for the US names on
   // screen (book + bench), plus the persistent-catalyst items.
+  // zzz813: every 8-K in the window is opened (EX-99.1 + the 8-K body) and read deterministically.
   const today = useMemo(() => localToday(), []);
-  const recentNew = useMemo(() => {
+  const recentRaws = useMemo(() => {
     if (loading || evidenceLoading) return null;
     const raws: RawEvent[] = [];
     for (const r of all) {
       const co0 = r.sec?.company || r.graded?.company || null;
       const co = co0 && String(co0).toUpperCase() !== r.symbol.toUpperCase() ? String(co0) : null;
-      raws.push(...rawFromLedger(r.symbol, co, r.ledger, r.assessment));
+      const set = thesisTypes[r.symbol.toUpperCase()];
+      const ctx: ThesisCtx = set ? { pattern: String(set), fit: 'exact', assessment: r.assessment }
+        : r.pattern?.pattern ? { pattern: String(r.pattern.pattern), fit: r.pattern.fit === 'nearest' ? 'provisional' : 'exact', assessment: r.assessment }
+        : { pattern: null, assessment: r.assessment };
+      raws.push(...rawFromLedger(r.symbol, co, r.ledger, r.assessment, ctx));
       let pcs: any[] = [];
       try { pcs = usDetect(r as any); } catch { pcs = []; }
-      raws.push(...rawFromPersistent(r.symbol, co, pcs, r.assessment));
+      raws.push(...rawFromPersistent(r.symbol, co, pcs, r.assessment, ctx));
     }
-    return buildRecentCatalysts(raws, today);
-  }, [all, loading, evidenceLoading, today]);
+    return raws;
+  }, [all, loading, evidenceLoading, thesisTypes]);
+  const readQueue = useMemo(() => (recentRaws ? buildRecentCatalysts(recentRaws, today, { market: 'US' }).toRead : []), [recentRaws, today]);
+  const { reads: filingReads, progress: readProgress } = useFilingReads(readQueue, 'US', !!recentRaws);
+  const recentNew = useMemo(() => (recentRaws ? buildRecentCatalysts(recentRaws, today, { market: 'US', reads: filingReads }) : null), [recentRaws, today, filingReads]);
   const recentNotes = useMemo(() => {
     const n: string[] = [];
     const ecs = evidenceCounts(all as any);
@@ -203,7 +212,7 @@ export default function UsPortfolioCatalystsPage() {
       </div>
 
       {view === 'new' ? (
-        <NewCatalystsTab result={recentNew} loading={loading || evidenceLoading} names={all.length} sourceNotes={recentNotes} market="US"
+        <NewCatalystsTab result={recentNew} loading={loading || evidenceLoading} names={all.length} sourceNotes={recentNotes} market="US" progress={readProgress}
           onJump={(t) => { setView('board'); setSource('all'); jumpTo(t); }} />
       ) : (<>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
