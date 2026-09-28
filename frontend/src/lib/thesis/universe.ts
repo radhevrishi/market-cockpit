@@ -32,6 +32,11 @@
 //      one. The server book is the union partner, never the replacement: a
 //      name added locally and not yet synced still shows.
 //
+// zzz811 — THE PRESET NO LONGER GATES THE BENCH. Every India Conviction
+// Beats name joins (server list + this browser's + the synced book's flags);
+// the preset is a label and a filter chip on the page (lib/thesis/pc-bench).
+// benchPassingPreset below is kept for its callers and tests only.
+//
 // PURE where it can be: the merge and the preset gate take data and return
 // data, so both are tested against fixtures rather than against a browser.
 // ═══════════════════════════════════════════════════════════════════════════

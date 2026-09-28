@@ -44,36 +44,52 @@ export const INDIA_PRESET = {
  * something is wrong with the row, not with the disclosure.
  */
 export function passesIndiaPreset(r: any): boolean {
-  if (!r) return false;
+  return indiaPresetCheck(r).pass;
+}
+
+/**
+ * zzz811 — the same preset, with the REASONS it failed, in plain words.
+ * passesIndiaPreset is this function's `pass`, so the label on a Portfolio
+ * Catalysts bench card and the alert path can never disagree. Every gate
+ * that fails is listed (not just the first), so the card can say why.
+ * No row at all is `pass: false` with the reason "no graded row" — callers
+ * that need "unknown ≠ fail" test for a row first (see presetLabelIndia).
+ */
+export function indiaPresetCheck(r: any): { pass: boolean; reasons: string[] } {
+  if (!r) return { pass: false, reasons: ['no graded row'] };
+  const reasons: string[] = [];
+  const fmt = (n: number) => `${Math.round(n * 10) / 10}`;
 
   const mcap = typeof r.market_cap_cr === 'number' ? r.market_cap_cr : null;
-  if (mcap == null || mcap < INDIA_PRESET.mktCapMin) return false;
+  if (mcap == null) reasons.push('market cap not known');
+  else if (mcap < INDIA_PRESET.mktCapMin) reasons.push(`market cap \u20B9${fmt(mcap)} Cr is below \u20B9${INDIA_PRESET.mktCapMin} Cr`);
 
   const sales = r.sales_yoy_pct;
-  if (typeof sales === 'number' && sales < INDIA_PRESET.sales) return false;
+  if (typeof sales === 'number' && sales < INDIA_PRESET.sales) reasons.push(`sales growth ${fmt(sales)}% is below ${INDIA_PRESET.sales}%`);
 
   const eps = r.eps_yoy_pct;
-  if (typeof eps === 'number' && eps < INDIA_PRESET.eps) return false;
+  if (typeof eps === 'number' && eps < INDIA_PRESET.eps) reasons.push(`EPS growth ${fmt(eps)}% is below ${INDIA_PRESET.eps}%`);
 
   const pead = r.pead_score;
-  if (typeof pead === 'number' && pead < INDIA_PRESET.pead) return false;
+  if (typeof pead === 'number' && pead < INDIA_PRESET.pead) reasons.push('post-results drift reading below the preset');
 
   // Operating-margin direction, expressed the way the grader expresses it.
   if (typeof r.opm_pct === 'number' && typeof r.opm_prev_pct === 'number') {
-    if (r.opm_pct - r.opm_prev_pct < INDIA_PRESET.opmDelta) return false;
+    const d = r.opm_pct - r.opm_prev_pct;
+    if (d < INDIA_PRESET.opmDelta) reasons.push(`operating margin fell ${fmt(Math.abs(d))} points`);
   }
 
   const cfo = r.cfo_to_pat_ratio;
-  if (typeof cfo === 'number' && cfo < INDIA_PRESET.cfoPatMin) return false;
+  if (typeof cfo === 'number' && cfo < INDIA_PRESET.cfoPatMin) reasons.push(`cash from operations is ${fmt(cfo)}x profit (needs ${INDIA_PRESET.cfoPatMin}x)`);
 
   // Pledge: only a KNOWN pledge above the ceiling fails. Null passes.
   const pl = r.pledged_pct;
-  if (typeof pl === 'number' && pl > INDIA_PRESET.pledgedMax) return false;
+  if (typeof pl === 'number' && pl > INDIA_PRESET.pledgedMax) reasons.push(`promoter pledge ${fmt(pl)}%`);
 
   const v = r.verdict ?? r.tier_verdict ?? null;
-  if (typeof v === 'string' && !INDIA_PRESET.verdicts.includes(v.toUpperCase())) return false;
+  if (typeof v === 'string' && !INDIA_PRESET.verdicts.includes(v.toUpperCase())) reasons.push('grader verdict is outside the preset');
 
-  return true;
+  return { pass: reasons.length === 0, reasons };
 }
 
 /** The tiers an alert is allowed to carry. Nothing below STRONG is worth a

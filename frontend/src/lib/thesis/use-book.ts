@@ -23,10 +23,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { normSymbol } from '@/lib/portfolio-symbols';
 import {
-  readHoldingSymbols, fetchServerBook, benchPassingPreset, mergeUniverse,
+  readHoldingSymbols, fetchServerBook, mergeUniverse,
   originCounts, type BookOrigin,
 } from './universe';
 import { readConvictionBeats } from '@/lib/conviction-beats';
+import { buildIndiaBench, presetLabelIndia, cbTicker, IN_CB_SOURCE, type PresetLabel, type IndiaCbInfo } from './pc-bench';
 import { classifyOrNearest, classifyWithFiling, type AbfgResult, manualPattern, type AbfgPattern } from '@/lib/earnings/pattern-abfg';
 import { extractVariables } from './variables';
 import { buildComparisons, historyDepth, type MetricComparison } from './comparison';
@@ -49,6 +50,11 @@ export interface BookRow {
   symbol: string;
   /** Book, bench, or both. A bench name is a candidate, never a holding. */
   origin: BookOrigin;
+  /** zzz811: the quality preset as a LABEL (pass / fail with reasons /
+   *  not checked yet). It never removes a row. */
+  preset?: PresetLabel | null;
+  /** zzz811: which list put a bench name here ("Conviction Beats (India)"). */
+  benchSource?: string | null;
   market: 'IN' | 'US';
   graded: any | null;
   tier: string | null;
@@ -187,6 +193,38 @@ async function postStatus(row: BookRow): Promise<void> {
   } catch { /* history is best-effort; the status itself is recomputed deterministically */ }
 }
 
+/**
+ * zzz811 — India Conviction Beats, as the Conviction Beats pages know it:
+ * the SERVER list (/api/v1/bench?view=tickers — names only, no grade cards;
+ * works on a fresh phone) plus this browser's list.
+ * A failed server read is reported, never returned as an empty list.
+ */
+async function loadIndiaConvictionBench(): Promise<{ server: any[]; local: Array<{ ticker: string; company: string | null }>; removed: string[]; updatedAt: string | null; error: string | null }> {
+  let server: any[] = [];
+  let updatedAt: string | null = null;
+  let error: string | null = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const r = await fetch('/api/v1/bench?view=tickers', { cache: 'no-store' });
+      const j = await readJson(r);
+      if (!r.ok || j?.ok === false) throw new Error(j?.error || `HTTP ${r.status}`);
+      server = Array.isArray(j?.entries) ? j.entries : [];
+      updatedAt = j?.updatedAt || null;
+      error = null;
+      break;
+    } catch (e: any) { error = humanError(e); }
+  }
+  // The recycle bin is NOT subtracted: the Conviction Beats tab itself shows
+  // every server-confirmed name regardless of the bin (zzz426), and the bin
+  // also holds automatic demotions the owner never chose. Same list here.
+  let local: Array<{ ticker: string; company: string | null }> = [];
+  try {
+    const m = await import('@/lib/conviction-beats');
+    local = m.getConvictionList().map((e: any) => ({ ticker: String(e?.ticker || ''), company: e?.company || null })).filter((e) => !!e.ticker);
+  } catch { /* no list in this browser (an installed app starts empty) */ }
+  return { server, local, removed: [], updatedAt, error };
+}
+
 /** zzz774: thesis types the owner set by hand, keyed by symbol. Loaded from
  *  the server once per page; every assessment reads it, so an assignment
  *  survives every later re-classification. */
@@ -287,6 +325,7 @@ function assess(row0: BookRow): BookRow {
   const rowP: BookRow = pattern === row.pattern ? row : { ...row, pattern };
   return {
     ...rowP,
+    preset: row.market === 'US' ? null : presetLabelIndia(row.graded),
     comparisons,
     assessment: withThesisSet(rowP, a0),
     capex,
@@ -299,17 +338,16 @@ function assess(row0: BookRow): BookRow {
 export interface UniverseNote {
   /** Held names, whatever they grade at. */
   book: number;
-  /** Bench candidates that passed the preset and are shown. */
+  /** Bench names on the page (every Conviction Beats name not held). */
   bench: number;
   /** Held AND benched. Counted inside both figures above, never double-added
    *  to the total. */
   both: number;
-  /** Bench candidates the preset rejected. Shown as a number so the page can
-   *  say what it filtered rather than quietly shrinking. */
-  benchFiltered: number;
-  /** Bench candidates with no graded row anywhere — excluded because the
-   *  preset could not be applied, NOT because it failed. */
-  benchUnchecked: number;
+  /** zzz811: the India Conviction Beats list behind the bench — where it
+   *  came from and how it adds up. Null until loaded (or on Exit Radar). */
+  cb: IndiaCbInfo | null;
+  /** Conviction Beats names the owner holds (shown once, as book). */
+  heldOnCb: number;
   /** Non-null when the server book could not be read. */
   serverError: string | null;
 }
@@ -352,7 +390,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
     at: string | null;
   }>({ state: 'idle', days: 10, plan: null, error: null, feedNote: null, feed: null, usSkipped: 0, at: null });
   const [note, setNote] = useState<UniverseNote>({
-    book: 0, bench: 0, both: 0, benchFiltered: 0, benchUnchecked: 0, serverError: null,
+    book: 0, bench: 0, both: 0, cb: null, heldOnCb: 0, serverError: null,
   });
   const rowsRef = useRef<Record<string, BookRow>>({});
   const stopRef = useRef(false);
@@ -386,7 +424,13 @@ export function useBook(opts?: { includeBench?: boolean }) {
       // whether it would pass a conviction filter today.
       let bench: Record<string, any> = {};
       try { bench = readConvictionBeats(); } catch { bench = {}; }
-      const byNorm = new Map(Object.entries(bench).map(([k, v]) => [normSymbol(k), v]));
+      // zzz811: quarter-archive keys ("MTAR@Q3-2026") fold onto the bare
+      // ticker; the bare entry (the latest quarter) wins.
+      const byNorm = new Map<string, any>();
+      for (const [k, v] of Object.entries(bench)) {
+        const t = cbTicker(k);
+        if (t && (!byNorm.has(t) || !k.includes('@'))) byNorm.set(t, v);
+      }
 
       const build = (sym: string, g: any | null, src: string | null): BookRow => assess({
         symbol: sym,
@@ -437,17 +481,36 @@ export function useBook(opts?: { includeBench?: boolean }) {
       universe = mergeUniverse(held, []);
       paint(universe);
 
-      // Bench candidates: the server's bench list, plus anything in this
-      // browser's local bench that the server has not heard of yet.
-      const candidates = includeBench
-        ? Array.from(new Set<string>([
-          ...server.benched,
-          ...Array.from(byNorm.keys()),
-        ])).filter((s) => !held.has(s))
-        : [];
+      // ── THE BENCH IS ALL OF INDIA CONVICTION BEATS.              (zzz811)
+      // The server's list (/api/v1/bench) + this browser's list + the synced
+      // book's bench flags, minus the owner's removals, minus what he holds.
+      // No preset gate: every name joins; the preset is a label on its card.
+      let candidates: string[] = [];
+      let heldOnCb = 0;
+      let cbInfo: IndiaCbInfo | null = null;
+      let cbCompanies: Record<string, string | null> = {};
+      if (includeBench) {
+        const cb = await loadIndiaConvictionBench();
+        if (cancelled) return;
+        const built = buildIndiaBench({
+          held, server: cb.server, local: cb.local, removed: cb.removed,
+          synced: server.benched, updatedAt: cb.updatedAt, serverError: cb.error,
+        });
+        candidates = built.bench;
+        heldOnCb = built.heldOnCb.length;
+        cbInfo = built.info;
+        cbCompanies = built.companies;
+        universe = mergeUniverse(held, candidates);
+        paint(universe);
+        setRows((cur) => {
+          const out = { ...cur };
+          for (const s of candidates) if (out[s]) out[s] = { ...out[s], benchSource: IN_CB_SOURCE };
+          return out;
+        });
+      }
 
       setNote((n) => ({
-        ...n, ...originCounts(universe.values()), serverError: server.error,
+        ...n, ...originCounts(universe.values()), serverError: server.error, cb: cbInfo, heldOnCb,
       }));
 
       // ── STAGE 3 — graded rows for everything, and the preset gate.
@@ -487,15 +550,6 @@ export function useBook(opts?: { includeBench?: boolean }) {
         } catch { /* the filing path still answers for every holding */ }
         if (cancelled) return;
       }
-
-      const gate = benchPassingPreset(candidates, got);
-      universe = mergeUniverse(held, gate.passed);
-      paint(universe);
-      setNote((n) => ({
-        ...n, ...originCounts(universe.values()),
-        benchFiltered: gate.failed, benchUnchecked: gate.unchecked.length,
-        serverError: server.error,
-      }));
 
       setRows((cur) => {
         const out = { ...cur };
@@ -599,64 +653,52 @@ export function useBook(opts?: { includeBench?: boolean }) {
       // sequential margin, no profit figures) get the year-on-year table
       // too. Background, batched, cached server-side for a day; no model.
       try {
-        const wantLive = Array.from(new Set([
-          ...Array.from(universe.keys()).filter((s) => {
-            const g = got[s.toUpperCase()] || rowsRef.current[s]?.graded;
-            return (rowsRef.current[s]?.market !== 'US') && (!g || g.source === 'none' || g.source === 'screener');
-          }),
-          ...benchPassingPreset(candidates, got).unchecked,
-        ]));
+        // Book names first, then the bench — one small request at a time,
+        // so a 300-name bench never fans out into hundreds of calls.
+        const needsLive = (s: string) => {
+          const g = got[s.toUpperCase()] || rowsRef.current[s]?.graded;
+          return (rowsRef.current[s]?.market !== 'US') && (!g || g.source === 'none' || g.source === 'screener');
+        };
+        const keys = Array.from(universe.keys());
+        const wantLive = [
+          ...keys.filter((s) => universe.get(s) !== 'bench' && needsLive(s)),
+          ...keys.filter((s) => universe.get(s) === 'bench' && needsLive(s)),
+        ];
         const live: Record<string, any> = {};
+        const applyLive = (batchRows: Record<string, any>) => {
+          const fresh: Record<string, any> = {};
+          for (const [k, v] of Object.entries(batchRows)) {
+            const cur = got[k];
+            if (!cur || cur.source === 'none' || cur.source === 'screener' || richness(v) > richness(cur)) { got[k] = v; fresh[k] = v; }
+          }
+          if (!Object.keys(fresh).length) return;
+          setRows((cur) => {
+            const out = { ...cur };
+            for (const [k, hit] of Object.entries(fresh)) {
+              const sym = Object.prototype.hasOwnProperty.call(out, k) ? k : Object.keys(out).find((x) => x.toUpperCase() === k);
+              if (!sym || !out[sym]) continue;
+              const prev = out[sym];
+              out[sym] = assess({
+                ...prev, graded: hit, dataSource: 'screener-live',
+                pattern: classifyOrNearest(hit) || prev.pattern,
+                sourceUrl: prev.sourceUrl || hit.source_url || null,
+              });
+            }
+            return out;
+          });
+        };
         for (let i = 0; i < wantLive.length && !cancelled; i += 12) {
           try {
             const r = await fetch(`/api/v1/portfolio/screener-live?tickers=${encodeURIComponent(wantLive.slice(i, i + 12).join(','))}`, { cache: 'no-store' });
             if (!r.ok) continue;
             const j = await readJson(r);
-            for (const [k, v] of Object.entries(j?.rows || {})) if (v) live[k.toUpperCase()] = v;
+            const batchRows: Record<string, any> = {};
+            for (const [k, v] of Object.entries(j?.rows || {})) if (v) { live[k.toUpperCase()] = v; batchRows[k.toUpperCase()] = v; }
+            // Each batch lands as it arrives (progressive), not all at the end.
+            applyLive(batchRows);
           } catch { /* one batch failing leaves those names as they were */ }
         }
         if (cancelled || !Object.keys(live).length) throw new Error('no live rows');
-        for (const [k, v] of Object.entries(live)) {
-          const cur = got[k];
-          if (!cur || cur.source === 'none' || cur.source === 'screener' || richness(v) > richness(cur)) got[k] = v;
-        }
-        const gate2 = benchPassingPreset(candidates, got);
-        const before = new Set(universe.keys());
-        universe = mergeUniverse(held, gate2.passed);
-        paint(universe);
-        setNote((n) => ({
-          ...n, ...originCounts(universe.values()),
-          benchFiltered: gate2.failed, benchUnchecked: gate2.unchecked.length,
-        }));
-        // Ledgers for bench names admitted by this pass.
-        const added = Array.from(universe.keys()).filter((s) => !before.has(s));
-        const addedLedgers: Record<string, CompanyLedger> = {};
-        for (let i = 0; i < added.length && !cancelled; i += 100) {
-          try {
-            const r = await fetch(`/api/v1/portfolio/evidence?tickers=${encodeURIComponent(added.slice(i, i + 100).join(','))}`, { cache: 'no-store' });
-            if (r.ok) Object.assign(addedLedgers, (await readJson(r))?.ledgers || {});
-          } catch { /* the card says NEVER READ */ }
-        }
-        setRows((cur) => {
-          const out = { ...cur };
-          for (const sym of Array.from(universe.keys())) {
-            const hit = live[sym.toUpperCase()];
-            const prev = out[sym];
-            if (!prev) continue;
-            let next = prev;
-            if (hit && (got[sym.toUpperCase()] === hit)) {
-              next = {
-                ...next, graded: hit, dataSource: 'screener-live',
-                pattern: classifyOrNearest(hit) || next.pattern,
-                sourceUrl: next.sourceUrl || hit.source_url || null,
-              };
-            }
-            const l = addedLedgers[sym.toUpperCase()];
-            if (l) next = applyLedger(next, l);
-            if (next !== prev) out[sym] = assess(next);
-          }
-          return out;
-        });
       } catch { /* enrichment only — every card still renders from what it had */ }
       if (cancelled) return;
 
@@ -906,7 +948,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
    * marks only that company NEW EVIDENCE AVAILABLE. Nothing is read.
    */
   const [checkBatch, setCheckBatch] = useState<{ running: boolean; done: number; total: number; found: number }>({ running: false, done: 0, total: 0, found: 0 });
-  const checkAll = useCallback(async (syms: string[], concurrency = 4) => {
+  const checkAll = useCallback(async (syms: string[], concurrency = 3) => {
     const todo = syms.filter((s) => { const r = rowsRef.current[s]; return !!r && r.market !== 'US' && r.state !== 'loading'; });
     if (!todo.length) return;
     stopRef.current = false;
@@ -917,6 +959,9 @@ export function useBook(opts?: { includeBench?: boolean }) {
         const k = i++;
         if (k >= todo.length) return;
         try { await readFiling(todo[k], 'check'); } catch { /* recorded on the row */ }
+        // zzz811: with the full bench (300+ names) the check stays polite —
+        // three at a time and a short pause between calls per worker.
+        if (todo.length > 40 && !stopRef.current) await new Promise((res) => setTimeout(res, 200));
         done++;
         const found = Object.values(rowsRef.current).filter((r) => todo.includes(r.symbol) && (r.freshness?.state === 'NEW_EVIDENCE_AVAILABLE' || r.freshness?.evidence_state === 'NEW_EVIDENCE_AVAILABLE')).length;
         setCheckBatch((b) => ({ ...b, done, found }));

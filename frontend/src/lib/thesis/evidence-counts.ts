@@ -123,7 +123,8 @@ export interface UniverseCounts {
   /** "131 total − 12 large caps hidden = 119 shown = 53 book + 66 bench". */
   line: string;
 }
-export function universeCounts(allRows: UniverseRow[], shownRows: UniverseRow[], constructive: string[]): UniverseCounts {
+/** zzz811: `market` picks the wording — the US page must never say NSE. */
+export function universeCounts(allRows: UniverseRow[], shownRows: UniverseRow[], constructive: string[], opts?: { market?: 'IN' | 'US' }): UniverseCounts {
   const total = allRows.length, shown = shownRows.length;
   const hiddenLargeCap = total - shown;
   let book = 0, bench = 0, evaluated = 0, provisional = 0, provisionalWeak = 0, promoted = 0, exportable = 0, exportableUs = 0;
@@ -146,7 +147,9 @@ export function universeCounts(allRows: UniverseRow[], shownRows: UniverseRow[],
   const line = `${total} total${hiddenLargeCap ? ` − ${hiddenLargeCap} large caps hidden` : ''} = ${shown} shown = ${book} book + ${bench} bench`
     + ` · ${evaluated} evaluated${notAssessed ? ` + ${notAssessed} not yet assessed` : ''}`
     + ` · ${byStatus.THESIS_NOT_SET || 0} thesis not set · ${provisional} provisional (nearest-fit${provisionalWeak ? `, ${provisionalWeak} of them a weak fit` : ''})${promoted ? ` · ${promoted} type${promoted === 1 ? '' : 's'} confirmed from filings` : ''}`
-    + ` · ${exportable} eligible for research export (NSE)${exportableUs ? ` + ${exportableUs} US eligible` : ''} + ${excludedN} excluded = ${exportable + exportableUs + excludedN} evaluated`;
+    + (opts?.market === 'US'
+      ? ` · ${exportable + exportableUs} eligible for research export (US-listed, SEC filers) + ${excludedN} excluded = ${exportable + exportableUs + excludedN} evaluated`
+      : ` · ${exportable} eligible for research export (NSE)${exportableUs ? ` + ${exportableUs} US eligible` : ''} + ${excludedN} excluded = ${exportable + exportableUs + excludedN} evaluated`);
   return { total, hiddenLargeCap, shown, book, bench, evaluated, notAssessed, byStatus, statusSum, thesisNotSet: byStatus.THESIS_NOT_SET || 0,
     provisional, provisionalWeak, promoted, exportable, exportableUs, excluded, excludedN, line };
 }

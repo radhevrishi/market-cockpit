@@ -31,7 +31,7 @@
 'use client';
 
 import TickerExportToolbar from '@/components/TickerExportToolbar';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useBook } from '@/lib/thesis/use-book';
 import { ThesisCard } from '@/components/thesis-card';
 import { SpecialFocusPanel, PersistentStrip, detectForRow } from '@/components/special-focus-panel';
@@ -41,6 +41,7 @@ import { priorBackfillPlan } from '@/lib/thesis/prior-period';
 import { evidenceCounts, universeCounts, researchPriorityEligible, researchPriorityTitle, researchWhyLine, exportCounts, evidenceAttention, RESEARCH_EXPORT_STATUSES } from '@/lib/thesis/evidence-counts';
 import NewCatalystsTab from '@/components/catalyst/new-catalysts-tab';
 import { buildRecentCatalysts, rawFromLedger, rawFromPersistent, rawFromFeed, localToday, type RawEvent } from '@/lib/catalyst/recent-events';
+import { benchPresetCounts, indiaBenchLine, nextWindow, PC_PAGE_STEP, readScope, otherBenchLabel } from '@/lib/thesis/pc-bench';
 
 const C = {
   bg: 'var(--mc-bg-1)', border: 'var(--mc-bg-4)', text: 'var(--tc-text, #F1F5F9)',
@@ -70,7 +71,12 @@ export default function PortfolioCatalystsPage() {
   // are always stated separately — a holding and a candidate are different
   // objects and the header never adds them into a single "holdings" figure
   // the way this page used to.
-  const [source, setSource] = useState<'all' | 'book' | 'bench'>('all');
+  // zzz811: + 'benchPass' — the bench names that pass the quality preset.
+  // The preset is a filter you choose, never a silent removal.
+  const [source, setSource] = useState<'all' | 'book' | 'bench' | 'benchPass'>('all');
+  // zzz811: progressive rendering — 300+ bench cards never render at once.
+  const [shownN, setShownN] = useState(PC_PAGE_STEP);
+  const moreRef = useRef<HTMLDivElement | null>(null);
   // The preset has a market-cap floor and no ceiling, so it admits TITAN and
   // HINDALCO. This is on by default and the count it hides is printed beside
   // it — a size filter is allowed to be opinionated, not allowed to be quiet.
@@ -87,10 +93,16 @@ export default function PortfolioCatalystsPage() {
     r.origin !== 'bench' || !smallMidOnly || isSmallMidCap(r.graded)), [all, smallMidOnly]);
   const hiddenByCap = all.length - sized.length;
 
-  const inSource = useMemo(() => sized.filter((r) =>
+  // zzz811: a held name is shown ONCE, in My book; "Bench" is the names you
+  // do not hold, so All = My book + Bench exactly.
+  const inView = (r: { origin: string; preset?: { state?: string } | null }) =>
     source === 'all' ? true
       : source === 'book' ? (r.origin === 'book' || r.origin === 'both')
-      : (r.origin === 'bench' || r.origin === 'both')), [sized, source]);
+      : source === 'bench' ? r.origin === 'bench'
+      : r.origin === 'bench' && r.preset?.state === 'pass';
+  const inSource = useMemo(() => sized.filter(inView), [sized, source]);
+  const presetAll = useMemo(() => benchPresetCounts(all), [all]);
+  const presetShown = useMemo(() => benchPresetCounts(sized), [sized]);
 
   // zzz784: one set of header numbers from the same arrays; a row without an
   // assessment is "not yet assessed", never counted into NO MATERIAL CHANGE.
@@ -101,9 +113,7 @@ export default function PortfolioCatalystsPage() {
   const counts = ucView.byStatus;
 
   const list = useMemo(() => {
-    let f = sized;
-    if (source === 'book') f = f.filter((r) => r.origin === 'book' || r.origin === 'both');
-    if (source === 'bench') f = f.filter((r) => r.origin === 'bench' || r.origin === 'both');
+    let f = inSource;
     if (filter) f = f.filter((r) => r.assessment?.status === filter);
     if (onlyRead) f = f.filter((r) => r.state === 'done');
     // Sorted by SEVERITY, never by price and never alphabetically: the thing
@@ -118,10 +128,42 @@ export default function PortfolioCatalystsPage() {
       if (ad !== bd) return bd - ad;
       return a.symbol.localeCompare(b.symbol);
     });
-  }, [sized, filter, onlyRead, source]);
+  }, [inSource, filter, onlyRead]);
+
+  // zzz811: the card window resets when the view changes and grows as you
+  // scroll (or click "show more") — the page never mounts 300 cards at once.
+  useEffect(() => { setShownN(PC_PAGE_STEP); }, [source, filter, onlyRead, smallMidOnly]);
+  useEffect(() => {
+    const el = moreRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver((es) => {
+      if (es.some((e) => e.isIntersecting)) setShownN((n) => nextWindow(n, list.length));
+    }, { rootMargin: '600px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [list.length, shownN]);
+  const visible = useMemo(() => list.slice(0, shownN), [list, shownN]);
+  // A jump (Special Focus, research priority, New · last 10 days) to a card
+  // beyond the window first widens the window, then scrolls.
+  const [pendingJump, setPendingJump] = useState<string | null>(null);
+  const jumpTo = (t: string) => { setFilter(null); setOnlyRead(false); setPendingJump(t); };
+  useEffect(() => {
+    if (!pendingJump) return;
+    const idx = list.findIndex((r) => r.symbol === pendingJump);
+    if (idx < 0) {
+      if (source !== 'all') { setSource('all'); return; }
+      if (smallMidOnly) { setSmallMidOnly(false); return; }
+      setPendingJump(null);
+      return;
+    }
+    if (idx >= shownN) { setShownN(idx + PC_PAGE_STEP); return; }
+    const t = pendingJump;
+    setPendingJump(null);
+    setTimeout(() => document.getElementById(`pc-${t}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+  }, [pendingJump, list, shownN, source, smallMidOnly]);
 
   // zzz780 — persistence test per holding, from its ledger + assessment only.
-  const persistBySymbol = useMemo(() => new Map(list.map((r) => [r.symbol, detectForRow(r as any)] as const)), [list]);
+  const persistBySymbol = useMemo(() => new Map(visible.map((r) => [r.symbol, detectForRow(r as any)] as const)), [visible]);
 
   // COUNTS COME FROM THE LEDGER, not from a transient counter. A name has
   // evidence when its persisted ledger holds a period — that is what
@@ -136,7 +178,14 @@ export default function PortfolioCatalystsPage() {
   // zzz790: ONE definition of "needs attention" for the header and the button
   // (unread = no persisted period; requires update = newer / stale / failed).
   const attention = evidenceAttention(inSource as any);
-  const attentionInList = evidenceAttention(list as any);
+  // zzz811: bulk reads cover the book + preset-passing bench by default; the
+  // rest of the bench is its own manual button (see readScope).
+  const scope = readScope(list);
+  const attentionInList = evidenceAttention(scope.primary as any);
+  const attentionOther = evidenceAttention(scope.otherBench as any);
+  const primarySyms = scope.primary.map((r) => r.symbol);
+  const otherSyms = scope.otherBench.map((r) => r.symbol);
+  const primaryUnread = attentionInList.unread.length;
   // EVIDENCE INCOMPLETE because a core financial has no grader row — and the
   // stored read predates the headline prompt (india-ai-summary-v9), so a
   // re-read can fill it. A v9 read that still shows ⊘ is a filing that does
@@ -185,8 +234,10 @@ export default function PortfolioCatalystsPage() {
     const ecs = evidenceCounts(sized);
     if (ecs.source_unavailable > 0) n.push(`${ecs.source_unavailable} name${ecs.source_unavailable === 1 ? '' : 's'}: the filing source could not be reached on the last check, so a new filing may be missing.`);
     if (ecs.retrieval_failed > 0) n.push(`${ecs.retrieval_failed} name${ecs.retrieval_failed === 1 ? '' : 's'}: filings were found but could not be downloaded or read.`);
-    const never = sized.filter((r) => !r.ledger).length;
-    if (never > 0) n.push(`${never} name${never === 1 ? ' has' : 's have'} never been checked for filings, so nothing new can show for ${never === 1 ? 'it' : 'them'} yet.`);
+    const neverRows = sized.filter((r) => !r.ledger);
+    const never = neverRows.length;
+    const neverBench = neverRows.filter((r) => r.origin === 'bench').length;
+    if (never > 0) n.push(`${never} name${never === 1 ? ' has' : 's have'} never been checked for filings (${never - neverBench} in your book, ${neverBench} on the bench), so nothing new can show for ${never === 1 ? 'it' : 'them'} yet — "Check all for new evidence" on the board searches them, a few at a time, with no AI.`);
     if (recent.state === 'error' && recent.error) n.push(recent.error);
     if (recent.feed && recent.feed.days_failed.length > 0) n.push(`Exchange results feed answered nothing for ${recent.feed.days_failed.join(', ')}.`);
     return n;
@@ -199,7 +250,7 @@ export default function PortfolioCatalystsPage() {
         {note.serverError
           ? <>Your book could not be read — the server answered: <i>{note.serverError}</i>. This is not the same as an
             empty book, and nothing has been assessed. Reload once the connection is back.</>
-          : <>Your book is empty and no bench name passes the preset, so there is nothing to watch. Add holdings on the
+          : <>Your book is empty and the India Conviction Beats list is empty{note.cb?.serverError ? <> (the server list could not be read: <i>{note.cb.serverError}</i>)</> : null}, so there is nothing to watch. Add holdings on the
             Portfolio page and each one will appear here with its thesis, the variables that thesis rests on, and the
             conditions that would end it.</>}
       </div>
@@ -215,8 +266,9 @@ export default function PortfolioCatalystsPage() {
           and each quarter&apos;s evidence is checked against them. Capex is tracked as a chain to whether it actually
           earned, not as an announcement. <b style={{ color: C.text }}>A price move is never an exit reason</b>, and no
           price is read anywhere in this engine. Your <b style={{ color: C.text }}>book</b> is watched in full,
-          whatever it grades at; the <b style={{ color: C.text }}>conviction bench</b> joins it filtered by your
-          quality preset. A bench name is a candidate, not a holding, and every card says which it is.
+          whatever it grades at; <b style={{ color: C.text }}>every India Conviction Beats name</b> joins it on the
+          bench. Your quality preset is a label on each bench card and a filter you can choose — it never hides a
+          name. A bench name is a candidate, not a holding, and every card says which it is.
         </div>
       </div>
 
@@ -236,16 +288,17 @@ export default function PortfolioCatalystsPage() {
 
       {view === 'new' ? (
         <NewCatalystsTab result={recentNew} loading={loading || evidenceLoading} names={sized.length} sourceNotes={recentNotes} market="IN"
-          onJump={(t) => { setView('board'); setSource('all'); setFilter(null); setOnlyRead(false); setTimeout(() => document.getElementById(`pc-${t}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80); }} />
+          onJump={(t) => { setView('board'); setSource('all'); jumpTo(t); }} />
       ) : (<>
       {/* ── WHICH POPULATION. Two numbers, never merged into one. ───────── */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         {([
           // zzz784: the chips count the same rows the reconciliation line sums
           // (after the size filter), so "All" = book + bench on screen.
-          ['all', `All ${uc.shown}`, 'Everything below: your book, plus every bench name that passes the preset (after the size filter).'],
+          ['all', `All ${uc.shown}`, 'Everything below: your book, plus every India Conviction Beats name you do not hold (after the size filter).'],
           ['book', `\uD83D\uDCD7 My book ${uc.book}`, 'Only what you own. Nothing is filtered out of this list — a holding is watched whatever it grades at.'],
-          ['bench', `\uD83C\uDFC6 Bench ${uc.bench}`, 'Conviction-bench candidates that pass the quality preset (and the size filter). You do not own these.'],
+          ['bench', `\uD83C\uDFC6 Bench ${uc.bench}`, 'Every India Conviction Beats name you do not hold (after the size filter), whether or not it passes the quality preset. You do not own these.'],
+          ['benchPass', `\u2705 Bench passing preset ${presetShown.pass}`, 'Bench names whose graded row passes your quality preset (the same rule the alerts use). Names not checked yet are not counted as failing.'],
         ] as Array<[typeof source, string, string]>).map(([k, label, hint]) => {
           const on = source === k;
           return (
@@ -269,15 +322,18 @@ export default function PortfolioCatalystsPage() {
           )}
         </button>
 
-        {(note.benchFiltered > 0 || note.benchUnchecked > 0) && (
-          <span style={{ fontSize: 13, color: C.faint }}
-            title="The preset is the same one the alerts use (lib/quality-preset), applied to the same graded row the thesis engine reads.">
-            {note.benchFiltered > 0 && <>{note.benchFiltered} bench names failed the preset</>}
-            {note.benchFiltered > 0 && note.benchUnchecked > 0 && ' · '}
-            {note.benchUnchecked > 0 && <>{note.benchUnchecked} had no graded row, so the preset could not be applied — excluded, not failed</>}
+        {presetShown.bench > 0 && (
+          <span data-testid="bench-preset-split" style={{ fontSize: 13, color: C.faint }}
+            title="The preset is the same one the alerts use (lib/quality-preset), applied to the same graded row the thesis engine reads. It labels bench names; it never hides them.">
+            Bench {presetShown.bench} = {presetShown.pass} pass the preset + {presetShown.fail} do not + {presetShown.unknown} not checked yet (no graded row — not a fail)
           </span>
         )}
       </div>
+      {!loading && (
+        <div data-testid="cb-bench-line" style={{ fontSize: 13, color: C.dim, lineHeight: 1.5 }}>
+          <b style={{ color: C.text }}>{indiaBenchLine(note.cb, note.heldOnCb, presetAll.bench, presetShown, hiddenByCap)}</b>
+        </div>
+      )}
 
       {/* ── THE ARITHMETIC, VISIBLY. (zzz784) Every figure from the same rows. */}
       {!evidenceLoading && !loading && (
@@ -285,7 +341,7 @@ export default function PortfolioCatalystsPage() {
           title="total − large caps hidden = shown = book + bench; status buckets + not yet assessed = shown; exportable + excluded = evaluated">
           <b style={{ color: C.text }}>{uc.line}</b>
           {' '}· status buckets {ORDER.filter((s) => uc.byStatus[s]).map((s) => uc.byStatus[s]).join(' + ') || 0}{uc.notAssessed ? ` + ${uc.notAssessed} not yet assessed` : ''} = {uc.statusSum + uc.notAssessed} shown
-          {source !== 'all' && <span style={{ color: C.faint }}> · view {source === 'book' ? 'my book' : 'bench'}: {ucView.shown} shown, buckets {ucView.statusSum}{ucView.notAssessed ? ` + ${ucView.notAssessed} not yet assessed` : ''}</span>}
+          {source !== 'all' && <span style={{ color: C.faint }}> · view {source === 'book' ? 'my book' : source === 'bench' ? 'bench' : 'bench passing preset'}: {ucView.shown} shown, buckets {ucView.statusSum}{ucView.notAssessed ? ` + ${ucView.notAssessed} not yet assessed` : ''}</span>}
         </div>
       )}
       {/* Until the stored evidence is in, every card reads "incomplete" and
@@ -363,7 +419,7 @@ export default function PortfolioCatalystsPage() {
           if (r.pattern?.pattern) return r.pattern.fit === 'nearest' ? `nearest ${r.pattern.pattern} (auto, provisional${(r.pattern as any).weak ? ', weak fit' : ''})` : `${r.pattern.pattern} (auto${(r.pattern as any).promoted ? ', type confirmed from filings' : ''})`;
           return 'Not set';
         }}
-        onJump={(t: string) => { setFilter(null); setTimeout(() => document.getElementById(`pc-${t}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); }} />
+        onJump={(t: string) => jumpTo(t)} />
 
       {/* ── TOP CATALYSTS. (zzz776) The intact theses ranked by how strong the
           EVIDENCED catalyst is — output growth plus the mechanism drivers the
@@ -405,7 +461,7 @@ export default function PortfolioCatalystsPage() {
                       <tr key={r.symbol} style={{ borderTop: `1px solid ${C.border}`, verticalAlign: 'top' }}>
                         <td style={{ padding: '5px 6px', color: C.faint, fontWeight: 800 }}>{i + 1}</td>
                         <td style={{ padding: '5px 6px', fontWeight: 900, whiteSpace: 'nowrap' }}>
-                          <a href={`#pc-${r.symbol}`} onClick={(e) => { e.preventDefault(); setFilter(null); setTimeout(() => document.getElementById(`pc-${r.symbol}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); }}
+                          <a href={`#pc-${r.symbol}`} onClick={(e) => { e.preventDefault(); jumpTo(r.symbol); }}
                             style={{ color: C.text, textDecoration: 'none' }}>{r.symbol}</a>
                           {r.origin === 'bench' && <span style={{ fontSize: 11, color: C.faint, fontWeight: 700 }}> · bench</span>}
                         </td>
@@ -459,12 +515,22 @@ export default function PortfolioCatalystsPage() {
         }}>{onlyRead ? 'Only names with evidence read' : 'Show all'}</button>
 
         {evidenceLoading ? null : !batch.running ? (
-          <button onClick={() => readAll(list.map((r) => r.symbol))}
-            title="Reads and PERSISTS the evidence behind each name that needs it — never read, failed, or with newer documents at a source. Names whose evidence is current are skipped without a model call. Three at a time; resumable after a reload."
+          <>
+          <button onClick={() => readAll(primarySyms)}
+            title="Your book plus the bench names that pass the quality preset. Reads and PERSISTS the evidence behind each name that needs it — never read, failed, or with newer documents at a source. Names whose evidence is current are skipped without a model call. Three at a time; resumable after a reload."
             style={{
               fontSize: 13.5, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
               border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan,
-            }}>&#10024; {attentionInList.total ? `Read evidence for ${attentionInList.total} that need it (${attentionInList.unread.length} unread, ${attentionInList.update.length} update)` : 'All evidence current'}</button>
+            }}>&#10024; {attentionInList.total ? `Read evidence for ${attentionInList.total} that need it (${attentionInList.unread.length} unread, ${attentionInList.update.length} update) — book + bench passing preset` : 'All evidence current (book + bench passing preset)'}</button>
+          {attentionOther.total > 0 && (
+            <button data-testid="read-other-bench" onClick={() => readAll(otherSyms)}
+              title="The bench names that do not pass the preset or are not checked yet. Manual only — never started automatically. Three at a time; Stop works."
+              style={{
+                fontSize: 13.5, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
+                border: `1px solid ${C.border}`, background: 'transparent', color: C.dim,
+              }}>{otherBenchLabel(attentionOther.total)}</button>
+          )}
+          </>
         ) : (
           <>
             <span style={{ fontSize: 13.5, fontWeight: 700, color: C.cyan }}>Reading {batch.done} of {batch.total}…</span>
@@ -588,7 +654,7 @@ export default function PortfolioCatalystsPage() {
         <div style={{ fontSize: 14, color: C.dim, background: C.bg, border: `1px solid ${C.cyan}`, borderRadius: 8, padding: '9px 13px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <b style={{ color: C.text }}>Last batch: {batch.done} updated · {batch.resumable} remaining{batch.failed ? ` · ${batch.failed} failed` : ''}</b>
           <span>— persisted; nothing here was lost on reload.</span>
-          <button onClick={() => readAll(list.map((r) => r.symbol))} style={{
+          <button onClick={() => readAll(primarySyms)} title="Resumes over your book + the bench names that pass the preset." style={{
             fontSize: 13.5, fontWeight: 800, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
             border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan,
           }}>Resume</button>
@@ -612,12 +678,16 @@ export default function PortfolioCatalystsPage() {
           has not been looked at. A deterioration already visible in the figures would still be flagged.
           {!batch.running && (
             <div style={{ marginTop: 7 }}>
-              <button onClick={() => readAll(list.map((r) => r.symbol))} style={{
+              {primaryUnread > 0 && <button onClick={() => readAll(primarySyms)} style={{
                 fontSize: 14, fontWeight: 800, padding: '5px 13px', borderRadius: 999, cursor: 'pointer',
                 border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan,
-              }}>&#10024; Read the {inSource.length - readCount} remaining</button>
+              }}>&#10024; Read the {primaryUnread} remaining (book + bench passing preset)</button>}
+              {attentionOther.unread.length > 0 && <button onClick={() => readAll(otherSyms)} style={{
+                fontSize: 14, fontWeight: 700, padding: '5px 13px', borderRadius: 999, cursor: 'pointer', marginLeft: 8,
+                border: `1px solid ${C.border}`, background: 'transparent', color: C.dim,
+              }}>{otherBenchLabel(attentionOther.unread.length)}</button>}
               <span style={{ fontSize: 13, color: C.faint, marginLeft: 9 }}>
-                Three at a time. Each is one model call against one filing, and you can stop it at any point.
+                Three at a time. Each is one model call against one filing, and you can stop it at any point. Nothing starts without a click.
               </span>
             </div>
           )}
@@ -646,8 +716,18 @@ export default function PortfolioCatalystsPage() {
           </div>
         ) : null;
       })()}
-      {list.map((r) => (
+      {visible.map((r) => (
         <div key={r.symbol} id={`pc-${r.symbol}`} style={{ scrollMarginTop: 70 }}>
+        {r.origin === 'bench' && (
+          <div data-testid="bench-preset-label" style={{ fontSize: 12.5, color: C.faint, padding: '2px 4px', lineHeight: 1.5 }}>
+            <b style={{ color: C.text }}>{r.symbol}</b> · 🏆 bench · on {r.benchSource || 'Conviction Beats (India)'} · not held
+            {' · '}
+            <span style={{ fontWeight: 800, color: r.preset?.state === 'pass' ? C.green : r.preset?.state === 'fail' ? C.amber : C.dim }}>
+              {r.preset?.state === 'pass' ? '✅ ' : r.preset?.state === 'fail' ? '✖ ' : '◌ '}{r.preset?.text || 'preset not checked yet'}
+            </span>
+            {r.pattern?.fit === 'nearest' && !thesisTypes[r.symbol.toUpperCase()] ? <> · thesis type is provisional (nearest fit)</> : null}
+          </div>
+        )}
         {!evidenceLoading && <PersistentStrip ticker={r.symbol} pcs={persistBySymbol.get(r.symbol) || []} onOpenFocus={() => document.getElementById('special-focus')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />}
         <ThesisCard
           thesisType={(thesisTypes[r.symbol.toUpperCase()] as any) || null}
@@ -679,6 +759,19 @@ export default function PortfolioCatalystsPage() {
         />
         </div>
       ))}
+      {list.length > visible.length && (
+        <div ref={moreRef} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '6px 2px' }}>
+          <span style={{ fontSize: 13.5, color: C.faint }}>Showing {visible.length} of {list.length} cards — more load as you scroll.</span>
+          <button onClick={() => setShownN((n) => nextWindow(n, list.length))} style={{
+            fontSize: 13.5, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
+            border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan,
+          }}>Show {Math.min(PC_PAGE_STEP, list.length - visible.length)} more</button>
+          <button onClick={() => setShownN(list.length)} style={{
+            fontSize: 13.5, fontWeight: 700, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
+            border: `1px solid ${C.border}`, background: 'transparent', color: C.dim,
+          }}>Show all {list.length}</button>
+        </div>
+      )}
       </>)}
     </div>
   );

@@ -24,7 +24,7 @@
 
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useUsBook, US_CB_SOURCE } from '@/lib/us-thesis/use-us-book';
 import { usDisplayer } from '@/lib/us-thesis/display';
 import { usExportLine, usWhyLine, usBatchLine } from '@/lib/us-thesis/page-words';
@@ -39,6 +39,7 @@ import { STATUS_META, type ThesisStatus } from '@/lib/thesis/status';
 import { evidenceCounts, universeCounts, researchPriorityEligible, researchPriorityTitle } from '@/lib/thesis/evidence-counts';
 import NewCatalystsTab from '@/components/catalyst/new-catalysts-tab';
 import { buildRecentCatalysts, rawFromLedger, rawFromPersistent, localToday, type RawEvent } from '@/lib/catalyst/recent-events';
+import { nextWindow, PC_PAGE_STEP, readScope, otherBenchLabel } from '@/lib/thesis/pc-bench';
 
 const C = {
   bg: 'var(--mc-bg-1)', border: 'var(--mc-bg-4)', text: 'var(--tc-text, #F1F5F9)',
@@ -65,9 +66,11 @@ export default function UsPortfolioCatalystsPage() {
   const [view, setView] = useState<'board' | 'new'>('board');
 
   const all = useMemo(() => Object.values(rows), [rows]);
-  const inSource = useMemo(() => all.filter((r) => source === 'all' ? true : source === 'book' ? r.origin !== 'bench' : r.origin !== 'book'), [all, source]);
-  const uc = useMemo(() => universeCounts(all as any, all as any, CONSTRUCTIVE), [all]);
-  const ucView = useMemo(() => universeCounts(all as any, inSource as any, CONSTRUCTIVE), [all, inSource]);
+  // zzz811: a held name is shown once, in My US book — "US bench" is the
+  // names you do not hold, so All = book + bench exactly (the chip counts).
+  const inSource = useMemo(() => all.filter((r) => source === 'all' ? true : source === 'book' ? r.origin !== 'bench' : r.origin === 'bench'), [all, source]);
+  const uc = useMemo(() => universeCounts(all as any, all as any, CONSTRUCTIVE, { market: 'US' }), [all]);
+  const ucView = useMemo(() => universeCounts(all as any, inSource as any, CONSTRUCTIVE, { market: 'US' }), [all, inSource]);
   const ec = useMemo(() => evidenceCounts(inSource as any), [inSource]);
   const list = useMemo(() => {
     const f = filter ? inSource.filter((r) => r.assessment?.status === filter) : inSource;
@@ -77,16 +80,45 @@ export default function UsPortfolioCatalystsPage() {
       return (b.assessment?.triggered.length || 0) - (a.assessment?.triggered.length || 0) || a.symbol.localeCompare(b.symbol);
     });
   }, [inSource, filter]);
+  // zzz811: progressive rendering — the bench can run to hundreds of cards.
+  const [shownN, setShownN] = useState(PC_PAGE_STEP);
+  const moreRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => { setShownN(PC_PAGE_STEP); }, [source, filter]);
+  useEffect(() => {
+    const el = moreRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) setShownN((n) => nextWindow(n, list.length)); }, { rootMargin: '600px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [list.length, shownN]);
+  const visible = useMemo(() => list.slice(0, shownN), [list, shownN]);
+  const [pendingJump, setPendingJump] = useState<string | null>(null);
+  const jumpTo = (t: string) => { setFilter(null); setPendingJump(t); };
+  useEffect(() => {
+    if (!pendingJump) return;
+    const idx = list.findIndex((r) => r.symbol === pendingJump);
+    if (idx < 0) { if (source !== 'all') { setSource('all'); return; } setPendingJump(null); return; }
+    if (idx >= shownN) { setShownN(idx + PC_PAGE_STEP); return; }
+    const t = pendingJump;
+    setPendingJump(null);
+    setTimeout(() => document.getElementById(`uspc-${t}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+  }, [pendingJump, list, shownN, source]);
   // Detection runs on the engine's rows (period keys intact); what is PRINTED
   // goes through the US wording (the company's own fiscal periods, $M).
   const displayerBySymbol = useMemo(() => new Map(all.map((r) => [r.symbol, usDisplayer(r)] as const)), [all]);
-  const displayBySymbol = useMemo(() => new Map(list.map((r) => [r.symbol, (displayerBySymbol.get(r.symbol) || ((x: any) => x))(r)] as const)), [list, displayerBySymbol]);
-  const persistBySymbol = useMemo(() => new Map(list.map((r) => [r.symbol, (displayerBySymbol.get(r.symbol) || ((x: any) => x))(usDetect(r as any))] as const)), [list, displayerBySymbol]);
+  const displayBySymbol = useMemo(() => new Map(visible.map((r) => [r.symbol, (displayerBySymbol.get(r.symbol) || ((x: any) => x))(r)] as const)), [visible, displayerBySymbol]);
+  const persistBySymbol = useMemo(() => new Map(visible.map((r) => [r.symbol, (displayerBySymbol.get(r.symbol) || ((x: any) => x))(usDetect(r as any))] as const)), [visible, displayerBySymbol]);
   // zzz797: bench names that came from US Conviction Beats, and CB names you already hold.
   const cbOnPage = all.filter((r) => r.origin === 'bench' && r.benchSource === US_CB_SOURCE).length;
   const cbHeld = all.filter((r) => r.origin !== 'bench' && r.benchSource === US_CB_SOURCE).length;
-  const needRead = inSource.filter((r) => !r.summary || r.freshness?.state === 'NEW_EVIDENCE_AVAILABLE' || r.freshness?.state === 'STALE'
-    || ['NEW_EVIDENCE_AVAILABLE', 'STALE', 'RETRIEVAL_FAILED', 'SOURCE_UNAVAILABLE'].includes(String(r.freshness?.evidence_state || '')));
+  const needsIt = (r: typeof inSource[number]) => !r.summary || r.freshness?.state === 'NEW_EVIDENCE_AVAILABLE' || r.freshness?.state === 'STALE'
+    || ['NEW_EVIDENCE_AVAILABLE', 'STALE', 'RETRIEVAL_FAILED', 'SOURCE_UNAVAILABLE'].includes(String(r.freshness?.evidence_state || ''));
+  // zzz811: bulk reads cover the US book by default (the US preset reads
+  // price, so no bench name "passes" it here); the bench is its own manual button.
+  const scope = readScope(inSource, 'US');
+  const needRead = scope.primary.filter(needsIt);
+  const needReadOther = scope.otherBench.filter(needsIt);
+  const primarySyms = scope.primary.map((r) => r.symbol);
   const needPrior = list.filter((r) => needsPrior(r));
   const anyRunning = batch.running || priorBatch.running || checkBatch.running;
   const excludedBook = excluded.filter((e) => e.origin !== 'bench').length;
@@ -167,7 +199,7 @@ export default function UsPortfolioCatalystsPage() {
 
       {view === 'new' ? (
         <NewCatalystsTab result={recentNew} loading={loading || evidenceLoading} names={all.length} sourceNotes={recentNotes} market="US"
-          onJump={(t) => { setView('board'); setSource('all'); setFilter(null); setTimeout(() => document.getElementById(`uspc-${t}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80); }} />
+          onJump={(t) => { setView('board'); setSource('all'); jumpTo(t); }} />
       ) : (<>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         {([['all', `All US-listed ${uc.shown}`], ['book', `📗 My US book ${uc.book}`], ['bench', `🏆 US bench ${uc.bench}${cbOnPage ? ` (incl. ${cbOnPage} ${US_CB_SOURCE})` : ''}`]] as Array<[typeof source, string]>).map(([k, label]) => (
@@ -175,6 +207,9 @@ export default function UsPortfolioCatalystsPage() {
         ))}
         {cbInfo && cbCount > 0 && <span data-testid="us-cb-source" style={{ fontSize: 13, color: C.faint }}>🏆 {US_CB_SOURCE}: {cbCount} on the list ({cbInfo.server ? `server list${cbInfo.updatedAt ? `, updated ${String(cbInfo.updatedAt).slice(0, 10)}` : ''}` : 'this browser only'}{cbInfo.localOnly && cbInfo.server ? ` + ${cbInfo.localOnly} from this browser` : ''}) · {cbOnPage} on the bench · {cbHeld} held</span>}
         {excluded.length > 0 && <span style={{ fontSize: 13, color: C.amber }}>{excluded.length} non-US listing{excluded.length === 1 ? '' : 's'} excluded (no SEC coverage) — listed below</span>}
+      </div>
+      <div data-testid="us-preset-note" style={{ fontSize: 12.5, color: C.faint }}>
+        Every US Conviction Beats name is on the bench — none is hidden by a preset. The US quality preset reads price (50- and 200-day averages), and this page reads no price, so it is not applied here.
       </div>
 
       {!loading && cbInfo && cbCount === 0 && (
@@ -232,7 +267,7 @@ export default function UsPortfolioCatalystsPage() {
           if (r.pattern?.pattern) return r.pattern.fit === 'nearest' ? `${r.pattern.pattern} (provisional — confirm it)` : `${r.pattern.pattern} (auto)`;
           return 'Not set';
         }}
-        onJump={(t) => { setFilter(null); setTimeout(() => document.getElementById(`uspc-${t}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); }} />
+        onJump={(t) => jumpTo(t)} />
 
       {!evidenceLoading && (() => {
         const ranked = inSource.filter((r) => r.assessment?.catalystRank && researchPriorityEligible(r.assessment.status))
@@ -245,7 +280,7 @@ export default function UsPortfolioCatalystsPage() {
             {ranked.slice(0, 15).map((r, i) => (
               <div key={r.symbol} style={{ fontSize: 13, color: C.dim, padding: '3px 0', borderTop: `1px solid ${C.border}` }}>
                 <b style={{ color: C.text }}>{i + 1}. {r.symbol}</b> · {STATUS_META[r.assessment!.status].label}
-                <div style={{ color: C.faint }}>{usWhyLine(displayBySymbol.get(r.symbol)?.assessment?.catalystRank || r.assessment!.catalystRank)}</div>
+                <div style={{ color: C.faint }}>{usWhyLine((displayBySymbol.get(r.symbol) || (displayerBySymbol.get(r.symbol) || ((x: any) => x))(r))?.assessment?.catalystRank || r.assessment!.catalystRank)}</div>
               </div>
             ))}
           </div>
@@ -263,8 +298,13 @@ export default function UsPortfolioCatalystsPage() {
           {!evidenceLoading && ec.retrieval_failed > 0 && <> · {ec.retrieval_failed} retrieval failed</>}
         </span>
         {!evidenceLoading && !batch.running && (
-          <button onClick={() => readAll(inSource.map((r) => r.symbol))} title="Reads and persists the SEC evidence of each name that needs it — never read, failed, or with a newer filing. Current names are skipped without a model call. Two at a time; a failed read is retried once."
-            style={pill(true)}>&#10024; {needRead.length ? `Read SEC evidence for ${needRead.length} that need it (uses AI)` : 'All evidence current'}</button>
+          <button onClick={() => readAll(primarySyms)} title="Your US book. Reads and persists the SEC evidence of each name that needs it — never read, failed, or with a newer filing. Current names are skipped without a model call. Two at a time; a failed read is retried once."
+            style={pill(true)}>&#10024; {needRead.length ? `Read SEC evidence for ${needRead.length} that need it (uses AI) — your US book` : 'All evidence current (your US book)'}</button>
+        )}
+        {!evidenceLoading && !batch.running && needReadOther.length > 0 && (
+          <button data-testid="us-read-other-bench" onClick={() => readAll(needReadOther.map((r) => r.symbol))}
+            title="The US bench names (US Conviction Beats you do not hold). Manual only — never started automatically. Two at a time; Stop works."
+            style={pill(false)}>{otherBenchLabel(needReadOther.length)}</button>
         )}
         {batch.running && <><span style={{ fontSize: 13.5, fontWeight: 700, color: C.cyan }}>{usBatchLine(batch)}</span><button onClick={stop} style={pill(true, C.amber)}>Stop</button></>}
         {!batch.running && usBatchLine(batch) && <span style={{ fontSize: 13, color: C.amber }}>{usBatchLine(batch)}</span>}
@@ -285,7 +325,7 @@ export default function UsPortfolioCatalystsPage() {
       {!loading && !batch.running && !batch.stopped && (batch.resumable || 0) > 0 && (
         <div style={{ fontSize: 14, color: C.dim, border: `1px solid ${C.cyan}`, borderRadius: 8, padding: '9px 13px' }}>
           <b style={{ color: C.text }}>Last batch: {batch.done} processed · {batch.resumable} remaining</b> — persisted; nothing was lost on reload.{' '}
-          <button onClick={() => readAll(inSource.map((r) => r.symbol))} style={pill(true)}>Resume</button>
+          <button onClick={() => readAll(primarySyms)} title="Resumes over your US book." style={pill(true)}>Resume</button>
         </div>
       )}
 
@@ -311,7 +351,7 @@ export default function UsPortfolioCatalystsPage() {
 
       {loading && <div style={{ fontSize: 14, color: C.dim }}>Reading your US book…</div>}
 
-      {list.map((r0) => { const r = displayBySymbol.get(r0.symbol) || r0; return (
+      {visible.map((r0) => { const r = displayBySymbol.get(r0.symbol) || r0; return (
         <div key={r0.symbol} id={`uspc-${r0.symbol}`} data-testid="us-card-block" style={{ scrollMarginTop: 70, border: `1px solid ${C.border}`, borderRadius: 10, padding: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
           {/* zzz793: ONE block per company, top to bottom — the company's
               own line, then ITS persistent-catalyst strip (named), then ITS
@@ -345,6 +385,13 @@ export default function UsPortfolioCatalystsPage() {
           />
         </div>
       ); })}
+      {list.length > visible.length && (
+        <div ref={moreRef} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '6px 2px' }}>
+          <span style={{ fontSize: 13.5, color: C.faint }}>Showing {visible.length} of {list.length} US cards — more load as you scroll.</span>
+          <button onClick={() => setShownN((n) => nextWindow(n, list.length))} style={pill(true)}>Show {Math.min(PC_PAGE_STEP, list.length - visible.length)} more</button>
+          <button onClick={() => setShownN(list.length)} style={pill(false)}>Show all {list.length}</button>
+        </div>
+      )}
 
       {excluded.length > 0 && (
         <div data-testid="us-excluded" style={{ border: `1px solid ${C.amber}`, borderRadius: 8, padding: '10px 12px', background: C.bg }}>
