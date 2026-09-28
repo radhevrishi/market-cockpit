@@ -64,7 +64,8 @@ import type { AbfgPattern } from '@/lib/earnings/pattern-abfg';
 import { thesisFor, type Thesis, type ThesisVariable } from './ledger';
 import { byKey, type StructuralVar, type VarVerdict } from './variables';
 import { BASIS_LABEL, type MetricComparison } from './comparison';
-import { periodEnd } from './fact-normalize';
+import { periodEnd, hasQuantity } from './fact-normalize';
+import { utilisationLow } from './transcript-evidence';
 import { scaledNumber } from './evidence-ledger';
 import { checkPasses, SILENT_STATE_WORD, SILENT_PHRASE, explicitNoneStated } from './silent-check';
 import { isJunkOneOffAmount } from './figure-guards';
@@ -405,6 +406,11 @@ export interface CheckedVariable {
   /** The earlier-period figure behind this row, and the engine's decision on
    *  whether it remains an active thesis condition. (zzz773) */
   historical?: HistoricalItem | null;
+  /** zzz809: management's forward-guidance lines, on the guidance row. */
+  forwardLines?: string[] | null;
+  /** zzz809: why a level reads as supporting the thesis (A: high current
+   *  utilisation with capacity being added). */
+  supports?: string | null;
 }
 
 /** ── zzz771 CONTRACT (PC-2 fills, PC-3 renders) ───────────────────────────
@@ -967,6 +973,27 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
           : { ...v, verdict: 'stated' as VarVerdict, unjudged: 'the stated margin driver is a one-off benefit, not a structural mechanism' };
       }
     }
+    // ── A FULL PLANT WITH CAPACITY BEING ADDED SUPPORTS AN A THESIS. (zzz809)
+    // IOLCP: "our current capacity is exhausted up to the level of 90% to 95%"
+    // while a 6,000 MTPA addition is being built. For an operating-inflection
+    // thesis that is the mechanism working — the plant is nearly full and more
+    // capacity is needed — not a level with nothing to say. A CURRENT, filed
+    // (ACTUAL) utilisation of 80% or more, with a capacity addition on file,
+    // counts as supporting evidence. A target, a management claim, an unclear
+    // figure or a figure that moved down is never lifted by this rule.
+    const untagV = (x: unknown) => String(x ?? '').replace(/\s*\((?:target|guidance)\)\s*$/i, '');
+    if (thesis.pattern === 'A' && v.key === 'utilisation' && v.verdict === 'stated' && !v.unjudged && v.kind !== 'claim'
+      && (!v.statement || v.statement === 'ACTUAL') && !v.before && !isForwardRow(v) && v.validation?.state !== 'UNCLEAR') {
+      const lo = utilisationLow(v.after);
+      const adding = (input.variables || []).find((x) => (x.key === 'capacity_addition' && hasQuantity(untagV(x.after)))
+        || (x.key === 'capacity' && !!x.plan && hasQuantity(x.plan.value)));
+      if (lo != null && lo >= 80 && adding) {
+        const add = adding.key === 'capacity_addition' ? untagV(adding.after) : `to ${adding.plan!.value}`;
+        const why = `current utilisation ${v.after} with capacity being added (${add}) — the existing plant is nearly full, so the addition has demand to fill`;
+        return { ...v, verdict: 'improving' as VarVerdict, supports: why,
+          evidence: `Supports the thesis: ${why}. A level, not a trend — the next reading shows whether it holds as the new capacity comes on. ${v.evidence}` } as StructuralVar;
+      }
+    }
     if (isReserveTonnage(v as any) && !v.unjudged) {
       return { ...v, verdict: 'stated' as VarVerdict, unjudged: 'a mineral resource / reserve tonnage (a stock, not a production rate) — not capacity evidence' };
     }
@@ -1175,6 +1202,8 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       quote: v?.quote ?? null,
       context: v?.context ?? null,
       retyped: v?.retyped ?? null,
+      forwardLines: v?.forwardLines ?? null,
+      supports: (v as any)?.supports ?? null,
       historical: historicalByKey.get(tv.key) ?? null,
       evidence: v?.evidence || (!v && historicalByKey.has(tv.key)
         ? `${curHead} ${lcl(VAR_LABEL[tv.key] || tv.key)}: NOT DISCLOSED. The ${historicalByKey.get(tv.key)!.period} figure `

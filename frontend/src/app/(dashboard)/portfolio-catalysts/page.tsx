@@ -39,6 +39,8 @@ import { STATUS_META, type ThesisStatus } from '@/lib/thesis/status';
 import { isSmallMidCap, SMALL_MID_CAP_MAX_CR } from '@/lib/thesis/universe';
 import { priorBackfillPlan } from '@/lib/thesis/prior-period';
 import { evidenceCounts, universeCounts, researchPriorityEligible, researchPriorityTitle, researchWhyLine, exportCounts, evidenceAttention, RESEARCH_EXPORT_STATUSES } from '@/lib/thesis/evidence-counts';
+import NewCatalystsTab from '@/components/catalyst/new-catalysts-tab';
+import { buildRecentCatalysts, rawFromLedger, rawFromPersistent, rawFromFeed, localToday, type RawEvent } from '@/lib/catalyst/recent-events';
 
 const C = {
   bg: 'var(--mc-bg-1)', border: 'var(--mc-bg-4)', text: 'var(--tc-text, #F1F5F9)',
@@ -75,6 +77,8 @@ export default function PortfolioCatalystsPage() {
   // A HOLDING IS NEVER HIDDEN BY IT.
   const [smallMidOnly, setSmallMidOnly] = useState(true);
   const [showAllTop, setShowAllTop] = useState(false);
+  // zzz808: the catalyst board, or "New · last 10 days".
+  const [view, setView] = useState<'board' | 'new'>('board');
 
   const all = useMemo(() => Object.values(rows), [rows]);
 
@@ -153,6 +157,41 @@ export default function PortfolioCatalystsPage() {
   const newEvidence = ec.new_evidence;
   const sourceDown = ec.source_unavailable;
 
+  // ── NEW IN THE LAST 10 DAYS. (zzz808) Every dated filing and extracted
+  // event already on file for the names on screen (book + bench after the
+  // size filter), plus the persistent-catalyst items and — when it has been
+  // run — the exchange results feed. Pure merge in lib/catalyst/recent-events.
+  const today = useMemo(() => localToday(), []);
+  const recentNew = useMemo(() => {
+    if (loading || evidenceLoading) return null;
+    const raws: RawEvent[] = [];
+    const bare = (t: string) => t.toUpperCase().replace(/-(BE|SM|ST|BZ|E1)$/i, '');
+    const bySym = new Map<string, { symbol: string; company: string | null }>();
+    for (const r of sized) {
+      const co = r.graded?.company && String(r.graded.company).toUpperCase() !== r.symbol.toUpperCase() ? String(r.graded.company) : null;
+      bySym.set(bare(r.symbol), { symbol: r.symbol, company: co });
+      raws.push(...rawFromLedger(r.symbol, co, r.ledger, r.assessment));
+      raws.push(...rawFromPersistent(r.symbol, co, detectForRow(r as any), r.assessment));
+    }
+    const feed = recent.plan ? [...recent.plan.due, ...recent.plan.current] : [];
+    raws.push(...rawFromFeed(
+      feed.filter((f) => bySym.has(bare(f.ticker))).map((f) => ({ ...f, ticker: bySym.get(bare(f.ticker))!.symbol })),
+      (t) => bySym.get(bare(t))?.company || null));
+    return buildRecentCatalysts(raws, today);
+  }, [sized, loading, evidenceLoading, recent.plan, today]);
+  const recentNotes = useMemo(() => {
+    const n: string[] = [];
+    if (note.serverError) n.push(`Your book could not be read from the server (${note.serverError}) — only names held in this browser are covered.`);
+    const ecs = evidenceCounts(sized);
+    if (ecs.source_unavailable > 0) n.push(`${ecs.source_unavailable} name${ecs.source_unavailable === 1 ? '' : 's'}: the filing source could not be reached on the last check, so a new filing may be missing.`);
+    if (ecs.retrieval_failed > 0) n.push(`${ecs.retrieval_failed} name${ecs.retrieval_failed === 1 ? '' : 's'}: filings were found but could not be downloaded or read.`);
+    const never = sized.filter((r) => !r.ledger).length;
+    if (never > 0) n.push(`${never} name${never === 1 ? ' has' : 's have'} never been checked for filings, so nothing new can show for ${never === 1 ? 'it' : 'them'} yet.`);
+    if (recent.state === 'error' && recent.error) n.push(recent.error);
+    if (recent.feed && recent.feed.days_failed.length > 0) n.push(`Exchange results feed answered nothing for ${recent.feed.days_failed.join(', ')}.`);
+    return n;
+  }, [sized, note.serverError, recent.state, recent.error, recent.feed]);
+
   if (!symbols.length && !loading) {
     return (
       <div style={{ padding: 24, color: C.dim, fontSize: 15, lineHeight: 1.6 }}>
@@ -181,6 +220,24 @@ export default function PortfolioCatalystsPage() {
         </div>
       </div>
 
+      {/* ── THE VIEWS. (zzz808) The catalyst board, or what is new. ─────── */}
+      <div className="mc-wrap-mobile" role="tablist" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        {([['board', 'Catalyst board'], ['new', `New \u00B7 last 10 days (${recentNew ? recentNew.items.length : '\u2026'})`]] as Array<[typeof view, string]>).map(([k, label]) => {
+          const on = view === k;
+          return (
+            <button key={k} role="tab" aria-selected={on} onClick={() => setView(k)} style={{
+              fontSize: 14, fontWeight: 900, padding: '6px 14px', borderRadius: 8, cursor: 'pointer',
+              border: `1px solid ${on ? C.cyan : C.border}`, color: on ? C.cyan : C.dim,
+              background: on ? 'color-mix(in srgb, var(--mc-cyan) 14%, transparent)' : C.bg,
+            }}>{label}</button>
+          );
+        })}
+      </div>
+
+      {view === 'new' ? (
+        <NewCatalystsTab result={recentNew} loading={loading || evidenceLoading} names={sized.length} sourceNotes={recentNotes} market="IN"
+          onJump={(t) => { setView('board'); setSource('all'); setFilter(null); setOnlyRead(false); setTimeout(() => document.getElementById(`pc-${t}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80); }} />
+      ) : (<>
       {/* ── WHICH POPULATION. Two numbers, never merged into one. ───────── */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         {([
@@ -622,6 +679,7 @@ export default function PortfolioCatalystsPage() {
         />
         </div>
       ))}
+      </>)}
     </div>
   );
 }

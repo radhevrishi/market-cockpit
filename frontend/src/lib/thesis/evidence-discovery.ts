@@ -232,7 +232,10 @@ export function candidateFromScreenerDoc(d: CompanyDoc): DocCandidate {
  *  filename is read too — the same lesson that produced zzz705. */
 export function classifyExchangeDoc(subject: string, url: string): DocKind {
   const hay = `${subject} ${decodeURIComponent(url).replace(/[_-]+/g, ' ')}`;
-  if (/transcript/i.test(hay)) return 'transcript';
+  // A transcript of any call — quarterly earnings, business update, investor
+  // or analyst meet (zzz809) — is a transcript; an intimation that one "will
+  // be made available" is not.
+  if (/transcript/i.test(hay) && !(/\b(intimation|schedule[ds]?|will be (?:made )?available|to be held|invitation)\b/i.test(hay) && !/\btranscripts? of\b/i.test(hay))) return 'transcript';
   if (/investor\s*(presentation|update)|earnings\s*(presentation|deck)/i.test(hay)) return 'investor_presentation';
   if (/financial\s+results|outcome\s+of\s+(the\s+)?board\s+meeting|press\s+release|earnings\s+update/i.test(hay)) return 'results';
   if (/annual\s+report/i.test(hay)) return 'annual_report';
@@ -318,9 +321,20 @@ export function candidatesFromBse(rows: BseAnnouncement[]): DocCandidate[] {
   for (const r of rows || []) {
     const file = String(r?.ATTACHMENTNAME || '').trim();
     if (!file || !/\.pdf$/i.test(file)) continue;
-    const subject = String(r?.NEWSSUB || r?.HEADLINE || '').trim();
+    const sub0 = String(r?.NEWSSUB || '').trim();
+    const head = String(r?.HEADLINE || '').replace(/\s+/g, ' ').trim();
+    // zzz809: BSE's NEWSSUB is often only the category ("Analysts/Institutional
+    // Investor Meet/Con. Call Updates") while the HEADLINE says what the PDF is
+    // ("Transcript of Business Update Call with Investors and Analysts"). Both
+    // are read, so a Reg 30 transcript of a business-update or investor call is
+    // classified as the transcript it is, not as "other".
+    const generic = !sub0 || /^(?:analysts?\s*\/\s*institutional investor meet\/con\.? call updates|company update|general updates?|announcement under regulation 30[^a-z]*)$/i.test(sub0);
+    const subject = (generic && head ? head : sub0 || head).slice(0, 240);
     const cat = `${r?.CATEGORYNAME || ''} ${r?.SUBCATNAME || ''}`.trim();
-    const hay = `${cat} ${subject}`;
+    // The exclusion filters read what they always read; the headline is
+    // used only to say WHAT KIND of document it is.
+    const hay = `${cat} ${sub0 || head}`;
+    const kindHay = `${cat} ${sub0} ${head}`;
     if (/insider trading|sast|regulation 29|reg\. ?29|agm\/egm|postal ballot|newspaper|trading window|iepf|voting result|scrutini[sz]er|compliance certificate|certificate under reg|reg\. ?74|loss of share|duplicate share|share transfer|reconciliation of share capital|brsr|business responsibility/i.test(hay)) continue;
     if (/board meeting intimation|intimation of board meeting|prior intimation|advance intimation/i.test(hay)) continue;
     // BSE serves a live attachment from AttachLive and an archived one from
@@ -332,7 +346,7 @@ export function candidatesFromBse(rows: BseAnnouncement[]): DocCandidate[] {
     seen.add(url);
     const date = feedDateIso(r?.NEWS_DT || r?.DT_TM || null);
     out.push({
-      url, kind: classifyExchangeDoc(hay, url), tier: 1, source: 'BSE corporate announcements',
+      url, kind: classifyExchangeDoc(kindHay, url), tier: 1, source: 'BSE corporate announcements',
       period: date, dateIso: date, label: subject || cat || 'BSE filing',
     });
   }

@@ -23,7 +23,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { fetchNSEAnnouncements, fetchBSEAnnouncements, type FilingRecord } from '@/lib/nse-bse-feed';
-import { classifyFiling, scoreBullish, isHighBullishRaw, type BullishScore, type ConcallFilingType } from '@/lib/concall-bullish';
+import { scoreBullish, type BullishScore, type ConcallFilingType } from '@/lib/concall-bullish';
+import { loadConcallWindow, classifyConcallFiling, dedupeConcallFilings, displaySubject, buildFeedStatus, countConcalls, LAST_OK_KEY, type WindowStore, type FeedStatus } from '@/lib/concall-feed';
 // PATCH 0934 — Haiku import REMOVED from Signals pipeline per user
 // directive. Wrapper stays available at @/lib/anthropic-classifier for the
 // /api/v1/haiku/health diagnostic endpoint and any FUTURE non-Signals use.
@@ -40,7 +41,8 @@ import { applyEvidenceHierarchy, type EvidenceHierarchyResult } from '@/lib/evid
 // PATCH 0424 — Economic Translation Layer (institutional review item 4.1-4.4)
 import { predictEarningsDelta, type EarningsDelta } from '@/lib/economic-translation';
 
-const CACHE_KEY = (days: number) => `concall-feed:v25:days:${days}`;  // v25: Patch 0429 cross-exchange dedup + scored-filing cache flush
+const CACHE_KEY = (days: number) => `concall-feed:v26:days:${days}`;  // v26: zzz810 honest fetch_status + backfill (orphans cached empties)
+// v25: Patch 0429 cross-exchange dedup + scored-filing cache flush  // v25: Patch 0429 cross-exchange dedup + scored-filing cache flush
 // PATCH 0703 — Vercel free-tier rescue. User hit 5h16m / 4h Fluid CPU cap
 // (was 4h52m at last check). This route is the single heaviest endpoint
 // (60s maxDuration, parallel PDF parse). Bumping TTLs 15× drops the
@@ -120,7 +122,11 @@ interface FeedPayload {
     nse: 'NSE_OK' | 'NSE_BLOCKED' | 'NSE_EMPTY';
     bse: 'BSE_OK' | 'BSE_BLOCKED' | 'BSE_EMPTY';
   };
+  fetch_status?: FeedStatus;   // zzz810
 }
+
+// zzz810 — BSE "Company Update" subcategories that carry concall material.
+const BSE_CONCALL_SUBCATEGORIES = ['Earnings Call Transcript', 'Analyst / Investor Meet', 'Investor Presentation'];
 
 export const runtime = 'nodejs';
 // PATCH 0819: removed force-dynamic so Cache-Control headers aren't overridden by Next.js. Query params still force dynamic at runtime.
@@ -181,7 +187,9 @@ async function handleLiveFeed(req: NextRequest) {
   const cacheKey = CACHE_KEY(days);
   if (!force && isRedisAvailable()) {
     const cached = await kvGet<FeedPayload>(cacheKey);
-    if (cached) {
+    // zzz810 — an empty or failed cached payload is not a store to serve:
+    // fall through and backfill the window from the exchanges.
+    if (cached && Array.isArray(cached.filings) && cached.filings.length > 0 && cached.fetch_status && cached.fetch_status.state !== 'FAILED') {
       return NextResponse.json(applyFilters(cached, { exchangeFilter, bullishOnly }), { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } });  // PATCH 0818
     }
   }
@@ -242,137 +250,47 @@ async function handleLiveFeed(req: NextRequest) {
     }, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } });  // PATCH 0818
   }
 
-  // Compute date range
-  const today = new Date();
-  const fromDate = new Date();
-  fromDate.setDate(fromDate.getDate() - days);
-  const fromIso = fromDate.toISOString().slice(0, 10);
-  const toIso = today.toISOString().slice(0, 10);
-
-  // PATCH 0408 — Long-window fetch: chunk NSE into ≤30-day sub-windows
-  // (NSE corp-announcements API caps returned rows per call, so a single
-  // 180-day request gets truncated to the most recent ~500 filings).
-  // Each sub-window runs in parallel. BSE page count scales with window
-  // size: 2 pages per 30 days, capped at 12.
-  const CHUNK_DAYS = 30;
-  const subWindows: Array<{ fromIso: string; toIso: string }> = [];
-  {
-    let cur = new Date(today);
-    let remaining = days;
-    while (remaining > 0) {
-      const chunkSize = Math.min(CHUNK_DAYS, remaining);
-      const winTo = new Date(cur);
-      const winFrom = new Date(cur);
-      winFrom.setDate(winFrom.getDate() - chunkSize + 1);
-      subWindows.push({
-        fromIso: winFrom.toISOString().slice(0, 10),
-        toIso: winTo.toISOString().slice(0, 10),
-      });
-      cur.setDate(cur.getDate() - chunkSize);
-      remaining -= chunkSize;
-    }
-  }
+  // zzz810 — window loading moved to lib/concall-feed.loadConcallWindow:
+  // sub-windows are dated on the IST calendar, a stored sub-window is reused
+  // only if its fetch actually succeeded and held rows (a blocked / empty
+  // fetch used to be cached — past windows for 180 days — which kept the feed
+  // at 0 after the exchanges recovered), and missing windows are backfilled
+  // from NSE/BSE on demand. BSE is additionally queried by the concall
+  // subcategories, because its unfiltered newest-N pages cover only a few
+  // hours of a results-season day.
   const bsePages = Math.min(12, Math.max(2, Math.ceil(days / 15)));
-  // PATCH 0413 — Per-sub-window raw filings cache. Closed past windows
-  // are immutable (NSE/BSE never republish history); we cache them 180
-  // days. The rolling current window gets 30 min TTL. User feedback:
-  // "what we saved should be saved and not scraped always."
-  const todayIsoForCache = new Date().toISOString().slice(0, 10);
-  const SUBWIN_KEY = (fromIso: string, toIso: string) => `subwin-filings:v1:${fromIso}:${toIso}`;
-  const SUBWIN_TTL_PAST = 180 * 24 * 60 * 60;      // 6 months
-  const SUBWIN_TTL_CURRENT = 30 * 60;              // 30 minutes for rolling window
-  function ttlForSubwindow(toIso: string): number {
-    return toIso < todayIsoForCache ? SUBWIN_TTL_PAST : SUBWIN_TTL_CURRENT;
-  }
-
-  // PATCH 0409 — serialize sub-window fetches with concurrency cap of 2.
-  // Previous version fired all 6 sub-windows in parallel — NSE
-  // rate-limited the burst and returned 429, dropping most filings.
-  // Symptom: 180d returned 3924 filings while 14d returned 76566. Now
-  // we batch 2 at a time with a 600ms jitter between batches.
-  // PATCH 0414 — tightened from 14s → 10s per sub-window so the worst
-  // case across 6 sub-windows stays under 32s, leaving 13s+ for PDFs.
-  const totalBudgetMs = 10000;
-  const SUBWIN_CONCURRENCY = 2;
-  const fetchSubWindow = (fromIsoW: string, toIsoW: string) => {
-    const nseCtrl = new AbortController();
-    const bseCtrl = new AbortController();
-    const tNse = setTimeout(() => nseCtrl.abort(), totalBudgetMs);
-    const tBse = setTimeout(() => bseCtrl.abort(), totalBudgetMs);
-    return Promise.all([
-      fetchNSEAnnouncements({ signal: nseCtrl.signal, fromIso: fromIsoW, toIso: toIsoW }),
-      fetchBSEAnnouncements({ signal: bseCtrl.signal, fromIso: fromIsoW, toIso: toIsoW, pages: bsePages }),
-    ]).finally(() => { clearTimeout(tNse); clearTimeout(tBse); });
-  };
-
-  // PATCH 0413 — cache-first sub-window fetch.
-  // Step 1: try KV for every sub-window. Step 2: scrape only the cache-misses
-  // (typically just the current rolling window).
-  type SubWinCache = { fromIso: string; toIso: string; nse: any; bse: any };
-  const subwinCacheHits: SubWinCache[] = [];
-  const subwinMisses: typeof subWindows = [];
-  if (isRedisAvailable() && !force) {
-    const reads = await Promise.all(subWindows.map(w =>
-      kvGet<SubWinCache>(SUBWIN_KEY(w.fromIso, w.toIso)).catch(() => null)
-    ));
-    for (let i = 0; i < subWindows.length; i++) {
-      if (reads[i]) subwinCacheHits.push(reads[i]!);
-      else subwinMisses.push(subWindows[i]);
-    }
-  } else {
-    subwinMisses.push(...subWindows);
-  }
-  console.log(`[live-feed] sub-windows: ${subwinCacheHits.length} cached, ${subwinMisses.length} need scrape`);
-
-  const allResults: Array<Awaited<ReturnType<typeof fetchSubWindow>>> = [];
-  for (const hit of subwinCacheHits) {
-    // PATCH 0415 — null-guard against malformed cache entries (was the 500 cause).
-    // Old/partial cache writes could yield { fromIso, toIso } without nested
-    // nse/bse arrays, then for-of on undefined .filings → TypeError → HTTP 500.
-    if (!hit || !hit.nse || !hit.bse || !Array.isArray(hit.nse.filings) || !Array.isArray(hit.bse.filings)) {
-      continue;
-    }
-    allResults.push([hit.nse, hit.bse]);
-  }
-  for (let i = 0; i < subwinMisses.length; i += SUBWIN_CONCURRENCY) {
-    const batch = subwinMisses.slice(i, i + SUBWIN_CONCURRENCY);
-    const batchResults = await Promise.all(batch.map(w => fetchSubWindow(w.fromIso, w.toIso)));
-    // Write each batch result back to KV before moving on
-    if (isRedisAvailable()) {
-      for (let j = 0; j < batch.length; j++) {
-        const [nseR, bseR] = batchResults[j];
-        const w = batch[j];
-        // Persist serializable plain objects (filings array + source)
-        const payload: SubWinCache = {
-          fromIso: w.fromIso,
-          toIso: w.toIso,
-          nse: { filings: nseR.filings, source: nseR.source },
-          bse: { filings: bseR.filings, source: bseR.source },
-        };
-        kvSet(SUBWIN_KEY(w.fromIso, w.toIso), payload, ttlForSubwindow(w.toIso)).catch(() => {});
+  const SUBWIN_BUDGET_MS = 10_000;
+  const store: WindowStore | null = isRedisAvailable()
+    ? { get: (k) => kvGet(k), set: (k, v, ttl) => kvSet(k, v, ttl) }
+    : null;
+  const win = await loadConcallWindow(days, {
+    store,
+    fetchNSE: (fromIsoW, toIsoW) => fetchNSEAnnouncements({ signal: AbortSignal.timeout(SUBWIN_BUDGET_MS), fromIso: fromIsoW, toIso: toIsoW }),
+    fetchBSE: async (fromIsoW, toIsoW) => {
+      const signal = AbortSignal.timeout(SUBWIN_BUDGET_MS);
+      const generic = await fetchBSEAnnouncements({ signal, fromIso: fromIsoW, toIso: toIsoW, pages: bsePages });
+      const parts = [generic];
+      if (generic.source !== 'BSE_BLOCKED' || generic.filings.length > 0) {
+        for (const sub of BSE_CONCALL_SUBCATEGORIES) {
+          if (signal.aborted) break;
+          parts.push(await fetchBSEAnnouncements({ signal, fromIso: fromIsoW, toIso: toIsoW, pages: 6, category: 'Company Update', subcategory: sub }));
+        }
       }
-    }
-    allResults.push(...batchResults);
-    if (i + SUBWIN_CONCURRENCY < subwinMisses.length) {
-      await new Promise(r => setTimeout(r, 600 + Math.random() * 200));
-    }
-  }
+      const filings = parts.flatMap((p) => p.filings);
+      const ok = parts.some((p) => p.source === 'BSE_OK');
+      return {
+        filings,
+        source: ok ? 'BSE_OK' : generic.source,
+        reason: ok ? undefined : (generic.reason || parts.find((p) => p.reason)?.reason),
+      };
+    },
+  }, { force });
+  console.log(`[live-feed] window ${win.from_iso}→${win.to_iso}: ${win.windows_from_store}/${win.windows_total} sub-windows from store, ${win.windows_backfilled} fetched · NSE ${win.nse} · BSE ${win.bse} · ${win.filings.length} announcements`);
 
-  // Merge + dedup across ALL sub-windows by content_hash
   const merged = new Map<string, FilingRecord>();
-  let nseStatus: string = 'NSE_EMPTY';
-  let bseStatus: string = 'BSE_EMPTY';
-  for (const [nseResult, bseResult] of allResults) {
-    if (nseResult.source === 'NSE_OK') nseStatus = 'NSE_OK';
-    if (bseResult.source === 'BSE_OK') bseStatus = 'BSE_OK';
-    for (const f of nseResult.filings) merged.set(f.content_hash, f);
-    for (const f of bseResult.filings) {
-      if (!merged.has(f.content_hash)) merged.set(f.content_hash, f);
-    }
-  }
-  // Reconstruct top-level result shape for the rest of the pipeline
-  const nseResult = { filings: [] as FilingRecord[], source: nseStatus as any };
-  const bseResult = { filings: [] as FilingRecord[], source: bseStatus as any };
+  for (const f of win.filings) merged.set(f.content_hash, f);
+  const nseResult = { filings: [] as FilingRecord[], source: (win.nse === 'OK' ? 'NSE_OK' : win.nse === 'EMPTY' ? 'NSE_EMPTY' : 'NSE_BLOCKED') as FeedPayload['sources']['nse'] };
+  const bseResult = { filings: [] as FilingRecord[], source: (win.bse === 'OK' ? 'BSE_OK' : win.bse === 'EMPTY' ? 'BSE_EMPTY' : 'BSE_BLOCKED') as FeedPayload['sources']['bse'] };
 
   // PATCH 0412 — Per-filing scored cache. User feedback: "have some concept
   // to save already saved in our website and then only look new in every
@@ -393,11 +311,16 @@ async function handleLiveFeed(req: NextRequest) {
   const SCORED_TTL = 180 * 24 * 60 * 60;
 
   // Phase 1: classify + identify candidates for PDF extraction
+  // zzz810 — classify on subject + detail line. NSE files every concall
+  // item as "Analysts/Institutional Investor Meet/Con. Call Updates"; only the
+  // detail says transcript vs recording vs intimation. Business-update,
+  // investor-call and analyst-meet transcripts are TRANSCRIPTs too.
   const candidates: Array<{ filing: FilingRecord; filing_type: ConcallFilingType }> = [];
-  for (const f of merged.values()) {
-    const filing_type = classifyFiling(f.subject);
-    if (!filing_type) continue;
-    candidates.push({ filing: f, filing_type });
+  for (const raw of dedupeConcallFilings([...merged.values()])) {
+    const cls = classifyConcallFiling(raw.subject, raw.detail);
+    if (!cls.filing_type) continue;
+    const f: FilingRecord = raw.detail ? { ...raw, subject: displaySubject(raw) } : raw;
+    candidates.push({ filing: f, filing_type: cls.filing_type });
   }
 
   // Sort by recency so we extract PDFs for the freshest filings first
@@ -539,7 +462,9 @@ async function handleLiveFeed(req: NextRequest) {
     // before, use the persisted payload directly. Skip extraction + scoring.
     const cached = cachedScored.get(f.content_hash);
     if (cached) {
-      all.push(cached);
+      // zzz810 — keep the stored score, but take today's classification and
+      // subject (older entries were classified on the generic NSE category).
+      all.push({ ...cached, filing_type, subject: f.subject, ...(f.detail ? { detail: f.detail } : {}) });
       continue;
     }
     const ext = extractedTexts.get(f.content_hash);
@@ -710,19 +635,48 @@ async function handleLiveFeed(req: NextRequest) {
   // smart money to ignore — late but high-conviction).
   const theme_clusters = buildThemeClusters(deduped);
 
+  // zzz810 — honest status. "Last successful fetch" is persisted so a
+  // failure can say when the feed last worked.
+  const nowIso = new Date().toISOString();
+  const anyOk = win.nse === 'OK' || win.bse === 'OK';
+  let lastOk: { at: string } | null = null;
+  if (isRedisAvailable()) {
+    if (anyOk && merged.size > 0) {
+      lastOk = { at: nowIso };
+      kvSet(LAST_OK_KEY, { at: nowIso, announcements: merged.size }, 30 * 24 * 60 * 60).catch(() => {});
+    } else {
+      lastOk = await kvGet<{ at: string }>(LAST_OK_KEY).catch(() => null);
+    }
+  } else if (anyOk && merged.size > 0) {
+    lastOk = { at: nowIso };
+  }
+  const counts = countConcalls(deduped);
+  const fetch_status = buildFeedStatus({
+    nse: win.nse, bse: win.bse, nse_reason: win.nse_reason, bse_reason: win.bse_reason,
+    announcements_total: merged.size,
+    concall_filings: counts.concall_filings,
+    transcripts: counts.transcripts,
+    window_days: days,
+    last_success_at: lastOk?.at ?? null,
+    from_iso: win.from_iso, to_iso: win.to_iso,
+  });
+
   const payload: FeedPayload = {
-    generated_at: new Date().toISOString(),
+    generated_at: nowIso,
     count_total: merged.size,
     count_relevant: deduped.length,
     count_high_bullish: deduped.filter(x => x.is_high_bullish).length,
     filings: deduped,
     theme_clusters,
     sources: { nse: nseResult.source, bse: bseResult.source },
+    fetch_status,
   };
 
-  // Cache the full payload; filters applied at response time
-  if (isRedisAvailable()) {
-    const ttl = days <= 2 ? CACHE_TTL_SHORT : CACHE_TTL_LONG;
+  // Cache the full payload; filters applied at response time.
+  // zzz810 — never cache a failed fetch (the next request must retry), and
+  // keep a partial one only briefly.
+  if (isRedisAvailable() && fetch_status.state !== 'FAILED') {
+    const ttl = fetch_status.state === 'PARTIAL' ? 5 * 60 : (days <= 2 ? CACHE_TTL_SHORT : CACHE_TTL_LONG);
     await kvSet(cacheKey, payload, ttl);
   }
 
@@ -768,6 +722,10 @@ function mergeNSEBSE(filings: ScoredFiling[]): ScoredFiling[] {
     if (arr.length === 1) { out.push(arr[0]); continue; }
     // Multiple filings same company on same day — collapse to winner
     arr.sort((a, b) => {
+      // zzz810 — the transcript IS the concall; never let a same-day notice
+      // or presentation hide it.
+      const ta = a.filing_type === 'TRANSCRIPT' ? 0 : 1, tb = b.filing_type === 'TRANSCRIPT' ? 0 : 1;
+      if (ta !== tb) return ta - tb;
       // Prefer PDF-scored over subject
       if (a.scored_from !== b.scored_from) return a.scored_from === 'PDF' ? -1 : 1;
       // Prefer higher raw score

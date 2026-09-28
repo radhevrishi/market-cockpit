@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { fetchNSEAnnouncements, fetchBSEAnnouncements, type FilingRecord } from '@/lib/nse-bse-feed';
+import { isUsableSubwindow } from '@/lib/concall-feed';
 import { extractFirstPdf } from '@/lib/pdf-text-extractor';
 import { extractSections } from '@/lib/concall-sections';
 import { scoreBullish } from '@/lib/concall-bullish';
@@ -234,7 +235,8 @@ async function handleWarrantFeed(req: NextRequest) {
       kvGet<SubWinCache>(SUBWIN_KEY(w.fromIso, w.toIso)).catch(() => null)
     ));
     for (let i = 0; i < subWindows.length; i++) {
-      if (reads[i]) subwinCacheHits.push(reads[i]!);
+      // zzz810 — a stored window whose fetch was blocked / empty is a miss, not "no filings".
+      if (isUsableSubwindow(reads[i])) subwinCacheHits.push(reads[i]!);
       else subwinMisses.push(subWindows[i]);
     }
   } else {
@@ -260,7 +262,8 @@ async function handleWarrantFeed(req: NextRequest) {
           nse: { filings: nseR.filings, source: nseR.source },
           bse: { filings: bseR.filings, source: bseR.source },
         };
-        kvSet(SUBWIN_KEY(w.fromIso, w.toIso), payload, ttlForSubwindow(w.toIso)).catch(() => {});
+        // zzz810 — never store a failed fetch as an empty window.
+        if (isUsableSubwindow(payload)) kvSet(SUBWIN_KEY(w.fromIso, w.toIso), payload, ttlForSubwindow(w.toIso)).catch(() => {});
       }
     }
     allResults.push(...batchResults);

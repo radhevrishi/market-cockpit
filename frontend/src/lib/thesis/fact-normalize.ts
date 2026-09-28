@@ -23,6 +23,7 @@
 
 import type { StructuralEvent, ValueType } from './evidence-extract';
 import type { VarKey } from './taxonomy';
+import { utilisationTense, isPostExpansionTotal, capexAmountKind } from './transcript-evidence';
 
 const MONTHS: Record<string, number> = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
 const monthEnd = (y: number, m: number) => new Date(Date.UTC(y, m + 1, 0));
@@ -278,7 +279,33 @@ export function normalizeEvent(e: StructuralEvent, reportingPeriod?: string | nu
   // "Capacity added 2,600 → 5,300 MTPA +103.8%". Nothing was added: the
   // board approved spending to add it.
   const approvedPlan = approvalPlan(e.evidence_text, e.after ?? e.before);
-  if (e.value_type === 'ACTUAL' && !pastDated && approvedPlan) {
+  // ── WHAT KIND OF STATEMENT, READ FROM THE SENTENCE'S OWN TENSE.    (zzz809)
+  // IOLCP "our current capacity is exhausted up to the level of 90% to 95%"
+  // is the utilisation TODAY — the model filed it as guidance and the card
+  // printed "target only". "In FY28 … around 25% utilization we can reach" is
+  // a target whatever it was filed as. "Taking our total capacity to 18,000
+  // MTPA" while expanding is the capacity AFTER a plan, not installed today.
+  // "INR495 crores of investment is being deployed" is the programme, not
+  // money spent.
+  const vSent = valueSentence(e.evidence_text, e.after ?? e.before);
+  if (e.variable === 'utilisation' && !e.before) {
+    const tense = utilisationTense(vSent);
+    if ((e.value_type === 'GUIDANCE' || e.value_type === 'TARGET') && tense === 'CURRENT') {
+      out.value_type = 'ACTUAL';
+      out.original_value_type = e.value_type;
+      out.retyped_because = 'the sentence states the current utilisation — an actual level today, not a target';
+    }
+  } else if (e.variable === 'capacity' && e.value_type === 'ACTUAL' && !pastDated && isPostExpansionTotal(e.evidence_text, e.after ?? e.before)) {
+    out.value_type = 'TARGET';
+    out.original_value_type = e.value_type;
+    out.retyped_because = 'the capacity after the expansion being built ("taking total capacity to …") — a plan, not capacity installed today';
+  } else if (e.variable === 'capex' && e.value_type === 'ACTUAL' && !pastDated && capexAmountKind(valueClause(e.evidence_text, e.after ?? e.before)) === 'PLANNED') {
+    out.value_type = 'GUIDANCE';
+    out.original_value_type = e.value_type;
+    out.retyped_because = 'the programme amount being deployed / proposed — the plan, not money already spent';
+  }
+  if (out.retyped_because) { /* typed above from the sentence's own tense */ }
+  else if (e.value_type === 'ACTUAL' && !pastDated && approvedPlan) {
     out.value_type = 'GUIDANCE';
     out.original_value_type = e.value_type;
     out.retyped_because = 'an approval to add capacity is a plan, not capacity added';
@@ -292,6 +319,13 @@ export function normalizeEvent(e: StructuralEvent, reportingPeriod?: string | nu
     out.value_type = 'ACTUAL';
     out.original_value_type = e.value_type;
     out.retyped_because = 'the sentence ties it to the current quarter';
+  }
+  // zzz809: a utilisation "we can reach in FY28" that the chain above left
+  // as ACTUAL is still a plan.
+  if (e.variable === 'utilisation' && !e.before && out.value_type === 'ACTUAL' && !pastDated && utilisationTense(vSent) === 'TARGET') {
+    out.value_type = 'GUIDANCE';
+    out.original_value_type = e.value_type;
+    out.retyped_because = out.retyped_because || 'the sentence states a utilisation to be reached — a plan, not today\'s level';
   }
   // ── A HEDGED FIGURE IS NOT A REPORTED ONE.                       (zzz767)
   // "Capex maybe INR1,200 crores" printed as an actual. A hedge word right

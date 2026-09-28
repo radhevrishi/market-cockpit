@@ -40,6 +40,8 @@ import { periodOrdinal } from './evidence-ledger';
 import { normalizeEvent, hasQuantity, periodEnd } from './fact-normalize';
 import { capacityMismatch, isCapacityFigure } from './fact-model';
 import { capexFigureOk } from './figure-guards';
+import { incurredShare, capexAmountKind, commercialStartOf } from './transcript-evidence';
+import { valueClause } from './fact-normalize';
 
 export type CapexState =
   | 'none'
@@ -136,7 +138,7 @@ export function capexBuild(projects: CapexProject[]): CapexBuild | null {
             : st(p, 'CAPACITY_CREATED') === 'actual' ? 'commissioned'
               : 'announced';
     const net = isNetworkAsset(p) && isOperatingBuild(build);
-    return { name: p.name, build: net ? 'opened' as BuildState : build, note: p.statusConflict || (net ? 'a store / network asset — opened, not production capacity' : null) };
+    return { name: p.name, build: net ? 'opened' as BuildState : build, note: p.statusConflict || p.statusNote || (net ? 'a store / network asset — opened, not production capacity' : null) };
   });
   const kinds = new Set(rows.map((r) => r.build));
   const mixed = rows.length > 1 && kinds.size > 1;
@@ -395,6 +397,7 @@ export function capexEarning(
   stage: CapexStage | null,
   projects: CapexProject[] = [],
   summary: any | null = null,
+  programme: ReturnType<typeof capexProgramme> | null = null,
 ): CapexEarning {
   const get = (k: string) => vars.find((v) => v.key === (k as VarKey)) || null;
   const ceRow = get('capex_earning');
@@ -432,7 +435,14 @@ export function capexEarning(
   const bareFigure = capexAfter.length <= 40 && !/[·;]/.test(capexAfter) && capexRow?.statement === 'ACTUAL';
   const saysSpent = SPENT_VERB.test(capexAfter) || /capital (?:WIP|work[- ]in[- ]progress)|\bCWIP\b|already (?:deployed|spent|incurred)/i.test(capexAfter);
   const capexRowSpent = capexRowStage === 'SPENDING' && !!money(capexRow!.after) && (saysSpent || bareFigure);
-  if (!spent) {
+  // zzz809: the programme's own stated share spent ("around 30% … has
+  // already been incurred") answers "spent?" for the whole programme; an
+  // unitemised capex figure — often the PLAN — never stands in for it.
+  const share = programme?.share || null;
+  const planTxt = programme?.planned.length ? programme.planned.join(' / ') : (share?.of || null);
+  if (!spent && share) {
+    spent = `about ${share.pct}% of the planned programme${planTxt ? ` (${planTxt})` : ''} already incurred — share as stated; the rupee amount spent is not stated`;
+  } else if (!spent) {
     const cs = get('capex_status');
     if (cs?.after && SPENT_VERB.test(String(cs.after)) && money(cs.after)) spent = spentPhrase(cs.after);
     else if (capexRowSpent) spent = `${spentPhrase(capexRow!.after)} (capex figure as stated; not itemised to a project)`;
@@ -497,7 +507,7 @@ export function capexEarning(
     : !!stage && ord(stage) >= ord('COMMISSIONED');
   const csRow = get('capex_status');
   const statedSpend = !!(csRow?.after && SPENT_VERB.test(String(csRow.after)) && money(csRow.after));
-  const spentOrBuilt = built || (pj ? pj.spent.length > 0 || actual('SPENT') : stage === 'SPENDING' && statedSpend) || (!pj && statedSpend) || capexRowSpent;
+  const spentOrBuilt = built || (pj ? pj.spent.length > 0 || actual('SPENT') : stage === 'SPENDING' && statedSpend) || (!pj && statedSpend) || capexRowSpent || !!share;
   const announcedOnly = !spentOrBuilt && (!!pj?.announced || actual('ANNOUNCED') || step('ANNOUNCED')?.state === 'target'
     || stage === 'ANNOUNCED' || stage === 'UNDER_CONSTRUCTION' || stage === 'SPENDING' || step('COMMISSIONED')?.state === 'target' || rowNotYet
     || !!nz(get('capex')?.after));
@@ -522,6 +532,7 @@ export function capexEarning(
     // disclosed": the amount phrase, or nothing when the sentence has none. (zzz772)
     const announcedTxt = announcedRaw && announcedRaw.length > 70 ? (money(announcedRaw) ? spentPhrase(announcedRaw) : null) : announcedRaw;
     lines.push(`Spent: ${spent || (announcedTxt ? `not disclosed (announced ${announcedTxt})` : 'not disclosed')}`);
+    if (programme?.planned.length && !(spent && programme.planned.every((x) => spent!.includes(x)))) lines.push(`Planned: ${programme.planned.join(' / ')} across the programme (stated plan, not spend)`);
     lines.push(`Revenue contribution: ${revenue || (state === 'NOT_STARTED'
       ? (step('REVENUE_CONTRIBUTION')?.state === 'target' && step('REVENUE_CONTRIBUTION')?.value ? `expected ${step('REVENUE_CONTRIBUTION')!.value}` : 'none yet — not commissioned')
       : 'not attributed in the documents read')}${revenueTarget ? ` · target ${revenueTarget}` : ''}`);
@@ -537,7 +548,8 @@ export function capexEarning(
   }
   const under = state === 'NOT_STARTED' && (stage === 'UNDER_CONSTRUCTION' || step('COMMISSIONED')?.state === 'target');
   return {
-    state, label: under ? 'NOT STARTED — UNDER CONSTRUCTION' : CAPEX_EARNING_LABEL[state],
+    state, label: under ? 'NOT STARTED — UNDER CONSTRUCTION'
+      : state === 'SPENT_NOT_EARNING' && share && !built && !(pj && pj.spent.length) ? 'PARTLY SPENT — NOT YET EARNING' : CAPEX_EARNING_LABEL[state],
     spent, revenueContribution: revenue, utilisation, marginContribution, marginText, roceText, lines,
     // "summary" is not a document; only a named document is worth printing.
     source: [src, step('REVENUE_CONTRIBUTION')?.source, pj?.steps.find((s) => s.source && s.source !== 'summary')?.source].find((x) => x && x !== 'summary') || null,
@@ -556,7 +568,7 @@ export function buildCapexChain(summary: any | null, vars: StructuralVar[], ledg
   const lifecycle = capexLifecycle(ledger);
   const reached = lifecycle.reduce<CapexStage | null>((m, e) => (!m || ord(e.stage) > ord(m) ? e.stage : m), null);
   const lifecycleProjects = capexProjects(summary, ledger, vars);
-  const earning00 = capexEarning(vars, reached, lifecycleProjects, summary);
+  const earning00 = capexEarning(vars, reached, lifecycleProjects, summary, capexProgramme(summary, ledger));
   const build = capexBuild(lifecycleProjects);
   // zzz790 — ONE PROGRAMME CANNOT BE "NOT STARTED" AND COMMISSIONED.
   // TI / HSCL / SANSERA read "Capex earning: NOT STARTED · Revenue
@@ -786,6 +798,9 @@ export interface CapexProject {
   /** zzz784: a reported status that its own completion date contradicts
    *  (IMFA KNR-1 "commercial production" with completion Q3 FY27). */
   statusConflict?: string | null;
+  /** zzz809: a built plant whose commercial start is later ("built & EU-GMP
+   *  certified — commercial start Q3 FY27"): a stage, not a conflict. */
+  statusNote?: string | null;
 }
 
 export { completionDate } from './fact-normalize';
@@ -841,6 +856,65 @@ const INVEST_IN = /(?:investment|capex|stake)\s+of\s+(?:₹|Rs\.?|INR)?\s?[\d,.]
 const CAPEX_EVENT_VARS = new Set(['capex', 'capex_status', 'commissioning', 'capex_earning', 'new_plant', 'capacity_addition']);
 
 interface Ev { variable: string; value_type: string; after: string | null; before: string | null; period: string | null; evidence_text: string; source: string; id: string | null; forward: boolean }
+
+/** zzz809: "EU-GMP certified" / "certified" when a summary line naming this
+ *  project says it received a certification or approval. */
+function certifiedWord(name: string, summary: any | null): string | null {
+  const tk = tokensOf(name);
+  if (!tk.length) return null;
+  const texts: string[] = [];
+  for (const c of Array.isArray(summary?.catalysts) ? summary.catalysts : []) texts.push(`${c?.title || ''} ${c?.evidence_quote || ''}`);
+  for (const x of Array.isArray(summary?.new_business) ? summary.new_business : []) texts.push(String(x || ''));
+  for (const x of Array.isArray(summary?.positives) ? summary.positives : []) texts.push(`${x?.label || ''} ${x?.detail || ''}`);
+  texts.push(String(summary?.customers?.approval || ''), String(summary?.customers?.qualification || ''));
+  for (const t of texts) {
+    const low = t.toLowerCase();
+    if (!tk.some((w) => new RegExp(`\\b${w}\\b`).test(low))) continue;
+    if (/\bEU[- ]?GMP\b/i.test(t)) return 'EU-GMP certified';
+    if (/\b(?:USFDA|US FDA)\b[^.]{0,40}(?:approv|clear|inspect)/i.test(t)) return 'USFDA approved';
+    if (/\b(?:GMP|WHO[- ]GMP)\b|certif(?:ied|ication)/i.test(t)) return 'certified';
+  }
+  return null;
+}
+
+const PROGRAMME_WORDS = /\b(across|initiatives|overall|total|programme|program|collectively|combined|in aggregate|all (?:the )?(?:two|three|four|five|\d) (?:projects|initiatives))\b/i;
+/** zzz809: the capital PROGRAMME as stated — its planned amounts and the
+ *  share of it management says is already spent. "Approximately INR495
+ *  crores of investment is being deployed" is the plan; "around 30% of
+ *  overall funding requirements has already been incurred" is the spend. A
+ *  rupee figure for the spend is never computed from the two. Pure. */
+export function capexProgramme(summary: any | null, ledger: CompanyLedger | null | undefined):
+  { planned: string[]; share: { pct: number; quote: string; of: string | null } | null } {
+  const planned: string[] = [];
+  const num = (x: string) => x.replace(/[^\d.]/g, '');
+  const addPlan = (m: string | null) => { if (m && !planned.some((p) => num(p) === num(m))) planned.push(m); };
+  const texts: string[] = [];
+  const latest = ledger?.latest_period && ledger.periods?.[ledger.latest_period] ? [ledger.latest_period] : [];
+  for (const per of latest) {
+    for (const raw of ledger!.periods[per]?.events || []) {
+      if (raw.variable !== 'capex' && raw.variable !== 'capex_status' && raw.variable !== 'capex_earning') continue;
+      texts.push(String(raw.evidence_text || ''));
+      const e = normalizeEvent(raw, per);
+      if (e.historical_as_of || e.variable !== 'capex') continue;
+      // The PROGRAMME, not one project inside it: the sentence has to speak
+      // of the whole ("across the three initiatives", "overall", "total").
+      if (!PROGRAMME_WORDS.test(e.evidence_text)) continue;
+      if (/programme amount/i.test(String(e.retyped_because || '')) || capexAmountKind(valueClause(e.evidence_text, e.after)) === 'PLANNED') addPlan(money(e.after));
+    }
+  }
+  const cap = String(summary?.capital?.capex || '');
+  for (const cl of cap.split(/;\s*/)) if (capexAmountKind(cl) === 'PLANNED' && PROGRAMME_WORDS.test(cl) && !/guidance|FY\d{2}\s+capex/i.test(cl)) addPlan(money(cl));
+  texts.push(cap, String(summary?.capex_earning || ''));
+  let share: { pct: number; quote: string; of: string | null } | null = null;
+  for (const t of texts) {
+    const sh = incurredShare(t);
+    if (!sh) continue;
+    // The plan the share is OF, when the same text states it.
+    share = { ...sh, of: money(t) };
+    break;
+  }
+  return { planned: planned.slice(0, 3), share };
+}
 
 /** Pure: every capital project the evidence names, with its lifecycle. */
 export function capexProjects(summary: any | null, ledger: CompanyLedger | null | undefined, vars: StructuralVar[] = []): CapexProject[] {
@@ -911,7 +985,7 @@ export function capexProjects(summary: any | null, ledger: CompanyLedger | null 
     const es = buckets.get(name) || [];
     if (!es.length && !row) continue;
     const steps = new Map<LifecycleStep, ProjectStep>();
-    let curUC = false; let curConflict: string | null = null;
+    let curUC = false; let curConflict: string | null = null; let curNote: string | null = null;
     const set = (step: LifecycleStep, state: 'actual' | 'target', value: string | null, e: Ev | null) => {
       const cur = steps.get(step);
       if (cur && cur.state === 'actual' && state === 'target') return;
@@ -1021,7 +1095,19 @@ export function capexProjects(summary: any | null, ledger: CompanyLedger | null 
         if (/commerciali[sz]ed|commercial production|commercial operations|commenced operations/i.test(comp) && !FORWARD_CUE.test(comp)) set('COMMERCIAL_PRODUCTION', 'actual', short(comp.replace(/^commerciali[sz]ed\s*(?:in\s*)?/i, ''), 50), null);
         else if (/commercial[_ ]production/.test(status) && (!compFuture || compDone)) set('COMMERCIAL_PRODUCTION', 'actual', short(comp, 50), null);
         else if ((status === 'commissioned' && !compFuture) || compDone) set('COMMISSIONED', 'actual', short(comp, 50), null);
-        else {
+        else if (commercialStartOf(status, comp) && !/under[_ ]construction/.test(status)) {
+          // ── BUILT NOW, SELLING LATER IS A STAGE, NOT A CONFLICT.   (zzz809)
+          // IOLCP's CDMO plant: "we have established a new CDMO facility …
+          // received the EU GMP certification, and commercialization is
+          // expected during Q3 FY27". Built and certified today; commercial
+          // sales start later. The "completion" the row states is the
+          // commercial start.
+          const cs = commercialStartOf(status, comp)!;
+          const cert = certifiedWord(name, summary);
+          set('COMMISSIONED', 'actual', `built${cert ? ` & ${cert}` : ''}`, null);
+          set('COMMERCIAL_PRODUCTION', 'target', cs, null);
+          curNote = `built${cert ? ` & ${cert}` : ''} — commercial start ${cs}`;
+        } else {
           set('COMMISSIONED', 'target', short(comp, 60), null);
           if (/commercial[_ ]production|commissioned/.test(status)) curConflict = `reported status "${status.replace(/_/g, ' ')}" conflicts with its stated completion ${short(comp, 40)} — validation required`;
           if (/commercial[_ ]production|commissioned/.test(status)) curUC = true;
@@ -1063,6 +1149,11 @@ export function capexProjects(summary: any | null, ledger: CompanyLedger | null 
       || (i < lastActual && ['SPENT', 'COMMISSIONED'].includes(st)
         ? { step: st, state: 'implied' as const, value: null, quote: null, source: null, sourceIds: [] }
         : { step: st, state: 'pending' as const, value: null, quote: null, source: null, sourceIds: [] }));
+    // zzz809: a project the documents NAME is a project, even with no amount,
+    // capacity or date yet (IOLCP's third initiative, a customer-led tolling
+    // facility): it is counted as announced rather than dropped.
+    const namedOnly = !!row && !ordered.some((x) => x.state === 'actual' || x.state === 'target');
+    if (namedOnly) ordered[0] = { step: 'ANNOUNCED', state: 'actual', value: null, quote: null, source: 'summary', sourceIds: [] };
     if (!ordered.some((x) => x.state === 'actual' || x.state === 'target')) continue;
 
     const get = (st: LifecycleStep) => ordered.find((x) => x.step === st)!;
@@ -1084,7 +1175,9 @@ export function capexProjects(summary: any | null, ledger: CompanyLedger | null 
     if (rev.state === 'pending') parts.push('revenue contribution pending');
     else if (rev.state === 'target') parts.push('earning pending');
     else if (mar.state === 'pending') parts.push('margin contribution pending');
-    const line0 = parts.join(' → ').replace(/^./, (c) => c.toUpperCase());
+    const line0 = (namedOnly
+      ? `Announced${said(row?.type) && !/not[_ ]stated/i.test(String(row.type)) ? ` (${String(row.type).replace(/_/g, ' ')})` : ''} — no amount, capacity or completion date stated yet`
+      : parts.join(' → ')).replace(/^./, (c) => c.toUpperCase());
     const line = mismatch ? `${line0} · ${mismatch}` : line0;
 
     const locMatch = /\b(?:at|in)\s+([A-Z][a-z]+(?:,\s*[A-Z][a-z]+)?)\b/.exec(name === OTHER ? '' : name);
@@ -1114,6 +1207,7 @@ export function capexProjects(summary: any | null, ledger: CompanyLedger | null 
       mismatch,
       underConstruction: curUC,
       statusConflict: curConflict,
+      statusNote: curNote,
     });
   }
   return out;

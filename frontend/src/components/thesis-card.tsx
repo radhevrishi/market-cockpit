@@ -1205,6 +1205,19 @@ export function ThesisCard(p: ThesisCardProps) {
                           {cc.retyped && (
                             <span style={{ display: 'block', fontSize: 12, color: C.faint }}>read as {String(cc.statement || '').toLowerCase().replace('_', ' ')}: {cc.retyped}</span>
                           )}
+                          {/* zzz809: management's forward statements, one per line —
+                              claims about the future, never filed results. */}
+                          {Array.isArray(cc.forwardLines) && cc.forwardLines.length > 0 && (
+                            <span style={{ display: 'block', fontSize: 12.5, color: C.cyan, marginTop: 2 }} data-forward-lines>
+                              Management guidance — not filed results:
+                              {cc.forwardLines.map((l: string) => (
+                                <span key={l} style={{ display: 'block', color: C.text }}>◐ {rupee(l)}</span>
+                              ))}
+                            </span>
+                          )}
+                          {cc.supports && (
+                            <span style={{ display: 'block', fontSize: 12, color: C.up }}>supports the thesis: {cc.supports}</span>
+                          )}
                           {Array.isArray(cc.context) && cc.context.length > 0 && (
                             <span style={{ display: 'block', fontSize: 12, color: C.faint }}>
                               Historical context: {cc.context.map((x: any) => `${x.value} (${x.asOf})`).join(' · ')}

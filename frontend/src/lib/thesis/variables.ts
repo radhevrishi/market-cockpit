@@ -31,12 +31,13 @@ import {
   type VarKey, type VarGroup, type EvidenceKind,
 } from './taxonomy';
 
-import { bestEventPerVariable, judgeEventQuality, valueFitsVariable, verifiedDirection, type StructuralEvent } from './evidence-extract';
+import { bestEventPerVariable, betterReading, judgeEventQuality, valueFitsVariable, verifiedDirection, type StructuralEvent } from './evidence-extract';
 import { scaledNumber, sameUnit, magnitudeOf, deltaOf as ledgerDeltaOf, periodOrdinal, needsVariableSnapshots, withVariableSnapshots, formatDeltaAbs, type CompanyLedger, type VariableSnapshot } from './evidence-ledger';
 import { BASIS_LABEL, type MetricComparison } from './comparison';
 import { normalizeEvent, gapToTarget, hedgedAround, rangeOf, datesIn, stripPeriodTokens, movePeriodOut, completionDate, periodEnd, forwardSentence, volumeContext } from './fact-normalize';
 import { parseOneOff, oneOffLine } from './one-offs';
 import { SILENCE_WORDING } from './silent-check';
+import { deriveCurrentCapacity, productOfCapacity, productKey, powerOfTenApart, bottleneckHurtsSales, utilisationLow } from './transcript-evidence';
 import type { ChangeLine, LedgerDocument } from './evidence-ledger';
 import {
   factTypeOf, metricGroupOf, validateReading, validateCashConversion, lineageOf, normalizeValue,
@@ -173,6 +174,10 @@ export interface StructuralVar {
   /** The row as the owner asked it printed: "68% → 74% · +6pp", "74% · prior
    *  comparable value not disclosed", "Actual: 74% · Target: 80%+". */
   display?: string;
+  /** zzz809: on the guidance row — management's forward statements, one per
+   *  line ("Incremental revenue from the new capacity: 25% to around 30%"),
+   *  each a claim about the future, never a filed result. */
+  forwardLines?: string[] | null;
 }
 
 
@@ -371,7 +376,29 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
   // fit its variable is set aside BEFORE the ranking — otherwise E2E's MRR
   // figure (Rs million, filed under utilisation) outranked, and then took
   // down with it, management's own "pretty much at maximum level".
-  const norm = events.map((e) => normalizeEvent(e, period));
+  // ── zzz809: SPOKEN WORDS AND GUIDANCE LINES TRAVEL APART.
+  // A qualitative statement (price "more or less same", a margin mechanism)
+  // and a forward-guidance line are not readings to rank against figures:
+  // they get their own rows / lines below.
+  const spokenEvents = events.filter((e) => e.qualitative || e.guidance_line);
+  const figureEvents = events.filter((e) => !e.qualitative && !e.guidance_line);
+  // ── zzz809: THE INSTALLED FIGURE A SENTENCE IMPLIES, SAID TO BE DERIVED.
+  // "Expanding our Ibuprofen capacity by 6,000 MTPA, taking our total capacity
+  // to 18,000 MTPA": installed today is 12,000 MTPA. Only when both figures
+  // are in the same sentence and the same unit; the row says "derived".
+  const derivedCap: StructuralEvent[] = [];
+  for (const e of figureEvents) {
+    if (e.variable !== 'capacity' && e.variable !== 'capacity_addition') continue;
+    const d = deriveCurrentCapacity(e.evidence_text);
+    if (!d || derivedCap.some((x) => x.after === d.current && x.source === e.source)) continue;
+    derivedCap.push({ ...e, variable: 'capacity', value_type: 'ACTUAL', before: null, after: d.current, unit: d.unit, direction: 'unknown',
+      derived: d.basis, product: d.product });
+  }
+  const norm = [...figureEvents, ...derivedCap].map((e) => {
+    const n0 = normalizeEvent(e, period);
+    // A derived figure keeps its derived type whatever the sentence's tense.
+    return (e as any).derived ? { ...n0, value_type: 'ACTUAL' as const, retyped_because: String((e as any).derived) } : n0;
+  });
   const historical = norm.filter((e) => e.historical_as_of && e.value_type === 'ACTUAL');
   const live = norm.filter((e) => !(e.historical_as_of && e.value_type === 'ACTUAL'))
     // Commentary carries no figure, so no unit test applies; it is kept and
@@ -381,10 +408,60 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
     // growth outlook). (zzz772)
     .filter((e) => (e.commentary && e.variable !== 'utilisation' && e.variable !== 'capex') || judgeEventQuality(e) !== 'unit_mismatch');
   const slots = bestEventPerVariable(live);
+  // ── zzz809: ONE PRODUCT'S CAPACITY, NOT THE LARGEST NUMBER ON FILE.
+  // IOLCP's card printed "✓ Installed capacity 120,000 MTPA" — Ethyl
+  // Acetate, from the annual report — beside an expansion of Ibuprofen, and
+  // called the Ibuprofen figure a disagreement. Capacity figures are read per
+  // product; where a capacity addition names its product, the installed row
+  // is that product's, so the two are like for like. Other products' figures
+  // are listed as context, never as a conflict.
+  const prodOf = (e: StructuralEvent): string | null => (e as any).product ?? productOfCapacity(e.evidence_text, e.after ?? e.before);
+  const capProducts = new Map<StructuralEvent, string | null>();
+  for (const e of live) if (e.variable === 'capacity' || e.variable === 'capacity_addition') capProducts.set(e, productKey(prodOf(e)));
+  const focus = (() => {
+    const add = live.find((e) => e.variable === 'capacity_addition' && capProducts.get(e));
+    if (add) return capProducts.get(add)!;
+    const post = live.find((e) => e.variable === 'capacity' && (e.value_type === 'TARGET' || e.value_type === 'GUIDANCE') && capProducts.get(e));
+    return post ? capProducts.get(post)! : null;
+  })();
+  const capSlot = slots.get('capacity');
+  let capOthers: string[] = [];
+  let capTenfold: string | null = null;
+  if (capSlot) {
+    const better0 = (x: StructuralEvent, y: StructuralEvent) => betterReading({ ...x, quality: judgeEventQuality(x) }, { ...y, quality: judgeEventQuality(y) });
+    const actuals = live.filter((e) => e.variable === 'capacity' && e.value_type === 'ACTUAL' && judgeEventQuality(e) !== 'unit_mismatch');
+    const pick = (xs: StructuralEvent[]) => xs.reduce<StructuralEvent | null>((m, x) => (!m || better0(x, m) < 0 ? x : m), null);
+    const mine = focus ? actuals.filter((e) => capProducts.get(e) === focus) : [];
+    if (focus && mine.length) capSlot.actual = pick(mine);
+    const fwd = live.filter((e) => e.variable === 'capacity' && (e.value_type === 'GUIDANCE' || e.value_type === 'TARGET'));
+    const winnerP = capSlot.actual ? capProducts.get(capSlot.actual) ?? null : focus;
+    const fwdMine = fwd.filter((e) => !capProducts.get(e) || !winnerP || capProducts.get(e) === winnerP);
+    capSlot.forward = pick(fwdMine);
+    // Disagreement only within one product (or where a product is unnamed).
+    const w = capSlot.actual;
+    const sameProduct = (e: StructuralEvent) => !w || !capProducts.get(e) || !capProducts.get(w) || capProducts.get(e) === capProducts.get(w);
+    capSlot.conflicts = (capSlot.conflicts || []).filter(sameProduct);
+    // 10× apart within one product: a unit or zero error in one document.
+    if (w) {
+      const wn = scaledNumber(String(w.after ?? ''));
+      const bad = actuals.find((e) => e !== w && sameProduct(e) && e.source !== w.source && sameUnit(String(e.after ?? ''), String(w.after ?? ''), e.unit, w.unit)
+        && powerOfTenApart(scaledNumber(String(e.after ?? '')), wn));
+      if (bad) {
+        capTenfold = `figures conflict across documents — ${w.after} (${w.source}) vs ${bad.after} (${bad.source}) for the same ${capProducts.get(w) || capProducts.get(bad) ? 'product' : 'measure'}, exactly ${Math.round(Math.max(scaledNumber(String(bad.after)) || 1, wn || 1) / Math.min(scaledNumber(String(bad.after)) || 1, wn || 1))}× apart: a unit or zero error in one of them, so neither is shown as confirmed`;
+        if (!capSlot.conflicts.includes(bad)) capSlot.conflicts = [bad, ...capSlot.conflicts];
+      }
+    }
+    const seenP = new Set<string>();
+    capOthers = actuals.filter((e) => capProducts.get(e) && capProducts.get(e) !== (w ? capProducts.get(w) : focus))
+      .filter((e) => { const k = `${capProducts.get(e)}|${scaledNumber(String(e.after ?? ''))}`; if (seenP.has(k)) return false; seenP.add(k); return true; })
+      .map((e) => `${prodOf(e)} ${e.after} (${e.source})`).slice(0, 5);
+  }
   for (const [key, slot] of slots) {
     const a = slot.actual as (StructuralEvent & { flat_stated?: boolean; retyped_because?: string | null }) | null;
     const f = slot.forward;
-    const label = VAR_LABEL[key] || key;
+    // zzz809: a capacity row names its product where the sentence does.
+    const capProduct = key === 'capacity' && (a || f) ? prodOf((a || f)!) : null;
+    const label = capProduct ? `${VAR_LABEL[key] || key} — ${capProduct}` : (VAR_LABEL[key] || key);
     // Only disagreements between values that would BOTH have been shown count.
     // A wrong-unit reading losing to a good one is the filter working, not two
     // sources contradicting each other.
@@ -507,7 +584,13 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
         bareMultiple
         || (!hasFigure(a.after) && /^(?:capacity|capacity_addition|order_book|order_intake|utilisation|volume)$/.test(key))
         || (/\b(?:stands?|stood|is|was)\s+at\b|\bas (?:on|of)\b|\bat a level of\b/i.test(a.evidence_text) && !movesFigure));
-      const verdict0: VarVerdict = denied ? 'flat'
+      // zzz809: a capacity constraint is ✕ only when the company says it is
+      // costing sales or volumes. A full plant with capacity being added
+      // ("operating at 90%-95%, implying a constraint") is the case FOR the
+      // addition, not a deterioration.
+      const constraintOnly = key === 'capacity_bottleneck' && !bottleneckHurtsSales(`${a.after || ''} ${a.evidence_text}`);
+      const verdict0: VarVerdict = constraintOnly && !(/remov|eas|resolv|de-?bottleneck/i.test(`${a.after || ''} ${a.evidence_text}`)) ? 'stated'
+        : denied ? 'flat'
         : notYet ? 'stated'
         : levelOnly && (dir === 'up' || dir === 'down') ? 'stated'
         : amountOnly && mayJudge && !flatStated && (dir === 'up' || dir === 'down') ? 'stated'
@@ -520,8 +603,20 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
       // DEEPAKNTR "170-odd percent" utilisation with no stated denominator is
       // a validation question, counted neither confirmed nor contradicted.
       const validation = validateReading(key, a.after, a.evidence_text, a.unit);
-      const unclear = validation.state === 'UNCLEAR';
+      const tenfold = key === 'capacity' ? capTenfold : null;
+      const unclear = validation.state === 'UNCLEAR' || !!tenfold;
       const verdict: VarVerdict = unclear ? 'stated' : verdict0;
+      // zzz809: a utilisation target far BELOW today's level is the ramp of new
+      // capacity ("25% in FY28" for a plant commissioning in 2027), not a
+      // target for the plant running at 90% — never set beside it as its plan.
+      const rampOfNew = key === 'utilisation' && !!f && (() => {
+        const lo = utilisationLow(a.after), fl = utilisationLow(f.after);
+        return lo != null && fl != null && fl < lo - 20;
+      })();
+      const derivedNote = (a as any).derived ? ` ⓘ ${String((a as any).derived)} — derived, not a figure the document prints.` : '';
+      const othersNote = key === 'capacity' && capOthers.length ? ` Other product lines on file (context, not this row): ${capOthers.join('; ')}.` : '';
+      const constraintNote = constraintOnly ? ' ⓘ A capacity constraint, not stated to be costing sales or volumes — shown, not counted against the thesis; for a capacity-led thesis it is the reason for the addition.' : '';
+      const rampNote = rampOfNew ? ` · Separate ${f!.value_type === 'GUIDANCE' ? 'guidance' : 'target'} for the new capacity's ramp: ${f!.after}${f!.period ? ` (${f!.period})` : ''} — not a target for the existing plant.` : '';
       const statement: StructuralVar['statement'] = isFact ? 'ACTUAL' : potential ? 'MANAGEMENT_STATEMENT' : a.value_type === 'MANAGEMENT_CLAIM' ? 'MANAGEMENT_STATEMENT' : a.value_type === 'GUIDANCE' ? 'GUIDANCE' : a.value_type === 'TARGET' ? 'TARGET' : 'MANAGEMENT_STATEMENT';
       out.push({
         key, label,
@@ -534,8 +629,9 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
               : verdict === 'stated' ? 'Level only — no earlier figure in the text to compare against: ' : '')
           + `${a.evidence_text.slice(0, 220)}${a.evidence_text.length > 220 ? '…' : ''}`
           + ` — ${a.source}${a.period ? `, ${a.period}` : ''}`
-          + (f ? ` · ${f.value_type === 'GUIDANCE' ? 'Guidance' : 'Target'} ${f.after}${f.period ? ` (${f.period})` : ''}` : '')
-          + (validation.metric_definition ? ` ⓘ Definition stated by the source: "${validation.metric_definition}".` : unclear ? `${overNameplate} ⓘ ${validation.reason}.` : overNameplate) + conflictNote,
+          + (f && !rampOfNew ? ` · ${f.value_type === 'GUIDANCE' ? 'Guidance' : 'Target'} ${f.after}${f.period ? ` (${f.period})` : ''}` : '') + rampNote
+          + (validation.metric_definition ? ` ⓘ Definition stated by the source: "${validation.metric_definition}".` : tenfold ? ` ⚠ ${tenfold}.` : unclear ? `${overNameplate} ⓘ ${validation.reason}.` : overNameplate)
+          + (tenfold ? '' : conflictNote) + derivedNote + othersNote + constraintNote,
         conflict: conflicts.length ? conflicts : null,
         corroboration: corroboration.length ? corroboration : null,
         source: 'filing',
@@ -557,7 +653,7 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
         // unit, or neither carries a figure. And "the same figure" compares
         // the leading figures: MENONBE "6.74 crore · plan 6.74 crore fully
         // deployed in FY26" differed only in the year.
-        plan: f && judgeEventQuality(f) !== 'unit_mismatch' && String(f.after ?? '').trim()
+        plan: f && !rampOfNew && judgeEventQuality(f) !== 'unit_mismatch' && String(f.after ?? '').trim()
           && !samePlanFigure(a.after, f.after)
           && hasFigure(a.after) === hasFigure(f.after)
           // Same measure AND same scope (zzz770): "80% plus" is a percent like
@@ -575,6 +671,7 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
         quote: a.evidence_text.slice(0, 300),
         retyped: a.retyped_because || null,
         unjudged: potential ? 'described as revenue potential over the next years, not an executable order book'
+          : tenfold ? tenfold
           : unclear ? validation.reason
             : (a as any).commentary ? 'management commentary — an expectation with no figure, not a value and not a confirmation' : null,
       });
@@ -670,7 +767,62 @@ export function varsFromEvents(events: StructuralEvent[] | null | undefined, per
       }
     }
   }
+  // ── zzz809: WHAT MANAGEMENT SAID IN WORDS, WHERE NO FIGURE WAS GIVEN.
+  // IOLCP's card printed "? Price NOT DISCLOSED" and "? Margin driver NOT
+  // DISCLOSED" over a call that said "Ibu prices are more or less same" and
+  // agreed to "a probable margin expansion" from backward integration. Such a
+  // statement is shown as what it is — management commentary, ◐ — never as a
+  // figure and never as confirmation.
+  for (const k of ['price', 'margin_driver', 'volume'] as VarKey[]) {
+    if (out.some((v) => v.key === k)) continue;
+    // Statements about the product being expanded lead (IOLCP: Ibuprofen).
+    const qs = spokenEvents.filter((e) => e.qualitative && e.variable === k)
+      .map((e, i) => ({ e, i, mine: !!focus && e.evidence_text.toLowerCase().includes(focus) }))
+      .sort((x, y) => Number(y.mine) - Number(x.mine) || x.i - y.i).map((x) => x.e);
+    if (!qs.length) continue;
+    const top = qs.slice(0, 2);
+    const first = top[0];
+    const cut = (x: string) => (x.length > 130 ? `${x.slice(0, 129)}…` : x);
+    out.push({
+      key: k, label: VAR_LABEL[k] || k, kind: 'claim',
+      before: null, after: top.map((e) => cut(String(e.after || ''))).join('; '), delta: null, verdict: 'stated',
+      evidence: `Management commentary in words — not a filed figure${qs.length > 2 ? ` (${qs.length} statements; first two shown)` : ''}: `
+        + qs.slice(0, 3).map((e) => `“${e.evidence_text.slice(0, 200)}${e.evidence_text.length > 200 ? '…' : ''}”`).join(' · ') + ` — ${first.source}`,
+      source: 'filing', statement: 'MANAGEMENT_STATEMENT', fact_type: 'MANAGEMENT_COMMENTARY',
+      validation: null, asOf: period || null, sourceLabel: first.source || null, quote: first.evidence_text.slice(0, 300),
+      lineage: lineageOf({ ...(first as any), period: period || null }, docs),
+      normalized: normalizeValue(null, null), scope: scopeOf(first.evidence_text, null), unjudged: null,
+    });
+  }
   return out;
+}
+
+/** zzz809: management's forward-guidance lines — from the transcript's own
+ *  sentences (events marked `guidance_line`) and, for a reading made before
+ *  those were captured, from the summary's forward fields. Each line is a
+ *  claim about the future; the figures are copied, never computed. */
+export function forwardGuidanceLines(events: StructuralEvent[] | null | undefined, summary: any | null): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const perLabel = new Map<string, number>();
+  const add = (line: string) => {
+    const t = line.replace(/\s+/g, ' ').trim().replace(/[.\s]+$/, '');
+    const k = t.toLowerCase().replace(/[^a-z0-9%]+/g, ' ');
+    const lab = t.split(':')[0].toLowerCase();
+    // Two statements of one kind are enough; the rest repeat them.
+    if (!t || seen.has(k) || (perLabel.get(lab) || 0) >= 2) return;
+    seen.add(k); out.push(t); perLabel.set(lab, (perLabel.get(lab) || 0) + 1);
+  };
+  for (const e of Array.isArray(events) ? events : []) if (e?.guidance_line && e.after) add(String(e.after));
+  const spokenLabels = new Set(out.map((l) => l.split(':')[0].toLowerCase()));
+  const dem = summary?.demand || {};
+  if (said(dem.revenue_visibility) && /\d\s*%/.test(String(dem.revenue_visibility)) && !spokenLabels.has('incremental revenue from the new capacity')) add(`Incremental revenue from the new capacity: ${dem.revenue_visibility}`);
+  const ut = summary?.utilisation || {};
+  if (said(ut.expected) && !spokenLabels.has('utilisation target')) add(`Utilisation target: ${ut.expected}${said(ut.expected_by) && !String(ut.expected).includes(String(ut.expected_by)) ? ` (by ${ut.expected_by})` : ''}`);
+  for (const t of Array.isArray(summary?.management_targets) ? summary.management_targets : []) {
+    if (said(t?.metric) && said(t?.target)) add(`${t.metric}: ${t.target}${said(t?.by) ? ` (${t.by})` : ''}`);
+  }
+  return out.slice(0, 12);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1495,8 +1647,13 @@ export function extractVariables(
     `Commissioning: ${str(cap.commissioning)}.`, { kind: 'claim' });
   if (str(cap.bottleneck)) {
     const removed = /remov|eas|resolv|de-?bottleneck/i.test(String(cap.bottleneck));
-    push_('capacity_bottleneck', str(cap.bottleneck), removed ? 'improving' : 'deteriorating',
-      `Capacity bottleneck: ${cap.bottleneck}.`);
+    // zzz809: ✕ only when the constraint is said to be costing sales or
+    // volumes. "Operating at 90%-95% (implying capacity constraint)" with
+    // capacity being added is a full plant — the reason for the addition.
+    const hurts = bottleneckHurtsSales(String(cap.bottleneck));
+    push_('capacity_bottleneck', str(cap.bottleneck), removed ? 'improving' : hurts ? 'deteriorating' : 'stated',
+      `Capacity bottleneck: ${String(cap.bottleneck).replace(/[.\s]+$/, '')}.${removed || hurts ? ''
+        : ' ⓘ A capacity constraint, not stated to be costing sales or volumes — shown, not counted against the thesis; for a capacity-led thesis it is the reason for the addition.'}`);
   }
 
   const dem = summary?.demand || {};
@@ -1608,6 +1765,23 @@ export function extractVariables(
   push_('pricing_power', str(risk.pricing_power), 'unknown', `Pricing power: ${str(risk.pricing_power)}.`);
   push_('technology', str(risk.technology), 'unknown', `Technology / automation: ${str(risk.technology)}.`);
   push_('raw_materials', str(risk.raw_materials), 'unknown', `Raw materials: ${str(risk.raw_materials)}.`);
+  // ── zzz809: PRICE STATED IN WORDS IS DISCLOSED, NOT SILENT.
+  // A reading made before transcript commentary was captured still holds
+  // management's price remarks in the pricing-power / raw-material fields
+  // ("price adjustment clauses", "API prices have softened from peaks").
+  // They fill the price row as commentary (◐), never as a figure.
+  if (!str(vpm.price) && !covered.has('price') && !out.some((v) => v.key === 'price')) {
+    const words = [str(risk.pricing_power), str(risk.raw_materials)]
+      .filter((x): x is string => !!x && /\bprices?\b|\bpricing\b|price adjustment|pass(?:ed)?[- ]?(?:on|through)/i.test(x) && !isDenial(x));
+    if (words.length) {
+      push({
+        key: 'price', label: VAR_LABEL.price, kind: 'claim', before: null,
+        after: words.map((x) => x.replace(/[.\s]+$/, '')).join('; '), delta: null, verdict: 'stated',
+        evidence: `Management commentary on prices, as summarised from the documents read — words, not a filed figure: ${words.join(' ')}`,
+        source: 'filing', statement: 'MANAGEMENT_STATEMENT', fact_type: 'MANAGEMENT_COMMENTARY',
+      });
+    }
+  }
 
   // ── MANAGEMENT TARGETS ARE CLAIMS, NOT FACTS, and are tagged so. They are
   //    what the promise ledger will grade a LATER quarter against.
@@ -1651,6 +1825,27 @@ export function extractVariables(
           : 'Every disclosed margin driver is cyclical or one-off. This margin does not repeat on its own.',
       source: 'filing', kind: 'fact',
     });
+  }
+
+  // ── zzz809: FORWARD GUIDANCE, LINE BY LINE, UNDER THE GUIDANCE ROW.
+  // Incremental revenue from new capacity, asset turns, ROCE when the
+  // projects are complete, growth guidance, utilisation targets — each a
+  // management claim about the future, shown as one, never as a result.
+  {
+    const fl = forwardGuidanceLines(summary?.events, summary);
+    // A row is created only from lines the transcript itself states; the
+    // summary's targets ride on a guidance row that already exists.
+    const spokenLines = (Array.isArray(summary?.events) ? summary.events : []).some((e: any) => e?.guidance_line);
+    if (fl.length) {
+      const gRow = out.find((v) => v.key === 'guidance');
+      if (gRow) gRow.forwardLines = fl;
+      else if (spokenLines) out.push({
+        key: 'guidance', label: VAR_LABEL.guidance, kind: 'claim', before: null,
+        after: `${fl.length} forward statement${fl.length === 1 ? '' : 's'}`, delta: null, verdict: 'stated',
+        evidence: `Management guidance — claims about the future, not filed results: ${fl.join(' · ')}.`,
+        source: 'filing', statement: 'GUIDANCE', forwardLines: fl,
+      });
+    }
   }
 
   // Every row says what kind of statement it is and which period it covers,

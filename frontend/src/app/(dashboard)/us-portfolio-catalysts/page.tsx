@@ -37,6 +37,8 @@ import { usDetect } from '@/lib/us-thesis/persist-us';
 import { UsSpecialFocusPanel } from '@/components/us-special-focus-panel';
 import { STATUS_META, type ThesisStatus } from '@/lib/thesis/status';
 import { evidenceCounts, universeCounts, researchPriorityEligible, researchPriorityTitle } from '@/lib/thesis/evidence-counts';
+import NewCatalystsTab from '@/components/catalyst/new-catalysts-tab';
+import { buildRecentCatalysts, rawFromLedger, rawFromPersistent, localToday, type RawEvent } from '@/lib/catalyst/recent-events';
 
 const C = {
   bg: 'var(--mc-bg-1)', border: 'var(--mc-bg-4)', text: 'var(--tc-text, #F1F5F9)',
@@ -59,6 +61,8 @@ export default function UsPortfolioCatalystsPage() {
   const [filter, setFilter] = useState<ThesisStatus | null>(null);
   const [source, setSource] = useState<'all' | 'book' | 'bench'>('all');
   const [copied, setCopied] = useState<string | null>(null);
+  // zzz808: the catalyst board, or "New · last 10 days".
+  const [view, setView] = useState<'board' | 'new'>('board');
 
   const all = useMemo(() => Object.values(rows), [rows]);
   const inSource = useMemo(() => all.filter((r) => source === 'all' ? true : source === 'book' ? r.origin !== 'bench' : r.origin !== 'book'), [all, source]);
@@ -87,6 +91,34 @@ export default function UsPortfolioCatalystsPage() {
   const anyRunning = batch.running || priorBatch.running || checkBatch.running;
   const excludedBook = excluded.filter((e) => e.origin !== 'bench').length;
   const excludedBench = excluded.length - excludedBook;
+
+  // ── NEW IN THE LAST 10 DAYS. (zzz808) Every dated SEC filing (8-K, 10-Q,
+  // 10-K, 20-F, 6-K) and extracted event already on file for the US names on
+  // screen (book + bench), plus the persistent-catalyst items.
+  const today = useMemo(() => localToday(), []);
+  const recentNew = useMemo(() => {
+    if (loading || evidenceLoading) return null;
+    const raws: RawEvent[] = [];
+    for (const r of all) {
+      const co0 = r.sec?.company || r.graded?.company || null;
+      const co = co0 && String(co0).toUpperCase() !== r.symbol.toUpperCase() ? String(co0) : null;
+      raws.push(...rawFromLedger(r.symbol, co, r.ledger, r.assessment));
+      let pcs: any[] = [];
+      try { pcs = usDetect(r as any); } catch { pcs = []; }
+      raws.push(...rawFromPersistent(r.symbol, co, pcs, r.assessment));
+    }
+    return buildRecentCatalysts(raws, today);
+  }, [all, loading, evidenceLoading, today]);
+  const recentNotes = useMemo(() => {
+    const n: string[] = [];
+    const ecs = evidenceCounts(all as any);
+    if (ecs.source_unavailable > 0) n.push(`${ecs.source_unavailable} name${ecs.source_unavailable === 1 ? '' : 's'}: SEC EDGAR could not be reached on the last check, so a new filing may be missing.`);
+    if (ecs.retrieval_failed > 0) n.push(`${ecs.retrieval_failed} name${ecs.retrieval_failed === 1 ? '' : 's'}: filings were found but could not be downloaded or read.`);
+    const never = all.filter((r) => !r.ledger).length;
+    if (never > 0) n.push(`${never} name${never === 1 ? ' has' : 's have'} never been checked on EDGAR, so nothing new can show for ${never === 1 ? 'it' : 'them'} yet.`);
+    if (excluded.length > 0) n.push(`${excluded.length} non-US listing${excluded.length === 1 ? ' is' : 's are'} not covered (no SEC filer).`);
+    return n;
+  }, [all, excluded.length]);
 
   if (universeError) {
     return <div style={{ padding: 24, color: C.dim, fontSize: 15 }}><h1 style={{ fontSize: 20, fontWeight: 800, color: C.text }}>US Portfolio Catalysts</h1>
@@ -125,6 +157,18 @@ export default function UsPortfolioCatalystsPage() {
         </div>
       </div>
 
+      {/* ── THE VIEWS. (zzz808) The catalyst board, or what is new. ─────── */}
+      <div className="mc-wrap-mobile" role="tablist" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        {([['board', 'Catalyst board'], ['new', `New \u00B7 last 10 days (${recentNew ? recentNew.items.length : '\u2026'})`]] as Array<[typeof view, string]>).map(([k, label]) => {
+          const on = view === k;
+          return <button key={k} role="tab" aria-selected={on} onClick={() => setView(k)} style={{ ...pill(on), fontSize: 14, fontWeight: 900, padding: '6px 14px', borderRadius: 8 }}>{label}</button>;
+        })}
+      </div>
+
+      {view === 'new' ? (
+        <NewCatalystsTab result={recentNew} loading={loading || evidenceLoading} names={all.length} sourceNotes={recentNotes} market="US"
+          onJump={(t) => { setView('board'); setSource('all'); setFilter(null); setTimeout(() => document.getElementById(`uspc-${t}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80); }} />
+      ) : (<>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         {([['all', `All US-listed ${uc.shown}`], ['book', `📗 My US book ${uc.book}`], ['bench', `🏆 US bench ${uc.bench}${cbOnPage ? ` (incl. ${cbOnPage} ${US_CB_SOURCE})` : ''}`]] as Array<[typeof source, string]>).map(([k, label]) => (
           <button key={k} onClick={() => setSource(k)} style={pill(source === k)}>{label}</button>
@@ -313,6 +357,7 @@ export default function UsPortfolioCatalystsPage() {
           ))}
         </div>
       )}
+      </>)}
     </div>
   );
 }

@@ -17,9 +17,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { fetchNSEAnnouncements, fetchBSEAnnouncements, type FilingRecord } from '@/lib/nse-bse-feed';
+import { isUsableSubwindow, classifyConcallFiling } from '@/lib/concall-feed';
 import { extractFirstPdf } from '@/lib/pdf-text-extractor';
 import { extractSections } from '@/lib/concall-sections';
-import { classifyFiling, type ConcallFilingType } from '@/lib/concall-bullish';
+import { type ConcallFilingType } from '@/lib/concall-bullish';
 import { findKeywordHits, summarizeHits, KEYWORD_CATALOG, type KeywordHit, type KeywordGroup } from '@/lib/concall-keyword-watch';
 
 const CACHE_KEY = (days: number) => `keyword-watch:v1:days:${days}`;
@@ -144,7 +145,8 @@ async function handleKeywordWatch(req: NextRequest) {
       kvGet<SubWinCache>(SUBWIN_KEY(w.fromIso, w.toIso)).catch(() => null)
     ));
     for (let i = 0; i < subWindows.length; i++) {
-      if (reads[i]) subwinCacheHits.push(reads[i]!);
+      // zzz810 — a stored window whose fetch was blocked / empty is a miss, not "no filings".
+      if (isUsableSubwindow(reads[i])) subwinCacheHits.push(reads[i]!);
       else subwinMisses.push(subWindows[i]);
     }
   } else {
@@ -168,7 +170,8 @@ async function handleKeywordWatch(req: NextRequest) {
           nse: { filings: nseR.filings, source: nseR.source },
           bse: { filings: bseR.filings, source: bseR.source },
         };
-        kvSet(SUBWIN_KEY(w.fromIso, w.toIso), payload, ttlForSubwindow(w.toIso)).catch(() => {});
+        // zzz810 — never store a failed fetch as an empty window.
+        if (isUsableSubwindow(payload)) kvSet(SUBWIN_KEY(w.fromIso, w.toIso), payload, ttlForSubwindow(w.toIso)).catch(() => {});
       }
     }
     allResults.push(...batchResults);
@@ -194,7 +197,7 @@ async function handleKeywordWatch(req: NextRequest) {
   // Filter to concall-relevant filings only
   const candidates: Array<{ filing: FilingRecord; filing_type: ConcallFilingType }> = [];
   for (const f of merged.values()) {
-    const ft = classifyFiling(f.subject);
+    const ft = classifyConcallFiling(f.subject, f.detail).filing_type;   // zzz810 — detail-aware
     if (!ft) continue;
     candidates.push({ filing: f, filing_type: ft });
   }

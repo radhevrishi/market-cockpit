@@ -88,11 +88,13 @@ function normalizeCFFiling(raw: any): FilingRecord | null {
   if (!parsed) return null;
   const attUrl = raw.attachment_url || raw.attchmntFile || '';
   const attUrls = attUrl ? [attUrl] : [];
+  const detail = String(raw.raw?.attchmntText || raw.attchmntText || raw.detail || '').trim();
   return {
     exchange: 'NSE',
     symbol: symbol.toUpperCase(),
     company_name: raw.company || raw.sm_name || symbol,
     subject,
+    ...(detail && detail !== subject ? { detail } : {}),
     category: raw.category || null,
     subcategory: null,
     filing_datetime: parsed,
@@ -189,6 +191,12 @@ export interface FilingRecord {
   symbol: string;
   company_name: string;
   subject: string;
+  /** zzz810 — the exchange's free-text line under the subject (NSE
+   *  `attchmntText`, BSE `HEADLINE`). NSE files every concall item under the
+   *  one category "Analysts/Institutional Investor Meet/Con. Call Updates";
+   *  whether it is a transcript, a recording link or a routine intimation is
+   *  only said here. Not part of content_hash (hashes stay stable). */
+  detail?: string;
   category: string | null;
   subcategory: string | null;
   filing_datetime: string;       // ISO
@@ -202,6 +210,52 @@ function hashRecord(exchange: string, symbol: string, subject: string, dt: strin
   return createHash('sha256').update(payload).digest('hex').slice(0, 16);
 }
 
+// ─── Snapshot coverage (zzz810) ────────────────────────────────────────────
+// The CF Worker snapshot holds only the ~20 NEWEST announcements (no date
+// range) and the GH blob ~24h. Before zzz810 any non-empty overlap with the
+// requested window was returned as NSE_OK — so a 30-day request got 20 rows
+// of "Trading Window / Change in Director", none of them concalls, and the
+// live windowed fetch never ran. That is why the Radar said "0 in feed".
+// A snapshot may only answer a request when it actually reaches back to the
+// start of the window (12h slack); otherwise the window is fetched live and
+// the snapshot rows are merged in.
+const SNAPSHOT_COVER_SLACK_MS = 12 * 60 * 60 * 1000;
+
+export function snapshotCoversWindow(filings: FilingRecord[], fromIso: string): boolean {
+  if (!Array.isArray(filings) || filings.length === 0) return false;
+  const fromMs = new Date(`${fromIso}T00:00:00Z`).getTime();
+  if (!Number.isFinite(fromMs)) return false;
+  let oldest = Infinity;
+  for (const f of filings) {
+    const t = new Date(f.filing_datetime).getTime();
+    if (Number.isFinite(t) && t < oldest) oldest = t;
+  }
+  return oldest <= fromMs + SNAPSHOT_COVER_SLACK_MS;
+}
+
+function mergeByHash(...lists: FilingRecord[][]): FilingRecord[] {
+  const seen = new Set<string>();
+  const out: FilingRecord[] = [];
+  for (const list of lists) {
+    for (const f of list) {
+      const k = f.content_hash || `${f.exchange}|${f.symbol}|${f.subject}|${f.filing_datetime}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(f);
+    }
+  }
+  return out;
+}
+
+export interface AnnouncementResult<S extends string> {
+  filings: FilingRecord[];
+  source: S;
+  /** zzz810 — why a fetch failed or came back empty (HTTP 403, timeout …). */
+  reason?: string;
+  /** zzz810 — SNAPSHOT (blob covered the window), LIVE, or SNAPSHOT+LIVE. */
+  via?: 'SNAPSHOT' | 'LIVE' | 'SNAPSHOT+LIVE';
+}
+
 // ─── NSE adapter ───────────────────────────────────────────────────────────
 
 const NSE_HEADERS = {
@@ -211,136 +265,147 @@ const NSE_HEADERS = {
   'Referer': 'https://www.nseindia.com/companies-listing/corporate-filings-announcements',
 };
 
+// zzz810 — NSE's API answers 401/403 without the session cookies its
+// homepage sets. The header comment always promised a warm-up; there was
+// none. One homepage visit per 10 minutes, shared by every caller.
+let nseCookieJar = '';
+let nseCookieExpiry = 0;
+async function nseCookies(force = false): Promise<string> {
+  if (!force && nseCookieJar && Date.now() < nseCookieExpiry) return nseCookieJar;
+  try {
+    const res = await fetch('https://www.nseindia.com/', {
+      headers: { 'User-Agent': NSE_HEADERS['User-Agent'], 'Accept': 'text/html,application/xhtml+xml', 'Accept-Language': 'en-US,en;q=0.9' },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(8_000),
+      cache: 'no-store',
+    });
+    const set = (res.headers as any).getSetCookie?.() || [];
+    nseCookieJar = (set as string[]).map((c) => c.split(';')[0]).join('; ');
+    nseCookieExpiry = Date.now() + 10 * 60 * 1000;
+  } catch {
+    nseCookieJar = '';
+    nseCookieExpiry = 0;
+  }
+  return nseCookieJar;
+}
+
+/** One NSE corporate-announcement row → FilingRecord (null when unusable). */
+export function nseRowToFiling(e: Record<string, any>): FilingRecord | null {
+  const subject = String(e.subject || e.desc || '').trim();
+  if (!subject) return null;
+  const ts = e.an_dt || e.sm_dt || e.dt || e.broadcastdt;
+  if (!ts) return null;
+  let isoDt: string;
+  try {
+    const d = new Date(ts);
+    if (!Number.isFinite(d.getTime())) return null;
+    isoDt = d.toISOString();
+  } catch { return null; }
+  const symbol = String(e.symbol || '').trim().toUpperCase();
+  const company = String(e.sm_name || e.company_name || symbol).trim();
+  const urls: string[] = [];
+  if (e.attchmntFile) urls.push(String(e.attchmntFile));
+  if (e.attachmentUrl) urls.push(String(e.attachmentUrl));
+  const detail = String(e.attchmntText || '').trim();
+  return {
+    exchange: 'NSE',
+    symbol,
+    company_name: company,
+    subject,
+    ...(detail && detail !== subject ? { detail } : {}),
+    category: e.csubject || e.category || null,
+    subcategory: e.smkt_cat || e.sub_category || null,
+    filing_datetime: isoDt,
+    attachment_urls: urls,
+    source_url: `https://www.nseindia.com/companies-listing/corporate-filings-announcements?symbol=${encodeURIComponent(symbol)}`,
+    content_hash: hashRecord('NSE', symbol, subject, isoDt, urls),
+  };
+}
+
 export async function fetchNSEAnnouncements(opts: {
   signal?: AbortSignal;
   fromIso?: string;   // YYYY-MM-DD start
   toIso?: string;     // YYYY-MM-DD end (defaults to today)
-} = {}): Promise<{ filings: FilingRecord[]; source: 'NSE_OK' | 'NSE_BLOCKED' | 'NSE_EMPTY' }> {
-  // The general endpoint with no symbol param returns recent announcements
-  // for all equities. NSE accepts from_date / to_date params in
-  // DD-MM-YYYY format.
+} = {}): Promise<AnnouncementResult<'NSE_OK' | 'NSE_BLOCKED' | 'NSE_EMPTY'>> {
+  // The general endpoint with no symbol param returns announcements for all
+  // equities in the date range. NSE takes DD-MM-YYYY.
   const today = new Date();
   const fromStr = opts.fromIso || isoDaysAgo(2);
   const toStr = opts.toIso || today.toISOString().slice(0, 10);
   const url = `https://www.nseindia.com/api/corporate-announcements?index=equities&from_date=${formatNSEDate(fromStr)}&to_date=${formatNSEDate(toStr)}`;
 
   // PATCH 0732 — short-circuit if this exact window has recently failed.
-  // Keyed by the date range so a different date scan isn't blocked by a
-  // failed scan of a different range.
   const dedupKey = `nse-feed:announcements:${fromStr}:${toStr}`;
-  if (negCacheCheck(dedupKey)) {
-    return { filings: [], source: 'NSE_BLOCKED' };
-  }
+  const neg = negCacheCheck(dedupKey);
+  if (neg) return { filings: [], source: 'NSE_BLOCKED', reason: `${neg.reason} (retry after cool-down)` };
 
   return dedupedCall(dedupKey, async () => {
-    // Re-check negative cache inside the dedup lock — another concurrent
-    // caller may have flipped this window into the failure state while
-    // we were waiting.
-    if (negCacheCheck(dedupKey)) {
-      return { filings: [], source: 'NSE_BLOCKED' as const };
-    }
+    const neg2 = negCacheCheck(dedupKey);
+    if (neg2) return { filings: [], source: 'NSE_BLOCKED' as const, reason: `${neg2.reason} (retry after cool-down)` };
 
-    // PATCH 1101zzz29 — MERGE CF + GH blobs instead of exclusive fallback.
-    // Old: CF Worker won when non-empty → GH blob never read. CF Worker
-    // queries NSE `?index=equities` with no date range and returns only
-    // ~20 newest filings, starving downstream stages (concall scoring,
-    // warrant momentum, signals compute). Meanwhile the GH-Actions
-    // `scrape-corp-filings.yml` writes 500 filings/day to KV but that
-    // blob was unreachable because CF returned non-empty.
-    // Fix: pull BOTH in parallel, dedupe by content_hash, merge before
-    // window-filtering. CF stays as the freshness source for the last
-    // 15-30 min, GH gives the 24h depth needed for real scoring signal.
+    // Snapshot sources (CF Worker ~20 newest + GH blob ~24h). Used alone only
+    // when they reach back to the start of the window (zzz810).
+    let snapshot: FilingRecord[] = [];
     try {
       const [cfFilings, ghBlob] = await Promise.all([
         readCFWorkerBlob(opts.signal).catch(() => null),
         readGhBlob().catch(() => null),
       ]);
-      const cfArr = (cfFilings && cfFilings.length > 0) ? cfFilings : [];
-      const ghArr = (ghBlob && ghBlob.filings) ? ghBlob.filings : [];
-      if (cfArr.length > 0 || ghArr.length > 0) {
-        const seen = new Set<string>();
-        const merged: FilingRecord[] = [];
-        // CF first (fresher), then GH entries that don't dupe.
-        // Dedupe key: content_hash if present, else symbol|subject|filing_date.
-        for (const f of cfArr) {
-          const k = (f as any).content_hash || `${f.symbol}|${f.subject}|${f.filing_date}`;
-          if (!seen.has(k)) { seen.add(k); merged.push(f); }
-        }
-        for (const f of ghArr) {
-          const k = (f as any).content_hash || `${f.symbol}|${f.subject}|${f.filing_date}`;
-          if (!seen.has(k)) { seen.add(k); merged.push(f); }
-        }
-        const filtered = filterBlobToWindow(merged, fromStr, toStr, 'NSE');
-        if (filtered.length > 0) {
-          return { filings: filtered, source: 'NSE_OK' as const };
-        }
+      const merged = mergeByHash(cfFilings || [], (ghBlob && ghBlob.filings) || []);
+      snapshot = filterBlobToWindow(merged, fromStr, toStr, 'NSE');
+      if (snapshot.length > 0 && snapshotCoversWindow(merged.filter((f) => f.exchange === 'NSE'), fromStr)) {
+        return { filings: snapshot, source: 'NSE_OK' as const, via: 'SNAPSHOT' as const };
       }
     } catch {
       /* best-effort: fall through to live fetch */
     }
 
+    const partial = (reason: string) => ({
+      filings: snapshot,
+      source: 'NSE_BLOCKED' as const,
+      reason: snapshot.length > 0 ? `${reason}; only the ${snapshot.length} newest snapshot rows are available` : reason,
+      via: snapshot.length > 0 ? 'SNAPSHOT' as const : undefined,
+    });
+
     try {
-      const res = await fetch(url, {
+      const doFetch = async (cookie: string) => fetch(url, {
         signal: withDefaultTimeout(opts.signal, ANNOUNCEMENT_DEFAULT_TIMEOUT_MS),
-        headers: NSE_HEADERS,
+        headers: cookie ? { ...NSE_HEADERS, Cookie: cookie } : NSE_HEADERS,
         cache: 'no-store',
       });
+      let res = await doFetch(await nseCookies());
+      if (res.status === 401 || res.status === 403) {
+        // Stale / missing session — refresh the cookie once and retry.
+        res = await doFetch(await nseCookies(true));
+      }
       if (!res.ok) {
-        negCacheSet(dedupKey, ANNOUNCEMENT_NEG_CACHE_MS, `HTTP ${res.status}`);
-        return { filings: [], source: 'NSE_BLOCKED' as const };
+        const reason = `NSE HTTP ${res.status}`;
+        negCacheSet(dedupKey, ANNOUNCEMENT_NEG_CACHE_MS, reason);
+        return partial(reason);
       }
       const data = await res.json();
       const entries: Array<Record<string, any>> = Array.isArray(data)
         ? data
         : Array.isArray((data as any)?.data) ? (data as any).data : [];
 
-      const filings: FilingRecord[] = [];
+      const live: FilingRecord[] = [];
       for (const e of entries) {
-        const subject = String(e.subject || e.desc || '').trim();
-        if (!subject) continue;
-        const ts = e.an_dt || e.sm_dt || e.dt || e.broadcastdt;
-        if (!ts) continue;
-        let isoDt: string;
-        try {
-          const d = new Date(ts);
-          if (!Number.isFinite(d.getTime())) continue;
-          isoDt = d.toISOString();
-        } catch { continue; }
-
-        const symbol = String(e.symbol || '').trim().toUpperCase();
-        const company = String(e.sm_name || e.company_name || symbol).trim();
-        const urls: string[] = [];
-        if (e.attchmntFile) urls.push(String(e.attchmntFile));
-        if (e.attachmentUrl) urls.push(String(e.attachmentUrl));
-
-        filings.push({
-          exchange: 'NSE',
-          symbol,
-          company_name: company,
-          subject,
-          category: e.csubject || e.category || null,
-          subcategory: e.smkt_cat || e.sub_category || null,
-          filing_datetime: isoDt,
-          attachment_urls: urls,
-          source_url: `https://www.nseindia.com/companies-listing/corporate-filings-announcements?symbol=${encodeURIComponent(symbol)}`,
-          content_hash: hashRecord('NSE', symbol, subject, isoDt, urls),
-        });
+        const f = nseRowToFiling(e);
+        if (f) live.push(f);
       }
-      // PATCH 0732 — NSE_EMPTY is also worth a brief negative cache. NSE
-      // legitimately returns empty payloads when blocking softly (429 in
-      // some windows, empty body in others). Use a shorter TTL so we
-      // recover faster than for a hard failure.
-      if (filings.length === 0) {
-        negCacheSet(dedupKey, Math.floor(ANNOUNCEMENT_NEG_CACHE_MS / 3), 'empty');
+      // A date range of ALL equities with zero rows is NSE soft-blocking
+      // (empty body / challenge page), not a quiet market.
+      if (live.length === 0) {
+        negCacheSet(dedupKey, Math.floor(ANNOUNCEMENT_NEG_CACHE_MS / 3), 'NSE returned no announcements');
+        if (snapshot.length > 0) return partial('NSE returned no announcements for the range');
+        return { filings: [], source: 'NSE_EMPTY' as const, reason: 'NSE returned no announcements for the range' };
       }
-      return {
-        filings,
-        source: filings.length === 0 ? 'NSE_EMPTY' as const : 'NSE_OK' as const,
-      };
+      const all = mergeByHash(live, snapshot);
+      return { filings: all, source: 'NSE_OK' as const, via: snapshot.length > 0 ? 'SNAPSHOT+LIVE' as const : 'LIVE' as const };
     } catch (e: any) {
-      const reason = e?.name === 'AbortError' ? 'timeout' : (e?.message || 'network');
+      const reason = e?.name === 'AbortError' || e?.name === 'TimeoutError' ? 'NSE timeout' : `NSE ${e?.message || 'network error'}`;
       negCacheSet(dedupKey, ANNOUNCEMENT_NEG_CACHE_MS, reason);
-      return { filings: [], source: 'NSE_BLOCKED' as const };
+      return partial(reason);
     }
   });
 }
@@ -351,128 +416,130 @@ const BSE_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
   'Accept': 'application/json',
   'Accept-Language': 'en-US,en;q=0.9',
-  'Referer': 'https://www.bseindia.com/corporates/ann.html',
+  'Referer': 'https://www.bseindia.com/',
+  'Origin': 'https://www.bseindia.com',
 };
+
+/** One BSE AnnGetData row → FilingRecord (null when unusable). */
+export function bseRowToFiling(e: Record<string, any>): FilingRecord | null {
+  const subject = String(e.NEWSSUB || e.HEADLINE || '').trim();
+  if (!subject) return null;
+  const ts = e.NEWS_DT || e.DT_TM;
+  if (!ts) return null;
+  let isoDt: string;
+  try {
+    const d = new Date(ts);
+    if (!Number.isFinite(d.getTime())) return null;
+    isoDt = d.toISOString();
+  } catch { return null; }
+  const symbol = String(e.SCRIP_CD || '').trim();
+  const company = String(e.SLONGNAME || e.SHORTNAME || symbol).trim();
+  const urls: string[] = [];
+  if (e.ATTACHMENTNAME) urls.push(`https://www.bseindia.com/xml-data/corpfiling/AttachLive/${e.ATTACHMENTNAME}`);
+  const detail = String(e.HEADLINE || '').trim();
+  return {
+    exchange: 'BSE',
+    symbol,
+    company_name: company,
+    subject,
+    ...(detail && detail !== subject ? { detail } : {}),
+    category: e.CATEGORYNAME || null,
+    subcategory: e.SUBCATNAME || null,
+    filing_datetime: isoDt,
+    attachment_urls: urls,
+    source_url: `https://www.bseindia.com/stock-share-price/_/_/${symbol}/`,
+    content_hash: hashRecord('BSE', symbol, subject, isoDt, urls),
+  };
+}
 
 export async function fetchBSEAnnouncements(opts: {
   signal?: AbortSignal;
   fromIso?: string;
   toIso?: string;
   pages?: number;     // default 1
-} = {}): Promise<{ filings: FilingRecord[]; source: 'BSE_OK' | 'BSE_BLOCKED' | 'BSE_EMPTY' }> {
+  /** zzz810 — BSE category / subcategory filter, e.g. 'Company Update' +
+   *  'Earnings Call Transcript'. Without it the newest N pages of ALL
+   *  announcements are read, which in results season is only a few hours. */
+  category?: string;
+  subcategory?: string;
+} = {}): Promise<AnnouncementResult<'BSE_OK' | 'BSE_BLOCKED' | 'BSE_EMPTY'>> {
   const today = new Date();
   const fromStr = (opts.fromIso || isoDaysAgo(2)).replace(/-/g, '');
   const toStr = (opts.toIso || today.toISOString().slice(0, 10)).replace(/-/g, '');
   const pages = opts.pages || 1;
+  const cat = opts.category || '';
+  const sub = opts.subcategory || '';
 
-  // PATCH 0732 — same resilience pattern as fetchNSEAnnouncements.
-  // Pages is included in the key because a 1-page scan and a 5-page scan
-  // touch different upstream URLs and may succeed/fail independently.
-  const dedupKey = `bse-feed:announcements:${fromStr}:${toStr}:${pages}`;
-  if (negCacheCheck(dedupKey)) {
-    return { filings: [], source: 'BSE_BLOCKED' };
-  }
+  const dedupKey = `bse-feed:announcements:${fromStr}:${toStr}:${pages}:${cat}:${sub}`;
+  const neg = negCacheCheck(dedupKey);
+  if (neg) return { filings: [], source: 'BSE_BLOCKED', reason: `${neg.reason} (retry after cool-down)` };
 
   return dedupedCall(dedupKey, async () => {
-    if (negCacheCheck(dedupKey)) {
-      return { filings: [], source: 'BSE_BLOCKED' as const };
-    }
+    const neg2 = negCacheCheck(dedupKey);
+    if (neg2) return { filings: [], source: 'BSE_BLOCKED' as const, reason: `${neg2.reason} (retry after cool-down)` };
 
-    // PATCH 0739 + 1101zzz29 — Merge CF + GH blobs for BSE too. Same
-    // logic as fetchNSEAnnouncements above.
-    try {
-      const fromIso = `${fromStr.slice(0, 4)}-${fromStr.slice(4, 6)}-${fromStr.slice(6, 8)}`;
-      const toIso   = `${toStr.slice(0, 4)}-${toStr.slice(4, 6)}-${toStr.slice(6, 8)}`;
-      const [cfFilings, blob] = await Promise.all([
-        readCFWorkerBlob(opts.signal).catch(() => null),
-        readGhBlob().catch(() => null),
-      ]);
-      const cfArr = (cfFilings && cfFilings.length > 0) ? cfFilings.filter((f: any) => f.exchange === 'BSE') : [];
-      const ghArr = (blob && blob.filings) ? blob.filings.filter((f: any) => f.exchange === 'BSE') : [];
-      if (cfArr.length > 0 || ghArr.length > 0) {
-        const seen = new Set<string>();
-        const merged: FilingRecord[] = [];
-        for (const f of cfArr) {
-          const k = (f as any).content_hash || `${f.symbol}|${f.subject}|${f.filing_date}`;
-          if (!seen.has(k)) { seen.add(k); merged.push(f); }
+    // Snapshot (GH blob) — only for the unfiltered query and only when it
+    // covers the window (zzz810).
+    let snapshot: FilingRecord[] = [];
+    if (!cat && !sub) {
+      try {
+        const fromIso = `${fromStr.slice(0, 4)}-${fromStr.slice(4, 6)}-${fromStr.slice(6, 8)}`;
+        const toIso   = `${toStr.slice(0, 4)}-${toStr.slice(4, 6)}-${toStr.slice(6, 8)}`;
+        const [cfFilings, blob] = await Promise.all([
+          readCFWorkerBlob(opts.signal).catch(() => null),
+          readGhBlob().catch(() => null),
+        ]);
+        const merged = mergeByHash(cfFilings || [], (blob && blob.filings) || []).filter((f) => f.exchange === 'BSE');
+        snapshot = filterBlobToWindow(merged, fromIso, toIso, 'BSE');
+        if (snapshot.length > 0 && snapshotCoversWindow(merged, fromIso)) {
+          return { filings: snapshot, source: 'BSE_OK' as const, via: 'SNAPSHOT' as const };
         }
-        for (const f of ghArr) {
-          const k = (f as any).content_hash || `${f.symbol}|${f.subject}|${f.filing_date}`;
-          if (!seen.has(k)) { seen.add(k); merged.push(f); }
-        }
-        const filtered = filterBlobToWindow(merged, fromIso, toIso, 'BSE');
-        if (filtered.length > 0) {
-          return { filings: filtered, source: 'BSE_OK' as const };
-        }
+      } catch {
+        /* best-effort: fall through to live fetch */
       }
-    } catch {
-      /* best-effort: fall through to live fetch */
     }
 
     const allFilings: FilingRecord[] = [];
-    try {
-    for (let pageno = 1; pageno <= pages; pageno++) {
-      // strCat=AnnLatest fetches recent announcements across all scrips
-      const url = `https://api.bseindia.com/BseIndiaAPI/api/AnnGetData/w?pageno=${pageno}&strCat=-1&strPrevDate=${fromStr}&strScrip=&strSearch=P&strToDate=${toStr}&strType=C`;
-      const res = await fetch(url, {
-        signal: withDefaultTimeout(opts.signal, ANNOUNCEMENT_DEFAULT_TIMEOUT_MS),
-        headers: BSE_HEADERS,
-        cache: 'no-store',
-      });
-      if (!res.ok) {
-        if (res.status === 401 || res.status === 403 || res.status === 429) {
-          negCacheSet(dedupKey, ANNOUNCEMENT_NEG_CACHE_MS, `HTTP ${res.status}`);
-          return { filings: allFilings, source: 'BSE_BLOCKED' as const };
-        }
-        continue;
-      }
-      const data = await res.json();
-      const tableData: Array<Record<string, any>> = Array.isArray((data as any)?.Table)
-        ? (data as any).Table
-        : [];
-
-      for (const e of tableData) {
-        const subject = String(e.NEWSSUB || e.HEADLINE || '').trim();
-        if (!subject) continue;
-        const ts = e.NEWS_DT || e.DT_TM;
-        if (!ts) continue;
-        let isoDt: string;
-        try {
-          const d = new Date(ts);
-          if (!Number.isFinite(d.getTime())) continue;
-          isoDt = d.toISOString();
-        } catch { continue; }
-
-        const symbol = String(e.SCRIP_CD || '').trim();
-        const company = String(e.SLONGNAME || e.SHORTNAME || symbol).trim();
-        const urls: string[] = [];
-        if (e.ATTACHMENTNAME) urls.push(`https://www.bseindia.com/xml-data/corpfiling/AttachLive/${e.ATTACHMENTNAME}`);
-
-        allFilings.push({
-          exchange: 'BSE',
-          symbol,
-          company_name: company,
-          subject,
-          category: e.CATEGORYNAME || null,
-          subcategory: e.SUBCATNAME || null,
-          filing_datetime: isoDt,
-          attachment_urls: urls,
-          source_url: `https://www.bseindia.com/stock-share-price/_/_/${symbol}/`,
-          content_hash: hashRecord('BSE', symbol, subject, isoDt, urls),
-        });
-      }
-    }
-    if (allFilings.length === 0) {
-      negCacheSet(dedupKey, Math.floor(ANNOUNCEMENT_NEG_CACHE_MS / 3), 'empty');
-    }
-    return {
-      filings: allFilings,
-      source: allFilings.length === 0 ? 'BSE_EMPTY' as const : 'BSE_OK' as const,
+    const done = (source: 'BSE_OK' | 'BSE_BLOCKED' | 'BSE_EMPTY', reason?: string) => {
+      const filings = mergeByHash(allFilings, snapshot);
+      return { filings, source, ...(reason ? { reason } : {}), via: allFilings.length > 0 ? (snapshot.length > 0 ? 'SNAPSHOT+LIVE' as const : 'LIVE' as const) : (snapshot.length > 0 ? 'SNAPSHOT' as const : undefined) };
     };
+    try {
+      for (let pageno = 1; pageno <= pages; pageno++) {
+        const url = `https://api.bseindia.com/BseIndiaAPI/api/AnnGetData/w?pageno=${pageno}&strCat=${cat ? encodeURIComponent(cat) : '-1'}&strPrevDate=${fromStr}&strScrip=&strSearch=P&strToDate=${toStr}&strType=C${sub ? `&subcategory=${encodeURIComponent(sub)}` : ''}`;
+        const res = await fetch(url, {
+          signal: withDefaultTimeout(opts.signal, ANNOUNCEMENT_DEFAULT_TIMEOUT_MS),
+          headers: BSE_HEADERS,
+          cache: 'no-store',
+        });
+        if (!res.ok) {
+          if (res.status === 401 || res.status === 403 || res.status === 429) {
+            const reason = `BSE HTTP ${res.status}`;
+            negCacheSet(dedupKey, ANNOUNCEMENT_NEG_CACHE_MS, reason);
+            return done(allFilings.length > 0 ? 'BSE_OK' : 'BSE_BLOCKED', reason);
+          }
+          continue;
+        }
+        const data = await res.json();
+        const tableData: Array<Record<string, any>> = Array.isArray((data as any)?.Table) ? (data as any).Table : [];
+        if (tableData.length === 0) break;              // past the last page — stop, don't hammer
+        for (const e of tableData) {
+          const f = bseRowToFiling(e);
+          if (f) allFilings.push(f);
+        }
+        if (pageno < pages) await new Promise((r) => setTimeout(r, 250));   // polite pacing
+      }
+      if (allFilings.length === 0) {
+        // An unfiltered all-scrip range with zero rows is a soft block; a
+        // category-filtered query can genuinely be empty.
+        if (!cat && !sub) negCacheSet(dedupKey, Math.floor(ANNOUNCEMENT_NEG_CACHE_MS / 3), 'BSE returned no announcements');
+        return done(snapshot.length > 0 ? 'BSE_BLOCKED' : 'BSE_EMPTY', cat || sub ? undefined : 'BSE returned no announcements for the range');
+      }
+      return done('BSE_OK');
     } catch (e: any) {
-      const reason = e?.name === 'AbortError' ? 'timeout' : (e?.message || 'network');
+      const reason = e?.name === 'AbortError' || e?.name === 'TimeoutError' ? 'BSE timeout' : `BSE ${e?.message || 'network error'}`;
       negCacheSet(dedupKey, ANNOUNCEMENT_NEG_CACHE_MS, reason);
-      return { filings: allFilings, source: 'BSE_BLOCKED' as const };
+      return done(allFilings.length > 0 ? 'BSE_OK' : 'BSE_BLOCKED', reason);
     }
   });
 }

@@ -11,7 +11,7 @@
 // Plus the original manual transcript-paste analyser below.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useState, useEffect, useMemo, useCallback, type ReactNode } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, type ReactNode } from 'react';
 // PATCH 0437 BUG-026 — decode HTML entities in concall subjects (extends BUG-008)
 import { decodeHTMLEntities } from '@/lib/html-decode';
 // PATCH 0490 QA-#14 — resolve raw BSE codes (e.g. 526612) to NSE symbols
@@ -463,6 +463,36 @@ interface LiveFeedFiling {
   sector_overlay?: SectorOverlayResult;
 }
 
+// zzz810 — the feed's honest status, built server-side (lib/concall-feed).
+// FAILED = we could not fetch NSE/BSE (never shown as "no filings");
+// EMPTY = the exchanges answered and nothing concall-related was filed;
+// PARTIAL = one exchange answered; OK = real counts.
+interface FeedStatusLite {
+  state: 'OK' | 'PARTIAL' | 'EMPTY' | 'FAILED';
+  message: string;
+  reason?: string;
+  last_success_at: string | null;
+  announcements_total: number;
+  concall_filings: number;
+  transcripts: number;
+  window_days: number;
+  retrying: boolean;
+}
+
+function FeedStatusNote({ status, compact = false }: { status: FeedStatusLite | null | undefined; compact?: boolean }) {
+  if (!status) return null;
+  const color = status.state === 'FAILED' ? 'var(--mc-bearish)' : status.state === 'PARTIAL' ? 'var(--mc-warn)' : 'var(--mc-text-3)';
+  const icon = status.state === 'FAILED' ? '⚠' : status.state === 'PARTIAL' ? '◐' : status.state === 'EMPTY' ? '○' : '●';
+  return (
+    <div style={{
+      fontSize: compact ? 10.5 : 11.5, color, lineHeight: 1.5,
+      ...(compact ? {} : { padding: '8px 12px', borderRadius: 8, border: `1px solid color-mix(in srgb, ${color} 35%, transparent)`, background: `color-mix(in srgb, ${color} 7%, transparent)` }),
+    }}>
+      {icon} {status.message}
+    </div>
+  );
+}
+
 interface LiveFeedPayload {
   generated_at: string;
   count_total: number;
@@ -470,6 +500,7 @@ interface LiveFeedPayload {
   count_high_bullish: number;
   filings: LiveFeedFiling[];
   sources: { nse: string; bse: string };
+  fetch_status?: FeedStatusLite;
 }
 
 function LiveBullishFeed() {
@@ -534,6 +565,18 @@ function LiveBullishFeed() {
       setLoading(false);
     }
   };
+
+  // zzz810 — when the exchanges could not be reached, retry every 90s
+  // (up to 5 times) instead of waiting for the 5-minute poll.
+  const retryCount = useRef(0);
+  useEffect(() => {
+    const st = data?.fetch_status?.state;
+    if (st !== 'FAILED' && st !== 'PARTIAL') { retryCount.current = 0; return; }
+    if (retryCount.current >= 5) return;
+    const t = setTimeout(() => { retryCount.current++; fetchFeed(true); }, 90_000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
 
   // Initial fetch + auto-poll every 5 min
   useEffect(() => {
@@ -688,11 +731,17 @@ function LiveBullishFeed() {
         </div>
       )}
 
+      {/* zzz810 — say whether the exchanges were reached, with real counts. */}
+      {data?.fetch_status && (
+        <div style={{ marginBottom: 8 }}><FeedStatusNote status={data.fetch_status} compact={data.fetch_status.state === 'OK'} /></div>
+      )}
       {filtered.length === 0 && !loading && (
         <div style={{ fontSize: 11, color: 'var(--mc-text-3)', fontStyle: 'italic', padding: '12px 0' }}>
           {data && data.count_relevant > 0
             ? `No filings match the selected tiers. Try enabling more tiers above (e.g. Mixed Positive surfaces realistic mid-quality bullish setups).`
-            : 'No concall-related filings yet. NSE/BSE may be blocking the request (try refresh in a few minutes).'}
+            : data?.fetch_status
+              ? (data.fetch_status.state === 'FAILED' ? 'No filings to show until NSE/BSE can be reached — see the note above.' : data.fetch_status.message)
+              : 'No concall filings loaded — the feed did not say whether NSE/BSE were reached. Press ↻ Refresh.'}
         </div>
       )}
 
@@ -2954,6 +3003,15 @@ function ConcallAnalyticsTab() {
         </div>
       </div>
 
+      {/* zzz810 — the concall sections below hide when the feed is empty;
+          say WHY (could not reach NSE/BSE vs nothing filed) instead of
+          silently rendering nothing. */}
+      {!loading && (liveBullishData?.fetch_status
+        ? <FeedStatusNote status={liveBullishData.fetch_status} compact={liveBullishData.fetch_status.state === 'OK'} />
+        : !liveBullishData && lastRefresh
+          ? <FeedStatusNote status={{ state: 'FAILED', message: "Couldn't load the live concall feed (request failed or timed out) — press ↻ Refresh all.", last_success_at: null, announcements_total: 0, concall_filings: 0, transcripts: 0, window_days: 30, retrying: false }} />
+          : null)}
+
       {/* ── 📐 INSTITUTIONAL CALIBRATION DISCLOSURE (PATCH 0598) ──────────
           User feedback called out "synthetic confidence" — 100% / 95% /
           CRITICAL labels are overstated for a regex-and-lexicon engine
@@ -3858,6 +3916,7 @@ interface ScannedNoSignal {
 interface TransformScreenPayload {
   generated_at: string; window_days: number; analyzed: number; pdf_cache_hits: number;
   candidates_total: number; entries: TransformScreenEntry[]; scanned_no_signal?: ScannedNoSignal[]; error?: string;
+  feed_status?: FeedStatusLite | null; concalls_in_feed?: number; transcripts_in_feed?: number;   // zzz810
 }
 
 const TIER_COLOR: Record<string, string> = {
@@ -3910,6 +3969,18 @@ function TransformationScreenerTab() {
 
   useEffect(() => { load(days); }, [days, load]);
 
+  // zzz810 — the feed could not be fetched: retry on our own (forced, so the
+  // server re-fetches NSE/BSE) every 90s, up to 5 times.
+  const feedState = data?.feed_status?.state ?? (data?.error ? 'FAILED' : undefined);
+  const retries = useRef(0);
+  useEffect(() => { retries.current = 0; }, [days]);
+  useEffect(() => {
+    if (loading || (feedState !== 'FAILED' && feedState !== 'PARTIAL')) return;
+    if (retries.current >= 5) return;
+    const t = setTimeout(() => { retries.current++; load(days, true); }, 90_000);
+    return () => clearTimeout(t);
+  }, [feedState, loading, days, load]);
+
   const allEntries = data?.entries ?? [];
   const sourceOf = useCallback(
     (sym: unknown): SymbolSource => classifySource(sym, owned, benchKeys),
@@ -3948,9 +4019,16 @@ function TransformationScreenerTab() {
           }}>{loading ? '⏳ Scanning…' : '↻ Rescan (fresh)'}</button>
           {data && (
             <span style={{ fontSize: 10.5, color: TF.dim, ...TFM }}>
-              {data.analyzed} concalls scanned · {data.pdf_cache_hits} cached · {data.candidates_total} in feed
+              {data.analyzed} filings scanned · {data.pdf_cache_hits} cached · {data.candidates_total} in feed
+              {data.concalls_in_feed != null && <> · {data.concalls_in_feed} concall filings ({data.transcripts_in_feed ?? 0} transcripts)</>}
             </span>
           )}
+        </div>
+        {/* zzz810 — honest feed status: reached or not, real counts */}
+        <div style={{ marginTop: 10 }}>
+          {data?.feed_status
+            ? <FeedStatusNote status={data.feed_status} compact={data.feed_status.state === 'OK'} />
+            : null}
         </div>
       </div>
 
@@ -3996,9 +4074,9 @@ function TransformationScreenerTab() {
         </div>
       )}
 
-      {err && !loading && (
+      {err && !loading && !data?.feed_status && (
         <div style={{ background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: TF.text }}>
-          ⚠ {err}. The feed may still be warming its PDF cache — try Rescan in a moment, or widen the window.
+          ⚠ {err}{retries.current < 5 ? ' Retrying automatically.' : ' Press ↻ Rescan to try again.'}
         </div>
       )}
 
@@ -4006,11 +4084,16 @@ function TransformationScreenerTab() {
         <div style={{ padding: '40px 0', textAlign: 'center', color: TF.dim, fontSize: 13 }}>⏳ Scanning the live feed for transformation patterns…</div>
       )}
 
-      {data && !loading && entries.length === 0 && !err && (
+      {data && !loading && entries.length === 0 && !err && feedState !== 'FAILED' && (
         <div style={{ background: TF.card, border: `1px solid ${TF.border}`, borderRadius: 10, padding: '18px' }}>
           <div style={{ fontSize: 13, color: TF.text2, lineHeight: 1.6, textAlign: 'center' }}>
-            The radar scanned <b style={{ color: TF.text }}>{data.analyzed}</b> concall{data.analyzed === 1 ? '' : 's'} in the last {days} days and found <b style={{ color: TF.amber }}>no transformation signal yet</b>.
-            {(data.candidates_total ?? 0) <= 6 && <> This is normal off-season — few companies file transcripts between earnings waves. Widen the window or check back when Q2 results land.</>}
+            {/* zzz810 — only claim "nothing found" about a feed that was actually
+                fetched; state the real counts, never a blanket off-season excuse. */}
+            {data.analyzed > 0
+              ? <>The radar read <b style={{ color: TF.text }}>{data.analyzed}</b> filing{data.analyzed === 1 ? '' : 's'} from the last {days} days{data.transcripts_in_feed != null ? <> ({data.transcripts_in_feed} transcript{data.transcripts_in_feed === 1 ? '' : 's'} in the feed)</> : null} and found <b style={{ color: TF.amber }}>no transformation signal yet</b>.</>
+              : data.feed_status?.state === 'EMPTY'
+                ? <>{data.feed_status.message}</>
+                : <>The feed returned <b style={{ color: TF.text }}>{data.candidates_total}</b> filings for the last {days} days but none had a readable PDF to scan.</>}
           </div>
           {data.scanned_no_signal && data.scanned_no_signal.length > 0 && (
             <div style={{ marginTop: 14 }}>

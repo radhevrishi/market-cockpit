@@ -45,6 +45,7 @@ import type { VarKey } from './taxonomy';
 import { normaliseForQuoteMatch } from '@/lib/ai-gainers/announcement-reader';
 import { anthropicMessages } from '@/lib/anthropic-meter';
 import { stripPeriodTokens } from './fact-normalize';
+import { transcriptCommentary } from './transcript-evidence';
 
 export type ValueType = 'ACTUAL' | 'GUIDANCE' | 'TARGET' | 'MANAGEMENT_CLAIM';
 export type Confidence = 'HIGH' | 'MEDIUM' | 'LOW';
@@ -78,6 +79,19 @@ export interface StructuralEvent {
    *  slide rather than a sentence — the figures are real but nothing in the
    *  text says what they mean, so the pair is capped at LOW confidence. */
   evidence_quality?: 'sentence' | 'chart' | 'unit_mismatch';
+  /** zzz809: a qualitative management statement (price, margin driver,
+   *  volume) read deterministically from a transcript — words, never a
+   *  figure; shown as management commentary, never confirmed. */
+  qualitative?: boolean;
+  /** zzz809: one forward-guidance line (incremental revenue %, asset turn,
+   *  ROCE, growth guidance, utilisation target) — shown under the guidance
+   *  row, never as a filed result and never as the guidance verdict. */
+  guidance_line?: boolean;
+  /** zzz809: a figure derived from two figures the same sentence states
+   *  ("total 18,000 − addition 6,000"), with the basis in words. */
+  derived?: string | null;
+  /** zzz809: the product a capacity figure belongs to, where named. */
+  product?: string | null;
 }
 
 export interface ExtractionPipeline {
@@ -228,6 +242,15 @@ export async function extractStructuralEvents(
 ): Promise<{ events: StructuralEvent[]; pipeline: ExtractionPipeline; raw?: any[] }> {
   const passages: Passage[] = [];
   for (const d of docs) passages.push(...findPassages(d.text, d.label));
+  // zzz809: what a transcript says in WORDS — price, margin mechanism, volume
+  // tone — and its forward guidance lines are read deterministically, whatever
+  // the model returns. Each carries its verbatim sentence; none is a figure
+  // the text does not print.
+  const spoken: StructuralEvent[] = [];
+  for (const d of docs) {
+    if (!/transcript|concall|con-?call|conference call|earnings call|business update/i.test(`${d.kind} ${d.label}`)) continue;
+    try { spoken.push(...transcriptCommentary(d.text, d.label)); } catch { /* commentary is additive; never fails the read */ }
+  }
 
   const byFam: Record<string, number> = {};
   for (const p of passages) byFam[p.family] = (byFam[p.family] || 0) + 1;
@@ -242,7 +265,7 @@ export async function extractStructuralEvents(
     dropped: [],
     model_error: null,
   };
-  if (!capped.length) return { events: [], pipeline };
+  if (!capped.length) return { events: spoken, pipeline };
 
   const prompt = `${ticker}\n\n` + capped
     .map((p, i) => `[${i + 1}] FAMILY: ${p.family} | SOURCE: ${p.doc}\n${p.text}`)
@@ -262,14 +285,14 @@ export async function extractStructuralEvents(
       let detail = '';
       try { const t = await resp.text(); const je = JSON.parse(t); detail = String(je?.error?.message || je?.message || t).slice(0, 300); } catch { /* status alone */ }
       pipeline.model_error = `HTTP ${resp.status}${detail ? `: ${detail}` : ''}`;
-      return { events: [], pipeline };
+      return { events: spoken, pipeline };
     }
     const j = await resp.json();
     const call = (j?.content || []).find((c: any) => c?.type === 'tool_use' && c?.name === EVENT_TOOL.name);
     raw = Array.isArray(call?.input?.events) ? call.input.events : [];
   } catch (e: any) {
     pipeline.model_error = String(e?.message || e);
-    return { events: [], pipeline };
+    return { events: spoken, pipeline };
   }
 
   pipeline.events_returned = raw.length;
@@ -277,7 +300,7 @@ export async function extractStructuralEvents(
   pipeline.events_kept = kept.length;
   pipeline.dropped = dropped;
   for (const ev of kept) pipeline.events_by_family[ev.variable] = (pipeline.events_by_family[ev.variable] || 0) + 1;
-  return { events: kept, pipeline, raw };
+  return { events: [...kept, ...spoken], pipeline, raw };
 }
 
 // ── 3. VALIDATE ────────────────────────────────────────────────────────────

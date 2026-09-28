@@ -22,6 +22,7 @@ import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { railwaySelfFetch } from '@/lib/railway-self-fetch';
 import { extractFirstPdf } from '@/lib/pdf-text-extractor';
 import { analyzeTransformation } from '@/lib/transformation-analyzer';
+import { classifyConcallFiling, type FeedStatus } from '@/lib/concall-feed';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -33,7 +34,8 @@ const CACHE_TTL = 12 * 60;               // zzz466 — 12 min (was 30) so new gr
 // fix keeps serving the OLD graded results until the 12-min TTL lapses or the user
 // force-refreshes — which is why fixed quotes appeared "still broken". A new
 // version orphans the stale entries so the very next request recomputes fresh.
-const CACHE_KEY = (days: number, limit: number) => `transform-screener:v3:${days}:${limit}`;
+// zzz810 — v4: payload carries feed_status; cached empties from the broken feed are orphaned.
+const CACHE_KEY = (days: number, limit: number) => `transform-screener:v4:${days}:${limit}`;
 
 export interface TransformScreenEntry {
   symbol: string;
@@ -84,6 +86,11 @@ interface ScreenPayload {
   candidates_total: number;  // relevant filings in feed
   entries: TransformScreenEntry[];
   scanned_no_signal: ScannedNoSignal[];  // zzz434 — analyzed but below the pattern floor
+  // zzz810 — the live feed's own honest status (could not fetch vs nothing
+  // filed), plus how many of the feed rows are real concalls / transcripts.
+  feed_status?: FeedStatus | null;
+  concalls_in_feed?: number;
+  transcripts_in_feed?: number;
   error?: string;
 }
 
@@ -140,17 +147,29 @@ async function handle(req: NextRequest, days: number, limit: number, minPatterns
   }
 
   const origin = new URL(req.url).origin;
-  const r = await railwaySelfFetch(`${origin}/api/v1/concall-intel/live-feed?days=${days}`, { cache: 'no-store' });
-  if (!r.ok) return NextResponse.json(emptyPayload(days, `live-feed HTTP ${r.status}`), { status: 200 });
+  // zzz810 — a forced Rescan also forces the feed, so an empty/failed feed
+  // is re-fetched from NSE/BSE instead of re-read from cache.
+  const r = await railwaySelfFetch(`${origin}/api/v1/concall-intel/live-feed?days=${days}${forceFresh ? '&force=1' : ''}`, { cache: 'no-store' });
+  if (!r.ok) return NextResponse.json(emptyPayload(days, `Couldn't load the concall feed (live-feed HTTP ${r.status}) — retrying`), { status: 200 });
   const data = await r.json();
   const filings: any[] = Array.isArray(data.filings) ? data.filings : [];
+  const feedStatus: FeedStatus | null = data.fetch_status ?? null;
+  if (data.error && filings.length === 0) {
+    return NextResponse.json({ ...emptyPayload(days, `Couldn't load the concall feed (${data.error}) — retrying`), feed_status: feedStatus });
+  }
+  let concallsInFeed = 0, transcriptsInFeed = 0;
+  for (const f of filings) {
+    const c = classifyConcallFiling(f.subject || '', f.detail);
+    if (c.is_concall || c.kind === 'INVESTOR_PRESENTATION') concallsInFeed++;
+    if (c.is_transcript && c.is_concall) transcriptsInFeed++;
+  }
 
   // zzz444 — a real transcript / investor-presentation is where the signal
   // lives; a "management change / AGM / record date" notice is pure noise that
   // wastes the scan budget and pollutes the leaderboard. Detect both so we (a)
   // spend the scan budget on transcripts FIRST and (b) keep obvious notices out
   // of the ranked list.
-  const isTranscript = (f: any) => /transcript|earnings call|con\s?call|conference call|investor (?:presentation|meet|update)|analyst (?:meet|call)|results? (?:presentation|call)|q[1-4]\s?fy/i.test(`${f.subject || ''} ${(f.attachment_urls?.[0] || '')}`);
+  const isTranscript = (f: any) => f.filing_type === 'TRANSCRIPT' || classifyConcallFiling(f.subject || '', f.detail).is_concall || /transcript|earnings call|con\s?call|conference call|investor (?:presentation|meet|update)|analyst (?:meet|call)|results? (?:presentation|call)|q[1-4]\s?fy/i.test(`${f.subject || ''} ${(f.attachment_urls?.[0] || '')}`);
   const isNoiseNotice = (f: any) => /management change|change in (?:management|director|kmp)|record date|book closure|board meeting|annual general meeting|\bAGM\b|postal ballot|voting result|scrutinizer|newspaper (?:publication|advertisement|clipping)|loss of (?:share|certificate)|duplicate (?:share|certificate)|sub[- ]division|stock split|dividend distribution|trading window|compliance certificate|reg\.?\s?74|reconciliation of share/i.test(f.subject || '');
 
   // zzz463 — FRESHNESS-FIRST scan order so the radar always reads the NEWEST
@@ -264,9 +283,15 @@ async function handle(req: NextRequest, days: number, limit: number, minPatterns
     candidates_total: filings.length,
     entries: ranked,
     scanned_no_signal: scannedNoSignal,
+    feed_status: feedStatus,
+    concalls_in_feed: concallsInFeed,
+    transcripts_in_feed: transcriptsInFeed,
   };
 
-  if (isRedisAvailable()) {
+  // zzz810 — never cache a scan of a feed that failed or came back empty;
+  // the next open must retry the exchanges, not replay "0 in feed".
+  const feedHealthy = filings.length > 0 && (!feedStatus || feedStatus.state === 'OK' || feedStatus.state === 'EMPTY');
+  if (isRedisAvailable() && feedHealthy) {
     try { await kvSet(CACHE_KEY(days, limit), payload, CACHE_TTL); } catch { /* best effort */ }
   }
   return NextResponse.json(payload, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=1800' } });
