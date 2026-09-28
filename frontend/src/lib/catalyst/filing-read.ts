@@ -22,21 +22,22 @@
 import { classifyIndiaEvents, inSentences, inFiguresIn, type InEventHit } from '../ai-gainers/in-event-taxonomy';
 import { classifyUsEvents, eventSentences, figuresIn, BOILERPLATE, type UsEventHit } from '../ai-gainers/us-event-taxonomy';
 import { extractIndiaFacts, type IndiaFacts } from '../ai-gainers/india-extract';
-import { subjectClass, type RecentEventType } from './recent-events';
+import { subjectClass, stripLetterhead, lineQuality, cleanClip, nameBroken, type RecentEventType } from './recent-events';
 import type { FilingRead, Touch } from './filing-read-types';
 
-export const FILING_READ_VERSION = 'r1';
+// r2 (zzz815): letterhead stripped, disclosure tables parsed, OCR names repaired, quality gate — cached reads re-parse.
+export const FILING_READ_VERSION = 'r2';
 export const MIN_TEXT = 200;
 
 export type ReadCore = Omit<FilingRead, 'url' | 'status' | 'version' | 'readAt'>;
 
 /** Letter wording in front of the fact ("We wish to inform that …", "With reference to …,") is cut. */
-const LETTER_LEAD = /^(?:(?:with reference to|in continuation (?:of|to)|further to|pursuant to|in terms of)[^,]{0,160},\s*)?(?:we (?:wish|would like|hereby wish) to (?:inform|state|intimate|submit|clarify)(?: you)?(?: that)?,?\s*|this is to (?:inform|intimate)(?: you)?(?: that)?\s*|please be informed that\s*|we hereby inform(?: you)? that\s*)/i;
+const LETTER_LEAD = /^(?:(?:with reference to|in continuation (?:of|to)|further to|pursuant to|in terms of)[^,]{0,160},(?:\s*\d{4},)?\s*|regulations?,?\s*\d{4},?\s*|[A-Z][^,.]{0,60}\s?,\s*(?=we\s))?(?:we (?:wish|would like|hereby wish) to (?:inform|state|intimate|submit|clarify)(?: you)?(?: that)?,?\s*|this is to (?:inform|intimate)(?: you)?(?: that)?\s*|please be informed that\s*|we hereby inform(?: you)? that\s*)/i;
 const clip = (s: string, n = 180): string => {
   let t = String(s || '').replace(/\s+/g, ' ').trim();
   const cut = t.replace(LETTER_LEAD, '');
   if (cut !== t && cut.length > 20) t = cut.charAt(0).toUpperCase() + cut.slice(1);
-  return t.length > n ? `${t.slice(0, n - 1).replace(/\s\S*$/, '')}…` : t;
+  return cleanClip(t, n);
 };
 
 // ── results ────────────────────────────────────────────────────────────────
@@ -145,18 +146,59 @@ function party(t: string, role: RegExp): string | null {
   return m[1].replace(/^M\/s\.?\s*/i, '').replace(/^(?:of|between|and|with|among)\s+/i, '').replace(/.*\b(?:between|among|of)\s+(?=[A-Z])/, '').replace(/[,\s]+$/, '').trim().slice(0, 80) || null;
 }
 
+const letters = (s: string) => s.toLowerCase().replace(/\b(?:limited|ltd|private|pvt|the)\b/g, '').replace(/[^a-z]/g, '');
+function dice(a: string, b: string): number {
+  const bg = (x: string) => { const o: string[] = []; for (let i = 0; i < x.length - 1; i++) o.push(x.slice(i, i + 2)); return o; };
+  const A = bg(a), B = bg(b);
+  if (!A.length || !B.length) return 0;
+  const pool = [...B]; let hit = 0;
+  for (const g of A) { const i = pool.indexOf(g); if (i >= 0) { hit++; pool.splice(i, 1); } }
+  return (2 * hit) / (A.length + B.length);
+}
+/** Company names written cleanly anywhere in the text ("Dalmia Bharat Refractories Limited"). */
+function cleanNames(t: string): string[] {
+  const out: string[] = [];
+  const re = /\b((?:[A-Z][A-Za-z&'.-]*\s+){1,6}(?:Limited|Ltd\.?|Private Limited|Pvt\.? Ltd\.?))/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t))) { const n = m[1].trim(); if (!nameBroken(n)) out.push(n); }
+  return Array.from(new Set(out));
+}
+/** Pure: a party name as the document wrote it — repaired from the row's own company name or a clean
+ *  occurrence elsewhere in the text when OCR broke it ("Bimad1 i Speciality" → "Himadri Speciality …"),
+ *  a split word rejoined ("Re fractories" → "Refractories"), otherwise dropped (null). */
+export function repairName(name: string | null, text: string, company?: string | null): string | null {
+  if (!name) return null;
+  let n = name.replace(/\s+/g, ' ').trim();
+  if (!nameBroken(n)) return n;
+  const joined = n.replace(/\b([A-Z][a-z]{0,3})\s([a-z]{4,})\b/g, '$1$2');
+  if (!nameBroken(joined)) {
+    const hit = cleanNames(text).find((c) => letters(c) === letters(joined));
+    return hit || joined;
+  }
+  const cands = [...(company ? [company] : []), ...cleanNames(text)];
+  let best: string | null = null, score = 0;
+  for (const c of cands) { const d = dice(letters(n), letters(c)); if (d > score) { score = d; best = c; } }
+  return best && score >= 0.6 ? best : null;
+}
+
 /** Pure: "Scheme: Dalmia Bharat Refractories' business demerged into Himadri Speciality Chemical; share swap …". */
 export function schemeLine(text: string, company?: string | null): string | null {
   const t = String(text || '').replace(/\s+/g, ' ');
   if (!/scheme of (?:arrangement|amalgamation)|demerg|amalgamat|\bmerger\b/i.test(t)) return null;
-  const demerged = party(t, /Demerged Company/), resulting = party(t, /Resulting Company/);
-  const transferor = party(t, /Transferor Company/), transferee = party(t, /Transferee Company/);
+  const demerged = repairName(party(t, /Demerged Company/), t, company), resulting = repairName(party(t, /Resulting Company/), t, company);
+  const transferor = repairName(party(t, /Transferor Company/), t, company), transferee = repairName(party(t, /Transferee Company/), t, company);
   let head = '';
   let from: string | null = null, to: string | null = null;
   if (demerged && resulting) { head = `Scheme: ${demerged}'s business demerged into ${resulting}`; from = demerged; to = resulting; }
   else if (transferor && transferee) { head = `Scheme: ${transferor} to be amalgamated into ${transferee}`; from = transferor; to = transferee; }
-  else if (/demerg/i.test(t)) head = 'Scheme of arrangement (demerger)';
-  else head = 'Scheme of arrangement / amalgamation';
+  else {
+    // "Scheme of Amalgamation of X with Y" / "Scheme of Arrangement between X and Y …" — said as written when clean
+    const d = /\bscheme of (arrangement|amalgamation)\s+(?:and\s+\w+\s+)?(?:between|of|amongst|among|for)\s+([^.;]{10,220}?)(?=\s+and\s+their\s+respective|\s+under\s+sections?|\s*\(|[.;]|$)/i.exec(t);
+    const desc = d ? d[2].replace(/\s+/g, ' ').trim() : '';
+    if (desc && !nameBroken(desc.replace(/\b(?:and|with|into|of|the|between)\b/g, 'And')) && lineQuality(desc).ok) head = `Scheme of ${d![1].toLowerCase()}: ${cleanClip(desc, 150)}`;
+    else if (/demerg/i.test(t)) head = 'Scheme of arrangement (demerger) — parties not legible in the filing';
+    else head = 'Scheme of arrangement / amalgamation — terms not stated in this filing';
+  }
   const ratio = /(\d+)\s*(?:\([A-Za-z ]+\)\s*)?(?:fully paid[- ]up\s+)?equity shares?[^.;]{0,140}?\bfor every\s+(\d+)\s*(?:\([A-Za-z ]+\)\s*)?(?:fully paid[- ]up\s+)?equity shares?/i.exec(t);
   const stage = /(?:NCLT|Tribunal)[^.;]{0,60}(?:sanction|approv)|sanctioned the scheme|order sanctioning/i.test(t) ? 'sanctioned by the NCLT'
     : /effective date|scheme (?:has )?become effective|made effective/i.test(t) ? 'effective'
@@ -172,12 +214,100 @@ export function schemeLine(text: string, company?: string | null): string | null
   return line;
 }
 
+// ── Reg 30 disclosure tables (SEBI annexure format) ─────────────────────────
+
+const EMPTY_VALUE = /^(?:not\s+applicable|n\.?\s?a\.?|nil|none|no|-+|–|not\s+available|na)\b[\s.,]*$/i;
+/** Pure: the value after a table label, up to the next label / row letter, or null when it is empty ("Not Applicable"). */
+export function tableValue(text: string, label: RegExp, max = 160): string | null {
+  const fl = label.flags.includes('i') ? 'i' : '';
+  // the label runs to its colon when there is one before the next row ("… belong to the promoter group: Not Applicable")
+  const m = new RegExp(label.source + String.raw`(?:(?![a-z]\)\s)[^:]){0,140}?:\s*`, fl).exec(text) || new RegExp(label.source + String.raw`[^:]{0,40}?(?:\?|-)?\s*`, fl).exec(text);
+  if (!m) return null;
+  let v = text.slice(m.index + m[0].length, m.index + m[0].length + max);
+  v = v.split(/\s(?:[a-z]\)|\(?[ivx]{1,4}\)|\d{1,2}[.)])\s|\s(?:Name of|Amount and percentage|Date on which|Expected date|Consideration|Brief details|Whether|Cost of|Percentage of|Indicative time|Nature of|Size|Details of|Type of|Industry to which)\b/)[0];
+  v = v.split(/\.\s+(?=[A-Z])/)[0].replace(/\s+/g, ' ').replace(/[;,.\s]+$/, '').trim();
+  if (!v || EMPTY_VALUE.test(v) || v.length < 2) return null;
+  if (!lineQuality(v).ok) return null;
+  return cleanClip(v, 90);
+}
+
+const MONEY_TXT = /(?:₹|Rs\.?|INR)\s?\d[\d,]*(?:\.\d+)?(?:\s?(?:crores?|cr\b\.?|lakhs?|lacs?|million|mn\b|billion|bn\b))?(?:\s?\/-)?|\d[\d,]*(?:\.\d+)?\s?(?:crores?|cr\b\.?)/i;
+const moneyIn = (s: string | null): string | null => { const m = s ? MONEY_TXT.exec(s) : null; return m ? m[0].replace(/\s?\/-$/, '').trim() : null; };
+
+/** Pure: "Divestment: <undertaking> to <buyer> for ₹X Cr; agreement dated …" from the Reg 30 sale/disposal table. */
+export function divestmentLine(text: string): string | null {
+  const t = String(text || '').replace(/\s+/g, ' ');
+  const what = tableValue(t, /name of the (?:entity|undertaking|unit|division)(?:\(s\))?(?: forming part of the undertaking)?/i)
+    || tableValue(t, /(?:sale|disposal) of (?:the )?(?:undertaking|unit|division|business)/i);
+  const buyer = tableValue(t, /brief details of (?:the )?buyers?/i);
+  const cons = moneyIn(tableValue(t, /consideration (?:received|receivable)?/i, 200)) || moneyIn(tableValue(t, /(?:sale|total) consideration/i, 200));
+  const date = tableValue(t, /date on which the agreement (?:for sale )?(?:has been )?entered into/i, 60);
+  const bits: string[] = [];
+  if (what) bits.push(what);
+  if (buyer) bits.push(`to ${buyer}`);
+  if (cons) bits.push(`for ${cons}`);
+  let line = bits.length ? `Divestment: ${bits.join(' ')}` : null;
+  if (line && date) line += `; agreement dated ${date}`;
+  return line || (/sale|dispos|divest|slump/i.test(t) ? "Divestment — details in the filing's disclosure table" : null);
+}
+
+/** Pure: "Acquisition: 24,00,000 equity shares of X Limited for ₹Y Cr (Z% stake)" — stake only when a % is written. */
+export function acquisitionLine(text: string, company?: string | null): string | null {
+  const t = String(text || '').replace(/\s+/g, ' ');
+  const target = tableValue(t, /name of the target entity/i) || tableValue(t, /name of the (?:company|entity) (?:being )?acquired/i);
+  const sh = /([\d,]{3,})\s+(?:fully paid[- ]up\s+)?equity shares\b(?:[^.;]|\.(?=\s?\d))*?\bof\s+((?:M\/s\.?\s*)?[A-Z][A-Za-z&'\- ]{2,80}?(?:Private Limited|Pvt\.? Ltd\.?|Limited|Ltd\.?|LLP|Inc\.?))/.exec(t);
+  const cost = moneyIn(tableValue(t, /cost of acquisition(?: or the price at which the shares are acquired)?/i, 200)) || moneyIn(tableValue(t, /(?:purchase |total )?consideration/i, 200))
+    || (/\bacqui\w*\b[^.]{0,200}?\b(?:for|at)\s+(?:a\s+)?(?:total\s+)?(?:(?:purchase\s+)?consideration\s+of\s+)?((?:₹|Rs\.?|INR)\s?\d[\d,]*(?:\.\d+)?\s?(?:crores?|cr\b\.?|lakhs?|lacs?))/i.exec(t)?.[1] || null);
+  const pctV = tableValue(t, /percentage of shareholding(?: \/ control)?(?: acquired)?(?: and \/ or number of shares acquired)?/i, 80);
+  const pct = pctV && /\d/.exec(pctV) ? (/(\d+(?:\.\d+)?)\s?%/.exec(pctV)?.[1] || null) : (/(\d+(?:\.\d+)?)\s?%\s+(?:of\s+the\s+)?(?:(?:paid[- ]up|issued)\s+)?(?:equity\s+)?(?:share\s+capital|stake|shareholding)/i.exec(t)?.[1] || null);
+  const stake = pct && Number(pct) > 0 ? `${pct}% stake` : null;
+  const targetName = repairName(sh ? sh[2].replace(/^M\/s\.?\s*/i, '') : target, t, company);
+  const bits: string[] = [];
+  if (sh && targetName) bits.push(`${sh[1]} equity shares of ${targetName}`);
+  else if (targetName) bits.push(targetName);
+  if (cost) bits.push(`for ${cost}`);
+  if (stake) bits.push(`(${stake})`);
+  return bits.length ? `Acquisition: ${bits.join(' ')}` : null;
+}
+
+/** Pure: "Preferential issue: 12,00,000 warrants at ₹145 each, total ₹17.4 Cr; to promoter group". Only what is stated. */
+export function fundLine(text: string): string | null {
+  const t = String(text || '').replace(/\s+/g, ' ');
+  const inst = /\b(preferential (?:issue|allotment)|qualified institutions? placement|\bQIP\b|rights issue|(?:fully )?convertible warrants|warrants|non[- ]convertible debentures|\bNCDs?\b|commercial papers?|term loan|external commercial borrowing|foreign currency convertible bonds|\bFCCBs?\b|bonus issue)/i.exec(t);
+  if (!inst) return null;
+  const name = inst[1].replace(/\bNCDs?\b/i, 'NCDs').replace(/qualified institutions? placement/i, 'QIP');
+  const count = /([\d,]{3,})\s+(?:(?:fully\s+)?(?:paid[- ]up|convertible)\s+)?(?:(?:listed|rated|secured|unsecured|redeemable|senior|taxable)[,\s]+)*(equity shares|warrants|non[- ]convertible debentures|NCDs)/i.exec(t);
+  const price = /(?:issue price|price|at a price) of\s+((?:₹|Rs\.?|INR)\s?[\d,]+(?:\.\d+)?)/i.exec(t) || /\bat\s+((?:₹|Rs\.?|INR)\s?[\d,]+(?:\.\d+)?)\s*(?:\/-\s*)?(?:per|each)/i.exec(t);
+  const size = /(?:aggregat\w*|amounting to|total (?:issue )?size|size of|for an amount of|not exceeding|up to|upto|of up to|raise)\s+(?:to\s+)?(?:an amount of\s+|up to\s+)?((?:₹|Rs\.?|INR)\s?[\d,]+(?:\.\d+)?\s?(?:crores?|cr\b\.?|lakhs?|lacs?))/i.exec(t);
+  const who = /\bnon[- ]promoter/i.test(t) && /\bpromoter(?:\s+group)?\b(?!\s*\/)/i.test(t.replace(/non[- ]promoter/gi, '')) ? 'promoter and non-promoter allottees'
+    : /\bnon[- ]promoter|public category/i.test(t) ? 'non-promoter allottees' : /\bto (?:the )?promoters?(?: group)?\b|promoter group (?:entit|allott)/i.test(t) ? 'promoter group' : null;
+  const bits: string[] = [];
+  if (count) bits.push(`${count[1]} ${count[2].toLowerCase().replace(/non[- ]convertible debentures/, 'NCDs')}`);
+  if (price) bits.push(`at ${price[1].replace(/^Rs\.?\s?|^INR\s?/i, '₹')} each`);
+  if (size) bits.push(`${bits.length ? 'total ' : ''}${size[1].replace(/^Rs\.?\s?|^INR\s?/i, '₹')}`);
+  let line = `${name.charAt(0).toUpperCase()}${name.slice(1)}${bits.length ? `: ${bits.join(', ')}` : ' — size not stated in the filing'}`;
+  if (who) line += `; to ${who}`;
+  return line;
+}
+
+/** Pure: "Licence / approval: <what> from <whom>" — or null when the filing does not say what. */
+export function approvalLine(text: string): string | null {
+  const t = String(text || '').replace(/\s+/g, ' ');
+  const m = /\b(?:received|obtained|granted|been granted|secured)\s+(?:the\s+|an?\s+)?((?:[A-Z]{2,}\s+)?(?:licen[cs]e|approval|certificate|certification|registration|permission|clearance|accreditation|EIR|establishment inspection report)[^.;]{0,140})/i.exec(t)
+    || /\b((?:licen[cs]e|approval|certificate|registration|permission|clearance)\s+(?:for|to|from)\s+[^.;]{5,140})/i.exec(t);
+  if (!m) return null;
+  const v = cleanClip(m[1].replace(/\s+/g, ' ').trim(), 160);
+  // "received the approval" says nothing — it must say what, or from whom
+  if (v.split(/\s+/).length < 4) return null;
+  return lineQuality(v).ok ? `${v.charAt(0).toUpperCase()}${v.slice(1)}` : null;
+}
+
 // ── other lines ────────────────────────────────────────────────────────────
 
 const NO_IMPACT = /\bno (?:material|significant|major|adverse)\s+(?:financial\s+|adverse\s+)?(?:impact|effect|bearing|implication)|not (?:expected to )?(?:have|be) (?:any )?(?:material|significant)|no impact on (?:the )?(?:financial|operations|business)|does not have any material/i;
 
 function sentenceWith(text: string, re: RegExp, market: 'IN' | 'US', preferFigure = true): string | null {
-  const sents = (market === 'US' ? eventSentences(text) : inSentences(text)).filter((s) => !BOILERPLATE.test(s) && s.length < 700);
+  const sents = (market === 'US' ? eventSentences(text) : inSentences(text)).filter((s) => !BOILERPLATE.test(s) && s.length < 700 && lineQuality(s).ok);
   const hits = sents.filter((s) => re.test(s));
   if (!hits.length) return null;
   const withFig = preferFigure ? hits.find((s) => (market === 'US' ? figuresIn(s) : inFiguresIn(s)).length) : null;
@@ -188,7 +318,7 @@ function sentenceWith(text: string, re: RegExp, market: 'IN' | 'US', preferFigur
 function leadSentence(text: string): string | null {
   const sents = inSentences(text).filter((s) => !BOILERPLATE.test(s) && s.length >= 40 && s.length < 600
     && !/scrip code|symbol\s*:|dear sir|listing (?:department|compliance)|corporate relationship|exchange plaza|dalal street|^sub(?:ject)?\s*:|^ref\s*:|cin\s*:|regd\.? off|website|e-?mail/i.test(s));
-  return sents.find((s) => /\b(?:inform|intimate|announce|pleased|hereby|has (?:received|approved|entered|signed|completed|commenced)|board of directors)\b/i.test(s)) || null;
+  return sents.find((s) => lineQuality(s).ok && /\b(?:inform|intimate|announce|pleased|hereby|has (?:received|approved|entered|signed|completed|commenced|allotted|executed)|board of directors)\b/i.test(s)) || null;
 }
 
 // ── touches ────────────────────────────────────────────────────────────────
@@ -276,18 +406,33 @@ export interface ReadInput {
 
 /** Pure: one filing's text → the line that matters. Never invents a figure. */
 export function readFilingText(inp: ReadInput): ReadCore {
-  const text = String(inp.text || '').replace(/\s+/g, ' ').trim();
-  if (text.length < MIN_TEXT) return { kind: null, line: null, figures: [], routine: null, touches: [], chars: text.length };
-  return inp.market === 'US' ? readUs(inp, text) : readIn(inp, text);
+  const raw = String(inp.text || '').replace(/\s+/g, ' ').trim();
+  if (raw.length < MIN_TEXT) return { kind: null, line: null, figures: [], routine: null, touches: [], chars: raw.length };
+  const text = stripLetterhead(raw);
+  const core = inp.market === 'US' ? readUs(inp, text) : readIn(inp, text);
+  return { ...core, chars: raw.length };
 }
 
-function lineOut(core: ReadCore, market: 'IN' | 'US'): ReadCore {
-  const line = core.line ? clip(core.line, 240) : null;
+/** Only thesis variables the kind of event can state are kept (a scheme does not state capacity). */
+const TOUCH_BY_KIND: Partial<Record<RecentEventType, RegExp>> = {
+  'Results': /^(?:revenue_growth|earnings_growth|margin|operating_leverage|guidance)$/,
+  'Capex / capacity': /^(?:capacity|capacity_addition|utilisation|new_plant|commissioning|capex|capex_status|capex_earning)$/,
+  'Order win': /^(?:order_intake|order_book|book_to_bill|revenue_visibility)$/,
+  'Regulatory approval': /^(?:approval|qualification)$/,
+  'Guidance': /^(?:guidance|management_target)$/,
+  'Concall / business update': /./,
+};
+function lineOut(core: ReadCore, market: 'IN' | 'US', type?: RecentEventType): ReadCore {
+  let line = core.line ? clip(core.line, 240) : null;
+  let rejected: string | null = null;
+  if (line) { const q = lineQuality(line); if (!q.ok) { rejected = q.why; line = null; } }
+  const allow = type ? TOUCH_BY_KIND[type] : /./;
+  const touches = (core.touches || []).filter((x) => allow ? allow.test(x.key) : false);
   const figs = line ? (market === 'US' ? figuresIn(line) : inFiguresIn(line)) : [];
   // the one computed figure: a capacity change % from two stated capacities
   const cap = line && /^Capacity .*→.*\(([+-]?\d+)%\)/.exec(line);
   if (cap && !figs.some((f) => f.replace(/\s/g, '') === `${cap[1]}%`)) figs.push(`${cap[1]}%`);
-  return { ...core, line, figures: figs };
+  return { ...core, line, figures: figs, touches, rejected };
 }
 
 function readIn(inp: ReadInput, text: string): ReadCore {
@@ -321,21 +466,25 @@ function readIn(inp: ReadInput, text: string): ReadCore {
   // nothing material: a generic subject whose body names no event
   if (!real.length && !facts.length && (subj.generic || subj.type === 'Other filing')) {
     const r = factRoutine || hits.find((h) => h.routine)?.label?.toLowerCase() || 'nothing material stated in the document';
-    return { kind: null, line: leadSentence(text) ? clip(leadSentence(text) as string, 200) : null, figures: [], routine: r, touches: [], chars: text.length, senior, noImpact };
+    const ls = leadSentence(text);
+    return { kind: null, line: ls && lineQuality(ls).ok ? clip(ls, 200) : null, figures: [], routine: r, touches: [], chars: text.length, senior, noImpact };
   }
 
   let line: string | null = null;
   const hitLine = (ids: RegExp) => { const h = real.find((x) => ids.test(x.id)); return h ? h.sentence : null; };
   switch (type) {
     case 'Results': line = resultsLine(text, 'IN') || (resultsHit ? `${resultsHit.label}: ${clip(resultsHit.sentence, 170)}` : 'Results filed — the figures are in the statement tables, no headline sentence'); break;
-    case 'Order win': line = fact?.event.kind === 'order' ? fact.headline : hitLine(/order_win|order_book/); break;
-    case 'Capex / capacity': line = capacityLine(text) || (fact?.event.kind === 'capacity' ? fact.headline : hitLine(/capacity/)); break;
+    case 'Order win': line = fact?.event.kind === 'order' && lineQuality(fact.headline).ok ? fact.headline : hitLine(/order_win|order_book/); break;
+    case 'Capex / capacity': line = capacityLine(text) || (fact?.event.kind === 'capacity' && lineQuality(fact.headline).ok ? fact.headline : hitLine(/capacity/)); break;
     case 'Corporate restructuring': line = schemeLine(text, inp.company); break;
-    case 'Acquisition': case 'Divestment': case 'Fund raise': case 'Regulatory approval':
-      line = fact && FACT_KIND[fact.event.kind] === type ? fact.headline : (real[0] ? `${real[0].label}: ${clip(real[0].sentence, 170)}` : null); break;
+    case 'Acquisition': line = acquisitionLine(text, inp.company); break;
+    case 'Divestment': line = divestmentLine(text); break;
+    case 'Fund raise': line = fundLine(text); break;
+    case 'Regulatory approval': line = approvalLine(text); break;
     case 'Regulatory / legal action': {
-      const base = fact && (fact.event.kind === 'tax_litigation' || fact.event.kind === 'governance') ? fact.headline
-        : sentenceWith(text, /\b(?:demand|penalt|notice|order|fine|levied|assessment|show cause|proceeding)\b/i, 'IN');
+      const acted = sentenceWith(text, /\b(?:received|issued|served|passed|levied|imposed|raised)\b[^.]{0,140}\b(?:demand|penalt\w*|notice|order|fine|communication)\b|\b(?:demand|penalt\w*|notice|order|fine|communication)\b[^.]{0,140}\b(?:received|issued|served|passed|levied|imposed|raised)\b/i, 'IN');
+      const base = fact && (fact.event.kind === 'tax_litigation' || fact.event.kind === 'governance') && lineQuality(fact.headline).ok && /\d/.test(fact.headline) ? fact.headline
+        : acted || sentenceWith(text, /\b(?:demand|penalt|notice|order|fine|levied|assessment|show cause|proceeding)\b/i, 'IN');
       line = base ? `${clip(base, 170)}${noImpact ? ' — company says no material impact' : ''}` : null; break;
     }
     case 'Management change': line = sentenceWith(text, /\b(?:appoint|resign|cessation|re-?appoint|re-?designat|steps? down|superannuat)/i, 'IN', false); break;
@@ -351,17 +500,19 @@ function readIn(inp: ReadInput, text: string): ReadCore {
       const cap = capacityLine(text);
       const bits: string[] = [];
       if (cap) bits.push(cap);
-      for (const h of top) if (bits.length < 2 && !(cap && /capacity/.test(h.id))) bits.push(`${h.label}: ${clip(h.sentence, 110)}`);
+      // a deck's hit sentences are often slide text — only clean ones are kept
+      for (const h of top) { const b = `${h.label}: ${clip(h.sentence, 110)}`; if (bits.length < 2 && !(cap && /capacity/.test(h.id)) && lineQuality(b).ok) bits.push(b); }
       const cust = sentenceWith(text, /\bnew\s+(?:[A-Z]{2,6}\s+|global\s+|international\s+|marquee\s+|large\s+)*(?:customers?|clients?)\b/i, 'IN', false);
-      if (cust && bits.length < 3) bits.push(clip(cust, 90));
+      if (cust && bits.length < 3 && lineQuality(cust).ok) bits.push(clip(cust, 90));
       const appr = sentenceWith(text, /\b(?:site|facility|plant|unit)s?\b[^.]{0,60}\b(?:approved|qualified)\s+by\b/i, 'IN', false);
-      if (appr && bits.length < 3 && appr !== cust) bits.push(clip(appr, 90));
+      if (appr && bits.length < 3 && appr !== cust && lineQuality(appr).ok) bits.push(clip(appr, 90));
       line = bits.join('; ') || (real[0] ? `${real[0].label}: ${clip(real[0].sentence, 150)}` : null);
       break;
     }
-    default: line = real[0] ? `${real[0].label}: ${clip(real[0].sentence, 170)}` : leadSentence(text);
+    default: line = real[0] ? `${real[0].label}: ${clip(real[0].sentence, 200)}` : leadSentence(text);
   }
-  return lineOut({ kind, line, routine: null, touches, chars: text.length, senior, noImpact }, 'IN');
+  if (line && !lineQuality(line).ok && type !== 'Concall / business update') line = leadSentence(text) || line;
+  return lineOut({ kind, line, routine: null, touches, chars: text.length, senior, noImpact }, 'IN', type);
 }
 
 function readUs(inp: ReadInput, text: string): ReadCore {
@@ -387,7 +538,7 @@ function readUs(inp: ReadInput, text: string): ReadCore {
     line = lead ? `${lead.label}: ${clip(lead.sentence, 180)}` : null;
     if (type === 'Regulatory / legal action' && line && noImpact) line += ' — company says no material impact';
   }
-  return lineOut({ kind, line, routine: null, touches, chars: text.length, senior, noImpact }, 'US');
+  return lineOut({ kind, line, routine: null, touches, chars: text.length, senior, noImpact }, 'US', type);
 }
 
 /** Pure: the cache / response record for one filing. */

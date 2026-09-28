@@ -29,6 +29,8 @@
 // the owner confirms the type with the picker. The owner's saved type
 // (us-thesis:types:v1) always wins. THESIS NOT SET remains only where there
 // is truly nothing: no SEC filer, or no figures and no business classification.
+// zzz815: a name whose figures are still loading or failed to load is NOT
+// thesis-not-set — it is not yet assessed, and the card says which.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { ABFG_META, type AbfgPattern, type AbfgResult } from '@/lib/earnings/pattern-abfg';
@@ -120,8 +122,13 @@ export function usNearestType(inp: UsTypeInputs | null): AbfgResult | null {
   return out('A', `${hasFigures ? 'the figures fit no type; ' : 'no SEC figures to fit; '}${words} — the thesis to test is an operating turn`, true);
 }
 
-/** Why a US row has no type at all (THESIS NOT SET), in plain words. */
+/** Why a US row has no type at all (THESIS NOT SET), in plain words.
+ *  zzz815: "no SEC filer" is said ONLY when the server said so (its `why`,
+ *  given after SEC's ticker map loaded and lacked the ticker). A profile not
+ *  yet loaded is "loading", and a profile that failed to load is a retrieval
+ *  failure — neither is ever an absence. */
 export function usNoTypeReason(sec: UsSecProfile | null | undefined, gradedWhy: string | null | undefined): string {
-  if (!sec) return gradedWhy || 'no SEC filer found for this ticker, so there are no SEC figures to fit a thesis type from';
+  if (sec === undefined && !gradedWhy) return 'loading SEC figures…';
+  if (!sec) return gradedWhy || 'SEC figures could not be read this time (a retrieval failure, not an absence) — retrying';
   return sec.note || gradedWhy || 'no SEC figures and no business classification to fit a thesis type from';
 }

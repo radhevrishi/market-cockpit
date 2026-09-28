@@ -15,7 +15,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { usGradedRow } from './adapter';
-import { strictFigures, roceFromFacts, rpoReadings, moneyShort, type FiscalCalendar, type StrictFigures, type UsRpo } from './xbrl';
+import { strictFigures, roceFromFacts, rpoReadings, instantYoY, moneyShort, type FiscalCalendar, type StrictFigures, type UsRpo, type UsInstantYoY } from './xbrl';
 
 export interface UsSecPeriod {
   basis: 'quarterly' | 'semiannual' | 'annual';
@@ -46,6 +46,8 @@ export interface UsSecProfile {
   rpo_growth_pct: number | null;
   /** zzz793: the filed order backlog (RPO) readings, current only. */
   rpo?: UsRpo | null;
+  /** zzz815: inventories filed at the latest quarter end vs a year earlier. */
+  inventory?: UsInstantYoY | null;
   /** Plain words for the card when there is no quarterly row. */
   note: string | null;
 }
@@ -102,12 +104,14 @@ export function usFactsResult(ticker: string, facts: any | null, meta: { cik?: n
   const roce0 = facts && s?.basis === 'quarterly' ? roceFromFacts(facts, s.q_end) : null;
   // RPO is read against the company's latest reported period (quarter or year).
   const rpo = facts ? rpoReadings(facts, s?.q_end || null) : null;
+  // zzz815: inventories at the quarter end vs a year earlier (working capital, no model).
+  const inventory = facts && s?.basis === 'quarterly' ? instantYoY(facts, ['InventoryNet'], s.q_end) : null;
   const profile: UsSecProfile = {
     cik: meta.cik ?? null, company: meta.company || facts?.entityName || null,
     sic: meta.sic || null, sic_description: meta.sicDescription || null,
     filer: fk.filer, forms_line: fk.line, calendar: s?.calendar || null,
     period, roce: roce0 ? { pct: roce0.pct, fiscal: roce0.fiscal } : null,
-    rpo_growth_pct: rpo ? rpo.pct : null, rpo, note: null,
+    rpo_growth_pct: rpo ? rpo.pct : null, rpo, inventory, note: null,
   };
   if (!s || !s.basis) {
     const why = fk.filer === 'foreign'
@@ -150,5 +154,6 @@ export function usFactsResult(ticker: string, facts: any | null, meta: { cik?: n
   // roceFromFacts), labelled; otherwise absent — never "not disclosed".
   if (roce0 && usd) { row.roce_pct = roce0.pct; row.roce_basis = 'sec-ttm'; row.roce_period = roce0.fiscal; }
   if (rpo) { row.rpo_growth_pct = rpo.pct; row.rpo = rpo; }
+  if (inventory && usd) row.inventory = inventory;
   return { row, why: null, profile };
 }

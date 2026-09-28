@@ -114,7 +114,8 @@ const FAMILY_RE: Record<Family, RegExp> = {
   orders: /order\s*book|order\s*backlog|\bbacklog\b|order\s*intake|orders?\s+(received|won|win|booked|booking)|book[- ]to[- ]bill|letter of (award|intent)|\bLOA\b|\bLOI\b|revenue visibility|pipeline of/i,
   customers: /new customers?|customer (addition|win|added|onboard|loss|lost|churn|concentration)|design win|qualif(ied|ication)|nomination|\bOEMs?\b|programme (win|award)/i,
   guidance: /\bguidance\b|\bguided\b|\bexpect(s|ed|ing)?\b|\btarget(s|ed|ing)?\b|\boutlook\b|\bFY\s?'?\d{2}\b|by (Q[1-4]|the end of|fiscal)/i,
-  volume_price_mix: /\bvolumes?\b|\brealisations?\b|\brealizations?\b|price (increase|hike|cut|realisation)|product mix|\bmix\b|\bASP\b/i,
+  // zzz816: a lender's / exchange's volume is its book or its turnover.
+  volume_price_mix: /\bvolumes?\b|\brealisations?\b|\brealizations?\b|price (increase|hike|cut|realisation)|product mix|\bmix\b|\bASP\b|\bAUM\b|assets under management|loan book|disbursements?|net interest margin|\bNIM\b|average daily (?:premium )?turnover|\bADTV\b/i,
   one_offs: /one[- ]?offs?|one[- ]time|exceptional item|non[- ]recurring|write[- ]?back|provision reversal|tax (reversal|benefit|credit)|forex (gain|loss)|impairment|other income/i,
   working_capital: /working capital|receivables?|debtors?|inventor(y|ies)|payables?|creditors?|customer advances|cash conversion|operating cash/i,
   execution: /delay(ed|s)?|deferred|postponed|slippage|behind schedule|ahead of schedule|on track|execution/i,
@@ -223,7 +224,8 @@ RULES THAT ARE NOT NEGOTIABLE
 - Several product lines may each have their own figure ("90-100% on AC, 65% on DC"). Record each as its own event with the line named in evidence_text; do not average them.
 - evidence_text must be the verbatim sentence. It will be checked against the document; an edited or paraphrased sentence causes the whole event to be discarded.
 - If a family of passages contains no usable figure, record nothing for it. Silence is correct; invention is not.
-- Revenue, profit and margin figures are NOT structural events and must not be recorded here — they come from the financial statements separately.`;
+- Revenue, profit and margin figures are NOT structural events and must not be recorded here — they come from the financial statements separately.
+- A bank, NBFC or other lender has no plant: record the growth of its loan book / AUM / disbursements as variable "volume" and its net interest margin as "margin_driver". An exchange or broker: record transaction volume / average daily turnover growth as "volume".`;
 
 export interface ReadDoc { label: string; kind: string; text: string; }
 

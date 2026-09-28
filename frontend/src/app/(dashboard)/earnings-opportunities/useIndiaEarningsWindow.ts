@@ -20,11 +20,30 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  windowDates, windowProgress, nextToGrade, mergeWindowDays,
+  windowDates, windowProgress, nextToGrade, windowEntries, dedupeWindowEntries,
   type DayState, type WindowDay, type WindowRow, type WindowRowBase, type WindowProgress,
+  type WindowEntry, type WindowBadRow,
 } from '@/lib/india-earnings-window';
 
 interface Entry<R extends WindowRowBase> { state: DayState; day?: WindowDay<R>; error?: string }
+
+function payloadRows(p: any): number {
+  if (!p?.by_tier) return 0;
+  return Object.values(p.by_tier).reduce((n: number, v: any) => n + (Array.isArray(v) ? v.length : 0), 0) as number;
+}
+/** zzz817 — keep what the page needs from a stored/graded payload: the tiers,
+ *  plus the companies the grader could NOT grade and the hub-down flag, which
+ *  the window used to throw away (so they vanished without a count). */
+function toDay<R extends WindowRowBase>(date: string, p: any, stale: boolean, engine: string | null): WindowDay<R> {
+  return {
+    date,
+    by_tier: p?.by_tier,
+    engine_stale: stale,
+    engine,
+    dropped: Array.isArray(p?._dropped) ? p._dropped.filter((x: any) => x && x.ticker) : null,
+    hub_fail: p?._hub_fail ? String(p._hub_fail) : null,
+  };
+}
 
 const BATCH_MAX_DATES = 40;
 const GRADE_TIMEOUT_MS = 150_000;
@@ -35,6 +54,12 @@ export interface IndiaWindowState<R extends WindowRowBase> {
   states: Record<string, DayState | undefined>;
   errors: Record<string, string | undefined>;
   days: WindowDay<R>[];
+  /** zzz817 — every graded result in the window, before the dedupe (the page
+   *  filters these, then dedupes, so a filter never hides a whole company). */
+  entries: WindowEntry<R>[];
+  /** zzz817 — rows that could not be read as a card, with the reason */
+  bad: WindowBadRow[];
+  /** one row per company, no filters (search + the unfiltered total) */
   rows: WindowRow<R>[];
   progress: WindowProgress;
   retryFailed: () => void;
@@ -89,7 +114,7 @@ export function useIndiaEarningsWindow<R extends WindowRowBase>(opts: {
             if (!day?.date || !day?.payload) continue;
             store.set(day.date, {
               state: day.stale ? 'stale' : 'ready',
-              day: { date: day.date, by_tier: day.payload.by_tier, engine_stale: !!day.stale, engine: day.engine || null },
+              day: toDay<R>(day.date, day.payload, !!day.stale, day.engine || null),
             });
           }
           for (const d of (j?.missing || [])) {
@@ -99,9 +124,15 @@ export function useIndiaEarningsWindow<R extends WindowRowBase>(opts: {
           // Too big for one response — ask again for these, first in line.
           const deferred: string[] = Array.isArray(j?.deferred) ? j.deferred : [];
           if (deferred.length) pending = [...deferred, ...pending];
-          // Anything the server did not mention at all stays readable next time.
+          // zzz817 — a date the server did not mention at all used to be
+          // deleted from the store, which the page then showed as "loading"
+          // for ever (the read does not run again) — the day, and every
+          // company in it, silently missing. It is now a failed day with a
+          // retry button.
           for (const d of ask) {
-            if (store.get(d)?.state === 'loading' && !deferred.includes(d)) store.delete(d);
+            if (store.get(d)?.state === 'loading' && !deferred.includes(d)) {
+              store.set(d, { state: 'failed', error: 'the graded store did not answer for this date' });
+            }
           }
         } catch (e: any) {
           if (cancelled || e?.name === 'AbortError') break;
@@ -110,6 +141,12 @@ export function useIndiaEarningsWindow<R extends WindowRowBase>(opts: {
           }
         }
         if (!cancelled) bump();
+      }
+      // zzz817 — the loop guard ran out with dates still waiting: say so.
+      if (!cancelled) {
+        let left = 0;
+        for (const d of need) if (store.get(d)?.state === 'loading') { store.set(d, { state: 'failed', error: 'too many dates to read in one go — retry' }); left++; }
+        if (left) bump();
       }
     })();
     return () => {
@@ -147,7 +184,10 @@ export function useIndiaEarningsWindow<R extends WindowRowBase>(opts: {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const p: any = await res.json();
         if (!p?.by_tier) throw new Error(p?.error || 'no graded payload');
-        store.set(d, { state: 'ready', day: { date: d, by_tier: p.by_tier, engine_stale: false, engine: null } });
+        // zzz817 — an EMPTY day built while the results hub was down is not
+        // "no results that day"; it is a failed read, offered for retry.
+        if (p._hub_fail && payloadRows(p) === 0) throw new Error(`results feed down (${p._hub_fail}) — 0 results read`);
+        store.set(d, { state: 'ready', day: toDay<R>(d, p, false, null) });
       } catch (e: any) {
         const msg = e?.name === 'AbortError' ? `took longer than ${GRADE_TIMEOUT_MS / 1000}s` : String(e?.message || e);
         store.set(d, { state: 'failed', error: msg });
@@ -179,7 +219,8 @@ export function useIndiaEarningsWindow<R extends WindowRowBase>(opts: {
       if (e?.error) errors[d] = e.error;
       if (e?.day && (e.state === 'ready' || e.state === 'stale')) days.push(e.day);
     }
-    return { states, errors, days, rows: mergeWindowDays<R>(days), progress: windowProgress(dates, states) };
+    const { entries, bad } = windowEntries<R>(days);
+    return { states, errors, days, entries, bad, rows: dedupeWindowEntries<R>(entries), progress: windowProgress(dates, states) };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [datesKey, version]);
 

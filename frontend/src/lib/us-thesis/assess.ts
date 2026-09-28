@@ -30,6 +30,7 @@ import type { UsSecProfile } from './facts-row';
 import { usNearestType, usTypeInputs, usNoTypeReason } from './us-type';
 import { isolateUsLedger, sanitizeUsSummary } from './sanitize';
 import { usdWords, niceDate, type UsRpo } from './xbrl';
+import { withUsDetEvidence, type UsDetEvidence } from './det-evidence';
 
 /**
  * zzz793: a summary with the filed RPO as its order book, when the documents
@@ -162,7 +163,26 @@ export interface UsRow {
   benchSource?: string | null;
   /** zzz811: meets / misses the owner's US Conviction Beats criteria (membership only — never read by the thesis engine). */
   preset?: { state: 'pass' | 'fail' | 'unknown'; reasons: string[]; text: string } | null;
+  /** zzz815: where this name's SEC XBRL figures stand. Until they are in
+   *  ('ok' or 'none'), the row is NOT assessed — the card says "loading SEC
+   *  figures…" or "SEC request failed — retrying", never NOT DISCLOSED. */
+  figures?: UsFiguresState | null;
+  /** zzz815: structural statements read WITHOUT AI (EX-99.1 / 10-Q MD&A,
+   *  deterministic), used only where no AI read exists. */
+  det?: UsDetEvidence | null;
 }
+
+export interface UsFiguresState {
+  state: 'loading' | 'ok' | 'none' | 'retrying' | 'failed';
+  /** Plain words for the card. */
+  note: string | null;
+  attempts: number;
+  /** The server said the ticker is not in SEC's (loaded) ticker list. */
+  noFiler?: boolean;
+}
+
+/** zzz815: the figures are in (a row, or a stated absence) — the row can be assessed. */
+export const usFiguresSettled = (r: Pick<UsRow, 'figures'> | null | undefined): boolean => !r?.figures || r.figures.state === 'ok' || r.figures.state === 'none';
 
 export const usPromiseKey = (sym: string) => `US:${String(sym).toUpperCase()}`;
 
@@ -240,7 +260,10 @@ export function assessUsRow(row0: UsRow, overrides: Record<string, AbfgPattern |
   // zzz793: the FILED order backlog (XBRL RPO) is the order-book variable for
   // every company that tags it, read or not — no model needed. A figure the
   // documents read already state wins.
-  const vars = usLossAwareEarnings(extractVariables(row.graded, withXbrlOrderBook(row.summary, (row.graded?.rpo || row.sec?.rpo || null) as UsRpo | null), comparisons, {
+  // zzz815: with no AI read, the statements read WITHOUT AI (and the filed
+  // inventories) fill the structural rows they can — labelled at the source.
+  const engineSummary = withUsDetEvidence(row.summary, row.det || null, (row.graded?.inventory || row.sec?.inventory || null));
+  const vars = usLossAwareEarnings(extractVariables(row.graded, withXbrlOrderBook(engineSummary, (row.graded?.rpo || row.sec?.rpo || null) as UsRpo | null), comparisons, {
     period, documents: (period && row.ledger?.periods?.[period]?.documents) || null, ledger: row.ledger || null,
   }), row.graded, row.summary);
   const check = row.summary ? checkPromises(usPromiseKey(row.symbol), row.summary) : null;

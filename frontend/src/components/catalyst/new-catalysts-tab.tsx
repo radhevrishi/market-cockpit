@@ -171,7 +171,7 @@ export default function NewCatalystsTab({ result, loading, names, sourceNotes, m
     <div data-testid="new-catalysts-tab" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ fontSize: 13.5, color: C.dim, lineHeight: 1.55, maxWidth: 900 }}>
         <b style={{ color: C.text }}>What happened for your {names} names, {result.window.from} to {result.window.to}</b> — each filing is opened and read
-        (no AI), most important first. A figure is shown only when the filing states it. &ldquo;Thesis&rdquo; maps the event onto the thesis type on the card.
+        (no AI). Latest day first; within each day, most important first. A figure is shown only when the filing states it. &ldquo;Thesis&rdquo; maps the event onto the thesis type on the card.
         Only filings already found are here; to look for newer ones use &ldquo;{market === 'US' ? 'Check EDGAR for new filings' : 'Check all for new evidence'}&rdquo; on the catalyst board.
       </div>
 

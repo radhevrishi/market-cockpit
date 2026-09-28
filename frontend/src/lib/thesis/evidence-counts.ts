@@ -9,6 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { evidenceStateOf, type CompanyEvidenceState, type CompanyLedger } from './evidence-ledger';
+import { isQuickReadPeriod } from './quick-read';
 
 export interface CountableRow {
   origin: 'book' | 'bench' | 'both' | string;
@@ -29,6 +30,9 @@ export interface EvidenceCounts {
   source_unavailable: number;
   retrieval_failed: number;
   documents_read: number;
+  /** zzz816: of evidence_read, the names whose latest period was read
+   *  without AI (deterministic quick read) — an AI read is one click away. */
+  quick_read: number;
   by_state: Record<CompanyEvidenceState, number>;
 }
 
@@ -44,7 +48,7 @@ export function evidenceCounts(rows: CountableRow[], now?: Date | string): Evide
     NOT_SEARCHED: 0, EVIDENCE_INCOMPLETE: 0, CURRENT: 0, NEW_EVIDENCE_AVAILABLE: 0,
     STALE: 0, SOURCE_UNAVAILABLE: 0, RETRIEVAL_FAILED: 0,
   };
-  let held = 0, bench = 0, read = 0, docs = 0;
+  let held = 0, bench = 0, read = 0, docs = 0, quick = 0;
   for (const r of rows) {
     // A name that is held AND on the bench is held; bench-only is never held.
     if (r.origin === 'book' || r.origin === 'both') held++; else bench++;
@@ -52,6 +56,7 @@ export function evidenceCounts(rows: CountableRow[], now?: Date | string): Evide
     if (l?.latest_period && l.periods?.[l.latest_period]) {
       read++;
       docs += l.periods[l.latest_period].documents_read || 0;
+      if (isQuickReadPeriod(l.periods[l.latest_period])) quick++;
     }
     by[rowEvidenceState(r, now)]++;
   }
@@ -60,7 +65,7 @@ export function evidenceCounts(rows: CountableRow[], now?: Date | string): Evide
     not_searched: by.NOT_SEARCHED, incomplete: by.EVIDENCE_INCOMPLETE, current: by.CURRENT,
     new_evidence: by.NEW_EVIDENCE_AVAILABLE, stale: by.STALE,
     source_unavailable: by.SOURCE_UNAVAILABLE, retrieval_failed: by.RETRIEVAL_FAILED,
-    documents_read: docs, by_state: by,
+    documents_read: docs, quick_read: quick, by_state: by,
   };
 }
 

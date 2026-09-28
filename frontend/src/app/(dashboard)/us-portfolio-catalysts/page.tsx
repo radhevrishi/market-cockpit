@@ -31,6 +31,8 @@ import { usExportLine, usWhyLine, usBatchLine } from '@/lib/us-thesis/page-words
 import { usNoTypeReason } from '@/lib/us-thesis/us-type';
 import { usdWords } from '@/lib/us-thesis/xbrl';
 import { usTickerKey } from '@/lib/us-thesis/sanitize';
+import { usFiguresSettled } from '@/lib/us-thesis/assess';
+import { usFiguresCounts, usFiguresLine, usCardFiguresWords, usPcView } from '@/lib/us-thesis/page-words';
 import { ThesisCard } from '@/components/thesis-card';
 import { PersistentStrip } from '@/components/special-focus-panel';
 import { usDetect } from '@/lib/us-thesis/persist-us';
@@ -59,7 +61,7 @@ const pill = (on: boolean, color = C.cyan): React.CSSProperties => ({
 });
 
 export default function UsPortfolioCatalystsPage() {
-  const { rows, excluded, universeError, loading, evidenceLoading, batch, priorBatch, checkBatch, readFiling, readAll, checkAll, readPriorPeriods, stop, thesisTypes, setThesisType, needsPrior, cbCriteria, cbPassing } = useUsBook();
+  const { rows, excluded, universeError, loading, evidenceLoading, batch, priorBatch, checkBatch, readFiling, readAll, checkAll, readPriorPeriods, stop, thesisTypes, setThesisType, needsPrior, cbCriteria, cbPassing, retryFigures, detBatch } = useUsBook();
   const [filter, setFilter] = useState<ThesisStatus | null>(null);
   const [source, setSource] = useState<'all' | 'book' | 'bench'>('all');
   const [copied, setCopied] = useState<string | null>(null);
@@ -71,22 +73,19 @@ export default function UsPortfolioCatalystsPage() {
   const [showFailing, setShowFailing] = useState(false);
   const all0 = useMemo(() => Object.values(rows), [rows]);
   const failingBench = useMemo(() => all0.filter((r) => r.origin === 'bench' && r.preset?.state === 'fail'), [all0]);
-  const all = useMemo(() => (showFailing ? all0 : all0.filter((r) => !(r.origin === 'bench' && r.preset?.state === 'fail'))), [all0, showFailing]);
   const cbOnPageCount = useMemo(() => { const p = new Set(cbPassing); return all0.filter((r) => p.has(usTickerKey(r.symbol))).length; }, [all0, cbPassing]);
   // zzz811: a held name is shown once, in My US book — "US bench" is the
   // names you do not hold, so All = book + bench exactly (the chip counts).
-  const inSource = useMemo(() => all.filter((r) => source === 'all' ? true : source === 'book' ? r.origin !== 'bench' : r.origin === 'bench'), [all, source]);
+  // zzz815: one pure rule for what is shown (lib/us-thesis/page-words usPcView).
+  const view0 = useMemo(() => usPcView(all0, { source, showFailing, filter, order: ORDER }), [all0, source, showFailing, filter]);
+  const all = view0.all;
+  const inSource = view0.inSource;
   const uc = useMemo(() => universeCounts(all as any, all as any, CONSTRUCTIVE, { market: 'US' }), [all]);
   const ucView = useMemo(() => universeCounts(all as any, inSource as any, CONSTRUCTIVE, { market: 'US' }), [all, inSource]);
   const ec = useMemo(() => evidenceCounts(inSource as any), [inSource]);
-  const list = useMemo(() => {
-    const f = filter ? inSource.filter((r) => r.assessment?.status === filter) : inSource;
-    return [...f].sort((a, b) => {
-      const ai = ORDER.indexOf(a.assessment?.status || 'NEUTRAL'), bi = ORDER.indexOf(b.assessment?.status || 'NEUTRAL');
-      if (ai !== bi) return ai - bi;
-      return (b.assessment?.triggered.length || 0) - (a.assessment?.triggered.length || 0) || a.symbol.localeCompare(b.symbol);
-    });
-  }, [inSource, filter]);
+  // zzz815: where every name's SEC figures stand (loading / in / retrying / failed).
+  const figs = useMemo(() => usFiguresCounts(all), [all]);
+  const list = view0.list;
   // zzz811: progressive rendering — the bench can run to hundreds of cards.
   const [shownN, setShownN] = useState(PC_PAGE_STEP);
   const moreRef = useRef<HTMLDivElement | null>(null);
@@ -264,7 +263,13 @@ export default function UsPortfolioCatalystsPage() {
       )}
       {evidenceLoading && !loading && (
         <div role="status" style={{ fontSize: 13.5, fontWeight: 700, color: C.cyan, padding: '8px 12px', border: `1px solid ${C.border}`, borderRadius: 8, background: C.bg }}>
-          Loading XBRL figures and stored SEC evidence for {all.length} companies… statuses and counts appear when it is in (no AI is used).
+          {usFiguresLine(figs, true)} Cards fill in as each batch lands (your book first, then the bench); statuses and counts appear when the first pass is in. No AI is used.
+        </div>
+      )}
+      {!evidenceLoading && !loading && (figs.loading + figs.retrying + figs.failed > 0 || detBatch.running) && (
+        <div role="status" data-testid="us-figures-progress" style={{ fontSize: 13, color: figs.failed ? C.amber : C.dim, padding: '6px 12px', border: `1px dashed ${C.border}`, borderRadius: 8, lineHeight: 1.5 }}>
+          {figs.loading + figs.retrying + figs.failed > 0 && <>{usFiguresLine(figs, false)}{figs.failed > 0 && <> <button onClick={() => retryFigures(all.filter((r) => r.figures?.state === 'failed').map((r) => r.symbol))} style={{ ...pill(false, C.amber), fontSize: 12.5 }}>Retry {figs.failed}</button></>}</>}
+          {detBatch.running && <div>Reading SEC documents <b>without AI</b> (earnings release + 10-Q) for backlog, bookings, awards, facilities and guidance: {detBatch.done} of {detBatch.total} · {detBatch.found} with statements found{detBatch.failed ? ` · ${detBatch.failed} could not be downloaded (retried later)` : ''} — your book first, then the bench.</div>}
         </div>
       )}
 
@@ -295,6 +300,7 @@ export default function UsPortfolioCatalystsPage() {
         thesisLabel={(r: any) => {
           const set = thesisTypes[String(r.symbol).toUpperCase()];
           if (set) return `${set} (set by you)`;
+          if (!usFiguresSettled(r)) return r.figures?.state === 'loading' ? 'loading SEC figures…' : 'SEC figures not in yet (request failed — retrying)';
           if (r.pattern?.pattern) return r.pattern.fit === 'nearest' ? `${r.pattern.pattern} (provisional — confirm it)` : `${r.pattern.pattern} (auto)`;
           return 'Not set';
         }}
@@ -320,7 +326,7 @@ export default function UsPortfolioCatalystsPage() {
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={{ fontSize: 13.5, color: C.faint }}>
-          {list.length} of {inSource.length} shown · {ec.held} held · {ec.bench} bench ·{' '}
+          {visible.length} of {list.length} card{list.length === 1 ? '' : 's'} shown{filter ? ` (filter: ${STATUS_META[filter].label})` : ''} · {ec.held} held · {ec.bench} bench ·{' '}
           {evidenceLoading ? <b style={{ color: C.text }}>loading…</b> : <><b style={{ color: C.text }}>{ec.evidence_read} of {inSource.length} have SEC evidence read</b> · {ec.documents_read} documents read</>}
           {!evidenceLoading && ec.incomplete > 0 && <> · {ec.incomplete} evidence incomplete</>}
           {ec.new_evidence > 0 && <> · <b style={{ color: C.amber }}>{ec.new_evidence} with a newer SEC filing unread</b></>}
@@ -353,6 +359,13 @@ export default function UsPortfolioCatalystsPage() {
         <a href="/us-portfolio-book" style={{ marginLeft: 'auto', fontSize: 13.5, fontWeight: 700, padding: '4px 11px', borderRadius: 999, border: `1px solid ${C.border}`, color: C.dim, textDecoration: 'none' }}>US Portfolio Book →</a>
       </div>
 
+      {source !== 'all' && (
+        <div data-testid="us-view-note" style={{ fontSize: 13, color: C.dim }}>
+          View: <b style={{ color: C.text }}>{source === 'book' ? `📗 My US book only — ${uc.bench} bench name${uc.bench === 1 ? ' is' : 's are'} not in this view` : `🏆 US bench only — ${uc.book} held name${uc.book === 1 ? ' is' : 's are'} not in this view`}</b>{' '}
+          <button onClick={() => setSource('all')} style={{ ...pill(false), fontSize: 12.5 }}>Show all {uc.shown}</button>
+        </div>
+      )}
+
       {!loading && !batch.running && !batch.stopped && (batch.resumable || 0) > 0 && (
         <div style={{ fontSize: 14, color: C.dim, border: `1px solid ${C.cyan}`, borderRadius: 8, padding: '9px 13px' }}>
           <b style={{ color: C.text }}>Last batch: {batch.done} processed · {batch.resumable} remaining</b> — persisted; nothing was lost on reload.{' '}
@@ -363,12 +376,15 @@ export default function UsPortfolioCatalystsPage() {
       {!loading && !evidenceLoading && ec.evidence_read < inSource.length && (
         <div style={{ fontSize: 14, color: C.dim, lineHeight: 1.6, border: `1px solid ${C.amber}`, borderRadius: 8, padding: '10px 13px' }}>
           <b style={{ color: C.text }}>{inSource.length - ec.evidence_read} of {inSource.length} US names have no SEC evidence read.</b>{' '}
-          Revenue, earnings, margin and cash conversion are already on the cards from XBRL. <b style={{ color: C.text }}>Backlog, capacity, utilization, capex and guidance are not</b> — they live in the MD&amp;A and the release, and until read those names sit at <b style={{ color: C.text }}>EVIDENCE INCOMPLETE</b>: silence is NOT DISCLOSED, never a pass.
+          Revenue, earnings, margin and cash conversion are already on the cards from XBRL. <b style={{ color: C.text }}>Backlog, capacity, utilization, capex and guidance are not complete</b> — they live in the MD&amp;A and the release, and until read those names sit at <b style={{ color: C.text }}>EVIDENCE INCOMPLETE</b>: silence is NOT DISCLOSED, never a pass.
+          {' '}What can be read without AI already is: backlog, bookings, awards, new facilities and guidance statements from the earnings release and 10-Q, and inventories from XBRL — each row marked <b style={{ color: C.text }}>read without AI</b> ({inSource.filter((r) => !r.summary && r.det?.state === 'EVIDENCE_FOUND').length} of these names have such rows so far). The AI read stays on click.
         </div>
       )}
 
       {(() => {
-        const untyped = list.filter((r) => !r.pattern);
+        // zzz815: only names whose figures are IN can be "thesis not set";
+        // a name still loading (or whose SEC request failed) is not yet assessed.
+        const untyped = list.filter((r) => !r.pattern && usFiguresSettled(r) && !thesisTypes[r.symbol.toUpperCase()]);
         const nearest = list.filter((r) => r.pattern?.fit === 'nearest' && !thesisTypes[r.symbol.toUpperCase()]);
         return untyped.length || nearest.length ? (
           <div style={{ fontSize: 13, color: C.dim, border: `1px dashed ${C.border}`, borderRadius: 8, padding: '8px 12px', lineHeight: 1.5 }}>
@@ -392,14 +408,21 @@ export default function UsPortfolioCatalystsPage() {
             <b style={{ color: C.text }}>{r0.symbol}</b>{' · '}
             {r0.graded?.period
               ? <>SEC XBRL figures: <b style={{ color: C.dim }}>{String(r0.graded.period)}</b> vs the same quarter a year earlier{r0.graded.xbrl_derived ? ` · ${String(r0.graded.xbrl_derived)}` : ''}{r0.graded.currency && r0.graded.currency !== 'USD' ? ` · reported in ${String(r0.graded.currency)} (growth rates only)` : ''}</>
-              : <>No quarterly SEC XBRL figures: {r0.sec?.note || r0.gradedWhy || 'not loaded yet'}</>}
+              : <span data-testid="us-card-figures-line" style={{ color: r0.figures && (r0.figures.state === 'retrying' || r0.figures.state === 'failed') ? C.amber : undefined }}>{usCardFiguresWords(r0)}</span>}
             {r0.sec?.forms_line ? ` · ${r0.sec.forms_line}` : ''}
             {(r0.graded?.rpo || r0.sec?.rpo) ? <> · order backlog (RPO, SEC XBRL) <b style={{ color: C.dim }}>{usdWords((r0.graded?.rpo || r0.sec?.rpo).cur.value)}</b>{(r0.graded?.rpo || r0.sec?.rpo).pct != null ? ` (${(r0.graded?.rpo || r0.sec?.rpo).pct >= 0 ? '+' : ''}${(r0.graded?.rpo || r0.sec?.rpo).pct}% on a year earlier)` : ''}</> : null}
             {r0.benchSource ? <> · on the bench from <b style={{ color: C.dim }}>{r0.benchSource}</b></> : null}
+            {!r0.summary && r0.det ? <> · <span data-testid="us-det-label" style={{ color: C.dim }}>SEC documents <b>read without AI</b>: {r0.det.note}</span></> : null}
             {r0.origin === 'bench' && r0.preset ? <> · <b data-testid="us-bench-criteria-label" style={{ color: r0.preset.state === 'pass' ? C.green : C.amber }}>{r0.preset.state === 'pass' ? '✅ ' : '✖ '}{r0.preset.text}</b></> : null}
           </div>
           {!evidenceLoading && <PersistentStrip ticker={r0.symbol} pcs={persistBySymbol.get(r0.symbol) || []} onOpenFocus={() => document.getElementById('us-special-focus')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />}
-          <ThesisCard
+          {!usFiguresSettled(r0) ? (
+            <div data-testid="us-card-pending" style={{ fontSize: 13.5, color: r0.figures?.state === 'loading' ? C.dim : C.amber, padding: '10px 12px', border: `1px dashed ${C.border}`, borderRadius: 8, lineHeight: 1.5 }}>
+              <b>{r0.symbol}</b> — {usCardFiguresWords(r0)}. Not assessed yet: no status, no thesis type and no “not disclosed” until the SEC figures are in.
+              {r0.ledger?.latest_period ? ` SEC evidence on file for ${r0.ledger.latest_period}.` : ''}
+              {r0.figures?.state === 'failed' && <> <button onClick={() => retryFigures([r0.symbol])} style={{ ...pill(true, C.amber), fontSize: 12.5, marginLeft: 6 }}>Retry SEC figures</button></>}
+            </div>
+          ) : <ThesisCard
             thesisType={(thesisTypes[r.symbol.toUpperCase()] as any) || null}
             onThesisType={(t) => setThesisType(r.symbol, t)}
             symbol={r.symbol} market="US" tier={r.tier} pattern={r.pattern}
@@ -414,7 +437,7 @@ export default function UsPortfolioCatalystsPage() {
             promiseNote={r.state === 'done' ? r.promiseNote : null}
             dataSource={r.dataSource} dataPeriod={r.graded?.period || null}
             sources={r.sourceUrl ? [{ label: 'SEC filing', url: r.sourceUrl }] : []}
-          />
+          />}
         </div>
       ); })}
       {list.length > visible.length && (

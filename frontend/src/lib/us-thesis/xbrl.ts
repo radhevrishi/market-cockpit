@@ -424,6 +424,37 @@ export function rpoReadings(facts: any, qEnd?: string | null): UsRpo | null {
   return { cur, prev, pct: prev ? Math.round(((cur.value / prev.value) - 1) * 1000) / 10 : null, series };
 }
 
+/** zzz815: one balance-sheet (instant) figure at the latest quarter end and
+ *  a year earlier — inventories, receivables. */
+export interface UsInstantYoY { concept: string; cur: RpoReading; prev: RpoReading | null; pct: number | null }
+
+/**
+ * zzz815 — a balance-sheet figure the company FILED, at the latest quarter
+ * end (`qEnd`, within 10 days) and at the same date a year earlier. Used for
+ * the working-capital row (inventories) without any model. Null when the
+ * company does not tag it for that quarter end — never inferred.
+ */
+export function instantYoY(facts: any, concepts: readonly string[], qEnd: string | null | undefined): UsInstantYoY | null {
+  if (!qEnd) return null;
+  for (const concept of concepts) {
+    const c = facts?.facts?.['us-gaap']?.[concept]?.units?.USD as any[] | undefined;
+    if (!Array.isArray(c)) continue;
+    const by = new Map<string, RpoReading>();
+    for (const e of c) {
+      if (!e?.end || e.start || typeof e.val !== 'number' || !Number.isFinite(e.val) || e.val < 0) continue;
+      const r: RpoReading = { end: String(e.end), value: e.val, filed: String(e.filed || ''), form: String(e.form || '') };
+      const had = by.get(r.end);
+      if (!had || r.filed > had.filed) by.set(r.end, r);
+    }
+    const all = Array.from(by.values()).sort((a, b) => a.end.localeCompare(b.end));
+    const cur = all.filter((r) => Math.abs(days(r.end, qEnd)) <= 10).pop();
+    if (!cur) continue;
+    const prev = all.filter((r) => r.end < cur.end && Math.abs(days(r.end, cur.end) - 364) <= 14).pop() || null;
+    return { concept, cur, prev, pct: prev && prev.value > 0 ? Math.round(((cur.value / prev.value) - 1) * 1000) / 10 : null };
+  }
+  return null;
+}
+
 /** Remaining performance obligations (a filed backlog measure), latest vs a
  *  year earlier, when both are tagged and current. */
 export function rpoGrowth(facts: any, qEnd?: string | null): { cur: number; prev: number; pct: number; end: string } | null {

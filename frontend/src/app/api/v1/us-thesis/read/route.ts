@@ -24,7 +24,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextRequest, NextResponse } from 'next/server';
-import { tickerToCik, submissions, companyFacts } from '@/lib/us-edgar';
+import { cikForTicker, submissions, companyFacts } from '@/lib/us-edgar';
 import { anthropicMessages, activeModel, modelConfigured, modelKeyName } from '@/lib/anthropic-meter';
 import { SUMMARY_TOOL } from '@/lib/earnings/ai-summary-shared';
 import { extractStructuralEvents, type StructuralEvent, type ExtractionPipeline } from '@/lib/thesis/evidence-extract';
@@ -104,7 +104,15 @@ export async function GET(req: NextRequest) {
 
   // ── DISCOVERY (SEC EDGAR, no model) ─────────────────────────────────────
   const attempts: Attempt[] = [];
-  const cik = await tickerToCik(ticker).catch(() => null);
+  // zzz815: a ticker map that could not be downloaded is a retrieval failure,
+  // never "not an SEC filer" (and never persisted as NO_DISCLOSURE).
+  let mapFailed = false;
+  const found = await cikForTicker(ticker).catch(() => { mapFailed = true; return null; });
+  const cik = found?.cik ?? null;
+  if (mapFailed) {
+    attempts.push({ source: 'SEC company list', outcome: 'error', detail: "SEC's ticker list could not be downloaded", found: 0 });
+    return NextResponse.json({ ok: false, state: 'RETRIEVAL_FAILED', error: "SEC request failed — SEC's company ticker list could not be downloaded just now. This is a retrieval failure, not an absence of filings. Read again in a minute.", discovery_attempts: attempts, ledger: ledgerBefore });
+  }
   if (!cik) {
     attempts.push({ source: 'SEC company list', outcome: 'empty', detail: `${ticker} is not an SEC filer`, found: 0 });
     const a = await persistUsAttempt(ticker, runId, startedAt, 'NO_DISCLOSURE', `${ticker} is not in the SEC company list — no SEC filings exist to read`, { mode: runMode, attempts });

@@ -44,6 +44,7 @@ import { reportingPeriodFromDate, periodOrdinal, freshnessOf, latestSummary, uns
 import { extractPdfText } from '@/lib/pdf-text-extractor';
 import { discoverEvidence, selectForReading, nextBestCandidate, attemptOutcome, type DocCandidate } from '@/lib/thesis/evidence-discovery';
 import { ocrPdf, OCR_MAX_PER_READ, readOneDocument } from '@/lib/thesis/pdf-ocr';
+import { isQuickReadSummary, latestIsQuickRead } from '@/lib/thesis/quick-read';
 import { extractStructuralEvents, type StructuralEvent, type ExtractionPipeline } from '@/lib/thesis/evidence-extract';
 import { previousPeriod, isReportingPeriod, isOlderPeriod, selectPriorPeriodDocuments, ledgerDocuments } from '@/lib/thesis/prior-period';
 import { anthropicMessages, activeModel, modelConfigured, modelKeyName } from '@/lib/anthropic-meter';
@@ -255,7 +256,10 @@ export async function GET(req: NextRequest) {
     // call — that is what "I should not have to click again after a
     // reload" means at the API.
     const stored = latestSummary(ledgerBefore);
-    if (stored) {
+    // A period read WITHOUT AI (zzz816 quick read) does not answer an AI
+    // read: the click asked for the model, so the read goes ahead and its
+    // facts supersede the deterministic ones for that period.
+    if (stored && !isQuickReadSummary(stored.summary)) {
       return NextResponse.json({
         ok: true, cached: true, from_ledger: true, ticker,
         source_url: stored.period.documents.find((d) => d.outcome === 'read')?.url || null,
@@ -265,10 +269,12 @@ export async function GET(req: NextRequest) {
         ledger: ledgerBefore, reporting_period: stored.period.reporting_period, persisted: true,
       });
     }
-    try {
-      const hit = await kvGet<any>(key);
-      if (hit?.structured) return NextResponse.json({ ok: true, cached: true, ...hit });
-    } catch { /* a cold cache is not an error */ }
+    if (!stored) {
+      try {
+        const hit = await kvGet<any>(key);
+        if (hit?.structured) return NextResponse.json({ ok: true, cached: true, ...hit });
+      } catch { /* a cold cache is not an error */ }
+    }
   }
 
   // The model key is checked only where a model call follows (below the
@@ -376,7 +382,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  if (mode === 'incremental' && !priorTarget && !force && latestOnFile && !hasNewer) {
+  if (mode === 'incremental' && !priorTarget && !force && latestOnFile && !hasNewer && !latestIsQuickRead(ledgerBefore)) {
     const stored = latestSummary(ledgerBefore);
     const { ledger } = await persistAttempt(ticker, 'IN', runId, startedAt, 'SKIPPED_NO_NEW_EVIDENCE', null, { documents_found: discovery.candidates.length, newestSeenDate: newestCandidateDate, mode: runMode, attempts: discovery.attempts });
     return NextResponse.json({

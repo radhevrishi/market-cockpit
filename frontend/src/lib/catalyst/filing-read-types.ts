@@ -23,6 +23,8 @@ export interface FilingRead {
   /** The company states no material impact (tax notice, penalty). */
   noImpact?: boolean;
   touches?: Touch[];
+  /** zzz815: the line the document gave was rejected by the quality gate (table dump, letterhead, OCR) — why. */
+  rejected?: string | null;
   chars?: number;
   version: string;
   readAt?: string;

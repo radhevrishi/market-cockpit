@@ -138,3 +138,40 @@ export function focusButtonWords(queueShown: number, nearCount: number): { near:
     all: `Show all ${queueShown} Special Focus`,
   };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WHERE A SPECIAL FOCUS COMPANY SITS — BOOK, BENCH, OR NEITHER.      (zzz816)
+//
+// FCL, HAPPYFORGE, CYIENTDLM, EXICOM, SONACOMS and IMFA read "Not in book /
+// bench (Daily Gainers) · Thesis: n/a" although some ARE on the Conviction
+// Beats list. The panel looked the ticker up only among the cards IN VIEW —
+// after the source chip, the size filter and the default that hides bench
+// names failing his Conviction Beats criteria — and by the exact symbol, so
+// a name one chip away (or filed as "SYMBOL-BE") read as not on the page at
+// all. The lookup is now the whole universe on the page, by bare symbol, and
+// the label says when the name is there but hidden by a filter, and why.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const bareSym = (t: string | null | undefined) => String(t || '').toUpperCase().trim().replace(/^(NSE|BSE):/, '').replace(/-(BE|SM|ST|BZ|E1|EQ)$/, '');
+
+export interface FocusLookupRow { symbol: string; origin?: string | null; preset?: { state?: string | null; text?: string | null } | null; market?: string | null }
+
+/** Pure: a bare-symbol index over every row on the page. */
+export function focusRowIndex<R extends FocusLookupRow>(rows: R[]): (ticker: string) => R | null {
+  const m = new Map<string, R>();
+  for (const r of rows) { const k = bareSym(r.symbol); if (k && !m.has(k)) m.set(k, r); }
+  return (t: string) => m.get(bareSym(t)) || null;
+}
+
+/** Pure: the portfolio label a Special Focus card prints. */
+export function focusSourceLabel(row: FocusLookupRow | null, o: { inView: boolean; origins?: string[] }): string {
+  if (!row) {
+    return (o.origins || []).includes('portfolio')
+      ? 'Not in book / bench now (was detected on Portfolio Catalysts earlier)'
+      : 'Not in book / bench (Daily Gainers)';
+  }
+  const base = row.origin === 'both' ? '📗 Book · 🏆 Bench' : row.origin === 'bench' ? '🏆 Bench (Conviction Beats)' : '📗 Book';
+  if (o.inView) return base;
+  if (row.origin === 'bench' && row.preset?.state === 'fail') return `${base} · misses your Conviction Beats criteria — hidden by default (use "Also show names failing your criteria")`;
+  return `${base} · on this page but outside the current view (source / size filter)`;
+}

@@ -138,7 +138,8 @@ describe('grouping and dedupe — one row per company per event', () => {
     assert.equal(r.items.length, 1);
     assert.equal(r.items[0].type, 'Corporate restructuring');
     assert.equal(r.items[0].filings.length, 3);
-    assert.equal(r.items[0].importance, 'Material');
+    // unread, no swap ratio or figure yet → Notable at most (zzz815)
+    assert.equal(r.items[0].importance, 'Notable');
   });
   test('CLEANMAX: appointment + change in management within 2 days → one row', () => {
     const r = buildRecentCatalysts([
@@ -262,7 +263,7 @@ describe('thesis mapping — deterministic', () => {
   test('capacity added on an A thesis supports it', () => {
     const t = thesisFor([{ key: 'capacity_addition', dir: 'up' }], A, 'read');
     assert.equal(t.touch, 'supports');
-    assert.match(t.why, /capacity added up — A thesis variable/);
+    assert.match(t.why, /capacity added up — an A-type thesis variable/);
   });
   test('an order win on a B thesis supports it', () => {
     assert.equal(thesisFor([{ key: 'order_intake', dir: 'up' }], B, 'read').touch, 'supports');
@@ -282,7 +283,7 @@ describe('thesis mapping — deterministic', () => {
   test('a variable the thesis does not rest on is neutral, with the reason', () => {
     const t = thesisFor([{ key: 'new_product', dir: 'up' }], B, 'read');
     assert.equal(t.touch, 'neutral');
-    assert.match(t.why, /not a variable the B thesis rests on/);
+    assert.equal(t.why, 'No effect on your B (demand explosion) thesis');
   });
   test('an unread document is "being read", a read one with nothing is neutral', () => {
     assert.equal(thesisFor([], A, 'pending').why, 'document still being read');
@@ -339,10 +340,10 @@ describe('grouped by calendar day, newest day first', () => {
   test('one group per day, newest first, with a plain header', () => {
     assert.deepEqual(days.map((d) => d.date), ['2026-09-27', '2026-09-22', '2026-09-19']);
     assert.equal(dayLabel('2026-09-22'), 'Tue 22 Sep');
-    assert.equal(days[1].header, 'Tue 22 Sep · 4 events (2 Material)');
+    assert.equal(days[1].header, 'Tue 22 Sep · 4 events (1 Material)');
   });
-  test('inside a day: Material with a figure first, then Material, then Notable; minor and routine apart', () => {
-    assert.deepEqual(days[1].items.map((e) => e.ticker), ['RES', 'SCH', 'ORD']);
+  test('inside a day: Material with a figure first, then Notable by event weight; minor and routine apart', () => {
+    assert.deepEqual(days[1].items.map((e) => e.ticker), ['RES', 'ORD', 'SCH']);
     assert.deepEqual(days[1].minor.map((e) => e.ticker), ['CLAR']);
     assert.deepEqual(days[1].hidden.map((e) => e.ticker), ['ESG']);
   });
@@ -359,10 +360,130 @@ describe('grouped by calendar day, newest day first', () => {
   });
   test('top of the window: up to 5 Material, newest first', () => {
     const top = topOfWindow(r.items, windowRange(TODAY, 10), 5, TODAY);
-    assert.deepEqual(top.map((e) => e.ticker), ['RES', 'SCH', 'OLD']);
+    assert.deepEqual(top.map((e) => e.ticker), ['RES']);
     assert.ok(top.every((e) => e.importance === 'Material'));
-    assert.deepEqual(topOfWindow(r.items, windowRange(TODAY, 10), 2, TODAY).map((e) => e.ticker), ['RES', 'SCH']);
+    assert.deepEqual(topOfWindow(r.items, windowRange(TODAY, 10), 0, TODAY), []);
     assert.deepEqual(topOfWindow(r.items, windowRange(TODAY, 3), 5, TODAY), []);
     assert.match(rowAnchor(top[0]), /^nc-[A-Za-z0-9-]+$/);
+  });
+});
+
+// ── 6. live rows the owner flagged (zzz815) — the exact strings the page showed ──
+import { stripLetterhead, lineQuality, cleanClip } from '../catalyst/recent-events';
+import { divestmentLine, acquisitionLine, fundLine, approvalLine, repairName } from '../catalyst/filing-read';
+
+describe('live rows — cleaned', () => {
+  const DECK = 'Largest manufacturer of Xanthine Derivatives in India International, 60% Domestic, 40% GEOGRAPHICAL SALES (Q1-FY27) 15,021 17,714 17,976 5,346 19% 20% 24% 25% FY24FY25FY26Q1-FY26 STANDALONE REVENUE (INR Mn) & EBITDA MARGINS (%) Aarti Pharmalabs Limited Investor Presentation';
+  test('1 AARTIPHARM: a deck dump never shows; only the extracted fact', () => {
+    assert.equal(lineQuality(DECK).ok, false);
+    const text = `${DECK}. Xanthine derivatives capacity expanded from 5,000 MTPA to 9,600+ MTPA and was successfully commissioned in Q1 FY27.${PAD}`;
+    const r = readFilingText({ subject: 'Investor Presentation', text, market: 'IN' });
+    assert.equal(r.line, 'Capacity 5,000 → 9,600+ MTPA (+92%), commissioned');
+    assert.equal(lineQuality('Capacity added: 5000MTPA → 9,600+MTPA (+92%)').ok, true);
+  });
+
+  const JUNK = 'Merger / amalgamation: If yes, whether the same is done at arm s length No No No g) Whether the sale, lease or disposal of the undertaking is outside Not Applicable Not Applicable Not';
+  test('2 CLEANMAX: disclosure-table junk is rejected; the filled fields are read', () => {
+    assert.equal(lineQuality(JUNK).ok, false);
+    const table = 'Disclosure under Regulation 30 - sale or disposal of unit. a) Name of the undertaking: Solar Asset Division b) Amount and percentage of the turnover or revenue or income and net worth contributed by such unit: Not Applicable c) Date on which the agreement for sale has been entered into: September 24, 2026 d) Expected date of completion of sale: Not Applicable e) Consideration received from such sale/disposal: Rs. 45 Crores f) Brief details of buyers and whether any of the buyers belong to the promoter group: Not Applicable g) Whether the sale, lease or disposal of the undertaking is outside Scheme of Arrangement: Not Applicable. ' + JUNK + PAD;
+    assert.equal(divestmentLine(table), 'Divestment: Solar Asset Division for Rs. 45 Crores; agreement dated September 24, 2026');
+    const r = readFilingText({ subject: 'Sale or disposal', text: table, market: 'IN' });
+    assert.equal(r.line, 'Divestment: Solar Asset Division for Rs. 45 Crores; agreement dated September 24, 2026');
+    const empty = 'Sale or disposal of unit. a) Name of the undertaking: Not Applicable b) Consideration received from such sale/disposal: Not Applicable c) Brief details of buyers: Not Applicable.' + PAD;
+    assert.equal(divestmentLine(empty), "Divestment — details in the filing's disclosure table");
+  });
+  test('2 CLEANMAX: a scheme says what it is when the filing states it', () => {
+    const text = 'The Board of Directors at its meeting held today considered and approved the Scheme of Amalgamation of Clean Max Enviro Energy Solutions Private Limited with Clean Max Energy Limited and their respective shareholders under Sections 230 to 232 of the Companies Act, 2013.' + PAD;
+    const r = readFilingText({ subject: 'Scheme of Arrangement', text, market: 'IN' });
+    assert.equal(r.line, 'Scheme of amalgamation: Clean Max Enviro Energy Solutions Private Limited with Clean Max Energy Limited; approved by the board');
+  });
+
+  test('3 HSCL: OCR-broken names repaired from the row\'s company and clean text; capacity never claimed', () => {
+    assert.equal(lineQuality("Dalmia Bharat Re fractories Limited's business demerged into Bimad1 i Speciality Chemical Ltd").ok, false);
+    const text = 'The Board approved the Scheme of Arrangement between Dalmia Bharat Re fractories Limited ("Demerged Company") and Bimad1 i Speciality Chemical Ltd ("Resulting Company"). The refractory business has a capacity addition of 50,000 TPA planned. As consideration, 1 (One) fully paid-up equity share of the Resulting Company shall be issued for every 10 (Ten) fully paid-up equity shares held in the Demerged Company.' + PAD;
+    const r = readFilingText({ subject: 'Scheme of Arrangement', text, market: 'IN', company: 'Himadri Speciality Chemical Ltd' });
+    assert.equal(r.line, "Scheme: Dalmia Bharat Refractories Limited's business demerged into Himadri Speciality Chemical Ltd; share swap 1 for every 10 shares; approved by the board — the company receives the business");
+    assert.deepEqual(r.touches, []);
+    assert.equal(repairName('Bimad1 i Speciality Chemical Ltd', 'nothing clean here', null), null);
+    const A: ThesisCtx = { pattern: 'A', fit: 'exact', assessment: null };
+    const f = filing({ ticker: 'HSCL', title: 'Scheme of Arrangement', ctx: A });
+    const e = buildRecentCatalysts([f], TODAY, { reads: { [f.url!]: toFilingRead(f.url!, r, null) } }).items[0];
+    assert.equal(e.thesis, 'neutral');
+    assert.equal(e.thesisWhy, 'No effect on your A (operating inflection) thesis');
+    assert.equal(e.importance, 'Material');
+  });
+
+  test('4 CUPID: acquisition names the shares and the consideration; no invented "0% stake"', () => {
+    const text = 'We wish to inform that the Company has acquired 24,00,000 equity shares of face value of Re. 1/- each of Cupid Trades and Finance Limited for a total consideration of Rs. 12.5 Crores.' + PAD;
+    const line = acquisitionLine(text);
+    assert.equal(line, 'Acquisition: 24,00,000 equity shares of Cupid Trades and Finance Limited for Rs. 12.5 Crores');
+    assert.doesNotMatch(String(line), /0% stake|Re,/);
+    assert.equal(acquisitionLine('The Company has acquired 51% stake of the paid-up share capital in a subsidiary for Rs. 3 Crores.'), 'Acquisition: for Rs. 3 Crores (51% stake)');
+  });
+  test('4 CUPID: an approval that says nothing is Minor with "see filing"; a specific one says what', () => {
+    const vague = 'Intimation regarding licence / approval. The Company has received the approval.' + PAD;
+    assert.equal(approvalLine(vague), null);
+    const f = filing({ ticker: 'CUPID', title: 'Licence / approval', ctx: { pattern: 'B', assessment: null } });
+    const r = buildRecentCatalysts([f], TODAY, { reads: { [f.url!]: read(f.url!, vague, f.title) } });
+    const e = [...r.items, ...r.minor][0];
+    assert.equal(e.what, 'Regulatory approval — see filing');
+    assert.equal(e.importance, 'Minor');
+    assert.notEqual(e.thesis, 'supports');
+    assert.equal(approvalLine('The Company has received approval from the Drug Controller General of India (DCGI) for manufacture of female condoms at its Nashik plant.'),
+      'Approval from the Drug Controller General of India (DCGI) for manufacture of female condoms at its Nashik plant');
+  });
+
+  test('5 AARTIPHARM: a site qualification on a results filing is not "Results"', () => {
+    const f = filing({ ticker: 'AARTIPHARM', title: 'Financial Results', kind: 'results' });
+    const ev = filing({ ticker: 'AARTIPHARM', url: f.url, title: 'Financial Results', origin: 'ledger-event', variable: 'qualification', direction: 'up', text: 'qualification: Atali site audited/approved by innovators' });
+    const e = [...buildRecentCatalysts([f, ev], TODAY).items][0];
+    assert.equal(e.type, 'Regulatory approval');
+    assert.equal(e.what, 'qualification: Atali site audited/approved by innovators');
+  });
+
+  test('6 letterhead is stripped before any sentence is chosen', () => {
+    const mind = 'The Listing Department BSE Limited Phiroze Jeejeebhoy Towers, Dalal Street, Mumbai - 400 001 The Listing Department National Stock Exchange of India Limited Exchange Plaza, G Block, Bandra Kurla Complex, Bandra (E), Mumbai - 400051 Scrip Symbol: MINDSPACE (Units) Dear Sir/Madam, Sub: Intimation of issuance of non-convertible debentures. We wish to inform you that the Mindspace REIT has allotted 50,000 listed, rated, secured non-convertible debentures of face value Rs. 1,00,000 each aggregating to Rs. 500 crores on a private placement basis. Kindly take the same on record.';
+    const stripped = stripLetterhead(mind);
+    assert.doesNotMatch(stripped, /Listing Department|Scrip|400\s?0\d\d|Bandra|Dear Sir/);
+    const r = readFilingText({ subject: 'Fund raising', text: mind + PAD, market: 'IN' });
+    assert.equal(r.line, 'Non-convertible debentures: 50,000 NCDs, total ₹500 crores');
+    const spec = 'NSE Symbol: SPECTRUM Script Code: 544386 ISIN: INE0QFO01010 Subject: Disclosure , We wish to inform you that the Company has entered into a Memorandum of Understanding (MoU) with Tata Electronics Private Limited for supply of electronic assemblies.' + PAD;
+    const s2 = readFilingText({ subject: 'Disclosure under Regulation 30', text: spec, market: 'IN' });
+    assert.match(String(s2.line), /Memorandum of Understanding \(MoU\) with Tata Electronics Private Limited for supply of electronic assemblies/);
+    assert.doesNotMatch(String(s2.line), /Symbol|Script|ISIN/);
+    const gold = 'Scrip Code: GOLDIAM EQ Respected Sir/Madam, Sub: Intimation Receipt of Property Tax Notice from BMC. Pursuant to Regulation 30 of the SEBI (LODR) Regulations, 2015, we wish to inform that the Company has received a communication from the Brihanmumbai Municipal Corporation (BMC) regarding revision of property tax for its premises at Andheri. The Company is assessing the same.' + PAD;
+    const g = readFilingText({ subject: 'Action(s) initiated or orders passed', text: gold, market: 'IN' });
+    assert.match(String(g.line), /^The Company has received a communication from the Brihanmumbai Municipal Corporation \(BMC\) regarding revision of property tax/);
+    assert.doesNotMatch(String(g.line), /Scrip|Sir\/Madam|Sub:/);
+  });
+
+  test('7 SPECTRUM: an equity raise states instrument, count, price, size and allottees — or says the size is not stated', () => {
+    assert.equal(fundLine('The Board approved issue of up to 12,00,000 convertible warrants at a price of Rs. 145 per warrant to promoter group and non-promoter persons on a preferential basis aggregating up to Rs. 17.40 crores.'),
+      'Convertible warrants: 12,00,000 warrants, at ₹145 each, total ₹17.40 crores; to promoter and non-promoter allottees');
+    assert.equal(fundLine('The Board approved a preferential issue of equity shares.'), 'Preferential issue — size not stated in the filing');
+    assert.equal(importanceOf({ type: 'Fund raise', figure: null, line: 'Preferential issue — size not stated in the filing', read: 'read' }), 'Notable');
+  });
+
+  test('8 thesis wording: article, type name, provisional in plain words', () => {
+    assert.equal(thesisFor([], { pattern: 'F', assessment: null }, 'read').why, 'No effect on your F (profit jump · forensics) thesis');
+    assert.match(thesisFor([{ key: 'earnings_growth', dir: 'up' }], { pattern: 'F', fit: 'provisional', assessment: null }, 'read').why, /— an F-type thesis variable \(type is provisional\)$/);
+    assert.match(thesisFor([{ key: 'order_book', dir: 'up' }], { pattern: 'B', assessment: null }, 'read').why, /— a B-type thesis variable$/);
+  });
+
+  test('9 quality gate and clipping', () => {
+    for (const bad of [DECK, JUNK, 'Debt raise / borrowing: Block, Bandra Kurla Complex, Bandra (E), Mumbai - 400051 Scrip Symbol: MINDSPACE (Units) The Listing Department BSE Limited', 'Scrip Code: GOLDIAM EQ Respected Sir/Madam, Sub: Intimation Receipt of Property Tax Notice from BMC']) {
+      assert.equal(lineQuality(bad).ok, false, bad.slice(0, 40));
+    }
+    assert.equal(lineQuality('Q1 FY27: Revenue ₹78.4 Cr (up 32%), EBITDA ₹21.2 Cr (vs ₹14.1 Cr), PAT ₹17.9 Cr (up 41%)').ok, true);
+    assert.equal(cleanClip('The first sentence is here. The second one runs on and on past the limit', 40), 'The first sentence is here.');
+    assert.equal(cleanClip('alpha beta gamma delta epsilon', 18), 'alpha beta gamma…');
+  });
+
+  test('10 materiality: unspecified approval / raise / scheme are not Material', () => {
+    assert.equal(importanceOf({ type: 'Regulatory approval', figure: null, line: null, read: 'read' }), 'Minor');
+    assert.equal(importanceOf({ type: 'Corporate restructuring', figure: null, line: 'Scheme of arrangement / amalgamation — terms not stated in this filing', read: 'read' }), 'Notable');
+    assert.equal(importanceOf({ type: 'Acquisition', figure: 'Rs. 12.5 Crores', line: 'x', read: 'read' }), 'Material');
+    assert.equal(importanceOf({ type: 'Acquisition', figure: null, line: 'Acquisition: X Limited', read: 'read' }), 'Notable');
+    assert.equal(importanceOf({ type: 'Capex / capacity', figure: null, line: 'Commissioned new line', read: 'read' }), 'Notable');
   });
 });

@@ -101,6 +101,10 @@ async function loadScreener(): Promise<Map<string, any>> {
         byTicker.set(k, {
           ticker: (r['NSE Code'] || '').trim().toUpperCase(),
           company: r['Name'] || null,
+          // zzz816: screener's industry, so a lender / exchange is recognised
+          // as one (the thesis type and the N/A rows read it).
+          sector: r['Industry Group'] || null,
+          industry: r['Industry'] || null,
           market: 'IN',
           sales_yoy_pct: num(r['YOY Quarterly sales growth']),
           net_profit_yoy_pct: num(r['YOY Quarterly profit growth']),

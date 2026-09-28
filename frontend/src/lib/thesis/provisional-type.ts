@@ -337,3 +337,101 @@ export function noTypeReason(graded: any | null | undefined, summary: any | null
   if (!summary) return 'the results row on file carries no usable figures (no revenue, profit, margin or cash figures), and no filing has been read yet';
   return 'no usable figures on file — the results row is missing and the filing read gave no revenue, profit, margin, order or capacity figures';
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FINANCIAL COMPANIES — THE NEAREST MEANINGFUL TYPE.                 (zzz816)
+//
+// A/B/F/G were written for operating companies. A lender (bank, NBFC,
+// housing finance, microfinance) or a market-infrastructure company
+// (exchange, depository, broker, registrar, asset manager) fell through the
+// figure rules to "nearest A · operating inflection", which then asked it for
+// capacity and utilisation — and a lender's read documents yielded 0 facts
+// because nothing in them is a plant (ABCAPITAL: "3 documents read · 0
+// facts"). The type set is fixed, so the nearest MEANINGFUL one is chosen and
+// the card says exactly how it is read:
+//
+//   LENDER / INSURER → G · silent quality: steady book growth, earnings,
+//     return on capital, asset quality. The loan book / AUM is read as the
+//     VOLUME line and the net interest margin as the MARGIN DRIVER; cash
+//     conversion and working capital do not apply to a lender (lending is an
+//     operating cash outflow) and are N/A, never pending, never negative.
+//   EXCHANGE / DEPOSITORY / BROKER / AMC → A · operating inflection with no
+//     plant: transaction volumes (or AUM) on a largely fixed cost base should
+//     show up as operating leverage. Capacity and utilisation are N/A.
+//
+// Detection is conservative and generic (no ticker is named): the results
+// row's industry, the company name, or the documents' own vocabulary (three
+// or more distinct lender words, or two exchange words, and no plant words).
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type FinancialKind = 'lender' | 'insurer' | 'market_infra' | 'asset_manager';
+
+const LENDER_LABEL = /\b(banks?|banking|nbfc|non[- ]banking|housing finance|micro ?finance|microfinance institutions?|consumer finance|lending|gold loans?|vehicle finance|finance)\b/i;
+const INSURER_LABEL = /\binsurance\b/i;
+const AMC_LABEL = /\basset management\b|\bmutual fund\b/i;
+const MARKET_LABEL = /\b(exchange and data platform|stock ?exchange|commodity exchange|depositor(?:y|ies)|stock ?broking|broking|registrar|rta\b|capital markets)\b/i;
+const NAME_LENDER = /\b(bank|finance|financial services|fincorp|finserv|housing finance|credit|small finance)\b/i;
+const NAME_MARKET = /\b(exchange|depository|stock broking|securities)\b/i;
+const NAME_AMC = /\b(asset management|amc)\b/i;
+const NAME_INSURER = /\b(insurance|assurance|life)\b.*\b(co|company|ltd|limited)\b|\binsurance\b/i;
+const PLANT_WORDS = /\b(manufactur\w*|plants?|factory|factories|mtpa|tonnes?|capacity utili[sz]ation|installed capacity|production lines?)\b/i;
+
+/** Pure: is this an India financial company, and which kind? Null when there
+ *  is no clear evidence (a manufacturer is never classified as one). */
+export function financialKindOf(graded: any | null | undefined, summary: any | null | undefined): { kind: FinancialKind; why: string } | null {
+  const g = graded && typeof graded === 'object' ? graded : {};
+  const s = summary && typeof summary === 'object' ? summary : {};
+  const label = [g.sector, g.industry_group, g.industry].filter((x) => typeof x === 'string' && x.trim()).join(' · ');
+  const name = typeof g.company === 'string' ? g.company : '';
+  const words: string = typeof s.business_words === 'string' ? s.business_words : '';
+  const prof = businessProfileOf(graded, summary);
+  const text = `${words} ${prof?.text || ''}`;
+  if (label && !PLANT_WORDS.test(label)) {
+    if (MARKET_LABEL.test(label) && !AMC_LABEL.test(label)) return { kind: 'market_infra', why: `industry "${label}"` };
+    if (AMC_LABEL.test(label)) return { kind: 'asset_manager', why: `industry "${label}"` };
+    if (INSURER_LABEL.test(label)) return { kind: 'insurer', why: `industry "${label}"` };
+    if (LENDER_LABEL.test(label) && !/fintech|technology/i.test(label)) return { kind: 'lender', why: `industry "${label}"` };
+  }
+  if (PLANT_WORDS.test(text)) return null;
+  const lenderWords = words ? words.split(' · ').filter((w) => /loan|aum|assets under|disburse|interest margin|\bnim\b|npa|stage|credit cost|collection|borrower|lending|nbfc|housing finance|microfinance|advance|deposit|casa/i.test(w)).length : 0;
+  const marketWords = words ? words.split(' · ').filter((w) => /daily turnover|adtv|transaction charge|clearing|derivative|option|listing fee|exchange|depositor|demat|brokerage/i.test(w)).length : 0;
+  if (name && NAME_MARKET.test(name) && !/\bexchange\s+rate\b/i.test(name)) return { kind: 'market_infra', why: `company name "${name}"` };
+  if (name && NAME_AMC.test(name)) return { kind: 'asset_manager', why: `company name "${name}"` };
+  if (name && /\binsurance\b/i.test(name) && NAME_INSURER.test(name)) return { kind: 'insurer', why: `company name "${name}"` };
+  if (name && NAME_LENDER.test(name) && !/\b(technolog|engineering|industries|chemicals?|pharma)\b/i.test(name)) return { kind: 'lender', why: `company name "${name}"` };
+  if (marketWords >= 2 && marketWords > lenderWords) return { kind: 'market_infra', why: `its documents talk about ${words}` };
+  if (lenderWords >= 3) return { kind: 'lender', why: `its documents talk about ${words}` };
+  return null;
+}
+
+const FIN_TYPE: Record<FinancialKind, { pattern: AbfgPattern; what: string; read: string }> = {
+  lender: { pattern: 'G', what: 'a lender (bank / NBFC / housing or micro finance)',
+    read: 'read as G · silent quality — steady growth of the loan book, earnings, return on capital and asset quality. The loan book / AUM is shown as the VOLUME line and the net interest margin as the MARGIN DRIVER; cash conversion and working capital do not apply to a lender (lending is an operating cash outflow) and are marked N/A' },
+  insurer: { pattern: 'G', what: 'an insurer',
+    read: 'read as G · silent quality — premium growth, earnings, return on capital; capacity and utilisation do not apply' },
+  market_infra: { pattern: 'A', what: 'market infrastructure (exchange / depository / broker / registrar)',
+    read: 'read as A without a plant — transaction volumes on a largely fixed cost base should show up as operating leverage and margin; capacity and utilisation do not apply and are marked N/A' },
+  asset_manager: { pattern: 'A', what: 'an asset manager',
+    read: 'read as A without a plant — AUM growth on a largely fixed cost base should show up as operating leverage and margin; capacity and utilisation do not apply' },
+};
+
+/**
+ * The provisional type for an India financial company, or null when it is not
+ * one. Always a nearest fit (never confirmed by itself), never weak (the
+ * business, not guesswork, decided it), and its `because` says in plain words
+ * that none of A/B/F/G was built for this business.
+ */
+export function financialProvisionalType(graded: any | null | undefined, summary: any | null | undefined): ProvisionalResult | null {
+  const k = financialKindOf(graded, summary);
+  if (!k) return null;
+  const t = FIN_TYPE[k.kind];
+  return {
+    pattern: t.pattern, ratio: null, fit: 'nearest', fallback: true, weak: false,
+    financial: k.kind,
+    exitCondition: k.kind === 'lender'
+      ? 'Loan-book growth stalls, asset quality worsens (gross NPA / credit cost rising for two quarters), or return on capital falls. Not a drawdown.'
+      : EXIT[t.pattern],
+    because: `Nearest fit (auto, provisional) — ${t.pattern} · ${ABFG_META[t.pattern].name.toLowerCase()}: this is ${t.what} (${k.why}), so A's capacity-and-utilisation reading does not fit it. It is ${t.read}. `
+      + `None of the four types was built for ${k.kind === 'lender' ? 'a lender' : 'this business'} — if you hold it for a different reason, set the type yourself with the thesis picker.`,
+  } as ProvisionalResult;
+}

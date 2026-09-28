@@ -101,42 +101,86 @@ async function secJson(url: string, tries = 3): Promise<any | null> {
 const MAJOR_EXCHANGES = new Set(['NYSE', 'Nasdaq', 'NYSE American', 'NYSE MKT', 'NYSE Arca', 'CBOE', 'Cboe']);
 
 interface Listing { ticker: string; exchange: string | null; }
-let _listings: { at: number; byCik: Map<number, Listing[]>; byTicker: Map<string, { cik: number; exchange: string | null }> } | null = null;
+type ListingMaps = { at: number; byCik: Map<number, Listing[]>; byTicker: Map<string, { cik: number; exchange: string | null }> };
+let _listings: ListingMaps | null = null;
 
-async function listings() {
-  if (_listings && Date.now() - _listings.at < 24 * 3600_000) return _listings;
+/** zzz815 — the ticker map could not be downloaded. Distinct from "the map
+ *  is loaded and does not carry this ticker": a caller must never turn this
+ *  into "no SEC filer". */
+export class SecTickerMapError extends Error {
+  readonly kind = 'sec-ticker-map-unavailable';
+  constructor(msg = 'SEC company ticker list could not be downloaded just now') { super(msg); this.name = 'SecTickerMapError'; }
+}
+
+/** Pure: the two SEC ticker files → the maps. The exchange file first; the
+ *  plain file (no venue) when the exchange file is missing or reshaped. An
+ *  empty result is null — a failed download, never "no listed companies". */
+export function parseTickerFiles(exchangeFile: any, plainFile: any): { byCik: Map<number, Listing[]>; byTicker: Map<string, { cik: number; exchange: string | null }> } | null {
   const byCik = new Map<number, Listing[]>();
   const byTicker = new Map<string, { cik: number; exchange: string | null }>();
-  const j = await secJson('https://www.sec.gov/files/company_tickers_exchange.json');
-  const fields: string[] = j?.fields || [];
+  const add = (cik: number, t: string, ex: string | null) => {
+    if (!t || !Number.isFinite(cik) || cik <= 0) return;
+    if (!byCik.has(cik)) byCik.set(cik, []);
+    byCik.get(cik)!.push({ ticker: t, exchange: ex });
+    if (!byTicker.has(t)) byTicker.set(t, { cik, exchange: ex });
+  };
+  const fields: string[] = Array.isArray(exchangeFile?.fields) ? exchangeFile.fields : [];
   const iCik = fields.indexOf('cik'), iT = fields.indexOf('ticker'), iX = fields.indexOf('exchange');
-  if (Array.isArray(j?.data) && iCik >= 0 && iT >= 0) {
-    for (const row of j.data as any[]) {
-      const cik = Number(row[iCik]); const t = String(row[iT] || '').toUpperCase();
-      if (!t || !Number.isFinite(cik)) continue;
-      const ex = iX >= 0 && row[iX] ? String(row[iX]) : null;
-      if (!byCik.has(cik)) byCik.set(cik, []);
-      byCik.get(cik)!.push({ ticker: t, exchange: ex });
-      if (!byTicker.has(t)) byTicker.set(t, { cik, exchange: ex });
-    }
-  } else {
-    // Fallback to the plain file (no exchange info) so a schema change can't
-    // take the whole engine down.
-    const p = await secJson('https://www.sec.gov/files/company_tickers.json');
-    if (p) for (const k of Object.keys(p)) {
-      const v = p[k]; const cik = Number(v?.cik_str); const t = String(v?.ticker || '').toUpperCase();
-      if (!t || !Number.isFinite(cik)) continue;
-      if (!byCik.has(cik)) byCik.set(cik, []);
-      byCik.get(cik)!.push({ ticker: t, exchange: null });
-      if (!byTicker.has(t)) byTicker.set(t, { cik, exchange: null });
-    }
+  if (Array.isArray(exchangeFile?.data) && iCik >= 0 && iT >= 0) {
+    for (const row of exchangeFile.data as any[]) add(Number(row[iCik]), String(row[iT] || '').toUpperCase(), iX >= 0 && row[iX] ? String(row[iX]) : null);
   }
-  // zzz805 — an EMPTY listing map is a failed download, not a market with no
-  // listed companies. Caching it for a day made every filer "not listed on a
-  // major US exchange" and every day "0 filers". Refuse it; the next call retries.
-  if (!byCik.size) throw new Error('SEC company ticker list could not be read');
-  _listings = { at: Date.now(), byCik, byTicker };
-  return _listings;
+  if (!byCik.size && plainFile && typeof plainFile === 'object') {
+    for (const k of Object.keys(plainFile)) { const v = plainFile[k]; add(Number(v?.cik_str), String(v?.ticker || '').toUpperCase(), null); }
+  }
+  return byCik.size ? { byCik, byTicker } : null;
+}
+
+// zzz815 — ONE download at a time, shared by every caller. A batch of 40
+// names used to start 40 downloads of the same 0.5 MB file (and, when SEC
+// was slow, each retried three times with a 20 s timeout per try), which is
+// what left "Loading XBRL figures…" running for minutes. A failure is
+// remembered for 20 s so a burst of callers fails fast instead of queuing
+// behind a dead socket; after that the next call tries again. A failure is
+// NEVER cached as an empty map.
+let _listingsInflight: Promise<ListingMaps> | null = null;
+let _listingsFailedAt = 0;
+const LISTINGS_FAIL_MEMO_MS = 20_000;
+
+async function listings(): Promise<ListingMaps> {
+  if (_listings && Date.now() - _listings.at < 24 * 3600_000) return _listings;
+  if (_listingsInflight) return _listingsInflight;
+  if (Date.now() - _listingsFailedAt < LISTINGS_FAIL_MEMO_MS) {
+    // A day-old map is far better than none while SEC is not answering.
+    if (_listings) return _listings;
+    throw new SecTickerMapError();
+  }
+  _listingsInflight = (async () => {
+    let ex: any = null, plain: any = null;
+    try { ex = await secJson('https://www.sec.gov/files/company_tickers_exchange.json', 2); } catch { ex = null; }
+    let parsed = parseTickerFiles(ex, null);
+    if (!parsed) {
+      try { plain = await secJson('https://www.sec.gov/files/company_tickers.json', 2); } catch { plain = null; }
+      parsed = parseTickerFiles(null, plain);
+    }
+    // zzz805 — an EMPTY listing map is a failed download, not a market with no
+    // listed companies. Refuse it; the next call (after the short memo) retries.
+    if (!parsed) {
+      _listingsFailedAt = Date.now();
+      if (_listings) return _listings;
+      throw new SecTickerMapError();
+    }
+    _listingsFailedAt = 0;
+    _listings = { at: Date.now(), ...parsed };
+    return _listings;
+  })().finally(() => { _listingsInflight = null; });
+  return _listingsInflight;
+}
+
+/** Test hook: forget the map and any remembered failure. */
+export function _resetTickerMapForTests(maps?: { byCik: Map<number, Listing[]>; byTicker: Map<string, { cik: number; exchange: string | null }> } | null): void {
+  _listings = maps ? { at: Date.now(), ...maps } : null;
+  _listingsInflight = null;
+  _listingsFailedAt = 0;
 }
 
 /** Preferred lines, warrants, units and rights are not the common stock.
@@ -352,6 +396,40 @@ export async function tickerToCik(ticker: string): Promise<number | null> {
   return L.byTicker.get(t)?.cik ?? L.byTicker.get(ticker.toUpperCase())?.cik ?? null;
 }
 
+/**
+ * zzz815 — the spellings a share-class ticker comes in, most likely first.
+ * SEC writes MOG-A / BRK-B; TradingView and some brokers write MOG.A, IBKR
+ * writes "MOG A", and some exports drop the separator (MOGA). The last
+ * spelling (a separator inserted before a trailing A/B) is tried only after
+ * the ticker as written, so ALB is never read as "AL-B". Pure.
+ */
+export function tickerSpellings(raw: string): string[] {
+  const t = String(raw || '').toUpperCase().trim().replace(/\s+/g, ' ');
+  if (!t) return [];
+  const dash = t.replace(/[ ./]/g, '-');
+  const out = [dash, t, dash.replace(/-/g, '.'), dash.replace(/-/g, '')];
+  if (/^[A-Z]{2,5}[AB]$/.test(dash)) out.push(`${dash.slice(0, -1)}-${dash.slice(-1)}`);
+  return Array.from(new Set(out.filter(Boolean)));
+}
+
+/**
+ * zzz815 — the CIK for a ticker, trying its share-class spellings.
+ *   { cik }              found;
+ *   { cik: null }        the SEC ticker map IS loaded and carries none of the
+ *                        spellings — the only case that may be called "no SEC filer";
+ * and it THROWS SecTickerMapError when the map could not be downloaded — a
+ * retrieval failure, never an absence.
+ */
+export async function cikForTicker(raw: string): Promise<{ cik: number | null; matched: string | null; tried: string[] }> {
+  const L = await listings();
+  const tried = tickerSpellings(raw);
+  for (const s of tried) {
+    const hit = L.byTicker.get(s);
+    if (hit) return { cik: hit.cik, matched: s, tried };
+  }
+  return { cik: null, matched: null, tried };
+}
+
 // ─── submissions (filing history + SIC + exchanges), cached 6h ─────────────
 export interface SubmissionsLite {
   sic: string | null;
@@ -368,11 +446,15 @@ export interface SubmissionsLite {
   formerName: string | null;
   recent: Array<{ form: string; filingDate: string; reportDate: string | null; items: string[]; accession: string }>;
 }
-const _subs = new Map<number, { at: number; data: SubmissionsLite | null }>();
+const _subs = new Map<number, { at: number; data: SubmissionsLite | null; failed?: boolean }>();
 export async function submissions(cikNum: number): Promise<SubmissionsLite | null> {
   const hit = _subs.get(cikNum);
-  if (hit && Date.now() - hit.at < 6 * 3600_000) return hit.data;
+  if (hit && !hit.failed && Date.now() - hit.at < 6 * 3600_000) return hit.data;
+  // zzz815 — a failed request (timeout, 5xx, throttled) is remembered for a
+  // minute only; it used to be cached as "no submissions" for six hours.
+  if (hit && hit.failed && Date.now() - hit.at < 60_000) return null;
   let out: SubmissionsLite | null = null;
+  let failed = false;
   try {
     const j = await secJson(`https://data.sec.gov/submissions/CIK${String(cikNum).padStart(10, '0')}.json`, 2);
     if (j) {
@@ -412,12 +494,12 @@ export async function submissions(cikNum: number): Promise<SubmissionsLite | nul
         recent,
       };
     }
-  } catch { out = null; }
+  } catch { out = null; failed = true; }
   if (_subs.size > 1500) {
     const oldest = Array.from(_subs.entries()).sort((a, b) => a[1].at - b[1].at).slice(0, 300);
     for (const [k] of oldest) _subs.delete(k);
   }
-  _subs.set(cikNum, { at: Date.now(), data: out });
+  _subs.set(cikNum, { at: Date.now(), data: out, failed });
   return out;
 }
 

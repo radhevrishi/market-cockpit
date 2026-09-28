@@ -703,6 +703,17 @@ export interface AssessInput {
   business?: BusinessProfile | null;
   /** The last discovery ended RETRIEVAL_FAILED. (zzz770) */
   retrievalFailed?: boolean;
+  /** zzz816 (India only): a financial company. For a LENDER, cash conversion
+   *  and working capital are N/A (lending is an operating cash outflow, so
+   *  CFO / PAT does not measure earnings quality); for any financial kind the
+   *  physical-capacity variables are N/A. Absent → nothing changes. */
+  financialKind?: string | null;
+  /** zzz816: the reason the last search / read produced nothing, printed on a
+   *  SOURCE UNAVAILABLE / RETRIEVAL FAILED row ("couldn't read (reason)"). */
+  unavailableReason?: string | null;
+  /** zzz816: every source was searched and none holds a readable document —
+   *  the variables are NOT DISCLOSED (searched), not NOT SEARCHED. */
+  searchedNoDocuments?: boolean;
   /** zzz784: the capex chain's normalized build / economic state. When given,
    *  the capex line of the status narrative reads from it — one state for the
    *  narrative, the capex row and Special Focus. */
@@ -1143,8 +1154,10 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   // Physical capacity cannot apply to a services / software / financial
   // business: N/A, never pending. A figure that WAS disclosed is kept. (zzz770)
   const servicesBusiness = isServicesBusiness(input.business);
+  const LENDER_NA = new Set<VarKey>(['cash_conversion', 'working_capital']);
   const checked: CheckedVariable[] = thesis.variables.map((tv: ThesisVariable) => {
-    let v = found[tv.key];
+    const lenderNA = input.financialKind === 'lender' && LENDER_NA.has(tv.key);
+    let v = lenderNA ? undefined : found[tv.key];
     // ── A NEGATIVE CASH RATIO IS UNCLEAR, NOT A VERDICT.           (zzz770)
     // The grader's CFO/PAT is last full year's ratio; its sign can come from
     // either side, and the quarter's profit cannot settle which. LLOYDSENGG
@@ -1157,7 +1170,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       // Read and deliberately not judged: a disclosed value, UNCLEAR. (zzz770)
       v = { ...v, verdict: 'stated' };
     }
-    const notApplicable = !v && servicesBusiness && PHYSICAL_CAPACITY_VARS.has(tv.key);
+    const notApplicable = lenderNA || (!v && (servicesBusiness || !!input.financialKind) && PHYSICAL_CAPACITY_VARS.has(tv.key));
     // ── SILENCE ON A RISK IS A CHECK THAT PASSED.                  (zzz757)
     //
     // Three documents read and no one-off found is the forensic test
@@ -1204,10 +1217,12 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       retyped: v?.retyped ?? null,
       forwardLines: v?.forwardLines ?? null,
       supports: (v as any)?.supports ?? null,
-      historical: historicalByKey.get(tv.key) ?? null,
-      evidence: v?.evidence || (!v && historicalByKey.has(tv.key)
+      historical: lenderNA ? null : historicalByKey.get(tv.key) ?? null,
+      evidence: v?.evidence || (!v && !lenderNA && historicalByKey.has(tv.key)
         ? `${curHead} ${lcl(VAR_LABEL[tv.key] || tv.key)}: NOT DISCLOSED. The ${historicalByKey.get(tv.key)!.period} figure `
           + `(${historicalByKey.get(tv.key)!.value}) is shown as historical context, not as ${curAdj} evidence. ${historicalByKey.get(tv.key)!.decision}`
+        : notApplicable && lenderNA
+        ? 'Not applicable: this is a lender. Lending is an operating cash outflow, so cash conversion (CFO ÷ PAT) and working-capital days do not measure its earnings quality — asset quality does. Never counted as pending, never counted against the thesis.'
         : notApplicable
         ? 'Not applicable: this is a services / software / financial business, so there is no physical capacity or plant to fill. Never counted as pending.'
         : stoppedDisclosing
@@ -1235,6 +1250,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
         : input.sourceUnavailable && !input.evidenceReviewed ? 'source_unavailable'
         : graderMissing && GRADER_AVAILABLE.has(tv.key) && input.evidenceReviewed ? 'no_grader_row'
           : input.evidenceReviewed ? 'not_disclosed'
+            : input.searchedNoDocuments ? 'not_disclosed'
             : GRADER_AVAILABLE.has(tv.key) ? 'not_disclosed' : 'not_read',
     };
   });
@@ -1246,7 +1262,9 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     } else {
       c.state = stateOfAbsence(c.absence, !!input.retrievalFailed);
       c.stateReason = c.historical ? `${curHead}: not disclosed — the ${c.historical.period} figure ${c.historical.value} is historical context`
-        : c.state === 'NOT_APPLICABLE' ? 'services / software / financial business — no physical capacity to fill'
+        : c.state === 'NOT_APPLICABLE' ? (input.financialKind === 'lender' && LENDER_NA.has(c.key) ? 'a lender — lending is an operating cash outflow, so this does not measure its quality' : 'services / software / financial business — no physical capacity to fill')
+        : c.state === 'NOT_DISCLOSED' && input.searchedNoDocuments && !input.evidenceReviewed ? `searched every source: ${String(input.unavailableReason || 'no transcript, presentation or results filing found').replace(/^searched[:\s—-]*/i, '').slice(0, 220)}`
+        : (c.state === 'SOURCE_UNAVAILABLE' || c.state === 'RETRIEVAL_FAILED') && input.unavailableReason ? `couldn't read (${String(input.unavailableReason).replace(/^couldn't read — /, '').slice(0, 220)})`
         : c.absence === 'no_grader_row' ? 'no graded or screener row on file, and no document read prints it'
           : c.comparison?.change_type === 'NOT_DISCLOSED' && c.comparison.previous
             ? `was ${c.comparison.previous.raw} in ${c.comparison.previous_period}; not disclosed since` : null;

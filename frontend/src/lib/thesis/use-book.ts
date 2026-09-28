@@ -47,7 +47,8 @@ import {
   type CompanyLedger, type FreshnessState, type ChangeLine, type CompanyEvidenceState,
 } from './evidence-ledger';
 import { evidenceReadLine, changesNote } from './evidence-counts';
-import { provisionalType, isProvisionalFallback, noTypeReason, promotionFromFilings, promotedType } from './provisional-type';
+import { provisionalType, isProvisionalFallback, noTypeReason, promotionFromFilings, promotedType, financialProvisionalType, financialKindOf } from './provisional-type';
+import { quickReadQueue, type QuickRowLike } from './quick-read';
 
 export interface BookRow {
   symbol: string;
@@ -240,11 +241,20 @@ function assess(row0: BookRow): BookRow {
   // nearest); else a provisional nearest fit from the company's own figures.
   // A provisional fallback is re-derived on every pass, so it always reflects
   // the latest figures and never outranks a real classification.
-  const row: BookRow = ov
+  const row1: BookRow = ov
     ? { ...row0, pattern: manualPattern(ov) }
     : (!row0.pattern || isProvisionalFallback(row0.pattern))
       ? { ...row0, pattern: classifyWithFiling(row0.graded, row0.summary) || classifyOrNearest(row0.graded) || provisionalType(row0.graded, row0.summary) }
       : row0;
+  // zzz816: A LENDER OR AN EXCHANGE IS NOT A PLANT. The auto types were
+  // built for operating companies, so a bank / NBFC / exchange fell to
+  // "nearest A · operating inflection" and was asked for capacity and
+  // utilisation it can never have. For an India financial company the
+  // auto type (never the owner's own choice, never an exact B / F / G) is
+  // replaced by the nearest MEANINGFUL type, which says what it reads.
+  const fin = !ov && row0.market !== 'US' ? financialProvisionalType(row0.graded, row0.summary) : null;
+  const row: BookRow = fin && (!row1.pattern || row1.pattern.fit === 'nearest' || isProvisionalFallback(row1.pattern) || row1.pattern.pattern === 'A')
+    ? { ...row1, pattern: fin } : row1;
   // ── THE LONGITUDINAL JOIN HAPPENS HERE.                          (zzz758)
   //
   // Every period this holding has ever had read is in `row.ledger`, and until
@@ -297,9 +307,16 @@ function assess(row0: BookRow): BookRow {
       evidenceReviewed: !!row.summary,
       sourceUnavailable: row.ledger?.last_attempt?.outcome === 'SOURCE_UNAVAILABLE',
       // A failed read is RETRIEVAL_FAILED, never "not disclosed". (zzz770)
-      retrievalFailed: row.discoveryState === 'RETRIEVAL_FAILED' || row.ledger?.last_attempt?.outcome === 'FAILED',
+      retrievalFailed: row.discoveryState === 'RETRIEVAL_FAILED' || row.ledger?.last_attempt?.outcome === 'FAILED'
+        || (!!row.ledger && !row.ledger.latest_period && freshnessOf(row.ledger).evidence_state === 'RETRIEVAL_FAILED'),
       // Services / software / financial businesses: capacity is N/A. (zzz770)
       business: businessProfileOf(row.graded, row.summary),
+      // zzz816: a lender's cash conversion and working capital do not apply
+      // (lending is an operating cash outflow) — N/A, with the reason.
+      financialKind: row.market !== 'US' ? (financialKindOf(row.graded, row.summary)?.kind ?? null) : null,
+      // zzz816: why the last search or read produced nothing, in its own words.
+      unavailableReason: row.ledger && !row.ledger.latest_period ? (row.ledger.last_attempt?.error ?? null) : null,
+      searchedNoDocuments: !!row.ledger && !row.ledger.latest_period && row.ledger.last_attempt?.outcome === 'NO_DISCLOSURE',
       // Without a graded or screener row the grader-computed variables can
       // never be filled, whatever is read. (zzz757)
       hasGraderRow: !!row.graded,
@@ -989,6 +1006,87 @@ export function useBook(opts?: { includeBench?: boolean }) {
     setCheckBatch((b) => ({ ...b, running: false }));
   }, [readFiling]);
 
+  // ══════════════════════════════════════════════════════════════════════
+  // QUICK READ (NO AI) — ON PAGE LOAD, A FEW AT A TIME.             (zzz816)
+  //
+  // Every India name with no evidence on file for the latest expected
+  // quarter is read WITHOUT AI: the server finds its latest concall
+  // transcript, investor presentation and results filing, runs the
+  // deterministic extractors and persists the facts to the same ledger the
+  // AI read uses, marked "read without AI". Book first, then the bench
+  // names passing his Conviction Beats criteria, then the rest. Three at a
+  // time with a short pause; Stop works; a failure is recorded on the name
+  // and never retried on every load (the server waits six hours). No model
+  // is called — the AI read stays on its button.
+  // ══════════════════════════════════════════════════════════════════════
+  const [quick, setQuick] = useState<{ running: boolean; done: number; total: number; filled: number; failed: number; nothing: number; skipped: number; current: string[] }>({ running: false, done: 0, total: 0, filled: 0, failed: 0, nothing: 0, skipped: 0, current: [] });
+  const quickStopRef = useRef(false);
+  const quickStarted = useRef(false);
+  const quickReadOne = useCallback(async (sym: string, force = false): Promise<string> => {
+    const cur = rowsRef.current[sym];
+    if (!cur || cur.market === 'US') return 'SKIPPED';
+    const fd = String(cur.graded?.filing_date || '').slice(0, 10);
+    const q = `/api/v1/portfolio/quick-read?ticker=${encodeURIComponent(sym)}${/^\d{4}-\d{2}-\d{2}$/.test(fd) ? `&filing_date=${fd}` : ''}${force ? '&force=1' : ''}`;
+    let j: any = null;
+    try {
+      const r = await fetch(q, { cache: 'no-store', signal: AbortSignal.timeout(70_000) });
+      j = await readJson(r);
+    } catch (e: any) {
+      j = { ok: false, outcome: 'FAILED', note: `Quick read (no AI) did not answer: ${humanError(e)}` };
+    }
+    const ledger: CompanyLedger | null = j?.ledger || null;
+    const fold = (prev: BookRow): BookRow => {
+      const base: BookRow = ledger ? applyLedger(prev, ledger) : prev;
+      // applyLedger re-assesses only when a period is on file; a failed or
+      // empty search changes the rows' words (searched / couldn't read), so
+      // the row is assessed again either way.
+      const next = ledger && !ledger.latest_period ? assess(base) : base;
+      return { ...next, readNote: j?.note || next.readNote || null };
+    };
+    setRows((r) => (r[sym] ? { ...r, [sym]: fold(r[sym]) } : r));
+    const after = rowsRef.current[sym] ? fold(rowsRef.current[sym]) : null;
+    if (after && j?.outcome === 'READ' && after.reportingPeriod) void postStatus(after);
+    return String(j?.outcome || 'FAILED');
+  }, []);
+  const quickReadAll = useCallback(async (opts?: { force?: boolean; symbols?: string[] }) => {
+    const all = Object.values(rowsRef.current) as Array<BookRow & QuickRowLike>;
+    const pool = opts?.symbols ? all.filter((r) => opts.symbols!.includes(r.symbol)) : all;
+    const todo = quickReadQueue(pool).map((r) => r.symbol);
+    if (!todo.length) return;
+    quickStopRef.current = false;
+    setQuick({ running: true, done: 0, total: todo.length, filled: 0, failed: 0, nothing: 0, skipped: 0, current: [] });
+    let i = 0;
+    const worker = async () => {
+      while (!quickStopRef.current) {
+        const k = i++;
+        if (k >= todo.length) return;
+        const sym = todo[k];
+        setQuick((p) => ({ ...p, current: [...p.current, sym] }));
+        const outcome = await quickReadOne(sym, !!opts?.force);
+        setQuick((p) => ({
+          ...p, done: p.done + 1, current: p.current.filter((x) => x !== sym),
+          filled: p.filled + (outcome === 'READ' ? 1 : 0),
+          failed: p.failed + (outcome === 'FAILED' ? 1 : 0),
+          nothing: p.nothing + (outcome === 'NO_DOCUMENTS' ? 1 : 0),
+          skipped: p.skipped + (outcome === 'SKIPPED' ? 1 : 0),
+        }));
+        // Polite: a short pause between names per worker.
+        if (!quickStopRef.current) await new Promise((res) => setTimeout(res, 300));
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(3, todo.length) }, worker));
+    setQuick((p) => ({ ...p, running: false, current: [] }));
+  }, [quickReadOne]);
+  const stopQuick = useCallback(() => { quickStopRef.current = true; }, []);
+  // Started once, automatically, when the stored evidence is in (Portfolio
+  // Catalysts only — the research surface; Exit Radar reads what is on file).
+  useEffect(() => {
+    if (!includeBench || evidenceLoading || loading || quickStarted.current) return;
+    const t = setTimeout(() => { if (quickStarted.current) return; quickStarted.current = true; void quickReadAll(); }, 1200);
+    return () => clearTimeout(t);
+  }, [includeBench, evidenceLoading, loading, quickReadAll]);
+  useEffect(() => () => { quickStopRef.current = true; }, []);
+
   /**
    * READ THE PRIOR QUARTER — so a level gets a before. On click only. (zzz765)
    *
@@ -1164,5 +1262,5 @@ export function useBook(opts?: { includeBench?: boolean }) {
     } catch { /* kept locally for this session */ }
   }, []);
 
-  return { symbols, origins, note, rows, loading, evidenceLoading, batch, readFiling, readAll, stop, recent, readRecentReporters, priorBatch, readPriorPeriods, checkAll, checkBatch, thesisTypes, setThesisType };
+  return { symbols, origins, note, rows, loading, evidenceLoading, batch, readFiling, readAll, stop, recent, readRecentReporters, priorBatch, readPriorPeriods, checkAll, checkBatch, thesisTypes, setThesisType, quick, quickReadAll, quickReadOne, stopQuick };
 }

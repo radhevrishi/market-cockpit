@@ -20,6 +20,7 @@ import {
 } from './evidence-ledger';
 import type { StructuralEvent } from './evidence-extract';
 import { bareSymbol } from './filing-dates';
+import { isQuickReadPeriod, supersedeQuickRead, QUICK_READ_MODE } from './quick-read';
 
 // Keyed by the BARE symbol: IFBAGRO and IFBAGRO-BE are one company and must
 // share one ledger. A ledger written under a suffixed key before zzz765 is
@@ -148,7 +149,17 @@ export async function persistEvidenceRun(inp: PersistInput): Promise<{ ledger: C
     mode: inp.mode ?? null, failure_kind: null,
   };
   const before = await loadLedger(inp.ticker);
-  const existing = before || emptyLedger(inp.ticker, inp.market, now);
+  let existing = before || emptyLedger(inp.ticker, inp.market, now);
+  // ── A QUICK READ NEVER OVERWRITES AN AI READ; AN AI READ SUPERSEDES A
+  // QUICK READ. (zzz816) The deterministic read fills a period nobody read;
+  // when the model later reads the same period its facts replace the
+  // deterministic ones (archived as superseded, never deleted). A second
+  // quick read of a quick-read period replaces the first the same way.
+  const onFile = existing.periods[rp.period];
+  if (inp.mode === QUICK_READ_MODE && onFile && !isQuickReadPeriod(onFile) && (onFile.documents_read || 0) > 0) {
+    return { ledger: ledgerView(existing), period: rp.period, persisted: false, error: `${rp.period} was already read with AI — a read without AI never replaces it`, diff: null, log: null };
+  }
+  if (onFile && isQuickReadPeriod(onFile)) existing = supersedeQuickRead(existing, rp.period, now, inp.runId);
   const { ledger: merged0, diff } = mergePeriodDetailed(existing, period, run);
   const entry = buildRunLogEntry({ ticker: inp.ticker, run, before, after: merged0, diff, attempts: inp.discoveryAttempts });
   const merged = appendRunLog(merged0, entry);

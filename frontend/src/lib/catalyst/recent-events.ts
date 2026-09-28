@@ -315,17 +315,19 @@ export function thesisFor(touches: Touch[], ctx: ThesisCtx | null | undefined, r
     return { touch: 'not assessed', why: 'thesis type not set — pick A / B / F / G on the card' };
   }
   const p = String(ctx.pattern).toUpperCase();
-  const prov = ctx.fit === 'provisional' ? ' (type provisional)' : '';
+  const name = String((THESES as any)[p]?.name || '').toLowerCase();
+  const art = /^[AEFHILMNORSX]/.test(p) ? 'an' : 'a';
+  const your = `your ${p}${name ? ` (${name})` : ''} thesis`;
+  const prov = ctx.fit === 'provisional' ? ' (type is provisional)' : '';
   if (!touches.length) {
     return read === 'pending' ? { touch: 'not assessed', why: 'document still being read' }
       : read === 'failed' ? { touch: 'not assessed', why: 'document could not be opened' }
-      : { touch: 'neutral', why: `nothing in it moves a ${p} thesis variable` };
+      : { touch: 'neutral', why: `No effect on ${your}${prov}` };
   }
   const vars = thesisVars(ctx);
   const hit = touches.filter((t) => vars.has(t.key));
   if (!hit.length) {
-    const names = Array.from(new Set(touches.map((t) => varLabel(t.key).toLowerCase()))).slice(0, 2).join(', ');
-    return { touch: 'neutral', why: `${names} — not a variable the ${p} thesis rests on` };
+    return { touch: 'neutral', why: `No effect on ${your}${prov}` };
   }
   const up = hit.filter((t) => t.dir === 'up'), down = hit.filter((t) => t.dir === 'down');
   const card = (k: string) => {
@@ -337,10 +339,11 @@ export function thesisFor(touches: Touch[], ctx: ThesisCtx | null | undefined, r
     const cw = card(k);
     return `${varLabel(k).toLowerCase()} ${w}${cw ? ` (${cw})` : ''}`;
   };
-  if (up.length && !down.length) return { touch: 'supports', why: `${say(up, 'up')} — ${p} thesis variable${prov}` };
-  if (down.length && !up.length) return { touch: 'against', why: `${say(down, 'down')} — ${p} thesis variable${prov}` };
-  if (up.length && down.length) return { touch: 'neutral', why: `mixed: ${say(up, 'up')}, ${say(down, 'down')}${prov}` };
-  return { touch: 'neutral', why: `states ${varLabel(hit[0].key).toLowerCase()} (a level, no change)${prov}` };
+  const tv = `${art} ${p}-type thesis variable`;
+  if (up.length && !down.length) return { touch: 'supports', why: `${say(up, 'up')} — ${tv}${prov}` };
+  if (down.length && !up.length) return { touch: 'against', why: `${say(down, 'down')} — ${tv}${prov}` };
+  if (up.length && down.length) return { touch: 'neutral', why: `Mixed: ${say(up, 'up')}, ${say(down, 'down')}${prov}` };
+  return { touch: 'neutral', why: `States ${varLabel(hit[0].key).toLowerCase()} (a level, no change)${prov}` };
 }
 
 const DIR: Record<string, Touch['dir']> = { up: 'up', UP: 'up', down: 'down', DOWN: 'down' };
@@ -350,15 +353,19 @@ const DIR: Record<string, Touch['dir']> = { up: 'up', UP: 'up', down: 'down', DO
 const TYPE_RANK: Record<RecentEventType, number> = Object.fromEntries(EVENT_TYPES.map((t, i) => [t, i])) as any;
 const IMP_RANK: Record<Importance, number> = { Material: 0, Notable: 1, Minor: 2 };
 
-/** Pure: Material / Notable / Minor, in words. */
+/** Pure: Material / Notable / Minor, in words. Material needs a stated figure or a clearly big event
+ *  with its terms (results with numbers, an order with a value, capacity with numbers, an acquisition
+ *  with consideration or a stated stake, a scheme with its swap ratio). (zzz815) */
 export function importanceOf(e: { type: RecentEventType; figure: string | null; line: string | null; senior?: boolean; read: ReadState; noImpact?: boolean }): Importance {
   const fig = !!e.figure;
+  const line = e.line || '';
   switch (e.type) {
     case 'Results': return fig ? 'Material' : 'Notable';
     case 'Order win': return fig ? 'Material' : 'Notable';
-    case 'Capex / capacity': return fig || /commission|commercial production|operational/i.test(e.line || '') ? 'Material' : 'Notable';
-    case 'Corporate restructuring': case 'Acquisition': case 'Divestment': return 'Material';
-    case 'Regulatory approval': return 'Material';
+    case 'Capex / capacity': return fig ? 'Material' : 'Notable';
+    case 'Corporate restructuring': return fig || /share swap|for every \d+|consideration/i.test(line) ? 'Material' : 'Notable';
+    case 'Acquisition': case 'Divestment': return fig ? 'Material' : 'Notable';
+    case 'Regulatory approval': return fig ? 'Material' : line && !/see filing/.test(line) ? 'Notable' : e.read === 'pending' ? 'Notable' : 'Minor';
     case 'Fund raise': return fig ? 'Material' : 'Notable';
     case 'Guidance': return fig ? 'Material' : 'Notable';
     case 'Management change': return e.senior ? 'Notable' : 'Minor';
@@ -535,6 +542,8 @@ interface Resolved {
   readNote: string | null;
   senior: boolean;
   noImpact: boolean;
+  /** Read, but no line passed the quality gate — show "<type> — see filing". */
+  seeFiling?: boolean;
 }
 
 function resolve(f: FilingItem, readMap: Map<string, FilingRead>, market: 'IN' | 'US'): Resolved {
@@ -557,26 +566,48 @@ function resolve(f: FilingItem, readMap: Map<string, FilingRead>, market: 'IN' |
     if (v) type = VAR_TYPE[v.variable as string];
   }
   if (type === 'Other filing' && !r && f.kind && KIND_TYPE[f.kind]) type = KIND_TYPE[f.kind];
-  // the line that matters
-  const evs = f.events;
+  // the line that matters — only a clean one (quality gate); the ledger's extracted events next
+  const evs = f.events.filter((e) => !e.text || lineQuality(e.text).ok);
   const withFig = evs.filter((e) => e.figure);
   const best = withFig.find((e) => e.variable && VAR_TYPE[e.variable] === type) || withFig[0] || evs[0] || null;
   let line: string | null = null;
   let figure: string | null = null;
-  if (r?.status === 'read' && r.line) { line = r.line; figure = r.figures && r.figures.length ? r.figures[0] : null; }
-  if (!line && best?.text) { line = String(best.text); figure = best.figure || null; }
-  if (line && evs.length > 1 && !(r?.status === 'read' && r.line)) {
+  const readLine = r?.status === 'read' && r.line && lineQuality(r.line).ok ? r.line : null;
+  if (readLine) { line = readLine; figure = r!.figures && r!.figures.length ? r!.figures[0] : null; }
+  if (!line && best?.text) {
+    line = String(best.text); figure = best.figure || null;
+    // a results filing whose only extracted point is a qualification / capacity is not "Results"
+    const bt = best.variable ? VAR_TYPE[best.variable] : null;
+    if (type === 'Results' && bt && bt !== 'Results') type = bt;
+  }
+  if (line && evs.length > 1 && !readLine) {
     const more = evs.length - 1;
     line += ` (+${more} more point${more === 1 ? '' : 's'} on the card)`;
   }
+  // thesis variables only from what this event states (a scheme does not state capacity)
   const touches: Touch[] = [];
-  for (const t of r?.touches || []) touches.push(t);
-  for (const e of evs) if (e.variable) touches.push({ key: e.variable, dir: DIR[String(e.direction || '')] || (e.figure ? 'stated' : 'stated') });
+  for (const t of r?.status === 'read' ? r.touches || [] : []) if (touchAllowed(type, t.key)) touches.push(t);
+  for (const e of evs) if (e.variable && touchAllowed(type, e.variable)) touches.push({ key: e.variable, dir: DIR[String(e.direction || '')] || 'stated' });
   const readNote = r && r.status !== 'read' ? `couldn't open the document (${r.reason || 'no reason given'})` : null;
   return {
     f, type, line, figure, routine, touches, read, readNote,
     senior: !!(f.subject.senior || r?.senior), noImpact: !!r?.noImpact,
+    seeFiling: r?.status === 'read' && !line,
   };
+}
+
+const TOUCH_BY_TYPE: Partial<Record<RecentEventType, RegExp>> = {
+  'Results': /^(?:revenue_growth|earnings_growth|margin|operating_leverage|margin_driver|guidance)$/,
+  'Capex / capacity': /^(?:capacity|capacity_addition|utilisation|new_plant|commissioning|capacity_bottleneck|capex|capex_status|capex_earning|maintenance_vs_growth)$/,
+  'Order win': /^(?:order_intake|order_book|book_to_bill|revenue_visibility)$/,
+  'Regulatory approval': /^(?:approval|qualification)$/,
+  'Guidance': /^(?:guidance|management_target|promise_vs_actual)$/,
+  'Concall / business update': /./,
+};
+/** Pure: may an event of this type move this thesis variable? Only what the event can state. */
+export function touchAllowed(type: RecentEventType, key: string): boolean {
+  const re = TOUCH_BY_TYPE[type];
+  return !!re && re.test(key);
 }
 
 // ── grouping and ranking ───────────────────────────────────────────────────
@@ -590,13 +621,14 @@ function toEvent(list: Resolved[]): RecentEvent {
   const touches = list.flatMap((x) => x.touches);
   const read: ReadState = list.some((x) => x.read === 'read') ? 'read' : list.some((x) => x.read === 'pending') ? 'pending' : list.some((x) => x.read === 'failed') ? 'failed' : 'not-needed';
   const th = thesisFor(dedupeTouches(touches), lead.f.ctx, read);
-  const what = lead.line || lead.f.title || '(untitled filing)';
+  const cleanTitle = stripLetterhead(lead.f.title) || lead.f.title;
+  const what = lead.line || (lead.seeFiling ? `${lead.type} — see filing` : cleanTitle) || '(untitled filing)';
   const imp = list.map((x) => importanceOf({ type: x.type, figure: x.figure, line: x.line, senior: x.senior, read: x.read, noImpact: x.noImpact }))
     .sort((a, b) => IMP_RANK[a] - IMP_RANK[b])[0];
   return {
     id: `${lead.f.ticker}|${newest}|${lead.type}|${lead.f.url ? normUrl(lead.f.url) : normTitle(lead.f.title)}`,
     date: newest, ticker: lead.f.ticker, company: list.find((x) => x.f.company)?.f.company || null,
-    type: lead.type, title: lead.f.title, what: what.length > 240 ? `${what.slice(0, 239)}…` : what,
+    type: lead.type, title: cleanTitle, what: cleanClip(what, 240),
     figure: lead.figure, badge: list.some((x) => x.f.badge === 'filed') ? 'filed' : 'press',
     url: lead.f.url || list.find((x) => x.f.url)?.f.url || null, source: lead.f.source,
     importance: imp, thesis: th.touch, thesisWhy: th.why,
@@ -829,3 +861,104 @@ export function countInRange(items: RecentEvent[], range: { from: string; to: st
 
 /** A DOM-safe anchor id for a row. */
 export const rowAnchor = (e: Pick<RecentEvent, 'id'>): string => `nc-${e.id.replace(/[^a-z0-9]+/gi, '-').slice(0, 120)}`;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CLEAN TEXT ONLY.                                                   (zzz815)
+// Live rows showed letterhead ("Scrip Code: GOLDIAM EQ Respected Sir/Madam"),
+// SEBI disclosure-table junk ("No No No … Not Applicable Not Applicable"),
+// investor-deck dumps ("15,021 17,714 17,976 5,346 19% 20% 24% 25% FY24FY25…")
+// and OCR breakage ("Bimad1 i Speciality"). Three pure tools:
+//   stripLetterhead — cut the letter furniture before any sentence is chosen
+//   lineQuality     — the gate a line must pass before it is displayed
+//   cleanClip       — shorten at a sentence end, else a word end, never mid-word
+// ═══════════════════════════════════════════════════════════════════════════
+
+const LETTERHEAD: RegExp[] = [
+  // exchange addresses and departments
+  /\b(?:the\s+)?(?:general\s+manager[,\s]*)?(?:listing\s+(?:department|compliance|operations)|department\s+of\s+corporate\s+services|corporate\s+relationship\s+department|corporate\s+communication\s+department)\b[^.]{0,40}?/gi,
+  /\b(?:BSE\s+Limited|National\s+Stock\s+Exchange\s+of\s+India\s+(?:Limited|Ltd\.?))[,\s]*(?:(?:Phiroze\s+Jeejeebhoy\s+Towers|P\.?\s?J\.?\s+Towers|Exchange\s+Plaza)[^.]{0,160}?(?:400\s?0\d\d|Mumbai)\s*[-–]?\s*(?:400\s?0\d\d)?)?/gi,
+  /\b(?:Plot\s+No\.?\s*C\/?1,?\s*)?(?:G\s+)?Block,?\s+Bandra[-\s]?Kurla\s+Complex,?\s+Bandra\s*\(E(?:ast)?\),?\s+Mumbai\s*[-–]?\s*400\s?0\d\d/gi,
+  /\bDalal\s+Street,?\s+(?:Fort,?\s+)?Mumbai\s*[-–]?\s*400\s?0\d\d/gi,
+  /\b(?:Mumbai|New\s+Delhi|Delhi|Chennai|Kolkata|Bengaluru|Bangalore|Hyderabad|Pune|Ahmedabad|Gurugram|Gurgaon|Noida)\s*[-–,]?\s*\d{3}\s?\d{3}\b/g,
+  // identifiers
+  /\b(?:NSE|BSE)?\s*(?:Scrip|Script|Security|Stock)\s*(?:Code|Symbol|ID|Name)\s*[:\-–]?\s*[A-Z0-9&.\-]{2,20}(?:\s*\((?:Units|Equity|EQ)\)|\s+EQ\b|\s+(?:Series\s*:?\s*)?EQ)?/gi,
+  /\b(?:NSE|BSE)\s+Symbol\s*[:\-–]?\s*[A-Z0-9&.\-]{2,20}/gi,
+  /\bSymbol\s*[:\-–]\s*[A-Z0-9&.\-]{2,20}(?:\s*\((?:Units|Equity)\))?/g,
+  /\bISIN\s*(?:No\.?|Code)?\s*[:\-–]?\s*[A-Z]{2}[A-Z0-9]{9}\d\b/gi,
+  /\bSeries\s*[:\-–]\s*[A-Z]{1,3}\b/g,
+  /\bCIN\s*[:\-–]?\s*[LU]\d{5}[A-Z]{2}\d{4}[A-Z]{3}\d{6}\b/gi,
+  // salutations, subject / reference labels, closings
+  /\b(?:Dear|Respected)\s+(?:Sir|Madam|Sirs)(?:\s*[\/,]\s*(?:Madam|Sir|Ma'?am))?\s*[,:]?/gi,
+  /\bTo,?\s+(?=The\s+(?:Manager|General Manager|Listing|Secretary))/g,
+  // a subject / reference line is the filing's title, not its content: dropped whole when it ends in a
+  // full stop and holds no content verbs, else only its label goes ("Subject: Disclosure , We wish …")
+  /\b(?:Ref(?:erence)?|Sub(?:ject)?)\s*[:\-–]\s*(?:(?![^.]{0,220}\b(?:we|has|have|had|is|are|was|were)\b)[^.]{3,220}\.\s+)?/gi,
+  /\b(?:kindly|please)\s+take\s+(?:the\s+)?(?:same|above|this)\s+on\s+(?:your\s+)?records?\.?/gi,
+  /\bthis\s+is\s+for\s+your\s+(?:kind\s+)?(?:information|reference|records)(?:\s+and\s+(?:records|necessary action))?\.?/gi,
+  /\b(?:thanking\s+you|yours\s+(?:faithfully|truly|sincerely)|with\s+regards|regards)[.,]?/gi,
+  /\bfor\s+and\s+on\s+behalf\s+of\b[^.]{0,80}/gi,
+  /\bFor\s+[A-Z][A-Za-z&.\- ]{2,60}\s+(?:Limited|Ltd\.?)\s+(?=[A-Z][a-z]+\s+[A-Z])/g,
+  /\b(?:Company\s+Secretary|Compliance\s+Officer)(?:\s*(?:&|and)\s*(?:Compliance\s+Officer|Company\s+Secretary))?\b(?:\s*(?:Membership|M\.?\s?No\.?|ACS|FCS)\s*[:.]?\s*[A-Z]*\d+)?/gi,
+  /\b(?:Membership\s+No\.?|ACS|FCS)\s*[:.]?\s*[A-Z]?\d{3,6}\b/gi,
+  /\bEncl(?:osure)?s?\s*[:.]\s*(?:as\s+above)?/gi,
+  // office lines, contacts, footers
+  /\b(?:Regd\.?|Registered|Corporate|Head)\s+Office\s*[:\-–]?[^.]{0,160}?(?=\s(?:Tel|Phone|Ph|Fax|E-?mail|Website|CIN|www)\b|$)/gi,
+  /\b(?:Tel|Phone|Ph|Fax|Mob(?:ile)?)\s*(?:No\.?)?\s*[:.]?\s*[+()\d][\d\s()+\-\/,]{6,40}/gi,
+  /\b(?:E-?mail|Email\s+ID)\s*[:\-–]?\s*\S+@\S+/gi,
+  /\S+@\S+\.\w{2,}/g,
+  /\b(?:Website|Web)\s*[:\-–]?\s*(?:https?:\/\/)?(?:www\.)?\S+\.\w{2,}\S*/gi,
+  /\b(?:https?:\/\/)?www\.\S+/gi,
+  /\bPage\s+\d+\s+(?:of|\/)\s+\d+\b/gi,
+];
+
+/** Pure: the text with letterhead, identifiers, salutations, closings and footers cut out. */
+export function stripLetterhead(text: string): string {
+  let t = String(text || '').replace(/\s+/g, ' ');
+  for (const re of LETTERHEAD) t = t.replace(re, ' ');
+  return t.replace(/\s+([,.;:])/g, '$1').replace(/([,.;:])(?:\s*[,.;:])+/g, '$1').replace(/\s{2,}/g, ' ').trim();
+}
+
+const LETTERHEAD_HINT = /listing\s+department|scrip\s*(?:code|symbol)|script\s+code|\bISIN\b|\bCIN\b|dalal\s+street|exchange\s+plaza|bandra[-\s]kurla|\b400\s?0\d\d\b|(?:dear|respected)\s+sir|sir\s*\/\s*madam|\bsub(?:ject)?\s*:|\bref\s*:|take\s+(?:the\s+)?same\s+on\s+record|yours\s+(?:faithfully|truly)|company\s+secretary|compliance\s+officer|regd\.?\s+office|registered\s+office/i;
+
+/** Pure: a word with a digit inside it ("Bimad1i", "Re1iance") or a split word inside a name. */
+export function ocrBroken(s: string): boolean {
+  const t = String(s || '');
+  if (/[A-Za-z]\d+[A-Za-z]|\b[A-Za-z]{2,}\d\s[a-z]\b|\b\d[a-z]{3,}/.test(t)) return true;
+  return false;
+}
+/** In a proper name every word is capitalised; a lower-case fragment of 4+ letters is a split word ("Re fractories"). */
+export function nameBroken(name: string): boolean {
+  if (ocrBroken(name)) return true;
+  const words = String(name || '').split(/\s+/).filter(Boolean);
+  return words.some((w) => /^[a-z]{4,}$/.test(w) && !/^(?:private|limited|and|with|from|into)$/.test(w))
+    || /\b[a-z]\s[a-z]\b/.test(name);
+}
+
+/** Pure: may this line be shown? Rejects table dumps, disclosure-table junk, letterhead and OCR breakage. */
+export function lineQuality(line: string | null | undefined): { ok: boolean; why: string | null } {
+  const s = String(line || '').trim();
+  if (!s) return { ok: false, why: 'empty' };
+  const tokens = s.split(/\s+/).filter(Boolean);
+  // bare numbers (no ₹ / $ / unit in front) and run-together period labels ("FY24FY25FY26") are table text
+  const bare = (w: string) => /^[\d,.]+%?$/.test(w) || /^(?:FY\d{2}|Q[1-4]-?FY\d{2}){2,}/i.test(w);
+  const numeric = tokens.filter(bare).length;
+  let run = 0, maxRun = 0;
+  for (const w of tokens) { run = bare(w) ? run + 1 : 0; maxRun = Math.max(maxRun, run); }
+  if ((tokens.length >= 6 && numeric / tokens.length > 0.3) || maxRun >= 4) return { ok: false, why: 'mostly numbers / table text' };
+  if ((s.match(/\b(?:Not\s+Applicable|N\.?A\.?|No|Nil)\b(?=[\s,.;]|$)/gi) || []).length >= 3) return { ok: false, why: 'disclosure-table text' };
+  if (/\b(?:If yes|whether the (?:same|sale|transaction|acquisition)|arm'?\s?s length|related party transaction)\b/i.test(s) && !/₹|Rs\.?\s?\d|crore/i.test(s)) return { ok: false, why: 'disclosure-table text' };
+  if (LETTERHEAD_HINT.test(s)) return { ok: false, why: 'letterhead text' };
+  if (/[A-Za-z]\d+[A-Za-z]{2,}|\b[A-Za-z]{3,}\d\s[a-z]\b/.test(s.replace(/\b(?:FY|Q[1-4]|H[12]|9M)[-']?\d+|\d+(?:MTPA|TPA|MW|GW|KLPD|MT|mn|bn|cr)\b|\b(?:[A-Z]{1,4}\d{1,4}[A-Z]{0,3})\b/g, ''))) return { ok: false, why: 'broken OCR text' };
+  if (/(?:[A-Z]{2,}\s+){6,}/.test(s)) return { ok: false, why: 'slide heading text' };
+  return { ok: true, why: null };
+}
+
+/** Pure: shorten at a sentence end within `n`, else at a word end with "…" — never mid-word. */
+export function cleanClip(s: string, n = 200): string {
+  const t = String(s || '').replace(/\s+/g, ' ').trim();
+  if (t.length <= n) return t;
+  const head = t.slice(0, n);
+  const end = Math.max(head.lastIndexOf('. '), head.lastIndexOf('; '));
+  if (end >= n * 0.5) return head.slice(0, end + 1).replace(/;$/, '.');
+  return `${head.replace(/\s+\S*$/, '').replace(/[,;:\s]+$/, '')}…`;
+}

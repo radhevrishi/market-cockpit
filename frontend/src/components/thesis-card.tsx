@@ -21,6 +21,7 @@
 
 'use client';
 
+import { isQuickReadPeriod, QUICK_READ_LABEL } from '@/lib/thesis/quick-read';
 import { useState } from 'react';
 import { STATUS_META, type ThesisAssessment } from '@/lib/thesis/status';
 import { ORIGIN_META, type BookOrigin } from '@/lib/thesis/universe';
@@ -718,6 +719,10 @@ export function ThesisCard(p: ThesisCardProps) {
                 <b style={{ color: C.text }}>{pr.reporting_period}</b> · {pr.documents_read} document{pr.documents_read === 1 ? '' : 's'} read
                 {pr.documents_failed > 0 && <> · {pr.documents_failed} unavailable</>}
                 {' '}· {pr.facts.length} facts · last updated {pr.updated_at.slice(0, 10)}
+                {isQuickReadPeriod(pr) && (
+                  <span data-testid="quick-read-label" title="Read by the deterministic extractors (no AI): utilisation, capacity, capex, order book, commissioning, lender / exchange metrics and management's words on price, margin, volume and guidance — each with its verbatim sentence. An AI read (on click) replaces these facts for the same quarter."
+                    style={{ marginLeft: 6, fontSize: 11.5, fontWeight: 800, padding: '1px 6px', borderRadius: 3, border: `1px dashed ${C.cyan}`, color: C.cyan }}>{QUICK_READ_LABEL}</span>
+                )}
               </span>
             ) : <span>no persisted evidence</span>}
             {fr && fl && (
@@ -735,6 +740,11 @@ export function ThesisCard(p: ThesisCardProps) {
                   <button onClick={p.onCheck} title="Search the sources for a document newer than the one on file. No model call." style={{
                     fontSize: 12.5, fontWeight: 700, padding: '2px 8px', borderRadius: 999, border: `1px solid ${C.border}`, background: 'transparent', color: C.dim, cursor: 'pointer',
                   }}>↻ Check for new evidence</button>
+                )}
+                {p.onRead && pr && isQuickReadPeriod(pr) && fr?.state !== 'NEW_EVIDENCE_AVAILABLE' && (
+                  <button data-testid="read-with-ai" onClick={p.onRead} title="Read this quarter's documents with AI (one model call, on click). Its facts supersede the ones read without AI; nothing is lost — the deterministic facts are kept in history." style={{
+                    fontSize: 12.5, fontWeight: 800, padding: '2px 8px', borderRadius: 999, border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan, cursor: 'pointer',
+                  }}>✨ Read evidence with AI</button>
                 )}
                 {p.onRead && pr && fr?.state === 'NEW_EVIDENCE_AVAILABLE' && (
                   <button onClick={p.onRead} title="Read the newer documents, add the new period to the ledger, keep the old one." style={{

@@ -10,7 +10,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { detectPersistentCatalysts, rankOf, persistenceWords, catalystThesisLine, type PersistentCatalyst } from '@/lib/catalyst/persistence';
-import { specialFocusQueue, nearMissList, focusButtonWords, splitDroppedOut } from '@/lib/catalyst/cross-view';
+import { specialFocusQueue, nearMissList, focusButtonWords, splitDroppedOut, focusRowIndex, focusSourceLabel } from '@/lib/catalyst/cross-view';
 
 const C = {
   bg: 'var(--mc-bg-1)', bg2: 'var(--mc-bg-2, var(--mc-bg-1))', border: 'var(--mc-bg-4)', text: 'var(--tc-text, #F1F5F9)',
@@ -24,6 +24,8 @@ export interface FocusRow {
   assessment?: any; ledger?: any; graded?: any; pattern?: any;
   /** zzz784: the card's capex chain — Special Focus reads the same build state. */
   capex?: any;
+  /** zzz816: bench criteria label, to say why a bench name is hidden. */
+  preset?: { state?: string | null; text?: string | null } | null;
 }
 interface Stored {
   id: string; ticker: string; kind: string; label: string; sfId: number | null; firstSeen: string; lastSeen: string;
@@ -63,8 +65,11 @@ export function PersistentStrip({ pcs, onOpenFocus, ticker }: { pcs: PersistentC
   );
 }
 
-export function SpecialFocusPanel({ rows, ready, thesisLabel, onJump, onReadPrior, priorRunning }: {
+export function SpecialFocusPanel({ rows, lookup, ready, thesisLabel, onJump, onReadPrior, priorRunning }: {
   rows: FocusRow[]; ready: boolean;
+  /** zzz816: every row on the page (all sources, sizes, failing bench) — the
+   *  book / bench label is looked up here, by bare symbol. */
+  lookup?: FocusRow[];
   /** zzz781: read the prior quarter (AI, on click) for near misses — one document set per name. */
   onReadPrior?: (tickers: string[]) => void; priorRunning?: boolean;
   thesisLabel: (r: FocusRow) => string;
@@ -110,9 +115,10 @@ export function SpecialFocusPanel({ rows, ready, thesisLabel, onJump, onReadPrio
   // zzz787: one entry per mechanism; a tracked enabling step of a company
   // already in the queue is a link on its card, never a second item.
   const queue = useMemo(() => {
-    const rowOf = new Map(rows.map((r) => [r.symbol.toUpperCase(), r] as const));
-    return specialFocusQueue<FocusRow>(live, stored as any, (t) => rowOf.get(t) || null);
-  }, [live, stored, rows]);
+    const rowOf = focusRowIndex<FocusRow>(lookup && lookup.length ? lookup : rows);
+    return specialFocusQueue<FocusRow>(live, stored as any, (t) => rowOf(t));
+  }, [live, stored, rows, lookup]);
+  const inViewOf = useMemo(() => focusRowIndex<FocusRow>(rows), [rows]);
   const entries = useMemo(() => queue.entries.map((e) => ({ ...e, st: e.st as Stored | null }))
     .sort((a, b) => (Number(b.st?.user?.state === 'confirmed') - Number(a.st?.user?.state === 'confirmed')) || (Number(a.decayed) - Number(b.decayed)) || (rankOf(b.pc) - rankOf(a.pc))), [queue]);
   const hiddenByUser = Object.values(stored).filter((s) => s.user?.state === 'dismissed' || s.user?.state === 'archived');
@@ -150,7 +156,7 @@ export function SpecialFocusPanel({ rows, ready, thesisLabel, onJump, onReadPrio
         {visible.map((e) => {
           const pc = e.pc;
           const isOpen = !!open[e.id];
-          const portfolio = !e.row ? 'Not in book / bench (Daily Gainers)' : e.row.origin === 'both' ? '📗 Book · 🏆 Bench' : e.row.origin === 'bench' ? '🏆 Bench' : '📗 Book';
+          const portfolio = focusSourceLabel(e.row, { inView: !!e.row && !!inViewOf(e.row.symbol), origins: pc.origins });
           const u = e.st?.user?.state || null;
           const btn = (label: string, state: string | null, color = C.dim) => (
             <button key={label} onClick={() => act(e.id, u === state ? null : state)} style={{ fontSize: 12, fontWeight: 800, padding: '2px 9px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${u === state ? color : C.border}`, background: u === state ? `color-mix(in srgb, ${color} 16%, transparent)` : 'transparent', color }}>{u === state ? `✓ ${label}` : label}</button>

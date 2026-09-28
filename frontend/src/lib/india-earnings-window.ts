@@ -127,6 +127,12 @@ export interface WindowDay<R extends WindowRowBase = WindowRowBase> {
   /** Served from an older engine's namespace — graded under the previous rules. */
   engine_stale?: boolean;
   engine?: string | null;
+  /** zzz817 — companies that filed that day but did not become a card, with
+   *  the grader's reason (the payload's `_dropped`). */
+  dropped?: ReadonlyArray<{ ticker: string; reason?: string; company?: string }> | null;
+  /** zzz817 — the day was built while the results hub was down (the payload's
+   *  `_hub_fail`): a partial list, not the whole day. */
+  hub_fail?: string | null;
 }
 
 /** A merged row: the card plus where it sits in the window. */
@@ -136,6 +142,20 @@ export type WindowRow<R extends WindowRowBase = WindowRowBase> = R & {
   /** Earlier dates in the window on which the same company also reported. */
   _also_reported: string[];
   /** True when that day was graded under the previous engine. */
+  _engine_stale: boolean;
+  _engine: string | null;
+  /** zzz817 — the other results for this company in the window, with their
+   *  tier (older ones), so the card can say "also 13 Aug · STRONG". */
+  _earlier?: Array<{ date: string; tier: string }>;
+  /** zzz817 — NEWER results for this company that are not the one shown,
+   *  and why: hidden by the active filters, or filed without financial data
+   *  (so an older graded result is shown instead of the company vanishing). */
+  _newer?: Array<{ date: string; tier: string; why: 'filtered' | 'no-data' }>;
+};
+
+/** zzz817 — one graded result in the window, before the per-company dedupe. */
+export type WindowEntry<R extends WindowRowBase = WindowRowBase> = R & {
+  _window_date: string;
   _engine_stale: boolean;
   _engine: string | null;
 };
@@ -173,33 +193,322 @@ function betterSameDay(a: WindowRowBase, b: WindowRowBase): boolean {
  * Rows come back in no particular order; use sortByDate / sortByTier.
  */
 export function mergeWindowDays<R extends WindowRowBase>(days: ReadonlyArray<WindowDay<R>>): WindowRow<R>[] {
-  const best = new Map<string, { row: R; day: WindowDay<R> }>();
-  const seen = new Map<string, Set<string>>();
+  return dedupeWindowEntries(windowEntries(days).entries);
+}
+
+// ─── zzz817 — entries, error rows, filter-aware dedupe ─────────────────────
+//
+// The owner: "some companies missing". The old merge picked each company's
+// latest result FIRST and applied the page's filters AFTER, so a company whose
+// newest entry failed a filter (a re-filing with no market cap, say) vanished
+// even though an older result in the window passed. It also dropped, without
+// a word, any row with no ticker, any row under a tier name it did not know
+// (older engines), and every company the grader could not grade that day
+// (the payload's `_dropped` list was never read).
+//
+// Now: every graded result is an ENTRY; the page's filters run on entries;
+// the dedupe runs on what passes; a result filed without financial data never
+// hides an older graded one; and everything that could not be shown is
+// COUNTED (windowIssues) instead of disappearing.
+
+/** A tier name as stored, or null when it is not one of the four. Older
+ *  payloads may carry lower-case names. */
+export function normTier(t: any): WindowTier | null {
+  const s = String(t ?? '').trim().toUpperCase();
+  return (WINDOW_TIER_ORDER as readonly string[]).includes(s) ? (s as WindowTier) : null;
+}
+
+/** True when the grader had no financial numbers at all for the row (a
+ *  "preview" card: filed, but Screener/NSE returned nothing yet). The card is
+ *  still shown — it is counted, and never preferred over a graded result. */
+export function hasNoFinancialData(r: any): boolean {
+  const keys = ['sales_yoy_pct', 'net_profit_yoy_pct', 'pat_yoy_pct', 'eps_yoy_pct', 'sales_curr_cr', 'pat_curr_cr', 'eps_curr'];
+  if (keys.some((k) => typeof r?.[k] === 'number' && Number.isFinite(r[k]))) return false;
+  const qs = r?.quarters_sales;
+  if (Array.isArray(qs) && qs.some((x: any) => typeof x === 'number')) return false;
+  return true;
+}
+/** True when the card has no share price (the price feed missed it). */
+export function hasNoPrice(r: any): boolean {
+  return !(typeof r?.price === 'number' && r.price > 0) && !(typeof r?.current_price === 'number' && r.current_price > 0);
+}
+
+export interface WindowBadRow { date: string; ticker: string; company?: string; reason: string }
+
+/**
+ * Every graded result of every loaded day, stamped with its date. Rows that
+ * cannot be shown as a card (no ticker, a tier that is not one of the four)
+ * come back in `bad` with the reason — counted, never silently skipped. A row
+ * with `symbol` but no `ticker` (older payloads) is repaired, not dropped.
+ */
+export function windowEntries<R extends WindowRowBase>(days: ReadonlyArray<WindowDay<R>>): { entries: WindowEntry<R>[]; bad: WindowBadRow[] } {
+  const entries: WindowEntry<R>[] = [];
+  const bad: WindowBadRow[] = [];
   for (const day of days) {
     if (!day || !day.by_tier) continue;
-    for (const t of WINDOW_TIER_ORDER) {
-      for (const row of (day.by_tier[t] || []) as R[]) {
-        if (!row || !row.ticker) continue;
-        const key = companyKey(row);
-        if (!key) continue;
-        (seen.get(key) || seen.set(key, new Set()).get(key)!).add(day.date);
-        const cur = best.get(key);
-        if (!cur || day.date > cur.day.date || (day.date === cur.day.date && betterSameDay(row, cur.row))) {
-          best.set(key, { row, day });
-        }
+    for (const [key, list] of Object.entries(day.by_tier)) {
+      if (!Array.isArray(list)) continue;
+      for (const raw of list as any[]) {
+        if (!raw || typeof raw !== 'object') continue;
+        const ticker = String(raw.ticker || raw.symbol || '').trim();
+        const tier = normTier(raw.tier) || normTier(key);
+        if (!ticker) { bad.push({ date: day.date, ticker: '?', company: raw.company, reason: 'row has no ticker' }); continue; }
+        if (!tier) { bad.push({ date: day.date, ticker, company: raw.company, reason: `unrecognised tier "${String(raw.tier ?? key)}"` }); continue; }
+        entries.push({
+          ...raw, ticker, tier,
+          _window_date: day.date,
+          _engine_stale: !!day.engine_stale,
+          _engine: day.engine ?? null,
+        } as WindowEntry<R>);
       }
     }
   }
+  return { entries, bad };
+}
+
+/**
+ * ONE row per company among the entries that pass `pass` (the page's filters —
+ * but NOT the tier filter, see below). The rule:
+ *   1. a result WITH financial data beats one without (a re-filing that has
+ *      not been parsed yet never hides the graded quarter);
+ *   2. then the LATEST date wins;
+ *   3. same date: NSE ticker over BSE code, better tier, higher score.
+ * Newer results that lost (filtered out, or no data) are listed in `_newer`;
+ * older ones in `_also_reported` / `_earlier`.
+ *
+ * The tier filter is applied to the result of this, not inside it: the tier
+ * a company is listed under is the tier of its latest result, so the tier
+ * chips add up to the total and a chip's count is exactly what it shows.
+ */
+export function dedupeWindowEntries<R extends WindowRowBase>(
+  entries: ReadonlyArray<WindowEntry<R>>,
+  pass?: (r: WindowEntry<R>) => boolean,
+): WindowRow<R>[] {
+  const groups = new Map<string, WindowEntry<R>[]>();
+  for (const e of entries) {
+    const key = companyKey(e);
+    if (!key) continue;
+    (groups.get(key) || groups.set(key, []).get(key)!).push(e);
+  }
   const out: WindowRow<R>[] = [];
-  for (const [key, { row, day }] of best) {
-    const also = [...(seen.get(key) || [])].filter((d) => d < day.date).sort().reverse();
+  for (const list of groups.values()) {
+    const ok = pass ? list.filter(pass) : list;
+    if (ok.length === 0) continue;
+    let best = ok[0];
+    for (const e of ok.slice(1)) {
+      const eNo = hasNoFinancialData(e), bNo = hasNoFinancialData(best);
+      if (eNo !== bNo) { if (!eNo) best = e; continue; }
+      if (e._window_date !== best._window_date) { if (e._window_date > best._window_date) best = e; continue; }
+      if (betterSameDay(e, best)) best = e;
+    }
+    const olderMap = new Map<string, string>();
+    const newerMap = new Map<string, { date: string; tier: string; why: 'filtered' | 'no-data' }>();
+    for (const e of list) {
+      if (e._window_date < best._window_date) {
+        if (!olderMap.has(e._window_date)) olderMap.set(e._window_date, String(e.tier));
+      } else if (e._window_date > best._window_date && !newerMap.has(e._window_date)) {
+        newerMap.set(e._window_date, { date: e._window_date, tier: String(e.tier), why: pass && !pass(e) ? 'filtered' : 'no-data' });
+      }
+    }
+    const older = [...olderMap.keys()].sort().reverse();
     out.push({
-      ...row,
-      _window_date: day.date,
-      _also_reported: also,
-      _engine_stale: !!day.engine_stale,
-      _engine: day.engine ?? null,
-    });
+      ...best,
+      _also_reported: older,
+      _earlier: older.map((d) => ({ date: d, tier: olderMap.get(d)! })),
+      _newer: [...newerMap.values()].sort((a, b) => (a.date < b.date ? 1 : -1)),
+    } as WindowRow<R>);
+  }
+  return out;
+}
+
+// ─── zzz817 — the tier filter (?tier=BLOCKBUSTER,STRONG) ───────────────────
+
+export const TIER_PARAM = 'tier';
+
+/** ?tier= → the selected tiers, valid and in the fixed order (empty = all). */
+export function parseTierParam(raw: string | null | undefined): WindowTier[] {
+  const want = new Set(String(raw ?? '').split(',').map(normTier).filter(Boolean) as WindowTier[]);
+  const sel = WINDOW_TIER_ORDER.filter((t) => want.has(t));
+  return sel.length === WINDOW_TIER_ORDER.length ? [] : sel;
+}
+/** The href with ?tier= set (or removed for "all"), everything else untouched. */
+export function withTierParam(href: string, tiers: readonly string[]): string {
+  const u = new URL(href, 'http://x');
+  const sel = parseTierParam(tiers.join(','));
+  if (sel.length) u.searchParams.set(TIER_PARAM, sel.join(',')); else u.searchParams.delete(TIER_PARAM);
+  const qs = u.searchParams.toString().replace(/%2C/gi, ',');
+  return u.pathname + (qs ? '?' + qs : '') + u.hash;
+}
+/** Click on a tier chip: add or remove it (multi-select). Selecting all four = all. */
+export function toggleTier(sel: readonly WindowTier[], t: WindowTier): WindowTier[] {
+  const s = new Set(sel);
+  if (s.has(t)) s.delete(t); else s.add(t);
+  return parseTierParam([...s].join(','));
+}
+/** Does a row pass the tier selection? (empty selection = every tier) */
+export function passesTier(r: { tier: any }, sel: readonly string[]): boolean {
+  return sel.length === 0 || sel.includes(String(r.tier));
+}
+/** Count per tier — call it with the rows that pass every OTHER filter, so the
+ *  chips always show what clicking them would show. */
+export function countByTier(rows: ReadonlyArray<{ tier: any }>): Record<WindowTier, number> {
+  const out: Record<WindowTier, number> = { BLOCKBUSTER: 0, STRONG: 0, MIXED: 0, AVOID: 0 };
+  for (const r of rows) { const t = normTier(r.tier); if (t) out[t]++; }
+  return out;
+}
+
+// ─── zzz817 — per-day groups with their own MIXED / AVOID expander ─────────
+
+export interface DayGroupView<R> {
+  date: string;
+  /** every row of that day that passes the filters (tier order within) */
+  rows: R[];
+  /** what is on screen now */
+  visible: R[];
+  /** folded behind this day's own "show N MIXED · N AVOID" expander */
+  folded: { MIXED: number; AVOID: number };
+  counts: Record<WindowTier, number>;
+}
+/**
+ * The By-date groups. With no tier filter and no other filter, each day shows
+ * BLOCKBUSTER and STRONG and folds MIXED and AVOID behind ITS OWN expander
+ * (openDays). A tier filter, or any other filter, shows everything it selects.
+ * `keep` forces a row visible (the searched-for card).
+ */
+export function dayGroups<R extends WindowRow<WindowRowBase>>(
+  rows: ReadonlyArray<R>,
+  opts: { openDays?: ReadonlySet<string>; showAll?: boolean; within?: Cmp<R>; keep?: (r: R) => boolean } = {},
+): DayGroupView<R>[] {
+  return sortByDate(rows, opts.within).map((g) => {
+    const open = !!opts.showAll || !!opts.openDays?.has(g.date);
+    const folded = { MIXED: 0, AVOID: 0 };
+    const visible: R[] = [];
+    for (const r of g.rows) {
+      const t = String(r.tier);
+      if (!open && (t === 'MIXED' || t === 'AVOID') && !(opts.keep && opts.keep(r))) folded[t]++;
+      else visible.push(r);
+    }
+    return { date: g.date, rows: g.rows, visible, folded, counts: countByTier(g.rows) };
+  });
+}
+
+// ─── zzz817 — what could not be shown, and the header arithmetic ───────────
+
+export interface WindowIssues {
+  /** filed, but the grader could not grade them (payload `_dropped`), minus
+   *  companies graded on another date in the window (those are on screen) */
+  notGraded: Array<{ date: string; ticker: string; reason: string }>;
+  /** rows that could not be read as a card (no ticker, unknown tier) */
+  badRows: WindowBadRow[];
+  /** companies shown whose result has no financial numbers yet */
+  noData: Array<{ date: string; ticker: string }>;
+  /** companies shown without a share price */
+  noPrice: number;
+  /** days built while the results hub was down — partial lists */
+  partialDays: string[];
+  /** notGraded + badRows + noData by short reason, for the one-line summary */
+  byReason: Record<string, number>;
+  byDate: Record<string, number>;
+  total: number;
+}
+
+/** The grader's long drop reasons, as a few plain words. */
+export function shortDropReason(reason: string | undefined | null): string {
+  const s = String(reason || '').toLowerCase();
+  if (/ghost/.test(s)) return 'no confirmed filing';
+  if (/quarter .* before the filing|not on screener|stale/.test(s)) return 'new quarter not on Screener yet';
+  if (/no financial|no data|missing/.test(s)) return 'no financial data';
+  if (/price|quote/.test(s)) return 'no price';
+  if (/timeout|fetch|failed|http|error/.test(s)) return 'fetch failed';
+  return s ? 'could not grade' : 'unknown reason';
+}
+
+export function windowIssues<R extends WindowRowBase>(
+  days: ReadonlyArray<WindowDay<R>>,
+  entries: ReadonlyArray<WindowEntry<R>>,
+  bad: ReadonlyArray<WindowBadRow>,
+  shown: ReadonlyArray<WindowRow<R>>,
+): WindowIssues {
+  const gradedTickers = new Set<string>();
+  const gradedKeys = new Set<string>();
+  for (const e of entries) { gradedTickers.add(String(e.ticker).toUpperCase()); gradedKeys.add(companyKey(e)); }
+  const notGraded: WindowIssues['notGraded'] = [];
+  const seenDrop = new Set<string>();
+  const partialDays: string[] = [];
+  for (const d of days) {
+    if (!d) continue;
+    if (d.hub_fail) partialDays.push(d.date);
+    for (const x of d.dropped || []) {
+      const t = String(x?.ticker || '').trim().toUpperCase();
+      if (!t || gradedTickers.has(t) || (x.company && gradedKeys.has(companyKey({ ticker: t, company: x.company })))) continue;
+      if (seenDrop.has(t)) continue;            // one company, counted once
+      seenDrop.add(t);
+      notGraded.push({ date: d.date, ticker: t, reason: shortDropReason(x.reason) });
+    }
+  }
+  const noData = shown.filter(hasNoFinancialData).map((r) => ({ date: r._window_date, ticker: r.ticker }));
+  const noPrice = shown.filter(hasNoPrice).length;
+  const byReason: Record<string, number> = {};
+  const byDate: Record<string, number> = {};
+  const add = (reason: string, date: string) => { byReason[reason] = (byReason[reason] || 0) + 1; byDate[date] = (byDate[date] || 0) + 1; };
+  for (const x of notGraded) add(x.reason, x.date);
+  for (const x of bad) add(x.reason.startsWith('unrecognised') ? 'unrecognised tier' : x.reason, x.date);
+  for (const x of noData) add('no financial data yet', x.date);
+  return { notGraded, badRows: [...bad], noData, noPrice, partialDays: partialDays.sort().reverse(), byReason, byDate, total: notGraded.length + bad.length + noData.length };
+}
+
+export interface WindowTotals {
+  /** graded results read, summed over the loaded days */
+  results: number;
+  daysLoaded: number;
+  /** one per company */
+  companies: number;
+  /** companies with results on 2+ dates (latest shown) */
+  repeated: number;
+  /** extra rows for the same company on the same date (NSE + BSE) */
+  sameDayDupes: number;
+  line: string;
+}
+const fmtN = (n: number) => n.toLocaleString('en-IN');
+/** The plain arithmetic behind the header: results − repeats = companies. */
+export function windowTotals<R extends WindowRowBase>(
+  days: ReadonlyArray<WindowDay<R>>,
+  entries: ReadonlyArray<WindowEntry<R>>,
+  companies: ReadonlyArray<WindowRow<R>>,
+): WindowTotals {
+  const daysLoaded = days.filter((d) => d && d.by_tier).length;
+  const perKeyDates = new Map<string, Set<string>>();
+  let sameDayDupes = 0;
+  const perKeyDay = new Set<string>();
+  for (const e of entries) {
+    const k = companyKey(e);
+    const kd = k + '@' + e._window_date;
+    if (perKeyDay.has(kd)) sameDayDupes++; else perKeyDay.add(kd);
+    (perKeyDates.get(k) || perKeyDates.set(k, new Set()).get(k)!).add(e._window_date);
+  }
+  let repeated = 0;
+  for (const s of perKeyDates.values()) if (s.size > 1) repeated++;
+  const results = entries.length;
+  const n = companies.length;
+  const extra = results - n;
+  const bits: string[] = [];
+  if (repeated > 0) bits.push(`${fmtN(repeated)} reported on more than one date — latest shown`);
+  if (sameDayDupes > 0) bits.push(`${fmtN(sameDayDupes)} NSE/BSE duplicate${sameDayDupes === 1 ? '' : 's'} merged`);
+  const line = extra > 0
+    ? `${fmtN(results)} results across ${daysLoaded} day${daysLoaded === 1 ? '' : 's'} = ${fmtN(n)} companies (${bits.join('; ')})`
+    : `${fmtN(results)} results across ${daysLoaded} day${daysLoaded === 1 ? '' : 's'} = ${fmtN(n)} companies (no company reported twice)`;
+  return { results, daysLoaded, companies: n, repeated, sameDayDupes, line };
+}
+
+/** Per date: how many companies filed that day but are listed under ANOTHER
+ *  date — usually a later one (their newest result), or an earlier one when
+ *  the newer filing had no numbers / failed a filter. Read from the rows'
+ *  `_also_reported` and `_newer`, so per-day counts + this = results read. */
+export function shownElsewhereByDate(rows: ReadonlyArray<{ _also_reported?: string[]; _newer?: Array<{ date: string }> }>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const r of rows) {
+    for (const d of r._also_reported || []) out[d] = (out[d] || 0) + 1;
+    for (const n of r._newer || []) out[n.date] = (out[n.date] || 0) + 1;
   }
   return out;
 }

@@ -43,6 +43,7 @@ import NewCatalystsTab from '@/components/catalyst/new-catalysts-tab';
 import { buildRecentCatalysts, rawFromLedger, rawFromPersistent, rawFromFeed, localToday, windowRange, countInRange, type RawEvent, type ThesisCtx, type WindowSpan } from '@/lib/catalyst/recent-events';
 import { useFilingReads } from '@/components/catalyst/use-filing-reads';
 import { cbCriteriaLine, nextWindow, PC_PAGE_STEP, readScope, otherBenchLabel } from '@/lib/thesis/pc-bench';
+import { quickProgressLine } from '@/lib/thesis/quick-read';
 
 const C = {
   bg: 'var(--mc-bg-1)', border: 'var(--mc-bg-4)', text: 'var(--tc-text, #F1F5F9)',
@@ -62,7 +63,7 @@ const ORDER: ThesisStatus[] = [
 ];
 
 export default function PortfolioCatalystsPage() {
-  const { symbols, note, rows, loading, evidenceLoading, batch, readFiling, readAll, stop, recent, readRecentReporters, priorBatch, readPriorPeriods, checkAll, checkBatch, thesisTypes, setThesisType } = useBook();
+  const { symbols, note, rows, loading, evidenceLoading, batch, readFiling, readAll, stop, recent, readRecentReporters, priorBatch, readPriorPeriods, checkAll, checkBatch, thesisTypes, setThesisType, quick, quickReadAll, stopQuick } = useBook();
   const [filter, setFilter] = useState<ThesisStatus | null>(null);
   const [onlyRead, setOnlyRead] = useState(false);
   // ── WHICH POPULATION IS IN VIEW.                                (zzz731)
@@ -158,6 +159,8 @@ export default function PortfolioCatalystsPage() {
     if (idx < 0) {
       if (source !== 'all') { setSource('all'); return; }
       if (smallMidOnly) { setSmallMidOnly(false); return; }
+      // zzz816: a bench name failing the criteria is hidden by default.
+      if (!showFailing && all0.some((r) => r.symbol === pendingJump)) { setShowFailing(true); return; }
       setPendingJump(null);
       return;
     }
@@ -165,7 +168,7 @@ export default function PortfolioCatalystsPage() {
     const t = pendingJump;
     setPendingJump(null);
     setTimeout(() => document.getElementById(`pc-${t}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
-  }, [pendingJump, list, shownN, source, smallMidOnly]);
+  }, [pendingJump, list, shownN, source, smallMidOnly, showFailing, all0]);
 
   // zzz780 — persistence test per holding, from its ledger + assessment only.
   const persistBySymbol = useMemo(() => new Map(visible.map((r) => [r.symbol, detectForRow(r as any)] as const)), [visible]);
@@ -436,7 +439,7 @@ export default function PortfolioCatalystsPage() {
       {/* ── 🔥 SPECIAL FOCUS. (zzz780) A cross-cutting research layer: a
           persistent MECHANISM with filed evidence and runway. Separate from the
           thesis status and from Research Priority below — never merged. */}
-      <SpecialFocusPanel rows={inSource as any} ready={!evidenceLoading && !loading}
+      <SpecialFocusPanel rows={inSource as any} lookup={all0 as any} ready={!evidenceLoading && !loading}
         onReadPrior={(t: string[]) => readPriorPeriods(t)} priorRunning={!!priorBatch?.running}
         thesisLabel={(r: any) => {
           const set = thesisTypes[String(r.symbol).toUpperCase()];
@@ -526,7 +529,7 @@ export default function PortfolioCatalystsPage() {
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={{ fontSize: 13.5, color: C.faint }}>
           {list.length} of {inSource.length} shown · {ec.held} held · {ec.bench} bench ·{' '}
-          {evidenceLoading ? <b style={{ color: C.text }}>loading stored evidence…</b> : <><b style={{ color: C.text }}>{readCount} of {inSource.length} companies have evidence read</b> · {attention.line} · {docsRead} documents read</>}
+          {evidenceLoading ? <b style={{ color: C.text }}>loading stored evidence…</b> : <><b style={{ color: C.text }}>{readCount} of {inSource.length} companies have evidence read</b>{ec.quick_read > 0 ? <> ({ec.quick_read} read without AI — an AI read is one click on the card)</> : null} · {attention.line} · {docsRead} documents read</>}
           {!evidenceLoading && ec.incomplete > 0 && <> · {ec.incomplete} evidence incomplete</>}
           {newEvidence > 0 && <> · <b style={{ color: C.amber }}>{newEvidence} with new evidence available</b></>}
           {!evidenceLoading && ec.stale > 0 && <> · {ec.stale} stale</>}
@@ -661,6 +664,20 @@ export default function PortfolioCatalystsPage() {
             fontSize: 15, fontWeight: 800, padding: '4px 11px', borderRadius: 999, cursor: 'pointer',
             border: `1px solid ${C.cyan}`, background: 'transparent', color: C.text,
           }}>Resume</button>
+        </div>
+      )}
+
+      {/* ── QUICK READ (NO AI). (zzz816) Started automatically on load for
+          the names with no evidence for the latest quarter — book first,
+          then the bench passing your criteria, then the rest. */}
+      {quick.total > 0 && (
+        <div data-testid="quick-read-progress" style={{ fontSize: 13.5, color: C.dim, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', border: `1px dashed ${C.cyan}`, borderRadius: 8, padding: '6px 12px', background: C.bg }}>
+          <b style={{ color: quick.running ? C.cyan : C.text }}>{quickProgressLine(quick)}</b>
+          {quick.running && quick.current.length > 0 && <span style={{ color: C.faint }}>now: {quick.current.join(' · ')}</span>}
+          <span style={{ color: C.faint }}>Deterministic extractors on the latest concall transcript, investor presentation and results filing — no model, no cost. The AI read stays on each card&apos;s button.</span>
+          {quick.running
+            ? <button onClick={stopQuick} style={{ fontSize: 13, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.amber}`, background: 'transparent', color: C.amber }}>Stop</button>
+            : <button onClick={() => void quickReadAll()} title="Runs the quick read (no AI) again for names still without evidence for the latest quarter. A name tried in the last six hours is not tried again." style={{ fontSize: 13, fontWeight: 700, padding: '3px 10px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${C.border}`, background: 'transparent', color: C.dim }}>&#8635; Quick-read again (no AI)</button>}
         </div>
       )}
 

@@ -42,3 +42,64 @@ export function usBatchLine(b: { running: boolean; done: number; total: number; 
   if (b.stopped && b.total) return `Stopped — ${b.done} of ${b.total} finished; ${Math.max(0, b.total - b.done)} not read. Nothing in progress.`;
   return null;
 }
+
+// ── zzz815: WHERE EACH NAME'S SEC FIGURES STAND. ─────────────────────────
+type FigRow = { figures?: { state?: string; note?: string | null; attempts?: number; noFiler?: boolean } | null; graded?: any; sec?: any; gradedWhy?: string | null };
+
+export interface UsFiguresCounts { total: number; loading: number; ok: number; none: number; retrying: number; failed: number }
+
+/** Pure: how many names are loading / in / retrying / failed. */
+export function usFiguresCounts(rows: FigRow[]): UsFiguresCounts {
+  const c: UsFiguresCounts = { total: rows.length, loading: 0, ok: 0, none: 0, retrying: 0, failed: 0 };
+  for (const r of rows) {
+    const s = r.figures?.state;
+    if (s === 'loading') c.loading++;
+    else if (s === 'retrying') c.retrying++;
+    else if (s === 'failed') c.failed++;
+    else if (s === 'none') c.none++;
+    else c.ok++;
+  }
+  return c;
+}
+
+/** Pure: the progress line. Counts add up to the total. */
+export function usFiguresLine(c: UsFiguresCounts, firstPass: boolean): string {
+  const inN = c.ok + c.none;
+  const head = firstPass ? `Loading SEC XBRL figures: ${inN} of ${c.total} in` : `SEC XBRL figures: ${inN} of ${c.total} in`;
+  const parts = [`${c.ok} with quarterly figures`, c.none ? `${c.none} with none filed` : '', c.loading ? `${c.loading} loading` : '',
+    c.retrying ? `${c.retrying} SEC request failed — retrying` : '', c.failed ? `${c.failed} SEC request failed (not a finding about the company)` : ''].filter(Boolean);
+  return `${head} (${parts.join(' · ')}).`;
+}
+
+/** Pure: the card's figures line when there is no quarterly row. Never
+ *  "no SEC filer" unless the server said the loaded ticker list lacks it;
+ *  never "not loaded yet" next to a finding. */
+export function usCardFiguresWords(r: FigRow): string {
+  const f = r.figures;
+  if (f?.state === 'loading') return 'loading SEC figures…';
+  if (f?.state === 'retrying') return f.note || 'SEC request failed — retrying';
+  if (f?.state === 'failed') return f.note || 'SEC request failed — not a finding about the company';
+  const why = r.sec?.note || r.gradedWhy;
+  return why ? `No quarterly SEC XBRL figures: ${why}` : 'No quarterly SEC XBRL figures filed';
+}
+
+// ── zzz815: WHICH CARDS THE PAGE SHOWS — pure, so it can be tested. ──────
+type ViewRow = { symbol: string; origin: string; preset?: { state?: string } | null; assessment?: { status?: string | null; triggered?: unknown[] } | null };
+
+/**
+ * The cards for a view. Bench names are hidden ONLY when they miss the
+ * owner's Conviction Beats criteria and the "also show failing" chip is off;
+ * a bench name whose figures are still loading is shown (as loading). The
+ * view chip picks book / bench / all; the status filter narrows further.
+ */
+export function usPcView<T extends ViewRow>(rows: T[], o: { source: 'all' | 'book' | 'bench'; showFailing: boolean; filter: string | null; order: readonly string[] }): { all: T[]; inSource: T[]; list: T[] } {
+  const all = o.showFailing ? rows : rows.filter((r) => !(r.origin === 'bench' && r.preset?.state === 'fail'));
+  const inSource = all.filter((r) => (o.source === 'all' ? true : o.source === 'book' ? r.origin !== 'bench' : r.origin === 'bench'));
+  const f = o.filter ? inSource.filter((r) => r.assessment?.status === o.filter) : inSource;
+  const list = [...f].sort((a, b) => {
+    const ai = o.order.indexOf(a.assessment?.status || 'NEUTRAL'), bi = o.order.indexOf(b.assessment?.status || 'NEUTRAL');
+    if (ai !== bi) return ai - bi;
+    return ((b.assessment?.triggered?.length || 0) - (a.assessment?.triggered?.length || 0)) || a.symbol.localeCompare(b.symbol);
+  });
+  return { all, inSource, list };
+}

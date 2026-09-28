@@ -439,7 +439,7 @@ export function evidenceStateLine(state: EvidenceState, o: { docs?: Array<{ kind
   const searched = searchedPhrase(o.docs);
   switch (state) {
     case 'FOUND': return 'FOUND';
-    case 'NOT_DISCLOSED': return `NOT DISCLOSED — ${searched ? `searched ${searched}` : 'searched the documents read'}`;
+    case 'NOT_DISCLOSED': return `NOT DISCLOSED — ${searched ? `searched ${searched}` : o.reason || 'searched the documents read'}`;
     case 'NOT_SEARCHED': return 'NOT SEARCHED — no document that could carry it has been read yet';
     case 'UNCLEAR': return `UNCLEAR — ${o.reason || 'read, but not in a form that can be judged'}`;
     case 'NOT_APPLICABLE': return `N/A — ${o.reason || 'not relevant to this thesis'}`;
