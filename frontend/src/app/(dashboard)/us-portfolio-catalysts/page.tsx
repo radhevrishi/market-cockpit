@@ -24,6 +24,8 @@
 
 'use client';
 
+import { exchangeToday, exchangeClock, CURRENCY } from '@/lib/catalyst/exchange-time';
+import { useUrlParam } from '@/lib/use-url-param';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useUsBook, US_CB_SOURCE } from '@/lib/us-thesis/use-us-book';
 import { usDisplayer } from '@/lib/us-thesis/display';
@@ -68,8 +70,13 @@ const pill = (on: boolean, color = C.cyan): React.CSSProperties => ({
 
 export default function UsPortfolioCatalystsPage() {
   const { rows, excluded, universeError, loading, evidenceLoading, batch, priorBatch, checkBatch, readFiling, readAll, checkAll, readPriorPeriods, stop, thesisTypes, setThesisType, needsPrior, cbCriteria, cbPassing, cbExtras, retryFigures, detBatch, usBook } = useUsBook();
-  const [filter, setFilter] = useState<ThesisStatus | null>(null);
-  const [source, setSource] = useState<'all' | 'book' | 'bench' | 'cb'>('all');
+  const [filterRaw, setFilterRaw] = useUrlParam<string>('st', '');
+  const filter = (filterRaw || null) as ThesisStatus | null;
+  const setFilter = (v: ThesisStatus | null) => setFilterRaw(v || '');
+  const [source, setSource] = useUrlParam<'all' | 'book' | 'bench' | 'cb'>('src', 'all', ['all', 'book', 'bench', 'cb']);
+  const [loadedAt, setLoadedAt] = useState<string>('');
+  const [stale, setStale] = useState(false);
+  useEffect(() => { if (!loading && !evidenceLoading) { setLoadedAt(exchangeClock('US')); setStale(false); const id = setTimeout(() => setStale(true), 30 * 60_000); return () => clearTimeout(id); } return undefined; }, [loading, evidenceLoading]);
   const [copied, setCopied] = useState<string | null>(null);
   // zzz808: the catalyst board, or "New · last 10 days".
   const [view, setView] = useState<'board' | 'new'>('board');
@@ -178,7 +185,7 @@ export default function UsPortfolioCatalystsPage() {
   // 10-K, 20-F, 6-K) and extracted event already on file for the US names on
   // screen (book + bench), plus the persistent-catalyst items.
   // zzz813: every 8-K in the window is opened (EX-99.1 + the 8-K body) and read deterministically.
-  const today = useMemo(() => localToday(), []);
+  const today = useMemo(() => exchangeToday('US'), []);
   // zzz825: every SEC filing of the names on screen in the window, by metadata (form + 8-K items) — an officer
   // change, a closing, an offering the ledger never files. Fetched once the page is in; never blocks the tab.
   const [secRows, setSecRows] = useState<{ rows: UsFilingMeta[]; failed: number; error: string | null } | null>(null);
@@ -287,6 +294,9 @@ export default function UsPortfolioCatalystsPage() {
     <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div>
         <h1 style={{ fontSize: 20, fontWeight: 800, color: C.text, margin: 0 }}>🇺🇸 US Portfolio Catalysts</h1>
+        {/* zzz834: currency + exchange clock, so the currency is never guessed and the age of the data is visible */}
+        <span data-testid="pc-currency-badge" title={CURRENCY.US.note} style={{ fontSize: 12, fontWeight: 800, color: C.dim, border: `1px solid ${C.border}`, borderRadius: 999, padding: '2px 10px', alignSelf: 'center' }}>{CURRENCY.US.symbol} {CURRENCY.US.code} · {CURRENCY.US.note}</span>
+        {loadedAt && <span data-testid="pc-asof" style={{ fontSize: 12, color: C.faint, alignSelf: 'center' }}>data loaded {loadedAt}{stale ? ' · older than 30 min — reload' : ''}</span>}
         <div style={{ fontSize: 14, color: C.dim, marginTop: 4, lineHeight: 1.55, maxWidth: 860 }}>
           The same thesis engine as India Portfolio Catalysts, over <b style={{ color: C.text }}>SEC evidence</b>: every US holding carries a thesis ledger (A · B · F · G) checked against its
           10-Q / 10-K and 8-K earnings release. Revenue, earnings, margin and cash conversion come from the company&apos;s XBRL filings (no model), quarter against the same quarter a year earlier, in the company&apos;s own fiscal calendar.

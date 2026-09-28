@@ -21,6 +21,8 @@ import {
   EVENT_TYPES, daysAgo, windowRange, dayLabel, inRange, rowAnchor, compareWithinDay, WINDOW_SPANS, normUrl,
   type RecentCatalystResult, type TypeFilter, type RecentEvent, type WindowSpan,
 } from '@/lib/catalyst/recent-events';
+import { useUrlParam } from '@/lib/use-url-param';
+import { buildIcs, MARKET_TZ } from '@/lib/catalyst/exchange-time';
 import { IMPACTS, ledgerView, calculateCatalystCounts, type Impact, type EvidenceQuality } from '@/lib/catalyst/event-card';
 import { STATUS_META } from '@/lib/thesis/status';
 import type { ReadProgress } from './use-filing-reads';
@@ -323,11 +325,12 @@ function LedgerPanel({ e, all, onClose, holding }: { e: RecentEvent; all: Recent
 // ── the tab ───────────────────────────────────────────────────────────────
 
 export default function NewCatalystsTab({ result, loading, names, sourceNotes, market, progress, onJump, win, onWin, holdingOf, onRead, wanted }: NewCatalystsTabProps) {
-  const [book, setBook] = useState<BookF>('all');
-  const [mat, setMat] = useState<MatF>('All');
-  const [type, setType] = useState<TypeFilter>('All');
-  const [thesis, setThesis] = useState<ThesisF>('All');
-  const [impact, setImpact] = useState<ImpactF>('All');
+  // zzz834: filters live in the URL (?nb= ?nm= ?nt= ?nh= ?ni=) so a refresh or a shared link keeps them
+  const [book, setBook] = useUrlParam<BookF>('nb', 'all', ['all', 'book', 'bench']);
+  const [mat, setMat] = useUrlParam<MatF>('nm', 'All', ['All', 'Material', 'Notable', 'Minor']);
+  const [type, setType] = useUrlParam<TypeFilter>('nt', 'All' as TypeFilter);
+  const [thesis, setThesis] = useUrlParam<ThesisF>('nh', 'All', ['All', 'A', 'B', 'F', 'G', 'none']);
+  const [impact, setImpact] = useUrlParam<ImpactF>('ni', 'All' as ImpactF);
   const [showMinor, setShowMinor] = useState(false);
   const [showRoutine, setShowRoutine] = useState(false);
   const [showAllGaps, setShowAllGaps] = useState(false);
@@ -465,6 +468,17 @@ export default function NewCatalystsTab({ result, loading, names, sourceNotes, m
             {w.anchor && <> · <button onClick={() => setW({ span: w.span, anchor: null })} style={{ fontSize: 12, color: C.cyan, background: 'transparent', border: 'none', padding: 0, cursor: 'pointer' }}>back to today</button></>}
           </span>
         </Group>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <button data-testid="nc-ics" title="Download the Material and Needs-attention events shown as a calendar file (.ics) — all-day events on the filing date, in the exchange's own calendar day"
+            onClick={() => {
+              const ev = list.filter((e) => e.card!.materiality === 'Material' || e.card!.attention).map((e) => ({ date: e.date, ticker: e.ticker, summary: `${e.card!.eventType}${e.card!.keyNumber ? ` ${e.card!.keyNumber}` : ''}`, url: e.url }));
+              try {
+                const blob = new Blob([buildIcs(ev)], { type: 'text/calendar' });
+                const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `catalysts-${market === 'US' ? 'us' : 'india'}-${MARKET_TZ[market] ? range.to : ''}.ics`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+              } catch { /* download blocked */ }
+            }}
+            style={{ fontSize: 12, fontWeight: 800, color: C.cyan, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 999, padding: '2px 10px', cursor: 'pointer' }}>📅 Calendar (.ics) · Material + attention</button>
+        </div>
         {filtered && (
           <div><button onClick={() => { setBook('all'); setMat('All'); setType('All'); setThesis('All'); setImpact('All'); }}
             style={{ fontSize: 12, color: C.cyan, background: 'transparent', border: 'none', padding: 0, cursor: 'pointer' }}>Clear filters</button></div>

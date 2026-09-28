@@ -30,6 +30,8 @@
 
 'use client';
 
+import { exchangeToday, exchangeClock, CURRENCY } from '@/lib/catalyst/exchange-time';
+import { useUrlParam } from '@/lib/use-url-param';
 import TickerExportToolbar from '@/components/TickerExportToolbar';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useBook } from '@/lib/thesis/use-book';
@@ -40,7 +42,7 @@ import { isSmallMidCap, SMALL_MID_CAP_MAX_CR } from '@/lib/thesis/universe';
 import { priorBackfillPlan } from '@/lib/thesis/prior-period';
 import { evidenceCounts, universeCounts, researchPriorityEligible, researchPriorityTitle, researchWhyLine, exportCounts, evidenceAttention, RESEARCH_EXPORT_STATUSES } from '@/lib/thesis/evidence-counts';
 import NewCatalystsTab from '@/components/catalyst/new-catalysts-tab';
-import { buildRecentCatalysts, rawFromLedger, rawFromPersistent, rawFromFeed, localToday, windowRange, countInRange, nameMapOf, normUrl, type RawEvent, type ThesisCtx, type WindowSpan } from '@/lib/catalyst/recent-events';
+import { buildRecentCatalysts, rawFromLedger, rawFromPersistent, rawFromFeed, windowRange, countInRange, nameMapOf, normUrl, type RawEvent, type ThesisCtx, type WindowSpan } from '@/lib/catalyst/recent-events';
 import { getConvictionList } from '@/lib/conviction-beats';
 import { useFilingReads } from '@/components/catalyst/use-filing-reads';
 import { cbCriteriaLine, nextWindow, PC_PAGE_STEP, readScope, otherBenchLabel, cbViewRows, cbViewTag, cbViewLine, heldKey } from '@/lib/thesis/pc-bench';
@@ -69,7 +71,12 @@ const ORDER: ThesisStatus[] = [
 
 export default function PortfolioCatalystsPage() {
   const { symbols, note, rows, loading, evidenceLoading, batch, readFiling, readAll, stop, recent, readRecentReporters, priorBatch, readPriorPeriods, checkAll, checkBatch, thesisTypes, setThesisType, quick, quickReadAll, stopQuick } = useBook();
-  const [filter, setFilter] = useState<ThesisStatus | null>(null);
+  const [filterRaw, setFilterRaw] = useUrlParam<string>('st', '');
+  const filter = (filterRaw || null) as ThesisStatus | null;
+  const setFilter = (v: ThesisStatus | null) => setFilterRaw(v || '');
+  const [loadedAt, setLoadedAt] = useState<string>('');
+  const [stale, setStale] = useState(false);
+  useEffect(() => { if (!loading && !evidenceLoading) { setLoadedAt(exchangeClock('IN')); setStale(false); const id = setTimeout(() => setStale(true), 30 * 60_000); return () => clearTimeout(id); } return undefined; }, [loading, evidenceLoading]);
   const [onlyRead, setOnlyRead] = useState(false);
   // ── WHICH POPULATION IS IN VIEW.                                (zzz731)
   //
@@ -79,7 +86,7 @@ export default function PortfolioCatalystsPage() {
   // objects and the header never adds them into a single "holdings" figure
   // the way this page used to.
   // zzz827: 'cb' = the whole Conviction Beats list under his criteria (held names included).
-  const [source, setSource] = useState<'all' | 'book' | 'bench' | 'cb'>('all');
+  const [source, setSource] = useUrlParam<'all' | 'book' | 'bench' | 'cb'>('src', 'all', ['all', 'book', 'bench', 'cb']);
   // zzz811: the bench is the Conviction Beats list under HIS Conviction Beats
   // criteria. Names failing them are off by default and one chip away.
   const [showFailing, setShowFailing] = useState(false);
@@ -249,7 +256,7 @@ export default function PortfolioCatalystsPage() {
   // run — the exchange results feed. Pure merge in lib/catalyst/recent-events.
   // zzz813: every non-routine filing in the window is opened and read (server-side, cached per
   // document, no AI) — the row shows what the document says, not its subject line.
-  const today = useMemo(() => localToday(), []);
+  const today = useMemo(() => exchangeToday('IN'), []);
   const recentRaws = useMemo(() => {
     if (loading || evidenceLoading) return null;
     const raws: RawEvent[] = [];
@@ -324,6 +331,9 @@ export default function PortfolioCatalystsPage() {
     <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div>
         <h1 style={{ fontSize: 20, fontWeight: 800, color: C.text, margin: 0 }}>Portfolio Catalysts</h1>
+        {/* zzz834: currency + exchange clock, so ₹ and $ are never guessed and the age of the data is visible */}
+        <span data-testid="pc-currency-badge" title={CURRENCY.IN.note} style={{ fontSize: 12, fontWeight: 800, color: C.dim, border: `1px solid ${C.border}`, borderRadius: 999, padding: '2px 10px', alignSelf: 'center' }}>{CURRENCY.IN.symbol} {CURRENCY.IN.code} · {CURRENCY.IN.note}</span>
+        {loadedAt && <span data-testid="pc-asof" style={{ fontSize: 12, color: C.faint, alignSelf: 'center' }}>data loaded {loadedAt}{stale ? ' · older than 30 min — reload' : ''}</span>}
         <div style={{ fontSize: 14, color: C.dim, marginTop: 4, lineHeight: 1.55, maxWidth: 820 }}>
           Every holding carries a <b style={{ color: C.text }}>thesis ledger</b> — the named variables you own it for —
           and each quarter&apos;s evidence is checked against them. Capex is tracked as a chain to whether it actually
