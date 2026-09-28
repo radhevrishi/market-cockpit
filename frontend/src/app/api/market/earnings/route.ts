@@ -1,4 +1,4 @@
-import { isAcceptableQuarter } from '@/lib/earnings/quarter-window';
+import { isAcceptableQuarter, quarterEndDate } from '@/lib/earnings/quarter-window';
 import { NextResponse } from 'next/server';
 import {
   fetchBoardMeetings,
@@ -259,8 +259,17 @@ function getResultsQuarter(meetingDate: Date, desc: string): string {
     let month = -1;
     if (monthMap[monthStr]) month = monthMap[monthStr];
     else if (!isNaN(parseInt(monthStr))) month = parseInt(monthStr);
-    if (month > 0 && yearStr > 2000) {
-      return getFiscalQuarter(new Date(yearStr, month - 1, 1));
+    if (month >= 1 && month <= 12 && yearStr > 2000) {
+      // zzz820 — a parsed period is only believed when it is a quarter that
+      // had ENDED by the meeting date and ended no more than 200 days before
+      // it. Aether (31 Jul 2026) and Energy Development (10 Aug 2026) were
+      // stored as "Q1 FY28" — a quarter that ends in June 2027. A month
+      // outside 1–12 (a US-style "06/30/2026" read day-first) used to roll
+      // the Date forward into a later year; it is now rejected outright.
+      const q = getFiscalQuarter(new Date(yearStr, month - 1, 1));
+      const qEnd = quarterEndDate(q);
+      const lagDays = qEnd ? (meetingDate.getTime() - qEnd.getTime()) / 86_400_000 : NaN;
+      if (Number.isFinite(lagDays) && lagDays >= -1 && lagDays <= 200) return q;
     }
   }
   return getExpectedQuarter(meetingDate);

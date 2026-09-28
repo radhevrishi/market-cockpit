@@ -86,9 +86,13 @@ describe('KABRAEXTRU — a loss-narrowing operating turnaround', () => {
     assert.ok(caveatPenaltyFor('still loss-making') < caveatPenaltyFor('low quality'));
   });
   test('the D1 reaction is a separate, labelled note — not a fundamental caveat', () => {
-    assert.ok(g.caveat_tags.includes('market rejected print'));
+    // zzz819 — price is context: the reaction lives in market_context /
+    // market_reaction, never in the caveat list, and never changes the grade.
+    assert.ok(!g.caveat_tags.includes('market rejected print'));
+    assert.ok(g.market_context.includes('market rejected print'));
     assert.ok(g.market_reaction);
-    assert.match(g.market_reaction.note, /^Market reaction: D1 -6% after the print — a price move, not a verdict on the filing/);
+    assert.equal(g.market_reaction.demoted_from, null);
+    assert.match(g.market_reaction.note, /^Market reaction: D1 -6% after the print — a price move, not a verdict on the filing; it does not change the grade\./);
     assert.ok(!/is a mixed print/.test(g.narrative));
     assert.match(g.narrative, /strong operating turnaround/);
     // "with caveat(s): …" must list only fundamental caveats
@@ -115,7 +119,10 @@ describe('genuinely weak prints stay flagged', () => {
       pat_curr_cr: -2, pat_prev_cr: -6, eps_curr: -0.4, eps_prev: -1.2,
       pat_yoy_pct: 66.7, eps_yoy_pct: 66.7, opm_pct: 2, opm_prev_pct: 4,
     }))!;
-    assert.equal(g.tier, 'MIXED');
+    // zzz819 — it was MIXED only because its Stage-2 chart lifted the blended
+    // composite; on the filing alone (revenue −12%, still a loss, margin
+    // down) it fails the bar.
+    assert.ok(g.tier === 'MIXED' || g.tier === 'AVOID', g.tier);
     assert.ok(!g.methodology_tags.includes('operating turnaround'));
     assert.ok(g.caveat_tags.includes('segment mix shift'));
   });
@@ -139,7 +146,7 @@ describe('genuinely weak prints stay flagged', () => {
   });
 });
 
-describe('a Day-1 sell-off cannot turn a strong quarter into a mixed one', () => {
+describe('a Day-1 sell-off does not change the grade at all (zzz819 — price-free)', () => {
   const strongPrint = {
     sales_yoy_pct: 30, sales_curr_cr: 130, sales_prev_cr: 100,
     pat_yoy_pct: 40, pat_curr_cr: 14, pat_prev_cr: 10,
@@ -150,10 +157,13 @@ describe('a Day-1 sell-off cannot turn a strong quarter into a mixed one', () =>
     const calm = gradeIndiaRow(row({ ...strongPrint, d1_pct: 1 }))!;
     const sold = gradeIndiaRow(row({ ...strongPrint, d1_pct: -9 }))!;
     assert.ok(calm.tier === 'STRONG' || calm.tier === 'BLOCKBUSTER', calm.tier);
-    assert.ok(sold.tier === 'STRONG', `sold-off print was ${sold.tier}`);
-    assert.ok(sold.caveat_tags.includes('sold off post-results'));
+    assert.equal(sold.tier, calm.tier, `sold-off print was ${sold.tier}, calm was ${calm.tier}`);
+    assert.ok(!sold.caveat_tags.includes('sold off post-results'));
+    assert.ok(sold.market_context.includes('sold off post-results'));
     assert.ok(sold.market_reaction && /D1 -9%/.test(sold.market_reaction.note));
+    assert.ok(!/cost the top tier/.test(sold.narrative), sold.narrative);
   });
+  // The shared helper is kept for older callers; the India grader no longer uses it.
   test('reactionFloor: may cost the top tier, never more', () => {
     assert.equal(reactionFloor('BLOCKBUSTER', 'MIXED'), 'STRONG');
     assert.equal(reactionFloor('BLOCKBUSTER', 'STRONG'), 'STRONG');

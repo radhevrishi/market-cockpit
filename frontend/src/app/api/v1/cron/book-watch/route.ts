@@ -25,6 +25,8 @@
 import { NextResponse } from 'next/server';
 import { verifyCronSecret } from '@/lib/verifyAuth';
 import { kvGet } from '@/lib/kv';
+import { gradedKeyCandidates } from '@/lib/graded-cache-key';
+import { withCurrentIndiaRules } from '@/lib/india-regrade';
 import { dispatchAlert } from '@/lib/alert-dispatcher';
 import {
   readBookState,
@@ -44,7 +46,18 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 const ADMIN_CHAT_ID = process.env.NEXT_PUBLIC_CHAT_ID || '5057319640';
-const GRADED_KEY = (date: string) => `graded:v10:${date}`;
+// zzz819 — was a hard-coded `graded:v10:` that nothing has written since the
+// v10 → v11 bump, so this cron saw no India grades at all. It now reads the
+// current namespace first and falls back through the legacy ones, regrading a
+// legacy day in memory under the current rules (lib/india-regrade.ts).
+async function readGradedDay(date: string): Promise<any | null> {
+  for (const key of gradedKeyCandidates(date)) {
+    const p = await kvGet<any>(key).catch(() => null);
+    const n = p?.by_tier ? (Object.values(p.by_tier) as any[]).reduce((a: number, v: any) => a + (Array.isArray(v) ? v.length : 0), 0) : 0;
+    if (n > 0) return withCurrentIndiaRules(p, key);
+  }
+  return null;
+}
 const GRADED_LOOKBACK_DAYS = 10;
 const MAX_DISPATCH_PER_RUN = 40;
 
@@ -76,7 +89,7 @@ async function buildGradedMap(): Promise<Record<string, GradedInfo>> {
   for (let i = 0; i < GRADED_LOOKBACK_DAYS; i++) dates.push(istDateStr(i));
 
   const payloads = await Promise.all(
-    dates.map(async (d) => ({ d, payload: await kvGet<any>(GRADED_KEY(d)).catch(() => null) })),
+    dates.map(async (d) => ({ d, payload: await readGradedDay(d) })),
   );
 
   // newest date first so the first write per ticker wins (most-recent print)

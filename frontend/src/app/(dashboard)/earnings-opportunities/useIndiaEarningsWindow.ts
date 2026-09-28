@@ -42,6 +42,9 @@ function toDay<R extends WindowRowBase>(date: string, p: any, stale: boolean, en
     engine,
     dropped: Array.isArray(p?._dropped) ? p._dropped.filter((x: any) => x && x.ticker) : null,
     hub_fail: p?._hub_fail ? String(p._hub_fail) : null,
+    // zzz820 — when this day was last graded, for "last checked <date>".
+    checked_at: typeof p?.generated_at === 'string' ? p.generated_at
+      : (typeof p?._refresh?.at === 'string' ? p._refresh.at : null),
   };
 }
 

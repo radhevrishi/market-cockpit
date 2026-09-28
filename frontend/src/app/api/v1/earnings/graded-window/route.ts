@@ -15,8 +15,16 @@
 // Engine version: a date stored only under an older engine's namespace is
 // returned as it is, stamped `stale` with that engine — the page shows it
 // labelled "graded under the previous rules" instead of re-grading the whole
-// window. (The India payload stores graded OUTPUT, not the grader's inputs,
-// so there is no US-style instant re-grade from stored inputs.)
+// window.
+//
+// zzz819 — …unless it can be regraded in-process. Cards now carry the
+// grader's own input, and v20–v23 cards carry every figure the grade reads
+// (lib/india-regrade.ts), so a stale day is regraded here, in memory (pure,
+// milliseconds — this route still never writes and never reads a source), and
+// returned as current. The /graded route stores regraded days under the
+// current engine when it is asked for one. Only a day that cannot be regraded
+// keeps the "previous rules" label. The stored grader input is stripped from
+// the response (the page never needs it, and it would double the bytes).
 //
 // Response size: Vercel caps a function response at ~4.5 MB and a dense
 // results day is a few hundred KB, so groups are read until ~3.5 MB is
@@ -26,6 +34,7 @@
 import { NextResponse } from 'next/server';
 import { GRADED_CACHE_VERSION, GRADED_CACHE_LEGACY } from '@/lib/graded-cache-key';
 import { kvMGet } from '@/lib/kv';
+import { regradeIndiaDayPayload, stripGradeInput } from '@/lib/india-regrade';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -56,6 +65,7 @@ export async function GET(req: Request) {
   const deferred: string[] = [];
   let bytes = 0;
   let kvCommands = 0;
+  let regraded = 0;
 
   for (let i = 0; i < dates.length; i += GROUP) {
     const group = dates.slice(i, i + GROUP);
@@ -89,13 +99,23 @@ export async function GET(req: Request) {
       const f = found.get(d);
       if (!f) { missing.push(d); continue; }
       if (bytes >= BUDGET_BYTES) { deferred.push(d); continue; }
-      bytes += JSON.stringify(f.payload).length;
-      days.push({ date: d, payload: f.payload, engine: f.engine, stale: f.stale });
+      if (f.stale) {
+        try {
+          const re = regradeIndiaDayPayload(f.payload, f.engine);
+          if (re) {
+            regraded++;
+            f.payload = re; f.engine = GRADED_CACHE_VERSION; f.stale = false;
+          }
+        } catch { /* keep the stale label */ }
+      }
+      const out = stripGradeInput(f.payload);
+      bytes += JSON.stringify(out).length;
+      days.push({ date: d, payload: out, engine: f.engine, stale: f.stale });
     }
   }
 
   return NextResponse.json(
-    { engine_current: GRADED_CACHE_VERSION, days, missing, deferred, kv_commands: kvCommands, bytes },
+    { engine_current: GRADED_CACHE_VERSION, days, missing, deferred, regraded, kv_commands: kvCommands, bytes },
     { headers: { 'Cache-Control': 'no-store' } },
   );
 }

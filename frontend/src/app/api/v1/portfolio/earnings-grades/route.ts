@@ -16,13 +16,16 @@
 
 import { NextRequest } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
+import { gradedKeyCandidates } from '@/lib/graded-cache-key';
+import { withCurrentIndiaRules } from '@/lib/india-regrade';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const INDEX_KEY = 'search:idx:v3'; // zzz300 — bumped to invalidate old cache w/o pead
 const INDEX_TTL_SECONDS = 15 * 60;
-const CACHE_PREFIX = 'graded:v10:';
+// zzz819 — was a hard-coded 'graded:v10:' that nothing writes any more; the
+// current namespace is read first, then the legacy ones (regraded in memory).
 const LOOKBACK_BUSINESS_DAYS = 120;
 
 type Tier = 'BLOCKBUSTER' | 'STRONG' | 'MIXED' | 'AVOID';
@@ -55,9 +58,12 @@ async function buildIndex(): Promise<IndexEntry[]> {
     const batch = dates.slice(i, i + CONC);
     await Promise.all(batch.map(async (d, batchIdx) => {
       const daysBack = i + batchIdx;
-      const key = CACHE_PREFIX + d;
       let payload: any = null;
-      try { payload = await kvGet(key); } catch { return; }
+      for (const key of gradedKeyCandidates(d)) {
+        try { payload = await kvGet(key); } catch { payload = null; }
+        if (payload && payload.by_tier) { payload = withCurrentIndiaRules(payload, key); break; }
+        payload = null;
+      }
       if (!payload || !payload.by_tier) return;
       for (const tier of TIERS) {
         const arr = payload.by_tier[tier];

@@ -15,6 +15,7 @@ import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { verifyCronSecret } from '@/lib/verifyAuth';
 import { gradedKeyCandidates, GRADED_CACHE_VERSION } from '@/lib/graded-cache-key';
+import { withCurrentIndiaRules } from '@/lib/india-regrade';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -124,7 +125,9 @@ export async function GET(req: Request) {
       try {
         const hit = await kvGet<GradedPayload>(key);
         if (rowCount(hit) > 0) {
-          payload = hit;
+          // zzz819 — a legacy day is regraded in memory under the current
+          // rules, so the bench never carries a verdict the engine has retired.
+          payload = withCurrentIndiaRules(hit, key);
           if (!key.startsWith(`graded:${GRADED_CACHE_VERSION}:`)) usedLegacy = true;
           break;
         }

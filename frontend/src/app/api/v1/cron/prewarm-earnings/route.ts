@@ -24,6 +24,8 @@
 
 import { NextResponse } from 'next/server';
 import { railwaySelfFetch } from '@/lib/railway-self-fetch';
+import { kvGet, kvSet } from '@/lib/kv';
+import { recheckableDrops, unconfirmedRows } from '@/lib/india-eo-card-data';  // zzz820
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -37,6 +39,20 @@ const DEADLINE_MS = 250_000;   // stop starting new work after ~4m10s
 const UNDERCOUNT_RATIO = 0.6;
 const MIN_RAW = 8;
 const FILL_THRESHOLD = 8;      // # of un-enriched cards that triggers a fill pass
+// zzz820 — RE-CHECK (companies the grader DROPPED): a company whose new quarter
+// was not on Screener at the first scan, or whose filing was not yet confirmed,
+// used to stay dropped for good — the health check above never looked at
+// `_dropped`, so August results were still "not on Screener yet" in late
+// September. A date with at least RECHECK_MIN such companies, within
+// RECHECK_MAX_AGE_DAYS, is rebuilt at most once per RECHECK_LOCK_S, and at
+// most RECHECK_BUDGET dates per run, newest first.
+// zzz820b — a date holding ANY row whose growth was measured against an
+// unverified year-ago quarter (the gappy-Screener positional bug) is re-checked
+// under the same bounds, so its tier is rebuilt from date-matched figures.
+const RECHECK_BUDGET = 2;
+const RECHECK_MIN = 3;
+const RECHECK_MAX_AGE_DAYS = 60;
+const RECHECK_LOCK_S = 20 * 3600;
 
 function tierTotal(g: any): number {
   return Object.values(g?.by_tier || {}).reduce<number>(
@@ -61,6 +77,8 @@ export async function GET(req: Request) {
 
   const results: any[] = [];
   let healsUsed = 0, fillsUsed = 0, healed = 0, filled = 0, refreshed = 0, healthy = 0;
+  let rechecksUsed = 0, rechecked = 0;
+  const recheckBudgetMax = Math.max(0, parseInt(searchParams.get('recheck') || String(RECHECK_BUDGET), 10) || 0);
   let budgetStopped = false;
 
   // zzz429 — rebuild the server Conviction Beats bench FIRST, before the heal/fill
@@ -116,6 +134,13 @@ export async function GET(req: Request) {
     return r.ok ? await r.json() : null;
   };
 
+  const recentlyRechecked = async (date: string): Promise<boolean> => {
+    try {
+      const t = await kvGet<number>(`graded:recheck-lock:${date}`);
+      return !!t && Date.now() - Number(t) < RECHECK_LOCK_S * 1000;
+    } catch { return false; }
+  };
+
   for (let i = 0; i <= windowDays; i++) {
     if (Date.now() - start > DEADLINE_MS) { budgetStopped = true; break; }
     const d = new Date(today);
@@ -145,8 +170,14 @@ export async function GET(req: Request) {
         });
         entry.graded_status = chk.status;
         let cand = 0, raw = 0, failed = 0;
+        let waiting = 0;
+        let unconfirmed = 0;   // zzz820b — rows whose growth used an unverified year-ago quarter
         if (chk.ok) {
           const j = await chk.json();
+          waiting = recheckableDrops(j?._dropped);
+          entry.waiting_for_data = waiting;
+          unconfirmed = unconfirmedRows(j);
+          if (unconfirmed) entry.unconfirmed_rows = unconfirmed;
           cand = Number(j?.candidates_total) || tierTotal(j);
           raw = Number(j?.raw_items_total) || 0;
           failed = Array.isArray(j?._failed_tickers) ? j._failed_tickers.length : 0;
@@ -163,6 +194,13 @@ export async function GET(req: Request) {
           const f = await fillGraded(date);
           if (f) { entry.graded_total = tierTotal(f); entry.refresh_msg = f?._refresh; entry.failed_after = Array.isArray(f?._failed_tickers) ? f._failed_tickers.length : undefined; }
           entry.action = 'filled'; fillsUsed++; filled++;
+        } else if ((waiting >= RECHECK_MIN || unconfirmed > 0) && i <= RECHECK_MAX_AGE_DAYS && rechecksUsed < recheckBudgetMax
+                   && !(await recentlyRechecked(date))) {
+          // zzz820 — rebuild so dropped companies are graded once their data lands.
+          try { await kvSet(`graded:recheck-lock:${date}`, Date.now(), RECHECK_LOCK_S); } catch {}
+          const g = await forceGraded(date);
+          if (g) { entry.graded_total_after = tierTotal(g); entry.waiting_after = recheckableDrops(g?._dropped); entry.unconfirmed_after = unconfirmedRows(g); }
+          entry.action = 'rechecked-dropped'; rechecksUsed++; rechecked++;
         } else if (undercounted) {
           entry.action = 'heal-deferred (budget)'; budgetStopped = true;
         } else if (failed >= FILL_THRESHOLD) {
@@ -184,8 +222,8 @@ export async function GET(req: Request) {
     theme_rotation_warm: themeRotationWarmed,   // zzz483
     window_days: windowDays,
     scanned: results.length,
-    refreshed, healed, filled, healthy,
-    heals_used: healsUsed, fills_used: fillsUsed,
+    refreshed, healed, filled, healthy, rechecked,
+    heals_used: healsUsed, fills_used: fillsUsed, rechecks_used: rechecksUsed,
     budget_stopped: budgetStopped,
     elapsed_ms: Date.now() - start,
     results,

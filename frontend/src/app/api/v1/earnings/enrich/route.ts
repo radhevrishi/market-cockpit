@@ -13,6 +13,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
+import { isQuarterEndStale, yoyFromDatedSeries, sameFigure } from '@/lib/india-eo-card-data';  // zzz820
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { proxiedFetch, fetchWorkerStock } from '@/lib/proxy-fetch';
 import { fetchCompanyFinancialResults } from '@/lib/nse';
@@ -368,14 +369,35 @@ async function fetchScreenerHtml(url: string): Promise<string | null> {
   return null;
 }
 
+// zzz820 — a Screener page whose newest quarter ended more than this many days
+// ago is STALE for a results filing. The commonest cause is the CONSOLIDATED
+// page of a company that stopped publishing consolidated statements (JYOTHYLAB
+// consolidated ends Mar 2025, SUNDARAM Mar 2020, ALKYLAMINE Mar 2020 …) while
+// its standalone page is current. Consolidated was always read first and won,
+// so those companies were dropped as "new quarter not on Screener yet" for
+// months. The standalone page is now read too and the FRESHER page wins.
+// (isQuarterEndStale lives in lib/india-eo-card-data so it is unit-tested.)
+
 async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
   const urls = [
     `https://www.screener.in/company/${encodeURIComponent(symbol)}/consolidated/`,
     `https://www.screener.in/company/${encodeURIComponent(symbol)}/`,
   ];
+  let best: any | null = null;
   for (const url of urls) {
+    const r = await fetchScreenerForUrl(url);
+    if (!r) continue;
+    if (!best || String(r.latest_quarter_end_iso || '') > String(best.latest_quarter_end_iso || '')) best = r;
+    // A fresh page is final (consolidated preferred when both are current).
+    if (!isQuarterEndStale(best.latest_quarter_end_iso)) break;
+  }
+  return best;
+}
+
+async function fetchScreenerForUrl(url: string): Promise<any | null> {
+  {
     const html = await fetchScreenerHtml(url);
-    if (!html) continue;
+    if (!html) return null;
     const q = parseQuartersTable(html);
     // zzz416b — was `q.labels.length < 5`, which rejected recent IPOs outright:
     // their Screener quarterly table only carries the RHP-disclosed quarters
@@ -383,7 +405,7 @@ async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
     // direct-Screener result was discarded before the month-matched YoY
     // fallback below could ever run. Two columns is enough for latest-quarter
     // absolutes; YoY fills in whenever the year-ago column exists.
-    if (!q || q.labels.length < 2) continue;
+    if (!q || q.labels.length < 2) return null;
     const ratios = parseTopRatios(html);
     const sector = parseSector(html);
     const N = q.labels.length;
@@ -433,7 +455,7 @@ async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
     const patPrev = get('Net Profit', priorIdx) ?? get('Profit', priorIdx);
     const epsCurr = get('EPS', latestIdx);
     const epsPrev = get('EPS', priorIdx);
-    if (salesCurr == null && patCurr == null && epsCurr == null) continue;
+    if (salesCurr == null && patCurr == null && epsCurr == null) return null;
     const cp = ratios['Current Price'];
     const hi = ratios['High'] ?? ratios['52w High'];
     const mcap = ratios['Market Cap'] ?? null;
@@ -1348,7 +1370,10 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   // zzz367 — v10->v11: v10 cached the field-less payloads (fetchScreenerForSymbol
   // was null in prod, so no trends). v11 forces a clean re-fetch that now carries the
   // trends via the proven fetchScreenerCFO path (extractScreenerTrends).
-  const cacheKey = filedHint ? `enrich:v15:${symbol}:${filedHint}` : `enrich:v15:${symbol}`;  // zzz377 v14->v15: flush so worker-sourced quarterly trends land. zzz375 v13->v14. zzz372 v12->v13
+  // zzz820 v15->v16: year-ago matched by DATE (not 4 columns back), stale
+  // consolidated pages no longer win over a fresh standalone page, and
+  // Screener cherry-picks must be the same statement/quarter as the primary.
+  const cacheKey = filedHint ? `enrich:v16:${symbol}:${filedHint}` : `enrich:v16:${symbol}`;  // zzz377 v14->v15: flush so worker-sourced quarterly trends land. zzz375 v13->v14. zzz372 v12->v13
   if (isRedisAvailable() && !bypassCache) {
     try {
       const cached = await kvGet(cacheKey);
@@ -1538,6 +1563,20 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     const best = scored[0];
     worker = best.worker; nse = best.nse; screener = best.screener; yahoo = best.yahoo; yahooFund = best.yahooFund; cfoOnly = best.cfoOnly; ghFund = best.ghFund;
   }
+  // zzz820 — the Worker reads the CONSOLIDATED page only. For a company that
+  // stopped consolidating, that page's newest quarter is years old while the
+  // direct scrape (which now falls back to the fresher standalone page) has
+  // the current quarter. A stale Worker answer must not win the merge over a
+  // fresher one — that is what dropped JYOTHYLAB, CERA, DHANUKA, 3MINDIA …
+  // as "new quarter not on Screener yet" for the whole season.
+  if (worker && isQuarterEndStale(worker.latest_quarter_end_iso)) {
+    const fresher = [nse, screener].find((x: any) => x && x.latest_quarter_end_iso
+      && String(x.latest_quarter_end_iso) > String(worker.latest_quarter_end_iso || ''));
+    if (fresher) {
+      console.log(`[enrich] zzz820: worker quarter ${worker.latest_quarter_end_iso} is stale for ${symbol}; using ${fresher.financials_source || 'fresher source'} (${fresher.latest_quarter_end_iso})`);
+      worker = null;
+    }
+  }
   // Merge priority (most reliable first):
   //   1. Cloudflare Worker  — pre-parsed, Cloudflare-immune (Patch 0519)
   //   2. NSE structured     — official Q-data when available
@@ -1588,6 +1627,17 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   // the merge but left ROCE/ROE null, the more-reliable Screener value fills
   // ahead of the Yahoo returnOnAssets proxy. Guarded on null → never overwrites
   // a good primary value.
+  // zzz820 — the YoY cherry-pick below takes the year-ago figure from the
+  // direct Screener page while the current figure came from the primary
+  // source. That is only honest when both describe the SAME quarter on the
+  // SAME statement basis (consolidated vs standalone): the current-quarter
+  // sales (or profit) must agree. Otherwise a consolidated "now" would be
+  // compared with a standalone "a year ago".
+  const _scSameBasis = !!screener && (
+    (out.financials_source === 'screener')
+    || ((screener as any).latest_quarter_end_iso === out.latest_quarter_end_iso
+        && (sameFigure((screener as any).sales_curr_cr, out.sales_curr_cr) || sameFigure((screener as any).pat_curr_cr, out.pat_curr_cr)))
+  );
   if (screener) {
     const sc = screener as any;
     if (out.roce == null && typeof sc.roce === 'number' && Number.isFinite(sc.roce)) {
@@ -1604,21 +1654,21 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     // priorIdx fallback in fetchScreenerForSymbol) never surfaced. Fill the
     // whole prev/yoy family from the direct scrape when the primary left it
     // null — never overwrites a populated primary value.
-    if (out.sales_yoy_pct == null && sc.sales_yoy_pct != null) {
+    if (_scSameBasis && out.sales_yoy_pct == null && sc.sales_yoy_pct != null) {
       out.sales_yoy_pct = sc.sales_yoy_pct;
       if (out.sales_prev_cr == null) out.sales_prev_cr = sc.sales_prev_cr ?? null;
       out._yoy_source = 'screener';
     }
-    if (out.pat_yoy_pct == null && sc.pat_yoy_pct != null) {
+    if (_scSameBasis && out.pat_yoy_pct == null && sc.pat_yoy_pct != null) {
       out.pat_yoy_pct = sc.pat_yoy_pct;
       if (out.pat_prev_cr == null) out.pat_prev_cr = sc.pat_prev_cr ?? null;
     }
-    if (out.eps_yoy_pct == null && sc.eps_yoy_pct != null) {
+    if (_scSameBasis && out.eps_yoy_pct == null && sc.eps_yoy_pct != null) {
       out.eps_yoy_pct = sc.eps_yoy_pct;
       if (out.eps_prev == null) out.eps_prev = sc.eps_prev ?? null;
     }
-    if (out.opm_prev_pct == null && sc.opm_prev_pct != null) out.opm_prev_pct = sc.opm_prev_pct;
-    if (out.op_profit_yoy_pct == null && sc.op_profit_yoy_pct != null) out.op_profit_yoy_pct = sc.op_profit_yoy_pct;
+    if (_scSameBasis && out.opm_prev_pct == null && sc.opm_prev_pct != null) out.opm_prev_pct = sc.opm_prev_pct;
+    if (_scSameBasis && out.op_profit_yoy_pct == null && sc.op_profit_yoy_pct != null) out.op_profit_yoy_pct = sc.op_profit_yoy_pct;
   }
   if (yahooFund) {
     const yf = yahooFund as any;
@@ -1738,25 +1788,31 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   // oldest-first tail). Fixes recent-IPO cards (VIKRAN etc.) where the Worker
   // supplies quarters_sales/eps/opm but no prev/YoY, and the direct-Screener
   // month-match path (zzz416) was bypassed because the Worker won the merge.
+  //
+  // zzz820 — that fallback took "4 columns back" as the year-ago quarter. On a
+  // gappy table (half-yearly SME filers, a change of financial year) that is a
+  // DIFFERENT quarter — FOSECOIND Jun 2026 was compared with Mar 2025, MODIS
+  // with Mar 2025 (+192% sales, +469% EPS). Profit had no such fallback, so it
+  // showed '—' beside a confident, wrong sales and EPS growth. The year-ago
+  // column is now found BY DATE from the series' own column labels, for
+  // profit too; without dates, nothing is derived.
   {
-    const _yoyFromSeries = (arr: any): { curr: number; prev: number } | null => {
-      if (!Array.isArray(arr) || arr.length < 5) return null;
-      const curr = Number(arr[arr.length - 1]);
-      const prev = Number(arr[arr.length - 5]);  // 4 quarters back = year-ago
-      if (!Number.isFinite(curr) || !Number.isFinite(prev) || prev === 0) return null;
-      return { curr, prev };
-    };
     const _pctChg = (c: number, p: number) => Math.round(((c - p) / Math.abs(p)) * 1000) / 10;
+    const dates = (out as any).quarters_dates;
     if (out.sales_yoy_pct == null) {
-      const r = _yoyFromSeries((out as any).quarters_sales);
-      if (r) { out.sales_yoy_pct = _pctChg(r.curr, r.prev); if (out.sales_prev_cr == null) out.sales_prev_cr = r.prev; out._yoy_source = (out as any)._yoy_source || 'quarters-series'; }
+      const r = yoyFromDatedSeries((out as any).quarters_sales, dates);
+      if (r) { out.sales_yoy_pct = _pctChg(r.curr, r.prev); if (out.sales_prev_cr == null) out.sales_prev_cr = r.prev; out._yoy_source = (out as any)._yoy_source || 'quarters-series-dated'; }
+    }
+    if (out.pat_yoy_pct == null) {
+      const r = yoyFromDatedSeries((out as any).quarters_pat, dates);
+      if (r) { out.pat_yoy_pct = _pctChg(r.curr, r.prev); if (out.pat_prev_cr == null) out.pat_prev_cr = r.prev; }
     }
     if (out.eps_yoy_pct == null) {
-      const r = _yoyFromSeries((out as any).quarters_eps);
+      const r = yoyFromDatedSeries((out as any).quarters_eps, dates);
       if (r) { out.eps_yoy_pct = _pctChg(r.curr, r.prev); if ((out as any).eps_prev == null) (out as any).eps_prev = r.prev; }
     }
     if (out.opm_prev_pct == null) {
-      const r = _yoyFromSeries((out as any).quarters_opm);
+      const r = yoyFromDatedSeries((out as any).quarters_opm, dates);
       if (r) { out.opm_prev_pct = r.prev; }
     }
   }

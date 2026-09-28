@@ -217,12 +217,12 @@ describe('exports', () => {
     day('2026-09-24', [r('KAYNES', 'BLOCKBUSTER', 90, 'Kaynes Technology, India'), r('543193', 'STRONG', 70, 'Some BSE Co')]),
   ]);
 
-  test('CSV carries the date, the real company/score/YoY fields, and "also reported"', () => {
+  test('CSV carries the date, the real company/YoY fields, and "also reported"', () => {
     const csv = windowCsv(sortByDate(merged).flatMap((g) => g.rows)).split('\n');
     assert.equal(csv[0].split(',')[0], 'Date');
     assert.equal(csv.length, 3);
     assert.ok(csv[1].startsWith('2026-09-25,STRONG,KAYNES,"Kaynes Technology, India",'));
-    assert.ok(csv[1].includes(',74,'));
+    assert.ok(!csv[0].includes('Score'));   // zzz820b — no 0–100 score columns
     assert.ok(csv[1].includes(',31.5,'));
     assert.ok(csv[1].includes(',2026-09-24,current,'));
   });

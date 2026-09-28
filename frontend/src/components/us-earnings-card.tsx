@@ -343,7 +343,9 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
           style={{
             fontSize: 9, fontWeight: 800, letterSpacing: 0.4, lineHeight: 1,
             padding: '3px 5px', borderRadius: 3, whiteSpace: 'nowrap',
-            color: meta.color, border: `1px solid ${meta.color}55`,
+            // zzz818 — mixed with the theme text colour so a yellow MIXED
+            // stays readable on the light theme and in print.
+            color: `color-mix(in srgb, ${meta.color} 60%, var(--mc-text-1))`, border: `1px solid ${meta.color}`,
             background: `${meta.color}14`, alignSelf: 'center',
           }}
         >

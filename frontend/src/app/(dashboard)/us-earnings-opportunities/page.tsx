@@ -38,6 +38,12 @@ import { CardBadgesToggle } from '@/components/card-badges';
 import { classifyGradedRow, ABFG_META, type AbfgPattern } from '@/lib/earnings/pattern-abfg';
 import { resolveSearch, scoreRow, hiddenNote, type SearchOutcome, type WindowHit, type RankedHit } from '@/lib/earnings-search';
 import { freshestFirst } from '@/lib/india-earnings-window';
+// zzz818 — the tier chips filter (multi-select, ?tier= in the URL), plus the
+// one-click BLOCKBUSTER + STRONG chip — the same helpers as the India page.
+import {
+  parseTierParam, withTierParam, toggleTier, passesTier,
+  isTopTiersSel, toggleTopTiers, topTiersCount, tierEmptyMessage, type WindowTier,
+} from '@/lib/india-earnings-window';
 import { useUrlSearchQuery, SearchResultsPanel } from '@/components/earnings-search-kit';
 
 interface PendingFiler {
@@ -245,6 +251,23 @@ export default function UsEarningsOpportunitiesPage() {
   // zzz812 — the search text lives in ?q= (survives refresh, shareable) and
   // is debounced 150 ms; polling re-renders never touch it.
   const { q: find, setQ: setFind, debounced: findQ } = useUrlSearchQuery();
+  // zzz818 — tier filter: empty = every tier. Read from ?tier= after mount,
+  // written back with every other parameter (?q= included) untouched.
+  const [tierSel, setTierSel] = useState<WindowTier[]>([]);
+  const [tierUrlReady, setTierUrlReady] = useState(false);
+  useEffect(() => {
+    try { setTierSel(parseTierParam(new URLSearchParams(window.location.search).get('tier'))); } catch { /* no window */ }
+    setTierUrlReady(true);
+  }, []);
+  useEffect(() => {
+    if (!tierUrlReady) return;
+    try {
+      const cur = window.location.pathname + window.location.search + window.location.hash;
+      const next = withTierParam(cur, tierSel);
+      if (next !== cur) window.history.replaceState(window.history.state, '', next);
+    } catch { /* ignore */ }
+  }, [tierUrlReady, tierSel]);
+  const tierFilterOn = tierSel.length > 0;
   const [findLoading, setFindLoading] = useState(false);
   const [findAdhoc, setFindAdhoc] = useState<any | null>(null);
   const [findErr, setFindErr] = useState<string | null>(null);
@@ -698,14 +721,24 @@ export default function UsEarningsOpportunitiesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, minCap, capBucket, quality, patternOnly]);
 
-  const shownTotal = US_TIER_ORDER.reduce((n, t) => n + view[t].length, 0);
+  // zzz818 — the tier chips' counts: each tier under every OTHER filter, so a
+  // chip says exactly what clicking it shows. (They used to count the whole
+  // window, ignoring the filters, and the chips were labels, not buttons.)
+  const tierCounts: Record<string, number> = { BLOCKBUSTER: view.BLOCKBUSTER.length, STRONG: view.STRONG.length, MIXED: view.MIXED.length, AVOID: view.AVOID.length };
+  // What is on screen and exported: `view` with the tier selection applied.
+  const shownView = useMemo(() => {
+    const out: Record<EarningsTier, UsGradedRow[]> = { BLOCKBUSTER: [], STRONG: [], MIXED: [], AVOID: [] };
+    for (const t of US_TIER_ORDER) out[t] = passesTier({ tier: t }, tierSel) ? view[t] : [];
+    return out;
+  }, [view, tierSel]);
+  const shownTotal = US_TIER_ORDER.reduce((n, t) => n + shownView[t].length, 0);
 
   // Expand-all works on every row that passes the filters, whether or not its
   // tier section happens to be collapsed — the toggle is about the cards, not
   // about the sections.
   const visibleKeys = useMemo(
-    () => US_TIER_ORDER.flatMap((t) => view[t].map(rowKey)),
-    [view],
+    () => US_TIER_ORDER.flatMap((t) => shownView[t].map(rowKey)),
+    [shownView],
   );
   const allCardsOpen = visibleKeys.length > 0 && visibleKeys.every((k) => openCards.has(k));
   const toggleAllCards = () => {
@@ -748,9 +781,10 @@ export default function UsEarningsOpportunitiesPage() {
     if (quality.multibagger && !r.multibagger_setup) out.push('multibagger setup');
     if (quality.beatCheap && ((r.sales_yoy_pct ?? -1) < 15 || r.pe == null || r.pe <= 0 || r.pe > 30)) out.push('Beat + Cheap');
     if (patternOnly && classifyGradedRow(r)?.pattern !== patternOnly) out.push(`pattern ${patternOnly}`);
+    if (tierSel.length > 0 && !passesTier(r, tierSel)) out.push(`tier filter: ${tierSel.join(' + ')}`);
     if (!out.length && r.tier && !expanded[r.tier]) out.push(`tier ${r.tier} collapsed`);
     return out;
-  }, [minCap, capBucket, quality, patternOnly, expanded]);
+  }, [minCap, capBucket, quality, patternOnly, expanded, tierSel]);
 
   const [findOutcome, setFindOutcome] = useState<SearchOutcome<UsGradedRow, any> | null>(null);
   const [findBusy, setFindBusy] = useState(false);
@@ -877,7 +911,7 @@ export default function UsEarningsOpportunitiesPage() {
   };
 
   const exportCsv = () => {
-    const rows = US_TIER_ORDER.flatMap((t) => view[t]);
+    const rows = US_TIER_ORDER.flatMap((t) => shownView[t]);
     const head = ['Ticker', 'Company', 'Tier', 'Quadrant', 'Quality', 'Inflection', 'Score', 'Quarter', 'Filed', 'Rev YoY %', 'EPS YoY %',
       'OPM %', 'OPM prev %', 'CFO/NI', 'PEAD', 'RS', 'Stage', 'Mkt cap $M', 'Price', 'P/E', 'D1 %', 'Sector', 'Filing'];
     const esc = (v: any) => `"${String(v ?? '').replace(/"/g, '""')}"`;
@@ -893,7 +927,7 @@ export default function UsEarningsOpportunitiesPage() {
   };
 
   const exportTradingView = () => {
-    const rows = US_TIER_ORDER.flatMap((t) => view[t]);
+    const rows = US_TIER_ORDER.flatMap((t) => shownView[t]);
     download(`us-earnings-${date}-tradingview.txt`, rows.map((r) => r.ticker).join(','), 'text/plain');
   };
 
@@ -1033,16 +1067,42 @@ export default function UsEarningsOpportunitiesPage() {
         )}
       </div>
 
-      {/* ── tier + quality + cap chips (counts are pre-filter, like India) ── */}
+      {/* ── tier + quality + cap chips ──
+          zzz818 — the tier chips are FILTERS (they were labels): click one to
+          show only that tier, click more to add, "All" clears; the combined
+          chip picks exactly BLOCKBUSTER + STRONG. Tier counts respect every
+          other filter; the quality / cap chip counts stay pre-filter. */}
       {data && allRows.length > 0 && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
-          {US_TIER_ORDER.map((t) => (
-            <span key={t} style={{
-              fontSize: 'var(--mc-text-xs)', fontWeight: 800, padding: '5px 10px', borderRadius: 999,
-              border: `1px solid ${TIER_META[t].color}`, color: TIER_META[t].color,
-              backgroundColor: `color-mix(in srgb, ${TIER_META[t].color} 10%, transparent)`,
-            }}>{TIER_META[t].icon} {t} {counts[t]}</span>
-          ))}
+          <button onClick={() => setTierSel([])} aria-pressed={!tierFilterOn} title="Show every tier"
+            style={btn(!tierFilterOn)}>All {US_TIER_ORDER.reduce((n, t) => n + tierCounts[t], 0)}</button>
+          {(() => {
+            const on = isTopTiersSel(tierSel);
+            const n = topTiersCount(tierCounts);
+            return (
+              <button className="eo-top-tiers-chip" onClick={() => setTierSel((sel) => toggleTopTiers(sel))} aria-pressed={on}
+                title={on ? 'Showing BLOCKBUSTER + STRONG — click to show every tier' : `Show only BLOCKBUSTER and STRONG — ${n} with the current filters`}
+                style={{
+                  fontSize: 'var(--mc-text-xs)', fontWeight: 800, padding: '5px 10px', borderRadius: 999, cursor: 'pointer',
+                  border: `${on ? 2 : 1}px solid #10B981`,
+                  background: on ? 'color-mix(in srgb, #10B981 26%, transparent)' : 'linear-gradient(90deg, #F59E0B15, #10B98115)',
+                  color: 'color-mix(in srgb, #10B981 55%, var(--mc-text-1))',
+                }}>{on ? '✓ ' : ''}⭐+🟢 BLOCKBUSTER + STRONG ({n})</button>
+            );
+          })()}
+          {US_TIER_ORDER.map((t) => {
+            const on = tierSel.includes(t as WindowTier);
+            const c = TIER_META[t].color;
+            return (
+              <button key={t} onClick={() => setTierSel((sel) => toggleTier(sel, t as WindowTier))} aria-pressed={on}
+                title={on ? `Showing ${t} — click to remove it from the filter` : `Show only ${t}${tierFilterOn ? ' (added to the tiers already picked)' : ''} — ${tierCounts[t]} with the current filters`}
+                style={{
+                  fontSize: 'var(--mc-text-xs)', fontWeight: 800, padding: '5px 10px', borderRadius: 999, cursor: 'pointer',
+                  border: `${on ? 2 : 1}px solid ${c}`, color: `color-mix(in srgb, ${c} 60%, var(--mc-text-1))`,
+                  backgroundColor: `color-mix(in srgb, ${c} ${on ? 28 : 10}%, transparent)`,
+                }}>{on ? '✓ ' : ''}{TIER_META[t].icon} {t} {tierCounts[t]}</button>
+            );
+          })}
           <span style={{ width: 1, height: 20, backgroundColor: 'var(--mc-bg-4)', margin: '0 2px' }} />
           <button onClick={() => setQuality((q) => ({ ...q, elite: !q.elite }))} style={btn(quality.elite, '#F59E0B')}>⭐ ELITE {counts.elite}</button>
           <button onClick={() => setQuality((q) => ({ ...q, pead70: !q.pead70 }))} style={btn(quality.pead70, '#EF4444')}>🔥 PEAD≥70 {counts.pead70}</button>
@@ -1592,7 +1652,16 @@ export default function UsEarningsOpportunitiesPage() {
         </div>
       )}
 
-      {viewMode === 'GRADED' && data && shownTotal === 0 && !isLoading && (
+      {/* zzz818 — a tier chip that leaves nothing says so plainly. */}
+      {viewMode === 'GRADED' && data && shownTotal === 0 && tierFilterOn && allRows.length > 0 && (
+        <div className="eo-tier-empty" style={panel()}>
+          <div style={{ fontWeight: 700, color: 'var(--mc-text-0)' }}>
+            {tierEmptyMessage(tierSel, 'window')}.{' '}
+            <button onClick={() => setTierSel([])} style={{ background: 'none', border: 'none', color: 'var(--mc-cyan)', fontWeight: 800, cursor: 'pointer' }}>Show all tiers</button>
+          </div>
+        </div>
+      )}
+      {viewMode === 'GRADED' && data && shownTotal === 0 && !isLoading && !(tierFilterOn && allRows.length > 0) && (
         <div style={panel()}>
           <div style={{ fontWeight: 700, color: 'var(--mc-text-0)', marginBottom: 6 }}>Nothing graded in this window</div>
           <div style={{ color: 'var(--mc-text-2)', fontSize: 'var(--mc-text-sm)' }}>
@@ -1618,10 +1687,11 @@ export default function UsEarningsOpportunitiesPage() {
         // it, with a note naming the filters.
         const pinned = findPin ? (data?.by_tier?.[tier] || []).find((r: any) => rowKey(r) === findPin.key) : undefined;
         const pinnedReasons = pinned ? findHiddenReasons(pinned).filter((x) => !/collapsed/.test(x)) : [];
-        const rows = pinned && !view[tier].some((r) => rowKey(r) === findPin!.key) ? [pinned, ...view[tier]] : view[tier];
+        const rows = pinned && !shownView[tier].some((r) => rowKey(r) === findPin!.key) ? [pinned, ...shownView[tier]] : shownView[tier];
         if (!rows.length) return null;
         const meta = TIER_META[tier];
-        const open = expanded[tier] || !!pinned;
+        // zzz818 — a picked tier chip opens its section.
+        const open = expanded[tier] || !!pinned || tierFilterOn;
         return (
           <div key={tier} style={{
             marginBottom: 18, borderRadius: 'var(--mc-radius)', overflow: 'hidden',

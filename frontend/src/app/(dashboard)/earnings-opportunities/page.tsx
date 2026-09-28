@@ -48,9 +48,19 @@ import {
 import {
   dedupeWindowEntries, parseTierParam, withTierParam, toggleTier, passesTier, countByTier,
   dayGroups, windowIssues, windowTotals, shownElsewhereByDate, hasNoFinancialData,
+  dropReasonWithCheck,
   type WindowTier,
 } from '@/lib/india-earnings-window';
+// zzz818 — the one-click BLOCKBUSTER + STRONG chip and the empty-state line.
+import { isTopTiersSel, toggleTopTiers, topTiersCount, tierEmptyMessage } from '@/lib/india-earnings-window';
 import { useIndiaEarningsWindow } from './useIndiaEarningsWindow';
+// zzz820 — what a card may honestly show (quarter label, year-ago base, margin
+// for lenders / "0.0%" unknowns, words instead of 0–100 numbers).
+import {
+  checkQuarterLabel, growthView, marginView, axisWord, driftWord, partWord, notRecordedNote, narrativeForDisplay,
+  holdUnconfirmedPayload, yearAgoUnverified, stripGradeInputForStorage, UNCONFIRMED_LABEL,
+  type MarginView,
+} from '@/lib/india-eo-card-data';
 import { GRADED_CACHE_VERSION } from '@/lib/graded-cache-key';
 
 // ─── Calendar payload types ────────────────────────────────────────────────
@@ -944,7 +954,8 @@ export default function EarningsOpportunitiesPage() {
     // PATCH 0545 — coalesced via 250ms idle window. Avoids stringify+writeIO
     // on every React Query revalidate when the user is rapid-clicking the
     // date arrows (each click can fire a setData + writeLsCache pair).
-    try { debouncedSetItem(LS_PREFIX + date, JSON.stringify({ ...data, _cachedAt: Date.now() })); } catch {}
+    // zzz820b — the grader's stored input (grade_input) is never kept in the browser.
+    try { debouncedSetItem(LS_PREFIX + date, JSON.stringify({ ...stripGradeInputForStorage(data), _cachedAt: Date.now() })); } catch {}
   };
 
   // PATCH 0161/0165/0185 — graded query reads from localStorage initialData
@@ -1873,6 +1884,8 @@ export default function EarningsOpportunitiesPage() {
     }> = [];
     for (const tier of ['BLOCKBUSTER', 'STRONG'] as const) {
       for (const c of (syncSource.by_tier[tier] || [])) {
+        // zzz820b — never bench a top tier built on unverified growth.
+        if ((c as any)._tier_unconfirmed || yearAgoUnverified(c)) continue;
         const g = deriveGuidance(c);
         // PATCH 0911 — Parse the graded payload's "quarter" string (e.g.
         // "Q4 FY26" or "Q1 FY27" or just "Q4") into explicit fields so the
@@ -2302,7 +2315,9 @@ export default function EarningsOpportunitiesPage() {
 
   // PATCH 0176 — Merge force-included tickers into the view. Dedupe by ticker
   // so a force-included one doesn't appear twice if the server also picks it up.
-  const view: OpportunitiesPayload = useMemo(() => {
+  // zzz820b — top-tier rows built on unverified growth are held out of
+  // BLOCKBUSTER / STRONG for every count, chip, export and the bench.
+  const viewMerged: OpportunitiesPayload = useMemo(() => {
     if (!forcedCards || forcedCards.length === 0) return baseView;
     const seenTickers = new Set<string>();
     const merged: Record<EarningsTier, ParsedEarning[]> = { BLOCKBUSTER: [], STRONG: [], MIXED: [], AVOID: [] };
@@ -2328,6 +2343,7 @@ export default function EarningsOpportunitiesPage() {
       candidates_total: baseView.candidates_total + injected,
     };
   }, [baseView, forcedCards]);
+  const view: OpportunitiesPayload = useMemo(() => holdUnconfirmedPayload(viewMerged), [viewMerged]);
 
   // zzz814 — what the counts, filter chips, search and exports read: the
   // single date as before, or the merged window (one row per company).
@@ -2776,31 +2792,15 @@ export default function EarningsOpportunitiesPage() {
             <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--mc-bg-4)', fontSize: 11.5, color: 'var(--mc-text-3)', lineHeight: 1.7 }}>
               {/* zzz227 — exact grading rules, mirrored from the grader code so the
                   doc can never drift from behaviour without a code change here too. */}
+              {/* zzz820b — the India tier is PRICE-FREE since engine v24 (zzz819):
+                  only the reported numbers decide it; the chart, the Day-1
+                  reaction, the 52-week position and thin trading are shown
+                  beside the grade as grey "Price context" chips. */}
               <div style={{ marginBottom: 12, padding: '8px 12px', background: 'color-mix(in srgb, var(--mc-cyan) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', borderRadius: 8 }}>
-                <strong style={{ color: 'var(--mc-cyan)' }}>📐 COMPOSITE SCORE (0–100)</strong> — the big number on each card. Exact formula:<br/>
-                <strong>Score = Magnitude × 0.35 + Quality × 0.25 + Technicals × 0.25 + Methodology × 0.15</strong>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10, marginTop: 8 }}>
-                  <div>
-                    <strong style={{ color: 'var(--mc-text-2)' }}>1 · MAGNITUDE (35%)</strong> — each of Sales / PAT / EPS YoY is bucketed, then blended (Sales 35% · PAT 30% · EPS 35%):<br/>
-                    ≥100% → 100 pts · ≥50% → 90 · ≥25% → 75 · ≥15% → 60 · ≥5% → 40 · ≥0% → 25 · negative → scales toward 0. Missing metrics are dropped from the blend (not punished).
-                  </div>
-                  <div>
-                    <strong style={{ color: 'var(--mc-text-2)' }}>2 · QUALITY (25%)</strong> — starts at 100, each caveat deducts:<br/>
-                    ocf divergence −25 · low quality −25 · optical eps −20 · tax distortion −15 · segment mix shift −10 · still loss-making (loss narrowing) −10 · exceptional item −10 · thin float −8. A Day-1 price reaction is shown as a separate market-reaction note and deducts nothing.
-                    Margin ladder: OPM ≥ +5pp adds +14 · ≥ +3pp adds +10 · ≥ +1pp adds +5 · ≤ −0.5pp costs −8 · ≤ −2pp costs −14.
-                  </div>
-                  <div>
-                    <strong style={{ color: 'var(--mc-text-2)' }}>3 · TECHNICALS (25%)</strong> — Stage base + RS + 52-wk proximity:<br/>
-                    Stage 2 → 70 base · Stage 1 → 45 · Stage 3 → 30 · Stage 4 → 10 · unknown → 50. Plus RS÷3 (RS 90 = +30). Plus 52-wk high distance: within 5% → +15 · within 15% → +8 · within 25% → 0 · below → −15. Trend Template pass → +10.
-                  </div>
-                  <div>
-                    <strong style={{ color: 'var(--mc-text-2)' }}>4 · METHODOLOGY (15%)</strong> — playbook pass count (Trend Template · SEPA · CANSLIM · bonde EP):<br/>
-                    4 pass → 100 · 3 → 80 · 2 → 60 · 1 → 35 · 0 → 10. Floors: any Tier-1 pass (TT/SEPA/CANSLIM) → min 55 · mega triple-beat (≥40/75/75) → min 75 · exceptional (≥40/50/50) → min 65. SEPA pass adds +5.
-                  </div>
-                </div>
-                <div style={{ marginTop: 6, fontSize: 10.5, color: 'var(--mc-text-4)' }}>
-                  Playbook pass rules — <strong>Trend Template</strong>: MA stack aligned + RS ≥ 70 · <strong>SEPA</strong>: Stage 2 + RS ≥ 80 + EPS ≥ 25% + within 15% of 52-wk high · <strong>CANSLIM</strong>: EPS ≥ 25% + Sales ≥ 20% + RS ≥ 70 · <strong>bonde EP</strong>: EPS ≥ 20% with Sales ≥ 5%.
-                </div>
+                <strong style={{ color: 'var(--mc-cyan)' }}>📐 HOW THE TIER IS DECIDED — from the company&apos;s numbers only</strong><br/>
+                The tier looks only at what the company reported: how much sales, profit and earnings per share (EPS) grew against the same quarter last year, the operating margin and whether it widened, whether cash backs the profit, and any warning flags found in the filing.<br/>
+                <strong>Price is not part of the grade.</strong> The chart (stage and relative strength), the share-price move on the day after results (Day-1 reaction), how far the price is from its 52-week high, and thin trading are shown on each card as small grey <em>&ldquo;Price context — not part of the grade&rdquo;</em> chips. A falling share price never lowers a tier, and a rising one never lifts it.<br/>
+                An internal number is used behind the scenes only to order cards within a tier; it is not shown.
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
                 <div style={{ padding: '8px 12px', background: 'color-mix(in srgb, #FCD34D 6%, transparent)', border: '1px solid color-mix(in srgb, #FCD34D 30%, transparent)', borderRadius: 8 }}>
@@ -2812,45 +2812,35 @@ export default function EarningsOpportunitiesPage() {
                   · Not Stage 4 · RS ≥ 60 (if known) · ADTV ≥ ₹1 Cr/day (no thin float)
                 </div>
                 <div style={{ padding: '8px 12px', background: 'color-mix(in srgb, var(--mc-warn) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 30%, transparent)', borderRadius: 8 }}>
-                  <strong style={{ color: 'var(--mc-warn)' }}>⭐ BLOCKBUSTER</strong> — rare (0–3/day). Any ONE path qualifies:<br/>
-                  <strong>A · Clean triple-beat:</strong> Sales, PAT &amp; EPS all ≥ 25% YoY + score ≥ 78 + ≤ 1 caveat + (≥ 1 playbook pass OR strong forward guidance) + chart OK<br/>
-                  <strong>B · Exceptional:</strong> Sales ≥ 40 / PAT ≥ 50 / EPS ≥ 50% + score ≥ 72 + ≤ 2 caveats + chart OK<br/>
-                  <strong>C · Mega:</strong> Sales ≥ 40 / PAT ≥ 75 / EPS ≥ 75% + ≤ 3 caveats + not Stage 4<br/>
-                  <strong>D · Margin inflection:</strong> PAT &amp; EPS ≥ 100% + Sales ≥ −5% + ≤ 3 caveats + not Stage 4<br/>
-                  <strong>E · Inflection (loose):</strong> PAT &amp; EPS ≥ 75% + Sales ≥ 0 + ≤ 2 caveats + not Stage 4<br/>
-                  <strong>F · Completed profit swing:</strong> last year lost money, this year earns it with cash to match + Sales ≥ +25% + OPM ≥ +5pp + ≤ 3 caveats + not Stage 4<br/>
-                  <em>Chart OK = not Stage 4 and within 25% of 52-wk high.</em><br/>
-                  <em>Opening a path is not the label: still loss-making, an unfinished turnaround, or margins down ≥ 1.5pp caps the row at MIXED.</em>
+                  <strong style={{ color: 'var(--mc-warn)' }}>⭐ BLOCKBUSTER</strong> — rare. First the growth must be exceptional (very large sales, profit and EPS growth, or a big margin jump). Then it must pass <strong>every one</strong> of five checks:<br/>
+                  1 · <strong>Real sales growth</strong> — sales up at least 15% on last year.<br/>
+                  2 · <strong>Not small-base maths</strong> — if last year&apos;s profit was a loss or tiny, a huge % means little; it then needs sales up 25%+ and the margin up 3 points+.<br/>
+                  3 · <strong>A healthy margin</strong> — operating margin 12%+ (or a big jump: up 5 points and by half again). For banks and lenders: net profit at least 10% of income.<br/>
+                  4 · <strong>Cash backs the profit</strong> — when cash-flow figures exist, operating cash must be at least 0.6× profit (lenders exempt). No cash data does not count against it.<br/>
+                  5 · <strong>No open warning flag</strong> — e.g. cash not matching profit, a one-off gain, tax-driven profit.<br/>
+                  <em>Miss any check and the card is held at STRONG (or MIXED if sales barely grew), with one plain line under the tier saying why — e.g. &ldquo;Capped at STRONG: revenue grew only 9%&rdquo;.</em>
                 </div>
                 <div style={{ padding: '8px 12px', background: 'color-mix(in srgb, var(--mc-bullish) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 30%, transparent)', borderRadius: 8 }}>
-                  <strong style={{ color: 'var(--mc-bullish)' }}>🟢 STRONG</strong> — all four required:<br/>
-                  · Composite score ≥ 68<br/>
-                  · ≥ 1 playbook passing (Trend Template / SEPA / CANSLIM)<br/>
-                  · ≤ 3 caveat flags<br/>
-                  · Not Stage 4 (chart not in decline)
+                  <strong style={{ color: 'var(--mc-bullish)' }}>🟢 STRONG</strong> — good, clean growth in the numbers with few warning flags, or a BLOCKBUSTER-sized quarter that missed one of the five checks. A loss that is shrinking fast on strongly rising sales can reach STRONG, never higher.
                 </div>
                 <div style={{ padding: '8px 12px', background: 'color-mix(in srgb, #FACC15 6%, transparent)', border: '1px solid color-mix(in srgb, #FACC15 30%, transparent)', borderRadius: 8 }}>
-                  <strong style={{ color: '#FACC15' }}>🟡 MIXED</strong> — either:<br/>
-                  · Composite score ≥ 35 but fails a STRONG condition, OR<br/>
-                  · Was BLOCKBUSTER/STRONG on numbers but demoted for thin float (ADTV &lt; ₹1 Cr/day — can't be traded at size)
+                  <strong style={{ color: '#FACC15' }}>🟡 MIXED</strong> — some good numbers but not enough, too many warning flags, still loss-making, margins shrinking sharply, or a company too small to invest in (under ₹100 Cr, or under ₹500 Cr and barely trading).
                 </div>
                 <div style={{ padding: '8px 12px', background: 'color-mix(in srgb, var(--mc-bearish) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-bearish) 30%, transparent)', borderRadius: 8 }}>
-                  <strong style={{ color: 'var(--mc-bearish)' }}>🔴 AVOID</strong> — any of:<br/>
-                  · Hard fail: Stage 4 chart with RS &lt; 40 (broken chart)<br/>
-                  · Hard fail: EPS YoY negative AND PAT down &gt; 10%<br/>
-                  · Composite score &lt; 35<br/>
-                  <em>Hard fails override the score unless composite ≥ 70.</em>
+                  <strong style={{ color: 'var(--mc-bearish)' }}>🔴 AVOID</strong> — the numbers went the wrong way (e.g. EPS down and profit down more than 10%) or were weak overall.
                 </div>
                 <div style={{ padding: '8px 12px', background: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 8 }}>
-                  <strong style={{ color: 'var(--mc-text-2)' }}>🚩 CAVEAT FLAGS</strong> — each deducts from the Quality score (see #2):<br/>
+                  <strong style={{ color: 'var(--mc-text-2)' }}>⚪ UNCONFIRMED</strong> — the stored growth figures may have been measured against the wrong quarter last year (Screener&apos;s table had a gap). The old tier is shown small and grey, the card is not counted as BLOCKBUSTER or STRONG, and the date is re-checked automatically until it is regraded with correct figures.
+                </div>
+                <div style={{ padding: '8px 12px', background: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 8 }}>
+                  <strong style={{ color: 'var(--mc-text-2)' }}>🚩 CAVEAT FLAGS</strong> — warning flags found in the filing; each counts against the grade (the internal point cost is in brackets):<br/>
                   · <strong>optical eps</strong> (−20) — EPS growth ≥ 3× sales growth (&amp; ≥ 50%), or ≥ 200% YoY, or prior-year EPS was near zero: the beat is likely arithmetic, not operational<br/>
                   · <strong>tax distortion</strong> (−15) — PAT YoY &gt; 100% while Op Profit YoY &lt; 30%: the tax line, not the business, is driving PAT<br/>
                   · <strong>segment mix shift</strong> (−10) — OPM contracted &gt; 1.5pp YoY: growth came from lower-margin mix<br/>
                   · <strong>ocf divergence</strong> (−25) — annual operating cash flow &lt; 60% of PAT, or negative OCF while PAT positive: profits not converting to cash<br/>
-                  · <strong>low quality</strong> (−25) — still loss-making with the loss NOT narrowing (widened, flat, or a profit that swung to a loss); or a Stage 4 chart / &gt; 25% below 52-wk high<br/>
+                  · <strong>low quality</strong> (−25) — still loss-making with the loss NOT narrowing (widened, flat, or a profit that swung to a loss)<br/>
                   · <strong>still loss-making</strong> (−10) — a loss that narrowed YoY. No growth % is computed off a loss; the card says &ldquo;loss narrowed ₹X → ₹Y&rdquo;. Loss at least halved + revenue ≥ +25% + OPM ≥ +5pp and now positive = an operating turnaround, graded STRONG at most<br/>
-                  · <strong>market reaction</strong> (sold off / market rejected print) — a price move after the print, not a fundamental caveat: it may cost the BLOCKBUSTER label but never pushes a STRONG quarter to MIXED<br/>
-                  · <strong>thin float</strong> — ADTV &lt; ₹1 Cr/day: also demotes BLOCKBUSTER/STRONG → MIXED<br/>
+                  · <strong>market reaction</strong> (sold off / market rejected print) and <strong>thin float</strong> — price context only, shown as grey chips; they do not change the tier<br/>
                   · <strong>exceptional item / one-time order</strong> (−10) — filing text flags non-recurring income<br/>
                   · <strong>accelerated depreciation</strong> (−10) · <strong>accounting change / pooling restate</strong> (−12) — comparability of YoY numbers is compromised<br/>
                   · <strong>forex gain / loss</strong> (−8) — currency moves flatter or hurt the print
@@ -3165,7 +3155,7 @@ export default function EarningsOpportunitiesPage() {
               served from KV cache. Suppressing the chip in the all-zero
               case removes the false alarm without hiding genuine
               coverage info when at least one source returns data. */}
-          {coverageStats && (coverageStats.nse > 0 || coverageStats.bse > 0 || coverageStats.total > 0) && (
+          {!windowOn && coverageStats && (coverageStats.nse > 0 || coverageStats.bse > 0 || coverageStats.total > 0) && (
             <span
               title={`NSE corp-announcements: ${coverageStats.nse} filings
 BSE corp-announcements: ${coverageStats.bse} filings
@@ -3184,8 +3174,13 @@ Source label: ${coverageStats.source}`}
             </span>
           )}
           <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--mc-text-4)' }}
-            title="A company can only be GRADED once it has actually FILED its results and our parser has read them. Companies that have only ANNOUNCED a board meeting for this date (results not filed yet) can't be graded — they show in the '📅 SCHEDULED TODAY' block below and move into a grade tier the moment their results are filed. So 'filed & graded' + 'results pending' = the full cohort for the day. A mismatch near filing day is expected, not a bug.">
-            {(() => {
+            title={windowOn ? `Whole ${windowDays}-session window: one line per company (latest result shown), the graded results read across every loaded day, and how many of the window's dates have loaded. The single-date counts appear when the window is 1d.` : "A company can only be GRADED once it has actually FILED its results and our parser has read them. Companies that have only ANNOUNCED a board meeting for this date (results not filed yet) can't be graded — they show in the '📅 SCHEDULED TODAY' block below and move into a grade tier the moment their results are filed. So 'filed & graded' + 'results pending' = the full cohort for the day. A mismatch near filing day is expected, not a bug."}>
+            {windowOn ? (() => {
+              // zzz820 — with a window selected this line used to show the
+              // single anchor date's numbers ("1 filed & graded · 1 scanned")
+              // beside a window of 2,000 companies. It now describes the window.
+              return `Window: ${win.rows.length.toLocaleString('en-IN')} companies · ${win.entries.length.toLocaleString('en-IN')} graded results · ${win.progress.ready}/${win.progress.total} days loaded`;
+            })() : (() => {
               // Durable, date-agnostic cohort line. The day's TRUE total =
               // filed-&-graded + still-pending (board-meeting announced but not
               // yet filed/parsed). Pending is computed from the SAME source the
@@ -3208,7 +3203,7 @@ Source label: ${coverageStats.source}`}
           {/* PATCH 0909 — Upstream hub-fail banner. When the graded API
               fell back to live-NSE only (or stale KV), let the user know
               why the list might look short. */}
-          {(view as any)?._hub_fail && (
+          {!windowOn && (view as any)?._hub_fail && (
             <span
               title={`Earnings hub was unreachable (${(view as any)._hub_fail}). Showing live NSE filings only. Retry in a moment to get the full list.`}
               style={{ fontSize: 10, padding: '3px 8px', borderRadius: 4, background: 'color-mix(in srgb, var(--mc-warn) 13%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', color: 'var(--mc-warn)', fontWeight: 800 }}
@@ -3227,6 +3222,25 @@ Source label: ${coverageStats.source}`}
                 backgroundColor: !tierFilterOn ? 'color-mix(in srgb, var(--mc-cyan) 14%, transparent)' : 'transparent',
                 color: !tierFilterOn ? 'var(--mc-cyan)' : 'var(--mc-text-3)',
               }}>All {counts.reduce((n, c) => n + c.n, 0)}</button>
+            {/* zzz818 — one click = exactly BLOCKBUSTER + STRONG (the same
+                multi-select as picking both); click again to clear. */}
+            {(() => {
+              const on = isTopTiersSel(tierSel);
+              const n = topTiersCount(tierChipCounts);
+              return (
+                <button className="eo-top-tiers-chip" onClick={() => setTierSel((sel) => toggleTopTiers(sel))}
+                  aria-pressed={on}
+                  title={on ? 'Showing BLOCKBUSTER + STRONG — click to show every tier' : `Show only BLOCKBUSTER and STRONG — ${n} with the current filters`}
+                  style={{
+                    fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 20, cursor: 'pointer',
+                    border: `${on ? 2 : 1}px solid ${on ? '#10B981' : 'color-mix(in srgb, #10B981 50%, #F59E0B)'}`,
+                    background: on ? 'color-mix(in srgb, #10B981 26%, transparent)' : 'linear-gradient(90deg, #F59E0B15, #10B98115)',
+                    color: 'color-mix(in srgb, #10B981 55%, var(--mc-text-1))',
+                  }}>
+                  {on ? '✓ ' : ''}⭐+🟢 BLOCKBUSTER + STRONG ({n})
+                </button>
+              );
+            })()}
             {counts.map((c) => {
               const on = tierSel.includes(c.tier);
               const m = TIER_META[c.tier];
@@ -3566,7 +3580,7 @@ Source label: ${coverageStats.source}`}
                       <div style={{ fontSize: 10.5, marginTop: 2 }}>
                         {probeResult.layers?.graded?.found ? (
                           <span style={{ color: 'var(--mc-bullish)' }}>
-                            ✓ {probeResult.layers.graded.tier} · score {probeResult.layers.graded.score}
+                            ✓ {probeResult.layers.graded.tier}
                           </span>
                         ) : (
                           <span style={{ color: 'var(--mc-bearish)' }}>
@@ -3812,6 +3826,14 @@ Source label: ${coverageStats.source}`}
             </div>
           );
         })()}
+        {/* zzz818 — a tier chip that leaves nothing on this date says so. */}
+        {viewMode === 'GRADED' && !windowOn && tierFilterOn && view.candidates_total > 0
+          && TIER_ORDER.every((t) => !passesTier({ tier: t }, tierSel) || applyRowFilters(view.by_tier[t] || []).length === 0) && (
+          <div className="eo-tier-empty" style={{ color: 'var(--mc-text-2)', fontSize: 13, padding: '24px', textAlign: 'center', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 10 }}>
+            {tierEmptyMessage(tierSel, 'date')}.{' '}
+            <button onClick={() => setTierSel([])} style={{ background: 'none', border: 'none', color: 'var(--mc-cyan)', fontWeight: 800, cursor: 'pointer', fontSize: 13 }}>Show all tiers</button>
+          </div>
+        )}
         {viewMode === 'GRADED' && !windowOn && TIER_ORDER.map((tier) => {
           // PATCH 1017 / 1022 / zzz703 — ELITE · PEAD · MULTIBAGGER · turnaround ·
           // radar · beat+cheap, then market cap, then pattern (applyRowFilters).
@@ -3886,12 +3908,24 @@ Source label: ${coverageStats.source}`}
           const totals = windowTotals(win.days, win.entries, win.rows);
           const issues = windowIssues(win.days, win.entries, win.bad, win.rows);
           const laterByDate = shownElsewhereByDate(rows);
+          // zzz820 — a board meeting with no confirmed results filing is not a
+          // company that "filed but couldn't be graded": counted apart. Every
+          // reason says when the day was last checked.
+          const filedNotGraded = issues.notGraded.filter((x) => !x.unconfirmed);
+          const unconfirmedDrops = issues.notGraded.filter((x) => x.unconfirmed);
           const notGradedByDate: Record<string, string[]> = {};
-          for (const x of issues.notGraded) (notGradedByDate[x.date] ||= []).push(`${x.ticker} — ${x.reason}`);
+          for (const x of filedNotGraded) (notGradedByDate[x.date] ||= []).push(`${x.ticker} — ${dropReasonWithCheck(x.reason, x.checked)}`);
           for (const x of issues.badRows) (notGradedByDate[x.date] ||= []).push(`${x.ticker} — ${x.reason}`);
-          const notGradedN = issues.notGraded.length + issues.badRows.length;
+          const unconfirmedByDate: Record<string, string[]> = {};
+          for (const x of unconfirmedDrops) (unconfirmedByDate[x.date] ||= []).push(`${x.ticker} — ${dropReasonWithCheck(x.reason, x.checked)}`);
+          const notGradedN = filedNotGraded.length + issues.badRows.length;
           const notGradedReasons: Record<string, number> = {};
-          for (const x of issues.notGraded) notGradedReasons[x.reason] = (notGradedReasons[x.reason] || 0) + 1;
+          const lastCheckedByReason: Record<string, string> = {};
+          for (const x of filedNotGraded) {
+            notGradedReasons[x.reason] = (notGradedReasons[x.reason] || 0) + 1;
+            const c = String(x.checked || '').slice(0, 10);
+            if (c && (!lastCheckedByReason[x.reason] || c < lastCheckedByReason[x.reason])) lastCheckedByReason[x.reason] = c;
+          }
           for (const x of issues.badRows) { const k = x.reason.startsWith('unrecognised') ? 'unrecognised tier' : x.reason; notGradedReasons[k] = (notGradedReasons[k] || 0) + 1; }
           const openDate = (d: string) => { setWindowDays(1); setFilterDate(d); };
           let budget = windowRenderLimit;
@@ -3911,6 +3945,9 @@ Source label: ${coverageStats.source}`}
             }
             if (hasNoFinancialData(s)) notes.push('filed, but no financial numbers yet — open the date to retry');
             if (s._engine_stale) notes.push(`graded under the previous rules (${s._engine || 'older engine'})`);
+            // zzz820 — older payloads never recorded RS / Stage: say so.
+            const nr = notRecordedNote(s);
+            if (nr) notes.push(nr);
             const isPinned = isPinnedRow(s) && pinnedReasons.length > 0;
             return (
               <div key={s._window_date + ':' + s.ticker + ':' + s.company} style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
@@ -4018,7 +4055,7 @@ Source label: ${coverageStats.source}`}
                 {notGradedN > 0 && (
                   <div className="eo-window-issues" style={{ fontSize: 11, color: 'var(--mc-warn)', lineHeight: 1.6 }}>
                     ⚠ <strong>{notGradedN.toLocaleString('en-IN')} {notGradedN === 1 ? 'company' : 'companies'} filed but couldn&apos;t be graded</strong>
-                    {' '}({Object.entries(notGradedReasons).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k}: ${n}`).join(' · ')}) — open the date to retry:{' '}
+                    {' '}({Object.entries(notGradedReasons).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k}: ${n}${lastCheckedByReason[k] ? ` (oldest check ${fmtShortDate(lastCheckedByReason[k])})` : ''}`).join(' · ')}) — each date is re-checked automatically about once a day while data is still missing; open a date to retry now:{' '}
                     {Object.keys(notGradedByDate).sort().reverse().slice(0, 14).map((d) => (
                       <button key={d} onClick={() => openDate(d)} title={notGradedByDate[d].join('\n')}
                         style={{ background: 'none', border: 'none', padding: '0 6px 0 0', color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 700, cursor: 'pointer', textDecoration: 'underline dotted' }}>
@@ -4026,6 +4063,12 @@ Source label: ${coverageStats.source}`}
                       </button>
                     ))}
                     {Object.keys(notGradedByDate).length > 14 && <span>+{Object.keys(notGradedByDate).length - 14} more dates</span>}
+                  </div>
+                )}
+                {unconfirmedDrops.length > 0 && (
+                  <div style={{ fontSize: 11, color: 'var(--mc-text-3)', lineHeight: 1.5 }}
+                    title={Object.keys(unconfirmedByDate).sort().reverse().map((d) => `${fmtShortDate(d)}: ${unconfirmedByDate[d].join(', ')}`).join('\n')}>
+                    ⓘ {unconfirmedDrops.length.toLocaleString('en-IN')} {unconfirmedDrops.length === 1 ? 'company had' : 'companies had'} a results board meeting in the window but no confirmed results filing yet — not graded, not counted as a failure (hover for the list).
                   </div>
                 )}
                 {(issues.noData.length > 0 || issues.noPrice > 0) && (
@@ -4056,7 +4099,7 @@ Source label: ${coverageStats.source}`}
               )}
               {win.rows.length > 0 && rows.length === 0 && (
                 <div style={{ color: 'var(--mc-text-3)', fontSize: 13, padding: '28px', textAlign: 'center', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 10 }}>
-                  {win.rows.length} companies in the window — none pass the current filters.
+                  {tierFilterOn ? tierEmptyMessage(tierSel, 'window') + '.' : `${win.rows.length} companies in the window — none pass the current filters.`}
                   {tierFilterOn && <> <button onClick={() => setTierSel([])} style={{ background: 'none', border: 'none', color: 'var(--mc-cyan)', fontWeight: 800, cursor: 'pointer', fontSize: 13 }}>Show all tiers</button></>}
                 </div>
               )}
@@ -4212,12 +4255,15 @@ function QuadrantBadge({ stock }: { stock: ParsedEarning }) {
   const meta = QUADRANT_META[q];
   if (!meta) return null;
   const parts = stock.quadrant_parts;
+  // zzz820 — words, not the 0–100 numbers (owner rule: no visible scores).
   const fmtParts = (ps?: Array<{ label: string; points: number; of: number }>) =>
-    (ps && ps.length) ? ps.map((p) => `${p.label} ${p.points}/${p.of}`).join(', ') : 'not assessable from this filing';
+    (ps && ps.length) ? ps.map(partWord).join(', ') : 'not assessable from this filing';
+  const qualW = axisWord(qual, 'quality');
+  const inflW = axisWord(infl, 'inflection');
   const title =
     `${meta.label} — ${meta.tagline}.\n` +
-    `QUALITY ${qual}/100 (what the business IS): ${fmtParts(parts?.quality)}\n` +
-    `INFLECTION ${infl}/100 (what it is BECOMING): ${fmtParts(parts?.inflection)}\n` +
+    `QUALITY — ${qualW} (what the business IS): ${fmtParts(parts?.quality)}\n` +
+    `INFLECTION — ${inflW} (what it is BECOMING): ${fmtParts(parts?.inflection)}\n` +
     `Independent of the tier — the quadrant never promotes a row.`;
   return (
     <span title={title} style={{
@@ -4227,7 +4273,7 @@ function QuadrantBadge({ stock }: { stock: ParsedEarning }) {
       color: meta.color, fontWeight: 800, letterSpacing: '0.3px', whiteSpace: 'nowrap',
     }}>
       {meta.icon} {meta.label}
-      <span style={{ fontWeight: 700, opacity: 0.85, marginLeft: 5 }}>Q{qual}·I{infl}</span>
+      <span style={{ fontWeight: 700, opacity: 0.85, marginLeft: 5 }}>· {qualW} · {inflW}</span>
     </span>
   );
 }
@@ -4373,7 +4419,7 @@ function IndiaAiSummary({ stock }: { stock: ParsedEarning }) {
 }
 
 function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh?: boolean; radar?: { transformation_score: number } | null }) {
-  const tierColor = TIER_META[stock.tier].color;
+  const tierColor = ((stock as any)._tier_unconfirmed || yearAgoUnverified(stock)) ? '#94A3B8' : TIER_META[stock.tier].color;
   // zzz696 — badge chips are opt-in, shared with the US tab through one key.
   const [showBadges] = useCardBadges();
   // zzz505 — newly-listed companies have no year-ago quarter, so the YoY tiles
@@ -4399,6 +4445,19 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
   // stopped emitting "+77%" on a loss base read correctly too.
   const _patTraj = profitTrajectory(stock.pat_curr_cr, stock.pat_prev_cr, 'cr');
   const _epsTraj = profitTrajectory(stock.eps_curr, stock.eps_prev, 'eps');
+  // zzz820 — what the card may honestly show. growthView withholds Sales/EPS
+  // growth measured against an unverified year-ago quarter (gappy Screener
+  // table); marginView hides OPM for banks/NBFCs/insurers and treats a stored
+  // 0.0% as unknown; checkQuarterLabel replaces an impossible quarter label.
+  const _g = growthView(stock);
+  const _margin = marginView(stock, { newlyListed: _isNewCard });
+  const _q = checkQuarterLabel(stock.quarter, (stock as any)._window_date || stock.filing_date);
+  // zzz820b — a stored top tier built on unverified growth is held, not shown
+  // as if it stood (holdUnconfirmed has already moved it out of the top tiers).
+  const _unconf: string | null = (stock as any)._tier_unconfirmed || (yearAgoUnverified(stock) ? String(stock.tier) : null);
+  const _ctx: string[] = Array.isArray((stock as any).market_context)
+    ? Array.from(new Set(((stock as any).market_context as any[]).filter((t) => typeof t === 'string' && t.trim()).map((t) => String(t))))
+    : [];
   // ☀️ daytime filing (09:15–15:30 IST) vs 🌙 outside-hours
   const timing: '☀️' | '🌙' | null = (() => {
     if (!stock.filing_url) return null;
@@ -4421,7 +4480,14 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
       <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--mc-text-1)', lineHeight: 1.2, marginBottom: 4 }}>
         {/* zzz817 — the card says its tier, next to the name, in every view
             (a window day mixes all four tiers). */}
-        <TierBadge tier={stock.tier} />
+        {_unconf
+          ? <span className="eo-tier-badge" data-tier="UNCONFIRMED"
+              title="The stored growth figures may compare against the wrong quarter last year (Screener's table has a gap). Not counted as BLOCKBUSTER or STRONG until the date is regraded with correct figures."
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginRight: 8, padding: '1px 7px', borderRadius: 4, fontSize: 10, fontWeight: 900, letterSpacing: '0.3px', verticalAlign: 'middle', whiteSpace: 'nowrap', border: '1.5px solid var(--mc-text-4)', color: 'var(--mc-text-2)' }}>
+              ⚪ {UNCONFIRMED_LABEL}
+              <span style={{ fontWeight: 600, color: 'var(--mc-text-4)', letterSpacing: 0 }}>(was {_unconf})</span>
+            </span>
+          : <TierBadge tier={stock.tier} />}
         {stock.company}
         <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 600, marginLeft: 6, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
           {stock.ticker}
@@ -4439,6 +4505,12 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
           </span>
         )}
       </div>
+      {/* zzz820b — why a top-tier quarter was held at a lower tier (engine v24). */}
+      {typeof (stock as any).tier_cap_reason === 'string' && (stock as any).tier_cap_reason && (
+        <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--mc-text-2)', marginBottom: 4, lineHeight: 1.35 }}>
+          {(stock as any).tier_cap_reason}
+        </div>
+      )}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', fontSize: 10.5, marginBottom: 8 }}>
         {/* zzz696 — everything from the quadrant badge to the sector chip is
             opt-in. The PRICE below is not: it shares this row but it is a
@@ -4467,7 +4539,7 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
           <span title="On the concall-intel transformation radar — turnaround/re-rating candidate from the transformation screener" style={{
             padding: '1px 6px', borderRadius: 3,
             border: '1px solid #34D399', background: '#064E3B', color: '#6EE7B7', fontWeight: 800, letterSpacing: '0.3px',
-          }}>🚀 Radar T-{Math.round(radar.transformation_score)}</span>
+          }}>🚀 On transformation radar</span>
         )}
         {stock.pe != null && (
           <span style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-2)', fontWeight: 700 }}>
@@ -4487,9 +4559,10 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
             ROCE {stock.roce.toFixed(0)}%
           </span>
         )}
-        {stock.quarter && (
-          <span style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-3)', fontWeight: 700 }}>
-            {stock.quarter}
+        {_q.label && (
+          <span title={(_q.corrected || (stock as any)._quarter_note) ? `Quarter corrected from the filing date (${_q.reason || (stock as any)._quarter_note}). Indian FY runs April–March.` : 'Results quarter (Indian FY runs April–March)'}
+            style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-3)', fontWeight: 700 }}>
+            {_q.label}
           </span>
         )}
         {(stock.market_cap_bucket && stock.market_cap_bucket !== 'UNKNOWN') || stock.market_cap_cr != null ? (
@@ -4554,6 +4627,17 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
         </div>
       )}
 
+      {/* zzz820b — price facts beside the grade, never inside it (engine v24). */}
+      {_ctx.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center', marginBottom: 6 }}
+          title="Share-price facts shown for context. The tier is decided from the reported numbers only.">
+          <span style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700 }}>Price context — not part of the grade:</span>
+          {_ctx.map((t) => (
+            <span key={t} style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 3, border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-3)', fontWeight: 600 }}>{t}</span>
+          ))}
+        </div>
+      )}
+
       {/* PATCH 1006 — Institutional badges row.  zzz696 — opt-in. */}
       {showBadges && ((stock as any).is_elite || typeof (stock as any).pead_score === 'number' || (stock as any).multibagger_setup) && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
@@ -4575,11 +4659,11 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
                 ? { border: '1px solid #F59E0B', background: '#78350F', color: '#FCD34D', icon: '⚡' }
                 : { border: '1px solid #6B7280', background: '#1F2937', color: '#9CA3AF', icon: '📊' };
             return (
-              <span title={`PEAD score ${p} — academic post-earnings drift driver (≥70 strong, 50-69 moderate, <50 weak)`} style={{
+              <span title="Post-earnings drift (PEAD): how strongly prices have tended to keep moving after results like this one — strong, moderate or weak" style={{
                 fontSize: 10, fontWeight: 800, letterSpacing: '0.3px',
                 padding: '2px 8px', borderRadius: 4,
                 border: style.border, background: style.background, color: style.color,
-              }}>{style.icon} PEAD {p}</span>
+              }}>{style.icon} {driftWord(p)}</span>
             );
           })()}
           {(stock as any).multibagger_setup && (
@@ -4596,24 +4680,34 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
       {/* ── Three metric tiles + score ────────────────────────────────────── */}
       {/* PATCH 1003 — 2x3 grid: 4 metrics + score (was 2x2 = 3 metrics + score) */}
       <div className="mc-grid-2-mobile" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-        <MetricTile label={_useSalesQoQ ? 'SALES QoQ' : 'SALES YOY'}  pct={_useSalesQoQ ? _salesQoQ : stock.sales_yoy_pct}      curr={fmtCr(stock.sales_curr_cr)} prev={_useSalesQoQ ? fmtCr(_salesPrevQ) : fmtCr(stock.sales_prev_cr)} />
-        <MetricTile label={_usePatQoQ ? 'NET PROFIT QoQ' : 'NET PROFIT'} pct={_usePatQoQ ? _patQoQ : (_patTraj ? null : stock.net_profit_yoy_pct)} word={!_usePatQoQ && _patTraj ? { text: _patTraj.short, good: _patTraj.improving, title: _patTraj.label } : undefined} curr={fmtCr(stock.pat_curr_cr)}   prev={_usePatQoQ ? fmtCr(_patPrevQ) : fmtCr(stock.pat_prev_cr)} />
-        <MetricTile label={_useEpsQoQ ? 'EPS QoQ' : 'EPS YOY'}    pct={_useEpsQoQ ? _epsQoQ : (_epsTraj ? null : stock.eps_yoy_pct)}        word={!_useEpsQoQ && _epsTraj ? { text: _epsTraj.short, good: _epsTraj.improving, title: _epsTraj.label } : undefined} curr={fmtPx(stock.eps_curr)}     prev={_useEpsQoQ ? fmtPx(_epsPrevQ) : fmtPx(stock.eps_prev)} />
-        <OpmTile opm={stock.opm_pct} opmPrev={stock.opm_prev_pct} newlyListed={(stock.caveat_tags || []).includes('newly listed')} />
+        <MetricTile label={_useSalesQoQ ? 'SALES QoQ' : 'SALES YOY'}  pct={_useSalesQoQ ? _salesQoQ : _g.sales}      curr={fmtCr(stock.sales_curr_cr)} prev={_useSalesQoQ ? fmtCr(_salesPrevQ) : fmtCr(_g.salesPrev)} note={!_useSalesQoQ && _g.withheld ? 'year-ago not matched' : undefined} noteTitle={_g.withheld || undefined} />
+        <MetricTile label={_usePatQoQ ? 'NET PROFIT QoQ' : 'NET PROFIT YOY'} pct={_usePatQoQ ? _patQoQ : (_patTraj && !_g.withheld ? null : _g.pat)} word={!_usePatQoQ && _patTraj && !_g.withheld ? { text: _patTraj.short, good: _patTraj.improving, title: _patTraj.label } : undefined} curr={fmtCr(stock.pat_curr_cr)}   prev={_usePatQoQ ? fmtCr(_patPrevQ) : fmtCr(_g.patPrev)} note={_usePatQoQ ? undefined : (_g.withheld ? 'year-ago not matched' : (_g.patNote || undefined))} noteTitle={_g.withheld || (_g.patNote ? 'This quarter\'s profit is known; the same quarter last year is not in the source, so no growth figure is shown (it is not worked out from EPS).' : undefined)} />
+        <MetricTile label={_useEpsQoQ ? 'EPS QoQ' : 'EPS YOY'}    pct={_useEpsQoQ ? _epsQoQ : (_epsTraj && !_g.withheld ? null : _g.eps)}        word={!_useEpsQoQ && _epsTraj && !_g.withheld ? { text: _epsTraj.short, good: _epsTraj.improving, title: _epsTraj.label } : undefined} curr={fmtPx(stock.eps_curr)}     prev={_useEpsQoQ ? fmtPx(_epsPrevQ) : fmtPx(_g.epsPrev)} note={!_useEpsQoQ && _g.withheld ? 'year-ago not matched' : undefined} noteTitle={_g.withheld || undefined} />
+        <MarginTile m={_margin} />
         {/* zzz694 — cash sits beside the score, so the figure that decides the
             tier is on the card rather than only in the caveat pills. The score
             gives up its full-width row for it; a 94 that is capped by cash is
             better read next to the cash than alone. */}
         <CashTile ratio={stock.ocf_to_pat_ratio ?? stock.cfo_to_pat_ratio ?? null} />
-        <div style={{ padding: '6px 10px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: `1px solid ${tierColor}40`, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-          <div style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.6px' }}>SCORE</div>
-          <div style={{ fontSize: 22, fontWeight: 900, color: tierColor, lineHeight: 1, marginTop: 2 }}>{stock.composite_score}</div>
+        {/* zzz820 — the 0–100 composite is no longer printed (owner rule: no
+            visible scores). The tile says the grade in words instead. */}
+        <div title={TIER_META[stock.tier].tagline} style={{ padding: '6px 10px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: `1px solid ${tierColor}40`, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+          <div style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.6px' }}>GRADE</div>
+          <div style={{ fontSize: 14, fontWeight: 900, color: tierColor, lineHeight: 1.1, marginTop: 2 }}>{_unconf ? 'UNCONFIRMED' : TIER_META[stock.tier].label}</div>
         </div>
       </div>
 
+      {/* zzz820 — the tier was set from the stored growth figures; when those
+          may be measured against the wrong year-ago quarter, say so. */}
+      {_g.withheld && (
+        <div title={_g.withheld} style={{ marginTop: 6, fontSize: 10.5, color: 'var(--mc-warn)', fontWeight: 700, lineHeight: 1.4 }}>
+          ⚠ Growth not shown: last year&apos;s same quarter is missing from the Screener table, so the stored growth (and the grade built on it) may compare against the wrong quarter. Check the filing before relying on it.
+        </div>
+      )}
+
       {/* ── Brief narrative ───────────────────────────────────────────────── */}
       <div style={{ marginTop: 8, fontSize: 11, color: 'var(--mc-text-2)', lineHeight: 1.5, fontStyle: 'italic', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 6, padding: '6px 9px' }}>
-        📝 {stock.narrative}
+        📝 {narrativeForDisplay(stock)}
       </div>
 
       <IndiaAiSummary stock={stock} />
@@ -4857,10 +4951,12 @@ function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarP
 // Displays current OPM % and YoY change in percentage points, color-coded
 // so user can see margin direction at a glance — feeds the margin-gate
 // rule introduced in Patch 1000.
-function OpmTile({ opm, opmPrev, newlyListed }: { opm: number | null | undefined; opmPrev: number | null | undefined; newlyListed?: boolean }) {
-  const hasOpm = typeof opm === 'number' && Number.isFinite(opm);
-  const hasPrev = typeof opmPrev === 'number' && Number.isFinite(opmPrev);
-  const delta = hasOpm && hasPrev ? (opm as number) - (opmPrev as number) : null;
+// zzz820 — now driven by marginView(): a stored 0.0% is shown as unknown, and
+// banks / NBFCs / insurers get NET MARGIN (net profit ÷ total income) instead
+// of an operating margin that means nothing for a lender.
+function MarginTile({ m }: { m: MarginView }) {
+  const hasV = m.value != null;
+  const delta = m.value != null && m.prev != null ? m.value - m.prev : null;
   const deltaColor = delta == null ? '#6B7A8D'
                     : delta >= 1 ? '#10B981'
                     : delta >= -0.5 ? '#94A3B8'
@@ -4868,18 +4964,18 @@ function OpmTile({ opm, opmPrev, newlyListed }: { opm: number | null | undefined
   const deltaLabel = delta == null ? '—'
                     : `${delta >= 0 ? '+' : ''}${delta.toFixed(1)} pp`;
   return (
-    <div style={{ padding: '6px 10px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: '1px solid var(--mc-bg-4)', display: 'flex', flexDirection: 'column', gap: 1 }}>
-      <div style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.6px' }}>OPM MARGIN</div>
+    <div title={m.title} style={{ padding: '6px 10px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: '1px solid var(--mc-bg-4)', display: 'flex', flexDirection: 'column', gap: 1 }}>
+      <div style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.6px' }}>{m.label}</div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-        <div style={{ fontSize: 16, fontWeight: 800, color: hasOpm ? 'var(--mc-text-1)' : 'var(--mc-text-4)', lineHeight: 1 }}>
-          {hasOpm ? `${(opm as number).toFixed(1)}%` : '—'}
+        <div style={{ fontSize: 16, fontWeight: 800, color: hasV ? 'var(--mc-text-1)' : 'var(--mc-text-4)', lineHeight: 1 }}>
+          {hasV ? `${(m.value as number).toFixed(1)}%` : '—'}
         </div>
         <div style={{ fontSize: 11, fontWeight: 700, color: deltaColor }}>
           {deltaLabel}
         </div>
       </div>
       <div style={{ fontSize: 9, color: 'var(--mc-text-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {hasPrev ? `vs ${(opmPrev as number).toFixed(1)}%` : (hasOpm ? 'prior n/a' : (newlyListed ? 'newly listed' : 'screener gap'))}
+        {m.note}
       </div>
     </div>
   );
@@ -4933,7 +5029,7 @@ function CashTile({ ratio }: { ratio: number | null | undefined }) {
   );
 }
 
-function MetricTile({ label, pct, curr, prev, word }: { label: string; pct: number | null; curr: string | null; prev: string | null; word?: { text: string; good: boolean; title?: string } }) {
+function MetricTile({ label, pct, curr, prev, word, note, noteTitle }: { label: string; pct: number | null; curr: string | null; prev: string | null; word?: { text: string; good: boolean; title?: string }; note?: string; noteTitle?: string }) {
   const color = word ? (word.good ? '#10B981' : '#EF4444') : pct == null ? '#6B7A8D' : pct >= 0 ? '#10B981' : '#EF4444';
   // zzz385 — clamp base-effect blow-ups on the card tile (mirror the narrative fmtP
   // clamp): a near-zero prior base makes YoY % explode (e.g. ₹0.5 Cr → ₹50 Cr PAT =
@@ -4953,6 +5049,12 @@ function MetricTile({ label, pct, curr, prev, word }: { label: string; pct: numb
       {(curr || prev) && (
         <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginTop: 2, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
           {curr || '—'}{prev && ` vs ${prev}`}
+        </div>
+      )}
+      {/* zzz820 — why a figure is '—' (never a guess in its place). */}
+      {note && (
+        <div title={noteTitle} style={{ fontSize: 9, color: 'var(--mc-text-3)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: noteTitle ? 'help' : undefined }}>
+          ⓘ {note}
         </div>
       )}
     </div>

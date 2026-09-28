@@ -130,6 +130,8 @@ export interface WorkerStockData {
   quarters_opm?: (number | null)[] | null;
   quarters_sales?: (number | null)[] | null;
   quarters_eps?: (number | null)[] | null;
+  quarters_pat?: (number | null)[] | null;   // zzz820
+  quarters_dates?: string[] | null;          // zzz820 — "Jun 2026" per column
   quarters_tax_pct?: (number | null)[] | null;
   quarters_other_income_pct?: (number | null)[] | null;
   financials_source: 'screener-worker';
@@ -199,9 +201,34 @@ export async function fetchWorkerStock(symbol: string, timeoutMs = 10000): Promi
     })();
     if (yoyMisaligned) {
       // eslint-disable-next-line no-console
-      console.log(`[worker] PATCH 0996: yoy date misaligned for ${j.symbol}: latest=${latest?.date} yoy=${yoy?.date} — nulling yoy fields`);
+      console.log(`[worker] PATCH 0996: yoy date misaligned for ${j.symbol}: latest=${latest?.date} yoy=${yoy?.date} — re-reading the year-ago column by date (zzz820)`);
     }
-    const safeYoy = yoyMisaligned ? {} as any : yoy;
+    // zzz820 — the Worker picks its year-ago column POSITIONALLY (4 back), so
+    // on a gappy table (half-yearly SME filer: Mar 25, Jun 25, Dec 25, Mar 26,
+    // Jun 26) it hands back Mar 2025 for a Jun 2026 quarter. Nulling it (0996)
+    // left a downstream positional fallback to repeat the same mistake. The
+    // exact year-ago column is usually in the Worker's own quarters table, so
+    // look it up BY DATE; only when it is genuinely absent is the year-ago
+    // block empty.
+    const monthMatchedYoy = (() => {
+      if (!yoyMisaligned) return null;
+      const q = j.quarters;
+      const dates: any[] = Array.isArray(q?.dates) ? q.dates : [];
+      const lm = String(latest?.date || '').trim().match(/^([A-Za-z]{3})\s+(\d{4})$/);
+      if (!lm || dates.length === 0) return null;
+      const want = `${lm[1]} ${parseInt(lm[2], 10) - 1}`.toLowerCase();
+      const i = dates.findIndex((d) => String(d || '').trim().toLowerCase() === want);
+      if (i < 0) return null;
+      const at = (a: any) => (Array.isArray(a) && typeof a[i] === 'number' && Number.isFinite(a[i]) ? a[i] : null);
+      // Same statement basis check: the latest column must be the last column.
+      if (String(dates[dates.length - 1] || '').trim().toLowerCase() !== String(latest?.date || '').trim().toLowerCase()) return null;
+      return {
+        date: dates[i],
+        revenue: at(q.sales), netProfit: at(q.netProfit), eps: at(q.eps),
+        opm: at(q.opm), operatingProfit: at(q.operatingProfit),
+      };
+    })();
+    const safeYoy = yoyMisaligned ? (monthMatchedYoy || {} as any) : yoy;
     return {
       symbol: j.symbol,
       company: j.name,
@@ -257,6 +284,8 @@ export async function fetchWorkerStock(symbol: string, timeoutMs = 10000): Promi
         const opm = numArr(q.opm);
         const sales = numArr(q.sales);
         const eps = numArr(q.eps);
+        const pat = numArr(q.netProfit);   // zzz820
+        const dates = Array.isArray(q.dates) ? q.dates.map((d: any) => String(d || '').trim()) : null;
         const tax = numArr(q.tax);
         const oiRaw = numArr(q.otherIncome);
         const oiPct = (oiRaw && sales)
@@ -267,6 +296,10 @@ export async function fetchWorkerStock(symbol: string, timeoutMs = 10000): Promi
           ...(hasAny(opm) ? { quarters_opm: opm } : {}),
           ...(hasAny(sales) ? { quarters_sales: sales } : {}),
           ...(hasAny(eps) ? { quarters_eps: eps } : {}),
+          // zzz820 — the column dates travel with the series so any YoY taken
+          // from them can be matched by DATE, never by position.
+          ...(hasAny(pat) ? { quarters_pat: pat } : {}),
+          ...(dates && dates.length ? { quarters_dates: dates } : {}),
           ...(hasAny(tax) ? { quarters_tax_pct: tax } : {}),
           ...(hasAny(oiPct) ? { quarters_other_income_pct: oiPct } : {}),
         };

@@ -31,6 +31,8 @@
 // a holiday is simply a date with no filings.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { withHonestQuarter, growthView, holdUnconfirmed } from './india-eo-card-data';
+
 export type WindowTier = 'BLOCKBUSTER' | 'STRONG' | 'MIXED' | 'AVOID';
 export const WINDOW_TIER_ORDER: readonly WindowTier[] = ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID'];
 
@@ -133,6 +135,9 @@ export interface WindowDay<R extends WindowRowBase = WindowRowBase> {
   /** zzz817 — the day was built while the results hub was down (the payload's
    *  `_hub_fail`): a partial list, not the whole day. */
   hub_fail?: string | null;
+  /** zzz820 — when the day was last graded (the payload's generated_at), so a
+   *  "not on Screener yet" reason can say when it was last checked. */
+  checked_at?: string | null;
 }
 
 /** A merged row: the card plus where it sits in the window. */
@@ -254,12 +259,15 @@ export function windowEntries<R extends WindowRowBase>(days: ReadonlyArray<Windo
         const tier = normTier(raw.tier) || normTier(key);
         if (!ticker) { bad.push({ date: day.date, ticker: '?', company: raw.company, reason: 'row has no ticker' }); continue; }
         if (!tier) { bad.push({ date: day.date, ticker, company: raw.company, reason: `unrecognised tier "${String(raw.tier ?? key)}"` }); continue; }
-        entries.push({
-          ...raw, ticker, tier,
+        // zzz820 — an impossible stored quarter label (a quarter that had not
+        // ended on the filing date) is replaced by the one the date implies.
+        // zzz820b — a top tier built on unverified growth is held (see holdUnconfirmed).
+        entries.push(holdUnconfirmed({
+          ...withHonestQuarter({ ...raw, _window_date: day.date }), ticker, tier,
           _window_date: day.date,
           _engine_stale: !!day.engine_stale,
           _engine: day.engine ?? null,
-        } as WindowEntry<R>);
+        }) as WindowEntry<R>);
       }
     }
   }
@@ -397,7 +405,7 @@ export function dayGroups<R extends WindowRow<WindowRowBase>>(
 export interface WindowIssues {
   /** filed, but the grader could not grade them (payload `_dropped`), minus
    *  companies graded on another date in the window (those are on screen) */
-  notGraded: Array<{ date: string; ticker: string; reason: string }>;
+  notGraded: Array<{ date: string; ticker: string; reason: string; checked?: string | null; unconfirmed?: boolean }>;
   /** rows that could not be read as a card (no ticker, unknown tier) */
   badRows: WindowBadRow[];
   /** companies shown whose result has no financial numbers yet */
@@ -416,11 +424,32 @@ export interface WindowIssues {
 export function shortDropReason(reason: string | undefined | null): string {
   const s = String(reason || '').toLowerCase();
   if (/ghost/.test(s)) return 'no confirmed filing';
+  // zzz820 — a scheduled board meeting with no confirmed filing is not a
+  // company that "filed but couldn't be graded".
+  if (/scheduled|upcoming/.test(s)) return 'board meeting only — filing not confirmed';
+  // zzz820 — "Screener's latest quarter 2016-03-31 is 3788d before the filing"
+  // is not "not on Screener YET": the Screener page itself is years stale
+  // (typically the consolidated page of a company that stopped consolidating).
+  const lag = s.match(/is\s+(\d+)d\s+before the filing/);
+  if (lag && +lag[1] > 200) return 'Screener page years out of date';
   if (/quarter .* before the filing|not on screener|stale/.test(s)) return 'new quarter not on Screener yet';
   if (/no financial|no data|missing/.test(s)) return 'no financial data';
   if (/price|quote/.test(s)) return 'no price';
   if (/timeout|fetch|failed|http|error/.test(s)) return 'fetch failed';
   return s ? 'could not grade' : 'unknown reason';
+}
+
+/** zzz820 — reasons that mean "no results filing confirmed yet", as opposed to
+ *  "filed, but the grader could not read the numbers". */
+export function isUnconfirmedDrop(shortReason: string): boolean {
+  return shortReason === 'board meeting only — filing not confirmed' || shortReason === 'no confirmed filing';
+}
+
+/** zzz820 — "new quarter not on Screener yet — last checked 27 Sep". */
+export function dropReasonWithCheck(shortReason: string, checkedAt?: string | null): string {
+  const d = String(checkedAt || '').slice(0, 10);
+  if (!ISO_RE.test(d)) return shortReason;
+  return `${shortReason} — last checked ${fmtShortDate(d)}`;
 }
 
 export function windowIssues<R extends WindowRowBase>(
@@ -443,7 +472,8 @@ export function windowIssues<R extends WindowRowBase>(
       if (!t || gradedTickers.has(t) || (x.company && gradedKeys.has(companyKey({ ticker: t, company: x.company })))) continue;
       if (seenDrop.has(t)) continue;            // one company, counted once
       seenDrop.add(t);
-      notGraded.push({ date: d.date, ticker: t, reason: shortDropReason(x.reason) });
+      const reason = shortDropReason(x.reason);
+      notGraded.push({ date: d.date, ticker: t, reason, checked: d.checked_at ?? null, unconfirmed: isUnconfirmedDrop(reason) });
     }
   }
   const noData = shown.filter(hasNoFinancialData).map((r) => ({ date: r._window_date, ticker: r.ticker }));
@@ -631,7 +661,8 @@ const csvCell = (v: any): string => {
 const numCell = (v: any) => (typeof v === 'number' && Number.isFinite(v) ? v : '');
 
 export const WINDOW_CSV_HEADER = [
-  'Date', 'Tier', 'Ticker', 'Company', 'Quarter', 'Score', 'Quadrant', 'Quality_Score', 'Inflection_Score',
+  // zzz820b — no 0–100 score columns (owner rule: no scores shown).
+  'Date', 'Tier', 'Ticker', 'Company', 'Quarter', 'Quadrant',
   'Sales_YoY', 'PAT_YoY', 'EPS_YoY', 'Market_Cap_Cr', 'Also_Reported', 'Graded_Under', 'Source',
 ];
 
@@ -640,9 +671,10 @@ export function windowCsv(rows: ReadonlyArray<any>, dateOf: (r: any) => string =
   const lines = [WINDOW_CSV_HEADER.join(',')];
   for (const c of rows) {
     lines.push([
-      dateOf(c), c.tier, c.ticker, c.company, c.quarter, numCell(c.composite_score), c.quadrant ?? '',
-      numCell(c.quality_score), numCell(c.inflection_score),
-      numCell(c.sales_yoy_pct), numCell(c.net_profit_yoy_pct), numCell(c.eps_yoy_pct), numCell(c.market_cap_cr),
+      dateOf(c), c._tier_unconfirmed ? `UNCONFIRMED (stored ${c._tier_unconfirmed})` : c.tier, c.ticker, c.company, c.quarter, c.quadrant ?? '',
+      // zzz820 — the same honest growth the card shows (withheld when the
+      // year-ago quarter could not be matched).
+      numCell(growthView(c).sales), numCell(growthView(c).pat), numCell(growthView(c).eps), numCell(c.market_cap_cr),
       (c._also_reported || []).join(' '), c._engine_stale ? `previous rules (${c._engine || 'older engine'})` : 'current',
       c.filing_url || c.source || '',
     ].map(csvCell).join(','));
@@ -697,4 +729,35 @@ export function freshestFirst(a: any, b: any): number {
   const s = Number(b?.composite_score ?? 0) - Number(a?.composite_score ?? 0);
   if (s !== 0) return s;
   return String(a?.ticker || '').localeCompare(String(b?.ticker || ''));
+}
+
+// ─── zzz818 — the one-click "BLOCKBUSTER + STRONG" chip (India + US) ───────
+//
+// The owner: "add one filter blockbuster+strong … and make it work". It is
+// exactly the multi-select of those two tiers — same state, same URL
+// (?tier=BLOCKBUSTER,STRONG) — so the two ways of picking them never disagree.
+
+export const TOP_TIERS: readonly WindowTier[] = ['BLOCKBUSTER', 'STRONG'];
+
+/** True when the selection is exactly BLOCKBUSTER + STRONG. */
+export function isTopTiersSel(sel: readonly string[]): boolean {
+  const s = parseTierParam(sel.join(','));
+  return s.length === 2 && s[0] === 'BLOCKBUSTER' && s[1] === 'STRONG';
+}
+/** Click on the combined chip: select exactly both; click again clears. */
+export function toggleTopTiers(sel: readonly string[]): WindowTier[] {
+  return isTopTiersSel(sel) ? [] : [...TOP_TIERS];
+}
+/** Its count: the sum of the two tiers under every other active filter. */
+export function topTiersCount(counts: Partial<Record<string, number>>): number {
+  return (counts.BLOCKBUSTER || 0) + (counts.STRONG || 0);
+}
+/** The plain empty-state line when a tier filter leaves nothing to show. */
+export function tierEmptyMessage(sel: readonly string[], scope: 'window' | 'date' = 'window'): string {
+  const s = parseTierParam(sel.join(','));
+  if (s.length === 0) return scope === 'window' ? 'No results in this window — widen the window or clear a filter' : 'No results on this date — pick another date or clear a filter';
+  const names = s.length === 1 ? s[0] : `${s.slice(0, -1).join(', ')} or ${s[s.length - 1]}`;
+  return scope === 'window'
+    ? `No ${names} results in this window — widen the window or clear a filter`
+    : `No ${names} results on this date — widen the window or clear a filter`;
 }

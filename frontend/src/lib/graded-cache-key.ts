@@ -87,7 +87,21 @@
 //     +25%, margin +5pp and positive) can be STRONG;
 //   · a Day-1 sell-off may cost the top tier but can no longer push a
 //     fundamentally STRONG quarter to MIXED (the US floor, ported).
-export const GRADED_CACHE_VERSION = 'v23';
+// zzz819 — v23 → v24. The India grade is price-free and the top tier needs
+//   confirming:
+//   · no price input reaches the tier — Day-1 reaction, stage, 52-week
+//     distance and thin float are MARKET CONTEXT, shown beside the grade
+//     (the US rule since zzz804); the chart methods no longer count and the
+//     tier reads the price-free composite;
+//   · a BLOCKBUSTER on the numbers must pass a confirmation gate (revenue
+//     +15%, no small-base profit arithmetic, a healthy margin or a big
+//     expansion, cash backing when known, no open quality flag) or it is
+//     held at STRONG / MIXED with a one-line reason;
+//   · every card stores the grader's own input (`grade_input`), so a future
+//     rules change regrades stored days in-process (lib/india-regrade.ts)
+//     instead of re-queuing the whole window. v23/v22/v21/v20 days are
+//     regraded from their card figures on first read.
+export const GRADED_CACHE_VERSION = 'v24';
 
 /** The KV key holding one fully graded India session. */
 export const gradedKey = (date: string): string => `graded:${GRADED_CACHE_VERSION}:${date}`;
@@ -100,7 +114,7 @@ export const gradedKey = (date: string): string => `graded:${GRADED_CACHE_VERSIO
  * nothing has been written to the new namespace yet. Nothing should WRITE to
  * them, and a reader that uses them must prefer the current key first.
  */
-export const GRADED_CACHE_LEGACY: readonly string[] = ['v22', 'v21', 'v20', 'v19', 'v18', 'v17', 'v16', 'v15', 'v14', 'v13', 'v12', 'v11', 'v10'];
+export const GRADED_CACHE_LEGACY: readonly string[] = ['v23', 'v22', 'v21', 'v20', 'v19', 'v18', 'v17', 'v16', 'v15', 'v14', 'v13', 'v12', 'v11', 'v10'];
 
 /** Current key first, then the abandoned ones — for readers that tolerate age. */
 export function gradedKeyCandidates(date: string): string[] {

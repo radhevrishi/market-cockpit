@@ -14,6 +14,7 @@
 import { NextRequest } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { gradedKeyCandidates } from '@/lib/graded-cache-key';
+import { withCurrentIndiaRules } from '@/lib/india-regrade';
 import { rankMatches, normalizeTicker } from '@/lib/earnings-search';
 
 export const runtime = 'nodejs';
@@ -72,7 +73,7 @@ async function buildIndex(): Promise<IndexEntry[]> {
       let payload: any = null;
       for (const key of gradedKeyCandidates(d)) {
         try { payload = await kvGet(key); } catch { payload = null; }
-        if (payload && payload.by_tier) break;
+        if (payload && payload.by_tier) { payload = withCurrentIndiaRules(payload, key); break; }
         payload = null;
       }
       if (!payload || !payload.by_tier) return;

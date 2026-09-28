@@ -24,10 +24,12 @@
 
 import { NextResponse } from 'next/server';
 import { gradedKey, gradedKeyCandidates, GRADED_CACHE_VERSION } from '@/lib/graded-cache-key';
+import { regradeIndiaDayPayload, versionOfGradedKey } from '@/lib/india-regrade';
 // zzz669 — the grader and its two date helpers now live in ONE place, shared
 // with the Earnings Opportunities page. See lib/india-grade.ts for why.
 import { gradeIndiaRow as gradeRow, gradeIndiaRowExplained, deriveQuarterLabel } from '@/lib/india-grade';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
+import { checkQuarterLabel } from '@/lib/india-eo-card-data';  // zzz820
 import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta, decideTier, marketReactionDelta, typicalDailyMovePct, thinFloatGate, quadrantForIndiaRow } from '@/lib/earnings-grade-shared';
 
 // zzz379 — derive the correct RESULT quarter from a filing date instead of the
@@ -220,6 +222,17 @@ export async function GET(req: Request) {
           ? (Object.values(old.by_tier) as any[][]).reduce((n, v) => n + (Array.isArray(v) ? v.length : 0), 0)
           : 0;
         if (rows > 0) {
+          // zzz819 — A RULES CHANGE IS NOT A DATA CHANGE. Regrade the stored
+          // day in-process from its own figures (lib/india-regrade.ts), store
+          // it under the current engine and serve it as current. Only a day
+          // that cannot be regraded falls through to the stale label below.
+          try {
+            const re = regradeIndiaDayPayload(old, versionOfGradedKey(legacyKey));
+            if (re) {
+              try { await kvSet(cacheKey, re, isPast ? 365 * 24 * 3600 : 5 * 60); } catch { /* serve anyway */ }
+              return NextResponse.json({ ...re, _cache: 'regraded' }, { status: 200 });
+            }
+          } catch { /* fall through to the stale label */ }
           return NextResponse.json({
             ...old,
             engine_stale: true,
@@ -254,6 +267,28 @@ export async function GET(req: Request) {
   // No automatic re-enrich for today's date — those are expected to be
   // preview-heavy until filings propagate (we still respect manual Refresh).
   let autoPromoteToRefreshMissing = false;
+  // zzz819 — nothing under the current engine yet, but the same day exists
+  // under an older one: regrade it in-process instead of re-enriching every
+  // company from Screener. Milliseconds, no network beyond the KV reads.
+  if (isRedisAvailable() && !refreshMissing && !force) {
+    try {
+      const current = await kvGet<any>(cacheKey);
+      if (!current) {
+        for (const legacyKey of gradedKeyCandidates(date).slice(1)) {
+          const old = await kvGet<any>(legacyKey).catch(() => null);
+          if (!old?.by_tier) continue;
+          const re = regradeIndiaDayPayload(old, versionOfGradedKey(legacyKey));
+          if (!re) break;   // newest stored day cannot be regraded → normal rebuild
+          const n = (Object.values(re.by_tier) as any[][]).reduce((a, v) => a + (Array.isArray(v) ? v.length : 0), 0);
+          if (n === 0) break;
+          try { await kvSet(cacheKey, re, isPast ? 365 * 24 * 3600 : 5 * 60); } catch { /* serve anyway */ }
+          return NextResponse.json({ ...re, _cache: 'regraded' }, {
+            headers: { 'Cache-Control': isPast ? 's-maxage=3600, stale-while-revalidate=86400' : 's-maxage=60, stale-while-revalidate=300' },
+          });
+        }
+      }
+    } catch { /* fall through to the normal path */ }
+  }
   if (isRedisAvailable() && !refreshMissing && !force) {
     try {
       const cached = await kvGet(cacheKey);
@@ -466,7 +501,7 @@ export async function GET(req: Request) {
               ? e.company
               : (c.company || e.company_name || c.ticker),
             filing_date: c.filing_date,
-            quarter: c.quarter, sector: e.sector || c.sector,
+            quarter: checkQuarterLabel(c.quarter, c.filing_date || date).label || c.quarter, sector: e.sector || c.sector,  // zzz820
             market_cap_bucket: e.market_cap_bucket || c.market_cap_bucket,
             market_cap_cr: e.market_cap_cr ?? (c as any).market_cap_cr ?? null,
             adtv_cr: e.adtv_cr ?? null,  // PATCH 1037 — carry liquidity into grader
@@ -933,7 +968,7 @@ export async function GET(req: Request) {
             ticker: sym,
             company: c.company || sym,
             resultDate: date,
-            quarter: c.quarter || deriveQuarterLabel(date),
+            quarter: checkQuarterLabel(c.quarter, date).label || deriveQuarterLabel(date),  // zzz820
             sector: c.sector || null,
             marketCap: null,
             quality: 'Confirmed',
@@ -1153,7 +1188,9 @@ export async function GET(req: Request) {
         ? e.company
         : (m.company && m.company.toUpperCase() !== String(m.ticker).toUpperCase() ? m.company : (e.company || m.company || m.ticker)),
       filing_date: m.resultDate,
-      quarter: m.quarter || e.quarter || deriveQuarterLabel(m.resultDate),
+      // zzz820 — a stored label for a quarter that had not ended by the filing
+      // date (hub "Q1 FY28" on a Jul 2026 filing) is replaced from the date.
+      quarter: checkQuarterLabel(m.quarter || e.quarter, m.resultDate).label || deriveQuarterLabel(m.resultDate),
       sector: e.sector || m.sector,
       market_cap_bucket: e.market_cap_bucket ||
         (m.marketCap === 'L' ? 'LARGE' : m.marketCap === 'M' ? 'MID' : m.marketCap === 'S' ? 'SMALL' : m.marketCap === 'Micro' ? 'MICRO' : null),

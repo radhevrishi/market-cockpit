@@ -809,9 +809,16 @@ export const QUADRANT_META: Record<EarningsQuadrant, { icon: string; label: stri
     icon: '🛡', label: 'QUALITY', color: '#22D3EE',
     tagline: 'A genuinely good business that is not currently inflecting.',
   },
+  // zzz819 — the KEY stays 'REJECT' (stored rows and filters use it), but the
+  // LABEL no longer says it. The quadrant is a description beside the tier and
+  // never changes it (see the header of this section); a badge reading
+  // "⊘ REJECT" on a STRONG card read as the engine contradicting itself, when
+  // it only meant "returns and rate of change are both modest on the data we
+  // hold" — often because India's feed carries no ROCE or FCF at all.
   'REJECT': {
-    icon: '⊘', label: 'REJECT', color: 'var(--mc-text-3)',
-    tagline: 'Neither earning a return nor changing quickly enough to matter yet.',
+    icon: '◌', label: 'NOT YET PROVEN', color: 'var(--mc-text-3)',
+    tagline: 'On the figures we hold, neither the return on capital nor the rate of change stands out yet. '
+      + 'A description of the business, not a verdict on this quarter — the tier is the verdict',
   },
 };
 

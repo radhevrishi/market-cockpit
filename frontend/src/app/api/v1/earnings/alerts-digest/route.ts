@@ -22,6 +22,7 @@
 import { NextResponse } from 'next/server';
 import { kvGet, isRedisAvailable } from '@/lib/kv';
 import { gradedKeyCandidates } from '@/lib/graded-cache-key';
+import { withCurrentIndiaRules } from '@/lib/india-regrade';
 import { isAlertable } from '@/lib/quality-preset';
 
 export const runtime = 'nodejs';
@@ -72,7 +73,7 @@ export async function GET(req: Request) {
           // fall through to the next namespace rather than reporting an empty
           // day, which is how a version bump would otherwise look like "no
           // earnings today".
-          if (n > 0) { payload = parsed; usedKey = k; break; }
+          if (n > 0) { payload = withCurrentIndiaRules(parsed, k); usedKey = k; break; }   // zzz819
         }
       } catch { /* try the next namespace */ }
     }

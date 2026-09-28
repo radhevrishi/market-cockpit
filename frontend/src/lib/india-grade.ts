@@ -25,10 +25,10 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import {
-  CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, caveatPenaltyFor, countingCaveats, marginQualityDelta, decideTier,
-  marketReactionDelta, typicalDailyMovePct, thinFloatGate, quadrantForIndiaRow,
+  caveatPenaltyFor, countingCaveats, marginQualityDelta, decideTier,
+  marketReactionDelta, typicalDailyMovePct, quadrantForIndiaRow,
   fundamentalComposite, setupGrade,
-  profitTrajectory, reactionFloor, MARKET_REACTION_CAVEATS,
+  profitTrajectory, MARKET_REACTION_CAVEATS,
   type EarningsTier,
 } from '@/lib/earnings-grade-shared';
 import { peadScore } from '@/lib/pead-score';
@@ -70,11 +70,199 @@ function parseTrendlynePeriodEnd(s: string): string | null {
 export function gradeIndiaRowExplained(row: any): { card: IndiaGradedRow | null; dropReason: string | null } {
   let reason: string | null = null;
   const card = _gradeIndiaRow(row, (r) => { reason = r; return null; });
+  if (card) attachGradeInput(card, row);
   return { card, dropReason: card ? null : (reason ?? 'unknown') };
 }
 
 export function gradeIndiaRow(row: any): IndiaGradedRow | null {
-  return _gradeIndiaRow(row, () => null);
+  const card = _gradeIndiaRow(row, () => null);
+  if (card) attachGradeInput(card, row);
+  return card;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE GRADE'S OWN INPUT, STORED ON THE CARD.                        (zzz819)
+//
+// Until now an India day stored the grader's OUTPUT only, so a rules change
+// could not be applied to a stored day without re-enriching every company
+// from Screener — the whole 60-day window re-queued, one day at a time. The
+// US engine solved this in zzz807 by keeping the exact input on the row.
+// India now does the same: every field the grader reads, and nothing else.
+// A regrade (lib/india-regrade.ts) feeds this straight back in.
+// ═══════════════════════════════════════════════════════════════════════════
+export const INDIA_GRADE_INPUT_V = 1;
+const GRADE_INPUT_FIELDS = [
+  'hub_quality', 'symbol', 'company', 'filing_date', 'quarter', 'sector', 'market_cap_bucket',
+  'market_cap_cr', 'marketCapCr', 'adtv_cr', 'close_30d', 'vol_ratio_20d', 'rvol',
+  'exceptional_pct_pbt', 'pledged_pct', 'guidance_raised', 'guidance_lowered',
+  'source_url', 'sales_curr_cr', 'sales_prev_cr', 'sales_yoy_pct', 'pat_curr_cr', 'pat_prev_cr',
+  'pat_yoy_pct', 'eps_curr', 'eps_prev', 'eps_yoy_pct', 'newly_listed', 'num_quarters',
+  'quarters_sales', 'quarters_eps', 'quarters_pat', 'op_profit_yoy_pct', 'opm_pct', 'opm_prev_pct',
+  'pe', 'stockPE', 'current_price', 'gap_pct', 'd1_pct', 'move_pct', 'pct_from_52w_high',
+  'rs_rating', 'stage', 'trend_template_passes', 'ocf_annual_cr', 'pat_annual_cr',
+  'ocf_to_pat_ratio', 'roce', 'latest_quarter_end_iso', 'financials_source',
+] as const;
+const GRADE_INPUT_TEXT_FIELDS = ['guidance_text', 'narrative_text', 'announcement_text', 'attachment', 'headline', 'title'] as const;
+
+/** The subset of an enriched row the grader reads. Pure. */
+export function pickIndiaGradeInput(row: any): Record<string, any> {
+  const out: Record<string, any> = { v: INDIA_GRADE_INPUT_V };
+  for (const k of GRADE_INPUT_FIELDS) if (row?.[k] !== undefined && row?.[k] !== null) out[k] = row[k];
+  for (const k of GRADE_INPUT_TEXT_FIELDS) {
+    const v = row?.[k];
+    // Only the guidance scan reads these, and it lower-cases and pattern-
+    // matches; a long announcement is capped so one day cannot balloon.
+    if (typeof v === 'string' && v) out[k] = v.slice(0, 3000);
+  }
+  // A card-basis regrade (lib/india-regrade.ts) carries filing flags the card
+  // could not re-derive; they must survive into the next regrade too.
+  if (Array.isArray(row?._carried_caveats) && row._carried_caveats.length) out._carried_caveats = row._carried_caveats.slice();
+  if (row?._carried_oneoff_cap) out._carried_oneoff_cap = row._carried_oneoff_cap;
+  return out;
+}
+
+function attachGradeInput(card: any, row: any): void {
+  // A regrade passes the stored input back in; keep it exactly as it was.
+  if (row?._regrade === true && row?._stored_input) { card.grade_input = row._stored_input; return; }
+  card.grade_input = pickIndiaGradeInput(row);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE INDIA BLOCKBUSTER CONFIRMATION GATE.                          (zzz819)
+//
+// Every BLOCKBUSTER path in `decideTier` is a PERCENTAGE test, and a
+// percentage off a tiny base clears any of them. So the live page published
+// BLOCKBUSTER on revenue +5% with profit up 500% off almost nothing, on a
+// lender whose cash flow ran the other way, on a 2%-margin distributor with a
+// cash divergence, and on rows the engine itself had flagged 'low quality'.
+//
+// The US engine closed the same hole in zzz806. A row the magnitude paths
+// call BLOCKBUSTER must now ALSO show, from the filing (price never counts):
+//   1. real revenue growth — at least 15% year on year;
+//   2. profit growth that is not small-base arithmetic — when the year-ago
+//      profit was a loss, under ₹2 Cr, or under 2% of revenue, the profit
+//      jump counts for nothing and the quarter must stand on revenue growth
+//      of 25%+ and (for a non-lender) a margin gain of 3+ points;
+//   3. a healthy operating margin (12%+) or a large expansion (5+ points and
+//      at least half the starting margin). Banks, NBFCs and insurers are
+//      judged on net margin instead (profit ÷ revenue, 10%+), because an
+//      operating margin means nothing for a lender. A margin we do not have
+//      is not held against the company — it simply cannot confirm the top
+//      tier;
+//   4. cash backing, when the cash-flow figures exist: operating cash below
+//      0.6× profit, or negative against a profit, blocks it (lenders exempt:
+//      their loan growth IS their operating cash outflow). No cash data is no
+//      evidence either way and does not block;
+//   5. no open forensic / quality flag on the row.
+// Failing caps the row at STRONG — or at MIXED when the growth itself is
+// weak (revenue up less than 5%, or up less than 15% with a profit jump that
+// is only small-base arithmetic). Every miss is named on the card.
+// ═══════════════════════════════════════════════════════════════════════════
+export const IN_BB_MIN_REVENUE_GROWTH = 15;
+export const IN_BB_WEAK_REVENUE_GROWTH = 5;
+export const IN_BB_SMALL_BASE_PAT_CR = 2;
+export const IN_BB_SMALL_BASE_MARGIN_PCT = 2;
+export const IN_BB_HEALTHY_OPM_PCT = 12;
+export const IN_BB_LENDER_NET_MARGIN_PCT = 10;
+export const IN_BB_MIN_CASH_CONVERSION = 0.6;
+/** Flags that say the engine found something wrong in the filing. */
+export const IN_BB_BLOCKING_FLAGS: readonly string[] = [
+  'low quality', 'ocf divergence', 'optical eps', 'tax distortion', 'exceptional item',
+  'profit without operating cash', 'earnings outrun both revenue and cash',
+  'headline leans on a one-off', 'multiple quality flags',
+];
+
+export interface IndiaBlockbusterGateInput {
+  salesY: number | null;
+  patY: number | null;
+  opmPct: number | null; opmPrevPct: number | null;
+  salesCurCr: number | null; salesPrevCr: number | null;
+  patCurCr: number | null; patPrevCr: number | null;
+  epsPrev: number | null;
+  cfoToPat: number | null;
+  ocfAnnualCr: number | null; patAnnualCr: number | null;
+  isLender: boolean;
+  caveatTags: readonly string[];
+}
+export interface IndiaBlockbusterGateResult {
+  tier: 'BLOCKBUSTER' | 'STRONG' | 'MIXED';
+  misses: string[];
+  /** One plain line, e.g. "Capped at STRONG: revenue grew only 5%". Null when passed. */
+  reason: string | null;
+}
+
+const _pct = (v: number): string => {
+  const r = Math.round(v);
+  return r === 0 ? '0' : `${r}`;
+};
+
+export function indiaBlockbusterGate(i: IndiaBlockbusterGateInput): IndiaBlockbusterGateResult {
+  const misses: string[] = [];
+  const opmExp = i.opmPct != null && i.opmPrevPct != null ? i.opmPct - i.opmPrevPct : null;
+
+  // 1 — real revenue growth.
+  const revKnown = i.salesY != null && Number.isFinite(i.salesY);
+  const revOk = revKnown && (i.salesY as number) >= IN_BB_MIN_REVENUE_GROWTH;
+  if (!revKnown) misses.push('revenue growth not reported, so the top tier cannot be confirmed');
+  else if (!revOk) {
+    const y = i.salesY as number;
+    misses.push(Math.round(y) === 0 ? 'revenue was flat'
+      : y < 0 ? `revenue fell ${_pct(Math.abs(y))}%`
+      : `revenue grew only ${_pct(y)}%`);
+  }
+
+  // 2 — profit growth that is not small-base arithmetic.
+  const priorMargin = (i.patPrevCr != null && i.salesPrevCr != null && i.salesPrevCr > 0)
+    ? (i.patPrevCr / i.salesPrevCr) * 100 : null;
+  const smallBase =
+    (i.patPrevCr != null && (i.patPrevCr <= 0 || i.patPrevCr < IN_BB_SMALL_BASE_PAT_CR
+      || (priorMargin != null && priorMargin < IN_BB_SMALL_BASE_MARGIN_PCT)))
+    || (i.patPrevCr == null && i.epsPrev != null && Math.abs(i.epsPrev) < 0.5);
+  let smallBaseMiss = false;
+  if (smallBase) {
+    const growthOk = revKnown && (i.salesY as number) >= 25;
+    const marginOk = i.isLender || (opmExp != null && opmExp >= 3);
+    if (!growthOk || !marginOk) {
+      smallBaseMiss = true;
+      const base = i.patPrevCr != null
+        ? (i.patPrevCr <= 0 ? `a year-ago loss (₹${Math.abs(Math.round(i.patPrevCr * 100) / 100)} Cr)` : `a tiny year-ago profit (₹${Math.round(i.patPrevCr * 100) / 100} Cr)`)
+        : 'a tiny year-ago EPS';
+      misses.push(`profit jump is off ${base}, so the % is arithmetic, not growth`);
+    }
+  }
+
+  // 3 — margin level (operating for companies, net for lenders).
+  if (i.isLender) {
+    const nm = (i.patCurCr != null && i.salesCurCr != null && i.salesCurCr > 0) ? (i.patCurCr / i.salesCurCr) * 100 : null;
+    if (nm == null) misses.push('lender profitability not measurable from the figures on file');
+    else if (nm < IN_BB_LENDER_NET_MARGIN_PCT) misses.push(`thin net margin for a lender (${_pct(nm)}%)`);
+  } else if (i.opmPct == null) {
+    misses.push('operating margin not reported, so the top tier cannot be confirmed');
+  } else {
+    const bigStep = opmExp != null && opmExp >= 5 && i.opmPrevPct != null && i.opmPrevPct > 0 && opmExp / i.opmPrevPct >= 0.5;
+    if (i.opmPct < IN_BB_HEALTHY_OPM_PCT && !bigStep) misses.push(`thin operating margin (${Math.round(i.opmPct * 10) / 10}%)`);
+  }
+
+  // 4 — cash backing, when the figures exist. Lenders exempt.
+  if (!i.isLender) {
+    if (i.ocfAnnualCr != null && i.ocfAnnualCr < 0 && i.patAnnualCr != null && i.patAnnualCr > 0) {
+      misses.push('operating cash flow was negative against a reported profit');
+    } else if (i.cfoToPat != null && i.cfoToPat < IN_BB_MIN_CASH_CONVERSION) {
+      misses.push(i.cfoToPat < 0
+        ? 'operating cash flow was negative against a reported profit'
+        : `cash does not back the profit (operating cash ${Math.round(i.cfoToPat * 100) / 100}× profit)`);
+    }
+  }
+
+  // 5 — open forensic / quality flags.
+  const open = IN_BB_BLOCKING_FLAGS.filter((t) => i.caveatTags.includes(t));
+  if (open.length) misses.push(`open flag${open.length > 1 ? 's' : ''}: ${open.join(', ')}`);
+
+  if (misses.length === 0) return { tier: 'BLOCKBUSTER', misses, reason: null };
+  const weakGrowth = (revKnown && (i.salesY as number) < IN_BB_WEAK_REVENUE_GROWTH)
+    || (smallBaseMiss && revKnown && (i.salesY as number) < IN_BB_MIN_REVENUE_GROWTH);
+  const tier = weakGrowth ? 'MIXED' : 'STRONG';
+  return { tier, misses, reason: `Capped at ${tier}: ${misses.join('; ')}` };
 }
 
 /** IST calendar date (YYYY-MM-DD). Pure — no Intl, no env. */
@@ -280,8 +468,14 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
   // zzz800 — IST, not UTC. Between 00:00 and 05:30 IST the UTC date is still
   // yesterday, so every filing dated today-IST was dropped as "future" until
   // 05:30 — exactly when late-night result filings land.
+  // zzz819 — a REGRADE re-applies the rules to a card that already passed
+  // every attribution guard when it was first graded. The guards below read
+  // fields (announce date, Screener quarter end) that a stored card does not
+  // carry, and the calendar has moved on since, so on a regrade they would
+  // drop real filings for reasons that have nothing to do with the rules.
+  const _regrade = row?._regrade === true;
   const todayIso = istTodayIso();
-  if (row?.filing_date && row.filing_date > todayIso) return drop(`filing date ${row.filing_date} is in the future`);
+  if (!_regrade && row?.filing_date && row.filing_date > todayIso) return drop(`filing date ${row.filing_date} is in the future`);
 
   // PATCH 0182 — STRICT announce-date attribution guard.
   // The previous data flow attributed Screener's LATEST Q4 financials to whatever
@@ -291,7 +485,7 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
   // Now: if /enrich returned an announce_date_iso (NSE re_broadcastDt — the
   // authoritative filing timestamp), it MUST match the page's filing_date
   // within ±3 days. Outside that window = wrong attribution, drop the row.
-  if (row?.announce_date_iso && row?.filing_date) {
+  if (!_regrade && row?.announce_date_iso && row?.filing_date) {
     const announceD = new Date(row.announce_date_iso);
     const filingD = new Date(row.filing_date);
     if (!isNaN(announceD.getTime()) && !isNaN(filingD.getTime())) {
@@ -311,7 +505,7 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
   // data cannot confirm the historic filing actually happened. But if hub_quality is
   // set to anything other than 'Upcoming' (Good/OK/Great/Excellent/Weak), the Earnings
   // Hub has already confirmed the filing. Keep those rows for historical browsing.
-  if (!row?.announce_date_iso && row?.filing_date) {
+  if (!_regrade && !row?.announce_date_iso && row?.filing_date) {
     const filingD = new Date(row.filing_date);
     const todayD = new Date();
     if (!isNaN(filingD.getTime())) {
@@ -342,7 +536,7 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
   // Only drop on screener-only source with extreme mismatch (>95 days).
   // NSE/BSE-structured financials are authoritative — trust them even when
   // Screener latest_quarter_end_iso still shows the prior quarter.
-  if (row?.period_ended && row?.latest_quarter_end_iso) {
+  if (!_regrade && row?.period_ended && row?.latest_quarter_end_iso) {
     const promised = parseTrendlynePeriodEnd(row.period_ended);
     if (promised && promised !== row.latest_quarter_end_iso) {
       const diffDays = Math.abs((new Date(promised).getTime() - new Date(row.latest_quarter_end_iso).getTime()) / 86_400_000);
@@ -572,8 +766,29 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
     const _excPct = typeof row?.exceptional_pct_pbt === 'number' ? Math.abs(row.exceptional_pct_pbt) : null;
     if (_excPct != null && _excPct >= 20) caveat_tags.push('exceptional item');
   }
-  if (stage === 4) caveat_tags.push('low quality');
-  else if (pct52 != null && pct52 < -25) caveat_tags.push('low quality');
+  // ═══════════════════════════════════════════════════════════════════════
+  // PRICE IS CONTEXT, NOT A CAVEAT.                                (zzz819)
+  //
+  // A Stage-4 chart or a price more than 25% off the 52-week high used to
+  // push 'low quality' — the same tag, and the same 25 quality points, as a
+  // company still losing money. That is the tape grading the filing. The US
+  // engine stopped doing it in zzz804; India now matches. The facts are still
+  // stated, in `market_context`, beside the grade and never inside it.
+  // ═══════════════════════════════════════════════════════════════════════
+  const market_context: string[] = [];
+  if (stage === 4) market_context.push('stage 4 downtrend');
+  else if (pct52 != null && pct52 < -25) market_context.push(`${Math.round(Math.abs(pct52))}% below its 52-week high`);
+
+  // zzz819 — CARRIED FILING FLAGS (regrade of a card stored before zzz819
+  // only). A stored card does not hold the annual cash figures, the
+  // exceptional-item share or operating-profit growth, so those flags cannot
+  // be re-derived from it. They were derived from the FILING when the card
+  // was first graded, so they are carried forward as they were — never
+  // invented, never dropped.
+  const _carried: string[] = Array.isArray(row?._carried_caveats) ? row._carried_caveats.map(String) : [];
+  for (const t of ['ocf divergence', 'exceptional item', 'tax distortion']) {
+    if (_carried.includes(t) && !caveat_tags.includes(t)) caveat_tags.push(t);
+  }
 
   // ═══════════════════════════════════════════════════════════════════════
   // DEDUPE BEFORE ANYTHING COUNTS THEM.  (zzz665c)
@@ -646,7 +861,21 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
   // below reads them, and `decideTier` still receives `composite`. See the long
   // note on `fundamentalComposite` in earnings-grade-shared for why the switch
   // is deliberately a second, separate change.
-  const _fund_composite = fundamentalComposite(magnitude, quality, methodology);
+  //
+  // zzz819 — …and now the switch is made. THE TIER IS DECIDED WITHOUT THE
+  // CHART, as the US engine has been since zzz804. `composite` still blends
+  // 25% technical and counts trend template / SEPA / CANSLIM (all three read
+  // off stage, RS and the 52-week high), so it moved with the price. The tier
+  // reads `tierComposite`: magnitude, quality and FUNDAMENTAL methodology only,
+  // renormalised to 0-100 so every threshold in `decideTier` keeps its
+  // meaning. The blended number is still returned for ordering within a tier.
+  const PRICE_METHODS = new Set(['trend template', 'sepa', 'canslim']);
+  const fundMCount = methodology_tags.filter((t) => !PRICE_METHODS.has(t)).length;
+  let methodologyFund = fundMCount >= 4 ? 100 : fundMCount === 3 ? 80 : fundMCount === 2 ? 60 : fundMCount === 1 ? 35 : 10;
+  if (_megaMagFloor) methodologyFund = Math.max(methodologyFund, 75);
+  if (_exceptMagFloor) methodologyFund = Math.max(methodologyFund, 65);
+  const tierComposite = fundamentalComposite(magnitude, quality, methodologyFund);
+  const _fund_composite = tierComposite;
   // "Has technical evidence" is stage OR relative strength actually arriving
   // from the scraper. Both null means a newly listed or uncovered symbol, whose
   // setup is UNKNOWN — never 'D'.
@@ -672,10 +901,8 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
   // stage at all, so the rule has been dormant rather than correct. Now that
   // stage is real, it would have started firing.
   //
-  // A stage-4 downtrend is still a genuine risk and still costs the row: it
-  // adds a `low quality` caveat, it vetoes every Blockbuster path, and the
-  // reaction ladder can demote on top. It simply may no longer, by itself,
-  // produce the worst grade available.
+  // zzz819 — and since zzz819 the chart costs the row nothing at all: a
+  // stage-4 downtrend is stated in `market_context`, beside the grade.
   // ═══════════════════════════════════════════════════════════════════════
   const broken = (epsY != null && epsY < 0 && patY != null && patY < -10);
   const cleanMag = salesY != null && salesY >= 25 && patY != null && patY >= 25 && epsY != null && epsY >= 25;
@@ -688,7 +915,8 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
   //   Catches near-mega stories like Investment & Precision Castings
   //   (PAT+98/EPS+98/sales+20/comp 68) that failed the Tier A 100% gate.
   const marginInflection = patY != null && patY >= 100 && epsY != null && epsY >= 100 && salesY != null && salesY >= -5;
-  const marginInflectionLoose = patY != null && patY >= 75 && epsY != null && epsY >= 75 && salesY != null && salesY >= 0 && stage !== 4;
+  // zzz819 — `stage !== 4` removed: the chart does not grade the quarter.
+  const marginInflectionLoose = patY != null && patY >= 75 && epsY != null && epsY >= 75 && salesY != null && salesY >= 0;
 
   // Guidance signal — scan available text
   const guidanceText = [
@@ -728,7 +956,6 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
     : _gRaised === true ? true
     : _guidanceMatches >= 2;
 
-  const chartOk = stage !== 4 && (pct52 == null || pct52 >= -25);
   // zzz800 — the loss-narrowing operating turnaround (see decideTier). Every
   // input is a reported figure: the prior loss at least halved, revenue up
   // >= 25%, operating margin up >= 5pp and positive now, and the annual cash
@@ -744,16 +971,21 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
   // zzz395 — tier-decision chain (BLOCKBUSTER gate Paths A–E + graduated margin
   // gate + loss-maker/turnaround/quality-STRONG rules) now lives in the shared
   // module so this server copy and the client gradeRow can never re-drift.
+  // zzz819 — no price input reaches the decision: the composite is the
+  // price-free one, the chart is always "ok", the stage is unknown to it, the
+  // method count is the fundamental one, and the Tier-1 methods (which are
+  // chart methods) count for nothing. India has no street consensus, so the
+  // only Path-A confirmation left is guidance — as it should be.
   tier = decideTier({
-    composite,
+    composite: tierComposite,
     broken,
     stillLossMaking,
     turnaroundBase,
     marginContracting: opmExp != null && opmExp <= -0.5,        // PATCH 1000
     marginSevereContraction: opmExp != null && opmExp <= -1.5,  // PATCH 1020
     caveatCount: countingCaveats(caveat_tags),   // zzz694 — informational tags must not gate a tier
-    mCount,
-    stage,
+    mCount: fundMCount,
+    stage: null,
     salesY, patY, epsY, opmExp,
     cleanMag, exceptMag, megaMag,
     marginInflection, marginInflectionLoose,
@@ -783,79 +1015,40 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
         && opmExp != null && opmExp >= 5;
     })(),
     lossTurnaround,
-    tier1MethodCount: _t1MethodCount,
+    tier1MethodCount: 0,
     positiveGuidance,
-    chartOk,
+    chartOk: true,
   }).tier;
   if (lossTurnaround && tier === 'STRONG' && !methodology_tags.includes('operating turnaround')) {
     // Pushed AFTER composite, so it describes the verdict without scoring it.
     methodology_tags.push('operating turnaround');
   }
-  // What the FUNDAMENTALS said before the tape got a vote (zzz800).
-  const tierOnFundamentals: EarningsTier = tier;
-  let _reactionDemotedFrom: EarningsTier | null = null;
-  let _reactionTierAfter: EarningsTier = tier;
-
-  // PATCH 0938 — Market-reaction gate (user-reported: POCL +78%/+124% scored
-  // BLOCKBUSTER but stock sold off -6% D1; CARRARO same pattern at -5% D1).
+  // ═══════════════════════════════════════════════════════════════════════
+  // THE TAPE IS CONTEXT.                                            (zzz819)
   //
-  // The grader was purely fundamental — it never looked at how the MARKET
-  // priced the print. A "blockbuster" that gets sold off on D1 is signalling
-  // one of: (a) numbers were already in the price, (b) tax/other-income
-  // skew the market is discounting, (c) guidance disappointed even though
-  // headline numbers beat, (d) margin compression the market noticed first.
-  //
-  // Downgrade ladder based on Day-1 close % (the cleanest signal of market
-  // verdict — gap alone is noisy from pre-market liquidity).
-  //   D1 <= -7%  → caveat 'sold off post-results' (tier capped at STRONG —
-  //                zzz800: never below STRONG on the price alone, see below)
-  //   D1 <= -3%  → downgrade BLOCKBUSTER → STRONG, caveat 'market rejected print'
-  //   Gap >= +3 BUT D1 close <= -2% → caveat 'intraday reversal · distribution'
-  //
-  // Logic is one-way (only downgrades). A negative D1 reaction never elevates a tier.
+  // PATCH 0938 let a Day-1 sell-off demote the tier; zzz800 floored that at
+  // STRONG, so the price could still "cost the top tier". The owner's rule is
+  // that price does not grade a filing at all, and the US engine has worked
+  // that way since zzz804. The reaction ladder still runs — scaled by the
+  // stock's own typical daily move (zzz665c) — but only to NAME what the
+  // market did, in `market_reaction` and `market_context`. It never touches
+  // the tier and never enters the caveat list.
+  // ═══════════════════════════════════════════════════════════════════════
+  const _reactionTags: string[] = [];
   {
-    // zzz665c — SCALE THE THRESHOLDS BY THE STOCK'S OWN VOLATILITY.
-    //
-    // The 3-argument form falls back to a flat −7% "sold off" and −3% "market
-    // rejected print" for every company on the exchange. The shared module's
-    // own comment explains why that is wrong, using a US example: a stock whose
-    // median daily move is over 3% did not reject anything by falling 3.2% —
-    // that was an ordinary session. Indian smallcaps are more volatile than the
-    // stock in that example, not less, so the flat threshold has been calling
-    // ordinary sessions verdicts on exactly the names where it matters most,
-    // and one-way demoting them for it.
-    //
-    // The 4th argument scales both thresholds by the stock's own median daily
-    // move (2.5× and 1.5×, floored at the old constants and capped at 20%/10%
-    // so a violently volatile microcap cannot become unfalsifiable). The US has
-    // passed it since the fix; India dropped the input before it got here.
     const _mr = marketReactionDelta(
       tier, row?.d1_pct, row?.gap_pct,
       typicalDailyMovePct((row as any)?.close_30d ?? null),
     );
-    // zzz800 — the price may cost the TOP tier ("market confirming" has to
-    // mean the market confirmed it), but a Day-1 sell-off on its own can no
-    // longer turn a fundamentally STRONG quarter into a "mixed print". The US
-    // engine has always had this floor; India did not. The reaction is kept
-    // as a separate, labelled note (`market_reaction`), not a verdict.
-    tier = reactionFloor(tierOnFundamentals, _mr.tier);
-    _reactionDemotedFrom = tier !== tierOnFundamentals ? tierOnFundamentals : null;
-    _reactionTierAfter = tier;
-    for (const c of _mr.addCaveats) if (!caveat_tags.includes(c)) caveat_tags.push(c);
+    for (const c of _mr.addCaveats) if (!_reactionTags.includes(c)) _reactionTags.push(c);
   }
 
-  // PATCH 1034 — Liquidity / thin-float gate. A name that barely trades can't be
-  // built or exited at size, so it doesn't belong in the top conviction tiers.
-  // Demote (never delete) + tag. Missing ADTV is NOT punished (data gap ≠ illiquid).
-  // _adtv / _thinFloat retained locally: _adtv feeds the return object, _thinFloat
-  // gates the ELITE flag below. The tier demotion itself is the shared thinFloatGate.
+  // PATCH 1034 — liquidity. zzz819: a thin float is a fact about TRADING the
+  // stock, not about the quarter, so it is market context (as on the US side
+  // since zzz804) and no longer demotes the tier. Missing ADTV says nothing.
   const _adtv = (typeof row?.adtv_cr === 'number' && Number.isFinite(row.adtv_cr)) ? row.adtv_cr : null;
   const _thinFloat = _adtv != null && _adtv < 1;  // < ₹1 Cr/day median traded value = thin float
-  {
-    const _tf = thinFloatGate(tier, _adtv);
-    tier = _tf.tier;
-    for (const c of _tf.addCaveats) if (!caveat_tags.includes(c)) caveat_tags.push(c);
-  }
+  if (_thinFloat) market_context.push('thin float');
 
   // ═══════════════════════════════════════════════════════════════════════
   // HARD CEILINGS — INDIA HAD NONE.  (zzz666)
@@ -963,7 +1156,15 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
     // composite is what was measured - swapping in fund_composite here would
     // be implementing something the study never tested, which is the mistake
     // the FPS demotion was made of.
-    if (_ocfAnnual != null && _ocfAnnual < 0 && _patAnnual != null && _patAnnual > 0) {
+    //
+    // zzz819 — …but the owner's rule outranks the study: no price in the
+    // grade. The split now reads the PRICE-FREE composite (`tierComposite`),
+    // so a name the market happens to like no longer escapes the MIXED cap on
+    // momentum. The 78 line keeps its meaning because the price-free composite
+    // is renormalised to the same 0-100 scale.
+    const _cashCapTrigger = (_ocfAnnual != null && _ocfAnnual < 0 && _patAnnual != null && _patAnnual > 0)
+      || _carried.includes('profit without operating cash');
+    if (_cashCapTrigger) {
       if (_looksLikeLender) {
         // Named, not silently skipped: the reader should see WHY the usual
         // cash ceiling did not apply, and should be able to disagree.
@@ -971,7 +1172,7 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
           caveat_tags.push('lender — operating cash flow is loan growth');
         }
       } else {
-        capTier(composite >= 78 ? 'STRONG' : 'MIXED', 'profit without operating cash');
+        capTier(tierComposite >= 78 ? 'STRONG' : 'MIXED', 'profit without operating cash');
       }
     }
 
@@ -1000,6 +1201,11 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
     const _excShare = typeof row?.exceptional_pct_pbt === 'number' ? Math.abs(row.exceptional_pct_pbt) : null;
     if (_excShare != null && _excShare >= 50) capTier('MIXED', 'headline leans on a one-off');
     else if (_excShare != null && _excShare >= 25) capTier('STRONG', 'headline leans on a one-off');
+    else if (_excShare == null && _carried.includes('headline leans on a one-off')) {
+      // zzz819 — carried from a stored card (see `_carried`): the level the
+      // original filing set, recovered conservatively by the caller.
+      capTier(row?._carried_oneoff_cap === 'STRONG' ? 'STRONG' : 'MIXED', 'headline leans on a one-off');
+    }
 
     // ═══════════════════════════════════════════════════════════════════════
     // 5. YOU CANNOT BUY IT.  (zzz674)
@@ -1040,12 +1246,36 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
     // Pakka ₹357 Cr and Aartech ₹162 Cr all pass — genuine microcaps are the
     // hunting ground, and this is not a smallcap filter.
     // ═══════════════════════════════════════════════════════════════════════
+    if (_looksLikeLender && _carried.includes('lender — operating cash flow is loan growth')
+        && !caveat_tags.includes('lender — operating cash flow is loan growth')) {
+      caveat_tags.push('lender — operating cash flow is loan growth');
+    }
     const _mcap = typeof row?.market_cap_cr === 'number' ? row.market_cap_cr : null;
     const _adtv = typeof row?.adtv_cr === 'number' ? row.adtv_cr : null;
     if (_mcap != null && _mcap < 100) {
       capTier('MIXED', 'below investable size');
     } else if (_mcap != null && _mcap < 500 && _adtv != null && _adtv < 0.10) {
       capTier('MIXED', 'barely trades');
+    }
+  }
+
+  // ── zzz819 — THE INDIA BLOCKBUSTER CONFIRMATION GATE (see `indiaBlockbusterGate`)
+  let _bbGate: IndiaBlockbusterGateResult | null = null;
+  let tier_cap_reason: string | null = null;
+  if (tier === 'BLOCKBUSTER') {
+    _bbGate = indiaBlockbusterGate({
+      salesY, patY, opmPct: _opmNow, opmPrevPct: _opmPre,
+      salesCurCr: _sCur, salesPrevCr: _sPrev,
+      patCurCr: _patCurA, patPrevCr: _patPrevA, epsPrev: _epsPrevA,
+      cfoToPat: _cfoRatio,
+      ocfAnnualCr: _numA(row?.ocf_annual_cr), patAnnualCr: _numA(row?.pat_annual_cr),
+      isLender: _isLender,
+      caveatTags: caveat_tags,
+    });
+    if (_bbGate.tier !== 'BLOCKBUSTER') {
+      tier = _bbGate.tier;
+      tier_cap_reason = _bbGate.reason;
+      if (tier_cap_reason && !caveat_tags.includes(tier_cap_reason)) caveat_tags.push(tier_cap_reason);
     }
   }
 
@@ -1071,7 +1301,6 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
   // Price-reaction tags are NOT fundamental caveats: they go in their own
   // clearly labelled sentence so "with caveats" only ever describes the filing.
   const _fundCaveats = [...new Set(caveat_tags)].filter((t) => !MARKET_REACTION_CAVEATS.has(t));
-  const _reactionTags = [...new Set(caveat_tags)].filter((t) => MARKET_REACTION_CAVEATS.has(t));
   const flavor =
     _fundCaveats.length > 0 ? ` with caveat${_fundCaveats.length > 1 ? 's' : ''}: ${_fundCaveats.slice(0, 3).join(' + ')}.` :
     methodology_tags.length >= 2 ? ` and ${[...new Set(methodology_tags)].join('/')} all passing.` : '.';
@@ -1080,10 +1309,17 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
     d1_pct: _d1,
     gap_pct: typeof row?.gap_pct === 'number' ? row.gap_pct : null,
     tags: _reactionTags,
-    demoted_from: _reactionDemotedFrom,
-    note: `Market reaction: ${_d1 != null ? `D1 ${_d1 >= 0 ? '+' : ''}${Math.round(_d1 * 10) / 10}% after the print` : 'sold after the print'} — a price move, not a verdict on the filing${_reactionDemotedFrom ? ` (it cost the top tier only: ${_reactionDemotedFrom} → ${_reactionTierAfter})` : ''}.`,
+    // zzz819 — the price no longer changes the tier, so nothing is ever
+    // demoted by it. Kept (always null) so older readers of the field work.
+    demoted_from: null,
+    note: `Market reaction: ${_d1 != null ? `D1 ${_d1 >= 0 ? '+' : ''}${Math.round(_d1 * 10) / 10}% after the print` : 'sold after the print'} — a price move, not a verdict on the filing; it does not change the grade.`,
   } : null;
-  const narrative = `${head} (${metrics})${flavor}${market_reaction ? ' ' + market_reaction.note : ''}`;
+  for (const t of _reactionTags) if (!market_context.includes(t)) market_context.push(t);
+  // Chart / liquidity facts other than the Day-1 reaction, stated AFTER the
+  // verdict and labelled as not part of it.
+  const _ctxOther = market_context.filter((t) => !MARKET_REACTION_CAVEATS.has(t));
+  const _ctxNote = _ctxOther.length ? ` Price context (not part of the grade): ${_ctxOther.join(', ')}.` : '';
+  const narrative = `${head} (${metrics})${flavor}${market_reaction ? ' ' + market_reaction.note : ''}${_ctxNote}`;
 
   // PATCH 1006 — compute ELITE / PEAD / MULTIBAGGER flags from available data
   const _stillLoss = (row?.pat_curr_cr != null && row.pat_curr_cr <= 0) || (row?.eps_curr != null && row.eps_curr <= 0);
@@ -1233,6 +1469,12 @@ function _gradeIndiaRow(row: any, drop: (reason: string) => null): IndiaGradedRo
     pat_trajectory: patTraj ? patTraj.label : null,
     eps_trajectory: epsTraj ? epsTraj.label : null,
     market_reaction,
+    // zzz819 — price facts shown beside the grade, never part of it.
+    market_context: Array.from(new Set(market_context)),
+    // zzz819 — why a BLOCKBUSTER-on-the-numbers quarter was held lower, in one
+    // plain line ("Capped at STRONG: revenue grew only 5%"). Null otherwise.
+    tier_cap_reason,
+    bb_gate_misses: _bbGate && _bbGate.tier !== 'BLOCKBUSTER' ? _bbGate.misses : null,
     // PATCH 1006
     is_elite: _is_elite,
     pead_score: _pead_score,
