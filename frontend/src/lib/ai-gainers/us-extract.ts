@@ -103,7 +103,8 @@ export function isStrategicHolder(name: string | null | undefined, loose = false
 }
 
 function stageOf(s: string): EventFacts['stage'] {
-  if (/\b(completed|closed|consummated|has acquired|acquired all)\b/i.test(s)) return 'COMPLETED';
+  // zzz835: "expected to be closed in Q4" / "proposed ... to be completed" is NOT completed - only a done-tense completion is
+  if (/\b(?:has|have|had|was|were)\s+(?:now\s+)?(?:completed|closed|consummated|acquired)\b|\b(?:completed|consummated|closed)\s+(?:the |its )?(?:previously announced )?(?:acquisition|merger|transaction|sale|purchase|deal)\b|\btransaction (?:has )?closed\b|\bhas acquired\b|\bacquired all\b/i.test(s) && !/\b(?:expected|anticipated|scheduled|intends?|proposed|subject to)\b[^.]{0,40}\b(?:to )?(?:be )?(?:completed|closed|consummated)\b/i.test(s)) return 'COMPLETED';
   if (/\b(letter of intent|\bloi\b|non-binding|memorandum of understanding|\bmou\b|term sheet|proposal|proposed|in (advanced )?talks|nears? (a )?deal|explor(es|ing)|people familiar|sources say)\b/i.test(s)) return 'PROPOSED';
   if (/\b(awarded|won|received (a|an) (order|contract|award|purchase order))\b/i.test(s)) return 'AWARDED';
   if (/\b(approv(ed|al) (by|from) (the )?(fda|faa|fcc|nrc|regulator|agency))\b/i.test(s)) return 'APPROVED';

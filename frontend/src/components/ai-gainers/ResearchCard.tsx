@@ -5,7 +5,7 @@
 
 import React, { useState } from 'react';
 import type { EarningsMini, ResearchItem } from '@/lib/ai-gainers/research-view';
-import { Btn, CatalystChips, CatalystForBadge, FactLine, FlagChips, Move, Name, OlderContextBadge, RelevanceBadge, ScanNote, SourceBadge, StatusPill, TriagePill, UsCatalystList, InCatalystList } from './Badges';
+import { Btn, CatalystChips, CatalystForBadge, CardFacts, FactLine, FlagChips, Move, Name, OlderContextBadge, RelevanceBadge, ScanNote, SourceBadge, StatusPill, TriagePill, UsCatalystList, InCatalystList } from './Badges';
 import { C, CLASS_META, pctND, tint, txt } from './tokens';
 
 const label: React.CSSProperties = { fontSize: 11, fontWeight: 800, letterSpacing: 0.5, color: C.faint };
@@ -327,6 +327,7 @@ export function ResearchCard({ it, rank, onOpen, older, section }: { it: Researc
       {/* zzz803 (India): filed vs press events, the result backdrop, the clarification. */}
       <InCatalystList it={it} />
       <FactLine it={it} />
+      <CardFacts it={it} />
 
       <div style={{ fontSize: 13, lineHeight: 1.5, color: C.text }}>
         <span style={{ ...label, marginRight: 6 }}>WHY RESEARCH</span>{txt(it.whyResearch, 'Not established')}
@@ -335,6 +336,12 @@ export function ResearchCard({ it, rank, onOpen, older, section }: { it: Researc
       {it.whyRank && (
         <div data-testid="why-rank" style={{ fontSize: 12, lineHeight: 1.45, color: C.dim }}>
           <span style={{ ...label, marginRight: 6 }}>WHY #{rank}:</span>{it.whyRank}
+        </div>
+      )}
+      {/* zzz835: the rank in one line, from the same components as the rank. Price is never in it. */}
+      {it.rankReason && (
+        <div data-testid="rank-reason" style={{ fontSize: 12, lineHeight: 1.45, color: C.dim }}>
+          <span style={{ ...label, marginRight: 6 }}>RANK BASIS:</span>{it.rankReason}
         </div>
       )}
       <AlsoIn it={it} here={section} />

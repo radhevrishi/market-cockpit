@@ -7,6 +7,7 @@
 // evidence / No catalyst / Negative evidence — never a trade instruction.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { CATALYST_WINDOWS } from '@/lib/ai-gainers/research-view';
 import type {
   EventClass, GapLevel, Persistence, ResearchItem, SourceConfidence, Stage, Transmission,
 } from '@/lib/ai-gainers/research-view';
@@ -146,9 +147,9 @@ export const RELEVANCE_META: Record<ResearchItem['portfolio']['relevance'], { la
 // guesses when the field is absent (older stored findings have no value).
 export type CatalystFor = NonNullable<ResearchItem['catalystFor']>;
 export const CATALYST_META: Record<CatalystFor, { label: string; color: string; hover: string }> = {
-  THIS_MOVE: { label: 'THIS MOVE', color: C.cyan, hover: 'Filed within the move window (India ≤3 sessions, US ≤7 days) — can be the catalyst for this move.' },
-  RECENT: { label: 'RECENT', color: C.amber, hover: 'Filed 4–14 days ago — a delayed reaction is possible; kept in the queue with a freshness penalty.' },
-  CONTEXT: { label: 'CONTEXT', color: C.faint, hover: 'Filed more than 14 days ago — a real event, but older context. Not this move’s catalyst; never counted as confirmed.' },
+  THIS_MOVE: { label: 'THIS MOVE', color: C.cyan, hover: `Filed within the move window (India: ${CATALYST_WINDOWS.IN.thisMove} calendar days, US: ${CATALYST_WINDOWS.US.thisMove} calendar days, counted on the exchange's own calendar) — can be the catalyst for this move.` },
+  RECENT: { label: 'RECENT', color: C.amber, hover: `Filed after the move window but within ${CATALYST_WINDOWS.US.recent} days — a delayed reaction is possible; kept in the queue with a freshness penalty.` },
+  CONTEXT: { label: 'CONTEXT', color: C.faint, hover: `Filed more than ${CATALYST_WINDOWS.US.recent} days ago — a real event, but older context. Not this move’s catalyst; never counted as confirmed.` },
 };
 
 /** "47d" when the age is known; null when it is not (nothing is invented). */
@@ -158,10 +159,15 @@ export const ageText = (it: Pick<ResearchItem, 'ageDays'>): string | null =>
 /** The card title. A bare BSE scrip code ("544501") is not a name the reader
  *  recognises, so the pipeline may supply displayTicker (the company name)
  *  and displayCode (the code, shown small). Fallback: the ticker as before. */
-export function displayName(it: Pick<ResearchItem, 'ticker' | 'company' | 'displayTicker' | 'displayCode'>): { title: string; code: string | null; company: string | null } {
-  const title = txt(it.displayTicker, '') || txt(it.ticker, '');
-  const code = txt(it.displayCode, '') || null;
-  const company = txt(it.company, '') || null;
+export function displayName(it: Pick<ResearchItem, 'ticker' | 'company' | 'displayTicker' | 'displayCode' | 'issuer'> & { companyName?: string }): { title: string; code: string | null; company: string | null } {
+  let title = txt(it.displayTicker, '') || txt(it.ticker, '');
+  const bare = /^\d{5,6}$/.test(title);   // no company name known: the code is the title, labelled as a code
+  if (bare) title = `BSE ${title}`;
+  // a numeric BSE code is shown as "BSE 544434" beside the name, never as the name
+  const code = bare ? null : it.issuer?.code ? `BSE ${it.issuer.code}` : txt(it.displayCode, '') || null;
+  // zzz835: never an empty name line - the pipeline's companyName (scan / screener / BSE map) fills a missing company.
+  const cn = (v: string | null | undefined) => { const t = txt(v, ''); return t && !/^\d+$/.test(t) ? t : null; };
+  const company = cn(it.company) || cn(it.companyName);
   const same = (a: string | null, b: string | null) => !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
   return {
     title,
@@ -177,3 +183,6 @@ export function materialityHover(it: ResearchItem): string {
   const lines = (m?.ratios || []).map((r) => r.text).filter(Boolean);
   return [txt(m?.explanation, NOT_DISCLOSED), ...lines].join('\n');
 }
+
+/** A market's clock and currency for the header (exchange time, never the browser's). */
+export { exchangeClock, CURRENCY } from '@/lib/catalyst/exchange-time';

@@ -45,7 +45,7 @@ import { classifyUsFiling, fmtUsdM, usPlainSubject } from './us-gainers';
 import type { NewsContext } from './news-context';
 import { pressFacts } from './news-context';
 import type { StructuredFacts, SourceRef } from './structured-facts';
-import { favourableLegalOutcome } from './structured-facts';
+import { favourableLegalOutcome, exchangeDay, exchangeDate } from './structured-facts';
 import { catalystTypeOf, factValueCr, flatFacts, evidenceBreadthOf, type DocRead, type IndiaFacts } from './india-extract';
 import { isGenericSubject, docSeqOf } from './announcement-reader';
 import { buildIndiaCard, classifyIndiaEvents, IN_BACKDROP_DAYS, type InCard } from './in-event-taxonomy';
@@ -1125,6 +1125,9 @@ export function indiaCardOf(inp: Pick<SweepInput, 'announcements' | 'docs' | 'ne
     filings: (inp.announcements || []).map((a) => ({ subject: a.subject, summary: a.summary, url: a.url, dateIso: a.dateIso, ageDays: a.ageDays ?? ageDaysOf(a.dateIso, inp.now), docText: [...(a.docLines || []), docText.get(a.url) || ''].map((x) => String(x).replace(/[.;\s]+$/, '')).filter(Boolean).join('. ') || null })),
     press: (inp.news?.items || []).map((n) => ({ title: n.title, url: n.url, date: n.date, source: n.source })),
     now: inp.now, windowDays: inp.windowDays, backdropDays: IN_BACKDROP_DAYS, sessionCloseIso: inp.sessionCloseIso ?? null,
+    // zzz835: the move day on the IST calendar; an official filing is this move's catalyst within 3 days, a press item within 1.
+    moveDate: (inp.sessionCloseIso ? exchangeDay(inp.sessionCloseIso, 'IN') : null) || exchangeDate(inp.now, 'IN'),
+    causalWindowDays: 3, pressWindowDays: 1,
   });
 }
 

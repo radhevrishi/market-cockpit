@@ -28,6 +28,8 @@
 // Pure: no fetch, no clock, no model.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { extractMetrics, type TypedMetric } from './structured-facts';
+
 export type UsEventCategory =
   | 'Earnings' | 'Product & segment' | 'Capital & capacity' | 'Corporate action'
   | 'Deals & customers' | 'Regulatory & clinical' | 'Capital structure' | 'Market & ownership';
@@ -51,6 +53,8 @@ export interface UsEventHit {
   sentence: string;
   /** Figures literally present in that sentence ("$120 million", "99%", "10-2"). */
   figures: string[];
+  /** zzz835: the sentence's percentages typed by NAME (net_income_growth vs revenue_growth vs a margin level), each with its original text. */
+  metrics?: TypedMetric[];
   /** The sentence speaks of a plan / expectation ("plans to", "expects to"). */
   planned: boolean;
 }
@@ -81,7 +85,7 @@ const RULES: Rule[] = [
   // ── EARNINGS ──
   { id: 'earnings_beat', label: 'Results beat expectations', category: 'Earnings', direction: 'positive', rank: 10,
     any: [/\b(?:beat|beats|beating|exceed(?:s|ed|ing)?|surpass(?:es|ed)?|topp(?:ed|ing)|tops)\b[^.]{0,60}\b(?:consensus|expectations|estimates|analysts?'? (?:estimates|expectations)|guidance|the high end of)/i, /\bEPS\b(?:[^.]|\.\d){0,40}\bbeats?\b/i, /\babove (?:the )?(?:consensus|analyst (?:estimates|expectations)|high end of (?:its |our )?guidance)\b/i],
-    not: /\bmiss(?:es|ed)?\b|\bbelow (?:consensus|expectations)\b/i, hides: ['eps_reported'] },
+    not: /\bmiss(?:es|ed)?\b|\bbelow (?:consensus|expectations)\b|\b(?:said|says|stated|commented|noted)\b|[“"][^”"]{0,200}\bexpectations\b|\b(?:trial|study|patients?|clinical|endpoint)\b/i, hides: ['eps_reported'] },
   { id: 'earnings_miss', label: 'Results below expectations', category: 'Earnings', direction: 'negative', rank: 10,
     any: [/\b(?:miss(?:es|ed)?|fell short of|came in below|below)\b[^.]{0,40}\b(?:consensus|expectations|estimates)\b/i] },
   { id: 'record_results', label: 'Record revenue / results', category: 'Earnings', direction: 'positive', rank: 11,
@@ -94,6 +98,13 @@ const RULES: Rule[] = [
     not: /\b(?:decreas|declin|fell|down \d)/i },
   { id: 'revenue_decline', label: 'Revenue decline', category: 'Earnings', direction: 'negative', rank: 13,
     any: [/\b(?:total |net )?(?:revenues?|sales)\b[^.;]{0,60}?\b(?:decreas(?:ed|es)|declin(?:ed|es)|fell|dropped|down)\b[^.;]{0,30}?\d+(?:\.\d+)?\s?(?:%|percent)/i] },
+  // zzz835: net income / profit growth is its OWN metric - never confused with revenue growth or a margin
+  { id: 'profit_growth', label: 'Net income growth', category: 'Earnings', direction: 'positive', rank: 12,
+    any: [/\b(?:net income|net earnings|net profit|profit after tax|GAAP net income)\b[^.;]{0,80}?\b(?:increas(?:ed|es|ing)|grew|grows|rose|rising|up|jump(?:ed|s)?|soar(?:ed|s)?|surg(?:ed|es)|climb(?:ed|s)?|gain(?:ed|s)?|improv(?:ed|es))\b[^.;]{0,40}?\d+(?:\.\d+)?\s?(?:%|percent)/i,
+      /\d+(?:\.\d+)?\s?(?:%|percent)\s+(?:year[- ]over[- ]year |yoy )?(?:increase|growth|rise|jump|gain)\s+in\s+(?:GAAP )?(?:net income|net earnings|net profit)\b/i],
+    not: /\b(?:net income|net earnings|net profit)\b[^.;]{0,40}\b(?:decreas|declin|fell|down|lower)\w*/i },
+  { id: 'profit_decline', label: 'Net income decline', category: 'Earnings', direction: 'negative', rank: 13,
+    any: [/\b(?:net income|net earnings|net profit|profit after tax)\b[^.;]{0,60}?\b(?:decreas(?:ed|es)|declin(?:ed|es)|fell|dropped|down|lower)\b[^.;]{0,40}?\d+(?:\.\d+)?\s?(?:%|percent)/i] },
   { id: 'growth_acceleration', label: 'Growth acceleration', category: 'Earnings', direction: 'positive', rank: 12,
     any: [/\baccelerat(?:ed|ing|ion (?:in|of))\b[^.]{0,40}\b(?:revenue|sales|growth|demand|bookings)\b/i, /\b(?:revenue|sales) growth accelerated\b/i, /\bsequential (?:revenue |sales )?growth of\b/i] },
   { id: 'margin_expansion', label: 'Margin expansion', category: 'Earnings', direction: 'positive', rank: 13,
@@ -235,6 +246,12 @@ const RULES: Rule[] = [
   { id: 'intl_approval', label: 'CE mark / international approval', category: 'Regulatory & clinical', direction: 'positive', rank: 5,
     any: [/\bCE[- ]?[Mm]ark(?:ed|ing)?\b/, /\bEuropean Commission\b[^.;]{0,40}\b(?:approv|authori[sz]|grant)/i, /\bCHMP\b[^.;]{0,30}\b(?:positive opinion|recommend)/i, /\b(?:EMA|Health Canada|PMDA|NMPA|MHRA|TGA|ANVISA|Swissmedic|Japan(?:ese)? Ministry of Health)\b[^.;]{0,60}\b(?:approv(?:ed|al)|authori[sz](?:ed|ation)|clear(?:ed|ance)|grant(?:ed|s))\b/i],
     not: /\bseek(?:s|ing)?\b|\bplans? to (?:seek|file)\b/i },
+  // zzz835: a jury verdict / damages award / court judgment is LITIGATION - never an order, contract or licence.
+  { id: 'litigation_verdict', label: 'Litigation - jury verdict / damages / judgment', category: 'Regulatory & clinical', direction: 'neutral', rank: 1,
+    any: [/\bjury\b[^.;]{0,80}\b(?:award(?:ed|s)?|found|finds|return(?:ed|s)|verdict|damages)\b/i, /\bverdict\b/i, /\b(?:award(?:ed|s)?|granted|ordered to pay|to pay)\b[^.;]{0,60}\bin damages\b|\bdamages (?:award|of)\b|\bdamages\b[^.;]{0,30}\b(?:plus|and) interest\b/i, /\b(?:court|judge)\b[^.;]{0,40}\b(?:entered|enter(?:s|ed)?|issued|rul(?:ed|es)|grant(?:ed|s))\b[^.;]{0,30}\bjudg(?:e)?ment\b/i, /\bfinal judg(?:e)?ment\b/i],
+    not: /\bno (?:jury|verdict)\b|\bwaiv(?:ed|es|er of) (?:its |their )?(?:right to )?(?:a )?jury\b|\b(?:prevailed|won|wins|favorable)\b/i,
+    dir: (s) => (/\b(?:against|liable|ordered (?:the Company|us) to pay|found (?:the Company|us|that the Company))\b[^.;]{0,30}\b(?:the Company|us|Company)\b|\bagainst the Company\b|\bordered (?:the Company|us) to pay\b/i.test(s) ? 'negative' : /\bawarded (?:the Company|us)\b|\bin favou?r of (?:the Company|us)\b|\b(?:financial (?:entitlement|interest)|entitle(?:d|ment))\b/i.test(s) ? 'positive' : 'neutral'),
+    hides: ['patent_litigation_win', 'licensing', 'major_contract', 'customer_win', 'partnership', 'gov_contract'] },
   { id: 'patent_litigation_win', label: 'Patent / litigation win', category: 'Regulatory & clinical', direction: 'positive', rank: 25,
     any: [/\b(?:patent|patents)\b[^.;]{0,30}\b(?:granted|issued|allowed|upheld)\b/i, /\b(?:issued|granted) (?:a |an |two |three )?(?:new )?(?:U\.?S\.? |European |Japanese |Chinese )?patents?\b/i, /\bnotice of allowance\b/i, /\b(?:won|wins|prevail(?:s|ed)?|favorable)\b[^.;]{0,40}\b(?:ruling|verdict|judgment|decision|appeal|arbitration|lawsuit|litigation|case|PTAB|inter partes review)\b/i, /\bjury (?:verdict|awarded)\b/i, /\b(?:dismiss(?:ed|al) of|court dismissed)\b[^.;]{0,40}\b(?:lawsuit|complaint|case|claims)\b/i],
     dir: (s) => (/\badverse|unfavorabl|against the Company|lost\b/i.test(s) ? 'negative' : 'positive') },
@@ -298,7 +315,7 @@ export function usEventMeta(id: string): { label: string; category: UsEventCateg
 // ── boilerplate / sentences ────────────────────────────────────────────────
 
 /** Sentences that are legal / risk / furnishing language — never an event. */
-export const BOILERPLATE = /\b(?:forward[- ]looking (?:statements?|information)|safe harbou?r|private securities litigation reform act|risks? and uncertainties|could cause (?:our |the Company'?s? )?actual|actual results (?:may|could|to) differ|there (?:can|may) be no assurance|no assurance (?:can be given|that)|undertakes? no (?:obligation|duty)|does not undertake|risk factors|could (?:materially )?(?:and )?adversely|adverse(?:ly)? (?:affect|impact)|if we (?:are unable|fail|do not|cannot)|we may not be able|may not (?:be able to|achieve|realize|obtain|succeed)|might not|not be deemed ["“]?filed|incorporated by reference|furnished (?:pursuant|herewith|as Exhibit)|shall not be deemed|Securities Exchange Act of 1934|non-GAAP financial measures? (?:should|are|is) not|reconciliation of (?:GAAP|non-GAAP)|this press release (?:contains|includes|may contain)|words such as|such as ["“]?(?:may|will|expect|anticipate)|shall (?:mean|be deemed|have the meaning)|hereunder|hereby|herein|hereto|thereof|thereunder|as defined (?:in|below|herein)|pursuant to (?:Section|this Agreement|the terms of this)|the undersigned|in witness whereof|representations(?:,| and) warranties|voting results?|results of (?:the )?voting|to consider and (?:approve|vote)|broker non-votes?|initial Business Combination|Sponsor has agreed|trust account)\b|\((?:i|ii|iii|iv|a|b|c)\)[^.]{0,240}\((?:ii|iii|iv|v|b|c|d)\)/i;
+export const BOILERPLATE = /\b(?:forward[- ]looking (?:statements?|information)|safe harbou?r|private securities litigation reform act|risks? and uncertainties|could cause (?:our |the Company'?s? )?actual|actual results (?:may|could|to) differ|there (?:can|may) be no assurance|no assurance (?:can be given|that)|undertakes? no (?:obligation|duty)|does not undertake|risk factors|could (?:materially )?(?:and )?adversely|adverse(?:ly)? (?:affect|impact)|if we (?:are unable|fail|do not|cannot)|we may not be able|may not (?:be able to|achieve|realize|obtain|succeed)|might not|not be deemed ["“]?filed|incorporated by reference|furnished (?:pursuant|herewith|as Exhibit)|shall not be deemed|Securities Exchange Act of 1934|non-GAAP financial measures? (?:should|are|is) not|reconciliation of (?:GAAP|non-GAAP)|this press release (?:contains|includes|may contain)|words such as|such as ["“]?(?:may|will|expect|anticipate)|shall (?:mean|be deemed|have the meaning)|hereunder|hereby|herein|hereto|thereof|thereunder|as defined (?:in|below|herein)|pursuant to (?:Section|this Agreement|the terms of this)|the undersigned|in witness whereof|representations(?:,| and) warranties|voting results?|results of (?:the )?voting|does not constitute (?:an? )?(?:offer|solicitation|prospectus|public offering)|solicitation of an? off\s?er|no offer (?:to sell|or solicitation)|to consider and (?:approve|vote)|broker non-votes?|initial Business Combination|Sponsor has agreed|trust account)\b|\((?:i|ii|iii|iv|a|b|c)\)[^.]{0,240}\((?:ii|iii|iv|v|b|c|d)\)/i;
 
 /** Hedged plan / expectation — kept, but marked "planned". */
 const PLANNED = /\b(?:plans? to|planning to|intends? to|expects? to|expected to|anticipates?|aims? to|seeks? to|targets? (?:to|a)|is evaluating|proposed|will seek|potential(?:ly)?)\b/i;
@@ -358,6 +375,170 @@ export function figuresIn(sentence: string): string[] {
   return out.slice(0, 6);
 }
 
+// ── litigation guard + canonical event type (zzz835) ───────────────────────
+
+/** Words that make a sentence litigation. */
+export const LITIGATION_SENTENCE = /\bjury\b|\bverdict\b|\bdamages\b|\blawsuit\b|\bfiled (?:a |an )?(?:complaint|suit)\b|\balleging\b[^.;]{0,80}\bbreach\b|\bbreach of (?:the )?(?:implied covenant|contract)\b/i;
+/** Court words that are litigation unless the court is approving a corporate scheme. */
+const COURT_WORD = /\b(?:district|federal|supreme|appeals?|circuit|high|superior) court\b|\bcourt of appeals?\b|\bjudg(?:e)?ment (?:was )?entered\b/i;
+const SCHEME_COURT = /\bscheme of (?:arrangement|amalgamation)\b|\bNCLT\b|\bamalgamation\b|\bdemerger\b|\bmerger\b|\bcourt[- ]convened\b|\bsanction(?:ed|s)?\b/i;
+/** Deterministic: does this text describe a litigation outcome (jury, verdict, damages, judgment, lawsuit, court)? */
+export function isLitigationText(text: string | null | undefined): boolean {
+  const t = String(text || '');
+  if (/\bjury\b|\bverdict\b|\bdamages\b|\blawsuit\b|\bfinal judg(?:e)?ment\b/i.test(t)) return !/\bwaiv\w* (?:its |their )?(?:right to )?(?:a )?jury\b/i.test(t);
+  return COURT_WORD.test(t) && !SCHEME_COURT.test(t);
+}
+
+export type CanonicalEventType =
+  | 'earnings' | 'order' | 'loi' | 'contract' | 'acquisition' | 'trial_result' | 'regulatory'
+  | 'litigation' | 'financing' | 'capacity' | 'partnership' | 'ownership' | 'other';
+
+/** The first rule that fires wins: litigation, then LOI / proposed, then a
+ *  results release, then order / contract, trial result, acquisition,
+ *  earnings, financing … (spec order). Runs BEFORE any model label is
+ *  accepted. `proposed` is true for LOI / tentative / subject-to wording. */
+export function classifyCanonicalEventType(text: string | null | undefined): { type: CanonicalEventType; rule: string; proposed: boolean } {
+  const t = String(text || '');
+  const proposed = /\bletters? of intent\b|\bLOIs?\b|\btentative(?:ly)?\b|\bnon-?binding\b|\bproposed\b|\bsubject to (?:the )?(?:approval|receipt|regulatory|shareholder|board|stockholder|definitive)/i.test(t);
+  if (isLitigationText(t)) return { type: 'litigation', rule: 'jury / verdict / damages / judgment / court / lawsuit', proposed: false };
+  if (/\bletters? of intent\b|\bLOIs?\b/i.test(t)) return { type: 'loi', rule: 'letter of intent', proposed: true };
+  const earnScore = [/\brevenues?\b/i, /\bnet (?:income|loss)\b/i, /\bEPS\b|earnings per share/i, /\bEBITDA\b/i, /\boutlook\b|\bguidance\b/i, /\bquarter\b|\bfiscal\b/i].filter((r) => r.test(t)).length;
+  if (earnScore >= 3 && /\b(?:reports?|reported|announces?)\b[^.]{0,60}\b(?:results|earnings)\b|\bfinancial results\b/i.test(t)) return { type: 'earnings', rule: 'results release', proposed: false };
+  if (/\b(?:Phase\s?(?:1|2|3|I{1,3})[ab]?|primary endpoint|co-primary|p\s?[<=]\s?0?\.\d+|p-value|topline)\b/i.test(t)) return { type: 'trial_result', rule: 'phase / endpoint / p-value / topline', proposed };
+  if (/\bpurchase order\b|\b(?:awarded|received|secured|won|bags)\b[^;]{0,60}\b(?:order|contract)\b|\bcontract awarded\b|\bwork order\b|\bletter of award\b/i.test(t)) return { type: /\bcontract\b/i.test(t) && !/\border\b/i.test(t) ? 'contract' : 'order', rule: 'purchase order / awarded / received order', proposed };
+  if (/\b(?:acquisitions?|acquir(?:e|es|ed|ing))\b|\bstake in\b|\bmerger\b|\bscheme of (?:arrangement|amalgamation)\b|\bshare purchase\b|\bbusiness transfer\b/i.test(t)) return { type: 'acquisition', rule: 'acquire / stake / merger / scheme / share purchase', proposed };
+  if (earnScore >= 2 || /\b(?:revenue|net income|EPS|EBITDA|outlook)\b/i.test(t)) return { type: 'earnings', rule: 'revenue / net income / EPS / EBITDA / outlook', proposed: false };
+  if (/\b(?:offering|placement|convertible notes|credit facility|term loan|notes due|buyback|repurchase)\b/i.test(t)) return { type: 'financing', rule: 'offering / notes / credit facility', proposed };
+  if (/\b(?:FDA|EMA|approval|clearance|designation|regulator)\b/i.test(t)) return { type: 'regulatory', rule: 'regulator', proposed };
+  if (/\b(?:capacity|capex|new (?:plant|facility)|commission(?:ed|ing))\b/i.test(t)) return { type: 'capacity', rule: 'capacity', proposed };
+  if (/\b(?:partnership|collaboration|joint venture|alliance|memorandum of understanding)\b/i.test(t)) return { type: 'partnership', rule: 'partnership', proposed };
+  if (/\b(?:13D|13G|beneficial(?:ly)? own|promoter|shareholding)\b/i.test(t)) return { type: 'ownership', rule: 'ownership', proposed };
+  return { type: 'other', rule: 'no deterministic rule fired', proposed };
+}
+
+/** Validation errors for a canonical event: a source quote with jury / damages can never be an order or contract; a proposed event can never carry a firm stage. */
+export function validateCanonicalEvent(ev: { event_type: string; source_quote: string; stage?: string | null }): string[] {
+  const errs: string[] = [];
+  const q = String(ev.source_quote || '');
+  if (/^(order|contract|loi)$/i.test(ev.event_type) && /\b(?:jury|damages|verdict)\b/i.test(q)) errs.push(`event_type "${ev.event_type}" contradicts a source quote that contains jury / damages / verdict - it must be litigation`);
+  if (/^(order|contract)$/i.test(ev.event_type) && isLitigationText(q)) errs.push(`event_type "${ev.event_type}" contradicts a litigation source quote`);
+  if (ev.event_type === 'loi' && /^(awarded|executed|completed)$/i.test(String(ev.stage || ''))) errs.push('a letter of intent cannot be awarded / executed / completed');
+  return errs;
+}
+
+// ── litigation materiality: a gross award is not cash (zzz835) ─────────────
+
+export const LITIGATION_CASH_NOTE = 'Gross award is not expected cash proceeds.';
+export interface LitigationRead {
+  /** Gross award / damages as written, in $ millions - null when not stated. */
+  grossAwardM: number | null;
+  grossAwardText: string | null;
+  /** Appeal / collectability / entitlement / fees / timing: "stated: <quote>" or "unknown - not stated in the cited filing". */
+  appeal: string;
+  collectability: string;
+  entitlement: string;
+  legalCosts: string;
+  timing: string;
+  interestNote: string | null;
+  quote: string;
+}
+const NOT_STATED = 'unknown - not stated in the cited filing';
+/** What the text says about a litigation outcome. Appeal / collectability stay unknown unless the text states them. Never an order/market-cap ratio. */
+export function readLitigation(text: string): LitigationRead | null {
+  const sents = eventSentences(text);
+  // the sentence that STATES the outcome (a title "Statement Regarding Jury Verdict" only names it); the one with an amount first
+  const cand = sents.filter((s) => /\bjury\b[^.;]{0,120}\b(?:award\w*|found|finds|return\w*|damages)\b|\bverdict\b[^.;]{0,80}\b(?:award\w*|damages|for|in favou?r)\b|\bawarded?\b[^.;]{0,80}\bdamages\b|\bdamages\b[^.;]{0,40}\bawarded\b|\b(?:court|judge)\b[^.;]{0,60}\bjudg(?:e)?ment\b|\bfinal judg(?:e)?ment\b/i.test(s) && !BOILERPLATE.test(s));
+  const lead = cand.find((s) => /\$\s?\d/.test(s)) || cand[0];
+  if (!lead) return null;
+  const all = sents.join(' ');
+  const amt = /(?:US)?\$\s?(\d[\d,]*(?:\.\d+)?)\s*(billion|million|bn|mn|[BM])\b/i.exec(lead);
+  let grossM: number | null = null;
+  if (amt) { const v = parseFloat(amt[1].replace(/,/g, '')); grossM = /^(billion|bn|b)$/i.test(amt[2]) ? v * 1000 : v; }
+  const pick = (re: RegExp): string => { const x = sents.find((s) => re.test(s) && !BOILERPLATE.test(s)); return x ? `stated: "${x.length > 200 ? `${x.slice(0, 199)}...` : x}"` : NOT_STATED; };
+  return {
+    grossAwardM: grossM, grossAwardText: amt ? amt[0].trim() : null,
+    appeal: pick(/\bappeal(?:s|ed|ing)?\b|\bpost-trial motions?\b|\bJMOL\b|\bnew trial\b/i),
+    collectability: pick(/\bcollect(?:ab|ib)\w*\b|\bpaid\b[^.;]{0,30}\bjudg(?:e)?ment\b|\bpayment of the (?:judg(?:e)?ment|award)\b|\bbond\b/i),
+    entitlement: pick(/\bentitle(?:d|ment)\b|\bfinancial (?:interest|entitlement)\b|\bshare of (?:the )?(?:proceeds|award)\b|\bproceeds\b/i),
+    legalCosts: pick(/\blegal (?:fees|costs|expenses)\b|\battorneys?'? fees\b|\bcontingen(?:t|cy) fee\b/i),
+    timing: pick(/\bexpected (?:to|in)\b[^.;]{0,40}\b(?:judg(?:e)?ment|payment|hearing|ruling)\b|\bhearing (?:is )?scheduled\b|\bto be determined by the (?:District )?Court\b/i),
+    interestNote: /\binterest\b/i.test(all) ? 'Interest is mentioned - the amount is not stated in the cited filing.' : null,
+    quote: lead.length > 320 ? `${lead.slice(0, 319)}...` : lead,
+  };
+}
+
+// ── clinical read-out facts, only from the text (zzz835) ───────────────────
+
+export const CLIN_NOT_DISCLOSED = 'not disclosed in the cited filing';
+export interface ClinicalFacts {
+  result: 'positive' | 'mixed' | 'negative' | 'unclear';
+  endpointMet: 'met' | 'not_met' | 'mixed' | 'not_stated';
+  indication: string | null;
+  phase: string | null;
+  primaryEndpoint: string | null;
+  effectSize: string | null;
+  pValue: string | null;
+  confidenceInterval: string | null;
+  sampleSize: string | null;
+  comparator: string | null;
+  dosingInterval: string | null;
+  safety: string | null;
+  nextStep: string | null;
+  /** Names of the fields the text does not state. */
+  notDisclosed: string[];
+  /** Plain lines: "Effect size: 54% of patients on 6-month dosing", or "... not disclosed in the cited filing". */
+  lines: string[];
+}
+const clipC = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1).replace(/\s\S*$/, '')}...` : s);
+/** Indication, phase, endpoint result, effect size, p-value / CI, sample size, comparator, dosing interval, safety and next step - each only when the text states it. */
+export function extractClinicalFacts(text: string): ClinicalFacts | null {
+  const body = eventBodyOf(text);
+  const sents = eventSentences(text);
+  if (!sents.some((s) => /\b(?:trial|study|topline|interim|data|endpoint|p\s?[<=])\b/i.test(s))) return null;
+  const T = sents.join(' ');
+  const first = (re: RegExp, group = 0): string | null => { const m = re.exec(T); return m ? (m[group] || m[0]).replace(/\s+/g, ' ').trim() : null; };
+  const ph = /\bPhase\s?(1\/2|2\/3|1b|2a|2b|3b?|1|2|III|II|I)\b/i.exec(T);
+  const phase = ph ? `Phase ${String(ph[1]).replace(/^III$/i, '3').replace(/^II$/i, '2').replace(/^I$/i, '1')}` : (/\bpivotal\b/i.test(T) ? 'pivotal (phase not stated)' : null);
+  const indication = first(/\b(?:in|for|of) (?:adult |adult and pediatric |pediatric |[a-z]+ )?(?:patients|adults|participants|people|subjects|children|individuals)\s+with\s+([A-Za-z][\w\s\-,'/]{3,70}?)(?=[,.;()]|\s(?:who|that|the|compared|versus|vs|as|was|were|met|showed|demonstrated|achieved|receiving|treated)\b|$)/i, 1)
+    || first(/\b(?:treatment of|treating)\s+([A-Za-z][\w\s\-,'/]{3,60}?)(?=[,.;()]|\s(?:who|that|in|with)\b|$)/i, 1)
+    || first(/\bin\s+((?:generalized anxiety disorder|wet AMD|wAMD|IgA nephropathy|[A-Z][A-Za-z]+(?: [A-Za-z]+){0,3} (?:disease|disorder|syndrome|cancer|carcinoma|leukemia|lymphoma|nephropathy|degeneration|edema|retinopathy|sarcoma)))/i, 1);
+  const metRx = /\b(met|achieved|meets|achieves|did not meet|failed to meet|missed|not met)\b[^.;]{0,50}\b(?:the )?(?:primary|co-primary)(?: efficacy)?(?: endpoints?| and all key secondary)/i;
+  const mm = metRx.exec(T);
+  const negEnd = /\bdid not meet|failed to meet|missed|not met\b/i.test(mm ? mm[0] : '');
+  const posEnd = !!mm && !negEnd;
+  const secFail = /\bdid not (?:meet|achieve)[^.;]{0,40}\bsecondary\b|\bfailed[^.;]{0,30}\bsecondary\b/i.test(T);
+  const endpointMet: ClinicalFacts['endpointMet'] = mm ? (negEnd ? 'not_met' : secFail ? 'mixed' : 'met') : (/\bstatistically significant\b/i.test(T) && !/\bnot statistically significant\b/i.test(T) ? 'met' : 'not_stated');
+  const pe = /\bprimary (?:efficacy )?endpoint(?:s)?\s+(?:of|was|were|is|being|measured (?:by|as)|:)\s+([^.;]{6,140})/i.exec(T);
+  const primaryEndpoint = pe && !/^(?:\(p|p\s?[<=])/i.test(pe[1]) ? clipC(pe[1].replace(/\s+/g, ' ').trim(), 140) : null;
+  const pv = /\bp(?:-value)?\s?(?:of|[<=]|was|=)\s?(?:<|=)?\s?(0?\.\d+(?:e-?\d+)?)/i.exec(T);
+  const pValue = pv ? `p ${/[<]/.test(pv[0]) ? '<' : '='} ${pv[1]}` : null;
+  const ci = /\b(\d{2}(?:\.\d)?%\s?(?:CI|confidence interval)[^.;]{0,50}|\(?95%\s?CI[:,]?\s?[-\d.,\s to]+\)?)/i.exec(T);
+  const eff = /\b(?:hazard ratio|HR|odds ratio|OR|relative risk|LS mean (?:difference|change)|mean (?:change|difference|improvement))\b[^.;]{0,50}?-?\d+(?:\.\d+)?/i.exec(T)
+    || /\b(?:majority of patients|patients|participants)\s*\((\d+(?:\.\d+)?%)\)[^.;,]{0,50}/i.exec(T)
+    || /\b\d+(?:\.\d+)?%\s+(?:reduction|improvement|increase|decrease|of patients|of participants|response|remission)\b[^.;]{0,50}/i.exec(T)
+    || /\b(?:reduc\w+|improv\w+|increase\w*|decreas\w+)\b[^.;]{0,30}\bby\s+\d+(?:\.\d+)?%[^.;]{0,40}/i.exec(T);
+  const effectSize = eff ? clipC(eff[0].replace(/\s+/g, ' ').trim(), 140) : null;
+  const n = /\b(?:n\s?=\s?|enrolled |randomi[sz]ed |of )(\d[\d,]{1,6})\s*(?:patients|participants|subjects|adults|people)?/i.exec(T) || /\b(\d[\d,]{2,6})\s+(?:patients|participants|subjects|adults)\b/i.exec(T);
+  const sampleSize = n ? `${n[1]} ${/patients|participants|subjects|adults|people/i.exec(n[0])?.[0] || 'participants'}`.replace(/\s+/g, ' ') : null;
+  const cmp = /\b(?:compared (?:with|to)|versus|vs\.?|placebo-controlled|active[- ]controlled|non-inferior(?:ity)? to|comparable to)\s+((?:placebo|[A-Za-z][\w-]+(?: [A-Za-z][\w-]+){0,2}))/i.exec(T) || /\bcompared\s+[A-Za-z][\w-]*(?: [A-Za-z][\w-]*){0,2}\s+(?:with|to|against)\s+((?:placebo|[A-Za-z][\w-]+))/i.exec(T);
+  const comparator = cmp ? cmp[1].replace(/\s+/g, ' ').trim() : (/\bplacebo\b/i.test(T) ? 'placebo' : null);
+  const dose = /\b(\d+|one|two|three|four|six|twelve)[- ](?:month|week)(?:ly)? (?:dosing|interval|regimen|treatment interval)\b|\b(?:every|q)\s?(\d+)\s?(?:months?|weeks?|W|M)\b|\b(?:once|twice)[- ](?:daily|weekly|monthly)\b/i.exec(T);
+  const dosingInterval = dose ? dose[0].replace(/\s+/g, ' ') : null;
+  const saf = sents.find((s) => /\b(?:safety|adverse events?|tolerab\w+|discontinu\w+|serious adverse|well[- ]tolerated|no (?:new )?safety signals?)\b/i.test(s));
+  const safety = saf ? clipC(saf, 200) : null;
+  const nxt = sents.find((s) => /\b(?:BLA|NDA|sNDA|MAA|submission|submit|regulatory (?:filing|path|pathway)|PDUFA|meet(?:ing)? with the FDA|end[- ]of[- ]phase|approval)\b/i.test(s) && /\b(?:plan|expect|intend|will|anticipate|on track|planned|submitted)\w*\b/i.test(s));
+  const nextStep = nxt ? clipC(nxt, 200) : null;
+  const neg = endpointMet === 'not_met' || /\bdid not (?:meet|achieve)|failed to meet|not statistically significant\b/i.test(T);
+  const pos = endpointMet === 'met' || /\bpositive\b[^.;]{0,40}\b(?:results|data|topline)\b/i.test(T);
+  const result: ClinicalFacts['result'] = neg && pos ? 'mixed' : neg ? 'negative' : pos ? 'positive' : 'unclear';
+  const f: ClinicalFacts = { result, endpointMet, indication: indication ? clipC(indication, 80) : null, phase, primaryEndpoint, effectSize, pValue, confidenceInterval: ci ? ci[1].trim() : null, sampleSize, comparator, dosingInterval, safety, nextStep, notDisclosed: [], lines: [] };
+  const fields: Array<[keyof ClinicalFacts, string]> = [['indication', 'Indication'], ['phase', 'Phase'], ['primaryEndpoint', 'Primary endpoint'], ['effectSize', 'Effect size'], ['pValue', 'Statistical evidence (p-value)'], ['confidenceInterval', 'Confidence interval'], ['sampleSize', 'Sample size'], ['comparator', 'Comparator'], ['dosingInterval', 'Dosing interval'], ['safety', 'Safety'], ['nextStep', 'Next regulatory step']];
+  f.lines.push(`Clinical result: ${result}${endpointMet === 'not_stated' ? '' : ` (primary endpoint ${endpointMet.replace('_', ' ')})`}`);
+  for (const [k, lab] of fields) { const v = f[k] as string | null; if (v) f.lines.push(`${lab}: ${v}`); else { f.notDisclosed.push(String(k)); f.lines.push(`${lab}: ${CLIN_NOT_DISCLOSED}`); } }
+  void body;
+  return f;
+}
+
 // ── the classifier ────────────────────────────────────────────────────────
 
 /** The form rules match on: abbreviation dots removed ("Inc." "U.S." "Sept.")
@@ -411,6 +592,8 @@ export function classifyUsEvents(text: string, opts: ClassifyOptions = {}): UsEv
       if (had && !r.dir && (had.figures.length || order - had.order > 10)) continue;
       if (!r.any.some((re) => re.test(m))) continue;
       if (r.not && r.not.test(m)) continue;
+      // zzz835: a sentence describing a lawsuit / jury / damages claim is litigation, never a licence, partnership or order
+      if (r.category === 'Deals & customers' && LITIGATION_SENTENCE.test(m)) continue;
       // a rule whose direction reads from the sentence remembers every
       // direction it saw — a title "topline results" and a bullet "missed
       // the primary endpoint" make the hint MIXED, never just positive
@@ -422,7 +605,7 @@ export function classifyUsEvents(text: string, opts: ClassifyOptions = {}): UsEv
       const shown = clipAround(s, Number.isFinite(at) ? at : 0);
       const figures = figuresIn(shown);
       if (had && !figures.length) continue;
-      here.push({ r, hit: { id: r.id, label: r.label, category: r.category, direction: r.dir ? r.dir(m) : r.direction, sentence: shown, figures, planned: PLANNED.test(shown) } });
+      here.push({ r, hit: { id: r.id, label: r.label, category: r.category, direction: r.dir ? r.dir(m) : r.direction, sentence: shown, figures, planned: PLANNED.test(shown), ...(figures.length ? { metrics: extractMetrics(shown) } : {}) } });
     }
     // a more specific rule hides a generic one fired by the same sentence
     const hidden = new Set(here.flatMap((x) => x.r.hides || []));

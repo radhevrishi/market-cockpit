@@ -22,14 +22,19 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import type { Finding } from './catalyst-research';
-import { presentErrorLines } from './research-present';
-import { contractTermYears, debtActionOf, isStrategicStakeKind, type CatalystRecord, type EventKind, type StructuredFacts } from './structured-facts';
-import { buildCatalystRecords, evidenceBreadthOf, storedView, evidenceGapOf, factsForFinding, legacyFactMapOf, structuredFactsOf, threadTimeline, KIND_WORD, STATE_WORD, type CatalystView, type EvidenceBreadth, type EvidenceGap, type TimelineEntry } from './catalyst-timeline';
+import { presentErrorLines, marketRunOf, exchangeDateOf } from './research-present';
+import { contractTermYears, debtActionOf, isStrategicStakeKind, resolveIssuer, type CatalystConfirmation, type CatalystRecord, type EventKind, type EventStage, type StructuredFacts, type ValueStatus } from './structured-facts';
+import { buildCatalystRecords, evidenceBreadthOf, storedView, evidenceGapOf, factsForFinding, legacyFactMapOf, structuredFactsOf, threadTimeline, KIND_WORD, STATE_WORD, stateWordFor, type CatalystView, type EvidenceBreadth, type EvidenceGap, type TimelineEntry } from './catalyst-timeline';
 import { persistenceTestOf, type PersistenceTestView } from './persistence-test';
 // zzz798: the US card is a type-only reference (inline import type below) —
 // this module keeps its client-safe import list.
 type UsCard = import('./us-card').UsCard;
 type InCard = import('./in-event-taxonomy').InCard;
+type ClinicalFacts = import('./us-event-taxonomy').ClinicalFacts;
+type LitigationRead = import('./us-event-taxonomy').LitigationRead;
+type UsAcquisitionEconomics = import('./us-card').UsAcquisitionEconomics;
+/** Same sentence as LITIGATION_CASH_NOTE in us-event-taxonomy.ts (kept literal so this file stays client-safe). */
+const LITIGATION_CASH_NOTE = 'Gross award is not expected cash proceeds.';
 type InCatalyst = import('./in-event-taxonomy').InCatalyst;
 
 /** The six states every gainer ends in (spec §4), plus data states. */
@@ -134,6 +139,23 @@ export function catalystForOf(market: 'IN' | 'US', ageDays: number | null | unde
   if (ageDays == null || !Number.isFinite(ageDays)) return 'RECENT';   // unknown age: neither claimed nor dismissed
   const w = CATALYST_WINDOWS[market];
   return ageDays <= w.thisMove ? 'THIS_MOVE' : ageDays <= w.recent ? 'RECENT' : 'CONTEXT';
+}
+
+/** A usable company name: not empty, not the ticker itself, not a bare scrip code. (zzz835) */
+export function isRealName(name: string | null | undefined, ticker: string): boolean {
+  const n = String(name ?? '').trim();
+  if (!n || /^(-|—|n\/a|null|undefined|nan)$/i.test(n)) return false;
+  if (/^\d+$/.test(n)) return false;
+  return n.toLowerCase() !== String(ticker || '').trim().toLowerCase();
+}
+
+/** The name to print for a row: the company name if any is known, else the
+ *  displayed name, else the ticker — never blank, never '-'. (zzz835) */
+export function companyNameOf(ticker: string, company: string | null | undefined, displayTicker?: string | null): { name: string; from: 'company' | 'display' | 'ticker' } {
+  if (isRealName(company, ticker)) return { name: String(company).trim(), from: 'company' };
+  const d = String(displayTicker ?? '').trim();
+  if (d && isRealName(d, ticker)) return { name: d, from: 'display' };
+  return { name: String(ticker || '').trim(), from: 'ticker' };
 }
 
 /** A bare BSE scrip code ("544501") is not a name anyone recognises: the
@@ -273,6 +295,55 @@ export interface ResearchItem {
    *  company"), the latest quarterly result as the backdrop, the price /
    *  volume clarification, the routine list. Absent on US items. */
   inCard?: InCard | null;
+  // ── zzz835 (all optional) ──
+  /** A company name for every row: the finding / scan row / screener / BSE-map
+   *  name, else the displayed name, else the ticker. Never empty — the PDF and
+   *  the tables print this instead of '-'. */
+  companyName?: string;
+  /** Where the name came from: 'finding' | 'scan' | 'filed' | 'lookup' | 'display' | 'ticker'. */
+  companyNameFrom?: string;
+  /** One short line built from the rank components (evidence, mechanism,
+   *  persistence, materiality, recency, penalties). Price is never in it. */
+  rankReason?: string;
+  /** The same components as numbers: evidence 0-3, mechanism 0-2, persistence
+   *  0-2, materiality 0-2, recency 0-1 (freshness factor), penalties (words). */
+  rankParts?: { evidence: number; mechanism: number; persistence: number; materiality: number; recency: number; penalties: string[] };
+  /** The exchange date of the move this event is measured against. */
+  moveDate?: string | null;
+  /** inside_window / outside_window / unknown — by the exchange calendar (catalystFor is the 3-way badge). */
+  windowStatus?: 'inside_window' | 'outside_window' | 'unknown';
+  // ── zzz835 card facts (both markets; all optional; absent on items whose card predates them) ──
+  /** Value conflicts (headline / press value vs the filed value), plainly worded, both values named. Empty / absent = none flagged. */
+  conflicts?: string[];
+  /** The values behind a conflict, each with where it came from. */
+  conflictValues?: Array<{ text: string; source: string }>;
+  /** verified | reported | conflicting | not_disclosed. 'conflicting' means the impact is unknown. */
+  valueStatus?: ValueStatus;
+  /** PROPOSED / SIGNED / AWARDED / EXECUTED / COMPLETED, from the event's own words; null when unclear. */
+  stageBadge?: EventStage | null;
+  /** One earnings filing = one cluster with child facts. */
+  clusters?: Array<{ clusterId: string; label: string; sentence: string; source: string; independentSources: number; children: Array<{ label: string; sentence: string; figures: string[] }> }>;
+  /** Clinical-trial facts (endpoint, effect size, p-value, safety ...); each missing one is named in `notStated`. */
+  clinical?: ClinicalFacts | null;
+  /** Acquisition economics (price, upfront cash, contingent, liabilities, financing, contribution). */
+  acquisition?: UsAcquisitionEconomics | null;
+  /** The litigation read (gross award, appeal, collectability ...). */
+  litigation?: LitigationRead | null;
+  /** 'Gross award is not expected cash proceeds.' on any litigation award. */
+  litigationNote?: string | null;
+  /** True when the item's causal window says it is context only (older than the move window). Never shown as the move catalyst. */
+  contextOnly?: boolean;
+  /** e.g. "Filed 5 days before the move - outside the 3-day window: context only". */
+  causalLabel?: string | null;
+  /** One sentence on what was found / searched. Never "no catalyst" when an event exists. */
+  catalystStatusSentence?: string | null;
+  /** What was searched: sources and how far back. */
+  searched?: { sources: string[]; lookbackDays: number | null; filings?: number; press?: number } | null;
+  /** Does an official filing that was read contain the event? */
+  catalystConfirmation?: CatalystConfirmation;
+  catalystConfirmationLabel?: string;
+  /** Who the issuer is: a numeric BSE code is shown as "BSE 544434" with the company name kept apart. */
+  issuer?: { code: string | null; ticker: string | null; name: string | null; display: string };
 }
 
 /** One catalyst record as a card shows it. */
@@ -298,6 +369,19 @@ export interface ResearchView {
     date: string | null; scanAt: string | null; status: string; cached: boolean;
     /** Optional (zzz770 AG-A): human label and whether the move is today's. */
     label?: string | null; isToday?: boolean | null; note?: string | null;
+    // ── zzz835: the market run, kept apart (see marketRunOf) ──
+    /** The trading date the moves belong to (exchange date). */
+    sessionDate?: string | null;
+    /** When the scan was generated / the prices were read (ISO instants). */
+    generatedAt?: string | null; dataAsOf?: string | null;
+    /** Exchange time zone of every time shown. */
+    timezone?: string | null;
+    sessionStatus?: 'pre_market' | 'live' | 'closed' | 'stale';
+    /** True only when the session has closed AND the data was read at/after the close. */
+    isFinal?: boolean;
+    marketCloseAt?: string | null;
+    /** One sentence: why the run is final or PROVISIONAL. */
+    runReason?: string | null;
   };
   summary: {
     scanned: number; confirmed: number; potential: number; negative: number;
@@ -313,6 +397,20 @@ export interface ResearchView {
       found: number; none: number;
       byCategory: Array<{ category: string; names: number; sec: number; press: number; tickers: string[] }>;
     };
+    /** zzz835 (BOTH markets): catalysts found by category. `sec` = names with an
+     *  official-filing catalyst in the category, `press` = press only. Same shape
+     *  as usCatalysts; India categories come from the India taxonomy. */
+    catalysts?: {
+      market: 'IN' | 'US'; found: number; none: number;
+      byCategory: Array<{ category: string; names: number; sec: number; press: number; tickers: string[] }>;
+    };
+    /** zzz835: tile detail so a tile and its lists agree. `noCatalystFound` +
+     *  `marketMoveOnly` + `context` = `noCatalyst`. `negativeImmaterial` of the
+     *  `negative` count are immaterial tax / penalty items, listed apart from the
+     *  material negative list (`view.negative`). */
+    noCatalystFound?: number; negativeImmaterial?: number;
+    /** zzz835: items whose card lists a value conflict (impact unknown). */
+    conflicts?: number;
   };
   top3: ResearchItem[];
   /** Full research queue, 10–15, ranked by priority. */
@@ -336,7 +434,48 @@ export interface ResearchView {
   /** zzz785: live events whose economics are Unknown — every one, ranked, labelled
    *  "Unknown — needs reading" (never dropped by the queue / watch caps). */
   needsReading?: ResearchItem[];
+  // ── zzz835 (all optional; both markets) ──
+  /** The top-of-page counts (spec §7). `conflicts` is read defensively from an
+   *  optional `conflicts` array on each item (added by the classification code). */
+  banner?: ViewBanner;
+  /** One line: the criteria the board was read with (US: TradingView filters; India: the screener.in screen + cut-offs). */
+  scanCriteria?: string | null;
+  /** The OLDER FILINGS (CONTEXT) table, as rows — same shape for India and the US. */
+  olderFilings?: OlderFilingRow[];
+  /** Data-quality / large-move rows derivable from the scan without inventing:
+   *  new listings with no comparable prior close, SPAC / ADR flags, moves at or
+   *  above EXTREME_MOVE_PCT. */
+  dataNotes?: DataNoteRow[];
+  /** What the book check saw: how many held / watched names were supplied. Zero
+   *  means "no match is possible", not "no gainer matched". */
+  bookChecked?: { held: number; watch: number } | null;
 }
+
+/** Spec §7 — the top-of-report counts. */
+export interface ViewBanner {
+  market: 'IN' | 'US'; scanned: number;
+  /** Verified events: filed / read, size judged (material or small). */
+  verified: number;
+  /** Events found but the impact or the source is unverified. */
+  unverified: number;
+  /** Items whose `conflicts` array is non-empty (headline value vs filed value etc.). */
+  conflicts: number;
+  /** Names with no material catalyst (no catalyst found + price-band only + older context only). */
+  noMaterialCatalyst: number;
+  negative: number;
+  provisional: boolean;
+}
+export interface OlderFilingRow {
+  ticker: string; name: string; company: string; movePct: number | null; filedDate: string | null; ageDays: number | null;
+  event: string; eventLabel: string; material: string; url: string | null; moveDate: string | null;
+}
+export interface DataNoteRow {
+  ticker: string; name: string; company: string; movePct: number | null;
+  kind: 'new_listing' | 'spac' | 'adr' | 'extreme_move' | 'band_move';
+  text: string;
+}
+/** A move at or above this % is flagged for a second look (a display rule, not a claim about cause). */
+export const EXTREME_MOVE_PCT = 25;
 
 export interface ResearchViewInput {
   /** zzz786 — US board window: live 1-day scan ('1D', default) or weekly export ('1W'). India is always '1D'. */
@@ -344,7 +483,7 @@ export interface ResearchViewInput {
   market: 'IN' | 'US';
   findings: Record<string, Finding>;
   /** Today's scanned board (ticker, company, move, market cap, perf …). */
-  board: Array<{ ticker: string; company: string | null; move_pct: number | null; market_cap?: number | null; perf?: any; turnover?: number | null }>;
+  board: Array<{ ticker: string; company: string | null; move_pct: number | null; market_cap?: number | null; perf?: any; turnover?: number | null; flags?: string[] | null }>;
   /** Filed-result rows from the graded funnel (the scan's queue rows). */
   filedResults: any[];
   /** Held tickers (upper-case) and watchlist tickers. */
@@ -362,6 +501,14 @@ export interface ResearchViewInput {
   /** zzz785: catalyst records stored on earlier days (persistence-store
    *  loadCatalystRecords), keyed by id — a later gainer sees the prior state. */
   priorCatalysts?: Record<string, CatalystRecord> | null;
+  // ── zzz835 (all optional) ──
+  /** The moment the page is being looked at (ISO). Finality needs it: a scan
+   *  taken at 15:43 ET is still provisional at 17:00 ET. Defaults to the scan instant. */
+  viewedAt?: string | null;
+  /** Company names looked up elsewhere (screener.in page / BSE map), keyed by ticker or scrip code. */
+  companyNames?: Record<string, string> | null;
+  /** The scan-criteria line for this board (shown under the header). */
+  scanCriteria?: string | null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -408,14 +555,22 @@ interface FiledRow {
   orderBook: 'UP' | 'DOWN' | 'UNCHANGED' | 'NOT_STATED'; marketCap: number | null;
 }
 
-function ageFrom(dateIso: string | null, now: string | null | undefined): number | null {
+/** Whole calendar days between a filing and the reference midday. With a market,
+ *  a timestamped filing is first put on that EXCHANGE's calendar date (an 8-K
+ *  accepted 16:05 ET is that ET day, whatever its UTC date) — zzz835. */
+function ageFrom(dateIso: string | null, now: string | null | undefined, market?: 'IN' | 'US'): number | null {
   if (!dateIso || !now) return null;
-  const a = Date.parse(dateIso.length === 10 ? `${dateIso}T00:00:00Z` : dateIso), b = Date.parse(now);
+  let a: number;
+  if (market && dateIso.length > 10) {
+    const t = Date.parse(dateIso);
+    a = Number.isFinite(t) ? Date.parse(`${exchangeDateOf(market, new Date(t))}T00:00:00Z`) : NaN;
+  } else a = Date.parse(dateIso.length === 10 ? `${dateIso}T00:00:00Z` : dateIso);
+  const b = Date.parse(now);
   if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
   return Math.max(0, Math.floor((b - a) / 86_400_000));
 }
 
-export function normaliseFiledRow(raw: any, now?: string | null): FiledRow | null {
+export function normaliseFiledRow(raw: any, now?: string | null, market?: 'IN' | 'US'): FiledRow | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw.filed && typeof raw.filed === 'object' ? { ...raw, ...raw.filed } : raw;
   const ticker = up(r.ticker || r.symbol);
@@ -425,7 +580,7 @@ export function normaliseFiledRow(raw: any, now?: string | null): FiledRow | nul
   const ttm = num(r.ttm_revenue_cr ?? r.ttm_revenue ?? r.revenue_ttm)
     ?? (q4 && q4.every((x: number | null) => x != null && x > 0) ? (q4 as number[]).reduce((s, x) => s + x, 0) : null);
   const filingDate = (r.filing_date || r.filed_date || r.filedDate || null) ? String(r.filing_date || r.filed_date || r.filedDate).slice(0, 10) : null;
-  const age = num(r._ageDays ?? r.filed_days_ago ?? r.age_days) ?? ageFrom(filingDate, now);
+  const age = num(r._ageDays ?? r.filed_days_ago ?? r.age_days) ?? ageFrom(filingDate, now, market);
   const ob = String(r.order_book_trend || r.order_book || '').toUpperCase();
   return {
     ticker, company: r.company ? clean(r.company) : null, tier: r.tier ? String(r.tier) : null, quarter: r.quarter ? String(r.quarter) : null,
@@ -1597,7 +1752,7 @@ function portfolioOf(ticker: string, type: EventType, cls: EventClass, e: Earnin
 // ONE NAME → ONE ITEM
 // ═══════════════════════════════════════════════════════════════════════════
 
-interface BoardRow { ticker: string; company: string | null; move_pct: number | null; market_cap?: number | null; perf?: any; turnover?: number | null }
+interface BoardRow { ticker: string; company: string | null; move_pct: number | null; market_cap?: number | null; perf?: any; turnover?: number | null; flags?: string[] | null }
 
 /** zzz789 — the open question for THIS kind of event, in plain words (never
  *  the generic "size not disclosed" when the real unknown is something else). */
@@ -1720,6 +1875,29 @@ export function answerQuestions(qs: string[], ctx: { facts: Record<string, strin
   });
 }
 
+const EVIDENCE_WORD = ['no event on file', 'secondary source', 'official filing', 'document read'];
+const MECH_WORD = ['no mechanism', 'mechanism identified', 'mechanism quantified'];
+const PERS_WORD = ['runway not established', 'one period', 'multi-period'];
+const MAT_WORD = ['small vs size', 'size unresolved', 'material vs size'];
+
+/** The rank of one item as a short line built ONLY from its rank components
+ *  (evidence, mechanism, persistence, materiality, recency, penalties). The
+ *  size of the move is never a component. (zzz835) */
+export function rankReasonOf(it: Pick<ResearchItem, 'rankParts' | 'ageDays'>): string {
+  const r = it.rankParts;
+  if (!r) return '';
+  const age = typeof it.ageDays === 'number' && Number.isFinite(it.ageDays) ? (it.ageDays <= 0 ? 'filed today' : `filed ${Math.round(it.ageDays)}d ago`) : 'filing age unknown';
+  const bits = [
+    `evidence ${r.evidence}/3 (${EVIDENCE_WORD[r.evidence] || '—'})`,
+    `mechanism ${r.mechanism}/2 (${MECH_WORD[r.mechanism] || '—'})`,
+    `persistence ${r.persistence}/2 (${PERS_WORD[r.persistence] || '—'})`,
+    `materiality ${r.materiality}/2 (${MAT_WORD[r.materiality] || '—'})`,
+    `recency ${r.recency.toFixed(2)} (${age})`,
+  ];
+  if (r.penalties.length) bits.push(`penalty: ${r.penalties.join(', ')}`);
+  return `${bits.join(' · ')} · price not used`;
+}
+
 export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow | null, filed: FiledRow | null, input: ResearchViewInput, sets: { held: Set<string>; watch: Set<string>; theme: Set<string> }): ResearchItem {
   const market = input.market;
   const perf = (b?.perf && typeof b.perf === 'object') ? b.perf : {};
@@ -1732,7 +1910,13 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
     m3: num(f?.returns?.m3) != null ? r1(f!.returns!.m3 as number) : num(perf.m3) != null ? r1(num(perf.m3)!) : null,
   };
   const marketCap = num(f?.marketCap) ?? num(b?.market_cap) ?? filed?.marketCap ?? null;
-  const company = f?.company ? clean(f.company) : b?.company ? clean(b.company) : filed?.company ?? null;
+  // zzz835: a name for every row. The finding / scan row / filed row can carry the
+  // ticker itself ("544434") where the screen had no visible name; that is not a
+  // name. Order: finding → scan row → filed row → looked-up name (screener.in /
+  // BSE map) → nothing (companyName then falls back to the displayed name).
+  const nameCands: Array<[string, string | null | undefined]> = [['finding', f?.company], ['scan', b?.company], ['filed', filed?.company], ['lookup', input.companyNames?.[ticker] ?? input.companyNames?.[up(ticker)] ?? null]];
+  const picked = nameCands.map(([from, v]) => [from, v ? clean(v) : ''] as const).find(([, v]) => isRealName(v, ticker));
+  const company = picked ? picked[1] : null;
   const e = filed ? earningsMiniOf(filed) : null;
   const status = f?.status || null;
   const notes = (f?.notes || []).map(clean);
@@ -1770,7 +1954,7 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
   let filedDate = f?.sourceDate ? String(f.sourceDate).slice(0, 10) : null;
   // The finding's own age when it has one; otherwise aged from its filing
   // date against the scan instant (input.now) — never the clock. (zzz771)
-  let ageDays: number | null = num(f?.ageDays) ?? ageFrom(f?.sourceDate ? String(f.sourceDate) : null, input.now);
+  let ageDays: number | null = ageFrom(f?.sourceDate ? String(f.sourceDate) : null, input.now, market) ?? num(f?.ageDays);   // zzz835: exchange-calendar age first; the pipeline's UTC-day age only when no date
   const windowDays = num(f?.windowDays) ?? 21;
   const scanScope = market === 'US' ? 'SEC' : 'exchange';
   const notScanned = 'news, broker actions and sector moves are not scanned';
@@ -1911,7 +2095,7 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
     conf = officialRead ? 'VERIFIED_FILING' : 'SECONDARY_SUMMARY';
     label = officialRead ? `${KIND_WORD[x.event.kind]} — potential (on file, size not established)` : `${KIND_WORD[x.event.kind]} — Potential · verification required`;
     headline = clean(x.source.title) || label;
-    sourceUrl = x.source.url || sourceUrl; filedDate = x.source.date || filedDate; ageDays = ageFrom(x.source.date, input.now) ?? ageDays;
+    sourceUrl = x.source.url || sourceUrl; filedDate = x.source.date || filedDate; ageDays = ageFrom(x.source.date, input.now, market) ?? ageDays;
     stage = x.event.stage === 'PROPOSED' || x.event.stage === 'ANNOUNCED' ? 'PROPOSED' : x.event.stage === 'AWARDED' ? 'AWARDED' : x.event.stage === 'SIGNED' ? 'SIGNED' : 'UNKNOWN';
     scanNote = null; routine = false;
     if (x.economics.valueNative != null) { value = x.economics.valueNative; mat = valueMateriality(value, marketCap, revenue, market, x.event.kind === 'order' ? 'order' : x.event.kind === 'acquisition' || x.event.kind === 'merger' ? 'acquisition' : 'generic', officialRead, false); }
@@ -2068,6 +2252,8 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
     priority: 0, priorityReasons: [], scoreDetails: null,
     eventLabel: label || type, action: isContext ? 'Monitor' : actionOf(cls, portfolio.relevance, type), move: mv, findingStatus: status, notes, ageDays,
     catalystFor, ...displayNameOf(ticker, company), scanNote,
+    companyName: companyNameOf(ticker, company, displayNameOf(ticker, company).displayTicker).name,
+    companyNameFrom: picked ? picked[0] : companyNameOf(ticker, company, displayNameOf(ticker, company).displayTicker).from,
     persistentCatalyst: f?.persistence ?? null,
     news: f?.news ? { narrative: f.news.narrative ? { label: f.news.narrative.label, days: f.news.narrative.days, firstDate: f.news.narrative.firstDate, lastDate: f.news.narrative.lastDate, lead: f.news.narrative.lead } : null, items: f.news.items.slice(0, 3).map((x) => ({ title: x.title, url: x.url, date: x.date, source: x.source })) } : null,
   };
@@ -2081,11 +2267,15 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
   const usc = market === 'US' && f?.usCard ? applyUsCard(item, f.usCard, { mv, returns, now: input.now ?? null }) : null;
   // zzz803 (India only): the India card names the event a no-catalyst row missed.
   const inc = market === 'IN' && f?.inCard ? applyInCard(item, f.inCard, { status, hasEarnings: !!e, clarification, favourable: favourableOutcome, mv, returns, now: input.now ?? null }) : null;
+  attachCardFacts(item);
   const staleEarnings = !usc && type === 'Earnings' && e?.filedDaysAgo != null && e.filedDaysAgo > CATALYST_WINDOWS[market].recent;
   const p = priorityOf(item, { routine: usc || inc?.presented ? false : routine, pricingState: (f?.components as any)?.pricing?.state ?? null, staleEarnings, veryStale: staleEarnings && (e!.filedDaysAgo as number) > 60, namedAllottee: !!fr?.named, clarification: clarification && !inc?.presented, quantified: usc ? usc.quantified || quantified : quantified });
   item.priority = p.score; item.priorityReasons = p.reasons; item.scoreDetails = p.details;
   const penaltyWords = Object.keys(p.details).filter((k) => k.startsWith('penalty_')).map((k) => ({ dilution: 'dilution flag', denial: 'company denial', lowMateriality: 'too small to explain the move', pricing: 'move already ahead of the change', unverified: 'unverified source', listing: 'listing artifact', routine: 'routine filings only', technical: 'technical move only', staleResult: 'older result' } as Record<string, string>)[k.slice(8)] || k.slice(8));
   item.whyRank = [...p.dims.words, ...penaltyWords.map((w) => `penalty: ${w}`)].join(' + ');
+  // zzz835: the rank in one short, reproducible line — the same components, no price term.
+  item.rankParts = { evidence: p.dims.evidence, mechanism: p.dims.mechanism, persistence: p.dims.persistence, materiality: p.dims.materiality, recency: Math.round((p.details.freshness ?? 0) * 100) / 100, penalties: penaltyWords };
+  item.rankReason = rankReasonOf(item);
   if (usc?.earnings) item.whyRank = item.whyRank.replace(/material vs size \([^)]*\)/, `material change (${[usc.earnings.revenueGrowthPct != null ? `revenue ${pctS(usc.earnings.revenueGrowthPct)}` : null, usc.earnings.profitChange ? `net income ${usc.earnings.profitChange}` : null].filter(Boolean).join(', ')})`);
   // zzz785: unknown economics are said, not silently ranked low.
   if (item.economicsUnknown) item.priorityReasons.push(`${UNKNOWN_NEEDS_READING}${item.economicsUnknown.missing.length ? ` (${item.economicsUnknown.missing.join(', ')})` : ''}`);
@@ -2104,6 +2294,99 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
 const US_EVENT_TYPES = new Set<string>(['Earnings', 'Order win', 'Contract', 'Acquisition', 'Merger', 'Divestment', 'Regulatory approval', 'Fundraising', 'Buyback', 'Guidance', 'Rating action', 'Strategic investment', 'Litigation / regulatory', 'Capacity expansion', 'No identified catalyst',
   // zzz801: the event taxonomy's wider types
   'New product', 'Customer win', 'Pricing', 'JV', 'Partnership', 'Production ramp', 'Strategic expansion', 'Debt / refinancing', 'Management change', 'Governance', 'Capital allocation', 'Promoter buying']);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz835 — CARD FACTS ON THE ITEM (both markets).
+// Copies what the US card / India card already computed onto the item so the
+// page and the PDF print the same facts: conflicts (=> impact unknown), the
+// stage badge, clusters, clinical / acquisition / litigation reads, the
+// causal-window verdict, what was searched, and whether an official filing
+// that was read holds the event. Nothing is invented here.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const STAGE_OF_US: Record<string, EventStage | null> = { PROPOSED: 'PROPOSED', SIGNED: 'SIGNED', AWARDED: 'AWARDED', EXECUTED: 'EXECUTED', MONETIZING: 'EXECUTED', RUMOUR: null, UNKNOWN: null };
+
+/** Was the event confirmed in an official filing that was read? Derived from the card only. */
+export function confirmationOf(it: Pick<ResearchItem, 'market' | 'usCard' | 'inCard'>): CatalystConfirmation | null {
+  const us = it.market === 'US' ? it.usCard : null;
+  if (us) {
+    if (us.catalystConfirmation) return us.catalystConfirmation;
+    return us.source.tier === 'SEC' ? (us.quantified ? 'confirmed_in_official_filing' : 'filed_document_unread') : us.source.tier === 'PRESS' ? 'press_unconfirmed' : 'not_found';
+  }
+  const inc = it.market === 'IN' ? it.inCard : null;
+  const lead = inc?.lead || inc?.catalysts?.[0] || null;
+  if (!lead) return inc ? 'not_found' : null;
+  if (lead.source === 'FILING') return /document read/i.test(lead.sourceLabel) ? 'confirmed_in_official_filing' : 'filed_document_unread';
+  return lead.confirmedByFiling ? 'filed_document_unread' : 'press_unconfirmed';
+}
+const CC_LABEL: Record<CatalystConfirmation, string> = {
+  confirmed_in_official_filing: 'Confirmed in an official filing', filed_document_unread: 'Filed - the document itself was not read',
+  press_unconfirmed: 'Reported in the press - not yet in an official filing', not_found: 'No source found',
+};
+function attachCardFacts(item: ResearchItem): void {
+  const us = item.market === 'US' ? item.usCard : null;
+  const inc = item.market === 'IN' ? item.inCard : null;
+  const lead = inc ? (inc.lead || inc.catalysts?.[0] || null) : null;
+  // issuer: a numeric BSE code is "BSE 544434", the company name stays apart
+  item.issuer = resolveIssuer({ ticker: item.ticker, company: item.companyName || item.company });
+  // conflicts
+  const conflicts = new Set<string>();
+  const vals: Array<{ text: string; source: string }> = [];
+  for (const c of (us?.conflicts || [])) conflicts.add(c);
+  for (const c of (inc?.conflicts || [])) conflicts.add(c);
+  for (const c of (inc?.catalysts || [])) {
+    for (const x of (c.conflicts || [])) conflicts.add(x);
+    if (c.valueStatus === 'conflicting') for (const v of (c.values || [])) if (!vals.some((y) => y.text === v.text && y.source === v.source)) vals.push({ text: v.text, source: v.source });
+  }
+  const conflicting = conflicts.size > 0 || us?.valueStatus === 'conflicting' || lead?.valueStatus === 'conflicting';
+  if (conflicting && !conflicts.size) conflicts.add('The stated values conflict; impact unknown until confirmed.');
+  if (conflicts.size) item.conflicts = Array.from(conflicts);
+  if (vals.length) item.conflictValues = vals;
+  item.valueStatus = conflicting ? 'conflicting' : us?.valueStatus ?? lead?.valueStatus ?? undefined;
+  if (conflicting) {
+    // impact unknown: the size is not used until the values are reconciled; unknown is not negative
+    item.materiality = { ...item.materiality, label: 'UNKNOWN', ratios: [], verification: null, confidence: 0, explanation: `Values conflict - impact unknown until confirmed. ${item.materiality?.explanation || ''}`.trim() };
+    if (item.eventClass === 'CONFIRMED_MATERIAL' || item.eventClass === 'CONFIRMED_LOW_MATERIALITY') item.eventClass = 'POTENTIAL_UNVERIFIED';
+    item.impact = 'Impact unknown - the stated values conflict';
+  }
+  // stage badge
+  item.stageBadge = us ? (us.deal?.stage === 'completed' ? 'COMPLETED' : STAGE_OF_US[us.stage] ?? null) : (lead?.stage ?? null);
+  // clusters: one earnings filing = one cluster with child facts
+  if (us?.clusters?.length) {
+    item.clusters = us.clusters.map((k) => ({
+      clusterId: k.clusterId, label: k.primary.label, sentence: k.primary.sentence, source: k.primary.sourceLabel, independentSources: k.independentConfirmationCount,
+      children: k.facts.filter((f) => f !== k.primary).map((f) => ({ label: f.label, sentence: f.sentence, figures: f.figures })),
+    }));
+  } else if (inc) {
+    const res = (inc.catalysts || []).filter((c) => c.category === 'Results');
+    if (res.length > 1) item.clusters = [{ clusterId: `results:${res[0].url || res[0].date || item.ticker}`, label: res[0].label, sentence: res[0].sentence, source: res[0].sourceLabel, independentSources: new Set(res.map((c) => c.url || c.title)).size, children: res.slice(1).map((f) => ({ label: f.label, sentence: f.sentence, figures: f.figures })) }];
+  }
+  if (us?.clinical) item.clinical = us.clinical;
+  if (us?.acquisition) item.acquisition = us.acquisition;
+  if (us?.litigation) item.litigation = us.litigation;
+  const litigationAward = !!us?.litigation || (item.eventType === 'Litigation / regulatory' && !!lead && lead.figures.length > 0 && /award|damages|verdict|decree|compensation/i.test(`${lead.sentence} ${lead.label}`));
+  if (litigationAward) item.litigationNote = LITIGATION_CASH_NOTE;
+  // context only = older than the per-market move window (CATALYST_WINDOWS: India 3, US 7 calendar days, up to 14 = recent).
+  // The card's own 3-day flag is not used, so the legend and the badge agree for carded items too.
+  const w = CATALYST_WINDOWS[item.market];
+  const age = item.ageDays;
+  const ctxOnly = item.catalystFor === 'CONTEXT';
+  if (age != null && item.filedDate) {
+    item.causalLabel = `Filed ${age} day${age === 1 ? '' : 's'} before the move - ${age <= w.thisMove ? `inside the ${w.thisMove}-day window` : age <= w.recent ? `after the ${w.thisMove}-day window but within ${w.recent} days (recent)` : `older than ${w.recent} days: context only`}`;
+  }
+  if (ctxOnly) { item.contextOnly = true; item.action = 'Monitor'; }
+  // what was searched / found
+  if (us?.catalystStatus) { item.catalystStatusSentence = us.catalystStatus.sentence; item.searched = { sources: us.catalystStatus.sources, lookbackDays: us.catalystStatus.lookbackDays }; }
+  else if (inc) {
+    item.catalystStatusSentence = inc.summary || null;
+    if (inc.searched) item.searched = { sources: inc.searched.sources, lookbackDays: inc.searched.lookbackDays, filings: inc.searched.filings, press: inc.searched.press };
+  }
+  // official filing vs state label
+  const cc = confirmationOf(item);
+  if (cc) { item.catalystConfirmation = cc; item.catalystConfirmationLabel = us?.catalystConfirmationLabel || CC_LABEL[cc]; }
+  if (item.catalysts?.length) item.catalysts = item.catalysts.map((c, i) => (i === 0 ? { ...c, stateWord: stateWordFor(c.stateWord, cc) } : c));
+  if (item.durations?.catalystState) item.durations = { ...item.durations, catalystState: stateWordFor(item.durations.catalystState, cc) };
+}
 
 /** zzz801 (US only): catalysts found per category, over the names on the board. */
 function usCatalystSummary(items: ResearchItem[]): NonNullable<ResearchView['summary']['usCatalysts']> {
@@ -2141,7 +2424,7 @@ function applyUsCard(item: ResearchItem, c: UsCard, ctx: { mv: { pct: number | n
     // press only: an analyst opinion, commentary or an old results write-up is
     // not a company event; a reported deal / order / approval / opening is a
     // potential one, to verify.
-    const fresh = (ageFrom(c.source.date, ctx.now) ?? 99) <= 3;
+    const fresh = (ageFrom(c.source.date, ctx.now, 'US') ?? 99) <= 3;
     cls = c.kind === 'other' || c.kind === 'analyst' || (c.kind === 'earnings' && !fresh) ? 'NO_CATALYST' : 'POTENTIAL_UNVERIFIED';
   }
   item.eventClass = cls;
@@ -2161,7 +2444,7 @@ function applyUsCard(item: ResearchItem, c: UsCard, ctx: { mv: { pct: number | n
   if (c.source.url) item.sourceUrl = c.source.url;
   if (c.source.date) {
     item.filedDate = c.source.date;
-    const a = ageFrom(c.source.date, ctx.now);
+    const a = ageFrom(c.source.date, ctx.now, 'US');
     if (a != null) item.ageDays = a;
     const dated = cls === 'CONFIRMED_MATERIAL' || cls === 'CONFIRMED_LOW_MATERIALITY' || cls === 'POTENTIAL_UNVERIFIED' || cls === 'NEGATIVE';
     item.catalystFor = dated ? catalystForOf('US', item.ageDays ?? null) : undefined;
@@ -2228,7 +2511,7 @@ function applyInCard(item: ResearchItem, card: InCard, ctx: { status: string | n
   const presentedFlags = () => { item.flags = { ...item.flags, denial: false }; };
   const setDated = (date: string | null, url: string | null) => {
     if (url) item.sourceUrl = url;
-    if (date) { item.filedDate = date; const a = ageFrom(date, ctx.now); if (a != null) item.ageDays = a; }
+    if (date) { item.filedDate = date; const a = ageFrom(date, ctx.now, 'IN'); if (a != null) item.ageDays = a; }
   };
   const finish = (cls: EventClass) => {
     item.eventClass = cls;
@@ -2553,15 +2836,62 @@ function catalystLayer(item: ResearchItem, f: Finding | null, c: {
 const CLASS_RANK: Record<EventClass, number> = { CONFIRMED_MATERIAL: 0, POTENTIAL_UNVERIFIED: 1, CONFIRMED_LOW_MATERIALITY: 2, NEGATIVE: 3, NO_CATALYST: 4, MARKET_MOVE_ONLY: 5, LISTING: 6, DATA_UNAVAILABLE: 7 };
 const byPriority = (a: ResearchItem, b: ResearchItem) => (b.priority - a.priority) || (CLASS_RANK[a.eventClass] - CLASS_RANK[b.eventClass]) || (a.ticker < b.ticker ? -1 : a.ticker > b.ticker ? 1 : 0);
 
+/** The conflicts recorded on an item (headline value vs filed value, etc.), read
+ *  defensively: an optional `conflicts` array on the item, else on its US / India
+ *  card. Entries may be strings or objects with text/message. Never throws. (zzz835) */
+export function conflictsOf(it: unknown): string[] {
+  try {
+    const o: any = it;
+    const raw = o?.conflicts ?? o?.usCard?.conflicts ?? o?.inCard?.conflicts;
+    if (!Array.isArray(raw)) return [];
+    return raw.map((x: any) => (typeof x === 'string' ? x : x && typeof x === 'object' ? String(x.text ?? x.message ?? x.field ?? '') : '')).map((x: string) => x.trim()).filter(Boolean);
+  } catch { return []; }
+}
+
+const IN_CAT_ORDER = ['Results', 'Orders & business', 'Capacity & capex', 'Corporate action', 'Capital raising', 'Ownership & control', 'Management & governance', 'Regulatory & legal', 'Exchange disclosure'];
+
+/** Catalysts found per category over the board — BOTH markets. A name counts once per
+ *  category; `sec` = an official-filing catalyst in the category, `press` = press only. */
+export function catalystSummaryOf(items: ResearchItem[], market: 'IN' | 'US'): NonNullable<ResearchView['summary']['catalysts']> {
+  const by = new Map<string, { names: Set<string>; sec: Set<string>; press: Set<string> }>();
+  const slot = (c: string) => { let b = by.get(c); if (!b) { b = { names: new Set(), sec: new Set(), press: new Set() }; by.set(c, b); } return b; };
+  let found = 0, none = 0;
+  for (const it of items) {
+    const list: Array<{ category: string; official: boolean }> | null = market === 'US'
+      ? (it.usCard ? (it.usCard.catalysts || []).map((c) => ({ category: c.category, official: c.source === 'SEC' })) : null)
+      : (it.inCard ? (it.inCard.catalysts || []).filter((c) => c.category !== 'Routine').map((c) => ({ category: c.category, official: c.source === 'FILING' })) : null);
+    if (!list) continue;
+    if (!list.length) { none++; continue; }
+    found++;
+    for (const c of list) { const b = slot(c.category); b.names.add(it.ticker); (c.official ? b.sec : b.press).add(it.ticker); }
+  }
+  const order = market === 'US' ? ['Earnings', 'Product & segment', 'Capital & capacity', 'Corporate action', 'Deals & customers', 'Regulatory & clinical', 'Capital structure', 'Market & ownership'] : IN_CAT_ORDER;
+  const cats = [...order, ...Array.from(by.keys()).filter((c) => !order.includes(c))];
+  return {
+    market, found, none,
+    byCategory: cats.filter((c) => by.has(c) && by.get(c)!.names.size > 0).map((c) => { const b = by.get(c)!; return { category: c, names: b.names.size, sec: b.sec.size, press: Array.from(b.press).filter((t) => !b.sec.has(t)).length, tickers: Array.from(b.names).slice(0, 12) }; }),
+  };
+}
+
+const rowName = (it: ResearchItem) => (it.displayTicker && it.displayTicker.trim()) || it.ticker;
+
 export function buildResearchView(input: ResearchViewInput): ResearchView {
   const market = input.market === 'US' ? 'US' : 'IN';
-  const inp: ResearchViewInput = { ...input, market };
+  // zzz835: ages are measured on the EXCHANGE calendar — the exchange's own date at
+  // the scan instant (New York for the US, India time for India), never the UTC day. The scan instant stays in
+  // `scanNow`; `inp.now` is the reference midday of that exchange date, so
+  // every whole-day age below is a calendar-day difference of two exchange dates.
+  const scanNow = input.now ?? null;
+  const sessDate = input.session?.date && /^\d{4}-\d{2}-\d{2}/.test(String(input.session.date)) ? String(input.session.date).slice(0, 10) : null;
+  const scanT = scanNow ? Date.parse(scanNow) : NaN;
+  const refDate = Number.isFinite(scanT) ? exchangeDateOf(market, new Date(scanT)) : sessDate;
+  const inp: ResearchViewInput = { ...input, market, now: refDate ? `${refDate}T12:00:00Z` : input.now };
   const board = new Map<string, BoardRow>();
   for (const r of input.board || []) { const t = up(r?.ticker); if (t && !board.has(t)) board.set(t, r); }
   const findings = new Map<string, Finding>();
   for (const [k, f] of Object.entries(input.findings || {})) if (f) findings.set(up(k || f.ticker), f);
   const filed = new Map<string, FiledRow>();
-  for (const raw of input.filedResults || []) { const r = normaliseFiledRow(raw, input.now); if (r && !filed.has(r.ticker)) filed.set(r.ticker, r); }
+  for (const raw of input.filedResults || []) { const r = normaliseFiledRow(raw, inp.now, market); if (r && !filed.has(r.ticker)) filed.set(r.ticker, r); }
   const sets = { held: new Set((input.holdings || []).map(up)), watch: new Set((input.watchlist || []).map(up)), theme: new Set((input.sameTheme || []).map(up)) };
 
   // The universe: the board when there is one; otherwise whatever was researched or filed.
@@ -2592,7 +2922,9 @@ export function buildResearchView(input: ResearchViewInput): ResearchView {
   const inQ = new Set(queue.map((i) => i.ticker));
   // zzz798 (US): every US event card stays visible — the 20-card cap dropped
   // names from the page entirely once the SEC reader found more events.
-  const watch = eligible.filter((i) => !inQ.has(i.ticker)).slice(0, market === 'US' ? 500 : 20);
+  // zzz835: no cap in either market — a name dropped by a cap appeared in NO section
+  // while still counted in the tiles (India capped at 20).
+  const watch = eligible.filter((i) => !inQ.has(i.ticker));
   const top3 = queue.filter((i) => i.priority >= 25).slice(0, 3);
   const negative = live.filter((i) => i.eventClass === 'NEGATIVE' && !i.immaterialNegative);
   const immaterialNegative = live.filter((i) => i.eventClass === 'NEGATIVE' && i.immaterialNegative);
@@ -2646,16 +2978,59 @@ export function buildResearchView(input: ResearchViewInput): ResearchView {
       ? 'US moves are 1-week performance from the export, not a one-day move.'
       : session.isToday === false ? `Moves are from the last completed session${session.date ? ` (${session.date})` : ''}, not today.` : null;
   }
+  // zzz835: the market run — session date, generated, data-as-of, status, final/provisional.
+  const weekly = market === 'US' && input.moveWindow === '1W';
+  const run = marketRunOf({ market, sessionDate: sessDate, scanAt: s0.scanAt || scanNow, now: input.viewedAt || scanNow });
+  if (!weekly) {
+    session.sessionDate = run.sessionDate; session.generatedAt = run.generatedAt; session.dataAsOf = run.dataAsOf; session.timezone = run.exchangeTimezone;
+    session.sessionStatus = run.sessionStatus; session.isFinal = run.isFinal; session.marketCloseAt = run.marketCloseAt; session.runReason = run.reason;
+  } else {
+    session.isFinal = false; session.runReason = 'PROVISIONAL — the US move is the weekly export (1-week performance), not a closed one-day session.';
+  }
+  // zzz835: every item says which exchange date its move is measured on and whether its event is inside the window.
+  for (const i of items) {
+    i.moveDate = sessDate;
+    i.windowStatus = i.catalystFor == null || i.ageDays == null ? 'unknown' : i.catalystFor === 'THIS_MOVE' ? 'inside_window' : 'outside_window';
+  }
+  const negativeImmaterial = immaterialNegative.length;
+  const noCatalystFound = count('NO_CATALYST');
+  const summary: ResearchView['summary'] = {
+    scanned: tickers.length, confirmed: count('CONFIRMED_MATERIAL') + count('CONFIRMED_LOW_MATERIALITY'), potential: count('POTENTIAL_UNVERIFIED'),
+    // all live negative items (the class totals add to `scanned`); `negativeImmaterial` of them are listed apart
+    negative: count('NEGATIVE'), noCatalyst: count('NO_CATALYST') + count('MARKET_MOVE_ONLY') + context.length, queue: queue.length,
+    portfolioMatches: portfolio.length, dataUnavailable: count('DATA_UNAVAILABLE'),
+    lowMateriality: count('CONFIRMED_LOW_MATERIALITY'), marketMoveOnly: count('MARKET_MOVE_ONLY'), listings: count('LISTING'), unresearched, watch: watch.length,
+    context: context.length, noCatalystFound, negativeImmaterial, conflicts: items.filter((i) => conflictsOf(i).length > 0).length,
+    catalysts: catalystSummaryOf(items, market),
+    ...(market === 'US' ? { usCatalysts: usCatalystSummary(items) } : {}),
+  };
+  const banner: ViewBanner = {
+    market, scanned: summary.scanned, verified: summary.confirmed, unverified: summary.potential,
+    conflicts: items.filter((i) => conflictsOf(i).length > 0).length,
+    noMaterialCatalyst: summary.noCatalyst, negative: summary.negative, provisional: weekly ? true : run.provisional,
+  };
+  // OLDER FILINGS (CONTEXT) as table rows — same shape in both markets.
+  const olderFilings: OlderFilingRow[] = context.map((i) => ({
+    ticker: i.ticker, name: rowName(i), company: i.companyName || rowName(i), movePct: i.move1d ?? i.move?.pct ?? null,
+    filedDate: i.filedDate ? i.filedDate.slice(0, 10) : null, ageDays: i.ageDays ?? null, event: i.headline, eventLabel: i.eventLabel || i.eventType,
+    material: i.materiality?.label || 'UNKNOWN', url: i.sourceUrl, moveDate: i.moveDate ?? null,
+  }));
+  // Data-quality / large-move rows derivable from the scan (nothing invented).
+  const dataNotes: DataNoteRow[] = [];
+  const noteBase = (i: ResearchItem) => ({ ticker: i.ticker, name: rowName(i), company: i.companyName || rowName(i), movePct: i.move1d ?? i.move?.pct ?? null });
+  for (const i of items) {
+    const b = board.get(i.ticker);
+    const mv = i.move1d ?? i.move?.pct ?? null;
+    const perfKnown = !!(b && b.perf && typeof b.perf === 'object');
+    if (market === 'US' && perfKnown && i.returns.m1 == null && i.returns.m3 == null) {
+      dataNotes.push({ ...noteBase(i), kind: 'new_listing', text: 'No 1-month or 3-month performance on the scan — a new listing or thin history: no comparable prior close, so the trend context is not measured.' });
+    }
+    for (const f of (b?.flags || [])) if (f === 'SPAC' || f === 'ADR') dataNotes.push({ ...noteBase(i), kind: f === 'SPAC' ? 'spac' : 'adr', text: f === 'SPAC' ? 'Blank-check / acquisition-corp name — its price follows the deal, not operations.' : 'Depositary receipt — SEC filings may be foreign-issuer forms.' });
+    if (market === 'US' && mv != null && Math.abs(mv) >= EXTREME_MOVE_PCT) dataNotes.push({ ...noteBase(i), kind: 'extreme_move', text: `Move of ${mv >= 0 ? '+' : ''}${mv.toFixed(1)}% is at or above the ${EXTREME_MOVE_PCT}% second-look flag (a display rule, not a cause).` });
+  }
   return {
-    session,
-    summary: {
-      scanned: tickers.length, confirmed: count('CONFIRMED_MATERIAL') + count('CONFIRMED_LOW_MATERIALITY'), potential: count('POTENTIAL_UNVERIFIED'),
-      negative: count('NEGATIVE'), noCatalyst: count('NO_CATALYST') + count('MARKET_MOVE_ONLY') + context.length, queue: queue.length,
-      portfolioMatches: portfolio.length, dataUnavailable: count('DATA_UNAVAILABLE'),
-      lowMateriality: count('CONFIRMED_LOW_MATERIALITY'), marketMoveOnly: count('MARKET_MOVE_ONLY'), listings: count('LISTING'), unresearched, watch: watch.length,
-      context: context.length,
-      ...(market === 'US' ? { usCatalysts: usCatalystSummary(items) } : {}),
-    },
-    top3, queue, watch, negative, immaterialNegative, noCatalyst, dataQuality, sourceFailures, partialFailures, portfolio, context, needsReading,
+    session, summary, top3, queue, watch, negative, immaterialNegative, noCatalyst, dataQuality, sourceFailures, partialFailures, portfolio, context, needsReading,
+    banner, scanCriteria: input.scanCriteria ?? null, olderFilings, dataNotes,
+    bookChecked: { held: sets.held.size, watch: sets.watch.size },
   };
 }

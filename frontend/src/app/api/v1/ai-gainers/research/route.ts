@@ -36,6 +36,7 @@ import { indiaSession, isLargeCap, LARGE_CAP_MIN_CR } from '@/lib/ai-gainers/scr
 import { readAnnouncementCached, type ReadAnnouncement } from '@/lib/ai-gainers/announcement-reader';
 import { extractPdfText } from '@/lib/pdf-text-extractor';
 import { readBookState } from '@/lib/book-store';
+import { readUsBook } from '@/lib/us-book-store';
 import { etToday, capTierUs, usPhaseAt, lastCompletedNyseSession } from '@/lib/ai-gainers/us-gainers';
 import { buildResearchView, type ResearchView } from '@/lib/ai-gainers/research-view';
 import { fetchGoogleNewsRSS } from '@/lib/indian-news-rss';
@@ -46,7 +47,7 @@ import { IN_BACKDROP_DAYS } from '@/lib/ai-gainers/in-event-taxonomy';
 import { detectPersistentCatalysts, summarizePersistence, trackPotentialFromFinding, PERSIST_CATEGORIES, type PersistentCatalyst } from '@/lib/catalyst/persistence';
 import { upsertDetections, loadCatalystRecords, rememberGainerCatalysts, catalystRecordsFor } from '@/lib/catalyst/persistence-store';
 import { loadLedger } from '@/lib/thesis/evidence-store';
-import { fetchUsCard } from '@/lib/ai-gainers/us-card-fetch';
+import { fetchUsCard, usMoveDate } from '@/lib/ai-gainers/us-card-fetch';
 import { buildUsCard, withPressCatalysts, US_CARD_VERSION, type UsCard } from '@/lib/ai-gainers/us-card';
 import { boardHash, droppedFromBoard } from '@/lib/ai-gainers/us-board-sync';
 
@@ -314,10 +315,13 @@ async function loadState(market: 'IN' | 'US', date: string): Promise<ResearchSta
   } catch { return null; }
 }
 
-async function loadHoldings(_origin: string): Promise<Set<string>> {
+async function loadHoldings(_origin: string, market: 'IN' | 'US' = 'IN'): Promise<Set<string>> {
   // Read the book store directly: a self-fetch through `origin` resolved to
   // an internal host on Railway and answered nothing, so no gainer was ever
   // marked as held (MARKSANS sat in "unexplained" without its 📗).
+  // zzz835: the US board is matched against the US book (its own KV key) — it
+  // used to be matched against the India book, so no US gainer was ever "held".
+  if (market === 'US') return new Set((await loadBook('US')).held);
   try {
     const st: any = await readBookState(process.env.NEXT_PUBLIC_CHAT_ID || '5057319640');
     const rows: any[] = st?.tickers || st?.book?.tickers || [];
@@ -415,7 +419,14 @@ export async function GET(req: NextRequest) {
 // cached scan's filed-result rows and the book. KV reads only — opening the
 // page never makes a model call or an upstream fetch here.
 
-async function loadBook(): Promise<{ held: string[]; watch: string[] }> {
+async function loadBook(market: 'IN' | 'US' = 'IN'): Promise<{ held: string[]; watch: string[] }> {
+  if (market === 'US') {
+    // zzz835: the US portfolio book (holdings + bench), kept apart from the India book.
+    try {
+      const { book } = await readUsBook();
+      return { held: book.holdings.map((h) => String(h.ticker || '').toUpperCase()).filter(Boolean), watch: book.bench.map((b) => String(b.ticker || '').toUpperCase()).filter(Boolean) };
+    } catch { return { held: [], watch: [] }; }
+  }
   try {
     const st: any = await readBookState(process.env.NEXT_PUBLIC_CHAT_ID || '5057319640');
     const rows: any[] = st?.tickers || st?.book?.tickers || [];
@@ -440,7 +451,7 @@ async function cachedFiledResults(market: 'IN' | 'US', date: string): Promise<{ 
 
 async function viewFor(st: ResearchState, market: 'IN' | 'US', date: string, session: ReturnType<typeof indiaSession> | null): Promise<ResearchView | null> {
   try {
-    const [book, filed, prior] = await Promise.all([loadBook(), cachedFiledResults(market, date), loadCatalystRecords().catch(() => ({}))]);
+    const [book, filed, prior] = await Promise.all([loadBook(market), cachedFiledResults(market, date), loadCatalystRecords().catch(() => ({}))]);
     const status = market === 'IN'
       ? (session && session.date !== date ? 'previous_session' : session?.state === 'open' ? 'live' : session?.state === 'closed' ? 'closed' : 'last_completed')
       : st.moveWindow === '1W' ? 'weekly_export' : usPhaseAt(new Date()) === 'regular' ? 'live' : 'last_completed';
@@ -461,6 +472,7 @@ async function viewFor(st: ResearchState, market: 'IN' | 'US', date: string, ses
       watchlist: book.watch,
       errors: st.errors,
       now: st.updated_at,
+      viewedAt: new Date().toISOString(),
       // zzz785 — earlier days' catalyst states (timeline + previous state).
       priorCatalysts: catalystRecordsFor(prior as any, st.universe.map((u) => u.ticker)),
       session: {
@@ -546,7 +558,7 @@ async function research(req: NextRequest, body: any) {
     st.universe.push(u);
   }
 
-  const holdings = await loadHoldings(origin);
+  const holdings = await loadHoldings(origin, market);
   // Explicit re-run of the day after a rule change. The day's model-read
   // count is KEPT: re-used reads come from the 30-day cache and cost nothing,
   // and the daily ceiling still bounds any new read. (zzz768)
@@ -645,7 +657,7 @@ async function research(req: NextRequest, body: any) {
 
       const news = market === 'US' && usLeft() < 15_000 ? null : await newsFor(market, u.ticker, fullName || u.company, date, now);
       // zzz798: no SEC event document read → a PRESS-ONLY card, said plainly.
-      if (market === 'US' && !usCard) usCard = buildUsCard({ ticker: u.ticker, company: u.company, marketCapM: u.marketCap, filing: null, docs: [], press: [...pressItemsOf(news), ...((usListing?.press?.items || []) as any[]).map((p) => ({ title: String(p.title || ''), url: String(p.url || ''), date: p.date ?? null, source: p.source ?? null }))], latestSec: usListing?.recentFilings?.[0] ? { form: usListing.recentFilings[0].form, date: usListing.recentFilings[0].date, items: usListing.recentFilings[0].items.filter((i) => i !== '9.01') } : null, secChecked: !!usListing && !usListing.failure, windowDays: WINDOW_DAYS });
+      if (market === 'US' && !usCard) usCard = buildUsCard({ ticker: u.ticker, company: u.company, marketCapM: u.marketCap, filing: null, docs: [], press: [...pressItemsOf(news), ...((usListing?.press?.items || []) as any[]).map((p) => ({ title: String(p.title || ''), url: String(p.url || ''), date: p.date ?? null, source: p.source ?? null }))], latestSec: usListing?.recentFilings?.[0] ? { form: usListing.recentFilings[0].form, date: usListing.recentFilings[0].date, items: usListing.recentFilings[0].items.filter((i) => i !== '9.01') } : null, secChecked: !!usListing && !usListing.failure, windowDays: WINDOW_DAYS, moveDate: usMoveDate(new Date()) });
       // zzz801: a card read from a filing also lists the catalysts the press
       // headlines name (press only — never merged into the filing's figures).
       else if (market === 'US' && usCard && usCard.source.tier === 'SEC') usCard = withPressCatalysts(usCard, pressItemsOf(news));
@@ -768,7 +780,7 @@ async function rescoreOnly(req: NextRequest, body: any) {
     if (typeof r?.filed_result === 'boolean') u.filedResult = r.filed_result;
     if (typeof r?.move_pct === 'number') u.movePct = r.move_pct;
   }
-  const holdings = await loadHoldings(origin);
+  const holdings = await loadHoldings(origin, market);
   const stale = new Set(staleTickers(st));
   let rescored = 0, failed = 0;
   const persistSink: PersistentCatalyst[] = [];   // zzz780
@@ -828,7 +840,7 @@ async function rescoreOnly(req: NextRequest, body: any) {
         let card: UsCard | null = null;
         if (er2 && !er2.failure) card = await withDeadline(fetchUsCard({ ticker: u.ticker, company: u.company, marketCapM: u.marketCap ?? inputs.marketCap, listing: er2, now: new Date(inputs.fetchedAt), deadlineMs: Math.min(12_000, budget - (Date.now() - t0) - 6_000), windowDays: WINDOW_DAYS }), Math.min(13_000, budget - (Date.now() - t0) - 5_000), null);
         if (card && card.source.tier === 'SEC') card = withPressCatalysts(card, pressItemsOf(inputs.news));   // zzz801
-        if (!card) card = buildUsCard({ ticker: u.ticker, company: u.company, marketCapM: u.marketCap ?? inputs.marketCap, filing: null, docs: [], press: pressItemsOf(inputs.news), latestSec: er2?.recentFilings?.[0] ? { form: er2.recentFilings[0].form, date: er2.recentFilings[0].date, items: er2.recentFilings[0].items.filter((i) => i !== '9.01') } : null, secChecked: !!er2 && !er2.failure, windowDays: WINDOW_DAYS });
+        if (!card) card = buildUsCard({ ticker: u.ticker, company: u.company, marketCapM: u.marketCap ?? inputs.marketCap, filing: null, docs: [], press: pressItemsOf(inputs.news), latestSec: er2?.recentFilings?.[0] ? { form: er2.recentFilings[0].form, date: er2.recentFilings[0].date, items: er2.recentFilings[0].items.filter((i) => i !== '9.01') } : null, secChecked: !!er2 && !er2.failure, windowDays: WINDOW_DAYS, moveDate: usMoveDate(new Date(inputs.fetchedAt)) });
         // an EDGAR outage is not "no card" — try again on the next open
         inputs = { ...inputs, usCard: card, usCardV: er2 && !er2.failure ? US_CARD_VERSION : inputs.usCardV };
       }

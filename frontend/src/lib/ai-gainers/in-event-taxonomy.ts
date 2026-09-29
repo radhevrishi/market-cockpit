@@ -49,6 +49,8 @@
 // Pure: no fetch, no clock (the caller passes `now`), no model.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { causalWindow, exchangeAgeDays, exchangeDate, exchangeDay, reconcileValues, stageFromText, type CausalWindow, type EventStage, type EventValue, type ValueStatus } from './structured-facts';
+
 export type InEventCategory =
   | 'Results' | 'Ownership & control' | 'Orders & business' | 'Capacity & capex' | 'Corporate action'
   | 'Capital raising' | 'Management & governance' | 'Regulatory & legal' | 'Exchange disclosure' | 'Routine';
@@ -499,6 +501,19 @@ export interface InCatalyst extends InEventHit {
   ageDays: number | null;
   /** The filing's subject / the headline — what the reader clicks. */
   title: string;
+  // ── zzz835 (optional; cards cached before this lack them) ──
+  /** PROPOSED for an LOI / tentative / non-binding / subject-to-approval event - never firm, never booked. */
+  stage?: EventStage | null;
+  /** 'conflicting' when a headline / summary / press value differs from the filed value - both are kept in `values`. */
+  valueStatus?: ValueStatus;
+  values?: EventValue[];
+  conflicts?: string[];
+  /** True when the impact cannot be sized (conflict, or a value not confirmed by a filed document). */
+  impactUnknown?: boolean;
+  /** Age at the move day and the causal-window verdict (context only when outside). */
+  ageDaysAtMove?: number | null;
+  causalWindowStatus?: CausalWindow['status'];
+  contextOnly?: boolean;
 }
 
 export interface InBackdrop {
@@ -527,6 +542,14 @@ export interface InCard {
   routine: Array<{ label: string; title: string; date: string | null }>;
   filingsChecked: number;
   pressChecked: number;
+  /** zzz835: every value conflict on the card (headline vs filed), plainly worded. */
+  conflicts?: string[];
+  /** zzz835: what was searched and how far back - printed with any "no catalyst" conclusion. */
+  searched?: { filings: number; press: number; lookbackDays: number; sources: string[] };
+  /** zzz835: never "no catalyst" when an event was extracted. */
+  catalystStatus?: 'no_event_found' | 'event_found_low_information' | 'event_found_not_market_moving' | 'event_found_unverified' | 'confirmed_material_event';
+  /** The move day (IST calendar) the causal windows were measured against. */
+  moveDate?: string | null;
   /** One plain sentence — never empty; "No catalyst found in filings or news" when nothing. */
   summary: string;
 }
@@ -537,12 +560,18 @@ export interface InCardFiling { subject: string; summary: string | null; url: st
 export interface InCardPress { title: string; url: string | null; date: string | null; source?: string | null }
 
 const QUOTES_PRESS = /\bcaptioned\b|\bnews (?:item|article|report)s?\b|\brumou?r verification\b|\bmarket rumou?rs?\b|\bmedia (?:report|article)s?\b/i;
-const dayOf = (iso: string | null | undefined): string | null => (iso ? String(iso).slice(0, 10) : null);
+// zzz835: days are IST calendar days (Asia/Kolkata), never UTC or the server's / browser's clock.
+const dayOf = (iso: string | null | undefined): string | null => exchangeDay(iso, 'IN');
 const ageOf = (iso: string | null | undefined, now: Date): number | null => {
-  if (!iso) return null;
-  const t = Date.parse(String(iso).length <= 10 ? `${iso}T12:00:00+05:30` : String(iso));
-  return Number.isFinite(t) ? Math.max(0, Math.floor((now.getTime() - t) / 86_400_000)) : null;
+  const a = exchangeAgeDays(iso, now, 'IN');
+  return a == null ? null : Math.max(0, a);
 };
+/** The first money amount of a hit in ₹ crore, from its own stated figures. */
+const hitCrore = (h: Pick<InEventHit, 'figures' | 'sentence'>): number | null => {
+  for (const f of h.figures) { const v = figureCrore(f); if (v != null) return v; }
+  return null;
+};
+const fmtCrText = (v: number) => `Rs ${Math.round(v * 100) / 100} crore`;
 const rankOf = (id: string) => RULE_BY_ID.get(id)?.rank ?? 99;
 /** Events that explain nothing on their own — they never lead the card. */
 const NEVER_LEAD = new Set(['price_clarification', 'exchange_query', 'results_filed', 'commodity_price']);
@@ -583,7 +612,9 @@ function resultTone(hits: InEventHit[]): InBackdrop['tone'] {
 /** Build the India card for one gainer. `filings` may reach back further than
  *  the window — only results filings older than the window are used, and only
  *  as the backdrop. Pure. */
-export function buildIndiaCard(input: { filings: InCardFiling[]; press: InCardPress[]; now: Date; windowDays: number; backdropDays?: number; sessionCloseIso?: string | null }): InCard {
+export function buildIndiaCard(input: { filings: InCardFiling[]; press: InCardPress[]; now: Date; windowDays: number; backdropDays?: number; sessionCloseIso?: string | null; moveDate?: string | null;
+  /** Causal window for an official filing (default: windowDays; the QA brief's default is 3) and for a press item (default: windowDays; brief: 1). An item older than its window is context only. */
+  causalWindowDays?: number; pressWindowDays?: number }): InCard {
   const { now, windowDays } = input;
   const backdropDays = input.backdropDays ?? IN_BACKDROP_DAYS;
   const closeT = input.sessionCloseIso ? Date.parse(input.sessionCloseIso) : NaN;
@@ -684,6 +715,44 @@ export function buildIndiaCard(input: { filings: InCardFiling[]; press: InCardPr
   // The lead is a fresh event: an in-window filing, or press dated inside the window. Results older than the window are the backdrop, not the lead.
   const lead = merged.find((c) => !NEVER_LEAD.has(c.id) && (c.ageDays == null || c.ageDays <= windowDays)) || null;
 
+  // ── zzz835: stage, value conflicts, causal windows, search record ──
+  const moveDate = input.moveDate || (input.sessionCloseIso ? dayOf(input.sessionCloseIso) : null) || exchangeDate(now, 'IN');
+  const conflicts: string[] = [];
+  const shown = merged.slice(0, 12);
+  for (const c of shown) {
+    if (c.category !== 'Results' && c.category !== 'Exchange disclosure') c.stage = stageFromText(c.sentence) ?? undefined;
+    if (c.stage === 'PROPOSED') c.impactUnknown = true;
+    const cw = causalWindow({ itemDate: c.date, moveDate, official: c.source === 'FILING', windowDays: c.source === 'FILING' ? (input.causalWindowDays ?? windowDays) : (input.pressWindowDays ?? input.causalWindowDays ?? windowDays) });
+    c.ageDaysAtMove = cw.ageDaysAtMove; c.causalWindowStatus = cw.status; c.contextOnly = cw.contextOnly;
+  }
+  // a headline / summary / press value that differs from the FILED value: keep both, never pick one
+  for (const f of inWin) {
+    const meta = [...classifyIndiaEvents(f.subject, { headline: true }), ...(f.summary ? classifyIndiaEvents(f.summary) : [])];
+    const doc = f.docText ? classifyIndiaEvents(f.docText) : [];
+    for (const d of doc) {
+      const dv = hitCrore(d);
+      const m = meta.find((x) => x.id === d.id && hitCrore(x) != null);
+      if (dv == null || !m) continue;
+      const r = reconcileValues([{ value: dv, unit: 'INR_CRORE', source: 'filed', text: fmtCrText(dv) }, { value: hitCrore(m)!, unit: 'INR_CRORE', source: 'headline', text: fmtCrText(hitCrore(m)!) }]);
+      if (r.valueStatus !== 'conflicting') continue;
+      const tgt = shown.find((c) => c.id === d.id && c.source === 'FILING');
+      if (tgt) { tgt.valueStatus = 'conflicting'; tgt.values = r.values; tgt.conflicts = [...(tgt.conflicts || []), ...r.conflicts]; tgt.impactUnknown = true; }
+      conflicts.push(...r.conflicts);
+    }
+  }
+  for (const p of shown.filter((c) => c.source === 'PRESS')) {
+    const pv = hitCrore(p);
+    for (const fcat of shown.filter((c) => c.source === 'FILING' && c.id === p.id)) {
+      const fv = hitCrore(fcat);
+      if (pv == null || fv == null) continue;
+      const r = reconcileValues([{ value: fv, unit: 'INR_CRORE', source: 'filed', text: fmtCrText(fv) }, { value: pv, unit: 'INR_CRORE', source: 'press', text: fmtCrText(pv) }]);
+      if (r.valueStatus !== 'conflicting') continue;
+      for (const t of [p, fcat]) { t.valueStatus = 'conflicting'; t.values = r.values; t.conflicts = [...(t.conflicts || []), ...r.conflicts]; t.impactUnknown = true; }
+      conflicts.push(...r.conflicts);
+    }
+  }
+  const conflictNotes = Array.from(new Set(conflicts));
+
   let summary: string;
   if (lead) summary = `${lead.label}${lead.planned && lead.source === 'PRESS' ? ' (reported plan)' : ''} — ${lead.sourceLabel}${lead.date ? `, ${lead.date}` : ''}`;
   else if (clarification) summary = `Exchange clarification on price / volume movement${clarification.date ? ` (${clarification.date})` : ''} — company says no undisclosed information; no fundamental catalyst filed`;
@@ -695,7 +764,12 @@ export function buildIndiaCard(input: { filings: InCardFiling[]; press: InCardPr
   else if (routine.length) summary = `Routine filings only (${Array.from(new Set(routine.map((r) => r.label.toLowerCase()))).slice(0, 3).join(', ')}) — no fresh catalyst`;
   else summary = 'No catalyst found in filings or news';
 
-  return { v: IN_CARD_VERSION, catalysts: merged.slice(0, 12), lead, backdrop, clarification, routine, filingsChecked: inWin.length, pressChecked: press.length, summary };
+  const eventFound = !!lead || !!clarification || merged.some((c) => c.id === 'exchange_query') || !!backdrop || routine.length > 0;
+  const catalystStatus: InCard['catalystStatus'] = !eventFound ? 'no_event_found'
+    : lead ? (lead.source === 'FILING' && !lead.contextOnly ? 'confirmed_material_event' : 'event_found_unverified')
+      : routine.length && !backdrop && !clarification ? 'event_found_low_information' : 'event_found_not_market_moving';
+  const searched = { filings: inWin.length, press: press.length, lookbackDays: windowDays, sources: ['exchange filings (NSE / BSE announcements)', 'press headlines'] };
+  return { v: IN_CARD_VERSION, catalysts: shown, lead, backdrop, clarification, routine, filingsChecked: inWin.length, pressChecked: press.length, conflicts: conflictNotes, searched, catalystStatus, moveDate, summary };
 }
 
 /** The sentences of a filed document that name a (non-routine) event — kept with the document read so the

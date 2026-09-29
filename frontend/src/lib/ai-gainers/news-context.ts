@@ -16,7 +16,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import type { StructuredFacts, SourceRef, EventKind } from './structured-facts';
-import { emptyEconomics, emptyTime, favourableLegalOutcome } from './structured-facts';
+import { emptyEconomics, emptyTime, favourableLegalOutcome, reconcileValues, stageFromText } from './structured-facts';
 import { moneyCr } from './india-extract';
 
 export interface NewsLite { title: string; url: string; published_at: string; source?: string }
@@ -242,6 +242,12 @@ export interface PressFacts extends StructuredFacts {
   headline: string;
   secondary: true;
   confirmedBy: { url: string | null; date: string | null; title: string } | null;
+  /** zzz835: the headline's value differs from a filed value for the same event - both are shown, neither is chosen. */
+  conflicts?: string[];
+  /** 'conflicting' | 'reported' (press value, no filing states it) */
+  valueStatus?: 'conflicting' | 'reported' | 'not_disclosed';
+  /** PROPOSED for an LOI / tentative / subject-to-approval report. */
+  stage?: 'PROPOSED' | 'SIGNED' | 'AWARDED' | 'COMPLETED' | null;
 }
 
 const tok = (s: string | null | undefined) => new Set(String(s || '').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 5 && !/^(limited|india|indian|order|orders|crore|leading|private|company)$/.test(w)));
@@ -261,6 +267,7 @@ export function pressFacts(news: NewsContext, issuer: string, official: Structur
     const kind: EventKind | null = negTax ? 'tax_litigation' : newSub ? 'strategic_expansion' : theme === 'negative' ? 'regulatory_negative' : theme ? THEME_KIND[theme]! : null;
     const value = moneyCr(it.title);
     let confirmedBy: PressFacts['confirmedBy'] = null;
+    let conflictNotes: string[] = [];
     if (kind) {
       const mine = tok(it.title);
       const hit = offs.find((f) => {
@@ -272,6 +279,21 @@ export function pressFacts(news: NewsContext, issuer: string, official: Structur
         return days(f.source.date, it.date) <= 3;
       });
       if (hit) confirmedBy = { url: hit.source.url ?? null, date: hit.source.date, title: hit.source.title };
+      // zzz835: same event (kind + counterparty or date), different value: a conflict, not a silent pick
+      if (!hit && value != null) {
+        const other = offs.find((f) => {
+          if (f.event.kind !== kind) return false;
+          const fv = f.economics.valueNative ?? f.economics.considerationNative ?? f.economics.capex;
+          if (fv == null) return false;
+          const cp = tok(`${f.event.counterparty || ''} ${f.event.product || ''}`);
+          return Array.from(cp).some((w) => mine.has(w)) || days(f.source.date, it.date) <= 3;
+        });
+        if (other) {
+          const fv = (other.economics.valueNative ?? other.economics.considerationNative ?? other.economics.capex)!;
+          const r = reconcileValues([{ value: fv, unit: 'INR_CRORE', source: 'filed', text: `Rs ${Math.round(fv * 100) / 100} crore` }, { value, unit: 'INR_CRORE', source: 'headline', text: `Rs ${Math.round(value * 100) / 100} crore` }]);
+          if (r.valueStatus === 'conflicting') conflictNotes = r.conflicts;
+        }
+      }
     }
     const src: SourceRef = { kind: 'PRESS', access: 'SUMMARY_ONLY', issuer, date: it.date, url: it.url, title: `${it.title}${it.source ? ` — ${it.source}` : ''}`.slice(0, 160) };
     refs.push(src);
@@ -283,9 +305,11 @@ export function pressFacts(news: NewsContext, issuer: string, official: Structur
         quotes: [], unknowns: ['Press report — not verified against an official filing.', ...(confirmedBy ? [] : ['No official filing read that states the same event.'])],
         verificationRequired: true, polarity: kind === 'tax_litigation' || kind === 'regulatory_negative' ? 'negative' : ['order', 'capacity', 'qualification', 'acquisition', 'partnership', 'stake_by_strategic', 'strategic_investment', 'promoter_buying'].includes(kind) ? 'positive' : 'neutral',
         headline: it.title, secondary: true, confirmedBy,
+        ...(conflictNotes.length ? { conflicts: conflictNotes, valueStatus: 'conflicting' as const } : value != null ? { valueStatus: 'reported' as const } : {}),
+        stage: (() => { const st = stageFromText(it.title); return st === 'PROPOSED' || st === 'SIGNED' || st === 'AWARDED' || st === 'COMPLETED' ? st : null; })(),
       });
     }
-    return { ...it, secondary: true, confirmedBy };
+    return { ...it, secondary: true, confirmedBy, ...(conflictNotes.length ? { conflicts: conflictNotes } : {}) };
   });
   return { facts: out, refs, news: { ...news, items } };
 }

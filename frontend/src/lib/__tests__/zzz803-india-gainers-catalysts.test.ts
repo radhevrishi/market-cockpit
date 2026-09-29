@@ -539,7 +539,7 @@ test('live NSE wording: Avadh Sugar press release — PAT ₹0.24 Cr as against 
   assert.equal(c.backdrop?.tone, 'turnaround_small');
   assert.equal(c.backdrop?.lead?.source, 'FILING');
   assert.equal(c.backdrop?.lead?.sourceLabel, 'exchange filing (document read)');
-  assert.match(c.summary, /Turnaround, small — quarterly result \(filed 2026-08-03, 52d ago\)/);
+  assert.match(c.summary, /Turnaround, small — quarterly result \(filed 2026-08-03, 53d ago\)/);   // zzz835: IST calendar days (3 Aug -> 25 Sep = 53), not hours since noon floored
 });
 
 test('live NSE wording: Bhageria — the exchange\'s price-movement letter is a query; the reply is the clarification', () => {

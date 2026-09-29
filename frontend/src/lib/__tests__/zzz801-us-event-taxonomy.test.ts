@@ -56,6 +56,9 @@ const CASES: Array<[string, string]> = [
   ['trial_milestone', 'The Company announced that the first patient has been dosed in its Phase 2 trial of OMI-101.'],
   ['designation', 'The FDA granted Breakthrough Therapy Designation to PX-12 for recurrent glioblastoma.'],
   ['intl_approval', 'The device received CE Mark approval, allowing commercial sales across the European Union.'],
+  ['profit_growth', 'Net income of $33.9 million, up 154.9% year-over-year, compared to $13.3 million.'],
+  ['profit_decline', 'Net income decreased 18% to $4.1 million from $5.0 million.'],
+  ['litigation_verdict', 'The jury awarded the Company $90 million in damages plus interest to be determined by the District Court.'],
   ['patent_litigation_win', 'The Company prevailed in its patent infringement lawsuit after a jury verdict awarded $28 million in damages.'],
   ['settlement', 'The Company entered into a settlement agreement resolving all claims in the Delaware litigation.'],
   ['buyback', 'The Board authorized a new share repurchase program of up to $25 million.'],
@@ -235,7 +238,7 @@ test('8-K with nothing classifiable keeps the plain answer and says the scan fou
   const ex = 'Acme Inc. today announced that it will hold its annual shareholder meeting on November 5, 2026 at its offices.';
   const c = buildUsCard({ ticker: 'ACME', company: 'Acme Inc.', marketCapM: 400, filing: filing('8-K', ['8.01']), docs: [doc('primary', BODY_701.replace(/7\.01/g, '8.01')), doc('ex99', `${ex} ${'Other company text here. '.repeat(6)}`)], secChecked: true })!;
   assert.deepEqual(c.catalysts, []);
-  assert.ok(c.extra.some((x) => /no catalyst found in the filing text/i.test(x)));
+  assert.ok(c.extra.some((x) => /no (?:material operating )?catalyst found in the filing text/i.test(x)));   // zzz835: an extracted event says "event found, low information" first
 });
 
 test('an earnings card still reads the figures, and also lists the release\'s other catalysts', () => {

@@ -27,6 +27,9 @@
 //      between fundamental surprise and price reaction is.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { classifyCanonicalEventType, validateCanonicalEvent, type CanonicalEventType } from './us-event-taxonomy';
+import { stageFromText, reconcileValues, type EventValue, type ValueStatus } from './structured-facts';
+
 export type Market = 'IN' | 'US';
 
 // ── The fixed taxonomy. A model may not invent a category. ────────────────
@@ -105,6 +108,17 @@ export type Materiality = 'low' | 'medium' | 'high' | 'unknown';
 export type StructuralDuration = 'short' | 'medium' | 'long' | 'unknown';
 export type Attribution = 'company_specific' | 'sector' | 'market' | 'macro' | 'technical' | 'unknown';
 
+/** Two documents of one filing (an 8-K body and its EX-99.1) are ONE source: the key is the SEC accession, else the URL without query / fragment. */
+export function independentSourceKey(url: string | null | undefined): string {
+  const u = String(url || '').trim();
+  const acc = /\/data\/\d+\/(\d{18})\//.exec(u) || /(\d{10}-\d{2}-\d{6})/.exec(u);
+  if (acc) return `sec:${acc[1].replace(/-/g, '')}`;
+  return u.replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase();
+}
+export function countIndependentSources(sources: Array<{ url: string }>): number {
+  return new Set((sources || []).map((s) => independentSourceKey(s.url)).filter(Boolean)).size;
+}
+
 export interface EventSource {
   url: string;
   tier: SourceTier;
@@ -169,27 +183,73 @@ export function clusterKey(market: Market, ticker: string, catalyst: CatalystTyp
   return `${market}:${String(ticker).toUpperCase()}:${catalyst}:${bucket}`;
 }
 
-/** Merge events sharing a cluster key, unioning their sources and claims. */
+/** Merge events of one company + catalyst that sit within CLUSTER_WINDOW_HOURS of the previous one (a chain), unioning their sources and claims.
+ *  zzz835: fixed 72h buckets split two sightings 1 hour apart when a bucket edge fell between them; proximity does not. */
 export function clusterEvents(events: GainerEvent[]): GainerEvent[] {
-  const byKey = new Map<string, GainerEvent>();
+  const groups = new Map<string, GainerEvent[]>();
   for (const e of events) {
-    const k = clusterKey(e.market, e.ticker, e.catalyst, e.eventTime);
-    const prev = byKey.get(k);
-    if (!prev) {
-      byKey.set(k, { ...e, clusterId: k, sources: [...e.sources], claims: [...e.claims] });
-      continue;
-    }
-    const seen = new Set(prev.sources.map((s) => s.url));
-    for (const s of e.sources) if (!seen.has(s.url)) prev.sources.push(s);
-    const seenClaims = new Set(prev.claims.map((c) => `${c.sourceUrl}|${c.text}`));
-    for (const c of e.claims) {
-      const id = `${c.sourceUrl}|${c.text}`;
-      if (!seenClaims.has(id)) { prev.claims.push(c); seenClaims.add(id); }
-    }
-    // Keep the strongest evidence and the earliest sighting.
-    if (Date.parse(e.eventTime) < Date.parse(prev.eventTime)) prev.eventTime = e.eventTime;
+    const g = `${e.market}:${String(e.ticker).toUpperCase()}:${e.catalyst}`;
+    groups.set(g, [...(groups.get(g) || []), e]);
   }
-  return Array.from(byKey.values());
+  const out: GainerEvent[] = [];
+  for (const list of Array.from(groups.values())) {
+    const sorted = [...list].sort((a, b) => (Date.parse(a.eventTime) || 0) - (Date.parse(b.eventTime) || 0));
+    let cur: GainerEvent | null = null; let lastT = NaN;
+    for (const e of sorted) {
+      const t = Date.parse(e.eventTime);
+      if (cur && Number.isFinite(t) && Number.isFinite(lastT) && t - lastT <= CLUSTER_WINDOW_HOURS * 3600_000) {
+        const seen = new Set(cur.sources.map((s) => s.url));
+        for (const s of e.sources) if (!seen.has(s.url)) { cur.sources.push(s); seen.add(s.url); }
+        const seenClaims = new Set(cur.claims.map((c) => `${c.sourceUrl}|${c.text}`));
+        for (const c of e.claims) { const id = `${c.sourceUrl}|${c.text}`; if (!seenClaims.has(id)) { cur.claims.push(c); seenClaims.add(id); } }
+        lastT = t;
+        continue;
+      }
+      cur = { ...e, clusterId: clusterKey(e.market, e.ticker, e.catalyst, e.eventTime), sources: [...e.sources], claims: [...e.claims] };
+      lastT = t;
+      out.push(cur);
+    }
+  }
+  return out;
+}
+
+// ── zzz835: THE CANONICAL EVENT (what the document says, never what the headline says) ──
+
+export type CanonicalStage = 'reported' | 'proposed' | 'signed' | 'awarded' | 'executed' | 'completed' | 'unknown';
+export type CanonicalSourceTier = 'official_filing' | 'official_company_release' | 'press' | 'secondary';
+export interface CanonicalEvent {
+  event_id: string;
+  ticker: string;
+  event_type: CanonicalEventType;
+  stage: CanonicalStage;
+  /** Every value seen - a headline value never overrides the filed one. */
+  values: EventValue[];
+  value: number | null;
+  currency: string | null;
+  value_status: ValueStatus;
+  source_tier: CanonicalSourceTier;
+  filing_date: string | null;
+  source_url: string | null;
+  source_quote: string;
+  confidence: number;
+  conflicts: string[];
+  validation_errors: string[];
+}
+/** Build the canonical event. The type comes from deterministic rules FIRST (litigation, then LOI / proposed, then order / trial / acquisition / earnings ...). */
+export function buildCanonicalEvent(i: {
+  ticker: string; quote: string; tier: CanonicalSourceTier; url?: string | null; filingDate?: string | null; currency?: string | null; values?: EventValue[]; declaredType?: CanonicalEventType | null;
+}): CanonicalEvent {
+  const det = classifyCanonicalEventType(i.quote);
+  const st = stageFromText(i.quote);
+  const stage: CanonicalStage = st === 'PROPOSED' ? 'proposed' : st === 'COMPLETED' ? 'completed' : st === 'AWARDED' ? 'awarded' : st === 'SIGNED' ? 'signed' : i.quote ? 'reported' : 'unknown';
+  const rec = reconcileValues(i.values || []);
+  const errs = i.declaredType && i.declaredType !== det.type ? validateCanonicalEvent({ event_type: i.declaredType, source_quote: i.quote, stage }) : [];
+  return {
+    event_id: `${String(i.ticker).toUpperCase()}:${det.type}:${(i.filingDate || 'undated')}`, ticker: String(i.ticker).toUpperCase(), event_type: det.type, stage,
+    values: rec.values, value: rec.usable ? rec.usable.value : null, currency: i.currency ?? null, value_status: rec.valueStatus, source_tier: i.tier,
+    filing_date: i.filingDate ?? null, source_url: i.url ?? null, source_quote: i.quote, confidence: i.tier === 'official_filing' ? 0.9 : i.tier === 'official_company_release' ? 0.75 : i.tier === 'press' ? 0.4 : 0.3,
+    conflicts: rec.conflicts, validation_errors: errs,
+  };
 }
 
 // ── Research priority. Explainable, never one opaque number. ──────────────
@@ -221,7 +281,7 @@ export function evidencePoints(sources: EventSource[]): { points: number; best: 
   const tiers = (sources || []).map((s) => s.tier).filter((t) => t === 1 || t === 2 || t === 3);
   if (!tiers.length) return { points: 0, best: 3, because: 'no source recorded' };
   const best = Math.min(...tiers) as SourceTier;
-  const independent = new Set((sources || []).map((s) => s.url)).size;
+  const independent = countIndependentSources(sources || []);   // zzz835: filings, not files
   if (best === 1) {
     return { points: independent >= 2 ? 15 : 13, best, because: independent >= 2
       ? 'primary filing, corroborated by a second source' : 'primary filing' };
@@ -274,10 +334,11 @@ export function researchPriority(input: PriorityInput): ResearchPriority {
 
   // Catalyst persistence — a cluster seen across more than one document has
   // survived a day of scrutiny; a single sighting has not.
-  const persistence = Math.min(10, Math.max(0, (e.sources.length - 1) * 4));
+  const nIndep = countIndependentSources(e.sources);
+  const persistence = Math.min(10, Math.max(0, (nIndep - 1) * 4));
   comps.push({
     key: 'persistence', label: 'Catalyst persistence', points: persistence, max: 10,
-    because: e.sources.length > 1 ? `${e.sources.length} independent sources` : 'single sighting',
+    because: nIndep > 1 ? `${nIndep} independent sources` : 'single sighting',
   });
 
   // ── PRICE/FUNDAMENTAL MISMATCH. The only place price enters the score,

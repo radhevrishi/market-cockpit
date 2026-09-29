@@ -4,7 +4,7 @@
 
 import React, { useEffect } from 'react';
 import type { ResearchItem } from '@/lib/ai-gainers/research-view';
-import { Btn, CatalystForBadge, FlagChips, Move, Name, OlderContextBadge, RelevanceBadge, ScanNote, SourceBadge, StatusPill, TriagePill, UsCatalystList, InCatalystList, materialWord } from './Badges';
+import { Btn, CardFacts, CatalystChips, CatalystForBadge, FlagChips, Move, Name, OlderContextBadge, RelevanceBadge, ScanNote, SourceBadge, StatusPill, TriagePill, UsCatalystList, InCatalystList, materialWord } from './Badges';
 import { EarningsStrip, ScoreDetails, WhatChanged } from './ResearchCard';
 import { C, GAP_META, MATERIAL_COLOR, PERSIST_META, SOURCE_META, STAGE_META, TRANSMIT_META, money, pct, txt } from './tokens';
 
@@ -55,7 +55,7 @@ export function EventDrawer({ it, onClose }: { it: ResearchItem; onClose: () => 
   return (
     <div role="dialog" aria-modal="true" aria-label={`Event detail — ${it.ticker}`}
       style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', justifyContent: 'flex-end' }}>
-      <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.55)' }} />
+      <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(15,23,42,0.28)' }} />
       <div className="mc-drawer-mobile" style={{
         position: 'relative', width: 'min(760px, 100vw)', height: '100%', overflowY: 'auto', overflowX: 'hidden',
         background: C.bg, borderLeft: `1px solid ${C.border}`, padding: '14px 16px 40px', boxSizing: 'border-box',
@@ -73,6 +73,8 @@ export function EventDrawer({ it, onClose }: { it: ResearchItem; onClose: () => 
           {it.catalystFor === 'CONTEXT' && <OlderContextBadge it={it} />}
           <StatusPill it={it} /><CatalystForBadge it={it} /><TriagePill it={it} /><SourceBadge it={it} /><RelevanceBadge it={it} /><FlagChips it={it} />
         </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}><CatalystChips it={it} /></div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}><CardFacts it={it} /></div>
 
         <H>EVENT</H>
         <P><b>{it.eventLabel || it.eventType}</b> · stage <b title={(STAGE_META[it.stage] || STAGE_META.UNKNOWN).hover}>{(STAGE_META[it.stage] || STAGE_META.UNKNOWN).label}</b> · filed {it.filedDate ? it.filedDate.slice(0, 10) : 'date not disclosed'}</P>

@@ -18,7 +18,14 @@ import { strictFigures, type StrictFigures } from '@/lib/us-thesis/xbrl';
 import { secRawHtml, secJson, secDocText, htmlToText, type EdgarResearch, type UsRecentFiling } from './edgar-research';
 import { buildUsCard, rankUsFilings, decodeHtmlText, type UsCard, type UsCardDoc } from './us-card';
 import { secDocRoleOf } from './sec-routing';
-import { usFormOf, usItemsOf } from './us-gainers';
+import { usFormOf, usItemsOf, etToday, usPhaseAt, isNyseTradingDay, lastCompletedNyseSession } from './us-gainers';
+
+/** The US session whose move a scan at `now` describes (New York calendar): today once the market has opened on a trading day, else the last completed session. */
+export function usMoveDate(now: Date): string {
+  const today = etToday(now);
+  const ph = usPhaseAt(now);
+  return (ph === 'regular' || ph === 'after_hours') && isNyseTradingDay(today) ? today : lastCompletedNyseSession(now);
+}
 
 const XBRL_TTL_MS = 6 * 3600_000;
 const xbrlMemo = new Map<string, { at: number; s: StrictFigures | null }>();
@@ -108,6 +115,8 @@ export interface UsCardFetchInput {
   now: Date;
   deadlineMs: number;
   windowDays?: number;
+  /** The move day (YYYY-MM-DD, New York calendar) the causal window is measured against. Default: the session `now` describes. */
+  moveDate?: string | null;
 }
 
 /** Build the US card for one name. Null when there is nothing to read. */
@@ -136,13 +145,13 @@ export async function fetchUsCard(inp: UsCardFetchInput): Promise<UsCard | null>
       const card = buildUsCard({
         ticker: inp.ticker, company: inp.company, marketCapM: inp.marketCapM,
         filing: { form, items, date: cand.dateIso, url: cand.url, subject: cand.subject }, docs, original, xbrl,
-        latestSec: latest, secChecked: !l?.failure, windowDays: inp.windowDays,
+        latestSec: latest, secChecked: !l?.failure, windowDays: inp.windowDays, moveDate: inp.moveDate || usMoveDate(inp.now),
       });
       if (card) return card;
     }
     // No SEC event document read → press only (said plainly).
     const press = [...(inp.press || []), ...((l?.press?.items || []).map((p: any) => ({ title: String(p.title || ''), url: String(p.url || ''), date: p.date ?? null, source: p.source ?? null })))];
     if (!press.length) return null;
-    return buildUsCard({ ticker: inp.ticker, company: inp.company, marketCapM: inp.marketCapM, filing: null, docs: [], press, latestSec: latest, secChecked: !!l && !l.failure, windowDays: inp.windowDays });
+    return buildUsCard({ ticker: inp.ticker, company: inp.company, marketCapM: inp.marketCapM, filing: null, docs: [], press, latestSec: latest, secChecked: !!l && !l.failure, windowDays: inp.windowDays, moveDate: inp.moveDate || usMoveDate(inp.now) });
   } catch { return null; }
 }

@@ -300,3 +300,17 @@ export function partitionByCap<T extends { marketCapCr?: number | null }>(rows: 
   for (const r of rows) (isLargeCap(r.marketCapCr) ? largeCaps : kept).push(r);
   return { kept, largeCaps };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE INDIA SCAN-CRITERIA LINE.                                       (zzz835)
+// The US page states the filters its list was read with; India stated none.
+// Only what the code actually knows is printed: which screen, which column is
+// the move, how many rows, the large-cap cut-off, and the catalyst windows.
+// The screen's OWN filters (market cap floor, volume …) live in the owner's
+// screener.in account and are not readable here — the line says so.
+// ═══════════════════════════════════════════════════════════════════════════
+export function describeIndiaCriteria(o: { total?: number | null; read: number; largeCapsExcluded?: number; windowThisMove?: number; windowRecent?: number }): string {
+  const rows = o.total != null && o.total !== o.read ? `${o.read} read of ${o.total} reported` : `${o.read} read`;
+  const win = o.windowThisMove != null && o.windowRecent != null ? ` · catalyst window: filed ≤ ${o.windowThisMove} days = this move, ≤ ${o.windowRecent} days = recent, older = context` : '';
+  return `your screener.in gainers screen (1-day return; the screen's own filters are set on screener.in and are not read here) · ${rows} · small/mid caps only: market cap ≥ ₹${LARGE_CAP_MIN_CR.toLocaleString('en-IN')} Cr excluded${o.largeCapsExcluded ? ` (${o.largeCapsExcluded} excluded)` : ''}${win}`;
+}

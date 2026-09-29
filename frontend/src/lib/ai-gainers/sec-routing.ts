@@ -24,7 +24,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import type { AnnouncementLite } from './catalyst-research';
-import type { EventKind, SourceAccess, SourceKind, SourceRef } from './structured-facts';
+import { exchangeDay, type EventKind, type SourceAccess, type SourceKind, type SourceRef } from './structured-facts';
 import { usFormOf, usItemsOf } from './us-gainers';
 
 // ── 1. HASH (sha1 of normalised text) ──────────────────────────────────────
@@ -114,10 +114,27 @@ export function secSourceRef(a: {
   const rest = a.title ? (usFormOf(a.title) === form ? a.title.slice(a.title.indexOf(':') + 1).trim() : a.title) : '';
   const title = `${form}${role || rest ? ': ' : ''}${role}${role && rest ? ' — ' : ''}${rest}`;
   return {
-    kind: 'SEC_FILING', access: a.access, issuer: a.issuer, date: a.date ? a.date.slice(0, 10) : null,
+    kind: 'SEC_FILING', access: a.access, issuer: a.issuer, date: exchangeDay(a.date, 'US'),   // zzz835: the New York calendar day, not the UTC one
     accession: a.accession ?? accessionFromUrl(a.url), url: a.url ?? null,
     title: title.slice(0, 300), hash: textHash(a.text), secItems: a.items && a.items.length ? a.items : undefined,
+    cik: cikFromUrl(a.url), formType: form || null, exhibit: exhibitNumberOf(a.url, a.role),
   };
+}
+
+/** "…/ex99-1.htm" -> "99.1"; null for the filing body. */
+export function exhibitNumberOf(url: string | null | undefined, role?: SecDocRole): string | null {
+  const name = String(url || '').split('/').pop() || '';
+  // ex99-1.htm / ex-991.htm / d185059dex991.htm / exhibit99_1.htm -> 99.1 ; ex10-2.htm -> 10.2
+  const m = /(?:ex|exhibit)[-_ .]?(99|10)(?:[-_.]?(\d{1,2}))?(?=\D|$)/i.exec(name);
+  if (m) return m[2] ? `${m[1]}.${m[2]}` : m[1] === '99' ? '99.1' : '10';
+  return role === 'ex99' ? '99.1' : null;
+}
+
+/** "Official SEC filing - Exhibit 99.1 press release": a press release attached to an 8-K is part of the filing, not "press only". */
+export function secOfficialLabel(ref: Pick<SourceRef, 'kind' | 'formType' | 'exhibit' | 'date' | 'secItems' | 'accession'>): string {
+  if (ref.kind !== 'SEC_FILING') return ref.kind === 'PRESS' ? 'Press - secondary, verification required' : 'Official source';
+  const what = ref.exhibit ? (ref.exhibit.startsWith('99') ? `Exhibit ${ref.exhibit} press release` : `Exhibit ${ref.exhibit}`) : `${ref.formType || 'filing'} body${ref.secItems && ref.secItems.length ? ` (Item ${ref.secItems.join(', ')})` : ''}`;
+  return `Official SEC filing - ${what}${ref.date ? `, filed ${ref.date}` : ''}${ref.accession ? ` - accession ${ref.accession}` : ''}`;
 }
 
 /** A listed EDGAR filing (subject line only — nothing opened yet). */

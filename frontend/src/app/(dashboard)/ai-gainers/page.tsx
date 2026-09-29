@@ -31,8 +31,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { readJsonResponse, describeFetchError } from '@/lib/ai-gainers/client-fetch';
-import { boardCoverage } from '@/lib/ai-gainers/research-present';
-import { buildResearchView, type ResearchView } from '@/lib/ai-gainers/research-view';
+import { boardCoverage, marketRunOf } from '@/lib/ai-gainers/research-present';
+import { buildResearchView, isRealName, type ResearchView, type ResearchItem } from '@/lib/ai-gainers/research-view';
 import { ResearchTriage } from '@/components/ai-gainers/ResearchTriage';
 import { GainersPdfButton } from '@/components/ai-gainers/GainersPdfButton';
 import { parseScreenerLink, US_SCAN_EXCHANGES, type UsScanCriteria as UsCriteria } from '@/lib/ai-gainers/us-scan-criteria';
@@ -133,6 +133,26 @@ const MKT_KEY = 'mc:ai-gainers:market';
  *  not a "listing artifact"). (zzz769) */
 const boardRows = (scanned: Payload['scanned']) => (scanned || []).map((g) => ({ ticker: g.ticker, company: g.company, move_pct: g.move_pct, volume: g.volume ?? null, price: g.price ?? null, market_cap: g.market_cap ?? null, perf: (g as any).perf ?? null, filed_result: !!g.matched }));
 
+/** Fill a missing company name on a server-built view from names looked up in the page (BSE map). Never overwrites a real name. */
+function withNames(v: ResearchView, names: Record<string, string>): ResearchView {
+  if (!Object.keys(names).length) return v;
+  const seen = new Map<ResearchItem, ResearchItem>();
+  const fix = (it: ResearchItem): ResearchItem => {
+    const hit = seen.get(it); if (hit) return hit;
+    const n = names[it.ticker];
+    const out = n && !isRealName(it.companyName, it.ticker) ? { ...it, company: isRealName(it.company, it.ticker) ? it.company : n, companyName: n, companyNameFrom: 'lookup' } : it;
+    seen.set(it, out); return out;
+  };
+  const fl = (a?: ResearchItem[]) => (a ? a.map(fix) : a);
+  const rowFix = <T extends { ticker: string; company: string; name: string }>(r: T): T => (names[r.ticker] && !isRealName(r.company, r.ticker) ? { ...r, company: names[r.ticker] } : r);
+  return {
+    ...v,
+    top3: fl(v.top3) || [], queue: fl(v.queue) || [], watch: fl(v.watch) || [], negative: fl(v.negative) || [], immaterialNegative: fl(v.immaterialNegative),
+    noCatalyst: fl(v.noCatalyst) || [], dataQuality: fl(v.dataQuality) || [], portfolio: fl(v.portfolio) || [], context: fl(v.context), needsReading: fl(v.needsReading),
+    olderFilings: v.olderFilings?.map(rowFix), dataNotes: v.dataNotes?.map(rowFix),
+  };
+}
+
 export default function AiGainersPage() {
   const [market, setMarketState] = useState<Mkt>('US');
   // The URL / last choice is read once on mount, BEFORE the first load, so a
@@ -160,8 +180,17 @@ export default function AiGainersPage() {
   const setMarket = useCallback((m: Mkt) => {
     setMarketState(m);
     try { window.localStorage.setItem(MKT_KEY, m); } catch { /* per-viewer convenience only */ }
+    // zzz835: the market is in the URL (?market=IN) so a refresh or a shared link opens the same board. US is the default and is not written.
+    try {
+      const u = new URL(window.location.href);
+      if (m === 'US') u.searchParams.delete('market'); else u.searchParams.set('market', m);
+      window.history.replaceState(null, '', u.toString());
+    } catch { /* no URL access */ }
   }, []);
   const [data, setData] = useState<Payload | null>(null);
+  // zzz835: when the data on screen was loaded (shown on the market's clock) and company names looked up for scrip codes.
+  const [loadedAt, setLoadedAt] = useState<string | null>(null);
+  const [codeNames, setCodeNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [open, setOpen] = useState<Record<string, boolean>>({});
@@ -315,6 +344,7 @@ export default function AiGainersPage() {
       moveWindowRef.current = j?.market === 'US' && j?.source_list?.move_window === '1W' ? '1W' : '1D';
       scanAtRef.current = j?.generated_at || null;
       setData(j);
+      setLoadedAt(new Date().toISOString());
       // What is already researched for this session shows immediately; the
       // sweep then fills the rest. A "Rescan" does not re-research.
       try {
@@ -364,6 +394,29 @@ export default function AiGainersPage() {
     setData(null); setResearch(null); setSweeping(false); setRescored(null); setRescoring(false); setSweepNote(null); load(market);
   }, [market, load, ready, demo]);
 
+  // zzz835 (India): a board row that arrives with no company name (a bare BSE scrip code) is named from the
+  // login-protected BSE map (in-app sources only). Runs in the background; the view never waits for it.
+  useEffect(() => {
+    if (market !== 'IN' || !data || demo) return;
+    const need = (data.scanned || []).filter((g) => /^\d{6}$/.test(String(g.ticker)) && !isRealName(g.company, String(g.ticker))).map((g) => String(g.ticker));
+    const todo = need.filter((c) => !codeNames[c]).slice(0, 40);
+    if (!todo.length) return;
+    let dead = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/v1/book/bse-map?codes=${todo.join(',')}`, { cache: 'no-store', signal: AbortSignal.timeout(70_000) });
+        const res = await readJsonResponse<{ matches?: Record<string, any> }>(r, 'The BSE name lookup');
+        const j = res.ok ? res.json : null;
+        if (dead || !j?.matches) return;
+        const got: Record<string, string> = {};
+        for (const [c, m] of Object.entries<any>(j.matches)) if (m?.company && isRealName(m.company, c)) got[c] = String(m.company);
+        if (Object.keys(got).length) setCodeNames((cur) => ({ ...cur, ...got }));
+      } catch { /* the name stays as the displayed name; nothing is invented */ }
+    })();
+    return () => { dead = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [market, data, demo]);
+
   // The filed-result rows as the API ranked them — never re-sorted here.
   const rows = data?.queue || [];
 
@@ -388,13 +441,19 @@ export default function AiGainersPage() {
     const live = s ? s.isToday && s.state === 'open' : !!(asOf && asOf.intraday && !asOf.stale);
     // zzz786 — US after the 16:00 ET close: the live scan is TODAY's final move, not an old session.
     const usTodayFinal = !s && !!asOf && !asOf.intraday && (asOf as any).phase === 'after_hours';
+    const date = s?.date || (market === 'US' && asOf?.session) || research?.date || null;
+    // zzz835: session date, generated and data-as-of kept apart, and whether the run is final. The clock is the
+    // moment this data was loaded, so a scan taken before the close stays PROVISIONAL after it.
+    const run = marketRunOf({ market, sessionDate: date, scanAt: data.generated_at || null, now: loadedAt || data.generated_at || null });
     return {
-      date: s?.date || (market === 'US' && asOf?.session) || research?.date || null,
+      date,
       scanAt: data.generated_at || null,
       status: live ? 'Live' : usTodayFinal ? 'Today — final' : 'Last completed session',
       cached: !!data.served_from_cache,
+      sessionDate: run.sessionDate, generatedAt: run.generatedAt, dataAsOf: run.dataAsOf, timezone: run.exchangeTimezone,
+      sessionStatus: run.sessionStatus, isFinal: run.isFinal, marketCloseAt: run.marketCloseAt, runReason: run.reason,
     };
-  }, [data, research, market]);
+  }, [data, research, market, loadedAt]);
 
   const built = useMemo((): { view: ResearchView | null; error: string | null } => {
     if (demo) return { view: demo, error: null };
@@ -403,7 +462,8 @@ export default function AiGainersPage() {
     // tickers); otherwise the view is built here from the board on screen, so the
     // summary counts always match it. India unchanged.
     const serverViewOk = market !== 'US' || serverViewMatchesBoard(research?.board_hash, boardH);
-    if (research?.view && research.view.summary && serverViewOk) return { view: { ...research.view, session: session || research.view.session }, error: null };
+    const criteriaLine = market === 'IN' ? data.source_list?.criteria_summary || null : null;
+    if (research?.view && research.view.summary && serverViewOk) return { view: withNames({ ...research.view, session: { ...(research.view.session || {}), ...(session || {}) } as ResearchView['session'], scanCriteria: research.view.scanCriteria || criteriaLine }, codeNames), error: null };
     try {
       const findings = Object.fromEntries(Object.entries(research?.findings || {})
         .filter(([, f]) => !boardSet || boardSet.has(String(f.ticker).toUpperCase()))) as any;
@@ -419,13 +479,16 @@ export default function AiGainersPage() {
         // zzz789: the same scan instant the server builder uses (research route: now = st.updated_at),
         // so the client fallback ages filings exactly like India / US / Your Book on the server.
         now: (research as any)?.updated_at || data.generated_at || null,
+        viewedAt: loadedAt,
+        companyNames: codeNames,
+        scanCriteria: criteriaLine,
         session: session || undefined,
       });
       return { view, error: null };
     } catch (e: any) {
       return { view: null, error: String(e?.message || e) };
     }
-  }, [demo, data, research, session, boardSet, market, rows, boardH]);
+  }, [demo, data, research, session, boardSet, market, rows, boardH, loadedAt, codeNames]);
   const view = built.view;
 
   const researched = Object.keys(research?.findings || {}).length > 0;
@@ -478,7 +541,7 @@ export default function AiGainersPage() {
         );
       })()}
       {covShown && covShown.total > 0 && !sweeping && !(market === 'US' && research?.progress) && (
-        <span style={{ fontSize: 12, color: C.faint }} title={`Research completion, not catalysts found: ${covShown.researched} of the ${covShown.total} small/mid-cap gainers have had their filings researched. ${board.length > covShown.total ? `The other ${board.length - covShown.total} of the ${board.length} scanned are large caps (≥ ₹${(research?.large_cap_min_cr ?? 100000).toLocaleString('en-IN')} Cr), excluded from catalyst research.` : ''}`}>{covShown.researched >= covShown.total ? '✓ ' : ''}AI research {covShown.researched}/{covShown.total} small/mid caps{board.length > covShown.total ? ` · ${board.length - covShown.total} large caps excluded` : ''}</span>
+        <span style={{ fontSize: 12, color: C.faint }} title={`Research completion, not catalysts found: ${covShown.researched} of the ${covShown.total} small/mid-cap gainers have had their filings researched. ${board.length > covShown.total ? `The other ${board.length - covShown.total} of the ${board.length} scanned are large caps${market === 'IN' ? ` (≥ ₹${(research?.large_cap_min_cr ?? 100000).toLocaleString('en-IN')} Cr)` : ''}, excluded from catalyst research.` : ''}`}>{covShown.researched >= covShown.total ? '✓ ' : ''}AI research {covShown.researched}/{covShown.total} small/mid caps{board.length > covShown.total ? ` · ${board.length - covShown.total} large caps excluded` : ''}</span>
       )}
       {!sweeping && rescored && (
         <span title="Findings stored under older rules were re-classified and re-scored from filings already fetched and model reads already cached. No model read was made." style={{ fontSize: 12, color: C.faint }}>
@@ -610,7 +673,7 @@ export default function AiGainersPage() {
       )}
 
       {view && (
-        <ResearchTriage view={view} market={demo ? 'IN' : market} toolbar={toolbar} notice={notice}
+        <ResearchTriage view={view} market={demo ? 'IN' : market} toolbar={toolbar} notice={notice} loadedAt={loadedAt}
           onRescan={demo ? undefined : () => load(market, true)} rescanning={loading}
           sessionNote={sessionNote} technical={technical}
           pdfAction={(

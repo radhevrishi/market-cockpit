@@ -58,6 +58,9 @@ const AMBER: RGB = [168, 108, 6];
 const BLUE: RGB = [29, 78, 160];
 const LINK: RGB = [29, 78, 160];
 
+/** The line a live US scan carries at the top of the report. */
+const PROVISIONAL_LINE = 'PROVISIONAL — prices and rank can change until the close at 16:00 ET';
+const PROVISIONAL_LINE_IN = 'PROVISIONAL — prices and rank can change until the close at 15:30 IST';
 const FOOTER_TAIL = 'Research only, not investment advice';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -68,6 +71,14 @@ const FOOTER_TAIL = 'Research only, not investment advice';
 const WINANSI_EXTRA = new Set('€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ');
 
 const REPLACE: Array<[RegExp, string]> = [
+  // zzz835: typographic characters become plain ASCII BEFORE anything is dropped.
+  // An en-dash range "28–30%" stays "28-30%"; an em-dash between words becomes " - ".
+  [/[\u2018\u2019\u201A\u201B\u2032]/g, "'"],
+  [/[\u201C\u201D\u201E\u201F\u2033]/g, '"'],
+  [/[\u2010\u2011\u2012\u2013]/g, '-'],
+  [/\s*[\u2014\u2015]\s*/g, ' - '],
+  [/\u2026/g, '...'],
+  [/\u2022/g, '-'],
   [/₹\s*/g, 'Rs '],
   [/[→⟶➔➜➝➞]/g, '->'],
   [/[←⟵]/g, '<-'],
@@ -151,11 +162,22 @@ function dayIn(tz: string, d: Date): string | null {
   return y ? ymdWords(y) : null;
 }
 
+/** The 16:00 New York close of a US session date, as an instant (early closes are not modelled). */
+function nyCloseUtc(ymd: string): Date | null {
+  const [y, m, d] = ymd.split('-').map(Number);
+  if (!y || !m || !d) return null;
+  for (const off of [4, 5]) {
+    const c = new Date(Date.UTC(y, m - 1, d, 16 + off, 0));
+    if (clockIn('America/New_York', c) === '16:00' && ymdIn('America/New_York', c) === ymd) return c;
+  }
+  return null;
+}
+
 const toDate = (v: Date | string | null | undefined): Date => (v instanceof Date ? v : v ? new Date(v) : new Date());
 
 /** The session date the page shows: IST session for India, New York session for the US. */
 export function gainersSessionYmd(view: ResearchView, market: GainersMarket, generatedAt?: Date | string | null): string {
-  const d = view?.session?.date;
+  const d = view?.session?.sessionDate || view?.session?.date;
   if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
   if (d && Number.isFinite(Date.parse(d))) { const y = ymdIn(TZ[market], new Date(d)); if (y) return y; }
   const scan = view?.session?.scanAt ? new Date(view.session.scanAt) : null;
@@ -257,8 +279,10 @@ const companyOf = (it: ResearchItem): string => {
 const moveOf = (it: ResearchItem): string => {
   if (typeof it.move1d === 'number' && Number.isFinite(it.move1d)) return pct(it.move1d);
   if (it.move && typeof it.move.pct === 'number') return `${pct(it.move.pct)} (${it.move.window})`;
-  return '-';
+  return 'Not available';
 };
+/** Company cell: the company, else the display name, else "Not disclosed" - never a bare dash. */
+const coCell = (it: ResearchItem): string => (has(it.companyName) ? String(it.companyName).trim() : '') || companyOf(it) || nameOf(it) || 'Not disclosed';
 const trailOf = (it: ResearchItem): string => {
   const r = it.returns || { w1: null, m1: null, m3: null };
   const p = (v: number | null | undefined) => (typeof v === 'number' && Number.isFinite(v) ? pct(v) : 'n/a');
@@ -269,6 +293,37 @@ const ageOf = (it: ResearchItem): string => (typeof it.ageDays === 'number' && N
 // ═══════════════════════════════════════════════════════════════════════════
 // THE BUILDER
 // ═══════════════════════════════════════════════════════════════════════════
+
+/** Every item on the view, once each (a name in several sections is one item). */
+function allItems(view: ResearchView): ResearchItem[] {
+  const seen = new Set<string>(); const out: ResearchItem[] = [];
+  for (const list of [view.queue, view.watch, view.needsReading, view.negative, view.noCatalyst, view.context, view.dataQuality, view.portfolio]) {
+    for (const it of list || []) { if (!it || seen.has(it.ticker)) continue; seen.add(it.ticker); out.push(it); }
+  }
+  return out;
+}
+
+/** Catalysts found per category, from the per-card taxonomy (US usCard / India inCard). Null when no card carries one. */
+function derivedCatalysts(view: ResearchView): { found: number; none: number; byCategory: Array<{ category: string; names: number; press: number }> } | null {
+  const by = new Map<string, { names: Set<string>; filed: Set<string>; press: Set<string> }>();
+  let found = 0, none = 0, carded = 0;
+  for (const it of allItems(view)) {
+    const cs: any[] | undefined = it.market === 'US' ? it.usCard?.catalysts : it.inCard?.catalysts?.filter((c) => c.id !== 'price_clarification' && c.id !== 'exchange_query');
+    if (!(it.market === 'US' ? it.usCard : it.inCard)) continue;
+    carded++;
+    if (!cs || !cs.length) { none++; continue; }
+    found++;
+    for (const c of cs) {
+      const key = String(c.category || 'Other');
+      const b = by.get(key) || { names: new Set<string>(), filed: new Set<string>(), press: new Set<string>() };
+      b.names.add(it.ticker);
+      ((c.source === 'SEC' || c.source === 'FILING' || c.confirmedByFiling) ? b.filed : b.press).add(it.ticker);
+      by.set(key, b);
+    }
+  }
+  if (!carded) return null;
+  return { found, none, byCategory: Array.from(by.entries()).map(([category, b]) => ({ category, names: b.names.size, press: Array.from(b.press).filter((t) => !b.filed.has(t)).length })).sort((a, b) => b.names - a.names) };
+}
 
 interface Seg { text: string; bold?: boolean; color?: RGB }
 
@@ -284,18 +339,19 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
   doc.setProperties({ title: `AI Daily Gainers - ${mName} - ${gainersSessionYmd(view, market, gen)}`, subject: 'Research only, not investment advice', creator: 'Market Cockpit' });
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
-  const M = 15;
+  const M = 12;
   const W = pageW - M * 2;
-  const TOP = 16;
-  const BOTTOM = pageH - 17;
+  const TOP = 12;
+  const BOTTOM = pageH - 15;
   let y = TOP;
+  let provisional = false;
 
   const newPage = () => { doc.addPage(); y = TOP; };
   const room = (h: number) => { if (y + h > BOTTOM) newPage(); };
   const font = (size: number, bold = false, color: RGB = INK2) => {
     doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(size); doc.setTextColor(...color);
   };
-  const lh = (size: number) => size * 0.43;   // line height in mm for a pt size
+  const lh = (size: number) => size * 0.4;   // line height in mm for a pt size
   const wrap = (s: string, w: number): string[] => doc.splitTextToSize(pdfText(s), w) as string[];
 
   /** Wrapped paragraph. */
@@ -341,41 +397,79 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
     }
   };
 
-  /** Section heading: rule, then the title — kept with at least `keep` mm of what follows. */
+  /** Height a section heading will take (title + optional sub line). */
+  const headingH = (sub?: string | null): number => {
+    let h = 6 + 5;   // gap above + title
+    if (sub) { font(8, false, MUTED); h += wrap(sub, W).length * lh(8) + 1.5; } else h += 1;
+    return h;
+  };
+  /** Draw a heading with no page-break check (the caller has reserved the room). */
+  const drawHeading = (title: string, sub?: string | null) => {
+    if (y > TOP + 0.5) y += 4;
+    font(10.5, true, INK); doc.text(pdfText(title.toUpperCase()), M, y + 3.2); y += 5.6;
+    if (sub) { para(sub, { size: 8, color: MUTED, after: 1 }); } else y += 0.8;
+  };
+  /** A heading that belongs to the table drawn next: it moves with the table (no orphan heading). */
+  let pendingHead: [string, (string | null)?] | null = null;
+  const head = (title: string, sub?: string | null) => { pendingHead = [title, sub]; };
+  /** Section heading: kept with at least `keep` mm of what follows (never an orphan heading). */
   const section = (title: string, sub?: string | null, keep = 14) => {
-    room(12 + keep);
-    if (y > TOP + 0.5) y += 5;
-    font(11, true, INK); doc.text(pdfText(title.toUpperCase()), M, y + 3.3); y += 6;
-    if (sub) { para(sub, { size: 8, color: MUTED, after: 1.5 }); } else y += 1;
+    room(headingH(sub) + keep);
+    drawHeading(title, sub);
   };
 
-  // ── Tables: wrapped cells, header row repeated on every page ─────────────
+  // ── Tables: wrapped + clipped cells, header row repeated on every page ────
+  // Keep-together: a table starts on a new page only if its heading, header and
+  // first 3 rows do not fit; it never leaves a header with fewer than 3 rows.
   interface Col { head: string; w: number; align?: 'left' | 'right' }
-  interface Cell { text: string; bold?: boolean; color?: RGB; link?: string | null }
-  const table = (cols: Col[], rows: Cell[][], o: { size?: number } = {}) => {
-    const size = o.size ?? 7.6;
-    const padX = 1.3, padY = 1.25;
-    const total = cols.reduce((s, c) => s + c.w, 0);
+  interface Cell { text: string; bold?: boolean; color?: RGB; link?: string | null; maxLines?: number }
+  const table = (cols: Col[], rows: Cell[][], o: { size?: number; heading?: [string, (string | null)?]; maxLines?: number } = {}) => {
+    const size = o.size ?? 8;
+    const padX = 1.3, padY = 1.0;
+    const total = cols.reduce((sm, c) => sm + c.w, 0);
     const scale = W / total;
     const cw = cols.map((c) => c.w * scale);
     const L = lh(size);
+    // Wrap (and clip long text with an ellipsis; the full text stays on the card).
+    const layoutRow = (r: Cell[]) => {
+      const cells = r.map((c, i) => {
+        font(size, c.bold);
+        let lines = wrap(c.text, cw[i] - padX * 2);
+        const cap = c.maxLines ?? o.maxLines;
+        if (cap && lines.length > cap) {
+          lines = lines.slice(0, cap);
+          let last = lines[cap - 1];
+          while (last.length > 1 && doc.getTextWidth(`${last}...`) > cw[i] - padX * 2) last = last.slice(0, -1);
+          lines[cap - 1] = `${last.replace(/[ ,;:.-]+$/, '')}...`;
+        }
+        return lines;
+      });
+      return { cells, h: Math.max(1, ...cells.map((c) => c.length)) * L + padY * 2 };
+    };
+    font(6.8, true, MUTED);
+    const heads = cols.map((c, i) => wrap(c.head.toUpperCase(), cw[i] - padX * 2));
+    const headH = Math.max(...heads.map((h) => h.length)) * lh(6.8) + padY * 2;
+    const laid = rows.map(layoutRow);
     const drawHead = () => {
       font(6.8, true, MUTED);
-      const heads = cols.map((c, i) => wrap(c.head.toUpperCase(), cw[i] - padX * 2));
-      const h = Math.max(...heads.map((h) => h.length)) * lh(6.8) + padY * 2;
       let x = M;
       heads.forEach((hl, i) => { hl.forEach((ln, k) => doc.text(ln, cols[i].align === 'right' ? x + cw[i] - padX : x + padX, y + padY + 6.8 * 0.3 + k * lh(6.8), cols[i].align === 'right' ? { align: 'right' } : undefined)); x += cw[i]; });
-      y += h;
+      y += headH;
       doc.setDrawColor(...INK2); doc.setLineWidth(0.3); doc.line(M, y, pageW - M, y);
     };
-    room(lh(6.8) * 2 + L * 2 + 6);
+    const heading: [string, (string | null)?] | null = o.heading || pendingHead; pendingHead = null;
+    const need = (heading ? headingH(heading[1]) : 0) + headH + laid.slice(0, 3).reduce((a, r) => a + r.h, 0);
+    room(need);
+    if (heading) drawHeading(heading[0], heading[1]);
     drawHead();
-    for (const r of rows) {
-      const cells = r.map((c, i) => { font(size, c.bold); return wrap(c.text, cw[i] - padX * 2); });
-      const h = Math.max(1, ...cells.map((c) => c.length)) * L + padY * 2;
-      if (y + h > BOTTOM) { newPage(); drawHead(); }
+    laid.forEach((row, ri) => {
+      const r = rows[ri];
+      if (y + row.h > BOTTOM) {
+        // Never strand fewer than 3 rows at the top of a page: the header repeats here.
+        newPage(); drawHead();
+      }
       let x = M;
-      cells.forEach((lines, i) => {
+      row.cells.forEach((lines, i) => {
         const c = r[i];
         font(size, c.bold, c.color ?? INK2);
         if (c.link && lines.length) doc.setTextColor(...LINK);
@@ -387,10 +481,10 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
         });
         x += cw[i];
       });
-      y += h;
+      y += row.h;
       doc.setDrawColor(...RULE); doc.setLineWidth(0.15); doc.line(M, y, pageW - M, y);
-    }
-    y += 2;
+    });
+    y += 1.5;
   };
 
   // ═════════════════════════════════════════════════════════════════════════
@@ -398,17 +492,18 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
   // ═════════════════════════════════════════════════════════════════════════
   const s = view.session || { date: null, scanAt: null, status: 'Unknown', cached: false };
   const ymd = gainersSessionYmd(view, market, gen);
-  font(7.5, true, MUTED); doc.text('MARKET COCKPIT  ·  RESEARCH NOTE', M, y + 2.5); y += 5;
-  font(20, true, INK); doc.text('AI Daily Gainers', M, y + 6.5);
+  font(7.2, true, MUTED); doc.text('MARKET COCKPIT  ·  RESEARCH NOTE', M, y + 2.2); y += 4;
+  font(16, true, INK); doc.text('AI Daily Gainers', M, y + 5.2);
   const titleW = doc.getTextWidth('AI Daily Gainers');
-  font(12, false, INK2); doc.text(pdfText(`${mName}${market === 'IN' ? '  (NSE / BSE)' : '  (NASDAQ / NYSE / AMEX)'}`), M + titleW + 4, y + 6.5);
-  y += 10;
-  para('Fundamental events behind the session\'s unusual moves, ranked by research value, not by return. Price is context, never the ranking.', { size: 9, color: INK2, after: 3 });
-  if (input.demo) para('DEMO DATA: an illustrative fixture for layout checks. No live data was read.', { size: 8.5, bold: true, color: AMBER, after: 2 });
+  font(11, false, INK2); doc.text(pdfText(`${mName}${market === 'IN' ? '  (NSE / BSE)' : '  (NASDAQ / NYSE / AMEX)'}`), M + titleW + 4, y + 5.2);
+  y += 8;
+  para('Fundamental events behind the session\'s unusual moves, ranked by research value, not by return. Price is context, never the ranking.', { size: 8.2, color: INK2, after: 1.5 });
+  if (input.demo) para('DEMO DATA: an illustrative fixture for layout checks. No live data was read.', { size: 8.2, bold: true, color: AMBER, after: 1.5 });
 
   // Session box: key / value rows inside a thin border.
   const scanD = s.scanAt ? new Date(s.scanAt) : null;
   const scanOk = !!scanD && Number.isFinite(scanD.getTime());
+  const tzWord = market === 'US' ? 'ET' : 'IST';
   let scanText = 'Unknown';
   if (scanOk) {
     if (market === 'US') {
@@ -420,34 +515,67 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
   }
   const live = /live/i.test(String(s.status || ''));
   const statusText = live ? 'Live' : !has(s.status) || /unknown/i.test(String(s.status)) ? 'Unknown' : String(s.status);
+  // A live US scan, or one taken before the 16:00 ET close of its session, is PROVISIONAL.
+  const closeAt = market === 'US' ? nyCloseUtc(ymd) : null;
+  // The view's own verdict wins; the live / before-the-close rule is the US fallback.
+  provisional = typeof s.isFinal === 'boolean' ? !s.isFinal : market === 'US' && (live || (scanOk && !!closeAt && scanD!.getTime() < closeAt.getTime()));
+  const fmtInstant = (iso: string | null | undefined): string | null => {
+    const d = iso ? new Date(iso) : null;
+    if (!d || !Number.isFinite(d.getTime())) return null;
+    const c = clockIn(tz, d), day = dayIn(tz, d);
+    return c && day ? `${c} ${tzWord}, ${day}` : null;
+  };
   const dataText = s.cached ? `Cached scan${scanOk ? ` from ${market === 'US' ? `${clockIn('America/New_York', scanD!)} ET` : `${clockIn('Asia/Kolkata', scanD!)} IST`}` : ''}` : 'Live scan completed';
+  const genText = `${dayIn(tz, gen) || gen.toISOString().slice(0, 10)} ${clockIn(tz, gen) || ''} ${tzWord}`.replace(/\s+/g, ' ').trim();
   const kvRows: Array<[string, string, RGB?]> = [
     ['Market', market === 'IN' ? 'India' : 'USA'],
-    ['Session', `${sessionWords(ymd)}${market === 'US' ? ' (New York date)' : ' (India date)'}`],
+    ['Session date', `${sessionWords(ymd)}${market === 'US' ? ' (New York date)' : ' (India date)'}`],
     ['Scan time', scanText],
-    ['Status', statusText, live ? BLUE : undefined],
+    ['Generated', fmtInstant(s.generatedAt) || genText],
+    ...(fmtInstant(s.dataAsOf) ? [['Data as of', fmtInstant(s.dataAsOf) as string] as [string, string]] : []),
+    ['Status', provisional ? `Provisional (${statusText}) - not final until after the ${market === 'US' ? '16:00 ET' : '15:30 IST'} close` : statusText, provisional ? AMBER : live ? BLUE : undefined],
     ['Data', dataText],
   ];
   if (!live && s.date && /last|previous|closed/i.test(String(s.status))) kvRows.push(['Note', 'These are the last completed session\'s moves, not today\'s.', AMBER]);
+  if (has(s.runReason) && !provisional) kvRows.push(['Run', String(s.runReason)]);
   if (has(input.sessionNote)) kvRows.push(['Session note', String(input.sessionNote)]);
-  if (market === 'US' && has(input.criteria)) kvRows.push(['Scan criteria', String(input.criteria)]);
+  const criteriaText = has(view.scanCriteria) ? String(view.scanCriteria) : has(input.criteria) ? String(input.criteria) : '';
+  if (criteriaText) kvRows.push(['Scan criteria', criteriaText]);
+  if (provisional) {
+    font(9.2, true, AMBER);
+    const pl = wrap(market === 'US' ? PROVISIONAL_LINE : PROVISIONAL_LINE_IN, W - 6);
+    const ph = pl.length * lh(9.2) + 3;
+    room(ph + 2);
+    doc.setDrawColor(...AMBER); doc.setLineWidth(0.6); doc.roundedRect(M, y, W, ph, 1.2, 1.2, 'S');
+    font(9.2, true, AMBER);
+    pl.forEach((ln, i) => doc.text(ln, M + 3, y + 1.5 + 9.2 * 0.3 + i * lh(9.2)));
+    y += ph + 2;
+  }
   {
-    const keyW = 27;
+    const keyW = 24;
     const valW = W - keyW - 6;
-    const lines = kvRows.map(([, v]) => { font(8.8); return wrap(v, valW); });
-    const h = lines.reduce((a, l) => a + l.length * lh(8.8) + 1.1, 0) + 4;
+    const lines = kvRows.map(([, v]) => { font(8.2); return wrap(v, valW); });
+    const h = lines.reduce((a, l) => a + l.length * lh(8.2) + 0.8, 0) + 3;
     room(h);
     const top = y;
     doc.setDrawColor(...RULE); doc.setLineWidth(0.3); doc.roundedRect(M, top, W, h, 1.5, 1.5, 'S');
     doc.setDrawColor(...BLUE); doc.setLineWidth(0.9); doc.line(M + 0.45, top + 1.2, M + 0.45, top + h - 1.2);
-    y = top + 2.3;
+    y = top + 1.8;
     kvRows.forEach(([k, , color], i) => {
-      font(7.2, true, MUTED); doc.text(pdfText(k.toUpperCase()), M + 3.5, y + 8.8 * 0.3);
-      font(8.8, k === 'Status' || k === 'Session', color ?? INK);
-      lines[i].forEach((ln, j) => doc.text(ln, M + 3.5 + keyW, y + 8.8 * 0.3 + j * lh(8.8)));
-      y += lines[i].length * lh(8.8) + 1.1;
+      font(7, true, MUTED); doc.text(pdfText(k.toUpperCase()), M + 3.5, y + 8.2 * 0.3);
+      font(8.2, k === 'Status' || k === 'Session date', color ?? INK);
+      lines[i].forEach((ln, j) => doc.text(ln, M + 3.5 + keyW, y + 8.2 * 0.3 + j * lh(8.2)));
+      y += lines[i].length * lh(8.2) + 0.8;
     });
-    y = top + h + 5;
+    y = top + h + 2.5;
+  }
+  // Counts strip (spec section 7).
+  {
+    const bn = view.banner;
+    if (bn) {
+      const parts = [`Scanned ${bn.scanned}`, `Verified events ${bn.verified}`, `Unverified ${bn.unverified}`, `Conflicts ${bn.conflicts}`, `No material catalyst ${bn.noMaterialCatalyst}`, `Negative ${bn.negative}`];
+      para(parts.join('   ·   '), { size: 8.4, bold: true, color: INK, after: 2 });
+    }
   }
 
   // Market summary grid.
@@ -465,28 +593,32 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
       { n: sm.dataUnavailable, l: 'Data unavailable', rgb: AMBER },
     ];
     if (typeof sm.context === 'number') cells.push({ n: sm.context, l: 'Older context', rgb: INK });
+    // Optional (not on every view): contradictory evidence found. Shown only when the view carries the count.
+    const conflicts = sm.conflicts ?? (sm as any).conflicts;
+    if (typeof conflicts === 'number' && Number.isFinite(conflicts)) cells.push({ n: conflicts, l: 'Conflicts in the evidence', rgb: RED });
     const perRow = cells.length > 8 ? 5 : 4;
-    const gap = 2.2;
+    const gap = 1.8;
     const cwid = (W - gap * (perRow - 1)) / perRow;
-    const ch = 13.5;
+    const ch = 11.5;
     const rows = Math.ceil(cells.length / perRow);
-    room(8 + rows * (ch + gap));
-    font(8, true, MUTED); doc.text('MARKET SUMMARY', M, y + 2.6); y += 5;
+    room(6 + rows * (ch + gap));
+    font(8, true, MUTED); doc.text('MARKET SUMMARY', M, y + 2.4); y += 4.2;
     cells.forEach((c, i) => {
       const cx = M + (i % perRow) * (cwid + gap);
       const cy = y + Math.floor(i / perRow) * (ch + gap);
       const n = Number.isFinite(c.n) ? c.n : 0;
       doc.setDrawColor(...RULE); doc.setLineWidth(0.3); doc.roundedRect(cx, cy, cwid, ch, 1.2, 1.2, 'S');
-      font(14, true, n > 0 ? c.rgb : MUTED); doc.text(String(n), cx + 2.6, cy + 6.4);
+      font(13, true, n > 0 ? c.rgb : MUTED); doc.text(String(n), cx + 2.6, cy + 5.6);
       font(6.6, true, MUTED);
-      wrap(c.l.toUpperCase(), cwid - 5).slice(0, 2).forEach((ln, k) => doc.text(ln, cx + 2.6, cy + 9.6 + k * 2.6));
+      wrap(c.l.toUpperCase(), cwid - 5).slice(0, 2).forEach((ln, k) => doc.text(ln, cx + 2.6, cy + 8.4 + k * 2.4));
     });
-    y += rows * (ch + gap) + 2;
-    // zzz801 (US only): catalysts found by category (SEC vs press only).
-    const uc = sm.usCatalysts;
+    y += rows * (ch + gap) + 1;
+    // Catalysts found by category — both markets. The US view carries its own tally;
+    // otherwise it is derived here from the cards already on the view (nothing invented).
+    const uc = sm.catalysts || sm.usCatalysts || derivedCatalysts(view);
     if (uc) {
       const cats = uc.byCategory.map((c) => `${c.category} ${c.names}${c.press ? ` (${c.press} press only)` : ''}`).join('  ·  ');
-      para(`Catalysts found by category: ${cats || 'none'}. ${uc.found} name${uc.found === 1 ? '' : 's'} with a catalyst found in filings or news; ${uc.none} with none found.`, { size: 7.8 });
+      para(`Catalysts found by category: ${cats || 'none'}. ${uc.found} name${uc.found === 1 ? '' : 's'} with a catalyst found in ${market === 'US' ? 'filings or news' : 'exchange filings or news'}; ${uc.none} with none found.`, { size: 8 });
     }
   }
 
@@ -500,14 +632,14 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
   // ═════════════════════════════════════════════════════════════════════════
   const top3 = (view.top3 || []).slice(0, 3);
   if (!empty && top3.length) {
-    section('Top 3 research priorities', 'The names that most deserve research time today.');
+    section('Top 3 research priorities', 'The names that most deserve research time today.', 22);
     top3.forEach((it, i) => {
       const st = statusWord(it);
       const head: Seg[] = [{ text: `#${i + 1}  `, bold: true, color: MUTED }, { text: nameOf(it), bold: true, color: INK }];
       if (companyOf(it)) head.push({ text: `  ${companyOf(it)}`, color: INK2 });
       head.push({ text: `   ${moveOf(it)}`, bold: true, color: INK });
       const blocks: Array<{ segs: Seg[]; size: number }> = [
-        { segs: head, size: 10 },
+        { segs: head, size: 9.6 },
         { segs: [{ text: txt(it.headline, 'Headline not available'), bold: true, color: INK }], size: 9 },
       ];
       if (has(it.whyResearch)) blocks.push({ segs: [{ text: String(it.whyResearch) }], size: 8.6 });
@@ -517,13 +649,13 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
         { text: materialWord(it), bold: true, color: materialRgb(it) }, { text: '   ·   Source: ', color: MUTED }, { text: sourceWord(it), color: INK2 },
       ], size: 7.8 });
       const laid = blocks.map((b) => ({ ...b, lines: layoutSegs(b.segs, W - 6, b.size) }));
-      const h = laid.reduce((a, b) => a + b.lines.length * lh(b.size) + 0.9, 0) + 3;
-      room(h + 2);
+      const h = laid.reduce((a, b) => a + b.lines.length * lh(b.size) + 0.6, 0) + 2;
+      room(h + 1.5);
       const top = y;
       doc.setDrawColor(...st.rgb); doc.setLineWidth(0.9); doc.line(M + 0.45, top + 0.6, M + 0.45, top + h - 0.6);
-      y += 1.6;
-      laid.forEach((b) => { b.lines.forEach((ln) => { drawSegLine(ln, M + 4, y + b.size * 0.3, b.size, INK2); y += lh(b.size); }); y += 0.9; });
-      y = top + h + 2.2;
+      y += 1.1;
+      laid.forEach((b) => { b.lines.forEach((ln) => { drawSegLine(ln, M + 4, y + b.size * 0.3, b.size, INK2); y += lh(b.size); }); y += 0.6; });
+      y = top + h + 1.6;
     });
   }
 
@@ -532,28 +664,28 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
   // ═════════════════════════════════════════════════════════════════════════
   const queue = view.queue || [];
   const qCols: Col[] = [
-    { head: '#', w: 6 }, { head: 'Ticker', w: 21 }, { head: 'Company', w: 25 }, { head: 'Move', w: 24 },
-    { head: 'Status', w: 28 }, { head: 'Event', w: 27 }, { head: 'Material', w: 23 }, { head: 'Source', w: 23 },
+    { head: '#', w: 6 }, { head: 'Ticker', w: 20 }, { head: 'Company', w: 22 }, { head: 'Move', w: 15 },
+    { head: 'Status', w: 26 }, { head: 'Event', w: 23 }, { head: 'Material', w: 22 }, { head: 'Source', w: 22 }, { head: 'Why ranked', w: 30 },
   ];
-  const moveCell = (it: ResearchItem): Cell => ({ text: `${moveOf(it)}\n${trailOf(it).replace(/ · /g, '\n')}`, color: INK });
   if (!empty) {
-    section('Research queue', 'Ranked by research value. Price is context, never the ranking.');
     if (!queue.length) {
+      section('Research queue', 'Ranked by research value. Price is context, never the ranking.');
       para('No name on this board carries an event that deserves research time. That is a valid result, not an empty page.', { size: 9 });
     } else {
       table(qCols, queue.map((it, i) => {
         const st = statusWord(it);
         return [
           { text: String(i + 1), bold: true, color: MUTED },
-          { text: nameOf(it) + (it.displayCode && it.displayCode !== nameOf(it) ? `\n${it.displayCode}` : ''), bold: true, color: INK },
-          { text: companyOf(it) || '-' },
-          moveCell(it),
-          { text: `${st.word}\n${triageWord(it)}${it.catalystFor ? ` · ${CATALYST_FOR_WORD[it.catalystFor]}${it.catalystFor !== 'THIS_MOVE' && ageOf(it) ? ` (${ageOf(it)})` : ''}` : ''}`, color: st.rgb },
-          { text: txt(it.eventLabel || it.eventType, 'Not classified') },
-          { text: materialWord(it), bold: true, color: materialRgb(it) },
-          { text: sourceWord(it) },
+          { text: nameOf(it) + (it.displayCode && it.displayCode !== nameOf(it) ? `\n${it.displayCode}` : ''), bold: true, color: INK, maxLines: 2 },
+          { text: coCell(it), maxLines: 2 },
+          { text: moveOf(it), color: INK, bold: true },
+          { text: `${st.word}\n${triageWord(it)}${it.catalystFor ? ` · ${CATALYST_FOR_WORD[it.catalystFor]}${it.catalystFor !== 'THIS_MOVE' && ageOf(it) ? ` (${ageOf(it)})` : ''}` : ''}`, color: st.rgb, maxLines: 3 },
+          { text: txt(it.eventLabel || it.eventType, 'Not classified'), maxLines: 2 },
+          { text: materialWord(it), bold: true, color: materialRgb(it), maxLines: 2 },
+          { text: sourceWord(it), maxLines: 2 },
+          { text: has(it.rankReason) ? String(it.rankReason) : 'Not stated', maxLines: 3 },
         ];
-      }));
+      }), { maxLines: 3, heading: ['Research queue', 'Ranked by research value. Price is context, never the ranking. Long text is clipped here; the card below has it in full.'] });
     }
   }
 
@@ -567,6 +699,28 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
 
   const lbl = (t: string): Seg => ({ text: `${t}  `, bold: true, color: MUTED });
 
+  /** What to print for an empty catalyst list: the view's own sentence (what was searched), never a fixed "no catalyst" when an event exists. */
+  const noCatalystText = (it: ResearchItem, fallback: string): string => {
+    const st = it.usCard?.catalystStatus?.status ?? it.inCard?.catalystStatus;
+    const sent = has(it.catalystStatusSentence) ? String(it.catalystStatusSentence) : '';
+    const sr = it.searched;
+    const searched = sr && sr.sources?.length ? `Searched ${sr.sources.join(', ')}${sr.lookbackDays != null ? `, last ${sr.lookbackDays} days` : ''}${typeof sr.filings === 'number' || typeof sr.press === 'number' ? ` (${sr.filings ?? 0} filings, ${sr.press ?? 0} press items)` : ''}.` : '';
+    if (sent && st !== 'no_event_found') return sent;
+    if (sent) return sent;
+    return [fallback, searched].filter(Boolean).join(' ');
+  };
+  const clusterBlocks = (it: ResearchItem): Block[] => {
+    const out: Block[] = [];
+    const cl = it.clusters || [];
+    if (cl.length) out.push({ k: 'segs', segs: [lbl(`CATALYSTS FOUND (${cl.length} event${cl.length === 1 ? '' : 's'}, grouped)`)], size: 8.2, gapAfter: 0.3 });
+    cl.forEach((k) => {
+      out.push({ k: 'segs', size: 8.2, gapAfter: 0.3, segs: [lbl('CLUSTER'), { text: k.label, bold: true, color: INK }, { text: `  ${k.source}${k.independentSources ? ` · ${k.independentSources} independent source${k.independentSources === 1 ? '' : 's'}` : ''}`, color: MUTED }] });
+      if (has(k.sentence)) out.push({ k: 'segs', size: 7.8, indent: 4, gapAfter: 0.3, segs: [{ text: `"${k.sentence}"` }] });
+      (k.children || []).forEach((c) => out.push({ k: 'segs', size: 8, indent: 4, gapAfter: 0.2, segs: [{ text: `- ${c.label}`, bold: true, color: INK }, { text: `: ${c.sentence}${c.figures?.length ? ` (stated: ${c.figures.join(', ')})` : ''}` }] }));
+    });
+    return out;
+  };
+
   const cardBlocks = (it: ResearchItem, rank: number): Block[] => {
     const b: Block[] = [];
     const st = statusWord(it);
@@ -578,6 +732,8 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
       { text: `Move ${moveOf(it)}`, bold: true, color: INK }, { text: `  (${trailOf(it)})`, color: MUTED }, { text: '     ' },
       { text: st.word.toUpperCase(), bold: true, color: st.rgb }, { text: '  ·  ', color: MUTED }, { text: triageWord(it).toUpperCase(), bold: true, color: INK2 },
     ];
+    if (it.stageBadge) tags.push({ text: '  ·  ', color: MUTED }, { text: `STAGE ${String(it.stageBadge)}`, bold: true, color: BLUE });
+    if (it.contextOnly) tags.push({ text: '  ·  ', color: MUTED }, { text: 'CONTEXT ONLY', bold: true, color: AMBER });
     if (it.catalystFor) tags.push({ text: '  ·  ', color: MUTED }, { text: `${CATALYST_FOR_WORD[it.catalystFor].toUpperCase()}${it.catalystFor !== 'THIS_MOVE' && ageOf(it) ? ` (${ageOf(it)})` : ''}`, bold: true, color: it.catalystFor === 'THIS_MOVE' ? BLUE : it.catalystFor === 'RECENT' ? AMBER : MUTED });
     b.push({ k: 'segs', segs: tags, size: 7.8, gapAfter: 1.6 });
     b.push({ k: 'segs', segs: [{ text: txt(it.headline, 'Headline not available'), bold: true, color: INK }], size: 9.6, gapAfter: 1.6 });
@@ -590,8 +746,9 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
       (us.extra || []).filter(has).forEach((x) => b.push({ k: 'segs', segs: [{ text: `- ${x}` }], size: 8.2, indent: 4 }));
       (us.flags || []).filter(has).forEach((x) => b.push({ k: 'segs', segs: [{ text: `Caution: ${x}`, color: AMBER }], size: 8.2, indent: 4 }));
       // zzz801: the catalysts the taxonomy found — SEC vs press only, the sentence, a figure only when stated.
-      if (Array.isArray(us.catalysts)) {
-        if (!us.catalysts.length) b.push({ k: 'segs', segs: [lbl('CATALYSTS FOUND'), { text: 'No catalyst found in filings or news', color: MUTED }], size: 8.2 });
+      if (it.clusters?.length) b.push(...clusterBlocks(it));
+      else if (Array.isArray(us.catalysts)) {
+        if (!us.catalysts.length) b.push({ k: 'segs', segs: [lbl('CATALYSTS FOUND'), { text: noCatalystText(it, 'No catalyst found in filings or news.'), color: MUTED }], size: 8.2 });
         else {
           b.push({ k: 'segs', segs: [lbl(`CATALYSTS FOUND (${us.catalysts.length})`)], size: 8.2, gapAfter: 0.3 });
           us.catalysts.slice(0, 5).forEach((c) => {
@@ -625,8 +782,9 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
     // zzz803 (India): the India card — filed vs press events, the result backdrop, the clarification; a figure only when stated.
     const inc = it.market === 'IN' ? it.inCard : null;
     if (inc && Array.isArray(inc.catalysts)) {
-      const cs = inc.catalysts.filter((c) => c.id !== 'price_clarification' && c.id !== 'exchange_query');
-      if (!cs.length && !inc.backdrop && !inc.clarification) b.push({ k: 'segs', segs: [lbl('CATALYSTS FOUND'), { text: `No catalyst found in filings or news${inc.routine.length ? ` (routine only: ${Array.from(new Set(inc.routine.map((r) => r.label.toLowerCase()))).slice(0, 3).join(', ')})` : ''}`, color: MUTED }], size: 8.2 });
+      const cs = it.clusters?.length ? [] : inc.catalysts.filter((c) => c.id !== 'price_clarification' && c.id !== 'exchange_query');
+      if (it.clusters?.length) b.push(...clusterBlocks(it));
+      if (!cs.length && !it.clusters?.length && !inc.backdrop && !inc.clarification) b.push({ k: 'segs', segs: [lbl('CATALYSTS FOUND'), { text: `${noCatalystText(it, 'No catalyst found in filings or news')}${has(it.catalystStatusSentence) ? '' : inc.routine.length ? ` (routine only: ${Array.from(new Set(inc.routine.map((r) => r.label.toLowerCase()))).slice(0, 3).join(', ')})` : ''}`, color: MUTED }], size: 8.2 });
       if (cs.length) {
         b.push({ k: 'segs', segs: [lbl(`CATALYSTS FOUND (${cs.length})`)], size: 8.2, gapAfter: 0.3 });
         cs.slice(0, 5).forEach((c) => {
@@ -638,6 +796,31 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
       if (inc.clarification) b.push({ k: 'segs', size: 8.2, segs: [lbl('EXCHANGE CLARIFICATION'), { text: `${inc.clarification.date ? `${inc.clarification.date} - ` : ''}company says no undisclosed information. "${inc.clarification.sentence}"` }] });
     }
     if (has(it.impact)) b.push({ k: 'segs', segs: [lbl('IMPACT'), { text: String(it.impact) }], size: 8.6 });
+    // zzz835 card facts (optional on the view; each prints only when the view carries it).
+    const cvals = (it.conflictValues || []).filter((v) => has(v.text));
+    const cwords = (it.conflicts || []).filter(has);
+    if (cvals.length || cwords.length) {
+      b.push({ k: 'segs', size: 8.6, gapAfter: 0.3, segs: [{ text: 'VALUES CONFLICT', bold: true, color: RED }, { text: '  two values are reported for this event; the impact is unknown until the filing is read', color: RED }] });
+      cwords.forEach((x) => b.push({ k: 'segs', size: 8.2, indent: 4, gapAfter: 0.2, segs: [{ text: x, color: INK }] }));
+      cvals.forEach((v) => b.push({ k: 'segs', size: 8.2, indent: 4, gapAfter: 0.2, segs: [{ text: `- ${v.text}`, bold: true, color: INK }, { text: has(v.source) ? `  (${v.source})` : '', color: MUTED }] }));
+    }
+    if (it.contextOnly || has(it.causalLabel)) {
+      b.push({ k: 'segs', size: 8.2, segs: [it.contextOnly ? { text: 'CONTEXT ONLY  ', bold: true, color: AMBER } : lbl('TIMING'), { text: has(it.causalLabel) ? String(it.causalLabel) : 'Older than the move window; not the catalyst for this move.', color: it.contextOnly ? AMBER : MUTED }] });
+    }
+    if (has(it.litigationNote)) b.push({ k: 'segs', size: 8.2, segs: [lbl('LITIGATION'), { text: String(it.litigationNote), color: INK }] });
+    if (it.clinical && (it.clinical.lines || []).length) {
+      b.push({ k: 'segs', size: 8.4, gapAfter: 0.2, segs: [lbl('CLINICAL')] });
+      it.clinical.lines.filter(has).forEach((x) => b.push({ k: 'segs', size: 8.2, indent: 4, gapAfter: 0.2, segs: [{ text: `- ${x}` }] }));
+    }
+    if (it.acquisition) {
+      const a = it.acquisition;
+      b.push({ k: 'segs', size: 8.4, gapAfter: 0.2, segs: [lbl('ACQUISITION ECONOMICS')] });
+      b.push({ k: 'grid', size: 8.2, pairs: [
+        ['Purchase price', txt(a.purchasePrice)], ['Upfront cash', txt(a.upfrontCash)],
+        ['Contingent', txt(a.contingentConsideration)], ['Liabilities', txt(a.assumedLiabilities)],
+        ['Financing', txt(a.financing)], ['Contribution', txt(a.expectedContribution)],
+      ] });
+    }
 
     // Event / stage / material / duration / persistence / catalyst state
     const pairs: Array<[string, string, RGB?]> = [
@@ -657,6 +840,7 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
     }
 
     b.push({ k: 'segs', segs: [lbl('WHY RESEARCH'), { text: txt(it.whyResearch, 'Not established'), color: INK }], size: 8.8 });
+    if (has(it.rankReason)) b.push({ k: 'segs', segs: [lbl('WHY RANKED'), { text: String(it.rankReason) }], size: 8.4 });
     if (has(it.whyRank)) b.push({ k: 'segs', segs: [lbl(`WHY #${rank}`), { text: String(it.whyRank) }], size: 8.4 });
 
     const unknowns = (it.unknowns || []).filter(has);
@@ -747,17 +931,23 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
   };
 
   if (!empty && queue.length) {
-    section('Research queue: the detail', 'One section per card, in rank order. Every figure is as the filing states it; a missing value says "Not disclosed".', 30);
+    const DETAIL_SUB = 'One section per card, in rank order. Every figure is as the filing states it; a missing value says "Not disclosed".';
     const usable = BOTTOM - TOP;
+    // A card is kept whole when it fits on the rest of the page; otherwise it flows onto the next
+    // page, but only once its head (name, move, headline, what changed) has room - no orphan heading.
+    const headKeep = (blocks: Block[]): number => Math.min(measure(blocks.slice(0, 4), W - 5) + 8, usable);
     queue.forEach((it, i) => {
       const blocks = cardBlocks(it, i + 1);
       const h = measure(blocks, W - 5) + 2;
-      // Keep each card on one page when it fits on a page at all.
-      if (h <= usable) room(h + 3); else room(40);
-      if (i > 0 && y > TOP + 0.5) { doc.setDrawColor(...RULE); doc.setLineWidth(0.15); doc.line(M + 4, y - 1.6, pageW - M, y - 1.6); }
-      y += 0.8;
+      const fitsHere = y + h + 3 <= BOTTOM;
+      const headerH = i === 0 ? headingH(DETAIL_SUB) : 0;
+      if (!fitsHere) room(headerH + (h <= 70 ? h + 3 : headKeep(blocks)));
+      else if (i === 0) room(headerH + h + 3);
+      if (i === 0) drawHeading('Research queue: the detail', DETAIL_SUB);
+      if (i > 0 && y > TOP + 0.5) { doc.setDrawColor(...RULE); doc.setLineWidth(0.15); doc.line(M + 4, y - 1.2, pageW - M, y - 1.2); }
+      y += 0.6;
       drawBlocks(blocks, M + 4, W - 5, statusWord(it).rgb);
-      y += 3.2;
+      y += 2.2;
     });
   }
 
@@ -771,7 +961,7 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
     const st = statusWord(it);
     return [
       { text: nameOf(it), bold: true, color: INK },
-      { text: companyOf(it) || '-' },
+      { text: coCell(it) },
       { text: moveOf(it), color: INK },
       { text: `${txt(it.headline, 'Headline not available')}${extra ? `\n${extra}` : ''}` },
       { text: st.word, color: st.rgb },
@@ -781,8 +971,13 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
 
   if (!empty) {
     const book = view.portfolio || [];
+    if (!book.length && view.bookChecked) {
+      const bc = view.bookChecked;
+      section('Your book', null, 8);
+      para(bc.held + bc.watch === 0 ? 'No holdings or watchlist were supplied, so no match with the gainers is possible.' : `Checked ${bc.held} held and ${bc.watch} watched name${bc.held + bc.watch === 1 ? '' : 's'} against this board: none matched.`, { size: 8.6 });
+    }
     if (book.length) {
-      section('Your book', 'Position reviews against your thesis. Not trade instructions.');
+      head('Your book', 'Position reviews against your thesis. Not trade instructions.');
       table([{ head: 'Ticker', w: 22 }, { head: 'Move', w: 16 }, { head: 'Event', w: 58 }, { head: 'Thesis variable', w: 34 }, { head: 'Material', w: 20 }, { head: 'Research next', w: 42 }],
         book.map((it) => [
           { text: `${nameOf(it)}${it.portfolio?.relevance === 'HOLDING' ? '\n(holding)' : ''}`, bold: true, color: INK },
@@ -790,94 +985,111 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
           { text: `${txt(it.headline, 'No event')}\n${statusWord(it).word}` },
           { text: txt(it.portfolio?.thesisVariable, 'Not mapped') },
           { text: materialWord(it), bold: true, color: materialRgb(it) },
-          { text: (it.researchNext || []).filter(has).slice(0, 2).map((q) => `- ${q}`).join('\n') || '-' },
-        ]));
+          { text: (it.researchNext || []).filter(has).slice(0, 2).map((q) => `- ${q}`).join('\n') || 'Not stated' },
+        ]), { maxLines: 3 });
     }
 
     const shownAbove = new Set([...(view.queue || []), ...(view.watch || [])].map((i) => i.ticker));
     const needsOnly = (view.needsReading || []).filter((i) => !shownAbove.has(i.ticker));
     if (needsOnly.length) {
-      section('Unknown: needs reading', 'Events whose size is not established yet. Unknown is not negative: each needs its document read.');
-      table(listCols, needsOnly.map((it) => listRow(it, it.economicsUnknown?.missing?.length ? `Missing: ${it.economicsUnknown.missing.join(', ')}` : 'Size not stated')));
+      head('Unknown: needs reading', 'Events whose size is not established yet. Unknown is not negative: each needs its document read.');
+      table(listCols, needsOnly.map((it) => listRow(it, it.economicsUnknown?.missing?.length ? `Missing: ${it.economicsUnknown.missing.join(', ')}` : 'Size not stated')), { maxLines: 4 });
     }
 
     const watch = view.watch || [];
     if (watch.length) {
-      section('Watch / investigate', 'Real but smaller, or not yet verified.');
-      table(listCols, watch.map((it) => listRow(it, [it.catalystFor ? CATALYST_FOR_WORD[it.catalystFor] + (it.catalystFor !== 'THIS_MOVE' && ageOf(it) ? ` (${ageOf(it)})` : '') : '', it.economicsUnknown ? 'Needs reading' : '', it.flags?.dilution ? 'Dilution' : '', it.flags?.band != null ? `Price band ${it.flags.band}%` : ''].filter(Boolean).join(' · '))));
+      head('Watch / investigate', 'Real but smaller, or not yet verified.');
+      table(listCols, watch.map((it) => listRow(it, [it.catalystFor ? CATALYST_FOR_WORD[it.catalystFor] + (it.catalystFor !== 'THIS_MOVE' && ageOf(it) ? ` (${ageOf(it)})` : '') : '', it.economicsUnknown ? 'Needs reading' : '', it.flags?.dilution ? 'Dilution' : '', it.flags?.band != null ? `Price band ${it.flags.band}%` : ''].filter(Boolean).join(' · '))), { maxLines: 4 });
     }
 
     const neg = view.negative || [];
     if (neg.length) {
-      section('Negative evidence', 'Findings, not omissions. Kept even though the stock rose.');
-      table(listCols, neg.map((it) => listRow(it, has(it.whyResearch) ? String(it.whyResearch) : has(it.expectationGap?.text) ? String(it.expectationGap.text) : '')));
+      head('Negative evidence', 'Findings, not omissions. Kept even though the stock rose.');
+      table(listCols, neg.map((it) => listRow(it, has(it.whyResearch) ? String(it.whyResearch) : has(it.expectationGap?.text) ? String(it.expectationGap.text) : '')), { maxLines: 4 });
     }
     const imm = view.immaterialNegative || [];
     if (imm.length) {
       para(`Immaterial tax / penalty items (under 0.25% of market cap; recorded, not ranked as negative evidence): ${imm.map((it) => `${nameOf(it)} (${it.materiality?.ratios?.[0]?.text || 'size not stated'})`).join('; ')}.`, { size: 8, color: MUTED, after: 2 });
     }
 
-    const context = view.context || [];
-    if (context.length) {
-      section('Older filings (context)', 'Real events filed before the move window. Context for the name, never the catalyst for this move and never counted as confirmed.');
-      table([{ head: '#', w: 6 }, { head: 'Ticker', w: 21 }, { head: 'Company', w: 28 }, { head: 'Move', w: 15 }, { head: 'Filed', w: 20 }, { head: 'Event', w: 64 }, { head: 'Material', w: 20 }],
-        context.map((it, i) => [
+    const olderRows: Cell[][] = (view.olderFilings && view.olderFilings.length)
+      ? view.olderFilings.map((r, i) => [
+          { text: String(i + 1), bold: true, color: MUTED },
+          { text: txt(r.name || r.ticker, 'Not disclosed'), bold: true, color: INK },
+          { text: txt(r.company || r.name, 'Not disclosed'), maxLines: 2 },
+          { text: pctND(r.movePct), color: INK },
+          { text: `${r.filedDate ? String(r.filedDate).slice(0, 10) : 'Undated'}${typeof r.ageDays === 'number' ? `\n${Math.round(r.ageDays)}d before` : ''}` },
+          { text: `${txt(r.event, 'Headline not available')}${has(r.eventLabel) ? `\n${r.eventLabel}` : ''}`, maxLines: 3, link: r.url || null },
+          { text: txt(r.material, 'UNKNOWN'), bold: true, color: MUTED },
+        ])
+      : (view.context || []).map((it, i) => [
           { text: String(i + 1), bold: true, color: MUTED },
           { text: nameOf(it), bold: true, color: INK },
-          { text: companyOf(it) || '-' },
+          { text: coCell(it), maxLines: 2 },
           { text: moveOf(it), color: INK },
           { text: `${it.filedDate ? String(it.filedDate).slice(0, 10) : 'Undated'}${ageOf(it) ? `\n${ageOf(it)} ago` : ''}` },
-          { text: `${txt(it.headline, 'Headline not available')}\n${txt(it.eventLabel || it.eventType, '')}` },
+          { text: `${txt(it.headline, 'Headline not available')}\n${txt(it.eventLabel || it.eventType, '')}`, maxLines: 3 },
           { text: materialWord(it), bold: true, color: materialRgb(it) },
-        ]));
+        ]);
+    if (olderRows.length) {
+      head('Older filings (context)', 'Real events filed before the move window. Context for the name, never the catalyst for this move and never counted as confirmed.');
+      table([{ head: '#', w: 6 }, { head: 'Ticker', w: 21 }, { head: 'Company', w: 28 }, { head: 'Move', w: 15 }, { head: 'Filed', w: 20 }, { head: 'Event', w: 64 }, { head: 'Material', w: 20 }], olderRows, { maxLines: 3 });
     }
 
     const isBand = (it: ResearchItem) => it.eventClass === 'MARKET_MOVE_ONLY';
     const noCat = (view.noCatalyst || []).filter((it) => !isBand(it));
     if (noCat.length) {
-      section('No identified catalyst', 'Checked: nothing meaningful filed in the window. "No catalyst" is a finding, not "nothing happened".');
+      head('No identified catalyst', 'Checked: nothing meaningful filed in the window. "No catalyst" is a finding, not "nothing happened".');
       table([{ head: 'Ticker', w: 24 }, { head: 'Company', w: 34 }, { head: 'Move', w: 17 }, { head: 'What was checked', w: 103 }],
         noCat.map((it) => [
           { text: nameOf(it), bold: true, color: INK },
-          { text: companyOf(it) || '-' },
+          { text: coCell(it) },
           { text: moveOf(it), color: INK },
           { text: [txt(it.headline, 'No meaningful filing'), it.flags?.denial ? 'Company told the exchange it has no undisclosed information.' : '', has(it.scanNote) ? (/^scanned\b/i.test(String(it.scanNote).trim()) ? String(it.scanNote) : `Scanned: ${it.scanNote}`) : '', it.evidenceGap && it.evidenceGap.code !== 'NO_CATALYST' ? it.evidenceGap.label : '', it.news?.narrative ? `Press (unverified): ${it.news.narrative.label} story over ${it.news.narrative.days} days` : ''].filter(Boolean).join('\n') },
-        ]), { size: 7.4 });
+        ]), { size: 8, maxLines: 4 });
     }
     const bands = [...(view.noCatalyst || []), ...(view.dataQuality || [])].filter(isBand);
     if (bands.length) {
-      section('Price-band moves', 'Price-band movement. Does not establish demand.');
+      head('Price-band moves', 'Price-band movement. Does not establish demand.');
       table([{ head: 'Ticker', w: 24 }, { head: 'Company', w: 34 }, { head: 'Move', w: 17 }, { head: 'Detail', w: 103 }],
-        bands.map((it) => [{ text: nameOf(it), bold: true, color: INK }, { text: companyOf(it) || '-' }, { text: moveOf(it), color: INK },
-          { text: `${txt(it.headline, 'No meaningful filing')}${it.flags?.band != null ? `\nBand ${it.flags.band}%` : ''}` }]), { size: 7.4 });
+        bands.map((it) => [{ text: nameOf(it), bold: true, color: INK }, { text: coCell(it) }, { text: moveOf(it), color: INK },
+          { text: `${txt(it.headline, 'No meaningful filing')}${it.flags?.band != null ? `\nBand ${it.flags.band}%` : ''}` }]), { size: 8, maxLines: 4 });
+    }
+
+    const NOTE_WORD: Record<string, string> = { new_listing: 'New listing', spac: 'SPAC', adr: 'ADR', extreme_move: 'Extreme move', band_move: 'Price-band move' };
+    const notes = (view.dataNotes || []).filter((n) => !(n.kind === 'band_move' && bands.length));
+    if (notes.length) {
+      head('Data notes', 'Flags from the scan itself, for a second look. They say nothing about the cause of the move.');
+      table([{ head: 'Ticker', w: 24 }, { head: 'Company', w: 34 }, { head: 'Move', w: 17 }, { head: 'Flag', w: 26 }, { head: 'Note', w: 77 }],
+        notes.map((n) => [{ text: txt(n.name || n.ticker, 'Not disclosed'), bold: true, color: INK }, { text: txt(n.company || n.name, 'Not disclosed'), maxLines: 2 }, { text: pctND(n.movePct), color: INK }, { text: NOTE_WORD[n.kind] || n.kind, color: AMBER }, { text: txt(n.text, 'Not disclosed'), maxLines: 3 }]), { maxLines: 3 });
     }
 
     const dq = (view.dataQuality || []).filter((it) => !isBand(it));
     if (dq.length) {
       const listings = dq.filter((it) => it.eventClass === 'LISTING' || it.flags?.listing).length;
-      section('Data quality / new listings', listings ? `${listings} recent listing${listings === 1 ? '' : 's'} excluded from fundamental comparison.` : 'Names left out of the comparison because the data is not reliable.');
+      head('Data quality / new listings', listings ? `${listings} recent listing${listings === 1 ? '' : 's'} excluded from fundamental comparison.` : 'Names left out of the comparison because the data is not reliable.');
       table([{ head: 'Ticker', w: 24 }, { head: 'Company', w: 34 }, { head: 'Move', w: 17 }, { head: 'Status', w: 32 }, { head: 'Detail', w: 71 }],
-        dq.map((it) => { const st = statusWord(it); return [{ text: nameOf(it), bold: true, color: INK }, { text: companyOf(it) || '-' }, { text: moveOf(it), color: INK }, { text: st.word, color: st.rgb }, { text: txt(it.headline, '-') }]; }), { size: 7.4 });
+        dq.map((it) => { const st = statusWord(it); return [{ text: nameOf(it), bold: true, color: INK }, { text: coCell(it) }, { text: moveOf(it), color: INK }, { text: st.word, color: st.rgb }, { text: txt(it.headline, 'Not disclosed') }]; }), { size: 8, maxLines: 4 });
     }
 
     const fails = view.sourceFailures || [];
     if (fails.length) {
-      section('Data-source failures', 'Data unavailable is not "no data found": the filing source did not answer for these names, so their filings were not checked.');
+      head('Data-source failures', 'Data unavailable is not "no data found": the filing source did not answer for these names, so their filings were not checked.');
       table([{ head: 'Ticker', w: 24 }, { head: 'Reason', w: 154 }],
-        fails.map((f) => [{ text: txt(f.ticker, '-'), bold: true, color: INK },
-          { text: [txt(f.full || f.text, 'Source unavailable'), f.news?.narrative ? `Press (unverified): ${f.news.narrative.label} story, ${f.news.narrative.days} days - "${f.news.narrative.lead}"` : f.news?.items?.[0] ? `Press (unverified): ${f.news.items[0].date} - ${f.news.items[0].title}` : ''].filter(Boolean).join('\n') }]), { size: 7.4 });
+        fails.map((f) => [{ text: txt(f.ticker, 'Not disclosed'), bold: true, color: INK },
+          { text: [txt(f.full || f.text, 'Source unavailable'), f.news?.narrative ? `Press (unverified): ${f.news.narrative.label} story, ${f.news.narrative.days} days - "${f.news.narrative.lead}"` : f.news?.items?.[0] ? `Press (unverified): ${f.news.items[0].date} - ${f.news.items[0].title}` : ''].filter(Boolean).join('\n') }]), { size: 8, maxLines: 4 });
     }
     const partial = view.partialFailures || [];
     if (partial.length) {
-      section('Partial data: price history missing', 'Filings WERE checked for these names; only the price history failed, so the market response is not measured.');
-      table([{ head: 'Ticker', w: 24 }, { head: 'Reason', w: 154 }], partial.map((f) => [{ text: txt(f.ticker, '-'), bold: true, color: INK }, { text: txt(f.text, '-') }]), { size: 7.4 });
+      head('Partial data: price history missing', 'Filings WERE checked for these names; only the price history failed, so the market response is not measured.');
+      table([{ head: 'Ticker', w: 24 }, { head: 'Reason', w: 154 }], partial.map((f) => [{ text: txt(f.ticker, 'Not disclosed'), bold: true, color: INK }, { text: txt(f.text, 'Not disclosed') }]), { size: 8, maxLines: 4 });
     }
   }
 
   // ═════════════════════════════════════════════════════════════════════════
   // 10. HOW TO READ THIS
   // ═════════════════════════════════════════════════════════════════════════
-  section('How to read this', null, market === 'US' ? 112 : 118);
+  section('How to read this', null, 40);
   const legend: Array<[string, string, RGB]> = [
     ['Confirmed material event', 'The event is verified from the filing and it is large for the company.', GREEN],
     ['Confirmed, low materiality', 'A real event, but too small on its own to explain the move.', BLUE],
@@ -889,7 +1101,7 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
   ];
   const legendRow = (k: string, v: string, c: RGB) => {
     const lines = layoutSegs([{ text: v }], W - 58, 8.2);
-    const h = lines.length * lh(8.2) + 1.2;
+    const h = lines.length * lh(8.2) + 0.8;
     room(h);
     font(8.2, true, c); doc.text(pdfText(k), M, y + 8.2 * 0.3);
     lines.forEach((ln, i) => drawSegLine(ln, M + 58, y + 8.2 * 0.3 + i * lh(8.2), 8.2, INK2));
@@ -930,9 +1142,10 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
     const pg = `Page ${p} of ${pages}`;
     font(6.8, false, MUTED);
     const pw = doc.getTextWidth(pg);
-    const fl = doc.splitTextToSize(footer, W - pw - 6) as string[];
+    const fl = doc.splitTextToSize(footer, W - pw - (provisional ? 30 : 6)) as string[];
     fl.forEach((ln, i) => doc.text(ln, M, fy + i * 2.8));
     font(6.8, true, MUTED); doc.text(pg, pageW - M, fy, { align: 'right' });
+    if (provisional) { font(6.8, true, AMBER); doc.text('PROVISIONAL', pageW - M - pw - 4, fy, { align: 'right' }); }
   }
   doc.setPage(pages);
   return doc;

@@ -20,8 +20,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import {
-  catalystIdOf, emptyEconomics, emptyTime,
-  type CatalystRecord, type CatalystState, type EventKind, type SourceKind, type SourceRef, type StructuredFacts,
+  catalystIdOf, emptyEconomics, emptyTime, reconcileStateLabel,
+  type CatalystConfirmation, type CatalystRecord, type CatalystState, type EventKind, type SourceKind, type SourceRef, type StructuredFacts,
 } from './structured-facts';
 
 // ── defensive readers for the optional Finding fields (A/B contract) ─────
@@ -200,6 +200,14 @@ export const STATE_WORD: Record<CatalystState, string> = {
   IDENTIFIED: 'Identified (not yet in an official filing)', DOCUMENTED: 'Documented in a filing', EXECUTING: 'Executing — follow-up evidence on file',
   CONFIRMED: 'Confirmed — completed / delivering', WEAKENING: 'Weakening — delay or cut on file', DISPROVED: 'Disproved — cancelled or denied',
 };
+/** A state label that says "not yet in an official filing" is corrected when the card shows the event IS in a filing (read, or filed and unread). */
+export function stateWordFor(label: string, cc: CatalystConfirmation | null | undefined): string {
+  if (!cc) return label;
+  const r = reconcileStateLabel(label, cc);
+  if (r !== label) return r;
+  if (cc === 'filed_document_unread' && /not yet in an official filing/i.test(label)) return 'Identified - filed with the exchange / SEC (the document itself was not read)';
+  return label;
+}
 const LADDER: CatalystState[] = ['IDENTIFIED', 'DOCUMENTED', 'EXECUTING', 'CONFIRMED'];
 const rank = (s: CatalystState) => LADDER.indexOf(s);
 const RX_DISPROVE = /\bcancel(l?ed|lation)\b|\bterminat(ed|ion)\b|\bwithdrawn\b|\brevoked\b|\blapsed\b|\bcalled off\b|\brescind|\bno such (order|deal|agreement|proposal)\b|\bdenie[sd]\b/i;

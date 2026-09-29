@@ -3,6 +3,7 @@
 
 import React from 'react';
 import type { ResearchItem } from '@/lib/ai-gainers/research-view';
+import { stateWordFor } from '@/lib/ai-gainers/catalyst-timeline';
 import {
   C, CATALYST_META, CLASS_META, GAP_META, MATERIAL_COLOR, PERSIST_META, RELEVANCE_META, SOURCE_META, STAGE_META, TRANSMIT_META,
   ageText, displayName, materialityHover, money, moveColor, pct, tint, triageLabel, txt,
@@ -221,6 +222,11 @@ export function SectionHead({ title, count, sub, right }: { title: string; count
  *  evidence gap, unknown economics, catalyst state, persistence grade. */
 const GRADE_COLOR: Record<string, string> = { HIGH: C.green, MEDIUM: C.cyan, EARLY: C.amber, TEMPORARY: C.faint };
 const STATE_COLOR: Record<string, string> = { IDENTIFIED: C.amber, DOCUMENTED: C.cyan, EXECUTING: C.cyan, CONFIRMED: C.green, WEAKENING: C.amber, DISPROVED: C.red };
+const STAGE_BADGE_COLOR: Record<string, string> = { PROPOSED: C.amber, SIGNED: C.cyan, AWARDED: C.cyan, EXECUTED: C.green, COMPLETED: C.green };
+const STAGE_HOVER: Record<string, string> = {
+  PROPOSED: 'Proposed / non-binding / subject to approval - not firm, not booked.', SIGNED: 'Agreement signed; economics may still be pending.',
+  AWARDED: 'Order / contract awarded; execution ahead.', EXECUTED: 'Done, not proposed.', COMPLETED: 'The transaction has completed.',
+};
 export function CatalystChips({ it }: { it: ResearchItem }) {
   const primary = it.catalysts?.[0];
   const pt = it.persistenceTest;
@@ -229,7 +235,15 @@ export function CatalystChips({ it }: { it: ResearchItem }) {
       {it.verification && /verification required/i.test(it.verification) && !(it.market === 'US' && it.usCard) && <Pill color={C.amber} title="Only a secondary source (press / summary) says this. It becomes evidence when an official filing confirms it.">SECONDARY · VERIFICATION REQUIRED</Pill>}
       {it.evidenceGap && <Pill color={it.evidenceGap.code === 'NO_CATALYST' ? C.faint : C.amber} title={it.evidenceGap.text}>{it.evidenceGap.label.toUpperCase()}</Pill>}
       {it.economicsUnknown && <Pill color={C.amber} title={it.economicsUnknown.missing.length ? `Missing: ${it.economicsUnknown.missing.join(', ')}` : 'The size of this event is not stated.'}>{it.economicsUnknown.label.toUpperCase()}</Pill>}
-      {primary && <Pill color={STATE_COLOR[primary.state] || C.faint} title={`${primary.stateWord}${primary.previousState ? ` (was ${primary.previousState.toLowerCase()})` : ''}`}>CATALYST: {primary.state}{primary.previousState && primary.previousState !== primary.state ? ` (was ${primary.previousState})` : ''}</Pill>}
+      {it.conflicts && it.conflicts.length > 0 && (
+        <Pill color={C.red} solid title={`${it.conflicts.join('\n')}\nImpact is unknown until the values are confirmed. Unknown is not negative.`}>VALUES CONFLICT</Pill>
+      )}
+      {it.stageBadge && <Pill color={STAGE_BADGE_COLOR[it.stageBadge] || C.faint} title={STAGE_HOVER[it.stageBadge]}>{it.stageBadge}</Pill>}
+      {it.contextOnly && <Pill color={C.faint} solid title={it.causalLabel || 'Older than the causal window: context for the name, not this move’s catalyst.'}>CONTEXT ONLY</Pill>}
+      {it.catalystConfirmation && (
+        <Pill color={it.catalystConfirmation === 'confirmed_in_official_filing' ? C.green : it.catalystConfirmation === 'filed_document_unread' ? C.cyan : it.catalystConfirmation === 'press_unconfirmed' ? C.amber : C.faint} title="Is the event in an official filing that was read? Reading the document and confirming the event are two separate facts.">{(it.catalystConfirmationLabel || it.catalystConfirmation).toUpperCase()}</Pill>
+      )}
+      {primary && <Pill color={STATE_COLOR[primary.state] || C.faint} title={`${stateWordFor(primary.stateWord, it.catalystConfirmation)}${primary.previousState ? ` (was ${primary.previousState.toLowerCase()})` : ''}`}>CATALYST: {primary.state}{primary.previousState && primary.previousState !== primary.state ? ` (was ${primary.previousState})` : ''}</Pill>}
       {/* zzz789: EARLY reads as Early / unproven — never a verdict, never negative. */}
       {pt && <Pill color={GRADE_COLOR[pt.grade] || C.faint} title={pt.why}>PERSISTENCE: {pt.grade === 'EARLY' ? 'EARLY / UNPROVEN' : pt.grade}</Pill>}
       {it.persistentCatalyst && it.persistentCatalyst.specialFocus && <Pill color={C.amber} title={it.persistentCatalyst.mechanism}>🔥 SPECIAL FOCUS</Pill>}
@@ -377,5 +391,87 @@ export function InCatalystList({ it, compact, max = 5 }: { it: ResearchItem; com
       )}
       {card.routine.length > 0 && <div style={{ fontSize: 11.5, color: C.faint }}>Routine (not catalysts): {Array.from(new Set(card.routine.map((r) => r.label.toLowerCase()))).slice(0, 4).join(', ')}</div>}
     </div>
+  );
+}
+
+// ── zzz835: the card facts, market-agnostic ────────────────────────────────
+// Conflicting values (both named), clusters (one earnings filing = one cluster
+// with child facts), clinical facts, acquisition economics, the litigation
+// caveat, the causal-window verdict and what was searched. Every block renders
+// only when the item carries it; a missing field is named "Not stated", never
+// blank, never zero.
+
+const kS: React.CSSProperties = { fontSize: 11, fontWeight: 800, letterSpacing: 0.5, color: C.faint };
+const NS = 'Not stated';
+function KV({ rows }: { rows: Array<[string, string | null | undefined]> }) {
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 320 }}><tbody>
+        {rows.map(([k, v]) => (
+          <tr key={k}><td style={{ ...kS, padding: '2px 10px 2px 0', whiteSpace: 'nowrap', verticalAlign: 'top' }}>{k.toUpperCase()}</td><td style={{ fontSize: 12.5, color: v ? C.text : C.faint, padding: '2px 0', overflowWrap: 'anywhere' }}>{txt(v, NS)}</td></tr>
+        ))}
+      </tbody></table>
+    </div>
+  );
+}
+
+export function CardFacts({ it }: { it: ResearchItem }) {
+  const conf = it.conflicts && it.conflicts.length ? it.conflicts : null;
+  const cl = it.clinical;
+  const ac = it.acquisition;
+  const cs = it.clusters;
+  const box: React.CSSProperties = { background: C.bg2, borderRadius: 6, padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 };
+  return (
+    <>
+      {conf && (
+        <div data-testid="conflict-box" style={{ ...box, border: `1px solid ${C.red}`, background: tint(C.red, 8) }}>
+          <div style={{ ...kS, color: C.red }}>VALUES CONFLICT - IMPACT UNKNOWN</div>
+          {conf.map((c, i) => <div key={i} style={{ fontSize: 12.5, color: C.text, lineHeight: 1.45 }}>{c}</div>)}
+          {it.conflictValues && it.conflictValues.length > 0 && (
+            <div style={{ fontSize: 12, color: C.dim }}>Values seen: {it.conflictValues.map((v) => `${v.text} (${v.source})`).join(' vs ')}. Neither is used for sizing until confirmed. Unknown is not negative.</div>
+          )}
+        </div>
+      )}
+      {it.contextOnly && (
+        <div data-testid="context-only" style={{ fontSize: 12.5, color: C.dim }}><span style={{ ...kS, marginRight: 6 }}>CONTEXT ONLY</span>{txt(it.causalLabel, 'Older than the causal window.')} It is not shown as this move’s catalyst.</div>
+      )}
+      {!it.contextOnly && it.causalLabel && <div style={{ fontSize: 12, color: C.faint }}>{it.causalLabel}</div>}
+      {it.litigationNote && (
+        <div data-testid="litigation-note" style={{ fontSize: 12.5, color: C.amber, lineHeight: 1.45 }}><span style={{ ...kS, marginRight: 6 }}>LITIGATION</span>{it.litigationNote}{it.litigation && <> Appeal: {txt(it.litigation.appeal, NS)}. Collectability: {txt(it.litigation.collectability, NS)}. Company’s share: {txt(it.litigation.entitlement, NS)}.</>}</div>
+      )}
+      {cl && (
+        <div data-testid="clinical-facts" style={box}>
+          <div style={kS}>CLINICAL FACTS{cl.result ? ` · RESULT: ${cl.result.toUpperCase()}` : ''}</div>
+          <KV rows={[['Indication', cl.indication], ['Phase', cl.phase], ['Primary endpoint', cl.primaryEndpoint], ['Endpoint met', cl.endpointMet === 'not_stated' ? null : cl.endpointMet.replace('_', ' ')], ['Effect size', cl.effectSize], ['p-value', cl.pValue], ['Confidence interval', cl.confidenceInterval], ['Sample size', cl.sampleSize], ['Comparator', cl.comparator], ['Dosing', cl.dosingInterval], ['Safety', cl.safety], ['Next step', cl.nextStep]]} />
+        </div>
+      )}
+      {ac && (
+        <div data-testid="acquisition-economics" style={box}>
+          <div style={kS}>ACQUISITION ECONOMICS</div>
+          <KV rows={[['Purchase price', ac.purchasePrice], ['Upfront cash', ac.upfrontCash], ['Contingent', ac.contingentConsideration], ['Assumed liabilities', ac.assumedLiabilities], ['Financing', ac.financing], ['Expected contribution', ac.expectedContribution]]} />
+        </div>
+      )}
+      {cs && cs.length > 0 && (
+        <div data-testid="clusters" style={box}>
+          <div style={kS}>{cs.length === 1 ? 'ONE FILING · ONE EVENT' : `${cs.length} EVENTS`} (child facts grouped under their filing)</div>
+          {cs.map((k) => (
+            <div key={k.clusterId} style={{ fontSize: 12.5, color: C.dim, lineHeight: 1.45, minWidth: 0 }}>
+              <b style={{ color: C.text }}>{k.label}</b> <span style={{ color: C.faint }}>· {k.independentSources} independent source{k.independentSources === 1 ? '' : 's'}</span>
+              {k.children.length > 0 && (
+                <ul style={{ margin: '2px 0 0', paddingLeft: 16 }}>
+                  {k.children.slice(0, 6).map((c, i) => <li key={i}><b style={{ color: C.text }}>{c.label}</b>{c.figures.length ? <span> - stated: {c.figures.join(', ')}</span> : null}</li>)}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {it.catalystStatusSentence && (
+        <div data-testid="catalyst-status" style={{ fontSize: 12, color: C.faint, lineHeight: 1.45 }}>
+          <span style={{ ...kS, marginRight: 6 }}>SEARCHED</span>{it.catalystStatusSentence}
+          {it.searched && it.searched.sources.length > 0 && !it.catalystStatusSentence.includes(it.searched.sources[0]) && <> Sources: {it.searched.sources.join(', ')}{it.searched.lookbackDays != null ? `, last ${it.searched.lookbackDays} days` : ''}.</>}
+        </div>
+      )}
+    </>
   );
 }

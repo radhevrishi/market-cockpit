@@ -114,7 +114,7 @@ function quoteFor(text: string, sentences: string[], re: RegExp): string | null 
   return null;
 }
 
-const MONEY_SRC = String.raw`(?:(?:rs\.?|inr|₹)\s*)?~?\s*([\d,]+(?:\.\d+)?)\s*-?\s*(crores?|cr\b|lakhs?|lacs?|million|mn\b)|(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d+)?)\s*\/-|\b(\d{1,3}(?:,\d{2})*,\d{3}(?:\.\d+)?)\s*\/-|(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d+)?)`;
+const MONEY_SRC = String.raw`(?:(?:rs\.?|inr|₹)\s*)?~?\s*([\d,]+(?:\.\d+)?)\s*-?\s*(crores?|cr\b|lakhs?|lacs?|million|mn\b|billions?|bn\b)|(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d+)?)\s*\/-|\b(\d{1,3}(?:,\d{2})*,\d{3}(?:\.\d+)?)\s*\/-|(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d+)?)`;
 const COUNTED = /^\s*(?:fully[- ]paid(?:[- ]up)?\s+|equity\s+|new\s+)*(?:shares?|warrants?|units?|users?|customers?|components?|part numbers?|tonnes?|litres?|securities)\b/i;
 
 /** ₹ Cr of the first money amount in `s`, or null. Handles the PDF text layer
@@ -131,8 +131,9 @@ export function moneyCr(s: string): number | null {
       if (!Number.isFinite(n)) continue;
       const u = m[2].toLowerCase();
       // A lakh or a million is money only when a currency marks it ("20 lakh users").
-      if (/^(lakh|lac|million|mn)/.test(u) && !/(rs\.?|inr|₹)/i.test(m[0])) continue;
-      return /^(lakh|lac)/.test(u) ? n / 100 : /^(million|mn)/.test(u) ? n / 10 : n;
+      if (/^(lakh|lac|million|mn|billion|bn)/.test(u) && !/(rs\.?|inr|₹)/i.test(m[0])) continue;
+      // zzz835: Rs 2.13 billion = 213 crore (it was read as Rs 2.13 = 0.0000002 crore)
+      return /^(lakh|lac)/.test(u) ? n / 100 : /^(million|mn)/.test(u) ? n / 10 : /^(billion|bn)/.test(u) ? n * 100 : n;
     }
     const raw = m[3] || m[4] || m[5];
     if (!raw) continue;
@@ -412,8 +413,14 @@ function numberOf(s: string): number | null { const n = parseFloat(s.replace(/,/
 
 // ── the extraction ──────────────────────────────────────────────────────────
 
+// zzz835: LOI / tentative / non-binding / MoU / "subject to approval" is PROPOSED - never booked, awarded or firm.
+const PROPOSED_WORDING = /letter of intent|\bloi\b|\btentative|non-?binding|term sheet|memorandum of understanding|\bmou\b|in[- ]principle/i;
 const STAGE_OF = (kind: EventKind, text: string, sub?: string): EventFacts['stage'] => {
-  if (kind === 'order') return /letter of intent|\bloi\b/i.test(text) && !/purchase order|notification of award|letter of award/i.test(text) ? 'ANNOUNCED' : 'AWARDED';
+  const st = STAGE_OF0(kind, text, sub);
+  return PROPOSED_WORDING.test(text) && !/purchase order|notification of award|letter of award|work order/i.test(text) && (st === 'AWARDED' || st === 'SIGNED' || st === 'ANNOUNCED' || st === 'APPROVED') ? 'PROPOSED' : st;
+};
+const STAGE_OF0 = (kind: EventKind, text: string, sub?: string): EventFacts['stage'] => {
+  if (kind === 'order') return /letter of intent|\bloi\b/i.test(text) && !/purchase order|notification of award|letter of award/i.test(text) ? 'PROPOSED' : 'AWARDED';
   if (kind === 'capacity') return /successful(ly)? commission|has been commissioned|commissioning of|commenced commercial/i.test(text) ? 'COMMISSIONED' : /approved|has approved|considered and approved/i.test(text) ? 'APPROVED' : 'PROPOSED';
   if (kind === 'fundraising') return /allotted|allotment of [\d,]+/i.test(text) && !/proposed allot/i.test(text) ? 'COMPLETED' : /approved/i.test(text) && !/proposed/i.test(text) ? 'APPROVED' : 'PROPOSED';
   if (kind === 'acquisition') return /has completed the acquisition|completed the acquisition|acquisition (is|has been) completed/i.test(text) ? 'COMPLETED' : /entered into|executed|signed|execution of (a |the )?(business transfer|share purchase)/i.test(text) ? 'SIGNED' : 'PROPOSED';

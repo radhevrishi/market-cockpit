@@ -14,7 +14,7 @@
 // No key is needed; nothing secret is sent. Price is used here ONLY to pick
 // the list of names (discovery), never as evidence of a catalyst.
 
-import { etParts, etToday, usPhaseAt, lastCompletedNyseSession, isNyseTradingDay, type UsExportRow, type UsExportAsOf } from './us-gainers';
+import { etParts, etToday, usPhaseAt, lastCompletedNyseSession, isNyseTradingDay, closeMinutes, type UsExportRow, type UsExportAsOf } from './us-gainers';
 
 import { DEFAULT_US_SCAN_CRITERIA, scanFilters, type UsScanCriteria } from './us-scan-criteria';
 
@@ -79,8 +79,11 @@ export function describeLiveScan(now: Date = new Date()): UsExportAsOf {
   const session = intraday || (phase === 'after_hours' && isNyseTradingDay(today)) ? today : lastCompletedNyseSession(now);
   const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const synced_et = `${days[e.weekday] || ''} ${e.ymd} ${e.hhmm} ET`;
+  // Early-close days (day after Thanksgiving, Christmas Eve, July 3) end at 13:00 ET, not 16:00.
+  const cm = closeMinutes(today);
+  const closeAt = `${String(Math.floor(cm / 60)).padStart(2, '0')}:${String(cm % 60).padStart(2, '0')}`;
   const label = intraday
-    ? `Live US scan at ${e.hhmm} ET — today's (${session}) move so far; it changes until the 16:00 ET close.`
+    ? `Live US scan at ${e.hhmm} ET — today's (${session}) move so far; it changes until the ${closeAt} ET close.`
     : session === today
       ? `Live US scan at ${e.hhmm} ET — today's (${session}) completed session.`
       : `Live US scan at ${e.hhmm} ET — the US market is not open yet, so these are the last completed session's (${session}) moves.`;

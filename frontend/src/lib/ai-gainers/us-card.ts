@@ -35,15 +35,22 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import type { StrictFigures } from '@/lib/us-thesis/xbrl';
-import { classifyUsEvents, type UsEventCategory, type UsEventDirection, type UsEventHit } from './us-event-taxonomy';
+import {
+  classifyUsEvents, usEventMeta, classifyCanonicalEventType, validateCanonicalEvent, isLitigationText, readLitigation, extractClinicalFacts, LITIGATION_CASH_NOTE, CLIN_NOT_DISCLOSED,
+  type UsEventCategory, type UsEventDirection, type UsEventHit, type CanonicalEventType, type LitigationRead, type ClinicalFacts,
+} from './us-event-taxonomy';
+import {
+  clusterFacts, exchangeDay, verificationOf, validateVerification, CATALYST_CONFIRMATION_LABEL, catalystSearchResult, causalWindow, exchangeDate, guidanceCheck, parseRange, periodBasisOf, reconcileValues, stageFromText,
+  POTENTIAL_SCALE_NOTE, type EventCluster, type DocumentVerification, type CatalystConfirmation, type CatalystSearchResult, type CausalWindow, type GuidanceCheck, type ValueStatus,
+} from './structured-facts';
 
 // v2 (zzz801): every card carries the catalyst list read by the US event
 // taxonomy (us-event-taxonomy.ts) — cards cached at v1 are re-read.
-export const US_CARD_VERSION = 2;
+export const US_CARD_VERSION = 3;
 
 export type UsCardKind =
   | 'earnings' | 'acquisition' | 'merger' | 'divestiture' | 'order' | 'fda' | 'clinical' | 'offering' | 'buyback'
-  | 'guidance' | 'index' | 'activist' | 'short_report' | 'analyst' | 'facility' | 'catalyst' | 'other';
+  | 'guidance' | 'index' | 'activist' | 'short_report' | 'analyst' | 'facility' | 'catalyst' | 'litigation' | 'other';
 export type UsMatLabel = 'SIGNIFICANT' | 'MODERATE' | 'SMALL' | 'UNKNOWN';
 
 export interface UsFigure { cur: number | null; prev: number | null }
@@ -67,6 +74,17 @@ export interface UsEarnings {
   outlookLabel?: string | null;
   guidance: 'RAISED' | 'CUT' | 'REAFFIRMED' | 'NEW' | 'NOT_STATED';
   guidanceNote: string | null;
+  /** zzz835: the revenue outlook set against an actual base - a % only when the periods match, else "comparison unavailable". */
+  guidanceCheck?: GuidanceCheck | null;
+}
+/** zzz835: acquisition economics kept apart; a missing one says so. */
+export interface UsAcquisitionEconomics {
+  purchasePrice: string;
+  upfrontCash: string;
+  contingentConsideration: string;
+  assumedLiabilities: string;
+  financing: string;
+  expectedContribution: string;
 }
 export interface UsDeal {
   role: 'acquirer' | 'seller';
@@ -129,6 +147,28 @@ export interface UsCard {
    *  sentence, the figures literally in it, source and date. Empty = none
    *  found (said plainly on the card). Absent on v1 cards. */
   catalysts?: UsCatalyst[];
+  // ── zzz835 (all optional: cards cached before v3 lack them) ──
+  /** Deterministic event type (litigation / loi / order / trial_result / acquisition / earnings ...). */
+  canonicalType?: CanonicalEventType;
+  /** Validation errors of the card itself (e.g. a jury quote labelled order). Empty = consistent. */
+  validationErrors?: string[];
+  /** Was the cited document read, and is the event confirmed by an authoritative source - two independent facts. */
+  documentVerification?: DocumentVerification;
+  catalystConfirmation?: CatalystConfirmation;
+  catalystConfirmationLabel?: string;
+  /** Value status of the event's stated amount; 'conflicting' keeps every value and lists the conflict. */
+  valueStatus?: ValueStatus;
+  conflicts?: string[];
+  /** The catalyst search outcome: never "no catalyst found" when an event was extracted; says what was searched. */
+  catalystStatus?: CatalystSearchResult;
+  /** One earnings filing = one cluster with child facts; independent sources counted by filing, not sentence. */
+  clusters?: Array<EventCluster<UsCatalyst>>;
+  independentSourceCount?: number;
+  /** Filing age vs the move day and whether it is inside the causal window. */
+  causal?: CausalWindow;
+  clinical?: ClinicalFacts | null;
+  litigation?: LitigationRead | null;
+  acquisition?: UsAcquisitionEconomics | null;
 }
 
 /** zzz801 — one catalyst found by the taxonomy, with where it was read. */
@@ -614,17 +654,31 @@ export function readUsEarnings(o: { text: string; html?: string | null; xbrl?: S
   })();
   const outlook = ol.lines.map((l) => (/^[A-Z][a-z]/.test(l) ? `${l.charAt(0).toLowerCase()}${l.slice(1)}` : l));
   const outlookLabel = ol.label ? ol.label.replace(/^fiscal (\d{4})$/i, 'FY$1') : null;
-  // implied growth of a revenue outlook against the release's own twelve-month revenue
-  if (ttm && ttm.cur && outlook.length) {
+  // zzz835: a revenue outlook is set against the release's twelve-month revenue ONLY when the periods match
+  // (a fiscal-year outlook vs the twelve months of a year-end result). A quarterly outlook vs twelve months
+  // is "comparison unavailable" - never a forced percentage (Stitch Fix: Q1 $323M-$328M vs $1.348B TTM was -76%).
+  let gcheck: GuidanceCheck | null = null;
+  {
     const revLine = outlook.find((l) => /^revenues?|^sales|^net sales/i.test(l));
-    const mm = revLine && /\$([\d.,]+)([MB])–\$([\d.,]+)([MB])/.exec(revLine);
-    if (mm) {
-      const lo = Number(mm[1].replace(/,/g, '')) * (mm[2] === 'B' ? 1000 : 1), hi = Number(mm[3].replace(/,/g, '')) * (mm[4] === 'B' ? 1000 : 1);
-      const i = outlook.findIndex((l) => l.includes(revLine!));
-      if (i >= 0 && lo > 0 && hi > 0) outlook[i] += ` (${pctTxt((lo / ttm.cur - 1) * 100)} to ${pctTxt((hi / ttm.cur - 1) * 100)} vs the last twelve months' ${usdM(ttm.cur)})`;
+    const rr = revLine ? parseRange(revLine) : null;
+    if (revLine && rr && rr.currency === 'USD' && rr.absoluteLow != null && rr.absoluteHigh != null && rr.absoluteLow > 0) {
+      const yearEnd = /\bfourth (?:fiscal )?quarter\b|\bfull[- ]year\b|\bfull fiscal year\b|\bfiscal year ended\b|\byear ended\b/i.test(String(base.period || period || ''));
+      gcheck = guidanceCheck({
+        guidance: { low: rr.absoluteLow / 1e6, high: rr.absoluteHigh / 1e6, period: ol.label },
+        actual: ttm && ttm.cur ? { value: ttm.cur, period: 'the last twelve months', yearEnd } : null,
+      });
+      const i = outlook.findIndex((l) => l === revLine);
+      if (i >= 0 && ttm && ttm.cur) {
+        outlook[i] += gcheck.comparable && gcheck.changePct
+          ? ` (${pctTxt(gcheck.changePct.low)} to ${pctTxt(gcheck.changePct.high)} vs the last twelve months' ${usdM(ttm.cur)})`
+          : ' (comparison unavailable - the outlook period is not the base period)';
+      }
+      if (ol.action === 'RAISED') gcheck = { ...gcheck, action: 'raised', display: gcheck.display.replace(/ · (?:new outlook.*|prior guidance.*)$/, '') + ' · guidance raised' };
+      else if (ol.action === 'CUT') gcheck = { ...gcheck, action: 'cut', display: gcheck.display.replace(/ · (?:new outlook.*|prior guidance.*)$/, '') + ' · guidance cut' };
+      else if (ol.action === 'REAFFIRMED') gcheck = { ...gcheck, action: 'maintained', display: gcheck.display.replace(/ · (?:new outlook.*|prior guidance.*)$/, '') + ' · guidance maintained' };
     }
   }
-  return { ...base, revenueGrowthPct: growth(base.revenue), profitChange: pw.words, profitGrowthPct: pw.pct, margin, outlook, outlookLabel, guidance: ol.action, guidanceNote: ol.note };
+  return { ...base, revenueGrowthPct: growth(base.revenue), profitChange: pw.words, profitGrowthPct: pw.pct, margin, outlook, outlookLabel, guidance: ol.action, guidanceNote: ol.note, guidanceCheck: gcheck };
 }
 
 /** India's earnings rule on the US figures. */
@@ -793,7 +847,7 @@ export function readUsOrder(text: string): UsOrder | null {
 
 // ── other US event types ──────────────────────────────────────────────────
 
-export interface UsOtherRead { kind: UsCardKind; word: string; valueM: number | null; line: string; quote: string | null; polarity: UsCard['polarity']; flags: string[] }
+export interface UsOtherRead { kind: UsCardKind; word: string; valueM: number | null; line: string; quote: string | null; polarity: UsCard['polarity']; flags: string[]; clinical?: ClinicalFacts | null }
 export function readUsOther(text: string, o: { form?: string | null; items?: string[] } = {}): UsOtherRead | null {
   const ss = sentencesOf(text).slice(0, 220).filter((s) => !/\b(?:forward-looking|safe harbor|risk factors|could cause actual)\b/i.test(s));
   // what the release LEADS with — a designation or a trial named in the
@@ -815,7 +869,9 @@ export function readUsOther(text: string, o: { form?: string | null; items?: str
   if (trial) {
     const neg = /\bdid not meet|failed to meet|missed|not statistically significant\b/i.test(trial);
     const p = /\bp\s?([<=])\s?(0?\.\d+)/i.exec(trial);
-    return { kind: 'clinical', word: neg ? 'Trial missed its goal' : 'Trial result', valueM: null, line: `${clip(trial, 220)}${p ? ` (p${p[1]}${p[2]})` : ''}`, quote: trial, polarity: neg ? 'negative' : 'positive', flags: [] };
+    const clinical = extractClinicalFacts(text);
+    const word = clinical && clinical.result === 'mixed' ? 'Trial result (mixed)' : neg ? 'Trial missed its goal' : 'Trial result';
+    return { kind: 'clinical', word, valueM: null, line: `${clip(trial, 220)}${p ? ` (p${p[1]}${p[2]})` : ''}`, quote: trial, polarity: neg ? 'negative' : 'positive', flags: [], clinical };
   }
   // offering — the event sentence, then the amount wherever the filing states it
   const off = find(/\b(?:pricing of|priced|announces?|entered into|closing of|closed)\b[^.]{0,80}\b(?:underwritten |registered direct |public |private |secondary )?(?:offering|placement|PIPE)\b/i)
@@ -859,6 +915,7 @@ export function pressKindOf(title: string): { kind: UsCardKind; word: string; po
   if (/\b(?:upgrade[sd]?|downgrade[sd]?|price target|initiat(?:es|ed) coverage|reinstat(?:es|ed)|reiterat(?:es|ed)|maintains? (?:\w+ )?rating|outperform|overweight|(?:buy|sell|hold) rating)\b/i.test(t)) return { kind: 'analyst', word: /downgrad/i.test(t) ? 'Analyst downgrade (press only)' : 'Analyst action (press only)', polarity: /downgrad/i.test(t) ? 'negative' : 'positive' };
   if (/\b(?:short (?:seller|report)|Hindenburg|Muddy Waters|Spruce Point|Culper|Fuzzy Panda|Grizzly)\b/i.test(t)) return { kind: 'short_report', word: 'Short-seller report (press only)', polarity: 'negative' };
   if (OPINION.test(t)) return none;
+  if (isLitigationText(t) && /\b(?:jury|verdict|damages|judg(?:e)?ment)\b/i.test(t)) return { kind: 'litigation', word: 'Litigation - jury verdict / damages (press only)', polarity: 'neutral' };
   if (/\b(?:S&P (?:SmallCap|MidCap|500)|Russell (?:1000|2000|3000)|Nasdaq-100)\b/i.test(t) && /\b(?:join|add|inclusion|replace)/i.test(t)) return { kind: 'index', word: 'Index inclusion (press only)', polarity: 'positive' };
   if (/\b(?:activist|13D)\b|\b(?:takes?|builds?|discloses?) (?:a )?(?:\d+(?:\.\d+)?% )?stake\b/i.test(t)) return { kind: 'activist', word: 'Stake / activist (press only)', polarity: 'positive' };
   if (/\b(?:FDA|EMA)\b|\b(?:approval|clearance|advisory (?:committee|panel)|advisors back)\b/i.test(t)) return { kind: 'fda', word: 'FDA / approval (press only)', polarity: 'positive' };
@@ -888,6 +945,7 @@ function pressKindForHit(id: string): UsCardKind {
   if (id === 'analyst_action') return 'analyst';
   if (id === 'index_inclusion') return 'index';
   if (id === 'short_report') return 'short_report';
+  if (id === 'litigation_verdict') return 'litigation';
   if (id === 'activist_stake') return 'activist';
   if (/^(equity_offering|convertible|warrant_exercise)$/.test(id)) return 'offering';
   if (id === 'buyback') return 'buyback';
@@ -956,7 +1014,8 @@ export function withPressCatalysts(card: UsCard, press: Array<{ title: string; u
   const have = (card.catalysts || []).filter((c) => c.source === 'PRESS');
   const add = catalystsFromPress(press, [...sec, ...have].map((c) => c.id));
   const catalysts = [...sec, ...have, ...add].slice(0, 14);
-  const next: UsCard = { ...card, catalysts };
+  const next0: UsCard = { ...card, catalysts };
+  const next: UsCard = reconcileCardValues(next0, catalystsFromPress(press));   // every press headline, including types the filing also states
   if (card.source.tier === 'SEC' && card.eventType === 'No identified catalyst' && !sec.length && add.length) {
     next.extra = [...card.extra, `Press reports (not verified in a filing): ${add.slice(0, 3).map((c) => c.label.toLowerCase()).join(', ')}.`];
   }
@@ -966,7 +1025,7 @@ export function withPressCatalysts(card: UsCard, press: Array<{ title: string; u
 /** The research-view event type a taxonomy hit maps to. */
 export const US_EVENT_TYPE_OF: Record<string, string> = {
   earnings_beat: 'Earnings', earnings_miss: 'Earnings', record_results: 'Earnings', revenue_growth: 'Earnings', revenue_decline: 'Earnings', growth_acceleration: 'Earnings',
-  margin_expansion: 'Earnings', margin_compression: 'Earnings', turned_profitable: 'Earnings', eps_reported: 'Earnings',
+  profit_growth: 'Earnings', profit_decline: 'Earnings', margin_expansion: 'Earnings', margin_compression: 'Earnings', turned_profitable: 'Earnings', eps_reported: 'Earnings',
   guidance_raise: 'Guidance', guidance_cut: 'Guidance', guidance_issued: 'Guidance',
   product_launch: 'New product', first_commercial: 'New product', tech_milestone: 'New product', new_segment: 'Strategic expansion', ai_datacenter: 'Strategic expansion',
   crypto_strategy: 'Strategic expansion', product_mix: 'Pricing', pricing_action: 'Pricing',
@@ -977,7 +1036,7 @@ export const US_EVENT_TYPE_OF: Record<string, string> = {
   licensing: 'Contract', supply_agreement: 'Contract', strategic_investment: 'Strategic investment',
   fda_crl: 'Regulatory approval', fda_adcom: 'Regulatory approval', fda_approval: 'Regulatory approval', fda_submission: 'Regulatory approval', pdufa: 'Regulatory approval',
   designation: 'Regulatory approval', trial_results: 'Regulatory approval', trial_milestone: 'Regulatory approval', intl_approval: 'Regulatory approval',
-  patent_litigation_win: 'Litigation / regulatory', settlement: 'Litigation / regulatory', regulatory_probe: 'Litigation / regulatory',
+  litigation_verdict: 'Litigation / regulatory', patent_litigation_win: 'Litigation / regulatory', settlement: 'Litigation / regulatory', regulatory_probe: 'Litigation / regulatory',
   buyback: 'Buyback', dividend: 'Capital allocation', debt_refinancing: 'Debt / refinancing', convertible: 'Fundraising', equity_offering: 'Fundraising',
   reverse_split: 'Governance', warrant_exercise: 'Fundraising',
   index_inclusion: 'Rating action', uplisting: 'Governance', listing_deficiency: 'Governance', activist_stake: 'Strategic investment',
@@ -1038,6 +1097,118 @@ function taxonomyCard(top: UsCatalyst, cats: UsCatalyst[], ctx: { mcap: number |
   };
 }
 
+// ── zzz835: litigation, acquisition economics, finalisation ────────────────
+
+const CLIN_LABEL: Record<string, string> = { indication: 'Indication', phase: 'Phase', primaryEndpoint: 'Primary endpoint', effectSize: 'Effect size', pValue: 'Statistical evidence (p-value)', confidenceInterval: 'Confidence interval', sampleSize: 'Sample size', comparator: 'Comparator', dosingInterval: 'Dosing interval', safety: 'Safety', nextStep: 'Next regulatory step' };
+const NDC = 'not disclosed in the cited filing';
+
+/** A jury verdict / damages award: litigation materiality, never order ÷ market cap. */
+function litigationCard(lit: LitigationRead, ctx: { mcap: number | null; ticker: string; cats: UsCatalyst[]; source: UsCardSource }): UsCard {
+  const gross = lit.grossAwardM;
+  const scale = gross != null && ctx.mcap ? ` Headline scale only: the gross award is ${r1(gross / ctx.mcap)}x the market cap (${usdM(gross)} vs ${usdM(ctx.mcap)}).` : '';
+  const open = [
+    `Appeal status: ${lit.appeal}`, `Collectability: ${lit.collectability}`, `Company's entitlement: ${lit.entitlement}`, `Legal costs: ${lit.legalCosts}`, `Timing of payment: ${lit.timing}`,
+  ];
+  return {
+    v: US_CARD_VERSION, kind: 'litigation', kindWord: 'Litigation - jury verdict / damages award', eventType: 'Litigation / regulatory', stage: 'UNKNOWN', stageText: 'verdict reported - post-trial motions, appeal and payment not settled',
+    headline: clip(lit.quote, 160),
+    whatChanged: `Jury verdict${gross != null ? `: ${lit.grossAwardText} in damages (gross)` : ''} - ${LITIGATION_CASH_NOTE}`,
+    extra: [LITIGATION_CASH_NOTE + scale, ...open, ...(lit.interestNote ? [lit.interestNote] : [])],
+    material: { label: 'UNKNOWN', how: `Litigation, not a contract: ${LITIGATION_CASH_NOTE} What reaches the company depends on its entitlement share, appeal, collectability, legal costs and timing (see below). No order / market-cap ratio is computed.${scale}`, ratios: [] },
+    polarity: 'neutral', source: ctx.source,
+    whyResearch: 'A court award is not cash in hand - check whether the company is the plaintiff or a funder, its share of any recovery, the appeal path, whether the defendant can pay, and legal costs.',
+    unknowns: [...open.filter((x) => /unknown - not stated/.test(x)).map((x) => x.replace('unknown - not stated in the cited filing', NDC))],
+    flags: [], quantified: false, quote: lit.quote, earnings: null, deal: null, catalysts: ctx.cats, litigation: lit,
+  };
+}
+
+/** Purchase price, upfront cash, contingent consideration, assumed liabilities, financing, expected contribution - each stated or "not disclosed in the cited filing". */
+export function acquisitionEconomics(d: UsDeal, text: string): UsAcquisitionEconomics {
+  const assumed = sentencesOf(text).find((x) => /\bassum(?:e|es|ed|ption of)\b[^.;]{0,80}\b(?:liabilit\w+|debt|obligations)\b/i.test(x) && !/\bforward-looking\b/i.test(x));
+  return {
+    purchasePrice: d.totalValueM != null ? usdM(d.totalValueM) : d.perShare ? d.perShare : d.exchangeRatio ? d.exchangeRatio : NDC,
+    upfrontCash: d.upfrontM != null ? usdM(d.upfrontM) : NDC,
+    contingentConsideration: d.contingentM != null ? `up to ${usdM(d.contingentM)}` : NDC,
+    assumedLiabilities: assumed ? `stated: "${clip(assumed, 200)}"` : NDC,
+    financing: d.funding || NDC,
+    expectedContribution: d.targetRevenueM != null ? `target revenue about ${usdM(d.targetRevenueM)}; earnings contribution ${NDC}` : NDC,
+  };
+}
+
+const KIND_TO_CANON: Partial<Record<UsCardKind, CanonicalEventType>> = {
+  earnings: 'earnings', acquisition: 'acquisition', merger: 'acquisition', divestiture: 'acquisition', order: 'order', fda: 'regulatory', clinical: 'trial_result',
+  offering: 'financing', buyback: 'financing', guidance: 'earnings', litigation: 'litigation', facility: 'capacity', activist: 'ownership',
+};
+
+/** Post-process a built card: deterministic type check, document-vs-confirmation split, clusters, catalyst status, causal window. Pure. */
+function finalizeUsCard(card: UsCard, inp: UsCardInput & { moveDate?: string | null }): UsCard {
+  let c: UsCard = { ...card };
+  const errs: string[] = [];
+  // 1. deterministic type: a jury / damages quote can never be an order or contract
+  const quoteText = `${c.quote || ''} ${c.headline || ''}`;
+  const det = classifyCanonicalEventType(quoteText);
+  const declared: CanonicalEventType = KIND_TO_CANON[c.kind] ?? (c.eventType === 'Contract' ? 'contract' : c.eventType === 'Order win' ? 'order' : 'other');
+  const bad = validateCanonicalEvent({ event_type: declared, source_quote: quoteText, stage: c.stage });
+  if (bad.length && (c.kind === 'order' || c.eventType === 'Order win' || c.eventType === 'Contract')) {
+    const lit = readLitigation(quoteText);
+    const src = c.source;
+    if (lit) c = { ...litigationCard(lit, { mcap: inp.marketCapM && inp.marketCapM > 0 ? inp.marketCapM : null, ticker: inp.ticker, cats: c.catalysts || [], source: src }), source: src };
+    else errs.push(...bad);
+  } else errs.push(...bad);
+  // 2. an LOI / tentative / non-binding order is PROPOSED - never a firm order
+  if ((c.kind === 'order' || c.eventType === 'Order win' || c.eventType === 'Contract') && /\bletters? of intent\b|\bLOIs?\b|\btentative|\bnon-?binding\b|\bterm sheet\b|\bmemorandum of understanding\b/i.test(quoteText) && stageFromText(quoteText) === 'PROPOSED') {
+    c = { ...c, stage: 'PROPOSED', stageText: 'proposed (letter of intent / non-binding) - not a firm order', material: { ...c.material, label: 'UNKNOWN', how: `${c.material.how} ${POTENTIAL_SCALE_NOTE}` } };
+  }
+  // 3. document verification and catalyst confirmation, validated together
+  const tier = c.source.tier;
+  const v = verificationOf({ sourceKind: tier === 'SEC' ? 'SEC_FILING' : tier === 'PRESS' ? 'PRESS' : null, access: tier === 'SEC' ? 'DOCUMENT_READ' : 'SUMMARY_ONLY', eventInDocument: tier === 'SEC' });
+  const vErr = validateVerification(v.documentVerification, v.catalystConfirmation, { sourceKind: tier === 'SEC' ? 'SEC_FILING' : tier === 'PRESS' ? 'PRESS' : null, eventInDocument: tier === 'SEC' });
+  if (vErr) errs.push(vErr);
+  // 4. catalyst search outcome: an extracted event is never "no catalyst"
+  const filedEvent = tier === 'SEC' && (c.kind !== 'other' || !!c.quote || /^As filed/i.test(c.whatChanged));
+  const pressEvent = tier === 'PRESS' && c.kind !== 'other';
+  const eventExtracted = filedEvent || pressEvent || (c.catalysts || []).length > 0;
+  const lowInfo = c.kind === 'other' && tier === 'SEC';
+  const sources = tier === 'SEC' ? [`SEC ${c.source.form || 'filing'}${c.source.doc ? ` (${c.source.doc})` : ''}`] : inp.secChecked ? ['SEC EDGAR', 'press headlines'] : ['press headlines'];
+  const lookback = inp.windowDays ?? 21;
+  const status = catalystSearchResult({ eventExtracted, verified: tier === 'SEC', material: !lowInfo && tier === 'SEC' && c.material.label !== 'UNKNOWN' && c.material.label !== 'SMALL', lowInformation: lowInfo, sources, lookbackDays: lookback, eventLabel: eventExtracted ? clip(c.kindWord, 60) : null });
+  const catalysts = c.catalysts;
+  // 5. one filing = one cluster
+  const clusters = clusterFacts(catalysts || [], { rank: (x) => usEventMeta(x.id)?.rank ?? 99 });
+  // 6. causal window (exchange calendar; official = 3 days, press = 1 day)
+  const moveDate = inp.moveDate || null;
+  const causal = moveDate ? causalWindow({ itemDate: c.source.date, moveDate, official: tier === 'SEC' }) : undefined;
+  return {
+    ...c, catalysts, canonicalType: declared === 'other' ? det.type : declared, validationErrors: errs,
+    documentVerification: v.documentVerification, catalystConfirmation: v.catalystConfirmation, catalystConfirmationLabel: CATALYST_CONFIRMATION_LABEL[v.catalystConfirmation],
+    valueStatus: c.valueStatus || (c.quantified ? (tier === 'SEC' ? 'verified' : 'reported') : 'not_disclosed'), conflicts: c.conflicts || [],
+    catalystStatus: status, clusters, independentSourceCount: clusters.length ? new Set(clusters.map((k) => k.primarySource || k.clusterId)).size : 0, ...(causal ? { causal } : {}),
+  };
+}
+
+/** Build the card. `moveDate` (YYYY-MM-DD on the exchange calendar; default: today in America/New_York is NOT assumed - pass it) enables the causal-window fields. */
+export function buildUsCard(inp: UsCardInput & { moveDate?: string | null }): UsCard | null {
+  const core = buildUsCardCore(inp);
+  return core ? finalizeUsCard(core, inp) : null;
+}
+
+/** A press headline value that differs from the filed value keeps BOTH and marks the card conflicting (impact unknown). */
+export function reconcileCardValues(card: UsCard, pressCats: UsCatalyst[] = []): UsCard {
+  const cats = [...(card.catalysts || []), ...pressCats.filter((p) => !(card.catalysts || []).some((c) => c.source === 'PRESS' && c.id === p.id && c.sentence === p.sentence))];
+  const conflicts: string[] = [];
+  const money = (c: UsCatalyst) => c.figures.filter((f) => /\$/.test(f));
+  for (const p of cats.filter((x) => x.source === 'PRESS')) {
+    const s = cats.find((x) => x.source === 'SEC' && x.id === p.id);
+    if (!s || money(p).length !== 1 || money(s).length !== 1) continue;
+    const pv = parseRange(`${money(p)[0]}-${money(p)[0]}`); const sv = parseRange(`${money(s)[0]}-${money(s)[0]}`);
+    if (!pv || !sv || pv.absoluteLow == null || sv.absoluteLow == null) continue;
+    const r = reconcileValues([{ value: sv.absoluteLow, unit: 'USD', source: 'filed', text: money(s)[0] }, { value: pv.absoluteLow, unit: 'USD', source: 'press', text: money(p)[0] }]);
+    if (r.valueStatus === 'conflicting') conflicts.push(...r.conflicts);
+  }
+  if (!conflicts.length) return card;
+  return { ...card, valueStatus: 'conflicting', conflicts, material: { ...card.material, label: 'UNKNOWN', how: `${card.material.how} Conflicting values (${conflicts.length}) - impact unknown until confirmed.` } };
+}
+
 // ── THE CARD ──────────────────────────────────────────────────────────────
 
 export interface UsCardDoc { role: string; url: string; text: string; html?: string | null; name?: string | null }
@@ -1064,7 +1235,7 @@ function secLabel(form: string, date: string | null, doc: string | null): string
   return `VERIFIED DOCUMENT (SEC ${form}${date ? `, filed ${date.slice(0, 10)}` : ''}${doc ? ` · ${doc}` : ''})`;
 }
 
-export function buildUsCard(inp: UsCardInput): UsCard | null {
+function buildUsCardCore(inp: UsCardInput): UsCard | null {
   const f = inp.filing;
   const mcap = inp.marketCapM && inp.marketCapM > 0 ? inp.marketCapM : null;
   if (f && inp.docs.some((d) => (d.text && d.text.length > 150) || (d.html && d.html.length > 300))) {
@@ -1073,7 +1244,7 @@ export function buildUsCard(inp: UsCardInput): UsCard | null {
     const release = inp.docs.find((d) => d.role === 'ex99') || inp.docs.find((d) => d.role === 'release') || inp.docs.find((d) => d.role === 'primary') || inp.docs[0];
     const allDocs = [...inp.docs, ...(inp.original?.docs || []).map((d) => ({ ...d, role: d.role === 'primary' ? 'original' : d.role }))];
     const allText = allDocs.map((d) => d.text).join(' \n ');
-    const date = f.date ? f.date.slice(0, 10) : null;
+    const date = f.date ? exchangeDay(f.date, 'US') || f.date.slice(0, 10) : null;   // zzz835: the New York calendar day of the filing
     const cats = catalystsFromDocs(allDocs, { form, date, url: f.url });   // zzz801
     const baseSource = (doc: string | null, url?: string | null): UsCardSource => ({ tier: 'SEC', label: secLabel(form, date, doc), form, date, url: url || release?.url || f.url, doc });
     const earningsForm = items.has('2.02') || /^(10-Q|10-K|20-F|40-F)(\/A)?$/.test(form) || (form === '6-K' && /\b(?:financial results|results for the|reports? (?:first|second|third|fourth|q[1-4])|quarter(?:ly)? results|half[- ]year results)\b/i.test(release?.text.slice(0, 3000) || ''));
@@ -1087,7 +1258,8 @@ export function buildUsCard(inp: UsCardInput): UsCard | null {
         const weak = (e.revenueGrowthPct != null && e.revenueGrowthPct < 0 && (e.profitGrowthPct == null ? /widened|swung to a loss/.test(e.profitChange || '') : e.profitGrowthPct < 0)) || (e.profitGrowthPct != null && e.profitGrowthPct <= -20) || /swung to a loss|widened/.test(e.profitChange || '');
         const extra: string[] = [];
         if (e.outlook.length) extra.push(`Outlook as filed${e.outlookLabel ? ` (${e.outlookLabel})` : ''}: ${e.outlook.join(' · ')}`);
-        extra.push(e.guidance === 'RAISED' ? `Guidance RAISED — “${e.guidanceNote}”` : e.guidance === 'CUT' ? `Guidance CUT — “${e.guidanceNote}”` : e.guidance === 'REAFFIRMED' ? `Guidance reaffirmed / unchanged — “${e.guidanceNote}”` : e.guidance === 'NEW' ? 'Guidance: a new outlook — the release does not compare it with an earlier one.' : 'Guidance: not stated in the filing.');
+        extra.push(e.guidance === 'RAISED' ? `Guidance RAISED — “${e.guidanceNote}”` : e.guidance === 'CUT' ? `Guidance CUT — “${e.guidanceNote}”` : e.guidance === 'REAFFIRMED' ? `Guidance reaffirmed / unchanged — “${e.guidanceNote}”` : e.guidance === 'NEW' ? 'Guidance: new outlook — direction cannot be inferred (the release gives no earlier guidance to compare with).' : 'Guidance: not stated in the filing.');
+        if (e.guidanceCheck) extra.push(`Guidance comparison: ${e.guidanceCheck.display}`);
         const unknowns: string[] = [];
         if (!e.revenue?.prev) unknowns.push('Revenue a year ago: not stated in the filing');
         if (!e.netIncome) unknowns.push('Net income: not stated in the release');
@@ -1171,12 +1343,16 @@ export function buildUsCard(inp: UsCardInput): UsCard | null {
             : kind === 'divestiture' ? 'A sale of a business — what matters is the cash received vs what the business earned, and what the cash is used for.'
               : `${d.structure === 'cash' ? 'A cash purchase' : 'An acquisition'} sized against the company — what matters is what the target earns (revenue / profit) and how it is paid for${d.targetRevenueM != null ? '' : ' (target revenue not stated)'}.`,
           unknowns, flags: [], quantified: price != null || d.ownershipPct != null, quote: d.quotes[0] || null, earnings: null, deal: d, catalysts: cats,
+          acquisition: acquisitionEconomics(d, allText),
         };
       }
     }
 
     // ── ORDERS / OTHER ──
     const releaseFirst = [...allDocs.filter((d) => /^(ex99|release|ex992)$/.test(d.role)), ...allDocs.filter((d) => !/^(ex99|release|ex992)$/.test(d.role))].map((d) => d.text).join(' \n ');
+    // ── LITIGATION (zzz835) - a jury verdict / damages award is never an order or contract ──
+    const lit = readLitigation(releaseFirst);
+    if (lit) return litigationCard(lit, { mcap, ticker: inp.ticker, cats, source: baseSource(ROLE_WORD[release?.role || 'primary'] || null) });
     const other = readUsOther(releaseFirst, { form, items: f.items });
     if (other) {
       const kindBand: keyof typeof US_BANDS | null = other.kind === 'offering' ? 'offering' : other.kind === 'buyback' ? 'buyback' : null;
@@ -1193,10 +1369,11 @@ export function buildUsCard(inp: UsCardInput): UsCard | null {
       return {
         v: US_CARD_VERSION, kind: other.kind, kindWord: other.word, eventType: other.kind === 'fda' || other.kind === 'clinical' ? 'Regulatory approval' : other.kind === 'offering' ? 'Fundraising' : other.kind === 'buyback' ? 'Buyback' : other.kind === 'guidance' ? 'Guidance' : 'Rating action',
         stage: other.kind === 'offering' || other.kind === 'fda' ? 'EXECUTED' : 'UNKNOWN', stageText: null,
-        headline: clip(other.line, 160), whatChanged: wc, extra: [],
-        material: r ? { label: r.label, how: r.how, ratios: r.ratio ? [r.ratio] : [] } : { label: 'UNKNOWN', how: other.kind === 'fda' || other.kind === 'clinical' ? 'A binary event — its size is the revenue the product can earn, which the filing does not state.' : 'No amount stated in the filing — it cannot be sized.', ratios: [] },
+        headline: clip(other.line, 160), whatChanged: wc, extra: other.clinical ? other.clinical.lines : [],
+        material: other.kind === 'clinical' ? { label: 'UNKNOWN', how: 'A clinical read-out has no dollar amount. Its weight rests on endpoint quality, effect size, statistical evidence, safety, the regulatory path and the addressable market - each is shown below only when the cited filing states it.', ratios: [] } : r ? { label: r.label, how: r.how, ratios: r.ratio ? [r.ratio] : [] } : { label: 'UNKNOWN', how: other.kind === 'fda' ? 'A binary event — its size is the revenue the product can earn, which the filing does not state.' : 'No amount stated in the filing — it cannot be sized.', ratios: [] },
         polarity: other.polarity, source: baseSource(ROLE_WORD[release?.role || 'primary'] || null), whyResearch: why[other.kind] || 'Read the filing for the size of the event.',
-        unknowns: other.valueM == null ? ['Amount: not stated in the filing'] : [], flags: other.flags, quantified: other.valueM != null, quote: other.quote, earnings: null, deal: null, catalysts: cats,
+        unknowns: other.kind === 'clinical' && other.clinical ? other.clinical.notDisclosed.map((k) => `${CLIN_LABEL[k] || k}: ${CLIN_NOT_DISCLOSED}`) : other.valueM == null ? ['Amount: not stated in the filing'] : [], flags: other.flags, quantified: other.valueM != null, quote: other.quote, earnings: null, deal: null, catalysts: cats,
+        clinical: other.clinical || null,
       };
     }
     const ord = readUsOrder(releaseFirst);
@@ -1246,7 +1423,7 @@ export function buildUsCard(inp: UsCardInput): UsCard | null {
         v: US_CARD_VERSION, kind: 'other', kindWord, eventType: deck || debtOnly ? 'No identified catalyst' : f.items.includes('1.01') ? 'Contract' : 'No identified catalyst', stage: f.items.includes('1.01') && !debtOnly ? 'SIGNED' : 'UNKNOWN', stageText: null,
         headline: clip(what || kindWord, 170),
         whatChanged: `${what ? `As filed: “${clip(what, 220)}”` : kindWord}${what && /\$\s?\d/.test(what) ? ' — not sized against the company' : ' — no amount stated in the filing'}`,
-        extra: cats.length ? [`Mentioned in the filing: ${cats.slice(0, 4).map((c) => c.label.toLowerCase()).join(' · ')}`] : ['Catalyst scan: no catalyst found in the filing text (about 60 event types checked).'],
+        extra: cats.length ? [`Mentioned in the filing: ${cats.slice(0, 4).map((c) => c.label.toLowerCase()).join(' · ')}`] : [what ? 'Catalyst scan: event found, low information - no material operating catalyst found in the filing text (about 60 event types checked).' : 'Catalyst scan: no catalyst found in the filing text (about 60 event types checked).'],
         material: { label: 'UNKNOWN', how: 'No amount is stated in the filing, so it cannot be sized against the company.', ratios: [] },
         polarity: 'neutral', source: baseSource(ROLE_WORD[release?.role || 'primary'] || null),
         whyResearch: deck ? 'A presentation or appointment restates the story — read it for any new figure; it is not by itself an event.' : debtOnly ? 'Borrowing or repaying debt is financing, not an operating event — it does not explain a move by itself.' : clinical ? 'Clinical data were presented — what matters is the size of the effect, safety, and the path and time to approval; the filing does not size it.' : 'A filed event with no amount stated — read the filing for its terms (value, counterparty, timing) before judging it.',

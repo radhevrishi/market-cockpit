@@ -234,7 +234,7 @@ export function prevNyseSession(ymd: string): string {
   for (let i = 0; i < 10 && !isNyseTradingDay(d); i++) d = addDays(d, -1);
   return d;
 }
-const closeMinutes = (ymd: string) => (NYSE_EARLY_CLOSES.has(ymd) ? 13 * 60 : 16 * 60);
+export const closeMinutes = (ymd: string) => (NYSE_EARLY_CLOSES.has(ymd) ? 13 * 60 : 16 * 60);
 
 export type UsPhase = 'pre_market' | 'regular' | 'after_hours' | 'closed_day';
 export function usPhaseAt(d: Date): UsPhase {

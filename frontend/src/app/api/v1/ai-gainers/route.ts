@@ -31,7 +31,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { kvGet, kvSet } from '@/lib/kv';
-import { fetchIndiaGainers, INDIA_GAINERS_URL, indiaSession, partitionByCap, LARGE_CAP_MIN_CR } from '@/lib/ai-gainers/screener-gainers';
+import { fetchIndiaGainers, INDIA_GAINERS_URL, indiaSession, partitionByCap, LARGE_CAP_MIN_CR, describeIndiaCriteria } from '@/lib/ai-gainers/screener-gainers';
+import { marketRunOf } from '@/lib/ai-gainers/research-present';
+import { CATALYST_WINDOWS } from '@/lib/ai-gainers/research-view';
 import { istLastNWeekdays } from '@/lib/market-hours';
 import { readAnnouncementCached, worthReading, type AnnouncementItem } from '@/lib/ai-gainers/announcement-reader';
 import { extractPdfText } from '@/lib/pdf-text-extractor';
@@ -719,6 +721,10 @@ async function scan(req: NextRequest) {
     market,
     generated_at: now,
     session,
+    // zzz835: the run's session date / generated / data-as-of / status / final flag, on the exchange clock.
+    // The page recomputes it with its own clock (a cached scan is older than it looks).
+    run: market === 'IN' ? marketRunOf({ market: 'IN', sessionDate: session!.date, scanAt: now })
+      : gainersRes.moveWindow === '1D' ? marketRunOf({ market: 'US', sessionDate: gainersRes.asOf?.session ?? etToday(), scanAt: now }) : null,
     served_from_cache: false,
     funnel,
     gainers_scanned: gainers.length,
@@ -737,6 +743,8 @@ async function scan(req: NextRequest) {
       window: `1-day return — ${session!.label}`,
       session,
       large_cap_min_cr: LARGE_CAP_MIN_CR,
+      // zzz835: India states its scan criteria the way the US page does.
+      criteria_summary: describeIndiaCriteria({ total: indiaRes?.totalReported ?? null, read: indiaRes?.rows.length ?? 0, largeCapsExcluded: capSplit.largeCaps.length, windowThisMove: CATALYST_WINDOWS.IN.thisMove, windowRecent: CATALYST_WINDOWS.IN.recent }),
       excluded_large_caps: capSplit.largeCaps.map((g) => ({ ticker: g.ticker, company: g.company, move_pct: g.movePct, market_cap: g.marketCapCr })),
       proxy_cache_age_ms: indiaRes?.proxyCacheAgeMs ?? null,
       rows: gainers.length,
