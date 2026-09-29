@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-09-29T14:57:28.761Z",
+  "lastSync": "2026-09-29T18:15:18.346Z",
   "workflowVersion": "zzz270",
   "approach": "scanner-api-interception (screeners) + direct scanner POST (watchlists)",
   "ok": 11,
@@ -11,8 +11,8 @@
       "screenerId": "sBtiBahk",
       "kind": "screener",
       "ok": true,
-      "size": 45832,
-      "rowCount": 40,
+      "size": 47064,
+      "rowCount": 41,
       "error": null
     },
     {
@@ -21,8 +21,8 @@
       "screenerId": "WJDx6FZ9",
       "kind": "screener",
       "ok": true,
-      "size": 8911,
-      "rowCount": 6,
+      "size": 15715,
+      "rowCount": 12,
       "error": null
     },
     {
@@ -31,8 +31,8 @@
       "screenerId": "Px4kG2hQ",
       "kind": "screener",
       "ok": true,
-      "size": 18079,
-      "rowCount": 15,
+      "size": 16952,
+      "rowCount": 14,
       "error": null
     },
     {
@@ -41,8 +41,8 @@
       "screenerId": "9IcX30Ez",
       "kind": "screener",
       "ok": true,
-      "size": 84163,
-      "rowCount": 74,
+      "size": 80929,
+      "rowCount": 71,
       "error": null
     },
     {
@@ -61,8 +61,8 @@
       "screenerId": "RtSuWTgK",
       "kind": "screener",
       "ok": true,
-      "size": 46659,
-      "rowCount": 39,
+      "size": 50099,
+      "rowCount": 42,
       "error": null
     },
     {
@@ -71,7 +71,7 @@
       "screenerId": "5gzenlmQ",
       "kind": "screener",
       "ok": true,
-      "size": 20294,
+      "size": 20268,
       "rowCount": 16,
       "error": null
     },
@@ -81,7 +81,7 @@
       "screenerId": "GHHf1HVl",
       "kind": "screener",
       "ok": true,
-      "size": 106393,
+      "size": 106852,
       "rowCount": 100,
       "error": null
     },
@@ -91,8 +91,8 @@
       "screenerId": "oRvEFfVY",
       "kind": "screener",
       "ok": true,
-      "size": 87952,
-      "rowCount": 79,
+      "size": 100008,
+      "rowCount": 90,
       "error": null
     },
     {
@@ -101,7 +101,7 @@
       "screenerId": "SwBe8R8b",
       "kind": "screener",
       "ok": true,
-      "size": 34911,
+      "size": 34865,
       "rowCount": 30,
       "error": null
     },
