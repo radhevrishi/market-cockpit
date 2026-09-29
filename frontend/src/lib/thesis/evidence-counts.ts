@@ -245,3 +245,66 @@ export function evidenceAttention(rows: AttentionRow[], now?: Date | string): { 
   const line = total ? `${total} need${total === 1 ? 's' : ''} attention — ${unread.length} unread, ${update.length} require${update.length === 1 ? 's' : ''} update` : 'Evidence up to date (latest filings on file)';
   return { unread, update, total, line };
 }
+
+export { evidenceLineOf, dedupeLabels } from './evidence-line';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ONE NUMBER, ONE MEANING — THE HEADER'S COUNTS RECONCILED.          (zzz837)
+//
+// The page printed "190 names failing your criteria", "206 of the 286 miss",
+// "bench 255", "Bench 65", "65 on the bench", "CB 239 · India 80 · US 159" and
+// "Conviction Beats 80": seven numbers for four populations, no sum. They are
+// one partition of the India Conviction Beats list:
+//
+//   list 286 = held on the list 31 + not held 255
+//   meets your criteria 80 = 15 held + 65 bench
+//   misses them 206 = 16 held + 190 bench
+//   "bench" (cards) = the 65 not-held names that meet; all 255 not held =
+//   65 meeting + 190 missing.  CB 239 = India 80 + US 159 (names meeting).
+//
+// Each figure below has an id, a label and a one-line meaning; the sentence is
+// built from the parts, so it adds up by construction (and says so if the
+// inputs do not).
+// ═══════════════════════════════════════════════════════════════════════════
+export interface PcCountsInput {
+  heldMeet: number; heldMiss: number; benchMeet: number; benchMiss: number;
+  /** Names on the US Conviction Beats list that meet the US criteria, when the page shows the combined chip. */
+  usMeet?: number | null;
+  /** Cards on the board: book cards (every holding is watched, whatever it grades). */
+  cardsBook?: number | null;
+}
+export interface PcCountFigure { id: string; label: string; n: number; meaning: string }
+export interface PcCountsReconciled {
+  figures: PcCountFigure[];
+  byId: Record<string, PcCountFigure>;
+  sentence: string;
+  cbChip: string | null;
+  consistent: boolean;
+}
+export function pcCountsReconciled(i: PcCountsInput): PcCountsReconciled {
+  const meet = i.heldMeet + i.benchMeet, miss = i.heldMiss + i.benchMiss;
+  const heldOnList = i.heldMeet + i.heldMiss, benchAll = i.benchMeet + i.benchMiss;
+  const list = meet + miss;
+  const us = i.usMeet ?? null;
+  const F = (id: string, label: string, n: number, meaning: string): PcCountFigure => ({ id, label, n, meaning });
+  const figures = [
+    F('list', 'Conviction Beats list', list, 'every name on your India Conviction Beats list'),
+    F('meet', 'Meet your criteria', meet, 'list names that pass your Conviction Beats criteria (held + bench)'),
+    F('miss', 'Miss your criteria', miss, 'list names that do not pass them (held + bench)'),
+    F('heldMeet', 'Held, meeting', i.heldMeet, 'names you hold that are on the list and pass'),
+    F('heldMiss', 'Held, missing', i.heldMiss, 'names you hold that are on the list and do not pass'),
+    F('bench', 'Bench', i.benchMeet, 'names you do not hold that meet your criteria — these are the bench cards'),
+    F('benchMiss', 'Bench names failing criteria', i.benchMiss, 'names you do not hold that do not pass — hidden unless you ask to see them'),
+    F('benchAll', 'Not held, all', benchAll, 'every list name you do not hold: bench meeting + failing'),
+    ...(us != null ? [F('cbBoth', 'Conviction Beats, India + US', meet + us, 'names meeting the criteria: India + US together')] : []),
+    ...(i.cardsBook != null ? [F('cards', 'Cards on the board', i.cardsBook + i.benchMeet, 'book cards + bench cards')] : []),
+  ];
+  const byId = Object.fromEntries(figures.map((f) => [f.id, f]));
+  const sentence = `List ${list} = ${meet} meet your criteria (${i.heldMeet} held + ${i.benchMeet} bench) + ${miss} miss them (${i.heldMiss} held + ${i.benchMiss} bench). `
+    + `"Bench" means the ${i.benchMeet} names you do not hold that meet your criteria; all ${benchAll} names you do not hold = ${i.benchMeet} meeting + ${i.benchMiss} failing. `
+    + `${heldOnList} of the ${list} are names you hold.`
+    + (us != null ? ` Conviction Beats ${meet + us} = India ${meet} + US ${us}, names meeting the criteria.` : '')
+    + (i.cardsBook != null ? ` Cards on the board: ${i.cardsBook + i.benchMeet} = ${i.cardsBook} book + ${i.benchMeet} bench.` : '');
+  const consistent = list === heldOnList + benchAll && meet + miss === list && benchAll === i.benchMeet + i.benchMiss;
+  return { figures, byId, sentence, cbChip: us != null ? `CB ${meet + us} = India ${meet} + US ${us}` : null, consistent };
+}

@@ -39,6 +39,7 @@ import { parseOneOff, oneOffLine } from './one-offs';
 import { SILENCE_WORDING } from './silent-check';
 import { deriveCurrentCapacity, productOfCapacity, productKey, powerOfTenApart, bottleneckHurtsSales, utilisationLow } from './transcript-evidence';
 import type { ChangeLine, LedgerDocument } from './evidence-ledger';
+import { croreFrom, orderBookImplausible } from './figure-guards';
 import {
   factTypeOf, metricGroupOf, validateReading, validateCashConversion, lineageOf, normalizeValue,
   comparability, capacityMismatch, isCapacityFigure, samePeriodPair, scopeOf, hasQuantity, isCommentaryOnly, RECURRING_METRICS, EVENT_METRICS,
@@ -1874,6 +1875,7 @@ export function extractVariables(
     .map(unitlessPriorGuard)
     .map((v) => planGuard(v, summary, opts?.period ?? null))
     .map(provenanceLabel)
+    .map((v, _i, all) => orderBookScaleGuard(v, all, graded))
     .map((v) => { const r = readingFor(v, ctx); return { ...v, reading: r, display: rowDisplay({ ...v, reading: r }) }; })
     // ── THE PERIOD'S OWN SERIES OUTRANKS AN OLD IN-TEXT MOVE.        (zzz775)
     // VADILALIND's capacity read "270,000 → 380,000 (+40.7%)" — a move the
@@ -1895,6 +1897,24 @@ export function extractVariables(
       const why = `history — installed capacity is unchanged since ${r.previous.period || 'the previous period'} (${r.previous.value}), so this addition predates ${opts?.period || 'the current period'}; not current-period evidence`;
       return { ...v, verdict: 'stated' as VarVerdict, unjudged: why };
     });
+}
+
+// ── AN ORDER BOOK MUST BE THE SIZE OF THE BUSINESS.                (zzz837)
+// NRBBEARING "Order book INR25 crores" beside a Rs 250 crore capex programme
+// (and a quarter's revenue many times that): a unit or scope slip is likelier
+// than a fact. Shown as "unit/scope unclear — validation required": counted
+// neither confirmed nor contradicted. Unknown stays unknown.
+export function orderBookScaleGuard(v: StructuralVar, all: StructuralVar[], graded: any | null | undefined): StructuralVar {
+  if (v.key !== 'order_book' || v.source !== 'filing' || v.unjudged) return v;
+  const ob = croreFrom(v.after);
+  if (ob == null) return v;
+  const capexRow = all.find((x) => x.key === 'capex' && x.source === 'filing');
+  const capexCr = croreFrom(capexRow?.after ?? capexRow?.plan?.value ?? null);
+  const revRaw = Number(graded?.sales_curr_cr);
+  const why = orderBookImplausible(ob, { capexProgrammeCr: capexCr, quarterRevenueCr: Number.isFinite(revRaw) && revRaw > 0 ? revRaw : null });
+  if (!why) return v;
+  return { ...v, verdict: 'stated', delta: null, unjudged: why,
+    validation: { state: 'UNCLEAR', flags: ['IMPLAUSIBLE_SCALE'], reason: why, metric_definition: null } } as StructuralVar;
 }
 
 // ── A PLANNED CAPACITY IS A TARGET, NOT CAPACITY ADDED.              (zzz784)

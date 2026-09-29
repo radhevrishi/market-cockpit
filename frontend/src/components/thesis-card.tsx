@@ -31,6 +31,8 @@ import type { VarVerdict, VariableReading, ReadingPoint, PeriodClass } from '@/l
 import type { ThesisVerdict } from '@/lib/thesis/status';
 import { VAR_GROUP, VAR_LABEL, GROUP_ORDER, GROUP_LABEL, ABSENCE_MARK, EVIDENCE_STATE_META, evidenceStateLine, type VarGroup } from '@/lib/thesis/taxonomy';
 import { ABFG_META, type AbfgResult } from '@/lib/earnings/pattern-abfg';
+import { dedupedCountRows } from '@/lib/thesis/evidence-line';
+import { confirmationBreakdown, isAiTypeRecord, aiTypeLine, CARD_AI_TYPE_LABEL, type AiTypeRecord } from '@/lib/thesis/ai-type';
 import type { CompanyLedger, FreshnessState, ChangeLine } from '@/lib/thesis/evidence-ledger';
 import { freshnessLine } from '@/lib/thesis/evidence-ledger';
 import { BASIS_LABEL } from '@/lib/thesis/comparison';
@@ -420,6 +422,11 @@ export interface ThesisCardProps {
    *  the setter. Absent → no picker is shown. */
   thesisType?: 'A' | 'B' | 'F' | 'G' | null;
   onThesisType?: (p: 'A' | 'B' | 'F' | 'G' | null) => void;
+  /** zzz837: the AI's answer for this name (a type, or 'undecided'), the click that asks AI, and its state. */
+  aiType?: AiTypeRecord | null;
+  onAiType?: () => void;
+  aiTypeBusy?: boolean;
+  aiTypeError?: string | null;
   symbol: string;
   market: 'IN' | 'US';
   tier?: string | null;
@@ -569,6 +576,15 @@ export function historyItems(a: ThesisAssessment, reportingPeriod?: string | nul
 
 export function ThesisCard(p: ThesisCardProps) {
   const [open, setOpen] = useState(!!p.defaultOpen);
+  // zzz837: cards are compact by default — the long reasoning and count detail sit behind one toggle.
+  const [detailsOpen, setDetailsOpen] = useState(!!p.defaultOpen);
+  // zzz837: a name is listed once — under the first row that names it; later rows say "same as above".
+  const ddRows = p.assessment ? dedupedCountRows(p.assessment.coverage as any) : [];
+  const dd = (rowName: string, state: string, fallback: string[]): string[] => {
+    const part = ddRows.find((r) => r.name === rowName)?.parts.find((x) => x.state === state);
+    if (!part) return fallback;
+    return part.names.length ? part.names : part.sameAsAbove > 0 ? [`same ${part.sameAsAbove} as above`] : [];
+  };
   const a = p.assessment;
   const sm = a ? STATUS_META[a.status] : null;
   const pm = p.pattern ? ABFG_META[p.pattern.pattern] : null;
@@ -651,7 +667,7 @@ export function ThesisCard(p: ThesisCardProps) {
         {p.onThesisType && (
           <select
             aria-label="Thesis type"
-            title={p.thesisType ? 'Thesis type set by you — choose "auto" to return to the automatic classification.' : p.pattern?.fit === 'nearest' ? `${p.pattern.because}` : p.pattern ? 'Automatic thesis type from the quarter\'s figures — you can override it.' : 'No figures on file for this company yet, so no thesis type can be worked out and no variable can move this card. Set why you hold it.'}
+            title={p.thesisType && p.aiType && isAiTypeRecord(p.aiType) ? `Thesis ${aiTypeLine(p.aiType)}. Choosing any type here makes it yours; choose "auto" to return to the automatic classification.` : p.thesisType ? 'Thesis type set by you — choose "auto" to return to the automatic classification.' : p.pattern?.fit === 'nearest' ? `${p.pattern.because}` : p.pattern ? 'Automatic thesis type from the quarter\'s figures — you can override it.' : 'No figures on file for this company yet, so no thesis type can be worked out and no variable can move this card. Set why you hold it.'}
             value={p.thesisType || ''}
             onChange={(e) => p.onThesisType!((e.target.value || null) as any)}
             style={{ fontSize: 12, fontWeight: 700, padding: '1px 4px', borderRadius: 3, background: 'transparent', color: p.pattern ? C.dim : '#F59E0B', border: `1px solid ${p.pattern ? C.border : '#F59E0B'}`, cursor: 'pointer' }}>
@@ -661,6 +677,30 @@ export function ThesisCard(p: ThesisCardProps) {
             <option value="F">F · Profit jump</option>
             <option value="G">G · Silent quality</option>
           </select>
+        )}
+        {/* zzz837: what AI did and what rules did, on the card. */}
+        {p.aiType && isAiTypeRecord(p.aiType) && p.thesisType && (
+          <span data-testid="ai-type-line" style={{ flexBasis: '100%', order: 98, fontSize: 12, color: C.dim, lineHeight: 1.45 }}>
+            <b style={{ color: C.cyan }}>{'\u2728'} {aiTypeLine(p.aiType)}.</b> {p.aiType.reason}
+            {p.aiType.justification.length > 0 ? <> Why: {p.aiType.justification.join(' · ')}.</> : null}
+            {p.aiType.notApplicable.length > 0 ? <> Checks that do not apply here (AI&apos;s view; the status still counts them as not disclosed, not negative): {p.aiType.notApplicable.map((n) => `${n.check}${n.instead ? ` \u2192 use ${n.instead}` : ''}`).join('; ')}.</> : null}
+            {' '}The type is AI&apos;s (used AI); the figures and the status are worked out by rules.
+          </span>
+        )}
+        {p.aiType && p.aiType.type === 'undecided' && !p.thesisType && (
+          <span data-testid="ai-type-undecided" style={{ flexBasis: '100%', order: 98, fontSize: 12, color: C.dim, lineHeight: 1.45 }}>
+            <b style={{ color: C.warn }}>{'\u2728'} AI could not decide this type on {p.aiType.at} — it stays provisional.</b> {p.aiType.reason}{p.aiType.rejected ? ` (${p.aiType.rejected})` : ''} Pick the type with the picker, or ask AI again.
+          </span>
+        )}
+        {p.onAiType && p.pattern?.fit === 'nearest' && !p.thesisType && (
+          <button data-testid="ai-type-one" onClick={p.onAiType} disabled={!!p.aiTypeBusy}
+            title="Asks AI to choose A, B, F or G (or say undecided) from this company's business description and filed figures. One call, only on click. AI never sees a price."
+            style={{ fontSize: 12.5, fontWeight: 700, padding: '2px 9px', borderRadius: 999, border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan, cursor: p.aiTypeBusy ? 'default' : 'pointer' }}>
+            {p.aiTypeBusy ? 'Asking AI…' : p.aiType?.type === 'undecided' ? '\u2728 Ask AI again' : CARD_AI_TYPE_LABEL}
+          </button>
+        )}
+        {p.aiTypeError && !p.thesisType && (
+          <span style={{ flexBasis: '100%', order: 98, fontSize: 12, color: C.warn }}>AI type call failed: {p.aiTypeError}</span>
         )}
         {p.dataSource === 'screener' && (
           <span title="These figures are screener.in's, not read from the filing by this portal's own engine. Wider coverage, one step further from the document."
@@ -683,8 +723,13 @@ export function ThesisCard(p: ThesisCardProps) {
             <span title={sm.meaning} style={{
               fontSize: 12.5, fontWeight: 900, padding: '2px 9px', borderRadius: 3,
               border: `1px solid ${sm.color}`, background: `${sm.color}18`, color: ink(sm.color),
-            }}>{sm.dot} {sm.label}{p.pattern?.fit === 'nearest' && !p.thesisType && a?.status !== 'THESIS_NOT_SET' ? ' (provisional thesis)' : ''}</span>
+            }}>{sm.dot} {sm.label}{p.pattern?.fit === 'nearest' && !p.thesisType && a?.status !== 'THESIS_NOT_SET' ? ' (provisional thesis)' : ''}{p.aiType && isAiTypeRecord(p.aiType) && p.thesisType ? ' (type chosen by AI)' : ''}</span>
           )}
+          {a?.status === 'CONFIRMATION_REQUIRED' && (() => {
+            const b = confirmationBreakdown([{ pattern: p.pattern, assessment: a }]);
+            const w = b.both ? 'needs type + evidence' : b.needsType ? 'needs type' : b.needsEvidence ? 'needs evidence' : null;
+            return w ? <span data-testid="cr-subreason" style={{ fontSize: 12, fontWeight: 700, color: C.faint }}>{w}</span> : null;
+          })()}
           {p.needsRead && !p.reading && (
             <button onClick={p.onRead} style={{
               fontSize: 13, fontWeight: 700, padding: '3px 10px', borderRadius: 999,
@@ -840,7 +885,12 @@ export function ThesisCard(p: ThesisCardProps) {
       {/* The one-line verdict is always visible; the evidence expands. */}
       {a && (
         <div style={{ marginTop: 7, fontSize: 14, color: C.dim, lineHeight: 1.55 }}>
-          <b style={{ color: ink(sm?.color) }}>{a.action}</b> — {a.actionLine.slice(a.action.length + 3)}
+          <b style={{ color: ink(sm?.color) }}>{a.action}</b> — {(() => {
+            const full = a.actionLine.slice(a.action.length + 3);
+            if (detailsOpen || full.length <= 230) return full;
+            const first = full.match(/^.{40,230}?[.;](?=\s|$)/)?.[0];
+            return (first || `${full.slice(0, 220).replace(/\s+\S*$/, '')}\u2026`);
+          })()}
         </div>
       )}
 
@@ -883,7 +933,9 @@ export function ThesisCard(p: ThesisCardProps) {
               {/Watch — /.test(bt.text) && <span data-testid="verdict-watch" style={{ fontWeight: 600, color: ink(C.warn) }}> · watch (not mapped to this thesis, status unchanged): {bt.text.split(/Watch — [^:]*: /)[1]?.replace(/\.$/, '')}</span>}</>, 'verdict-break')}
             {chip(dirColor, v.direction === 'UNKNOWN', v.directionWhy, <>DIRECTION: <b>{DIRECTION_WORD[v.direction]}</b>{v.directionWhy ? <span style={{ fontWeight: 500 }}> — {v.directionWhy}</span> : null}</>, 'verdict-direction')}
             {chip(evColor, v.evidence === 'UNCHECKED' || v.evidence === 'INCOMPLETE', v.evidenceWhy,
-              <>{v.evidence === 'INCOMPLETE' ? 'EVIDENCE COMPLETENESS' : 'EVIDENCE'}: <b>{EVIDENCE_WORD[v.evidence]}</b> ({v.coverage.confirmed}/{v.coverage.applicable} structural)
+              (v as any).evidenceLine
+              ? <>{v.evidence === 'INCOMPLETE' ? 'EVIDENCE COMPLETENESS' : 'EVIDENCE'}: <b data-testid="evidence-line">{(v as any).evidenceLine}</b></>
+              : <>{v.evidence === 'INCOMPLETE' ? 'EVIDENCE COMPLETENESS' : 'EVIDENCE'}: <b>{EVIDENCE_WORD[v.evidence]}</b> ({v.coverage.confirmed}/{v.coverage.applicable} structural)
                 {contradicted.length ? <span data-testid="evidence-contradicted" style={{ fontWeight: 700, color: ink(C.down) }}> · contradicted: {contradicted.join(', ')}</span> : null}
                 {histOpen.length ? <span data-testid="evidence-historical" style={{ fontWeight: 700, color: ink(C.warn) }}> · historical unresolved: {histOpen.join(', ')}</span> : null}
                 {missing.length ? <span style={{ fontWeight: 500 }}> · missing: {missing.join(', ')}</span> : null}</>, 'verdict-evidence')}
@@ -1053,6 +1105,13 @@ export function ThesisCard(p: ThesisCardProps) {
         </div>
       )}
 
+      {a && (
+        <button type="button" data-testid="card-details-toggle" onClick={() => setDetailsOpen((v) => !v)} aria-expanded={detailsOpen}
+          style={{ marginTop: 7, fontSize: 12.5, fontWeight: 700, padding: '2px 9px', borderRadius: 999, border: `1px solid ${C.border}`, background: 'transparent', color: C.dim, cursor: 'pointer' }}>
+          {detailsOpen ? '\u25be Details' : '\u25b8 Details'}
+        </button>
+      )}
+      {a && detailsOpen && (<>
       {/* ── HISTORICAL CONTEXT, APART FROM THE CURRENT PERIOD.    (zzz773)
           "Cash conversion -7.62× (last FY)" sat on the board as if it were
           Q1 FY27's reading and moved Q1 FY27's status. Every earlier-period
@@ -1120,9 +1179,9 @@ export function ThesisCard(p: ThesisCardProps) {
                   ...(name === 'STRUCTURAL' ? [['Confirmed', t.named.confirmed || [], C.up] as [string, string[], string]] : []),
                   ['Silent (unknown)', t.named.silent || [], C.flat],
                   ['Statement / target only', t.named.statementOnly || [], C.warn],
-                  ['Historical unresolved', t.named.historical || [], C.warn],
-                  ['Contradicted', t.named.contradicted, C.down], ['Pending', t.named.pending, C.warn],
-                  ['Unclear', t.named.unclear, C.flat], ['Watch', t.named.watch, C.warn],
+                  ['Historical unresolved', dd(name, 'historical', t.named.historical || []), C.warn],
+                  ['Contradicted', dd(name, 'contradicted', t.named.contradicted), C.down], ['Pending', dd(name, 'pending', t.named.pending), C.warn],
+                  ['Unclear', dd(name, 'unclear', t.named.unclear), C.flat], ['Watch', dd(name, 'watch', t.named.watch), C.warn],
                 ] as Array<[string, string[], string]>).filter(([, xs]) => xs.length > 0).map(([w, xs, col]) => (
                   <div key={w} data-testid={`tally-${name.toLowerCase().split(' ')[0]}-${w.toLowerCase().replace(/\s+/g, '-')}`} style={{ paddingLeft: 78, fontSize: 12.5, color: C.dim, lineHeight: 1.5 }}>
                     <b style={{ color: ink(col) }}>{w}:</b> {xs.map(humanTokens).join(' · ')}
@@ -1163,6 +1222,8 @@ export function ThesisCard(p: ThesisCardProps) {
           )}
         </div>
       )}
+
+      </>)}
 
       {a && open && (
         <>

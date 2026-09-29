@@ -213,7 +213,7 @@ describe('zzz811 — pages: no gate, no silent removal, US wording on the US pag
   test('India: the bench reads the server Conviction Beats list and no longer gates on the preset', () => {
     assert.match(useBook, /fetch\('\/api\/v1\/bench'/);
     assert.doesNotMatch(useBook, /benchPassingPreset\(/);
-    assert.match(inPage, /Also show names failing your criteria/);
+    assert.match(inPage, /Also show (bench )?names failing your criteria/);
     assert.match(inPage, /bench-preset-label/);
     assert.match(inPage, /large caps hidden/, 'the size filter says what it hides');
     assert.match(inPage, /visible\.map\(/, 'cards render from the progressive window');
@@ -327,8 +327,8 @@ describe('zzz811 — the bench is the Conviction Beats page under the owner\'s c
     assert.match(inPage, /const \[showFailing, setShowFailing\] = useState\(false\)/);
     assert.match(usPage, /const \[showFailing, setShowFailing\] = useState\(false\)/);
     assert.match(inPage, /const \[smallMidOnly, setSmallMidOnly\] = useState\(false\)/);
-    assert.match(inPage, /Also show names failing your criteria \(\{failingBench\.length\}\)/);
-    assert.match(usPage, /Also show names failing your criteria \(\{failingBench\.length\}\)/);
+    assert.match(inPage, /Also show bench names failing your criteria \(\{pcc \? pcc\.byId\.benchMiss\.n : failingBench\.length\}\)/);
+    assert.match(usPage, /Also show bench names failing your criteria \(\{pcc \? pcc\.byId\.benchMiss\.n : failingBench\.length\}\)/);
   });
 
   test('header: "under your criteria", same list, and a visible match / mismatch', () => {

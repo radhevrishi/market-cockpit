@@ -2581,6 +2581,7 @@ export default function PortfolioPage() {
                     <th key={`${col.key}|${col.label}|${i}`} onClick={() => !col.noSort && handleSort(col.key)} style={{
                       padding: '10px 12px', textAlign: col.align as any, fontSize: '10px', fontWeight: '700',
                       color: 'var(--mc-text-3)', letterSpacing: '0.5px', cursor: col.noSort ? 'default' : 'pointer', whiteSpace: 'nowrap',
+                      ...(col.label === 'EDIT' ? { position: 'sticky' as const, right: 0, zIndex: 2, backgroundColor: 'var(--mc-bg-1)' } : {}),
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: col.align === 'right' ? 'flex-end' : 'flex-start', gap: '4px' }}>
                         {col.label} {!col.noSort && <SortIcon field={col.key} />}
@@ -2746,19 +2747,17 @@ export default function PortfolioPage() {
                           {hasQuote ? fmtPct(r.changePercent) : '—'}
                         </span>
                       </td>
-                      <td style={{ padding: '10px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        <button onClick={() => setEditSymbol(editSymbol === r.symbol ? null : r.symbol)}
+                      <td data-testid={`edit-cell-${r.symbol}`} style={{ padding: '8px 10px', textAlign: 'right', whiteSpace: 'nowrap', position: 'sticky', right: 0, zIndex: 1, backgroundColor: 'var(--mc-bg-0, var(--mc-bg-1))', boxShadow: '-6px 0 8px -6px rgba(0,0,0,0.25)' }}>
+                        {/* zzz838: a visible, labelled Edit button on EVERY holding (was a dim icon-only button that sat off-screen on a wide table). Sticky at the right edge so it is always reachable. */}
+                        <button data-testid={`edit-btn-${r.symbol}`} onClick={() => setEditSymbol(editSymbol === r.symbol ? null : r.symbol)}
                           title={`Edit ${r.symbol} — entry price, quantity, notes`}
-                          style={{ background: 'none', border: 'none', color: editSymbol === r.symbol ? 'var(--mc-info)' : 'var(--mc-text-4)', cursor: 'pointer', padding: '4px', borderRadius: '4px', marginRight: 2 }}
-                          onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(34,211,238,0.12)'; e.currentTarget.style.color = '#22D3EE'; }}
-                          onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = editSymbol === r.symbol ? '#22D3EE' : '#4A5B6C'; }}>
-                          <Edit3 style={{ width: '14px', height: '14px' }} />
+                          aria-label={`Edit ${r.symbol}`}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: editSymbol === r.symbol ? 'rgba(34,211,238,0.15)' : 'transparent', border: '1px solid var(--mc-info)', color: 'var(--mc-info)', cursor: 'pointer', padding: '3px 9px', borderRadius: 6, fontSize: 11, fontWeight: 800, marginRight: 6 }}>
+                          <Edit3 style={{ width: '12px', height: '12px' }} />Edit
                         </button>
-                        <button onClick={() => handleRemove(r.symbol)} title="Remove from portfolio"
-                          style={{ background: 'none', border: 'none', color: 'var(--mc-text-4)', cursor: 'pointer', padding: '4px', borderRadius: '4px' }}
-                          onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.1)'; e.currentTarget.style.color = '#EF4444'; }}
-                          onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = '#4A5B6C'; }}>
-                          <Trash2 style={{ width: '14px', height: '14px' }} />
+                        <button data-testid={`remove-btn-${r.symbol}`} onClick={() => handleRemove(r.symbol)} title="Remove from portfolio" aria-label={`Remove ${r.symbol}`}
+                          style={{ background: 'none', border: '1px solid var(--mc-border-2)', color: 'var(--mc-text-3)', cursor: 'pointer', padding: '3px 6px', borderRadius: 6 }}>
+                          <Trash2 style={{ width: '13px', height: '13px' }} />
                         </button>
                       </td>
                     </tr>

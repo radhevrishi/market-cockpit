@@ -13,6 +13,8 @@
 // shared engine's, untouched. No price is an input: the row carries none.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { priorVerdictsOf } from '@/lib/thesis/prior-verdicts';
+import { aiPattern, isAiTypeRecord, type AiTypeRecord } from '@/lib/thesis/ai-type';
 import { classifyOrNearest, classifyWithFiling, manualPattern, type AbfgResult, type AbfgPattern } from '@/lib/earnings/pattern-abfg';
 import { extractVariables, rowChangeLines } from '@/lib/thesis/variables';
 import { buildComparisons, historyDepth, type MetricComparison } from '@/lib/thesis/comparison';
@@ -247,13 +249,17 @@ export function usCapexChain(chain: CapexChain | null, summary: any | null, grad
   };
 }
 
+/** zzz837: the overrides entries the AI chose (the owner clicked "Let AI choose"). */
+export const US_AI_RECORDS: Record<string, AiTypeRecord> = {};
+
 export function assessUsRow(row0: UsRow, overrides: Record<string, AbfgPattern | null | undefined> = {}, now: Date | string = new Date()): UsRow {
   const ov = overrides[String(row0.symbol || '').toUpperCase()];
   // zzz793: one company's evidence only, and only real figures (lib/us-thesis/sanitize).
   const cleanLedger = row0.ledger ? isolateUsLedger(row0.ledger, row0.symbol) : row0.ledger;
   const cleanSummary = row0.summary ? sanitizeUsSummary(row0.summary).summary : row0.summary;
   const row1: UsRow = { ...row0, ledger: cleanLedger ?? null, summary: cleanSummary };
-  const row: UsRow = ov ? { ...row1, pattern: manualPattern(ov) } : row1;
+  const aiRec = US_AI_RECORDS[String(row0.symbol || '').toUpperCase()];
+  const row: UsRow = ov ? { ...row1, pattern: aiRec && isAiTypeRecord(aiRec) && aiRec.type === ov ? aiPattern(ov, aiRec) : manualPattern(ov) } : row1;
   const comparisons = buildComparisons(row.ledger || null);
   const hist = historyDepth(row.ledger || null);
   const period = row.reportingPeriod || row.ledger?.latest_period || null;
@@ -278,6 +284,7 @@ export function assessUsRow(row0: UsRow, overrides: Record<string, AbfgPattern |
   })();
   const capex = usCapexChain(buildCapexChain(row.summary, vars, row.ledger || null), row.summary, row.graded);
   const assessment = withThesisSet(row, assessThesis({
+    priorVerdicts: priorVerdictsOf(row.ledger || null, { pattern: row.pattern?.pattern ?? null, patternFit: (row.pattern as any)?.fit ?? null }),
     capexState: capex ? { build: capex.build || null, economic: capex.earning?.economic ?? null, earningState: capex.earning?.state ?? null } : null,
     pattern: row.pattern?.pattern ?? null,
     patternFit: (row.pattern as any)?.fit ?? null,

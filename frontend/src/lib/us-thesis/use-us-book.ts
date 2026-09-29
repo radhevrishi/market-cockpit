@@ -38,7 +38,9 @@ import { recordPromises } from '@/lib/thesis/guidance-ledger';
 import { whatChanged, type CompanyLedger } from '@/lib/thesis/evidence-ledger';
 import { previousPeriod } from '@/lib/thesis/prior-period';
 import { evidenceReadLine, changesNote } from '@/lib/thesis/evidence-counts';
-import { assessUsRow, applyUsLedger, newUsRow, usPromiseKey, autoPattern, usFiguresSettled, type UsRow } from './assess';
+import { isAiTypeRecord, type AiTypeRecord } from '@/lib/thesis/ai-type';
+import { applyAiRecord } from '@/lib/thesis/ai-type-store';
+import { US_AI_RECORDS, assessUsRow, applyUsLedger, newUsRow, usPromiseKey, autoPattern, usFiguresSettled, type UsRow } from './assess';
 import { usDetQueue, type UsDetEvidence } from './det-evidence';
 import { normalizeUsTicker } from '@/lib/us-book/import';
 import { usFreshness } from './calendar';
@@ -216,6 +218,7 @@ export function useUsBook() {
   const [priorBatch, setPriorBatch] = useState<Batch>({ running: false, done: 0, total: 0 });
   const [checkBatch, setCheckBatch] = useState<{ running: boolean; done: number; total: number; found: number }>({ running: false, done: 0, total: 0, found: 0 });
   const [thesisTypes, setThesisTypes] = useState<Record<string, AbfgPattern>>({});
+  const [thesisAi, setThesisAi] = useState<Record<string, AiTypeRecord>>({});
   const [cbCount, setCbCount] = useState<number>(0);
   const [cbInfo, setCbInfo] = useState<UsCbInfo | null>(null);
   const [cbCriteria, setCbCriteria] = useState<CbCriteriaInfo | null>(null);
@@ -328,7 +331,10 @@ export function useUsBook() {
       try {
         const j = await readJson(await fetch('/api/v1/us-thesis/evidence?thesis_types=1', { cache: 'no-store', signal: AbortSignal.timeout(20_000) }));
         typesRef.current = (j?.thesis_types || {}) as Record<string, AbfgPattern>;
-        if (!cancelled) setThesisTypes(typesRef.current);
+        const aiMap = (j?.thesis_ai || {}) as Record<string, AiTypeRecord>;
+        for (const k of Object.keys(US_AI_RECORDS)) delete US_AI_RECORDS[k];
+        for (const [k, v] of Object.entries(aiMap)) US_AI_RECORDS[k.toUpperCase()] = v;
+        if (!cancelled) { setThesisTypes(typesRef.current); setThesisAi(aiMap); }
       } catch { /* automatic classification stands */ }
 
       // ── STAGE 1 — the universe (no price in it) + US Conviction Beats
@@ -605,6 +611,8 @@ export function useUsBook() {
     const key = sym.toUpperCase();
     const map = { ...typesRef.current };
     if (p) map[key] = p; else delete map[key];
+    delete US_AI_RECORDS[key]; // zzz837: the owner's own choice always wins over AI's
+    setThesisAi((m) => { const n = { ...m }; delete n[key]; return n; });
     typesRef.current = map;
     setThesisTypes(map);
     const cur = rowsRef.current[sym];
@@ -612,7 +620,23 @@ export function useUsBook() {
     try { await fetch('/api/v1/us-thesis/evidence', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'thesis_type', ticker: key, pattern: p }) }); } catch { /* kept for this session */ }
   }, []);
 
-  return { rows, excluded, universeError, loading, evidenceLoading, batch, priorBatch, checkBatch, readFiling, readAll, checkAll, readPriorPeriods, stop, thesisTypes, setThesisType, needsPrior, cbCount, cbInfo, cbCriteria, cbPassing, cbExtras, retryFigures, detBatch, usBook };
+  /** zzz837: file an AI answer for one name (the route already saved it). A type the owner chose stands. */
+  const applyAiType = useCallback((sym: string, rec: AiTypeRecord) => {
+    const key = sym.toUpperCase();
+    const r = applyAiRecord(typesRef.current as Record<string, string>, US_AI_RECORDS, key, rec);
+    if (!r.applied) return false;
+    US_AI_RECORDS[key] = rec;
+    const map = { ...typesRef.current };
+    if (isAiTypeRecord(rec)) map[key] = rec.type as AbfgPattern; else delete map[key];
+    typesRef.current = map;
+    setThesisTypes(map);
+    setThesisAi((m) => ({ ...m, [key]: rec }));
+    const cur = rowsRef.current[sym];
+    if (cur) put(sym, assessUsRow(cur, map));
+    return true;
+  }, []);
+
+  return { rows, excluded, universeError, loading, evidenceLoading, batch, priorBatch, checkBatch, readFiling, readAll, checkAll, readPriorPeriods, stop, thesisTypes, thesisAi, applyAiType, setThesisType, needsPrior, cbCount, cbInfo, cbCriteria, cbPassing, cbExtras, retryFigures, detBatch, usBook };
 }
 
 async function postStatus(row: UsRow): Promise<void> {

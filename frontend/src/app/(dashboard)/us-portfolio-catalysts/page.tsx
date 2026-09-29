@@ -51,6 +51,10 @@ import { usCbReconcile } from '@/lib/conviction-beats-us';
 import { decodeHTMLEntities } from '@/lib/html-decode';
 import { buildBookCheck } from '@/lib/thesis/book-membership';
 import { aiReadPlan, aiReadStatus, aiSourcesExplainer } from '@/lib/thesis/ai-read';
+import { pcCountsReconciled } from '@/lib/thesis/evidence-counts';
+import { aiTypePlan, confirmationBreakdown } from '@/lib/thesis/ai-type';
+import { useAiTypeResolver } from '@/lib/thesis/use-ai-type';
+import { AiResolveBar, ProvisionalBanner } from '@/components/thesis-ai-resolve';
 
 const C = {
   bg: 'var(--mc-bg-1)', border: 'var(--mc-bg-4)', text: 'var(--tc-text, #F1F5F9)',
@@ -69,7 +73,7 @@ const pill = (on: boolean, color = C.cyan): React.CSSProperties => ({
 });
 
 export default function UsPortfolioCatalystsPage() {
-  const { rows, excluded, universeError, loading, evidenceLoading, batch, priorBatch, checkBatch, readFiling, readAll, checkAll, readPriorPeriods, stop, thesisTypes, setThesisType, needsPrior, cbCriteria, cbPassing, cbExtras, retryFigures, detBatch, usBook } = useUsBook();
+  const { rows, excluded, universeError, loading, evidenceLoading, batch, priorBatch, checkBatch, readFiling, readAll, checkAll, readPriorPeriods, stop, thesisTypes, thesisAi, applyAiType, setThesisType, needsPrior, cbCriteria, cbPassing, cbExtras, retryFigures, detBatch, usBook } = useUsBook();
   const [filterRaw, setFilterRaw] = useUrlParam<string>('st', '');
   const filter = (filterRaw || null) as ThesisStatus | null;
   const setFilter = (v: ThesisStatus | null) => setFilterRaw(v || '');
@@ -86,6 +90,11 @@ export default function UsPortfolioCatalystsPage() {
   const [showFailing, setShowFailing] = useState(false);
   const all0 = useMemo(() => Object.values(rows), [rows]);
   const failingBench = useMemo(() => all0.filter((r) => r.origin === 'bench' && r.preset?.state === 'fail'), [all0]);
+  // zzz837: one label per number, and a sentence that adds up (lib/thesis/evidence-counts pcCountsReconciled).
+  const pcc = useMemo(() => cbCriteria ? pcCountsReconciled({
+    heldMeet: cbCriteria.heldPassing, benchMeet: Math.max(0, cbCriteria.passing - cbCriteria.heldPassing),
+    heldMiss: Math.max(0, cbCriteria.failing - failingBench.length), benchMiss: failingBench.length,
+  }) : null, [cbCriteria, failingBench.length]);
   // zzz823: the Book check — My US book = the US Portfolio Book's saved
   // holdings, nothing else; a non-US listing is saved but not assessed (no SEC).
   const bookCheck = useMemo(() => {
@@ -175,6 +184,19 @@ export default function UsPortfolioCatalystsPage() {
   const aiPlan = useMemo(() => aiReadPlan(list as any), [list]);
   const aiPage = useMemo(() => aiReadPlan(inSource as any), [inSource]);
   const [aiPick, setAiPick] = useState<'all' | 'incomplete' | 'withoutAi' | 'withGaps'>('all');
+  // zzz837: let AI choose the types (and fill the missing details) — one click each, never automatic.
+  const live = useRef<any>({});
+  live.current = { rows, list, aiPlan };
+  const aiType = useAiTypeResolver({ market: 'US', getRow: (sym) => (live.current.rows as any)?.[sym] || (live.current.list as any[])?.find((x) => x.symbol === sym) || null, applyAiType });
+  const aiTypePl = useMemo(() => aiTypePlan(list as any, thesisTypes as any, thesisAi as any), [list, thesisTypes, thesisAi]);
+  const crBreak = useMemo(() => confirmationBreakdown(inSource as any), [inSource]);
+  const resolveAll = () => aiType.resolveAll({
+    typeSyms: aiTypePl.names,
+    gapSyms: () => (live.current.aiPlan?.withGaps as string[]) || [],
+    fillGaps: (syms) => readAll(syms, { reprocess: true }),
+    gapsOf: (sym) => { const r = (live.current.list as any[])?.find((x) => x.symbol === sym); return r ? aiReadStatus(r).gaps : 0; },
+    stillIncomplete: () => { const pl = aiReadPlan((live.current.list as any[]) || []); return new Set([...pl.withGaps, ...pl.incomplete]).size; },
+  });
   const aiSyms = aiPick === 'incomplete' ? aiPlan.incomplete : aiPick === 'withoutAi' ? aiPlan.withoutAi : aiPick === 'withGaps' ? aiPlan.withGaps : aiPlan.all;
   const needPrior = list.filter((r) => needsPrior(r));
   const anyRunning = batch.running || priorBatch.running || checkBatch.running;
@@ -323,21 +345,21 @@ export default function UsPortfolioCatalystsPage() {
           onJump={(t) => { setView('board'); setSource('all'); jumpTo(t); }} />
       ) : (<>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        {([['all', `All US-listed ${uc.shown}`], ['book', `📗 My US book ${uc.book}`], ['bench', `Bench ${uc.bench}${cbOnPage ? ` (${cbOnPage} Conviction Beats names you do not hold${uc.bench > cbOnPage ? ` + ${uc.bench - cbOnPage} from your own bench list` : ''})` : ''}`], ['cb', `🏆 Conviction Beats (${cbCriteria ? cbCriteria.passing : '…'})`]] as Array<[typeof source, string]>).map(([k, label]) => (
+        {([['all', `All US-listed ${uc.shown}`], ['book', `📗 My US book ${uc.book}`], ['bench', `Bench ${pcc ? pcc.byId.bench.n : uc.bench}${cbOnPage ? ` (${cbOnPage} Conviction Beats names you do not hold${uc.bench > cbOnPage ? ` + ${uc.bench - cbOnPage} from your own bench list` : ''})` : ''}`], ['cb', `🏆 Conviction Beats (${cbCriteria ? cbCriteria.passing : '…'})`]] as Array<[typeof source, string]>).map(([k, label]) => (
           <button key={k} data-testid={`us-source-${k}`} onClick={() => setSource(k)} style={pill(source === k)}
             title={k === 'cb' ? 'Every name the US Conviction Beats page shows under your saved criteria — the ones you hold (tagged “📗 also in My book”) and the ones you do not.' : undefined}>{label}</button>
         ))}
         {(failingBench.length > 0 || showFailing) && (
           <button data-testid="us-show-failing-chip" onClick={() => setShowFailing((v) => !v)} style={pill(showFailing, C.amber)}
             title="US Conviction Beats names you do not hold that miss your US Conviction Beats criteria. Off by default; each card says which criteria it misses.">
-            {showFailing ? '✓ ' : ''}Also show names failing your criteria ({failingBench.length})
+            {showFailing ? '✓ ' : ''}Also show bench names failing your criteria ({pcc ? pcc.byId.benchMiss.n : failingBench.length})
           </button>
         )}
         {excluded.length > 0 && <span style={{ fontSize: 13, color: C.amber }}>{excluded.length} non-US listing{excluded.length === 1 ? '' : 's'} excluded (no SEC coverage) — listed below</span>}
       </div>
       {!loading && (
         <div data-testid="us-cb-criteria-line" style={{ fontSize: 13, lineHeight: 1.5, color: cbCriteria && cbOnPageCount !== cbCriteria.passing ? C.amber : C.dim }}>
-          <b style={{ color: cbCriteria && cbOnPageCount !== cbCriteria.passing ? C.amber : C.text }}>{cbCriteriaLine(cbCriteria, cbOnPageCount, showFailing)}</b>
+          <b style={{ color: cbCriteria && cbOnPageCount !== cbCriteria.passing ? C.amber : C.text }}>{cbCriteriaLine(cbCriteria, cbOnPageCount, showFailing).replace(/ \u00b7 \d+ of the \d+ on the list miss your criteria[^\u00b7]*/, '')}</b>{pcc && <div data-testid="pc-counts-sentence" style={{ color: C.dim }}>{pcc.sentence}{' '}{showFailing ? '(Names failing your criteria are shown, labelled.)' : '(Names failing your criteria are hidden \u2014 use the chip to show them.)'}{pcc.consistent ? '' : ' \u26a0 these figures do not add up \u2014 the list is still loading or changed.'}</div>}
           {cbRecon && (
             <div data-testid="us-cb-reconciliation" style={{ fontSize: 12.5, color: cbRecon.matches ? C.faint : C.amber }}>
               {cbRecon.line}{cbCriteria ? ` 🏆 ${cbCriteria.passing} = ${cbHeldOnPage} you hold + ${cbCriteria.passing - cbHeldOnPage} on the bench.` : ''}
@@ -388,9 +410,12 @@ export default function UsPortfolioCatalystsPage() {
           const m = STATUS_META[s];
           const on = filter === s;
           return (
-            <button key={s} data-testid={`pc-status-${s}`} onClick={() => { setFilter(on ? null : s); if (!on && typeof window !== 'undefined') setTimeout(() => document.getElementById('pc-cards-top')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60); }} title={`${m.meaning}${(ucView.byStatus[s] || 0) === 0 ? ' — none in this view' : ''}`} style={{ display: 'flex', alignItems: 'baseline', gap: 7, padding: '6px 12px', borderRadius: 8, cursor: 'pointer', border: `${on ? 2 : 1}px solid ${on ? m.color : C.border}`, background: on ? `${m.color}30` : C.bg, opacity: !on && !evidenceLoading && (ucView.byStatus[s] || 0) === 0 ? 0.55 : 1 }}>
+            <button key={s} data-testid={`pc-status-${s}`} onClick={() => { setFilter(on ? null : s); if (!on && typeof window !== 'undefined') setTimeout(() => document.getElementById('pc-cards-top')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60); }} title={`${m.meaning}${(ucView.byStatus[s] || 0) === 0 ? ' — none in this view' : ''}`} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 7, padding: '6px 12px', borderRadius: 8, cursor: 'pointer', border: `${on ? 2 : 1}px solid ${on ? m.color : C.border}`, background: on ? `${m.color}30` : C.bg, opacity: !on && !evidenceLoading && (ucView.byStatus[s] || 0) === 0 ? 0.55 : 1 }}>
               <span style={{ fontSize: 19, fontWeight: 900, color: `color-mix(in srgb, ${m.color} 65%, var(--tc-text, #F1F5F9))` }}>{evidenceLoading ? '…' : (ucView.byStatus[s] || 0)}</span>
               <span style={{ fontSize: 12.5, fontWeight: 800, color: C.dim }}>{m.dot} {m.label}</span>
+              {s === 'CONFIRMATION_REQUIRED' && !evidenceLoading && crBreak.total > 0 && (
+                <span data-testid="pc-cr-breakdown" style={{ flexBasis: '100%', fontSize: 11.5, fontWeight: 700, color: C.faint, textAlign: 'left' }}>{crBreak.line}</span>
+              )}
             </button>
           );
         })}
@@ -409,7 +434,7 @@ export default function UsPortfolioCatalystsPage() {
         onReadPrior={(t) => readPriorPeriods(t)} priorRunning={priorBatch.running}
         thesisLabel={(r: any) => {
           const set = thesisTypes[String(r.symbol).toUpperCase()];
-          if (set) return `${set} (set by you)`;
+          if (set) return thesisAi[String(r.symbol).toUpperCase()]?.type === set ? `${set} (chosen by AI — you can change it)` : `${set} (set by you)`;
           if (!usFiguresSettled(r)) return r.figures?.state === 'loading' ? 'loading SEC figures…' : 'SEC figures not in yet (request failed — retrying)';
           if (r.pattern?.pattern) return r.pattern.fit === 'nearest' ? `${r.pattern.pattern} (provisional — confirm it)` : `${r.pattern.pattern} (auto)`;
           return 'Not set';
@@ -468,6 +493,13 @@ export default function UsPortfolioCatalystsPage() {
             <span style={{ fontSize: 12.5, color: C.faint }}>{aiPlan.breakdown}</span>
           </span>
         )}
+        {/* ── ✨ LET AI CHOOSE THE TYPES, AND RESOLVE EVERYTHING. Click only. (zzz837) */}
+        {(!evidenceLoading && !batch.running && !checkBatch.running && !priorBatch.running) || aiType.run.running || aiType.run.summary ? (
+          <AiResolveBar typePlan={aiTypePl} gapCount={aiPlan.withGaps.length} run={aiType.run}
+            detailsBatch={batch} disabled={batch.running || priorBatch.running || checkBatch.running}
+            onTypes={() => void aiType.runTypes(aiTypePl.names)} onAll={() => void resolveAll()}
+            onStop={() => { aiType.stop(); stop(); }} />
+        ) : null}
         {!evidenceLoading && !batch.running && needReadOther.length > 0 && (
           <button data-testid="us-read-other-bench" onClick={() => readAll(needReadOther.map((r) => r.symbol))}
             title="US bench names that miss your Conviction Beats criteria (shown with the chip). Manual only — never started automatically. Two at a time; Stop works."
@@ -526,8 +558,7 @@ export default function UsPortfolioCatalystsPage() {
           <div style={{ fontSize: 13, color: C.dim, border: `1px dashed ${C.border}`, borderRadius: 8, padding: '8px 12px', lineHeight: 1.5 }}>
             {untyped.length > 0 && <><b style={{ color: '#A78BFA' }}>◇ Thesis not set — {untyped.length}.</b> There is nothing in the SEC data to fit a type from, so they sit in <b>THESIS NOT SET</b> — not intact, not weakening. Set why you hold each with the <b>thesis</b> picker on its card.
               {untyped.map((r) => <div key={r.symbol} style={{ fontSize: 12, color: C.faint, marginTop: 2 }}><b style={{ color: C.dim }}>{r.symbol}</b> — {usNoTypeReason(r.sec, r.gradedWhy)}</div>)}</>}
-            {nearest.length > 0 && <div style={{ marginTop: untyped.length ? 6 : 0 }}><b style={{ color: C.cyan }}>{nearest.length} on a provisional type (worked out from the company&apos;s own SEC data)</b> — CONFIRMATION REQUIRED: the status cannot read strengthening, on track or weakening until you confirm or change the type with the picker.
-              <div style={{ fontSize: 12, color: C.faint, marginTop: 4 }}>{nearest.map((r) => `${r.symbol} (provisional ${r.pattern!.pattern})`).join(' · ')}</div></div>}
+            {nearest.length > 0 && <div style={{ marginTop: untyped.length ? 6 : 0 }}><ProvisionalBanner nearest={nearest.length} weak={0} breakdown={crBreak} symbols={nearest.map((r) => `${r.symbol} (provisional ${r.pattern!.pattern})`)} /></div>}
           </div>
         ) : null;
       })()}
@@ -569,6 +600,10 @@ export default function UsPortfolioCatalystsPage() {
               {r0.figures?.state === 'failed' && <> <button onClick={() => retryFigures([r0.symbol])} style={{ ...pill(true, C.amber), fontSize: 12.5, marginLeft: 6 }}>Retry SEC figures</button></>}
             </div>
           ) : <ThesisCard
+            aiType={thesisAi[r.symbol.toUpperCase()] || null}
+            onAiType={() => void aiType.one(r.symbol, true)}
+            aiTypeBusy={!!aiType.busy[r.symbol]}
+            aiTypeError={aiType.errors[r.symbol] || null}
             thesisType={(thesisTypes[r.symbol.toUpperCase()] as any) || null}
             onThesisType={(t) => setThesisType(r.symbol, t)}
             symbol={r.symbol} market="US" tier={r.tier} pattern={r.pattern}

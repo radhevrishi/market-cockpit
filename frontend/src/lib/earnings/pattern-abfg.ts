@@ -103,6 +103,10 @@ export interface AbfgResult {
    *  loosely (auto, labelled as such); 'manual' — set by the owner. Absent
    *  on older results means exact. */
   fit?: 'exact' | 'nearest' | 'manual';
+  /** zzz837: who set a 'manual' type — absent means the owner; 'ai' means the owner clicked "Let AI choose". */
+  source?: 'ai';
+  aiAt?: string;
+  aiModel?: string;
   /** zzz804 — when EPS outran revenue by 3x+: 'passed' (explained by revenue ×
    *  margin and backed by cash), 'flagged' (not explained, or no cash), or
    *  absent when the ratio test never fired. */

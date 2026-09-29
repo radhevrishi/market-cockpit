@@ -266,7 +266,7 @@ describe('zzz827 — Portfolio Catalysts shows the whole Conviction Beats list',
     assert.match(wl, /writeCbTabSnapshot\(\{ tickers, savedCriteria: filtersMatchSaved\(filters, readCbPresetOptOut\(\)\)/);
     const pc = read('app/(dashboard)/portfolio-catalysts/page.tsx');
     assert.match(pc, /\['cb', `\\uD83C\\uDFC6 Conviction Beats \$\{cbRows\.length\}`/);
-    assert.match(pc, /\['bench', `Bench \$\{uc\.bench\}`/);
+    assert.match(pc, /\['bench', `Bench \$\{pcc \? pcc\.byId\.bench\.n : uc\.bench\}`/);
     assert.match(pc, /data-testid="cb-reconciliation"/);
     assert.match(pc, /data-testid="cb-also-held"/);
   });

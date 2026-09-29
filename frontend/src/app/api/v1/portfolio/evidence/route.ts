@@ -17,6 +17,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { loadLedgers, persistStatus, loadBatch, saveBatch, type BatchHeader } from '@/lib/thesis/evidence-store';
+import { applyUserType, IN_AI_TYPES_KEY, type AiMap } from '@/lib/thesis/ai-type-store';
 import { freshnessOf, batchProgress, type CompanyLedger, type CompanyEvidenceState } from '@/lib/thesis/evidence-ledger';
 
 export const dynamic = 'force-dynamic';
@@ -32,7 +33,8 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   if (searchParams.get('thesis_types')) {
     const map = (await kvGet<Record<string, string>>(THESIS_TYPES_KEY).catch(() => null)) || {};
-    return NextResponse.json({ ok: true, thesis_types: map });
+    const ai = (await kvGet<AiMap>(IN_AI_TYPES_KEY).catch(() => null)) || {};
+    return NextResponse.json({ ok: true, thesis_types: map, thesis_ai: ai });
   }
   const raw = (searchParams.get('tickers') || '').split(',').map((s) => s.trim().toUpperCase()).filter((s) => TICKER_RE.test(s));
   const tickers = Array.from(new Set(raw)).slice(0, 400);
@@ -81,9 +83,11 @@ export async function POST(req: NextRequest) {
     const pattern = body?.pattern == null ? null : String(body.pattern).toUpperCase();
     if (!TICKER_RE.test(ticker) || (pattern !== null && !PATTERNS.has(pattern))) return NextResponse.json({ ok: false, error: 'ticker and pattern (A/B/F/G or null) are required' }, { status: 400 });
     const map = (await kvGet<Record<string, string>>(THESIS_TYPES_KEY).catch(() => null)) || {};
-    if (pattern) map[ticker] = pattern; else delete map[ticker];
-    await kvSet(THESIS_TYPES_KEY, map);
-    return NextResponse.json({ ok: true, thesis_types: map });
+    const aiMap = (await kvGet<AiMap>(IN_AI_TYPES_KEY).catch(() => null)) || {};
+    // zzz837: the owner's picker always wins — it also removes any AI record for the name.
+    const r = applyUserType(map, aiMap, ticker, pattern);
+    await Promise.all([kvSet(THESIS_TYPES_KEY, r.types), kvSet(IN_AI_TYPES_KEY, r.ai)]);
+    return NextResponse.json({ ok: true, thesis_types: r.types, thesis_ai: r.ai });
   }
 
   if (action === 'status') {

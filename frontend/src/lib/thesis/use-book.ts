@@ -33,7 +33,10 @@ import {
   serverBenchToCbEntries, mergeCbEntries, cbFiltersForOwner, readCbPresetOptOut, cbCriteriaCheck,
 } from '@/lib/conviction-filter-india';
 import { classifyOrNearest, classifyWithFiling, type AbfgResult, manualPattern, type AbfgPattern } from '@/lib/earnings/pattern-abfg';
+import { aiPattern, isAiTypeRecord, type AiTypeRecord } from './ai-type';
+import { applyAiRecord, applyUserType } from './ai-type-store';
 import { extractVariables } from './variables';
+import { priorVerdictsOf } from './prior-verdicts';
 import { buildComparisons, historyDepth, type MetricComparison } from './comparison';
 import { rowChangeLines, deepRupeeGlyph } from './variables';
 import { readJson, humanError } from './safe-json';
@@ -233,6 +236,8 @@ async function loadIndiaConvictionBench(): Promise<{ server: any[]; local: any[]
  *  the server once per page; every assessment reads it, so an assignment
  *  survives every later re-classification. */
 const THESIS_OVERRIDES: Record<string, AbfgPattern | null> = {};
+/** zzz837: the entries of THESIS_OVERRIDES that the AI chose (the owner clicked "Let AI choose"). */
+const THESIS_AI: Record<string, AiTypeRecord> = {};
 
 /** zzz790: the page's own row builder, for the QA harness (same path as a bench row with no ledger). */
 export function assessBookRow(row0: BookRow): BookRow { return assess(row0); }
@@ -243,7 +248,7 @@ function assess(row0: BookRow): BookRow {
   // A provisional fallback is re-derived on every pass, so it always reflects
   // the latest figures and never outranks a real classification.
   const row1: BookRow = ov
-    ? { ...row0, pattern: manualPattern(ov) }
+    ? { ...row0, pattern: isAiTypeRecord(THESIS_AI[String(row0.symbol || '').toUpperCase()]) && THESIS_AI[String(row0.symbol || '').toUpperCase()].type === ov ? aiPattern(ov, THESIS_AI[String(row0.symbol || '').toUpperCase()]) : manualPattern(ov) }
     : (!row0.pattern || isProvisionalFallback(row0.pattern))
       ? { ...row0, pattern: classifyWithFiling(row0.graded, row0.summary) || classifyOrNearest(row0.graded) || provisionalType(row0.graded, row0.summary) }
       : row0;
@@ -290,7 +295,13 @@ function assess(row0: BookRow): BookRow {
   // zzz784: the capex chain first, so the status narrative reads the SAME
   // normalized build / economic state the capex row prints.
   const capex = buildCapexChain(row.summary, vars, row.ledger || null);
+  // zzz837: the prior quarter's verdicts, so a two-quarter break condition can fire for real.
+  const priorV = priorVerdictsOf(row.ledger || null, {
+    pattern: row.pattern?.pattern ?? null, patternFit: (row.pattern as any)?.fit ?? null, indiaDisclosure: row.market !== 'US',
+    business: businessProfileOf(row.graded, row.summary), financialKind: row.market !== 'US' ? (financialKindOf(row.graded, row.summary)?.kind ?? null) : null,
+  });
   const run = (pattern: BookRow['pattern']) => assessThesis({
+      priorVerdicts: priorV,
       capexState: capex ? { build: capex.build || null, economic: capex.earning?.economic ?? null, earningState: capex.earning?.state ?? null } : null,
       pattern: pattern?.pattern ?? null,
       patternFit: (pattern as any)?.fit ?? null,
@@ -1258,6 +1269,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
 
   // ── THESIS TYPES SET BY THE OWNER.                               (zzz774)
   const [thesisTypes, setThesisTypes] = useState<Record<string, AbfgPattern>>({});
+  const [thesisAi, setThesisAi] = useState<Record<string, AiTypeRecord>>({});
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -1267,8 +1279,11 @@ export function useBook(opts?: { includeBench?: boolean }) {
         const map: Record<string, AbfgPattern> = j?.thesis_types || {};
         if (cancelled) return;
         for (const [k, v] of Object.entries(map)) THESIS_OVERRIDES[k.toUpperCase()] = v;
+        const aiMap: Record<string, AiTypeRecord> = j?.thesis_ai || {};
+        for (const [k, v] of Object.entries(aiMap)) THESIS_AI[k.toUpperCase()] = v;
         setThesisTypes(map);
-        if (Object.keys(map).length) setRows((rs) => { const out: Record<string, BookRow> = {}; for (const [k, v] of Object.entries(rs)) out[k] = assess(v); return out; });
+        setThesisAi(aiMap);
+        if (Object.keys(map).length || Object.keys(aiMap).length) setRows((rs) => { const out: Record<string, BookRow> = {}; for (const [k, v] of Object.entries(rs)) out[k] = assess(v); return out; });
       } catch { /* the automatic classification stands */ }
     })();
     return () => { cancelled = true; };
@@ -1276,6 +1291,8 @@ export function useBook(opts?: { includeBench?: boolean }) {
   const setThesisType = useCallback(async (sym: string, p: AbfgPattern | null) => {
     const key = sym.toUpperCase();
     if (p) THESIS_OVERRIDES[key] = p; else delete THESIS_OVERRIDES[key];
+    delete THESIS_AI[key]; // zzz837: the owner's own choice always wins over AI's
+    setThesisAi((m) => applyUserType({}, m, key, null).ai);
     setThesisTypes((m) => { const n = { ...m }; if (p) n[key] = p; else delete n[key]; return n; });
     setRows((rs) => {
       const cur = rs[sym];
@@ -1289,5 +1306,20 @@ export function useBook(opts?: { includeBench?: boolean }) {
     } catch { /* kept locally for this session */ }
   }, []);
 
-  return { symbols, origins, note, rows, loading, evidenceLoading, batch, readFiling, readAll, stop, recent, readRecentReporters, priorBatch, readPriorPeriods, checkAll, checkBatch, thesisTypes, setThesisType, quick, quickReadAll, quickReadOne, stopQuick };
+  /** zzz837: file an AI answer for one name (the route already saved it). A type the owner chose stands. */
+  const applyAiType = useCallback((sym: string, rec: AiTypeRecord) => {
+    const key = sym.toUpperCase();
+    const cur: Record<string, string> = {};
+    for (const [k, v] of Object.entries(THESIS_OVERRIDES)) if (v) cur[k] = v;
+    const r = applyAiRecord(cur, THESIS_AI, key, rec);
+    if (!r.applied) return false;
+    THESIS_AI[key] = rec;
+    if (isAiTypeRecord(rec)) THESIS_OVERRIDES[key] = rec.type as AbfgPattern; else delete THESIS_OVERRIDES[key];
+    setThesisAi((m) => ({ ...m, [key]: rec }));
+    setThesisTypes((m) => { const n = { ...m }; if (isAiTypeRecord(rec)) n[key] = rec.type as AbfgPattern; else delete n[key]; return n; });
+    setRows((rs) => (rs[sym] ? { ...rs, [sym]: assess(rs[sym]) } : rs));
+    return true;
+  }, []);
+
+  return { symbols, origins, note, rows, loading, evidenceLoading, batch, readFiling, readAll, stop, recent, readRecentReporters, priorBatch, readPriorPeriods, checkAll, checkBatch, thesisTypes, thesisAi, applyAiType, setThesisType, quick, quickReadAll, quickReadOne, stopQuick };
 }

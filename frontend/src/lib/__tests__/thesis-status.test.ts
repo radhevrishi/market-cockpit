@@ -432,7 +432,7 @@ describe('zzz770 PC-C · status definitions, evidence states, capex lifecycle, n
   });
 
   test('D · an explicit stated break condition → BROKEN, naming the condition', () => {
-    const a = R({ pattern: 'B', variables: [...GOOD_OUTPUT, V('order_book', 'deteriorating', { delta: '-30%' }), V('book_to_bill', 'deteriorating', { after: '0.6' })] });
+    const a = R({ pattern: 'B', variables: [...GOOD_OUTPUT, V('order_book', 'deteriorating', { delta: '-30%' }), V('book_to_bill', 'deteriorating', { after: '0.6' })], priorVerdicts: { book_to_bill: 'deteriorating' } });  // zzz837: "below 1.0 for two consecutive quarters" needs the second quarter on file
     fixtures.D = a;
     assert.equal(a.status, 'BROKEN');
     assert.ok(a.actionLine.startsWith('THESIS BROKEN — EXIT REVIEW — '), a.actionLine);
@@ -862,7 +862,7 @@ describe('zzz771 PC-2 · strict green, verdict separation, unknown ≠ flat ≠ 
     assert.match(weak.verdict!.breakTrigger.text, /^Fired: "New order intake falls materially or stops\." — one condition on a single reading; a break needs/);
     assert.equal(weak.verdict!.direction, 'WEAKENING');
     assert.equal(weak.verdict!.evidence, 'CONTRADICTED');
-    const broken = R({ pattern: 'B', variables: [...GOOD_OUTPUT, V('order_book', 'deteriorating', { delta: '-30%' }), V('book_to_bill', 'deteriorating', { after: '0.6' })] });
+    const broken = R({ pattern: 'B', variables: [...GOOD_OUTPUT, V('order_book', 'deteriorating', { delta: '-30%' }), V('book_to_bill', 'deteriorating', { after: '0.6' })], priorVerdicts: { book_to_bill: 'deteriorating' } });  // zzz837: "below 1.0 for two consecutive quarters" needs the second quarter on file
     assert.equal(broken.status, 'BROKEN');
     assert.match(broken.verdict!.breakTrigger.text, /thesis-break condition met/);
     assert.equal(broken.verdict!.direction, 'WEAKENING');

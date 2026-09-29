@@ -1021,6 +1021,32 @@ export function rankOf(pc: PersistentCatalyst): number {
   return c + st + Math.min(pc.hardCount, 6) * 2 + pc.distinctMetrics * 2 + (pc.freshness === 'CURRENT' ? 5 : 0);
 }
 
+// ── THE SPECIAL FOCUS ORDER, AND WHAT ITS NUMBER MEANS.            (zzz837)
+// The card said "#12 … #9 … #10 … #27": the number was the permanent registry
+// id (assigned once, when the mechanism was first detected — `sfId`), not a
+// rank, so the list looked unsorted. The list IS sorted: you-confirmed first,
+// then still-qualifying before decayed, then by research priority (`rankOf`:
+// evidence richness only — never a return, never a price), then a stable
+// tie-break. The position is what the card prints as "#N"; the registry id
+// is said apart, in words.
+export interface SfOrderable { pc: PersistentCatalyst; decayed?: boolean; st?: { user?: { state?: string | null } | null; sfId?: number | null } | null }
+export function compareSpecialFocus(a: SfOrderable, b: SfOrderable): number {
+  return (Number(b.st?.user?.state === 'confirmed') - Number(a.st?.user?.state === 'confirmed'))
+    || (Number(!!a.decayed) - Number(!!b.decayed))
+    || (rankOf(b.pc) - rankOf(a.pc))
+    || ((a.st?.sfId ?? Infinity) - (b.st?.sfId ?? Infinity))
+    || String(a.pc.ticker).localeCompare(String(b.pc.ticker));
+}
+export function orderSpecialFocus<T extends SfOrderable>(xs: T[]): T[] { return [...xs].sort(compareSpecialFocus); }
+/** Position label ("#1" = first in the list shown) and the registry id in words. */
+export function specialFocusLabels(position: number, sfId: number | null | undefined): { position: string; registry: string | null; title: string } {
+  return {
+    position: `#${position}`,
+    registry: sfId ? `Special Focus ID ${sfId}` : null,
+    title: `#${position} = position in this list (confirmed first, then research priority; no price used).${sfId ? ` Special Focus ID ${sfId} is the permanent registry number given when this mechanism was first detected — not a rank.` : ' New this run — no registry number yet.'}`,
+  };
+}
+
 /** The strongest Special Focus catalyst for a company, if any. */
 export function specialFocusOf(list: PersistentCatalyst[]): PersistentCatalyst | null {
   return list.find((p) => p.specialFocus) || null;

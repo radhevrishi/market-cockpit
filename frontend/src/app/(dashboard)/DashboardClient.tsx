@@ -842,7 +842,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
               {convictionCount > 0 && (
                 <Link
                   href="/earnings-opportunities"
-                  title={`Conviction Beats bench — India ${convictionTitle || `${convictionCount} tickers`}${usBenchCount != null ? `; US ${usBenchCount} on the server list` : '; US list not read yet'}. Open Earnings Opportunities to view the India bench.`}
+                  title={`CB ${convictionCount + (usBenchCount || 0)} = India ${convictionCount} + US ${usBenchCount ?? '…'}: names meeting your Conviction Beats criteria in each market, added together (the Portfolio Catalysts pages show the India split as held + bench). Conviction Beats bench — India ${convictionTitle || `${convictionCount} tickers`}${usBenchCount != null ? `; US ${usBenchCount} on the server list` : '; US list not read yet'}. Open Earnings Opportunities to view the India bench.`}
                   style={{
                     display: 'inline-flex', alignItems: 'center', gap: 5,
                     padding: '5px 10px', borderRadius: 8,

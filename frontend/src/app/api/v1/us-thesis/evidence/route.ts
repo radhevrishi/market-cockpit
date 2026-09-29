@@ -16,6 +16,8 @@ import {
   loadUsLedgers, persistUsStatus, loadUsBatch, saveUsBatch, loadUsThesisTypes, saveUsThesisTypes, type UsBatchHeader,
 } from '@/lib/us-thesis/evidence-store';
 import { batchProgress, type CompanyLedger, type CompanyEvidenceState } from '@/lib/thesis/evidence-ledger';
+import { applyUserType, US_AI_TYPES_KEY, type AiMap } from '@/lib/thesis/ai-type-store';
+import { kvGet, kvSet } from '@/lib/kv';
 import { usFreshness } from '@/lib/us-thesis/calendar';
 
 export const runtime = 'nodejs';
@@ -27,7 +29,7 @@ const PATTERNS = new Set(['A', 'B', 'F', 'G']);
 
 export async function GET(req: NextRequest) {
   const sp = new URL(req.url).searchParams;
-  if (sp.get('thesis_types')) return NextResponse.json({ ok: true, thesis_types: await loadUsThesisTypes() });
+  if (sp.get('thesis_types')) return NextResponse.json({ ok: true, thesis_types: await loadUsThesisTypes(), thesis_ai: (await kvGet<AiMap>(US_AI_TYPES_KEY).catch(() => null)) || {} });
   const tickers = Array.from(new Set((sp.get('tickers') || '').split(',').map((s) => s.trim().toUpperCase()).filter((s) => TICKER_RE.test(s)))).slice(0, 400);
   const [ledgers, batch, priorBatch] = await Promise.all([
     tickers.length ? loadUsLedgers(tickers) : Promise.resolve({} as Record<string, CompanyLedger>), loadUsBatch(), loadUsBatch('prior'),
@@ -62,9 +64,11 @@ export async function POST(req: NextRequest) {
     const pattern = body?.pattern == null ? null : String(body.pattern).toUpperCase();
     if (!TICKER_RE.test(ticker) || (pattern !== null && !PATTERNS.has(pattern))) return NextResponse.json({ ok: false, error: 'ticker and pattern (A/B/F/G or null) are required' }, { status: 400 });
     const map = await loadUsThesisTypes();
-    if (pattern) map[ticker] = pattern; else delete map[ticker];
-    await saveUsThesisTypes(map);
-    return NextResponse.json({ ok: true, thesis_types: map });
+    const aiMap = (await kvGet<AiMap>(US_AI_TYPES_KEY).catch(() => null)) || {};
+    // zzz837: the owner's picker always wins — it also removes any AI record for the name.
+    const r = applyUserType(map, aiMap, ticker, pattern);
+    await Promise.all([saveUsThesisTypes(r.types), kvSet(US_AI_TYPES_KEY, r.ai)]);
+    return NextResponse.json({ ok: true, thesis_types: r.types, thesis_ai: r.ai });
   }
   if (action === 'status') {
     const ticker = String(body?.ticker || '').toUpperCase();

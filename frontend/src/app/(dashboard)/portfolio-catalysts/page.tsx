@@ -40,7 +40,7 @@ import { SpecialFocusPanel, PersistentStrip, detectForRow } from '@/components/s
 import { STATUS_META, type ThesisStatus } from '@/lib/thesis/status';
 import { isSmallMidCap, SMALL_MID_CAP_MAX_CR } from '@/lib/thesis/universe';
 import { priorBackfillPlan } from '@/lib/thesis/prior-period';
-import { evidenceCounts, universeCounts, researchPriorityEligible, researchPriorityTitle, researchWhyLine, exportCounts, evidenceAttention, RESEARCH_EXPORT_STATUSES } from '@/lib/thesis/evidence-counts';
+import { pcCountsReconciled, evidenceCounts, universeCounts, researchPriorityEligible, researchPriorityTitle, researchWhyLine, exportCounts, evidenceAttention, RESEARCH_EXPORT_STATUSES } from '@/lib/thesis/evidence-counts';
 import NewCatalystsTab from '@/components/catalyst/new-catalysts-tab';
 import { buildRecentCatalysts, rawFromLedger, rawFromPersistent, rawFromFeed, windowRange, countInRange, nameMapOf, normUrl, type RawEvent, type ThesisCtx, type WindowSpan } from '@/lib/catalyst/recent-events';
 import { getConvictionList } from '@/lib/conviction-beats';
@@ -51,6 +51,9 @@ import { quickProgressLine } from '@/lib/thesis/quick-read';
 import BookCheckPanel from '@/components/BookCheckPanel';
 import { buildBookCheck } from '@/lib/thesis/book-membership';
 import { aiReadPlan, aiReadStatus, aiSourcesExplainer } from '@/lib/thesis/ai-read';
+import { aiTypePlan, confirmationBreakdown } from '@/lib/thesis/ai-type';
+import { useAiTypeResolver } from '@/lib/thesis/use-ai-type';
+import { AiResolveBar, ProvisionalBanner } from '@/components/thesis-ai-resolve';
 
 const C = {
   bg: 'var(--mc-bg-1)', border: 'var(--mc-bg-4)', text: 'var(--tc-text, #F1F5F9)',
@@ -70,7 +73,7 @@ const ORDER: ThesisStatus[] = [
 ];
 
 export default function PortfolioCatalystsPage() {
-  const { symbols, note, rows, loading, evidenceLoading, batch, readFiling, readAll, stop, recent, readRecentReporters, priorBatch, readPriorPeriods, checkAll, checkBatch, thesisTypes, setThesisType, quick, quickReadAll, stopQuick } = useBook();
+  const { symbols, note, rows, loading, evidenceLoading, batch, readFiling, readAll, stop, recent, readRecentReporters, priorBatch, readPriorPeriods, checkAll, checkBatch, thesisTypes, thesisAi, applyAiType, setThesisType, quick, quickReadAll, stopQuick } = useBook();
   const [filterRaw, setFilterRaw] = useUrlParam<string>('st', '');
   const filter = (filterRaw || null) as ThesisStatus | null;
   const setFilter = (v: ThesisStatus | null) => setFilterRaw(v || '');
@@ -108,6 +111,11 @@ export default function PortfolioCatalystsPage() {
   const all = useMemo(() => (showFailing ? all0 : all0.filter((r) => !(r.origin === 'bench' && r.preset?.state === 'fail'))), [all0, showFailing]);
   // Names passing his criteria that are on this page (book + bench, before
   // the size filter) — must equal the Conviction Beats page's count.
+  // zzz837: one label per number, and a sentence that adds up (lib/thesis/evidence-counts pcCountsReconciled).
+  const pcc = useMemo(() => note.cb ? pcCountsReconciled({
+    heldMeet: note.cb.heldPassing, benchMeet: Math.max(0, note.cb.passing - note.cb.heldPassing),
+    heldMiss: Math.max(0, note.cb.failing - failingBench.length), benchMiss: failingBench.length,
+  }) : null, [note.cb, failingBench.length]);
   const cbOnPage = useMemo(() => { const p = new Set(note.cbPassing || []); return all0.filter((r) => p.has(r.symbol)).length; }, [all0, note.cbPassing]);
 
   // zzz823: the Book check — every source, why each name is here, and the
@@ -229,6 +237,19 @@ export default function PortfolioCatalystsPage() {
   const aiPlan = useMemo(() => aiReadPlan(list as any), [list]);
   const aiPage = useMemo(() => aiReadPlan(inSource as any), [inSource]);
   const [aiPick, setAiPick] = useState<'all' | 'incomplete' | 'withoutAi' | 'withGaps'>('all');
+  // zzz837: let AI choose the types (and fill the missing details) — one click each, never automatic.
+  const live = useRef<any>({});
+  live.current = { rows, list, aiPlan };
+  const aiType = useAiTypeResolver({ market: 'IN', getRow: (sym) => (live.current.rows as any)?.[sym] || null, applyAiType });
+  const aiTypePl = useMemo(() => aiTypePlan(list as any, thesisTypes as any, thesisAi as any), [list, thesisTypes, thesisAi]);
+  const crBreak = useMemo(() => confirmationBreakdown(inSource as any), [inSource]);
+  const resolveAll = () => aiType.resolveAll({
+    typeSyms: aiTypePl.names,
+    gapSyms: () => (live.current.aiPlan?.withGaps as string[]) || [],
+    fillGaps: (syms) => readAll(syms, 3, { exact: true, modeOf: live.current.aiPlan?.modeOf }),
+    gapsOf: (sym) => { const r = (live.current.rows as any)?.[sym]; return r ? aiReadStatus(r).gaps : 0; },
+    stillIncomplete: () => { const pl = aiReadPlan((live.current.list as any[]) || []); return new Set([...pl.withGaps, ...pl.incomplete]).size; },
+  });
   const aiSyms = aiPick === 'incomplete' ? aiPlan.incomplete : aiPick === 'withoutAi' ? aiPlan.withoutAi : aiPick === 'withGaps' ? aiPlan.withGaps : aiPlan.all;
   // EVIDENCE INCOMPLETE because a core financial has no grader row — and the
   // stored read predates the headline prompt (india-ai-summary-v9), so a
@@ -377,7 +398,7 @@ export default function PortfolioCatalystsPage() {
           ['all', `All ${uc.shown}`, 'Everything below: your book, plus the India Conviction Beats names you do not hold that pass your Conviction Beats criteria (after the size filter).'],
           ['book', `\uD83D\uDCD7 My book ${uc.book}`, 'Only what you own. Nothing is filtered out of this list — a holding is watched whatever it grades at.'],
           ['cb', `\uD83C\uDFC6 Conviction Beats ${cbRows.length}`, 'Every name on your India Conviction Beats list that meets your Conviction Beats criteria — the same list as the Conviction Beats tab, name for name. Names you hold are included and tagged "📗 also in My book".'],
-          ['bench', `Bench ${uc.bench}`, 'India Conviction Beats names you do not hold, selected by your Conviction Beats criteria. You do not own these.'],
+          ['bench', `Bench ${pcc ? pcc.byId.bench.n : uc.bench}`, 'India Conviction Beats names you do not hold, selected by your Conviction Beats criteria. You do not own these.'],
         ] as Array<[typeof source, string, string]>).map(([k, label, hint]) => {
           const on = source === k;
           return (
@@ -408,12 +429,13 @@ export default function PortfolioCatalystsPage() {
               fontSize: 13.5, fontWeight: 800, padding: '5px 12px', borderRadius: 999, cursor: 'pointer',
               border: `1px solid ${showFailing ? C.amber : C.border}`, color: showFailing ? C.amber : C.dim,
               background: showFailing ? 'color-mix(in srgb, var(--mc-verdict-warn) 14%, transparent)' : C.bg,
-            }}>{showFailing ? '\u2713 ' : ''}Also show names failing your criteria ({failingBench.length})</button>
+            }}>{showFailing ? '\u2713 ' : ''}Also show bench names failing your criteria ({pcc ? pcc.byId.benchMiss.n : failingBench.length})</button>
         )}
       </div>
       {!loading && (
         <div data-testid="cb-bench-line" style={{ fontSize: 13, color: note.cb && cbOnPage !== note.cb.passing ? C.amber : C.dim, lineHeight: 1.5 }}>
-          <b style={{ color: note.cb && cbOnPage !== note.cb.passing ? C.amber : C.text }}>{cbCriteriaLine(note.cb, cbOnPage, showFailing)}</b>
+          {pcc && <div data-testid="pc-counts-sentence" style={{ color: C.dim }}>{pcc.sentence}{' '}{showFailing ? '(Names failing your criteria are shown, labelled.)' : '(Names failing your criteria are hidden \u2014 use the chip to show them.)'}{pcc.consistent ? '' : ' \u26a0 these figures do not add up \u2014 the list is still loading or changed.'}</div>}
+          <b style={{ color: note.cb && cbOnPage !== note.cb.passing ? C.amber : C.text }}>{cbCriteriaLine(note.cb, cbOnPage, showFailing).replace(/ \u00b7 \d+ of the \d+ on the list miss your criteria[^\u00b7]*/, '')}</b>
         </div>
       )}
 
@@ -451,13 +473,16 @@ export default function PortfolioCatalystsPage() {
               onClick={() => { setFilter(on ? null : s); if (!on && typeof window !== 'undefined') setTimeout(() => document.getElementById('pc-cards-top')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60); }}
               title={`${m.meaning}${(counts[s] || 0) === 0 ? ' — none in this view' : ''}`}
               style={{
-                display: 'flex', alignItems: 'baseline', gap: 7, padding: '6px 12px', borderRadius: 8,
+                display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 7, padding: '6px 12px', borderRadius: 8,
                 cursor: 'pointer', border: `${on ? 2 : 1}px solid ${on ? m.color : C.border}`,
                 background: on ? `${m.color}30` : C.bg,
                 opacity: !on && !evidenceLoading && (counts[s] || 0) === 0 ? 0.55 : 1,
               }}>
               <span style={{ fontSize: 19, fontWeight: 900, color: `color-mix(in srgb, ${m.color} 65%, var(--tc-text, #F1F5F9))` }}>{evidenceLoading ? '…' : (counts[s] || 0)}</span>
               <span style={{ fontSize: 12.5, fontWeight: 800, color: on ? `color-mix(in srgb, ${m.color} 65%, var(--tc-text, #F1F5F9))` : C.dim }}>{m.dot} {m.label}</span>
+              {s === 'CONFIRMATION_REQUIRED' && !evidenceLoading && crBreak.total > 0 && (
+                <span data-testid="pc-cr-breakdown" style={{ flexBasis: '100%', fontSize: 11.5, fontWeight: 700, color: C.faint, textAlign: 'left' }}>{crBreak.line}</span>
+              )}
             </button>
           );
         })}
@@ -508,7 +533,7 @@ export default function PortfolioCatalystsPage() {
         onReadPrior={(t: string[]) => readPriorPeriods(t)} priorRunning={!!priorBatch?.running}
         thesisLabel={(r: any) => {
           const set = thesisTypes[String(r.symbol).toUpperCase()];
-          if (set) return `${set} (set by you)`;
+          if (set) return thesisAi[String(r.symbol).toUpperCase()]?.type === set ? `${set} (chosen by AI — you can change it)` : `${set} (set by you)`;
           if (r.pattern?.pattern) return r.pattern.fit === 'nearest' ? `nearest ${r.pattern.pattern} (auto, provisional${(r.pattern as any).weak ? ', weak fit' : ''})` : `${r.pattern.pattern} (auto${(r.pattern as any).promoted ? ', type confirmed from filings' : ''})`;
           return 'Not set';
         }}
@@ -656,6 +681,14 @@ export default function PortfolioCatalystsPage() {
             <span style={{ fontSize: 12.5, color: C.faint }}>{aiPlan.breakdown}</span>
           </span>
         )}
+        {/* ── ✨ LET AI CHOOSE THE TYPES, AND RESOLVE EVERYTHING. Click only. (zzz837)
+            One call per name, three at a time, Stop works; nothing starts on its own. */}
+        {!evidenceLoading && !batch.running && !checkBatch.running && !priorBatch.running || aiType.run.running || aiType.run.summary ? (
+          <AiResolveBar typePlan={aiTypePl} gapCount={aiPlan.withGaps.length} run={aiType.run}
+            detailsBatch={batch} disabled={batch.running || priorBatch.running || checkBatch.running}
+            onTypes={() => void aiType.runTypes(aiTypePl.names)} onAll={() => void resolveAll()}
+            onStop={() => { aiType.stop(); stop(); }} />
+        ) : null}
         {/* ── RECENT REPORTERS. Click only. (zzz763)
             Re-reads the names that filed results in the last 10 days and
             have not been read since that filing. Everything else is skipped
@@ -845,8 +878,8 @@ export default function PortfolioCatalystsPage() {
             </>}
             {nearest.length > 0 && (
               <div style={{ marginTop: untyped.length ? 6 : 0 }}>
-                <b style={{ color: C.cyan }}>{nearest.length} holding{nearest.length === 1 ? ' is' : 's are'} on a nearest-fit type (auto, PROVISIONAL)</b> — no exact test fired, so the type was worked out from the company&apos;s own figures{nearest.some((r) => (r.pattern as any)?.weak) ? <> ({nearest.filter((r) => (r.pattern as any)?.weak).length} of them a <b>weak fit</b>, where the figures did not point clearly at one type and the business description decided)</> : null}. Their status is provisional: at most CONFIRMATION REQUIRED — it cannot read strengthening or on-track until you confirm the type (or set another) with the <b>thesis</b> picker, or until the company&apos;s filings confirm it: a nearest fit is promoted to a confirmed auto type when at least two of that type&apos;s checks are confirmed from filed figures (one of them its core mechanism — for A, utilisation or a filed alternate such as volume growth or capacity added), covering at least 40% of its checks, with nothing in the mechanism contradicted. A weak fit is never promoted.
-                <div style={{ fontSize: 12, color: C.faint, marginTop: 4 }}>{nearest.map((r) => `${r.symbol} (nearest ${r.pattern!.pattern}${(r.pattern as any)?.weak ? ', weak fit' : ''})`).join(' · ')}</div>
+                <ProvisionalBanner nearest={nearest.length} weak={nearest.filter((r) => (r.pattern as any)?.weak).length} breakdown={crBreak}
+                  symbols={nearest.map((r) => `${r.symbol} (nearest ${r.pattern!.pattern}${(r.pattern as any)?.weak ? ', weak fit' : ''})`)} />
               </div>
             )}
           </div>
@@ -882,6 +915,10 @@ export default function PortfolioCatalystsPage() {
         <ThesisCard
           thesisType={(thesisTypes[r.symbol.toUpperCase()] as any) || null}
           onThesisType={(t) => setThesisType(r.symbol, t)}
+          aiType={thesisAi[r.symbol.toUpperCase()] || null}
+          onAiType={() => void aiType.one(r.symbol, true)}
+          aiTypeBusy={!!aiType.busy[r.symbol]}
+          aiTypeError={aiType.errors[r.symbol] || null}
           symbol={r.symbol} market={r.market} tier={r.tier} pattern={r.pattern}
           radarScore={r.radarScore} assessment={r.assessment} capex={r.capex}
           origin={r.origin}

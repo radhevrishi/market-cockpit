@@ -320,6 +320,14 @@ export function normalizeEvent(e: StructuralEvent, reportingPeriod?: string | nu
     out.original_value_type = e.value_type;
     out.retyped_because = 'the sentence ties it to the current quarter';
   }
+  // zzz837: a utilisation whose OWN value text says guidance / target ("guidance:
+  // 60%", "target 80%") is a plan, never today's level.
+  if (e.variable === 'utilisation' && out.value_type === 'ACTUAL' && !pastDated
+    && /\b(guidance|guided|targets?|targeted|aims?|aiming|goal)\b/i.test(String(e.after ?? ''))) {
+    out.value_type = /\bguid/i.test(String(e.after)) ? 'GUIDANCE' : 'TARGET';
+    out.original_value_type = e.value_type;
+    out.retyped_because = out.retyped_because || 'the value is stated as guidance / a target — a plan, not today\'s level';
+  }
   // zzz809: a utilisation "we can reach in FY28" that the chain above left
   // as ACTUAL is still a plan.
   if (e.variable === 'utilisation' && !e.before && out.value_type === 'ACTUAL' && !pastDated && utilisationTense(vSent) === 'TARGET') {

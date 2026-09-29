@@ -36,6 +36,7 @@ export const PROTECTED_API_PREFIXES = [
   '/api/v1/us-book',             // zzz790 — US book: holdings, cash, bench
   '/api/v1/catalyst/',            // zzz809 — filing reader (fetches documents; owner only); zzz825 us-filings (SEC lists)
   '/api/v1/us-thesis',           // zzz790 — US ledgers, reads (paid AI), special focus
+  '/api/v1/thesis-ai',           // zzz837 — AI thesis-type resolver (paid AI, owner only)
 ] as const;
 
 /** Never gated: the login flow itself, and machine endpoints with their own auth. */

@@ -34,6 +34,7 @@
 
 import type { VarKey } from './taxonomy';
 import { scaledNumber } from './evidence-ledger';
+import { isGarbledText, capacityUnitIssue, currencyNotStated } from './figure-guards';
 import { valueClause, datesIn, hasQuantity, isCommentaryOnly, RECURRING_METRICS, stripPeriodTokens } from './fact-normalize';
 export { hasQuantity, isCommentaryOnly, RECURRING_METRICS, stripPeriodTokens };
 
@@ -433,7 +434,8 @@ export function beforeAfterText(prev: Comparable | null, cur: Comparable): { tex
 
 export type ValidationFlag =
   | 'UTILISATION_ABOVE_100' | 'NEGATIVE_RATIO_SIGN_UNCLEAR' | 'DENOMINATOR_MISMATCH'
-  | 'UNIT_MISMATCH' | 'IMPOSSIBLE_VALUE' | 'AMBIGUOUS_VALUE' | 'UNIT_MISSING' | 'NO_COUNTERPARTY';
+  | 'UNIT_MISMATCH' | 'IMPOSSIBLE_VALUE' | 'AMBIGUOUS_VALUE' | 'UNIT_MISSING' | 'NO_COUNTERPARTY'
+  | 'GARBLED_TEXT' | 'CURRENCY_NOT_STATED' | 'IMPLAUSIBLE_SCALE';
 
 // ── AN AMOUNT WITH NO UNIT IS NOT A NUMBER THE CARD CAN USE.        (zzz773)
 // MOREPENLAB's "Capex: 57012.81 (Unaudited)" is a statement-table cell: lakh,
@@ -555,6 +557,20 @@ export function validateReading(key: VarKey | string, value: string | null | und
   if (isAmbiguousValue(v)) {
     return { state: 'UNCLEAR', flags: ['AMBIGUOUS_VALUE'], metric_definition: null,
       reason: `validation required — ambiguous reading: ${v.trim()}` };
+  }
+  // zzz837: a run-together OCR string is not a reading; a money figure with no
+  // currency is shown as such; a count of riders / locations is not a capacity.
+  if (isGarbledText(v)) {
+    return { state: 'UNCLEAR', flags: ['GARBLED_TEXT'], metric_definition: null,
+      reason: 'validation required — the extracted text has no word boundaries (OCR run-together), so what it states cannot be read' };
+  }
+  if (currencyNotStated(String(key), v, text)) {
+    return { state: 'UNCLEAR', flags: ['CURRENCY_NOT_STATED'], metric_definition: null,
+      reason: `currency not stated — ${v.trim()} names no currency, so it is not read as rupees or dollars` };
+  }
+  if (key === 'capacity' || key === 'capacity_addition') {
+    const issue = capacityUnitIssue(v);
+    if (issue) return { state: 'UNCLEAR', flags: ['UNIT_MISMATCH'], metric_definition: null, reason: `validation required — ${issue}` };
   }
   if (key === 'utilisation') {
     const ps = percents(v);

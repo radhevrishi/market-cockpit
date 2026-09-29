@@ -467,11 +467,43 @@ const SERVICES_TEXT = /\b(software|saas|subscription|licen[cs]e revenue|annual r
 
 export interface BusinessProfile { sector?: string | null; industry?: string | null; text?: string | null }
 
+// ── zzz837: businesses with no physical capacity, by industry WORD (never a ticker).
+// Each carries the alternates the type documents in place of capacity / utilisation.
+export type NoPlantKind = 'exchange' | 'it_services' | 'retail' | 'media' | 'leisure' | 'ports' | 'insurance_finance';
+const NO_PLANT_WORDS: Array<{ kind: NoPlantKind; re: RegExp; what: string; alternates: string }> = [
+  { kind: 'exchange', re: /\b(stock ?exchange|commodity exchange|exchange and data platform|market infrastructure|depositor(?:y|ies)|clearing corporation)\b/i,
+    what: 'an exchange / market infrastructure business', alternates: 'transaction volumes, market share and operating leverage' },
+  { kind: 'it_services', re: /\b(it services|it[- ]enabled|information technology|software|saas|technology services|it consulting|consulting|bpo|bpm|business process|staffing|recruitment|engineering services|it\s*[-–]\s*(?:software|services))\b/i,
+    what: 'an IT / technology-services business', alternates: 'order book / deal wins, headcount and revenue per employee' },
+  { kind: 'retail', re: /\b(retail(?:ing)?|e-?commerce|online marketplace|department stores?|fashion retail|apparel retail|eyewear|jewellery retail|supermarkets?|trading)\b/i,
+    what: 'a retail / trading business', alternates: 'same-store sales growth, store additions and volume growth' },
+  { kind: 'media', re: /\b(media|entertainment|broadcast\w*|publishing|music|television|radio|ott)\b/i,
+    what: 'a media / content business', alternates: 'subscriber or user growth, content volume and volume growth' },
+  { kind: 'leisure', re: /\b(leisure|amusement|theme parks?|hospitality|resorts?|hotels?|restaurants?|cinemas?|multiplex)\b/i,
+    what: 'a leisure / consumer-services business', alternates: 'visitor / footfall growth and same-store growth' },
+  { kind: 'ports', re: /\b(ports?|port services|port operations|shipping)\b/i,
+    what: 'a ports / shipping business', alternates: 'cargo volume growth and order book' },
+  { kind: 'insurance_finance', re: /\b(insurance|nbfc|non[- ]banking|financial services|banks?|banking|asset management|wealth management|broking|fintech|capital markets)\b/i,
+    what: 'an insurance / finance business', alternates: 'premium or AUM growth and volume growth' },
+];
+/** Pure: the no-plant kind from the industry / sector label words, else null.
+ *  A label that names plant words is never classified here. */
+export function noPlantBusinessOf(b: BusinessProfile | null | undefined): { kind: NoPlantKind; reason: string; alternates: string } | null {
+  if (!b) return null;
+  const label = `${b.sector || ''} ${b.industry || ''}`.trim();
+  if (!label || MANUFACTURING.test(label)) return null;
+  for (const w of NO_PLANT_WORDS) {
+    if (w.re.test(label)) return { kind: w.kind, reason: `${w.what} (industry "${label}") has no physical capacity to fill`, alternates: w.alternates };
+  }
+  return null;
+}
+
 /** True only on clear evidence of a services / software / financial business. */
 export function isServicesBusiness(b: BusinessProfile | null | undefined): boolean {
   if (!b) return false;
   const label = `${b.sector || ''} ${b.industry || ''}`.trim();
   if (label && SERVICES_SECTOR.test(label) && !MANUFACTURING.test(label)) return true;
+  if (noPlantBusinessOf(b)) return true;
   const text = String(b.text || '');
   if (!text) return false;
   const hits = new Set((text.match(SERVICES_TEXT) || []).map((s) => s.toLowerCase()));

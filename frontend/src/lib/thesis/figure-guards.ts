@@ -84,3 +84,90 @@ export function capexFigureOk(s: string | null | undefined, context?: string | n
 export function isJunkOneOffAmount(after: string | null | undefined): boolean {
   return isBareRupeeAmount(after);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz837 — GARBAGE AND AMBIGUOUS EXTRACTIONS.
+//
+//   • Run-together OCR strings ("ExpandedMfg.capacityatthe Texasfacilityby
+//     70,000MTPA") have no word boundaries: nobody can say what they state.
+//     Rejected, never shown as a fact.
+//   • A physical capacity has a physical unit. "12 riders", "6 units",
+//     "over 125+ locations" are counts of something else.
+//   • A money metric names its currency. "order intake 2.1 billion" does not:
+//     shown as "currency not stated", never assumed to be rupees or dollars.
+//   • An order book far below the capex programme, or below one quarter of
+//     revenue, is more likely a unit / scope slip than a fact: "unit/scope
+//     unclear — validation required".
+// Pure; no I/O; no price.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const FN_JOIN = String.raw`(?:at|in|on|of|by|to|for|and|from|with)`;
+/** A run-together string: function words glued to their neighbours, or a
+ *  word glued to a number after "by / at / to / of". */
+const GARBLE_RES: RegExp[] = [
+  new RegExp(`[a-z]{2,}${FN_JOIN}the(?=[a-z]{2,})`),                    // capacityatthe / Texasfacilityby...
+  new RegExp(`\\b[a-z]{3,}(?:by|at|to|of|from|for)\\d`, 'i'),            // facilityby70,000
+  /\b[A-Za-z]{2,}\.[a-z]{6,}[a-z]*\b(?=[a-z]{0,20}(?:at|in|by|of))/,    // Mfg.capacityatthe
+  /\b[a-z]{24,}\b/,                                                      // a 24-letter lower-case run
+];
+export function isGarbledText(s: string | null | undefined): boolean {
+  const t = String(s ?? '');
+  if (t.length < 12) return false;
+  const lower = t.replace(/https?:\/\/\S+/g, ' ');
+  return GARBLE_RES.some((re) => re.test(lower)) || /\b[A-Za-z]{2,}\.[a-z]{5,}(?:at|in|by|of)the[a-z]/.test(lower);
+}
+
+const COUNT_NOUN = /\b(riders?|rides?|visitors?|guests?|locations?|stores?|outlets?|branches|branch|centres?|centers?|clinics?|restaurants?|cities|countries|employees?|customers?|users?|members?|employees)\b/i;
+const CAP_RATE = /(?:per|\/|p\.?a\.?|a)\s*(?:day|month|year|annum|hour|shift)|\b(?:pa|pm|tpa|tpd|ktpa|mtpa)\b/i;
+/** Why a physical-capacity figure cannot be one, or null when it can. */
+export function capacityUnitIssue(value: string | null | undefined): string | null {
+  const v = String(value ?? '');
+  if (!/\d/.test(v)) return null;
+  if (COUNT_NOUN.test(v)) return `a count of ${(COUNT_NOUN.exec(v)![1] || 'items').toLowerCase()}, not a physical capacity`;
+  const m = /(\d[\d,]*(?:\.\d+)?)\s*(?:\+\s*)?units?\b/i.exec(v);
+  if (m && !CAP_RATE.test(v)) {
+    const n = Number(m[1].replace(/,/g, ''));
+    if (n < 1000) return `${m[0].trim()} — a small count of units with no per-period rate is not a capacity`;
+  }
+  return null;
+}
+
+const MONEY_METRICS = new Set(['order_book', 'order_intake', 'revenue_visibility', 'capex', 'fcf', 'debt']);
+const CUR_WORD = /₹|\bINR|\bRs\.?|\bUSD|\bUS\$|\$|\bEUR|€|£|\bGBP|\brupees?|\bdollars?|\beuros?/i;
+const RUPEE_MAG = /\b(?:crores?|crs?|lakhs?|lacs?)\b/i;
+const FOREIGN_MAG = /\b(?:mn|million|bn|billion|k|thousand)\b/i;
+/** True when a money metric carries a magnitude word (million / billion) but
+ *  no currency in the value or its sentence: the currency is unknown. */
+export function currencyNotStated(key: string, value: string | null | undefined, context?: string | null): boolean {
+  if (!MONEY_METRICS.has(key)) return false;
+  const v = String(value ?? '');
+  if (!/\d/.test(v) || /%/.test(v)) return false;
+  if (CUR_WORD.test(v) || RUPEE_MAG.test(v)) return false;
+  if (!FOREIGN_MAG.test(v)) return false;
+  return !CUR_WORD.test(String(context ?? ''));
+}
+
+/** A scaled amount in crore, from "INR25 crores", "Rs 250 crore", "₹1,200 Cr", lakh; null when not rupee-scaled. */
+export function croreFrom(s: string | null | undefined): number | null {
+  const t = String(s ?? '').replace(/,/g, '');
+  const m = /(\d+(?:\.\d+)?)\s*(crores?|crs?\b|lakhs?|lacs?)/i.exec(t);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return /^(?:crores?|crs?)$/i.test(m[2]) ? n : n / 100;
+}
+
+/**
+ * Order book against the company's own scale. Returns a reason when the order
+ * book (crore) is implausible beside the capex programme (crore) or one
+ * quarter of revenue (crore) — a unit or scope slip is likelier than a fact.
+ */
+export function orderBookImplausible(orderBookCr: number | null, o: { capexProgrammeCr?: number | null; quarterRevenueCr?: number | null }): string | null {
+  if (orderBookCr == null || !(orderBookCr > 0)) return null;
+  if (o.capexProgrammeCr != null && o.capexProgrammeCr > 0 && orderBookCr * 4 < o.capexProgrammeCr) {
+    return `unit/scope unclear — validation required: an order book of ₹${orderBookCr} crore is far below the ₹${o.capexProgrammeCr} crore capex programme stated for the same company`;
+  }
+  if (o.quarterRevenueCr != null && o.quarterRevenueCr > 0 && orderBookCr < o.quarterRevenueCr * 0.5) {
+    return `unit/scope unclear — validation required: an order book of ₹${orderBookCr} crore is below half of one quarter's revenue (₹${Math.round(o.quarterRevenueCr)} crore)`;
+  }
+  return null;
+}

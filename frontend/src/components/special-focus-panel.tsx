@@ -9,7 +9,7 @@
 // the same TICKER:KIND id merges both. No price anywhere in this file.
 // ═══════════════════════════════════════════════════════════════════════════
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { detectPersistentCatalysts, rankOf, persistenceWords, catalystThesisLine, type PersistentCatalyst } from '@/lib/catalyst/persistence';
+import { detectPersistentCatalysts, rankOf, compareSpecialFocus, specialFocusLabels, persistenceWords, catalystThesisLine, type PersistentCatalyst } from '@/lib/catalyst/persistence';
 import { specialFocusQueue, nearMissList, focusButtonWords, splitDroppedOut, splitOffLists, focusRowIndex, focusSourceLabel } from '@/lib/catalyst/cross-view';
 
 const C = {
@@ -120,7 +120,7 @@ export function SpecialFocusPanel({ rows, lookup, ready, thesisLabel, onJump, on
   }, [live, stored, rows, lookup]);
   const inViewOf = useMemo(() => focusRowIndex<FocusRow>(rows), [rows]);
   const entries = useMemo(() => queue.entries.map((e) => ({ ...e, st: e.st as Stored | null }))
-    .sort((a, b) => (Number(b.st?.user?.state === 'confirmed') - Number(a.st?.user?.state === 'confirmed')) || (Number(a.decayed) - Number(b.decayed)) || (rankOf(b.pc) - rankOf(a.pc))), [queue]);
+    .sort(compareSpecialFocus), [queue]);
   const hiddenByUser = Object.values(stored).filter((s) => s.user?.state === 'dismissed' || s.user?.state === 'archived');
   // zzz781 — NEAR MISSES: one or two pieces of evidence away. The research to do
   // is named per name; reading the prior quarter often supplies the second figure.
@@ -168,7 +168,7 @@ export function SpecialFocusPanel({ rows, lookup, ready, thesisLabel, onJump, on
           return (
             <div key={e.id} id={`sf-${e.id}`} data-testid="special-focus-card" style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 10px', opacity: e.decayed ? 0.85 : 1 }}>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline' }}>
-                <span style={{ fontSize: 12, fontWeight: 900, color: C.amber }}>🔥 {e.st?.sfId ? `#${e.st.sfId}` : 'NEW'}</span>
+                <span title={specialFocusLabels(shown.indexOf(e) + 1, e.st?.sfId).title} style={{ fontSize: 12, fontWeight: 900, color: C.amber }}>🔥 #{shown.indexOf(e) + 1}{e.st?.sfId ? <span style={{ fontWeight: 600, color: C.faint }}> · ID {e.st.sfId}</span> : ' · NEW'}</span>
                 <button onClick={() => onJump(pc.ticker)} style={{ all: 'unset', cursor: 'pointer', fontSize: 15, fontWeight: 900, color: C.text }}>{pc.ticker}</button>
                 <span style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>{pc.label}</span>
                 {/* zzz788: evidence state and persistence grade, said apart. */}

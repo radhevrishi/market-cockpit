@@ -45,6 +45,7 @@ import type { VarKey } from './taxonomy';
 import { normaliseForQuoteMatch } from '@/lib/ai-gainers/announcement-reader';
 import { anthropicMessages } from '@/lib/anthropic-meter';
 import { stripPeriodTokens } from './fact-normalize';
+import { isGarbledText, capacityUnitIssue } from './figure-guards';
 import { transcriptCommentary } from './transcript-evidence';
 
 export type ValueType = 'ACTUAL' | 'GUIDANCE' | 'TARGET' | 'MANAGEMENT_CLAIM';
@@ -538,6 +539,10 @@ export function valueFitsVariable(e: { variable: string; before: string | null; 
   // of them. Whatever variable they were filed under, nobody can say which
   // figure is which.
   if (isNumberRow(e.before) || isNumberRow(e.after)) return false;
+  // zzz837: a run-together OCR string ("ExpandedMfg.capacityatthe Texasfacilityby70,000MTPA")
+  // has no word boundaries — nobody can say what it states. Never a fact.
+  // (A clean value quoted from a space-less OCR sentence — "5000MTPAto9,600+MTPA" — is still a clean value.)
+  if (isGarbledText(valueText)) return false;
   const unitOk = (() => {
     // ── UTILISATION IS THE MOST-ABUSED VARIABLE ON THE PAGE.       (zzz755)
     //
@@ -606,6 +611,8 @@ export function valueFitsVariable(e: { variable: string; before: string | null; 
     // bare percentage (GESHIP "installed capacity About 25-26%").
     if (CAPACITY_VARS.has(v)) {
       if (CURRENCY_RE.test(valueText)) return false;
+      // zzz837: "12 riders", "over 125+ locations", "6 units" are counts of something else.
+      if (capacityUnitIssue(valueText)) return false;
       // ── A ROOFTOP SOLAR PLANT IS NOT PRODUCTION CAPACITY.         (zzz769)
       // TATVA "155 kW rooftop solar", MENONBE "3,870 kWp", SOTL "2,061 kWp",
       // EMIL "187 kW": captive power in kilowatts, not what the company

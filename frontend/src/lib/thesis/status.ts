@@ -70,6 +70,7 @@ import { scaledNumber } from './evidence-ledger';
 import { checkPasses, SILENT_STATE_WORD, SILENT_PHRASE, explicitNoneStated } from './silent-check';
 import { isJunkOneOffAmount } from './figure-guards';
 import { parseOneOff } from './one-offs';
+import { evidenceLineOf, dedupeLabels, histSignature } from './evidence-line';
 /** zzz802: "no explicit raw material one-off gains disclosed" says there is
  *  NONE — it is never a one-off item, benefit or clause. */
 export const statesNoOneOff = (t: unknown): boolean => explicitNoneStated(String(t ?? ''))
@@ -77,7 +78,7 @@ export const statesNoOneOff = (t: unknown): boolean => explicitNoneStated(String
 /** zzz802: the words a one-off carries when its amount had no unit. */
 export const UNSCALED_AMOUNT_WORDS = 'amount stated without a crore / lakh unit, not sized';
 import { VAR_LABEL, GRADER_AVAILABLE, SILENCE_IS_A_PASS, VAR_DIMENSION, DIMENSION_LABEL, type VarKey, type VarDimension, type AbsenceReason,
-  type EvidenceState, stateOfAbsence, isServicesBusiness, PHYSICAL_CAPACITY_VARS, type BusinessProfile,
+  type EvidenceState, stateOfAbsence, isServicesBusiness, noPlantBusinessOf, PHYSICAL_CAPACITY_VARS, type BusinessProfile,
   THESIS_STATUS_VARS, HISTORICAL_PERSISTENT } from './taxonomy';
 
 /** A variable the grader can fill without a document is OUTPUT. (zzz738) */
@@ -94,6 +95,8 @@ const isOutput = (k: VarKey): boolean => VAR_DIMENSION[k] === 'financial' || GRA
 // profit (the grader's figure); it counts as structural only when a document
 // states it — fixed-cost absorption named by the company.
 // ═══════════════════════════════════════════════════════════════════════════
+/** zzz837: a break condition that needs more than one reading. */
+export const TWO_READING_RE = /\b(two|2)\s+(consecutive\s+)?(quarters?|periods?|readings?)\b|consecutive\s+quarters|\brepeatedly\b/i;
 const isFinancialOutput = (k: VarKey, source?: string | null): boolean =>
   VAR_DIMENSION[k] === 'financial' && !(k === 'operating_leverage' && source === 'filing');
 
@@ -368,6 +371,10 @@ export interface CheckedVariable {
    *  read did not mention. It passes its gate; it is never a confirmation and
    *  never "checked, nothing material". (zzz771) */
   silence: boolean;
+  /** zzz837: a condition written over two quarters that only ONE quarter has
+   *  read: 'not_on_file' (no prior period) or 'not_repeated' (prior did not
+   *  read down). Never fired, never contradicted; shown as watch. */
+  secondReading?: 'not_on_file' | 'not_repeated' | null;
   /** The specific reason behind UNCLEAR or NOT_APPLICABLE, when known. */
   stateReason: string | null;
   /** The cross-period join for this variable, when the ledger holds one. It is
@@ -436,7 +443,13 @@ export interface ThesisVerdict {
      *  consumers keep compiling. (zzz772) */
     contradicted?: string[];
     /** zzz777: adverse earlier-period readings still open — not contradicted. */
-    historical?: string[] };
+    historical?: string[];
+    /** zzz837: output checks (revenue / earnings / margin / operating leverage) that
+     *  moved down — shown apart from the structural count. */
+    outputContradicted?: string[] };
+  /** zzz837: the one evidence sentence to print (right word: 'not confirmed'
+   *  unless a structural check is contradicted; output check named apart). */
+  evidenceLine?: string;
 }
 export interface CatalystRank {
   score: number;                       // 0–100
@@ -652,6 +665,11 @@ export interface AssessInput {
   pattern: AbfgPattern | null | undefined;
   /** zzz782: how the type was reached — an auto nearest fit is PROVISIONAL. */
   patternFit?: 'exact' | 'nearest' | 'manual' | null;
+  /** zzz837: the PRIOR quarter's verdict per variable, when a prior period is on
+   *  file. A break condition written over time ("two consecutive quarters")
+   *  fires only when this quarter AND the prior one both read deteriorating.
+   *  Absent = the second quarter is not on file (never read as fired). */
+  priorVerdicts?: Partial<Record<VarKey, VarVerdict>> | null;
   variables: StructuralVar[];
   /** From guidance-ledger: a promise made earlier that this quarter can be
    *  checked against. Absent on the first quarter a holding is tracked. */
@@ -1033,6 +1051,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   const persistentKeys = HISTORICAL_PERSISTENT[thesis.pattern] || new Set<VarKey>();
   const historicalByKey = new Map<VarKey, HistoricalItem>();
   const historicalContext: HistoricalItem[] = [];
+  const historicalSeen = new Set<string>();
   const variables: StructuralVar[] = [];
   for (const v of variables0) {
     if (!isHistoricalRow(v)) { variables.push(v); continue; }
@@ -1059,7 +1078,10 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
         ? `Not an active condition — the ${period} reading (${value}) ${unreadable ? 'cannot be read either way' : 'does not fail the test'}; it is history and can neither confirm nor contradict ${curName}.`
         : `Context only — ${lcl(label)} is not a persistent condition of the ${thesis.name} thesis, so the ${period} figure does not change the ${curAdj} status.`;
     const item: HistoricalItem = { key: v.key, label, period, value, active, standing, rule: active || standing ? 'STANDING_CONDITION' : 'CONTEXT', decision, source: v.sourceLabel || (v.source === 'grader' ? 'screener (annual)' : null) };
-    historicalContext.push(item);
+    // zzz837: one row per metric + period + value (PICCADIL printed the same
+    // utilisation twice, and "30 KL" beside "30 KLPD" — the same figure).
+    const histSig = histSignature(item.key, item.period, value);
+    if (!historicalSeen.has(histSig)) { historicalSeen.add(histSig); historicalContext.push(item); }
     // One historical item per variable on the row itself; a live row keeps
     // its own value, the history sits beside it.
     if (!historicalByKey.has(v.key)) historicalByKey.set(v.key, item);
@@ -1191,7 +1213,12 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     const silencePasses = !v && !notApplicable && !stoppedDisclosing && !!input.evidenceReviewed && SILENCE_IS_A_PASS.has(tv.key);
     // A variable the company did not disclose is UNKNOWN, never deteriorating.
     const verdict: VarVerdict = v ? v.verdict : silencePasses ? 'flat' : 'unknown';
-    const fired = !!tv.invalidatedWhen && verdict === 'deteriorating';
+    // zzz837: "two consecutive quarters" / "repeatedly" needs a second reading.
+    const needsSecond = TWO_READING_RE.test(tv.invalidatedWhen || '');
+    const priorV = input.priorVerdicts ? input.priorVerdicts[tv.key] : undefined;
+    const secondReading: 'not_on_file' | 'not_repeated' | null = !!tv.invalidatedWhen && verdict === 'deteriorating' && needsSecond && priorV !== 'deteriorating'
+      ? (priorV == null || priorV === 'unknown' ? 'not_on_file' : 'not_repeated') : null;
+    const fired = !!tv.invalidatedWhen && verdict === 'deteriorating' && !secondReading;
     // A flat row that states a non-zero move moved, just not materially. (zzz772)
     const move = v ? outputMove(v) : null;
     const withinMateriality = verdict === 'flat' && !!v && (immaterialKeys.has(tv.key) || (move != null && move !== 0));
@@ -1224,7 +1251,8 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
         : notApplicable && lenderNA
         ? 'Not applicable: this is a lender. Lending is an operating cash outflow, so cash conversion (CFO ÷ PAT) and working-capital days do not measure its earnings quality — asset quality does. Never counted as pending, never counted against the thesis.'
         : notApplicable
-        ? 'Not applicable: this is a services / software / financial business, so there is no physical capacity or plant to fill. Never counted as pending.'
+        ? `Not applicable: ${noPlantBusinessOf(input.business)?.reason || 'this is a services / software / financial business, so there is no physical capacity or plant to fill'}. `
+          + `${noPlantBusinessOf(input.business) ? `Read instead: ${noPlantBusinessOf(input.business)!.alternates}. ` : ''}Never counted as pending.`
         : stoppedDisclosing
         ? `${comparison!.previous?.raw} in ${comparison!.previous_period}, and not disclosed in ${comparison!.current_period}. `
           + 'The figure was on file and has stopped being published. That is a decision, not an oversight, '
@@ -1240,7 +1268,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       invalidation: fired ? conditionText(tv.key, tv.invalidatedWhen, { after: v?.after, before: v?.before, verdict }) : null,
       withinMateriality,
       state: 'FOUND' as EvidenceState, stateReason: (v?.unjudged ?? null) as string | null,
-      readings: readingsOf(v, comparison), silence: silencePasses,
+      readings: readingsOf(v, comparison), silence: silencePasses, secondReading,
       // The four absences are different facts and only one of them is fixable
       // by pressing a button. A grader-available variable that is still blank
       // after the row was loaded means the source simply did not carry it.
@@ -1262,7 +1290,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     } else {
       c.state = stateOfAbsence(c.absence, !!input.retrievalFailed);
       c.stateReason = c.historical ? `${curHead}: not disclosed — the ${c.historical.period} figure ${c.historical.value} is historical context`
-        : c.state === 'NOT_APPLICABLE' ? (input.financialKind === 'lender' && LENDER_NA.has(c.key) ? 'a lender — lending is an operating cash outflow, so this does not measure its quality' : 'services / software / financial business — no physical capacity to fill')
+        : c.state === 'NOT_APPLICABLE' ? (input.financialKind === 'lender' && LENDER_NA.has(c.key) ? 'a lender — lending is an operating cash outflow, so this does not measure its quality' : (noPlantBusinessOf(input.business)?.reason || 'services / software / financial business — no physical capacity to fill'))
         : c.state === 'NOT_DISCLOSED' && input.searchedNoDocuments && !input.evidenceReviewed ? `searched every source: ${String(input.unavailableReason || 'no transcript, presentation or results filing found').replace(/^searched[:\s—-]*/i, '').slice(0, 220)}`
         : (c.state === 'SOURCE_UNAVAILABLE' || c.state === 'RETRIEVAL_FAILED') && input.unavailableReason ? `couldn't read (${String(input.unavailableReason).replace(/^couldn't read — /, '').slice(0, 220)})`
         : c.absence === 'no_grader_row' ? 'no graded or screener row on file, and no document read prints it'
@@ -1333,6 +1361,11 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
       c.watch = true;
       c.watchCondition = c.invalidation;
       c.invalidation = null;
+    }
+    // zzz837: one quarter of a two-quarter condition is watch, not a reading down.
+    if (c.secondReading) {
+      c.watch = true;
+      c.watchCondition = thesis.variables.find((t) => t.key === c.key)?.invalidatedWhen || null;
     }
   }
   /** "earnings growth -55.8%", or for a historical active condition
@@ -2122,9 +2155,13 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     const warnFired = firedRows.filter((c) => !mayMoveStatus(c)).map((c) => c.invalidation as string);
     const q = (xs: string[], j: string) => xs.map((c) => `"${c}"`).join(j);
     // A condition on an unmapped variable is watch, not a fired trigger. (zzz773)
-    const watchConds = checked.filter((c) => c.watch && c.watchCondition)
+    const watchConds = checked.filter((c) => c.watch && c.watchCondition && !c.secondReading)
       .map((c) => `${conditionText(c.key, c.watchCondition as string, c).replace(/\.\s*$/, '')} (${lcl(VAR_LABEL[c.key] || c.label)} ${c.delta || c.after || ''}`.trim() + ')');
-    const watchTxt = watchConds.length ? ` Watch — not mapped to this thesis, cannot move the status: ${q(watchConds, '; ')}.` : '';
+    // zzz837: a condition over two quarters that only one quarter has read.
+    const secondConds = checked.filter((c) => c.secondReading && c.watchCondition)
+      .map((c) => `${conditionText(c.key, c.watchCondition as string, c).replace(/\.\s*$/, '')} (${lcl(VAR_LABEL[c.key] || c.label)} ${c.delta || c.after || ''}`.trim() + `; ${c.secondReading === 'not_on_file' ? 'second quarter not on file' : 'prior quarter did not read down'})`);
+    const watchTxt = (watchConds.length ? ` Watch — not mapped to this thesis, cannot move the status: ${q(watchConds, '; ')}.` : '')
+      + (secondConds.length ? ` watch — one quarter (needs a second), not fired, status unchanged: ${q(secondConds, '; ')}.` : '');
     const unresolvedTxt = unresolved.length ? ` Unresolved from a prior period (standing-condition rule — not a current reading): ${q(unresolved, '; ')}.` : '';
     const breakTrigger = {
       fired: fired.length > 0,
@@ -2147,11 +2184,20 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
     // unresolved, not contradicted by the current period.
     const histKeys = openKeys.filter((k) => checked.some((c) => c.key === k && c.verdict === 'deteriorating' && !c.watch && c.historical?.active)
       && !checked.some((c) => c.key === k && c.verdict === 'deteriorating' && !c.watch && !c.historical?.active));
-    const contradictedKeys = openKeys.filter((k) => !histKeys.includes(k) && checked.some((c) => c.key === k && c.verdict === 'deteriorating' && !c.watch));
-    const missing = openKeys.filter((k) => !contradictedKeys.includes(k) && !histKeys.includes(k)).map(labelOf);
+    // zzz837: a financial-output row (operating leverage from revenue and profit)
+    // is the OUTPUT check — listed apart, never as a contradicted or missing structural check.
+    const outKey = (k: VarKey) => checked.some((c) => c.key === k && isFinancialOutput(c.key, c.source));
+    const outputDownKeys = openKeys.filter((k) => outKey(k) && checked.some((c) => c.key === k && c.verdict === 'deteriorating' && !c.watch && !c.historical?.active));
+    const contradictedKeys = openKeys.filter((k) => !histKeys.includes(k) && !outKey(k) && checked.some((c) => c.key === k && c.verdict === 'deteriorating' && !c.watch));
+    const missing = dedupeLabels(openKeys.filter((k) => !contradictedKeys.includes(k) && !histKeys.includes(k) && !outputDownKeys.includes(k)).map(labelOf));
     const contradictedLabels = contradictedKeys.map(labelOf);
     const currentDown = checked.filter((c) => c.verdict === 'deteriorating' && mayMoveStatus(c) && (c.weight === 4 || structuralKeys.has(c.key)) && !c.historical?.active);
-    const coreContradicted = (coreDown.length > 0 || structuralDown) && currentDown.length > 0;
+    // zzz837: EVIDENCE is about the MECHANISM. A financial-output row (operating
+    // leverage computed from revenue and profit, margin, earnings) moving down is
+    // the OUTPUT check; it is shown apart and never turns the evidence line
+    // 'contradicted' when no structural check is contradicted.
+    const mechDown = currentDown.filter((c) => !isFinancialOutput(c.key, c.source) && !c.secondReading);
+    const coreContradicted = (coreDown.length > 0 || structuralDown) && mechDown.length > 0;
     const anyConfirmed = mechX > 0 || drivers.length > 0;
     const coreOpen = coreMechanism.filter((c) => c.verdict === 'unknown' || c.state === 'UNCLEAR');
     // TI: WEAKENING on margin and earnings, while no core MECHANISM variable
@@ -2226,8 +2272,11 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
                 ? `no financial figures on file for this period; mechanism ${mechX}/${mechY} confirmed`
                 : `output did not improve (${outputSummary}); mechanism ${mechX}/${mechY} confirmed — nothing read calls a direction`;
     }
-    return { breakTrigger, direction, directionWhy, evidence, evidenceWhy,
-      coverage: { confirmed: mechX, applicable: mechY, missing, contradicted: contradictedLabels, historical: histKeys.map(labelOf) } };
+    const outputContradicted = dedupeLabels(checked.filter((c) => isFinancialOutput(c.key, c.source) && c.verdict === 'deteriorating' && !c.watch && !c.historical?.active && mayMoveStatus(c))
+      .map((c) => `${lcl(VAR_LABEL[c.key] || c.label)} ${c.delta || c.after || ''}`.trim()));
+    const coverageOut = { confirmed: mechX, applicable: mechY, missing, contradicted: contradictedLabels, historical: histKeys.map(labelOf), ...(outputContradicted.length ? { outputContradicted } : {}) };
+    return { breakTrigger, direction, directionWhy, evidence, evidenceWhy, coverage: coverageOut,
+      evidenceLine: evidenceLineOf({ evidence, coverage: coverageOut }) };
   })();
   // The card's status sentence opens with the staleness, whatever the status:
   // the reader must know the evidence is old before reading what it said.
@@ -2416,7 +2465,7 @@ export function assessThesis(input: AssessInput): ThesisAssessment {
   }
   // WATCH, appended to whatever the status is. (zzz773)
   {
-    const watchRows = checked.filter((c) => c.watch && c.verdict === 'deteriorating' && (c.weight >= 3 || c.key === 'cash_conversion'));
+    const watchRows = checked.filter((c) => c.watch && !c.secondReading && c.verdict === 'deteriorating' && (c.weight >= 3 || c.key === 'cash_conversion'));
     if (watchRows.length && status !== 'BROKEN') {
       because = `${because.replace(/\s+$/, '')} Watch — context, not status-changing (not mapped to the ${thesis.name} thesis): `
         + `${watchRows.map((c) => `${lcl(VAR_LABEL[c.key] || c.label)} ${c.delta || c.after || ''}`.trim()).join(', ')}.`;
