@@ -6,7 +6,7 @@
 import React, { useState } from 'react';
 import type { EarningsMini, ResearchItem } from '@/lib/ai-gainers/research-view';
 import { Btn, CatalystChips, CatalystForBadge, CardFacts, FactLine, FlagChips, Move, Name, OlderContextBadge, RelevanceBadge, ScanNote, SourceBadge, StatusPill, TriagePill, UsCatalystList, InCatalystList } from './Badges';
-import { C, CLASS_META, pctND, tint, txt } from './tokens';
+import { C, CLASS_META, PRICE_COMMENTARY_LABEL, isPriceCommentary, pctND, tint, txt } from './tokens';
 
 const label: React.CSSProperties = { fontSize: 11, fontWeight: 800, letterSpacing: 0.5, color: C.faint };
 
@@ -25,7 +25,7 @@ export function WhatChanged({ it, noLabel }: { it: ResearchItem; noLabel?: boole
       </div>
     );
   }
-  if (it.earnings) return <EarningsStrip e={it.earnings} />;
+  if (it.earnings) return <EarningsStrip e={it.earnings} older={it.olderResultLabel} />;
   const hasBA = !!(it.before || it.after);
   const body = hasBA
     ? (
@@ -50,7 +50,7 @@ export function WhatChanged({ it, noLabel }: { it: ResearchItem; noLabel?: boole
 const gTxt: Record<EarningsMini['guidance'], string> = { RAISED: 'Raised', MAINTAINED: 'Maintained', CUT: 'Cut', NOT_STATED: 'Not stated' };
 const oTxt: Record<EarningsMini['orderBook'], string> = { UP: 'Up', DOWN: 'Down', UNCHANGED: 'Unchanged', NOT_STATED: 'Not stated' };
 
-export function EarningsStrip({ e }: { e: EarningsMini }) {
+export function EarningsStrip({ e, older }: { e: EarningsMini; older?: string | null }) {
   const margin = e.marginNow == null ? 'Not disclosed'
     : `${e.marginPrior != null ? `${e.marginPrior.toFixed(1)}% → ` : ''}${e.marginNow.toFixed(1)}%`;
   // zzz771: every missing figure says "Not disclosed" — never "—" beside a
@@ -68,7 +68,7 @@ export function EarningsStrip({ e }: { e: EarningsMini }) {
   ];
   return (
     <div style={{ background: C.bg2, borderRadius: 6, padding: '7px 10px' }}>
-      <div style={{ ...label, marginBottom: 4 }}>EARNINGS{e.filedDaysAgo != null ? ` · FILED ${e.filedDaysAgo}D AGO` : ''}</div>
+      <div style={{ ...label, marginBottom: 4 }}>{older ? older.toUpperCase() : `EARNINGS${e.filedDaysAgo != null ? ` · FILED ${e.filedDaysAgo}D AGO` : ''}`}</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '4px 12px' }}>
         {cells.map(([k, v, col]) => (
           <div key={k} style={{ minWidth: 0 }}>
@@ -78,10 +78,19 @@ export function EarningsStrip({ e }: { e: EarningsMini }) {
         ))}
       </div>
       <div style={{ fontSize: 13, color: C.text, marginTop: 5 }}>
-        <span style={{ ...label, marginRight: 6 }}>KEY CHANGE</span>{txt(e.keyChange, 'Not identified')}
+        <span style={{ ...label, marginRight: 6 }}>{older ? 'CHANGE IN THAT RESULT' : 'KEY CHANGE'}</span>{txt(e.keyChange, 'Not identified')}
       </div>
     </div>
   );
+}
+
+/** Two rank sentences that say mostly the same words are one sentence: print it once. */
+function sameText(a: string, b: string): boolean {
+  const w = (x: string) => new Set(x.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter((t) => t.length > 3));
+  const A = w(a), B = w(b);
+  if (!A.size || !B.size) return false;
+  let hit = 0; A.forEach((t) => { if (B.has(t)) hit++; });
+  return hit / Math.min(A.size, B.size) >= 0.6;
 }
 
 /** zzz789: the rank is explained in WORDS — the structured dimensions and any
@@ -116,13 +125,13 @@ const kv = (k: string, v: React.ReactNode) => (
 
 /** zzz789: the SAME event surfaced in other sections — referenced, never a second card. */
 export function AlsoIn({ it, here }: { it: ResearchItem; here?: string }) {
-  // zzz798 (US): "Unknown — needs reading" is a to-do list, not another view
-  // of the event — naming it here said nothing ("SAME EVENT · ALSO IN: Unknown — needs reading").
-  const other = (it.surfacedIn || []).filter((s) => s !== here && !(it.market === 'US' && s === 'Unknown — needs reading'));
+  // zzz836: "Also listed under" only when the item truly appears in another VISIBLE section. "Unknown - needs reading" is a to-do
+  // list that repeats items already shown above, so it is never named here (either market).
+  const other = (it.surfacedIn || []).filter((s) => s !== here && s !== 'Unknown — needs reading');
   if (!other.length) return null;
   return (
-    <div data-testid="also-in" style={{ fontSize: 12, color: C.faint }} title={`Same event (${it.canonicalId || it.ticker}) — one record, referenced from each view.`}>
-      <span style={{ ...label, marginRight: 6 }}>SAME EVENT · ALSO IN</span>{other.join(' · ')}
+    <div data-testid="also-in" style={{ fontSize: 12, color: C.faint }} title={`One record (${it.canonicalId || it.ticker}), referenced from each section.`}>
+      <span style={{ ...label, marginRight: 6 }}>ALSO LISTED UNDER</span>{other.join(' · ')}
     </div>
   );
 }
@@ -139,6 +148,13 @@ function AlsoOnFile({ it }: { it: ResearchItem }) {
           <span style={{ color: C.text }}>{txt(c.title, c.kindWord)}</span>
           {c.materialityText && <span> — {c.materialityText}</span>}
           <span style={{ color: C.faint }}> · {c.state.toLowerCase()} · {c.verification}</span>
+          {(() => {
+            // every item shows its own date and age; older than 14 days before the move is context
+            const d = c.lastSeen ? String(c.lastSeen).slice(0, 10) : null;
+            const n = d && it.moveDate ? Math.round((Date.parse(`${it.moveDate}T00:00:00Z`) - Date.parse(`${d}T00:00:00Z`)) / 86_400_000) : null;
+            if (!d) return null;
+            return <span style={{ color: n != null && n > 14 ? C.amber : C.faint }}> · {d}{n != null && n >= 0 ? ` (${n}d before the move)` : ''}{n != null && n > 14 ? ' — context' : ''}</span>;
+          })()}
         </div>
       ))}
     </div>
@@ -332,6 +348,9 @@ export function ResearchCard({ it, rank, onOpen, older, section }: { it: Researc
       <div style={{ fontSize: 13, lineHeight: 1.5, color: C.text }}>
         <span style={{ ...label, marginRight: 6 }}>WHY RESEARCH</span>{txt(it.whyResearch, 'Not established')}
       </div>
+      <div data-testid="research-question" style={{ fontSize: 12, color: C.faint }}>
+        <span style={{ ...label, marginRight: 6 }}>RESEARCH QUESTION</span>{it.researchQuestion || 'What fundamental event, if any, explains the move?'}
+      </div>
       {/* zzz789: why this rank, in words — no score number. */}
       {it.whyRank && (
         <div data-testid="why-rank" style={{ fontSize: 12, lineHeight: 1.45, color: C.dim }}>
@@ -339,7 +358,7 @@ export function ResearchCard({ it, rank, onOpen, older, section }: { it: Researc
         </div>
       )}
       {/* zzz835: the rank in one line, from the same components as the rank. Price is never in it. */}
-      {it.rankReason && (
+      {it.rankReason && !(it.whyRank && sameText(it.whyRank, it.rankReason)) && (
         <div data-testid="rank-reason" style={{ fontSize: 12, lineHeight: 1.45, color: C.dim }}>
           <span style={{ ...label, marginRight: 6 }}>RANK BASIS:</span>{it.rankReason}
         </div>
@@ -348,7 +367,7 @@ export function ResearchCard({ it, rank, onOpen, older, section }: { it: Researc
       <AlsoOnFile it={it} />
       {it.news?.narrative && (
         <div style={{ fontSize: 12, color: C.dim }}>
-          <span style={{ ...label, marginRight: 6 }}>RUNNING STORY</span>{it.news.narrative.label} · covered on {it.news.narrative.days} days ({it.news.narrative.firstDate} → {it.news.narrative.lastDate}) · press, secondary · verification required — “{it.news.narrative.lead}”
+          <span style={{ ...label, marginRight: 6 }}>{isPriceCommentary(it.news.narrative.label) ? PRICE_COMMENTARY_LABEL : 'RUNNING STORY'}</span>{it.news.narrative.label} · covered on {it.news.narrative.days} days ({it.news.narrative.firstDate} → {it.news.narrative.lastDate}) · {isPriceCommentary(it.news.narrative.label) ? 'a price narrative, not evidence of an event' : 'press, secondary · verification required'} — “{it.news.narrative.lead}”
         </div>
       )}
       {unknowns.length > 0 && (

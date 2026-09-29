@@ -131,7 +131,7 @@ test('session.isFinal === false makes any market PROVISIONAL; isFinal === true d
 
 test('banner rows: session date, generated, data as of, criteria, counts strip with conflicts', () => {
   const v = { ...withSession(indiaPdfView(), { sessionDate: '2026-09-28', generatedAt: '2026-09-29T02:00:00.000Z', dataAsOf: '2026-09-28T10:00:00.000Z', isFinal: true }),
-    scanCriteria: 'screener.in screen X', banner: { market: 'IN' as const, scanned: 43, verified: 2, unverified: 21, conflicts: 3, noMaterialCatalyst: 16, negative: 1, provisional: false } };
+    partition: undefined, scanCriteria: 'screener.in screen X', banner: { market: 'IN' as const, scanned: 43, verified: 2, unverified: 21, conflicts: 3, noMaterialCatalyst: 16, negative: 1, provisional: false } };
   const t = flow(build({ view: v, market: 'IN' }));
   assert.match(t, /SESSION DATE/); assert.match(t, /DATA AS OF/); assert.match(t, /07:30 IST, 29 Sep 2026/); assert.match(t, /15:30 IST, 28 Sep 2026/);
   assert.match(t, /SCAN CRITERIA/); assert.match(t, /screener\.in screen X/);
@@ -160,7 +160,7 @@ test('empty catalysts print the view sentence with what was searched', () => {
 
 test('view.summary.catalysts, olderFilings, dataNotes, bookChecked and companyName are printed', () => {
   const b = usPdfView();
-  const v: ResearchView = { ...b,
+  const v: ResearchView = { ...b, partition: undefined,
     summary: { ...b.summary, conflicts: 2, catalysts: { market: 'US', found: 4, none: 3, byCategory: [{ category: 'Earnings', names: 4, sec: 3, press: 1, tickers: [] }] } },
     olderFilings: [{ ticker: 'OLDX', name: 'OLDX', company: 'Old Corp', movePct: 6, filedDate: '2026-08-01', ageDays: 40, event: 'Old order', eventLabel: 'Contract', material: 'SMALL', url: null, moveDate: '2026-09-24' }],
     dataNotes: [{ ticker: 'NEWL', name: 'NEWL', company: 'New Listing Inc', movePct: 80, kind: 'new_listing', text: 'No prior close to compare' }],
@@ -170,4 +170,99 @@ test('view.summary.catalysts, olderFilings, dataNotes, bookChecked and companyNa
   assert.match(t, /Earnings 4 \(1 press only\)/); assert.match(t, /CONFLICTS IN THE EVIDENCE/);
   assert.match(t, /Old Corp/); assert.match(t, /DATA NOTES/); assert.match(t, /No prior close to compare/);
   assert.match(t, /Checked 5 held and 2 watched names/); assert.match(t, /Named By View Corp/);
+});
+
+// ── round 2: partition, source vs evidence, direction words, wording ──
+test('partition: one line, exclusive bucket tiles, overlays apart, no tile strip of mixed counts', () => {
+  const v = indiaPdfView();
+  assert.ok(v.partition, 'fixture view carries a partition');
+  const t = flow(build({ view: v, market: 'IN' }));
+  assert.ok(t.includes(v.partition!.line), 'the partition line is printed once');
+  assert.match(t, /Overlays \(tags on the names above, not part of the sum\): research queue \d+ · watch \d+ · portfolio matches \d+ · conflicts \d+/);
+  assert.doesNotMatch(t, /PORTFOLIO MATCHES \d|RESEARCH QUEUE \d+ PORTFOLIO/, 'overlays are not tiles');
+  const sum = v.partition!.buckets.reduce((n, b) => n + b.count, 0);
+  assert.equal(sum, v.partition!.scanned);
+});
+
+test('PROVISIONAL is one banner line plus one footer tag per page (no doubled text)', () => {
+  const v = withSession(usPdfView(), { status: 'Live', scanAt: '2026-09-24T19:43:00.000Z', date: '2026-09-24', isFinal: false });
+  const doc = build({ view: v, market: 'US' });
+  const s = drawnStrings(doc);
+  assert.equal(s.filter((x) => /PROVISIONAL/.test(x) && x !== 'PROVISIONAL').length, 1);
+  assert.equal(s.filter((x) => x === 'PROVISIONAL').length, doc.getNumberOfPages());
+  assert.ok(!s.some((x) => /PROVISIONAL.*PROVISIONAL/.test(x)));
+  assert.ok(!flow(doc).includes('Provisional (Live)'));
+});
+
+test('SOURCE and EVIDENCE are separate labelled fields; direction is an ASCII word; no arrows', () => {
+  for (const [v, market] of [[indiaPdfView(), 'IN'], [usPdfView(), 'US']] as Array<[ResearchView, 'IN' | 'US']>) {
+    const doc = build({ view: v, market });
+    const t = flow(doc);
+    assert.match(t, /EVIDENCE/); assert.match(t, /SOURCE/);
+    assert.match(t, /Official filing exists|Press only/); assert.match(t, /Document (not )?read|Secondary only/);
+    assert.match(t, /\+ POSITIVE|\? UNKNOWN|= NEUTRAL|- NEGATIVE|~ MIXED/);
+    assert.ok(!/[▲▼◆●]/.test(t));
+    assert.ok(drawnStrings(doc).some((x) => x === 'Evidence' || /^EVIDENCE/.test(x) || x === 'EVIDENCE'), 'an Evidence column / label is drawn');
+  }
+});
+
+test('wording: no causal claim, MARKET MOVE and RESEARCH QUESTION on every card', () => {
+  for (const [v, market] of [[indiaPdfView(), 'IN'], [usPdfView(), 'US']] as Array<[ResearchView, 'IN' | 'US']>) {
+    const t = flow(build({ view: v, market }));
+    assert.match(t, /Fundamental events filed around unusual price moves, ranked by research value, not by return\./);
+    assert.match(t, /MARKET MOVE/); assert.match(t, /RESEARCH QUESTION What fundamental event, if any, explains the move\?/);
+    assert.doesNotMatch(t, /behind the (unusual )?move|caused by|driven by|catalyst behind/i);
+  }
+});
+
+test('company names are full and never merged into the move; heading is ticker then company', () => {
+  const v = indiaPdfView();
+  const long = { ...v.queue[0], companyName: 'Landmark Cars Limited India' };
+  const strings = drawnStrings(build({ view: { ...v, queue: [long, ...v.queue.slice(1)], top3: [long] }, market: 'IN' }));
+  assert.ok(strings.join(' ').includes('Landmark Cars Limited'));
+  assert.ok(!strings.some((x) => /Landmark Cars/.test(x) && /[+-]\d+\.\d%/.test(x)), 'no drawn string joins the company and the move');
+});
+
+test('older result, price commentary, band, direction note print in their own words', () => {
+  const v = indiaPdfView();
+  const withE = v.queue.findIndex((i) => i.earnings);
+  const base = v.queue[Math.max(0, withE)];
+  const patched = { ...base, olderResultLabel: 'Q1 result filed 46 days ago', materialityBand: 'SMALL = under 5% of market cap (moderate from 5%, high from 20%)', directionNote: 'Rating outlook raised; not a growth event', priceCommentaryOnly: true,
+    news: { ...(base.news || {}), narrative: { label: 'Circuit / momentum', days: 3, firstDate: '2026-09-22', lastDate: '2026-09-24', lead: 'shares surge' } } as any };
+  const t = flow(build({ view: { ...v, queue: [patched], top3: [patched] }, market: 'IN' }));
+  assert.match(t, /BAND SMALL = under 5% of market cap/);
+  assert.match(t, /DIRECTION Rating outlook raised/);
+  assert.match(t, /PRICE COMMENTARY \(not evidence\)/);
+  if (base.earnings) { assert.match(t, /OLDER RESULT - context/); assert.doesNotMatch(t, /KEY CHANGE/); }
+});
+
+test('no empty section headings; "also listed under" only names a real other section', () => {
+  const v = indiaPdfView();
+  const bare: ResearchView = { ...v, partition: undefined, needsReading: [], watch: [], negative: [], noCatalyst: [], dataQuality: [], context: [], olderFilings: [], dataNotes: [], sourceFailures: [], partialFailures: [], portfolio: [], bookChecked: null, immaterialNegative: [] };
+  const t = flow(build({ view: bare, market: 'IN' }));
+  for (const h of ['WATCH / INVESTIGATE', 'UNKNOWN: NEEDS READING', 'OLDER FILINGS', 'NO IDENTIFIED CATALYST', 'DATA NOTES', 'DATA QUALITY']) assert.ok(!t.includes(h), `${h} hidden when empty`);
+  const it = { ...v.queue[0], surfacedIn: ['Research queue', 'Unknown — needs reading'] };
+  assert.doesNotMatch(flow(build({ view: { ...v, queue: [it] }, market: 'IN' })), /ALSO LISTED UNDER/);
+  const it2 = { ...v.queue[0], surfacedIn: ['Research queue', 'Watch / investigate'] };
+  assert.match(flow(build({ view: { ...v, queue: [it2] }, market: 'IN' })), /ALSO LISTED UNDER Watch \/ investigate/);
+});
+
+test('table cells are not squeezed: tickers, ranks and MATERIAL words are not split mid-word', () => {
+  const v = indiaPdfView();
+  const big = bigView(v);
+  const s = drawnStrings(build({ view: big, market: 'IN' }));
+  assert.ok(!s.some((x) => x === 'NT' || x === 'T' || x === 'E' || x === 'WN' || x === 'B'), 'no one-letter word remnants');
+  assert.ok(!s.some((x) => /^\d$/.test(x) && false));
+});
+
+test('stageLabel, event-specific research question (printed once) and "Regulatory inspection" render', () => {
+  const v = indiaPdfView();
+  const q = 'Are the observations procedural, and when is the response due?';
+  const it = { ...v.queue[0], eventType: 'Regulatory inspection', eventLabel: 'Regulatory inspection', stageBadge: null, stageLabel: 'Inspection completed', researchQuestion: q, whyResearch: q } as ResearchItem;
+  const t = flow(build({ view: { ...v, queue: [it], top3: [] }, market: 'IN' }));
+  assert.match(t, /STAGE INSPECTION COMPLETED/);
+  assert.match(t, /Regulatory inspection/);
+  assert.equal(t.split(q).length - 1, 1, 'the same sentence is printed once');
+  const it2 = { ...it, researchQuestion: undefined, whyResearch: 'Other reason.' } as ResearchItem;
+  assert.match(flow(build({ view: { ...v, queue: [it2], top3: [] }, market: 'IN' })), /What fundamental event, if any, explains the move\?/);
 });

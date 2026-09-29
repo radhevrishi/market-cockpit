@@ -464,6 +464,7 @@ export function classifyAnnouncement(a: AnnouncementLite, market: 'IN' | 'US' = 
     if (/divest|slump sale|stake sale/i.test(hay)) return cat('divestiture');
     return cat('acquisition');
   }
+  if (RX.certification.test(hay) && /\bform 483\b|\b483\b|\beir\b|establishment inspection|\binspect(ion|ed)\b|\bobservations?\b/i.test(hay) && !/\banda\b|marketing authori|approval (granted|received)|received (an? )?(final |tentative )?approval|\bcep\b|ce mark|gmp certificate|certificate of gmp/i.test(hay)) return cat('regulatory_inspection');   // zzz836: an inspection is a compliance event, never an approval (Unichem)
   if (RX.certification.test(hay)) return cat(/usfda|us fda|eir|483|who|gmp|dcgi|cdsco|anda|marketing authori|cep|ce mark/i.test(hay) ? 'regulatory_approval' : 'product_qualification');
   if (RX.rating.test(hay)) {
     // Only an UPGRADE or an outlook revised upward is an event. A

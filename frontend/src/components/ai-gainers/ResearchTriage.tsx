@@ -16,11 +16,11 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { useUrlParam } from '@/lib/use-url-param';
 import { exchangeStamp } from '@/lib/ai-gainers/research-present';
-import { EXTREME_MOVE_PCT, type ResearchItem, type ResearchView } from '@/lib/ai-gainers/research-view';
-import { BandChip, Btn, CatalystForBadge, Move, Name, Pill, ScanNote, SectionHead, SourceBadge, StatusPill, TriagePill, UsCatalystList, InCatalystList, materialWord } from './Badges';
+import { EXTREME_MOVE_PCT, PARTITION_META, type ResearchItem, type ResearchView } from '@/lib/ai-gainers/research-view';
+import { BandChip, Btn, CatalystForBadge, DirectionChip, Move, Name, Pill, ScanNote, SectionHead, SourceBadge, StatusPill, TriagePill, UsCatalystList, InCatalystList, materialWord } from './Badges';
 import { EventDrawer } from './EventDrawer';
 import { AlsoIn, ResearchCard } from './ResearchCard';
-import { C, CLASS_META, CURRENCY, MATERIAL_COLOR, exchangeClock, moveColor, pct, sessionDate, tint, txt } from './tokens';
+import { C, CLASS_META, CURRENCY, PRICE_COMMENTARY_LABEL, isPriceCommentary, MATERIAL_COLOR, exchangeClock, moveColor, pct, sessionDate, tint, txt } from './tokens';
 
 export interface ResearchTriageProps {
   view: ResearchView;
@@ -93,11 +93,11 @@ function Header({ view, market, onRescan, rescanning, toolbar, sessionNote, pdfA
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '2px 12px' }}>
         <h1 style={{ margin: 0, fontSize: 18, fontWeight: 900, letterSpacing: 0.8, color: C.text }}>AI DAILY GAINERS</h1>
         <span title={cur.note} data-testid="currency-badge" style={{ fontSize: 11, fontWeight: 800, color: C.dim, border: `1px solid ${C.border}`, borderRadius: 4, padding: '1px 6px' }}>{market === 'US' ? 'USA' : 'INDIA'} · {cur.symbol} {cur.code}</span>
-        <span style={{ fontSize: 13, color: C.dim }}>Fundamental events behind unusual moves - ranked by research value, not return.</span>
+        <span style={{ fontSize: 13, color: C.dim }}>Fundamental events filed around unusual moves - ranked by research value, not return.</span>
       </div>
       {provisional && (
         <div role="status" data-testid="provisional-banner" style={{ padding: '6px 11px', borderRadius: 8, border: `1px solid ${C.amber}`, background: tint(C.amber, 12), color: C.text, fontSize: 13, lineHeight: 1.45 }}>
-          <b style={{ color: C.amber, letterSpacing: 0.5 }}>PROVISIONAL</b> - {txt(s.runReason, 'The session has not closed, so these moves and rankings can still change.')} Do not treat the ranking as final.
+          <b style={{ color: C.amber, letterSpacing: 0.5 }}>PROVISIONAL</b> - {txt(s.runReason, 'The session has not closed, so these moves and rankings can still change.').replace(/^\s*PROVISIONAL\s*[-—–:]*\s*/i, '')} Do not treat the ranking as final.
         </div>
       )}
       <div data-testid="session-block" style={{
@@ -130,6 +130,24 @@ function Header({ view, market, onRescan, rescanning, toolbar, sessionNote, pdfA
 function BannerCounts({ view }: { view: ResearchView }) {
   const b = view.banner;
   if (!b) return null;
+  // zzz836: ONE partition line - every scanned name in exactly one bucket, the counts add up to the scanned total.
+  if (view.partition) {
+    const p = view.partition;
+    const shown = p.buckets.filter((x) => PARTITION_META[x.key].core || x.count > 0);
+    return (
+      <div data-testid="partition-line" style={{ ...box, padding: '6px 11px', display: 'flex', flexWrap: 'wrap', gap: '3px 10px', alignItems: 'baseline' }}>
+        <b style={{ fontSize: 17, color: C.text }}>{p.scanned}</b><span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.4, color: C.faint }}>SCANNED =</span>
+        {shown.map((x, i) => (
+          <span key={x.key} title={`${x.meaning}${x.tickers.length ? `\n${x.tickers.slice(0, 40).join(', ')}` : ''}`} style={{ display: 'inline-flex', alignItems: 'baseline', gap: 4 }}>
+            {i > 0 && <span style={{ color: C.faint }}>+</span>}
+            <b style={{ fontSize: 16, color: x.count > 0 ? (x.key === 'confirmed' ? C.green : x.key === 'negative' ? C.red : x.key === 'identified_impact_unknown' || x.key === 'secondary_unverified' || x.key === 'data_unavailable' ? C.amber : C.text) : C.faint }}>{x.count}</b>
+            <span style={{ fontSize: 12, color: C.dim }}>{x.label.toLowerCase()}</span>
+          </span>
+        ))}
+        {b.provisional && <span style={{ fontSize: 11, fontWeight: 900, color: C.amber, letterSpacing: 0.5 }}>PROVISIONAL</span>}
+      </div>
+    );
+  }
   const cells: Array<{ n: number; l: string; color?: string; title: string }> = [
     { n: b.scanned, l: 'Scanned', title: 'Names on this session’s board.' },
     { n: b.verified, l: 'Verified', color: C.green, title: 'Event verified from the filing and its size judged.' },
@@ -159,7 +177,7 @@ function Summary({ view }: { view: ResearchView }) {
     const t = [...all.values()].filter(pred).map((i) => txt(i.displayTicker, '') || i.ticker);
     return t.length ? `\n${t.slice(0, 40).join(', ')}${t.length > 40 ? ', …' : ''}` : '';
   };
-  const cards: Array<{ n: number; l: string; color?: string; title: string }> = [
+  const cards: Array<{ n: number; l: string; color?: string; title: string }> = view.partition ? [] : [
     { n: s.scanned, l: 'Gainers scanned', title: 'Names on this session’s board.' },
     { n: s.confirmed, l: 'Verified events', color: C.green, title: 'Event verified from the filing AND its size judged (material or small). Verified ≠ a confirmed catalyst for the move.' + names((it) => it.eventClass === 'CONFIRMED_MATERIAL' || it.eventClass === 'CONFIRMED_LOW_MATERIALITY') },
     { n: s.potential, l: 'Impact unknown / unverified', color: C.amber, title: 'Either the event is filed but its size / materiality is not established, or the source itself is not verified.' + names((it) => it.eventClass === 'POTENTIAL_UNVERIFIED') },
@@ -168,11 +186,17 @@ function Summary({ view }: { view: ResearchView }) {
     { n: s.queue, l: 'Research queue', color: C.cyan, title: 'Names that deserve research time today.' },
     { n: s.portfolioMatches, l: 'Portfolio matches', color: C.cyan, title: 'Names in or related to your book.' },
   ];
-  if (s.dataUnavailable > 0) cards.push({ n: s.dataUnavailable, l: 'Data unavailable', color: C.amber, title: 'Sources failed — not the same as “no catalyst”.' });
+  if (view.partition) {
+    // zzz836: the tiles ARE the partition (mutually exclusive, adding up to scanned); queue / book / conflicts are overlays, shown apart.
+    const p = view.partition;
+    const colors: Record<string, string | undefined> = { confirmed: C.green, identified_impact_unknown: C.amber, secondary_unverified: C.amber, negative: C.red, data_unavailable: C.amber };
+    for (const b of p.buckets) if (PARTITION_META[b.key].core || b.count > 0) cards.push({ n: b.count, l: b.label, color: colors[b.key], title: `${b.meaning}${b.tickers.length ? `\n${b.tickers.slice(0, 40).join(', ')}` : ''}` });
+  }
+  if (!view.partition && s.dataUnavailable > 0) cards.push({ n: s.dataUnavailable, l: 'Data unavailable', color: C.amber, title: 'Sources failed — not the same as “no catalyst”.' });
   // zzz771: older filings are counted once, here, and nowhere else — they are
   // not confirmed events and not in the queue. Hidden when the pipeline did
   // not supply the count (older cached views).
-  if (typeof s.context === 'number' && s.context > 0) cards.push({ n: s.context, l: 'Older context', title: 'Names whose only event is older than the move window — context, not this move’s catalyst.' });
+  if (!view.partition && typeof s.context === 'number' && s.context > 0) cards.push({ n: s.context, l: 'Older context', title: 'Names whose only event is older than the move window — context, not this move’s catalyst.' });
   return (
     <section aria-label="Market summary">
       <SectionHead title="MARKET SUMMARY" />
@@ -184,6 +208,12 @@ function Summary({ view }: { view: ResearchView }) {
           </div>
         ))}
       </div>
+      {view.partition && (
+        <div data-testid="overlays" style={{ fontSize: 12, color: C.dim, marginTop: 6 }}>
+          <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.5, color: C.faint, marginRight: 6 }}>OVERLAYS - TAGS, NOT STATUSES (they cut across the counts above)</span>
+          Research queue <b style={{ color: C.text }}>{view.partition.overlays.queue}</b> · Watch <b style={{ color: C.text }}>{view.partition.overlays.watch}</b> · Portfolio match <b style={{ color: C.text }}>{view.partition.overlays.portfolio}</b> · Conflicts <b style={{ color: view.partition.overlays.conflicts ? C.red : C.text }}>{view.partition.overlays.conflicts}</b>
+        </div>
+      )}
       <CatalystCategories view={view} />
     </section>
   );
@@ -266,7 +296,7 @@ function OneLiner({ it, onOpen, extra }: { it: ResearchItem; onOpen?: (it: Resea
       {it.eventClass === 'NO_CATALYST' && it.scanNote && <div style={{ flexBasis: '100%' }}><ScanNote it={it} /></div>}
       {it.market === 'US' && it.usCard?.catalysts && <div style={{ flexBasis: '100%' }}><UsCatalystList it={it} compact /></div>}
       {it.market === 'IN' && it.inCard && <div style={{ flexBasis: '100%' }}><InCatalystList it={it} compact /></div>}
-      {it.news?.narrative && <div style={{ flexBasis: '100%', fontSize: 12, color: C.dim }}>Press (unverified): <b style={{ color: C.text }}>{it.news.narrative.label}</b> story over {it.news.narrative.days} days ({it.news.narrative.firstDate} → {it.news.narrative.lastDate}) — “{it.news.narrative.lead}”</div>}
+      {it.news?.narrative && <div style={{ flexBasis: '100%', fontSize: 12, color: C.dim }}>{isPriceCommentary(it.news.narrative.label) ? PRICE_COMMENTARY_LABEL : 'Press (unverified)'}: <b style={{ color: C.text }}>{it.news.narrative.label}</b> story over {it.news.narrative.days} days ({it.news.narrative.firstDate} → {it.news.narrative.lastDate}) — “{it.news.narrative.lead}”</div>}
     </div>
   );
 }
@@ -479,7 +509,12 @@ export function ResearchTriage(props: ResearchTriageProps) {
 
           {/* zzz785: unknown economics are never sorted away silently — every one is listed, ranked, labelled. */}
           {/* zzz789: one canonical event per card — a name already shown in the queue / watch is REFERENCED here, not repeated. */}
-          {(view.needsReading || []).length > 0 && (
+          {needsOnly.length === 0 && needsElsewhere.length > 0 && (
+            <div data-testid="needs-reading-refs" style={{ fontSize: 12, color: C.faint }}>
+              Events with unknown size are all shown above ({needsElsewhere.length}); none is listed only here.
+            </div>
+          )}
+          {needsOnly.length > 0 && (
             <section aria-label="Unknown — needs reading" data-testid="needs-reading" style={box}>
               <SectionHead title="UNKNOWN — NEEDS READING" count={needsOnly.length} sub="Events whose size is not established yet. Unknown is not negative: each needs its document read." />
               {needsElsewhere.length > 0 && (
@@ -510,6 +545,7 @@ export function ResearchTriage(props: ResearchTriageProps) {
                   <span style={{ display: 'inline-flex', gap: 5, flexWrap: 'wrap' }}>
                     <Pill color={(CLASS_META[it.eventClass] || CLASS_META.NO_CATALYST).color} title={(CLASS_META[it.eventClass] || CLASS_META.NO_CATALYST).meaning}>{(CLASS_META[it.eventClass] || CLASS_META.NO_CATALYST).short.toUpperCase()}</Pill>
                     <CatalystForBadge it={it} />
+                    <DirectionChip it={it} />
                     <SourceBadge it={it} />
                     <BandChip it={it} />
                     {it.persistentCatalyst && (it.persistentCatalyst.specialFocus || it.persistentCatalyst.confidence === 'HIGH' || it.persistentCatalyst.confidence === 'MEDIUM') && (

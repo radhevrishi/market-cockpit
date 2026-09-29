@@ -28,7 +28,7 @@
 // Pure: no fetch, no clock, no model.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { extractMetrics, type TypedMetric } from './structured-facts';
+import { extractMetrics, directionOf, directionNote, subtypeOf, type EconDirection, type EventSubtype, type TypedMetric } from './structured-facts';
 
 export type UsEventCategory =
   | 'Earnings' | 'Product & segment' | 'Capital & capacity' | 'Corporate action'
@@ -57,6 +57,11 @@ export interface UsEventHit {
   metrics?: TypedMetric[];
   /** The sentence speaks of a plan / expectation ("plans to", "expects to"). */
   planned: boolean;
+  // ── zzz836 (optional) ──
+  /** Economic direction of the event itself (never the price move): POSITIVE | NEGATIVE | MIXED | NEUTRAL | UNKNOWN. `direction` keeps the older lower-case hint. */
+  economicDirection?: EconDirection;
+  directionNote?: string | null;
+  subtype?: EventSubtype;
 }
 
 interface Rule {
@@ -223,6 +228,14 @@ const RULES: Rule[] = [
   { id: 'fda_crl', label: 'FDA setback (CRL / clinical hold)', category: 'Regulatory & clinical', direction: 'negative', rank: 3,
     any: [/\bcomplete response letter\b/i, /\bCRL\b/, /\brefus(?:e|al) to file\b/i, /\bclinical hold\b/i],
     not: /\blift(?:ed|s)? (?:the |a )?(?:partial )?clinical hold\b|\bremov(?:ed|es) (?:the )?clinical hold\b/i, hides: ['fda_approval', 'fda_submission'] },
+  { id: 'fda_inspection', label: 'Regulatory inspection / observations', category: 'Regulatory & clinical', direction: 'neutral', rank: 3,
+    any: [/\b(?:FDA|MHRA|EMA|EU[- ]GMP|Health Canada)\b[^.;]{0,80}\binspect(?:ion|ed|ions)\b/i, /\binspect(?:ion|ed|ions)\b[^.;]{0,80}\b(?:FDA|MHRA|EMA|Form 483|483|observations?|EIR|NAI|VAI)\b/i, /\bForm 483\b/i],
+    not: /\bwarning letter\b|\bimport alert\b|\bofficial action indicated\b|\bOAI\b|\bcomplete response letter\b|\bCRL\b/i,
+    dir: (s) => { const d = directionOf('regulatory_inspection', s); return d === 'POSITIVE' ? 'positive' : d === 'NEGATIVE' ? 'negative' : d === 'MIXED' ? 'mixed' : 'neutral'; },
+    hides: ['fda_approval', 'fda_submission', 'new_facility'] },
+  { id: 'fda_warning_letter', label: 'FDA warning letter / import alert', category: 'Regulatory & clinical', direction: 'negative', rank: 3,
+    any: [/\bwarning letter\b/i, /\bimport alert\b/i, /\bofficial action indicated\b/i],
+    not: /\b(?:resolved|closed out|close-out letter|lifted|removed from)\b/i, hides: ['fda_approval', 'fda_submission', 'fda_inspection', 'regulatory_probe'] },
   { id: 'fda_adcom', label: 'FDA advisory committee', category: 'Regulatory & clinical', direction: 'neutral', rank: 3,
     any: [/\badvisory committee\b|\bAdCom\b|\b(?:FDA|advisory) panel\b|\bpanel (?:voted|backs?|backed|recommend)/i],
     dir: (s) => (/\bvoted\b[^.;]{0,40}\b(?:in favou?r|to (?:recommend|support)|that the benefits)\b|\bback(?:s|ed)?\b|\bsupport(?:s|ed)?\b|\bfavorabl|\bpositive vote\b|\brecommend(?:s|ed)? approval\b/i.test(s) ? 'positive' : /\bvoted against\b|\bunfavorabl|\bagainst approval\b|\bnegative vote\b/i.test(s) ? 'negative' : 'neutral'),
@@ -391,7 +404,9 @@ export function isLitigationText(text: string | null | undefined): boolean {
 
 export type CanonicalEventType =
   | 'earnings' | 'order' | 'loi' | 'contract' | 'acquisition' | 'trial_result' | 'regulatory'
-  | 'litigation' | 'financing' | 'capacity' | 'partnership' | 'ownership' | 'other';
+  | 'litigation' | 'financing' | 'capacity' | 'partnership' | 'ownership' | 'other'
+  // zzz836
+  | 'regulatory_inspection' | 'credit_rating';
 
 /** The first rule that fires wins: litigation, then LOI / proposed, then a
  *  results release, then order / contract, trial result, acquisition,
@@ -402,6 +417,10 @@ export function classifyCanonicalEventType(text: string | null | undefined): { t
   const proposed = /\bletters? of intent\b|\bLOIs?\b|\btentative(?:ly)?\b|\bnon-?binding\b|\bproposed\b|\bsubject to (?:the )?(?:approval|receipt|regulatory|shareholder|board|stockholder|definitive)/i.test(t);
   if (isLitigationText(t)) return { type: 'litigation', rule: 'jury / verdict / damages / judgment / court / lawsuit', proposed: false };
   if (/\bletters? of intent\b|\bLOIs?\b/i.test(t)) return { type: 'loi', rule: 'letter of intent', proposed: true };
+  // zzz836: a credit rating is its own type (its "outlook" and "Rs 700 crore facilities" are not guidance); an inspection is not an approval
+  if (/\b(?:crisil|icra|care ratings?|\bCARE\b|india ratings|ind-?ra|acuit[eé]|infomerics|brickwork|S&P Global Ratings|Moody['’]?s|Fitch)\b[^;]{0,120}\b(?:rating|reaffirm\w*|upgrad\w*|downgrad\w*|outlook)\b|\bcredit rating\b/i.test(t)) return { type: 'credit_rating', rule: 'rating agency / credit rating', proposed: false };
+  if (!/\bwarning letter\b|\bcomplete response letter\b/i.test(t) && (/\b(?:usfda|us fda|fda|mhra|eu[- ]?gmp|who[- ]?gmp|health canada)\b[^;]{0,80}\binspect(?:ion|ed|ions)\b|\binspect(?:ion|ed|ions)\b[^;]{0,80}\b(?:usfda|us fda|fda|mhra|form 483|observations?|EIR)\b|\bform 483\b/i.test(t))) return { type: 'regulatory_inspection', rule: 'regulator inspection / Form 483 / observations', proposed: false };
+  if (/\bwarning letter\b|\bimport alert\b/i.test(t)) return { type: 'regulatory_inspection', rule: 'warning letter / import alert', proposed: false };
   const earnScore = [/\brevenues?\b/i, /\bnet (?:income|loss)\b/i, /\bEPS\b|earnings per share/i, /\bEBITDA\b/i, /\boutlook\b|\bguidance\b/i, /\bquarter\b|\bfiscal\b/i].filter((r) => r.test(t)).length;
   if (earnScore >= 3 && /\b(?:reports?|reported|announces?)\b[^.]{0,60}\b(?:results|earnings)\b|\bfinancial results\b/i.test(t)) return { type: 'earnings', rule: 'results release', proposed: false };
   if (/\b(?:Phase\s?(?:1|2|3|I{1,3})[ab]?|primary endpoint|co-primary|p\s?[<=]\s?0?\.\d+|p-value|topline)\b/i.test(t)) return { type: 'trial_result', rule: 'phase / endpoint / p-value / topline', proposed };
@@ -625,7 +644,7 @@ export function classifyUsEvents(text: string, opts: ClassifyOptions = {}): UsEv
   return Array.from(byId.values())
     .sort((a, b) => (Math.min(a.order, 6) - Math.min(b.order, 6)) * 4 + (rank(a.id) - rank(b.id)) || (Number(a.planned) - Number(b.planned)) || a.order - b.order)
     .slice(0, opts.max ?? 12)
-    .map(({ order: _o, ...h }) => h);
+    .map(({ order: _o, ...h }) => ({ ...h, economicDirection: directionOf(h.id, h.sentence, h.direction), directionNote: directionNote(h.id, h.sentence), subtype: subtypeOf(h.id, h.sentence) }));
 }
 
 /** Counts of hits by category (every category present, zero when none). */

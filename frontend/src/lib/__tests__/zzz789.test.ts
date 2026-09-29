@@ -98,8 +98,8 @@ describe('zzz789 · 1 CDNA / CRML — acquisition duration only from stated tran
       assert.match(it.whatChanged || '', /^Purchase consideration \$\d+M ÷ \$[\d,.]+[MB]? market cap = [\d.]+% \(document-verified\)$/);
       assert.ok(!/order value/i.test(JSON.stringify(it)));
       // Research next: Purchase price → target revenue / EBITDA → funding → contribution → integration
-      assert.deepEqual(it.researchNext.map((q) => q.split(':')[0]), ['1. Purchase price', '2. Target revenue / EBITDA', '3. Funding', '4. Contribution', '5. Integration']);
-      assert.match(it.researchNext[0], /^1\. Purchase price: ✓ \$\d+M/);
+      assert.deepEqual(it.researchNext.map((q) => q.split(':')[0]), ['1. Purchase price / swap ratio', '2. Target revenue / EBITDA', '3. Funding', '4. Contribution', '5. Integration']);
+      assert.match(it.researchNext[0], /^1\. Purchase price \/ swap ratio: ✓ \$\d+M/);
       assert.match(it.whyResearch, /target's economics/);
       assert.ok(!/size is not disclosed/.test(it.whyResearch));
       assert.ok(!/multi-period runway/.test(it.whyRank || ''));
@@ -461,9 +461,10 @@ describe('zzz789 · 11 GNA — one canonical event across Watch and Unknown — 
     const html = renderToStaticMarkup(React.createElement(ResearchTriage, { view: v, market: 'IN' } as any));
     const t = strip(html);
     // needs-reading header counts only rows not already shown; GNA is referenced there, not repeated
-    assert.ok(/UNKNOWN — NEEDS READING · 0/.test(t), t);
-    assert.ok(t.includes('Same events, shown above (not repeated): GNA'), t);
-    assert.ok(t.includes('SAME EVENT · ALSO IN Unknown — needs reading'), t);
+    // zzz836: an empty section is hidden (one line instead), and a bucket name is never printed as "also in"
+    assert.ok(!/UNKNOWN — NEEDS READING · 0/.test(t), t);
+    assert.ok(t.includes('Events with unknown size are all shown above (1)'), t);
+    assert.ok(!t.includes('SAME EVENT · ALSO IN'), t);
     // one row / card for GNA with an OPEN button in the ranked sections — never two
     const rows = (html.match(/Promoter GNA Holdings acquired 1\.16% stake/g) || []).length;
     assert.equal(rows, 1, `GNA rendered ${rows} times`);

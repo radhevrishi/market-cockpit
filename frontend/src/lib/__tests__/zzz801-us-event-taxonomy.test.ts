@@ -23,6 +23,8 @@ const first = (t: string, headline = false) => classifyUsEvents(t, { headline })
 // ── 1. many event types, realistic sentences ────────────────────────────────
 
 const CASES: Array<[string, string]> = [
+  ['fda_inspection', 'The FDA completed its inspection of the Bothell facility and issued a Form 483 with three observations.'],
+  ['fda_warning_letter', 'The Company received a warning letter from the FDA regarding its manufacturing facility.'],
   ['product_launch', 'Acme Corp. (NASDAQ: ACME) today announced the launch of its next-generation X500 sensor platform for industrial customers.'],
   ['acquisition', 'On September 20, 2026, the Company entered into a definitive agreement to acquire Beta Systems, Inc. for $120 million in cash.'],
   ['fda_adcom', 'The FDA advisory committee voted 10-2 that the benefits of the Galleri test outweigh its risks.'],

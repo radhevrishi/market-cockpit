@@ -57,11 +57,12 @@ test('CBRL (US): CONFIRMED MATERIAL from the filed figures, one VERIFIED source,
   assert.ok(!it.unknowns.some((u) => /^Guidance: Not stated/i.test(u)));
   assert.equal(it.headline, 'Cracker Barrel Reports Fourth Quarter and Full Year Fiscal 2026 Results and Provides Fiscal 2027 Outlook');
   const html = card(it, 'Research queue');
-  assert.match(html, /SOURCE: VERIFIED DOCUMENT \(SEC 8-K, filed 2026-09-23 · EX-99\.1 press release\)/);
+  assert.match(html, /SOURCE: OFFICIAL FILING EXISTS/);
+  assert.match(html, /EVIDENCE: DOCUMENT READ/);
   assert.doesNotMatch(html, /SECONDARY · VERIFICATION REQUIRED/);
   assert.doesNotMatch(html, /SAME EVENT · ALSO IN/);
   assert.doesNotMatch(html, /Guidance: Not stated|UNKNOWN — NEEDS READING/i);
-  assert.match(html, /MATERIAL HIGH · ⓘ how computed/);
+  assert.match(html, /MATERIAL HIGH · ⓘ/);
   assert.match(html, /Outlook as filed \(FY2027\): revenue \$3\.325B–\$3\.4B/);
   assert.doesNotMatch(html, /₹|\bCr\b/);
   assert.match(it.whyRank!, /material change \(revenue -2\.2%, net income up 80\.7%\)/);
@@ -75,7 +76,8 @@ test('press-only (US): "PRESS ONLY — no SEC filing found yet" is the one sourc
   assert.equal(it.eventClass, 'POTENTIAL_UNVERIFIED');
   assert.equal(it.sourceConfidence, 'SECONDARY_SUMMARY');
   const badge = strip(renderToStaticMarkup(React.createElement(SourceBadge, { it })));
-  assert.match(badge, /SOURCE: PRESS ONLY — no SEC filing found yet/);
+  assert.match(badge, /SOURCE: PRESS ONLY/);
+  assert.match(badge, /EVIDENCE: SECONDARY ONLY/);
   const html = card(it);
   assert.doesNotMatch(html, /SECONDARY · VERIFICATION REQUIRED/);   // said once, by the source badge
   assert.doesNotMatch(html, /as stated in the filing/);

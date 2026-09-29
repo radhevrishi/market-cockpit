@@ -186,3 +186,21 @@ export function materialityHover(it: ResearchItem): string {
 
 /** A market's clock and currency for the header (exchange time, never the browser's). */
 export { exchangeClock, CURRENCY } from '@/lib/catalyst/exchange-time';
+
+/** A price / momentum narrative (upper circuit, broker target price, "shares surge") is commentary, never evidence. */
+export const isPriceCommentary = (label: string | null | undefined): boolean => /circuit|momentum|target price|price target|broker|goldman|surge|rally/i.test(String(label || ''));
+export const PRICE_COMMENTARY_LABEL = 'PRICE COMMENTARY (not evidence)';
+
+/** ▲ only for POSITIVE, ▼ NEGATIVE, ◆ MIXED / NEUTRAL, ? UNKNOWN - the economics of the event, never the price move. */
+export const DIRECTION_MARK: Record<string, { mark: string; word: string; color: string }> = {
+  POSITIVE: { mark: '▲', word: 'Positive', color: C.green },
+  NEGATIVE: { mark: '▼', word: 'Negative', color: C.red },
+  MIXED: { mark: '◆', word: 'Mixed', color: C.amber },
+  NEUTRAL: { mark: '◆', word: 'Neutral', color: C.faint },
+  UNKNOWN: { mark: '?', word: 'Unknown', color: C.faint },
+};
+/** A catalyst's direction from the new upper-case field when present, else the older lower-case hint. */
+export function directionKey(c: { direction?: unknown; economicDirection?: unknown } | null | undefined): string {
+  const raw = String((c as any)?.economicDirection || (c as any)?.direction || '').toUpperCase();
+  return DIRECTION_MARK[raw] ? raw : 'UNKNOWN';
+}

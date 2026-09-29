@@ -443,7 +443,7 @@ test('InCatalystList: filed vs "reported, not confirmed by the company"; empty s
   assert.match(w, /CATALYSTS FOUND/);
   assert.match(w, /REPORTED, NOT CONFIRMED BY THE COMPANY/);
   assert.match(w, /EXCHANGE FILING/);
-  assert.match(w, /BACKDROP/);
+  assert.match(w, /BACKDROP|OLDER RESULT[^.]*CONTEXT/);
   const av = strip(renderToStaticMarkup(React.createElement(InCatalystList, { it: itemOf(v, 'AVADHSUGAR') })));
   assert.match(av, /Turnaround, small/);
   const b = strip(renderToStaticMarkup(React.createElement(InCatalystList, { it: itemOf(v, 'BHAGERIA') })));

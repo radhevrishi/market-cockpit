@@ -16,7 +16,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import type { StructuredFacts, SourceRef, EventKind } from './structured-facts';
-import { emptyEconomics, emptyTime, favourableLegalOutcome, reconcileValues, stageFromText } from './structured-facts';
+import { emptyEconomics, emptyTime, favourableLegalOutcome, isPriceCommentary, reconcileValues, stageFromText } from './structured-facts';
 import { moneyCr } from './india-extract';
 
 export interface NewsLite { title: string; url: string; published_at: string; source?: string }
@@ -71,6 +71,9 @@ const RULES: Array<[NewsTheme, RegExp]> = [
 
 /** Generic market-data spam that names the stock but carries no event. */
 const JUNK = /latest shareholding|share price (today|live)|stock price (today|live)|session: finishes|level watch|technical (analysis|view)|stocks? to (watch|buy)|top (gainers|losers)|shares? of .* trade|market (live|update|wrap)|sensex|nifty (ends|closes|opens)|intraday|tracxn|marketscreener|investing\.com|moneycontrol quote|stock analysis|peer context/i;
+
+/** zzz836: themes that describe the PRICE, not the business - never evidence, never counted. */
+export const PRICE_THEMES = new Set<NewsTheme>(['circuit_momentum', 'broker_view']);
 
 export function themesOf(title: string): NewsTheme[] {
   // zzz789: an institutional holding change is its own theme — never M&A,
@@ -165,10 +168,17 @@ export interface NewsContext {
     /** zzz785: always true — press is secondary until an official filing confirms it. */
     secondary?: boolean;
     /** zzz785: the official filing that states the same event, when one was read. */
-    confirmedBy?: { url: string | null; date: string | null; title: string } | null }>;
-  themes: Array<{ theme: NewsTheme; label: string; count: number; firstDate: string; lastDate: string }>;
+    confirmedBy?: { url: string | null; date: string | null; title: string } | null;
+    /** zzz836: 'price_commentary' for a circuit / momentum / broker-target headline - it describes the price, not the business, and is never evidence. */
+    kind?: 'price_commentary' | 'event';
+    priceCommentary?: boolean }>;
+  themes: Array<{ theme: NewsTheme; label: string; count: number; firstDate: string; lastDate: string; /** zzz836: false for price commentary */ evidence?: boolean }>;
   /** A theme covered on ≥2 different days within the window — a story that keeps running. */
-  narrative: { theme: NewsTheme; label: string; count: number; days: number; firstDate: string; lastDate: string; lead: string } | null;
+  narrative: { theme: NewsTheme; label: string; count: number; days: number; firstDate: string; lastDate: string; lead: string;
+    /** zzz836: 'price_commentary' for circuit / momentum / broker targets: shown as "PRICE COMMENTARY (not evidence)", never counted as evidence. */
+    kind?: 'price_commentary' | 'event'; evidence?: boolean; displayLabel?: string } | null;
+  /** zzz836: headlines that are evidence of an event (price commentary excluded). */
+  evidenceItemCount?: number;
   windowDays: number;
   fetched: number;
   query: string;
@@ -200,7 +210,9 @@ export function buildNewsContext(raw: NewsLite[], opts: { ticker: string; compan
     // Theme on the headline with the company's own name removed: "Kavveri
     // Defence … falls 8%" is not defence-sector news.
     const bare = nameRx ? title.replace(nameRx, ' ') : title;
-    items.push({ title: title.slice(0, 180), url: n.url, date: new Date(t).toISOString().slice(0, 10), source, themes: themesOf(bare) });
+    const th = themesOf(bare);
+    const pc = isPriceCommentary(title) || (th.length > 0 && th.every((x) => x === 'circuit_momentum' || x === 'broker_view'));
+    items.push({ title: title.slice(0, 180), url: n.url, date: new Date(t).toISOString().slice(0, 10), source, themes: th, kind: pc ? 'price_commentary' : 'event', priceCommentary: pc });
   }
   items.sort((a, b) => b.date.localeCompare(a.date));
   const by = new Map<NewsTheme, { n: number; dates: Set<string>; first: string; last: string; lead: string }>();
@@ -211,7 +223,7 @@ export function buildNewsContext(raw: NewsLite[], opts: { ticker: string; compan
     if (it.date > e.last) { e.last = it.date; e.lead = it.title; }
     by.set(th, e);
   }
-  const themes = Array.from(by.entries()).map(([theme, e]) => ({ theme, label: THEME_LABEL[theme], count: e.n, firstDate: e.first, lastDate: e.last }))
+  const themes = Array.from(by.entries()).map(([theme, e]) => ({ theme, label: THEME_LABEL[theme], count: e.n, firstDate: e.first, lastDate: e.last, evidence: !PRICE_THEMES.has(theme) }))
     .sort((a, b) => b.count - a.count || b.lastDate.localeCompare(a.lastDate));
   // Momentum commentary is not a story in itself; a sector word alone is not
   // company news. Either can still be the narrative when nothing else recurs.
@@ -220,8 +232,11 @@ export function buildNewsContext(raw: NewsLite[], opts: { ticker: string; compan
   const cands = Array.from(by.entries()).filter(([th, e]) => e.dates.size >= 2 && th !== 'institutional_holding')
     .sort(([ta, a], [tb, b]) => Number(weak.has(ta)) - Number(weak.has(tb)) || b.dates.size - a.dates.size || b.last.localeCompare(a.last) || b.n - a.n);
   const top = cands[0];
-  const narrative = top ? { theme: top[0], label: THEME_LABEL[top[0]], count: top[1].n, days: top[1].dates.size, firstDate: top[1].first, lastDate: top[1].last, lead: top[1].lead } : null;
-  return { items: items.slice(0, 6), themes: themes.slice(0, 6), narrative, windowDays, fetched: raw.length, query: opts.query || '' };
+  const pcTop = top ? PRICE_THEMES.has(top[0]) : false;
+  const narrative = top ? { theme: top[0], label: THEME_LABEL[top[0]], count: top[1].n, days: top[1].dates.size, firstDate: top[1].first, lastDate: top[1].last, lead: top[1].lead,
+    kind: (pcTop ? 'price_commentary' : 'event') as 'price_commentary' | 'event', evidence: !pcTop, displayLabel: pcTop ? 'PRICE COMMENTARY (not evidence)' : THEME_LABEL[top[0]] } : null;
+  const kept = items.slice(0, 6);
+  return { items: kept, themes: themes.slice(0, 6), narrative, windowDays, fetched: raw.length, query: opts.query || '', evidenceItemCount: kept.filter((i) => !i.priceCommentary).length };
 }
 
 /** The full legal name from a screener.in company page title. */

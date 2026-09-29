@@ -172,6 +172,7 @@ const RX = {
   order: /purchase order|work order|letter of award|notification of award|receipt of (a )?(firm )?(purchase )?order|secured (a |an )?(new )?(order|contract)|order aggregating|order (worth|valued)|contract (award|worth|valued)|emerged as successful in the tender|successful (bidder|in the tender)|\bl-?1 bidder|\bwins?\b[^.]{0,60}\borders?\b|awarded (a |an |the )?(contract|order)|rate contract/i,
   fundraising: /preferential (issue|basis|allotment)|qualified institutions? placement|\bqip\b|convertible warrants|rights issue|issue of (up to )?[\d,]+ (fully paid[- ]up )?equity shares/i,
   // A certification printed in a letterhead ("AS 9100D ISO 9001:2015") is not news: an approval needs a verb.
+  inspection: /\b(?:usfda|us fda|fda|mhra|eu[- ]?gmp|who[- ]?gmp|anvisa|pmda|tga|dcgi|cdsco|health canada)\b[^;]{0,80}\binspect(?:ion|ed|ions)\b|\binspect(?:ion|ed|ions)\b[^;]{0,80}\b(?:usfda|us fda|mhra|form 483|observations?|EIR)\b/i,
   qualification: /licen[cs]e (has been )?(granted|received|for (the )?manufactur)|grant(ed|ing)? (of )?(a )?licen[cs]e|granting licen[cs]e|(received|granted|obtained|awarded|achieved)[^.]{0,60}(approval|certification|accreditation|as ?9100|nadcap|usfda|eir\b)|marketing authori[sz]ation|approval (from|of) the (drug|ministry|dgca|commissioner)/i,
   capacity: /successful(ly)? commission|has been commissioned|commissioned (the|a|an|its|our|\d)|commissioning of (the |a |an |its |our )?(\d|new|plant|project|unit|facility|line|battery)|commenced commercial (production|operations)|manufacturing facility|capacity (addition|expansion|enhancement)|proposed capacity|setting up (a |an |new )?[a-z ]{0,40}(plant|distillery|facility|unit|warehouse)|new (plant|facility|manufacturing unit)|battery (manufacturing )?plant|\d+\s*mw\s*\/\s*\d+\s*mwh|greenfield|brownfield/i,
   subsidiaryIncorporation: /(incorporat\w+)[^.]{0,120}wholly[- ]owned subsidiary|wholly[- ]owned subsidiary[^.]{0,120}(has been |was )?incorporated|incorporation of (a )?(wholly[- ]owned )?(step[- ]down )?subsidiary/i,
@@ -219,7 +220,7 @@ function eventSentences(text: string): string {
   return sentencesOf(eventBody(text)).filter((s) => !/is engaged in|engaged in the business|is in the business of|line of business|brief background about/i.test(s)).join('. ');
 }
 
-function kindOf(text0: string): { kind: EventKind | 'routine' | null; polarity: Polarity; sub?: 'subsidiary' | 'fine' | 'favourable' | 'merger' | 'promoter_sale' } {
+function kindOf(text0: string): { kind: EventKind | 'routine' | null; polarity: Polarity; sub?: 'subsidiary' | 'fine' | 'favourable' | 'merger' | 'promoter_sale' | 'inspection' } {
   const text = eventSentences(text0);
   if (RX.taxProceeding.test(text) && (RX.taxWord.test(text) || /\bitat\b|appellate tribunal/i.test(text))) {
     return RX.taxFavourable.test(text) || favourableLegalOutcome(text) ? { kind: 'tax_litigation', polarity: 'positive', sub: 'favourable' } : { kind: 'tax_litigation', polarity: 'negative' };
@@ -230,6 +231,7 @@ function kindOf(text0: string): { kind: EventKind | 'routine' | null; polarity: 
   if (RX.order.test(text)) return { kind: 'order', polarity: 'positive' };
   if (RX.fundraising.test(text)) return { kind: 'fundraising', polarity: 'neutral' };
   if (RX.merger.test(text)) return { kind: 'other', polarity: 'neutral', sub: 'merger' };
+  if (RX.inspection.test(text) && !/\b(?:approval|licen[cs]e) (?:has been )?(?:granted|received)\b/i.test(text)) return { kind: 'other', polarity: 'neutral', sub: 'inspection' };
   if (RX.qualification.test(text)) return { kind: 'qualification', polarity: 'positive' };
   if (RX.capacity.test(text)) return { kind: 'capacity', polarity: 'positive' };
   if (RX.subsidiaryIncorporation.test(text)) return { kind: 'other', polarity: 'neutral', sub: 'subsidiary' };
@@ -424,6 +426,7 @@ const STAGE_OF0 = (kind: EventKind, text: string, sub?: string): EventFacts['sta
   if (kind === 'capacity') return /successful(ly)? commission|has been commissioned|commissioning of|commenced commercial/i.test(text) ? 'COMMISSIONED' : /approved|has approved|considered and approved/i.test(text) ? 'APPROVED' : 'PROPOSED';
   if (kind === 'fundraising') return /allotted|allotment of [\d,]+/i.test(text) && !/proposed allot/i.test(text) ? 'COMPLETED' : /approved/i.test(text) && !/proposed/i.test(text) ? 'APPROVED' : 'PROPOSED';
   if (kind === 'acquisition') return /has completed the acquisition|completed the acquisition|acquisition (is|has been) completed/i.test(text) ? 'COMPLETED' : /entered into|executed|signed|execution of (a |the )?(business transfer|share purchase)/i.test(text) ? 'SIGNED' : 'PROPOSED';
+  if (kind === 'other' && sub === 'inspection') return 'COMPLETED';
   if (kind === 'qualification') return 'APPROVED';
   if (kind === 'promoter_buying') return /propos|intend|will acquire/i.test(text) ? 'PROPOSED' : 'COMPLETED';
   if (kind === 'other' && sub === 'subsidiary') return /proposed incorporation|proposes to incorporate/i.test(text) && !/has been incorporated|completed the incorporation/i.test(text) ? 'PROPOSED' : 'COMPLETED';
@@ -469,6 +472,7 @@ function headlineOf(f: Omit<IndiaFacts, 'headline'>, sub?: string): string {
     case 'promoter_buying': parts.push(`Promoter stake purchase${e.stakePct != null ? ` of ${e.stakePct}%` : ''}${ev.counterparty ? ` by ${ev.counterparty}` : ''} — insider buying, not a business event`); break;
     case 'other':
       if (sub === 'promoter_sale') { parts.push(`Promoter share sale${e.sharesIssued != null ? ` of up to ${e.sharesIssued.toLocaleString('en-IN')} shares` : ''}${e.stakePct != null ? ` (${e.stakePct}%)` : ''} — supply, not a company event`); break; }
+      if (sub === 'inspection') { parts.push('Regulatory inspection completed - observations and response to be read (not an approval)'); break; }
       if (sub === 'merger') { parts.push(`Group restructuring${ev.product ? ` — ${ev.product}` : ''}`); break; }
       if (sub === 'subsidiary') { parts.push(`Wholly owned subsidiary ${ev.stage === 'PROPOSED' ? 'proposed' : 'incorporated'}${f.attribution ? `: ${f.attribution.entity}` : ''}${ev.geography ? ` in ${ev.geography}` : ''}`); break; }
       parts.push('Update');
@@ -649,7 +653,7 @@ export function extractIndiaFacts(doc: IndiaDoc, ctx: ExtractContext = {}): DocE
   // (The body was read as 'other' + sub above; the headline keeps its words.)
   const headline = headlineOf(base, k.sub);
   const finalKind: EventKind = kind === 'other' && k.sub === 'subsidiary' ? 'strategic_expansion' : kind === 'other' && k.sub === 'merger' ? 'merger' : kind;
-  return { facts: [{ ...base, event: { ...base.event, kind: finalKind }, headline }], routineReason: null, classified: true, valuesSeen };
+  return { facts: [{ ...base, event: { ...base.event, kind: finalKind, ...(kind === 'other' && k.sub === 'inspection' ? { eventType: 'regulatory_inspection' } : {}) }, headline }], routineReason: null, classified: true, valuesSeen };
 }
 
 // ── from facts to the sweep's vocabulary ────────────────────────────────────

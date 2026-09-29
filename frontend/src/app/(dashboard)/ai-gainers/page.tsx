@@ -34,6 +34,7 @@ import { readJsonResponse, describeFetchError } from '@/lib/ai-gainers/client-fe
 import { boardCoverage, marketRunOf } from '@/lib/ai-gainers/research-present';
 import { buildResearchView, isRealName, type ResearchView, type ResearchItem } from '@/lib/ai-gainers/research-view';
 import { ResearchTriage } from '@/components/ai-gainers/ResearchTriage';
+import { isPriceCommentary } from '@/components/ai-gainers/tokens';
 import { GainersPdfButton } from '@/components/ai-gainers/GainersPdfButton';
 import { parseScreenerLink, US_SCAN_EXCHANGES, type UsScanCriteria as UsCriteria } from '@/lib/ai-gainers/us-scan-criteria';
 import { boardHash, serverViewMatchesBoard, needsBoardSync, usSessionPhrase, sweepStopReason } from '@/lib/ai-gainers/us-board-sync';
@@ -108,7 +109,7 @@ const QUAD: Record<Row['quadrant'], { name: string; color: string; meaning: stri
   },
   momentum_speculative: {
     name: 'Momentum / speculative', color: C.red,
-    meaning: 'A large move with no material catalyst behind it. Most likely technical or sentiment. Scored low on purpose.',
+    meaning: 'A large move with no material filed event found. Most likely technical or sentiment. Scored low on purpose.',
   },
   early_unclear: {
     name: 'Early / unclear', color: C.faint,
@@ -510,7 +511,7 @@ export default function AiGainersPage() {
         const fresh = !research || research.coverage.total === 0;
         return (
           <button type="button" onClick={() => sweep(market, data.scanned || [], genRef.current)}
-            title={`Reads the filings behind each move with the AI model. Runs only when you click.${fresh ? '' : ` Not yet researched: ${bcov!.missing.slice(0, 30).join(', ')}${missing > 30 ? '…' : ''}`}`}
+            title={`Reads the filings around each move with the AI model. Runs only when you click.${fresh ? '' : ` Not yet researched: ${bcov!.missing.slice(0, 30).join(', ')}${missing > 30 ? '…' : ''}`}`}
             style={{ fontSize: 12, fontWeight: 800, padding: '4px 12px', borderRadius: 999, border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan, cursor: 'pointer' }}>
             ▶ Research catalysts · {missing} {fresh ? `name${missing === 1 ? '' : 's'}` : `new name${missing === 1 ? '' : 's'}`} (uses AI)
           </button>
@@ -563,7 +564,7 @@ export default function AiGainersPage() {
       )}
       {data && !demo && research && !researched && !sweeping && !research.error && (
         <div style={{ fontSize: 13, color: C.dim, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 12px' }}>
-          Catalyst research has not run for this session yet, so events are not classified. <b style={{ color: C.text }}>▶ Research catalysts</b> reads the filings behind each move — it runs only when you click, because it uses AI reads.
+          Catalyst research has not run for this session yet, so events are not classified. <b style={{ color: C.text }}>▶ Research catalysts</b> reads the filings around each move — it runs only when you click, because it uses AI reads.
         </div>
       )}
       {research?.error && !demo && (
@@ -618,9 +619,9 @@ export default function AiGainersPage() {
           {techTab === 'filed' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <div style={{ fontSize: 12, color: C.faint }}>
-                Filed results behind today&rsquo;s gainers — context. A result filed weeks ago explains a re-rating, not today&rsquo;s print.
+                Filed results for today&rsquo;s gainers — context. A result filed weeks ago explains a re-rating, not today&rsquo;s print.
               </div>
-              {rows.length === 0 && <div style={{ fontSize: 12, color: C.dim }}>No filed result stands behind any gainer on this board.</div>}
+              {rows.length === 0 && <div style={{ fontSize: 12, color: C.dim }}>No filed result is on file for any gainer on this board.</div>}
               {rows.map((r) => (
                 <EventCard key={r.ticker} r={r} compact={false}
                   open={!!open[r.ticker]} onToggle={() => setOpen((o) => ({ ...o, [r.ticker]: !o[r.ticker] }))} />
@@ -651,7 +652,7 @@ export default function AiGainersPage() {
       {!view && (
         <header>
           <h1 style={{ margin: 0, fontSize: 18, fontWeight: 900, letterSpacing: 0.8, color: C.text }}>AI DAILY GAINERS</h1>
-          <div style={{ fontSize: 13, color: C.dim, marginTop: 3 }}>Fundamental events behind today&rsquo;s unusual moves — ranked by research value, not return.</div>
+          <div style={{ fontSize: 13, color: C.dim, marginTop: 3 }}>Fundamental events filed around today&rsquo;s unusual moves — ranked by research value, not return.</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 8 }}>{toolbar}</div>
         </header>
       )}
@@ -853,7 +854,7 @@ function ResearchLevel({ research, sweeping, market, onResume, onRescore, onRetr
       <div style={{ marginTop: 8, border: `1px dashed ${C.border}`, borderRadius: 6, padding: '6px 8px' }}>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
           <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: 0.5, color: C.faint }}>PRESS · SECONDARY, UNVERIFIED</span>
-          {n.narrative && <span style={pill(C.violet)} title={`Covered on ${n.narrative.days} different days, ${n.narrative.firstDate} → ${n.narrative.lastDate}. A story that keeps running can keep a stock moving after the event.`}>RUNNING STORY: {n.narrative.label.toUpperCase()} · {n.narrative.days}d · {n.narrative.firstDate.slice(5)}→{n.narrative.lastDate.slice(5)}</span>}
+          {n.narrative && <span style={pill(C.violet)} title={`Covered on ${n.narrative.days} different days, ${n.narrative.firstDate} → ${n.narrative.lastDate}. A story that keeps running can keep a stock moving after the event.`}>{isPriceCommentary(n.narrative.label) ? 'PRICE COMMENTARY (not evidence)' : 'RUNNING STORY'}: {n.narrative.label.toUpperCase()} · {n.narrative.days}d · {n.narrative.firstDate.slice(5)}→{n.narrative.lastDate.slice(5)}</span>}
           {n.themes.filter((t) => t.theme !== n.narrative?.theme).slice(0, compact ? 2 : 4).map((t) => <span key={t.theme} style={pill(C.faint)}>{t.label} ×{t.count}</span>)}
         </div>
         {shown.map((it, k) => (
@@ -962,7 +963,7 @@ function ResearchLevel({ research, sweeping, market, onResume, onRescore, onRetr
         <b style={{ color: C.text }} title="Research completion — names whose filings were checked — not the number with a catalyst.">Catalyst research {cov.researched}/{cov.total} small/mid caps researched ({cov.pct}%)</b>
         {research.date && <span style={{ color: C.faint }}> · session {research.date}</span>}
         {sweeping ? <span style={{ color: C.cyan }}> · researching…</span>
-          : pendingOnBoard > 0 ? <button onClick={onResume} title="Reads the filings behind each move with the AI model. Runs only when you click." style={{ marginLeft: 8, fontSize: 12, fontWeight: 700, padding: '2px 9px', borderRadius: 999, border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan, cursor: 'pointer' }}>▶ Research · {pendingOnBoard} not yet researched (uses AI)</button>
+          : pendingOnBoard > 0 ? <button onClick={onResume} title="Reads the filings around each move with the AI model. Runs only when you click." style={{ marginLeft: 8, fontSize: 12, fontWeight: 700, padding: '2px 9px', borderRadius: 999, border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan, cursor: 'pointer' }}>▶ Research · {pendingOnBoard} not yet researched (uses AI)</button>
             : onRescore && cov.total > 0 ? <button onClick={onRescore} title="Re-researches today's names from scratch with the current rules. Filings already model-read come from the cache; a filing the current rules newly choose may be model-read (within the daily ceiling). Stored findings under older rules are already re-scored automatically, without AI, when the page opens." style={{ marginLeft: 8, fontSize: 12, fontWeight: 700, padding: '2px 9px', borderRadius: 999, border: `1px solid ${C.border}`, background: 'transparent', color: C.dim, cursor: 'pointer' }}>↻ Re-score today with current rules</button> : null}
         {/* The partition: every processed name in exactly one group. */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', alignItems: 'baseline', marginTop: 6, padding: '8px 10px', border: `1px solid ${C.border}`, borderRadius: 8, background: C.bg }}>
@@ -1023,7 +1024,7 @@ function ResearchLevel({ research, sweeping, market, onResume, onRescore, onRetr
                 // never "an artifact" that contradicts it. (zzz769, MILKYMIST)
                 const withResult = !!filedTickers?.has(String(f.ticker).toUpperCase());
                 return <tr key={f.ticker}><td style={td}><Name f={f} /></td><td style={td}>{pct(f.movePct)}</td><td style={{ ...td, minWidth: 300 }}>{withResult
-                  ? <><b style={{ color: C.amber }}>RECENT LISTING · FILED RESULT.</b> A quarterly result is on file behind this move (see the filed-result rows in the research queue). Caveat: {String(f.headline || '').replace(/^Listed/, 'listed').replace(/ — no comparable prior close.*$/, '')} — no comparable prior close, so the size of the move is unreliable.</>
+                  ? <><b style={{ color: C.amber }}>RECENT LISTING · FILED RESULT.</b> A quarterly result is on file for this name (see the filed-result rows in the research queue). Caveat: {String(f.headline || '').replace(/^Listed/, 'listed').replace(/ — no comparable prior close.*$/, '')} — no comparable prior close, so the size of the move is unreliable.</>
                   : <><b style={{ color: C.faint }}>LISTING ARTIFACT.</b> {f.headline}</>}</td><td style={td}><Src f={f} /></td></tr>;
               })}
             </tbody></Wrap>

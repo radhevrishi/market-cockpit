@@ -6,7 +6,7 @@ import type { ResearchItem } from '@/lib/ai-gainers/research-view';
 import { stateWordFor } from '@/lib/ai-gainers/catalyst-timeline';
 import {
   C, CATALYST_META, CLASS_META, GAP_META, MATERIAL_COLOR, PERSIST_META, RELEVANCE_META, SOURCE_META, STAGE_META, TRANSMIT_META,
-  ageText, displayName, materialityHover, money, moveColor, pct, tint, triageLabel, txt,
+  ageText, displayName, materialityHover, money, moveColor, pct, tint, triageLabel, txt, DIRECTION_MARK, directionKey, isPriceCommentary, PRICE_COMMENTARY_LABEL,
 } from './tokens';
 
 export function Pill({ color, title, children, solid }: { color: string; title?: string; children: React.ReactNode; solid?: boolean }) {
@@ -30,7 +30,7 @@ export function StatusPill({ it }: { it: ResearchItem }) {
     return <Pill color={C.faint} title={it.materiality?.explanation || 'A tax / penalty item under 0.25% of market cap.'}>⚪ IMMATERIAL NEGATIVE</Pill>;
   }
   if (it.eventClass === 'NO_CATALYST' && it.flags?.denial) {
-    return <Pill color={C.faint} title="The company told the exchange it has no undisclosed information behind the price move. A clarification, not negative evidence.">⚪ COMPANY: NO UNDISCLOSED INFO</Pill>;
+    return <Pill color={C.faint} title="The company told the exchange it has no undisclosed information about the price move. A clarification, not negative evidence.">⚪ COMPANY: NO UNDISCLOSED INFO</Pill>;
   }
   // zzz776: the event can be verified while its SIGNIFICANCE is not — say
   // which of the two is open instead of calling a filed award "unverified".
@@ -55,7 +55,7 @@ export function CatalystForBadge({ it }: { it: ResearchItem }) {
 }
 
 /** zzz771: the card-level marker for the "Older filings" section — the reader
- *  must never mistake one of these for the event behind today's move. */
+ *  must never mistake one of these for this move's event. */
 export function OlderContextBadge({ it }: { it: ResearchItem }) {
   const age = ageText(it);
   return <Pill color={C.faint} solid title="A real filing, but older than the move window. Context for the name, not the catalyst for this move.">OLDER CONTEXT{age ? ` · ${age}` : ''}</Pill>;
@@ -67,8 +67,19 @@ export function TriagePill({ it }: { it: ResearchItem }) {
 }
 
 export function SourceBadge({ it }: { it: ResearchItem }) {
-  // zzz798 (US): one source label per card, read from the SEC documents —
-  // "VERIFIED DOCUMENT (SEC 8-K, filed …)" or "PRESS ONLY — no SEC filing found yet".
+  // zzz836: SOURCE EXISTENCE and EVIDENCE VERIFICATION are two independent facts, both taken from the HEADLINE event's own source.
+  // An official filing existing is never "verified" by itself.
+  if (it.sourceExistence && it.evidenceVerification) {
+    if (it.sourceExistence === 'none' && it.evidenceVerification === 'none') return null;
+    const exC = it.sourceExistence === 'press_only' ? C.amber : it.sourceExistence === 'none' ? C.faint : C.cyan;
+    const evC = it.evidenceVerification === 'document_read' ? C.green : it.evidenceVerification === 'contradicted' ? C.red : it.evidenceVerification === 'secondary_only' ? C.amber : C.cyan;
+    return (
+      <>
+        <Pill color={exC} title="Does a source exist for the headline event: an official filing, the press, or both. Existing is not the same as verified.">SOURCE: {(it.sourceExistenceLabel || it.sourceExistence).toUpperCase()}</Pill>
+        <Pill color={evC} title="How well the headline event is verified: was the document read, or only a summary / the press.">EVIDENCE: {(it.evidenceVerificationLabel || it.evidenceVerification).toUpperCase()}</Pill>
+      </>
+    );
+  }
   const us = it.market === 'US' ? it.usCard : null;
   if (us && us.source.tier !== 'NONE') {
     const sec = us.source.tier === 'SEC';
@@ -76,6 +87,13 @@ export function SourceBadge({ it }: { it: ResearchItem }) {
   }
   const s = SOURCE_META[it.sourceConfidence] || SOURCE_META.UNVERIFIED;
   return <Pill color={s.color} title={s.hover}>SOURCE: {s.label}</Pill>;
+}
+
+/** zzz836: the economic direction of the HEADLINE event (not the price move). */
+export function DirectionChip({ it }: { it: ResearchItem }) {
+  if (!it.direction) return null;
+  const d = DIRECTION_MARK[it.direction] || DIRECTION_MARK.UNKNOWN;
+  return <Pill color={d.color} title={`Economic direction of the event itself: ${d.word}.${it.directionNote ? ` ${it.directionNote}` : ''} Not a trade instruction and not the price move.`}>{d.mark} {d.word.toUpperCase()}</Pill>;
 }
 
 /** zzz798: the materiality word the owner reads — HIGH / MODERATE / SMALL on US cards. */
@@ -134,10 +152,10 @@ export function FactLine({ it }: { it: ResearchItem }) {
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px', alignItems: 'baseline' }}>
       <Fact k="EVENT" v={it.eventLabel || it.eventType} />
-      <Fact k="STAGE" v={usCard?.stageText ? `${st.label} · ${usCard.stageText.toUpperCase()}` : st.label} title={st.hover} />
+      <Fact k="STAGE" v={it.stageLabel ? it.stageLabel.toUpperCase() : usCard?.stageText ? `${st.label} · ${usCard.stageText.toUpperCase()}` : st.label} title={st.hover} />
       {usCard
-        ? <Fact k="MATERIAL" v={`${materialWord(it)} · ⓘ how computed`} color={MATERIAL_COLOR[ml]} title={materialityHover(it)} />
-        : <Fact k="MATERIAL" v={`${ml}${ml !== 'UNKNOWN' ? ' ⓘ' : it.materiality?.verification === 'PENDING' ? ' — PENDING DOCUMENT VERIFICATION' : ''}`} color={MATERIAL_COLOR[ml]} title={it.materiality?.verification === 'PENDING' ? it.materiality.explanation : materialityHover(it)} />}
+        ? <Fact k="MATERIAL" v={`${materialWord(it)}${it.materiality?.ratios?.[0] ? ` · ${it.materiality.ratios[0].pct}% of ${it.materiality.ratios[0].basis === 'market_cap' ? 'market cap' : 'revenue'}` : ''} · ⓘ`} color={MATERIAL_COLOR[ml]} title={`${it.materialityBand ? `${it.materialityBand}\n` : ''}${materialityHover(it)}`} />
+        : <Fact k="MATERIAL" v={`${ml}${ml !== 'UNKNOWN' && it.materiality?.ratios?.[0] ? ` · ${it.materiality.ratios[0].pct}% of ${it.materiality.ratios[0].basis === 'market_cap' ? 'market cap' : 'revenue'}` : ml !== 'UNKNOWN' ? ' (size ratio not shown)' : ''}${ml !== 'UNKNOWN' ? ' ⓘ' : it.materiality?.verification === 'PENDING' ? ' — PENDING DOCUMENT VERIFICATION' : ''}`} color={MATERIAL_COLOR[ml]} title={it.materiality?.verification === 'PENDING' ? it.materiality.explanation : `${it.materialityBand ? `${it.materialityBand}\n` : ''}${materialityHover(it)}`} />}
       <Fact k="TRANSMIT" v={tr.label} title={tr.hover} />
       {/* zzz787: four duration concepts, never merged — contractual (only when stated),
           potential economic duration (NOT evidence), persistence evidence, catalyst state. */}
@@ -162,10 +180,12 @@ export function Move({ it, big }: { it: ResearchItem; big?: boolean }) {
   const r = it.returns || { w1: null, m1: null, m3: null };
   return (
     <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 7, flexWrap: 'wrap' }}>
-      <span title="1-day move — context only, never the ranking" style={{ fontSize: big ? 15 : 13, fontWeight: 900, color: moveColor(it.move1d) }}>{pct(it.move1d)}</span>
-      <span style={{ fontSize: 11, color: C.faint, whiteSpace: 'nowrap' }}>
-        1W {pct(r.w1)} · 1M {pct(r.m1)} · 3M {pct(r.m3)}
-      </span>
+      <span title="1-day price move — context only, never the ranking" style={{ fontSize: big ? 15 : 13, fontWeight: 900, color: moveColor(it.move1d) }}><span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.4, color: C.faint, marginRight: 4 }}>MARKET MOVE</span>{pct(it.move1d)}</span>
+      {r.w1 == null && r.m1 == null && r.m3 == null
+        ? <span title="Not enough price history for a 1-week, 1-month or 3-month return. Unknown, not zero." style={{ fontSize: 11, color: C.faint }}>{it.eventClass === 'LISTING' ? 'recent listing' : 'short history'} - no 1W / 1M / 3M yet</span>
+        : <span style={{ fontSize: 11, color: C.faint, whiteSpace: 'nowrap' }}>
+            1W {pct(r.w1)} · 1M {pct(r.m1)} · 3M {pct(r.m3)}
+          </span>}
     </span>
   );
 }
@@ -227,23 +247,28 @@ const STAGE_HOVER: Record<string, string> = {
   PROPOSED: 'Proposed / non-binding / subject to approval - not firm, not booked.', SIGNED: 'Agreement signed; economics may still be pending.',
   AWARDED: 'Order / contract awarded; execution ahead.', EXECUTED: 'Done, not proposed.', COMPLETED: 'The transaction has completed.',
 };
+/** The timeline's catalyst state chip is shown only when it does not contradict the headline event's own source. */
+function stateAgrees(it: ResearchItem, state: string): boolean {
+  if (it.sourceExistence === 'press_only' && (state === 'DOCUMENTED' || state === 'EXECUTING' || state === 'CONFIRMED')) return false;
+  if ((it.sourceExistence === 'official_filing' || it.sourceExistence === 'both') && state === 'IDENTIFIED') return false;
+  if (it.eventClass === 'NO_CATALYST' || it.eventClass === 'MARKET_MOVE_ONLY') return false;
+  return true;
+}
 export function CatalystChips({ it }: { it: ResearchItem }) {
   const primary = it.catalysts?.[0];
   const pt = it.persistenceTest;
   return (
     <>
-      {it.verification && /verification required/i.test(it.verification) && !(it.market === 'US' && it.usCard) && <Pill color={C.amber} title="Only a secondary source (press / summary) says this. It becomes evidence when an official filing confirms it.">SECONDARY · VERIFICATION REQUIRED</Pill>}
-      {it.evidenceGap && <Pill color={it.evidenceGap.code === 'NO_CATALYST' ? C.faint : C.amber} title={it.evidenceGap.text}>{it.evidenceGap.label.toUpperCase()}</Pill>}
+      {it.verification && /verification required/i.test(it.verification) && !(it.market === 'US' && it.usCard) && !(it.sourceExistence && it.sourceExistence !== 'none') && <Pill color={C.amber} title="Only a secondary source (press / summary) says this. It becomes evidence when an official filing confirms it.">SECONDARY · VERIFICATION REQUIRED</Pill>}
+      {it.evidenceGap && (it.eventClass === 'NO_CATALYST' || it.eventClass === 'MARKET_MOVE_ONLY' || !it.sourceExistence) && <Pill color={it.evidenceGap.code === 'NO_CATALYST' ? C.faint : C.amber} title={it.evidenceGap.text}>{it.evidenceGap.label.toUpperCase()}</Pill>}
       {it.economicsUnknown && <Pill color={C.amber} title={it.economicsUnknown.missing.length ? `Missing: ${it.economicsUnknown.missing.join(', ')}` : 'The size of this event is not stated.'}>{it.economicsUnknown.label.toUpperCase()}</Pill>}
       {it.conflicts && it.conflicts.length > 0 && (
         <Pill color={C.red} solid title={`${it.conflicts.join('\n')}\nImpact is unknown until the values are confirmed. Unknown is not negative.`}>VALUES CONFLICT</Pill>
       )}
       {it.stageBadge && <Pill color={STAGE_BADGE_COLOR[it.stageBadge] || C.faint} title={STAGE_HOVER[it.stageBadge]}>{it.stageBadge}</Pill>}
       {it.contextOnly && <Pill color={C.faint} solid title={it.causalLabel || 'Older than the causal window: context for the name, not this move’s catalyst.'}>CONTEXT ONLY</Pill>}
-      {it.catalystConfirmation && (
-        <Pill color={it.catalystConfirmation === 'confirmed_in_official_filing' ? C.green : it.catalystConfirmation === 'filed_document_unread' ? C.cyan : it.catalystConfirmation === 'press_unconfirmed' ? C.amber : C.faint} title="Is the event in an official filing that was read? Reading the document and confirming the event are two separate facts.">{(it.catalystConfirmationLabel || it.catalystConfirmation).toUpperCase()}</Pill>
-      )}
-      {primary && <Pill color={STATE_COLOR[primary.state] || C.faint} title={`${stateWordFor(primary.stateWord, it.catalystConfirmation)}${primary.previousState ? ` (was ${primary.previousState.toLowerCase()})` : ''}`}>CATALYST: {primary.state}{primary.previousState && primary.previousState !== primary.state ? ` (was ${primary.previousState})` : ''}</Pill>}
+      <DirectionChip it={it} />
+      {primary && stateAgrees(it, primary.state) && <Pill color={STATE_COLOR[primary.state] || C.faint} title={`${stateWordFor(primary.stateWord, it.catalystConfirmation)}${primary.previousState ? ` (was ${primary.previousState.toLowerCase()})` : ''}`}>CATALYST: {primary.state}{primary.previousState && primary.previousState !== primary.state ? ` (was ${primary.previousState})` : ''}</Pill>}
       {/* zzz789: EARLY reads as Early / unproven — never a verdict, never negative. */}
       {pt && <Pill color={GRADE_COLOR[pt.grade] || C.faint} title={pt.why}>PERSISTENCE: {pt.grade === 'EARLY' ? 'EARLY / UNPROVEN' : pt.grade}</Pill>}
       {it.persistentCatalyst && it.persistentCatalyst.specialFocus && <Pill color={C.amber} title={it.persistentCatalyst.mechanism}>🔥 SPECIAL FOCUS</Pill>}
@@ -262,13 +287,30 @@ const DIR_MARK: Record<string, { mark: string; color: string; word: string }> = 
   negative: { mark: '▼', color: C.red, word: 'reads negative' },
   mixed: { mark: '◆', color: C.amber, word: 'mixed' },
   neutral: { mark: '◆', color: C.faint, word: 'neutral' },
+  unknown: { mark: '?', color: C.faint, word: 'unknown' },
 };
+/** ▲ only for a POSITIVE event, ▼ NEGATIVE, ◆ MIXED / NEUTRAL, ? UNKNOWN - read from the new field when present. */
+const dirOf = (c: unknown) => DIR_MARK[directionKey(c as any).toLowerCase()] || DIR_MARK.unknown;
+const isPC = (c: unknown) => (c as any)?.kind === 'price_commentary' || (c as any)?.subtype === 'price_commentary';
+const hasEvent = (it: ResearchItem) => it.eventClass !== 'NO_CATALYST' && it.eventClass !== 'MARKET_MOVE_ONLY' && it.eventClass !== 'DATA_UNAVAILABLE' && it.eventClass !== 'LISTING';
+
+function PriceCommentary({ items }: { items: Array<{ sentence: string; label: string }> }) {
+  if (!items.length) return null;
+  return (
+    <div data-testid="price-commentary" style={{ fontSize: 11.5, color: C.faint }}>
+      <span style={{ fontWeight: 800, letterSpacing: 0.4, marginRight: 6 }}>{PRICE_COMMENTARY_LABEL}</span>
+      {items.slice(0, 2).map((c, i) => <span key={i}>{i ? ' · ' : ''}<i>“{c.sentence}”</i></span>)}
+    </div>
+  );
+}
 
 export function UsCatalystList({ it, compact, max = 5 }: { it: ResearchItem; compact?: boolean; max?: number }) {
   const us = it.market === 'US' ? it.usCard : null;
   if (!us || !Array.isArray(us.catalysts)) return null;
-  const cs = us.catalysts;
+  const pcs = us.catalysts.filter(isPC);
+  const cs = us.catalysts.filter((c) => !isPC(c));
   const k: React.CSSProperties = { fontSize: 11, fontWeight: 800, letterSpacing: 0.5, color: C.faint };
+  if (!cs.length && hasEvent(it)) return null;   // the headline event is above; never "no catalyst found" beside it
   if (!cs.length) {
     return <div data-testid="us-catalysts-none" style={{ fontSize: 12, color: C.faint }}>No catalyst found in filings or news.</div>;
   }
@@ -287,7 +329,7 @@ export function UsCatalystList({ it, compact, max = 5 }: { it: ResearchItem; com
     <div data-testid="us-catalysts" style={{ background: C.bg2, borderRadius: 6, padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
       <div style={k}>CATALYSTS FOUND ({cs.length})</div>
       {cs.slice(0, max).map((c) => {
-        const d = DIR_MARK[c.direction] || DIR_MARK.neutral;
+        const d = dirOf(c);
         return (
           <div key={c.id} style={{ fontSize: 12.5, lineHeight: 1.45, color: C.dim, minWidth: 0 }}>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 7px', alignItems: 'baseline' }}>
@@ -305,6 +347,7 @@ export function UsCatalystList({ it, compact, max = 5 }: { it: ResearchItem; com
         );
       })}
       {cs.length > max && <div style={{ fontSize: 11.5, color: C.faint }}>+{cs.length - max} more in OPEN EVENT</div>}
+      <PriceCommentary items={pcs} />
     </div>
   );
 }
@@ -321,7 +364,8 @@ export function UsCatalystList({ it, compact, max = 5 }: { it: ResearchItem; com
 export function InCatalystList({ it, compact, max = 5 }: { it: ResearchItem; compact?: boolean; max?: number }) {
   const card = it.market === 'IN' ? it.inCard : null;
   if (!card || !Array.isArray(card.catalysts)) return null;
-  const cs = card.catalysts.filter((c) => c.id !== 'price_clarification' && c.id !== 'exchange_query');
+  const pcs = card.catalysts.filter(isPC);
+  const cs = card.catalysts.filter((c) => c.id !== 'price_clarification' && c.id !== 'exchange_query' && !isPC(c));
   const bd = card.backdrop;
   const cl = card.clarification;
   const k: React.CSSProperties = { fontSize: 11, fontWeight: 800, letterSpacing: 0.5, color: C.faint };
@@ -333,6 +377,7 @@ export function InCatalystList({ it, compact, max = 5 }: { it: ResearchItem; com
       {c.source === 'FILING' ? 'EXCHANGE FILING' : c.confirmedByFiling ? 'PRESS · ALSO FILED' : 'REPORTED, NOT CONFIRMED BY THE COMPANY'}
     </Pill>
   );
+  if (!cs.length && !bd && !cl && hasEvent(it)) return null;   // the headline event is above; never "no catalyst found" beside it
   if (!cs.length && !bd && !cl) {
     return (
       <div data-testid="in-catalysts-none" style={{ fontSize: 12, color: C.faint }}>
@@ -357,7 +402,7 @@ export function InCatalystList({ it, compact, max = 5 }: { it: ResearchItem; com
     <div data-testid="in-catalysts" style={{ background: C.bg2, borderRadius: 6, padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
       <div style={k}>CATALYSTS FOUND ({cs.length})</div>
       {cs.slice(0, max).map((c) => {
-        const d = DIR_MARK[c.direction] || DIR_MARK.neutral;
+        const d = dirOf(c);
         return (
           <div key={`${c.source}-${c.id}`} style={{ fontSize: 12.5, lineHeight: 1.45, color: C.dim, minWidth: 0 }}>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 7px', alignItems: 'baseline' }}>
@@ -368,6 +413,7 @@ export function InCatalystList({ it, compact, max = 5 }: { it: ResearchItem; com
               {c.date && <span style={{ color: C.faint, fontSize: 11 }}>{c.date}</span>}
               {c.figures.length > 0 && <span style={{ color: C.text, fontWeight: 700 }}>stated: {c.figures.join(', ')}</span>}
               {c.note && <span style={{ color: C.amber, fontSize: 11.5 }}>{c.note}</span>}
+              {(c.evidenceRole === 'context' || c.evidenceRole === 'supporting') && <span title="Listed for context. It is not the evidence for the headline event." style={{ color: C.faint, fontSize: 11 }}>context - not the headline's evidence</span>}
             </div>
             {!repeated(c.sentence) && (
               <div style={{ fontStyle: 'italic', overflowWrap: 'anywhere' }}>
@@ -380,7 +426,7 @@ export function InCatalystList({ it, compact, max = 5 }: { it: ResearchItem; com
       {cs.length > max && <div style={{ fontSize: 11.5, color: C.faint }}>+{cs.length - max} more in OPEN EVENT</div>}
       {bd && (
         <div data-testid="in-backdrop" style={{ fontSize: 12.5, lineHeight: 1.45, color: C.dim }}>
-          <span style={{ ...k, marginRight: 6 }}>BACKDROP</span><b style={{ color: C.text }}>{bd.label}</b>
+          <span style={{ ...k, marginRight: 6 }}>{bd.contextLabel ? bd.contextLabel.toUpperCase() : 'BACKDROP'}</span><b style={{ color: C.text }}>{bd.label}</b>
           {bd.lead && <> — {bd.lead.source === 'PRESS' ? 'press: ' : ''}{!repeated(bd.lead.sentence) && <i>“{bd.lead.sentence}”</i>}{bd.lead.figures.length > 0 && <b style={{ color: C.text }}> stated: {bd.lead.figures.join(', ')}</b>}{bd.lead.note && <span style={{ color: C.amber }}> ({bd.lead.note})</span>}</>}
         </div>
       )}
@@ -389,6 +435,7 @@ export function InCatalystList({ it, compact, max = 5 }: { it: ResearchItem; com
           <span style={{ ...k, marginRight: 6 }}>EXCHANGE CLARIFICATION</span>{cl.date ? `${cl.date} — ` : ''}company says no undisclosed information. <i>“{cl.sentence}”</i>
         </div>
       )}
+      <PriceCommentary items={pcs} />
       {card.routine.length > 0 && <div style={{ fontSize: 11.5, color: C.faint }}>Routine (not catalysts): {Array.from(new Set(card.routine.map((r) => r.label.toLowerCase()))).slice(0, 4).join(', ')}</div>}
     </div>
   );

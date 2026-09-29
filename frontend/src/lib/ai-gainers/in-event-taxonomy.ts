@@ -49,15 +49,17 @@
 // Pure: no fetch, no clock (the caller passes `now`), no model.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { causalWindow, exchangeAgeDays, exchangeDate, exchangeDay, reconcileValues, stageFromText, type CausalWindow, type EventStage, type EventValue, type ValueStatus } from './structured-facts';
+import { causalWindow, directionOf, directionNote, subtypeOf, isPlausibleAmount, contextTag, type EconDirection, type EventSubtype, exchangeAgeDays, exchangeDate, exchangeDay, reconcileValues, stageFromText, type CausalWindow, type EventStage, type EventValue, type ValueStatus } from './structured-facts';
 
 export type InEventCategory =
   | 'Results' | 'Ownership & control' | 'Orders & business' | 'Capacity & capex' | 'Corporate action'
-  | 'Capital raising' | 'Management & governance' | 'Regulatory & legal' | 'Exchange disclosure' | 'Routine';
+  | 'Capital raising' | 'Management & governance' | 'Regulatory & legal' | 'Exchange disclosure' | 'Routine'
+  // zzz836: a credit rating is a balance-sheet / credit event - never guidance, never a result
+  | 'Balance sheet / credit';
 
 export const IN_EVENT_CATEGORIES: InEventCategory[] = [
   'Results', 'Ownership & control', 'Orders & business', 'Capacity & capex', 'Corporate action',
-  'Capital raising', 'Management & governance', 'Regulatory & legal', 'Exchange disclosure', 'Routine',
+  'Capital raising', 'Management & governance', 'Regulatory & legal', 'Exchange disclosure', 'Routine', 'Balance sheet / credit',
 ];
 
 export type InEventDirection = 'positive' | 'negative' | 'mixed' | 'neutral';
@@ -82,6 +84,13 @@ export interface InEventHit {
   strength: 'weak' | 'small' | null;
   /** A plain note for the reader ("turnaround, small", "company says no undisclosed information"). */
   note: string | null;
+  // ── zzz836 (optional) ──
+  /** Economic direction of the event itself (never the price move): POSITIVE | NEGATIVE | MIXED | NEUTRAL | UNKNOWN. `direction` keeps the older lower-case hint. */
+  economicDirection?: EconDirection;
+  /** One plain line for a direction that needs it (dilution, contingent, observations are not a clean result). */
+  directionNote?: string | null;
+  /** Finer than the category: store_launch, dealership, facility_for_customer, credit_rating, inspection ... */
+  subtype?: EventSubtype;
 }
 
 interface Rule {
@@ -160,6 +169,7 @@ const RULES: Rule[] = [
     note: 'figures restated — compare like with like before reading growth' },
   { id: 'guidance', label: 'Guidance / target stated', category: 'Results', direction: 'positive', rank: 16,
     any: [/\b(?:rais(?:ed|es)|revis(?:ed|es) upward|upgrad(?:ed|es))\b[^.;]{0,40}\b(?:guidance|outlook|target)\b/i, /\b(?:guidance|outlook)\b[^.;]{0,50}\b(?:₹|rs\.?|inr|\d+(?:\.\d+)?\s?%|crore)/i, /\btarget(?:s|ing|ed)?\b[^.;]{0,20}\b(?:revenue|turnover|sales|topline|growth)\b[^.;]{0,40}(?:₹|rs\.?|\d)/i],
+    not: /\b(?:crisil|icra|care ratings?|\bCARE\b|india ratings|ind-?ra|acuit[eé]|infomerics|brickwork|credit rating|rating agency|reaffirm\w*|long[- ]term (?:bank )?facilit\w+|short[- ]term (?:bank )?facilit\w+)\b/i,
     dir: (s) => (/\b(?:lower(?:ed|s)|cut|reduc(?:ed|es)|withdr(?:ew|awn))\b[^.;]{0,30}\b(?:guidance|outlook|target)\b/i.test(s) ? 'negative' : 'positive') },
   { id: 'order_book', label: 'Order book stated', category: 'Results', direction: 'positive', rank: 17,
     any: [/\border ?book\b[^.;]{0,50}(?:₹|rs\.?|inr|crore|\d)/i, /\bunexecuted order\b/i],
@@ -224,9 +234,11 @@ const RULES: Rule[] = [
   // ── CAPACITY & CAPEX ──
   { id: 'capacity_commissioned', label: 'Capacity commissioned / production started', category: 'Capacity & capex', direction: 'positive', rank: 9,
     any: [/\bcommission(?:ed|ing)\b[^.;]{0,60}\b(?:plant|unit|line|capacity|facility|project|mw|tpa|mtpa|tpd|klpd|furnace|kiln|boiler)\b/i, /\b(?:plant|unit|line|capacity|facility|project)\b[^.;]{0,60}\bcommission(?:ed|ing)\b/i,
-      /\bcommenc(?:ed|ement of|es)\b[^.;]{0,20}\b(?:commercial )?(?:production|operations|dispatch(?:es)?)\b/i, /\b(?:start(?:ed|s)?|began|begins)\b[^.;]{0,15}\b(?:commercial )?production\b/i, /\bcommercial operation date\b/i, /\bCOD\b/, /\btrial (?:run|production)\b/i, /\binaugurat(?:ed|ion|es)\b[^.;]{0,50}\b(?:plant|unit|facility|factory|line|centre|center)\b/i] },
+      /\bcommenc(?:ed|ement of|es)\b[^.;]{0,20}\b(?:commercial )?(?:production|operations|dispatch(?:es)?)\b/i, /\b(?:start(?:ed|s)?|began|begins)\b[^.;]{0,15}\b(?:commercial )?production\b/i, /\bcommercial operation date\b/i, /\bCOD\b/, /\btrial (?:run|production)\b/i, /\binaugurat(?:ed|ion|es)\b[^;]{0,50}\b(?:plants?|units?|facilit(?:y|ies)|factory|factories|lines?|centre|center)\b/i],
+    not: /\b(?:showroom|dealerships?|retail (?:and service )?partner|(?:retail )?stores?|outlets?|boutique)\b/i, },
   { id: 'capacity_expansion', label: 'Capacity expansion / capex', category: 'Capacity & capex', direction: 'positive', rank: 15,
     any: [/\bcapacity (?:expansion|addition|enhancement|augmentation|increase)\b/i, /\b(?:expand|expansion of|enhance|enhancement of|increase|augment|augmentation of|double|doubling)\b[^.;]{0,40}\b(?:production |installed |manufacturing )?capacity\b/i, /\bcapex\b[^.;]{0,40}(?:₹|rs\.?|inr|crore|plan|programme|program)/i, /\b(?:greenfield|brownfield)\b/i, /\bnew (?:plant|facility|manufacturing unit|production line|unit)\b/i, /\bset(?:ting)? up (?:a |an )?(?:new )?(?:plant|facility|unit|factory)\b/i],
+    not: /\b(?:showroom|dealerships?|retail (?:and service )?partner|(?:retail )?stores?|outlets?|boutique)\b/i,
     hides: [] },
 
   // ── CORPORATE ACTION ──
@@ -259,10 +271,15 @@ const RULES: Rule[] = [
     note: 'equity raise adds supply — check price, allottees and use of proceeds' },
   { id: 'debt_raise', label: 'Debt raise / borrowing', category: 'Capital raising', direction: 'neutral', rank: 38,
     any: [/\bnon[- ]convertible debentures?\b/i, /\bNCDs?\b/, /\bterm loan\b|\bcommercial paper\b|\bborrowing limits?\b/i] },
-  { id: 'rating_upgrade', label: 'Credit rating upgrade', category: 'Capital raising', direction: 'positive', rank: 30,
-    any: [/\b(?:rating|outlook)\b[^.;]{0,60}\b(?:upgrad(?:ed|e)|revised (?:upward|to positive)|to positive)\b/i, /\bupgrad(?:ed|es)\b[^.;]{0,40}\b(?:rating|outlook)\b/i] },
-  { id: 'rating_downgrade', label: 'Credit rating downgrade', category: 'Capital raising', direction: 'negative', rank: 30,
-    any: [/\b(?:rating|outlook)\b[^.;]{0,60}\b(?:downgrad(?:ed|e)|revised to negative|to negative|watch with negative)\b/i, /\bdowngrad(?:ed|es)\b[^.;]{0,40}\b(?:rating|outlook)\b/i] },
+  { id: 'rating_upgrade', label: 'Credit rating upgrade', category: 'Balance sheet / credit', direction: 'positive', rank: 30,
+    any: [/\b(?:rating|outlook)\b[^.;]{0,60}\b(?:upgrad(?:ed|e)|revised (?:upward|to positive)|to positive)\b/i, /\bupgrad(?:ed|es)\b[^.;]{0,40}\b(?:rating|outlook)\b/i],
+    hides: ['rating_action'], note: 'rated facility size is a debt figure, not guidance or revenue' },
+  { id: 'rating_downgrade', label: 'Credit rating downgrade', category: 'Balance sheet / credit', direction: 'negative', rank: 30,
+    any: [/\b(?:rating|outlook)\b[^.;]{0,60}\b(?:downgrad(?:ed|e)|revised to negative|to negative|watch with negative)\b/i, /\bdowngrad(?:ed|es)\b[^.;]{0,40}\b(?:rating|outlook)\b/i],
+    hides: ['rating_action'], note: 'rated facility size is a debt figure, not guidance or revenue' },
+  { id: 'rating_action', label: 'Credit rating action', category: 'Balance sheet / credit', direction: 'neutral', rank: 31,
+    any: [/\b(?:crisil|icra|care ratings?|\bCARE\b|india ratings|ind-?ra|acuit[eé]|infomerics|brickwork)\b[^.;]{0,80}\b(?:reaffirm\w*|assign\w*|retain\w*|maintain\w*|rating)\b/i, /\b(?:reaffirm\w*|assign\w*)\b[^.;]{0,40}\b(?:credit )?rating\b/i, /\bcredit rating\b/i],
+    hides: [], note: 'rated facility size is a debt figure, not guidance or revenue' },
 
   // ── MANAGEMENT & GOVERNANCE ──
   { id: 'auditor_resignation', label: 'Auditor resignation', category: 'Management & governance', direction: 'negative', rank: 6,
@@ -285,7 +302,24 @@ const RULES: Rule[] = [
     not: /\bshareholders?'? approval\b|\bboard(?:'s)? approval\b|\bsubject to (?:the )?(?:approval|shareholders)|\bapproval of (?:the )?(?:board|shareholders|members)\b|\bapproved the (?:financial )?results\b|\bin-principle approval\b[^.;]{0,30}\blisting\b/i,
     hides: ['vendor_approval'] },
   { id: 'regulatory_setback', label: 'Regulatory setback (warning letter / import alert / 483)', category: 'Regulatory & legal', direction: 'negative', rank: 6,
-    any: [/\bwarning letter\b|\bimport alert\b|\bform 483\b|\b483 observations?\b|\bofficial action indicated\b|\bOAI\b/i, /\b(?:licen[cs]e|approval|registration)\b[^.;]{0,20}\b(?:suspended|cancelled|revoked)\b/i] },
+    any: [/\bwarning letter\b|\bimport alert\b|\bform 483\b|\b483 observations?\b|\bofficial action indicated\b|\bOAI\b/i, /\b(?:licen[cs]e|approval|registration)\b[^.;]{0,20}\b(?:suspended|cancelled|revoked)\b/i],
+    // an inspection that ended with observations is its own (mixed) event; only a warning letter / import alert / OAI is a setback
+    not: /^(?!.*(?:warning letter|import alert|official action indicated|\bOAI\b)).*\binspect(?:ion|ed|ions)\b/is },
+  { id: 'subsidiary_incorporation', label: 'New subsidiary incorporated', category: 'Corporate action', direction: 'neutral', rank: 36,
+    any: [/\bincorporat\w*\b[^;]{0,120}\bsubsidiary\b/i, /\bsubsidiary\b[^;]{0,80}\bincorporat\w*\b/i, /\bwholly[- ]owned subsidiary\b[^;]{0,60}\b(?:formed|set up|incorporated|established)\b/i],
+    not: /\bstrike[- ]off\b|\bcessation\b|\bclosure of (?:the )?subsidiary\b/i, note: 'an enabling step - it books no revenue by itself' },
+  { id: 'regulatory_inspection', label: 'Regulatory inspection / observations', category: 'Regulatory & legal', direction: 'neutral', rank: 9,
+    any: [/\b(?:usfda|us fda|fda|mhra|eu[- ]?gmp|who[- ]?gmp|anvisa|pmda|tga|dcgi|cdsco|health canada|pic\/s|gmp)\b[^.;]{0,80}\binspect(?:ion|ed|ions)\b/i, /\binspect(?:ion|ed|ions)\b[^.;]{0,80}\b(?:usfda|us fda|fda|mhra|eu[- ]?gmp|who[- ]?gmp|observations?|form 483|483|EIR|NAI|VAI)\b/i, /\b(?:pre[- ]approval|surveillance|cgmp|gmp)\s+inspection\b/i],
+    not: /\b(?:warning letter|import alert|official action indicated|\bOAI\b)\b|\bcomplete response letter\b|\binspection of (?:records|books|documents)\b/i,
+    dir: (s) => { const d = directionOf('regulatory_inspection', s); return d === 'POSITIVE' ? 'positive' : d === 'NEGATIVE' ? 'negative' : d === 'MIXED' ? 'mixed' : 'neutral'; },
+    hides: ['regulatory_approval'],
+    note: 'inspection is not an approval - read the observations, the response and the site\'s revenue share' },
+  { id: 'store_launch', label: 'New store / showroom launch', category: 'Orders & business', direction: 'positive', rank: 21,
+    any: [/\b(?:showroom|store|stores|outlet|outlets|boutique|retail (?:store|outlet))\b[^.;]{0,50}\b(?:launch\w*|opening|opened|inaugurat\w*|open)\b/i, /\b(?:launch\w*|open(?:s|ed|ing)?|inaugurat\w*)\b[^.;]{0,40}\b(?:new |first )?(?:showroom|store|stores|outlet|outlets|boutique)\b/i],
+    not: /\bdealership\b/i, note: 'store economics differ from a plant: capex per store, same-store sales, payback' },
+  { id: 'dealership_expansion', label: 'Dealership / network expansion', category: 'Orders & business', direction: 'positive', rank: 21,
+    any: [/\bdealerships?\b/i, /\b(?:dealer|retail|service|distribution) network\b[^.;]{0,40}\b(?:expand\w*|addition|new)\b/i, /\bexpands? its (?:dealer |retail |service )?network\b/i, /\bretail and service partner\b[^.;]{0,120}\bnew (?:facility|outlet|showroom)\b/i],
+    note: 'network expansion: capex per outlet, throughput and the brand\'s allocation' },
   { id: 'tax_demand', label: 'Tax demand / penalty', category: 'Regulatory & legal', direction: 'negative', rank: 32,
     any: [/\b(?:gst|income[- ]tax|customs|excise|service tax)\b[^.;]{0,60}\b(?:demand|notice|order|penalty|show[- ]cause)\b/i, /\bshow[- ]cause notice\b|\bdemand notice\b|\bpenalty of\b/i],
     not: /\b(?:quashed|set aside|dropped|in (?:our|its|the company'?s) favou?r|allowed the appeal|deleted)\b/i,
@@ -382,7 +416,7 @@ export function inFiguresIn(sentence: string): string[] {
   }
   hits.sort((a, b) => a.at - b.at);
   const out: string[] = [];
-  for (const h of hits) if (!out.includes(h.v) && s.includes(h.v)) out.push(h.v);
+  for (const h of hits) if (!out.includes(h.v) && s.includes(h.v) && isPlausibleAmount(h.v)) out.push(h.v);
   return out.slice(0, 6);
 }
 
@@ -472,7 +506,7 @@ export function classifyIndiaEvents(text: string, opts: InClassifyOptions = {}):
   return kept
     .sort((a, b) => Number(a.routine) - Number(b.routine) || (Math.min(a.order, 4) - Math.min(b.order, 4)) * 3 + (rank(a.id) - rank(b.id)) || Number(a.planned) - Number(b.planned) || a.order - b.order)
     .slice(0, opts.max ?? 12)
-    .map(({ order: _o, ...h }) => h);
+    .map(({ order: _o, ...h }) => ({ ...h, economicDirection: directionOf(h.id, h.sentence, h.direction), directionNote: directionNote(h.id, h.sentence), subtype: subtypeOf(h.id, h.sentence) }));
 }
 
 /** Counts of hits by category (every category present, zero when none). */
@@ -514,6 +548,13 @@ export interface InCatalyst extends InEventHit {
   ageDaysAtMove?: number | null;
   causalWindowStatus?: CausalWindow['status'];
   contextOnly?: boolean;
+  // ── zzz836 (optional): two independent fields, never one 'verified' chip ──
+  /** SOURCE EXISTENCE: 'official' (an exchange filing) | 'press' | 'both' (press whose event a filing also states). */
+  sourceExistence?: 'official' | 'press' | 'both';
+  /** EVIDENCE VERIFICATION: 'document_read' | 'document_not_read' | 'secondary_only' | 'contradicted'. An official filing that was not read is NOT verified. */
+  evidenceVerification?: 'document_read' | 'document_not_read' | 'secondary_only' | 'contradicted';
+  /** 'headline' = the card's lead event; 'context' = press / older items about other topics, never the headline's evidence. */
+  evidenceRole?: 'headline' | 'supporting' | 'context';
 }
 
 export interface InBackdrop {
@@ -526,6 +567,11 @@ export interface InBackdrop {
   label: string;
   /** Other Results facts read (restatement, margins …). */
   also: InCatalyst[];
+  // ── zzz836 (optional) ──
+  /** True when the result filing is older than 14 days: shown as context, never as the KEY CHANGE. */
+  context?: boolean;
+  /** "OLDER RESULT (46d) - context" when `context`. */
+  contextLabel?: string | null;
 }
 
 export interface InCard {
@@ -550,6 +596,8 @@ export interface InCard {
   catalystStatus?: 'no_event_found' | 'event_found_low_information' | 'event_found_not_market_moving' | 'event_found_unverified' | 'confirmed_material_event';
   /** The move day (IST calendar) the causal windows were measured against. */
   moveDate?: string | null;
+  /** zzz836: the headline (lead) event's OWN date and age - the timing line must be computed from this, never from another filing. */
+  headline?: { id: string; label: string; date: string | null; ageDays: number | null; ageDaysAtMove: number | null; source: 'FILING' | 'PRESS'; causalWindowStatus: CausalWindow['status'] | null } | null;
   /** One plain sentence — never empty; "No catalyst found in filings or news" when nothing. */
   summary: string;
 }
@@ -629,7 +677,7 @@ export function buildIndiaCard(input: { filings: InCardFiling[]; press: InCardPr
   const routine: InCard['routine'] = [];
   let clarification: InCatalyst | null = null;
   const toCat = (h: InEventHit, f: InCardFiling & { ageDays: number | null }, fromDoc: boolean): InCatalyst => ({
-    ...h, source: 'FILING', sourceLabel: fromDoc ? 'exchange filing (document read)' : 'exchange filing (subject / summary)', confirmedByFiling: true,
+    ...h, sourceExistence: 'official', evidenceVerification: fromDoc ? 'document_read' : 'document_not_read', source: 'FILING', sourceLabel: fromDoc ? 'exchange filing (document read)' : 'exchange filing (subject / summary)', confirmedByFiling: true,
     date: dayOf(f.dateIso), url: f.url ?? null, ageDays: f.ageDays, title: clip(f.subject || h.sentence, 160),
   });
   for (const f of inWin) {
@@ -662,7 +710,7 @@ export function buildIndiaCard(input: { filings: InCardFiling[]; press: InCardPr
     for (const h of classifyIndiaEvents(p.title, { headline: true })) {
       if (h.routine || pressCats.some((x) => x.id === h.id)) continue;
       const confirmed = catalysts.some((c) => c.source === 'FILING' && (c.id === h.id || (c.category === h.category && h.category !== 'Results' && h.category !== 'Exchange disclosure' && h.category !== 'Ownership & control')));
-      pressCats.push({ ...h, planned: h.planned || h.id === 'promoter_stake_sale', source: 'PRESS', sourceLabel: confirmed ? 'press; an exchange filing states the same event' : 'reported, not confirmed by the company', confirmedByFiling: confirmed,
+      pressCats.push({ ...h, sourceExistence: confirmed ? 'both' : 'press', evidenceVerification: 'secondary_only', planned: h.planned || h.id === 'promoter_stake_sale', source: 'PRESS', sourceLabel: confirmed ? 'press; an exchange filing states the same event' : 'reported, not confirmed by the company', confirmedByFiling: confirmed,
         date: dayOf(p.date), url: p.url ?? null, ageDays: age, title: clip(`${p.title}${p.source ? ` — ${p.source}` : ''}`, 180) });
     }
   }
@@ -687,7 +735,8 @@ export function buildIndiaCard(input: { filings: InCardFiling[]; press: InCardPr
         : tone === 'growth' ? `Quarterly result: growth (${when})`
           : tone === 'weak' ? `Weak result (${when})`
             : `Quarterly result filed (${when}) — figures not stated in the text read`;
-    backdrop = { filing: { title: clip(f.subject, 160), date: d, ageDays: f.ageDays, url: f.url ?? null }, lead, tone, label, also: sorted.slice(1, 4) };
+    const ctx = contextTag(f.ageDays, 'result');
+    backdrop = { filing: { title: clip(f.subject, 160), date: d, ageDays: f.ageDays, url: f.url ?? null }, lead, tone, label, also: sorted.slice(1, 4), context: ctx.context, contextLabel: ctx.label };
     break;
   }
   if (!backdrop) {
@@ -698,7 +747,8 @@ export function buildIndiaCard(input: { filings: InCardFiling[]; press: InCardPr
       const tone = resultTone(pr);
       const when = `reported ${pr[0].date || 'undated'}${pr[0].ageDays != null ? `, ${pr[0].ageDays}d ago` : ''}; press, the results filing itself was not in the fetched list`;
       const label = tone === 'turnaround_small' ? `Turnaround, small — quarterly result (${when})` : tone === 'turnaround' ? `Turnaround to profit — quarterly result (${when})` : tone === 'growth' ? `Quarterly result: growth (${when})` : tone === 'weak' ? `Weak result (${when})` : `Quarterly result (${when})`;
-      backdrop = { filing: null, lead: pr[0], tone, label, also: pr.slice(1, 3) };
+      const ctx = contextTag(pr[0].ageDays, 'result');
+      backdrop = { filing: null, lead: pr[0], tone, label, also: pr.slice(1, 3), context: ctx.context, contextLabel: ctx.label };
     }
   }
 
@@ -724,6 +774,7 @@ export function buildIndiaCard(input: { filings: InCardFiling[]; press: InCardPr
     if (c.stage === 'PROPOSED') c.impactUnknown = true;
     const cw = causalWindow({ itemDate: c.date, moveDate, official: c.source === 'FILING', windowDays: c.source === 'FILING' ? (input.causalWindowDays ?? windowDays) : (input.pressWindowDays ?? input.causalWindowDays ?? windowDays) });
     c.ageDaysAtMove = cw.ageDaysAtMove; c.causalWindowStatus = cw.status; c.contextOnly = cw.contextOnly;
+    c.evidenceRole = c === lead ? 'headline' : (c.source === 'PRESS' || c.contextOnly || (c.ageDays != null && c.ageDays > windowDays)) ? 'context' : 'supporting';
   }
   // a headline / summary / press value that differs from the FILED value: keep both, never pick one
   for (const f of inWin) {
@@ -751,7 +802,9 @@ export function buildIndiaCard(input: { filings: InCardFiling[]; press: InCardPr
       conflicts.push(...r.conflicts);
     }
   }
+  for (const c of shown) if (c.valueStatus === 'conflicting') c.evidenceVerification = 'contradicted';
   const conflictNotes = Array.from(new Set(conflicts));
+  const hl = lead ? { id: lead.id, label: lead.label, date: lead.date, ageDays: lead.ageDays, ageDaysAtMove: lead.ageDaysAtMove ?? null, source: lead.source, causalWindowStatus: lead.causalWindowStatus ?? null } : null;
 
   let summary: string;
   if (lead) summary = `${lead.label}${lead.planned && lead.source === 'PRESS' ? ' (reported plan)' : ''} — ${lead.sourceLabel}${lead.date ? `, ${lead.date}` : ''}`;
@@ -769,7 +822,7 @@ export function buildIndiaCard(input: { filings: InCardFiling[]; press: InCardPr
     : lead ? (lead.source === 'FILING' && !lead.contextOnly ? 'confirmed_material_event' : 'event_found_unverified')
       : routine.length && !backdrop && !clarification ? 'event_found_low_information' : 'event_found_not_market_moving';
   const searched = { filings: inWin.length, press: press.length, lookbackDays: windowDays, sources: ['exchange filings (NSE / BSE announcements)', 'press headlines'] };
-  return { v: IN_CARD_VERSION, catalysts: shown, lead, backdrop, clarification, routine, filingsChecked: inWin.length, pressChecked: press.length, conflicts: conflictNotes, searched, catalystStatus, moveDate, summary };
+  return { v: IN_CARD_VERSION, catalysts: shown, lead, backdrop, clarification, routine, filingsChecked: inWin.length, pressChecked: press.length, conflicts: conflictNotes, searched, catalystStatus, moveDate, headline: hl, summary };
 }
 
 /** The sentences of a filed document that name a (non-routine) event — kept with the document read so the

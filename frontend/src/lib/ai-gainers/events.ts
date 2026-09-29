@@ -47,6 +47,8 @@ export const OPERATING_CATALYSTS = [
   // a tier-1 filing link under it, which is the worst shape a wrong answer
   // can take on this portal.
   'quarterly_result',
+  // zzz836: a regulator's inspection / Form 483 / EIR is NOT an approval.
+  'regulatory_inspection',
 ] as const;
 
 export const CORPORATE_CATALYSTS = [
@@ -115,8 +117,9 @@ export function independentSourceKey(url: string | null | undefined): string {
   if (acc) return `sec:${acc[1].replace(/-/g, '')}`;
   return u.replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase();
 }
-export function countIndependentSources(sources: Array<{ url: string }>): number {
-  return new Set((sources || []).map((s) => independentSourceKey(s.url)).filter(Boolean)).size;
+export function countIndependentSources(sources: Array<{ url: string; kind?: string | null }>): number {
+  // zzz836: price commentary (circuit / momentum / broker target) is not evidence and is never counted
+  return new Set((sources || []).filter((s) => s.kind !== 'price_commentary').map((s) => independentSourceKey(s.url)).filter(Boolean)).size;
 }
 
 export interface EventSource {
@@ -125,6 +128,8 @@ export interface EventSource {
   published?: string | null;
   /** The sentence that evidences the claim. Never paraphrased. */
   excerpt?: string | null;
+  /** zzz836: 'price_commentary' sources are excluded from evidence counts and points. */
+  kind?: 'price_commentary' | 'event' | null;
 }
 
 /** A thing a document STATES. Not a conclusion. */
@@ -278,6 +283,7 @@ const NOVELTY_POINTS: Record<InformationStatus, number> = {
 /** The best (lowest) tier present, and the points it earns. Tier 3 alone is
  *  worth nothing — it can raise an alert, never a score. */
 export function evidencePoints(sources: EventSource[]): { points: number; best: SourceTier; because: string } {
+  sources = (sources || []).filter((s) => s.kind !== 'price_commentary');
   const tiers = (sources || []).map((s) => s.tier).filter((t) => t === 1 || t === 2 || t === 3);
   if (!tiers.length) return { points: 0, best: 3, because: 'no source recorded' };
   const best = Math.min(...tiers) as SourceTier;

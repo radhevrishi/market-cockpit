@@ -254,6 +254,26 @@ export function sourceWord(it: ResearchItem): string {
   return SOURCE_WORD[it.sourceConfidence] || 'Unverified';
 }
 
+/** SOURCE (does an official filing / press exist) - its own field; never reads as "verified". */
+export function sourceExistWord(it: ResearchItem): string {
+  return has(it.sourceExistenceLabel) ? String(it.sourceExistenceLabel) : sourceWord(it);
+}
+/** EVIDENCE (was the document read / is it secondary only) - a separate field from SOURCE. */
+export function evidenceWord(it: ResearchItem): string {
+  return has(it.evidenceVerificationLabel) ? String(it.evidenceVerificationLabel) : 'Not stated';
+}
+/** Economic direction in plain ASCII (Helvetica cannot draw arrows): + POSITIVE, - NEGATIVE, ~ MIXED, = NEUTRAL, ? UNKNOWN. */
+export function directionWord(it: ResearchItem): { word: string; rgb: RGB } | null {
+  switch (it.direction) {
+    case 'POSITIVE': return { word: '+ POSITIVE', rgb: GREEN };
+    case 'NEGATIVE': return { word: '- NEGATIVE', rgb: RED };
+    case 'MIXED': return { word: '~ MIXED', rgb: AMBER };
+    case 'NEUTRAL': return { word: '= NEUTRAL', rgb: MUTED };
+    case 'UNKNOWN': return { word: '? UNKNOWN', rgb: MUTED };
+    default: return null;
+  }
+}
+
 const materialWord = (it: ResearchItem): string => {
   const l = it.materiality?.label || 'UNKNOWN';
   const w = it.market === 'US' && it.usCard && l === 'SIGNIFICANT' ? 'HIGH' : l;
@@ -497,7 +517,7 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
   const titleW = doc.getTextWidth('AI Daily Gainers');
   font(11, false, INK2); doc.text(pdfText(`${mName}${market === 'IN' ? '  (NSE / BSE)' : '  (NASDAQ / NYSE / AMEX)'}`), M + titleW + 4, y + 5.2);
   y += 8;
-  para('Fundamental events behind the session\'s unusual moves, ranked by research value, not by return. Price is context, never the ranking.', { size: 8.2, color: INK2, after: 1.5 });
+  para('Fundamental events filed around unusual price moves, ranked by research value, not by return. Price is context, never the ranking.', { size: 8.2, color: INK2, after: 1.5 });
   if (input.demo) para('DEMO DATA: an illustrative fixture for layout checks. No live data was read.', { size: 8.2, bold: true, color: AMBER, after: 1.5 });
 
   // Session box: key / value rows inside a thin border.
@@ -533,11 +553,10 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
     ['Scan time', scanText],
     ['Generated', fmtInstant(s.generatedAt) || genText],
     ...(fmtInstant(s.dataAsOf) ? [['Data as of', fmtInstant(s.dataAsOf) as string] as [string, string]] : []),
-    ['Status', provisional ? `Provisional (${statusText}) - not final until after the ${market === 'US' ? '16:00 ET' : '15:30 IST'} close` : statusText, provisional ? AMBER : live ? BLUE : undefined],
+    ['Status', statusText, live ? BLUE : undefined],
     ['Data', dataText],
   ];
   if (!live && s.date && /last|previous|closed/i.test(String(s.status))) kvRows.push(['Note', 'These are the last completed session\'s moves, not today\'s.', AMBER]);
-  if (has(s.runReason) && !provisional) kvRows.push(['Run', String(s.runReason)]);
   if (has(input.sessionNote)) kvRows.push(['Session note', String(input.sessionNote)]);
   const criteriaText = has(view.scanCriteria) ? String(view.scanCriteria) : has(input.criteria) ? String(input.criteria) : '';
   if (criteriaText) kvRows.push(['Scan criteria', criteriaText]);
@@ -569,19 +588,36 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
     });
     y = top + h + 2.5;
   }
-  // Counts strip (spec section 7).
-  {
-    const bn = view.banner;
-    if (bn) {
-      const parts = [`Scanned ${bn.scanned}`, `Verified events ${bn.verified}`, `Unverified ${bn.unverified}`, `Conflicts ${bn.conflicts}`, `No material catalyst ${bn.noMaterialCatalyst}`, `Negative ${bn.negative}`];
-      para(parts.join('   ·   '), { size: 8.4, bold: true, color: INK, after: 2 });
-    }
-  }
-
-  // Market summary grid.
+  // Market summary: ONE partition line, exclusive buckets that add up to "scanned", overlays kept apart.
   const sm = view.summary;
   const empty = !sm || (sm.scanned || 0) === 0;
-  if (sm) {
+  const part = view.partition;
+  if (sm && part && part.buckets?.length) {
+    const shown = part.buckets.filter((bk) => bk.count > 0 || ['confirmed', 'identified_impact_unknown', 'secondary_unverified', 'negative', 'no_catalyst'].includes(bk.key));
+    const BK_RGB: Record<string, RGB> = { confirmed: GREEN, identified_impact_unknown: AMBER, secondary_unverified: AMBER, negative: RED, no_catalyst: INK };
+    room(30);
+    font(8, true, MUTED); doc.text('MARKET SUMMARY', M, y + 2.4); y += 4.2;
+    para(has(part.line) ? String(part.line) : `${part.scanned} scanned = ${shown.map((bk) => `${bk.count} ${bk.label.toLowerCase()}`).join(' + ')}`, { size: 9, bold: true, color: INK, after: 1.2 });
+    const perRow = shown.length <= 6 ? shown.length : Math.ceil(shown.length / 2);
+    const gap = 1.8;
+    const cwid = (W - gap * (perRow - 1)) / perRow;
+    const ch = 11.5;
+    const rows = Math.ceil(shown.length / perRow);
+    room(rows * (ch + gap) + 6);
+    shown.forEach((bk, i) => {
+      const cx = M + (i % perRow) * (cwid + gap);
+      const cy = y + Math.floor(i / perRow) * (ch + gap);
+      doc.setDrawColor(...RULE); doc.setLineWidth(0.3); doc.roundedRect(cx, cy, cwid, ch, 1.2, 1.2, 'S');
+      font(13, true, bk.count > 0 ? (BK_RGB[bk.key] || INK) : MUTED); doc.text(String(bk.count), cx + 2.6, cy + 5.6);
+      font(6.6, true, MUTED);
+      wrap(bk.label.toUpperCase(), cwid - 5).slice(0, 2).forEach((ln, k) => doc.text(ln, cx + 2.6, cy + 8.4 + k * 2.4));
+    });
+    y += rows * (ch + gap);
+    const ov = part.overlays;
+    if (ov) para(`Overlays (tags on the names above, not part of the sum): research queue ${ov.queue} · watch ${ov.watch} · portfolio matches ${ov.portfolio} · conflicts ${ov.conflicts}.`, { size: 8, color: MUTED, after: 1 });
+  } else if (sm) {
+    const bn = view.banner;
+    if (bn) para([`Scanned ${bn.scanned}`, `Verified events ${bn.verified}`, `Unverified ${bn.unverified}`, `Conflicts ${bn.conflicts}`, `No material catalyst ${bn.noMaterialCatalyst}`, `Negative ${bn.negative}`].join('   ·   '), { size: 8.4, bold: true, color: INK, after: 2 });
     const cells: Array<{ n: number; l: string; rgb: RGB }> = [
       { n: sm.scanned, l: 'Gainers scanned', rgb: INK },
       { n: sm.confirmed, l: 'Verified events', rgb: GREEN },
@@ -593,7 +629,6 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
       { n: sm.dataUnavailable, l: 'Data unavailable', rgb: AMBER },
     ];
     if (typeof sm.context === 'number') cells.push({ n: sm.context, l: 'Older context', rgb: INK });
-    // Optional (not on every view): contradictory evidence found. Shown only when the view carries the count.
     const conflicts = sm.conflicts ?? (sm as any).conflicts;
     if (typeof conflicts === 'number' && Number.isFinite(conflicts)) cells.push({ n: conflicts, l: 'Conflicts in the evidence', rgb: RED });
     const perRow = cells.length > 8 ? 5 : 4;
@@ -613,10 +648,12 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
       wrap(c.l.toUpperCase(), cwid - 5).slice(0, 2).forEach((ln, k) => doc.text(ln, cx + 2.6, cy + 8.4 + k * 2.4));
     });
     y += rows * (ch + gap) + 1;
+  }
+  if (sm) {
     // Catalysts found by category — both markets. The US view carries its own tally;
     // otherwise it is derived here from the cards already on the view (nothing invented).
     const uc = sm.catalysts || sm.usCatalysts || derivedCatalysts(view);
-    if (uc) {
+    if (uc && (uc.byCategory.length || uc.found > 0)) {
       const cats = uc.byCategory.map((c) => `${c.category} ${c.names}${c.press ? ` (${c.press} press only)` : ''}`).join('  ·  ');
       para(`Catalysts found by category: ${cats || 'none'}. ${uc.found} name${uc.found === 1 ? '' : 's'} with a catalyst found in ${market === 'US' ? 'filings or news' : 'exchange filings or news'}; ${uc.none} with none found.`, { size: 8 });
     }
@@ -637,17 +674,19 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
       const st = statusWord(it);
       const head: Seg[] = [{ text: `#${i + 1}  `, bold: true, color: MUTED }, { text: nameOf(it), bold: true, color: INK }];
       if (companyOf(it)) head.push({ text: `  ${companyOf(it)}`, color: INK2 });
-      head.push({ text: `   ${moveOf(it)}`, bold: true, color: INK });
       const blocks: Array<{ segs: Seg[]; size: number }> = [
         { segs: head, size: 9.6 },
         { segs: [{ text: txt(it.headline, 'Headline not available'), bold: true, color: INK }], size: 9 },
       ];
       if (has(it.whyResearch)) blocks.push({ segs: [{ text: String(it.whyResearch) }], size: 8.6 });
       blocks.push({ segs: [
+        { text: 'MARKET MOVE ', bold: true, color: MUTED }, { text: moveOf(it), bold: true, color: INK }, { text: '   ·   ', color: MUTED },
         { text: st.word.toUpperCase(), bold: true, color: st.rgb }, { text: '   ·   ', color: MUTED },
-        { text: triageWord(it).toUpperCase(), bold: true, color: INK2 }, { text: '   ·   Material: ', color: MUTED },
-        { text: materialWord(it), bold: true, color: materialRgb(it) }, { text: '   ·   Source: ', color: MUTED }, { text: sourceWord(it), color: INK2 },
+        { text: triageWord(it).toUpperCase(), bold: true, color: INK2 },
+        ...(directionWord(it) ? [{ text: '   ·   ', color: MUTED } as Seg, { text: directionWord(it)!.word, bold: true, color: directionWord(it)!.rgb } as Seg] : []),
+        { text: '   ·   Material: ', color: MUTED }, { text: materialWord(it), bold: true, color: materialRgb(it) },
       ], size: 7.8 });
+      blocks.push({ segs: [{ text: 'SOURCE ', bold: true, color: MUTED }, { text: sourceExistWord(it), color: INK2 }, { text: '   ·   EVIDENCE ', bold: true, color: MUTED }, { text: evidenceWord(it), color: INK2 }], size: 7.8 });
       const laid = blocks.map((b) => ({ ...b, lines: layoutSegs(b.segs, W - 6, b.size) }));
       const h = laid.reduce((a, b) => a + b.lines.length * lh(b.size) + 0.6, 0) + 2;
       room(h + 1.5);
@@ -664,8 +703,8 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
   // ═════════════════════════════════════════════════════════════════════════
   const queue = view.queue || [];
   const qCols: Col[] = [
-    { head: '#', w: 6 }, { head: 'Ticker', w: 20 }, { head: 'Company', w: 22 }, { head: 'Move', w: 15 },
-    { head: 'Status', w: 26 }, { head: 'Event', w: 23 }, { head: 'Material', w: 22 }, { head: 'Source', w: 22 }, { head: 'Why ranked', w: 30 },
+    { head: '#', w: 7 }, { head: 'Ticker', w: 24 }, { head: 'Company', w: 25 }, { head: 'Move', w: 14 },
+    { head: 'Status', w: 24 }, { head: 'Direction', w: 23 }, { head: 'Event', w: 18 }, { head: 'Material', w: 24 }, { head: 'Source', w: 17 }, { head: 'Evidence', w: 17 },
   ];
   if (!empty) {
     if (!queue.length) {
@@ -679,11 +718,12 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
           { text: nameOf(it) + (it.displayCode && it.displayCode !== nameOf(it) ? `\n${it.displayCode}` : ''), bold: true, color: INK, maxLines: 2 },
           { text: coCell(it), maxLines: 2 },
           { text: moveOf(it), color: INK, bold: true },
-          { text: `${st.word}\n${triageWord(it)}${it.catalystFor ? ` · ${CATALYST_FOR_WORD[it.catalystFor]}${it.catalystFor !== 'THIS_MOVE' && ageOf(it) ? ` (${ageOf(it)})` : ''}` : ''}`, color: st.rgb, maxLines: 3 },
+          { text: `${st.word}\n${triageWord(it)}${it.catalystFor ? `\n${CATALYST_FOR_WORD[it.catalystFor]}${it.catalystFor !== 'THIS_MOVE' && ageOf(it) ? ` (${ageOf(it)})` : ''}` : ''}`, color: st.rgb, maxLines: 4 },
+          { text: directionWord(it)?.word || 'Not assessed', bold: !!directionWord(it), color: directionWord(it)?.rgb ?? MUTED },
           { text: txt(it.eventLabel || it.eventType, 'Not classified'), maxLines: 2 },
           { text: materialWord(it), bold: true, color: materialRgb(it), maxLines: 2 },
-          { text: sourceWord(it), maxLines: 2 },
-          { text: has(it.rankReason) ? String(it.rankReason) : 'Not stated', maxLines: 3 },
+          { text: sourceExistWord(it), maxLines: 3 },
+          { text: evidenceWord(it), maxLines: 3 },
         ];
       }), { maxLines: 3, heading: ['Research queue', 'Ranked by research value. Price is context, never the ranking. Long text is clipped here; the card below has it in full.'] });
     }
@@ -729,13 +769,16 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
     if (companyOf(it)) head.push({ text: `  ·  ${companyOf(it)}`, color: INK2 });
     b.push({ k: 'segs', segs: head, size: 11, gapAfter: 0.6 });
     const tags: Seg[] = [
-      { text: `Move ${moveOf(it)}`, bold: true, color: INK }, { text: `  (${trailOf(it)})`, color: MUTED }, { text: '     ' },
+      { text: 'MARKET MOVE ', bold: true, color: MUTED }, { text: moveOf(it), bold: true, color: INK }, { text: `  (${trailOf(it)})`, color: MUTED }, { text: '     ' },
       { text: st.word.toUpperCase(), bold: true, color: st.rgb }, { text: '  ·  ', color: MUTED }, { text: triageWord(it).toUpperCase(), bold: true, color: INK2 },
     ];
-    if (it.stageBadge) tags.push({ text: '  ·  ', color: MUTED }, { text: `STAGE ${String(it.stageBadge)}`, bold: true, color: BLUE });
+    { const d = directionWord(it); if (d) tags.push({ text: '  ·  ', color: MUTED }, { text: d.word, bold: true, color: d.rgb }); }
+    if (it.stageBadge || has(it.stageLabel)) tags.push({ text: '  ·  ', color: MUTED }, { text: `STAGE ${has(it.stageLabel) ? String(it.stageLabel).toUpperCase() : String(it.stageBadge)}`, bold: true, color: BLUE });
     if (it.contextOnly) tags.push({ text: '  ·  ', color: MUTED }, { text: 'CONTEXT ONLY', bold: true, color: AMBER });
     if (it.catalystFor) tags.push({ text: '  ·  ', color: MUTED }, { text: `${CATALYST_FOR_WORD[it.catalystFor].toUpperCase()}${it.catalystFor !== 'THIS_MOVE' && ageOf(it) ? ` (${ageOf(it)})` : ''}`, bold: true, color: it.catalystFor === 'THIS_MOVE' ? BLUE : it.catalystFor === 'RECENT' ? AMBER : MUTED });
-    b.push({ k: 'segs', segs: tags, size: 7.8, gapAfter: 1.6 });
+    b.push({ k: 'segs', segs: tags, size: 7.8, gapAfter: 0.8 });
+    b.push({ k: 'segs', size: 7.8, gapAfter: 1.2, segs: [{ text: 'RESEARCH QUESTION  ', bold: true, color: MUTED }, { text: has(it.researchQuestion) ? String(it.researchQuestion) : 'What fundamental event, if any, explains the move?', color: INK2 }, { text: '     SOURCE  ', bold: true, color: MUTED }, { text: sourceExistWord(it), color: INK2 }, { text: '     EVIDENCE  ', bold: true, color: MUTED }, { text: evidenceWord(it), color: INK2 }] });
+    if (has(it.directionNote)) b.push({ k: 'segs', size: 8, gapAfter: 0.8, segs: [lbl('DIRECTION'), { text: String(it.directionNote), color: INK2 }] });
     b.push({ k: 'segs', segs: [{ text: txt(it.headline, 'Headline not available'), bold: true, color: INK }], size: 9.6, gapAfter: 1.6 });
     if (it.eventClass === 'NO_CATALYST' && has(it.scanNote)) b.push({ k: 'segs', segs: [lbl('SCANNED'), { text: String(it.scanNote) }], size: 8.2 });
 
@@ -763,7 +806,7 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
       const rev = e.revenueYoY == null && e.revenueQoQ == null ? 'Not disclosed' : `${pctND(e.revenueYoY)} YoY, ${pctND(e.revenueQoQ)} QoQ`;
       const g: Record<string, string> = { RAISED: 'Raised', MAINTAINED: 'Maintained', CUT: 'Cut', NOT_STATED: 'Not stated' };
       const ob: Record<string, string> = { UP: 'Up', DOWN: 'Down', UNCHANGED: 'Unchanged', NOT_STATED: 'Not stated' };
-      b.push({ k: 'segs', segs: [lbl(`WHAT CHANGED (EARNINGS${e.quarter ? ` ${e.quarter}` : ''}${e.filedDaysAgo != null ? `, FILED ${e.filedDaysAgo}D AGO` : ''})`)], size: 8.8, gapAfter: 0.4 });
+      b.push({ k: 'segs', segs: [it.olderResultLabel ? lbl(`OLDER RESULT - context (EARNINGS${e.quarter ? ` ${e.quarter}` : ''}${e.filedDaysAgo != null ? `, FILED ${e.filedDaysAgo}D AGO` : ''})`) : lbl(`WHAT CHANGED (EARNINGS${e.quarter ? ` ${e.quarter}` : ''}${e.filedDaysAgo != null ? `, FILED ${e.filedDaysAgo}D AGO` : ''})`), ...(it.olderResultLabel ? [{ text: String(it.olderResultLabel), color: AMBER } as Seg] : [])], size: 8.8, gapAfter: 0.4 });
       b.push({ k: 'grid', size: 8.2, pairs: [
         ['Revenue', rev], ['EBITDA', e.ebitdaYoY == null ? 'Not disclosed' : `${pctND(e.ebitdaYoY)} YoY`],
         ['Margin', margin, e.marginNow != null && e.marginPrior != null ? (e.marginNow >= e.marginPrior ? GREEN : RED) : undefined],
@@ -772,7 +815,7 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
         ['Guidance', g[e.guidance] || 'Not stated', e.guidance === 'RAISED' ? GREEN : e.guidance === 'CUT' ? RED : undefined],
         ['Order book', ob[e.orderBook] || 'Not stated'],
       ] });
-      b.push({ k: 'segs', segs: [lbl('KEY CHANGE'), { text: txt(e.keyChange, 'Not identified'), color: INK }], size: 8.4 });
+      b.push({ k: 'segs', segs: [lbl(it.olderResultLabel ? 'OLDER RESULT' : 'KEY CHANGE'), { text: txt(e.keyChange, 'Not identified'), color: it.olderResultLabel ? INK2 : INK }], size: 8.4 });
     } else if (it.before || it.after) {
       b.push({ k: 'segs', segs: [lbl('WHAT CHANGED'), { text: txt(it.before, 'Before: not disclosed') }, { text: '  ->  ', bold: true, color: MUTED }, { text: txt(it.after, 'After: not disclosed'), bold: true, color: INK }], size: 8.8 });
       if (has(it.whatChanged)) b.push({ k: 'segs', segs: [{ text: String(it.whatChanged) }], size: 8.4, indent: 4 });
@@ -825,13 +868,14 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
     // Event / stage / material / duration / persistence / catalyst state
     const pairs: Array<[string, string, RGB?]> = [
       ['Event', txt(it.eventLabel || it.eventType, 'Not classified')],
-      ['Stage', `${STAGE_WORD[it.stage] || 'Unknown'}${us?.stageText ? ` · ${us.stageText}` : ''}`],
+      ['Stage', `${has(it.stageLabel) ? String(it.stageLabel) : STAGE_WORD[it.stage] || 'Unknown'}${us?.stageText ? ` · ${us.stageText}` : ''}`],
       ['Material', materialWord(it), materialRgb(it)],
       ['Duration', `${it.potentialDuration ? POT_WORD[it.potentialDuration.value] || 'Not established' : POT_WORD[it.persistence] || 'Not established'}${it.potentialDuration?.basis === 'TYPE' ? ' (by type)' : ''}${it.durations?.contractual ? ` · contract: ${it.durations.contractual}` : ''}`],
       ['Persistence', it.persistenceEvidence && it.persistenceEvidence.level !== 'NONE' ? (PERSIST_EV_WORD[it.persistenceEvidence.level] || it.persistenceEvidence.level) : it.persistenceTest ? (it.persistenceTest.grade === 'EARLY' ? 'Early / unproven' : String(it.persistenceTest.grade)) : 'Not established'],
       ['Catalyst state', it.durations?.catalystState ? it.durations.catalystState.split(' (')[0] : it.catalysts?.[0] ? it.catalysts[0].stateWord : 'Not recorded'],
     ];
     b.push({ k: 'grid', size: 8.2, pairs });
+    if (has(it.materialityBand)) b.push({ k: 'segs', size: 8, segs: [lbl('BAND'), { text: String(it.materialityBand), color: INK2 }] });
     const matExp = has(it.materiality?.explanation) ? String(it.materiality.explanation) : '';
     const ratios = (it.materiality?.ratios || []).map((r) => r.text).filter(has);
     if (matExp || ratios.length) {
@@ -839,7 +883,7 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
       b.push({ k: 'segs', segs: [lbl('MATERIALITY'), { text: [sent, ratios.join('; ')].filter(Boolean).join(' ') }], size: 8.2 });
     }
 
-    b.push({ k: 'segs', segs: [lbl('WHY RESEARCH'), { text: txt(it.whyResearch, 'Not established'), color: INK }], size: 8.8 });
+    if (!(has(it.researchQuestion) && has(it.whyResearch) && String(it.researchQuestion).trim() === String(it.whyResearch).trim())) b.push({ k: 'segs', segs: [lbl('WHY RESEARCH'), { text: txt(it.whyResearch, 'Not established'), color: INK }], size: 8.8 });
     if (has(it.rankReason)) b.push({ k: 'segs', segs: [lbl('WHY RANKED'), { text: String(it.rankReason) }], size: 8.4 });
     if (has(it.whyRank)) b.push({ k: 'segs', segs: [lbl(`WHY #${rank}`), { text: String(it.whyRank) }], size: 8.4 });
 
@@ -859,14 +903,15 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
     }
     if (it.news?.narrative) {
       const n = it.news.narrative;
-      b.push({ k: 'segs', size: 8.2, segs: [lbl('RUNNING STORY'), { text: `${n.label} · covered on ${n.days} days (${n.firstDate} to ${n.lastDate}) · press, secondary, verification required - "${n.lead}"` }] });
+      b.push({ k: 'segs', size: 8.2, segs: [it.priceCommentaryOnly ? { text: 'PRICE COMMENTARY (not evidence)  ', bold: true, color: AMBER } : lbl('RUNNING STORY'), { text: `${n.label} · covered on ${n.days} days (${n.firstDate} to ${n.lastDate}) · press, secondary, verification required - "${n.lead}"` }] });
     }
     if (it.portfolio?.relevance && it.portfolio.relevance !== 'UNRELATED') {
       b.push({ k: 'segs', size: 8.2, segs: [lbl(it.portfolio.relevance === 'HOLDING' ? 'YOUR BOOK' : 'THEME'), { text: [it.portfolio.thesisVariable, it.portfolio.note].filter(has).join('. ') || 'Related to your book', color: BLUE }] });
     }
+    { const also = (it.surfacedIn || []).filter((n) => !/^(research queue|unknown\s*[—-]\s*needs reading)$/i.test(n.trim()) && n.trim()); if (also.length) b.push({ k: 'segs', size: 8, segs: [lbl('ALSO LISTED UNDER'), { text: also.join(', '), color: MUTED }] }); }
     if (it.sourceUrl) b.push({ k: 'link', label: 'SOURCE', url: it.sourceUrl, size: 8.2 });
     else b.push({ k: 'segs', size: 8.2, segs: [lbl('SOURCE'), { text: 'No source link', color: MUTED }] });
-    const filed = [it.filedDate ? `Filed ${String(it.filedDate).slice(0, 10)}` : '', `Source: ${sourceWord(it)}`, has(it.verification) ? String(it.verification) : ''].filter(Boolean).join('  ·  ');
+    const filed = [it.filedDate ? `Filed ${String(it.filedDate).slice(0, 10)}` : '', `Source: ${sourceExistWord(it)}`, it.evidenceVerificationLabel ? `Evidence: ${evidenceWord(it)}` : '', has(it.verification) ? String(it.verification) : ''].filter(Boolean).join('  ·  ');
     b.push({ k: 'segs', size: 7.8, segs: [{ text: filed, color: MUTED }] });
     return b;
   };
@@ -939,10 +984,8 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
     queue.forEach((it, i) => {
       const blocks = cardBlocks(it, i + 1);
       const h = measure(blocks, W - 5) + 2;
-      const fitsHere = y + h + 3 <= BOTTOM;
       const headerH = i === 0 ? headingH(DETAIL_SUB) : 0;
-      if (!fitsHere) room(headerH + (h <= 70 ? h + 3 : headKeep(blocks)));
-      else if (i === 0) room(headerH + h + 3);
+      room(headerH + (h <= 95 ? h + 3 : headKeep(blocks)));
       if (i === 0) drawHeading('Research queue: the detail', DETAIL_SUB);
       if (i > 0 && y > TOP + 0.5) { doc.setDrawColor(...RULE); doc.setLineWidth(0.15); doc.line(M + 4, y - 1.2, pageW - M, y - 1.2); }
       y += 0.6;
@@ -955,7 +998,7 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
   // 5–9. THE COMPACT LISTS
   // ═════════════════════════════════════════════════════════════════════════
   const listCols: Col[] = [
-    { head: 'Ticker', w: 22 }, { head: 'Company', w: 30 }, { head: 'Move', w: 16 }, { head: 'What was found', w: 62 }, { head: 'Status', w: 26 }, { head: 'Source', w: 22 },
+    { head: 'Ticker', w: 22 }, { head: 'Company', w: 26 }, { head: 'Move', w: 14 }, { head: 'What was found', w: 46 }, { head: 'Status', w: 24 }, { head: 'Direction', w: 24 }, { head: 'Source / evidence', w: 30 },
   ];
   const listRow = (it: ResearchItem, extra?: string): Cell[] => {
     const st = statusWord(it);
@@ -965,7 +1008,8 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
       { text: moveOf(it), color: INK },
       { text: `${txt(it.headline, 'Headline not available')}${extra ? `\n${extra}` : ''}` },
       { text: st.word, color: st.rgb },
-      { text: sourceWord(it) },
+      { text: directionWord(it)?.word || 'Not assessed', color: directionWord(it)?.rgb ?? MUTED },
+      { text: `${sourceExistWord(it)}${it.evidenceVerificationLabel ? `\n${evidenceWord(it)}` : ''}` },
     ];
   };
 
@@ -1120,11 +1164,24 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
   legendRow('Small', 'Real, but small against the size of the company.', MUTED);
   legendRow('Unknown', 'The size is not stated or not yet verified. Unknown is not negative.', MUTED);
   y += 1.5;
-  para('SOURCES', { size: 7.4, bold: true, color: MUTED, after: 0.8 });
-  legendRow('Verified document', market === 'US' ? 'Read from the SEC filing itself (8-K, 6-K, 10-Q, offering or 13D).' : 'The filing was read and the quoted text was found in it.', GREEN);
-  legendRow(market === 'IN' ? 'Exchange filing' : 'SEC filing', `${market === 'IN' ? 'An exchange' : 'An SEC'} filing exists; its subject is verified, the full document was not read.`, BLUE);
-  legendRow('Summary only', 'Only a third-party summary. Treat the figures as unconfirmed.', AMBER);
+  para('SOURCE (does a filing or press item exist?)', { size: 7.4, bold: true, color: MUTED, after: 0.8 });
+  legendRow(market === 'IN' ? 'Official filing exists' : 'Official filing exists (SEC)', 'A filing on the exchange / SEC record carries the event. This alone does not mean the document was read.', BLUE);
   legendRow('Press only', 'Only press or news coverage. No official filing found yet.', AMBER);
+  legendRow('Official filing and press', 'Both exist for the headline event.', BLUE);
+  y += 1.5;
+  para('EVIDENCE (was it checked?)', { size: 7.4, bold: true, color: MUTED, after: 0.8 });
+  legendRow('Document read', 'The filing text was read and the stated facts were found in it.', GREEN);
+  legendRow('Document not read', 'The filing exists but only its subject line was used. Confirm the facts in the document.', AMBER);
+  legendRow('Secondary only', 'Only a third-party summary. Treat the figures as unconfirmed.', AMBER);
+  legendRow('Values contradict', 'Two sources give different values. Both are shown on the card.', RED);
+  y += 1.5;
+  para('DIRECTION (economics of the event, never the price move)', { size: 7.4, bold: true, color: MUTED, after: 0.8 });
+  legendRow('+ POSITIVE', 'The event helps the company economics.', GREEN);
+  legendRow('- NEGATIVE', 'The event hurts the company economics.', RED);
+  legendRow('~ MIXED / = NEUTRAL', 'Cuts both ways, or enabling / financing with no direct effect yet.', AMBER);
+  legendRow('? UNKNOWN', 'The direction is not established.', MUTED);
+  y += 1.5;
+  para('TIMING', { size: 7.4, bold: true, color: MUTED, after: 0.8 });
   legendRow('This move / Recent / Older context', `Whether the event can be the catalyst for this move: filed within ${market === 'US' ? '7 days' : '3 sessions'}, 4 to 14 days ago, or older (context only).`, INK);
   y += 2;
   para('Price is context, never the ranking. Rank is research value: evidence, mechanism, persistence, materiality and how researchable it is. This note repeats what the page showed; it adds no figure of its own.', { size: 7.8, color: MUTED });

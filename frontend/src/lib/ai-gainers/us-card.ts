@@ -40,7 +40,7 @@ import {
   type UsEventCategory, type UsEventDirection, type UsEventHit, type CanonicalEventType, type LitigationRead, type ClinicalFacts,
 } from './us-event-taxonomy';
 import {
-  clusterFacts, exchangeDay, verificationOf, validateVerification, CATALYST_CONFIRMATION_LABEL, catalystSearchResult, causalWindow, exchangeDate, guidanceCheck, parseRange, periodBasisOf, reconcileValues, stageFromText,
+  clusterFacts, exchangeDay, exchangeAgeDays, directionOf, directionNote, subtypeOf, researchQuestionFor, contextTag, isPriceCommentary, type EconDirection, type EventSubtype, verificationOf, validateVerification, CATALYST_CONFIRMATION_LABEL, catalystSearchResult, causalWindow, exchangeDate, guidanceCheck, parseRange, periodBasisOf, reconcileValues, stageFromText,
   POTENTIAL_SCALE_NOTE, type EventCluster, type DocumentVerification, type CatalystConfirmation, type CatalystSearchResult, type CausalWindow, type GuidanceCheck, type ValueStatus,
 } from './structured-facts';
 
@@ -50,7 +50,9 @@ export const US_CARD_VERSION = 3;
 
 export type UsCardKind =
   | 'earnings' | 'acquisition' | 'merger' | 'divestiture' | 'order' | 'fda' | 'clinical' | 'offering' | 'buyback'
-  | 'guidance' | 'index' | 'activist' | 'short_report' | 'analyst' | 'facility' | 'catalyst' | 'litigation' | 'other';
+  | 'guidance' | 'index' | 'activist' | 'short_report' | 'analyst' | 'facility' | 'catalyst' | 'litigation' | 'other'
+  // zzz836: circuit / momentum / broker-target press - describes the price, never evidence
+  | 'price_commentary';
 export type UsMatLabel = 'SIGNIFICANT' | 'MODERATE' | 'SMALL' | 'UNKNOWN';
 
 export interface UsFigure { cur: number | null; prev: number | null }
@@ -166,6 +168,19 @@ export interface UsCard {
   independentSourceCount?: number;
   /** Filing age vs the move day and whether it is inside the causal window. */
   causal?: CausalWindow;
+  // ── zzz836 (optional) ──
+  /** Economic direction of the HEADLINE event (never the price move). */
+  direction?: EconDirection;
+  directionNote?: string | null;
+  subtype?: EventSubtype;
+  /** The subtype-specific research question (store launch, dealership, facility for a customer, rating, inspection ...). */
+  researchQuestion?: string;
+  /** The headline event's OWN filing date and age at the move - the timing line must come from here. */
+  headlineTiming?: { date: string | null; ageDays: number | null; ageDaysAtMove: number | null; source: 'SEC' | 'PRESS' | 'NONE' };
+  /** True for circuit / momentum / analyst-target press: excluded from evidence counts and the running story. */
+  priceCommentary?: boolean;
+  /** 'OLDER RESULT (46d) - context' when an earnings card's filing is older than 14 days. */
+  contextLabel?: string | null;
   clinical?: ClinicalFacts | null;
   litigation?: LitigationRead | null;
   acquisition?: UsAcquisitionEconomics | null;
@@ -914,6 +929,7 @@ export function pressKindOf(title: string): { kind: UsCardKind; word: string; po
   const none = { kind: 'other' as UsCardKind, word: 'Press coverage only', polarity: 'neutral' as const };
   if (/\b(?:upgrade[sd]?|downgrade[sd]?|price target|initiat(?:es|ed) coverage|reinstat(?:es|ed)|reiterat(?:es|ed)|maintains? (?:\w+ )?rating|outperform|overweight|(?:buy|sell|hold) rating)\b/i.test(t)) return { kind: 'analyst', word: /downgrad/i.test(t) ? 'Analyst downgrade (press only)' : 'Analyst action (press only)', polarity: /downgrad/i.test(t) ? 'negative' : 'positive' };
   if (/\b(?:short (?:seller|report)|Hindenburg|Muddy Waters|Spruce Point|Culper|Fuzzy Panda|Grizzly)\b/i.test(t)) return { kind: 'short_report', word: 'Short-seller report (press only)', polarity: 'negative' };
+  if (isPriceCommentary(t)) return { kind: 'price_commentary', word: 'Price commentary (not evidence)', polarity: 'neutral' };
   if (OPINION.test(t)) return none;
   if (isLitigationText(t) && /\b(?:jury|verdict|damages|judg(?:e)?ment)\b/i.test(t)) return { kind: 'litigation', word: 'Litigation - jury verdict / damages (press only)', polarity: 'neutral' };
   if (/\b(?:S&P (?:SmallCap|MidCap|500)|Russell (?:1000|2000|3000)|Nasdaq-100)\b/i.test(t) && /\b(?:join|add|inclusion|replace)/i.test(t)) return { kind: 'index', word: 'Index inclusion (press only)', polarity: 'positive' };
@@ -1034,6 +1050,7 @@ export const US_EVENT_TYPE_OF: Record<string, string> = {
   restructuring: 'Capital allocation', management_change: 'Management change',
   gov_contract: 'Order win', major_contract: 'Order win', backlog: 'Order win', customer_win: 'Customer win', partnership: 'Partnership', joint_venture: 'JV',
   licensing: 'Contract', supply_agreement: 'Contract', strategic_investment: 'Strategic investment',
+  fda_inspection: 'Regulatory inspection / observations', fda_warning_letter: 'Regulatory inspection / observations',
   fda_crl: 'Regulatory approval', fda_adcom: 'Regulatory approval', fda_approval: 'Regulatory approval', fda_submission: 'Regulatory approval', pdufa: 'Regulatory approval',
   designation: 'Regulatory approval', trial_results: 'Regulatory approval', trial_milestone: 'Regulatory approval', intl_approval: 'Regulatory approval',
   litigation_verdict: 'Litigation / regulatory', patent_litigation_win: 'Litigation / regulatory', settlement: 'Litigation / regulatory', regulatory_probe: 'Litigation / regulatory',
@@ -1178,8 +1195,19 @@ function finalizeUsCard(card: UsCard, inp: UsCardInput & { moveDate?: string | n
   // 6. causal window (exchange calendar; official = 3 days, press = 1 day)
   const moveDate = inp.moveDate || null;
   const causal = moveDate ? causalWindow({ itemDate: c.source.date, moveDate, official: tier === 'SEC' }) : undefined;
+  // 7. zzz836: direction / subtype / research question / timing all come from the HEADLINE event
+  const hl = classifyUsEvents(quoteText, { max: 1 })[0] || null;
+  const typeKey = hl?.id || (det.type !== 'other' ? det.type : c.kind);
+  const econ = directionOf(typeKey, quoteText, hl?.direction || c.polarity);
+  const sub = subtypeOf(typeKey, quoteText);
+  const ageAtMove = moveDate && c.source.date ? exchangeAgeDays(c.source.date, new Date(`${moveDate}T12:00:00Z`), 'US') : null;
+  const pc = c.kind === 'price_commentary' || c.kind === 'analyst';
+  const ctxTag = c.kind === 'earnings' ? contextTag(ageAtMove) : { context: false, label: null };
   return {
     ...c, catalysts, canonicalType: declared === 'other' ? det.type : declared, validationErrors: errs,
+    direction: c.kind === 'price_commentary' ? 'NEUTRAL' : econ, directionNote: directionNote(typeKey, quoteText), subtype: sub, researchQuestion: researchQuestionFor(sub) || undefined,
+    headlineTiming: { date: c.source.date ?? null, ageDays: ageAtMove, ageDaysAtMove: ageAtMove, source: tier === 'SEC' ? 'SEC' : tier === 'PRESS' ? 'PRESS' : 'NONE' },
+    ...(pc ? { priceCommentary: true } : {}), ...(ctxTag.context ? { contextLabel: ctxTag.label } : {}),
     documentVerification: v.documentVerification, catalystConfirmation: v.catalystConfirmation, catalystConfirmationLabel: CATALYST_CONFIRMATION_LABEL[v.catalystConfirmation],
     valueStatus: c.valueStatus || (c.quantified ? (tier === 'SEC' ? 'verified' : 'reported') : 'not_disclosed'), conflicts: c.conflicts || [],
     catalystStatus: status, clusters, independentSourceCount: clusters.length ? new Set(clusters.map((k) => k.primarySource || k.clusterId)).size : 0, ...(causal ? { causal } : {}),

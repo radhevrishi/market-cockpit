@@ -97,7 +97,7 @@ export const SOURCE_WORD: Record<SourceKind, string> = {
 const CATEGORY_KIND: Record<string, EventKind> = {
   order_win: 'order', backlog_increase: 'order', order_cancellation: 'order', new_customer: 'order', customer_ramp: 'order',
   capacity_expansion: 'capacity', production_ramp: 'capacity', utilization_increase: 'capacity',
-  product_qualification: 'qualification', regulatory_approval: 'qualification', export_approval: 'qualification',
+  regulatory_inspection: 'other', product_qualification: 'qualification', regulatory_approval: 'qualification', export_approval: 'qualification',
   acquisition: 'acquisition', open_offer: 'acquisition', strategic_investor: 'stake_by_strategic',
   // zzz787: no longer 'other' / forced into acquisition.
   new_geography: 'strategic_expansion', promoter_purchase: 'promoter_buying', buyback: 'capital_allocation',

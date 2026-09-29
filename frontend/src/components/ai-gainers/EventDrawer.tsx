@@ -122,7 +122,7 @@ export function EventDrawer({ it, onClose }: { it: ResearchItem; onClose: () => 
         <H>RESEARCH NEXT</H>
         {(it.researchNext || []).length ? it.researchNext.map((q, i) => <P key={i}>→ {q}</P>) : <P dim>No questions recorded.</P>}
 
-        {it.earnings && (<><H>RELATED EARNINGS</H><EarningsStrip e={it.earnings} /></>)}
+        {it.earnings && (<><H>RELATED EARNINGS</H><EarningsStrip e={it.earnings} older={it.olderResultLabel} /></>)}
 
         <H>PORTFOLIO / THESIS RELEVANCE</H>
         {it.portfolio?.relevance && it.portfolio.relevance !== 'UNRELATED'

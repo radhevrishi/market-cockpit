@@ -163,7 +163,7 @@ describe('zzz785 · fundraising — materiality Unknown until amount / price / a
     assert.ok(it.priorityReasons.some((r) => r.startsWith('Unknown — needs reading')));
     assert.ok(it.researchNext.some((q) => /Dilution: new shares ÷ existing shares/.test(q)));
     const html = renderToStaticMarkup(React.createElement(ResearchTriage, { view: v, market: 'IN' } as any));
-    assert.ok(strip(html).includes('UNKNOWN — NEEDS READING'));
+    assert.ok(strip(html).includes('NEEDS READING'));   // zzz836: the empty section is hidden; the row / chip still says it
   });
   test('all four known (structured facts) → a sized label', () => {
     const it = item(view({ KABRA: mk({ ticker: 'KABRA', status: 'catalyst', category: 'fundraising', stage: 'executed', sourceTier: 'primary', marketCap: 800,
@@ -190,7 +190,7 @@ describe('zzz785 · BETA — a strategic stake seen only in the press is Potenti
     assert.equal(it.catalysts![0].state, 'IDENTIFIED');
     assert.equal(it.persistenceTest!.grade, 'EARLY');
     const t = strip(renderToStaticMarkup(React.createElement(ResearchCard, { it, rank: 1, onOpen: () => {} })));
-    assert.ok(t.includes('SECONDARY · VERIFICATION REQUIRED'));
+    assert.ok(t.includes('SOURCE: PRESS ONLY') && t.includes('EVIDENCE: SECONDARY ONLY'));   // zzz836: source existence and verification are two chips
   });
 });
 

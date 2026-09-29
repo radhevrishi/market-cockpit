@@ -23,7 +23,7 @@
 
 import type { Finding } from './catalyst-research';
 import { presentErrorLines, marketRunOf, exchangeDateOf } from './research-present';
-import { contractTermYears, debtActionOf, isStrategicStakeKind, resolveIssuer, type CatalystConfirmation, type CatalystRecord, type EventKind, type EventStage, type StructuredFacts, type ValueStatus } from './structured-facts';
+import { contractTermYears, debtActionOf, isStrategicStakeKind, resolveIssuer, directionOf, subtypeOf, researchQuestionFor, ACQUISITION_PRICE_LABEL, contextTag, type CatalystConfirmation, type EconDirection, type EventSubtype, type CatalystRecord, type EventKind, type EventStage, type StructuredFacts, type ValueStatus } from './structured-facts';
 import { buildCatalystRecords, evidenceBreadthOf, storedView, evidenceGapOf, factsForFinding, legacyFactMapOf, structuredFactsOf, threadTimeline, KIND_WORD, STATE_WORD, stateWordFor, type CatalystView, type EvidenceBreadth, type EvidenceGap, type TimelineEntry } from './catalyst-timeline';
 import { persistenceTestOf, type PersistenceTestView } from './persistence-test';
 // zzz798: the US card is a type-only reference (inline import type below) —
@@ -52,7 +52,7 @@ export type EventClass =
 export type EventType =
   | 'Earnings' | 'Order win' | 'Order cancellation' | 'Capacity expansion' | 'Production ramp'
   | 'New product' | 'Customer win' | 'Pricing' | 'Acquisition' | 'Divestment' | 'JV'
-  | 'Regulatory approval' | 'Contract' | 'Partnership' | 'Buyback' | 'Fundraising'
+  | 'Regulatory approval' | 'Regulatory inspection' | 'Contract' | 'Partnership' | 'Buyback' | 'Fundraising'
   | 'Debt / refinancing' | 'Management change' | 'Governance' | 'Guidance' | 'Rating action'
   | 'Litigation / regulatory' | 'Accident / disruption' | 'Denial' | 'No identified catalyst'
   | 'Market/technical move'
@@ -342,6 +342,33 @@ export interface ResearchItem {
   /** Does an official filing that was read contain the event? */
   catalystConfirmation?: CatalystConfirmation;
   catalystConfirmationLabel?: string;
+  // ── zzz836 ──
+  /** ONE mutually exclusive status per scanned name; the counts of these add up to `scanned`. */
+  primaryStatus?: PrimaryStatus;
+  /** Does a source exist for the HEADLINE event: an official filing, press only, both, or none. Says nothing about being verified. */
+  sourceExistence?: 'official_filing' | 'press_only' | 'both' | 'none';
+  /** How well the HEADLINE event is verified: document read, filed but document not read, secondary (press / summary) only, contradicted by another value, or none. */
+  evidenceVerification?: 'document_read' | 'document_not_read' | 'secondary_only' | 'contradicted' | 'none';
+  sourceExistenceLabel?: string;
+  /** zzz836: the one open question for this kind of event (from the classification, else the subtype rule). */
+  researchQuestion?: string;
+  /** zzz836: a stage in words for events that are not on the deal ladder, e.g. 'Inspection completed'. */
+  stageLabel?: string | null;
+  evidenceVerificationLabel?: string;
+  /** Economic direction of the HEADLINE event (never the price move). */
+  direction?: EconDirection;
+  /** One plain line explaining a direction that needs it (dilution, contingent, observations). */
+  directionNote?: string | null;
+  /** Finer than eventType: store_launch, dealership, facility_for_customer, credit_rating, inspection, tax_demand ... */
+  subtype?: EventSubtype;
+  /** Age of the HEADLINE event's own filing date, on the exchange calendar (the `ageDays` above is set from it). */
+  headlineFiledDate?: string | null;
+  /** "OLDER RESULT (46d) - context" when the earnings block on the card is older than 14 days; else null. */
+  olderResultLabel?: string | null;
+  /** How the materiality band was set, in words: "SMALL = under 5% of market cap (moderate 5-15%, significant 15%+ for an order)". */
+  materialityBand?: string | null;
+  /** True for a price / momentum narrative (upper circuit, broker target price): shown as PRICE COMMENTARY, never evidence. */
+  priceCommentaryOnly?: boolean;
   /** Who the issuer is: a numeric BSE code is shown as "BSE 544434" with the company name kept apart. */
   issuer?: { code: string | null; ticker: string | null; name: string | null; display: string };
 }
@@ -449,6 +476,53 @@ export interface ResearchView {
   /** What the book check saw: how many held / watched names were supplied. Zero
    *  means "no match is possible", not "no gainer matched". */
   bookChecked?: { held: number; watch: number } | null;
+  /** zzz836: every scanned name in exactly ONE bucket; counts add up to `scanned`. Overlays (queue, book) are listed apart. */
+  partition?: ViewPartition;
+}
+
+/** zzz836: the ONE status a scanned name has. Mutually exclusive; the counts add up to `scanned`. */
+export type PrimaryStatus =
+  | 'confirmed' | 'identified_impact_unknown' | 'secondary_unverified' | 'negative' | 'no_catalyst'
+  | 'older_context_only' | 'data_unavailable' | 'recent_listing_excluded' | 'not_researched';
+export interface PartitionBucket { key: PrimaryStatus; label: string; count: number; tickers: string[]; meaning: string }
+export interface ViewPartition {
+  scanned: number;
+  buckets: PartitionBucket[];
+  /** Sum of the bucket counts (always === scanned). */
+  total: number;
+  /** "22 scanned = 1 confirmed + 8 identified, impact unknown + ..." */
+  line: string;
+  /** Overlays (tags, NOT statuses): they cut across the buckets and are never added to them. */
+  overlays: { queue: number; watch: number; portfolio: number; conflicts: number };
+}
+export const PARTITION_ORDER: PrimaryStatus[] = ['confirmed', 'identified_impact_unknown', 'secondary_unverified', 'negative', 'no_catalyst', 'older_context_only', 'data_unavailable', 'recent_listing_excluded', 'not_researched'];
+export const PARTITION_META: Record<PrimaryStatus, { label: string; meaning: string; core: boolean }> = {
+  confirmed: { label: 'Confirmed catalyst', core: true, meaning: 'Official evidence and an economic mechanism that can be sized (material or small).' },
+  identified_impact_unknown: { label: 'Catalyst identified, impact unknown', core: true, meaning: 'The event is in an official filing; its economics are not resolved yet. Unknown is not negative.' },
+  secondary_unverified: { label: 'Secondary / unverified', core: true, meaning: 'Only press or a secondary summary says so; no official filing confirms it.' },
+  negative: { label: 'Negative evidence', core: true, meaning: 'A genuine negative filing that contradicts a bullish reading.' },
+  no_catalyst: { label: 'No catalyst found', core: true, meaning: 'The search found nothing material in filings or news for this move.' },
+  older_context_only: { label: 'Older context only', core: false, meaning: 'Only a filing older than the move window - context, not this move’s event.' },
+  data_unavailable: { label: 'Data unavailable', core: false, meaning: 'The filing source failed - not the same as no catalyst.' },
+  recent_listing_excluded: { label: 'Recent listing excluded', core: false, meaning: 'Too little price history to compare - excluded from fundamental comparison.' },
+  not_researched: { label: 'Not yet researched', core: false, meaning: 'Research has not run for this name yet.' },
+};
+
+/** The single primary status of one item (mutually exclusive, exhaustive over researched names). */
+export function primaryStatusOf(it: Pick<ResearchItem, 'eventClass' | 'catalystFor' | 'sourceConfidence' | 'immaterialNegative' | 'sourceExistence'>): PrimaryStatus {
+  if (it.eventClass === 'DATA_UNAVAILABLE') return 'data_unavailable';
+  if (it.eventClass === 'LISTING') return 'recent_listing_excluded';
+  if (it.catalystFor === 'CONTEXT') return 'older_context_only';
+  switch (it.eventClass) {
+    case 'NEGATIVE': return 'negative';
+    case 'CONFIRMED_MATERIAL': case 'CONFIRMED_LOW_MATERIALITY': return 'confirmed';
+    case 'POTENTIAL_UNVERIFIED': {
+      // official evidence exists (filed / read) -> the event is identified, its impact is unknown; otherwise secondary only
+      const official = it.sourceExistence ? it.sourceExistence === 'official_filing' || it.sourceExistence === 'both' : it.sourceConfidence === 'VERIFIED_DOCUMENT' || it.sourceConfidence === 'VERIFIED_FILING';
+      return official ? 'identified_impact_unknown' : 'secondary_unverified';
+    }
+    default: return 'no_catalyst';
+  }
 }
 
 /** Spec §7 — the top-of-report counts. */
@@ -464,6 +538,8 @@ export interface ViewBanner {
   noMaterialCatalyst: number;
   negative: number;
   provisional: boolean;
+  /** zzz836: the one partition line, "22 scanned = a + b + ...". */
+  partitionLine?: string;
 }
 export interface OlderFilingRow {
   ticker: string; name: string; company: string; movePct: number | null; filedDate: string | null; ageDays: number | null;
@@ -677,6 +753,7 @@ function eventTypeOf(category: string | null, hay: string, negative: boolean): {
     case 'capacity_expansion': return { type: 'Capacity expansion', label: null };
     case 'production_ramp': case 'utilization_increase': return { type: 'Production ramp', label: null };
     case 'revenue_guidance_increase': return { type: 'Guidance', label: null };
+    case 'regulatory_inspection': return { type: 'Regulatory inspection', label: 'Regulatory inspection / observations' };
     case 'regulatory_approval': case 'export_approval': return { type: 'Regulatory approval', label: null };
     case 'product_qualification': return { type: 'Regulatory approval', label: 'Qualification / certification' };
     case 'new_customer': case 'customer_ramp': return { type: 'Customer win', label: null };
@@ -1050,7 +1127,7 @@ const CHECKLISTS: Record<string, Step[]> = {
   contract_term: ORDER_STEPS('is the revenue recurring across the stated term (fees each year), or billed on milestones — and what are the renewal terms?', 'Contract value'),
   order_recurring: ORDER_STEPS('is the stated annual value recurring for the full programme life — fixed contracts, or initial awards that scale with the customer\'s build rate?'),
   acquisition: [
-    { label: 'Purchase price', q: 'what price was paid, and at what valuation (EV / sales, EV / EBITDA)?', ans: A.price },
+    { label: ACQUISITION_PRICE_LABEL, q: 'what price or swap ratio was paid, and at what valuation (EV / sales, EV / EBITDA)?', ans: A.price },
     { label: 'Target revenue / EBITDA', q: 'the target\'s last-year revenue and EBITDA — stated?', ans: A.targetEcon },
     { label: 'Funding', q: 'how is it funded — cash, debt or new shares (dilution if shares)?', ans: A.funding },
     { label: 'Contribution', q: 'when does it start adding to consolidated revenue and profit, and is it accretive?', ans: A.contribution },
@@ -1200,7 +1277,7 @@ function unknownsFor(key: string, hay: string, hasValue: boolean, e: EarningsMin
       say('Revenue contribution', false);
       break;
     case 'acquisition':
-      say('Price', hasValue);
+      say(ACQUISITION_PRICE_LABEL, hasValue || /swap ratio|share swap|exchange ratio/i.test(hay));
       say('Funding', /funded|cash|debt|internal accruals|share swap/i.test(hay));
       say('Target revenue / EBITDA', /revenue|ebitda|turnover/i.test(hay));
       say('Earnings contribution', /accretive|eps|earnings contribution/i.test(hay));
@@ -2267,7 +2344,7 @@ export function buildResearchItem(ticker: string, f: Finding | null, b: BoardRow
   const usc = market === 'US' && f?.usCard ? applyUsCard(item, f.usCard, { mv, returns, now: input.now ?? null }) : null;
   // zzz803 (India only): the India card names the event a no-catalyst row missed.
   const inc = market === 'IN' && f?.inCard ? applyInCard(item, f.inCard, { status, hasEarnings: !!e, clarification, favourable: favourableOutcome, mv, returns, now: input.now ?? null }) : null;
-  attachCardFacts(item);
+  attachCardFacts(item, input.now ?? null);
   const staleEarnings = !usc && type === 'Earnings' && e?.filedDaysAgo != null && e.filedDaysAgo > CATALYST_WINDOWS[market].recent;
   const p = priorityOf(item, { routine: usc || inc?.presented ? false : routine, pricingState: (f?.components as any)?.pricing?.state ?? null, staleEarnings, veryStale: staleEarnings && (e!.filedDaysAgo as number) > 60, namedAllottee: !!fr?.named, clarification: clarification && !inc?.presented, quantified: usc ? usc.quantified || quantified : quantified });
   item.priority = p.score; item.priorityReasons = p.reasons; item.scoreDetails = p.details;
@@ -2306,24 +2383,85 @@ const US_EVENT_TYPES = new Set<string>(['Earnings', 'Order win', 'Contract', 'Ac
 
 const STAGE_OF_US: Record<string, EventStage | null> = { PROPOSED: 'PROPOSED', SIGNED: 'SIGNED', AWARDED: 'AWARDED', EXECUTED: 'EXECUTED', MONETIZING: 'EXECUTED', RUMOUR: null, UNKNOWN: null };
 
-/** Was the event confirmed in an official filing that was read? Derived from the card only. */
-export function confirmationOf(it: Pick<ResearchItem, 'market' | 'usCard' | 'inCard'>): CatalystConfirmation | null {
-  const us = it.market === 'US' ? it.usCard : null;
-  if (us) {
-    if (us.catalystConfirmation) return us.catalystConfirmation;
-    return us.source.tier === 'SEC' ? (us.quantified ? 'confirmed_in_official_filing' : 'filed_document_unread') : us.source.tier === 'PRESS' ? 'press_unconfirmed' : 'not_found';
-  }
-  const inc = it.market === 'IN' ? it.inCard : null;
-  const lead = inc?.lead || inc?.catalysts?.[0] || null;
-  if (!lead) return inc ? 'not_found' : null;
-  if (lead.source === 'FILING') return /document read/i.test(lead.sourceLabel) ? 'confirmed_in_official_filing' : 'filed_document_unread';
-  return lead.confirmedByFiling ? 'filed_document_unread' : 'press_unconfirmed';
+const normTxt = (x: unknown) => String(x ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+type InCat = NonNullable<InCard['catalysts']>[number];
+export interface HeadlineSource {
+  existence: NonNullable<ResearchItem['sourceExistence']>;
+  verification: NonNullable<ResearchItem['evidenceVerification']>;
+  /** The India catalyst that IS the headline event (matched by URL or text), when there is one. */
+  cat: InCat | null;
+  matched: 'url' | 'text' | null;
 }
+const NO_EVENT_CLASSES = new Set<EventClass>(['NO_CATALYST', 'MARKET_MOVE_ONLY', 'DATA_UNAVAILABLE', 'LISTING']);
+/** Source existence and evidence verification of the HEADLINE event only, from that event's own source record.
+ *  A press item about another topic never changes it. */
+export function headlineSourceOf(it: Pick<ResearchItem, 'market' | 'usCard' | 'inCard' | 'eventClass' | 'headline' | 'whatChanged' | 'quote' | 'sourceUrl' | 'sourceConfidence' | 'conflicts' | 'verification'>): HeadlineSource {
+  const none: HeadlineSource = { existence: 'none', verification: 'none', cat: null, matched: null };
+  if (NO_EVENT_CLASSES.has(it.eventClass)) return none;
+  const contradicted = (it.conflicts || []).length > 0;
+  const fin = (h: HeadlineSource): HeadlineSource => (contradicted && h.verification !== 'none' ? { ...h, verification: 'contradicted' } : h);
+  const us = it.market === 'US' ? it.usCard : null;
+  if (us && us.source.tier === 'SEC') {
+    const top = us.catalysts?.[0];
+    const both = !!top && (us.catalysts || []).some((c) => c.source === 'PRESS' && c.id === top.id);
+    const read = us.documentVerification ? us.documentVerification === 'read' : !!us.quantified;
+    return fin({ existence: both ? 'both' : 'official_filing', verification: read ? 'document_read' : 'document_not_read', cat: null, matched: null });
+  }
+  if (us && us.source.tier === 'PRESS') return fin({ existence: 'press_only', verification: 'secondary_only', cat: null, matched: null });
+  const inc = it.market === 'IN' ? it.inCard : null;
+  if (inc && Array.isArray(inc.catalysts) && inc.catalysts.length) {
+    const h = normTxt(`${it.headline} ${it.whatChanged} ${it.quote || ''}`);
+    const hits = (c: InCat) => (it.sourceUrl && c.url && c.url === it.sourceUrl ? 'url' : (normTxt(c.sentence).length >= 15 && h.includes(normTxt(c.sentence).slice(0, 45))) || (normTxt(c.title).length >= 15 && h.includes(normTxt(c.title).slice(0, 45))) ? 'text' : null);
+    const cands = inc.catalysts.map((c) => ({ c, m: hits(c) })).filter((x) => x.m);
+    const hlc = inc.headline ? inc.catalysts.find((x) => x.id === inc.headline!.id && x.source === inc.headline!.source) : null;   // the card names its own headline event
+    const pick = cands.find((x) => x.m === 'url') || cands.find((x) => x.c.source === 'FILING') || cands[0] || (hlc && !NO_EVENT_CLASSES.has(it.eventClass) ? { c: hlc, m: 'text' as const } : null);
+    if (pick) {
+      const c = pick.c;
+      if (c.sourceExistence && c.evidenceVerification) {   // the classification's own fields win over the label heuristics
+        return fin({ existence: c.sourceExistence === 'official' ? 'official_filing' : c.sourceExistence === 'press' ? 'press_only' : 'both', verification: c.evidenceVerification, cat: c, matched: pick.m as 'url' | 'text' });
+      }
+      const alsoPress = inc.catalysts.some((x) => x !== c && x.id === c.id && x.source !== c.source);
+      if (c.source === 'FILING') return fin({ existence: alsoPress ? 'both' : 'official_filing', verification: /document read/i.test(c.sourceLabel) ? 'document_read' : 'document_not_read', cat: c, matched: pick.m as 'url' | 'text' });
+      return fin(c.confirmedByFiling ? { existence: 'both', verification: 'document_not_read', cat: c, matched: pick.m as 'url' | 'text' } : { existence: 'press_only', verification: 'secondary_only', cat: c, matched: pick.m as 'url' | 'text' });
+    }
+  }
+  // no card event matches the headline: the finding's own source record
+  switch (it.sourceConfidence) {
+    case 'VERIFIED_DOCUMENT': return fin({ existence: 'official_filing', verification: 'document_read', cat: null, matched: null });
+    case 'SECONDARY_SUMMARY': if (/^secondary|press/i.test(it.verification || '')) return fin({ existence: 'press_only', verification: 'secondary_only', cat: null, matched: null });
+      return fin({ existence: 'official_filing', verification: 'document_not_read', cat: null, matched: null });
+    case 'VERIFIED_FILING': return fin({ existence: 'official_filing', verification: 'document_not_read', cat: null, matched: null });
+    default: return fin({ existence: it.sourceUrl ? 'press_only' : 'none', verification: it.sourceUrl ? 'secondary_only' : 'none', cat: null, matched: null });
+  }
+}
+/** Was the HEADLINE event confirmed in an official filing that was read? Derived from the headline event's own source. */
+export function confirmationOf(it: Pick<ResearchItem, 'market' | 'usCard' | 'inCard' | 'eventClass' | 'headline' | 'whatChanged' | 'quote' | 'sourceUrl' | 'sourceConfidence' | 'conflicts' | 'verification'>): CatalystConfirmation | null {
+  if (NO_EVENT_CLASSES.has(it.eventClass)) return it.usCard || it.inCard ? 'not_found' : null;
+  const h = headlineSourceOf(it);
+  if (h.existence === 'none') return 'not_found';
+  if (h.existence === 'press_only') return 'press_unconfirmed';
+  return h.verification === 'document_read' || (h.verification === 'contradicted' && it.usCard?.catalystConfirmation === 'confirmed_in_official_filing') ? 'confirmed_in_official_filing' : 'filed_document_unread';
+}
+const EXISTENCE_LABEL: Record<NonNullable<ResearchItem['sourceExistence']>, string> = { official_filing: 'Official filing exists', press_only: 'Press only', both: 'Official filing and press', none: 'No source' };
+const VERIFICATION_LABEL: Record<NonNullable<ResearchItem['evidenceVerification']>, string> = { document_read: 'Document read', document_not_read: 'Document not read', secondary_only: 'Secondary only', contradicted: 'Values contradict', none: 'Not verified' };
+
+const WHY_BY_SUBTYPE: Partial<Record<EventSubtype, string>> = {
+  store_launch: 'A new store or showroom adds retail network. The open questions are how many stores, capex per store and same-store sales - not utilisation or offtake.',
+  dealership: 'A new dealership widens a brand’s sales and service network. Open: number of outlets, capex, and the brand’s volume growth.',
+  facility_for_customer: 'A facility opened for a named customer. Open: contract term, volume commitment and the revenue expected from that customer.',
+  credit_rating: 'A rating action changes borrowing cost and access to funds. Open: the rated facility size (a facility limit, not revenue or guidance), the outlook, and debt due soon.',
+  inspection: 'A regulatory inspection is a compliance risk to a site’s supply and approvals. Open: how serious the observations are, the response due date, repeat-inspection risk, and which products depend on the site.',
+  tax_demand: 'A tax demand is a contingent liability, not a positive event. Size it against earnings, net worth and cash, and read the appeal status.',
+  subsidiary: 'A new subsidiary is an enabling step - no revenue yet. Open: its purpose and the capital committed.',
+};
+const BAND_KIND = (t: string): keyof typeof BANDS => (/^(Order win|Contract|Customer win)$/.test(t) ? 'order' : /^(Acquisition|Merger)$/.test(t) ? 'acquisition' : /^(Capacity expansion|Production ramp)$/.test(t) ? 'capex' : t === 'Buyback' ? 'buyback' : t === 'Fundraising' ? 'fundraise' : 'generic');
+const PRICE_COMMENTARY_RX = /circuit|momentum|target price|price target|broker|goldman|surge|rally/i;
+
 const CC_LABEL: Record<CatalystConfirmation, string> = {
   confirmed_in_official_filing: 'Confirmed in an official filing', filed_document_unread: 'Filed - the document itself was not read',
   press_unconfirmed: 'Reported in the press - not yet in an official filing', not_found: 'No source found',
 };
-function attachCardFacts(item: ResearchItem): void {
+function attachCardFacts(item: ResearchItem, now: string | null): void {
   const us = item.market === 'US' ? item.usCard : null;
   const inc = item.market === 'IN' ? item.inCard : null;
   const lead = inc ? (inc.lead || inc.catalysts?.[0] || null) : null;
@@ -2381,10 +2519,56 @@ function attachCardFacts(item: ResearchItem): void {
     item.catalystStatusSentence = inc.summary || null;
     if (inc.searched) item.searched = { sources: inc.searched.sources, lookbackDays: inc.searched.lookbackDays, filings: inc.searched.filings, press: inc.searched.press };
   }
+  // ── zzz836: the HEADLINE event's own source (existence and verification are two fields) ──
+  const hs = headlineSourceOf(item);
+  item.sourceExistence = hs.existence; item.evidenceVerification = hs.verification;
+  item.sourceExistenceLabel = EXISTENCE_LABEL[hs.existence]; item.evidenceVerificationLabel = VERIFICATION_LABEL[hs.verification];
+  const eventful = !NO_EVENT_CLASSES.has(item.eventClass);
+  // the headline age comes from the headline event's own filing date
+  if (hs.cat?.date && eventful && !(hs.matched === 'text' && item.catalystFor === 'CONTEXT')) {   // a fuzzy text match never re-dates an older result as fresh
+    item.headlineFiledDate = hs.cat.date;
+    const a = ageFrom(hs.cat.date, now, 'IN');
+    if (a != null && (item.filedDate?.slice(0, 10) !== hs.cat.date.slice(0, 10) || item.ageDays !== a)) {
+      item.filedDate = hs.cat.date; item.ageDays = a;
+      if (item.eventClass !== 'DATA_UNAVAILABLE') item.catalystFor = catalystForOf('IN', a);
+    }
+  } else if (us?.source.date && eventful) item.headlineFiledDate = us.source.date;
+  // direction and subtype of the headline event (the classification's own fields first, then the shared rule)
+  const hcat: any = hs.cat || us?.catalysts?.[0] || null;
+  const text = `${item.headline} ${item.quote || ''}`;
+  const rawDir = String(hcat?.economicDirection || '').toUpperCase();
+  if (eventful) {
+    item.direction = item.eventClass === 'NEGATIVE' && !rawDir ? 'NEGATIVE'
+      : (['POSITIVE', 'NEGATIVE', 'MIXED', 'NEUTRAL', 'UNKNOWN'].includes(rawDir) ? rawDir : directionOf(item.eventType, text, hcat?.direction ?? null)) as EconDirection;
+    item.directionNote = hcat?.directionNote ?? null;
+    item.subtype = (hcat?.subtype as EventSubtype | undefined) ?? subtypeOf(item.eventType, text);
+    const rq = String(hcat?.researchQuestion || '') || (item.subtype ? researchQuestionFor(item.subtype) : '');
+    if (rq) item.researchQuestion = rq;
+    const why = item.subtype ? WHY_BY_SUBTYPE[item.subtype] : null;   // WHY RESEARCH keeps its richer text; the open question is its own field (researchQuestion)
+    if (why && item.eventClass !== 'NEGATIVE') item.whyResearch = why;
+    if (item.eventType === 'Regulatory inspection') item.stageLabel = 'Inspection completed';
+    if (item.subtype === 'tax_demand') item.direction = 'NEGATIVE';
+  }
+  // a card with a headline event never says "no catalyst found"
+  if (eventful && /no catalyst found/i.test(item.catalystStatusSentence || '')) item.catalystStatusSentence = `Headline event found: ${item.eventLabel || item.eventType}${item.filedDate ? ` (filed ${item.filedDate.slice(0, 10)})` : ''}.${item.searched ? ` Searched ${item.searched.sources.join(', ') || 'filings and news'}${item.searched.lookbackDays != null ? `, last ${item.searched.lookbackDays} days` : ''}.` : ''}`;
+  // price / momentum narrative is commentary, never evidence
+  if (item.news?.narrative && PRICE_COMMENTARY_RX.test(item.news.narrative.label)) item.priceCommentaryOnly = true;
+  // an older result block is context, not the key change
+  const fda = item.earnings?.filedDaysAgo;
+  if (typeof fda === 'number') item.olderResultLabel = contextTag(fda, 'result').label;
+  // materiality band, in words, next to the ratio
+  const r0 = item.materiality?.ratios?.[0];
+  if (r0 && item.materiality.label !== 'UNKNOWN') {
+    const band = BANDS[BAND_KIND(item.eventType)][r0.basis === 'market_cap' ? 'mcap' : 'revenue'];
+    const basis = r0.basis === 'market_cap' ? 'market cap' : 'revenue';
+    const l = item.materiality.label;
+    item.materialityBand = `${l === 'SIGNIFICANT' ? 'HIGH' : l} = ${l === 'SMALL' ? `under ${band[1]}%` : l === 'MODERATE' ? `${band[1]}% to under ${band[0]}%` : `${band[0]}% or more`} of ${basis} (moderate from ${band[1]}%, high from ${band[0]}%)`;
+  }
+  item.primaryStatus = primaryStatusOf(item);
   // official filing vs state label
   const cc = confirmationOf(item);
-  if (cc) { item.catalystConfirmation = cc; item.catalystConfirmationLabel = us?.catalystConfirmationLabel || CC_LABEL[cc]; }
-  if (item.catalysts?.length) item.catalysts = item.catalysts.map((c, i) => (i === 0 ? { ...c, stateWord: stateWordFor(c.stateWord, cc) } : c));
+  if (cc) { item.catalystConfirmation = cc; item.catalystConfirmationLabel = us?.catalystConfirmationLabel && cc === us.catalystConfirmation ? us.catalystConfirmationLabel : CC_LABEL[cc]; }
+  if (item.catalysts?.length) item.catalysts = item.catalysts.map((c, i) => ({ ...c, stateWord: i === 0 ? stateWordFor(c.stateWord, cc) : (/not yet in an official filing/i.test(c.stateWord) && item.sourceExistence !== 'press_only' ? 'Identified' : c.stateWord) }));   // only the headline's own source is known; another item never keeps a claim we did not check
   if (item.durations?.catalystState) item.durations = { ...item.durations, catalystState: stateWordFor(item.durations.catalystState, cc) };
 }
 
@@ -2487,7 +2671,7 @@ const IN_TYPE_OF: Record<string, EventType> = {
   price_hike: 'Pricing', vendor_approval: 'Customer win', capacity_commissioned: 'Production ramp', capacity_expansion: 'Capacity expansion', acquisition: 'Acquisition', merger: 'Merger',
   demerger: 'Divestment', divestment: 'Divestment', joint_venture: 'JV', buyback: 'Buyback', delisting: 'Capital allocation', bonus_split: 'Capital allocation', special_dividend: 'Capital allocation',
   equity_raise: 'Fundraising', debt_raise: 'Debt / refinancing', rating_upgrade: 'Rating action', rating_downgrade: 'Rating action', auditor_resignation: 'Governance', kmp_resignation: 'Management change',
-  independent_director_exit: 'Governance', kmp_appointment: 'Management change', regulatory_approval: 'Regulatory approval', regulatory_setback: 'Litigation / regulatory', tax_demand: 'Litigation / regulatory',
+  independent_director_exit: 'Governance', kmp_appointment: 'Management change', regulatory_approval: 'Regulatory approval', regulatory_inspection: 'Regulatory inspection', regulatory_setback: 'Litigation / regulatory', tax_demand: 'Litigation / regulatory',
   legal_win: 'Litigation / regulatory', insolvency_default: 'Litigation / regulatory', operations_disruption: 'Accident / disruption', price_clarification: 'No identified catalyst',
   media_clarification: 'Governance', exchange_query: 'No identified catalyst',
 };
@@ -2899,10 +3083,11 @@ export function buildResearchView(input: ResearchViewInput): ResearchView {
   tickers.sort();
   const items: ResearchItem[] = [];
   let unresearched = 0;
+  const unresearchedTickers: string[] = [];
   for (const t of tickers) {
     const f = findings.get(t) || null;
     const fr = filed.get(t) || null;
-    if ((!f || f.status === 'unresearched') && !fr) { unresearched++; continue; }
+    if ((!f || f.status === 'unresearched') && !fr) { unresearched++; unresearchedTickers.push(t); continue; }
     items.push(buildResearchItem(t, f, board.get(t) || null, fr, inp, sets));
   }
   items.sort(byPriority);
@@ -3004,7 +3189,20 @@ export function buildResearchView(input: ResearchViewInput): ResearchView {
     catalysts: catalystSummaryOf(items, market),
     ...(market === 'US' ? { usCatalysts: usCatalystSummary(items) } : {}),
   };
+  // zzz836: ONE mutually exclusive status per scanned name. The counts add up to `scanned`; overlays are listed apart.
+  for (const i of items) i.primaryStatus = primaryStatusOf(i);
+  const buckets: PartitionBucket[] = PARTITION_ORDER.map((key) => {
+    const ts = key === 'not_researched' ? unresearchedTickers : items.filter((i) => i.primaryStatus === key).map((i) => i.ticker);
+    return { key, label: PARTITION_META[key].label, meaning: PARTITION_META[key].meaning, count: ts.length, tickers: ts };
+  });
+  const shownBuckets = buckets.filter((b) => PARTITION_META[b.key].core || b.count > 0);
+  const partition: ViewPartition = {
+    scanned: tickers.length, buckets, total: buckets.reduce((n, b) => n + b.count, 0),
+    line: `${tickers.length} scanned = ${shownBuckets.map((b) => `${b.count} ${b.label.toLowerCase()}`).join(' + ')}`,
+    overlays: { queue: queue.length, watch: watch.length, portfolio: portfolio.length, conflicts: items.filter((i) => conflictsOf(i).length > 0).length },
+  };
   const banner: ViewBanner = {
+    partitionLine: partition.line,
     market, scanned: summary.scanned, verified: summary.confirmed, unverified: summary.potential,
     conflicts: items.filter((i) => conflictsOf(i).length > 0).length,
     noMaterialCatalyst: summary.noCatalyst, negative: summary.negative, provisional: weekly ? true : run.provisional,
@@ -3030,7 +3228,7 @@ export function buildResearchView(input: ResearchViewInput): ResearchView {
   }
   return {
     session, summary, top3, queue, watch, negative, immaterialNegative, noCatalyst, dataQuality, sourceFailures, partialFailures, portfolio, context, needsReading,
-    banner, scanCriteria: input.scanCriteria ?? null, olderFilings, dataNotes,
+    banner, partition, scanCriteria: input.scanCriteria ?? null, olderFilings, dataNotes,
     bookChecked: { held: sets.held.size, watch: sets.watch.size },
   };
 }

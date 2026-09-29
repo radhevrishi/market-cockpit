@@ -63,7 +63,7 @@ test('USA: builds, New York scan time plus India time, criteria line, verified v
   assert.match(t, /WHAT CHANGED/);
   assert.match(t, /17:12 New York time \(02:42 IST, 25 Sep 2026 in India\)/);
   assert.match(t, /SCAN CRITERIA/);
-  assert.match(t, /Verified document \(SEC 8-K\)/);
+  assert.match(t, /SEC 8-K/);
   assert.match(t, /Press only/);
   assert.match(t, /Market Cockpit · AI Daily Gainers · USA · generated 25 Sep 2026 05:05 ET · Research only, not investment advice/);
   assert.doesNotMatch(t, /\bRs\b|₹/);

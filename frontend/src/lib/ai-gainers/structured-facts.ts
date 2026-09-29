@@ -108,6 +108,8 @@ export interface EventFacts {
   product: string | null;
   geography: string | null;
   stage: 'ANNOUNCED' | 'SIGNED' | 'AWARDED' | 'APPROVED' | 'COMMISSIONED' | 'COMPLETED' | 'PROPOSED' | null;
+  /** zzz836: a finer type than `kind` ('regulatory_inspection' = a regulator's inspection / Form 483 / observations, NOT an approval). kind stays 'other'. */
+  eventType?: string;
 }
 
 export interface EconomicFacts {
@@ -824,3 +826,138 @@ export function resolveIssuer(o: { ticker?: string | null; company?: string | nu
   if (hit) return { code: /^\d{5,6}$/.test(hit) ? hit : null, ticker: /^\d{5,6}$/.test(hit) ? null : hit.toUpperCase(), name, display: `${name} (${/^\d{5,6}$/.test(hit) ? `BSE ${hit}` : hit.toUpperCase()})`, tickerBasis: 'security_master' };
   return { code: null, ticker: null, name, display: name || 'Unknown issuer', tickerBasis: null };
 }
+
+// ═══ zzz836: ECONOMIC DIRECTION, SUBTYPE, RESEARCH QUESTION, PRICE COMMENTARY, AMOUNTS ═══════════════════════
+// Direction is about the ECONOMICS of the event, never about the price move.
+
+export type EconDirection = 'POSITIVE' | 'NEGATIVE' | 'MIXED' | 'NEUTRAL' | 'UNKNOWN';
+
+const typeKey = (t: string) => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+const RX_INSPECTION_NEG = /\b(?:official action indicated|OAI|warning letter|import alert|form 483 (?:with|citing) (?:critical|repeat|data[- ]integrity)|data integrity|critical observations?|unacceptable)\b/i;
+const RX_INSPECTION_CLEAN = /\b(?:no observations?|zero observations?|nil observations?|\bNAI\b|no action indicated|closed without (?:any )?observations?|EIR (?:received|issued)|establishment inspection report|voluntary action indicated|\bVAI\b)\b/i;
+const RX_INSPECTION_OBS = /\b(?:observations?|form 483|483s?|procedural|deficienc(?:y|ies)|citations?)\b/i;
+
+/** The direction of an event's economics. `type` is a taxonomy id / label from either market; `text` is the evidence sentence.
+ *  Unknown is UNKNOWN - never guessed negative. A fallback (the taxonomy's own hint) is used only when the type is not known here. */
+export function directionOf(type: string, text: string, fallback?: string | null): EconDirection {
+  const k = typeKey(type);
+  const t = String(text || '');
+  const has = (rx: RegExp) => rx.test(t);
+  if (/inspection|warning_letter/.test(k) || (/\b(?:usfda|us fda|fda|mhra|eu[- ]gmp|who[- ]gmp|anvisa|pmda|tga)\b/i.test(t) && /\binspection\b/i.test(t) && !/^(?:regulatory_approval|tax)/.test(k))) {
+    if (has(RX_INSPECTION_NEG)) return 'NEGATIVE';
+    if (has(/\b(?:no observations?|zero observations?|nil observations?|\bNAI\b|no action indicated)\b/i)) return 'POSITIVE';
+    if (has(RX_INSPECTION_OBS)) return 'MIXED';
+    if (has(RX_INSPECTION_CLEAN)) return 'POSITIVE';
+    return 'UNKNOWN';
+  }
+  if (/credit_rating|rating_(?:upgrade|downgrade|action|reaffirm)/.test(k)) {
+    if (has(/\bdowngrad|\bto negative\b|\bnegative outlook\b|\bwatch with negative\b|\brevised (?:downward|to negative)\b/i)) return 'NEGATIVE';
+    if (has(/\bupgrad|\bto positive\b|\bpositive outlook\b|\brevised (?:upward|to positive)\b/i)) return 'POSITIVE';
+    if (has(/\breaffirm|\bassigned\b|\bretained\b|\bmaintained\b/i)) return 'NEUTRAL';
+    return 'UNKNOWN';
+  }
+  if (/tax_demand|tax_litigation|regulatory_setback|insolvency|default|operations_disruption|auditor_resignation|net_loss|revenue_decline|profit_decline|margin_compression|litigation_loss|going_concern|delist/.test(k)) return 'NEGATIVE';
+  if (/legal_win|favourable|patent_litigation_win/.test(k)) return 'POSITIVE';
+  if (/kmp_resignation|independent_director_exit|resignation|departure/.test(k)) {
+    return has(/\b(?:ceo|cfo|chief executive|chief financial|managing director|md\b|promoter)\b/i) ? 'NEGATIVE' : 'UNKNOWN';
+  }
+  if (/subsidiary|incorporation|debt_raise|ncd|financing|debt|borrowing|equity_raise|equity_offering|fundrais|qip|preferential|rights_issue|dividend|bonus|split|buyback|kmp_appointment|record_date|agm|price_commentary|circuit|broker/.test(k)) return 'NEUTRAL';
+  if (/store_launch|dealership|network_expansion/.test(k)) return 'POSITIVE';
+  if (/results|revenue|profit|earnings|turnaround|guidance/.test(k)) {
+    const up = has(/\b(?:up|rose|grew|growth|increase[ds]?|jumped|surged|record|beat|raised|turnaround|profit)\b/i);
+    const dn = has(/\b(?:down|fell|declined|decrease[ds]?|dropped|slumped|loss|missed|lowered|cut|withdr[ae]w)\b/i);
+    if (up && dn) return 'MIXED';
+    if (up) return 'POSITIVE';
+    if (dn) return 'NEGATIVE';
+    return 'UNKNOWN';
+  }
+  if (/order|contract|work_order|capacity|capex|commission|acquisition|approval|qualification|partnership|new_product|launch|customer|promoter_buying|stake_buy|trial|licens|milestone|expansion/.test(k)) return 'POSITIVE';
+  const fb = String(fallback || '').toLowerCase();
+  return fb === 'positive' ? 'POSITIVE' : fb === 'negative' ? 'NEGATIVE' : fb === 'mixed' ? 'MIXED' : fb === 'neutral' ? 'NEUTRAL' : 'UNKNOWN';
+}
+
+/** A plain note for a direction that needs one (dilution, contingent, procedural). */
+export function directionNote(type: string, text: string): string | null {
+  const k = typeKey(type);
+  if (/equity_raise|equity_offering|fundrais|qip|preferential|rights_issue/.test(k)) return 'equity raise adds shares - dilution note: check price, allottees and use of proceeds';
+  if (/tax_demand/.test(k)) return 'contingent until any appeal ends - size it against earnings, net worth and cash';
+  if (/inspection/.test(k) && RX_INSPECTION_OBS.test(text) && !RX_INSPECTION_NEG.test(text)) return 'observations are not a clean result - severity and response not yet read';
+  if (/debt_raise|ncd|financing/.test(k)) return 'financing - neutral until the use of proceeds is known';
+  return null;
+}
+
+export const DIRECTION_MARK: Record<EconDirection, string> = { POSITIVE: '▲', NEGATIVE: '▼', MIXED: '◆', NEUTRAL: '◆', UNKNOWN: '?' };
+
+export type EventSubtype =
+  | 'store_launch' | 'dealership' | 'facility_for_customer' | 'capacity_capex' | 'credit_rating' | 'inspection'
+  | 'tax_demand' | 'subsidiary' | 'debt_financing' | 'equity_raise' | 'acquisition' | 'order' | 'price_commentary' | 'other';
+
+/** What kind of the broad type this really is - drives the research question. Text first, type second. */
+export function subtypeOf(type: string, text: string): EventSubtype {
+  const k = typeKey(type);
+  const t = String(text || '');
+  if (/credit_rating|rating_/.test(k) || /\b(?:crisil|icra|care ratings|\bCARE\b|india ratings|acuite|infomerics|brickwork)\b[^.;]{0,80}\b(?:rating|reaffirm|upgrad|downgrad|outlook)/i.test(t)) return 'credit_rating';
+  if (/inspection|warning_letter/.test(k) || (/\binspection\b/i.test(t) && /\b(?:usfda|us fda|fda|mhra|eu[- ]gmp|who[- ]gmp|form 483|observations?)\b/i.test(t))) return 'inspection';
+  if (/tax_demand/.test(k)) return 'tax_demand';
+  if (/dealership|network_expansion/.test(k) || /\bdealership\b|\bshowroom for (?:BYD|[A-Z][a-z]+)\b|\bnew (?:BYD|[A-Z]{2,}) (?:outlet|dealership|facility)\b|\bdealer(?:ship)? network\b/i.test(t)) return 'dealership';
+  if (/store_launch/.test(k) || /\b(?:showroom|store|stores|outlet|outlets|boutique|retail (?:store|outlet))\b[^.;]{0,50}\b(?:launch|launched|launching|opening|opened|inaugurat\w*|open)\b|\b(?:launch\w*|open(?:s|ed|ing)?|inaugurat\w*)\b[^.;]{0,40}\b(?:new )?(?:showroom|store|stores|outlet|outlets|boutique)\b/i.test(t)) return 'store_launch';
+  if (/\binaugurat\w*\b[^;]{0,80}\bfor\s+(?:[A-Z][A-Za-z&.-]+)/.test(t) && /\b(?:facility|facilities|plant|unit|centre|center)\b/i.test(t)) return 'facility_for_customer';
+  if (/subsidiary|incorporation/.test(k) || /\bincorporat\w*\b[^.;]{0,60}\bsubsidiary\b/i.test(t)) return 'subsidiary';
+  if (/debt_raise|ncd|financing|debt/.test(k) || /\bnon[- ]convertible debentures?\b|\bNCDs?\b/.test(t)) return 'debt_financing';
+  if (/equity_raise|equity_offering|fundrais|qip|preferential|rights_issue/.test(k)) return 'equity_raise';
+  if (/acquisition/.test(k)) return 'acquisition';
+  if (/order|contract/.test(k)) return 'order';
+  if (/capacity|capex|commission/.test(k)) return 'capacity_capex';
+  if (/price_commentary/.test(k)) return 'price_commentary';
+  return 'other';
+}
+
+/** The subtype-specific research question (WHY RESEARCH). Plain words; asks, never asserts. */
+export function researchQuestionFor(sub: EventSubtype): string {
+  switch (sub) {
+    case 'store_launch': return 'Store launch on file - the open question is store economics: capex per store, same-store sales and payback, and how many more openings are planned.';
+    case 'dealership': return 'New dealership on file - the open question is network economics: capex for the outlet, sales and service throughput, and the brand\'s vehicle allocation to it.';
+    case 'facility_for_customer': return 'Facility opened for a named customer - the open question is the customer contract: volume, price, tenor and ramp-up, and the customer\'s share of revenue.';
+    case 'capacity_capex': return 'Capex / capacity on file - the open question is utilisation: will orders or offtake fill it, and what revenue and EBITDA follow.';
+    case 'credit_rating': return 'Rating action on file - the open question is the cost and access of debt: rated facilities, the agency\'s reasons, and debt due for refinancing.';
+    case 'inspection': return 'Inspection on file - the open question is compliance risk: what the observations are, the company\'s response and due date, whether a repeat inspection follows, and how much revenue depends on the site.';
+    case 'tax_demand': return 'Tax demand on file - the open question is the exposure: the amount against earnings, net worth and cash, the appeal stage and any provision made.';
+    case 'subsidiary': return 'New subsidiary on file - the open question is what it is for: the business it will run, capital put in and any customer or asset moving into it.';
+    case 'debt_financing': return 'Debt raised - the open question is the use of the money: refinancing or growth, cost of debt, maturity and the effect on leverage.';
+    case 'equity_raise': return 'Equity raise on file - the open question is dilution and use: issue price, who subscribes and what the money funds.';
+    case 'acquisition': return 'Acquisition on file - the open question is the deal economics: purchase price / swap ratio, what the target earns, how it is financed and when it closes.';
+    case 'order': return 'Order on file - the open question is delivery: size against revenue, margin, execution timeline and who the customer is.';
+    case 'price_commentary': return 'Price commentary only - not evidence; find the filed event, if any.';
+    default: return '';
+  }
+}
+
+/** Circuit / momentum / broker-target headlines describe the PRICE, not the business. */
+const RX_PRICE_TALK = /\b(?:upper circuit|lower circuit|locks? at (?:the )?upper|circuit (?:limit|filter)|buyers queue|shares? (?:surge|jump|zoom|soar|rally|spike|slump|tumble)|stock (?:surges?|jumps?|rallies|zooms?|soars?|hits? (?:upper|52)|climbs?)|52[- ]week high|all[- ]time high|multibagger|technical breakout|target price|price target|brokerage|buy rating|overweight|initiates? coverage|goldman|jefferies|motilal|nomura|nuvama)\b/i;
+const RX_EVENT_WORD = /\b(?:order|contract|work order|acquir\w+|acquisition|approval|approved|result|results|profit|revenue|launch\w*|inspection|rating|incorporat\w+|subsidiary|capex|capacity|commission\w*|allot\w*|debentures?|dividend|bonus|merger|demerger|agreement|partnership|resign\w*|appoint\w*)\b/i;
+export function isPriceCommentary(text: string): boolean {
+  const t = String(text || '');
+  if (!RX_PRICE_TALK.test(t)) return false;
+  // "shares surge after Rs 200 crore order" states an event: it is classified by the event, not as commentary
+  const stripped = t.replace(RX_PRICE_TALK, ' ');
+  return !RX_EVENT_WORD.test(stripped);
+}
+
+/** An amount is presentable only with an explicit currency unit, or a full number with a currency prefix. "Rs 7" and "15 years 7" are table fragments. */
+export function isPlausibleAmount(fig: string): boolean {
+  const s = String(fig || '').trim();
+  if (!/\d/.test(s)) return false;
+  if (/(?:crores?|\bcr\b|lakhs?|lacs?|million|\bmn\b|billion|\bbn\b|thousand|\bk\b|%|per ?cent|bps|basis points|\/-)/i.test(s)) return true;
+  if (/^(?:US)?\$/.test(s)) return /[MBK]\b/.test(s) || Number(s.replace(/[^\d.]/g, '')) >= 1000;
+  const n = Number(s.replace(/[^\d.]/g, ''));
+  if (/^(?:₹|rs\.?|inr)/i.test(s)) return Number.isFinite(n) && n >= 1000;
+  return true;   // unit-carrying non-money figures (MW, tonnes ...) are judged by their own unit
+}
+
+/** Anything older than this many days is context, not fresh news (stale ALSO ON FILE items, older result blocks). */
+export const CONTEXT_AGE_DAYS = 14;
+export function contextTag(ageDays: number | null | undefined, what = 'item', threshold = CONTEXT_AGE_DAYS): { context: boolean; label: string | null } {
+  if (ageDays == null || !Number.isFinite(ageDays) || ageDays <= threshold) return { context: false, label: null };
+  return { context: true, label: `OLDER ${what.toUpperCase()} (${ageDays}d) - context` };
+}
+export const ACQUISITION_PRICE_LABEL = 'Purchase price / swap ratio';
