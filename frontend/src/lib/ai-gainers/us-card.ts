@@ -36,13 +36,14 @@
 
 import type { StrictFigures } from '@/lib/us-thesis/xbrl';
 import {
-  classifyUsEvents, usEventMeta, classifyCanonicalEventType, validateCanonicalEvent, isLitigationText, readLitigation, extractClinicalFacts, LITIGATION_CASH_NOTE, CLIN_NOT_DISCLOSED,
+  classifyUsEvents, usEventMeta, reconcileConvertibleHits, classifyCanonicalEventType, validateCanonicalEvent, isLitigationText, readLitigation, extractClinicalFacts, LITIGATION_CASH_NOTE, CLIN_NOT_DISCLOSED,
   type UsEventCategory, type UsEventDirection, type UsEventHit, type CanonicalEventType, type LitigationRead, type ClinicalFacts,
 } from './us-event-taxonomy';
 import {
   clusterFacts, exchangeDay, exchangeAgeDays, directionOf, directionNote, subtypeOf, researchQuestionFor, contextTag, isPriceCommentary, type EconDirection, type EventSubtype, verificationOf, validateVerification, CATALYST_CONFIRMATION_LABEL, catalystSearchResult, causalWindow, exchangeDate, guidanceCheck, parseRange, periodBasisOf, reconcileValues, stageFromText,
   POTENTIAL_SCALE_NOTE, type EventCluster, type DocumentVerification, type CatalystConfirmation, type CatalystSearchResult, type CausalWindow, type GuidanceCheck, type ValueStatus,
 } from './structured-facts';
+import { repairSplitText, NO_REPURCHASE, parseAmountsM, parseRangeM, guidanceRaiseAmountM, pickPrimaryCatalyst, primaryCatalystScore, isBackgroundApproval } from './us-text-guards';
 
 // v2 (zzz801): every card carries the catalyst list read by the US event
 // taxonomy (us-event-taxonomy.ts) — cards cached at v1 are re-read.
@@ -52,7 +53,9 @@ export type UsCardKind =
   | 'earnings' | 'acquisition' | 'merger' | 'divestiture' | 'order' | 'fda' | 'clinical' | 'offering' | 'buyback'
   | 'guidance' | 'index' | 'activist' | 'short_report' | 'analyst' | 'facility' | 'catalyst' | 'litigation' | 'other'
   // zzz836: circuit / momentum / broker-target press - describes the price, never evidence
-  | 'price_commentary';
+  | 'price_commentary'
+  // zzz840: a law-firm notice inviting investors to a suit / investigation - not a company filing, never a catalyst
+  | 'solicitation';
 export type UsMatLabel = 'SIGNIFICANT' | 'MODERATE' | 'SMALL' | 'UNKNOWN';
 
 export interface UsFigure { cur: number | null; prev: number | null }
@@ -78,6 +81,9 @@ export interface UsEarnings {
   guidanceNote: string | null;
   /** zzz835: the revenue outlook set against an actual base - a % only when the periods match, else "comparison unavailable". */
   guidanceCheck?: GuidanceCheck | null;
+  /** zzz840: how the year-ago comparison was established - 'computed' (pair agrees with any stated %), 'stated' (release's own %), 'conflicting' (pair dropped: implausible or disagrees with the stated %). */
+  comparison?: 'computed' | 'stated' | 'conflicting';
+  comparisonNote?: string | null;
 }
 /** zzz835: acquisition economics kept apart; a missing one says so. */
 export interface UsAcquisitionEconomics {
@@ -196,6 +202,8 @@ export interface UsCatalyst {
   /** Figures literally present in the sentence — never computed. */
   figures: string[];
   planned: boolean;
+  /** zzz840: stage implied by the event type (a submission is PROPOSED). */
+  stage?: 'PROPOSED' | 'SIGNED';
   source: 'SEC' | 'PRESS';
   /** "SEC 8-K · EX-99.1 press release" / "press · Reuters — not verified in a filing". */
   sourceLabel: string;
@@ -207,7 +215,7 @@ export interface UsCatalyst {
 
 const r1 = (v: number) => Math.round(v * 10) / 10;
 const r2 = (v: number) => Math.round(v * 100) / 100;
-const sq = (s: string) => String(s || '').replace(/\s+/g, ' ').trim();
+const sq = (s: string) => repairSplitText(String(s || '').replace(/\s+/g, ' ').trim());
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 /** $ millions → "$849.3M" / "$3.325B" / "$450K". */
@@ -232,15 +240,17 @@ export function moneyToM(num: string, scale: string | null | undefined): number 
   if (/^(billion|bn|b)$/.test(s)) return x * 1000;
   if (/^(million|mn|m|mm)$/.test(s)) return x;
   if (/^(thousand|k)$/.test(s)) return x / 1000;
+  // zzz840: a written full-dollar amount ("$12,000,000", "$58,350,533"); a price / EPS ("$0.64") is not an amount
+  if (!s && x >= 100_000) return x / 1e6;
   return null;
 }
-const MONEY = String.raw`(?:US)?\$\s?(\d[\d,]*(?:\.\d+)?)\s*(billion|million|bn|mn|thousand)\b`;
+const MONEY = String.raw`(?:US)?\$\s?(\d[\d,]*(?:\.\d+)?)(?:\s*(billion|million|bn|mn|thousand)\b)?`;
 
 /** Sentences of a text (bullets split). */
 /** zzz801: the exhibit's EDGAR header ("EX-99 2 pressrelease.htm EX-99.1 Document"). */
 const EXHIBIT_HEADER = /^\s*EX-\d+(?:\.\d+)?\s+\d+\s+\S+\.html?\s+(?:(?:EX-\d+(?:\.\d+)?|Document)\s+)*/i;
 export function sentencesOf(t: string): string[] {
-  return String(t || '').replace(EXHIBIT_HEADER, '').replace(/^\s*(?:.{0,160}?\bExhibit\s+99\.\d+\s*)+/i, '').replace(/&middot;|·|•|●|▪/g, ' • ').replace(/\s+/g, ' ')
+  return repairSplitText(String(t || '')).replace(EXHIBIT_HEADER, '').replace(/^\s*(?:.{0,160}?\bExhibit\s+99\.\d+\s*)+/i, '').replace(/&middot;|·|•|●|▪/g, ' • ').replace(/\s+/g, ' ')
     // no split after an abbreviation ("U.S. Army", "Naveris, Inc., a Delaware …", "Zeta Inc. in the S&P 600")
     .split(/(?<=[.!?])(?<!\b(?:U\.S|U\.K|Inc|Corp|Co|Ltd|No|Nos|Mr|Ms|Mrs|Dr|St|Jr|Sr|vs|etc|approx|Tenn|Calif|Mass|N\.A|S\.A|N\.V|L\.P|p\.m|a\.m)\.)\s+(?=[A-Z"“(•$])|\s•\s/).map((s) => s.replace(/^[•.\s]+/, '').trim()).filter((s) => s.length >= 12);
 }
@@ -611,12 +621,75 @@ export function releaseTitle(text: string): string | null {
   return title.length >= 20 ? clip(title, 170) : null;
 }
 
+// ── zzz840: the release's STATED growth / prior figures beat a table-derived pair ──
+
+/** "Total net revenues rose 19.5% to $7.9 billion" / "revenue of $7.9 billion, up 19.5%" -> +19.5 (signed). Null when no growth % is written for revenue. */
+export function statedRevenueGrowth(text: string): number | null {
+  for (const s of sentencesOf(text)) {
+    if (/\b(?:outlook|guidance|expects?|expected|anticipat|forecast|adjusted|non-gaap|constant currency|organic|comparable|same[- ]store|segment)\b/i.test(s)) continue;
+    const gap = String.raw`(?:[^.%]|\.(?=\d)){0,70}?`;
+    const a = new RegExp(String.raw`\b(?:total |net |consolidated )*(?:revenues?|net sales|sales)\b${gap}\b(rose|increased|grew|climbed|jumped|up|increase of|growth of|decreased|declined|fell|dropped|down|decrease of|decline of)\s+(?:by\s+)?(?:approximately\s+)?(\d+(?:\.\d+)?)\s*%`, 'i').exec(s);
+    if (!a) continue;
+    const v = Number(a[2]);
+    if (!Number.isFinite(v)) continue;
+    return /^(?:decreased|declined|fell|dropped|down|decrease of|decline of)$/i.test(a[1]) ? -v : v;
+  }
+  return null;
+}
+
+const near = (a: number, b: number, tol = 0.02) => Math.abs(a - b) <= Math.abs(b) * tol;
+const growthOf = (cur: number | null | undefined, prev: number | null | undefined) => (cur != null && prev != null && prev > 0 ? r1(((cur / prev) - 1) * 100) : null);
+
+/** Cross-check the table / XBRL pair against the release's own sentences. The stated growth % and stated prior figure win;
+ *  an implausible or disagreeing computed pair is dropped ("conflicting / not established") - never shown. */
+export function reconcileEarnings<T extends { revenue: UsFigure | null; netIncome: UsFigure | null; eps: UsFigure | null }>(base: T, text: string): { base: T; revenueGrowthPct: number | null; comparison: 'computed' | 'stated' | 'conflicting' | undefined; note: string | null } {
+  let rev = base.revenue, ni = base.netIncome, eps = base.eps;
+  const rvS = revenueSentence(text), niS = netIncomeSentence(text), epS = epsSentence(text);
+  const stated = statedRevenueGrowth(text);
+  // 1) the stated prior-period figure from the sentence
+  if (rev && rev.cur != null && rvS && rvS.prevM != null && near(rvS.curM, rev.cur, 0.02) && (rev.prev == null || !near(rev.prev, rvS.prevM, 0.02))) rev = { cur: rev.cur, prev: rvS.prevM };
+  if (ni && ni.cur != null && niS && niS.prevM != null && near(Math.abs(niS.curM), Math.abs(ni.cur), 0.02) && (ni.prev == null || !near(ni.prev, niS.prevM, 0.02))) ni = { cur: ni.cur, prev: niS.prevM };
+  // 2) the stated EPS pair (both ends written) is used as written
+  if (epS && epS.prev != null && (!eps || eps.cur == null || Math.abs(eps.cur - epS.cur) > 0.005 || eps.prev == null || Math.abs(eps.prev - epS.prev) > 0.005)) eps = { cur: epS.cur, prev: epS.prev };
+  // 3) revenue: stated % vs computed
+  const computed = growthOf(rev?.cur, rev?.prev);
+  let comparison: 'computed' | 'stated' | 'conflicting' | undefined;
+  let growth: number | null = computed;
+  let note: string | null = null;
+  const tol = (v: number) => Math.max(2, Math.abs(v) * 0.15);
+  if (stated != null) {
+    if (computed != null && Math.abs(computed - stated) > tol(stated)) {
+      rev = rev ? { cur: rev.cur, prev: null } : rev;
+      comparison = 'conflicting';
+      note = `Revenue ${pctTxt(stated)} as stated in the release; the year-ago figure read from the tables (${pctTxt(computed)} implied) does not match it - comparison conflicting / not established, pair not shown.`;
+    } else comparison = computed != null ? 'computed' : 'stated';
+    growth = stated;
+  } else if (computed != null && (computed > 1000 || computed < -95)) {
+    rev = rev ? { cur: rev.cur, prev: null } : rev;
+    comparison = 'conflicting';
+    growth = null;
+    note = `Revenue year-ago figure read from the tables implies ${pctTxt(computed)} - implausible, so the comparison is conflicting / not established and is not shown.`;
+  } else if (computed != null) comparison = 'computed';
+  // 4) net income: a prior figure that fights the revenue comparison or the EPS pair is a mis-read column - drop it
+  if (ni && ni.cur != null && ni.prev != null && !(niS && niS.prevM != null && near(niS.prevM, ni.prev, 0.02))) {
+    const nig = growthOf(ni.cur, ni.prev);
+    const epg = eps && eps.cur != null && eps.prev != null && eps.cur > 0 && eps.prev > 0 ? growthOf(eps.cur, eps.prev) : null;
+    const epsMismatch = nig != null && epg != null && nig > 900 && nig > Math.abs(epg) * 4 + 100;
+    if (comparison === 'conflicting' || epsMismatch || (nig != null && nig > 5000)) {
+      ni = { cur: ni.cur, prev: null };
+      note = `${note ? `${note} ` : ''}Net income year-ago figure not established (it does not fit the stated ${epg != null ? `EPS change of ${pctTxt(epg)}` : 'growth'}), so no net-income comparison is shown.`;
+    }
+  }
+  return { base: { ...base, revenue: rev, netIncome: ni, eps }, revenueGrowthPct: growth, comparison, note };
+}
+
 const growth = (f: UsFigure | null) => (f && f.cur != null && f.prev != null && f.prev > 0 ? r1(((f.cur / f.prev) - 1) * 100) : null);
 
 /** "up 80.7%" / "loss narrowed from $X to $Y" / "swung to a profit" — never a growth % on a loss. */
 export function profitWords(f: UsFigure | null): { words: string | null; pct: number | null } {
   if (!f || f.cur == null || f.prev == null) return { words: null, pct: null };
   const { cur, prev } = f;
+  if (cur >= 0 && prev > 0 && cur / prev >= 100) return { words: null, pct: null };   // zzz840: an implausible base is not a "small base" - no comparison
   if (cur >= 0 && prev > 0) { const p = r1(((cur / prev) - 1) * 100); return { words: p >= 900 ? `up about ${r1(cur / prev)}× (from a small base)` : `${p >= 0 ? 'up' : 'down'} ${Math.abs(p).toFixed(1)}%`, pct: p }; }
   if (cur >= 0 && prev <= 0) return { words: prev === 0 ? 'from zero' : 'swung to a profit from a loss', pct: null };
   if (cur < 0 && prev > 0) return { words: 'swung to a loss from a profit', pct: null };
@@ -658,7 +731,9 @@ export function readUsEarnings(o: { text: string; html?: string | null; xbrl?: S
   }
   const ol = outlookOf(o.text);
   if (!e && !ol.lines.length) return null;
-  const base = e || { period, basis: 'release text' as const, revenue: null, netIncome: null, eps: null, adjEps: null, adjEbitda: null, opIncome: null };
+  const base0 = e || { period, basis: 'release text' as const, revenue: null, netIncome: null, eps: null, adjEps: null, adjEbitda: null, opIncome: null };
+  const rc = reconcileEarnings(base0, o.text);
+  const base = rc.base;
   const pw = profitWords(base.netIncome);
   const margin = (() => {
     const rv = base.revenue;
@@ -693,7 +768,7 @@ export function readUsEarnings(o: { text: string; html?: string | null; xbrl?: S
       else if (ol.action === 'REAFFIRMED') gcheck = { ...gcheck, action: 'maintained', display: gcheck.display.replace(/ · (?:new outlook.*|prior guidance.*)$/, '') + ' · guidance maintained' };
     }
   }
-  return { ...base, revenueGrowthPct: growth(base.revenue), profitChange: pw.words, profitGrowthPct: pw.pct, margin, outlook, outlookLabel, guidance: ol.action, guidanceNote: ol.note, guidanceCheck: gcheck };
+  return { ...base, revenueGrowthPct: rc.revenueGrowthPct, comparison: rc.comparison, comparisonNote: rc.note, profitChange: pw.words, profitGrowthPct: pw.pct, margin, outlook, outlookLabel, guidance: ol.action, guidanceNote: ol.note, guidanceCheck: gcheck };
 }
 
 /** India's earnings rule on the US figures. */
@@ -712,7 +787,7 @@ export function earningsMaterial(e: UsEarnings): { label: UsMatLabel; how: strin
 
 function earningsLine(e: UsEarnings): string {
   const bits: string[] = [];
-  if (e.revenue?.cur != null) bits.push(`Revenue ${usdM(e.revenue.cur)}${e.revenue.prev != null ? ` vs ${usdM(e.revenue.prev)} a year ago (${pctTxt(e.revenueGrowthPct!)})` : ' (year-ago figure not stated)'}`);
+  if (e.revenue?.cur != null) bits.push(`Revenue ${usdM(e.revenue.cur)}${e.revenue.prev != null && e.revenueGrowthPct != null ? ` vs ${usdM(e.revenue.prev)} a year ago (${pctTxt(e.revenueGrowthPct)})` : e.comparison === 'conflicting' ? `${e.revenueGrowthPct != null ? ` (${pctTxt(e.revenueGrowthPct)} as stated in the release; year-ago comparison conflicting / not established)` : ' (year-ago comparison conflicting / not established)'}` : e.revenueGrowthPct != null ? ` (${pctTxt(e.revenueGrowthPct)} as stated in the release)` : ' (year-ago figure not stated)'}`);
   if (e.netIncome?.cur != null) {
     const loss = e.netIncome.cur < 0;
     bits.push(`${loss ? 'Net loss' : 'Net income'} ${usdM(Math.abs(e.netIncome.cur))}${e.netIncome.prev != null ? ` vs ${e.netIncome.prev < 0 ? 'a loss of ' : ''}${usdM(Math.abs(e.netIncome.prev))}${e.profitChange ? ` (${e.profitChange})` : ''}` : ''}`);
@@ -862,8 +937,52 @@ export function readUsOrder(text: string): UsOrder | null {
 
 // ── other US event types ──────────────────────────────────────────────────
 
-export interface UsOtherRead { kind: UsCardKind; word: string; valueM: number | null; line: string; quote: string | null; polarity: UsCard['polarity']; flags: string[]; clinical?: ClinicalFacts | null }
+export interface UsOtherRead { kind: UsCardKind; word: string; valueM: number | null; line: string; quote: string | null; polarity: UsCard['polarity']; flags: string[]; clinical?: ClinicalFacts | null; stage?: UsCard['stage']; stageText?: string | null }
+
+/** zzz840: a 6-K / 8-K in which no event could be classified - on file, not an event. */
+export const FILING_ONLY_WORD = 'Filing on file - no classifiable event; read the filing';
+export const CONVERTIBLE_CAUTION = 'Convertible notes: dilution only if converted; check conversion price, interest cost and use of proceeds';
+const MONTH_DAY = /\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sept?(?:ember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.? \d{1,2}(?:,? \d{4})?/;
+/** zzz840: an offering that has priced / signed but whose closing is still "expected" is SIGNED (planned closing), not EXECUTED. Pure. */
+export function offeringClosing(ss: string[]): { stage: UsCard['stage']; stageText: string | null } | null {
+  if (ss.some((s) => /\b(?:closed|completed|consummated)\b[^.;]{0,40}\b(?:offering|placement|sale|issuance)\b|\b(?:offering|placement)\b[^.;]{0,30}\b(?:has closed|was completed|closed on|completed on)\b/i.test(s))) return { stage: 'EXECUTED', stageText: null };
+  const exp = ss.find((s) => /\b(?:closing|close|settlement|delivery)\b[^.;]{0,50}\b(?:expected|anticipated|scheduled)\b|\b(?:expected|anticipated|scheduled) to (?:close|settle)\b/i.test(s));
+  if (!exp) return null;
+  const d = MONTH_DAY.exec(exp);
+  return { stage: 'SIGNED', stageText: `signed / priced - closing expected${d ? ` ${d[0]}` : ''}; not closed yet` };
+}
+/** zzz840: the guidance change in the release's own numbers: new range, prior range (when written), the stated raise at the midpoint.
+ *  A midpoint move is computed only when BOTH ranges are written in the same unit; otherwise only what is written is shown. */
+function guidanceLine(ss: string[], gd: string, up: boolean): string {
+  const base = clip(gd, 240);
+  const nr = parseRangeM(gd);
+  const near2 = [gd, ...ss.slice(Math.max(0, ss.indexOf(gd) - 1), ss.indexOf(gd) + 3)].join(' ');
+  const pm = /\b(?:from|previously|prior (?:guidance|outlook|range)(?: of| was)?|compared (?:to|with)|versus|vs\.?)\s+(?:the |a )?(?:prior |previous )?(?:range of |guidance of )?((?:US)?\$\s?\d[\d,]*(?:\.\d+)?(?:\s*(?:billion|bn|million|mm|mn))?\s*(?:to|-|–|and)\s*(?:US)?\$?\s?\d[\d,]*(?:\.\d+)?\s*(?:billion|bn|million|mm|mn))/i.exec(near2);
+  const pr = pm ? parseRangeM(pm[1]) : null;
+  const stated = guidanceRaiseAmountM(near2);
+  const bits: string[] = [];
+  if (nr) bits.push(`${up ? 'new' : 'lowered'} range ${nr.text}`);
+  if (pr) bits.push(`prior range ${pr.text}`);
+  if (stated) bits.push(`${up ? '+' : '-'}${usdM(stated.m)} at the midpoint (as stated)`);
+  else if (nr && pr) { const d = nr.midM - pr.midM; bits.push(`midpoint ${usdM(pr.midM)} -> ${usdM(nr.midM)} (${d >= 0 ? '+' : '-'}${usdM(Math.abs(d))}, from the two stated ranges)`); }
+  return bits.length ? clip(`${up ? 'Guidance raised' : 'Guidance changed'}: ${bits.join(' · ')} — “${gd}”`, 320) : base;
+}
+
+/** zzz840: primary-catalyst selection. Every reader that fires is scored (current-period, quantified, guidance / results above a
+ *  background mention) and the highest score is the headline event; ties keep the old reading order. Deterministic, no AI. */
 export function readUsOther(text: string, o: { form?: string | null; items?: string[] } = {}): UsOtherRead | null {
+  const ORDER: UsCardKind[] = ['fda', 'clinical', 'offering', 'buyback', 'guidance', 'index'];
+  const ID: Record<string, (r: UsOtherRead) => string> = { fda: (r) => (/designation/i.test(r.word) ? 'designation' : /filing accepted/i.test(r.word) ? 'fda_submission' : 'fda_approval'), clinical: () => 'trial_results', offering: () => 'equity_offering', buyback: () => 'buyback', guidance: (r) => (/raised/i.test(r.word) ? 'guidance_raise' : 'guidance_cut'), index: () => 'index_inclusion' };
+  const cands: Array<{ r: UsOtherRead; sc: number }> = [];
+  ORDER.forEach((k, i) => {
+    const r = readUsOtherOne(text, o, k);
+    if (r) cands.push({ r, sc: primaryCatalystScore({ id: ID[k](r), sentence: r.quote || r.line, figures: r.valueM != null ? ['$'] : [] }) - i * 0.5 });
+  });
+  if (!cands.length) return null;
+  return cands.sort((a, b) => b.sc - a.sc)[0].r;
+}
+
+function readUsOtherOne(text: string, o: { form?: string | null; items?: string[] }, only: UsCardKind): UsOtherRead | null {
   const ss = sentencesOf(text).slice(0, 220).filter((s) => !/\b(?:forward-looking|safe harbor|risk factors|could cause actual)\b/i.test(s));
   // what the release LEADS with — a designation or a trial named in the
   // "About the company" background is not this filing's event (ARCT)
@@ -873,14 +992,14 @@ export function readUsOther(text: string, o: { form?: string | null; items?: str
   const form = String(o.form || '').toUpperCase();
   const agency = (s: string) => (/\b(?:FDA|Food and Drug Administration)\b/.test(s) ? 'FDA' : /\b(?:EMA|European Medicines Agency)\b/.test(s) ? 'EMA' : /\bMHRA\b/.test(s) ? 'MHRA' : 'Regulator');
   // FDA / regulator
-  const fda = findIn(lead, /\b(?:FDA|Food and Drug Administration|EMA|European Medicines Agency)\b[^.]{0,120}\b(?:approv(?:ed|al)|clear(?:ed|ance)|grant(?:ed|s)?|accept(?:ed|s)?|designation)\b|\b(?:approval|clearance) (?:from|by) the (?:U\.S\. )?(?:FDA|Food and Drug Administration)\b|\bcomplete response letter\b|\bPDUFA\b/i);
-  if (fda) {
+  const fda = lead.find((s) => !isBackgroundApproval(s) && /\b(?:FDA|Food and Drug Administration|EMA|European Medicines Agency)\b[^.]{0,120}\b(?:approv(?:ed|al)|clear(?:ed|ance)|grant(?:ed|s)?|accept(?:ed|s)?|designation)\b|\b(?:approval|clearance) (?:from|by) the (?:U\.S\. )?(?:FDA|Food and Drug Administration)\b|\bcomplete response letter\b|\bPDUFA\b/i.test(s));
+  if (fda && only === 'fda') {
     const neg = /\bcomplete response letter\b|\bCRL\b|\brefus(?:e|al) to file\b/i.test(fda);
     const ag = agency(fda);
     const word = neg ? `${ag} setback (complete response letter)` : /designation/i.test(fda) ? `${ag} designation` : /PDUFA|accept/i.test(fda) ? `${ag} filing accepted` : `${ag} approval / clearance`;
     return { kind: 'fda', word, valueM: null, line: clip(fda, 240), quote: fda, polarity: neg ? 'negative' : 'positive', flags: [] };
   }
-  const trial = findIn(lead, /\b(?:met|achieved|did not meet|failed to meet|missed)\b[^.]{0,40}\bprimary endpoint\b|\btopline (?:results|data)\b|\bstatistically significant\b|\bp\s?[<=]\s?0?\.\d+/i);
+  const trial = only !== 'clinical' ? null : findIn(lead, /\b(?:met|achieved|did not meet|failed to meet|missed)\b[^.]{0,40}\bprimary endpoint\b|\btopline (?:results|data)\b|\bstatistically significant\b|\bp\s?[<=]\s?0?\.\d+/i);
   if (trial) {
     const neg = /\bdid not meet|failed to meet|missed|not statistically significant\b/i.test(trial);
     const p = /\bp\s?([<=])\s?(0?\.\d+)/i.exec(trial);
@@ -891,7 +1010,15 @@ export function readUsOther(text: string, o: { form?: string | null; items?: str
   // offering — the event sentence, then the amount wherever the filing states it
   const off = find(/\b(?:pricing of|priced|announces?|entered into|closing of|closed)\b[^.]{0,80}\b(?:underwritten |registered direct |public |private |secondary )?(?:offering|placement|PIPE)\b/i)
     || (/^(424B[1-8]|S-1|F-1)$/.test(form) ? find(/\boffering\b[^.]{0,120}\$\s?\d/i) : null);
-  if (off && !/\bnotes due|senior notes|convertible notes\b/i.test(off)) {
+  // zzz840: convertible notes (also in a private placement) are debt with potential future dilution - never "new shares"
+  const cvNote = only !== 'offering' ? null : ss.find((s) => /\bconvertible (?:senior |subordinated |secured |unsecured )*(?:notes?|debentures?|bonds?)\b/i.test(s) && /\b(?:offering|offer|sale of|sell|priced|pricing|issu\w+|placement|purchase agreement|purchasers?)\b/i.test(s) && !/\b(?:redeem\w*|redemption|repurchase[sd]? of|exchange[sd]? (?:of|for)|conversion of)\b/i.test(s)) || null;
+  if (only === 'offering' && cvNote) {
+    const am = new RegExp(`${MONEY}\\s+(?:aggregate\\s+)?principal amount`, 'i').exec(cvNote) || new RegExp(MONEY, 'i').exec(cvNote);
+    const pp = ss.some((s) => /\bprivate placement\b|\bRule 144A\b|\bSection 4\(a\)\(2\)\b|\bqualified institutional buyers\b/i.test(s));
+    const cl = offeringClosing(ss);
+    return { kind: 'offering', word: pp ? 'Convertible notes offering (private placement)' : 'Convertible notes offering', valueM: am ? moneyToM(am[1], am[2]) : null, line: clip(cvNote, 240), quote: cvNote, polarity: 'neutral', flags: [CONVERTIBLE_CAUTION], ...(cl ? { stage: cl.stage, stageText: cl.stageText } : {}) };
+  }
+  if (only === 'offering' && off && !/\bnotes due|senior notes|convertible\b|\bprincipal amount\b/i.test(off)) {
     let v: number | null = null;
     for (const s of ss) {
       const gp = new RegExp(String.raw`\b(?:aggregate )?(?:gross proceeds|aggregate (?:gross )?proceeds)\b[^$.]{0,40}?(?:of|to be|are expected to be|were|was|approximately)\s+(?:approximately\s+)?${MONEY}`, 'i').exec(s)
@@ -904,18 +1031,23 @@ export function readUsOther(text: string, o: { form?: string | null; items?: str
         if (shp) { const n = Number(shp[1].replace(/,/g, '')), px = Number(shp[2]); if (n > 0 && px > 0) { v = r2((n * px) / 1e6); break; } }
       }
     }
+    const cl0 = offeringClosing(ss);
     return { kind: 'offering', word: /private placement|PIPE/i.test(off) ? 'Private placement (new shares)' : 'Share offering (new shares)', valueM: v, line: clip(off, 240), quote: off, polarity: 'negative',
-      flags: ['A rise on the day of a share sale is unusual — check the price against the market and who bought (a strategic buyer can explain it).'] };
+      flags: ['A rise on the day of a share sale is unusual — check the price against the market and who bought (a strategic buyer can explain it).'], ...(cl0 ? { stage: cl0.stage, stageText: cl0.stageText } : {}) };
   }
-  const bb = find(/\b(?:share )?(?:repurchase|buyback|buy-back) (?:program|programme|authori[sz]ation|plan)\b[^.]{0,120}\$\s?\d|\bauthori[sz]ed (?:the )?(?:repurchase|buyback) of up to\b/i);
-  if (bb) {
+  // zzz840: "we did not repurchase any shares ... pursuant to our share repurchase program" is not a buyback
+  const bb = ss.find((s) => !NO_REPURCHASE.test(s) && /\b(?:share )?(?:repurchase|buyback|buy-back) (?:program|programme|authori[sz]ation|plan)\b[^.]{0,120}\$\s?\d|\bauthori[sz]ed (?:the )?(?:repurchase|buyback) of up to\b/i.test(s)) || null;
+  if (only === 'buyback' && bb) {
     const m = new RegExp(MONEY, 'i').exec(bb);
     return { kind: 'buyback', word: 'Share buyback', valueM: m ? moneyToM(m[1], m[2]) : null, line: clip(bb, 240), quote: bb, polarity: 'positive', flags: [] };
   }
-  const gd = find(/\b(?:rais(?:es|ed)|increas(?:es|ed)|lower(?:s|ed)|cut(?:s)?|reduc(?:es|ed))\b[^.]{0,60}\b(?:guidance|outlook)\b/i);
-  if (gd && !/\bnot (?:updating|changing)\b/i.test(gd)) return { kind: 'guidance', word: /rais|increas/i.test(gd) ? 'Guidance raised' : 'Guidance cut', valueM: null, line: clip(gd, 240), quote: gd, polarity: /rais|increas/i.test(gd) ? 'positive' : 'negative', flags: [] };
+  const gd = ss.find((s) => /\b(?:rais(?:es|ed)|increas(?:es|ed)|lower(?:s|ed)|cut(?:s)?|reduc(?:es|ed))\b[^.]{0,60}\b(?:guidance|outlook)\b/i.test(s) && !/\b(?:did not|does not|do not|has not|have not|not|no)\s+(?:\w+\s+){0,2}(?:rais|increas|lower|cut|reduc)\w*/i.test(s)) || null;
+  if (only === 'guidance' && gd && !/\bnot (?:updating|changing)\b/i.test(gd)) {
+    const up = /rais|increas/i.test(gd);
+    return { kind: 'guidance', word: up ? 'Guidance raised' : 'Guidance cut', valueM: null, line: guidanceLine(ss, gd, up), quote: gd, polarity: up ? 'positive' : 'negative', flags: [] };
+  }
   const idx = find(/\b(?:added to|join(?:s|ing)?|inclusion in|included in|will replace)\b[\s\S]{0,60}?\b(?:S&P (?:SmallCap|MidCap|500)|S&P \d{3}|Russell (?:1000|2000|3000)|Nasdaq-100)\b/i);
-  if (idx) return { kind: 'index', word: 'Index inclusion', valueM: null, line: clip(idx, 240), quote: idx, polarity: 'positive', flags: ['Index demand is a one-time flow of buying, not a change in the business.'] };
+  if (only === 'index' && idx) return { kind: 'index', word: 'Index inclusion', valueM: null, line: clip(idx, 240), quote: idx, polarity: 'positive', flags: ['Index demand is a one-time flow of buying, not a change in the business.'] };
   return null;
 }
 
@@ -927,12 +1059,15 @@ const OPINION = /\b(?:(?:acquires?|buys?|sells?|trims?|boosts?|lowers?|raises?|c
 export function pressKindOf(title: string): { kind: UsCardKind; word: string; polarity: UsCard['polarity'] } {
   const t = String(title || '');
   const none = { kind: 'other' as UsCardKind, word: 'Press coverage only', polarity: 'neutral' as const };
+  // zzz840: a law-firm notice is not a company filing and never a positive catalyst
+  if (classifyUsEvents(t, { headline: true, max: 4 }).some((h) => h.id === 'law_firm_solicitation')) return { kind: 'solicitation', word: 'Investor-litigation solicitation (law-firm notice; not a company filing)', polarity: 'neutral' };
   if (/\b(?:upgrade[sd]?|downgrade[sd]?|price target|initiat(?:es|ed) coverage|reinstat(?:es|ed)|reiterat(?:es|ed)|maintains? (?:\w+ )?rating|outperform|overweight|(?:buy|sell|hold) rating)\b/i.test(t)) return { kind: 'analyst', word: /downgrad/i.test(t) ? 'Analyst downgrade (press only)' : 'Analyst action (press only)', polarity: /downgrad/i.test(t) ? 'negative' : 'positive' };
   if (/\b(?:short (?:seller|report)|Hindenburg|Muddy Waters|Spruce Point|Culper|Fuzzy Panda|Grizzly)\b/i.test(t)) return { kind: 'short_report', word: 'Short-seller report (press only)', polarity: 'negative' };
+  // zzz840: "Stock Jumps As S&P SmallCap 600 Inclusion" states the index add; it is not price commentary
+  if (/\b(?:S&P (?:SmallCap|MidCap|500)|Russell (?:1000|2000|3000)|Nasdaq-100)\b/i.test(t) && /\b(?:join|add|inclusion|replace)/i.test(t)) return { kind: 'index', word: 'Index inclusion (press only)', polarity: 'positive' };
   if (isPriceCommentary(t)) return { kind: 'price_commentary', word: 'Price commentary (not evidence)', polarity: 'neutral' };
   if (OPINION.test(t)) return none;
   if (isLitigationText(t) && /\b(?:jury|verdict|damages|judg(?:e)?ment)\b/i.test(t)) return { kind: 'litigation', word: 'Litigation - jury verdict / damages (press only)', polarity: 'neutral' };
-  if (/\b(?:S&P (?:SmallCap|MidCap|500)|Russell (?:1000|2000|3000)|Nasdaq-100)\b/i.test(t) && /\b(?:join|add|inclusion|replace)/i.test(t)) return { kind: 'index', word: 'Index inclusion (press only)', polarity: 'positive' };
   if (/\b(?:activist|13D)\b|\b(?:takes?|builds?|discloses?) (?:a )?(?:\d+(?:\.\d+)?% )?stake\b/i.test(t)) return { kind: 'activist', word: 'Stake / activist (press only)', polarity: 'positive' };
   if (/\b(?:FDA|EMA)\b|\b(?:approval|clearance|advisory (?:committee|panel)|advisors back)\b/i.test(t)) return { kind: 'fda', word: 'FDA / approval (press only)', polarity: 'positive' };
   if (/\b(?:acquires?|acquisition|merger|to buy [A-Z]|takeover|buyout|deal (?:for|with)|extends? .* deal)\b/i.test(t)) return { kind: 'acquisition', word: 'Deal (press only)', polarity: 'positive' };
@@ -990,19 +1125,19 @@ function itemBodyOf(t: string): string {
 }
 
 /** Catalysts in the documents of one SEC filing (SEC-sourced, lead first). */
-export function catalystsFromDocs(docs: Array<{ role: string; text: string; url?: string | null }>, meta: { form: string; date: string | null; url: string | null }): UsCatalyst[] {
+export function catalystsFromDocs(docs: Array<{ role: string; text: string; url?: string | null }>, meta: { form: string; date: string | null; url: string | null; issuer?: string | null }): UsCatalyst[] {
   const out: UsCatalyst[] = [];
   const seen = new Set<string>();
   const ds = docs.filter((d) => d && d.text && d.role in CAT_ROLE_ORDER).sort((a, b) => CAT_ROLE_ORDER[a.role] - CAT_ROLE_ORDER[b.role]);
   for (const d of ds) {
     const text = d.role === 'primary' || d.role === 'original' ? itemBodyOf(d.text) : d.text;
-    for (const h of classifyUsEvents(text.slice(0, 80_000), { max: 12 })) {
+    for (const h of classifyUsEvents(text.slice(0, 80_000), { max: 12, issuer: meta.issuer })) {
       if (seen.has(h.id)) continue;
       seen.add(h.id);
       out.push({ ...h, source: 'SEC', sourceLabel: `SEC ${meta.form} · ${ROLE_WORD[d.role] || d.role}`, date: meta.date ? meta.date.slice(0, 10) : null, url: d.url || meta.url });
     }
   }
-  return out.slice(0, 12);
+  return reconcileConvertibleHits(out).slice(0, 12);   // zzz840: notes in a private placement are not also a share sale
 }
 
 /** Catalysts named in press headlines (PRESS-sourced — never verified here).
@@ -1058,6 +1193,9 @@ export const US_EVENT_TYPE_OF: Record<string, string> = {
   reverse_split: 'Governance', warrant_exercise: 'Fundraising',
   index_inclusion: 'Rating action', uplisting: 'Governance', listing_deficiency: 'Governance', activist_stake: 'Strategic investment',
   insider_buying: 'Promoter buying', analyst_action: 'Rating action', short_report: 'Litigation / regulatory',
+  // zzz840
+  tax_ruling: 'Merger', ownership_split: 'Merger', dividend_counterparty: 'Capital allocation', priority_review_voucher: 'Regulatory approval', collaboration_expanded: 'Partnership',
+  convertible_private_placement: 'Fundraising', law_firm_solicitation: 'No identified catalyst', sector_sympathy: 'No identified catalyst',
 };
 
 const WHY_BY_CATEGORY: Record<UsEventCategory, string> = {
@@ -1074,13 +1212,17 @@ const WHY_BY_CATEGORY: Record<UsEventCategory, string> = {
 const SIZE_BAND: Record<string, keyof typeof US_BANDS> = {
   acquisition: 'acquisition', merger_agreement: 'acquisition', takeover_bid: 'acquisition', divestiture: 'acquisition', strategic_investment: 'acquisition',
   major_contract: 'order', gov_contract: 'order', supply_agreement: 'order', licensing: 'order',
-  capacity_expansion: 'generic', new_facility: 'generic', buyback: 'buyback', equity_offering: 'offering', convertible: 'offering',
+  capacity_expansion: 'generic', new_facility: 'generic', dividend: 'generic', buyback: 'buyback', equity_offering: 'offering', convertible: 'offering',
 };
 
 /** The one $ amount a sentence states (null when none, or more than one — which is the event's value would be a guess). */
 function singleAmountM(sentence: string): { m: number; text: string } | null {
-  const xs = Array.from(String(sentence || '').matchAll(new RegExp(MONEY, 'gi'))).map((m) => ({ m: moneyToM(m[1], m[2]), text: m[0] })).filter((x) => x.m != null) as Array<{ m: number; text: string }>;
-  const uniq = xs.filter((x, i) => xs.findIndex((y) => y.m === x.m) === i);
+  const sent = String(sentence || '');
+  // zzz840: a range stated in one unit ("$410 to $420 million") is sized at its midpoint; mixed units are not a single amount
+  const rg = parseRangeM(sent);
+  if (rg) return parseAmountsM(sent.replace(rg.text, ' ')).length ? null : { m: rg.midM, text: `midpoint of ${rg.text}` };
+  const xs = parseAmountsM(sent).map((x) => ({ m: x.m, text: x.text }));
+  const uniq = xs.filter((x, i) => xs.findIndex((y) => Math.abs(y.m - x.m) < 1e-9) === i);
   return uniq.length === 1 ? uniq[0] : null;
 }
 
@@ -1096,20 +1238,23 @@ function taxonomyCard(top: UsCatalyst, cats: UsCatalyst[], ctx: { mcap: number |
   const label: UsMatLabel = r ? (hedged && r.label !== 'UNKNOWN' ? 'UNKNOWN' : r.label) : 'UNKNOWN';
   const kind: UsCardKind = /^(equity_offering|convertible|warrant_exercise)$/.test(top.id) ? 'offering' : 'catalyst';
   const others = cats.filter((c) => c.id !== top.id && c.source === 'SEC').slice(0, 3);
+  const conv = /^convertible/.test(top.id);
+  const closing = kind === 'offering' ? offeringClosing([top.sentence]) : null;
   const stated = top.figures.length ? ` · stated: ${top.figures.join(', ')}` : '';
   const sized = r?.ratio ? ` · ${r.ratio.text}${hedged ? ' (a ceiling — scale only)' : ''}` : '';
   return {
     v: US_CARD_VERSION, kind, kindWord: catWord(top), eventType: US_EVENT_TYPE_OF[top.id] || 'No identified catalyst',
-    stage: top.planned ? 'PROPOSED' : /\b(?:completed|closed|consummated|commenced|began|opened|launched|received|was awarded|has been awarded|approved)\b/i.test(top.sentence) ? 'EXECUTED' : 'UNKNOWN', stageText: top.planned ? 'planned / expected — not done yet' : null,
+    stage: closing ? closing.stage : top.stage ? top.stage : top.planned ? 'PROPOSED' : /\b(?:completed|closed|consummated|commenced|began|opened|launched|received|was awarded|has been awarded|approved)\b/i.test(top.sentence) ? 'EXECUTED' : 'UNKNOWN',
+    stageText: closing ? closing.stageText : top.stage === 'PROPOSED' ? 'filed / proposed — not approved or completed yet' : top.planned ? 'planned / expected — not done yet' : null,
     headline: clip(ctx.title || `${top.label}: ${top.sentence}`, 170),
     whatChanged: `${catWord(top)} — “${clip(top.sentence, 220)}”${stated}${sized}`,
     extra: others.length ? [`Also in the filing: ${others.map((c) => c.label.toLowerCase()).join(' · ')}`] : [],
     material: r ? { label, how: hedged ? `${r.how} The figure is a ceiling ("up to") — scale only, not a committed amount.` : r.how, ratios: r.ratio ? [r.ratio] : [] }
       : { label: 'UNKNOWN', how: top.figures.length ? `Figures are stated in the sentence (${top.figures.join(', ')}), but none is a single event value that can be sized against market cap.` : 'No amount is stated in the filing, so it cannot be sized against the company.', ratios: [] },
-    polarity: kind === 'offering' ? 'negative' : POLARITY_OF(top.direction), source: ctx.source,
-    whyResearch: WHY_BY_CATEGORY[top.category],
+    polarity: conv ? 'neutral' : kind === 'offering' ? 'negative' : POLARITY_OF(top.direction), source: ctx.source,
+    whyResearch: conv ? 'Convertible notes are debt with potential future dilution — check the use of proceeds, the conversion price (dilution only if converted) and the interest cost.' : WHY_BY_CATEGORY[top.category],
     unknowns: [...(amt ? [] : ['Amount: not stated in the filing']), 'Revenue / profit effect: not stated in the filing'],
-    flags: kind === 'offering' ? ['A rise on the day of a share sale is unusual — check the price against the market and who bought (a strategic buyer can explain it).'] : [],
+    flags: conv ? [CONVERTIBLE_CAUTION] : kind === 'offering' ? ['A rise on the day of a share sale is unusual — check the price against the market and who bought (a strategic buyer can explain it).'] : [],
     quantified: !!(r?.ratio && !hedged), quote: top.sentence, earnings: null, deal: null, catalysts: cats,
   };
 }
@@ -1197,15 +1342,17 @@ function finalizeUsCard(card: UsCard, inp: UsCardInput & { moveDate?: string | n
   const causal = moveDate ? causalWindow({ itemDate: c.source.date, moveDate, official: tier === 'SEC' }) : undefined;
   // 7. zzz836: direction / subtype / research question / timing all come from the HEADLINE event
   const hl = classifyUsEvents(quoteText, { max: 1 })[0] || null;
-  const typeKey = hl?.id || (det.type !== 'other' ? det.type : c.kind);
+  const filingOnly = c.kind === 'other' && c.source.tier === 'SEC' && /^Filing on file/i.test(c.kindWord);   // zzz840
+  const typeKey = filingOnly ? 'filing_only' : (hl?.id || (det.type !== 'other' ? det.type : c.kind));
   const econ = directionOf(typeKey, quoteText, hl?.direction || c.polarity);
-  const sub = subtypeOf(typeKey, quoteText);
+  const sub = subtypeOf(typeKey, quoteText, 'US');
   const ageAtMove = moveDate && c.source.date ? exchangeAgeDays(c.source.date, new Date(`${moveDate}T12:00:00Z`), 'US') : null;
   const pc = c.kind === 'price_commentary' || c.kind === 'analyst';
+  const noDir = pc || c.kind === 'solicitation';
   const ctxTag = c.kind === 'earnings' ? contextTag(ageAtMove) : { context: false, label: null };
   return {
     ...c, catalysts, canonicalType: declared === 'other' ? det.type : declared, validationErrors: errs,
-    direction: c.kind === 'price_commentary' ? 'NEUTRAL' : econ, directionNote: directionNote(typeKey, quoteText), subtype: sub, researchQuestion: researchQuestionFor(sub) || undefined,
+    direction: noDir ? 'NEUTRAL' : filingOnly ? 'UNKNOWN' : econ, directionNote: directionNote(typeKey, quoteText), subtype: sub, researchQuestion: researchQuestionFor(sub) || undefined,
     headlineTiming: { date: c.source.date ?? null, ageDays: ageAtMove, ageDaysAtMove: ageAtMove, source: tier === 'SEC' ? 'SEC' : tier === 'PRESS' ? 'PRESS' : 'NONE' },
     ...(pc ? { priceCommentary: true } : {}), ...(ctxTag.context ? { contextLabel: ctxTag.label } : {}),
     documentVerification: v.documentVerification, catalystConfirmation: v.catalystConfirmation, catalystConfirmationLabel: CATALYST_CONFIRMATION_LABEL[v.catalystConfirmation],
@@ -1273,7 +1420,7 @@ function buildUsCardCore(inp: UsCardInput): UsCard | null {
     const allDocs = [...inp.docs, ...(inp.original?.docs || []).map((d) => ({ ...d, role: d.role === 'primary' ? 'original' : d.role }))];
     const allText = allDocs.map((d) => d.text).join(' \n ');
     const date = f.date ? exchangeDay(f.date, 'US') || f.date.slice(0, 10) : null;   // zzz835: the New York calendar day of the filing
-    const cats = catalystsFromDocs(allDocs, { form, date, url: f.url });   // zzz801
+    const cats = catalystsFromDocs(allDocs, { form, date, url: f.url, issuer: inp.company });   // zzz801
     const baseSource = (doc: string | null, url?: string | null): UsCardSource => ({ tier: 'SEC', label: secLabel(form, date, doc), form, date, url: url || release?.url || f.url, doc });
     const earningsForm = items.has('2.02') || /^(10-Q|10-K|20-F|40-F)(\/A)?$/.test(form) || (form === '6-K' && /\b(?:financial results|results for the|reports? (?:first|second|third|fourth|q[1-4])|quarter(?:ly)? results|half[- ]year results)\b/i.test(release?.text.slice(0, 3000) || ''));
     const dealForm = items.has('2.01') || items.has('1.01') || /^(425|S-4|S-4\/A|F-4|DEFM14A|PREM14A|SC TO-T|SC 14D9)$/.test(form) || (/^(6-K|8-K|8-K\/A)$/.test(form) && /\b(?:acquisition of|to acquire|acquires|merger|scheme of arrangement|schemes of arrangement|business combination|scheme implementation)\b/i.test(allText.slice(0, 12000)));
@@ -1289,7 +1436,7 @@ function buildUsCardCore(inp: UsCardInput): UsCard | null {
         extra.push(e.guidance === 'RAISED' ? `Guidance RAISED — “${e.guidanceNote}”` : e.guidance === 'CUT' ? `Guidance CUT — “${e.guidanceNote}”` : e.guidance === 'REAFFIRMED' ? `Guidance reaffirmed / unchanged — “${e.guidanceNote}”` : e.guidance === 'NEW' ? 'Guidance: new outlook — direction cannot be inferred (the release gives no earlier guidance to compare with).' : 'Guidance: not stated in the filing.');
         if (e.guidanceCheck) extra.push(`Guidance comparison: ${e.guidanceCheck.display}`);
         const unknowns: string[] = [];
-        if (!e.revenue?.prev) unknowns.push('Revenue a year ago: not stated in the filing');
+        if (!e.revenue?.prev) unknowns.push(e.comparison === 'conflicting' ? 'Revenue a year ago: conflicting / not established' : 'Revenue a year ago: not stated in the filing');
         if (!e.netIncome) unknowns.push('Net income: not stated in the release');
         if (!e.margin) unknowns.push('Margin: not stated in the filing');
         unknowns.push('Whether the change repeats next quarter: open');
@@ -1389,14 +1536,14 @@ function buildUsCardCore(inp: UsCardInput): UsCard | null {
       const why: Record<string, string> = {
         fda: other.polarity === 'negative' ? 'A regulatory setback — check what the FDA asked for and how long a re-filing takes.' : 'An approval opens a market — the revenue it books (price, patients, launch date) is not stated yet.',
         clinical: other.polarity === 'negative' ? 'The trial missed — check what is left in the pipeline and the cash runway.' : 'A trial read-out — what matters is the size of the effect, safety, and the path and time to approval.',
-        offering: 'New shares were sold — a rise on an offering is unusual; check the price vs the market, who bought and what the money is for.',
+        offering: /convertible/i.test(other.word) ? 'Convertible notes are debt with potential future dilution — check the use of proceeds, the conversion price (dilution only if converted) and the interest cost.' : 'New shares were sold — a rise on an offering is unusual; check the price vs the market, who bought and what the money is for.',
         buyback: 'A buyback returns cash — size vs market cap is shown; check whether it is actually executed and how it is funded.',
         guidance: other.polarity === 'negative' ? 'Guidance was lowered — check what changed and whether it is one-off.' : 'Guidance was raised — check the new range against the old one and what drives it.',
-        index: 'Index inclusion brings one-time buying from index funds — it does not change the business.',
+        index: 'Index inclusion brings index-fund demand, not an operating change — a one-time flow of buying that does not change the business.',
       };
       return {
         v: US_CARD_VERSION, kind: other.kind, kindWord: other.word, eventType: other.kind === 'fda' || other.kind === 'clinical' ? 'Regulatory approval' : other.kind === 'offering' ? 'Fundraising' : other.kind === 'buyback' ? 'Buyback' : other.kind === 'guidance' ? 'Guidance' : 'Rating action',
-        stage: other.kind === 'offering' || other.kind === 'fda' ? 'EXECUTED' : 'UNKNOWN', stageText: null,
+        stage: other.stage ?? (other.kind === 'offering' || other.kind === 'fda' ? 'EXECUTED' : 'UNKNOWN'), stageText: other.stageText ?? null,
         headline: clip(other.line, 160), whatChanged: wc, extra: other.clinical ? other.clinical.lines : [],
         material: other.kind === 'clinical' ? { label: 'UNKNOWN', how: 'A clinical read-out has no dollar amount. Its weight rests on endpoint quality, effect size, statistical evidence, safety, the regulatory path and the addressable market - each is shown below only when the cited filing states it.', ratios: [] } : r ? { label: r.label, how: r.how, ratios: r.ratio ? [r.ratio] : [] } : { label: 'UNKNOWN', how: other.kind === 'fda' ? 'A binary event — its size is the revenue the product can earn, which the filing does not state.' : 'No amount stated in the filing — it cannot be sized.', ratios: [] },
         polarity: other.polarity, source: baseSource(ROLE_WORD[release?.role || 'primary'] || null), whyResearch: why[other.kind] || 'Read the filing for the size of the event.',
@@ -1442,11 +1589,11 @@ function buildUsCardCore(inp: UsCardInput): UsCard | null {
       // "press release — no amount stated". A presentation / debt-only filing
       // keeps its routine reading (a deck restates the story); a CEO / CFO
       // change is an event, a board appointment is not.
-      const lead = cats.find((c) => c.id !== 'management_change') || cats.find((c) => c.id === 'management_change' && /\b(?:CEO|Chief Executive|CFO|Chief Financial|President)\b/.test(c.sentence)) || null;
+      const lead = pickPrimaryCatalyst(cats.filter((c) => c.id !== 'management_change')) || cats.find((c) => c.id === 'management_change' && /\b(?:CEO|Chief Executive|CFO|Chief Financial|President)\b/.test(c.sentence)) || null;
       if (lead && !debtOnly && (!deck || (lead.id === 'management_change' && !/\b(?:presentation|conference|webcast|fireside)\b/i.test(whatTxt)))) {
         return taxonomyCard(lead, cats, { mcap, title, source: baseSource(ROLE_WORD[allDocs.find((d) => d.url === lead.url)?.role || release?.role || 'primary'] || null, lead.url) });
       }
-      const kindWord = deck ? 'Routine update (presentation / appointment) — no new event' : debtOnly ? 'Debt financing / redemption — no new operating event' : clinical ? 'Clinical data presented (size not stated)' : f.items.includes('1.01') ? 'Material agreement signed (terms not sized)' : f.items.includes('8.01') ? 'Company announcement (8-K Item 8.01)' : f.items.includes('7.01') ? 'Press release (8-K Item 7.01)' : /^6-K/.test(form) ? 'Foreign-filer report (6-K)' : `${form} filing`;
+      const kindWord = deck ? 'Routine update (presentation / appointment) — no new event' : debtOnly ? 'Debt financing / redemption — no new operating event' : clinical ? 'Clinical data presented (size not stated)' : f.items.includes('1.01') ? 'Material agreement signed (terms not sized)' : /^(?:6-K|8-K)/.test(form) ? FILING_ONLY_WORD : `${form} filing`;
       return {
         v: US_CARD_VERSION, kind: 'other', kindWord, eventType: deck || debtOnly ? 'No identified catalyst' : f.items.includes('1.01') ? 'Contract' : 'No identified catalyst', stage: f.items.includes('1.01') && !debtOnly ? 'SIGNED' : 'UNKNOWN', stageText: null,
         headline: clip(what || kindWord, 170),
@@ -1454,7 +1601,7 @@ function buildUsCardCore(inp: UsCardInput): UsCard | null {
         extra: cats.length ? [`Mentioned in the filing: ${cats.slice(0, 4).map((c) => c.label.toLowerCase()).join(' · ')}`] : [what ? 'Catalyst scan: event found, low information - no material operating catalyst found in the filing text (about 60 event types checked).' : 'Catalyst scan: no catalyst found in the filing text (about 60 event types checked).'],
         material: { label: 'UNKNOWN', how: 'No amount is stated in the filing, so it cannot be sized against the company.', ratios: [] },
         polarity: 'neutral', source: baseSource(ROLE_WORD[release?.role || 'primary'] || null),
-        whyResearch: deck ? 'A presentation or appointment restates the story — read it for any new figure; it is not by itself an event.' : debtOnly ? 'Borrowing or repaying debt is financing, not an operating event — it does not explain a move by itself.' : clinical ? 'Clinical data were presented — what matters is the size of the effect, safety, and the path and time to approval; the filing does not size it.' : 'A filed event with no amount stated — read the filing for its terms (value, counterparty, timing) before judging it.',
+        whyResearch: kindWord === FILING_ONLY_WORD ? 'A filing is on file but no event in it could be classified (about 60 event types checked) — read the filing itself; it is not by itself a catalyst.' : deck ? 'A presentation or appointment restates the story — read it for any new figure; it is not by itself an event.' : debtOnly ? 'Borrowing or repaying debt is financing, not an operating event — it does not explain a move by itself.' : clinical ? 'Clinical data were presented — what matters is the size of the effect, safety, and the path and time to approval; the filing does not size it.' : 'A filed event with no amount stated — read the filing for its terms (value, counterparty, timing) before judging it.',
         unknowns: ['Amount: not stated in the filing'], flags: [], quantified: false, quote: itemLead, earnings: null, deal: null, catalysts: cats,
       };
     }
@@ -1484,7 +1631,7 @@ function buildUsCardCore(inp: UsCardInput): UsCard | null {
     };
   }
   if (!press.length) return null;
-  const RANK: Partial<Record<UsCardKind, number>> = { acquisition: 0, order: 0, fda: 0, clinical: 0, short_report: 0, facility: 1, index: 1, activist: 1, catalyst: 1, guidance: 1, offering: 1, buyback: 2, earnings: 2, analyst: 3 };
+  const RANK: Partial<Record<UsCardKind, number>> = { acquisition: 0, order: 0, fda: 0, clinical: 0, short_report: 0, facility: 1, index: 1, activist: 1, catalyst: 1, guidance: 1, offering: 1, buyback: 2, earnings: 2, analyst: 3, solicitation: 6 };
   const scored = press.map((p, i) => ({ p, i, k: pressKindOfX(p.title) })).sort((a, b) => ((RANK[a.k.kind] ?? 5) - (RANK[b.k.kind] ?? 5)) || (a.i - b.i));
   const top = scored[0];
   const mm = new RegExp(MONEY, 'i').exec(top.p.title) || /\$(\d+(?:\.\d+)?)\s?(m|bn|b)\b/i.exec(top.p.title);
@@ -1494,14 +1641,14 @@ function buildUsCardCore(inp: UsCardInput): UsCard | null {
   const wd = inp.windowDays ?? 21;
   return {
     v: US_CARD_VERSION, kind: top.k.kind, kindWord: top.k.word, eventType: top.k.tx && US_EVENT_TYPE_OF[top.k.tx.id] ? US_EVENT_TYPE_OF[top.k.tx.id] : top.k.kind === 'analyst' || top.k.kind === 'index' ? 'Rating action' : top.k.kind === 'acquisition' ? 'Acquisition' : top.k.kind === 'order' ? 'Order win' : top.k.kind === 'facility' ? 'Capacity expansion' : top.k.kind === 'fda' ? 'Regulatory approval' : top.k.kind === 'short_report' ? 'Litigation / regulatory' : top.k.kind === 'earnings' ? 'Earnings' : 'No identified catalyst',
-    stage: 'RUMOUR', stageText: null,
+    stage: top.k.tx?.stage ?? 'RUMOUR', stageText: top.k.tx?.stage === 'PROPOSED' ? 'filed / proposed (press) — not approved' : null,
     headline: clip(top.p.title, 160),
     whatChanged: `Press report: “${clip(top.p.title, 150)}”${top.p.source ? ` (${top.p.source}${top.p.date ? `, ${String(top.p.date).slice(0, 10)}` : ''})` : ''} — press only, no SEC filing found yet${scale}`,
     extra: [inp.secChecked ? `SEC EDGAR checked: no results, deal, contract, offering or 13D filing in the last ${wd} days${latest ? ` (${latest})` : ''}.` : 'SEC EDGAR could not be checked for this name.', ...scored.slice(1, 3).map((x) => `Also in the press: “${clip(x.p.title, 120)}”`)],
     material: { label: 'UNKNOWN', how: `Press only — no figure from an official filing, so it is not sized.${scale ? ' The scale shown uses the press figure and is not verified.' : ''}`, ratios: [] },
     polarity: top.k.polarity,
     source: { tier: 'PRESS', label: 'PRESS ONLY — no SEC filing found yet', form: null, date: top.p.date ? String(top.p.date).slice(0, 10) : null, url: top.p.url, doc: top.p.source },
-    whyResearch: `Press only — no SEC filing found yet. ${top.k.kind === 'analyst' ? 'An analyst view is an opinion, not a company event.' : top.k.kind === 'index' ? 'Index inclusion is a one-time flow of buying, not a change in the business.' : top.k.kind === 'short_report' ? 'A short-seller report is an allegation — look for the company\'s answer in a filing.' : 'Look for the company\'s own 8-K / press release before treating it as fact.'}`,
+    whyResearch: `Press only — no SEC filing found yet. ${top.k.kind === 'analyst' ? 'An analyst view is an opinion, not a company event.' : top.k.kind === 'index' ? 'Index inclusion is index-fund demand, not an operating change — a one-time flow of buying.' : top.k.kind === 'solicitation' ? 'A law-firm notice is not a company filing and reports no company event — read the company\'s own filings; it is not a catalyst.' : top.k.kind === 'short_report' ? 'A short-seller report is an allegation — look for the company\'s answer in a filing.' : 'Look for the company\'s own 8-K / press release before treating it as fact.'}`,
     unknowns: ['Official filing: none found yet', ...(v != null ? ['Figure: press only, not verified'] : [])], flags: [], quantified: false, quote: null, earnings: null, deal: null, catalysts: pcats,
   };
 }

@@ -77,6 +77,7 @@ void HALF;
 
 const WEAK_TYPES: Array<{ test: (it: ResearchItem, hay: string) => boolean; name: string }> = [
   { test: (it) => it.eventType === 'Buyback', name: 'buyback' },
+  { test: (it) => /index inclusion/i.test(it.eventLabel || ''), name: 'index inclusion (fund flow, not an operating change)' },
   { test: (it) => it.eventType === 'Promoter buying', name: 'promoter purchase' },
   { test: (it) => it.eventType === 'Capital allocation', name: 'capital allocation' },
   { test: (it) => it.eventType === 'Rating action' || it.subtype === 'credit_rating', name: 'credit rating action' },
@@ -135,7 +136,9 @@ function scoreable(it: ResearchItem): string | null {
   if (it.eventClass === 'DATA_UNAVAILABLE') return 'Data was unavailable — nothing to score (not a "no catalyst" finding).';
   if (it.eventClass === 'LISTING') return 'Recent listing — excluded from comparison.';
   if (it.eventClass === 'MARKET_MOVE_ONLY' || it.eventType === 'Market/technical move') return 'Market or technical move only — no event to score.';
-  if (it.eventClass === 'NO_CATALYST' || it.eventType === 'No identified catalyst') return 'No catalyst event found — nothing to score.';
+  const lab = `${it.eventLabel || ''} ${it.usCard?.catalysts?.[0]?.label || ''}`.toLowerCase();
+  if (/sector\/theme sympathy|law-firm notice|investor-litigation/.test(lab) || it.subtype === 'price_commentary' && it.priceCommentaryOnly) return 'No company event (sympathy move, law-firm notice or price commentary) — nothing to score.';
+  if (it.eventClass === 'NO_CATALYST' || it.eventType === 'No identified catalyst') return 'No classifiable event in the filings — read the filing; any press item is unverified — nothing to score yet.';
   return null;
 }
 

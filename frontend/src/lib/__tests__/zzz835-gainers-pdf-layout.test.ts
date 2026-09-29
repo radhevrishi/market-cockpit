@@ -211,7 +211,8 @@ test('wording: no causal claim, MARKET MOVE and RESEARCH QUESTION on every card'
   for (const [v, market] of [[indiaPdfView(), 'IN'], [usPdfView(), 'US']] as Array<[ResearchView, 'IN' | 'US']>) {
     const t = flow(build({ view: v, market }));
     assert.match(t, /Fundamental events filed around unusual price moves, ranked by research value, not by return\./);
-    assert.match(t, /MARKET MOVE/); assert.match(t, /RESEARCH QUESTION What fundamental event, if any, explains the move\?/);
+    // zzz840: US cards now carry a per-type question (earnings, guidance, approval ...); the generic line stays for a card with no event type
+    assert.match(t, /MARKET MOVE/); assert.match(t, market === 'US' ? /RESEARCH QUESTION (?:Results on file|Outlook on file|Acquisition on file|Debt raised|Equity raise on file|What fundamental event, if any, explains the move\?)/ : /RESEARCH QUESTION What fundamental event, if any, explains the move\?/);
     assert.doesNotMatch(t, /behind the (unusual )?move|caused by|driven by|catalyst behind/i);
   }
 });

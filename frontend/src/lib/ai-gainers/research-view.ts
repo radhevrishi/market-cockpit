@@ -2544,8 +2544,8 @@ function attachCardFacts(item: ResearchItem, now: string | null): void {
     item.direction = item.eventClass === 'NEGATIVE' && !rawDir ? 'NEGATIVE'
       : (['POSITIVE', 'NEGATIVE', 'MIXED', 'NEUTRAL', 'UNKNOWN'].includes(rawDir) ? rawDir : directionOf(item.eventType, text, hcat?.direction ?? null)) as EconDirection;
     item.directionNote = hcat?.directionNote ?? null;
-    item.subtype = (hcat?.subtype as EventSubtype | undefined) ?? subtypeOf(item.eventType, text);
-    const rq = String(hcat?.researchQuestion || '') || (item.subtype ? researchQuestionFor(item.subtype) : '');
+    item.subtype = (us?.subtype && us.subtype !== 'other' ? us.subtype : undefined) ?? (hcat?.subtype as EventSubtype | undefined) ?? subtypeOf(item.eventType, text, item.market === 'US' ? 'US' : 'IN');
+    const rq = String(hcat?.researchQuestion || '') || (us?.researchQuestion && us.subtype === item.subtype ? us.researchQuestion : '') || (item.subtype ? researchQuestionFor(item.subtype) : '');
     if (rq) item.researchQuestion = rq;
     const why = item.subtype ? WHY_BY_SUBTYPE[item.subtype] : null;   // WHY RESEARCH keeps its richer text; the open question is its own field (researchQuestion)
     if (why && item.eventClass !== 'NEGATIVE') item.whyResearch = why;
@@ -2604,6 +2604,8 @@ function applyUsCard(item: ResearchItem, c: UsCard, ctx: { mv: { pct: number | n
   let cls: EventClass;
   if (sec) {
     if (c.kind === 'other' && c.eventType === 'No identified catalyst' && /no new (?:operating )?event/i.test(c.kindWord)) cls = 'NO_CATALYST';
+    // zzz840: a 6-K / 8-K in which nothing could be classified is a filing on file, not a verified event - it must not rank
+    else if (c.kind === 'other' && /^Filing on file/i.test(c.kindWord)) cls = 'NO_CATALYST';
     else if (c.polarity === 'negative' && c.kind !== 'offering') cls = 'NEGATIVE';
     else if (c.kind === 'offering' || c.stage === 'PROPOSED' || c.stage === 'RUMOUR') cls = 'POTENTIAL_UNVERIFIED';
     else cls = mat === 'SIGNIFICANT' || mat === 'MODERATE' ? 'CONFIRMED_MATERIAL' : mat === 'SMALL' ? 'CONFIRMED_LOW_MATERIALITY' : 'POTENTIAL_UNVERIFIED';
@@ -2612,7 +2614,7 @@ function applyUsCard(item: ResearchItem, c: UsCard, ctx: { mv: { pct: number | n
     // not a company event; a reported deal / order / approval / opening is a
     // potential one, to verify.
     const fresh = (ageFrom(c.source.date, ctx.now, 'US') ?? 99) <= 3;
-    cls = c.kind === 'other' || c.kind === 'analyst' || (c.kind === 'earnings' && !fresh) ? 'NO_CATALYST' : 'POTENTIAL_UNVERIFIED';
+    cls = c.kind === 'other' || c.kind === 'analyst' || c.kind === 'solicitation' || (c.kind === 'earnings' && !fresh) ? 'NO_CATALYST' : 'POTENTIAL_UNVERIFIED';
   }
   item.eventClass = cls;
   if (US_EVENT_TYPES.has(c.eventType)) item.eventType = c.eventType as EventType;
@@ -2642,7 +2644,7 @@ function applyUsCard(item: ResearchItem, c: UsCard, ctx: { mv: { pct: number | n
   if (sec && c.quantified) { item.evidenceGap = null; item.economicsUnknown = null; }
   else if (sec) item.economicsUnknown = { label: UNKNOWN_NEEDS_READING, missing: c.unknowns.map((u) => u.split(':')[0].toLowerCase()).slice(0, 4) };
   else { item.economicsUnknown = null; item.evidenceGap = null; }
-  if (cls === 'NO_CATALYST') { item.catalystFor = undefined; item.scanNote = c.extra[0] || null; }
+  if (cls === 'NO_CATALYST') { item.catalystFor = undefined; item.scanNote = c.extra[0] || null; if (c.researchQuestion && (c.subtype === 'filing_only' || c.subtype === 'law_firm_notice')) item.researchQuestion = c.researchQuestion; }
   if (c.kind === 'earnings') item.earnings = null;
   if (c.kind === 'offering') item.flags = { ...item.flags, dilution: true };
   item.transmission = (sec ? US_TRANSMIT[c.kind] : null) ?? (sec ? item.transmission : 'WEAK');

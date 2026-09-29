@@ -850,6 +850,8 @@ export function directionOf(type: string, text: string, fallback?: string | null
     if (has(RX_INSPECTION_CLEAN)) return 'POSITIVE';
     return 'UNKNOWN';
   }
+  // zzz840: opinion, a law-firm notice, sympathy and index demand describe no change in the company's economics
+  if (/^(?:analyst_action|law_firm_solicitation|sector_sympathy|index_inclusion|tax_ruling|ownership_split|dividend_counterparty)$/.test(k)) return 'NEUTRAL';
   if (/credit_rating|rating_(?:upgrade|downgrade|action|reaffirm)/.test(k)) {
     if (has(/\bdowngrad|\bto negative\b|\bnegative outlook\b|\bwatch with negative\b|\brevised (?:downward|to negative)\b/i)) return 'NEGATIVE';
     if (has(/\bupgrad|\bto positive\b|\bpositive outlook\b|\brevised (?:upward|to positive)\b/i)) return 'POSITIVE';
@@ -883,6 +885,17 @@ export function directionNote(type: string, text: string): string | null {
   if (/tax_demand/.test(k)) return 'contingent until any appeal ends - size it against earnings, net worth and cash';
   if (/inspection/.test(k) && RX_INSPECTION_OBS.test(text) && !RX_INSPECTION_NEG.test(text)) return 'observations are not a clean result - severity and response not yet read';
   if (/debt_raise|ncd|financing/.test(k)) return 'financing - neutral until the use of proceeds is known';
+  // zzz840
+  if (k === 'index_inclusion') return 'index-fund demand, not an operating change';
+  if (/^convertible/.test(k)) return 'Convertible notes: dilution only if converted; check conversion price, interest cost and use of proceeds';
+  if (k === 'sector_sympathy') return 'sympathy move - no company event; not evidence';
+  if (k === 'law_firm_solicitation') return 'law-firm notice, not a company filing - legal-risk noise, not a catalyst';
+  if (k === 'fda_submission') return 'filed, not approved - approval is not certain';
+  if (k === 'priority_review_voucher') return 'a saleable asset; value not stated';
+  if (k === 'dividend_counterparty') return 'declared by the counterparty, not by this company';
+  if (k === 'ownership_split') return 'a fact of the deal (who owns what after closing), not an activist stake';
+  if (k === 'tax_ruling') return 'closing condition satisfied';
+  if (k === 'analyst_action') return 'opinion on the price, not a company event';
   return null;
 }
 
@@ -890,10 +903,13 @@ export const DIRECTION_MARK: Record<EconDirection, string> = { POSITIVE: '▲', 
 
 export type EventSubtype =
   | 'store_launch' | 'dealership' | 'facility_for_customer' | 'capacity_capex' | 'credit_rating' | 'inspection'
-  | 'tax_demand' | 'subsidiary' | 'debt_financing' | 'equity_raise' | 'acquisition' | 'order' | 'price_commentary' | 'other';
+  | 'tax_demand' | 'subsidiary' | 'debt_financing' | 'equity_raise' | 'acquisition' | 'order' | 'price_commentary' | 'other'
+  // zzz840: per-type research questions for the US path
+  | 'earnings' | 'guidance_raise' | 'guidance_cut' | 'guidance_issued' | 'fda_approval' | 'regulatory_submission' | 'priority_voucher' | 'trial_result'
+  | 'spin_merger' | 'license_deal' | 'collaboration' | 'buyback' | 'convertible' | 'management_change' | 'index_inclusion' | 'law_firm_notice' | 'sector_sympathy' | 'filing_only';
 
 /** What kind of the broad type this really is - drives the research question. Text first, type second. */
-export function subtypeOf(type: string, text: string): EventSubtype {
+export function subtypeOf(type: string, text: string, market?: 'US' | 'IN'): EventSubtype {
   const k = typeKey(type);
   const t = String(text || '');
   if (/credit_rating|rating_/.test(k) || /\b(?:crisil|icra|care ratings|\bCARE\b|india ratings|acuite|infomerics|brickwork)\b[^.;]{0,80}\b(?:rating|reaffirm|upgrad|downgrad|outlook)/i.test(t)) return 'credit_rating';
@@ -908,7 +924,29 @@ export function subtypeOf(type: string, text: string): EventSubtype {
   if (/acquisition/.test(k)) return 'acquisition';
   if (/order|contract/.test(k)) return 'order';
   if (/capacity|capex|commission/.test(k)) return 'capacity_capex';
-  if (/price_commentary/.test(k)) return 'price_commentary';
+  if (/price_commentary|^analyst_action$/.test(k)) return 'price_commentary';
+  // zzz840: US taxonomy ids and research-view event types (US only - the India rows keep their own reading)
+  if (market !== 'US') return 'other';
+  if (/^(?:law_firm_solicitation)$/.test(k)) return 'law_firm_notice';
+  if (/^(?:sector_sympathy)$/.test(k)) return 'sector_sympathy';
+  if (/^(?:index_inclusion)$/.test(k)) return 'index_inclusion';
+  if (/^(?:fda_submission)$/.test(k)) return 'regulatory_submission';
+  if (/^(?:priority_review_voucher)$/.test(k)) return 'priority_voucher';
+  if (/^(?:fda_approval|intl_approval|regulatory_approval)$/.test(k)) return 'fda_approval';
+  if (/^(?:trial_results|trial_milestone|trial_result)$/.test(k)) return 'trial_result';
+  if (/^(?:guidance_raise)$/.test(k)) return 'guidance_raise';
+  if (/^(?:guidance_cut)$/.test(k)) return 'guidance_cut';
+  if (/^(?:guidance|guidance_issued)$/.test(k)) return 'guidance_issued';
+  if (/^(?:earnings|earnings_beat|earnings_miss|record_results|revenue_growth|revenue_decline|profit_growth|profit_decline|growth_acceleration|margin_expansion|margin_compression|turned_profitable|eps_reported|turnaround_profit|net_loss|results_filed)$/.test(k)) return 'earnings';
+  if (/^(?:merger|merger_agreement|divestiture|divestment|demerger|tax_ruling|ownership_split|dividend_counterparty)$/.test(k)) return 'spin_merger';
+  if (/^(?:takeover_bid)$/.test(k)) return 'acquisition';
+  if (/^(?:licensing)$/.test(k)) return 'license_deal';
+  if (/^(?:partnership|joint_venture|collaboration_expanded|strategic_investment)$/.test(k)) return 'collaboration';
+  if (/^(?:customer_win|supply_agreement|backlog)$/.test(k)) return 'order';
+  if (/^(?:buyback)$/.test(k)) return 'buyback';
+  if (/^(?:convertible|convertible_private_placement)$/.test(k)) return 'convertible';
+  if (/^(?:management_change|kmp_appointment)$/.test(k)) return 'management_change';
+  if (/^(?:no_filing_event|filing_only)$/.test(k)) return 'filing_only';
   return 'other';
 }
 
@@ -928,6 +966,25 @@ export function researchQuestionFor(sub: EventSubtype): string {
     case 'acquisition': return 'Acquisition on file - the open question is the deal economics: purchase price / swap ratio, what the target earns, how it is financed and when it closes.';
     case 'order': return 'Order on file - the open question is delivery: size against revenue, margin, execution timeline and who the customer is.';
     case 'price_commentary': return 'Price commentary only - not evidence; find the filed event, if any.';
+    // zzz840: US per-type questions
+    case 'earnings': return 'Results on file - the open question is what drove the change: volume, price or mix; one-offs in the figures; and what guidance says about the next quarter.';
+    case 'guidance_raise': return 'Guidance raised - the open question is whether the raise is backed by orders or a segment, and what the prior range was.';
+    case 'guidance_cut': return 'Guidance cut - the open question is the cause (demand, cost, one-off), how far below the prior range it sits, and whether it is a timing slip or a lasting change.';
+    case 'guidance_issued': return 'Outlook on file - the open question is how it compares with the prior range and what it assumes for orders, price and cost.';
+    case 'fda_approval': return 'Approval on file - the open questions are launch date, price, the patients who qualify, and any label limits.';
+    case 'regulatory_submission': return 'Submission filed, not approved - the open questions are whether the regulator has accepted it, the review clock (decision date) and what evidence supports it.';
+    case 'priority_voucher': return 'Priority review voucher received - a saleable asset; the open question is whether the company will sell or use it, and for how much (value not stated).';
+    case 'trial_result': return 'Trial result on file - the open questions are the effect size against the comparator, safety, and the path and time to approval.';
+    case 'spin_merger': return 'Spin-off / merger on file - the open questions are the terms (who gets what), closing conditions and timing, tax treatment, and leverage of each side after closing.';
+    case 'license_deal': return 'Licence deal on file - the open questions are upfront cash versus milestones, term, exclusivity and territory, and royalty rates.';
+    case 'collaboration': return 'Collaboration on file - the open questions are what each side pays or gets (upfront, milestones), the scope and term, and whether it is exclusive.';
+    case 'buyback': return 'Buyback on file - the open questions are its size against market cap, whether it is executed or only authorised, and how it is funded.';
+    case 'convertible': return 'Convertible notes on file - the open questions are the use of proceeds, the conversion price (dilution if converted), interest cost and maturity.';
+    case 'management_change': return 'Management change on file - the open questions are why (planned or sudden), who replaces the person, and whether strategy or guidance changes.';
+    case 'index_inclusion': return 'Index inclusion on file - a one-time flow of index-fund buying, not an operating change; the open question is whether the business itself changed.';
+    case 'law_firm_notice': return 'Law-firm notice - not a company filing and no company event; read the company\'s own filings for the facts behind any claim.';
+    case 'sector_sympathy': return 'Sector or theme move - no company event found; the open question is whether the company has any filed link to the theme.';
+    case 'filing_only': return 'Filing on file - no classifiable event was found; read the filing itself for the event, its terms and its date.';
     default: return '';
   }
 }
@@ -935,9 +992,12 @@ export function researchQuestionFor(sub: EventSubtype): string {
 /** Circuit / momentum / broker-target headlines describe the PRICE, not the business. */
 const RX_PRICE_TALK = /\b(?:upper circuit|lower circuit|locks? at (?:the )?upper|circuit (?:limit|filter)|buyers queue|shares? (?:surge|jump|zoom|soar|rally|spike|slump|tumble)|stock (?:surges?|jumps?|rallies|zooms?|soars?|hits? (?:upper|52)|climbs?)|52[- ]week high|all[- ]time high|multibagger|technical breakout|target price|price target|brokerage|buy rating|overweight|initiates? coverage|goldman|jefferies|motilal|nomura|nuvama)\b/i;
 const RX_EVENT_WORD = /\b(?:order|contract|work order|acquir\w+|acquisition|approval|approved|result|results|profit|revenue|launch\w*|inspection|rating|incorporat\w+|subsidiary|capex|capacity|commission\w*|allot\w*|debentures?|dividend|bonus|merger|demerger|agreement|partnership|resign\w*|appoint\w*)\b/i;
+// zzz840: "Still a Buy?", "average target price" and "analysts see 20% upside" describe the price
+const RX_PRICE_TALK_US = /\b(?:still a (?:buy|sell|hold)\b|is it (?:still )?a (?:buy|sell)\b|(?:average|consensus|mean|median) (?:analyst )?(?:price )?target(?: price)?\b|analysts? (?:see|expect|project)s?\b[^.;]{0,30}\bupside\b|implied upside)/i;
 export function isPriceCommentary(text: string): boolean {
   const t = String(text || '');
-  if (!RX_PRICE_TALK.test(t)) return false;
+  if (!RX_PRICE_TALK.test(t) && !RX_PRICE_TALK_US.test(t)) return false;
+  if (RX_PRICE_TALK_US.test(t) && !RX_PRICE_TALK.test(t)) return !RX_EVENT_WORD.test(t.replace(RX_PRICE_TALK_US, ' '));
   // "shares surge after Rs 200 crore order" states an event: it is classified by the event, not as commentary
   const stripped = t.replace(RX_PRICE_TALK, ' ');
   return !RX_EVENT_WORD.test(stripped);

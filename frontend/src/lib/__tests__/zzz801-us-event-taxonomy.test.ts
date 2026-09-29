@@ -88,6 +88,15 @@ const CASES: Array<[string, string]> = [
   ['listing_deficiency', 'The Company received a deficiency notice from Nasdaq regarding the minimum bid price requirement.'],
   ['regulatory_probe', 'The Company received a subpoena from the SEC related to its revenue recognition practices.'],
   ['warrant_exercise', 'The Company entered into a warrant inducement agreement with existing holders.'],
+  // zzz840
+  ['tax_ruling', 'Alpha Corp received a favorable Private Letter Ruling from the Internal Revenue Service regarding the tax consequences of the spin-off.'],
+  ['ownership_split', 'Alpha shareholders are expected to own approximately 56.4% of the combined company and former holders of SpinCo 43.6%.'],
+  ['collaboration_expanded', 'Alpha Bio and Beta Labs expanded their collaboration to a second program.'],
+  ['priority_review_voucher', 'The Company received a Priority Review Voucher upon this approval.'],
+  ['dividend_counterparty', 'Gamma Industries will pay a special dividend of $2.00 per share to its holders before closing.'],
+  ['convertible_private_placement', 'The Company priced $50 million of convertible senior notes due 2031 in a private placement.'],
+  ['sector_sympathy', 'Big-tech AI glasses push lifts eyewear names.'],
+  ['law_firm_solicitation', 'SHAREHOLDER ALERT: Rosen Law Firm encourages investors to contact the firm.'],
 ];
 
 test('the taxonomy covers ~60 event types in eight categories, each with a plain-English label', () => {

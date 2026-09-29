@@ -27,6 +27,7 @@
 import type { jsPDF as JsPdfDoc } from 'jspdf';
 import type { ResearchItem, ResearchView } from './research-view';
 import { scoreFactorLine } from './catalyst-score';
+import { watchLines, olderLines, noCatalystLines, negativeLines, technicalLines, type DetailLine } from './row-detail';
 
 export type GainersMarket = 'IN' | 'US';
 
@@ -945,13 +946,23 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
   }, 0);
 
   /** Draw blocks with a coloured left rule; a line that would cross the bottom moves to the next page. */
-  const drawBlocks = (blocks: Block[], x0: number, w: number, bar: RGB) => {
+  /** Adjacent runs in one style are drawn as one string (so a lone " - " is never its own string). */
+  const mergeLine = (line: Seg[]): Seg[] => {
+    const out: Seg[] = [];
+    for (const sg of line) {
+      const last = out[out.length - 1];
+      if (last && !!last.bold === !!sg.bold && (last.color ?? null) === (sg.color ?? null)) out[out.length - 1] = { ...last, text: last.text + sg.text };
+      else out.push({ ...sg });
+    }
+    return out;
+  };
+  const drawBlocks = (blocks: Block[], x0: number, w: number, bar: RGB, merge = false) => {
     const barLine = (h: number) => { doc.setDrawColor(...bar); doc.setLineWidth(0.9); doc.line(M + 0.45, y, M + 0.45, y + h); };
     const lineRoom = (h: number) => { if (y + h > BOTTOM) newPage(); };
     for (const bl of blocks) {
       if (bl.k === 'segs') {
         const lines = layoutSegs(bl.segs, w - (bl.indent ?? 0), bl.size);
-        for (const ln of lines) { const h = lh(bl.size); lineRoom(h); barLine(h); drawSegLine(ln, x0 + (bl.indent ?? 0), y + bl.size * 0.3, bl.size, INK2); y += h; }
+        for (const ln of lines) { const h = lh(bl.size); lineRoom(h); barLine(h); drawSegLine(merge ? mergeLine(ln) : ln, x0 + (bl.indent ?? 0), y + bl.size * 0.3, bl.size, INK2); y += h; }
         const g = bl.gapAfter ?? 1; if (y + g <= BOTTOM) { barLine(g); y += g; }
       } else if (bl.k === 'grid') {
         const colW = w / 2;
@@ -1025,6 +1036,48 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
     ];
   };
 
+
+  // zzz841: compact one-block-per-row lists (watch, negative, older, no catalyst, large moves) - the same
+  // detail lines the page shows (row-detail.ts): why watch, the question, the key unknown, catalysts, what was searched.
+  const detailBlocks = (lines: DetailLine[]): Block[] => lines.map((l) => ({
+    k: 'segs' as const, size: 7.8, gapAfter: 0.15, indent: l.label ? 0 : 4,
+    segs: [...(l.label ? [lbl(l.label)] : []), { text: l.text.replace(/ - /g, ': '), color: l.tone === 'amber' ? AMBER : l.tone === 'muted' ? MUTED : INK2 }],
+  }));
+  const rowHeadBlock = (it: ResearchItem, tags: string[] = []): Block => {
+    const st = statusWord(it);
+    const segs: Seg[] = [{ text: nameOf(it), bold: true, color: INK }];
+    if (companyOf(it)) segs.push({ text: `  ${companyOf(it)}`, color: MUTED });
+    segs.push({ text: `   ${moveOf(it)}`, bold: true, color: INK }, { text: '   ' }, { text: st.word, bold: true, color: st.rgb });
+    const d = directionWord(it); if (d) segs.push({ text: '  ·  ', color: MUTED }, { text: d.word, bold: true, color: d.rgb });
+    const extra = tags.filter(Boolean).join(' · ');
+    if (extra) segs.push({ text: `  ·  ${extra}`, color: MUTED });
+    return { k: 'segs', segs, size: 8.6, gapAfter: 0.4 };
+  };
+  const rowList = <T,>(title: string, sub: string, its: T[], mk: (it: T) => Block[], bar: (it: T) => RGB = (it) => statusWord(it as unknown as ResearchItem).rgb) => {
+    const usable = BOTTOM - TOP;
+    its.forEach((it, i) => {
+      const blocks = mk(it);
+      const h = measure(blocks, W - 5) + 2;
+      const headerH = i === 0 ? headingH(sub) : 0;
+      room(headerH + Math.min(h + 2, usable));
+      if (i === 0) drawHeading(title, sub);
+      else if (y > TOP + 0.5) { doc.setDrawColor(...RULE); doc.setLineWidth(0.1); doc.line(M + 4, y - 0.6, pageW - M, y - 0.6); }
+      y += 0.4;
+      drawBlocks(blocks, M + 4, W - 5, bar(it), true);
+      y += 1.2;
+    });
+  };
+  const scoreLineBlock = (it: ResearchItem): Block[] => {
+    const cs = it.catalystScore;
+    if (!cs) return [];
+    if (!cs.scored) return [{ k: 'segs', size: 7.8, gapAfter: 0.15, segs: [lbl('CATALYST SCORE'), { text: `Not scored - ${cs.notScoredReason || ''}`, color: MUTED }] }];
+    const sc = cs.band === 'RESEARCH NOW' ? GREEN : cs.band === 'WATCH / CONFIRM' ? AMBER : cs.band.startsWith('NEGATIVE') ? RED : MUTED;
+    return [{ k: 'segs', size: 7.8, gapAfter: 0.15, segs: [lbl('CATALYST SCORE'), { text: `${cs.total}/12 ${cs.band}`, bold: true, color: sc }, { text: `${cs.unscored.length ? ` (${cs.unscored.length} unknown, up to ${cs.ceiling})` : ''}  ${scoreFactorLine(cs)}`, color: INK2 }] }];
+  };
+  const headlineBlock = (it: ResearchItem, fb: string): Block => ({ k: 'segs', size: 8.2, gapAfter: 0.3, segs: [{ text: txt(it.headline, fb), bold: true, color: INK }] });
+  const srcEvBlock = (it: ResearchItem): Block => ({ k: 'segs', size: 7.8, gapAfter: 0.15, segs: [lbl('SOURCE'), { text: sourceExistWord(it), color: INK2 }, { text: '     EVIDENCE  ', bold: true, color: MUTED }, { text: evidenceWord(it), color: INK2 }] });
+  const scanBlock = (it: ResearchItem): Block[] => (has(it.scanNote) ? [{ k: 'segs', size: 7.8, gapAfter: 0.15, segs: [lbl('SCANNED'), { text: String(it.scanNote).replace(/^scanned\s+/i, '') }] } as Block] : []);
+
   if (!empty) {
     const book = view.portfolio || [];
     if (!book.length && view.bookChecked) {
@@ -1054,62 +1107,66 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
 
     const watch = view.watch || [];
     if (watch.length) {
-      head('Watch / investigate', 'Real but smaller, or not yet verified.');
-      table(listCols, watch.map((it) => listRow(it, [it.catalystFor ? CATALYST_FOR_WORD[it.catalystFor] + (it.catalystFor !== 'THIS_MOVE' && ageOf(it) ? ` (${ageOf(it)})` : '') : '', it.economicsUnknown ? 'Needs reading' : '', it.flags?.dilution ? 'Dilution' : '', it.flags?.band != null ? `Price band ${it.flags.band}%` : ''].filter(Boolean).join(' · '))), { maxLines: 4 });
+      rowList('Watch / investigate', 'Real but smaller, or not yet verified.', watch, (it) => [
+        rowHeadBlock(it, [it.catalystFor ? CATALYST_FOR_WORD[it.catalystFor] + (it.catalystFor !== 'THIS_MOVE' && ageOf(it) ? ` (${ageOf(it)})` : '') : '', it.economicsUnknown ? 'Needs reading' : '', it.flags?.dilution ? 'Dilution' : '', it.flags?.band != null ? `Price band ${it.flags.band}%` : '']),
+        headlineBlock(it, 'Headline not available'), srcEvBlock(it), ...detailBlocks(watchLines(it)), ...scoreLineBlock(it),
+      ]);
     }
 
     const neg = view.negative || [];
     if (neg.length) {
-      head('Negative evidence', 'Findings, not omissions. Kept even though the stock rose.');
-      table(listCols, neg.map((it) => listRow(it, has(it.whyResearch) ? String(it.whyResearch) : has(it.expectationGap?.text) ? String(it.expectationGap.text) : '')), { maxLines: 4 });
+      rowList('Negative evidence', 'Findings, not omissions. Kept even though the stock rose.', neg, (it) => [
+        rowHeadBlock(it), headlineBlock(it, 'Headline not available'),
+        ...(has(it.whyResearch) || has(it.expectationGap?.text) ? [{ k: 'segs', size: 7.8, gapAfter: 0.15, segs: [lbl('WHY'), { text: has(it.whyResearch) ? String(it.whyResearch) : String(it.expectationGap.text), color: INK2 }] } as Block] : []),
+        ...detailBlocks(negativeLines(it)),
+      ]);
     }
     const imm = view.immaterialNegative || [];
     if (imm.length) {
       para(`Immaterial tax / penalty items (under 0.25% of market cap; recorded, not ranked as negative evidence): ${imm.map((it) => `${nameOf(it)} (${it.materiality?.ratios?.[0]?.text || 'size not stated'})`).join('; ')}.`, { size: 8, color: MUTED, after: 2 });
     }
 
-    const olderRows: Cell[][] = (view.olderFilings && view.olderFilings.length)
-      ? view.olderFilings.map((r, i) => [
-          { text: String(i + 1), bold: true, color: MUTED },
-          { text: txt(r.name || r.ticker, 'Not disclosed'), bold: true, color: INK },
-          { text: txt(r.company || r.name, 'Not disclosed'), maxLines: 2 },
-          { text: pctND(r.movePct), color: INK },
-          { text: `${r.filedDate ? String(r.filedDate).slice(0, 10) : 'Undated'}${typeof r.ageDays === 'number' ? `\n${Math.round(r.ageDays)}d before` : ''}` },
-          { text: `${txt(r.event, 'Headline not available')}${has(r.eventLabel) ? `\n${r.eventLabel}` : ''}`, maxLines: 3, link: r.url || null },
-          { text: txt(r.material, 'UNKNOWN'), bold: true, color: MUTED },
-        ])
-      : (view.context || []).map((it, i) => [
-          { text: String(i + 1), bold: true, color: MUTED },
-          { text: nameOf(it), bold: true, color: INK },
-          { text: coCell(it), maxLines: 2 },
-          { text: moveOf(it), color: INK },
-          { text: `${it.filedDate ? String(it.filedDate).slice(0, 10) : 'Undated'}${ageOf(it) ? `\n${ageOf(it)} ago` : ''}` },
-          { text: `${txt(it.headline, 'Headline not available')}\n${txt(it.eventLabel || it.eventType, '')}`, maxLines: 3 },
-          { text: materialWord(it), bold: true, color: materialRgb(it) },
-        ]);
-    if (olderRows.length) {
-      head('Older filings (context)', 'Real events filed before the move window. Context for the name, never the catalyst for this move and never counted as confirmed.');
-      table([{ head: '#', w: 6 }, { head: 'Ticker', w: 21 }, { head: 'Company', w: 28 }, { head: 'Move', w: 15 }, { head: 'Filed', w: 20 }, { head: 'Event', w: 64 }, { head: 'Material', w: 20 }], olderRows, { maxLines: 3 });
+    // zzz841: older filings, one compact block each (event, filed date and age, "context only", the catalyst label and stated values).
+    // The view's olderFilings rows decide the list when present; the matching context item adds the catalyst detail.
+    const ctxByT = new Map((view.context || []).map((i) => [i.ticker, i] as const));
+    const olderList: Array<{ row?: NonNullable<ResearchView['olderFilings']>[number]; it?: ResearchItem }> = view.olderFilings && view.olderFilings.length
+      ? view.olderFilings.map((r) => ({ row: r, it: ctxByT.get(r.ticker) }))
+      : (view.context || []).map((it) => ({ it }));
+    if (olderList.length) {
+      rowList('Older filings (context)', 'Real events filed before the move window. Context for the name, never the catalyst for this move and never counted as confirmed.', olderList, ({ row, it }) => {
+        if (it) return [
+          rowHeadBlock(it, [materialWord(it)]), headlineBlock(it, 'Headline not available'), ...detailBlocks(olderLines(it, { withEvent: true })),
+          ...((it.sourceUrl || row?.url) ? [{ k: 'link', label: 'SOURCE', url: String(it.sourceUrl || row?.url), size: 7.8 } as Block] : []),
+        ];
+        const r = row!;
+        const age = typeof r.ageDays === 'number' ? ` (${Math.round(r.ageDays)} days ago)` : '';
+        return [
+          { k: 'segs', size: 8.6, gapAfter: 0.4, segs: [{ text: txt(r.name || r.ticker, 'Not disclosed'), bold: true, color: INK }, { text: `  ${txt(r.company || r.name, '')}`, color: MUTED }, { text: `   ${pctND(r.movePct)}`, bold: true, color: INK }, { text: `  ·  ${txt(r.material, 'UNKNOWN')}`, color: MUTED }] },
+          { k: 'segs', size: 8.2, gapAfter: 0.3, segs: [{ text: txt(r.event, 'Headline not available'), bold: true, color: INK }] },
+          { k: 'segs', size: 7.8, gapAfter: 0.15, segs: [lbl('EVENT'), { text: `${txt(r.eventLabel, 'Not classified')} · filed ${r.filedDate ? String(r.filedDate).slice(0, 10) : 'date not disclosed'}${age}`, color: INK2 }] },
+          { k: 'segs', size: 7.8, gapAfter: 0.15, segs: [lbl('CONTEXT'), { text: "Context only, not this move's catalyst.", color: AMBER }] },
+          ...(r.url ? [{ k: 'link', label: 'SOURCE', url: r.url, size: 7.8 } as Block] : []),
+        ];
+      }, () => MUTED);
     }
 
     const isBand = (it: ResearchItem) => it.eventClass === 'MARKET_MOVE_ONLY';
     const noCat = (view.noCatalyst || []).filter((it) => !isBand(it));
     if (noCat.length) {
-      head('No identified catalyst', 'Checked: nothing meaningful filed in the window. "No catalyst" is a finding, not "nothing happened".');
-      table([{ head: 'Ticker', w: 24 }, { head: 'Company', w: 34 }, { head: 'Move', w: 17 }, { head: 'What was checked', w: 103 }],
-        noCat.map((it) => [
-          { text: nameOf(it), bold: true, color: INK },
-          { text: coCell(it) },
-          { text: moveOf(it), color: INK },
-          { text: [txt(it.headline, 'No meaningful filing'), it.flags?.denial ? 'Company told the exchange it has no undisclosed information.' : '', has(it.scanNote) ? (/^scanned\b/i.test(String(it.scanNote).trim()) ? String(it.scanNote) : `Scanned: ${it.scanNote}`) : '', it.evidenceGap && it.evidenceGap.code !== 'NO_CATALYST' ? it.evidenceGap.label : '', it.news?.narrative ? `Press (unverified): ${it.news.narrative.label} story over ${it.news.narrative.days} days` : ''].filter(Boolean).join('\n') },
-        ]), { size: 8, maxLines: 4 });
+      rowList('No identified catalyst', 'Checked: nothing meaningful filed in the window. "No catalyst" is a finding, not "nothing happened".', noCat, (it) => [
+        rowHeadBlock(it),
+        headlineBlock(it, 'No meaningful filing'),
+        ...(it.flags?.denial ? [{ k: 'segs', size: 7.8, gapAfter: 0.15, segs: [{ text: 'Company told the exchange it has no undisclosed information.', color: INK2 }] } as Block] : []),
+        ...scanBlock(it),
+        ...(it.evidenceGap && it.evidenceGap.code !== 'NO_CATALYST' ? [{ k: 'segs', size: 7.8, gapAfter: 0.15, segs: [lbl('GAP'), { text: it.evidenceGap.label, color: AMBER }] } as Block] : []),
+        ...detailBlocks(noCatalystLines(it)),
+      ]);
     }
     const bands = [...(view.noCatalyst || []), ...(view.dataQuality || [])].filter(isBand);
     if (bands.length) {
-      head('Price-band moves', 'Price-band movement. Does not establish demand.');
-      table([{ head: 'Ticker', w: 24 }, { head: 'Company', w: 34 }, { head: 'Move', w: 17 }, { head: 'Detail', w: 103 }],
-        bands.map((it) => [{ text: nameOf(it), bold: true, color: INK }, { text: coCell(it) }, { text: moveOf(it), color: INK },
-          { text: `${txt(it.headline, 'No meaningful filing')}${it.flags?.band != null ? `\nBand ${it.flags.band}%` : ''}` }]), { size: 8, maxLines: 4 });
+      rowList('Price-band moves', 'Price-band movement. Does not establish demand.', bands, (it) => [
+        rowHeadBlock(it, [it.flags?.band != null ? `Band ${it.flags.band}%` : '']), headlineBlock(it, 'No meaningful filing'), ...scanBlock(it), ...detailBlocks(technicalLines(it)),
+      ]);
     }
 
     const NOTE_WORD: Record<string, string> = { new_listing: 'New listing', spac: 'SPAC', adr: 'ADR', extreme_move: 'Extreme move', band_move: 'Price-band move' };

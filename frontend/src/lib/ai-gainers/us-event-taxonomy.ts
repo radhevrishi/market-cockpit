@@ -29,6 +29,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { extractMetrics, directionOf, directionNote, subtypeOf, type EconDirection, type EventSubtype, type TypedMetric } from './structured-facts';
+import { repairSplitText, hasNegatedTrigger, NO_REPURCHASE, isBackgroundApproval } from './us-text-guards';
 
 export type UsEventCategory =
   | 'Earnings' | 'Product & segment' | 'Capital & capacity' | 'Corporate action'
@@ -62,6 +63,8 @@ export interface UsEventHit {
   economicDirection?: EconDirection;
   directionNote?: string | null;
   subtype?: EventSubtype;
+  /** zzz840: stage the event type implies (filed-not-approved = PROPOSED), when the rule sets one. */
+  stage?: 'PROPOSED' | 'SIGNED';
 }
 
 interface Rule {
@@ -79,12 +82,15 @@ interface Rule {
   hides?: string[];
   /** Rank inside the card: lower = the lead catalyst. */
   rank: number;
+  /** zzz840: the stage the event itself implies (a submission is PROPOSED - filed, not approved). */
+  stage?: 'PROPOSED' | 'SIGNED';
 }
 
 // ── the rules ─────────────────────────────────────────────────────────────
 
+const AI_INFRA = String.raw`(?:data cent(?:er|re)s?|HPC|high[- ]performance computing|GPUs?|AI (?:factory|factories|cloud|infrastructure|compute|data ?cent(?:er|re)s?|campus)|compute (?:capacity|cluster|infrastructure)|colocation|hyperscal\w+|AI[- ]ready (?:power|capacity|data))`;
 const MONEYISH = String.raw`(?:US)?\$\s?\d`;
-const GOV = String.raw`(?:U\.?S\.?|United States|federal|government|Department of (?:Defense|Energy|Homeland Security|Health|Veterans Affairs|Transportation|the (?:Army|Navy|Air Force))|DoD|DOE|DHS|NASA|DARPA|BARDA|NIH|Army|Navy|Air Force|Space Force|Marine Corps|Missile Defense Agency|Space Development Agency|CHIPS)`;
+const GOV = String.raw`(?:U\.?S\.?(?![$\d])|United States|federal|government|Department of (?:Defense|Energy|Homeland Security|Health|Veterans Affairs|Transportation|the (?:Army|Navy|Air Force))|DoD|DOE|DHS|NASA|DARPA|BARDA|NIH|Army|Navy|Air Force|Space Force|Marine Corps|Missile Defense Agency|Space Development Agency|CHIPS)`;
 
 const RULES: Rule[] = [
   // ── EARNINGS ──
@@ -150,10 +156,11 @@ const RULES: Rule[] = [
     dir: (s) => (/\bprice (?:cut|reduction|decrease)s?\b|\blower(?:ed)? prices\b/i.test(s) ? 'negative' : 'positive') },
   { id: 'tech_milestone', label: 'Product / technical milestone', category: 'Product & segment', direction: 'positive', rank: 23,
     any: [/\b(?:achiev(?:es|ed|ing)|reach(?:es|ed)|complet(?:es|ed))\b[^.;]{0,30}\b(?:key |major |significant |critical |technical |development |commercial |regulatory )?milestones?\b/i, /\bsuccessfully (?:completed|demonstrated|tested|launched|validated|deployed)\b/i, /\b(?:product|system|platform|device|chip|design|technology|module)s?\b[^.;]{0,40}\b(?:qualified|certified) by\b/i, /\bdesign[- ]ins?\b/i] },
+  // zzz840: infrastructure / compute / data-centre / GPU / power context only. "AI" next to a collaboration, drug-discovery or software word is not this rule.
   { id: 'ai_datacenter', label: 'AI / data-centre move', category: 'Product & segment', direction: 'positive', rank: 21,
-    any: [/\b(?:AI|artificial intelligence|data cent(?:er|re)s?|HPC|high[- ]performance computing|GPUs?|AI factory|AI cloud|inference)\b[^.;]{0,80}\b(?:launch|enter|expan|agreement|contract|partner|deploy|build|pivot|transition|acqui|lease|capacity|MW|megawatts?|campus|colocation|customer|order)/i,
-      /\b(?:launch|enter|expan|agreement|contract|partner|deploy|build|pivot|transition|acqui|lease|campus|colocation)\w*\b[^.;]{0,80}\b(?:AI|artificial intelligence|data cent(?:er|re)s?|HPC|high[- ]performance computing|GPUs?)\b/],
-    not: /\b(?:may|could|might) (?:be )?(?:affect|impact|disrupt)/i },
+    any: [new RegExp(String.raw`\b${AI_INFRA}\b[^.;]{0,80}\b(?:launch|enter|expan|agreement|contract|partner|deploy|build|pivot|transition|acqui|lease|capacity|MW|megawatts?|campus|colocation|customer|order)`, 'i'),
+      new RegExp(String.raw`\b(?:launch|enter|expan|agreement|contract|partner|deploy|build|pivot|transition|acqui|lease|campus|colocation)\w*\b[^.;]{0,80}\b${AI_INFRA}\b`)],
+    not: /\b(?:may|could|might) (?:be )?(?:affect|impact|disrupt)|\b(?:collaboration|drug discovery|therapeutics?|biotech\w*|RNA|clinical|oncology|genomics?)\b/i },
   { id: 'crypto_strategy', label: 'Crypto / digital-asset strategy', category: 'Product & segment', direction: 'mixed', rank: 21,
     any: [/\b(?:bitcoin|ethereum|ether|BTC|ETH|solana|SOL|XRP|crypto(?:currency|currencies)?|digital assets?|tokens?|stablecoin)\b[^.;]{0,60}\b(?:treasury|reserve|purchase|purchased|acquire|acquired|strategy|holdings|mining|miners|hashrate|staking)\b/i,
       /\b(?:treasury|reserve) (?:strategy|asset)\b[^.;]{0,40}\b(?:bitcoin|ethereum|crypto|digital asset|token)/i] },
@@ -188,6 +195,14 @@ const RULES: Rule[] = [
   { id: 'divestiture', label: 'Divestiture / spin-off', category: 'Corporate action', direction: 'mixed', rank: 8,
     any: [/\bdivest(?:s|ed|iture|ment|ing)?\b/i, /\bspin[- ]?off\b|\bspinoff\b|\bspin(?:s|ning)? off\b/i, /\b(?:sale|sell|sold|sells)\b[^.;]{0,40}\b(?:its|the|our)\b[^.;]{0,40}\b(?:business|division|segment|unit|subsidiary|portfolio|assets)\b/i, /\bseparation of\b[^.;]{0,40}\b(?:business|segment|into two)\b/i],
     not: /\bsale of (?:\d|common|shares|stock|units|notes|securities)\b|\bsold (?:\d|shares|stock)\b/i },
+  // zzz840: an IRS private letter ruling on a spin-off / merger is a closing-condition fact, never a litigation win.
+  { id: 'tax_ruling', label: 'Tax ruling (closing condition satisfied)', category: 'Corporate action', direction: 'neutral', rank: 8,
+    any: [/\bprivate letter ruling\b/i, /\b(?:Internal Revenue Service|IRS)\b[^.;]{0,80}\b(?:ruling|tax[- ]free|opinion)\b/i, /\b(?:ruling|opinion)\b[^.;]{0,60}\b(?:Internal Revenue Service|IRS)\b/i, /\btax[- ]free (?:spin[- ]?off|distribution|reorganization)\b/i],
+    not: /\b(?:unfavorable|adverse|no assurance|may (?:challenge|disagree|not))\b/i, hides: ['patent_litigation_win', 'settlement', 'regulatory_probe', 'activist_stake'] },
+  // zzz840: who will own what after a spin-off / merger is a fact of the deal, not an activist stake.
+  { id: 'ownership_split', label: 'Post-deal ownership split', category: 'Corporate action', direction: 'neutral', rank: 8,
+    any: [/\b(?:shareholders|stockholders|holders)\b[^.;]{0,60}\b(?:expected to|will|would|are expected to)\s+(?:collectively )?(?:own|hold)\s+(?:approximately |about |roughly )?\d+(?:\.\d+)?\s?%/i, /\bformer (?:holders|shareholders|stockholders)\b[^.;]{0,60}\b(?:own|hold)\b[^.;]{0,20}\d+(?:\.\d+)?\s?%/i, /\b(?:expected to|will|would)\s+own\s+(?:approximately |about |roughly )?\d+(?:\.\d+)?\s?%\s+of\s+the\s+(?:combined|new|pro forma|outstanding)/i],
+    hides: ['activist_stake', 'insider_buying'] },
   { id: 'strategic_review', label: 'Strategic review', category: 'Corporate action', direction: 'mixed', rank: 9,
     any: [/\bstrategic alternatives\b/i, /\bstrategic review\b/i, /\bexplor(?:e|es|ed|ing) (?:a )?(?:potential )?(?:sale|strategic options|merger)\b/i] },
   { id: 'restructuring', label: 'Restructuring / cost cuts', category: 'Corporate action', direction: 'mixed', rank: 24,
@@ -200,7 +215,7 @@ const RULES: Rule[] = [
   { id: 'gov_contract', label: 'Government contract / award', category: 'Deals & customers', direction: 'positive', rank: 14,
     any: [new RegExp(String.raw`\b${GOV}\b[^.;]{0,80}\b(?:contract|award|awarded|task order|grant|funding|selected|delivery order|OTA|other transaction)\b`, 'i'),
       new RegExp(String.raw`\b(?:contract|award|awarded|task order|grant|delivery order)\b[^.;]{0,80}\b(?:from|by|with) (?:the )?${GOV}`, 'i')],
-    not: /\bFDA\b|\bFood and Drug\b/i, hides: ['major_contract', 'customer_win'] },
+    not: /\bFDA\b|\bFood and Drug\b|\bfunding (?:mix|structure|package|plan|gap|sources?|costs?)\b/i, hides: ['major_contract', 'customer_win'] },
   { id: 'major_contract', label: 'Major contract / order', category: 'Deals & customers', direction: 'positive', rank: 15,
     any: [/\b(?:award(?:ed|s)?|won|wins|win|secur(?:es|ed)|receiv(?:es|ed)|land(?:s|ed)|sign(?:s|ed)|book(?:s|ed))\b[^.;]{0,60}\b(?:contract|order|purchase order|task order|master services agreement|framework agreement|multi-year agreement)\b/i,
       /\b(?:contract|order|agreement)\b[^.;]{0,40}\b(?:valued at|worth|with a (?:total |aggregate )?value of|totaling)\b/i, new RegExp(String.raw`\b(?:a|an)\s+${MONEYISH}[\d.,]*\s*(?:million|billion|M|B)?\s+(?:multi-year |follow-on |firm )?(?:contract|order|award)\b`, 'i')],
@@ -215,6 +230,9 @@ const RULES: Rule[] = [
     not: /\bpublic[- ]private partnership\b[^.;]{0,20}\bmay\b|\bthe Partnership\b|\bPartnership['’]s\b|\bLimited Partnership\b|\bpartnership (?:units|interests)\b/ },
   { id: 'joint_venture', label: 'Joint venture', category: 'Deals & customers', direction: 'positive', rank: 18,
     any: [/\bjoint venture\b|\bJV\b/], hides: ['partnership'] },
+  { id: 'collaboration_expanded', label: 'Collaboration expanded', category: 'Deals & customers', direction: 'positive', rank: 17,
+    any: [/\b(?:expand(?:s|ed|ing)?|extend(?:s|ed|ing)?|broaden(?:s|ed|ing)?|deepen(?:s|ed|ing)?)\b[^.;]{0,50}\b(?:collaborations?|partnerships?|alliance)\b/i, /\b(?:collaborations?|partnerships?)\b[^.;]{0,25}\b(?:expan(?:sion|ded)|extended|extension)\b/i],
+    hides: ['partnership', 'ai_datacenter'] },
   { id: 'licensing', label: 'Licensing deal', category: 'Deals & customers', direction: 'positive', rank: 18,
     any: [/\b(?:exclusive |global |worldwide |non-exclusive )?licen[cs](?:e|ing) (?:agreement|deal)\b/i, /\b(?:in-?licens|out-?licens)\w*/i, /\bupfront payment\b/i, /\bmilestone payments?\b[^.;]{0,40}\broyalt/i, /\broyalt(?:y|ies)\b[^.;]{0,40}\b(?:agreement|on net sales)\b/i],
     hides: ['partnership'] },
@@ -243,12 +261,18 @@ const RULES: Rule[] = [
   { id: 'fda_approval', label: 'FDA approval / clearance', category: 'Regulatory & clinical', direction: 'positive', rank: 2,
     any: [/\b(?:FDA|Food and Drug Administration)\b[^.;]{0,80}\b(?:approv(?:ed|al|es)|clear(?:ed|ance)|authori[sz](?:ed|ation)|grant(?:ed|s) (?:marketing|approval|clearance))\b/i, /\b(?:approv(?:ed|al)|clearance|cleared)\b[^.;]{0,40}\b(?:by|from) the (?:U\.?S\.? )?(?:FDA|Food and Drug Administration)\b/i, /\b510\(k\) clearance\b|\bDe Novo (?:clearance|authorization|classification)\b|\bPMA approval\b/i, /\bFDA (?:approves|clears)\b/i],
     not: /\bnot (?:yet )?(?:been )?approved\b|\bprior to (?:FDA )?approval\b|\bseek(?:s|ing)? (?:FDA )?approval\b|\bpending (?:FDA )?approval\b|\bsubject to (?:FDA )?approval\b|\bapproved (?:drugs?|products?|therapies) (?:for|in)\b/i },
-  { id: 'fda_submission', label: 'Regulatory filing / acceptance', category: 'Regulatory & clinical', direction: 'positive', rank: 4,
-    any: [/\b(?:submit(?:s|ted)|fil(?:es|ed)|complet(?:es|ed) (?:the )?submission of)\b[^.;]{0,40}\b(?:NDA|BLA|sNDA|sBLA|PMA|510\(k\)|MAA|IND|New Drug Application|Biologics License Application|Premarket Approval)\b/i, /\baccept(?:s|ed|ance)?\b[^.;]{0,40}\b(?:for (?:filing|review)|NDA|BLA|MAA)\b/i, /\bpriority review\b(?! voucher)/i, /\bIND (?:clearance|cleared|is now in effect)\b|\bcleared (?:the |its )?IND\b/i] },
+  { id: 'fda_submission', label: 'Regulatory submission (filed, not approved)', category: 'Regulatory & clinical', direction: 'positive', rank: 4, stage: 'PROPOSED',
+    any: [/\b(?:submit(?:s|ted)|fil(?:es|ed)|complet(?:es|ed) (?:the )?submission of)\b[^.;]{0,40}\b(?:NDA|BLA|sNDA|sBLA|PMA|510\(k\)|MAA|IND|New Drug Application|Biologics License Application|Premarket Approval)(?![A-Za-z0-9])/i, /\baccept(?:s|ed|ance)?\b[^.;]{0,40}\b(?:for (?:filing|review)|NDA|BLA|MAA)\b/i, /\bpriority review\b(?! voucher)/i, /\bIND (?:clearance|cleared|is now in effect)\b|\bcleared (?:the |its )?IND\b/i,
+      /\b(?:FDA|EMA|regulatory) (?:submission|filing)\b/i, /\bsubmi(?:ts|tted|ssion)\b[^.;]{0,30}\b(?:to|with) (?:the )?(?:FDA|EMA|regulators?)\b/i],
+    not: /\b(?:approv(?:ed|es|al) (?:of|for)|granted)\b[^.;]{0,20}\b(?:NDA|BLA)\b/i },
   { id: 'pdufa', label: 'PDUFA date set', category: 'Regulatory & clinical', direction: 'neutral', rank: 4,
     any: [/\bPDUFA\b/, /\b(?:target action date|goal date)\b/i] },
   { id: 'designation', label: 'Breakthrough / fast-track designation', category: 'Regulatory & clinical', direction: 'positive', rank: 5,
-    any: [/\bbreakthrough (?:therapy |device )?designation\b/i, /\bfast[- ]track (?:designation|status)\b/i, /\borphan (?:drug )?designation\b/i, /\bRMAT designation\b|\bregenerative medicine advanced therapy\b/i, /\brare pediatric disease designation\b/i, /\bpriority review voucher\b/i, /\bPRIME (?:designation|eligibility)\b/] },
+    any: [/\bbreakthrough (?:therapy |device )?designation\b/i, /\bfast[- ]track (?:designation|status)\b/i, /\borphan (?:drug )?designation\b/i, /\bRMAT designation\b|\bregenerative medicine advanced therapy\b/i, /\brare pediatric disease designation\b/i, /\bPRIME (?:designation|eligibility)\b/] },
+  // zzz840: a voucher is a saleable asset, not a designation.
+  { id: 'priority_review_voucher', label: 'Priority review voucher received (a saleable asset; value not stated)', category: 'Regulatory & clinical', direction: 'positive', rank: 5,
+    any: [/\bpriority review vouchers?\b/i, /\bPRV\b/],
+    not: /\b(?:may|could|might|if) (?:receive|be granted|be eligible)|\beligible (?:for|to receive)\b|\bno (?:priority review )?voucher\b/i },
   { id: 'trial_results', label: 'Clinical trial results / topline data', category: 'Regulatory & clinical', direction: 'positive', rank: 3,
     any: [/\btopline (?:results|data)\b/i, /\b(?:met|achieved|meets|achieves|did not meet|failed to meet|missed)\b[^.;]{0,40}\b(?:primary|secondary|co-primary) (?:efficacy )?endpoints?\b/i, /\bstatistically significant\b/i, /\b(?:positive|encouraging|compelling|interim|final|pivotal) (?:clinical |interim |final |topline |Phase [123][ab]? )?(?:results|data)\b[^.;]{0,60}\b(?:trial|study|Phase|cohort)\b/i, /\bp\s?[<=]\s?0?\.\d+/i],
     dir: (s) => (/\bdid not (?:meet|achieve)|failed to (?:meet|achieve)|missed (?:its |the )?(?:co-)?primary|not statistically significant|discontinu/i.test(s) ? 'negative' : 'positive'),
@@ -277,27 +301,43 @@ const RULES: Rule[] = [
 
   // ── CAPITAL STRUCTURE ──
   { id: 'buyback', label: 'Share buyback', category: 'Capital structure', direction: 'positive', rank: 27,
-    any: [/\b(?:share |stock )?(?:repurchase|buyback|buy-back) (?:program|programme|plan|authori[sz]ation)\b/i, /\bauthori[sz](?:ed|es)\b[^.;]{0,40}\b(?:repurchase|buyback|buy back)\b/i, /\brepurchas(?:ed|es|ing)\b[^.;]{0,30}\b(?:shares|of (?:its|our) (?:common )?stock)\b/i, /\baccelerated share repurchase\b/i] },
+    any: [/\b(?:share |stock )?(?:repurchase|buyback|buy-back) (?:program|programme|plan|authori[sz]ation)\b/i, /\bauthori[sz](?:ed|es)\b[^.;]{0,40}\b(?:repurchase|buyback|buy back)\b/i, /\brepurchas(?:ed|es|ing)\b[^.;]{0,30}\b(?:shares|of (?:its|our) (?:common )?stock)\b/i, /\baccelerated share repurchase\b/i],
+    not: NO_REPURCHASE },
+  // zzz840: in a spin-off / merger the OTHER company often declares the special dividend - it is not this company's.
+  { id: 'dividend_counterparty', label: 'Special dividend declared by the counterparty', category: 'Capital structure', direction: 'neutral', rank: 28,
+    any: [/(?<!\bThe )(?<!\bthe )\b(?!The\b|We\b|Our\b|Its\b|It\b|This\b|Such\b|Board\b|Company\b|Directors\b|Management\b|Committee\b|Special\b)[A-Z][\w&.-]*(?: [A-Z][\w&.-]*){0,2} (?:will|is expected to|expects to|intends to|has|had|shall|to)?\s*(?:pay|paid|declare|declared|distribute|distributed)s?\b[^.;]{0,50}\bspecial (?:cash )?dividend\b/, /\bspecial (?:cash )?dividend\b[^.;]{0,60}\b(?:declared|paid|payable|to be paid) by\s+(?!the Company\b|us\b|we\b)[A-Z]/],
+    hides: ['dividend'] },
   { id: 'dividend', label: 'Special dividend / dividend raise', category: 'Capital structure', direction: 'positive', rank: 27,
     any: [/\bspecial (?:cash )?dividend\b/i, /\b(?:increas(?:es|ed|ing)|rais(?:es|ed|ing)|boost(?:s|ed))\b[^.;]{0,30}\b(?:quarterly |annual |regular )?(?:cash )?dividend\b/i, /\bdividend increase\b/i, /\b(?:initiat(?:es|ed|ing)|reinstat(?:es|ed)|declar(?:es|ed) (?:its |the )?first)\b[^.;]{0,30}\b(?:quarterly |regular )?(?:cash )?dividend\b/i],
     dir: (s) => (/\b(?:suspend|cut|reduc|eliminat)\w*\b[^.;]{0,20}\bdividend/i.test(s) ? 'negative' : 'positive') },
-  { id: 'debt_refinancing', label: 'Debt refinancing / new credit facility', category: 'Capital structure', direction: 'neutral', rank: 35,
-    any: [/\b(?:new |amended (?:and restated )?|senior secured |revolving )?(?:credit (?:agreement|facility)|revolving credit|term loan(?: facility)?|loan agreement|financing facility)\b/i, /\brefinanc(?:e|es|ed|ing)\b/i, /\b(?:repaid|repay(?:s|ment of)?|retire(?:d|s)?|extinguish(?:ed|es)?|redeem(?:ed|s)?|redemption of)\b[^.;]{0,40}\b(?:debt|notes|loan|borrowings|term loan)\b/i, /\b(?:became|is now|now) debt[- ]free\b/i, /\bsenior (?:secured |unsecured )?notes\b/i],
+  { id: 'debt_refinancing', label: 'Debt financing / new credit facility', category: 'Capital structure', direction: 'neutral', rank: 35,
+    any: [/\b(?:new |amended (?:and restated )?|senior secured |revolving )?(?:credit (?:agreement|facility)|revolving credit|term loan(?: facility)?|loan agreement|financing facility)\b/i, /\brefinanc(?:e|es|ed|ing)\b/i, /\b(?:repaid|repay(?:s|ment of)?|retire(?:d|s)?|extinguish(?:ed|es)?|redeem(?:ed|s)?|redemption of)\b[^.;]{0,40}\b(?:debt|notes|loan|borrowings|term loan)\b/i, /\b(?:became|is now|now) debt[- ]free\b/i, /\bsenior (?:secured |unsecured )?notes\b/i,
+      /\b(?:project |mine |construction |senior |term |bank )?debt (?:financing|package|facility|funding|raise)\b/i, /\b(?:US)?\$\s?\d[\d.,]*\s?(?:M|B|MM|million|billion)\s+(?:[A-Z][\w-]*\s+){0,2}(?:project )?debt\b/],
     not: /\bconvertible\b|\bdebt[- ]free basis\b/i,
     dir: (s) => (/\bdebt[- ]free\b|\brepaid|extinguish|retire[ds]?\b|lower(?:s|ed)? (?:its )?(?:interest|cost of)|extend(?:s|ed) (?:the )?maturit/i.test(s) ? 'positive' : 'neutral') },
+  { id: 'convertible_private_placement', label: 'Convertible notes offering (private placement)', category: 'Capital structure', direction: 'mixed', rank: 33,
+    any: [/\bconvertible\b[^.;]{0,160}\bprivate placement\b/i, /\bprivate placement\b[^.;]{0,160}\bconvertible\b/i],
+    hides: ['convertible', 'equity_offering'] },
   { id: 'convertible', label: 'Convertible financing', category: 'Capital structure', direction: 'mixed', rank: 34,
     any: [/\bconvertible (?:senior |secured |unsecured )?(?:notes|debentures|preferred|bonds|note)\b/i] },
   { id: 'equity_offering', label: 'Equity offering / ATM (dilution)', category: 'Capital structure', direction: 'negative', rank: 33,
     any: [/\b(?:underwritten |registered direct |public |follow-on |secondary |confidentially marketed )(?:offering|placement)\b/i, /\bprivate placement\b|\bPIPE\b/, /\bat[- ]the[- ]market (?:offering|program|facility|equity|sales)\b|\bATM (?:program|facility|offering)\b/i, /\bequity (?:line|purchase agreement|distribution agreement)\b/i, /\bpric(?:es|ed|ing) (?:of )?(?:its |an |a |the )?(?:upsized )?(?:\$[\d.,]+\s*(?:million|billion) )?(?:offering|public offering)\b/i],
-    not: /\binitial public offering\b[^.;]{0,20}\b(?:in|of) (?:19|20)\d\d\b|\bconvertible\b|\b(?:Registrable )?Notes\b/ },
+    not: /\binitial public offering\b[^.;]{0,20}\b(?:in|of) (?:19|20)\d\d\b|\bconvertible\b|\b(?:Registrable )?Notes\b|\bnotes due\b|\baggregate principal amount\b/i },
   { id: 'reverse_split', label: 'Reverse stock split', category: 'Capital structure', direction: 'negative', rank: 36,
     any: [/\breverse (?:stock |share )?split\b/i] },
   { id: 'warrant_exercise', label: 'Warrant exercise / inducement', category: 'Capital structure', direction: 'mixed', rank: 36,
     any: [/\bwarrant (?:inducement|exercise)\b|\bexercise of (?:outstanding )?warrants\b|\binducement (?:letter|agreement)\b/i] },
 
   // ── MARKET & OWNERSHIP ──
-  { id: 'index_inclusion', label: 'Index inclusion', category: 'Market & ownership', direction: 'positive', rank: 38,
-    any: [/\b(?:added to|join(?:s|ing)?|inclusion in|included in|will replace|to replace)\b[^.;]{0,60}\b(?:S&P (?:SmallCap|MidCap|500)|S&P \d{3}|Russell (?:1000|2000|3000|Microcap)|Nasdaq-100|Nasdaq Biotechnology Index|MSCI)\b/i] },
+  { id: 'index_inclusion', label: 'Index inclusion (S&P/Russell/Nasdaq-100 add)', category: 'Market & ownership', direction: 'positive', rank: 38,
+    any: [/\b(?:added to|join(?:s|ing)?|inclusion in|included in|will replace|to replace)\b[^.;]{0,60}\b(?:S&P (?:SmallCap|MidCap|500|Total Market)|S&P \d{3}|Russell (?:1000|2000|3000|Microcap)|Nasdaq-100|Nasdaq Biotechnology Index|MSCI)\b/i,
+      /\b(?:S&P (?:SmallCap|MidCap|500|Total Market)(?: \d{3})?|S&P \d{3}|Russell (?:1000|2000|3000|Microcap)|Nasdaq-100|Nasdaq Biotechnology Index)\b[^.;]{0,30}\b(?:inclusion|addition|index add|index change|rebalanc\w+)\b/i,
+      /\b(?:inclusion|addition|added|joins?|set to join)\b[^.;]{0,20}\b(?:in|to|the)?\s*(?:the )?(?:S&P|Russell|Nasdaq-100)\b/i],
+    not: /\b(?:may|could|might) be (?:added|included)\b/i },
+  // zzz840: sector / theme press ("Meta's AI glasses push lifts an eyewear name") is sympathy, not a company event.
+  { id: 'sector_sympathy', label: 'Sector/theme sympathy (no company event)', category: 'Market & ownership', direction: 'neutral', rank: 70,
+    any: [/\b(?:sympathy|sector[- ](?:wide )?(?:rally|move|rotation|momentum)|theme(?:atic)? (?:rally|play|momentum)|lifts? (?:the )?(?:sector|group|peers)|peers? (?:rally|jump|surge)|(?:AI|chip|semiconductor|quantum|nuclear|crypto|EV|defense|drone|space|rare earth) (?:stocks|names|plays|trade)\b[^.;]{0,30}\b(?:rall|jump|surg|soar|climb|gain|lift))/i,
+      /\b(?:push|boom|craze|frenzy|hype|wave|buzz)\b[^.;]{0,30}\b(?:lifts?|boosts?|sends?|drives?|powers?|fuels?)\b[^.;]{0,40}\b(?:stocks?|shares|names?|makers?|suppliers?|plays?)\b/i] },
   { id: 'uplisting', label: 'Uplisting / new exchange listing', category: 'Market & ownership', direction: 'positive', rank: 38,
     any: [/\buplist(?:ing|ed|s)?\b/i, /\bapproved (?:for|to) list(?:ing)? on (?:the )?(?:Nasdaq|NYSE|New York Stock Exchange)\b/i, /\b(?:begin|began|commence[sd]?|will begin) trading on (?:the )?(?:Nasdaq|NYSE|New York Stock Exchange)\b/i, /\btransfer(?:s|red)? (?:its )?(?:stock )?listing to (?:the )?(?:Nasdaq|NYSE)\b/i] },
   { id: 'listing_deficiency', label: 'Listing deficiency notice', category: 'Market & ownership', direction: 'negative', rank: 39,
@@ -305,13 +345,22 @@ const RULES: Rule[] = [
     dir: (s) => (/\bregain(?:s|ed)? compliance\b/i.test(s) ? 'positive' : 'negative') },
   { id: 'activist_stake', label: 'Activist / large stake (13D)', category: 'Market & ownership', direction: 'positive', rank: 19,
     any: [/\bSchedule 13D\b|\b13D\b/, /\bactivist\b/i, /\b(?:beneficial(?:ly)? own(?:s|ership)? of|stake of|owns?)\s+(?:approximately\s+)?\d+(?:\.\d+)?%\s+of\b/i, /\b(?:nominat(?:e|es|ed|ing)|board seats?)\b[^.;]{0,40}\b(?:directors?|board)\b/i, /\bcooperation agreement\b/i],
-    not: /\bSchedule 13G\b/i },
+    not: /\bSchedule 13G\b|\b(?:expected to|will|would)\s+(?:collectively )?own\b[^.;]{0,40}%[^.;]{0,80}\b(?:combined|pro forma|SpinCo|spin[- ]?off|merger|transaction)\b|\bformer (?:holders|shareholders|stockholders) of\b/i },
   { id: 'insider_buying', label: 'Insider buying', category: 'Market & ownership', direction: 'positive', rank: 37,
-    any: [/\binsider (?:buying|purchases?|bought)\b/i, /\b(?:CEO|Chief Executive|CFO|Chairman|director|directors|officer|officers|founder|insiders?)\b[^.;]{0,40}\b(?:bought|purchased|acquired|buys|purchases)\b[^.;]{0,30}\bshares\b/i, /\bopen[- ]market purchases?\b/i, /\bForm 4\b[^.;]{0,40}\bpurchas/i],
-    not: /\bsold\b|\bsales? of\b/i },
+    any: [/\binsider (?:buying|purchases?|bought)\b/i, /\b(?:CEO|Chief Executive|CFO|Chairman|director|directors|officer|officers|founder|insiders?)\b[^.;]{0,40}\b(?:bought|purchased|acquired|buys|purchases)\b[^.;]{0,30}\bshares\b/i, /\b(?:CEO|Chief Executive|CFO|Chairman|directors?|officers?|founder|insiders?|10%\s+(?:holder|owner|shareholder|stockholder))\b[^.;]{0,60}\bopen[- ]market purchases?\b/i, /\bopen[- ]market purchases?\b[^.;]{0,40}\bby (?:the |our |its )?(?:CEO|Chief Executive|CFO|Chairman|directors?|officers?|founder|insiders?)\b/i, /\bForm 4\b[^.;]{0,40}\bpurchas/i],
+    not: /\bsold\b|\bsales? of\b|\b(?:repurchase|buy-?back|from time to time|under the program|privately negotiated|block trades?|Rule 10b5-1|Rule 10b-18)\b/i },
   { id: 'analyst_action', label: 'Analyst upgrade / initiation (opinion)', category: 'Market & ownership', direction: 'positive', rank: 50,
     any: [/\bupgrad(?:e|es|ed|ing)\b[^.;]{0,40}\b(?:to|rating|shares|stock)\b/i, /\binitiat(?:es|ed|ing) coverage\b/i, /\b(?:raises?|raised|lifts?|lifted|boosts?) (?:its |the )?price target\b/i, /\bprice target\b[^.;]{0,30}\b(?:raised|increased|to \$)/i, /\bdowngrad(?:e|es|ed|ing)\b/i],
     dir: (s) => (/\bdowngrad|\bcuts? (?:its |the )?price target|\blower(?:s|ed) (?:its |the )?price target/i.test(s) ? 'negative' : 'positive') },
+  // zzz840: a law-firm notice inviting investors to join a suit / investigation is not a company filing and not a catalyst.
+  { id: 'law_firm_solicitation', label: 'Investor-litigation solicitation (law-firm notice; not a company filing)', category: 'Market & ownership', direction: 'neutral', rank: 60,
+    any: [/\b(?:Robbins Geller|Rosen Law|Pomerantz|Levi\s?&\s?Korsinsky|Bragar Eagel|Faruqi|Glancy Prongay|Bernstein Liebhard|Kessler Topaz|Hagens Berman|Block\s?&\s?Leviton|Schall Law|Gross Law|Johnson Fistel|Bronstein,? Gewirtz|Kirby McInerney|Saxena White|Portnoy Law|Howard G\. Smith|Frank R\. Cruz|Rigrodsky|Halper Sadeh|Ademi|Monteverde|Brodsky\s?&\s?Smith|Kahn Swick|Wolf Haldenstein|Lowey Dannenberg|Berger Montague|Scott\+Scott|Holzer|Pawar Law|Bleichmar|Labaton|Grant\s?&\s?Eisenhofer|Rudman)\b/i,
+      /\b(?:class action (?:lawsuit|suit|filed|alert|deadline)|lead plaintiff deadline|securities (?:fraud|class action)\b)/i,
+      /\b(?:encourage|urge|remind|invite)s?\b[^.;]{0,40}\b(?:investors|shareholders|stockholders|witnesses)\b[^.;]{0,80}\b(?:contact|to contact|to join|to learn)\b/i,
+      /\binvestigation\b[^.;]{0,80}\bon behalf of\b[^.;]{0,40}\b(?:investors|shareholders|stockholders|purchasers)\b/i,
+      /\b(?:SHAREHOLDER|INVESTOR|STOCKHOLDER)S? ALERT\b/i, /\b[A-Z]{2,6} ALERT:\s*(?:Investigation|Class Action|Securities)/,
+      /\bLLP\b[^.;]{0,120}\b(?:investors|shareholders|potential witnesses)\b/],
+    hides: ['regulatory_probe', 'litigation_verdict', 'settlement', 'patent_litigation_win', 'short_report', 'analyst_action', 'insider_buying', 'activist_stake', 'listing_deficiency'] },
   { id: 'short_report', label: 'Short report / company rebuttal', category: 'Market & ownership', direction: 'negative', rank: 19,
     any: [/\bshort[- ]sell(?:er|ers|ing) (?:report|firm|attack|allegations?)\b/i, /\bshort report\b/i, /\b(?:Hindenburg|Muddy Waters|Spruce Point|Culper|Fuzzy Panda|Grizzly Research|Kerrisdale|Wolfpack|Iceberg Research|Blue Orca|Bleecker Street|J Capital)\b/],
     dir: (s) => (/\b(?:respond(?:s|ed)? to|refut(?:es|ed)|rebut(?:s|ted)?|rejects?|denies|denied|false and misleading|baseless)\b/i.test(s) ? 'positive' : 'negative') },
@@ -336,7 +385,7 @@ const PLANNED = /\b(?:plans? to|planning to|intends? to|expects? to|expected to|
 /** Cut the text at the forward-looking / safe-harbor section and at the
  *  "About <Company>" boilerplate paragraph (when they come after the lead). */
 export function eventBodyOf(text: string): string {
-  let t = String(text || '').replace(/\s+/g, ' ')
+  let t = repairSplitText(String(text || '').replace(/\s+/g, ' '))
     // the exhibit's own header ("EX-99.1 2 d168737dex991.htm EX-99.1 Exhibit 99.1 Document")
     .replace(/^\s*(?:EX-\d+(?:\.\d+)?\s+\d+\s+\S+\.html?\s+)?(?:(?:EX-\d+(?:\.\d+)?|Exhibit\s+\d+(?:\.\d+)?|Document)\s+)*/i, '');
   const cutAt = (re: RegExp, min: number) => { const m = re.exec(t); if (m && m.index >= min) t = t.slice(0, m.index); };
@@ -573,6 +622,9 @@ function matchForm(s: string): string {
 const decimalTolerant = (re: RegExp) => new RegExp(re.source.replace(/\[\^\.;\]/g, '(?:[^.;]|\\.(?=\\d))').replace(/\[\^\.\]/g, '(?:[^.]|\\.(?=\\d))'), re.flags);
 for (const r of RULES) { r.any = r.any.map(decimalTolerant); if (r.not) r.not = decimalTolerant(r.not); }
 
+/** zzz840: rules whose trigger words are negated by the words just before them do not fire. */
+const NEG_GUARDED = new Set(['buyback', 'dividend', 'guidance_raise', 'guidance_cut', 'acquisition', 'merger_agreement', 'takeover_bid', 'divestiture', 'equity_offering', 'convertible', 'restructuring', 'gov_contract', 'major_contract', 'customer_win', 'licensing', 'partnership', 'joint_venture', 'fda_approval', 'fda_submission', 'intl_approval', 'strategic_investment', 'settlement', 'debt_refinancing', 'capacity_expansion', 'new_facility', 'product_launch']);
+
 /** A long sentence is shown around the words that fired the rule. */
 function clipAround(s: string, at: number, n = 320): string {
   if (s.length <= n) return s;
@@ -591,6 +643,21 @@ export interface ClassifyOptions {
   maxChars?: number;
   /** Text is a single headline — no sentence split, no boilerplate cut. */
   headline?: boolean;
+  /** zzz840: the issuer's own name — a special dividend "declared by X" is the counterparty's unless X is the issuer. */
+  issuer?: string | null;
+}
+
+const SHARE_SALE_WORDS = /\b(?:shares?|common stock|ordinary shares|per share|ADSs?|units|warrants?|at[- ]the[- ]market|ATM)\b/i;
+/** zzz840: a convertible-notes private placement is debt with potential dilution - the same release must not also list a share sale. Pure. */
+export function reconcileConvertibleHits<T extends { id: string; label: string; sentence: string; figures: string[] }>(hits: T[]): T[] {
+  const cv = hits.find((h) => h.id === 'convertible' || h.id === 'convertible_private_placement');
+  if (!cv) return hits;
+  const eq = hits.find((h) => h.id === 'equity_offering');
+  if (!eq) return hits;
+  // a real share sale states shares / stock / ATM in ITS sentence; "private placement of the Notes" does not
+  if (SHARE_SALE_WORDS.test(eq.sentence) && !/\bconvertible\b|\bnotes\b/i.test(eq.sentence)) return hits;
+  const pp = /\bprivate placement\b|\bPIPE\b/i.test(eq.sentence) || /\bprivate placement\b/i.test(cv.sentence);
+  return hits.filter((h) => h.id !== 'equity_offering').map((h) => (h === cv && pp && cv.id === 'convertible' ? { ...h, id: 'convertible_private_placement', label: 'Convertible notes offering (private placement)' } : h));
 }
 
 /** Every catalyst named in the text: one hit per event type (the first
@@ -599,7 +666,7 @@ export interface ClassifyOptions {
 export function classifyUsEvents(text: string, opts: ClassifyOptions = {}): UsEventHit[] {
   const raw = String(text || '').slice(0, opts.maxChars ?? 120_000);
   if (!raw.trim()) return [];
-  const sents = opts.headline ? [raw.replace(/\s+/g, ' ').trim()] : eventSentences(raw).slice(0, opts.maxSentences ?? 400);
+  const sents = opts.headline ? [repairSplitText(raw.replace(/\s+/g, ' ').trim())] : eventSentences(raw).slice(0, opts.maxSentences ?? 400);
   const byId = new Map<string, UsEventHit & { order: number }>();
   const dirs = new Map<string, Set<UsEventDirection>>();
   sents.forEach((s, order) => {
@@ -611,6 +678,9 @@ export function classifyUsEvents(text: string, opts: ClassifyOptions = {}): UsEv
       if (had && !r.dir && (had.figures.length || order - had.order > 10)) continue;
       if (!r.any.some((re) => re.test(m))) continue;
       if (r.not && r.not.test(m)) continue;
+      // zzz840: a negated trigger ("did not repurchase", "no material contract") is not the event; a background approval is not a new one
+      if (NEG_GUARDED.has(r.id) && hasNegatedTrigger(m, r.any)) continue;
+      if ((r.id === 'fda_approval' || r.id === 'intl_approval') && isBackgroundApproval(m)) continue;
       // zzz835: a sentence describing a lawsuit / jury / damages claim is litigation, never a licence, partnership or order
       if (r.category === 'Deals & customers' && LITIGATION_SENTENCE.test(m)) continue;
       // a rule whose direction reads from the sentence remembers every
@@ -624,7 +694,7 @@ export function classifyUsEvents(text: string, opts: ClassifyOptions = {}): UsEv
       const shown = clipAround(s, Number.isFinite(at) ? at : 0);
       const figures = figuresIn(shown);
       if (had && !figures.length) continue;
-      here.push({ r, hit: { id: r.id, label: r.label, category: r.category, direction: r.dir ? r.dir(m) : r.direction, sentence: shown, figures, planned: PLANNED.test(shown), ...(figures.length ? { metrics: extractMetrics(shown) } : {}) } });
+      here.push({ r, hit: { id: r.id, label: r.label, category: r.category, direction: r.dir ? r.dir(m) : r.direction, sentence: shown, figures, planned: PLANNED.test(shown), ...(r.stage ? { stage: r.stage } : {}), ...(figures.length ? { metrics: extractMetrics(shown) } : {}) } });
     }
     // a more specific rule hides a generic one fired by the same sentence
     const hidden = new Set(here.flatMap((x) => x.r.hides || []));
@@ -638,13 +708,23 @@ export function classifyUsEvents(text: string, opts: ClassifyOptions = {}): UsEv
     const d = dirs.get(id);
     if (d && d.has('positive') && d.has('negative')) byId.set(id, { ...h, direction: 'mixed' });
   }
+  // zzz840: the counterparty's special dividend is attributed to it, unless the issuer itself is the payer
+  if (opts.issuer) {
+    const key = String(opts.issuer).toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).find((w) => w.length > 2 && !/^(?:inc|corp|corporation|company|holdings?|group|ltd|plc|the|technologies|therapeutics)$/.test(w));
+    const dc = byId.get('dividend_counterparty');
+    if (key && dc && dc.sentence.toLowerCase().includes(key)) {
+      const d = RULE_BY_ID.get('dividend')!;
+      byId.delete('dividend_counterparty');
+      if (!byId.has('dividend')) byId.set('dividend', { ...dc, id: d.id, label: d.label, direction: 'positive' });
+    }
+  }
   const rank = (id: string) => RULE_BY_ID.get(id)?.rank ?? 99;
   // the lead catalyst: an event stated early (the release's lead) and of a
   // strong kind first; a planned event after a done one of the same rank.
-  return Array.from(byId.values())
+  return reconcileConvertibleHits(Array.from(byId.values()))
     .sort((a, b) => (Math.min(a.order, 6) - Math.min(b.order, 6)) * 4 + (rank(a.id) - rank(b.id)) || (Number(a.planned) - Number(b.planned)) || a.order - b.order)
     .slice(0, opts.max ?? 12)
-    .map(({ order: _o, ...h }) => ({ ...h, economicDirection: directionOf(h.id, h.sentence, h.direction), directionNote: directionNote(h.id, h.sentence), subtype: subtypeOf(h.id, h.sentence) }));
+    .map(({ order: _o, ...h }) => ({ ...h, economicDirection: directionOf(h.id, h.sentence, h.direction), directionNote: directionNote(h.id, h.sentence), subtype: subtypeOf(h.id, h.sentence, 'US') }));
 }
 
 /** Counts of hits by category (every category present, zero when none). */

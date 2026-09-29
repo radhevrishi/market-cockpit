@@ -120,3 +120,14 @@ describe('zzz839 both markets, scoring only', () => {
     assert.doesNotMatch(rv, /sort\([^)]*catalystScore/);
   });
 });
+
+describe('zzz840 score follows the new US event types', () => {
+  test('sympathy moves and law-firm notices are not scored; index inclusion is a weak type', () => {
+    for (const eventLabel of ['Sector/theme sympathy (no company event)', 'Investor-litigation solicitation (law-firm notice; not a company filing)']) {
+      const s = catalystScoreOf({ ...base, eventLabel } as any);
+      assert.equal(s.scored, false); assert.match(s.notScoredReason!, /No company event/);
+    }
+    const ix = catalystScoreOf({ ...base, eventLabel: 'Index inclusion (S&P/Russell/Nasdaq-100 add)', stage: 'EXECUTED' } as any);
+    assert.match(ix.weakType || '', /index inclusion/);
+  });
+});

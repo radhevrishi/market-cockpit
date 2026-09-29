@@ -21,6 +21,7 @@ import { ScoreChip } from './ScoreBox';
 import { BandChip, Btn, CatalystForBadge, DirectionChip, Move, Name, Pill, ScanNote, SectionHead, SourceBadge, StatusPill, TriagePill, UsCatalystList, InCatalystList, materialWord } from './Badges';
 import { EventDrawer } from './EventDrawer';
 import { AlsoIn, ResearchCard } from './ResearchCard';
+import { WatchDetail, OlderDetail, NoCatalystDetail, NegativeDetail, TechnicalDetail } from './RowDetail';
 import { C, CLASS_META, CURRENCY, PRICE_COMMENTARY_LABEL, isPriceCommentary, MATERIAL_COLOR, exchangeClock, moveColor, pct, sessionDate, tint, txt } from './tokens';
 
 export interface ResearchTriageProps {
@@ -283,7 +284,7 @@ function Collapsible({ title, count, sub, children, color, testid, paren }: { ti
 }
 
 /** "SECZ +17.9% No meaningful filing" — the compressed one-liner. */
-function OneLiner({ it, onOpen, extra }: { it: ResearchItem; onOpen?: (it: ResearchItem) => void; extra?: React.ReactNode }) {
+export function OneLiner({ it, onOpen, extra, kind }: { it: ResearchItem; onOpen?: (it: ResearchItem) => void; extra?: React.ReactNode; kind?: 'nocat' | 'technical' }) {
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 9px', alignItems: 'baseline', padding: '4px 0', borderTop: `1px solid ${C.border}`, fontSize: 13, minWidth: 0 }}>
       <Name it={it} max={160} />
@@ -299,6 +300,9 @@ function OneLiner({ it, onOpen, extra }: { it: ResearchItem; onOpen?: (it: Resea
       {it.market === 'US' && it.usCard?.catalysts && <div style={{ flexBasis: '100%' }}><UsCatalystList it={it} compact /></div>}
       {it.market === 'IN' && it.inCard && <div style={{ flexBasis: '100%' }}><InCatalystList it={it} compact /></div>}
       {it.news?.narrative && <div style={{ flexBasis: '100%', fontSize: 12, color: C.dim }}>{isPriceCommentary(it.news.narrative.label) ? PRICE_COMMENTARY_LABEL : 'Press (unverified)'}: <b style={{ color: C.text }}>{it.news.narrative.label}</b> story over {it.news.narrative.days} days ({it.news.narrative.firstDate} → {it.news.narrative.lastDate}) — “{it.news.narrative.lead}”</div>}
+      {/* zzz841: what was searched, the plain "not negative", any press seen; large moves get the facts and the open question. */}
+      {kind === 'nocat' && <div style={{ flexBasis: '100%' }}><NoCatalystDetail it={it} /></div>}
+      {kind === 'technical' && <div style={{ flexBasis: '100%' }}><TechnicalDetail it={it} /></div>}
     </div>
   );
 }
@@ -391,7 +395,7 @@ const thS: React.CSSProperties = { fontSize: 11, fontWeight: 800, letterSpacing:
 const tdS: React.CSSProperties = { fontSize: 13, color: C.dim, padding: '5px 8px', borderBottom: `1px solid ${C.border}`, verticalAlign: 'top' };
 
 /** OLDER FILINGS as a table - same columns for India and the US. Horizontally scrollable on a phone. */
-function OlderTable({ rows, items, onOpen }: { rows: NonNullable<ResearchView['olderFilings']>; items: ResearchItem[]; onOpen: (it: ResearchItem) => void }) {
+export function OlderTable({ rows, items, onOpen }: { rows: NonNullable<ResearchView['olderFilings']>; items: ResearchItem[]; onOpen: (it: ResearchItem) => void }) {
   const byT = new Map(items.map((i) => [i.ticker, i] as const));
   return (
     <div style={{ overflowX: 'auto' }} data-testid="older-table">
@@ -406,7 +410,7 @@ function OlderTable({ rows, items, onOpen }: { rows: NonNullable<ResearchView['o
                 <td style={{ ...tdS, color: moveColor(r.movePct), fontWeight: 800 }}>{pct(r.movePct)}</td>
                 <td style={tdS}>{txt(r.filedDate ? r.filedDate.slice(0, 10) : null, 'Not disclosed')}</td>
                 <td style={tdS}>{r.ageDays != null ? `${r.ageDays} days` : 'Not disclosed'}</td>
-                <td style={{ ...tdS, minWidth: 200 }}>{txt(r.eventLabel || r.event, 'Not disclosed')}{it && <> <button type="button" onClick={() => onOpen(it)} style={{ all: 'unset', cursor: 'pointer', fontSize: 12, color: C.cyan }}>details</button></>}</td>
+                <td style={{ ...tdS, minWidth: 200 }}>{txt(r.eventLabel || r.event, 'Not disclosed')}{it && <OlderDetail it={it} />}{it && <> <button type="button" onClick={() => onOpen(it)} style={{ all: 'unset', cursor: 'pointer', fontSize: 12, color: C.cyan }}>details</button></>}</td>
                 <td style={tdS}>{txt(r.material, 'Not disclosed')}</td>
                 <td style={tdS}>{r.url ? <a href={r.url} target="_blank" rel="noopener noreferrer" style={{ color: C.cyan, textDecoration: 'none' }}>open filing</a> : <span style={{ color: C.faint }}>no link</span>}</td>
               </tr>
@@ -557,6 +561,7 @@ export function ResearchTriage(props: ResearchTriageProps) {
                   </span>
                   {it.market === 'US' && it.usCard?.catalysts && <div style={{ flexBasis: '100%' }}><UsCatalystList it={it} compact /></div>}
       {it.market === 'IN' && it.inCard && <div style={{ flexBasis: '100%' }}><InCatalystList it={it} compact /></div>}
+                  <WatchDetail it={it} />
                   <div style={{ flexBasis: '100%' }}><AlsoIn it={it} here="Watch / investigate" /></div>
                   <button type="button" onClick={() => onOpen(it)} style={{ all: 'unset', cursor: 'pointer', fontSize: 12, fontWeight: 800, color: C.cyan }}>OPEN</button>
                 </div>
@@ -586,6 +591,7 @@ export function ResearchTriage(props: ResearchTriageProps) {
                     <button type="button" onClick={() => onOpen(it)} style={{ all: 'unset', cursor: 'pointer', fontSize: 12, fontWeight: 800, color: C.cyan }}>OPEN</button>
                   </div>
                   <div style={{ fontSize: 12, color: C.dim, marginTop: 1 }}>↳ {txt(it.whyResearch, txt(it.expectationGap?.text, 'The move is not supported by the filings.'))}</div>
+                  <div style={{ marginTop: 2, paddingLeft: 12 }}><NegativeDetail it={it} /></div>
                 </div>
               ))}
             </section>
@@ -608,14 +614,14 @@ export function ResearchTriage(props: ResearchTriageProps) {
           )}
 
           <Collapsible testid="no-catalyst" title="NO IDENTIFIED CATALYST" count={noCat.length} sub="Checked: nothing meaningful filed in the window.">
-            <ShowAll items={noCat} first={15} render={(it) => <OneLiner key={it.ticker} it={it} onOpen={onOpen} />} />
+            <ShowAll items={noCat} first={15} render={(it) => <OneLiner key={it.ticker} it={it} onOpen={onOpen} kind="nocat" />} />
           </Collapsible>
 
           {(bandsRest.length > 0 || bandNotes.length > 0) && (
             <Collapsible testid="band-prints" title={props.market === 'US' ? 'LARGE / TECHNICAL MOVES' : 'PRICE-BAND MOVES'} count={bandsRest.length + bandNoteT.size}
               sub={props.market === 'US' ? `Moves of ${EXTREME_MOVE_PCT}% or more, or price-only prints with no filing. Size of move does not establish demand.` : 'Price-band movement. Does not establish demand.'}>
               {bandNotes.length > 0 && <DataNotesTable rows={bandNotes} />}
-              <ShowAll items={bandsRest} first={15} render={(it) => <OneLiner key={it.ticker} it={it} onOpen={onOpen} extra={<BandChip it={it} />} />} />
+              <ShowAll items={bandsRest} first={15} render={(it) => <OneLiner key={it.ticker} it={it} onOpen={onOpen} extra={<BandChip it={it} />} kind="technical" />} />
             </Collapsible>
           )}
 
