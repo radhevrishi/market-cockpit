@@ -26,6 +26,7 @@
 
 import type { jsPDF as JsPdfDoc } from 'jspdf';
 import type { ResearchItem, ResearchView } from './research-view';
+import { scoreFactorLine } from './catalyst-score';
 
 export type GainersMarket = 'IN' | 'US';
 
@@ -886,6 +887,17 @@ export function buildGainersPdf(JsPDF: JsPdfCtor, input: GainersPdfInput): JsPdf
     if (!(has(it.researchQuestion) && has(it.whyResearch) && String(it.researchQuestion).trim() === String(it.whyResearch).trim())) b.push({ k: 'segs', segs: [lbl('WHY RESEARCH'), { text: txt(it.whyResearch, 'Not established'), color: INK }], size: 8.8 });
     if (has(it.rankReason)) b.push({ k: 'segs', segs: [lbl('WHY RANKED'), { text: String(it.rankReason) }], size: 8.4 });
     if (has(it.whyRank)) b.push({ k: 'segs', segs: [lbl(`WHY #${rank}`), { text: String(it.whyRank) }], size: 8.4 });
+    // zzz839: the Catalyst Score (0-12), read-only; the price is not an input.
+    const cs = it.catalystScore;
+    if (cs) {
+      if (!cs.scored) b.push({ k: 'segs', size: 8.4, segs: [lbl('CATALYST SCORE'), { text: `Not scored - ${cs.notScoredReason || ''}`, color: MUTED }] });
+      else {
+        const sc = cs.band === 'RESEARCH NOW' ? GREEN : cs.band === 'WATCH / CONFIRM' ? AMBER : cs.band.startsWith('NEGATIVE') ? RED : MUTED;
+        b.push({ k: 'segs', size: 8.4, gapAfter: 0.2, segs: [lbl('CATALYST SCORE'), { text: `${cs.total}/12 ${cs.band}`, bold: true, color: sc }, { text: `${cs.unscored.length ? ` (${cs.unscored.length} unknown, up to ${cs.ceiling})` : ''}  ${scoreFactorLine(cs)}`, color: INK2 }] });
+        const rule = cs.evidenceCapped || cs.weakType || cs.band.startsWith('NEGATIVE') ? `${cs.bandNote}. ` : '';
+        b.push({ k: 'segs', size: 8, indent: 4, segs: [{ text: `${rule}Watch next: ${cs.kpis.slice(0, 2).join('; ')}.`, color: MUTED }] });
+      }
+    }
 
     const unknowns = (it.unknowns || []).filter(has);
     if (unknowns.length) {

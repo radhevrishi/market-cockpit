@@ -17,6 +17,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { useUrlParam } from '@/lib/use-url-param';
 import { exchangeStamp } from '@/lib/ai-gainers/research-present';
 import { EXTREME_MOVE_PCT, PARTITION_META, type ResearchItem, type ResearchView } from '@/lib/ai-gainers/research-view';
+import { ScoreChip } from './ScoreBox';
 import { BandChip, Btn, CatalystForBadge, DirectionChip, Move, Name, Pill, ScanNote, SectionHead, SourceBadge, StatusPill, TriagePill, UsCatalystList, InCatalystList, materialWord } from './Badges';
 import { EventDrawer } from './EventDrawer';
 import { AlsoIn, ResearchCard } from './ResearchCard';
@@ -255,6 +256,7 @@ function Top3({ items, onOpen, provisional }: { items: ResearchItem[]; onOpen: (
             {it.rankReason && <div style={{ fontSize: 12, color: C.faint, lineHeight: 1.45 }}>Rank basis: {it.rankReason}</div>}
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 2 }}>
               <TriagePill it={it} />
+              <ScoreChip it={it} />
               <Pill color={MATERIAL_COLOR[it.materiality?.label || 'UNKNOWN']} title={it.materiality?.explanation || ''}>{materialWord(it)}</Pill>
               <span style={{ marginLeft: 'auto' }}><Btn onClick={() => onOpen(it)} color={C.cyan}>OPEN</Btn></span>
             </div>

@@ -26,6 +26,7 @@ import { presentErrorLines, marketRunOf, exchangeDateOf } from './research-prese
 import { contractTermYears, debtActionOf, isStrategicStakeKind, resolveIssuer, directionOf, subtypeOf, researchQuestionFor, ACQUISITION_PRICE_LABEL, contextTag, type CatalystConfirmation, type EconDirection, type EventSubtype, type CatalystRecord, type EventKind, type EventStage, type StructuredFacts, type ValueStatus } from './structured-facts';
 import { buildCatalystRecords, evidenceBreadthOf, storedView, evidenceGapOf, factsForFinding, legacyFactMapOf, structuredFactsOf, threadTimeline, KIND_WORD, STATE_WORD, stateWordFor, type CatalystView, type EvidenceBreadth, type EvidenceGap, type TimelineEntry } from './catalyst-timeline';
 import { persistenceTestOf, type PersistenceTestView } from './persistence-test';
+import { catalystScoreOf } from './catalyst-score';
 // zzz798: the US card is a type-only reference (inline import type below) —
 // this module keeps its client-safe import list.
 type UsCard = import('./us-card').UsCard;
@@ -345,6 +346,8 @@ export interface ResearchItem {
   // ── zzz836 ──
   /** ONE mutually exclusive status per scanned name; the counts of these add up to `scanned`. */
   primaryStatus?: PrimaryStatus;
+  /** zzz839: the 0–12 Catalyst Score (scoring only — never changes a rank, class or count). */
+  catalystScore?: import('./catalyst-score').CatalystScore;
   /** Does a source exist for the HEADLINE event: an official filing, press only, both, or none. Says nothing about being verified. */
   sourceExistence?: 'official_filing' | 'press_only' | 'both' | 'none';
   /** How well the HEADLINE event is verified: document read, filed but document not read, secondary (press / summary) only, contradicted by another value, or none. */
@@ -3191,6 +3194,7 @@ export function buildResearchView(input: ResearchViewInput): ResearchView {
   };
   // zzz836: ONE mutually exclusive status per scanned name. The counts add up to `scanned`; overlays are listed apart.
   for (const i of items) i.primaryStatus = primaryStatusOf(i);
+  for (const i of items) i.catalystScore = catalystScoreOf(i);
   const buckets: PartitionBucket[] = PARTITION_ORDER.map((key) => {
     const ts = key === 'not_researched' ? unresearchedTickers : items.filter((i) => i.primaryStatus === key).map((i) => i.ticker);
     return { key, label: PARTITION_META[key].label, meaning: PARTITION_META[key].meaning, count: ts.length, tickers: ts };

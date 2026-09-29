@@ -43,12 +43,13 @@ const withSession = (v: ResearchView, session: Partial<ResearchView['session']>)
   return { ...v, session: { ...rest, ...session } };
 };
 
+// zzz839: limit 11 -> 12: the Catalyst Score adds two lines per card (requested).
 test('compact: 15 cards take clearly fewer pages than one page per card', () => {
   for (const [v, market] of [[bigView(indiaPdfView()), 'IN'], [bigView(usPdfView()), 'US']] as Array<[ResearchView, 'IN' | 'US']>) {
     const doc = build({ view: v, market });
     assert.ok(doc.getNumberOfPages() < 15 + 4, `pages ${doc.getNumberOfPages()} must beat one-card-per-page`);
     
-    assert.ok(doc.getNumberOfPages() <= 11, `pages ${doc.getNumberOfPages()} should be compact`);
+    assert.ok(doc.getNumberOfPages() <= 12, `pages ${doc.getNumberOfPages()} should be compact`);
   }
 });
 

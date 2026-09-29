@@ -4628,7 +4628,7 @@ describe('zzz770 AG-A research view — classification, ranking, sections', () =
     const src = readFileSync(join(__dirname, '..', 'ai-gainers', 'research-view.ts'), 'utf8');
     const imports = Array.from(src.matchAll(/^import .* from '([^']+)';/gm)).map((m) => m[1]);
     // zzz785: + the pure timeline / persistence-test / contract modules, themselves client-safe.
-    assert.deepEqual(imports.sort(), ['./catalyst-research', './catalyst-timeline', './persistence-test', './research-present', './structured-facts']);
+    assert.deepEqual(imports.sort(), ['./catalyst-research', './catalyst-score', './catalyst-timeline', './persistence-test', './research-present', './structured-facts']);
     for (const m of ['catalyst-timeline', 'persistence-test', 'structured-facts']) {
       const t = readFileSync(join(__dirname, '..', 'ai-gainers', `${m}.ts`), 'utf8');
       assert.ok(Array.from(t.matchAll(/from '([^']+)'/g)).every((x) => x[1].startsWith('./')), `${m} imports only local pure modules`);
