@@ -183,14 +183,16 @@ describe('2b special situations vs structural candidates', () => {
     assert.equal(analyseRadarItem(BUYBACK).bucket, 'SPECIAL_SITUATION');
   });
   test('a plain spin-off stays SPECIAL_SITUATION', () => assert.equal(analyseRadarItem(SPIN_PLAIN).bucket, 'SPECIAL_SITUATION'));
-  test('a spin-off that unlocks a growth business with stated contribution becomes an earnings candidate', () => {
+  test('a spin-off that unlocks a growth business with stated contribution stays a special situation (zzz847: no measured result exists yet)', () => {
     const r = analyseRadarItem(SPIN_DURABLE);
     assert.equal(r.kind, 'SPECIAL_SITUATION');
-    assert.ok(['EARNINGS_INFLECTION', 'MULTIBAGGER'].includes(r.bucket), r.bucket);
+    assert.equal(r.bucket, 'SPECIAL_SITUATION');
+    assert.equal(r.structuralBridge?.created, true);
   });
-  test('an acquisition with stated contribution and capacity can be an earnings candidate; without it, not', () => {
+  test('an acquisition lands in special situations with or without a stated contribution (zzz847); the contribution only builds the structural bridge', () => {
     const yes = run({ title: 'Zeta acquires a rival; adds capacity of 4 MTPA and contributes 25% to revenue', sourceLabel: 'NSE' });
-    assert.ok(['EARNINGS_INFLECTION', 'MULTIBAGGER'].includes(yes.bucket));
+    assert.equal(yes.bucket, 'SPECIAL_SITUATION');
+    assert.equal(yes.structuralBridge?.created, true);
     const no = run({ title: 'Eta Ltd announces acquisition of a rival', sourceLabel: 'NSE' });
     assert.equal(no.bucket, 'SPECIAL_SITUATION');
   });
@@ -214,8 +216,9 @@ describe('3 duration', () => {
       const r = analyseRadarItem({ ...f, title: f.title.replace(/\d+-year|over the next 5 years/g, '') });
       if (r.duration.basis === 'type') assert.ok((r.duration.code ?? 0) <= 3);
     }
-    const r = analyseRadarItem(BOTTLENECK);
-    assert.equal(r.duration.basis, 'type');
+    // changed in zzz845: duration is never inferred from the type of event
+    const r = analyseRadarItem({ ...BOTTLENECK, title: BOTTLENECK.title.replace(/\d+-year|over the next 5 years/g, '') });
+    assert.ok(r.duration.basis === 'none' || r.duration.basis === 'stated');
     assert.ok((r.duration.code ?? 0) <= 3);
   });
   test('nothing stated and no type: code null, not established', () => {
@@ -237,8 +240,9 @@ describe('3 duration', () => {
     assert.match(r.duration.evidence, /one-time/i);
   });
   test('asset sale is one-time and a buyback type-only is 0', () => {
-    assert.equal(run({ title: 'Rho Ltd completes asset sale of a plant', sourceLabel: 'NSE' }).duration.code, 0);
-    assert.equal(analyseRadarItem(BUYBACK).duration.code, 0);
+    // changed in zzz845: no duration from event type; unknown is null, not zero
+    assert.equal(run({ title: 'Rho Ltd completes asset sale of a plant', sourceLabel: 'NSE' }).duration.code, null);
+    assert.equal(analyseRadarItem(BUYBACK).duration.code, null);
   });
   test('quarters and months conversion; history windows are ignored', () => {
     assert.equal(parseDuration('benefit for the next 2 quarters')?.code, 2);
@@ -456,7 +460,8 @@ describe('9 proof point and break conditions', () => {
   });
   test('feed facts feed the proof and break lists', () => {
     const r = run({ title: 'Ab Ltd wins order worth $9 million', feedFacts: { what_to_watch: 'first dispatch', what_breaks_thesis: 'customer cuts volumes' } });
-    assert.match(r.proof.what, /first dispatch/);
+    // zzz847: the feed watch-item boilerplate is no longer appended to the next proof
+    assert.doesNotMatch(r.proof.what, /first dispatch|Feed watch item/);
     assert.ok(r.breakConditions.some((b) => /customer cuts volumes/.test(b)));
   });
 });
@@ -533,11 +538,12 @@ describe('10 buckets', () => {
 
 describe('11 research priority', () => {
   test('VERY_HIGH needs stated duration >= 4, direct/near link, confirmed/strong evidence, governance not flagged', () => {
-    assert.equal(analyseRadarItem(QUAL).priority, 'VERY_HIGH');
+    // changed in zzz845: materiality is unknown without company context, so the top grade is withheld
+    assert.equal(analyseRadarItem(QUAL).priority, 'HIGH');
     // missing pieces each drop it
     assert.notEqual(analyseRadarItem({ ...QUAL, sourceLabel: 'Financial media', primarySource: false, independentSources: 1 }).priority, 'VERY_HIGH');
     const typeOnly = run({ title: 'Ai Corp completes customer qualification and wins a supply contract worth $120 million', sourceLabel: 'SEC 8-K' });
-    assert.equal(typeOnly.duration.basis, 'type');
+    assert.equal(typeOnly.duration.basis, 'none');
     assert.notEqual(typeOnly.priority, 'VERY_HIGH');
   });
   test('governance FLAGGED caps at MEDIUM with the reason', () => {
@@ -555,7 +561,7 @@ describe('11 research priority', () => {
   test('CLEAR governance with data', () => {
     const r = analyseRadarItem({ ...QUAL, governance: { promoterPledgePct: 2, auditorIssue: false } });
     assert.equal(r.governance.status, 'CLEAR');
-    assert.equal(r.priority, 'VERY_HIGH');
+    assert.equal(r.priority, 'HIGH'); // changed in zzz845: no company context, materiality unknown
   });
   test('HYPOTHESIS never above MEDIUM', () => {
     for (const f of [SOCIAL, ANALYST, { ...QUAL, sourceLabel: 'Twitter', primarySource: false, independentSources: 1 }]) assert.ok(P(analyseRadarItem(f)) <= 1);

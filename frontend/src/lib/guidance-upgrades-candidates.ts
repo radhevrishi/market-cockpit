@@ -3,7 +3,8 @@
 // and the US graded-results cache (KV `us-graded:<engine>:<date>|1`, gzip). Nothing here fetches a document,
 // imports a price module, or calls an AI model.
 import { gunzipSync } from 'zlib';
-import type { GuCandidate, GuContext, GuMarket, GuWindow, GuidanceEvent } from './guidance-upgrades-types';
+import type { GuCandidate, GuContext, GuMarket, GuWindow, GuidanceEvent, GuScanStatus } from './guidance-upgrades-types';
+import { buildGuidanceEvent, isGuidanceUpgradeCandidate, mergeCandidates, rank, withinWindow } from './guidance-upgrades';
 
 const WINDOWS: GuWindow[] = ['24H', '3D', '7D', '14D', '30D'];
 /** Missing or unknown window falls back to 7D. */
@@ -21,7 +22,42 @@ export function lookbackDays(w: GuWindow): number {
 }
 
 const clean = (s: unknown, max = 1500) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
-const iso = (s: unknown): string | null => { const t = Date.parse(String(s ?? '')); return Number.isFinite(t) ? new Date(t).toISOString() : null; };
+
+// ── India time: exchanges publish in IST, RSS in RFC 822 (sometimes '... IST'), some rows carry no zone at all ──────────────
+const IST_MIN = 330;
+const MONTHS: Record<string, number> = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+const utcFrom = (y: number, mo: number, d: number, h: number, mi: number, sec: number, zoneMin: number): string | null => {
+  const t = Date.UTC(y, mo, d, h, mi, sec) - zoneMin * 60_000;
+  return Number.isFinite(t) ? new Date(t).toISOString() : null;
+};
+/**
+ * Tolerant timestamp parser. ISO and RFC 822 with an explicit zone go through Date.parse. A trailing 'IST' is read as +05:30.
+ * A zone-less 'DD-Mon-YYYY HH:mm:ss' (NSE style) or 'YYYY-MM-DD HH:mm:ss' is exchange local time, so it is read in `naiveZoneMin`
+ * (IST by default) instead of the server's zone. Date-only input becomes 00:00 UTC of that date (callers that need the date
+ * itself keep the original string).
+ */
+export function parseWhen(v: unknown, naiveZoneMin: number = IST_MIN): string | null {
+  let s = String(v ?? '').trim();
+  if (!s) return null;
+  s = s.replace(/\s*\(?\bIST\b\)?\s*$/i, ' +0530');
+  let m = s.match(/^(\d{1,2})[-\s\/]([A-Za-z]{3,9})[-\s\/](\d{4})(?:[ T]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (m) { const mo = MONTHS[m[2].slice(0, 3).toLowerCase()]; if (mo !== undefined) return utcFrom(+m[3], mo, +m[1], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0), naiveZoneMin); }
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?$/);
+  if (m) return utcFrom(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0), naiveZoneMin);
+  m = s.match(/^(\d{2})-(\d{2})-(\d{4})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (m) return utcFrom(+m[3], +m[2] - 1, +m[1], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0), naiveZoneMin);
+  const t = Date.parse(s);
+  return Number.isFinite(t) ? new Date(t).toISOString() : null;
+}
+const iso = (s: unknown): string | null => parseWhen(s, 0);
+/** YYYY-MM-DD of an instant in IST (the Indian trading/announcement day). */
+export const istDate = (d: Date): string => new Date(d.getTime() + IST_MIN * 60_000).toISOString().slice(0, 10);
+/** IST calendar days, today first. India graded sessions and exchange announcements are keyed by the IST day. */
+export function istDateList(now: Date, days: number): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < Math.min(days, 30); i++) out.push(istDate(new Date(now.getTime() - i * 86_400_000)));
+  return out;
+}
 const tick = (s: unknown): string | undefined => { const t = String(s ?? '').trim().toUpperCase().replace(/\.(NS|BO)$/, ''); return t || undefined; };
 
 const hostOf = (u: unknown): string => { try { return new URL(String(u)).hostname.toLowerCase().replace(/^www\./, ''); } catch { return ''; } };
@@ -35,43 +71,193 @@ export function isCompanyWire(sourceName: unknown, url: unknown): boolean {
   return WIRE_NAME_RE.test(String(sourceName || '')) && !/\b(yahoo|reuters|benzinga|seeking ?alpha|marketwatch)\b/i.test(String(sourceName || ''));
 }
 
-export function newsToCandidate(a: any): GuCandidate | null {
-  const publishedAt = iso(a?.published_at);
+// ═══════════════════════════════════════════════════════════════════════════
+// India company -> NSE symbol. Indian headlines name the company ("Cupid raises FY27 guidance"), and the news pipeline's
+// `ticker_symbols` is built from ALL-CAPS words in the headline (so it can hold "AGM" or "NSE" and miss the company).
+// The index below is built by the route from data the app already holds: the NSE symbol catalog (KV `symbolmaster:catalog`),
+// the curated NSE_TICKER_NAMES map, and every (symbol, company_name) pair in the filing / results rows it read this request.
+// Nothing here names a company or a ticker.
+// ═══════════════════════════════════════════════════════════════════════════
+export interface CompanyIndex {
+  /** normalised company name -> NSE symbol; null = two symbols share that name (ambiguous, never guessed) */
+  names: Map<string, string | null>;
+  /** every NSE-style symbol seen */
+  known: Set<string>;
+  maxWords: number;
+  size: number;
+}
+const SYMBOL_OK = /^[A-Z0-9][A-Z0-9&-]{0,19}$/;
+/** NSE symbol shape; a pure-digit code is a BSE scrip code, not an NSE symbol. */
+export const isNseSymbol = (t: unknown): boolean => { const u = String(t ?? '').trim().toUpperCase(); return SYMBOL_OK.test(u) && !/^\d+$/.test(u); };
+export function normCompanyName(s: unknown): string {
+  let t = String(s ?? '').toLowerCase().replace(/&/g, ' and ').replace(/\(.*?\)/g, ' ').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  for (let i = 0; i < 3; i++) {
+    const n = t.replace(/\s+(?:limited|ltd|pvt|private|plc|inc|corporation|corp|co)$/, '').trim();
+    if (n === t) break; t = n;
+  }
+  return t;
+}
+export function buildCompanyIndex(pairs: Iterable<{ symbol?: unknown; name?: unknown }>): CompanyIndex {
+  const names = new Map<string, string | null>(); const known = new Set<string>(); let maxWords = 1;
+  const put = (key: string, sym: string) => {
+    if (key.length < 3) return;
+    const cur = names.get(key);
+    if (cur === undefined) names.set(key, sym); else if (cur !== sym) names.set(key, null);
+    maxWords = Math.max(maxWords, key.split(' ').length);
+  };
+  for (const p of pairs) {
+    const sym = String(p?.symbol ?? '').trim().toUpperCase().replace(/\.(NS|BO)$/, '');
+    if (!isNseSymbol(sym)) continue;
+    known.add(sym);
+    const base = normCompanyName(p?.name);
+    if (!base) continue;
+    put(base, sym);
+    const noIndia = base.replace(/\s+india$/, '').trim();
+    if (noIndia && noIndia !== base) put(noIndia, sym);
+  }
+  return { names, known, maxWords: Math.min(maxWords, 7), size: names.size };
+}
+/** Words that are a whole company name only by accident ("India", "Bank"); never matched as a single-word name. */
+const GENERIC_WORD = new Set(['india', 'indian', 'bank', 'group', 'global', 'power', 'steel', 'gold', 'energy', 'capital', 'finance', 'industries', 'international', 'technologies', 'company', 'corporation', 'holdings', 'infra', 'ventures', 'enterprises', 'trading', 'foods', 'oil', 'gas', 'green', 'new', 'first', 'national', 'united', 'sector', 'stock', 'stocks', 'shares', 'market', 'markets']);
+/** Institutions and generic actors that raise forecasts but are not listed companies with company guidance. */
+const NON_COMPANY = /^(?:rbi|sebi|imf|oecd|adb|fed|ecb|government|govt|centre|center|ministry|cabinet|brokerage|brokerages|analysts?|world bank|moody'?s|fitch|crisil|icra|care ratings|s&p|goldman sachs|morgan stanley|jefferies|nomura|citi|hsbc|ubs|kotak institutional equities|motilal oswal|icici securities|sensex|nifty|india inc)$/i;
+
+export interface ResolvedCompany { ticker?: string; company?: string; how: 'article-ticker' | 'exchange-tag' | 'name' | 'headline' | 'none' }
+const RAISE_VERB_HEAD = /\b(?:raises?|raised|hikes?|hiked|lifts?|lifted|upgrades?|upgraded|increases?|increased|revises?|revised|boosts?|boosted|ups|now\s+(?:expects?|sees?|targets?|guides?|projects?)|expects?|sees|targets?|guides?|aims?|plans?|sets?|announces?)\b/i;
+/** Best-effort company name from the words in front of the first raise verb of a headline. Never invents a ticker. */
+export function companyFromHeadline(title: string): string | undefined {
+  const t = clean(title, 300).replace(/^[\s"'“‘\[\(]+/, '');
+  const m = RAISE_VERB_HEAD.exec(t);
+  if (!m || m.index < 2) return undefined;
+  let head = t.slice(0, m.index).trim();
+  head = head.split(/\s*[:|–—]\s+/).pop() || head;              // "Stocks to watch: Cupid" -> "Cupid"
+  head = head.replace(/[,;]+$/, '').replace(/\s+(?:shares?|stock|share price)$/i, '').trim();
+  const words = head.split(/\s+/).filter(Boolean);
+  if (!words.length || words.length > 6) return undefined;
+  if (!/^[A-Z0-9]/.test(words[0])) return undefined;
+  if (NON_COMPANY.test(head) || (words.length === 1 && GENERIC_WORD.has(words[0].toLowerCase()))) return undefined;
+  return head;
+}
+const EXCH_TAG = /\b(?:NSE|BSE)\s*[:\-]\s*([A-Z0-9][A-Z0-9&-]{1,19})\b/g;
+const PAREN_SYM = /\(([A-Z0-9][A-Z0-9&-]{1,19})\)/g;
+/** Find the company a headline is about. Order: the article's own ticker if the index knows it, an exchange tag, a company name in the headline. */
+export function resolveCompany(title: string, lead: string, articleTickers: readonly string[], idx?: CompanyIndex): ResolvedCompany {
+  const fallbackName = companyFromHeadline(title);
+  if (!idx || (!idx.known.size && !idx.names.size)) return { company: fallbackName, how: fallbackName ? 'headline' : 'none' };
+  for (const raw of articleTickers) { const t = String(raw ?? '').trim().toUpperCase().replace(/\.(NS|BO)$/, ''); if (t && idx.known.has(t)) return { ticker: t, company: fallbackName, how: 'article-ticker' }; }
+  const hay = `${title} ${lead}`;
+  for (const re of [EXCH_TAG, PAREN_SYM]) { re.lastIndex = 0; let m: RegExpExecArray | null; while ((m = re.exec(re === PAREN_SYM ? title : hay)) !== null) if (idx.known.has(m[1])) return { ticker: m[1], company: fallbackName, how: 'exchange-tag' }; }
+  const scan = (text: string, maxStart: number): { sym: string; name: string } | null => {
+    const toks = text.match(/[A-Za-z0-9&'.-]+/g) || [];
+    for (let n = Math.min(idx.maxWords, toks.length); n >= 1; n--) {
+      for (let i = 0; i + n <= toks.length && i <= maxStart; i++) {
+        const first = toks[i];
+        if (!/^[A-Z0-9]/.test(first)) continue;
+        const name = toks.slice(i, i + n).join(' ');
+        const key = normCompanyName(name);
+        if (n === 1 && (key.length < 4 || GENERIC_WORD.has(key))) continue;
+        const sym = idx.names.get(key);
+        if (sym) return { sym, name };
+      }
+    }
+    return null;
+  };
+  const inTitle = scan(title, 99);
+  if (inTitle) return { ticker: inTitle.sym, company: inTitle.name, how: 'name' };
+  const inLead = scan(clean(lead, 160), 1);   // the summary only when it OPENS with the company name
+  if (inLead) return { ticker: inLead.sym, company: inLead.name, how: 'name' };
+  return { company: fallbackName, how: fallbackName ? 'headline' : 'none' };
+}
+
+const INDIAN_NEWS_HOSTS = ['livemint.com', 'business-standard.com', 'economictimes.indiatimes.com', 'moneycontrol.com', 'ndtvprofit.com', 'financialexpress.com', 'businesstoday.in', 'thehindubusinessline.com', 'cnbctv18.com', 'whalesbook.com', 'multibagg.com', 'retailintel.in', 'tradingview.com', 'screener.in', 'trendlyne.com', 'scanx.trade'];
+
+/**
+ * One news-cache article -> candidate.
+ * `idx` (India company index) is optional: without it the article's own primary_ticker / ticker_symbols[0] is used as before.
+ * With it, an India or unlabelled article is attached to an NSE symbol by company name when the pipeline's own ticker is missing
+ * or is not a real NSE symbol (e.g. 'AGM'). When no symbol can be found the candidate keeps the company name and ticker stays
+ * undefined, so the route can show it labelled 'ticker not resolved'.
+ */
+export function newsToCandidate(a: any, idx?: CompanyIndex): GuCandidate | null {
+  const region = String(a?.region || '').toUpperCase();
+  let market: GuMarket = region === 'IN' || region === 'INDIA' ? 'IN' : region === 'US' || region === 'USA' ? 'US' : 'GLOBAL';
+  const url = a?.source_url || a?.url || undefined;
+  const publishedAt = parseWhen(a?.published_at ?? a?.publishedAt ?? a?.pubDate, market === 'US' ? 0 : IST_MIN);
   const title = clean(a?.title || a?.headline, 300);
   if (!publishedAt || !title) return null;
-  const region = String(a?.region || '').toUpperCase();
-  const market: GuMarket = region === 'IN' || region === 'INDIA' ? 'IN' : region === 'US' || region === 'USA' ? 'US' : 'GLOBAL';
-  const tickers: string[] = Array.isArray(a?.ticker_symbols) ? a.ticker_symbols : [];
-  const ticker = tick(a?.primary_ticker || tickers[0]);
-  const url = a?.source_url || a?.url || undefined;
+  const tickers: string[] = Array.isArray(a?.ticker_symbols) ? a.ticker_symbols : Array.isArray(a?.tickers) ? a.tickers : [];
+  const summary = clean(a?.summary ?? a?.snippet);
+  let ticker: string | undefined; let company: string | undefined;
+  if (idx && market !== 'US') {
+    const r = resolveCompany(title, summary, [a?.primary_ticker, ...tickers].filter(Boolean), idx);
+    ticker = r.ticker; company = r.company;
+    if (market === 'GLOBAL' && (r.ticker || INDIAN_NEWS_HOSTS.some((h) => { const x = hostOf(url); return x === h || x.endsWith(`.${h}`); }))) market = 'IN';
+  } else ticker = tick(a?.primary_ticker || tickers[0]);
   const sourceName = clean(a?.source_name || a?.source || 'News', 80);
   // PRIMARY only when the item IS the company's own document: the SEC's own site, or a wire release that names a company.
   const kind: GuCandidate['kind'] = isSecUrl(url) ? 'FILING' : ticker && isCompanyWire(sourceName, url) ? 'RELEASE' : 'NEWS';
-  return { id: `news:${a?.id ?? title.slice(0, 40)}`, ticker, market, title, text: clean(a?.summary), url, sourceName, publishedAt, kind };
+  const cand: GuCandidate = { id: `news:${a?.id ?? title.slice(0, 40)}`, ticker, market, title, text: summary, url, sourceName, publishedAt, kind };
+  if (company) cand.company = clean(company, 120);
+  return cand;
 }
 
-export function filingToCandidate(f: any): GuCandidate | null {
-  const publishedAt = iso(f?.filing_datetime);
+const djb = (s: string): string => { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0; return h.toString(36); };
+/** One entry of `scraped-india-news:v1:latest` ({ title, url, source, publishedAt, snippet }) -> India news candidate. */
+export function scrapedNewsToCandidate(s: any, idx?: CompanyIndex): GuCandidate | null {
+  if (!s || !s.title) return null;
+  return newsToCandidate({ id: `scraped-${djb(String(s.url || s.title))}`, title: s.title, summary: s.snippet, source_name: s.source || 'India news', source_url: s.url, published_at: s.publishedAt, region: 'IN' }, idx);
+}
+
+/** Every text field a filing / concall-feed row can carry. The exchange subject is usually administrative; the scored excerpts are where a company says what it expects. */
+function filingText(f: any): string {
+  const parts: unknown[] = [f?.detail, f?.headline, f?.summary, f?.excerpt, f?.attchmntText];
+  if (Array.isArray(f?.evidence_excerpts)) parts.push(...f.evidence_excerpts);
+  if (Array.isArray(f?.bullish_excerpts)) parts.push(...f.bullish_excerpts);
+  const b = f?.bullish;
+  if (b && Array.isArray(b.evidence)) for (const e of b.evidence) if (e && e.polarity !== 'BEAR' && !e.negated) parts.push(e.text);
+  if (b && Array.isArray(b.bullish_phrases)) parts.push(...b.bullish_phrases);
+  if (f?.evidence && Array.isArray(f.evidence.numeric_examples)) parts.push(...f.evidence.numeric_examples);
+  const seen = new Set<string>(); const out: string[] = [];
+  for (const p of parts) { const t = clean(p, 500); if (t && !seen.has(t)) { seen.add(t); out.push(t); } }
+  return clean(out.join(' '), 2500);
+}
+
+export function filingToCandidate(f: any, idx?: CompanyIndex): GuCandidate | null {
+  const publishedAt = parseWhen(f?.filing_datetime ?? f?.filing_date ?? f?.an_dt ?? f?.NEWS_DT, IST_MIN);
   const title = clean(f?.subject, 300);
   if (!publishedAt || !title) return null;
+  const company = clean(f?.company_name, 120) || undefined;
+  // A BSE row's symbol is a numeric scrip code, which is not an NSE symbol: resolve by company name or leave the ticker empty.
+  let ticker = isNseSymbol(f?.symbol) ? tick(f?.symbol) : undefined;
+  if (!ticker && idx && company) { const r = resolveCompany(company, '', [], idx); ticker = r.ticker; }
   return {
     id: `filing:${f?.content_hash ?? `${f?.exchange}:${f?.symbol}:${publishedAt}`}`,
-    ticker: tick(f?.symbol), company: clean(f?.company_name, 120) || undefined, market: 'IN',
-    title, text: clean(f?.detail), url: (Array.isArray(f?.attachment_urls) && f.attachment_urls[0]) || f?.source_url || undefined,
+    ticker, company, market: 'IN',
+    title, text: filingText(f), url: (Array.isArray(f?.attachment_urls) && f.attachment_urls[0]) || f?.source_url || undefined,
     sourceName: `${f?.exchange || 'Exchange'} filing`, publishedAt, kind: 'FILING',
   };
 }
 
+/** The six text fields the India grader itself reads for forward guidance (see earnings-grade-shared / india-grade). */
+const GRADED_TEXT_FIELDS = ['guidance_text', 'narrative_text', 'announcement_text', 'attachment', 'headline', 'title'] as const;
 /** One India graded results row. Its guidance text is the company's own words. */
 export function gradedRowToCandidate(r: any, fallbackDate: string): GuCandidate | null {
-  const text = clean(r?.guidance_text);
+  const seen = new Set<string>(); const parts: string[] = [];
+  for (const f of GRADED_TEXT_FIELDS) { const t = clean(r?.[f], 700); if (t && !seen.has(t)) { seen.add(t); parts.push(t); } }
+  const text = clean(parts.join(' '), 2500);
   if (!text) return null;
-  const publishedAt = iso(r?.filing_date) || iso(fallbackDate);
+  // the overlay's own verdict: a row it marked as a CUT is not a raise candidate
+  if (r?.guidance_lowered === true && r?.guidance_raised !== true) return null;
+  const fd = String(r?.filing_date ?? '').trim();
+  const publishedAt = /^\d{4}-\d{2}-\d{2}$/.test(fd) ? fd : parseWhen(fd, IST_MIN) || (/^\d{4}-\d{2}-\d{2}$/.test(fallbackDate) ? fallbackDate : parseWhen(fallbackDate, IST_MIN));
   if (!publishedAt) return null;
+  const sym = tick(r?.symbol ?? r?.ticker);
+  // the boolean is added to the headline only when the text itself reads as a raise (the overlay also counts 'record order book' as a raise)
+  const flagged = r?.guidance_raised === true && looksLikeGuidanceRaise(text);
   return {
-    id: `graded:${r?.symbol}:${publishedAt.slice(0, 10)}`,
-    ticker: tick(r?.symbol), company: clean(r?.company, 120) || undefined, market: 'IN',
-    title: `${clean(r?.company || r?.symbol, 80)} results${r?.guidance_raised ? ': guidance raised' : ''}`,
+    id: `graded:${sym ?? r?.company}:${publishedAt.slice(0, 10)}`,
+    ticker: sym, company: clean(r?.company, 120) || undefined, market: 'IN',
+    title: `${clean(r?.company || r?.symbol, 80)} results${flagged ? ': guidance raised' : ''}`,
     text, url: r?.source_url || undefined, sourceName: 'Exchange results filing', publishedAt, kind: 'FILING',
   };
 }
@@ -320,34 +506,293 @@ export interface MarketCoverage {
   cacheEmpty: string[];                          // feeds that returned nothing
   events: number; withConsensus: number;
   newest: string | null;
+  /** zzz844: live scan status for this market; when present the line leads with SCAN COMPLETE / SCAN INCOMPLETE */
+  scan?: GuScanStatus;
+  verified?: number;
+  /** India: what each source actually returned, so a zero can be explained source by source */
+  read?: IndiaRead;
+}
+
+export interface IndiaRead {
+  news: number;              // India articles in the news cache (news:articles:v39)
+  newsScraped: number;       // entries in the scraped India news blob (scraped-india-news:v1:latest)
+  retained: number;          // earlier raise-worded news items kept past the feeds' own retention
+  filings: number;           // exchange announcements read (feed cache + live day scan)
+  graded: number;            // India results rows read
+  subjectOnly: number;       // announcements seen whose raise text sits in an unread document
+  unresolved: number;        // raise candidates with a company name but no NSE symbol
+  noCompany: number;         // raise wording found but no company could be identified (not shown)
 }
 
 export function coverageLine(c: MarketCoverage, now: Date = new Date()): string {
   const name = c.market === 'IN' ? 'India' : 'US';
-  const gradedWord = c.market === 'IN' ? 'results filings' : 'graded results (SEC releases)';
-  const parts: string[] = [];
-  if (c.candidates.graded) parts.push(`${c.candidates.graded} from ${gradedWord}`);
-  if (c.candidates.filings) parts.push(`${c.candidates.filings} from the exchange filing feed`);
-  if (c.candidates.news) parts.push(`${c.candidates.news} from news`);
   const total = c.candidates.graded + c.candidates.filings + c.candidates.news;
-  let s = `${name}: ${total} raise candidate${total === 1 ? '' : 's'}${parts.length ? ` (${parts.join(', ')})` : ''}`;
-  if (c.market === 'US' && c.sessions) {
-    if (c.sessions.total > 0 && c.sessions.warm === 0) s += `. The US graded-results cache is cold (0 of ${c.sessions.total} sessions found), so US coverage is from news only`;
-    else if (c.sessions.total > 0) s += `. ${c.sessions.warm} of ${c.sessions.total} US sessions were in the cache${c.sessions.warm < c.sessions.total ? ' (the rest are not graded yet)' : ''}${c.sessions.olderEngine ? `, ${c.sessions.olderEngine} from an earlier grading version` : ''}`;
+  const parts: string[] = [];
+  if (c.candidates.graded) parts.push(`${c.candidates.graded} from ${c.market === 'IN' ? 'results filings' : 'graded results (SEC releases)'}`);
+  if (c.candidates.filings) parts.push(`${c.candidates.filings} from exchange filings`);
+  if (c.candidates.news) parts.push(`${c.candidates.news} from news`);
+  let s: string;
+  if (c.scan) {
+    s = scanSummaryLine(c.scan, { candidates: total, verified: c.verified ?? 0, events: c.events, withConsensus: c.withConsensus });
+    if (parts.length) s += ` (${parts.join(', ')})`;
+  } else {
+    s = `${name}: ${total} candidate${total === 1 ? '' : 's'}${parts.length ? ` (${parts.join(', ')})` : ''}. Live scan status not available, so this is cache-only coverage`;
+  }
+  if (c.market === 'US' && c.sessions && c.sessions.total > 0) {
+    if (c.sessions.warm === 0) s += `. The US graded-results cache holds 0 of ${c.sessions.total} sessions`;
+    else if (c.sessions.warm < c.sessions.total) s += `. Graded cache holds ${c.sessions.warm} of ${c.sessions.total} US sessions (${c.sessions.total - c.sessions.warm} still awaiting grading; this is not full coverage)`;
+    if (c.sessions.olderEngine) s += `. ${c.sessions.olderEngine} from an earlier grading version`;
   }
   if (c.cacheEmpty.length) s += `. Empty: ${c.cacheEmpty.join(', ')}`;
-  if (c.market === 'IN') s += '. Consensus unavailable (no analyst estimates feed for India)';
-  else if (c.events === 0) s += '. Consensus unavailable';
-  else if (c.withConsensus === 0) s += `. Consensus unavailable for all ${c.events} event${c.events === 1 ? '' : 's'} (no analyst estimate matched a guided period)`;
-  else if (c.withConsensus >= c.events) s += `. Analyst consensus matched for all ${c.events} event${c.events === 1 ? '' : 's'}`;
-  else s += `. Analyst consensus matched for ${c.withConsensus} of ${c.events} events; DATA UNAVAILABLE for the rest`;
+  if (c.read) s += `. Read: ${readWords(c.read)}`;
+  if (c.events > 0 || !c.read) s += `. ${consensusLabel(c.withConsensus, c.events)}`;
   if (c.newest) {
     const d = Math.max(0, Math.floor((now.getTime() - Date.parse(c.newest)) / 86_400_000));
     s += `. Newest announcement ${c.newest.slice(0, 10)} (${d === 0 ? 'today' : `${d}d ago`})`;
-  } else s += '. No announcement in this window';
+  } else if (c.scan && !c.scan.complete) s += '. No announcement found (scan incomplete)';
+  else s += c.read ? '. No guidance raise found among the items read' : '. No announcement found in this window';
   return `${s}.`;
+}
+
+/** Per-source counts in plain words. Never offers consensus as a reason for a zero. */
+export function readWords(r: IndiaRead): string {
+  const parts = [
+    `${r.news} India news item${r.news === 1 ? '' : 's'} (cache)`,
+    `${r.newsScraped} from the scraped news feed`,
+    ...(r.retained ? [`${r.retained} kept from earlier days`] : []),
+    `${r.filings} exchange announcement${r.filings === 1 ? '' : 's'}`,
+    `${r.graded} results row${r.graded === 1 ? '' : 's'}`,
+  ];
+  let s = parts.join(', ');
+  if (r.subjectOnly) s += `; ${r.subjectOnly} announcement${r.subjectOnly === 1 ? '' : 's'} seen with raise text not read (document not opened, not counted as a raise)`;
+  if (r.unresolved) s += `; ${r.unresolved} candidate${r.unresolved === 1 ? '' : 's'} shown with ticker not resolved`;
+  if (r.noCompany) s += `; ${r.noCompany} raise-worded item${r.noCompany === 1 ? '' : 's'} dropped because no company could be identified`;
+  return s;
 }
 
 export function coverageNote(list: MarketCoverage[], now: Date = new Date()): string {
   return list.map((c) => coverageLine(c, now)).join(' ');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz844 V2: semantic intake + scan-aware wording
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Company-voice guidance-raise phrasing. Language only; no ticker or company is named here. */
+const RAISE_VERB = String.raw`(?:rais(?:e|es|ed|ing)|further raised|hik(?:e|es|ed|ing)|lift(?:s|ed|ing)?|upgrad(?:e|es|ed|ing)|increas(?:e|es|ed|ing)|rev(?:ise|ises|ised|ising)|boost(?:s|ed|ing)?|upped|up-?revis(?:e|es|ed|ing))`;
+const GUIDE_NOUN = String.raw`(?:guidance|outlook|forecast|targets?|projections?|expectations?)`;
+const PHRASE_RES: RegExp[] = [
+  new RegExp(String.raw`\b${RAISE_VERB}\b[^.;:]{0,60}\b(?:FY ?\d{2,4}|full[- ]year|annual|revenue|sales|profit|net profit|PAT|EBITDA|margin|EPS|earnings|turnover|top[- ]?line)\b[^.;:]{0,40}\b${GUIDE_NOUN}\b`, 'i'),
+  new RegExp(String.raw`\b${RAISE_VERB}\b[^.;:]{0,40}\b${GUIDE_NOUN}\b`, 'i'),
+  /\bnow (?:expects?|expected|sees?|anticipates?|targets?|projects?|guides?)\b/i,
+  /\brevis(?:e|es|ed|ing)\b[^.;:]{0,30}\b(?:outlook|guidance|targets?)\b/i,
+  /\b(?:revenue|sales|profit|PAT|EBITDA|turnover|earnings)\s+(?:target|guidance)\b[^.;:]{0,40}\b(?:raised|increased|revised|upgraded|hiked|to)\b/i,
+];
+const ANALYST_ONLY = /\b(?:price targets?|target price|analysts?|brokerages?|broker|rating|initiat\w+ coverage|consensus)\b/i;
+
+/** True when the text reads like the COMPANY raising its own outlook. Analyst wording never matches. */
+export function looksLikeGuidanceRaise(text: string): boolean {
+  const t = String(text || '');
+  if (!t) return false;
+  for (const s of t.split(/(?<=[.!?])\s+|\n+/)) {
+    if (!PHRASE_RES.some((r) => r.test(s))) continue;
+    if (ANALYST_ONLY.test(s) && !/\bcompany|management|board|we\b/i.test(s)) continue;
+    return true;
+  }
+  return false;
+}
+
+/** Exchange categories / subjects that can carry guidance: results, outcome, AGM, investor presentation, press release, call, outlook. */
+const FILING_RELEVANT_RE = /\b(?:results?|outcome|board meeting|agm|annual general|egm|investor|analyst|presentation|press release|media release|earnings|concall|con\.? call|conference call|transcript|guidance|outlook|target|forecast|business update|operational update|update)\b/i;
+export function isGuidanceRelevantFiling(f: any): boolean {
+  const hay = `${f?.subject ?? ''} ${f?.category ?? ''} ${f?.subcategory ?? ''} ${f?.detail ?? ''}`;
+  return FILING_RELEVANT_RE.test(hay) || looksLikeGuidanceRaise(hay);
+}
+
+/** Consensus is optional enrichment, never a reason for zero candidates. */
+export function consensusLabel(have: number, of: number): string {
+  return `Consensus available ${have} of ${of}`;
+}
+
+export interface ScanLineCounts { candidates: number; verified: number; events: number; withConsensus: number }
+export function scanSummaryLine(s: GuScanStatus, n: ScanLineCounts): string {
+  const name = s.market === 'IN' ? 'India' : 'US';
+  const sourceCount = s.sources.filter((x) => x.state !== 'NOT_RUN').length;
+  if (s.complete) {
+    return `${name}: SCAN COMPLETE — ${s.daysCovered} of ${s.daysRequested} days, ${sourceCount} source${sourceCount === 1 ? '' : 's'}; ${n.candidates} candidate${n.candidates === 1 ? '' : 's'}, ${n.verified} verified`;
+  }
+  const bad = s.sources.filter((x) => x.state !== 'COMPLETE').map((x) => `${x.name}: ${x.detail || x.state}`).join('; ');
+  const wait = s.awaitingGrading > 0 ? `; ${s.awaitingGrading} filing${s.awaitingGrading === 1 ? '' : 's'} awaiting grading` : '';
+  return `${name}: SCAN INCOMPLETE — ${s.daysCovered} of ${s.daysRequested} days covered${bad ? ` (${bad})` : ''}${wait}; ${n.events} event${n.events === 1 ? '' : 's'} shown is NOT a confirmation of no upgrades`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// India pipeline: what counts as a raise candidate, how it reaches the engine, and how filings corroborate it
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** The name the engine will group an UNRESOLVED candidate under (mirrors the engine's own ticker fallback). */
+export const nameKeyOf = (c: Pick<GuCandidate, 'company'>): string => (c.company ?? '').trim().toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
+
+/**
+ * A candidate goes to the engine when the engine itself accepts it as a management raise, or when it reads as a company raise and
+ * none of the engine's exclusions (analyst action, rumour, cut, reiteration, beat, price move, policy, contract) applies.
+ * The second kind has wording but no parsed numbers: it stays a visible CANDIDATE (stage CANDIDATE, decision UNVERIFIED).
+ * Wording-only candidates need a resolved NSE symbol, so macro or broker headlines ("RBI raises FY27 growth forecast") never become events.
+ */
+export function isRaiseCandidate(c: GuCandidate): boolean {
+  const r = isGuidanceUpgradeCandidate(c);
+  if (r.include) return true;
+  if (!c.ticker || r.reason !== 'No management guidance raise found') return false;
+  return looksLikeGuidanceRaise(`${c.title}. ${c.text}`);
+}
+
+/** processCandidates for India: same engine, same window rule, wording-only raises kept as CANDIDATE. */
+export function processRaiseCandidates(cands: GuCandidate[], ctxFor: (ticker: string) => GuContext, now: Date, window: GuWindow = '7D'): GuidanceEvent[] {
+  const kept = cands.filter((c) => withinWindow(c.publishedAt, window, now) && isRaiseCandidate(c));
+  return rank(mergeCandidates(kept).map((sk) => buildGuidanceEvent(sk, ctxFor(sk.ticker) ?? {}, now)));
+}
+
+/** An unresolved candidate whose company name matches a resolved candidate of the batch takes that symbol (one outlet wrote 'Cupid Ltd', another 'Cupid'). */
+export function propagateTickers(list: GuCandidate[]): GuCandidate[] {
+  const byName = new Map<string, string | null>();
+  for (const c of list) {
+    if (!c.ticker || !c.company) continue;
+    const k = normCompanyName(c.company); if (!k) continue;
+    const cur = byName.get(k); if (cur === undefined) byName.set(k, c.ticker); else if (cur !== c.ticker) byName.set(k, null);
+  }
+  return list.map((c) => {
+    if (c.ticker || !c.company) return c;
+    const t = byName.get(normCompanyName(c.company));
+    return t ? { ...c, ticker: t } : c;
+  });
+}
+
+/**
+ * Exchange announcements whose SUBJECT says an outcome / presentation / release / call / results document exists. The figures of a
+ * raise often sit only in that attachment, and a public route never opens documents, so such a row is evidence that a primary
+ * document EXISTS, never evidence of a raise.
+ */
+const RAISE_BEARING_SUBJECT = /\b(?:outcome of (?:the )?(?:\d+\w*\s+)?(?:annual general|agm|egm|extra[- ]ordinary)|annual general meeting|\bagm\b|investor presentation|analyst(?:s)?\s*\/?\s*(?:and\s+)?institutional investor|investor (?:meet|call|day)|press release|media release|earnings (?:call|release)|con(?:ference)?\.? call|transcript|(?:financial|quarterly|audited|unaudited)\s+results?|results?\s+for the)\b/i;
+export function isRaiseBearingSubject(subject: unknown): boolean { return RAISE_BEARING_SUBJECT.test(String(subject ?? '')); }
+
+export interface SubjectOnlyFiling { ticker?: string; company?: string; nameKey: string; subject: string; date: string; url?: string; exchange: string }
+/** Filing candidates that carry no raise wording but whose subject names a guidance-bearing document. Deduped by company + subject + day. */
+export function collectSubjectOnly(filings: GuCandidate[]): SubjectOnlyFiling[] {
+  const out: SubjectOnlyFiling[] = []; const seen = new Set<string>();
+  for (const c of filings) {
+    if (c.kind !== 'FILING' || c.market !== 'IN' || !c.id.startsWith('filing:')) continue;
+    if (!isRaiseBearingSubject(c.title)) continue;
+    const nameKey = normCompanyName(c.company || c.ticker || '');
+    const k = `${c.ticker || nameKey}|${c.publishedAt.slice(0, 10)}|${c.title.toLowerCase().slice(0, 50)}`;
+    if (seen.has(k)) continue; seen.add(k);
+    out.push({ ticker: c.ticker, company: c.company, nameKey, subject: c.title, date: c.publishedAt.slice(0, 10), url: c.url, exchange: c.sourceName.replace(/ filing$/, '') });
+  }
+  return out;
+}
+
+const dayDiff = (a: string, b: string): number => Math.round((Date.parse(`${a.slice(0, 10)}T00:00:00Z`) - Date.parse(`${b.slice(0, 10)}T00:00:00Z`)) / 86_400_000);
+export const FILING_NOT_READ = 'document not read';
+
+/**
+ * A media/graded raise for a company that ALSO filed an AGM outcome / investor presentation / press release / results subject within
+ * a day or two gets that filing attached as a source, plus an evidence-gap line saying the document was not opened.
+ * It does NOT change verification, primaryAvailable, stage or decision: the engine has no PARTIALLY_VERIFIED state for guidance
+ * upgrades, and a subject line is not a number.
+ */
+export function corroborateWithFilings(events: GuidanceEvent[], subjectOnly: readonly SubjectOnlyFiling[]): { events: GuidanceEvent[]; matched: number; unmatched: SubjectOnlyFiling[] } {
+  const used = new Set<SubjectOnlyFiling>(); let matched = 0;
+  const out = events.map((e) => {
+    if (e.market !== 'IN') return e;
+    const key = normCompanyName(e.company); const tk = (e.ticker || '').toUpperCase();
+    const hits = subjectOnly.filter((f) => {
+      const same = (f.ticker && f.ticker === tk) || (!!f.nameKey && f.nameKey === key);
+      if (!same) return false;
+      const d = dayDiff(f.date, e.announcement_date);
+      return d >= -1 && d <= 3;
+    });
+    if (!hits.length) return e;
+    hits.forEach((h) => used.add(h));
+    if (e.primaryAvailable) return e;     // already backed by a document whose text was read: the subject-only row adds nothing
+    matched++;
+    const h = hits[0];
+    const gap = `Exchange filing seen on ${h.date} ("${h.subject.slice(0, 90)}"); the raise figures sit in its attached document, which this page does not open (${FILING_NOT_READ}), so the claim stays unverified`;
+    const next = 'Open the attached exchange filing and confirm the raised figures';
+    const sources = e.sources.some((s) => s.name.includes('subject only')) ? e.sources
+      : [...e.sources, { url: h.url, name: `${h.exchange} announcement (subject only)`, tier: 'SECONDARY' as const, type: `Exchange filing, ${FILING_NOT_READ}`, date: h.date }];
+    const via = e.v2 ? { ...e.v2, detectedVia: e.v2.detectedVia.includes('exchange filing (subject only)') ? e.v2.detectedVia : [...e.v2.detectedVia, 'exchange filing (subject only)'] } : e.v2;
+    return { ...e, sources, evidenceGaps: e.evidenceGaps.includes(gap) ? e.evidenceGaps : [gap, ...e.evidenceGaps], nextEvidence: e.nextEvidence.includes(next) ? e.nextEvidence : [next, ...e.nextEvidence].slice(0, 3), v2: via };
+  });
+  return { events: out, matched, unmatched: subjectOnly.filter((f) => !used.has(f)) };
+}
+
+export const TICKER_NOT_RESOLVED = 'ticker not resolved';
+/** Events built from a company name only get a visible label and an evidence-gap line. `nameKeys` = nameKeyOf() of each unresolved candidate. */
+export function labelUnresolved(events: GuidanceEvent[], nameKeys: ReadonlySet<string>): GuidanceEvent[] {
+  return events.map((e) => {
+    if (!nameKeys.has(e.ticker)) return e;
+    const gap = `Ticker not resolved: the company was matched by name only, so no NSE symbol, price or history is attached`;
+    return { ...e, company: /ticker not resolved/i.test(e.company) ? e.company : `${e.company} (${TICKER_NOT_RESOLVED})`, evidenceGaps: e.evidenceGaps.includes(gap) ? e.evidenceGaps : [...e.evidenceGaps, gap] };
+  });
+}
+
+/** True for a ticker the ledger and price-free context may use (an NSE-style symbol, not a company-name fallback). */
+export const isResolvedTicker = (t: unknown): boolean => isNseSymbol(t);
+
+export interface IndiaInputs {
+  /** `news:articles:v39` array (all regions) */
+  news: any[] | null;
+  /** `scraped-india-news:v1:latest` payload ({ entries } or an array) */
+  scraped: any;
+  /** `concall-feed:v26:days:N` payload ({ filings }) */
+  feed: any;
+  /** graded payloads, one per date in `gradedDates` (same order) */
+  graded: any[] | null; gradedDates: string[];
+  /** rows the live exchange scan returned (already candidates) */
+  scanCandidates: GuCandidate[];
+  /** `symbolmaster:catalog` value (entries) */
+  catalog?: any;
+  /** raise-worded news candidates kept from earlier requests */
+  retained?: GuCandidate[];
+}
+export interface IndiaBuild {
+  index: CompanyIndex;
+  candidates: GuCandidate[];
+  /** candidates that came from the news cache / scraped blob / retention, kept apart for persistence */
+  counts: { news: number; newsAll: number; newsScraped: number; retained: number; filings: number; graded: number; gradedRows: number };
+}
+
+export function indexPairs(inp: Pick<IndiaInputs, 'feed' | 'graded' | 'scanCandidates' | 'catalog'>, names: Record<string, string>): Array<{ symbol: string; name: string }> {
+  const pairs: Array<{ symbol: string; name: string }> = [];
+  const ents = inp.catalog?.entries;
+  if (ents && typeof ents === 'object') for (const k of Object.keys(ents)) { const e = ents[k]; if (e) pairs.push({ symbol: e.symbol || k, name: e.companyName }); }
+  for (const [symbol, name] of Object.entries(names)) pairs.push({ symbol, name });
+  if (Array.isArray(inp.feed?.filings)) for (const f of inp.feed.filings) pairs.push({ symbol: f?.symbol, name: f?.company_name });
+  for (const c of inp.scanCandidates) if (c.ticker) pairs.push({ symbol: c.ticker, name: c.company ?? '' });
+  if (Array.isArray(inp.graded)) for (const p of inp.graded) for (const r of collectGradedRows(p)) pairs.push({ symbol: r?.symbol ?? r?.ticker, name: r?.company });
+  return pairs;
+}
+
+/**
+ * Every India input path in one place, shared by Guidance Upgrades and Growth Guidance:
+ * news cache + scraped India news + retained items (media), exchange feed + live scan (filings), graded rows (results).
+ * `names` is the curated symbol -> company map (NSE_TICKER_NAMES), passed in so this module stays data-free.
+ */
+export function buildIndiaCandidates(inp: IndiaInputs, names: Record<string, string>): IndiaBuild {
+  const index = buildCompanyIndex(indexPairs(inp, names));
+  // live-scan rows were built before the index existed: a BSE row (numeric scrip code) is resolved by company name now
+  const cands: GuCandidate[] = inp.scanCandidates.map((c) => (c.ticker || !c.company ? c : { ...c, ticker: resolveCompany(c.company, '', [], index).ticker }));
+  let filings = 0; let graded = 0; let gradedRows = 0; let news = 0; let newsAll = 0; let newsScraped = 0;
+  if (Array.isArray(inp.feed?.filings)) for (const f of inp.feed.filings) { filings++; const c = filingToCandidate(f, index); if (c) cands.push(c); }
+  if (Array.isArray(inp.graded)) inp.graded.forEach((p, i) => { for (const r of collectGradedRows(p)) { gradedRows++; const c = gradedRowToCandidate(r, inp.gradedDates[i]); if (c) { graded++; cands.push(c); } } });
+  if (Array.isArray(inp.news)) for (const a of inp.news) {
+    newsAll++;
+    const c = newsToCandidate(a, index); if (!c) continue;
+    if (c.market === 'IN') news++;
+    cands.push(c);
+  }
+  const scrapedList: any[] = Array.isArray(inp.scraped) ? inp.scraped : Array.isArray(inp.scraped?.entries) ? inp.scraped.entries : Array.isArray(inp.scraped?.items) ? inp.scraped.items : [];
+  for (const s of scrapedList) { const c = scrapedNewsToCandidate(s, index); if (c) { newsScraped++; cands.push(c); } }
+  const retained = (inp.retained || []).filter((c) => c && c.id && c.title && c.publishedAt && c.market === 'IN');
+  cands.push(...retained);
+  return { index, candidates: propagateTickers(dedupeCandidates(cands)), counts: { news, newsAll, newsScraped, retained: retained.length, filings, graded, gradedRows } };
 }

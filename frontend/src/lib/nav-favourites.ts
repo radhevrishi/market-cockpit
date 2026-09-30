@@ -59,7 +59,8 @@ const OFFER: readonly string[] = ['/portfolio-catalysts', '/exit-radar', '/ai-ga
   '/us-portfolio-book', '/us-portfolio-catalysts'];
 // zzz841 — Market Snapshot, offered once like every new tab.
 // zzz843 — Guidance Upgrades, offered once like every new tab.
-const OFFER_ALL: readonly string[] = [...OFFER, '/market-snapshot', '/guidance-upgrades'];
+// zzz846 — Growth Guidance, offered once like every new tab.
+const OFFER_ALL: readonly string[] = [...OFFER, '/market-snapshot', '/guidance-upgrades', '/growth-guidance'];
 
 function applyOffers(cur: string[]): string[] {
   let offered: string[] = [];

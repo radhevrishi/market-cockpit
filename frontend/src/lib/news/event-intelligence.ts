@@ -26,6 +26,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { createHash } from 'crypto';
+import { classifyForm10, parseSecFilingTitle, subtypeHint } from '../special-sit-feed-quality';
 
 // ─── Event types ────────────────────────────────────────────────────────────
 
@@ -34,7 +35,8 @@ export type EventType =
   | 'GOING_PRIVATE'          // SC 13E-3
   | 'MERGER_RECOMMENDATION'  // SC 14D-9
   | 'MERGER_DEFINITIVE'      // 8-K Item 1.01 / S-4
-  | 'SPIN_OFF'               // 10-12B / 10-12G
+  | 'SPIN_OFF'               // 10-12B / 10-12G with SpinCo / separation text only
+  | 'FORM10_REGISTRATION'    // zzz847: 10-12G/B registration of a class of securities (funds, BDCs, shells). Low signal.
   | 'OPEN_OFFER'             // SEBI open offer
   | 'BUYBACK_TENDER'
   | 'BUYBACK_OPEN_MARKET'
@@ -125,14 +127,20 @@ export function extractEventSignals(args: { title: string; description?: string;
   const text = `${args.title} ${args.description || ''}`;
   const isAmendment = AMENDMENT_PATTERN.test(args.title);
 
-  // Parse target name from SEC titles like "10-12B - Mobility Global Inc. (0001234) (Filer)"
+  // Parse target name from SEC titles like "10-12B - Mobility Global Inc. (0001234) (Filer)".
+  // zzz847: only the "form - " prefix is stripped, so 'B-Scada, Inc.' keeps its leading 'B-'.
   let target_name: string | undefined;
   let filing_form: string | undefined;
-  const secTitleMatch = args.title.match(/^([A-Z0-9-/\s]+)\s*-\s*(.+?)(?:\s*\([\d ]+\))?(?:\s*\([^)]*\))?$/);
-  if (secTitleMatch) {
-    filing_form = secTitleMatch[1].trim();
-    target_name = secTitleMatch[2].trim();
+  const secParsed = parseSecFilingTitle(args.title);
+  if (secParsed) {
+    filing_form = secParsed.form;
+    target_name = secParsed.company;
   }
+
+  // Layer 0 (zzz847): Form 10 registrations are not spin-offs unless the filer / text says so.
+  const f10 = classifyForm10(args.title, args.description);
+  if (f10 === 'REGISTRATION') return { event_type: 'FORM10_REGISTRATION', is_amendment: isAmendment, target_name, filing_form };
+  if (f10 === 'SPIN') return { event_type: 'SPIN_OFF', is_amendment: isAmendment, target_name, filing_form };
 
   // Layer 1: SEC form-strict
   for (const f of SEC_FORM_MAP) {
@@ -142,6 +150,11 @@ export function extractEventSignals(args: { title: string; description?: string;
   }
 
   // Layer 2: India / general pattern match
+  // zzz847: a merger / swap-ratio / amalgamation headline is never a demerger.
+  if (subtypeHint(args.title) === 'MERGER') {
+    const tentative = /\b(may|could|might|likely|proposal|proposes?|plans?|in talks|questions?|reportedly|rumou?r|explor\w+|weigh\w*|consider\w*)\b/i.test(args.title);
+    return { event_type: tentative ? 'NEWS_RUMOR' : 'MERGER_DEFINITIVE', is_amendment: false, target_name };
+  }
   for (const p of INDIA_PATTERNS) {
     if (p.pattern.test(text)) {
       if (p.reject && p.reject.test(text)) continue;

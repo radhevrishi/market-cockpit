@@ -7,7 +7,7 @@ export type GuMarket = 'IN' | 'US' | 'GLOBAL';
 export type GuSourceTier = 'PRIMARY' | 'SECONDARY' | 'DISCOVERY';   // filing/release/deck/transcript · Reuters etc · Yahoo/blogs/social
 export type GuMetric =
   | 'REVENUE' | 'REVENUE_GROWTH' | 'EBITDA' | 'EBIT' | 'OP_MARGIN' | 'EPS' | 'ADJ_EPS' | 'FCF' | 'FCF_CONVERSION'
-  | 'ORGANIC_GROWTH' | 'ORDER_INTAKE' | 'BACKLOG' | 'VOLUME' | 'PRODUCTION' | 'CAPACITY_UTIL' | 'OTHER';
+  | 'ORGANIC_GROWTH' | 'ORDER_INTAKE' | 'BACKLOG' | 'VOLUME' | 'PRODUCTION' | 'CAPACITY_UTIL' | 'NET_PROFIT' | 'OTHER';
 export type GuType = 'A_REVENUE' | 'B_PROFIT' | 'C_MARGIN' | 'D_CASHFLOW' | 'E_VOLUME' | 'F_ORDER_BACKLOG' | 'G_MULTI_METRIC';
 export type GuQuality = 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN';
 export type GuEvidence = 'DIRECT' | 'INDIRECT' | 'STATIC' | 'UNPROVEN' | 'INCOMPLETE';
@@ -19,7 +19,56 @@ export type GuDecision = 'IMMEDIATE_BUY' | 'WATCHLIST' | 'DELAYED_EP' | 'REJECT'
 export type GuVerification = 'VERIFIED' | 'UNVERIFIED';
 export type GuPortfolioImpact = 'SUPPORTS' | 'NEUTRAL' | 'WEAKENS' | 'BROKEN';
 export type GuWindow = '24H' | '3D' | '7D' | '14D' | '30D';
-export type GuFlag = 'REPEATED_UPGRADER' | 'GUIDANCE_PLUS_GAP' | 'GUIDANCE_PLUS_BOTTLENECK' | 'SECOND_UPGRADE_IN_WINDOW';
+export type GuFlag = 'REPEATED_UPGRADER' | 'GUIDANCE_PLUS_GAP' | 'GUIDANCE_PLUS_BOTTLENECK' | 'SECOND_UPGRADE_IN_WINDOW' | 'SMALL_MID_CAP_INFLECTION';
+
+// ── zzz844 V2 additions (all additive) ──────────────────────────────────────
+/** How a guided RANGE moved. Midpoint-only comparison is never used alone. */
+export type GuRangeClass = 'CLEAN_RAISE' | 'MIDPOINT_RAISE_RANGE_NARROWING' | 'RANGE_SHIFT_UP' | 'RANGE_WIDENING' | 'REITERATION' | 'DOWNGRADE' | 'FIRST_GUIDANCE' | 'UNKNOWN';
+export interface GuRangeMath {
+  beforeLow: number | null; beforeMid: number | null; beforeHigh: number | null;
+  afterLow: number | null; afterMid: number | null; afterHigh: number | null;
+  widthBefore: number | null; widthAfter: number | null;
+  lowChangePct: number | null; midChangePct: number | null; highChangePct: number | null;
+  klass: GuRangeClass;
+  /** zzz847: the new low end is above the OLD high end (strongest raise class). */
+  floorAboveOldCeiling?: boolean;
+}
+/** Metric semantics so EPS / GAAP / adjusted / organic are never mixed up. */
+export type GuMetricBasis = 'GAAP' | 'ADJUSTED' | 'ORGANIC' | 'REPORTED' | 'CONSTANT_CURRENCY' | 'UNSTATED';
+export type GuDurabilityLevel = 'ONE_OFF' | '1_2_QUARTERS' | 'MULTI_QUARTER' | 'MULTI_YEAR' | 'STRUCTURAL' | 'UNKNOWN_INSUFFICIENT_EVIDENCE';
+/** Pipeline stage of one claim: news-only claims stay CANDIDATE until a primary source is found. */
+export type GuStage = 'CANDIDATE' | 'PRIMARY_SOURCE_FOUND' | 'PRIOR_GUIDANCE_FOUND' | 'CALCULATED' | 'VERIFIED' | 'MATERIALITY_CHECKED' | 'DECISION';
+export interface GuScoreItem { label: string; rating: 'STRONG' | 'OK' | 'WEAK' | 'UNKNOWN'; detail: string }  // plain words, never 0–100
+export interface GuEventV2 {
+  stage: GuStage;
+  ranges: GuRangeMath[];                // one per changed metric, same order as changes
+  metricBasis: GuMetricBasis;
+  operatingVariable: string | null;     // volume / price / mix / utilisation / margin / FX / new capacity … only when stated or directly evidenced
+  durabilityLevel: GuDurabilityLevel;
+  durabilityWhy: string;
+  whyNowResolved: boolean;              // false → text says 'Driver unresolved after primary-source + recent-event research'
+  scorecard: GuScoreItem[];
+  smallMidCapInflection: boolean;
+  detectedVia: string[];                // 'exchange filing' | 'SEC 8-K' | 'graded results' | 'news' | 'concall' …
+  consensusAvailable: boolean;
+  unitWarnings: string[];               // e.g. 'EPS shown per share; revenue in millions'
+  /** zzz847: source says guidance was RAISED but gave no usable before/after numbers (headline-only). Never a number. */
+  statedDirection?: 'RAISED';
+  /** zzz847: measures the source names as raised (plain words), e.g. ['revenue','net profit']. */
+  statedMetrics?: string[];
+}
+export interface GuScanSource { name: string; state: 'COMPLETE' | 'PARTIAL' | 'FAILED' | 'NOT_RUN'; scanned: number; detail: string }
+export interface GuScanStatus {
+  market: 'IN' | 'US';
+  windowFrom: string; windowTo: string;
+  complete: boolean;                    // false → UI says SCAN INCOMPLETE, never '0 events'
+  lastScanAt: string;
+  sources: GuScanSource[];              // exchange filings / company IR / SEC / news discovery / graded cache
+  daysCovered: number; daysRequested: number;
+  candidatesFound: number; processed: number; awaitingGrading: number; verified: number;
+  newestItemAt: string | null;
+  note: string;
+}
 
 /** A number that either exists with its provenance, or is honestly unavailable. */
 export interface GuNumber {
@@ -142,6 +191,7 @@ export interface GuidanceEvent {
   decision: GuDecision;
   decisionReason: string[];        // ordered: changed, earnings, gap, valuation, duration, risk
   flags: GuFlag[];
+  v2?: GuEventV2;                  // zzz844
   rankKey: number;                 // internal sort only, never displayed
   created_at: string; updated_at: string;
 }
@@ -149,11 +199,16 @@ export interface GuidanceEvent {
 export interface GuSummary {
   window: GuWindow; asOf: string;
   detected: number; verified: number; material: number; expectationPositive: number; inBook: number;
+  /** zzz844 additive */
+  byMarket?: { IN: { detected: number; verified: number; material: number; expectationPositive: number }; US: { detected: number; verified: number; material: number; expectationPositive: number } };
+  consensusAvailable?: { have: number; of: number };
+  today?: number;                   // verified events announced today
 }
 
 export interface GuidanceUpgradesResponse {
   summary: GuSummary;
   events: GuidanceEvent[];
+  scan?: Partial<Record<'IN' | 'US', GuScanStatus>>;   // zzz844
   freshness: {
     newestAnnouncement: string | null; feedCheckedAt: string; note?: string;
     /** additive: per-market coverage, so India and USA are each described honestly */

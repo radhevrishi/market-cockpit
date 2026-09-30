@@ -196,7 +196,7 @@ describe('zzz841 rendered tab', () => {
   });
   test('cards show the spec fields', () => {
     const t = strip(render(EVENTS));
-    for (const f of ['Catalyst type', 'Why now', 'Evidence', 'Earnings link', 'Duration', 'Next proof', 'Expectations', 'Valuation context', 'Portfolio status', 'Research priority', 'Mechanism', 'Break conditions', 'Governance', 'WHEN, not WHY', 'Add to thesis ledger']) {
+    for (const f of ['Catalyst type', 'Why now', 'Evidence', 'Earnings link', 'Duration', 'Next proof', 'Portfolio status', 'Research priority', 'Mechanism', 'Break conditions', 'Governance', 'WHEN, not WHY', 'Add to thesis ledger']) {
       assert.ok(t.toLowerCase().includes(f.toLowerCase()), f);
     }
     assert.ok(!/governance\s+clear/i.test(t) || /not checked/i.test(t));

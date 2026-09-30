@@ -234,14 +234,14 @@ describe('US cache: KV shape, sessions, cold cache', () => {
   test('coverage note is honest per market: cold cache, counts, consensus, freshness', () => {
     const us: MarketCoverage = { market: 'US', candidates: { graded: 0, filings: 0, news: 2 }, sessions: { warm: 0, total: 6, olderEngine: 0 }, cacheEmpty: [], events: 1, withConsensus: 0, newest: '2026-09-28' };
     const l = coverageLine(us, NOW);
-    assert.match(l, /US graded-results cache is cold \(0 of 6 sessions found\)/); assert.match(l, /Consensus unavailable for all 1 event/); assert.match(l, /Newest announcement 2026-09-28 \(2d ago\)/);
+    assert.match(l, /US graded-results cache holds 0 of 6 sessions/); assert.match(l, /Consensus available 0 of 1/); assert.match(l, /Newest announcement 2026-09-28 \(2d ago\)/);
     const warm: MarketCoverage = { ...us, candidates: { graded: 3, filings: 0, news: 1 }, sessions: { warm: 5, total: 6, olderEngine: 1 }, events: 2, withConsensus: 1, newest: '2026-09-29' };
     const w = coverageLine(warm, NOW);
-    assert.match(w, /US: 4 raise candidates \(3 from graded results \(SEC releases\), 1 from news\)/); assert.match(w, /5 of 6 US sessions/); assert.match(w, /1 from an earlier grading version/);
-    assert.match(w, /Analyst consensus matched for 1 of 2 events; DATA UNAVAILABLE for the rest/);
+    assert.match(w, /US: 4 candidates \(3 from graded results \(SEC releases\), 1 from news\)/); assert.match(w, /5 of 6 US sessions.*not full coverage/); assert.match(w, /1 from an earlier grading version/);
+    assert.match(w, /Consensus available 1 of 2/);
     const ind: MarketCoverage = { market: 'IN', candidates: { graded: 2, filings: 1, news: 0 }, cacheEmpty: [], events: 2, withConsensus: 0, newest: null };
     const n = coverageNote([ind, warm], NOW);
-    assert.match(n, /India: 3 raise candidates/); assert.match(n, /no analyst estimates feed for India/); assert.match(n, /No announcement in this window/);
+    assert.match(n, /India: 3 candidates/); assert.doesNotMatch(n, /no analyst estimates feed for India/); assert.match(n, /Consensus available 0 of 2/); assert.match(n, /No announcement found in this window/);
   });
 });
 

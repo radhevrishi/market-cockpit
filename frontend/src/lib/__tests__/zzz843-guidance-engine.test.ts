@@ -444,7 +444,7 @@ describe('14-16. narrative builders', () => {
   test('whyNow: one sentence naming driver + numbers', () => {
     const w = ev().whyNow; assert.match(w, /\$10\.4B from \$10/); assert.match(w, /strong|demand/i); assert.equal((w.match(/\. /g) ?? []).length, 0);
   });
-  test('whyNow: unknown driver says so', () => assert.match(build('ZZTest raises FY27 revenue guidance to $10.8B from $10.0B').whyNow, /does not say why/));
+  test('whyNow: unknown driver says so (V2 wording: Driver unresolved after primary-source + recent-event research)', () => assert.match(build('ZZTest raises FY27 revenue guidance to $10.8B from $10.0B').whyNow, /Driver unresolved after primary-source \+ recent-event research/));
   test('whatItMeans: operating leverage only when profit % > revenue % from numbers', () => {
     assert.match(ev().whatItMeans, /operating leverage/);
     const flat = build('ZZTest raises FY27 revenue guidance to $10.8B from $10.0B');

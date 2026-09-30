@@ -19,9 +19,9 @@ import {
 } from '@/lib/multibagger-ledger-store';
 import { normSymbol } from '@/lib/portfolio-symbols';
 import { readLocalBookInput, fetchSavedHoldings } from '@/lib/thesis/book-sources';
-import { BUCKET_MEANING, EVIDENCE_ORDER, PRIORITY_RANK, R, box } from './radar-tokens';
+import { BUCKET_MEANING, EVIDENCE_ORDER, KIND_LEGEND, PRIORITY_RANK, QUARANTINE_HEADER, R, box, isOneLine, isQuarantined } from './radar-tokens';
 import { Chip, btn, input } from './RadarBits';
-import { RadarCard } from './RadarCard';
+import { RadarCard, RadarRow } from './RadarCard';
 import { LedgerPanel } from './LedgerPanel';
 import { HoldingsMonitor } from './HoldingsMonitor';
 
@@ -124,7 +124,7 @@ export default function MultibaggerRadar({ events, holdings: holdingsProp, regio
   const radar = built.radar;
 
   const onSave = (e: LedgerEntry) => { saveEntry(e); refresh(); };
-  const onStatus = (id: string, to: ThesisStatus, reason: string) => { const r = updateStatus(id, to, reason, new Date()); refresh(); return r.error; };
+  const onStatus = (id: string, to: ThesisStatus, reason: string, extra?: { postMortem?: { detectionFailureWhy?: string; failurePoint?: string } }) => { const r = updateStatus(id, to, reason, new Date(), undefined, extra || {}); refresh(); return r.error; };
   const onTag = (t: string, tag: OwnerTag | null) => { setTag(t, tag); refresh(); };
 
   const subBtn = (v: SubView, label: string) => (
@@ -174,6 +174,13 @@ export default function MultibaggerRadar({ events, holdings: holdingsProp, regio
           </div>
           <div style={{ fontSize: 12, color: R.dim }}><b>Ranked by research value - price never used.</b> A price move, volume spike or analyst target never puts a name on this list.</div>
 
+          <details style={{ fontSize: 12, color: R.dim }}>
+            <summary style={{ cursor: 'pointer', fontWeight: 700 }}>Legend: kinds of catalyst</summary>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingTop: 4 }}>
+              {KIND_LEGEND.map((g) => <div key={g.group}><b>{g.group}:</b> {g.kinds.map((k) => KIND_LABEL[k]).join(', ')}</div>)}
+            </div>
+          </details>
+
           {radar.items.length === 0 && (
             <div style={box({ padding: 14, fontSize: 13, color: R.dim })}>
               No events in the feed right now to build a radar from.{' '}
@@ -186,18 +193,33 @@ export default function MultibaggerRadar({ events, holdings: holdingsProp, regio
             const list = all.filter(passes);
             const expanded = !!showAll[b];
             const shown = expanded ? list : list.slice(0, CARD_CAP);
-            return (
-              <section key={b} data-radar-bucket={b} aria-label={BUCKET_LABEL[b]} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', borderBottom: `1px solid ${R.border}`, paddingBottom: 4 }}>
-                  <h3 style={{ margin: 0, fontSize: 13, fontWeight: 900, letterSpacing: 0.4, color: R.text, textTransform: 'uppercase' }}>{BUCKET_LABEL[b]}</h3>
-                  <Chip color={R.dim}>{list.length}{list.length !== all.length ? ` of ${all.length}` : ''}</Chip>
-                  <span style={{ fontSize: 12, color: R.dim }}>{BUCKET_MEANING[b]}</span>
-                </div>
+            const quarantined = isQuarantined(b);
+            const secondary = b === 'SPECIAL_SITUATION';
+            const heading = (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', borderBottom: `1px solid ${R.border}`, paddingBottom: 4 }}>
+                <h3 style={{ margin: 0, fontSize: quarantined || secondary ? 12 : 14, fontWeight: 900, letterSpacing: 0.4, color: quarantined ? R.dim : R.text, textTransform: 'uppercase' }}>{BUCKET_LABEL[b]}</h3>
+                <Chip color={R.dim}>{list.length}{list.length !== all.length ? ` of ${all.length}` : ''}</Chip>
+                <span style={{ fontSize: 12, color: R.dim }}>{BUCKET_MEANING[b]}</span>
+              </div>
+            );
+            const body = (
+              <>
                 {list.length === 0 && <div style={{ fontSize: 12, color: R.faint }}>Nothing here{all.length ? ' with these filters' : ' right now'}.</div>}
-                {shown.map((i) => (
-                  <RadarCard key={i.id} item={i} held={isHeld(i)} ownerTag={i.ticker ? tags[normSymbol(i.ticker)] : undefined} ledgerIds={ledgerIds} onSaveLedger={onSave} now={now} />
-                ))}
+                {shown.map((i) => (isOneLine(i)
+                  ? <RadarRow key={i.id} item={i} />
+                  : <RadarCard key={i.id} item={i} held={isHeld(i)} ownerTag={i.ticker ? tags[normSymbol(i.ticker)] : undefined} ledgerIds={ledgerIds} onSaveLedger={onSave} now={now} />))}
                 {list.length > shown.length && <button type="button" style={btn(R.cyan)} onClick={() => setShowAll((s) => ({ ...s, [b]: true }))}>Show all {list.length}</button>}
+              </>
+            );
+            return (
+              <section key={b} data-radar-bucket={b} data-radar-tier={quarantined ? 'quarantine' : secondary ? 'secondary' : 'primary'} aria-label={BUCKET_LABEL[b]} style={{ display: 'flex', flexDirection: 'column', gap: 8, opacity: quarantined ? 0.9 : 1 }}>
+                {quarantined ? (
+                  <details open={bucketF === b}>
+                    <summary style={{ cursor: 'pointer', listStyle: 'revert' }}>{heading}</summary>
+                    <div style={{ fontSize: 12, color: R.faint, padding: '6px 0' }}>{QUARANTINE_HEADER}</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>{body}</div>
+                  </details>
+                ) : (<>{heading}{body}</>)}
               </section>
             );
           })}

@@ -33,6 +33,12 @@ export function LedgerForm({ initial, title, saveLabel, onSave, onCancel }: {
             <textarea value={draft[f]} rows={2} onChange={(e) => set(f, e.target.value)} style={{ ...input, resize: 'vertical', fontFamily: 'inherit' }} />
           </label>
         ))}
+        {(['upgradeCondition', 'downgradeCondition'] as const).map((f) => (
+          <label key={f} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span style={{ fontSize: 10, fontWeight: 800, color: R.faint, textTransform: 'uppercase', letterSpacing: 0.5 }}>{f === 'upgradeCondition' ? 'What would upgrade it' : 'What would downgrade it'}</span>
+            <textarea value={draft[f] || ''} rows={2} onChange={(e) => set(f, e.target.value)} style={{ ...input, resize: 'vertical', fontFamily: 'inherit' }} />
+          </label>
+        ))}
       </div>
       {err && <div style={{ fontSize: 11, color: R.red }}>{err}</div>}
       <div style={{ display: 'flex', gap: 8 }}>

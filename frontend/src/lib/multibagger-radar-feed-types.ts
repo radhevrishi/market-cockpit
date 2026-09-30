@@ -31,3 +31,30 @@ export interface RadarFeedEvent {
   primary_source?: boolean;
   age_hours?: number;
 }
+
+/**
+ * zzz847 - optional hints the adapter attaches to a RadarInput (additive; the
+ * engine may read them to quarantine or re-type an item). Names are stable.
+ */
+export interface RadarFeedHints {
+  /** Price-move article (share price falls/jumps, since-listing performance). Not a corporate event. */
+  isPriceArticle?: boolean;
+  /** Results / record-date preview: the result is not out yet. */
+  isPreview?: boolean;
+  /** Broker target / rating change / "stocks to buy". Non-investment signal. */
+  isAnalystTarget?: boolean;
+  /** Opinion / prediction / question headline. */
+  isOpinion?: boolean;
+  /** Government / pay-commission / union news. Not a company. */
+  isNonCorporate?: boolean;
+  /** SEC Form 10-12G/B registration of a class of securities (not a spin-off). */
+  isRegistration?: boolean;
+  /** Generic subtype decided from the headline wording. */
+  subtypeHint?: 'MERGER' | 'SPIN' | 'FINANCING' | 'GUIDANCE_PLAN' | 'LISTING_DONE' | 'NEW_PRODUCT' | null;
+  /** Price / dividend / percent spans that must never be shown as earnings-number evidence. */
+  nonEarningsNumbers?: string[];
+  /** True when the ticker came from the feed or the headline subject; false means ticker is null on purpose. */
+  tickerResolved?: boolean;
+  /** How many duplicate cards were merged into this one. */
+  mergedDuplicates?: number;
+}

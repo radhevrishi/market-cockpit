@@ -34,6 +34,10 @@ import {
   type CoverageBucket,
 } from '@/lib/specsit-institutional';
 
+import {
+  classifyForm10, contentHints, createEventClusterer, decodeHtmlEntities, extractSubjectTickers, identifySubject, isNonEventContent, countCanonicalEventTypes,
+} from '@/lib/special-sit-feed-quality';
+
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
@@ -218,10 +222,8 @@ let CACHE: { data: any; ts: number } | null = null;
 // (or <entry> for Atom). We don't need DOM-level fidelity.
 
 function decodeXmlEntities(s: string): string {
-  return s
-    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'")
-    .replace(/&nbsp;/g, ' ');
+  // zzz847: one central decoder (named + decimal + hex entities, e.g. &#x20B1; and &#8377;).
+  return decodeHtmlEntities(s);
 }
 
 function stripCdataAndHtml(s: string): string {
@@ -237,7 +239,7 @@ function stripCdataAndHtml(s: string): string {
   if (r.startsWith('http') && /[<>\[\]]/.test(r)) {
     r = r.replace(/[<>\[\]]/g, '');
   }
-  return r;
+  return decodeHtmlEntities(r);
 }
 
 function parseRSS(xml: string): Array<{ title: string; link: string; pubDate: string; description?: string }> {
@@ -497,8 +499,10 @@ async function buildFeed(): Promise<{
 
     for (const it of items) {
       const text = `${it.title} ${it.description || ''}`;
-      const c = classify(text);
+      let c = classify(text);
       if (!c) continue;
+      // zzz847: a Form 10-12G/B registration that is not a spin-off goes to the quiet corporate-action bucket.
+      if (classifyForm10(it.title, it.description) === 'REGISTRATION') c = { category: 'CAP', label: CATEGORIES.find((x) => x.id === 'CAP')?.label || 'Capital structure' };
       let pubMs = NaN;
       if (it.pubDate) {
         const d = new Date(it.pubDate);
@@ -517,7 +521,7 @@ async function buildFeed(): Promise<{
         age_hours: ageHours,
         category: c.category,
         category_label: c.label,
-        tickers: extractTickers(text, src.region),
+        tickers: extractSubjectTickers(it.title, it.description, src.name, it.link),
         description: (it.description || '').slice(0, 240),
       });
     }
@@ -594,6 +598,7 @@ async function buildFeed(): Promise<{
     const et = (eventType || '').toUpperCase();
     if (['NCLT_IBC_ADMISSION', 'NCLT_IBC_RESOLUTION', 'TURNAROUND_OPERATING', 'TURNAROUND_NARRATIVE'].includes(et)) return 'TURN';
     if (['TENDER_OFFER', 'MERGER_DEFINITIVE', 'MERGER_RECOMMENDATION', 'GOING_PRIVATE', 'OPEN_OFFER', 'ACQUISITION_PUBLIC', 'STAKE_SALE', 'ASSET_SALE_MONETIZATION'].includes(et)) return 'MA';
+    if (et === 'FORM10_REGISTRATION') return 'CAP';
     if (['SPIN_OFF', 'DEMERGER_INDIA', 'IPO_SUBSIDIARY', 'HOLDCO_ARB_TRIGGER', 'STUB_TRADE_TRIGGER'].includes(et)) return 'SPIN';
     if (['BUYBACK_TENDER', 'BUYBACK_OPEN_MARKET', 'DIVIDEND_HIKE', 'RIGHTS_ISSUE', 'RIGHTS_ISSUE_DEEP', 'CONVERTIBLE_PIPE', 'PROMOTER_BACKSTOP', 'QIP_PLACEMENT', 'BONUS_ISSUE', 'STOCK_SPLIT', 'NCD_ISSUE', 'WARRANTS_ISSUE', 'OFS', 'FCCB_ISSUE'].includes(et)) return 'CAP';
     if (['CAPEX_EXPANSION', 'NEW_VENTURE', 'CAPACITY_COMMISSIONED', 'GREENFIELD_PROJECT', 'BROWNFIELD_EXPANSION', 'NEW_MANUFACTURING_FACILITY', 'FORAY_NEW_MARKET'].includes(et)) return 'CAPEX';
@@ -610,6 +615,7 @@ async function buildFeed(): Promise<{
 
   // PATCH 0431 — per-event-type counts for coverage diagnostic
   const eventTypeCounts: Record<string, number> = {};
+  const clusterer = createEventClusterer();
 
   for (const it of deduped) {
     const fullText = `${it.title} ${it.description || ''}`;
@@ -631,17 +637,24 @@ async function buildFeed(): Promise<{
       sig.event_type = extended as any;
     }
 
+    // zzz847: SEC Form 10 registrations that are not spin-offs stay out of the spin / extended classifiers.
+    const f10 = classifyForm10(it.title, it.description);
+    if (f10 === 'REGISTRATION') sig.event_type = 'FORM10_REGISTRATION' as any;
+    else if (f10 === 'SPIN') sig.event_type = 'SPIN_OFF';
     itemSignals.set(it.id, sig);
-    eventTypeCounts[sig.event_type] = (eventTypeCounts[sig.event_type] || 0) + 1;
 
     // Skip UNCLASSIFIED noise from canonical event grouping (still in by_category for backwards compat)
     if (sig.event_type === 'UNCLASSIFIED') continue;
 
-    const eid = canonicalEventId({
+    // zzz847: tickerless events key on the headline subject (not 'unknown'), and the same deal reported with
+    // different subjects (acquirer vs target) collapses onto the first card via the clusterer.
+    const subj = identifySubject({ title: it.title, feedTicker: it.tickers[0] || null, isSec: /sec\.gov/i.test(it.link) });
+    const baseId = canonicalEventId({
       event_type: sig.event_type,
-      target_name: sig.target_name,
+      target_name: sig.target_name || (subj.company !== 'Not identified' ? subj.company : it.title.slice(0, 60)),
       tickers: it.tickers,
     });
+    const eid = sig.event_type === 'FORM10_REGISTRATION' ? baseId : clusterer.assign(baseId, it.title, it.region, sig.event_type);
     const bucket = eventBuckets.get(eid) || [];
     bucket.push(it);
     eventBuckets.set(eid, bucket);
@@ -650,7 +663,6 @@ async function buildFeed(): Promise<{
   // PATCH 0431 — Coverage diagnostic. Tells the user which institutional
   // categories the engine found in this window. Direct response to "if
   // something is missing reupdate logic — 3 months it should show all such".
-  const coverageDiagnostic: CoverageBucket[] = computeCoverageDiagnostic(eventTypeCounts);
 
   // Build CanonicalEvent objects
   const events: CanonicalEvent[] = [];
@@ -733,7 +745,7 @@ async function buildFeed(): Promise<{
       speculation_penalty: hasSpeculation,
     });
 
-    const tradability = classifyTradability({
+    const tradabilityRaw = classifyTradability({
       event_type: eventType,
       is_amendment: primarySig.is_amendment,
       amendment_count_in_event: amendments.length,
@@ -745,6 +757,14 @@ async function buildFeed(): Promise<{
       title: primary.title,
       description: primary.description,
     });
+
+    // zzz847: registrations, price articles, previews, analyst targets and opinion pieces are never actionable catalysts.
+    const hintsP = contentHints(primary.title, primary.description);
+    const tradability = (eventType as string) === 'FORM10_REGISTRATION'
+      ? { is_tradable: false, tier: 'NOISE' as const, rationale: 'Registration (Form 10) of a class of securities, not a spin-off. Low signal.' }
+      : isNonEventContent(hintsP)
+        ? { is_tradable: false, tier: 'NOISE' as const, rationale: hintsP.isPriceArticle ? 'Price article, not a corporate event' : hintsP.isPreview ? 'Preview, result not out yet' : hintsP.isAnalystTarget ? 'Analyst target / rating, non-investment signal' : hintsP.isOpinion ? 'Opinion / prediction piece' : 'Not a company event' }
+        : tradabilityRaw;
 
     const lifecycle = inferLifecycleStage({
       is_amendment: primarySig.is_amendment,
@@ -789,6 +809,12 @@ async function buildFeed(): Promise<{
     if (ta !== tb) return tb - ta;
     return b.catalyst_score.decay_score - a.catalyst_score.decay_score;
   });
+
+  // zzz847: coverage counts are per canonical event (was per raw item over the whole 90-day window, which
+  // double counted syndication and amendments), and skip registrations and price / preview / analyst pieces.
+  const canonicalTypeCounts = countCanonicalEventTypes(events.map((e) => ({ event_type: e.event_type, title: e.primary_filing.title, tier: e.tier })));
+  for (const [k, v] of Object.entries(canonicalTypeCounts)) eventTypeCounts[k] = v;
+  const coverageDiagnostic: CoverageBucket[] = computeCoverageDiagnostic(eventTypeCounts);
 
   const by_tier: Record<'TIER_1' | 'TIER_2' | 'WATCHLIST' | 'NOISE', number> = {
     TIER_1: 0, TIER_2: 0, WATCHLIST: 0, NOISE: 0,

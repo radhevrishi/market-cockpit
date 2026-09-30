@@ -20,3 +20,5 @@ export const PRINT_CSS = `
   .gu-drawer{position:static !important;width:auto !important;border:none !important}
   .gu-card{break-inside:avoid}
 }`;
+
+export const RATING_COLOR: Record<'STRONG' | 'OK' | 'WEAK' | 'UNKNOWN', string> = { STRONG: R.green, OK: R.cyan, WEAK: R.red, UNKNOWN: R.grey };

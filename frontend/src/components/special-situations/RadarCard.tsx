@@ -13,12 +13,32 @@ import {
 } from '@/lib/multibagger-radar-types';
 import { addFromRadarItem, NOT_ESTABLISHED, type OwnerTag } from '@/lib/multibagger-ledger-store';
 import type { LedgerEntry } from '@/lib/multibagger-radar-types';
-import { CHAIN_MARK, EVIDENCE_META, PRIORITY_COLOR, R, TAG_COLOR, box, tint } from './radar-tokens';
+import {
+  CHAIN_MARK, DELTA_LABEL, EVIDENCE_META, INDICATOR_LABEL, LINK_KEY_LABEL, LINK_STATUS_META, MATERIALITY_LABEL, NOT_YET, PRICE_BLOCK_LABEL, PRIORITY_COLOR, QUANT_LABEL, R,
+  TAG_COLOR, TRANSMISSION_LABEL, box, durationLine, has, oneLineRow, orNotYet, populatedSections, progressionText, sourcesLine, statusBadges,
+} from './radar-tokens';
 import { Chip, Field, btn } from './RadarBits';
 import { LedgerForm } from './LedgerForm';
 import { PORTFOLIO_TAG_LABEL } from '@/lib/multibagger-radar-types';
 
-const say = (s: string | null | undefined): string => (s && s.trim() ? s : NOT_ESTABLISHED);
+const say = orNotYet;
+void NOT_ESTABLISHED;
+
+/** One line, no detail panel: corporate actions and items with no earnings link. */
+export function RadarRow({ item }: { item: RadarItem }) {
+  const r = oneLineRow(item);
+  return (
+    <div data-radar-row={item.id} style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', fontSize: 12, color: R.dim, padding: '3px 0', borderBottom: `1px dotted ${R.border}` }}>
+      <b style={{ color: R.text }}>{r.who}</b>
+      <span style={{ overflowWrap: 'anywhere' }}>{r.what}</span>
+      {r.tag && <span style={{ fontSize: 10, fontWeight: 700, color: R.faint, border: `1px solid ${R.border}`, borderRadius: 3, padding: '0 5px' }}>{r.tag}</span>}
+    </div>
+  );
+}
+
+function Sub({ label, children }: { label: string; children: React.ReactNode }) {
+  return <Field label={label}>{children}</Field>;
+}
 
 export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now }: {
   item: RadarItem; held: boolean; ownerTag?: OwnerTag; ledgerIds: ReadonlySet<string>;
@@ -28,39 +48,127 @@ export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now }
   const ev = EVIDENCE_META[item.evidence.status];
   const draft = addFromRadarItem(item, now);
   const inLedger = ledgerIds.has(draft.id);
+  const show = new Set(populatedSections(item, held));
   const portfolio = held ? (ownerTag ? PORTFOLIO_TAG_LABEL[ownerTag] + ' - in your holdings' : 'In your holdings') : 'Not in your holdings';
   const govNote = item.governance.status === 'NOT_CHECKED' ? 'Not checked' : item.governance.status === 'CLEAR' ? 'Clear' : 'Flagged';
   const govColor = item.governance.status === 'FLAGGED' ? R.red : item.governance.status === 'CLEAR' ? R.green : R.faint;
   const feedHref = item.feedEventId ? `/special-situations?tab=all#${encodeURIComponent(item.feedEventId)}` : '/special-situations?tab=all';
+  const badges = statusBadges(item);
+  const links = item.catalystChain || [];
+  const transmission = item.financialTransmission || item.link;
+  const eligible = item.ledgerEligible !== false;
+  const prog = progressionText(item);
+  const kindText = KIND_LABEL[item.kind] + (item.subKind ? ` - ${KIND_LABEL[item.subKind]}` : '') + (item.inflection !== 'NOT_ASSESSED' ? ` - ${INFLECTION_LABEL[item.inflection]}` : '');
   return (
     <div style={box({ padding: 12, display: 'flex', flexDirection: 'column', gap: 8, opacity: item.lowSignal ? 0.78 : 1 })} data-radar-card={item.id}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
         <span style={{ fontSize: 15, fontWeight: 900, color: R.text }}>{item.ticker || 'No ticker'}</span>
         <span style={{ fontSize: 13, color: R.dim }}>{item.company}</span>
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <Chip color={ev.color} dashed={ev.dashed} title={item.evidence.why}>{ev.mark} {EVIDENCE_LABEL[item.evidence.status]}</Chip>
+          <Chip color={ev.color} dashed={ev.dashed} title={item.evidence.why}>{ev.mark} Evidence: {EVIDENCE_LABEL[item.evidence.status]}</Chip>
           <Chip color={PRIORITY_COLOR[item.priority]} title={item.priorityReason}>Research priority: {PRIORITY_LABEL[item.priority]}</Chip>
         </span>
       </div>
 
+      {/* three separate statuses - never merged into one "Confirmed" */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} aria-label="Three separate statuses">
+        {badges.map((b) => <Chip key={b.key} color={b.color} dashed={b.dashed}>{b.heading}: {b.label}</Chip>)}
+      </div>
+      {has(item.confirmationLabel) && <div style={{ fontSize: 12, color: R.dim }}>{item.confirmationLabel}</div>}
+
+      {show.has('chain') && (
+      <div>
+        <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.6, color: R.faint, textTransform: 'uppercase' }}>
+          Catalyst chain - {item.provenThrough >= 0 ? `proven through step ${item.provenThrough + 1}` : 'no step proven yet'}
+        </div>
+        {links.length > 0 ? (
+          <ul style={{ listStyle: 'none', margin: '4px 0 0', padding: 0, display: 'flex', flexWrap: 'wrap', gap: 4 }} data-radar-chain>
+            {links.map((c) => {
+              const m = LINK_STATUS_META[c.status];
+              const tip = [c.evidence, c.source, c.date, c.confidence !== 'UNKNOWN' ? `confidence ${c.confidence.toLowerCase()}` : null].filter(has).join(' | ');
+              return <li key={c.link}><Chip color={m.color} dashed={m.dashed} title={tip || undefined}>{m.mark} {LINK_KEY_LABEL[c.link]}: {m.label}</Chip></li>;
+            })}
+          </ul>
+        ) : (
+          <ol style={{ listStyle: 'none', margin: '4px 0 0', padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {item.chain.map((c, i) => {
+              const m = CHAIN_MARK[c.status];
+              return (
+                <li key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', borderLeft: `2px ${m.border} ${m.color}`, paddingLeft: 8, opacity: m.opacity }}>
+                  <span style={{ color: m.color, fontWeight: 900 }} aria-hidden>{m.mark}</span>
+                  <span style={{ fontSize: 12, color: R.text }}>
+                    <b>{i + 1}. {c.step}</b> <span style={{ color: m.color }}>({m.word})</span>{c.text ? ` - ${c.text}` : ''}
+                  </span>
+                </li>
+              );
+            })}
+            {item.chain.length === 0 && <li style={{ fontSize: 12, color: R.faint }}>{NOT_YET}</li>}
+          </ol>
+        )}
+      </div>
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: '8px 14px' }}>
-        <Field label="Catalyst">{say(item.event)}</Field>
-        <Field label="Catalyst type">{KIND_LABEL[item.kind]}{item.inflection !== 'NOT_ASSESSED' ? ` - ${INFLECTION_LABEL[item.inflection]}` : ''}</Field>
-        <Field label="Why now">{say(item.whyItMatters)}</Field>
-        <Field label="Evidence">
+        {show.has('catalyst') && <Sub label="Catalyst">{say(item.event)}</Sub>}
+        <Sub label="Catalyst type">{kindText}</Sub>
+        {show.has('whyNow') && <Sub label="Why now">{say(item.whyItMatters)}</Sub>}
+        {show.has('mechanism') && (
+          <Sub label="Economic mechanism">
+            {has(item.oneSentenceMechanism) ? <b>{item.oneSentenceMechanism}</b> : null}
+            {has(item.oneSentenceMechanism) && has(item.mechanism) ? ' ' : ''}{has(item.mechanism) ? item.mechanism : ''}
+          </Sub>
+        )}
+        <Sub label="Evidence">
           <span style={{ color: ev.color, fontWeight: 700 }}>{EVIDENCE_LABEL[item.evidence.status]}</span>
           {' - '}{say(item.evidence.sourceLabel)}. {say(item.evidence.why)}
-        </Field>
-        <Field label="Earnings link">{LINK_LABEL[item.link]}. {say(item.financialImpact)}</Field>
-        <Field label="Duration">
-          {say(item.duration.label)}{item.duration.evidence ? ` - ${item.duration.evidence}` : ''}{item.duration.basis === 'type' ? ' (by event type)' : ''}
-        </Field>
-        <Field label="Next proof">{say(item.proof.what)}{' - '}{item.proof.when ? item.proof.when : 'timing not stated'}</Field>
-        <Field label="Expectations">{say(item.expectations.note)}</Field>
-        <Field label="Valuation context">{say(item.valuationContext)}</Field>
-        <Field label="Portfolio status">{portfolio}</Field>
+        </Sub>
+        {show.has('scope') && item.evidenceScope && (
+          <Sub label="Evidence scope">
+            {item.evidenceScope.confirmed.length > 0 && <div><b style={{ color: R.green }}>Confirmed:</b> {item.evidenceScope.confirmed.join('; ')}</div>}
+            {item.evidenceScope.notConfirmed.length > 0 && <div><b style={{ color: R.amber }}>Not confirmed:</b> {item.evidenceScope.notConfirmed.join('; ')}</div>}
+          </Sub>
+        )}
+        {show.has('proven') && (
+          <Sub label="Proven / not proven">
+            {item.provenThrough >= 0 ? `Proven through step ${item.provenThrough + 1}.` : 'No step proven yet.'}
+            {has(item.weakestUnprovenLink) ? ` Weakest unproven link: ${item.weakestUnprovenLink}.` : ''}
+          </Sub>
+        )}
+        <Sub label="Earnings link">
+          {TRANSMISSION_LABEL[transmission] || LINK_LABEL[transmission]}. {say(item.financialImpact)}
+          {item.quantificationStatus ? ` Quantification: ${QUANT_LABEL[item.quantificationStatus]}.` : ''}
+        </Sub>
+        <Sub label="Duration">{durationLine(item.duration)}</Sub>
+        {show.has('maturity') && (
+          <Sub label="Catalyst maturity">
+            {[prog, item.evidenceDelta ? `Evidence: ${DELTA_LABEL[item.evidenceDelta]}` : null].filter(Boolean).join(' - ')}
+            {item.indicator?.type ? <> <Chip color={R.dim}>{INDICATOR_LABEL[item.indicator.type]}</Chip></> : null}
+          </Sub>
+        )}
+        {show.has('materiality') && item.catalystMateriality && (
+          <Sub label="Materiality">{MATERIALITY_LABEL[item.catalystMateriality]}{has(item.materialityNote) ? ` - ${item.materialityNote}` : ''}</Sub>
+        )}
+        {show.has('nextProof') && <Sub label="Next proof">{say(item.proof.what)}{item.proof.when ? ` - ${item.proof.when}` : ''}</Sub>}
+        {!show.has('nextProof') && <Sub label="Next proof">{NOT_YET}</Sub>}
+        {show.has('expectations') && <Sub label="Expectations">{item.expectations.note}</Sub>}
+        {show.has('valuation') && <Sub label="Valuation context">{item.valuationContext}</Sub>}
+        <Sub label="Portfolio status">{portfolio}</Sub>
       </div>
-      <div style={{ fontSize: 12, color: R.dim, lineHeight: 1.45 }}><b style={{ color: PRIORITY_COLOR[item.priority] }}>Why this priority:</b> {say(item.priorityReason)}</div>
+
+      {show.has('price') && item.priceResponse && (
+        <div data-radar-price style={{ border: `1px dashed ${R.border}`, borderRadius: 6, padding: '6px 10px', fontSize: 11.5, color: R.faint, lineHeight: 1.45 }}>
+          <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.6, textTransform: 'uppercase' }}>{PRICE_BLOCK_LABEL}</div>
+          {item.priceResponse.text}{has(item.priceResponse.note) ? ` ${item.priceResponse.note}` : ''}
+        </div>
+      )}
+
+      <div style={{ fontSize: 12, color: R.dim, lineHeight: 1.45, display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <div><b style={{ color: PRIORITY_COLOR[item.priority] }}>Why this priority:</b> {say(item.priorityReason)}</div>
+        {(item.whyNotHigher || []).filter(has).length > 0 && <div><b>Why not higher?</b> {(item.whyNotHigher || []).filter(has).join('; ')}</div>}
+        {has(item.upgradeTrigger) && <div><b>What would upgrade?</b> {item.upgradeTrigger}</div>}
+        {has(item.downgradeTrigger) && <div><b>What would downgrade?</b> {item.downgradeTrigger}</div>}
+      </div>
+      {show.has('sources') && <div style={{ fontSize: 11.5, color: R.faint }}><b>Source quality and diversity:</b> {sourcesLine(item.evidence)}</div>}
       {item.drivers.length > 0 && (
         <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
           {item.drivers.map((d) => <Chip key={d} color={R.faint} title="Shared driver tag">{d}</Chip>)}
@@ -71,28 +179,9 @@ export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now }
         <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, color: R.cyan }}>Details: mechanism, chain, break conditions</summary>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 8 }}>
           <Field label="Mechanism">{say(item.mechanism)}</Field>
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.6, color: R.faint, textTransform: 'uppercase' }}>
-              Catalyst chain - {item.provenThrough >= 0 ? `proven through step ${item.provenThrough + 1}` : 'no step proven yet'}
-            </div>
-            <ol style={{ listStyle: 'none', margin: '4px 0 0', padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {item.chain.map((c, i) => {
-                const m = CHAIN_MARK[c.status];
-                return (
-                  <li key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', borderLeft: `2px ${m.border} ${m.color}`, paddingLeft: 8, opacity: m.opacity }}>
-                    <span style={{ color: m.color, fontWeight: 900 }} aria-hidden>{m.mark}</span>
-                    <span style={{ fontSize: 12, color: R.text }}>
-                      <b>{i + 1}. {c.step}</b> <span style={{ color: m.color }}>({m.word})</span>{c.text ? ` - ${c.text}` : ''}
-                    </span>
-                  </li>
-                );
-              })}
-              {item.chain.length === 0 && <li style={{ fontSize: 12, color: R.faint }}>{NOT_ESTABLISHED}</li>}
-            </ol>
-          </div>
           {item.bottleneckQuestion && <Field label="Bottleneck question">{item.bottleneckQuestion}</Field>}
           <Field label="Break conditions">
-            {item.breakConditions.length ? <ul style={{ margin: '2px 0 0', paddingLeft: 18 }}>{item.breakConditions.map((b, i) => <li key={i}>{b}</li>)}</ul> : NOT_ESTABLISHED}
+            {item.breakConditions.filter(has).length ? <ul style={{ margin: '2px 0 0', paddingLeft: 18 }}>{item.breakConditions.filter(has).map((b, i) => <li key={i}>{b}</li>)}</ul> : NOT_YET}
           </Field>
           <Field label="Governance">
             <span style={{ color: govColor, fontWeight: 700 }}>{govNote}</span>
@@ -109,10 +198,16 @@ export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now }
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         {inLedger
           ? <Chip color={R.green}>In thesis ledger</Chip>
-          : <button type="button" onClick={() => setAdding((a) => !a)} style={btn(R.cyan, adding)}>{adding ? 'Close' : 'Add to thesis ledger'}</button>}
+          : eligible
+            ? <button type="button" onClick={() => setAdding((a) => !a)} style={btn(R.cyan, adding)}>{adding ? 'Close' : 'Add to thesis ledger'}</button>
+            : (
+              <span data-radar-ledger-blocked style={{ fontSize: 11.5, color: R.faint }}>
+                Not ready for the thesis ledger{(item.ledgerBlockers || []).filter(has).length ? `: ${(item.ledgerBlockers || []).filter(has).join('; ')}` : '.'}
+              </span>
+            )}
         {held && ownerTag && <Chip color={TAG_COLOR[ownerTag]}>{PORTFOLIO_TAG_LABEL[ownerTag]}</Chip>}
       </div>
-      {adding && !inLedger && (
+      {adding && !inLedger && eligible && (
         <LedgerForm initial={draft} title="Add to thesis ledger - please review" saveLabel="Confirm and save to ledger"
           onSave={(e) => { onSaveLedger(e); setAdding(false); }} onCancel={() => setAdding(false)} />
       )}

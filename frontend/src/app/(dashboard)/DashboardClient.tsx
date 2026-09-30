@@ -81,6 +81,8 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/ai-gainers',                label: 'AI Daily Gainers',          icon: <Zap className="w-4 h-4" /> },
       // zzz843 — positive guidance raises in the last 7 days, verified and quantified.
       { href: '/guidance-upgrades',         label: 'Guidance Upgrades',         icon: <LineChart className="w-4 h-4" /> },
+      // zzz846 — companies where management guides unusually high growth (30%+), verified.
+      { href: '/growth-guidance',           label: 'Growth Guidance',           icon: <TrendingUp className="w-4 h-4" /> },
       // The interpretation layer that sits ON TOP of the graded engine: it
       // never screens, it only reads what the filings already qualified.
       { href: '/ai-desk',                   label: 'AI Research Desk',          icon: <Microscope className="w-4 h-4" /> },
@@ -260,6 +262,7 @@ const _LEGACY_NAV: NavItem[] = [
   // grading of Indian earnings filings, modelled on earningspulse.ai.
   { href: '/earnings-opportunities', label: 'Earnings Opportunities', icon: <Star className="w-5 h-5" /> },
   { href: '/guidance-upgrades', label: 'Guidance Upgrades', icon: <LineChart className="w-5 h-5" /> },
+  { href: '/growth-guidance', label: 'Growth Guidance', icon: <TrendingUp className="w-5 h-5" /> },
   // PATCH 0350 — Strategic Visibility moved next to the earnings intelligence
   // cluster (it surfaces transformational-contract / mega-deal wins which is
   // an earnings-adjacent decision surface). Was previously sandwiched between

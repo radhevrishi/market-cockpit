@@ -15,6 +15,7 @@ import type {
   GuGuidancePoint, GuHistoryStats, GuLedgerRow, GuMarket, GuMateriality, GuMetric, GuNumber,
   GuPortfolioImpact, GuQuality, GuSourceRef, GuSourceTier, GuSummary, GuThesis, GuType,
   GuValuation, GuVerification, GuWindow, GuidanceEvent,
+  GuRangeMath, GuRangeClass, GuEventV2, GuScoreItem, GuStage, GuDurabilityLevel, GuMetricBasis,
 } from './guidance-upgrades-types';
 
 export const DATA_UNAVAILABLE = 'DATA UNAVAILABLE';
@@ -71,7 +72,7 @@ const METRIC_LABEL: Record<GuMetric, string> = {
   OP_MARGIN: 'operating margin', EPS: 'EPS', ADJ_EPS: 'adjusted EPS', FCF: 'free cash flow',
   FCF_CONVERSION: 'cash conversion', ORGANIC_GROWTH: 'organic growth', ORDER_INTAKE: 'order intake',
   BACKLOG: 'order backlog', VOLUME: 'volume', PRODUCTION: 'production', CAPACITY_UTIL: 'capacity utilisation',
-  OTHER: 'profit',
+  NET_PROFIT: 'net profit', OTHER: 'profit',
 };
 function metricLabel(c: GuChange): string {
   if (c.metric === 'OTHER' && !isProfitOther(c)) return 'other measure';
@@ -255,7 +256,7 @@ const KW_RULES: Array<[RegExp, GuMetric]> = [
   [/\b(?:ebit|operating income|operating profit)\b/gi, 'EBIT'],
   [/\b(?:adjusted eps|adj\.? eps|non-gaap eps|adjusted earnings per share)\b/gi, 'ADJ_EPS'],
   [/\b(?:eps|earnings per share)\b/gi, 'EPS'],
-  [/\b(?:net profit|net income|profit after tax|pat|net earnings|earnings|profit)\b/gi, 'OTHER'],
+  [/\b(?:income from continuing operations|net profit|net income|profit after tax|profit after taxes|pat|net earnings|earnings|profit)\b/gi, 'NET_PROFIT'],
   [/\b(?:order intake|order inflows?|order wins|new orders|order flow)\b/gi, 'ORDER_INTAKE'],
   [/\b(?:order book|order backlog|backlog)\b/gi, 'BACKLOG'],
   [/\b(?:capacity utili[sz]ation|utili[sz]ation)\b/gi, 'CAPACITY_UTIL'],
@@ -277,6 +278,8 @@ function findMetricKws(sent: string): Kw[] {
   return kept;
 }
 
+const sameMetricFamily = (m: GuMetric): string => (m === 'ADJ_EPS' ? 'EPS' : m === 'ORGANIC_GROWTH' || m === 'REVENUE_GROWTH' ? 'REVENUE' : m === 'REVENUE' ? 'REVENUE' : m);
+const PER_SHARE_KW = new Set<GuMetric>(['EPS', 'ADJ_EPS']);
 const PCT_METRICS = new Set<GuMetric>(['REVENUE_GROWTH', 'ORGANIC_GROWTH', 'OP_MARGIN', 'FCF_CONVERSION', 'CAPACITY_UTIL']);
 const PCT_OK_METRICS = new Set<GuMetric>([...PCT_METRICS, 'VOLUME', 'PRODUCTION', 'ORDER_INTAKE', 'BACKLOG']);
 
@@ -343,6 +346,8 @@ const LINK_TOKEN = /\b(from|prior|previous(?:ly)?|earlier|versus|vs\.?|compared 
 const LINK_BAD = /(consensus|analysts?|estimates?|street|year[- ]ago|a year|last year|prior[- ]year|year[- ]over[- ]year|yoy|y\/y|quarter[- ]ago)/i;
 const YEAR_AGO_AFTER = /^\s*[\)\],]?\s*(?:a year ago|year[- ]ago|last year|prior[- ]year|year[- ]over[- ]year|yoy|y\/y|in the (?:prior|previous|year[- ]ago))/i;
 const NEG_WORD = /(declin|decreas|\bfall|\bdrop|contract(?:ion)?\b|negative|\bloss|shrink|deficit)/i;
+const PAIR_SEP = /^\s*(?:,\s*and|,|and|&)\s*$/i;
+const PRIOR_CUE = /(?:\b(?:from|versus|vs\.?|compared (?:with|to)|against|previously|earlier|prior)(?:\s+(?:guidance|target|forecast))?(?:\s+(?:of|at|was|were))?)\s*$/i;
 const FLAT_BEFORE = /^\s*[\(,]?\s*(?:from|versus|vs\.?|previously|prior|compared (?:with|to)|earlier)\s+(?:a\s+|was\s+)?(flat|stable|zero)\b/i;
 
 function extractFromSentence(sent: string, fallbackPeriod: string): GuChange[] {
@@ -355,6 +360,8 @@ function extractFromSentence(sent: string, fallbackPeriod: string): GuChange[] {
   const used = new Set<number>();
 
   const kwFor = (v: RawVal): Kw | null => {
+    const adj = kws.find(k => k.start >= v.end && /^\s*(?:of\s+)?$/i.test(sent.slice(v.end, k.start)) && k.start - v.end <= 6 && !(sent.slice(v.end, v.end + 1) === '' ));
+    if (adj && (v.scale || v.cur) && !v.pct) return adj; // "Rs 750 crore revenue": the noun right after the amount owns it
     const prior = kws.filter(k => k.end <= v.start && k.start >= lastEnd - 0);
     if (prior.length) { const k = prior[prior.length - 1]; if (v.start - k.end <= 140) return k; }
     const after = kws.find(k => k.start >= v.end && k.start - v.end <= 40);
@@ -401,6 +408,29 @@ function extractFromSentence(sent: string, fallbackPeriod: string): GuChange[] {
     void from;
   };
 
+  // zzz847 paired multi-metric: "revenue of A and net profit of B, up from X and Y earlier" -> priors assigned to metrics by order.
+  for (let i = 0; i + 1 < vals.length; i++) {
+    let j = i;
+    while (j + 1 < vals.length && PAIR_SEP.test(sent.slice(vals[j].end, vals[j + 1].start))) j++;
+    const n = j - i + 1;
+    if (n < 2 || i - n < 0) continue;
+    if (!PRIOR_CUE.test(sent.slice(Math.max(0, vals[i].start - 28), vals[i].start))) continue;
+    const afters = vals.slice(i - n, i); const priors = vals.slice(i, j + 1);
+    if (afters.some(a => a.negative) || priors.some(p => p.negative)) continue;
+    const picks: Kw[] = []; let ok = true;
+    for (let k = 0; k < n; k++) {
+      const lo = k === 0 ? 0 : afters[k - 1].end;
+      const cand = kws.filter(w => w.start >= lo && w.end <= afters[k].start);
+      const kw = cand[cand.length - 1];
+      if (!kw || afters[k].start - kw.end > 60) { ok = false; break; }
+      picks.push(kw);
+    }
+    if (!ok || new Set(picks.map(p => p.metric)).size !== n) continue;
+    for (let k = 0; k < n; k++) { used.add(i - n + k); used.add(i + k); }
+    for (let k = 0; k < n; k++) finish(picks[k], priors[k], afters[k], false, afters[k].start, priors[k].end);
+    i = j;
+  }
+
   for (let i = 0; i < vals.length; i++) {
     if (used.has(i)) continue;
     const v = vals[i];
@@ -414,7 +444,7 @@ function extractFromSentence(sent: string, fallbackPeriod: string): GuChange[] {
     if (kw && fm && (PCT_METRICS.has(kw.metric) || kw.metric === 'REVENUE') && (v.pct || PCT_METRICS.has(kw.metric)) && !NEG_WORD.test(winBefore)) {
       used.add(i); finish(kw, null, v, true, v.start, v.end + fm[0].length); continue;
     }
-    if (nxt && !nxt.negative && kw) {
+    if (nxt && !nxt.negative && kw && !kws.some(k => k.start >= v.end && k.end <= nxt.start && sameMetricFamily(k.metric) !== sameMetricFamily(kw.metric))) { // never pair a prior that belongs to another metric
       const link = sent.slice(v.end, nxt.start);
       const reversed = /\bfrom\s*$/i.test(winBefore) && /^\s*(?:to|->|→)\s*$/i.test(link);
       const forward = !reversed && link.length <= 40 && LINK_TOKEN.test(link) && !LINK_BAD.test(link) && !/\band\b/i.test(link);
@@ -435,7 +465,7 @@ function extractFromSentence(sent: string, fallbackPeriod: string): GuChange[] {
       used.add(i); finish(kw, b, a, false, v.start, v.end); continue;
     }
     // lone value: only with a metric keyword and a "to / of / at / now" cue right before it
-    if (kw && /(?:\bto|\bof|\bat|\bbe|\bbetween|\baround|\babout|:|\bnow|\bsees?|\bexpects?)\s*$/i.test(winBefore.replace(/[$₹€£]|Rs\.?\s*$/gi, '').trimEnd() + ' ')
+    if (kw && /(?:\bto|\bof|\bat|\bbe|\btargets?|\bbetween|\baround|\babout|:|\bnow|\bsees?|\bexpects?)\s*$/i.test(winBefore.replace(/[$₹€£]|Rs\.?\s*$/gi, '').trimEnd() + ' ')
         && !NEG_WORD.test(winBefore) && !/(analysts?|consensus|estimates?)/i.test(sent.slice(Math.max(0, v.start - 40), v.start))) {
       used.add(i); finish(kw, null, v, false, v.start, v.end); continue;
     }
@@ -507,9 +537,49 @@ function managementRaise(sent: string): string | null {
   if (g && !analystSubjectBefore(sent, g.index)) return 'Company guided higher';
   if (RE_FLAT_TO_GROWTH.test(sent) && !analystSubjectBefore(sent, 0)) return 'Company moved from flat to growth guidance';
   if (RE_NARROW_UP.test(sent)) return 'Company narrowed its range upward and raised the midpoint';
+  return v2Raise(sent);
+}
+
+// zzz844 V2 detection: broader management-raise wording. Never needs consensus. Analyst / speculation / price-target guards stay.
+const METRIC_W = '(?:revenues?|sales|top[- ]?line|turnover|profit|pat|net profit|net income|earnings|ebitda|ebit|eps|margins?|volumes?|order inflows?|order intake|order book|production)';
+const RE_RAISE_METRIC = new RegExp(`\\b(${RAISE_VERB})\\b[^;]{0,60}?\\b${METRIC_W}\\b`, 'i');
+const FWD_STRICT = /\b(?:guidance|outlook|forecasts?|targets?|projections?|expects?|expected to|now (?:expects?|sees?|forecasts?|targets?|projects?))\b/i;
+const FY_TOKEN = /\b(?:FY\s?'?\d{2,4}|F\.?Y\.?\s?'?\d{2,4}|full[- ]year|fiscal(?: year)?\s*'?\d{2,4}|H[12]\s?FY)\b/i;
+const RE_NOW_EXPECTS = /\bnow\s+(?:expects?|forecasts?|targets?|projects?|anticipates?|sees?|guides?|estimates?)\b/i;
+const RE_HIGHER_EARLIER = /\b(?:expects?|sees?|forecasts?|targets?|anticipates?|projects?|guid\w+)\b[^;]{0,120}?\bhigher than\b[^;]{0,40}?\b(?:earlier|previous(?:ly)?|prior|before|initial|original|last (?:guidance|forecast|outlook))/i;
+const RE_OUTLOOK_RAISED = /\b(?:outlook|guidance|forecasts?|targets?|projections?)\s+(?:has been |was |is |were )?(?:further |again |now )?(?:raised|lifted|increased|upgraded|hiked|revised (?:up|upward|higher))\b|\bfurther (?:raised|lifted|increased|upgraded|hiked)\b/i;
+const RE_REVISE_UP = /\brevis(?:es|ed|ing)\b[^;]{0,60}?\b(?:guidance|outlook|forecasts?|targets?|expectations?|revenue|profit|ebitda|eps|margins?)\b[^;]{0,40}?\b(?:upward|higher|up)\b|\b(?:upward|higher) revision\b[^;]{0,30}?\b(?:guidance|outlook|forecasts?|targets?)/i;
+const HISTORIC = /\b(?:reported|posted|delivered|recorded|quarter ended|year ended|rose|grew|jumped)\b/i;
+
+function v2Raise(sent: string): string | null {
+  ANALYST_RE.lastIndex = 0;
+  const analystSent = ANALYST_RE.test(sent) && !COMPANY_CUE.test(sent);
+  ANALYST_RE.lastIndex = 0;
+  if (analystSent) return null;
+  const guard = (idx: number): boolean => {
+    const before = sent.slice(Math.max(0, idx - 30), idx);
+    return !NEGATION.test(before) && !SPECULATION.test(before) && !analystSubjectBefore(sent, idx);
+  };
+  let m: RegExpExecArray | null;
+  if ((m = RE_OUTLOOK_RAISED.exec(sent)) && guard(m.index) && !OBJ_BAD.test(sent.slice(m.index, m.index + 40))) return 'Company guidance was raised';
+  if ((m = RE_REVISE_UP.exec(sent)) && guard(m.index) && !OBJ_BAD.test(m[0])) return 'Company revised its guidance upward';
+  if ((m = RE_HIGHER_EARLIER.exec(sent)) && guard(m.index)) return 'Company now expects more than it said earlier';
+  if ((m = RE_NOW_EXPECTS.exec(sent)) && guard(m.index)) {
+    const chs = extractFromSentence(sent, firstPeriod(sent));
+    const withBefore = chs.filter(c => c.before);
+    if (withBefore.length ? withBefore.some(c => c.direction === 'UP') : /\b(?:higher|raised|increased|up from|upward|more than)\b/i.test(sent))
+      return 'Company now expects more than it said earlier';
+  }
+  if ((m = RE_RAISE_METRIC.exec(sent)) && guard(m.index) && !OBJ_BAD.test(sent.slice(m.index + m[1].length, m.index + m[1].length + 22)) && !/\bprice\s+targets?\b/i.test(m[0])) {
+    if (FWD_STRICT.test(sent) && !(HISTORIC.test(sent) && !/\b(?:guidance|outlook|forecasts?|targets?|expects?)\b/i.test(sent))) return 'Company raised its forward numbers';
+    if (FY_TOKEN.test(sent) && !HISTORIC.test(sent) && extractFromSentence(sent, firstPeriod(sent)).some(c => c.direction === 'UP' && c.before)) return 'Company raised its forward numbers';
+  }
   return null;
 }
 
+/** capex / dividend / hiring guidance is not an earnings upgrade unless the same sentence also raises an earnings measure. */
+const NON_EARNINGS = /\b(?:capex|capital expenditures?|capital spending|capital outlay|dividends?|buy-?backs?|hiring|headcount|store (?:count|openings?)|share repurchases?)\b/i;
+const EARN_W = /\b(?:revenues?|sales|top[- ]?line|turnover|profit|pat|net income|earnings|ebitda|ebit|eps|margins?|volumes?|order (?:inflows?|intake|book))\b/i;
 const FORWARD_CUE = /\b(guid\w*|outlook|expects?|expected|sees?|forecasts?|projects?|projected|anticipat\w*|target|now)\b/i;
 const COMPANY_CUE = /\b(company|management|the firm|guid\w*|outlook|now expects?|now sees?|it (?:now )?(?:expects?|sees?))\b/i;
 
@@ -519,12 +589,13 @@ export function isGuidanceUpgradeCandidate(c: GuCandidate): { include: boolean; 
   const text = `${c.title ?? ''}. ${c.text ?? ''}`.replace(/[ \t]+/g, ' ');
   const sents = splitSentences(text);
   let raised: string | null = null;
-  for (const s of sents) { const r = managementRaise(s); if (r) { raised = r; break; } }
+  for (const s of sents) { if (NON_EARNINGS.test(s) && !EARN_W.test(s)) continue; const r = managementRaise(s); if (r) { raised = r; break; } }
   if (!raised) {
     // numeric fallback: "sees FY margin 24% versus 22% earlier" -> guidance moved up, from company words only
     const fb = firstPeriod(text);
     for (const s of sents) {
       if (!FORWARD_CUE.test(s)) continue;
+      if (NON_EARNINGS.test(s) && !EARN_W.test(s)) continue;
       ANALYST_RE.lastIndex = 0;
       if (ANALYST_RE.test(s) && !COMPANY_CUE.test(s)) { ANALYST_RE.lastIndex = 0; continue; }
       ANALYST_RE.lastIndex = 0;
@@ -569,7 +640,7 @@ function isProfitOther(c: GuChange): boolean {
 function familyOf(c: GuChange): Family {
   switch (c.metric) {
     case 'REVENUE': case 'REVENUE_GROWTH': case 'ORGANIC_GROWTH': return 'REVENUE';
-    case 'EBITDA': case 'EBIT': case 'EPS': case 'ADJ_EPS': return 'PROFIT';
+    case 'EBITDA': case 'EBIT': case 'EPS': case 'ADJ_EPS': case 'NET_PROFIT': return 'PROFIT';
     case 'OP_MARGIN': return 'MARGIN';
     case 'FCF': case 'FCF_CONVERSION': return 'CASH';
     case 'VOLUME': case 'PRODUCTION': case 'CAPACITY_UTIL': return 'VOLUME';
@@ -621,7 +692,7 @@ const DRIVER_RULES: Array<{ kind: GuDriverKind; q: 'HIGH' | 'MEDIUM' | 'LOW'; re
   { kind: 'CAPACITY', q: 'HIGH', label: 'new or better-used capacity', re: /\b(?:capacity (?:expansion|additions?|ramp(?:-?up)?)|(?:new|expanded) (?:plant|line|facility|capacity)|utili[sz]ation|commission(?:ing|ed))\b/i },
   { kind: 'MIX', q: 'HIGH', label: 'a better product mix', re: /\b(?:(?:richer|favou?rable|better|premium|improved|product|value-added) mix|mix (?:improvement|shift)|premiumi[sz]ation)\b/i },
   { kind: 'RECURRING', q: 'HIGH', label: 'recurring customers and revenue', re: /\b(?:recurring (?:revenue|customers?)|repeat (?:orders|customers?)|subscriptions?|renewals?)\b/i },
-  { kind: 'BACKLOG', q: 'HIGH', label: 'a larger order backlog', re: /\b(?:multi-?year (?:backlog|order book|contracts?)|order (?:book|backlog)|record backlog|backlog|orders? inflows?)\b/i },
+  { kind: 'BACKLOG', q: 'HIGH', label: 'a larger order backlog', re: /\b(?:multi-?year (?:backlog|order book|contracts?)|order (?:book|backlog|pipeline)|record backlog|backlog|orders? inflows?)\b/i },
 ];
 const LOW_KINDS = new Set<GuDriverKind>(['TAX_BENEFIT', 'ONE_TIME_ITEM', 'ASSET_SALE', 'COST_REVERSAL', 'FIN_ENGINEERING']);
 const CAUSAL_CUE = /\b(?:driven by|due to|because of|reflecting|on account of|thanks to|owing to|led by|supported by|attributable to|as a result of|helped by|citing|cited|from|on the back of|boosted by|benefit(?:ing)? from)\b/i;
@@ -683,7 +754,7 @@ export interface GuSkeleton {
   text: string;                    // combined title + body of all merged candidates
 }
 
-const METRIC_PRIORITY: GuMetric[] = ['REVENUE', 'EPS', 'ADJ_EPS', 'EBITDA', 'EBIT', 'OTHER', 'OP_MARGIN', 'REVENUE_GROWTH', 'ORGANIC_GROWTH', 'FCF', 'FCF_CONVERSION', 'ORDER_INTAKE', 'BACKLOG', 'VOLUME', 'PRODUCTION', 'CAPACITY_UTIL'];
+const METRIC_PRIORITY: GuMetric[] = ['REVENUE', 'EPS', 'ADJ_EPS', 'EBITDA', 'EBIT', 'NET_PROFIT', 'OTHER', 'OP_MARGIN', 'REVENUE_GROWTH', 'ORGANIC_GROWTH', 'FCF', 'FCF_CONVERSION', 'ORDER_INTAKE', 'BACKLOG', 'VOLUME', 'PRODUCTION', 'CAPACITY_UTIL'];
 
 function rowsFromChanges(changes: GuChange[], date: string): GuLedgerRow[] {
   return changes.filter(c => c.before).map(c => {
@@ -1059,6 +1130,16 @@ const upChanges = (e: Pick<GuidanceEvent, 'changes'>) => e.changes.filter(c => c
 
 export function buildRisks(e: GuidanceEvent, x: { text: string; kinds: readonly GuDriverKind[] }): string[] {
   const k = new Set(x.kinds); const risks: string[] = [];
+  const v2r = e.v2;
+  if (v2r) {
+    const nonClean = v2r.ranges.filter(r => r.klass === 'MIDPOINT_RAISE_RANGE_NARROWING');
+    const cuts = v2r.ranges.filter(r => r.klass === 'MIDPOINT_RAISE_RANGE_NARROWING');
+    if (cuts.some(r => r.afterHigh != null && r.beforeHigh != null && r.afterHigh < r.beforeHigh)) risks.push('Range narrowed: top end cut, so only the midpoint rose. The best case was lowered.');
+    else if (cuts.some(r => r.afterLow != null && r.beforeLow != null && r.afterLow < r.beforeLow)) risks.push('Range narrowed: low end cut, so only the midpoint rose.');
+    if (nonClean.length) risks.push('Only the midpoint of the range rose while the low end or top end was lowered, so this is not a clean raise.');
+    if (v2r.ranges.some(r => r.klass === 'RANGE_WIDENING')) risks.push('The range got wider, so the higher midpoint is less certain than a clean raise.');
+    if (v2r.unitWarnings.some(w => /basis/i.test(w))) risks.push('Before and after figures use different bases (for example adjusted versus GAAP), so they cannot be compared directly.');
+  }
   if (/\b(?:customer concentration|top (?:customer|client)s?|largest (?:customer|client)|single (?:customer|client)|key (?:customer|client)s?|depend\w* on (?:a |few |one )?(?:customer|client))/i.test(x.text))
     risks.push('A few big customers may make up much of sales, so losing one would hurt.');
   if (k.has('FX')) risks.push('Part of the raise comes from currency moves, and currencies can move back.');
@@ -1081,6 +1162,8 @@ export function buildRisks(e: GuidanceEvent, x: { text: string; kinds: readonly 
 export function buildNextEvidence(e: GuidanceEvent): string[] {
   const ups = upChanges(e);
   if (!ups.length) return ['Wait for the company to publish clear before and after guidance numbers.'];
+  const driverSpecific = e.v2 ? nextEvidenceFor(e.v2.operatingVariable) : [];
+  if (driverSpecific.length) return driverSpecific.slice(0, 2);
   const out: string[] = [];
   const line = (c: GuChange): string => {
     const g = fmtPoint(c.after); const p = c.after.period === 'UNSTATED' ? 'the guided period' : c.after.period;
@@ -1101,17 +1184,26 @@ export function buildNextEvidence(e: GuidanceEvent): string[] {
   return out.slice(0, 2);
 }
 
-function driverPhrase(e: GuidanceEvent): string {
-  if (e.guidance_quality === 'UNKNOWN' || /not stated/i.test(e.guidance_driver)) return 'and the source does not say why';
-  return `driven by ${e.guidance_driver.charAt(0).toLowerCase()}${e.guidance_driver.slice(1)}`;
+export const WHY_NOW_UNRESOLVED = 'Driver unresolved after primary-source + recent-event research';
+function driverPhrase(e: GuidanceEvent): string | null {
+  const v = e.v2?.operatingVariable;
+  if (e.guidance_quality === 'UNKNOWN' || /not stated|unresolved|^stated operating/i.test(e.guidance_driver)) return v ? `driven by ${v}` : null;
+  return `driven by ${e.guidance_driver.charAt(0).toLowerCase()}${e.guidance_driver.slice(1)}${v ? ` (stated: ${v})` : ''}`;
 }
 export function buildWhyNow(e: GuidanceEvent): string {
   const ups = upChanges(e);
-  if (!ups.length) return `${e.company} raised its guidance, but the source does not give clear before and after numbers (${DATA_UNAVAILABLE}).`;
+  if (!ups.length && e.v2?.statedDirection === 'RAISED') {
+    const sm = e.v2.statedMetrics?.length ? ` ${e.v2.statedMetrics.join(', ')}` : '';
+    return `${e.company} raised its${sm} guidance (direction stated by the source), but the source gives no before and after numbers (${DATA_UNAVAILABLE}). Shown as detected, not verified.${!e.v2.whyNowResolved ? ` ${WHY_NOW_UNRESOLVED}.` : ''}`;
+  }
+  if (!ups.length) return `${e.company} raised its guidance, but the source does not give clear before and after numbers (${DATA_UNAVAILABLE}).${e.v2 && !e.v2.whyNowResolved ? ` ${WHY_NOW_UNRESOLVED}.` : ''}`;
   const c = ups.slice().sort((a, b) => METRIC_PRIORITY.indexOf(a.metric) - METRIC_PRIORITY.indexOf(b.metric))[0];
   const period = c.after.period === 'UNSTATED' ? '' : ` for ${c.after.period}`;
   const more = ups.length > 1 ? ` (plus ${ups.length - 1} more measure${ups.length > 2 ? 's' : ''})` : '';
-  return `${e.company} raised ${metricLabel(c)} guidance${period} to ${fmtPoint(c.after)} from ${fmtPoint(c.before)}${more}, ${driverPhrase(e)}.`;
+  const dp = driverPhrase(e);
+  const ci = e.changes.indexOf(c); const kl = e.v2?.ranges[ci]?.klass;
+  if (kl === 'MIDPOINT_RAISE_RANGE_NARROWING') return `${e.company} moved the midpoint of ${metricLabel(c)} guidance${period} up, to ${fmtPoint(c.after)} from ${fmtPoint(c.before)}, but narrowed the range (top end cut)${dp ? `, ${dp}.` : `. ${WHY_NOW_UNRESOLVED}.`}`;
+  return `${e.company} raised ${metricLabel(c)} guidance${period} to ${fmtPoint(c.after)} from ${fmtPoint(c.before)}${more}${dp ? `, ${dp}.` : `. ${WHY_NOW_UNRESOLVED}.`}`;
 }
 
 export function whatItMeans(e: GuidanceEvent): string {
@@ -1152,7 +1244,7 @@ export function chain(e: GuidanceEvent): GuChain {
   const pe = e.valuation?.currentPE.value;
   const first = e.decisionReason[0] ?? '';
   return {
-    event: buildWhyNow(e).replace(/, (?:driven by|and the source does not say why).*$/, '.'),
+    event: buildWhyNow(e).replace(/(?:, driven by|\. Driver unresolved).*$/, '.'),
     evidence: e.verification === 'VERIFIED'
       ? `Confirmed by ${e.sources.filter(s => s.tier === 'PRIMARY').map(s => s.name).slice(0, 2).join(' and ')}.`
       : `Not confirmed by a primary source yet. ${e.sources.length} source${e.sources.length === 1 ? '' : 's'} so far.`,
@@ -1196,12 +1288,19 @@ export function decide(e: GuidanceEvent, ctx?: GuContext, x?: { thesisBreaking?:
   const T = GU_THRESHOLDS;
   const gapPos = e.expectationGap === 'POSITIVE' || e.expectationGap === 'LARGE_POSITIVE';
   const ups = upChanges(e);
-  const reject = (why: string) => ({ decision: 'REJECT' as GuDecision, reasons: [...lines, `Result: REJECT — ${why}`] });
-  if (!ups.length) return reject('no measurable upgrade (previous guidance not found)');
+  const v2Lines = v2DecisionLines(e);
+  const reject = (why: string) => ({ decision: 'REJECT' as GuDecision, reasons: [...lines, ...v2Lines, `Result: REJECT — ${why}`] });
+  if (!ups.length) return reject(`no measurable upgrade (previous guidance not found${e.v2?.unitWarnings.length ? '; a figure was dropped for a unit or basis problem, see warnings' : ''})`);
   if (e.guidance_quality === 'LOW') return reject('the raise comes from a low-quality, one-time driver');
   if (e.duration === 'ONE_OFF') return reject('the raise is one-off');
   if (e.expectationGap === 'NEGATIVE') return reject('guidance is still below consensus');
-  if (e.materiality === 'LOW') return reject('the earnings effect is small');
+  if (e.materiality === 'LOW') {
+    const famsUp = new Set(ups.map(familyOf));
+    if (famsUp.size >= 2 && e.guidance_quality !== 'UNKNOWN') {
+      return { decision: 'WATCHLIST', reasons: [...lines, ...v2Lines, `Result: WATCHLIST — each raise is small (${e.materialityBasis}), but several measures moved together and the driver is stated, so it is tracked rather than rejected`] };
+    }
+    return reject(`small raise (${e.materialityBasis}); it is below the size lines for a real earnings effect and nothing else offsets that (one measure only, or driver not clearly strong)`);
+  }
   if (e.materiality === 'UNKNOWN') return reject('no numbers to measure the earnings effect');
 
   const strongFund = e.materiality === 'HIGH' || (e.materiality === 'MEDIUM' && e.expectationGap === 'LARGE_POSITIVE');
@@ -1210,21 +1309,258 @@ export function decide(e: GuidanceEvent, ctx?: GuContext, x?: { thesisBreaking?:
   const pe = e.valuation?.currentPE.value ?? null; const peKnown = pe != null && pe > 0;
   const stretched = peKnown && (pe as number) >= T.STRETCHED_PE;
   const bigMove = (ctx?.priceContext?.move7dPct ?? 0) >= T.BIG_MOVE_7D_PCT;   // price context: only chooses WATCHLIST vs DELAYED_EP
-  if (core && peKnown && !stretched) return { decision: 'IMMEDIATE_BUY', reasons: [...lines, 'Result: IMMEDIATE_BUY — verified, material, above consensus, high-quality and lasting driver, valuation not stretched'] };
+  const realRaise = hasRealRaise(e);
+  if (core && peKnown && !stretched && !realRaise) return { decision: 'WATCHLIST', reasons: [...lines, ...v2Lines, 'Result: WATCHLIST — everything else lines up, but the raise is not clean (midpoint only, or before/after not comparable), so it is capped at WATCHLIST until the low end of the range moves up'] };
+  if (core && peKnown && !stretched) return { decision: 'IMMEDIATE_BUY', reasons: [...lines, ...v2Lines, 'Result: IMMEDIATE_BUY — verified, material, above consensus, high-quality and lasting driver, valuation not stretched'] };
   if (core) {
-    if (stretched) return { decision: 'DELAYED_EP', reasons: [...lines, 'Result: DELAYED_EP — strong fundamentals but valuation is already stretched; wait for confirmation'] };
-    if (bigMove) return { decision: 'DELAYED_EP', reasons: [...lines, 'Result: DELAYED_EP — strong fundamentals; valuation data unavailable and the stock has already moved a lot; wait for confirmation'] };
-    return { decision: 'WATCHLIST', reasons: [...lines, 'Result: WATCHLIST — valuation data unavailable'] };
+    if (stretched) return { decision: 'DELAYED_EP', reasons: [...lines, ...v2Lines, 'Result: DELAYED_EP — strong fundamentals but valuation is already stretched; wait for confirmation'] };
+    if (bigMove) return { decision: 'DELAYED_EP', reasons: [...lines, ...v2Lines, 'Result: DELAYED_EP — strong fundamentals; valuation data unavailable and the stock has already moved a lot; wait for confirmation'] };
+    return { decision: 'WATCHLIST', reasons: [...lines, ...v2Lines, 'Result: WATCHLIST — valuation data unavailable'] };
   }
   const strongish = e.materiality === 'HIGH' && gapPos && (e.guidance_quality === 'HIGH' || e.guidance_quality === 'MEDIUM') && !thesisBreaking;
-  if ((strongish && bigMove) || (strongish && stretched)) return { decision: 'DELAYED_EP', reasons: [...lines, 'Result: DELAYED_EP — strong earnings effect; wait for confirmation'] };
+  if ((strongish && bigMove) || (strongish && stretched)) return { decision: 'DELAYED_EP', reasons: [...lines, ...v2Lines, 'Result: DELAYED_EP — strong earnings effect; wait for confirmation'] };
   const missing: string[] = [];
   if (!gapPos) missing.push(e.expectationGap === 'UNKNOWN' ? 'no consensus to compare' : 'gap versus consensus is not clearly positive');
   if (e.guidance_quality !== 'HIGH') missing.push('driver quality is not clearly high');
   if (!durable) missing.push('duration not confirmed');
   if (!peKnown) missing.push('valuation data unavailable');
   if (thesisBreaking) missing.push('source states margin or cash flow pressure');
-  return { decision: 'WATCHLIST', reasons: [...lines, `Result: WATCHLIST — real earnings effect, but ${missing.join('; ') || 'more evidence needed'}`] };
+  if (!realRaise) missing.push('the raise is not clean (midpoint only, or before/after not comparable)');
+  return { decision: 'WATCHLIST', reasons: [...lines, ...v2Lines, `Result: WATCHLIST — real earnings effect, but ${missing.join('; ') || 'more evidence needed'}`] };
+}
+
+// ---------------------------------------------------------------------------------------------
+// zzz844 V2 engine pieces (pure, deterministic). Consensus never drives detection; unknown is not negative.
+// ---------------------------------------------------------------------------------------------
+const REAL_RAISE = new Set<GuRangeClass>(['CLEAN_RAISE', 'RANGE_SHIFT_UP']);
+/** True when at least one raised metric is a real raise of the range (floor moved up), not a midpoint-only or widened one.
+ *  Events without V2 data behave as before (true). */
+export function hasRealRaise(e: GuidanceEvent): boolean {
+  if (!e.v2) return true;
+  const ups = e.changes.map((c, i) => ({ c, r: e.v2!.ranges[i] })).filter(x => x.c.direction === 'UP' && !!x.c.before);
+  if (!ups.length) return true;
+  return ups.some(x => !x.r || REAL_RAISE.has(x.r.klass));
+}
+
+const tolOf = (a: number, b: number) => 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
+/** Range maths for one changed metric. Midpoint alone is never enough: the low and high ends are checked too.
+ *  For growth/margin (rate) points the *ChangePct fields hold percentage-point changes, not relative %. */
+export function computeRangeMath(before: GuGuidancePoint | null, after: GuGuidancePoint): GuRangeMath {
+  const ends = (p: GuGuidancePoint | null) => {
+    if (!p) return { lo: null, hi: null, mid: null };
+    const lo = p.low ?? p.midpoint; const hi = p.high ?? p.midpoint;
+    const mid = p.midpoint ?? (lo != null && hi != null ? (lo + hi) / 2 : null);
+    return { lo, hi, mid };
+  };
+  const b = ends(before); const a = ends(after);
+  const rate = after.isGrowthRate;
+  const chg = (x: number | null, y: number | null): number | null => x == null || y == null ? null : rate ? round(x - y, 4) : (y !== 0 ? round(((x - y) / Math.abs(y)) * 100, 2) : null);
+  const wB = b.lo != null && b.hi != null ? round(b.hi - b.lo, 6) : null;
+  const wA = a.lo != null && a.hi != null ? round(a.hi - a.lo, 6) : null;
+  let klass: GuRangeClass = 'UNKNOWN';
+  if (!before) klass = 'FIRST_GUIDANCE';
+  else if (b.lo != null && b.hi != null && b.mid != null && a.lo != null && a.hi != null && a.mid != null) {
+    const t = tolOf(a.mid, b.mid);
+    const dm = a.mid - b.mid;
+    if (dm < -t) klass = 'DOWNGRADE';
+    else if (Math.abs(dm) <= t) klass = (wA ?? 0) > (wB ?? 0) + t ? 'RANGE_WIDENING' : 'REITERATION';
+    else if (a.lo < b.lo - t || a.hi < b.hi - t) klass = 'MIDPOINT_RAISE_RANGE_NARROWING';
+    else if (a.lo > b.lo + t && a.hi > b.hi + t) klass = 'CLEAN_RAISE';
+    else if (a.lo > b.lo + t) klass = 'RANGE_SHIFT_UP';
+    else klass = 'RANGE_WIDENING';
+  }
+  const floorAboveOldCeiling = !!before && a.lo != null && b.hi != null && a.lo > b.hi + tolOf(a.lo, b.hi);
+  return {
+    floorAboveOldCeiling,
+    beforeLow: b.lo, beforeMid: b.mid, beforeHigh: b.hi, afterLow: a.lo, afterMid: a.mid, afterHigh: a.hi,
+    widthBefore: wB, widthAfter: wA, lowChangePct: chg(a.lo, b.lo), midChangePct: chg(a.mid, b.mid), highChangePct: chg(a.hi, b.hi), klass,
+  };
+}
+
+const PER_SHARE = new Set<GuMetric>(['EPS', 'ADJ_EPS']);
+/** EPS must be a per-share amount; any scale (M/B/K/Cr), an implausible size, or before/after units that differ is a unit error:
+ *  the change is dropped with a warning rather than printed. The same unit-mismatch rule covers every absolute metric. */
+export function validateChangeUnits(changes: GuChange[]): { kept: GuChange[]; warnings: string[] } {
+  const kept: GuChange[] = []; const warnings: string[] = [];
+  const scaled = (p: GuGuidancePoint | null) => !!p && !p.isGrowthRate && !!p.unit && p.unit !== '%';
+  for (const c of changes) {
+    const name = METRIC_LABEL[c.metric];
+    const pts = [c.after, c.before].filter((p): p is GuGuidancePoint => !!p);
+    if (PER_SHARE.has(c.metric)) {
+      if (pts.some(p => p.isGrowthRate)) { warnings.push(`Unit error: ${name} must be a per-share amount, not a rate. Figure dropped.`); continue; }
+      if (pts.some(scaled)) { warnings.push(`Unit error: ${name} carried a scale (million, billion, crore) but must be a per-share amount. Figure dropped, not shown.`); continue; }
+      if (pts.some(p => Math.abs(p.midpoint ?? 0) > 1000)) { warnings.push(`Unit error: ${name} is implausibly large for a per-share amount. Figure dropped.`); continue; }
+    }
+    if (c.before && !c.after.isGrowthRate && !c.before.isGrowthRate) {
+      if ((c.before.unit ?? '') !== (c.after.unit ?? '') || (c.before.currency && c.after.currency && c.before.currency !== c.after.currency)) {
+        warnings.push(`Unit error: before and after ${name} figures use different units or currencies. Figure dropped.`); continue;
+      }
+    }
+    kept.push(c);
+  }
+  return { kept, warnings };
+}
+
+type BasisWord = 'ADJUSTED' | 'GAAP' | null;
+function basisWordIn(s: string): BasisWord {
+  if (/non-?gaap|adjusted|\badj\b\.?/i.test(s)) return 'ADJUSTED';
+  if (/\bgaap\b|\breported\b/i.test(s)) return 'GAAP';
+  return null;
+}
+/** A change whose before side is on one basis (GAAP) and after side on another (adjusted), read from the words right before each figure. */
+export function basisMismatch(text: string, c: GuChange): boolean {
+  if (!c.before?.raw || !c.after.raw) return false;
+  const bRaw = c.before.raw; const aTail = c.after.raw.replace(/^[^\d$₹€£]*/, '');
+  for (const sent of splitSentences(text)) {
+    const bi = sent.indexOf(bRaw); const ai = aTail ? sent.indexOf(aTail) : -1;
+    if (bi < 0 || ai < 0 || bi === ai) continue;
+    const win = (idx: number, other: number) => sent.slice(Math.max(other < idx ? other + 1 : 0, idx - 50), idx);
+    const bw = basisWordIn(win(bi, ai)); const aw = basisWordIn(win(ai, bi) + ' ' + c.after.raw.slice(0, Math.max(0, c.after.raw.indexOf(aTail))));
+    if (bw && aw && bw !== aw) return true;
+  }
+  return false;
+}
+function basisOfEvent(changes: GuChange[], text: string): GuMetricBasis {
+  const map: Record<string, GuMetricBasis> = { NON_GAAP: 'ADJUSTED', GAAP: 'GAAP', ORGANIC: 'ORGANIC', REPORTED: 'REPORTED' };
+  const eps = changes.find(c => PER_SHARE.has(c.metric)); const pick = eps ?? changes[0];
+  const b = pick?.after.basis ? map[pick.after.basis] : undefined;
+  if (b) return b;
+  return /constant[- ]currency|\bcc basis\b/i.test(text) ? 'CONSTANT_CURRENCY' : 'UNSTATED';
+}
+
+// ── researched WHY NOW: operating variable named only when the text states it ────────────────
+interface VarRule { key: string; label: string; re: RegExp; next: string }
+const VAR_RULES: VarRule[] = [
+  { key: 'CAPACITY', label: 'new capacity coming on stream', next: 'Commissioning of the new plant and utilisation in the next quarter\'s results',
+    re: /\b(?:new|additional|expanded|upcoming)\s+(?:\w+\s+){0,2}?(?:plants?|facilit(?:y|ies)|lines?|capacity|units?|factor(?:y|ies))\b|\bcapacity (?:expansion|addition|ramp)|\bcommission(?:ed|ing)\b/i },
+  { key: 'ORDERS', label: 'order pipeline', next: 'Order book / order inflow disclosed with the next quarter\'s results',
+    re: /\border (?:pipeline|book|backlog|inflows?|intake)\b|\b(?:robust|strong|strongest|healthy|record)\s+(?:\w+\s+){0,2}?pipeline\b|\bbacklog\b/i },
+  { key: 'EXPORTS', label: 'exports', next: 'Export revenue share in the next quarter\'s results',
+    re: /\bexports?\b|\bexport (?:revenue|sales|demand|markets?)\b|\bacross \d+\+? countries\b/i },
+  { key: 'VOLUME', label: 'higher volumes', next: 'Volume growth in the next quarter\'s results against the guided pace',
+    re: /\b(?:higher|strong|robust|record|rising|growth in)\s+(?:sales\s+)?volumes?\b|\bvolume (?:growth|increases?|gains?)\b|\bvolumes? (?:rose|grew|up)\b/i },
+  { key: 'PRICE', label: 'price / realisation', next: 'Realisation per unit in the next quarter\'s results, and whether the price rise holds',
+    re: /\bprice (?:hikes?|increases?|realisations?|realizations?)\b|\bhigher (?:selling )?(?:prices|realisations?|realizations?)\b|\bpricing (?:power|actions?)\b/i },
+  { key: 'MIX', label: 'product mix', next: 'Share of higher-value products in the next quarter\'s sales mix',
+    re: /\b(?:richer|favou?rable|better|premium|improved|value-added|product) mix\b|\bmix (?:improvement|shift)\b|\bpremiumi[sz]ation\b/i },
+  { key: 'UTIL', label: 'capacity utilisation', next: 'Capacity utilisation in the next quarter\'s results',
+    re: /\butili[sz]ation\b/i },
+  { key: 'MARGIN', label: 'margin expansion', next: 'Operating margin in the next quarter\'s results against the guided level',
+    re: /\bmargin (?:expansion|improvement)\b|\boperating leverage\b|\bcost (?:savings|efficienc\w+|reductions?)\b/i },
+  { key: 'FX', label: 'currency moves', next: 'Constant-currency growth against reported growth in the next quarter',
+    re: /\b(?:currency|foreign exchange|forex|fx)\b[^.;]{0,30}\b(?:tailwinds?|benefits?|gains?|translation)\b|\bfavou?rable (?:currency|exchange)\b/i },
+  { key: 'DEMAND', label: 'customer demand', next: 'Order or volume growth in the next quarter as the demand check',
+    re: /\b(?:strong|robust|healthy|record|higher)\s+(?:customer\s+)?demand\b|\bdemand (?:momentum|strength|pick-?up|recovery)\b/i },
+];
+export interface GuWhyNow { resolved: boolean; variable: string | null; keys: string[] }
+/** Reads the operating variable from the text only when it is stated. No stated variable -> unresolved (never guessed). */
+export function researchWhyNow(text: string, driver: GuDriverResult): GuWhyNow {
+  const keys: string[] = []; const labels: string[] = [];
+  for (const r of VAR_RULES) if (r.re.test(text ?? '')) { keys.push(r.key); labels.push(r.label); }
+  // utilisation is already covered by new capacity
+  const uniq = labels.filter((l, i) => !(keys[i] === 'UTIL' && keys.includes('CAPACITY')));
+  const variable = uniq.length ? uniq.slice(0, 3).join(' + ') : null;
+  return { resolved: variable != null || driver.quality !== 'UNKNOWN', variable, keys };
+}
+/** 1-2 measurable, driver-specific checks. Empty when no driver is stated (caller falls back to metric lines). */
+export function nextEvidenceFor(variable: string | null): string[] {
+  if (!variable) return [];
+  const has = (label: string) => variable.includes(label);
+  const out: string[] = [];
+  for (const r of VAR_RULES) if (has(r.label) && r.key !== 'EXPORTS' && r.key !== 'ORDERS') out.push(r.next);
+  const ord = has('order pipeline'); const exp = has('exports');
+  if (ord && exp) out.push('Order book / export revenue share next quarter');
+  else if (ord) out.push(VAR_RULES.find(r => r.key === 'ORDERS')!.next);
+  else if (exp) out.push(VAR_RULES.find(r => r.key === 'EXPORTS')!.next);
+  return out;
+}
+
+// ── durability from stated evidence only ─────────────────────────────────────────────────────
+export function assessDurability(text: string, changes: GuChange[], driver: GuDriverResult, old: GuDuration, w: GuWhyNow): { level: GuDurabilityLevel; why: string } {
+  const t = text ?? ''; const has = (k: string) => w.keys.includes(k);
+  if (old === 'ONE_OFF') return { level: 'ONE_OFF', why: 'The stated driver is a one-time item, so it is not expected to repeat.' };
+  if (/\b(?:structural|secular)\b/i.test(t) && (has('CAPACITY') || has('ORDERS') || driver.kinds.includes('STRUCTURAL') || /multi-?year/i.test(t)))
+    return { level: 'STRUCTURAL', why: 'The source describes the demand as structural or secular and backs it with capacity, orders or a multi-year view.' };
+  if (/\b(?:multi-?year|long-term) (?:contracts?|order book|backlog|agreements?|orders?)\b|\b\d[- ]year (?:contracts?|agreements?|orders?)\b/i.test(t) || old === 'MULTI_YEAR')
+    return { level: 'MULTI_YEAR', why: 'The source states multi-year contracts, backlog or demand, which reaches beyond this year.' };
+  if (has('CAPACITY') && (has('ORDERS') || has('EXPORTS')))
+    return { level: 'MULTI_QUARTER', why: 'New capacity is being added and an order pipeline or export demand is stated, so output can stay higher for several quarters. Whether it lasts years is not stated.' };
+  if (has('CAPACITY')) return { level: 'MULTI_QUARTER', why: 'New capacity is being added, which stays in place after this quarter. Demand to fill it is not evidenced in the source.' };
+  if (has('ORDERS')) return { level: 'MULTI_QUARTER', why: 'An order book or pipeline is stated; it converts to revenue over the coming quarters. Contract length is not stated.' };
+  if (old === 'MULTI_QUARTER') return { level: 'MULTI_QUARTER', why: 'The source states the driver continues over the coming quarters.' };
+  if (driver.kinds.some(k => k === 'FX' || k === 'TEMP_SUPPLY' || k === 'ONE_OFF_PRICING' || k === 'PRICE_HIKE' || k === 'COMMODITY'))
+    return { level: '1_2_QUARTERS', why: 'The stated driver (currency, prices, supply or commodities) can reverse within a quarter or two.' };
+  if (/\b(?:next|coming) quarter\b/i.test(t)) return { level: '1_2_QUARTERS', why: 'Only the next quarter is referred to; no capacity, contract or backlog evidence for longer is stated.' };
+  void changes;
+  return { level: 'UNKNOWN_INSUFFICIENT_EVIDENCE', why: 'No new capacity, multi-year contract or order backlog is stated, so how long this lasts is unknown (not assumed brief).' };
+}
+const DUR_FROM_LEVEL: Record<GuDurabilityLevel, GuDuration> = { ONE_OFF: 'ONE_OFF', '1_2_QUARTERS': 'UNKNOWN', MULTI_QUARTER: 'MULTI_QUARTER', MULTI_YEAR: 'MULTI_YEAR', STRUCTURAL: 'MULTI_YEAR', UNKNOWN_INSUFFICIENT_EVIDENCE: 'UNKNOWN' };
+
+// ── market cap bucket (context only; never a price signal) ───────────────────────────────────
+/** India: small/mid when below ₹30,000 Cr. Input may be in ₹ Cr (< 1e9) or raw rupees (>= 1e9).
+ *  US: small/mid when below $10B. Input may be raw dollars (>= 1e7), $M (1e3..1e7) or $B (< 1e3). Unknown -> null, never assumed. */
+export function isSmallMidCap(market: GuMarket, cap: number | null | undefined): boolean | null {
+  if (cap == null || !isFinite(cap) || cap <= 0) return null;
+  if (market === 'IN') return (cap >= 1e9 ? cap / 1e7 : cap) < 30000;
+  if (market === 'US') { const b = cap >= 1e7 ? cap / 1e9 : cap >= 1e3 ? cap / 1e3 : cap; return b < 10; }
+  return null;
+}
+
+function pctOfChange(c: GuChange): number | null { return c.after.isGrowthRate ? c.percentagePointChange : c.percentageChange; }
+
+export function detectedViaOf(cands: GuCandidate[]): string[] {
+  const out = new Set<string>();
+  for (const c of cands) {
+    const host = hostOf(c.url);
+    if (/graded/i.test(`${c.id} ${c.sourceName}`)) out.add('graded results');
+    if (c.kind === 'FILING') out.add(hostIn(host, ['sec.gov']) || /\b8-?k\b|sec filing/i.test(c.sourceName) ? 'SEC 8-K' : 'exchange filing');
+    else if (c.kind === 'RELEASE') out.add('company press release');
+    else if (c.kind === 'TRANSCRIPT') out.add('concall');
+    else if (c.kind === 'DECK') out.add('investor deck');
+    else out.add('news');
+  }
+  return [...out];
+}
+
+function buildScorecard(e: GuidanceEvent, ranges: GuRangeMath[], level: GuDurabilityLevel, durWhy: string): GuScoreItem[] {
+  const ups = e.changes.filter(c => c.direction === 'UP' && !!c.before);
+  const pcts = ups.map(pctOfChange).filter((x): x is number => x != null);
+  const best = pcts.length ? Math.max(...pcts) : null;
+  const sizeText = ups.map(c => `${metricLabel(c)} ${signed(pctOfChange(c) ?? 0, 1)}${c.after.isGrowthRate ? ' points' : '%'}`).join(', ');
+  const clean = hasRealRaise(e);
+  const pe = e.valuation?.currentPE.value ?? null;
+  const items: GuScoreItem[] = [];
+  items.push({ label: 'Size of the raise', rating: best == null ? 'UNKNOWN' : best >= 20 ? 'STRONG' : best >= 8 ? 'OK' : 'WEAK',
+    detail: best == null ? 'No before and after numbers, so the size cannot be measured.' : `Guidance moved up: ${sizeText}.` });
+  items.push({ label: 'Earnings materiality', rating: e.materiality === 'HIGH' ? 'STRONG' : e.materiality === 'MEDIUM' ? 'OK' : e.materiality === 'LOW' ? 'WEAK' : 'UNKNOWN',
+    detail: e.materialityBasis || DATA_UNAVAILABLE });
+  items.push({ label: 'Expectation gap', rating: e.expectationGap === 'UNKNOWN' ? 'UNKNOWN' : e.expectationGap === 'NEGATIVE' ? 'WEAK' : e.expectationGap === 'LARGE_POSITIVE' || e.expectationGap === 'POSITIVE' ? 'STRONG' : 'OK',
+    detail: e.expectationGap === 'UNKNOWN' ? 'No consensus number was supplied. The gap is unknown, not negative, and it does not lower the other scores.' : `Guidance versus consensus: ${e.gapPct != null ? signed(e.gapPct, 1) + '%' : DATA_UNAVAILABLE}.` });
+  const klasses = [...new Set(ranges.map(r => r.klass))].filter(k => k !== 'UNKNOWN');
+  items.push({ label: 'Quality of the raise', rating: !clean ? 'WEAK' : e.guidance_quality === 'HIGH' ? 'STRONG' : e.guidance_quality === 'MEDIUM' ? 'OK' : e.guidance_quality === 'LOW' ? 'WEAK' : 'UNKNOWN',
+    detail: `${!clean ? 'Not a clean raise: the low end of the range did not move up. ' : ''}Driver: ${e.guidance_driver}.${klasses.length ? ` Range check: ${klasses.join(', ').toLowerCase().replace(/_/g, ' ')}.` : ''}` });
+  items.push({ label: 'Durability', rating: level === 'STRUCTURAL' || level === 'MULTI_YEAR' ? 'STRONG' : level === 'MULTI_QUARTER' ? 'OK' : level === 'UNKNOWN_INSUFFICIENT_EVIDENCE' ? 'UNKNOWN' : 'WEAK', detail: durWhy });
+  items.push({ label: 'Valuation', rating: pe == null ? 'UNKNOWN' : pe < 25 ? 'STRONG' : pe < GU_THRESHOLDS.STRETCHED_PE ? 'OK' : 'WEAK',
+    detail: pe == null ? 'P/E not supplied, so valuation is unknown.' : `P/E ${fmtNum(pe)}x${pe >= GU_THRESHOLDS.STRETCHED_PE ? ', already stretched' : ''}. Context only.` });
+  items.push({ label: 'Evidence', rating: e.verification !== 'VERIFIED' ? 'WEAK' : ups.length && e.driverEvidence === 'DIRECT' ? 'STRONG' : 'OK',
+    detail: e.verification === 'VERIFIED' ? `Primary source found (${e.sources.filter(s => s.tier === 'PRIMARY').map(s => s.name).slice(0, 2).join(', ')}).${ups.length ? '' : ' No before and after numbers yet.'}` : 'No primary source yet, so this stays a candidate.' });
+  const pi = e.links.portfolioImpact;
+  items.push({ label: 'Portfolio impact', rating: pi === 'SUPPORTS' ? 'STRONG' : pi === 'NEUTRAL' ? 'OK' : pi === 'WEAKENS' || pi === 'BROKEN' ? 'WEAK' : 'UNKNOWN',
+    detail: pi ? `Holding impact: ${pi.toLowerCase()}.` : 'Not a holding, or no thesis on file, so not assessed.' });
+  return items;
+}
+
+function v2DecisionLines(e: GuidanceEvent): string[] {
+  const v = e.v2; if (!v) return [];
+  const out: string[] = [];
+  const odd = v.ranges.map((r, i) => ({ r, c: e.changes[i] })).filter(x => x.c && x.c.direction === 'UP' && x.r.klass !== 'CLEAN_RAISE' && x.r.klass !== 'RANGE_SHIFT_UP');
+  if (odd.length) out.push(`Range check: ${odd.map(x => `${metricLabel(x.c)} is ${x.r.klass.toLowerCase().replace(/_/g, ' ')}`).join('; ')}.`);
+  else if (v.ranges.some(r => r.floorAboveOldCeiling)) out.push('Range check: FLOOR ABOVE OLD CEILING. The new low end is above the old high end (strongest kind of raise).');
+  else if (v.ranges.some(r => r.klass === 'CLEAN_RAISE')) out.push('Range check: the low and high ends of the guided range both moved up (clean raise).');
+  if (v.unitWarnings.length) out.push(`Warnings: ${v.unitWarnings.join(' ')}`);
+  out.push(v.whyNowResolved ? `Why now: ${v.operatingVariable ?? e.guidance_driver}.` : `Why now: ${WHY_NOW_UNRESOLVED}.`);
+  out.push(`Durability evidence: ${v.durabilityLevel.replace(/_/g, ' ').toLowerCase()} — ${v.durabilityWhy}`);
+  return out;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1275,13 +1611,26 @@ export function buildGuidanceEvent(input: GuCandidate[] | GuSkeleton, ctx: GuCon
   const sk: GuSkeleton = Array.isArray(input) ? (() => { const g = buildGroups(input, true); if (!g.length) throw new Error('No usable candidates (need a ticker or company and a date)'); return skeletonOf(g[0]); })() : input;
   ctx = ctx ?? {};
   const text = sk.text;
-  const allChanges = applyPrior(sk.changes, ctx.priorGuidance);
+  const unitCheck = validateChangeUnits(applyPrior(sk.changes, ctx.priorGuidance));
+  const allChanges = unitCheck.kept;
+  const unitWarnings = [...unitCheck.warnings];
   let changes = allChanges;
   const ups = changes.filter(c => c.direction === 'UP' && c.before);
   if (ups.length) changes = ups;
   const ver = verificationOf(sk.sources);
   const driver = classifyDriver(text);
-  const duration = classifyDuration(text, changes, driver);
+  const duration0 = classifyDuration(text, changes, driver);
+  const why = researchWhyNow(text, driver);
+  const dur2 = assessDurability(text, changes, driver, duration0, why);
+  const duration: GuDuration = duration0 === 'UNKNOWN' ? DUR_FROM_LEVEL[dur2.level] : duration0;
+  const ranges: GuRangeMath[] = changes.map(c => {
+    const r = computeRangeMath(c.before, c.after);
+    if (c.before && basisMismatch(text, c)) {
+      unitWarnings.push(`Basis mismatch: ${METRIC_LABEL[c.metric]} before and after are on different bases (adjusted versus GAAP). They are not compared as a clean upgrade.`);
+      return { ...r, klass: 'UNKNOWN' as GuRangeClass };
+    }
+    return r;
+  });
   const type = classifyType(changes);
   const mat = materiality(changes);
   const impacts = computeImpacts(ups.length ? [...changes, ...allChanges.filter(c => !changes.includes(c) && c.metric === 'OP_MARGIN')] : changes, ctx); // a stated margin is kept for the labelled estimate
@@ -1318,10 +1667,16 @@ export function buildGuidanceEvent(input: GuCandidate[] | GuSkeleton, ctx: GuCon
   const hist = buildHistory(ctx.ledger ?? [], currentRows);
   const thesisBreaking = statedDeterioration(text, hist.rows);
   const thesis = thesisLabel({ changes, driver, text });
-  const flags = computeFlags({
+  let flags = computeFlags({
     verified: ver.verification === 'VERIFIED', changes, history: hist.rows, historyStats: hist.stats, text, gap, materiality: mat.level,
     bottleneckThemes: ctx.bottleneckThemes, structuralAlignment: ctx.structuralAlignment, secondUpgrade: sk.flags.includes('SECOND_UPGRADE_IN_WINDOW'),
   });
+  // SMALL_MID_CAP_INFLECTION: needs a stated small/mid market cap, HIGH materiality, and multi-metric or a >=25% raise
+  const smallMid = isSmallMidCap(sk.market, ctx.priceContext?.marketCap) === true && mat.level === 'HIGH' && ups.length > 0
+    && (new Set(ups.map(familyOf)).size >= 2 || ups.some(c => (pctOfChange(c) ?? 0) >= 25));
+  if (changes.some(c => c.direction === 'UP' && c.before) && !ranges.some((r, i) => changes[i].direction === 'UP' && !!changes[i].before && REAL_RAISE.has(r.klass)))
+    flags = flags.filter(f => f !== 'REPEATED_UPGRADER' && f !== 'GUIDANCE_PLUS_GAP'); // a narrowed / non-clean range is not a repeated upgrade
+  if (smallMid) flags = [...flags, 'SMALL_MID_CAP_INFLECTION'];
   const evidence: GuEvidence = ups.length ? (ver.primaryAvailable ? 'DIRECT' : 'INDIRECT') : (ver.primaryAvailable ? 'INCOMPLETE' : 'UNPROVEN');
   const nowIso = now.toISOString();
   const links = {
@@ -1341,6 +1696,22 @@ export function buildGuidanceEvent(input: GuCandidate[] | GuSkeleton, ctx: GuCon
     chain: { event: '', evidence: '', driver: '', earnings: '', gap: '', valuation: '', durability: '', risk: '', action: '' },
     decision: 'UNVERIFIED', decisionReason: [], flags, rankKey: 0, created_at: nowIso, updated_at: nowIso,
   };
+  base.v2 = {
+    stage: ver.primaryAvailable ? (ups.length ? 'CALCULATED' : 'PRIMARY_SOURCE_FOUND') : 'CANDIDATE',
+    ranges, metricBasis: basisOfEvent(changes, text),
+    operatingVariable: why.variable, durabilityLevel: dur2.level, durabilityWhy: dur2.why, whyNowResolved: why.resolved,
+    scorecard: [], smallMidCapInflection: smallMid, detectedVia: detectedViaOf(sk.candidates),
+    consensusAvailable: consensus.value != null, unitWarnings,
+  };
+  if (!ups.length && sk.candidates.some(c => isGuidanceUpgradeCandidate(c).include)) {
+    base.v2.statedDirection = 'RAISED';
+    const names: string[] = [];
+    for (const sn of splitSentences(text)) if (managementRaise(sn)) for (const k of findMetricKws(sn)) { const l = METRIC_LABEL[k.metric]; if (k.metric !== 'OTHER' && !names.includes(l)) names.push(l); }
+    if (names.length) base.v2.statedMetrics = names;
+  }
+  if (!why.resolved) { /* keep 'Driver not stated in the source'; whyNow carries the unresolved text */ }
+  else if (driver.quality === 'UNKNOWN' && why.variable) base.guidance_driver = `Stated operating drivers: ${why.variable}`;
+  if (unitWarnings.length) for (const w of unitWarnings) if (!base.evidenceGaps.includes(w)) base.evidenceGaps.push(w);
   base.risks = buildRisks(base, { text, kinds: driver.kinds });
   base.nextEvidence = buildNextEvidence(base);
   base.whyNow = buildWhyNow(base);
@@ -1348,6 +1719,8 @@ export function buildGuidanceEvent(input: GuCandidate[] | GuSkeleton, ctx: GuCon
   base.marketMissing = marketMissing(base);
   const d = decide(base, ctx, { thesisBreaking });
   base.decision = d.decision; base.decisionReason = d.reasons;
+  base.v2.scorecard = buildScorecard(base, ranges, dur2.level, dur2.why);
+  base.v2.stage = d.decision === 'UNVERIFIED' ? 'CANDIDATE' : (ups.length && mat.level !== 'UNKNOWN') ? 'DECISION' : ups.length ? 'VERIFIED' : 'PRIMARY_SOURCE_FOUND';
   base.chain = chain(base);
   base.rankKey = rankKeyOf(base);
   return base;
@@ -1360,11 +1733,23 @@ export function processCandidates(cands: GuCandidate[], ctxFor: (ticker: string)
 }
 
 export function summarise(events: GuidanceEvent[], window: GuWindow, now: Date): GuSummary {
+  const today = now.toISOString().slice(0, 10);
+  const bucket = (m: 'IN' | 'US') => {
+    const es = events.filter(e => e.market === m);
+    return {
+      detected: es.length, verified: es.filter(e => e.verification === 'VERIFIED').length,
+      material: es.filter(e => e.materiality === 'HIGH' || e.materiality === 'MEDIUM').length,
+      expectationPositive: es.filter(e => e.expectationGap === 'POSITIVE' || e.expectationGap === 'LARGE_POSITIVE').length,
+    };
+  };
   return {
     window, asOf: now.toISOString(), detected: events.length,
     verified: events.filter(e => e.verification === 'VERIFIED').length,
     material: events.filter(e => e.materiality === 'HIGH' || e.materiality === 'MEDIUM').length,
     expectationPositive: events.filter(e => e.expectationGap === 'POSITIVE' || e.expectationGap === 'LARGE_POSITIVE').length,
     inBook: events.filter(e => e.links.inBook === true).length,
+    byMarket: { IN: bucket('IN'), US: bucket('US') },
+    consensusAvailable: { have: events.filter(e => e.consensus.value != null).length, of: events.length },
+    today: events.filter(e => e.verification === 'VERIFIED' && e.announcement_date === today).length,
   };
 }

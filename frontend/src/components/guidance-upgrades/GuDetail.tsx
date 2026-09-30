@@ -2,9 +2,9 @@
 // zzz843 — the detail view: 15 sections, first screen concise, detail below.
 import React from 'react';
 import type { GuidanceEvent } from '@/lib/guidance-upgrades-types';
-import { DURATION_LABEL, FLAG_LABEL, IMPACT_LABEL, MATERIALITY_LABEL, METRIC_LABEL, THESIS_LABEL, UNAVAILABLE, agoText, fmtBeforeAfter, fmtNumber, showsDecision } from '@/lib/guidance-upgrades-format';
+import { DURATION_LABEL, FLAG_LABEL, IMPACT_LABEL, MATERIALITY_LABEL, METRIC_LABEL, THESIS_LABEL, UNAVAILABLE, agoText, changeMarker, fmtBeforeAfter, fmtNumber, isHeadlineOnly, showsDecision, tickerText } from '@/lib/guidance-upgrades-format';
 import { IMPACT_COLOR, R, box } from './gu-tokens';
-import { Chip, DecisionChip, GapBadge, List, NumRow, Section, SourceChip, UnverifiedBanner, btn } from './GuBits';
+import { Chip, ConsensusLine, CrossLinks, DecisionChip, HeadlineOnlyBanner, DetectedVia, DurabilityRow, GapBadge, InflectionBadge, List, MetricBasisChip, NumRow, RangeBlock, Scorecard, Section, SourceChip, StageChip, TopEndCutNote, UnitWarnings, UnverifiedBanner, WhyDecision, WhyNow, btn } from './GuBits';
 
 const STAGES: Array<[string, keyof GuidanceEvent['chain']]> = [
   ['EVENT', 'event'], ['EVIDENCE', 'evidence'], ['DRIVER', 'driver'], ['EARNINGS', 'earnings'], ['GAP', 'gap'],
@@ -21,23 +21,32 @@ export function GuDetail({ e, onClose, now }: { e: GuidanceEvent; onClose: () =>
       background: R.bg, color: R.text, borderLeft: `1px solid ${R.border}`, padding: 16, boxShadow: '-4px 0 16px rgba(0,0,0,0.12)',
     }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <b style={{ fontSize: 17 }}>{e.company}</b><span style={{ color: R.dim, fontSize: 12 }}>{e.ticker} · {e.market}</span>
-        <DecisionChip e={e} />
+        <b style={{ fontSize: 17 }}>{e.company}</b><span style={{ color: R.dim, fontSize: 12 }}>{tickerText(e)} · {e.market}</span>
+        <DecisionChip e={e} /><InflectionBadge e={e} /><MetricBasisChip e={e} />
         <button type="button" className="gu-noprint" style={{ ...btn(), marginLeft: 'auto' }} onClick={onClose}>Close</button>
       </div>
-      {!verified && <div style={{ marginTop: 8 }}><UnverifiedBanner /></div>}
+      <div style={{ marginTop: 8 }}><StageChip e={e} /></div>
+      {!verified && <div style={{ marginTop: 8 }}>{isHeadlineOnly(e) ? <HeadlineOnlyBanner e={e} /> : <UnverifiedBanner />}</div>}
+      <div style={{ marginTop: 8 }}><TopEndCutNote e={e} /></div>
+      <div style={{ marginTop: 8 }}><UnitWarnings e={e} /></div>
 
       {/* First screen: the answer in a few lines. */}
       <div style={box({ padding: 10, margin: '10px 0', display: 'flex', flexDirection: 'column', gap: 6 })}>
         <div style={{ fontSize: 13 }}><b>What changed:</b> {e.whatItMeans || UNAVAILABLE}</div>
-        <div style={{ fontSize: 13 }}><b>Why now:</b> {e.whyNow || UNAVAILABLE}</div>
+        <WhyNow e={e} />
+        <RangeBlock e={e} />
+        <DurabilityRow e={e} />
+        <Scorecard e={e} />
+        <DetectedVia e={e} />
+        <CrossLinks e={e} />
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}><GapBadge e={e} /><Chip color={R.dim}>Materiality: {MATERIALITY_LABEL[e.materiality]}</Chip><Chip color={R.dim}>{DURATION_LABEL[e.duration]}</Chip></div>
-        {e.decisionReason[0] && verified && <div style={{ fontSize: 12.5, color: R.dim }}>{e.decisionReason[0]}</div>}
+        <WhyDecision e={e} />
       </div>
 
       <Section n={1} title="What changed">
-        {e.changes.map((c, i) => { const b = fmtBeforeAfter(c); return (
-          <div key={i}><b>{METRIC_LABEL[c.after.metric]} {c.after.period}:</b> {b.before} → <b>{b.after}</b> {b.delta ? <b style={{ color: R.green }}>{b.delta}</b> : <span style={{ color: R.faint }}>(change {UNAVAILABLE})</span>}
+        {isHeadlineOnly(e) && <div style={{ color: R.dim }}>Raise stated by the source. Before {UNAVAILABLE} · After {UNAVAILABLE}. No percentage is shown.</div>}
+        {!isHeadlineOnly(e) && e.changes.map((c, i) => { const b = fmtBeforeAfter(c); const mk = changeMarker(e, i); return (
+          <div key={i}><b>{METRIC_LABEL[c.after.metric]} {c.after.period}:</b> {b.before} → <b>{b.after}</b> {b.delta && c.before ? <b style={{ color: mk.kind === 'UP' ? R.green : mk.kind === 'DOWN' ? R.red : R.amber }}>{mk.glyph ? `${mk.glyph} ` : ''}{mk.kind === 'NEUTRAL' ? `midpoint ${b.delta}` : b.delta}</b> : <span style={{ color: R.faint }}>(change {UNAVAILABLE})</span>}
             {c.after.basis && c.after.basis !== 'UNSTATED' ? ` · ${c.after.basis.replace('_', '-')}` : ''}</div>); })}
         <div style={{ fontSize: 11, color: R.dim }}>Announced {e.announcement_date} ({agoText(e.announcement_timestamp || e.announcement_date, now)}). Percent is a relative change. pp is a change between two rates.</div>
       </Section>
@@ -68,7 +77,7 @@ export function GuDetail({ e, onClose, now }: { e: GuidanceEvent; onClose: () =>
       </Section>
 
       <Section n={6} title="Consensus and expectations gap">
-        <NumRow label="Consensus" n={e.consensus} />
+        {e.consensus?.value != null ? <NumRow label="Consensus" n={e.consensus} /> : <div style={{ fontSize: 12.5 }}><b>Consensus:</b> <ConsensusLine e={e} /></div>}
         <div style={{ marginTop: 4 }}><GapBadge e={e} /></div>
         {e.marketMissing && <div style={{ marginTop: 4 }}>{e.marketMissing}</div>}
       </Section>
