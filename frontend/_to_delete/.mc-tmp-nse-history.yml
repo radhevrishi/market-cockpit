@@ -1,0 +1,90 @@
+name: Scrape NSE sector index history
+
+# ══════════════════════════════════════════════════════════════════════════════
+# WHY THIS EXISTS  (zzz654)
+#
+# Eleven of the fifteen NSE sector indices the rotation board is named after
+# stopped updating on Yahoo on 2026-07-17 and resumed on 2026-09-15. Worse than
+# a gap: Yahoo served a bar dated 2026-09-14 for Nifty Realty at 918.7 — and
+# 918.7 is NSE's actual close for 17 JULY. The stale value was relabelled as
+# current, on a day the exchange was shut. The board was not missing data, it
+# was being given invented data, and no bar count or staleness check can see
+# that because both ends of the series look healthy.
+#
+# NSE publishes the real closes itself, one CSV per session, on the same static
+# archive host the constituent scraper already uses. This ingests them.
+#
+# WHY GITHUB ACTIONS AND NOT THE APP. NSE's /api/ endpoints answer 403 to
+# datacentre IPs — Railway's included, as this codebase's own comments have
+# warned for months. The static archive is served plainly, and the neighbouring
+# scraper has four runs of evidence that GitHub Actions IPs can read it.
+#
+# CADENCE. Once a day, after the EOD file publishes. Past index closes are
+# immutable, so the job fetches only the sessions it does not already hold —
+# a cold start converges over a few runs and then costs one file a day forever.
+# ══════════════════════════════════════════════════════════════════════════════
+
+on:
+  schedule:
+    - cron: '30 15 * * 1-5'   # 21:00 IST, weekdays — after the EOD file lands
+  workflow_dispatch:
+    inputs:
+      max_fetch:
+        description: 'Sessions to fetch this run (raise it to force a faster backfill)'
+        required: false
+        default: '260'
+
+concurrency:
+  group: scrape-nse-index-history
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Ingest NSE index closes
+        env:
+          UPSTASH_REDIS_REST_URL:   ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+          MAX_FETCH: ${{ github.event.inputs.max_fetch || '260' }}
+        run: |
+          if [ -z "$UPSTASH_REDIS_REST_URL" ] || [ -z "$UPSTASH_REDIS_REST_TOKEN" ]; then
+            echo "::error title=Missing secrets::Add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          node .github/scripts/scrape-nse-index-history.mjs
+
+      - name: Rebuild the India rotation board on the fresh history
+        if: success()
+        continue-on-error: true
+        env:
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          # The board caches for six hours, so without this the new history
+          # would not reach the page until the cache happened to expire.
+          BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          curl -s -m 200 "$BASE/api/market/theme-rotation?region=india&refresh=1" -o /tmp/tr.json -w "rebuild %{http_code}\n" || true
+          Q="import json,collections;d=json.load(open('/tmp/tr.json'));r=d.get('themes') or [];print('themes:',len(r),dict(collections.Counter(x.get('sourceKind') for x in r)),dict(collections.Counter(x.get('proxySource') for x in r)))"
+          python3 -c "$Q" || true
+
+      - name: Heartbeat (always run)
+        if: always()
+        env:
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          OK="true"
+          if [[ "${{ job.status }}" != "success" ]]; then OK="false"; fi
+          curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" \
+            -H 'Content-Type: application/json' \
+            -d "{\"name\":\"scrape-nse-index-history\",\"phase\":\"end\",\"ok\":$OK,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -o /dev/null -w "heartbeat %{http_code}\n" || true
