@@ -5918,6 +5918,8 @@ const FAVS: Array<{ href: string; label: string; color: string; ext?: boolean }>
   { href: '/us-portfolio-catalysts', label: '🇺🇸 US Portfolio Catalysts', color: '#22D3EE' },
   { href: '/exit-radar', label: '🚨 Exit Radar', color: '#EF4444' },
   { href: '/ai-gainers', label: '📊 AI Daily Gainers', color: '#A78BFA' },
+  // zzz843 — positive guidance raises, verified and quantified.
+  { href: '/guidance-upgrades', label: '📈 Guidance Upgrades', color: '#10B981' },
   // zzz721 — the radar is the discovery half of the same engine Portfolio
   // Catalysts uses on the book; it deep-links straight to the tab rather than
   // landing on Live Feeds and making him click again.

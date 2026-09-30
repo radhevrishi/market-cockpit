@@ -38,6 +38,7 @@ const SEED: readonly string[] = [
   '/ai-gainers',
   '/concall-intel?tab=radar',
   '/market-snapshot',
+  '/guidance-upgrades',
 ];
 
 // ── INTRODUCING A NEW TAB TO A RAIL THAT HAS ALREADY BEEN STARRED. (zzz713)
@@ -57,7 +58,8 @@ const OFFER: readonly string[] = ['/portfolio-catalysts', '/exit-radar', '/ai-ga
   // zzz790 — the US book and its catalysts, offered once like every new tab.
   '/us-portfolio-book', '/us-portfolio-catalysts'];
 // zzz841 — Market Snapshot, offered once like every new tab.
-const OFFER_ALL: readonly string[] = [...OFFER, '/market-snapshot'];
+// zzz843 — Guidance Upgrades, offered once like every new tab.
+const OFFER_ALL: readonly string[] = [...OFFER, '/market-snapshot', '/guidance-upgrades'];
 
 function applyOffers(cur: string[]): string[] {
   let offered: string[] = [];
