@@ -37,6 +37,7 @@ const SEED: readonly string[] = [
   '/exit-radar',
   '/ai-gainers',
   '/concall-intel?tab=radar',
+  '/market-snapshot',
 ];
 
 // ── INTRODUCING A NEW TAB TO A RAIL THAT HAS ALREADY BEEN STARRED. (zzz713)
@@ -55,12 +56,14 @@ const OFFERED_KEY = 'mc.navFavourites.offered.v1';
 const OFFER: readonly string[] = ['/portfolio-catalysts', '/exit-radar', '/ai-gainers', '/concall-intel?tab=radar',
   // zzz790 — the US book and its catalysts, offered once like every new tab.
   '/us-portfolio-book', '/us-portfolio-catalysts'];
+// zzz841 — Market Snapshot, offered once like every new tab.
+const OFFER_ALL: readonly string[] = [...OFFER, '/market-snapshot'];
 
 function applyOffers(cur: string[]): string[] {
   let offered: string[] = [];
   try { offered = JSON.parse(window.localStorage.getItem(OFFERED_KEY) || '[]'); } catch { offered = []; }
   if (!Array.isArray(offered)) offered = [];
-  const fresh = OFFER.filter((h) => !offered.includes(h));
+  const fresh = OFFER_ALL.filter((h) => !offered.includes(h));
   if (!fresh.length) return cur;
   try {
     window.localStorage.setItem(OFFERED_KEY, JSON.stringify([...offered, ...fresh]));
@@ -75,7 +78,7 @@ function read(): string[] {
   try {
     const raw = window.localStorage.getItem(KEY);
     if (raw === null) {
-      try { window.localStorage.setItem(OFFERED_KEY, JSON.stringify([...OFFER])); } catch { /* shortcut only */ }
+      try { window.localStorage.setItem(OFFERED_KEY, JSON.stringify([...OFFER_ALL])); } catch { /* shortcut only */ }
       return [...SEED];
     }
     const arr = JSON.parse(raw);

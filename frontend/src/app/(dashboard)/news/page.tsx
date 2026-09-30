@@ -424,6 +424,7 @@ interface TransformationalPreviewResp {
   count: number;
   total_in_ledger?: number;
   window_days?: number;
+  summary?: { newest_recorded_at?: string | null };
   articles: TransformationalPreviewItem[];
 }
 function useTransformationalPreview() {
@@ -431,7 +432,7 @@ function useTransformationalPreview() {
     queryKey: ['news', 'transformational-preview'],
     queryFn: async () => {
       // PATCH 0070: 365d preview window — matches strategic-visibility default
-      const { data } = await api.get('/news?transformational=1&window_days=365&limit=8');
+      const { data } = await api.get('/news?transformational=1&window_days=365&limit=30&sort=recent');
       return data;
     },
     refetchInterval: 5 * 60_000,
@@ -3216,7 +3217,12 @@ export default function NewsFeedPage() {
               🌟 TRANSFORMATIONAL CONTRACTS
             </span>
             <span style={{ fontSize: '13px', color: 'var(--mc-text-4)' }}>
-              {transformationalPreview.total_in_ledger || transformationalPreview.count} qualifying contracts in last {transformationalPreview.window_days || 180} days
+              {transformationalPreview.total_in_ledger || transformationalPreview.count} qualifying contracts in last {transformationalPreview.window_days || 180} days · newest first
+              {(() => {
+                const ts = transformationalPreview.summary?.newest_recorded_at || transformationalPreview.articles?.[0]?.published_at;
+                const d = ts ? Math.floor((Date.now() - new Date(ts).getTime()) / 86400000) : null;
+                return d === null || !Number.isFinite(d) ? '' : ` · latest ${d <= 0 ? 'today' : `${d}d ago`}`;
+              })()}
             </span>
             <a
               href="/strategic-visibility"

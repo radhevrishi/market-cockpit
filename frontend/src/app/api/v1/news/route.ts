@@ -2781,6 +2781,7 @@ export async function GET(request: Request) {
         theme: themeFilter,
         region: regionFilter || 'ALL',
         limit,
+        sort: searchParams.get('sort') === 'recent' ? 'recent' : 'rank',
       });
       const summary = await transformationalSummary({ window_days: windowDays });
 

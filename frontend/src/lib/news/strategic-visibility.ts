@@ -101,7 +101,7 @@ const THEME_PATTERNS: Array<{ theme: StrategicTheme; pattern: RegExp; weight: nu
   { theme: 'NEOCLOUD_AI_INFRA',  weight: 8, pattern: /\b(coreweave|crusoe|lambda labs|nebius|wulf|terawulf|hut.?8|iren|applied digital|cipher mining|vast data|fluidstack)\b/i },
   // ENERGY_TRANSITION — broadened to catch India renewable EPC orders
   // (solar / wind / BESS / hydro) from NTPC / SECI / state utilities.
-  { theme: 'ENERGY_TRANSITION',  weight: 7, pattern: /\b(grid (?:upgrade|expansion|epc)|t&d epc|transmission (?:project|expansion|order|epc|line)|renewable (?:project|epc|capacity|order)|solar (?:epc|order|project|park|plant|ppa)|wind (?:epc|order|project|farm|ppa)|hydro (?:project|epc|order)|bess|battery (?:storage|energy storage)|fgd|flue gas desulphur|smr|small modular reactor|uranium (?:offtake|supply)|haleu|enrichment (?:framework|contract)|nuclear (?:fuel|reactor) (?:agreement|order|contract)|emission control (?:order|framework))\b/i },
+  { theme: 'ENERGY_TRANSITION',  weight: 7, pattern: /\b(grid (?:upgrade|expansion|epc)|t&d epc|transmission (?:project|expansion|order|epc|line)|renewable (?:project|epc|capacity|order)|solar (?:epc|order|project|park|plant|ppa)|wind (?:epc|order|project|farm|ppa)|hydro (?:project|epc|order)|bess|battery (?:storage|energy storage)|fgd|flue gas desulphur|smr|small modular reactor|uranium (?:offtake|supply)|haleu|enrichment (?:framework|contract)|nuclear (?:fuel|reactor) (?:agreement|order|contract)|nuclear (?:refurbishment|uprate|uprates|power plant|plant|units?|restart|new.?build)|green energy corridor|energy corridor|emission control (?:order|framework))\b/i },
   // DEFENSE_AEROSPACE — broadened: missile, submarine, frigate, destroyer,
   // fighter, helicopter, radar, BVRAAM, ammunition, drone all detect.
   { theme: 'DEFENSE_AEROSPACE',  weight: 7, pattern: /\b(defense (?:appropriation|framework|multi.?year|order|contract)|defence (?:appropriation|framework|multi.?year|order|contract)|missile (?:order|contract|production)|akash (?:ng|missile)?|astra (?:missile|mk\d|bvraam)|brahmos|nirbhay|submarine (?:order|contract|construction)|p75|p-?17|frigate (?:order|contract)|destroyer (?:order|contract)|aircraft carrier|fighter (?:order|production|contract)|tejas (?:mk\d|lca)?|amca|lca|production line .{0,15}(?:fighter|missile|naval)|fms (?:contract|case)|naval (?:shipbuilding|reactor|order|contract)|c4isr|space launch (?:contract|order)|drone (?:order|fleet)|ammunition (?:order|contract)|radar (?:order|contract))\b/i },
@@ -142,7 +142,8 @@ const COUNTERPARTY_PATTERNS: Array<{ tier: CounterpartyTier; pattern: RegExp; na
   { tier: 'TOP3_UTILITY', pattern: /\bnlc india\b/i, name: 'NLC India' },
   { tier: 'TOP3_UTILITY', pattern: /\b(ireda|rec ltd|pfc ltd|power finance corp)\b/i, name: 'India Energy Finance' },
   { tier: 'TOP3_UTILITY', pattern: /\b(seci|solar energy corporation of india)\b/i, name: 'SECI' },
-  { tier: 'TOP3_UTILITY', pattern: /\b(nextera|duke energy|southern company|exelon|aep|dominion|edison)\b/i, name: 'US Utility' },
+  { tier: 'TOP3_UTILITY', pattern: /\b(nextera|duke energy|southern company|georgia power|exelon|aep|dominion|edison|constellation energy|vistra|talen|tva|tennessee valley authority|entergy|ontario power generation|\bopg\b|bruce power|hydro.?qu[eé]bec|electricit[eé] de france|edf)\b/i, name: 'Utility' },
+  { tier: 'TIER1_GOV_DEFENSE', pattern: /\b(union cabinet|cabinet (?:approves|clears|nod)|cabinet committee on economic affairs|ccea)\b/i, name: 'GoI' },
   // PSU heavy industries → TIER1_GOV_DEFENSE (counted as Tier-1 counterparty)
   { tier: 'TIER1_GOV_DEFENSE', pattern: /\bbhel\b/i, name: 'BHEL' },
   { tier: 'TIER1_GOV_DEFENSE', pattern: /\b(hal|hindustan aeronautics)\b/i, name: 'HAL' },
@@ -215,6 +216,12 @@ const EXCLUDE_PATTERNS = [
   /\b(mou|memorandum of understanding|loi|letter of intent|pilot project)\b(?!.{0,40}(binding|firm|definitive|signed))/i,  // MOU/LOI without binding
   /\b(routine maintenance|service contract|support contract|annual contract)\b/i,
   /\b(amendment|extension|renewal)\b(?!.{0,40}(\$|\d+\s*(?:billion|million|cr|crore)))/i,  // amendment without new $
+  // A tender / RFP / bid INVITATION is a request, not a signed contract. It only
+  // passes when the same text also reports an award (awarded / won / bags / signs).
+  /\b(?:floats?|floated|floating|invites?|inviting|issues?|issued|releases?|released|launch(?:es|ed)?|seeks?|sought)\b.{0,40}\b(?:tender|rfp|rfq|eoi|expression of interest|bids?|bidders?)\b(?!.{0,80}\b(?:awarded|awards?|wins?|won|bags?|secures?|signs?|signed|loa|letter of award)\b)/i,
+  /\b(?:tender|rfp|bids?)\s+(?:notice|invited|floated|issued|document)\b(?!.{0,80}\b(?:awarded|awards?|wins?|won|bags?|secures?|signs?|signed|loa|letter of award)\b)/i,
+  // Lowest bidder (L1) is not yet an award.
+  /\b(?:l-?1 bidder|lowest bidder|emerges? as l-?1)\b(?!.{0,80}\b(?:letter of award|loa|awarded|signed)\b)/i,
 ];
 
 // ─── Detect strategic-chokepoint companies ────────────────────────────────
@@ -370,13 +377,23 @@ export function classifyStrategicVisibility(args: {
   if (visibility_years === undefined) {
     const cpIsIndianPSU = (
       counterparty_tier === 'TOP3_UTILITY' ||
-      (counterparty_tier === 'TIER1_GOV_DEFENSE' && /\b(india|goi|ministry|psu)\b/i.test(text))
+      (counterparty_tier === 'TIER1_GOV_DEFENSE' && /\b(india|goi|ministry|psu|cabinet)\b/i.test(text))
     );
     const themeMatchesInfra = INFRA_INFERRED_VISIBILITY_THEMES.includes(theme);
     if (cpIsIndianPSU && themeMatchesInfra) {
       visibility_years = 3;          // conservative default — most are 5-25y
       visibility_inferred = true;
     }
+  }
+
+  // A stated ≥$1B award from a top utility / government buyer in an infra theme
+  // (nuclear refurbishment, uprates, grid) is a multi-year programme by nature.
+  // Stated value only — never invented; visibility is flagged "inferred".
+  if (visibility_years === undefined && contract_value_usd_m !== undefined && contract_value_usd_m >= 1000 &&
+      (counterparty_tier === 'TOP3_UTILITY' || counterparty_tier === 'TIER1_GOV_DEFENSE' || counterparty_tier === 'HYPERSCALER') &&
+      INFRA_INFERRED_VISIBILITY_THEMES.includes(theme)) {
+    visibility_years = 3;
+    visibility_inferred = true;
   }
 
   // Step 4: Compute % of mcap / LTM revenue (if known)
@@ -401,7 +418,7 @@ export function classifyStrategicVisibility(args: {
   // though the absolute number is below the global $300M floor.
   const isIndiaPSUTier1 = (
     counterparty_tier === 'TOP3_UTILITY' ||
-    (counterparty_tier === 'TIER1_GOV_DEFENSE' && /\b(india|goi|ministry|psu|crore|₹|rs\.?\s*\d|inr)\b/i.test(text))
+    (counterparty_tier === 'TIER1_GOV_DEFENSE' && /\b(india|goi|ministry|psu|cabinet|crore|₹|rs\.?\s*\d|inr)\b/i.test(text))
   );
   const indiaPSUSizeOK = (
     isIndiaPSUTier1 &&

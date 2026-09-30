@@ -22,6 +22,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import MultibaggerRadar from '@/components/special-situations/MultibaggerRadar';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ExternalLink, AlertTriangle } from 'lucide-react';
 import api from '@/lib/api';
@@ -371,9 +372,11 @@ const TIER_META: Record<Tier, { label: string; color: string; tagline: string }>
 // PAGE
 // ═══════════════════════════════════════════════════════════════════════════
 
-type Tab = 'all' | 'analytics' | 'timing' | 'playbook' | 'math' | 'discover';
+type Tab = 'radar' | 'all' | 'analytics' | 'timing' | 'playbook' | 'math' | 'discover';
 
 const TABS: ReadonlyArray<{ id: Tab; label: string }> = [
+  // zzz841 — Multibagger / structural-inflection radar. First tab and the default.
+  { id: 'radar',     label: '★ Multibagger Radar' },
   { id: 'all',       label: 'All Situations' },
   // PATCH 0584 — Special Situations Analytics (mirrors Multibagger Analytics).
   // Wraps the existing merger-arb / deal-probability / playbook libs into a
@@ -389,8 +392,8 @@ const TABS: ReadonlyArray<{ id: Tab; label: string }> = [
 export default function SpecialSituationsPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const initial = (searchParams?.get('tab') as Tab) || 'all';
-  const [active, setActive] = useState<Tab>(TABS.some((t) => t.id === initial) ? initial : 'all');
+  const initial = (searchParams?.get('tab') as Tab) || 'radar';
+  const [active, setActive] = useState<Tab>(TABS.some((t) => t.id === initial) ? initial : 'radar');
   const [region, setRegion] = useState<'ALL' | 'IN' | 'US' | 'GLOBAL'>('ALL');
   // PATCH 0252 — Clickable tier/category filters. Clicking a Stat box toggles
   // the filter; multiple categories may be selected (OR semantics).
@@ -726,6 +729,9 @@ export default function SpecialSituationsPage() {
 
       {/* ── Body ─────────────────────────────────────────────────────────── */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {active === 'radar' && (
+          <MultibaggerRadar events={canonicalEvents} region={region} onRegionChange={setRegion} isLoading={isLoading} error={error} />
+        )}
         {active === 'all' && (
           canonicalEvents.length > 0
             ? <AllSituationsCanonical isLoading={isLoading} error={error} tier1={tier1Canonical} tier2={tier2Canonical} watchlist={watchlistCanonical} />
