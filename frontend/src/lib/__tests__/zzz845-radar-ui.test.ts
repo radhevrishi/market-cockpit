@@ -113,7 +113,7 @@ describe('zzz845 wording and separation', () => {
     });
     const t = strip(card(full, true));
     assert.deepEqual(forbiddenWording(t), []);
-    for (const w of ['PARTIALLY PROVEN', 'ASSUMED', 'CONTRADICTED', 'N/A', 'PROVEN', 'Why not higher?', 'What would upgrade?', 'What would downgrade?', 'Leading indicator']) assert.ok(t.includes(w), w);
+    for (const w of ['PARTIALLY PROVEN', 'ASSUMED', 'CONTRADICTED', 'Not applicable: Free cash flow', 'PROVEN', 'Why not higher?', 'What would upgrade?', 'What would downgrade?', 'Leading indicator']) assert.ok(t.includes(w), w);
   });
 });
 

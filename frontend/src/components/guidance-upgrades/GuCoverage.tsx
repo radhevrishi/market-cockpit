@@ -2,7 +2,7 @@
 // zzz844 — MARKET COVERAGE: what was actually scanned, per market. Incomplete scans are said plainly and never read as "no upgrades".
 import React from 'react';
 import type { GuScanStatus, GuWindow, GuidanceUpgradesResponse } from '@/lib/guidance-upgrades-types';
-import { COVERAGE_120_INCOMPLETE, MARKET_NAME, SCAN_STATE_LABEL, coverage120, fmtDaysCovered, fmtScanFunnel, coverageCounts, freshnessText, marketIncompleteNote, scanHeadline, scanIncompleteWords } from '@/lib/guidance-upgrades-format';
+import { COVERAGE_120_INCOMPLETE, MARKET_NAME, SCAN_STATE_LABEL, coverage120, fmtDaysCovered, fmtScanFunnel, coverageCounts, freshnessText, marketIncompleteNote, sourceFailedText, unresolvedLine, scanHeadline, scanIncompleteWords } from '@/lib/guidance-upgrades-format';
 import { R, box, tint } from './gu-tokens';
 import { Chip } from './GuBits';
 
@@ -51,7 +51,7 @@ function Market({ s, now, m, events, window }: { s: GuScanStatus; now: Date; m?:
             <span style={{ fontWeight: 700 }}>{x.name}</span>
             <Chip color={STATE_COLOR[x.state]} dashed={x.state === 'NOT_RUN' || String(x.state) === 'NOT_AVAILABLE'}>{SCAN_STATE_LABEL[x.state]}</Chip>
             <span style={{ color: R.dim }}>{x.scanned} scanned</span>
-            <span style={{ color: R.dim, overflowWrap: 'anywhere' }}>{x.detail}</span>
+            {sourceFailedText(x) ? <span style={{ color: R.red, fontWeight: 800, overflowWrap: 'anywhere' }} role="alert">Failed: {sourceFailedText(x)}</span> : <span style={{ color: R.dim, overflowWrap: 'anywhere' }}>{x.detail}</span>}
           </div>
         ))}
       </div>
@@ -62,13 +62,14 @@ function Market({ s, now, m, events, window }: { s: GuScanStatus; now: Date; m?:
 }
 
 type ByMarket = NonNullable<NonNullable<GuidanceUpgradesResponse['freshness']['byMarket']>['IN']>;
-export function GuCoverage({ scan, now, byMarket, eventCounts, window }: { window?: GuWindow; scan: Partial<Record<'IN' | 'US', GuScanStatus>> | undefined; now: Date; byMarket?: GuidanceUpgradesResponse['freshness']['byMarket']; eventCounts?: Partial<Record<'IN' | 'US', number>> }) {
+export function GuCoverage({ scan, now, byMarket, eventCounts, window, unresolved }: { unresolved?: number; window?: GuWindow; scan: Partial<Record<'IN' | 'US', GuScanStatus>> | undefined; now: Date; byMarket?: GuidanceUpgradesResponse['freshness']['byMarket']; eventCounts?: Partial<Record<'IN' | 'US', number>> }) {
   const list = (['IN', 'US'] as const).map((k) => scan?.[k]).filter((x): x is GuScanStatus => !!x);
-  if (!list.length) return null;
+  if (!list.length && !(unresolved && unresolved > 0)) return null;
   return (
     <section aria-label="Market coverage" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 0.4, color: R.dim }}>COVERAGE</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(340px,1fr))', gap: 10 }}>
+      {unresolved != null && unresolved > 0 && <div role="note" style={{ fontSize: 12, color: R.dim }}>{unresolvedLine(unresolved)}</div>}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,340px),1fr))', gap: 10 }}>
         {list.map((s) => <Market key={s.market} s={s} now={now} m={byMarket?.[s.market]} events={eventCounts?.[s.market] ?? byMarket?.[s.market]?.events ?? 0} window={window} />)}
       </div>
     </section>

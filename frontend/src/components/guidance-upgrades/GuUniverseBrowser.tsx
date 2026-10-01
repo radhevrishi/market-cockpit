@@ -4,7 +4,7 @@
 import React, { useMemo, useState } from 'react';
 import { normSymbol } from '@/lib/portfolio-symbols';
 import {
-  UNIVERSE_METRICS, UNIVERSE_SCOPES, UNIVERSE_UNAVAILABLE, filterUniverse, sortUniverse, universeApiMarket, universeApiMetric,
+  UNIVERSE_METRICS, UNIVERSE_SCOPES, UNIVERSE_UNAVAILABLE, ZERO_RECORDS_TEXT, universeNoticeLine, filterUniverse, sortUniverse, universeApiMarket, universeApiMetric,
   type UniverseMetric, type UniverseScope, type UniverseView,
 } from '@/lib/guidance-upgrades-format';
 import type { GgCompany } from '@/lib/growth-guidance-types';
@@ -22,7 +22,7 @@ export function GuUniverseBrowser({ held, onFull }: { held: string[]; onFull?: (
   const [scope, setScope] = useState<UniverseScope>('ALL');
   const [metric, setMetric] = useState<UniverseMetric>('ALL');
   const [view, setView] = useState<UniverseView>('active');
-  const { data, state, retry } = useGuUniverse({ market: universeApiMarket(scope), metric: universeApiMetric(metric), view });
+  const { data, state, retry, error } = useGuUniverse({ market: universeApiMarket(scope), metric: universeApiMetric(metric), view });
   const heldSet = useMemo(() => new Set(held.map(normSymbol)), [held]);
   const list = useMemo(
     () => sortUniverse(filterUniverse(data?.records || [], scope, metric, (t) => heldSet.has(normSymbol(t)))),
@@ -31,11 +31,11 @@ export function GuUniverseBrowser({ held, onFull }: { held: string[]; onFull?: (
   return (
     <section aria-label="Guidance universe" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <h2 style={{ fontSize: 14, fontWeight: 900, letterSpacing: 0.6, margin: 0 }}>📊 GUIDANCE UNIVERSE</h2>
-      <div style={{ fontSize: 12, color: R.dim }}>Guidance that is still in force, whenever it was announced. The time window below does not change this section.</div>
+      <div style={{ fontSize: 12, color: R.dim }}>Guidance that is still in force, whenever it was announced. The time window in the next section only filters events. It does not change this universe.</div>
       <div className="gu-noprint" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} role="group" aria-label="Universe market">
         {UNIVERSE_SCOPES.map(([k, l]) => <button key={k} type="button" style={pill(scope === k)} aria-pressed={scope === k} onClick={() => setScope(k)}>{l}</button>)}
         <span style={{ width: 10 }} />
-        {([['active', 'Active guidance'], ['all', 'All active guidance']] as Array<[UniverseView, string]>).map(([k, l]) => (
+        {([['active', 'Active guidance'], ['all', 'Active + history']] as Array<[UniverseView, string]>).map(([k, l]) => (
           <button key={k} type="button" style={pill(view === k)} aria-pressed={view === k} onClick={() => setView(k)}>{l}</button>
         ))}
       </div>
@@ -43,18 +43,19 @@ export function GuUniverseBrowser({ held, onFull }: { held: string[]; onFull?: (
         {UNIVERSE_METRICS.map(([k, l]) => <button key={k} type="button" style={pill(metric === k)} aria-pressed={metric === k} onClick={() => setMetric(k)}>{l}</button>)}
       </div>
       {scope === 'MY_BOOK' && held.length === 0 && <div style={{ fontSize: 12, color: R.dim }}>No holdings found. Add them on the Portfolio page and this view fills in.</div>}
-      {state === 'loading' && !data && <div style={box({ padding: 12, fontSize: 13, color: R.dim })}>{UNIVERSE_UNAVAILABLE}. Reading the guidance universe.</div>}
+      {state === 'loading' && !data && <div style={box({ padding: 12, fontSize: 13, color: R.dim })}>Reading the guidance universe.</div>}
       {state === 'error' && (
         <div style={box({ padding: 12, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' })} role="alert">
-          <span style={{ fontSize: 13 }}>{UNIVERSE_UNAVAILABLE}. Please try again.</span>
+          <span style={{ fontSize: 13 }}><b>{UNIVERSE_UNAVAILABLE}.</b> {error || 'Unknown error'}</span>
           <button type="button" style={btn(R.cyan, true)} onClick={retry}>Retry</button>
         </div>
       )}
       {data && (
         <>
+          {universeNoticeLine(data.summary) && <div style={{ fontSize: 12, color: R.dim }}>{universeNoticeLine(data.summary)}</div>}
           <div style={{ fontSize: 12, color: R.dim }}>{list.length} shown</div>
           <div style={{ opacity: state === 'loading' ? 0.6 : 1 }}>
-            <GuUniverseList records={list} showMarket={scope === 'ALL' || scope === 'MY_BOOK'} onFull={onFull} emptyText="Nothing matches these filters. Clear a filter to see more." />
+            <GuUniverseList records={list} showMarket={scope === 'ALL' || scope === 'MY_BOOK'} onFull={onFull} emptyText={data.records.length === 0 ? ZERO_RECORDS_TEXT : "Nothing matches these filters. Clear a filter to see more."} />
           </div>
         </>
       )}

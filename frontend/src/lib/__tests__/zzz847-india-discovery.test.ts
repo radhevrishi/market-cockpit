@@ -10,7 +10,7 @@ import { processCandidates, withinWindow } from '../guidance-upgrades';
 import {
   newsToCandidate, scrapedNewsToCandidate, filingToCandidate, gradedRowToCandidate, parseWhen, istDate, istDateList, buildCompanyIndex,
   buildIndiaCandidates, resolveCompany, companyFromHeadline, propagateTickers, isRaiseCandidate, processRaiseCandidates, isRaiseBearingSubject,
-  collectSubjectOnly, corroborateWithFilings, labelUnresolved, nameKeyOf, splitByMarket, coverageLine, dedupeCandidates, normCompanyName,
+  collectSubjectOnly, corroborateWithFilings, quarantineUnresolved, nameKeyOf, splitByMarket, coverageLine, dedupeCandidates, normCompanyName,
   type MarketCoverage, type IndiaRead,
 } from '../guidance-upgrades-candidates';
 import { scanIndia, makeRealIndiaFetchers, type DayFetcher } from '../guidance-upgrades-scan';
@@ -72,15 +72,15 @@ describe('1. news path: Indian articles with no usable ticker_symbols', () => {
     const b = buildIndiaCandidates(emptyInputs({ news: [article()] }), { CUPID: 'Cupid' });
     assert.equal(b.candidates[0].ticker, 'CUPID');
   });
-  test('unresolved: company name kept, ticker undefined, still shown and labelled "ticker not resolved"', () => {
+  test('unresolved: company name kept, ticker undefined, QUARANTINED (listed for diagnostics, never an event)', () => {
+    // zzz849: UPDATED. This used to assert the unresolved candidate was shown as an event labelled "ticker not resolved"; an event must name a real, resolved company.
     const c = newsToCandidate(article(), buildCompanyIndex([{ symbol: 'ZZIN2', name: 'Zed Two Limited' }]))!;
     assert.equal(c.ticker, undefined); assert.equal(c.company, 'Cupid');
-    assert.ok(isRaiseCandidate(c), 'engine accepts the raise wording even without a symbol');
-    const ev = labelUnresolved(processRaiseCandidates([c], noCtx, NOW, '7D'), new Set([nameKeyOf(c)]));
-    assert.equal(ev.length, 1);
-    assert.match(ev[0].company, /ticker not resolved/);
-    assert.ok(ev[0].evidenceGaps.some((g) => /Ticker not resolved/.test(g)));
-    assert.equal(ev[0].verification, 'UNVERIFIED'); assert.equal(ev[0].v2!.stage, 'CANDIDATE'); assert.equal(ev[0].decision, 'UNVERIFIED');
+    assert.ok(isRaiseCandidate(c), 'the raise wording alone is accepted by the engine');
+    const q = quarantineUnresolved([c]);
+    assert.equal(q.kept.length, 0); assert.equal(q.unresolved.length, 1);
+    assert.equal(q.unresolved[0].company, 'Cupid');
+    assert.deepEqual(processRaiseCandidates(q.kept, noCtx, NOW, '7D'), []);
   });
   test('an index that knows nothing never invents a symbol', () => {
     assert.deepEqual(resolveCompany('Cupid raises FY27 guidance', '', ['AGM'], buildCompanyIndex([])).ticker, undefined);
@@ -309,9 +309,9 @@ describe('5. coverage text: per-source counts, never consensus as the reason', (
     assert.doesNotMatch(l, /consensus/i);
     assert.doesNotMatch(l, /raise candidates|\b0 events\b|No announcement in this window/);
   });
-  test('with events the consensus label stays, and ticker-not-resolved is counted', () => {
+  test('with events the consensus label stays, and unresolved discoveries are counted as held back', () => {
     const l = coverageLine(cov({ events: 2, withConsensus: 0, candidates: { graded: 0, filings: 0, news: 3 }, read: { ...read, unresolved: 1, noCompany: 0, news: 120, newsScraped: 190 } }), NOW);
-    assert.match(l, /3 from news/); assert.match(l, /Consensus available 0 of 2/); assert.match(l, /1 candidate shown with ticker not resolved/);
+    assert.match(l, /3 from news/); assert.match(l, /Consensus available 0 of 2/); assert.match(l, /1 unresolved discovery held back \(not shown as an event\)/);
     assert.match(l, /120 India news items \(cache\), 190 from the scraped news feed/);
   });
   test('name normaliser', () => { assert.equal(normCompanyName('Cupid Limited'), 'cupid'); assert.equal(normCompanyName('CUPID LTD.'), 'cupid'); assert.equal(normCompanyName('Dixon Technologies (India) Ltd'), 'dixon technologies'); });
@@ -320,7 +320,7 @@ describe('5. coverage text: per-source counts, never consensus as the reason', (
 describe('route wiring', () => {
   const r = read('app/api/v1/guidance-upgrades/route.ts').replace(/\/\/.*$/gm, '');
   test('every India input path is read and reported', () => {
-    for (const k of ["'news:articles:v39'", "'scraped-india-news:v1:latest'", 'concall-feed:v26:days:', 'gradedKey(', 'loadCatalog(', 'NSE_TICKER_NAMES', 'buildIndiaCandidates(', 'processRaiseCandidates(', 'corroborateWithFilings(', 'labelUnresolved(', 'collectSubjectOnly(', 'istDateList('])
+    for (const k of ["'news:articles:v39'", "'scraped-india-news:v1:latest'", 'concall-feed:v26:days:', 'gradedKey(', 'loadCatalog(', 'NSE_TICKER_NAMES', 'buildIndiaCandidates(', 'processRaiseCandidates(', 'corroborateWithFilings(', 'quarantineUnresolved(', 'collectSubjectOnly(', 'istDateList('])
       assert.ok(r.includes(k), k);
     assert.match(r, /Announcements with subject only/); assert.match(r, /Scraped India news/);
     assert.ok(!/dateList\(now, days \+ 1\)/.test(r.replace(/istDateList\(now, days \+ 1\)/g, '')), 'no UTC date list for India');

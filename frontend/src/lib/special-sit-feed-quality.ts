@@ -63,13 +63,23 @@ export const isSecSource = (source?: string, link?: string): boolean => SEC_SOUR
 const SEC_FORM_ALT = '(?:10-12[BG]|10-K|10-Q|8-K|S-1|S-4|S-11|F-1|F-4|424B\\d|SC\\s*(?:TO-[TI]|13E-?3|14D-?9|13[DG])|SCHEDULE\\s*13[DG]|DEF\\s*14A|PREM14A|DEFM14A|N-2|N-14|NT\\s*10-[KQ])';
 const SEC_TITLE_RE = new RegExp(`^(${SEC_FORM_ALT}(?:\\/A)?)\\s+-\\s+(.+?)\\s*(?:\\((?:\\d{3,10})\\))?\\s*(?:\\((?:Filer|Subject|Issuer|Filed by|Reporting|Filed for)[^)]*\\))*\\s*$`, 'i');
 
-export interface SecTitle { form: string; company: string; isAmendment: boolean }
+export interface SecTitle { form: string; company: string; isAmendment: boolean; /** EDGAR role tag at the end of the title, e.g. 'Subject', 'Filed by', 'Filer'. */ role: string | null }
 export function parseSecFilingTitle(title: string): SecTitle | null {
   const m = (title || '').trim().match(SEC_TITLE_RE);
   if (!m) return null;
   const company = m[2].replace(/\s*\(\d{3,10}\)\s*/g, ' ').replace(/\s*\((?:Filer|Subject|Issuer|Filed by|Reporting)[^)]*\)\s*/gi, ' ').replace(/\s+/g, ' ').trim();
   if (!company) return null;
-  return { form: m[1].toUpperCase().replace(/\s+/g, ' '), company, isAmendment: /\/A$/i.test(m[1]) };
+  const roleM = (title || '').match(/\((Subject|Filed by|Filer|Issuer|Reporting|Filed for)\b[^)]*\)\s*$/i);
+  return { form: m[1].toUpperCase().replace(/\s+/g, ' '), company, isAmendment: /\/A$/i.test(m[1]), role: roleM ? roleM[1].toLowerCase() : null };
+}
+
+/** EDGAR accession number from a filing link (both the dashed and the 18-digit path form). One filing lists once per party (subject, filed-by) under the same accession. */
+export function secAccession(link?: string | null): string | null {
+  const l = link || '';
+  const a = l.match(/(\d{10}-\d{2}-\d{6})/);
+  if (a) return a[1];
+  const b = l.match(/\/(\d{18})(?:\/|$|-)/);
+  return b ? `${b[1].slice(0, 10)}-${b[1].slice(10, 12)}-${b[1].slice(12)}` : null;
 }
 
 export const isForm10Title = (title: string): boolean => /^\s*10-12[BG](?:\/A)?\b/i.test(title || '');
@@ -161,6 +171,17 @@ export const NOT_IDENTIFIED = 'Not identified';
 
 const isCapWord = (w: string): boolean => /^[A-Z][\w'&.\u2019-]*$/.test(w);
 
+/** 'Vedanta Aluminium\u2019s' -> 'Vedanta Aluminium'; strips wrapping quotes and a trailing possessive. */
+export function stripPossessiveAndQuotes(name: string): string {
+  let n = (name || '').replace(/\s+/g, ' ').trim();
+  for (let i = 0; i < 3; i++) {
+    const before = n;
+    n = n.replace(/^[\u2018\u2019'"\u201c\u201d`]+/, '').replace(/[\u2018\u2019'"\u201c\u201d`]+$/, '').replace(/['\u2019]s$/i, '').replace(/s['\u2019]$/i, (m) => m.slice(0, 1)).trim();
+    if (n === before) break;
+  }
+  return n;
+}
+
 /** Subject noun phrase: leading run of capitalised words up to the verb / event noun. */
 export function subjectFromHeadline(title: string): string | null {
   let t = (title || '').replace(/\s+/g, ' ').trim();
@@ -193,7 +214,7 @@ export function subjectFromHeadline(title: string): string | null {
   while (run.length && NAME_CONNECT.has(run[run.length - 1].toLowerCase())) run.pop();
   while (run.length && /^\(.*\)$/.test(run[run.length - 1])) run.pop();
   if (!run.length) return null;
-  const name = run.join(' ').trim();
+  const name = stripPossessiveAndQuotes(run.join(' '));
   if (name.length < 2) return null;
   if (NON_TICKER_ACRONYMS.has(name.toUpperCase()) && name === name.toUpperCase() && !(name.toUpperCase() in NSE_TICKER_NAMES)) return null;
   return name;
@@ -202,7 +223,42 @@ export function subjectFromHeadline(title: string): string | null {
 const PAREN_EXCH_RE = /\((?:NYSE|NASDAQ|NYSEARCA|AMEX|NSE|BSE|TSX|LSE)\s*[:\s]\s*([A-Z][A-Z0-9.]{0,5})\)/;
 const PAREN_TKR_RE = /\(([A-Z]{2,6})\)/;
 
-export interface SubjectIdentity { company: string; ticker: string | null; tickerSource: 'feed' | 'suffix' | 'paren' | 'lead' | 'possessive' | 'master' | null }
+export interface SubjectIdentity {
+  company: string; ticker: string | null; tickerSource: 'feed' | 'suffix' | 'paren' | 'lead' | 'possessive' | 'master' | 'parent' | null;
+  /** The subject is a group / promoter name ('<X> Group'), not one listed issuer. Ticker is null. */
+  group?: boolean;
+  /** Name of the listed parent when the ticker is the parent's (a subsidiary / brand). Show it as 'via parent'. */
+  viaParent?: string | null;
+}
+
+// Group / promoter names are not listed issuers. Data, not logic: a name ending in 'Group' (without a corporate
+// suffix) or a bare token below is a group. A group name the company master resolves (a real listed 'X Group') is kept.
+const GROUP_NAME_RE = /^(.+?)\s+(?:group|conglomerate|family|promoter group|business house)$/i;
+export const UNLISTED_GROUP_TOKENS: ReadonlySet<string> = new Set(['RPSG', 'SHAPOORJI', 'MURUGAPPA', 'ESSAR']);
+export function isGroupName(name: string | null | undefined): boolean {
+  const n = (name || '').replace(/\s+/g, ' ').trim();
+  if (!n) return false;
+  const bare = n.replace(/\s+group$/i, '');
+  if (UNLISTED_GROUP_TOKENS.has(n.toUpperCase()) || UNLISTED_GROUP_TOKENS.has(bare.toUpperCase())) return !resolveCompanyToTicker(n);
+  if (!GROUP_NAME_RE.test(n)) return false;
+  return !resolveCompanyToTicker(n);
+}
+
+/**
+ * Subsidiary / brand -> listed parent aliases. DATA ONLY and empty by default: a parent is attached only when an
+ * entry says so (or the resolver already maps the exact name). No prefix guessing: 'X Cement' is not 'X'.
+ * Entry: match the subsidiary name, give the parent's name (resolved through the master) and optionally its ticker.
+ */
+export interface SubsidiaryAlias { match: RegExp; parent: string; parentTicker?: string }
+export const SUBSIDIARY_PARENT_ALIASES: ReadonlyArray<SubsidiaryAlias> = [];
+export function resolveViaParent(name: string, aliases: ReadonlyArray<SubsidiaryAlias> = SUBSIDIARY_PARENT_ALIASES): { ticker: string; parent: string } | null {
+  for (const a of aliases) {
+    if (!a.match.test(name)) continue;
+    const t = resolveCompanyToTicker(a.parent) || (a.parentTicker && okTicker(a.parentTicker.toUpperCase()) ? a.parentTicker.toUpperCase() : undefined);
+    if (t) return { ticker: t, parent: a.parent };
+  }
+  return null;
+}
 
 const okTicker = (t: string): boolean => /^[A-Z][A-Z0-9&-]{1,9}$/.test(t) && !NON_TICKER_ACRONYMS.has(t.replace(/\.(NS|BO)$/, ''));
 
@@ -213,7 +269,15 @@ const okTicker = (t: string): boolean => /^[A-Z][A-Z0-9&-]{1,9}$/.test(t) && !NO
  * found in the company master. Everything else in the text (lenders, brokers,
  * exchanges, currencies, tribunals, designations) is ignored.
  */
-export function identifySubject(args: { title: string; feedTicker?: string | null; isSec?: boolean; explicitName?: string | null }): SubjectIdentity {
+export function identifySubject(args: { title: string; feedTicker?: string | null; isSec?: boolean; explicitName?: string | null; subsidiaryAliases?: ReadonlyArray<SubsidiaryAlias> }): SubjectIdentity {
+  const id = identifySubjectCore(args);
+  // A group / promoter name is never a listed ticker; only an explicit exchange tag in the headline survives.
+  const grp = isGroupName(id.company) || (id.ticker != null && UNLISTED_GROUP_TOKENS.has(id.ticker.toUpperCase()) && !(id.ticker.toUpperCase() in NSE_TICKER_NAMES));
+  if (grp && id.tickerSource !== 'suffix' && id.tickerSource !== 'paren') return { company: id.company, ticker: null, tickerSource: null, group: true, viaParent: null };
+  return id;
+}
+
+function identifySubjectCore(args: { title: string; feedTicker?: string | null; isSec?: boolean; explicitName?: string | null; subsidiaryAliases?: ReadonlyArray<SubsidiaryAlias> }): SubjectIdentity {
   const title = (args.title || '').replace(/\s+/g, ' ').trim();
   const sec = parseSecFilingTitle(title);
   const name = (args.explicitName && args.explicitName.trim()) || (sec ? sec.company : subjectFromHeadline(title));
@@ -247,6 +311,8 @@ export function identifySubject(args: { title: string; feedTicker?: string | nul
   if (name) {
     const t = resolveCompanyToTicker(name) || resolveCompanyToTicker(name.replace(/\s+(?:Ltd\.?|Limited|Inc\.?|Corp\.?)$/i, ''));
     if (t) return { company: name, ticker: t, tickerSource: 'master' };
+    const par = resolveViaParent(name, args.subsidiaryAliases);
+    if (par) return { company: name, ticker: par.ticker, tickerSource: 'parent', viaParent: par.parent };
   }
   if (feed && okTicker(feed.replace(/\.(NS|BO)$/, ''))) return { company: name || feed, ticker: feed, tickerSource: 'feed' };
   return { company: name || NOT_IDENTIFIED, ticker: null, tickerSource: null };
@@ -281,11 +347,15 @@ export function entityTokens(title: string): Set<string> {
   }
   return out;
 }
+const UNIT_NORM: Record<string, string> = { crore: 'cr', crores: 'cr', cr: 'cr', 'lakh crore': 'lakhcr', billion: 'bn', bn: 'bn', million: 'mn', mn: 'mn' };
 export function keyNumbers(title: string): Set<string> {
   const out = new Set<string>();
-  const t = (title || '').replace(/,/g, '');
+  const t = (title || '').replace(/(\d),(?=\d{3}\b)/g, '$1');
   for (const m of t.matchAll(/\b(\d{1,4})\s?:\s?(\d{1,4})\b/g)) out.add(`${m[1]}:${m[2]}`);
-  for (const m of t.matchAll(/(?:rs\.?|inr|₹|\$|€)\s?(\d+(?:\.\d+)?)\s*(crore|cr|lakh crore|billion|million|bn|mn)?/gi)) out.add(`${m[1]}${(m[2] || '').toLowerCase().replace('crore', 'cr')}`);
+  for (const m of t.matchAll(/(?:rs\.?|inr|\u20b9|\$|us\$|usd|\u20ac|eur|\u00a3|gbp|cad)\s?(\d+(?:\.\d+)?)\s*(lakh crores?|crores?|cr|billion|million|bn|mn)?\b/gi)) {
+    const u = (m[2] || '').toLowerCase().replace(/crores$/, 'crore').replace(/lakh crores$/, 'lakh crore');
+    out.add(`${m[1]}${UNIT_NORM[u] || u}`);
+  }
   for (const m of t.matchAll(/\b(\d+(?:\.\d+)?)\s?(mw|gw|mwh)\b/gi)) out.add(`${m[1]}${m[2].toLowerCase()}`);
   return out;
 }
@@ -295,7 +365,7 @@ export function eventFamily(title: string, eventType?: string): EventFamily {
   if (sub === 'MERGER') return 'MERGER';
   if (sub === 'SPIN' || sub === 'LISTING_DONE') return 'SPIN';
   const t = `${title} ${(eventType || '').replace(/_/g, ' ')}`;
-  if (/\b(acquir|acquisition|takeover|open offer|buys? stake|stake (?:buy|sale))/i.test(t)) return 'ACQUISITION';
+  if (/\b(acquir|acquisition|takeover|open offer|buys? stake|stake (?:buy|sale))/i.test(t) || (/\b(?:buys?(?!\s*-?back)|bought|snaps up|picks up|agrees? to buy)\s+[A-Z\u20b9$]/.test(t) && !/\bstocks?\s+to\s+buy\b/i.test(t))) return 'ACQUISITION';
   if (/\bbuyback|repurchase/i.test(t)) return 'BUYBACK';
   if (/\bdividend/i.test(t)) return 'DIVIDEND';
   if (/\b(rights issue|warrants?|qip|preferential|ncd|convertible)\b/i.test(t)) return 'CAPITAL_RAISE';
@@ -332,16 +402,21 @@ export function countCanonicalEventTypes(events: ReadonlyArray<{ event_type: str
 
 /** Incremental clusterer: maps each item to the id of an earlier item describing the same deal (same family + region). */
 export function createEventClusterer() {
-  const reps = new Map<string, Array<{ id: string; title: string; eventType?: string; toks: Set<string>; nums: Set<string> }>>();
+  const reps = new Map<string, Array<{ id: string; title: string; eventType?: string; toks: Set<string>; nums: Set<string>; canon: CanonicalEventKey; acc: string | null }>>();
   return {
     /** Returns an earlier id when the item is the same event, else registers it under `id` and returns `id`. */
-    assign(id: string, title: string, region: string, eventType?: string): string {
+    assign(id: string, title: string, region: string, eventType?: string, extra?: { link?: string; pubDate?: string | null }): string {
       const fam = eventFamily(title, eventType);
-      if (fam === 'OTHER') return id;
+      const acc = secAccession(extra?.link);
+      const canon = canonicalEventKey({ title, eventType, pubDate: extra?.pubDate });
+      // One SEC filing lists once per party (subject / filed-by) under the same accession: always one event.
+      if (acc) for (const list of reps.values()) for (const r of list) if (r.acc === acc) return r.id;
+      if (fam === 'OTHER') { if (acc) { const k = `${region}|OTHER`; const l = reps.get(k) || []; l.push({ id, title, eventType, toks: new Set(), nums: new Set(), canon, acc }); reps.set(k, l); } return id; }
       const key = `${region}|${fam}`;
       const list = reps.get(key) || [];
       const toks = entityTokens(title), nums = keyNumbers(title);
       for (const r of list) {
+        if (sameCanonicalEvent(canon, r.canon)) return r.id;
         let shared = 0;
         toks.forEach((x) => { if (r.toks.has(x)) shared += 1; });
         let sharedNum = 0;
@@ -350,9 +425,83 @@ export function createEventClusterer() {
         if (!minSize) continue;
         if ((sharedNum > 0 && shared >= 1) || (shared >= 2 && shared / minSize >= 0.6)) return r.id;
       }
-      list.push({ id, title, eventType, toks, nums });
+      list.push({ id, title, eventType, toks, nums, canon, acc });
       reps.set(key, list);
       return id;
     },
   };
 }
+
+// ─── 9. Canonical event key (company + event type + amount + date window) ────
+const LEGAL_SUFFIX = /\b(?:ltd|limited|inc|incorporated|corp|corporation|plc|llc|co|company|nv|sa|ag)\b\.?/gi;
+const normSubject = (s: string): string => (s || '').toLowerCase().replace(/['\u2019]s\b/g, '').replace(LEGAL_SUFFIX, ' ').replace(/[^a-z0-9]+/g, ' ').trim();
+
+export interface CanonicalEventKey { subject: string; family: EventFamily; amounts: string[]; ts: number | null; key: string }
+export function canonicalEventKey(a: { title: string; eventType?: string; pubDate?: string | null }): CanonicalEventKey {
+  const subject = normSubject(subjectFromHeadline(decodeHtmlEntities(a.title || '')) || '');
+  const family = eventFamily(a.title, a.eventType);
+  const amounts = Array.from(keyNumbers(a.title)).filter((x) => !x.includes(':')).sort();
+  const t = a.pubDate ? Date.parse(a.pubDate) : NaN;
+  return { subject, family, amounts, ts: Number.isNaN(t) ? null : t, key: `${family}|${subject}|${amounts[0] || ''}` };
+}
+/** Same company + same event family + compatible amount + within the date window. Syndicated copies (ET / Moneycontrol / Mint) of one story merge. */
+export function sameCanonicalEvent(a: CanonicalEventKey, b: CanonicalEventKey, windowHours = 72): boolean {
+  if (a.family === 'OTHER' || a.family !== b.family) return false;
+  if (!a.subject || !b.subject) return false;
+  const ta = a.subject.split(' '), tb = b.subject.split(' ');
+  const [short, long] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
+  if (!short.every((w, i) => long[i] === w)) return false;
+  if (a.amounts.length && b.amounts.length && !a.amounts.some((x) => b.amounts.includes(x))) return false;
+  if (a.ts != null && b.ts != null && Math.abs(a.ts - b.ts) > windowHours * 3600000) return false;
+  return true;
+}
+
+// ─── 10. Fund / investment-company repurchase offers (not equity special situations) ──
+export type FeedQuarantineReason = 'FUND_REPURCHASE_OFFER';
+export const FEED_QUARANTINE_LABEL: Record<FeedQuarantineReason, string> = {
+  FUND_REPURCHASE_OFFER: 'Fund repurchase offer: a periodic tender by a pooled investment vehicle (interval fund, BDC, feeder), not an equity special situation',
+};
+const ISSUER_TENDER_FORM_RE = /\bSC\s*TO-I(?:\/A)?\b/i;
+const TENDER_TEXT_RE = /\b(tender offer|repurchase offer|offer to (?:purchase|repurchase)|periodic repurchase|issuer tender)\b/i;
+// Name / text patterns are data. Strong: a pooled-vehicle word. Credit-style: only with an issuer tender form.
+const FUND_NAME_STRONG_RE = /\b(funds?|trusts?(?!\s+(?:bancorp|bancshares|company|co\b|bank|financial))|bdc|feeder|interval|evergreen|hedge|private (?:credit|equity|markets?|assets?|debt|lending)|multi[- ]?(?:alpha|strategy|manager|asset)|structured credit|floating rate|portfolio solutions?|master (?:fund|llc)|offshore|alternative (?:access|income|investments?|strategies)|l\.?p\.?)\s*(?:,|\.|$|\b)/i;
+const FUND_NAME_CREDIT_RE = /\b(credit (?:solutions|opportunit\w+|strategies|income|fund)|senior (?:loan|secured)|direct lending|lending (?:fund|partners)|income (?:fund|partners|opportunit\w+)|real (?:assets|estate income)|infrastructure income|alternative (?:credit|income))\b/i;
+const OPERATING_GUARD_RE = /\b(bancorp|bancshares|bankshares|bank\b|savings|insurance|industries|technologies|pharma\w*|holdings? (?:ltd|inc))\b/i;
+const INVESTMENT_COMPANY_HINT_RE = /\binvestment company act\b|\bN-2\b|\b1940 act\b|\bclosed-end (?:management )?(?:investment )?(?:company|fund)\b|\binterval fund\b|\bbusiness development company\b|\bBDC\b|\bnet asset value\b|\bNAV\b|\bfeeder fund\b|\bmaster fund\b|\b(?:LLC|limited liability company) (?:interests|units)\b|\bshares of beneficial interest\b|\bregistered under the investment company\b/i;
+
+export function isFundRepurchaseOffer(a: { title?: string; description?: string; source?: string; company?: string | null; eventType?: string }): boolean {
+  const title = decodeHtmlEntities(a.title || '');
+  const desc = decodeHtmlEntities(a.description || '');
+  const issuerForm = ISSUER_TENDER_FORM_RE.test(`${title} ${a.source || ''}`);
+  const tenderish = issuerForm || TENDER_TEXT_RE.test(title) || /\brepurchase|tender/i.test(a.eventType || '');
+  if (!tenderish) return false;
+  const sec = parseSecFilingTitle(title);
+  const name = (a.company || (sec ? sec.company : subjectFromHeadline(title)) || '').trim();
+  const hint = INVESTMENT_COMPANY_HINT_RE.test(`${title} ${desc}`);
+  if (hint && (issuerForm || FUND_NAME_STRONG_RE.test(name) || FUND_NAME_CREDIT_RE.test(name))) return true;
+  if (FUND_NAME_STRONG_RE.test(name) && !OPERATING_GUARD_RE.test(name)) return true;
+  if (issuerForm && FUND_NAME_CREDIT_RE.test(name)) return true;
+  return false;
+}
+
+export interface HeldBackSummary { total: number; byReason: Partial<Record<FeedQuarantineReason, number>>; line: string; examples: string[] }
+/** Visible 'held back' line for items kept out of the main list. */
+export function summariseHeldBack(items: ReadonlyArray<{ reason: FeedQuarantineReason; name?: string }>): HeldBackSummary {
+  const byReason: Partial<Record<FeedQuarantineReason, number>> = {};
+  for (const i of items) byReason[i.reason] = (byReason[i.reason] || 0) + 1;
+  const parts = (Object.keys(byReason) as FeedQuarantineReason[]).map((r) => `${byReason[r]} held back: ${FEED_QUARANTINE_LABEL[r]}`);
+  return { total: items.length, byReason, line: parts.join('; '), examples: items.map((i) => i.name || '').filter(Boolean).slice(0, 5) };
+}
+
+// ─── 11. 13E-3 legal boilerplate and price-reaction wording ──────────────────
+export const is13e3Text = (form?: string | null, text?: string): boolean => /13E-?3/i.test(form || '') || /\brule\s*13e-?3\b|\bschedule\s*13e-?3\b/i.test(text || '');
+const PCT_RE = /\b\d{1,3}(?:\.\d+)?\s?%/g;
+/** In SC 13E-3 text a bare percentage (for example '40%') is a legal-boilerplate figure, never a deal amount. */
+export function legalBoilerplatePercents(text: string): string[] { return Array.from(new Set((text || '').match(PCT_RE) || [])).map((x) => x.trim()); }
+export function stripLegalBoilerplatePercents(text: string): string {
+  return (text || '').replace(PCT_RE, ' ').replace(/\s+([,.;])/g, '$1').replace(/\s+/g, ' ').trim();
+}
+
+const PRICE_PHRASE_RE = /\b(?:hits?|hit|touch(?:es|ed)?|scal(?:es|ed)|reach(?:es|ed)|trade[sd]? at|at)\s+(?:a\s+)?(?:fresh\s+)?(?:all[- ]time high|record high|52[- ]week high|lifetime high|multi[- ]year high|upper circuit|lower circuit)\b|\b(?:all[- ]time high|record high|52[- ]week high|lifetime high)\b/gi;
+/** Share-price reaction wording ('hits all-time high'). Context only: the adapter hands these spans to the radar as non-evidence. */
+export function priceReactionSpans(text: string): string[] { return Array.from(new Set((text || '').match(PRICE_PHRASE_RE) || [])).map((x) => x.trim()); }

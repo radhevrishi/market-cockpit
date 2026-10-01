@@ -807,7 +807,7 @@ function buildGroups(cands: GuCandidate[], forceOne: boolean): Group[] {
       }
       const last = g.steps[g.steps.length - 1];
       const dd = Math.abs(dayNum(x.date) - dayNum(last.date));
-      const sameNumbers = x.changes.some(c => { const lc = [...last.changes.values()].find(l => chKey(l) === chKey(c)); return lc && lc.after.midpoint === c.after.midpoint && lc.before?.midpoint === c.before?.midpoint; });
+      const sameNumbers = x.changes.some(c => { const lc = [...last.changes.values()].find(l => chKey(l) === chKey(c)); return lc && lc.after.midpoint === c.after.midpoint && (!lc.before || !c.before || lc.before.midpoint === c.before.midpoint); });   // zzz849: an outlet that quotes only the new figure repeats the same announcement
       if (forceOne || dd <= 1 || sameNumbers) { addToStep(g, last, x); return; }
       // second raise: later date, before equals previous after
       const isLater = dayNum(x.date) > dayNum(last.date);
@@ -846,7 +846,9 @@ function buildGroups(cands: GuCandidate[], forceOne: boolean): Group[] {
     if (same.length >= 1 || forceOne) {
       // attach to the group whose latest step is nearest in time (ties: first)
       const g = same.slice().sort((a, b) => Math.abs(dayNum(a.steps[a.steps.length - 1].date) - dayNum(x.date)) - Math.abs(dayNum(b.steps[b.steps.length - 1].date) - dayNum(x.date)))[0];
-      if (g && (forceOne || Math.abs(dayNum(g.steps[g.steps.length - 1].date) - dayNum(x.date)) <= 1)) { g.steps[g.steps.length - 1].cands.push(x); continue; }
+      // zzz849: a number-less outlet repeating the announcement can run up to 3 days AFTER it (news lags the filing); the event keeps the EARLIEST (announcement) date, never the repost date
+      const gap = g ? dayNum(x.date) - dayNum(g.steps[g.steps.length - 1].date) : 0;
+      if (g && (forceOne || (gap >= -1 && gap <= 3))) { g.steps[g.steps.length - 1].cands.push(x); continue; }
     }
     const g: Group = { ticker: x.ticker, company: x.c.company ?? x.ticker, market: x.c.market, steps: [{ date: x.date, ts: x.c.publishedAt, cands: [x], changes: new Map() }], metrics: new Set(), period: 'UNSTATED' };
     groups.push(g);
@@ -1159,9 +1161,29 @@ export function buildRisks(e: GuidanceEvent, x: { text: string; kinds: readonly 
   return out;
 }
 
+/** zzz849: what the COMPUTED numbers say, so every sentence follows the numbers and never the headline verb.
+ *  UPGRADE = at least one measure moved up with a before value. REITERATION = every compared measure unchanged. DOWNGRADE = a compared measure fell and none rose.
+ *  NO_RAISE = compared measures moved in mixed ways without a raise. DETECTED = no before and after numbers at all. */
+export type GuEventClass = 'UPGRADE' | 'REITERATION' | 'DOWNGRADE' | 'NO_RAISE' | 'DETECTED';
+export const EVENT_CLASS_LABEL: Record<GuEventClass, string> = {
+  UPGRADE: 'GUIDANCE RAISED', REITERATION: 'GUIDANCE REITERATED', DOWNGRADE: 'GUIDANCE LOWERED', NO_RAISE: 'NO RAISE ON THE NUMBERS', DETECTED: 'DETECTED, NUMBERS NOT FOUND',
+};
+export function eventClassOf(changes: readonly GuChange[], ranges?: readonly GuRangeMath[]): GuEventClass {
+  const compared = changes.map((c, i) => ({ c, r: ranges?.[i] })).filter((x) => !!x.c.before && x.c.direction !== 'UNKNOWN');
+  if (!compared.length) return 'DETECTED';
+  if (compared.some((x) => x.c.direction === 'UP')) return 'UPGRADE';
+  if (compared.every((x) => (x.r ? x.r.klass === 'REITERATION' : x.c.direction === 'FLAT'))) return 'REITERATION';
+  if (compared.some((x) => x.c.direction === 'DOWN')) return 'DOWNGRADE';
+  return 'NO_RAISE';
+}
+const classOfEvent = (e: Pick<GuidanceEvent, 'changes' | 'v2'>): GuEventClass => e.v2?.eventClass ?? eventClassOf(e.changes, e.v2?.ranges);
+const comparedChanges = (e: Pick<GuidanceEvent, 'changes'>) => e.changes.filter((c) => !!c.before && c.direction !== 'UNKNOWN');
+
 export function buildNextEvidence(e: GuidanceEvent): string[] {
   const ups = upChanges(e);
-  if (!ups.length) return ['Wait for the company to publish clear before and after guidance numbers.'];
+  // zzz849: numbers WERE extracted (unchanged or lowered): the next check is tracking, not "wait for numbers"
+  const tracked = ups.length ? ups : comparedChanges(e);
+  if (!tracked.length) return ['Wait for the company to publish clear before and after guidance numbers.'];
   const driverSpecific = e.v2 ? nextEvidenceFor(e.v2.operatingVariable) : [];
   if (driverSpecific.length) return driverSpecific.slice(0, 2);
   const out: string[] = [];
@@ -1178,9 +1200,9 @@ export function buildNextEvidence(e: GuidanceEvent): string[] {
       default: return `${metricLabel(c)} stays at or above the guided ${g} for ${p}.`;
     }
   };
-  const first = ups.slice().sort((a, b) => METRIC_PRIORITY.indexOf(a.metric) - METRIC_PRIORITY.indexOf(b.metric));
+  const first = tracked.slice().sort((a, b) => (ups.length ? METRIC_PRIORITY.indexOf(a.metric) - METRIC_PRIORITY.indexOf(b.metric) : narrativeRank(a) - narrativeRank(b)));
   out.push(line(first[0]));
-  if (first[1]) out.push(line(first[1])); else out.push('The company repeats or raises this guidance again at the next update.');
+  if (first[1]) out.push(line(first[1])); else out.push(ups.length ? 'The company repeats or raises this guidance again at the next update.' : 'Watch whether the company raises this guidance at the next update.');
   return out.slice(0, 2);
 }
 
@@ -1190,8 +1212,22 @@ function driverPhrase(e: GuidanceEvent): string | null {
   if (e.guidance_quality === 'UNKNOWN' || /not stated|unresolved|^stated operating/i.test(e.guidance_driver)) return v ? `driven by ${v}` : null;
   return `driven by ${e.guidance_driver.charAt(0).toLowerCase()}${e.guidance_driver.slice(1)}${v ? ` (stated: ${v})` : ''}`;
 }
+function figureWords(c: GuChange): string {
+  const period = c.after.period === 'UNSTATED' ? '' : `${c.after.period} `;
+  // a revenue figure quoted as a percentage reads "revenue guidance at 13%" (the % is the growth rate the company guided)
+  return `${period}${c.metric === 'REVENUE_GROWTH' ? 'revenue' : metricLabel(c)} guidance`;
+}
+const narrativeRank = (c: GuChange): number => (c.metric === 'REVENUE' || c.metric === 'REVENUE_GROWTH' ? -1 : METRIC_PRIORITY.indexOf(c.metric));
 export function buildWhyNow(e: GuidanceEvent): string {
   const ups = upChanges(e);
+  const cls = classOfEvent(e);
+  if (!ups.length && (cls === 'REITERATION' || cls === 'DOWNGRADE' || cls === 'NO_RAISE')) {
+    const cmp = comparedChanges(e).slice().sort((a, b) => narrativeRank(a) - narrativeRank(b));
+    const c = cmp[0]; const more = cmp.length - 1;
+    if (cls === 'REITERATION') return `Management reiterated ${figureWords(c)} at ${fmtPoint(c.after)}.${more > 0 ? ` ${more} more measure${more === 1 ? ' was' : 's were'} also reiterated.` : ''}`;
+    if (cls === 'DOWNGRADE') { const d = cmp.find((x) => x.direction === 'DOWN') ?? c; return `Management lowered ${figureWords(d)} to ${fmtPoint(d.after)} from ${fmtPoint(d.before)}.`; }
+    return `No measure was raised: ${figureWords(c)} is ${fmtPoint(c.after)} against ${fmtPoint(c.before)} before.`;
+  }
   if (!ups.length && e.v2?.statedDirection === 'RAISED') {
     const sm = e.v2.statedMetrics?.length ? ` ${e.v2.statedMetrics.join(', ')}` : '';
     return `${e.company} raised its${sm} guidance (direction stated by the source), but the source gives no before and after numbers (${DATA_UNAVAILABLE}). Shown as detected, not verified.${!e.v2.whyNowResolved ? ` ${WHY_NOW_UNRESOLVED}.` : ''}`;
@@ -1213,7 +1249,13 @@ export function whatItMeans(e: GuidanceEvent): string {
   if (prof != null) parts.push(`Profit guidance is up ${fmtNum(round(prof, 1))}%.`);
   if (!parts.length) {
     const c = upChanges(e)[0];
-    if (!c) return `${DATA_UNAVAILABLE}: the source has no before and after numbers, so we cannot say what this does to earnings.`;
+    if (!c) {
+      const k = classOfEvent(e);
+      if (k === 'REITERATION') return 'Guidance was repeated at the same level, so there is nothing new to add to earnings estimates.';
+      if (k === 'DOWNGRADE') return 'Guidance was lowered, so this is not an upgrade and earnings estimates may need to come down.';
+      if (k === 'NO_RAISE') return 'No measure was raised on the numbers found, so there is no upgrade to add to earnings estimates.';
+      return `${DATA_UNAVAILABLE}: the source has no before and after numbers, so we cannot say what this does to earnings.`;
+    }
     return `${metricLabel(c)} guidance moved from ${fmtPoint(c.before)} to ${fmtPoint(c.after)}. The source gives no revenue or profit numbers, so the effect on earnings is not known.`;
   }
   if (rev != null && prof != null && prof > rev)
@@ -1268,7 +1310,7 @@ export const DECISION_ORDER: Record<GuDecision, number> = { IMMEDIATE_BUY: 4, WA
 function reasonLines(e: GuidanceEvent, ctx: GuContext | undefined, thesisBreaking: boolean): string[] {
   const pe = e.valuation?.currentPE.value ?? null; const move = ctx?.priceContext?.move7dPct;
   const ups = upChanges(e);
-  const changed = ups.length ? `What changed: ${buildWhyNow(e)}` : `What changed: no measurable upgrade (${DATA_UNAVAILABLE} for before and after numbers).`;
+  const changed = ups.length || classOfEvent(e) !== 'DETECTED' ? `What changed: ${buildWhyNow(e)}` : `What changed: no measurable upgrade (${DATA_UNAVAILABLE} for before and after numbers).`;
   const earnings = `Earnings effect: ${e.materialityBasis || DATA_UNAVAILABLE} (materiality ${e.materiality}).`;
   const gap = e.expectationGap === 'UNKNOWN' ? `Expectations: ${DATA_UNAVAILABLE} (no consensus, so the gap is unknown, not negative).`
     : `Expectations: guidance is ${e.expectationGap.replace('_', ' ').toLowerCase()} versus consensus${e.gapPct != null ? ` (${signed(e.gapPct, 1)}%)` : ''}.`;
@@ -1290,7 +1332,13 @@ export function decide(e: GuidanceEvent, ctx?: GuContext, x?: { thesisBreaking?:
   const ups = upChanges(e);
   const v2Lines = v2DecisionLines(e);
   const reject = (why: string) => ({ decision: 'REJECT' as GuDecision, reasons: [...lines, ...v2Lines, `Result: REJECT — ${why}`] });
-  if (!ups.length) return reject(`no measurable upgrade (previous guidance not found${e.v2?.unitWarnings.length ? '; a figure was dropped for a unit or basis problem, see warnings' : ''})`);
+  if (!ups.length) {
+    const k = classOfEvent(e);
+    if (k === 'REITERATION') return reject('guidance was reiterated at the same level, not raised');
+    if (k === 'DOWNGRADE') return reject('guidance was lowered, not raised');
+    if (k === 'NO_RAISE') return reject('no measure was raised on the numbers found');
+    return reject(`no measurable upgrade (previous guidance not found${e.v2?.unitWarnings.length ? '; a figure was dropped for a unit or basis problem, see warnings' : ''})`);
+  }
   if (e.guidance_quality === 'LOW') return reject('the raise comes from a low-quality, one-time driver');
   if (e.duration === 'ONE_OFF') return reject('the raise is one-off');
   if (e.expectationGap === 'NEGATIVE') return reject('guidance is still below consensus');
@@ -1476,6 +1524,7 @@ export function nextEvidenceFor(variable: string | null): string[] {
 }
 
 // ── durability from stated evidence only ─────────────────────────────────────────────────────
+const SHORT_LIVED_RE = /\b(?:temporar\w+|short[- ]?term|short[- ]?lived|transient|fleeting|one[- ]quarter|this quarter only|(?:expected|likely|set) to (?:fade|reverse|normali[sz]e|ease|unwind)|will (?:fade|reverse|normali[sz]e|ease)|windfall)\b/i;
 export function assessDurability(text: string, changes: GuChange[], driver: GuDriverResult, old: GuDuration, w: GuWhyNow): { level: GuDurabilityLevel; why: string } {
   const t = text ?? ''; const has = (k: string) => w.keys.includes(k);
   if (old === 'ONE_OFF') return { level: 'ONE_OFF', why: 'The stated driver is a one-time item, so it is not expected to repeat.' };
@@ -1488,9 +1537,10 @@ export function assessDurability(text: string, changes: GuChange[], driver: GuDr
   if (has('CAPACITY')) return { level: 'MULTI_QUARTER', why: 'New capacity is being added, which stays in place after this quarter. Demand to fill it is not evidenced in the source.' };
   if (has('ORDERS')) return { level: 'MULTI_QUARTER', why: 'An order book or pipeline is stated; it converts to revenue over the coming quarters. Contract length is not stated.' };
   if (old === 'MULTI_QUARTER') return { level: 'MULTI_QUARTER', why: 'The source states the driver continues over the coming quarters.' };
-  if (driver.kinds.some(k => k === 'FX' || k === 'TEMP_SUPPLY' || k === 'ONE_OFF_PRICING' || k === 'PRICE_HIKE' || k === 'COMMODITY'))
-    return { level: '1_2_QUARTERS', why: 'The stated driver (currency, prices, supply or commodities) can reverse within a quarter or two.' };
-  if (/\b(?:next|coming) quarter\b/i.test(t)) return { level: '1_2_QUARTERS', why: 'Only the next quarter is referred to; no capacity, contract or backlog evidence for longer is stated.' };
+  // zzz849: "one to two quarters" is claimed ONLY when the source says the driver is short-lived. A driver such as currency, prices or commodities
+  // being mentioned is not evidence that it reverses; without that statement the answer is "unknown, not enough evidence".
+  if (driver.kinds.some(k => k === 'FX' || k === 'TEMP_SUPPLY' || k === 'ONE_OFF_PRICING' || k === 'PRICE_HIKE' || k === 'COMMODITY') && SHORT_LIVED_RE.test(t))
+    return { level: '1_2_QUARTERS', why: 'The source says the driver (currency, prices, supply or commodities) is temporary or short-lived, so it can reverse within a quarter or two.' };
   void changes;
   return { level: 'UNKNOWN_INSUFFICIENT_EVIDENCE', why: 'No new capacity, multi-year contract or order backlog is stated, so how long this lasts is unknown (not assumed brief).' };
 }
@@ -1656,7 +1706,8 @@ export function buildGuidanceEvent(input: GuCandidate[] | GuSkeleton, ctx: GuCon
   }
   if (gap === 'UNKNOWN' && !evidenceGaps.some(g => /gap/.test(g))) evidenceGaps.push(`Consensus: ${DATA_UNAVAILABLE}`);
   if (!ver.primaryAvailable) evidenceGaps.push(ver.note ?? 'Primary source not found yet');
-  if (!ups.length) evidenceGaps.push('Previous guidance not found, so this cannot be called a measured upgrade');
+  const evClass = eventClassOf(changes, ranges);
+  if (!ups.length && evClass === 'DETECTED') evidenceGaps.push('Previous guidance not found, so this cannot be called a measured upgrade');
   if (driver.quality === 'UNKNOWN') evidenceGaps.push('Driver not stated in the source');
   if (duration === 'UNKNOWN') evidenceGaps.push('How long the driver lasts is not stated');
   if (valuation.currentPE.value == null) evidenceGaps.push(`P/E: ${DATA_UNAVAILABLE}`);
@@ -1701,9 +1752,9 @@ export function buildGuidanceEvent(input: GuCandidate[] | GuSkeleton, ctx: GuCon
     ranges, metricBasis: basisOfEvent(changes, text),
     operatingVariable: why.variable, durabilityLevel: dur2.level, durabilityWhy: dur2.why, whyNowResolved: why.resolved,
     scorecard: [], smallMidCapInflection: smallMid, detectedVia: detectedViaOf(sk.candidates),
-    consensusAvailable: consensus.value != null, unitWarnings,
+    consensusAvailable: consensus.value != null, unitWarnings, eventClass: evClass, eventLabel: EVENT_CLASS_LABEL[evClass],
   };
-  if (!ups.length && sk.candidates.some(c => isGuidanceUpgradeCandidate(c).include)) {
+  if (!ups.length && evClass === 'DETECTED' && sk.candidates.some(c => isGuidanceUpgradeCandidate(c).include)) {
     base.v2.statedDirection = 'RAISED';
     const names: string[] = [];
     for (const sn of splitSentences(text)) if (managementRaise(sn)) for (const k of findMetricKws(sn)) { const l = METRIC_LABEL[k.metric]; if (k.metric !== 'OTHER' && !names.includes(l)) names.push(l); }
@@ -1726,9 +1777,32 @@ export function buildGuidanceEvent(input: GuCandidate[] | GuSkeleton, ctx: GuCon
   return base;
 }
 
-export function processCandidates(cands: GuCandidate[], ctxFor: (ticker: string) => GuContext, now: Date, window: GuWindow = '7D'): GuidanceEvent[] {
+/** zzz849: numbers the persistent guidance universe holds for the same company, offered to an event that has none of its own. */
+export interface GuExtra { cand: GuCandidate; numbersFrom: NonNullable<GuEventV2['numbersFrom']> }
+export type GuExtraFor = (sk: GuSkeleton) => GuExtra[];
+/**
+ * Build one event. When the skeleton has NO before-and-after numbers and `extraFor` offers source-backed ones (universe record), the event is rebuilt
+ * from the same candidates PLUS the record's own statement, as ONE event (earliest date = the announcement). The provenance is stamped on the event:
+ * `v2.numbersFrom` carries the record's own verification tier, the sources list names the record's source, and a media-only record never becomes VERIFIED.
+ */
+export function buildWithExtras(sk: GuSkeleton, ctx: GuContext, now: Date, extraFor?: GuExtraFor): GuidanceEvent {
+  if (!extraFor || eventClassOf(sk.changes) !== 'DETECTED') return buildGuidanceEvent(sk, ctx, now);
+  let extras: GuExtra[] = [];
+  try { extras = extraFor(sk) || []; } catch { extras = []; }
+  if (!extras.length) return buildGuidanceEvent(sk, ctx, now);
+  const ev = buildGuidanceEvent([...sk.candidates, ...extras.map(x => x.cand)], ctx, now);
+  if (eventClassOf(ev.changes, ev.v2?.ranges) === 'DETECTED' || !ev.v2) return buildGuidanceEvent(sk, ctx, now);   // the record added no readable numbers: leave the event as it was
+  const nf = extras[0].numbersFrom;
+  ev.v2.numbersFrom = nf;
+  ev.v2.detectedVia = ev.v2.detectedVia.includes('guidance universe record') ? ev.v2.detectedVia : [...ev.v2.detectedVia, 'guidance universe record'];
+  ev.evidenceGaps = [nf.note, ...ev.evidenceGaps.filter(g => !/^Previous guidance not found/.test(g))];
+  if (!ev.primaryAvailable) ev.nextEvidence = ['Open the company\'s own filing or presentation and confirm these figures', ...ev.nextEvidence].slice(0, 3);
+  return ev;
+}
+
+export function processCandidates(cands: GuCandidate[], ctxFor: (ticker: string) => GuContext, now: Date, window: GuWindow = '7D', extraFor?: GuExtraFor): GuidanceEvent[] {
   const kept = cands.filter(c => withinWindow(c.publishedAt, window, now) && isGuidanceUpgradeCandidate(c).include);
-  const events = mergeCandidates(kept).map(sk => buildGuidanceEvent(sk, ctxFor(sk.ticker) ?? {}, now));
+  const events = mergeCandidates(kept).map(sk => buildWithExtras(sk, ctxFor(sk.ticker) ?? {}, now, extraFor));
   return rank(events);
 }
 

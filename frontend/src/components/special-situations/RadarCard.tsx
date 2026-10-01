@@ -15,7 +15,7 @@ import { addFromRadarItem, NOT_ESTABLISHED, type OwnerTag } from '@/lib/multibag
 import type { LedgerEntry } from '@/lib/multibagger-radar-types';
 import {
   CHAIN_MARK, DELTA_LABEL, EVIDENCE_META, INDICATOR_LABEL, LINK_KEY_LABEL, LINK_STATUS_META, MATERIALITY_LABEL, NOT_YET, PRICE_BLOCK_LABEL, PRIORITY_COLOR, QUANT_LABEL, R,
-  TAG_COLOR, TRANSMISSION_LABEL, box, durationLine, has, oneLineRow, orNotYet, populatedSections, progressionText, sourcesLine, statusBadges,
+  TAG_COLOR, TRANSMISSION_LABEL, box, collapseChain, evidenceLines, durationLine, has, oneLineRow, orNotYet, populatedSections, progressionText, sourcesLine, statusBadges,
 } from './radar-tokens';
 import { Chip, Field, btn } from './RadarBits';
 import { LedgerForm } from './LedgerForm';
@@ -55,6 +55,9 @@ export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now }
   const feedHref = item.feedEventId ? `/special-situations?tab=all#${encodeURIComponent(item.feedEventId)}` : '/special-situations?tab=all';
   const badges = statusBadges(item);
   const links = item.catalystChain || [];
+  const chainView = collapseChain(links, (c) => LINK_KEY_LABEL[c.link]);
+  const oldUnknown = item.chain.filter((c) => c.status === 'unknown').map((c) => c.step);
+  const evLine = evidenceLines(item);
   const transmission = item.financialTransmission || item.link;
   const eligible = item.ledgerEligible !== false;
   const prog = progressionText(item);
@@ -83,15 +86,17 @@ export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now }
         </div>
         {links.length > 0 ? (
           <ul style={{ listStyle: 'none', margin: '4px 0 0', padding: 0, display: 'flex', flexWrap: 'wrap', gap: 4 }} data-radar-chain>
-            {links.map((c) => {
+            {chainView.shown.map((c) => {
               const m = LINK_STATUS_META[c.status];
               const tip = [c.evidence, c.source, c.date, c.confidence !== 'UNKNOWN' ? `confidence ${c.confidence.toLowerCase()}` : null].filter(has).join(' | ');
               return <li key={c.link}><Chip color={m.color} dashed={m.dashed} title={tip || undefined}>{m.mark} {LINK_KEY_LABEL[c.link]}: {m.label}</Chip></li>;
             })}
+            {chainView.notApplicable && <li style={{ fontSize: 11.5, color: R.faint }} data-radar-chain-na>{chainView.notApplicable}</li>}
           </ul>
         ) : (
           <ol style={{ listStyle: 'none', margin: '4px 0 0', padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
             {item.chain.map((c, i) => {
+              if (c.status === 'unknown') return null;
               const m = CHAIN_MARK[c.status];
               return (
                 <li key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', borderLeft: `2px ${m.border} ${m.color}`, paddingLeft: 8, opacity: m.opacity }}>
@@ -103,6 +108,7 @@ export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now }
               );
             })}
             {item.chain.length === 0 && <li style={{ fontSize: 12, color: R.faint }}>{NOT_YET}</li>}
+            {oldUnknown.length > 0 && <li style={{ fontSize: 11.5, color: R.faint }} data-radar-chain-na>Not applicable or not established: {oldUnknown.join(', ')}</li>}
           </ol>
         )}
       </div>
@@ -118,10 +124,16 @@ export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now }
             {has(item.oneSentenceMechanism) && has(item.mechanism) ? ' ' : ''}{has(item.mechanism) ? item.mechanism : ''}
           </Sub>
         )}
-        <Sub label="Evidence">
-          <span style={{ color: ev.color, fontWeight: 700 }}>{EVIDENCE_LABEL[item.evidence.status]}</span>
+        <Sub label="Event evidence">
+          <span style={{ color: ev.color, fontWeight: 700 }}>{item.eventEvidence ? evLine.event : EVIDENCE_LABEL[item.evidence.status]}</span>
           {' - '}{say(item.evidence.sourceLabel)}. {say(item.evidence.why)}
         </Sub>
+        {item.economicEvidence && (
+          <Sub label="Economic evidence">
+            <span style={{ fontWeight: 700 }}>{evLine.economic}</span>
+            {item.economicEvidence === 'NOT_ESTABLISHED' ? '. The source states no company revenue, EBITDA or profit figure; a confirmed event does not make an earnings link.' : ''}
+          </Sub>
+        )}
         {show.has('scope') && item.evidenceScope && (
           <Sub label="Evidence scope">
             {item.evidenceScope.confirmed.length > 0 && <div><b style={{ color: R.green }}>Confirmed:</b> {item.evidenceScope.confirmed.join('; ')}</div>}

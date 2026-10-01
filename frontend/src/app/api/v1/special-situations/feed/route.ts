@@ -36,6 +36,7 @@ import {
 
 import {
   classifyForm10, contentHints, createEventClusterer, decodeHtmlEntities, extractSubjectTickers, identifySubject, isNonEventContent, countCanonicalEventTypes,
+  isFundRepurchaseOffer, parseSecFilingTitle, summariseHeldBack, FEED_QUARANTINE_LABEL, type FeedQuarantineReason,
 } from '@/lib/special-sit-feed-quality';
 
 export const dynamic = 'force-dynamic';
@@ -459,6 +460,8 @@ interface CanonicalEvent {
   is_fund: boolean;
   primary_source: boolean;
   age_hours: number;
+  /** Set when the event is held out of the main Radar list (visible in held_back). */
+  quarantine_reason?: FeedQuarantineReason | null;
 }
 
 async function buildFeed(): Promise<{
@@ -654,7 +657,7 @@ async function buildFeed(): Promise<{
       target_name: sig.target_name || (subj.company !== 'Not identified' ? subj.company : it.title.slice(0, 60)),
       tickers: it.tickers,
     });
-    const eid = sig.event_type === 'FORM10_REGISTRATION' ? baseId : clusterer.assign(baseId, it.title, it.region, sig.event_type);
+    const eid = sig.event_type === 'FORM10_REGISTRATION' ? baseId : clusterer.assign(baseId, it.title, it.region, sig.event_type, { link: it.link, pubDate: it.pub_date });
     const bucket = eventBuckets.get(eid) || [];
     bucket.push(it);
     eventBuckets.set(eid, bucket);
@@ -675,6 +678,9 @@ async function buildFeed(): Promise<{
       const aIsPrimary = SEC_PRIMARY_RE.test(a.link) && !sigA.is_amendment;
       const bIsPrimary = SEC_PRIMARY_RE.test(b.link) && !sigB.is_amendment;
       if (aIsPrimary !== bIsPrimary) return aIsPrimary ? -1 : 1;
+      // The Subject row of a deal is the card; a 'Filed by' row (acquirer / sponsor) is the same deal, never its own card.
+      const roleRank = (x: FeedItem) => { const r = parseSecFilingTitle(x.title)?.role; return r === 'subject' || r === 'issuer' ? 0 : r === 'filed by' ? 2 : 1; };
+      if (roleRank(a) !== roleRank(b)) return roleRank(a) - roleRank(b);
       // Otherwise newest first
       const ta = a.pub_date ? new Date(a.pub_date).getTime() : 0;
       const tb = b.pub_date ? new Date(b.pub_date).getTime() : 0;
@@ -766,6 +772,11 @@ async function buildFeed(): Promise<{
         ? { is_tradable: false, tier: 'NOISE' as const, rationale: hintsP.isPriceArticle ? 'Price article, not a corporate event' : hintsP.isPreview ? 'Preview, result not out yet' : hintsP.isAnalystTarget ? 'Analyst target / rating, non-investment signal' : hintsP.isOpinion ? 'Opinion / prediction piece' : 'Not a company event' }
         : tradabilityRaw;
 
+    // Fund / BDC / interval-fund / feeder periodic repurchase offers (SC TO-I) are not equity special situations: held back, with a reason.
+    const fundRep = isFundRepurchaseOffer({ title: primary.title, description: allText, source: primary.source, eventType });
+    const quarantineReason: FeedQuarantineReason | null = fundRep ? 'FUND_REPURCHASE_OFFER' : null;
+    if (quarantineReason) { tradability.is_tradable = false; (tradability as any).tier = 'NOISE'; tradability.rationale = FEED_QUARANTINE_LABEL[quarantineReason]; }
+
     const lifecycle = inferLifecycleStage({
       is_amendment: primarySig.is_amendment,
       amendment_count: amendments.length,
@@ -795,9 +806,10 @@ async function buildFeed(): Promise<{
       lifecycle,
       region,
       tickers: allTickers,
-      is_fund: isFund,
+      is_fund: isFund || fundRep,
       primary_source: hasPrimarySource,
       age_hours: ageHours,
+      quarantine_reason: quarantineReason,
     });
   }
 
@@ -821,7 +833,10 @@ async function buildFeed(): Promise<{
   };
   for (const e of events) by_tier[e.tier] += 1;
 
+  const held_back = summariseHeldBack(events.filter((e) => e.quarantine_reason).map((e) => ({ reason: e.quarantine_reason as FeedQuarantineReason, name: e.target_name || e.primary_filing.title })));
+
   const result: any = {
+    held_back,
     last_updated: new Date().toISOString(),
     total: deduped.length,
     by_category,

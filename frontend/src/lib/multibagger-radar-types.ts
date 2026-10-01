@@ -230,8 +230,18 @@ export interface RadarItem {
   /** Per-variable impact: a stated value, 'Not quantified' (link exists, no number) or 'Not established' (no link). */
   impacts?: ImpactMap;
   catalystMaturity?: CatalystMaturity | null;
-  /** 0 (broken) to 7 (mature); a position on the maturity ladder, not a score of quality. */
+  /** 0 (broken) to 7 (mature); a position on the maturity ladder, not a score of quality. Legacy: the reader sees stageNumber / stageLabel instead. */
   catalystProgression?: number;
+  /** Honest stage on the 1-7 ladder (see STAGE_LABEL). 3+ needs a primary source; 4+ needs a company earnings number; 5+ needs reported results. */
+  stageNumber?: number;
+  stageLabel?: string;
+  /** Event evidence and economic evidence are separate lines: a confirmed event never implies an established earnings link. */
+  eventEvidence?: EventEvidence;
+  economicEvidence?: EconomicEvidence;
+  /** Labelled facts the source states that are NOT earnings (deal value, capacity acquired, investment, capex). */
+  dealFacts?: string[];
+  /** The next quarter-style check for an earnings result: durability and the driver (price, volume or cost). Only set for results. */
+  resultDriverNote?: string | null;
   evidenceDelta?: EvidenceDelta;
   indicator?: { type: IndicatorType | null; label: string };
   catalystMateriality?: Materiality;
@@ -276,9 +286,26 @@ export interface CatalystLink {
   date: string | null;
   confidence: Confidence;
 }
-export type EventConfirmation = 'CONFIRMED' | 'REPORTED' | 'PLANNED' | 'DISPROVED' | 'NOT_APPLICABLE';
+/** REPORTED_RESULT = an earnings result that has already been reported (seen in secondary media, filing not read). */
+export type EventConfirmation = 'CONFIRMED' | 'REPORTED' | 'REPORTED_RESULT' | 'PLANNED' | 'DISPROVED' | 'NOT_APPLICABLE';
 export type MechanismStatus = 'STATED' | 'PARTIALLY_STATED' | 'ASSUMED' | 'NOT_ESTABLISHED' | 'CONTRADICTED';
-export type EarningsImpactStatus = 'CONFIRMED' | 'PARTIALLY_PROVEN' | 'UNPROVEN' | 'NOT_ESTABLISHED' | 'CONTRADICTED';
+/** REPORTED_RESULT = the item IS the reported earnings result, so "not yet in the numbers" would be wrong. */
+export type EarningsImpactStatus = 'CONFIRMED' | 'PARTIALLY_PROVEN' | 'UNPROVEN' | 'NOT_ESTABLISHED' | 'CONTRADICTED' | 'REPORTED_RESULT';
+
+/** Event evidence: how well the EVENT itself is sourced. Never implies an earnings link. */
+export type EventEvidence = 'PRIMARY_CONFIRMED' | 'PRIMARY_PROPOSED' | 'SECONDARY_REPORTED' | 'DISPROVED' | 'NOT_APPLICABLE';
+export const EVENT_EVIDENCE_LABEL: Record<EventEvidence, string> = {
+  PRIMARY_CONFIRMED: 'Primary-confirmed', PRIMARY_PROPOSED: 'Primary source, proposal only', SECONDARY_REPORTED: 'Secondary-reported', DISPROVED: 'Disproved', NOT_APPLICABLE: 'Not applicable',
+};
+/** Economic evidence: whether the source states a company earnings number (revenue / EBITDA / profit / order value). Deal, capex and capacity figures do not count. */
+export type EconomicEvidence = 'NOT_ESTABLISHED' | 'PARTLY' | 'QUANTIFIED' | 'REPORTED_RESULT';
+export const ECONOMIC_EVIDENCE_LABEL: Record<EconomicEvidence, string> = {
+  NOT_ESTABLISHED: 'Not established', PARTLY: 'Partly', QUANTIFIED: 'Quantified', REPORTED_RESULT: 'Reported result (secondary-reported, filing not read)',
+};
+/** Honest 1-7 ladder shown to the reader. 0 = broken. Never 'Validated' without a primary source. */
+export const STAGE_LABEL: Record<number, string> = {
+  0: 'Broken', 1: 'Reported', 2: 'Reported by several outlets (unconfirmed)', 3: 'Confirmed by company or filing', 4: 'Quantified', 5: 'Delivering in results', 6: 'Repeated', 7: 'Proven over several periods',
+};
 export type QuantificationStatus = 'QUANTIFIED' | 'PARTIALLY_QUANTIFIED' | 'NOT_QUANTIFIED' | 'NO_FINANCIAL_LINK';
 export interface ImpactMap { revenue: string; volume: string; asp: string; margin: string; ebitda: string; fcf: string; roce: string; marketShare: string }
 export type CatalystMaturity = 'DISCOVERY' | 'VALIDATED' | 'DEVELOPING' | 'FINANCIALLY_VISIBLE' | 'CONFIRMED' | 'ACCELERATING' | 'MATURE' | 'BROKEN';

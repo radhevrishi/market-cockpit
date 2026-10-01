@@ -6,7 +6,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GuWindow, GuidanceUpgradesResponse } from '@/lib/guidance-upgrades-types';
-import { applyFilters, splitToday, zeroEventWording, type MetricFilter, type ScopeFilter } from '@/lib/guidance-upgrades-format';
+import { applyFilters, splitToday, zeroEventWording, unresolvedCount, type MetricFilter, type ScopeFilter } from '@/lib/guidance-upgrades-format';
 import { overlayBook, countInBook } from '@/lib/guidance-upgrades-book';
 import { readLocalBookInput, fetchSavedHoldings } from '@/lib/thesis/book-sources';
 import type { GgCompany } from '@/lib/growth-guidance-types';
@@ -113,7 +113,7 @@ export default function GuidanceUpgradesPage() {
         )}
         {!(todayFirst && todayList.length > 0) && shown.map((e) => <GuCard key={e.guidance_event_id} e={e} onOpen={select} now={now} />)}
       </div>
-      <GuCoverage scan={data?.scan} now={now} window={window_} byMarket={data?.freshness.byMarket} eventCounts={{ IN: events.filter((e) => e.market === 'IN').length, US: events.filter((e) => e.market === 'US').length }} />
+      <GuCoverage unresolved={unresolvedCount(data?.unresolved)} scan={data?.scan} now={now} window={window_} byMarket={data?.freshness.byMarket} eventCounts={{ IN: events.filter((e) => e.market === 'IN').length, US: events.filter((e) => e.market === 'US').length }} />
       {!data?.scan && data?.freshness.note && <div style={{ fontSize: 12, color: R.dim }}>{data.freshness.note}</div>}
       <div style={{ fontSize: 11, color: R.faint }}>Company data only. Not investment advice. Prices are context here, never the reason.</div>
       {ggOpen && <GgDetail c={ggOpen} onClose={() => setGgOpen(null)} unverified={ggOpen.verification === 'SECONDARY_ONLY' || ggOpen.verification === 'UNVERIFIED'} />}

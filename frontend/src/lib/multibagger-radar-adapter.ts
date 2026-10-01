@@ -7,8 +7,10 @@
 import type { RadarInput } from './multibagger-radar';
 import type { RadarFeedEvent, RadarFeedHints, RadarFeedItem } from './multibagger-radar-feed-types';
 import {
-  NOT_IDENTIFIED, classifyForm10, contentHints, decodeHtmlEntities, identifySubject, isForm10Title, isSecSource, nonEarningsNumberSpans,
-  parseSecFilingTitle, publisherFamily, sameEvent, subjectFromHeadline, subtypeHint,
+  NOT_IDENTIFIED, canonicalEventKey, classifyForm10, contentHints, decodeHtmlEntities, identifySubject, is13e3Text, isForm10Title, isFundRepurchaseOffer, isSecSource,
+  legalBoilerplatePercents, nonEarningsNumberSpans, parseSecFilingTitle, priceReactionSpans, publisherFamily, sameCanonicalEvent, sameEvent, secAccession,
+  stripLegalBoilerplatePercents, subjectFromHeadline, subtypeHint, summariseHeldBack, FEED_QUARANTINE_LABEL,
+  type FeedQuarantineReason, type HeldBackSummary,
 } from './special-sit-feed-quality';
 
 const clean = (s: unknown): string => (typeof s === 'string' ? decodeHtmlEntities(s).replace(/\s+/g, ' ').trim() : '');
@@ -30,9 +32,14 @@ export type RadarInputWithHints = RadarInput & RadarFeedHints;
 export function eventToRadarInput(ev: RadarFeedEvent): RadarInputWithHints {
   const pf = ev.primary_filing || ({} as RadarFeedEvent['primary_filing']);
   const title = clean(pf.title);
-  const description = clean(pf.description) || undefined;
+  const rawDescription = clean(pf.description) || undefined;
   const sec = parseSecFilingTitle(title);
   const secSource = !!sec || isSecSource(pf.source, pf.link);
+  // SC 13E-3 text carries legal-boilerplate percentages ('40%'); they are not a deal amount. Strip them from the description
+  // (they stay listed in nonEarningsNumbers so no later stage can show them as evidence).
+  const is13e3 = secSource && is13e3Text(sec?.form, `${title} ${rawDescription || ''} ${pf.source || ''}`);
+  const boilerplate = is13e3 ? legalBoilerplatePercents(`${title} ${rawDescription || ''}`) : [];
+  const description = is13e3 && rawDescription ? (stripLegalBoilerplatePercents(rawDescription) || undefined) : rawDescription;
   const hints = contentHints(title, description);
   const form10 = classifyForm10(title, description);
   const sub = subtypeHint(title);
@@ -43,12 +50,14 @@ export function eventToRadarInput(ev: RadarFeedEvent): RadarInputWithHints {
   const id = identifySubject({ title, feedTicker, isSec: secSource, explicitName: explicit || null });
   const ticker = id.ticker;
   // A ticker given by the feed itself (no name in the headline subject or target_name) is shown as the name, as before.
+  const fundRepurchase = isFundRepurchaseOffer({ title, description: rawDescription, source: pf.source, company: sec ? sec.company : explicit || id.company, eventType: ev.event_type });
   const company = feedTicker && ticker === feedTicker && id.tickerSource === 'feed' && !explicit ? ticker : (id.company && id.company !== NOT_IDENTIFIED ? id.company : (ticker || NOT_IDENTIFIED));
 
   // Event typing. A registration is never a spin-off; a merger is never a demerger; a loan is financing.
   let eventType = ev.event_type;
   let category = ev.category || pf.category;
-  if (form10 === 'REGISTRATION') { eventType = 'FORM10_REGISTRATION'; category = undefined; }
+  if (fundRepurchase) { eventType = 'FUND_REPURCHASE_OFFER'; category = undefined; }
+  else if (form10 === 'REGISTRATION') { eventType = 'FORM10_REGISTRATION'; category = undefined; }
   else if (hints.isPriceArticle) { eventType = 'PRICE_ARTICLE'; category = undefined; }
   else if (hints.isPreview) { eventType = 'RESULTS_PREVIEW'; category = undefined; }
   else if (hints.isAnalystTarget) { eventType = 'ANALYST_TARGET'; category = undefined; }
@@ -66,7 +75,7 @@ export function eventToRadarInput(ev: RadarFeedEvent): RadarInputWithHints {
   for (const f of filings) families.add(clean(f.source) ? publisherFamily(f.source) : `t:${norm(f.title || '')}`);
   if (!filings.length) families.add(publisherFamily(pf.source));
   const region = ev.region || pf.region || 'GLOBAL';
-  const tier = hints.isPriceArticle || hints.isPreview || hints.isAnalystTarget || hints.isOpinion || hints.isNonCorporate || form10 === 'REGISTRATION' ? 'NOISE' : ev.tier;
+  const tier = fundRepurchase || hints.isPriceArticle || hints.isPreview || hints.isAnalystTarget || hints.isOpinion || hints.isNonCorporate || form10 === 'REGISTRATION' ? 'NOISE' : ev.tier;
 
   const out = {
     id: ev.event_id,
@@ -94,8 +103,16 @@ export function eventToRadarInput(ev: RadarFeedEvent): RadarInputWithHints {
     isNonCorporate: hints.isNonCorporate,
     isRegistration: form10 === 'REGISTRATION',
     subtypeHint: form10 === 'SPIN' ? 'SPIN' : sub,
-    nonEarningsNumbers: nonEarningsNumberSpans(`${title} ${description || ''}`),
+    // Price-reaction wording ('hits all-time high') is context only; it is listed so no stage can read it as evidence.
+    nonEarningsNumbers: Array.from(new Set([...nonEarningsNumberSpans(`${title} ${rawDescription || ''}`), ...priceReactionSpans(`${title} ${rawDescription || ''}`), ...boilerplate])),
     tickerResolved: !!ticker,
+    isFundRepurchaseOffer: fundRepurchase,
+    feedQuarantineReason: fundRepurchase ? 'FUND_REPURCHASE_OFFER' : null,
+    feedQuarantineLabel: fundRepurchase ? FEED_QUARANTINE_LABEL.FUND_REPURCHASE_OFFER : undefined,
+    groupName: id.group === true,
+    tickerNote: ticker ? (id.viaParent ? `via parent ${id.viaParent}` : undefined) : (id.group ? 'No listed ticker (group)' : undefined),
+    tickerVia: id.viaParent || undefined,
+    isLegalBoilerplateAmount: is13e3,
   } as RadarInputWithHints;
   return out;
 }
@@ -108,7 +125,7 @@ const srcRank = (f: RadarFeedItem | undefined): number => {
   if (/ndtv|moneycontrol|cnbc|marketwatch|yahoo/.test(s)) return 2;
   return 1;
 };
-const evScore = (e: RadarFeedEvent): number => (e.primary_source ? 10 : 0) + srcRank(e.primary_filing) * 2 + Math.min((e.filings || []).length, 5) * 0.1 + (/\bmay\b|could|likely|plans?\b|proposal|questions?|report/i.test(e.primary_filing?.title || '') ? -1 : 0) + (/^will\b|\?\s*$|what .* say/i.test(clean(e.primary_filing?.title)) ? -3 : 0);
+const evScore = (e: RadarFeedEvent): number => (e.primary_source ? 10 : 0) + srcRank(e.primary_filing) * 2 + Math.min((e.filings || []).length, 5) * 0.1 + (/\bmay\b|could|likely|plans?\b|proposal|questions?|report/i.test(e.primary_filing?.title || '') ? -1 : 0) + (/\(Subject\)\s*$/i.test(clean(e.primary_filing?.title)) ? 3 : 0) + (/\(Filed by\)\s*$/i.test(clean(e.primary_filing?.title)) ? -3 : 0) + (/^will\b|\?\s*$|what .* say/i.test(clean(e.primary_filing?.title)) ? -3 : 0);
 
 /** Merges the same event shown on several cards. Returns the kept events and the number merged away. */
 export function dedupeFeedEvents(events: ReadonlyArray<RadarFeedEvent>): { events: RadarFeedEvent[]; merged: number } {
@@ -119,7 +136,16 @@ export function dedupeFeedEvents(events: ReadonlyArray<RadarFeedEvent>): { event
     const t = clean(ev.primary_filing?.title);
     const reg = (ev.region || ev.primary_filing?.region || 'GLOBAL');
     const h = contentHints(t);
-    const hit = (h.isRegistration || isForm10Title(t)) ? undefined : kept.find((k) => (k.region || k.primary_filing?.region || 'GLOBAL') === reg && sameEvent({ title: clean(k.primary_filing?.title), eventType: k.event_type }, { title: t, eventType: ev.event_type }));
+    const acc = secAccession(ev.primary_filing?.link);
+    const ck = canonicalEventKey({ title: t, eventType: ev.event_type, pubDate: ev.primary_filing?.pub_date });
+    const hit = (h.isRegistration || isForm10Title(t)) ? undefined : kept.find((k) => {
+      if ((k.region || k.primary_filing?.region || 'GLOBAL') !== reg) return false;
+      // same SEC accession = the same filing listed once per party (subject / filed-by)
+      if (acc && secAccession(k.primary_filing?.link) === acc) return true;
+      const kt = clean(k.primary_filing?.title);
+      return sameCanonicalEvent(canonicalEventKey({ title: kt, eventType: k.event_type, pubDate: k.primary_filing?.pub_date }), ck)
+        || sameEvent({ title: kt, eventType: k.event_type }, { title: t, eventType: ev.event_type });
+    });
     if (!hit) { kept.push(ev); continue; }
     merged += 1;
     const winner = evScore(ev) > evScore(hit) ? ev : hit;
@@ -145,8 +171,14 @@ export function dedupeFeedEvents(events: ReadonlyArray<RadarFeedEvent>): { event
   return { events: out, merged };
 }
 
-/** Maps every event (dropping exact duplicate ids, headline-less events and same-event duplicates). */
-export function eventsToRadarInputs(events: ReadonlyArray<RadarFeedEvent> | null | undefined): RadarInputWithHints[] {
+/** Same as before, minus held-back items. Pass `{ includeHeldBack: true }` to keep fund repurchase offers (flagged, never in a thesis bucket). */
+export function eventsToRadarInputs(events: ReadonlyArray<RadarFeedEvent> | null | undefined, opts?: { includeHeldBack?: boolean }): RadarInputWithHints[] {
+  const all = splitRadarInputs(events);
+  return opts?.includeHeldBack ? [...all.inputs, ...all.heldBackInputs] : all.inputs;
+}
+
+/** Maps every event (dropping exact duplicate ids, headline-less events and same-event duplicates), split into the main list and the held-back list. */
+export function splitRadarInputs(events: ReadonlyArray<RadarFeedEvent> | null | undefined): { inputs: RadarInputWithHints[]; heldBackInputs: RadarInputWithHints[]; heldBack: HeldBackSummary } {
   const seen = new Set<string>();
   const uniq: RadarFeedEvent[] = [];
   for (const ev of events || []) {
@@ -155,5 +187,10 @@ export function eventsToRadarInputs(events: ReadonlyArray<RadarFeedEvent> | null
     seen.add(ev.event_id);
     uniq.push(ev);
   }
-  return dedupeFeedEvents(uniq).events.map(eventToRadarInput);
+  const mapped = dedupeFeedEvents(uniq).events.map(eventToRadarInput);
+  const inputs: RadarInputWithHints[] = [];
+  const heldBackInputs: RadarInputWithHints[] = [];
+  for (const i of mapped) (i.feedQuarantineReason ? heldBackInputs : inputs).push(i);
+  const heldBack = summariseHeldBack(heldBackInputs.map((i) => ({ reason: i.feedQuarantineReason as FeedQuarantineReason, name: i.company })));
+  return { inputs, heldBackInputs, heldBack };
 }

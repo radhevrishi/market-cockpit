@@ -2,6 +2,7 @@
 // Colour carries meaning only (evidence status / thesis status). No fills that
 // assume a dark background: tints are transparent mixes of theme variables.
 
+import { ECONOMIC_EVIDENCE_LABEL, EVENT_EVIDENCE_LABEL } from '@/lib/multibagger-radar-types';
 import type {
   EvidenceStatus, PortfolioTag, RadarBucket, ResearchPriority, ThesisStatus, ChainStatus, RadarItem, LinkStatus, CatalystLinkKey, EvidenceRead, DurationRead,
   EventConfirmation, MechanismStatus, EarningsImpactStatus, QuantificationStatus, FalsePositiveReason, CatalystMaturity, EvidenceDelta, IndicatorType, Materiality, CatalystKind,
@@ -94,6 +95,7 @@ export const LINK_KEY_LABEL: Record<CatalystLinkKey, string> = {
 export const EVENT_CONF_META: Record<EventConfirmation, { label: string; color: string; dashed: boolean }> = {
   CONFIRMED: { label: 'Confirmed by a filing or the company', color: R.green, dashed: false },
   REPORTED: { label: 'Reported, not yet confirmed', color: R.amber, dashed: true },
+  REPORTED_RESULT: { label: 'Already reported earnings result (secondary-reported, filing not read)', color: R.cyan, dashed: true },
   PLANNED: { label: 'Planned, not yet done', color: R.violet, dashed: true },
   DISPROVED: { label: 'Disproved', color: R.red, dashed: false },
   NOT_APPLICABLE: { label: 'Not applicable', color: R.grey, dashed: true },
@@ -109,6 +111,7 @@ export const EARNINGS_IMPACT_META: Record<EarningsImpactStatus, { label: string;
   CONFIRMED: { label: 'Shown in reported numbers', color: R.green, dashed: false },
   PARTIALLY_PROVEN: { label: 'Partly shown in numbers', color: R.cyan, dashed: false },
   UNPROVEN: { label: 'Not yet in the numbers', color: R.amber, dashed: true },
+  REPORTED_RESULT: { label: 'Reported - this is the earnings result', color: R.cyan, dashed: false },
   NOT_ESTABLISHED: { label: 'Not established', color: R.grey, dashed: true },
   CONTRADICTED: { label: 'Contradicted', color: R.red, dashed: false },
 };
@@ -164,7 +167,7 @@ export function durationLine(d: DurationRead): string {
 }
 
 export const MATURITY_LABEL: Record<CatalystMaturity, string> = {
-  DISCOVERY: 'Discovery', VALIDATED: 'Validated', DEVELOPING: 'Developing', FINANCIALLY_VISIBLE: 'Financially visible', CONFIRMED: 'Confirmed',
+  DISCOVERY: 'Reported', VALIDATED: 'Reported, not yet confirmed', DEVELOPING: 'Developing', FINANCIALLY_VISIBLE: 'Financially visible', CONFIRMED: 'Confirmed',
   ACCELERATING: 'Accelerating', MATURE: 'Mature', BROKEN: 'Broken',
 };
 export const DELTA_LABEL: Record<EvidenceDelta, string> = {
@@ -174,8 +177,15 @@ export const DELTA_LABEL: Record<EvidenceDelta, string> = {
 export const INDICATOR_LABEL: Record<IndicatorType, string> = { LEADING: 'Leading indicator', INTERMEDIATE: 'Intermediate indicator', LAGGING: 'Lagging indicator' };
 export const MATERIALITY_LABEL: Record<Materiality, string> = { VERY_HIGH: 'Very high', HIGH: 'High', MODERATE: 'Moderate', LOW: 'Low', UNKNOWN: 'Not established' };
 
-/** 'Stage 3 of 7 (Developing)'. A position on a ladder, not a quality rating. Null when not supplied. */
-export function progressionText(i: Pick<RadarItem, 'catalystMaturity' | 'catalystProgression'>): string | null {
+/**
+ * 'Stage 3 of 7 (Confirmed by company or filing)'. A position on a ladder, not a quality rating. Null when not supplied.
+ * The engine's honest stage (stageNumber / stageLabel) wins; older items fall back to the legacy maturity wording, which never says 'Validated'.
+ */
+export function progressionText(i: Pick<RadarItem, 'catalystMaturity' | 'catalystProgression'> & Partial<Pick<RadarItem, 'stageNumber' | 'stageLabel'>>): string | null {
+  if (typeof i.stageNumber === 'number' && Number.isFinite(i.stageNumber)) {
+    const n = Math.min(7, Math.max(0, Math.round(i.stageNumber)));
+    return has(i.stageLabel) ? `Stage ${n} of 7 (${i.stageLabel})` : `Stage ${n} of 7`;
+  }
   const p = i.catalystProgression;
   const stage = typeof p === 'number' && Number.isFinite(p) ? `Stage ${Math.min(7, Math.max(0, Math.round(p)))} of 7` : null;
   const m = i.catalystMaturity ? MATURITY_LABEL[i.catalystMaturity] : null;
@@ -255,3 +265,17 @@ export const KIND_LEGEND: Array<{ group: string; kinds: CatalystKind[] }> = [
   { group: 'Event', kinds: ['CONTRACT_ORDER', 'REGULATORY_DECISION', 'FINANCING', 'MANAGEMENT_CHANGE'] },
   { group: 'Low signal', kinds: ['CORPORATE_ACTION', 'PRICE_MOVE', 'ANALYST_CHANGE', 'MEDIA_NARRATIVE'] },
 ];
+
+/** Event evidence and economic evidence as two separate lines. A confirmed event never implies an established earnings link. */
+export function evidenceLines(i: Pick<RadarItem, 'evidence' | 'eventEvidence' | 'economicEvidence' | 'dealFacts'>): { event: string; economic: string } {
+  const event = i.eventEvidence ? EVENT_EVIDENCE_LABEL[i.eventEvidence] : NOT_YET;
+  const economic = i.economicEvidence ? ECONOMIC_EVIDENCE_LABEL[i.economicEvidence] : NOT_YET;
+  return { event, economic };
+}
+
+/** Collapses the chain links with nothing to say into one line, so no empty rows are printed. */
+export function collapseChain<T extends { status: string }>(links: T[], label: (l: T) => string): { shown: T[]; notApplicable: string | null } {
+  const shown = links.filter((l) => l.status !== 'NOT_APPLICABLE');
+  const na = links.filter((l) => l.status === 'NOT_APPLICABLE').map(label);
+  return { shown, notApplicable: na.length ? `Not applicable: ${na.join(', ')}` : null };
+}

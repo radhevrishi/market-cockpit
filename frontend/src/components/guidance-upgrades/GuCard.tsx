@@ -2,7 +2,7 @@
 // zzz843 — one compact guidance-upgrade card. No score is ever shown; order comes from the engine.
 import React from 'react';
 import type { GuidanceEvent } from '@/lib/guidance-upgrades-types';
-import { DURATION_LABEL, FLAG_LABEL, IMPACT_LABEL, MATERIALITY_LABEL, METRIC_LABEL, THESIS_LABEL, UNAVAILABLE, agoText, changeMarker, fmtBeforeAfter, fmtNumber, isHeadlineOnly, secondUpgradeText, showsDecision, tickerText, hasRealRaise } from '@/lib/guidance-upgrades-format';
+import { DURATION_LABEL, FLAG_LABEL, IMPACT_LABEL, MATERIALITY_LABEL, METRIC_LABEL, THESIS_LABEL, UNAVAILABLE, agoText, changeMarker, fmtBeforeAfter, fmtNumber, isHeadlineOnly, secondUpgradeText, showsDecision, tickerText, hasRealRaise, isReiteration } from '@/lib/guidance-upgrades-format';
 import { IMPACT_COLOR, R, box } from './gu-tokens';
 import { Chip, ConsensusLine, CrossLinks, DecisionChip, DetectedVia, DurabilityRow, Field, GapBadge, HeadlineOnlyBanner, InflectionBadge, MetricBasisChip, RangeBlock, SourceChip, StageChip, TopEndCutNote, UnitWarnings, UnverifiedBanner, WhyNow } from './GuBits';
 
@@ -18,7 +18,9 @@ export function GuCard({ e, onOpen, now }: { e: GuidanceEvent; onOpen: (id: stri
       <header style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <b style={{ fontSize: 15 }}>{e.company}</b>
         <span style={{ fontSize: 11, color: R.dim, fontWeight: 700 }}>{tickerText(e)} · {e.market === 'IN' ? 'India' : e.market === 'US' ? 'USA' : 'Global'}</span>
-        {headline
+        {!headline && isReiteration(e)
+          ? <Chip color={R.grey} title="The company repeated its earlier guidance. Nothing was raised.">REITERATED · {agoText(e.announcement_timestamp || e.announcement_date, now)}</Chip>
+          : headline
           ? <Chip color={R.amber} dashed>DETECTED · {agoText(e.announcement_timestamp || e.announcement_date, now)}</Chip>
           : <Chip color={hasRealRaise(e) ? R.green : R.amber}>{hasRealRaise(e) ? 'GUIDANCE UPGRADE' : 'GUIDANCE UPDATE'} · {agoText(e.announcement_timestamp || e.announcement_date, now)}</Chip>}
         <InflectionBadge e={e} /><MetricBasisChip e={e} />

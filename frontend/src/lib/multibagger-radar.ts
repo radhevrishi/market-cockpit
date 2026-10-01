@@ -12,7 +12,7 @@
 
 import {
   BUCKET_ORDER, DURATION_LABEL, EVIDENCE_LABEL, INFLECTION_LABEL, KIND_LABEL, LINK_LABEL,
-  PRIORITY_LABEL,
+  PRIORITY_LABEL, STAGE_LABEL,
 } from './multibagger-radar-types';
 import type {
   CatalystKind, CatalystLink, CatalystLinkKey, CatalystMaturity, ChainStatus, ChainStep, Confidence, DurationCode, DurationRead,
@@ -20,7 +20,7 @@ import type {
   ExpectationsRead, FalsePositiveReason, GovernanceRead, HalfLife, HistoricalAnalogue, ImpactMap, IndicatorType, InflectionState,
   IntegrityCode, LedgerEntry, LinkStatus, LinkStrength, Materiality, MechanismStatus, MonitorAnswers, PriceResponse, ProofPoint,
   QuantificationStatus, RadarBucket, RadarItem, ResearchPriority, SharedDriverGroup, SourceDiversity, SourceQuality, TechnicalContext,
-  ThesisIntegrity, ThesisMonitor, ThesisStatus, QuarantineReason,
+  ThesisIntegrity, ThesisMonitor, ThesisStatus, QuarantineReason, EconomicEvidence, EventEvidence,
 } from './multibagger-radar-types';
 import type { RadarFeedHints } from './multibagger-radar-feed-types';
 import { NOT_IDENTIFIED, entityTokens, keyNumbers, publisherFamily } from './special-sit-feed-quality';
@@ -194,6 +194,8 @@ const RE = {
   capability: /(qualified|qualification|approved|design[\s-]?win|patent|proprietary|first commercial|licensed|certified|platform)/i,
   durableSS: /(growth business|high[\s-]?growth|unlock\w*|contribut\w+[^.]{0,30}(?:revenue|ebitda|profit|earnings|%)|(?:adds?|adding)[^.]{0,30}(?:capacity|customers?|revenue|ebitda)|capacity of \d|customer base|accretive|synerg\w+[^.]{0,30}\d|capital efficiency|return on capital|\bROCE\b|asset quality|cash generation|free cash flow|addressable market|market share|competitive position)/i,
   quantAdd: /\d/,
+  // zzz850: for an acquisition, a capacity figure or "adds capacity" is a deal fact, not a stated earnings contribution
+  durableMA: /(growth business|high[\s-]?growth|unlock\w*|contribut\w+[^.]{0,30}(?:revenue|ebitda|profit|earnings|%)|(?:adds?|adding)[^.]{0,30}(?:customers?|revenue|ebitda)|customer base|accretive|synerg\w+[^.]{0,30}\d|capital efficiency|return on capital|\bROCE\b|asset quality|cash generation|free cash flow|addressable market|market share|competitive position)/i,
   // ── zzz845: event parsing before classification ──
   corpAction: /(\b(?:interim|final|special|annual|quarterly)?\s?dividends?\b|\bdividend[\s-]?(?:stock|yield|payout|record|declared|announced)|\d+(?:\.\d+)?\s?%\s*dividend|\b(?:stock|share|equity)\s+splits?\b|\bsplit\s+watch\b|\bsub[\s-]?division of (?:equity )?shares|\bconsolidation of (?:equity )?shares|\bbonus (?:issue|shares?|debentures?)|\bbonus\b.{0,20}\b(?:ratio|\d\s?:\s?\d)|\brecord[\s-]?date\b|\bex[\s-]?(?:date|dividend|split|bonus)\b|\bex-?entitlement\b|\bface value (?:split|of)\b|\bstock split\b)/i,
   rumour: /\b(rumou?rs?|speculation|speculative reports?|unconfirmed reports?|media reports?|news reports?|reports? (?:of|that|suggest\w*|claim\w*)|social media (?:posts?|claims?)|viral (?:post|message|claims?)|fake (?:news|message)|misinformation|clarif\w+)\b/i,
@@ -215,6 +217,17 @@ const RE = {
   investIn: /\b(invest(?:s|ed|ing|ment)?|infus(?:e|es|ed|ion)|pump(?:s|ed)? in|commits?|earmarks?|allocates?)\b/i,
   dealMechanics: /\b(merger|amalgamation|scheme of arrangement|reverse merger|open offer|tender offer|delist\w*|go(?:ing)? private|demerg\w+|spin[\s-]?off|buy[\s-]?back|squeeze[\s-]?out|slump sale|stake sale|divest\w+)\b/i,
   aiExposure: /(\bAI\b.{0,30}(?:exposure|beneficiar\w+|play|tailwinds?|theme|optionality)|exposure to (?:the )?AI|AI[\s-]linked|AI[\s-]related)/i,
+  // ── zzz850: result vs deal context ──
+  quarterPhrase: /\b(?:(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)[\s-]+quarter|(?:first|second|third|fourth|1st|2nd|3rd|4th)[\s-]+quarter|q[1-4](?:\s?fy\s?\d{2,4})?\b|quarter(?:ly)? (?:ended|results?|profit|earnings)|fy\s?\d{2,4}\s+(?:results?|profit|earnings)|(?:full[\s-]?year|annual) (?:results?|profit|earnings))/i,
+  resultNoun: /\b(?:profits?|net profit|pat|revenues?|earnings|ebitda|net income|net loss|loss)\b/i,
+  resultChange: /\b(?:surges?|surged|jumps?|jumped|rises?|rose|soars?|soared|climbs?|climbed|grows?|grew|growth|doubles?|doubled|triples?|tripled|up|falls?|fell|drops?|dropped|declines?|declined|slumps?|slumped|plunges?|plunged|swings? to|turns? to|narrows?|narrowed|widens?|widened|beats?|misses?|improves?|improved|record|(?:\d+|two|three|four|five)[\s-]?fold|multi[\s-]?fold|more than doubles?)\b|\d/i,
+  notYetReported: /\b(?:expect\w*|estimate\w*|forecast\w*|preview|ahead of|likely to|set to (?:report|announce)|to (?:report|announce|declare)|will (?:report|announce)|board meeting|scheduled)\b/i,
+  foldWord: /\b(?:(?:\d+|two|three|four|five)[\s-]?fold|multi[\s-]?fold|doubled|tripled|quadrupled|more than doubled)\b/i,
+  dealCtx: /\b(?:acqui(?:re|res|red|ring|sition)|takeover|buy[\s-]?out|to buy|buys|buying|purchase(?:s|d)?(?!\s+(?:orders?|agreements?|commitments?|contracts?))|stake (?:in|buy|purchase|acquisition)|invest(?:s|ed|ing|ment|ments)?|infus\w+|bets?|valuation|valued at|enterprise value|deal value|capex|capital (?:expenditure|outlay)|outlay)\b/i,
+  acqVerb: /\b(?:acqui(?:re|res|red|ring|sition)|takeover|buy[\s-]?out|to buy|buys|buying|purchase(?:s|d)?(?!\s+(?:orders?|agreements?|commitments?|contracts?))|stake (?:in|buy|purchase|acquisition))\b/i,
+  // a statement about THE COMPANY's earnings: revenue / sales / EBITDA / profit / order value / tariff with a figure. Deal, capex and capacity figures never count.
+  earnStmt: /\b(?:revenues?|sales|turnover|ebitda|pat|net profit|net income|operating profit|annual (?:revenues?|sales)|order (?:book|inflow|value)|orders?\s+(?:worth|of)|tariffs?)\b[^.;]{0,40}?(?:\d|₹|rs\.?\s?\d)|\borders?\b[^.;]{0,25}?(?:₹|rs\.?|inr|\$|us\$)\s?\d|(?:₹|rs\.?|inr|\$|us\$)\s?\d[\d,.]*\s?(?:crores?|cr|lakhs?|million|mn|billion|bn)?\s+(?:of |in |annual |yearly )?(?:revenues?|sales|ebitda|turnover|net profit|annual revenue)\b/i,
+  driverStated: /\b(?:due to|driven by|on the back of|on account of|thanks to|because of|aided by|helped by|owing to|led by|higher (?:realisations?|prices?|volumes?)|lower (?:costs?|input costs?|raw material)|(?:price|volume|cost) (?:gains?|increase|decline|reduction))\b/i,
   wire: /\b(PTI|IANS|ANI|Reuters|Bloomberg|Press Trust of India|Asian News International|AFP|Dow Jones|with inputs from|via (?:PTI|IANS|ANI|Reuters))\b/i,
 };
 
@@ -675,7 +688,9 @@ export function readSources(input: Pick<RadarInput, 'sourceLabel' | 'url' | 'pri
       const same = c.idx.some((j) => {
         const y = ranked[j];
         const jac = jaccard(x.toks, y.toks);
-        return (x.dom && x.dom === y.dom) || jac >= 0.7 || ((x.wire || y.wire) && jac >= 0.4) || (!x.dom && !y.dom && !!x.r.label && x.r.label === y.r.label && jac >= 0.5);
+        // zzz850: the same headline figures with similar words is one story reworded, not a second independent report
+        const sharedFigure = Array.from(x.toks).some((t) => /^\d{2,}$/.test(t) && y.toks.has(t));
+        return (x.dom && x.dom === y.dom) || jac >= 0.7 || (sharedFigure && jac >= 0.35) || ((x.wire || y.wire) && jac >= 0.4) || (!x.dom && !y.dom && !!x.r.label && x.r.label === y.r.label && jac >= 0.5);
       });
       if (same) { c.idx.push(i); placed = true; break; }
     }
@@ -884,7 +899,10 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   const listingDone = subHint === 'LISTING_DONE';
   const newProductDet = RE.newProduct.test(text) || /new product|launch|approval/i.test(eType) || subHint === 'NEW_PRODUCT' || planHint;
   const operatingDet = RE.operating.test(ctext);
-  const isResult = RE.isResult.test(text) || /result|earnings/i.test(eType);
+  // zzz850: an already-reported earnings result ("profit surges three-fold in June quarter on record revenue")
+  const reportedResult = !quar && !planHint && RE.quarterPhrase.test(text) && RE.resultNoun.test(ctext) && RE.resultChange.test(ctext) && !RE.notYetReported.test(text) && !disproved;
+  const isResult = RE.isResult.test(text) || /result|earnings/i.test(eType) || reportedResult;
+  const earnStated = RE.earnStmt.test(ctext);
   const orderLike = RE.orderLike.test(text);
   const capacityIncrease = RE.capacityIncrease.test(text);
   const custDemand = RE.custDemand.test(text);
@@ -901,9 +919,9 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   const unitsM = ctext.match(RE.units) || [];
   const quantInText = amountStrs.length + percents.length + unitsM.length > 0;
   const earnNumbers = !!e && (isNum(e.revenueYoY) || isNum(e.patYoY) || (isNum(e.marginNow) && isNum(e.marginPrior)) || isNum(e.cfoToPat));
-  const resultFin = isResult && (earnNumbers || /\b(?:pat|net profit|profit|revenue|sales|ebitda|income|margin|earnings)\b[^.;]{0,40}\d/i.test(ctext));
+  const resultFin = isResult && (earnNumbers || reportedResult || /\b(?:pat|net profit|profit|revenue|sales|ebitda|income|margin|earnings)\b[^.;]{0,40}\d/i.test(ctext));
   const capexDetected = RE.capexWord.test(text) || capacityIncrease || input.category === 'CAPEX' || /capex|capacity/i.test(eType);
-  const capacityConfirmed = capacityIncrease && (custDemand || utilisation || contractOfftake);
+  const capacityConfirmed = capacityIncrease && (custDemand || utilisation || contractOfftake || earnStated);
   const concrete = quantInText || RE.concreteVerb.test(text) || earnNumbers || disproved;
 
   let ss: SsSubtype | null = null;
@@ -953,9 +971,13 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   const technicalText = RE.technical.test(text) || /technical|breakout/i.test(eType);
 
   const alwaysSS = ss === 'BUYBACK' || ss === 'OPEN_OFFER';
-  const durableSSm = RE.durableSS.exec(text);
+  const durableSSm = ss === 'MA' ? (RE.durableMA.exec(text) || RE.earnStmt.exec(ctext)) : RE.durableSS.exec(text);
   const durableSS = !alwaysSS && (ss === 'SPIN' || ss === 'MA') && !!durableSSm && !disproved;
-  const anyFundamental = !!(ss || qualDet || bottleneckDet || demandDet || supplyDemandDet || newProductDet || capexDetected || operatingDet || orderOnly || marketShareDet || regDemandDet || pricingDet || marginDet || fcfDet || growthInvest || (isResult && (earnNumbers || quantInText)));
+  // zzz850: an acquisition / investment / valuation context where the source states no company earnings figure. Deal value, capacity acquired,
+  // capex and investment amounts are facts about the deal, never earnings: they cannot raise link strength or count as quantification.
+  const dealKind = ss === 'MA' || growthInvest || (!ss && (RE.acqVerb.test(text) || investDet));
+  const dealOnly = dealKind && RE.dealCtx.test(text) && !earnStated && !isResult && !planHint && !durableSS && (ss === 'MA' || (!capacityConfirmed && !orderLike));
+  const anyFundamental = !!(reportedResult || ss || qualDet || bottleneckDet || demandDet || supplyDemandDet || newProductDet || capexDetected || operatingDet || orderOnly || marketShareDet || regDemandDet || pricingDet || marginDet || fcfDet || growthInvest || (isResult && (earnNumbers || quantInText)));
 
   // ── duration parse (stated only) ──
   const term = parseDuration(ctext);
@@ -991,6 +1013,7 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
       else if (first.startsWith('sector')) { kind = 'SECTOR_COMMENTARY'; eventClass = 'SECTOR_COMMENTARY'; }
       else { kind = 'OTHER'; eventClass = 'UNCLASSIFIED'; }
     } else if (planHint) kind = 'NEW_PRODUCT_MARKET';
+    else if (reportedResult && !ss) kind = 'EARNINGS_RESULT';
     else if (ss) kind = 'SPECIAL_SITUATION';
     else if (qualDet) kind = 'CUSTOMER_QUALIFICATION';
     else if (bottleneckDet) kind = 'BOTTLENECK';
@@ -1089,7 +1112,8 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
 
   // ── link strength: strict definitions, price and non-earnings amounts never count ──
   const inflection = inflectionOf(e);
-  const amountOrder = orderLike && amounts.length > 0;
+  const amountOrder = orderLike && amounts.length > 0 && !dealOnly;
+  const qLink = dealOnly ? false : quantInText;
   const implementedPrice = pricingDet && RE.pricingImplemented.test(text) && percents.length > 0;
   const aiExposureOnly = RE.aiExposure.test(text) && !(orderLike && amounts.length > 0) && !qualDet && !resultFin;
   const opEffectStated = /\b(?:licen[cs]e|ban (?:lifted|revoked)|resume[sd]? (?:operations|production|trading)|allowed to (?:operate|resume)|restor\w+ (?:operations|licen[cs]e)|clearance to operate|revenue|margins?|earnings|profit)\b/i.test(ctext) && !legalCaseDet;
@@ -1102,25 +1126,30 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   else if (kind === 'CUSTOMER_QUALIFICATION') link = amountOrder ? 'DIRECT' : 'NEAR_DIRECT';
   else if (kind === 'DEMAND_EXPLOSION') link = amountOrder ? 'DIRECT' : orderLike ? 'NEAR_DIRECT' : 'INDIRECT';
   else if (kind === 'CAPACITY_INFLECTION') link = capexAlone ? 'INDIRECT' : contractOfftake && (unitsM.length > 0 || amounts.length > 0) ? 'DIRECT' : 'NEAR_DIRECT';
-  else if (kind === 'BOTTLENECK') link = RE.companyAdvantage.test(text) && (orderLike || quantInText) ? 'NEAR_DIRECT' : 'INDIRECT';
-  else if (kind === 'OPERATING_INFLECTION') link = quantInText ? 'DIRECT' : 'NEAR_DIRECT';
-  else if (kind === 'MARGIN_INFLECTION') link = quantInText ? 'DIRECT' : 'NEAR_DIRECT';
-  else if (kind === 'FCF_INFLECTION') link = quantInText ? 'DIRECT' : 'NEAR_DIRECT';
+  else if (kind === 'BOTTLENECK') link = RE.companyAdvantage.test(text) && (orderLike || qLink) ? 'NEAR_DIRECT' : 'INDIRECT';
+  else if (kind === 'OPERATING_INFLECTION') link = qLink ? 'DIRECT' : 'NEAR_DIRECT';
+  else if (kind === 'MARGIN_INFLECTION') link = qLink ? 'DIRECT' : 'NEAR_DIRECT';
+  else if (kind === 'FCF_INFLECTION') link = qLink ? 'DIRECT' : 'NEAR_DIRECT';
   else if (kind === 'PRICING_POWER_INFLECTION') link = implementedPrice ? 'DIRECT' : 'NEAR_DIRECT';
-  else if (kind === 'MARKET_SHARE_INFLECTION') link = quantInText ? 'NEAR_DIRECT' : 'INDIRECT';
-  else if (kind === 'REGULATORY_DEMAND_INFLECTION') link = orderLike && quantInText ? 'NEAR_DIRECT' : 'INDIRECT';
-  else if (kind === 'SUPPLY_DEMAND_INFLECTION') link = quantInText && RE.companyAdvantage.test(text) ? 'NEAR_DIRECT' : 'INDIRECT';
-  else if (kind === 'NEW_PRODUCT_MARKET') link = planHint ? (amounts.length > 0 && /\b(?:revenue|sales|turnover|ebitda)\b/i.test(ctext) ? 'NEAR_DIRECT' : 'INDIRECT') : RE.traction.test(text) && quantInText && !growthInvest ? 'NEAR_DIRECT' : 'INDIRECT';
+  else if (kind === 'MARKET_SHARE_INFLECTION') link = qLink ? 'NEAR_DIRECT' : 'INDIRECT';
+  else if (kind === 'REGULATORY_DEMAND_INFLECTION') link = orderLike && qLink ? 'NEAR_DIRECT' : 'INDIRECT';
+  else if (kind === 'SUPPLY_DEMAND_INFLECTION') link = qLink && RE.companyAdvantage.test(text) ? 'NEAR_DIRECT' : 'INDIRECT';
+  else if (kind === 'NEW_PRODUCT_MARKET') link = planHint ? (amounts.length > 0 && /\b(?:revenue|sales|turnover|ebitda)\b/i.test(ctext) ? 'NEAR_DIRECT' : 'INDIRECT') : RE.traction.test(text) && qLink && !growthInvest ? 'NEAR_DIRECT' : 'INDIRECT';
   else if (kind === 'SPECIAL_SITUATION') link = durableSS ? 'NEAR_DIRECT' : 'INDIRECT';
   else if (isOrderOther) link = amountOrder ? 'DIRECT' : 'NEAR_DIRECT';
   else link = 'NARRATIVE_ONLY';
   if (aiExposureOnly && (link === 'DIRECT' || link === 'NEAR_DIRECT')) link = 'INDIRECT';
+  // zzz850: deal / investment amounts never make an earnings link. An acquisition or investment with no stated acquired revenue / EBITDA has none established.
+  if (dealOnly && !noiseKind && kind !== 'EARNINGS_RESULT') {
+    if ((kind === 'SPECIAL_SITUATION' && ss === 'MA') || growthInvest) link = 'NOT_ESTABLISHED';
+    else if (link === 'DIRECT' || link === 'NEAR_DIRECT') link = 'INDIRECT';
+  }
 
   // ── bucket ──
   const linkGood = link === 'DIRECT' || link === 'NEAR_DIRECT';
   const evOK = evStatus === 'CONFIRMED' || evStatus === 'STRONG' || evStatus === 'DEVELOPING';
   let bucket: RadarBucket;
-  const quantified = earnNumbers || quantInText;
+  const quantified = earnNumbers || qLink || reportedResult;
   const earningsKinds = kind === 'EARNINGS_RESULT' || kind === 'OPERATING_INFLECTION' || kind === 'MARGIN_INFLECTION' || kind === 'FCF_INFLECTION';
   if (kind === 'CORPORATE_ACTION') bucket = 'CORPORATE_ACTION';
   else if (kind === 'DISPROVED_RUMOUR') bucket = 'NOISE';
@@ -1223,6 +1252,44 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
           ? `${KIND_LABEL[kind]}: it can change ${joinList(changes)}. ${mechanism}`
           : `${KIND_LABEL[kind]}: ${mechanism}`;
 
+  // ── zzz850: labelled deal facts. Deal value, capacity acquired, investment and capex are stated facts about the DEAL, never earnings. ──
+  const shortCr = (r: string) => squash(r).replace(/\bcrores?\b/gi, 'cr');
+  const dealFacts: string[] = ((): string[] => {
+    if (!dealOnly || noEarningsLink) return [];
+    const out: string[] = [];
+    const seen = new Set<string>();
+    const labelFor = (idx: number): string => {
+      const before = ctext.slice(Math.max(0, idx - 45), idx).toLowerCase();
+      if (/valu(?:ation|ed)|enterprise value|\bev\b/.test(before)) return 'Valuation';
+      if (/capex|capital (?:expenditure|outlay)|outlay/.test(before)) return 'Capex';
+      if (/acqui|takeover|buy|purchase|stake/.test(before)) return 'Deal value';
+      if (/invest|infus|commit|earmark|bet/.test(before)) return 'Investment';
+      return RE.acqVerb.test(text) ? 'Deal value' : /\bbets?\b|invest|infus/i.test(text) ? 'Investment' : 'Amount in the source';
+    };
+    const money = amounts.slice().sort((a, b) => b.millions - a.millions);
+    let first = true;
+    for (const a of money) {
+      const disp = shortCr(a.raw);
+      const key = disp.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const idx = ctext.toLowerCase().indexOf(a.raw.toLowerCase());
+      out.push(first ? `${labelFor(Math.max(0, idx))} ${disp}` : `Other amount in the source ${disp}`);
+      first = false;
+      if (out.length >= 3) break;
+    }
+    for (const u of unitsM) {
+      const disp = squash(u);
+      const isCap = /\b(?:mw|gw|mwh|gwh|mtpa|ktpa|tpa|mt)\b/i.test(disp);
+      const k = disp.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(`${isCap ? (ss === 'MA' || RE.acqVerb.test(text) ? 'Capacity acquired' : 'Capacity') : 'Quantity'} ${disp}`);
+      if (out.length >= 5) break;
+    }
+    return out;
+  })();
+
   // ── financial impact (company facts only; price, dividends, issue prices and security counts were removed) ──
   const financialImpact = ((): string => {
     if (noEarningsLink || nonOperatingEvent) {
@@ -1231,7 +1298,14 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
           : nonOperatingEvent ? `Not established - ${kind === 'CAPITAL_RAISE' || kind === 'FINANCING' ? 'funding changes cash and share count, not revenue or profit' : 'the source states no revenue or profit effect'}.`
             : 'Not established - no earnings figure is stated.';
     }
+    if (dealOnly) return dealFacts.length
+      ? `${dealFacts.join('. ')}. These are facts about the deal, not earnings: the source states no revenue, EBITDA or profit for the acquired or funded business.`
+      : 'Not quantified in the source - the financial impact is not established.';
     const parts: string[] = [];
+    if (reportedResult && !(e && earnNumbers)) {
+      const rs = sentenceWith(sentencesOf(ctext), RE.resultNoun);
+      if (rs) parts.push(`Reported: "${clip(noPriceClause(rs), 140)}" (secondary-reported; the filing was not read).`);
+    }
     const q = uniq([...amounts.map((a) => a.raw), ...percents.map(squash), ...unitsM.map(squash)]).slice(0, 4);
     if (kind === 'EARNINGS_RESULT' && e) {
       const b: string[] = [];
@@ -1250,7 +1324,7 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   const noFinLink = noEarningsLink || link === 'NOT_ESTABLISHED' || link === 'NARRATIVE_ONLY';
   const NQ = noFinLink ? 'Not established' : 'Not quantified';
   const impacts: ImpactMap = { revenue: NQ, volume: NQ, asp: NQ, margin: NQ, ebitda: NQ, fcf: NQ, roce: NQ, marketShare: NQ };
-  if (!noFinLink) {
+  if (!noFinLink && !dealOnly) {
     const firstAmt = amounts.length ? amounts.reduce((a, b) => (b.millions > a.millions ? b : a)).raw : null;
     if (kind === 'EARNINGS_RESULT' && e && isNum(e.revenueYoY)) impacts.revenue = `Revenue ${e.revenueYoY >= 0 ? 'up' : 'down'} ${fmt(Math.abs(e.revenueYoY))}% year on year (reported)`;
     else if (firstAmt && (isOrderOther || kind === 'CUSTOMER_QUALIFICATION' || kind === 'DEMAND_EXPLOSION' || (orderLike && kind === 'CAPACITY_INFLECTION'))) impacts.revenue = `${firstAmt} contract or order value (stated; revenue arrives as it is delivered)`;
@@ -1288,6 +1362,10 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   const evSent = sentenceWith(sents, /./) || clip(text, 200);
   const pub = input.publishedAt || null;
   const evUsable = evStatus !== 'HYPOTHESIS' && evStatus !== 'DISPROVED' && !noEarningsLink;
+  // zzz850: facts about a deal (capacity acquired, customers of the target) are not proof of the earnings chain: steps 2-5 stay assumed
+  const evUsableChain = evUsable && !dealOnly;
+  const resultKind = kind === 'EARNINGS_RESULT';
+  const resultSent = resultKind ? sentenceWith(sentencesOf(ctext), RE.resultNoun) : null;
   const step = (i: number, status: ChainStatus, t: string): ChainStep => ({
     step: CHAIN_NAMES[i], status, text: t,
     source: status === 'proven' ? src.label : null, date: status === 'proven' ? pub : null,
@@ -1302,15 +1380,15 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
             : step(0, 'assumed', `Reported by ${src.label} but not verified by a primary source: "${evSent}"`),
   );
   const drvSent = sentenceWith(sents, /\b(customers?|demand|orders?|order book|backlog|offtake|off-take|market)\b/i);
-  chain.push(noEarningsLink || nonOperatingEvent ? step(1, 'unknown', NE) : drvSent && kind !== 'EARNINGS_RESULT' ? step(1, evUsable ? 'proven' : 'assumed', `Source sentence: "${drvSent}"`) : ['DEMAND_EXPLOSION', 'CAPACITY_INFLECTION', 'CUSTOMER_QUALIFICATION', 'NEW_PRODUCT_MARKET'].includes(kind) ? step(1, 'assumed', 'The kind of event implies a customer or market driver, but the source does not name one.') : step(1, 'unknown', NE));
+  chain.push(noEarningsLink || nonOperatingEvent ? step(1, 'unknown', NE) : drvSent && kind !== 'EARNINGS_RESULT' ? step(1, evUsableChain ? 'proven' : 'assumed', `Source sentence: "${drvSent}"`) : ['DEMAND_EXPLOSION', 'CAPACITY_INFLECTION', 'CUSTOMER_QUALIFICATION', 'NEW_PRODUCT_MARKET'].includes(kind) ? step(1, 'assumed', 'The kind of event implies a customer or market driver, but the source does not name one.') : step(1, 'unknown', NE));
   const bnSent = sentenceWith(sents, RE.bottleneck);
-  chain.push(bnSent && !noEarningsLink && !nonOperatingEvent ? step(2, evUsable ? 'proven' : 'assumed', `Source sentence: "${bnSent}"`) : step(2, 'unknown', kind === 'BOTTLENECK' ? 'Not established - read the source' : NE));
+  chain.push(bnSent && !noEarningsLink && !nonOperatingEvent ? step(2, evUsableChain ? 'proven' : 'assumed', `Source sentence: "${bnSent}"`) : step(2, 'unknown', kind === 'BOTTLENECK' ? 'Not established - read the source' : NE));
   const advSent = qualDet ? sentenceWith(sents, RE.qual) : (RE.companyAdvantage.test(text) && !noEarningsLink && !nonOperatingEvent ? sentenceWith(sents, RE.companyAdvantage) : null);
-  chain.push(advSent && !noEarningsLink ? step(3, evUsable ? 'proven' : 'assumed', `Source sentence: "${advSent}"`) : step(3, 'unknown', NE));
+  chain.push(advSent && !noEarningsLink ? step(3, evUsableChain ? 'proven' : 'assumed', `Source sentence: "${advSent}"`) : step(3, 'unknown', NE));
   const capSent = capacityIncrease ? sentenceWith(sents, RE.capacityIncrease) : (utilisation ? sentenceWith(sents, RE.utilisation) : null);
   const orderBookUp = e?.orderBook === 'UP' && kind === 'EARNINGS_RESULT';
   chain.push(orderBookUp ? step(4, 'proven', 'Supplied results show the order book up.')
-    : capSent && !noEarningsLink && !nonOperatingEvent ? step(4, evUsable ? 'proven' : 'assumed', `Source sentence: "${capSent}"`)
+    : capSent && !noEarningsLink && !nonOperatingEvent ? step(4, evUsableChain ? 'proven' : 'assumed', dealOnly ? `Capacity acquired is a stated deal fact, not volume or revenue: "${clip(capSent, 120)}"` : `Source sentence: "${capSent}"`)
       : ['CAPACITY_INFLECTION', 'CUSTOMER_QUALIFICATION', 'DEMAND_EXPLOSION'].includes(kind) ? step(4, 'assumed', 'Volume is implied by the kind of event; no capacity or volume figure is stated.') : step(4, 'unknown', NE));
   const fromResults = kind === 'EARNINGS_RESULT' && !!e;
   const revProven = fromResults && isNum(e!.revenueYoY);
@@ -1318,10 +1396,19 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   const fcfProven = fromResults && isNum(e!.cfoToPat);
   const patProven = fromResults && isNum(e!.patYoY);
   const impliesRev = !noEarningsLink && !nonOperatingEvent && ['CAPACITY_INFLECTION', 'CUSTOMER_QUALIFICATION', 'DEMAND_EXPLOSION', 'NEW_PRODUCT_MARKET', 'BOTTLENECK', 'OPERATING_INFLECTION', 'EARNINGS_RESULT', 'MARKET_SHARE_INFLECTION', 'REGULATORY_DEMAND_INFLECTION'].includes(kind) || isOrderOther;
-  chain.push(revProven ? step(5, 'proven', `Supplied results: revenue ${e!.revenueYoY! >= 0 ? 'up' : 'down'} ${fmt(Math.abs(e!.revenueYoY!))}% year on year.`) : impliesRev ? step(5, 'assumed', 'Revenue impact is implied by the mechanism, not yet visible in reported earnings.') : step(5, 'unknown', NE));
-  chain.push(marginProven ? step(6, 'proven', `Supplied results: margin ${fmt(e!.marginPrior!)}% to ${fmt(e!.marginNow!)}%.`) : changes.some((c) => /margin|ASP/.test(c)) && !noEarningsLink ? step(6, 'assumed', 'Margin impact is implied by the mechanism, not yet visible in reported earnings.') : step(6, 'unknown', NE));
+  const resultRevStated = resultKind && !!resultSent && /\b(?:revenues?|sales|turnover)\b/i.test(resultSent);
+  const resultPatStated = resultKind && !!resultSent && /\b(?:profits?|net profit|pat|earnings|net income|loss)\b/i.test(resultSent);
+  const resultNote = resultSent ? `Reported (secondary-reported, filing not read): "${clip(noPriceClause(resultSent), 120)}"` : '';
+  chain.push(revProven ? step(5, 'proven', `Supplied results: revenue ${e!.revenueYoY! >= 0 ? 'up' : 'down'} ${fmt(Math.abs(e!.revenueYoY!))}% year on year.`)
+    : resultKind ? (resultRevStated ? step(5, 'assumed', resultNote) : step(5, 'unknown', NE))
+      : dealOnly ? step(5, 'unknown', 'Not established: the source states no revenue for the acquired or funded business.')
+        : impliesRev ? step(5, 'assumed', 'Revenue impact is implied by the mechanism, not yet visible in reported earnings.') : step(5, 'unknown', NE));
+  chain.push(marginProven ? step(6, 'proven', `Supplied results: margin ${fmt(e!.marginPrior!)}% to ${fmt(e!.marginNow!)}%.`) : resultKind ? step(6, 'unknown', NE) : changes.some((c) => /margin|ASP/.test(c)) && !noEarningsLink ? step(6, 'assumed', 'Margin impact is implied by the mechanism, not yet visible in reported earnings.') : step(6, 'unknown', NE));
   chain.push(fcfProven ? step(7, 'proven', `Supplied results: cash flow from operations is ${fmt(e!.cfoToPat!)}x profit.`) : step(7, 'unknown', NE));
-  chain.push(patProven ? step(8, 'proven', `Supplied results: profit ${e!.patYoY! >= 0 ? 'up' : 'down'} ${fmt(Math.abs(e!.patYoY!))}% year on year.`) : (chain[5].status === 'assumed' || chain[6].status === 'assumed') ? step(8, 'assumed', 'Earnings impact follows only if the revenue and margin steps happen.') : step(8, 'unknown', NE));
+  chain.push(patProven ? step(8, 'proven', `Supplied results: profit ${e!.patYoY! >= 0 ? 'up' : 'down'} ${fmt(Math.abs(e!.patYoY!))}% year on year.`)
+    : resultKind ? (resultPatStated ? step(8, 'assumed', resultNote) : step(8, 'unknown', NE))
+      : dealOnly ? step(8, 'unknown', 'Not established: the source states no revenue, EBITDA or profit for the acquired or funded business.')
+        : (chain[5].status === 'assumed' || chain[6].status === 'assumed') ? step(8, 'assumed', 'Earnings impact follows only if the revenue and margin steps happen.') : step(8, 'unknown', NE));
 
   // ── expectations (only when both sides have data) ──
   const mult = input.multipleNow, fwd = input.forwardEarningsGrowth;
@@ -1363,7 +1450,11 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
     return { link, status, evidence: status === 'NOT_APPLICABLE' ? null : evidence, source: real ? srcName : null, date: real ? pub : null, confidence: confOf(status) };
   };
   const NA = (link: CatalystLinkKey) => lk(link, 'NOT_APPLICABLE', null);
-  const soft: LinkStatus = evLinkStatus === 'PROVEN' ? 'PROVEN' : evLinkStatus === 'PARTIALLY_PROVEN' ? 'PARTIALLY_PROVEN' : 'ASSUMED';
+  const softBase: LinkStatus = evLinkStatus === 'PROVEN' ? 'PROVEN' : evLinkStatus === 'PARTIALLY_PROVEN' ? 'PARTIALLY_PROVEN' : 'ASSUMED';
+  const soft: LinkStatus = softBase;
+  // zzz850: a deal fact (capacity acquired, target's customers) is not a proven earnings-chain link
+  const softE: LinkStatus = dealOnly ? 'ASSUMED' : softBase;
+  const NOT_STATED_DEAL = 'Not established: the source states no revenue, EBITDA or profit for the acquired or funded business.';
   const opKind = STRUCTURAL_KINDS.has(kind) || kind === 'EARNINGS_RESULT' || kind === 'CONTRACT_ORDER';
   const bnApplicable = bottleneckDet || ['BOTTLENECK', 'CUSTOMER_QUALIFICATION', 'SUPPLY_DEMAND_INFLECTION', 'DEMAND_EXPLOSION', 'REGULATORY_DEMAND_INFLECTION', 'PRICING_POWER_INFLECTION'].includes(kind);
   const capApplicable = capacityIncrease || utilisation || ['CAPACITY_INFLECTION', 'CUSTOMER_QUALIFICATION', 'DEMAND_EXPLOSION', 'BOTTLENECK', 'CONTRACT_ORDER', 'NEW_PRODUCT_MARKET', 'REGULATORY_DEMAND_INFLECTION'].includes(kind);
@@ -1389,23 +1480,26 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
     if (kind === 'SPECIAL_SITUATION' && !spApplicable) {
       for (const k of LINK_KEYS.slice(1)) catalystChain.push((k === 'EXPECTATIONS' || k === 'VALUATION') && haveVal ? lk(k, 'PARTIALLY_PROVEN', expectations.note) : NA(k));
     } else {
-      catalystChain.push(kind === 'EARNINGS_RESULT' ? NA('DRIVER') : drvSent ? lk('DRIVER', soft, `Source sentence: "${drvSent}"`) : lk('DRIVER', 'ASSUMED', 'The kind of event implies a customer or market driver, but the source does not name one.'));
-      catalystChain.push(!bnApplicable ? NA('BOTTLENECK') : bnSent ? lk('BOTTLENECK', soft, `Source sentence: "${bnSent}"`) : lk('BOTTLENECK', 'ASSUMED', 'Not established - read the source.'));
-      catalystChain.push(kind === 'EARNINGS_RESULT' ? NA('COMPANY_ADVANTAGE') : advSent ? lk('COMPANY_ADVANTAGE', soft, `Source sentence: "${advSent}"`) : lk('COMPANY_ADVANTAGE', 'ASSUMED', 'Not established.'));
-      catalystChain.push(!capApplicable ? NA('CAPACITY') : capSent ? lk('CAPACITY', capexAlone ? 'PARTIALLY_PROVEN' : soft, `Source sentence: "${capSent}"`) : lk('CAPACITY', 'ASSUMED', 'No capacity figure is stated.'));
-      catalystChain.push(!volApplicable ? NA('VOLUME')
+      catalystChain.push(kind === 'EARNINGS_RESULT' ? NA('DRIVER') : drvSent ? lk('DRIVER', softE, `Source sentence: "${drvSent}"`) : lk('DRIVER', 'ASSUMED', 'The kind of event implies a customer or market driver, but the source does not name one.'));
+      catalystChain.push(!bnApplicable ? NA('BOTTLENECK') : bnSent ? lk('BOTTLENECK', softE, `Source sentence: "${bnSent}"`) : lk('BOTTLENECK', 'ASSUMED', 'Not established - read the source.'));
+      catalystChain.push(kind === 'EARNINGS_RESULT' ? NA('COMPANY_ADVANTAGE') : advSent ? lk('COMPANY_ADVANTAGE', softE, `Source sentence: "${advSent}"`) : lk('COMPANY_ADVANTAGE', 'ASSUMED', 'Not established.'));
+      catalystChain.push(!capApplicable ? NA('CAPACITY') : capSent ? (dealOnly ? lk('CAPACITY', 'ASSUMED', `Capacity acquired is a stated deal fact, not production or sales: "${clip(capSent, 110)}"`) : lk('CAPACITY', capexAlone ? 'PARTIALLY_PROVEN' : soft, `Source sentence: "${capSent}"`)) : lk('CAPACITY', 'ASSUMED', 'No capacity figure is stated.'));
+      catalystChain.push(!volApplicable || (resultKind && !orderBookUp && !unitsM.length) ? NA('VOLUME')
         : orderBookUp ? lk('VOLUME', 'PROVEN', 'Supplied results show the order book up.')
+          : unitsM.length && dealOnly ? lk('VOLUME', 'ASSUMED', 'The source states capacity acquired, not production volume or sales.')
           : unitsM.length ? lk('VOLUME', soft === 'ASSUMED' ? 'ASSUMED' : 'PARTIALLY_PROVEN', `The source states ${squash(unitsM[0]!)}.`)
             : lk('VOLUME', 'ASSUMED', 'Volume is implied by the mechanism; no volume figure is stated.'));
-      const revSt: LinkStatus = resultsContra && revProven ? 'CONTRADICTED' : revProven ? 'PROVEN' : amountOrder && link === 'DIRECT' && soft !== 'ASSUMED' ? 'PARTIALLY_PROVEN' : impliesRev || kind === 'SPECIAL_SITUATION' ? 'ASSUMED' : 'NOT_APPLICABLE';
-      catalystChain.push(lk('REVENUE', revSt, revProven ? `Supplied results: revenue ${e!.revenueYoY! >= 0 ? 'up' : 'down'} ${fmt(Math.abs(e!.revenueYoY!))}% year on year.` : revSt === 'PARTIALLY_PROVEN' ? `${impacts.revenue}.` : 'Revenue impact is implied by the mechanism, not yet visible in reported earnings.'));
-      const mgSt: LinkStatus = resultsContra && marginProven ? 'CONTRADICTED' : marginProven ? 'PROVEN' : !marginApplicable ? 'NOT_APPLICABLE' : impacts.margin !== 'Not quantified' && link === 'DIRECT' ? 'PARTIALLY_PROVEN' : 'ASSUMED';
+      const revSt: LinkStatus = resultsContra && revProven ? 'CONTRADICTED' : revProven ? 'PROVEN' : resultKind ? (resultRevStated ? 'PARTIALLY_PROVEN' : 'NOT_APPLICABLE') : (amountOrder && link === 'DIRECT' || !dealOnly && /\(stated\)$/.test(impacts.revenue)) && soft !== 'ASSUMED' ? 'PARTIALLY_PROVEN' : impliesRev || kind === 'SPECIAL_SITUATION' ? 'ASSUMED' : 'NOT_APPLICABLE';
+      catalystChain.push(lk('REVENUE', revSt, revProven ? `Supplied results: revenue ${e!.revenueYoY! >= 0 ? 'up' : 'down'} ${fmt(Math.abs(e!.revenueYoY!))}% year on year.` : revSt === 'PARTIALLY_PROVEN' ? (resultKind && !e ? `${resultNote}.` : `${impacts.revenue}.`) : dealOnly ? NOT_STATED_DEAL : 'Revenue impact is implied by the mechanism, not yet visible in reported earnings.'));
+      const mgStated = impacts.margin !== 'Not quantified' && impacts.margin !== 'Not established';
+      const mgSt: LinkStatus = resultsContra && marginProven ? 'CONTRADICTED' : marginProven ? 'PROVEN' : resultKind ? (mgStated ? 'PARTIALLY_PROVEN' : 'NOT_APPLICABLE') : !marginApplicable ? 'NOT_APPLICABLE' : mgStated && link === 'DIRECT' ? 'PARTIALLY_PROVEN' : 'ASSUMED';
       catalystChain.push(lk('MARGIN', mgSt, marginProven ? `Supplied results: margin ${fmt(e!.marginPrior!)}% to ${fmt(e!.marginNow!)}%.` : mgSt === 'PARTIALLY_PROVEN' ? `${impacts.margin}.` : 'Margin impact is implied by the mechanism, not yet visible in reported earnings.'));
-      const ebSt: LinkStatus = revProven && marginProven ? 'PARTIALLY_PROVEN' : impacts.ebitda !== 'Not quantified' ? 'PARTIALLY_PROVEN' : revSt === 'ASSUMED' || mgSt === 'ASSUMED' ? 'ASSUMED' : 'NOT_APPLICABLE';
-      catalystChain.push(lk('EBITDA', ebSt, ebSt === 'PARTIALLY_PROVEN' ? (revProven && marginProven ? 'Derived from reported revenue and margin; EBITDA itself is not stated.' : `${impacts.ebitda}.`) : 'EBITDA impact follows only if the revenue and margin steps happen.'));
-      catalystChain.push(!fcfApplicable ? NA('FCF') : fcfProven ? lk('FCF', 'PROVEN', `Supplied results: cash flow from operations is ${fmt(e!.cfoToPat!)}x profit.`) : impacts.fcf !== 'Not quantified' ? lk('FCF', 'PARTIALLY_PROVEN', `${impacts.fcf}.`) : lk('FCF', 'ASSUMED', 'Cash conversion is not yet shown.'));
-      const eaSt: LinkStatus = patProven ? (resultsContra ? 'CONTRADICTED' : 'PROVEN') : revSt === 'ASSUMED' || mgSt === 'ASSUMED' || revSt === 'PARTIALLY_PROVEN' ? 'ASSUMED' : 'NOT_APPLICABLE';
-      catalystChain.push(lk('EARNINGS', eaSt, patProven ? `Supplied results: profit ${e!.patYoY! >= 0 ? 'up' : 'down'} ${fmt(Math.abs(e!.patYoY!))}% year on year.` : 'Earnings impact follows only if the revenue and margin steps happen.'));
+      const ebStated = impacts.ebitda !== 'Not quantified' && impacts.ebitda !== 'Not established';
+      const ebSt: LinkStatus = revProven && marginProven ? 'PARTIALLY_PROVEN' : ebStated ? 'PARTIALLY_PROVEN' : resultKind ? 'NOT_APPLICABLE' : revSt === 'ASSUMED' || mgSt === 'ASSUMED' ? 'ASSUMED' : 'NOT_APPLICABLE';
+      catalystChain.push(lk('EBITDA', ebSt, ebSt === 'PARTIALLY_PROVEN' ? (revProven && marginProven ? 'Derived from reported revenue and margin; EBITDA itself is not stated.' : `${impacts.ebitda}.`) : dealOnly ? NOT_STATED_DEAL : 'EBITDA impact follows only if the revenue and margin steps happen.'));
+      catalystChain.push(!fcfApplicable ? NA('FCF') : fcfProven ? lk('FCF', 'PROVEN', `Supplied results: cash flow from operations is ${fmt(e!.cfoToPat!)}x profit.`) : impacts.fcf !== 'Not quantified' && impacts.fcf !== 'Not established' ? lk('FCF', 'PARTIALLY_PROVEN', `${impacts.fcf}.`) : lk('FCF', 'ASSUMED', 'Cash conversion is not yet shown.'));
+      const eaSt: LinkStatus = patProven ? (resultsContra ? 'CONTRADICTED' : 'PROVEN') : resultKind ? (resultPatStated ? 'PARTIALLY_PROVEN' : 'NOT_APPLICABLE') : revSt === 'ASSUMED' || mgSt === 'ASSUMED' || revSt === 'PARTIALLY_PROVEN' ? 'ASSUMED' : 'NOT_APPLICABLE';
+      catalystChain.push(lk('EARNINGS', eaSt, patProven ? `Supplied results: profit ${e!.patYoY! >= 0 ? 'up' : 'down'} ${fmt(Math.abs(e!.patYoY!))}% year on year.` : resultKind ? `${resultNote}.` : dealOnly ? NOT_STATED_DEAL : 'Earnings impact follows only if the revenue and margin steps happen.'));
     }
     if (!(kind === 'SPECIAL_SITUATION' && !spApplicable)) {
       catalystChain.push(haveVal ? lk('EXPECTATIONS', 'PARTIALLY_PROVEN', expectations.note) : lk('EXPECTATIONS', 'ASSUMED', 'Expectation data insufficient: no multiple or forward growth supplied.'));
@@ -1415,7 +1509,7 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   const chainOf = (k: CatalystLinkKey) => catalystChain.find((l) => l.link === k)!;
 
   // three separate confirmations
-  const eventConfirmation: EventConfirmation = noiseKind ? 'NOT_APPLICABLE' : evStatus === 'DISPROVED' ? 'DISPROVED' : tentative || planHint ? 'PLANNED' : evStatus === 'CONFIRMED' ? 'CONFIRMED' : 'REPORTED';
+  const eventConfirmation: EventConfirmation = noiseKind ? 'NOT_APPLICABLE' : evStatus === 'DISPROVED' ? 'DISPROVED' : tentative || planHint ? 'PLANNED' : evStatus === 'CONFIRMED' ? 'CONFIRMED' : resultKind ? 'REPORTED_RESULT' : 'REPORTED';
   const mechLinks = catalystChain.filter((l) => ['DRIVER', 'BOTTLENECK', 'COMPANY_ADVANTAGE', 'CAPACITY', 'VOLUME'].includes(l.link) && l.status !== 'NOT_APPLICABLE');
   const mechanismStatus: MechanismStatus = evStatus === 'DISPROVED' ? 'CONTRADICTED'
     : !mechLinks.length ? 'NOT_ESTABLISHED'
@@ -1423,9 +1517,10 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
         : mechLinks.some((l) => l.status === 'PROVEN' || l.status === 'PARTIALLY_PROVEN') ? 'PARTIALLY_STATED' : 'ASSUMED';
   const earnLinks = catalystChain.filter((l) => ['REVENUE', 'MARGIN', 'EBITDA', 'EARNINGS'].includes(l.link) && l.status !== 'NOT_APPLICABLE');
   const earningsImpactStatus: EarningsImpactStatus = earnLinks.some((l) => l.status === 'CONTRADICTED') ? 'CONTRADICTED'
-    : !earnLinks.length ? 'NOT_ESTABLISHED'
-      : chainOf('EARNINGS').status === 'PROVEN' ? 'CONFIRMED'
-        : earnLinks.some((l) => l.status === 'PROVEN' || l.status === 'PARTIALLY_PROVEN') ? 'PARTIALLY_PROVEN' : 'UNPROVEN';
+    : resultKind && chainOf('EARNINGS').status !== 'PROVEN' ? 'REPORTED_RESULT'
+      : !earnLinks.length ? 'NOT_ESTABLISHED'
+        : chainOf('EARNINGS').status === 'PROVEN' ? 'CONFIRMED'
+          : earnLinks.some((l) => l.status === 'PROVEN' || l.status === 'PARTIALLY_PROVEN') ? 'PARTIALLY_PROVEN' : 'UNPROVEN';
   const kindWord: Partial<Record<CatalystKind, string>> = {
     CAPACITY_INFLECTION: 'demand/capacity', DEMAND_EXPLOSION: 'demand/capacity', CUSTOMER_QUALIFICATION: 'customer-qualification', BOTTLENECK: 'supply-bottleneck',
     NEW_PRODUCT_MARKET: 'new product/market', MARGIN_INFLECTION: 'margin', FCF_INFLECTION: 'cash-flow', MARKET_SHARE_INFLECTION: 'market-share',
@@ -1440,6 +1535,8 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
     if (nonOperatingEvent) return `${eventConfirmation === 'CONFIRMED' ? 'Event confirmed' : 'Event reported'}; the earnings link is not established.`;
     const kw = kindWord[kind] || (kind === 'SPECIAL_SITUATION' ? 'deal' : 'event');
     if (earningsImpactStatus === 'CONFIRMED') return 'Confirmed earnings catalyst: reported results show it in profit.';
+    if (resultKind && earningsImpactStatus === 'REPORTED_RESULT') return `${directPrimary && eventConfirmation === 'CONFIRMED' ? 'Reported earnings result (company or filing source)' : 'Already reported earnings result (secondary-reported, filing not read)'}. The open question is whether the next quarter confirms it lasts, and what drove it.`;
+    if (dealOnly) return `${eventConfirmation === 'CONFIRMED' ? 'Event confirmed' : eventConfirmation === 'PLANNED' ? 'Planned deal, not yet completed' : 'Event reported (secondary-reported)'}; earnings link not established: the source states no revenue or EBITDA for the acquired or funded business.`;
     if (eventConfirmation === 'CONFIRMED') return `Confirmed ${kw} catalyst; earnings transmission remains ${earningsImpactStatus === 'PARTIALLY_PROVEN' ? 'partially unproven' : earningsImpactStatus === 'NOT_ESTABLISHED' ? 'not established' : 'unproven'}.`;
     if (eventConfirmation === 'PLANNED') return `Planned ${kw} event, not yet completed; earnings transmission is unproven.`;
     return `Reported ${kw} event, not confirmed by a primary source; earnings transmission is unproven.`;
@@ -1453,6 +1550,8 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
       else if (l.status === 'ASSUMED') notConfirmed.push(cap1(LINK_WORD[l.link]));
       else if (l.status === 'CONTRADICTED') notConfirmed.push(`${cap1(LINK_WORD[l.link])} (contradicted)`);
     }
+    for (const f of dealFacts) confirmed.push(`${f} (stated; a deal fact, not an earnings fact)`);
+    if (dealOnly) notConfirmed.unshift('Earnings link: revenue / EBITDA of the acquired or funded business');
     if (duration.code == null && !noEarningsLink) notConfirmed.push('Duration');
     if (proposedOnly && !noEarningsLink) notConfirmed.unshift(planHint ? 'Management target: proposed, not delivered' : 'Deal: proposed, not approved');
     if (kind === 'CAPITAL_RAISE' || kind === 'FINANCING') { if (!useOfProceeds) notConfirmed.push('Use of proceeds'); }
@@ -1468,14 +1567,21 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
     OPERATING_INFLECTION: ['REVENUE', 'MARGIN', 'FCF', 'EARNINGS'], EARNINGS_RESULT: ['REVENUE', 'MARGIN', 'FCF', 'EARNINGS'], CAPITAL_RAISE: ['CAPACITY', 'REVENUE', 'EARNINGS'], FINANCING: ['CAPACITY', 'REVENUE', 'EARNINGS'],
     SPECIAL_SITUATION: ['REVENUE', 'EARNINGS'],
   };
+  const resultOpenQ = resultKind && earningsImpactStatus !== 'CONTRADICTED' && inflection.state !== 'STRUCTURAL_INFLECTION';
   const weakestKey = ((): CatalystLinkKey | null => {
     if (noEarningsLink) return null;
+    if (resultOpenQ) return null;
+    if (dealOnly) return 'EARNINGS';
     if (evStatus === 'DISPROVED') return 'EVENT';
     if (evLinkStatus === 'ASSUMED') return 'EVENT';
     for (const k of PATH[kind] || ['REVENUE', 'EARNINGS']) { const l = chainOf(k); if (l.status === 'ASSUMED' || l.status === 'PARTIALLY_PROVEN') return k; }
     return null;
   })();
-  const weakestUnprovenLink = weakestKey ? LINK_WORD[weakestKey] : null;
+  const driverQuote = resultKind ? matchQuote(RE.driverStated, ctext) : null;
+  const resultDriverNote = resultKind
+    ? (driverQuote ? `The source gives a cause ("${clip(driverQuote, 60)}"); the filing has not confirmed it.` : 'The cause is not stated in the source: price, volume or cost? Not established.')
+    : null;
+  const weakestUnprovenLink = resultOpenQ ? 'whether the next quarter confirms it lasts, and what drove it (price, volume or cost)' : dealOnly ? 'earnings link: revenue / EBITDA of the acquired or funded business' : weakestKey ? LINK_WORD[weakestKey] : null;
 
   const when = ((): string | null => {
     const m = /(?:by|in|during|from|before|starting|planned|scheduled|slated|due|commenc\w+|expected (?:by|in|to))\s+((?:Q[1-4]\s?FY\s?\d{2}(?:\d{2})?(?!\d)|H[12]\s?FY\s?\d{2}(?:\d{2})?(?!\d)|FY\s?\d{2}(?:\d{2})?(?!\d)|(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}|(?:first|second|third|fourth) quarter(?: of)?\s+\d{4}|Q[1-4]\s?\d{4}))/i.exec(text);
@@ -1502,7 +1608,8 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
       case 'FCF_INFLECTION': p = { what: 'Cash flow from operations against profit, working-capital days and free cash flow in the next results.', when: when || 'next quarterly result', kind: 'result' }; break;
       case 'MARKET_SHARE_INFLECTION': p = { what: 'Volume and revenue growth against the market, and the stated share figure, in the next results.', when: when || 'next quarterly result', kind: 'result' }; break;
       case 'REGULATORY_DEMAND_INFLECTION': p = { what: 'Enforcement dates, the company\'s order intake under the rule and volume in the next results.', when, kind: 'order' }; break;
-      case 'OPERATING_INFLECTION': case 'EARNINGS_RESULT': p = { what: 'Next quarterly result: do revenue growth and margin hold for a second and third quarter?', when: 'next quarterly result', kind: 'result' }; break;
+      case 'OPERATING_INFLECTION': p = { what: 'Next quarterly result: do revenue growth and margin hold for a second and third quarter?', when: 'next quarterly result', kind: 'result' }; break;
+      case 'EARNINGS_RESULT': p = { what: `Next quarterly result: do revenue growth and margin hold for a second and third quarter? Also what drove this one (price, volume or cost). ${resultDriverNote}`, when: 'next quarterly result', kind: 'result' }; break;
       case 'CAPITAL_RAISE': case 'FINANCING': p = { what: 'Use of proceeds and deployment, the balance-sheet effect, and later results showing what the money funded.', when, kind: 'filing' }; break;
       case 'LEGAL_DECISION': case 'REGULATORY_DECISION': p = { what: 'A company disclosure of the operating effect (licence, revenue or margin) in a filing or the next results.', when, kind: 'filing' }; break;
       case 'SPECIAL_SITUATION':
@@ -1512,7 +1619,7 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
                 : tentative ? { what: 'Board and shareholder approval of the proposal (proposed, not approved), then the record date, listing of the separated business and its first separate results.', when, kind: 'closing' }
                   : { what: 'Record date, listing of the separated business and its first separate results.', when, kind: 'closing' })
               : ss === 'MA' ? (subHint === 'MERGER' ? { what: `${tentative ? 'Approval of the proposal (proposed, not approved), then ' : ''}regulatory, shareholder and NCLT approval, the swap-ratio terms, deal closing and the first combined results.`, when, kind: 'closing' }
-                : { what: 'Regulatory approval, deal closing, distribution or customer overlap, and separate reporting of the acquired business.', when, kind: 'closing' })
+                : { what: `Regulatory approval, deal closing, distribution or customer overlap, and separate reporting of the acquired business.${dealOnly ? ' The earnings link needs the acquired business revenue, EBITDA or contract tariff, which the source does not state.' : ''}`, when, kind: 'closing' })
                 : ss === 'RESTRUCTURING' ? { what: 'The next regulatory or lender step, then results showing the effect.', when, kind: 'filing' }
                   : { what: 'Completion step named in the filing (closing, allotment or listing).', when, kind: 'closing' };
         break;
@@ -1669,7 +1776,7 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
     for (const i of order) if (chain[i].status !== 'proven') return i;
     return 8;
   })();
-  const unprovenOld = CHAIN_NAMES[weakLinkIdx].toLowerCase();
+  const unprovenOld = resultKind ? 'durability (does the next quarter confirm it)' : dealOnly ? 'earnings' : CHAIN_NAMES[weakLinkIdx].toLowerCase();
   const dupNote = src0.duplicates > 0 ? ` (${src0.duplicates} syndicated or near-identical ${src0.duplicates === 1 ? 'copy was' : 'copies were'} removed)` : '';
   const why = ((): string => {
     if (evStatus === 'DISPROVED') return kind === 'DISPROVED_RUMOUR' ? 'The source says the report was denied or untrue. There is no event to confirm.' : `The source says the event was cancelled, withdrawn or rejected ("${clip(disprovedQuote || '', 60)}"). Nothing further is proven.`;
@@ -1687,6 +1794,24 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
     status: evStatus, sourceRank: src.rank, sourceLabel: src.label, why, independentSources: nSrc,
     sourceCount: src0.count, sourceQuality: src0.quality, sourceDiversity: src0.diversity, duplicatesRemoved: src0.duplicates,
   };
+
+  // ── zzz850: event evidence and economic evidence are separate; the reader sees an honest 1-7 stage ──
+  const primaryEvent = directPrimary && !noEarningsLink && evStatus !== 'DISPROVED' && !tentative && !planHint;
+  const eventEvidence: EventEvidence = noiseKind || kind === 'CORPORATE_ACTION' ? 'NOT_APPLICABLE' : evStatus === 'DISPROVED' ? 'DISPROVED' : primaryEvent ? 'PRIMARY_CONFIRMED' : directPrimary ? 'PRIMARY_PROPOSED' : 'SECONDARY_REPORTED';
+  const economicEvidence: EconomicEvidence = noFinLink || dealOnly ? 'NOT_ESTABLISHED'
+    : kind === 'EARNINGS_RESULT' && quantificationStatus !== 'QUANTIFIED' ? 'REPORTED_RESULT'
+      : quantificationStatus === 'QUANTIFIED' ? 'QUANTIFIED' : quantificationStatus === 'PARTIALLY_QUANTIFIED' ? 'PARTLY' : 'NOT_ESTABLISHED';
+  const stageNumber: number | undefined = ((): number | undefined => {
+    if (maturity == null) return undefined;
+    if (maturity === 'BROKEN') return 0;
+    let n = primaryEvent ? 3 : nSrc >= 2 ? 2 : 1;
+    if (n >= 3 && (quantificationStatus === 'QUANTIFIED' || quantificationStatus === 'PARTIALLY_QUANTIFIED') && !dealOnly && !noFinLink) n = 4;
+    if (finVisible) n = Math.max(n, 5);
+    if (finVisible && (inflection.state === 'CONFIRMED_INFLECTION' || inflection.state === 'ACCELERATING_INFLECTION')) n = Math.max(n, 6);
+    if (finVisible && inflection.state === 'STRUCTURAL_INFLECTION') n = 7;
+    return n;
+  })();
+  const stageLabel = stageNumber == null ? undefined : STAGE_LABEL[stageNumber];
 
   // draft
   const publishedAt = pub;
@@ -1710,6 +1835,7 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
     catalystChain, eventConfirmation, mechanismStatus, earningsImpactStatus, confirmationLabel, evidenceScope,
     financialTransmission, quantificationStatus, impacts,
     catalystMaturity: maturity, catalystProgression: maturity ? PROGRESSION[maturity] : 0, evidenceDelta, indicator,
+    stageNumber, stageLabel, eventEvidence, economicEvidence, dealFacts, resultDriverNote,
     catalystMateriality, materialityNote: mat.note, counterfactual,
     oneSentenceMechanism, mechanismSpecific: noEarningsLink ? undefined : mechanismSpecific,
     weakestUnprovenLink, ...dates, priceResponse,
@@ -1735,7 +1861,7 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
       else if (mat.level === 'LOW' || mat.level === 'MODERATE') whyNot.push(`Materiality is ${mat.level.toLowerCase()}.`);
       if (governance.status === 'FLAGGED') whyNot.push('Governance is flagged.');
       if (capexAlone) whyNot.push('Capex has no demand link yet.');
-      if (earningsImpactStatus !== 'CONFIRMED' && link !== 'NOT_ESTABLISHED') whyNot.push(`Earnings transmission is ${earningsImpactStatus === 'PARTIALLY_PROVEN' ? 'only partly proven' : 'unproven'}.`);
+      if (earningsImpactStatus !== 'CONFIRMED' && earningsImpactStatus !== 'REPORTED_RESULT' && link !== 'NOT_ESTABLISHED') whyNot.push(`Earnings transmission is ${earningsImpactStatus === 'PARTIALLY_PROVEN' ? 'only partly proven' : 'unproven'}.`);
       if (integrity.action !== 'NONE') for (const f of integrity.failedChecks) whyNot.push(f.why);
     }
   }
@@ -1779,7 +1905,10 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
     const wk = weakestUnprovenLink ? ` Weakest unproven link: ${weakestUnprovenLink}.` : '';
     const tail = kind === 'EARNINGS_RESULT' && earnNumbers
       ? `Reported results are supplied (${INFLECTION_LABEL[inflection.state].toLowerCase()}).`
-      : 'Revenue impact not yet visible in reported earnings.';
+      : kind === 'EARNINGS_RESULT' ? `This is an already reported result${directPrimary ? '' : ' (secondary-reported, filing not read)'}; the open question is whether the next quarter confirms it lasts.`
+        : dealOnly ? 'Earnings link not established: the source states no revenue or EBITDA for the acquired or funded business.'
+          : /\(stated\)$/.test(impacts.revenue) ? 'The source states a revenue figure; reported results have not yet confirmed it.'
+            : 'Revenue impact not yet visible in reported earnings.';
     const govTail = governance.status === 'NOT_CHECKED' && p >= 2 ? ' Governance not checked yet.' : '';
     const capTail = capReasons.length ? ` Capped at ${PRIORITY_LABEL[priority === 'EXCLUDE' ? 'LOW' : priority].toLowerCase()}: ${joinList(capReasons)}.` : '';
     return `${head}: ${descr}. ${evClause}${wk} ${tail}${govTail}${capTail}`.replace(/\s+/g, ' ').trim();
@@ -1806,6 +1935,7 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   if (!input.company || input.company === 'Unnamed company') ledgerBlockers.push('No company is named.');
   if (quar) ledgerBlockers.push(`Quarantined: ${quar.noise}.`);
   if (proposedOnly) ledgerBlockers.push('The event is proposed, not approved or delivered.');
+  if (dealOnly && !noEarningsLink) ledgerBlockers.push('Earnings link not established');
   if (noEarningsLink || kind === 'OTHER' || nonOperatingEvent || kind === 'SPECIAL_SITUATION' && !durableSS) ledgerBlockers.push('The event is not an earnings catalyst.');
   if (!(evStatus === 'CONFIRMED' || evStatus === 'STRONG' || evStatus === 'DEVELOPING')) ledgerBlockers.push('Evidence is not yet at developing or better.');
   if (!mechanismSpecific) ledgerBlockers.push('No company-specific mechanism.');
@@ -2090,8 +2220,8 @@ export function monitorThesisOf(entry: Partial<LedgerEntry> | null | undefined, 
   const orig = clean(e?.thesis);
   const fail = [...(item?.breakConditions || []), ...(clean(e?.whatWouldBreak) ? [clean(e?.whatWouldBreak)] : [])].filter(Boolean);
   const indicator = item?.indicator?.type ? `${item.indicator.type[0] + item.indicator.type.slice(1).toLowerCase()} indicator: ${item.indicator.label}.` : NE;
-  const fin = item?.earningsImpactStatus === 'CONFIRMED' || item?.earningsImpactStatus === 'PARTIALLY_PROVEN'
-    ? `Earnings impact is ${item.earningsImpactStatus === 'CONFIRMED' ? 'confirmed' : 'partly proven'}. ${a.earningsConversionBegun !== NE ? a.earningsConversionBegun : ''}`.trim()
+  const fin = item?.earningsImpactStatus === 'CONFIRMED' || item?.earningsImpactStatus === 'PARTIALLY_PROVEN' || item?.earningsImpactStatus === 'REPORTED_RESULT'
+    ? `Earnings impact is ${item.earningsImpactStatus === 'CONFIRMED' ? 'confirmed' : item.earningsImpactStatus === 'REPORTED_RESULT' ? 'reported (the result itself)' : 'partly proven'}. ${a.earningsConversionBegun !== NE ? a.earningsConversionBegun : ''}`.trim()
     : a.earningsConversionBegun;
   return {
     status, statusReason: why, originalThesis: orig || NE,

@@ -50,6 +50,7 @@ export function GuTopBar(p: {
           {WINDOWS.map((w) => <button key={w} type="button" style={pill(p.window === w)} aria-pressed={p.window === w} onClick={() => p.onWindow(w)}>{w}</button>)}
         </div>
       </div>
+      <div style={{ fontSize: 12, color: R.dim }}>The time window only filters these events. It does not filter the guidance universe above.</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))', gap: 8 }}>
         {counts.map(([label, n, tip, split]) => (
           <div key={label} title={tip} style={box({ padding: '8px 10px' })}>

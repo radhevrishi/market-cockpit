@@ -53,7 +53,7 @@ describe('display: ranges, open-ended, multi-year, implied', () => {
     assert.equal(uni([mk({ growthLow: 75, growthHigh: 85, statement: 'Guides 80% plus or minus 5%.' })]).records[0].display, '+75–85%');
   });
   test('implied growth is labelled, stated is not', () => {
-    assert.equal(uni([mk({ growthOrigin: 'IMPLIED', growthLow: 43, growthHigh: 43 })]).records[0].display, '+43% (implied)');
+    assert.equal(uni([mk({ growthOrigin: 'IMPLIED', growthLow: 43, growthHigh: 43, absoluteTarget: { value: 143, unit: '₹ Cr' }, impliedBase: { value: 100, unit: '₹ Cr', period: 'FY26' } })]).records[0].display, '+43% (implied)');
     assert.ok(!/implied/.test(uni([mk()]).records[0].display));
   });
   test('an absolute-only guide shows the amount and says no % is stated', () => {
@@ -163,7 +163,9 @@ describe('summary is computed from the records', () => {
   test('US goes through the same function as India (same rules, separate bucket)', () => {
     const us = SEED.filter((r) => r.market === 'US' && r.verification !== 'UNVERIFIED' && r.metric === 'REVENUE' && r.periodKind !== 'MULTI_YEAR_CAGR' && (r.verification === 'VERIFIED' || r.verification === 'PARTIALLY_VERIFIED'));
     const cmp = (r: GuSeedRow) => (r.growthLow == null ? -1 : r.growthHigh == null || r.growthHigh === r.growthLow ? r.growthLow : (r.growthLow + r.growthHigh) / 2);
-    const ex = new Set(us.filter((r) => cmp(r) >= 30 && !/pre-?sales/i.test(r.statement)).map((r) => r.ticker)).size;
+    // zzz849 rules also drop rows flagged needs-review, implied rows with no sourced base, and revenue growth >= 100% that is not a stated figure
+    const flagged = (r: GuSeedRow) => !!r.needsReview || (r.growthOrigin === 'IMPLIED' && !r.impliedBase) || (cmp(r) >= 100 && r.growthOrigin !== 'STATED');
+    const ex = new Set(us.filter((r) => cmp(r) >= 30 && !/pre-?sales/i.test(r.statement) && !flagged(r)).map((r) => r.ticker)).size;
     assert.equal(s0.usa.revenueGte30, ex);
   });
   test('mutating the data changes the numbers (nothing is hard-coded)', () => {

@@ -12,7 +12,7 @@ import {
   type CatalystKind, type EvidenceStatus, type LedgerEntry, type RadarBucket, type RadarItem, type ResearchPriority, type ThesisStatus,
 } from '@/lib/multibagger-radar-types';
 import { buildRadar } from '@/lib/multibagger-radar';
-import { eventsToRadarInputs } from '@/lib/multibagger-radar-adapter';
+import { splitRadarInputs } from '@/lib/multibagger-radar-adapter';
 import type { RadarFeedEvent } from '@/lib/multibagger-radar-feed-types';
 import {
   LEDGER_EVENT, LEDGER_KEY, TAGS_KEY, loadLedger, loadTags, removeEntry, saveEntry, setTag, updateStatus, type OwnerTag,
@@ -90,9 +90,9 @@ export default function MultibaggerRadar({ events, holdings: holdingsProp, regio
 
   const built = useMemo(() => {
     try {
-      const inputs = eventsToRadarInputs((events || []).filter((e) => region === 'ALL' || (e.region || e.primary_filing?.region) === region));
-      return { radar: buildRadar(inputs, { holdings }), failed: null as string | null };
-    } catch (e: any) { return { radar: null, failed: String(e?.message || e) }; }
+      const split = splitRadarInputs((events || []).filter((e) => region === 'ALL' || (e.region || e.primary_filing?.region) === region));
+      return { radar: buildRadar(split.inputs, { holdings }), failed: null as string | null, heldBackLine: split.heldBack?.line || '' };
+    } catch (e: any) { return { radar: null, failed: String(e?.message || e), heldBackLine: '' }; }
   }, [events, region, holdings]);
 
   const heldSet = useMemo(() => new Set(holdings.map(normSymbol)), [holdings]);
@@ -108,6 +108,7 @@ export default function MultibaggerRadar({ events, holdings: holdingsProp, regio
   const banner = (
     <div style={{ fontSize: 12, color: R.dim, lineHeight: 1.5, border: `1px solid ${R.border}`, borderRadius: 8, padding: '8px 12px', background: R.bg2 }}>
       Built from filings and headlines in the feed; where the feed has no numbers the card says Not established. Existing Special Situations views are unchanged in the other tabs.
+      {built.heldBackLine ? <div style={{ marginTop: 4 }}>{built.heldBackLine}</div> : null}
     </div>
   );
   const footer = <div style={{ fontSize: 11, color: R.faint, textAlign: 'center', padding: '8px 0' }}>Not investment advice. Research priority tells you what to read first. It is not a recommendation.</div>;

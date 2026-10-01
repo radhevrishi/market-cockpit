@@ -3,7 +3,7 @@
 // of the window (bounded, parallel, failures tolerated) and reports HONESTLY what it covered.
 // Pure helpers take injectable fetchers, so tests never touch the network. No paid AI, no document fetching.
 import type { GuCandidate, GuScanSource, GuScanStatus, GuWindow } from './guidance-upgrades-types';
-import { LIVE_SCAN_MAX_DAYS, computeCoverage, coverageLabel, dateList, filingToCandidate, isGuidanceRelevantFiling, istDate, istDateList, parseWhen, scanState, usSessionDates } from './guidance-upgrades-candidates';
+import { BLOB_ONLY_NOTE, LIVE_SCAN_MAX_DAYS, computeCoverage, coverageLabel, dateList, filingToCandidate, isGuidanceRelevantFiling, istDate, istDateList, parseWhen, scanState, usSessionDates } from './guidance-upgrades-candidates';
 
 export interface FilingRowLike {
   exchange?: string; symbol?: string; company_name?: string; subject?: string; detail?: string;
@@ -104,6 +104,7 @@ export async function scanIndia(inp: IndiaScanInput): Promise<MarketScanResult> 
   const sources: GuScanSource[] = [];
   const dayOk = new Map<string, boolean>(days.map((d) => [d, true]));
   const failedDays: Record<string, string[]> = {};
+  const blobDays = new Set<string>();   // zzz849: days the scraped blob really covers (never required, never a substitute for the exchange feeds)
 
   const runEx = async (name: string, f: DayFetcher | undefined) => {
     if (!f) { sources.push({ name, state: 'NOT_RUN', scanned: 0, detail: 'not wired' }); for (const d of days) dayOk.set(d, false); return; }
@@ -125,8 +126,9 @@ export async function scanIndia(inp: IndiaScanInput): Promise<MarketScanResult> 
     const rb = inp.readBlob;
     const res = await runBounded(days, (d) => rb(d), { concurrency: 6, budgetMs: Math.min(budget, 6_000) });
     let have = 0; let seen = 0;
-    for (const r of res) if (r.ok && Array.isArray(r.value)) { have++; for (const x of r.value) { const n = normaliseBlobRow(x); if (n) { rows.push(n); seen++; } } }
-    sources.push({ name: 'Scraped filings blob', state: have === 0 ? 'NOT_RUN' : stateFor(have, days.length), scanned: seen, detail: have === 0 ? 'scraped filings blob (corp-filings:v1:latest) missing, empty or older than the window (optional source)' : `${have} of ${days.length} days read from the scraped filings blob, ${seen} announcements (optional source)` });
+    for (const r of res) if (r.ok && Array.isArray(r.value)) { have++; blobDays.add(r.item); for (const x of r.value) { const n = normaliseBlobRow(x); if (n) { rows.push(n); seen++; } } }
+    // zzz849: a day counts as read from the blob only when the blob's own date range covers it (the reader answers null outside that range)
+    sources.push({ name: 'Scraped filings blob', state: have === 0 ? 'NOT_RUN' : stateFor(have, days.length), scanned: seen, detail: have === 0 ? 'scraped filings blob (corp-filings:v1:latest) missing, empty or older than the window: blob (optional source)' : `${have} of ${days.length} days covered by the scraped filings blob, ${seen} announcements: blob (optional source)` });
   } else sources.push({ name: 'Scraped filings blob', state: 'NOT_RUN', scanned: 0, detail: 'not wired (optional source)' });
 
   const relevant = rows.filter(isGuidanceRelevantFiling);
@@ -143,8 +145,9 @@ export async function scanIndia(inp: IndiaScanInput): Promise<MarketScanResult> 
   let status: GuScanStatus;
   if (!long) {
     // windows up to 30D: exactly the previous numbers and rules
-    const daysCovered = liveOk.length;
-    const complete = required.every((s) => s.state === 'COMPLETE') && daysCovered === days.length;
+    // zzz849: a day read by the exchange feeds OR covered by the scraped blob counts as covered; COMPLETE still needs every required exchange feed
+    const daysCovered = days.filter((d) => dayOk.get(d) || blobDays.has(d)).length;
+    const complete = required.every((s) => s.state === 'COMPLETE') && liveOk.length === days.length;
     status = {
       market: 'IN', windowFrom: days[days.length - 1], windowTo: days[0], complete, lastScanAt: now.toISOString(), sources,
       daysCovered, daysRequested: days.length, candidatesFound: candidates.length, processed: 0, awaitingGrading: 0, verified: 0, newestItemAt: newest, note: '',
@@ -152,7 +155,7 @@ export async function scanIndia(inp: IndiaScanInput): Promise<MarketScanResult> 
   } else {
     // long window: days covered = read live today (and graded, weekdays) OR already processed by an earlier run. A day that is neither is MISSING, never "zero events".
     const gradedDays = await Promise.resolve(inp.gradedDays ?? null).catch(() => null);
-    const cov = computeCoverage({ days: allDays, live: new Set(liveOk), graded: gradedDays, store: inp.storeCovered });
+    const cov = computeCoverage({ days: allDays, live: new Set([...liveOk, ...days.filter((d) => blobDays.has(d))]), graded: gradedDays, store: inp.storeCovered });
     const storeSeen = inp.storeCovered ? allDays.filter((d) => inp.storeCovered!.has(d)).length : 0;
     sources.push({
       name: 'Persisted event store', scanned: storeSeen,
@@ -169,8 +172,11 @@ export async function scanIndia(inp: IndiaScanInput): Promise<MarketScanResult> 
     for (const r of required) r.detail += ` (live scan is bounded to ${LIVE_SCAN_MAX_DAYS} days per run; ${days.length} of ${allDays.length} days read this run)`;
   }
   status.windowDays = inp.days; status.sourcesCount = sources.filter((x) => x.state !== 'NOT_RUN' && x.state !== 'NOT_AVAILABLE').length;
-  status.coverageLabel = coverageLabel(status.daysCovered, status.daysRequested, inp.window ?? windowOfDays(inp.days));
+  const blobOnly = days.filter((d) => blobDays.has(d) && !dayOk.get(d)).length;
+  status.coveredBy = { exchange: liveOk.length, blob: blobDays.size, blobOnly };
+  status.coverageLabel = coverageLabel(status.daysCovered, status.daysRequested, inp.window ?? windowOfDays(inp.days)) + (blobOnly > 0 && !status.complete ? ` — PARTIAL: ${BLOB_ONLY_NOTE}` : '');
   status.status = scanState(status);
+  if (blobOnly > 0 && !status.complete && status.status === 'COMPLETE') status.status = 'PARTIAL';
   status.note = scanNote(status);
   return { status, candidates, rowsSeen: rows.length, rowsRelevant: relevant.length, liveDays: liveOk };
 }
@@ -266,17 +272,20 @@ export async function scanUs(inp: UsScanInput): Promise<MarketScanResult> {
   return { status, candidates: [], rowsSeen, rowsRelevant: rowsSeen, liveDays: liveWarm };
 }
 
+/** zzz849: the one wording for days covered only by the optional scraped blob while the exchange feeds failed. */
+export { BLOB_ONLY_NOTE };
 /** Plain note that never turns an incomplete scan into "nothing happened". */
 export function scanNote(s: GuScanStatus): string {
   const name = s.market === 'IN' ? 'India' : 'US';
+  const blobTail = s.coveredBy?.blobOnly ? ` ${s.coveredBy.blobOnly} of the covered days were ${BLOB_ONLY_NOTE} (blob is an optional source, so this is PARTIAL, not full coverage).` : '';
   if (s.complete) return `${name} scan complete: ${s.daysCovered} of ${s.daysRequested} days, every required source answered.`;
   if (s.windowDays && s.windowDays > LIVE_SCAN_MAX_DAYS && s.coverageLabel) {
     const bad = s.sources.filter((x) => x.state !== 'COMPLETE' && x.state !== 'NOT_RUN').map((x) => `${x.name}: ${x.detail}`);
     const wait = (s.unprocessed ?? s.awaitingGrading) > 0 ? `; ${s.unprocessed ?? s.awaitingGrading} filing${(s.unprocessed ?? s.awaitingGrading) === 1 ? '' : 's'} awaiting grading` : '';
-    return `SCAN INCOMPLETE — ${name}: ${s.coverageLabel}${bad.length ? `; ${bad.join('; ')}` : ''}${wait}. Zero events shown is NOT a confirmation of no upgrades.`;
+    return `SCAN INCOMPLETE — ${name}: ${s.coverageLabel}${bad.length ? `; ${bad.join('; ')}` : ''}${wait}.${blobTail} Zero events shown is NOT a confirmation of no upgrades.`;
   }
   const bad = s.sources.filter((x) => x.state !== 'COMPLETE' && x.state !== 'NOT_RUN').map((x) => x.detail).concat(s.sources.filter((x) => x.state === 'NOT_RUN' && !/optional/.test(x.detail)).map((x) => `${x.name} not run`));
-  return `SCAN INCOMPLETE — ${name}: ${s.daysCovered} of ${s.daysRequested} days covered${bad.length ? `; ${bad.join('; ')}` : ''}${(s.unprocessed ?? s.awaitingGrading) ? `; ${s.unprocessed ?? s.awaitingGrading} filing${(s.unprocessed ?? s.awaitingGrading) === 1 ? '' : 's'} awaiting grading` : ''}. Zero events shown is NOT a confirmation of no upgrades.`;
+  return `SCAN INCOMPLETE — ${name}: ${s.daysCovered} of ${s.daysRequested} days covered${bad.length ? `; ${bad.join('; ')}` : ''}${(s.unprocessed ?? s.awaitingGrading) ? `; ${s.unprocessed ?? s.awaitingGrading} filing${(s.unprocessed ?? s.awaitingGrading) === 1 ? '' : 's'} awaiting grading` : ''}.${blobTail} Zero events shown is NOT a confirmation of no upgrades.`;
 }
 
 /** After the engine ran: fill processed / verified / candidatesFound and re-stamp the note. */
@@ -297,6 +306,34 @@ export const candidateDay = dayOfCandidate;
 
 // ── real fetcher wiring (used by the route; tests inject stubs instead) ──────────────────────────────────────────
 const BLOB_KEY = 'corp-filings:v1:latest';
+/** The scraper keeps the newest N announcements. A blob holding N rows was cut off, so its oldest day is partial. */
+export const BLOB_CAP = 500;
+const rowsOfBlob = (v: any): any[] | null => (Array.isArray(v) ? v : Array.isArray(v?.filings) ? v.filings : null);
+/** The IST days the scraped blob really covers: from its oldest complete day to the day it was generated (or its newest row). Null when it holds nothing readable. */
+export function blobCoverage(v: any, cap: number = BLOB_CAP): { from: string; to: string; rows: number; truncated: boolean } | null {
+  const rows = rowsOfBlob(v);
+  if (!rows || !rows.length) return null;
+  const days: string[] = [];
+  for (const r of rows) { const t = parseWhen(r?.filing_datetime ?? r?.filing_date ?? r?.an_dt ?? r?.NEWS_DT); if (t) days.push(istDate(new Date(t))); }
+  if (!days.length) return null;
+  days.sort();
+  const gen = parseWhen(v?.generatedAt ?? v?.generated_at);
+  const last = gen && istDate(new Date(gen)) > days[days.length - 1] ? istDate(new Date(gen)) : days[days.length - 1];
+  const truncated = rows.length >= cap;
+  let from = days[0];
+  if (truncated) { const next = new Date(Date.parse(`${from}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10); from = next <= last ? next : last; }   // the oldest day may be cut off: not counted
+  return { from, to: last, rows: rows.length, truncated };
+}
+/** Per-day reader for the scraped blob. Returns null for a day the blob does not cover, so such a day is never counted as read. `load` is injected (tests pass a stub). */
+export function makeBlobReader(load: () => Promise<any>, cap: number = BLOB_CAP): BlobReader {
+  return async (day) => {
+    const v: any = await load();
+    const cov = blobCoverage(v, cap);
+    const rows = rowsOfBlob(v);
+    if (!cov || !rows || day < cov.from || day > cov.to) return null;
+    return rows.filter((r) => { const t = parseWhen(r?.filing_datetime ?? r?.filing_date ?? r?.an_dt ?? r?.NEWS_DT); return !!t && istDate(new Date(t)) === day; });
+  };
+}
 export function makeRealIndiaFetchers(): { nse: DayFetcher; bse: DayFetcher; blob: BlobReader } {
   const mk = (which: 'NSE' | 'BSE'): DayFetcher => async (day, signal) => {
     const feed = await import('./nse-bse-feed');
@@ -309,16 +346,13 @@ export function makeRealIndiaFetchers(): { nse: DayFetcher; bse: DayFetcher; blo
     return { ok: !blocked, filings: Array.isArray(r?.filings) ? r.filings : [], reason: blocked ? (r?.reason || src) : undefined };
   };
   let latest: Promise<any> | null = null;
-  const blob: BlobReader = async (day) => {
+  // What the GitHub scraper really writes: ONE blob 'corp-filings:v1:latest' { generatedAt, filings[] } (last ~3 days, newest 500).
+  // There is no per-day key. A day counts as covered only when the blob's own date range holds it (see makeBlobReader).
+  const blob = makeBlobReader(async () => {
     const { kvGet } = await import('./kv');
-    // What the GitHub scraper really writes: ONE blob 'corp-filings:v1:latest' { generatedAt, filings[] } (last ~3 days, newest 500).
-    // There is no per-day key; the old per-day key was never written by anything, so this source was always empty.
     if (!latest) latest = kvGet<any>(BLOB_KEY).catch(() => null);
-    const v: any = await latest;
-    const rows: any[] | null = Array.isArray(v) ? v : Array.isArray(v?.filings) ? v.filings : null;
-    if (!rows) return null;
-    return rows.filter((r) => { const t = parseWhen(r?.filing_datetime ?? r?.filing_date ?? r?.an_dt ?? r?.NEWS_DT); return !!t && istDate(new Date(t)) === day; });
-  };
+    return latest;
+  });
   return { nse: mk('NSE'), bse: mk('BSE'), blob };
 }
 

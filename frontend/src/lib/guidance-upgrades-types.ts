@@ -62,6 +62,12 @@ export interface GuEventV2 {
   sourceHashes?: string[];
   /** zzz848: where the event came from on this read: live sources, the persisted event store, or both. */
   origin?: 'LIVE' | 'STORE' | 'LIVE+STORE';
+  /** zzz849: what the computed numbers say. UPGRADE | REITERATION | DOWNGRADE | NO_RAISE | DETECTED (no before and after numbers). Wording follows this, never the headline verb. */
+  eventClass?: 'UPGRADE' | 'REITERATION' | 'DOWNGRADE' | 'NO_RAISE' | 'DETECTED';
+  /** zzz849: display label for eventClass, e.g. 'GUIDANCE REITERATED'. */
+  eventLabel?: string;
+  /** zzz849: set when before/after numbers came from the persistent guidance universe record, not from the event's own sources. */
+  numbersFrom?: { origin: 'UNIVERSE_RECORD'; note: string; sourceName: string; sourceDate: string | null; sourceUrl: string | null; verification: 'VERIFIED' | 'PARTIALLY_VERIFIED' | 'SECONDARY_ONLY' | 'UNVERIFIED'; metric: string; period: string; display: string };
 }
 /** zzz848: NOT_AVAILABLE = the source cannot serve this window at all (e.g. no history that far back). It is never COMPLETE. */
 export type GuScanState = 'COMPLETE' | 'PARTIAL' | 'FAILED' | 'NOT_RUN' | 'NOT_AVAILABLE';
@@ -85,6 +91,8 @@ export interface GuScanStatus {
   missingDaysCount?: number;
   storeDays?: number;                   // days counted as covered because an earlier run already processed them (persisted store)
   coverageLabel?: string;               // 'Coverage: 74/120 days — 120D coverage incomplete'
+  /** zzz849: India: how the covered days were read. exchange = days NSE+BSE both answered; blob = days the optional scraped filings blob covers; blobOnly = covered by the blob while an exchange feed failed (PARTIAL, never full coverage). */
+  coveredBy?: { exchange: number; blob: number; blobOnly: number };
 }
 
 /** A number that either exists with its provenance, or is honestly unavailable. */
@@ -222,10 +230,16 @@ export interface GuSummary {
   today?: number;                   // verified events announced today
 }
 
+/** zzz849: a discovery whose headline names no real company (no NSE symbol or company-name match). Held back: NEVER an event; shown only in coverage diagnostics. */
+export interface GuUnresolvedDiscovery { company: string | null; title: string; sourceName: string; date: string; url?: string; market: GuMarket; reason: string }
 export interface GuidanceUpgradesResponse {
   summary: GuSummary;
   events: GuidanceEvent[];
+  /** zzz849: number of unresolved discoveries held back from `events` (the list is `unresolved`, an array of GuUnresolvedDiscovery, coverage diagnostics only) */
+  unresolvedCount?: number;
   scan?: Partial<Record<'IN' | 'US', GuScanStatus>>;   // zzz844
+  /** additive (optional): discoveries held back because they could not be resolved; the route sends GuUnresolvedDiscovery[]. Never shown as events. */
+  unresolved?: number | unknown[];
   freshness: {
     newestAnnouncement: string | null; feedCheckedAt: string; note?: string;
     /** additive: per-market coverage, so India and USA are each described honestly */

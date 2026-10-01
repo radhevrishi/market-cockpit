@@ -57,4 +57,17 @@ export interface RadarFeedHints {
   tickerResolved?: boolean;
   /** How many duplicate cards were merged into this one. */
   mergedDuplicates?: number;
+  /** Fund / BDC / interval-fund / feeder periodic repurchase offer (SC TO-I). Not an equity special situation. */
+  isFundRepurchaseOffer?: boolean;
+  /** Set when the item is held out of the main list; shown only in the visible 'held back' line. */
+  feedQuarantineReason?: 'FUND_REPURCHASE_OFFER' | null;
+  feedQuarantineLabel?: string;
+  /** The subject is a group / promoter name ('<X> Group'): no listed ticker. */
+  groupName?: boolean;
+  /** Text to show next to the ticker: 'via parent <name>' or 'No listed ticker (group)'. */
+  tickerNote?: string;
+  /** Listed parent name when the ticker is the parent's (subsidiary / brand). */
+  tickerVia?: string;
+  /** SC 13E-3 text: percentages in it are legal boilerplate, never a deal amount. */
+  isLegalBoilerplateAmount?: boolean;
 }

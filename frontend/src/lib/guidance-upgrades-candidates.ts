@@ -3,8 +3,8 @@
 // and the US graded-results cache (KV `us-graded:<engine>:<date>|1`, gzip). Nothing here fetches a document,
 // imports a price module, or calls an AI model.
 import { gunzipSync } from 'zlib';
-import type { GuCandidate, GuContext, GuMarket, GuWindow, GuidanceEvent, GuScanStatus, GuScanState } from './guidance-upgrades-types';
-import { buildGuidanceEvent, isGuidanceUpgradeCandidate, mergeCandidates, rank, withinWindow } from './guidance-upgrades';
+import type { GuCandidate, GuContext, GuMarket, GuWindow, GuidanceEvent, GuScanStatus, GuScanState, GuUnresolvedDiscovery } from './guidance-upgrades-types';
+import { buildGuidanceEvent, buildWithExtras, isGuidanceUpgradeCandidate, mergeCandidates, rank, withinWindow, type GuExtraFor } from './guidance-upgrades';
 
 const WINDOWS: GuWindow[] = ['24H', '3D', '7D', '14D', '30D', '120D'];
 /** Missing or unknown window falls back to 7D. */
@@ -129,6 +129,24 @@ const NON_COMPANY = /^(?:rbi|sebi|imf|oecd|adb|fed|ecb|government|govt|centre|ce
 export interface ResolvedCompany { ticker?: string; company?: string; how: 'article-ticker' | 'exchange-tag' | 'name' | 'headline' | 'none' }
 const RAISE_VERB_HEAD = /\b(?:raises?|raised|hikes?|hiked|lifts?|lifted|upgrades?|upgraded|increases?|increased|revises?|revised|boosts?|boosted|ups|now\s+(?:expects?|sees?|targets?|guides?|projects?)|expects?|sees|targets?|guides?|aims?|plans?|sets?|announces?)\b/i;
 /** Best-effort company name from the words in front of the first raise verb of a headline. Never invents a ticker. */
+/** Words that describe demand, a period, a sector or a macro mood, never a company. A phrase made of them is not a company name. */
+const NON_NAME_WORD = new Set(['demand', 'sales', 'growth', 'outlook', 'guidance', 'consumer', 'consumers', 'goods', 'sector', 'sectors', 'market', 'markets', 'economy', 'festive', 'festival', 'season', 'rural', 'urban',
+  'buoyant', 'strong', 'robust', 'weak', 'record', 'healthy', 'steady', 'sluggish', 'subdued', 'higher', 'lower', 'rising', 'falling', 'surge', 'surging', 'spike', 'boom', 'slowdown', 'recovery', 'quarter', 'quarters', 'year', 'years', 'earnings', 'results', 'profit', 'profits',
+  'revenue', 'revenues', 'exports', 'imports', 'credit', 'loans', 'prices', 'rates', 'inflation', 'monsoon', 'festivals', 'orders', 'volumes', 'margins', 'stocks', 'shares', 'investors', 'analysts', 'experts', 'companies', 'firms', 'sectoral', 'overall']);
+const PERIOD_TOKEN = /^(?:Q[1-4]|H[12]|FY\d{0,4}|CY\d{0,4}|\d[\d.,%]*|[1-4]Q\d{0,2})$/i;
+/** True only when the phrase can be a company name: short, no period token, and not made of demand / sector / macro words. Language only, no company is named here. */
+export function isPlausibleCompanyName(name: unknown): boolean {
+  const t = String(name ?? '').trim();
+  if (!t) return false;
+  const words = t.split(/\s+/).filter(Boolean);
+  if (!words.length || words.length > 5) return false;
+  if (words.some((w) => PERIOD_TOKEN.test(w.replace(/[(),.;:]+$/g, '')))) return false;
+  const lower = words.map((w) => w.toLowerCase().replace(/[^a-z0-9&']/g, ''));
+  const generic = lower.filter((w) => NON_NAME_WORD.has(w)).length;
+  if (NON_NAME_WORD.has(lower[0]) || generic * 2 >= lower.length) return false;   // 'Buoyant ... demand', 'Consumer demand'; 'Tata Consumer Products' keeps its one generic word
+  if (words.length > 2 && lower.filter((w) => ['for', 'of', 'in', 'on', 'at', 'to', 'the', 'a', 'an', 'as', 'by', 'with', 'from', 'amid'].includes(w)).length >= 1) return false;   // a clause, not a name
+  return /^[A-Z0-9]/.test(words[0]);
+}
 export function companyFromHeadline(title: string): string | undefined {
   const t = clean(title, 300).replace(/^[\s"'“‘\[\(]+/, '');
   const m = RAISE_VERB_HEAD.exec(t);
@@ -140,6 +158,7 @@ export function companyFromHeadline(title: string): string | undefined {
   if (!words.length || words.length > 6) return undefined;
   if (!/^[A-Z0-9]/.test(words[0])) return undefined;
   if (NON_COMPANY.test(head) || (words.length === 1 && GENERIC_WORD.has(words[0].toLowerCase()))) return undefined;
+  if (!isPlausibleCompanyName(head)) return undefined;     // zzz849: 'Buoyant Q2 demand for consumer goods' is a phrase, never a company
   return head;
 }
 const EXCH_TAG = /\b(?:NSE|BSE)\s*[:\-]\s*([A-Z0-9][A-Z0-9&-]{1,19})\b/g;
@@ -580,7 +599,7 @@ export function readWords(r: IndiaRead): string {
   ];
   let s = parts.join(', ');
   if (r.subjectOnly) s += `; ${r.subjectOnly} announcement${r.subjectOnly === 1 ? '' : 's'} seen with raise text not read (document not opened, not counted as a raise)`;
-  if (r.unresolved) s += `; ${r.unresolved} candidate${r.unresolved === 1 ? '' : 's'} shown with ticker not resolved`;
+  if (r.unresolved) s += `; ${r.unresolved} unresolved discover${r.unresolved === 1 ? 'y' : 'ies'} held back (not shown as ${r.unresolved === 1 ? 'an event' : 'events'})`;
   if (r.noCompany) s += `; ${r.noCompany} raise-worded item${r.noCompany === 1 ? '' : 's'} dropped because no company could be identified`;
   return s;
 }
@@ -706,7 +725,7 @@ const ANALYST_ONLY = /\b(?:price targets?|target price|analysts?|brokerages?|bro
 const RV = String.raw`(?:rais(?:e|es|ed|ing)|hik(?:e|es|ed|ing)|lift(?:s|ed|ing)?|boost(?:s|ed|ing)?|increas(?:e|es|ed|ing)|upgrad(?:e|es|ed|ing)|ups|upped|bump(?:s|ed|ing)?)`;
 const RAISE_ANY = new RegExp(String.raw`\b${RV}\b`, 'i');
 /** words that may sit between "raises" and "guidance" in a real company raise */
-const GUIDE_QUAL = String.raw`(?:(?:FY|F\.?Y\.?)\s?'?\d{2,4}|[HQ][1-4]\s?FY\s?'?\d{2,4}|full[- ]year|fiscal(?: year)?(?:\s*'?\d{2,4})?|annual|medium[- ]term|revenues?|sales|turnover|net|profit|PAT|EBITDA|EBIT|EPS|earnings|margins?|operating|volumes?|growth|income|production|order(?:s| book| inflows?)?|top[- ]?line|bottom[- ]?line|\d{2,4}|and|&|,)`;
+const GUIDE_QUAL = String.raw`(?:(?:FY|F\.?Y\.?)\s?'?\d{2,4}|[HQ][1-4]\s?FY\s?'?\d{2,4}|full[- ]year|fiscal(?: year)?(?:\s*'?\d{2,4})?|annual|medium[- ]term|revenues?|sales|turnover|net|profit|PAT|EBITDA|EBIT|EPS|earnings|margins?|operating|volumes?|growth|income|production|(?:loan|credit|deposit|advances)(?: book)?|order(?:s| book| inflows?)?|top[- ]?line|bottom[- ]?line|\d{2,4}|and|&|,)`;
 const DET = String.raw`(?:(?:its|their|the|our|his|her|a|an)\s+)?`;
 /** raise verb + qualifiers + guidance / outlook / forecast  (qualifiers optional) */
 const STRONG_GUIDE_RE = new RegExp(String.raw`\b${RV}\s+${DET}(?:${GUIDE_QUAL}\s*){0,5}(?:guidance|outlook|forecasts?|projections?)\b`, 'i');
@@ -727,6 +746,10 @@ const COMPANY_VOICE_RE = /\b(?:company|management|the firm|the board|we|our)\b/i
 /** index / market-wide pieces ("Sensex, Nifty end higher", "market wrap"). 'Stocks to watch' lists company news, so it is NOT here. */
 const INDEX_PIECE_RE = /\b(?:sensex|nifty(?:\s?(?:50|100|bank|midcap|smallcap|next 50|it))?|bank nifty|indices|indexes|index|dalal street|market wrap|closing bell|opening bell|stock market(?: today)?|markets? (?:live|today|close|update|cheat sheet)|top (?:gainers|losers)|stocks? (?:to buy|that (?:rose|fell))|market breadth|gift nifty)\b/i;
 
+/** Capital raising: bonds, NCDs, debentures, QIP, rights issue, loans, funds, IPO / OFS, stake sale. Never guidance, in any word order ("raises Rs 13,000 crore through bonds", "bond issue raises ..."). */
+const FUNDING_RE = /\b(?:bonds?|ncds?|(?:non[- ]convertible )?debentures?|qips?|qualified institutional placements?|rights issues?|rights offerings?|fund[- ]?rais\w*|(?:private|preferential) (?:placements?|issues?|allotments?)|commercial papers?|(?:term |bridge |syndicated )?loans?|ipos?|ofs|offer for sale|stake sales?|ecbs?|green bonds?|masala bonds?|convertible notes?|senior notes?|share sales?|equity (?:raise|issue)|capital raise)\b/i;
+/** "Rs 13,000 crore raised by X through bonds": money first, raise verb after it */
+const MONEY_THEN_RAISED_RE = new RegExp(String.raw`${MONEY}\s+(?:[A-Za-z0-9&'.-]+\s+){0,4}?(?:${RV})\b`, 'i');
 /** True when a sentence uses a raise verb on something that is not the company's own earnings guidance. */
 export function nonGuidanceRaiseSentence(sentence: string): boolean {
   const s = String(sentence || '');
@@ -743,6 +766,7 @@ export function nonGuidanceRaiseSentence(sentence: string): boolean {
   if (INDEX_PIECE_RE.test(s) && !(strong && SPECIFIC_RE.test(s))) return true;             // market wrap: only a specific company raise survives
   if (strong) return false;
   if (FWD_CUE_RE.test(s) && FY_PERIOD_RE.test(s)) return false;                               // compound sentence that also states a dated company forward view: the engine decides
+  if (!FWD_CUE_RE.test(s) && (FUNDING_RE.test(s) || MONEY_THEN_RAISED_RE.test(s))) return true;   // zzz849: capital raising in any word order, no guidance cue in the sentence
   return NON_EARN_OBJ_RE.test(s);
 }
 const SENT_SPLIT = /(?<=[.!?])\s+(?=[A-Z₹$€£])|\n+|;\s+/;
@@ -759,7 +783,8 @@ export function sanitizeRaiseCandidate(c: GuCandidate): GuCandidate | null {
   if (!titleBad && keep.length === sents.length) return c;
   const text = keep.join(' ');
   if (!titleBad) return { ...c, text };
-  const pick = keep.find((x) => looksLikeGuidanceRaise(x) || isGuidanceUpgradeCandidate({ ...c, title: x, text: '' }).include);
+  // zzz849: a bad headline (funds, stake, bonds ...) is only replaced by a text sentence that is a real, SPECIFIC company raise (a period or a number), never by loose wording
+  const pick = keep.find((x) => (looksLikeGuidanceRaise(x) || isGuidanceUpgradeCandidate({ ...c, title: x, text: '' }).include) && SPECIFIC_RE.test(x));
   return pick ? { ...c, title: clean(pick, 200), text } : null;
 }
 
@@ -789,6 +814,8 @@ export function consensusLabel(have: number, of: number): string {
   return `Consensus available ${have} of ${of}`;
 }
 
+/** zzz849: the one wording for days covered only by the optional scraped blob while the exchange feeds failed. */
+export const BLOB_ONLY_NOTE = 'read from scraped blob; exchange feeds failed';
 export interface ScanLineCounts { candidates: number; verified: number; events: number; withConsensus: number }
 export function scanSummaryLine(s: GuScanStatus, n: ScanLineCounts): string {
   const name = s.market === 'IN' ? 'India' : 'US';
@@ -803,7 +830,8 @@ export function scanSummaryLine(s: GuScanStatus, n: ScanLineCounts): string {
   const bad = s.sources.filter((x) => x.state !== 'COMPLETE').map((x) => `${x.name}: ${x.detail || x.state}`).join('; ');
   const waiting = s.unprocessed ?? s.awaitingGrading;
   const wait = waiting > 0 ? `; ${waiting} filing${waiting === 1 ? '' : 's'} awaiting grading` : '';
-  return `${name}: SCAN INCOMPLETE — ${s.daysCovered} of ${s.daysRequested} days covered${bad ? ` (${bad})` : ''}${wait}; ${n.events} event${n.events === 1 ? '' : 's'} shown is NOT a confirmation of no upgrades`;
+  const blobTail = s.coveredBy?.blobOnly ? ` — PARTIAL: ${s.coveredBy.blobOnly} of those days ${BLOB_ONLY_NOTE}` : '';
+  return `${name}: SCAN INCOMPLETE — ${s.daysCovered} of ${s.daysRequested} days covered${blobTail}${bad ? ` (${bad})` : ''}${wait}; ${n.events} event${n.events === 1 ? '' : 's'} shown is NOT a confirmation of no upgrades`;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -838,9 +866,9 @@ export function isRaiseCandidate(c0: GuCandidate): boolean {
 export const isExchangeFiling = (c: Pick<GuCandidate, 'id' | 'kind' | 'market'>): boolean => c.kind === 'FILING' && c.market === 'IN' && c.id.startsWith('filing:');
 
 /** processCandidates for India: same engine, same window rule, wording-only raises kept as CANDIDATE. */
-export function processRaiseCandidates(cands: GuCandidate[], ctxFor: (ticker: string) => GuContext, now: Date, window: GuWindow = '7D'): GuidanceEvent[] {
-  const kept = cands.filter((c) => withinWindow(c.publishedAt, window, now) && isRaiseCandidate(c)).map((c) => sanitizeRaiseCandidate(c) ?? c);
-  return rank(mergeCandidates(kept).map((sk) => buildGuidanceEvent(sk, ctxFor(sk.ticker) ?? {}, now)));
+export function processRaiseCandidates(cands: GuCandidate[], ctxFor: (ticker: string) => GuContext, now: Date, window: GuWindow = '7D', extraFor?: GuExtraFor): GuidanceEvent[] {
+  const kept = cands.filter((c) => withinWindow(c.publishedAt, window, now)).map((c) => sanitizeRaiseCandidate(c)).filter((c): c is GuCandidate => !!c && isRaiseCandidate(c));
+  return rank(mergeCandidates(kept).map((sk) => buildWithExtras(sk, ctxFor(sk.ticker) ?? {}, now, extraFor)));
 }
 
 /** An unresolved candidate whose company name matches a resolved candidate of the batch takes that symbol (one outlet wrote 'Cupid Ltd', another 'Cupid'). */
@@ -899,7 +927,7 @@ export function corroborateWithFilings(events: GuidanceEvent[], subjectOnly: rea
       const same = (f.ticker && f.ticker === tk) || (!!f.nameKey && f.nameKey === key);
       if (!same) return false;
       const d = dayDiff(f.date, e.announcement_date);
-      return d >= -1 && d <= 3;
+      return d >= -5 && d <= 3;      // zzz849: news can repeat a filing for several days; the filing is the announcement
     });
     if (!hits.length) return e;
     hits.forEach((h) => used.add(h));
@@ -911,19 +939,34 @@ export function corroborateWithFilings(events: GuidanceEvent[], subjectOnly: rea
     const sources = e.sources.some((s) => s.name.includes('subject only')) ? e.sources
       : [...e.sources, { url: h.url, name: `${h.exchange} announcement (subject only)`, tier: 'SECONDARY' as const, type: `Exchange filing, ${FILING_NOT_READ}`, date: h.date }];
     const via = e.v2 ? { ...e.v2, detectedVia: e.v2.detectedVia.includes('exchange filing (subject only)') ? e.v2.detectedVia : [...e.v2.detectedVia, 'exchange filing (subject only)'] } : e.v2;
-    return { ...e, sources, evidenceGaps: e.evidenceGaps.includes(gap) ? e.evidenceGaps : [gap, ...e.evidenceGaps], nextEvidence: e.nextEvidence.includes(next) ? e.nextEvidence : [next, ...e.nextEvidence].slice(0, 3), v2: via };
+    // the event date is the ANNOUNCEMENT (the earliest matching filing), never the date a news item repeated it
+    const earliest = hits.map((x) => x.date).sort()[0];
+    const redate = earliest && earliest < e.announcement_date.slice(0, 10) ? { announcement_date: earliest, announcement_timestamp: undefined } : {};
+    return { ...e, ...redate, sources, evidenceGaps: e.evidenceGaps.includes(gap) ? e.evidenceGaps : [gap, ...e.evidenceGaps], nextEvidence: e.nextEvidence.includes(next) ? e.nextEvidence : [next, ...e.nextEvidence].slice(0, 3), v2: via };
   });
   return { events: out, matched, unmatched: subjectOnly.filter((f) => !used.has(f)) };
 }
 
-export const TICKER_NOT_RESOLVED = 'ticker not resolved';
-/** Events built from a company name only get a visible label and an evidence-gap line. `nameKeys` = nameKeyOf() of each unresolved candidate. */
-export function labelUnresolved(events: GuidanceEvent[], nameKeys: ReadonlySet<string>): GuidanceEvent[] {
-  return events.map((e) => {
-    if (!nameKeys.has(e.ticker)) return e;
-    const gap = `Ticker not resolved: the company was matched by name only, so no NSE symbol, price or history is attached`;
-    return { ...e, company: /ticker not resolved/i.test(e.company) ? e.company : `${e.company} (${TICKER_NOT_RESOLVED})`, evidenceGaps: e.evidenceGaps.includes(gap) ? e.evidenceGaps : [...e.evidenceGaps, gap] };
-  });
+/**
+ * zzz849: a discovery whose headline names no real company (no NSE symbol, no company-name match, or a phrase such as 'Buoyant Q2 demand for
+ * consumer goods') is NOT a company event. It is held back here: counted and listed for coverage diagnostics, never turned into an event.
+ * US candidates always carry a ticker and are untouched.
+ */
+export function quarantineUnresolved(list: readonly GuCandidate[]): { kept: GuCandidate[]; unresolved: GuUnresolvedDiscovery[]; unnamed: number } {
+  const kept: GuCandidate[] = []; const unresolved: GuUnresolvedDiscovery[] = []; const seen = new Set<string>(); let unnamed = 0;
+  for (const c of list) {
+    if (c.market === 'US' || isResolvedTicker(c.ticker)) { kept.push(c); continue; }
+    const name = (c.company ?? '').trim();
+    const real = !!name && isPlausibleCompanyName(name);
+    if (!name) unnamed++;
+    const k = `${real ? nameKeyOf(c) : c.title.toLowerCase().slice(0, 60)}|${c.publishedAt.slice(0, 10)}`;
+    if (seen.has(k)) continue; seen.add(k);
+    unresolved.push({
+      company: real ? name : null, title: c.title, sourceName: c.sourceName, date: c.publishedAt.slice(0, 10), url: c.url, market: c.market,
+      reason: real ? 'No NSE symbol or company-name match, so it is not shown as a company event' : 'The headline does not name a company, so it is not shown as a company event',
+    });
+  }
+  return { kept, unresolved, unnamed };
 }
 
 /** True for a ticker the ledger and price-free context may use (an NSE-style symbol, not a company-name fallback). */
@@ -983,7 +1026,8 @@ export function buildIndiaCandidates(inp: IndiaInputs, names: Record<string, str
   }
   const scrapedList: any[] = Array.isArray(inp.scraped) ? inp.scraped : Array.isArray(inp.scraped?.entries) ? inp.scraped.entries : Array.isArray(inp.scraped?.items) ? inp.scraped.items : [];
   for (const s of scrapedList) { const c = scrapedNewsToCandidate(s, index); if (c) { newsScraped++; cands.push(c); } }
-  const retained = (inp.retained || []).filter((c) => c && c.id && c.title && c.publishedAt && c.market === 'IN');
+  // zzz849: retained / stored candidates were kept by earlier runs, possibly before a guard existed: they go through the SAME capital-raise guard on every read
+  const retained = (inp.retained || []).filter((c) => c && c.id && c.title && c.publishedAt && c.market === 'IN').map((c) => sanitizeRaiseCandidate(c)).filter((c): c is GuCandidate => !!c);
   cands.push(...retained);
   return { index, candidates: propagateTickers(dedupeCandidates(cands)), counts: { news, newsAll, newsScraped, retained: retained.length, filings, graded, gradedRows } };
 }

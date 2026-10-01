@@ -1,7 +1,7 @@
 {
  "version": 1,
- "generatedAt": "2026-09-30",
- "note": "Researched guidance records (public sources, paraphrased). Loaded as universe records; live filings/concalls supersede them. Never treat as hardcoded UI content.",
+ "generatedAt": "2026-10-01",
+ "note": "Researched guidance records (public sources, paraphrased). Loaded as universe records; live filings/concalls supersede them. Never treat as hardcoded UI content. zzz849: impliedBase = the sourced base an implied % was divided by; needsReview = researcher flag (never counted as high-growth).",
  "rows": [
   {
    "company": "HFCL Limited",
@@ -278,7 +278,8 @@
    "growthOrigin": "IMPLIED",
    "absoluteTarget": {
     "value": 750,
-    "unit": "₹ Cr"
+    "unit": "₹ Cr",
+    "valueLow": 725
    },
    "period": "FY27",
    "periodKind": "FY",
@@ -307,7 +308,12 @@
    ],
    "supersededBy": null,
    "notes": "Base: FY26 consolidated revenue from operations ₹357.71 Cr (+95%). 725/357.71=+102.7%, 750/357.71=+109.7%. Owner's 60% matches old/lower guidance (~68% implied in May), now outdated: current guide is ~103-110%. Media source; AGM speech/filing not opened.",
-   "ownerListText": "Cupid - 60% revenue and 70% PAT growth for FY27"
+   "ownerListText": "Cupid - 60% revenue and 70% PAT growth for FY27",
+   "impliedBase": {
+    "value": 357.71,
+    "unit": "₹ Cr",
+    "period": "FY26"
+   }
   },
   {
    "company": "Cupid Ltd",
@@ -319,7 +325,8 @@
    "growthOrigin": "IMPLIED",
    "absoluteTarget": {
     "value": 225,
-    "unit": "₹ Cr"
+    "unit": "₹ Cr",
+    "valueLow": 210
    },
    "period": "FY27",
    "periodKind": "FY",
@@ -348,7 +355,12 @@
    ],
    "supersededBy": null,
    "notes": "Base: FY26 consolidated PAT ₹108.23 Cr (+165%). 210/108.23=+94.0%, 225/108.23=+107.9%. Owner's 70% is close to the old May target (~66%), now outdated. FY26 actuals beat guidance of ₹335 Cr revenue / ₹100 Cr PAT.",
-   "ownerListText": "Cupid - 60% revenue and 70% PAT growth for FY27"
+   "ownerListText": "Cupid - 60% revenue and 70% PAT growth for FY27",
+   "impliedBase": {
+    "value": 108.23,
+    "unit": "₹ Cr",
+    "period": "FY26"
+   }
   },
   {
    "company": "V2 Retail Ltd",
@@ -391,7 +403,8 @@
    "growthOrigin": "IMPLIED",
    "absoluteTarget": {
     "value": 6500,
-    "unit": "₹ Cr"
+    "unit": "₹ Cr",
+    "valueLow": 6000
    },
    "period": "FY27",
    "periodKind": "FY",
@@ -413,7 +426,12 @@
    "priorGuidance": [],
    "supersededBy": null,
    "notes": "Growth implied on FY26 revenue Rs 4,220.8 Cr (multibagg): 42.2% at low, 54.0% at high. Owner's 50% sits inside range (upper half). Guidance described as revised/upgraded; prior number not found. Primary concall/presentation not opened.",
-   "ownerListText": "Aditya Infotech - 50% revenue growth in FY27"
+   "ownerListText": "Aditya Infotech - 50% revenue growth in FY27",
+   "impliedBase": {
+    "value": 4220.8,
+    "unit": "₹ Cr",
+    "period": "FY26"
+   }
   },
   {
    "company": "Senores Pharmaceuticals Ltd",
@@ -513,7 +531,12 @@
    "priorGuidance": [],
    "supersededBy": null,
    "notes": "Rs 8,100 Cr vs FY26 Rs 6,294.9 Cr = 28.6% implied, slightly below owner's 30-35% (which is the stated sustainable growth range). Q1 FY27 revenue Rs 2,013 Cr (+78%), annualising near Rs 8,050 Cr, so target looks conservative. Primary concall not opened.",
-   "ownerListText": "Sky Gold - 30-35% revenue growth guidance in FY27"
+   "ownerListText": "Sky Gold - 30-35% revenue growth guidance in FY27",
+   "impliedBase": {
+    "value": 6294.9,
+    "unit": "₹ Cr",
+    "period": "FY26"
+   }
   },
   {
    "company": "TD Power Systems Ltd",
@@ -547,7 +570,13 @@
    "priorGuidance": [],
    "supersededBy": null,
    "notes": "Growth implied vs FY26 total income Rs 1,869 Cr (revenue base slightly lower, so true growth maybe 28-30%). Owner's 30% is approx right. Guidance is Rs 2,400 Cr plus, so low-end. Prior guidance not found.",
-   "ownerListText": "TD Power Systems - 30% revenue growth in FY27"
+   "ownerListText": "TD Power Systems - 30% revenue growth in FY27",
+   "impliedBase": {
+    "value": 1869,
+    "unit": "₹ Cr",
+    "period": "FY26"
+   },
+   "needsReview": "Growth was divided by FY26 total income (Rs 1,869 Cr), not revenue from operations (a slightly lower figure), so the true % may be 28-30%. Base basis does not match the metric."
   },
   {
    "company": "Avalon Technologies Ltd",
@@ -784,7 +813,8 @@
    "sourceRank": 10,
    "verification": "PARTIALLY_VERIFIED",
    "notes": "Metric is revenue, guided in Rs Cr. 43% is implied only if FY26 base is about Rs 3,500 Cr; base not verified, so check. Part of growth is acquisition (NPC). Transcript PDF at mangroup.com/wp-content/uploads/2026/06/Concall-Transcript_26.05.2026.pdf could not be opened. No PAT guidance.",
-   "ownerListText": "Man Industries - 43% Growth guidance in FY27."
+   "ownerListText": "Man Industries - 43% Growth guidance in FY27.",
+   "needsReview": "The 43% assumes an FY26 base of about Rs 3,500 Cr that was not verified, and part of the growth is acquisition (NPC). Check the base before relying on the %."
   },
   {
    "company": "Aehr Test Systems",
@@ -818,7 +848,12 @@
    "priorGuidance": [],
    "supersededBy": null,
    "notes": "Growth computed: $130-150M vs FY26 $50.0M base. Fiscal year ends May. Non-GAAP net income guided at 18-22% of revenue (PAT proxy). Numbers read via page summary; confirm on release.",
-   "ownerListText": null
+   "ownerListText": null,
+   "impliedBase": {
+    "value": 50.0,
+    "unit": "$M",
+    "period": "FY26"
+   }
   },
   {
    "company": "Applied Optoelectronics",
@@ -952,7 +987,12 @@
    "priorGuidance": [],
    "supersededBy": null,
    "notes": "Growth computed: $450-500M vs 2025 $335.4M. Release date approximate; reaffirmed on Q2 2026 call (https://www.investing.com/news/transcripts/earnings-call-transcript-redwire-tops-q2-2026-estimates-as-stock-jumps-98-93CH-4842909). Includes acquisition effect. No EBITDA guide found.",
-   "ownerListText": null
+   "ownerListText": null,
+   "impliedBase": {
+    "value": 335.4,
+    "unit": "$M",
+    "period": "CY25"
+   }
   },
   {
    "company": "Innodata Inc.",
@@ -1016,7 +1056,8 @@
    "priorGuidance": [],
    "supersededBy": null,
    "notes": "Growth % came from summary; FY26 base not confirmed (summary says ~$307-315M; 430/1.40 about $307M). Fiscal year ends Jan 2027. Adjusted EBITDA guide $3-10M. Verify on primary release.",
-   "ownerListText": null
+   "ownerListText": null,
+   "needsReview": "The FY26 base was not confirmed; the growth % was back-derived from a summary, not worked out from a sourced base."
   },
   {
    "company": "Firefly Aerospace",
@@ -1051,7 +1092,8 @@
    "priorGuidance": [],
    "supersededBy": null,
    "notes": "Growth computed vs approx $160M 2025 base (2025 revenue up 163% per Firefly FY25 release title, on 2024 about $60.8M; base is my estimate, verify). Includes acquisition effect. Recently listed, volatile; check market cap.",
-   "ownerListText": null
+   "ownerListText": null,
+   "needsReview": "The 2025 base (about $160M) is a researcher estimate, not a sourced figure, so the implied % is unconfirmed."
   },
   {
    "company": "Guardant Health",
@@ -1236,7 +1278,12 @@
    ],
    "supersededBy": null,
    "notes": "Growth computed vs 2025 actual ~$2.35B (Q4 2025 release). Acquisition-led portion significant; domestic only ~16%. Adj EBITDA guide $275-325M (prior $300-375M, i.e. LOWERED).",
-   "ownerListText": null
+   "ownerListText": null,
+   "impliedBase": {
+    "value": 2350,
+    "unit": "$M",
+    "period": "CY25"
+   }
   },
   {
    "company": "Zeta Global Holdings",
@@ -1367,7 +1414,12 @@
    "priorGuidance": [],
    "supersededBy": null,
    "notes": "Computed vs FY25 adj EBITDA $18.5M as reported by Investing.com; verify against release.",
-   "ownerListText": null
+   "ownerListText": null,
+   "impliedBase": {
+    "value": 18.5,
+    "unit": "$M",
+    "period": "FY25"
+   }
   }
  ]
 }

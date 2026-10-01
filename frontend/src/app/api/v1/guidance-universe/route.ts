@@ -1,11 +1,13 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// GET /api/v1/guidance-universe?market=IN|US|ALL&metric=REVENUE|PAT|EPS|EBITDA|FCF&threshold=30&view=active|all&force=1   (zzz848, Layer A)
+// GET /api/v1/guidance-universe?market=IN|US|ALL&metric=REVENUE|PAT|EPS|EBITDA|FCF&threshold=30&view=active|all|history&force=1   (zzz848, Layer A)
 //
 // The persistent GUIDANCE UNIVERSE: management guidance that is still valid today, regardless of when it was announced (no event window).
 // Sources: the live Growth Guidance pipeline (cached KV), the append-only ledger, the stored universe, and researched records held as data.
 // PUBLIC company data only (never holdings). No AI, no document fetching. 22s budget, shared 2-minute memory cache.
 // metric (optional): keep only companies with a counted figure for that metric at or above `threshold`. Summary is always for the whole universe.
-// view=all also returns the inactive records (expired / superseded / withdrawn) and the excluded unverified rows, for diagnostics.
+// view=all (alias: history) also returns the inactive records (expired / superseded / withdrawn) and the excluded unverified rows. Expired guidance is never in `records`.
+// summary (zzz849, additive): byMarket {IN,US,ALL}:{companies,revenueGe30,patGe30,multiMetric,cagrMultiYear}, highGrowth[] (the ONE filtered list every count comes from),
+//   expiredCount, unknownPeriodCount, awaitingVerificationCount, needsReviewCount. The page needs no recomputation.
 // ═══════════════════════════════════════════════════════════════════════════
 import { NextRequest, NextResponse } from 'next/server';
 import { getUniverseBundle } from '@/lib/guidance-universe-service';
@@ -27,12 +29,12 @@ export async function GET(req: NextRequest) {
   const metric = METRICS.includes(m) ? m : null;
   const t = parseFloat(sp.get('threshold') || '30');
   const threshold = Number.isFinite(t) ? Math.min(500, Math.max(1, t)) : 30;
-  const view = String(sp.get('view') || 'active').toLowerCase() === 'all' ? 'all' : 'active';
+  const vq = String(sp.get('view') || 'active').toLowerCase(); const view = vq === 'all' || vq === 'history' ? 'all' : 'active';
   try {
     const b = await getUniverseBundle(t0, sp.get('force') === '1');
-    const summary = summarize(b.build.records, b.now, threshold);
+    const summary = summarize(b.build.records, b.now, threshold, b.build.inactive);
     let records = b.build.records.filter((r) => market === 'ALL' || r.record.market === market);
-    if (metric) records = records.filter((r) => r.points.some((p) => p.metric === metric && p.compareValue != null && p.compareValue >= threshold && p.periodKind !== 'MULTI_YEAR_CAGR'));
+    if (metric) records = records.filter((r) => r.points.some((p) => p.metric === metric && p.compareValue != null && p.compareValue >= threshold && p.counted));
     const inactive = b.build.inactive.filter((x) => market === 'ALL' || x.market === market);
     const body = {
       summary, records, pendingPrimary: summary.all.pendingPrimary,

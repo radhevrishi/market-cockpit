@@ -321,7 +321,7 @@ export type UniverseMetric = 'ALL' | 'REVENUE' | 'EBITDA' | 'NET_PROFIT' | 'EPS'
 export type UniverseView = 'active' | 'all';
 export const UNIVERSE_SCOPES: Array<[UniverseScope, string]> = [['ALL', 'All'], ['INDIA', 'India'], ['USA', 'USA'], ['MY_BOOK', 'My Book']];
 export const UNIVERSE_METRICS: Array<[UniverseMetric, string]> = [['ALL', 'All'], ['REVENUE', 'Revenue'], ['EBITDA', 'EBITDA'], ['NET_PROFIT', 'Net profit'], ['EPS', 'EPS'], ['FCF', 'FCF'], ['MULTI_METRIC', 'Multi-metric'], ['MULTI_YEAR', 'Multi-year']];
-export const UNIVERSE_UNAVAILABLE = 'Universe loading / not available';
+export const UNIVERSE_UNAVAILABLE = 'The guidance universe could not be read';
 export const UNIVERSE_HEADER = 'Highest verified guidance';
 
 /** Builds the universe request. There is NO window parameter by design: the universe ignores event recency. */
@@ -507,4 +507,146 @@ export const REGRESSION_STATUS_LABEL: Record<string, string> = {
 export function investigatedCount(counts: Record<string, number> | undefined, rows: number, total = 20): string {
   const n = counts ? Object.values(counts).reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0) : rows;
   return `${n || rows}/${total} investigated`;
+}
+
+// ── zzz849: high-growth list, legend, period-unclear, event tags, notices ───────────────────────────────────────
+import type { GuHighGrowthRow } from './guidance-universe-types';
+import type { GgLedgerRow } from './growth-guidance-types';
+
+export const VERIFICATION_LEGEND = '✓ verified from the company\'s own document · ◐ partly verified (media or one source) · ○ claim found, not verified';
+export const PERIOD_UNCLEAR_LABEL = 'period unclear';
+export const PERIOD_UNCLEAR_HINT = 'The source does not give a clear year. Open the filing to check.';
+export const ZERO_RECORDS_TEXT = '0 verified active guidance records.';
+const PROXY_KINDS = new Set(['ANALYST_CONSENSUS', 'ANALYST_ESTIMATE', 'HISTORICAL_TRAJECTORY', 'INFERENCE']);
+
+/** True when the period text has no usable year ('Q2 (year not stated)', 'Period not stated', a bare 'Q2'). */
+export function isPeriodUnclear(period: string | null | undefined, flag?: boolean): boolean {
+  if (flag) return true;
+  const t = (period || '').trim();
+  if (!t) return true;
+  if (/not stated|unclear|unknown|n\/a|unspecified/i.test(t)) return true;
+  if (/^(Q[1-4]|H[12])$/i.test(t)) return true;
+  return false;
+}
+export function recordPeriodUnclear(r: GuUniverseRecord): boolean {
+  return isPeriodUnclear(r.record?.primary?.period, r.periodUnclear) || r.record?.primary?.periodKind === 'UNKNOWN';
+}
+
+const statedPct = (p: GgGuidancePoint | null | undefined, t: number): boolean => {
+  if (!p || p.qualitative || PROXY_KINDS.has(p.kind)) return false;
+  const g = num(p.growthLow) ? p.growthLow : p.growthHigh;
+  if (!num(g)) return false;                                // '₹1,500 Cr target (no % stated)' has no growth number
+  if (p.growthOrigin === 'IMPLIED' && !p.base) return false; // derived % needs its base
+  return g >= t;
+};
+/** Active high-growth: still in force, revenue OR PAT growth floor >= threshold, and a % that is stated or derived (never a proxy metric). */
+export function qualifiesHighGrowth(r: GuUniverseRecord, threshold = 30): boolean {
+  const c = r.record; if (!c) return false;
+  if (c.validity && c.validity !== 'ACTIVE') return false;
+  return statedPct(pointOf(c, 'REVENUE'), threshold) || statedPct(pointOf(c, 'PAT'), threshold);
+}
+
+export interface HighGrowthRow {
+  key: string; company: string; market: string; guidance: string; period: string; periodUnclear: boolean;
+  glyph: string; markLabel: string; rec: GuUniverseRecord | null; revGe: boolean; patGe: boolean;
+}
+const mkName = (m: string | undefined) => (m === 'IN' ? 'India' : m === 'US' ? 'USA' : '');
+export function rowGuidance(r: GuUniverseRecord): string {
+  const parts = [`${primaryDisplay(r)} ${metricShort(r.metric || r.record?.primary?.metric)}`.trim()];
+  for (const a of r.alsoDisplay || []) parts.push(`${a.display} ${metricShort(a.metric)}`.trim());
+  return parts.join(' / ');
+}
+function fromRecord(r: GuUniverseRecord, t: number): HighGrowthRow {
+  const m = verificationMark(r);
+  return {
+    key: r.record.id, company: r.record.company, market: r.record.market, guidance: rowGuidance(r), period: r.record.primary?.period || '',
+    periodUnclear: recordPeriodUnclear(r), glyph: m.glyph, markLabel: m.label, rec: r,
+    revGe: statedPct(pointOf(r.record, 'REVENUE'), t), patGe: statedPct(pointOf(r.record, 'PAT'), t),
+  };
+}
+export interface HighGrowthView { rows: HighGrowthRow[]; activeInMarket: number; from: 'backend' | 'records' }
+/** One set for the headline number AND the list. Uses summary.highGrowth when the backend sends it, else filters the records client-side. */
+export function buildHighGrowth(data: Pick<GuUniverseResponse, 'records' | 'summary'>, mk: 'IN' | 'US' | 'ALL'): HighGrowthView {
+  const t = data.summary?.threshold ?? 30;
+  const recs = (data.records || []).filter((r) => r.record && (mk === 'ALL' || r.record.market === mk));
+  const byId = new Map<string, GuUniverseRecord>();
+  for (const r of data.records || []) if (r.record?.id) byId.set(r.record.id, r);
+  const hg = data.summary?.highGrowth;
+  if (Array.isArray(hg)) {
+    const rows: HighGrowthRow[] = [];
+    for (const h of hg as GuHighGrowthRow[]) {
+      if (mk !== 'ALL' && h.market && h.market !== mk) continue;
+      const rec = (h.id && byId.get(h.id)) || null;
+      if (rec) { if (!qualifiesHighGrowth(rec, t)) continue; rows.push(fromRecord(rec, t)); continue; }
+      const mark = verificationMark({ mediaOnly: !!h.mediaOnly, record: h.verification ? { verification: h.verification as GgCompany['verification'] } : undefined });
+      const guidance = h.guidance || [`${h.display || ''} ${metricShort(h.metric)}`.trim(), ...(h.alsoDisplay || []).map((a) => `${a.display} ${metricShort(a.metric)}`.trim())].filter(Boolean).join(' / ');
+      if (!guidance) continue;
+      rows.push({ key: h.id || `${h.company}-${rows.length}`, company: h.company, market: h.market || '', guidance, period: h.period || '', periodUnclear: isPeriodUnclear(h.period, h.periodUnclear), glyph: mark.glyph, markLabel: mark.label, rec: null, revGe: false, patGe: false });
+    }
+    return { rows, activeInMarket: Math.max(recs.length, rows.length), from: 'backend' };
+  }
+  const rows = sortUniverse(recs.filter((r) => qualifiesHighGrowth(r, t))).map((r) => fromRecord(r, t));
+  return { rows, activeInMarket: recs.length, from: 'records' };
+}
+/** Summary lines for the list that is actually shown. The headline is the list length. */
+export function highGrowthLines(v: HighGrowthView, mk: 'IN' | 'US' | 'ALL', threshold = 30): UniverseSummaryLine[] {
+  const n = v.rows.length;
+  const head = mk === 'ALL' ? `${n} companies currently identified (${fmtUniverseCounts(v.rows.filter((r) => r.market === 'IN').length, v.rows.filter((r) => r.market === 'US').length)})` : `${n} companies currently identified`;
+  const out: UniverseSummaryLine[] = [{ label: head, value: '' }];
+  if (v.rows.some((r) => !r.rec)) return out;   // compact rows carry no point detail: do not guess a split
+  const rev = v.rows.filter((r) => r.revGe), pat = v.rows.filter((r) => r.patGe);
+  out.push({ label: `Revenue ≥${threshold}%`, value: String(rev.length) }, { label: `PAT ≥${threshold}%`, value: String(pat.length) },
+    { label: `Revenue + PAT ≥${threshold}%`, value: String(v.rows.filter((r) => r.revGe && r.patGe).length) });
+  const top = sortUniverse(rev.map((r) => r.rec as GuUniverseRecord))[0];
+  out.push({ label: 'Highest revenue guidance', value: top ? `${top.record.company} ${primaryDisplay(top)}` : '—' });
+  return out;
+}
+/** Quiet line for active records that are not in the high-growth list. Null when there are none. */
+export function unlistedActiveLine(v: HighGrowthView): string | null {
+  const n = v.activeInMarket - v.rows.length;
+  return n > 0 ? `${n} more active record${n === 1 ? '' : 's'} below 30% or without a % ${n === 1 ? 'is' : 'are'} in the universe below.` : null;
+}
+/** 'X expired and hidden, Y with unclear period' from the backend summary only. Null when the backend sent neither. */
+export function universeNoticeLine(s: GuUniverseResponse['summary'] | undefined): string | null {
+  if (!s) return null;
+  const parts: string[] = [];
+  if (num(s.expiredCount)) parts.push(`${s.expiredCount} expired and hidden`);
+  if (num(s.unknownPeriodCount)) parts.push(`${s.unknownPeriodCount} with unclear period`);
+  if (num(s.awaitingVerificationCount)) parts.push(`${s.awaitingVerificationCount} awaiting verification`);
+  return parts.length ? parts.join(', ') : null;
+}
+
+export interface EventTag { label: 'RAISED' | 'CUT' | 'AT RISK'; tone: 'green' | 'red' | 'amber'; tip: string }
+const fmtPrior = (p: { low: number; high: number; unit: string }) => `${p.low === p.high ? r0(p.low) : `${r0(p.low)}–${r0(p.high)}`}${p.unit === '%' ? '%' : ` ${p.unit}`}`;
+/** The earlier and current figure for the latest revision, or null when no prior value is stored. */
+export function priorAfter(r: GuUniverseRecord): { before: string; after: string; period: string } | null {
+  const c = r.record; if (!c) return null;
+  const rows = [...(c.history || [])].filter((h: GgLedgerRow) => h.old && h.old.trim() && h.next).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const h = rows.find((x) => x.revision === 'RAISED' || x.revision === 'LOWERED') || rows[0];
+  if (h) return { before: h.old as string, after: h.next, period: h.period };
+  const pr = c.primary?.prior;
+  if (pr && num(pr.low) && num(pr.high)) return { before: fmtPrior(pr), after: primaryDisplay(r), period: c.primary.period };
+  return null;
+}
+/** RAISED / CUT only when a prior value exists. AT RISK is a status and keeps showing. Tooltip shows before and after. */
+export function eventTags(r: GuUniverseRecord): EventTag[] {
+  const out: EventTag[] = [];
+  const pa = priorAfter(r);
+  const tip = pa ? `Before: ${pa.before}. After: ${pa.after}${pa.period ? ` (${pa.period})` : ''}.` : '';
+  if (pa && r.revision === 'RAISED') out.push({ label: 'RAISED', tone: 'green', tip });
+  if (pa && r.revision === 'LOWERED') out.push({ label: 'CUT', tone: 'red', tip });
+  if (r.atRisk) out.push({ label: 'AT RISK', tone: 'amber', tip: r.record?.reality?.trackingWhy || 'Tracking looks behind what the guidance needs.' });
+  return out;
+}
+
+/** An event whose range class says it only repeated earlier guidance (never shown as raised). */
+export function isReiteration(e: Pick<GuidanceEvent, 'v2' | 'changes'>): boolean {
+  const rs = e.v2?.ranges || [];
+  if (rs.length) return rs.every((x) => x.klass === 'REITERATION');
+  return false;
+}
+export function unresolvedCount(u: number | unknown[] | undefined | null): number { return Array.isArray(u) ? u.length : num(u) ? u : 0; }
+export function unresolvedLine(n: number): string { return `${n} unresolved discover${n === 1 ? 'y' : 'ies'} held back - not shown as events`; }
+export function sourceFailedText(x: { state: string; detail?: string }): string | null {
+  return String(x.state) === 'FAILED' ? ((x.detail || '').trim() || 'No reason was given by the source.') : null;
 }

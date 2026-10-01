@@ -29,11 +29,13 @@ import {
   parseWindow, parseMarket, lookbackDays, newsToCandidate, collectGradedRows, istDate, istDateList, dedupeCandidates, usSessionDates,
   loadUsSessions, usGradedRowToCandidate, reassignGlobalToUs, splitByMarket, filterByMarket, originOf, coverageLine, coverageNote,
   looksLikeGuidanceRaise, buildIndiaCandidates, isRaiseCandidate, processRaiseCandidates, collectSubjectOnly, corroborateWithFilings,
-  labelUnresolved, nameKeyOf, isResolvedTicker, noUpgradesNote, sanitizeRaiseCandidate, withProvenance, tagOrigin, computeCoverage, LIVE_SCAN_MAX_DAYS, coverageLabel,
+  quarantineUnresolved, isResolvedTicker, noUpgradesNote, sanitizeRaiseCandidate, withProvenance, tagOrigin, computeCoverage, LIVE_SCAN_MAX_DAYS, coverageLabel,
   type MarketCoverage, type UsRowResult, type IndiaBuild, type IndiaRead,
 } from '@/lib/guidance-upgrades-candidates';
 import { readLedgers, writeEvents, readEventStore, mergeIntoStore, writeEventStore, storedCandidates, storeCoveredDays } from '@/lib/guidance-upgrades-ledger';
 import { scanIndia, scanUs, finaliseScan, makeRealIndiaFetchers, makeRealEdgarFetcher, type MarketScanResult } from '@/lib/guidance-upgrades-scan';
+import { loadUniverseRecords, makeExtraFor, universeLookup } from '@/lib/guidance-upgrades-reconcile';
+import type { GuUniverseRecordX } from '@/lib/guidance-universe';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -193,19 +195,19 @@ export async function GET(req: NextRequest) {
     }), Math.max(3_500, Math.min(9_500, BUDGET_MS - (Date.now() - t0) - 7_500)), null);
   }
 
-  // headlines that raise funds / a stake / prices / capex / a dividend / a bid / a price target, or an index wrap, are not guidance: dropped here for both markets
+  // headlines that raise funds / bonds / NCDs / QIP / loans / a stake / prices / capex / a dividend / a bid / a price target, or an index wrap, are not guidance.
+  // zzz849: this guard runs on EVERY candidate (news, scraped, retained / stored, exchange filing, graded, US), not only on fresh news ids.
   const inWindow = reassignGlobalToUs(dedupeCandidates(cands), usTickers).filter((c) => withinWindow(c.publishedAt, window, now))
-    .map((c) => (c.id.startsWith('news:') ? sanitizeRaiseCandidate(c) : c)).filter((c): c is GuCandidate => !!c);
+    .map((c) => sanitizeRaiseCandidate(c)).filter((c): c is GuCandidate => !!c);
   // India / unlabelled items: the engine's own test, or raise wording with a resolved symbol (kept as a visible CANDIDATE). US: as before.
   const isPicked = (c: GuCandidate) => (c.market === 'US' ? isGuidanceUpgradeCandidate(c).include || looksLikeGuidanceRaise(`${c.title}. ${c.text}`) : isRaiseCandidate(c));
   const pickedAll = inWindow.filter(isPicked);
-  // raise wording but no company at all: the engine cannot group it, so say so instead of counting it
-  const noCompany = pickedAll.filter((c) => c.market !== 'US' && !c.ticker && !nameKeyOf(c));
-  const picked = pickedAll.filter((c) => !noCompany.includes(c)).sort((a, b) => b.publishedAt.localeCompare(a.publishedAt));
+  // zzz849: an India / global discovery with no NSE symbol (or whose "company" is a phrase, not a name) is QUARANTINED: counted and listed for diagnostics, never an event
+  const quarantine = quarantineUnresolved(pickedAll);
+  const unresolvedList = quarantine.unresolved;
+  const picked = quarantine.kept.sort((a, b) => b.publishedAt.localeCompare(a.publishedAt));
   const split = splitByMarket(picked, long ? PER_MARKET_CAP_LONG : PER_MARKET_CAP);
   for (const c of picked) if (c.market === 'IN' || c.market === 'US') cov[c.market].candidates[originOf(c)]++;
-  const unresolved = picked.filter((c) => c.market !== 'US' && !c.ticker);
-  const unresolvedKeys = new Set(unresolved.map(nameKeyOf));
   // exchange announcements whose subject names a guidance-bearing document but carry no raise text we can read
   const subjectOnly = collectSubjectOnly(inWindow.filter((c) => c.market === 'IN' && !isPicked(c)));
 
@@ -214,10 +216,13 @@ export async function GET(req: NextRequest) {
   const inTickers = tickersOf([...split.IN, ...split.GLOBAL]);
   const usPicked = tickersOf(split.US);
   const left = () => Math.max(2_000, BUDGET_MS - (Date.now() - t0));
-  const [ledIN, ledUS] = await Promise.all([
+  const [ledIN, ledUS, uniRecords] = await Promise.all([
     withTimeout(readLedgers(inTickers, 'IN'), left(), new Map()),
     withTimeout(readLedgers(usPicked, 'US'), left(), new Map()),
+    // zzz849: persistent guidance-universe records (researched data + stored + ledger), read only, for events that have no before-and-after numbers of their own
+    withTimeout(loadUniverseRecords({ IN: inTickers, US: usPicked }, now), Math.min(3_500, left()), [] as GuUniverseRecordX[]),
   ]);
+  const extraFor = makeExtraFor(universeLookup(uniRecords));
 
   // News / bottleneck links: only where the article names the ticker AND was classified BOTTLENECK by the news pipeline.
   // An India article is linked by the symbol it was resolved to (company name in the headline), not only by the pipeline's own ticker list.
@@ -258,11 +263,11 @@ export async function GET(req: NextRequest) {
   let all: GuidanceEvent[] = [];
   let corroborated = 0; let unmatchedSubjects = subjectOnly;
   try {
-    let inEvents = processRaiseCandidates([...split.IN, ...split.GLOBAL], ctxMaker('IN', ledIN), now, window);
-    const corr = corroborateWithFilings(inEvents, subjectOnly);
+    const inRaw = processRaiseCandidates([...split.IN, ...split.GLOBAL], ctxMaker('IN', ledIN), now, window, extraFor);
+    const corr = corroborateWithFilings(inRaw, subjectOnly);
     corroborated = corr.matched; unmatchedSubjects = corr.unmatched;
-    inEvents = labelUnresolved(corr.events, unresolvedKeys);
-    const usEvents = processCandidates(split.US, ctxMaker('US', ledUS), now, window);
+    const inEvents = corr.events;
+    const usEvents = processCandidates(split.US, ctxMaker('US', ledUS), now, window, extraFor);
     // the same release also cut something: the engine keeps the raises, so say the cut here
     for (const e of usEvents) {
       const cuts = usCuts.get(e.ticker.toUpperCase());
@@ -294,8 +299,8 @@ export async function GET(req: NextRequest) {
       const scanRes = m === 'IN' ? inScan : usScan;
       if ((m === 'IN' && !wantIN) || (m === 'US' && !wantUS)) return;
       const sk = m === 'IN'
-        ? mergeCandidates([...split.IN, ...split.GLOBAL].map((c) => sanitizeRaiseCandidate(c) ?? c))
-        : mergeCandidates(split.US.filter((c) => isGuidanceUpgradeCandidate(c).include));
+        ? mergeCandidates([...split.IN, ...split.GLOBAL].map((c) => sanitizeRaiseCandidate(c)).filter((c): c is GuCandidate => !!c))   // never store a candidate the guard rejected
+        : mergeCandidates(split.US.map((c) => sanitizeRaiseCandidate(c)).filter((c): c is GuCandidate => !!c && isGuidanceUpgradeCandidate(c).include));
       // a day counts as processed only when every live source answered for it (India: and a results session exists, or it is a weekend)
       const liveDays = scanRes?.liveDays ?? [];
       const covered = m === 'IN'
@@ -316,7 +321,7 @@ export async function GET(req: NextRequest) {
   const read: IndiaRead = {
     news: inBuild?.counts.news ?? 0, newsScraped: inBuild?.counts.newsScraped ?? scrapedList.length, retained: inBuild?.counts.retained ?? 0,
     filings: (inBuild?.counts.filings ?? 0) + (inScan?.rowsSeen ?? 0), graded: inBuild?.counts.gradedRows ?? 0,
-    subjectOnly: unmatchedSubjects.length, unresolved: unresolvedKeys.size, noCompany: noCompany.length,
+    subjectOnly: unmatchedSubjects.length, unresolved: unresolvedList.length, noCompany: 0,   // unnamed discoveries are inside `unresolved` now
   };
   if (wantIN) cov.IN.read = read;
 
@@ -378,6 +383,8 @@ export async function GET(req: NextRequest) {
     note = `${noUpgradesNote({ window, complete: !anyIncomplete, awaiting })} Last checked ${checkedAt.slice(11, 16)} UTC.`;
   }
   note = `${note ? `${note} ` : ''}${coverageNote(covLines, now)}`;
+  const enriched = events.filter((e) => !!e.v2?.numbersFrom).length;
+  if (enriched) note += ` ${enriched} event${enriched === 1 ? '' : 's'} carry before and after numbers taken from the guidance universe record (source and verification tier named on each event).`;
 
   const summary = summarise(events, window, now);
   try {
@@ -394,6 +401,7 @@ export async function GET(req: NextRequest) {
   } catch { /* summary extras are optional */ }
   const body: GuidanceUpgradesResponse = {
     summary, events, scan,
+    unresolved: unresolvedList.slice(0, 50), unresolvedCount: unresolvedList.length,
     freshness: { newestAnnouncement: newest, feedCheckedAt: checkedAt, note, byMarket },
   };
   mem.set(memKey, { at: Date.now(), body });
