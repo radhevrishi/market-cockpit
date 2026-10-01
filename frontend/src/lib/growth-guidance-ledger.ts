@@ -54,3 +54,22 @@ export async function writeGgLedgers(byTicker: Map<string, GgStoredEntry[]>, exi
   }
   return n;
 }
+
+// ── zzz848 Guidance Universe persistence ─────────────────────────────────────────────────────
+// key `guidance-universe:v1:<IN|US>`, 400-day TTL, bounded (GU_MAX_STORED rows), idempotent (skipped when the stored key-hash is unchanged).
+// The researched data file is never frozen here; only live/ledger-derived points are kept so a scan that briefly misses a company does not erase it.
+import { mergeStored, type GuStoredDoc, type GuStoredPoint } from './guidance-universe';
+export const GU_TTL_S = 400 * 24 * 3600;
+export const guUniverseKey = (market: GgLedgerMarket) => `guidance-universe:v1:${market}`;
+export async function readGuStored(market: GgLedgerMarket): Promise<GuStoredDoc | null> {
+  try { const v = await kvGet<GuStoredDoc>(guUniverseKey(market)); return v && v.v === 1 && Array.isArray(v.rows) ? v : null; } catch { return null; }
+}
+/** Merges `fresh` into the stored universe and writes only when something changed. Returns true when a write happened. */
+export async function writeGuStored(market: GgLedgerMarket, fresh: GuStoredPoint[], now: Date, existing?: GuStoredDoc | null): Promise<boolean> {
+  try {
+    const cur = existing === undefined ? await readGuStored(market) : existing;
+    const { doc, changed } = mergeStored(cur, fresh.filter((r) => r.market === market), now);
+    if (!changed) return false;
+    await kvSet(guUniverseKey(market), doc, GU_TTL_S); return true;
+  } catch { return false; }
+}

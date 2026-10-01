@@ -104,7 +104,7 @@ const na = (label: GuNumber['label'] = 'UNAVAILABLE', source?: string): GuNumber
 // window helpers (20)
 // ---------------------------------------------------------------------------------------------
 export function windowDays(w: GuWindow): number {
-  switch (w) { case '24H': return 1; case '3D': return 3; case '7D': return 7; case '14D': return 14; case '30D': return 30; default: return 7; }
+  switch (w) { case '24H': return 1; case '3D': return 3; case '7D': return 7; case '14D': return 14; case '30D': return 30; case '120D': return 120; default: return 7; }
 }
 /** True when dateIso is inside the window ending at `now`. Date-only strings use calendar days (UTC);
  *  timestamps use exact hours. Never extends silently: an 8-day-old event is outside 7D. */

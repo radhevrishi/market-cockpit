@@ -3,10 +3,10 @@
 // and the US graded-results cache (KV `us-graded:<engine>:<date>|1`, gzip). Nothing here fetches a document,
 // imports a price module, or calls an AI model.
 import { gunzipSync } from 'zlib';
-import type { GuCandidate, GuContext, GuMarket, GuWindow, GuidanceEvent, GuScanStatus } from './guidance-upgrades-types';
+import type { GuCandidate, GuContext, GuMarket, GuWindow, GuidanceEvent, GuScanStatus, GuScanState } from './guidance-upgrades-types';
 import { buildGuidanceEvent, isGuidanceUpgradeCandidate, mergeCandidates, rank, withinWindow } from './guidance-upgrades';
 
-const WINDOWS: GuWindow[] = ['24H', '3D', '7D', '14D', '30D'];
+const WINDOWS: GuWindow[] = ['24H', '3D', '7D', '14D', '30D', '120D'];
 /** Missing or unknown window falls back to 7D. */
 export function parseWindow(v: string | null | undefined): GuWindow {
   const u = String(v ?? '').trim().toUpperCase();
@@ -18,8 +18,12 @@ export function parseMarket(v: string | null | undefined): MarketFilter {
   return u === 'IN' || u === 'US' ? u : 'ALL';
 }
 export function lookbackDays(w: GuWindow): number {
-  return w === '24H' ? 1 : w === '3D' ? 3 : w === '7D' ? 7 : w === '14D' ? 14 : 30;
+  return w === '24H' ? 1 : w === '3D' ? 3 : w === '7D' ? 7 : w === '14D' ? 14 : w === '120D' ? 120 : 30;
 }
+/** Longest window a date list may cover (120D + the 1-day edge). Lists for windows up to 30D are exactly as before. */
+export const MAX_LIST_DAYS = 130;
+/** Live source scans stay bounded: a window longer than this is served from the persisted event store plus a bounded live scan. */
+export const LIVE_SCAN_MAX_DAYS = 30;
 
 const clean = (s: unknown, max = 1500) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 
@@ -55,7 +59,7 @@ export const istDate = (d: Date): string => new Date(d.getTime() + IST_MIN * 60_
 /** IST calendar days, today first. India graded sessions and exchange announcements are keyed by the IST day. */
 export function istDateList(now: Date, days: number): string[] {
   const out: string[] = [];
-  for (let i = 0; i < Math.min(days, 30); i++) out.push(istDate(new Date(now.getTime() - i * 86_400_000)));
+  for (let i = 0; i < Math.min(days, MAX_LIST_DAYS); i++) out.push(istDate(new Date(now.getTime() - i * 86_400_000)));
   return out;
 }
 const tick = (s: unknown): string | undefined => { const t = String(s ?? '').trim().toUpperCase().replace(/\.(NS|BO)$/, ''); return t || undefined; };
@@ -271,7 +275,7 @@ export function collectGradedRows(payload: any): any[] {
 
 export function dateList(now: Date, days: number): string[] {
   const out: string[] = [];
-  for (let i = 0; i < Math.min(days, 30); i++) out.push(new Date(now.getTime() - i * 86_400_000).toISOString().slice(0, 10));
+  for (let i = 0; i < Math.min(days, MAX_LIST_DAYS); i++) out.push(new Date(now.getTime() - i * 86_400_000).toISOString().slice(0, 10));
   return out;
 }
 
@@ -309,7 +313,7 @@ export function unzipUsPayload(raw: any): any | null {
 export function usSessionDates(now: Date, days: number): string[] {
   const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
   const out: string[] = [];
-  const span = Math.min(Math.max(days, 1), 30) + 1;
+  const span = Math.min(Math.max(days, 1), MAX_LIST_DAYS) + 1;
   for (let i = 0; i <= span; i++) {
     const d = fmt.format(new Date(now.getTime() - i * 86_400_000));
     const dow = new Date(`${d}T00:00:00Z`).getUTCDay();
@@ -330,20 +334,31 @@ export interface UsSessions {
  */
 export async function loadUsSessions(
   dates: string[], versions: string[], mget: (keys: string[]) => Promise<any[]>, chunk = 6,
+  opts: { concurrency?: number; budgetMs?: number } = {},
 ): Promise<UsSessions> {
   const rows: UsSessions['rows'] = [];
   const have = new Set<string>();
   let olderEngine = 0;
+  // zzz848: a long window (120D = ~85 sessions) is read in bounded waves inside a shared deadline. Without `opts` every chunk runs at once, as before.
+  const deadline = opts.budgetMs ? Date.now() + opts.budgetMs : Infinity;
+  const conc = Math.max(1, opts.concurrency ?? Infinity);
   for (let vi = 0; vi < versions.length; vi++) {
     const missing = dates.filter((d) => !have.has(d));
-    if (!missing.length) break;
+    if (!missing.length || Date.now() >= deadline) break;
     const parts: string[][] = [];
     for (let i = 0; i < missing.length; i += chunk) parts.push(missing.slice(i, i + chunk));
-    const got = await Promise.all(parts.map(async (ds) => {
+    const readPart = async (ds: string[]) => {
+      if (Date.now() >= deadline) return ds.map((d) => ({ d, p: null as any }));   // out of time: these sessions stay COLD and are reported as such
       try { const vals = await mget(ds.map((d) => `us-graded:${versions[vi]}:${d}|1`)); return ds.map((d, i) => ({ d, p: unzipUsPayload(vals?.[i]) })); }
-      catch { return ds.map((d) => ({ d, p: null })); }
-    }));
-    for (const g of got.flat()) if (g.p?.by_tier) { rows.push({ date: g.d, payload: g.p, version: versions[vi] }); have.add(g.d); if (vi > 0) olderEngine++; }
+      catch { return ds.map((d) => ({ d, p: null as any })); }
+    };
+    const got: Array<Array<{ d: string; p: any }>> = new Array(parts.length);
+    if (conc >= parts.length) await Promise.all(parts.map(async (ds, i) => { got[i] = await readPart(ds); }));
+    else {
+      let next = 0;
+      await Promise.all(Array.from({ length: conc }, async () => { while (next < parts.length) { const i = next++; got[i] = await readPart(parts[i]); } }));
+    }
+    for (const g of got.flat()) if (g?.p?.by_tier) { rows.push({ date: g.d, payload: g.p, version: versions[vi] }); have.add(g.d); if (vi > 0) olderEngine++; }
   }
   return { rows, total: dates.length, warm: have.size, olderEngine };
 }
@@ -574,6 +589,97 @@ export function coverageNote(list: MarketCoverage[], now: Date = new Date()): st
   return list.map((c) => coverageLine(c, now)).join(' ');
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz848: honest coverage + mandatory wording for empty results
+// ═══════════════════════════════════════════════════════════════════════════
+export const NOT_CONFIRMATION = 'Zero events shown is NOT a confirmation of no upgrades.';
+const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
+
+/**
+ * The ONLY wording for "no events". Never the bare phrase that says nothing was found.
+ * complete -> 'No verified upgrades found in the fully processed 120D source universe.'
+ * incomplete -> 'No additional verified upgrades found in currently processed sources. 102 filings remain awaiting grading.'
+ * `awaiting` null/undefined = unknown: the generic sentence is used instead of a number.
+ */
+export function noUpgradesMessage(o: { window: GuWindow; complete: boolean; awaiting?: number | null }): string {
+  if (o.complete) return `No verified upgrades found in the fully processed ${o.window} source universe.`;
+  const n = o.awaiting;
+  const tail = typeof n === 'number' && Number.isFinite(n) && n > 0
+    ? `${plural(n, 'filing')} remain${n === 1 ? 's' : ''} awaiting grading.`
+    : typeof n === 'number' && n === 0 ? 'Some sources or days were not fully processed.'
+    : 'Some filings may remain awaiting grading.';
+  return `No additional verified upgrades found in currently processed sources. ${tail}`;
+}
+/** Empty-result note: the wording above, plus the not-a-confirmation line whenever the scan is incomplete. */
+export function noUpgradesNote(o: { window: GuWindow; complete: boolean; awaiting?: number | null }): string {
+  const m = noUpgradesMessage(o);
+  return o.complete ? m : `${m} ${NOT_CONFIRMATION}`;
+}
+/** 'Coverage: 74/120 days — 120D coverage incomplete' (or just 'Coverage: 120/120 days' when nothing is missing). */
+export function coverageLabel(covered: number, requested: number, window: GuWindow): string {
+  const base = `Coverage: ${covered}/${requested} days`;
+  return covered >= requested ? base : `${base} — ${window} coverage incomplete`;
+}
+const isWeekendDay = (d: string): boolean => { const w = new Date(`${d}T00:00:00Z`).getUTCDay(); return w === 0 || w === 6; };
+export interface CoverageInput {
+  /** calendar days of the window, newest first */
+  days: readonly string[];
+  /** days a required LIVE source answered for, in this run */
+  live: ReadonlySet<string>;
+  /** days that have a graded results session (null = this market has no graded-session requirement) */
+  graded?: ReadonlySet<string> | null;
+  /** days an earlier run already processed completely (persisted store) */
+  store?: ReadonlySet<string>;
+  /** days that cannot have a graded session (weekend) are not missing just because nothing was graded */
+  freeDay?: (d: string) => boolean;
+}
+export interface CoverageResult { covered: string[]; missing: string[]; fromStore: number; fromLive: number }
+/** A day is covered when an earlier run processed it, or when every live requirement was met today. A missing day is never counted as zero events. */
+export function computeCoverage(i: CoverageInput): CoverageResult {
+  const free = i.freeDay ?? isWeekendDay;
+  const covered: string[] = []; const missing: string[] = []; let fromStore = 0; let fromLive = 0;
+  for (const d of i.days) {
+    const liveOk = i.live.has(d) && (!i.graded || i.graded.has(d) || free(d));
+    if (liveOk) { covered.push(d); fromLive++; }
+    else if (i.store?.has(d)) { covered.push(d); fromStore++; }
+    else missing.push(d);
+  }
+  return { covered, missing, fromStore, fromLive };
+}
+/** COMPLETE only when nothing failed, nothing is missing and nothing is waiting to be read. */
+export function scanState(s: Pick<GuScanStatus, 'complete' | 'sources' | 'daysCovered'>): GuScanState {
+  if (s.complete) return 'COMPLETE';
+  const ran = s.sources.filter((x) => x.state !== 'NOT_RUN' && x.state !== 'NOT_AVAILABLE');
+  if (s.daysCovered === 0 && (ran.length === 0 || ran.every((x) => x.state === 'FAILED'))) return s.sources.some((x) => x.state === 'NOT_AVAILABLE') && ran.length === 0 ? 'NOT_AVAILABLE' : 'FAILED';
+  return 'PARTIAL';
+}
+/** Who confirmed a raise: the owner of the primary document, when one was actually read. */
+export function verifiedByOf(e: Pick<GuidanceEvent, 'verification' | 'primaryAvailable' | 'sources'>): string | undefined {
+  if (e.verification !== 'VERIFIED' || !e.primaryAvailable) return undefined;
+  const p = e.sources.find((x) => x.tier === 'PRIMARY');
+  return p ? `${p.name}${p.type && !p.name.includes(p.type) ? ` (${p.type})` : ''}` : undefined;
+}
+/** Where each event came from on this read: live sources, the persisted event store, or both. Matching is by ticker (or name) + event day. */
+export function tagOrigin(events: GuidanceEvent[], live: readonly GuCandidate[], stored: readonly GuCandidate[]): GuidanceEvent[] {
+  const key = (c: GuCandidate) => `${(c.ticker || nameKeyOf(c)).toUpperCase()}|${c.publishedAt.slice(0, 10)}`;
+  const liveK = new Set(live.map(key)); const storeK = new Set(stored.map(key));
+  return events.map((e) => {
+    if (!e.v2) return e;
+    const k = `${e.ticker.toUpperCase()}|${e.announcement_date.slice(0, 10)}`;
+    const origin: 'LIVE' | 'STORE' | 'LIVE+STORE' = liveK.has(k) && storeK.has(k) ? 'LIVE+STORE' : storeK.has(k) && !liveK.has(k) ? 'STORE' : 'LIVE';
+    return e.v2.origin === origin ? e : { ...e, v2: { ...e.v2, origin } };
+  });
+}
+/** Additive provenance: `verifiedBy` (the primary source that confirmed it) next to `detectedVia` (who first saw it). Everything else is untouched. */
+export function withProvenance(events: GuidanceEvent[]): GuidanceEvent[] {
+  return events.map((e) => {
+    if (!e.v2) return e;
+    const vb = verifiedByOf(e);
+    return vb && e.v2.verifiedBy !== vb ? { ...e, v2: { ...e.v2, verifiedBy: vb } } : e;
+  });
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // zzz844 V2: semantic intake + scan-aware wording
 // ═══════════════════════════════════════════════════════════════════════════
@@ -590,12 +696,81 @@ const PHRASE_RES: RegExp[] = [
 ];
 const ANALYST_ONLY = /\b(?:price targets?|target price|analysts?|brokerages?|broker|rating|initiat\w+ coverage|consensus)\b/i;
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz848 false-positive guard: a company "raises" many things that are NOT its earnings guidance.
+// Funds, stake, prices, capex, dividend, a bid, a price target, a brokerage estimate, an index / market-wide wrap.
+// Judged sentence by sentence. A sentence is only dropped when it names one of those objects and does NOT also carry a real
+// "raises <FY / revenue / profit ...> guidance | outlook | forecast" phrase. Clean candidates come back as the SAME object.
+// ═══════════════════════════════════════════════════════════════════════════
+const RV = String.raw`(?:rais(?:e|es|ed|ing)|hik(?:e|es|ed|ing)|lift(?:s|ed|ing)?|boost(?:s|ed|ing)?|increas(?:e|es|ed|ing)|upgrad(?:e|es|ed|ing)|ups|upped|bump(?:s|ed|ing)?)`;
+const RAISE_ANY = new RegExp(String.raw`\b${RV}\b`, 'i');
+/** words that may sit between "raises" and "guidance" in a real company raise */
+const GUIDE_QUAL = String.raw`(?:(?:FY|F\.?Y\.?)\s?'?\d{2,4}|[HQ][1-4]\s?FY\s?'?\d{2,4}|full[- ]year|fiscal(?: year)?(?:\s*'?\d{2,4})?|annual|medium[- ]term|revenues?|sales|turnover|net|profit|PAT|EBITDA|EBIT|EPS|earnings|margins?|operating|volumes?|growth|income|production|order(?:s| book| inflows?)?|top[- ]?line|bottom[- ]?line|\d{2,4}|and|&|,)`;
+const DET = String.raw`(?:(?:its|their|the|our|his|her|a|an)\s+)?`;
+/** raise verb + qualifiers + guidance / outlook / forecast  (qualifiers optional) */
+const STRONG_GUIDE_RE = new RegExp(String.raw`\b${RV}\s+${DET}(?:${GUIDE_QUAL}\s*){0,5}(?:guidance|outlook|forecasts?|projections?)\b`, 'i');
+/** raise verb + at least ONE qualifier + target  ("raises FY27 revenue target"; a bare "raises target" is a price target) */
+const STRONG_TARGET_RE = new RegExp(String.raw`\b${RV}\s+${DET}(?:${GUIDE_QUAL}\s*){1,5}(?:targets?)\b`, 'i');
+/** a real raise that also says WHICH period / how much: used where the sentence is otherwise suspicious (index wrap) */
+const SPECIFIC_RE = /\b(?:FY\s?'?\d{2,4}|F\.?Y\.?\s?'?\d{2,4}|full[- ]year|fiscal|from\s+(?:Rs\.?|₹|INR|\$)?\s?[\d,.]+[^.]{0,40}?\bto\b|(?:Rs\.?|₹|INR|\$)\s?[\d,.]+\s*(?:crore|cr|lakh|million|mn|billion|bn)|\d+(?:\.\d+)?\s?%)/i;
+const MONEY = String.raw`(?:(?:rs\.?|inr|₹|us\$|\$|usd|eur|€|£)\s?\d[\d,.]*(?:\s?-\s?\d[\d,.]*)?(?:\s?(?:crore|cr|lakh|mn|million|billion|bn|trillion|tn))?|\d[\d,.]*(?:\s?-\s?\d[\d,.]*)?\s?(?:crore|cr|lakh|mn|million|billion|bn|trillion|tn))`;
+const NON_EARN_NOUN = String.raw`(?:funds?|funding|capital|money|cash|debt|loans?|bonds?|ncds?|debentures?|notes|stakes?|shareholding|holding|prices?|tariffs?|fares?|rates?|capex|capital expenditures?|spending|investments?|dividends?|payouts?|bids?|offers?|limits?|caps?|fees?|salar(?:y|ies)|wages|quotas?|premium|commissions?|levies|duty|duties|interest|borrowings?|exposure|credit lines?|pay(?:ment)?s?)`;
+/** what the raise verb is applied to: money raised, a stake, a price, capex, a dividend, a bid, or a bare (price) target */
+const NON_EARN_OBJ_RE = new RegExp(String.raw`\b${RV}\s+${DET}(?:(?:${MONEY})\b|(?:[A-Za-z0-9&'-]+\s+){0,2}?${NON_EARN_NOUN}\b|(?:price\s+)?targets?\b(?!\s+(?:for|of)\s+(?:FY|full|the year|revenue|sales|profit)))`, 'i');
+const BROKER_SUBJECT_RE = /\b(?:analysts?|brokers?|brokerages?|research (?:house|firm)|street|goldman|jpmorgan|jp morgan|morgan stanley|citi(?:group)?|jefferies|nomura|kotak|motilal|hsbc|ubs|barclays|bernstein|macquarie|clsa|bofa|wells fargo|deutsche|credit suisse|iifl|axis securities|icici securities|sbi securities|nuvama|elara|ambit|emkay|prabhudas|anand rathi|kr choksey|sharekhan|crisil|icra|care ratings|fitch|moody'?s|s&p|rating agenc\w+)\b/i;
+const NON_EARNINGS_ONLY_RE = /\b(?:capex|capital expenditures?|capital spending|capital outlay|dividends?|buy-?backs?|hiring|headcount|store (?:count|openings?)|share repurchases?)\b/i;
+const EARNINGS_WORD_RE = /\b(?:revenues?|sales|top[- ]?line|turnover|profit|pat|net income|earnings|ebitda|ebit|eps|margins?|volumes?|order (?:inflows?|intake|book))\b/i;
+const FWD_CUE_RE = /\b(?:now\s+(?:expects?|sees?|guides?|forecasts?|targets?|projects?)|guidance|outlook)\b/i;
+const FY_PERIOD_RE = /\b(?:FY\s?'?\d{2,4}|F\.?Y\.?\s?'?\d{2,4}|full[- ]year|fiscal)\b/i;
+const COMPANY_VOICE_RE = /\b(?:company|management|the firm|the board|we|our)\b/i;
+/** index / market-wide pieces ("Sensex, Nifty end higher", "market wrap"). 'Stocks to watch' lists company news, so it is NOT here. */
+const INDEX_PIECE_RE = /\b(?:sensex|nifty(?:\s?(?:50|100|bank|midcap|smallcap|next 50|it))?|bank nifty|indices|indexes|index|dalal street|market wrap|closing bell|opening bell|stock market(?: today)?|markets? (?:live|today|close|update|cheat sheet)|top (?:gainers|losers)|stocks? (?:to buy|that (?:rose|fell))|market breadth|gift nifty)\b/i;
+
+/** True when a sentence uses a raise verb on something that is not the company's own earnings guidance. */
+export function nonGuidanceRaiseSentence(sentence: string): boolean {
+  const s = String(sentence || '');
+  if (!s || !RAISE_ANY.test(s)) return false;
+  const vm = new RegExp(String.raw`\b${RV}\b`, 'i').exec(s);
+  // a brokerage / agency subject ("Jefferies raises FY27 EBITDA forecast") is an analyst action even when the sentence reads like guidance
+  if (vm) {
+    const seg = s.slice(Math.max(0, vm.index - 60), vm.index);
+    const re = new RegExp(BROKER_SUBJECT_RE.source, 'gi'); let m: RegExpExecArray | null; let last: RegExpExecArray | null = null;
+    while ((m = re.exec(seg)) !== null) last = m;
+    if (last && !/\b(?:after|as|following|because|when|while|but|say|says|said|note|notes|noted)\b/i.test(seg.slice(last.index + last[0].length)) && !COMPANY_VOICE_RE.test(seg.slice(last.index + last[0].length))) return true;
+  }
+  const strong = STRONG_GUIDE_RE.test(s) || STRONG_TARGET_RE.test(s);
+  if (INDEX_PIECE_RE.test(s) && !(strong && SPECIFIC_RE.test(s))) return true;             // market wrap: only a specific company raise survives
+  if (strong) return false;
+  if (FWD_CUE_RE.test(s) && FY_PERIOD_RE.test(s)) return false;                               // compound sentence that also states a dated company forward view: the engine decides
+  return NON_EARN_OBJ_RE.test(s);
+}
+const SENT_SPLIT = /(?<=[.!?])\s+(?=[A-Z₹$€£])|\n+|;\s+/;
+const sentencesOf = (t: string): string[] => String(t || '').split(SENT_SPLIT).map((x) => x.trim()).filter(Boolean);
+
+/**
+ * Drop the sentences that raise something else. Returns the SAME candidate object when nothing needed dropping.
+ * Returns null when the headline is such a sentence and nothing else in the text reads as a company guidance raise.
+ */
+export function sanitizeRaiseCandidate(c: GuCandidate): GuCandidate | null {
+  const titleBad = nonGuidanceRaiseSentence(c.title);
+  const sents = sentencesOf(c.text);
+  const keep = sents.filter((x) => !nonGuidanceRaiseSentence(x));
+  if (!titleBad && keep.length === sents.length) return c;
+  const text = keep.join(' ');
+  if (!titleBad) return { ...c, text };
+  const pick = keep.find((x) => looksLikeGuidanceRaise(x) || isGuidanceUpgradeCandidate({ ...c, title: x, text: '' }).include);
+  return pick ? { ...c, title: clean(pick, 200), text } : null;
+}
+
 /** True when the text reads like the COMPANY raising its own outlook. Analyst wording never matches. */
 export function looksLikeGuidanceRaise(text: string): boolean {
   const t = String(text || '');
   if (!t) return false;
   for (const s of t.split(/(?<=[.!?])\s+|\n+/)) {
     if (!PHRASE_RES.some((r) => r.test(s))) continue;
+    if (nonGuidanceRaiseSentence(s)) continue;                 // zzz848: funds / stake / prices / capex / dividend / bid / price target / index wrap
+    if (NON_EARNINGS_ONLY_RE.test(s) && !EARNINGS_WORD_RE.test(s)) continue;   // capex / dividend / hiring guidance is not an earnings upgrade
     if (ANALYST_ONLY.test(s) && !/\bcompany|management|board|we\b/i.test(s)) continue;
     return true;
   }
@@ -618,11 +793,16 @@ export interface ScanLineCounts { candidates: number; verified: number; events: 
 export function scanSummaryLine(s: GuScanStatus, n: ScanLineCounts): string {
   const name = s.market === 'IN' ? 'India' : 'US';
   const sourceCount = s.sources.filter((x) => x.state !== 'NOT_RUN').length;
+  if (s.windowDays && s.windowDays > LIVE_SCAN_MAX_DAYS && s.coverageLabel) {
+    const wait = (s.unprocessed ?? s.awaitingGrading) > 0 ? `; ${plural(s.unprocessed ?? s.awaitingGrading, 'filing')} awaiting grading` : '';
+    return `${name}: ${s.complete ? 'SCAN COMPLETE' : 'SCAN INCOMPLETE'} — ${s.coverageLabel}; ${sourceCount} source${sourceCount === 1 ? '' : 's'}; ${n.candidates} candidate${n.candidates === 1 ? '' : 's'}, ${n.verified} verified${wait}${s.complete ? '' : `; ${n.events} event${n.events === 1 ? '' : 's'} shown is NOT a confirmation of no upgrades`}`;
+  }
   if (s.complete) {
     return `${name}: SCAN COMPLETE — ${s.daysCovered} of ${s.daysRequested} days, ${sourceCount} source${sourceCount === 1 ? '' : 's'}; ${n.candidates} candidate${n.candidates === 1 ? '' : 's'}, ${n.verified} verified`;
   }
   const bad = s.sources.filter((x) => x.state !== 'COMPLETE').map((x) => `${x.name}: ${x.detail || x.state}`).join('; ');
-  const wait = s.awaitingGrading > 0 ? `; ${s.awaitingGrading} filing${s.awaitingGrading === 1 ? '' : 's'} awaiting grading` : '';
+  const waiting = s.unprocessed ?? s.awaitingGrading;
+  const wait = waiting > 0 ? `; ${waiting} filing${waiting === 1 ? '' : 's'} awaiting grading` : '';
   return `${name}: SCAN INCOMPLETE — ${s.daysCovered} of ${s.daysRequested} days covered${bad ? ` (${bad})` : ''}${wait}; ${n.events} event${n.events === 1 ? '' : 's'} shown is NOT a confirmation of no upgrades`;
 }
 
@@ -639,16 +819,27 @@ export const nameKeyOf = (c: Pick<GuCandidate, 'company'>): string => (c.company
  * The second kind has wording but no parsed numbers: it stays a visible CANDIDATE (stage CANDIDATE, decision UNVERIFIED).
  * Wording-only candidates need a resolved NSE symbol, so macro or broker headlines ("RBI raises FY27 growth forecast") never become events.
  */
-export function isRaiseCandidate(c: GuCandidate): boolean {
+export function isRaiseCandidate(c0: GuCandidate): boolean {
+  const c = sanitizeRaiseCandidate(c0);                       // zzz848: funds / stake / prices / capex / dividend / bid / price target / index wrap are not guidance
+  if (!c) return false;
   const r = isGuidanceUpgradeCandidate(c);
+  if (isExchangeFiling(c)) {
+    // zzz848: an exchange subject line is administrative. It never makes an event on its own: the raise has to be in the text we hold,
+    // or the subject itself must pass the engine's strict management-raise test. Otherwise it is "filing seen, raise text not read".
+    if (!c.text.trim()) return r.include && isGuidanceUpgradeCandidate({ ...c, text: '' }).include;
+    if (r.include) return true;
+    return !!c.ticker && r.reason === 'No management guidance raise found' && looksLikeGuidanceRaise(c.text);
+  }
   if (r.include) return true;
   if (!c.ticker || r.reason !== 'No management guidance raise found') return false;
   return looksLikeGuidanceRaise(`${c.title}. ${c.text}`);
 }
+/** An India exchange announcement row (NSE / BSE), as opposed to a graded results row or a news item. */
+export const isExchangeFiling = (c: Pick<GuCandidate, 'id' | 'kind' | 'market'>): boolean => c.kind === 'FILING' && c.market === 'IN' && c.id.startsWith('filing:');
 
 /** processCandidates for India: same engine, same window rule, wording-only raises kept as CANDIDATE. */
 export function processRaiseCandidates(cands: GuCandidate[], ctxFor: (ticker: string) => GuContext, now: Date, window: GuWindow = '7D'): GuidanceEvent[] {
-  const kept = cands.filter((c) => withinWindow(c.publishedAt, window, now) && isRaiseCandidate(c));
+  const kept = cands.filter((c) => withinWindow(c.publishedAt, window, now) && isRaiseCandidate(c)).map((c) => sanitizeRaiseCandidate(c) ?? c);
   return rank(mergeCandidates(kept).map((sk) => buildGuidanceEvent(sk, ctxFor(sk.ticker) ?? {}, now)));
 }
 
@@ -672,7 +863,7 @@ export function propagateTickers(list: GuCandidate[]): GuCandidate[] {
  * raise often sit only in that attachment, and a public route never opens documents, so such a row is evidence that a primary
  * document EXISTS, never evidence of a raise.
  */
-const RAISE_BEARING_SUBJECT = /\b(?:outcome of (?:the )?(?:\d+\w*\s+)?(?:annual general|agm|egm|extra[- ]ordinary)|annual general meeting|\bagm\b|investor presentation|analyst(?:s)?\s*\/?\s*(?:and\s+)?institutional investor|investor (?:meet|call|day)|press release|media release|earnings (?:call|release)|con(?:ference)?\.? call|transcript|(?:financial|quarterly|audited|unaudited)\s+results?|results?\s+for the)\b/i;
+const RAISE_BEARING_SUBJECT = /\b(?:outcome of (?:the )?(?:\d+\w*\s+)?(?:annual general|agm|egm|extra[- ]ordinary)|annual general meeting|\bagm\b|investor presentation|analyst(?:s)?\s*\/?\s*(?:and\s+)?institutional investor|investor (?:meet|call|day)|press release|media release|earnings (?:call|release)|con(?:ference)?\.? call|transcript|(?:financial|quarterly|audited|unaudited)\s+results?|results?\s+for the|guidance|outlook|forecast|(?:business|operational|trading|quarterly) update)\b/i;
 export function isRaiseBearingSubject(subject: unknown): boolean { return RAISE_BEARING_SUBJECT.test(String(subject ?? '')); }
 
 export interface SubjectOnlyFiling { ticker?: string; company?: string; nameKey: string; subject: string; date: string; url?: string; exchange: string }

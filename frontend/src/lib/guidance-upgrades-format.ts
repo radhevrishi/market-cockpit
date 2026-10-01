@@ -1,7 +1,7 @@
 // zzz843 — Guidance Upgrades: plain-English formatters. Client-safe, pure, no imports beyond types.
 // Rule: a relative change is "+x%", a change between two rates (growth, margin) is "+x pp".
 // The two are never mixed. A missing number prints DATA UNAVAILABLE, never zero.
-import type { GuChange, GuGuidancePoint, GuNumber, GuDecision, GuMetric, GuThesis, GuGap, GuDuration, GuMateriality, GuPortfolioImpact, GuFlag, GuidanceEvent, GuRangeClass, GuDurabilityLevel, GuStage, GuScoreItem, GuMetricBasis, GuScanStatus, GuScanSource, GuSummary, GuRangeMath } from './guidance-upgrades-types';
+import type { GuWindow, GuChange, GuGuidancePoint, GuNumber, GuDecision, GuMetric, GuThesis, GuGap, GuDuration, GuMateriality, GuPortfolioImpact, GuFlag, GuidanceEvent, GuRangeClass, GuDurabilityLevel, GuStage, GuScoreItem, GuMetricBasis, GuScanStatus, GuScanSource, GuSummary, GuRangeMath } from './guidance-upgrades-types';
 
 export const UNAVAILABLE = 'DATA UNAVAILABLE';
 
@@ -167,7 +167,7 @@ export const RATING_LABEL: Record<GuScoreItem['rating'], string> = { STRONG: 'ST
 export const BASIS_LABEL: Record<GuMetricBasis, string> = {
   GAAP: 'GAAP', ADJUSTED: 'Adjusted', ORGANIC: 'Organic', REPORTED: 'Reported', CONSTANT_CURRENCY: 'Constant currency', UNSTATED: 'Basis not stated',
 };
-export const SCAN_STATE_LABEL: Record<GuScanSource['state'], string> = { COMPLETE: 'COMPLETE', PARTIAL: 'PARTIAL', FAILED: 'FAILED', NOT_RUN: 'NOT RUN' };
+export const SCAN_STATE_LABEL: Record<string, string> = { COMPLETE: 'COMPLETE', PARTIAL: 'PARTIAL', FAILED: 'FAILED', NOT_RUN: 'NOT RUN', NOT_AVAILABLE: 'NOT AVAILABLE' };
 export const MARKET_NAME = { IN: 'India', US: 'USA' } as const;
 
 export const WHY_NOW_UNRESOLVED = 'Driver unresolved after primary-source + recent-event research';
@@ -306,4 +306,205 @@ export function marketIncompleteNote(market: 'IN' | 'US', events: number, s: GuS
   const bad = emptySources(s);
   if (s.complete && !bad.length) return null;
   return `${MARKET_NAME[market]}: scan incomplete${bad.length ? ` — ${bad.join(', ')} empty` : ''}. Not a confirmation of no upgrades.`;
+}
+
+
+// ═══ zzz848 — universe (Layer A) vs events (Layer B): pure helpers ═══════════════════════════════════════════════
+import type { GuUniverseRecord, GuUniverseResponse } from './guidance-universe-types';
+import type { GgCompany, GgGuidancePoint, GgMetric } from './growth-guidance-types';
+
+/** Window chips for the EVENTS section only. The universe never takes a window. */
+export const GU_WINDOWS: GuWindow[] = ['24H', '3D', '7D', '14D', '30D', '120D'];
+
+export type UniverseScope = 'ALL' | 'INDIA' | 'USA' | 'MY_BOOK';
+export type UniverseMetric = 'ALL' | 'REVENUE' | 'EBITDA' | 'NET_PROFIT' | 'EPS' | 'FCF' | 'MULTI_METRIC' | 'MULTI_YEAR';
+export type UniverseView = 'active' | 'all';
+export const UNIVERSE_SCOPES: Array<[UniverseScope, string]> = [['ALL', 'All'], ['INDIA', 'India'], ['USA', 'USA'], ['MY_BOOK', 'My Book']];
+export const UNIVERSE_METRICS: Array<[UniverseMetric, string]> = [['ALL', 'All'], ['REVENUE', 'Revenue'], ['EBITDA', 'EBITDA'], ['NET_PROFIT', 'Net profit'], ['EPS', 'EPS'], ['FCF', 'FCF'], ['MULTI_METRIC', 'Multi-metric'], ['MULTI_YEAR', 'Multi-year']];
+export const UNIVERSE_UNAVAILABLE = 'Universe loading / not available';
+export const UNIVERSE_HEADER = 'Highest verified guidance';
+
+/** Builds the universe request. There is NO window parameter by design: the universe ignores event recency. */
+export function universeUrl(o: { market?: 'IN' | 'US' | 'ALL'; metric?: string; threshold?: number; view?: UniverseView } = {}): string {
+  const q = new URLSearchParams();
+  q.set('market', o.market || 'ALL');
+  if (o.metric) q.set('metric', o.metric);
+  q.set('threshold', String(o.threshold ?? 30));
+  q.set('view', o.view || 'active');
+  return `/api/v1/guidance-universe?${q.toString()}`;
+}
+export const REGRESSION_URL = '/api/v1/guidance-universe/regression';
+
+const API_METRIC: Record<UniverseMetric, string> = { ALL: '', REVENUE: 'REVENUE', EBITDA: 'EBITDA', NET_PROFIT: 'PAT', EPS: 'EPS', FCF: 'FCF', MULTI_METRIC: 'MULTI_METRIC', MULTI_YEAR: 'MULTI_YEAR' };
+export function universeApiMetric(m: UniverseMetric): string { return API_METRIC[m]; }
+export function universeApiMarket(s: UniverseScope): 'IN' | 'US' | 'ALL' { return s === 'INDIA' ? 'IN' : s === 'USA' ? 'US' : 'ALL'; }
+
+/** 'India 20 | USA 14' */
+export function fmtUniverseCounts(india: number | null | undefined, usa: number | null | undefined): string { return `India ${india ?? 0} | USA ${usa ?? 0}`; }
+
+const num = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
+const r0 = (n: number) => String(Math.round(n));
+/** '3-yr CAGR' from a period like 'FY26–29' or '3 years'; 'multi-year CAGR' when the length is unknown. */
+export function cagrLabel(period: string | null | undefined): string {
+  const t = period || '';
+  const y = /(\d+)\s*-?\s*(?:yr|year)/i.exec(t)?.[1];
+  if (y) return `${y}-yr CAGR`;
+  const m = /FY?(\d{2})\s*[–-]\s*(?:FY)?(\d{2})/i.exec(t);
+  if (m && Number(m[2]) > Number(m[1])) return `${Number(m[2]) - Number(m[1])}-yr CAGR`;
+  return 'multi-year CAGR';
+}
+/** '+60%', '+35–40%', '+80%+' (open-ended), never a midpoint. Implied growth says so; a multi-year figure says '3-yr CAGR'. */
+export function fmtGrowthDisplay(p: Pick<GgGuidancePoint, 'growthLow' | 'growthHigh' | 'growthOrigin' | 'periodKind' | 'approx' | 'cumulativeYears' | 'period'> | null | undefined): string {
+  if (!p) return '—';
+  const lo = p.growthLow, hi = p.growthHigh;
+  if (!num(lo) && !num(hi)) return '—';
+  let body: string;
+  if (num(lo) && num(hi) && Math.round(lo) !== Math.round(hi)) body = `+${r0(Math.min(lo, hi))}–${r0(Math.max(lo, hi))}%`;
+  else if (num(lo) && !num(hi)) body = `+${r0(lo)}%+`;
+  else body = `+${r0((num(lo) ? lo : hi) as number)}%`;
+  if (p.growthOrigin === 'IMPLIED') body += ' (implied)';
+  if (p.periodKind === 'MULTI_YEAR_CAGR') body += ` ${cagrLabel(p.period)}`;
+  return body;
+}
+export const METRIC_SHORT: Record<string, string> = { REVENUE: 'Revenue', PAT: 'PAT', EPS: 'EPS', EBITDA: 'EBITDA', FCF: 'FCF' };
+export function metricShort(m: string | null | undefined): string { return (m && METRIC_SHORT[m]) || (m ? String(m) : ''); }
+
+const pointOf = (c: Pick<GgCompany, 'primary' | 'others'>, m: GgMetric): GgGuidancePoint | null => (c.primary?.metric === m ? c.primary : (c.others || []).find((o) => o.metric === m) || null);
+
+/** The display string for the primary point: the server's `display` when present (range preserved), else built from the point. */
+export function primaryDisplay(r: GuUniverseRecord): string {
+  const d = (r.display || '').trim();
+  let out = d || fmtGrowthDisplay(r.record?.primary);
+  if (d && r.record?.primary?.growthOrigin === 'IMPLIED' && !/implied/i.test(d)) out += ' (implied)';
+  if (d && r.record?.primary?.periodKind === 'MULTI_YEAR_CAGR' && !/CAGR/i.test(d)) out += ` ${cagrLabel(r.record.primary.period)}`;
+  return out;
+}
+/** 'MTAR — +80%+ Revenue' or 'Cupid — +60% Revenue / +70% PAT' */
+export function universeRowText(r: GuUniverseRecord): string {
+  const parts = [`${primaryDisplay(r)} ${metricShort(r.metric || r.record?.primary?.metric)}`.trim()];
+  for (const a of r.alsoDisplay || []) parts.push(`${a.display} ${metricShort(a.metric)}`.trim());
+  return `${r.record?.company || 'Unknown company'} — ${parts.join(' / ')}`;
+}
+export function numberedRows(list: GuUniverseRecord[]): string[] { return list.map((r, i) => `${i + 1}. ${universeRowText(r)}`); }
+
+/** ✓ verified, ◐ partial, ○ media-only (primary source not found yet). */
+export function verificationMark(r: Pick<GuUniverseRecord, 'mediaOnly'> & { record?: Pick<GgCompany, 'verification'> }): { glyph: string; label: string } {
+  const v = r.record?.verification;
+  if (r.mediaOnly || v === 'SECONDARY_ONLY' || v === 'UNVERIFIED') return { glyph: '○', label: 'media-only' };
+  if (v === 'PARTIALLY_VERIFIED') return { glyph: '◐', label: 'partial' };
+  return v === 'VERIFIED' ? { glyph: '✓', label: 'verified' } : { glyph: '○', label: 'media-only' };
+}
+export function verificationTooltip(r: GuUniverseRecord): string {
+  const m = verificationMark(r);
+  const src = (r.record?.sources || []).find((x) => x.primary) || (r.record?.sources || [])[0];
+  const from = src ? `${src.name}${src.date ? `, ${src.date.slice(0, 10)}` : ''}` : 'no source listed';
+  return m.label === 'media-only' ? `Media only. Primary source not found yet. ${from}` : `${m.label === 'verified' ? 'Verified' : 'Partly verified'}: ${from}`;
+}
+
+const QUALITY_RANK: Record<string, number> = { HIGH: 3, MEDIUM: 2, LOW: 1 };
+const revPoint = (r: GuUniverseRecord) => pointOf(r.record, 'REVENUE');
+const floorOf = (p: GgGuidancePoint | null) => (p ? (num(p.growthLow) ? p.growthLow : num(p.growthHigh) ? p.growthHigh : null) : null);
+const ceilOf = (p: GgGuidancePoint | null) => (p ? (num(p.growthHigh) ? p.growthHigh : num(p.growthLow) ? p.growthLow : null) : null);
+/** Sort rule: (1) highest VERIFIED revenue guidance (its floor; non-verified sink), (2) then the range (higher ceiling), (3) then evidence quality,
+ *  (4) then any revenue floor, (5) company name. Stable and pure. */
+export function sortUniverse(list: GuUniverseRecord[]): GuUniverseRecord[] {
+  const key = (r: GuUniverseRecord) => {
+    const p = revPoint(r); const ver = r.record?.verification === 'VERIFIED' && !r.mediaOnly;
+    const f = floorOf(p);
+    return [ver && f != null ? f : -Infinity, ceilOf(p) ?? -Infinity, (QUALITY_RANK[r.record?.quality] || 0) * 10 + Math.min(9, r.record?.evidence?.independentSources || 0), f ?? -Infinity] as const;
+  };
+  return [...list].sort((a, b) => {
+    const ka = key(a), kb = key(b);
+    for (let i = 0; i < 4; i++) if (ka[i] !== kb[i]) return kb[i] > ka[i] ? 1 : -1;
+    return (a.record?.company || '').localeCompare(b.record?.company || '');
+  });
+}
+
+export function universeMatchesMetric(r: GuUniverseRecord, m: UniverseMetric): boolean {
+  if (m === 'ALL') return true;
+  const c = r.record; if (!c) return false;
+  const metrics = new Set<string>([c.primary?.metric, ...(c.others || []).map((o) => o.metric), r.metric, ...(r.alsoDisplay || []).map((a) => a.metric)].filter(Boolean) as string[]);
+  if (m === 'MULTI_METRIC') return metrics.size > 1;
+  if (m === 'MULTI_YEAR') return [c.primary, ...(c.others || [])].some((p) => p && (p.periodKind === 'MULTI_YEAR_CAGR' || (p.cumulativeYears ?? 0) > 1));
+  return metrics.has(API_METRIC[m]);
+}
+export function filterUniverse(list: GuUniverseRecord[], scope: UniverseScope, metric: UniverseMetric, heldNorm?: (t: string) => boolean): GuUniverseRecord[] {
+  return list.filter((r) => {
+    const mk = r.record?.market;
+    if (scope === 'INDIA' && mk !== 'IN') return false;
+    if (scope === 'USA' && mk !== 'US') return false;
+    if (scope === 'MY_BOOK' && !(heldNorm && r.record?.ticker && heldNorm(r.record.ticker))) return false;
+    return universeMatchesMetric(r, metric);
+  });
+}
+/** Defensive: anything that is not a usable universe answer is treated as 'not available', never as an empty success. */
+export function isUniverseUsable(j: unknown): j is GuUniverseResponse {
+  const x = j as GuUniverseResponse | null;
+  return !!x && Array.isArray(x.records) && !!x.summary && !!x.summary.india && !!x.summary.usa && !!x.summary.all;
+}
+
+export interface UniverseSummaryLine { label: string; value: string }
+/** Summary lines from GuUniverseSummary only. Nothing is hard-coded. */
+export function universeSummaryLines(s: GuUniverseResponse['summary'], market: 'IN' | 'US' | 'ALL'): UniverseSummaryLine[] {
+  const t = s.threshold ?? 30;
+  if (market === 'ALL') {
+    return [
+      { label: 'Active high-growth guidance companies', value: fmtUniverseCounts(s.india.companies, s.usa.companies) + ` (${s.all.active} total)` },
+      { label: 'Guidance raised', value: String(s.all.raised) }, { label: 'Maintained', value: String(s.all.maintained) },
+      { label: 'Cut', value: String(s.all.cut) }, { label: 'At risk', value: String(s.all.atRisk) },
+      { label: 'Media-only, primary pending', value: String(s.all.mediaOnly) },
+    ];
+  }
+  const b = market === 'IN' ? s.india : s.usa;
+  const hr = b.highestRevenue;
+  return [
+    { label: `${b.companies} companies currently identified`, value: '' },
+    { label: `Revenue ≥${t}%`, value: String(b.revenueGte30) }, { label: `PAT ≥${t}%`, value: String(b.patGte30) },
+    { label: `Revenue + PAT ≥${t}%`, value: String(b.revenueAndPatGte30) },
+    { label: 'Highest revenue guidance', value: hr ? `${hr.company} ${hr.display}` : '—' },
+  ];
+}
+
+// ── zero-event wording and 120D coverage ────────────────────────────────────────────────────────────────────────
+export const NOT_A_CONFIRMATION = 'Zero events shown is NOT a confirmation of no upgrades.';
+/** Wording for an empty event list. Uses scan.complete and never claims a clean negative. */
+export function zeroEventWording(window: GuWindow, scan: Partial<Record<'IN' | 'US', GuScanStatus>> | undefined): string {
+  const list = Object.values(scan || {}).filter((x): x is GuScanStatus => !!x);
+  if (!list.length) return `No additional verified upgrades found in currently processed sources. Scan coverage is not available. ${NOT_A_CONFIRMATION}`;
+  const incomplete = list.some((s) => !s.complete);
+  if (incomplete) {
+    const n = list.reduce((a, s) => a + (s.awaitingGrading || 0), 0);
+    return `No additional verified upgrades found in currently processed sources. ${n} filings remain awaiting grading. ${NOT_A_CONFIRMATION}`;
+  }
+  return `No verified upgrades found in the fully processed ${window} source universe.`;
+}
+
+export type CoverageState = 'COMPLETE' | 'PARTIAL' | 'FAILED' | 'NOT_AVAILABLE';
+export function coverageState(s: GuScanStatus | undefined): CoverageState {
+  const src = (s?.sources || []).map((x) => String(x.state));
+  if (!s || !src.length) return 'NOT_AVAILABLE';
+  if (src.every((x) => x === 'NOT_AVAILABLE' || x === 'NOT_RUN')) return 'NOT_AVAILABLE';
+  if (src.every((x) => x === 'FAILED')) return 'FAILED';
+  if (s.complete && src.every((x) => x === 'COMPLETE')) return 'COMPLETE';
+  return 'PARTIAL';
+}
+export interface Coverage120 { market: 'IN' | 'US'; state: CoverageState; days: string; sources: number; unprocessed: number; missing: number; incomplete: boolean }
+export const COVERAGE_120_INCOMPLETE = '120D coverage incomplete';
+export function coverage120(s: GuScanStatus): Coverage120 {
+  const req = 120;
+  const covered = Math.max(0, s.daysCovered || 0);
+  return {
+    market: s.market, state: coverageState(s), days: `${covered}/${req}`, sources: (s.sources || []).length,
+    unprocessed: s.awaitingGrading || Math.max(0, (s.candidatesFound || 0) - (s.processed || 0)), missing: Math.max(0, req - covered),
+    incomplete: covered < req || !s.complete,
+  };
+}
+
+// ── regression table (diagnostics) ──────────────────────────────────────────────────────────────────────────────
+export const REGRESSION_STATUS_LABEL: Record<string, string> = {
+  VERIFIED: 'VERIFIED', PARTIALLY_VERIFIED: 'PARTIALLY VERIFIED', NOT_FOUND: 'NOT FOUND', REJECTED: 'REJECTED', SUPERSEDED: 'SUPERSEDED', EXPIRED: 'EXPIRED',
+};
+export function investigatedCount(counts: Record<string, number> | undefined, rows: number, total = 20): string {
+  const n = counts ? Object.values(counts).reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0) : rows;
+  return `${n || rows}/${total} investigated`;
 }

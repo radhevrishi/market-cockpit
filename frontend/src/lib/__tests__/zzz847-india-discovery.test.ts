@@ -330,7 +330,7 @@ describe('route wiring', () => {
     assert.ok(!/from '[^']*(quote|price|yahoo)[^']*'/i.test(r));
   });
   test('growth-guidance shares the India builder and IST dates', () => {
-    const g = read('app/api/v1/growth-guidance/route.ts');
+    const g = read('lib/growth-guidance-live.ts');   // pipeline extracted from the route (zzz848); the route calls getLiveGuidance
     assert.match(g, /buildIndiaCandidates\(/); assert.match(g, /istDateList\(/); assert.match(g, /scraped-india-news:v1:latest/);
   });
 });

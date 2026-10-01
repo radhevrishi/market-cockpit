@@ -4,15 +4,19 @@
 // compared with expectations, valued, and ended with ONE decision (or UNVERIFIED). One fetch, no AI on load.
 // My Book is read in this browser only (same sources as the Radar) and overlaid here; the server never sees it.
 // ═══════════════════════════════════════════════════════════════════════════
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GuWindow, GuidanceUpgradesResponse } from '@/lib/guidance-upgrades-types';
-import { applyFilters, anyScanIncomplete, splitToday, SCAN_INCOMPLETE_EMPTY, type MetricFilter, type ScopeFilter } from '@/lib/guidance-upgrades-format';
+import { applyFilters, splitToday, zeroEventWording, type MetricFilter, type ScopeFilter } from '@/lib/guidance-upgrades-format';
 import { overlayBook, countInBook } from '@/lib/guidance-upgrades-book';
 import { readLocalBookInput, fetchSavedHoldings } from '@/lib/thesis/book-sources';
-import { GuTopBar } from '@/components/guidance-upgrades/GuTopBar';
+import type { GgCompany } from '@/lib/growth-guidance-types';
+import { GuTitle, GuTopBar } from '@/components/guidance-upgrades/GuTopBar';
 import { GuCard } from '@/components/guidance-upgrades/GuCard';
 import { GuCoverage } from '@/components/guidance-upgrades/GuCoverage';
 import { GuDetail } from '@/components/guidance-upgrades/GuDetail';
+import { GuUniverseSummary } from '@/components/guidance-upgrades/GuUniverseSummary';
+import { GuUniverseBrowser } from '@/components/guidance-upgrades/GuUniverseBrowser';
+import { GgDetail } from '@/components/growth-guidance/GgDetail';
 import { PRINT_CSS, R, box } from '@/components/guidance-upgrades/gu-tokens';
 import { btn } from '@/components/guidance-upgrades/GuBits';
 
@@ -26,20 +30,25 @@ export default function GuidanceUpgradesPage() {
   const [bookLoaded, setBookLoaded] = useState(false);
   const [todayFirst, setTodayFirst] = useState(true);
   const [openId, setOpenId] = useState<string | null>(null);
+  const [ggOpen, setGgOpen] = useState<GgCompany | null>(null);
   const now = useMemo(() => new Date(), [data]);
 
+  const acRef = useRef<AbortController | null>(null);
   const load = useCallback(async (w: GuWindow) => {
+    acRef.current?.abort();
+    const ac = new AbortController(); acRef.current = ac;
     setState('loading');
     try {
-      const r = await fetch(`/api/v1/guidance-upgrades?window=${w}&market=ALL`, { cache: 'no-store' });
+      const r = await fetch(`/api/v1/guidance-upgrades?window=${w}&market=ALL`, { cache: 'no-store', signal: ac.signal });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = await r.json();
       if (!j || !Array.isArray(j.events)) throw new Error('bad answer');
+      if (ac.signal.aborted) return;
       setData(j as GuidanceUpgradesResponse); setState('ok');
-    } catch { setState('error'); }
+    } catch { if (!ac.signal.aborted) setState('error'); }
   }, []);
 
-  useEffect(() => { void load(window_); }, [window_, load]);
+  useEffect(() => { void load(window_); return () => acRef.current?.abort(); }, [window_, load]);
 
   useEffect(() => {
     try { const id = new URLSearchParams(window.location.search).get('id'); if (id) setOpenId(id); } catch { /* no id */ }
@@ -63,17 +72,17 @@ export default function GuidanceUpgradesPage() {
   const events = useMemo(() => overlayBook(data?.events || [], held), [data, held]);
   const shown = useMemo(() => applyFilters(events, scope, metric), [events, scope, metric]);
   const { today: todayList, rest: restList } = useMemo(() => splitToday(shown, now), [shown, now]);
-  const incomplete = anyScanIncomplete(data?.scan);
   const open = openId ? events.find((e) => e.guidance_event_id === openId) || null : null;
 
   return (
     <div className="gu-page" style={{ color: R.text, display: 'flex', flexDirection: 'column', gap: 12 }}>
       <style>{PRINT_CSS}</style>
+      <GuTitle newest={data?.freshness.newestAnnouncement || null} checkedAt={data?.freshness.feedCheckedAt || null} />
+      <GuUniverseSummary onFull={setGgOpen} />
+      <GuUniverseBrowser held={held} onFull={setGgOpen} />
       <GuTopBar summary={data?.summary || null} window={window_} onWindow={setWindow} scope={scope} onScope={setScope} metric={metric} onMetric={setMetric}
-        newest={data?.freshness.newestAnnouncement || null} checkedAt={data?.freshness.feedCheckedAt || null} inBookCount={countInBook(events)} bookLoaded={bookLoaded} />
+        inBookCount={countInBook(events)} bookLoaded={bookLoaded} />
       {scope === 'MY_BOOK' && bookLoaded && held.length === 0 && <div style={{ fontSize: 12, color: R.dim }}>No holdings found. Add them on the Portfolio page and this filter fills in.</div>}
-      <GuCoverage scan={data?.scan} now={now} byMarket={data?.freshness.byMarket} eventCounts={{ IN: events.filter((e) => e.market === 'IN').length, US: events.filter((e) => e.market === 'US').length }} />
-      {!data?.scan && data?.freshness.note && <div style={{ fontSize: 12, color: R.dim }}>{data.freshness.note}</div>}
 
       {state === 'loading' && !data && <div style={box({ padding: 14, fontSize: 13, color: R.dim })}>Looking for guidance raises. This can take a few seconds.</div>}
       {state === 'error' && (
@@ -84,11 +93,7 @@ export default function GuidanceUpgradesPage() {
       )}
       {state === 'ok' && shown.length === 0 && (
         <div style={box({ padding: 14, fontSize: 13, color: R.dim })}>
-          {events.length === 0 && incomplete
-            ? SCAN_INCOMPLETE_EMPTY
-            : events.length === 0
-            ? 'No verified guidance raises found in this window. Try a longer window. Quiet weeks are normal.'
-            : 'Nothing matches these filters. Clear a filter to see the other raises.'}
+          {events.length === 0 ? zeroEventWording(window_, data?.scan) : 'Nothing matches these filters. Clear a filter to see the other raises.'}
         </div>
       )}
       {shown.length > 0 && (
@@ -108,7 +113,10 @@ export default function GuidanceUpgradesPage() {
         )}
         {!(todayFirst && todayList.length > 0) && shown.map((e) => <GuCard key={e.guidance_event_id} e={e} onOpen={select} now={now} />)}
       </div>
+      <GuCoverage scan={data?.scan} now={now} window={window_} byMarket={data?.freshness.byMarket} eventCounts={{ IN: events.filter((e) => e.market === 'IN').length, US: events.filter((e) => e.market === 'US').length }} />
+      {!data?.scan && data?.freshness.note && <div style={{ fontSize: 12, color: R.dim }}>{data.freshness.note}</div>}
       <div style={{ fontSize: 11, color: R.faint }}>Company data only. Not investment advice. Prices are context here, never the reason.</div>
+      {ggOpen && <GgDetail c={ggOpen} onClose={() => setGgOpen(null)} unverified={ggOpen.verification === 'SECONDARY_ONLY' || ggOpen.verification === 'UNVERIFIED'} />}
       {open && <GuDetail e={open} onClose={() => select(null)} now={now} />}
     </div>
   );

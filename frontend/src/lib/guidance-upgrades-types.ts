@@ -18,7 +18,7 @@ export type GuThesis = 'A' | 'B' | 'F' | 'G' | null;            // existing labe
 export type GuDecision = 'IMMEDIATE_BUY' | 'WATCHLIST' | 'DELAYED_EP' | 'REJECT' | 'UNVERIFIED'; // UNVERIFIED = no primary source: no final decision
 export type GuVerification = 'VERIFIED' | 'UNVERIFIED';
 export type GuPortfolioImpact = 'SUPPORTS' | 'NEUTRAL' | 'WEAKENS' | 'BROKEN';
-export type GuWindow = '24H' | '3D' | '7D' | '14D' | '30D';
+export type GuWindow = '24H' | '3D' | '7D' | '14D' | '30D' | '120D';
 export type GuFlag = 'REPEATED_UPGRADER' | 'GUIDANCE_PLUS_GAP' | 'GUIDANCE_PLUS_BOTTLENECK' | 'SECOND_UPGRADE_IN_WINDOW' | 'SMALL_MID_CAP_INFLECTION';
 
 // ── zzz844 V2 additions (all additive) ──────────────────────────────────────
@@ -56,8 +56,16 @@ export interface GuEventV2 {
   statedDirection?: 'RAISED';
   /** zzz847: measures the source names as raised (plain words), e.g. ['revenue','net profit']. */
   statedMetrics?: string[];
+  /** zzz848: who CONFIRMED the raise (primary document owner), when one was read. Absent = nobody yet; `detectedVia` says who first saw it. */
+  verifiedBy?: string;
+  /** zzz848: stable short hash per source (url, else name+date), so the same outlet is never stored or counted twice. */
+  sourceHashes?: string[];
+  /** zzz848: where the event came from on this read: live sources, the persisted event store, or both. */
+  origin?: 'LIVE' | 'STORE' | 'LIVE+STORE';
 }
-export interface GuScanSource { name: string; state: 'COMPLETE' | 'PARTIAL' | 'FAILED' | 'NOT_RUN'; scanned: number; detail: string }
+/** zzz848: NOT_AVAILABLE = the source cannot serve this window at all (e.g. no history that far back). It is never COMPLETE. */
+export type GuScanState = 'COMPLETE' | 'PARTIAL' | 'FAILED' | 'NOT_RUN' | 'NOT_AVAILABLE';
+export interface GuScanSource { name: string; state: GuScanState; scanned: number; detail: string }
 export interface GuScanStatus {
   market: 'IN' | 'US';
   windowFrom: string; windowTo: string;
@@ -68,6 +76,15 @@ export interface GuScanStatus {
   candidatesFound: number; processed: number; awaitingGrading: number; verified: number;
   newestItemAt: string | null;
   note: string;
+  /** zzz848 (all additive): honest coverage for long windows. */
+  windowDays?: number;                  // the N of the window (120 for 120D)
+  status?: GuScanState;                 // overall: COMPLETE | PARTIAL | FAILED | NOT_AVAILABLE
+  sourcesCount?: number;                // sources that actually ran
+  unprocessed?: number;                 // filings seen but not graded / text not read
+  missingDays?: string[];               // newest first, capped at 60 (missingDaysCount is the real number)
+  missingDaysCount?: number;
+  storeDays?: number;                   // days counted as covered because an earlier run already processed them (persisted store)
+  coverageLabel?: string;               // 'Coverage: 74/120 days — 120D coverage incomplete'
 }
 
 /** A number that either exists with its provenance, or is honestly unavailable. */

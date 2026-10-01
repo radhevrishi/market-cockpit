@@ -226,6 +226,8 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/status',       label: 'System Status', icon: <Bell className="w-4 h-4" /> },
       // PATCH zzz67 — System Health checkup (workers + cron + freshness)
       { href: '/system-health', label: 'System Health', icon: <Shield className="w-4 h-4" /> },
+      // zzz848 — regression table for the guidance universe (System & Tools only; not linked from Guidance Upgrades)
+      { href: '/guidance-diagnostics', label: 'Guidance diagnostics', icon: <BarChart3 className="w-4 h-4" /> },
       { href: '/settings',     label: 'Settings',      icon: <Shield className="w-4 h-4" /> },
     ],
   },

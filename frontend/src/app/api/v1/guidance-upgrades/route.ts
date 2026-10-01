@@ -22,17 +22,17 @@ import { kvGet, kvMGet, kvSet } from '@/lib/kv';
 import { loadCatalog } from '@/lib/symbolMaster';
 import { NSE_TICKER_NAMES } from '@/lib/nse-ticker-names';
 import { gradedKey } from '@/lib/graded-cache-key';
-import { isGuidanceUpgradeCandidate, processCandidates, rank, summarise, withinWindow } from '@/lib/guidance-upgrades';
+import { isGuidanceUpgradeCandidate, mergeCandidates, processCandidates, rank, summarise, withinWindow } from '@/lib/guidance-upgrades';
 import { US_ENGINE_VERSION, US_ENGINE_PREVIOUS_VERSIONS } from '@/lib/us-engine-version';
-import type { GuCandidate, GuContext, GuScanSource, GuScanStatus, GuidanceEvent, GuidanceUpgradesResponse } from '@/lib/guidance-upgrades-types';
+import type { GuCandidate, GuContext, GuScanSource, GuScanStatus, GuWindow, GuidanceEvent, GuidanceUpgradesResponse } from '@/lib/guidance-upgrades-types';
 import {
   parseWindow, parseMarket, lookbackDays, newsToCandidate, collectGradedRows, istDate, istDateList, dedupeCandidates, usSessionDates,
   loadUsSessions, usGradedRowToCandidate, reassignGlobalToUs, splitByMarket, filterByMarket, originOf, coverageLine, coverageNote,
   looksLikeGuidanceRaise, buildIndiaCandidates, isRaiseCandidate, processRaiseCandidates, collectSubjectOnly, corroborateWithFilings,
-  labelUnresolved, nameKeyOf, isResolvedTicker,
+  labelUnresolved, nameKeyOf, isResolvedTicker, noUpgradesNote, sanitizeRaiseCandidate, withProvenance, tagOrigin, computeCoverage, LIVE_SCAN_MAX_DAYS, coverageLabel,
   type MarketCoverage, type UsRowResult, type IndiaBuild, type IndiaRead,
 } from '@/lib/guidance-upgrades-candidates';
-import { readLedgers, writeEvents } from '@/lib/guidance-upgrades-ledger';
+import { readLedgers, writeEvents, readEventStore, mergeIntoStore, writeEventStore, storedCandidates, storeCoveredDays } from '@/lib/guidance-upgrades-ledger';
 import { scanIndia, scanUs, finaliseScan, makeRealIndiaFetchers, makeRealEdgarFetcher, type MarketScanResult } from '@/lib/guidance-upgrades-scan';
 
 export const runtime = 'nodejs';
@@ -42,19 +42,23 @@ export const maxDuration = 30;
 const NEWS_KEY = 'news:articles:v39';
 const SCRAPED_NEWS_KEY = 'scraped-india-news:v1:latest';
 const RETAINED_KEY = 'guidance-upgrades:in-candidates:v1';
-const RETAINED_DAYS = 35;
-const RETAINED_MAX = 150;
+// raise-worded India news is kept >= 130 days (was 35) so a 120D window outlives the news feeds; bounded by count and by serialised size
+const RETAINED_DAYS = 130;
+const RETAINED_MAX = 600;
+const RETAINED_MAX_CHARS = 900_000;
 const BUDGET_MS = 22_000;
 const PER_MARKET_CAP = 300;
+const PER_MARKET_CAP_LONG = 600;
 const mem = new Map<string, { at: number; body: GuidanceUpgradesResponse }>();
 const MEM_TTL_MS = 2 * 60_000;
 
-function noScan(m: 'IN' | 'US', now: Date, why: string, days: number): GuScanStatus {
+function noScan(m: 'IN' | 'US', now: Date, why: string, days: number, window: GuWindow = '7D'): GuScanStatus {
   const d = m === 'IN' ? Math.max(days, 2) : days;
   const s: GuScanStatus = { market: m, windowFrom: '', windowTo: now.toISOString().slice(0, 10), complete: false, lastScanAt: now.toISOString(),
     sources: [{ name: m === 'IN' ? 'NSE/BSE announcements' : 'SEC EDGAR 8-K', state: 'NOT_RUN', scanned: 0, detail: why }],
     daysCovered: 0, daysRequested: d, candidatesFound: 0, processed: 0, awaitingGrading: 0, verified: 0, newestItemAt: null, note: '' };
   s.note = `SCAN INCOMPLETE \u2014 ${m === 'IN' ? 'India' : 'US'}: ${why}. Zero events shown is NOT a confirmation of no upgrades.`;
+  s.windowDays = days; s.status = 'FAILED'; s.sourcesCount = 0; s.coverageLabel = coverageLabel(0, d, window);
   return s;
 }
 
@@ -85,6 +89,7 @@ export async function GET(req: NextRequest) {
   const wantIN = market !== 'US';
   const wantUS = market !== 'IN';
   const days = lookbackDays(window);
+  const long = days > LIVE_SCAN_MAX_DAYS;   // 120D: live scans stay bounded, the rest of the window comes from the persisted event store
   const cands: GuCandidate[] = [];
   let newsArticles: any[] = [];
   const peByTicker: Record<'IN' | 'US', Map<string, number>> = { IN: new Map(), US: new Map() };
@@ -99,20 +104,30 @@ export async function GET(req: NextRequest) {
   const dates = istDateList(now, days + 1);
   const usDates = wantUS ? usSessionDates(now, days) : [];
   const inFetch = wantIN ? makeRealIndiaFetchers() : null;
+  // persisted raise events + processed days (written after each run): what serves a long window once the live caches have expired
+  const storeP = Promise.all([wantIN ? readEventStore('IN') : Promise.resolve(null), wantUS ? readEventStore('US') : Promise.resolve(null)]);
+  const gradedP: Promise<Timed<any[]>> = wantIN ? timed(kvMGet<any>(dates.map((d) => gradedKey(d))), BUDGET_MS) : Promise.resolve<Timed<any[]>>({ v: null, timedOut: false });
+  const gradedDaysP: Promise<Set<string> | null> = gradedP.then((g) => (Array.isArray(g.v) ? new Set(dates.filter((_d, i) => !!(g.v as any[])[i]?.by_tier)) : null));
   // Live incremental India scan (exchange announcements per day + scraped filings blob): catches filings the caches have not seen yet.
   const inScanP: Promise<MarketScanResult | null> = inFetch
-    ? scanIndia({ now, days, fetchNse: inFetch.nse, fetchBse: inFetch.bse, readBlob: inFetch.blob, budgetMs: 12_000 }).catch(() => null)
+    ? storeP.then(([stIN]) => scanIndia({ now, days, window, fetchNse: inFetch.nse, fetchBse: inFetch.bse, readBlob: inFetch.blob, budgetMs: 12_000, storeCovered: storeCoveredDays(stIN), gradedDays: gradedDaysP })).catch(() => null)
     : Promise.resolve(null);
   let feedKeyUsed = '';
-  const [news, feed, graded, usSessions, scraped, retained, catalog] = await Promise.all([
+  const [news, feed, graded, usSessions, scraped, retained, catalog, [storeIN, storeUS]] = await Promise.all([
     timed(kvGet<any[]>(NEWS_KEY), BUDGET_MS),
     wantIN ? timed((async () => { for (const k of feedKeys) { const v = await kvGet<any>(k); if (v && Array.isArray(v.filings)) { feedKeyUsed = k; return v; } } return null; })(), BUDGET_MS) : Promise.resolve<Timed<any>>({ v: null, timedOut: false }),
-    wantIN ? timed(kvMGet<any>(dates.map((d) => gradedKey(d))), BUDGET_MS) : Promise.resolve<Timed<any[]>>({ v: null, timedOut: false }),
-    wantUS ? withTimeout(loadUsSessions(usDates, [US_ENGINE_VERSION, ...US_ENGINE_PREVIOUS_VERSIONS.slice(0, 2)], (keys) => kvMGet<any>(keys)), BUDGET_MS, null) : Promise.resolve(null),
+    gradedP,
+    wantUS ? withTimeout(long
+      ? loadUsSessions(usDates, [US_ENGINE_VERSION, ...US_ENGINE_PREVIOUS_VERSIONS.slice(0, 2)], (keys) => kvMGet<any>(keys), 15, { concurrency: 4, budgetMs: 10_000 })   // ~85 sessions: mget chunks of 15, 4 at a time, inside the budget
+      : loadUsSessions(usDates, [US_ENGINE_VERSION, ...US_ENGINE_PREVIOUS_VERSIONS.slice(0, 2)], (keys) => kvMGet<any>(keys)), BUDGET_MS, null) : Promise.resolve(null),
     wantIN ? timed(kvGet<any>(SCRAPED_NEWS_KEY), BUDGET_MS) : Promise.resolve<Timed<any>>({ v: null, timedOut: false }),
     wantIN ? timed(kvGet<any>(RETAINED_KEY), BUDGET_MS) : Promise.resolve<Timed<any>>({ v: null, timedOut: false }),
     wantIN ? timed(loadCatalog(), 4_000) : Promise.resolve<Timed<any>>({ v: null, timedOut: false }),
+    storeP,
   ]);
+  // events persisted by earlier runs go back through the SAME engine; live candidates are added first, so a live copy always wins the dedupe
+  const storedIN = storedCandidates(storeIN).filter((c) => c.market !== 'US');
+  const storedUS = storedCandidates(storeUS).filter((c) => c.market === 'US');
 
   const inScan = await withTimeout(inScanP, 13_500, null);
   const cov: Record<'IN' | 'US', MarketCoverage> = {
@@ -128,7 +143,7 @@ export async function GET(req: NextRequest) {
     inBuild = buildIndiaCandidates({
       news: newsList, scraped: scraped.v, feed: feed.v, graded: Array.isArray(graded.v) ? graded.v : null, gradedDates: dates,
       scanCandidates: inScan?.candidates || [], catalog: catalog.v,
-      retained: Array.isArray(retained.v) ? (retained.v as GuCandidate[]) : [],
+      retained: [...(Array.isArray(retained.v) ? (retained.v as GuCandidate[]) : []), ...storedIN],
     }, NSE_TICKER_NAMES);
     cands.push(...inBuild.candidates);
     if (Array.isArray(graded.v)) for (const p of graded.v) for (const r of collectGradedRows(p)) {
@@ -162,6 +177,7 @@ export async function GET(req: NextRequest) {
       }
     } else { cov.US.cacheEmpty.push('graded-results cache (timed out)'); cov.US.sessions = { warm: 0, total: usDates.length, olderEngine: 0 }; }
     if (!wantIN && !newsList) cov.US.cacheEmpty.push('news cache');
+    cands.push(...storedUS);   // raises persisted by earlier runs (graded sessions that have since left the cache)
   }
   if (wantUS && wantIN && !newsList) cov.US.cacheEmpty.push('news cache');
   if (wantUS && !wantIN && newsList && !newsList.length) cov.US.cacheEmpty.push('news cache');
@@ -172,19 +188,21 @@ export async function GET(req: NextRequest) {
     const gradedTickers = new Set<string>(usTickers);
     const warmDates = new Set<string>((usSessions?.rows || []).map((r) => r.date));
     usScan = await withTimeout(scanUs({
-      now, days, warmSessions: usSessions?.warm ?? 0, totalSessions: usSessions?.total ?? usDates.length, gradedTickers, warmDates,
+      now, days, window, warmSessions: usSessions?.warm ?? 0, totalSessions: usSessions?.total ?? usDates.length, gradedTickers, warmDates, storeCovered: storeCoveredDays(storeUS),
       fetchEdgar: makeRealEdgarFetcher(), budgetMs: Math.max(3_000, Math.min(9_000, BUDGET_MS - (Date.now() - t0) - 8_000)),
     }), Math.max(3_500, Math.min(9_500, BUDGET_MS - (Date.now() - t0) - 7_500)), null);
   }
 
-  const inWindow = reassignGlobalToUs(dedupeCandidates(cands), usTickers).filter((c) => withinWindow(c.publishedAt, window, now));
+  // headlines that raise funds / a stake / prices / capex / a dividend / a bid / a price target, or an index wrap, are not guidance: dropped here for both markets
+  const inWindow = reassignGlobalToUs(dedupeCandidates(cands), usTickers).filter((c) => withinWindow(c.publishedAt, window, now))
+    .map((c) => (c.id.startsWith('news:') ? sanitizeRaiseCandidate(c) : c)).filter((c): c is GuCandidate => !!c);
   // India / unlabelled items: the engine's own test, or raise wording with a resolved symbol (kept as a visible CANDIDATE). US: as before.
   const isPicked = (c: GuCandidate) => (c.market === 'US' ? isGuidanceUpgradeCandidate(c).include || looksLikeGuidanceRaise(`${c.title}. ${c.text}`) : isRaiseCandidate(c));
   const pickedAll = inWindow.filter(isPicked);
   // raise wording but no company at all: the engine cannot group it, so say so instead of counting it
   const noCompany = pickedAll.filter((c) => c.market !== 'US' && !c.ticker && !nameKeyOf(c));
   const picked = pickedAll.filter((c) => !noCompany.includes(c)).sort((a, b) => b.publishedAt.localeCompare(a.publishedAt));
-  const split = splitByMarket(picked, PER_MARKET_CAP);
+  const split = splitByMarket(picked, long ? PER_MARKET_CAP_LONG : PER_MARKET_CAP);
   for (const c of picked) if (c.market === 'IN' || c.market === 'US') cov[c.market].candidates[originOf(c)]++;
   const unresolved = picked.filter((c) => c.market !== 'US' && !c.ticker);
   const unresolvedKeys = new Set(unresolved.map(nameKeyOf));
@@ -236,6 +254,7 @@ export async function GET(req: NextRequest) {
     };
   };
 
+  const storedIds = new Set<string>([...storedIN, ...storedUS].map((c) => c.id));
   let all: GuidanceEvent[] = [];
   let corroborated = 0; let unmatchedSubjects = subjectOnly;
   try {
@@ -254,17 +273,40 @@ export async function GET(req: NextRequest) {
     console.error('[guidance-upgrades] engine error', e?.message || e);
     return NextResponse.json({ ok: false, error: 'The guidance engine could not finish. Please try again.' }, { status: 500 });
   }
-  const events = filterByMarket(all, market);
+  const events = withProvenance(tagOrigin(filterByMarket(all, market), cands.filter((c) => !storedIds.has(c.id)), [...storedIN, ...storedUS]));
 
   // Write the ledger AFTER the answer is built; bounded, idempotent, never blocks the response for long.
   // Raise-worded India news is also kept (35 days, newest 150) so a 7D / 14D window still sees it after the feeds drop the article.
   const retainedIds = new Set(((Array.isArray(retained.v) ? retained.v : []) as GuCandidate[]).map((c) => c?.id));
   const freshMedia = picked.filter((c) => c.market === 'IN' && c.id.startsWith('news:') && !retainedIds.has(c.id));
   const keepFrom = new Date(now.getTime() - RETAINED_DAYS * 86_400_000).toISOString();
-  const retainNext = freshMedia.length
-    ? [...freshMedia, ...((Array.isArray(retained.v) ? retained.v : []) as GuCandidate[])].filter((c) => c?.publishedAt && c.publishedAt >= keepFrom).slice(0, RETAINED_MAX)
-    : null;
+  let retainNext: GuCandidate[] | null = null;
+  if (freshMedia.length) {
+    const seenRet = new Set<string>();
+    retainNext = [...freshMedia, ...((Array.isArray(retained.v) ? retained.v : []) as GuCandidate[])]
+      .filter((c) => c?.publishedAt && c.publishedAt >= keepFrom && !seenRet.has(c.id) && !!seenRet.add(c.id)).slice(0, RETAINED_MAX);
+    while (retainNext.length > 1 && JSON.stringify(retainNext).length > RETAINED_MAX_CHARS) retainNext = retainNext.slice(0, Math.ceil(retainNext.length * 0.9));   // stay inside one KV value
+  }
+  // Persisted raise events + processed days (one canonical event = one record, several sources). Idempotent: a run that learned nothing new writes nothing.
+  const gradedDaySet = await gradedDaysP;
+  const persist = async (m: 'IN' | 'US'): Promise<void> => {
+    try {
+      const scanRes = m === 'IN' ? inScan : usScan;
+      if ((m === 'IN' && !wantIN) || (m === 'US' && !wantUS)) return;
+      const sk = m === 'IN'
+        ? mergeCandidates([...split.IN, ...split.GLOBAL].map((c) => sanitizeRaiseCandidate(c) ?? c))
+        : mergeCandidates(split.US.filter((c) => isGuidanceUpgradeCandidate(c).include));
+      // a day counts as processed only when every live source answered for it (India: and a results session exists, or it is a weekend)
+      const liveDays = scanRes?.liveDays ?? [];
+      const covered = m === 'IN'
+        ? (gradedDaySet ? computeCoverage({ days: liveDays, live: new Set(liveDays), graded: gradedDaySet }).covered : [])
+        : (usSessions ? liveDays : []);
+      const r = mergeIntoStore(m === 'IN' ? storeIN : storeUS, sk, covered, now);
+      if (r.changed) await writeEventStore(r.store);
+    } catch { /* the store is an accelerator: the page never depends on it */ }
+  };
   await withTimeout(Promise.all([
+    persist('IN'), persist('US'),
     writeEvents(events.filter((e) => e.market !== 'US' && isResolvedTicker(e.ticker)), ledIN, 'IN'),
     writeEvents(events.filter((e) => e.market === 'US'), ledUS, 'US'),
     retainNext ? kvSet(RETAINED_KEY, retainNext, RETAINED_DAYS * 86_400).catch(() => 0) : Promise.resolve(0),
@@ -280,12 +322,19 @@ export async function GET(req: NextRequest) {
 
   const srcRow = (name: string, n: number, bad: string | null, detail: string): GuScanSource => ({ name, state: bad ? 'FAILED' : 'COMPLETE', scanned: n, detail: bad || detail });
   const newsRaise = picked.filter((c) => c.market !== 'US' && c.id.startsWith('news:')).length;
+  // long window: results sessions exist only on weekdays and expire from the cache, so PARTIAL is said plainly instead of COMPLETE
+  const weekdaysInWindow = dates.filter((d) => { const w = new Date(`${d}T00:00:00Z`).getUTCDay(); return w !== 0 && w !== 6; }).length;
+  const resultsRow: GuScanSource = srcRow('India results cache', read.graded, gradedPayloads ? null : (graded.timedOut ? 'graded cache timed out' : `no graded session found for ${dates[dates.length - 1]} to ${dates[0]}`), `${read.graded} results rows with guidance text, from ${gradedPayloads} of ${dates.length} days`);
+  if (long && gradedPayloads > 0 && gradedPayloads < weekdaysInWindow) {
+    resultsRow.state = 'PARTIAL';
+    resultsRow.detail = `${read.graded} results rows with guidance text, from ${gradedPayloads} of ${weekdaysInWindow} weekday sessions in the window; older sessions have left the cache, so days before them are covered only if an earlier run processed them`;
+  }
   const inExtra: GuScanSource[] = wantIN ? [
     srcRow('India news cache', read.news, newsList?.length ? null : whyEmpty(news, NEWS_KEY), `${read.news} India of ${inBuild?.counts.newsAll ?? 0} articles read`),
     srcRow('Scraped India news', read.newsScraped, scrapedList.length ? null : whyEmpty(scraped, SCRAPED_NEWS_KEY), `${read.newsScraped} entries read (company named in the headline, no ticker)${read.retained ? `; ${read.retained} raise-worded items kept from earlier days` : ''}; ${newsRaise} with raise wording in this window`),
     srcRow('Exchange filing feed cache', Array.isArray(feed.v?.filings) ? feed.v.filings.length : 0, Array.isArray(feed.v?.filings) ? null : (feed.timedOut ? 'concall-feed timed out' : `none of ${feedKeys.join(', ')} found`), `${feed.v?.filings?.length ?? 0} announcements read from ${feedKeyUsed}`),
-    srcRow('India results cache', read.graded, gradedPayloads ? null : (graded.timedOut ? 'graded cache timed out' : `no graded session found for ${dates[dates.length - 1]} to ${dates[0]}`), `${read.graded} results rows with guidance text, from ${gradedPayloads} of ${dates.length} days`),
-    srcRow('Announcements with subject only', unmatchedSubjects.length, null, `${unmatchedSubjects.length} announcement${unmatchedSubjects.length === 1 ? '' : 's'} name an AGM outcome, presentation, press release, call or results document${unmatchedSubjects.length ? ` (e.g. ${unmatchedSubjects.slice(0, 4).map((f) => f.company || f.ticker || 'company').join(', ')})` : ''}; the document is not opened here, so they are NOT counted as raises${corroborated ? `; ${corroborated} raise${corroborated === 1 ? '' : 's'} have such a filing on file` : ''}`),
+    resultsRow,
+    srcRow('Announcements with subject only', unmatchedSubjects.length, null, `${unmatchedSubjects.length} announcement${unmatchedSubjects.length === 1 ? '' : 's'} name an AGM outcome, presentation, press release, call or results document${unmatchedSubjects.length ? ` (e.g. ${unmatchedSubjects.slice(0, 4).map((f) => f.company || f.ticker || 'company').join(', ')})` : ''}; the document is not opened here (filing seen, raise text not read), so they are NOT counted as raises${corroborated ? `; ${corroborated} raise${corroborated === 1 ? '' : 's'} have such a filing on file` : ''}`),
   ] : [];
   const bothNewsEmpty = wantIN && !newsList?.length && !scrapedList.length && !(inBuild?.counts.retained);
 
@@ -305,10 +354,10 @@ export async function GET(req: NextRequest) {
     if (sc && m === 'IN') sc = { ...sc, sources: [...sc.sources, ...inExtra], complete: sc.complete && !bothNewsEmpty };
     const found = cov[m].candidates.graded + cov[m].candidates.filings + cov[m].candidates.news;
     if (sc) {
-      scan[m] = finaliseScan(sc, { found, processed: mine.length, verified: cov[m].verified!, newest: cov[m].newest });
+      scan[m] = finaliseScan(sc, { found, processed: mine.length, verified: cov[m].verified!, newest: cov[m].newest, unprocessed: m === 'IN' ? unmatchedSubjects.length : sc.awaitingGrading });
     } else {
-      const ns = noScan(m, now, 'scan did not finish within budget', days);
-      scan[m] = m === 'IN' ? finaliseScan({ ...ns, sources: [...ns.sources, ...inExtra] }, { found, processed: mine.length, verified: cov[m].verified!, newest: cov[m].newest }) : ns;
+      const ns = noScan(m, now, 'scan did not finish within budget', days, window);
+      scan[m] = m === 'IN' ? finaliseScan({ ...ns, sources: [...ns.sources, ...inExtra] }, { found, processed: mine.length, verified: cov[m].verified!, newest: cov[m].newest, unprocessed: unmatchedSubjects.length }) : ns;
     }
     cov[m].scan = scan[m];
     covLines.push(cov[m]);
@@ -323,9 +372,11 @@ export async function GET(req: NextRequest) {
   const checkedAt = now.toISOString();
   let note: string | undefined;
   const anyIncomplete = Object.values(scan).some((x) => x && !x.complete);
-  if (!events.length) note = anyIncomplete
-    ? `No guidance raises shown, but the scan was INCOMPLETE, so this is NOT a confirmation of no upgrades. Last checked ${checkedAt.slice(11, 16)} UTC.`
-    : `Scan complete: no guidance raises found in the last ${days === 1 ? '24 hours' : `${days} days`}; last checked ${checkedAt.slice(11, 16)} UTC.`;
+  if (!events.length) {
+    // mandatory wording (never a bare nothing-found line): incomplete names the real awaiting-grading count, complete names the window
+    const awaiting = Object.values(scan).reduce((a, x) => a + (x ? (x.unprocessed ?? x.awaitingGrading ?? 0) : 0), 0);
+    note = `${noUpgradesNote({ window, complete: !anyIncomplete, awaiting })} Last checked ${checkedAt.slice(11, 16)} UTC.`;
+  }
   note = `${note ? `${note} ` : ''}${coverageNote(covLines, now)}`;
 
   const summary = summarise(events, window, now);
