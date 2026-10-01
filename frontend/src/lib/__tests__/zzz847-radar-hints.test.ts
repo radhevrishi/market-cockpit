@@ -87,11 +87,12 @@ describe('2 non-earnings numbers never reach earnings evidence', () => {
   test('REC: the dividend per share is gone, the profit growth stays an earnings fact', () => {
     const r = an('REC');
     assert.doesNotMatch(allText(r), /4\.25/);
-    assert.equal(r.kind, 'EARNINGS_RESULT'); assert.match(r.financialImpact, /23%/);
+    // zzz852: a dividend headline is the primary corporate action; the profit figure is secondary context
+    assert.equal(r.kind, 'CORPORATE_ACTION'); assert.match(r.secondaryEvent?.text || '', /23%/); assert.equal(r.catalystDirection, 'positive');
   });
   test('HEG: 5% and 67% are price numbers', () => { const t = allText(an('HEG')); assert.doesNotMatch(t, /\b67%|\b5%/); });
   test('SAT: 8% is a price move', () => assert.doesNotMatch(allText(an('SAT')), /\b8%/));
-  test('ZEEL: the warrant price is not evidence', () => { const r = an('ZEEL'); assert.doesNotMatch(r.financialImpact, /126/); assert.equal(r.kind, 'CAPITAL_RAISE'); assert.equal(r.link, 'NOT_ESTABLISHED'); });
+  test('ZEEL: the warrant price is not evidence', () => { const r = an('ZEEL'); assert.doesNotMatch(r.financialImpact, /126/); assert.equal(r.kind, 'CAPITAL_RAISE'); assert.equal(r.link, 'NOT_APPLICABLE'); });
   test('Satin: issue price and stake percent are stripped; nothing else stated gives "Not quantified"', () => {
     const r = analyseRadarItem(radarIn('Satin Creditcare allots 1.2 crore warrants to promoter at Rs 260 per share; promoter stake to 38.32%', 'OTHER', { source: 'Livemint' }));
     assert.doesNotMatch(allText(r), /\b260\b|38\.32/);
@@ -115,7 +116,7 @@ describe('3 subtype routing', () => {
   test('Vedanta bank loan is financing, not a special situation; the next proof is the use of funds', () => {
     const r = an('VEDL-loan');
     assert.equal(r.kind, 'FINANCING'); assert.equal(r.eventClass, 'CAPITAL_STRUCTURE_FUNDING'); assert.notEqual(r.bucket, 'SPECIAL_SITUATION');
-    assert.equal(r.link, 'NOT_ESTABLISHED'); assert.match(r.proof.what, /use of proceeds/i); assert.equal(r.subKind, null);
+    assert.equal(r.link, 'NOT_APPLICABLE'); assert.match(r.proof.what, /use of proceeds/i); assert.equal(r.subKind, null);
   });
   test("Lord's Mark is a management plan with a target, not a spin-off", () => {
     const r = an('LORDS');
@@ -150,7 +151,8 @@ describe('4 bucket assignment', () => {
   test('no corpus row other than a measured result is an Earnings inflection', () => {
     for (const row of CORPUS) { const b = an(row[0]).bucket; if (row[0] !== 'REC') assert.notEqual(b, 'EARNINGS_INFLECTION', row[0]); }
   });
-  test('REC, a results item with a measured profit figure, is the earnings item', () => assert.equal(an('REC').bucket, 'EARNINGS_INFLECTION'));
+  // zzz852: REC leads with a dividend, so it is a corporate action with the profit as context
+  test('REC, a dividend headline with a profit figure, is a corporate action', () => assert.equal(an('REC').bucket, 'CORPORATE_ACTION'));
   test('Samsung (media, no deal, no result) is not a thesis bucket', () => { const r = an('SAMSUNG'); assert.ok(['EVENT_DRIVEN', 'NOISE'].includes(r.bucket)); assert.notEqual(r.priority, 'HIGH'); });
 });
 

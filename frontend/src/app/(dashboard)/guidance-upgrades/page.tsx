@@ -11,7 +11,7 @@ import { overlayBook, countInBook } from '@/lib/guidance-upgrades-book';
 import { readLocalBookInput, fetchSavedHoldings } from '@/lib/thesis/book-sources';
 import type { GgCompany } from '@/lib/growth-guidance-types';
 import { GuTitle, GuTopBar } from '@/components/guidance-upgrades/GuTopBar';
-import { GuCard } from '@/components/guidance-upgrades/GuCard';
+import { GuCard, GuAuditArea } from '@/components/guidance-upgrades/GuCard';
 import { GuCoverage } from '@/components/guidance-upgrades/GuCoverage';
 import { GuDetail } from '@/components/guidance-upgrades/GuDetail';
 import { GuUniverseSummary } from '@/components/guidance-upgrades/GuUniverseSummary';
@@ -19,6 +19,7 @@ import { GuUniverseBrowser } from '@/components/guidance-upgrades/GuUniverseBrow
 import { GgDetail } from '@/components/growth-guidance/GgDetail';
 import { PRINT_CSS, R, box } from '@/components/guidance-upgrades/gu-tokens';
 import { btn } from '@/components/guidance-upgrades/GuBits';
+import { splitAudit } from '@/components/guidance-upgrades/gu-ui';
 
 export default function GuidanceUpgradesPage() {
   const [window_, setWindow] = useState<GuWindow>('7D');
@@ -70,7 +71,8 @@ export default function GuidanceUpgradesPage() {
   }, []);
 
   const events = useMemo(() => overlayBook(data?.events || [], held), [data, held]);
-  const shown = useMemo(() => applyFilters(events, scope, metric), [events, scope, metric]);
+  const filtered = useMemo(() => applyFilters(events, scope, metric), [events, scope, metric]);
+  const { main: shown, audit: auditList } = useMemo(() => splitAudit(filtered), [filtered]);
   const { today: todayList, rest: restList } = useMemo(() => splitToday(shown, now), [shown, now]);
   const open = openId ? events.find((e) => e.guidance_event_id === openId) || null : null;
 
@@ -93,7 +95,7 @@ export default function GuidanceUpgradesPage() {
       )}
       {state === 'ok' && shown.length === 0 && (
         <div style={box({ padding: 14, fontSize: 13, color: R.dim })}>
-          {events.length === 0 ? zeroEventWording(window_, data?.scan) : 'Nothing matches these filters. Clear a filter to see the other raises.'}
+          {events.length === 0 ? zeroEventWording(window_, data?.scan) : auditList.length > 0 && filtered.length === auditList.length ? 'No clean raises in this window. See the audit area below for what was found.' : 'Nothing matches these filters. Clear a filter to see the other raises.'}
         </div>
       )}
       {shown.length > 0 && (
@@ -113,7 +115,8 @@ export default function GuidanceUpgradesPage() {
         )}
         {!(todayFirst && todayList.length > 0) && shown.map((e) => <GuCard key={e.guidance_event_id} e={e} onOpen={select} now={now} />)}
       </div>
-      <GuCoverage unresolved={unresolvedCount(data?.unresolved)} scan={data?.scan} now={now} window={window_} byMarket={data?.freshness.byMarket} eventCounts={{ IN: events.filter((e) => e.market === 'IN').length, US: events.filter((e) => e.market === 'US').length }} />
+      <GuAuditArea events={auditList} onOpen={select} now={now} />
+      <GuCoverage coverage={data?.coverage} queue={data?.queue} invariantViolations={data?.invariantViolations} unresolved={unresolvedCount(data?.unresolved)} scan={data?.scan} now={now} window={window_} byMarket={data?.freshness.byMarket} eventCounts={{ IN: events.filter((e) => e.market === 'IN').length, US: events.filter((e) => e.market === 'US').length }} />
       {!data?.scan && data?.freshness.note && <div style={{ fontSize: 12, color: R.dim }}>{data.freshness.note}</div>}
       <div style={{ fontSize: 11, color: R.faint }}>Company data only. Not investment advice. Prices are context here, never the reason.</div>
       {ggOpen && <GgDetail c={ggOpen} onClose={() => setGgOpen(null)} unverified={ggOpen.verification === 'SECONDARY_ONLY' || ggOpen.verification === 'UNVERIFIED'} />}

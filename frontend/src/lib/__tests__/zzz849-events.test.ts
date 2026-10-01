@@ -222,7 +222,8 @@ describe('4. universe reconciliation', () => {
     assert.equal(e.announcement_date, '2026-09-22');
   });
   test('a record verified against a primary document keeps its VERIFIED tier', () => {
-    const [e] = run([seed({ verification: 'VERIFIED', sourceType: 'Exchange filing', sourceRank: 1, sourceName: 'Zed Alpha exchange filing (AGM)', sourceUrl: 'https://www.nseindia.com/zz' })]);
+    // zzz853: a derived growth that is flagged for review is never VERIFIED, so this record states its % (EXPLICIT) to keep its VERIFIED tier
+    const [e] = run([seed({ growthOrigin: 'STATED', growthLow: 102.7, growthHigh: 109.7, impliedBase: null, statement: 'At the AGM on 22 Sep 2026 management raised FY27 revenue guidance by 102.7-109.7% to ₹725-750 Cr from ₹600 Cr.', verification: 'VERIFIED', sourceType: 'Exchange filing', sourceRank: 1, sourceName: 'Zed Alpha exchange filing (AGM)', sourceUrl: 'https://www.nseindia.com/zz' })]);
     assert.equal(e.v2!.numbersFrom!.verification, 'VERIFIED'); assert.equal(e.verification, 'VERIFIED');
   });
   test('events that already have their own numbers, a different company, or a far-away date are left alone', () => {

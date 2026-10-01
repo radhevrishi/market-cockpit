@@ -3,8 +3,9 @@
 import React from 'react';
 import type { GuSummary, GuWindow } from '@/lib/guidance-upgrades-types';
 import type { MetricFilter, ScopeFilter } from '@/lib/guidance-upgrades-format';
-import { GU_WINDOWS, ageDays, fmtConsensusAvail, fmtMarketCounts } from '@/lib/guidance-upgrades-format';
+import { GU_WINDOWS, ageDays, countsLine, fmtConsensusAvail, fmtMarketCounts } from '@/lib/guidance-upgrades-format';
 import { R, box, tint } from './gu-tokens';
+import { eventCountsStrip } from './gu-ui';
 
 export const WINDOWS: GuWindow[] = GU_WINDOWS;
 const SCOPES: Array<[ScopeFilter, string]> = [['ALL', 'ALL'], ['INDIA', 'INDIA'], ['USA', 'USA'], ['MY_BOOK', 'MY BOOK'], ['HIGH', 'HIGH MATERIALITY']];
@@ -60,6 +61,12 @@ export function GuTopBar(p: {
           </div>
         ))}
       </div>
+      {s?.counts && (
+        <div style={{ display: 'grid', gap: 2, fontSize: 12, color: R.dim }} aria-label="Event counts">
+          <div>{countsLine(s.counts)}</div>
+          {eventCountsStrip(s.counts) && <div>{eventCountsStrip(s.counts)}</div>}
+        </div>
+      )}
       {(s?.today != null || s?.consensusAvailable) && (
         <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12, color: R.dim }}>
           {s?.today != null && <span><b style={{ color: R.text }}>Today {s.today}</b></span>}

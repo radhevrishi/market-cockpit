@@ -11,6 +11,7 @@ import {
   EVIDENCE_LABEL, INFLECTION_LABEL, KIND_LABEL, LINK_LABEL, PRIORITY_LABEL,
   type RadarItem,
 } from '@/lib/multibagger-radar-types';
+import { DIRECTION_LABEL } from '@/lib/multibagger-radar-economics';
 import { addFromRadarItem, NOT_ESTABLISHED, type OwnerTag } from '@/lib/multibagger-ledger-store';
 import type { LedgerEntry } from '@/lib/multibagger-radar-types';
 import {
@@ -68,7 +69,7 @@ export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now }
         <span style={{ fontSize: 15, fontWeight: 900, color: R.text }}>{item.ticker || 'No ticker'}</span>
         <span style={{ fontSize: 13, color: R.dim }}>{item.company}</span>
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <Chip color={ev.color} dashed={ev.dashed} title={item.evidence.why}>{ev.mark} Evidence: {EVIDENCE_LABEL[item.evidence.status]}</Chip>
+          <Chip color={ev.color} dashed={ev.dashed} title={item.evidence.why}>{ev.mark} Evidence: {item.evidenceLabel || EVIDENCE_LABEL[item.evidence.status]}</Chip>
           <Chip color={PRIORITY_COLOR[item.priority]} title={item.priorityReason}>Research priority: {PRIORITY_LABEL[item.priority]}</Chip>
         </span>
       </div>
@@ -77,14 +78,32 @@ export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now }
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} aria-label="Three separate statuses">
         {badges.map((b) => <Chip key={b.key} color={b.color} dashed={b.dashed}>{b.heading}: {b.label}</Chip>)}
       </div>
+      {(item.catalystDirection || has(item.sourceSubjectLine)) && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          {item.catalystDirection && (
+            <Chip color={item.catalystDirection === 'positive' ? R.green : item.catalystDirection === 'negative' ? R.red : item.catalystDirection === 'mixed' ? R.amber : R.faint} title={item.directionBasis}>
+              {DIRECTION_LABEL[item.catalystDirection]}{item.inflectionStrength && item.inflectionStrength !== 'unknown' && item.inflectionStrength !== 'none' ? ` - ${item.inflectionStrength} inflection` : ''}
+            </Chip>
+          )}
+          {has(item.sourceSubjectLine) && <span style={{ fontSize: 11.5, color: R.faint }}>{item.sourceSubjectLine}{has(item.financialOwner) ? ` | Financial owner: ${item.financialOwner}` : ''}</span>}
+        </div>
+      )}
+      {item.secondaryEvent && <div style={{ fontSize: 12, color: R.dim }} data-radar-secondary><b>{item.secondaryEvent.label}:</b> {item.secondaryEvent.text}</div>}
       {has(item.confirmationLabel) && <div style={{ fontSize: 12, color: R.dim }}>{item.confirmationLabel}</div>}
 
       {show.has('chain') && (
       <div>
         <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.6, color: R.faint, textTransform: 'uppercase' }}>
-          Catalyst chain - {item.provenThrough >= 0 ? `proven through step ${item.provenThrough + 1}` : 'no step proven yet'}
+          {item.evidenceChain && item.evidenceChain.length > 0 ? `Evidence chain (${(item.evidenceChainKind || 'OPERATING').replace(/_/g, ' ').toLowerCase()})` : 'Catalyst chain'}
         </div>
-        {links.length > 0 ? (
+        {item.evidenceChain && item.evidenceChain.length > 0 && (
+          <ul style={{ listStyle: 'none', margin: '4px 0 0', padding: 0, display: 'flex', flexWrap: 'wrap', gap: 4 }} data-radar-evidence-chain>
+            {item.evidenceChain.map((c) => (
+              <li key={c.step}><Chip color={c.state === 'confirmed' ? R.green : R.faint} dashed={c.state !== 'confirmed'} title={c.detail || undefined}>{c.state === 'confirmed' ? '\u2713' : '?'} {c.step}</Chip></li>
+            ))}
+          </ul>
+        )}
+        {item.evidenceChain && item.evidenceChain.length > 0 ? (chainView.notApplicable ? <div style={{ fontSize: 11.5, color: R.faint, marginTop: 4 }} data-radar-chain-na>{chainView.notApplicable}</div> : null) : links.length > 0 ? (
           <ul style={{ listStyle: 'none', margin: '4px 0 0', padding: 0, display: 'flex', flexWrap: 'wrap', gap: 4 }} data-radar-chain>
             {chainView.shown.map((c) => {
               const m = LINK_STATUS_META[c.status];
@@ -117,13 +136,15 @@ export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now }
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: '8px 14px' }}>
         {show.has('catalyst') && <Sub label="Catalyst">{say(item.event)}</Sub>}
         <Sub label="Catalyst type">{kindText}</Sub>
-        {show.has('whyNow') && <Sub label="Why now">{say(item.whyItMatters)}</Sub>}
+        <Sub label="Why now">{item.whyNow ? item.whyNow : say(item.whyItMatters)}</Sub>
         {show.has('mechanism') && (
           <Sub label="Economic mechanism">
-            {has(item.oneSentenceMechanism) ? <b>{item.oneSentenceMechanism}</b> : null}
-            {has(item.oneSentenceMechanism) && has(item.mechanism) ? ' ' : ''}{has(item.mechanism) ? item.mechanism : ''}
+            {has(item.economicMechanism) ? <span title={item.mechanismHelp || undefined}><b>{item.economicMechanism}</b></span> : null}
+            {has(item.economicMechanism) ? ' ' : ''}{has(item.oneSentenceMechanism) ? item.oneSentenceMechanism : ''}
+            {!has(item.economicMechanism) && !has(item.oneSentenceMechanism) && has(item.mechanism) ? item.mechanism : ''}
           </Sub>
         )}
+        {has(item.economicPayoff) && <Sub label="Economic payoff">{item.economicPayoff}</Sub>}
         <Sub label="Event evidence">
           <span style={{ color: ev.color, fontWeight: 700 }}>{item.eventEvidence ? evLine.event : EVIDENCE_LABEL[item.evidence.status]}</span>
           {' - '}{say(item.evidence.sourceLabel)}. {say(item.evidence.why)}
@@ -142,7 +163,9 @@ export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now }
         )}
         {show.has('proven') && (
           <Sub label="Proven / not proven">
-            {item.provenThrough >= 0 ? `Proven through step ${item.provenThrough + 1}.` : 'No step proven yet.'}
+            {item.evidenceChain && item.evidenceChain.length > 0
+              ? `${item.evidenceChain.filter((c) => c.state === 'confirmed').length} of ${item.evidenceChain.length} steps confirmed.`
+              : item.provenThrough >= 0 ? 'Some steps are confirmed.' : 'No step confirmed yet.'}
             {has(item.weakestUnprovenLink) ? ` Weakest unproven link: ${item.weakestUnprovenLink}.` : ''}
           </Sub>
         )}
@@ -150,6 +173,25 @@ export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now }
           {TRANSMISSION_LABEL[transmission] || LINK_LABEL[transmission]}. {say(item.financialImpact)}
           {item.quantificationStatus ? ` Quantification: ${QUANT_LABEL[item.quantificationStatus]}.` : ''}
         </Sub>
+        {has(item.parentImpactLine) && <Sub label="Company earnings effect">{item.parentImpactLine}</Sub>}
+        {(item.numberLines || []).length > 0 && (
+          <Sub label="Numbers in the source, by owner"><ul style={{ margin: '2px 0 0', paddingLeft: 18 }} data-radar-numbers>{(item.numberLines || []).map((l, i) => <li key={i}>{l}</li>)}</ul></Sub>
+        )}
+        {(item.dealTermLines || []).length > 0 && (
+          <Sub label="Deal terms">
+            <ul style={{ margin: '2px 0 0', paddingLeft: 18 }} data-radar-dealterms>
+              {(item.dealTermLines || []).map((l) => <li key={l.label} style={{ color: l.stated ? undefined : R.faint }}>{l.label}: {l.value}{l.calculated ? ' (calculated)' : ''}</li>)}
+            </ul>
+          </Sub>
+        )}
+        {item.factScope && (
+          <Sub label="What is confirmed, inferred and unknown">
+            {item.factScope.confirmed.length > 0 && <div><b style={{ color: R.green }}>Confirmed facts:</b> {item.factScope.confirmed.map((c) => `${c.text} (owner: ${c.owner})`).join('; ')}</div>}
+            {item.factScope.inference.length > 0 && <div><b style={{ color: R.amber }}>Model inference:</b> {item.factScope.inference.join('; ')}</div>}
+            {item.factScope.unknown.length > 0 && <div><b>Unknown:</b> {item.factScope.unknown.join('; ')}</div>}
+          </Sub>
+        )}
+        {has(item.nextStep) && <Sub label="Next step">{item.nextStep}</Sub>}
         <Sub label="Duration">{durationLine(item.duration)}</Sub>
         {show.has('maturity') && (
           <Sub label="Catalyst maturity">
@@ -175,7 +217,7 @@ export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now }
       )}
 
       <div style={{ fontSize: 12, color: R.dim, lineHeight: 1.45, display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <div><b style={{ color: PRIORITY_COLOR[item.priority] }}>Why this priority:</b> {say(item.priorityReason)}</div>
+        <div title={item.priorityFactors ? `Information value ${item.priorityFactors.informationValue}; materiality ${item.priorityFactors.materiality}; evidence uncertainty ${item.priorityFactors.evidenceUncertainty}; proximity ${item.priorityFactors.proximity}; persistence ${item.priorityFactors.persistence}; portfolio relevance ${item.priorityFactors.portfolio}` : undefined}><b style={{ color: PRIORITY_COLOR[item.priority] }}>Why this priority:</b> {say(item.priorityReason)}</div>
         {(item.whyNotHigher || []).filter(has).length > 0 && <div><b>Why not higher?</b> {(item.whyNotHigher || []).filter(has).join('; ')}</div>}
         {has(item.upgradeTrigger) && <div><b>What would upgrade?</b> {item.upgradeTrigger}</div>}
         {has(item.downgradeTrigger) && <div><b>What would downgrade?</b> {item.downgradeTrigger}</div>}
@@ -188,18 +230,19 @@ export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now }
       )}
 
       <details>
-        <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, color: R.cyan }}>Details: mechanism, chain, break conditions</summary>
+        <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, color: R.cyan }}>Details: definition, break conditions, governance, timing (answers WHEN, not WHY)</summary>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 8 }}>
-          <Field label="Mechanism">{say(item.mechanism)}</Field>
+          <Field label="Mechanism (general definition of this kind of event)">{say(item.mechanismHelp || item.mechanism)}</Field>
           {item.bottleneckQuestion && <Field label="Bottleneck question">{item.bottleneckQuestion}</Field>}
           <Field label="Break conditions">
             {item.breakConditions.filter(has).length ? <ul style={{ margin: '2px 0 0', paddingLeft: 18 }}>{item.breakConditions.filter(has).map((b, i) => <li key={i}>{b}</li>)}</ul> : NOT_YET}
           </Field>
           <Field label="Governance">
-            <span style={{ color: govColor, fontWeight: 700 }}>{govNote}</span>
-            {item.governance.flags.length ? ` - ${item.governance.flags.join('; ')}` : ''}{item.governance.note ? `. ${item.governance.note}` : ''}
+            {item.governance.status === 'NOT_CHECKED' && !item.governance.flags.length
+              ? <span style={{ color: govColor, fontWeight: 700 }}>Governance relevance: Not assessed</span>
+              : <><span style={{ color: govColor, fontWeight: 700 }}>{govNote}</span>{item.governance.flags.length ? ` - ${item.governance.flags.join('; ')}` : ''}{item.governance.note ? `. ${item.governance.note}` : ''}</>}
           </Field>
-          <Field label="Timing note (answers WHEN, not WHY)">{item.technical.note ? item.technical.note : 'No technical data supplied.'}</Field>
+          {item.technical.note ? <Field label="Timing note (answers WHEN, not WHY)">{item.technical.note}</Field> : null}
           <div style={{ display: 'flex', gap: 12, fontSize: 12, flexWrap: 'wrap' }}>
             <a href={feedHref} style={{ color: R.cyan }}>Open the Special Situations card</a>
             {item.sourceUrl && <a href={item.sourceUrl} target="_blank" rel="noreferrer" style={{ color: R.cyan }}>Source filing</a>}

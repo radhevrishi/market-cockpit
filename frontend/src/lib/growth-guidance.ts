@@ -1,6 +1,7 @@
 // zzz846 — GROWTH GUIDANCE engine. Pure, deterministic, NO AI, NO network, NO composite number.
 // Never invents a number: an absolute target only becomes a growth % when a base is supplied (labelled IMPLIED).
 // Research only: no BUY/SELL wording. Holdings are never read here (portfolio.held is always false).
+import { HIGH_GROWTH_THRESHOLD } from './guidance-config';
 import type {
   GgMarket, GgMetric, GgKind, GgVerification, GgPeriodKind, GgOrganic, GgQuality, GgValidity, GgTracking, GgRevision, GgOutcome,
   GgExpectations, GgInflection, GgMap2x2, GgCapBand, GgCatalyst, GgLeverage, GgRerating, GgAlertKind, GgSort, GgSourceRef,
@@ -692,7 +693,7 @@ const SUPPORT_RE = /\b(?:order (?:win|wins|received|worth)|bagged|letter of awar
 
 export function buildGrowthGuidance(inp: BuildInput): BuildOutput {
   const { now } = inp;
-  _thr = inp.threshold ?? 30;
+  _thr = inp.threshold ?? HIGH_GROWTH_THRESHOLD;
   const groups = new Map<string, { market: 'IN' | 'US'; ticker: string; company?: string; ex: ExPoint[]; withdrawnAt: string | null; supporting: string[]; newsIds: Set<string>; concallSeen: boolean }>();
   let extractedCount = 0;
   const gOf = (market: 'IN' | 'US', ticker: string) => {

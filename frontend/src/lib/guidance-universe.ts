@@ -11,6 +11,18 @@
 //     (the range itself is still displayed), and the LOWER BOUND for an open-ended "80%+" figure (no invented midpoint).
 import type { GgCompany, GgGrowthOrigin, GgGuidancePoint, GgKind, GgLedgerRow, GgMetric, GgOrganic, GgPeriodKind, GgRevision, GgSourceRef, GgVerification } from './growth-guidance-types';
 import type { GuHighGrowthHorizon, GuHighGrowthMetric, GuHighGrowthRowX, GuMarketSummary, GuPeriodStatus, GuRegressionResponse, GuRegressionRow, GuRegressionStatus, GuSummaryAdditions, GuUniverseBucket, GuUniverseRecord, GuUniverseRecordOrigin, GuUniverseSummary } from './guidance-universe-types';
+import type {
+  GuClaimType, GuCohort, GuDurationType, GuExpirySummary, GuGrowthDerivation, GuGrowthType, GuGrowthVsPriorYear, GuGuidanceType, GuHgGroupRow, GuHgMetricX, GuHighGrowthGroups, GuHistoryStep, GuLifecycle,
+  GuMetricFamily, GuPeriodConfirm, GuReviewReasonX, GuRevisionVsPrior, GuSourceEntry, GuStateCounts, GuTrust, GuVerificationState,
+} from './guidance-universe-types';
+import {
+  HIGH_GROWTH_THRESHOLD, PLAUSIBLE_REVENUE_GROWTH_PCT, REPORTING_LAG_DAYS, REGRESSION_TOLERANCE_PP, PRIOR_NEIGHBOURHOOD_PP, SOURCE_CONFLICT_WINDOW_DAYS, STALE_VERIFICATION_DAYS, classifySourceTier, TIER_LABEL, type SourceTier,
+} from './guidance-config';
+import {
+  FAMILY_OF, amountText, buildHistory, claimTypeOf, daysBetween, deriveGrowth, derivedDp, extractMetricLabel, familyOfLabel, fnum, isCapitalRaise, isReiteration, isStale, nonGuidanceReason, normPeriod, parseUnit,
+  pctText, periodFacts, r0, r1, revisionVsPriorOf, sameMoneyBasis, sameValue, sg, textSaysGuidanceRaised, verificationStateOf, type GuVersionIn,
+} from './guidance-universe-integrity';
+export { normPeriod, amountText, pctText, PLAUSIBLE_REVENUE_GROWTH_PCT, REPORTING_LAG_DAYS, REGRESSION_TOLERANCE_PP, PRIOR_NEIGHBOURHOOD_PP };
 import { buildCompanyIndex, normCompanyName } from './guidance-upgrades-candidates';
 import { NSE_TICKER_NAMES } from './nse-ticker-names';
 import { endOfPeriodLabel, qualityOf, revisionOf, type GgStoredEntry } from './growth-guidance';
@@ -24,12 +36,10 @@ const VERIFS: GgVerification[] = ['VERIFIED', 'PARTIALLY_VERIFIED', 'SECONDARY_O
 const KINDS: GgKind[] = ['MANAGEMENT_GUIDANCE', 'MANAGEMENT_TARGET', 'MANAGEMENT_COMMENTARY', 'ANALYST_CONSENSUS', 'ANALYST_ESTIMATE', 'HISTORICAL_TRAJECTORY', 'INFERENCE'];
 const ORGANICS: GgOrganic[] = ['ORGANIC', 'ACQUISITION_LED', 'MIXED', 'UNKNOWN'];
 const isMgmt = (k: GgKind) => k.startsWith('MANAGEMENT_');
-const r1 = (n: number) => Math.round(n * 10) / 10;
-const fnum = (n: number) => String(r1(n));
 const hash = (s: string): string => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); };
 
 // ═══ seed rows (researched records held as data) ═══════════════════════════════════════════════
-export interface GuSeedPrior { date: string; growthLow: number | null; growthHigh: number | null; note: string }
+export interface GuSeedPrior { date: string; growthLow: number | null; growthHigh: number | null; note: string; /** zzz853: the earlier guidance AMOUNT when it was stated (enables the revision vs prior guidance) */ absoluteTarget?: { value: number; unit: string; valueLow?: number } | null }
 export interface GuSeedRow {
   company: string; ticker: string | null; market: 'IN' | 'US'; metric: GgMetric;
   growthLow: number | null; growthHigh: number | null; growthOrigin: GgGrowthOrigin; absoluteTarget: { value: number; unit: string; valueLow?: number } | null;
@@ -37,7 +47,15 @@ export interface GuSeedRow {
   sourceName: string; sourceType: string; sourceUrl: string | null; sourceDate: string | null; sourceRank: number; verification: GgVerification;
   priorGuidance: GuSeedPrior[]; supersededBy: string | null; notes: string; ownerListText: string | null;
   /** zzz849: the SOURCED base an implied growth % was divided by, e.g. { value: 357.71, unit: '₹ Cr', period: 'FY26' }. Absent = base not sourced. */
-  impliedBase?: { value: number; unit: string; period: string } | null;
+  impliedBase?: { value: number; unit: string; period: string; /** zzz853: what the base is (default PRIOR_YEAR_ACTUAL) */ kind?: 'PRIOR_YEAR_ACTUAL' | 'PRIOR_GUIDANCE' } | null;
+  /** zzz853: the source record's own fiscal-year context for a year-less quarter ('FY27'): filing period / period of report / explicit text. Never taken from today's date. */
+  periodContext?: string | null;
+  /** zzz853: the text of the primary document was actually read (not only found). Absent = true only for a TIER1/2 source the researcher marked VERIFIED. */
+  primarySourceRead?: boolean | null;
+  /** zzz853: the metric word the source used ('Net sales', 'Turnover', 'PAT') */
+  sourceMetricLabel?: string | null;
+  /** zzz853: date a person or the system last confirmed this record (defaults to the source date) */
+  lastVerified?: string | null;
   /** zzz849: why a researcher flagged this row (ambiguous base, conflicting sources). Flagged rows stay listed but are never counted as high-growth. */
   needsReview?: string | null;
 }
@@ -66,9 +84,10 @@ export function loadSeedRows(raw: unknown): { rows: GuSeedRow[]; dropped: Array<
     const rank = x.sourceRank; if (typeof rank !== 'number' || !Number.isInteger(rank) || rank < 1 || rank > 12) return bad('sourceRank must be 1..12');
     const sd = isoDay(x.sourceDate); if (sd === undefined) return bad('bad sourceDate');
     const ib = x.impliedBase && typeof x.impliedBase === 'object' && typeof x.impliedBase.value === 'number' && Number.isFinite(x.impliedBase.value) && x.impliedBase.value > 0 && typeof x.impliedBase.period === 'string' && x.impliedBase.period.trim()
-      ? { value: x.impliedBase.value as number, unit: String(x.impliedBase.unit || ''), period: String(x.impliedBase.period).trim() } : null;
+      ? { value: x.impliedBase.value as number, unit: String(x.impliedBase.unit || ''), period: String(x.impliedBase.period).trim(), ...(x.impliedBase.kind === 'PRIOR_GUIDANCE' ? { kind: 'PRIOR_GUIDANCE' as const } : {}) } : null;
     const url = typeof x.sourceUrl === 'string' && /^https?:\/\//i.test(x.sourceUrl) ? x.sourceUrl : null;
-    const priors: GuSeedPrior[] = (Array.isArray(x.priorGuidance) ? x.priorGuidance : []).map((p: any) => ({ date: isoDay(p?.date) || '', growthLow: numOrNull(p?.growthLow) ?? null, growthHigh: numOrNull(p?.growthHigh) ?? null, note: String(p?.note || '') })).filter((p: GuSeedPrior) => p.date);
+    const absOf = (a: any) => (a && typeof a === 'object' && typeof a.value === 'number' && Number.isFinite(a.value) ? { value: a.value as number, unit: String(a.unit || ''), ...(typeof a.valueLow === 'number' && Number.isFinite(a.valueLow) && a.valueLow < a.value ? { valueLow: a.valueLow as number } : {}) } : null);
+    const priors: GuSeedPrior[] = (Array.isArray(x.priorGuidance) ? x.priorGuidance : []).map((p: any) => ({ date: isoDay(p?.date) || '', growthLow: numOrNull(p?.growthLow) ?? null, growthHigh: numOrNull(p?.growthHigh) ?? null, note: String(p?.note || ''), absoluteTarget: absOf(p?.absoluteTarget) })).filter((p: GuSeedPrior) => p.date);
     rows.push({
       company: x.company.trim(), ticker: typeof x.ticker === 'string' && x.ticker.trim() ? x.ticker.trim().toUpperCase().replace(/\.(NS|BO)$/, '') : null, market: x.market, metric: x.metric,
       growthLow: lo ?? null, growthHigh: hi ?? null, growthOrigin: x.growthOrigin === 'IMPLIED' ? 'IMPLIED' : 'STATED', absoluteTarget: abs,
@@ -77,19 +96,16 @@ export function loadSeedRows(raw: unknown): { rows: GuSeedRow[]; dropped: Array<
       sourceUrl: url, sourceDate: sd ?? null, sourceRank: rank, verification: x.verification, priorGuidance: priors, supersededBy: typeof x.supersededBy === 'string' ? x.supersededBy : null,
       notes: String(x.notes || ''), ownerListText: typeof x.ownerListText === 'string' && x.ownerListText.trim() ? x.ownerListText.trim() : null,
       impliedBase: ib, needsReview: typeof x.needsReview === 'string' && x.needsReview.trim() ? x.needsReview.trim() : null,
+      periodContext: typeof x.periodContext === 'string' && x.periodContext.trim() ? x.periodContext.trim() : null,
+      primarySourceRead: typeof x.primarySourceRead === 'boolean' ? x.primarySourceRead : null,
+      sourceMetricLabel: typeof x.sourceMetricLabel === 'string' && x.sourceMetricLabel.trim() ? x.sourceMetricLabel.trim() : null,
+      lastVerified: isoDay(x.lastVerified) ?? null,
     });
   });
   return { rows, dropped };
 }
 
 // ═══ periods ═══════════════════════════════════════════════════════════════════════════════════
-/** 'FY2027' -> 'FY27', 'FY27–29' -> 'FY27-29', 'cy2026' -> 'CY26'. Anything else is returned trimmed. */
-export function normPeriod(p: string): string {
-  let s = String(p || '').trim().replace(/[–—]/g, '-').replace(/\s+/g, ' ');
-  s = s.replace(/^(fy|cy)\s?(\d{2,4})(?:-(\d{2,4}))?$/i, (_m, a: string, y: string, z?: string) => `${a.toUpperCase()}${y.slice(-2)}${z ? `-${z.slice(-2)}` : ''}`);
-  s = s.replace(/^(q[1-4]|h[12]) ?(fy|cy)\s?(\d{2,4})$/i, (_m, q: string, a: string, y: string) => `${q.toUpperCase()} ${a.toUpperCase()}${y.slice(-2)}`);
-  return s;
-}
 /** End of a guidance period. Indian FY ends 31 Mar. US FY: the company's fiscal year end is not known here, so it is treated as 31 Dec of the named year and noted. Unknown -> null (active, noted). */
 export function periodEnd(period: string, market: 'IN' | 'US', announced?: string | null): { end: Date | null; note: string | null } {
   const p = normPeriod(period);
@@ -99,8 +115,6 @@ export function periodEnd(period: string, market: 'IN' | 'US', announced?: strin
 }
 
 // ═══ period status (zzz849): ACTIVE / EXPIRED / UNKNOWN from the period text and the issue date ═════
-/** A guided quarter or half is treated as expired only this long after it ends (results are reported with a lag). Annual periods have no lag. */
-export const REPORTING_LAG_DAYS = 45;
 export interface GuPeriodInfo { status: GuPeriodStatus; end: Date | null; /** the year was not in the text and was inferred from the issue date */ inferred: boolean; note: string | null; reason: string }
 const utcD = (y: number, m: number, d: number) => new Date(Date.UTC(y, m, d));
 /** Calendar end of quarter q (1-4) or half h (1-2) for a market: India reports on an April-March fiscal year, the US on calendar quarters unless the text says otherwise. */
@@ -161,17 +175,6 @@ export function isOpenEnded(low: number | null, high: number | null, statement: 
     || new RegExp(`\\b${n}\\s*%\\s*(?:\\+|plus(?! or minus)\\b|or more|and above)`, 'i').test(statement);
 }
 export interface GuDisplayIn { metric: GgMetric; low: number | null; high: number | null; open: boolean; origin: GgGrowthOrigin; periodKind: GgPeriodKind; period: string; abs: { value: number; unit: string; valueLow?: number } | null; cumulativeYears?: number | null; proxy?: string | null }
-/** '+35' / '-19.8' (never '+-19.8'). */
-const sg = (n: number) => `${n < 0 ? '-' : '+'}${fnum(Math.abs(n))}`;
-/** Money amount as written in the data: '₹750 Cr', '$140M', '$1.1B'. */
-export function amountText(a: { value: number; unit: string; valueLow?: number }): string {
-  const u = a.unit; const f = (n: number) => n.toLocaleString('en-US');
-  const val = a.valueLow != null && a.valueLow < a.value ? `${f(a.valueLow)}–${f(a.value)}` : f(a.value);
-  return `${u === '₹ Cr' ? '₹' : u.startsWith('$') ? '$' : ''}${val}${u === '₹ Cr' ? ' Cr' : u.startsWith('$') ? u.slice(1) : u ? ` ${u}` : ''}`;
-}
-export function pctText(low: number, high: number | null, open: boolean): string {
-  return open ? `${sg(low)}%+` : high == null || low === high ? `${sg(low)}%` : low < 0 || high < 0 ? `${sg(low)} to ${sg(high)}%` : `${sg(low)}–${fnum(high)}%`;
-}
 export function displayOf(i: GuDisplayIn): string {
   let core: string;
   if (i.low == null) {
@@ -203,8 +206,8 @@ const proxyOf = (metric: GgMetric, statement: string): string | null => {
 
 // ═══ items (one guidance statement, whatever its origin) ═══════════════════════════════════════
 type Inactive = 'EXPIRED' | 'SUPERSEDED' | 'WITHDRAWN';
-interface Prior { date: string; low: number | null; high: number | null; note: string }
-interface ItemBase { value: number; unit: string; period: string }
+interface Prior { date: string; low: number | null; high: number | null; note: string; abs?: { value: number; unit: string; valueLow?: number } | null }
+interface ItemBase { value: number; unit: string; period: string; kind?: 'PRIOR_YEAR_ACTUAL' | 'PRIOR_GUIDANCE' }
 interface Item {
   origin: GuUniverseRecordOrigin; market: 'IN' | 'US'; ticker: string | null; company: string; metric: GgMetric;
   low: number | null; high: number | null; open: boolean; gOrigin: GgGrowthOrigin; abs: { value: number; unit: string; valueLow?: number } | null; cumulativeYears?: number | null;
@@ -212,6 +215,9 @@ interface Item {
   period: string; pkind: GgPeriodKind; kind: GgKind; organic: GgOrganic; statement: string; driver: string | null; mechanisms: string[];
   src: { name: string; type: string; url: string | null; date: string | null; rank: number };
   verification: GgVerification; priors: Prior[]; notes: string | null; withdrawn?: boolean; forced?: Inactive; gc?: GgCompany; gp?: GgGuidancePoint; isPrimary?: boolean; owner?: string | null;
+  /** zzz853 */ periodContext?: string | null; primarySourceRead?: boolean | null; sourceMetricLabel?: string | null; lastVerified?: string | null;
+  tier?: SourceTier; claimType?: GuClaimType;
+  /** zzz853: other sources for the same slot whose value differs (a conflict, not a revision) */ conflicts?: Item[];
 }
 const srcPrimary = (rank: number, type: string) => rank <= 7 && !/media|news/i.test(type);
 const tk = (t: unknown): string | null => { const s = String(t ?? '').trim().toUpperCase().replace(/\.(NS|BO)$/, ''); return s || null; };
@@ -222,7 +228,8 @@ function itemFromSeed(r: GuSeedRow): Item {
     origin: 'RESEARCHED_SEED', market: r.market, ticker: r.ticker, company: r.company, metric: r.metric, low: r.growthLow, high: r.growthHigh ?? r.growthLow, open: isOpenEnded(r.growthLow, r.growthHigh, r.statement), gOrigin: r.growthOrigin,
     abs: r.absoluteTarget, base: r.impliedBase ?? null, needsReview: r.needsReview ?? null, period: r.period, pkind: r.periodKind, kind: r.kind, organic: r.organic, statement: r.statement, driver: r.driver, mechanisms: r.mechanisms,
     src: { name: r.sourceName, type: r.sourceType, url: r.sourceUrl, date: r.sourceDate, rank: r.sourceRank }, verification: r.verification,
-    priors: r.priorGuidance.map((p) => ({ date: p.date, low: p.growthLow, high: p.growthHigh, note: p.note })), notes: r.notes || null, owner: r.ownerListText,
+    priors: r.priorGuidance.map((p) => ({ date: p.date, low: p.growthLow, high: p.growthHigh, note: p.note, abs: p.absoluteTarget ?? null })), notes: r.notes || null, owner: r.ownerListText,
+    periodContext: r.periodContext ?? null, primarySourceRead: r.primarySourceRead ?? null, sourceMetricLabel: r.sourceMetricLabel ?? null, lastVerified: r.lastVerified ?? null,
   };
 }
 const inactiveOfValidity = (v: GgCompany['validity']): Inactive | undefined => (v === 'ACTIVE' ? undefined : v === 'SUPERSEDED' ? 'SUPERSEDED' : v === 'WITHDRAWN' ? 'WITHDRAWN' : 'EXPIRED');
@@ -232,7 +239,7 @@ function itemsFromLive(c: GgCompany): Item[] {
   const pts = [c.primary, ...(c.others || [])].filter(Boolean);
   const out: Item[] = [];
   pts.forEach((p, idx) => {
-    if (!isMgmt(p.kind) || (p.growthLow == null && !p.absoluteTarget)) return;
+    if (p.growthLow == null && !p.absoluteTarget) return;
     const lo = p.growthLow, hi = p.growthHigh ?? p.growthLow;
     out.push({
       origin: 'LIVE', market: c.market as 'IN' | 'US', ticker: tk(c.ticker), company: c.company, metric: p.metric, low: lo, high: hi, open: isOpenEnded(lo, hi, p.originalStatement || ''), gOrigin: p.growthOrigin,
@@ -249,7 +256,7 @@ function itemsFromLedger(rows: Array<{ market: 'IN' | 'US'; ticker: string; comp
   for (const row of rows || []) {
     const groups = new Map<string, GgStoredEntry[]>();
     for (const e of row.entries || []) {
-      if (!e || !isMgmt(e.kind) || e.verification === 'UNVERIFIED') continue;
+      if (!e || e.verification === 'UNVERIFIED') continue;
       const k = `${e.metric}|${normPeriod(e.period)}`; (groups.get(k) || groups.set(k, []).get(k)!).push(e);
     }
     for (const list of Array.from(groups.values())) {
@@ -272,6 +279,7 @@ export interface GuStoredPoint {
   key: string; slot: string; market: 'IN' | 'US'; ticker: string | null; company: string; metric: GgMetric; low: number | null; high: number | null; open: boolean; gOrigin: GgGrowthOrigin;
   abs: { value: number; unit: string; valueLow?: number } | null; base?: ItemBase | null; needsReview?: string | null; period: string; pkind: GgPeriodKind; kind: GgKind; organic: GgOrganic; verification: GgVerification; statement: string;
   src: { name: string; type: string; url: string | null; date: string | null; rank: number }; priors: Prior[]; origin: GuUniverseRecordOrigin; display: string;
+  /** zzz853 */ periodContext?: string | null; primarySourceRead?: boolean | null; sourceMetricLabel?: string | null; lastVerified?: string | null;
 }
 export interface GuStoredDoc { v: 1; asOf: string; hash: string; rows: GuStoredPoint[] }
 export const GU_MAX_STORED = 600;
@@ -281,7 +289,8 @@ function itemsFromStored(rows: GuStoredPoint[] | null | undefined): Item[] {
     if (!r || r.origin === 'RESEARCHED_SEED') continue;           // researched rows are re-read from their data file every time, never from a stale copy
     if (!METRICS.includes(r.metric) || !r.company || (r.low == null && !r.abs) || !isMgmt(r.kind) || r.verification === 'UNVERIFIED') continue;
     out.push({ origin: 'LEDGER', market: r.market, ticker: r.ticker, company: r.company, metric: r.metric, low: r.low, high: r.high, open: !!r.open, gOrigin: r.gOrigin, abs: r.abs, base: r.base ?? null, needsReview: r.needsReview ?? null, period: r.period, pkind: r.pkind, kind: r.kind,
-      organic: r.organic, statement: r.statement || '', driver: null, mechanisms: [], src: r.src, verification: r.verification, priors: Array.isArray(r.priors) ? r.priors : [], notes: null });
+      organic: r.organic, statement: r.statement || '', driver: null, mechanisms: [], src: r.src, verification: r.verification, priors: Array.isArray(r.priors) ? r.priors : [], notes: null,
+      periodContext: r.periodContext ?? null, primarySourceRead: r.primarySourceRead ?? null, sourceMetricLabel: r.sourceMetricLabel ?? null, lastVerified: r.lastVerified ?? null });
   }
   return out;
 }
@@ -370,7 +379,8 @@ export interface GuPoint {
   revision: GuUniverseRecord['revision']; proxy: string | null; statement: string; notes: string | null;
   priors: Prior[]; absolute: { value: number; unit: string; valueLow?: number } | null;
   // ── zzz849 (additive) ──
-  periodStatus: GuPeriodStatus; periodInferred: boolean; periodNote: string | null; periodEnd: string | null;
+  /** RUN STATE of the guided period (zzz853: renamed from `periodStatus`): ACTIVE = still running, EXPIRED, UNKNOWN = cannot be placed in time. Expiry may use the issue date; it never confirms a period. */
+  periodRunState: GuPeriodStatus; periodInferred: boolean; periodNote: string | null; periodEnd: string | null;
   /** growth as management stated it (null when only a target amount was stated) */
   statedGrowth: { low: number; high: number | null; open: boolean; display: string } | null;
   /** growth worked out from a target amount and a sourced base. Secondary when statedGrowth exists; primary (and labelled '(implied)') otherwise. */
@@ -387,6 +397,35 @@ export interface GuPoint {
   hg: GuHighGrowthHorizon | null;
   /** passes every high-growth rule except verification (only media backs it) */
   awaitingVerification: boolean;
+  // ── zzz853 (additive): growth basis ──
+  /** EXPLICIT = company stated the %. DERIVED = company stated amounts and the system computed the growth from a sourced base. IMPLIED = inferred, no sourced base. UNKNOWN = no usable growth. */
+  growthType: GuGrowthType;
+  guidanceType: GuGuidanceType;
+  /** the target is a range (a % range or an amount range) */ isRange: boolean;
+  /** 'stated_by_company' | 'absolute_vs_prior_year_actual' | 'absolute_vs_prior_guidance' | 'inferred_no_sourced_base' | null */ growthBasis: string | null;
+  /** ready text for the basis, e.g. 'vs FY26 actual (derived: ₹210–225 Cr vs ₹108.23 Cr)' */ basisLabel: string;
+  /** every number behind a DERIVED growth (previous value, current low/high, growth low/mid/high, basis) */ growthDerivation: GuGrowthDerivation | null;
+  /** exact (unrounded) growth kept internally; the display rounds by rule */ growthExact: { low: number; mid: number; high: number } | null;
+  /** growth against the PRIOR-YEAR ACTUAL (separate fact from the revision vs prior guidance) */ growthVsPriorYear: GuGrowthVsPriorYear | null;
+  /** the move against the PRIOR GUIDANCE, when an earlier guidance value exists (never overwrites growthVsPriorYear) */ revisionVsPriorGuidance: GuRevisionVsPrior | null;
+  /** false when currency / unit scale / period basis differ: growth is not computed ('GROWTH NOT COMPARABLE') */ growthComparable: boolean; growthNotComparable: string | null;
+  headlineBasis: 'GROWTH_VS_PRIOR_YEAR' | 'ABSOLUTE_TARGET_ONLY';
+  // verification
+  verificationState: GuVerificationState; verificationReason: string; claimType: GuClaimType;
+  sourceTier: SourceTier; sourceTierLabel: string; primarySourceFound: boolean; primarySourceRead: boolean; primarySourceText: 'PRIMARY SOURCE FOUND' | 'primary source not found'; primarySourceReadText: 'primary source read' | 'primary source not yet read';
+  // period
+  periodLabelSource: string; periodNormalized: string; fiscalYear: number | null; fiscalYearStart: number | null; fiscalQuarter: number | null;
+  /** CONFIRMED | UNCLEAR | UNKNOWN: is the period itself established by the source record? */ periodStatus: GuPeriodConfirm;
+  durationType: GuDurationType; cohort: GuCohort | null;
+  // metric
+  metricFamily: GuMetricFamily; sourceMetricLabel: string | null; currency: string | null; unit: string | null; scale: string | null;
+  // lifecycle, history, freshness
+  status: GuLifecycle; current: boolean; expiryReason: string | null; history: GuHistoryStep[];
+  lastVerified: string | null; lastVerifiedDaysAgo: number | null; staleVerification: boolean;
+  // sources
+  sources: GuSourceEntry[]; sourceConflict: boolean; primaryValue: GuSourceEntry | null; mediaClaim: GuSourceEntry | null;
+  /** per-point review reasons (blocking ones keep the point out of the default view) */ reviewReasons: GuReviewReasonX[];
+  inDefaultView: boolean;
 }
 export interface GuUniverseRecordX extends GuUniverseRecord {
   entityKey: string; tickers: string[]; names: string[]; period: string;
@@ -396,12 +435,32 @@ export interface GuUniverseRecordX extends GuUniverseRecord {
   sourceName: string; sourceType: string; sourceUrl: string | null; sourceDate: string | null; sourceRank: number; primarySource: boolean;
   statement: string; notes: string | null; activeNote: string | null;
   /** zzz849: status of the headline point's period, why it is flagged, and the secondary (implied) figure when management also stated a % */
-  periodStatus: GuPeriodStatus; needsReview: string | null; secondaryDisplay: string | null; impliedDisplay: string | null;
+  /** zzz853: CONFIRMED | UNCLEAR | UNKNOWN (the earlier running state is `periodRunState`) */ periodStatus: GuPeriodConfirm; periodRunState: GuPeriodStatus;
+  needsReview: string | null; secondaryDisplay: string | null; impliedDisplay: string | null;
+  // ── zzz853 (additive), all taken from the headline point ──
+  /** stable id of the resolved company (market:TICKER); null when the company is not resolved */ companyId: string | null; tickerResolved: boolean;
+  status: GuLifecycle; current: boolean;
+  verificationState: GuVerificationState; growthType: GuGrowthType; guidanceType: GuGuidanceType; claimType: GuClaimType; metricFamily: GuMetricFamily;
+  sourceTier: SourceTier; primarySourceFound: boolean; primarySourceRead: boolean; primarySourceText: string;
+  basisLabel: string; growthVsPriorYear: GuGrowthVsPriorYear | null; revisionVsPriorGuidance: GuRevisionVsPrior | null;
+  fiscalYear: number | null; fiscalQuarter: number | null; periodLabelSource: string; periodNormalized: string; durationType: GuDurationType; cohort: GuCohort | null;
+  history: GuHistoryStep[]; lastVerified: string | null; lastVerifiedDaysAgo: number | null; staleVerification: boolean;
+  sources: GuSourceEntry[]; sourceConflict: boolean; primaryValue: GuSourceEntry | null; mediaClaim: GuSourceEntry | null;
+  /** empty for a default-view record; for a review-queue record the reasons it is there (plus the informational ones) */ reviewReasons: string[]; reviewReasonCodes: string[]; inReviewQueue: boolean;
+  /** informational notes that do NOT keep a record out of the default view (secondary-only, primary not found, stale verification ...) */ caveats: string[];
 }
-export interface GuInactiveRecord { entityKey: string; company: string; ticker: string | null; market: 'IN' | 'US'; metric: GgMetric; period: string; status: Inactive; reason: string; display: string; verification: GgVerification; sourceName: string; sourceDate: string | null; origin: GuUniverseRecordOrigin }
-export interface GuExcluded { company: string; ticker: string | null; market: 'IN' | 'US'; metric: GgMetric; period: string; reason: string }
-export interface GuUniverseBuild { records: GuUniverseRecordX[]; inactive: GuInactiveRecord[]; excluded: GuExcluded[]; stored: GuStoredPoint[] }
-export interface GuBuildOpts { threshold?: number }
+export interface GuInactiveRecord {
+  entityKey: string; company: string; ticker: string | null; market: 'IN' | 'US'; metric: GgMetric; period: string; status: Inactive; reason: string; display: string; verification: GgVerification; sourceName: string; sourceDate: string | null; origin: GuUniverseRecordOrigin;
+  /** zzz853: auditable expiry: 'period completed' | 'superseded' | 'withdrawn' */ expiryReason: string; lifecycle: GuLifecycle; current: false; periodEnd: string | null; supersededBy: string | null;
+}
+export interface GuExcluded { company: string; ticker: string | null; market: 'IN' | 'US'; metric: GgMetric; period: string; reason: string; /** zzz853 */ claimType?: GuClaimType }
+export interface GuUniverseBuild {
+  /** every active record (legacy shape: one per company with all its points) */ records: GuUniverseRecordX[]; inactive: GuInactiveRecord[]; excluded: GuExcluded[]; stored: GuStoredPoint[];
+  /** zzz853: the DEFAULT VIEW: active + company resolved + period CONFIRMED + not needsReview (per point) */ defaultRecords: GuUniverseRecordX[];
+  /** zzz853: everything else that is active, each with reviewReasons[] */ reviewQueue: GuUniverseRecordX[];
+}
+/** `eventWindow` is accepted and IGNORED: the universe never depends on an event window (24H/3D/7D...). */
+export interface GuBuildOpts { threshold?: number; eventWindow?: string | null }
 
 const dateOf = (i: Item) => i.src.date || '';
 const ORIGIN_ORDER: Record<GuUniverseRecordOrigin, number> = { LIVE: 0, LEDGER: 1, RESEARCHED_SEED: 2 };
@@ -423,20 +482,32 @@ function better(a: Item, b: Item): number {
 const mid = (low: number | null, high: number | null): number | null => (low == null ? null : high == null ? low : (low + high) / 2);
 const REVISION_UP = /\b(raised|upgraded|hiked|lifted|increased)\b/i, REVISION_DOWN = /\b(lowered|cut|trimmed|reduced|slashed|downgraded)\b/i, REVISION_SAME = /\b(reiterat\w*|maintain\w*|unchanged|reaffirm\w*)\b/i, GUIDE_CTX = /\b(guid\w*|target\w*|outlook|forecast\w*|expect\w*)\b/i;
 function revisionFor(it: Item, history: Prior[]): GuUniverseRecord['revision'] {
-  if (it.gc && it.isPrimary) { const r = it.gc.revision; if (r === 'RAISED' || r === 'MAINTAINED' || r === 'LOWERED' || r === 'WITHDRAWN' || r === 'INITIAL') return r; }
+  const stmt = it.statement || '';
+  /** A reiteration or a capital raise is never a RAISE of guidance (unless the numbers themselves moved up). */
+  const noRaiseWords = (isCapitalRaise(stmt) || (isReiteration(stmt))) && !textSaysGuidanceRaised(stmt);
   const cur = mid(it.low, it.high);
   const priors = history.filter((p) => p.low != null).sort((a, b) => a.date.localeCompare(b.date));
   const last = priors[priors.length - 1];
-  if (cur != null && last) { const r = revisionOf(mid(last.low, last.high), cur, false); if (r === 'RAISED' || r === 'LOWERED' || r === 'MAINTAINED') return r; }
-  if (GUIDE_CTX.test(it.statement)) { if (REVISION_DOWN.test(it.statement)) return 'LOWERED'; if (REVISION_UP.test(it.statement)) return 'RAISED'; if (REVISION_SAME.test(it.statement)) return 'MAINTAINED'; }
+  const numeric = cur != null && last ? revisionOf(mid(last.low, last.high), cur, false) : null;
+  if (it.gc && it.isPrimary) {
+    const r = it.gc.revision;
+    if (r === 'RAISED' && noRaiseWords && numeric !== 'RAISED') return isCapitalRaise(stmt) && !isReiteration(stmt) ? 'NONE' : 'MAINTAINED';
+    if (r === 'RAISED' || r === 'MAINTAINED' || r === 'LOWERED' || r === 'WITHDRAWN' || r === 'INITIAL') return r;
+  }
+  if (numeric === 'RAISED' || numeric === 'LOWERED' || numeric === 'MAINTAINED') return numeric;
+  if (GUIDE_CTX.test(stmt)) {
+    if (REVISION_DOWN.test(stmt)) return 'LOWERED';
+    if (isReiteration(stmt) && !textSaysGuidanceRaised(stmt)) return 'MAINTAINED';
+    if (REVISION_UP.test(stmt) && !isCapitalRaise(stmt)) return 'RAISED';
+    if (textSaysGuidanceRaised(stmt)) return 'RAISED';
+    if (REVISION_SAME.test(stmt)) return 'MAINTAINED';
+  }
   return it.gc && it.isPrimary && it.gc.revision === 'INITIAL' ? 'INITIAL' : 'NONE';
 }
 const classOf = (k: GgPeriodKind): GuUniverseRecordX['classification'] => (k === 'MULTI_YEAR_CAGR' ? 'MULTI_YEAR' : k === 'QUARTER' || k === 'HALF' ? 'SHORT_PERIOD' : k === 'UNKNOWN' ? 'UNKNOWN_PERIOD' : 'ANNUAL');
 const ANNUAL_COUNTABLE: GgPeriodKind[] = ['FY', 'CY', 'ROLLING_12M'];
 const srcRefOf = (it: Item): GgSourceRef => ({ name: it.src.name, rank: it.src.rank, type: it.src.type, date: it.src.date, url: it.src.url || undefined, primary: srcPrimary(it.src.rank, it.src.type) });
 
-/** A revenue growth at or above this needs an explicit stated basis (a % management stated, with the figure in the source text) or it is flagged 'needs review'. */
-export const PLAUSIBLE_REVENUE_GROWTH_PCT = 100;
 const lenOfKind = (k: GgPeriodKind): number | null => (k === 'FY' || k === 'CY' || k === 'ROLLING_12M' ? 12 : k === 'QUARTER' ? 3 : k === 'HALF' ? 6 : null);
 const lenOfPeriod = (p: string): number | null => { const n = normPeriod(p); return /^Q[1-4]\b/.test(n) ? 3 : /^H[12]\b/.test(n) ? 6 : /^(FY|CY)\d{2}$/.test(n) || /^(prior|previous|last) year$/i.test(n) || /^(19|20)\d{2}$/.test(n) ? 12 : null; };
 const baseText = (b: { value: number; unit: string; period: string }, metric: GgMetric) => `${b.period} ${METRIC_WORD[metric]} ${amountText({ value: b.value, unit: b.unit })}`;
@@ -462,24 +533,65 @@ function impliedCheck(it: Item): { reject?: string; review?: string } {
   return {};
 }
 
-function pointOf(it: Item, history: Prior[], ps: GuPeriodInfo): GuPoint {
+/** Context a point needs that lives outside its own item: the version chain, lifecycle, sources of the slot. */
+interface PointCtx { now: Date; versions: GuVersionIn[]; lifecycle: GuLifecycle; expiryReason: string | null; sources: GuSourceEntry[]; conflict: boolean; primaryValue: GuSourceEntry | null; mediaClaim: GuSourceEntry | null; pf: ReturnType<typeof periodFacts>; resolved: boolean; dupOf: string | null }
+const versionOfItem = (it: Item): GuVersionIn => ({ date: it.src.date, low: it.low, high: it.high, absLow: it.abs ? (it.abs.valueLow ?? it.abs.value) : null, absHigh: it.abs ? it.abs.value : null, unit: it.abs?.unit ?? null, source: it.src.name,
+  display: displayOf({ metric: it.metric, low: it.low, high: it.high, open: it.open, origin: 'STATED', periodKind: it.pkind, period: it.period, abs: it.abs, cumulativeYears: it.cumulativeYears }) });
+const versionOfPrior = (p: Prior, unit: string | null): GuVersionIn => ({ date: p.date, low: p.low, high: p.high, absLow: p.abs ? (p.abs.valueLow ?? p.abs.value) : null, absHigh: p.abs ? p.abs.value : null, unit: p.abs?.unit ?? unit, source: p.note || 'Earlier guidance',
+  display: p.abs ? amountText(p.abs) : p.low == null ? 'no %' : pctText(p.low, p.high === p.low ? null : p.high, false) });
+const toVersionIn = (s: GuHistoryStep['to']): GuVersionIn => ({ date: s.date, low: s.low, high: s.high, absLow: s.absoluteLow, absHigh: s.absoluteHigh, unit: s.unit, source: s.source, display: s.display });
+const srcEntry = (it: Item, role: GuSourceEntry['role']): GuSourceEntry => {
+  const t = it.tier ?? classifySourceTier({ rank: it.src.rank, type: it.src.type, name: it.src.name, url: it.src.url }).tier;
+  return { name: it.src.name, type: it.src.type, url: it.src.url, date: it.src.date, tier: t, tierLabel: TIER_LABEL[t], low: it.low, high: it.high, absolute: it.abs,
+    value: displayOf({ metric: it.metric, low: it.low, high: it.high, open: it.open, origin: 'STATED', periodKind: it.pkind, period: it.period, abs: it.abs, cumulativeYears: it.cumulativeYears }), role };
+};
+
+function pointOf(it: Item, history: Prior[], ps: GuPeriodInfo, x: PointCtx): GuPoint {
   const proxy = proxyOf(it.metric, it.statement);
+  const tier = it.tier ?? classifySourceTier({ rank: it.src.rank, type: it.src.type, name: it.src.name, url: it.src.url }).tier;
+  const claimType = it.claimType ?? claimTypeOf(it.kind, tier, it.statement);
+  const pf = x.pf;
   let low = it.low, high = it.high, open = it.open; const origin = it.gOrigin;
   let impliedRejected: string | null = null; const flags: string[] = [];
+  let growthType: GuGrowthType = it.low == null ? 'UNKNOWN' : origin === 'STATED' ? 'EXPLICIT' : 'IMPLIED';
+  let derivation: GuGrowthDerivation | null = null; let notComparable: string | null = null; let growthBasis: string | null = growthType === 'EXPLICIT' ? 'stated_by_company' : null;
   if (origin === 'IMPLIED' && low != null) {
     const chk = impliedCheck(it);
-    if (chk.reject) { impliedRejected = chk.reject; low = null; high = null; open = false; } else if (chk.review) flags.push(chk.review);
+    if (chk.reject) { impliedRejected = chk.reject; low = null; high = null; open = false; growthType = 'UNKNOWN'; if (!/no stated target amount/.test(chk.reject)) notComparable = chk.reject.replace(/^Implied growth dropped:\s*/i, ''); }
+    else if (chk.review) { flags.push(chk.review); growthBasis = 'inferred_no_sourced_base'; }
+    else if (it.abs && it.base) {
+      const d = deriveGrowth({ target: it.abs, base: it.base, storedLow: it.low, storedHigh: it.high });
+      if (d.ok && d.consistent) { growthType = 'DERIVED'; growthBasis = d.basis; derivation = { previousValue: d.previousValue, currentLow: d.currentLow, currentHigh: d.currentHigh, unit: d.unit, basePeriod: d.basePeriod, growthLow: d.growthLow, growthMid: d.growthMid, growthHigh: d.growthHigh, basis: d.basis }; }
+      else if (d.ok) { flags.push(`Stored growth (${it.high != null && it.high !== it.low ? `${fnum(it.low!)}–${fnum(it.high)}` : fnum(it.low!)}%) cannot be reproduced from the target amount and base (${fnum(d.growthLow)}–${fnum(d.growthHigh)}%).`); growthBasis = 'inferred_no_sourced_base'; }
+      else { notComparable = d.reason; low = null; high = null; open = false; growthType = 'UNKNOWN'; impliedRejected = `Implied growth dropped: ${d.reason}.`; }
+    }
   }
   if (it.needsReview) flags.push(it.needsReview);
   const cv = compareValue(low, high, open);
   if (it.metric === 'REVENUE' && cv != null && cv >= PLAUSIBLE_REVENUE_GROWTH_PCT && !(origin === 'STATED' && low != null && figureIn(it.statement, low)))
     flags.push(`Revenue growth of about ${fnum(cv)}% is at or above ${PLAUSIBLE_REVENUE_GROWTH_PCT}%, which is implausible for an established company unless management clearly stated it as a percent. The source text does not show that, so it needs review.`);
   const needsReview = flags.length ? flags.join(' ') : null;
-  const baseCore = displayOf({ metric: it.metric, low, high, open, origin: low == null ? 'STATED' : origin, periodKind: it.pkind, period: it.period, abs: it.abs, cumulativeYears: it.cumulativeYears, proxy });
+  // ── display with its basis ──
+  const exact = derivation ? { low: derivation.growthLow, mid: derivation.growthMid, high: derivation.growthHigh } : null;
+  const dRange = derivation ? derivation.currentLow !== derivation.currentHigh : (high != null && low != null && high !== low);
+  const dp = growthType === 'DERIVED' || growthType === 'IMPLIED' ? derivedDp(exact ? exact.low : (low as number), dRange ? (exact ? exact.high : high) : null) : 1;
+  const pctShown = low == null ? null : exact ? pctText(exact.low, dRange ? exact.high : null, false, dp) : pctText(low, open ? null : high === low ? null : high, open, dp);
+  const tgtText = it.abs ? amountText(it.abs) : null;
+  let basisLabel: string;
+  if (growthType === 'EXPLICIT') basisLabel = 'stated by company';
+  else if (growthType === 'DERIVED' && derivation) {
+    const bt = amountText({ value: derivation.previousValue, unit: derivation.unit });
+    basisLabel = derivation.basis === 'absolute_vs_prior_guidance' ? `vs prior guidance (derived: ${tgtText} vs ${bt})` : `vs ${it.base!.period} actual (derived: ${tgtText} vs ${bt})`;
+  } else if (growthType === 'IMPLIED') basisLabel = tgtText ? `implied from the ${tgtText} target; base not sourced` : 'implied; no stated % and no sourced base';
+  else basisLabel = notComparable ? `GROWTH NOT COMPARABLE: ${notComparable}` : 'no % stated';
+  let core: string;
+  if (growthType === 'EXPLICIT') core = displayOf({ metric: it.metric, low, high, open, origin: 'STATED', periodKind: it.pkind, period: it.period, abs: it.abs, cumulativeYears: it.cumulativeYears, proxy });
+  else if (growthType === 'DERIVED' || growthType === 'IMPLIED') core = `${pctShown}${proxy ? ` (${proxy})` : ''} ${growthType === 'DERIVED' ? basisLabel : `(${basisLabel})`}`;
+  else core = tgtText ? `${tgtText} target (${notComparable ? basisLabel : 'no % stated'})` : '—';
   const tails: string[] = [];
   if (needsReview) tails.push('needs review');
-  if (ps.status === 'UNKNOWN' || ps.inferred) tails.push('period year not stated');
-  const display = tails.length ? `${baseCore} (${tails.join('; ')})` : baseCore;
+  if (pf.periodStatus !== 'CONFIRMED') tails.push('period year not stated');
+  const display = tails.length ? `${core} (${tails.join('; ')})` : core;
   const baseLabel = it.base ? baseText(it.base, it.metric) : null;
   // stated vs implied: both are kept when both exist; stated is always primary
   const statedGrowth = origin === 'STATED' && low != null ? { low, high: open ? null : high === low ? null : high, open, display: pctText(low, open ? null : high === low ? null : high, open) } : null;
@@ -491,21 +603,63 @@ function pointOf(it: Item, history: Prior[], ps: GuPeriodInfo): GuPoint {
   }
   const impliedDisplay = impliedGrowth ? `${impliedGrowth.display} (implied${impliedGrowth.baseLabel ? `, base ${impliedGrowth.baseLabel}` : ''})` : null;
   const secondaryDisplay = statedGrowth && impliedGrowth ? impliedDisplay : null;
+  // ── legacy counting rules (unchanged) ──
   const mgmtVerified = it.verification === 'VERIFIED' || it.verification === 'PARTIALLY_VERIFIED';
   const horizon: GuHighGrowthHorizon | null = ANNUAL_COUNTABLE.includes(it.pkind) ? 'SINGLE_YEAR' : it.pkind === 'MULTI_YEAR_CAGR' ? 'MULTI_YEAR_CAGR' : null;
-  const base = isMgmt(it.kind) && (it.metric === 'REVENUE' || it.metric === 'PAT') && horizon && !proxy && cv != null && !needsReview && ps.status === 'ACTIVE' && !ps.inferred;
+  const runOk = ps.status === 'ACTIVE' && !ps.inferred;
+  const base = isMgmt(it.kind) && (it.metric === 'REVENUE' || it.metric === 'PAT') && horizon && !proxy && cv != null && !needsReview && runOk;
   const hg = base && mgmtVerified ? horizon : null;
   const awaitingVerification = !!base && it.verification === 'SECONDARY_ONLY';
-  const counted = isMgmt(it.kind) && mgmtVerified && horizon === 'SINGLE_YEAR' && !proxy && cv != null && !needsReview && ps.status === 'ACTIVE' && !ps.inferred;
+  const counted = isMgmt(it.kind) && mgmtVerified && horizon === 'SINGLE_YEAR' && !proxy && cv != null && !needsReview && runOk;
+  // ── zzz853: source, verification state ──
+  const read = it.primarySourceRead != null ? !!it.primarySourceRead && tier <= 2 : tier <= 2 && (it.origin !== 'RESEARCHED_SEED' || it.verification === 'VERIFIED');
+  const found = tier <= 2 && (!!it.src.url || read);
+  const evidence = !!(it.statement || '').trim();
+  const vs = verificationStateOf({ claimType, tier, primarySourceFound: found, primarySourceRead: read, growthType, periodStatus: pf.periodStatus, needsReview: !!needsReview, hasEvidence: evidence });
+  const legacyVerification: GgVerification = it.verification === 'VERIFIED' && vs.state !== 'VERIFIED' ? 'PARTIALLY_VERIFIED' : it.verification;
+  // ── metric family, units ──
+  const family = FAMILY_OF[it.metric]; const srcLabel = it.sourceMetricLabel ?? extractMetricLabel(it.statement, it.metric);
+  const labelFam = familyOfLabel(it.sourceMetricLabel);
+  const mu = parseUnit(it.abs?.unit);
+  const rflags: GuReviewReasonX[] = [];
+  const rf = (code: GuReviewReasonX['code'], text: string, blocks: boolean) => rflags.push({ code, text, blocks });
+  if (!x.resolved) rf('COMPANY_UNRESOLVED', 'The company is not resolved to a ticker.', true);
+  if (pf.periodStatus === 'UNCLEAR') rf('PERIOD_UNCLEAR', 'The period year is not stated in the source, so the period is unclear.', true);
+  else if (pf.periodStatus === 'UNKNOWN') rf('PERIOD_UNKNOWN', 'The period is not stated.', true);
+  if (needsReview) rf('NEEDS_REVIEW', needsReview, true);
+  if (x.conflict) rf('SOURCE_CONFLICT', 'Two sources give different values for this company, metric and period.', true);
+  if (x.dupOf) rf('POTENTIAL_DUPLICATE', `May be the same company as ${x.dupOf}.`, true);
+  if (ps.status === 'ACTIVE' && ps.end && ps.end.getTime() < x.now.getTime()) rf('EXPIRED', `The guided period ended ${ps.end.toISOString().slice(0, 10)}; results are due within the reporting lag.`, true);
+  if (labelFam && labelFam !== family) rf('METRIC_LABEL_MISMATCH', `The source calls this "${it.sourceMetricLabel}" (${labelFam}) but it is recorded as ${family}.`, true);
+  if (tier >= 3) rf('SECONDARY_ONLY', 'Only media or another secondary source backs this.', false);
+  if (!found) rf('PRIMARY_MISSING', 'primary source not found', false);
+  const lastVerified = it.lastVerified ?? it.src.date ?? null; const ago = daysBetween(lastVerified, x.now);
+  const ver: GuVersionIn[] = x.versions.length ? x.versions : [versionOfItem(it)];
+  const hist = buildHistory(ver, x.lifecycle);
+  const lastStep = hist[hist.length - 1];
+  const revPrior = lastStep && lastStep.from ? revisionVsPriorOf(toVersionIn(lastStep.from), toVersionIn(lastStep.to)) : null;
+  const gvp: GuGrowthVsPriorYear | null = growthType === 'EXPLICIT' && low != null ? { type: 'EXPLICIT', low, mid: (low + (high ?? low)) / 2, high: high ?? low, display: pctText(low, open ? null : high === low ? null : high, open), baseLabel: null, basis: 'stated_by_company' }
+    : growthType === 'DERIVED' && derivation && derivation.basis === 'absolute_vs_prior_year_actual' ? { type: 'DERIVED', low: derivation.growthLow, mid: derivation.growthMid, high: derivation.growthHigh, display: `${pctShown} ${basisLabel}`, baseLabel, basis: derivation.basis }
+    : growthType === 'IMPLIED' && low != null ? { type: 'IMPLIED', low, mid: (low + (high ?? low)) / 2, high: high ?? low, display: `${pctShown} (${basisLabel})`, baseLabel, basis: growthBasis } : null;
+  const gType: GuGuidanceType = it.pkind === 'MULTI_YEAR_CAGR' && low != null ? 'CAGR' : (it.abs && (growthType !== 'EXPLICIT' || low == null)) ? 'ABSOLUTE_TARGET' : (low != null && high != null && low !== high) || open || (it.abs?.valueLow != null) ? 'RANGE_TARGET' : 'GROWTH_RATE';
   return {
     metric: it.metric, period: it.period, periodKind: it.pkind, display,
-    low, high, open, implied: origin === 'IMPLIED', compareValue: cv, counted, verification: it.verification, origin: it.origin, sourceName: it.src.name, sourceType: it.src.type, sourceUrl: it.src.url,
+    low, high, open, implied: origin === 'IMPLIED', compareValue: cv, counted, verification: legacyVerification, origin: it.origin, sourceName: it.src.name, sourceType: it.src.type, sourceUrl: it.src.url,
     sourceDate: it.src.date, sourceRank: it.src.rank, primarySource: srcPrimary(it.src.rank, it.src.type), revision: revisionFor(it, history), proxy, statement: it.statement, notes: it.notes, priors: history, absolute: it.abs,
-    periodStatus: ps.status, periodInferred: ps.inferred, periodNote: ps.note, periodEnd: ps.end ? ps.end.toISOString().slice(0, 10) : null,
+    periodRunState: ps.status, periodInferred: ps.inferred, periodNote: ps.note, periodEnd: ps.end ? ps.end.toISOString().slice(0, 10) : null,
     statedGrowth, impliedGrowth, impliedDisplay, secondaryDisplay, impliedRejected, needsReview, hg, awaitingVerification,
+    growthType, guidanceType: gType, isRange: (low != null && high != null && low !== high) || it.abs?.valueLow != null, growthBasis, basisLabel, growthDerivation: derivation, growthExact: exact, growthVsPriorYear: gvp, revisionVsPriorGuidance: revPrior,
+    growthComparable: !notComparable, growthNotComparable: notComparable, headlineBasis: low != null ? 'GROWTH_VS_PRIOR_YEAR' : 'ABSOLUTE_TARGET_ONLY',
+    verificationState: vs.state, verificationReason: vs.reason, claimType, sourceTier: tier, sourceTierLabel: TIER_LABEL[tier], primarySourceFound: found, primarySourceRead: read,
+    primarySourceText: found ? 'PRIMARY SOURCE FOUND' : 'primary source not found', primarySourceReadText: read ? 'primary source read' : 'primary source not yet read',
+    periodLabelSource: pf.periodLabelSource, periodNormalized: pf.periodNormalized, fiscalYear: pf.fiscalYear, fiscalYearStart: pf.fiscalYearStart, fiscalQuarter: pf.fiscalQuarter, periodStatus: pf.periodStatus, durationType: pf.durationType, cohort: pf.cohort,
+    metricFamily: family, sourceMetricLabel: srcLabel, currency: mu.currency, unit: it.abs?.unit ?? null, scale: mu.scale,
+    status: x.lifecycle, current: x.lifecycle === 'ACTIVE', expiryReason: x.expiryReason, history: hist,
+    lastVerified, lastVerifiedDaysAgo: ago, staleVerification: isStale(ago),
+    sources: x.sources, sourceConflict: x.conflict, primaryValue: x.primaryValue, mediaClaim: x.mediaClaim, reviewReasons: rflags, inDefaultView: !rflags.some((r) => r.blocks),
   };
 }
-const fmtPrior = (p: Prior) => (p.low == null ? 'no %' : pctText(p.low, p.high === p.low ? null : p.high, false));
+const fmtPrior = (p: Prior) => { const pc = p.low == null ? null : pctText(p.low, p.high === p.low ? null : p.high, false); return p.abs ? `${amountText(p.abs)}${pc ? ` (about ${pc})` : ''}` : pc ?? 'no %'; };
 
 function companyOf(base: Item, all: Item[], pt: GuPoint, key: string): GgCompany {
   const primaryPoint: GgGuidancePoint = base.gp || {
@@ -534,9 +688,14 @@ function companyOf(base: Item, all: Item[], pt: GuPoint, key: string): GgCompany
 const METRIC_ORDER: Record<GgMetric, number> = { REVENUE: 0, PAT: 1, EPS: 2, EBITDA: 3, FCF: 4 };
 const PERIOD_CLASS_ORDER: Record<GuUniverseRecordX['classification'], number> = { ANNUAL: 0, UNKNOWN_PERIOD: 1, SHORT_PERIOD: 2, MULTI_YEAR: 3 };
 
+const daysApart = (a: string | null, b: string | null): number => { if (!a && !b) return 0; if (!a || !b) return Infinity; const x = Date.parse(a), y = Date.parse(b); return Number.isFinite(x) && Number.isFinite(y) ? Math.abs(x - y) / DAY : Infinity; };
+const sameSource = (a: Item, b: Item) => a.src.name === b.src.name && (a.src.url || '') === (b.src.url || '');
+const tierOf = (it: Item): SourceTier => it.tier ?? classifySourceTier({ rank: it.src.rank, type: it.src.type, name: it.src.name, url: it.src.url }).tier;
+const isUnresolved = (entityKey: string) => entityKey.includes(':~');
+
 /** The universe: currently valid guidance, merged per company. No time window. ACTIVE = not expired (period end vs now), not superseded by a later record for the same company+metric+period, not withdrawn. */
 export function buildUniverse(live: GgCompany[], ledgerRows: Array<{ market: 'IN' | 'US'; ticker: string; company?: string; entries: GgStoredEntry[] }> | null | undefined, seedRows: GuSeedRow[], now: Date, opts: GuBuildOpts & { stored?: GuStoredPoint[] | null } = {}): GuUniverseBuild {
-  void opts;
+  void opts.threshold; void opts.eventWindow;   // the universe never depends on an event window
   const items: Item[] = [];
   for (const c of live || []) items.push(...itemsFromLive(c));
   items.push(...itemsFromLedger(ledgerRows || []));
@@ -544,8 +703,13 @@ export function buildUniverse(live: GgCompany[], ledgerRows: Array<{ market: 'IN
   for (const r of seedRows || []) items.push(itemFromSeed(r));
   const excluded: GuExcluded[] = [];
   const usable = items.filter((it) => {
-    if (it.verification === 'UNVERIFIED') { excluded.push({ company: it.company, ticker: it.ticker, market: it.market, metric: it.metric, period: it.period, reason: 'UNVERIFIED: no source supports this number, so it is not shown as guidance.' }); return false; }
-    if (!isMgmt(it.kind) || !hasNumber(it.low, it.abs)) return false;
+    const t = classifySourceTier({ rank: it.src.rank, type: it.src.type, name: it.src.name, url: it.src.url });
+    it.tier = t.tier; it.claimType = claimTypeOf(it.kind, t.tier, it.statement);
+    if (it.verification === 'UNVERIFIED') { excluded.push({ company: it.company, ticker: it.ticker, market: it.market, metric: it.metric, period: it.period, reason: 'UNVERIFIED: no source supports this number, so it is not shown as guidance.', claimType: it.claimType }); return false; }
+    if (!hasNumber(it.low, it.abs)) return false;
+    const ng = nonGuidanceReason(it.kind, it.claimType, it.statement);
+    if (ng) { excluded.push({ company: it.company, ticker: it.ticker, market: it.market, metric: it.metric, period: it.period, reason: ng, claimType: it.claimType }); return false; }
+    if (it.primarySourceRead == null && it.origin !== 'RESEARCHED_SEED') it.primarySourceRead = t.tier <= 2;   // live / ledger text came from the document itself
     return true;
   });
   const entityOf = resolveEntities(usable);
@@ -553,62 +717,123 @@ export function buildUniverse(live: GgCompany[], ledgerRows: Array<{ market: 'IN
   const slots = new Map<string, Item[]>();
   for (const it of usable) { const k = `${entityOf.get(it)}|${it.metric}|${normPeriod(it.period)}`; (slots.get(k) || slots.set(k, []).get(k)!).push(it); }
   const inactive: GuInactiveRecord[] = [];
-  const activeByEntity = new Map<string, Array<{ it: Item; history: Prior[]; note: string | null; ps: GuPeriodInfo }>>();
+  interface ActiveSlot { it: Item; history: Prior[]; note: string | null; ps: GuPeriodInfo; versions: GuVersionIn[]; sources: GuSourceEntry[]; conflict: boolean; primaryValue: GuSourceEntry | null; mediaClaim: GuSourceEntry | null; pf: ReturnType<typeof periodFacts> }
+  const activeByEntity = new Map<string, ActiveSlot[]>();
   const nameSets = new Map<string, Set<string>>(); const tickerSets = new Map<string, Set<string>>();
   for (const it of usable) { const e = entityOf.get(it)!; (nameSets.get(e) || nameSets.set(e, new Set()).get(e)!).add(normCompanyName(it.company)); if (it.ticker) (tickerSets.get(e) || tickerSets.set(e, new Set()).get(e)!).add(it.ticker); }
-  const pushInactive = (e: string, it: Item, status: Inactive, reason: string) => inactive.push({ entityKey: e, company: it.company, ticker: it.ticker, market: it.market, metric: it.metric, period: it.period, status, reason, display: displayOf({ metric: it.metric, low: it.low, high: it.high, open: it.open, origin: it.gOrigin, periodKind: it.pkind, period: it.period, abs: it.abs, cumulativeYears: it.cumulativeYears }), verification: it.verification, sourceName: it.src.name, sourceDate: it.src.date, origin: it.origin });
+  const pushInactive = (e: string, it: Item, status: Inactive, reason: string, extra: { periodEnd?: string | null; supersededBy?: string | null } = {}) => inactive.push({
+    entityKey: e, company: it.company, ticker: it.ticker, market: it.market, metric: it.metric, period: it.period, status, reason,
+    display: displayOf({ metric: it.metric, low: it.low, high: it.high, open: it.open, origin: it.gOrigin, periodKind: it.pkind, period: it.period, abs: it.abs, cumulativeYears: it.cumulativeYears }), verification: it.verification, sourceName: it.src.name, sourceDate: it.src.date, origin: it.origin,
+    expiryReason: status === 'EXPIRED' ? 'period completed' : status === 'SUPERSEDED' ? 'superseded' : 'withdrawn', lifecycle: status, current: false, periodEnd: extra.periodEnd ?? null, supersededBy: extra.supersededBy ?? null,
+  });
   for (const group of Array.from(slots.values())) {
     const e = entityOf.get(group[0])!;
     const eligible = group.filter((g) => !g.forced);
     for (const g of group.filter((x) => x.forced)) pushInactive(e, g, g.forced!, g.forced === 'WITHDRAWN' ? 'Management withdrew this guidance.' : g.forced === 'SUPERSEDED' ? 'Replaced by a later statement.' : 'The guided period has ended.');
     if (!eligible.length) continue;
     eligible.sort((a, b) => -better(a, b));
-    const win = eligible[0];
+    let win = eligible[0];
     // zzz849: a stated % is never replaced by an implied one. A same-day implied statement for the same slot rides along as the secondary figure; the same
     // statement from the same day never beats a stated one.
     const comp = win.gOrigin === 'STATED' && win.low != null ? eligible.slice(1).find((x) => x.gOrigin === 'IMPLIED' && x.low != null && dateOf(x) === dateOf(win)) : undefined;
-    if (comp) win.compImplied = comp;
-    for (const l of eligible.slice(1)) if (l !== comp) pushInactive(e, l, 'SUPERSEDED', `A later or higher-ranked record for the same company, metric and period (${win.src.date || 'undated'}, ${win.src.name}) replaces this one.`);
+    // zzz853: SOURCE CONFLICT: other sources, within a few days, that give a DIFFERENT value. Both are stored; the primary-tier value wins; nothing is averaged or merged.
+    const conflicts = eligible.filter((x) => x !== win && x !== comp && !sameSource(x, win) && daysApart(dateOf(x) || null, dateOf(win) || null) <= SOURCE_CONFLICT_WINDOW_DAYS && !sameValue(x, win));
+    let losers: Item[] = [];
+    if (conflicts.length) {
+      const cluster = [win, ...conflicts].sort((a, b) => tierOf(a) - tierOf(b) || -better(a, b));
+      win = cluster[0];
+      losers = cluster.slice(1).filter((x) => !sameSource(x, win) && !sameValue(x, win));
+    }
+    const rest = eligible.filter((x) => x !== win && x !== comp && !losers.includes(x));
+    if (comp && win.gOrigin === 'STATED' && win.low != null) win.compImplied = comp;
+    const supersededBy = `${win.src.date || 'undated'}, ${win.src.name}`;
+    for (const l of eligible.filter((x) => x !== win && x !== comp && !losers.includes(x))) pushInactive(e, l, 'SUPERSEDED', `A later or higher-ranked record for the same company, metric and period (${win.src.date || 'undated'}, ${win.src.name}) replaces this one.`, { supersededBy });
     if (win.withdrawn) { pushInactive(e, win, 'WITHDRAWN', 'Management withdrew this guidance.'); continue; }
-    const ps = periodStatusOf(win.period, win.pkind, win.market, win.src.date || (win.gc?.announcedAt ?? null), now);
-    if (ps.status === 'EXPIRED') { pushInactive(e, win, 'EXPIRED', ps.reason); continue; }
-    const history: Prior[] = [...win.priors, ...eligible.slice(1).map((l) => ({ date: l.src.date || '', low: l.low, high: l.high, note: l.src.name }))].filter((p) => p.date);
-    (activeByEntity.get(e) || activeByEntity.set(e, []).get(e)!).push({ it: win, history, note: ps.note, ps });
+    const pf = periodFacts(win.period, win.pkind, { context: win.periodContext, statement: win.statement, cumulativeYears: win.cumulativeYears });
+    const ps = periodStatusOf(pf.contextApplied ? pf.effectivePeriod : win.period, win.pkind, win.market, win.src.date || (win.gc?.announcedAt ?? null), now);
+    if (ps.status === 'EXPIRED') { pushInactive(e, win, 'EXPIRED', ps.reason, { periodEnd: ps.end ? ps.end.toISOString().slice(0, 10) : null }); continue; }
+    const history: Prior[] = [...win.priors, ...rest.map((l) => ({ date: l.src.date || '', low: l.low, high: l.high, note: l.src.name, abs: l.abs })).filter((p) => p.date)].filter((p) => p.date);
+    const versions: GuVersionIn[] = [...win.priors.map((p) => versionOfPrior(p, win.abs?.unit ?? null)), ...rest.map(versionOfItem), versionOfItem(win)];
+    const conflict = losers.length > 0;
+    const sources: GuSourceEntry[] = [srcEntry(win, tierOf(win) <= 2 ? 'PRIMARY' : 'OTHER'), ...losers.map((l) => srcEntry(l, tierOf(l) >= 3 ? 'MEDIA_CLAIM' : 'OTHER'))];
+    const primaryValue = conflict && tierOf(win) <= 2 ? sources[0] : null;
+    const mediaClaim = conflict && tierOf(win) <= 2 ? sources.slice(1).find((s) => s.tier >= 3) || null : null;
+    (activeByEntity.get(e) || activeByEntity.set(e, []).get(e)!).push({ it: win, history, note: ps.note, ps, versions, sources, conflict, primaryValue, mediaClaim, pf });
   }
-  const records: GuUniverseRecordX[] = [];
-  for (const [e, act] of Array.from(activeByEntity.entries())) {
-    const pts = act.map((a) => ({ ...a, pt: pointOf(a.it, a.history, a.ps), cls: classOf(a.it.pkind) }));
-    pts.sort((a, b) => METRIC_ORDER[a.it.metric] - METRIC_ORDER[b.it.metric] || PERIOD_CLASS_ORDER[a.cls] - PERIOD_CLASS_ORDER[b.cls]
-      || (periodEnd(a.it.period, a.it.market, a.it.src.date).end?.getTime() ?? 9e15) - (periodEnd(b.it.period, b.it.market, b.it.src.date).end?.getTime() ?? 9e15));
+  // potential duplicates: an unresolved name that closely matches another company's name in the same market
+  const dupOf = new Map<string, string>();
+  const entityList = Array.from(activeByEntity.keys());
+  for (const a of entityList) {
+    if (!isUnresolved(a)) continue;
+    const an = Array.from(nameSets.get(a) || [])[0] || '';
+    for (const b of entityList) {
+      if (b === a || b.split(':')[0] !== a.split(':')[0]) continue;
+      for (const bn of Array.from(nameSets.get(b) || [])) {
+        if (!an || !bn || an === bn) continue;
+        if (bn.startsWith(`${an} `) || an.startsWith(`${bn} `) || (Math.min(an.length, bn.length) >= 8 && editDistanceLe1(an, bn))) { dupOf.set(a, Array.from(activeByEntity.get(b)!)[0].it.company); break; }
+      }
+      if (dupOf.has(a)) break;
+    }
+  }
+  const mkRecord = (e: string, act: Array<{ a: ActiveSlot; pt: GuPoint; cls: GuUniverseRecordX['classification'] }>): GuUniverseRecordX => {
+    const pts = act.slice().sort((a, b) => METRIC_ORDER[a.a.it.metric] - METRIC_ORDER[b.a.it.metric] || PERIOD_CLASS_ORDER[a.cls] - PERIOD_CLASS_ORDER[b.cls]
+      || (periodEnd(a.a.it.period, a.a.it.market, a.a.it.src.date).end?.getTime() ?? 9e15) - (periodEnd(b.a.it.period, b.a.it.market, b.a.it.src.date).end?.getTime() ?? 9e15));
     // headline = the best revenue point (annual before multi-year), else the next metric in order
     const head = pts[0]; const rest = pts.slice(1);
-    const base = head.it;
-    const gc = base.gc ? { ...base.gc } : companyOf(base, pts.map((p) => p.it), head.pt, e);
-    const tracking = pts.map((p) => p.it.gc?.reality?.tracking).find((t) => t === 'AT_RISK' || t === 'BROKEN');
-    const company = base.company;
-    const rec: GuUniverseRecordX = {
-      record: gc, origin: base.origin, display: head.pt.display, metric: base.metric,
-      alsoDisplay: rest.map((r) => ({ metric: r.it.metric, display: r.pt.display, verification: r.it.verification, period: r.it.period, sourceDate: r.it.src.date, sourceName: r.it.src.name, implied: r.pt.implied,
-        secondaryDisplay: r.pt.secondaryDisplay, impliedDisplay: r.pt.impliedDisplay, periodStatus: r.pt.periodStatus, needsReview: r.pt.needsReview })) as GuUniverseRecord['alsoDisplay'],
-      mediaOnly: base.verification === 'SECONDARY_ONLY', revision: head.pt.revision, atRisk: !!tracking,
+    const base = head.a.it;
+    const gc0 = base.gc ? { ...base.gc } : companyOf(base, pts.map((p) => p.a.it), head.pt, e);
+    const gc: GgCompany = { ...gc0, verification: head.pt.verification };
+    const tracking = pts.map((p) => p.a.it.gc?.reality?.tracking).find((t) => t === 'AT_RISK' || t === 'BROKEN');
+    const resolved = !isUnresolved(e);
+    const blockingAll = pts.every((p) => p.pt.inDefaultView);
+    const allReasons: GuReviewReasonX[] = [];
+    for (const p of pts) for (const r of p.pt.reviewReasons) if (!allReasons.some((x) => x.code === r.code && x.text === r.text)) allReasons.push(r);
+    allReasons.sort((x, y) => Number(y.blocks) - Number(x.blocks));
+    const caveats = [...allReasons.filter((r) => !r.blocks).map((r) => r.text), ...(pts.some((p) => p.pt.staleVerification) ? [`Last verified more than ${STALE_VERIFICATION_DAYS} days ago; the record stays active until its period ends or it is replaced.`] : [])];
+    const hp = head.pt;
+    return {
+      record: gc, origin: base.origin, display: hp.display, metric: base.metric,
+      alsoDisplay: rest.map((r) => ({ metric: r.a.it.metric, display: r.pt.display, verification: r.pt.verification, period: r.a.it.period, sourceDate: r.a.it.src.date, sourceName: r.a.it.src.name, implied: r.pt.implied,
+        secondaryDisplay: r.pt.secondaryDisplay, impliedDisplay: r.pt.impliedDisplay, periodStatus: r.pt.periodStatus, periodRunState: r.pt.periodRunState, needsReview: r.pt.needsReview,
+        verificationState: r.pt.verificationState, growthType: r.pt.growthType, metricFamily: r.pt.metricFamily, basisLabel: r.pt.basisLabel })) as GuUniverseRecord['alsoDisplay'],
+      mediaOnly: base.verification === 'SECONDARY_ONLY', revision: hp.revision, atRisk: !!tracking,
       entityKey: e, tickers: Array.from(tickerSets.get(e) || []), names: Array.from(nameSets.get(e) || []), period: base.period, classification: head.cls, points: pts.map((p) => p.pt),
-      sourceName: base.src.name, sourceType: base.src.type, sourceUrl: base.src.url, sourceDate: base.src.date, sourceRank: base.src.rank, primarySource: head.pt.primarySource,
-      statement: base.statement, notes: base.notes, activeNote: head.note,
-      periodUnclear: head.pt.periodStatus === 'UNKNOWN' || head.pt.periodInferred, periodStatus: head.pt.periodStatus, needsReview: head.pt.needsReview, secondaryDisplay: head.pt.secondaryDisplay, impliedDisplay: head.pt.impliedDisplay,
+      sourceName: base.src.name, sourceType: base.src.type, sourceUrl: base.src.url, sourceDate: base.src.date, sourceRank: base.src.rank, primarySource: hp.primarySource,
+      statement: base.statement, notes: base.notes, activeNote: head.a.note,
+      periodUnclear: hp.periodStatus !== 'CONFIRMED', periodStatus: hp.periodStatus, periodRunState: hp.periodRunState, needsReview: hp.needsReview, secondaryDisplay: hp.secondaryDisplay, impliedDisplay: hp.impliedDisplay,
+      companyId: resolved ? e : null, tickerResolved: resolved, status: hp.status, current: hp.current,
+      verificationState: hp.verificationState, growthType: hp.growthType, guidanceType: hp.guidanceType, claimType: hp.claimType, metricFamily: hp.metricFamily,
+      sourceTier: hp.sourceTier, primarySourceFound: hp.primarySourceFound, primarySourceRead: hp.primarySourceRead, primarySourceText: hp.primarySourceText,
+      basisLabel: hp.basisLabel, growthVsPriorYear: hp.growthVsPriorYear, revisionVsPriorGuidance: hp.revisionVsPriorGuidance,
+      fiscalYear: hp.fiscalYear, fiscalQuarter: hp.fiscalQuarter, periodLabelSource: hp.periodLabelSource, periodNormalized: hp.periodNormalized, durationType: hp.durationType, cohort: hp.cohort,
+      history: hp.history, lastVerified: hp.lastVerified, lastVerifiedDaysAgo: hp.lastVerifiedDaysAgo, staleVerification: hp.staleVerification,
+      sources: hp.sources, sourceConflict: hp.sourceConflict, primaryValue: hp.primaryValue, mediaClaim: hp.mediaClaim,
+      reviewReasons: blockingAll ? [] : allReasons.map((r) => r.text), reviewReasonCodes: blockingAll ? [] : allReasons.map((r) => r.code), inReviewQueue: !blockingAll, caveats,
     };
-    void company;
-    records.push(rec);
+  };
+  const cmpRec = (a: GuUniverseRecordX, b: GuUniverseRecordX) => (a.record.market === b.record.market ? 0 : a.record.market === 'IN' ? -1 : 1) || (b.points[0].compareValue ?? -1) - (a.points[0].compareValue ?? -1) || a.record.company.localeCompare(b.record.company);
+  const records: GuUniverseRecordX[] = []; const defaultRecords: GuUniverseRecordX[] = []; const reviewQueue: GuUniverseRecordX[] = [];
+  for (const [e, actRaw] of Array.from(activeByEntity.entries())) {
+    const act = actRaw.map((a) => {
+      const pt = pointOf(a.it, a.history, a.ps, { now, versions: a.versions, lifecycle: 'ACTIVE', expiryReason: null, sources: a.sources, conflict: a.conflict, primaryValue: a.primaryValue, mediaClaim: a.mediaClaim, pf: a.pf, resolved: !isUnresolved(e), dupOf: dupOf.get(e) || null });
+      return { a, pt, cls: classOf(a.it.pkind) };
+    });
+    const full = mkRecord(e, act); records.push(full);
+    const elig = act.filter((x) => x.pt.inDefaultView), inel = act.filter((x) => !x.pt.inDefaultView);
+    if (!inel.length) defaultRecords.push(full);
+    else { if (elig.length) defaultRecords.push(mkRecord(e, elig)); reviewQueue.push(mkRecord(e, inel)); }
   }
-  records.sort((a, b) => (a.record.market === b.record.market ? 0 : a.record.market === 'IN' ? -1 : 1) || (b.points[0].compareValue ?? -1) - (a.points[0].compareValue ?? -1) || a.record.company.localeCompare(b.record.company));
+  records.sort(cmpRec); defaultRecords.sort(cmpRec); reviewQueue.sort(cmpRec);
   const stored: GuStoredPoint[] = [];
   for (const r of records) for (const p of r.points) {
     const it = activeByEntity.get(r.entityKey)!.find((a) => a.it.metric === p.metric && a.it.period === p.period)!.it;
     if (it.origin === 'RESEARCHED_SEED') continue;   // never frozen into the store: the data file is authoritative and re-read each time
     const slot = `${it.market}|${r.entityKey}|${it.metric}|${normPeriod(it.period)}`;
     stored.push({ key: `${slot}|${hash(`${it.src.url || it.src.name}|${it.src.date}|${p.display}`)}`, slot, market: it.market, ticker: it.ticker, company: it.company, metric: it.metric, low: it.low, high: it.high, open: it.open, gOrigin: it.gOrigin, abs: it.abs, base: it.base ?? null, needsReview: it.needsReview ?? null,
-      period: it.period, pkind: it.pkind, kind: it.kind, organic: it.organic, verification: it.verification, statement: it.statement.slice(0, 300), src: it.src, priors: r.points.find((x) => x === p)!.priors.slice(-3), origin: it.origin, display: p.display });
+      period: it.period, pkind: it.pkind, kind: it.kind, organic: it.organic, verification: it.verification, statement: it.statement.slice(0, 300), src: it.src, priors: r.points.find((x) => x === p)!.priors.slice(-3), origin: it.origin, display: p.display,
+      periodContext: it.periodContext ?? null, primarySourceRead: it.primarySourceRead ?? null, sourceMetricLabel: it.sourceMetricLabel ?? null, lastVerified: it.lastVerified ?? null });
   }
-  return { records, inactive, excluded, stored };
+  return { records, inactive, excluded, stored, defaultRecords, reviewQueue };
 }
 
 /** What the page shows in a metric column: the figure, or '—' with 'not verified' when no such statement exists. Never infers PAT from revenue. */
@@ -630,7 +855,7 @@ export function metricCell(rec: GuUniverseRecordX, metric: GgMetric): { text: st
 export const HIGH_GROWTH_LABEL = 'Highest verified guidance' as const;
 export const HIGH_GROWTH_RULE = 'Revenue or PAT growth at or above the threshold on the comparison value (stated figure, midpoint of a closed range, lower bound of an open range); active FY/CY/rolling-12M guidance, or an explicit multi-year CAGR listed separately; proxy metrics (presales, bookings), target amounts with no % stated, flagged and unverified-media records excluded.';
 const hgMetric = (p: GuPoint): GuHighGrowthMetric => ({ display: p.display, compareValue: p.compareValue as number, period: p.period, verification: p.verification, implied: p.implied, impliedBase: p.implied ? p.impliedGrowth?.baseLabel ?? null : null });
-export function selectHighGrowth(records: GuUniverseRecordX[], thr = 30): GuHighGrowthRowX[] {
+export function selectHighGrowth(records: GuUniverseRecordX[], thr = HIGH_GROWTH_THRESHOLD): GuHighGrowthRowX[] {
   const rows: Array<Omit<GuHighGrowthRowX, 'rank'>> = [];
   for (const r of records) {
     for (const horizon of ['SINGLE_YEAR', 'MULTI_YEAR_CAGR'] as GuHighGrowthHorizon[]) {
@@ -643,7 +868,8 @@ export function selectHighGrowth(records: GuUniverseRecordX[], thr = 30): GuHigh
         id: `${r.entityKey}|${horizon}`, guidance: [rev ? `${rev.display} Revenue` : '', pat ? `${pat.display} PAT` : ''].filter(Boolean).join(' / '),
         alsoDisplay: head === rev && pat ? [{ metric: 'PAT', display: pat.display, verification: pat.verification }] : head === pat && rev ? [{ metric: 'REVENUE', display: rev.display, verification: rev.verification }] : [],
         periodUnclear: false, mediaOnly: false,
-        revenue: rev ? hgMetric(rev) : null, pat: pat ? hgMetric(pat) : null, revision: head.revision, sourceName: head.sourceName, sourceDate: head.sourceDate, sourceUrl: head.sourceUrl, label: HIGH_GROWTH_LABEL,
+        revenue: rev ? hgMetric(rev) : null, pat: pat ? hgMetric(pat) : null, revision: head.revision,
+        verificationState: head.verificationState, growthType: head.growthType, basisLabel: head.basisLabel, revisionVsPriorGuidance: head.revisionVsPriorGuidance?.display ?? null, periodNormalized: head.periodNormalized, cohort: head.cohort, sourceName: head.sourceName, sourceDate: head.sourceDate, sourceUrl: head.sourceUrl, label: HIGH_GROWTH_LABEL,
       });
     }
   }
@@ -660,10 +886,80 @@ function bucketOf(rs: GuUniverseRecordX[], hg: GuHighGrowthRowX[]): GuUniverseBu
   const m = marketSummary(rs, hg);
   return { companies: m.companies, revenueGte30: m.revenueGe30, patGte30: m.patGe30, revenueAndPatGte30: m.multiMetric, highestRevenue: best ? { company: best.company, display: best.revenue!.display } : null };
 }
-export interface GuSummaryX extends Omit<GuUniverseSummary, keyof GuSummaryAdditions>, GuSummaryAdditions { all: GuUniverseSummary['all'] & { pendingPrimary: number } }
-export function summarize(records: GuUniverseRecordX[], now: Date, threshold = 30, inactive: GuInactiveRecord[] = []): GuSummaryX {
+const FAMILY_WORD: Record<GuMetricFamily, string> = { REVENUE: 'Revenue', NET_PROFIT: 'PAT', EBITDA: 'EBITDA', EPS: 'EPS', FCF: 'FCF' };
+const FAMILY_ORDER: Record<GuMetricFamily, number> = { REVENUE: 0, NET_PROFIT: 1, EBITDA: 2, EPS: 3, FCF: 4 };
+const TRUST_ORDER: GuTrust[] = ['verified', 'derived', 'partial', 'claimsAwaiting'];
+const COHORTS: GuCohort[] = ['ANNUAL', 'MULTI_YEAR_CAGR', 'QUARTERLY'];
+const trustOf = (s: GuVerificationState): GuTrust | null => (s === 'VERIFIED' ? 'verified' : s === 'DERIVED' ? 'derived' : s === 'PARTIAL' ? 'partial' : s === 'UNVERIFIED' ? 'claimsAwaiting' : null);
+/** Short growth text for a group row: '+60%', '+94–108% (derived)', '+43% (implied)', with ' CAGR' for a multi-year rate. Full text with its basis is in `display`. */
+function shortGrowth(p: GuPoint): string {
+  if (p.low == null) return p.display;
+  let t: string;
+  if (p.growthType === 'DERIVED' && p.growthExact && p.growthDerivation) { const rg = p.growthDerivation.currentLow !== p.growthDerivation.currentHigh; t = `${pctText(p.growthExact.low, rg ? p.growthExact.high : null, false, derivedDp(p.growthExact.low, rg ? p.growthExact.high : null))} (derived)`; }
+  else if (p.growthType === 'IMPLIED') t = `${pctText(p.low, p.open ? null : p.high === p.low ? null : p.high, p.open, derivedDp(p.low, p.high === p.low ? null : p.high))} (implied)`;
+  else t = pctText(p.low, p.open ? null : p.high === p.low ? null : p.high, p.open);
+  return p.cohort === 'MULTI_YEAR_CAGR' ? t.replace(/^([^ ]+)/, '$1 CAGR') : t;
+}
+const hgMetricX = (p: GuPoint): GuHgMetricX => ({
+  metric: p.metric, metricFamily: p.metricFamily, sourceMetricLabel: p.sourceMetricLabel, display: p.display, short: shortGrowth(p), compareValue: p.compareValue as number, period: p.period, periodNormalized: p.periodNormalized,
+  verificationState: p.verificationState, growthType: p.growthType, guidanceType: p.guidanceType, basisLabel: p.basisLabel, headlineBasis: p.headlineBasis, revisionVsPriorGuidance: p.revisionVsPriorGuidance?.display ?? null, sourceConflict: p.sourceConflict,
+});
+/**
+ * zzz853: the high-growth rows GROUPED, never one mixed ranking. A point qualifies when it is management guidance, ACTIVE, has a CONFIRMED period, is not flagged / proxy,
+ * has a % at or above the threshold, and belongs to a cohort: ANNUAL (single FY/CY/12M), MULTI_YEAR_CAGR (multi-year, never counted as single-year) or QUARTERLY.
+ * Revenue, PAT (net profit) and EBITDA are kept as separate metrics inside a row (Revenue +30% · PAT +60%); one metric is never counted as another.
+ * Trust sections: verified (strict: VERIFIED + CONFIRMED + active), derived, partial, claimsAwaiting (media / secondary only). Each section is split by cohort and sorted within the cohort.
+ */
+export function selectHighGrowthGroups(records: GuUniverseRecordX[], thr = HIGH_GROWTH_THRESHOLD): GuHighGrowthGroups {
+  const FAM = new Set<GuMetricFamily>(['REVENUE', 'NET_PROFIT', 'EBITDA']);
+  const acc = new Map<string, { r: GuUniverseRecordX; cohort: GuCohort; trust: GuTrust; pts: GuPoint[] }>();
+  for (const r of records) for (const p of r.points) {
+    if (!FAM.has(p.metricFamily) || !p.cohort || p.compareValue == null || p.low == null || p.compareValue < thr) continue;
+    if (p.claimType !== 'MANAGEMENT_GUIDANCE' || p.status !== 'ACTIVE' || p.periodStatus !== 'CONFIRMED' || p.periodRunState !== 'ACTIVE' || p.proxy || p.needsReview || !p.inDefaultView) continue;
+    const trust = trustOf(p.verificationState); if (!trust) continue;
+    const k = `${r.entityKey}|${p.cohort}|${trust}`; const cur = acc.get(k) || { r, cohort: p.cohort, trust, pts: [] }; cur.pts.push(p); acc.set(k, cur);
+  }
+  const rows: Array<Omit<GuHgGroupRow, 'rank'>> = [];
+  for (const { r, cohort, trust, pts } of Array.from(acc.values())) {
+    // one point per family: the highest comparison value
+    const byFam = new Map<GuMetricFamily, GuPoint>();
+    for (const p of pts) { const c = byFam.get(p.metricFamily); if (!c || (p.compareValue as number) > (c.compareValue as number)) byFam.set(p.metricFamily, p); }
+    const ms = Array.from(byFam.values()).sort((a, b) => FAMILY_ORDER[a.metricFamily] - FAMILY_ORDER[b.metricFamily]);
+    const head = ms.slice().sort((a, b) => (b.compareValue as number) - (a.compareValue as number) || FAMILY_ORDER[a.metricFamily] - FAMILY_ORDER[b.metricFamily])[0];
+    const metrics = ms.map(hgMetricX);
+    rows.push({ id: `${r.entityKey}|${cohort}|${trust}`, entityKey: r.entityKey, company: r.record.company, ticker: r.record.ticker || r.tickers[0] || null, market: r.record.market, cohort, trust, metrics,
+      text: metrics.map((m) => `${FAMILY_WORD[m.metricFamily]} ${m.short}`).join(' · '), headline: hgMetricX(head), sourceName: head.sourceName, sourceDate: head.sourceDate, sourceUrl: head.sourceUrl });
+  }
+  const cmp = (a: Omit<GuHgGroupRow, 'rank'>, b: Omit<GuHgGroupRow, 'rank'>) => b.headline.compareValue - a.headline.compareValue || a.company.localeCompare(b.company);
+  const rank = (list: Array<Omit<GuHgGroupRow, 'rank'>>): GuHgGroupRow[] => list.map((r, i) => ({ ...r, rank: i + 1 }));
+  const cohorts = {} as Record<GuCohort, GuHgGroupRow[]>; const trust = {} as Record<GuTrust, Record<GuCohort, GuHgGroupRow[]>>;
+  for (const c of COHORTS) cohorts[c] = rank(rows.filter((r) => r.cohort === c).sort((a, b) => TRUST_ORDER.indexOf(a.trust) - TRUST_ORDER.indexOf(b.trust) || cmp(a, b)));
+  for (const t of TRUST_ORDER) { trust[t] = {} as Record<GuCohort, GuHgGroupRow[]>; for (const c of COHORTS) trust[t][c] = rank(rows.filter((r) => r.trust === t && r.cohort === c).sort(cmp)); }
+  const n = (f: (r: Omit<GuHgGroupRow, 'rank'>) => boolean) => rows.filter(f).length;
+  return { threshold: thr, label: HIGH_GROWTH_LABEL, rule: HIGH_GROWTH_GROUPS_RULE, cohorts, trust,
+    counts: { rows: rows.length, verified: n((r) => r.trust === 'verified'), derived: n((r) => r.trust === 'derived'), partial: n((r) => r.trust === 'partial'), claimsAwaiting: n((r) => r.trust === 'claimsAwaiting'), ANNUAL: n((r) => r.cohort === 'ANNUAL'), MULTI_YEAR_CAGR: n((r) => r.cohort === 'MULTI_YEAR_CAGR'), QUARTERLY: n((r) => r.cohort === 'QUARTERLY') } };
+}
+export const HIGH_GROWTH_GROUPS_RULE = 'Grouped, never one mixed ranking. Cohorts: ANNUAL (single FY/CY), MULTI_YEAR_CAGR, QUARTERLY. Trust: verified (primary source read, growth stated, period confirmed), derived (growth calculated from the primary source amounts), partial, claimsAwaiting (media only). Revenue, PAT and EBITDA are separate metrics. Only default-view records (company resolved, period confirmed, not flagged) are listed.';
+
+export interface GuSummaryIntegrity {
+  /** zzz853: grouped high-growth rows (cohort x trust). The flat `highGrowth` list above is kept as it was. */ highGrowthGroups: GuHighGrowthGroups;
+  /** zzz853: record counts by verification state, computed from the SAME records as every other number here */ counts: GuStateCounts;
+  /** the same split by point (one record can carry several metrics) */ pointCounts: GuStateCounts;
+  reviewQueueCount: number; reviewReasonCounts: Record<string, number>; staleVerificationCount: number; sourceConflictCount: number;
+  /** auditable expiry: how many records left the active universe and why */ expiry: GuExpirySummary;
+}
+export interface GuSummaryX extends Omit<GuUniverseSummary, keyof GuSummaryAdditions>, GuSummaryAdditions, GuSummaryIntegrity { all: GuUniverseSummary['all'] & { pendingPrimary: number } }
+const stateCounts = (states: GuVerificationState[]): GuStateCounts => ({
+  activeRecords: states.length, verified: states.filter((s) => s === 'VERIFIED').length, partial: states.filter((s) => s === 'PARTIAL').length, derived: states.filter((s) => s === 'DERIVED').length,
+  unverified: states.filter((s) => s === 'UNVERIFIED').length, periodUnclear: states.filter((s) => s === 'PERIOD_UNCLEAR').length,
+});
+export function summarize(records: GuUniverseRecordX[], now: Date, threshold = HIGH_GROWTH_THRESHOLD, inactive: GuInactiveRecord[] = [], reviewQueue: GuUniverseRecordX[] = []): GuSummaryX {
   const hg = selectHighGrowth(records, threshold); const inM = (m: 'IN' | 'US') => records.filter((r) => r.record.market === m);
   const allPoints = records.flatMap((r) => r.points);
+  const reasonCounts: Record<string, number> = {};
+  for (const r of reviewQueue) for (const c of r.reviewReasonCodes) reasonCounts[c] = (reasonCounts[c] || 0) + 1;
+  const reasonsOf = (st: string) => inactive.filter((x) => x.status === st).length;
+  const reasonList = [{ reason: 'period completed', count: reasonsOf('EXPIRED') }, { reason: 'superseded', count: reasonsOf('SUPERSEDED') }, { reason: 'withdrawn', count: reasonsOf('WITHDRAWN') }].filter((x) => x.count > 0);
   return {
     asOf: now.toISOString(), threshold,
     india: bucketOf(inM('IN'), hg), usa: bucketOf(inM('US'), hg),
@@ -674,16 +970,18 @@ export function summarize(records: GuUniverseRecordX[], now: Date, threshold = 3
     byMarket: { IN: marketSummary(inM('IN'), hg), US: marketSummary(inM('US'), hg), ALL: marketSummary(records, hg) },
     highGrowth: hg, highGrowthLabel: HIGH_GROWTH_LABEL, highGrowthRule: HIGH_GROWTH_RULE,
     expiredCount: inactive.filter((x) => x.status === 'EXPIRED').length,
-    unknownPeriodCount: allPoints.filter((p) => p.periodStatus === 'UNKNOWN').length,
+    unknownPeriodCount: allPoints.filter((p) => p.periodRunState === 'UNKNOWN').length,
     awaitingVerificationCount: records.filter((r) => r.points.some((p) => p.awaitingVerification && p.compareValue != null && p.compareValue >= threshold)).length,
     needsReviewCount: allPoints.filter((p) => p.needsReview).length,
+    highGrowthGroups: selectHighGrowthGroups(records, threshold),
+    counts: stateCounts(records.map((r) => r.verificationState)), pointCounts: stateCounts(allPoints.map((p) => p.verificationState)),
+    reviewQueueCount: reviewQueue.length, reviewReasonCounts: reasonCounts,
+    staleVerificationCount: records.filter((r) => r.staleVerification).length, sourceConflictCount: records.filter((r) => r.sourceConflict).length,
+    expiry: { expired: reasonsOf('EXPIRED'), superseded: reasonsOf('SUPERSEDED'), withdrawn: reasonsOf('WITHDRAWN'), total: inactive.length, reasons: reasonList },
   };
 }
 
 // ═══ regression: the owner's list vs what the sources say ═══════════════════════════════════════
-export const REGRESSION_TOLERANCE_PP = 2;
-/** An owner figure this close to (or below) an earlier guidance figure is read as 'quoting the earlier target'. */
-export const PRIOR_NEIGHBOURHOOD_PP = 10;
 export interface GuOwnerClaim { low: number; high: number | null; text: string }
 /** Reads '35-40% Top line', '80%+revenue', '60% revenue and 70% PAT', '40% Growth topline and Bottomline' into per-metric claims. A figure with no metric word is read as revenue. */
 export function parseOwnerText(text: string): Partial<Record<GgMetric, GuOwnerClaim>> {
@@ -703,11 +1001,51 @@ export function parseOwnerText(text: string): Partial<Record<GgMetric, GuOwnerCl
 }
 const overlaps = (o: GuOwnerClaim, fLow: number, fHigh: number | null, tol: number) => o.low - tol <= (fHigh ?? Infinity) && (o.high ?? Infinity) + tol >= fLow;
 const emptyCounts = (): Record<GuRegressionStatus, number> => ({ VERIFIED: 0, PARTIALLY_VERIFIED: 0, NOT_FOUND: 0, REJECTED: 0, SUPERSEDED: 0, EXPIRED: 0 });
-export interface GuRegressionRowX extends GuRegressionRow { sourceUrl: string | null; verification: GgVerification | null; foundOrigin: GuUniverseRecordOrigin | null }
-export interface GuRegressionResponseX extends GuRegressionResponse { rows: GuRegressionRowX[] }
+export interface GuRegressionRowX extends GuRegressionRow {
+  sourceUrl: string | null; verification: GgVerification | null; foundOrigin: GuUniverseRecordOrigin | null;
+  // ── zzz853: the owner's regression columns (every one of the listed claims appears; nothing is forced to pass) ──
+  /** the company resolved to a ticker */ resolved: boolean;
+  /** a guidance statement for this company + metric was found */ guidanceFound: boolean;
+  /** any source (primary or media) was found for it */ sourceFound: boolean;
+  /** 'PRIMARY SOURCE FOUND' | 'primary source not found' */ primarySource: string; primarySourceRead: boolean | null;
+  growthType: 'explicit' | 'derived' | 'implied' | 'unknown' | null;
+  currentGuidance: string | null; previousGuidance: string | null;
+  /** still current (not expired / superseded) */ active: boolean; inDefaultView: boolean | null;
+  verificationState: GuVerificationState | null;
+  /** why guidance or its primary source is missing (null when both were found) */ reasonIfMissing: string | null;
+  /** growth against the prior-year actual and the revision against the prior guidance, kept as two separate labelled facts */
+  growthVsPriorYear: GuGrowthVsPriorYear | null; revisionVsPriorGuidance: GuRevisionVsPrior | null;
+  /** one plain sentence: what was found, on which basis, and what is still missing */ finding: string;
+  reviewReasons: string[];
+}
+export interface GuRegressionResponseX extends GuRegressionResponse { rows: GuRegressionRowX[]; /** distinct companies in the table */ companies: number; columns: string[] }
 export interface GuOwnerRow { ownerText: string; company?: string; ticker?: string | null; market?: 'IN' | 'US'; metric?: GgMetric }
 
 /** Pure. One row per owner statement (per metric). `ownerRows` default: every researched row that carries the owner's original text. */
+export const REGRESSION_COLUMNS = ['company', 'resolved', 'guidanceFound', 'sourceFound', 'primarySource', 'period', 'metric', 'growthType', 'currentGuidance', 'previousGuidance', 'active', 'verificationState', 'reasonIfMissing'];
+/** Adds the owner's regression columns to a row. Pure; every value comes from the found point (or the inactive record), never invented. */
+function withRegressionExtras(r: GuRegressionRowX, pt: GuPoint | null, rec: GuUniverseRecordX | undefined, inact: GuInactiveRecord | undefined, resolved: boolean): GuRegressionRowX {
+  const found = !!pt || !!inact && (r.status === 'EXPIRED' || r.status === 'SUPERSEDED');
+  const prev = pt?.revisionVsPriorGuidance?.previous ?? (pt && pt.priors.length ? null : null);
+  const lastPrior = pt && pt.priors.length ? pt.priors.filter((p) => p.date).sort((a, b) => a.date.localeCompare(b.date))[pt.priors.length - 1] : null;
+  const previousGuidance = prev ? `${prev.display}${prev.date ? ` (${prev.date})` : ''}` : lastPrior ? `${fmtPrior(lastPrior)} (${lastPrior.date})` : null;
+  const gt = pt ? (pt.growthType === 'EXPLICIT' ? 'explicit' : pt.growthType === 'DERIVED' ? 'derived' : pt.growthType === 'IMPLIED' ? 'implied' : 'unknown') : null;
+  const primary = pt ? pt.primarySourceText : 'primary source not found';
+  const parts: string[] = [];
+  if (pt) {
+    parts.push(`${pt.display} ${METRIC_WORD[pt.metric]} (${pt.period})`);
+    if (pt.growthVsPriorYear) parts.push(`growth vs prior-year actual: ${pt.growthVsPriorYear.display}`);
+    if (pt.revisionVsPriorGuidance) parts.push(`revision vs prior guidance: ${pt.revisionVsPriorGuidance.display}`);
+    parts.push(pt.primarySourceFound ? (pt.primarySourceRead ? 'primary source read' : 'primary source found, not yet read') : 'primary source not found (media only)');
+  }
+  return {
+    ...r, resolved, guidanceFound: !!pt, sourceFound: !!pt || (found && !!inact), primarySource: primary, primarySourceRead: pt ? pt.primarySourceRead : null, growthType: gt,
+    currentGuidance: pt ? pt.display : inact ? inact.display : null, previousGuidance, active: !!pt && pt.status === 'ACTIVE', inDefaultView: pt ? pt.inDefaultView : null, verificationState: pt ? pt.verificationState : null,
+    reasonIfMissing: !pt ? r.reason : pt.primarySourceFound ? null : 'Primary source not found: only media or another secondary source backs this, and the company filing has not been read yet.',
+    growthVsPriorYear: pt?.growthVsPriorYear ?? null, revisionVsPriorGuidance: pt?.revisionVsPriorGuidance ?? null,
+    finding: pt ? parts.join('; ') : r.reason, reviewReasons: rec && pt ? pt.reviewReasons.map((x) => x.text) : [],
+  };
+}
 export function buildRegression(seedRows: GuSeedRow[], universe: Pick<GuUniverseBuild, 'records'> & Partial<Pick<GuUniverseBuild, 'inactive'>>, now: Date, ownerRows?: GuOwnerRow[]): GuRegressionResponseX {
   const owners: Array<{ o: GuOwnerRow; seed: GuSeedRow | null; metric: GgMetric }> = [];
   if (ownerRows) {
@@ -729,21 +1067,24 @@ export function buildRegression(seedRows: GuSeedRow[], universe: Pick<GuUniverse
     const pts = rec ? rec.points.filter((p) => p.metric === metric) : [];
     const pt = pts.find((p) => seed && normPeriod(p.period) === normPeriod(seed.period)) || pts[0] || null;
     const base = { ownerText: o.ownerText, company, ticker, market, expected };
+    let inactF: GuInactiveRecord | undefined;
+    const push = (r: GuRegressionRowX) => { rows.push(withRegressionExtras(r, pt, rec, inactF, !!ticker || !!rec?.tickerResolved)); };
     const row = (status: GuRegressionStatus, reason: string, found = '—', p: GuPoint | null = null): GuRegressionRowX => ({
       ...base, found, source: p?.sourceName ?? null, sourceDate: p?.sourceDate ?? null, period: p?.period ?? null, metric: p ? metric : null, status, reason, sourceUrl: p?.sourceUrl ?? null, verification: p?.verification ?? null, foundOrigin: p?.origin ?? null,
-    });
+    }) as GuRegressionRowX;
     if (!pt) {
       const inact = (universe.inactive || []).find((x) => x.market === market && x.metric === metric && (x.ticker === ticker || normCompanyName(x.company) === nm) && (!seed || normPeriod(x.period) === normPeriod(seed.period)));
-      if (inact && inact.status === 'EXPIRED') { rows.push({ ...row('EXPIRED', `The guidance found was for ${inact.period}, which has ended. No newer guidance was found.`, `${inact.display} ${METRIC_WORD[metric]} (${inact.period})`), source: inact.sourceName, sourceDate: inact.sourceDate, period: inact.period, metric }); continue; }
-      if (inact && inact.status === 'SUPERSEDED') { rows.push({ ...row('SUPERSEDED', 'A later record replaced this guidance.', `${inact.display} ${METRIC_WORD[metric]} (${inact.period})`), source: inact.sourceName, sourceDate: inact.sourceDate, period: inact.period, metric }); continue; }
+      inactF = inact;
+      if (inact && inact.status === 'EXPIRED') { push({ ...row('EXPIRED', `The guidance found was for ${inact.period}, which has ended. No newer guidance was found.`, `${inact.display} ${METRIC_WORD[metric]} (${inact.period})`), source: inact.sourceName, sourceDate: inact.sourceDate, period: inact.period, metric }); continue; }
+      if (inact && inact.status === 'SUPERSEDED') { push({ ...row('SUPERSEDED', 'A later record replaced this guidance.', `${inact.display} ${METRIC_WORD[metric]} (${inact.period})`), source: inact.sourceName, sourceDate: inact.sourceDate, period: inact.period, metric }); continue; }
       const why = seed && seed.verification === 'UNVERIFIED' ? `No source we could read says this. ${seed.notes.replace(/^CONFLICT:\s*/i, '').slice(0, 240)}` : 'No source found for this company and metric.';
-      rows.push({ ...row('NOT_FOUND', why), period: seed?.period ?? null, metric });
+      push({ ...row('NOT_FOUND', why), period: seed?.period ?? null, metric });
       continue;
     }
     const found = `${pt.display} ${METRIC_WORD[metric]} (${pt.period})`;
-    if (pt.sourceRank >= 11) { rows.push(row('NOT_FOUND', `Only a ${pt.sourceRank === 12 ? 'social-media post' : 'blog or forum post'} gives a figure (${pt.display}). That is not a usable source, so the claim is not confirmed.`, found, pt)); continue; }
-    if (pt.low == null) { rows.push(row('PARTIALLY_VERIFIED', `The source gives a rupee or dollar target but no growth percent, so your ${expected} cannot be checked against it.`, found, pt)); continue; }
-    if (!claim) { rows.push(row('PARTIALLY_VERIFIED', 'The list text gives no figure that can be compared.', found, pt)); continue; }
+    if (pt.sourceRank >= 11) { push(row('NOT_FOUND', `Only a ${pt.sourceRank === 12 ? 'social-media post' : 'blog or forum post'} gives a figure (${pt.display}). That is not a usable source, so the claim is not confirmed.`, found, pt)); continue; }
+    if (pt.low == null) { push(row('PARTIALLY_VERIFIED', `The source gives a rupee or dollar target but no growth percent, so your ${expected} cannot be checked against it.`, found, pt)); continue; }
+    if (!claim) { push(row('PARTIALLY_VERIFIED', 'The list text gives no figure that can be compared.', found, pt)); continue; }
     const matches = overlaps(claim, pt.low, pt.open ? null : pt.high, REGRESSION_TOLERANCE_PP);
     const who = pt.primarySource ? `The company's own ${pt.sourceType.toLowerCase()}` : 'Media or commentary';
     if (matches) {
@@ -753,17 +1094,17 @@ export function buildRegression(seedRows: GuSeedRow[], universe: Pick<GuUniverse
       if (pt.implied) caveats.push('The growth is worked out from a target amount, not stated as a percent by management.');
       if (pt.needsReview) caveats.push(`Flagged for review: ${pt.needsReview}`);
       const full = pt.verification === 'VERIFIED' && !pt.needsReview && !caveats.some((c) => !/worked out/.test(c));
-      if (full) rows.push(row('VERIFIED', `${who} (${pt.sourceDate || 'undated'}) says ${pt.display}. The list figure ${claim.text} is within ${REGRESSION_TOLERANCE_PP} points.${caveats.length ? ` ${caveats.join(' ')}` : ''}`, found, pt));
-      else rows.push(row('PARTIALLY_VERIFIED', `${pt.primarySource ? `${who} (${pt.sourceDate || 'undated'}) says ${pt.display}.` : `Only media or commentary backs this. It says ${pt.display}.`} The list figure ${claim.text} is within ${REGRESSION_TOLERANCE_PP} points.${pt.primarySource ? '' : " The company's own filing or transcript has not been read yet."}${caveats.length ? ` ${caveats.join(' ')}` : ''}`, found, pt));
+      if (full) push(row('VERIFIED', `${who} (${pt.sourceDate || 'undated'}) says ${pt.display}. The list figure ${claim.text} is within ${REGRESSION_TOLERANCE_PP} points.${caveats.length ? ` ${caveats.join(' ')}` : ''}`, found, pt));
+      else push(row('PARTIALLY_VERIFIED', `${pt.primarySource ? `${who} (${pt.sourceDate || 'undated'}) says ${pt.display}.` : `Only media or commentary backs this. It says ${pt.display}.`} The list figure ${claim.text} is within ${REGRESSION_TOLERANCE_PP} points.${pt.primarySource ? '' : " The company's own filing or transcript has not been read yet."}${caveats.length ? ` ${caveats.join(' ')}` : ''}`, found, pt));
       continue;
     }
     // number does not match: is the owner quoting an earlier target that management has since raised?
     const prior = pt.priors.filter((p) => p.low != null).find((p) => claim.low <= (p.high ?? p.low!) + PRIOR_NEIGHBOURHOOD_PP && claim.low >= (p.low as number) - PRIOR_NEIGHBOURHOOD_PP - REGRESSION_TOLERANCE_PP && pt.low! > (claim.high ?? claim.low));
-    if (prior) { rows.push(row('SUPERSEDED', `The list figure ${claim.text} is close to the earlier target (${fmtPrior(prior)}, ${prior.date}). Management has since raised guidance to ${pt.display}.${pt.needsReview ? ` Flagged for review: ${pt.needsReview}` : ''}`, found, pt)); continue; }
+    if (prior) { push(row('SUPERSEDED', `The list figure ${claim.text} is close to the earlier target (${fmtPrior(prior)}, ${prior.date}). Management has since raised guidance to ${pt.display}.${pt.needsReview ? ` Flagged for review: ${pt.needsReview}` : ''}`, found, pt)); continue; }
     const soft = pt.verification !== 'VERIFIED' || !pt.primarySource ? ` This rests on ${pt.primarySource ? 'a partly verified' : 'a media or secondary'} source and the company's own transcript has not been read, so it is the best figure found so far, not a final answer.` : '';
     const note = seed?.notes ? ` Researcher note: ${seed.notes.replace(/^CONFLICT:\s*/i, '').slice(0, 260)}` : '';
-    rows.push(row('REJECTED', `${who} says ${pt.display}. The list says ${claim.text}. The gap is more than ${REGRESSION_TOLERANCE_PP} points.${pt.implied ? ' The source figure is worked out from a target amount.' : ''}${pt.needsReview ? ` Flagged for review: ${pt.needsReview}` : ''}${soft}${note}`, found, pt));
+    push(row('REJECTED', `${who} says ${pt.display}. The list says ${claim.text}. The gap is more than ${REGRESSION_TOLERANCE_PP} points.${pt.implied ? ' The source figure is worked out from a target amount.' : ''}${pt.needsReview ? ` Flagged for review: ${pt.needsReview}` : ''}${soft}${note}`, found, pt));
   }
   const counts = emptyCounts(); for (const r of rows) counts[r.status]++;
-  return { asOf: now.toISOString(), rows, counts };
+  return { asOf: now.toISOString(), rows, counts, companies: new Set(rows.map((r) => `${r.market}|${normCompanyName(r.company)}`)).size, columns: REGRESSION_COLUMNS };
 }

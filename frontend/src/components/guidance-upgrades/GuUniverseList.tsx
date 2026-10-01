@@ -3,11 +3,11 @@
 import React, { useState } from 'react';
 import type { GuUniverseRecord } from '@/lib/guidance-universe-types';
 import type { GgCompany } from '@/lib/growth-guidance-types';
-import { primaryDisplay, metricShort, verificationMark, verificationTooltip, eventTags, recordPeriodUnclear, PERIOD_UNCLEAR_HINT, PERIOD_UNCLEAR_LABEL } from '@/lib/guidance-upgrades-format';
+import { primaryDisplay, metricShort, eventTags, recordPeriodUnclear, PERIOD_UNCLEAR_HINT, PERIOD_UNCLEAR_LABEL } from '@/lib/guidance-upgrades-format';
+import { cohortLabel, reasonsPlain, recordBasis, recordBadge, type GuRecX } from './gu-ui';
 import { R, box } from './gu-tokens';
-import { Chip, btn } from './GuBits';
+import { Chip, VerBadge, BasisLine, LastVerified, btn } from './GuBits';
 import { GuCompanyDetail } from './GuCompanyDetail';
-import { MARK_COLOR } from './GuHighGrowthList';
 
 const TONE = { green: R.green, red: R.red, amber: R.amber } as const;
 const MOBILE_LIMIT = 25;
@@ -21,7 +21,10 @@ export function GuUniverseList({ records, showMarket, limit = MOBILE_LIMIT, onFu
     <div style={{ display: 'grid', gap: 4 }}>
       <ol style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 4 }}>
         {list.map((r, i) => {
-          const m = verificationMark(r);
+          const x = r as GuRecX;
+          const b = recordBadge(x);
+          const reasons = reasonsPlain(x);
+          const basis = recordBasis(x);
           const id = r.record.id;
           const isOpen = open === id;
           const sec = r.alsoDisplay || [];
@@ -32,12 +35,20 @@ export function GuUniverseList({ records, showMarket, limit = MOBILE_LIMIT, onFu
                 <span style={{ color: R.dim, minWidth: 22 }}>{i + 1}.</span>
                 <b>{r.record.company}</b>
                 <span>— {primaryDisplay(r)} {metricShort(r.metric || r.record.primary?.metric)}{sec.map((a) => ` / ${a.display} ${metricShort(a.metric)}`).join('')}</span>
-                <span title={verificationTooltip(r)} style={{ color: MARK_COLOR[m.glyph], fontWeight: 900 }} aria-label={m.label}>{m.glyph}</span>
+                <VerBadge b={b} />
+                {x.cohort && <span title="Annual, multi-year CAGR and quarterly figures are not comparable with each other."><Chip color={R.grey} dashed>{cohortLabel(x.cohort)}</Chip></span>}
                 <span style={{ fontSize: 12.5, color: R.dim }}>{r.record.primary?.period || ''}{showMarket ? ` · ${r.record.market === 'IN' ? 'India' : r.record.market === 'US' ? 'USA' : ''}` : ''}</span>
                 {recordPeriodUnclear(r) && <span title={PERIOD_UNCLEAR_HINT}><Chip color={R.grey} dashed>{PERIOD_UNCLEAR_LABEL}</Chip></span>}
                 {eventTags(r).map((t) => <Chip key={t.label} color={TONE[t.tone]} title={t.tip}>{t.label}</Chip>)}
                 <span aria-hidden style={{ marginLeft: 'auto', color: R.dim, fontSize: 12 }}>{isOpen ? 'Hide' : 'Details'}</span>
               </button>
+              {(basis?.line || reasons.length > 0 || x.lastVerified || x.lastVerifiedDaysAgo != null) && (
+                <div style={{ display: 'grid', gap: 1, paddingLeft: 30, marginTop: 2 }}>
+                  <BasisLine t={basis} />
+                  {reasons.length > 0 && <div style={{ fontSize: 12, color: R.amber }}><b>Needs review:</b> {reasons.join(' ')}</div>}
+                  <LastVerified r={x} />
+                </div>
+              )}
               {isOpen && <GuCompanyDetail r={r} onFull={onFull} />}
             </li>
           );

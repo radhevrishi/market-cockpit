@@ -2,8 +2,9 @@
 // zzz843 — one compact guidance-upgrade card. No score is ever shown; order comes from the engine.
 import React from 'react';
 import type { GuidanceEvent } from '@/lib/guidance-upgrades-types';
-import { DURATION_LABEL, FLAG_LABEL, IMPACT_LABEL, MATERIALITY_LABEL, METRIC_LABEL, THESIS_LABEL, UNAVAILABLE, agoText, changeMarker, fmtBeforeAfter, fmtNumber, isHeadlineOnly, secondUpgradeText, showsDecision, tickerText, hasRealRaise, isReiteration } from '@/lib/guidance-upgrades-format';
-import { IMPACT_COLOR, R, box } from './gu-tokens';
+import { DURATION_LABEL, FLAG_LABEL, IMPACT_LABEL, MATERIALITY_LABEL, METRIC_LABEL, THESIS_LABEL, UNAVAILABLE, agoText, changeMarker, fmtBeforeAfter, fmtNumber, isHeadlineOnly, secondUpgradeText, showsDecision, tickerText, hasRealRaise, isReiteration, primaryStateLine, raiseVsPreviousText, sourceConflictLine } from '@/lib/guidance-upgrades-format';
+import { IMPACT_COLOR, R, TONE_COLOR, box } from './gu-tokens';
+import { safeEventLabel, sourceDisplayName } from './gu-ui';
 import { Chip, ConsensusLine, CrossLinks, DecisionChip, DetectedVia, DurabilityRow, Field, GapBadge, HeadlineOnlyBanner, InflectionBadge, MetricBasisChip, RangeBlock, SourceChip, StageChip, TopEndCutNote, UnitWarnings, UnverifiedBanner, WhyNow } from './GuBits';
 
 export function GuCard({ e, onOpen, now }: { e: GuidanceEvent; onOpen: (id: string) => void; now: Date }) {
@@ -11,6 +12,9 @@ export function GuCard({ e, onOpen, now }: { e: GuidanceEvent; onOpen: (id: stri
   const second = secondUpgradeText(e);
   const v = e.valuation;
   const headline = isHeadlineOnly(e);
+  const lab = safeEventLabel(e);
+  const conflict = sourceConflictLine(e);
+  const primary = primaryStateLine(e);
   return (
     <article className="gu-card" style={box({ padding: 12, display: 'flex', flexDirection: 'column', gap: 8, cursor: 'pointer' })}
       onClick={() => onOpen(e.guidance_event_id)} tabIndex={0} role="button" aria-label={`Open details for ${e.company}`}
@@ -18,17 +22,19 @@ export function GuCard({ e, onOpen, now }: { e: GuidanceEvent; onOpen: (id: stri
       <header style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <b style={{ fontSize: 15 }}>{e.company}</b>
         <span style={{ fontSize: 11, color: R.dim, fontWeight: 700 }}>{tickerText(e)} · {e.market === 'IN' ? 'India' : e.market === 'US' ? 'USA' : 'Global'}</span>
-        {!headline && isReiteration(e)
-          ? <Chip color={R.grey} title="The company repeated its earlier guidance. Nothing was raised.">REITERATED · {agoText(e.announcement_timestamp || e.announcement_date, now)}</Chip>
-          : headline
-          ? <Chip color={R.amber} dashed>DETECTED · {agoText(e.announcement_timestamp || e.announcement_date, now)}</Chip>
-          : <Chip color={hasRealRaise(e) ? R.green : R.amber}>{hasRealRaise(e) ? 'GUIDANCE UPGRADE' : 'GUIDANCE UPDATE'} · {agoText(e.announcement_timestamp || e.announcement_date, now)}</Chip>}
+        <Chip color={lab.tone === 'green' ? R.green : lab.tone === 'grey' ? R.grey : lab.tone === 'red' ? R.red : R.amber} dashed={lab.dashed}
+          title={lab.label === 'GUIDANCE UPGRADE' ? 'Numbers say the guidance went up and the company\'s own document confirms it.' : lab.label === 'REITERATION' ? 'The company repeated its earlier guidance. Nothing was raised.' : lab.label === 'UNVERIFIED CLAIM' ? 'Reported by a media or secondary source. The company document has not been read, so this is not counted as an upgrade.' : lab.label === 'GUIDANCE LOWERED' ? 'The numbers went down.' : 'Some numbers went up and some did not, or the range moved. Not a clean raise.'}>
+          {lab.label} · {agoText(e.announcement_timestamp || e.announcement_date, now)}
+        </Chip>
         <InflectionBadge e={e} /><MetricBasisChip e={e} />
         {e.thesis && <Chip color={R.violet}>{THESIS_LABEL[e.thesis]}</Chip>}
         <span style={{ marginLeft: 'auto' }}><DecisionChip e={e} /></span>
       </header>
 
       <StageChip e={e} />
+      {lab.note && <div role="note" style={{ fontSize: 12.5, color: R.dim, borderLeft: `3px solid ${R.grey}`, paddingLeft: 8 }}><b>Audit note:</b> {lab.note}</div>}
+      {primary && <div style={{ fontSize: 12.5, color: e.primaryState === 'PRIMARY_SOURCE_READ' ? R.green : R.amber }}><b>Primary source:</b> {primary}</div>}
+      {conflict && <div role="note" style={{ fontSize: 12.5, color: R.red }}><b>Sources disagree.</b> {conflict}. Both are kept.</div>}
       {headline ? <HeadlineOnlyBanner e={e} /> : !verified && <UnverifiedBanner />}
       <TopEndCutNote e={e} />
       <UnitWarnings e={e} />
@@ -44,7 +50,7 @@ export function GuCard({ e, onOpen, now }: { e: GuidanceEvent; onOpen: (id: stri
               <span style={{ color: R.dim }}>{b.before}</span><span aria-hidden>→</span><b>{b.after}</b>
               {unknownBefore || !b.delta
                 ? <span style={{ color: R.faint }}>change {UNAVAILABLE}</span>
-                : <span style={{ color: mk.kind === 'UP' ? R.green : mk.kind === 'DOWN' ? R.red : R.amber, fontWeight: 800 }}>{mk.glyph ? `${mk.glyph} ` : ''}{mk.kind === 'NEUTRAL' ? `midpoint ${b.delta}` : b.delta}</span>}
+                : <span title={raiseVsPreviousText(c) || undefined} style={{ color: mk.kind === 'UP' ? R.green : mk.kind === 'DOWN' ? R.red : R.amber, fontWeight: 800 }}>{mk.glyph ? `${mk.glyph} ` : ''}{mk.kind === 'NEUTRAL' ? `midpoint ${b.delta}` : b.delta}</span>}
             </div>
           );
         })}
@@ -73,5 +79,34 @@ export function GuCard({ e, onOpen, now }: { e: GuidanceEvent; onOpen: (id: stri
       <SourceChip e={e} />
       <CrossLinks e={e} />
     </article>
+  );
+}
+
+
+/** Audit area: events that are NOT a clean verified raise (repeats, mixed, lowered, adjusted-only). Shown apart, never counted as upgrades. */
+export function GuAuditArea({ events, onOpen, now }: { events: GuidanceEvent[]; onOpen: (id: string) => void; now: Date }) {
+  if (!events.length) return null;
+  return (
+    <section aria-label="Audit only events" style={{ display: 'grid', gap: 6 }}>
+      <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 0.4, color: R.dim }}>AUDIT ONLY ({events.length})</div>
+      <div style={{ fontSize: 12, color: R.dim }}>These were found but are not clean raises. They are kept for checking and are not counted as upgrades.</div>
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 4 }}>
+        {events.map((e) => {
+          const l = safeEventLabel(e);
+          return (
+            <li key={e.guidance_event_id} className="gu-card" style={box({ padding: '6px 10px', display: 'grid', gap: 2 })}>
+              <button type="button" onClick={() => onOpen(e.guidance_event_id)} style={{ all: 'unset', cursor: 'pointer', display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', fontSize: 13 }} aria-label={`Open details for ${e.company}`}>
+                <b>{e.company}</b>
+                <span style={{ fontSize: 11, color: R.dim }}>{tickerText(e)} · {e.market === 'IN' ? 'India' : e.market === 'US' ? 'USA' : 'Global'}</span>
+                <Chip color={TONE_COLOR[l.tone]} dashed={l.dashed}>{l.label}</Chip>
+                <span style={{ fontSize: 11.5, color: R.dim }}>{agoText(e.announcement_timestamp || e.announcement_date, now)}</span>
+                {e.sources?.[0]?.name && <span style={{ fontSize: 11.5, color: R.dim }}>{sourceDisplayName(e.sources[0].name)}</span>}
+              </button>
+              <div style={{ fontSize: 12.5, color: R.dim }}>{l.note ?? 'No audit note was given.'}</div>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }

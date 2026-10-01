@@ -70,7 +70,7 @@ describe('A. high-growth rule', () => {
 describe('B. implied growth: stated first, implied secondary with its base, never a guess', () => {
   const cupid = mk({ company: 'ZZ Cupid Ltd', ticker: 'ZZCUP', growthLow: 102.7, growthHigh: 109.7, growthOrigin: 'IMPLIED', absoluteTarget: { value: 750, unit: '₹ Cr', valueLow: 725 }, impliedBase: { value: 357.71, unit: '₹ Cr', period: 'FY26' }, statement: 'Management raised FY27 revenue guidance to Rs 725-750 crore from Rs 600 crore.' });
   test('only-implied keeps (implied) and the display of the secondary line names the base', () => {
-    const p = build([cupid]).b.records[0].points[0]; assert.match(p.display, /\(implied\)/); assert.equal(p.statedGrowth, null);
+    const p = build([cupid]).b.records[0].points[0]; assert.match(p.display, /^\+103–110% vs FY26 actual \(derived: ₹725–750 Cr vs ₹357\.71 Cr\)/); assert.equal(p.growthType, 'DERIVED'); assert.equal(p.statedGrowth, null);   // zzz853: basis shown, never a bare '(implied)'
     assert.equal(p.impliedDisplay, '+102.7–109.7% (implied, base FY26 revenue ₹357.71 Cr)'); assert.equal(p.absolute!.valueLow, 725);
   });
   test('a stated % is never replaced by an implied one; both are shown, stated primary', () => {
@@ -103,11 +103,11 @@ describe('C. period expiry', () => {
   });
   test('a year-less quarter still running is active, flagged, and never in the high-growth list', () => {
     const { b, s } = build([q(3, '2026-09-10', { growthLow: 100, growthHigh: 100 })]); const p = b.records[0].points[0];
-    assert.equal(p.periodStatus, 'ACTIVE'); assert.equal(p.periodInferred, true); assert.match(p.display, /period year not stated/); assert.equal(s.highGrowth.length, 0); assert.equal(b.records[0].periodUnclear, true);
+    assert.equal(p.periodRunState, 'ACTIVE'); assert.equal(p.periodStatus, 'UNCLEAR'); assert.equal(p.periodInferred, true);   // zzz853: periodStatus is now CONFIRMED|UNCLEAR|UNKNOWN; the running state is periodRunState assert.match(p.display, /period year not stated/); assert.equal(s.highGrowth.length, 0); assert.equal(b.records[0].periodUnclear, true);
   });
   test('no issue date, or no period: UNKNOWN, kept in the universe, out of the high-growth list, counted', () => {
     const { b, s } = build([q(4, null), co('NoPeriod', { period: 'Period not stated', periodKind: 'UNKNOWN' })]);
-    assert.equal(b.records.length, 2); assert.ok(b.records.every((r) => r.points[0].periodStatus === 'UNKNOWN')); assert.equal(s.unknownPeriodCount, 2); assert.equal(s.highGrowth.length, 0); assert.ok(b.records.every((r) => /period year not stated/.test(r.points[0].display)));
+    assert.equal(b.records.length, 2); assert.ok(b.records.every((r) => r.points[0].periodRunState === 'UNKNOWN')); assert.ok(b.records.every((r) => r.points[0].periodStatus !== 'CONFIRMED')); assert.equal(s.unknownPeriodCount, 2); assert.equal(s.highGrowth.length, 0); assert.ok(b.records.every((r) => /period year not stated/.test(r.points[0].display)));
   });
   test('India fiscal logic: FY26 and Q1 FY27 (+lag) are over in Oct 2026; Q2 FY27 and FY27 are running', () => {
     const st = (p: string, k: any) => periodStatusOf(p, k, 'IN', '2026-05-10', NOW).status;
@@ -131,7 +131,7 @@ describe('D. plausibility and formatting', () => {
   });
   test('an implied % from a quarter target against a full-year base is rejected: only the amount is shown', () => {
     const { b } = build([mk({ period: 'Q3 FY27', periodKind: 'QUARTER', growthLow: 300, growthHigh: 300, growthOrigin: 'IMPLIED', absoluteTarget: { value: 400, unit: '₹ Cr' }, impliedBase: { value: 100, unit: '₹ Cr', period: 'FY26' }, statement: 'Q3 revenue of Rs 400 crore.' })]);
-    const p = b.records[0].points[0]; assert.equal(p.low, null); assert.equal(p.display, '₹400 Cr target (no % stated)'); assert.match(p.impliedRejected || '', /3-month Q3 FY27 target cannot be divided by a 12-month base/);
+    const p = b.records[0].points[0]; assert.equal(p.low, null); assert.match(p.display, /^₹400 Cr target \(GROWTH NOT COMPARABLE: /);   // zzz853: the owner's wording for a mismatched basis assert.match(p.impliedRejected || '', /3-month Q3 FY27 target cannot be divided by a 12-month base/);
   });
   test('like with like is accepted: quarter target over a quarter base, FY over FY', () => {
     const { b } = build([mk({ period: 'Q3 FY27', periodKind: 'QUARTER', growthLow: 33.3, growthHigh: 33.3, growthOrigin: 'IMPLIED', absoluteTarget: { value: 400, unit: '₹ Cr' }, impliedBase: { value: 300, unit: '₹ Cr', period: 'Q3 FY26' }, statement: 'Q3 revenue of Rs 400 crore.' })]);

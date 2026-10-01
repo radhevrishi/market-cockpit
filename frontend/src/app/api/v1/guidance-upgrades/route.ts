@@ -3,7 +3,8 @@
 //
 // Finds positive company guidance raises, verifies them against a primary source, and returns the engine's events.
 // PUBLIC company data only: no holdings, no personal data (My Book is overlaid in the browser).
-// NO PAID AI. NO document fetching. Cache-first, bounded time, partial answers are labelled.
+// NO PAID AI. Cache-first, bounded time, partial answers are labelled. zzz853: a small bounded queue (<= 12 documents, ~15 s per run) reads exchange / SEC
+// documents through the repo's own text helpers (see guidance-upgrades-queue.ts); a document confirms an event only when company, metric, period and value are all read.
 //
 // Candidate feeds (all existing, all read from KV cache; a cold cache is reported, never rebuilt here):
 //   · news:articles:v39 (the News & Signals cache; India and US). It lives 5 minutes, so it is often EMPTY between hourly refreshes.
@@ -36,6 +37,13 @@ import { readLedgers, writeEvents, readEventStore, mergeIntoStore, writeEventSto
 import { scanIndia, scanUs, finaliseScan, makeRealIndiaFetchers, makeRealEdgarFetcher, type MarketScanResult } from '@/lib/guidance-upgrades-scan';
 import { loadUniverseRecords, makeExtraFor, universeLookup } from '@/lib/guidance-upgrades-reconcile';
 import type { GuUniverseRecordX } from '@/lib/guidance-universe';
+import { readNewsWithLastGood, makeKvNewsIo, newsFallbackNote, cacheStateText, type NewsRead } from '@/lib/guidance-upgrades-cache';
+import { readQueue, writeQueue, emptyQueue, enqueue, processQueue, doneCandidates, reportQueue, awaitingCount, unavailableCount, readNoEventCount, makeDefaultFetchDoc, DOC_BUDGET_MS, type QueueState } from '@/lib/guidance-upgrades-queue';
+import { assignEventDates, reconcilePrimary, queueInputsFromFilings, type PrimaryFiling } from '@/lib/guidance-upgrades-sources';
+import { computeCounts, checkEventInvariants } from '@/lib/guidance-upgrades-counts';
+import { buildCoverageCard, buildCoverageBlock } from '@/lib/guidance-upgrades-coverage';
+import { isRaiseBearingSubject, normCompanyName } from '@/lib/guidance-upgrades-candidates';
+import type { GuCacheRow } from '@/lib/guidance-upgrades-types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -115,8 +123,16 @@ export async function GET(req: NextRequest) {
     ? storeP.then(([stIN]) => scanIndia({ now, days, window, fetchNse: inFetch.nse, fetchBse: inFetch.bse, readBlob: inFetch.blob, budgetMs: 12_000, storeCovered: storeCoveredDays(stIN), gradedDays: gradedDaysP })).catch(() => null)
     : Promise.resolve(null);
   let feedKeyUsed = '';
+  // zzz853: news cache with a last-good fallback (the live key lives 5 minutes and is refilled hourly, so a miss is normal and is not a data statement)
+  const nr: { v: NewsRead | null } = { v: null };
+  const timedNews = async (): Promise<Timed<any[]>> => {
+    const r = await timed(readNewsWithLastGood(makeKvNewsIo(Math.min(BUDGET_MS, 6_000))), BUDGET_MS);
+    nr.v = r.v;
+    return { v: r.v?.articles ?? null, timedOut: r.timedOut };
+  };
+  const queueP: Promise<QueueState | null> = withTimeout(readQueue(), 4_000, null);
   const [news, feed, graded, usSessions, scraped, retained, catalog, [storeIN, storeUS]] = await Promise.all([
-    timed(kvGet<any[]>(NEWS_KEY), BUDGET_MS),
+    timedNews(),
     wantIN ? timed((async () => { for (const k of feedKeys) { const v = await kvGet<any>(k); if (v && Array.isArray(v.filings)) { feedKeyUsed = k; return v; } } return null; })(), BUDGET_MS) : Promise.resolve<Timed<any>>({ v: null, timedOut: false }),
     gradedP,
     wantUS ? withTimeout(long
@@ -152,7 +168,7 @@ export async function GET(req: NextRequest) {
       const t = String(r?.symbol || r?.ticker || '').toUpperCase().replace(/\.(NS|BO)$/, ''); const pe = Number(r?.pe);
       if (t && Number.isFinite(pe) && pe > 0) peByTicker.IN.set(t, pe);
     }
-    if (!newsList?.length) cov.IN.cacheEmpty.push(`India news cache (${whyEmpty(news, NEWS_KEY)}; it expires after 5 minutes and is refreshed hourly)`);
+    if (!newsList?.length) cov.IN.cacheEmpty.push(`India news cache (${nr.v?.row.text ?? whyEmpty(news, NEWS_KEY)})`);
     if (!scrapedList.length) cov.IN.cacheEmpty.push(`scraped India news (${whyEmpty(scraped, SCRAPED_NEWS_KEY)})`);
     if (!Array.isArray(feed.v?.filings)) cov.IN.cacheEmpty.push(`exchange filing feed (${feed.timedOut ? 'timed out' : `none of ${feedKeys.join(', ')} found`})`);
     if (gradedPayloads === 0) cov.IN.cacheEmpty.push(`results cache (${graded.timedOut ? 'timed out' : `no graded session found for ${dates[dates.length - 1]} to ${dates[0]}`})`);
@@ -195,9 +211,35 @@ export async function GET(req: NextRequest) {
     }), Math.max(3_500, Math.min(9_500, BUDGET_MS - (Date.now() - t0) - 7_500)), null);
   }
 
+  // zzz853: queue. Filings whose SUBJECT names a guidance-bearing document (and SEC 8-Ks not yet graded) are queued, a few are read (P0 first, bounded),
+  // and documents that showed company + metric + period + value come back as primary-source candidates for the same engine.
+  const filingPool: PrimaryFiling[] = [];
+  const seenPool = new Set<string>();
+  for (const c of cands) {
+    if (c.market !== 'IN' || c.kind !== 'FILING' || !c.id.startsWith('filing:') || !isRaiseBearingSubject(c.title)) continue;
+    const k = `${c.id}`; if (seenPool.has(k)) continue; seenPool.add(k);
+    filingPool.push({ market: 'IN', ticker: c.ticker, company: c.company, subject: c.title, date: c.publishedAt.slice(0, 10), url: c.url ?? null, exchange: c.sourceName.replace(/ filing$/, '') });
+  }
+  for (const d of usScan?.awaitingDocs ?? []) {
+    filingPool.push({ market: 'US', ticker: d.ticker ?? undefined, company: d.company ?? undefined, subject: 'Form 8-K earnings release (items 2.02 / 7.01)', date: d.filed.slice(0, 10), url: d.url, exchange: 'SEC EDGAR', anySubject: true });
+  }
+  // a company with a media raise waiting for its document is read first (P0)
+  const waitingKeys = new Set<string>();
+  for (const c of cands) if (c.market !== 'US' && c.kind !== 'FILING' && c.ticker && isRaiseCandidate(c)) waitingKeys.add(`IN|${c.ticker.toUpperCase()}`);
+  let queue: QueueState = (await queueP) ?? emptyQueue(now);
+  const queueReadOk = !!(await queueP);
+  const enq = enqueue(queue, queueInputsFromFilings(filingPool, waitingKeys), now);
+  queue = enq.queue;
+  const qLeft = Math.min(DOC_BUDGET_MS, 26_000 - (Date.now() - t0));
+  const qRun = qLeft >= 2_500 ? await withTimeout(processQueue(queue, { now, fetchDoc: makeDefaultFetchDoc(Math.min(10_000, qLeft)), budgetMs: qLeft }), qLeft + 1_500, null) : null;
+  if (qRun) queue = qRun.queue;
+  cands.push(...doneCandidates(queue));
+
+  // zzz853: the company announcement date, not the media date, decides the window. A media article takes the date of the matching primary item.
+  const dated = assignEventDates(reassignGlobalToUs(dedupeCandidates(cands), usTickers));
   // headlines that raise funds / bonds / NCDs / QIP / loans / a stake / prices / capex / a dividend / a bid / a price target, or an index wrap, are not guidance.
   // zzz849: this guard runs on EVERY candidate (news, scraped, retained / stored, exchange filing, graded, US), not only on fresh news ids.
-  const inWindow = reassignGlobalToUs(dedupeCandidates(cands), usTickers).filter((c) => withinWindow(c.publishedAt, window, now))
+  const inWindow = dated.cands.filter((c) => withinWindow(c.eventDate || c.publishedAt, window, now))
     .map((c) => sanitizeRaiseCandidate(c)).filter((c): c is GuCandidate => !!c);
   // India / unlabelled items: the engine's own test, or raise wording with a resolved symbol (kept as a visible CANDIDATE). US: as before.
   const isPicked = (c: GuCandidate) => (c.market === 'US' ? isGuidanceUpgradeCandidate(c).include || looksLikeGuidanceRaise(`${c.title}. ${c.text}`) : isRaiseCandidate(c));
@@ -261,19 +303,26 @@ export async function GET(req: NextRequest) {
 
   const storedIds = new Set<string>([...storedIN, ...storedUS].map((c) => c.id));
   let all: GuidanceEvent[] = [];
-  let corroborated = 0; let unmatchedSubjects = subjectOnly;
+  let corroborated = 0; let reconcileNotFound = 0; let unmatchedSubjects = subjectOnly;
   try {
     const inRaw = processRaiseCandidates([...split.IN, ...split.GLOBAL], ctxMaker('IN', ledIN), now, window, extraFor);
-    const corr = corroborateWithFilings(inRaw, subjectOnly);
-    corroborated = corr.matched; unmatchedSubjects = corr.unmatched;
-    const inEvents = corr.events;
-    const usEvents = processCandidates(split.US, ctxMaker('US', ledUS), now, window, extraFor);
+    const usRaw = processCandidates(split.US, ctxMaker('US', ledUS), now, window, extraFor);
+    // zzz853: search the filings already loaded (+-10 days, same company) for the primary document: found -> PRIMARY SOURCE FOUND + queue P0; none -> SECONDARY-SOURCE CLAIM
+    const recIn = reconcilePrimary(inRaw, filingPool); const recUs = reconcilePrimary(usRaw, filingPool);
+    corroborated = recIn.found; reconcileNotFound = recIn.notFound + recUs.notFound;
+    const q2 = enqueue(queue, [...recIn.queueInputs, ...recUs.queueInputs], now); queue = q2.queue;
+    const matchedKey = (e: GuidanceEvent) => `${e.market === 'US' ? 'US' : 'IN'}|${(e.ticker || '').toUpperCase()}|${normCompanyName(e.company)}`;
+    const matchedSet = new Set(recIn.events.filter((e) => e.primaryState === 'PRIMARY_SOURCE_FOUND').map(matchedKey));
+    unmatchedSubjects = subjectOnly.filter((f) => !matchedSet.has(`IN|${(f.ticker || '').toUpperCase()}|${f.nameKey}`) && !recIn.events.some((e) => e.primaryState === 'PRIMARY_SOURCE_FOUND' && ((f.ticker && f.ticker.toUpperCase() === (e.ticker || '').toUpperCase()) || (!!f.nameKey && f.nameKey === normCompanyName(e.company)))));
+    const inEvents = recIn.events;
+    const usEvents = recUs.events;
     // the same release also cut something: the engine keeps the raises, so say the cut here
     for (const e of usEvents) {
       const cuts = usCuts.get(e.ticker.toUpperCase());
       if (cuts?.length && e.primaryAvailable) e.risks = [`${cuts[0]}.`, ...e.risks].slice(0, 4);
     }
-    all = rank([...inEvents, ...usEvents]);
+    // the announcement date may have moved to the company's filing: the window is cut on that date (never on a media date)
+    all = rank([...inEvents, ...usEvents]).filter((e) => withinWindow(e.announcement_date, window, now));
   } catch (e: any) {
     console.error('[guidance-upgrades] engine error', e?.message || e);
     return NextResponse.json({ ok: false, error: 'The guidance engine could not finish. Please try again.' }, { status: 500 });
@@ -315,6 +364,9 @@ export async function GET(req: NextRequest) {
     writeEvents(events.filter((e) => e.market !== 'US' && isResolvedTicker(e.ticker)), ledIN, 'IN'),
     writeEvents(events.filter((e) => e.market === 'US'), ledUS, 'US'),
     retainNext ? kvSet(RETAINED_KEY, retainNext, RETAINED_DAYS * 86_400).catch(() => 0) : Promise.resolve(0),
+    // zzz853: the queue (last write wins: two overlapping runs may each save their own view; items are idempotent, so the next run re-derives anything lost)
+    (qRun?.changed || enq.added > 0 || (queueReadOk && queue.items.length)) ? writeQueue(queue).catch(() => false) : Promise.resolve(false),
+    nr.v?.wrote ?? Promise.resolve(),
   ]).then(() => 0), 3_000, 0);
 
   // India: what each source returned, in numbers, so a zero can be explained (never by consensus).
@@ -335,7 +387,7 @@ export async function GET(req: NextRequest) {
     resultsRow.detail = `${read.graded} results rows with guidance text, from ${gradedPayloads} of ${weekdaysInWindow} weekday sessions in the window; older sessions have left the cache, so days before them are covered only if an earlier run processed them`;
   }
   const inExtra: GuScanSource[] = wantIN ? [
-    srcRow('India news cache', read.news, newsList?.length ? null : whyEmpty(news, NEWS_KEY), `${read.news} India of ${inBuild?.counts.newsAll ?? 0} articles read`),
+    srcRow('India news cache', read.news, newsList?.length ? null : (nr.v?.row.text ?? whyEmpty(news, NEWS_KEY)), `${read.news} India of ${inBuild?.counts.newsAll ?? 0} articles read${nr.v && nr.v.servedBy !== 'LIVE' ? ` (served from the ${nr.v.servedBy === 'NONE' ? 'fallback' : 'last good'} copy)` : ''}`),
     srcRow('Scraped India news', read.newsScraped, scrapedList.length ? null : whyEmpty(scraped, SCRAPED_NEWS_KEY), `${read.newsScraped} entries read (company named in the headline, no ticker)${read.retained ? `; ${read.retained} raise-worded items kept from earlier days` : ''}; ${newsRaise} with raise wording in this window`),
     srcRow('Exchange filing feed cache', Array.isArray(feed.v?.filings) ? feed.v.filings.length : 0, Array.isArray(feed.v?.filings) ? null : (feed.timedOut ? 'concall-feed timed out' : `none of ${feedKeys.join(', ')} found`), `${feed.v?.filings?.length ?? 0} announcements read from ${feedKeyUsed}`),
     resultsRow,
@@ -399,8 +451,43 @@ export async function GET(req: NextRequest) {
     const todays = new Set([now.toISOString().slice(0, 10), istDate(now)]);
     summary.today = events.filter((e) => e.verification === 'VERIFIED' && todays.has((e.announcement_date || '').slice(0, 10))).length;
   } catch { /* summary extras are optional */ }
+  // zzz853: canonical counts (one definition per number), invariants, coverage cards and the queue report
+  const qWin: QueueState = { ...queue, items: queue.items.filter((x) => withinWindow(x.event_date, window, now)) };
+  const countsFor = (m: 'IN' | 'US') => computeCounts(events.filter((e) => e.market === m), {
+    documentsAwaitingGrading: Math.max(awaitingCount(qWin, m), m === 'US' ? (scan.US?.awaitingGrading ?? 0) : 0),
+    documentsUnavailable: unavailableCount(qWin, m), documentsReadNoEvent: readNoEventCount(qWin, m),
+  });
+  const countsByMarket = { IN: countsFor('IN'), US: countsFor('US') };
+  const sum = (k: keyof typeof countsByMarket.IN): number => (wantIN ? countsByMarket.IN[k] : 0) + (wantUS ? countsByMarket.US[k] : 0);
+  summary.countsByMarket = countsByMarket;
+  summary.counts = {
+    discovered: sum('discovered'), processed: sum('processed'), verified: sum('verified'), material: sum('material'), upgrade: sum('upgrade'), reiteration: sum('reiteration'),
+    mixed: sum('mixed'), lowered: sum('lowered'), expectationPositive: sum('expectationPositive'), unverifiedClaims: sum('unverifiedClaims'),
+    documentsAwaitingGrading: sum('documentsAwaitingGrading'), documentsUnavailable: sum('documentsUnavailable'),
+  };
+  const invariantViolations = [
+    ...(wantIN ? checkEventInvariants(events.filter((e) => e.market !== 'US'), countsByMarket.IN) : []),
+    ...(wantUS ? checkEventInvariants(events.filter((e) => e.market === 'US'), countsByMarket.US) : []),
+  ];
+  const cacheRows: GuCacheRow[] = [];
+  if (nr.v) cacheRows.push(nr.v.row);
+  else cacheRows.push({ name: 'News cache', key: NEWS_KEY, state: news.timedOut ? 'FETCH_FAILED' : 'CACHE_MISS', servedBy: 'NONE', items: 0, text: cacheStateText(news.timedOut ? 'FETCH_FAILED' : 'CACHE_MISS', NEWS_KEY, { reason: news.timedOut ? 'timed out' : undefined }) });
+  if (wantIN) {
+    const st = scraped.timedOut ? 'FETCH_FAILED' : scraped.v == null ? 'CACHE_MISS' : scrapedList.length ? 'HIT' : 'SOURCE_EMPTY';
+    cacheRows.push({ name: 'Scraped India news', key: SCRAPED_NEWS_KEY, state: st, servedBy: scrapedList.length ? 'LIVE' : 'NONE', items: scrapedList.length, text: cacheStateText(st, SCRAPED_NEWS_KEY, { items: scrapedList.length, reason: scraped.timedOut ? 'timed out' : undefined }) });
+  }
+  const fb = newsFallbackNote(nr.v ?? { servedBy: 'NONE', liveState: 'CACHE_MISS' }, scrapedList.length, inBuild?.counts.retained ?? 0);
+  const cards = (['IN', 'US'] as const).filter((m) => scan[m]).map((m) => buildCoverageCard({
+    market: m, window, windowDays: days, now, scan: scan[m]!, cache: cacheRows.filter((r) => m === 'IN' || r.key === NEWS_KEY),
+    fallbackNote: m === 'IN' ? fb.note : null,
+    documentsAwaitingGrading: countsByMarket[m].documentsAwaitingGrading, documentsUnavailable: countsByMarket[m].documentsUnavailable,
+    candidatesDiscovered: countsByMarket[m].discovered, processed: countsByMarket[m].processed, verified: countsByMarket[m].verified,
+  }));
+  const queueReport = reportQueue(queue, { processed: qRun?.done ?? 0, verified: qRun?.complete ?? 0, failed: (qRun?.failed ?? 0) + (qRun?.unavailable ?? 0) });
+  if (reconcileNotFound) queueReport.note += ` ${reconcileNotFound} claim${reconcileNotFound === 1 ? '' : 's'} have no primary filing in the filings read so far.`;
   const body: GuidanceUpgradesResponse = {
     summary, events, scan,
+    coverage: buildCoverageBlock(cards, window, days, now), invariantViolations, queue: queueReport,
     unresolved: unresolvedList.slice(0, 50), unresolvedCount: unresolvedList.length,
     freshness: { newestAnnouncement: newest, feedCheckedAt: checkedAt, note, byMarket },
   };

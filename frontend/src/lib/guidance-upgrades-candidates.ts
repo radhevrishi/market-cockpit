@@ -867,7 +867,7 @@ export const isExchangeFiling = (c: Pick<GuCandidate, 'id' | 'kind' | 'market'>)
 
 /** processCandidates for India: same engine, same window rule, wording-only raises kept as CANDIDATE. */
 export function processRaiseCandidates(cands: GuCandidate[], ctxFor: (ticker: string) => GuContext, now: Date, window: GuWindow = '7D', extraFor?: GuExtraFor): GuidanceEvent[] {
-  const kept = cands.filter((c) => withinWindow(c.publishedAt, window, now)).map((c) => sanitizeRaiseCandidate(c)).filter((c): c is GuCandidate => !!c && isRaiseCandidate(c));
+  const kept = cands.filter((c) => withinWindow(c.eventDate || c.publishedAt, window, now)).map((c) => sanitizeRaiseCandidate(c)).filter((c): c is GuCandidate => !!c && isRaiseCandidate(c));
   return rank(mergeCandidates(kept).map((sk) => buildWithExtras(sk, ctxFor(sk.ticker) ?? {}, now, extraFor)));
 }
 

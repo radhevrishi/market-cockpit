@@ -1,7 +1,7 @@
 {
- "version": 1,
+ "version": 2,
  "generatedAt": "2026-10-01",
- "note": "Researched guidance records (public sources, paraphrased). Loaded as universe records; live filings/concalls supersede them. Never treat as hardcoded UI content. zzz849: impliedBase = the sourced base an implied % was divided by; needsReview = researcher flag (never counted as high-growth).",
+ "note": "Researched guidance records (public sources, paraphrased). Loaded as universe records; live filings/concalls supersede them. Never treat as hardcoded UI content. zzz849: impliedBase = the sourced base an implied % was divided by; needsReview = researcher flag (never counted as high-growth). zzz853: priorGuidance[].absoluteTarget = the earlier guidance amount (for the revision vs prior guidance); absoluteTarget.valueLow/value = the stated amount range; impliedBase.kind (optional) = PRIOR_YEAR_ACTUAL (default) or PRIOR_GUIDANCE; periodContext / primarySourceRead / sourceMetricLabel / lastVerified are optional.",
  "rows": [
   {
    "company": "HFCL Limited",
@@ -303,7 +303,11 @@
      "date": "2026-05-31",
      "growthLow": 67.7,
      "growthHigh": 67.7,
-     "note": "May 2026 target ₹600 Cr revenue; implied +67.7% on FY26 base ₹357.71 Cr (exact May date not confirmed)"
+     "note": "May 2026 target ₹600 Cr revenue; implied +67.7% on FY26 base ₹357.71 Cr (exact May date not confirmed)",
+     "absoluteTarget": {
+      "value": 600,
+      "unit": "₹ Cr"
+     }
     }
    ],
    "supersededBy": null,
@@ -350,7 +354,11 @@
      "date": "2026-05-31",
      "growthLow": 66.3,
      "growthHigh": 66.3,
-     "note": "May 2026 target ₹180 Cr PAT; implied +66.3% on FY26 PAT ₹108.23 Cr (exact May date not confirmed)"
+     "note": "May 2026 target ₹180 Cr PAT; implied +66.3% on FY26 PAT ₹108.23 Cr (exact May date not confirmed)",
+     "absoluteTarget": {
+      "value": 180,
+      "unit": "₹ Cr"
+     }
     }
    ],
    "supersededBy": null,
@@ -783,7 +791,12 @@
      "date": "2026-05-26",
      "growthLow": null,
      "growthHigh": null,
-     "note": "Rs 5,000-5,500 Cr revenue, EBITDA margin 13-15%, ex-Merino"
+     "note": "Rs 5,000-5,500 Cr revenue, EBITDA margin 13-15%, ex-Merino",
+     "absoluteTarget": {
+      "value": 5500,
+      "unit": "₹ Cr",
+      "valueLow": 5000
+     }
     }
    ],
    "supersededBy": null,
@@ -825,8 +838,9 @@
    "growthHigh": 200,
    "growthOrigin": "IMPLIED",
    "absoluteTarget": {
-    "value": 140,
-    "unit": "$M"
+    "value": 150,
+    "unit": "$M",
+    "valueLow": 130
    },
    "period": "FY2027",
    "periodKind": "FY",
@@ -964,8 +978,9 @@
    "growthHigh": 49.1,
    "growthOrigin": "IMPLIED",
    "absoluteTarget": {
-    "value": 475,
-    "unit": "$M"
+    "value": 500,
+    "unit": "$M",
+    "valueLow": 450
    },
    "period": "CY2026",
    "periodKind": "CY",
@@ -1033,8 +1048,9 @@
    "growthHigh": 43,
    "growthOrigin": "IMPLIED",
    "absoluteTarget": {
-    "value": 435.5,
-    "unit": "$M"
+    "value": 441,
+    "unit": "$M",
+    "valueLow": 430
    },
    "period": "FY2027",
    "periodKind": "FY",
@@ -1068,8 +1084,9 @@
    "growthHigh": 181,
    "growthOrigin": "IMPLIED",
    "absoluteTarget": {
-    "value": 435,
-    "unit": "$M"
+    "value": 450,
+    "unit": "$M",
+    "valueLow": 420
    },
    "period": "CY2026",
    "periodKind": "CY",
@@ -1249,8 +1266,9 @@
    "growthHigh": 40,
    "growthOrigin": "IMPLIED",
    "absoluteTarget": {
-    "value": 3200,
-    "unit": "$M"
+    "value": 3300,
+    "unit": "$M",
+    "valueLow": 3100
    },
    "period": "FY2026",
    "periodKind": "FY",
@@ -1395,8 +1413,9 @@
    "growthHigh": 235,
    "growthOrigin": "IMPLIED",
    "absoluteTarget": {
-    "value": 61,
-    "unit": "$M"
+    "value": 62,
+    "unit": "$M",
+    "valueLow": 60
    },
    "period": "FY2026",
    "periodKind": "FY",

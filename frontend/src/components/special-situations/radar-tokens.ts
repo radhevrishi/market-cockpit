@@ -44,6 +44,7 @@ export const CHAIN_MARK: Record<ChainStatus, { mark: string; word: string; color
 export const BUCKET_MEANING: Record<RadarBucket, string> = {
   MULTIBAGGER: 'Could change what the business earns for years. Needs the most homework.',
   EARNINGS_INFLECTION: 'Could lift earnings over the next 12 to 24 months.',
+  RESULT_NO_INFLECTION: 'A reported result that is flat, mixed, down or not clearly better. Shown so you can see it was read; it is not a turn in earnings.',
   BOTTLENECK: 'Demand is real and supply is tight. Check why rivals cannot just copy it.',
   SPECIAL_SITUATION: 'A corporate action: spin-off, merger, buyback, open offer and similar.',
   EVENT_DRIVEN: 'A shorter event. It helps for a while, then it fades.',
@@ -130,7 +131,7 @@ export function statusBadges(i: Pick<RadarItem, 'eventConfirmation' | 'mechanism
 }
 
 export const TRANSMISSION_LABEL: Record<string, string> = {
-  DIRECT: 'Direct', NEAR_DIRECT: 'Near-direct', INDIRECT: 'Indirect', NARRATIVE_ONLY: 'Narrative only', NOT_ESTABLISHED: 'Not established',
+  DIRECT: 'Direct', NEAR_DIRECT: 'Near-direct', INDIRECT: 'Indirect', NARRATIVE_ONLY: 'Narrative only', NOT_ESTABLISHED: 'Not established', NONE: 'None', NOT_APPLICABLE: 'Not applicable',
 };
 export const QUANT_LABEL: Record<QuantificationStatus, string> = {
   QUANTIFIED: 'Quantified', PARTIALLY_QUANTIFIED: 'Partly quantified', NOT_QUANTIFIED: 'Not quantified', NO_FINANCIAL_LINK: 'No financial link to quantify',

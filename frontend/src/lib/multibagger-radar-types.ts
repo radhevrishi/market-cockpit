@@ -14,6 +14,8 @@
 //  * Nothing is invented: every chain step is 'proven' (a source states it),
 //    'assumed' (mechanism reasoning, no source yet) or 'unknown'.
 
+import type { OwnedNumber, ResolvedEntity, DealTerms, SourceSubject } from './radar-owned-types';
+
 export type RadarBucket =
   | 'MULTIBAGGER'          // long-duration structural opportunities
   | 'EARNINGS_INFLECTION'  // 12-24 month earnings acceleration
@@ -22,15 +24,16 @@ export type RadarBucket =
   | 'EVENT_DRIVEN'         // shorter-duration events
   | 'TECHNICAL'            // timing information only
   | 'NOISE'               // nothing that changes earnings power
+  | 'RESULT_NO_INFLECTION' // zzz852: a reported earnings result that is not a materially improving one (routine, negative, mixed or direction unknown)
   | 'CORPORATE_ACTION';   // dividend / split / bonus / record date: low-signal quarantine, never a thesis candidate
 
 export const BUCKET_LABEL: Record<RadarBucket, string> = {
-  MULTIBAGGER: 'Multibagger / structural', EARNINGS_INFLECTION: 'Earnings inflection', BOTTLENECK: 'Bottleneck',
+  MULTIBAGGER: 'Multibagger / structural', EARNINGS_INFLECTION: 'Earnings inflection', RESULT_NO_INFLECTION: 'Earnings results (no inflection)', BOTTLENECK: 'Bottleneck',
   SPECIAL_SITUATION: 'Special situations', EVENT_DRIVEN: 'Event-driven', TECHNICAL: 'Technical confirmation', NOISE: 'No earnings link',
   CORPORATE_ACTION: 'Corporate actions (low signal)',
 };
 /** Buckets are never merged into one leaderboard. This is the display order. */
-export const BUCKET_ORDER: RadarBucket[] = ['MULTIBAGGER', 'EARNINGS_INFLECTION', 'BOTTLENECK', 'SPECIAL_SITUATION', 'EVENT_DRIVEN', 'TECHNICAL', 'NOISE', 'CORPORATE_ACTION'];
+export const BUCKET_ORDER: RadarBucket[] = ['MULTIBAGGER', 'EARNINGS_INFLECTION', 'RESULT_NO_INFLECTION', 'BOTTLENECK', 'SPECIAL_SITUATION', 'EVENT_DRIVEN', 'TECHNICAL', 'NOISE', 'CORPORATE_ACTION'];
 
 export type CatalystKind =
   // structural / operating
@@ -111,10 +114,21 @@ export interface EvidenceRead {
 export type SourceQuality = 'PRIMARY' | 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN';
 export type SourceDiversity = 'PRIMARY' | 'COMPANY' | 'CUSTOMER' | 'GOVERNMENT' | 'INDEPENDENT_INDUSTRY' | 'FINANCIAL_MEDIA' | 'SYNDICATED' | 'ANALYST' | 'SOCIAL';
 
-export type LinkStrength = 'DIRECT' | 'NEAR_DIRECT' | 'INDIRECT' | 'NARRATIVE_ONLY' | 'NOT_ESTABLISHED';
+/**
+ * zzz852 strict terms.
+ *  DIRECT          impact already shown in the company's own reported financials.
+ *  NEAR_DIRECT     a documented operating event with a clear quantified bridge owned by the company (e.g. signed contract value + stated margin).
+ *  INDIRECT        a plausible pathway; the bridge is incomplete.
+ *  NOT_ESTABLISHED the source shows no earnings link.
+ *  NONE            the event has no earnings mechanism (checked and absent).
+ *  NOT_APPLICABLE  the event is a transaction or shareholder payoff (tender, dividend, buyback, split, legal, capital raise, listing mechanics); earnings language does not apply.
+ * A number in the source never by itself makes a link near-direct: the number must be owned by the company.
+ */
+export type LinkStrength = 'DIRECT' | 'NEAR_DIRECT' | 'INDIRECT' | 'NARRATIVE_ONLY' | 'NOT_ESTABLISHED' | 'NONE' | 'NOT_APPLICABLE';
 export const LINK_LABEL: Record<LinkStrength, string> = {
-  DIRECT: 'Direct - affects revenue / profit', NEAR_DIRECT: 'Near-direct - one clear step', INDIRECT: 'Indirect - several assumptions', NARRATIVE_ONLY: 'Narrative only - no measurable transmission yet',
-  NOT_ESTABLISHED: 'Not established - no earnings link shown',
+  DIRECT: 'Direct - already shown in reported company financials', NEAR_DIRECT: 'Near-direct - documented operating event with a quantified bridge', INDIRECT: 'Indirect - plausible pathway, bridge incomplete',
+  NARRATIVE_ONLY: 'Narrative only - no measurable transmission yet', NOT_ESTABLISHED: 'Not established - no earnings link shown',
+  NONE: 'None - no earnings mechanism', NOT_APPLICABLE: 'None / Not applicable - transaction or shareholder payoff',
 };
 
 export type InflectionState = 'NO_INFLECTION' | 'EARLY_INFLECTION' | 'CONFIRMED_INFLECTION' | 'ACCELERATING_INFLECTION' | 'STRUCTURAL_INFLECTION' | 'NOT_ASSESSED';
@@ -269,6 +283,64 @@ export interface RadarItem {
   priceResponse?: PriceResponse | null;
   /** Optional, only when supplied by the caller. Context, never a prediction. */
   historicalAnalogue?: HistoricalAnalogue | null;
+
+  // ── zzz852 logic QA fields (all optional) ──
+  /** Every number the engine used, with its owner. Only parent-owned financial-statement lines may set the earnings link or count in quantification. */
+  ownedNumbers?: OwnedNumber[];
+  /** 'ITC incremental revenue / EBITDA / PAT: Not established' (or the parent-owned figure). */
+  parentImpactLine?: string;
+  /** Labelled numbers that belong to someone else: 'Yoga Bar revenue: Rs 452 cr (target / acquired business, not ITC)'. */
+  numberLines?: string[];
+  /** Who the source is about, and whose financials any number belongs to. */
+  sourceSubject?: SourceSubject;
+  sourceSubjectLine?: string;
+  financialOwner?: string;
+  /** The primary kind is decided by the headline's main verb/object. An earnings figure in a dividend headline is a secondary fact. */
+  secondaryEvent?: { kind: CatalystKind; label: string; text: string; direction?: CatalystDirection } | null;
+  contextFacts?: string[];
+  /** 'Shareholder cash return' / 'Transaction / shareholder payoff': what the holder gets when earnings language does not apply. */
+  economicPayoff?: string | null;
+  /** Earnings events: is the stated result better, worse, mixed or unknown? Never assumed positive. */
+  catalystDirection?: CatalystDirection;
+  directionBasis?: string;
+  inflectionStrength?: InflectionStrength;
+  /** Headline evidence label. Media-only evidence is 'Secondary-reported (N outlets)', never Strong or Confirmed. */
+  evidenceLabel?: string;
+  /** Next step for a result read from secondary sources (filing not read). */
+  nextStep?: string | null;
+  /** Event-specific sentence about the status change, or 'Not established'. */
+  whyNow?: string;
+  /** Company-specific facts first. The generic taxonomy definition is only in mechanismHelp (a tooltip). */
+  economicMechanism?: string;
+  mechanismHelp?: string;
+  /** Deal fields by kind, each a value or 'Not stated'. Calculated values are labelled and only built when both inputs are stated. */
+  dealTerms?: DealTerms | null;
+  dealTermLines?: DealTermLine[];
+  /** Per-kind evidence chain: each step confirmed or not established. */
+  evidenceChain?: EvidenceChainStep[];
+  evidenceChainKind?: EvidenceChainKind;
+  /** Confirmed facts (with owner), model inference (clearly labelled) and unknowns, kept apart. */
+  factScope?: FactScope;
+  /** Why this research priority, as the factors that drove it. */
+  priorityFactors?: PriorityFactors;
+  /** What the engine knows about identifying the issuer: how the ticker was (or was not) resolved. */
+  resolutionAttempt?: 'feed-entity' | 'feed-flag' | 'none';
+  entity?: ResolvedEntity | null;
+}
+
+export type CatalystDirection = 'positive' | 'negative' | 'mixed' | 'neutral' | 'unknown';
+export type InflectionStrength = 'strong' | 'moderate' | 'weak' | 'none' | 'unknown';
+export type EvidenceChainKind = 'OPERATING' | 'ACQUISITION' | 'TENDER' | 'SPIN_OFF' | 'LEGAL' | 'MERGER' | 'BUYBACK' | 'CORPORATE_ACTION' | 'CAPITAL_RAISE' | 'RESULT';
+export interface EvidenceChainStep { step: string; state: 'confirmed' | 'not_established'; detail: string | null }
+export interface DealTermLine { label: string; value: string; stated: boolean; calculated?: boolean }
+export interface FactScope { confirmed: Array<{ text: string; owner: string }>; inference: string[]; unknown: string[] }
+export interface PriorityFactors {
+  informationValue: 'high' | 'medium' | 'low';
+  materiality: 'not assessable' | 'low' | 'moderate' | 'high' | 'very high';
+  evidenceUncertainty: 'open' | 'narrow';
+  proximity: 'dated proof point' | 'none';
+  persistence: 'stated multi-quarter' | 'not established';
+  portfolio: 'tie-break only';
 }
 
 export type EventClass =

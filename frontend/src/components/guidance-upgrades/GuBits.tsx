@@ -3,7 +3,8 @@
 import React from 'react';
 import type { GuNumber, GuidanceEvent } from '@/lib/guidance-upgrades-types';
 import { AWAITING_PRIMARY, BASIS_LABEL, CONSENSUS_ABSENT, DECISION_LABEL, DURABILITY_LEVEL_LABEL, GAP_LABEL, HEADLINE_ONLY_BANNER, LABEL_WORD, STAGE_LABEL, TOP_END_CUT, decisionChipText, guidanceMarkerWord, hasTopEndCut, isHeadlineOnly, isRealRaiseClass, rangeClassLabel, STAGE_ORDER, UNAVAILABLE, WHY_NOW_UNRESOLVED, fmtNumber, fmtRangeLine, showsDecision, stageIndex, stageNote, stageOf } from '@/lib/guidance-upgrades-format';
-import { DECISION_COLOR, GAP_COLOR, RATING_COLOR, R, tint } from './gu-tokens';
+import { DECISION_COLOR, GAP_COLOR, RATING_COLOR, R, TONE_COLOR, tint } from './gu-tokens';
+import { INVARIANT_BANNER, basisText, freshnessLines, lastVerifiedText, qualityStrip, recordBasis, type BasisText, type FreshnessIn, type GuBadge } from './gu-ui';
 export { Chip, Field, btn } from '@/components/special-situations/RadarBits';
 import { Chip } from '@/components/special-situations/RadarBits';
 
@@ -225,4 +226,72 @@ export function CrossLinks({ e }: { e: GuidanceEvent }) {
   const ls = crossLinks(e);
   if (!ls.length) return null;
   return <div className="gu-noprint" style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: 12 }}>{ls.map((x) => <a key={x.label} href={x.href} style={{ color: R.cyan, fontWeight: 700 }} onClick={(ev) => ev.stopPropagation()}>{x.label} →</a>)}</div>;
+}
+
+
+// ═══ zzz853 additions ═══════════════════════════════════════════════════════════════════════════════════════════════
+/** Verification badge: glyph + plain word, with a plain-English tooltip. The glyph is never the only signal (the word is printed too). */
+export function VerBadge({ b, compact }: { b: GuBadge; compact?: boolean }) {
+  return (
+    <span title={b.tip} aria-label={`${b.label}. ${b.tip}`} style={{ color: TONE_COLOR[b.tone], fontWeight: 800, fontSize: compact ? 13 : 12, whiteSpace: 'nowrap' }}>
+      <span aria-hidden style={{ fontWeight: 900 }}>{b.glyph}</span>{compact ? null : ` ${b.label}`}
+    </span>
+  );
+}
+
+/** Growth basis on one line, e.g. '+94% vs FY26 actual (derived) · +20.8% vs prior guidance'. Calculation detail sits in the tooltip and a small second line. */
+export function BasisLine({ t, showDetail }: { t: BasisText | null | undefined; showDetail?: boolean }) {
+  if (!t || !t.line) return null;
+  return (
+    <div style={{ fontSize: 12, color: R.dim, overflowWrap: 'anywhere' }} title={t.detail ? `Worked out from: ${t.detail}` : undefined}>
+      {t.line}
+      {showDetail && t.detail && <div style={{ fontSize: 11.5 }}>Worked out from: {t.detail}</div>}
+    </div>
+  );
+}
+export { basisText, recordBasis };
+
+export function LastVerified({ r }: { r: Parameters<typeof lastVerifiedText>[0] }) {
+  const v = lastVerifiedText(r);
+  return <span style={{ fontSize: 11.5, color: v.stale ? R.amber : R.dim, fontWeight: v.stale ? 800 : 400 }} title={v.stale ? 'Not checked against the company document for a while. Still active until its period ends or it is replaced.' : undefined}>{v.stale ? '⚠ ' : ''}{v.text}</span>;
+}
+
+/** Three freshness lines: guidance data, event scan, source feed. Unknown stays Unknown. */
+export function FreshnessBlock(p: FreshnessIn) {
+  const lines = freshnessLines(p);
+  return (
+    <div role="group" aria-label="Data freshness" style={{ display: 'grid', gap: 2, fontSize: 12, color: R.dim }}>
+      {lines.map((l) => <div key={l.label}><b style={{ color: R.text }}>{l.label}:</b> <span style={{ color: l.known ? R.dim : R.amber }}>{l.text}</span></div>)}
+    </div>
+  );
+}
+
+/** Data-quality strip for the universe: counts, review reasons, stale and conflict counts, invariant banner, live-feed notice. */
+export function QualityStrip({ data }: { data: Parameters<typeof qualityStrip>[0] }) {
+  const q = qualityStrip(data);
+  const parts: string[] = [];
+  if (q.stateLine) parts.push(q.stateLine);
+  if (q.reviewQueue != null) parts.push(`${q.reviewQueue} need review`);
+  if (q.stale != null) parts.push(`${q.stale} verification stale`);
+  if (q.conflicts != null) parts.push(`${q.conflicts} source conflict${q.conflicts === 1 ? '' : 's'}`);
+  if (!parts.length && !q.reasonLine && !q.violations.length && !q.liveError && !q.servedNote) return null;
+  return (
+    <div style={{ display: 'grid', gap: 4 }}>
+      {q.violations.length > 0 && (
+        <div role="alert" style={{ border: `1px solid ${R.red}`, background: tint(R.red, 8), borderRadius: 6, padding: '6px 10px', fontSize: 12.5 }}>
+          <b style={{ color: R.red }}>{INVARIANT_BANNER}</b>
+          <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{q.violations.slice(0, 5).map((v, i) => <li key={i}>{v}</li>)}</ul>
+          {q.violations.length > 5 && <div>and {q.violations.length - 5} more.</div>}
+        </div>
+      )}
+      {(q.liveError || q.servedNote) && (
+        <div role="note" style={{ border: `1px dashed ${R.amber}`, background: tint(R.amber, 8), borderRadius: 6, padding: '6px 10px', fontSize: 12.5 }}>
+          {q.servedNote && <div><b>{q.servedNote}</b></div>}
+          {q.liveError && <div>Live feed problem: {q.liveError}. The saved guidance is still shown.</div>}
+        </div>
+      )}
+      {parts.length > 0 && <div style={{ fontSize: 12.5, color: R.dim }} aria-label="Data quality counts">{parts.join(' · ')}</div>}
+      {q.reasonLine && <div style={{ fontSize: 12, color: R.dim }}><b>Why records need review:</b> {q.reasonLine}</div>}
+    </div>
+  );
 }

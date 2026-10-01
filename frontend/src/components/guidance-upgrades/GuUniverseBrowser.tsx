@@ -5,11 +5,12 @@ import React, { useMemo, useState } from 'react';
 import { normSymbol } from '@/lib/portfolio-symbols';
 import {
   UNIVERSE_METRICS, UNIVERSE_SCOPES, UNIVERSE_UNAVAILABLE, ZERO_RECORDS_TEXT, universeNoticeLine, filterUniverse, sortUniverse, universeApiMarket, universeApiMetric,
-  type UniverseMetric, type UniverseScope, type UniverseView,
+  type UniverseMetric, type UniverseScope,
 } from '@/lib/guidance-upgrades-format';
 import type { GgCompany } from '@/lib/growth-guidance-types';
 import { R, box, tint } from './gu-tokens';
 import { btn } from './GuBits';
+import { VIEW_HINT, VIEW_ORDER, expiryLine, excludedWhy, reasonCountsLine, sourceDisplayName, viewCountsLine, viewLabel, type GuView } from './gu-ui';
 import { GuUniverseList } from './GuUniverseList';
 import { useGuUniverse } from './useGuUniverse';
 
@@ -21,7 +22,7 @@ const pill = (on: boolean): React.CSSProperties => ({
 export function GuUniverseBrowser({ held, onFull }: { held: string[]; onFull?: (c: GgCompany) => void }) {
   const [scope, setScope] = useState<UniverseScope>('ALL');
   const [metric, setMetric] = useState<UniverseMetric>('ALL');
-  const [view, setView] = useState<UniverseView>('active');
+  const [view, setView] = useState<GuView>('active');
   const { data, state, retry, error } = useGuUniverse({ market: universeApiMarket(scope), metric: universeApiMetric(metric), view });
   const heldSet = useMemo(() => new Set(held.map(normSymbol)), [held]);
   const list = useMemo(
@@ -35,10 +36,11 @@ export function GuUniverseBrowser({ held, onFull }: { held: string[]; onFull?: (
       <div className="gu-noprint" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} role="group" aria-label="Universe market">
         {UNIVERSE_SCOPES.map(([k, l]) => <button key={k} type="button" style={pill(scope === k)} aria-pressed={scope === k} onClick={() => setScope(k)}>{l}</button>)}
         <span style={{ width: 10 }} />
-        {([['active', 'Active guidance'], ['all', 'Active + history']] as Array<[UniverseView, string]>).map(([k, l]) => (
-          <button key={k} type="button" style={pill(view === k)} aria-pressed={view === k} onClick={() => setView(k)}>{l}</button>
+        {VIEW_ORDER.map((k) => (
+          <button key={k} type="button" style={pill(view === k)} aria-pressed={view === k} title={VIEW_HINT[k]} onClick={() => setView(k)}>{viewLabel(k, data?.viewCounts)}</button>
         ))}
       </div>
+      <div style={{ fontSize: 12, color: R.dim }}>{VIEW_HINT[view]}</div>
       <div className="gu-noprint" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} role="group" aria-label="Universe metric">
         {UNIVERSE_METRICS.map(([k, l]) => <button key={k} type="button" style={pill(metric === k)} aria-pressed={metric === k} onClick={() => setMetric(k)}>{l}</button>)}
       </div>
@@ -53,10 +55,35 @@ export function GuUniverseBrowser({ held, onFull }: { held: string[]; onFull?: (
       {data && (
         <>
           {universeNoticeLine(data.summary) && <div style={{ fontSize: 12, color: R.dim }}>{universeNoticeLine(data.summary)}</div>}
+          {viewCountsLine(data.viewCounts) && <div style={{ fontSize: 12, color: R.dim }}>{viewCountsLine(data.viewCounts)}</div>}
+          {view === 'review' && reasonCountsLine(data.summary?.reviewReasonCounts) && <div style={{ fontSize: 12, color: R.dim }}><b>Reasons:</b> {reasonCountsLine(data.summary?.reviewReasonCounts)}</div>}
           <div style={{ fontSize: 12, color: R.dim }}>{list.length} shown</div>
           <div style={{ opacity: state === 'loading' ? 0.6 : 1 }}>
-            <GuUniverseList records={list} showMarket={scope === 'ALL' || scope === 'MY_BOOK'} onFull={onFull} emptyText={data.records.length === 0 ? ZERO_RECORDS_TEXT : "Nothing matches these filters. Clear a filter to see more."} />
+            <GuUniverseList records={list} showMarket={scope === 'ALL' || scope === 'MY_BOOK'} onFull={onFull} emptyText={data.records.length === 0 ? (view === 'review' ? 'Nothing is waiting for review.' : ZERO_RECORDS_TEXT) : "Nothing matches these filters. Clear a filter to see more."} />
           </div>
+          {view === 'history' && (
+            <div style={{ display: 'grid', gap: 4 }}>
+              {expiryLine(data.summary?.expiry) && <div style={{ fontSize: 12, color: R.dim }}>{expiryLine(data.summary?.expiry)}</div>}
+              <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: 0.4, color: R.dim }}>NO LONGER ACTIVE ({(data.inactive || []).length})</div>
+              {(data.inactive || []).length === 0 ? <div style={{ fontSize: 12.5, color: R.dim }}>None.</div> : (
+                <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 3 }}>
+                  {(data.inactive || []).filter((x) => scope === 'ALL' || scope === 'MY_BOOK' || (scope === 'INDIA' ? x.market === 'IN' : x.market === 'US')).map((x, i) => (
+                    <li key={`${x.entityKey}-${i}`} className="gu-card" style={box({ padding: '5px 10px', fontSize: 13 })}>
+                      <b>{x.company}</b> — {x.display} <span style={{ color: R.dim }}>{x.period} · {x.expiryReason || x.status}{x.sourceName ? ` · ${sourceDisplayName(x.sourceName)}` : ''}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: 0.4, color: R.dim }}>LEFT OUT ON PURPOSE ({(data.excluded || []).length})</div>
+              {(data.excluded || []).length === 0 ? <div style={{ fontSize: 12.5, color: R.dim }}>None.</div> : (
+                <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 3 }}>
+                  {(data.excluded || []).slice(0, 50).map((x, i) => (
+                    <li key={i} style={{ fontSize: 12.5, color: R.dim }}><b style={{ color: R.text }}>{x.company}</b> {x.period} — {excludedWhy(x)}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
         </>
       )}
     </section>

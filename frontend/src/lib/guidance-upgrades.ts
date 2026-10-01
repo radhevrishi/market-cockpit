@@ -16,6 +16,7 @@ import type {
   GuPortfolioImpact, GuQuality, GuSourceRef, GuSourceTier, GuSummary, GuThesis, GuType,
   GuValuation, GuVerification, GuWindow, GuidanceEvent,
   GuRangeMath, GuRangeClass, GuEventV2, GuScoreItem, GuStage, GuDurabilityLevel, GuMetricBasis,
+  GuClassification, GuSourceClaim, GuSourceConflict, GuPrimaryState,
 } from './guidance-upgrades-types';
 
 export const DATA_UNAVAILABLE = 'DATA UNAVAILABLE';
@@ -303,6 +304,20 @@ function periodOf(sent: string, near: number, fallback: string): string {
   if (before.length) return before[0].val;
   return filtered.sort((a, b) => a.idx - b.idx)[0].val;
 }
+
+const WORD_NUM: Record<string, number> = { two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7 };
+/** zzz853: a growth target over several years ("30-35% over FY27-FY29", "CAGR of 20% over the next 3 years") is a multi-year CAGR, never a single-year figure. */
+export function multiYearSpan(sent: string): { period: string; years: number | null } | null {
+  const yr = (s: string) => { const n = Number(s.length === 4 ? s.slice(2) : s); return Number.isFinite(n) ? n : NaN; };
+  const m = /\b(?:FY|F\.Y\.?)\s*'?(\d{4}|\d{2})\s*(?:[-–—]|to)\s*(?:FY|F\.Y\.?)?\s*'?(\d{4}|\d{2})(?!\d)/i.exec(sent);
+  if (m) { const a = yr(m[1]); const b = yr(m[2]); if (b - a >= 2) return { period: `FY${String(a).padStart(2, '0')}–${String(b).padStart(2, '0')}`, years: b - a + 1 }; }
+  const n = /\b(?:over|across|during|for|in)\s+(?:the\s+)?(?:next|coming|following)?\s*(\d+|two|three|four|five|six|seven)(?:\s*(?:to|-|–)\s*(?:\d+|two|three|four|five|six|seven))?[-\s]*years?\b/i.exec(sent);
+  if (n) { const k = /^\d+$/.test(n[1]) ? Number(n[1]) : WORD_NUM[n[1].toLowerCase()]; if (k >= 2) return { period: `${k} years`, years: k }; }
+  const y = /\b(\d+)[-\s]years?\s+(?:CAGR|growth|period|plan)\b/i.exec(sent);
+  if (y && Number(y[1]) >= 2) return { period: `${y[1]} years`, years: Number(y[1]) };
+  if (/\bCAGR\b/.test(sent)) return { period: '', years: null };
+  return null;
+}
 function firstPeriod(text: string): string { return periodOf(text, 0, 'UNSTATED'); }
 
 function basisOf(s: string): GuGuidancePoint['basis'] {
@@ -383,15 +398,18 @@ function extractFromSentence(sent: string, fallbackPeriod: string): GuChange[] {
     if (beforeV && beforeV.cur && afterV.cur && beforeV.cur !== afterV.cur) return; // mixed currencies
     if (beforeV && !beforeV.pct && pct && !flatBefore && beforeV.cur) return;
     const target: ScaleKey | null = pct ? null : (afterV.scale ?? beforeV?.scale ?? null);
-    const period = periodOf(sent, afterV.start, fallbackPeriod);
+    const span = pct ? multiYearSpan(sent) : null;   // a multi-year growth rate is never a single-year figure
+    const period = span?.period ? span.period : periodOf(sent, afterV.start, fallbackPeriod);
     const rawAfter = sent.slice(Math.min(kw.start, afterV.start), afterV.end).trim();
     const after = makePoint(metric, period, afterV, target, cur, pct, basis, rawAfter);
+    if (span) { after.periodKind = 'MULTI_YEAR_CAGR'; if (span.years) after.periodYears = span.years; }
     let before: GuGuidancePoint | null = null;
     if (flatBefore) {
       before = { metric, period, low: 0, high: 0, midpoint: 0, isGrowthRate: true, unit: '%', basis, raw: 'flat' };
     } else if (beforeV) {
       before = makePoint(metric, period, beforeV, target, cur, pct, basis, sent.slice(beforeV.start, beforeV.end).trim());
     }
+    if (before && span) { before.periodKind = 'MULTI_YEAR_CAGR'; if (span.years) before.periodYears = span.years; }
     // plausibility
     if (after.midpoint == null) return;
     if (before && before.midpoint != null) {
@@ -718,6 +736,14 @@ export function classifyDriver(text: string): GuDriverResult {
   return { quality, driver, evidence: direct ? 'DIRECT' : 'INDIRECT', kinds: hits.map(h => h.kind) };
 }
 
+
+/** zzz853: a sentence names a multi-year contract / order book / backlog AND says it drives the guided number (revenue, sales, growth, guidance) with a causal or conversion cue. */
+const CONTRACT_TERM = /\b(?:multi-?year|long-term|\d[- ]year|three-year|five-year)\s+(?:\w+\s+){0,2}?(?:contracts?|agreements?|orders?|order book|backlog)\b|\b(?:order book|backlog)\b[^.;]{0,50}\b(?:multi-?year|over (?:the next )?\d+ years)\b/i;
+const MECHANISM_LINK = /\b(?:revenues?|sales|top[- ]?line|turnover|growth|guidance|outlook|execution|conversion|convert\w*|translat\w*|recogni[sz]\w*|drives?|driving|driven by|underpin\w*|supports?|supported by|visibility|reflect\w*)\b/i;
+export function contractIsMechanism(text: string): boolean {
+  return splitSentences(text ?? '').some(sn => CONTRACT_TERM.test(sn) && MECHANISM_LINK.test(sn) && /\b(?:driven by|due to|because of|reflect\w*|supported by|supports?|fuels?|lifts?|underpin\w*|visibility|convert\w*|translat\w*|execution|drives?|driving|led by|backed by|on the back of|leads? to|will (?:be )?(?:recogni[sz]ed|execut\w+))\b/i.test(sn));
+}
+
 // ---------------------------------------------------------------------------------------------
 // 5. classifyDuration
 // ---------------------------------------------------------------------------------------------
@@ -728,8 +754,10 @@ export function classifyDuration(text: string, changes: GuChange[], driver: GuDr
   const allLow = driver.kinds.length > 0 && driver.kinds.every(x => LOW_KINDS.has(x));
   if (allLow) return 'ONE_OFF';
   if (/\b(?:one[- ]?time|one[- ]?off|non[- ]?recurring)\b(?!\s+(?:pric|contract|order))/i.test(t) && !k.has('STRUCTURAL') && !k.has('BACKLOG')) return 'ONE_OFF';
+  // zzz853: 'several years' only when the multi-year contract / backlog is the stated MECHANISM of the guided metric (same sentence: the contract
+  // or backlog, a link to revenue / orders / the guidance, and a causal or conversion cue). Generic multi-year contract wording elsewhere is not enough.
   const multiYearText = /\b(?:multi-?year|over the next (?:3|three|4|four|5|five|several) years|3-5 years|five-year|long-term contracts?|through FY\s?\d{2})\b/i.test(t);
-  if ((k.has('BACKLOG') && multiYearText) || (k.has('STRUCTURAL') && k.has('CAPACITY')) || (multiYearText && driver.quality === 'HIGH')) return 'MULTI_YEAR';
+  if ((k.has('BACKLOG') && multiYearText && contractIsMechanism(t)) || (k.has('STRUCTURAL') && k.has('CAPACITY'))) return 'MULTI_YEAR';
   const years = new Set(changes.map(c => /FY\d{2}/.exec(c.after.period)?.[0]).filter(Boolean));
   if (years.size >= 2) return 'MULTI_YEAR';
   if (/\b(?:(?:next|coming|following) (?:few |two |three |several )?quarters|second half|\bH2\b|rest of the (?:fiscal )?year|remainder of (?:the )?(?:fiscal )?year|through the year)\b/i.test(t)) return 'MULTI_QUARTER';
@@ -791,7 +819,7 @@ function preferChange(existing: GuChange | undefined, next: GuChange, nextPrimar
 
 function buildGroups(cands: GuCandidate[], forceOne: boolean): Group[] {
   const list: Cand[] = cands
-    .map(c => ({ c, date: isoDate(c.publishedAt), ticker: tickerOf(c), changes: extractGuidance(`${c.title}. ${c.text}`), tier: sourceTier(c.sourceName, c.kind, c.url) }))
+    .map(c => ({ c, date: isoDate(c.eventDate || c.publishedAt), ticker: tickerOf(c), changes: extractGuidance(`${c.title}. ${c.text}`), tier: sourceTier(c.sourceName, c.kind, c.url) }))
     .filter(x => x.ticker && x.date)
     .sort((a, b) => a.date.localeCompare(b.date) || b.changes.length - a.changes.length);
   const groups: Group[] = [];
@@ -818,18 +846,18 @@ function buildGroups(cands: GuCandidate[], forceOne: boolean): Group[] {
           && c.direction === 'UP';
       });
       if (follows) {
-        const step: Step = { date: x.date, ts: x.c.publishedAt, cands: [], changes: new Map() };
+        const step: Step = { date: x.date, ts: x.c.eventDate ? undefined : x.c.publishedAt, cands: [], changes: new Map() };
         g.steps.push(step); addToStep(g, step, x); return;
       }
     }
     groups.push({ ticker: x.ticker, company: x.c.company ?? x.ticker, market: x.c.market, steps: [], metrics: new Set(), period: per });
     const g = groups[groups.length - 1];
-    const step: Step = { date: x.date, ts: x.c.publishedAt, cands: [], changes: new Map() };
+    const step: Step = { date: x.date, ts: x.c.eventDate ? undefined : x.c.publishedAt, cands: [], changes: new Map() };
     g.steps.push(step); addToStep(g, step, x);
   };
   const addToStep = (g: Group, step: Step, x: Cand) => {
     step.cands.push(x);
-    if (x.date < step.date) { step.date = x.date; step.ts = x.c.publishedAt; }
+    if (x.date < step.date) { step.date = x.date; step.ts = x.c.eventDate ? undefined : x.c.publishedAt; }
     for (const ch of x.changes) {
       const k = chKey(ch);
       const ex = step.changes.get(k);
@@ -850,7 +878,7 @@ function buildGroups(cands: GuCandidate[], forceOne: boolean): Group[] {
       const gap = g ? dayNum(x.date) - dayNum(g.steps[g.steps.length - 1].date) : 0;
       if (g && (forceOne || (gap >= -1 && gap <= 3))) { g.steps[g.steps.length - 1].cands.push(x); continue; }
     }
-    const g: Group = { ticker: x.ticker, company: x.c.company ?? x.ticker, market: x.c.market, steps: [{ date: x.date, ts: x.c.publishedAt, cands: [x], changes: new Map() }], metrics: new Set(), period: 'UNSTATED' };
+    const g: Group = { ticker: x.ticker, company: x.c.company ?? x.ticker, market: x.c.market, steps: [{ date: x.date, ts: x.c.eventDate ? undefined : x.c.publishedAt, cands: [x], changes: new Map() }], metrics: new Set(), period: 'UNSTATED' };
     groups.push(g);
   }
   return groups;
@@ -879,7 +907,7 @@ function skeletonOf(g: Group): GuSkeleton {
   const key = canonicalKey(g.ticker, primaryMetric, g.period, first.date);
   const texts: string[] = []; const seenT = new Set<string>();
   for (const x of allCands) { const t = `${x.c.title}. ${x.c.text}`; if (!seenT.has(t)) { seenT.add(t); texts.push(t); } }
-  const withTs = latest.cands.filter(x => x.c.publishedAt.length > 10).sort((a, b) => a.c.publishedAt.localeCompare(b.c.publishedAt))[0];
+  const withTs = latest.cands.filter(x => x.c.publishedAt.length > 10 && !x.c.eventDate).sort((a, b) => a.c.publishedAt.localeCompare(b.c.publishedAt))[0];
   return {
     canonical_key: key, guidance_event_id: stableId(key), ticker: g.ticker, company: g.company, market: g.market,
     announcement_date: latest.date, announcement_timestamp: withTs?.c.publishedAt,
@@ -1185,7 +1213,16 @@ export function buildNextEvidence(e: GuidanceEvent): string[] {
   const tracked = ups.length ? ups : comparedChanges(e);
   if (!tracked.length) return ['Wait for the company to publish clear before and after guidance numbers.'];
   const driverSpecific = e.v2 ? nextEvidenceFor(e.v2.operatingVariable) : [];
-  if (driverSpecific.length) return driverSpecific.slice(0, 2);
+  if (driverSpecific.length) {
+    const out2 = driverSpecific.slice(0, 2);
+    // zzz853: once a primary document confirmed the raise, the first check is tied to the guided range itself
+    if (e.verification === 'VERIFIED' && ups.length) {
+      const c0 = ups.slice().sort((a, b) => METRIC_PRIORITY.indexOf(a.metric) - METRIC_PRIORITY.indexOf(b.metric))[0];
+      const p0 = c0.after.period === 'UNSTATED' ? 'the guided period' : c0.after.period;
+      out2[0] = `${out2[0]}, as confirmation of progress toward the guided ${metricLabel(c0)} ${fmtPoint(c0.after)} for ${p0}`;
+    }
+    return out2;
+  }
   const out: string[] = [];
   const line = (c: GuChange): string => {
     const g = fmtPoint(c.after); const p = c.after.period === 'UNSTATED' ? 'the guided period' : c.after.period;
@@ -1212,8 +1249,10 @@ function driverPhrase(e: GuidanceEvent): string | null {
   if (e.guidance_quality === 'UNKNOWN' || /not stated|unresolved|^stated operating/i.test(e.guidance_driver)) return v ? `driven by ${v}` : null;
   return `driven by ${e.guidance_driver.charAt(0).toLowerCase()}${e.guidance_driver.slice(1)}${v ? ` (stated: ${v})` : ''}`;
 }
+/** 'FY27–29 (3-year CAGR)' for a multi-year growth target, the plain period otherwise */
+export const periodWords = (p: GuGuidancePoint): string => (p.periodKind === 'MULTI_YEAR_CAGR' ? `${p.period && p.period !== 'UNSTATED' ? `${p.period} ` : ''}(${p.periodYears ? `${p.periodYears}-year ` : 'multi-year '}CAGR)`.trim() : p.period);
 function figureWords(c: GuChange): string {
-  const period = c.after.period === 'UNSTATED' ? '' : `${c.after.period} `;
+  const period = c.after.period === 'UNSTATED' ? '' : `${periodWords(c.after)} `;
   // a revenue figure quoted as a percentage reads "revenue guidance at 13%" (the % is the growth rate the company guided)
   return `${period}${c.metric === 'REVENUE_GROWTH' ? 'revenue' : metricLabel(c)} guidance`;
 }
@@ -1234,7 +1273,7 @@ export function buildWhyNow(e: GuidanceEvent): string {
   }
   if (!ups.length) return `${e.company} raised its guidance, but the source does not give clear before and after numbers (${DATA_UNAVAILABLE}).${e.v2 && !e.v2.whyNowResolved ? ` ${WHY_NOW_UNRESOLVED}.` : ''}`;
   const c = ups.slice().sort((a, b) => METRIC_PRIORITY.indexOf(a.metric) - METRIC_PRIORITY.indexOf(b.metric))[0];
-  const period = c.after.period === 'UNSTATED' ? '' : ` for ${c.after.period}`;
+  const period = c.after.period === 'UNSTATED' ? '' : ` for ${periodWords(c.after)}`;
   const more = ups.length > 1 ? ` (plus ${ups.length - 1} more measure${ups.length > 2 ? 's' : ''})` : '';
   const dp = driverPhrase(e);
   const ci = e.changes.indexOf(c); const kl = e.v2?.ranges[ci]?.klass;
@@ -1530,8 +1569,10 @@ export function assessDurability(text: string, changes: GuChange[], driver: GuDr
   if (old === 'ONE_OFF') return { level: 'ONE_OFF', why: 'The stated driver is a one-time item, so it is not expected to repeat.' };
   if (/\b(?:structural|secular)\b/i.test(t) && (has('CAPACITY') || has('ORDERS') || driver.kinds.includes('STRUCTURAL') || /multi-?year/i.test(t)))
     return { level: 'STRUCTURAL', why: 'The source describes the demand as structural or secular and backs it with capacity, orders or a multi-year view.' };
+  if (contractIsMechanism(t) || (old === 'MULTI_YEAR' && contractIsMechanism(t)))
+    return { level: 'MULTI_YEAR', why: 'The source states a multi-year contract or backlog as the way the guided number is delivered, which reaches beyond this year.' };
   if (/\b(?:multi-?year|long-term) (?:contracts?|order book|backlog|agreements?|orders?)\b|\b\d[- ]year (?:contracts?|agreements?|orders?)\b/i.test(t) || old === 'MULTI_YEAR')
-    return { level: 'MULTI_YEAR', why: 'The source states multi-year contracts, backlog or demand, which reaches beyond this year.' };
+    return { level: 'UNKNOWN_INSUFFICIENT_EVIDENCE', why: 'Multi-year contracts are mentioned, but the source does not say they drive the guided number, so how long this lasts is unknown (not assumed).' };
   if (has('CAPACITY') && (has('ORDERS') || has('EXPORTS')))
     return { level: 'MULTI_QUARTER', why: 'New capacity is being added and an order pipeline or export demand is stated, so output can stay higher for several quarters. Whether it lasts years is not stated.' };
   if (has('CAPACITY')) return { level: 'MULTI_QUARTER', why: 'New capacity is being added, which stays in place after this quarter. Demand to fill it is not evidenced in the source.' };
@@ -1657,6 +1698,119 @@ function portfolioImpact(e: { inBook: boolean; bookThesis?: GuThesis; verificati
   return 'NEUTRAL';
 }
 
+
+// ---------------------------------------------------------------------------------------------
+// zzz853: classification follows the numbers; dates; source claims and conflicts; the company's own driver sentence
+// ---------------------------------------------------------------------------------------------
+export const AUDIT_NOTE = 'Adjusted: headline described a raise; normalised guidance did not constitute a clean raise.';
+export const LABEL_UPGRADE = 'GUIDANCE UPGRADE';
+export const LABEL_UNVERIFIED = 'UNVERIFIED CLAIM';
+export const LABEL_REITERATION = 'REITERATION';
+export const LABEL_MIXED = 'MIXED / RANGE CHANGE';
+export const LABEL_LOWERED = 'GUIDANCE LOWERED';
+export const LABEL_NO_NUMBERS = 'DETECTED, NUMBERS NOT FOUND';
+
+/**
+ * What the numbers say, independent of the headline verb:
+ * RAISE = at least one measure moved up with a real raise of the range (the low end moved up).
+ * MIXED = a midpoint-only raise (range narrowed / top end cut), a widened range, a basis mismatch, or mixed moves without a raise.
+ * REITERATION = every compared measure unchanged. DOWNGRADE = lowered. DETECTED = no before and after numbers.
+ * 'GUIDANCE UPGRADE' is the label ONLY for a VERIFIED RAISE. Anything that is not a clean raise is `auditOnly` and never an upgrade.
+ */
+export function classifyEvent(e: Pick<GuidanceEvent, 'changes' | 'v2' | 'verification'>): { classification: GuClassification; displayLabel: string; auditOnly: boolean; auditNote?: string; isUpgrade: boolean } {
+  const cls = e.v2?.eventClass ?? eventClassOf(e.changes, e.v2?.ranges);
+  const verified = e.verification === 'VERIFIED';
+  let classification: GuClassification;
+  if (cls === 'UPGRADE') {
+    const ups = e.changes.map((c, i) => ({ c, r: e.v2?.ranges[i] })).filter(x => x.c.direction === 'UP' && !!x.c.before);
+    const clean = ups.some(x => !!x.r && REAL_RAISE.has(x.r.klass)) || (!e.v2 && ups.length > 0);
+    classification = clean ? 'RAISE' : 'MIXED';
+  } else if (cls === 'REITERATION') classification = 'REITERATION';
+  else if (cls === 'DOWNGRADE') classification = 'DOWNGRADE';
+  else if (cls === 'NO_RAISE') classification = 'MIXED';
+  else classification = 'DETECTED';
+  const displayLabel = classification === 'RAISE' ? (verified ? LABEL_UPGRADE : LABEL_UNVERIFIED)
+    : classification === 'REITERATION' ? LABEL_REITERATION
+    : classification === 'MIXED' ? LABEL_MIXED
+    : classification === 'DOWNGRADE' ? LABEL_LOWERED
+    : verified ? LABEL_NO_NUMBERS : LABEL_UNVERIFIED;
+  const auditOnly = classification !== 'RAISE' && classification !== 'DETECTED';
+  return { classification, displayLabel, auditOnly, auditNote: auditOnly ? AUDIT_NOTE : undefined, isUpgrade: classification === 'RAISE' };
+}
+/** Re-stamp classification fields after something changed the event (verification, sources). Pure. */
+export function withClassification<T extends GuidanceEvent>(e: T): T {
+  const k = classifyEvent(e);
+  return { ...e, classification: k.classification, displayLabel: k.displayLabel, auditOnly: k.auditOnly, auditNote: k.auditNote, isUpgrade: k.isUpgrade };
+}
+
+/** Dates: the company's announcement date is the event date; the media date is kept apart. Returns undefined when no media source is involved. */
+export function mediaDateOf(cands: readonly GuCandidate[]): string | undefined {
+  const media = cands.filter(c => !(c.kind && PRIMARY_KINDS.has(c.kind)) && sourceTier(c.sourceName, c.kind, c.url) !== 'PRIMARY').map(c => isoDate(c.publishedAt)).filter(Boolean).sort();
+  return media[0];
+}
+export function dateBasisOf(cands: readonly GuCandidate[]): 'ANNOUNCEMENT' | 'MEDIA' {
+  return cands.some(c => !!c.eventDate || (c.kind && PRIMARY_KINDS.has(c.kind)) || sourceTier(c.sourceName, c.kind, c.url) === 'PRIMARY') ? 'ANNOUNCEMENT' : 'MEDIA';
+}
+
+const claimsOfCandidate = (c: GuCandidate): GuSourceClaim[] => {
+  const out: GuSourceClaim[] = []; const seen = new Set<string>();
+  for (const ch of extractGuidance(`${c.title}. ${c.text}`)) {
+    const k = `${ch.metric}|${ch.after.period}`; if (seen.has(k)) continue; seen.add(k);
+    out.push({ metric: ch.metric, period: ch.after.period, display: fmtPoint(ch.after), low: ch.after.low, high: ch.after.high, before: ch.before ? fmtPoint(ch.before) : null });
+  }
+  return out;
+};
+const sameClaimValue = (a: GuSourceClaim, b: GuSourceClaim): boolean => {
+  if (a.low == null || a.high == null || b.low == null || b.high == null) return true;   // an unreadable value is never a conflict
+  const tol = (x: number, y: number) => 1e-9 * Math.max(1, Math.abs(x), Math.abs(y));
+  return Math.abs(a.low - b.low) <= tol(a.low, b.low) && Math.abs(a.high - b.high) <= tol(a.high, b.high);
+};
+/** Attach each source's OWN numbers to it and report a conflict when a primary source and another source state different values for the same measure and period. Both are kept; nothing is averaged. */
+export function attachClaims(sources: GuSourceRef[], cands: readonly GuCandidate[]): { sources: GuSourceRef[]; conflict: GuSourceConflict | null } {
+  const keyOf = (c: GuCandidate) => (c.url ?? '') || `${c.sourceName}|${isoDate(c.publishedAt)}`;
+  const byKey = new Map<string, GuSourceClaim[]>();
+  for (const c of cands) { const k = keyOf(c); const cl = claimsOfCandidate(c); if (cl.length) byKey.set(k, [...(byKey.get(k) ?? []), ...cl]); }
+  const out = sources.map(sr => { const k = (sr.url ?? '') || `${sr.name}|${sr.date}`; const cl = byKey.get(k); return cl ? { ...sr, claims: cl } : sr; });
+  let conflict: GuSourceConflict | null = null;
+  const prim = out.filter(sr => sr.tier === 'PRIMARY' && sr.claims?.length); const other = out.filter(sr => sr.tier !== 'PRIMARY' && sr.claims?.length);
+  outer: for (const p of prim) for (const pc of p.claims!) for (const o of other) for (const oc of o.claims!) {
+    if (pc.metric !== oc.metric || pc.period !== oc.period || sameClaimValue(pc, oc)) continue;
+    conflict = { metric: pc.metric, period: pc.period, primary: pc.display, media: oc.display, primarySource: p.name, mediaSource: o.name, text: `Primary source: ${pc.display}; Media claim: ${oc.display}` };
+    break outer;
+  }
+  return { sources: out, conflict };
+}
+
+// the company's own sentence explaining the change (text only; never invented)
+const DRIVER_CUE = /\b(?:driven by|due to|because of|reflecting|reflects|on account of|thanks to|owing to|led by|supported by|attributable to|as a result of|helped by|on the back of|boosted by|benefit(?:ing)? from|backed by|fuell?ed by|underpinned by|visibility)\b/i;
+const DRIVER_TERM = /\b(?:demand|orders?|order (?:book|inflows?|intake|pipeline)|backlog|capacity|customers?|pricing|prices?|price (?:hikes?|increases?)|acquisitions?|acquired|volumes?|mix|utili[sz]ation|ramp[- ]?up|new (?:plant|line|facility|products?|contracts?)|realisations?|realizations?)\b/i;
+export const DRIVER_NOT_STATED = 'Driver not stated';
+export function extractDriverSentence(text: string): string | null {
+  for (const raw of splitSentences(text ?? '')) {
+    const sn = raw.replace(/\s+/g, ' ').trim();
+    if (sn.length < 25 || sn.length > 400) continue;
+    if (!DRIVER_CUE.test(sn) || !DRIVER_TERM.test(sn)) continue;
+    ANALYST_RE.lastIndex = 0; const analyst = ANALYST_RE.test(sn); ANALYST_RE.lastIndex = 0;
+    if (analyst && !COMPANY_CUE.test(sn)) continue;
+    return sn.length > 260 ? `${sn.slice(0, 257)}...` : sn;
+  }
+  return null;
+}
+
+
+export const PRIMARY_STATE_TEXT: Record<GuPrimaryState, string> = {
+  PRIMARY_SOURCE_READ: 'PRIMARY SOURCE READ',
+  PRIMARY_SOURCE_FOUND: 'PRIMARY SOURCE FOUND',
+  AWAITING_PRIMARY_SOURCE: 'Awaiting primary source',
+  SECONDARY_SOURCE_CLAIM: 'SECONDARY-SOURCE CLAIM',
+};
+export const PRIMARY_NOT_FOUND_TEXT = 'Primary source: not found in the filings read so far';
+/** 'Awaiting primary source' only when no primary link is known; a known link is PRIMARY SOURCE FOUND (read -> PRIMARY SOURCE READ). */
+export function primaryStateFor(o: { url?: string | null; read?: boolean; searched?: boolean }): { state: GuPrimaryState; text: string } {
+  const state: GuPrimaryState = o.read ? 'PRIMARY_SOURCE_READ' : o.url ? 'PRIMARY_SOURCE_FOUND' : o.searched ? 'SECONDARY_SOURCE_CLAIM' : 'AWAITING_PRIMARY_SOURCE';
+  return { state, text: PRIMARY_STATE_TEXT[state] };
+}
+
 export function buildGuidanceEvent(input: GuCandidate[] | GuSkeleton, ctx: GuContext, now: Date): GuidanceEvent {
   const sk: GuSkeleton = Array.isArray(input) ? (() => { const g = buildGroups(input, true); if (!g.length) throw new Error('No usable candidates (need a ticker or company and a date)'); return skeletonOf(g[0]); })() : input;
   ctx = ctx ?? {};
@@ -1774,7 +1928,21 @@ export function buildGuidanceEvent(input: GuCandidate[] | GuSkeleton, ctx: GuCon
   base.v2.stage = d.decision === 'UNVERIFIED' ? 'CANDIDATE' : (ups.length && mat.level !== 'UNKNOWN') ? 'DECISION' : ups.length ? 'VERIFIED' : 'PRIMARY_SOURCE_FOUND';
   base.chain = chain(base);
   base.rankKey = rankKeyOf(base);
-  return base;
+  // zzz853: each source's own numbers, a conflict when sources disagree, the media date kept apart from the company's date, the company's own driver sentence, and the classification
+  const cl = attachClaims(base.sources, sk.candidates);
+  base.sources = cl.sources; base.sourceConflict = cl.conflict;
+  if (cl.conflict) base.evidenceGaps = [`Source conflict: ${cl.conflict.text}`, ...base.evidenceGaps];
+  // zzz853: a quarter written without a fiscal year (or no period at all) cannot be placed on a calendar; say so, never guess the year
+  if (base.changes.some(c => c.after.period === 'UNSTATED') && !base.evidenceGaps.some(g => /period unclear/i.test(g))) base.evidenceGaps = ['Guided period unclear: the source gives no fiscal year for the guided figure (a quarter without a year is not placed on a calendar)', ...base.evidenceGaps];
+  if (base.changes.some(c => c.after.periodKind === 'MULTI_YEAR_CAGR') && !base.evidenceGaps.some(g => /multi-year/i.test(g))) base.evidenceGaps = ['Multi-year growth target (a CAGR over several years), not a single-year guidance figure', ...base.evidenceGaps];
+  base.media_date = mediaDateOf(sk.candidates); base.dateBasis = dateBasisOf(sk.candidates);
+  const prim = base.sources.find(x => x.tier === 'PRIMARY' && !!x.url);
+  base.primarySourceUrl = prim?.url ?? null; base.primarySourceDate = prim?.date ?? null;
+  const ps = primaryStateFor({ url: base.primarySourceUrl, read: base.verification === 'VERIFIED' });
+  base.primaryState = ps.state; base.primaryStateText = ps.text;
+  const drv = extractDriverSentence(text);
+  base.whyNowDriver = drv ?? DRIVER_NOT_STATED;
+  return withClassification(base);
 }
 
 /** zzz849: numbers the persistent guidance universe holds for the same company, offered to an event that has none of its own. */
@@ -1801,7 +1969,7 @@ export function buildWithExtras(sk: GuSkeleton, ctx: GuContext, now: Date, extra
 }
 
 export function processCandidates(cands: GuCandidate[], ctxFor: (ticker: string) => GuContext, now: Date, window: GuWindow = '7D', extraFor?: GuExtraFor): GuidanceEvent[] {
-  const kept = cands.filter(c => withinWindow(c.publishedAt, window, now) && isGuidanceUpgradeCandidate(c).include);
+  const kept = cands.filter(c => withinWindow(c.eventDate || c.publishedAt, window, now) && isGuidanceUpgradeCandidate(c).include);   // zzz853: the company's announcement date, never a republish date
   const events = mergeCandidates(kept).map(sk => buildWithExtras(sk, ctxFor(sk.ticker) ?? {}, now, extraFor));
   return rank(events);
 }

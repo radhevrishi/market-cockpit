@@ -111,10 +111,12 @@ describe('zzz850 acquisition: deal value and capacity are not earnings', () => {
     assert.equal(p.stageLabel, 'Confirmed by company or filing');
     assert.ok((p.ledgerBlockers || []).includes('Earnings link not established'));
   });
-  test('once the acquired business revenue / EBITDA is stated, the block lifts', () => {
+  test('zzz852: the acquired business revenue / EBITDA is the TARGET\'s figure; it is shown with its owner and does not lift the acquirer link', () => {
+    // changed assertion: zzz850 expected the block to lift. Number ownership now says a target or acquired-asset figure is never the parent's earnings.
     const q = run({ title: ACQ, description: `${ACQ_D} The acquired assets reported revenue of Rs 300 crore and EBITDA of Rs 240 crore last year.` });
-    assert.notEqual(q.link, 'NOT_ESTABLISHED');
-    assert.ok(!(q.ledgerBlockers || []).includes('Earnings link not established'));
+    assert.equal(q.link, 'NOT_ESTABLISHED');
+    assert.ok((q.ledgerBlockers || []).includes('Earnings link not established'));
+    assert.ok((q.numberLines || []).some((l) => /Rs 300 cr.*, not /.test(l)), JSON.stringify(q.numberLines));
   });
   test('US deal in dollars behaves the same', () => {
     const u = analyseRadarItem({ id: 'u', ticker: 'OMEG', company: 'Omegatech', region: 'US', title: 'Omegatech to acquire 300 MW solar assets for $450 million', sourceLabel: 'Reuters' } as RadarInput);

@@ -106,6 +106,7 @@ export interface FeedContentHints {
 export type SubtypeHint = 'MERGER' | 'SPIN' | 'FINANCING' | 'GUIDANCE_PLAN' | 'LISTING_DONE' | 'NEW_PRODUCT' | null;
 
 const PRICE_RE = /\b(share price|stock price)\b.{0,40}\b(falls?|fell|drops?|dropped|slips?|slides?|jumps?|rallies|rally|surges?|climbs?|gains?|tumbles?|plunges?|down|up|rises?|hits?)\b|\b(falls?|drops?|slips?|slides?|jumps?|rallies|rally|surges?|climbs?|tumbles?|plunges?|rises?|gains?|zooms?|soars?|sinks?|hits? (?:52|upper|lower))\b[^.]{0,30}\d+(?:\.\d+)?\s?%|\bshare price\b.{0,30}\bsince\b|\bsince (?:the )?(?:demerger|listing|ipo)\b|\b(?:shares?|stock) (?:rally|jump|surge|fall|drop|slump|tank|zoom|soar)s?\b.{0,20}\d+\s?%|\bzooms? \d+\s?%|\bwhat'?s dragging\b|\bintraday\b/i;
+const FIN_MOVE_RE = /\b(net profit|profit|pat|revenues?|sales|ebitda|net income|earnings|margins?|net loss|order book)\b[^.,;]{0,25}\b(rises?|rose|falls?|fell|drops?|dropped|jumps?|jumped|surges?|surged|climbs?|gains?|slips?|slides?|declines?|grows?|soars?|tumbles?|plunges?|up|down)\b/i;
 const PREVIEW_RE = /\b(q[1-4]|fy\d{2}|quarterly|half[- ]yearly)?\s*results? (?:today|tomorrow|preview|date|on)\b|\bresults? today\b|\bwhat to watch\b|\b(?:earnings|results) (?:preview|calendar|date)\b|\bdate, time\b|\b(?:record date|ex[- ]date) (?:alert|details|list)\b|\blast chance to buy\b|\bwhat to expect\b|\bahead of (?:q[1-4]|results|earnings)\b|\b(?:stock split|bonus|dividend) watch\b|\brecord date alert\b|\bcheck (?:ratio|record date|dates?)\b/i;
 const ANALYST_RE = /\b(price target|target price|share price target|brokerages?|analysts?)\b.{0,60}\b(upside|see|sees|raises?|cuts?|lifts?|target|rating)\b|\b(?:citi|clsa|nuvama|jefferies|nomura|goldman|morgan stanley|macquarie|kotak|motilal|iifl|jpmorgan|ubs|bofa|hsbc|bernstein)\b.{0,50}\b(?:target|upside|buy|overweight|outperform|rating)\b|\bup to \d+% upside\b|\b(?:buy|sell|hold) (?:rating|call)\b|\bstocks? to buy\b|\b(?:brokerage|analyst) (?:picks?|calls?)\b|\bwhat (?:goldman|nomura|citi|analysts?|brokerages?)\b.{0,30}\bsay\b|\bhere'?s what .{0,30}\bsay\b/i;
 const OPINION_RE = /^\s*(prediction|opinion|analysis|explained|explainer|view|column|commentary|will\b.{0,80}\?|should you|can\b.{0,60}\?|is it (?:time|worth))\b|\?\s*$|\bwhy (?:buy|sell)\b|\bbull(?:ish)? case\b|\bbear(?:ish)? case\b|\bprediction\b/i;
@@ -127,7 +128,9 @@ export function contentHints(title: string, description?: string): FeedContentHi
   const isAnalystTarget = ANALYST_RE.test(t);
   const isPreview = PREVIEW_RE.test(t);
   // A preview or analyst headline is not a price article even when it mentions a percent.
-  const isPriceArticle = !isPreview && !isAnalystTarget && PRICE_RE.test(t);
+  // 'Q1 net profit rises 23%' is a results headline, not a price move (zzz852): a financial-statement noun owns the verb and no share-price wording is present.
+  const resultsMove = FIN_MOVE_RE.test(t) && !/\b(?:share|stock) price\b|\bshares?\b|\bstocks?\b|\bintraday\b|\b52[- ]week\b/i.test(t);
+  const isPriceArticle = !isPreview && !isAnalystTarget && !resultsMove && PRICE_RE.test(t);
   const isOpinion = OPINION_RE.test(t) && !isAnalystTarget;
   return {
     isPriceArticle, isPreview, isAnalystTarget, isOpinion,
@@ -505,3 +508,12 @@ export function stripLegalBoilerplatePercents(text: string): string {
 const PRICE_PHRASE_RE = /\b(?:hits?|hit|touch(?:es|ed)?|scal(?:es|ed)|reach(?:es|ed)|trade[sd]? at|at)\s+(?:a\s+)?(?:fresh\s+)?(?:all[- ]time high|record high|52[- ]week high|lifetime high|multi[- ]year high|upper circuit|lower circuit)\b|\b(?:all[- ]time high|record high|52[- ]week high|lifetime high)\b/gi;
 /** Share-price reaction wording ('hits all-time high'). Context only: the adapter hands these spans to the radar as non-evidence. */
 export function priceReactionSpans(text: string): string[] { return Array.from(new Set((text || '').match(PRICE_PHRASE_RE) || [])).map((x) => x.trim()); }
+
+// ─── 12. zzz852: name-level fund / regulator / court checks (data patterns, shared with the entity resolver) ──
+/** A pooled investment vehicle by name alone (fund, trust, BDC, LP ...). Operating-company words (bank, bancorp ...) veto. */
+export function isFundLikeName(name: string | null | undefined): boolean {
+  const n = (name || '').trim();
+  if (!n) return false;
+  if (OPERATING_GUARD_RE.test(n)) return false;
+  return FUND_NAME_STRONG_RE.test(n) || FUND_NAME_CREDIT_RE.test(n);
+}

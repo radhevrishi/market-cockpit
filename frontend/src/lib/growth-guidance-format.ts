@@ -5,13 +5,14 @@ import type {
   GgAlertKind, GgAlertLevel, GgCapBand, GgCatalyst, GgChainStep, GgCompany, GgExpectations, GgGrowthOrigin, GgGuidancePoint, GgInflection, GgKind,
   GgLeverage, GgMap2x2, GgMarket, GgMetric, GgOrganic, GgOutcome, GgPeriodKind, GgQuality, GgRerating, GgRevision, GgScanSource, GgSort, GgTracking, GgValidity, GgVerification,
 } from './growth-guidance-types';
+import { HIGH_GROWTH_THRESHOLD } from './guidance-config';
 import { CATALYST_LABEL, KIND_LABEL, THRESHOLDS, TRACKING_LABEL, VERIFICATION_LABEL } from './growth-guidance-types';
 
 export { CATALYST_LABEL, KIND_LABEL, THRESHOLDS, TRACKING_LABEL, VERIFICATION_LABEL };
 
 export const UNAVAILABLE = 'DATA UNAVAILABLE';
 export const NOT_ESTABLISHED = 'Not yet established';
-export const DEFAULT_THRESHOLD = 30;
+export const DEFAULT_THRESHOLD = HIGH_GROWTH_THRESHOLD;
 export const SCAN_INCOMPLETE_NOTE = 'SCAN INCOMPLETE. An empty list does not mean there is no guidance. Some sources were not fully read.';
 export const DISCLAIMER = 'Company data only. Research, not investment advice. A guided number is what management said, not a promise.';
 

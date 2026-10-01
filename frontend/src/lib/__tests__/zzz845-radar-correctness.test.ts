@@ -25,7 +25,7 @@ describe('known false classifications', () => {
     const r = run('Zee Entertainment allots 20.94 crore warrants at Rs 126 issue price to promoter group');
     assert.equal(r.eventClass, 'CAPITAL_STRUCTURE_FUNDING');
     assert.notEqual(r.link, 'DIRECT');
-    assert.equal(r.link, 'NOT_ESTABLISHED');
+    assert.equal(r.link, 'NOT_APPLICABLE');
     assert.match(r.proof.what, /use of proceeds/i);
     assert.match(r.proof.what, /balance-sheet/i);
     assert.equal(r.impacts?.revenue ? /not established/i.test(r.impacts.revenue) : true, true);
@@ -39,7 +39,7 @@ describe('known false classifications', () => {
   test('SAT relief: legal event, link not established, the 8% lives only in priceResponse', () => {
     const r = run('SAT grants relief to JSW Steel; stock jumps 8%');
     assert.equal(r.eventClass, 'REGULATORY_LEGAL');
-    assert.equal(r.link, 'NOT_ESTABLISHED');
+    assert.equal(r.link, 'NOT_APPLICABLE');
     assert.equal(r.priceResponse?.pct, 8);
     assert.equal(r.priceResponse?.direction, 'UP');
     const fundamentals = JSON.stringify([r.impacts, r.catalystChain, r.changes, r.financialTransmission]);

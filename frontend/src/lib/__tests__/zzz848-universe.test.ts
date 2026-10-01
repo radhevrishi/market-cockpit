@@ -42,7 +42,9 @@ describe('display: ranges, open-ended, multi-year, implied', () => {
     assert.equal(u.display, '+35–40%'); assert.ok(!/37\.5/.test(u.display));
     for (const s of SEED.filter((x) => x.growthLow != null && x.growthHigh != null && x.growthLow !== x.growthHigh && x.periodKind !== 'MULTI_YEAR_CAGR' && x.verification !== 'UNVERIFIED')) {
       const rec = find(uni(SEED).records, new RegExp(s.company.split(' ')[0], 'i'))!; const p = rec.points.find((x) => x.metric === s.metric)!;
-      assert.match(p.display, new RegExp(`${s.growthLow}.{1}${s.growthHigh}|${String(s.growthLow).replace('.', '\\.')}–${String(s.growthHigh).replace('.', '\\.')}`));
+      // zzz853: a derived / implied range is shown to 0 decimals when broad (e.g. 102.7-109.7 -> 103-110), the exact value is kept in growthExact
+      const num = (n: number) => (s.growthOrigin === 'IMPLIED' ? `(?:${String(n).replace('.', '\\.')}|${Math.round(n)})` : String(n).replace('.', '\\.'));
+      assert.match(p.display, new RegExp(`${num(s.growthLow!)}–${num(s.growthHigh!)}`));
     }
   });
   test('open-ended figures keep the plus: no upper number, or "at least / over"', () => {
@@ -53,7 +55,7 @@ describe('display: ranges, open-ended, multi-year, implied', () => {
     assert.equal(uni([mk({ growthLow: 75, growthHigh: 85, statement: 'Guides 80% plus or minus 5%.' })]).records[0].display, '+75–85%');
   });
   test('implied growth is labelled, stated is not', () => {
-    assert.equal(uni([mk({ growthOrigin: 'IMPLIED', growthLow: 43, growthHigh: 43, absoluteTarget: { value: 143, unit: '₹ Cr' }, impliedBase: { value: 100, unit: '₹ Cr', period: 'FY26' } })]).records[0].display, '+43% (implied)');
+    assert.equal(uni([mk({ growthOrigin: 'IMPLIED', growthLow: 43, growthHigh: 43, absoluteTarget: { value: 143, unit: '₹ Cr' }, impliedBase: { value: 100, unit: '₹ Cr', period: 'FY26' } })]).records[0].display, '+43% vs FY26 actual (derived: ₹143 Cr vs ₹100 Cr)');   // zzz853: the basis is always shown, never a bare '(implied)'
     assert.ok(!/implied/.test(uni([mk()]).records[0].display));
   });
   test('an absolute-only guide shows the amount and says no % is stated', () => {
@@ -224,7 +226,7 @@ describe('Cupid-style company: revenue and PAT are independent (data-driven)', (
     assert.equal(normPeriod(pr.period), 'FY27'); assert.equal(normPeriod(pp.period), 'FY27');
     assert.equal(pr.sourceDate, rev.sourceDate); assert.equal(pp.sourceDate, pat.sourceDate); assert.ok(pr.sourceName && pp.sourceName);
     assert.equal(metricCell(r, 'REVENUE').text, pr.display); assert.equal(metricCell(r, 'PAT').text, pp.display);
-    assert.equal(pr.implied, rev.growthOrigin === 'IMPLIED'); assert.match(pr.display, /implied/);
+    assert.equal(pr.implied, rev.growthOrigin === 'IMPLIED'); assert.match(pr.display, /derived: .* vs /);   // zzz853: derived growth names its base
   });
   test('PAT is shown as "—" / not verified when only revenue exists, and is never inferred from revenue', () => {
     const rows = seed().filter((r) => !(/cupid/i.test(r.company) && r.metric === 'PAT')); const r = find(uni(rows).records, /cupid/i)!;

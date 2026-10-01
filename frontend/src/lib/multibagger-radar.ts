@@ -24,8 +24,20 @@ import type {
 } from './multibagger-radar-types';
 import type { RadarFeedHints } from './multibagger-radar-feed-types';
 import { NOT_IDENTIFIED, entityTokens, keyNumbers, publisherFamily } from './special-sit-feed-quality';
+import type { DealTerms, OwnedNumber, ResolvedEntity, SourceSubject } from './radar-owned-types';
+import type { CatalystDirection, DealTermLine, FactScope, InflectionStrength, PriorityFactors } from './multibagger-radar-types';
+import {
+  chainKindOf, conditionClauses, dealKindOf, dealTermLinesOf, diagnosticsOf, directionOf, evidenceChainOf, extractOwnership, foreignNumberLines,
+  headlineHierarchy, isBoilerplateBreak, ownDealTerms, sourceSubjectOf, whyNowOf, type RadarDiagnostics,
+} from './multibagger-radar-economics';
 
-export const RADAR_ENGINE_VERSION = 'zzz845-radar-v2';
+/**
+ * zzz852: optional fields the feed/entity layer may attach to a RadarInput. Read through this local type so the engine
+ * compiles whether or not RadarFeedHints declares them yet.
+ */
+export interface RadarOwnedHints { ownedNumbers?: OwnedNumber[]; entity?: ResolvedEntity; dealTerms?: DealTerms; sourceSubject?: SourceSubject }
+
+export const RADAR_ENGINE_VERSION = 'zzz852-radar-v3';
 
 // ─────────────────────────── input types ───────────────────────────
 
@@ -79,7 +91,7 @@ export interface RadarSnapshot {
   firstDiscovered?: string | null; firstPrimaryConfirmation?: string | null; firstFinancialConfirmation?: string | null; firstMaterialEarningsImpact?: string | null;
 }
 
-export interface RadarInput extends RadarFeedHints {
+export interface RadarInput extends RadarFeedHints, RadarOwnedHints {
   id: string;
   ticker: string | null;
   company: string;
@@ -131,6 +143,8 @@ export interface RadarResult {
   byBucket: Record<RadarBucket, RadarItem[]>;
   sharedDrivers: SharedDriverGroup[];
   counts: RadarCounts;
+  /** zzz852: why the empty buckets are empty. Explains; never changes what is promoted. */
+  diagnostics: RadarDiagnostics;
 }
 
 export interface RadarOptions { holdings?: string[]; now?: number }
@@ -473,7 +487,7 @@ const STRUCTURAL_KINDS = new Set<CatalystKind>([
 /** Kinds that are quarantined: they never become a thesis candidate and never show an earnings link. */
 const QUARANTINE_KINDS = new Set<CatalystKind>(['CORPORATE_ACTION', 'PRICE_MOVE', 'ANALYST_CHANGE', 'MEDIA_NARRATIVE', 'SECTOR_COMMENTARY', 'DISPROVED_RUMOUR']);
 const NON_OPERATING_CLASSES = new Set<EventClass>(['CAPITAL_STRUCTURE_FUNDING', 'REGULATORY_LEGAL', 'CORPORATE_ACTION', 'DISPROVED_RUMOUR', 'PRICE_RESPONSE', 'ANALYST', 'NARRATIVE', 'SECTOR_COMMENTARY', 'TECHNICAL']);
-const LINK_ORDER: Record<LinkStrength, number> = { DIRECT: 4, NEAR_DIRECT: 3, INDIRECT: 2, NARRATIVE_ONLY: 1, NOT_ESTABLISHED: 0 };
+const LINK_ORDER: Record<LinkStrength, number> = { DIRECT: 4, NEAR_DIRECT: 3, INDIRECT: 2, NARRATIVE_ONLY: 1, NOT_ESTABLISHED: 0, NONE: 0, NOT_APPLICABLE: 0 };
 const PROGRESSION: Record<CatalystMaturity, number> = { BROKEN: 0, DISCOVERY: 1, VALIDATED: 2, DEVELOPING: 3, FINANCIALLY_VISIBLE: 4, CONFIRMED: 5, ACCELERATING: 6, MATURE: 7 };
 const MAT_NUM: Record<Materiality, number> = { UNKNOWN: -1, LOW: 0, MODERATE: 1, HIGH: 2, VERY_HIGH: 3 };
 const LINK_STATUS_NUM: Record<LinkStatus, number> = { CONTRADICTED: -1, NOT_APPLICABLE: 0, ASSUMED: 1, PARTIALLY_PROVEN: 2, PROVEN: 3 };
@@ -884,6 +898,13 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   const ctext = stripNonEarnings(ps.clean, input.nonEarningsNumbers);
   const priceResponse = ps.response;
 
+  // ── zzz852: who owns each number. A figure owned by a target, subsidiary, transaction or industry is never the parent's earnings. ──
+  const hints = input as RadarInput & RadarOwnedHints;
+  const own0 = extractOwnership(ctext, input.company || '', hints.ownedNumbers);
+  const ctextOwn = own0.ownText;
+  const foreignRaws = new Set(own0.foreign.filter((n) => n.metric !== 'capacity').map((n) => squash(n.raw).toLowerCase()));
+  const hier = headlineHierarchy(title);
+
   // ── detectors (company facts are read from the price-free text) ──
   const disprovedQuote = matchQuote(RE.disproved, text);
   const disproved = disprovedQuote != null;
@@ -898,11 +919,11 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   const financingHint = subHint === 'FINANCING';
   const listingDone = subHint === 'LISTING_DONE';
   const newProductDet = RE.newProduct.test(text) || /new product|launch|approval/i.test(eType) || subHint === 'NEW_PRODUCT' || planHint;
-  const operatingDet = RE.operating.test(ctext);
+  const operatingDet = RE.operating.test(ctextOwn);
   // zzz850: an already-reported earnings result ("profit surges three-fold in June quarter on record revenue")
-  const reportedResult = !quar && !planHint && RE.quarterPhrase.test(text) && RE.resultNoun.test(ctext) && RE.resultChange.test(ctext) && !RE.notYetReported.test(text) && !disproved;
-  const isResult = RE.isResult.test(text) || /result|earnings/i.test(eType) || reportedResult;
-  const earnStated = RE.earnStmt.test(ctext);
+  const reportedResult = !quar && !planHint && RE.quarterPhrase.test(text) && RE.resultNoun.test(ctextOwn) && RE.resultChange.test(ctextOwn) && !RE.notYetReported.test(text) && !disproved;
+  const isResult = RE.isResult.test(own0.ownText || text) || /result|earnings/i.test(eType) || reportedResult;
+  const earnStated = RE.earnStmt.test(ctextOwn) || own0.parentFinancial.some((n) => n.metric !== 'order_value');
   const orderLike = RE.orderLike.test(text);
   const capacityIncrease = RE.capacityIncrease.test(text);
   const custDemand = RE.custDemand.test(text);
@@ -911,15 +932,17 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   const marketShareDet = RE.marketShare.test(text);
   const regDemandDet = RE.regDemand.test(text);
   const pricingDet = RE.pricingPower.test(text);
-  const marginDet = RE.marginWord.test(ctext);
+  const marginDet = RE.marginWord.test(ctextOwn);
   const fcfDet = RE.fcfWord.test(text);
-  const amounts = parseAmounts(ctext);
-  const amountStrs = ctext.match(RE.amount) || [];
-  const percents = ctext.match(RE.percent) || [];
-  const unitsM = ctext.match(RE.units) || [];
+  // amounts that belong to a target / subsidiary / industry are not company amounts (deal and transaction amounts stay: they are labelled deal facts)
+  const amounts = parseAmounts(ctext).filter((a) => !foreignRaws.has(squash(a.raw).toLowerCase()));
+  const amountStrs = (ctextOwn.match(RE.amount) || []).filter((a) => !foreignRaws.has(squash(a).toLowerCase()));
+  const percents = ctextOwn.match(RE.percent) || [];
+  const unitsM = ctextOwn.match(RE.units) || [];
+  const unitsDeal = ctext.match(RE.units) || [];
   const quantInText = amountStrs.length + percents.length + unitsM.length > 0;
   const earnNumbers = !!e && (isNum(e.revenueYoY) || isNum(e.patYoY) || (isNum(e.marginNow) && isNum(e.marginPrior)) || isNum(e.cfoToPat));
-  const resultFin = isResult && (earnNumbers || reportedResult || /\b(?:pat|net profit|profit|revenue|sales|ebitda|income|margin|earnings)\b[^.;]{0,40}\d/i.test(ctext));
+  const resultFin = isResult && (earnNumbers || reportedResult || /\b(?:pat|net profit|profit|revenue|sales|ebitda|income|margin|earnings)\b[^.;]{0,40}\d/i.test(ctextOwn));
   const capexDetected = RE.capexWord.test(text) || capacityIncrease || input.category === 'CAPEX' || /capex|capacity/i.test(eType);
   const capacityConfirmed = capacityIncrease && (custDemand || utilisation || contractOfftake || earnStated);
   const concrete = quantInText || RE.concreteVerb.test(text) || earnNumbers || disproved;
@@ -955,7 +978,11 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
 
   const rumourDenial = RE.rumour.test(text) && RE.denial.test(text) && !operatingFund;
   const corpActionDet = RE.corpAction.test(text) || RE.corpAction.test(etText);
-  const corpAction = !rumourDenial && corpActionDet && !fundMech && !funding && !(ss && ss !== 'OTHER');
+  // zzz852 headline hierarchy: when the headline's main verb/object is a dividend / split / bonus / record date, that is the primary event and an
+  // earnings figure in the same headline is secondary context. Only a real operating mechanism (order, capacity, bottleneck...) keeps it operating.
+  const operatingMech = qualDet || bottleneckDet || demandDet || capacityIncrease || marketShareDet || pricingDet || regDemandDet || supplyDemandDet || orderOnly || (newProductDet && RE.newProduct.test(text)) || growthInvest;
+  const headlineCorp = hier.corpPrimary && corpActionDet;
+  const corpAction = !rumourDenial && corpActionDet && (!fundMech || (headlineCorp && !operatingMech)) && !funding && !(ss && ss !== 'OTHER');
   const fda = RE.fdaLike.test(text);
   const legalCaseDet = !fda && (RE.legalSAT.test(text) || RE.legalCase.test(text));
   const legalDet = !fda && (legalCaseDet || RE.regDecision.test(text));
@@ -971,7 +998,7 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   const technicalText = RE.technical.test(text) || /technical|breakout/i.test(eType);
 
   const alwaysSS = ss === 'BUYBACK' || ss === 'OPEN_OFFER';
-  const durableSSm = ss === 'MA' ? (RE.durableMA.exec(text) || RE.earnStmt.exec(ctext)) : RE.durableSS.exec(text);
+  const durableSSm = ss === 'MA' ? (RE.durableMA.exec(own0.ownText || text) || RE.earnStmt.exec(ctextOwn)) : RE.durableSS.exec(text);
   const durableSS = !alwaysSS && (ss === 'SPIN' || ss === 'MA') && !!durableSSm && !disproved;
   // zzz850: an acquisition / investment / valuation context where the source states no company earnings figure. Deal value, capacity acquired,
   // capex and investment amounts are facts about the deal, never earnings: they cannot raise link strength or count as quantification.
@@ -1145,6 +1172,33 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
     else if (link === 'DIRECT' || link === 'NEAR_DIRECT') link = 'INDIRECT';
   }
 
+  // ── zzz852: strict link terminology. Direct = already in reported company financials. Near-direct = documented operating event with a quantified,
+  //    company-owned bridge. Indirect = plausible pathway, bridge incomplete. A number alone never makes Near-direct; a foreign number never counts. ──
+  const dirRead = directionOf(ctextOwn, e, inflection.state);
+  const dealK = dealKindOf(kind, subKind, ctext, growthInvest);
+  const reportedFin = reportedResult || earnNumbers || own0.parentFinancial.some((n) => n.metric === 'revenue' || n.metric === 'ebitda' || n.metric === 'pat' || n.metric === 'eps');
+  const shareholderMech = kind === 'CORPORATE_ACTION' || dealK === 'TENDER' || dealK === 'BUYBACK' || dealK === 'DIVIDEND' || dealK === 'SPLIT_BONUS';
+  const termsOwn = dealK ? ownDealTerms(dealK, ctext, own0) : null;
+  const hintTerms = hints.dealTerms && hints.dealTerms.fields ? hints.dealTerms : null;
+  const terms: DealTerms | null = dealK ? (hintTerms ? { ...(termsOwn as DealTerms), ...hintTerms, fields: { ...(termsOwn?.fields || {}), ...hintTerms.fields }, statedConditions: hintTerms.statedConditions && hintTerms.statedConditions.length ? hintTerms.statedConditions : (termsOwn?.statedConditions || []) } : termsOwn) : null;
+  const termLines: DealTermLine[] = dealK && terms ? dealTermLinesOf(dealK, terms, own0) : [];
+  const tenderConds = conditionClauses(terms, 3);
+  const qBridge = amounts.length > 0 || unitsM.length > 0 || percents.length > 0 || qLink;
+  if (!noiseKind && kind !== 'DISPROVED_RUMOUR') {
+    if (shareholderMech) link = 'NOT_APPLICABLE';
+    else if (kind === 'SPECIAL_SITUATION' && dealK === 'SPIN_OFF' && !durableSS) link = 'NONE';
+    else if ((kind === 'CAPITAL_RAISE' || kind === 'FINANCING') && link === 'NOT_ESTABLISHED') link = 'NOT_APPLICABLE';
+    else if ((kind === 'LEGAL_DECISION' || kind === 'REGULATORY_DECISION') && link === 'NOT_ESTABLISHED') link = 'NOT_APPLICABLE';
+    else if (kind === 'EARNINGS_RESULT' && !reportedFin && dirRead.signals === 0) link = 'NOT_ESTABLISHED';
+    else {
+      const resultLike = kind === 'EARNINGS_RESULT' || kind === 'OPERATING_INFLECTION' || kind === 'MARGIN_INFLECTION' || kind === 'FCF_INFLECTION';
+      if (link === 'DIRECT' && !(resultLike && reportedFin)) link = qBridge ? 'NEAR_DIRECT' : 'INDIRECT';
+      // a documented, company-owned operating event in a primary filing (order, award, qualification, commissioned capacity) is a bridge by itself
+      const documentedOp = directPrimary && (orderLike || qualDet || contractOfftake || capacityConfirmed) && !dealOnly;
+      if (link === 'NEAR_DIRECT' && !qBridge && !documentedOp && kind !== 'EARNINGS_RESULT') link = 'INDIRECT';
+    }
+  }
+
   // ── bucket ──
   const linkGood = link === 'DIRECT' || link === 'NEAR_DIRECT';
   const evOK = evStatus === 'CONFIRMED' || evStatus === 'STRONG' || evStatus === 'DEVELOPING';
@@ -1163,6 +1217,11 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   else if (growthInvest && acqWord) bucket = 'SPECIAL_SITUATION';
   else if (STRUCTURAL_KINDS.has(kind) && dCode != null && dCode >= 4 && linkGood && evOK) bucket = 'MULTIBAGGER';
   else if (bottleneckDet && (kind === 'BOTTLENECK' || kind === 'DEMAND_EXPLOSION' || kind === 'SUPPLY_DEMAND_INFLECTION')) bucket = 'BOTTLENECK';
+  else if (kind === 'EARNINGS_RESULT') {
+    // zzz852: only a materially improving positive result is an inflection; every other result is shown in its own group
+    const real = dirRead.direction === 'positive' && (dirRead.strength === 'strong' || dirRead.strength === 'moderate');
+    bucket = real && quantified ? 'EARNINGS_INFLECTION' : (dirRead.signals > 0 || reportedFin) ? 'RESULT_NO_INFLECTION' : 'EVENT_DRIVEN';
+  }
   else if (earningsKinds && quantified && inflection.state !== 'NO_INFLECTION') bucket = 'EARNINGS_INFLECTION';
   else if (STRUCTURAL_KINDS.has(kind) && (dCode == null || dCode === 2 || dCode === 3) && linkGood && evOK) bucket = 'EARNINGS_INFLECTION';
   else bucket = 'EVENT_DRIVEN';
@@ -1278,7 +1337,7 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
       first = false;
       if (out.length >= 3) break;
     }
-    for (const u of unitsM) {
+    for (const u of unitsDeal) {
       const disp = squash(u);
       const isCap = /\b(?:mw|gw|mwh|gwh|mtpa|ktpa|tpa|mt)\b/i.test(disp);
       const k = disp.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -1321,7 +1380,7 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   })();
 
   // per-variable impacts
-  const noFinLink = noEarningsLink || link === 'NOT_ESTABLISHED' || link === 'NARRATIVE_ONLY';
+  const noFinLink = noEarningsLink || link === 'NOT_ESTABLISHED' || link === 'NARRATIVE_ONLY' || link === 'NONE' || link === 'NOT_APPLICABLE';
   const NQ = noFinLink ? 'Not established' : 'Not quantified';
   const impacts: ImpactMap = { revenue: NQ, volume: NQ, asp: NQ, margin: NQ, ebitda: NQ, fcf: NQ, roce: NQ, marketShare: NQ };
   if (!noFinLink && !dealOnly) {
@@ -1614,7 +1673,7 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
       case 'LEGAL_DECISION': case 'REGULATORY_DECISION': p = { what: 'A company disclosure of the operating effect (licence, revenue or margin) in a filing or the next results.', when, kind: 'filing' }; break;
       case 'SPECIAL_SITUATION':
         p = ss === 'BUYBACK' ? { what: 'Completion of the buyback and the size actually bought back.', when, kind: 'closing' }
-          : ss === 'OPEN_OFFER' ? { what: 'Offer close, acceptance level and the regulatory approvals.', when, kind: 'closing' }
+          : ss === 'OPEN_OFFER' ? { what: tenderConds.length ? `Next proof: ${tenderConds.join('; ')}.` : 'Next proof: offer terms and conditions in the filing.', when, kind: 'closing' }
             : ss === 'SPIN' ? (listingDone ? { what: 'First separate results and separate reporting of the listed business; the listing itself is done.', when, kind: 'result' }
                 : tentative ? { what: 'Board and shareholder approval of the proposal (proposed, not approved), then the record date, listing of the separated business and its first separate results.', when, kind: 'closing' }
                   : { what: 'Record date, listing of the separated business and its first separate results.', when, kind: 'closing' })
@@ -1651,12 +1710,11 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
     case 'OPERATING_INFLECTION': case 'EARNINGS_RESULT': bAdd('Margin reversal in the next result', 'Revenue growth slows', 'Falling backlog or order book', 'Cash conversion worsens'); break;
     case 'CAPITAL_RAISE': case 'FINANCING': bAdd('The money is not deployed into the business', 'Dilution or interest cost outruns the return on the new money'); break;
     case 'LEGAL_DECISION': case 'REGULATORY_DECISION': bAdd('The ruling is appealed or reversed', 'The operating effect never shows in results'); break;
-    case 'SPECIAL_SITUATION': if (listingDone) bAdd('The separated business reports weak results on its own', 'Balance-sheet stress at the separated business'); else bAdd('Regulatory rejection or deal termination', 'Balance-sheet stress from the deal or its financing'); if (durableSS) bAdd('The stated earnings contribution does not appear in results'); break;
+    case 'SPECIAL_SITUATION': if (tenderConds.length) tenderConds.forEach((c) => bAdd(`A stated condition fails: ${c}`)); else bAdd('See stated transaction conditions'); if (durableSS) bAdd('The stated earnings contribution does not appear in results'); break;
     default: bAdd('Order cancellation', 'Falling backlog', 'Margin reversal');
   }
   if (kind !== 'CORPORATE_ACTION') {
     if (governance.status === 'FLAGGED') bAdd('Governance deterioration: the flags above worsen');
-    else if (!noEarningsLink) bAdd('Governance deterioration');
     if (/\bdebt|borrow|loan|financ/i.test(text) && kind !== 'SPECIAL_SITUATION' && !noEarningsLink) bAdd('Balance-sheet stress');
   }
   const breakConditions = breaks.slice(0, 7);
@@ -1714,7 +1772,7 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   const durStated4 = duration.basis === 'stated' && dCode != null && dCode >= 4;
   const evGood = evStatus === 'CONFIRMED' || evStatus === 'STRONG';
   const inflStrong = ['CONFIRMED_INFLECTION', 'ACCELERATING_INFLECTION', 'STRUCTURAL_INFLECTION'].includes(inflection.state);
-  if (noEarningsLink || evStatus === 'DISPROVED' || link === 'NARRATIVE_ONLY' || link === 'NOT_ESTABLISHED') p = 0;
+  if (noEarningsLink || evStatus === 'DISPROVED' || link === 'NARRATIVE_ONLY' || link === 'NOT_ESTABLISHED' || link === 'NONE' || link === 'NOT_APPLICABLE') p = 0;
   else if (bucket === 'SPECIAL_SITUATION') p = evGood && (ss === 'SPIN' || ss === 'MA' || ss === 'RESTRUCTURING') ? 1 : 0;
   else if (durStated4 && linkGood && evGood) p = 3;
   else if (linkGood && evOK && ((dCode != null && dCode >= 3) || (kind === 'EARNINGS_RESULT' && inflStrong))) p = 2;
@@ -1732,6 +1790,87 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   if (!noEarningsLink && p > 0 && mat.level === 'LOW') { p = 0; capReasons.push('the event is economically hard to tell apart from no event against the size of the company'); }
   else if (!noEarningsLink && p > 2 && mat.level === 'MODERATE') { p = 2; capReasons.push('the event is only moderate against the size of the company'); }
   if (p === 3 && earningsImpactStatus === 'CONFIRMED') { p = 2; capReasons.push('the earnings effect is already reported, so little transmission is left to prove'); }
+
+  // ── zzz852: research priority from information value, materiality (only when a size is supplied), evidence uncertainty, catalyst proximity,
+  //    persistence; portfolio relevance is a tie-break only (never here). No default Medium. ──
+  const termDated = termLines.some((l) => l.stated && /^(?:Expiry|Expected closing|Record date|Listing date)/.test(l.label));
+  const datedProof = termDated || !!(proof.when && (/\d/.test(proof.when) || /^next /i.test(proof.when)));
+  const noLinkClass = link === 'NONE' || link === 'NOT_APPLICABLE' || link === 'NOT_ESTABLISHED' || link === 'NARRATIVE_ONLY';
+  const matKnown = mat.level === 'HIGH' || mat.level === 'VERY_HIGH' ? 2 : mat.level === 'MODERATE' ? 1 : 0;
+  const persistPts = dCode != null && dCode >= 4 && duration.basis === 'stated' ? 2 : dCode != null && dCode >= 3 && duration.basis === 'stated' ? 1 : 0;
+  const prioPts = (linkGood ? 2 : link === 'INDIRECT' ? 1 : 0) + (evGood ? 1 : 0) + matKnown + (datedProof ? 1 : 0) + persistPts;
+  if (!noEarningsLink && bucket === 'RESULT_NO_INFLECTION') { p = 0; capReasons.push('the result is not an inflection'); }
+  if (!noEarningsLink) {
+    const capP = prioPts >= 6 ? 3 : prioPts >= 4 ? 2 : prioPts >= 2 ? 1 : 0;
+    if (p > capP) { p = capP; capReasons.push('the information value, size, proximity or persistence is not established'); }
+    if (noLinkClass && !datedProof) p = 0;
+    if (noLinkClass && p > 1) p = 1;
+  }
+  const priorityFactors: PriorityFactors = {
+    informationValue: evStatus === 'DISPROVED' || noLinkClass || bucket === 'RESULT_NO_INFLECTION' ? 'low' : evGood && linkGood ? 'medium' : linkGood || link === 'INDIRECT' ? 'medium' : 'low',
+    materiality: mat.level === 'VERY_HIGH' ? 'very high' : mat.level === 'HIGH' ? 'high' : mat.level === 'MODERATE' ? 'moderate' : mat.level === 'LOW' ? 'low' : 'not assessable',
+    evidenceUncertainty: evStatus === 'CONFIRMED' && directPrimary ? 'narrow' : 'open',
+    proximity: datedProof ? 'dated proof point' : 'none',
+    persistence: persistPts > 0 ? 'stated multi-quarter' : 'not established',
+    portfolio: 'tie-break only',
+  };
+  if (priorityFactors.informationValue === 'medium' && !(evGood && linkGood && (datedProof || matKnown > 0))) priorityFactors.informationValue = noLinkClass ? 'low' : 'medium';
+  if (priorityFactors.informationValue === 'medium' && prioPts >= 6) priorityFactors.informationValue = 'high';
+
+  // ── zzz852: new display fields ──
+  const co = squash(input.company || '') && input.company !== 'Unnamed company' ? squash(input.company) : 'the company';
+  const secondaryOnly = !directPrimary;
+  const evidenceLabel = evStatus === 'DISPROVED' ? 'Disproved' : directPrimary ? EVIDENCE_LABEL[evStatus] : socialAnalyst ? 'Hypothesis (social or analyst source)' : `Secondary-reported (${nSrc} ${nSrc === 1 ? 'outlet' : 'outlets'})`;
+  const nextStep = kind === 'EARNINGS_RESULT' && secondaryOnly
+    ? 'Next: read the official result filing and extract revenue, EBITDA, margin, PAT, volumes, realisation, cost, cash flow, capex, net debt, guidance'
+    : null;
+  const corpWithEarnings = kind === 'CORPORATE_ACTION' && hier.earningsInTitle;
+  const earnClause = (): string | null => {
+    const clauses = `${title}. ${ctext}`.split(/(?<=[.!?])\s+|,|;|\bdespite\b|\bwhile\b|\bas\b|\beven as\b/i).map((x) => squash(x).replace(/^[\s.]+|[\s.]+$/g, '')).filter(Boolean);
+    const hit = clauses.find((c) => /\b(?:profit|revenue|earnings|ebitda|net income|loss|q[1-4]|quarter)\b/i.test(c) && !/\bdividends?\b/i.test(c));
+    return hit || null;
+  };
+  const earnSentence = corpWithEarnings ? earnClause() : null;
+  const secondaryEvent: RadarItem['secondaryEvent'] = corpWithEarnings && earnSentence ? { kind: 'EARNINGS_RESULT', label: 'Earnings (context only)', text: clip(earnSentence, 160), direction: dirRead.direction } : null;
+  const contextFacts = corpWithEarnings && earnSentence ? [`Earnings figure in the same headline, shown as context and not as the event: ${clip(earnSentence, 160)}`] : [];
+  const isResultKind = kind === 'EARNINGS_RESULT';
+  const economicPayoff: string | null = dealK === 'DIVIDEND' || (kind === 'CORPORATE_ACTION' && /dividend/i.test(ctext)) ? 'Shareholder cash return'
+    : dealK === 'SPLIT_BONUS' || kind === 'CORPORATE_ACTION' ? 'Share structure change (no operating payoff)'
+      : dealK ? 'Transaction / shareholder payoff' : null;
+  const opLanguageOK = kind === 'NEW_PRODUCT_MARKET' || kind === 'CAPACITY_INFLECTION' || kind === 'CONTRACT_ORDER' || kind === 'CUSTOMER_QUALIFICATION' || kind === 'DEMAND_EXPLOSION' || kind === 'REGULATORY_DEMAND_INFLECTION' || kind === 'SUPPLY_DEMAND_INFLECTION' || kind === 'BOTTLENECK';
+  const whyNow = whyNowOf({
+    kind, subKind, dealKind: dealK, text: ctext, terms, direction: dirRead, company: co, tentative, planHint, listingDone, evSentence: evSent,
+    secondaryDirection: corpWithEarnings ? dirRead.direction : null, noEarningsLink, quarantined: !!quar, disproved: evStatus === 'DISPROVED',
+  });
+  const ss0 = sourceSubjectOf(hints.sourceSubject || null, input.company || '', own0);
+  const foreignLines = foreignNumberLines(own0, co);
+  const parentLines = own0.parentFinancial.slice(0, 4).map((n) => `${co} ${n.metric === 'pat' ? 'profit' : n.metric === 'ebitda' ? 'EBITDA' : n.metric}: ${squash(n.raw)}${n.period && n.period !== 'not stated' ? ` (${n.period})` : ''} (owner: ${co})`);
+  const numberLines = [...parentLines, ...foreignLines];
+  const parentImpactText: string | undefined = linkGood && link === 'DIRECT' ? undefined : `${co} incremental revenue / EBITDA / PAT: Not established`;
+  const chainRes = evidenceChainOf({
+    kind, subKind, dealKind: dealK, text: ctext, own: own0, terms, termLines, listingDone, completed: /\b(?:completed|completes|closed|closing completed)\b/i.test(ctext) && !tentative, secondary: secondaryOnly, company: co,
+    link: (k: string) => { const l = catalystChain.find((x) => x.link === k); return l ? { status: l.status, evidence: l.evidence || null } : undefined; },
+    hasParentRevenue: own0.parentFinancial.some((n) => n.metric === 'revenue'), hasParentOrder: own0.parentFinancial.some((n) => n.metric === 'order_value') || (orderLike && amounts.length > 0),
+    resultStated: {
+      revenue: /\b(?:revenues?|sales|turnover)\b/i.test(ctextOwn), profit: /\b(?:profit|pat|net income|earnings|ebitda)\b/i.test(ctextOwn), margin: /\bmargins?\b/i.test(ctextOwn),
+      cash: /\bcash flow|\bfcf\b/i.test(ctextOwn), guidance: /\bguidance|outlook\b/i.test(ctextOwn), driver: /\b(?:volumes?|realisations?|pricing|cost)\b/i.test(ctextOwn),
+    },
+  });
+  const factScope: FactScope = {
+    confirmed: [
+      ...(noEarningsLink ? [] : [{ text: clip(evSent, 140), owner: ss0.subject.eventSubject || co }]),
+      ...own0.numbers.filter((n) => n.entityRole === 'parent' && n.countsAsParentEarnings).slice(0, 3).map((n) => ({ text: `${n.metric} ${squash(n.raw)}`, owner: co })),
+      ...own0.foreign.slice(0, 3).map((n) => ({ text: `${n.metric} ${squash(n.raw)}`, owner: n.entity })),
+    ],
+    inference: noLinkClass ? [] : [`${co}: ${link === 'INDIRECT' ? 'a plausible pathway to earnings, bridge incomplete' : 'an earnings effect follows from the stated event'} (model inference, not stated in the source)`],
+    unknown: [
+      ...(link === 'DIRECT' ? [] : [`${co} incremental revenue / EBITDA / PAT`]),
+      ...(dCode == null ? ['Duration'] : []),
+      ...(mat.level === 'UNKNOWN' ? ['Size against the company'] : []),
+      ...termLines.filter((l) => !l.stated).slice(0, 4).map((l) => l.label),
+    ],
+  };
+  const resolutionAttempt: 'feed-entity' | 'feed-flag' | 'none' = hints.entity ? 'feed-entity' : (input.tickerResolved !== undefined || input.groupName || input.tickerNote || input.ticker) ? 'feed-flag' : 'none';
 
   // draft item, then integrity
   const dates = ((): Pick<RadarItem, 'firstDiscovered' | 'firstPrimaryConfirmation' | 'firstFinancialConfirmation' | 'firstMaterialEarningsImpact'> => {
@@ -1828,7 +1967,7 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
     inflection: inflection.state, regimeNote: inflection.note, chain, provenThrough, bottleneckQuestion, proof, breakConditions,
     expectations, valuationContext, technical: technicalNote(input.technical), governance, drivers,
     priority: noEarningsLink ? 'EXCLUDE' : P_FROM[p], priorityReason: '',
-    lowSignal: bucket === 'NOISE' || bucket === 'TECHNICAL' || bucket === 'CORPORATE_ACTION' || link === 'NARRATIVE_ONLY' || link === 'NOT_ESTABLISHED',
+    lowSignal: bucket === 'NOISE' || bucket === 'TECHNICAL' || bucket === 'CORPORATE_ACTION' || link === 'NARRATIVE_ONLY' || link === 'NOT_ESTABLISHED' || link === 'NONE' || link === 'NOT_APPLICABLE',
     sourceUrl: input.url || null, publishedAt, feedEventId: hasFeedHints ? input.id : null,
     eventClass, subKind, secondaryKind,
     structuralBridge: kind === 'SPECIAL_SITUATION' ? { created: durableSS, basis: durableSS && durableSSm ? `The text states: "${clip(durableSSm[0], 80)}"` : null } : undefined,
@@ -1839,6 +1978,16 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
     catalystMateriality, materialityNote: mat.note, counterfactual,
     oneSentenceMechanism, mechanismSpecific: noEarningsLink ? undefined : mechanismSpecific,
     weakestUnprovenLink, ...dates, priceResponse,
+    ownedNumbers: own0.numbers, parentImpactLine: parentImpactText, numberLines, sourceSubject: ss0.subject, sourceSubjectLine: ss0.line, financialOwner: ss0.financialOwner,
+    secondaryEvent, contextFacts, economicPayoff,
+    catalystDirection: isResultKind || corpWithEarnings ? dirRead.direction : undefined,
+    directionBasis: isResultKind || corpWithEarnings ? dirRead.basis : undefined,
+    inflectionStrength: isResultKind || corpWithEarnings ? dirRead.strength : undefined,
+    evidenceLabel, nextStep, whyNow,
+    economicMechanism: noEarningsLink ? undefined : (shareholderMech || dealK ? `${co}: ${clip(evSent, 170)}` : clip(evSent, 170)),
+    mechanismHelp: mechanism,
+    dealTerms: terms, dealTermLines: termLines, evidenceChain: chainRes.steps, evidenceChainKind: chainRes.kind, factScope, priorityFactors,
+    resolutionAttempt, entity: hints.entity || null,
     historicalAnalogue: input.historicalAnalogue && squash(input.historicalAnalogue)
       ? { label: 'HISTORICAL ANALOGUE', text: clip(squash(input.historicalAnalogue), 400), note: 'Context only. It is not a prediction of what happens here.' } : null,
   };
@@ -1854,14 +2003,14 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
     else {
       if (evStatus === 'HYPOTHESIS') whyNot.push('The evidence is only a hypothesis.');
       else if (evStatus === 'DEVELOPING') whyNot.push('The evidence is still developing (planned, or no demand shown).');
-      if (link === 'INDIRECT' || link === 'NOT_ESTABLISHED' || link === 'NARRATIVE_ONLY') whyNot.push(`The earnings link is ${link === 'INDIRECT' ? 'indirect' : 'not established'}.`);
+      if (link === 'INDIRECT' || link === 'NOT_ESTABLISHED' || link === 'NARRATIVE_ONLY' || link === 'NONE' || link === 'NOT_APPLICABLE') whyNot.push(`The earnings link is ${link === 'INDIRECT' ? 'indirect' : link === 'NOT_APPLICABLE' ? 'not applicable' : link === 'NONE' ? 'none' : 'not established'}.`);
       if (duration.code == null) whyNot.push('No duration is stated, so it is not treated as long-lasting.');
       else if (duration.code < 4 && priority !== 'LOW') whyNot.push(`The stated duration is ${duration.label.toLowerCase()}, not structural.`);
       if (mat.level === 'UNKNOWN' && !nonOperatingEvent) whyNot.push('Materiality against the company is unknown (no company size supplied).');
       else if (mat.level === 'LOW' || mat.level === 'MODERATE') whyNot.push(`Materiality is ${mat.level.toLowerCase()}.`);
       if (governance.status === 'FLAGGED') whyNot.push('Governance is flagged.');
       if (capexAlone) whyNot.push('Capex has no demand link yet.');
-      if (earningsImpactStatus !== 'CONFIRMED' && earningsImpactStatus !== 'REPORTED_RESULT' && link !== 'NOT_ESTABLISHED') whyNot.push(`Earnings transmission is ${earningsImpactStatus === 'PARTIALLY_PROVEN' ? 'only partly proven' : 'unproven'}.`);
+      if (earningsImpactStatus !== 'CONFIRMED' && earningsImpactStatus !== 'REPORTED_RESULT' && link !== 'NOT_ESTABLISHED' && link !== 'NONE' && link !== 'NOT_APPLICABLE') whyNot.push(`Earnings transmission is ${earningsImpactStatus === 'PARTIALLY_PROVEN' ? 'only partly proven' : 'unproven'}.`);
       if (integrity.action !== 'NONE') for (const f of integrity.failedChecks) whyNot.push(f.why);
     }
   }
@@ -1908,7 +2057,8 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
       : kind === 'EARNINGS_RESULT' ? `This is an already reported result${directPrimary ? '' : ' (secondary-reported, filing not read)'}; the open question is whether the next quarter confirms it lasts.`
         : dealOnly ? 'Earnings link not established: the source states no revenue or EBITDA for the acquired or funded business.'
           : /\(stated\)$/.test(impacts.revenue) ? 'The source states a revenue figure; reported results have not yet confirmed it.'
-            : 'Revenue impact not yet visible in reported earnings.';
+            : shareholderMech ? 'Economic payoff: transaction / shareholder payoff; no earnings link applies.'
+              : opLanguageOK ? 'Revenue impact not yet visible in reported earnings.' : 'Earnings effect not established from this source.';
     const govTail = governance.status === 'NOT_CHECKED' && p >= 2 ? ' Governance not checked yet.' : '';
     const capTail = capReasons.length ? ` Capped at ${PRIORITY_LABEL[priority === 'EXCLUDE' ? 'LOW' : priority].toLowerCase()}: ${joinList(capReasons)}.` : '';
     return `${head}: ${descr}. ${evClause}${wk} ${tail}${govTail}${capTail}`.replace(/\s+/g, ' ').trim();
@@ -1924,7 +2074,7 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
     if (integrity.action === 'REJECTED') return integrity.failedChecks.some((x) => x.code === 'KIND_MISMATCHED_TO_EVENT') ? 'WRONG_CLASSIFICATION' : 'NO_EARNINGS_TRANSMISSION';
     if (noiseKind) return 'NARRATIVE_ONLY';
     if (src0.duplicates > 0 && src0.distinct < 2 && evStatus === 'HYPOTHESIS') return 'DUPLICATED_SOURCE';
-    if (link === 'NOT_ESTABLISHED' || link === 'NARRATIVE_ONLY') return 'NO_EARNINGS_TRANSMISSION';
+    if (link === 'NOT_ESTABLISHED' || link === 'NARRATIVE_ONLY' || link === 'NONE' || link === 'NOT_APPLICABLE') return 'NO_EARNINGS_TRANSMISSION';
     if (mat.level === 'LOW') return 'IMMATERIAL';
     if (evStatus === 'HYPOTHESIS') return 'INSUFFICIENT_EVIDENCE';
     if (integrity.failedChecks.some((x) => x.code === 'DURATION_INFERRED_WITHOUT_DISCLOSURE')) return 'DURATION_UNSUPPORTED';
@@ -2091,7 +2241,10 @@ export function buildRadar(inputs: RadarInput[], opts?: RadarOptions): RadarResu
     else if (i.bucket === 'SPECIAL_SITUATION') counts.specialSituations = (counts.specialSituations || 0) + 1;
     if (i.ticker && holdings.has(i.ticker.toUpperCase())) counts.holdings += 1;
   }
-  return { items, byBucket, sharedDrivers, counts };
+  const textOf = new Map<string, string>();
+  for (const { inp, item } of analysed) textOf.set(item.id, squash([inp.title, inp.description, inp.feedFacts?.what_happened, inp.feedFacts?.what_matters].filter(Boolean).join('. ')));
+  const diagnostics = diagnosticsOf(items.map((item) => ({ id: item.id, text: textOf.get(item.id) || item.event, item })));
+  return { items, byBucket, sharedDrivers, counts, diagnostics };
 }
 
 // ─────────────────────────── portfolio monitor ───────────────────────────

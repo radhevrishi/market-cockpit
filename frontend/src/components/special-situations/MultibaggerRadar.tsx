@@ -205,7 +205,7 @@ export default function MultibaggerRadar({ events, holdings: holdingsProp, regio
             );
             const body = (
               <>
-                {list.length === 0 && <div style={{ fontSize: 12, color: R.faint }}>Nothing here{all.length ? ' with these filters' : ' right now'}.</div>}
+                {list.length === 0 && <div style={{ fontSize: 12, color: R.faint }}>Nothing here{all.length ? ' with these filters' : ' right now'}.{!all.length && radar.diagnostics && (b === 'BOTTLENECK' || b === 'MULTIBAGGER') ? <span data-radar-empty-reason> {b === 'BOTTLENECK' ? radar.diagnostics.lines.bottleneck : radar.diagnostics.lines.structural}.</span> : null}</div>}
                 {shown.map((i) => (isOneLine(i)
                   ? <RadarRow key={i.id} item={i} />
                   : <RadarCard key={i.id} item={i} held={isHeld(i)} ownerTag={i.ticker ? tags[normSymbol(i.ticker)] : undefined} ledgerIds={ledgerIds} onSaveLedger={onSave} now={now} />))}
@@ -224,6 +224,18 @@ export default function MultibaggerRadar({ events, holdings: holdingsProp, regio
               </section>
             );
           })}
+          {radar.items.length > 0 && radar.diagnostics && (
+            <details data-radar-diagnostics style={{ fontSize: 12, color: R.dim }}>
+              <summary style={{ cursor: 'pointer', fontWeight: 700 }}>Radar diagnostics</summary>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingTop: 4 }}>
+                <div>These lines only explain what was screened. They do not change what is promoted.</div>
+                <div>{radar.diagnostics.lines.bottleneck}.</div>
+                <div>{radar.diagnostics.lines.structural}.</div>
+                <div>{radar.diagnostics.lines.noLink}.</div>
+                {radar.diagnostics.bottleneck.examples.length > 0 && <div>Examples: {radar.diagnostics.bottleneck.examples.map((x) => `${x.id} (${x.why})`).join('; ')}</div>}
+              </div>
+            </details>
+          )}
         </>
       )}
 

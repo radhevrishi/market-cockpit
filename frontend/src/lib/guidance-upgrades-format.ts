@@ -650,3 +650,32 @@ export function unresolvedLine(n: number): string { return `${n} unresolved disc
 export function sourceFailedText(x: { state: string; detail?: string }): string | null {
   return String(x.state) === 'FAILED' ? ((x.detail || '').trim() || 'No reason was given by the source.') : null;
 }
+
+// ═══ zzz853: text builders (no components) ═══════════════════════════════════════════════════════════════════════════
+/** '+22.9% raise vs previous guidance' / '+1.5 pp raise vs previous guidance'; null when there is no previous guidance or the measure did not move up. */
+export function raiseVsPreviousText(c: GuChange): string | null {
+  if (!c.before || c.direction !== 'UP') return null;
+  const d = fmtDelta(c);
+  return d ? `${d} raise vs previous guidance` : null;
+}
+/** 'Primary source: <what the company says>; Media claim: <what the outlet says>' (both kept, never averaged). */
+export function sourceConflictLine(e: Pick<GuidanceEvent, 'sourceConflict'>): string | null {
+  const s = e.sourceConflict;
+  return s ? `Primary source: ${s.primary}; Media claim: ${s.media}` : null;
+}
+/** One line per event about where its primary source stands. 'Awaiting primary source' only when no link is known. */
+export function primaryStateLine(e: Pick<GuidanceEvent, 'primaryState' | 'primaryStateText' | 'primarySourceUrl' | 'primarySourceDate'>): string | null {
+  if (!e.primaryState) return null;
+  const when = e.primarySourceDate ? ` (${e.primarySourceDate})` : '';
+  if (e.primaryState === 'SECONDARY_SOURCE_CLAIM') return `${e.primaryStateText}. Primary source: not found in the filings read so far`;
+  if (e.primaryState === 'AWAITING_PRIMARY_SOURCE') return e.primaryStateText ?? 'Awaiting primary source';
+  return `${e.primaryStateText}${when}`;
+}
+/** The label the page shows on an event, from the engine's own classification (never from a headline verb). */
+export function eventLabelText(e: Pick<GuidanceEvent, 'displayLabel' | 'auditOnly' | 'auditNote'>): { label: string; note: string | null } {
+  return { label: e.displayLabel ?? 'UNVERIFIED CLAIM', note: e.auditOnly ? (e.auditNote ?? null) : null };
+}
+/** 'Verified 3 of 12 discovered; 5 awaiting grading' from the canonical counts. */
+export function countsLine(c: { discovered: number; processed: number; verified: number; documentsAwaitingGrading: number; documentsUnavailable: number }): string {
+  return `${c.discovered} discovered, ${c.processed} processed, ${c.verified} verified; ${c.documentsAwaitingGrading} awaiting grading (not counted as verified)${c.documentsUnavailable ? `; ${c.documentsUnavailable} source${c.documentsUnavailable === 1 ? '' : 's'} unavailable` : ''}`;
+}

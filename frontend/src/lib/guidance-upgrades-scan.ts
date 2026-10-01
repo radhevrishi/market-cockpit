@@ -81,7 +81,10 @@ export interface MarketScanResult {
   rowsSeen: number; rowsRelevant: number;
   /** zzz848: days every required LIVE source answered for in this run (what the route persists as processed) */
   liveDays?: string[];
+  /** zzz853: SEC filings indexed but not yet graded (US): the processing queue reads these documents */
+  awaitingDocs?: AwaitingDoc[];
 }
+export interface AwaitingDoc { ticker: string | null; company: string | null; filed: string; url: string; form: string; day: string }
 const MISSING_CAP = 60;
 const windowOfDays = (d: number): GuWindow => (d <= 1 ? '24H' : d <= 3 ? '3D' : d <= 7 ? '7D' : d <= 14 ? '14D' : d <= 30 ? '30D' : '120D');
 const pickDays = (all: string[], store: ReadonlySet<string> | undefined, max: number): string[] => {
@@ -107,17 +110,18 @@ export async function scanIndia(inp: IndiaScanInput): Promise<MarketScanResult> 
   const blobDays = new Set<string>();   // zzz849: days the scraped blob really covers (never required, never a substitute for the exchange feeds)
 
   const runEx = async (name: string, f: DayFetcher | undefined) => {
-    if (!f) { sources.push({ name, state: 'NOT_RUN', scanned: 0, detail: 'not wired' }); for (const d of days) dayOk.set(d, false); return; }
+    if (!f) { sources.push({ name, state: 'NOT_RUN', scanned: 0, tier: 'PRIMARY', daysTried: days.slice(), daysOk: [], detail: 'not wired' }); for (const d of days) dayOk.set(d, false); return; }
     const res = await runBounded(days, (d) => f(d), { concurrency: 6, budgetMs: budget });
-    let ok = 0; let seen = 0; const bad: string[] = [];
+    let ok = 0; let seen = 0; const bad: string[] = []; const okList: string[] = [];
     for (const r of res) {
       const d = r.item;
-      if (r.ok && r.value?.ok) { ok++; seen += r.value.filings.length; rows.push(...r.value.filings); }
+      if (r.ok && r.value?.ok) { ok++; okList.push(d); seen += r.value.filings.length; rows.push(...r.value.filings); }
       else { dayOk.set(d, false); bad.push(d); (failedDays[name] ||= []).push(r.value?.reason || r.error || 'failed'); }
     }
     const st = stateFor(ok, days.length);
     const why = failedDays[name]?.[0];
-    sources.push({ name, state: st, scanned: seen, detail: st === 'COMPLETE' ? `${ok} of ${days.length} days, ${seen} announcements` : `${name.split(' ')[0]} feed failed for ${days.length - ok} of ${days.length} days${why ? ` (${why})` : ''}` });
+    sources.push({ name, state: st, scanned: seen, tier: 'PRIMARY', daysTried: days.slice(), daysOk: okList, failReasons: [...new Set(failedDays[name] || [])].slice(0, 3),
+      detail: st === 'COMPLETE' ? `${ok} of ${days.length} days, ${seen} announcements` : `${name.split(' ')[0]} feed failed for ${days.length - ok} of ${days.length} days${why ? ` (${why})` : ''}` });
   };
   await Promise.all([runEx('NSE announcements', inp.fetchNse), runEx('BSE announcements', inp.fetchBse)]);
 
@@ -128,8 +132,8 @@ export async function scanIndia(inp: IndiaScanInput): Promise<MarketScanResult> 
     let have = 0; let seen = 0;
     for (const r of res) if (r.ok && Array.isArray(r.value)) { have++; blobDays.add(r.item); for (const x of r.value) { const n = normaliseBlobRow(x); if (n) { rows.push(n); seen++; } } }
     // zzz849: a day counts as read from the blob only when the blob's own date range covers it (the reader answers null outside that range)
-    sources.push({ name: 'Scraped filings blob', state: have === 0 ? 'NOT_RUN' : stateFor(have, days.length), scanned: seen, detail: have === 0 ? 'scraped filings blob (corp-filings:v1:latest) missing, empty or older than the window: blob (optional source)' : `${have} of ${days.length} days covered by the scraped filings blob, ${seen} announcements: blob (optional source)` });
-  } else sources.push({ name: 'Scraped filings blob', state: 'NOT_RUN', scanned: 0, detail: 'not wired (optional source)' });
+    sources.push({ name: 'Scraped filings blob', tier: 'FALLBACK', daysTried: days.slice(), daysOk: [...blobDays], state: have === 0 ? 'NOT_RUN' : stateFor(have, days.length), scanned: seen, detail: have === 0 ? 'scraped filings blob (corp-filings:v1:latest) missing, empty or older than the window: blob (optional source)' : `${have} of ${days.length} days covered by the scraped filings blob, ${seen} announcements: blob (optional source)` });
+  } else sources.push({ name: 'Scraped filings blob', tier: 'FALLBACK', daysTried: days.slice(), daysOk: [], state: 'NOT_RUN', scanned: 0, detail: 'not wired (optional source)' });
 
   const relevant = rows.filter(isGuidanceRelevantFiling);
   const seenId = new Set<string>();
@@ -158,7 +162,7 @@ export async function scanIndia(inp: IndiaScanInput): Promise<MarketScanResult> 
     const cov = computeCoverage({ days: allDays, live: new Set([...liveOk, ...days.filter((d) => blobDays.has(d))]), graded: gradedDays, store: inp.storeCovered });
     const storeSeen = inp.storeCovered ? allDays.filter((d) => inp.storeCovered!.has(d)).length : 0;
     sources.push({
-      name: 'Persisted event store', scanned: storeSeen,
+      name: 'Persisted event store', scanned: storeSeen, tier: 'SECONDARY',
       state: storeSeen === 0 ? 'NOT_AVAILABLE' : cov.missing.length === 0 ? 'COMPLETE' : 'PARTIAL',
       detail: storeSeen === 0 ? 'no stored history yet: long-window coverage builds up run by run as each scan is saved'
         : `${storeSeen} of ${allDays.length} days already processed by earlier runs; ${cov.missing.length} still missing`,
@@ -210,33 +214,35 @@ export async function scanUs(inp: UsScanInput): Promise<MarketScanResult> {
   const warm = inp.warmSessions;
   const storeOnly = long && inp.storeCovered ? allDates.filter((d) => inp.storeCovered!.has(d) && !(inp.warmDates?.has(d))).length : 0;
   const gradedOk = long ? warm + storeOnly : warm;
-  sources.push({ name: 'Graded results cache', state: total === 0 ? 'NOT_RUN' : gradedOk >= total ? 'COMPLETE' : gradedOk === 0 ? 'FAILED' : 'PARTIAL', scanned: warm,
+  sources.push({ name: 'Graded results cache', tier: 'SECONDARY', daysTried: allDates.slice(), daysOk: allDates.filter((d) => inp.warmDates?.has(d)), state: total === 0 ? 'NOT_RUN' : gradedOk >= total ? 'COMPLETE' : gradedOk === 0 ? 'FAILED' : 'PARTIAL', scanned: warm,
     detail: gradedOk >= total ? `${warm} of ${total} sessions graded${storeOnly ? `; ${storeOnly} carried from the persisted store` : ''}`
       : `${warm} of ${total} sessions graded${storeOnly ? `, ${storeOnly} carried from the persisted store` : ''}; ${total - gradedOk} awaiting grading` });
 
   let awaiting = 0; let rowsSeen = 0; let edgarDays = 0;
+  const edgarOkDays: string[] = []; const edgarFail: string[] = [];
+  const awaitingDocs: AwaitingDoc[] = [];
   const coldDays = new Set<string>();
   if (inp.fetchEdgar) {
     const fe = inp.fetchEdgar;
     const res = await runBounded(dates, (d) => fe(d), { concurrency: 3, budgetMs: inp.budgetMs ?? SCAN_BUDGET_MS });
     const cold = coldDays;
     for (const r of res) {
-      if (!r.ok || !Array.isArray(r.value)) continue;
-      edgarDays++;
+      if (!r.ok || !Array.isArray(r.value)) { edgarFail.push(r.error || 'failed'); continue; }
+      edgarDays++; edgarOkDays.push(r.item);
       const hits = r.value.filter((x) => x.form === '8-K' && x.items.some((i) => i === '2.02' || i === '7.01'));
       rowsSeen += hits.length;
       const dayWarm = inp.warmDates ? inp.warmDates.has(r.item) : warm >= total;
       for (const h of hits) {
         const t = (h.ticker || '').toUpperCase();
         if (t && inp.gradedTickers?.has(t)) continue;
-        if (!dayWarm || !t) { awaiting++; cold.add(r.item); }
+        if (!dayWarm || !t) { awaiting++; cold.add(r.item); if (h.filing_url) awaitingDocs.push({ ticker: t || null, company: h.company || null, filed: h.filed || r.item, url: h.filing_url, form: h.form, day: r.item }); }
       }
     }
     const edgarTotal = long ? allDates.length : dates.length; const edgarOk = edgarDays + skippedStore;
-    sources.push({ name: 'SEC EDGAR 8-K (items 2.02/7.01)', state: stateFor(edgarOk, edgarTotal), scanned: rowsSeen,
+    sources.push({ name: 'SEC EDGAR 8-K (items 2.02/7.01)', tier: 'PRIMARY', daysTried: dates.slice(), daysOk: edgarOkDays, failReasons: [...new Set(edgarFail)].slice(0, 3), state: stateFor(edgarOk, edgarTotal), scanned: rowsSeen,
       detail: edgarOk === edgarTotal ? `${edgarDays} of ${dates.length} sessions indexed${skippedStore ? `, ${skippedStore} more already processed by earlier runs` : ''}; ${awaiting} filing${awaiting === 1 ? '' : 's'} not yet graded (index only, no release text read)`
         : `EDGAR index read for ${edgarDays} of ${dates.length} sessions${long ? ` (live index read is bounded to ${US_LIVE_SESSIONS} sessions per run; ${allDates.length - edgarOk} sessions of the window not indexed)` : ''}` });
-  } else sources.push({ name: 'SEC EDGAR 8-K (items 2.02/7.01)', state: 'NOT_RUN', scanned: 0, detail: 'not run' });
+  } else sources.push({ name: 'SEC EDGAR 8-K (items 2.02/7.01)', tier: 'PRIMARY', daysTried: dates.slice(), daysOk: [], state: 'NOT_RUN', scanned: 0, detail: 'not run' });
 
   const edgar = sources[1];
   // Graded sessions are what turn an 8-K into a guidance candidate; EDGAR alone only indexes filers.
@@ -256,7 +262,7 @@ export async function scanUs(inp: UsScanInput): Promise<MarketScanResult> {
     const live = new Set<string>([...cal.filter(isWeekend), ...liveWarm]);
     const cov = computeCoverage({ days: cal, live, graded: null, store: inp.storeCovered });
     const storeSeen = inp.storeCovered ? cal.filter((d) => inp.storeCovered!.has(d)).length : 0;
-    sources.push({ name: 'Persisted event store', scanned: storeSeen, state: storeSeen === 0 ? 'NOT_AVAILABLE' : cov.missing.length === 0 ? 'COMPLETE' : 'PARTIAL',
+    sources.push({ name: 'Persisted event store', scanned: storeSeen, tier: 'SECONDARY', state: storeSeen === 0 ? 'NOT_AVAILABLE' : cov.missing.length === 0 ? 'COMPLETE' : 'PARTIAL',
       detail: storeSeen === 0 ? 'no stored history yet: long-window coverage builds up run by run as each scan is saved' : `${storeSeen} of ${cal.length} days already processed by earlier runs; ${cov.missing.length} still missing` });
     const complete = sources[0].state === 'COMPLETE' && edgar.state === 'COMPLETE' && cov.missing.length === 0 && awaiting === 0;
     status = {
@@ -269,7 +275,7 @@ export async function scanUs(inp: UsScanInput): Promise<MarketScanResult> {
   status.coverageLabel = coverageLabel(status.daysCovered, status.daysRequested, inp.window ?? windowOfDays(inp.days));
   status.status = scanState(status);
   status.note = scanNote(status);
-  return { status, candidates: [], rowsSeen, rowsRelevant: rowsSeen, liveDays: liveWarm };
+  return { status, candidates: [], rowsSeen, rowsRelevant: rowsSeen, liveDays: liveWarm, awaitingDocs };
 }
 
 /** zzz849: the one wording for days covered only by the optional scraped blob while the exchange feeds failed. */
@@ -342,8 +348,12 @@ export function makeRealIndiaFetchers(): { nse: DayFetcher; bse: DayFetcher; blo
       : await feed.fetchBSEAnnouncements({ fromIso: day, toIso: day, pages: 2, signal });
     const src = String(r?.source || '');
     const blocked = src.endsWith('_BLOCKED');
-    // *_EMPTY on a weekend/holiday is a real answer; *_BLOCKED is a failure
-    return { ok: !blocked, filings: Array.isArray(r?.filings) ? r.filings : [], reason: blocked ? (r?.reason || src) : undefined };
+    const filings = Array.isArray(r?.filings) ? r.filings : [];
+    // *_EMPTY on a weekend is a real answer; *_BLOCKED is a failure. zzz853: an EMPTY answer for a WEEKDAY is not trusted: an exchange that refuses this server
+    // often answers 200 with no rows, which is indistinguishable from a quiet day, so the day is NOT counted as read (failed / unknown, never 'complete, 0 scanned').
+    const dow = new Date(`${day}T00:00:00Z`).getUTCDay();
+    const suspectEmpty = !blocked && src.endsWith('_EMPTY') && filings.length === 0 && dow !== 0 && dow !== 6;
+    return { ok: !blocked && !suspectEmpty, filings, reason: blocked ? (r?.reason || src) : suspectEmpty ? `${which} returned zero rows for a trading day (cannot be told from a blocked feed), so the day is not counted as read` : undefined };
   };
   let latest: Promise<any> | null = null;
   // What the GitHub scraper really writes: ONE blob 'corp-filings:v1:latest' { generatedAt, filings[] } (last ~3 days, newest 500).

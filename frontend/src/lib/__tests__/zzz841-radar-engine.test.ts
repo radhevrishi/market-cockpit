@@ -315,7 +315,8 @@ describe('4 evidence status and source hierarchy', () => {
 describe('5 link strength', () => {
   test('quantified order -> DIRECT; production award -> DIRECT/NEAR_DIRECT', () => {
     assert.ok(['DIRECT', 'NEAR_DIRECT'].includes(analyseRadarItem(QUAL).link));
-    assert.equal(analyseRadarItem(GRID).link, 'DIRECT');
+    // zzz852: DIRECT means already in reported financials; a quantified order is a documented event with a bridge (NEAR_DIRECT)
+    assert.equal(analyseRadarItem(GRID).link, 'NEAR_DIRECT');
   });
   test('results with numbers -> DIRECT', () => assert.equal(analyseRadarItem(RESULT).link, 'DIRECT'));
   test('sector bottleneck without company evidence -> INDIRECT', () => assert.equal(analyseRadarItem(BOTTLENECK).link, 'INDIRECT'));
@@ -455,7 +456,7 @@ describe('9 proof point and break conditions', () => {
     assert.ok(analyseRadarItem(CAPEX_DEMAND).breakConditions.some((b) => /capex without demand/i.test(b)));
     assert.ok(analyseRadarItem(QUAL).breakConditions.some((b) => /cancellation/i.test(b)));
     assert.ok(analyseRadarItem(RESULT).breakConditions.some((b) => /margin reversal/i.test(b)));
-    assert.ok(analyseRadarItem(BUYBACK).breakConditions.some((b) => /regulatory|termination/i.test(b)));
+    assert.ok(analyseRadarItem(BUYBACK).breakConditions.some((b) => /regulatory|termination|stated transaction conditions/i.test(b)));
     for (const f of ALL_FIX) assert.ok(analyseRadarItem(f).breakConditions.length > 0, f.id);
   });
   test('feed facts feed the proof and break lists', () => {

@@ -82,6 +82,8 @@ export interface GuHighGrowthRowX extends GuHighGrowthRow {
   revision: string; sourceName: string; sourceDate: string | null; sourceUrl: string | null;
   /** Always 'Highest verified guidance' (a ranking by guided growth among verified records, not a quality or buy ranking). */
   label: 'Highest verified guidance';
+  /** zzz853 (additive): the trust state and the growth basis of the headline metric (see summary.highGrowthGroups for the grouped lists) */
+  verificationState?: string; growthType?: string; basisLabel?: string; revisionVsPriorGuidance?: string | null; periodNormalized?: string; cohort?: string | null;
 }
 export interface GuMarketSummary extends GuUniverseMarketCounts { cagrMultiYear: number }
 export interface GuSummaryAdditions {
@@ -91,3 +93,67 @@ export interface GuSummaryAdditions {
   highGrowthRule: string;
   expiredCount: number; unknownPeriodCount: number; awaitingVerificationCount: number; needsReviewCount: number;
 }
+
+// ── zzz853 (additive): data-integrity model ──────────────────────────────────────────────────
+import type { SourceTier, SourceTierLabel } from './guidance-config';
+export type GuGrowthType = 'EXPLICIT' | 'DERIVED' | 'IMPLIED' | 'UNKNOWN';
+export type GuGuidanceType = 'ABSOLUTE_TARGET' | 'GROWTH_RATE' | 'RANGE_TARGET' | 'CAGR';
+export type GuVerificationState = 'VERIFIED' | 'DERIVED' | 'PARTIAL' | 'UNVERIFIED' | 'PERIOD_UNCLEAR';
+/** periodStatus (zzz853): is the period itself established by the source? (The earlier running/expired state is now `periodRunState`.) */
+export type GuPeriodConfirm = 'CONFIRMED' | 'UNCLEAR' | 'UNKNOWN';
+export type GuDurationType = 'QUARTER' | 'HALF_YEAR' | 'ANNUAL' | 'MULTI_YEAR' | 'CAGR' | 'UNKNOWN';
+export type GuClaimType = 'MANAGEMENT_GUIDANCE' | 'ANALYST_ESTIMATE' | 'CONSENSUS' | 'MEDIA_CLAIM' | 'SYSTEM_DERIVED';
+export type GuMetricFamily = 'REVENUE' | 'NET_PROFIT' | 'EBITDA' | 'EPS' | 'FCF';
+export type GuLifecycle = 'ACTIVE' | 'SUPERSEDED' | 'EXPIRED' | 'WITHDRAWN';
+export type GuCohort = 'ANNUAL' | 'MULTI_YEAR_CAGR' | 'QUARTERLY';
+export type GuTrust = 'verified' | 'derived' | 'partial' | 'claimsAwaiting';
+export type GuReviewCode = 'PERIOD_UNCLEAR' | 'PERIOD_UNKNOWN' | 'SECONDARY_ONLY' | 'PRIMARY_MISSING' | 'SOURCE_CONFLICT' | 'EXPIRED' | 'POTENTIAL_DUPLICATE' | 'NEEDS_REVIEW' | 'COMPANY_UNRESOLVED' | 'METRIC_LABEL_MISMATCH';
+export interface GuVersionSnapshot { date: string | null; low: number | null; high: number | null; absoluteLow: number | null; absoluteHigh: number | null; unit: string | null; display: string; source: string }
+export interface GuHistoryStep {
+  step: number; date: string | null;
+  /** null for the first version */ from: GuVersionSnapshot | null; to: GuVersionSnapshot;
+  revision: 'INITIAL' | 'RAISED' | 'LOWERED' | 'MAINTAINED' | 'UNKNOWN';
+  changeMidPct: number | null; changePp: number | null;
+  /** status of the `to` version: the newest is the record's own status, every earlier one is SUPERSEDED (never deleted, never current) */
+  status: GuLifecycle; source: string;
+}
+/** Revision against the PRIOR GUIDANCE (labelled apart from growth vs the prior-year actual). */
+export interface GuRevisionVsPrior {
+  basis: 'absolute_vs_prior_guidance' | 'percent_vs_prior_guidance'; direction: 'RAISED' | 'LOWERED' | 'MAINTAINED';
+  previous: GuVersionSnapshot; current: GuVersionSnapshot;
+  previousValue: number | null; previousValueLow: number | null; currentLow: number | null; currentHigh: number | null;
+  changeLowPct: number | null; changeMidPct: number | null; changeHighPct: number | null; changePp: number | null;
+  display: string;
+}
+/** Growth against the PRIOR-YEAR ACTUAL (labelled apart from the revision vs prior guidance). */
+export interface GuGrowthVsPriorYear { type: GuGrowthType; low: number; mid: number; high: number; display: string; baseLabel: string | null; basis: string | null }
+export interface GuGrowthDerivation {
+  previousValue: number; currentLow: number; currentHigh: number; unit: string; basePeriod: string;
+  growthLow: number; growthMid: number; growthHigh: number;
+  basis: 'absolute_vs_prior_guidance' | 'absolute_vs_prior_year_actual';
+}
+export interface GuSourceEntry { name: string; type: string; url: string | null; date: string | null; tier: SourceTier; tierLabel: SourceTierLabel; value: string; low: number | null; high: number | null; absolute: { value: number; unit: string; valueLow?: number } | null; role: 'PRIMARY' | 'MEDIA_CLAIM' | 'OTHER' }
+export interface GuReviewReasonX { code: GuReviewCode; text: string; /** true = this reason alone keeps the record out of the default view */ blocks: boolean }
+export interface GuHgMetricX {
+  metric: GgMetric; metricFamily: GuMetricFamily; sourceMetricLabel: string | null; display: string; /** short text such as '+60%' or '+60% (derived)' */ short: string; compareValue: number; period: string; periodNormalized: string;
+  verificationState: GuVerificationState; growthType: GuGrowthType; guidanceType: GuGuidanceType; basisLabel: string; headlineBasis: 'GROWTH_VS_PRIOR_YEAR' | 'ABSOLUTE_TARGET_ONLY';
+  revisionVsPriorGuidance: string | null; sourceConflict: boolean;
+}
+export interface GuHgGroupRow {
+  id: string; rank: number; entityKey: string; company: string; ticker: string | null; market: GgMarket; cohort: GuCohort; trust: GuTrust;
+  /** every qualifying metric, kept apart: Revenue / PAT / EBITDA are never merged */ metrics: GuHgMetricX[];
+  /** 'Revenue +30% · PAT +60%' */ text: string; headline: GuHgMetricX; sourceName: string; sourceDate: string | null; sourceUrl: string | null;
+}
+export interface GuHighGrowthGroups {
+  threshold: number; label: string; rule: string;
+  /** every row of the default view, split by cohort and sorted within it (never one mixed ranking) */
+  cohorts: Record<GuCohort, GuHgGroupRow[]>;
+  /** the same rows split by trust, then by cohort. verified = strict: VERIFIED + CONFIRMED period + active. */
+  trust: Record<GuTrust, Record<GuCohort, GuHgGroupRow[]>>;
+  counts: { rows: number; verified: number; derived: number; partial: number; claimsAwaiting: number; ANNUAL: number; MULTI_YEAR_CAGR: number; QUARTERLY: number };
+}
+export interface GuStateCounts { activeRecords: number; verified: number; partial: number; derived: number; unverified: number; periodUnclear: number }
+export interface GuExpirySummary { expired: number; superseded: number; withdrawn: number; total: number; reasons: Array<{ reason: string; count: number }> }
+export interface GuViewCounts { default: number; review: number; expired: number; superseded: number; withdrawn: number; excluded: number }
+export interface GuInvariantViolation { code: string; entityKey: string | null; company: string | null; metric: string | null; message: string }
+export type GuServedFrom = 'live' | 'last_good' | 'seed';

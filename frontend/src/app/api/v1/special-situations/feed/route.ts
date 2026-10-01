@@ -38,6 +38,12 @@ import {
   classifyForm10, contentHints, createEventClusterer, decodeHtmlEntities, extractSubjectTickers, identifySubject, isNonEventContent, countCanonicalEventTypes,
   isFundRepurchaseOffer, parseSecFilingTitle, summariseHeldBack, FEED_QUARANTINE_LABEL, type FeedQuarantineReason,
 } from '@/lib/special-sit-feed-quality';
+import { dedupeFeedEvents, splitRadarInputs } from '@/lib/multibagger-radar-adapter';
+import { buildRadarQa } from '@/lib/special-sit-qa';
+import { createSecLookupLoader } from '@/lib/special-sit-entity';
+
+// zzz852: read-only SEC ticker map from an existing KV cache (6h memory cache, no network). Null when no cache exists.
+const loadSecLookup = createSecLookupLoader((k) => kvGet(k));
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -835,7 +841,28 @@ async function buildFeed(): Promise<{
 
   const held_back = summariseHeldBack(events.filter((e) => e.quarantine_reason).map((e) => ({ reason: e.quarantine_reason as FeedQuarantineReason, name: e.target_name || e.primary_filing.title })));
 
+  // zzz852: QA + exclusion flags. Additive only: nothing is removed from events / by_category (raw data stays available).
+  let qa: any = null;
+  try {
+    const usLookup = await loadSecLookup();
+    const evs = events as unknown as Parameters<typeof splitRadarInputs>[0] & Parameters<typeof dedupeFeedEvents>[0];
+    const split = splitRadarInputs(evs, { entityDeps: { usLookup } });
+    const normalized = dedupeFeedEvents(evs || []).events;
+    qa = buildRadarQa({ rawEvents: evs || [], normalizedEvents: normalized, radarInputs: split.inputs as any, heldBack: split.heldBackInputs as any });
+    qa.totals.raw_items = deduped.length;
+    const byId = new Map(qa.exclusions.map((x: any) => [x.id, x]));
+    const byLink = new Map<string, any>();
+    for (const e of events) {
+      const x: any = byId.get(e.event_id);
+      if (!x) continue;
+      Object.assign(e, { excluded_from_equity_radar: true, exclusion_reason: x.exclusion_reason, entity_type: x.entity_type });
+      for (const f of e.filings) if (f.link) byLink.set(f.link, x);
+    }
+    for (const k of Object.keys(by_category) as Category[]) for (const it of by_category[k]) { const x = it.link ? byLink.get(it.link) : null; if (x) Object.assign(it, { excluded_from_equity_radar: true, exclusion_reason: x.exclusion_reason, entity_type: x.entity_type }); }
+  } catch { qa = null; }
+
   const result: any = {
+    qa,
     held_back,
     last_updated: new Date().toISOString(),
     total: deduped.length,

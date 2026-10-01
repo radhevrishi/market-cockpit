@@ -130,8 +130,10 @@ describe('source-level checks', () => {
     for (const k of ['CURRENT GUIDANCE', 'GUIDANCE HISTORY', 'WHY', 'NEXT PROOF', 'SOURCE', 'Not independently verified', 'Primary source available', 'Primary source read', 'Latest update', 'Issued', 'Base:']) assert.ok(d.includes(k), k);
     assert.ok(G('GuUniverseList.tsx').includes('GuCompanyDetail'));
   });
-  test('card shows REITERATED in a neutral colour; coverage shows unresolved and failed reasons', () => {
-    assert.match(G('GuCard.tsx'), /color=\{R\.grey\}[^>]*>REITERATED/);
+  test('card shows the repeat label (REITERATION, zzz853) in a neutral colour; coverage shows unresolved and failed reasons', () => {
+    // zzz853: the label now comes from safeEventLabel (REITERATION, grey tone) instead of the older fixed 'REITERATED' chip
+    assert.match(G('GuCard.tsx'), /safeEventLabel\(e\)/); assert.match(G('GuCard.tsx'), /lab\.tone === 'grey' \? R\.grey/);
+    assert.match(G('gu-ui.ts'), /label === 'REITERATION' \? 'grey'/);
     const c = G('GuCoverage.tsx'); assert.ok(c.includes('unresolvedLine') && c.includes('sourceFailedText'));
   });
   test('rules: no scores, no BUY/SELL, no dark fills in the new files', () => {

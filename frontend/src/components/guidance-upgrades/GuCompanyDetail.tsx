@@ -7,7 +7,8 @@ import type { GgGuidancePoint } from '@/lib/growth-guidance-types';
 import { fmtGrowthDisplay, metricShort, recordPeriodUnclear, PERIOD_UNCLEAR_HINT, PERIOD_UNCLEAR_LABEL } from '@/lib/guidance-upgrades-format';
 import { kindLabel, verificationText } from '@/lib/growth-guidance-format';
 import { R, tint } from './gu-tokens';
-import { Chip, btn } from './GuBits';
+import { Chip, VerBadge, BasisLine, LastVerified, btn } from './GuBits';
+import { cohortLabel, reasonsPlain, recordBadge, recordBasis, revisionShort, sourceDisplayName, sourceTierWord, UNKNOWN, type GuRecX } from './gu-ui';
 import type { GgCompany } from '@/lib/growth-guidance-types';
 
 const H = ({ children }: { children: React.ReactNode }) => <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: 0.4, color: R.dim, marginTop: 4 }}>{children}</div>;
@@ -33,6 +34,14 @@ export function GuCompanyDetail({ r, onFull }: { r: GuUniverseRecord; onFull?: (
   const hasNumbers = !!rl && [rl.fyActualRevenue, rl.latestQuarterGrowthPct, rl.latestAnnualGrowthPct, rl.ttmRevenue, rl.requiredGrowthFromRunRate].some((n) => typeof n === 'number');
   const hist = [...(c.history || [])].sort((a, b) => String(b.date).localeCompare(String(a.date)));
   const unclear = recordPeriodUnclear(r);
+  const x = r as GuRecX;
+  const badge = recordBadge(x);
+  const basis = recordBasis(x);
+  const reasons = reasonsPlain(x);
+  const gvp = x.growthVsPriorYear; const rvp = x.revisionVsPriorGuidance;
+  const entries = Array.isArray(x.sources) ? x.sources : [];
+  const conflict = x.sourceConflict && (x.primaryValue || x.mediaClaim) ? { primary: x.primaryValue, media: x.mediaClaim } : null;
+  const steps = Array.isArray(x.history) ? x.history : [];
   return (
     <div style={{ borderTop: `1px solid ${R.border}`, marginTop: 6, paddingTop: 6, display: 'grid', gap: 3, fontSize: 12.5, color: R.text }}>
       <H>CURRENT GUIDANCE</H>
@@ -49,6 +58,24 @@ export function GuCompanyDetail({ r, onFull }: { r: GuUniverseRecord; onFull?: (
           )}
         </div>
       ))}
+      <H>TRUST AND BASIS</H>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline' }}>
+        <VerBadge b={badge} />
+        {x.cohort && <span><b>Group</b> {cohortLabel(x.cohort)}</span>}
+        {x.periodNormalized && <span><b>Period</b> {x.periodNormalized}</span>}
+        <LastVerified r={x} />
+      </div>
+      {gvp?.display && <div><b>Growth vs prior-year actual:</b> {gvp.display}{gvp.baseLabel ? <span style={{ color: R.dim }}> (base {gvp.baseLabel})</span> : null}</div>}
+      {rvp?.display && <div><b>Revision vs prior guidance:</b> {revisionShort(rvp.display)}<span style={{ color: R.dim }}> — {rvp.display}</span></div>}
+      {!gvp?.display && !rvp?.display && basis?.line && <BasisLine t={basis} showDetail />}
+      {gvp?.display && rvp?.display && <div style={{ color: R.dim, fontSize: 12 }}>Two different comparisons. The first is growth against last year&apos;s actual. The second is the change against what the company guided before.</div>}
+      {conflict && (
+        <div role="note" style={{ color: R.red, fontSize: 12.5 }}>
+          <b>Sources disagree.</b> Company document: {conflict.primary?.value ?? UNKNOWN}{conflict.primary ? ` (${sourceDisplayName(conflict.primary.name)})` : ''}. Media: {conflict.media?.value ?? UNKNOWN}{conflict.media ? ` (${sourceDisplayName(conflict.media.name)})` : ''}. Both are kept. Nothing is averaged.
+        </div>
+      )}
+      {reasons.length > 0 && <div style={{ color: R.amber }}><b>Needs review:</b> {reasons.join(' ')}</div>}
+      {Array.isArray(x.caveats) && x.caveats.length > 0 && <div style={{ color: R.dim, fontSize: 12 }}>{x.caveats.join(' ')}</div>}
       <H>GUIDANCE</H>
       <div>
         <b>Period</b> {c.primary?.period || '—'}{unclear && <> <span title={PERIOD_UNCLEAR_HINT}><Chip color={R.grey} dashed>{PERIOD_UNCLEAR_LABEL}</Chip></span></>}
@@ -64,6 +91,12 @@ export function GuCompanyDetail({ r, onFull }: { r: GuUniverseRecord; onFull?: (
       {hist.length === 0 ? <div style={{ color: R.dim }}>No earlier guidance stored for this company.</div> : hist.map((h, i) => (
         <div key={i}>{day(h.date)} · {metricShort(h.metric)} {h.period} · {h.old && h.old.trim() ? <>{h.old} → <b>{h.next}</b></> : <>first seen: <b>{h.next}</b></>} <span style={{ color: R.dim }}>({h.revision.toLowerCase()})</span></div>
       ))}
+      {steps.length > 1 && (<>
+        <H>VERSIONS OF THIS GUIDANCE</H>
+        {steps.map((st) => (
+          <div key={st.step}>{day(st.date)} · {st.from ? `${st.from.display} → ` : 'first seen: '}<b>{st.to.display}</b> <span style={{ color: R.dim }}>({st.revision.toLowerCase()}{st.status !== 'ACTIVE' ? `, ${st.status.toLowerCase()}` : ''})</span></div>
+        ))}
+      </>)}
       <H>WHY</H>
       <div>{c.driverText && c.driverText.trim() ? c.driverText : <span style={{ color: R.dim }}>No reason stated in the source.</span>}</div>
       <H>NEXT PROOF</H>
@@ -71,8 +104,11 @@ export function GuCompanyDetail({ r, onFull }: { r: GuUniverseRecord; onFull?: (
       {hasNumbers && rl && rl.trackingWhy && <div style={{ color: R.dim }}>{rl.trackingWhy}</div>}
       <H>SOURCE</H>
       <div><b>Primary source available:</b> {available ? 'Yes' : 'No'} · <b>Primary source read:</b> {read ? 'Yes' : 'No'}</div>
-      {srcs.length === 0 && <div style={{ color: R.dim }}>No source listed.</div>}
-      {srcs.map((s, i) => (
+      {entries.length > 0 && entries.map((e, i) => (
+        <div key={`e${i}`}>{sourceDisplayName(e.name)} · {sourceTierWord(e.tierLabel)} · {e.role === 'PRIMARY' ? 'primary figure' : e.role === 'MEDIA_CLAIM' ? 'media claim' : 'other'}{e.value ? ` · ${e.value}` : ''} · {day(e.date)} {e.url ? <a href={e.url} target="_blank" rel="noopener noreferrer" style={{ color: R.cyan }}>Open link</a> : <span style={{ color: R.dim }}>no link</span>}</div>
+      ))}
+      {entries.length === 0 && srcs.length === 0 && <div style={{ color: R.dim }}>No source listed.</div>}
+      {entries.length === 0 && srcs.map((s, i) => (
         <div key={i}>{s.name} · {s.type}{s.primary ? ' (primary)' : ' (secondary)'} · {day(s.date)} {s.url ? <a href={s.url} target="_blank" rel="noopener noreferrer" style={{ color: R.cyan }}>Open link</a> : <span style={{ color: R.dim }}>no link</span>}</div>
       ))}
       {onFull && <div className="gu-noprint"><button type="button" style={btn()} onClick={() => onFull(c)}>Full growth guidance detail</button></div>}

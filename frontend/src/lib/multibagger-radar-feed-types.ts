@@ -1,3 +1,5 @@
+import type { DealKind, DealTerms, OwnedNumber, ResolvedEntity, SourceSubject } from './radar-owned-types';
+
 // zzz841 — the minimal feed-event shape the Multibagger Radar reads. A local
 // structural interface so the Special Situations page's private CanonicalEvent
 // never has to be exported (Next.js page-export rule). Any object with these
@@ -70,4 +72,22 @@ export interface RadarFeedHints {
   tickerVia?: string;
   /** SC 13E-3 text: percentages in it are legal boilerplate, never a deal amount. */
   isLegalBoilerplateAmount?: boolean;
+  // ─── zzz852 (all optional; absent = not stated) ───
+  /** Every money / capacity figure with its owner. Only entityRole 'parent' items with countsAsParentEarnings may be read as the company's earnings. */
+  ownedNumbers?: OwnedNumber[];
+  /** Entity resolution result. The card ticker is set only when entity.state === 'RESOLVED'. */
+  entity?: ResolvedEntity;
+  /** Deal terms read from the text only (kind-specific); `missing` lists what the source did not state. */
+  dealTerms?: DealTerms;
+  /** Who the headline is about / who is bought / whose financials these are. */
+  sourceSubject?: SourceSubject;
+  /** Precise ticker state text: 'Ticker: UTMD (Nasdaq)', 'Listed - security not identified', 'Unlisted / private', 'Not applicable (fund)', 'Not resolved yet'. */
+  tickerLabel?: string;
+  /** What the headline itself announces. 'DIVIDEND' even when the headline also mentions a profit fall; the engine keeps the corporate-action hierarchy. */
+  eventHeadlineKind?: DealKind | 'EARNINGS' | 'OTHER';
+  /** Secondary facts in the headline (for example the profit clause of a dividend headline). Never the primary kind. */
+  secondaryFacts?: string[];
+  /** Set by the QA layer: held out of the equity radar (flag only, the record is kept). */
+  excludedFromEquityRadar?: boolean;
+  exclusionReason?: string;
 }

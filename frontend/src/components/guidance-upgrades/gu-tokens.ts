@@ -22,3 +22,6 @@ export const PRINT_CSS = `
 }`;
 
 export const RATING_COLOR: Record<'STRONG' | 'OK' | 'WEAK' | 'UNKNOWN', string> = { STRONG: R.green, OK: R.cyan, WEAK: R.red, UNKNOWN: R.grey };
+
+/** zzz853: badge / event tones. Colour carries meaning only (light, print friendly). */
+export const TONE_COLOR: Record<'green' | 'amber' | 'violet' | 'grey' | 'red', string> = { green: R.green, amber: R.amber, violet: R.violet, grey: R.grey, red: R.red };
