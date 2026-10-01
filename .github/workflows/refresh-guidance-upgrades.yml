@@ -1,0 +1,47 @@
+name: Refresh Guidance Upgrades (hourly)
+
+# Keeps Guidance Upgrades fully automatic: new guidance raises are scanned and
+# stored in KV, and the persistent Guidance Universe is rebuilt, without anyone
+# opening the page. Uses only the public read routes (no secrets).
+
+on:
+  schedule:
+    # Every hour on weekdays across India + US hours, then every 3 hours
+    - cron: '10 3-23 * * 1-5'
+    - cron: '10 */3 * * 0,6'
+  workflow_dispatch: {}
+
+concurrency:
+  group: refresh-guidance-upgrades
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Scan recent guidance events (30D and 120D) and rebuild the universe
+        id: main
+        env:
+          BASE: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
+          FAIL=0
+          for W in 30D 120D; do
+            curl -fsS --max-time 100 "$BASE/api/v1/guidance-upgrades?window=$W&market=ALL&force=1" -o /dev/null -w "events $W %{http_code}\n" || FAIL=1
+          done
+          curl -fsS --max-time 100 "$BASE/api/v1/guidance-universe?market=ALL&force=1" -o /dev/null -w "universe %{http_code}\n" || FAIL=1
+          exit $FAIL
+
+      - name: Heartbeat (always run)
+        if: always()
+        env:
+          BASE: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
+          OK="true"
+          if [[ "${{ steps.main.outcome }}" != "success" ]]; then OK="false"; fi
+          curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" \
+            -H 'Content-Type: application/json' \
+            -d "{\"name\":\"refresh-guidance-upgrades\",\"phase\":\"end\",\"ok\":$OK,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -o /dev/null -w "heartbeat %{http_code}\n" || true
