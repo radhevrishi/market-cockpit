@@ -120,13 +120,13 @@ describe('data quality in numbers', () => {
   test('India: NSE found, BSE missing, documents pending => PARTIAL with the counts', () => {
     const rows = [idx('IN', 'https://nsearchives.nseindia.com/a.pdf', false), idx('IN', 'https://nsearchives.nseindia.com/b.pdf', true, '2026-09-21')];
     const m = marketQuality('IN', rows, { v: 1, market: 'IN', updatedAt: '', days: { '2026-09-21': { status: 'ok', filings: 1, docs: 1, at: '2026-09-21T10:00:00Z' }, '2026-09-22': { status: 'failed', filings: 0, docs: 0, at: '2026-09-22T10:00:00Z' } } }, NOW);
-    assert.equal(m.status, 'PARTIAL'); assert.equal(m.documentsPending, 1); assert.equal(m.documentsDiscovered, 2);
-    assert.equal(m.line, 'INDIA — PARTIAL: NSE ✓ | BSE ✕ | 1 document pending');
+    assert.equal(m.status, 'PRIMARY_PENDING'); assert.equal(m.documentsPending, 1); assert.equal(m.documentsDiscovered, 2);   // zzz861: nothing verified yet and a document waits
+    assert.equal(m.line, 'INDIA — PRIMARY VERIFICATION PENDING: NSE ✓ 2 | BSE ✕ | 1 document pending | 0 claims | 0 verified');
     assert.equal(m.daysFullyCovered, 1); assert.equal(m.daysFailed, 1); assert.ok(m.tradingDays > 80 && m.tradingDays < 90); assert.ok(m.daysNotRead > 0);
   });
-  test('no data is NO_DATA, never complete; footnote says counts are not exhaustive', () => {
+  test('no data is NO_SOURCE_DATA, never complete; footnote says counts are not exhaustive', () => {
     const q = dataQualityOf([], {}, NOW);
-    assert.equal(q.markets.IN.status, 'NO_DATA'); assert.equal(q.exhaustive, false); assert.equal(q.footnote, NOT_EXHAUSTIVE); assert.match(q.markets.US.line, /NO DATA/);
+    assert.equal(q.markets.IN.status, 'NO_SOURCE_DATA'); assert.equal(q.exhaustive, false); assert.equal(q.footnote, NOT_EXHAUSTIVE); assert.match(q.markets.US.line, /NO SOURCE DATA/);
   });
   test('weekdays only', () => { assert.deepEqual(tradingDaysBetween('2026-09-25', '2026-09-30'), ['2026-09-25', '2026-09-28', '2026-09-29', '2026-09-30']); });
 });

@@ -268,6 +268,27 @@ async function knownIds(deps) {
   } catch { deps.log('known-ids unavailable (continuing without)'); return new Set(); }
 }
 
+/**
+ * zzz861 — claim-driven collection. The server lists the companies a media claim names whose own document is not on file yet (GET /api/v1/guidance-pipeline,
+ * from the claims table; no company is named in this script). A filing from one of them is read even when its subject is a plain "Financial Results" /
+ * "Outcome of Board Meeting" (those are skipped for everybody else), because that is where a results release usually states guidance.
+ */
+export async function fetchWanted(deps) {
+  try {
+    const res = await deps.fetch(`${deps.baseUrl}/api/v1/guidance-pipeline?market=IN&window=24H`, { signal: AbortSignal.timeout(20_000) });
+    if (!res.ok) { deps.log(`wanted list HTTP ${res.status} (continuing without)`); return []; }
+    const j = await res.json();
+    return Array.isArray(j?.wanted) ? j.wanted.filter((w) => w && w.market === 'IN') : [];
+  } catch { deps.log('wanted list unavailable (continuing without)'); return []; }
+}
+const normName = (s) => String(s || '').toLowerCase().replace(/&/g, ' and ').replace(/\(.*?\)/g, ' ').replace(/[^a-z0-9 ]+/g, ' ').replace(/\b(limited|ltd|pvt|private|plc|inc|corporation|corp|co)\b/g, ' ').replace(/\s+/g, ' ').trim();
+export function wantedMatcher(wanted) {
+  const names = new Set(wanted.map((w) => normName(w.company)).filter(Boolean));
+  const ticks = new Set(wanted.map((w) => String(w.ticker || '').toUpperCase()).filter(Boolean));
+  return (f) => (f.nseSymbol && ticks.has(String(f.nseSymbol).toUpperCase())) || names.has(normName(f.company));
+}
+const WANTED_SUBJECT = /result|outcome of board|presentation|transcript|conference call|earnings call|investor|press release|media release|guidance|outlook/i;
+
 /** Per-day status → coverage rows for guidance-docs:v1:coverage:IN (failed stays failed; a partial read is 'partial'). */
 export function coverageRows(statusDays, at) {
   const out = {};
@@ -304,6 +325,9 @@ export async function run(d) {
   const c = deps.counts;
 
   const known = await knownIds(deps);
+  const wanted = env.WANTED === '0' ? [] : await fetchWanted(deps);
+  const isWanted = wantedMatcher(wanted);
+  deps.log(`wanted companies: ${wanted.length}`);
   const maps = await loadTickerMaps(http, deps);
   deps.log(`maps: isin→nse ${maps.isinToNse.size}, bse→isin ${maps.bseToIsin.size}, curated ${maps.curated.size}; known docs ${known.size}`);
 
@@ -358,7 +382,12 @@ export async function run(d) {
     for (const f of filings) {
       if (seenUrl.has(f.url)) continue;
       seenUrl.add(f.url);
-      const kind = classifySubject(f.subject, { headline: f.headline, category: f.category, subcategory: f.subcategory, includePlainResults });
+      let kind = classifySubject(f.subject, { headline: f.headline, category: f.category, subcategory: f.subcategory, includePlainResults });
+      if (!kind && wanted.length && isWanted(f)) {   // zzz861: a company a claim is waiting on: read its results / outcome filings too
+        kind = classifySubject(f.subject, { headline: f.headline, category: f.category, subcategory: f.subcategory, includePlainResults: true })
+          || (WANTED_SUBJECT.test(`${f.subject} ${f.headline}`) ? 'RESULTS_RELEASE' : null);
+        if (kind) c.wanted = (c.wanted || 0) + 1;
+      }
       if (kind) matches.push({ f, kind });
     }
     c.matched += matches.length;

@@ -24,6 +24,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUniverseBundle, buildUniverseResponse, parseView, clampThreshold } from '@/lib/guidance-universe-service';
 import type { GgMetric } from '@/lib/growth-guidance-types';
 import { verifyUniverseClaims } from '@/lib/ai-verify';
+import { loadPipelineEvidence, pipelineView } from '@/lib/guidance-pipeline-service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -54,6 +55,19 @@ export async function GET(req: NextRequest) {
     if (after.length + removed.length !== claimsBefore.length) recon.push(`claims awaiting (${after.length}) + AI-contradicted removed (${removed.length}) does not equal claims before verification (${claimsBefore.length})`);
     if (body.viewCounts?.claimsAwaiting != null && body.viewCounts.claimsAwaiting !== after.length) recon.push(`viewCounts.claimsAwaiting (${body.viewCounts.claimsAwaiting}) does not equal the claims list (${after.length})`);
     body.invariantViolations = [...(Array.isArray(body.invariantViolations) ? body.invariantViolations : []), ...recon];
+    // zzz861: the real state of each market (distinct states, never a bare NO DATA), the claims table with its actionable status, and the wanted-companies list.
+    try {
+      const ev = await Promise.race([loadPipelineEvidence(), new Promise<null>((r) => setTimeout(() => r(null), 4_000))]);
+      if (ev) {
+        const contra = removed.flatMap((r: any) => [String(r.ticker || '').toUpperCase(), String(r.company || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase()]).filter(Boolean);
+        const act = (m: 'IN' | 'US') => (gb.build.defaultRecords ?? []).filter((r: any) => r.record.market === m).length;
+        const pv = pipelineView(ev, claimsBefore, { IN: act('IN'), US: act('US') }, new Date(), contra);
+        body.extractCoverage = { ...(body.extractCoverage || { docs: 0, extracted: 0, rows: 0, lastExtractAt: null }), quality: pv.quality };
+        // the collectors read this list (GET /api/v1/guidance-pipeline) so they go and fetch the company documents the claims are waiting on
+        import('@/lib/kv').then((k) => k.kvSet('guidance-pipeline:wanted:v1', { at: new Date().toISOString(), wanted: pv.wanted }, 7 * 86_400)).catch(() => 0);
+        body.pipeline = { claims: pv.claims.slice(0, 600), claimCounts: pv.claimCounts, wanted: pv.wanted, queueStages: pv.queueStages, evidenceErrors: ev.errors };
+      }
+    } catch { /* the pipeline view is additive */ }
     return NextResponse.json(body, { headers: { 'Cache-Control': 'no-store' } });
   } catch (e: any) {
     console.error('[guidance-universe] error', e?.message || e);

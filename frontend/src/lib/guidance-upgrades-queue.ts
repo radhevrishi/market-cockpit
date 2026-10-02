@@ -217,7 +217,9 @@ export function extractFromDocument(text: string, item: Pick<GuQueueItem, 'id' |
 }
 
 // ── one run ────────────────────────────────────────────────────────────────────────────────────────────────────────
-export interface ProcessOptions { now: Date; fetchDoc: FetchDoc; budgetMs?: number; maxDocs?: number; concurrency?: number }
+export interface ProcessOptions { now: Date; fetchDoc: FetchDoc; budgetMs?: number; maxDocs?: number; concurrency?: number;
+  /** zzz861: called for every document that was fetched AND validated (the text the worker read). The route stores it in the guidance-docs store so the AI extractor can read it; the worker never just marks a document read. */
+  onRead?: (item: GuQueueItem, doc: DocFetchResult) => void }
 export interface ProcessResult { queue: QueueState; attempted: number; done: number; complete: number; failed: number; unavailable: number; changed: boolean }
 
 const applyFailure = (x: GuQueueItem, f: ValidationFailure, now: Date): void => {
@@ -246,6 +248,7 @@ export async function processQueue(q: QueueState, o: ProcessOptions): Promise<Pr
     const doc = await o.fetchDoc(x.source_url!).catch((e: any): DocFetchResult => ({ ok: false, text: '', reason: String(e?.message || e || 'fetch failed').slice(0, 120) }));
     const bad = validateDocument(doc, x);
     if (bad) { applyFailure(x, bad, o.now); return; }
+    try { o.onRead?.(x, doc); } catch { /* the hook is an accelerator */ }
     const ex = extractFromDocument(doc.text, x);
     x.processing_status = 'DONE'; x.last_error = null; x.next_attempt = null;
     x.result = { complete: ex.complete, metrics: ex.metrics, candidate: ex.candidate, readAt: o.now.toISOString() };

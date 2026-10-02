@@ -18,6 +18,8 @@ export interface GuUniverseExt extends Omit<GuUniverseResponse, 'summary'> {
   }>;
   viewCounts?: GuViewCounts; invariantViolations?: Array<GuInvariantViolation | string>; servedFrom?: GuServedFrom; builtAt?: string; liveError?: string;
   inactive?: GuInactiveRecord[]; excluded?: GuExcluded[];
+  /** zzz861: claims table (actionable status) and the wanted-companies list */
+  pipeline?: { claims: import('@/lib/guidance-claims').GuidanceClaim[]; claimCounts: Record<'IN' | 'US', Record<string, number>>; wanted: import('@/lib/guidance-claims').WantedCompany[]; queueStages: Record<'IN' | 'US', Record<string, number>> };
 }
 
 export function guUniverseUrl(o: { market?: 'IN' | 'US' | 'ALL'; metric?: string; threshold?: number; view?: GuView } = {}): string {

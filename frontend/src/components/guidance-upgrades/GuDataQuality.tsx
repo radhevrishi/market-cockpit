@@ -5,13 +5,15 @@ import type { GuDataQuality as Q, GuMarketQuality } from '@/lib/guidance-pipelin
 import { R, tint } from './gu-tokens';
 import { LazyDetails } from './GuMore';
 
-const COLOR = { COMPLETE: R.green, PARTIAL: R.amber, NO_DATA: R.red } as const;
+const COLOR = { COMPLETE: R.green, PARTIAL: R.amber, PRIMARY_PENDING: R.amber, STALE: R.amber, SOURCE_FAILED: R.red, NO_SOURCE_DATA: R.red } as const;
+const CHIP: Record<string, string> = { COMPLETE: 'COMPLETE', PARTIAL: 'PARTIAL', PRIMARY_PENDING: 'PRIMARY PENDING', STALE: 'STALE', SOURCE_FAILED: 'SOURCE FAILED', NO_SOURCE_DATA: 'NO SOURCE DATA' };
 function Line({ m }: { m: GuMarketQuality }) {
   const c = COLOR[m.status];
   return (
     <div data-gu-dq-line={m.market} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline', fontSize: 12.5 }}>
-      <span style={{ fontWeight: 800, color: c, border: `1px solid ${tint(c, 45)}`, background: tint(c, 10), borderRadius: 10, padding: '0 8px', fontSize: 11.5 }}>{m.status === 'NO_DATA' ? 'NO DATA' : m.status}</span>
+      <span style={{ fontWeight: 800, color: c, border: `1px solid ${tint(c, 45)}`, background: tint(c, 10), borderRadius: 10, padding: '0 8px', fontSize: 11.5 }}>{CHIP[m.status] ?? m.status}</span>
       <span style={{ color: R.text }}>{m.line}</span>
+      {m.reasons?.length ? <span data-gu-dq-reasons style={{ color: R.dim, flexBasis: '100%', fontSize: 12 }}>{m.reasons.join(' ')}</span> : null}
     </div>
   );
 }

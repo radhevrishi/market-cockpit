@@ -12,12 +12,30 @@ export interface GuPipelineCtx {
   docs?: GuidanceDocIndexRow[]; extracted?: GuidanceExtractResult[];
   /** tickers (upper case) or normalised names the AI verifier contradicted */ contradicted?: string[];
 }
+/** The terminal states the regression is judged by. */
+export type GuTerminal = 'PRIMARY_VERIFIED' | 'SECONDARY_ONLY' | 'PRIMARY_SOURCE_NOT_FOUND' | 'PRIMARY_SOURCE_READ_NO_GUIDANCE' | 'CLAIM_CONTRADICTED' | 'EXPIRED' | 'REPLACED' | 'LOWERED' | 'REITERATION' | 'PRIMARY_FOUND_NOT_READ' | 'NO_CLAIM_FOUND' | 'STALE_NEEDS_RECHECK';
+export function terminalOf(state: GuCompanyState, secondaryClaimFound: boolean): GuTerminal {
+  switch (state) {
+    case 'VERIFIED_ACTIVE': return 'PRIMARY_VERIFIED';
+    case 'VERIFIED_STALE': return 'STALE_NEEDS_RECHECK';
+    case 'VERIFIED_REPLACED': return 'REPLACED';
+    case 'REITERATION': return 'REITERATION';
+    case 'LOWERED': return 'LOWERED';
+    case 'EXPIRED': case 'WITHDRAWN': return 'EXPIRED';
+    case 'CLAIM_CONTRADICTED': return 'CLAIM_CONTRADICTED';
+    case 'PRIMARY_SOURCE_FOUND_NOT_READ': return 'PRIMARY_FOUND_NOT_READ';
+    case 'PRIMARY_SOURCE_NOT_FOUND': return 'PRIMARY_SOURCE_NOT_FOUND';
+    case 'NO_VALID_GUIDANCE_FOUND': return secondaryClaimFound ? 'PRIMARY_SOURCE_READ_NO_GUIDANCE' : 'NO_CLAIM_FOUND';
+    default: return secondaryClaimFound ? 'SECONDARY_ONLY' : 'NO_CLAIM_FOUND';
+  }
+}
 export interface GuPipelineRow {
   name: string; ticker: string | null; market: 'IN' | 'US' | null;
   discovered: boolean; company_resolved: boolean; primary_source_found: boolean; primary_source_opened: boolean; guidance_found: boolean;
   metric: string | null; period: string | null; current_guidance: string | null; previous_guidance: string | null;
   event_type: GuEventType | null; calculation_type: GuCalculationType | null; verification_status: GuVerificationStatus | null;
   active_status: 'ACTIVE' | 'NEEDS_REVIEW' | 'CLAIM_AWAITING' | 'INACTIVE' | 'NONE'; source_date: string | null; state: GuCompanyState; reason: string;
+  /** zzz861 */ secondary_claim_found: boolean; terminal: GuTerminal;
 }
 export interface GuPipelineReport { rows: GuPipelineRow[]; total: number; counts: Record<GuCompanyState, number>; verifiedActive: number; withExplicitState: number; summary: string }
 const STATES: GuCompanyState[] = ['VERIFIED_ACTIVE', 'VERIFIED_REPLACED', 'REITERATION', 'LOWERED', 'WITHDRAWN', 'EXPIRED', 'PRIMARY_SOURCE_NOT_FOUND', 'PRIMARY_SOURCE_FOUND_NOT_READ', 'CLAIM_CONTRADICTED', 'NO_VALID_GUIDANCE_FOUND', 'VERIFIED_STALE', 'NEEDS_REVIEW'];
@@ -45,7 +63,8 @@ export function pipelineReport(build: Pick<GuUniverseBuild, 'records' | 'default
       event_type: (pt?.eventType ?? null) as GuEventType | null, calculation_type: (pt?.calculationType ?? null) as GuCalculationType | null, verification_status: (pt?.verificationStatus ?? null) as GuVerificationStatus | null,
       source_date: pt?.sourceDate ?? null,
     };
-    const done = (state: GuCompanyState, active_status: GuPipelineRow['active_status'], reason: string): GuPipelineRow => ({ ...base, ...common, active_status, state, reason });
+    const secondary = all.length > 0 || inactive.length > 0;
+    const done = (state: GuCompanyState, active_status: GuPipelineRow['active_status'], reason: string): GuPipelineRow => ({ ...base, ...common, active_status, state, reason, secondary_claim_found: secondary, terminal: terminalOf(state, secondary) });
     const contradicted = [tk, nm.toUpperCase()].some((k) => !!k && contra.has(k as string));
     if (contradicted) return done('CLAIM_CONTRADICTED', 'NONE', "The AI check found the company's own document does not support the claim.");
     const wd = inactive.find((x) => x.status === 'WITHDRAWN');

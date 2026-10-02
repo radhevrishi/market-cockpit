@@ -13,6 +13,7 @@ import { GuGroupList, GuHighGrowthList } from './GuHighGrowthList';
 import { useGuUniverse, type GuUniverseExt } from './useGuUniverse';
 import { GuFold, GuPanel, pillStyle } from './GuPanel';
 import { GuDataQuality } from './GuDataQuality';
+import { GuClaimsTable } from './GuClaimsTable';
 import { SCOPE_NOTE, scopedTitle } from '@/lib/guidance-semantics';
 import { BADGE_LEGEND, SECTIONS, SECTION_ACTIVE, cohortCountsLine, cohortTotal, freshnessLines, groupCountsLine, highestActiveHeading, sectionRows } from './gu-ui';
 
@@ -51,6 +52,7 @@ export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void 
       {data && (
         <>
           <GuDataQuality quality={data.extractCoverage?.quality} />
+          <GuClaimsTable claims={data.pipeline?.claims} market={mk} />
           <div data-gu-scope style={{ fontSize: 12.5, color: R.dim }}>Showing: <b style={{ color: R.text }}>{SCOPE_NOTE[mk]}</b>. Switch the market above; every heading and count below follows it.</div>
           {hasGroups && mk !== 'US' && cohortTotal(sectionRows(groups, 'active', 'IN')) === 0 && cohortTotal(sectionRows(groups, 'claimsAwaiting', 'IN')) > 0 && (
             <div data-gu-india-note style={{ fontSize: 12.5, color: R.amber }}>India: no guidance is verified against the company's own document yet. {cohortTotal(sectionRows(groups, 'claimsAwaiting', 'IN'))} India claims reported by media are listed under "Claims awaiting verification" until their primary documents are read.</div>

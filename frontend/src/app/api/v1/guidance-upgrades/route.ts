@@ -24,6 +24,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvMGet, kvSet } from '@/lib/kv';
+import { docFromQueueRead, storeQueueDocs } from '@/lib/guidance-queue-bridge';
+import { snapshotOf, readSnapshot, writeSnapshot } from '@/lib/guidance-pipeline-snapshot';
 import { loadCatalog } from '@/lib/symbolMaster';
 import { NSE_TICKER_NAMES } from '@/lib/nse-ticker-names';
 import { gradedKey } from '@/lib/graded-cache-key';
@@ -242,7 +244,11 @@ export async function GET(req: NextRequest) {
   const enq = enqueue(queue, queueInputsFromFilings(filingPool, waitingKeys), now);
   queue = enq.queue;
   const qLeft = Math.min(DOC_BUDGET_MS, 26_000 - (Date.now() - t0));
-  const qRun = qLeft >= 2_500 ? await withTimeout(processQueue(queue, { now, fetchDoc: makeDefaultFetchDoc(Math.min(10_000, qLeft)), budgetMs: qLeft }), qLeft + 1_500, null) : null;
+  // zzz861: every filing the worker reads is also stored as a company document, so the AI extractor can read it and the universe can change
+  const bridged: Array<Record<string, unknown>> = [];
+  const qRun = qLeft >= 2_500 ? await withTimeout(processQueue(queue, { now, fetchDoc: makeDefaultFetchDoc(Math.min(10_000, qLeft)), budgetMs: qLeft,
+    onRead: (it, doc) => { const r = docFromQueueRead(it, doc, now); if (r) bridged.push(r); } }), qLeft + 1_500, null) : null;
+  const bridgeP = bridged.length ? storeQueueDocs(bridged, now).catch(() => null) : Promise.resolve(null);
   if (qRun) queue = qRun.queue;
   cands.push(...doneCandidates(queue));
 
@@ -407,6 +413,7 @@ export async function GET(req: NextRequest) {
     // zzz853: the queue (last write wins: two overlapping runs may each save their own view; items are idempotent, so the next run re-derives anything lost)
     (qRun?.changed || enq.added > 0 || (queueReadOk && queue.items.length)) ? writeQueue(queue).catch(() => false) : Promise.resolve(false),
     nr.v?.wrote ?? Promise.resolve(),
+    bridgeP,
   ]).then(() => 0), 3_000, 0);
 
   // India: what each source returned, in numbers, so a zero can be explained (never by consensus).
@@ -539,6 +546,8 @@ export async function GET(req: NextRequest) {
     documentsAwaitingGrading: countsByMarket[m].documentsAwaitingGrading, documentsUnavailable: countsByMarket[m].documentsUnavailable,
     candidatesDiscovered: countsByMarket[m].discovered, processed: countsByMarket[m].processed, verified: countsByMarket[m].verified,
   }));
+  // zzz861: save the source health + queue stages so the Guidance Universe page can describe each market from real evidence (best effort, bounded)
+  await withTimeout((async () => { const prev = await readSnapshot(); await writeSnapshot(snapshotOf(cards, queue, now, prev)); })().catch(() => 0), 1_500, 0);
   const queueReport = reportQueue(queue, { processed: qRun?.done ?? 0, verified: qRun?.complete ?? 0, failed: (qRun?.failed ?? 0) + (qRun?.unavailable ?? 0) });
   if (reconcileNotFound) queueReport.note += ` ${reconcileNotFound} claim${reconcileNotFound === 1 ? '' : 's'} have no primary filing in the filings read so far.`;
   const verification: VerificationSummary = ov?.verification ?? { provider: 'unknown', model: null, available: false, unavailableReason: 'The AI verification state could not be read; unverified events stay in the review queue.', mode: 'enforce',
