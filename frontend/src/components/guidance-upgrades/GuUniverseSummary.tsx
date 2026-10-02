@@ -11,14 +11,12 @@ import { R, box, tint } from './gu-tokens';
 import { QualityStrip, btn } from './GuBits';
 import { GuGroupList, GuHighGrowthList } from './GuHighGrowthList';
 import { useGuUniverse, type GuUniverseExt } from './useGuUniverse';
+import { GuFold, GuPanel, pillStyle } from './GuPanel';
 import { BADGE_LEGEND, SECTIONS, SECTION_ACTIVE, cohortCountsLine, cohortTotal, freshnessLines, groupCountsLine, highestActiveHeading, sectionRows } from './gu-ui';
 
 type Mk = 'IN' | 'US' | 'ALL';
 const TOGGLE: Array<[Mk, string]> = [['IN', 'India'], ['US', 'USA'], ['ALL', 'All']];
-const pill = (on: boolean): React.CSSProperties => ({
-  fontSize: 11, fontWeight: 800, letterSpacing: 0.3, padding: '4px 10px', borderRadius: 14, cursor: 'pointer',
-  border: `1px solid ${on ? R.cyan : R.border}`, background: on ? tint(R.cyan, 14) : 'transparent', color: on ? R.cyan : R.dim,
-});
+const SECTION_ACCENT: Record<string, string> = { active: R.cyan, verified: R.green, derived: R.violet, claimsAwaiting: R.amber };
 
 export function recordFinder(data: GuUniverseExt | null): (entityKey: string) => GuUniverseRecord | null {
   const m = new Map<string, GuUniverseRecord>();
@@ -37,13 +35,9 @@ export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void 
   const find = useMemo(() => recordFinder(data), [data]);
   const thr = data?.summary?.threshold ?? groups?.threshold ?? 30;
   return (
-    <section aria-label="Active high-growth guidance" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-        <h2 style={{ fontSize: 14, fontWeight: 900, letterSpacing: 0.6, margin: 0 }}>🔥 ACTIVE HIGH-GROWTH GUIDANCE</h2>
-        <div className="gu-noprint" style={{ display: 'flex', gap: 6, marginLeft: 'auto' }} role="group" aria-label="Market">
-          {TOGGLE.map(([k, l]) => <button key={k} type="button" style={pill(mk === k)} aria-pressed={mk === k} onClick={() => setMk(k)}>{l}</button>)}
-        </div>
-      </div>
+    <GuPanel id="gu-high-growth" icon="🔥" title="Active high-growth guidance" accent={R.green}
+      hint={`Companies that have guided ${thr}% or more growth and whose guidance is still in force.`}
+      right={<div role="group" aria-label="Market" style={{ display: 'flex', gap: 6 }}>{TOGGLE.map(([k, l]) => <button key={k} type="button" style={pillStyle(mk === k, R.green)} aria-pressed={mk === k} onClick={() => setMk(k)}>{l}</button>)}</div>}>
       {state === 'loading' && !data && <div style={box({ padding: 12, fontSize: 13, color: R.dim })}>Reading the guidance universe.</div>}
       {state === 'error' && (
         <div style={box({ padding: 12, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' })} role="alert">
@@ -54,18 +48,18 @@ export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void 
       {data && (
         <>
           <QualityStrip data={data} />
-          <FreshnessBlockUniverse data={data} />
           {data.records.length === 0 ? <div style={{ fontSize: 13, color: R.dim }}>{ZERO_RECORDS_TEXT}</div> : (
             <>
-              <div style={{ fontSize: 12, color: R.dim }} aria-label="Verification legend">{BADGE_LEGEND}</div>
               {hasGroups ? SECTIONS.map((sec) => {
                 const rows = sectionRows(groups, sec.key, mk);
                 const total = cohortTotal(rows);
                 // zzz854: the Active heading carries its threshold and the backend equation, so 'Active N' vs 'Highest active M' is explained
                 const ha = sec.key === 'active' && mk === 'ALL' ? highestActiveHeading(data.countEquations, total, thr) : null;
+                // zzz859: each list folds; the ranked lists open when they have rows, claims awaiting verification stay closed
+                const accent = SECTION_ACCENT[sec.key] || R.cyan;
                 return (
-                  <div key={sec.key} role="group" aria-label={sec.title} style={{ display: 'grid', gap: 4, marginTop: 4 }}>
-                    <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: 0.4, color: R.text }}>{ha ? ha.title : <>{sec.title} <span style={{ color: R.dim, fontWeight: 600 }}>({total})</span></>}</div>
+                  <div key={sec.key} role="group" aria-label={sec.title}>
+                  <GuFold title={ha ? ha.title.replace(/\s*\(\d+\)\s*$/, '') : sec.title.replace(/\s*\(\d+\)\s*$/, '')} count={total} accent={accent} defaultOpen={sec.key !== 'claimsAwaiting' && total > 0}>
                     {ha?.note && <div data-gu-highest-note style={{ fontSize: 12, color: R.dim }}>{ha.note}</div>}
                     {ha && data.countEquations?.highestActive && data.countEquations.highestActive.value !== total && <div style={{ fontSize: 12, color: R.amber }}>{total} rows are in this list; the count above says {data.countEquations.highestActive.value}.</div>}
                     <div style={{ fontSize: 12, color: R.dim }}>{sec.hint}</div>
@@ -77,6 +71,7 @@ export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void 
                     )}
                     <GuGroupList cohorts={rows} showMarket={mk === 'ALL'} findRecord={find} onFull={onFull}
                       emptyText={sec.key === 'verified' ? `No strictly verified guidance of ${thr}% or more in this market in the current data.` : sec.key === 'derived' ? 'No derived growth of this size in this market.' : sec.key === 'claimsAwaiting' ? 'No claims awaiting verification in this market.' : `No active guidance of ${thr}% or more in this market in the current data.`} />
+                  </GuFold>
                   </div>
                 );
               }) : legacy && (
@@ -94,10 +89,14 @@ export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void 
               )}
             </>
           )}
+          <div style={{ display: 'grid', gap: 2, borderTop: `1px dashed ${R.border}`, paddingTop: 6 }}>
+            <FreshnessBlockUniverse data={data} />
+            <div style={{ fontSize: 11.5, color: R.dim }} aria-label="Verification legend">{BADGE_LEGEND}</div>
+          </div>
           {data.scan && !data.scan.complete && <div style={{ fontSize: 11.5, color: R.dim }}>Universe scan incomplete. {data.scan.note}</div>}
         </>
       )}
-    </section>
+    </GuPanel>
   );
 }
 

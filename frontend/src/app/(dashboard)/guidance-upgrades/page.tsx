@@ -22,6 +22,7 @@ import { PRINT_CSS, R, box } from '@/components/guidance-upgrades/gu-tokens';
 import { btn } from '@/components/guidance-upgrades/GuBits';
 import { splitAudit } from '@/components/guidance-upgrades/gu-ui';
 import { CappedList } from '@/components/guidance-upgrades/GuMore';
+import { GuPanel } from '@/components/guidance-upgrades/GuPanel';
 
 export default function GuidanceUpgradesPage() {
   const [window_, setWindow] = useState<GuWindow>('7D');
@@ -82,11 +83,13 @@ export default function GuidanceUpgradesPage() {
   const card = useCallback((e: (typeof events)[number]) => <GuCard key={e.guidance_event_id} e={e} onOpen={select} now={now} />, [select, now]);
 
   return (
-    <div className="gu-page" style={{ color: R.text, display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div className="gu-page" style={{ color: R.text, display: 'flex', flexDirection: 'column', gap: 14 }}>
       <style>{PRINT_CSS}</style>
       <GuTitle newest={data?.freshness.newestAnnouncement || null} checkedAt={data?.freshness.feedCheckedAt || null} />
       <GuUniverseSummary onFull={setGgOpen} />
       <GuUniverseBrowser held={held} onFull={setGgOpen} />
+      <GuPanel id="gu-events" icon="📈" title="Guidance raises in this window" accent={R.violet} count={state === 'ok' || data ? shown.length : null}
+        hint="New guidance raises announced in the chosen time window. Click a card for the full check.">
       <GuTopBar summary={data?.summary || null} window={window_} onWindow={setWindow} scope={scope} onScope={setScope} metric={metric} onMetric={setMetric}
         inBookCount={countInBook(events)} bookLoaded={bookLoaded} />
       {scope === 'MY_BOOK' && bookLoaded && held.length === 0 && <div style={{ fontSize: 12, color: R.dim }}>No holdings found. Add them on the Portfolio page and this filter fills in.</div>}
@@ -120,12 +123,17 @@ export default function GuidanceUpgradesPage() {
         )}
         {!(todayFirst && todayList.length > 0) && <CappedList key={`all-${window_}-${scope}-${metric}`} items={shown} render={card} color={R.dim} />}
       </div>
+      </GuPanel>
+      {/* zzz859: audit, review queue, AI verification and coverage together, collapsed until opened */}
+      <GuPanel id="gu-checks" icon="🔎" title="Checks, review queue and coverage" accent={R.grey} count={auditList.length + (data?.reviewQueueCount ?? 0)} defaultOpen={false}
+        hint="What was found but not shown as a raise, why, and how much of the market was read.">
       <GuAuditArea events={auditList} onOpen={select} now={now} />
       {/* zzz854: items that are not event cards, each with its reason; then the AI verification state (never silent) */}
       <GuReviewQueue items={data?.reviewQueue} count={data?.reviewQueueCount} />
       <GuVerificationBlock data={data as unknown as Parameters<typeof GuVerificationBlock>[0]['data']} />
       <GuCoverage coverage={data?.coverage} queue={data?.queue} invariantViolations={data?.invariantViolations} unresolved={unresolvedCount(data?.unresolved)} scan={data?.scan} now={now} window={window_} byMarket={data?.freshness.byMarket} eventCounts={eventCounts} />
       {!data?.scan && data?.freshness.note && <div style={{ fontSize: 12, color: R.dim }}>{data.freshness.note}</div>}
+      </GuPanel>
       <div style={{ fontSize: 11, color: R.faint }}>Company data only. Not investment advice. Prices are context here, never the reason.</div>
       {ggOpen && <GgDetail c={ggOpen} onClose={() => setGgOpen(null)} unverified={ggOpen.verification === 'SECONDARY_ONLY' || ggOpen.verification === 'UNVERIFIED'} />}
       {open && <GuDetail e={open} onClose={() => select(null)} now={now} />}

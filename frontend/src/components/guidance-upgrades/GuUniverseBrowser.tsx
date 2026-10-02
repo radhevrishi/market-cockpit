@@ -14,11 +14,9 @@ import { VIEW_HINT, VIEW_ORDER, expiryLine, excludedWhy, reasonCountsLine, sourc
 import { GuUniverseList } from './GuUniverseList';
 import { useGuUniverse } from './useGuUniverse';
 import { CappedList } from './GuMore';
+import { GuPanel, pillStyle } from './GuPanel';
 
-const pill = (on: boolean): React.CSSProperties => ({
-  fontSize: 11, fontWeight: 800, letterSpacing: 0.3, padding: '4px 10px', borderRadius: 14, cursor: 'pointer',
-  border: `1px solid ${on ? R.cyan : R.border}`, background: on ? tint(R.cyan, 14) : 'transparent', color: on ? R.cyan : R.dim,
-});
+const pill = (on: boolean): React.CSSProperties => pillStyle(on, R.cyan);
 
 export function GuUniverseBrowser({ held, onFull }: { held: string[]; onFull?: (c: GgCompany) => void }) {
   const [scope, setScope] = useState<UniverseScope>('ALL');
@@ -31,18 +29,19 @@ export function GuUniverseBrowser({ held, onFull }: { held: string[]; onFull?: (
     [data, scope, metric, heldSet],
   );
   return (
-    <section aria-label="Guidance universe" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <h2 style={{ fontSize: 14, fontWeight: 900, letterSpacing: 0.6, margin: 0 }}>📊 GUIDANCE UNIVERSE</h2>
-      <div style={{ fontSize: 12, color: R.dim }}>Guidance that is still in force, whenever it was announced. The time window in the next section only filters events. It does not change this universe.</div>
-      <div className="gu-noprint" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} role="group" aria-label="Universe market">
+    <GuPanel id="gu-universe" icon="📊" title="Guidance universe" accent={R.cyan} count={data ? list.length : null}
+      hint="Every guidance still in force, whenever it was announced. The time window in the next section only filters events; it does not change this universe.">
+      <div className="gu-noprint" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }} role="group" aria-label="Universe market">
+        <span style={{ fontSize: 11, fontWeight: 800, color: R.dim, width: 56 }}>MARKET</span>
         {UNIVERSE_SCOPES.map(([k, l]) => <button key={k} type="button" style={pill(scope === k)} aria-pressed={scope === k} onClick={() => setScope(k)}>{l}</button>)}
-        <span style={{ width: 10 }} />
+        <span style={{ width: 10 }} /><span style={{ fontSize: 11, fontWeight: 800, color: R.dim }}>VIEW</span>
         {VIEW_ORDER.map((k) => (
           <button key={k} type="button" style={pill(view === k)} aria-pressed={view === k} title={VIEW_HINT[k]} onClick={() => setView(k)}>{viewLabel(k, data?.viewCounts)}</button>
         ))}
       </div>
       <div style={{ fontSize: 12, color: R.dim }}>{VIEW_HINT[view]}</div>
-      <div className="gu-noprint" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} role="group" aria-label="Universe metric">
+      <div className="gu-noprint" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }} role="group" aria-label="Universe metric">
+        <span style={{ fontSize: 11, fontWeight: 800, color: R.dim, width: 56 }}>METRIC</span>
         {UNIVERSE_METRICS.map(([k, l]) => <button key={k} type="button" style={pill(metric === k)} aria-pressed={metric === k} onClick={() => setMetric(k)}>{l}</button>)}
       </div>
       {scope === 'MY_BOOK' && held.length === 0 && <div style={{ fontSize: 12, color: R.dim }}>No holdings found. Add them on the Portfolio page and this view fills in.</div>}
@@ -89,6 +88,6 @@ export function GuUniverseBrowser({ held, onFull }: { held: string[]; onFull?: (
           )}
         </>
       )}
-    </section>
+    </GuPanel>
   );
 }

@@ -270,6 +270,8 @@ export function FreshnessBlock(p: FreshnessIn) {
 }
 
 /** Data-quality strip for the universe: counts, review reasons, stale and conflict counts, invariant banner, live-feed notice. */
+const chipStyle = (c: string): React.CSSProperties => ({ fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 12, color: c, border: `1px solid ${tint(c, 45)}`, background: tint(c, 8) });
+
 export function QualityStrip({ data }: { data: Parameters<typeof qualityStrip>[0] }) {
   const q = qualityStrip(data);
   const parts: string[] = [];
@@ -293,8 +295,21 @@ export function QualityStrip({ data }: { data: Parameters<typeof qualityStrip>[0
           {q.liveError && <div>Live feed problem: {q.liveError}. The saved guidance is still shown.</div>}
         </div>
       )}
-      {parts.length > 0 && <div style={{ fontSize: 12.5, color: R.dim }} aria-label="Data quality counts">{parts.join(' · ')}</div>}
-      {q.reasonLine && <div style={{ fontSize: 12, color: R.dim }}><b>Why records need review:</b> {q.reasonLine}</div>}
+      {/* zzz859: the counts as coloured chips (green = active state, amber = needs attention, red = conflicts), reasons folded */}
+      {parts.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} aria-label="Data quality counts">
+          {q.stateLine && <span style={chipStyle(R.green)}>{q.stateLine}</span>}
+          {q.reviewQueue != null && <span style={chipStyle(q.reviewQueue > 0 ? R.amber : R.grey)}>{q.reviewQueue} need review</span>}
+          {q.stale != null && <span style={chipStyle(q.stale > 0 ? R.amber : R.grey)}>{q.stale} verification stale</span>}
+          {q.conflicts != null && <span style={chipStyle(q.conflicts > 0 ? R.red : R.grey)}>{q.conflicts} source conflict{q.conflicts === 1 ? '' : 's'}</span>}
+        </div>
+      )}
+      {q.reasonLine && (
+        <details style={{ fontSize: 12, color: R.dim }}>
+          <summary style={{ cursor: 'pointer', fontWeight: 700 }}>Why records need review</summary>
+          <div style={{ paddingTop: 4 }}>{q.reasonLine}</div>
+        </details>
+      )}
     </div>
   );
 }
