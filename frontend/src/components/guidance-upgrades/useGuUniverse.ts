@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import type { GuUniverseResponse, GuViewCounts, GuInvariantViolation, GuServedFrom, GuHighGrowthGroups, GuStateCounts, GuExpirySummary } from '@/lib/guidance-universe-types';
 import type { GuExcluded, GuInactiveRecord } from '@/lib/guidance-universe';
 import { isUniverseUsable } from '@/lib/guidance-upgrades-format';
+import { readCache, writeCache, FRESH_MS } from '@/lib/gu-client-cache';
 import type { GuView } from './gu-ui';
 
 export type UniverseState = 'loading' | 'ok' | 'error';
@@ -61,14 +62,22 @@ export function useGuUniverse(o: { market?: 'IN' | 'US' | 'ALL'; metric?: string
   useEffect(() => { const h = () => setTick((t) => t + 1); window.addEventListener('gu-refresh', h); return () => window.removeEventListener('gu-refresh', h); }, []);
   useEffect(() => {
     let alive = true;
-    setState('loading'); setError(null);
+    // zzz863: show the saved copy at once, fetch fresh data in the background (skipped when the copy is under 90 seconds old)
+    const hit = tick === 0 ? readCache<GuUniverseExt>(url) : null;
+    if (hit && isUniverseUsable(hit.data)) {
+      setData(hit.data); setState('ok'); setError(null);
+      if (hit.ageMs < FRESH_MS) return () => { alive = false; };
+    } else { setState('loading'); }
+    setError(null);
     (async () => {
       try {
         const j = await fetchUniverse(url, tick > 0);
         if (!alive) return;
+        writeCache(url, j);
         setData(j); setState('ok');
       } catch (e) {
         if (!alive) return;
+        if (hit) return;   // keep showing the saved copy when the refresh fails
         setData(null); setError((e as Error)?.message || 'Unknown error'); setState('error');
       }
     })();

@@ -23,6 +23,7 @@ import { btn } from '@/components/guidance-upgrades/GuBits';
 import { splitAudit } from '@/components/guidance-upgrades/gu-ui';
 import { CappedList } from '@/components/guidance-upgrades/GuMore';
 import { GuPanel } from '@/components/guidance-upgrades/GuPanel';
+import { readCache, writeCache, FRESH_MS } from '@/lib/gu-client-cache';
 
 export default function GuidanceUpgradesPage() {
   const [window_, setWindow] = useState<GuWindow>('7D');
@@ -38,21 +39,29 @@ export default function GuidanceUpgradesPage() {
   const now = useMemo(() => new Date(), [data]);
 
   const acRef = useRef<AbortController | null>(null);
-  const load = useCallback(async (w: GuWindow) => {
+  const load = useCallback(async (w: GuWindow, force = false) => {
     acRef.current?.abort();
     const ac = new AbortController(); acRef.current = ac;
-    setState('loading');
+    // zzz863: the saved answer for this window is shown at once; fresh data is fetched in the background (skipped when it is under 90 seconds old)
+    const key = `/api/v1/guidance-upgrades?window=${w}&market=ALL`;
+    const hit = force ? null : readCache<GuidanceUpgradesResponse>(key);
+    if (hit && Array.isArray((hit.data as { events?: unknown })?.events)) {
+      setData(hit.data); setState('ok');
+      if (hit.ageMs < FRESH_MS) return;
+    } else setState('loading');
     try {
-      const r = await fetch(`/api/v1/guidance-upgrades?window=${w}&market=ALL`, { cache: 'no-store', signal: ac.signal });
+      const r = await fetch(key, { cache: 'no-store', signal: ac.signal });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = await r.json();
       if (!j || !Array.isArray(j.events)) throw new Error('bad answer');
       if (ac.signal.aborted) return;
+      writeCache(key, j);
       setData(j as GuidanceUpgradesResponse); setState('ok');
-    } catch { if (!ac.signal.aborted) setState('error'); }
+    } catch { if (!ac.signal.aborted && !hit) setState('error'); }
   }, []);
 
   useEffect(() => { void load(window_); return () => acRef.current?.abort(); }, [window_, load]);
+  useEffect(() => { const h = () => void load(window_, true); window.addEventListener('gu-refresh', h); return () => window.removeEventListener('gu-refresh', h); }, [window_, load]);
 
   useEffect(() => {
     try { const id = new URLSearchParams(window.location.search).get('id'); if (id) setOpenId(id); } catch { /* no id */ }
@@ -98,7 +107,7 @@ export default function GuidanceUpgradesPage() {
       {state === 'error' && (
         <div style={box({ padding: 14, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' })} role="alert">
           <span style={{ fontSize: 13 }}>The guidance feed could not be read right now. Nothing is wrong with your data. Please try again.</span>
-          <button type="button" style={btn(R.cyan, true)} onClick={() => void load(window_)}>Retry</button>
+          <button type="button" style={btn(R.cyan, true)} onClick={() => void load(window_, true)}>Retry</button>
         </div>
       )}
       {state === 'ok' && shown.length === 0 && (
