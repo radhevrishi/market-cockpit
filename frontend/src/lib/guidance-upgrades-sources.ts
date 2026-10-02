@@ -1,3 +1,4 @@
+import { GUIDANCE_BEARING_SUBJECT } from './guidance-watch';
 // zzz853 — source reconciliation: company announcement date, primary-source search, and the queue inputs they produce.
 // Pure and deterministic (no network): the route hands in the candidates and filings it already read.
 //
@@ -114,13 +115,14 @@ export function reconcilePrimary(events: readonly GuidanceEvent[], filings: read
 }
 
 /** Queue inputs for every filing that names a guidance-bearing document. P0 when a not-yet-verified event of the same company is waiting on it. */
-export function queueInputsFromFilings(filings: readonly PrimaryFiling[], matched: ReadonlySet<string> = new Set()): QueueInput[] {
+export function queueInputsFromFilings(filings: readonly PrimaryFiling[], matched: ReadonlySet<string> = new Set(), watched?: (s: { market: string; ticker?: string | null; company?: string | null }) => boolean): QueueInput[] {
   const out: QueueInput[] = []; const seen = new Set<string>();
   for (const f of filings) {
-    if (!(f.anySubject || isRaiseBearingSubject(f.subject))) continue;
+    const watch = !!watched && watched({ market: f.market, ticker: f.ticker, company: f.company }) && GUIDANCE_BEARING_SUBJECT.test(f.subject);   // zzz862: a company that already has guidance: its new results / call / presentation filing is always read, first
+    if (!(f.anySubject || isRaiseBearingSubject(f.subject) || watch)) continue;
     const k = `${f.market}|${f.url || ''}|${f.ticker || f.company}|${day(f.date)}|${f.subject.slice(0, 50)}`;
     if (seen.has(k)) continue; seen.add(k);
-    const waiting = matched.has(`${f.market}|${(f.ticker || '').toUpperCase()}`);
+    const waiting = watch || matched.has(`${f.market}|${(f.ticker || '').toUpperCase()}`);
     out.push({ market: f.market, ticker: f.ticker, company: f.company, sourceUrl: f.url ?? null, sourceType: f.exchange, subject: f.subject, eventDate: day(f.date), priority: waiting ? 'P0' : priorityOf(f.subject, f.exchange) });
   }
   return out;

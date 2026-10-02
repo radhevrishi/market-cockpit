@@ -25,6 +25,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvMGet, kvSet } from '@/lib/kv';
 import { docFromQueueRead, storeQueueDocs } from '@/lib/guidance-queue-bridge';
+import { readWatch, watchMatcher, promoteWatched } from '@/lib/guidance-watch';
 import { snapshotOf, readSnapshot, writeSnapshot } from '@/lib/guidance-pipeline-snapshot';
 import { loadCatalog } from '@/lib/symbolMaster';
 import { NSE_TICKER_NAMES } from '@/lib/nse-ticker-names';
@@ -241,8 +242,11 @@ export async function GET(req: NextRequest) {
   for (const c of cands) if (c.market !== 'US' && c.kind !== 'FILING' && c.ticker && isRaiseCandidate(c)) waitingKeys.add(`IN|${c.ticker.toUpperCase()}`);
   let queue: QueueState = (await queueP) ?? emptyQueue(now);
   const queueReadOk = !!(await queueP);
-  const enq = enqueue(queue, queueInputsFromFilings(filingPool, waitingKeys), now);
+  // zzz862: companies that already have guidance (active, review, or a claim waiting for its document) are read first, automatically
+  const watchSet = await withTimeout(readWatch(), 2_000, null); const isWatched = watchMatcher(watchSet);
+  const enq = enqueue(queue, queueInputsFromFilings(filingPool, waitingKeys, isWatched), now);
   queue = enq.queue;
+  const watchPromoted = promoteWatched(queue.items, isWatched);
   const qLeft = Math.min(DOC_BUDGET_MS, 26_000 - (Date.now() - t0));
   // zzz861: every filing the worker reads is also stored as a company document, so the AI extractor can read it and the universe can change
   const bridged: Array<Record<string, unknown>> = [];

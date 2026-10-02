@@ -17,11 +17,17 @@ export interface GuPipelineInput {
   sources: GuSourceLine[]; scanAt: string | null; servedFromStaleCache: boolean; staleCacheSavedAt: string | null;
   documentsDiscovered: number; documentsProcessed: number; documentsPending: number;
   queueAwaiting: number; queueReadNoGuidance: number; queueUnavailable: number;
+  /** claims whose document is queued / being read / awaiting extraction, and claims with no document at all (zzz862) */ claimsQueued?: number; claimsNoDocument?: number;
   claims: number; claimsPrimaryFound: number; claimsPrimaryRead: number; claimsVerified: number; claimsContradicted: number;
   verifiedGuidance: number; processedNoGuidance: number;
   daysFailed: number; daysPartial: number; daysNotRead: number; tradingDays: number;
 }
+export type GuSourceCoverage = 'COMPLETE' | 'PARTIAL' | 'STALE' | 'SOURCE_FAILED' | 'NO_SOURCE_DATA';
+export type GuVerificationStage = 'VERIFIED' | 'PARTLY_VERIFIED' | 'PRIMARY_PENDING' | 'NOTHING_TO_VERIFY';
+export const SOURCE_COVERAGE_TEXT: Record<GuSourceCoverage, string> = { COMPLETE: 'COMPLETE', PARTIAL: 'PARTIAL', STALE: 'STALE (saved copy only)', SOURCE_FAILED: 'FAILED', NO_SOURCE_DATA: 'NO SOURCE DATA' };
+export const VERIFICATION_STAGE_TEXT: Record<GuVerificationStage, string> = { VERIFIED: 'VERIFIED', PARTLY_VERIFIED: 'PARTLY VERIFIED', PRIMARY_PENDING: 'PRIMARY PENDING', NOTHING_TO_VERIFY: 'NOTHING TO VERIFY' };
 export interface GuPipelineState {
+  /** zzz862: two separate questions. Did we read the sources (coverage)? Did the company's own documents confirm the claims (verification)? */ sourceCoverage: GuSourceCoverage; verification: GuVerificationStage;
   state: GuSourceState; status: GuCoverageStatus; headline: string; sources: GuSourceLine[];
   /** the blocking reasons, one sentence each, in plain words */ reasons: string[];
   nse: number | null; bse: number | null;
@@ -65,13 +71,19 @@ export function pipelineStateOf(i: GuPipelineInput): GuPipelineState {
     if (failed.length) reasons.push(`${failed.map((s) => s.name).join(' and ')} ${failed.length === 1 ? 'did' : 'do'} not answer; the other sources keep running.`);
     if (stale.length || i.servedFromStaleCache) reasons.push('A saved copy of one feed is in use; it is used to discover, not to verify.');
     if (pending > 0) reasons.push(`${plural(pending, 'document')} still to be read.`);
-    if (claimsOpen > 0) reasons.push(`${plural(claimsOpen, 'claim')} waiting for a company document.`);
+    if (claimsOpen > 0) {
+      const q = Math.min(claimsOpen, i.claimsQueued ?? 0); const nd = Math.min(claimsOpen - q, i.claimsNoDocument ?? claimsOpen - q);
+      reasons.push(`${plural(claimsOpen, 'claim')} not verified yet: ${nd} with no company document found, ${q} with a document queued, being read or awaiting extraction${claimsOpen - q - nd > 0 ? `, ${claimsOpen - q - nd} other` : ''}.`);
+    }
     status = blocked ? 'PRIMARY_PENDING' : failed.length || stale.length || i.daysFailed > 0 || i.daysPartial > 0 || i.daysNotRead > 0 || pending > 0 || claimsOpen > 0 ? 'PARTIAL' : 'COMPLETE';
   }
+  const partialSrc = failed.length > 0 || stale.length > 0 || i.servedFromStaleCache || i.daysFailed > 0 || i.daysPartial > 0 || i.daysNotRead > 0;
+  const sourceCoverage: GuSourceCoverage = state === 'NO_SOURCE_DATA' ? 'NO_SOURCE_DATA' : state === 'SOURCE_FAILED' ? 'SOURCE_FAILED' : state === 'SOURCE_STALE' ? 'STALE' : partialSrc ? 'PARTIAL' : 'COMPLETE';
+  const verification: GuVerificationStage = i.verifiedGuidance > 0 ? (claimsOpen > 0 || pending > 0 ? 'PARTLY_VERIFIED' : 'VERIFIED') : claimsOpen > 0 || pending > 0 ? 'PRIMARY_PENDING' : 'NOTHING_TO_VERIFY';
   const nse = i.sources.find((s) => s.name === 'NSE'); const bse = i.sources.find((s) => s.name === 'BSE');
   const lead = status === 'PRIMARY_PENDING' ? 'PRIMARY VERIFICATION PENDING' : status === 'NO_SOURCE_DATA' ? 'NO SOURCE DATA' : status === 'SOURCE_FAILED' ? 'SOURCE FAILED' : status === 'STALE' ? 'STALE (saved copy only)' : status;
   const tail = [`${plural(pending, 'document')} pending`, `${plural(i.claims, 'claim')}`, `${i.verifiedGuidance} verified`];
   const head = i.sources.length ? `${i.sources.map((s) => `${s.name} ${mark(s)}${s.documents ? ` ${s.documents}` : ''}`).join(' | ')} | ` : '';
   const headline = `${MK[i.market]} — ${lead}: ${head}${tail.join(' | ')}`;
-  return { state, status, headline, sources: i.sources, reasons, nse: nse ? nse.documents : null, bse: bse ? bse.documents : null };
+  return { sourceCoverage, verification, state, status, headline, sources: i.sources, reasons, nse: nse ? nse.documents : null, bse: bse ? bse.documents : null };
 }

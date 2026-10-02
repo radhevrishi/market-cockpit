@@ -308,7 +308,7 @@ export function reportQueue(q: QueueState, run: { processed: number; verified: n
   for (const x of open) byPriority[x.priority]++;
   const backlogByMarket = { IN: open.filter((x) => x.market === 'IN').length, US: open.filter((x) => x.market === 'US').length };
   const note = open.length === 0 ? 'No documents are waiting to be read.'
-    : `${open.length} document${open.length === 1 ? '' : 's'} waiting to be read (P0 ${byPriority.P0}, P1 ${byPriority.P1}, P2 ${byPriority.P2}); up to ${MAX_DOCS_PER_RUN} are read per run (${QUEUE_CONCURRENCY} at a time), highest priority and longest-waiting first; ${drainEstimate(open.length).text}.`;
+    : `${open.length} document${open.length === 1 ? '' : 's'} waiting to be read (${by('QUEUED')} queued + ${by('FAILED')} retrying after a failed fetch; P0 ${byPriority.P0}, P1 ${byPriority.P1}, P2 ${byPriority.P2}); up to ${MAX_DOCS_PER_RUN} are read per run (${QUEUE_CONCURRENCY} at a time), highest priority and longest-waiting first; ${drainEstimate(open.length).text}.`;
   return { total: q.items.length, queued: by('QUEUED'), reading: by('READING'), done: by('DONE'), failed: by('FAILED'), sourceUnavailable: by('SOURCE_UNAVAILABLE'), byPriority,
     processedThisRun: run.processed, verifiedThisRun: run.verified, failedThisRun: run.failed, backlogByMarket, note };
 }

@@ -91,7 +91,7 @@ export default function GuidanceUpgradesPage() {
       <GuPanel id="gu-events" icon="📈" title="Guidance raises in this window" accent={R.violet} count={state === 'ok' || data ? shown.length : null}
         hint="New guidance raises announced in the chosen time window. Click a card for the full check.">
       <GuTopBar summary={data?.summary || null} window={window_} onWindow={setWindow} scope={scope} onScope={setScope} metric={metric} onMetric={setMetric}
-        inBookCount={countInBook(events)} bookLoaded={bookLoaded} />
+        inBookCount={countInBook(events)} bookLoaded={bookLoaded} incomplete={!!data?.coverage?.cards?.some((c: any) => c.overall !== 'COMPLETE') || data?.scan?.IN?.complete === false || data?.scan?.US?.complete === false} />
       {scope === 'MY_BOOK' && bookLoaded && held.length === 0 && <div style={{ fontSize: 12, color: R.dim }}>No holdings found. Add them on the Portfolio page and this filter fills in.</div>}
 
       {state === 'loading' && !data && <div style={box({ padding: 14, fontSize: 13, color: R.dim })}>Looking for guidance raises. This can take a few seconds.</div>}

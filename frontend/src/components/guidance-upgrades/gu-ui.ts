@@ -93,6 +93,14 @@ export function groupCountsLine(c: Partial<GuHighGrowthGroups['counts']> | null 
   if (!c || !isNum(c.rows)) return null;
   return `${n0(c.verified)} verified · ${n0(c.partial)} partial · ${n0(c.derived) + n0(c.claimsAwaiting)} unverified/derived`;
 }
+/** zzz862: the trust split of the rows ACTUALLY LISTED (one row = one company per cohort), never the page-wide counts (which also hold claims and other lists). */
+export function rowTrustLine(c: CohortRows): string {
+  const all = COHORT_ORDER.flatMap((k) => c[k]);
+  const n = (t: GuTrust) => all.filter((r) => r.trust === t).length;
+  const stale = all.filter((r) => r.trust === 'verified' && (r.headline as any)?.freshness === 'STALE').length;
+  return `${n('verified')} verified · ${n('derived')} derived · ${n('partial')} partial · ${n('claimsAwaiting')} unverified (${all.length} companies listed${stale ? `; ${stale} of the verified need a fresh check` : ''})`;
+}
+export function rowCohortLine(c: CohortRows): string { return `${c.ANNUAL.length} annual · ${c.MULTI_YEAR_CAGR.length} multi-year CAGR · ${c.QUARTERLY.length} quarterly`; }
 export function cohortCountsLine(c: Partial<GuHighGrowthGroups['counts']> | null | undefined): string | null {
   if (!c || !isNum(c.rows)) return null;
   return `${n0(c.ANNUAL)} annual · ${n0(c.MULTI_YEAR_CAGR)} multi-year CAGR · ${n0(c.QUARTERLY)} quarterly`;

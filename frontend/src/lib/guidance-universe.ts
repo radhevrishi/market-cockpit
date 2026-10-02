@@ -1171,7 +1171,8 @@ export function selectHighGrowthGroups(records: GuUniverseRecordX[], thr = HIGH_
   for (const r of records) for (const p of r.points) {
     if (!base(p) || p.periodStatus !== 'CONFIRMED' || !p.inDefaultView || (p.listBucket && p.listBucket !== 'ACTIVE')) continue;
     const trust = trustOf(p.verificationState); if (!trust || trust === 'claimsAwaiting') continue;   // zzz854: an unverified claim is never in the ranked Active list
-    add(byTrust, `${r.entityKey}|${p.cohort}|${trust}`, r, p.cohort!, trust, p);
+    // zzz862: a verification older than the freshness limit (60 days) is not "strictly verified" any more: it stays in Active (with its re-check tag) but leaves the strict list
+    if (!(trust === 'verified' && p.freshness === 'STALE')) add(byTrust, `${r.entityKey}|${p.cohort}|${trust}`, r, p.cohort!, trust, p);
     add(byCohort, `${r.entityKey}|${p.cohort}`, r, p.cohort!, trust, p);
   }
   // zzz854: claims awaiting verification come from their OWN list, never from the Active records

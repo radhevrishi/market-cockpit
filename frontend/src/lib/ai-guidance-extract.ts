@@ -659,8 +659,10 @@ export interface PriorityIo {
   usQueue(): Promise<{ handoff: Set<string>; graded: Set<string> } | null>;
   /** TICKER → dates (YYYY-MM-DD) of verified guidance events with numbers. Tickers absent from the map have none. null = unreadable. */
   verifiedEventDates(tickers: string[]): Promise<Map<string, string[]> | null>;
+  /** zzz862: companies that already have a guidance record (active / review / claim). Their new documents are read FIRST. Optional; null = unreadable (no reordering). */
+  watchSet?(): Promise<import('./guidance-watch').WatchSet | null>;
 }
-export interface PlanInfo { handoff: Set<string> | null; graded: Set<string> | null; verified: Map<string, string[]> | null; looked: Set<string> }
+export interface PlanInfo { handoff: Set<string> | null; graded: Set<string> | null; verified: Map<string, string[]> | null; looked: Set<string>; /** zzz862: true for a document of a company that already has guidance */ watched?: ((s: { market: string; ticker?: string | null; company?: string | null }) => boolean) | null }
 export interface QueuePlan {
   rows: GuidanceDocIndexRow[];
   counts: { india: number; usHandoff: number; usNoEvent: number; usUnknown: number; skippedGraded: number; skippedVerified: number; skippedMode: number };
@@ -689,12 +691,17 @@ export function planQueue(rows: GuidanceDocIndexRow[], info: PlanInfo, mode: UsM
     t3.push(r);
   }
   counts.usHandoff = t2.length; counts.usNoEvent = t3.length; counts.usUnknown = t4.length;
-  return { rows: [...india, ...t2, ...t3, ...t4], counts };
+  const ordered = [...india, ...t2, ...t3, ...t4];
+  // zzz862: a new document from a company that already has guidance can change that guidance, so it goes first (stable: the order inside each group is unchanged)
+  const w = info.watched; if (!w) return { rows: ordered, counts };
+  const first = ordered.filter((r) => w({ market: r.market, ticker: r.ticker, company: r.company })); const rest = ordered.filter((r) => !w({ market: r.market, ticker: r.ticker, company: r.company }));
+  return { rows: [...first, ...rest], counts };
 }
 
 /** Reads the priority inputs (bounded) and plans the run. Never throws: unreadable inputs make documents "unknown", never skipped. */
 export async function buildPlan(rows: GuidanceDocIndexRow[], io: PriorityIo | undefined, mode: UsMode): Promise<QueuePlan> {
-  const info: PlanInfo = { handoff: null, graded: null, verified: null, looked: new Set() };
+  const info: PlanInfo = { handoff: null, graded: null, verified: null, looked: new Set(), watched: null };
+  if (io?.watchSet) { const ws = await io.watchSet().catch(() => null); if (ws) { const { watchMatcher } = await import('./guidance-watch'); info.watched = watchMatcher(ws); } }
   const usRows = rows.filter((r) => r.market !== 'IN');
   if (io && usRows.length) {
     const q = await io.usQueue().catch(() => null);
@@ -942,6 +949,7 @@ export async function realStore(): Promise<GuidanceDocStore> {
 /** Priority inputs from the guidance-upgrades events queue and the verified ledger (lazy imports). */
 export function realPriority(): PriorityIo {
   return {
+    watchSet: async () => (await import('./guidance-watch')).readWatch(),
     usQueue: async () => {
       const qm = await import('./guidance-upgrades-queue');
       const q = await qm.readQueue();

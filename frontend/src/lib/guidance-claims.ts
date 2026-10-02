@@ -13,7 +13,10 @@ import type { ClaimCounts } from './guidance-pipeline-coverage';
 export type ClaimVerification = 'VERIFIED' | 'CONTRADICTED' | 'PRIMARY_NOT_FOUND' | 'PRIMARY_NOT_READ' | 'NO_GUIDANCE_IN_DOCUMENT' | 'NOT_COMPARABLE';
 export type ClaimPrimary = 'FOUND' | 'NOT_FOUND' | 'NOT_YET_FETCHED';
 export type ClaimDocument = 'AVAILABLE' | 'PENDING';
-export type ClaimProcessing = 'QUEUED' | 'RUNNING' | 'FAILED' | 'DONE' | 'NONE';
+export type ClaimProcessing = 'QUEUED' | 'RUNNING' | 'AWAITING_EXTRACTION' | 'FAILED' | 'DONE' | 'NONE';
+/** One plain stage per claim: claim -> primary not found -> document queued -> being read -> read, awaiting extraction -> verified / contradicted / no guidance. */
+export type ClaimStage = 'PRIMARY_NOT_FOUND' | 'DOCUMENT_QUEUED' | 'DOCUMENT_FAILED' | 'DOCUMENT_BEING_READ' | 'DOCUMENT_READ_AWAITING_EXTRACTION' | 'NO_GUIDANCE_IN_DOCUMENT' | 'VERIFIED' | 'CONTRADICTED' | 'NOT_COMPARABLE';
+export const CLAIM_STAGE_TEXT: Record<ClaimStage, string> = { PRIMARY_NOT_FOUND: 'No company document yet', DOCUMENT_QUEUED: 'Document queued', DOCUMENT_FAILED: 'Document fetch failed (retrying)', DOCUMENT_BEING_READ: 'Document being read', DOCUMENT_READ_AWAITING_EXTRACTION: 'Document found, awaiting extraction', NO_GUIDANCE_IN_DOCUMENT: 'Read: no guidance in it', VERIFIED: 'Verified', CONTRADICTED: 'Contradicted', NOT_COMPARABLE: 'Needs review' };
 /** The processing stage of a filing in the queue (the queue's own statuses mapped onto the pipeline stages). */
 export type QueueStage = 'DISCOVERED' | 'LOCATED' | 'FETCHED' | 'READ' | 'EXTRACTED' | 'NO_GUIDANCE' | 'GUIDANCE_FOUND' | 'FAILED' | 'SOURCE_UNAVAILABLE';
 export interface GuidanceClaim {
@@ -22,7 +25,7 @@ export interface GuidanceClaim {
   source_url: string | null; source_date: string | null; secondary_source: string; claim_status: 'AWAITING_PRIMARY' | 'VERIFIED' | 'CONTRADICTED' | 'NO_GUIDANCE_IN_DOCUMENT';
   primary_source_id: string | null; verification_status: ClaimVerification;
   /** actionable status */
-  primary: ClaimPrimary; document: ClaimDocument; processing: ClaimProcessing; queue_stage: QueueStage | null; next_action: string;
+  primary: ClaimPrimary; document: ClaimDocument; processing: ClaimProcessing; queue_stage: QueueStage | null; stage: ClaimStage; next_action: string;
   primary_source_url: string | null; reason: string;
 }
 export interface ClaimCtx {
@@ -98,9 +101,13 @@ export function resolveClaims(rows: GuUniverseRecordX[], ctx: ClaimCtx = {}): Gu
       why = best ? 'A filing for this company is queued; it has not been fetched and read yet.' : 'No company document for this company is on file yet.';
     }
     const stage = best?.st ?? null;
-    const processing: ClaimProcessing = v === 'VERIFIED' || v === 'CONTRADICTED' || v === 'NO_GUIDANCE_IN_DOCUMENT' || v === 'NOT_COMPARABLE' ? 'DONE' : stageProcessing(stage);
+    const terminal = v === 'VERIFIED' || v === 'CONTRADICTED' || v === 'NO_GUIDANCE_IN_DOCUMENT' || v === 'NOT_COMPARABLE';
+    // a document on file that the AI extractor has not read is "awaiting extraction", whatever the filings queue said about its own (regex) read
+    const processing: ClaimProcessing = terminal ? 'DONE' : v === 'PRIMARY_NOT_READ' ? (stage === 'FETCHED' ? 'RUNNING' : 'AWAITING_EXTRACTION') : stageProcessing(stage);
+    const cstage: ClaimStage = terminal ? (v as ClaimStage) : v === 'PRIMARY_NOT_READ' ? (stage === 'FETCHED' ? 'DOCUMENT_BEING_READ' : 'DOCUMENT_READ_AWAITING_EXTRACTION')
+      : processing === 'RUNNING' ? 'DOCUMENT_BEING_READ' : processing === 'FAILED' ? 'DOCUMENT_FAILED' : processing === 'QUEUED' ? 'DOCUMENT_QUEUED' : 'PRIMARY_NOT_FOUND';
     const next = v === 'VERIFIED' ? 'None: verified; it can move to Active.' : v === 'CONTRADICTED' ? 'None: leave out of every list.' : v === 'NO_GUIDANCE_IN_DOCUMENT' ? 'Look for a later results release, presentation or call transcript.' : v === 'NOT_COMPARABLE' ? 'Review the unit or period by hand.'
-      : v === 'PRIMARY_NOT_READ' ? 'Read the document (the AI extractor picks it up on its next run).'
+      : v === 'PRIMARY_NOT_READ' ? 'Wait: the document is on file; the AI extractor reads it on its next hourly run.'
       : processing === 'QUEUED' ? 'Wait: the filing is queued to be fetched and read.' : processing === 'RUNNING' ? 'Wait: the filing is being read.' : processing === 'FAILED' ? 'Retry: the last fetch failed; it is retried with back-off.'
       : 'Collect: add this company to the wanted list so the next collector run looks for its results release, presentation or transcript.';
     out.push({
@@ -108,7 +115,7 @@ export function resolveClaims(rows: GuUniverseRecordX[], ctx: ClaimCtx = {}): Gu
       claimed_metric: String(p.metric), claimed_period: p.period, claimed_growth: p.display, claimed_amount: p.absolute ? `${p.absolute.valueLow != null ? `${p.absolute.valueLow}–` : ''}${p.absolute.value} ${p.absolute.unit}` : null,
       source_url: p.sourceUrl ?? r.sourceUrl ?? null, source_date: p.sourceDate ?? r.sourceDate ?? null, secondary_source: p.sourceName || r.sourceName || 'secondary source',
       claim_status: v === 'VERIFIED' ? 'VERIFIED' : v === 'CONTRADICTED' ? 'CONTRADICTED' : v === 'NO_GUIDANCE_IN_DOCUMENT' ? 'NO_GUIDANCE_IN_DOCUMENT' : 'AWAITING_PRIMARY',
-      primary_source_id: sourceId, verification_status: v, primary, document: docState, processing, queue_stage: stage, next_action: next, primary_source_url: primaryUrl, reason: why,
+      primary_source_id: sourceId, verification_status: v, primary, document: docState, processing, queue_stage: stage, stage: cstage, next_action: next, primary_source_url: primaryUrl, reason: why,
     });
   }
   return out;
@@ -120,6 +127,7 @@ export function claimCountsOf(claims: GuidanceClaim[], verifiedGuidance: Record<
   const f = (m: 'IN' | 'US'): ClaimCounts => {
     const c = claims.filter((x) => x.market === m);
     return { claims: c.length, primaryFound: c.filter((x) => x.primary === 'FOUND').length, primaryRead: c.filter((x) => x.verification_status === 'VERIFIED' || x.verification_status === 'CONTRADICTED' || x.verification_status === 'NO_GUIDANCE_IN_DOCUMENT' || x.verification_status === 'NOT_COMPARABLE').length,
+      queued: c.filter((x) => x.stage === 'DOCUMENT_QUEUED' || x.stage === 'DOCUMENT_BEING_READ' || x.stage === 'DOCUMENT_READ_AWAITING_EXTRACTION' || x.stage === 'DOCUMENT_FAILED').length, noDocument: c.filter((x) => x.stage === 'PRIMARY_NOT_FOUND').length,
       verified: c.filter((x) => x.verification_status === 'VERIFIED').length, contradicted: c.filter((x) => x.verification_status === 'CONTRADICTED').length, verifiedGuidance: verifiedGuidance[m] };
   };
   return { IN: f('IN'), US: f('US') };

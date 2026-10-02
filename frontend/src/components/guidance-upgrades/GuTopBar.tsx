@@ -33,6 +33,7 @@ export function GuTopBar(p: {
   summary: GuSummary | null; window: GuWindow; onWindow: (w: GuWindow) => void;
   scope: ScopeFilter; onScope: (s: ScopeFilter) => void; metric: MetricFilter; onMetric: (m: MetricFilter) => void;
   inBookCount: number; bookLoaded: boolean;
+  /** zzz862: the scan did not read every source / day, so a 0 here is not proof that nothing was raised */ incomplete?: boolean;
 }) {
   const s = p.summary;
   const bm = s?.byMarket;
@@ -57,12 +58,14 @@ export function GuTopBar(p: {
         </div>
       </div>
       <div style={{ fontSize: 12, color: R.dim }}>The time window only filters these events. It does not filter the guidance universe above.</div>
+      {p.incomplete && <div data-gu-incomplete-note role="note" style={{ fontSize: 12, color: R.amber, fontWeight: 700 }}>0 verified upgrades DETECTED. Detection is incomplete (some exchange days or documents are not read yet), so this is not proof that no company raised guidance.</div>}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))', gap: 8 }}>
         {counts.map(([label, n, tip, split]) => (
           <div key={label} title={tip} style={box({ padding: '8px 10px' })}>
             <div style={{ fontSize: 22, fontWeight: 900 }}>{n == null ? '·' : n}</div>
             <div style={{ fontSize: 11, color: R.dim, fontWeight: 700 }}>{label}</div>
             {split && <div style={{ fontSize: 10.5, color: R.faint }}>{split}</div>}
+            {p.incomplete && label === 'Verified upgrades' && <div data-gu-incomplete style={{ fontSize: 10.5, color: R.amber, fontWeight: 700 }}>detection incomplete</div>}
           </div>
         ))}
       </div>

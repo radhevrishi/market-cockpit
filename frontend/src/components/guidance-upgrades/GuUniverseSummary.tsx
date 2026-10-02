@@ -15,7 +15,7 @@ import { GuFold, GuPanel, pillStyle } from './GuPanel';
 import { GuDataQuality } from './GuDataQuality';
 import { GuClaimsTable } from './GuClaimsTable';
 import { SCOPE_NOTE, scopedTitle } from '@/lib/guidance-semantics';
-import { BADGE_LEGEND, SECTIONS, SECTION_ACTIVE, cohortCountsLine, cohortTotal, freshnessLines, groupCountsLine, highestActiveHeading, sectionRows } from './gu-ui';
+import { BADGE_LEGEND, SECTIONS, SECTION_ACTIVE, cohortCountsLine, cohortTotal, freshnessLines, highestActiveHeading, rowCohortLine, rowTrustLine, sectionRows } from './gu-ui';
 
 type Mk = 'IN' | 'US' | 'ALL';
 const TOGGLE: Array<[Mk, string]> = [['ALL', 'All markets'], ['IN', 'India'], ['US', 'USA']];
@@ -52,10 +52,11 @@ export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void 
       {data && (
         <>
           <GuDataQuality quality={data.extractCoverage?.quality} />
+          <div data-gu-datasets style={{ fontSize: 12, color: R.dim }}>Four separate lists on this page: <b style={{ color: R.text }}>Guidance universe</b> (all guidance in force today) · <b style={{ color: R.text }}>Upgrade events</b> (changes inside the chosen window) · <b style={{ color: R.text }}>Claim queue</b> (media claims waiting for the company document) · <b style={{ color: R.text }}>Document queue</b> (company filings waiting to be read).</div>
           <GuClaimsTable claims={data.pipeline?.claims} market={mk} />
           <div data-gu-scope style={{ fontSize: 12.5, color: R.dim }}>Showing: <b style={{ color: R.text }}>{SCOPE_NOTE[mk]}</b>. Switch the market above; every heading and count below follows it.</div>
           {hasGroups && mk !== 'US' && cohortTotal(sectionRows(groups, 'active', 'IN')) === 0 && cohortTotal(sectionRows(groups, 'claimsAwaiting', 'IN')) > 0 && (
-            <div data-gu-india-note style={{ fontSize: 12.5, color: R.amber }}>India: no guidance is verified against the company's own document yet. {cohortTotal(sectionRows(groups, 'claimsAwaiting', 'IN'))} India claims reported by media are listed under "Claims awaiting verification" until their primary documents are read.</div>
+            <div data-gu-india-note style={{ fontSize: 12.5, color: R.amber }}>India: no guidance is verified against the company's own document yet. {data.pipeline?.claimCounts?.IN?.claims ?? cohortTotal(sectionRows(groups, 'claimsAwaiting', 'IN'))} India claim rows reported by media ({cohortTotal(sectionRows(groups, 'claimsAwaiting', 'IN'))} of them at {thr}% or more, which is all this ranked list shows) wait for their company documents; see "Claims and what happens next".</div>
           )}
           <QualityStrip data={data} />
           {data.records.length === 0 ? <div style={{ fontSize: 13, color: R.dim }}>{ZERO_RECORDS_TEXT}</div> : (
@@ -75,8 +76,7 @@ export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void 
                     <div style={{ fontSize: 12, color: R.dim }}>{sec.hint}</div>
                     {sec.key === 'active' && groups && (
                       <div style={{ fontSize: 12.5, color: R.dim }}>
-                        {mk === 'ALL' ? <b style={{ color: R.text }}>{groupCountsLine(groups.counts)}</b> : null}
-                        {mk === 'ALL' && cohortCountsLine(groups.counts) ? ' · ' : ''}{mk === 'ALL' ? cohortCountsLine(groups.counts) : `${total} shown for this market`}
+                        <b data-gu-trust-line style={{ color: R.text }}>{rowTrustLine(rows)}</b> · {rowCohortLine(rows)}
                       </div>
                     )}
                     <GuGroupList cohorts={rows} showMarket={mk === 'ALL'} findRecord={find} onFull={onFull}

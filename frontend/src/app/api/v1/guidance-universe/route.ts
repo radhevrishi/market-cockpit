@@ -65,6 +65,8 @@ export async function GET(req: NextRequest) {
         body.extractCoverage = { ...(body.extractCoverage || { docs: 0, extracted: 0, rows: 0, lastExtractAt: null }), quality: pv.quality };
         // the collectors read this list (GET /api/v1/guidance-pipeline) so they go and fetch the company documents the claims are waiting on
         import('@/lib/kv').then((k) => k.kvSet('guidance-pipeline:wanted:v1', { at: new Date().toISOString(), wanted: pv.wanted }, 7 * 86_400)).catch(() => 0);
+        // zzz862: every company that has a guidance record is on the watch set: its new filings are queued first and read first (see lib/guidance-watch.ts)
+        import('@/lib/guidance-watch').then((w) => w.writeWatch(w.watchOf([...(gb.build.defaultRecords ?? []), ...(gb.build.reviewQueue ?? []), ...claimsBefore].map((r: any) => ({ market: r.record.market, ticker: r.tickers?.[0] || r.record.ticker, company: r.record.company }))))).catch(() => 0);
         body.pipeline = { claims: pv.claims.slice(0, 600), claimCounts: pv.claimCounts, wanted: pv.wanted, queueStages: pv.queueStages, evidenceErrors: ev.errors };
       }
     } catch { /* the pipeline view is additive */ }

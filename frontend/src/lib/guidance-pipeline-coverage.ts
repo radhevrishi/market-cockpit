@@ -18,7 +18,7 @@ export interface GuMarketQuality {
   documentsDiscovered: number; documentsProcessed: number; documentsPending: number;
   sources: GuSourceHealth[]; line: string; lastCoverageAt: string | null;
   /** zzz861: the distinct pipeline state (never a bare NO DATA), the reasons in plain words, and the plain numbers the state was derived from (the route adds the claim counts) */
-  state: GuSourceState; reasons: string[]; nse: number | null; bse: number | null; inputs: GuPipelineInput;
+  state: GuSourceState; sourceCoverage: import('./guidance-pipeline-state').GuSourceCoverage; verification: import('./guidance-pipeline-state').GuVerificationStage; reasons: string[]; nse: number | null; bse: number | null; inputs: GuPipelineInput;
 }
 export interface GuDataQuality { windowDays: number; markets: { IN: GuMarketQuality; US: GuMarketQuality }; exhaustive: boolean; footnote: string | null }
 export const NOT_EXHAUSTIVE = 'Guidance counts are not exhaustive until the pending primary documents are processed.';
@@ -41,8 +41,8 @@ export function sourceOfUrl(url: string | null | undefined, market: 'IN' | 'US')
 const EXPECTED: Record<'IN' | 'US', string[]> = { IN: ['NSE', 'BSE'], US: ['SEC'] };
 
 export interface QualityExtras { snapshot?: PipelineSnapshot | null; claims?: Partial<Record<'IN' | 'US', ClaimCounts>> }
-export interface ClaimCounts { claims: number; primaryFound: number; primaryRead: number; verified: number; contradicted: number; verifiedGuidance: number }
-const ZERO_CLAIMS: ClaimCounts = { claims: 0, primaryFound: 0, primaryRead: 0, verified: 0, contradicted: 0, verifiedGuidance: 0 };
+export interface ClaimCounts { claims: number; primaryFound: number; primaryRead: number; verified: number; contradicted: number; verifiedGuidance: number; /** claims whose document is queued, being read or awaiting extraction */ queued?: number; /** claims with no company document yet */ noDocument?: number }
+const ZERO_CLAIMS: ClaimCounts = { claims: 0, primaryFound: 0, primaryRead: 0, verified: 0, contradicted: 0, verifiedGuidance: 0, queued: 0, noDocument: 0 };
 
 export function marketQuality(market: 'IN' | 'US', rows: GuidanceDocIndexRow[], coverage: Coverage | null | undefined, now: Date, windowDays = COVERAGE_WINDOW_DAYS, extras: QualityExtras = {}): GuMarketQuality {
   const end = iso(now); const start = iso(new Date(now.getTime() - windowDays * DAY));
@@ -73,14 +73,14 @@ export function marketQuality(market: 'IN' | 'US', rows: GuidanceDocIndexRow[], 
     documentsDiscovered: inWin.length, documentsProcessed: processed, documentsPending: inWin.length - processed,
     queueAwaiting: q?.awaiting ?? 0, queueReadNoGuidance: q?.readNoGuidance ?? 0, queueUnavailable: q?.unavailable ?? 0,
     claims: cc.claims, claimsPrimaryFound: cc.primaryFound, claimsPrimaryRead: cc.primaryRead, claimsVerified: cc.verified, claimsContradicted: cc.contradicted,
-    verifiedGuidance: cc.verifiedGuidance, processedNoGuidance: 0,
+    verifiedGuidance: cc.verifiedGuidance, processedNoGuidance: 0, claimsQueued: cc.queued ?? 0, claimsNoDocument: cc.noDocument ?? 0,
     daysFailed: failed + (snap?.daysFailed ?? 0), daysPartial: partial + (snap?.daysPartial ?? 0), daysNotRead: coverage ? notRead : 0, tradingDays: days.length,
   };
   return qualityFromInput(input, { windowDays, ok, partial, failed, notRead, inWin: inWin.length, processed, last });
 }
 /** Re-derive a market's quality after the claim counts are known (the route calls this; same rules, more evidence). */
 export function withClaimCounts(q: GuMarketQuality, cc: ClaimCounts): GuMarketQuality {
-  return qualityFromInput({ ...q.inputs, claims: cc.claims, claimsPrimaryFound: cc.primaryFound, claimsPrimaryRead: cc.primaryRead, claimsVerified: cc.verified, claimsContradicted: cc.contradicted, verifiedGuidance: cc.verifiedGuidance },
+  return qualityFromInput({ ...q.inputs, claims: cc.claims, claimsPrimaryFound: cc.primaryFound, claimsPrimaryRead: cc.primaryRead, claimsVerified: cc.verified, claimsContradicted: cc.contradicted, verifiedGuidance: cc.verifiedGuidance, claimsQueued: cc.queued ?? 0, claimsNoDocument: cc.noDocument ?? 0 },
     { windowDays: q.windowDays, ok: q.daysFullyCovered, partial: q.daysPartial, failed: q.daysFailed, notRead: q.daysNotRead, inWin: q.documentsDiscovered, processed: q.documentsProcessed, last: q.lastCoverageAt });
 }
 function qualityFromInput(input: GuPipelineInput, d: { windowDays: number; ok: number; partial: number; failed: number; notRead: number; inWin: number; processed: number; last: string | null }): GuMarketQuality {
@@ -90,7 +90,7 @@ function qualityFromInput(input: GuPipelineInput, d: { windowDays: number; ok: n
     daysFullyCovered: d.ok, daysPartial: d.partial, daysFailed: d.failed, daysNotRead: d.notRead,
     documentsDiscovered: d.inWin, documentsProcessed: d.processed, documentsPending: input.documentsPending,
     sources: st.sources.map((s) => ({ name: s.name, ok: s.state === 'OK' || s.state === 'PARTIAL', documents: s.documents, state: s.state, detail: s.detail })),
-    line: st.headline, lastCoverageAt: d.last, state: st.state, reasons: st.reasons, nse: st.nse, bse: st.bse, inputs: input,
+    line: st.headline, lastCoverageAt: d.last, state: st.state, sourceCoverage: st.sourceCoverage, verification: st.verification, reasons: st.reasons, nse: st.nse, bse: st.bse, inputs: input,
   };
 }
 export function dataQualityOf(rows: GuidanceDocIndexRow[], cov: { IN?: Coverage | null; US?: Coverage | null }, now: Date, windowDays = COVERAGE_WINDOW_DAYS, extras: QualityExtras = {}): GuDataQuality {

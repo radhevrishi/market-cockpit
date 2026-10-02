@@ -169,7 +169,7 @@ export function GuCoverage({ scan, now, byMarket, eventCounts, window, unresolve
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,340px),1fr))', gap: 10 }}>
         {cards.map((c) => <CoverageCardView key={c.market} c={c} />)}
       </div>
-      {queue && <div style={{ fontSize: 12, color: R.dim }}><b>Document queue</b> {queue.queued} waiting · {queue.done} read · {queue.failed} failed · {queue.sourceUnavailable} source unavailable{queue.note ? `. ${queue.note}` : ''}</div>}
+      {queue && <div style={{ fontSize: 12, color: R.dim }}><b>Document queue</b> {queue.note || 'No documents are waiting to be read.'} {queue.done} read so far · {queue.sourceUnavailable} source unavailable (not counted as waiting). Documents of companies that already have guidance are read first.</div>}
       {coverage?.windowNote && <div style={{ fontSize: 11, color: R.faint }}>{coverage.windowNote}</div>}
     </section>
   );
