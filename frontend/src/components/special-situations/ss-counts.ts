@@ -111,7 +111,7 @@ export function otherCategories(cm: CountModelIn, known?: string[] | null): stri
 
 // ─── zzz856: "nothing verified yet" banner, verification progress, the opt-in UNVERIFIED list ──────────────────────
 const clock = (iso: unknown): string | null => { const t = typeof iso === 'string' ? Date.parse(iso) : NaN; return Number.isFinite(t) ? `${new Date(t).toISOString().slice(11, 16)} UTC` : null; };
-type VerificationIn = (Partial<VerificationSummary> & { nextRunAt?: string | null; next_run_at?: string | null; awaitingWithPrimary?: number; awaitingNoPrimary?: number }) | null | undefined;
+type VerificationIn = (Partial<VerificationSummary> & { nextRunAt?: string | null; next_run_at?: string | null; nextRunEta?: string | null; shownNotChecked?: number; awaitingWithPrimary?: number; awaitingNoPrimary?: number }) | null | undefined;
 
 /** Awaiting count: the verification block first, then the route's awaitingVerificationCount. Null when neither is sent. */
 export function awaitingTotal(v: VerificationIn, awaitingCount?: number | null): number | null {
@@ -124,13 +124,19 @@ export function aiRunPhrase(v: VerificationIn): string {
   if (!v || typeof v !== 'object') return 'AI check: state unknown';
   if (v.available === false) return `AI check: unavailable${v.unavailableReason ? ` (${String(v.unavailableReason).trim().replace(/\.$/, '')})` : ''}`;
   const last = clock(v.lastRunAt);
-  const nextIso = v.nextRunAt ?? v.next_run_at;
+  const nextIso = v.nextRunAt ?? v.next_run_at ?? v.nextRunEta;
   const next = clock(nextIso);
   return `AI check: ${last ? `last run ${last}` : v.lastRunAt === null ? 'not run yet' : 'last run unknown'}, next run ${next ? `~${next}` : 'unknown'}`;
 }
 
 /** The top banner when nothing is verified but items are waiting. Null otherwise (or when the shown count is not sent). */
 export function nothingVerifiedBanner(cm: CountModelIn, v: VerificationIn, awaitingCount?: number | null): string | null {
+  // zzz858: not-yet-checked events are shown (marked) while the hourly AI check catches up
+  const sn = v && num(v.shownNotChecked) ? (v.shownNotChecked as number) : 0;
+  if (sn > 0) {
+    const shown = cm && num(cm.shown) ? (cm.shown as number) : null;
+    return `${sn}${shown != null ? ` of the ${shown}` : ''} event${sn === 1 ? '' : 's'} shown ${sn === 1 ? 'is' : 'are'} not checked yet against the company's own document — each is marked "⏳ Not checked yet". ${aiRunPhrase(v)}. Anything the check cannot confirm is removed automatically.`;
+  }
   const n = awaitingTotal(v, awaitingCount);
   if (!cm || !num(cm.shown) || cm.shown !== 0 || !n || n <= 0) return null;
   return `Nothing verified yet. ${n} item${n === 1 ? ' is' : 's are'} waiting for the company-document check (${aiRunPhrase(v)}). They are hidden until confirmed.`;

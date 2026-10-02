@@ -946,6 +946,12 @@ async function applyVerificationGate(data: any): Promise<any> {
       return ai || doc ? { ...e, ...(ai ? { aiVerification: ai } : {}), ...(doc || {}) } : e;
     })
     : candidates.filter((e) => isSpecSitPrimaryVerified(e));   // the gate failed: primary-verified only, never a silent pass
+  // zzz858 — owner: "nothing populated, it used to be all good". Events the AI has NOT CHECKED YET (queued, or a fetch to
+  // retry) are shown in the lists, each marked "Not checked yet", instead of an empty page while the hourly check catches
+  // up. Anything the check contradicts, cannot find in the company document, or has no company document for stays hidden.
+  // SS_SHOW_PENDING=0 on the server restores the strict view (only checked events shown).
+  const shownPending = pendingToShow(g, candidates, kept);
+  for (const e of shownPending.events) kept.push(e);
   const keptLinks = new Set<string>();
   for (const e of kept) { if (e?.primary_filing?.link) keptLinks.add(e.primary_filing.link); for (const f of e?.filings || []) if (f?.link) keptLinks.add(f.link); }
   const report = g?.verification.mode === 'report';
@@ -974,9 +980,11 @@ async function applyVerificationGate(data: any): Promise<any> {
   const byTier: Record<string, number> = gated ? { ...gated.byTier } : { TIER_1: 0, TIER_2: 0, WATCHLIST: 0, NOISE: 0 };
   if (!gated) for (const e of kept) if (e?.tier && e.tier in byTier) byTier[e.tier] += 1;
   const coverageShown = gated ? COVERAGE_DEFS.map((b) => ({ ...b, count: gated!.countModel.shown_by_coverage[b.bucket] || 0 })) : data?.coverage_diagnostic;
-  const verification = g?.verification ?? { provider: 'unknown', model: null, available: false, unavailableReason: 'The verification gate could not run; only primary-verified events are shown.', mode: 'enforce',
+  const verification0 = g?.verification ?? { provider: 'unknown', model: null, available: false, unavailableReason: 'The verification gate could not run; only primary-verified events are shown.', mode: 'enforce',
     primaryVerified: kept.length, checked: 0, confirmed: 0, contradicted: 0, awaiting: candidates.length - kept.length, awaitingByReason: {}, lastRunAt: null,
     nextRunEta: null, schedule: null, queueSize: null, primaryDocument: undefined };
+  const verification = withShownPending(verification0, shownPending.byReason);
+  const hiddenAwaiting = (g?.awaiting ?? []).filter((r: any) => !shownPending.ids.has(String(r?.refId)));
   return {
     ...data,
     // held-back events stay in `events` WITH their quarantine / exclusion flags (the Radar turns them into its "N held back" line and
@@ -990,11 +998,37 @@ async function applyVerificationGate(data: any): Promise<any> {
     coverage_diagnostic: coverageShown,
     coverage_diagnostic_raw: { label: 'RAW (pre-filter)', buckets: data?.coverage_diagnostic ?? [] },
     verification,
-    awaitingVerification: (g?.awaiting ?? []).slice(0, 300),
+    awaitingVerification: hiddenAwaiting.slice(0, 300),
     awaitingVerificationCount: verification.awaiting,
     verificationAudit: (g?.removed ?? []).slice(0, 200),
     verification_held_back: { events_awaiting: verification.awaiting, events_contradicted: verification.contradicted, events_already_held_back: heldOut, category_items_hidden: categoryHeld },
   };
+}
+
+// zzz858 — not-yet-checked events shown (labelled) while the hourly AI check catches up. Pure helpers.
+const PENDING_SHOWN_REASONS = new Set(['queued', 'unreadable', 'error']);
+function pendingToShow(g: any, candidates: any[], kept: any[]): { events: any[]; ids: Set<string>; byReason: Record<string, number> } {
+  const out = { events: [] as any[], ids: new Set<string>(), byReason: {} as Record<string, number> };
+  if (!g || process.env.SS_SHOW_PENDING === '0') return out;
+  const keptIds = new Set(kept.map((e: any) => String(e?.event_id)));
+  const rows = new Map<string, any>();
+  for (const r of (g.awaiting || [])) if (r && PENDING_SHOWN_REASONS.has(r.reason)) rows.set(String(r.refId), r);
+  for (const e of candidates) {
+    const id = String(e?.event_id);
+    const r = rows.get(id);
+    if (!r || keptIds.has(id) || out.ids.has(id)) continue;
+    out.ids.add(id);
+    out.byReason[r.reason] = (out.byReason[r.reason] || 0) + 1;
+    out.events.push({ ...e, verification_pending: { reason: r.reason, reasonText: r.reasonText || 'Not checked yet against the company document.' } });
+  }
+  return out;
+}
+function withShownPending(v: any, byReason: Record<string, number>): any {
+  const n = Object.values(byReason).reduce((a, b) => a + b, 0);
+  if (!n) return { ...v, shownNotChecked: 0 };
+  const ab: Record<string, number> = { ...(v?.awaitingByReason || {}) };
+  for (const [k, c] of Object.entries(byReason)) { ab[k] = Math.max(0, (ab[k] || 0) - c); if (!ab[k]) delete ab[k]; }
+  return { ...v, awaiting: Math.max(0, (Number(v?.awaiting) || 0) - n), awaitingByReason: ab, shownNotChecked: n };
 }
 
 // ─── Handler ────────────────────────────────────────────────────────────────

@@ -23,6 +23,7 @@ import { Chip, Field, btn } from './RadarBits';
 import { LedgerForm } from './LedgerForm';
 import { LazyDetails } from '@/components/guidance-upgrades/GuMore';
 import { PORTFOLIO_TAG_LABEL } from '@/lib/multibagger-radar-types';
+import { NotCheckedChip } from './pending-context';
 
 const say = orNotYet;
 void NOT_ESTABLISHED;
@@ -81,6 +82,7 @@ export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now, 
         <span data-radar-security={sec.resolved ? 'resolved' : 'unresolved'} style={{ fontSize: sec.resolved ? 15 : 13, fontWeight: 900, color: sec.resolved ? R.text : R.dim }}>{sec.head}</span>
         <span style={{ fontSize: 13, color: R.dim }}>{item.company}</span>
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <NotCheckedChip id={item.feedEventId || item.id} />
           <Chip color={ev.color} dashed={ev.dashed} title={item.evidence.why}>{ev.mark} Evidence: {item.evidenceLabel || EVIDENCE_LABEL[item.evidence.status]}</Chip>
           <Chip color={PRIORITY_COLOR[item.priority]} title={item.priorityReason}>Research priority: {PRIORITY_LABEL[item.priority]}</Chip>
         </span>

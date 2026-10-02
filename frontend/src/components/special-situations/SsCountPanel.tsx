@@ -86,7 +86,7 @@ export function SsCountPanel({ feed, regionNote, knownCategories }: { feed: SsCo
         </div>
       )}
       {progress && <div data-ss-progress style={{ color: R.text }}>{progress}</div>}
-      {before && <div style={{ color: R.dim }}>{before}. The boxes above show only events that passed the check.</div>}
+      {before && <div style={{ color: R.dim }}>{before}. {(feed.verification as any)?.shownNotChecked > 0 ? `The boxes above show events that passed the check plus ${(feed.verification as any).shownNotChecked} not checked yet (each marked ⏳).` : 'The boxes above show only events that passed the check.'}</div>}
       {(awaitingN > 0 || awaiting.length > 0) && (
         <Fold data-ss-awaiting="" summary={<><b>Awaiting verification ({awaitingN})</b> <span style={{ color: R.dim }}>— hidden from the lists until the company document confirms them{reasons.length ? `: ${reasons.map((r) => `${r.label} ${r.count}`).join(' · ')}` : ''}</span></>}>
           {awaiting.length === 0 ? <div style={{ color: R.dim, paddingTop: 4 }}>The list itself was not sent with this payload.</div> : (

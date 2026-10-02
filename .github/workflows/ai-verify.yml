@@ -27,11 +27,11 @@ on:
       limit:
         description: 'Claims to verify in this run (1-100)'
         required: false
-        default: '40'
+        default: '100'
       max_usd:
         description: 'Spend cap for this run in USD (max 2; the monthly cap still binds)'
         required: false
-        default: '0.60'
+        default: '1.50'
 
 concurrency:
   group: ai-verify
@@ -50,8 +50,8 @@ jobs:
         env:
           BASE: ${{ secrets.CRON_BASE_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
-          LIMIT: ${{ github.event.inputs.limit || '40' }}
-          MAX_USD: ${{ github.event.inputs.max_usd || '0.60' }}
+          LIMIT: ${{ github.event.inputs.limit || '100' }}
+          MAX_USD: ${{ github.event.inputs.max_usd || '1.50' }}
         run: |
           set -euo pipefail
           BASE="${BASE:-https://market-cockpit-production.up.railway.app}"

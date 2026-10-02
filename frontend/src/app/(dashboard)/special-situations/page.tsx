@@ -24,6 +24,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import MultibaggerRadar from '@/components/special-situations/MultibaggerRadar';
 import { ShowMoreBar } from '@/components/guidance-upgrades/GuMore';
+import { PendingContext, pendingMapOf, NotCheckedChip } from '@/components/special-situations/pending-context';
 import { SsCountPanel, SsVerifyBanner, ShowUnverifiedToggle, UnverifiedSection, useShowUnverified, type SsCountFeed } from '@/components/special-situations/SsCountPanel';
 import { headerFromModel } from '@/components/special-situations/ss-counts';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -587,6 +588,7 @@ export default function SpecialSituationsPage() {
   const tier3Label = canonicalEvents.length > 0 ? 'Watchlist' : 'Archive';
   // zzz856 — opt-in, labelled view of events awaiting the company-document check (default OFF, this tab only). Never counted.
   const [showUnverified, setShowUnverified] = useShowUnverified();
+  const pendingMap = useMemo(() => pendingMapOf(feed?.events as any), [feed]);
   const awaitingEventCount = useMemo(() => (feed?.events || []).filter((e) => (e as any).quarantine_reason === 'AWAITING_VERIFICATION').length, [feed]);
 
   return (
@@ -761,6 +763,7 @@ export default function SpecialSituationsPage() {
       </div>
 
       {/* ── Body ─────────────────────────────────────────────────────────── */}
+      <PendingContext.Provider value={pendingMap}>
       <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
         {showUnverified && awaitingEventCount > 0 && (
           <UnverifiedSection events={feed?.events as any} awaiting={feed?.awaitingVerification} region={region} />
@@ -784,6 +787,7 @@ export default function SpecialSituationsPage() {
         {active === 'math' && <MathPanels />}
         {active === 'discover' && <DiscoverScanner feed={feed} isLoading={isLoading} error={error} refetch={refetch} isFetching={isFetching} region={region} setRegion={setRegion} />}
       </div>
+      </PendingContext.Provider>
     </div>
   );
 }
@@ -1391,6 +1395,7 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
           {ev.target_name && (
             <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--mc-text-1)' }}>{ev.target_name}</span>
           )}
+          <NotCheckedChip id={ev.event_id} />
           {ev.tickers.slice(0, 4).map((t) => (
             <span key={t} style={{ fontSize: 11, fontWeight: 700, color: '#38A9E8', backgroundColor: 'color-mix(in srgb, var(--mc-accent) 13%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-accent) 25%, transparent)', padding: '1px 6px', borderRadius: 3, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
               {t}
