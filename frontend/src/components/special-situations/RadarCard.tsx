@@ -21,7 +21,7 @@ import {
 } from './radar-tokens';
 import { Chip, Field, btn } from './RadarBits';
 import { LedgerForm } from './LedgerForm';
-import { LazyDetails } from '@/components/guidance-upgrades/GuMore';
+import { LazyDetails, usePrinting } from '@/components/guidance-upgrades/GuMore';
 import { PORTFOLIO_TAG_LABEL } from '@/lib/multibagger-radar-types';
 import { NotCheckedChip } from './pending-context';
 
@@ -51,6 +51,7 @@ export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now, 
   hints?: RadarCardHints | null;
 }) {
   const [adding, setAdding] = useState(false);
+  const printing = usePrinting();
   const ev = EVIDENCE_META[item.evidence.status];
   const draft = addFromRadarItem(item, now);
   const inLedger = ledgerIds.has(draft.id);
@@ -87,6 +88,10 @@ export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now, 
           <Chip color={PRIORITY_COLOR[item.priority]} title={item.priorityReason}>Research priority: {PRIORITY_LABEL[item.priority]}</Chip>
         </span>
       </div>
+      {/* zzz858 — owner: cards collapsed; the headline shows, the full detail only when opened */}
+      <div data-radar-headline style={{ fontSize: 13, color: R.text, overflowWrap: 'anywhere' }}>{say(item.event)}</div>
+      <LazyDetails data-radar-card-details="" open={printing} summary={<summary style={{ cursor: 'pointer', fontSize: 12, color: R.cyan, fontWeight: 700 }}>Show details</summary>}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 6 }}>
 
       {sec.line && <div data-radar-security-line style={{ fontSize: 12, color: R.dim }}>{sec.line}</div>}
       {(deal.roleLine || deal.subtype || deal.form || deal.termsBadge || result) && (
@@ -292,6 +297,8 @@ export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now, 
         <LedgerForm initial={draft} title="Add to thesis ledger - please review" saveLabel="Confirm and save to ledger"
           onSave={(e) => { onSaveLedger(e); setAdding(false); }} onCancel={() => setAdding(false)} />
       )}
+      </div>
+      </LazyDetails>
     </div>
   );
 }

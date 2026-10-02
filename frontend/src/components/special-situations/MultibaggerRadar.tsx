@@ -227,12 +227,11 @@ export default function MultibaggerRadar({ events, holdings: holdingsProp, regio
             );
             return (
               <section key={b} data-radar-bucket={b} data-radar-tier={quarantined ? 'quarantine' : secondary ? 'secondary' : 'primary'} aria-label={BUCKET_LABEL[b]} style={{ display: 'flex', flexDirection: 'column', gap: 8, opacity: quarantined ? 0.9 : 1 }}>
-                {quarantined ? (
-                  <LazyDetails open={bucketF === b} summary={<summary style={{ cursor: 'pointer', listStyle: 'revert' }}>{heading}</summary>}>
-                    <div style={{ fontSize: 12, color: R.faint, padding: '6px 0' }}>{QUARANTINE_HEADER}</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>{body}</div>
-                  </LazyDetails>
-                ) : (<>{heading}{body}</>)}
+                {/* zzz858 — owner: every section collapsed; its cards show only when opened */}
+                <LazyDetails open={printing || bucketF === b} summary={<summary style={{ cursor: 'pointer', listStyle: 'revert' }}>{heading}</summary>}>
+                  {quarantined && <div style={{ fontSize: 12, color: R.faint, padding: '6px 0' }}>{QUARANTINE_HEADER}</div>}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: quarantined ? 6 : 8, paddingTop: 6 }}>{body}</div>
+                </LazyDetails>
               </section>
             );
           })}
