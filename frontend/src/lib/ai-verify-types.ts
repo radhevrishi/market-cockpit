@@ -33,6 +33,49 @@ export interface VerifyClaim {
   sourceUrl: string | null;
   /** id of the list item the claim belongs to (guidance_event_id / event_id) */
   refId: string;
+  /** zzz856: how primaryUrl was found (null = none). 'feed_link' = the event's own filing link; 'sec_accession' = built from the
+   *  SEC accession + CIK; 'exchange_announcement' = the company's NSE / BSE announcement matched by symbol / name + date;
+   *  'edgar_by_cik' = the company's EDGAR filing matched by CIK + date. */
+  primaryHow?: PrimaryHow | null;
+  /** one plain sentence: which document, matched on what */
+  primaryDetail?: string | null;
+  /** zzz856: queue order. 3 = Tier 1, 2 = Tier 2 (and guidance), 1 = Watchlist, 0 = other */
+  priorityTier?: number;
+  /** ISO date of the event (queue order: newer first; document search window) */
+  eventDate?: string | null;
+  /** zzz856: what the document locator may match on (only names / tickers the event itself carries) */
+  locateHints?: LocateHints | null;
+}
+
+export type PrimaryHow = 'feed_link' | 'sec_accession' | 'exchange_announcement' | 'edgar_by_cik';
+
+export interface LocateHints {
+  /** NSE symbols / US tickers named by the event */
+  tickers: string[];
+  /** company names the event names (target / headline subject) */
+  names: string[];
+  /** the event's own headline + description (≤ 400 chars): a matched company must be named here */
+  text: string;
+  eventType: string | null;
+  region: VerifyMarket;
+}
+
+/** zzz856: the result of looking for a claim's primary document (cached per claim). */
+export interface LocatedDoc {
+  claimId: string;
+  found: boolean;
+  url: string | null;
+  how: PrimaryHow | null;
+  /** plain sentence: what was matched, or what was searched when nothing was found */
+  detail: string;
+  /** the company named on the matched document */
+  matchedName: string | null;
+  filingDate: string | null;
+  /** the document's own subject / description line (≤ 400 chars), when the source gives one */
+  text: string | null;
+  /** the subject line names this kind of event (acquisition, buyback, scheme ...) */
+  kindMatch: boolean;
+  checkedAt: string;
 }
 
 /** Final and interim states. Only `confirmed` lets an unverified item into a main list. */
@@ -126,6 +169,14 @@ export interface VerificationSummary {
   awaiting: number;
   awaitingByReason: Partial<Record<AwaitingReason, number>>;
   lastRunAt: string | null;
+  /** zzz856: next scheduled verifier run (ISO, from the workflow schedule) */
+  nextRunEta?: string | null;
+  /** zzz856: the workflow schedule (cron, UTC) the ETA is computed from */
+  schedule?: string | null;
+  /** zzz856: claims waiting in the verifier queue (null = not readable just now) */
+  queueSize?: number | null;
+  /** zzz856: awaiting items with / without a primary document located */
+  primaryDocument?: { located: number; none: number; notSearchedYet: number; byHow: Partial<Record<PrimaryHow, number>> };
 }
 
 export interface GateResult<T> {
@@ -136,7 +187,9 @@ export interface GateResult<T> {
   pending: VerifyClaim[];
   /** confirmed verdicts by refId, so the caller can attach the extracted values */
   confirmedByRef: Map<string, VerifyVerdict>;
-  stats: Omit<VerificationSummary, 'provider' | 'model' | 'available' | 'unavailableReason' | 'mode' | 'lastRunAt'>;
+  stats: Omit<VerificationSummary, 'provider' | 'model' | 'available' | 'unavailableReason' | 'mode' | 'lastRunAt' | 'nextRunEta' | 'schedule' | 'queueSize'>;
+  /** zzz856: claims with no primary document and no search result yet: the caller enqueues these so the run can look for one */
+  toLocate: VerifyClaim[];
 }
 
 export interface RunStatus {
@@ -158,6 +211,11 @@ export interface RunStatus {
     errors: number;
     cacheHits: number;
     spentUsd: number;
+    /** zzz856: document search in this run */
+    located?: number;
+    locateNone?: number;
+    locateDeferred?: number;
+    elapsedMs?: number;
     stoppedBy: 'done' | 'limit' | 'budget_usd' | 'time' | 'cap' | 'unavailable' | 'locked';
   } | null;
 }

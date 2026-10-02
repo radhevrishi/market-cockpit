@@ -121,7 +121,7 @@ describe('verifyClaim', () => {
 
   test('monthly cap reached mid-run (HTTP 402) → verification_unavailable, run stops', async () => {
     const kv = fakeKv();
-    await kv.set(QUEUE_KEY, mergeQueue({ items: [], updatedAt: null }, [claim({ claimId: 'a' }), claim({ claimId: 'b' })], new Date()).queue);
+    await kv.set(QUEUE_KEY, mergeQueue({ items: [], updatedAt: null }, [claim({ claimId: 'a', refId: 'ev-a' }), claim({ claimId: 'b', refId: 'ev-b' })], new Date()).queue);
     const d = deps({ kv, model: { ok: false, kind: 'spend_cap', status: 402, message: 'Monthly AI cap reached ($60.00 of $60)' } });
     const run = await runVerification(d, { limit: 10 });
     assert.equal(run.stoppedBy, 'cap');

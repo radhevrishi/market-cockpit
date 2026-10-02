@@ -1,10 +1,17 @@
-name: AI Verify (every 2 hours)
+name: AI Verify (hourly)
 
-# zzz854 — drains the AI verification queue. Each run asks the deployed app to
-# read the primary document of up to N unverified claims (guidance changes,
-# special situations), check them with the configured model (AI_PROVIDER /
-# OPENAI_API_KEY on the server, monthly cap AI_MONTHLY_CAP_USD) and cache the
-# verdicts. Lists only show items that are primary-verified or AI-confirmed.
+# zzz854 / zzz856 — drains the AI verification queue. Each round asks the deployed app to
+# first look up the company's own document for queued claims that carry none (NSE / BSE
+# announcements already scraped, EDGAR filings by CIK), then read the primary document of
+# up to N claims (Tier 1 → Tier 2 → Watchlist, newest first), check them with the
+# configured model (AI_PROVIDER / OPENAI_API_KEY on the server, monthly cap
+# AI_MONTHLY_CAP_USD) and cache the verdicts. Lists only show items that are
+# primary-verified or AI-confirmed.
+#
+# One request stops starting claims in time to answer inside the request limit
+# (stoppedBy=time); the job then sends another round, up to 4 rounds, while claims and
+# budget remain. The schedule below is mirrored in src/lib/ai-verify.ts
+# (AI_VERIFY_SCHEDULE, used for the "next run" time on the pages) — keep them equal.
 #
 # Secrets (repository → Settings → Secrets and variables → Actions):
 #   CRON_SECRET    — the same value as CRON_SECRET on the server (service key)
@@ -14,13 +21,17 @@ name: AI Verify (every 2 hours)
 
 on:
   schedule:
-    - cron: '35 */2 * * *'
+    - cron: '35 * * * *'
   workflow_dispatch:
     inputs:
       limit:
-        description: 'Claims to verify in this run (1-50)'
+        description: 'Claims to verify in this run (1-100)'
         required: false
-        default: '15'
+        default: '40'
+      max_usd:
+        description: 'Spend cap for this run in USD (max 2; the monthly cap still binds)'
+        required: false
+        default: '0.60'
 
 concurrency:
   group: ai-verify
@@ -32,36 +43,54 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 8
     steps:
-      - name: Run one verification batch
+      - name: Run verification rounds
         id: main
         env:
           BASE: ${{ secrets.CRON_BASE_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
-          LIMIT: ${{ github.event.inputs.limit || '15' }}
+          LIMIT: ${{ github.event.inputs.limit || '40' }}
+          MAX_USD: ${{ github.event.inputs.max_usd || '0.60' }}
         run: |
           set -euo pipefail
           BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
           if [ -z "${CRON_SECRET}" ]; then echo "CRON_SECRET is not set in repository secrets"; exit 1; fi
-          case "$LIMIT" in ''|*[!0-9]*) LIMIT=15 ;; esac
-          STATUS=$(curl -sS -o /tmp/ai-verify.json -w "%{http_code}" --max-time 90 -X POST \
-            -H "x-cron-secret: ${CRON_SECRET}" -H 'Content-Type: application/json' \
-            "$BASE/api/v1/ai-verify?limit=${LIMIT}" || echo "000")
-          echo "ai-verify HTTP $STATUS"
-          # counts only (the response never carries keys or document text)
-          python3 - <<'PY' || true
-          import json
+          case "$LIMIT" in ''|*[!0-9]*) LIMIT=40 ;; esac
+          case "$MAX_USD" in ''|*[!0-9.]*) MAX_USD=0.60 ;; esac
+          LEFT_N=$LIMIT
+          LEFT_USD=$MAX_USD
+          FAILED=0
+          for ROUND in 1 2 3 4; do
+            STATUS=$(curl -sS -o /tmp/ai-verify.json -w "%{http_code}" --max-time 75 -X POST \
+              -H "x-cron-secret: ${CRON_SECRET}" -H 'Content-Type: application/json' \
+              "$BASE/api/v1/ai-verify?limit=${LEFT_N}&maxUsd=${LEFT_USD}" || echo "000")
+            echo "round ${ROUND}: ai-verify HTTP $STATUS"
+            if [ "$STATUS" != "200" ]; then FAILED=1; break; fi
+            # counts only (the response never carries keys or document text); prints "<again> <claims left> <usd left>"
+            NEXT=$(LEFT_N="$LEFT_N" LEFT_USD="$LEFT_USD" python3 - <<'PY' || echo "0 0 0"
+          import json, os
           try:
               j = json.load(open('/tmp/ai-verify.json'))
               r = j.get('run') or {}
-              keys = ['available', 'stoppedBy', 'checked', 'confirmed', 'contradicted', 'notFound', 'unreadable', 'noPrimary', 'errors', 'spentUsd', 'queueBefore', 'queueAfter']
-              print(' '.join(f"{k}={r.get(k)}" for k in keys))
-              if r.get('unavailableReason'): print('unavailable:', str(r.get('unavailableReason'))[:200])
+              keys = ['available', 'stoppedBy', 'checked', 'confirmed', 'contradicted', 'notFound', 'unreadable', 'noPrimary', 'errors', 'located', 'locateNone', 'locateDeferred', 'spentUsd', 'queueBefore', 'queueAfter', 'elapsedMs']
+              import sys
+              print(' '.join(f"{k}={r.get(k)}" for k in keys), file=sys.stderr)
+              if r.get('unavailableReason'): print('unavailable:', str(r.get('unavailableReason'))[:200], file=sys.stderr)
+              n = int(os.environ['LEFT_N']) - int(r.get('checked') or 0)
+              usd = float(os.environ['LEFT_USD']) - float(r.get('spentUsd') or 0)
+              again = 1 if (r.get('stoppedBy') == 'time' and n > 0 and usd > 0.005 and int(r.get('queueAfter') or 0) > 0) else 0
+              print(f"{again} {max(n, 0)} {max(usd, 0):.4f}")
           except Exception as e:
-              print('response not readable:', e)
+              import sys
+              print('response not readable:', e, file=sys.stderr)
+              print('0 0 0')
           PY
-          if [ "$STATUS" != "200" ]; then exit 1; fi
+            )
+            read AGAIN LEFT_N LEFT_USD <<< "$NEXT"
+            if [ "$AGAIN" != "1" ]; then break; fi
+          done
+          if [ "$FAILED" = "1" ]; then exit 1; fi
 
       - name: Heartbeat (always run)
         if: always()

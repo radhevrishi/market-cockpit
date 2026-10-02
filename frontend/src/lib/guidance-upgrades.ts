@@ -831,6 +831,8 @@ export interface GuSkeleton {
   history: GuLedgerRow[];          // one row per raise seen in the batch
   flags: GuFlag[];                 // SECOND_UPGRADE_IN_WINDOW when applicable
   text: string;                    // combined title + body of all merged candidates
+  /** zzz857: set when the skeleton was built from AI-extracted, quote-checked rows of the company's own document (the candidate-level text verdicts are not used: the document's own status is) */
+  extracted?: { docId: string; raisedNoPrior: boolean; metrics: string[] };
 }
 
 const METRIC_PRIORITY: GuMetric[] = ['REVENUE', 'EPS', 'ADJ_EPS', 'EBITDA', 'EBIT', 'NET_PROFIT', 'OTHER', 'OP_MARGIN', 'REVENUE_GROWTH', 'ORGANIC_GROWTH', 'FCF', 'FCF_CONVERSION', 'ORDER_INTAKE', 'BACKLOG', 'VOLUME', 'PRODUCTION', 'CAPACITY_UTIL'];
@@ -2246,7 +2248,7 @@ export function buildGuidanceEvent(input: GuCandidate[] | GuSkeleton, ctx: GuCon
     scorecard: [], smallMidCapInflection: smallMid, detectedVia: detectedViaOf(sk.candidates),
     consensusAvailable: consensus.value != null, unitWarnings, eventClass: evClass, eventLabel: EVENT_CLASS_LABEL[evClass],
   };
-  if (!ups.length && evClass === 'DETECTED' && sk.candidates.some(c => isGuidanceUpgradeCandidate(c).include)) {
+  if (!ups.length && evClass === 'DETECTED' && (sk.extracted ? sk.extracted.raisedNoPrior : sk.candidates.some(c => isGuidanceUpgradeCandidate(c).include))) {
     base.v2.statedDirection = 'RAISED';
     const names: string[] = [];
     for (const sn of splitSentences(text)) if (managementRaise(sn)) for (const k of findMetricKws(sn)) { const l = METRIC_LABEL[k.metric]; if (k.metric !== 'OTHER' && !names.includes(l)) names.push(l); }
@@ -2260,7 +2262,7 @@ export function buildGuidanceEvent(input: GuCandidate[] | GuSkeleton, ctx: GuCon
   // zzz854: taxonomy + pipeline (where this item goes, and why)
   const titles = sk.candidates.map(c => c.title).join('. ');
   const body = sk.candidates.map(c => c.text).filter(Boolean).join('\n');
-  base.taxonomy = taxonomyOf({ title: titles, text, body, candidates: sk.candidates, changes, otherChanges, ranges, evClass, statedRaised: base.v2.statedDirection === 'RAISED' });
+  base.taxonomy = taxonomyOf({ title: titles, text, body, candidates: sk.extracted ? [] : sk.candidates, changes, otherChanges, ranges, evClass, statedRaised: base.v2.statedDirection === 'RAISED' });
   base.pipeline = pipelineOf(base, body);
   if (base.pipeline.status !== 'CARD') {
     // a thesis label or an upgrade flag on something that is not a verified formal upgrade is misleading (e.g. 'A Operating Inflection' on a queued claim)
@@ -2319,6 +2321,113 @@ export function processCandidates(cands: GuCandidate[], ctxFor: (ticker: string)
   const events = mergeCandidates(kept).map(sk => buildWithExtras(sk, ctxFor(sk.ticker) ?? {}, now, extraFor));
   // zzz854: every built item is returned, stamped with `pipeline` (CARD / AUDIT / QUEUE / DROPPED). Use partitionPipeline() to split cards from the review queue.
   return rank(applyCrossEventChecks(events));
+}
+
+// ── zzz857: AI-extracted, quote-checked rows from the company's OWN documents as PRIMARY candidates ────────────────────────────────────
+// One skeleton per document. Each row becomes a change on the engine's own types and goes through buildGuidanceEvent (unit, period, stale,
+// basis, implausible-change validators; taxonomy; pipeline). Nothing is bypassed:
+//   RAISED / LOWERED / NARROWED with the document's own stated prior -> before = prior, after = new (formal_upgrade / downgrade / mixed by the numbers)
+//   NEW -> no before: taxonomy first_guidance (review queue + universe only, never an upgrade card)
+//   REITERATED -> before = after (the document says unchanged): reiteration (audit row)
+//   WITHDRAWN / UNCLEAR rows are not events. A RAISED row without a stated prior has no before: it waits for numbers (never a card).
+/** Structural copy of GuidanceExtractResult (lib/guidance-docs-types.ts): the engine imports only its own types file and the validators. */
+export interface GuidanceExtractResult {
+  docId: string; market: 'IN' | 'US'; ticker: string | null; company: string; docUrl: string; docKind: string; filedAt: string; extractedAt?: string; status: string;
+  rows: Array<{ metric: string; period: string; periodKind: 'ANNUAL' | 'QUARTER' | 'MULTI_YEAR'; basis: string; currency: string | null; unit: string | null; low: number | null; high: number | null;
+    status: string; prior?: { low: number | null; high: number | null; statedIn: string | null } | null; quote: string }>;
+}
+const X_EV_METRIC: Record<string, GuMetric> = { REVENUE: 'REVENUE', REVENUE_GROWTH: 'REVENUE_GROWTH', EBITDA: 'EBITDA', EBITDA_MARGIN: 'OP_MARGIN', PAT: 'NET_PROFIT', EPS: 'EPS', ADJ_EPS: 'ADJ_EPS', FCF: 'FCF', ORDER_INFLOW: 'ORDER_INTAKE', VOLUME: 'VOLUME', OTHER: 'OTHER' };
+const X_EV_DOC: Record<string, { name: string; kind: GuCandidate['kind']; type: string }> = {
+  TRANSCRIPT: { name: 'Earnings call transcript', kind: 'TRANSCRIPT', type: 'Transcript' }, PRESENTATION: { name: 'Investor presentation', kind: 'DECK', type: 'Investor deck' },
+  RESULTS_RELEASE: { name: 'Results press release', kind: 'RELEASE', type: 'Earnings release' }, AGM_SPEECH: { name: 'AGM / chairman speech', kind: 'FILING', type: 'Company filing' },
+  OTHER_COMPANY_DOC: { name: 'Company document', kind: 'FILING', type: 'Company filing' },
+};
+export const EXTRACTED_VIA = 'company document (AI-read, quote-checked)';
+/** 'FY2027' -> 'FY27', 'Q3 FY2027' -> 'Q3 FY27', 'FY27-FY29' -> 'FY27-29'; '' when nothing usable. */
+export function extractedPeriod(p: string): string {
+  let s = String(p || '').trim().replace(/[–—]/g, '-').replace(/\s+/g, ' ');
+  s = s.replace(/^(FY|CY)\s?(\d{2,4})\s*-\s*(?:FY|CY)?\s?(\d{2,4})$/i, (_m, a: string, x: string, y: string) => `${a.toUpperCase()}${x.slice(-2)}-${y.slice(-2)}`);
+  s = s.replace(/^(FY|CY)\s?(\d{2,4})$/i, (_m, a: string, y: string) => `${a.toUpperCase()}${y.slice(-2)}`);
+  s = s.replace(/^(Q[1-4]|H[12])\s?(FY|CY)\s?(\d{2,4})$/i, (_m, q: string, a: string, y: string) => `${q.toUpperCase()} ${a.toUpperCase()}${y.slice(-2)}`);
+  return s;
+}
+function extractedPoint(row: GuidanceExtractResult['rows'][number], metric: GuMetric, period: string, lo: number | null, hi: number | null): GuGuidancePoint | null {
+  if (lo == null && hi == null) return null;
+  const l = (lo ?? hi) as number, h = (hi ?? lo) as number;
+  const rate = row.unit === '%' || metric === 'REVENUE_GROWTH' || metric === 'OP_MARGIN';
+  const u = String(row.unit || '').toLowerCase(); const cur = String(row.currency || '').toUpperCase();
+  const currency = rate ? undefined : cur === 'INR' ? '₹' : cur === 'USD' ? '$' : cur === 'EUR' ? '€' : cur === 'GBP' ? '£' : undefined;
+  const unit = rate ? '%' : u === 'crore' || u === 'crores' ? 'Cr' : u === 'million' ? 'M' : u === 'billion' ? 'B' : u === 'thousand' ? 'K' : u === 'per_share' ? '' : u === 'lakh crore' ? 'L Cr' : '';
+  const basis: GuGuidancePoint['basis'] = row.basis === 'ADJUSTED' ? 'NON_GAAP' : row.basis === 'GAAP' ? 'GAAP' : row.basis === 'REPORTED' ? 'REPORTED' : 'UNSTATED';
+  const multi = row.periodKind === 'MULTI_YEAR' && rate && /^(FY|CY)\d{2}-\d{2}$/.test(period);
+  const ys = multi ? /^(?:FY|CY)(\d{2})-(\d{2})$/.exec(period) : null;
+  return { metric, period, low: Math.min(l, h), high: Math.max(l, h), midpoint: round((l + h) / 2, 6), isGrowthRate: rate, currency, unit, basis, raw: String(row.quote || '').slice(0, 300), valueKind: 'GUIDANCE',
+    ...(multi ? { periodKind: 'MULTI_YEAR_CAGR' as const, ...(ys ? { periodYears: parseInt(ys[2], 10) - parseInt(ys[1], 10) + 1 } : {}) } : {}) };
+}
+/** One skeleton per extract result that has at least one usable row. Pure. */
+export function skeletonsFromExtracted(results: readonly GuidanceExtractResult[]): GuSkeleton[] {
+  const out: GuSkeleton[] = [];
+  for (const r of results || []) {
+    if (!r || r.status !== 'ok' || !Array.isArray(r.rows) || (r.market !== 'IN' && r.market !== 'US')) continue;
+    const date = isoDate(r.filedAt); if (!date) continue;
+    const ticker = (r.ticker || '').trim().toUpperCase().replace(/\.(NS|BO)$/, '') || (r.company || '').trim().toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
+    if (!ticker) continue;
+    const changes: GuChange[] = []; let raisedNoPrior = false; const metrics: string[] = [];
+    for (const row of r.rows) {
+      if (!row || row.status === 'WITHDRAWN' || row.status === 'UNCLEAR') continue;
+      const metric = X_EV_METRIC[row.metric]; if (!metric) continue;
+      const period = extractedPeriod(row.period) || 'UNSTATED';
+      const after = extractedPoint(row, metric, period, row.low, row.high); if (!after) continue;
+      let before: GuGuidancePoint | null = null;
+      if (row.status === 'REITERATED') before = { ...after, raw: `${after.raw ?? ''} (reiterated: unchanged)` };
+      else if ((row.status === 'RAISED' || row.status === 'LOWERED' || row.status === 'NARROWED') && row.prior && (row.prior.low != null || row.prior.high != null)) before = extractedPoint(row, metric, period, row.prior.low, row.prior.high);
+      if (row.status === 'RAISED' && !before) raisedNoPrior = true;
+      changes.push(makeChange(before, after));
+      if (!metrics.includes(METRIC_LABEL[metric])) metrics.push(METRIC_LABEL[metric]);
+    }
+    if (!changes.length) continue;
+    changes.sort((a, b) => METRIC_PRIORITY.indexOf(a.metric) - METRIC_PRIORITY.indexOf(b.metric));
+    const dn = X_EV_DOC[r.docKind] || X_EV_DOC.OTHER_COMPANY_DOC;
+    const sourceName = `${dn.name} (${r.company})`;
+    const cand: GuCandidate = { id: `extract:${r.docId}`, ticker, company: r.company || ticker, market: r.market, title: `${r.company || ticker}: ${dn.name.toLowerCase()} (${date})`,
+      text: r.rows.filter((x) => x && x.quote).map((x) => String(x.quote)).join('\n').slice(0, 3000), url: r.docUrl || undefined, sourceName, publishedAt: r.filedAt, eventDate: date, kind: dn.kind };
+    const key = canonicalKey(ticker, changes[0].metric, changes[0].after.period, date);
+    out.push({ canonical_key: key, guidance_event_id: stableId(key), ticker, company: r.company || ticker, market: r.market, announcement_date: date,
+      sources: [{ url: r.docUrl || undefined, name: sourceName, tier: 'PRIMARY', type: dn.type, date }], candidates: [cand], changes, history: rowsFromChanges(changes, date), flags: [],
+      text: `${cand.title}. ${cand.text}`, extracted: { docId: r.docId, raisedNoPrior, metrics } });
+  }
+  return out;
+}
+/** Build the extracted events through the SAME engine path (validators, taxonomy, pipeline, decision). Window is cut on the document date. */
+export function buildExtractedEvents(results: readonly GuidanceExtractResult[], ctxFor: (ticker: string, market: GuMarket) => GuContext, now: Date, window: GuWindow = '7D'): GuidanceEvent[] {
+  const out: GuidanceEvent[] = [];
+  for (const sk of skeletonsFromExtracted(results)) {
+    if (!withinWindow(sk.announcement_date, window, now)) continue;
+    let ev: GuidanceEvent;
+    try { ev = buildGuidanceEvent(sk, ctxFor(sk.ticker, sk.market) ?? {}, now); } catch { continue; }
+    if (ev.v2) ev.v2 = { ...ev.v2, detectedVia: Array.from(new Set([EXTRACTED_VIA, ...ev.v2.detectedVia])), verifiedBy: `${sk.sources[0].name}, ${sk.announcement_date} (${EXTRACTED_VIA})` };
+    out.push(withPrimarySourceState({ ...ev, primaryState: 'PRIMARY_SOURCE_READ' }));
+  }
+  return out;
+}
+const evNameKey = (s: string) => String(s || '').toLowerCase().replace(/\b(limited|ltd|inc|corp|corporation|plc|co|company|india)\b/g, '').replace(/[^a-z0-9]+/g, '');
+/** Days apart within which a news / regex event and a company-document event are the same announcement. */
+export const EXTRACTED_SAME_EVENT_DAYS = 3;
+/**
+ * The company-document event replaces any text-derived event for the same company (market + ticker, or the same normalised name) within
+ * EXTRACTED_SAME_EVENT_DAYS: it carries the document's own numbers and status. Pure; returns the merged list and the replaced ids.
+ */
+export function mergeExtractedEvents(base: readonly GuidanceEvent[], extracted: readonly GuidanceEvent[]): { events: GuidanceEvent[]; replaced: string[] } {
+  if (!extracted.length) return { events: base.slice(), replaced: [] };
+  const replaced = new Set<string>();
+  const near = (a: string, b: string) => Math.abs(dayNum(isoDate(a)) - dayNum(isoDate(b))) <= EXTRACTED_SAME_EVENT_DAYS;
+  for (const x of extracted) for (const e of base) {
+    if (e.market !== x.market || replaced.has(e.guidance_event_id)) continue;
+    const same = (!!e.ticker && e.ticker.toUpperCase() === x.ticker.toUpperCase()) || (!!evNameKey(e.company) && evNameKey(e.company) === evNameKey(x.company));
+    if (same && near(e.announcement_date, x.announcement_date)) replaced.add(e.guidance_event_id);
+  }
+  const ids = new Set(extracted.map((x) => x.guidance_event_id));
+  return { events: [...base.filter((e) => !replaced.has(e.guidance_event_id) && !ids.has(e.guidance_event_id)), ...extracted], replaced: Array.from(replaced) };
 }
 
 export function summarise(events: GuidanceEvent[], window: GuWindow, now: Date): GuSummary {

@@ -1,0 +1,100 @@
+name: EDGAR guidance backfill (US)
+
+# zzz857 — US guidance RECALL. Reads SEC EDGAR for every US trading day in the window: 8-K filings with
+# Item 2.02 (results; Item 7.01 Reg FD is opt-in via the `items` input), their EX-99.1 / EX-99.2 press releases,
+# keeps the ones with an explicit guidance cue (guidance / outlook / expects / sees / raises / reaffirms /
+# reiterates / now anticipates / full-year / fiscal 20xx) within ~300 chars of a figure ($X, X-Y, X%),
+# outside the safe-harbor text; text capped at 60k chars per document,
+# and POSTs them as GuidanceDocs to the app's ingest route for the AI extractor. Each finished day is
+# reported as a coverage row, so the US coverage card counts a day as read only when this job indexed it.
+#
+# Schedule: weekdays after the US close, the last 7 trading days (re-reading recent days is idempotent:
+# docId = sha1(exhibit url)). Full 120-day backfill: Actions → this workflow → Run workflow → days = 90
+# (90 trading days ≈ 126 calendar days; max 130).
+#
+# SEC fair access: contact User-Agent (SEC_USER_AGENT, or SEC_CONTACT_EMAIL), at most 8 requests/second.
+#
+# Secrets (repository → Settings → Secrets and variables → Actions):
+#   CRON_SECRET               — same value as CRON_SECRET on the server (sent as header x-cron-secret)
+#   CRON_BASE_URL             — optional; the deployed app's base URL (default: production)
+#   SEC_USER_AGENT            — optional; e.g. "market-cockpit research you@example.com"
+#   SEC_CONTACT_EMAIL         — used to build the User-Agent when SEC_USER_AGENT is not set
+#   UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN — optional; when set, the per-day coverage is also merged
+#                               straight into KV guidance-docs:v1:coverage:US
+# The script logs counts only — never document text, never secrets.
+
+on:
+  schedule:
+    - cron: '40 23 * * 1-5'    # 19:40 ET (EDT) / 18:40 ET (EST): after the close and the evening 8-K wave
+    - cron: '20 13 * * 2-6'    # 09:20 ET next morning: picks up filings accepted late the previous evening
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Trading days to read, newest first (1-130). 90 ≈ the 120-day window.'
+        required: false
+        default: '7'
+      end_date:
+        description: 'Last day to read (YYYY-MM-DD, US Eastern). Empty = today.'
+        required: false
+        default: ''
+      items:
+        description: '8-K items to read: 2.02 (default, results releases) or 2.02,7.01 (adds Reg FD releases)'
+        required: false
+        default: '2.02'
+      dry_run:
+        description: 'Read EDGAR and count, but POST nothing (1 = dry run)'
+        required: false
+        default: '0'
+
+concurrency:
+  group: edgar-guidance-backfill
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Backfill EDGAR guidance documents
+        id: main
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          SEC_CONTACT_EMAIL: ${{ secrets.SEC_CONTACT_EMAIL }}
+          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+          DAYS: ${{ github.event.inputs.days || '7' }}
+          END_DATE: ${{ github.event.inputs.end_date || '' }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
+          ITEMS: ${{ github.event.inputs.items || '2.02' }}
+          MAX_TEXT_CHARS: '60000'
+        run: |
+          set -euo pipefail
+          case "$DAYS" in ''|*[!0-9]*) DAYS=7 ;; esac
+          if [ "$DAYS" -gt 130 ]; then DAYS=130; fi
+          if [ "$DAYS" -lt 1 ]; then DAYS=1; fi
+          export DAYS
+          node .github/scripts/edgar-guidance-backfill.mjs
+
+      - name: Heartbeat (always run)
+        if: always()
+        env:
+          BASE: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
+          OK="true"
+          if [[ "${{ steps.main.outcome }}" != "success" ]]; then OK="false"; fi
+          curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" \
+            -H 'Content-Type: application/json' \
+            -d "{\"name\":\"edgar-guidance-backfill\",\"phase\":\"end\",\"ok\":$OK,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -o /dev/null -w "heartbeat %{http_code}\n" || true

@@ -28,6 +28,8 @@ export { normPeriod, amountText, pctText, PLAUSIBLE_REVENUE_GROWTH_PCT, REPORTIN
 import { buildCompanyIndex, normCompanyName } from './guidance-upgrades-candidates';
 import { NSE_TICKER_NAMES } from './nse-ticker-names';
 import { endOfPeriodLabel, qualityOf, revisionOf, type GgStoredEntry } from './growth-guidance';
+import type { ExtractedGuidance, GuidanceExtractResult, GuidanceMetricX } from './guidance-docs-types';
+import { actualKey, priorPeriodOf, universeUnitOf, type PriorActual } from './guidance-extract-reader';
 
 export const GU_VERSION = 'zzz849-gu-v2';
 const DAY = 86_400_000;
@@ -220,6 +222,9 @@ interface Item {
   /** zzz853 */ periodContext?: string | null; primarySourceRead?: boolean | null; sourceMetricLabel?: string | null; lastVerified?: string | null;
   tier?: SourceTier; claimType?: GuClaimType;
   /** zzz853: other sources for the same slot whose value differs (a conflict, not a revision) */ conflicts?: Item[];
+  /** zzz857 (COMPANY_DOC): the revision the company's own document states (NEW -> INITIAL, REITERATED -> MAINTAINED ...); wins over text heuristics */ extRevision?: GuUniverseRecord['revision'];
+  /** zzz857: why there is no growth % (e.g. 'growth not established: no FY26 actual available') */ growthNote?: string | null;
+  /** zzz857: later company documents that reiterated this guidance (listed as extra primary sources) */ confirmedBy?: Array<{ name: string; type: string; url: string | null; date: string | null }>;
 }
 const srcPrimary = (rank: number, type: string) => rank <= 7 && !/media|news/i.test(type);
 const tk = (t: unknown): string | null => { const s = String(t ?? '').trim().toUpperCase().replace(/\.(NS|BO)$/, ''); return s || null; };
@@ -296,6 +301,118 @@ function itemsFromStored(rows: GuStoredPoint[] | null | undefined): Item[] {
   }
   return out;
 }
+// ═══ zzz857: company documents read by the AI extractor (quote-checked rows) ═════════════════════════
+// Each ExtractedGuidance row (NEW / RAISED / REITERATED / NARROWED / LOWERED) for an ANNUAL or MULTI_YEAR period becomes a COMPANY_DOC item: the source is
+// the company's own document (TIER1, read), quote = statement, lastVerified = the newest document that confirmed it. Per company + metric + period the
+// documents are applied oldest -> newest: a new figure replaces the current one (the old one becomes a prior); a REITERATED figure inside the current
+// range keeps the range and only moves lastVerified (with a note); WITHDRAWN withdraws. Growth: the company's stated % ('stated'), else derived vs the
+// prior fiscal year's ACTUAL when one is available ('(derived)'), else the absolute target with 'growth not established'. Never a guess.
+const X_METRIC: Partial<Record<GuidanceMetricX, GgMetric>> = { REVENUE: 'REVENUE', REVENUE_GROWTH: 'REVENUE', PAT: 'PAT', EPS: 'EPS', ADJ_EPS: 'EPS', EBITDA: 'EBITDA', FCF: 'FCF' };
+const DOC_NAME: Record<string, { name: string; type: string }> = {
+  TRANSCRIPT: { name: 'Earnings call transcript', type: 'Transcript' }, PRESENTATION: { name: 'Investor presentation', type: 'Investor presentation' },
+  RESULTS_RELEASE: { name: 'Results press release', type: 'Earnings release' }, AGM_SPEECH: { name: 'AGM / chairman speech', type: 'Annual report' }, OTHER_COMPANY_DOC: { name: 'Company document', type: 'Filing' },
+};
+const xPeriod = (p: string): string => normPeriod(String(p || '').trim().replace(/^(FY|CY)\s?(\d{2,4})\s*[-–]\s*(?:FY|CY)?\s?(\d{2,4})$/i, (_m, a: string, x: string, y: string) => `${a.toUpperCase()}${x.slice(-2)}-${y.slice(-2)}`));
+const crText = (v: number, unit: string): string => (unit === '₹ Cr' ? `₹${v.toLocaleString('en-US')} crore` : amountText({ value: v, unit }));
+interface XCand { r: GuidanceExtractResult; row: ExtractedGuidance; growth: ExtractedGuidance | null; metric: GgMetric; period: string; date: string; notes: string[] }
+export function itemsFromExtracted(results: GuidanceExtractResult[] | null | undefined, actuals: Map<string, PriorActual> | null, now: Date): Item[] {
+  void now;
+  const chains = new Map<string, XCand[]>();
+  for (const r of results || []) {
+    if (!r || (r.market !== 'IN' && r.market !== 'US') || r.status !== 'ok' || !Array.isArray(r.rows)) continue;
+    const date = String(r.filedAt || '').slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    const rows = r.rows.filter((x) => x && (x.periodKind === 'ANNUAL' || x.periodKind === 'MULTI_YEAR') && x.status !== 'UNCLEAR');
+    const hasAdj = new Set(rows.filter((x) => x.metric === 'ADJ_EPS').map((x) => xPeriod(x.period)));
+    const per = new Map<string, XCand>();   // one candidate per metric + period in this document
+    for (const row of rows) {
+      const metric = X_METRIC[row.metric]; if (!metric) continue;
+      const period = xPeriod(row.period); if (!period) continue;
+      if (row.metric === 'EPS' && hasAdj.has(period)) continue;   // GAAP and adjusted are never mixed: the adjusted line is the headline
+      const k = `${metric}|${period}`; const cur = per.get(k);
+      if (row.metric === 'REVENUE_GROWTH') { if (cur) cur.growth = cur.growth ?? row; else per.set(k, { r, row, growth: row, metric, period, date, notes: [] }); continue; }
+      if (cur && cur.row.metric === 'REVENUE_GROWTH') { cur.row = row; continue; }
+      if (!cur) per.set(k, { r, row, growth: null, metric, period, date, notes: [] });
+    }
+    // companion figures that are not universe metrics (EBITDA margin) travel as a note on the same period's EBITDA, else revenue, point
+    for (const row of rows.filter((x) => x.metric === 'EBITDA_MARGIN' && x.low != null)) {
+      const period = xPeriod(row.period); const host = per.get(`EBITDA|${period}`) || per.get(`REVENUE|${period}`); if (!host) continue;
+      const hi = row.high ?? row.low!; host.notes.push(`EBITDA margin ${row.low === hi ? `${fnum(row.low!)}%` : `${fnum(row.low!)}–${fnum(hi)}%`} (${period}, ${row.status === 'NEW' ? 'first stated' : row.status.toLowerCase()} in the same document)`);
+    }
+    const who = (r.ticker || '').trim().toUpperCase().replace(/\.(NS|BO)$/, '') || `~${normCompanyName(r.company)}`;
+    for (const c of Array.from(per.values())) { const k = `${r.market}|${who}|${c.metric}|${c.period}`; (chains.get(k) || chains.set(k, []).get(k)!).push(c); }
+  }
+  const out: Item[] = [];
+  for (const list of Array.from(chains.values())) {
+    list.sort((a, b) => a.date.localeCompare(b.date) || String(a.r.extractedAt || '').localeCompare(String(b.r.extractedAt || '')));
+    let cur: XCand | null = null; let priors: Prior[] = []; let lastVerified: string | null = null; let notes: string[] = []; let rev: GuUniverseRecord['revision'] | undefined;
+    let withdrawn = false; let confirmed: NonNullable<Item['confirmedBy']> = [];
+    const unitOf = (c: XCand) => universeUnitOf(c.row.currency, c.row.unit);
+    const absOf = (c: XCand): { value: number; unit: string; valueLow?: number } | null => {
+      const u = unitOf(c); if (!u || c.row.metric === 'REVENUE_GROWTH' || c.row.unit === '%') return null;
+      const lo = c.row.low, hi = c.row.high ?? c.row.low; if (lo == null || hi == null) return null;
+      return { value: Math.max(lo, hi), unit: u, ...(Math.min(lo, hi) < Math.max(lo, hi) ? { valueLow: Math.min(lo, hi) } : {}) };
+    };
+    const priorOf = (c: XCand): Prior => { const g = c.growth; const gl = g ? (g.growthPctLow ?? g.low ?? null) : (c.row.growthPctLow ?? null); const gh = g ? (g.growthPctHigh ?? g.high ?? gl) : (c.row.growthPctHigh ?? gl);
+      return { date: c.date, low: gl, high: gh, note: `${DOC_NAME[c.r.docKind]?.name || 'Company document'} (${c.date})`, abs: absOf(c) }; };
+    for (const c of list) {
+      const st = c.row.status;
+      if (st === 'WITHDRAWN') { if (cur) { withdrawn = true; lastVerified = c.date; notes.push(`withdrawn on ${c.date}`); } continue; }
+      const abs = absOf(c); const ca = cur ? absOf(cur) : null;
+      const inside = !!(abs && ca && abs.unit === ca.unit && (abs.valueLow ?? abs.value) >= (ca.valueLow ?? ca.value) - 1e-9 && abs.value <= ca.value + 1e-9);
+      if (st === 'REITERATED' && cur && !withdrawn && (inside || (!abs && !ca))) {
+        lastVerified = c.date; rev = 'MAINTAINED';
+        if (abs && ca) {
+          const single = (abs.valueLow ?? abs.value) === abs.value; const lo = ca.valueLow ?? ca.value;
+          const where = ca.valueLow == null ? '' : single && abs.value === lo ? ' (lower end)' : single && abs.value === ca.value ? ' (upper end)' : single ? ' (within the range)' : abs.value === ca.value && (abs.valueLow ?? abs.value) === lo ? '' : ' (within the range)';
+          notes.push(`reiterated ${single ? '~' : ''}${single ? crText(abs.value, abs.unit) : (abs.unit === '₹ Cr' ? `₹${(abs.valueLow as number).toLocaleString('en-US')}–${abs.value.toLocaleString('en-US')} crore` : amountText(abs))}${where} on ${c.date}`);
+        } else notes.push(`reiterated on ${c.date}`);
+        const dn = DOC_NAME[c.r.docKind] || DOC_NAME.OTHER_COMPANY_DOC; confirmed.push({ name: `${dn.name} (${c.r.company})`, type: dn.type, url: c.r.docUrl || null, date: c.date });
+        continue;
+      }
+      // a new figure (or a 'reiterated' figure outside the current range, read on its numbers)
+      const hadCur = !!cur;
+      if (cur) priors.push(priorOf(cur));
+      else if (c.row.prior && (c.row.prior.low != null || c.row.prior.high != null) && (st === 'RAISED' || st === 'LOWERED' || st === 'NARROWED')) {
+        const u = unitOf(c); const lo = c.row.prior.low ?? c.row.prior.high!, hi = c.row.prior.high ?? lo;
+        priors.push({ date: c.date, low: null, high: null, note: `earlier guidance as stated in the ${DOC_NAME[c.r.docKind]?.name.toLowerCase() || 'company document'}${c.row.prior.statedIn ? ` (${c.row.prior.statedIn})` : ''}`, abs: u && c.row.unit !== '%' ? { value: Math.max(lo, hi), unit: u, ...(lo < hi ? { valueLow: lo } : {}) } : null });
+      }
+      cur = c; lastVerified = c.date; notes = []; withdrawn = false; confirmed = [];
+      rev = st === 'NEW' ? (priors.length ? undefined : 'INITIAL') : st === 'RAISED' ? 'RAISED' : st === 'LOWERED' ? 'LOWERED' : st === 'REITERATED' ? (hadCur ? undefined : 'MAINTAINED') : undefined;
+    }
+    if (!cur) continue;
+    const c = cur; const r = c.r; const row = c.row; const abs = absOf(c);
+    const g = c.growth; const sLo = g ? (g.growthPctLow ?? (g.unit === '%' || g.metric === 'REVENUE_GROWTH' ? g.low : null)) : (row.growthPctLow ?? null);
+    const sHi = g ? (g.growthPctHigh ?? (g.unit === '%' || g.metric === 'REVENUE_GROWTH' ? g.high ?? sLo : null)) : (row.growthPctHigh ?? sLo);
+    let low: number | null = null, high: number | null = null; let gOrigin: GgGrowthOrigin = 'STATED'; let base: ItemBase | null = null; let growthNote: string | null = null;
+    const pkind: GgPeriodKind = row.periodKind === 'ANNUAL' ? (/^CY/.test(c.period) ? 'CY' : 'FY') : /^(FY|CY)\d{2}-\d{2}$/.test(c.period) ? 'MULTI_YEAR_CAGR' : /^CY/.test(c.period) ? 'CY' : 'FY';
+    const ny = /^(?:FY|CY)(\d{2})-(\d{2})$/.exec(c.period); const years = ny ? parseInt(ny[2], 10) - parseInt(ny[1], 10) + 1 : null;
+    if (sLo != null) { low = sLo; high = sHi ?? sLo; }
+    else if (abs && pkind !== 'MULTI_YEAR_CAGR') {
+      const pp = priorPeriodOf(c.period); const tkr = (r.ticker || '').toUpperCase();
+      const act = pp && tkr && (c.metric === 'REVENUE' || c.metric === 'PAT') ? actuals?.get(actualKey(r.market, tkr, c.metric, pp)) ?? null : null;
+      if (act && act.unit === abs.unit && act.value > 0) {
+        gOrigin = 'IMPLIED'; base = { value: act.value, unit: act.unit, period: act.period, kind: 'PRIOR_YEAR_ACTUAL' };
+        low = ((abs.valueLow ?? abs.value) / act.value - 1) * 100; high = (abs.value / act.value - 1) * 100;
+        notes.unshift(`${act.period} actual ${amountText({ value: act.value, unit: act.unit })} from ${act.source}${act.quote ? `: "${act.quote.slice(0, 160)}"` : ''}`);
+      } else growthNote = `growth not established: no ${pp || 'prior-year'} actual available`;
+    } else if (!abs) continue;   // neither a % nor an amount the universe can place (unit not recognised)
+    else growthNote = 'growth not established';
+    const dn = DOC_NAME[r.docKind] || DOC_NAME.OTHER_COMPANY_DOC;
+    const ticker = (r.ticker || '').trim().toUpperCase().replace(/\.(NS|BO)$/, '') || null;
+    const statement = String(row.quote || '').slice(0, 300);
+    out.push({
+      origin: 'COMPANY_DOC', market: r.market, ticker, company: r.company || ticker || 'Unknown company', metric: c.metric, low, high, open: false, gOrigin, abs, base, needsReview: null,
+      cumulativeYears: pkind === 'MULTI_YEAR_CAGR' && sLo == null ? years : null,
+      period: c.period, pkind, kind: 'MANAGEMENT_GUIDANCE', organic: 'UNKNOWN', statement, driver: null, mechanisms: [],
+      src: { name: `${dn.name} (${r.company})`, type: dn.type, url: r.docUrl || null, date: c.date, rank: 4 }, verification: 'VERIFIED', priors,
+      notes: [...c.notes, ...notes].join('; ') || null, withdrawn, forced: withdrawn ? 'WITHDRAWN' : undefined,
+      primarySourceRead: true, sourceMetricLabel: row.metric === 'REVENUE_GROWTH' ? null : row.metricLabel || null, lastVerified, extRevision: rev, growthNote, confirmedBy: confirmed,
+      periodContext: null,
+    });
+  }
+  return out;
+}
+
 /** Pure: the next stored document. Same slot (market|entity|metric|period) is replaced by the fresh point; expired slots are dropped; bounded; newest first. Returns changed=false when nothing differs (idempotent write). */
 export function mergeStored(existing: GuStoredDoc | null | undefined, fresh: GuStoredPoint[], now: Date, asOf = now.toISOString()): { doc: GuStoredDoc; changed: boolean } {
   const bySlot = new Map<string, GuStoredPoint>();
@@ -471,12 +588,17 @@ export interface GuUniverseBuild {
   claimsAwaiting?: GuUniverseRecordX[];
 }
 /** `eventWindow` is accepted and IGNORED: the universe never depends on an event window (24H/3D/7D...). */
-export interface GuBuildOpts { threshold?: number; eventWindow?: string | null; /** zzz854: what the events layer says per company + metric + period (newest wins) */ eventStatuses?: GuEventStatus[] | null }
+export interface GuBuildOpts { threshold?: number; eventWindow?: string | null; /** zzz854: what the events layer says per company + metric + period (newest wins) */ eventStatuses?: GuEventStatus[] | null;
+  /** zzz857: AI-extracted, quote-checked rows from the companies' own documents, plus the prior-year actuals a derived growth is divided by */
+  extracted?: { results: GuidanceExtractResult[]; actuals?: Map<string, PriorActual> | null } | null }
 
 const dateOf = (i: Item) => i.src.date || '';
-const ORIGIN_ORDER: Record<GuUniverseRecordOrigin, number> = { LIVE: 0, LEDGER: 1, RESEARCHED_SEED: 2 };
+const ORIGIN_ORDER: Record<GuUniverseRecordOrigin, number> = { COMPANY_DOC: 0, LIVE: 1, LEDGER: 2, RESEARCHED_SEED: 3 };
 /** >0 when a should win over b (a is the current guidance). Live/ledger beat a researched row when newer-or-equal OR from a higher-ranked source. Otherwise newest wins, then rank. */
 function better(a: Item, b: Item): number {
+  // zzz857: the company's own document (AI-read, quote-checked) always beats a media / secondary (TIER3-4) source for the same slot
+  const aDoc = a.origin === 'COMPANY_DOC', bDoc = b.origin === 'COMPANY_DOC';
+  if (aDoc !== bDoc) { const other = aDoc ? b : a; if (tierOf(other) >= 3) return aDoc ? 1 : -1; }
   const aSeed = a.origin === 'RESEARCHED_SEED', bSeed = b.origin === 'RESEARCHED_SEED';
   if (aSeed !== bSeed) {
     const nonSeed = aSeed ? b : a, seed = aSeed ? a : b;
@@ -493,6 +615,7 @@ function better(a: Item, b: Item): number {
 const mid = (low: number | null, high: number | null): number | null => (low == null ? null : high == null ? low : (low + high) / 2);
 const REVISION_UP = /\b(raised|upgraded|hiked|lifted|increased)\b/i, REVISION_DOWN = /\b(lowered|cut|trimmed|reduced|slashed|downgraded)\b/i, REVISION_SAME = /\b(reiterat\w*|maintain\w*|unchanged|reaffirm\w*)\b/i, GUIDE_CTX = /\b(guid\w*|target\w*|outlook|forecast\w*|expect\w*)\b/i;
 function revisionFor(it: Item, history: Prior[]): GuUniverseRecord['revision'] {
+  if (it.extRevision) return it.extRevision;   // zzz857: the company document's own status (NEW / RAISED / REITERATED / LOWERED / WITHDRAWN)
   const stmt = it.statement || '';
   /** A reiteration or a capital raise is never a RAISE of guidance (unless the numbers themselves moved up). */
   const noRaiseWords = (isCapitalRaise(stmt) || (isReiteration(stmt))) && !textSaysGuidanceRaised(stmt);
@@ -637,11 +760,11 @@ function pointOf(it: Item, history: Prior[], ps: GuPeriodInfo, x: PointCtx): GuP
     const bt = amountText({ value: derivation.previousValue, unit: derivation.unit });
     basisLabel = derivation.basis === 'absolute_vs_prior_guidance' ? `vs prior guidance (derived: ${tgtText} vs ${bt})` : `vs ${it.base!.period} actual (derived: ${tgtText} vs ${bt})`;
   } else if (growthType === 'IMPLIED') basisLabel = tgtText ? `implied from the ${tgtText} target; base not sourced` : 'implied; no stated % and no sourced base';
-  else basisLabel = notComparable ? `GROWTH NOT COMPARABLE: ${notComparable}` : 'no % stated';
+  else basisLabel = notComparable ? `GROWTH NOT COMPARABLE: ${notComparable}` : it.growthNote || 'no % stated';
   let core: string;
   if (growthType === 'EXPLICIT') core = displayOf({ metric: it.metric, low, high, open, origin: 'STATED', periodKind: it.pkind, period: it.period, abs: it.abs, cumulativeYears: it.cumulativeYears, proxy });
   else if (growthType === 'DERIVED' || growthType === 'IMPLIED') core = `${pctShown}${proxy ? ` (${proxy})` : ''} ${growthType === 'DERIVED' ? basisLabel : `(${basisLabel})`}`;
-  else core = tgtText ? `${tgtText} target (${notComparable ? basisLabel : 'no % stated'})` : '—';
+  else core = tgtText ? `${tgtText} target (${notComparable ? basisLabel : it.growthNote || 'no % stated'})` : '—';
   const tails: string[] = [];
   if (needsReview) tails.push('needs review');
   if (pf.periodStatus !== 'CONFIRMED') tails.push('period year not stated');
@@ -769,6 +892,7 @@ const isUnresolved = (entityKey: string) => entityKey.includes(':~');
 export function buildUniverse(live: GgCompany[], ledgerRows: Array<{ market: 'IN' | 'US'; ticker: string; company?: string; entries: GgStoredEntry[] }> | null | undefined, seedRows: GuSeedRow[], now: Date, opts: GuBuildOpts & { stored?: GuStoredPoint[] | null } = {}): GuUniverseBuild {
   void opts.threshold; void opts.eventWindow;   // the universe never depends on an event window
   const items: Item[] = [];
+  if (opts.extracted) items.push(...itemsFromExtracted(opts.extracted.results, opts.extracted.actuals ?? null, now));
   for (const c of live || []) items.push(...itemsFromLive(c));
   items.push(...itemsFromLedger(ledgerRows || []));
   items.push(...itemsFromStored(opts.stored));
@@ -800,7 +924,14 @@ export function buildUniverse(live: GgCompany[], ledgerRows: Array<{ market: 'IN
   });
   for (const group of Array.from(slots.values())) {
     const e = entityOf.get(group[0])!;
-    const eligible = group.filter((g) => !g.forced);
+    let eligible = group.filter((g) => !g.forced);
+    // zzz857: a media / secondary claim (TIER3-4) for a slot the company's own document covers is SUPERSEDED by that document (never a 'conflict', never a claim awaiting verification)
+    const doc = eligible.filter((g) => g.origin === 'COMPANY_DOC').sort((a, b) => -better(a, b))[0];
+    if (doc) {
+      const media = eligible.filter((g) => g.origin !== 'COMPANY_DOC' && tierOf(g) >= 3);
+      for (const m of media) pushInactive(e, m, 'SUPERSEDED', `Superseded by the company's own document (${doc.src.date || 'undated'}, ${doc.src.name}).`, { supersededBy: `${doc.src.date || 'undated'}, ${doc.src.name}` });
+      eligible = eligible.filter((g) => !media.includes(g));
+    }
     for (const g of group.filter((x) => x.forced)) pushInactive(e, g, g.forced!, g.forced === 'WITHDRAWN' ? 'Management withdrew this guidance.' : g.forced === 'SUPERSEDED' ? 'Replaced by a later statement.' : 'The guided period has ended.');
     if (!eligible.length) continue;
     eligible.sort((a, b) => -better(a, b));
@@ -828,6 +959,7 @@ export function buildUniverse(live: GgCompany[], ledgerRows: Array<{ market: 'IN
     const versions: GuVersionIn[] = [...win.priors.map((p) => versionOfPrior(p, win.abs?.unit ?? null)), ...rest.map(versionOfItem), versionOfItem(win)];
     const conflict = losers.length > 0;
     const sources: GuSourceEntry[] = [srcEntry(win, tierOf(win) <= 2 ? 'PRIMARY' : 'OTHER'), ...losers.map((l) => srcEntry(l, tierOf(l) >= 3 ? 'MEDIA_CLAIM' : 'OTHER'))];
+    for (const c of win.confirmedBy || []) { const t = classifySourceTier({ rank: win.src.rank, type: c.type, name: c.name, url: c.url }).tier; sources.push({ name: c.name, type: c.type, url: c.url, date: c.date, tier: t, tierLabel: TIER_LABEL[t], value: 'reiterated', low: null, high: null, absolute: null, role: t <= 2 ? 'PRIMARY' : 'OTHER' }); }
     const primaryValue = conflict && tierOf(win) <= 2 ? sources[0] : null;
     const mediaClaim = conflict && tierOf(win) <= 2 ? sources.slice(1).find((s) => s.tier >= 3) || null : null;
     (activeByEntity.get(e) || activeByEntity.set(e, []).get(e)!).push({ it: win, history, note: ps.note, ps, versions, sources, conflict, primaryValue, mediaClaim, pf });
@@ -931,7 +1063,7 @@ export function buildUniverse(live: GgCompany[], ledgerRows: Array<{ market: 'IN
   const stored: GuStoredPoint[] = [];
   for (const r of records) for (const p of r.points) {
     const it = activeByEntity.get(r.entityKey)!.find((a) => a.it.metric === p.metric && a.it.period === p.period)!.it;
-    if (it.origin === 'RESEARCHED_SEED') continue;   // never frozen into the store: the data file is authoritative and re-read each time
+    if (it.origin === 'RESEARCHED_SEED' || it.origin === 'COMPANY_DOC') continue;   // zzz857: company-document rows are re-read from their extract results every time. Never frozen into the store: the data file is authoritative and re-read each time
     const slot = `${it.market}|${r.entityKey}|${it.metric}|${normPeriod(it.period)}`;
     stored.push({ key: `${slot}|${hash(`${it.src.url || it.src.name}|${it.src.date}|${p.display}`)}`, slot, market: it.market, ticker: it.ticker, company: it.company, metric: it.metric, low: it.low, high: it.high, open: it.open, gOrigin: it.gOrigin, abs: it.abs, base: it.base ?? null, needsReview: it.needsReview ?? null,
       period: it.period, pkind: it.pkind, kind: it.kind, organic: it.organic, verification: it.verification, statement: it.statement.slice(0, 300), src: it.src, priors: r.points.find((x) => x === p)!.priors.slice(-3), origin: it.origin, display: p.display,

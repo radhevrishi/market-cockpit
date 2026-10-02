@@ -38,6 +38,8 @@ export const PROTECTED_API_PREFIXES = [
   '/api/v1/us-thesis',           // zzz790 — US ledgers, reads (paid AI), special focus
   '/api/v1/thesis-ai',           // zzz837 — AI thesis-type resolver (paid AI, owner only)
   '/api/v1/ai-verify',           // zzz854 — AI verification queue (paid AI; cron uses the x-cron-secret header)
+  '/api/v1/guidance-docs',       // zzz857 — company guidance documents (collector ingest uses the x-cron-secret header)
+  '/api/v1/guidance-extract',    // zzz857 — AI guidance extractor (paid AI; cron uses the x-cron-secret header)
 ] as const;
 
 /** Never gated: the login flow itself, and machine endpoints with their own auth. */

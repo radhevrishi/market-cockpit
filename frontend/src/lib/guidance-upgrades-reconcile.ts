@@ -194,10 +194,18 @@ export async function loadEventStatuses(now: Date): Promise<{ statuses: GuEventS
     if (cands.length) { const evs = eng.processCandidates(cands, () => ({}), now, '120D'); fromStore = eventStatusesOf(evs); parts.push(`event store: ${evs.length} events`); }
     else parts.push('event store: empty or unreadable');
   } catch (e: any) { parts.push(`event store: failed (${String(e?.message || e).slice(0, 60)})`); }
+  // zzz857: the company documents read by the AI extractor, through the same engine (a NEW figure is first guidance -> NO_NUMBERS, never a raise)
+  let fromDocs: GuEventStatus[] = [];
+  try {
+    const [xr, eng] = await Promise.all([import('./guidance-extract-reader'), import('./guidance-upgrades')]);
+    const l = await xr.listExtractResults({});
+    if (l.results.length) { const evs = eng.buildExtractedEvents(l.results, () => ({}), now, '120D'); fromDocs = eventStatusesOf(evs); parts.push(`company documents: ${evs.length} events`); }
+    else parts.push(`company documents: none${l.error ? ` (${l.error.slice(0, 60)})` : ''}`);
+  } catch (e: any) { parts.push(`company documents: failed (${String(e?.message || e).slice(0, 60)})`); }
   try {
     const { kvGet } = await import('./kv');
     const d = await kvGet<{ statuses: GuEventStatus[] }>(EVENT_STATUS_KEY);
     if (Array.isArray(d?.statuses)) { fromDigest = d!.statuses; parts.push(`digest: ${fromDigest.length}`); }
   } catch { /* optional */ }
-  return { statuses: mergeEventStatuses(fromStore, fromDigest), source: parts.join('; ') };
+  return { statuses: mergeEventStatuses(mergeEventStatuses(fromDocs, fromStore), fromDigest), source: parts.join('; ') };
 }

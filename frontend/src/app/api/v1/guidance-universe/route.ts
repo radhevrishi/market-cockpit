@@ -9,6 +9,10 @@
 // reason 'Latest filing (date) says ...'). Response adds countEquations (Active = verified + derived + partial; highest active = Active rows >= threshold),
 // viewCounts.claimsAwaiting and eventReconciliation.
 // Extra (additive): viewCounts, invariantViolations (must be empty), servedFrom 'live'|'last_good'|'seed', builtAt. The universe is independent of the news cache.
+// zzz857: the universe also reads the rows the AI extractor took from the companies' OWN documents (guidance-extract:v1:*, quote-checked; no AI call
+// here). Each becomes an Active point sourced to that document (TIER1, read): growth 'stated' when the company gives a %, '(derived)' vs the prior
+// fiscal year's actual when one is available, else the absolute target with 'growth not established'. The body adds `sources` (every input with its
+// row count, COMPANY_DOC first) and `extractCoverage` { docs, extracted, rows, lastExtractAt } for the page.
 // PUBLIC company data only (never holdings). No AI call and no document fetch in this route.
 // zzz854 (AI verification): the "Claims awaiting verification" list IS the awaiting-verification list (one concept). Each claim is checked
 // against the AI verifier's cached verdicts (lib/ai-verify): it carries aiVerification { status, reason, reasonText }; unchecked claims are

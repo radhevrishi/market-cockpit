@@ -23,9 +23,9 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import type {
-  RunStatus, VerificationSummary, VerifyBasis, VerifyClaim, VerifyExtracted, VerifyStatus, VerifyVerdict,
+  LocatedDoc, RunStatus, VerificationSummary, VerifyBasis, VerifyClaim, VerifyExtracted, VerifyStatus, VerifyVerdict,
 } from './ai-verify-types';
-import { partitionByVerification, isPrimaryHostUrl, guidanceEventToClaim, specSitToClaim, overlayEventVerification, universeRecordToClaim, type OverlayStats } from './ai-verify-gate';
+import { partitionByVerification, isPrimaryHostUrl, guidanceEventToClaim, specSitToClaim, overlayEventVerification, universeRecordToClaim, withLocated, type OverlayStats } from './ai-verify-gate';
 import type { GateResult, AwaitingRow, RemovedRow } from './ai-verify-types';
 
 export const AI_VERIFY_VERSION = 'v1';
@@ -34,6 +34,11 @@ export const QUEUE_KEY = `ai-verify:${AI_VERIFY_VERSION}:queue`;
 export const STATUS_KEY = `ai-verify:${AI_VERIFY_VERSION}:status`;
 export const LOCK_KEY = `ai-verify:${AI_VERIFY_VERSION}:lock`;
 export const verdictKey = (claimId: string) => `${VERDICT_PREFIX}${claimId}`;
+/** zzz856: the located primary document of a claim that carried none (or what was searched) */
+export const LOCATED_PREFIX = `ai-verify:${AI_VERIFY_VERSION}:doc:`;
+export const locatedKey = (claimId: string) => `${LOCATED_PREFIX}${claimId}`;
+/** zzz856: small queue summary (length / with document / to locate) so list routes never read the whole queue blob */
+export const QUEUE_META_KEY = `ai-verify:${AI_VERIFY_VERSION}:queue-meta`;
 
 const DAY_S = 86_400;
 export const TTL_FINAL_S = 30 * DAY_S;          // confirmed / contradicted
@@ -42,11 +47,46 @@ export const TTL_NO_PRIMARY_S = 1 * DAY_S;      // a primary link may appear on 
 const BACKOFF_BASE_S = 2 * 3600;                // unreadable / error: 2h, 4h, 8h … capped at 48h
 const BACKOFF_MAX_S = 48 * 3600;
 export const QUEUE_MAX = 1000;
+/** the queue is one KV value: kept under this many JSON characters (lowest priority dropped first; re-enqueued by the next page view) */
+export const QUEUE_MAX_CHARS = 900_000;
 export const QUOTE_MAX = 200;
+export const TTL_LOCATED_S = 14 * DAY_S;        // a matched document does not move
+export const TTL_LOCATE_NONE_S = 1 * DAY_S;     // none found: look again tomorrow (new filings, fresher scrape)
 
 const envNum = (k: string, d: number) => { const v = Number(process.env[k]); return Number.isFinite(v) && v > 0 ? v : d; };
-export const runMaxClaims = () => Math.min(100, Math.round(envNum('AI_VERIFY_RUN_MAX_CLAIMS', 15)));
-export const runMaxUsd = () => envNum('AI_VERIFY_RUN_MAX_USD', 0.5);
+/** zzz856: 40 claims and $0.60 per run (was 15 / $0.50), hourly (was every 2 h). The monthly cap (AI_MONTHLY_CAP_USD) still binds. */
+export const runMaxClaims = () => Math.min(100, Math.round(envNum('AI_VERIFY_RUN_MAX_CLAIMS', 40)));
+export const runMaxUsd = () => envNum('AI_VERIFY_RUN_MAX_USD', 0.6);
+/** parallel claims per run (each = one document fetch + one model call) */
+export const runConcurrency = () => Math.max(1, Math.min(8, Math.round(envNum('AI_VERIFY_CONCURRENCY', 3))));
+/** one request's working time: the run stops starting claims in time to answer inside the platform's request limit, and continues next run */
+export const runBudgetMs = () => Math.max(10_000, Math.min(55_000, Math.round(envNum('AI_VERIFY_RUN_BUDGET_MS', 48_000))));
+/** document searches against SEC per run (India matching is in memory and unbounded) */
+export const runLocateMax = () => Math.max(1, Math.min(400, Math.round(envNum('AI_VERIFY_LOCATE_MAX', 120))));
+
+/** zzz856: the verifier workflow schedule (.github/workflows/ai-verify.yml — keep in sync; a test checks it). UTC. */
+export const AI_VERIFY_SCHEDULE = '35 * * * *';
+
+function cronFieldMatches(field: string, v: number): boolean {
+  return field.split(',').some((part) => {
+    const p = part.trim();
+    if (p === '*') return true;
+    const step = p.match(/^\*\/(\d+)$/); if (step) return v % Number(step[1]) === 0;
+    const range = p.match(/^(\d+)-(\d+)(?:\/(\d+))?$/); if (range) { const a = +range[1], b = +range[2], st = +(range[3] || 1); return v >= a && v <= b && (v - a) % st === 0; }
+    return /^\d+$/.test(p) && Number(p) === v;
+  });
+}
+/** Next time a 5-field cron (UTC) fires after `now`. null when it does not fire within 8 days or the expression is not understood. */
+export function nextCronRun(expr: string, now: Date): Date | null {
+  const f = String(expr || '').trim().split(/\s+/);
+  if (f.length !== 5) return null;
+  const t = new Date(Math.floor(now.getTime() / 60_000) * 60_000 + 60_000);
+  for (let i = 0; i < 8 * 24 * 60; i++) {
+    if (cronFieldMatches(f[0], t.getUTCMinutes()) && cronFieldMatches(f[1], t.getUTCHours()) && cronFieldMatches(f[2], t.getUTCDate()) && cronFieldMatches(f[3], t.getUTCMonth() + 1) && cronFieldMatches(f[4], t.getUTCDay())) return t;
+    t.setTime(t.getTime() + 60_000);
+  }
+  return null;
+}
 export const maxDocChars = () => Math.min(200_000, Math.round(envNum('AI_VERIFY_MAX_DOC_CHARS', 40_000)));
 export const gateMode = (): 'enforce' | 'report' => (String(process.env.AI_VERIFY_GATE || '').toLowerCase() === 'report' ? 'report' : 'enforce');
 
@@ -303,8 +343,10 @@ export interface KvIo {
 }
 export interface Availability { available: boolean; reason: string | null; provider: string; model: string | null }
 export interface VerifyDeps {
-  fetchDoc(url: string, claim: VerifyClaim): Promise<FetchedDoc>;
-  callModel(req: { system: string; user: string; maxTokens: number }): Promise<ModelCallResult>;
+  fetchDoc(url: string, claim: VerifyClaim, timeoutMs?: number): Promise<FetchedDoc>;
+  callModel(req: { system: string; user: string; maxTokens: number; timeoutMs?: number }): Promise<ModelCallResult>;
+  /** zzz856: look for the primary document of claims that carry none. A claim missing from the result was not searched (retried next run). */
+  locate?(claims: VerifyClaim[], o: { deadline: number; maxUs: number }): Promise<Map<string, LocatedDoc>>;
   kv: KvIo;
   availability(): Promise<Availability>;
   now?: () => Date;
@@ -328,8 +370,12 @@ export function isAllowedDocUrl(url: string): boolean {
 
 // ── one claim ───────────────────────────────────────────────────────────────
 
-export async function verifyClaim(claim: VerifyClaim, deps: VerifyDeps, prevAttempts = 0): Promise<VerifyVerdict & { stop?: 'cap' | 'unavailable' }> {
+export async function verifyClaim(claim: VerifyClaim, deps: VerifyDeps, prevAttempts = 0, opts: { timeoutMs?: number } = {}): Promise<VerifyVerdict & { stop?: 'cap' | 'unavailable' }> {
   const now = (deps.now || (() => new Date()))();
+  // zzz856: the whole check fits the time the run has left (document ≤ 15 s, model ≤ 45 s, both shortened near the end of a run)
+  const tStart = Date.now();
+  const total = Math.max(5_000, opts.timeoutMs ?? 60_000);
+  const fetchTimeout = Math.max(3_000, Math.min(15_000, Math.round(total * 0.35)));
   const base = (status: VerifyStatus, reason: string, extra: Partial<VerifyVerdict> = {}): VerifyVerdict => ({
     claimId: claim.claimId, status, reason: redact(reason, 300), documentUrl: claim.primaryUrl, provider: null, model: null, checkedAt: now.toISOString(), attempts: prevAttempts + 1, ...extra,
   });
@@ -338,11 +384,12 @@ export async function verifyClaim(claim: VerifyClaim, deps: VerifyDeps, prevAtte
   const av = await deps.availability();
   if (!av.available) return { ...base('verification_unavailable', av.reason || 'AI verification unavailable'), stop: 'unavailable' };
   let doc: FetchedDoc;
-  try { doc = await deps.fetchDoc(claim.primaryUrl, claim); } catch (e: any) { doc = { text: '', failure: redact(e?.message || 'fetch failed') }; }
+  try { doc = await deps.fetchDoc(claim.primaryUrl, claim, fetchTimeout); } catch (e: any) { doc = { text: '', failure: redact(e?.message || 'fetch failed') }; }
   if (doc.failure || !doc.text || doc.text.trim().length < 80) return base('unreadable', doc.failure || 'no readable text in the document', { provider: av.provider, model: av.model });
   const excerpt = selectExcerpt(doc.text, claim);
   const nonce = (deps.nonce || (() => Math.random().toString(36).slice(2, 10)))();
-  const res = await deps.callModel({ system: SYSTEM_PROMPT, user: buildUserPrompt(claim, excerpt, nonce), maxTokens: 600 });
+  const modelTimeout = Math.max(3_000, Math.min(45_000, total - (Date.now() - tStart) - 1_000));
+  const res = await deps.callModel({ system: SYSTEM_PROMPT, user: buildUserPrompt(claim, excerpt, nonce), maxTokens: 600, timeoutMs: modelTimeout });
   if (!res.ok) {
     if (res.kind === 'spend_cap') return { ...base('verification_unavailable', res.message || 'monthly AI cap reached', { provider: av.provider, model: av.model }), stop: 'cap' };
     if (res.kind === 'no_key') return { ...base('verification_unavailable', res.message || 'no API key configured', { provider: av.provider, model: av.model }), stop: 'unavailable' };
@@ -411,107 +458,267 @@ export async function writeVerdict(v: VerifyVerdict, kv: KvIo): Promise<void> {
 
 export interface QueueItem { claim: VerifyClaim; addedAt: string; priority: number }
 export interface QueueState { items: QueueItem[]; updatedAt: string | null }
+export interface QueueMeta { length: number; withPrimary: number; toLocate: number; byTier: Record<string, number>; updatedAt: string }
 
 export async function readQueue(kv: KvIo): Promise<QueueState> {
   const q = await kv.get<QueueState>(QUEUE_KEY).catch(() => null);
   return q && Array.isArray(q.items) ? q : { items: [], updatedAt: null };
 }
 
-/** Merge claims into the queue (dedupe by claimId, newest first, bounded). Guidance claims with a primary link go first. */
+/** zzz856: queue order = tier (Tier 1 → Tier 2 / guidance → Watchlist → other), then the newer event, then the newer entry. */
+export function priorityOf(c: VerifyClaim): number {
+  return typeof c.priorityTier === 'number' ? c.priorityTier : c.kind === 'guidance' ? 2 : 0;
+}
+const dateKey = (c: VerifyClaim): string => { const t = c.eventDate ? Date.parse(c.eventDate) : NaN; return Number.isFinite(t) ? new Date(t).toISOString() : ''; };
+export function compareQueueItems(a: QueueItem, b: QueueItem): number {
+  return b.priority - a.priority || dateKey(b.claim).localeCompare(dateKey(a.claim)) || b.addedAt.localeCompare(a.addedAt);
+}
+const eventKey = (c: VerifyClaim) => `${c.kind}|${c.refId}`;
+
+/** Keep one item per event (kind + refId): the newest claim wins (a re-built event gets a new claim id; the old one is dropped). */
+export function dedupeQueueItems(items: QueueItem[]): QueueItem[] {
+  const byEvent = new Map<string, QueueItem>(); const byId = new Set<string>();
+  for (const it of items) {
+    if (!it?.claim?.claimId || byId.has(it.claim.claimId)) continue;
+    byId.add(it.claim.claimId);
+    const k = eventKey(it.claim); const prev = byEvent.get(k);
+    if (!prev || it.addedAt > prev.addedAt) byEvent.set(k, it);
+  }
+  return Array.from(byEvent.values());
+}
+
+/** Bound the queue by count and by stored size, dropping the lowest priority first. */
+function boundQueue(items: QueueItem[]): QueueItem[] {
+  let out = items.slice().sort(compareQueueItems).slice(0, QUEUE_MAX);
+  let size = JSON.stringify(out).length;
+  while (size > QUEUE_MAX_CHARS && out.length > 1) { out = out.slice(0, Math.floor(out.length * 0.9)); size = JSON.stringify(out).length; }
+  return out;
+}
+
+/** Merge claims into the queue: one item per event (newest claim wins), ordered by tier then recency, bounded. */
 export function mergeQueue(q: QueueState, claims: VerifyClaim[], now: Date): { queue: QueueState; added: number } {
   const have = new Set(q.items.map((x) => x.claim.claimId));
   const fresh: QueueItem[] = [];
+  const nowIso = now.toISOString();
   for (const c of claims) {
     if (!c || have.has(c.claimId)) continue;
     have.add(c.claimId);
-    fresh.push({ claim: c, addedAt: now.toISOString(), priority: (c.primaryUrl ? 2 : 0) + (c.kind === 'guidance' ? 1 : 0) });
+    fresh.push({ claim: slimClaim(c), addedAt: nowIso, priority: priorityOf(c) });
   }
   if (!fresh.length) return { queue: q, added: 0 };
-  const items = [...fresh, ...q.items].slice(0, QUEUE_MAX);
-  return { queue: { items, updatedAt: now.toISOString() }, added: fresh.length };
+  const freshEvents = new Set(fresh.map((x) => eventKey(x.claim)));
+  const items = boundQueue(dedupeQueueItems([...fresh, ...q.items.filter((x) => !freshEvents.has(eventKey(x.claim)))]));
+  const keptFresh = items.filter((x) => x.addedAt === nowIso && fresh.includes(x)).length;
+  return { queue: { items, updatedAt: nowIso }, added: keptFresh };
+}
+
+/** Stored claims are trimmed (the queue is one KV value): the claim text, the event text the locator matches on, long links. */
+function slimClaim(c: VerifyClaim): VerifyClaim {
+  return {
+    ...c, claimText: c.claimText.slice(0, 300), company: c.company.slice(0, 100), sourceUrl: c.sourceUrl ? c.sourceUrl.slice(0, 300) : c.sourceUrl,
+    primaryDetail: c.primaryUrl && c.primaryDetail ? c.primaryDetail.slice(0, 240) : null,
+    locateHints: c.locateHints ? { ...c.locateHints, text: c.locateHints.text.slice(0, 240), names: c.locateHints.names.slice(0, 3).map((n) => n.slice(0, 80)), tickers: c.locateHints.tickers.slice(0, 4) } : c.locateHints ?? null,
+  };
+}
+
+export function queueMetaOf(q: QueueState, now: Date): QueueMeta {
+  const byTier: Record<string, number> = {};
+  let withPrimary = 0; let toLocate = 0;
+  for (const it of q.items) {
+    const t = String(it.priority); byTier[t] = (byTier[t] || 0) + 1;
+    if (it.claim.primaryUrl) withPrimary++; else if (it.claim.locateHints) toLocate++;
+  }
+  return { length: q.items.length, withPrimary, toLocate, byTier, updatedAt: now.toISOString() };
+}
+async function writeQueue(kv: KvIo, q: QueueState, now: Date): Promise<void> {
+  await kv.set(QUEUE_KEY, q, 14 * DAY_S).catch(() => undefined);
+  await kv.set(QUEUE_META_KEY, queueMetaOf(q, now), 14 * DAY_S).catch(() => undefined);
+}
+export async function readQueueMeta(kv: KvIo): Promise<QueueMeta | null> {
+  const m = await kv.get<QueueMeta>(QUEUE_META_KEY).catch(() => null);
+  return m && typeof m.length === 'number' ? m : null;
 }
 
 const recentEnqueue = new Map<string, number>();
-/** Called by the list routes: bounded, throttled (the same claim set is not re-written within a minute), never throws. */
+/** zzz856: the same claim set is merged at most once per 10 minutes per server (the queue is a ~1 MB value; a page view must not re-read it every minute). */
+const ENQUEUE_THROTTLE_MS = 10 * 60_000;
+/** Called by the list routes: bounded, throttled, never throws. Writes only when a claim really enters the queue (a claim trimmed by priority is not a change). */
 export async function enqueueClaims(claims: VerifyClaim[], kv: KvIo, now = new Date(), opts: { force?: boolean } = {}): Promise<number> {
   if (!claims.length) return 0;
   const sig = claims.map((c) => c.claimId).sort().join(',');
   const last = recentEnqueue.get(sig) ?? 0;
-  if (!opts.force && Date.now() - last < 60_000) return 0;
+  if (!opts.force && Date.now() - last < ENQUEUE_THROTTLE_MS) return 0;
   recentEnqueue.set(sig, Date.now());
   if (recentEnqueue.size > 200) recentEnqueue.delete(recentEnqueue.keys().next().value as string);
   try {
     const q = await readQueue(kv);
     const r = mergeQueue(q, claims, now);
-    if (r.added) await kv.set(QUEUE_KEY, r.queue, 14 * DAY_S);
+    if (r.added) await writeQueue(kv, r.queue, now);
     return r.added;
   } catch { return 0; }
 }
 
+// ── located documents (zzz856) ──────────────────────────────────────────────
+
+let locatedMemo: { at: number; map: Map<string, LocatedDoc | null> } | null = null;
+export function clearLocatedMemo(): void { locatedMemo = null; }
+
+/** Located-document records for these claim ids (KV, chunked, memoised like verdicts). */
+export async function readLocated(ids: string[], kv: KvIo, opts: { memo?: boolean } = {}): Promise<Map<string, LocatedDoc>> {
+  const out = new Map<string, LocatedDoc>();
+  const useMemo = opts.memo !== false;
+  const fresh = useMemo && locatedMemo && Date.now() - locatedMemo.at < VERDICT_MEMO_MS;
+  const need: string[] = [];
+  for (const id of Array.from(new Set(ids))) {
+    if (fresh && locatedMemo!.map.has(id)) { const hit = locatedMemo!.map.get(id); if (hit) out.set(id, hit); }
+    else need.push(id);
+  }
+  for (let i = 0; i < need.length; i += 100) {
+    const chunk = need.slice(i, i + 100);
+    const vals = await kv.mget<LocatedDoc>(chunk.map(locatedKey));
+    chunk.forEach((id, j) => { const v = vals[j]; if (v && typeof v === 'object' && v.claimId === id) out.set(id, v); });
+  }
+  if (useMemo) {
+    if (!fresh) locatedMemo = { at: Date.now(), map: new Map() };
+    for (const id of need) locatedMemo!.map.set(id, out.get(id) ?? null);
+    if (locatedMemo!.map.size > 20_000) locatedMemo = null;
+  }
+  return out;
+}
+
+/** "None found" is looked at again tomorrow for a recent event, in a week for an event more than a week old (no new filing will appear for it). */
+export function locatedTtlFor(d: LocatedDoc, eventDate?: string | null, now = Date.now()): number {
+  if (d.found) return TTL_LOCATED_S;
+  const t = eventDate ? Date.parse(eventDate) : NaN;
+  return Number.isFinite(t) && now - t > 7 * DAY_S * 1000 ? 7 * DAY_S : TTL_LOCATE_NONE_S;
+}
+export async function writeLocated(d: LocatedDoc, kv: KvIo, eventDate?: string | null): Promise<void> {
+  await kv.set(locatedKey(d.claimId), d, locatedTtlFor(d, eventDate)).catch(() => undefined);
+  if (locatedMemo) locatedMemo.map.set(d.claimId, d);
+}
+
 // ── the batch run (cron) ────────────────────────────────────────────────────
 
-export interface RunOpts { limit?: number; maxUsd?: number; budgetMs?: number; extraClaims?: VerifyClaim[] }
+export interface RunOpts { limit?: number; maxUsd?: number; budgetMs?: number; extraClaims?: VerifyClaim[]; concurrency?: number; locateMax?: number }
 
+const FINAL_STATUSES = new Set(['confirmed', 'contradicted', 'not_found', 'no_primary']);
+
+/**
+ * One verification run (cron). zzz856:
+ *   1. the queue is deduped per event and ordered Tier 1 → Tier 2 / guidance → Watchlist, newer events first;
+ *   2. claims with no document get one looked up first (free: exchange announcements / EDGAR by CIK); found → read next,
+ *      none → leaves the queue with the search recorded, not searchable now (data not loaded / out of time) → stays queued;
+ *   3. up to `concurrency` claims are checked at once; a claim is started only while the run's time budget leaves room for it,
+ *      so the request answers inside the platform limit and the rest continues on the next run (stoppedBy 'time').
+ */
 export async function runVerification(deps: VerifyDeps, o: RunOpts = {}): Promise<NonNullable<RunStatus['lastRun']>> {
   const nowFn = deps.now || (() => new Date());
   const t0 = Date.now();
   const limit = Math.max(1, Math.min(100, o.limit ?? runMaxClaims()));
   const maxUsd = o.maxUsd ?? runMaxUsd();
   const budgetMs = o.budgetMs ?? 50_000;
+  const deadline = t0 + budgetMs;
+  const minStartMs = Math.min(12_000, Math.max(1_000, Math.round(budgetMs / 4)));
+  const concurrency = Math.max(1, Math.min(8, o.concurrency ?? 1));
   const log = deps.log || (() => {});
   const av = await deps.availability();
   const stat: NonNullable<RunStatus['lastRun']> = {
     at: nowFn().toISOString(), available: av.available, unavailableReason: av.reason, provider: av.provider, model: av.model,
     queueBefore: 0, queueAfter: 0, checked: 0, confirmed: 0, contradicted: 0, notFound: 0, unreadable: 0, noPrimary: 0, errors: 0, cacheHits: 0, spentUsd: 0, stoppedBy: 'done',
+    located: 0, locateNone: 0, locateDeferred: 0, elapsedMs: 0,
   };
   // one run at a time (two runs would pay twice for the same claims)
   if (deps.kv.setNX) {
-    const got = await deps.kv.setNX(LOCK_KEY, { at: stat.at }, 180).catch(() => true);
+    const got = await deps.kv.setNX(LOCK_KEY, { at: stat.at }, Math.ceil(budgetMs / 1000) + 90).catch(() => true);
     if (!got) { stat.stoppedBy = 'locked'; return stat; }
   }
   try {
     let q = await readQueue(deps.kv);
     if (o.extraClaims?.length) q = mergeQueue(q, o.extraClaims, nowFn()).queue;
+    q = { ...q, items: dedupeQueueItems(q.items) };
     stat.queueBefore = q.items.length;
-    if (!av.available) { stat.stoppedBy = 'unavailable'; stat.queueAfter = q.items.length; await writeStatus(deps.kv, stat); return stat; }
-    const ordered = q.items.slice().sort((a, b) => b.priority - a.priority || b.addedAt.localeCompare(a.addedAt));
+    const ordered = q.items.slice().sort(compareQueueItems);
     const cached = await readVerdicts(ordered.map((x) => x.claim.claimId), deps.kv, { memo: false });
     const done = new Set<string>();
-    let calls = 0;
-    for (const it of ordered) {
-      const c = it.claim;
-      const prev = cached.get(c.claimId);
-      const nowIso = nowFn().toISOString();
-      if (prev && (prev.status === 'confirmed' || prev.status === 'contradicted' || prev.status === 'not_found' || prev.status === 'no_primary')) { stat.cacheHits++; done.add(c.claimId); continue; }
-      if (prev && prev.retryAfter && prev.retryAfter > nowIso) { stat.cacheHits++; continue; }   // backing off; stays queued
-      if (!c.primaryUrl) { stat.noPrimary++; done.add(c.claimId); continue; }   // nothing to read; the gate shows it as 'no primary document'
-      if (calls >= limit) { stat.stoppedBy = 'limit'; break; }
-      if (stat.spentUsd >= maxUsd) { stat.stoppedBy = 'budget_usd'; break; }
-      if (Date.now() - t0 > budgetMs) { stat.stoppedBy = 'time'; break; }
-      calls++;
-      const v = await verifyClaim(c, deps, prev?.attempts || 0);
-      stat.spentUsd += v.costUsd || 0;
-      if (v.stop === 'cap' || v.stop === 'unavailable') { stat.stoppedBy = v.stop === 'cap' ? 'cap' : 'unavailable'; stat.available = false; stat.unavailableReason = v.reason; break; }
-      stat.checked++;
-      if (v.status === 'confirmed') stat.confirmed++;
-      else if (v.status === 'contradicted') stat.contradicted++;
-      else if (v.status === 'not_found') stat.notFound++;
-      else if (v.status === 'unreadable') stat.unreadable++;
-      else if (v.status === 'no_primary') stat.noPrimary++;
-      else stat.errors++;
-      const { stop: _s, ...store } = v;
-      await deps.kv.set(verdictKey(c.claimId), { ...store, retryAfter: retryAfterOf(store) }, ttlFor(store)).catch(() => undefined);
-      if (verdictMemo) verdictMemo.map.set(c.claimId, { ...store, retryAfter: retryAfterOf(store) });
-      if (store.status !== 'unreadable' && store.status !== 'error') done.add(c.claimId);
-      // a failure that has been retried 5 times leaves the queue (its verdict still holds it in "awaiting")
-      if ((store.status === 'unreadable' || store.status === 'error') && store.attempts >= 5) done.add(c.claimId);
+
+    // ── 1. document search for claims that carry none (no AI cost; runs even when the AI is unavailable) ──
+    const needDoc = ordered.filter((it) => !it.claim.primaryUrl && it.claim.locateHints && !FINAL_STATUSES.has(cached.get(it.claim.claimId)?.status || ''));
+    if (needDoc.length) {
+      const known = await readLocated(needDoc.map((x) => x.claim.claimId), deps.kv, { memo: false }).catch(() => new Map<string, LocatedDoc>());
+      const unknown = needDoc.filter((x) => !known.has(x.claim.claimId)).map((x) => x.claim);
+      let found = new Map<string, LocatedDoc>();
+      if (deps.locate && unknown.length) {
+        found = await deps.locate(unknown, { deadline: t0 + Math.round(budgetMs * 0.35), maxUs: o.locateMax ?? runLocateMax() }).catch(() => new Map<string, LocatedDoc>());
+        const dateOf = new Map(unknown.map((c) => [c.claimId, c.eventDate ?? null]));
+        const recs = Array.from(found.values());
+        for (let i = 0; i < recs.length; i += 25) await Promise.all(recs.slice(i, i + 25).map((d) => writeLocated(d, deps.kv, dateOf.get(d.claimId))));
+      }
+      for (const it of needDoc) {
+        const rec = known.get(it.claim.claimId) || found.get(it.claim.claimId);
+        if (rec?.found && rec.url) { it.claim = withLocated(it.claim, rec); stat.located!++; }
+        else if (rec) { stat.locateNone!++; done.add(it.claim.claimId); }
+        else if (deps.locate) stat.locateDeferred!++;   // not searched yet (data not loaded / out of time): stays queued
+      }
     }
+
+    if (!av.available) {
+      stat.stoppedBy = 'unavailable';
+      const rest = q.items.filter((x) => !done.has(x.claim.claimId));
+      stat.queueAfter = rest.length;
+      await writeQueue(deps.kv, { items: rest, updatedAt: nowFn().toISOString() }, nowFn());
+      stat.elapsedMs = Date.now() - t0;
+      await writeStatus(deps.kv, stat);
+      return stat;
+    }
+
+    // ── 2. AI check, `concurrency` at a time, inside the time budget ──
+    let idx = 0; let calls = 0; let stop: NonNullable<RunStatus['lastRun']>['stoppedBy'] | null = null;
+    const next = (): QueueItem | null => (stop || idx >= ordered.length ? null : ordered[idx++]);
+    const worker = async (): Promise<void> => {
+      for (let it = next(); it; it = next()) {
+        const c = it.claim;
+        const prev = cached.get(c.claimId);
+        const nowIso = nowFn().toISOString();
+        if (prev && FINAL_STATUSES.has(prev.status)) { stat.cacheHits++; done.add(c.claimId); continue; }
+        if (prev && prev.retryAfter && prev.retryAfter > nowIso) { stat.cacheHits++; continue; }   // backing off; stays queued
+        if (!c.primaryUrl) {
+          // searchable later (not searched yet) → stays queued; nothing to search → leaves the queue as 'no primary document'
+          if (c.locateHints && deps.locate && !done.has(c.claimId)) continue;
+          if (!done.has(c.claimId)) stat.noPrimary++;
+          done.add(c.claimId); continue;
+        }
+        if (calls >= limit) { stop = stop || 'limit'; return; }
+        if (stat.spentUsd >= maxUsd) { stop = stop || 'budget_usd'; return; }
+        const remaining = deadline - Date.now();
+        if (remaining < minStartMs) { stop = stop || 'time'; return; }
+        calls++;
+        const v = await verifyClaim(c, deps, prev?.attempts || 0, { timeoutMs: remaining - 1_000 });
+        stat.spentUsd += v.costUsd || 0;
+        if (v.stop === 'cap' || v.stop === 'unavailable') { stop = v.stop === 'cap' ? 'cap' : 'unavailable'; stat.available = false; stat.unavailableReason = v.reason; return; }
+        stat.checked++;
+        if (v.status === 'confirmed') stat.confirmed++;
+        else if (v.status === 'contradicted') stat.contradicted++;
+        else if (v.status === 'not_found') stat.notFound++;
+        else if (v.status === 'unreadable') stat.unreadable++;
+        else if (v.status === 'no_primary') stat.noPrimary++;
+        else stat.errors++;
+        const { stop: _s, ...store } = v;
+        await deps.kv.set(verdictKey(c.claimId), { ...store, retryAfter: retryAfterOf(store) }, ttlFor(store)).catch(() => undefined);
+        if (verdictMemo) verdictMemo.map.set(c.claimId, { ...store, retryAfter: retryAfterOf(store) });
+        if (store.status !== 'unreadable' && store.status !== 'error') done.add(c.claimId);
+        // a failure that has been retried 5 times leaves the queue (its verdict still holds it in "awaiting")
+        if ((store.status === 'unreadable' || store.status === 'error') && store.attempts >= 5) done.add(c.claimId);
+      }
+    };
+    await Promise.all(Array.from({ length: concurrency }, () => worker()));
+    if (stop) stat.stoppedBy = stop;
     const rest = q.items.filter((x) => !done.has(x.claim.claimId));
     stat.queueAfter = rest.length;
-    await deps.kv.set(QUEUE_KEY, { items: rest, updatedAt: nowFn().toISOString() }, 14 * DAY_S).catch(() => undefined);
+    await writeQueue(deps.kv, { items: rest, updatedAt: nowFn().toISOString() }, nowFn());
     stat.spentUsd = Math.round(stat.spentUsd * 10_000) / 10_000;
+    stat.elapsedMs = Date.now() - t0;
     await writeStatus(deps.kv, stat);
-    log(`[ai-verify] run: checked=${stat.checked} confirmed=${stat.confirmed} contradicted=${stat.contradicted} not_found=${stat.notFound} unreadable=${stat.unreadable} no_primary=${stat.noPrimary} errors=${stat.errors} spent=$${stat.spentUsd} stop=${stat.stoppedBy} queue=${stat.queueAfter}`);
+    log(`[ai-verify] run: checked=${stat.checked} confirmed=${stat.confirmed} contradicted=${stat.contradicted} not_found=${stat.notFound} unreadable=${stat.unreadable} no_primary=${stat.noPrimary} errors=${stat.errors} located=${stat.located} none=${stat.locateNone} deferred=${stat.locateDeferred} spent=$${stat.spentUsd} stop=${stat.stoppedBy} queue=${stat.queueAfter} ms=${stat.elapsedMs}`);
     return stat;
   } finally {
     if (deps.kv.del) await deps.kv.del(LOCK_KEY).catch(() => undefined);
@@ -560,7 +767,7 @@ async function computeAvailability(): Promise<Availability> {
   return { available: true, reason: null, provider, model };
 }
 
-export async function realCallModel(req: { system: string; user: string; maxTokens: number }): Promise<ModelCallResult> {
+export async function realCallModel(req: { system: string; user: string; maxTokens: number; timeoutMs?: number }): Promise<ModelCallResult> {
   const m = await import('./anthropic-meter');
   const requested = 'claude-haiku-4-5-20251001';
   const body = {
@@ -569,7 +776,7 @@ export async function realCallModel(req: { system: string; user: string; maxToke
     tools: [VERDICT_TOOL], tool_choice: { type: 'tool', name: VERDICT_TOOL.name },
   };
   let resp: Response;
-  try { resp = await m.anthropicMessages('ai-verify', body, { signal: AbortSignal.timeout(45_000) }); }
+  try { resp = await m.anthropicMessages('ai-verify', body, { signal: AbortSignal.timeout(Math.max(3_000, Math.min(45_000, req.timeoutMs ?? 45_000))) }); }
   catch (e: any) { return { ok: false, kind: 'error', status: 0, message: redact(e?.name === 'TimeoutError' ? 'model call timed out' : e?.message || 'model call failed') }; }
   if (!resp.ok) {
     let type = ''; let message = `HTTP ${resp.status}`;
@@ -673,8 +880,9 @@ export async function realFetchDoc(url: string, _claim?: VerifyClaim, timeoutMs 
 
 export function realDeps(): VerifyDeps {
   return {
-    fetchDoc: (u, c) => realFetchDoc(u, c),
+    fetchDoc: (u, c, t) => realFetchDoc(u, c, t ?? 15_000),
     callModel: realCallModel,
+    locate: async (claims, o) => { const l = await import('./ai-verify-locator'); return l.locateDocs(claims, l.realLocateIo(), o); },
     kv: realKv(),
     availability: realAvailability,
     log: (m) => console.log(redact(m, 400)),
@@ -683,41 +891,51 @@ export function realDeps(): VerifyDeps {
 
 // ── route integration ───────────────────────────────────────────────────────
 
-export interface GateContext { verdicts: Map<string, VerifyVerdict>; availability: Availability; lastRunAt: string | null; mode: 'enforce' | 'report' }
+export interface GateContext {
+  verdicts: Map<string, VerifyVerdict>; availability: Availability; lastRunAt: string | null; mode: 'enforce' | 'report';
+  /** zzz856: located documents for claims that carried none; queue summary; next scheduled run */
+  located?: Map<string, LocatedDoc>; queueSize?: number | null; nextRunEta?: string | null; schedule?: string | null;
+}
 
-/** Verdicts + availability for a set of claims, bounded so a slow KV never blocks a page for long. */
-export async function loadGateContext(claimIds: string[], o: { kv?: KvIo; availability?: () => Promise<Availability>; timeoutMs?: number } = {}): Promise<GateContext> {
+/** Verdicts + availability (+ located documents, queue size) for a set of claims, bounded so a slow KV never blocks a page for long. */
+export async function loadGateContext(claimIds: string[], o: { kv?: KvIo; availability?: () => Promise<Availability>; timeoutMs?: number; locateIds?: string[]; now?: Date } = {}): Promise<GateContext> {
   const kv = o.kv || realKv();
   const tmo = o.timeoutMs ?? 4_000;
   const race = <T>(p: Promise<T>, fb: T): Promise<T> => Promise.race([p.catch(() => fb), new Promise<T>((r) => setTimeout(() => r(fb), tmo))]);
-  const [verdicts, availability, status] = await Promise.all([
+  const [verdicts, availability, status, located, meta] = await Promise.all([
     race(readVerdicts(claimIds, kv), new Map<string, VerifyVerdict>()),
     race((o.availability || realAvailability)(), { available: false, reason: 'AI verification status could not be read in time.', provider: 'unknown', model: null } as Availability),
     race(readStatus(kv), { lastRunAt: null, lastRun: null } as RunStatus),
+    o.locateIds?.length ? race(readLocated(o.locateIds, kv), new Map<string, LocatedDoc>()) : Promise.resolve(new Map<string, LocatedDoc>()),
+    race(readQueueMeta(kv), null as QueueMeta | null),
   ]);
-  return { verdicts, availability, lastRunAt: status.lastRunAt, mode: gateMode() };
+  const next = nextCronRun(AI_VERIFY_SCHEDULE, o.now || new Date());
+  return { verdicts, availability, lastRunAt: status.lastRunAt, mode: gateMode(), located, queueSize: meta ? meta.length : null, nextRunEta: next ? next.toISOString() : null, schedule: AI_VERIFY_SCHEDULE };
 }
 
 export function summaryOf<T>(g: GateResult<T>, ctx: GateContext): VerificationSummary {
   return {
     provider: ctx.availability.provider, model: ctx.availability.model, available: ctx.availability.available, unavailableReason: ctx.availability.reason,
     mode: ctx.mode, lastRunAt: ctx.lastRunAt, ...g.stats,
+    nextRunEta: ctx.nextRunEta ?? null, schedule: ctx.schedule ?? AI_VERIFY_SCHEDULE, queueSize: ctx.queueSize ?? null,
   };
 }
 
-export interface GatedList<T> { kept: T[]; awaiting: AwaitingRow[]; removed: RemovedRow[]; verification: VerificationSummary; confirmedByRef: Map<string, VerifyVerdict> }
+export interface GatedList<T> { kept: T[]; awaiting: AwaitingRow[]; removed: RemovedRow[]; verification: VerificationSummary; confirmedByRef: Map<string, VerifyVerdict>; locatedByRef: Map<string, LocatedDoc> }
 
-/** Gate a list with a claim builder; enqueue what still needs checking. Never throws: on failure everything waits (never a silent pass). */
+/** Gate a list with a claim builder; enqueue what still needs checking (and what still needs a document looked up). Never throws: on failure everything waits (never a silent pass). */
 export async function gateList<T>(items: T[], claimOf: (x: T) => VerifyClaim | null, o: { kv?: KvIo; availability?: () => Promise<Availability>; enqueue?: boolean; now?: Date; timeoutMs?: number } = {}): Promise<GatedList<T>> {
   const claims: VerifyClaim[] = [];
   for (const it of items) { try { const c = claimOf(it); if (c) claims.push(c); } catch { /* counted by the gate */ } }
-  const ctx = await loadGateContext(claims.map((c) => c.claimId), { kv: o.kv, availability: o.availability, timeoutMs: o.timeoutMs });
-  const g = partitionByVerification(items, { claimOf, verdicts: ctx.verdicts, available: ctx.availability.available, unavailableReason: ctx.availability.reason, mode: ctx.mode });
-  if (o.enqueue !== false && g.pending.length) {
+  const locateIds = claims.filter((c) => !c.primaryUrl && c.locateHints).map((c) => c.claimId);
+  const ctx = await loadGateContext(claims.map((c) => c.claimId), { kv: o.kv, availability: o.availability, timeoutMs: o.timeoutMs, locateIds, now: o.now });
+  const g = partitionByVerification(items, { claimOf, verdicts: ctx.verdicts, available: ctx.availability.available, unavailableReason: ctx.availability.reason, mode: ctx.mode, located: ctx.located || new Map() });
+  const toQueue = [...g.pending, ...g.toLocate];
+  if (o.enqueue !== false && toQueue.length) {
     const tmo = o.timeoutMs ?? 4_000;
-    await Promise.race([enqueueClaims(g.pending, o.kv || realKv(), o.now || new Date()).catch(() => 0), new Promise((r) => setTimeout(r, tmo))]);
+    await Promise.race([enqueueClaims(toQueue, o.kv || realKv(), o.now || new Date()).catch(() => 0), new Promise((r) => setTimeout(r, tmo))]);
   }
-  return { kept: g.kept, awaiting: g.awaiting, removed: g.removed, verification: summaryOf(g, ctx), confirmedByRef: g.confirmedByRef };
+  return { kept: g.kept, awaiting: g.awaiting, removed: g.removed, verification: summaryOf(g, ctx), confirmedByRef: g.confirmedByRef, locatedByRef: g.locatedByRef };
 }
 
 export const gateGuidanceEvents = <T>(events: T[], o: Parameters<typeof gateList>[2] = {}) => gateList(events, (e) => guidanceEventToClaim(e), o);

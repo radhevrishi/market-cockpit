@@ -937,7 +937,14 @@ async function applyVerificationGate(data: any): Promise<any> {
   const heldOut = all.length - candidates.length;
   const g = await gateSpecialSituations(candidates, { timeoutMs: 3_000 }).catch(() => null);
   const kept: any[] = g
-    ? g.kept.map((e: any) => { const ai = aiVerificationOf(g.confirmedByRef.get(String(e?.event_id))); return ai ? { ...e, aiVerification: ai } : e; })
+    ? g.kept.map((e: any) => {
+      const id = String(e?.event_id);
+      const ai = aiVerificationOf(g.confirmedByRef.get(id));
+      // zzz856: the company document the locator matched to this event (exchange announcement / EDGAR filing) and how
+      const loc = g.locatedByRef.get(id);
+      const doc = loc?.found ? { primaryDocument: { url: loc.url, how: loc.how, detail: loc.detail, filedAt: loc.filingDate, primaryVerifiedFrom: ai ? 'AI_CONFIRMED' : 'EXCHANGE_ANNOUNCEMENT_TERMS' } } : null;
+      return ai || doc ? { ...e, ...(ai ? { aiVerification: ai } : {}), ...(doc || {}) } : e;
+    })
     : candidates.filter((e) => isSpecSitPrimaryVerified(e));   // the gate failed: primary-verified only, never a silent pass
   const keptLinks = new Set<string>();
   for (const e of kept) { if (e?.primary_filing?.link) keptLinks.add(e.primary_filing.link); for (const f of e?.filings || []) if (f?.link) keptLinks.add(f.link); }
@@ -968,7 +975,8 @@ async function applyVerificationGate(data: any): Promise<any> {
   if (!gated) for (const e of kept) if (e?.tier && e.tier in byTier) byTier[e.tier] += 1;
   const coverageShown = gated ? COVERAGE_DEFS.map((b) => ({ ...b, count: gated!.countModel.shown_by_coverage[b.bucket] || 0 })) : data?.coverage_diagnostic;
   const verification = g?.verification ?? { provider: 'unknown', model: null, available: false, unavailableReason: 'The verification gate could not run; only primary-verified events are shown.', mode: 'enforce',
-    primaryVerified: kept.length, checked: 0, confirmed: 0, contradicted: 0, awaiting: candidates.length - kept.length, awaitingByReason: {}, lastRunAt: null };
+    primaryVerified: kept.length, checked: 0, confirmed: 0, contradicted: 0, awaiting: candidates.length - kept.length, awaitingByReason: {}, lastRunAt: null,
+    nextRunEta: null, schedule: null, queueSize: null, primaryDocument: undefined };
   return {
     ...data,
     // held-back events stay in `events` WITH their quarantine / exclusion flags (the Radar turns them into its "N held back" line and

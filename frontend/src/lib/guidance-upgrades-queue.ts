@@ -18,6 +18,7 @@
 import type { GuCandidate, GuQueueItem, GuQueuePriority, GuQueueReport, GuQueueStatus } from './guidance-upgrades-types';
 import { extractGuidance } from './guidance-upgrades';
 import { runBounded } from './guidance-upgrades-scan';
+import { guidanceDocIdOf, parseSecFilingIndexUrl } from './us-edgar-backfill';
 
 export const QUEUE_KEY = 'guidance-upgrades:queue:v1';
 export const QUEUE_TTL_S = 60 * 24 * 3600;
@@ -30,7 +31,14 @@ export const QUEUE_MAX_CHARS = 900_000;
  * (30D and 120D windows), so ~40-60 documents per hour: a backlog of 87 drains in about 2 hours of weekday runs (see drainEstimate).
  */
 export const MAX_DOCS_PER_RUN = 30;
-export const DOC_BUDGET_MS = 18_000;
+/**
+ * zzz857: budget 18 s -> 20 s (the route still caps it at 26 s minus what it already spent). A US item now costs 2-3 SEC requests
+ * (index.json + the EX-99.1 press release, instead of the filing INDEX page, which carried no release text and always ended "numbers not
+ * found") through the shared 8 req/s gate, so ~30 US documents take ~10-12 s of gate time. Count (30) and concurrency (5) are pinned by the
+ * zzz853/zzz854 tests. The big US throughput gain is elsewhere: the GitHub EDGAR backfill hands every guidance-bearing 8-K exhibit to the
+ * AI extractor as a GuidanceDoc, so the US backlog no longer has to drain through this queue.
+ */
+export const DOC_BUDGET_MS = 20_000;
 export const QUEUE_CONCURRENCY = 5;
 /** route runs per hour that process the queue (the hourly workflow calls the events route for 30D and 120D) */
 export const QUEUE_RUNS_PER_HOUR = 2;
@@ -140,7 +148,11 @@ export function drainEstimate(waitingDocs: number, perRun = EXPECTED_DOCS_PER_RU
 }
 
 // ── documents ──────────────────────────────────────────────────────────────────────────────────────────────────────
-export interface DocFetchResult { ok: boolean; status?: number; contentType?: string | null; text: string; reason?: string }
+export interface DocFetchResult {
+  ok: boolean; status?: number; contentType?: string | null; text: string; reason?: string;
+  /** zzz857: the document actually read when it differs from the queued link (an SEC filing index resolves to its EX-99.1 press release) */
+  resolvedUrl?: string | null;
+}
 export type FetchDoc = (url: string) => Promise<DocFetchResult>;
 
 const SKIP_TYPE = /^(?:image|audio|video)\/|zip|octet-stream$/i;
@@ -237,6 +249,7 @@ export async function processQueue(q: QueueState, o: ProcessOptions): Promise<Pr
     const ex = extractFromDocument(doc.text, x);
     x.processing_status = 'DONE'; x.last_error = null; x.next_attempt = null;
     x.result = { complete: ex.complete, metrics: ex.metrics, candidate: ex.candidate, readAt: o.now.toISOString() };
+    markHandoff(x, doc, ex.complete);
     out.done++; if (ex.complete) out.complete++;
   }, { concurrency: o.concurrency ?? QUEUE_CONCURRENCY, budgetMs: o.budgetMs ?? DOC_BUDGET_MS });
   // an item that was started but did not finish inside the budget is a failed attempt (a timeout), never left in READING forever
@@ -251,6 +264,33 @@ export async function processQueue(q: QueueState, o: ProcessOptions): Promise<Pr
   out.changed = true;
   return out;
 }
+
+// ── zzz857: hand-off to the AI extractor ─────────────────────────────────────────────────────────────────────────────
+/**
+ * A document the regex engine read but could not take company + metric + period + value from ("DETECTED, NUMBERS NOT FOUND") is handed to
+ * the AI extractor (guidance-docs-types.ts). The link is the shared docId: sha1(document url).slice(0, 20), where the url is the document
+ * actually read (for SEC: the EX-99.1 exhibit, the same url the GitHub EDGAR backfill stores as GuidanceDoc.url). The extractor finds the
+ * text under guidance-docs:v1:doc:<docId> (stored by the backfill / India collectors) and writes guidance-extract:v1:<docId>.
+ * Stored on the queue item as extra optional fields (the queue value is plain JSON; GuQueueItem is unchanged).
+ */
+export interface QueueHandoff { to: 'AI_EXTRACTOR'; docId: string; docUrl: string; reason: 'NUMBERS_NOT_FOUND'; at: string }
+export type GuQueueItemX = GuQueueItem & { doc_id?: string | null; doc_url?: string | null; handoff?: QueueHandoff | null };
+function markHandoff(x: GuQueueItem, doc: DocFetchResult, complete: boolean): void {
+  const xx = x as GuQueueItemX;
+  const url = doc.resolvedUrl || x.source_url;
+  if (!url) return;
+  xx.doc_url = url; xx.doc_id = guidanceDocIdOf(url);
+  xx.handoff = complete ? null : { to: 'AI_EXTRACTOR', docId: xx.doc_id, docUrl: url, reason: 'NUMBERS_NOT_FOUND', at: x.result?.readAt || new Date().toISOString() };
+}
+export interface ExtractorHandoffRow { docId: string; docUrl: string; market: 'IN' | 'US'; ticker: string | null; company: string | null; eventDate: string; subject: string; sourceType: string }
+/** Documents read with no usable numbers, for the AI extractor (newest announcement first). */
+export function extractorHandoffs(q: QueueState, market?: 'IN' | 'US'): ExtractorHandoffRow[] {
+  return (q.items as GuQueueItemX[])
+    .filter((x) => x.processing_status === 'DONE' && !x.result?.complete && x.handoff?.to === 'AI_EXTRACTOR' && (!market || x.market === market))
+    .sort((a, b) => b.event_date.localeCompare(a.event_date))
+    .map((x) => ({ docId: x.handoff!.docId, docUrl: x.handoff!.docUrl, market: x.market, ticker: x.ticker, company: x.company, eventDate: x.event_date, subject: x.subject, sourceType: x.source_type }));
+}
+export const handedToExtractorCount = (q: QueueState, market: 'IN' | 'US'): number => extractorHandoffs(q, market).length;
 
 /** Candidates produced by documents that were read and showed company + metric + period + value (kept on later runs too). */
 export function doneCandidates(q: QueueState): GuCandidate[] {
@@ -290,6 +330,19 @@ const stripHtml = (h: string): string => h.replace(/<(script|style)[\s\S]*?<\/\1
 export function makeDefaultFetchDoc(timeoutMs = 12_000): FetchDoc {
   return async (url) => {
     try {
+      // zzz857: an SEC filing INDEX page lists documents; it carries no release text, so reading it always ended "numbers not found".
+      // Read the filing's press release (EX-99.1, ranked and verified by lib/us-guidance releaseDocument) instead.
+      const sec = parseSecFilingIndexUrl(url);
+      if (sec) {
+        const { releaseDocument, htmlToText } = await import('./us-guidance');
+        const rd = await Promise.race([
+          releaseDocument(sec.cikNum, sec.accession, url),
+          new Promise<null>((r) => setTimeout(() => r(null), timeoutMs)),
+        ]);
+        if (!rd) return { ok: false, text: '', reason: 'timeout' };
+        if (!rd.url || !rd.html) return { ok: false, text: '', reason: 'press release exhibit not found in the SEC filing' };
+        return { ok: true, status: 200, contentType: 'text/html', text: htmlToText(rd.html), resolvedUrl: rd.url };
+      }
       if (/\.pdf(?:$|[?#])/i.test(url) || /nseindia\.com\/.*\.pdf|bseindia\.com\/xml-data\/corpfiling/i.test(url)) {
         const { extractPdfText } = await import('./pdf-text-extractor');
         const r = await extractPdfText(url, { timeoutMs });

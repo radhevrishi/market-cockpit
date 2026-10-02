@@ -250,7 +250,10 @@ export function eventToRadarInput(ev: RadarFeedEvent, opts?: AdapterOptions): Ra
     eventType,
     category,
     sourceLabel: clean(pf.source) || undefined,
-    primarySource: ev.primary_source === true,
+    // zzz856: a company document matched to the event by the verifier's locator (exchange announcement / EDGAR filing) counts
+    // as the primary source once it was read (AI-confirmed) or its own text states the terms; the card can link it.
+    primarySource: ev.primary_source === true || !!(ev as any).primaryDocument?.url,
+    primaryDocument: (ev as any).primaryDocument || undefined,
     // zzz854: independence by information origin, never by outlet count. Syndicated copies, party listings and amendments are one origin.
     independentSources: Math.max(sourceOrigins.independentOrigins, 1),
     independentOrigins: Math.max(sourceOrigins.independentOrigins, 1),

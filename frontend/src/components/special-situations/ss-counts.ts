@@ -108,3 +108,71 @@ export function otherCategories(cm: CountModelIn, known?: string[] | null): stri
   const rest = Object.entries(cm.shown_by_category).filter(([k, n]) => !known.includes(k) && n0(n) > 0);
   return rest.length ? `Not in a category box: ${rest.map(([k, n]) => `${k.toLowerCase().replace(/_/g, ' ')} ${n}`).join(' · ')}.` : null;
 }
+
+// ─── zzz856: "nothing verified yet" banner, verification progress, the opt-in UNVERIFIED list ──────────────────────
+const clock = (iso: unknown): string | null => { const t = typeof iso === 'string' ? Date.parse(iso) : NaN; return Number.isFinite(t) ? `${new Date(t).toISOString().slice(11, 16)} UTC` : null; };
+type VerificationIn = (Partial<VerificationSummary> & { nextRunAt?: string | null; next_run_at?: string | null; awaitingWithPrimary?: number; awaitingNoPrimary?: number }) | null | undefined;
+
+/** Awaiting count: the verification block first, then the route's awaitingVerificationCount. Null when neither is sent. */
+export function awaitingTotal(v: VerificationIn, awaitingCount?: number | null): number | null {
+  if (num(v?.awaiting)) return v!.awaiting as number;
+  return num(awaitingCount) ? awaitingCount : null;
+}
+
+/** 'AI check: last run 14:05 UTC, next run ~14:35 UTC'. Absent fields say 'unknown'; nothing is invented. */
+export function aiRunPhrase(v: VerificationIn): string {
+  if (!v || typeof v !== 'object') return 'AI check: state unknown';
+  if (v.available === false) return `AI check: unavailable${v.unavailableReason ? ` (${String(v.unavailableReason).trim().replace(/\.$/, '')})` : ''}`;
+  const last = clock(v.lastRunAt);
+  const nextIso = v.nextRunAt ?? v.next_run_at;
+  const next = clock(nextIso);
+  return `AI check: ${last ? `last run ${last}` : v.lastRunAt === null ? 'not run yet' : 'last run unknown'}, next run ${next ? `~${next}` : 'unknown'}`;
+}
+
+/** The top banner when nothing is verified but items are waiting. Null otherwise (or when the shown count is not sent). */
+export function nothingVerifiedBanner(cm: CountModelIn, v: VerificationIn, awaitingCount?: number | null): string | null {
+  const n = awaitingTotal(v, awaitingCount);
+  if (!cm || !num(cm.shown) || cm.shown !== 0 || !n || n <= 0) return null;
+  return `Nothing verified yet. ${n} item${n === 1 ? ' is' : 's are'} waiting for the company-document check (${aiRunPhrase(v)}). They are hidden until confirmed.`;
+}
+
+/** 'Verification progress: 0 confirmed · 0 checked · 1267 awaiting (No company document to read 1239 · Not checked yet 28)'. */
+export function verificationProgressLine(v: VerificationIn, awaitingCount?: number | null): string | null {
+  if (!v || typeof v !== 'object') return null;
+  const n = awaitingTotal(v, awaitingCount);
+  let split = '';
+  if (num(v.awaitingWithPrimary) || num(v.awaitingNoPrimary)) split = ` (with a company document ${n0(v.awaitingWithPrimary)} · without ${n0(v.awaitingNoPrimary)})`;
+  else { const r = awaitingReasonCounts(null, v.awaitingByReason as Record<string, number> | undefined); if (r.length) split = ` (${r.map((x) => `${x.label} ${x.count}`).join(' · ')})`; }
+  const conf = num(v.confirmed) ? `${v.confirmed} confirmed by the AI check` : 'confirmed unknown';
+  const prim = num(v.primaryVerified) ? ` · ${v.primaryVerified} confirmed by the filing itself` : '';
+  return `Verification progress: ${conf}${prim} · ${num(v.checked) ? v.checked : 'unknown'} checked · ${n ?? 'unknown'} awaiting${split}`;
+}
+
+export interface UnverifiedEventIn {
+  event_id?: string; quarantine_reason?: string | null; tier_before_hold?: string | null; category_before_hold?: string | null; target_name?: string | null;
+  region?: string; event_type?: string; tickers?: string[]; primary_filing?: { title?: string; link?: string; source?: string; pub_date?: string } | null;
+}
+export interface UnverifiedCard { id: string; company: string; headline: string; reason: string; link: string | null; region: string | null; tierBefore: string | null }
+const TIER_ORDER: Record<string, number> = { TIER_1: 0, TIER_2: 1, WATCHLIST: 2, NOISE: 3 };
+/** Events held back only because they await verification, sorted by their tier before the hold. Reason from the awaiting list (refId = event_id). */
+export function unverifiedCards(events: ReadonlyArray<UnverifiedEventIn> | null | undefined, awaiting?: ReadonlyArray<Partial<AwaitingRow>> | null, region = 'ALL'): UnverifiedCard[] {
+  const why = new Map<string, Partial<AwaitingRow>>();
+  for (const r of awaiting || []) if (r?.refId) why.set(String(r.refId), r);
+  return (events || [])
+    .filter((e) => e && e.quarantine_reason === 'AWAITING_VERIFICATION' && (region === 'ALL' || e.region === region))
+    .map((e, i) => {
+      const r = e.event_id ? why.get(String(e.event_id)) : undefined;
+      const headline = (e.primary_filing?.title || '').trim() || (r?.claimText || '').trim() || 'Headline not given';
+      const company = (e.target_name || '').trim() || (r?.company || '').trim() || 'Company not named';
+      const reason = (r?.reasonText && String(r.reasonText).trim()) || (r?.reason ? awaitingReasonWord(r.reason) : 'Awaiting verification (reason not sent with this payload)');
+      return { id: String(e.event_id || `u${i}`), company, headline, reason, link: e.primary_filing?.link || r?.primaryUrl || null, region: e.region || null, tierBefore: e.tier_before_hold || null, _i: i };
+    })
+    .sort((a, b) => (TIER_ORDER[a.tierBefore || ''] ?? 9) - (TIER_ORDER[b.tierBefore || ''] ?? 9) || a._i - b._i)
+    .map(({ _i, ...c }) => c);
+}
+
+/** Raw coverage rows from the route's coverage_diagnostic_raw when the count model has none. */
+export function coverageRawFallback(raw: { buckets?: Array<{ bucket?: string; count?: number }> } | null | undefined): Array<{ bucket: string; raw: number }> {
+  const b = Array.isArray(raw?.buckets) ? raw!.buckets : [];
+  return b.filter((x) => x && x.bucket).map((x) => ({ bucket: String(x.bucket), raw: n0(x.count) })).sort((a, b) => b.raw - a.raw || a.bucket.localeCompare(b.bucket));
+}

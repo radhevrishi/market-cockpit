@@ -197,9 +197,33 @@ export interface UsScanInput {
   /** zzz848: sessions an earlier run already processed (persisted event store). Only used for windows longer than LIVE_SCAN_MAX_DAYS. */
   storeCovered?: ReadonlySet<string>;
   window?: GuWindow;
+  /**
+   * zzz857: sessions the GitHub EDGAR backfill fully indexed (KV guidance-docs:v1:coverage:US, status 'ok'). Such a day counts as
+   * read for the EDGAR source and is not re-read live. Absent: taken from the real fetcher (makeRealEdgarFetcher) when it carries a
+   * reader; test stubs carry none, so their behaviour is unchanged.
+   */
+  backfillIndexed?: ReadonlySet<string> | null;
 }
-/** US sessions the live EDGAR index read may cover per run on a long window (about 30 calendar days). */
+/**
+ * US sessions the live EDGAR index read may cover per run on a window up to LIVE_SCAN_MAX_DAYS (every session, as before, unless the
+ * backfill already indexed it). zzz857: the live read shares the app's 8 req/s SEC gate and a 3-9 s slice of the route, so in production it
+ * really read ~2 sessions per run; the full window now comes from the GitHub backfill (.github/scripts/edgar-guidance-backfill.mjs).
+ */
 export const US_LIVE_SESSIONS = 24;
+/** zzz857: long windows (120D): the live read is a small recent window; the GitHub backfill indexes the rest. */
+export const US_LIVE_SESSIONS_LONG = 6;
+/** zzz857: the newest sessions are always read live on short windows (8-Ks keep landing through the evening), even when the backfill indexed them. */
+export const US_ALWAYS_LIVE = 2;
+/** zzz857: an EdgarDayFetcher may carry a reader of the days the backfill indexed (the real one does). */
+export type EdgarDayFetcherWithBackfill = EdgarDayFetcher & { backfillIndexed?: () => Promise<ReadonlySet<string> | null> };
+/** zzz857: which sessions the live EDGAR read covers this run (newest first). Pure. */
+export function pickUsLiveDates(allDates: readonly string[], o: { long: boolean; backfill?: ReadonlySet<string> | null; store?: ReadonlySet<string> }): string[] {
+  const elsewhere = (d: string): boolean => !!o.backfill?.has(d) || (o.long && !!o.store?.has(d));
+  const recent = allDates.slice(0, o.long ? 3 : US_ALWAYS_LIVE);
+  const rest = allDates.slice(recent.length).filter((d) => !elsewhere(d));
+  // short window: every session not indexed elsewhere (no backfill record = every session, unchanged); long window: the small recent window
+  return [...recent, ...rest].slice(0, o.long ? US_LIVE_SESSIONS_LONG : US_LIVE_SESSIONS);
+}
 const etFmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
 const isWeekend = (d: string): boolean => { const w = new Date(`${d}T00:00:00Z`).getUTCDay(); return w === 0 || w === 6; };
 
@@ -207,8 +231,12 @@ export async function scanUs(inp: UsScanInput): Promise<MarketScanResult> {
   const { now } = inp;
   const allDates = usSessionDates(now, inp.days);
   const long = inp.days > LIVE_SCAN_MAX_DAYS;
-  const dates = pickDays(allDates, inp.storeCovered, US_LIVE_SESSIONS);       // long window: the live EDGAR read stays bounded, earlier runs supply the rest
-  const skippedStore = long ? allDates.filter((d) => !dates.includes(d) && inp.storeCovered?.has(d)).length : 0;
+  // zzz857: days the GitHub EDGAR backfill indexed count as read and are not re-read live (except the newest sessions)
+  let backfill: ReadonlySet<string> | null = inp.backfillIndexed ?? null;
+  const bfReader = (inp.fetchEdgar as EdgarDayFetcherWithBackfill | undefined)?.backfillIndexed;
+  if (inp.backfillIndexed === undefined && bfReader) backfill = await bfReader().catch(() => null);
+  const dates = pickUsLiveDates(allDates, { long, backfill, store: inp.storeCovered });   // the live EDGAR read stays small; the backfill and earlier runs supply the rest
+  const skippedStore = long ? allDates.filter((d) => !dates.includes(d) && !backfill?.has(d) && inp.storeCovered?.has(d)).length : 0;
   const sources: GuScanSource[] = [];
   const total = inp.totalSessions || allDates.length;
   const warm = inp.warmSessions;
@@ -238,10 +266,14 @@ export async function scanUs(inp: UsScanInput): Promise<MarketScanResult> {
         if (!dayWarm || !t) { awaiting++; cold.add(r.item); if (h.filing_url) awaitingDocs.push({ ticker: t || null, company: h.company || null, filed: h.filed || r.item, url: h.filing_url, form: h.form, day: r.item }); }
       }
     }
-    const edgarTotal = long ? allDates.length : dates.length; const edgarOk = edgarDays + skippedStore;
-    sources.push({ name: 'SEC EDGAR 8-K (items 2.02/7.01)', tier: 'PRIMARY', daysTried: dates.slice(), daysOk: edgarOkDays, failReasons: [...new Set(edgarFail)].slice(0, 3), state: stateFor(edgarOk, edgarTotal), scanned: rowsSeen,
-      detail: edgarOk === edgarTotal ? `${edgarDays} of ${dates.length} sessions indexed${skippedStore ? `, ${skippedStore} more already processed by earlier runs` : ''}; ${awaiting} filing${awaiting === 1 ? '' : 's'} not yet graded (index only, no release text read)`
-        : `EDGAR index read for ${edgarDays} of ${dates.length} sessions${long ? ` (live index read is bounded to ${US_LIVE_SESSIONS} sessions per run; ${allDates.length - edgarOk} sessions of the window not indexed)` : ''}` });
+    // zzz857: backfill-indexed sessions not read live this run (or whose live read failed) count as indexed
+    const bfOnly = backfill ? allDates.filter((d) => backfill!.has(d) && !edgarOkDays.includes(d)) : [];
+    const tried = [...dates.filter((d) => !bfOnly.includes(d)), ...bfOnly];
+    const edgarTotal = long || bfOnly.length ? allDates.length : dates.length; const edgarOk = edgarDays + skippedStore + bfOnly.length;
+    const bfTail = bfOnly.length ? `, ${bfOnly.length} more indexed by the GitHub EDGAR backfill (press releases handed to the document extractor)` : '';
+    sources.push({ name: 'SEC EDGAR 8-K (items 2.02/7.01)', tier: 'PRIMARY', daysTried: tried, daysOk: [...edgarOkDays, ...bfOnly], failReasons: [...new Set(edgarFail)].slice(0, 3), state: stateFor(edgarOk, edgarTotal), scanned: rowsSeen,
+      detail: edgarOk === edgarTotal ? `${edgarDays} of ${dates.length} sessions indexed${bfTail}${skippedStore ? `, ${skippedStore} more already processed by earlier runs` : ''}; ${awaiting} filing${awaiting === 1 ? '' : 's'} not yet graded (index only, no release text read)`
+        : `EDGAR index read for ${edgarDays} of ${dates.length} sessions${bfTail}${long || bfOnly.length ? ` (the live index read is a small recent window of up to ${long ? US_LIVE_SESSIONS_LONG : US_LIVE_SESSIONS} sessions; the full window is read by the GitHub EDGAR backfill; ${allDates.length - edgarOk} sessions of the window not indexed yet)` : ''}` });
   } else sources.push({ name: 'SEC EDGAR 8-K (items 2.02/7.01)', tier: 'PRIMARY', daysTried: dates.slice(), daysOk: [], state: 'NOT_RUN', scanned: 0, detail: 'not run' });
 
   const edgar = sources[1];
@@ -250,7 +282,10 @@ export async function scanUs(inp: UsScanInput): Promise<MarketScanResult> {
   const warmSet = inp.warmDates ?? new Set<string>();
   const liveWarm = allDates.filter((d) => warmSet.has(d) && !coldDays.has(d));
   if (!long) {
-    const daysCovered = Math.min(warm, total);
+    // zzz857: a session the backfill indexed (its press releases are with the document extractor) counts as covered, alongside graded sessions
+    const daysCovered = backfill && backfill.size
+      ? Math.min(total, inp.warmDates ? allDates.filter((d) => (warmSet.has(d) && !coldDays.has(d)) || backfill!.has(d)).length : Math.max(warm, allDates.filter((d) => backfill!.has(d)).length))
+      : Math.min(warm, total);
     const complete = sources[0].state === 'COMPLETE' && edgar.state === 'COMPLETE' && daysCovered === total && awaiting === 0;
     status = {
       market: 'US', windowFrom: dates[dates.length - 1] ?? '', windowTo: dates[0] ?? '', complete, lastScanAt: now.toISOString(), sources,
@@ -259,7 +294,7 @@ export async function scanUs(inp: UsScanInput): Promise<MarketScanResult> {
   } else {
     // long window, in CALENDAR days: a weekend needs nothing; a session is covered when graded (and not waiting on ungraded filers) or already processed earlier
     const cal: string[] = []; for (let i = 0; i < Math.min(inp.days, 130); i++) { const d = etFmt.format(new Date(now.getTime() - i * 86_400_000)); if (!cal.includes(d)) cal.push(d); }
-    const live = new Set<string>([...cal.filter(isWeekend), ...liveWarm]);
+    const live = new Set<string>([...cal.filter(isWeekend), ...liveWarm, ...(backfill ? cal.filter((d) => backfill!.has(d) && !coldDays.has(d)) : [])]);
     const cov = computeCoverage({ days: cal, live, graded: null, store: inp.storeCovered });
     const storeSeen = inp.storeCovered ? cal.filter((d) => inp.storeCovered!.has(d)).length : 0;
     sources.push({ name: 'Persisted event store', scanned: storeSeen, tier: 'SECONDARY', state: storeSeen === 0 ? 'NOT_AVAILABLE' : cov.missing.length === 0 ? 'COMPLETE' : 'PARTIAL',
@@ -366,9 +401,12 @@ export function makeRealIndiaFetchers(): { nse: DayFetcher; bse: DayFetcher; blo
   return { nse: mk('NSE'), bse: mk('BSE'), blob };
 }
 
-export function makeRealEdgarFetcher(): EdgarDayFetcher {
-  return async (day) => {
+export function makeRealEdgarFetcher(): EdgarDayFetcherWithBackfill {
+  const f: EdgarDayFetcherWithBackfill = async (day) => {
     const { edgarFilingsOn } = await import('./us-edgar');
     return edgarFilingsOn(day, ['8-K']);
   };
+  // zzz857: the days the GitHub EDGAR backfill indexed (KV guidance-docs:v1:coverage:US); null when nothing is stored yet
+  f.backfillIndexed = async () => { const { readUsBackfillIndexedDays } = await import('./us-edgar-backfill'); return readUsBackfillIndexedDays(); };
+  return f;
 }

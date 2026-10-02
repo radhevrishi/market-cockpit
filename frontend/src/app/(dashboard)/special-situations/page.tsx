@@ -24,7 +24,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import MultibaggerRadar from '@/components/special-situations/MultibaggerRadar';
 import { ShowMoreBar } from '@/components/guidance-upgrades/GuMore';
-import { SsCountPanel, type SsCountFeed } from '@/components/special-situations/SsCountPanel';
+import { SsCountPanel, SsVerifyBanner, ShowUnverifiedToggle, UnverifiedSection, useShowUnverified, type SsCountFeed } from '@/components/special-situations/SsCountPanel';
 import { headerFromModel } from '@/components/special-situations/ss-counts';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ExternalLink, AlertTriangle } from 'lucide-react';
@@ -263,6 +263,7 @@ interface LiveFeedResp {
   awaitingVerificationCount?: number;
   verificationAudit?: SsCountFeed['verificationAudit'];
   by_tier_before_verification?: Record<string, number> | null;
+  coverage_diagnostic_raw?: SsCountFeed['coverage_diagnostic_raw'];
 }
 
 // PATCH 0437 BUG-029 — localStorage cache prime so the page doesn't flash
@@ -584,6 +585,9 @@ export default function SpecialSituationsPage() {
   // zzz855: memoised — a new array here made the radar rebuild every card's analysis on each page re-render.
   const radarEvents: CanonicalEvent[] = useMemo(() => (feed?.events || []).filter((e) => region === 'ALL' || e.region === region), [feed, region]);
   const tier3Label = canonicalEvents.length > 0 ? 'Watchlist' : 'Archive';
+  // zzz856 — opt-in, labelled view of events awaiting the company-document check (default OFF, this tab only). Never counted.
+  const [showUnverified, setShowUnverified] = useShowUnverified();
+  const awaitingEventCount = useMemo(() => (feed?.events || []).filter((e) => (e as any).quarantine_reason === 'AWAITING_VERIFICATION').length, [feed]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--mc-bg-0)' }}>
@@ -675,6 +679,9 @@ export default function SpecialSituationsPage() {
           </div>
         </div>
 
+        {/* zzz856 — nothing verified yet: say so plainly instead of a page of zeros; opt-in labelled view of the waiting items */}
+        <SsVerifyBanner feed={feed} />
+        {awaitingEventCount > 0 && <ShowUnverifiedToggle on={showUnverified} onChange={setShowUnverified} count={awaitingEventCount} />}
         {/* zzz854 — how the counts add up, what was held back, and the AI verification state (never silent) */}
         <SsCountPanel feed={feed} knownCategories={Object.keys(CAT_META)} regionNote={feed?.count_model && region !== 'ALL' ? `Region filter ${region}: the boxes count this region only; the line above is for all regions.` : null} />
 
@@ -755,6 +762,9 @@ export default function SpecialSituationsPage() {
 
       {/* ── Body ─────────────────────────────────────────────────────────── */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {showUnverified && awaitingEventCount > 0 && (
+          <UnverifiedSection events={feed?.events as any} awaiting={feed?.awaitingVerification} region={region} />
+        )}
         {active === 'radar' && (
           <MultibaggerRadar events={radarEvents} region={region} onRegionChange={setRegion} isLoading={isLoading} error={error} countModel={feed?.count_model} />
         )}

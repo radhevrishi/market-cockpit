@@ -5,7 +5,8 @@
 import type { GgCompany, GgMetric, GgMarket } from './growth-guidance-types';
 
 export type GuRegressionStatus = 'VERIFIED' | 'PARTIALLY_VERIFIED' | 'NOT_FOUND' | 'REJECTED' | 'SUPERSEDED' | 'EXPIRED';
-export type GuUniverseRecordOrigin = 'LIVE' | 'LEDGER' | 'RESEARCHED_SEED';
+/** zzz857: COMPANY_DOC = a row the AI extractor read from the company's own document (transcript / presentation / release) and quote-checked. */
+export type GuUniverseRecordOrigin = 'LIVE' | 'LEDGER' | 'RESEARCHED_SEED' | 'COMPANY_DOC';
 
 /** One active guidance record as shown in the universe; wraps GgCompany so every Growth Guidance field stays available. */
 export interface GuUniverseRecord {
@@ -58,7 +59,15 @@ export interface GuUniverseResponse {
   countEquations?: GuCountEquations;
   /** zzz854 (optional): how many event statuses the universe was reconciled against and where they came from */
   eventReconciliation?: { statuses: number; source: string; error?: string };
+  /** zzz857 (optional): every input the universe was built from (live scan, ledger, stored, researched seed, company documents read by the AI extractor) */
+  sources?: GuUniverseSourceInfo[];
+  /** zzz857 (optional): how much of the collected company documents the AI extractor has read */
+  extractCoverage?: GuExtractCoverage;
 }
+/** zzz857: one input of the universe build and how many guidance rows it gave. */
+export interface GuUniverseSourceInfo { id: 'LIVE' | 'LEDGER' | 'STORED' | 'RESEARCHED_SEED' | 'COMPANY_DOC'; label: string; rows: number; note?: string | null }
+/** zzz857: documents collected, documents with an extract result, extracted rows, newest extraction (ISO) */
+export interface GuExtractCoverage { docs: number; extracted: number; rows: number; lastExtractAt: string | null; error?: string }
 
 export interface GuRegressionRow {
   ownerText: string;                    // exactly what the owner listed

@@ -1,0 +1,107 @@
+name: AI Guidance Extract (hourly)
+
+# zzz857 — reads the company's OWN documents collected by the guidance-docs collectors
+# (earnings-call transcripts, investor presentations, results releases / 8-K exhibit
+# 99.1 — India and US) and extracts forward guidance rows with the configured model
+# (AI_PROVIDER / OPENAI_API_KEY on the server, monthly cap AI_MONTHLY_CAP_USD). Every
+# row's quote is checked against the document text and every number against the quote;
+# rows that fail are dropped and counted. Results: KV guidance-extract:v1:<docId>.
+#
+# Order: transcripts / presentations / results releases first, newest first, India and
+# US interleaved. One request stops starting documents in time to answer inside the
+# request limit (stoppedBy=time); the job then sends another round, up to 4 rounds,
+# while documents and budget remain. The schedule below is mirrored in
+# src/lib/ai-guidance-extract.ts (GUIDANCE_EXTRACT_SCHEDULE) — keep them equal.
+# Runs at :50, after the collectors and the AI verifier (:35).
+#
+# Secrets (repository → Settings → Secrets and variables → Actions):
+#   CRON_SECRET    — the same value as CRON_SECRET on the server (service key)
+#   CRON_BASE_URL  — optional; the deployed app's base URL
+# No secret is ever written inline or printed: the key travels in a header read from
+# the environment, and only the HTTP status + counts are echoed.
+
+on:
+  schedule:
+    - cron: '50 * * * *'
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Documents to extract in this run (1-100)'
+        required: false
+        default: '25'
+      max_usd:
+        description: 'Spend cap for this run in USD (max 2; the monthly cap still binds)'
+        required: false
+        default: '0.60'
+
+concurrency:
+  group: ai-guidance-extract
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Run extraction rounds
+        id: main
+        env:
+          BASE: ${{ secrets.CRON_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          LIMIT: ${{ github.event.inputs.limit || '25' }}
+          MAX_USD: ${{ github.event.inputs.max_usd || '0.60' }}
+        run: |
+          set -euo pipefail
+          BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
+          if [ -z "${CRON_SECRET}" ]; then echo "CRON_SECRET is not set in repository secrets"; exit 1; fi
+          case "$LIMIT" in ''|*[!0-9]*) LIMIT=25 ;; esac
+          case "$MAX_USD" in ''|*[!0-9.]*) MAX_USD=0.60 ;; esac
+          LEFT_N=$LIMIT
+          LEFT_USD=$MAX_USD
+          FAILED=0
+          for ROUND in 1 2 3 4; do
+            STATUS=$(curl -sS -o /tmp/guidance-extract.json -w "%{http_code}" --max-time 75 -X POST \
+              -H "x-cron-secret: ${CRON_SECRET}" -H 'Content-Type: application/json' \
+              "$BASE/api/v1/guidance-extract?limit=${LEFT_N}&maxUsd=${LEFT_USD}" || echo "000")
+            echo "round ${ROUND}: guidance-extract HTTP $STATUS"
+            if [ "$STATUS" != "200" ]; then FAILED=1; break; fi
+            # counts only (the response never carries keys or document text); prints "<again> <docs left> <usd left>"
+            NEXT=$(LEFT_N="$LEFT_N" LEFT_USD="$LEFT_USD" python3 - <<'PY' || echo "0 0 0"
+          import json, os, sys
+          try:
+              j = json.load(open('/tmp/guidance-extract.json'))
+              r = j.get('run') or {}
+              keys = ['available', 'stoppedBy', 'queued', 'attempted', 'ok', 'noGuidance', 'unreadable', 'errors', 'skippedBackoff', 'missingDoc', 'rowsKept', 'rowsDropped', 'spentUsd', 'elapsedMs']
+              print(' '.join(f"{k}={r.get(k)}" for k in keys), file=sys.stderr)
+              if r.get('dropReasons'): print('dropped:', json.dumps(r.get('dropReasons'))[:300], file=sys.stderr)
+              if r.get('unavailableReason'): print('unavailable:', str(r.get('unavailableReason'))[:200], file=sys.stderr)
+              n = int(os.environ['LEFT_N']) - int(r.get('attempted') or 0) - int(r.get('missingDoc') or 0)
+              usd = float(os.environ['LEFT_USD']) - float(r.get('spentUsd') or 0)
+              left = int(r.get('queued') or 0) - int(r.get('attempted') or 0) - int(r.get('missingDoc') or 0) - int(r.get('alreadyDone') or 0) - int(r.get('skippedBackoff') or 0)
+              again = 1 if (r.get('stoppedBy') == 'time' and n > 0 and usd > 0.005 and left > 0) else 0
+              print(f"{again} {max(n, 0)} {max(usd, 0):.4f}")
+          except Exception as e:
+              print('response not readable:', e, file=sys.stderr)
+              print('0 0 0')
+          PY
+            )
+            read AGAIN LEFT_N LEFT_USD <<< "$NEXT"
+            if [ "$AGAIN" != "1" ]; then break; fi
+          done
+          if [ "$FAILED" = "1" ]; then exit 1; fi
+
+      - name: Heartbeat (always run)
+        if: always()
+        env:
+          BASE: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
+          OK="true"
+          if [[ "${{ steps.main.outcome }}" != "success" ]]; then OK="false"; fi
+          curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" \
+            -H 'Content-Type: application/json' \
+            -d "{\"name\":\"ai-guidance-extract\",\"phase\":\"end\",\"ok\":$OK,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -o /dev/null -w "heartbeat %{http_code}\n" || true

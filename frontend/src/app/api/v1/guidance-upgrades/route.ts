@@ -14,6 +14,10 @@
 //   · graded:<engine>:<date> (India results with the company's own guidance text)
 //   · us-graded:<engine>:<date>|1 (US graded results: the company's guidance, its OWN previous full-year guidance,
 //     the SEC release link, and the analyst estimate already matched to the guided period)
+//   · guidance-extract:v1:<docId> (zzz857: rows the AI extractor read from the company's OWN transcript / presentation / release, each quote-checked).
+//     They are PRIMARY candidates built by the same engine (validators, taxonomy, pipeline): RAISED with the document's stated prior -> formal_upgrade
+//     card; NEW -> first_guidance (review queue + universe, never an upgrade card); REITERATED -> reiteration; LOWERED -> lowered. A company-document
+//     event replaces a text-derived event of the same company within 3 days. `extracted` in the body says how many documents / events / replacements.
 // India and US are processed separately so a US and an India ticker with the same letters never merge.
 // Consensus: US only, and only where the graded row already matched an estimate to that exact guided period.
 // India has no analyst-estimates feed, so India consensus stays DATA UNAVAILABLE.
@@ -23,7 +27,8 @@ import { kvGet, kvMGet, kvSet } from '@/lib/kv';
 import { loadCatalog } from '@/lib/symbolMaster';
 import { NSE_TICKER_NAMES } from '@/lib/nse-ticker-names';
 import { gradedKey } from '@/lib/graded-cache-key';
-import { isGuidanceUpgradeCandidate, mergeCandidates, processCandidates, rank, summarise, withinWindow, partitionPipeline, withClassification, reviewItemOf } from '@/lib/guidance-upgrades';
+import { isGuidanceUpgradeCandidate, mergeCandidates, processCandidates, rank, summarise, withinWindow, partitionPipeline, withClassification, reviewItemOf, buildExtractedEvents, mergeExtractedEvents } from '@/lib/guidance-upgrades';
+import { listExtractResults, type ExtractList } from '@/lib/guidance-extract-reader';
 import { US_ENGINE_VERSION, US_ENGINE_PREVIOUS_VERSIONS } from '@/lib/us-engine-version';
 import type { GuCandidate, GuContext, GuScanSource, GuScanStatus, GuWindow, GuidanceEvent, GuidanceUpgradesResponse } from '@/lib/guidance-upgrades-types';
 import {
@@ -135,6 +140,8 @@ export async function GET(req: NextRequest) {
     return { v: r.v?.articles ?? null, timedOut: r.timedOut };
   };
   const queueP: Promise<QueueState | null> = withTimeout(readQueue(), 4_000, null);
+  // zzz857: rows the AI extractor read (quote-checked) from the companies' own documents: PRIMARY candidates, built by the same engine
+  const extractP: Promise<ExtractList | null> = withTimeout(listExtractResults({ market: market === 'ALL' ? 'ALL' : market }), 6_000, null);
   const [news, feed, graded, usSessions, scraped, retained, catalog, [storeIN, storeUS]] = await Promise.all([
     timedNews(),
     wantIN ? timed(readConcallFeedWithFallback(makeKvFeedIo(Math.min(BUDGET_MS, 6_000)), feedDays).then((r) => { feedRead = r; return r.feed; }), BUDGET_MS) : Promise.resolve<Timed<any>>({ v: null, timedOut: false }),
@@ -308,6 +315,7 @@ export async function GET(req: NextRequest) {
   const storedIds = new Set<string>([...storedIN, ...storedUS].map((c) => c.id));
   let all: GuidanceEvent[] = [];
   let corroborated = 0; let reconcileNotFound = 0; let unmatchedSubjects = subjectOnly;
+  let extractInfo: { documents: number; events: number; replaced: number; error?: string } = { documents: 0, events: 0, replaced: 0 };
   try {
     const inRaw = processRaiseCandidates([...split.IN, ...split.GLOBAL], ctxMaker('IN', ledIN), now, window, extraFor);
     const usRaw = processCandidates(split.US, ctxMaker('US', ledUS), now, window, extraFor);
@@ -318,8 +326,14 @@ export async function GET(req: NextRequest) {
     const matchedKey = (e: GuidanceEvent) => `${e.market === 'US' ? 'US' : 'IN'}|${(e.ticker || '').toUpperCase()}|${normCompanyName(e.company)}`;
     const matchedSet = new Set(recIn.events.filter((e) => e.primaryState === 'PRIMARY_SOURCE_FOUND').map(matchedKey));
     unmatchedSubjects = subjectOnly.filter((f) => !matchedSet.has(`IN|${(f.ticker || '').toUpperCase()}|${f.nameKey}`) && !recIn.events.some((e) => e.primaryState === 'PRIMARY_SOURCE_FOUND' && ((f.ticker && f.ticker.toUpperCase() === (e.ticker || '').toUpperCase()) || (!!f.nameKey && f.nameKey === normCompanyName(e.company)))));
-    const inEvents = recIn.events;
-    const usEvents = recUs.events;
+    // zzz857: company-document events (AI-read, quote-checked) through the same engine; each replaces a text-derived event of the same company and announcement
+    const xList = await extractP;
+    const xEvents = xList ? buildExtractedEvents(xList.results.filter((r) => (r.market === 'US' ? wantUS : wantIN)), (t, m) => ctxMaker(m === 'US' ? 'US' : 'IN', m === 'US' ? ledUS : ledIN)(t), now, window) : [];
+    const mIN = mergeExtractedEvents(recIn.events, xEvents.filter((e) => e.market !== 'US'));
+    const mUS = mergeExtractedEvents(recUs.events, xEvents.filter((e) => e.market === 'US'));
+    extractInfo = { documents: xList?.results.length ?? 0, events: xEvents.length, replaced: mIN.replaced.length + mUS.replaced.length, ...(xList ? {} : { error: 'extract results could not be read in time' }), ...(xList?.error ? { error: xList.error } : {}) };
+    const inEvents = mIN.events;
+    const usEvents = mUS.events;
     // the same release also cut something: the engine keeps the raises, so say the cut here
     for (const e of usEvents) {
       const cuts = usCuts.get(e.ticker.toUpperCase());
@@ -529,7 +543,9 @@ export async function GET(req: NextRequest) {
   if (reconcileNotFound) queueReport.note += ` ${reconcileNotFound} claim${reconcileNotFound === 1 ? '' : 's'} have no primary filing in the filings read so far.`;
   const verification: VerificationSummary = ov?.verification ?? { provider: 'unknown', model: null, available: false, unavailableReason: 'The AI verification state could not be read; unverified events stay in the review queue.', mode: 'enforce',
     primaryVerified: eventsAll.filter((e) => e.verification === 'VERIFIED').length, checked: 0, confirmed: 0, contradicted: 0, awaiting: 0, awaitingByReason: {}, lastRunAt: null };
-  const body: GuidanceUpgradesResponse & { verification: VerificationSummary; reviewQueue: typeof reviewQueue; reviewQueueCount: number; awaitingVerificationCount: number } = {
+  const body: GuidanceUpgradesResponse & { verification: VerificationSummary; reviewQueue: typeof reviewQueue; reviewQueueCount: number; awaitingVerificationCount: number; extracted: typeof extractInfo } = {
+    // zzz857: company documents read by the AI extractor: how many fed this run, how many events they built, how many text-derived events they replaced
+    extracted: extractInfo,
     // zzz854: events = cards + audit (shown); reviewQueue = every other item with its status and reason (awaiting numbers / primary / AI verification ...)
     verification, reviewQueue: reviewQueue.slice(0, 600), reviewQueueCount: reviewQueue.length, awaitingVerificationCount: verification.awaiting,
     summary, events, scan,

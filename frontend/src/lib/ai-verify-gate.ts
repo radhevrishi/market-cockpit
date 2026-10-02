@@ -18,8 +18,10 @@
 
 import { createHash } from 'crypto';
 import type {
-  AwaitingReason, AwaitingRow, GateResult, RemovedRow, VerifyBasis, VerifyClaim, VerifyMarket, VerifyVerdict,
+  AwaitingReason, AwaitingRow, GateResult, LocatedDoc, PrimaryHow, RemovedRow, VerifyBasis, VerifyClaim, VerifyMarket, VerifyVerdict,
 } from './ai-verify-types';
+import { secAccession, subjectFromHeadline } from './special-sit-feed-quality';
+import { secIndexUrl } from './ai-verify-locator';
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -54,7 +56,7 @@ export function claimIdOf(p: { kind: string; company: string; metric: string | n
 }
 
 /** Hosts whose documents are the company's own words (filings, exchange disclosures, company-issued wire releases). */
-const PRIMARY_HOST = /(^|\.)(sec\.gov|nseindia\.com|bseindia\.com|prnewswire\.com|globenewswire\.com|businesswire\.com|accesswire\.com)$/i;
+const PRIMARY_HOST = /(^|\.)(sec\.gov|nseindia\.com|bseindia\.com|prnewswire\.com|globenewswire\.com|businesswire\.com|accesswire\.com|newsfilecorp\.com|newswire\.ca)$/i;
 
 export function isPrimaryHostUrl(url: string | null | undefined): boolean {
   if (!url) return false;
@@ -137,17 +139,43 @@ export function guidanceEventToClaim(e: any): VerifyClaim | null {
 
 /** "SC TO-I - COMPANY (0000123) (Subject)" and nothing else: the form was seen, its terms were not read. */
 const SEC_BARE_TITLE = /^\s*(?:SC\s*TO-[IT]|SC\s*13E-?3|SC\s*14D-?9|10-12[BG]|8-K|S-4|DEFM14A|PREM14A|425|SC\s*13D)(?:\/A)?\s+-\s+/i;
-/** a stated deal term: money with a currency, a per-share price, a share ratio, a premium */
-const TERMS_RE = /(?:[$₹€£]\s?\d|(?:rs\.?|inr|usd)\s?\d|\d[\d,.]*\s?(?:per\s+share|crore|cr\b|lakh|million|billion|bn\b|mn\b)|\b\d+\s*:\s*\d+\b|premium of \d)/i;
+/**
+ * A stated deal term: money with a currency (₹ / Rs / INR / $ / US$ / € / £), an amount in crore / lakh / million / billion, a
+ * per-share price ("per share", "per-share", "a share"), a stake percentage ("51% stake"), a premium, or a share-exchange / bonus /
+ * split ratio. zzz856: "per-share" and stake percentages were missed (too strict); a bare "12:30" (a time) is no longer read as a
+ * ratio (too loose) — a ratio needs ratio / swap / exchange / bonus / split / "for every" wording.
+ */
+const TERMS_RE = /(?:[$₹€£]\s?\d|(?:rs\.?|inr|usd|us\$|eur)\s?\d|\d[\d,.]*\s?(?:per[\s-]share|a share|crore|cr\b|lakh|million|billion|bn\b|mn\b)|\d+(?:\.\d+)?\s?%\s+(?:stake|equity|shareholding|interest|of (?:the )?(?:shares|equity|outstanding))|premium of \d)/i;
+const RATIO_RE = /\b\d{1,4}\s*:\s*\d{1,4}\b/;
+const RATIO_CONTEXT_RE = /\b(ratio|swap|share exchange|exchange ratio|for every|bonus|split|sub[\s-]?division|rights entitlement)\b/i;
 
 export function hasStatedTerms(text: string): boolean {
-  return TERMS_RE.test(text || '');
+  const t = text || '';
+  return TERMS_RE.test(t) || (RATIO_RE.test(t) && RATIO_CONTEXT_RE.test(t));
 }
 
 /** True when the event's evidence is a bare form title (no terms read). */
 export function isBareFormEvidence(ev: any): boolean {
   const filings: any[] = Array.isArray(ev?.filings) && ev.filings.length ? ev.filings : ev?.primary_filing ? [ev.primary_filing] : [];
   return !filings.some((f) => hasStatedTerms(`${str(f?.title)} ${str(f?.description)}`));
+}
+
+/**
+ * zzz856: the text of a company-issued wire release carries the wire's dateline even when it is republished (Yahoo / feed
+ * copies): "/PRNewswire/", "(GLOBE NEWSWIRE)", "(BUSINESS WIRE)", "/CNW/", "(ACCESSWIRE)", "(Newsfile Corp.)". Such an item IS
+ * the company's own words, whatever host serves it.
+ */
+const WIRE_DATELINE_RE = /\/\s?PRNewswire(?:-[A-Za-z]+)?\s?\/|\(\s?GLOBE\s?NEWSWIRE\s?\)|\(\s?BUSINESS\s?WIRE\s?\)|\/\s?CNW\s?\/|\(\s?ACCESSWIRE\s?\)|\(\s?Newsfile Corp\.?\s?\)/i;
+export function isCompanyReleaseItem(f: any): boolean {
+  if (!f) return false;
+  if (isPrimaryHostUrl(f.link)) return true;
+  return WIRE_DATELINE_RE.test(`${str(f.title)} ${str(f.description)}`);
+}
+
+/** The event's own primary items (filing / exchange disclosure / company wire release). */
+function primaryItemsOf(ev: any): any[] {
+  const filings: any[] = Array.isArray(ev?.filings) ? ev.filings : [];
+  return [ev?.primary_filing, ...filings].filter((f) => f && isCompanyReleaseItem(f));
 }
 
 export function specSitPrimaryUrl(ev: any): string | null {
@@ -157,14 +185,26 @@ export function specSitPrimaryUrl(ev: any): string | null {
   return hit ? str(hit.link) : null;
 }
 
-/** Primary-verified: a primary-host document whose own text carries the terms (or the feed says it read them). */
+/** zzz856: an SEC form row whose link is not a usable sec.gov address: the filing index from the accession + CIK it carries. */
+export function specSitSecIndexUrl(ev: any): string | null {
+  const filings: any[] = Array.isArray(ev?.filings) ? ev.filings : [];
+  for (const f of [ev?.primary_filing, ...filings].filter(Boolean)) {
+    const title = str(f.title);
+    if (!SEC_BARE_TITLE.test(title) && !/\bsec\b|edgar/i.test(str(f.source))) continue;
+    const acc = secAccession(str(f.link)) || secAccession(str(f.description).match(/\d{10}-\d{2}-\d{6}/)?.[0] || '');
+    const cik = title.match(/\((\d{3,10})\)/)?.[1] || str(f.link).match(/edgar\/data\/(\d{1,10})\//)?.[1] || null;
+    const u = secIndexUrl(cik, acc);
+    if (u) return u;
+  }
+  return null;
+}
+
+/** Primary-verified: the event's own primary document (filing / exchange disclosure / company wire release) states the terms. */
 export function isSpecSitPrimaryVerified(ev: any): boolean {
   if (!ev) return false;
-  const primaryUrl = specSitPrimaryUrl(ev);
-  if (!primaryUrl) return false;
+  const prim = primaryItemsOf(ev);
+  if (!prim.length) return false;
   if (ev.terms_read === true || ev.termsRead === true) return true;
-  const filings: any[] = Array.isArray(ev?.filings) ? ev.filings : [];
-  const prim = [ev?.primary_filing, ...filings].filter((f) => f && isPrimaryHostUrl(f.link));
   return prim.some((f) => hasStatedTerms(`${str(f.title)} ${str(f.description)}`));
 }
 
@@ -181,6 +221,12 @@ export function termNumbers(text: string): number[] {
   return out;
 }
 
+const TIER_RANK: Record<string, number> = { TIER_1: 3, TIER_2: 2, WATCHLIST: 1 };
+/** Queue order: Tier 1 = 3, Tier 2 = 2, Watchlist = 1, other = 0 (the tier before any hold-back flag). */
+export function tierRankOf(ev: any): number {
+  return TIER_RANK[str(ev?.tier_before_hold || ev?.tier).toUpperCase()] ?? 0;
+}
+
 export function specSitToClaim(ev: any): VerifyClaim | null {
   if (isSpecSitPrimaryVerified(ev)) return null;
   const p = ev?.primary_filing || (Array.isArray(ev?.filings) ? ev.filings[0] : null) || {};
@@ -192,11 +238,43 @@ export function specSitToClaim(ev: any): VerifyClaim | null {
   const type = str(ev?.event_type || ev?.category) || 'special situation';
   const claimText = `${company}: ${type.replace(/_/g, ' ').toLowerCase()} — "${title}"${values.length ? `; stated terms ${values.join(', ')}` : '; terms not yet read'}.`;
   const claimId = claimIdOf({ kind: 'special_situation', company, metric: type, period: null, values, sourceUrl });
+  const feedUrl = specSitPrimaryUrl(ev);
+  const secUrl = feedUrl ? null : specSitSecIndexUrl(ev);
+  const primaryUrl = feedUrl || secUrl;
+  const primaryHow: PrimaryHow | null = feedUrl ? 'feed_link' : secUrl ? 'sec_accession' : null;
+  const market = marketOf(ev?.region);
+  const headSubject = (() => { try { return subjectFromHeadline(str(p?.title)); } catch { return null; } })();
+  const names = Array.from(new Set([str(ev?.target_name), headSubject || ''].map((x) => x.trim()).filter((x) => x.length >= 2))).slice(0, 4);
+  const dates = [p?.pub_date, ...(Array.isArray(ev?.filings) ? ev.filings.map((f: any) => f?.pub_date) : [])].map(str).filter((d) => Number.isFinite(Date.parse(d)));
+  const eventDate = str(p?.pub_date) && Number.isFinite(Date.parse(str(p?.pub_date))) ? str(p.pub_date) : dates.sort()[0] || null;
   return {
-    claimId, kind: 'special_situation', market: marketOf(ev?.region), company, ticker: tickers[0] || null, claimText, metric: type,
+    claimId, kind: 'special_situation', market, company, ticker: tickers[0] || null, claimText, metric: type,
     numbers: { old: [], new: values }, unit: null, period: null, basis: null,
-    primaryUrl: specSitPrimaryUrl(ev), sourceUrl, refId: str(ev?.event_id) || claimId,
+    primaryUrl, sourceUrl, refId: str(ev?.event_id) || claimId,
+    primaryHow, primaryDetail: feedUrl ? 'The event\'s own filing / exchange / company-release link.' : secUrl ? 'SEC filing index built from the accession number and CIK the SEC row carries.' : null,
+    priorityTier: tierRankOf(ev), eventDate,
+    locateHints: primaryUrl ? null : { tickers: tickers.slice(0, 4), names, text: `${title} ${str(p?.description)}`.replace(/\s+/g, ' ').slice(0, 400), eventType: str(ev?.event_type) || null, region: market },
   };
+}
+
+/**
+ * zzz856: a located exchange announcement whose own subject line names this kind of event AND states the terms (and, when the
+ * event states figures, carries those figures) is the company's own words: primary-verified without the AI.
+ */
+export function isLocatedPrimaryVerified(claim: VerifyClaim, loc: LocatedDoc | null | undefined): boolean {
+  if (!loc || !loc.found || loc.how !== 'exchange_announcement' || !loc.text || !loc.kindMatch) return false;
+  if (!hasStatedTerms(loc.text)) return false;
+  if (claim.numbers.new.length) {
+    const have = termNumbers(loc.text).concat((loc.text.match(/\d[\d,]*(?:\.\d+)?/g) || []).map((x) => Number(x.replace(/,/g, ''))));
+    return claim.numbers.new.every((v) => have.some((h) => Math.abs(h - v) <= Math.max(0.005 * Math.abs(v), 1e-9)));
+  }
+  return true;
+}
+
+/** The claim with a located document attached (when the event carried none). */
+export function withLocated(claim: VerifyClaim, loc: LocatedDoc | null | undefined): VerifyClaim {
+  if (claim.primaryUrl || !loc?.found || !loc.url) return claim;
+  return { ...claim, primaryUrl: loc.url, primaryHow: loc.how, primaryDetail: loc.detail };
 }
 
 // ── the gate ────────────────────────────────────────────────────────────────
@@ -216,49 +294,73 @@ export interface GateOpts<T> {
   available: boolean;
   unavailableReason?: string | null;
   mode?: 'enforce' | 'report';
+  /**
+   * zzz856: documents the locator found (or did not find) for claims that carried none, by claimId. When given, a claim with
+   * locate hints and no search result yet is 'queued' (to be searched, then read) instead of a permanent 'no_primary'.
+   */
+  located?: Map<string, LocatedDoc>;
 }
 
+const LOCATE_QUEUED_TEXT = 'Not checked yet: queued to look up the company\'s own document (exchange announcement / SEC filing) for this event, then to read it.';
+
 /** Partition a list: kept (primary-verified or AI-confirmed), removed (AI-contradicted), awaiting (everything else). */
-export function partitionByVerification<T>(items: T[], o: GateOpts<T>): GateResult<T> {
+export function partitionByVerification<T>(items: T[], o: GateOpts<T>): GateResult<T> & { locatedByRef: Map<string, LocatedDoc> } {
   const mode = o.mode || 'enforce';
-  const kept: T[] = []; const awaiting: AwaitingRow[] = []; const removed: RemovedRow[] = []; const pending: VerifyClaim[] = [];
+  const kept: T[] = []; const awaiting: AwaitingRow[] = []; const removed: RemovedRow[] = []; const pending: VerifyClaim[] = []; const toLocate: VerifyClaim[] = [];
   const confirmedByRef = new Map<string, VerifyVerdict>();
+  const locatedByRef = new Map<string, LocatedDoc>();
   const awaitingByReason: Partial<Record<AwaitingReason, number>> = {};
+  const primaryDocument = { located: 0, none: 0, notSearchedYet: 0, byHow: {} as Partial<Record<PrimaryHow, number>> };
   let primaryVerified = 0; let checked = 0; let confirmed = 0; let contradicted = 0;
-  const seenPending = new Set<string>();
+  const seenPending = new Set<string>(); const seenLocate = new Set<string>();
   let unbuildable = 0;
   for (const it of items) {
     let claim: VerifyClaim | null;
     try { claim = o.claimOf(it); } catch { unbuildable++; awaitingByReason.error = (awaitingByReason.error || 0) + 1; if (mode === 'report') kept.push(it); continue; }
     if (!claim) { kept.push(it); primaryVerified++; continue; }
+    const loc = !claim.primaryUrl && o.located ? o.located.get(claim.claimId) : undefined;
+    claim = withLocated(claim, loc);
     const v = o.verdicts.get(claim.claimId);
     if (v && v.status !== 'verification_unavailable') checked++;
-    if (v?.status === 'confirmed') { kept.push(it); confirmed++; confirmedByRef.set(claim.refId, v); continue; }
     if (v?.status === 'contradicted') {
       contradicted++;
       removed.push({ claimId: claim.claimId, refId: claim.refId, kind: claim.kind, market: claim.market, company: claim.company, ticker: claim.ticker, claimText: claim.claimText, reason: v.reason, quote: v.extracted?.quote || null, documentUrl: v.documentUrl, checkedAt: v.checkedAt });
       continue;
     }
+    // zzz856: the company's own exchange announcement, matched to this event, states the terms → primary-verified without the AI
+    if (loc && isLocatedPrimaryVerified(claim, loc)) { kept.push(it); primaryVerified++; locatedByRef.set(claim.refId, loc); continue; }
+    if (v?.status === 'confirmed') { kept.push(it); confirmed++; confirmedByRef.set(claim.refId, v); if (loc?.found) locatedByRef.set(claim.refId, loc); continue; }
+    const searchable = !!o.located && !!claim.locateHints && !claim.primaryUrl && !loc && (!v || v.status === 'no_primary');
     let reason: AwaitingReason;
-    if (!claim.primaryUrl && (!v || v.status === 'no_primary')) reason = 'no_primary';   // nothing the verifier could read; not queued
+    if (searchable) reason = 'queued';                                                   // not searched yet: the run looks for its document
+    else if (!claim.primaryUrl && (!v || v.status === 'no_primary')) reason = 'no_primary';   // nothing the verifier could read; not queued
     else if (!v) reason = o.available ? 'queued' : 'verification_unavailable';
     else if (v.status === 'not_found' || v.status === 'unreadable' || v.status === 'no_primary' || v.status === 'error') reason = v.status;
     else reason = 'verification_unavailable';
+    if (searchable) { if (!seenLocate.has(claim.claimId)) { seenLocate.add(claim.claimId); toLocate.push(claim); } }
     // with no primary link the verifier cannot help; anything else goes (back) on the queue
-    if (reason !== 'no_primary' && (!v || reason === 'unreadable' || reason === 'error' || reason === 'verification_unavailable')) {
+    else if (reason !== 'no_primary' && (!v || reason === 'unreadable' || reason === 'error' || reason === 'verification_unavailable')) {
       if (!seenPending.has(claim.claimId)) { seenPending.add(claim.claimId); pending.push(claim); }
     }
+    if (claim.primaryUrl) { primaryDocument.located++; if (claim.primaryHow) primaryDocument.byHow[claim.primaryHow] = (primaryDocument.byHow[claim.primaryHow] || 0) + 1; }
+    else if (searchable) primaryDocument.notSearchedYet++;
+    else primaryDocument.none++;
     awaitingByReason[reason] = (awaitingByReason[reason] || 0) + 1;
+    const noneText = reason === 'no_primary' && loc && !loc.found ? `${AWAITING_TEXT.no_primary} ${loc.detail}` : null;
     awaiting.push({
       claimId: claim.claimId, refId: claim.refId, kind: claim.kind, market: claim.market, company: claim.company, ticker: claim.ticker, claimText: claim.claimText,
-      reason, reasonText: v?.reason && reason !== 'queued' ? `${AWAITING_TEXT[reason]} (${v.reason})` : (reason === 'verification_unavailable' && o.unavailableReason ? `${AWAITING_TEXT[reason]} ${o.unavailableReason}` : AWAITING_TEXT[reason]),
-      primaryUrl: claim.primaryUrl, sourceUrl: claim.sourceUrl, checkedAt: v?.checkedAt || null,
+      reason,
+      reasonText: searchable ? LOCATE_QUEUED_TEXT
+        : noneText ? noneText
+        : v?.reason && reason !== 'queued' ? `${AWAITING_TEXT[reason]} (${v.reason})`
+        : (reason === 'verification_unavailable' && o.unavailableReason ? `${AWAITING_TEXT[reason]} ${o.unavailableReason}` : AWAITING_TEXT[reason]),
+      primaryUrl: claim.primaryUrl, sourceUrl: claim.sourceUrl, checkedAt: v?.checkedAt || loc?.checkedAt || null,
     });
     if (mode === 'report') kept.push(it);
   }
   return {
-    kept, awaiting, removed, pending, confirmedByRef,
-    stats: { primaryVerified, checked, confirmed, contradicted, awaiting: awaiting.length + unbuildable, awaitingByReason },
+    kept, awaiting, removed, pending, toLocate, confirmedByRef, locatedByRef,
+    stats: { primaryVerified, checked, confirmed, contradicted, awaiting: awaiting.length + unbuildable, awaitingByReason, primaryDocument },
   };
 }
 

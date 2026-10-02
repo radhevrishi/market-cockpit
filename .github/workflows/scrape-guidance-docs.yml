@@ -1,0 +1,104 @@
+name: Scrape Guidance Docs (India, every 2h evening IST)
+
+# zzz857 — collects the companies' OWN guidance-bearing documents (earnings-call
+# transcripts, investor presentations, results press releases, AGM / chairman
+# speeches) from BSE corporate announcements across all companies (NSE and the
+# mc-proxy worker as fallbacks), extracts their text with pdftotext and stores
+# them via POST /api/v1/guidance-docs/ingest. Runs here because NSE / BSE refuse
+# Railway's datacenter range.
+#
+# Scheduled runs read the last 7 days (documents already stored or skipped are
+# not downloaded again). For the one-off 120-day backfill: Actions → this
+# workflow → "Run workflow" → days = 130.
+#
+# Secrets (repository → Settings → Secrets and variables → Actions):
+#   CRON_SECRET    — same value as CRON_SECRET on the server (service key)
+#   CRON_BASE_URL  — optional; the deployed app's base URL
+#   PROXY_URL      — optional; the mc-proxy worker base URL (fallback hop)
+#   PROXY_SECRET   — optional; the worker's PROXY_SECRET (needed for api.bseindia.com / nseindia.com via the worker)
+# The script prints counts only: never a secret, never document text.
+
+on:
+  schedule:
+    # every 2 h from 15:20 to 23:20 IST (09:50–17:50 UTC), when results and call transcripts land
+    - cron: '50 9,11,13,15,17 * * *'
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Days to read back from today (1-130; 130 = the one-off 120-day backfill)'
+        required: false
+        default: '7'
+      bse_mode:
+        description: 'BSE listing: auto (all categories for manual runs and the last 2 days), sub (category filters), all'
+        required: false
+        default: 'auto'
+      max_downloads:
+        description: 'Max PDFs to download in this run'
+        required: false
+        default: '6000'
+      include_plain_results:
+        description: 'Also read plain "Financial Results" PDFs (1 = yes; large, few carry guidance)'
+        required: false
+        default: '0'
+
+concurrency:
+  group: scrape-guidance-docs
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && 340 || 60 }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pdftotext
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils > /dev/null && pdftotext -v 2>&1 | head -1
+
+      - name: Collect documents
+        id: main
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+          PROXY_URL: ${{ secrets.PROXY_URL }}
+          PROXY_SECRET: ${{ secrets.PROXY_SECRET }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          IN_DAYS: ${{ github.event.inputs.days || '7' }}
+          IN_MODE: ${{ github.event.inputs.bse_mode || 'auto' }}
+          IN_MAX: ${{ github.event.inputs.max_downloads || '' }}
+          IN_PLAIN: ${{ github.event.inputs.include_plain_results || '0' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CRON_SECRET}" ]; then echo "CRON_SECRET is not set in repository secrets"; exit 1; fi
+          export CRON_BASE_URL="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          case "$IN_DAYS" in ''|*[!0-9]*) IN_DAYS=7 ;; esac
+          if [ "$IN_DAYS" -gt 130 ]; then IN_DAYS=130; fi
+          case "$IN_MODE" in auto|sub|all) ;; *) IN_MODE=auto ;; esac
+          case "$IN_MAX" in ''|*[!0-9]*) IN_MAX=600 ;; esac
+          export DAYS="$IN_DAYS" BSE_MODE="$IN_MODE" MAX_DOWNLOADS="$IN_MAX"
+          export INCLUDE_PLAIN_RESULTS="$([ "$IN_PLAIN" = "1" ] && echo 1 || echo 0)"
+          # leave ~10 min of the job limit for the final POSTs
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then export RUN_BUDGET_MIN=325; else export RUN_BUDGET_MIN=48; fi
+          node .github/scripts/scrape-guidance-docs.mjs
+
+      - name: Heartbeat (always run)
+        if: always()
+        env:
+          BASE: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
+          OK="true"
+          if [[ "${{ steps.main.outcome }}" != "success" ]]; then OK="false"; fi
+          curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" \
+            -H 'Content-Type: application/json' \
+            -d "{\"name\":\"scrape-guidance-docs\",\"phase\":\"end\",\"ok\":$OK,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -o /dev/null -w "heartbeat %{http_code}\n" || true
