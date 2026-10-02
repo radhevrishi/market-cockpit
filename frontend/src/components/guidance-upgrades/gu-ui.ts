@@ -2,18 +2,21 @@
 // Rules: never invent a number, Unknown stays "Unknown" (never negative), a missing field renders gracefully (old cached responses), no scores and no trade-call wording.
 import type { CoverageCard, GuCacheRow, GuidanceEvent } from '../../lib/guidance-upgrades-types';
 import type {
-  GuCohort, GuExpirySummary, GuHgGroupRow, GuHgMetricX, GuHighGrowthGroups, GuStateCounts, GuTrust, GuViewCounts,
+  GuCohort, GuExpirySummary, GuHgGroupRow, GuHgMetricX, GuHighGrowthGroups, GuStateCounts, GuTrust, GuViewCounts, GuCountEquations, GuEventOverride, GuEventStatus,
 } from '../../lib/guidance-universe-types';
+import type { GuPipelineCounts, GuReviewItem, GuReviewStatus, GuValidationIssue } from '../../lib/guidance-upgrades-types';
 import type { GuUniverseRecord } from '../../lib/guidance-universe-types';
 import type { GuUniverseRecordX } from '../../lib/guidance-universe';
-import { hasRealRaise, isReiteration, eventLabelText } from '../../lib/guidance-upgrades-format';
+import { hasRealRaise, isReiteration, eventLabelText, fmtBeforeAfter, METRIC_LABEL, PRIMARY_SOURCE_STATE_LABEL, REVIEW_STATUS_LABEL, TAXONOMY_LABEL, pipelineCountsLine, primaryStateLine, reviewItemLine, stageOf, STAGE_ORDER } from '../../lib/guidance-upgrades-format';
+import type { GuStage } from '../../lib/guidance-upgrades-types';
 
 export const UNKNOWN = 'Unknown';
 
 /** A universe record as the page receives it: the older shape plus the additive zzz853 fields, all optional (an older cached answer lacks them). */
 export type GuRecX = GuUniverseRecord & Partial<Pick<GuUniverseRecordX,
   'entityKey' | 'verificationState' | 'growthType' | 'basisLabel' | 'growthVsPriorYear' | 'revisionVsPriorGuidance' | 'cohort' | 'periodNormalized' | 'lastVerified' | 'lastVerifiedDaysAgo'
-  | 'staleVerification' | 'sourceConflict' | 'reviewReasons' | 'reviewReasonCodes' | 'inReviewQueue' | 'caveats' | 'sources' | 'history' | 'needsReview' | 'claimType' | 'sourceTier' | 'primaryValue' | 'mediaClaim'>>;
+  | 'staleVerification' | 'sourceConflict' | 'reviewReasons' | 'reviewReasonCodes' | 'inReviewQueue' | 'caveats' | 'sources' | 'history' | 'needsReview' | 'claimType' | 'sourceTier' | 'primaryValue' | 'mediaClaim'
+  | 'listBucket' | 'eventOverride' | 'latestEvent'>> & { points?: Array<{ awaitingVerificationReason?: string | null }> };
 
 
 // ── section titles ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -75,8 +78,11 @@ export function recordBadge(r: BadgeIn & { mediaOnly?: boolean; record?: { verif
 // ── counts ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 const n0 = (n: unknown): number => (typeof n === 'number' && Number.isFinite(n) ? n : 0);
 const isNum = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
-/** 'X verified · Y partial · Z unverified/derived'. Z = unverified + derived + period-unclear (everything that is not verified or partial). Null when no counts. */
-export function stateCountsLine(c: Partial<GuStateCounts> | null | undefined): string | null {
+/** 'X verified · Y partial · Z unverified/derived'. Z = unverified + derived + period-unclear (everything that is not verified or partial). Null when no counts.
+ *  zzz854: when the backend sends the Active equation it is used as is ('Active 45 = 30 verified + 10 derived + 5 partial ...'), so the header adds up. */
+export function stateCountsLine(c: Partial<GuStateCounts> | null | undefined, eq?: Partial<GuCountEquations> | null): string | null {
+  const a = eq?.active;
+  if (a && typeof a.text === 'string' && a.text.trim()) return a.holds === false ? `${a.text.trim()} (data check failed)` : a.text.trim();
   if (!c || !isNum(c.activeRecords)) return null;
   return `${n0(c.verified)} verified · ${n0(c.partial)} partial · ${n0(c.unverified) + n0(c.derived) + n0(c.periodUnclear)} unverified/derived`;
 }
@@ -102,10 +108,17 @@ export const REVIEW_REASON_TEXT: Record<string, string> = {
   NEEDS_REVIEW: 'Flagged for a manual check.',
   COMPANY_UNRESOLVED: 'The company could not be matched to a listed name.',
   METRIC_LABEL_MISMATCH: 'The metric name in the source does not match the metric shown.',
+  // zzz854
+  AWAITING_VERIFICATION: 'Not yet confirmed by the company\'s own document. Kept out of Active until it is.',
+  EVENT_CONFLICT: 'A newer company filing says something different. The filing wins, so this record left Active.',
+  NEWER_PERIOD_GUIDANCE: 'The company has already guided a later period. This older period is kept for review.',
+  STALE_VERIFICATION: 'Not checked against the company document for a long time.',
+  INVARIANT_FAILED: 'A data check failed, so this is kept out of Active.',
 };
-const REASON_SHORT: Record<string, string> = {
+export const REASON_SHORT: Record<string, string> = {
   PERIOD_UNCLEAR: 'Period unclear', PERIOD_UNKNOWN: 'Period not stated', SECONDARY_ONLY: 'Media only', PRIMARY_MISSING: 'Company document not found', SOURCE_CONFLICT: 'Sources disagree',
   EXPIRED: 'Period ended', POTENTIAL_DUPLICATE: 'Possible duplicate', NEEDS_REVIEW: 'Manual check', COMPANY_UNRESOLVED: 'Company not matched', METRIC_LABEL_MISMATCH: 'Metric name mismatch',
+  AWAITING_VERIFICATION: 'Awaiting verification', EVENT_CONFLICT: 'Newer filing disagrees', NEWER_PERIOD_GUIDANCE: 'Later period already guided', STALE_VERIFICATION: 'Verification stale', INVARIANT_FAILED: 'Data check failed',
 };
 const prettyCode = (c: string) => { const t = c.toLowerCase().replace(/_/g, ' '); return t.charAt(0).toUpperCase() + t.slice(1); };
 export function reasonText(code: string): string { return REVIEW_REASON_TEXT[code] || prettyCode(code); }
@@ -133,24 +146,25 @@ export function reasonCountsLine(c: Record<string, number> | null | undefined): 
 }
 
 // ── view toggle (Active / Needs review / History) ────────────────────────────────────────────────────────────────
-export type GuView = 'active' | 'review' | 'history';
-export const VIEW_ORDER: GuView[] = ['active', 'review', 'history'];
+export type GuView = 'active' | 'review' | 'claims' | 'history';
+export const VIEW_ORDER: GuView[] = ['active', 'review', 'claims', 'history'];
 export function viewLabel(v: GuView, vc?: Partial<GuViewCounts> | null): string {
-  const base = v === 'active' ? 'Active' : v === 'review' ? 'Needs review' : 'History';
+  const base = v === 'active' ? 'Active' : v === 'review' ? 'Needs review' : v === 'claims' ? 'Claims awaiting verification' : 'History';
   if (!vc) return base;
-  const n = v === 'active' ? vc.default : v === 'review' ? vc.review : isNum(vc.expired) || isNum(vc.superseded) || isNum(vc.withdrawn) ? n0(vc.expired) + n0(vc.superseded) + n0(vc.withdrawn) + n0(vc.excluded) : undefined;
+  const n = v === 'active' ? vc.default : v === 'review' ? vc.review : v === 'claims' ? vc.claimsAwaiting : isNum(vc.expired) || isNum(vc.superseded) || isNum(vc.withdrawn) ? n0(vc.expired) + n0(vc.superseded) + n0(vc.withdrawn) + n0(vc.excluded) : undefined;
   return isNum(n) ? `${base} (${n})` : base;
 }
 export const VIEW_HINT: Record<GuView, string> = {
   active: 'Default view. Company matched, period confirmed, nothing flagged.',
   review: 'Active guidance kept out of the default view. The reason is shown on each row.',
+  claims: 'Found in media or not yet confirmed by the company\'s own document. Never ranked or counted in Active. The reason is shown on each row.',
   history: 'Guidance that is no longer in force (ended, replaced or withdrawn) and rows left out on purpose.',
 };
 /** The API value for each view. */
-export function viewParam(v: GuView): 'active' | 'review' | 'history' { return v; }
+export function viewParam(v: GuView): GuView { return v; }
 export function viewCountsLine(vc: Partial<GuViewCounts> | null | undefined): string | null {
   if (!vc || !isNum(vc.default)) return null;
-  return `${n0(vc.default)} active · ${n0(vc.review)} need review · ${n0(vc.expired)} ended · ${n0(vc.superseded)} replaced · ${n0(vc.withdrawn)} withdrawn · ${n0(vc.excluded)} left out`;
+  return `${n0(vc.default)} active · ${n0(vc.review)} need review${isNum(vc.claimsAwaiting) ? ` · ${vc.claimsAwaiting} awaiting verification` : ''} · ${n0(vc.expired)} ended · ${n0(vc.superseded)} replaced · ${n0(vc.withdrawn)} withdrawn · ${n0(vc.excluded)} left out`;
 }
 export function expiryLine(x: Partial<GuExpirySummary> | null | undefined): string | null {
   if (!x || !isNum(x.total)) return null;
@@ -305,12 +319,12 @@ export interface QualityStrip {
   violations: string[]; liveError: string | null; servedNote: string | null;
 }
 export function qualityStrip(d: {
-  summary?: { counts?: Partial<GuStateCounts>; reviewReasonCounts?: Record<string, number>; staleVerificationCount?: number; sourceConflictCount?: number; reviewQueueCount?: number } | null;
-  invariantViolations?: unknown; liveError?: string | null; servedFrom?: string | null;
+  summary?: { counts?: Partial<GuStateCounts>; reviewReasonCounts?: Record<string, number>; staleVerificationCount?: number; sourceConflictCount?: number; reviewQueueCount?: number; countEquations?: Partial<GuCountEquations> } | null;
+  invariantViolations?: unknown; liveError?: string | null; servedFrom?: string | null; countEquations?: Partial<GuCountEquations> | null;
 } | null | undefined): QualityStrip {
   const s = d?.summary || {};
   return {
-    stateLine: stateCountsLine(s.counts), reasonLine: reasonCountsLine(s.reviewReasonCounts),
+    stateLine: stateCountsLine(s.counts, d?.countEquations ?? s.countEquations), reasonLine: reasonCountsLine(s.reviewReasonCounts),
     stale: isNum(s.staleVerificationCount) ? s.staleVerificationCount : null, conflicts: isNum(s.sourceConflictCount) ? s.sourceConflictCount : null,
     reviewQueue: isNum(s.reviewQueueCount) ? s.reviewQueueCount : null,
     violations: violationTexts(d?.invariantViolations), liveError: d?.liveError ? String(d.liveError) : null,
@@ -371,3 +385,146 @@ export function eventCountsStrip(c: { upgrade?: number; reiteration?: number; mi
   if (!c || !isNum(c.upgrade)) return null;
   return `Verified upgrades ${n0(c.upgrade)} · Reiterations ${n0(c.reiteration)} · Mixed or range change ${n0(c.mixed)} · Lowered ${n0(c.lowered)} · Unverified claims ${n0(c.unverifiedClaims)}`;
 }
+
+// ═══ zzz854 ═══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ── universe: Highest active heading, per-record event reconciliation ───────────────────────────────────────────
+/** 'HIGHEST ACTIVE GUIDANCE (29)' plus a note so 'Active 45' vs 'Highest active 29' is explained. Uses the backend equation when sent. */
+export function highestActiveHeading(eq: Partial<GuCountEquations> | null | undefined, shownTotal: number, threshold: number): { title: string; note: string | null } {
+  const h = eq?.highestActive;
+  if (h && isNum(h.value)) {
+    const a = eq?.active?.value;
+    const note = `${isNum(h.threshold) ? h.threshold : threshold}% or more guided growth (Revenue, PAT or EBITDA) · ${isNum(h.companies) ? h.companies : UNKNOWN} companies${isNum(a) ? ` out of ${a} active` : ''}. ${h.text ? String(h.text).trim() : ''}`.trim();
+    return { title: `${SECTION_ACTIVE} (${h.value})`, note: h.holds === false ? `${note} (data check failed)` : note };
+  }
+  return { title: `${SECTION_ACTIVE} (${shownTotal})`, note: `${threshold}% or more guided growth.` };
+}
+/** The record-level reconciliation lines: newer filing that wins, newest matching event, why it awaits verification. Empty when none. */
+export function eventReconcileLines(r: { eventOverride?: GuEventOverride | null; latestEvent?: GuEventStatus | null; awaitingVerificationReason?: string | null; listBucket?: string | null } | null | undefined): Array<{ text: string; tone: 'red' | 'amber' | 'grey' }> {
+  if (!r) return [];
+  const out: Array<{ text: string; tone: 'red' | 'amber' | 'grey' }> = [];
+  const o = r.eventOverride;
+  if (o && (o.text || o.eventLabel)) out.push({ text: o.text ? String(o.text).trim() : `Latest filing (${o.eventDate}) says ${o.eventLabel}; this record said ${o.previousRevision}.`, tone: 'red' });
+  const l = r.latestEvent;
+  if (l && !o) out.push({ text: `Latest event: ${l.label}${l.display ? ` (${l.display})` : ''}, ${l.period}, ${l.date}${l.verified ? '' : ' — not verified, does not change this record'}${l.reason ? `. ${l.reason}` : ''}`, tone: l.verified ? 'grey' : 'amber' });
+  if (r.awaitingVerificationReason && String(r.awaitingVerificationReason).trim()) out.push({ text: `Awaiting verification: ${String(r.awaitingVerificationReason).trim()}`, tone: 'amber' });
+  return out;
+}
+
+// ── events: one primary-source state, taxonomy, validation, AI check, other changes ────────────────────────────
+type EvX = Pick<GuidanceEvent, 'primaryState' | 'primaryStateText' | 'primarySourceUrl' | 'primarySourceDate'> & Partial<Pick<GuidanceEvent, 'primarySourceState' | 'taxonomy' | 'validationIssues' | 'otherChanges' | 'headlineBasis' | 'basisNote' | 'pipeline'>>;
+/** ONE primary-source line, derived from primarySourceState when present (never 'awaiting' next to 'read'). Falls back to the older wording. */
+export function primarySourceView(e: EvX): { text: string; tone: 'green' | 'amber' } | null {
+  if (e.primarySourceState) {
+    const t = PRIMARY_SOURCE_STATE_LABEL[e.primarySourceState] || UNKNOWN;
+    return { text: `${t}${e.primarySourceDate ? ` (${String(e.primarySourceDate).slice(0, 10)})` : ''}`, tone: e.primarySourceState === 'read_numbers_found' ? 'green' : 'amber' };
+  }
+  const old = primaryStateLine(e);
+  return old ? { text: old, tone: e.primaryState === 'PRIMARY_SOURCE_READ' ? 'green' : 'amber' } : null;
+}
+export function taxonomyText(e: EvX): string | null { return e.taxonomy ? TAXONOMY_LABEL[e.taxonomy] || null : null; }
+const SEVERITY_WORD: Record<GuValidationIssue['severity'], string> = { INVALID: 'Invalid', REVIEW: 'Check', INFO: 'Note' };
+/** 'Invalid: quarterly actual compared with an annual guide'. Empty when every check passed. */
+export function validationLines(e: EvX): Array<{ text: string; severity: GuValidationIssue['severity'] }> {
+  return (Array.isArray(e.validationIssues) ? e.validationIssues : []).filter((v) => v && v.text).map((v) => ({ text: `${SEVERITY_WORD[v.severity] || 'Note'}: ${String(v.text).trim()}`, severity: v.severity }));
+}
+const BASIS_WORD: Record<string, string> = { GAAP: 'GAAP', NON_GAAP: 'adjusted', ORGANIC: 'organic', REPORTED: 'reported', UNSTATED: 'basis not stated' };
+/** Measures from the same release that did not move up (e.g. the GAAP line next to an adjusted raise). Never counted as a raise. */
+export function otherChangeLines(e: EvX): string[] {
+  return (Array.isArray(e.otherChanges) ? e.otherChanges : []).filter((c) => c && c.after).map((c) => {
+    const b = fmtBeforeAfter(c);
+    const basis = c.after.basis && c.after.basis !== 'UNSTATED' ? ` (${BASIS_WORD[c.after.basis] || c.after.basis})` : '';
+    const dir = c.direction === 'DOWN' ? 'lowered' : c.direction === 'FLAT' ? 'unchanged' : c.direction === 'UP' ? 'raised' : 'change not established';
+    return `${METRIC_LABEL[c.after.metric] || c.after.metric} ${c.after.period}${basis}: ${b.before} → ${b.after}${b.delta ? ` (${b.delta})` : ''}, ${dir}`;
+  });
+}
+export const HEADLINE_BASIS_WORD: Record<string, string> = { ADJUSTED: 'Headline uses adjusted figures', GAAP: 'Headline uses GAAP figures', UNSTATED: 'Headline basis not stated' };
+
+export interface AiCheck { label: string; tone: 'green' | 'amber' | 'red'; quote: string | null; url: string | null; detail: string | null }
+/** The AI verifier tag on an event or review row. Confirmed shows '✓ AI-checked against filing' with the quote; awaiting and contradicted say so plainly. */
+export function aiCheckOf(x: object | null | undefined): AiCheck | null {
+  const a = (x as { aiVerification?: Record<string, unknown> } | null)?.aiVerification;
+  if (!a || typeof a !== 'object') return null;
+  const st = String(a.status || '');
+  const quote = typeof a.quote === 'string' && a.quote.trim() ? a.quote.trim() : null;
+  const url = typeof a.documentUrl === 'string' && a.documentUrl ? a.documentUrl : null;
+  const vals = (Array.isArray(a.newValues) ? a.newValues : Array.isArray(a.values) ? a.values : []).filter((n) => typeof n === 'number');
+  const old = (Array.isArray(a.oldValues) ? a.oldValues : []).filter((n) => typeof n === 'number');
+  const bits = [vals.length ? `new ${vals.join(' to ')}` : null, old.length ? `old ${old.join(' to ')}` : null, typeof a.period === 'string' && a.period ? `period ${a.period}` : null, typeof a.basis === 'string' && a.basis ? `basis ${a.basis.toLowerCase()}` : null].filter(Boolean);
+  const reason = typeof a.reasonText === 'string' && a.reasonText.trim() ? a.reasonText.trim() : null;
+  if (st === 'AI_CONFIRMED') return { label: '✓ AI-checked against filing', tone: 'green', quote, url, detail: bits.length ? `The document states: ${bits.join(', ')}` : null };
+  if (st === 'AI_CONFIRMED_NO_NUMBERS') return { label: 'AI found guidance in the filing — old and new figures still needed', tone: 'amber', quote, url, detail: reason };
+  if (st === 'AI_CONTRADICTED') return { label: '✕ AI check: the filing does not support this', tone: 'red', quote, url, detail: reason };
+  if (st === 'AWAITING') return { label: 'Awaiting AI check', tone: 'amber', quote: null, url, detail: reason };
+  return null;
+}
+
+// ── events: header partition, review queue, awaiting / audit lists ─────────────────────────────────────────────
+export interface PartitionView { line: string; boxes: Array<{ label: string; n: number; tip: string }>; listsLine: string; listsHold: boolean; byMarket: string | null }
+/** Header from the exact pipeline partition (the ten buckets add up to processed). Null for an older payload. */
+export function partitionView(p: Partial<GuPipelineCounts> | null | undefined, byMarket?: { IN?: Partial<GuPipelineCounts>; US?: Partial<GuPipelineCounts> } | null): PartitionView | null {
+  if (!p || !isNum(p.processed)) return null;
+  const full = { processed: 0, verifiedUpgrades: 0, reiterations: 0, mixed: 0, lowered: 0, firstGuidance: 0, invalidOrStale: 0, capitalRaise: 0, awaitingNumbers: 0, unverified: 0, nonGuidance: 0, stale: 0, needsReview: 0, awaitingPrimary: 0, material: 0, expectationPositive: 0, cards: 0, audit: 0, queue: 0, dropped: 0, ...p } as GuPipelineCounts;
+  const lists = n0(full.cards) + n0(full.audit) + n0(full.queue) + n0(full.dropped);
+  const mk = (m?: Partial<GuPipelineCounts>) => (m && isNum(m.processed) ? `${m.processed} processed, ${n0(m.verifiedUpgrades)} verified upgrades` : null);
+  const bm = byMarket ? [mk(byMarket.IN) ? `India ${mk(byMarket.IN)}` : null, mk(byMarket.US) ? `USA ${mk(byMarket.US)}` : null].filter(Boolean).join(' | ') : '';
+  return {
+    line: pipelineCountsLine(full),
+    boxes: [
+      { label: 'Processed', n: full.processed, tip: 'Every item whose numbers or company document were read. The buckets below add up to this.' },
+      { label: 'Verified upgrades', n: full.verifiedUpgrades, tip: 'Old and new numbers, same measure, same basis, same period, confirmed by the company document.' },
+      { label: 'Material', n: n0(full.material), tip: 'Verified upgrades big enough to matter (already inside verified upgrades).' },
+      { label: 'Review queue', n: n0(full.queue) + n0(full.dropped), tip: 'Not shown as cards: awaiting numbers, awaiting the company document, needs review, invalid, stale, first guidance, capital raise, or not guidance at all.' },
+    ],
+    listsLine: `Shown as cards ${n0(full.cards)} + audit list ${n0(full.audit)} + review queue ${n0(full.queue)} + not guidance ${n0(full.dropped)} (also listed in the review queue) = ${lists} of ${full.processed} processed`,
+    listsHold: lists === full.processed,
+    byMarket: bm || null,
+  };
+}
+export function reviewQueueLine(r: GuReviewItem): string {
+  try { return reviewItemLine(r); } catch { return `${r.company || UNKNOWN} ${r.announcement_date || ''} — ${r.reason || UNKNOWN}`; }
+}
+/** 'Awaiting numbers 40 · Needs review 12 ...' largest first. */
+export function reviewStatusCounts(items: ReadonlyArray<Pick<GuReviewItem, 'status'>> | null | undefined): Array<{ status: GuReviewStatus; label: string; n: number }> {
+  const c: Partial<Record<GuReviewStatus, number>> = {};
+  for (const i of items || []) if (i?.status) c[i.status] = (c[i.status] || 0) + 1;
+  return (Object.keys(c) as GuReviewStatus[]).map((k) => ({ status: k, label: REVIEW_STATUS_LABEL[k] || prettyCode(k), n: c[k] || 0 })).sort((a, b) => b.n - a.n || a.label.localeCompare(b.label));
+}
+/** Items waiting for the AI check / removed by it. Uses explicit lists when the route sends them, else the review queue's AI tags. */
+export function guVerificationLists<T extends { aiVerification?: unknown }>(d: { reviewQueue?: T[] | null; awaitingVerification?: unknown[] | null; verificationAudit?: unknown[] | null } | null | undefined): { awaiting: Array<T | Record<string, unknown>>; audit: Array<T | Record<string, unknown>> } {
+  const q = Array.isArray(d?.reviewQueue) ? d!.reviewQueue! : [];
+  const st = (x: T) => String(((x as { aiVerification?: { status?: unknown } }).aiVerification || {}).status || '');
+  const awaiting = Array.isArray(d?.awaitingVerification) ? (d!.awaitingVerification as Record<string, unknown>[]) : q.filter((x) => st(x) === 'AWAITING');
+  const audit = Array.isArray(d?.verificationAudit) ? (d!.verificationAudit as Record<string, unknown>[]) : q.filter((x) => st(x) === 'AI_CONTRADICTED');
+  return { awaiting, audit };
+}
+
+// ── coverage: blocked / empty feeds with their retry time ───────────────────────────────────────────────────────
+/** 'NSE blocked (HTTP 403) — retrying after 22:40 UTC'. Null when the row did not fail for one of these reasons. */
+export function coverageFailureLine(x: { name?: string; reason?: string; failureKind?: string | null; retryAfter?: string | null } | null | undefined): string | null {
+  if (!x) return null;
+  const name = sourceDisplayName(x.name).replace(/\s*filings?$/i, '') || 'Feed';
+  const t = x.retryAfter ? Date.parse(x.retryAfter) : NaN;
+  const when = Number.isFinite(t) ? `${new Date(t).toISOString().slice(11, 16)} UTC` : null;
+  if (x.failureKind === 'BLOCKED') {
+    const code = /\b(403|429)\b/.exec(x.reason || '')?.[1];
+    return `${name} blocked${code ? ` (HTTP ${code})` : ''} — ${when ? `retrying after ${when}` : 'retry time not known'}`;
+  }
+  if (x.failureKind === 'EMPTY_RESPONSE') return `${name} answered with no announcements — treated as a failed read, not as zero events`;
+  if (x.failureKind === 'TIMEOUT') return `${name} timed out${when ? ` — retrying after ${when}` : ''}`;
+  return null;
+}
+
+/** The stage shown on the pipeline strip, capped by the ONE primary-source state: a document that was not read is never past PRIMARY SOURCE. */
+export function displayStage(e: Parameters<typeof stageOf>[0] & { primarySourceState?: GuidanceEvent['primarySourceState'] }): GuStage {
+  const st = stageOf(e);
+  const cap: GuStage | null = e.primarySourceState === 'not_found' ? 'CANDIDATE' : e.primarySourceState === 'found_not_read' || e.primarySourceState === 'read_numbers_not_found' ? 'PRIMARY_SOURCE_FOUND' : null;
+  return cap && STAGE_ORDER.indexOf(st) > STAGE_ORDER.indexOf(cap) ? cap : st;
+}
+
+/** Record-level reconciliation: the record's own override / latest event, plus the first point's awaiting-verification reason. */
+export function recordReconcileLines(x: GuRecX | null | undefined): Array<{ text: string; tone: 'red' | 'amber' | 'grey' }> {
+  if (!x) return [];
+  const why = Array.isArray(x.points) ? x.points.map((p) => p?.awaitingVerificationReason).find((t) => typeof t === 'string' && t.trim()) : null;
+  return eventReconcileLines({ eventOverride: x.eventOverride, latestEvent: x.latestEvent, awaitingVerificationReason: why || null });
+}
+export const LIST_BUCKET_WORD: Record<string, string> = { ACTIVE: 'Active', REVIEW: 'Needs review', CLAIMS: 'Claim awaiting verification' };

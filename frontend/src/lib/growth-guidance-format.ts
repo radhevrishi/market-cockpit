@@ -247,6 +247,21 @@ export function overlayHeld(cs: GgCompany[], held: ReadonlyArray<string>): GgCom
 }
 
 // ── scan panel ───────────────────────────────────────────────────────────────────────────────────────────────────
+const SCAN_PREFIX_RE = /^\s*SCAN (?:INCOMPLETE|COMPLETE)\s*(?:[—–-]+|[.:])\s*/;
+/** zzz854: a market's own note without its leading 'SCAN INCOMPLETE —' (the caller adds the prefix once). */
+export function stripScanPrefix(note: string | null | undefined): string {
+  let t = String(note ?? '').trim();
+  while (SCAN_PREFIX_RE.test(t)) t = t.replace(SCAN_PREFIX_RE, '').trim();
+  return t;
+}
+/** zzz854: 'SCAN INCOMPLETE — SCAN INCOMPLETE — India: …' -> 'SCAN INCOMPLETE — India: …'. Every repeated prefix collapses to one; a note with none is unchanged. */
+export function scanNoteText(note: string | null | undefined): string {
+  const t = String(note ?? '').trim();
+  const m = /^\s*(SCAN (?:INCOMPLETE|COMPLETE))\b/.exec(t);
+  if (!m) return t;
+  const body = stripScanPrefix(t).replace(/\bSCAN INCOMPLETE\s*[—–-]+\s*/g, '');
+  return body ? `${m[1].toUpperCase()} — ${body}` : m[1].toUpperCase();
+}
 export function scanHeadline(scan: { complete: boolean } | null | undefined): string {
   if (!scan) return 'SCAN STATUS UNKNOWN';
   return scan.complete ? 'SCAN COMPLETE' : 'SCAN INCOMPLETE — not a confirmation of no guidance';

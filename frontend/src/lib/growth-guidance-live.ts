@@ -14,8 +14,10 @@ import { scanIndia, scanUs, makeRealIndiaFetchers, makeRealEdgarFetcher, type Ma
 import { buildGrowthGuidance, type GgTickerCtx, type GgReported, type GgStoredEntry } from '@/lib/growth-guidance';
 import { readGgLedgers, readGgIndex, writeGgLedgers } from '@/lib/growth-guidance-ledger';
 import type { GgCompany, GgResponse, GgScanSource } from '@/lib/growth-guidance-types';
+import { stripScanPrefix } from '@/lib/growth-guidance-format';
+import { readNewsWithLastGood, makeKvNewsIo, type NewsRead } from '@/lib/guidance-upgrades-cache';
+import { readConcallFeedWithFallback, makeKvFeedIo, type ConcallFeedRead } from '@/lib/concall-feed';
 
-const NEWS_KEY = 'news:articles:v39';
 const BUDGET_MS = 22_000;
 const DAYS = 30;
 const MAX_PER_MARKET = 600;
@@ -52,9 +54,11 @@ export async function buildLiveGuidance(market: 'IN' | 'US' | 'ALL', now: Date, 
   const usDates = wantUS ? usSessionDates(now, DAYS) : [];
   const inFetch = wantIN ? makeRealIndiaFetchers() : null;
   const inScanP: Promise<MarketScanResult | null> = inFetch ? scanIndia({ now, days: 14, fetchNse: inFetch.nse, fetchBse: inFetch.bse, readBlob: inFetch.blob, budgetMs: 11_000 }).catch(() => null) : Promise.resolve(null);
-  const [news, feed, graded, usSessions, scraped, catalog] = await Promise.all([
-    withTimeout(kvGet<any[]>(NEWS_KEY), BUDGET_MS, null),
-    wantIN ? withTimeout((async () => { for (const k of ['concall-feed:v26:days:30', 'concall-feed:v26:days:14', 'concall-feed:v26:days:7']) { const v = await kvGet<any>(k); if (v && Array.isArray(v.filings)) return v; } return null; })(), BUDGET_MS, null) : Promise.resolve(null),
+  const [newsRead, feedRead, graded, usSessions, scraped, catalog] = await Promise.all([
+    // zzz854: the news key lives 5 minutes; a durable last-good copy (>= 26 h) serves when it is absent, labelled stale with its age
+    withTimeout(readNewsWithLastGood(makeKvNewsIo(Math.min(BUDGET_MS, 6_000))), BUDGET_MS, null as NewsRead | null),
+    // zzz854: the 30-day feed key may be absent: next-best key, then the last-good copy, all labelled. A failed read is never zero filings.
+    wantIN ? withTimeout(readConcallFeedWithFallback(makeKvFeedIo(4_000)), BUDGET_MS, null as ConcallFeedRead | null) : Promise.resolve(null as ConcallFeedRead | null),
     wantIN ? withTimeout(kvMGet<any>(dates.map((d) => gradedKey(d))), BUDGET_MS, null) : Promise.resolve(null),
     wantUS ? withTimeout(loadUsSessions(usDates, [US_ENGINE_VERSION, ...US_ENGINE_PREVIOUS_VERSIONS.slice(0, 2)], (keys) => kvMGet<any>(keys)), BUDGET_MS, null) : Promise.resolve(null),
     // the news cache lives 5 minutes; the scraped India news blob lives 24h and is the steadier India media source
@@ -62,13 +66,17 @@ export async function buildLiveGuidance(market: 'IN' | 'US' | 'ALL', now: Date, 
     wantIN ? withTimeout(loadCatalog(), 4_000, null) : Promise.resolve(null),
   ]);
   const inScan = await withTimeout(inScanP, 12_500, null);
-  const empty: string[] = [];
+  const empty: string[] = []; const feedNotes: string[] = [];
+  const news = newsRead?.articles ?? null;
+  const feed = feedRead?.feed ?? null;
+  if (newsRead && newsRead.servedBy !== 'LIVE' && newsRead.articles) feedNotes.push(newsRead.row.text);
+  if (feedRead && feedRead.feed && feedRead.stale) feedNotes.push(feedRead.label);
   const scrapedList: any[] = Array.isArray(scraped) ? scraped : Array.isArray(scraped?.entries) ? scraped.entries : [];
   if (wantIN) {
     // every India input path (news, scraped news, exchange feed + live scan, graded rows) through one shared builder
     const b = buildIndiaCandidates({ news: Array.isArray(news) ? news : null, scraped, feed, graded: Array.isArray(graded) ? graded : null, gradedDates: dates, scanCandidates: inScan?.candidates || [], catalog }, NSE_TICKER_NAMES);
     cands.push(...b.candidates);
-    if (!Array.isArray(feed?.filings)) empty.push('India exchange filing feed (concall-feed:v26 missing or empty)');
+    if (!Array.isArray(feed?.filings)) empty.push(feedRead ? feedRead.label : 'India exchange filing feed: read timed out (unknown, not zero filings)');
     if (Array.isArray(graded)) graded.forEach((p, i) => {
       for (const r of collectGradedRows(p)) {
         const t = String(r?.symbol || r?.ticker || '').toUpperCase().replace(/\.(NS|BO)$/, '');
@@ -92,7 +100,7 @@ export async function buildLiveGuidance(market: 'IN' | 'US' | 'ALL', now: Date, 
       }
     } else empty.push('US graded-results cache');
   }
-  if (Array.isArray(news)) { for (const a of news) { newsArticles.push(a); if (!wantIN) { const c = newsToCandidate(a); if (c) cands.push(c); } } } else empty.push('news cache (news:articles:v39 missing or empty; it expires after 5 minutes)');
+  if (Array.isArray(news)) { for (const a of news) { newsArticles.push(a); if (!wantIN) { const c = newsToCandidate(a); if (c) cands.push(c); } } } else empty.push(newsRead ? newsRead.row.text : 'news cache: read timed out (unknown, not zero articles)');
   let usScan: MarketScanResult | null = null;
   if (wantUS) {
     usScan = await withTimeout(scanUs({ now, days: 14, warmSessions: usSessions?.warm ?? 0, totalSessions: usSessions?.total ?? usDates.length, gradedTickers: new Set(usTickers), warmDates: new Set((usSessions?.rows || []).map((r) => r.date)),
@@ -150,8 +158,9 @@ export async function buildLiveGuidance(market: 'IN' | 'US' | 'ALL', now: Date, 
   }
   for (const e of empty) sources.push({ name: e, state: 'FAILED', scanned: 0, detail: 'cache empty or timed out' });
   const complete = (!wantIN || !!inScan?.status.complete) && (!wantUS || !!usScan?.status.complete) && empty.length === 0;
-  const note = complete ? 'Scan complete for the sources read. Only text held in the caches is read; documents are not fetched, so a number is VERIFIED only when the company filing row itself carries it.'
-    : `SCAN INCOMPLETE — ${[inScan?.status && !inScan.status.complete ? inScan.status.note : '', usScan?.status && !usScan.status.complete ? usScan.status.note : '', ...(empty.length ? [`Empty: ${empty.join(', ')}`] : []), ...(!inScan && wantIN ? ['India scan did not finish'] : []), ...(!usScan && wantUS ? ['US scan did not finish'] : [])].filter(Boolean).join(' ')}. Empty results are not a confirmation of no guidance.`;
+  const staleTail = feedNotes.length ? ` Fallbacks in use: ${feedNotes.join(' ')}` : '';
+  const note = complete ? `Scan complete for the sources read.${staleTail}` + ' Only text held in the caches is read; documents are not fetched, so a number is VERIFIED only when the company filing row itself carries it.'
+    : `SCAN INCOMPLETE — ${[inScan?.status && !inScan.status.complete ? stripScanPrefix(inScan.status.note) : '', usScan?.status && !usScan.status.complete ? stripScanPrefix(usScan.status.note) : '', ...(empty.length ? [`Empty: ${empty.join(', ')}`] : []), ...(!inScan && wantIN ? ['India scan did not finish'] : []), ...(!usScan && wantUS ? ['US scan did not finish'] : []), ...feedNotes].filter(Boolean).join(' ').replace(/\.\s*$/, '')}. Empty results are not a confirmation of no guidance.`;
   const ledger: GgLedgerInput = [];
   for (const [m, mp] of [['IN', ledIN], ['US', ledUS]] as const) for (const [ticker, entries] of Array.from(mp.entries() as IterableIterator<[string, GgStoredEntry[]]>)) if (entries.length) ledger.push({ market: m, ticker, entries });
   return { at: Date.now(), all: built.companies, scan: { complete, note, sources, lastScanAt: now.toISOString() }, note: undefined, ledger };

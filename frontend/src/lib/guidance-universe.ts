@@ -14,9 +14,11 @@ import type { GuHighGrowthHorizon, GuHighGrowthMetric, GuHighGrowthRowX, GuMarke
 import type {
   GuClaimType, GuCohort, GuDurationType, GuExpirySummary, GuGrowthDerivation, GuGrowthType, GuGrowthVsPriorYear, GuGuidanceType, GuHgGroupRow, GuHgMetricX, GuHighGrowthGroups, GuHistoryStep, GuLifecycle,
   GuMetricFamily, GuPeriodConfirm, GuReviewReasonX, GuRevisionVsPrior, GuSourceEntry, GuStateCounts, GuTrust, GuVerificationState,
+  GuCountEquations, GuEventOverride, GuEventStatus, GuEventStatusKind, GuListBucket,
 } from './guidance-universe-types';
+import { activePointViolations } from './guidance-invariants';
 import {
-  HIGH_GROWTH_THRESHOLD, PLAUSIBLE_REVENUE_GROWTH_PCT, REPORTING_LAG_DAYS, REGRESSION_TOLERANCE_PP, PRIOR_NEIGHBOURHOOD_PP, SOURCE_CONFLICT_WINDOW_DAYS, STALE_VERIFICATION_DAYS, classifySourceTier, TIER_LABEL, type SourceTier,
+  HIGH_GROWTH_THRESHOLD, PLAUSIBLE_REVENUE_GROWTH_PCT, REPORTING_LAG_DAYS, REGRESSION_TOLERANCE_PP, PRIOR_NEIGHBOURHOOD_PP, SOURCE_CONFLICT_WINDOW_DAYS, STALE_VERIFICATION_DAYS, STALE_DEMOTE_DAYS, classifySourceTier, TIER_LABEL, type SourceTier,
 } from './guidance-config';
 import {
   FAMILY_OF, amountText, buildHistory, claimTypeOf, daysBetween, deriveGrowth, derivedDp, extractMetricLabel, familyOfLabel, fnum, isCapitalRaise, isReiteration, isStale, nonGuidanceReason, normPeriod, parseUnit,
@@ -426,6 +428,11 @@ export interface GuPoint {
   sources: GuSourceEntry[]; sourceConflict: boolean; primaryValue: GuSourceEntry | null; mediaClaim: GuSourceEntry | null;
   /** per-point review reasons (blocking ones keep the point out of the default view) */ reviewReasons: GuReviewReasonX[];
   inDefaultView: boolean;
+  // ── zzz854 (additive) ──
+  /** ACTIVE (verified / derived / partial with the company document read) | REVIEW | CLAIMS (awaiting verification; never ranked in Active) */ listBucket: GuListBucket;
+  /** why the point is a claim awaiting verification (secondary source only, document not read, last verified unknown ...), else null */ awaitingVerificationReason: string | null;
+  /** set when a newer primary-source event disagrees with this point (the event wins) */ eventOverride: GuEventOverride | null;
+  /** the newest event (Layer B) for the same company + metric + period, verified or not */ latestEvent: GuEventStatus | null;
 }
 export interface GuUniverseRecordX extends GuUniverseRecord {
   entityKey: string; tickers: string[]; names: string[]; period: string;
@@ -448,6 +455,8 @@ export interface GuUniverseRecordX extends GuUniverseRecord {
   sources: GuSourceEntry[]; sourceConflict: boolean; primaryValue: GuSourceEntry | null; mediaClaim: GuSourceEntry | null;
   /** empty for a default-view record; for a review-queue record the reasons it is there (plus the informational ones) */ reviewReasons: string[]; reviewReasonCodes: string[]; inReviewQueue: boolean;
   /** informational notes that do NOT keep a record out of the default view (secondary-only, primary not found, stale verification ...) */ caveats: string[];
+  /** zzz854: which list this record object belongs to (a company with points in two lists has one record object per list) */ listBucket: GuListBucket;
+  /** zzz854: headline point's event override / newest matching event (see GuPoint) */ eventOverride: GuEventOverride | null; latestEvent: GuEventStatus | null;
 }
 export interface GuInactiveRecord {
   entityKey: string; company: string; ticker: string | null; market: 'IN' | 'US'; metric: GgMetric; period: string; status: Inactive; reason: string; display: string; verification: GgVerification; sourceName: string; sourceDate: string | null; origin: GuUniverseRecordOrigin;
@@ -458,9 +467,11 @@ export interface GuUniverseBuild {
   /** every active record (legacy shape: one per company with all its points) */ records: GuUniverseRecordX[]; inactive: GuInactiveRecord[]; excluded: GuExcluded[]; stored: GuStoredPoint[];
   /** zzz853: the DEFAULT VIEW: active + company resolved + period CONFIRMED + not needsReview (per point) */ defaultRecords: GuUniverseRecordX[];
   /** zzz853: everything else that is active, each with reviewReasons[] */ reviewQueue: GuUniverseRecordX[];
+  /** zzz854: claims awaiting verification (media / social / document not read / last verified unknown). Never in the Active list or its counts. Absent in older stored builds. */
+  claimsAwaiting?: GuUniverseRecordX[];
 }
 /** `eventWindow` is accepted and IGNORED: the universe never depends on an event window (24H/3D/7D...). */
-export interface GuBuildOpts { threshold?: number; eventWindow?: string | null }
+export interface GuBuildOpts { threshold?: number; eventWindow?: string | null; /** zzz854: what the events layer says per company + metric + period (newest wins) */ eventStatuses?: GuEventStatus[] | null }
 
 const dateOf = (i: Item) => i.src.date || '';
 const ORIGIN_ORDER: Record<GuUniverseRecordOrigin, number> = { LIVE: 0, LEDGER: 1, RESEARCHED_SEED: 2 };
@@ -534,7 +545,50 @@ function impliedCheck(it: Item): { reject?: string; review?: string } {
 }
 
 /** Context a point needs that lives outside its own item: the version chain, lifecycle, sources of the slot. */
-interface PointCtx { now: Date; versions: GuVersionIn[]; lifecycle: GuLifecycle; expiryReason: string | null; sources: GuSourceEntry[]; conflict: boolean; primaryValue: GuSourceEntry | null; mediaClaim: GuSourceEntry | null; pf: ReturnType<typeof periodFacts>; resolved: boolean; dupOf: string | null }
+interface PointCtx { now: Date; versions: GuVersionIn[]; lifecycle: GuLifecycle; expiryReason: string | null; sources: GuSourceEntry[]; conflict: boolean; primaryValue: GuSourceEntry | null; mediaClaim: GuSourceEntry | null; pf: ReturnType<typeof periodFacts>; resolved: boolean; dupOf: string | null; /** zzz854: event statuses for this company + metric (any period) */ events?: GuEventStatus[] }
+
+// ═══ zzz854: the EVENTS layer overrides the universe ════════════════════════════════════════════
+// RULE: the newest PRIMARY-SOURCE (verified) event for the same company + metric + period, dated on or after the record's own source date, wins.
+// When it disagrees with the record (record RAISED but the filing says REITERATED / LOWERED / MIXED / not guidance; or the filing is newer and
+// moved the numbers), the record leaves the Active list for "Needs review" with the reason 'Latest filing (date) says <status>', its revision is
+// set to what the filing says and its 'vs prior guidance' text is dropped. A verified event for a LATER fiscal year of the same metric moves an
+// annual record to review too (the company already guides the next year). Unverified events never override; they are kept as `latestEvent` only.
+const EVENT_REVISION: Record<GuEventStatusKind, GuUniverseRecord['revision'] | null> = { RAISED: 'RAISED', REITERATED: 'MAINTAINED', LOWERED: 'LOWERED', MIXED: 'NONE', INVALID: 'NONE', NO_NUMBERS: null };
+const EVENT_WORD: Record<GuEventStatusKind, string> = { RAISED: 'guidance RAISED', REITERATED: 'guidance REITERATED (unchanged)', LOWERED: 'guidance LOWERED', MIXED: 'a MIXED / range change (not a clean raise)', INVALID: 'NOT guidance', NO_NUMBERS: 'no numbers' };
+const dayDiff = (a: string, b: string): number => (Date.parse(`${a.slice(0, 10)}T00:00:00Z`) - Date.parse(`${b.slice(0, 10)}T00:00:00Z`)) / DAY;
+const fyOf = (p: string): number | null => { const m = /^(?:FY|CY)(\d{2})$/.exec(normPeriod(p)); return m ? 2000 + parseInt(m[1], 10) : null; };
+export function eventOverrideFor(i: { period: string; revision: GuUniverseRecord['revision']; sourceDate: string | null; durationType: GuDurationType; events: GuEventStatus[] }): { override: GuEventOverride | null; latest: GuEventStatus | null } {
+  const per = normPeriod(i.period);
+  const same = i.events.filter((e) => e.period === per && e.status !== 'NO_NUMBERS').sort((a, b) => b.date.localeCompare(a.date) || Number(b.verified) - Number(a.verified));
+  const latest = same[0] ?? null;
+  const onOrAfter = (e: GuEventStatus) => !i.sourceDate || dayDiff(e.date, i.sourceDate) >= -1;
+  const ev = same.find((e) => e.verified && onOrAfter(e)) ?? null;
+  const mk = (code: GuEventOverride['code'], e: GuEventStatus, text: string): GuEventOverride => ({ code, eventStatus: e.status, eventDate: e.date, eventPeriod: e.period, eventLabel: e.label, eventDisplay: e.display, previousRevision: i.revision, text, sourceName: e.sourceName, sourceUrl: e.sourceUrl });
+  if (ev) {
+    const newer = !!i.sourceDate && dayDiff(ev.date, i.sourceDate) > SOURCE_CONFLICT_WINDOW_DAYS;
+    const r = i.revision; let clash = false;
+    switch (ev.status) {
+      case 'RAISED': clash = r === 'LOWERED' || r === 'MAINTAINED' || r === 'WITHDRAWN' || newer; break;
+      case 'REITERATED': clash = r === 'RAISED' || r === 'LOWERED'; break;
+      case 'LOWERED': clash = r !== 'LOWERED' || newer; break;
+      case 'MIXED': clash = r === 'RAISED' || newer; break;
+      case 'INVALID': clash = r === 'RAISED'; break;
+      default: clash = false;
+    }
+    if (clash) {
+      const said = r === 'NONE' || r === 'INITIAL' ? 'an earlier figure' : r;
+      const why = ev.status === 'INVALID' && ev.reason ? ` (${ev.reason})` : '';
+      return { override: mk('EVENT_CONFLICT', ev, `Latest filing (${ev.date}) says ${EVENT_WORD[ev.status]}${ev.display ? `: ${ev.display}` : ''}${why}; this record${i.sourceDate ? ` (${i.sourceDate})` : ''} said ${said}. The filing wins until the record is re-checked.`), latest };
+    }
+  }
+  // a newer verified ANNUAL event for a later fiscal year of the same metric: the company already guides the next year
+  const fy = fyOf(per);
+  if (fy != null && i.durationType === 'ANNUAL') {
+    const later = i.events.filter((e) => e.verified && e.status !== 'NO_NUMBERS' && e.status !== 'INVALID' && (fyOf(e.period) ?? 0) > fy && (!i.sourceDate || dayDiff(e.date, i.sourceDate) > 0)).sort((a, b) => b.date.localeCompare(a.date))[0];
+    if (later) return { override: mk('NEWER_PERIOD_GUIDANCE', later, `Latest filing (${later.date}) already guides ${later.period}${later.display ? ` (${later.display})` : ''}; this ${per} record may be for a year that has ended or been replaced (the fiscal year end is not known here).`), latest };
+  }
+  return { override: null, latest };
+}
 const versionOfItem = (it: Item): GuVersionIn => ({ date: it.src.date, low: it.low, high: it.high, absLow: it.abs ? (it.abs.valueLow ?? it.abs.value) : null, absHigh: it.abs ? it.abs.value : null, unit: it.abs?.unit ?? null, source: it.src.name,
   display: displayOf({ metric: it.metric, low: it.low, high: it.high, open: it.open, origin: 'STATED', periodKind: it.pkind, period: it.period, abs: it.abs, cumulativeYears: it.cumulativeYears }) });
 const versionOfPrior = (p: Prior, unit: string | null): GuVersionIn => ({ date: p.date, low: p.low, high: p.high, absLow: p.abs ? (p.abs.valueLow ?? p.abs.value) : null, absHigh: p.abs ? p.abs.value : null, unit: p.abs?.unit ?? unit, source: p.note || 'Earlier guidance',
@@ -634,6 +688,23 @@ function pointOf(it: Item, history: Prior[], ps: GuPeriodInfo, x: PointCtx): GuP
   if (tier >= 3) rf('SECONDARY_ONLY', 'Only media or another secondary source backs this.', false);
   if (!found) rf('PRIMARY_MISSING', 'primary source not found', false);
   const lastVerified = it.lastVerified ?? it.src.date ?? null; const ago = daysBetween(lastVerified, x.now);
+  // ── zzz854: the events layer wins over the record; stale verification; the verification gate (Active = verified / derived / document read) ──
+  const baseRevision = revisionFor(it, history);
+  const evx = eventOverrideFor({ period: it.period, revision: baseRevision, sourceDate: it.src.date, durationType: pf.durationType, events: x.events ?? [] });
+  let revision = baseRevision;
+  if (evx.override) {
+    rf(evx.override.code, evx.override.text, true);
+    if (evx.override.code === 'EVENT_CONFLICT') { const nr = EVENT_REVISION[evx.override.eventStatus]; if (nr) revision = nr; }
+  }
+  if (ago != null && ago > STALE_DEMOTE_DAYS) rf('STALE_VERIFICATION', `Last verified ${ago} days ago (more than ${STALE_DEMOTE_DAYS}). A newer filing may have changed it, so it must be re-checked before it is shown as active.`, true);
+  const gate = tier >= 3 ? `Only a secondary source backs this (${TIER_LABEL[tier]}: ${it.src.name}); the company's own document has not confirmed it.`
+    : it.verification === 'SECONDARY_ONLY' ? 'Marked media-only by the researcher; the company\'s own document has not confirmed it.'
+    : !found ? 'The company\'s own document was not found.'
+    : !read ? 'The company\'s own document was found but has not been read yet.'
+    : !lastVerified ? 'Last verified date unknown, so it cannot be shown as verified.'
+    : null;
+  if (gate) rf('AWAITING_VERIFICATION', gate, true);
+  const listBucket: GuListBucket = gate ? 'CLAIMS' : rflags.some((r) => r.blocks) ? 'REVIEW' : 'ACTIVE';
   const ver: GuVersionIn[] = x.versions.length ? x.versions : [versionOfItem(it)];
   const hist = buildHistory(ver, x.lifecycle);
   const lastStep = hist[hist.length - 1];
@@ -645,18 +716,19 @@ function pointOf(it: Item, history: Prior[], ps: GuPeriodInfo, x: PointCtx): GuP
   return {
     metric: it.metric, period: it.period, periodKind: it.pkind, display,
     low, high, open, implied: origin === 'IMPLIED', compareValue: cv, counted, verification: legacyVerification, origin: it.origin, sourceName: it.src.name, sourceType: it.src.type, sourceUrl: it.src.url,
-    sourceDate: it.src.date, sourceRank: it.src.rank, primarySource: srcPrimary(it.src.rank, it.src.type), revision: revisionFor(it, history), proxy, statement: it.statement, notes: it.notes, priors: history, absolute: it.abs,
+    sourceDate: it.src.date, sourceRank: it.src.rank, primarySource: srcPrimary(it.src.rank, it.src.type), revision, proxy, statement: it.statement, notes: it.notes, priors: history, absolute: it.abs,
     periodRunState: ps.status, periodInferred: ps.inferred, periodNote: ps.note, periodEnd: ps.end ? ps.end.toISOString().slice(0, 10) : null,
     statedGrowth, impliedGrowth, impliedDisplay, secondaryDisplay, impliedRejected, needsReview, hg, awaitingVerification,
-    growthType, guidanceType: gType, isRange: (low != null && high != null && low !== high) || it.abs?.valueLow != null, growthBasis, basisLabel, growthDerivation: derivation, growthExact: exact, growthVsPriorYear: gvp, revisionVsPriorGuidance: revPrior,
+    growthType, guidanceType: gType, isRange: (low != null && high != null && low !== high) || it.abs?.valueLow != null, growthBasis, basisLabel, growthDerivation: derivation, growthExact: exact, growthVsPriorYear: gvp, revisionVsPriorGuidance: evx.override?.code === 'EVENT_CONFLICT' ? null : revPrior,
     growthComparable: !notComparable, growthNotComparable: notComparable, headlineBasis: low != null ? 'GROWTH_VS_PRIOR_YEAR' : 'ABSOLUTE_TARGET_ONLY',
-    verificationState: vs.state, verificationReason: vs.reason, claimType, sourceTier: tier, sourceTierLabel: TIER_LABEL[tier], primarySourceFound: found, primarySourceRead: read,
+    verificationState: gate ? 'UNVERIFIED' : vs.state, verificationReason: gate ? `Awaiting verification: ${gate}` : vs.reason, claimType, sourceTier: tier, sourceTierLabel: TIER_LABEL[tier], primarySourceFound: found, primarySourceRead: read,
     primarySourceText: found ? 'PRIMARY SOURCE FOUND' : 'primary source not found', primarySourceReadText: read ? 'primary source read' : 'primary source not yet read',
     periodLabelSource: pf.periodLabelSource, periodNormalized: pf.periodNormalized, fiscalYear: pf.fiscalYear, fiscalYearStart: pf.fiscalYearStart, fiscalQuarter: pf.fiscalQuarter, periodStatus: pf.periodStatus, durationType: pf.durationType, cohort: pf.cohort,
     metricFamily: family, sourceMetricLabel: srcLabel, currency: mu.currency, unit: it.abs?.unit ?? null, scale: mu.scale,
     status: x.lifecycle, current: x.lifecycle === 'ACTIVE', expiryReason: x.expiryReason, history: hist,
     lastVerified, lastVerifiedDaysAgo: ago, staleVerification: isStale(ago),
-    sources: x.sources, sourceConflict: x.conflict, primaryValue: x.primaryValue, mediaClaim: x.mediaClaim, reviewReasons: rflags, inDefaultView: !rflags.some((r) => r.blocks),
+    sources: x.sources, sourceConflict: x.conflict, primaryValue: x.primaryValue, mediaClaim: x.mediaClaim, reviewReasons: rflags, inDefaultView: listBucket === 'ACTIVE',
+    listBucket, awaitingVerificationReason: gate, eventOverride: evx.override, latestEvent: evx.latest,
   };
 }
 const fmtPrior = (p: Prior) => { const pc = p.low == null ? null : pctText(p.low, p.high === p.low ? null : p.high, false); return p.abs ? `${amountText(p.abs)}${pc ? ` (about ${pc})` : ''}` : pc ?? 'no %'; };
@@ -761,7 +833,7 @@ export function buildUniverse(live: GgCompany[], ledgerRows: Array<{ market: 'IN
     (activeByEntity.get(e) || activeByEntity.set(e, []).get(e)!).push({ it: win, history, note: ps.note, ps, versions, sources, conflict, primaryValue, mediaClaim, pf });
   }
   // potential duplicates: an unresolved name that closely matches another company's name in the same market
-  const dupOf = new Map<string, string>();
+  const dupOf = new Map<string, string>(); const dupEntity = new Map<string, string>();
   const entityList = Array.from(activeByEntity.keys());
   for (const a of entityList) {
     if (!isUnresolved(a)) continue;
@@ -770,11 +842,30 @@ export function buildUniverse(live: GgCompany[], ledgerRows: Array<{ market: 'IN
       if (b === a || b.split(':')[0] !== a.split(':')[0]) continue;
       for (const bn of Array.from(nameSets.get(b) || [])) {
         if (!an || !bn || an === bn) continue;
-        if (bn.startsWith(`${an} `) || an.startsWith(`${bn} `) || (Math.min(an.length, bn.length) >= 8 && editDistanceLe1(an, bn))) { dupOf.set(a, Array.from(activeByEntity.get(b)!)[0].it.company); break; }
+        if (bn.startsWith(`${an} `) || an.startsWith(`${bn} `) || (Math.min(an.length, bn.length) >= 8 && editDistanceLe1(an, bn))) { dupOf.set(a, Array.from(activeByEntity.get(b)!)[0].it.company); dupEntity.set(a, b); break; }
       }
       if (dupOf.has(a)) break;
     }
   }
+  // zzz854: ONE canonical row per company + metric + period. An unresolved duplicate of a resolved company that holds the SAME metric + period
+  // slot is not shown twice: it leaves the active universe as SUPERSEDED ('duplicate of ...'). Slots the canonical company does not hold stay
+  // (flagged POTENTIAL_DUPLICATE) so no number is lost.
+  for (const [a, b] of Array.from(dupEntity.entries())) {
+    const canon = activeByEntity.get(b) || []; const mine = activeByEntity.get(a) || [];
+    const has = new Set(canon.map((x) => `${x.it.metric}|${normPeriod(x.it.period)}`));
+    const keep = mine.filter((x) => !has.has(`${x.it.metric}|${normPeriod(x.it.period)}`));
+    for (const x of mine) if (!keep.includes(x)) pushInactive(a, x.it, 'SUPERSEDED', `Duplicate of ${canon[0].it.company} (same company, metric and period); the canonical record is kept.`, { supersededBy: `${canon[0].it.company}` });
+    if (keep.length) activeByEntity.set(a, keep); else { activeByEntity.delete(a); dupOf.delete(a); }
+  }
+  // zzz854: event statuses per company + metric (any period), matched by market + ticker
+  const evIdx = new Map<string, GuEventStatus[]>();
+  for (const ev of opts.eventStatuses || []) { if (!ev || !ev.ticker || !ev.metric || !ev.date) continue; const k = `${ev.market}:${String(ev.ticker).toUpperCase()}|${ev.metric}`; (evIdx.get(k) || evIdx.set(k, []).get(k)!).push(ev); }
+  const eventsFor = (e: string, it: Item): GuEventStatus[] => {
+    if (!evIdx.size) return [];
+    const tks = new Set<string>([...(tickerSets.get(e) || []), ...(it.ticker ? [it.ticker] : [])].map((t) => t.toUpperCase()));
+    const out: GuEventStatus[] = []; for (const t of Array.from(tks)) out.push(...(evIdx.get(`${it.market}:${t}|${it.metric}`) || []));
+    return out;
+  };
   const mkRecord = (e: string, act: Array<{ a: ActiveSlot; pt: GuPoint; cls: GuUniverseRecordX['classification'] }>): GuUniverseRecordX => {
     const pts = act.slice().sort((a, b) => METRIC_ORDER[a.a.it.metric] - METRIC_ORDER[b.a.it.metric] || PERIOD_CLASS_ORDER[a.cls] - PERIOD_CLASS_ORDER[b.cls]
       || (periodEnd(a.a.it.period, a.a.it.market, a.a.it.src.date).end?.getTime() ?? 9e15) - (periodEnd(b.a.it.period, b.a.it.market, b.a.it.src.date).end?.getTime() ?? 9e15));
@@ -809,21 +900,34 @@ export function buildUniverse(live: GgCompany[], ledgerRows: Array<{ market: 'IN
       history: hp.history, lastVerified: hp.lastVerified, lastVerifiedDaysAgo: hp.lastVerifiedDaysAgo, staleVerification: hp.staleVerification,
       sources: hp.sources, sourceConflict: hp.sourceConflict, primaryValue: hp.primaryValue, mediaClaim: hp.mediaClaim,
       reviewReasons: blockingAll ? [] : allReasons.map((r) => r.text), reviewReasonCodes: blockingAll ? [] : allReasons.map((r) => r.code), inReviewQueue: !blockingAll, caveats,
+      listBucket: pts.every((p) => p.pt.listBucket === 'ACTIVE') ? 'ACTIVE' : pts.every((p) => p.pt.listBucket === 'CLAIMS') ? 'CLAIMS' : 'REVIEW',
+      eventOverride: hp.eventOverride, latestEvent: hp.latestEvent,
     };
   };
   const cmpRec = (a: GuUniverseRecordX, b: GuUniverseRecordX) => (a.record.market === b.record.market ? 0 : a.record.market === 'IN' ? -1 : 1) || (b.points[0].compareValue ?? -1) - (a.points[0].compareValue ?? -1) || a.record.company.localeCompare(b.record.company);
-  const records: GuUniverseRecordX[] = []; const defaultRecords: GuUniverseRecordX[] = []; const reviewQueue: GuUniverseRecordX[] = [];
+  const records: GuUniverseRecordX[] = []; const defaultRecords: GuUniverseRecordX[] = []; const reviewQueue: GuUniverseRecordX[] = []; const claimsAwaiting: GuUniverseRecordX[] = [];
   for (const [e, actRaw] of Array.from(activeByEntity.entries())) {
     const act = actRaw.map((a) => {
-      const pt = pointOf(a.it, a.history, a.ps, { now, versions: a.versions, lifecycle: 'ACTIVE', expiryReason: null, sources: a.sources, conflict: a.conflict, primaryValue: a.primaryValue, mediaClaim: a.mediaClaim, pf: a.pf, resolved: !isUnresolved(e), dupOf: dupOf.get(e) || null });
+      const pt = pointOf(a.it, a.history, a.ps, { now, versions: a.versions, lifecycle: 'ACTIVE', expiryReason: null, sources: a.sources, conflict: a.conflict, primaryValue: a.primaryValue, mediaClaim: a.mediaClaim, pf: a.pf, resolved: !isUnresolved(e), dupOf: dupOf.get(e) || null, events: eventsFor(e, a.it) });
       return { a, pt, cls: classOf(a.it.pkind) };
     });
+    // zzz854: invariants are ENFORCED, not just reported: an Active point that breaks a rule is demoted to "Needs review" with the rule as its reason
+    const resolved = !isUnresolved(e);
+    for (const x of act) {
+      if (x.pt.listBucket !== 'ACTIVE') continue;
+      const bad = activePointViolations({ companyId: resolved ? e : null, ticker: x.a.it.ticker || Array.from(tickerSets.get(e) || [])[0] || null, market: x.a.it.market }, x.pt);
+      if (bad.length) { x.pt.reviewReasons.push({ code: 'INVARIANT_FAILED', text: `Data check failed, so it is kept out of Active: ${bad.map((b: { message: string }) => b.message).join(' ')}`, blocks: true }); x.pt.listBucket = 'REVIEW'; x.pt.inDefaultView = false; }
+    }
     const full = mkRecord(e, act); records.push(full);
-    const elig = act.filter((x) => x.pt.inDefaultView), inel = act.filter((x) => !x.pt.inDefaultView);
-    if (!inel.length) defaultRecords.push(full);
-    else { if (elig.length) defaultRecords.push(mkRecord(e, elig)); reviewQueue.push(mkRecord(e, inel)); }
+    const elig = act.filter((x) => x.pt.listBucket === 'ACTIVE'), rev = act.filter((x) => x.pt.listBucket === 'REVIEW'), clm = act.filter((x) => x.pt.listBucket === 'CLAIMS');
+    if (elig.length === act.length) defaultRecords.push(full);
+    else {
+      if (elig.length) defaultRecords.push(mkRecord(e, elig));
+      if (rev.length) reviewQueue.push(mkRecord(e, rev));
+      if (clm.length) claimsAwaiting.push(mkRecord(e, clm));
+    }
   }
-  records.sort(cmpRec); defaultRecords.sort(cmpRec); reviewQueue.sort(cmpRec);
+  records.sort(cmpRec); defaultRecords.sort(cmpRec); reviewQueue.sort(cmpRec); claimsAwaiting.sort(cmpRec);
   const stored: GuStoredPoint[] = [];
   for (const r of records) for (const p of r.points) {
     const it = activeByEntity.get(r.entityKey)!.find((a) => a.it.metric === p.metric && a.it.period === p.period)!.it;
@@ -833,7 +937,7 @@ export function buildUniverse(live: GgCompany[], ledgerRows: Array<{ market: 'IN
       period: it.period, pkind: it.pkind, kind: it.kind, organic: it.organic, verification: it.verification, statement: it.statement.slice(0, 300), src: it.src, priors: r.points.find((x) => x === p)!.priors.slice(-3), origin: it.origin, display: p.display,
       periodContext: it.periodContext ?? null, primarySourceRead: it.primarySourceRead ?? null, sourceMetricLabel: it.sourceMetricLabel ?? null, lastVerified: it.lastVerified ?? null });
   }
-  return { records, inactive, excluded, stored, defaultRecords, reviewQueue };
+  return { records, inactive, excluded, stored, defaultRecords, reviewQueue, claimsAwaiting };
 }
 
 /** What the page shows in a metric column: the figure, or '—' with 'not verified' when no such statement exists. Never infers PAT from revenue. */
@@ -910,36 +1014,49 @@ const hgMetricX = (p: GuPoint): GuHgMetricX => ({
  * Revenue, PAT (net profit) and EBITDA are kept as separate metrics inside a row (Revenue +30% · PAT +60%); one metric is never counted as another.
  * Trust sections: verified (strict: VERIFIED + CONFIRMED + active), derived, partial, claimsAwaiting (media / secondary only). Each section is split by cohort and sorted within the cohort.
  */
-export function selectHighGrowthGroups(records: GuUniverseRecordX[], thr = HIGH_GROWTH_THRESHOLD): GuHighGrowthGroups {
+export function selectHighGrowthGroups(records: GuUniverseRecordX[], thr = HIGH_GROWTH_THRESHOLD, claims: GuUniverseRecordX[] = []): GuHighGrowthGroups {
   const FAM = new Set<GuMetricFamily>(['REVENUE', 'NET_PROFIT', 'EBITDA']);
-  const acc = new Map<string, { r: GuUniverseRecordX; cohort: GuCohort; trust: GuTrust; pts: GuPoint[] }>();
+  const base = (p: GuPoint) => FAM.has(p.metricFamily) && !!p.cohort && p.compareValue != null && p.low != null && p.compareValue >= thr && p.claimType === 'MANAGEMENT_GUIDANCE' && p.status === 'ACTIVE' && p.periodRunState === 'ACTIVE' && !p.proxy && !p.needsReview;
+  type Acc = { r: GuUniverseRecordX; cohort: GuCohort; trust: GuTrust; pts: GuPoint[] };
+  const byTrust = new Map<string, Acc>(); const byCohort = new Map<string, Acc>();
+  const add = (m: Map<string, Acc>, k: string, r: GuUniverseRecordX, cohort: GuCohort, trust: GuTrust, p: GuPoint) => { const cur = m.get(k) || { r, cohort, trust, pts: [] }; cur.pts.push(p); m.set(k, cur); };
   for (const r of records) for (const p of r.points) {
-    if (!FAM.has(p.metricFamily) || !p.cohort || p.compareValue == null || p.low == null || p.compareValue < thr) continue;
-    if (p.claimType !== 'MANAGEMENT_GUIDANCE' || p.status !== 'ACTIVE' || p.periodStatus !== 'CONFIRMED' || p.periodRunState !== 'ACTIVE' || p.proxy || p.needsReview || !p.inDefaultView) continue;
-    const trust = trustOf(p.verificationState); if (!trust) continue;
-    const k = `${r.entityKey}|${p.cohort}|${trust}`; const cur = acc.get(k) || { r, cohort: p.cohort, trust, pts: [] }; cur.pts.push(p); acc.set(k, cur);
+    if (!base(p) || p.periodStatus !== 'CONFIRMED' || !p.inDefaultView || (p.listBucket && p.listBucket !== 'ACTIVE')) continue;
+    const trust = trustOf(p.verificationState); if (!trust || trust === 'claimsAwaiting') continue;   // zzz854: an unverified claim is never in the ranked Active list
+    add(byTrust, `${r.entityKey}|${p.cohort}|${trust}`, r, p.cohort!, trust, p);
+    add(byCohort, `${r.entityKey}|${p.cohort}`, r, p.cohort!, trust, p);
   }
-  const rows: Array<Omit<GuHgGroupRow, 'rank'>> = [];
-  for (const { r, cohort, trust, pts } of Array.from(acc.values())) {
+  // zzz854: claims awaiting verification come from their OWN list, never from the Active records
+  for (const r of claims) for (const p of r.points) {
+    if (!base(p) || (p.listBucket && p.listBucket !== 'CLAIMS')) continue;
+    add(byTrust, `${r.entityKey}|${p.cohort}|claimsAwaiting`, r, p.cohort!, 'claimsAwaiting', p);
+  }
+  const rowOf = (a: Acc, id: string): Omit<GuHgGroupRow, 'rank'> => {
     // one point per family: the highest comparison value
     const byFam = new Map<GuMetricFamily, GuPoint>();
-    for (const p of pts) { const c = byFam.get(p.metricFamily); if (!c || (p.compareValue as number) > (c.compareValue as number)) byFam.set(p.metricFamily, p); }
-    const ms = Array.from(byFam.values()).sort((a, b) => FAMILY_ORDER[a.metricFamily] - FAMILY_ORDER[b.metricFamily]);
-    const head = ms.slice().sort((a, b) => (b.compareValue as number) - (a.compareValue as number) || FAMILY_ORDER[a.metricFamily] - FAMILY_ORDER[b.metricFamily])[0];
+    for (const p of a.pts) { const c = byFam.get(p.metricFamily); if (!c || (p.compareValue as number) > (c.compareValue as number)) byFam.set(p.metricFamily, p); }
+    const ms = Array.from(byFam.values()).sort((x, y) => FAMILY_ORDER[x.metricFamily] - FAMILY_ORDER[y.metricFamily]);
+    const head = ms.slice().sort((x, y) => (y.compareValue as number) - (x.compareValue as number) || FAMILY_ORDER[x.metricFamily] - FAMILY_ORDER[y.metricFamily])[0];
     const metrics = ms.map(hgMetricX);
-    rows.push({ id: `${r.entityKey}|${cohort}|${trust}`, entityKey: r.entityKey, company: r.record.company, ticker: r.record.ticker || r.tickers[0] || null, market: r.record.market, cohort, trust, metrics,
-      text: metrics.map((m) => `${FAMILY_WORD[m.metricFamily]} ${m.short}`).join(' · '), headline: hgMetricX(head), sourceName: head.sourceName, sourceDate: head.sourceDate, sourceUrl: head.sourceUrl });
-  }
+    const trust = a.trust === 'claimsAwaiting' ? 'claimsAwaiting' : trustOf(head.verificationState) ?? a.trust;
+    return { id, entityKey: a.r.entityKey, company: a.r.record.company, ticker: a.r.record.ticker || a.r.tickers[0] || null, market: a.r.record.market, cohort: a.cohort, trust, metrics,
+      text: metrics.map((m) => `${FAMILY_WORD[m.metricFamily]} ${m.short}`).join(' · '), headline: hgMetricX(head), sourceName: head.sourceName, sourceDate: head.sourceDate, sourceUrl: head.sourceUrl };
+  };
+  const trustRows = Array.from(byTrust.entries()).map(([k, a]) => rowOf(a, k));
+  // the ranked Active list: ONE row per company per cohort (a company whose revenue is verified and whose PAT is derived is one row, each metric keeps its own badge)
+  const activeRows = Array.from(byCohort.entries()).map(([k, a]) => rowOf(a, k));
   const cmp = (a: Omit<GuHgGroupRow, 'rank'>, b: Omit<GuHgGroupRow, 'rank'>) => b.headline.compareValue - a.headline.compareValue || a.company.localeCompare(b.company);
   const rank = (list: Array<Omit<GuHgGroupRow, 'rank'>>): GuHgGroupRow[] => list.map((r, i) => ({ ...r, rank: i + 1 }));
   const cohorts = {} as Record<GuCohort, GuHgGroupRow[]>; const trust = {} as Record<GuTrust, Record<GuCohort, GuHgGroupRow[]>>;
-  for (const c of COHORTS) cohorts[c] = rank(rows.filter((r) => r.cohort === c).sort((a, b) => TRUST_ORDER.indexOf(a.trust) - TRUST_ORDER.indexOf(b.trust) || cmp(a, b)));
-  for (const t of TRUST_ORDER) { trust[t] = {} as Record<GuCohort, GuHgGroupRow[]>; for (const c of COHORTS) trust[t][c] = rank(rows.filter((r) => r.trust === t && r.cohort === c).sort(cmp)); }
-  const n = (f: (r: Omit<GuHgGroupRow, 'rank'>) => boolean) => rows.filter(f).length;
+  for (const c of COHORTS) cohorts[c] = rank(activeRows.filter((r) => r.cohort === c).sort(cmp));
+  for (const t of TRUST_ORDER) { trust[t] = {} as Record<GuCohort, GuHgGroupRow[]>; for (const c of COHORTS) trust[t][c] = rank(trustRows.filter((r) => r.trust === t && r.cohort === c).sort(cmp)); }
+  const n = (l: Array<Omit<GuHgGroupRow, 'rank'>>, f: (r: Omit<GuHgGroupRow, 'rank'>) => boolean) => l.filter(f).length;
   return { threshold: thr, label: HIGH_GROWTH_LABEL, rule: HIGH_GROWTH_GROUPS_RULE, cohorts, trust,
-    counts: { rows: rows.length, verified: n((r) => r.trust === 'verified'), derived: n((r) => r.trust === 'derived'), partial: n((r) => r.trust === 'partial'), claimsAwaiting: n((r) => r.trust === 'claimsAwaiting'), ANNUAL: n((r) => r.cohort === 'ANNUAL'), MULTI_YEAR_CAGR: n((r) => r.cohort === 'MULTI_YEAR_CAGR'), QUARTERLY: n((r) => r.cohort === 'QUARTERLY') } };
+    counts: { rows: activeRows.length, verified: n(trustRows, (r) => r.trust === 'verified'), derived: n(trustRows, (r) => r.trust === 'derived'), partial: n(trustRows, (r) => r.trust === 'partial'), claimsAwaiting: n(trustRows, (r) => r.trust === 'claimsAwaiting'),
+      ANNUAL: n(activeRows, (r) => r.cohort === 'ANNUAL'), MULTI_YEAR_CAGR: n(activeRows, (r) => r.cohort === 'MULTI_YEAR_CAGR'), QUARTERLY: n(activeRows, (r) => r.cohort === 'QUARTERLY'),
+      companies: new Set(activeRows.map((r) => r.entityKey)).size } };
 }
-export const HIGH_GROWTH_GROUPS_RULE = 'Grouped, never one mixed ranking. Cohorts: ANNUAL (single FY/CY), MULTI_YEAR_CAGR, QUARTERLY. Trust: verified (primary source read, growth stated, period confirmed), derived (growth calculated from the primary source amounts), partial, claimsAwaiting (media only). Revenue, PAT and EBITDA are separate metrics. Only default-view records (company resolved, period confirmed, not flagged) are listed.';
+export const HIGH_GROWTH_GROUPS_RULE = 'Grouped, never one mixed ranking. Cohorts: ANNUAL (single FY/CY), MULTI_YEAR_CAGR, QUARTERLY. The ranked Active list has ONE row per company per cohort, built only from the Active list (verified, derived, or partial with the company document read). Trust sections: verified (primary source read, growth stated, period confirmed), derived (growth calculated from the primary source amounts), partial; claimsAwaiting comes from the separate Claims awaiting verification list (media / not read) and is never ranked with Active. Revenue, PAT and EBITDA are separate metrics.';
 
 export interface GuSummaryIntegrity {
   /** zzz853: grouped high-growth rows (cohort x trust). The flat `highGrowth` list above is kept as it was. */ highGrowthGroups: GuHighGrowthGroups;
@@ -947,13 +1064,34 @@ export interface GuSummaryIntegrity {
   /** the same split by point (one record can carry several metrics) */ pointCounts: GuStateCounts;
   reviewQueueCount: number; reviewReasonCounts: Record<string, number>; staleVerificationCount: number; sourceConflictCount: number;
   /** auditable expiry: how many records left the active universe and why */ expiry: GuExpirySummary;
+  /** zzz854: claims awaiting verification (never counted in Active) */ claimsAwaitingCount: number;
+  /** zzz854: every header number with the equation it comes from (one filtered set per list) */ countEquations: GuCountEquations;
 }
 export interface GuSummaryX extends Omit<GuUniverseSummary, keyof GuSummaryAdditions>, GuSummaryAdditions, GuSummaryIntegrity { all: GuUniverseSummary['all'] & { pendingPrimary: number } }
 const stateCounts = (states: GuVerificationState[]): GuStateCounts => ({
   activeRecords: states.length, verified: states.filter((s) => s === 'VERIFIED').length, partial: states.filter((s) => s === 'PARTIAL').length, derived: states.filter((s) => s === 'DERIVED').length,
   unverified: states.filter((s) => s === 'UNVERIFIED').length, periodUnclear: states.filter((s) => s === 'PERIOD_UNCLEAR').length,
 });
-export function summarize(records: GuUniverseRecordX[], now: Date, threshold = HIGH_GROWTH_THRESHOLD, inactive: GuInactiveRecord[] = [], reviewQueue: GuUniverseRecordX[] = []): GuSummaryX {
+/** zzz854: the header equations. Active = verified + derived + partial; highest active = Active rows at or above the threshold; nothing else is mixed in. */
+export function countEquationsOf(active: GuUniverseRecordX[], groups: GuHighGrowthGroups, reviewQueue: GuUniverseRecordX[], claims: GuUniverseRecordX[]): GuCountEquations {
+  const st = stateCounts(active.map((r) => r.verificationState));
+  const other = st.activeRecords - st.verified - st.derived - st.partial;
+  const companies = groups.counts.companies ?? new Set(Object.values(groups.cohorts).flat().map((r) => r.entityKey)).size;
+  const activeKeys = new Set(active.map((r) => r.entityKey));
+  const hgRows = Object.values(groups.cohorts).flat();
+  const a = active.length, r = reviewQueue.length, c = claims.length;
+  return {
+    active: { value: a, holds: other === 0, parts: { verified: st.verified, derived: st.derived, partial: st.partial, other },
+      text: `Active ${a} = ${st.verified} verified + ${st.derived} derived + ${st.partial} partial (company document read, growth % not stated by the company)${other ? ` + ${other} OTHER (data check failed)` : ''}` },
+    highestActive: { value: groups.counts.rows, companies, threshold: groups.threshold, holds: hgRows.every((x) => activeKeys.has(x.entityKey)) && companies <= a,
+      text: `Highest active guidance ${groups.counts.rows} = Active rows with Revenue, PAT or EBITDA guided growth of ${groups.threshold}% or more (${companies} of the ${a} active companies; one row per company per period type: ${groups.counts.ANNUAL} annual, ${groups.counts.MULTI_YEAR_CAGR} multi-year CAGR, ${groups.counts.QUARTERLY} quarterly)` },
+    needsReview: { value: r, holds: true, text: `Needs review ${r} = active guidance kept out of Active because something does not add up (reason on each row)` },
+    claimsAwaiting: { value: c, holds: true, text: `Claims awaiting verification ${c} = found in media or not yet confirmed by the company's own document; never ranked or counted in Active` },
+    rows: { value: a + r + c, holds: true, parts: { active: a, review: r, claimsAwaiting: c }, text: `${a} active + ${r} need review + ${c} awaiting verification = ${a + r + c} rows (a company with metrics in two lists has a row in each)` },
+  };
+}
+export function summarize(records: GuUniverseRecordX[], now: Date, threshold = HIGH_GROWTH_THRESHOLD, inactive: GuInactiveRecord[] = [], reviewQueue: GuUniverseRecordX[] = [], claims: GuUniverseRecordX[] = []): GuSummaryX {
+  const groups = selectHighGrowthGroups(records, threshold, claims);
   const hg = selectHighGrowth(records, threshold); const inM = (m: 'IN' | 'US') => records.filter((r) => r.record.market === m);
   const allPoints = records.flatMap((r) => r.points);
   const reasonCounts: Record<string, number> = {};
@@ -971,9 +1109,9 @@ export function summarize(records: GuUniverseRecordX[], now: Date, threshold = H
     highGrowth: hg, highGrowthLabel: HIGH_GROWTH_LABEL, highGrowthRule: HIGH_GROWTH_RULE,
     expiredCount: inactive.filter((x) => x.status === 'EXPIRED').length,
     unknownPeriodCount: allPoints.filter((p) => p.periodRunState === 'UNKNOWN').length,
-    awaitingVerificationCount: records.filter((r) => r.points.some((p) => p.awaitingVerification && p.compareValue != null && p.compareValue >= threshold)).length,
+    awaitingVerificationCount: [...records, ...claims].filter((r) => r.points.some((p) => (p.awaitingVerification || p.listBucket === 'CLAIMS') && p.compareValue != null && p.compareValue >= threshold)).length,
     needsReviewCount: allPoints.filter((p) => p.needsReview).length,
-    highGrowthGroups: selectHighGrowthGroups(records, threshold),
+    highGrowthGroups: groups, claimsAwaitingCount: claims.length, countEquations: countEquationsOf(records, groups, reviewQueue, claims),
     counts: stateCounts(records.map((r) => r.verificationState)), pointCounts: stateCounts(allPoints.map((p) => p.verificationState)),
     reviewQueueCount: reviewQueue.length, reviewReasonCounts: reasonCounts,
     staleVerificationCount: records.filter((r) => r.staleVerification).length, sourceConflictCount: records.filter((r) => r.sourceConflict).length,

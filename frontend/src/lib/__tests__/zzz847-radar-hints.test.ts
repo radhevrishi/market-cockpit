@@ -131,7 +131,8 @@ describe('3 subtype routing', () => {
     assert.equal(r.subKind, 'SPIN_DEMERGER'); assert.ok(['VALIDATED', 'DEVELOPING'].includes(String(r.catalystMaturity)), String(r.catalystMaturity));
     assert.doesNotMatch(r.proof.what, /record date/i); assert.match(r.proof.what, /separate (?:results|reporting)/i);
   });
-  test('ITC Yoga Bar is a new product / market', () => { const r = an('ITC'); assert.equal(r.kind, 'NEW_PRODUCT_MARKET'); assert.notEqual(r.bucket, 'EARNINGS_INFLECTION'); });
+  // zzz854: '₹900 cr Yoga Bar bet' is a stake / acquisition in a named company, not a new product (old expectation encoded the bug)
+  test('ITC Yoga Bar is an acquisition / stake event, not a new product', () => { const r = an('ITC'); assert.notEqual(r.kind, 'NEW_PRODUCT_MARKET'); assert.notEqual(r.bucket, 'EARNINGS_INFLECTION'); });
   test('tentative wording caps the evidence and says proposed, not approved (TVS hive-off, Tata Sons)', () => {
     for (const k of ['TVS', 'TATA']) {
       const r = an(k);

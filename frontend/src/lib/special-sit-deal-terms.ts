@@ -11,6 +11,19 @@ const MONEY = '(?:US\\$|\\$|Rs\\.?|\\u20b9|INR|\\u20ac|\\u00a3)\\s?\\d[\\d,]*(?:
 const MONEY_UNIT = `${MONEY}\\s?(?:lakh crores?|crores?|cr|lakhs?|million|mn|billion|bn)?`;
 const PER_SHARE = '(?:per\\s+(?:common\\s+|equity\\s+)?share|\\/\\s?-?\\s?(?:per\\s+)?share|a\\s+share|each\\s+share|per\\s+unit)';
 
+export const FINANCING_RE = /\b(?:financing|financed|finance[sd]? (?:by|through|with)|to finance|funded|funding|bridge (?:loan|facility|financing)|credit (?:facility|facilities|agreement)|term loan|borrow(?:ing|ings|ed)?|cash on hand|available cash|debt (?:financing|commitment)|committed (?:debt|financing)|equity commitment)\b/i;
+/** zzz854: an SEC form header ('SC TO-I - JONES FINANCIAL COMPANIES LLLP (0000815917) (Subject)') is a title, never a deal term. */
+export const FORM_HEADER_RE = /^\s*(?:SC\s*(?:TO-[TI]|13E-?3|14D-?9|13[DG])(?:\/A)?|SCHEDULE\s*13[DG]|10-12[BG](?:\/A)?|8-K|6-K|DEFM?14A|PREM14A|S-4|F-4|425)\b[^.]*?\(\d{6,10}\)/i;
+const normT = (x: string) => (x || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+/** True when a field value is only the headline / form header copied (it states no term). */
+export function isTitleCopy(value: string, title?: string | null): boolean {
+  const v = normT(value);
+  if (!v) return true;
+  if (FORM_HEADER_RE.test(value)) return true;
+  const t = normT(title || '');
+  return !!t && (v === t || (v.length >= 12 && t.includes(v) && v.length >= t.length * 0.8) || (t.length >= 12 && v.includes(t) && t.length >= v.length * 0.8));
+}
+
 const clip = (s: string, n = 280): string => (s.length > n ? `${s.slice(0, n - 1).trim()}…` : s);
 const first = (text: string, re: RegExp): RegExpMatchArray | null => text.match(re);
 const sentenceWith = (sents: string[], re: RegExp): string | null => { for (const s of sents) if (re.test(s)) return clip(s); return null; };
@@ -34,7 +47,8 @@ const E = {
   maxTender: ((_t, s) => sentenceWith(s, /\bmaximum\b|\bup to\b[^.]{0,40}\bshares\b|\bat most\b/i)) as Ext,
   expiry: ((t) => { const m = first(t, new RegExp(`(?:expire[sd]?|expiration(?: date)?|expiry|until|closes? on|open until)[^.]{0,60}?(${DATE})`, 'i')); return m ? m[1] : null; }) as Ext,
   settlement: ((_t, s) => sentenceWith(s, /\bsettle(?:d|ment)?\b|\bpayment (?:will be|is) made\b|\bpaid within\b/i)) as Ext,
-  financing: ((_t, s) => sentenceWith(s, /\bfinanc\w*|\bfunded\b|\bfunding\b|\bbridge\b|\bcredit facilit\w*|\bborrow\w*|\bcash on hand\b|\bdebt\b/i)) as Ext,
+  // zzz854: 'financ' alone matched company names ('JONES FINANCIAL ...'); only financing words count, never 'financial'
+  financing: ((_t, s) => sentenceWith(s, FINANCING_RE)) as Ext,
   approvals: ((_t, s) => sentenceWith(s, /\bapproval|\bclearance|\bregulatory|\bHSR\b|\bCCI\b|\bSEBI\b|\bshareholder vote\b/i)) as Ext,
   purchasePrice: ((t) => {
     const m = first(t, new RegExp(`(?:for|at|worth|valued at|valuing[^.]{0,30}at|consideration of|purchase price of|deal value of|enterprise value of|transaction value of)\\s+(?:an? )?(?:total |aggregate )?(?:of )?(${MONEY_UNIT})`, 'i')); return m ? m[1].trim() : null;
@@ -57,6 +71,9 @@ const E = {
   buybackFunding: ((_t, s) => sentenceWith(s, /\bfunded\b|\bfunding\b|\bfrom (?:its )?(?:free )?reserves\b|\bcash (?:on hand|reserves)\b|\bfinanced\b/i)) as Ext,
   buybackPrice: ((t) => { const m = first(t, new RegExp(`(?:at a (?:maximum )?price of|price of|at up to|at)\\s+(${MONEY_UNIT})\\s*${PER_SHARE}?`, 'i')); return m ? m[1].trim() : null; }) as Ext,
   dps: ((t) => { const m = first(t, new RegExp(`(${MONEY_UNIT})\\s*${PER_SHARE}`, 'i')); return m ? m[0].trim() : null; }) as Ext,
+  buyerGroup: ((_t, s) => sentenceWith(s, /\b(?:buyer group|purchaser group|filing persons|controlling (?:shareholder|stockholder)s?|management (?:group|buyout)|sponsor|merger sub|parent)\b/i)) as Ext,
+  voteCondition: ((_t, s) => sentenceWith(s, /\bmajority[- ]of[- ](?:the[- ])?minority\b|\bunaffiliated (?:shareholders|stockholders)\b|\bshareholder (?:vote|approval)\b|\bstockholder (?:vote|approval)\b|\bvote\b/i)) as Ext,
+  fairness: ((_t, s) => sentenceWith(s, /\bfairness opinion\b|\bspecial committee\b|\bfinancial advisor\b/i)) as Ext,
   splitRatio: ((t) => { const m = first(t, /\b(?:split|bonus|sub-?division)[^.]{0,60}?(\d+\s?:\s?\d+|\d+-for-\d+|\d+\s+for\s+\d+)|\b(\d+\s?:\s?\d+)\b[^.]{0,20}\b(?:split|bonus)\b/i); return m ? m[0].trim() : null; }) as Ext,
 };
 
@@ -83,15 +100,20 @@ const SPECS: Partial<Record<DealKind, Spec[]>> = {
     { name: 'size', ext: E.buybackSize }, { name: 'pct_of_market_cap', ext: E.pctMarketCap }, { name: 'method', ext: E.buybackMethod },
     { name: 'funding', ext: E.buybackFunding }, { name: 'price', ext: E.buybackPrice },
   ],
+  GOING_PRIVATE: [
+    { name: 'consideration_per_share', ext: E.offerPrice }, { name: 'consideration_type', ext: E.considerationType }, { name: 'buyer_group', ext: E.buyerGroup },
+    { name: 'vote_condition', ext: E.voteCondition }, { name: 'fairness_opinion', ext: E.fairness }, { name: 'financing', ext: E.financing }, { name: 'expected_close', ext: E.expectedClose },
+  ],
   DIVIDEND: [{ name: 'amount_per_share', ext: E.dps }, { name: 'record_date', ext: E.recordDate }],
   SPLIT_BONUS: [{ name: 'amount_per_share', ext: E.dps }, { name: 'record_date', ext: E.recordDate }, { name: 'ratio', ext: E.splitRatio }],
 };
 
 const COND_RE = /\bcondition|\bsubject to\b|\bexpir|\bminimum\b|\bapproval|\bfinancing\b/i;
 
-export function extractDealTerms(text: string, kind: DealKind): DealTerms {
+export function extractDealTerms(text: string, kind: DealKind, opts?: { title?: string | null }): DealTerms {
   const t = (text || '').replace(/\s+/g, ' ').trim();
-  const sents = splitSentences(t);
+  // zzz854: an SEC form header carries no terms; sentence-valued fields never copy it (or the headline)
+  const sents = splitSentences(t).filter((x) => !FORM_HEADER_RE.test(x));
   const specs = SPECS[kind] || [];
   const fields: Record<string, string> = {};
   const missing: string[] = [];
@@ -103,11 +125,12 @@ export function extractDealTerms(text: string, kind: DealKind): DealTerms {
       const metric = sp.name === 'target_revenue' ? 'revenue' : 'ebitda';
       const hit = owned.find((o) => o.metric === metric && (o.entityRole === 'target' || o.entityRole === 'subsidiary'));
       v = hit ? `${hit.raw}${hit.period && hit.period !== 'not stated' ? ` (${hit.period})` : ''}` : null;
-    } else v = sp.ext(t, sents);
+    } else v = sp.ext(sents.join(' '), sents);
+    if (v && isTitleCopy(v, opts?.title)) v = null;
     if (v) fields[sp.name] = v; else missing.push(sp.name);
   }
   // Premium / discount is shown only when its reference price is stated too.
   if (kind === 'TENDER' && fields.premium_or_discount && !fields.reference_price) { delete fields.premium_or_discount; missing.push('premium_or_discount'); }
-  const statedConditions = Array.from(new Set(sents.filter((s) => COND_RE.test(s)).map((s) => clip(s, 300))));
+  const statedConditions = Array.from(new Set(sents.filter((s) => COND_RE.test(s) && !isTitleCopy(s, opts?.title)).map((s) => clip(s, 300))));
   return { kind, fields, statedConditions, missing };
 }

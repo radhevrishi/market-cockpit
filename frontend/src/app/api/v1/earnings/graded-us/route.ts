@@ -749,6 +749,8 @@ function guideChange(
   new_low: number | null; new_high: number | null;
   direction: 'raised' | 'lowered' | 'reiterated' | 'narrowed' | 'widened';
   delta_pct: number | null; unit: string;
+  /** zzz854: the prior side is the company's previous RELEASE's guidance (never a reported actual), for its own stated period */
+  prev_kind: 'guidance'; prev_period_label: string | null;
 }> {
   const out: ReturnType<typeof guideChange> = [];
   const mid = (lo: number | null, hi: number | null) =>
@@ -794,6 +796,8 @@ function guideChange(
       // comps move in points, so the delta stays absolute for them.
       delta_pct: c.unit === 'pct' ? null : rel != null ? rel * 100 : null,
       unit: c.unit,
+      prev_kind: 'guidance',
+      prev_period_label: fyKey(p.guided_for_label) || null,
     });
   }
   return out;

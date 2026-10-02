@@ -6,10 +6,25 @@
 //  - A day is READ only when EVERY PRIMARY exchange feed answered it. A fallback (scraped blob) or a cache never makes a day read.
 //  - read + partial + failed === attempted, always.
 //  - Overall COMPLETE only if every PRIMARY source is COMPLETE, no day is missing and no document awaits grading.
+//  - zzz854: an India PRIMARY exchange feed that "answered" two or more trading days with ZERO announcements is a FAILED read (an exchange files
+//    every trading day; an empty answer is a block or a broken response), never a partial read and never zero events.
+//  - zzz854: a feed blocked by the exchange (HTTP 403 / 429 / 'blocked') is FAILED with failureKind BLOCKED and a retryAfter time (cool-down);
+//    the card carries the earliest retryAfter so the page can say when the next attempt is due.
 import type {
   CoverageCard, CoverageOverall, CoverageSourceRow, CoverageSourceStatus, GuCacheRow, GuCoverageBlock, GuScanSource, GuScanStatus, GuWindow,
 } from './guidance-upgrades-types';
 
+/** minutes to wait before re-asking an exchange that blocked us (403 / 429) */
+export const EXCHANGE_COOLDOWN_MIN = 30;
+export type CoverageFailureKind = 'BLOCKED' | 'EMPTY_RESPONSE' | 'TIMEOUT' | 'ERROR';
+export interface CoverageSourceRowX extends CoverageSourceRow { failureKind?: CoverageFailureKind | null; retryAfter?: string | null }
+export interface CoverageCardX extends CoverageCard { sources: CoverageSourceRowX[]; /** earliest time a blocked primary feed may be retried */ retryAfter?: string | null }
+const BLOCKED_RE = /\b(?:403|429)\b|forbidden|blocked|rate.?limit|too many requests|captcha|access denied/i;
+const TIMEOUT_RE = /time(?:d)?\s?out|timeout|aborted/i;
+export function failureKindOf(s: Pick<GuScanSource, 'failReasons' | 'detail'>): CoverageFailureKind {
+  const t = `${(s.failReasons || []).join(' ')} ${s.detail || ''}`;
+  return BLOCKED_RE.test(t) ? 'BLOCKED' : TIMEOUT_RE.test(t) ? 'TIMEOUT' : 'ERROR';
+}
 const isWeekdayStr = (d: string): boolean => { const w = new Date(`${d}T12:00:00Z`).getUTCDay(); return w >= 1 && w <= 5; };
 const dayList = (now: Date, n: number): string[] => Array.from({ length: n }, (_, i) => new Date(now.getTime() - i * 86_400_000).toISOString().slice(0, 10));
 
@@ -47,14 +62,33 @@ export interface CardInput {
   candidatesDiscovered?: number; processed?: number; verified?: number;
 }
 
-export function buildCoverageCard(i: CardInput): CoverageCard {
-  const sources = i.scan.sources.map(sourceRow);
-  const primary = i.scan.sources.filter((s) => (s.tier ?? 'SECONDARY') === 'PRIMARY');
-  const fallback = i.scan.sources.filter((s) => s.tier === 'FALLBACK');
+/** zzz854: an India exchange feed that answered 2+ trading days with zero rows did not really answer: FAILED (EMPTY_RESPONSE). */
+export function normaliseExchangeSource(s: GuScanSource, market: 'IN' | 'US'): GuScanSource {
+  if (market !== 'IN' || (s.tier ?? 'SECONDARY') !== 'PRIMARY' || s.state === 'FAILED' || s.state === 'NOT_AVAILABLE' || s.state === 'NOT_RUN') return s;
+  const tradingTried = (s.daysTried ?? []).filter(isWeekdayStr).length;
+  if (s.scanned > 0 || tradingTried < 2) return s;
+  return { ...s, state: 'FAILED', daysOk: [], failReasons: [...(s.failReasons ?? []), `returned zero announcements for ${tradingTried} trading days (an exchange files every trading day, so this is a failed read, not zero)`] };
+}
+
+export function buildCoverageCard(i: CardInput): CoverageCardX {
+  const raw = i.scan.sources.map((s) => normaliseExchangeSource(s, i.market));
+  const emptyFixed = new Set(raw.filter((s, k) => s !== i.scan.sources[k]).map((s) => s.name));
+  const cool = new Date(i.now.getTime() + EXCHANGE_COOLDOWN_MIN * 60_000).toISOString();
+  const sources: CoverageSourceRowX[] = raw.map((s) => {
+    const r: CoverageSourceRowX = sourceRow(s);
+    if (r.status === 'FAILED' && (s.tier ?? 'SECONDARY') === 'PRIMARY') {
+      r.failureKind = emptyFixed.has(s.name) ? 'EMPTY_RESPONSE' : failureKindOf(s);
+      r.retryAfter = r.failureKind === 'BLOCKED' ? cool : null;
+      if (r.failureKind === 'BLOCKED') r.reason = `${r.reason}; blocked by the exchange, retry after ${cool.slice(11, 16)} UTC (cool-down ${EXCHANGE_COOLDOWN_MIN} min)`;
+    }
+    return r;
+  });
+  const primary = raw.filter((s) => (s.tier ?? 'SECONDARY') === 'PRIMARY');
+  const fallback = raw.filter((s) => s.tier === 'FALLBACK');
 
   // the calendar of the window, and the trading days (weekdays) the exchanges owe
   const gen = dayList(i.now, i.windowDays);
-  const calendar = [...new Set([...gen, ...i.scan.sources.flatMap((s) => s.daysTried ?? [])])].sort().reverse().slice(0, Math.max(i.windowDays, 1));
+  const calendar = [...new Set([...gen, ...raw.flatMap((s) => s.daysTried ?? [])])].sort().reverse().slice(0, Math.max(i.windowDays, 1));
   const inWin = new Set(calendar);
   const trading = calendar.filter(isWeekdayStr);
 
@@ -98,9 +132,13 @@ export function buildCoverageCard(i: CardInput): CoverageCard {
     }
   }
   const mk = i.market === 'IN' ? 'India' : 'US';
+  const failedPrimary = sources.filter((r) => r.tier === 'PRIMARY' && r.status === 'FAILED');
+  const kindWord = (r: CoverageSourceRowX) => (r.failureKind === 'BLOCKED' ? 'blocked by the exchange' : r.failureKind === 'EMPTY_RESPONSE' ? 'answered with no announcements (treated as failed)' : r.failureKind === 'TIMEOUT' ? 'timed out' : 'query failed');
+  const retryAfter = failedPrimary.map((r) => r.retryAfter).filter((x): x is string => !!x).sort()[0] ?? null;
+  const failedText = failedPrimary.length ? `${failedPrimary.map((r) => `${r.name} ${kindWord(r)}`).join('; ')}${retryAfter ? `; next retry after ${retryAfter.slice(11, 16)} UTC` : ''}` : '';
   const headline = overall === 'COMPLETE' ? `${mk}: coverage complete (${read} of ${trading.length} trading days read from primary sources)`
-    : overall === 'FAILED' ? `${mk}: scan failed (${overallReason}); this says nothing about whether events exist`
-    : `${mk}: coverage partial, ${read} of ${trading.length} trading days fully read from primary sources (${overallReason})`;
+    : overall === 'FAILED' ? `${mk}: scan FAILED, ${read} of ${trading.length} trading days read from primary sources (${failedText || overallReason}); this says nothing about whether events exist`
+    : `${mk}: coverage partial, ${read} of ${trading.length} trading days fully read from primary sources (${overallReason}${failedText ? `; ${failedText}` : ''})`;
   return {
     market: i.market, requestedWindow: i.window, windowDays: i.windowDays, calendarDays: calendar.length, tradingDays: trading.length,
     daysAttempted: attempted.length, daysSuccessfullyRead: read, daysPartialCoverage: partial, daysPrimaryPartial: primaryPartial, daysFallbackOnly: fallbackOnly,
@@ -110,7 +148,7 @@ export function buildCoverageCard(i: CardInput): CoverageCard {
     sources, cache: i.cache ?? [], fallbackNote: i.fallbackNote ?? null,
     documentsAwaitingGrading: awaiting, documentsUnavailable: unavailable,
     candidatesDiscovered: i.candidatesDiscovered ?? 0, processed: i.processed ?? 0, verified: i.verified ?? 0,
-    overall, overallReason, headline,
+    overall, overallReason, headline, retryAfter,
   };
 }
 

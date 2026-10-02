@@ -6,7 +6,7 @@ import { COVERAGE_120_INCOMPLETE, MARKET_NAME, SCAN_STATE_LABEL, coverage120, fm
 import { R, box, tint } from './gu-tokens';
 import { Chip, FreshnessBlock } from './GuBits';
 import { useGuUniverse } from './useGuUniverse';
-import { QUERY_TEXT, TIER_WORD, STATUS_WORD, dataText, documentsLine, fallbackMessage, sourceDisplayName, violationTexts, INVARIANT_BANNER } from './gu-ui';
+import { QUERY_TEXT, TIER_WORD, STATUS_WORD, coverageFailureLine, dataText, documentsLine, fallbackMessage, sourceDisplayName, violationTexts, INVARIANT_BANNER } from './gu-ui';
 
 const STATE_COLOR: Record<string, string> = { COMPLETE: R.green, PARTIAL: R.amber, FAILED: R.red, NOT_RUN: R.grey, NOT_AVAILABLE: R.grey };
 
@@ -78,6 +78,12 @@ function LegacyCoverage({ scan, now, byMarket, eventCounts, window, unresolved }
   );
 }
 
+/** 'Next try of the blocked exchange feed after 22:40 UTC'. Null when no retry time was sent. */
+function retryText(iso: string | null | undefined): string | null {
+  const t = iso ? Date.parse(iso) : NaN;
+  return Number.isFinite(t) ? `Next try of the blocked exchange feed after ${new Date(t).toISOString().slice(11, 16)} UTC.` : null;
+}
+
 const OVERALL_COLOR: Record<string, string> = { COMPLETE: R.green, PARTIAL: R.amber, FAILED: R.red };
 const SRC_COLOR: Record<string, string> = { COMPLETE: R.green, PARTIAL: R.amber, FAILED: R.red, EMPTY: R.grey };
 
@@ -101,6 +107,7 @@ export function CoverageCardView({ c }: { c: CoverageCard }) {
         {c.daysNotAttempted > 0 ? <> · <b>Not asked this run</b> {c.daysNotAttempted} day{c.daysNotAttempted === 1 ? '' : 's'}{c.daysFromEarlierRuns > 0 ? ` (${c.daysFromEarlierRuns} done in earlier runs)` : ''}</> : null}
       </div>
       {bad && c.overallReason && <div role="note" style={{ fontSize: 12, color: R.amber, fontWeight: 700 }}>{c.overallReason}. Zero events here does not mean no upgrades.</div>}
+      {retryText((c as { retryAfter?: string | null }).retryAfter) && <div role="note" style={{ fontSize: 12, color: R.amber, fontWeight: 700 }}>{retryText((c as { retryAfter?: string | null }).retryAfter)}</div>}
       {fb && <div role="note" style={{ fontSize: 12, fontWeight: 800, color: R.amber }}>{fb}</div>}
       <div style={{ display: 'flex', flexDirection: 'column' }}>
         {(c.sources || []).map((x, i) => (
@@ -108,6 +115,7 @@ export function CoverageCardView({ c }: { c: CoverageCard }) {
             <div>
               <span style={{ fontWeight: 700 }}>{sourceDisplayName(x.name)}</span> <span style={{ color: R.dim }}>· {TIER_WORD[x.tier] || x.tier}</span>
               <div style={{ color: R.dim }}><b>Query:</b> {QUERY_TEXT[x.queryStatus] || x.queryStatus} · <b>Data:</b> {dataText(x)}{x.daysAttempted ? ` · ${x.daysSucceeded} of ${x.daysAttempted} days answered` : ''}</div>
+              {coverageFailureLine(x as Parameters<typeof coverageFailureLine>[0]) && <div data-gu-failure style={{ color: R.red, fontWeight: 800 }}>{coverageFailureLine(x as Parameters<typeof coverageFailureLine>[0])}</div>}
               {x.reason && <div style={{ color: x.status === 'FAILED' ? R.red : R.dim, overflowWrap: 'anywhere' }}>{x.reason}</div>}
             </div>
             <Chip color={SRC_COLOR[x.status] || R.grey} dashed={x.status === 'EMPTY'}>{STATUS_WORD[x.status] || x.status}</Chip>

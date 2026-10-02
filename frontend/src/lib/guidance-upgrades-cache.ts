@@ -19,6 +19,40 @@ export const NEWS_KEY = 'news:articles:v39';
 export const NEWS_SHARED_LASTGOOD_KEY = 'news:articles:v39:lastgood';
 export const NEWS_LASTGOOD_KEY = 'guidance-upgrades:news-lastgood:v1';
 export const NEWS_LASTGOOD_TTL_S = 24 * 3600;
+/** zzz854: the news route itself now writes `news:articles:v39:lastgood` on every successful refresh; at least 26 h so one missed hourly
+ *  refresh (or a quiet night) never leaves readers with nothing. */
+export const NEWS_SHARED_LASTGOOD_TTL_S = 30 * 3600;
+/** fewer real articles than this in a fresh scrape = the scrape failed (the live feed collapsed to placeholders); the last-good copy serves */
+export const NEWS_MIN_REAL_ARTICLES = 8;
+const isPlaceholder = (a: any): boolean => /^\[STRUCTURAL ALERT\]/.test(String(a?.title || ''));
+export const realArticleCount = (articles: readonly any[] | null | undefined): number => (Array.isArray(articles) ? articles.filter((a) => a && (a.title || a.headline) && !isPlaceholder(a)).length : 0);
+/** The value written to the shared last-good key: trimmed to the fields readers use, stamped with its save time. */
+export function sharedLastGoodValue(articles: readonly any[], nowMs: number = Date.now()): { savedAt: string; articles: any[]; trimmed: boolean } {
+  // the full list when it fits one KV value (the news page can serve it as-is), else the trimmed reader fields
+  const full = articles.filter((x) => x && (x.title || x.headline));
+  let fits = false; try { fits = JSON.stringify(full).length <= LASTGOOD_MAX_CHARS; } catch { fits = false; }
+  return { savedAt: new Date(nowMs).toISOString(), articles: fits ? full : trimNewsForLastGood(articles), trimmed: !fits };
+}
+/**
+ * Writer side (used by app/api/v1/news): after a successful refresh write the durable copy; when a fresh scrape collapsed (fewer than
+ * NEWS_MIN_REAL_ARTICLES real items) serve the last-good copy instead, labelled stale with its age. Never throws.
+ */
+export async function refreshNewsLastGood(io: NewsIo, fresh: readonly any[] | null | undefined): Promise<{ articles: any[] | null; servedFromLastGood: boolean; lastGoodAt: string | null; ageMinutes: number | null; label: string | null }> {
+  const nowMs = (io.now ?? Date.now)();
+  const n = realArticleCount(fresh);
+  if (fresh && n >= NEWS_MIN_REAL_ARTICLES) {
+    await io.set(NEWS_SHARED_LASTGOOD_KEY, sharedLastGoodValue(fresh, nowMs), NEWS_SHARED_LASTGOOD_TTL_S).catch(() => undefined);
+    return { articles: fresh as any[], servedFromLastGood: false, lastGoodAt: null, ageMinutes: null, label: null };
+  }
+  const lg = await io.get(NEWS_SHARED_LASTGOOD_KEY).catch((): KvRead => ({ value: null, failed: true }));
+  const la = arr(lg.value);
+  if (la && realArticleCount(la) > n) {
+    const at = typeof lg.value?.savedAt === 'string' ? lg.value.savedAt : null;
+    const age = at ? Math.max(0, Math.round((nowMs - Date.parse(at)) / 60_000)) : null;
+    return { articles: la, servedFromLastGood: true, lastGoodAt: at, ageMinutes: age, label: `STALE: live news refresh returned ${n} real items; serving the last good copy saved ${ageText(at, nowMs)} (${la.length} items).` };
+  }
+  return { articles: (fresh as any[]) ?? null, servedFromLastGood: false, lastGoodAt: null, ageMinutes: null, label: n < NEWS_MIN_REAL_ARTICLES ? `Live news refresh returned only ${n} real items and no last-good copy is available.` : null };
+}
 const LASTGOOD_MAX_ITEMS = 1500;
 const LASTGOOD_MAX_CHARS = 800_000;      // one KV value must stay well under the 1 MiB limit
 const WRITE_THROTTLE_MS = 5 * 60_000;    // never write the copy more than once per 5 minutes per instance

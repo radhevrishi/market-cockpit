@@ -4,7 +4,7 @@ import React from 'react';
 import type { GuidanceEvent } from '@/lib/guidance-upgrades-types';
 import { DURATION_LABEL, FLAG_LABEL, IMPACT_LABEL, MATERIALITY_LABEL, METRIC_LABEL, THESIS_LABEL, UNAVAILABLE, agoText, changeMarker, fmtBeforeAfter, fmtNumber, isHeadlineOnly, showsDecision, tickerText } from '@/lib/guidance-upgrades-format';
 import { IMPACT_COLOR, R, box } from './gu-tokens';
-import { Chip, ConsensusLine, CrossLinks, DecisionChip, HeadlineOnlyBanner, DetectedVia, DurabilityRow, GapBadge, InflectionBadge, List, MetricBasisChip, NumRow, RangeBlock, Scorecard, Section, SourceChip, StageChip, TopEndCutNote, UnitWarnings, UnverifiedBanner, WhyDecision, WhyNow, btn } from './GuBits';
+import { AiCheckBadge, BasisNote, OtherChanges, ValidationNotes, Chip, ConsensusLine, CrossLinks, DecisionChip, HeadlineOnlyBanner, DetectedVia, DurabilityRow, GapBadge, InflectionBadge, List, MetricBasisChip, NumRow, RangeBlock, Scorecard, Section, SourceChip, StageChip, TopEndCutNote, UnitWarnings, UnverifiedBanner, WhyDecision, WhyNow, btn } from './GuBits';
 
 const STAGES: Array<[string, keyof GuidanceEvent['chain']]> = [
   ['EVENT', 'event'], ['EVIDENCE', 'evidence'], ['DRIVER', 'driver'], ['EARNINGS', 'earnings'], ['GAP', 'gap'],
@@ -29,6 +29,7 @@ export function GuDetail({ e, onClose, now }: { e: GuidanceEvent; onClose: () =>
       {!verified && <div style={{ marginTop: 8 }}>{isHeadlineOnly(e) ? <HeadlineOnlyBanner e={e} /> : <UnverifiedBanner />}</div>}
       <div style={{ marginTop: 8 }}><TopEndCutNote e={e} /></div>
       <div style={{ marginTop: 8 }}><UnitWarnings e={e} /></div>
+      <div style={{ marginTop: 8, display: 'grid', gap: 6 }}><AiCheckBadge x={e} /><ValidationNotes e={e} /></div>
 
       {/* First screen: the answer in a few lines. */}
       <div style={box({ padding: 10, margin: '10px 0', display: 'flex', flexDirection: 'column', gap: 6 })}>
@@ -48,6 +49,8 @@ export function GuDetail({ e, onClose, now }: { e: GuidanceEvent; onClose: () =>
         {!isHeadlineOnly(e) && e.changes.map((c, i) => { const b = fmtBeforeAfter(c); const mk = changeMarker(e, i); return (
           <div key={i}><b>{METRIC_LABEL[c.after.metric]} {c.after.period}:</b> {b.before} → <b>{b.after}</b> {b.delta && c.before ? <b style={{ color: mk.kind === 'UP' ? R.green : mk.kind === 'DOWN' ? R.red : R.amber }}>{mk.glyph ? `${mk.glyph} ` : ''}{mk.kind === 'NEUTRAL' ? `midpoint ${b.delta}` : b.delta}</b> : <span style={{ color: R.faint }}>(change {UNAVAILABLE})</span>}
             {c.after.basis && c.after.basis !== 'UNSTATED' ? ` · ${c.after.basis.replace('_', '-')}` : ''}</div>); })}
+        <BasisNote e={e} />
+        <OtherChanges e={e} />
         <div style={{ fontSize: 11, color: R.dim }}>Announced {e.announcement_date} ({agoText(e.announcement_timestamp || e.announcement_date, now)}). Percent is a relative change. pp is a change between two rates.</div>
       </Section>
 

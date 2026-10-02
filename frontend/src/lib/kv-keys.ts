@@ -16,6 +16,11 @@
 export const KV_KEYS = {
   // News / bottleneck
   news_articles:                 'news:articles:v39',
+  // zzz854: durable copy written on every successful news refresh (30 h TTL), read as a labelled-stale fallback
+  news_articles_lastgood:        'news:articles:v39:lastgood',
+  // zzz854: India exchange filing feed (written by concall-intel/live-feed) and its durable last-good copy (30 h TTL)
+  concall_feed:                  (days: number) => `concall-feed:v26:days:${days}`,
+  concall_feed_lastgood:         'concall-feed:v26:lastgood',
   news_persistent_bottleneck:    'bottleneck:articles:persistent:v14',
 
   // Earnings

@@ -1,0 +1,77 @@
+name: AI Verify (every 2 hours)
+
+# zzz854 — drains the AI verification queue. Each run asks the deployed app to
+# read the primary document of up to N unverified claims (guidance changes,
+# special situations), check them with the configured model (AI_PROVIDER /
+# OPENAI_API_KEY on the server, monthly cap AI_MONTHLY_CAP_USD) and cache the
+# verdicts. Lists only show items that are primary-verified or AI-confirmed.
+#
+# Secrets (repository → Settings → Secrets and variables → Actions):
+#   CRON_SECRET    — the same value as CRON_SECRET on the server (service key)
+#   CRON_BASE_URL  — optional; the deployed app's base URL
+# No secret is ever written inline or printed: the key travels in a header
+# read from the environment, and only the HTTP status + counts are echoed.
+
+on:
+  schedule:
+    - cron: '35 */2 * * *'
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Claims to verify in this run (1-50)'
+        required: false
+        default: '15'
+
+concurrency:
+  group: ai-verify
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Run one verification batch
+        id: main
+        env:
+          BASE: ${{ secrets.CRON_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          LIMIT: ${{ github.event.inputs.limit || '15' }}
+        run: |
+          set -euo pipefail
+          BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
+          if [ -z "${CRON_SECRET}" ]; then echo "CRON_SECRET is not set in repository secrets"; exit 1; fi
+          case "$LIMIT" in ''|*[!0-9]*) LIMIT=15 ;; esac
+          STATUS=$(curl -sS -o /tmp/ai-verify.json -w "%{http_code}" --max-time 90 -X POST \
+            -H "x-cron-secret: ${CRON_SECRET}" -H 'Content-Type: application/json' \
+            "$BASE/api/v1/ai-verify?limit=${LIMIT}" || echo "000")
+          echo "ai-verify HTTP $STATUS"
+          # counts only (the response never carries keys or document text)
+          python3 - <<'PY' || true
+          import json
+          try:
+              j = json.load(open('/tmp/ai-verify.json'))
+              r = j.get('run') or {}
+              keys = ['available', 'stoppedBy', 'checked', 'confirmed', 'contradicted', 'notFound', 'unreadable', 'noPrimary', 'errors', 'spentUsd', 'queueBefore', 'queueAfter']
+              print(' '.join(f"{k}={r.get(k)}" for k in keys))
+              if r.get('unavailableReason'): print('unavailable:', str(r.get('unavailableReason'))[:200])
+          except Exception as e:
+              print('response not readable:', e)
+          PY
+          if [ "$STATUS" != "200" ]; then exit 1; fi
+
+      - name: Heartbeat (always run)
+        if: always()
+        env:
+          BASE: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
+          OK="true"
+          if [[ "${{ steps.main.outcome }}" != "success" ]]; then OK="false"; fi
+          curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" \
+            -H 'Content-Type: application/json' \
+            -d "{\"name\":\"ai-verify\",\"phase\":\"end\",\"ok\":$OK,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -o /dev/null -w "heartbeat %{http_code}\n" || true

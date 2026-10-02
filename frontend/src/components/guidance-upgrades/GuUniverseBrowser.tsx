@@ -57,9 +57,11 @@ export function GuUniverseBrowser({ held, onFull }: { held: string[]; onFull?: (
           {universeNoticeLine(data.summary) && <div style={{ fontSize: 12, color: R.dim }}>{universeNoticeLine(data.summary)}</div>}
           {viewCountsLine(data.viewCounts) && <div style={{ fontSize: 12, color: R.dim }}>{viewCountsLine(data.viewCounts)}</div>}
           {view === 'review' && reasonCountsLine(data.summary?.reviewReasonCounts) && <div style={{ fontSize: 12, color: R.dim }}><b>Reasons:</b> {reasonCountsLine(data.summary?.reviewReasonCounts)}</div>}
+          {view === 'claims' && <div style={{ fontSize: 12, color: R.dim }}>{data.countEquations?.claimsAwaiting?.text || 'Claims awaiting verification are found in media or not yet confirmed by the company\'s own document. They are never ranked or counted in Active.'}</div>}
+          {data.countEquations?.rows?.text && <div style={{ fontSize: 12, color: data.countEquations.rows.holds === false ? R.red : R.dim }}><b>How the lists add up:</b> {data.countEquations.rows.text}</div>}
           <div style={{ fontSize: 12, color: R.dim }}>{list.length} shown</div>
           <div style={{ opacity: state === 'loading' ? 0.6 : 1 }}>
-            <GuUniverseList records={list} showMarket={scope === 'ALL' || scope === 'MY_BOOK'} onFull={onFull} emptyText={data.records.length === 0 ? (view === 'review' ? 'Nothing is waiting for review.' : ZERO_RECORDS_TEXT) : "Nothing matches these filters. Clear a filter to see more."} />
+            <GuUniverseList records={list} showMarket={scope === 'ALL' || scope === 'MY_BOOK'} onFull={onFull} emptyText={data.records.length === 0 ? (view === 'review' ? 'Nothing is waiting for review.' : view === 'claims' ? 'No claims are waiting for verification.' : ZERO_RECORDS_TEXT) : "Nothing matches these filters. Clear a filter to see more."} />
           </div>
           {view === 'history' && (
             <div style={{ display: 'grid', gap: 4 }}>

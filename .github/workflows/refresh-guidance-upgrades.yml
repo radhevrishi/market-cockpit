@@ -6,9 +6,8 @@ name: Refresh Guidance Upgrades (hourly)
 
 on:
   schedule:
-    # Every hour on weekdays across India + US hours, then every 3 hours
-    - cron: '10 3-23 * * 1-5'
-    - cron: '10 */3 * * 0,6'
+    # zzz854: every hour, every day (the AI verifier queue is fed from these runs)
+    - cron: '10 * * * *'
   workflow_dispatch: {}
 
 concurrency:

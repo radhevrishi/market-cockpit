@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
+import { refreshNewsLastGood, makeKvNewsIo } from '@/lib/guidance-upgrades-cache';
 import { recordXRef } from '@/lib/news/cross-reference';
 import {
   buildInstitutionalEnvelope, shouldKeepEarnings, generateInstitutionalImpactLabel,
@@ -2520,6 +2521,8 @@ export async function GET(request: Request) {
     const transformationalFlag = searchParams.get('transformational') === '1';
 
     let articles: any[] | null = null;
+    // zzz854: which copy served this answer ('live' | 'lastgood; age=Nm'); sent as the X-News-Served-From header
+    let newsServedFrom = 'live';
     try {
       articles = await kvGet<any[]>(CACHE_KEY);
     } catch {}
@@ -2544,7 +2547,14 @@ export async function GET(request: Request) {
       } catch (e) {
         console.warn('[news] annotation pass failed (non-fatal):', e);
       }
-      try { await kvSet(CACHE_KEY, articles, CACHE_TTL); } catch {}
+      // zzz854: the 5-minute key is refreshed only hourly, so readers miss it most of the hour. Every successful refresh also writes a durable
+      // `news:articles:v39:lastgood` copy (30 h TTL); a refresh that collapsed (fewer than 8 real items) serves that copy instead, labelled stale.
+      try {
+        const lg = await refreshNewsLastGood(makeKvNewsIo(4_000), articles);
+        if (lg.servedFromLastGood && lg.articles) { articles = lg.articles; newsServedFrom = `lastgood; age=${lg.ageMinutes ?? 'unknown'}m`; console.warn('[news]', lg.label); }
+      } catch { /* best effort */ }
+      // never re-publish a stale copy under the live key (readers would take it for a fresh refresh)
+      if (newsServedFrom === 'live') { try { await kvSet(CACHE_KEY, articles, CACHE_TTL); } catch {} }
     }
 
     // PATCH 1069 — Scraper-KV backstop. Server-side RSS fetches from this host
@@ -2753,7 +2763,7 @@ export async function GET(request: Request) {
       }
       // Top up if one side has fewer than 5
       const ranked = merged.slice(0, 10);
-      return NextResponse.json(ranked, { headers: { 'Cache-Control': 's-maxage=60, stale-while-revalidate=120' } } );// PATCH 0818
+      return NextResponse.json(ranked, { headers: { 'Cache-Control': 's-maxage=60, stale-while-revalidate=120', 'X-News-Served-From': newsServedFrom } } );// PATCH 0818
     }
 
     // ── Phase 2.5 / 3.14: Anomaly detector ──
@@ -2988,7 +2998,7 @@ export async function GET(request: Request) {
       });
     }
 
-    return NextResponse.json(filtered, { headers: { 'Cache-Control': 's-maxage=60, stale-while-revalidate=120' } } );// PATCH 0818
+    return NextResponse.json(filtered, { headers: { 'Cache-Control': 's-maxage=60, stale-while-revalidate=120', 'X-News-Served-From': newsServedFrom } } );// PATCH 0818
   } catch (error) {
     console.error('[News API] Error:', error);
     return NextResponse.json([], { status: 200 });

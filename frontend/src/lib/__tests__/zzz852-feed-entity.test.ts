@@ -188,7 +188,8 @@ describe('C entity resolution', () => {
 describe('D source subject', () => {
   test('acquisition headline', () => {
     const s = deriveSourceSubject({ title: 'Acme Foods to acquire Beta Snacks for Rs 2,410 crore', company: 'Acme Foods' });
-    assert.equal(s.eventSubject, 'Acme Foods'); assert.equal(s.target, 'Beta Snacks'); assert.equal(s.financialOwner, 'Acme Foods');
+    // zzz854: the acquirer is not assumed to own the figures of an acquisition story (old expectation 'Acme Foods' encoded the ITC / Yoga Bar bug)
+    assert.equal(s.eventSubject, 'Acme Foods'); assert.equal(s.target, 'Beta Snacks'); assert.equal(s.financialOwner, undefined);
     const t = deriveSourceSubject({ title: 'Acme Foods buys 51% stake in Beta Snacks', company: 'Acme Foods' });
     assert.equal(t.target, 'Beta Snacks');
   });

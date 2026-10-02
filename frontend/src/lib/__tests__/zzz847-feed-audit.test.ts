@@ -188,7 +188,8 @@ describe('5 merger vs demerger subtype', () => {
     assert.equal(subtypeHint('Vedanta Aluminium seeks ₹13,500 crore bank loan after group demerger'), 'FINANCING');
     assert.equal(subtypeHint("Lord's Mark Industries outlines strategic expansion across global healthcare; targets ₹1,550 Crore revenue in FY2027"), 'GUIDANCE_PLAN');
     assert.equal(subtypeHint('Allcargo Global debuts on NSE, BSE following demerger from Allcargo Logistics'), 'LISTING_DONE');
-    assert.equal(subtypeHint("From cigarettes to protein bars: ITC's ₹900 cr Yoga Bar bet as FMCG giant taps India's health-food boom"), 'NEW_PRODUCT');
+    // zzz854: a '<money> <Company> bet' is an investment in a named company (stake / acquisition), not a new product (old expectation encoded the bug)
+    assert.equal(subtypeHint("From cigarettes to protein bars: ITC's ₹900 cr Yoga Bar bet as FMCG giant taps India's health-food boom"), null);
   });
   test('adapter re-types a merger that the feed marked as spin-off', () => {
     const i = inp('IHCL announces merger with Oriental Hotels', { event_type: 'DEMERGER_INDIA', category: 'SPIN' }) as any;
@@ -227,7 +228,10 @@ describe('6 dedupe', () => {
     const r = eventsToRadarInputs([a, b]);
     assert.equal(r.length, 1);
     assert.equal(r[0].eventType, 'MERGER_DEFINITIVE');
-    assert.equal(r[0].independentSources, 2);
+    // zzz854: two outlets reporting the same board approval with the same 5:41 ratio are ONE information origin
+    // (was 2 = outlet count, which is the bug). Both copies are still listed.
+    assert.equal(r[0].independentSources, 1);
+    assert.equal(r[0].sourceOrigins!.sourceCount, 2);
   });
   test('28 syndicated copies from one publisher count as one independent source', () => {
     const e = ev('Tata Sons merger proposal faces questions from Tata Trusts trustees: Report', { source: 'Livemint Companies' });

@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import type { GuUniverseRecord } from '@/lib/guidance-universe-types';
 import type { GgCompany } from '@/lib/growth-guidance-types';
 import { primaryDisplay, metricShort, eventTags, recordPeriodUnclear, PERIOD_UNCLEAR_HINT, PERIOD_UNCLEAR_LABEL } from '@/lib/guidance-upgrades-format';
-import { cohortLabel, reasonsPlain, recordBasis, recordBadge, type GuRecX } from './gu-ui';
+import { cohortLabel, reasonsPlain, recordBasis, recordBadge, recordReconcileLines, type GuRecX } from './gu-ui';
 import { R, box } from './gu-tokens';
 import { Chip, VerBadge, BasisLine, LastVerified, btn } from './GuBits';
 import { GuCompanyDetail } from './GuCompanyDetail';
@@ -28,6 +28,7 @@ export function GuUniverseList({ records, showMarket, limit = MOBILE_LIMIT, onFu
           const id = r.record.id;
           const isOpen = open === id;
           const sec = r.alsoDisplay || [];
+          const recon = recordReconcileLines(x);
           return (
             <li key={id} className="gu-card" style={box({ padding: '6px 10px' })}>
               <button type="button" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : id)}
@@ -42,10 +43,11 @@ export function GuUniverseList({ records, showMarket, limit = MOBILE_LIMIT, onFu
                 {eventTags(r).map((t) => <Chip key={t.label} color={TONE[t.tone]} title={t.tip}>{t.label}</Chip>)}
                 <span aria-hidden style={{ marginLeft: 'auto', color: R.dim, fontSize: 12 }}>{isOpen ? 'Hide' : 'Details'}</span>
               </button>
-              {(basis?.line || reasons.length > 0 || x.lastVerified || x.lastVerifiedDaysAgo != null) && (
+              {(basis?.line || reasons.length > 0 || recon.length > 0 || x.lastVerified || x.lastVerifiedDaysAgo != null) && (
                 <div style={{ display: 'grid', gap: 1, paddingLeft: 30, marginTop: 2 }}>
                   <BasisLine t={basis} />
-                  {reasons.length > 0 && <div style={{ fontSize: 12, color: R.amber }}><b>Needs review:</b> {reasons.join(' ')}</div>}
+                  {reasons.length > 0 && <div style={{ fontSize: 12, color: R.amber }}><b>{x.listBucket === 'CLAIMS' ? 'Why not verified:' : 'Needs review:'}</b> {reasons.join(' ')}</div>}
+                  {recon.map((l, k) => <div key={k} data-gu-reconcile style={{ fontSize: 12, color: l.tone === 'red' ? R.red : l.tone === 'amber' ? R.amber : R.dim }}>{l.text}</div>)}
                   <LastVerified r={x} />
                 </div>
               )}

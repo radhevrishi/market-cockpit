@@ -54,6 +54,10 @@ export interface GuUniverseResponse {
   scan: { note: string; complete: boolean };
   /** additive (optional): the backend's own error text, shown as-is with a Retry button */
   error?: string;
+  /** zzz854 (optional): every header number with its equation (same object as summary.countEquations) */
+  countEquations?: GuCountEquations;
+  /** zzz854 (optional): how many event statuses the universe was reconciled against and where they came from */
+  eventReconciliation?: { statuses: number; source: string; error?: string };
 }
 
 export interface GuRegressionRow {
@@ -107,7 +111,8 @@ export type GuMetricFamily = 'REVENUE' | 'NET_PROFIT' | 'EBITDA' | 'EPS' | 'FCF'
 export type GuLifecycle = 'ACTIVE' | 'SUPERSEDED' | 'EXPIRED' | 'WITHDRAWN';
 export type GuCohort = 'ANNUAL' | 'MULTI_YEAR_CAGR' | 'QUARTERLY';
 export type GuTrust = 'verified' | 'derived' | 'partial' | 'claimsAwaiting';
-export type GuReviewCode = 'PERIOD_UNCLEAR' | 'PERIOD_UNKNOWN' | 'SECONDARY_ONLY' | 'PRIMARY_MISSING' | 'SOURCE_CONFLICT' | 'EXPIRED' | 'POTENTIAL_DUPLICATE' | 'NEEDS_REVIEW' | 'COMPANY_UNRESOLVED' | 'METRIC_LABEL_MISMATCH';
+export type GuReviewCode = 'PERIOD_UNCLEAR' | 'PERIOD_UNKNOWN' | 'SECONDARY_ONLY' | 'PRIMARY_MISSING' | 'SOURCE_CONFLICT' | 'EXPIRED' | 'POTENTIAL_DUPLICATE' | 'NEEDS_REVIEW' | 'COMPANY_UNRESOLVED' | 'METRIC_LABEL_MISMATCH'
+  /** zzz854 */ | 'AWAITING_VERIFICATION' | 'EVENT_CONFLICT' | 'NEWER_PERIOD_GUIDANCE' | 'STALE_VERIFICATION' | 'INVARIANT_FAILED';
 export interface GuVersionSnapshot { date: string | null; low: number | null; high: number | null; absoluteLow: number | null; absoluteHigh: number | null; unit: string | null; display: string; source: string }
 export interface GuHistoryStep {
   step: number; date: string | null;
@@ -150,10 +155,44 @@ export interface GuHighGrowthGroups {
   cohorts: Record<GuCohort, GuHgGroupRow[]>;
   /** the same rows split by trust, then by cohort. verified = strict: VERIFIED + CONFIRMED period + active. */
   trust: Record<GuTrust, Record<GuCohort, GuHgGroupRow[]>>;
-  counts: { rows: number; verified: number; derived: number; partial: number; claimsAwaiting: number; ANNUAL: number; MULTI_YEAR_CAGR: number; QUARTERLY: number };
+  counts: { rows: number; verified: number; derived: number; partial: number; claimsAwaiting: number; ANNUAL: number; MULTI_YEAR_CAGR: number; QUARTERLY: number; /** zzz854: distinct companies in the ranked Active rows */ companies?: number };
 }
 export interface GuStateCounts { activeRecords: number; verified: number; partial: number; derived: number; unverified: number; periodUnclear: number }
 export interface GuExpirySummary { expired: number; superseded: number; withdrawn: number; total: number; reasons: Array<{ reason: string; count: number }> }
-export interface GuViewCounts { default: number; review: number; expired: number; superseded: number; withdrawn: number; excluded: number }
+export interface GuViewCounts { default: number; review: number; expired: number; superseded: number; withdrawn: number; excluded: number; /** zzz854: unverified claims, never in Active */ claimsAwaiting?: number }
 export interface GuInvariantViolation { code: string; entityKey: string | null; company: string | null; metric: string | null; message: string }
 export type GuServedFrom = 'live' | 'last_good' | 'seed';
+
+// ── zzz854 (additive): cross-tab reconciliation with the EVENTS layer, list buckets, count equations ──────────────
+/** Which list a point / record belongs to. ACTIVE = verified, derived or partial-with-document-read; REVIEW = something does not add up;
+ *  CLAIMS = not verified by the company's own document yet (media / social / not read / last verified unknown). CLAIMS is never ranked in Active. */
+export type GuListBucket = 'ACTIVE' | 'REVIEW' | 'CLAIMS';
+/** What the newest event (Layer B) says about a company + metric + period. */
+export type GuEventStatusKind = 'RAISED' | 'REITERATED' | 'LOWERED' | 'MIXED' | 'INVALID' | 'NO_NUMBERS';
+export interface GuEventStatus {
+  market: 'IN' | 'US'; ticker: string; company: string; metric: GgMetric;
+  /** normalised period ('FY27', 'Q2 FY27'); 'UNSTATED' when the event gave none */ period: string;
+  /** the company's announcement date (YYYY-MM-DD) */ date: string;
+  status: GuEventStatusKind;
+  /** true = the event was confirmed by a primary document (only these override a universe record) */ verified: boolean;
+  /** plain label, e.g. 'GUIDANCE REITERATED' */ label: string;
+  /** 'before → after' as the event shows it, or null */ display: string | null;
+  sourceName: string | null; sourceUrl: string | null; eventId: string | null;
+  /** why an event is INVALID (e.g. 'the narrative describes a capital raise, not guidance') */ reason?: string | null;
+}
+/** Set on a point when a newer primary-source event disagrees with it. The event wins; the point leaves the Active list. */
+export interface GuEventOverride {
+  code: 'EVENT_CONFLICT' | 'NEWER_PERIOD_GUIDANCE';
+  eventStatus: GuEventStatusKind; eventDate: string; eventPeriod: string; eventLabel: string; eventDisplay: string | null;
+  /** what the universe record said before the override ('RAISED') */ previousRevision: string;
+  /** e.g. 'Latest filing (2026-08-14) says GUIDANCE REITERATED; this record said RAISED.' */ text: string;
+  sourceName: string | null; sourceUrl: string | null;
+}
+export interface GuCountEquation { value: number; text: string; holds: boolean; parts?: Record<string, number> }
+/** Every header number and the equation it comes from. All computed from the same filtered sets as the lists. */
+export interface GuCountEquations {
+  /** Active = verified + derived + partial (records in the Active list, by the headline metric's trust state) */ active: GuCountEquation;
+  /** Highest active guidance = Active rows (one per company per period type) with Revenue / PAT / EBITDA guided growth >= threshold */ highestActive: GuCountEquation & { companies: number; threshold: number };
+  needsReview: GuCountEquation; claimsAwaiting: GuCountEquation;
+  /** active + needs review + claims awaiting = all rows shown across the three lists */ rows: GuCountEquation;
+}

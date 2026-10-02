@@ -12,7 +12,7 @@ import { DEFAULT_THRESHOLD } from '../growth-guidance-format';
 const NOW = new Date('2026-10-01T09:00:00Z');
 const mk = (o: Partial<GuSeedRow> = {}): GuSeedRow => ({
   company: 'ZZ Alpha Ltd', ticker: 'ZZALPHA', market: 'IN', metric: 'REVENUE', growthLow: 40, growthHigh: 40, growthOrigin: 'STATED', absoluteTarget: null, period: 'FY27', periodKind: 'FY', kind: 'MANAGEMENT_GUIDANCE', organic: 'ORGANIC',
-  statement: 'Management guides revenue growth of 40% for the year.', driver: null, mechanisms: [], sourceName: 'Q4 call', sourceType: 'Concall', sourceUrl: 'https://example.com/a', sourceDate: '2026-05-10', sourceRank: 7, verification: 'VERIFIED',
+  statement: 'Management guides revenue growth of 40% for the year.', driver: null, mechanisms: [], sourceName: 'Q4 call', sourceType: 'Concall', sourceUrl: 'https://example.com/a', sourceDate: '2026-08-10', sourceRank: 7, verification: 'VERIFIED',
   priorGuidance: [], supersededBy: null, notes: '', ownerListText: null, ...o,
 });
 const co = (n: string, o: Partial<GuSeedRow> = {}) => mk({ company: `ZZ ${n} Ltd`, ticker: `ZZ${n.toUpperCase()}`, ...o });
@@ -66,7 +66,7 @@ describe('strict verified section', () => {
     co('Der', { growthLow: 60, growthHigh: 60, growthOrigin: 'IMPLIED', absoluteTarget: { value: 160, unit: '₹ Cr' }, impliedBase: { value: 100, unit: '₹ Cr', period: 'FY26' }, statement: 'Targets revenue of Rs 160 crore in FY27.', sourceRank: 3, sourceType: 'Earnings release' }),
     co('Unc', { period: 'Q2', periodKind: 'QUARTER', growthLow: 50, growthHigh: 50, statement: 'Revenue growth of 50% in Q2.', sourceRank: 3, sourceType: 'Earnings release' }),
   ]);
-  const s = summarize(b.defaultRecords, NOW, 30, b.inactive, b.reviewQueue);
+  const s = summarize(b.defaultRecords, NOW, 30, b.inactive, b.reviewQueue, b.claimsAwaiting);   // zzz854: claims come from their own list
   test('verified section holds only strictly verified rows (no media, derived or unclear)', () => {
     const names = Object.values(s.highGrowthGroups.trust.verified).flat().map((r) => r.company);
     assert.deepEqual(names, ['ZZ Ver Ltd']);
@@ -105,9 +105,13 @@ describe('history and lifecycle', () => {
     assert.equal(b.records.filter((r) => r.record.company === 'ZZ H Ltd').length, 1);
     const sup = b.inactive.filter((x) => x.company === 'ZZ H Ltd'); assert.equal(sup.length, 2); for (const x of sup) { assert.equal(x.status, 'SUPERSEDED'); assert.equal(x.current, false); assert.ok(x.expiryReason); }
   });
-  test('stale verification warns but stays active', () => {
+  // zzz854 decision: 60-90 days = caveat, stays Active; more than 90 days = moved to Needs review (STALE_VERIFICATION). It is still ACTIVE guidance (not expired).
+  test('stale verification: 60-90 days warns and stays active; over 90 days moves to needs review', () => {
+    const w = bld([co('Warm', { sourceDate: '2026-07-20', lastVerified: '2026-07-20' })]); const pw = pt(w, 'Warm');
+    assert.ok((pw.lastVerifiedDaysAgo ?? 0) > 60 && (pw.lastVerifiedDaysAgo ?? 0) <= 90); assert.equal(pw.status, 'ACTIVE'); assert.ok(w.defaultRecords.length === 1); assert.ok(w.defaultRecords[0].caveats.some((c) => /Last verified more than/.test(c)));
     const o = bld([co('Old', { sourceDate: '2026-05-01', lastVerified: '2026-05-01' })]); const p = pt(o, 'Old');
-    assert.ok((p.lastVerifiedDaysAgo ?? 0) > 60); assert.equal(p.status, 'ACTIVE'); assert.ok(o.defaultRecords.length === 1);
+    assert.ok((p.lastVerifiedDaysAgo ?? 0) > 90); assert.equal(p.status, 'ACTIVE'); assert.equal(o.defaultRecords.length, 0);
+    assert.ok(o.reviewQueue[0].reviewReasonCodes.includes('STALE_VERIFICATION'));
   });
 });
 
@@ -126,7 +130,7 @@ describe('invariants', () => {
   });
   test('a deliberately broken bundle is flagged', () => {
     const b = bld([co('Br', { sourceRank: 10, sourceType: 'Media', sourceName: 'Some Blog', verification: 'SECONDARY_ONLY' }), co('Ok')]);
-    const broken = JSON.parse(JSON.stringify(b.defaultRecords)) as typeof b.defaultRecords;
+    const broken = JSON.parse(JSON.stringify([...b.defaultRecords, ...(b.claimsAwaiting ?? [])])) as typeof b.defaultRecords;   // zzz854: a media row is a claim, never Active; put it in Active by hand
     const br = broken.find((r) => r.record.company === 'ZZ Br Ltd')!; br.points[0].verificationState = 'VERIFIED'; br.points[0].periodStatus = 'UNCLEAR'; br.points[0].display = '+40% (implied)';
     const codes = checkUniverseInvariants({ defaultRecords: broken }).map((v) => v.code);
     for (const c of ['VERIFIED_BY_SECONDARY_SOURCE', 'DEFAULT_PERIOD_NOT_CONFIRMED', 'BARE_IMPLIED', 'TIER3_VERIFIED']) assert.ok(codes.includes(c), c);

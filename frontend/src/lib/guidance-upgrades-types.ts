@@ -125,6 +125,10 @@ export interface GuGuidancePoint {
   raw?: string;                    // the verbatim phrase it was extracted from
   /** zzz853: MULTI_YEAR_CAGR when the figure is a growth target over several years ('30-35% over FY27-FY29'); never read as a single-year figure. periodYears is the span when stated. */
   periodKind?: 'MULTI_YEAR_CAGR'; periodYears?: number;
+  /** zzz854: what the figure is. ACTUAL = the source words around it say it is a reported result ('reported', 'in the quarter', 'Q2 revenue of'), never guidance. Absent = not established. */
+  valueKind?: 'GUIDANCE' | 'ACTUAL';
+  /** zzz854: QUARTER when the words right next to the figure tie it to a single quarter ('in Q2', 'second-quarter', 'quarterly') */
+  grain?: 'QUARTER';
   unit?: string;                   // additive: scale label of low/high — 'B' | 'M' | 'K' | 'Cr' | 'L Cr' | '%' | '' (currency symbol is in `currency`)
 }
 
@@ -255,7 +259,22 @@ export interface GuidanceEvent {
   sourceConflict?: GuSourceConflict | null;
   /** zzz853: the company's own sentence that explains the change, or 'Driver not stated' */
   whyNowDriver?: string;
-  rankKey: number;                 // internal sort only, never displayed
+  /** zzz854: guidance taxonomy (see GuTaxonomy). Only 'formal_upgrade' + VERIFIED is ever labelled GUIDANCE UPGRADE. */
+  taxonomy?: GuTaxonomy;
+  /** zzz854: where this item goes: a main card, the audit list, the review queue, or dropped. Plus the counting bucket and the specific reason. */
+  pipeline?: GuPipeline;
+  /** zzz854: ONE primary-source state derived from data (never two contradicting labels) */
+  primarySourceState?: GuPrimarySourceState;
+  /** zzz854: unit / period / actual-vs-guidance / range / staleness / consensus checks that fired (empty = all passed) */
+  validationIssues?: GuValidationIssue[];
+  /** zzz854: compared measures of the same release that did NOT move up (kept so a raise next to a cut is 'mixed', never a clean upgrade) */
+  otherChanges?: GuChange[];
+  /** zzz854: comparisons removed by validation (INVALID: period mismatch, actual vs guidance, stale, degenerate range ...). Kept for the audit trail and cross-event checks; never shown as figures. */
+  rejectedChanges?: GuChange[];
+  /** zzz854: basis used for the headline numbers ('ADJUSTED' preferred when the company gives both) and a note when GAAP differs */
+  headlineBasis?: 'ADJUSTED' | 'GAAP' | 'UNSTATED';
+  basisNote?: string | null;
+  rankKey: number;                // internal sort only, never displayed
   created_at: string; updated_at: string;
 }
 
@@ -272,8 +291,50 @@ export interface GuCounts {
   documentsAwaitingGrading: number;   // reported separately; never mixed into verified
   documentsUnavailable: number;
 }
+// ═══ zzz854: taxonomy, validation, pipeline partition ═══════════════════════════════════════════════════════════════
+/** What kind of statement this is. Only formal_upgrade (old AND new numbers, same metric, same basis, same period) can be a GUIDANCE UPGRADE. */
+export type GuTaxonomy =
+  | 'formal_upgrade' | 'reiteration' | 'downgrade' | 'mixed_range_change' | 'first_guidance'
+  | 'qualitative_commentary' | 'analyst_revision' | 'earnings_beat' | 'management_target' | 'operational_disclosure'
+  | 'capital_raise_or_financing';
+export type GuValidationCode =
+  | 'PERIOD_MISMATCH' | 'PERIOD_UNSTATED' | 'ACTUAL_VS_GUIDANCE' | 'DUPLICATE_ACROSS_PERIODS' | 'IMPLAUSIBLE_CHANGE'
+  | 'DEGENERATE_RANGE' | 'STALE_PERIOD' | 'UNIT_ERROR' | 'PER_SHARE_MISMATCH' | 'BASIS_MIX' | 'CONSENSUS_METRIC_MISMATCH';
+/** INVALID = the comparison is wrong (dropped); REVIEW = it may be wrong (requeued as needs review, never verified); INFO = noted only */
+export interface GuValidationIssue { code: GuValidationCode; severity: 'INVALID' | 'REVIEW' | 'INFO'; metric: GuMetric | null; period: string | null; text: string }
+/** ONE primary-source state, derived from data. */
+export type GuPrimarySourceState = 'not_found' | 'found_not_read' | 'read_numbers_found' | 'read_numbers_not_found';
+/** CARD = main list (verified formal upgrade); AUDIT = verified reiteration / mixed / lowered; QUEUE = review / awaiting queue; DROPPED = not guidance or invalid */
+export type GuPipelineStatus = 'CARD' | 'AUDIT' | 'QUEUE' | 'DROPPED';
+export type GuReviewStatus = 'awaiting_numbers' | 'awaiting_primary' | 'needs_review' | 'invalid' | 'stale' | 'capital_raise' | 'first_guidance' | 'not_guidance';
+/** Counting bucket. Every processed item lands in exactly one, so the buckets always add up to `processed`. */
+export type GuPipelineBucket =
+  | 'verifiedUpgrades' | 'reiterations' | 'mixed' | 'lowered' | 'firstGuidance' | 'invalidOrStale' | 'capitalRaise'
+  | 'awaitingNumbers' | 'unverified' | 'nonGuidance';
+export interface GuPipeline { status: GuPipelineStatus; bucket: GuPipelineBucket; reviewStatus: GuReviewStatus | null; reason: string }
+/** One review-queue row (never an event card). */
+export interface GuReviewItem {
+  id: string; ticker: string; company: string; market: GuMarket; announcement_date: string;
+  status: GuReviewStatus; reason: string; taxonomy: GuTaxonomy;
+  primarySourceState: GuPrimarySourceState; primarySourceUrl: string | null;
+  /** what was read, in plain words ('revenue FY26: new 305–315, old DATA UNAVAILABLE') */
+  figures: string[];
+  sources: Array<{ name: string; url?: string; tier: GuSourceTier; date?: string }>;
+}
+/** Exact partition: the ten buckets add up to `processed`. Field names are stable for the counts agent. */
+export interface GuPipelineCounts {
+  processed: number;
+  verifiedUpgrades: number; reiterations: number; mixed: number; lowered: number; firstGuidance: number;
+  invalidOrStale: number; capitalRaise: number; awaitingNumbers: number; unverified: number; nonGuidance: number;
+  /** sub-counts (already inside the buckets above, never added again) */
+  stale: number; needsReview: number; awaitingPrimary: number; material: number; expectationPositive: number;
+  cards: number; audit: number; queue: number; dropped: number;
+}
 export interface GuSummary {
   window: GuWindow; asOf: string;
+  /** zzz854: exact pipeline partition (see GuPipelineCounts) */
+  pipeline?: GuPipelineCounts;
+  pipelineByMarket?: { IN: GuPipelineCounts; US: GuPipelineCounts };
   /** zzz853: the canonical counts (see GuCounts). The older fields above stay for the current UI. */
   counts?: GuCounts;
   countsByMarket?: { IN: GuCounts; US: GuCounts };
@@ -295,6 +356,9 @@ export interface GuidanceUpgradesResponse {
   /** zzz853: processing queue state after this run */
   queue?: GuQueueReport;
   events: GuidanceEvent[];
+  /** zzz854: items that are NOT event cards (awaiting numbers / awaiting primary / needs review / invalid / stale / capital raise / first guidance), with a reason each */
+  reviewQueue?: GuReviewItem[];
+  reviewQueueCount?: number;
   /** zzz849: number of unresolved discoveries held back from `events` (the list is `unresolved`, an array of GuUnresolvedDiscovery, coverage diagnostics only) */
   unresolvedCount?: number;
   scan?: Partial<Record<'IN' | 'US', GuScanStatus>>;   // zzz844

@@ -53,7 +53,9 @@ describe('zzz850 already-reported earnings result', () => {
     assert.equal(r.stageNumber, 1);
     assert.equal(r.stageLabel, 'Reported');
     assert.ok(!/validated/i.test(blob(r)));
-    assert.ok(r.link === 'DIRECT' || r.link === 'NEAR_DIRECT');
+    // zzz854: a secondary-only result headline is 'Earnings result (unverified)': no earnings link until the filing is read
+    assert.equal(r.link, 'NOT_ESTABLISHED');
+    assert.equal(r.resultLabel, 'Earnings result (unverified)');
   });
   test('a price reaction stays context only', () => {
     const p = run({ title: `${RESULT}; shares jump 6% today` });

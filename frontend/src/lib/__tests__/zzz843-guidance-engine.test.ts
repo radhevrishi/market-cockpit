@@ -278,7 +278,8 @@ describe('8. computeGap', () => {
   test('>= +5% LARGE_POSITIVE', () => assert.equal(computeGap(10.5, 10).gap, 'LARGE_POSITIVE'));
   test('+2..+5 POSITIVE', () => assert.equal(computeGap(10.3, 10).gap, 'POSITIVE'));
   test('-0.5..+2 INLINE', () => { assert.equal(computeGap(10.1, 10).gap, 'INLINE'); assert.equal(computeGap(9.97, 10).gap, 'INLINE'); });
-  test('below -0.5 NEGATIVE', () => assert.equal(computeGap(9.9, 10).gap, 'NEGATIVE'));
+  // zzz854: -2..+2 is in line (neutral); only below -2% is NEGATIVE (was -0.5, which let tiny gaps drive decisions)
+  test('within -2%..0 is INLINE; below -2 NEGATIVE', () => { assert.equal(computeGap(9.9, 10).gap, 'INLINE'); assert.equal(computeGap(9.7, 10).gap, 'NEGATIVE'); });
   test('consensus null -> UNKNOWN, never NEGATIVE', () => { const g = computeGap(10.8, null); assert.equal(g.gap, 'UNKNOWN'); assert.equal(g.gapPct, null); });
   test('guidance null or consensus 0 -> UNKNOWN', () => { assert.equal(computeGap(null, 10).gap, 'UNKNOWN'); assert.equal(computeGap(10, 0).gap, 'UNKNOWN'); });
   test('SMALL_POSITIVE only when caller says the market expected more than old guidance', () => {
@@ -366,7 +367,8 @@ describe('11. materiality', () => {
   const m = (t: string) => materiality(extractGuidance(t));
   test('EPS +13% -> HIGH with basis listing the numbers', () => { const r = m('raises EPS guidance to $4.75 from $4.20'); assert.equal(r.level, 'HIGH'); assert.match(r.basis, /EPS guidance up 13.1%/); });
   test('EBITDA +20% -> HIGH', () => assert.equal(m('raises EBITDA guidance to $2.4B from $2.0B').level, 'HIGH'));
-  test('revenue +8% alone -> MEDIUM', () => assert.equal(m('raises revenue guidance to $10.8B from $10.0B').level, 'MEDIUM'));
+  // zzz854: revenue midpoint >= 5% is HIGH on its own (was: only together with a second metric)
+  test('revenue +8% alone -> HIGH', () => assert.equal(m('raises revenue guidance to $10.8B from $10.0B').level, 'HIGH'));
   test('revenue +8% with a second metric -> HIGH', () =>
     assert.equal(m('raises revenue guidance to $10.8B from $10.0B and margin to 24% from 23.5%').level, 'HIGH'));
   test('revenue +2% -> LOW', () => assert.equal(m('raises revenue guidance to $10.2B from $10.0B').level, 'LOW'));
@@ -444,7 +446,8 @@ describe('14-16. narrative builders', () => {
   test('whyNow: one sentence naming driver + numbers', () => {
     const w = ev().whyNow; assert.match(w, /\$10\.4B from \$10/); assert.match(w, /strong|demand/i); assert.equal((w.match(/\. /g) ?? []).length, 0);
   });
-  test('whyNow: unknown driver says so (V2 wording: Driver unresolved after primary-source + recent-event research)', () => assert.match(build('ZZTest raises FY27 revenue guidance to $10.8B from $10.0B').whyNow, /Driver unresolved after primary-source \+ recent-event research/));
+  // zzz854: dated and specific instead of the old boilerplate
+  test('whyNow: unknown driver says so, dated and naming the document', () => { const w = build('ZZTest raises FY27 revenue guidance to $10.8B from $10.0B').whyNow; assert.match(w, /Why now: guidance raised on \d{4}-\d{2}-\d{2} in .+; driver not stated in the release/); assert.doesNotMatch(w, /Driver unresolved/); });
   test('whatItMeans: operating leverage only when profit % > revenue % from numbers', () => {
     assert.match(ev().whatItMeans, /operating leverage/);
     const flat = build('ZZTest raises FY27 revenue guidance to $10.8B from $10.0B');
@@ -487,21 +490,24 @@ describe('17. decide', () => {
     const e = build(STRONG + ' Free cash flow decline and margin pressure remain.', { consensus: CONS, priceContext: { pe: 22 } });
     assert.notEqual(e.decision, 'IMMEDIATE_BUY');
   });
-  test('REJECT: immaterial, NEGATIVE gap, LOW quality, no measurable upgrade', () => {
-    assert.equal(build('ZZTest raises FY27 revenue guidance to $10.2B from $10.0B, driven by strong demand').decision, 'REJECT');
-    assert.equal(build('ZZTest raises FY27 revenue guidance to $10.8B from $10.0B', { consensus: { ...CONS, value: 12 } }).decision, 'REJECT');
-    assert.equal(build('ZZTest raises FY27 EPS guidance to $4.75 from $4.20 due to a one-time tax benefit').decision, 'REJECT');
-    assert.equal(build('ZZTest raises its FY27 outlook').decision, 'REJECT');
+  // zzz854: REJECT is reserved for lowered / invalid / stale / capital-raise. A verified raise that is small, one-off or below consensus is WATCHLIST; no numbers = no decision.
+  test('verified raise is never REJECT for small size, negative gap or a one-time driver; no numbers = no decision', () => {
+    assert.equal(build('ZZTest raises FY27 revenue guidance to $10.2B from $10.0B, driven by strong demand').decision, 'WATCHLIST');
+    assert.equal(build('ZZTest raises FY27 revenue guidance to $10.8B from $10.0B', { consensus: { ...CONS, value: 11.2 } }).decision, 'WATCHLIST');
+    assert.equal(build('ZZTest raises FY27 EPS guidance to $4.75 from $4.20 due to a one-time tax benefit').decision, 'WATCHLIST');
+    assert.equal(build('ZZTest raises its FY27 outlook').decision, 'UNVERIFIED');
+    assert.equal(build('ZZTest lowers FY27 revenue guidance to $9.5B from $10.0B').decision, 'REJECT');
   });
   test('WATCHLIST: material but evidence incomplete', () => {
     const e = build('ZZTest raises FY27 EPS guidance to $4.75 from $4.00, driven by strong demand');
     assert.equal(e.decision, 'WATCHLIST');
   });
-  test('DELAYED_EP: strong earnings + big 7-day move (price only chooses WATCHLIST vs DELAYED_EP)', () => {
+  // zzz854: price is never used in a decision — a big 7-day move no longer changes WATCHLIST into DELAYED_EP
+  test('price never used: a big 7-day move does not change the decision', () => {
     const t = 'ZZTest raises FY27 EPS guidance to $4.75 from $4.00 and revenue to $10.8B from $10.0B, driven by strong demand';
     const cons = { ...CONS, value: 10.3 };
     assert.equal(build(t, { consensus: cons, priceContext: { pe: 25, move7dPct: 0 } }).decision, 'WATCHLIST');
-    assert.equal(build(t, { consensus: cons, priceContext: { pe: 25, move7dPct: 20 } }).decision, 'DELAYED_EP');
+    assert.equal(build(t, { consensus: cons, priceContext: { pe: 25, move7dPct: 20 } }).decision, 'WATCHLIST');
   });
   test('UNVERIFIED: no primary source -> no final decision', () => {
     const e = build(STRONG, { consensus: CONS, priceContext: { pe: 22 } }, { kind: 'NEWS', sourceName: 'Reuters' });
@@ -597,9 +603,10 @@ describe('ACCEPTANCE 1-12', () => {
     const e = build(t, { consensus: { metric: 'REVENUE', period: 'FY27', value: 11.2, unit: '$B', source: 'ZZ consensus' } });
     assert.equal(e.expectationGap, 'NEGATIVE'); assert.ok((e.gapPct ?? 0) < 0);
   });
-  test('(5) raise from a one-time tax benefit -> LOW quality, ONE_OFF, REJECT', () => {
+  // zzz854: REJECT is reserved for lowered / invalid / stale / capital raise; a verified one-off raise is tracked (WATCHLIST) with the reason
+  test('(5) raise from a one-time tax benefit -> LOW quality, ONE_OFF, WATCHLIST (never REJECT)', () => {
     const e = build('ZZTest raises FY27 EPS guidance to $4.75 from $4.20, driven by a one-time tax benefit');
-    assert.equal(e.guidance_quality, 'LOW'); assert.equal(e.duration, 'ONE_OFF'); assert.equal(e.decision, 'REJECT');
+    assert.equal(e.guidance_quality, 'LOW'); assert.equal(e.duration, 'ONE_OFF'); assert.equal(e.decision, 'WATCHLIST'); assert.match(e.decisionReason.join(' '), /one-time/);
   });
   test('(6) revenue + EBITDA + EPS raised -> G_MULTI_METRIC + HIGH materiality', () => {
     const e = build('ZZTest raises FY27 revenue guidance to $10.8B from $10.0B, EBITDA to $2.4B from $2.0B and EPS to $4.75 from $4.20');
@@ -753,7 +760,11 @@ describe('product rules', () => {
     assert.ok(imports.length >= 1);
     for (const l of imports) assert.ok(!/(price|quote|yahoo|market-data)/i.test(l), l);
     assert.ok(!/\bfetch\s*\(|XMLHttpRequest|require\(|process\.env|Math\.random|Date\.now\(|new Date\(\)/.test(src.replace(/\/\/.*$/gm, '')), 'no I/O, no randomness, no wall-clock');
-    assert.deepEqual([...new Set(imports.map(l => /from\s+['"]([^'"]+)['"]/.exec(l)?.[1]).filter(Boolean))], ['./guidance-upgrades-types']);
+    // zzz854: the engine may also import the validation module, which is itself pure and imports only the types file
+    assert.deepEqual([...new Set(imports.map(l => /from\s+['"]([^'"]+)['"]/.exec(l)?.[1]).filter(Boolean))].sort(), ['./guidance-upgrades-types', './guidance-upgrades-validate']);
+    const vsrc = readFileSync(join(__dirname, '..', 'guidance-upgrades-validate.ts'), 'utf8');
+    assert.deepEqual([...new Set(vsrc.split('\n').map(l => /from\s+['"]([^'"]+)['"]/.exec(l)?.[1]).filter(Boolean))], ['./guidance-upgrades-types']);
+    assert.ok(!/\bfetch\s*\(|process\.env|Math\.random|Date\.now\(|new Date\(\)/.test(vsrc.replace(/\/\/.*$/gm, '')));
   });
   test('deterministic: same input, same output', () => {
     const t = 'ZZTest raises FY27 revenue guidance to $10.8B from $10.0B and EPS to $4.75 from $4.00, driven by strong demand';

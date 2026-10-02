@@ -7,6 +7,8 @@ import type {
   EvidenceStatus, PortfolioTag, RadarBucket, ResearchPriority, ThesisStatus, ChainStatus, RadarItem, LinkStatus, CatalystLinkKey, EvidenceRead, DurationRead,
   EventConfirmation, MechanismStatus, EarningsImpactStatus, QuantificationStatus, FalsePositiveReason, CatalystMaturity, EvidenceDelta, IndicatorType, Materiality, CatalystKind,
 } from '@/lib/multibagger-radar-types';
+import type { RadarFeedHints, SecurityState, SourceOriginSummary } from '@/lib/multibagger-radar-feed-types';
+import type { DealSubtype } from '@/lib/radar-owned-types';
 
 export const R = {
   bg: 'var(--mc-bg-1)', bg2: 'var(--mc-bg-2)', border: 'var(--mc-bg-4)',
@@ -209,8 +211,8 @@ export const isQuarantined = (b: RadarBucket): boolean => QUARANTINE_BUCKETS.inc
 /** Items shown as one line with no detail panel. */
 export const isOneLine = (i: Pick<RadarItem, 'bucket' | 'priority'>): boolean => i.bucket === 'CORPORATE_ACTION' || i.bucket === 'NOISE' || i.priority === 'EXCLUDE';
 
-export function oneLineRow(i: Pick<RadarItem, 'ticker' | 'company' | 'event' | 'falsePositiveReason' | 'kind'>): { who: string; what: string; tag: string | null; text: string } {
-  const who = [i.ticker || 'No ticker', i.company].filter(has).join(' - ');
+export function oneLineRow(i: Pick<RadarItem, 'ticker' | 'company' | 'event' | 'falsePositiveReason' | 'kind'>, h?: RadarCardHints | null): { who: string; what: string; tag: string | null; text: string } {
+  const who = [securityView(i.ticker, h).head, i.company].filter(has).join(' - ');
   const ev = has(i.event) ? i.event.trim().replace(/\s+/g, ' ') : NOT_YET;
   const what = ev.length > 110 ? `${ev.slice(0, 107)}...` : ev;
   const tag = i.falsePositiveReason ? FALSE_POSITIVE_LABEL[i.falsePositiveReason] : null;
@@ -279,4 +281,91 @@ export function collapseChain<T extends { status: string }>(links: T[], label: (
   const shown = links.filter((l) => l.status !== 'NOT_APPLICABLE');
   const na = links.filter((l) => l.status === 'NOT_APPLICABLE').map(label);
   return { shown, notApplicable: na.length ? `Not applicable: ${na.join(', ')}` : null };
+}
+
+// ── zzz854: helpers for the feed layer's new fields. All inputs optional: an older cached payload still renders. ──
+
+/** Hints the adapter attached to the RadarInput that the RadarItem does not carry (security state, deal roles, origins). */
+export type RadarCardHints = Partial<Pick<RadarFeedHints,
+  'securityState' | 'securityLabel' | 'security' | 'dealRoles' | 'eventSubtypeLabel' | 'sourceOrigins' | 'independentOrigins' | 'formTitleOnly' | 'tickerLabel' | 'tickerNote' | 'tickerVia'>>;
+
+export const SECURITY_STATE_WORD: Record<SecurityState, string> = {
+  RESOLVED: 'Ticker', RESOLVED_MULTIPLE: 'Multiple securities', UNLISTED: 'Unlisted', UNLISTED_SUBSIDIARY: 'Unlisted subsidiary',
+  NON_EQUITY_ENTITY: 'Not a listed equity', NOT_APPLICABLE: 'Ticker not applicable', UNRESOLVED: 'Ticker unresolved',
+};
+/** Shown when there is no ticker and the feed said nothing about why. Never the bare 'No ticker'. */
+export const TICKER_NOT_ESTABLISHED = 'Ticker not resolved yet';
+export interface SecurityView { head: string; line: string | null; resolved: boolean }
+const dash = (s: string) => s.replace(/\s+(?:-|->)\s+/, ' — ').trim();
+/** The ticker slot of a card: the ticker when resolved, otherwise the security state with its reason ('Ticker unresolved — CIK not in ticker map'). */
+export function securityView(ticker: string | null | undefined, h?: RadarCardHints | null): SecurityView {
+  const sec = h?.security || null;
+  const state: SecurityState | undefined = sec?.state || h?.securityState;
+  const tkr = (ticker && ticker.trim()) || sec?.ticker || null;
+  const reason = has(sec?.reason) ? sec!.reason.trim() : null;
+  const label = has(sec?.label) ? sec!.label : has(h?.securityLabel) ? h!.securityLabel! : null;
+  if (!state) {
+    if (tkr) return { head: tkr, line: has(h?.tickerNote) ? h!.tickerNote! : null, resolved: true };
+    return { head: has(h?.tickerLabel) ? h!.tickerLabel! : TICKER_NOT_ESTABLISHED, line: has(h?.tickerNote) ? h!.tickerNote! : null, resolved: false };
+  }
+  if (state === 'RESOLVED') return { head: tkr || SECURITY_STATE_WORD.RESOLVED, line: tkr ? (sec?.exchange ? `${tkr} (${sec.exchange})` : null) : (label ? dash(label) : null), resolved: !!tkr };
+  if (state === 'RESOLVED_MULTIPLE') {
+    const list = (sec?.tickers || []).filter(has);
+    return { head: tkr || SECURITY_STATE_WORD.RESOLVED_MULTIPLE, line: list.length ? `Resolved — multiple securities: ${list.join(', ')}` : label ? dash(label) : null, resolved: !!tkr };
+  }
+  if (state === 'UNLISTED_SUBSIDIARY') {
+    const p = sec?.listedParent;
+    const line = p && has(p.name) ? `Unlisted subsidiary — listed parent: ${p.name}${p.ticker ? ` (${p.ticker})` : ''}` : label ? dash(label) : reason ? `Unlisted subsidiary — ${reason}` : 'Unlisted subsidiary — listed parent not established';
+    return { head: SECURITY_STATE_WORD.UNLISTED_SUBSIDIARY, line, resolved: false };
+  }
+  const word = SECURITY_STATE_WORD[state] || TICKER_NOT_ESTABLISHED;
+  const why = reason || (label ? dash(label).replace(/^[^—]*—\s*/, '') : null);
+  return { head: word, line: why && why !== word ? `${word} — ${why}` : null, resolved: false };
+}
+
+export const DEAL_SUBTYPE_LABEL: Record<DealSubtype, string> = {
+  THIRD_PARTY_TENDER: 'Third-party tender offer', ISSUER_TENDER: 'Issuer tender (the company buys its own securities)', GOING_PRIVATE: 'Going-private transaction',
+  SPIN_OFF: 'Spin-off', ACQUISITION: 'Acquisition', STAKE_INVESTMENT: 'Stake investment', MERGER: 'Merger', BUYBACK: 'Buyback', OPEN_OFFER: 'Open offer',
+};
+export const TERMS_NOT_READ_BADGE = 'Filing exists — terms not read';
+export interface DealView { roleLine: string | null; subtype: string | null; form: string | null; termsBadge: string | null }
+/** Who is acquirer / target, the deal subtype, the SEC form, and a plain badge when only the form title was seen. */
+export function dealView(i: Partial<Pick<RadarItem, 'dealSubtype' | 'filingForm' | 'termsRead'>>, h?: RadarCardHints | null): DealView {
+  const rl = h?.dealRoles?.roleLine;
+  return {
+    roleLine: has(rl) ? rl.replace(/\s*->\s*/g, ' → ') : null,
+    subtype: has(h?.eventSubtypeLabel) ? h!.eventSubtypeLabel!.trim() : i.dealSubtype ? DEAL_SUBTYPE_LABEL[i.dealSubtype] || null : null,
+    form: has(i.filingForm) ? i.filingForm.trim() : null,
+    termsBadge: i.termsRead === false || h?.formTitleOnly ? TERMS_NOT_READ_BADGE : null,
+  };
+}
+
+/** Source line by information origin (copies of one filing / release are ONE origin). Falls back to the older outlet-based line. */
+export function originsLine(e: Partial<EvidenceRead>, so?: SourceOriginSummary | null): string {
+  if (so && has(so.line)) return so.line.replace(/\s+-\s+/g, ' · ');
+  const o = e.independentOrigins;
+  if (typeof o === 'number' && Number.isFinite(o)) {
+    const total = Math.max(o, e.sourceCount ?? o);
+    const extra = total - o;
+    return `${total} ${total === 1 ? 'item' : 'items'} · ${o} independent ${o === 1 ? 'origin' : 'origins'}${extra > 0 ? ` (${extra} ${extra === 1 ? 'copy' : 'copies'} of an origin already counted)` : ''}`;
+  }
+  return sourcesLine({ independentSources: e.independentSources ?? 0, sourceCount: e.sourceCount, duplicatesRemoved: e.duplicatesRemoved, sourceQuality: e.sourceQuality, sourceDiversity: e.sourceDiversity });
+}
+
+const NATURE_WORD: Record<string, string> = {
+  reported: 'reported', forecast: 'forecast', deal_consideration: 'deal value', capacity: 'capacity', order_value: 'order value', market_size: 'market size', shareholder_payout: 'shareholder payout', other: 'other',
+};
+/** One line per number with its owner. Prefers the engine's metricOwnerLines, then each number's ownerLabel, then the older numberLines. */
+export function ownerLines(i: Partial<Pick<RadarItem, 'metricOwnerLines' | 'ownedNumbers' | 'numberLines'>>): string[] {
+  const m = (i.metricOwnerLines || []).filter(has);
+  if (m.length) return m;
+  const o = (i.ownedNumbers || []).filter((n) => has(n.ownerLabel)).map((n) => `${n.ownerLabel!.trim()}${n.nature && n.nature !== 'other' && !n.ownerLabel!.toLowerCase().includes(NATURE_WORD[n.nature] || '~') ? ` (${NATURE_WORD[n.nature] || n.nature})` : ''}`);
+  if (o.length) return o;
+  return (i.numberLines || []).filter(has);
+}
+
+/** Earnings-result label. An unverified result is said plainly (dashed, amber), never shown as an inflection. Null when not a result. */
+export function resultBadge(i: Partial<Pick<RadarItem, 'resultLabel' | 'resultVerified'>>): { label: string; verified: boolean } | null {
+  if (!has(i.resultLabel)) return null;
+  return { label: i.resultLabel.trim(), verified: i.resultVerified !== false };
 }

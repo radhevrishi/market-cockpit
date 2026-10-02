@@ -72,7 +72,8 @@ describe('headline-only raises are kept as detected candidates', () => {
     assert.equal(e.changes.length, 0); assert.equal(e.v2!.stage, 'CANDIDATE'); assert.equal(e.v2!.statedDirection, 'RAISED');
     assert.deepEqual(e.v2!.statedMetrics, ['revenue', 'net profit']);
     assert.equal(e.decision, 'UNVERIFIED'); assert.match(e.whyNow, /DATA UNAVAILABLE/); assert.match(e.whyNow, /raised its revenue, net profit guidance/);
-    assert.ok(!/\d/.test(e.whyNow.replace(/DATA UNAVAILABLE/g, '')));
+    // zzz854: the only digits allowed are the announcement date of the dated 'Why now' line (never a guidance number)
+    assert.ok(!/\d/.test(e.whyNow.replace(/DATA UNAVAILABLE/g, '').replace(/\d{4}-\d{2}-\d{2}/g, '')));
   });
   test('only the new number in the headline: candidate, before unknown (not an upgrade)', () => {
     const e = run([cand('Cupid raises FY27 profit guidance, targets Rs 750 crore revenue; stock up 160% in 2026')]);
@@ -101,7 +102,8 @@ describe('US: units and range classes', () => {
     assert.ok(!e.flags.includes('REPEATED_UPGRADER')); assert.ok(!e.flags.includes('GUIDANCE_PLUS_GAP'));
     assert.notEqual(e.decision, 'IMMEDIATE_BUY'); assert.ok(['WATCHLIST', 'REJECT', 'DELAYED_EP'].includes(e.decision));
     assert.ok(e.risks.some(x => /range narrowed: top end cut/i.test(x)));
-    assert.equal(e.expectationGap, 'NEGATIVE'); assert.ok((e.gapPct ?? 0) < 0);
+    // zzz854: -0.7% versus consensus is within +/-2%, so it is in line (neutral), never a negative that drives a decision
+    assert.equal(e.expectationGap, 'INLINE'); assert.ok((e.gapPct ?? 0) < 0);
     assert.match(e.whyNow, /narrowed the range/); assert.ok(!/raised adjusted EPS/.test(e.whyNow));
   });
   test('Blackberry: floor above old ceiling is a CLEAN_RAISE and the stated driver is reported', () => {

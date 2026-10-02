@@ -141,7 +141,10 @@ export function resolveEntity(input: EntityInput, deps: EntityDeps = {}): Resolv
       if (pre.length === 1) return fromRows(name, pre[0].rows, 'SEC ticker map (unique name prefix)');
     }
   }
-  return mk(name, 'UNRESOLVED', 'no listed security found in the sources checked', { entityType: 'UNKNOWN' });
+  // zzz854: say WHY it is unresolved (never a bare 'No ticker').
+  const why = input.cik ? (us ? 'CIK not in ticker map; name not matched' : 'SEC ticker map not loaded; name not matched in the company master')
+    : input.isSecFiling && !us ? 'SEC ticker map not loaded; name not matched in the company master' : 'name not matched in the company master';
+  return mk(name, 'UNRESOLVED', `no listed security found in the sources checked (${why})`, { entityType: 'UNKNOWN' });
 }
 
 /** Precise card text for the entity state. Never the bare 'No ticker'. `attempted`=false means no lookup has run. */
@@ -178,15 +181,17 @@ export function deriveSourceSubject(args: { title: string; company: string; file
     if (/\bfiled by\b/i.test(sec.role || '')) return { eventSubject: subject, sourceSubject: subject };
     return { eventSubject: subject, sourceSubject: subject, financialOwner: subject };
   }
+  // zzz854: in an acquisition / bet headline the financial figures usually describe the TARGET (or the transaction), so the
+  // acquirer is never assumed to own them: financialOwner is left unset and the engine decides from the owned numbers.
   const m = title.match(ACQ_HEAD_RE);
   if (m) {
     const acquirer = cleanName(m[1].replace(/['’]s$/i, '')) || company;
     const target = cleanName(m[2]);
-    if (acquirer && target) return { eventSubject: acquirer, target, sourceSubject: acquirer, financialOwner: acquirer };
+    if (acquirer && target) return { eventSubject: acquirer, target, sourceSubject: acquirer };
   }
   const bet = title.match(BET_RE);
   const subj = cleanName((subjectFromHeadline(title) || company).replace(ACTION_VERB_TAIL, '')) || company;
-  if (bet && subj) return { eventSubject: subj, target: cleanName(bet[1]), sourceSubject: subj, financialOwner: subj };
+  if (bet && subj) return { eventSubject: subj, target: cleanName(bet[1]), sourceSubject: subj };
   return { eventSubject: subj || 'Not identified', sourceSubject: subj || 'Not identified', financialOwner: subj || undefined };
 }
 
@@ -194,7 +199,9 @@ export function deriveSourceSubject(args: { title: string; company: string; file
 /** Existing-cache keys probed in order. Read only: this module never fetches from the network and never writes. */
 export const SEC_TICKER_KV_KEYS: ReadonlyArray<string> = ['sec:company_tickers_exchange', 'sec:company_tickers', 'us:company_tickers_exchange', 'us:company_tickers'];
 /** Returns an async loader: reads the first key that holds data, builds the index, keeps it in memory for ttlMs (default 6h). Never throws; null when nothing is cached. */
-export function createSecLookupLoader(get: (key: string) => Promise<unknown>, keys: ReadonlyArray<string> = SEC_TICKER_KV_KEYS, ttlMs = 6 * 3600_000, now: () => number = Date.now) {
+export function createSecLookupLoader(get: (key: string) => Promise<unknown>, keys: ReadonlyArray<string> = SEC_TICKER_KV_KEYS, ttlMs = 6 * 3600_000, now: () => number = Date.now,
+  /** zzz854: optional injected fallback when no KV key holds data (e.g. rows from us-edgar's cikTickerMap via secRowsFromCikTickerMap). Never throws. */
+  fallback?: () => Promise<ReadonlyArray<SecTickerRow> | null | undefined>) {
   let cached: { at: number; lookup: UsLookup | null } | null = null;
   return async function load(): Promise<UsLookup | null> {
     if (cached && now() - cached.at < ttlMs) return cached.lookup;
@@ -204,6 +211,9 @@ export function createSecLookupLoader(get: (key: string) => Promise<unknown>, ke
         const rows = parseSecTickerPayload(await get(k));
         if (rows.length) { lookup = buildUsLookup(rows); break; }
       } catch { /* a missing / unreachable cache is not an error */ }
+    }
+    if (!lookup && fallback) {
+      try { const rows = await fallback(); if (rows && rows.length) lookup = buildUsLookup(rows); } catch { /* fallback is best effort */ }
     }
     cached = { at: now(), lookup };
     return lookup;

@@ -23,21 +23,26 @@ import type {
   ThesisIntegrity, ThesisMonitor, ThesisStatus, QuarantineReason, EconomicEvidence, EventEvidence,
 } from './multibagger-radar-types';
 import type { RadarFeedHints } from './multibagger-radar-feed-types';
-import { NOT_IDENTIFIED, entityTokens, keyNumbers, publisherFamily } from './special-sit-feed-quality';
-import type { DealTerms, OwnedNumber, ResolvedEntity, SourceSubject } from './radar-owned-types';
+import { NOT_IDENTIFIED, entityTokens, keyNumbers, parseSecFilingTitle, publisherFamily } from './special-sit-feed-quality';
+import { FORECAST_RE } from './special-sit-numbers';
+import type { DealSubtype, DealTerms, OwnedNumber, ResolvedEntity, SourceSubject } from './radar-owned-types';
 import type { CatalystDirection, DealTermLine, FactScope, InflectionStrength, PriorityFactors } from './multibagger-radar-types';
 import {
   chainKindOf, conditionClauses, dealKindOf, dealTermLinesOf, diagnosticsOf, directionOf, evidenceChainOf, extractOwnership, foreignNumberLines,
-  headlineHierarchy, isBoilerplateBreak, ownDealTerms, sourceSubjectOf, whyNowOf, type RadarDiagnostics,
+  headlineHierarchy, isBoilerplateBreak, ownDealTerms, ownerLabelOf, sanitiseDealTerms, sourceSubjectOf, whyNowOf, TERMS_NOT_READ, NOT_STATED_IN_FILING, type RadarDiagnostics,
 } from './multibagger-radar-economics';
 
 /**
  * zzz852: optional fields the feed/entity layer may attach to a RadarInput. Read through this local type so the engine
  * compiles whether or not RadarFeedHints declares them yet.
  */
-export interface RadarOwnedHints { ownedNumbers?: OwnedNumber[]; entity?: ResolvedEntity; dealTerms?: DealTerms; sourceSubject?: SourceSubject }
+export interface RadarOwnedHints {
+  ownedNumbers?: OwnedNumber[]; entity?: ResolvedEntity; dealTerms?: DealTerms; sourceSubject?: SourceSubject;
+  // zzz854: the feed layer's new fields (eventSubtype, dealRoles, formTitleOnly, evidenceCeiling, feedFactsAreTemplate, sourceOrigins,
+  // independentOrigins, secFiling, securityState) are declared on RadarFeedHints and read defensively by the engine.
+}
 
-export const RADAR_ENGINE_VERSION = 'zzz852-radar-v3';
+export const RADAR_ENGINE_VERSION = 'zzz854-radar-v4';
 
 // ─────────────────────────── input types ───────────────────────────
 
@@ -75,7 +80,11 @@ export interface RadarTechnicalInput {
 }
 
 /** One article / filing behind an event. Used to de-duplicate syndicated copies and to judge source diversity. */
-export interface RadarSourceInput { label?: string; url?: string | null; title?: string; publishedAt?: string | null; primary?: boolean }
+export interface RadarSourceInput {
+  label?: string; url?: string | null; title?: string; publishedAt?: string | null; primary?: boolean;
+  /** zzz854: the information origin this copy derives from (press release / filing id). Copies sharing one origin are not independent. */
+  originId?: string | null; information_origin_id?: string | null;
+}
 
 /** Company size context for materiality. Every number is in `unit` of `currency` (default MILLION). Omit what is not known. */
 export interface RadarCompanyContext {
@@ -584,6 +593,8 @@ export function splitPrice(text: string): PriceSplit {
   } else if (RE.priceMove.test(text)) {
     const mm = RE.priceMove.exec(text);
     const snippet = mm ? squash(mm[0]) : 'share-price move';
+    // zzz854: the price clause ('shares hit all-time high') leaves the company text too, so it can never be quoted as a fundamental
+    clean = squash(clean.split(/(?<=[;,.!?])\s+|\s+(?=;)/).filter((c) => !(RE.priceMove.test(c) && (STOCK_WORD.test(c) || /all[\s-]?time high|52[\s-]?week|circuit|lifetime high/i.test(c)) && !FUND_NOUN.test(c.replace(/\b(?:share|stock) price\b/gi, '')))).join(' ').replace(/[;,]\s*$/, ''));
     const dir: 'UP' | 'DOWN' | null = DOWN_WORD.test(snippet) ? 'DOWN' : UP_WORD.test(snippet) ? 'UP' : null;
     response = { text: clip(snippet, 120), pct: null, direction: dir, note: 'Share-price reaction. It is timing context only and is not evidence about revenue, margin or earnings.' };
   }
@@ -641,7 +652,20 @@ function materialityOf(args: { amounts: Amount[]; capitalEvent: boolean; termQua
 
 // ─────────────────────────── sources: dedupe, quality, diversity ───────────────────────────
 
-export interface SourceRead { rank: number | null; label: string; count: number; distinct: number; duplicates: number; diversity: SourceDiversity[]; quality: SourceQuality; hasPrimary: boolean }
+export interface SourceRead {
+  rank: number | null; label: string; count: number; distinct: number; duplicates: number; diversity: SourceDiversity[]; quality: SourceQuality; hasPrimary: boolean;
+  /** zzz854: independent information origins (not outlets). Copies of one press release or filing are one origin. */
+  origins: number; originBasis: 'origin-id' | 'supplied' | 'conservative';
+}
+
+/** zzz854: independence is counted by information origin, never by outlet. With no origin data every copy is assumed to share one origin. */
+function originsOf(input: { independentOrigins?: number | null; sources?: RadarSourceInput[] }): { origins: number; basis: SourceRead['originBasis'] } {
+  if (isNum(input.independentOrigins) && input.independentOrigins >= 1) return { origins: Math.floor(input.independentOrigins), basis: 'supplied' };
+  const ids = new Set<string>();
+  for (const x of input.sources || []) { const id = (x.originId || x.information_origin_id || '').trim(); if (id) ids.add(id.toLowerCase()); }
+  if (ids.size) return { origins: ids.size, basis: 'origin-id' };
+  return { origins: 1, basis: 'conservative' };
+}
 
 const STOP = new Set(['the', 'a', 'an', 'of', 'to', 'in', 'on', 'for', 'and', 'by', 'at', 'as', 'with', 'from', 'its', 'is', 'says', 'said', 'announces', 'announced']);
 function tokensOf(title: string | undefined): Set<string> {
@@ -677,7 +701,8 @@ function qualityOf(rank: number | null): SourceQuality {
   return 'LOW';
 }
 
-export function readSources(input: Pick<RadarInput, 'sourceLabel' | 'url' | 'primarySource' | 'title' | 'publishedAt' | 'sources' | 'independentSources'>): SourceRead {
+export function readSources(input: Pick<RadarInput, 'sourceLabel' | 'url' | 'primarySource' | 'title' | 'publishedAt' | 'sources' | 'independentSources'> & { independentOrigins?: number | null }): SourceRead {
+  const og = originsOf(input);
   const own = { label: input.sourceLabel, url: input.url, title: input.title, primary: input.primarySource, publishedAt: input.publishedAt } as RadarSourceInput;
   const hasList = Array.isArray(input.sources) && input.sources.length > 0;
   // the event's own headline is usually also the first entry of the list: it is one source, not a duplicate of itself
@@ -692,7 +717,7 @@ export function readSources(input: Pick<RadarInput, 'sourceLabel' | 'url' | 'pri
   if (!hasList) {
     const n = isNum(input.independentSources) && input.independentSources >= 1 ? Math.floor(input.independentSources) : 1;
     const dv = diversityOf(best.rank);
-    return { rank: best.rank, label: best.label, count: n, distinct: n, duplicates: 0, diversity: dv ? [dv] : [], quality: qualityOf(best.rank), hasPrimary: best.rank != null && best.rank <= 9 };
+    return { rank: best.rank, label: best.label, count: n, distinct: n, duplicates: 0, diversity: dv ? [dv] : [], quality: qualityOf(best.rank), hasPrimary: best.rank != null && best.rank <= 9, origins: og.basis === 'supplied' ? og.origins : Math.min(og.origins, Math.max(n, 1)), originBasis: og.basis };
   }
   // cluster: same outlet, near-identical title, or the same wire story
   const clusters: Array<{ idx: number[] }> = [];
@@ -720,8 +745,24 @@ export function readSources(input: Pick<RadarInput, 'sourceLabel' | 'url' | 'pri
     if (cr != null && cr <= 9) hasPrimary = true;
   }
   const dups = ranked.length - clusters.length;
+  // zzz854: with no origin data, origins are counted conservatively: clusters that share a figure, much of the wording, or a wire
+  // byline are copies of one release. Only reports that share neither are counted as separate origins.
+  let originsList = og.origins;
+  if (og.basis === 'conservative') {
+    const oc: number[][] = [];
+    clusters.forEach((c, ci) => {
+      const hit = oc.find((o) => o.some((cj) => clusters[cj].idx.some((a) => c.idx.some((b) => {
+        const x = ranked[a], y = ranked[b];
+        const jac = jaccard(x.toks, y.toks);
+        const sharedFigure = Array.from(x.toks).some((t) => /^\d{2,}$/.test(t) && y.toks.has(t));
+        return jac >= 0.35 || sharedFigure || x.wire || y.wire;
+      }))));
+      if (hit) hit.push(ci); else oc.push([ci]);
+    });
+    originsList = Math.max(1, oc.length);
+  }
   if (dups > 0 && ranked.some((x) => x.wire) && !cats.includes('SYNDICATED')) cats.push('SYNDICATED');
-  return { rank: best.rank, label: best.label, count: ranked.length, distinct: clusters.length, duplicates: dups, diversity: cats, quality: qualityOf(best.rank), hasPrimary };
+  return { rank: best.rank, label: best.label, count: ranked.length, distinct: clusters.length, duplicates: dups, diversity: cats, quality: qualityOf(best.rank), hasPrimary, origins: og.basis === 'supplied' ? og.origins : Math.min(originsList, Math.max(clusters.length, 1)), originBasis: og.basis };
 }
 
 // ─────────────────────────── duration helpers ───────────────────────────
@@ -871,6 +912,33 @@ function quarantineOf(input: RadarInput): Quarantine | null {
   return null;
 }
 
+/** zzz854: reads the feed's event-subtype field whatever its spelling ('third-party tender', 'ISSUER_TENDER', 'going private', 'spin-off'). */
+function normSubtype(v: unknown): DealSubtype | null {
+  const t = typeof v === 'string' ? v.toUpperCase().replace(/[^A-Z]+/g, '_') : '';
+  if (!t) return null;
+  if (/THIRD_PARTY|TO_T\b|^TENDER_OFFER_THIRD/.test(t)) return 'THIRD_PARTY_TENDER';
+  if (/ISSUER|SELF_TENDER|TO_I\b/.test(t)) return 'ISSUER_TENDER';
+  if (/GOING_PRIVATE|TAKE_PRIVATE|13E/.test(t)) return 'GOING_PRIVATE';
+  if (/SPIN|DEMERGER/.test(t)) return 'SPIN_OFF';
+  if (/STAKE|INVESTMENT/.test(t)) return 'STAKE_INVESTMENT';
+  if (/ACQUI|TAKEOVER|BUYOUT/.test(t)) return 'ACQUISITION';
+  if (/MERGER|AMALGAMATION/.test(t)) return 'MERGER';
+  if (/BUYBACK|REPURCHASE/.test(t)) return 'BUYBACK';
+  if (/OPEN_OFFER/.test(t)) return 'OPEN_OFFER';
+  return null;
+}
+
+/** zzz854: the concrete next step for an SEC filing whose terms were not read: open it and record the named fields. */
+const FILING_EXISTS_LABEL = 'Filing exists — terms not read';
+function openFilingProof(sub: DealSubtype | null, form: string | null): string {
+  const f = form || 'filing';
+  if (sub === 'THIRD_PARTY_TENDER') return `Open the ${form || 'SC TO-T'} and record the bidder, the offer price per share, the expiry date, the minimum tender condition and the financing.`;
+  if (sub === 'ISSUER_TENDER') return `Open the ${form || 'SC TO-I'} and record which security is sought (common stock, notes, odd-lot or employee units), the price or price range, the size, the expiry date and whether it is an equity buyback at all.`;
+  if (sub === 'GOING_PRIVATE') return `Open the ${form || 'SC 13E3'} and record the consideration per share, the buyer group, the majority-of-minority vote condition, the fairness opinion and the expected closing.`;
+  if (sub === 'SPIN_OFF') return `Open the ${form || 'Form 10'} and record the distribution ratio, the record date, the distribution date, when-issued trading and the debt and cash each company keeps.`;
+  return `Open the ${f} and record the transaction terms it states.`;
+}
+
 const DANGLING_TAIL = /\s+(?:declares?|announces?|allots?|works?|outlines?|falls?|rises?|says?|plans?|to|rs\.?|₹|\$|inr|the|a|an|of|and|in|on|for|with|as|after|amid|may|will|seeks?|approves?|reports?|posts?|wins?|gets?|hikes?|cuts?|raises?)\.?$/i;
 /** Never show a headline fragment as the company name: trim trailing verbs / currency tokens; empty falls back to the ticker. */
 export function cleanCompanyName(company: string, ticker: string | null): string {
@@ -885,18 +953,32 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   const title = squash(input.title || '');
   const desc = squash(input.description || '');
   const ff = input.feedFacts || {};
-  const text = squash([title, desc, ff.what_happened || '', ff.what_matters || ''].filter(Boolean).join('. '));
-  const sents = sentencesOf([title, desc, ff.what_happened || '', ff.what_matters || ''].filter(Boolean).join('. '));
+  // zzz854: the feed's why-tradable block is generated from the event TYPE (a taxonomy template such as 'typical 20-40% premium for control').
+  // It is never source text: no number, date, term or status word is read from it. Only 'what happened' may help name the kind of event.
+  // 'What matters' is always commentary. 'What happened' counts as source text only when the feed does not mark the block as a template.
+  const ffSource = input.feedFactsAreTemplate === true ? '' : squash(ff.what_happened || '');
+  const srcText = squash([title, desc, ffSource].filter(Boolean).join('. '));
+  const text = squash([title, desc, ffSource].filter(Boolean).join('. '));
+  const sents = sentencesOf(srcText);
   const e = input.earnings || null;
   const eType = input.eventType || '';
   const etText = eType.replace(/_/g, ' ');
 
   // ── price is split off first: it can never feed a fundamental field ──
-  const ps = splitPrice(text);
-  const quar = quarantineOf(input);
+  const ps = splitPrice(srcText);
+  let quar = quarantineOf(input);
   // spans the adapter flagged (price, dividend per share, stake %) never reach earnings evidence
   const ctext = stripNonEarnings(ps.clean, input.nonEarningsNumbers);
   const priceResponse = ps.response;
+  // zzz854: price wording ('hits all-time high') never decides the class. A price-article flag yields when the price-free text
+  // still states a company event (a reported result or an order with an amount).
+  if (quar && quar.reason === 'PRICE_ARTICLE' && ((RE.resultNoun.test(ctext) && /\b(?:surg\w*|jump\w*|soar\w*|ris(?:e|es|ing)|rose|climb\w*|gr[eo]w\w*|doubl\w*|tripl\w*|fell|falls?|drop\w*|declin\w*|(?:\d+|two|three|four|five)[\s-]?fold)\b/i.test(ctext)) || (RE.orderLike.test(ctext) && RE.amount.test(ctext)))) quar = null;
+  RE.amount.lastIndex = 0;
+  // zzz854: an SEC form row ('SC TO-I - X (CIK) (Subject)'). With no filing text it proves only that a filing exists.
+  const secT = parseSecFilingTitle(title);
+  const secForm = secT ? secT.form.replace(/^SC\s*/i, 'SC ').replace(/\s+/g, ' ').toUpperCase() : null;
+  const descSubstance = squash(desc).length >= 40 && /\d|\b(?:offer|tender|price|per share|expire|consideration|merger|distribution|record date)\b/i.test(desc);
+  const secFormOnly = !!secT && !descSubstance;
 
   // ── zzz852: who owns each number. A figure owned by a target, subsidiary, transaction or industry is never the parent's earnings. ──
   const hints = input as RadarInput & RadarOwnedHints;
@@ -904,6 +986,15 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   const ctextOwn = own0.ownText;
   const foreignRaws = new Set(own0.foreign.filter((n) => n.metric !== 'capacity').map((n) => squash(n.raw).toLowerCase()));
   const hier = headlineHierarchy(title);
+  // zzz854: a figure stated for the business being bought is the TARGET's; it never states the buyer's earnings
+  const tgtFin0 = own0.foreign.find((n) => ['revenue', 'ebitda', 'pat'].includes(n.metric) && n.entityRole === 'target');
+  const noDealEarn = tgtFin0
+    ? `the ${tgtFin0.metric === 'pat' ? 'profit' : tgtFin0.metric === 'ebitda' ? 'EBITDA' : 'revenue'} stated in the source belongs to ${tgtFin0.entity} (the target), not ${squash(input.company || '') || 'the buyer'}; ${squash(input.company || '') || 'the buyer'}'s incremental revenue / EBITDA is not established until closing and consolidation`
+    : 'the source states no revenue, EBITDA or profit for the acquired or funded business';
+  const hints854 = input as RadarInput & RadarOwnedHints;
+  const roles854 = hints854.dealRoles || null;
+  const roleAcquirer = squash(String(roles854?.acquirer || hints854.sourceSubject?.acquirer || '')) || null;
+  const roleTarget = squash(String(roles854?.target || '')) || null;
 
   // ── detectors (company facts are read from the price-free text) ──
   const disprovedQuote = matchQuote(RE.disproved, text);
@@ -921,7 +1012,9 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   const newProductDet = RE.newProduct.test(text) || /new product|launch|approval/i.test(eType) || subHint === 'NEW_PRODUCT' || planHint;
   const operatingDet = RE.operating.test(ctextOwn);
   // zzz850: an already-reported earnings result ("profit surges three-fold in June quarter on record revenue")
-  const reportedResult = !quar && !planHint && RE.quarterPhrase.test(text) && RE.resultNoun.test(ctextOwn) && RE.resultChange.test(ctextOwn) && !RE.notYetReported.test(text) && !disproved;
+  // zzz854: 'profit surges three-fold' / 'profit jumps 35%' is a reported result even without a quarter phrase
+  const strongResultWords = /\b(?:net profit|profits?|pat|revenues?|sales|ebitda|net income|net loss)\b[^.;]{0,25}?\b(?:surg\w*|jump\w*|soar\w*|ris(?:e|es)|rose|climb\w*|gr[eo]w\w*|doubl\w*|tripl\w*|fell|falls?|drop\w*|declin\w*|slump\w*|plung\w*)\b[^.;]{0,20}?(?:\d+(?:\.\d+)?\s?(?:%|per ?cent)|(?:\d+|two|three|four|five)[\s-]?fold)|\b(?:net profit|profits?|pat|revenues?|ebitda|net income)\b[^.;]{0,25}?\b(?:doubl|tripl|quadrupl)\w*/i;
+  const reportedResult = !quar && !planHint && (RE.quarterPhrase.test(text) || strongResultWords.test(ctextOwn)) && RE.resultNoun.test(ctextOwn) && RE.resultChange.test(ctextOwn) && !RE.notYetReported.test(text) && !disproved && !secT;
   const isResult = RE.isResult.test(own0.ownText || text) || /result|earnings/i.test(eType) || reportedResult;
   const earnStated = RE.earnStmt.test(ctextOwn) || own0.parentFinancial.some((n) => n.metric !== 'order_value');
   const orderLike = RE.orderLike.test(text);
@@ -961,9 +1054,26 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   const investDet = RE.investIn.test(text);
   const namedTarget = /\b(?:invest\w*|infus\w*)\b[^.;]{0,60}?\b(?:in|into)\s+(?:the\s+)?[A-Z][\w&'-]+/.test(`${title}. ${desc}`);
   const expansionWords = RE.businessExpansion.test(text);
-  const growthInvest = !dealMech && !capacityIncrease && !newProductDet
+  let growthInvest = !dealMech && !capacityIncrease && !newProductDet
     && ((investDet && (expansionWords || namedTarget)) || (acqWord && expansionWords && (ss === 'MA' || ss == null)));
   if (growthInvest) ss = null;
+
+  // ── zzz854: classification by economic reality. A headline that buys or takes a stake in a NAMED business is an acquisition / investment
+  //    (then closing, consolidation and target economics are read separately), never a new product / market. ──
+  const subtypeHint854 = normSubtype(hints854.eventSubtype ?? (input as unknown as Record<string, unknown>).event_subtype);
+  const formSubtype: DealSubtype | null = !secForm ? null : /TO-T/.test(secForm) ? 'THIRD_PARTY_TENDER' : /TO-I/.test(secForm) ? 'ISSUER_TENDER' : /13E-?3/.test(secForm) ? 'GOING_PRIVATE' : /14D-?9/.test(secForm) ? 'THIRD_PARTY_TENDER' : /^10-12[BG]/.test(secForm) && !input.isRegistration ? 'SPIN_OFF' : null;
+  const dealTargets = own0.targetNames.filter((n) => !(roleAcquirer && n.toLowerCase() === roleAcquirer.toLowerCase()));
+  const acqHeadline = !dealMech && !financingHint && !planHint && !(RE.capRaise.test(text) && !acqWord)
+    && (dealTargets.length > 0 || !!roleTarget)
+    && (RE.acqVerb.test(text) || /\b(?:stake|bets?|buy[\s-]?out|takeover|invest(?:s|ed|ing|ment)?\s+(?:[^.;]{0,30}\s)?in(?:to)?)\b/i.test(`${title}. ${desc}`) || hints.eventHeadlineKind === 'ACQUISITION');
+  let dealSubtype: DealSubtype | null = subtypeHint854 || formSubtype;
+  if (!dealSubtype && /\b(?:going[\s-]private|take[\s-]?private|13e-?3)\b/i.test(text)) dealSubtype = 'GOING_PRIVATE';
+  if (!dealSubtype && acqHeadline && (ss == null || ss === 'MA')) dealSubtype = /\bstake\b|\binvest\w*|\bbets?\b/i.test(`${title}. ${desc}`) && !/\b(?:acqui\w+|buy[\s-]?out|takeover|full ownership|remaining stake|100\s?%)\b/i.test(`${title}. ${desc}`) ? 'STAKE_INVESTMENT' : 'ACQUISITION';
+  if (dealSubtype === 'THIRD_PARTY_TENDER' || dealSubtype === 'ISSUER_TENDER' || dealSubtype === 'GOING_PRIVATE' || dealSubtype === 'OPEN_OFFER') ss = 'OPEN_OFFER';
+  else if (dealSubtype === 'SPIN_OFF') ss = 'SPIN';
+  else if (dealSubtype === 'BUYBACK') ss = 'BUYBACK';
+  else if (dealSubtype === 'MERGER') ss = 'MA';
+  else if (dealSubtype === 'ACQUISITION' || dealSubtype === 'STAKE_INVESTMENT') { ss = 'MA'; growthInvest = false; }
 
   // capital-structure funding: equity raises (warrants, QIP, preferential) and debt raises
   const fundingEq = RE.capRaise.test(text);
@@ -1014,7 +1124,8 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   let eventClass: EventClass = 'UNCLASSIFIED';
   let noiseKind: 'NOISE' | 'TECHNICAL' | null = null;
   let noiseReason = '';
-  const narrativeOnly = noisePatterns.length > 0 && !concrete;
+  // zzz854: price wording never decides the class: a share-price move is a noise reason only when nothing else is stated
+  const narrativeOnly = noisePatterns.filter((n) => n !== 'a share-price move').length > 0 && !concrete && !reportedResult;
   const supplyAgreement = orderLike && !!term && term.code >= 3 && /supply|off-?take|agreement|contract/i.test(text);
   const isCourt = legalCaseDet;
 
@@ -1073,9 +1184,9 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   // special-situation subtype and secondary kind
   const subKind: CatalystKind | null = kind !== 'SPECIAL_SITUATION' ? null
     : ss === 'BUYBACK' ? 'BUYBACK'
-      : ss === 'OPEN_OFFER' ? (/delist|going private|take[\s-]?private|squeeze/i.test(text) ? 'GOING_PRIVATE' : 'TENDER_OFFER')
+      : ss === 'OPEN_OFFER' ? (dealSubtype === 'GOING_PRIVATE' || (!dealSubtype && /delist|going private|take[\s-]?private|squeeze/i.test(text)) ? 'GOING_PRIVATE' : 'TENDER_OFFER')
         : ss === 'SPIN' ? 'SPIN_DEMERGER'
-          : ss === 'MA' ? (subHint === 'MERGER' || /merger|amalgamation|scheme of arrangement/i.test(text) ? 'MERGER' : 'ACQUISITION')
+          : ss === 'MA' ? (dealSubtype === 'ACQUISITION' || dealSubtype === 'STAKE_INVESTMENT' ? 'ACQUISITION' : subHint === 'MERGER' || /merger|amalgamation|scheme of arrangement/i.test(text) ? 'MERGER' : 'ACQUISITION')
             : ss === 'RIGHTS' ? 'RIGHTS_ISSUE'
               : ss === 'ASSET_SALE' ? (/divest|hive|sale of (?:business|division|unit|undertaking)|stake sale|slump sale|sells? (?:its )?(?:stake|unit|division|business)/i.test(text) ? 'DIVESTITURE' : 'ASSET_SALE')
                 : ss === 'RESTRUCTURING' ? 'RESTRUCTURING' : null;
@@ -1095,6 +1206,8 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   const src0 = readSources(input);
   const src = { rank: src0.rank, label: src0.label };
   const nSrc = src0.distinct;
+  // zzz854: evidence strength and priority use independent information ORIGINS, never the number of outlets
+  const nOrig = src0.origins;
   const socialAnalyst = src.rank != null && src.rank >= 12;
   const directPrimary = !socialAnalyst && (input.primarySource === true || (src.rank != null && src.rank <= 9) || src0.hasPrimary);
 
@@ -1129,13 +1242,16 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   else if (disproved && !noiseKind) evStatus = 'DISPROVED';
   else if (noiseKind || (kind === 'OTHER' && !isOrderOther)) evStatus = 'HYPOTHESIS';
   else if (socialAnalyst) evStatus = 'HYPOTHESIS';
-  else if (directPrimary) evStatus = tentative ? (nSrc >= 2 ? 'STRONG' : 'DEVELOPING') : 'CONFIRMED';
-  else if (src.rank === 10) evStatus = nSrc >= 2 ? 'STRONG' : 'DEVELOPING';
-  else evStatus = nSrc >= 2 ? 'STRONG' : 'HYPOTHESIS';
+  else if (directPrimary) evStatus = tentative ? (nOrig >= 2 ? 'STRONG' : 'DEVELOPING') : 'CONFIRMED';
+  else if (src.rank === 10) evStatus = nOrig >= 2 ? 'STRONG' : 'DEVELOPING';
+  else evStatus = nOrig >= 2 ? 'STRONG' : 'HYPOTHESIS';
   if (capexAlone && (evStatus === 'CONFIRMED' || evStatus === 'STRONG')) evStatus = 'DEVELOPING';
   // a proposal, a question about a deal or a management plan is reported, not done: never above developing
   const proposedOnly = (tentative && (!!ss || planHint || !!subHint)) || planHint;
   if (proposedOnly && (evStatus === 'CONFIRMED' || evStatus === 'STRONG')) evStatus = 'DEVELOPING';
+  // zzz854: a bare form title proves only that a filing exists; its terms are unread, so the event cannot read as confirmed
+  const termsCeiling = secFormOnly || input.formTitleOnly === true || input.evidenceCeiling === 'FILING_EXISTS_TERMS_NOT_READ';
+  if (termsCeiling && (evStatus === 'CONFIRMED' || evStatus === 'STRONG')) evStatus = 'DEVELOPING';
 
   // ── link strength: strict definitions, price and non-earnings amounts never count ──
   const inflection = inflectionOf(e);
@@ -1149,7 +1265,7 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   else if (kind === 'CORPORATE_ACTION' || kind === 'DISPROVED_RUMOUR') link = 'NOT_ESTABLISHED';
   else if (kind === 'CAPITAL_RAISE' || kind === 'FINANCING') link = useOfProceeds ? 'INDIRECT' : 'NOT_ESTABLISHED';
   else if (kind === 'REGULATORY_DECISION' || kind === 'LEGAL_DECISION') link = opEffectStated ? 'INDIRECT' : 'NOT_ESTABLISHED';
-  else if (kind === 'EARNINGS_RESULT') link = earnNumbers || resultFin ? 'DIRECT' : 'NEAR_DIRECT';
+  else if (kind === 'EARNINGS_RESULT') link = earnNumbers || resultFin ? 'DIRECT' : 'NEAR_DIRECT';  // zzz854: capped below when the result is unverified
   else if (kind === 'CUSTOMER_QUALIFICATION') link = amountOrder ? 'DIRECT' : 'NEAR_DIRECT';
   else if (kind === 'DEMAND_EXPLOSION') link = amountOrder ? 'DIRECT' : orderLike ? 'NEAR_DIRECT' : 'INDIRECT';
   else if (kind === 'CAPACITY_INFLECTION') link = capexAlone ? 'INDIRECT' : contractOfftake && (unitsM.length > 0 || amounts.length > 0) ? 'DIRECT' : 'NEAR_DIRECT';
@@ -1174,14 +1290,39 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
 
   // ── zzz852: strict link terminology. Direct = already in reported company financials. Near-direct = documented operating event with a quantified,
   //    company-owned bridge. Indirect = plausible pathway, bridge incomplete. A number alone never makes Near-direct; a foreign number never counts. ──
-  const dirRead = directionOf(ctextOwn, e, inflection.state);
+  const dirRaw = directionOf(ctextOwn, e, inflection.state);
+  // ── zzz854: an earnings result is an inflection only when revenue AND profit changes are known and the figures come from a primary
+  //    source, at least two independent origins, or supplied result data. A secondary-only headline is 'Earnings result (unverified)':
+  //    its direction is not established until the filing is read. ──
+  const suppliedBoth = !!e && isNum(e.revenueYoY) && isNum(e.patYoY);
+  const verifiedSource = directPrimary || src0.origins >= 2;
+  const revProfitKnown = suppliedBoth || (!!dirRaw.known?.revenue && !!dirRaw.known?.profit);
+  const resultVerified = suppliedBoth || verifiedSource;
+  const inflectionAllowed = resultVerified && revProfitKnown;
+  const resultLikeKind = kind === 'EARNINGS_RESULT';
+  const dirRead: typeof dirRaw = resultLikeKind && !resultVerified
+    ? { ...dirRaw, direction: 'unknown', strength: 'unknown', basis: `Not established: a secondary-only headline (${src0.origins} independent origin), the filing was not read.${dirRaw.direction !== 'unknown' ? ` The headline claims ${dirRaw.direction === 'positive' ? 'an improvement' : dirRaw.direction === 'negative' ? 'a decline' : dirRaw.direction === 'mixed' ? 'a mixed result' : 'a flat result'}; that is not verified.` : ''}` }
+    : dirRaw;
   const dealK = dealKindOf(kind, subKind, ctext, growthInvest);
   const reportedFin = reportedResult || earnNumbers || own0.parentFinancial.some((n) => n.metric === 'revenue' || n.metric === 'ebitda' || n.metric === 'pat' || n.metric === 'eps');
-  const shareholderMech = kind === 'CORPORATE_ACTION' || dealK === 'TENDER' || dealK === 'BUYBACK' || dealK === 'DIVIDEND' || dealK === 'SPLIT_BONUS';
-  const termsOwn = dealK ? ownDealTerms(dealK, ctext, own0) : null;
-  const hintTerms = hints.dealTerms && hints.dealTerms.fields ? hints.dealTerms : null;
-  const terms: DealTerms | null = dealK ? (hintTerms ? { ...(termsOwn as DealTerms), ...hintTerms, fields: { ...(termsOwn?.fields || {}), ...hintTerms.fields }, statedConditions: hintTerms.statedConditions && hintTerms.statedConditions.length ? hintTerms.statedConditions : (termsOwn?.statedConditions || []) } : termsOwn) : null;
-  const termLines: DealTermLine[] = dealK && terms ? dealTermLinesOf(dealK, terms, own0) : [];
+  const shareholderMech = kind === 'CORPORATE_ACTION' || dealK === 'TENDER' || dealK === 'GOING_PRIVATE' || dealK === 'BUYBACK' || dealK === 'DIVIDEND' || dealK === 'SPLIT_BONUS';
+  // zzz854: deal terms come from the source text only; a value that is only the headline or an SEC form header is dropped ('Not stated')
+  const termsOwn = dealK ? ownDealTerms(dealK, ctext, own0, title) : null;
+  const hintTerms0 = hints.dealTerms && hints.dealTerms.fields ? sanitiseDealTerms(hints.dealTerms, title) : null;
+  const hintTerms = hintTerms0 && dealK && hintTerms0.kind !== dealK && !(dealK === 'GOING_PRIVATE' && hintTerms0.kind === 'TENDER') ? null : hintTerms0;
+  const terms: DealTerms | null = dealK ? (hintTerms ? { ...(termsOwn as DealTerms), ...hintTerms, kind: dealK, fields: { ...(termsOwn?.fields || {}), ...hintTerms.fields }, statedConditions: hintTerms.statedConditions && hintTerms.statedConditions.length ? hintTerms.statedConditions : (termsOwn?.statedConditions || []) } : termsOwn) : null;
+  const statedTermCount = terms ? Object.values(terms.fields || {}).filter((v) => typeof v === 'string' && squash(v)).length : 0;
+  const termsRead = !termsCeiling || statedTermCount > 0;
+  const subjectCo = secT ? secT.company : null;
+  const dealTarget = roleTarget || (dealSubtype === 'THIRD_PARTY_TENDER' || dealSubtype === 'GOING_PRIVATE' ? subjectCo : dealTargets[0] || null);
+  const dealAcquirer = roleAcquirer && (!dealTarget || roleAcquirer.toLowerCase() !== dealTarget.toLowerCase()) ? roleAcquirer
+    : (dealSubtype === 'ACQUISITION' || dealSubtype === 'STAKE_INVESTMENT') ? (squash(input.company || '') || null) : null;
+  const roleRows: Array<[string, string]> = dealSubtype === 'THIRD_PARTY_TENDER' ? [['Acquirer (filed by)', dealAcquirer || 'Not stated in the feed (the filed-by party is not listed)'], ['Target (subject company)', dealTarget || subjectCo || 'Not stated']]
+    : dealSubtype === 'ISSUER_TENDER' ? [['Issuer (buying back its own securities)', subjectCo || squash(input.company || '') || 'Not stated']]
+      : dealSubtype === 'GOING_PRIVATE' ? [['Subject company', subjectCo || squash(input.company || '') || 'Not stated'], ...(dealAcquirer ? [['Buyer (filed by)', dealAcquirer] as [string, string]] : [])]
+        : (dealSubtype === 'ACQUISITION' || dealSubtype === 'STAKE_INVESTMENT') && dealTarget ? [['Acquirer / investor', dealAcquirer || 'Not stated'], ['Target', dealTarget]] : [];
+  const missingTermText = !termsRead ? TERMS_NOT_READ : secT && descSubstance ? NOT_STATED_IN_FILING : 'Not stated';
+  const termLines: DealTermLine[] = dealK && terms ? dealTermLinesOf(dealK, terms, own0, { missingText: missingTermText, roles: roleRows }) : [];
   const tenderConds = conditionClauses(terms, 3);
   const qBridge = amounts.length > 0 || unitsM.length > 0 || percents.length > 0 || qLink;
   if (!noiseKind && kind !== 'DISPROVED_RUMOUR') {
@@ -1190,6 +1331,8 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
     else if ((kind === 'CAPITAL_RAISE' || kind === 'FINANCING') && link === 'NOT_ESTABLISHED') link = 'NOT_APPLICABLE';
     else if ((kind === 'LEGAL_DECISION' || kind === 'REGULATORY_DECISION') && link === 'NOT_ESTABLISHED') link = 'NOT_APPLICABLE';
     else if (kind === 'EARNINGS_RESULT' && !reportedFin && dirRead.signals === 0) link = 'NOT_ESTABLISHED';
+    // zzz854: an unverified (secondary-only, filing not read) result shows no earnings link until the filing is read
+    else if (kind === 'EARNINGS_RESULT' && !resultVerified) link = 'NOT_ESTABLISHED';
     else {
       const resultLike = kind === 'EARNINGS_RESULT' || kind === 'OPERATING_INFLECTION' || kind === 'MARGIN_INFLECTION' || kind === 'FCF_INFLECTION';
       if (link === 'DIRECT' && !(resultLike && reportedFin)) link = qBridge ? 'NEAR_DIRECT' : 'INDIRECT';
@@ -1219,9 +1362,10 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   else if (bottleneckDet && (kind === 'BOTTLENECK' || kind === 'DEMAND_EXPLOSION' || kind === 'SUPPLY_DEMAND_INFLECTION')) bucket = 'BOTTLENECK';
   else if (kind === 'EARNINGS_RESULT') {
     // zzz852: only a materially improving positive result is an inflection; every other result is shown in its own group
-    const real = dirRead.direction === 'positive' && (dirRead.strength === 'strong' || dirRead.strength === 'moderate');
+    const real = dirRead.direction === 'positive' && (dirRead.strength === 'strong' || dirRead.strength === 'moderate') && inflectionAllowed;
     bucket = real && quantified ? 'EARNINGS_INFLECTION' : (dirRead.signals > 0 || reportedFin) ? 'RESULT_NO_INFLECTION' : 'EVENT_DRIVEN';
   }
+  else if (earningsKinds && !resultVerified) bucket = 'EVENT_DRIVEN';  // zzz854: an unverified secondary headline is never an earnings inflection
   else if (earningsKinds && quantified && inflection.state !== 'NO_INFLECTION') bucket = 'EARNINGS_INFLECTION';
   else if (STRUCTURAL_KINDS.has(kind) && (dCode == null || dCode === 2 || dCode === 3) && linkGood && evOK) bucket = 'EARNINGS_INFLECTION';
   else bucket = 'EVENT_DRIVEN';
@@ -1292,8 +1436,12 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
       case 'SPECIAL_SITUATION':
         if (durableSS) return 'The text describes a change in the business that is bought or separated, with a stated contribution to earnings power.';
         if (ss === 'BUYBACK') return 'A buyback changes the share count, not the business.';
+        if (dealSubtype === 'THIRD_PARTY_TENDER') return 'A third-party tender offer: an outside bidder offers to purchase the target\'s shares. Holders are paid the offer price if the offer completes; operations do not change.';
+        if (dealSubtype === 'ISSUER_TENDER') return 'An issuer tender offer: the company buys back its own securities. Only holders who tender are paid, and the share count (or debt) falls; operations do not change.';
+        if (dealSubtype === 'GOING_PRIVATE') return 'A going-private transaction (not a tender): insiders or a sponsor take the company private and public holders are cashed out at the stated consideration if the vote and closing succeed.';
         if (ss === 'OPEN_OFFER') return 'A tender, open offer or going-private step is a deal-driven event with its own timetable, not a change in operations.';
         if (ss === 'SPIN') return listingDone ? 'The separation is already done and the business is listed. What is left is whether it reports and performs on its own; the text does not say it changes earnings power.' : 'A separation can change how the parts are run and valued; the text does not say it changes earnings power.';
+        if (ss === 'MA' && (dealSubtype === 'ACQUISITION' || dealSubtype === 'STAKE_INVESTMENT')) return `An acquisition / investment: the buyer pays consideration for ${dealTarget || 'the target'}. The buyer's earnings change only after closing and consolidation, by the target's own revenue and profit; the deal value is not revenue.`;
         if (ss === 'MA') return 'A deal can change scale or customers; the text does not state a contribution to earnings.';
         if (ss === 'ASSET_SALE') return 'An asset sale is usually a one-time cash event.';
         if (ss === 'RIGHTS') return 'A capital raise changes funding and share count, not operations.';
@@ -1358,7 +1506,7 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
             : 'Not established - no earnings figure is stated.';
     }
     if (dealOnly) return dealFacts.length
-      ? `${dealFacts.join('. ')}. These are facts about the deal, not earnings: the source states no revenue, EBITDA or profit for the acquired or funded business.`
+      ? `${dealFacts.join('. ')}. These are facts about the deal, not earnings: ${noDealEarn}.`
       : 'Not quantified in the source - the financial impact is not established.';
     const parts: string[] = [];
     if (reportedResult && !(e && earnNumbers)) {
@@ -1383,24 +1531,26 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   const noFinLink = noEarningsLink || link === 'NOT_ESTABLISHED' || link === 'NARRATIVE_ONLY' || link === 'NONE' || link === 'NOT_APPLICABLE';
   const NQ = noFinLink ? 'Not established' : 'Not quantified';
   const impacts: ImpactMap = { revenue: NQ, volume: NQ, asp: NQ, margin: NQ, ebitda: NQ, fcf: NQ, roce: NQ, marketShare: NQ };
+  // zzz854: impacts read only figures the company owns (target / unowned deal figures are already out of ctextOwn) and never a forecast
+  const ctextRep = planHint ? ctextOwn : squash(sentencesOf(ctextOwn).filter((x) => !FORECAST_RE.test(x)).join(' '));
   if (!noFinLink && !dealOnly) {
     const firstAmt = amounts.length ? amounts.reduce((a, b) => (b.millions > a.millions ? b : a)).raw : null;
     if (kind === 'EARNINGS_RESULT' && e && isNum(e.revenueYoY)) impacts.revenue = `Revenue ${e.revenueYoY >= 0 ? 'up' : 'down'} ${fmt(Math.abs(e.revenueYoY))}% year on year (reported)`;
-    else if (firstAmt && (isOrderOther || kind === 'CUSTOMER_QUALIFICATION' || kind === 'DEMAND_EXPLOSION' || (orderLike && kind === 'CAPACITY_INFLECTION'))) impacts.revenue = `${firstAmt} contract or order value (stated; revenue arrives as it is delivered)`;
-    else { const rv = /\b(?:revenue|sales|turnover)\b[^.;]{0,30}?(\d[\d,.]*\s?(?:%|crores?|cr|million|billion|mn|bn))/i.exec(ctext); if (rv) impacts.revenue = `${squash(rv[0])} (stated)`; }
-    if (unitsM.length) impacts.volume = `${squash(unitsM[0]!)} (stated)`;
+    else if (firstAmt && (isOrderOther || kind === 'CUSTOMER_QUALIFICATION' || kind === 'DEMAND_EXPLOSION' || (orderLike && kind === 'CAPACITY_INFLECTION'))) impacts.revenue = `Order value ${firstAmt} (stated) - an order, not revenue; revenue arrives only as it is delivered and billed`;
+    else { const rv = /\b(?:revenue|sales|turnover)\b[^.;]{0,30}?(\d[\d,.]*\s?(?:%|crores?|cr|million|billion|mn|bn))/i.exec(ctextRep); if (rv) impacts.revenue = `${squash(rv[0])} (stated)`; }
+    if (unitsM.length) impacts.volume = /\b(?:mw|gw|mwh|gwh|mtpa|ktpa|tpa)\b/i.test(unitsM[0]!) ? `${squash(unitsM[0]!)} capacity (stated) - capacity, not volume sold or revenue` : `${squash(unitsM[0]!)} (stated)`;
     else if (kind === 'EARNINGS_RESULT' && e && e.orderBook && e.orderBook !== 'NOT_STATED') impacts.volume = `Order book ${e.orderBook.toLowerCase()} (reported)`;
-    const asp = /\b(?:price|prices|realisations?|ASP)\b[^.;]{0,30}?(\d+(?:\.\d+)?\s?%)/i.exec(ctext);
+    const asp = /\b(?:price|prices|realisations?|ASP)\b[^.;]{0,30}?(\d+(?:\.\d+)?\s?%)/i.exec(ctextRep);
     if (asp) impacts.asp = `${squash(asp[0])} (stated)`;
     if (kind === 'EARNINGS_RESULT' && e && isNum(e.marginNow) && isNum(e.marginPrior)) impacts.margin = `Margin ${fmt(e.marginPrior)}% to ${fmt(e.marginNow)}% (reported)`;
-    else { const mg = /\bmargins?\b[^.;]{0,30}?(\d+(?:\.\d+)?\s?(?:%|bps))|(\d+(?:\.\d+)?\s?(?:%|bps))\s+margin/i.exec(ctext); if (mg) impacts.margin = `${squash(mg[0])} (stated)`; }
-    const eb = /\bEBITDA\b[^.;]{0,30}?((?:₹|rs\.?|inr|\$|us\$)?\s?\d[\d,.]*\s?(?:crores?|cr|million|billion|mn|bn|%))/i.exec(ctext);
+    else { const mg = /\bmargins?\b[^.;]{0,30}?(\d+(?:\.\d+)?\s?(?:%|bps))|(\d+(?:\.\d+)?\s?(?:%|bps))\s+margin/i.exec(ctextRep); if (mg) impacts.margin = `${squash(mg[0])} (stated)`; }
+    const eb = /\bEBITDA\b[^.;]{0,30}?((?:₹|rs\.?|inr|\$|us\$)?\s?\d[\d,.]*\s?(?:crores?|cr|million|billion|mn|bn|%))/i.exec(ctextRep);
     if (eb) impacts.ebitda = `${squash(eb[0])} (stated)`;
     if (kind === 'EARNINGS_RESULT' && e && isNum(e.cfoToPat)) impacts.fcf = `Cash flow from operations ${fmt(e.cfoToPat)}x profit (reported)`;
-    else { const fc = /\b(?:free cash flow|FCF)\b[^.;]{0,30}?((?:₹|rs\.?|inr|\$|us\$)?\s?\d[\d,.]*\s?(?:crores?|cr|million|billion|mn|bn|%))/i.exec(ctext); if (fc) impacts.fcf = `${squash(fc[0])} (stated)`; }
-    const rc = /\b(?:ROCE|return on capital)\b[^.;]{0,25}?(\d+(?:\.\d+)?\s?%)/i.exec(ctext);
+    else { const fc = /\b(?:free cash flow|FCF)\b[^.;]{0,30}?((?:₹|rs\.?|inr|\$|us\$)?\s?\d[\d,.]*\s?(?:crores?|cr|million|billion|mn|bn|%))/i.exec(ctextRep); if (fc) impacts.fcf = `${squash(fc[0])} (stated)`; }
+    const rc = /\b(?:ROCE|return on capital)\b[^.;]{0,25}?(\d+(?:\.\d+)?\s?%)/i.exec(ctextRep);
     if (rc) impacts.roce = `${squash(rc[0])} (stated)`;
-    const ms = /\bmarket share\b[^.;]{0,25}?(\d+(?:\.\d+)?\s?(?:%|pp|bps))/i.exec(ctext);
+    const ms = /\bmarket share\b[^.;]{0,25}?(\d+(?:\.\d+)?\s?(?:%|pp|bps))/i.exec(ctextRep);
     if (ms) impacts.marketShare = `${squash(ms[0])} (stated)`;
   }
   const impactVals = Object.values(impacts);
@@ -1410,7 +1560,7 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
 
   // ── governance, drivers ──
   const governance = governanceOf(input.governance);
-  const drivers = noiseKind === 'NOISE' || kind === 'CORPORATE_ACTION' || kind === 'DISPROVED_RUMOUR' ? [] : driversOfText(`${input.title || ''} ${input.description || ''} ${ff.what_happened || ''} ${ff.what_matters || ''}`);
+  const drivers = noiseKind === 'NOISE' || kind === 'CORPORATE_ACTION' || kind === 'DISPROVED_RUMOUR' ? [] : driversOfText(srcText);
 
   // ── bottleneck question ──
   const bottleneckQuestion = (kind === 'BOTTLENECK' || (bottleneckDet && !noEarningsLink && !nonOperatingEvent))
@@ -1460,13 +1610,13 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   const resultNote = resultSent ? `Reported (secondary-reported, filing not read): "${clip(noPriceClause(resultSent), 120)}"` : '';
   chain.push(revProven ? step(5, 'proven', `Supplied results: revenue ${e!.revenueYoY! >= 0 ? 'up' : 'down'} ${fmt(Math.abs(e!.revenueYoY!))}% year on year.`)
     : resultKind ? (resultRevStated ? step(5, 'assumed', resultNote) : step(5, 'unknown', NE))
-      : dealOnly ? step(5, 'unknown', 'Not established: the source states no revenue for the acquired or funded business.')
+      : dealOnly ? step(5, 'unknown', `Not established: ${noDealEarn}.`)
         : impliesRev ? step(5, 'assumed', 'Revenue impact is implied by the mechanism, not yet visible in reported earnings.') : step(5, 'unknown', NE));
   chain.push(marginProven ? step(6, 'proven', `Supplied results: margin ${fmt(e!.marginPrior!)}% to ${fmt(e!.marginNow!)}%.`) : resultKind ? step(6, 'unknown', NE) : changes.some((c) => /margin|ASP/.test(c)) && !noEarningsLink ? step(6, 'assumed', 'Margin impact is implied by the mechanism, not yet visible in reported earnings.') : step(6, 'unknown', NE));
   chain.push(fcfProven ? step(7, 'proven', `Supplied results: cash flow from operations is ${fmt(e!.cfoToPat!)}x profit.`) : step(7, 'unknown', NE));
   chain.push(patProven ? step(8, 'proven', `Supplied results: profit ${e!.patYoY! >= 0 ? 'up' : 'down'} ${fmt(Math.abs(e!.patYoY!))}% year on year.`)
     : resultKind ? (resultPatStated ? step(8, 'assumed', resultNote) : step(8, 'unknown', NE))
-      : dealOnly ? step(8, 'unknown', 'Not established: the source states no revenue, EBITDA or profit for the acquired or funded business.')
+      : dealOnly ? step(8, 'unknown', `Not established: ${noDealEarn}.`)
         : (chain[5].status === 'assumed' || chain[6].status === 'assumed') ? step(8, 'assumed', 'Earnings impact follows only if the revenue and margin steps happen.') : step(8, 'unknown', NE));
 
   // ── expectations (only when both sides have data) ──
@@ -1513,7 +1663,7 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   const soft: LinkStatus = softBase;
   // zzz850: a deal fact (capacity acquired, target's customers) is not a proven earnings-chain link
   const softE: LinkStatus = dealOnly ? 'ASSUMED' : softBase;
-  const NOT_STATED_DEAL = 'Not established: the source states no revenue, EBITDA or profit for the acquired or funded business.';
+  const NOT_STATED_DEAL = `Not established: ${noDealEarn}.`;
   const opKind = STRUCTURAL_KINDS.has(kind) || kind === 'EARNINGS_RESULT' || kind === 'CONTRACT_ORDER';
   const bnApplicable = bottleneckDet || ['BOTTLENECK', 'CUSTOMER_QUALIFICATION', 'SUPPLY_DEMAND_INFLECTION', 'DEMAND_EXPLOSION', 'REGULATORY_DEMAND_INFLECTION', 'PRICING_POWER_INFLECTION'].includes(kind);
   const capApplicable = capacityIncrease || utilisation || ['CAPACITY_INFLECTION', 'CUSTOMER_QUALIFICATION', 'DEMAND_EXPLOSION', 'BOTTLENECK', 'CONTRACT_ORDER', 'NEW_PRODUCT_MARKET', 'REGULATORY_DEMAND_INFLECTION'].includes(kind);
@@ -1548,16 +1698,16 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
           : unitsM.length && dealOnly ? lk('VOLUME', 'ASSUMED', 'The source states capacity acquired, not production volume or sales.')
           : unitsM.length ? lk('VOLUME', soft === 'ASSUMED' ? 'ASSUMED' : 'PARTIALLY_PROVEN', `The source states ${squash(unitsM[0]!)}.`)
             : lk('VOLUME', 'ASSUMED', 'Volume is implied by the mechanism; no volume figure is stated.'));
-      const revSt: LinkStatus = resultsContra && revProven ? 'CONTRADICTED' : revProven ? 'PROVEN' : resultKind ? (resultRevStated ? 'PARTIALLY_PROVEN' : 'NOT_APPLICABLE') : (amountOrder && link === 'DIRECT' || !dealOnly && /\(stated\)$/.test(impacts.revenue)) && soft !== 'ASSUMED' ? 'PARTIALLY_PROVEN' : impliesRev || kind === 'SPECIAL_SITUATION' ? 'ASSUMED' : 'NOT_APPLICABLE';
-      catalystChain.push(lk('REVENUE', revSt, revProven ? `Supplied results: revenue ${e!.revenueYoY! >= 0 ? 'up' : 'down'} ${fmt(Math.abs(e!.revenueYoY!))}% year on year.` : revSt === 'PARTIALLY_PROVEN' ? (resultKind && !e ? `${resultNote}.` : `${impacts.revenue}.`) : dealOnly ? NOT_STATED_DEAL : 'Revenue impact is implied by the mechanism, not yet visible in reported earnings.'));
+      const revSt: LinkStatus = resultsContra && revProven ? 'CONTRADICTED' : revProven ? 'PROVEN' : resultKind ? (resultRevStated ? (resultVerified ? 'PARTIALLY_PROVEN' : 'ASSUMED') : 'NOT_APPLICABLE') : (!dealOnly && /\(stated\)$/.test(impacts.revenue)) && soft !== 'ASSUMED' ? 'PARTIALLY_PROVEN' : impliesRev || kind === 'SPECIAL_SITUATION' ? 'ASSUMED' : 'NOT_APPLICABLE';
+      catalystChain.push(lk('REVENUE', revSt, revProven ? `Supplied results: revenue ${e!.revenueYoY! >= 0 ? 'up' : 'down'} ${fmt(Math.abs(e!.revenueYoY!))}% year on year.` : revSt === 'PARTIALLY_PROVEN' ? (resultKind && !e ? `${resultNote}.` : `${impacts.revenue}.`) : resultKind ? `Headline claim, unverified (filing not read): ${resultNote || 'no figure stated'}.` : dealOnly ? NOT_STATED_DEAL : 'Revenue impact is implied by the mechanism, not yet visible in reported earnings.'));
       const mgStated = impacts.margin !== 'Not quantified' && impacts.margin !== 'Not established';
-      const mgSt: LinkStatus = resultsContra && marginProven ? 'CONTRADICTED' : marginProven ? 'PROVEN' : resultKind ? (mgStated ? 'PARTIALLY_PROVEN' : 'NOT_APPLICABLE') : !marginApplicable ? 'NOT_APPLICABLE' : mgStated && link === 'DIRECT' ? 'PARTIALLY_PROVEN' : 'ASSUMED';
-      catalystChain.push(lk('MARGIN', mgSt, marginProven ? `Supplied results: margin ${fmt(e!.marginPrior!)}% to ${fmt(e!.marginNow!)}%.` : mgSt === 'PARTIALLY_PROVEN' ? `${impacts.margin}.` : 'Margin impact is implied by the mechanism, not yet visible in reported earnings.'));
+      const mgSt: LinkStatus = resultsContra && marginProven ? 'CONTRADICTED' : marginProven ? 'PROVEN' : resultKind ? (mgStated && resultVerified ? 'PARTIALLY_PROVEN' : mgStated ? 'ASSUMED' : 'NOT_APPLICABLE') : !marginApplicable ? 'NOT_APPLICABLE' : mgStated && link === 'DIRECT' ? 'PARTIALLY_PROVEN' : 'ASSUMED';
+      catalystChain.push(lk('MARGIN', mgSt, marginProven ? `Supplied results: margin ${fmt(e!.marginPrior!)}% to ${fmt(e!.marginNow!)}%.` : mgSt === 'PARTIALLY_PROVEN' ? `${impacts.margin}.` : resultKind ? 'Headline claim, unverified (filing not read).' : 'Margin impact is implied by the mechanism, not yet visible in reported earnings.'));
       const ebStated = impacts.ebitda !== 'Not quantified' && impacts.ebitda !== 'Not established';
       const ebSt: LinkStatus = revProven && marginProven ? 'PARTIALLY_PROVEN' : ebStated ? 'PARTIALLY_PROVEN' : resultKind ? 'NOT_APPLICABLE' : revSt === 'ASSUMED' || mgSt === 'ASSUMED' ? 'ASSUMED' : 'NOT_APPLICABLE';
       catalystChain.push(lk('EBITDA', ebSt, ebSt === 'PARTIALLY_PROVEN' ? (revProven && marginProven ? 'Derived from reported revenue and margin; EBITDA itself is not stated.' : `${impacts.ebitda}.`) : dealOnly ? NOT_STATED_DEAL : 'EBITDA impact follows only if the revenue and margin steps happen.'));
       catalystChain.push(!fcfApplicable ? NA('FCF') : fcfProven ? lk('FCF', 'PROVEN', `Supplied results: cash flow from operations is ${fmt(e!.cfoToPat!)}x profit.`) : impacts.fcf !== 'Not quantified' && impacts.fcf !== 'Not established' ? lk('FCF', 'PARTIALLY_PROVEN', `${impacts.fcf}.`) : lk('FCF', 'ASSUMED', 'Cash conversion is not yet shown.'));
-      const eaSt: LinkStatus = patProven ? (resultsContra ? 'CONTRADICTED' : 'PROVEN') : resultKind ? (resultPatStated ? 'PARTIALLY_PROVEN' : 'NOT_APPLICABLE') : revSt === 'ASSUMED' || mgSt === 'ASSUMED' || revSt === 'PARTIALLY_PROVEN' ? 'ASSUMED' : 'NOT_APPLICABLE';
+      const eaSt: LinkStatus = patProven ? (resultsContra ? 'CONTRADICTED' : 'PROVEN') : resultKind ? (resultPatStated ? (resultVerified ? 'PARTIALLY_PROVEN' : 'ASSUMED') : 'NOT_APPLICABLE') : revSt === 'ASSUMED' || mgSt === 'ASSUMED' || revSt === 'PARTIALLY_PROVEN' ? 'ASSUMED' : 'NOT_APPLICABLE';
       catalystChain.push(lk('EARNINGS', eaSt, patProven ? `Supplied results: profit ${e!.patYoY! >= 0 ? 'up' : 'down'} ${fmt(Math.abs(e!.patYoY!))}% year on year.` : resultKind ? `${resultNote}.` : dealOnly ? NOT_STATED_DEAL : 'Earnings impact follows only if the revenue and margin steps happen.'));
     }
     if (!(kind === 'SPECIAL_SITUATION' && !spApplicable)) {
@@ -1568,7 +1718,9 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   const chainOf = (k: CatalystLinkKey) => catalystChain.find((l) => l.link === k)!;
 
   // three separate confirmations
-  const eventConfirmation: EventConfirmation = noiseKind ? 'NOT_APPLICABLE' : evStatus === 'DISPROVED' ? 'DISPROVED' : tentative || planHint ? 'PLANNED' : evStatus === 'CONFIRMED' ? 'CONFIRMED' : resultKind ? 'REPORTED_RESULT' : 'REPORTED';
+  // zzz854: a filing whose terms were not read is 'reported' (filed, terms unproven), never confirmed
+  const filedOnly = termsCeiling && !termsRead;
+  const eventConfirmation: EventConfirmation = noiseKind ? 'NOT_APPLICABLE' : evStatus === 'DISPROVED' ? 'DISPROVED' : filedOnly ? 'REPORTED' : tentative || planHint ? 'PLANNED' : evStatus === 'CONFIRMED' ? 'CONFIRMED' : resultKind ? 'REPORTED_RESULT' : 'REPORTED';
   const mechLinks = catalystChain.filter((l) => ['DRIVER', 'BOTTLENECK', 'COMPANY_ADVANTAGE', 'CAPACITY', 'VOLUME'].includes(l.link) && l.status !== 'NOT_APPLICABLE');
   const mechanismStatus: MechanismStatus = evStatus === 'DISPROVED' ? 'CONTRADICTED'
     : !mechLinks.length ? 'NOT_ESTABLISHED'
@@ -1590,12 +1742,13 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
     if (kind === 'DISPROVED_RUMOUR') return 'Disproved: the source says the report was denied or untrue. No earnings link.';
     if (evStatus === 'DISPROVED') return 'Disproved: the source says the event was cancelled, withdrawn or rejected.';
     if (kind === 'CORPORATE_ACTION') return 'Corporate action: the event is reported; it has no earnings mechanism.';
+    if (filedOnly && !noiseKind) return `${FILING_EXISTS_LABEL}: the ${secForm || 'filing'} is filed, its terms are unproven; no earnings link applies.`;
     if (noiseKind) return 'Not an earnings catalyst: no event that changes revenue, margin or cash is stated.';
     if (nonOperatingEvent) return `${eventConfirmation === 'CONFIRMED' ? 'Event confirmed' : 'Event reported'}; the earnings link is not established.`;
     const kw = kindWord[kind] || (kind === 'SPECIAL_SITUATION' ? 'deal' : 'event');
     if (earningsImpactStatus === 'CONFIRMED') return 'Confirmed earnings catalyst: reported results show it in profit.';
     if (resultKind && earningsImpactStatus === 'REPORTED_RESULT') return `${directPrimary && eventConfirmation === 'CONFIRMED' ? 'Reported earnings result (company or filing source)' : 'Already reported earnings result (secondary-reported, filing not read)'}. The open question is whether the next quarter confirms it lasts, and what drove it.`;
-    if (dealOnly) return `${eventConfirmation === 'CONFIRMED' ? 'Event confirmed' : eventConfirmation === 'PLANNED' ? 'Planned deal, not yet completed' : 'Event reported (secondary-reported)'}; earnings link not established: the source states no revenue or EBITDA for the acquired or funded business.`;
+    if (dealOnly) return `${eventConfirmation === 'CONFIRMED' ? 'Event confirmed' : eventConfirmation === 'PLANNED' ? 'Planned deal, not yet completed' : 'Event reported (secondary-reported)'}; earnings link not established: ${noDealEarn}.`;
     if (eventConfirmation === 'CONFIRMED') return `Confirmed ${kw} catalyst; earnings transmission remains ${earningsImpactStatus === 'PARTIALLY_PROVEN' ? 'partially unproven' : earningsImpactStatus === 'NOT_ESTABLISHED' ? 'not established' : 'unproven'}.`;
     if (eventConfirmation === 'PLANNED') return `Planned ${kw} event, not yet completed; earnings transmission is unproven.`;
     return `Reported ${kw} event, not confirmed by a primary source; earnings transmission is unproven.`;
@@ -1668,17 +1821,19 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
       case 'MARKET_SHARE_INFLECTION': p = { what: 'Volume and revenue growth against the market, and the stated share figure, in the next results.', when: when || 'next quarterly result', kind: 'result' }; break;
       case 'REGULATORY_DEMAND_INFLECTION': p = { what: 'Enforcement dates, the company\'s order intake under the rule and volume in the next results.', when, kind: 'order' }; break;
       case 'OPERATING_INFLECTION': p = { what: 'Next quarterly result: do revenue growth and margin hold for a second and third quarter?', when: 'next quarterly result', kind: 'result' }; break;
-      case 'EARNINGS_RESULT': p = { what: `Next quarterly result: do revenue growth and margin hold for a second and third quarter? Also what drove this one (price, volume or cost). ${resultDriverNote}`, when: 'next quarterly result', kind: 'result' }; break;
+      case 'EARNINGS_RESULT': p = !resultVerified || !revProfitKnown ? { what: `Read the filing: open the company's result filing and record revenue, EBITDA and PAT with their year-on-year change, margin, cash flow and guidance${!resultVerified ? ' (the headline is secondary-reported and unverified)' : ' (revenue and profit change are not both stated)'}. Then the next quarterly result: do revenue growth and margin hold for a second and third quarter, and what drove this one (price, volume or cost)? ${resultDriverNote}`, when: null, kind: 'filing' } : { what: `Next quarterly result: do revenue growth and margin hold for a second and third quarter? Also what drove this one (price, volume or cost). ${resultDriverNote}`, when: 'next quarterly result', kind: 'result' }; break;
       case 'CAPITAL_RAISE': case 'FINANCING': p = { what: 'Use of proceeds and deployment, the balance-sheet effect, and later results showing what the money funded.', when, kind: 'filing' }; break;
       case 'LEGAL_DECISION': case 'REGULATORY_DECISION': p = { what: 'A company disclosure of the operating effect (licence, revenue or margin) in a filing or the next results.', when, kind: 'filing' }; break;
       case 'SPECIAL_SITUATION':
         p = ss === 'BUYBACK' ? { what: 'Completion of the buyback and the size actually bought back.', when, kind: 'closing' }
-          : ss === 'OPEN_OFFER' ? { what: tenderConds.length ? `Next proof: ${tenderConds.join('; ')}.` : 'Next proof: offer terms and conditions in the filing.', when, kind: 'closing' }
-            : ss === 'SPIN' ? (listingDone ? { what: 'First separate results and separate reporting of the listed business; the listing itself is done.', when, kind: 'result' }
+          : ss === 'OPEN_OFFER' ? (!termsRead ? { what: openFilingProof(dealSubtype, secForm), when: null, kind: 'filing' }
+            : { what: tenderConds.length ? `Next proof: ${tenderConds.join('; ')}.` : dealSubtype === 'GOING_PRIVATE' ? 'Next proof: the consideration per share, the vote of unaffiliated holders (majority of minority) and the closing date in the filing.' : 'Next proof: offer price, expiry and minimum condition in the filing.', when, kind: 'closing' })
+            : ss === 'SPIN' && !termsRead ? { what: openFilingProof('SPIN_OFF', secForm), when: null, kind: 'filing' }
+          : ss === 'SPIN' ? (listingDone ? { what: 'First separate results and separate reporting of the listed business; the listing itself is done.', when, kind: 'result' }
                 : tentative ? { what: 'Board and shareholder approval of the proposal (proposed, not approved), then the record date, listing of the separated business and its first separate results.', when, kind: 'closing' }
                   : { what: 'Record date, listing of the separated business and its first separate results.', when, kind: 'closing' })
               : ss === 'MA' ? (subHint === 'MERGER' ? { what: `${tentative ? 'Approval of the proposal (proposed, not approved), then ' : ''}regulatory, shareholder and NCLT approval, the swap-ratio terms, deal closing and the first combined results.`, when, kind: 'closing' }
-                : { what: `Regulatory approval, deal closing, distribution or customer overlap, and separate reporting of the acquired business.${dealOnly ? ' The earnings link needs the acquired business revenue, EBITDA or contract tariff, which the source does not state.' : ''}`, when, kind: 'closing' })
+                : { what: `${dealSubtype === 'STAKE_INVESTMENT' || dealSubtype === 'ACQUISITION' ? `Closing of the ${dealSubtype === 'STAKE_INVESTMENT' ? 'investment' : 'acquisition'}, whether ${dealTarget || 'the target'} is consolidated, then the acquired business revenue growth, distribution expansion and segment reporting in ${squash(input.company || '') || 'the buyer'}'s results.` : 'Regulatory approval, deal closing, distribution or customer overlap, and separate reporting of the acquired business.'}${dealOnly ? (tgtFin0 ? ` The earnings link needs closing and consolidation: ${noDealEarn}.` : ' The earnings link needs the acquired business revenue, EBITDA or contract tariff, which the source does not state.') : ''}`, when, kind: 'closing' })
                 : ss === 'RESTRUCTURING' ? { what: 'The next regulatory or lender step, then results showing the effect.', when, kind: 'filing' }
                   : { what: 'Completion step named in the filing (closing, allotment or listing).', when, kind: 'closing' };
         break;
@@ -1692,7 +1847,7 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   // ── break conditions ──
   const breaks: string[] = [];
   const bAdd = (...s: string[]) => s.forEach((x) => { if (!breaks.includes(x)) breaks.push(x); });
-  if (ff.what_breaks_thesis && squash(ff.what_breaks_thesis)) bAdd(clip(squash(ff.what_breaks_thesis), 200));
+  if (ff.what_breaks_thesis && squash(ff.what_breaks_thesis) && input.feedFactsAreTemplate !== true && !isBoilerplateBreak(ff.what_breaks_thesis)) bAdd(clip(squash(ff.what_breaks_thesis), 200));
   if (kind === 'CORPORATE_ACTION') { /* quarantined: no thesis, so nothing to break */ }
   else if (noEarningsLink) bAdd('No filing or result ever states an effect on revenue, margin or cash.');
   else switch (kind) {
@@ -1820,10 +1975,14 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   // ── zzz852: new display fields ──
   const co = squash(input.company || '') && input.company !== 'Unnamed company' ? squash(input.company) : 'the company';
   const secondaryOnly = !directPrimary;
-  const evidenceLabel = evStatus === 'DISPROVED' ? 'Disproved' : directPrimary ? EVIDENCE_LABEL[evStatus] : socialAnalyst ? 'Hypothesis (social or analyst source)' : `Secondary-reported (${nSrc} ${nSrc === 1 ? 'outlet' : 'outlets'})`;
-  const nextStep = kind === 'EARNINGS_RESULT' && secondaryOnly
+  const evidenceLabel = evStatus === 'DISPROVED' ? 'Disproved' : termsCeiling && !termsRead ? FILING_EXISTS_LABEL : directPrimary ? EVIDENCE_LABEL[evStatus] : socialAnalyst ? 'Hypothesis (social or analyst source)' : `Secondary-reported (${nSrc} ${nSrc === 1 ? 'outlet' : 'outlets'})`;
+  const nextStep = kind === 'EARNINGS_RESULT' && (secondaryOnly || !resultVerified || !revProfitKnown)
     ? 'Next: read the official result filing and extract revenue, EBITDA, margin, PAT, volumes, realisation, cost, cash flow, capex, net debt, guidance'
-    : null;
+    : !termsRead ? `Next: ${openFilingProof(dealSubtype, secForm)}` : null;
+  const resultLabel: string | undefined = kind !== 'EARNINGS_RESULT' ? undefined
+    : !resultVerified ? 'Earnings result (unverified)'
+      : !revProfitKnown ? 'Earnings result (incomplete: revenue and profit change not both stated)'
+        : bucket === 'EARNINGS_INFLECTION' ? 'Earnings inflection' : 'Earnings result (no inflection)';
   const corpWithEarnings = kind === 'CORPORATE_ACTION' && hier.earningsInTitle;
   const earnClause = (): string | null => {
     const clauses = `${title}. ${ctext}`.split(/(?<=[.!?])\s+|,|;|\bdespite\b|\bwhile\b|\bas\b|\beven as\b/i).map((x) => squash(x).replace(/^[\s.]+|[\s.]+$/g, '')).filter(Boolean);
@@ -1833,22 +1992,58 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   const earnSentence = corpWithEarnings ? earnClause() : null;
   const secondaryEvent: RadarItem['secondaryEvent'] = corpWithEarnings && earnSentence ? { kind: 'EARNINGS_RESULT', label: 'Earnings (context only)', text: clip(earnSentence, 160), direction: dirRead.direction } : null;
   const contextFacts = corpWithEarnings && earnSentence ? [`Earnings figure in the same headline, shown as context and not as the event: ${clip(earnSentence, 160)}`] : [];
+  // zzz854: a dividend inside a result headline is a shareholder cash return, never a catalyst
+  if (kind === 'EARNINGS_RESULT' && /\bdividends?\b/i.test(title)) contextFacts.push('Dividend declared in the same headline: a shareholder cash return, not a catalyst.');
+  // price wording is context only
+  { const pm = /\b(?:(?:hits?|touch\w*|scal\w+|reach\w*)\s+)?(?:an?\s+)?(?:fresh\s+)?(?:all[\s-]?time high|record high|52[\s-]?week (?:high|low)|lifetime high|upper circuit|lower circuit)\b/i.exec(srcText); if (pm) contextFacts.push(`Price context only, not evidence: ${squash(pm[0])}.`); }
   const isResultKind = kind === 'EARNINGS_RESULT';
   const economicPayoff: string | null = dealK === 'DIVIDEND' || (kind === 'CORPORATE_ACTION' && /dividend/i.test(ctext)) ? 'Shareholder cash return'
     : dealK === 'SPLIT_BONUS' || kind === 'CORPORATE_ACTION' ? 'Share structure change (no operating payoff)'
-      : dealK ? 'Transaction / shareholder payoff' : null;
+      : dealSubtype === 'THIRD_PARTY_TENDER' ? `Tender payoff: target holders are paid the offer price if the offer completes${termsRead ? '' : ' (price not read yet)'}`
+        : dealSubtype === 'ISSUER_TENDER' ? 'Issuer buyback payoff: only holders who tender are paid; the share count (or debt) falls'
+          : dealSubtype === 'GOING_PRIVATE' ? `Going-private payoff: public holders are cashed out at the consideration if the vote and closing succeed${termsRead ? '' : ' (consideration not read yet)'}`
+            : dealSubtype === 'SPIN_OFF' ? 'Spin-off payoff: holders receive shares of the separated company; value depends on the standalone business'
+              : dealSubtype === 'ACQUISITION' || dealSubtype === 'STAKE_INVESTMENT' ? `Acquisition payoff: ${dealAcquirer || co} pays consideration; its earnings change only after closing and consolidation of ${dealTarget || 'the target'}`
+                : dealK ? 'Transaction / shareholder payoff' : null;
   const opLanguageOK = kind === 'NEW_PRODUCT_MARKET' || kind === 'CAPACITY_INFLECTION' || kind === 'CONTRACT_ORDER' || kind === 'CUSTOMER_QUALIFICATION' || kind === 'DEMAND_EXPLOSION' || kind === 'REGULATORY_DEMAND_INFLECTION' || kind === 'SUPPLY_DEMAND_INFLECTION' || kind === 'BOTTLENECK';
   const whyNow = whyNowOf({
     kind, subKind, dealKind: dealK, text: ctext, terms, direction: dirRead, company: co, tentative, planHint, listingDone, evSentence: evSent,
     secondaryDirection: corpWithEarnings ? dirRead.direction : null, noEarningsLink, quarantined: !!quar, disproved: evStatus === 'DISPROVED',
+    publishedAt: input.secFiling?.latestFilingDate || input.publishedAt || null, filingForm: secT && termsCeiling ? secForm : null, termsRead,
+    resultVerified: kind === 'EARNINGS_RESULT' ? resultVerified : undefined,
   });
-  const ss0 = sourceSubjectOf(hints.sourceSubject || null, input.company || '', own0);
+  const ss00 = sourceSubjectOf(hints.sourceSubject || null, input.company || '', own0);
+  // zzz854: whose financials the numbers are. A deal names both parties; target figures are never the acquirer's; a tender has no earnings owner.
+  const foreignFin = own0.foreign.filter((n) => ['revenue', 'ebitda', 'pat', 'eps'].includes(n.metric) && (n.entityRole === 'target' || n.entityRole === 'subsidiary'));
+  const ss0 = ((): typeof ss00 => {
+    if (dealSubtype === 'THIRD_PARTY_TENDER' || dealSubtype === 'GOING_PRIVATE') {
+      const t0 = dealTarget || subjectCo || co;
+      const a0 = dealAcquirer;
+      const line = roles854?.roleLine || `${dealSubtype === 'GOING_PRIVATE' ? 'Buyer group' : 'Acquirer'} (filed by): ${a0 || 'not stated in the feed'} | ${dealSubtype === 'GOING_PRIVATE' ? 'Subject company' : 'Target (subject company)'}: ${t0}`;
+      return { subject: { ...ss00.subject, eventSubject: a0 || t0, target: t0, acquirer: a0 || undefined, sourceSubject: t0, financialOwner: 'Not applicable' }, line, financialOwner: `Not applicable - a ${dealSubtype === 'GOING_PRIVATE' ? 'going-private transaction' : 'tender offer'}; the payoff is to ${t0} holders and no earnings figure is read` };
+    }
+    if (dealSubtype === 'ISSUER_TENDER') {
+      const t0 = subjectCo || co;
+      return { subject: { ...ss00.subject, eventSubject: t0, sourceSubject: t0, financialOwner: 'Not applicable' }, line: `Issuer (buying back its own securities): ${t0}`, financialOwner: 'Not applicable - an issuer tender offer; no earnings figure is read' };
+    }
+    if ((dealSubtype === 'ACQUISITION' || dealSubtype === 'STAKE_INVESTMENT') && dealTarget) {
+      const a0 = dealAcquirer || co;
+      const fo = foreignFin.length ? `${dealTarget} (target), not ${a0} - the stated figures are the target's; ${a0}'s own financials are not in the source` : `Not established - the source states no revenue or profit for ${a0} or ${dealTarget}`;
+      return { subject: { ...ss00.subject, eventSubject: a0, target: dealTarget, acquirer: a0, sourceSubject: `${a0} (acquirer) and ${dealTarget} (target)`, financialOwner: fo }, line: `Source subject: ${a0} (acquirer) and ${dealTarget} (target)`, financialOwner: fo };
+    }
+    if (foreignFin.length && !own0.parentFinancial.length) return { ...ss00, financialOwner: `${foreignFin[0].entity} (${foreignFin[0].entityRole}), not ${co}` };
+    return ss00;
+  })();
   const foreignLines = foreignNumberLines(own0, co);
   const parentLines = own0.parentFinancial.slice(0, 4).map((n) => `${co} ${n.metric === 'pat' ? 'profit' : n.metric === 'ebitda' ? 'EBITDA' : n.metric}: ${squash(n.raw)}${n.period && n.period !== 'not stated' ? ` (${n.period})` : ''} (owner: ${co})`);
   const numberLines = [...parentLines, ...foreignLines];
+  // every number carries its owner and a plain owner line for the card
+  const ownedOut: OwnedNumber[] = own0.numbers.map((n) => ({ ...n, metricOwner: n.metricOwner || n.entity, ownerLabel: ownerLabelOf(n, co) }));
+  const metricOwnerLines = uniq(ownedOut.filter((n) => n.metric !== 'other' || n.entityRole !== 'unknown').map((n) => n.ownerLabel as string)).slice(0, 8);
   const parentImpactText: string | undefined = linkGood && link === 'DIRECT' ? undefined : `${co} incremental revenue / EBITDA / PAT: Not established`;
   const chainRes = evidenceChainOf({
     kind, subKind, dealKind: dealK, text: ctext, own: own0, terms, termLines, listingDone, completed: /\b(?:completed|completes|closed|closing completed)\b/i.test(ctext) && !tentative, secondary: secondaryOnly, company: co,
+    subtype: dealSubtype, termsRead, filingForm: secForm, acquirer: dealAcquirer, target: dealTarget, resultVerified: kind === 'EARNINGS_RESULT' ? resultVerified : undefined,
     link: (k: string) => { const l = catalystChain.find((x) => x.link === k); return l ? { status: l.status, evidence: l.evidence || null } : undefined; },
     hasParentRevenue: own0.parentFinancial.some((n) => n.metric === 'revenue'), hasParentOrder: own0.parentFinancial.some((n) => n.metric === 'order_value') || (orderLike && amounts.length > 0),
     resultStated: {
@@ -1875,7 +2070,7 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   // draft item, then integrity
   const dates = ((): Pick<RadarItem, 'firstDiscovered' | 'firstPrimaryConfirmation' | 'firstFinancialConfirmation' | 'firstMaterialEarningsImpact'> => {
     const prev = input.previous || null;
-    const primaryNow = directPrimary && !noEarningsLink && evStatus !== 'DISPROVED' && !tentative;
+    const primaryNow = directPrimary && !noEarningsLink && evStatus !== 'DISPROVED' && !tentative && !(termsCeiling && !termsRead);
     const finNow = !noEarningsLink && (chainOf('REVENUE').status === 'PROVEN' || chainOf('EARNINGS').status === 'PROVEN');
     const matNow = finNow && chainOf('EARNINGS').status === 'PROVEN' && (mat.level === 'HIGH' || mat.level === 'VERY_HIGH');
     return {
@@ -1906,7 +2101,7 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
   const indicator = indicatorOf(ctext, kind, noEarningsLink || nonOperatingEvent);
 
   const resolved = !!input.previous && kind === 'SPECIAL_SITUATION' && /\b(?:completed|completes|completion|closed|closing completed|listed|listing completed|allotted|effective from)\b/i.test(text);
-  const evidenceDelta = evidenceDeltaOf({ prev: input.previous, evidence: evStatus, chain: catalystChain, resolved, primaryConfirmed: directPrimary, commercialConfirmed: commercialNow, financiallyVisible: finVisible, sourceCount: nSrc });
+  const evidenceDelta = evidenceDeltaOf({ prev: input.previous, evidence: evStatus, chain: catalystChain, resolved, primaryConfirmed: directPrimary, commercialConfirmed: commercialNow, financiallyVisible: finVisible, sourceCount: nOrig });
 
   // evidence read
   const unproven = weakestUnprovenLink || CHAIN_NAMES[8].toLowerCase();
@@ -1930,27 +2125,30 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
     return `Evidence exists (${src.label}${src.rank ? `, rank ${src.rank}` : ''})${tentative ? ' but the event is described as planned or proposed' : ''}${capexAlone ? ', and the demand behind the capex is not stated' : ''}. Financial impact is not yet visible; the ${unprovenOld} link is unproven.`;
   })();
   const evidence: EvidenceRead = {
-    status: evStatus, sourceRank: src.rank, sourceLabel: src.label, why, independentSources: nSrc,
+    status: evStatus, sourceRank: src.rank, sourceLabel: src.label, why, independentSources: nOrig,
     sourceCount: src0.count, sourceQuality: src0.quality, sourceDiversity: src0.diversity, duplicatesRemoved: src0.duplicates,
+    independentOrigins: nOrig, outlets: nSrc, originBasis: src0.originBasis,
   };
 
   // ── zzz850: event evidence and economic evidence are separate; the reader sees an honest 1-7 stage ──
-  const primaryEvent = directPrimary && !noEarningsLink && evStatus !== 'DISPROVED' && !tentative && !planHint;
-  const eventEvidence: EventEvidence = noiseKind || kind === 'CORPORATE_ACTION' ? 'NOT_APPLICABLE' : evStatus === 'DISPROVED' ? 'DISPROVED' : primaryEvent ? 'PRIMARY_CONFIRMED' : directPrimary ? 'PRIMARY_PROPOSED' : 'SECONDARY_REPORTED';
+  const primaryEvent = directPrimary && !noEarningsLink && evStatus !== 'DISPROVED' && !tentative && !planHint && !filedOnly;
+  const eventEvidence: EventEvidence = noiseKind || kind === 'CORPORATE_ACTION' ? 'NOT_APPLICABLE' : evStatus === 'DISPROVED' ? 'DISPROVED' : filedOnly ? 'FILED_TERMS_NOT_READ' : primaryEvent ? 'PRIMARY_CONFIRMED' : directPrimary ? 'PRIMARY_PROPOSED' : 'SECONDARY_REPORTED';
   const economicEvidence: EconomicEvidence = noFinLink || dealOnly ? 'NOT_ESTABLISHED'
     : kind === 'EARNINGS_RESULT' && quantificationStatus !== 'QUANTIFIED' ? 'REPORTED_RESULT'
       : quantificationStatus === 'QUANTIFIED' ? 'QUANTIFIED' : quantificationStatus === 'PARTIALLY_QUANTIFIED' ? 'PARTLY' : 'NOT_ESTABLISHED';
   const stageNumber: number | undefined = ((): number | undefined => {
     if (maturity == null) return undefined;
     if (maturity === 'BROKEN') return 0;
-    let n = primaryEvent ? 3 : nSrc >= 2 ? 2 : 1;
+    // zzz854: a bare form title proves a filing exists, not its terms: stage 1, never 'Confirmed'
+    if (termsCeiling && !termsRead) return 1;
+    let n = primaryEvent ? 3 : nOrig >= 2 ? 2 : 1;
     if (n >= 3 && (quantificationStatus === 'QUANTIFIED' || quantificationStatus === 'PARTIALLY_QUANTIFIED') && !dealOnly && !noFinLink) n = 4;
     if (finVisible) n = Math.max(n, 5);
     if (finVisible && (inflection.state === 'CONFIRMED_INFLECTION' || inflection.state === 'ACCELERATING_INFLECTION')) n = Math.max(n, 6);
     if (finVisible && inflection.state === 'STRUCTURAL_INFLECTION') n = 7;
     return n;
   })();
-  const stageLabel = stageNumber == null ? undefined : STAGE_LABEL[stageNumber];
+  const stageLabel = stageNumber == null ? undefined : termsCeiling && !termsRead ? FILING_EXISTS_LABEL : STAGE_LABEL[stageNumber];
 
   // draft
   const publishedAt = pub;
@@ -1978,7 +2176,10 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
     catalystMateriality, materialityNote: mat.note, counterfactual,
     oneSentenceMechanism, mechanismSpecific: noEarningsLink ? undefined : mechanismSpecific,
     weakestUnprovenLink, ...dates, priceResponse,
-    ownedNumbers: own0.numbers, parentImpactLine: parentImpactText, numberLines, sourceSubject: ss0.subject, sourceSubjectLine: ss0.line, financialOwner: ss0.financialOwner,
+    ownedNumbers: ownedOut, metricOwnerLines, parentImpactLine: parentImpactText,
+    dealSubtype, termsRead, filingForm: secForm,
+    securityState: input.securityState, securityLabel: input.securityLabel, security: input.security, dealRoles: input.dealRoles, sourceOrigins: input.sourceOrigins,
+    independentOrigins: isNum(input.independentOrigins) ? input.independentOrigins : src0.origins, eventSubtype: input.eventSubtype, resultVerified: kind === 'EARNINGS_RESULT' ? resultVerified : undefined, resultLabel, numberLines, sourceSubject: ss0.subject, sourceSubjectLine: ss0.line, financialOwner: ss0.financialOwner,
     secondaryEvent, contextFacts, economicPayoff,
     catalystDirection: isResultKind || corpWithEarnings ? dirRead.direction : undefined,
     directionBasis: isResultKind || corpWithEarnings ? dirRead.basis : undefined,
@@ -2055,7 +2256,7 @@ export function analyseRadarItem(input: RadarInput): RadarItem {
     const tail = kind === 'EARNINGS_RESULT' && earnNumbers
       ? `Reported results are supplied (${INFLECTION_LABEL[inflection.state].toLowerCase()}).`
       : kind === 'EARNINGS_RESULT' ? `This is an already reported result${directPrimary ? '' : ' (secondary-reported, filing not read)'}; the open question is whether the next quarter confirms it lasts.`
-        : dealOnly ? 'Earnings link not established: the source states no revenue or EBITDA for the acquired or funded business.'
+        : dealOnly ? `Earnings link not established: ${noDealEarn}.`
           : /\(stated\)$/.test(impacts.revenue) ? 'The source states a revenue figure; reported results have not yet confirmed it.'
             : shareholderMech ? 'Economic payoff: transaction / shareholder payoff; no earnings link applies.'
               : opLanguageOK ? 'Revenue impact not yet visible in reported earnings.' : 'Earnings effect not established from this source.';
@@ -2242,7 +2443,7 @@ export function buildRadar(inputs: RadarInput[], opts?: RadarOptions): RadarResu
     if (i.ticker && holdings.has(i.ticker.toUpperCase())) counts.holdings += 1;
   }
   const textOf = new Map<string, string>();
-  for (const { inp, item } of analysed) textOf.set(item.id, squash([inp.title, inp.description, inp.feedFacts?.what_happened, inp.feedFacts?.what_matters].filter(Boolean).join('. ')));
+  for (const { inp, item } of analysed) textOf.set(item.id, squash([inp.title, inp.description, inp.feedFactsAreTemplate === true ? '' : inp.feedFacts?.what_happened].filter(Boolean).join('. ')));
   const diagnostics = diagnosticsOf(items.map((item) => ({ id: item.id, text: textOf.get(item.id) || item.event, item })));
   return { items, byBucket, sharedDrivers, counts, diagnostics };
 }

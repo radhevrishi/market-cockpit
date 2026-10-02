@@ -142,3 +142,20 @@ export function isStalled(rec: LifecycleRecord): boolean {
   if (!expected) return false;
   return daysInCurrentState(rec) > expected * 1.5;
 }
+
+// zzz854 - lifecycle hint from the SEC form alone. The form proves the filing exists, not its terms: when only the
+// form title was read the basis says so, and the engine must not present the stage as a confirmed deal milestone.
+export interface SecLifecycleHint { state: LifecycleState; basis: string; termsRead: boolean }
+const SEC_SUBTYPE_STATE: Record<string, { state: LifecycleState; what: string }> = {
+  THIRD_PARTY_TENDER: { state: 'OPEN', what: 'an SC TO-T means a third-party tender offer has commenced' },
+  TARGET_RECOMMENDATION: { state: 'OPEN', what: 'an SC 14D9 is the target response to an open tender offer' },
+  ISSUER_TENDER: { state: 'OPEN', what: 'an SC TO-I means an issuer tender offer has commenced' },
+  GOING_PRIVATE: { state: 'BINDING', what: 'an SC 13E3 is filed for a going-private transaction (agreement or proposal; the vote is still ahead)' },
+  SPIN_OFF_REGISTRATION: { state: 'REGULATORY', what: 'a Form 10-12B registration is under SEC review before the distribution' },
+};
+/** State suggested by the SEC subtype, or null when the form says nothing about the deal stage. */
+export function secLifecycleHint(subtype: string | null | undefined, formTitleOnly?: boolean): SecLifecycleHint | null {
+  const m = subtype ? SEC_SUBTYPE_STATE[subtype] : undefined;
+  if (!m) return null;
+  return { state: m.state, termsRead: !formTitleOnly, basis: formTitleOnly ? `Form type only: ${m.what}. Terms not read.` : `Filing text: ${m.what}.` };
+}

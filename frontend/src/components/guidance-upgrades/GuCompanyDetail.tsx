@@ -8,7 +8,7 @@ import { fmtGrowthDisplay, metricShort, recordPeriodUnclear, PERIOD_UNCLEAR_HINT
 import { kindLabel, verificationText } from '@/lib/growth-guidance-format';
 import { R, tint } from './gu-tokens';
 import { Chip, VerBadge, BasisLine, LastVerified, btn } from './GuBits';
-import { cohortLabel, reasonsPlain, recordBadge, recordBasis, revisionShort, sourceDisplayName, sourceTierWord, UNKNOWN, type GuRecX } from './gu-ui';
+import { LIST_BUCKET_WORD, cohortLabel, reasonsPlain, recordBadge, recordBasis, recordReconcileLines, revisionShort, sourceDisplayName, sourceTierWord, UNKNOWN, type GuRecX } from './gu-ui';
 import type { GgCompany } from '@/lib/growth-guidance-types';
 
 const H = ({ children }: { children: React.ReactNode }) => <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: 0.4, color: R.dim, marginTop: 4 }}>{children}</div>;
@@ -75,6 +75,8 @@ export function GuCompanyDetail({ r, onFull }: { r: GuUniverseRecord; onFull?: (
         </div>
       )}
       {reasons.length > 0 && <div style={{ color: R.amber }}><b>Needs review:</b> {reasons.join(' ')}</div>}
+      {x.listBucket && <div><b>List</b> {LIST_BUCKET_WORD[x.listBucket] || x.listBucket}</div>}
+      {recordReconcileLines(x).map((l, k) => <div key={k} style={{ color: l.tone === 'red' ? R.red : l.tone === 'amber' ? R.amber : R.dim }}>{l.text}</div>)}
       {Array.isArray(x.caveats) && x.caveats.length > 0 && <div style={{ color: R.dim, fontSize: 12 }}>{x.caveats.join(' ')}</div>}
       <H>GUIDANCE</H>
       <div>

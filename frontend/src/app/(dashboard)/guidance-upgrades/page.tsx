@@ -13,6 +13,7 @@ import type { GgCompany } from '@/lib/growth-guidance-types';
 import { GuTitle, GuTopBar } from '@/components/guidance-upgrades/GuTopBar';
 import { GuCard, GuAuditArea } from '@/components/guidance-upgrades/GuCard';
 import { GuCoverage } from '@/components/guidance-upgrades/GuCoverage';
+import { GuReviewQueue, GuVerificationBlock } from '@/components/guidance-upgrades/GuQueue';
 import { GuDetail } from '@/components/guidance-upgrades/GuDetail';
 import { GuUniverseSummary } from '@/components/guidance-upgrades/GuUniverseSummary';
 import { GuUniverseBrowser } from '@/components/guidance-upgrades/GuUniverseBrowser';
@@ -116,6 +117,9 @@ export default function GuidanceUpgradesPage() {
         {!(todayFirst && todayList.length > 0) && shown.map((e) => <GuCard key={e.guidance_event_id} e={e} onOpen={select} now={now} />)}
       </div>
       <GuAuditArea events={auditList} onOpen={select} now={now} />
+      {/* zzz854: items that are not event cards, each with its reason; then the AI verification state (never silent) */}
+      <GuReviewQueue items={data?.reviewQueue} count={data?.reviewQueueCount} />
+      <GuVerificationBlock data={data as unknown as Parameters<typeof GuVerificationBlock>[0]['data']} />
       <GuCoverage coverage={data?.coverage} queue={data?.queue} invariantViolations={data?.invariantViolations} unresolved={unresolvedCount(data?.unresolved)} scan={data?.scan} now={now} window={window_} byMarket={data?.freshness.byMarket} eventCounts={{ IN: events.filter((e) => e.market === 'IN').length, US: events.filter((e) => e.market === 'US').length }} />
       {!data?.scan && data?.freshness.note && <div style={{ fontSize: 12, color: R.dim }}>{data.freshness.note}</div>}
       <div style={{ fontSize: 11, color: R.faint }}>Company data only. Not investment advice. Prices are context here, never the reason.</div>

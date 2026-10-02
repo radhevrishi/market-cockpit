@@ -260,8 +260,11 @@ describe('4 evidence status and source hierarchy', () => {
     assert.equal(r.evidence.status, 'DEVELOPING');
   });
   test('several credible non-primary sources -> STRONG', () => {
-    const r = run({ title: 'Kappa Ltd wins order worth $10 million from a customer', sourceLabel: 'Financial media', primarySource: false, independentSources: 3 });
+    // zzz854: independence is by information origin; three outlets that may copy one release are not three origins
+    const r = run({ title: 'Kappa Ltd wins order worth $10 million from a customer', sourceLabel: 'Financial media', primarySource: false, independentSources: 3, independentOrigins: 3 } as any);
     assert.equal(r.evidence.status, 'STRONG');
+    const outletsOnly = run({ title: 'Kappa Ltd wins order worth $10 million from a customer', sourceLabel: 'Financial media', primarySource: false, independentSources: 3 });
+    assert.equal(outletsOnly.evidence.status, 'HYPOTHESIS');
   });
   test('press-only single source -> HYPOTHESIS', () => {
     const r = run({ title: 'Kappa Ltd wins order worth $10 million from a customer', sourceLabel: 'Financial media', primarySource: false });

@@ -6,6 +6,7 @@
 // generic (currencies, exchanges, regulators, brokers, designations, time zones).
 
 import { resolveCompanyToTicker, NSE_TICKER_NAMES } from './nse-ticker-names';
+import type { FeedHoldBackReason } from './multibagger-radar-feed-types';
 
 // ─── 1. HTML entities (centralised) ──────────────────────────────────────────
 const NAMED: Record<string, string> = {
@@ -89,7 +90,14 @@ const SPIN_TEXT_RE = /\b(spin[\s-]?co|spin[\s-]?off|spun[\s-]?off|spinoff|split[
 /** Form 10-12G/B is a registration of a class of securities. Only SpinCo-style filers / text are spin-offs. */
 export function classifyForm10(title: string, description?: string): 'SPIN' | 'REGISTRATION' | null {
   if (!isForm10Title(title)) return null;
-  return SPIN_TEXT_RE.test(`${title} ${description || ''}`) ? 'SPIN' : 'REGISTRATION';
+  if (SPIN_TEXT_RE.test(`${title} ${description || ''}`)) return 'SPIN';
+  // zzz854: Form 10-12B registers a class on an exchange - the spin-off route. A pooled vehicle / partnership filer stays a registration.
+  if (/^\s*10-12B/i.test(title || '')) {
+    const p = parseSecFilingTitle(title);
+    const name = p ? p.company : '';
+    if (name && !isFundLikeName(name) && !/\b(?:l\.?p\.?|llc|lllp|trust|fund)\s*\.?$/i.test(name)) return 'SPIN';
+  }
+  return 'REGISTRATION';
 }
 
 // ─── 4. Content hints: price / preview / analyst / opinion / non-corporate ─────
@@ -162,7 +170,8 @@ export function subtypeHint(title: string): SubtypeHint {
   if (merger && !spin) return 'MERGER';
   if (merger && spin) return /\b(swap ratio|merger with|to merge|merges? with|amalgamat)/i.test(t) && !/\b(hive|demerg|spin)\w*\s+(?:of|from|its|into)/i.test(t) ? 'MERGER' : 'SPIN';
   if (spin) return 'SPIN';
-  if (NEW_PRODUCT_RE.test(t) && !/\b(acquir|merg|stake)\b/i.test(t)) return 'NEW_PRODUCT';
+  // zzz854: '<money> <Proper Name> bet / buyout' is an investment in a named company (acquisition / stake), not a new product.
+  if (NEW_PRODUCT_RE.test(t) && !/\b(acquir|merg|stake)\b/i.test(t) && !MONEY_NAME_DEAL_RE.test(t)) return 'NEW_PRODUCT';
   return null;
 }
 
@@ -363,7 +372,10 @@ export function keyNumbers(title: string): Set<string> {
   return out;
 }
 export type EventFamily = 'MERGER' | 'SPIN' | 'ACQUISITION' | 'BUYBACK' | 'DIVIDEND' | 'CAPITAL_RAISE' | 'OTHER';
+/** '<Acquirer>'s Rs 900 cr <Target Name> bet / buyout / takeover': money + a mixed-case proper name + a deal noun (not 'bet on ...'). */
+export const MONEY_NAME_DEAL_RE = /(?:[Rr][Ss]\.?|\u20b9|INR|US\$|\$|\u20ac|\u00a3)\s?[\d,.]+\s?(?:[Ll]akh [Cc]rores?|[Cc]rores?|[Cc]r|[Mm]illion|mn|[Bb]illion|bn)?\s+((?:[A-Z][a-z][\w&.'\u2019-]*\s){1,4})(?:[Bb]et|[Bb]uyout|[Tt]akeover|[Aa]cquisition|[Ss]take buy)\b(?!\s+on\b)/;
 export function eventFamily(title: string, eventType?: string): EventFamily {
+  if (MONEY_NAME_DEAL_RE.test(title || '')) return 'ACQUISITION';
   const sub = subtypeHint(title);
   if (sub === 'MERGER') return 'MERGER';
   if (sub === 'SPIN' || sub === 'LISTING_DONE') return 'SPIN';
@@ -459,11 +471,23 @@ export function sameCanonicalEvent(a: CanonicalEventKey, b: CanonicalEventKey, w
   return true;
 }
 
-// ─── 10. Fund / investment-company repurchase offers (not equity special situations) ──
-export type FeedQuarantineReason = 'FUND_REPURCHASE_OFFER';
+// ─── 10. Held back from Special Situations (pooled vehicles, partnership units, debt / routine issuer tenders) ──
+// zzz854: one reason per item; counts are kept per reason. Classification lives in special-sit-security.ts (classifyFeedHoldBack).
+export type FeedQuarantineReason = FeedHoldBackReason;
 export const FEED_QUARANTINE_LABEL: Record<FeedQuarantineReason, string> = {
-  FUND_REPURCHASE_OFFER: 'Fund repurchase offer: a periodic tender by a pooled investment vehicle (interval fund, BDC, feeder), not an equity special situation',
+  FUND_REPURCHASE_OFFER: 'Fund repurchase offer: a periodic tender by a pooled investment vehicle (interval fund, BDC, feeder, private credit, non-traded REIT), not an equity special situation',
+  PARTNERSHIP_UNIT_REPURCHASE: 'Partnership / LLC unit repurchase: interests in an LP, LLLP or LLC, not listed common equity',
+  DEBT_TENDER: 'Debt tender offer: the offer is for notes or bonds, not equity',
+  ROUTINE_ISSUER_TENDER: 'Routine issuer tender (employee / option exchange, odd-lot or periodic), not an equity special situation',
+  ISSUER_TENDER_TERMS_NOT_READ: 'Issuer tender — terms not read (could be odd-lot, employee or debt)',
+  EXCLUDED_FROM_EQUITY_RADAR: 'Not an equity special situation (regulator, court, unlisted or unidentified entity)',
+  AWAITING_VERIFICATION: 'Awaiting verification: not confirmed from the primary document yet',
+  AI_CONTRADICTED: 'Removed: the primary document contradicts the headline',
 };
+/** BDC / private-credit vehicle names: a name ENDING in Capital / Lending / Credit / Income (+ corporate suffix, optional series). Only meaningful with an SEC tender form. */
+export const BDC_STYLE_NAME_RE = /\b(?:capital|lending|credit|income)(?:\s+(?:corp(?:oration)?|co|company|fund|trust))?\.?(?:\s*,?\s*(?:inc|llc|l\.?p)\.?)?(?:\s+(?:i{1,3}|iv|v|vi|\d))?\s*$/i;
+/** Private-credit / non-traded vehicle wording in a name. Only meaningful with an SEC tender form. */
+export const CREDIT_VEHICLE_NAME_RE = /\b(lending solutions|strategic lending|credit strateg\w*|lower middle[- ]market|middle[- ]market (?:capital|lending|credit|income)|direct lending|private credit|specialty lending|senior lending|credit (?:company|co)\b|income (?:corp|corporation)\b|technology income|real estate income|non[- ]traded)\b/i;
 const ISSUER_TENDER_FORM_RE = /\bSC\s*TO-I(?:\/A)?\b/i;
 const TENDER_TEXT_RE = /\b(tender offer|repurchase offer|offer to (?:purchase|repurchase)|periodic repurchase|issuer tender)\b/i;
 // Name / text patterns are data. Strong: a pooled-vehicle word. Credit-style: only with an issuer tender form.
@@ -484,16 +508,32 @@ export function isFundRepurchaseOffer(a: { title?: string; description?: string;
   if (hint && (issuerForm || FUND_NAME_STRONG_RE.test(name) || FUND_NAME_CREDIT_RE.test(name))) return true;
   if (FUND_NAME_STRONG_RE.test(name) && !OPERATING_GUARD_RE.test(name)) return true;
   if (issuerForm && FUND_NAME_CREDIT_RE.test(name)) return true;
+  // zzz854: BDC / private-credit vehicles ('<X> Capital Corp', '<X> Lending Solutions LLC', '<X> Income Corp') in an issuer tender.
+  if (issuerForm && (CREDIT_VEHICLE_NAME_RE.test(name) || (BDC_STYLE_NAME_RE.test(name) && !/\b(?:bank|bancorp|bancshares|insurance)\b/i.test(name)))) return true;
   return false;
 }
 
-export interface HeldBackSummary { total: number; byReason: Partial<Record<FeedQuarantineReason, number>>; line: string; examples: string[] }
-/** Visible 'held back' line for items kept out of the main list. */
+export interface HeldBackSummary {
+  total: number;
+  byReason: Partial<Record<FeedQuarantineReason, number>>;
+  line: string;
+  examples: string[];
+  /** zzz854: per reason, label + count + up to 5 example names (largest count first) */
+  reasons?: Array<{ reason: FeedQuarantineReason; label: string; count: number; examples: string[] }>;
+}
+/** Visible 'held back' line for items kept out of the main list. One reason per item; the per-reason counts sum to total. */
 export function summariseHeldBack(items: ReadonlyArray<{ reason: FeedQuarantineReason; name?: string }>): HeldBackSummary {
   const byReason: Partial<Record<FeedQuarantineReason, number>> = {};
-  for (const i of items) byReason[i.reason] = (byReason[i.reason] || 0) + 1;
-  const parts = (Object.keys(byReason) as FeedQuarantineReason[]).map((r) => `${byReason[r]} held back: ${FEED_QUARANTINE_LABEL[r]}`);
-  return { total: items.length, byReason, line: parts.join('; '), examples: items.map((i) => i.name || '').filter(Boolean).slice(0, 5) };
+  const ex: Partial<Record<FeedQuarantineReason, string[]>> = {};
+  for (const i of items) {
+    byReason[i.reason] = (byReason[i.reason] || 0) + 1;
+    const l = (ex[i.reason] = ex[i.reason] || []);
+    if (i.name && l.length < 5 && !l.includes(i.name)) l.push(i.name);
+  }
+  const order = (Object.keys(byReason) as FeedQuarantineReason[]).sort((a, b) => (byReason[b] || 0) - (byReason[a] || 0));
+  const parts = order.map((r) => `${byReason[r]} held back: ${FEED_QUARANTINE_LABEL[r] || r}`);
+  const reasons = order.map((r) => ({ reason: r, label: FEED_QUARANTINE_LABEL[r] || r, count: byReason[r] || 0, examples: ex[r] || [] }));
+  return { total: items.length, byReason, line: parts.join('; '), examples: items.map((i) => i.name || '').filter(Boolean).slice(0, 5), reasons };
 }
 
 // ─── 11. 13E-3 legal boilerplate and price-reaction wording ──────────────────

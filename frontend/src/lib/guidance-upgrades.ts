@@ -17,7 +17,12 @@ import type {
   GuValuation, GuVerification, GuWindow, GuidanceEvent,
   GuRangeMath, GuRangeClass, GuEventV2, GuScoreItem, GuStage, GuDurabilityLevel, GuMetricBasis,
   GuClassification, GuSourceClaim, GuSourceConflict, GuPrimaryState,
+  GuTaxonomy, GuPipeline, GuPipelineCounts, GuPrimarySourceState, GuReviewItem, GuValidationIssue,
 } from './guidance-upgrades-types';
+import {
+  validateChanges, duplicatesAcrossEvents, splitByBasis, consensusLooksMismatched, financingVerdict, brokerWordIsCompanyName,
+  periodGrain, metricName as vMetricName,
+} from './guidance-upgrades-validate';
 
 export const DATA_UNAVAILABLE = 'DATA UNAVAILABLE';
 
@@ -25,13 +30,17 @@ export const DATA_UNAVAILABLE = 'DATA UNAVAILABLE';
 export const GU_THRESHOLDS = {
   GAP_LARGE_POSITIVE_PCT: 5,      // guidance mid >= +5% above consensus
   GAP_POSITIVE_PCT: 2,            // +2..+5%
-  GAP_INLINE_FLOOR_PCT: -0.5,     // -0.5..+2 inline; below -0.5 -> NEGATIVE
-  MAT_HIGH_PROFIT_PCT: 10,        // EPS / EBITDA / EBIT / net profit / FCF up >= 10% -> HIGH
-  MAT_HIGH_REVENUE_PCT: 5,        // revenue up >= 5% AND multi-metric -> HIGH
+  GAP_INLINE_FLOOR_PCT: -2,       // zzz854: -2..+2 is in line (neutral); only below -2% is NEGATIVE. A tiny gap never drives a decision.
+  // zzz854 materiality: from the size of the change in the headline (basis-preferred) metric, midpoint %:
+  MAT_HIGH_PROFIT_PCT: 10,        // EPS / EBITDA / EBIT / net profit / FCF midpoint up >= 10% -> HIGH
+  MAT_HIGH_REVENUE_PCT: 5,        // revenue midpoint up >= 5% -> HIGH (on its own)
+  MAT_HIGH_MARGIN_PP: 3,          // margin up >= 3pp -> HIGH
+  MAT_HIGH_VOLUME_PCT: 20,        // volume / order / backlog up >= 20% -> HIGH
   MAT_MED_PROFIT_PCT: 5,          // profit-like up >= 5% -> MEDIUM
-  MAT_MED_REVENUE_PCT: 3,         // revenue up >= 3% -> MEDIUM
+  MAT_MED_REVENUE_PCT: 2.5,       // revenue up >= 2.5% -> MEDIUM (so +0.3% / +2% stay LOW)
   MAT_MED_MARGIN_PP: 1,           // margin up >= 1pp -> MEDIUM
   MAT_MED_VOLUME_PCT: 10,         // volume / order / backlog up >= 10% -> MEDIUM
+  REPEAT_WINDOW_DAYS: 365,        // REPEATED UPGRADER: >= 1 PRIOR verified raise (earlier announcement) within this many days
   STRETCHED_PE: 40,               // current P/E at or above this = valuation already stretched (context)
   BIG_MOVE_7D_PCT: 15,            // move7dPct >= 15 -> wait for confirmation (only WATCHLIST vs DELAYED_EP)
   SECOND_RAISE_TOL_PCT: 0.5,      // second raise: before must equal previous after within 0.5%
@@ -365,6 +374,22 @@ const PAIR_SEP = /^\s*(?:,\s*and|,|and|&)\s*$/i;
 const PRIOR_CUE = /(?:\b(?:from|versus|vs\.?|compared (?:with|to)|against|previously|earlier|prior)(?:\s+(?:guidance|target|forecast))?(?:\s+(?:of|at|was|were))?)\s*$/i;
 const FLAT_BEFORE = /^\s*[\(,]?\s*(?:from|versus|vs\.?|previously|prior|compared (?:with|to)|earlier)\s+(?:a\s+|was\s+)?(flat|stable|zero)\b/i;
 
+/** zzz854: the words right around ONE figure: its own period ("$71.1M in Q2 FY26"), a single-quarter tie ("in the quarter", "Q2 revenue of"),
+ *  or a reported-result cue ("reported", "a year ago"). Used only for the OLD figure of a comparison. */
+const FIG_AFTER_QUARTER = /^\s*[\),]?\s*(?:in|for|during)\s+(?:the\s+)?(?:(?:first|second|third|fourth|latest|last|previous|prior|june|september|december|march)[- ]quarter\b|quarter\b|three months\b|Q[1-4]\b(?!\s*(?:FY|F\.Y\.?)?\s*'?\d))/i;
+const FIG_BEFORE_QUARTER = /\b(?:quarterly|(?:first|second|third|fourth)[- ]quarter|Q[1-4])\s+(?:[\w-]+\s+){0,2}(?:of\s+|at\s+|was\s+)?$/i;
+const FIG_AFTER_ACTUAL = /^\s*(?:for\s+(?:Q[1-4]\s+)?FY\s?\d{2,4}\s*)?[\(\),]?\s*(?:(?:it\s+)?(?:reported|recorded|posted|achieved|delivered|generated)\b|(?:a\s+)?year[- ]ago\b|last year\b|in the (?:prior|previous|same) (?:year|quarter|period)\b|actual\b)/i;
+const FIG_BEFORE_ACTUAL = /\b(?:reported|recorded|posted|achieved|delivered|generated|actual)\s+(?:[\w-]+\s+){0,3}(?:of\s+|at\s+|was\s+)?$/i;
+function figureContext(sent: string, v: RawVal): { ownPeriod: string | null; quarter: boolean; actual: boolean } {
+  const after = sent.slice(v.end, v.end + 32); const before = sent.slice(Math.max(0, v.start - 32), v.start);
+  let ownPeriod: string | null = null;
+  const lead = /^\s*[\),]?\s*(?:in|for|during)\s+(?:the\s+)?/i.exec(after);
+  if (lead) { const p = periodOf(after.slice(lead[0].length, lead[0].length + 14), 0, ''); if (p) ownPeriod = p; }
+  const quarter = FIG_AFTER_QUARTER.test(after) || (FIG_BEFORE_QUARTER.test(before) && !/guid|outlook|forecast|target/i.test(before.slice(-24)));
+  const actual = FIG_AFTER_ACTUAL.test(after) || FIG_BEFORE_ACTUAL.test(before);
+  return { ownPeriod: ownPeriod && ownPeriod !== 'UNSTATED' ? ownPeriod : null, quarter: quarter && !(ownPeriod && periodGrain(ownPeriod) !== 'QUARTER'), actual };
+}
+
 function extractFromSentence(sent: string, fallbackPeriod: string): GuChange[] {
   const vals = findValues(sent);
   if (!vals.length) return [];
@@ -383,7 +408,7 @@ function extractFromSentence(sent: string, fallbackPeriod: string): GuChange[] {
     return after ?? null;
   };
 
-  const finish = (kw: Kw, beforeV: RawVal | null, afterV: RawVal, flatBefore: boolean, from: number, to: number) => {
+  const finish = (kw: Kw, beforeV: RawVal | null, afterV: RawVal, flatBefore: boolean, from: number, to: number, synthetic = false) => {
     let metric = kw.metric;
     let pct = afterV.pct || (beforeV?.pct ?? false);
     // metric / unit sanity
@@ -408,6 +433,13 @@ function extractFromSentence(sent: string, fallbackPeriod: string): GuChange[] {
       before = { metric, period, low: 0, high: 0, midpoint: 0, isGrowthRate: true, unit: '%', basis, raw: 'flat' };
     } else if (beforeV) {
       before = makePoint(metric, period, beforeV, target, cur, pct, basis, sent.slice(beforeV.start, beforeV.end).trim());
+      // zzz854: the old figure's OWN words: a period of its own, a single quarter, or a reported result (never assumed to be guidance)
+      if (!synthetic) {
+        const fc = figureContext(sent, beforeV);
+        if (fc.ownPeriod && fc.ownPeriod !== period) before.period = fc.ownPeriod;
+        if (fc.quarter) before.grain = 'QUARTER';
+        if (fc.actual) before.valueKind = 'ACTUAL';
+      }
     }
     if (before && span) { before.periodKind = 'MULTI_YEAR_CAGR'; if (span.years) before.periodYears = span.years; }
     // plausibility
@@ -480,7 +512,7 @@ function extractFromSentence(sent: string, fallbackPeriod: string): GuChange[] {
     // a single range "from $10.0 to $10.8 billion" (sep 'to', preceded by 'from', nothing after) = before -> after
     if (kw && v.sep === 'to' && /\bfrom\s*$/i.test(winBefore) && !(nxt && LINK_TOKEN.test(sent.slice(v.end, nxt.start)))) {
       const b: RawVal = { ...v, hi: v.lo, end: v.start + 1 }; const a: RawVal = { ...v, lo: v.hi, start: v.start + 1 };
-      used.add(i); finish(kw, b, a, false, v.start, v.end); continue;
+      used.add(i); finish(kw, b, a, false, v.start, v.end, true); continue;
     }
     // lone value: only with a metric keyword and a "to / of / at / now" cue right before it
     if (kw && /(?:\bto|\bof|\bat|\bbe|\btargets?|\bbetween|\baround|\babout|:|\bnow|\bsees?|\bexpects?)\s*$/i.test(winBefore.replace(/[$₹€£]|Rs\.?\s*$/gi, '').trimEnd() + ' ')
@@ -529,6 +561,9 @@ function analystSubjectBefore(sent: string, idx: number): boolean {
   const re = new RegExp(ANALYST_RE.source, 'gi'); let m: RegExpExecArray | null; let last: RegExpExecArray | null = null;
   while ((m = re.exec(seg)) !== null) last = m;
   if (!last) return false;
+  // zzz854: a broker word inside the company's own name ('Abercrombie & Fitch', 'Citi Trends') is not an analyst subject
+  const base = Math.max(0, idx - 35);
+  if (brokerWordIsCompanyName(sent, base + last.index, last[0].length)) return false;
   const tail = seg.slice(last.index + last[0].length);
   return !/\b(after|as|following|because|when|while|but|say|says|said|note|notes|noted|after)\b/i.test(tail);
 }
@@ -603,7 +638,21 @@ const COMPANY_CUE = /\b(company|management|the firm|guid\w*|outlook|now expects?
 
 /** INCLUDE only management-issued raises. Earnings beats, analyst/broker actions, price targets, price moves,
  *  government news, contracts without a guidance change, rumours, reiterated or cut guidance are excluded. */
-export function isGuidanceUpgradeCandidate(c: GuCandidate): { include: boolean; reason: string } {
+export function isGuidanceUpgradeCandidate(c: GuCandidate): { include: boolean; reason: string; taxonomy: GuTaxonomy } {
+  const r = isGuidanceUpgradeCandidate0(c);
+  return { ...r, taxonomy: taxonomyOfReason(r.include, r.reason) };
+}
+/** zzz854: the taxonomy a candidate-level verdict implies. An included candidate only CLAIMS a raise: the numbers decide the final taxonomy. */
+export function taxonomyOfReason(include: boolean, reason: string): GuTaxonomy {
+  if (include) return 'formal_upgrade';
+  if (/analyst|broker/i.test(reason)) return 'analyst_revision';
+  if (/cut or lowered/i.test(reason)) return 'downgrade';
+  if (/unchanged or reiterated/i.test(reason)) return 'reiteration';
+  if (/earnings beat/i.test(reason)) return 'earnings_beat';
+  if (/contract or order/i.test(reason)) return 'operational_disclosure';
+  return 'qualitative_commentary';
+}
+function isGuidanceUpgradeCandidate0(c: GuCandidate): { include: boolean; reason: string } {
   const text = `${c.title ?? ''}. ${c.text ?? ''}`.replace(/[ \t]+/g, ' ');
   const sents = splitSentences(text);
   let raised: string | null = null;
@@ -627,7 +676,9 @@ export function isGuidanceUpgradeCandidate(c: GuCandidate): { include: boolean; 
     return { include: true, reason: raised };
   }
   const t = text;
-  if (/(price targets?|target price|\bPT\b|buy rating|initiat\w+ coverage|downgrad\w+|upgrad\w+ (?:to|on)|analysts?\s+(?:rais|upgrad|lift|hik)\w*|brokerages?\s+(?:rais|upgrad|lift|hik)\w*|overweight|outperform rating)/i.test(t))
+  // zzz854: a broker / analyst as the subject of the raise verb ('Jefferies raises Zed FY27 EBITDA forecast') is an analyst revision
+  const brokerSubject = sents.some(s => { const m = /\b(?:rais|lift|hik|upgrad|boost|increas|revis)\w*/i.exec(s); return !!m && analystSubjectBefore(s, m.index); });
+  if (brokerSubject || /(price targets?|target price|\bPT\b|buy rating|initiat\w+ coverage|downgrad\w+|upgrad\w+ (?:to|on)|analysts?\s+(?:rais|upgrad|lift|hik)\w*|brokerages?\s+(?:rais|upgrad|lift|hik)\w*|overweight|outperform rating)/i.test(t))
     return { include: false, reason: 'Analyst or broker action (rating or price target), not company guidance' };
   if (RUMOUR.test(t)) return { include: false, reason: 'Rumour or social claim, not a company announcement' };
   if (/\b(?:cut|lower(?:s|ed)?|reduc\w+|trim\w*|slash\w*|withdr\w+|warn\w*)\b[^.;]{0,40}\b(?:guidance|outlook|forecasts?)\b|profit warning|guidance (?:cut|lowered|reduced|slashed)/i.test(t))
@@ -980,7 +1031,7 @@ export function computeImpacts(changes: GuChange[], ctx: GuContext): { revenueIm
       };
     } else ebitdaImpact = na('UNAVAILABLE', 'No EBITDA guidance, and no incremental revenue with a stated margin to estimate from');
   }
-  const ep = find(['EPS']) ?? find(['ADJ_EPS']);
+  const ep = find(['ADJ_EPS']) ?? find(['EPS']);   // zzz854: adjusted first (the emphasised basis)
   const epsImpact = ep ? diffNumber(ep, ep.metric === 'ADJ_EPS' ? 'adjusted EPS' : 'EPS') : na('UNAVAILABLE', 'No EPS guidance found');
   const fc = find(['FCF']);
   const fcfImpact = fc ? diffNumber(fc, 'free cash flow') : na('UNAVAILABLE', 'No free cash flow guidance found');
@@ -996,20 +1047,23 @@ export function valueAtUnchangedMultiple(epsBefore: number, epsAfter: number, pe
   return { before: round(epsBefore * pe, 4), after: round(epsAfter * pe, 4), pct: round(((epsAfter - epsBefore) / epsBefore) * 100, 2) };
 }
 export function computeValuation(ctx: GuContext, changes: GuChange[], opts?: { multipleSensitivityPct?: number }): GuValuation {
-  const ep = changes.find(c => (c.metric === 'EPS' || c.metric === 'ADJ_EPS') && c.before && c.before.midpoint != null && c.after.midpoint != null && c.direction !== 'UNKNOWN');
+  // zzz854: never mix bases — the adjusted EPS line is the headline when the company gives both; GAAP is never the 'earnings effect'
+  const okEp = (c: GuChange) => !!c.before && c.before.midpoint != null && c.after.midpoint != null && c.direction !== 'UNKNOWN';
+  const ep = changes.find(c => c.metric === 'ADJ_EPS' && okEp(c)) ?? changes.find(c => c.metric === 'EPS' && okEp(c));
+  const epWord = ep?.metric === 'ADJ_EPS' ? 'adjusted EPS' : ep?.after.basis === 'GAAP' ? 'GAAP EPS' : 'EPS';
   const pc = ctx.priceContext ?? {};
   const mk = (v: number | undefined, unit: string | undefined, src: string): GuNumber =>
     v != null && isFinite(v) ? { value: v, unit, label: 'REPORTED', source: src } : { value: null, label: 'UNAVAILABLE' };
   const epsUnit = ep ? unitOf(ep.after) : undefined;
-  const epsBefore: GuNumber = ep ? { value: ep.before!.midpoint, unit: epsUnit, label: 'COMPANY_GUIDANCE', source: `Old EPS guidance for ${ep.after.period}` } : na();
-  const epsAfter: GuNumber = ep ? { value: ep.after.midpoint, unit: epsUnit, label: 'COMPANY_GUIDANCE', source: `New EPS guidance for ${ep.after.period}` } : na();
+  const epsBefore: GuNumber = ep ? { value: ep.before!.midpoint, unit: epsUnit, label: 'COMPANY_GUIDANCE', source: `Old ${epWord} guidance for ${ep.after.period}` } : na();
+  const epsAfter: GuNumber = ep ? { value: ep.after.midpoint, unit: epsUnit, label: 'COMPANY_GUIDANCE', source: `New ${epWord} guidance for ${ep.after.period}` } : na();
   const currentPE = mk(pc.pe, 'x', 'Market data (context)');
   let earningsEffectPct: GuNumber = na('UNAVAILABLE', 'No EPS guidance change');
   if (ep && ep.before!.midpoint! > 0) {
     const pct = round(((ep.after.midpoint! - ep.before!.midpoint!) / ep.before!.midpoint!) * 100, 2);
     const vm = pc.pe != null ? valueAtUnchangedMultiple(ep.before!.midpoint!, ep.after.midpoint!, pc.pe) : null;
     earningsEffectPct = {
-      value: pct, unit: '%', label: 'MODEL_ESTIMATE', source: 'Our calculation from company EPS guidance',
+      value: pct, unit: '%', label: 'MODEL_ESTIMATE', source: `Our calculation from company ${epWord} guidance (basis: ${ep.metric === 'ADJ_EPS' ? 'adjusted' : ep.after.basis === 'GAAP' ? 'GAAP' : 'as stated'})`,
       formula: vm
         ? `(New EPS - old EPS) / old EPS = ${fmtNum(pct)}%. At ${fmtNum(pc.pe)}x, value per share moves ${fmtNum(vm.before)} to ${fmtNum(vm.after)}`
         : '(New EPS - old EPS) / old EPS, with the P/E multiple unchanged',
@@ -1040,13 +1094,14 @@ export function computeValuation(ctx: GuContext, changes: GuChange[], opts?: { m
 // ---------------------------------------------------------------------------------------------
 // 11. materiality
 // ---------------------------------------------------------------------------------------------
-/** Level comes from CALCULATED numbers only (raises only; cuts are ignored here).
- *  HIGH  : EPS / EBITDA / EBIT / net profit / FCF up >= 10%, OR revenue level up >= 5% together with another metric family.
- *  MEDIUM: any profit-like up >= 5%, revenue up >= 3%, margin up >= 1pp, volume/order/backlog up >= 10%.
+/** Level comes from CALCULATED numbers only (raises only; cuts are ignored here), on the headline basis (adjusted preferred over GAAP).
+ *  zzz854 HIGH  : EPS / EBITDA / EBIT / net profit / FCF midpoint up >= 10%, revenue midpoint up >= 5%, margin up >= 3pp, volume/order/backlog up >= 20%.
+ *  MEDIUM: any profit-like up >= 5%, revenue up >= 2.5%, margin up >= 1pp, volume/order/backlog up >= 10%.
  *  LOW   : numbers exist but below those lines. UNKNOWN: no before/after numbers at all.
  *  Growth-rate guidance is converted to a revenue level change: (1+new g)/(1+old g) - 1. */
 export function materiality(changes: GuChange[]): { level: GuMateriality; basis: string } {
-  const calc = changes.filter(c => c.before && c.direction !== 'UNKNOWN' && c.after.midpoint != null && c.before.midpoint != null);
+  // zzz854: basis-aware — when a measure is given both adjusted and GAAP, only the adjusted (headline) line sizes the change
+  const calc = splitByBasis(changes.filter(c => c.before && c.direction !== 'UNKNOWN' && c.after.midpoint != null && c.before.midpoint != null)).headline;
   if (!calc.length) return { level: 'UNKNOWN', basis: 'No before and after guidance numbers found, so nothing can be calculated' };
   const parts: string[] = [];
   let revPct: number | null = null; let profitMax: number | null = null; let marginPp: number | null = null; let volMax: number | null = null;
@@ -1078,7 +1133,9 @@ export function materiality(changes: GuChange[]): { level: GuMateriality; basis:
   }
   const basis = parts.join('; ');
   const multi = fams.size >= 2;
-  if ((profitMax != null && profitMax >= T.MAT_HIGH_PROFIT_PCT) || (revPct != null && revPct >= T.MAT_HIGH_REVENUE_PCT && multi)) return { level: 'HIGH', basis };
+  void multi;
+  if ((profitMax != null && profitMax >= T.MAT_HIGH_PROFIT_PCT) || (revPct != null && revPct >= T.MAT_HIGH_REVENUE_PCT)
+    || (marginPp != null && marginPp >= T.MAT_HIGH_MARGIN_PP) || (volMax != null && volMax >= T.MAT_HIGH_VOLUME_PCT)) return { level: 'HIGH', basis };
   if ((profitMax != null && profitMax >= T.MAT_MED_PROFIT_PCT) || (revPct != null && revPct >= T.MAT_MED_REVENUE_PCT) || (marginPp != null && marginPp >= T.MAT_MED_MARGIN_PP)
     || (volMax != null && volMax >= T.MAT_MED_VOLUME_PCT)) return { level: 'MEDIUM', basis };
   return { level: 'LOW', basis };
@@ -1140,14 +1197,26 @@ export function statedDeterioration(text: string, history: GuLedgerRow[] = []): 
   return DETERIORATION.test(text ?? '') || history.some(r => isDown(r) && (r.metric === 'OP_MARGIN' || r.metric === 'FCF' || r.metric === 'FCF_CONVERSION'));
 }
 const MATRANK: Record<GuMateriality, number> = { HIGH: 3, MEDIUM: 2, LOW: 1, UNKNOWN: 0 };
+/** zzz854: distinct EARLIER announcement dates (before `date`, within REPEAT_WINDOW_DAYS) on which the ledger recorded a raise. Several metrics raised on one day = one raise. */
+export function priorRaiseDates(history: readonly GuLedgerRow[], date: string): string[] {
+  const d0 = String(date || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d0)) return [];
+  const from = new Date(Date.parse(`${d0}T00:00:00Z`) - GU_THRESHOLDS.REPEAT_WINDOW_DAYS * 86_400_000).toISOString().slice(0, 10);
+  const out = new Set<string>();
+  for (const r of history ?? []) { const d = String(r.date || '').slice(0, 10); if (isUp(r) && d < d0 && d >= from) out.add(d); }
+  return [...out].sort();
+}
 export function computeFlags(x: {
   verified: boolean; changes: GuChange[]; history: GuLedgerRow[]; historyStats: GuHistoryStats | null; text: string;
   gap: GuGap; materiality: GuMateriality; bottleneckThemes?: string[]; structuralAlignment?: string; secondUpgrade?: boolean;
+  /** zzz854: the current announcement date. When given, REPEATED UPGRADER needs >= 1 PRIOR raise (an earlier announcement date within REPEAT_WINDOW_DAYS); the current event's own rows never count. */
+  announcementDate?: string;
 }): GuFlag[] {
   const flags: GuFlag[] = [];
   const raise = x.changes.some(c => c.direction === 'UP' && !!c.before);
   if (x.secondUpgrade) flags.push('SECOND_UPGRADE_IN_WINDOW');
-  if (x.historyStats && x.historyStats.upgrades >= 2 && !statedDeterioration(x.text, x.history) && x.verified) flags.push('REPEATED_UPGRADER');
+  const repeated = x.announcementDate ? priorRaiseDates(x.history, x.announcementDate).length >= 1 : !!x.historyStats && x.historyStats.upgrades >= 2;
+  if (repeated && raise && !statedDeterioration(x.text, x.history) && x.verified) flags.push('REPEATED_UPGRADER');
   if (raise && (x.gap === 'LARGE_POSITIVE' || x.gap === 'POSITIVE') && MATRANK[x.materiality] >= MATRANK.MEDIUM) flags.push('GUIDANCE_PLUS_GAP');
   if (raise && (x.bottleneckThemes?.length ?? 0) > 0 && (x.structuralAlignment ?? '').trim().length > 0 && MATRANK[x.materiality] >= MATRANK.MEDIUM) flags.push('GUIDANCE_PLUS_BOTTLENECK');
   return flags;
@@ -1207,43 +1276,63 @@ export function eventClassOf(changes: readonly GuChange[], ranges?: readonly GuR
 const classOfEvent = (e: Pick<GuidanceEvent, 'changes' | 'v2'>): GuEventClass => e.v2?.eventClass ?? eventClassOf(e.changes, e.v2?.ranges);
 const comparedChanges = (e: Pick<GuidanceEvent, 'changes'>) => e.changes.filter((c) => !!c.before && c.direction !== 'UNKNOWN');
 
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** zzz854: when the next check lands: the guided quarter's own results, else the next quarterly results (~announcement + 3 months). */
+export function nextResultsWindow(e: Pick<GuidanceEvent, 'announcement_date'>, c: GuChange): string {
+  if (periodGrain(c.after.period) === 'QUARTER') return `${c.after.period} results`;
+  const t0 = Date.parse(`${String(e.announcement_date || '').slice(0, 10)}T00:00:00Z`);
+  if (!Number.isFinite(t0)) return 'Next quarterly results';
+  const t = new Date(t0 + 91 * 86_400_000);
+  return `Next quarterly results (~${MON[t.getUTCMonth()]} ${t.getUTCFullYear()})`;
+}
+/** zzz854: metric + direction + window + source. A run-rate is the guided low end / 4 (simple average, labelled), never a forecast. */
+export function trackingLine(e: Pick<GuidanceEvent, 'announcement_date'>, c: GuChange): string {
+  const win = nextResultsWindow(e, c); const p = c.after.period === 'UNSTATED' ? 'the guided period' : periodWords(c.after);
+  const g = fmtPoint(c.after); const name = metricLabel(c);
+  const src = "source: the company's next results release";
+  if (c.after.isGrowthRate) return `${win}: ${name} at or above the guided ${g} for ${p} — ${src}.`;
+  const grain = periodGrain(c.after.period);
+  if (grain === 'QUARTER') return `${win}: ${name} at or above the guided ${g} — ${src}.`;
+  if (grain === 'ANNUAL' && c.after.low != null && c.after.low > 0 && c.after.periodKind !== 'MULTI_YEAR_CAGR') {
+    const q4 = round(c.after.low / 4, 4);
+    const q = { ...c.after, low: q4, high: q4, midpoint: q4 };
+    return `${win}: quarterly ${name} of about ${fmtPoint(q)} or more (guided low end ÷ 4, seasonality not considered) to stay on track for the guided ${g} for ${p} — ${src}.`;
+  }
+  return `${win}: ${name} tracking toward the guided ${g} for ${p} — ${src}.`;
+}
+
 export function buildNextEvidence(e: GuidanceEvent): string[] {
   const ups = upChanges(e);
   // zzz849: numbers WERE extracted (unchanged or lowered): the next check is tracking, not "wait for numbers"
-  const tracked = ups.length ? ups : comparedChanges(e);
-  if (!tracked.length) return ['Wait for the company to publish clear before and after guidance numbers.'];
-  const driverSpecific = e.v2 ? nextEvidenceFor(e.v2.operatingVariable) : [];
-  if (driverSpecific.length) {
-    const out2 = driverSpecific.slice(0, 2);
-    // zzz853: once a primary document confirmed the raise, the first check is tied to the guided range itself
-    if (e.verification === 'VERIFIED' && ups.length) {
-      const c0 = ups.slice().sort((a, b) => METRIC_PRIORITY.indexOf(a.metric) - METRIC_PRIORITY.indexOf(b.metric))[0];
-      const p0 = c0.after.period === 'UNSTATED' ? 'the guided period' : c0.after.period;
-      out2[0] = `${out2[0]}, as confirmation of progress toward the guided ${metricLabel(c0)} ${fmtPoint(c0.after)} for ${p0}`;
-    }
-    return out2;
+  const tracked = (ups.length ? ups : comparedChanges(e)).slice().sort((a, b) => (ups.length ? METRIC_PRIORITY.indexOf(a.metric) - METRIC_PRIORITY.indexOf(b.metric) : narrativeRank(a) - narrativeRank(b)));
+  if (!tracked.length) {
+    const ms = e.v2?.statedMetrics?.length ? ` for ${e.v2.statedMetrics.join(', ')}` : '';
+    const d = String(e.primarySourceDate || e.announcement_date || '').slice(0, 10);
+    return [`Primary document (${sourceDocumentOf(e)}${d ? `, ${d}` : ''}): confirm the old and new guidance figures${ms} for the same period and basis.`];
   }
-  const out: string[] = [];
-  const line = (c: GuChange): string => {
-    const g = fmtPoint(c.after); const p = c.after.period === 'UNSTATED' ? 'the guided period' : c.after.period;
-    switch (c.metric) {
-      case 'REVENUE': return `Next quarter revenue tracks toward the guided ${g} for ${p}.`;
-      case 'REVENUE_GROWTH': case 'ORGANIC_GROWTH': return `Next quarter revenue growth at or above the guided ${g}.`;
-      case 'EPS': case 'ADJ_EPS': return `Next quarter EPS keeps pace with the guided ${g} for ${p}.`;
-      case 'EBITDA': return `Next quarter EBITDA keeps pace with the guided ${g} for ${p}.`;
-      case 'OP_MARGIN': return `Operating margin at or above the guided ${g}.`;
-      case 'FCF': case 'FCF_CONVERSION': return `Free cash flow keeps pace with the guided ${g}.`;
-      case 'BACKLOG': case 'ORDER_INTAKE': return `Order backlog or intake stays at or above the guided ${g}.`;
-      default: return `${metricLabel(c)} stays at or above the guided ${g} for ${p}.`;
-    }
-  };
-  const first = tracked.slice().sort((a, b) => (ups.length ? METRIC_PRIORITY.indexOf(a.metric) - METRIC_PRIORITY.indexOf(b.metric) : narrativeRank(a) - narrativeRank(b)));
-  out.push(line(first[0]));
-  if (first[1]) out.push(line(first[1])); else out.push(ups.length ? 'The company repeats or raises this guidance again at the next update.' : 'Watch whether the company raises this guidance at the next update.');
+  const out: string[] = [trackingLine(e, tracked[0])];
+  const driverSpecific = e.v2 ? nextEvidenceFor(e.v2.operatingVariable) : [];   // only when the operating variable is stated in the source
+  if (driverSpecific.length) out.push(`${driverSpecific.slice(0, 2).join('; ')} (stated driver: ${e.v2!.operatingVariable})`);
+  else if (tracked[1]) out.push(trackingLine(e, tracked[1]));
+  else {
+    const c = tracked[0]; const p = c.after.period === 'UNSTATED' ? 'the guided period' : periodWords(c.after);
+    out.push(`Next guidance update: whether the company ${ups.length ? 'repeats or raises' : 'raises'} the ${metricLabel(c)} guidance for ${p} (${fmtPoint(c.after)}) — source: the next results release or guidance update.`);
+  }
   return out.slice(0, 2);
 }
 
-export const WHY_NOW_UNRESOLVED = 'Driver unresolved after primary-source + recent-event research';
+export const WHY_NOW_UNRESOLVED = 'Driver unresolved after primary-source + recent-event research';   // kept for old imports; zzz854 never emits it
+/** zzz854: the document the claim was read from: the primary source when there is one, else the first source. */
+export function sourceDocumentOf(e: Pick<GuidanceEvent, 'sources'>): string {
+  const p = e.sources.find(s => s.tier === 'PRIMARY') ?? e.sources[0];
+  if (!p) return 'the source';
+  return p.type && p.type !== p.name && !p.name.toLowerCase().includes(p.type.toLowerCase()) ? `${p.name} (${p.type})` : p.name;
+}
+/** zzz854: dated and specific when no driver is stated: 'Why now: guidance raised on 2026-09-30 in <document>; driver not stated in the release'. */
+export function driverNotStatedLine(e: Pick<GuidanceEvent, 'sources' | 'announcement_date' | 'primarySourceDate'>, verb = 'raised'): string {
+  const d = String(e.primarySourceDate || e.announcement_date || '').slice(0, 10) || 'an unstated date';
+  return `Why now: guidance ${verb} on ${d} in ${sourceDocumentOf(e)}; driver not stated in the release`;
+}
 function driverPhrase(e: GuidanceEvent): string | null {
   const v = e.v2?.operatingVariable;
   if (e.guidance_quality === 'UNKNOWN' || /not stated|unresolved|^stated operating/i.test(e.guidance_driver)) return v ? `driven by ${v}` : null;
@@ -1269,16 +1358,17 @@ export function buildWhyNow(e: GuidanceEvent): string {
   }
   if (!ups.length && e.v2?.statedDirection === 'RAISED') {
     const sm = e.v2.statedMetrics?.length ? ` ${e.v2.statedMetrics.join(', ')}` : '';
-    return `${e.company} raised its${sm} guidance (direction stated by the source), but the source gives no before and after numbers (${DATA_UNAVAILABLE}). Shown as detected, not verified.${!e.v2.whyNowResolved ? ` ${WHY_NOW_UNRESOLVED}.` : ''}`;
+    return `${e.company} raised its${sm} guidance (direction stated by the source), but the source gives no before and after numbers (${DATA_UNAVAILABLE}). Held for review, not verified. ${driverNotStatedLine(e)}.`;
   }
-  if (!ups.length) return `${e.company} raised its guidance, but the source does not give clear before and after numbers (${DATA_UNAVAILABLE}).${e.v2 && !e.v2.whyNowResolved ? ` ${WHY_NOW_UNRESOLVED}.` : ''}`;
+  if (!ups.length) return `${e.company} raised its guidance, but the source does not give clear before and after numbers (${DATA_UNAVAILABLE}). ${driverNotStatedLine(e)}.`;
   const c = ups.slice().sort((a, b) => METRIC_PRIORITY.indexOf(a.metric) - METRIC_PRIORITY.indexOf(b.metric))[0];
   const period = c.after.period === 'UNSTATED' ? '' : ` for ${periodWords(c.after)}`;
   const more = ups.length > 1 ? ` (plus ${ups.length - 1} more measure${ups.length > 2 ? 's' : ''})` : '';
   const dp = driverPhrase(e);
   const ci = e.changes.indexOf(c); const kl = e.v2?.ranges[ci]?.klass;
-  if (kl === 'MIDPOINT_RAISE_RANGE_NARROWING') return `${e.company} moved the midpoint of ${metricLabel(c)} guidance${period} up, to ${fmtPoint(c.after)} from ${fmtPoint(c.before)}, but narrowed the range (top end cut)${dp ? `, ${dp}.` : `. ${WHY_NOW_UNRESOLVED}.`}`;
-  return `${e.company} raised ${metricLabel(c)} guidance${period} to ${fmtPoint(c.after)} from ${fmtPoint(c.before)}${more}${dp ? `, ${dp}.` : `. ${WHY_NOW_UNRESOLVED}.`}`;
+  const basisWord = e.headlineBasis === 'ADJUSTED' && c.metric !== 'ADJ_EPS' && c.after.basis === 'NON_GAAP' ? 'adjusted ' : '';
+  if (kl === 'MIDPOINT_RAISE_RANGE_NARROWING') return `${e.company} moved the midpoint of ${basisWord}${metricLabel(c)} guidance${period} up, to ${fmtPoint(c.after)} from ${fmtPoint(c.before)}, but narrowed the range (top end cut)${dp ? `, ${dp}.` : `. ${driverNotStatedLine(e, 'changed')}.`}`;
+  return `${e.company} raised ${basisWord}${metricLabel(c)} guidance${period} to ${fmtPoint(c.after)} from ${fmtPoint(c.before)}${more}${dp ? `, ${dp}.` : `. ${driverNotStatedLine(e)}.`}`;
 }
 
 export function whatItMeans(e: GuidanceEvent): string {
@@ -1325,7 +1415,7 @@ export function chain(e: GuidanceEvent): GuChain {
   const pe = e.valuation?.currentPE.value;
   const first = e.decisionReason[0] ?? '';
   return {
-    event: buildWhyNow(e).replace(/(?:, driven by|\. Driver unresolved).*$/, '.'),
+    event: buildWhyNow(e).replace(/(?:, driven by|\. Driver unresolved|\. Why now:).*$/, '.'),
     evidence: e.verification === 'VERIFIED'
       ? `Confirmed by ${e.sources.filter(s => s.tier === 'PRIMARY').map(s => s.name).slice(0, 2).join(' and ')}.`
       : `Not confirmed by a primary source yet. ${e.sources.length} source${e.sources.length === 1 ? '' : 's'} so far.`,
@@ -1353,8 +1443,9 @@ function reasonLines(e: GuidanceEvent, ctx: GuContext | undefined, thesisBreakin
   const earnings = `Earnings effect: ${e.materialityBasis || DATA_UNAVAILABLE} (materiality ${e.materiality}).`;
   const gap = e.expectationGap === 'UNKNOWN' ? `Expectations: ${DATA_UNAVAILABLE} (no consensus, so the gap is unknown, not negative).`
     : `Expectations: guidance is ${e.expectationGap.replace('_', ' ').toLowerCase()} versus consensus${e.gapPct != null ? ` (${signed(e.gapPct, 1)}%)` : ''}.`;
+  void move;
   const val = pe == null ? 'Valuation: valuation data unavailable.'
-    : `Valuation: P/E ${fmtNum(pe)}x${pe >= GU_THRESHOLDS.STRETCHED_PE ? ' (stretched)' : ''}.` + (move != null ? ` Price context only: ${signed(move, 1)}% in 7 days.` : '');
+    : `Valuation: P/E ${fmtNum(pe)}x${pe >= GU_THRESHOLDS.STRETCHED_PE ? ' (stretched)' : ''}.`;
   const dur = `Durability: ${e.duration === 'UNKNOWN' ? 'not stated in the source' : e.duration.replace('_', ' ').toLowerCase()}; driver quality ${e.guidance_quality.toLowerCase()}.`;
   const risk = `Risk: ${thesisBreaking ? 'source states margin or cash flow pressure. ' : ''}${e.risks[0] ?? 'none stated'}`;
   return [changed, earnings, gap, val, dur, risk];
@@ -1371,31 +1462,28 @@ export function decide(e: GuidanceEvent, ctx?: GuContext, x?: { thesisBreaking?:
   const ups = upChanges(e);
   const v2Lines = v2DecisionLines(e);
   const reject = (why: string) => ({ decision: 'REJECT' as GuDecision, reasons: [...lines, ...v2Lines, `Result: REJECT — ${why}`] });
+  // zzz854: REJECT is reserved for lowered / invalid / stale / capital-raise items. A verified raise is never rejected for a small size,
+  // a one-time driver or a small or negative consensus gap: those cap it at WATCHLIST with the reason. No numbers = no decision.
+  const watch = (why: string) => ({ decision: 'WATCHLIST' as GuDecision, reasons: [...lines, ...v2Lines, `Result: WATCHLIST — ${why}`] });
   if (!ups.length) {
     const k = classOfEvent(e);
-    if (k === 'REITERATION') return reject('guidance was reiterated at the same level, not raised');
+    if (k === 'REITERATION') return watch('guidance was reiterated at the same level; nothing new, tracked only (not an upgrade)');
     if (k === 'DOWNGRADE') return reject('guidance was lowered, not raised');
-    if (k === 'NO_RAISE') return reject('no measure was raised on the numbers found');
-    return reject(`no measurable upgrade (previous guidance not found${e.v2?.unitWarnings.length ? '; a figure was dropped for a unit or basis problem, see warnings' : ''})`);
+    if (k === 'NO_RAISE') return watch('no measure was raised on the numbers found (range changed only); tracked, not an upgrade');
+    return { decision: 'UNVERIFIED', reasons: [`No decision — old and new guidance numbers were not both found${e.v2?.unitWarnings.length ? '; a figure was dropped for a unit or basis problem, see warnings' : ''}`, ...lines] };
   }
-  if (e.guidance_quality === 'LOW') return reject('the raise comes from a low-quality, one-time driver');
-  if (e.duration === 'ONE_OFF') return reject('the raise is one-off');
-  if (e.expectationGap === 'NEGATIVE') return reject('guidance is still below consensus');
-  if (e.materiality === 'LOW') {
-    const famsUp = new Set(ups.map(familyOf));
-    if (famsUp.size >= 2 && e.guidance_quality !== 'UNKNOWN') {
-      return { decision: 'WATCHLIST', reasons: [...lines, ...v2Lines, `Result: WATCHLIST — each raise is small (${e.materialityBasis}), but several measures moved together and the driver is stated, so it is tracked rather than rejected`] };
-    }
-    return reject(`small raise (${e.materialityBasis}); it is below the size lines for a real earnings effect and nothing else offsets that (one measure only, or driver not clearly strong)`);
-  }
-  if (e.materiality === 'UNKNOWN') return reject('no numbers to measure the earnings effect');
+  if (e.guidance_quality === 'LOW') return watch('the raise leans on a low-quality, one-time driver, so it is tracked rather than acted on');
+  if (e.duration === 'ONE_OFF') return watch('the stated driver is one-off, so it is tracked rather than acted on');
+  if (e.expectationGap === 'NEGATIVE') return watch(`guidance rose but is still clearly below consensus (${e.gapPct != null ? signed(e.gapPct, 1) + '%' : DATA_UNAVAILABLE}); tracked, not rejected`);
+  if (e.materiality === 'LOW') return watch(`small raise (${e.materialityBasis}); below the size lines for a real earnings effect, so it is tracked`);
+  if (e.materiality === 'UNKNOWN') return { decision: 'UNVERIFIED', reasons: ['No decision — no numbers to measure the earnings effect', ...lines] };
 
   const strongFund = e.materiality === 'HIGH' || (e.materiality === 'MEDIUM' && e.expectationGap === 'LARGE_POSITIVE');
   const durable = e.duration === 'MULTI_QUARTER' || e.duration === 'MULTI_YEAR';
   const core = strongFund && gapPos && e.guidance_quality === 'HIGH' && durable && !thesisBreaking;
   const pe = e.valuation?.currentPE.value ?? null; const peKnown = pe != null && pe > 0;
   const stretched = peKnown && (pe as number) >= T.STRETCHED_PE;
-  const bigMove = (ctx?.priceContext?.move7dPct ?? 0) >= T.BIG_MOVE_7D_PCT;   // price context: only chooses WATCHLIST vs DELAYED_EP
+  const bigMove = false;   // zzz854: price is never used in a decision (the 7-day move is context only and no longer read here)
   const realRaise = hasRealRaise(e);
   if (core && peKnown && !stretched && !realRaise) return { decision: 'WATCHLIST', reasons: [...lines, ...v2Lines, 'Result: WATCHLIST — everything else lines up, but the raise is not clean (midpoint only, or before/after not comparable), so it is capped at WATCHLIST until the low end of the range moves up'] };
   if (core && peKnown && !stretched) return { decision: 'IMMEDIATE_BUY', reasons: [...lines, ...v2Lines, 'Result: IMMEDIATE_BUY — verified, material, above consensus, high-quality and lasting driver, valuation not stretched'] };
@@ -1582,8 +1670,10 @@ export function assessDurability(text: string, changes: GuChange[], driver: GuDr
   // being mentioned is not evidence that it reverses; without that statement the answer is "unknown, not enough evidence".
   if (driver.kinds.some(k => k === 'FX' || k === 'TEMP_SUPPLY' || k === 'ONE_OFF_PRICING' || k === 'PRICE_HIKE' || k === 'COMMODITY') && SHORT_LIVED_RE.test(t))
     return { level: '1_2_QUARTERS', why: 'The source says the driver (currency, prices, supply or commodities) is temporary or short-lived, so it can reverse within a quarter or two.' };
-  void changes;
-  return { level: 'UNKNOWN_INSUFFICIENT_EVIDENCE', why: 'No new capacity, multi-year contract or order backlog is stated, so how long this lasts is unknown (not assumed brief).' };
+  // zzz854: specific to the guided figure, not a generic line
+  const c0 = changes.find(c => c.direction === 'UP' && !!c.before) ?? changes[0];
+  const what = c0 ? `the guided ${c0.after.period && c0.after.period !== 'UNSTATED' ? `${c0.after.period} ` : ''}${metricLabel(c0)}` : 'the guided figure';
+  return { level: 'UNKNOWN_INSUFFICIENT_EVIDENCE', why: `The source ties no new capacity, multi-year contract or order backlog to ${what}, so how long this lasts is unknown (not assumed brief).` };
 }
 const DUR_FROM_LEVEL: Record<GuDurabilityLevel, GuDuration> = { ONE_OFF: 'ONE_OFF', '1_2_QUARTERS': 'UNKNOWN', MULTI_QUARTER: 'MULTI_QUARTER', MULTI_YEAR: 'MULTI_YEAR', STRUCTURAL: 'MULTI_YEAR', UNKNOWN_INSUFFICIENT_EVIDENCE: 'UNKNOWN' };
 
@@ -1649,7 +1739,8 @@ function v2DecisionLines(e: GuidanceEvent): string[] {
   else if (v.ranges.some(r => r.floorAboveOldCeiling)) out.push('Range check: FLOOR ABOVE OLD CEILING. The new low end is above the old high end (strongest kind of raise).');
   else if (v.ranges.some(r => r.klass === 'CLEAN_RAISE')) out.push('Range check: the low and high ends of the guided range both moved up (clean raise).');
   if (v.unitWarnings.length) out.push(`Warnings: ${v.unitWarnings.join(' ')}`);
-  out.push(v.whyNowResolved ? `Why now: ${v.operatingVariable ?? e.guidance_driver}.` : `Why now: ${WHY_NOW_UNRESOLVED}.`);
+  const stated = v.operatingVariable || (e.guidance_quality !== 'UNKNOWN' && !/not stated/i.test(e.guidance_driver));
+  out.push(stated ? `Why now: ${v.operatingVariable ?? e.guidance_driver}.` : `${driverNotStatedLine(e, classOfEvent(e) === 'UPGRADE' ? 'raised' : 'updated')}.`);
   out.push(`Durability evidence: ${v.durabilityLevel.replace(/_/g, ' ').toLowerCase()} — ${v.durabilityWhy}`);
   return out;
 }
@@ -1717,7 +1808,12 @@ export const LABEL_NO_NUMBERS = 'DETECTED, NUMBERS NOT FOUND';
  * REITERATION = every compared measure unchanged. DOWNGRADE = lowered. DETECTED = no before and after numbers.
  * 'GUIDANCE UPGRADE' is the label ONLY for a VERIFIED RAISE. Anything that is not a clean raise is `auditOnly` and never an upgrade.
  */
-export function classifyEvent(e: Pick<GuidanceEvent, 'changes' | 'v2' | 'verification'>): { classification: GuClassification; displayLabel: string; auditOnly: boolean; auditNote?: string; isUpgrade: boolean } {
+export const LABEL_REVIEW: Record<NonNullable<GuPipeline['reviewStatus']>, string> = {
+  awaiting_numbers: 'AWAITING NUMBERS', awaiting_primary: 'AWAITING PRIMARY SOURCE', needs_review: 'NEEDS REVIEW', invalid: 'INVALID COMPARISON',
+  stale: 'STALE PERIOD', capital_raise: 'CAPITAL RAISE (NOT GUIDANCE)', first_guidance: 'FIRST GUIDANCE (NOT A RAISE)', not_guidance: 'NOT GUIDANCE',
+};
+type ClassifyInput = Pick<GuidanceEvent, 'changes' | 'v2' | 'verification'> & Partial<Pick<GuidanceEvent, 'pipeline' | 'taxonomy' | 'otherChanges' | 'company' | 'announcement_date'>>;
+export function classifyEvent(e: ClassifyInput): { classification: GuClassification; displayLabel: string; auditOnly: boolean; auditNote?: string; isUpgrade: boolean } {
   const cls = e.v2?.eventClass ?? eventClassOf(e.changes, e.v2?.ranges);
   const verified = e.verification === 'VERIFIED';
   let classification: GuClassification;
@@ -1725,22 +1821,246 @@ export function classifyEvent(e: Pick<GuidanceEvent, 'changes' | 'v2' | 'verific
     const ups = e.changes.map((c, i) => ({ c, r: e.v2?.ranges[i] })).filter(x => x.c.direction === 'UP' && !!x.c.before);
     const clean = ups.some(x => !!x.r && REAL_RAISE.has(x.r.klass)) || (!e.v2 && ups.length > 0);
     classification = clean ? 'RAISE' : 'MIXED';
+    if (e.taxonomy === 'mixed_range_change') classification = 'MIXED';   // zzz854: a raise next to a cut in the same release is mixed, never a clean raise
   } else if (cls === 'REITERATION') classification = 'REITERATION';
   else if (cls === 'DOWNGRADE') classification = 'DOWNGRADE';
   else if (cls === 'NO_RAISE') classification = 'MIXED';
   else classification = 'DETECTED';
+  const pl = e.pipeline;
+  if (pl) {
+    // zzz854: the label follows the pipeline: GUIDANCE UPGRADE only for a verified formal upgrade (a main card)
+    const auditOnly = pl.status === 'AUDIT' || (classification !== 'RAISE' && classification !== 'DETECTED');
+    const displayLabel = pl.status === 'CARD' ? LABEL_UPGRADE
+      : pl.status === 'AUDIT' ? (classification === 'REITERATION' ? LABEL_REITERATION : classification === 'DOWNGRADE' ? LABEL_LOWERED : LABEL_MIXED)
+      : pl.bucket === 'unverified' ? LABEL_UNVERIFIED : pl.reviewStatus ? LABEL_REVIEW[pl.reviewStatus] : LABEL_UNVERIFIED;
+    const isUpgrade = classification === 'RAISE' && e.taxonomy === 'formal_upgrade' && (pl.status === 'CARD' || pl.bucket === 'unverified');
+    return { classification, displayLabel, auditOnly, auditNote: auditOnly ? auditNoteFor(e) : undefined, isUpgrade };
+  }
   const displayLabel = classification === 'RAISE' ? (verified ? LABEL_UPGRADE : LABEL_UNVERIFIED)
     : classification === 'REITERATION' ? LABEL_REITERATION
     : classification === 'MIXED' ? LABEL_MIXED
     : classification === 'DOWNGRADE' ? LABEL_LOWERED
     : verified ? LABEL_NO_NUMBERS : LABEL_UNVERIFIED;
   const auditOnly = classification !== 'RAISE' && classification !== 'DETECTED';
-  return { classification, displayLabel, auditOnly, auditNote: auditOnly ? AUDIT_NOTE : undefined, isUpgrade: classification === 'RAISE' };
+  return { classification, displayLabel, auditOnly, auditNote: auditOnly ? auditNoteFor(e) : undefined, isUpgrade: classification === 'RAISE' };
 }
+
+// ── zzz854: specific audit reason per row (never one generic sentence) ───────────────────────────────────────────
+const endVal = (p: GuGuidancePoint, v: number | null): string => {
+  if (v == null) return DATA_UNAVAILABLE;
+  if (!p.isGrowthRate && !p.unit && p.currency) return `${v < 0 ? '-' : ''}${p.currency}${Math.abs(v).toFixed(2)}`;   // a per-share amount keeps its cents ($4.90)
+  return fmtPoint({ ...p, low: v, high: v, midpoint: v });
+};
+const perWords = (c: GuChange): string => (c.after.period && c.after.period !== 'UNSTATED' ? `${periodWords(c.after)} ` : '');
+/** 'Reiteration: FY26 revenue $1.2B to $1.3B unchanged' / 'Lowered: FY26 EPS high end cut from $4.50 to $4.30' / 'Mixed: revenue up, EBITDA down' */
+export function auditNoteFor(e: Pick<GuidanceEvent, 'changes' | 'v2'> & Partial<Pick<GuidanceEvent, 'otherChanges'>>): string {
+  const all = [...e.changes, ...(e.otherChanges ?? [])].filter(c => !!c.before && c.direction !== 'UNKNOWN').sort((a, b) => narrativeRank(a) - narrativeRank(b));
+  const ups = all.filter(c => c.direction === 'UP'); const downs = all.filter(c => c.direction === 'DOWN'); const flats = all.filter(c => c.direction === 'FLAT');
+  const rangeOf = (c: GuChange) => { const i = e.changes.indexOf(c); return i >= 0 ? e.v2?.ranges?.[i] : computeRangeMath(c.before, c.after); };
+  if (ups.length && downs.length) {
+    const nm = (l: GuChange[]) => [...new Set(l.map(c => metricLabel(c)))].join(' and ');
+    return `Mixed: ${nm(ups)} up, ${nm(downs)} down (${downs.map(c => `${perWords(c)}${metricLabel(c)} ${fmtPoint(c.before)} → ${fmtPoint(c.after)}`).join('; ')})`;
+  }
+  if (e.v2?.unitWarnings?.some(w => /basis mismatch/i.test(w))) return `Basis mismatch: ${e.v2.unitWarnings.find(w => /basis mismatch/i.test(w))}`;
+  for (const c of ups) {
+    const r = rangeOf(c);
+    if (r?.klass === 'MIDPOINT_RAISE_RANGE_NARROWING') {
+      const top = r.afterHigh != null && r.beforeHigh != null && r.afterHigh < r.beforeHigh;
+      return top ? `Midpoint up but range narrowed: ${perWords(c)}${metricLabel(c)} top end cut from ${endVal(c.before!, r.beforeHigh)} to ${endVal(c.after, r.afterHigh)} (midpoint ${endVal(c.before!, r.beforeMid)} → ${endVal(c.after, r.afterMid)})`
+        : `Midpoint up but range narrowed: ${perWords(c)}${metricLabel(c)} low end cut from ${endVal(c.before!, r.beforeLow)} to ${endVal(c.after, r.afterLow)}`;
+    }
+    if (r?.klass === 'RANGE_WIDENING') return `Range widened: ${perWords(c)}${metricLabel(c)} ${fmtPoint(c.before)} → ${fmtPoint(c.after)}; the low end did not move up`;
+  }
+  if (downs.length) {
+    const c = downs[0]; const r = rangeOf(c);
+    if (r && r.afterHigh != null && r.beforeHigh != null && r.afterLow != null && r.beforeLow != null && r.afterHigh < r.beforeHigh && Math.abs(r.afterLow - r.beforeLow) < 1e-9)
+      return `Lowered: ${perWords(c)}${metricLabel(c)} high end cut from ${endVal(c.before!, r.beforeHigh)} to ${endVal(c.after, r.afterHigh)}`;
+    return `Lowered: ${perWords(c)}${metricLabel(c)} ${fmtPoint(c.before)} → ${fmtPoint(c.after)}${downs.length > 1 ? ` (plus ${downs.length - 1} more measure${downs.length > 2 ? 's' : ''} lowered)` : ''}`;
+  }
+  if (flats.length) {
+    const c = flats[0]; const r = rangeOf(c);
+    if (r?.klass === 'RANGE_WIDENING') return `Range widened: ${perWords(c)}${metricLabel(c)} ${fmtPoint(c.before)} → ${fmtPoint(c.after)}, midpoint unchanged`;
+    const list = flats.slice(0, 3).map((x, i) => `${i === 0 ? perWords(x) : ''}${metricLabel(x)} ${fmtPoint(x.after)}`);
+    return `Reiteration: ${list.join(list.length > 2 ? ', ' : ' and ')} unchanged${flats.length > 3 ? ` (plus ${flats.length - 3} more)` : ''}`;
+  }
+  if (ups.length) return `Not a clean raise: ${perWords(ups[0])}${metricLabel(ups[0])} ${fmtPoint(ups[0].before)} → ${fmtPoint(ups[0].after)}; the low end of the range did not move up`;
+  return AUDIT_NOTE;
+}
+
+// ── zzz854: one primary-source state, derived from data ──────────────────────────────────────────────────────────
+export const PRIMARY_SOURCE_STATE_TEXT: Record<GuPrimarySourceState, string> = {
+  not_found: 'Primary source: not found yet',
+  found_not_read: 'Primary source found, not read yet',
+  read_numbers_found: 'Primary source read — old and new figures found',
+  read_numbers_not_found: 'Primary source read — old and new figures not found in it',
+};
+export function primarySourceStateOf(e: Pick<GuidanceEvent, 'verification' | 'primaryAvailable' | 'changes'> & Partial<Pick<GuidanceEvent, 'primarySourceUrl' | 'primaryState' | 'otherChanges'>>): GuPrimarySourceState {
+  const numbers = [...e.changes, ...(e.otherChanges ?? [])].some(c => !!c.before && c.direction !== 'UNKNOWN');
+  if (e.verification === 'VERIFIED' && e.primaryAvailable) return numbers ? 'read_numbers_found' : 'read_numbers_not_found';
+  if (e.primarySourceUrl || e.primaryState === 'PRIMARY_SOURCE_FOUND' || e.primaryState === 'PRIMARY_SOURCE_READ') return 'found_not_read';
+  return 'not_found';
+}
+const LEGACY_PRIMARY: Record<GuPrimarySourceState, GuPrimaryState> = {
+  not_found: 'AWAITING_PRIMARY_SOURCE', found_not_read: 'PRIMARY_SOURCE_FOUND', read_numbers_found: 'PRIMARY_SOURCE_READ', read_numbers_not_found: 'PRIMARY_SOURCE_READ',
+};
+/** Re-derive the primary-source fields (call after anything changes sources / verification / primarySourceUrl). Pure. */
+export function withPrimarySourceState<T extends GuidanceEvent>(e: T): T {
+  const st = primarySourceStateOf(e);
+  const legacy = st === 'not_found' && e.primaryState === 'SECONDARY_SOURCE_CLAIM' ? 'SECONDARY_SOURCE_CLAIM' : LEGACY_PRIMARY[st];
+  // the legacy wording is kept for the page; the 'read but figures not found' state says so in the same line, so 'awaiting' and 'read' never appear together
+  const text = st === 'read_numbers_not_found' ? `${PRIMARY_STATE_TEXT.PRIMARY_SOURCE_READ} — old and new figures not found in it` : PRIMARY_STATE_TEXT[legacy];
+  return { ...e, primarySourceState: st, primaryState: legacy, primaryStateText: text };
+}
+
+// ── zzz854: taxonomy + pipeline ──────────────────────────────────────────────────────────────────────────────────
+const ASPIRATION_RE = /\b(?:aspir\w+|ambitions?|vision\s?20\d\d|long[- ]term (?:targets?|goals?|aspirations?|ambitions?)|medium[- ]term (?:targets?|goals?|ambitions?|aspirations?)|by (?:FY\s?'?|20)\d{2}\b)/i;
+const FIRST_GUIDANCE_RE = /\b(?:initiat\w+|introduc\w+|first[- ](?:ever|time)|issu\w+ (?:its )?(?:first|initial)|provid\w+ (?:its )?(?:first|initial)|maiden)\b[^.;]{0,40}\b(?:guidance|outlook|forecast)/i;
+const NON_GUIDANCE_TX = new Set<GuTaxonomy>(['analyst_revision', 'earnings_beat', 'operational_disclosure', 'management_target']);
+export function taxonomyOf(x: {
+  title: string; text: string; candidates: readonly GuCandidate[]; changes: readonly GuChange[]; otherChanges: readonly GuChange[];
+  /** the candidates' bodies without their headlines (the financing check reads the headline and the body separately) */
+  body?: string;
+  ranges: readonly GuRangeMath[]; evClass: GuEventClass; statedRaised: boolean;
+}): GuTaxonomy {
+  if (financingVerdict(x.title, x.body ?? x.text).capitalRaise) return 'capital_raise_or_financing';
+  const verdicts = x.candidates.map(c => isGuidanceUpgradeCandidate(c));
+  if (verdicts.length && !verdicts.some(v => v.include)) {
+    const t = verdicts[0].taxonomy;
+    if (t === 'analyst_revision' || ((t === 'earnings_beat' || t === 'operational_disclosure') && x.evClass === 'DETECTED')) return t;
+  }
+  const ups = x.changes.filter(c => c.direction === 'UP' && !!c.before);
+  if (x.evClass === 'UPGRADE') {
+    if (ups.length && ups.every(c => c.after.periodKind === 'MULTI_YEAR_CAGR')) return 'management_target';
+    if (x.otherChanges.some(c => c.direction === 'DOWN' && !!c.before)) return 'mixed_range_change';
+    const clean = x.changes.some((c, i) => c.direction === 'UP' && !!c.before && (!x.ranges[i] || REAL_RAISE.has(x.ranges[i].klass)));
+    return clean ? 'formal_upgrade' : 'mixed_range_change';
+  }
+  if (x.evClass === 'REITERATION') return 'reiteration';
+  if (x.evClass === 'DOWNGRADE') return 'downgrade';
+  if (x.evClass === 'NO_RAISE') return 'mixed_range_change';
+  const hasNew = x.changes.some(c => c.after.midpoint != null);
+  if (hasNew && x.changes.every(c => c.after.periodKind === 'MULTI_YEAR_CAGR')) return 'management_target';
+  if (hasNew) return 'first_guidance';
+  if (ASPIRATION_RE.test(x.text) && !x.statedRaised) return 'management_target';
+  return 'qualitative_commentary';
+}
+const figuresOf = (e: Pick<GuidanceEvent, 'changes'> & Partial<Pick<GuidanceEvent, 'otherChanges'>>): string[] =>
+  [...e.changes, ...(e.otherChanges ?? [])].slice(0, 6).map(c => `${metricLabel(c)}${c.after.period && c.after.period !== 'UNSTATED' ? ` ${periodWords(c.after)}` : ' (period not stated)'}: new ${fmtPoint(c.after)}, old ${c.before ? fmtPoint(c.before) : DATA_UNAVAILABLE}`);
+/** Where an item goes and which bucket counts it. Exactly one bucket per item. */
+export function pipelineOf(e: Pick<GuidanceEvent, 'changes' | 'verification' | 'v2' | 'taxonomy' | 'validationIssues' | 'company' | 'announcement_date' | 'sources'> & Partial<Pick<GuidanceEvent, 'otherChanges' | 'primarySourceState' | 'primarySourceDate'>>, rawText = ''): GuPipeline {
+  const tx = e.taxonomy ?? 'qualitative_commentary';
+  const issues = e.validationIssues ?? [];
+  const verified = e.verification === 'VERIFIED';
+  const invalidFor = (c: GuChange) => issues.some(i => i.severity === 'INVALID' && i.metric === c.metric && i.period === c.after.period);
+  const compared = e.changes.filter(c => !!c.before && c.direction !== 'UNKNOWN' && !invalidFor(c));
+  if (tx === 'capital_raise_or_financing') {
+    const r = financingVerdict('', rawText).reason ?? 'Capital raise or financing (offering, notes, credit facility, ATM, QIP), not guidance';
+    return { status: 'DROPPED', bucket: 'capitalRaise', reviewStatus: 'capital_raise', reason: r };
+  }
+  if (NON_GUIDANCE_TX.has(tx)) {
+    const why = tx === 'analyst_revision' ? 'Analyst or broker revision, not company guidance' : tx === 'earnings_beat' ? 'Earnings beat (actual versus expectation), not a guidance change'
+      : tx === 'operational_disclosure' ? 'Operational disclosure (order, contract, volume), not a guidance change' : `Long-term management target or aspiration, not formal guidance (${figuresOf(e)[0] ?? 'no figure'})`;
+    return { status: 'DROPPED', bucket: 'nonGuidance', reviewStatus: 'not_guidance', reason: why };
+  }
+  const inv = issues.filter(i => i.severity === 'INVALID');
+  if (inv.length && !compared.length) {
+    const stale = inv.find(i => i.code === 'STALE_PERIOD');
+    return { status: 'QUEUE', bucket: 'invalidOrStale', reviewStatus: stale && inv.every(i => i.code === 'STALE_PERIOD') ? 'stale' : 'invalid', reason: (stale && inv.every(i => i.code === 'STALE_PERIOD') ? stale : inv[0]).text };
+  }
+  const rev = issues.filter(i => i.severity === 'REVIEW' && (i.metric == null || compared.some(c => c.metric === i.metric && c.after.period === i.period)));
+  if (rev.length) return { status: 'QUEUE', bucket: 'awaitingNumbers', reviewStatus: 'needs_review', reason: rev[0].text };
+  if (!compared.length) {
+    const statedRaised = e.v2?.statedDirection === 'RAISED';
+    const firstWords = FIRST_GUIDANCE_RE.test(rawText);
+    if (tx === 'first_guidance' && (!statedRaised || firstWords))
+      return { status: 'QUEUE', bucket: 'firstGuidance', reviewStatus: 'first_guidance', reason: `First guidance, not a raise: ${figuresOf(e)[0] ?? 'new figure'} — there is no earlier guidance to compare with` };
+    const read = verified;
+    const fig = figuresOf(e)[0];
+    return read
+      ? { status: 'QUEUE', bucket: 'awaitingNumbers', reviewStatus: 'awaiting_numbers', reason: `Primary source read, but old and new guidance figures for the same period were not both found${fig ? ` (${fig})` : ''}; the source says guidance was raised` }
+      : { status: 'QUEUE', bucket: 'awaitingNumbers', reviewStatus: 'awaiting_primary', reason: `Raise claimed by ${sourceDocumentOf(e)}; no primary document read and old and new figures not both found${fig ? ` (${fig})` : ''}` };
+  }
+  if (!verified) return { status: 'QUEUE', bucket: 'unverified', reviewStatus: 'awaiting_primary', reason: `Not verified: no primary document read yet (claim from ${sourceDocumentOf(e)}). Awaiting verification against the company's own filing.` };
+  if (tx === 'formal_upgrade') return { status: 'CARD', bucket: 'verifiedUpgrades', reviewStatus: null, reason: 'Verified formal upgrade: old and new figures, same metric, basis and period' };
+  if (tx === 'reiteration') return { status: 'AUDIT', bucket: 'reiterations', reviewStatus: null, reason: auditNoteFor(e) };
+  if (tx === 'downgrade') return { status: 'AUDIT', bucket: 'lowered', reviewStatus: null, reason: auditNoteFor(e) };
+  return { status: 'AUDIT', bucket: 'mixed', reviewStatus: null, reason: auditNoteFor(e) };
+}
+
+/** One review-queue row from an item that is not an event card. */
+export function reviewItemOf(e: GuidanceEvent): GuReviewItem {
+  return {
+    id: e.guidance_event_id, ticker: e.ticker, company: e.company, market: e.market, announcement_date: e.announcement_date,
+    status: e.pipeline?.reviewStatus ?? 'needs_review', reason: e.pipeline?.reason ?? '', taxonomy: e.taxonomy ?? 'qualitative_commentary',
+    primarySourceState: e.primarySourceState ?? primarySourceStateOf(e), primarySourceUrl: e.primarySourceUrl ?? null,
+    figures: figuresOf(e), sources: e.sources.map(x => ({ name: x.name, url: x.url, tier: x.tier, date: x.date })),
+  };
+}
+const emptyPipelineCounts = (): GuPipelineCounts => ({
+  processed: 0, verifiedUpgrades: 0, reiterations: 0, mixed: 0, lowered: 0, firstGuidance: 0, invalidOrStale: 0, capitalRaise: 0, awaitingNumbers: 0, unverified: 0, nonGuidance: 0,
+  stale: 0, needsReview: 0, awaitingPrimary: 0, material: 0, expectationPositive: 0, cards: 0, audit: 0, queue: 0, dropped: 0,
+});
+/** Exact partition of processed items. verifiedUpgrades + reiterations + mixed + lowered + firstGuidance + invalidOrStale + capitalRaise + awaitingNumbers + unverified + nonGuidance === processed. */
+export function pipelineCounts(events: readonly GuidanceEvent[]): GuPipelineCounts {
+  const n = emptyPipelineCounts();
+  for (const e of events) {
+    const p = e.pipeline ?? pipelineOf(e);
+    n.processed++; n[p.bucket]++;
+    if (p.reviewStatus === 'stale') n.stale++;
+    if (p.reviewStatus === 'needs_review') n.needsReview++;
+    if (p.reviewStatus === 'awaiting_primary') n.awaitingPrimary++;
+    if (p.status === 'CARD') { n.cards++; if (e.materiality === 'HIGH' || e.materiality === 'MEDIUM') n.material++; if ((e.expectationGap === 'POSITIVE' || e.expectationGap === 'LARGE_POSITIVE') && e.consensus.value != null) n.expectationPositive++; }
+    else if (p.status === 'AUDIT') n.audit++; else if (p.status === 'QUEUE') n.queue++; else n.dropped++;
+  }
+  return n;
+}
+/** Split built items: main cards (verified formal upgrades), audit rows (verified reiteration / mixed / lowered), the review queue, and dropped items. */
+export function partitionPipeline(events: readonly GuidanceEvent[]): { cards: GuidanceEvent[]; audit: GuidanceEvent[]; queue: GuReviewItem[]; queueEvents: GuidanceEvent[]; dropped: GuidanceEvent[]; counts: GuPipelineCounts } {
+  const cards: GuidanceEvent[] = []; const audit: GuidanceEvent[] = []; const queueEvents: GuidanceEvent[] = []; const dropped: GuidanceEvent[] = [];
+  for (const e of events) {
+    const st = (e.pipeline ?? pipelineOf(e)).status;
+    (st === 'CARD' ? cards : st === 'AUDIT' ? audit : st === 'QUEUE' ? queueEvents : dropped).push(e);
+  }
+  return { cards, audit, queue: [...queueEvents, ...dropped].map(reviewItemOf), queueEvents, dropped, counts: pipelineCounts(events) };
+}
+/** Decision that follows the pipeline: REJECT only for lowered / invalid / stale / capital raise; queued items get no decision. */
+function pipelineDecision(e: GuidanceEvent, base: { decision: GuDecision; reasons: string[] }): { decision: GuDecision; reasons: string[] } {
+  const p = e.pipeline; if (!p) return base;
+  const verified = e.verification === 'VERIFIED';
+  if (p.bucket === 'capitalRaise' || p.bucket === 'invalidOrStale')
+    return { decision: verified ? 'REJECT' : 'UNVERIFIED', reasons: [`${verified ? 'Result: REJECT' : 'No decision (not verified)'} — ${p.reason}`] };
+  if (p.status === 'QUEUE' || p.status === 'DROPPED') return { decision: 'UNVERIFIED', reasons: [...(verified ? [] : ['No primary source — no final decision']), `No decision — ${p.reason}`, ...base.reasons.filter(r => !/^Result:|^No primary source|^No decision/.test(r))] };
+  if (p.bucket === 'mixed' && base.decision !== 'REJECT') return { decision: 'WATCHLIST', reasons: [...base.reasons.filter(r => !/^Result:/.test(r)), `Result: WATCHLIST — ${p.reason}; not a clean upgrade, tracked only`] };
+  return base;
+}
+/** zzz854: same figures under two periods across separate events of one company and day -> both invalid. Pure; returns new objects for the affected events only. */
+export function applyCrossEventChecks(events: GuidanceEvent[]): GuidanceEvent[] {
+  const dup = duplicatesAcrossEvents(events.map(e => ({ id: e.guidance_event_id, ticker: e.ticker || e.company, date: e.announcement_date, changes: [...e.changes, ...(e.rejectedChanges ?? [])] })));
+  if (!dup.size) return events;
+  return events.map(e => {
+    const iss = dup.get(e.guidance_event_id); if (!iss) return e;
+    const validationIssues = [...(e.validationIssues ?? []), iss];
+    const pipeline: GuPipeline = { status: 'QUEUE', bucket: 'invalidOrStale', reviewStatus: 'invalid', reason: iss.text };
+    const x = { ...e, validationIssues, pipeline, evidenceGaps: [iss.text, ...e.evidenceGaps.filter(g => g !== iss.text)], flags: e.flags.filter(f => f !== 'REPEATED_UPGRADER') };
+    const d = pipelineDecision(x, { decision: x.decision, reasons: x.decisionReason });
+    return withClassification({ ...x, decision: d.decision, decisionReason: d.reasons });
+  });
+}
+
 /** Re-stamp classification fields after something changed the event (verification, sources). Pure. */
 export function withClassification<T extends GuidanceEvent>(e: T): T {
-  const k = classifyEvent(e);
-  return { ...e, classification: k.classification, displayLabel: k.displayLabel, auditOnly: k.auditOnly, auditNote: k.auditNote, isUpgrade: k.isUpgrade };
+  // zzz854: a changed verification / source re-derives the pipeline (only when the event already carries one) and the single primary-source state
+  const ps = withPrimarySourceState(e);
+  const old = ps.pipeline;
+  const KEEP: GuPipeline['bucket'][] = ['capitalRaise', 'nonGuidance', 'firstGuidance', 'invalidOrStale'];   // properties of the text / numbers, not of verification
+  const pl = !old ? undefined : KEEP.includes(old.bucket) ? old : pipelineOf(ps);
+  let e2: T = pl ? { ...ps, pipeline: pl } : ps;
+  if (old && pl && pl.status !== old.status) {   // e.g. a primary document was read since: the decision follows the new state
+    const d = pipelineDecision(e2, decide(e2));
+    e2 = { ...e2, decision: d.decision, decisionReason: d.reasons };
+  }
+  const k = classifyEvent(e2);
+  return { ...e2, classification: k.classification, displayLabel: k.displayLabel, auditOnly: k.auditOnly, auditNote: k.auditNote, isUpgrade: k.isUpgrade };
 }
 
 /** Dates: the company's announcement date is the event date; the media date is kept apart. Returns undefined when no media source is involved. */
@@ -1816,11 +2136,20 @@ export function buildGuidanceEvent(input: GuCandidate[] | GuSkeleton, ctx: GuCon
   ctx = ctx ?? {};
   const text = sk.text;
   const unitCheck = validateChangeUnits(applyPrior(sk.changes, ctx.priorGuidance));
-  const allChanges = unitCheck.kept;
   const unitWarnings = [...unitCheck.warnings];
+  // zzz854: validate every comparison (period, actual vs guidance, range, staleness, per-share). INVALID comparisons are removed here;
+  // REVIEW ones stay visible but send the item to the review queue (never verified).
+  const vIssues = validateChanges(unitCheck.kept, { announcementDate: sk.announcement_date, market: sk.market });
+  const invalidFor = (c: GuChange) => vIssues.some(i => i.severity === 'INVALID' && i.metric === c.metric && i.period === c.after.period);
+  const valid = unitCheck.kept.filter(c => !invalidFor(c));
+  const rejectedChanges = unitCheck.kept.filter(c => invalidFor(c));
+  // zzz854: never mix bases. Adjusted is the headline when both are given; the GAAP line is kept apart (otherChanges) with a note.
+  const bs = splitByBasis(valid);
+  const allChanges = bs.headline;
   let changes = allChanges;
   const ups = changes.filter(c => c.direction === 'UP' && c.before);
   if (ups.length) changes = ups;
+  const otherChanges = [...allChanges.filter(c => !changes.includes(c) && !!c.before && c.direction !== 'UNKNOWN'), ...bs.secondary];
   const ver = verificationOf(sk.sources);
   const driver = classifyDriver(text);
   const duration0 = classifyDuration(text, changes, driver);
@@ -1854,7 +2183,11 @@ export function buildGuidanceEvent(input: GuCandidate[] | GuSkeleton, ctx: GuCon
       const compatible = cu ? cu === gu : (ratio >= 0.2 && ratio <= 5);
       if (compatible) {
         const g = computeGap(target.after.midpoint, cc.value);
-        gap = g.gap; gapPct = g.gapPct;
+        if (consensusLooksMismatched(g.gapPct)) {
+          // zzz854: a 'gap' beyond +/-25% is a metric or basis mismatch (an FFO or adjusted guide against a GAAP estimate), never an expectation gap
+          const t = `Consensus ${fmtNum(cc.value)} differs from the guided ${METRIC_LABEL[target.metric]} midpoint by ${signed(g.gapPct as number, 1)}% — it likely measures a different metric or basis, so the expectation gap is ${DATA_UNAVAILABLE}`;
+          evidenceGaps.push(t); vIssues.push({ code: 'CONSENSUS_METRIC_MISMATCH', severity: 'INFO', metric: target.metric, period: target.after.period, text: t });
+        } else { gap = g.gap; gapPct = g.gapPct; }
       } else evidenceGaps.push('Consensus unit differs from guidance unit, so the gap was not calculated');
     } else evidenceGaps.push('Consensus given is for a different measure or period, so the gap was not calculated');
   }
@@ -1867,6 +2200,8 @@ export function buildGuidanceEvent(input: GuCandidate[] | GuSkeleton, ctx: GuCon
   if (valuation.currentPE.value == null) evidenceGaps.push(`P/E: ${DATA_UNAVAILABLE}`);
   if (impacts.ebitdaImpact.value == null) evidenceGaps.push(`EBITDA effect: ${DATA_UNAVAILABLE}`);
   if (impacts.epsImpact.value == null) evidenceGaps.push(`EPS effect: ${DATA_UNAVAILABLE}`);
+  for (const i of vIssues) if (i.severity !== 'INFO' && !evidenceGaps.includes(i.text)) evidenceGaps.unshift(i.text);
+  if (bs.note) evidenceGaps.push(bs.note);
 
   const currentRows = sk.history.length ? sk.history : rowsFromChanges(changes, sk.announcement_date);
   const hist = buildHistory(ctx.ledger ?? [], currentRows);
@@ -1875,6 +2210,7 @@ export function buildGuidanceEvent(input: GuCandidate[] | GuSkeleton, ctx: GuCon
   let flags = computeFlags({
     verified: ver.verification === 'VERIFIED', changes, history: hist.rows, historyStats: hist.stats, text, gap, materiality: mat.level,
     bottleneckThemes: ctx.bottleneckThemes, structuralAlignment: ctx.structuralAlignment, secondUpgrade: sk.flags.includes('SECOND_UPGRADE_IN_WINDOW'),
+    announcementDate: sk.announcement_date,
   });
   // SMALL_MID_CAP_INFLECTION: needs a stated small/mid market cap, HIGH materiality, and multi-metric or a >=25% raise
   const smallMid = isSmallMidCap(sk.market, ctx.priceContext?.marketCap) === true && mat.level === 'HIGH' && ups.length > 0
@@ -1896,15 +2232,17 @@ export function buildGuidanceEvent(input: GuCandidate[] | GuSkeleton, ctx: GuCon
     guidance_quality: driver.quality, guidance_driver: driver.driver, driverEvidence: driver.evidence,
     history: hist.rows, historyStats: hist.stats, consensus, expectationGap: gap, gapPct,
     revenueImpact: impacts.revenueImpact, ebitdaImpact: impacts.ebitdaImpact, epsImpact: impacts.epsImpact, fcfImpact: impacts.fcfImpact,
-    valuation, duration, thesis, materiality: mat.level, materialityBasis: mat.basis, evidence, links,
+    valuation, duration, thesis, materiality: mat.level, materialityBasis: mat.basis + (bs.note ? ` ${bs.note}` : ''), evidence, links,
     risks: [], evidenceGaps, nextEvidence: [], whyNow: '', whatItMeans: '', marketMissing: '',
     chain: { event: '', evidence: '', driver: '', earnings: '', gap: '', valuation: '', durability: '', risk: '', action: '' },
     decision: 'UNVERIFIED', decisionReason: [], flags, rankKey: 0, created_at: nowIso, updated_at: nowIso,
+    otherChanges, headlineBasis: bs.basis, basisNote: bs.note, validationIssues: vIssues, rejectedChanges,
   };
   base.v2 = {
     stage: ver.primaryAvailable ? (ups.length ? 'CALCULATED' : 'PRIMARY_SOURCE_FOUND') : 'CANDIDATE',
     ranges, metricBasis: basisOfEvent(changes, text),
-    operatingVariable: why.variable, durabilityLevel: dur2.level, durabilityWhy: dur2.why, whyNowResolved: why.resolved,
+    // zzz854: the WHY NOW text is always specific (the stated driver, or the dated 'driver not stated in <document>' line), so it is always shown
+    operatingVariable: why.variable, durabilityLevel: dur2.level, durabilityWhy: dur2.why, whyNowResolved: true,
     scorecard: [], smallMidCapInflection: smallMid, detectedVia: detectedViaOf(sk.candidates),
     consensusAvailable: consensus.value != null, unitWarnings, eventClass: evClass, eventLabel: EVENT_CLASS_LABEL[evClass],
   };
@@ -1914,15 +2252,27 @@ export function buildGuidanceEvent(input: GuCandidate[] | GuSkeleton, ctx: GuCon
     for (const sn of splitSentences(text)) if (managementRaise(sn)) for (const k of findMetricKws(sn)) { const l = METRIC_LABEL[k.metric]; if (k.metric !== 'OTHER' && !names.includes(l)) names.push(l); }
     if (names.length) base.v2.statedMetrics = names;
   }
-  if (!why.resolved) { /* keep 'Driver not stated in the source'; whyNow carries the unresolved text */ }
-  else if (driver.quality === 'UNKNOWN' && why.variable) base.guidance_driver = `Stated operating drivers: ${why.variable}`;
+  if (driver.quality === 'UNKNOWN' && why.variable) base.guidance_driver = `Stated operating drivers: ${why.variable}`;
   if (unitWarnings.length) for (const w of unitWarnings) if (!base.evidenceGaps.includes(w)) base.evidenceGaps.push(w);
+  // primary source (link + date) before the narrative, so WHY NOW can name the document and its date
+  const prim0 = base.sources.find(x => x.tier === 'PRIMARY' && !!x.url) ?? base.sources.find(x => x.tier === 'PRIMARY');
+  base.primarySourceUrl = prim0?.url ?? null; base.primarySourceDate = prim0?.date ?? null;
+  // zzz854: taxonomy + pipeline (where this item goes, and why)
+  const titles = sk.candidates.map(c => c.title).join('. ');
+  const body = sk.candidates.map(c => c.text).filter(Boolean).join('\n');
+  base.taxonomy = taxonomyOf({ title: titles, text, body, candidates: sk.candidates, changes, otherChanges, ranges, evClass, statedRaised: base.v2.statedDirection === 'RAISED' });
+  base.pipeline = pipelineOf(base, body);
+  if (base.pipeline.status !== 'CARD') {
+    // a thesis label or an upgrade flag on something that is not a verified formal upgrade is misleading (e.g. 'A Operating Inflection' on a queued claim)
+    base.flags = base.flags.filter(f => f !== 'REPEATED_UPGRADER' && f !== 'GUIDANCE_PLUS_GAP' && f !== 'SMALL_MID_CAP_INFLECTION');
+    if (base.pipeline.status !== 'AUDIT') base.thesis = null;
+  }
   base.risks = buildRisks(base, { text, kinds: driver.kinds });
   base.nextEvidence = buildNextEvidence(base);
   base.whyNow = buildWhyNow(base);
   base.whatItMeans = whatItMeans(base);
   base.marketMissing = marketMissing(base);
-  const d = decide(base, ctx, { thesisBreaking });
+  const d = pipelineDecision(base, decide(base, ctx, { thesisBreaking }));
   base.decision = d.decision; base.decisionReason = d.reasons;
   base.v2.scorecard = buildScorecard(base, ranges, dur2.level, dur2.why);
   base.v2.stage = d.decision === 'UNVERIFIED' ? 'CANDIDATE' : (ups.length && mat.level !== 'UNKNOWN') ? 'DECISION' : ups.length ? 'VERIFIED' : 'PRIMARY_SOURCE_FOUND';
@@ -1936,10 +2286,6 @@ export function buildGuidanceEvent(input: GuCandidate[] | GuSkeleton, ctx: GuCon
   if (base.changes.some(c => c.after.period === 'UNSTATED') && !base.evidenceGaps.some(g => /period unclear/i.test(g))) base.evidenceGaps = ['Guided period unclear: the source gives no fiscal year for the guided figure (a quarter without a year is not placed on a calendar)', ...base.evidenceGaps];
   if (base.changes.some(c => c.after.periodKind === 'MULTI_YEAR_CAGR') && !base.evidenceGaps.some(g => /multi-year/i.test(g))) base.evidenceGaps = ['Multi-year growth target (a CAGR over several years), not a single-year guidance figure', ...base.evidenceGaps];
   base.media_date = mediaDateOf(sk.candidates); base.dateBasis = dateBasisOf(sk.candidates);
-  const prim = base.sources.find(x => x.tier === 'PRIMARY' && !!x.url);
-  base.primarySourceUrl = prim?.url ?? null; base.primarySourceDate = prim?.date ?? null;
-  const ps = primaryStateFor({ url: base.primarySourceUrl, read: base.verification === 'VERIFIED' });
-  base.primaryState = ps.state; base.primaryStateText = ps.text;
   const drv = extractDriverSentence(text);
   base.whyNowDriver = drv ?? DRIVER_NOT_STATED;
   return withClassification(base);
@@ -1971,27 +2317,36 @@ export function buildWithExtras(sk: GuSkeleton, ctx: GuContext, now: Date, extra
 export function processCandidates(cands: GuCandidate[], ctxFor: (ticker: string) => GuContext, now: Date, window: GuWindow = '7D', extraFor?: GuExtraFor): GuidanceEvent[] {
   const kept = cands.filter(c => withinWindow(c.eventDate || c.publishedAt, window, now) && isGuidanceUpgradeCandidate(c).include);   // zzz853: the company's announcement date, never a republish date
   const events = mergeCandidates(kept).map(sk => buildWithExtras(sk, ctxFor(sk.ticker) ?? {}, now, extraFor));
-  return rank(events);
+  // zzz854: every built item is returned, stamped with `pipeline` (CARD / AUDIT / QUEUE / DROPPED). Use partitionPipeline() to split cards from the review queue.
+  return rank(applyCrossEventChecks(events));
 }
 
 export function summarise(events: GuidanceEvent[], window: GuWindow, now: Date): GuSummary {
   const today = now.toISOString().slice(0, 10);
+  // zzz854: when items carry a pipeline, the headline numbers come from the exact partition: detected = processed, verified = verified cards + audit rows,
+  // material / expectation positive = verified formal upgrades only. Legacy events (no pipeline) keep the old rule.
+  const piped = events.length > 0 && events.every(e => !!e.pipeline);
+  const shown = (e: GuidanceEvent) => !piped || e.pipeline!.status === 'CARD' || e.pipeline!.status === 'AUDIT';
+  const isVer = (e: GuidanceEvent) => e.verification === 'VERIFIED' && shown(e);
+  const isMat = (e: GuidanceEvent) => (e.materiality === 'HIGH' || e.materiality === 'MEDIUM') && (!piped || e.pipeline!.status === 'CARD');
+  const isPos = (e: GuidanceEvent) => (e.expectationGap === 'POSITIVE' || e.expectationGap === 'LARGE_POSITIVE') && (!piped || (e.pipeline!.status === 'CARD' && e.consensus.value != null));
   const bucket = (m: 'IN' | 'US') => {
     const es = events.filter(e => e.market === m);
-    return {
-      detected: es.length, verified: es.filter(e => e.verification === 'VERIFIED').length,
-      material: es.filter(e => e.materiality === 'HIGH' || e.materiality === 'MEDIUM').length,
-      expectationPositive: es.filter(e => e.expectationGap === 'POSITIVE' || e.expectationGap === 'LARGE_POSITIVE').length,
-    };
+    return { detected: es.length, verified: es.filter(isVer).length, material: es.filter(isMat).length, expectationPositive: es.filter(isPos).length };
   };
-  return {
+  const out: GuSummary = {
     window, asOf: now.toISOString(), detected: events.length,
-    verified: events.filter(e => e.verification === 'VERIFIED').length,
-    material: events.filter(e => e.materiality === 'HIGH' || e.materiality === 'MEDIUM').length,
-    expectationPositive: events.filter(e => e.expectationGap === 'POSITIVE' || e.expectationGap === 'LARGE_POSITIVE').length,
+    verified: events.filter(isVer).length,
+    material: events.filter(isMat).length,
+    expectationPositive: events.filter(isPos).length,
     inBook: events.filter(e => e.links.inBook === true).length,
     byMarket: { IN: bucket('IN'), US: bucket('US') },
     consensusAvailable: { have: events.filter(e => e.consensus.value != null).length, of: events.length },
-    today: events.filter(e => e.verification === 'VERIFIED' && e.announcement_date === today).length,
+    today: events.filter(e => isVer(e) && e.announcement_date === today).length,
   };
+  if (piped) {
+    out.pipeline = pipelineCounts(events);
+    out.pipelineByMarket = { IN: pipelineCounts(events.filter(e => e.market !== 'US')), US: pipelineCounts(events.filter(e => e.market === 'US')) };
+  }
+  return out;
 }

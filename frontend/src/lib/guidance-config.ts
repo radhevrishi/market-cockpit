@@ -13,6 +13,13 @@ export const PLAUSIBLE_REVENUE_GROWTH_PCT = 100;
 export const REPORTING_LAG_DAYS = 45;
 /** A record whose last verification is older than this gets a stale-verification warning. It stays ACTIVE: expiry is by period / status only. */
 export const STALE_VERIFICATION_DAYS = 60;
+/**
+ * zzz854 (documented decision): a record whose last verification is OLDER than this is moved out of the Active list into "Needs review"
+ * (reason STALE_VERIFICATION). 90 days = one full reporting cycle: a newer quarterly filing exists and may have changed the guidance, so the
+ * record is no longer shown as verified until it is re-checked. Between STALE_VERIFICATION_DAYS and this it stays Active with a caveat.
+ * A record whose guided period has ended is never Active either (EXPIRED, handled by the period rules).
+ */
+export const STALE_DEMOTE_DAYS = 90;
 /** Two sources for the same company + metric + period whose dates are this close (days) and whose values differ are a SOURCE CONFLICT, not a revision. */
 export const SOURCE_CONFLICT_WINDOW_DAYS = 3;
 /** Derived / implied growth ranges at least this wide (percentage points) are shown with 0 decimals; narrower ones keep 1 decimal. */
@@ -45,6 +52,14 @@ const COMPANY_SITE_RE = /\b(company website|website|investor relations|\bir\b|pr
 const EXCHANGE_HOST_RE = /(?:^|\/\/|\.)(nseindia\.com|bseindia\.com|sec\.gov)(?:\/|$)/i;
 const REPUTABLE_MEDIA_RE = /\b(reuters|bloomberg|business ?standard|economic ?times|et ?now|livemint|mint|moneycontrol|financial ?express|hindu ?business ?line|businessline|cnbc|wsj|wall street journal|financial times|ft\.com|barron'?s|the hindu|ndtv profit|business today)\b/i;
 
+/**
+ * zzz854: aggregators, call-summary sites, social posts and retail news apps. Whatever rank or type a feed gave them, they can only DISCOVER a claim
+ * (TIER4): a summary of a call is not the company's document. An exchange / SEC URL still wins (checked first).
+ */
+const AGGREGATOR_RE = /\b(?:scan ?x|multibagg\w*|trade ?brains|sahi(?: news)?|whalesbook|tradingkey|alpha ?spread|gurufocus|investywise|money ?muscle|business ?upturn|stocktwits|twitter|tweet|post on x|on x\b|x\.com|reddit|telegram|youtube|substack|seeking ?alpha|marketscreener|simply ?wall|tikr|quartr|marketbeat|tipranks|zacks|motley fool|stockanalysis|screener\.in|tickertape|trendlyne|moneycontrol forum|valuepickr)\b/i;
+const SUMMARY_RE = /\b(?:summary|summari[sz]ed|highlights|recap|as reported by|via)\b/i;
+export const isAggregatorSource = (name?: string | null, url?: string | null): boolean => AGGREGATOR_RE.test(`${name || ''} ${url || ''}`);
+
 export interface TierInput { rank?: number | null; type?: string | null; name?: string | null; url?: string | null }
 export interface TierResult { tier: SourceTier; label: SourceTierLabel; reason: string }
 export function classifySourceTier(s: TierInput): TierResult {
@@ -52,6 +67,9 @@ export function classifySourceTier(s: TierInput): TierResult {
   const type = String(s.type || ''); const name = String(s.name || ''); const url = String(s.url || '');
   const res = (tier: SourceTier, reason: string): TierResult => ({ tier, label: TIER_LABEL[tier], reason });
   if (url && EXCHANGE_HOST_RE.test(url)) return res(1, 'exchange / SEC host');
+  if (isAggregatorSource(name, url)) return res(4, 'aggregator, call summary or social post (can discover, never verify)');
+  // a third-party summary of a call / release is not the document itself
+  if (rank >= 6 && SUMMARY_RE.test(name) && !/\btranscript\b/i.test(name)) return res(rank <= 8 || REPUTABLE_MEDIA_RE.test(`${name} ${url}`) ? 3 : 4, 'third-party summary of a company document');
   const media = MEDIA_TYPE_RE.test(type) && !FILING_TYPE_RE.test(type.replace(MEDIA_TYPE_RE, ''));
   if (rank <= 5 && !media) return res(1, `rank ${rank}: company filing, release, presentation or transcript`);
   if (rank === 6 && !media) return res(2, 'rank 6: company press release / IR');

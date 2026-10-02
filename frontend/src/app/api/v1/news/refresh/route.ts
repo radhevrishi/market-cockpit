@@ -10,6 +10,8 @@ export const dynamic = 'force-dynamic';
 // here too. Also clear the persistent-bottleneck shard so the bottleneck
 // strip refreshes on next hit.
 const ACTIVE_NEWS_KEY = 'news:articles:v39';
+// zzz854: the durable `news:articles:v39:lastgood` copy is deliberately NOT cleared here. A refresh deletes only the 5-minute live key; the
+// next GET re-scrapes and rewrites both. If that scrape fails, readers still have the last good copy (labelled stale with its age).
 const ACTIVE_BOTTLENECK_KEY = 'bottleneck:articles:persistent:v14';
 
 export async function POST() {

@@ -137,7 +137,9 @@ describe('3. reiteration is called reiteration', () => {
     assert.ok(e.whyNow.startsWith('Management reiterated FY27 revenue guidance at 13%.'), e.whyNow);
     assert.ok(!/raised its/i.test(`${e.whyNow} ${e.whatItMeans} ${e.chain.event}`));
     assert.equal(e.v2!.statedDirection, undefined, 'no "direction stated, numbers missing" claim when numbers were extracted');
-    assert.equal(e.decision, 'REJECT'); assert.ok(e.decisionReason.some((l) => /reiterated at the same level, not raised/.test(l)));
+    // zzz854: REJECT is reserved for lowered / invalid / stale / capital raise; a reiteration is tracked (audit row, WATCHLIST) and says so
+    assert.equal(e.decision, 'WATCHLIST'); assert.ok(e.decisionReason.some((l) => /reiterated at the same level/.test(l)));
+    assert.equal(e.pipeline!.status, 'AUDIT'); assert.match(e.auditNote!, /^Reiteration: FY27 revenue growth 13% and adjusted EPS 35.8 unchanged$/);
     assert.ok(e.evidenceGaps.every((g) => !/Previous guidance not found/.test(g)));
   });
   test('nextEvidence is tracking-based when numbers WERE extracted', () => {
@@ -146,10 +148,12 @@ describe('3. reiteration is called reiteration', () => {
     assert.ok(e.nextEvidence.every((l) => !/Wait for the company to publish clear/.test(l)), e.nextEvidence.join(' | '));
     assert.match(e.nextEvidence[0], /13%/);
   });
-  test('"Wait for the company to publish clear numbers" is kept for events with NO numbers', () => {
+  // zzz854: an item with NO numbers names the document to read (not a generic wait line) and goes to the review queue
+  test('events with NO numbers: the next check names the primary document to read', () => {
     const [e] = processCandidates([us('The company raised its guidance at the AGM.', { title: 'Zed Netsol raises guidance', kind: 'NEWS', sourceName: 'Business Standard', url: 'https://www.business-standard.com/z' })], noCtx, NOW, '7D');
     assert.equal(e.v2!.eventClass, 'DETECTED');
-    assert.match(e.nextEvidence[0], /Wait for the company to publish clear before and after guidance numbers/);
+    assert.match(e.nextEvidence[0], /^Primary document \(Business Standard, 2026-09-24\): confirm the old and new guidance figures/);
+    assert.equal(e.pipeline!.status, 'QUEUE'); assert.equal(e.pipeline!.reviewStatus, 'awaiting_primary');
     assert.match(e.whyNow, /raised its guidance \(direction stated by the source\), but the source gives no before and after numbers/);
   });
   test('a lowered measure is called lowered; a real raise is still a raise', () => {
@@ -168,7 +172,9 @@ describe('3. reiteration is called reiteration', () => {
     assert.equal(bb.v2!.eventClass, 'UPGRADE'); assert.equal(bb.v2!.ranges[0].klass, 'CLEAN_RAISE'); assert.equal(bb.v2!.ranges[0].floorAboveOldCeiling, true);
     assert.equal(bb.verification, 'VERIFIED'); assert.equal(bb.materiality, 'HIGH'); assert.equal(Math.round((bb.changes[0].percentageChange ?? 0) * 10) / 10, 15.9);
     const fu = processCandidates([us('Zed Fuller now expects Adjusted EPS for FY26 of $4.70–4.85, up from $4.60–4.90 previously.', { ticker: 'ZZFU', company: 'Zed Fuller', id: 'usgraded:ZZFU:2026-09-24', title: 'Zed Fuller raises FY26 adjusted EPS guidance' })], noCtx, NOW, '7D')[0];
-    assert.equal(fu.v2!.eventClass, 'UPGRADE'); assert.equal(fu.v2!.ranges[0].klass, 'MIDPOINT_RAISE_RANGE_NARROWING'); assert.equal(fu.decision, 'REJECT');
+    // zzz854: a midpoint-only raise is a mixed / range change (audit row), tracked as WATCHLIST, never REJECT and never an upgrade
+    assert.equal(fu.v2!.eventClass, 'UPGRADE'); assert.equal(fu.v2!.ranges[0].klass, 'MIDPOINT_RAISE_RANGE_NARROWING'); assert.equal(fu.decision, 'WATCHLIST');
+    assert.equal(fu.taxonomy, 'mixed_range_change'); assert.equal(fu.isUpgrade, false);
   });
   test('US graded row with direction raised but equal old and new values is read as a reiteration', () => {
     const row = { ticker: 'ZZNS', company: 'Zed Netsol Inc', filing_date: '2026-09-24', guide_change: [{ metric: 'operating_margin', period_label: 'FY2027', unit: 'pct', direction: 'raised', new_low: 13, new_high: 13, prev_low: 13, prev_high: 13 }] };
@@ -302,7 +308,8 @@ describe('6. durability and why-now', () => {
     assert.equal(cup.v2!.durabilityLevel, 'UNKNOWN_INSUFFICIENT_EVIDENCE'); assert.equal(cup.duration, 'UNKNOWN');
     assert.doesNotMatch(cup.v2!.durabilityWhy, /can reverse within a quarter or two/);
     assert.match(cup.v2!.durabilityWhy, /unknown/i);
-    assert.equal(cup.v2!.whyNowResolved, false); assert.match(cup.whyNow, /Driver unresolved after primary-source \+ recent-event research/);
+    // zzz854: dated and specific, never the old boilerplate
+    assert.equal(cup.v2!.whyNowResolved, true); assert.match(cup.whyNow, /Why now: guidance raised on 2026-\d{2}-\d{2} in ET Companies; driver not stated in the release/); assert.doesNotMatch(cup.whyNow, /Driver unresolved/);
     const [fx] = processRaiseCandidates([cand({ id: 'news:fx', title: 'Zed Alpha raises FY27 revenue guidance to Rs 900 crore from Rs 800 crore', text: 'Management cited currency tailwinds and higher prices.', url: 'https://www.business-standard.com/fx' })], noCtx, NOW, '7D');
     assert.equal(fx.v2!.durabilityLevel, 'UNKNOWN_INSUFFICIENT_EVIDENCE');
   });

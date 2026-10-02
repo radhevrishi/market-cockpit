@@ -5,7 +5,7 @@ import type { GuSummary, GuWindow } from '@/lib/guidance-upgrades-types';
 import type { MetricFilter, ScopeFilter } from '@/lib/guidance-upgrades-format';
 import { GU_WINDOWS, ageDays, countsLine, fmtConsensusAvail, fmtMarketCounts } from '@/lib/guidance-upgrades-format';
 import { R, box, tint } from './gu-tokens';
-import { eventCountsStrip } from './gu-ui';
+import { eventCountsStrip, partitionView } from './gu-ui';
 
 export const WINDOWS: GuWindow[] = GU_WINDOWS;
 const SCOPES: Array<[ScopeFilter, string]> = [['ALL', 'ALL'], ['INDIA', 'INDIA'], ['USA', 'USA'], ['MY_BOOK', 'MY BOOK'], ['HIGH', 'HIGH MATERIALITY']];
@@ -36,7 +36,12 @@ export function GuTopBar(p: {
 }) {
   const s = p.summary;
   const bm = s?.byMarket;
-  const counts: Array<[string, number | null, string, string | null]> = [
+  // zzz854: the exact pipeline partition replaces 'Detected / Verified' (those two never added up). Older payloads keep the older boxes.
+  const part = partitionView(s?.pipeline, s?.pipelineByMarket);
+  const counts: Array<[string, number | null, string, string | null]> = part ? [
+    ...part.boxes.map((b) => [b.label, b.n, b.tip, null] as [string, number | null, string, string | null]),
+    ['In my book', p.bookLoaded ? p.inBookCount : null, 'Companies you hold', null],
+  ] : [
     ['Detected', s?.detected ?? null, 'Guidance mentions found in the feeds', fmtMarketCounts(bm, 'detected')],
     ['Verified', s?.verified ?? null, 'Backed by a company filing, release or transcript', fmtMarketCounts(bm, 'verified')],
     ['Material', s?.material ?? null, 'Big enough to change earnings in a way that matters', fmtMarketCounts(bm, 'material')],
@@ -61,7 +66,14 @@ export function GuTopBar(p: {
           </div>
         ))}
       </div>
-      {s?.counts && (
+      {part && (
+        <div style={{ display: 'grid', gap: 2, fontSize: 12, color: R.dim }} aria-label="How the counts add up" data-gu-partition>
+          <div><b style={{ color: R.text }}>How these numbers add up:</b> {part.line}</div>
+          <div style={{ color: part.listsHold ? R.dim : R.red, fontWeight: part.listsHold ? 400 : 700 }}>{part.listsHold ? '✓' : '✕'} {part.listsLine}{part.listsHold ? '' : ' — the lists do not add up; do not rely on these numbers until this is fixed'}</div>
+          {part.byMarket && <div>{part.byMarket}</div>}
+        </div>
+      )}
+      {!part && s?.counts && (
         <div style={{ display: 'grid', gap: 2, fontSize: 12, color: R.dim }} aria-label="Event counts">
           <div>{countsLine(s.counts)}</div>
           {eventCountsStrip(s.counts) && <div>{eventCountsStrip(s.counts)}</div>}

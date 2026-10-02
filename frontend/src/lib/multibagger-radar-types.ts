@@ -14,7 +14,8 @@
 //  * Nothing is invented: every chain step is 'proven' (a source states it),
 //    'assumed' (mechanism reasoning, no source yet) or 'unknown'.
 
-import type { OwnedNumber, ResolvedEntity, DealTerms, SourceSubject } from './radar-owned-types';
+import type { OwnedNumber, ResolvedEntity, DealSubtype, DealTerms, SourceSubject } from './radar-owned-types';
+import type { DealRoles, SecEventSubtype, SecurityResolution, SecurityState, SourceOriginSummary } from './multibagger-radar-feed-types';
 
 export type RadarBucket =
   | 'MULTIBAGGER'          // long-duration structural opportunities
@@ -55,7 +56,7 @@ export const KIND_LABEL: Record<CatalystKind, string> = {
   SPECIAL_SITUATION: 'Special situation', EARNINGS_RESULT: 'Earnings result', OTHER: 'Other event',
   MARGIN_INFLECTION: 'Margin inflection', FCF_INFLECTION: 'Free cash flow inflection', MARKET_SHARE_INFLECTION: 'Market share inflection',
   REGULATORY_DEMAND_INFLECTION: 'Regulation-driven demand', PRICING_POWER_INFLECTION: 'Pricing power inflection',
-  SPIN_DEMERGER: 'Spin-off / demerger', MERGER: 'Merger', ACQUISITION: 'Acquisition', DIVESTITURE: 'Divestiture', GOING_PRIVATE: 'Going private / delisting',
+  SPIN_DEMERGER: 'Spin-off / demerger', MERGER: 'Merger', ACQUISITION: 'Acquisition / investment', DIVESTITURE: 'Divestiture', GOING_PRIVATE: 'Going private / delisting',
   TENDER_OFFER: 'Tender / open offer', BUYBACK: 'Buyback', RIGHTS_ISSUE: 'Rights issue', RESTRUCTURING: 'Restructuring', ASSET_SALE: 'Asset sale', CAPITAL_REORG: 'Capital reorganisation',
   CONTRACT_ORDER: 'Contract / order', REGULATORY_DECISION: 'Regulatory decision', LEGAL_DECISION: 'Legal decision', FINANCING: 'Financing (debt)',
   CAPITAL_RAISE: 'Capital raise / funding', MANAGEMENT_CHANGE: 'Management change', OTHER_MATERIAL_EVENT: 'Other material event',
@@ -110,6 +111,12 @@ export interface EvidenceRead {
   sourceDiversity?: SourceDiversity[];
   /** Syndicated or near-identical copies that were removed from the count. */
   duplicatesRemoved?: number;
+  /** zzz854: independent information origins (copies of one filing / press release are ONE origin). `independentSources` carries the same number. */
+  independentOrigins?: number;
+  /** zzz854: distinct outlets after syndicated copies are merged (display only; never evidence strength). */
+  outlets?: number;
+  /** zzz854: 'origin-id' (feed origin ids), 'supplied' (feed count) or 'conservative' (no origin data: all copies assumed one origin). */
+  originBasis?: 'origin-id' | 'supplied' | 'conservative';
 }
 export type SourceQuality = 'PRIMARY' | 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN';
 export type SourceDiversity = 'PRIMARY' | 'COMPANY' | 'CUSTOMER' | 'GOVERNMENT' | 'INDEPENDENT_INDUSTRY' | 'FINANCIAL_MEDIA' | 'SYNDICATED' | 'ANALYST' | 'SOCIAL';
@@ -326,11 +333,33 @@ export interface RadarItem {
   /** What the engine knows about identifying the issuer: how the ticker was (or was not) resolved. */
   resolutionAttempt?: 'feed-entity' | 'feed-flag' | 'none';
   entity?: ResolvedEntity | null;
+
+  // ── zzz854 (all optional) ──
+  /** One owner line per number: 'Target (Yoga Bar) revenue ₹452 cr — not ITC's revenue; ITC's incremental revenue: Not established'. */
+  metricOwnerLines?: string[];
+  /** Economic subtype of a corporate transaction (third-party tender, issuer tender, going-private, spin-off, acquisition, stake investment). */
+  dealSubtype?: DealSubtype | null;
+  /** false = only an SEC form title was seen: the filing exists but its terms were not read. */
+  termsRead?: boolean;
+  /** The SEC form behind the item ('SC TO-T', 'SC 13E3', '10-12B'), when the headline is a form title. */
+  filingForm?: string | null;
+  /** Earnings results only: false = secondary-only headline, filing not read (direction and inflection not established). */
+  resultVerified?: boolean;
+  /** Earnings results only: 'Earnings inflection' | 'Earnings result (unverified)' | 'Earnings result (incomplete: ...)' | 'Earnings result (no inflection)'. */
+  resultLabel?: string;
+  // ── feed hints copied onto the item (same names as RadarFeedHints), so every consumer has them without the input ──
+  securityState?: SecurityState;
+  securityLabel?: string;
+  security?: SecurityResolution;
+  dealRoles?: DealRoles | null;
+  sourceOrigins?: SourceOriginSummary;
+  independentOrigins?: number;
+  eventSubtype?: SecEventSubtype | null;
 }
 
 export type CatalystDirection = 'positive' | 'negative' | 'mixed' | 'neutral' | 'unknown';
 export type InflectionStrength = 'strong' | 'moderate' | 'weak' | 'none' | 'unknown';
-export type EvidenceChainKind = 'OPERATING' | 'ACQUISITION' | 'TENDER' | 'SPIN_OFF' | 'LEGAL' | 'MERGER' | 'BUYBACK' | 'CORPORATE_ACTION' | 'CAPITAL_RAISE' | 'RESULT';
+export type EvidenceChainKind = 'OPERATING' | 'ACQUISITION' | 'TENDER' | 'GOING_PRIVATE' | 'SPIN_OFF' | 'LEGAL' | 'MERGER' | 'BUYBACK' | 'CORPORATE_ACTION' | 'CAPITAL_RAISE' | 'RESULT';
 export interface EvidenceChainStep { step: string; state: 'confirmed' | 'not_established'; detail: string | null }
 export interface DealTermLine { label: string; value: string; stated: boolean; calculated?: boolean }
 export interface FactScope { confirmed: Array<{ text: string; owner: string }>; inference: string[]; unknown: string[] }
@@ -365,9 +394,12 @@ export type MechanismStatus = 'STATED' | 'PARTIALLY_STATED' | 'ASSUMED' | 'NOT_E
 export type EarningsImpactStatus = 'CONFIRMED' | 'PARTIALLY_PROVEN' | 'UNPROVEN' | 'NOT_ESTABLISHED' | 'CONTRADICTED' | 'REPORTED_RESULT';
 
 /** Event evidence: how well the EVENT itself is sourced. Never implies an earnings link. */
-export type EventEvidence = 'PRIMARY_CONFIRMED' | 'PRIMARY_PROPOSED' | 'SECONDARY_REPORTED' | 'DISPROVED' | 'NOT_APPLICABLE';
+export type EventEvidence = 'PRIMARY_CONFIRMED' | 'PRIMARY_PROPOSED' | 'SECONDARY_REPORTED' | 'DISPROVED' | 'NOT_APPLICABLE'
+  /** zzz854: only an SEC form title was seen: the event is filed, its terms are unproven. Never 'confirmed'. */
+  | 'FILED_TERMS_NOT_READ';
 export const EVENT_EVIDENCE_LABEL: Record<EventEvidence, string> = {
   PRIMARY_CONFIRMED: 'Primary-confirmed', PRIMARY_PROPOSED: 'Primary source, proposal only', SECONDARY_REPORTED: 'Secondary-reported', DISPROVED: 'Disproved', NOT_APPLICABLE: 'Not applicable',
+  FILED_TERMS_NOT_READ: 'Filing exists — terms not read',
 };
 /** Economic evidence: whether the source states a company earnings number (revenue / EBITDA / profit / order value). Deal, capex and capacity figures do not count. */
 export type EconomicEvidence = 'NOT_ESTABLISHED' | 'PARTLY' | 'QUANTIFIED' | 'REPORTED_RESULT';

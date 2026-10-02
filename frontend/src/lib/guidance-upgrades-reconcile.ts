@@ -105,3 +105,99 @@ export async function loadUniverseRecords(tickers: { IN: string[]; US: string[] 
     return buildUniverse([], ledgerRows, seed.rows, now, { stored }).records;
   } catch { return []; }
 }
+
+// ═══ zzz854: the EVENTS layer's verdict per company + metric + period, for the universe to reconcile against ═══════════════════════
+// One status per (event, changed metric): RAISED / REITERATED / LOWERED / MIXED / INVALID (not guidance) / NO_NUMBERS.
+// Built from the event engine's OWN classification (never from a headline verb). The universe uses only VERIFIED statuses to override a record.
+import type { GuidanceEvent } from './guidance-upgrades-types';
+import type { GgMetric } from './growth-guidance-types';
+import type { GuEventStatus, GuEventStatusKind } from './guidance-universe-types';
+import { normPeriod } from './guidance-universe-integrity';
+import { nonGuidanceRaiseSentence } from './guidance-upgrades-candidates';
+
+const EV_METRIC: Partial<Record<string, GgMetric>> = { REVENUE: 'REVENUE', REVENUE_GROWTH: 'REVENUE', NET_PROFIT: 'PAT', EBITDA: 'EBITDA', EPS: 'EPS', ADJ_EPS: 'EPS', FCF: 'FCF' };
+const STATUS_LABEL: Record<GuEventStatusKind, string> = { RAISED: 'GUIDANCE RAISED', REITERATED: 'GUIDANCE REITERATED', LOWERED: 'GUIDANCE LOWERED', MIXED: 'MIXED / RANGE CHANGE', INVALID: 'NOT GUIDANCE', NO_NUMBERS: 'NUMBERS NOT FOUND' };
+const ptText = (p: { low: number | null; high: number | null; currency?: string; unit?: string; isGrowthRate?: boolean } | null | undefined): string | null => {
+  if (!p || p.low == null) return null;
+  const u = p.isGrowthRate ? '%' : p.unit || ''; const c = p.isGrowthRate ? '' : p.currency || '';
+  const f = (n: number) => `${c}${String(Math.round(n * 100) / 100)}${u}`;
+  return p.high != null && p.high !== p.low ? `${f(p.low)}–${f(p.high)}` : f(p.low);
+};
+/** The event agent may add a taxonomy field; read it defensively (string or { kind }). Unknown values fall back to `classification`. */
+const taxonomyOf = (e: GuidanceEvent): string | null => {
+  const t: any = (e as any).taxonomy ?? (e as any).guidanceTaxonomy ?? (e as any).eventTaxonomy ?? null;
+  const s = typeof t === 'string' ? t : typeof t?.kind === 'string' ? t.kind : typeof t?.bucket === 'string' ? t.bucket : null;
+  return s ? s.toUpperCase() : null;
+};
+/** The event-level verdict. A capital-raise narrative (or an event the counts demoted as not guidance) is INVALID. */
+export function eventVerdictOf(e: GuidanceEvent): { status: GuEventStatusKind; reason: string | null } {
+  const demoted: any = (e as any).invariantDemoted;
+  if (demoted?.excluded || nonGuidanceRaiseSentence(e.whyNow || '')) return { status: 'INVALID', reason: demoted?.reasons?.[0] || 'the narrative describes a capital raise, not guidance' };
+  const t = taxonomyOf(e) || '';
+  if (/INVALID|NOT_GUIDANCE|CAPITAL/.test(t)) return { status: 'INVALID', reason: 'classified as not guidance' };
+  if (/REITERAT|MAINTAIN|UNCHANGED/.test(t)) return { status: 'REITERATED', reason: null };
+  if (/LOWER|DOWNGRADE|CUT/.test(t)) return { status: 'LOWERED', reason: null };
+  if (/MIXED|RANGE/.test(t)) return { status: 'MIXED', reason: null };
+  if (/FIRST|INITIAL|NUMBERS_NOT_FOUND|NO_NUMBERS|DETECTED|AWAITING/.test(t)) return { status: 'NO_NUMBERS', reason: null };
+  if (/RAISE|UPGRADE/.test(t)) return { status: 'RAISED', reason: null };
+  const c = e.classification ?? (e.v2?.eventClass === 'UPGRADE' ? 'RAISE' : e.v2?.eventClass === 'REITERATION' ? 'REITERATION' : e.v2?.eventClass === 'DOWNGRADE' ? 'DOWNGRADE' : e.v2?.eventClass === 'NO_RAISE' ? 'MIXED' : 'DETECTED');
+  return { status: c === 'RAISE' ? 'RAISED' : c === 'REITERATION' ? 'REITERATED' : c === 'DOWNGRADE' ? 'LOWERED' : c === 'MIXED' ? 'MIXED' : 'NO_NUMBERS', reason: null };
+}
+/** One status per (event, changed metric with a stated period). Per-change direction refines a MIXED event (a metric that went down is LOWERED). */
+export function eventStatusesOf(events: readonly GuidanceEvent[]): GuEventStatus[] {
+  const out: GuEventStatus[] = [];
+  for (const e of events || []) {
+    if (!e || !e.ticker || !e.announcement_date || (e.market !== 'IN' && e.market !== 'US')) continue;
+    const v = eventVerdictOf(e);
+    const primary = (e.sources || []).find((s) => s.tier === 'PRIMARY') || e.sources?.[0];
+    for (const ch of e.changes || []) {
+      const metric = EV_METRIC[ch.metric]; if (!metric) continue;
+      const per = ch.after?.period && ch.after.period !== 'UNSTATED' ? normPeriod(ch.after.period) : 'UNSTATED';
+      let st: GuEventStatusKind = v.status;
+      if (st === 'MIXED' || st === 'RAISED') { if (ch.direction === 'DOWN' && ch.before) st = 'LOWERED'; else if (ch.direction === 'FLAT' && ch.before) st = 'REITERATED'; }
+      const b = ptText(ch.before), a = ptText(ch.after);
+      out.push({ market: e.market, ticker: String(e.ticker).toUpperCase(), company: e.company, metric, period: per, date: e.announcement_date.slice(0, 10), status: st,
+        verified: e.verification === 'VERIFIED' && (st === 'INVALID' || !!e.primaryAvailable),
+        label: STATUS_LABEL[st], display: b && a ? `${b} → ${a}` : a, sourceName: primary?.name ?? null, sourceUrl: e.primarySourceUrl ?? primary?.url ?? null, eventId: e.guidance_event_id ?? null, reason: v.reason });
+    }
+  }
+  return out;
+}
+/** Newest per (market, ticker, metric, period, date); bounded. */
+export function mergeEventStatuses(a: readonly GuEventStatus[], b: readonly GuEventStatus[], max = 3000): GuEventStatus[] {
+  const m = new Map<string, GuEventStatus>();
+  for (const x of [...a, ...b]) { if (!x?.ticker) continue; const k = `${x.market}|${x.ticker}|${x.metric}|${x.period}|${x.date}`; const cur = m.get(k); if (!cur || (x.verified && !cur.verified)) m.set(k, x); }
+  return Array.from(m.values()).sort((x, y) => y.date.localeCompare(x.date)).slice(0, max);
+}
+
+/** KV digest the events route may write after each run (compact; optional). The universe also derives statuses from the event store itself. */
+export const EVENT_STATUS_KEY = 'guidance-upgrades:event-status:v1';
+export const EVENT_STATUS_TTL_S = 30 * 24 * 3600;
+export async function writeEventStatuses(events: readonly GuidanceEvent[]): Promise<boolean> {
+  try {
+    const { kvGet, kvSet } = await import('./kv');
+    const prev = await kvGet<{ v: 1; statuses: GuEventStatus[] }>(EVENT_STATUS_KEY).catch(() => null);
+    const statuses = mergeEventStatuses(eventStatusesOf(events), Array.isArray(prev?.statuses) ? prev!.statuses : []);
+    await kvSet(EVENT_STATUS_KEY, { v: 1, updatedAt: new Date().toISOString(), statuses }, EVENT_STATUS_TTL_S); return true;
+  } catch { return false; }
+}
+/**
+ * Production loader for the universe: the persisted event store (both markets) run through the SAME event engine (pure), plus the optional digest.
+ * Never throws; an unreadable store gives an empty list and says so in `source`.
+ */
+export async function loadEventStatuses(now: Date): Promise<{ statuses: GuEventStatus[]; source: string }> {
+  const parts: string[] = []; let fromStore: GuEventStatus[] = []; let fromDigest: GuEventStatus[] = [];
+  try {
+    const [led, eng] = await Promise.all([import('./guidance-upgrades-ledger'), import('./guidance-upgrades')]);
+    const [stIN, stUS] = await Promise.all([led.readEventStore('IN').catch(() => null), led.readEventStore('US').catch(() => null)]);
+    const cands = [...led.storedCandidates(stIN), ...led.storedCandidates(stUS)];
+    if (cands.length) { const evs = eng.processCandidates(cands, () => ({}), now, '120D'); fromStore = eventStatusesOf(evs); parts.push(`event store: ${evs.length} events`); }
+    else parts.push('event store: empty or unreadable');
+  } catch (e: any) { parts.push(`event store: failed (${String(e?.message || e).slice(0, 60)})`); }
+  try {
+    const { kvGet } = await import('./kv');
+    const d = await kvGet<{ statuses: GuEventStatus[] }>(EVENT_STATUS_KEY);
+    if (Array.isArray(d?.statuses)) { fromDigest = d!.statuses; parts.push(`digest: ${fromDigest.length}`); }
+  } catch { /* optional */ }
+  return { statuses: mergeEventStatuses(fromStore, fromDigest), source: parts.join('; ') };
+}

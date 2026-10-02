@@ -26,18 +26,24 @@ export async function readLedgers(tickers: string[], market: LedgerMarket = 'IN'
 }
 
 export function ledgerRowsOf(e: GuidanceEvent): GuLedgerRow[] {
-  return e.changes.map((c) => ({
-    date: e.announcement_date, metric: c.after.metric, period: c.after.period, text: fmtPoint(c.after),
-    change: c.direction === 'UP' ? 'RAISED' : c.direction === 'DOWN' ? 'CUT' : c.direction === 'FLAT' ? 'REITERATED' : 'INITIAL',
-    result: 'PENDING',
-  }));
+  // zzz854: only a verified FORMAL upgrade writes RAISED. A midpoint-only / widened / mixed move is never stored as a raise (it would feed REPEATED UPGRADER).
+  const formal = !e.pipeline || e.pipeline.status === 'CARD';
+  return e.changes.map((c, i) => {
+    const k = e.v2?.ranges?.[i]?.klass;
+    const up = c.direction === 'UP' && formal && (!k || k === 'CLEAN_RAISE' || k === 'RANGE_SHIFT_UP');
+    const change: GuLedgerRow['change'] = up ? 'RAISED' : c.direction === 'DOWN' ? 'CUT' : c.direction === 'FLAT' ? 'REITERATED' : c.direction === 'UP' ? 'REITERATED' : 'INITIAL';
+    return { date: e.announcement_date, metric: c.after.metric, period: c.after.period, text: fmtPoint(c.after), change, result: 'PENDING' as const };
+  });
 }
+
+/** zzz854: only items that passed the pipeline (verified cards and audit rows) are history. Queued, invalid, stale, capital-raise and first-guidance items never are. */
+export const isLedgerWorthy = (e: GuidanceEvent): boolean => e.verification === 'VERIFIED' && !!e.ticker && (!e.pipeline || e.pipeline.status === 'CARD' || e.pipeline.status === 'AUDIT');
 
 /** Verified events only. Skips an event already stored. Returns how many tickers were written. */
 export async function writeEvents(events: GuidanceEvent[], existing: Map<string, TickerLedger>, market: LedgerMarket = 'IN'): Promise<number> {
   let n = 0;
   const byTicker = new Map<string, GuidanceEvent[]>();
-  for (const e of events) if (e.verification === 'VERIFIED' && e.ticker) byTicker.set(e.ticker.toUpperCase(), [...(byTicker.get(e.ticker.toUpperCase()) || []), e]);
+  for (const e of events) if (isLedgerWorthy(e)) byTicker.set(e.ticker.toUpperCase(), [...(byTicker.get(e.ticker.toUpperCase()) || []), e]);
   for (const [t, evs] of Array.from(byTicker.entries())) {
     const cur = existing.get(t) || { rows: [], points: [], ids: [] };
     const fresh = evs.filter((e) => !cur.ids.includes(e.guidance_event_id));

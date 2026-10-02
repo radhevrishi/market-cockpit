@@ -1,7 +1,7 @@
 // zzz843 — Guidance Upgrades: plain-English formatters. Client-safe, pure, no imports beyond types.
 // Rule: a relative change is "+x%", a change between two rates (growth, margin) is "+x pp".
 // The two are never mixed. A missing number prints DATA UNAVAILABLE, never zero.
-import type { GuWindow, GuChange, GuGuidancePoint, GuNumber, GuDecision, GuMetric, GuThesis, GuGap, GuDuration, GuMateriality, GuPortfolioImpact, GuFlag, GuidanceEvent, GuRangeClass, GuDurabilityLevel, GuStage, GuScoreItem, GuMetricBasis, GuScanStatus, GuScanSource, GuSummary, GuRangeMath } from './guidance-upgrades-types';
+import type { GuWindow, GuChange, GuGuidancePoint, GuNumber, GuDecision, GuMetric, GuThesis, GuGap, GuDuration, GuMateriality, GuPortfolioImpact, GuFlag, GuidanceEvent, GuRangeClass, GuDurabilityLevel, GuStage, GuScoreItem, GuMetricBasis, GuScanStatus, GuScanSource, GuSummary, GuRangeMath, GuTaxonomy, GuReviewStatus, GuPrimarySourceState, GuReviewItem, GuPipelineCounts } from './guidance-upgrades-types';
 
 export const UNAVAILABLE = 'DATA UNAVAILABLE';
 
@@ -177,6 +177,29 @@ export const SCAN_INCOMPLETE = 'SCAN INCOMPLETE';
 export const SCAN_COMPLETE = 'SCAN COMPLETE';
 export const SCAN_INCOMPLETE_EMPTY = 'Scan incomplete — no events shown does NOT mean no upgrades. Some sources were not fully read. Check the coverage panel above.';
 
+// ── zzz854: taxonomy, review queue, one primary-source state ──────────────────────────────────────────────────────
+export const TAXONOMY_LABEL: Record<GuTaxonomy, string> = {
+  formal_upgrade: 'Formal upgrade', reiteration: 'Reiteration', downgrade: 'Downgrade', mixed_range_change: 'Mixed / range change', first_guidance: 'First guidance (not a raise)',
+  qualitative_commentary: 'Qualitative commentary', analyst_revision: 'Analyst revision', earnings_beat: 'Earnings beat (actual vs expectation)',
+  management_target: 'Long-term management target', operational_disclosure: 'Operational disclosure', capital_raise_or_financing: 'Capital raise / financing (not guidance)',
+};
+export const REVIEW_STATUS_LABEL: Record<GuReviewStatus, string> = {
+  awaiting_numbers: 'Awaiting numbers', awaiting_primary: 'Awaiting primary source', needs_review: 'Needs review', invalid: 'Invalid comparison', stale: 'Stale period',
+  capital_raise: 'Capital raise (not guidance)', first_guidance: 'First guidance (not a raise)', not_guidance: 'Not guidance',
+};
+export const PRIMARY_SOURCE_STATE_LABEL: Record<GuPrimarySourceState, string> = {
+  not_found: 'Primary source: not found yet', found_not_read: 'Primary source found, not read yet',
+  read_numbers_found: 'Primary source read — old and new figures found', read_numbers_not_found: 'Primary source read — old and new figures not found in it',
+};
+/** 'NEEDS REVIEW · Fulgent (FLGT) 2026-09-30 — Needs review: implausible change ...' */
+export function reviewItemLine(r: GuReviewItem): string {
+  return `${REVIEW_STATUS_LABEL[r.status].toUpperCase()} · ${r.company}${r.ticker && r.ticker !== r.company ? ` (${r.ticker})` : ''} ${r.announcement_date} — ${r.reason}`;
+}
+/** 'Verified upgrades 3 · Reiterations 2 · Mixed 1 · Lowered 0 · First guidance 1 · Invalid/stale 2 · Capital raise 1 · Awaiting numbers 4 · Unverified 5 · Not guidance 0 = 19 processed' */
+export function pipelineCountsLine(c: GuPipelineCounts): string {
+  return `Verified upgrades ${c.verifiedUpgrades} · Reiterations ${c.reiterations} · Mixed ${c.mixed} · Lowered ${c.lowered} · First guidance ${c.firstGuidance} · Invalid/stale ${c.invalidOrStale} · Capital raise ${c.capitalRaise} · Awaiting numbers ${c.awaitingNumbers} · Unverified ${c.unverified} · Not guidance ${c.nonGuidance} = ${c.processed} processed`;
+}
+
 /** Stage of an event. News-only (no primary source) is always CANDIDATE, whatever the engine said. */
 export function stageOf(e: Pick<GuidanceEvent, 'v2' | 'primaryAvailable' | 'verification'> & { changes?: GuidanceEvent['changes'] }): GuStage {
   if (!e.primaryAvailable) return 'CANDIDATE';
@@ -184,7 +207,9 @@ export function stageOf(e: Pick<GuidanceEvent, 'v2' | 'primaryAvailable' | 'veri
   if (e.v2?.stage) return e.v2.stage;
   return e.verification === 'VERIFIED' ? 'VERIFIED' : 'PRIMARY_SOURCE_FOUND';
 }
-export function stageNote(e: Pick<GuidanceEvent, 'v2' | 'primaryAvailable' | 'verification'> & { changes?: GuidanceEvent['changes'] }): string | null {
+export function stageNote(e: Pick<GuidanceEvent, 'v2' | 'primaryAvailable' | 'verification'> & { changes?: GuidanceEvent['changes']; primarySourceState?: GuPrimarySourceState }): string | null {
+  // zzz854: one state from data. A primary source that WAS read is never called 'awaiting'.
+  if (e.primarySourceState) return e.primarySourceState === 'read_numbers_found' ? null : e.primarySourceState === 'not_found' ? AWAITING_PRIMARY : PRIMARY_SOURCE_STATE_LABEL[e.primarySourceState];
   return stageOf(e) === 'CANDIDATE' ? AWAITING_PRIMARY : null;
 }
 export function stageIndex(st: GuStage): number { return STAGE_ORDER.indexOf(st); }
@@ -664,8 +689,8 @@ export function sourceConflictLine(e: Pick<GuidanceEvent, 'sourceConflict'>): st
   return s ? `Primary source: ${s.primary}; Media claim: ${s.media}` : null;
 }
 /** One line per event about where its primary source stands. 'Awaiting primary source' only when no link is known. */
-export function primaryStateLine(e: Pick<GuidanceEvent, 'primaryState' | 'primaryStateText' | 'primarySourceUrl' | 'primarySourceDate'>): string | null {
-  if (!e.primaryState) return null;
+export function primaryStateLine(e: Pick<GuidanceEvent, 'primaryState' | 'primaryStateText' | 'primarySourceUrl' | 'primarySourceDate'> & { primarySourceState?: GuPrimarySourceState }): string | null {
+  if (!e.primaryState) return e.primarySourceState ? PRIMARY_SOURCE_STATE_LABEL[e.primarySourceState] : null;
   const when = e.primarySourceDate ? ` (${e.primarySourceDate})` : '';
   if (e.primaryState === 'SECONDARY_SOURCE_CLAIM') return `${e.primaryStateText}. Primary source: not found in the filings read so far`;
   if (e.primaryState === 'AWAITING_PRIMARY_SOURCE') return e.primaryStateText ?? 'Awaiting primary source';

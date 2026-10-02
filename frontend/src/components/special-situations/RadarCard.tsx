@@ -16,7 +16,8 @@ import { addFromRadarItem, NOT_ESTABLISHED, type OwnerTag } from '@/lib/multibag
 import type { LedgerEntry } from '@/lib/multibagger-radar-types';
 import {
   CHAIN_MARK, DELTA_LABEL, EVIDENCE_META, INDICATOR_LABEL, LINK_KEY_LABEL, LINK_STATUS_META, MATERIALITY_LABEL, NOT_YET, PRICE_BLOCK_LABEL, PRIORITY_COLOR, QUANT_LABEL, R,
-  TAG_COLOR, TRANSMISSION_LABEL, box, collapseChain, evidenceLines, durationLine, has, oneLineRow, orNotYet, populatedSections, progressionText, sourcesLine, statusBadges,
+  TAG_COLOR, TRANSMISSION_LABEL, box, collapseChain, evidenceLines, durationLine, has, oneLineRow, orNotYet, populatedSections, progressionText, statusBadges,
+  dealView, originsLine, ownerLines, resultBadge, securityView, type RadarCardHints,
 } from './radar-tokens';
 import { Chip, Field, btn } from './RadarBits';
 import { LedgerForm } from './LedgerForm';
@@ -26,8 +27,8 @@ const say = orNotYet;
 void NOT_ESTABLISHED;
 
 /** One line, no detail panel: corporate actions and items with no earnings link. */
-export function RadarRow({ item }: { item: RadarItem }) {
-  const r = oneLineRow(item);
+export function RadarRow({ item, hints }: { item: RadarItem; hints?: RadarCardHints | null }) {
+  const r = oneLineRow(item, hints);
   return (
     <div data-radar-row={item.id} style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', fontSize: 12, color: R.dim, padding: '3px 0', borderBottom: `1px dotted ${R.border}` }}>
       <b style={{ color: R.text }}>{r.who}</b>
@@ -41,9 +42,11 @@ function Sub({ label, children }: { label: string; children: React.ReactNode }) 
   return <Field label={label}>{children}</Field>;
 }
 
-export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now }: {
+export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now, hints }: {
   item: RadarItem; held: boolean; ownerTag?: OwnerTag; ledgerIds: ReadonlySet<string>;
   onSaveLedger: (e: LedgerEntry) => void; now: string;
+  /** zzz854: the adapter's hints for this item (security state, deal roles, information origins). Optional. */
+  hints?: RadarCardHints | null;
 }) {
   const [adding, setAdding] = useState(false);
   const ev = EVIDENCE_META[item.evidence.status];
@@ -62,17 +65,36 @@ export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now }
   const transmission = item.financialTransmission || item.link;
   const eligible = item.ledgerEligible !== false;
   const prog = progressionText(item);
+  const sec = securityView(item.ticker, hints);
+  const deal0 = dealView(item, hints);
+  // the engine's subject line may already carry the same role line: print it once
+  const norm = (t: string) => t.replace(/\s*(?:->|→)\s*/g, ' → ').toLowerCase();
+  const deal = deal0.roleLine && has(item.sourceSubjectLine) && norm(item.sourceSubjectLine).includes(norm(deal0.roleLine)) ? { ...deal0, roleLine: null } : deal0;
+  const result = resultBadge(item);
+  const owners = ownerLines(item);
+  const ctx = (item.contextFacts || []).filter(has);
   const kindText = KIND_LABEL[item.kind] + (item.subKind ? ` - ${KIND_LABEL[item.subKind]}` : '') + (item.inflection !== 'NOT_ASSESSED' ? ` - ${INFLECTION_LABEL[item.inflection]}` : '');
   return (
     <div style={box({ padding: 12, display: 'flex', flexDirection: 'column', gap: 8, opacity: item.lowSignal ? 0.78 : 1 })} data-radar-card={item.id}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 15, fontWeight: 900, color: R.text }}>{item.ticker || 'No ticker'}</span>
+        <span data-radar-security={sec.resolved ? 'resolved' : 'unresolved'} style={{ fontSize: sec.resolved ? 15 : 13, fontWeight: 900, color: sec.resolved ? R.text : R.dim }}>{sec.head}</span>
         <span style={{ fontSize: 13, color: R.dim }}>{item.company}</span>
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <Chip color={ev.color} dashed={ev.dashed} title={item.evidence.why}>{ev.mark} Evidence: {item.evidenceLabel || EVIDENCE_LABEL[item.evidence.status]}</Chip>
           <Chip color={PRIORITY_COLOR[item.priority]} title={item.priorityReason}>Research priority: {PRIORITY_LABEL[item.priority]}</Chip>
         </span>
       </div>
+
+      {sec.line && <div data-radar-security-line style={{ fontSize: 12, color: R.dim }}>{sec.line}</div>}
+      {(deal.roleLine || deal.subtype || deal.form || deal.termsBadge || result) && (
+        <div data-radar-deal style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          {deal.subtype && <Chip color={R.dim}>{deal.subtype}</Chip>}
+          {deal.form && <Chip color={R.dim} dashed title="The SEC form behind this item">Form {deal.form}</Chip>}
+          {deal.termsBadge && <Chip color={R.amber} dashed title="Only the form title was seen. Price, size and conditions are not known until the filing is read.">{deal.termsBadge}</Chip>}
+          {result && <Chip color={result.verified ? R.cyan : R.amber} dashed={!result.verified} title={result.verified ? undefined : 'Read from a secondary headline only. The filing was not read, so direction and inflection are not established.'}>{result.label}</Chip>}
+          {deal.roleLine && <span style={{ fontSize: 12, color: R.text }}>{deal.roleLine}</span>}
+        </div>
+      )}
 
       {/* three separate statuses - never merged into one "Confirmed" */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} aria-label="Three separate statuses">
@@ -146,7 +168,7 @@ export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now }
         )}
         {has(item.economicPayoff) && <Sub label="Economic payoff">{item.economicPayoff}</Sub>}
         <Sub label="Event evidence">
-          <span style={{ color: ev.color, fontWeight: 700 }}>{item.eventEvidence ? evLine.event : EVIDENCE_LABEL[item.evidence.status]}</span>
+          <span style={{ color: ev.color, fontWeight: 700 }}>{deal.termsBadge && has(item.evidenceLabel) ? item.evidenceLabel : item.eventEvidence ? evLine.event : EVIDENCE_LABEL[item.evidence.status]}</span>
           {' - '}{say(item.evidence.sourceLabel)}. {say(item.evidence.why)}
         </Sub>
         {item.economicEvidence && (
@@ -174,8 +196,8 @@ export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now }
           {item.quantificationStatus ? ` Quantification: ${QUANT_LABEL[item.quantificationStatus]}.` : ''}
         </Sub>
         {has(item.parentImpactLine) && <Sub label="Company earnings effect">{item.parentImpactLine}</Sub>}
-        {(item.numberLines || []).length > 0 && (
-          <Sub label="Numbers in the source, by owner"><ul style={{ margin: '2px 0 0', paddingLeft: 18 }} data-radar-numbers>{(item.numberLines || []).map((l, i) => <li key={i}>{l}</li>)}</ul></Sub>
+        {owners.length > 0 && (
+          <Sub label="Numbers in the source, by owner"><ul style={{ margin: '2px 0 0', paddingLeft: 18 }} data-radar-numbers>{owners.map((l, i) => <li key={i}>{l}</li>)}</ul></Sub>
         )}
         {(item.dealTermLines || []).length > 0 && (
           <Sub label="Deal terms">
@@ -209,10 +231,11 @@ export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now }
         <Sub label="Portfolio status">{portfolio}</Sub>
       </div>
 
-      {show.has('price') && item.priceResponse && (
+      {((show.has('price') && item.priceResponse) || ctx.length > 0) && (
         <div data-radar-price style={{ border: `1px dashed ${R.border}`, borderRadius: 6, padding: '6px 10px', fontSize: 11.5, color: R.faint, lineHeight: 1.45 }}>
           <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.6, textTransform: 'uppercase' }}>{PRICE_BLOCK_LABEL}</div>
-          {item.priceResponse.text}{has(item.priceResponse.note) ? ` ${item.priceResponse.note}` : ''}
+          {show.has('price') && item.priceResponse ? <div>{item.priceResponse.text}{has(item.priceResponse.note) ? ` ${item.priceResponse.note}` : ''}</div> : null}
+          {ctx.length > 0 && <div data-radar-context>Context only: {ctx.join('; ')}</div>}
         </div>
       )}
 
@@ -222,7 +245,7 @@ export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now }
         {has(item.upgradeTrigger) && <div><b>What would upgrade?</b> {item.upgradeTrigger}</div>}
         {has(item.downgradeTrigger) && <div><b>What would downgrade?</b> {item.downgradeTrigger}</div>}
       </div>
-      {show.has('sources') && <div style={{ fontSize: 11.5, color: R.faint }}><b>Source quality and diversity:</b> {sourcesLine(item.evidence)}</div>}
+      {show.has('sources') && <div style={{ fontSize: 11.5, color: R.faint }}><b>Sources:</b> {originsLine(item.evidence, hints?.sourceOrigins)}</div>}
       {item.drivers.length > 0 && (
         <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
           {item.drivers.map((d) => <Chip key={d} color={R.faint} title="Shared driver tag">{d}</Chip>)}

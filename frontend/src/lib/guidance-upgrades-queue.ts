@@ -23,8 +23,19 @@ export const QUEUE_KEY = 'guidance-upgrades:queue:v1';
 export const QUEUE_TTL_S = 60 * 24 * 3600;
 export const QUEUE_MAX_ITEMS = 900;
 export const QUEUE_MAX_CHARS = 900_000;
-export const MAX_DOCS_PER_RUN = 12;
-export const DOC_BUDGET_MS = 15_000;
+/**
+ * zzz854 throughput: was 12 docs / 15 s / 3 at a time, which left 87 documents waiting for 7+ runs. Now up to 30 docs per run, 5 at a time,
+ * inside an 18 s budget (the route still caps the budget at 26 s minus what it has already spent, inside its 30 s maxDuration).
+ * A PDF read takes ~2-5 s (KV text cache hits are faster), so a run reads ~18-30 documents; the hourly workflow calls the route twice
+ * (30D and 120D windows), so ~40-60 documents per hour: a backlog of 87 drains in about 2 hours of weekday runs (see drainEstimate).
+ */
+export const MAX_DOCS_PER_RUN = 30;
+export const DOC_BUDGET_MS = 18_000;
+export const QUEUE_CONCURRENCY = 5;
+/** route runs per hour that process the queue (the hourly workflow calls the events route for 30D and 120D) */
+export const QUEUE_RUNS_PER_HOUR = 2;
+/** a conservative documents-per-run figure for the drain estimate (not every run gets the full budget) */
+export const EXPECTED_DOCS_PER_RUN = 20;
 /** minutes to wait after failure 1, failure 2, failure 3 (the last is the single long re-check of a SOURCE_UNAVAILABLE item) */
 export const RETRY_DELAYS_MIN = [10, 120, 24 * 60] as const;
 export const MAX_FAILURES = 3;
@@ -110,12 +121,22 @@ const dueAt = (x: GuQueueItem, nowMs: number): boolean => {
     default: return false;
   }
 };
-/** P0 first, then P1, then P2; inside a priority the newest announcement first. At most `max` items. */
+/**
+ * P0 first, then P1, then P2. Inside a priority the document that has WAITED LONGEST goes first (oldest discovered_at), so the backlog drains
+ * in order and nothing starves behind a stream of new filings; among documents discovered together, the newest announcement first. At most `max`.
+ */
 export function selectDue(q: QueueState, now: Date, max: number = MAX_DOCS_PER_RUN): GuQueueItem[] {
   const nowMs = now.getTime();
   return q.items.filter((x) => dueAt(x, nowMs))
-    .sort((a, b) => PRIO_RANK[a.priority] - PRIO_RANK[b.priority] || b.event_date.localeCompare(a.event_date) || a.discovered_at.localeCompare(b.discovered_at))
+    .sort((a, b) => PRIO_RANK[a.priority] - PRIO_RANK[b.priority] || a.discovered_at.localeCompare(b.discovered_at) || b.event_date.localeCompare(a.event_date))
     .slice(0, max);
+}
+/** zzz854: how long the current backlog takes to drain at the configured throughput (runs and hours, rounded up). */
+export function drainEstimate(waitingDocs: number, perRun = EXPECTED_DOCS_PER_RUN, runsPerHour = QUEUE_RUNS_PER_HOUR): { runs: number; hours: number; text: string } {
+  const n = Math.max(0, Math.floor(waitingDocs));
+  if (!n) return { runs: 0, hours: 0, text: 'No backlog.' };
+  const runs = Math.ceil(n / Math.max(1, perRun)); const hours = Math.ceil(runs / Math.max(1, runsPerHour));
+  return { runs, hours, text: `about ${runs} run${runs === 1 ? '' : 's'} (~${hours} hour${hours === 1 ? '' : 's'} of scheduled weekday runs) to read all ${n}` };
 }
 
 // ── documents ──────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -217,7 +238,7 @@ export async function processQueue(q: QueueState, o: ProcessOptions): Promise<Pr
     x.processing_status = 'DONE'; x.last_error = null; x.next_attempt = null;
     x.result = { complete: ex.complete, metrics: ex.metrics, candidate: ex.candidate, readAt: o.now.toISOString() };
     out.done++; if (ex.complete) out.complete++;
-  }, { concurrency: o.concurrency ?? 3, budgetMs: o.budgetMs ?? DOC_BUDGET_MS });
+  }, { concurrency: o.concurrency ?? QUEUE_CONCURRENCY, budgetMs: o.budgetMs ?? DOC_BUDGET_MS });
   // an item that was started but did not finish inside the budget is a failed attempt (a timeout), never left in READING forever
   for (const r of res) {
     const x = byId.get(r.item.id)!;
@@ -244,7 +265,7 @@ export function reportQueue(q: QueueState, run: { processed: number; verified: n
   for (const x of open) byPriority[x.priority]++;
   const backlogByMarket = { IN: open.filter((x) => x.market === 'IN').length, US: open.filter((x) => x.market === 'US').length };
   const note = open.length === 0 ? 'No documents are waiting to be read.'
-    : `${open.length} document${open.length === 1 ? '' : 's'} waiting to be read (P0 ${byPriority.P0}, P1 ${byPriority.P1}, P2 ${byPriority.P2}); up to ${MAX_DOCS_PER_RUN} are read per run, highest priority first.`;
+    : `${open.length} document${open.length === 1 ? '' : 's'} waiting to be read (P0 ${byPriority.P0}, P1 ${byPriority.P1}, P2 ${byPriority.P2}); up to ${MAX_DOCS_PER_RUN} are read per run (${QUEUE_CONCURRENCY} at a time), highest priority and longest-waiting first; ${drainEstimate(open.length).text}.`;
   return { total: q.items.length, queued: by('QUEUED'), reading: by('READING'), done: by('DONE'), failed: by('FAILED'), sourceUnavailable: by('SOURCE_UNAVAILABLE'), byPriority,
     processedThisRun: run.processed, verifiedThisRun: run.verified, failedThisRun: run.failed, backlogByMarket, note };
 }

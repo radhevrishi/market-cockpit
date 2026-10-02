@@ -2,9 +2,10 @@
 // zzz843 — small presentational pieces for Guidance Upgrades.
 import React from 'react';
 import type { GuNumber, GuidanceEvent } from '@/lib/guidance-upgrades-types';
-import { AWAITING_PRIMARY, BASIS_LABEL, CONSENSUS_ABSENT, DECISION_LABEL, DURABILITY_LEVEL_LABEL, GAP_LABEL, HEADLINE_ONLY_BANNER, LABEL_WORD, STAGE_LABEL, TOP_END_CUT, decisionChipText, guidanceMarkerWord, hasTopEndCut, isHeadlineOnly, isRealRaiseClass, rangeClassLabel, STAGE_ORDER, UNAVAILABLE, WHY_NOW_UNRESOLVED, fmtNumber, fmtRangeLine, showsDecision, stageIndex, stageNote, stageOf } from '@/lib/guidance-upgrades-format';
+import { AWAITING_PRIMARY, BASIS_LABEL, CONSENSUS_ABSENT, DECISION_LABEL, DURABILITY_LEVEL_LABEL, GAP_LABEL, HEADLINE_ONLY_BANNER, LABEL_WORD, STAGE_LABEL, TOP_END_CUT, decisionChipText, guidanceMarkerWord, hasTopEndCut, isHeadlineOnly, isRealRaiseClass, rangeClassLabel, STAGE_ORDER, UNAVAILABLE, WHY_NOW_UNRESOLVED, fmtNumber, fmtRangeLine, showsDecision, stageIndex, stageNote } from '@/lib/guidance-upgrades-format';
 import { DECISION_COLOR, GAP_COLOR, RATING_COLOR, R, TONE_COLOR, tint } from './gu-tokens';
-import { INVARIANT_BANNER, basisText, freshnessLines, lastVerifiedText, qualityStrip, recordBasis, type BasisText, type FreshnessIn, type GuBadge } from './gu-ui';
+import { INVARIANT_BANNER, HEADLINE_BASIS_WORD, aiCheckOf, basisText, displayStage, freshnessLines, lastVerifiedText, otherChangeLines, qualityStrip, recordBasis, validationLines, type BasisText, type FreshnessIn, type GuBadge } from './gu-ui';
+import { PRIMARY_SOURCE_STATE_LABEL } from '@/lib/guidance-upgrades-format';
 export { Chip, Field, btn } from '@/components/special-situations/RadarBits';
 import { Chip } from '@/components/special-situations/RadarBits';
 
@@ -52,7 +53,9 @@ export function SourceChip({ e }: { e: GuidanceEvent }) {
       <b>SOURCE</b> {s.url ? <a href={s.url} target="_blank" rel="noopener noreferrer" style={{ color: R.cyan }}>{s.name}</a> : s.name}
       {' · '}<b>SOURCE TYPE</b> {s.type}
       {' · '}<b>SOURCE DATE</b> {s.date ? s.date.slice(0, 10) : UNAVAILABLE}
-      {' · '}<b>PRIMARY SOURCE AVAILABLE?</b> <span style={{ color: e.primaryAvailable ? R.green : R.red, fontWeight: 800 }}>{e.primaryAvailable ? 'YES' : 'NO'}</span>
+      {e.primarySourceState
+        ? <>{' · '}<b>PRIMARY SOURCE</b> <span style={{ color: e.primarySourceState === 'read_numbers_found' ? R.green : R.amber, fontWeight: 800 }}>{PRIMARY_SOURCE_STATE_LABEL[e.primarySourceState].replace(/^Primary source:?\s*/i, '')}</span></>
+        : <>{' · '}<b>PRIMARY SOURCE AVAILABLE?</b> <span style={{ color: e.primaryAvailable ? R.green : R.red, fontWeight: 800 }}>{e.primaryAvailable ? 'YES' : 'NO'}</span></>}
     </span>
   );
 }
@@ -90,7 +93,7 @@ export const List = ({ items, empty = UNAVAILABLE }: { items: string[]; empty?: 
 // ── zzz844 V2 pieces ────────────────────────────────────────────────────
 /** CANDIDATE → PRIMARY SOURCE → … → DECISION. Current stage is filled; earlier stages are ticked; later ones are plain. */
 export function StageChip({ e, compact }: { e: GuidanceEvent; compact?: boolean }) {
-  const cur = stageIndex(stageOf(e));
+  const cur = stageIndex(displayStage(e));
   const note = stageNote(e);
   const list = compact ? [STAGE_ORDER[cur]] : STAGE_ORDER;
   return (
@@ -292,6 +295,47 @@ export function QualityStrip({ data }: { data: Parameters<typeof qualityStrip>[0
       )}
       {parts.length > 0 && <div style={{ fontSize: 12.5, color: R.dim }} aria-label="Data quality counts">{parts.join(' · ')}</div>}
       {q.reasonLine && <div style={{ fontSize: 12, color: R.dim }}><b>Why records need review:</b> {q.reasonLine}</div>}
+    </div>
+  );
+}
+
+
+// ═══ zzz854 additions ═══════════════════════════════════════════════════════════════════════════════════════════════
+/** '✓ AI-checked against filing' with the verbatim quote and a link to the document; awaiting / contradicted said plainly. */
+export function AiCheckBadge({ x }: { x: object }) {
+  const a = aiCheckOf(x);
+  if (!a) return null;
+  const c = a.tone === 'green' ? R.green : a.tone === 'red' ? R.red : R.amber;
+  return (
+    <div data-gu-ai-check style={{ display: 'grid', gap: 2, fontSize: 12 }}>
+      <span><Chip color={c} dashed={a.tone !== 'green'}>{a.label}</Chip>{a.url ? <> <a href={a.url} target="_blank" rel="noopener noreferrer" style={{ color: R.cyan }} onClick={(ev) => ev.stopPropagation()}>document</a></> : null}</span>
+      {a.quote && <blockquote style={{ margin: 0, padding: '2px 8px', borderLeft: `3px solid ${c}`, color: R.text, fontStyle: 'italic', overflowWrap: 'anywhere' }}>“{a.quote}”</blockquote>}
+      {a.detail && <span style={{ color: R.dim }}>{a.detail}</span>}
+    </div>
+  );
+}
+/** Headline basis and the note when GAAP and adjusted differ. Shown right under the headline numbers. */
+export function BasisNote({ e }: { e: GuidanceEvent }) {
+  const hb = e.headlineBasis ? HEADLINE_BASIS_WORD[e.headlineBasis] : null;
+  if (!hb && !e.basisNote) return null;
+  return <div data-gu-basis-note style={{ fontSize: 12, color: R.dim }}>{hb ? <b>{hb}.</b> : null}{e.basisNote ? ` ${e.basisNote}` : ''}</div>;
+}
+export function ValidationNotes({ e }: { e: GuidanceEvent }) {
+  const v = validationLines(e);
+  if (!v.length) return null;
+  return (
+    <ul data-gu-validation style={{ margin: 0, paddingLeft: 18, fontSize: 12 }}>
+      {v.map((x, i) => <li key={i} style={{ color: x.severity === 'INVALID' ? R.red : x.severity === 'REVIEW' ? R.amber : R.dim }}>{x.text}</li>)}
+    </ul>
+  );
+}
+export function OtherChanges({ e }: { e: GuidanceEvent }) {
+  const l = otherChangeLines(e);
+  if (!l.length) return null;
+  return (
+    <div data-gu-other-changes style={{ fontSize: 12, color: R.dim }}>
+      <b>Other measures in the same release (not counted as a raise):</b>
+      <ul style={{ margin: '2px 0 0', paddingLeft: 18 }}>{l.map((x, i) => <li key={i}>{x}</li>)}</ul>
     </div>
   );
 }

@@ -13,10 +13,11 @@ const keys = (o: unknown, out: string[] = []): string[] => {
 };
 
 describe('known false classifications', () => {
-  test('ITC Yoga Bar investment is a new product / market event, not a special situation', () => {
+  test('ITC Yoga Bar investment is an acquisition / investment (zzz854: a stake in a named business is not a new product / market)', () => {
     const r = run('ITC to invest Rs 900 crore in Yoga Bar, expanding its packaged foods portfolio');
-    assert.equal(r.kind, 'NEW_PRODUCT_MARKET');
-    assert.notEqual(r.bucket, 'SPECIAL_SITUATION');
+    assert.equal(r.kind, 'SPECIAL_SITUATION');
+    assert.equal(r.subKind, 'ACQUISITION');
+    assert.notEqual(r.bucket, 'EARNINGS_INFLECTION');
     assert.match(r.proof.what, /revenue growth/i);
     assert.match(r.proof.what, /distribution/i);
     assert.match(r.proof.what, /segment/i);

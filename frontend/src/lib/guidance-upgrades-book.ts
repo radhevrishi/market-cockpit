@@ -6,7 +6,9 @@ import { normSymbol } from './portfolio-symbols';
 
 /** How the raise reads against the thesis the owner already holds. Uses existing fields only. */
 export function portfolioImpactOf(e: GuidanceEvent, bookThesis: GuThesis): GuPortfolioImpact {
-  const anyDown = e.changes.some((c) => c.direction === 'DOWN');
+  // zzz854: an item that is not a verified card / audit row (queued, invalid, stale, capital raise) says nothing about the thesis
+  if (e.pipeline && e.pipeline.status !== 'CARD' && e.pipeline.status !== 'AUDIT') return 'NEUTRAL';
+  const anyDown = e.changes.some((c) => c.direction === 'DOWN') || (e.otherChanges ?? []).some((c) => c.direction === 'DOWN' && !!c.before);
   if (anyDown) return 'WEAKENS';
   if (e.verification !== 'VERIFIED') return 'NEUTRAL';
   if (e.expectationGap === 'NEGATIVE' && e.decision === 'REJECT') return 'NEUTRAL';

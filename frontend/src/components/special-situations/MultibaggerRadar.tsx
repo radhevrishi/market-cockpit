@@ -19,7 +19,8 @@ import {
 } from '@/lib/multibagger-ledger-store';
 import { normSymbol } from '@/lib/portfolio-symbols';
 import { readLocalBookInput, fetchSavedHoldings } from '@/lib/thesis/book-sources';
-import { BUCKET_MEANING, EVIDENCE_ORDER, KIND_LEGEND, PRIORITY_RANK, QUARANTINE_HEADER, R, box, isOneLine, isQuarantined } from './radar-tokens';
+import { BUCKET_MEANING, EVIDENCE_ORDER, KIND_LEGEND, PRIORITY_RANK, QUARANTINE_HEADER, R, box, isOneLine, isQuarantined, type RadarCardHints } from './radar-tokens';
+import { radarReconcile, type CountModelIn } from './ss-counts';
 import { Chip, btn, input } from './RadarBits';
 import { RadarCard, RadarRow } from './RadarCard';
 import { LedgerPanel } from './LedgerPanel';
@@ -74,9 +75,11 @@ export interface MultibaggerRadarProps {
   onRegionChange?: (r: Region) => void;
   isLoading?: boolean;
   error?: unknown;
+  /** zzz854: the feed's one count model. When the region is ALL the radar checks that its sections add up to the same shown count. */
+  countModel?: CountModelIn;
 }
 
-export default function MultibaggerRadar({ events, holdings: holdingsProp, region = 'ALL', onRegionChange, isLoading, error }: MultibaggerRadarProps) {
+export default function MultibaggerRadar({ events, holdings: holdingsProp, region = 'ALL', onRegionChange, isLoading, error, countModel }: MultibaggerRadarProps) {
   const { holdings, loaded } = useHoldings(holdingsProp);
   const { entries, tags, refresh } = useLedgerState();
   const [now] = useState(() => new Date().toISOString());
@@ -91,8 +94,10 @@ export default function MultibaggerRadar({ events, holdings: holdingsProp, regio
   const built = useMemo(() => {
     try {
       const split = splitRadarInputs((events || []).filter((e) => region === 'ALL' || (e.region || e.primary_filing?.region) === region));
-      return { radar: buildRadar(split.inputs, { holdings }), failed: null as string | null, heldBackLine: split.heldBack?.line || '' };
-    } catch (e: any) { return { radar: null, failed: String(e?.message || e), heldBackLine: '' }; }
+      const hints = new Map<string, RadarCardHints>();
+      for (const i of split.inputs) hints.set(i.id, i as RadarCardHints);
+      return { radar: buildRadar(split.inputs, { holdings }), failed: null as string | null, heldBackLine: split.heldBack?.line || '', hints, shown: split.inputs.length };
+    } catch (e: any) { return { radar: null, failed: String(e?.message || e), heldBackLine: '', hints: new Map<string, RadarCardHints>(), shown: 0 }; }
   }, [events, region, holdings]);
 
   const heldSet = useMemo(() => new Set(holdings.map(normSymbol)), [holdings]);
@@ -105,10 +110,14 @@ export default function MultibaggerRadar({ events, holdings: holdingsProp, regio
     (kindF === 'ALL' || i.kind === kindF) &&
     (!heldOnly || isHeld(i));
 
+  const sectionCounts: Record<string, number> = {};
+  if (built.radar) for (const b of BUCKET_ORDER) sectionCounts[b] = (built.radar.byBucket[b] || []).length;
+  const reconcile = built.radar && region === 'ALL' && countModel && typeof countModel.shown === 'number' ? radarReconcile(sectionCounts, countModel.shown, built.radar.counts?.duplicatesMerged ?? 0) : null;
   const banner = (
     <div style={{ fontSize: 12, color: R.dim, lineHeight: 1.5, border: `1px solid ${R.border}`, borderRadius: 8, padding: '8px 12px', background: R.bg2 }}>
       Built from filings and headlines in the feed; where the feed has no numbers the card says Not established. Existing Special Situations views are unchanged in the other tabs.
       {built.heldBackLine ? <div style={{ marginTop: 4 }}>{built.heldBackLine}</div> : null}
+      {reconcile ? <div data-radar-reconcile style={{ marginTop: 4, color: reconcile.holds ? R.dim : R.red, fontWeight: reconcile.holds ? 400 : 700 }}>{reconcile.holds ? '✓' : '✕'} {reconcile.text}{reconcile.holds ? ' (the same count model as the boxes above).' : '. The radar and the boxes above disagree; do not rely on the counts until this is fixed.'}</div> : null}
     </div>
   );
   const footer = <div style={{ fontSize: 11, color: R.faint, textAlign: 'center', padding: '8px 0' }}>Not investment advice. Research priority tells you what to read first. It is not a recommendation.</div>;
@@ -207,8 +216,8 @@ export default function MultibaggerRadar({ events, holdings: holdingsProp, regio
               <>
                 {list.length === 0 && <div style={{ fontSize: 12, color: R.faint }}>Nothing here{all.length ? ' with these filters' : ' right now'}.{!all.length && radar.diagnostics && (b === 'BOTTLENECK' || b === 'MULTIBAGGER') ? <span data-radar-empty-reason> {b === 'BOTTLENECK' ? radar.diagnostics.lines.bottleneck : radar.diagnostics.lines.structural}.</span> : null}</div>}
                 {shown.map((i) => (isOneLine(i)
-                  ? <RadarRow key={i.id} item={i} />
-                  : <RadarCard key={i.id} item={i} held={isHeld(i)} ownerTag={i.ticker ? tags[normSymbol(i.ticker)] : undefined} ledgerIds={ledgerIds} onSaveLedger={onSave} now={now} />))}
+                  ? <RadarRow key={i.id} item={i} hints={built.hints.get(i.id)} />
+                  : <RadarCard key={i.id} item={i} held={isHeld(i)} ownerTag={i.ticker ? tags[normSymbol(i.ticker)] : undefined} ledgerIds={ledgerIds} onSaveLedger={onSave} now={now} hints={built.hints.get(i.id)} />))}
                 {list.length > shown.length && <button type="button" style={btn(R.cyan)} onClick={() => setShowAll((s) => ({ ...s, [b]: true }))}>Show all {list.length}</button>}
               </>
             );

@@ -11,7 +11,7 @@ import { R, box, tint } from './gu-tokens';
 import { QualityStrip, btn } from './GuBits';
 import { GuGroupList, GuHighGrowthList } from './GuHighGrowthList';
 import { useGuUniverse, type GuUniverseExt } from './useGuUniverse';
-import { BADGE_LEGEND, SECTIONS, SECTION_ACTIVE, cohortCountsLine, cohortTotal, freshnessLines, groupCountsLine, sectionRows } from './gu-ui';
+import { BADGE_LEGEND, SECTIONS, SECTION_ACTIVE, cohortCountsLine, cohortTotal, freshnessLines, groupCountsLine, highestActiveHeading, sectionRows } from './gu-ui';
 
 type Mk = 'IN' | 'US' | 'ALL';
 const TOGGLE: Array<[Mk, string]> = [['IN', 'India'], ['US', 'USA'], ['ALL', 'All']];
@@ -61,9 +61,13 @@ export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void 
               {hasGroups ? SECTIONS.map((sec) => {
                 const rows = sectionRows(groups, sec.key, mk);
                 const total = cohortTotal(rows);
+                // zzz854: the Active heading carries its threshold and the backend equation, so 'Active N' vs 'Highest active M' is explained
+                const ha = sec.key === 'active' && mk === 'ALL' ? highestActiveHeading(data.countEquations, total, thr) : null;
                 return (
                   <div key={sec.key} role="group" aria-label={sec.title} style={{ display: 'grid', gap: 4, marginTop: 4 }}>
-                    <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: 0.4, color: R.text }}>{sec.title} <span style={{ color: R.dim, fontWeight: 600 }}>({total})</span></div>
+                    <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: 0.4, color: R.text }}>{ha ? ha.title : <>{sec.title} <span style={{ color: R.dim, fontWeight: 600 }}>({total})</span></>}</div>
+                    {ha?.note && <div data-gu-highest-note style={{ fontSize: 12, color: R.dim }}>{ha.note}</div>}
+                    {ha && data.countEquations?.highestActive && data.countEquations.highestActive.value !== total && <div style={{ fontSize: 12, color: R.amber }}>{total} rows are in this list; the count above says {data.countEquations.highestActive.value}.</div>}
                     <div style={{ fontSize: 12, color: R.dim }}>{sec.hint}</div>
                     {sec.key === 'active' && groups && (
                       <div style={{ fontSize: 12.5, color: R.dim }}>

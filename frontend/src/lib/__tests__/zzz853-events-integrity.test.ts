@@ -12,7 +12,7 @@ import {
   priorityOf, enqueue, emptyQueue, selectDue, processQueue, doneCandidates, reportQueue, validateDocument, extractFromDocument, MAX_DOCS_PER_RUN, awaitingCount, type FetchDoc,
 } from '../guidance-upgrades-queue';
 import { assignEventDates, reconcilePrimary, type PrimaryFiling } from '../guidance-upgrades-sources';
-import { computeCounts, checkEventInvariants } from '../guidance-upgrades-counts';
+import { computeCounts, checkEventInvariants, countsDetail, eventViolations } from '../guidance-upgrades-counts';
 import { raiseVsPreviousText, sourceConflictLine, primaryStateLine, countsLine } from '../guidance-upgrades-format';
 import type { GuCandidate, GuContext, GuScanSource, GuScanStatus, GuidanceEvent } from '../guidance-upgrades-types';
 
@@ -172,7 +172,7 @@ describe('C. queue', () => {
     ];
     const q = enqueue(emptyQueue(NOW), inputs, NOW).queue;
     const due = selectDue(q, NOW);
-    assert.equal(due.length, MAX_DOCS_PER_RUN); assert.equal(MAX_DOCS_PER_RUN, 12);
+    assert.equal(due.length, Math.min(13, MAX_DOCS_PER_RUN)); assert.equal(MAX_DOCS_PER_RUN, 30);   // zzz854: raised from 12
     assert.deepEqual(due.slice(0, 3).map((x) => x.ticker), ['ZPB', 'ZPA', 'ZPC']);
   });
   test('backoff 10 min, 2 h, then SOURCE_UNAVAILABLE; a 404 is unavailable at once', async () => {
@@ -225,7 +225,7 @@ describe('C. queue', () => {
     const inputs = Array.from({ length: 20 }, (_, i) => input({ ticker: `ZQ${i}`, company: `Zed Q${i} Ltd`, sourceUrl: `https://x.test/${i}.pdf`, subject: 'Raises FY27 guidance' }));
     const q = enqueue(emptyQueue(NOW), inputs, NOW).queue;
     const r = await processQueue(q, { now: NOW, fetchDoc: docs({}) });
-    assert.ok(r.attempted <= 12);
+    assert.ok(r.attempted <= MAX_DOCS_PER_RUN);
     assert.equal(r.queue.items.length, 20); assert.ok(awaitingCount(r.queue, 'IN') >= 8);
   });
 });
@@ -297,7 +297,8 @@ describe('E. labels follow the numbers', () => {
   });
   test('Fuller-style: a "raise" headline over a narrowed range is auditOnly with the exact explanation', () => {
     const fu = build([primary('Zed Alpha raises FY26 adjusted EPS guidance', 'Zed Alpha Ltd now expects Adjusted EPS for FY26 of $4.70–4.85, up from $4.60–4.90 previously.', { market: 'US', ticker: 'ZZUS' })]);
-    assert.equal(fu.auditOnly, true); assert.equal(fu.auditNote, 'Adjusted: headline described a raise; normalised guidance did not constitute a clean raise.'); assert.equal(fu.auditNote, AUDIT_NOTE);
+    // zzz854: the audit note is the SPECIFIC reason for this row, never the one generic sentence
+    assert.equal(fu.auditOnly, true); assert.equal(fu.auditNote, 'Midpoint up but range narrowed: FY26 adjusted EPS top end cut from $4.90 to $4.85 (midpoint $4.75 → $4.78)'); assert.notEqual(fu.auditNote, AUDIT_NOTE);
     assert.notEqual(fu.classification, 'RAISE');
   });
   test('no before / after numbers: a detected claim is not an upgrade', () => {
@@ -355,7 +356,8 @@ describe('G. driver and durability come from the text only', () => {
   test('once VERIFIED, the next evidence is tied to the guided metric and range', () => {
     const e = build([primary('Zed Alpha raises FY27 guidance', `${BASE} The raise is driven by strong demand from export customers.`)]);
     assert.equal(e.verification, 'VERIFIED');
-    assert.ok(e.nextEvidence.some((x) => /confirmation of progress toward the guided revenue .*725.*750.*FY27/.test(x)), e.nextEvidence.join(' | '));
+    // zzz854: metric + direction + window + source, tied to the guided range
+    assert.ok(e.nextEvidence.some((x) => /^Next quarterly results \(~[A-Z][a-z]{2} 20\d\d\): quarterly revenue of about .+ to stay on track for the guided ₹725–750 Cr for FY27 — source:/.test(x)), e.nextEvidence.join(' | '));
   });
 });
 
@@ -381,8 +383,11 @@ describe('Owner regression cases', () => {
     assert.equal(e.classification, 'REITERATION'); assert.notEqual(e.displayLabel, 'GUIDANCE UPGRADE');
   });
   test('3. 4.60-4.90 -> 4.70-4.85 is not a clean raise', () => {
-    const e = build([primary('Zed Alpha raises FY26 EPS guidance', 'Zed Alpha Ltd now expects Adjusted EPS for FY26 of $4.70–4.85, up from $4.60–4.90 previously.')]);
+    // zzz854: FY27 (an India FY26 figure announced in Sept 2026 is a STALE period and is rejected before any range check — asserted below)
+    const e = build([primary('Zed Alpha raises FY27 EPS guidance', 'Zed Alpha Ltd now expects Adjusted EPS for FY27 of $4.70–4.85, up from $4.60–4.90 previously.')]);
     assert.notEqual(e.classification, 'RAISE'); assert.equal(e.auditOnly, true);
+    const stale = build([primary('Zed Alpha raises FY26 EPS guidance', 'Zed Alpha Ltd now expects Adjusted EPS for FY26 of $4.70–4.85, up from $4.60–4.90 previously.')]);
+    assert.equal(stale.pipeline!.reviewStatus, 'stale'); assert.equal(stale.isUpgrade, false);
   });
   test('4. a Rs13,000 Cr bond is not guidance', () => {
     assert.equal(nonGuidanceRaiseSentence('Zed Alpha raises Rs 13,000 crore via bonds'), true);
@@ -421,7 +426,11 @@ describe('count invariants', () => {
   test('clean data: counts add up and no invariant is violated', () => {
     const e = evs();
     const c = computeCounts(e, { documentsAwaitingGrading: 4, documentsUnavailable: 1, documentsReadNoEvent: 2 });
-    assert.equal(c.verified, 3); assert.equal(c.upgrade, 1); assert.equal(c.reiteration, 1); assert.equal(c.mixed, 1); assert.equal(c.unverifiedClaims, 1);
+    // zzz854: `verified` = verified formal upgrades ONLY; the older 'any event read from a primary document' number is verifiedPrimaryRead
+    const x = countsDetail(c)!; assert.ok(x);
+    assert.equal(x.verifiedPrimaryRead, 3); assert.equal(c.verified, x.buckets.verifiedUpgrades); assert.equal(c.upgrade, c.verified);
+    assert.equal(x.detected, Object.entries(x.buckets).filter(([k]) => k !== 'capitalRaise' && k !== 'nonGuidance').reduce((a, [, n]) => a + n, 0), x.equation);
+    assert.equal(c.reiteration, 1); assert.equal(c.unverifiedClaims, 1);
     assert.ok(c.verified <= c.processed && c.processed <= c.discovered); assert.ok(c.material <= c.verified && c.upgrade <= c.verified && c.expectationPositive <= c.verified);
     assert.equal(c.documentsAwaitingGrading, 4, 'awaiting is reported apart from verified'); assert.equal(c.discovered, 4 + 4 + 1 + 2);
     assert.deepEqual(checkEventInvariants(e, c), []);
@@ -430,14 +439,18 @@ describe('count invariants', () => {
   test('broken data is caught', () => {
     const e = evs(); const c = computeCounts(e);
     assert.ok(checkEventInvariants(e, { ...c, verified: c.processed + 5 }).some((m) => /verified .* greater than processed/.test(m)));
+    // zzz854: the rule is still DETECTED (eventViolations), and computeCounts now ENFORCES it: the event is demoted, not just reported
     const re = { ...e[1], displayLabel: 'GUIDANCE UPGRADE', isUpgrade: true };
-    assert.ok(checkEventInvariants([re], computeCounts([re])).some((m) => /reiteration is labelled as a raise|labelled as an upgrade/.test(m)));
+    assert.ok(eventViolations(re).some((m) => /reiteration is labelled as a raise|labelled as an upgrade/.test(m.message)));
+    assert.deepEqual(checkEventInvariants([re], computeCounts([re])), []); assert.equal(re.isUpgrade, false); assert.notEqual(re.displayLabel, 'GUIDANCE UPGRADE'); assert.ok((re as any).invariantDemoted);
     const gap = { ...e[0], expectationGap: 'POSITIVE' as const, consensus: { value: null, label: 'UNAVAILABLE' as const } };
-    assert.ok(checkEventInvariants([gap], computeCounts([gap])).some((m) => /no consensus number/.test(m)));
+    assert.ok(eventViolations(gap).some((m) => /no consensus number/.test(m.message)));
+    computeCounts([gap]); assert.equal(gap.expectationGap, 'UNKNOWN');
     const unv = { ...e[3], displayLabel: 'GUIDANCE UPGRADE' };
-    assert.ok(checkEventInvariants([unv], computeCounts([unv])).some((m) => /without a primary source/.test(m)));
-    const audit = { ...e[2], isUpgrade: true };
-    assert.ok(checkEventInvariants([audit], computeCounts([audit])).length > 0);
+    assert.ok(eventViolations(unv).some((m) => /without a primary source/.test(m.message)));
+    computeCounts([unv]); assert.notEqual(unv.displayLabel, 'GUIDANCE UPGRADE');
+    const audit = { ...e[2], isUpgrade: true, auditOnly: true };
+    assert.ok(eventViolations(audit).length > 0); computeCounts([audit]); assert.equal(audit.isUpgrade, false);
   });
   test('classifyEvent is a pure function of the numbers', () => {
     const e = evs()[0]; const again = classifyEvent(e);

@@ -23,6 +23,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import MultibaggerRadar from '@/components/special-situations/MultibaggerRadar';
+import { SsCountPanel, type SsCountFeed } from '@/components/special-situations/SsCountPanel';
+import { headerFromModel } from '@/components/special-situations/ss-counts';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ExternalLink, AlertTriangle } from 'lucide-react';
 import api from '@/lib/api';
@@ -252,6 +254,14 @@ interface LiveFeedResp {
     note: string;
   }>;
   event_type_counts?: Record<string, number>;
+  // zzz854 — one count model + AI verification state (all optional: an older cached payload lacks them)
+  count_model?: SsCountFeed['count_model'];
+  held_back?: SsCountFeed['held_back'];
+  verification?: SsCountFeed['verification'];
+  awaitingVerification?: SsCountFeed['awaitingVerification'];
+  awaitingVerificationCount?: number;
+  verificationAudit?: SsCountFeed['verificationAudit'];
+  by_tier_before_verification?: Record<string, number> | null;
 }
 
 // PATCH 0437 BUG-029 — localStorage cache prime so the page doesn't flash
@@ -556,10 +566,16 @@ export default function SpecialSituationsPage() {
       if (e.category in catCounts) catCounts[e.category]++;
     }
   }
+  // zzz854 — header boxes come from the feed's ONE count model (verified, shown set) when it is present and no region filter
+  // is applied; the radar checks its sections against the same model. Otherwise the older per-list counts are used.
+  const fromModel = headerFromModel(feed?.count_model, region);
+  if (fromModel) for (const c of Object.keys(catCounts) as Category[]) catCounts[c] = Number(fromModel.categories[c]) || 0;
   // Tier counts that sync with whichever pipeline is rendering
-  const tier1Count = canonicalEvents.length > 0 ? tier1Canonical.length : tier1.length;
-  const tier2Count = canonicalEvents.length > 0 ? tier2Canonical.length : tier2.length;
-  const tier3Count = canonicalEvents.length > 0 ? watchlistCanonical.length : archive.length;
+  const tier1Count = fromModel ? fromModel.tiers.TIER_1 : canonicalEvents.length > 0 ? tier1Canonical.length : tier1.length;
+  const tier2Count = fromModel ? fromModel.tiers.TIER_2 : canonicalEvents.length > 0 ? tier2Canonical.length : tier2.length;
+  const tier3Count = fromModel ? fromModel.tiers.WATCHLIST : canonicalEvents.length > 0 ? watchlistCanonical.length : archive.length;
+  // zzz854 — the radar reads the route's events as sent (the adapter merges duplicates itself), so its sections reconcile with the count model.
+  const radarEvents: CanonicalEvent[] = (feed?.events || []).filter((e) => region === 'ALL' || e.region === region);
   const tier3Label = canonicalEvents.length > 0 ? 'Watchlist' : 'Archive';
 
   return (
@@ -652,6 +668,9 @@ export default function SpecialSituationsPage() {
           </div>
         </div>
 
+        {/* zzz854 — how the counts add up, what was held back, and the AI verification state (never silent) */}
+        <SsCountPanel feed={feed} knownCategories={Object.keys(CAT_META)} regionNote={feed?.count_model && region !== 'ALL' ? `Region filter ${region}: the boxes count this region only; the line above is for all regions.` : null} />
+
         {/* PATCH 0431 — INSTITUTIONAL COVERAGE DIAGNOSTIC.
             User asked: "if something is missing reupdate logic — 3 months
             it should show all such". This panel shows per-bucket counts
@@ -662,7 +681,7 @@ export default function SpecialSituationsPage() {
           <div style={{ marginTop: 8, marginBottom: 8, padding: 10, background: 'linear-gradient(135deg, color-mix(in srgb, var(--mc-accent) 8%, transparent), color-mix(in srgb, var(--mc-warn) 6%, transparent))', border: '1px solid #38A9E840', borderRadius: 8 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
               <span style={{ fontSize: 11, fontWeight: 800, color: '#38A9E8', letterSpacing: '0.4px' }}>
-                📋 INSTITUTIONAL COVERAGE — 9 alpha categories
+                📋 INSTITUTIONAL COVERAGE — 9 alpha categories{feed?.count_model ? ' · shown events after checks' : ''}
                 {coverageFilterSet.size > 0 && (
                   <span style={{ marginLeft: 8, color: 'var(--mc-bullish)', fontSize: 10 }}>
                     · filtering on {coverageFilterSet.size} bucket{coverageFilterSet.size === 1 ? '' : 's'}
@@ -730,7 +749,7 @@ export default function SpecialSituationsPage() {
       {/* ── Body ─────────────────────────────────────────────────────────── */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
         {active === 'radar' && (
-          <MultibaggerRadar events={canonicalEvents} region={region} onRegionChange={setRegion} isLoading={isLoading} error={error} />
+          <MultibaggerRadar events={radarEvents} region={region} onRegionChange={setRegion} isLoading={isLoading} error={error} countModel={feed?.count_model} />
         )}
         {active === 'all' && (
           canonicalEvents.length > 0

@@ -126,6 +126,12 @@ export interface GuidanceFigure {
   prior_high: number | null;
   raised: boolean | null;
   source: string;
+  /** zzz854: what the PRIOR figure is, read only from the words around it: 'guidance' (prior / previous guidance, outlook, range;
+   *  a column headed prior or previous outlook), 'actual' (reported, results, last year, year-ago), 'unknown' when the text does not say.
+   *  Absent / null when there is no prior figure. */
+  prior_kind?: 'guidance' | 'actual' | 'unknown' | null;
+  /** zzz854: the prior figure's OWN period when the text states one next to it ("up from $561 million in fiscal 2025" -> 'FY25'), else null */
+  prior_period_label?: string | null;
 }
 
 type Unit = 'usd' | 'usd_share' | 'pct';
@@ -207,6 +213,29 @@ const COL_UPD_BARE = /\b(updated|current)\b/i;
  *  and the second is often the percentage change between them. */
 const COL_RESULTS = /\b(?:fy\s*'?\d{2,4}|prior[- ]year|last\s+year)\s+results?\b|^\s*results?\s*$/i;
 const COL_GUIDANCE = /\bguidance\b|\boutlook\b/i;
+
+
+// ─── zzz854: what the PRIOR figure is (text only) ──────────────────────────────────────────────────────────────
+const PRIOR_GUIDE_WORDS = /\b(?:prior|previous|previously|earlier|initial|original)\s+(?:full[- ]year\s+)?(?:guidance|outlook|range|view|midpoint|forecast|expectations?|target)\b|\b(?:guidance|outlook|range|forecast)\s+(?:of|was|had been)\b|\braised\s+from\b|\bincreased\s+from\b|\(\s*prior\s*\)|\bpreviously\b/i;
+const PRIOR_ACTUAL_WORDS = /\b(?:reported|actual|results?|achieved|delivered|generated|recorded|posted|last\s+year|prior[- ]year|year[- ]ago|a\s+year\s+(?:ago|earlier)|same\s+(?:quarter|period)\s+(?:of\s+)?last\s+year)\b/i;
+const QWORD: Record<string, number> = { first: 1, second: 2, third: 3, fourth: 4 };
+const yy = (y: string): string => (y.length === 4 ? y.slice(2) : y.padStart(2, '0'));
+/** 'FY25', 'Q2 FY26' from the words next to a prior figure; null when no period is stated there. */
+export function priorPeriodLabel(win: string): string | null {
+  const t = String(win || '');
+  let m: RegExpExecArray | null;
+  if ((m = /\bQ([1-4])\s*(?:of\s+)?(?:FY|fiscal(?:\s+year)?)?\s*'?(\d{4}|\d{2})\b/i.exec(t))) return `Q${m[1]} FY${yy(m[2])}`;
+  if ((m = /\b(first|second|third|fourth)[- ]quarter\s+(?:of\s+)?(?:fiscal\s+(?:year\s+)?)?'?(\d{4})\b/i.exec(t))) return `Q${QWORD[m[1].toLowerCase()]} FY${yy(m[2])}`;
+  if ((m = /\b(?:FY|fiscal(?:\s+year)?)\s*'?(\d{4}|\d{2})\b/i.exec(t))) return `FY${yy(m[1])}`;
+  if ((m = /\b(?:full[- ]year|year|in|for)\s+(20\d{2})\b/i.exec(t))) return `FY${yy(m[1])}`;
+  return null;
+}
+/** Text-only verdict on a prior figure. Guidance wording wins over a stray results word; nothing stated -> 'unknown'. */
+export function classifyPriorText(win: string): { kind: 'guidance' | 'actual' | 'unknown'; periodLabel: string | null } {
+  const t = String(win || '');
+  const kind = PRIOR_GUIDE_WORDS.test(t) ? 'guidance' : PRIOR_ACTUAL_WORDS.test(t) ? 'actual' : 'unknown';
+  return { kind, periodLabel: priorPeriodLabel(t) };
+}
 
 /** Only these phrasings mark a later range on a line as PRIOR GUIDANCE. */
 const PRIOR_MARK = /\b(?:up\s+from|down\s+from|from\s+(?:the\s+)?(?:previous|prior)|(?:previous|prior)\s+(?:guidance|outlook|range|view|midpoint)|compared\s+to\s+(?:the\s+)?(?:previous|prior)\s+(?:guidance|outlook|range)|versus\s+(?:the\s+)?(?:previous|prior)|raised\s+from|increased\s+from)\b|\([^)]{0,60}\bprior\b\s*\)/i;
@@ -933,7 +962,7 @@ export function guidanceFiguresFromText(text: string): GuidanceFigure[] {
       // the per-share figures are non-GAAP too.
       const basis = basisOf(h) || (/on\s+an?\s+(?:non-?gaap|adjusted)\s+basis|\((?:non-?gaap|adjusted)\)/i.test(slice)
         ? 'adjusted' : (basisOf(hits[0]) || 'gaap'));
-      const put = (r: Rng, b: 'gaap' | 'adjusted', p: Period, pr?: Rng) => {
+      const put = (r: Rng, b: 'gaap' | 'adjusted', p: Period, pr?: Rng, pk?: { kind: 'guidance' | 'actual' | 'unknown'; periodLabel: string | null }) => {
         const isPoint = r.lo === r.hi;
         if (isPoint) {
           // A RANGE WITH A WORDED END IS NEVER A POINT, PRIOR GUIDANCE OR NOT.
@@ -976,6 +1005,8 @@ export function guidanceFiguresFromText(text: string): GuidanceFigure[] {
           prior_low: pr ? pr.lo : null, prior_high: pr ? pr.hi : null,
           raised: pr ? (r.lo > pr.lo || r.hi > pr.hi) : null,
           source: `${l}${valueText === l ? '' : ' ' + valueText}`.slice(0, 240),
+          prior_kind: pr ? (pk?.kind ?? 'unknown') : null,
+          prior_period_label: pr ? (pk?.periodLabel ?? null) : null,
         });
       };
 
@@ -985,7 +1016,14 @@ export function guidanceFiguresFromText(text: string): GuidanceFigure[] {
       const said = fromCells ? null : clausePeriod(l, ctx, period);
       const bound = said && said.kind !== period!.kind ? said : period!;
 
-      if (prior.length && curr.length) { put(curr[0], basis, bound, prior[0]); return; }
+      if (prior.length && curr.length) {
+        // zzz854: the words from the prior marker to the end of the prior figure's clause say what it is and which period it is for
+        const after = valueText.slice(prior[0].at);
+        const stop = after.search(/[.;](?:\s|$)/);
+        const win = valueText.slice(Math.max(0, priorAt), prior[0].at + (stop >= 0 ? Math.min(stop, 80) : Math.min(after.length, 80)));
+        put(curr[0], basis, bound, prior[0], classifyPriorText(win));
+        return;
+      }
       // COLUMNS. Two figures on a row of table cells are two COLUMNS, and the
       // row may only be read once something has said what those columns are.
       if (curr.length >= 2 && periodCols && fromCells) {
@@ -995,8 +1033,9 @@ export function guidanceFiguresFromText(text: string): GuidanceFigure[] {
       }
       if (curr.length >= 2 && fromCells && curr[0].unit === curr[1].unit) {
         if (cols === 'gaap') { put(curr[0], 'gaap', bound); put(curr[1], 'adjusted', bound); return; }
-        if (cols === 'prevfirst') { put(curr[1], basis, bound, curr[0]); return; }
-        if (cols === 'currprior') { put(curr[0], basis, bound, curr[1]); return; }
+        // a column headed prior / previous outlook (or bare 'Previous' next to 'Updated') is prior GUIDANCE for the same period
+        if (cols === 'prevfirst') { put(curr[1], basis, bound, curr[0], { kind: 'guidance', periodLabel: null }); return; }
+        if (cols === 'currprior') { put(curr[0], basis, bound, curr[1], { kind: 'guidance', periodLabel: null }); return; }
       }
       // …and when nothing has, the row states nothing this parser can prove.
       // Keeping the FIRST cell and stamping it with the section's period is a

@@ -36,14 +36,27 @@ import {
 
 import {
   classifyForm10, contentHints, createEventClusterer, decodeHtmlEntities, extractSubjectTickers, identifySubject, isNonEventContent, countCanonicalEventTypes,
-  isFundRepurchaseOffer, parseSecFilingTitle, summariseHeldBack, FEED_QUARANTINE_LABEL, type FeedQuarantineReason,
+  parseSecFilingTitle, summariseHeldBack, type FeedQuarantineReason,
 } from '@/lib/special-sit-feed-quality';
-import { dedupeFeedEvents, splitRadarInputs } from '@/lib/multibagger-radar-adapter';
+import { assembleGatedFeed, dedupeFeedEvents, splitRadarInputs } from '@/lib/multibagger-radar-adapter';
 import { buildRadarQa } from '@/lib/special-sit-qa';
 import { createSecLookupLoader } from '@/lib/special-sit-entity';
+import { classifyFeedHoldBack, dealRolesFor, secFilingInfoFor, secRowsFromCikTickerMap } from '@/lib/special-sit-security';
+import { gateSpecialSituations, aiVerificationOf } from '@/lib/ai-verify';
+import { isSpecSitPrimaryVerified } from '@/lib/ai-verify-gate';
 
-// zzz852: read-only SEC ticker map from an existing KV cache (6h memory cache, no network). Null when no cache exists.
-const loadSecLookup = createSecLookupLoader((k) => kvGet(k));
+// zzz852: read-only SEC ticker map from an existing KV cache (6h memory cache). zzz854: when no KV key holds the map, fall back
+// to the shared us-edgar CIK -> ticker map (one SEC download per day, shared with every caller), capped at 8s so the feed never
+// waits on SEC. A failure leaves the lookup null and entities say 'SEC ticker map not loaded' (never a silent 'No ticker').
+const loadSecLookup = createSecLookupLoader((k) => kvGet(k), undefined, undefined, undefined, async () => {
+  const { cikTickerMap } = await import('@/lib/us-edgar');
+  const map = await Promise.race([cikTickerMap(), new Promise<null>((res) => setTimeout(() => res(null), 8_000))]);
+  return secRowsFromCikTickerMap(map);
+});
+const safeSecLookup = () => loadSecLookup().catch(() => null);
+// Coverage bucket for an event type, from the institutional coverage definitions (one source of truth for both raw and shown).
+const COVERAGE_DEFS = computeCoverageDiagnostic({});
+const coverageBucketOf = (et: string): string => COVERAGE_DEFS.find((b) => (b.event_types as string[]).includes(et))?.bucket || 'Other';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -468,6 +481,8 @@ interface CanonicalEvent {
   age_hours: number;
   /** Set when the event is held out of the main Radar list (visible in held_back). */
   quarantine_reason?: FeedQuarantineReason | null;
+  /** zzz854: why_tradable.what_matters / what_breaks_thesis are per-event-type playbook text, not facts. */
+  why_tradable_kind?: 'PLAYBOOK';
 }
 
 async function buildFeed(): Promise<{
@@ -778,10 +793,13 @@ async function buildFeed(): Promise<{
         ? { is_tradable: false, tier: 'NOISE' as const, rationale: hintsP.isPriceArticle ? 'Price article, not a corporate event' : hintsP.isPreview ? 'Preview, result not out yet' : hintsP.isAnalystTarget ? 'Analyst target / rating, non-investment signal' : hintsP.isOpinion ? 'Opinion / prediction piece' : 'Not a company event' }
         : tradabilityRaw;
 
-    // Fund / BDC / interval-fund / feeder periodic repurchase offers (SC TO-I) are not equity special situations: held back, with a reason.
-    const fundRep = isFundRepurchaseOffer({ title: primary.title, description: allText, source: primary.source, eventType });
-    const quarantineReason: FeedQuarantineReason | null = fundRep ? 'FUND_REPURCHASE_OFFER' : null;
-    if (quarantineReason) { tradability.is_tradable = false; (tradability as any).tier = 'NOISE'; tradability.rationale = FEED_QUARANTINE_LABEL[quarantineReason]; }
+    // zzz854: held back with ONE reason: pooled vehicles (fund / BDC / private credit / non-traded REIT), partnership units,
+    // debt tenders, routine issuer tenders, and operating-company SC TO-I whose terms were not read.
+    const relatedText = sorted.filter((it) => it !== primary).map((it) => `${it.title} ${it.description || ''}`).join(' ');
+    const hold = classifyFeedHoldBack({ title: primary.title, description: primary.description, source: primary.source, link: primary.link, eventType, relatedText });
+    const quarantineReason: FeedQuarantineReason | null = hold ? hold.reason : null;
+    const fundRep = quarantineReason === 'FUND_REPURCHASE_OFFER';
+    if (hold) { tradability.is_tradable = false; (tradability as any).tier = 'NOISE'; tradability.rationale = hold.label; }
 
     const lifecycle = inferLifecycleStage({
       is_amendment: primarySig.is_amendment,
@@ -789,11 +807,23 @@ async function buildFeed(): Promise<{
       event_type: eventType,
     });
 
-    const why = whyTradable({
+    const whyTpl = whyTradable({
       event_type: eventType,
       target_name: primarySig.target_name,
       ticker: allTickers[0],
     });
+    // zzz854: why_tradable is a per-event-type PLAYBOOK. 'What happened' is the fact from the source (SEC subtype + roles, or the
+    // headline); the playbook prior is labelled so no card shows it as a fact about this event.
+    const secInfo = secFilingInfoFor(sorted.map((it) => ({ title: it.title, source: it.source, link: it.link, pub_date: it.pub_date, description: it.description })), primary.description || '');
+    const secRows = sorted.map((it) => parseSecFilingTitle(it.title)).filter(Boolean) as NonNullable<ReturnType<typeof parseSecFilingTitle>>[];
+    const secSubject = secRows.find((r) => r.role === 'subject' || r.role === 'issuer')?.company || secRows.find((r) => r.role !== 'filed by')?.company || null;
+    const secFiler = secRows.find((r) => r.role === 'filed by' && r.company !== secSubject)?.company || null;
+    const roles = secInfo ? dealRolesFor({ secFiling: secInfo, subject: secSubject, filer: secFiler }) : null;
+    const why = {
+      ...whyTpl,
+      what_happened: secInfo ? `${secInfo.subtypeLabel} filed${roles?.roleLine ? `. ${roles.roleLine}` : ''}${secInfo.amendmentCount ? ` (${secInfo.amendmentCount} amendment${secInfo.amendmentCount === 1 ? '' : 's'})` : ''}.` : primary.title,
+      what_matters: `Playbook (typical for this event type, not from the source): ${whyTpl.what_matters}`,
+    };
 
     events.push({
       event_id: eventId,
@@ -809,6 +839,7 @@ async function buildFeed(): Promise<{
       tier: tradability.tier,
       tradability_rationale: tradability.rationale,
       why_tradable: why,
+      why_tradable_kind: 'PLAYBOOK',
       lifecycle,
       region,
       tickers: allTickers,
@@ -839,14 +870,16 @@ async function buildFeed(): Promise<{
   };
   for (const e of events) by_tier[e.tier] += 1;
 
-  const held_back = summariseHeldBack(events.filter((e) => e.quarantine_reason).map((e) => ({ reason: e.quarantine_reason as FeedQuarantineReason, name: e.target_name || e.primary_filing.title })));
-
   // zzz852: QA + exclusion flags. Additive only: nothing is removed from events / by_category (raw data stays available).
   let qa: any = null;
   try {
-    const usLookup = await loadSecLookup();
+    const usLookup = await safeSecLookup();
     const evs = events as unknown as Parameters<typeof splitRadarInputs>[0] & Parameters<typeof dedupeFeedEvents>[0];
     const split = splitRadarInputs(evs, { entityDeps: { usLookup } });
+    // zzz854: the adapter's hold-back decision (it also knows the security state) is the one the route reports, so the route's
+    // held_back line and the Radar's line are the same numbers.
+    const evById = new Map(events.map((e) => [e.event_id, e]));
+    for (const h of split.heldBackInputs) { const e = evById.get(h.id); if (e && !e.quarantine_reason && h.feedQuarantineReason) { e.quarantine_reason = h.feedQuarantineReason; e.tier = 'NOISE'; e.is_tradable = false; e.tradability_rationale = h.feedQuarantineLabel || e.tradability_rationale; } }
     const normalized = dedupeFeedEvents(evs || []).events;
     qa = buildRadarQa({ rawEvents: evs || [], normalizedEvents: normalized, radarInputs: split.inputs as any, heldBack: split.heldBackInputs as any });
     qa.totals.raw_items = deduped.length;
@@ -860,6 +893,7 @@ async function buildFeed(): Promise<{
     }
     for (const k of Object.keys(by_category) as Category[]) for (const it of by_category[k]) { const x = it.link ? byLink.get(it.link) : null; if (x) Object.assign(it, { excluded_from_equity_radar: true, exclusion_reason: x.exclusion_reason, entity_type: x.entity_type }); }
   } catch { qa = null; }
+  const held_back = summariseHeldBack(events.filter((e) => e.quarantine_reason).map((e) => ({ reason: e.quarantine_reason as FeedQuarantineReason, name: e.target_name || e.primary_filing.title })));
 
   const result: any = {
     qa,
@@ -880,6 +914,71 @@ async function buildFeed(): Promise<{
   return result;
 }
 
+// ─── zzz854: AI verification gate ───────────────────────────────────────────
+// Applied to EVERY response (fresh or cached), so new verdicts show without a rebuild. Main lists (events, by_category, by_tier)
+// keep only events whose primary document carries the terms, or that the AI verifier confirmed from the primary document.
+// AI-contradicted events go to verificationAudit; everything else to awaitingVerification with a reason (bare form titles,
+// media-only stories with no primary filing, not yet checked). Events already held back (fund offers, excluded entities)
+// are never sent to the paid verifier; they keep their flags so the Radar can explain what it held back.
+async function applyVerificationGate(data: any): Promise<any> {
+  const all: any[] = Array.isArray(data?.events) ? data.events : [];
+  const held = (e: any) => !!e?.quarantine_reason || !!e?.excluded_from_equity_radar;
+  const candidates = all.filter((e) => !held(e));
+  const heldOut = all.length - candidates.length;
+  const g = await gateSpecialSituations(candidates, { timeoutMs: 3_000 }).catch(() => null);
+  const kept: any[] = g
+    ? g.kept.map((e: any) => { const ai = aiVerificationOf(g.confirmedByRef.get(String(e?.event_id))); return ai ? { ...e, aiVerification: ai } : e; })
+    : candidates.filter((e) => isSpecSitPrimaryVerified(e));   // the gate failed: primary-verified only, never a silent pass
+  const keptLinks = new Set<string>();
+  for (const e of kept) { if (e?.primary_filing?.link) keptLinks.add(e.primary_filing.link); for (const f of e?.filings || []) if (f?.link) keptLinks.add(f.link); }
+  const report = g?.verification.mode === 'report';
+  const byCategory: Record<string, any[]> = {};
+  let categoryHeld = 0;
+  for (const [k, list] of Object.entries((data?.by_category || {}) as Record<string, any[]>)) {
+    const arr = Array.isArray(list) ? list : [];
+    byCategory[k] = report ? arr : arr.filter((it) => it?.link && keptLinks.has(it.link));
+    categoryHeld += arr.length - byCategory[k].length;
+  }
+  // zzz854: ONE count model over the verified set. Shown = kept (after the adapter's dedupe + hold-back); held back = route reasons
+  // + AWAITING_VERIFICATION + AI_CONTRADICTED, each with its own count. Header tiers, category chips and coverage all derive
+  // from it; the route's pre-gate numbers stay available as *_raw (labelled raw).
+  const keptIds = new Set(kept.map((e: any) => String(e?.event_id)));
+  const removedRefs = new Set((g?.removed ?? []).map((r: any) => String(r?.refId)));
+  const notKept = candidates.filter((e) => !keptIds.has(String(e?.event_id)));
+  const rawCoverage: Record<string, number> = {};
+  for (const b of (Array.isArray(data?.coverage_diagnostic) ? data.coverage_diagnostic : [])) if (b?.bucket) rawCoverage[b.bucket] = Number(b.count) || 0;
+  let gated: ReturnType<typeof assembleGatedFeed> | null = null;
+  try {
+    gated = assembleGatedFeed({
+      kept, held: all.filter(held), awaiting: notKept.filter((e) => !removedRefs.has(String(e?.event_id))), contradicted: notKept.filter((e) => removedRefs.has(String(e?.event_id))),
+      rawItemCount: Number(data?.total) || undefined, rawCoverage, coverageBucketOf, entityDeps: { usLookup: await safeSecLookup() },
+    });
+  } catch { gated = null; }
+  const byTier: Record<string, number> = gated ? { ...gated.byTier } : { TIER_1: 0, TIER_2: 0, WATCHLIST: 0, NOISE: 0 };
+  if (!gated) for (const e of kept) if (e?.tier && e.tier in byTier) byTier[e.tier] += 1;
+  const coverageShown = gated ? COVERAGE_DEFS.map((b) => ({ ...b, count: gated!.countModel.shown_by_coverage[b.bucket] || 0 })) : data?.coverage_diagnostic;
+  const verification = g?.verification ?? { provider: 'unknown', model: null, available: false, unavailableReason: 'The verification gate could not run; only primary-verified events are shown.', mode: 'enforce',
+    primaryVerified: kept.length, checked: 0, confirmed: 0, contradicted: 0, awaiting: candidates.length - kept.length, awaitingByReason: {}, lastRunAt: null };
+  return {
+    ...data,
+    // held-back events stay in `events` WITH their quarantine / exclusion flags (the Radar turns them into its "N held back" line and
+    // never shows them as cards); they are not counted in by_tier and their headlines are not in by_category.
+    events: gated ? gated.events : [...kept, ...all.filter(held)], by_category: byCategory, by_tier: byTier,
+    by_tier_before_verification: data?.by_tier ?? null,
+    // zzz854: one count model; chips = count_model.shown_by_category, coverage = shown coverage (raw kept separately)
+    count_model: gated ? gated.countModel : null,
+    category_counts: gated ? gated.countModel.shown_by_category : null,
+    held_back: gated ? gated.heldBack : data?.held_back,
+    coverage_diagnostic: coverageShown,
+    coverage_diagnostic_raw: { label: 'RAW (pre-filter)', buckets: data?.coverage_diagnostic ?? [] },
+    verification,
+    awaitingVerification: (g?.awaiting ?? []).slice(0, 300),
+    awaitingVerificationCount: verification.awaiting,
+    verificationAudit: (g?.removed ?? []).slice(0, 200),
+    verification_held_back: { events_awaiting: verification.awaiting, events_contradicted: verification.contradicted, events_already_held_back: heldOut, category_items_hidden: categoryHeld },
+  };
+}
+
 // ─── Handler ────────────────────────────────────────────────────────────────
 
 export async function GET(req: Request) {
@@ -891,14 +990,14 @@ export async function GET(req: Request) {
     // PATCH 0454 P1-24 — Two-tier cache lookup: in-memory warm path first
     // (cheap), then KV (cross-container). Skip both when ?refresh=1.
     if (!force && CACHE && now - CACHE.ts < CACHE_TTL_MS) {
-      return NextResponse.json({ ...CACHE.data, cached: true, cache_age_min: Math.round((now - CACHE.ts) / 60000) });
+      return NextResponse.json({ ...(await applyVerificationGate(CACHE.data)), cached: true, cache_age_min: Math.round((now - CACHE.ts) / 60000) });
     }
     if (!force && ssRedisAvailable()) {
       try {
         const persisted = await ssKvGet<{ data: any; ts: number }>(CACHE_KV_KEY);
         if (persisted && now - persisted.ts < CACHE_TTL_MS) {
           CACHE = persisted; // warm the in-mem too
-          return NextResponse.json({ ...persisted.data, cached: true, cache_age_min: Math.round((now - persisted.ts) / 60000), cache_origin: 'kv' });
+          return NextResponse.json({ ...(await applyVerificationGate(persisted.data)), cached: true, cache_age_min: Math.round((now - persisted.ts) / 60000), cache_origin: 'kv' });
         }
       } catch {}
     }
@@ -908,7 +1007,7 @@ export async function GET(req: Request) {
     if (ssRedisAvailable()) {
       try { await ssKvSet(CACHE_KV_KEY, CACHE, CACHE_KV_TTL_S); } catch {}
     }
-    return NextResponse.json({ ...data, cached: false, cache_age_min: 0 });
+    return NextResponse.json({ ...(await applyVerificationGate(data)), cached: false, cache_age_min: 0 });
   } catch (e: any) {
     // PATCH zzz65 — sanitize. Don't ship raw error.message to client.
     console.error('[special-situations/feed] error', e?.message || e);

@@ -42,7 +42,8 @@ describe('1 number ownership', () => {
     assert.doesNotMatch(r.financialImpact, /452|30,000/);
   });
   test('a parent-owned result figure still counts', () => {
-    const p = run({ title: 'Deltacorp Q1 net profit up 35% to Rs 410 crore', company: 'Deltacorp' });
+    // zzz854: Direct needs the figure from a primary filing (or two independent origins); a secondary-only headline is 'Earnings result (unverified)'
+    const p = run({ title: 'Deltacorp Q1 net profit up 35% to Rs 410 crore', company: 'Deltacorp', sourceLabel: 'BSE filing' });
     assert.ok((p.ownedNumbers || []).some((n) => n.entityRole === 'parent' && n.countsAsParentEarnings));
     assert.equal(p.link, 'DIRECT');
   });
@@ -86,7 +87,8 @@ describe('3 direction and inflection strength', () => {
   ];
   for (const [t, d, s, b] of cases) {
     test(`${t} -> ${d} / ${s} / ${b}`, () => {
-      const r = run({ title: t, company: 'Epsilon' });
+      // zzz854: direction is read only from a verified source (primary filing here); a secondary-only headline is 'unknown'
+      const r = run({ title: t, company: 'Epsilon', sourceLabel: 'NSE filing' });
       assert.equal(r.kind, 'EARNINGS_RESULT');
       assert.equal(r.catalystDirection, d);
       assert.equal(r.inflectionStrength, s);
@@ -94,7 +96,8 @@ describe('3 direction and inflection strength', () => {
     });
   }
   test('only a materially improving result is called an earnings inflection', () => {
-    for (const [t, , , b] of cases) assert.equal(run({ title: t, company: 'Epsilon' }).bucket === 'EARNINGS_INFLECTION', b === 'EARNINGS_INFLECTION');
+    for (const [t, , , b] of cases) assert.equal(run({ title: t, company: 'Epsilon', sourceLabel: 'NSE filing' }).bucket === 'EARNINGS_INFLECTION', b === 'EARNINGS_INFLECTION');
+    for (const [t] of cases) assert.notEqual(run({ title: t, company: 'Epsilon' }).bucket, 'EARNINGS_INFLECTION', 'a secondary-only headline is never an inflection');
   });
   test('results with no numbers at all are not shown as an inflection', () => {
     const r = run({ title: 'Epsilon announces quarterly results', company: 'Epsilon' });
@@ -106,7 +109,7 @@ describe('3 direction and inflection strength', () => {
     assert.ok(BUCKET_ORDER.indexOf('RESULT_NO_INFLECTION') > BUCKET_ORDER.indexOf('EARNINGS_INFLECTION'));
   });
   test('the card shows the direction chip', () => {
-    const t = strip(card(run({ title: 'Epsilon Q1 net profit falls 20%, revenue down 5%', company: 'Epsilon' })));
+    const t = strip(card(run({ title: 'Epsilon Q1 net profit falls 20%, revenue down 5%', company: 'Epsilon', sourceLabel: 'NSE filing' })));
     assert.match(t, /Direction: negative/);
   });
 });
@@ -205,7 +208,8 @@ describe('7 and 8 why now, next proof, break conditions, governance', () => {
     const c = run({ ...T, title: 'Kappa Corp launches tender offer at Rs 120 per share', description: 'The offer is subject to regulatory approvals.' });
     assert.match(c.proof.what, /regulatory approvals/);
     const d = run({ ...T, title: 'Kappa Corp launches tender offer at Rs 120 per share' });
-    assert.equal(d.proof.what, 'Next proof: offer terms and conditions in the filing.');
+    // zzz854: the default next proof names the concrete fields to record
+    assert.equal(d.proof.what, 'Next proof: offer price, expiry and minimum condition in the filing.');
   });
   test('break conditions for deals are stated conditions or the default, never boilerplate', () => {
     const d = run({ ...T, title: 'Kappa Corp launches tender offer at Rs 120 per share' });
@@ -280,7 +284,9 @@ describe('11 link terminology', () => {
     assert.ok(foreign.link !== 'DIRECT' && foreign.link !== 'NEAR_DIRECT');
   });
   test('Direct needs a parent reported figure', () => {
-    for (const r of [run({ title: 'Epsilon Q1 net profit jumps 60%, revenue up 30%', company: 'Epsilon' })]) assert.equal(r.link, 'DIRECT');
+    // zzz854: the parent figure must come from a verified source (primary filing); the same headline from one media outlet is unverified
+    for (const r of [run({ title: 'Epsilon Q1 net profit jumps 60%, revenue up 30%', company: 'Epsilon', sourceLabel: 'NSE filing' })]) assert.equal(r.link, 'DIRECT');
+    assert.equal(run({ title: 'Epsilon Q1 net profit jumps 60%, revenue up 30%', company: 'Epsilon' }).link, 'NOT_ESTABLISHED');
   });
 });
 
@@ -351,7 +357,7 @@ describe('14 automatic QA gate', () => {
     assert.equal(qa.total, 0);
   });
   test('the report lists counts for every class and at most 20 errors with ids', () => {
-    assert.equal(Object.keys(qa.counts).length, 8);
+    assert.equal(Object.keys(qa.counts).length, QA_CLASSES.length);  // zzz854: 8 -> 13 classes
     assert.ok(qa.top.length <= 20);
   });
   test('the gate does catch a broken item (it is not vacuous)', () => {

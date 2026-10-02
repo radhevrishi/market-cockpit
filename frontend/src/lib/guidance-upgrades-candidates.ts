@@ -4,7 +4,8 @@
 // imports a price module, or calls an AI model.
 import { gunzipSync } from 'zlib';
 import type { GuCandidate, GuContext, GuMarket, GuWindow, GuidanceEvent, GuScanStatus, GuScanState, GuUnresolvedDiscovery } from './guidance-upgrades-types';
-import { buildGuidanceEvent, buildWithExtras, isGuidanceUpgradeCandidate, mergeCandidates, rank, withinWindow, type GuExtraFor } from './guidance-upgrades';
+import { applyCrossEventChecks, buildGuidanceEvent, buildWithExtras, isGuidanceUpgradeCandidate, mergeCandidates, rank, withinWindow, type GuExtraFor } from './guidance-upgrades';
+import { brokerWordIsCompanyName } from './guidance-upgrades-validate';
 
 const WINDOWS: GuWindow[] = ['24H', '3D', '7D', '14D', '30D', '120D'];
 /** Missing or unknown window falls back to 7D. */
@@ -382,7 +383,11 @@ export async function loadUsSessions(
   return { rows, total: dates.length, warm: have.size, olderEngine };
 }
 
-type UsLine = { metric: string; basis: string | null; period: string | null; unit: string; low: number | null; high: number | null; prevLow: number | null; prevHigh: number | null; est: number | null };
+type UsLine = { metric: string; basis: string | null; period: string | null; unit: string; low: number | null; high: number | null; prevLow: number | null; prevHigh: number | null; est: number | null;
+  /** zzz854: where the old figure came from: the company's previous release for the same metric, basis and period, or a prior column of this release's table */
+  prior?: 'PREVIOUS_RELEASE' | 'TABLE_COLUMN';
+  /** zzz854: what the producer read about the old figure (text only): guidance / actual / unknown, and its own period label when stated */
+  priorKind?: 'guidance' | 'actual' | 'unknown' | null; priorPeriod?: string | null };
 
 const fyNorm = (label: unknown): string => {
   const t = String(label ?? '').toUpperCase().replace(/\s+/g, ' ').trim();
@@ -407,7 +412,16 @@ const scaleFor = (v: number): Scale => {
 };
 const trim = (v: number, dp: number): string => String(parseFloat(v.toFixed(dp)));
 
-function sentenceFor(l: UsLine, company: string, verb = 'raised'): { text: string; label: string; scale: Scale | null; fmt: (lo: number | null, hi: number | null) => string } | null {
+/** zzz854: how the old figure is written into the sentence so the engine can validate it: its own period ('for FY25') when it differs from the
+ *  guided period, and what it is ('previous guidance' / 'reported result, not guidance'). Unknown is said as unknown, never upgraded to guidance. */
+function priorTail(l: UsLine, per: string, fallback: string): string {
+  const pp = fyNorm(l.priorPeriod);
+  const own = pp && pp !== fyNorm(l.period) ? ` for ${pp}` : '';
+  if (l.priorKind === 'actual') return `${own} (reported result, not guidance)`;
+  if (l.priorKind === 'unknown') return `${own} (prior figure — the release does not say whether it was guidance or a result)`;
+  return `${own}${fallback ? ` (${fallback.replace('{per}', per)})` : ''}`;
+}
+function sentenceFor(l: UsLine, company: string, verb = 'raised', priorWords = ''): { text: string; label: string; scale: Scale | null; fmt: (lo: number | null, hi: number | null) => string } | null {
   const w = US_METRIC_WORDS[l.metric];
   if (!w || w.unit !== l.unit) return null;
   const newV = [l.low, l.high].filter((x): x is number => x != null);
@@ -422,7 +436,7 @@ function sentenceFor(l: UsLine, company: string, verb = 'raised'): { text: strin
   const adj = l.basis === 'adjusted' && l.metric !== 'revenue';
   const word = l.metric === 'eps' ? (adj ? 'adjusted EPS' : 'GAAP EPS') : `${adj ? 'adjusted ' : ''}${w.word}`;
   const per = fyNorm(l.period) || 'full-year';
-  const text = `The company ${verb} ${per} ${word} guidance to ${fmt(l.low, l.high)} from ${fmt(l.prevLow, l.prevHigh)}.`;
+  const text = `The company ${verb} ${per} ${word} guidance to ${fmt(l.low, l.high)} from ${fmt(l.prevLow, l.prevHigh)}${priorTail(l, per, priorWords)}.`;
   return { text, label: `${per} ${word}`, scale, fmt };
 }
 
@@ -454,30 +468,36 @@ export function usGradedRowToCandidate(row: any, sessionDate: string, generatedA
     const k = key(c?.metric, c?.basis, c?.period_label); seen.add(k);
     const f = figBy.get(k);
     const line: UsLine = { metric: String(c?.metric), basis: c?.basis ?? null, period: c?.period_label ?? null, unit: String(c?.unit ?? f?.unit ?? ''),
-      low: num(c?.new_low), high: num(c?.new_high), prevLow: num(c?.prev_low), prevHigh: num(c?.prev_high), est: num(f?.est) };
+      low: num(c?.new_low), high: num(c?.new_high), prevLow: num(c?.prev_low), prevHigh: num(c?.prev_high), est: num(f?.est), prior: 'PREVIOUS_RELEASE',
+      priorKind: c?.prev_kind === 'actual' || c?.prev_kind === 'unknown' ? c.prev_kind : 'guidance', priorPeriod: c?.prev_period_label ?? null };
     if (c?.direction === 'raised') raised.push(line); else if (c?.direction === 'lowered') lowered.push(line);
   }
   for (const f of figs) {   // a prior column printed inside the release's own outlook table
     const k = key(f?.metric, f?.basis, f?.period_label);
     if (seen.has(k) || (f?.prior_low == null && f?.prior_high == null)) continue;
     const line: UsLine = { metric: String(f?.metric), basis: f?.basis ?? null, period: f?.period_label ?? null, unit: String(f?.unit ?? ''),
-      low: num(f?.low), high: num(f?.high), prevLow: num(f?.prior_low), prevHigh: num(f?.prior_high), est: num(f?.est) };
+      low: num(f?.low), high: num(f?.high), prevLow: num(f?.prior_low), prevHigh: num(f?.prior_high), est: num(f?.est), prior: 'TABLE_COLUMN',
+      // older cached rows carry no prior_kind: kept as before (the producer only marked a prior on guidance wording), validators still run
+      priorKind: f?.prior_kind === 'actual' || f?.prior_kind === 'unknown' || f?.prior_kind === 'guidance' ? f.prior_kind : null, priorPeriod: f?.prior_period_label ?? null };
     if (f?.raised === true) raised.push(line); else if (f?.raised === false) lowered.push(line);
   }
 
   const sentences: string[] = []; const periods: string[] = []; const built: Array<{ l: UsLine; s: NonNullable<ReturnType<typeof sentenceFor>> }> = [];
+  const priorWords = (l: UsLine) => (l.prior === 'PREVIOUS_RELEASE' ? 'previous {per} guidance' : l.prior === 'TABLE_COLUMN' ? 'prior guidance stated in the same release' : '');
   for (const l of raised) {
-    const s = sentenceFor(l, company); if (!s) continue;
+    const s = sentenceFor(l, company, 'raised', priorWords(l)); if (!s) continue;
     sentences.push(s.text); built.push({ l, s }); const p = fyNorm(l.period) || 'full-year'; if (!periods.includes(p)) periods.push(p);
   }
-  const cuts: string[] = [];
+  const cuts: string[] = []; const cutSentences: string[] = [];
   for (const l of lowered) {
-    const s = sentenceFor(l, company, 'lowered'); if (!s) continue;
+    const s = sentenceFor(l, company, 'lowered', priorWords(l)); if (!s) continue;
     cuts.push(`The same release lowered ${s.label} guidance to ${s.fmt(l.low, l.high)} from ${s.fmt(l.prevLow, l.prevHigh)}`);
+    cutSentences.push(s.text);
   }
 
   let title: string; let text: string;
-  if (sentences.length) { title = `${company} raises ${periods.join(' and ')} guidance`; text = sentences.join(' '); }
+  // zzz854: the lowered lines of the SAME release go into the text too, so a raise next to a cut is read as mixed, never as a clean upgrade
+  if (sentences.length) { title = `${company} raises ${periods.join(' and ')} guidance`; text = [...sentences, ...cutSentences].join(' '); }
   else {
     // No structured before/after: use the company's own verbatim outlook sentences, only when the row's own verdict is RAISED.
     const snips: string[] = Array.isArray(row?.guidance_snippets) ? row.guidance_snippets.map((x: unknown) => clean(x, 400)).filter(Boolean) : [];
@@ -725,12 +745,12 @@ const ANALYST_ONLY = /\b(?:price targets?|target price|analysts?|brokerages?|bro
 const RV = String.raw`(?:rais(?:e|es|ed|ing)|hik(?:e|es|ed|ing)|lift(?:s|ed|ing)?|boost(?:s|ed|ing)?|increas(?:e|es|ed|ing)|upgrad(?:e|es|ed|ing)|ups|upped|bump(?:s|ed|ing)?)`;
 const RAISE_ANY = new RegExp(String.raw`\b${RV}\b`, 'i');
 /** words that may sit between "raises" and "guidance" in a real company raise */
-const GUIDE_QUAL = String.raw`(?:(?:FY|F\.?Y\.?)\s?'?\d{2,4}|[HQ][1-4]\s?FY\s?'?\d{2,4}|full[- ]year|fiscal(?: year)?(?:\s*'?\d{2,4})?|annual|medium[- ]term|revenues?|sales|turnover|net|profit|PAT|EBITDA|EBIT|EPS|earnings|margins?|operating|volumes?|growth|income|production|(?:loan|credit|deposit|advances)(?: book)?|order(?:s| book| inflows?)?|top[- ]?line|bottom[- ]?line|\d{2,4}|and|&|,)`;
+const GUIDE_QUAL = String.raw`(?:(?:FY|F\.?Y\.?)\s?'?\d{2,4}|[HQ][1-4]\s?FY\s?'?\d{2,4}|full[- ]year|fiscal(?: year)?(?:\s*'?\d{2,4})?|annual|medium[- ]term|revenues?|sales|turnover|net|profit|PAT|EBITDA|EBIT|EPS|earnings|margins?|operating|volumes?|growth|income|production|(?:loan|credit|deposit|advances)(?: book)?|order(?:s| book| inflows?)?|top[- ]?line|bottom[- ]?line|adjusted|non-?GAAP|GAAP|diluted|per[- ]share|gross|free|cash|flows?|comparable|comps?|same[- ]store|organic|core|underlying|segment|backlog|bookings|ARR|subscription|recurring|total|consolidated|interest|fee|rental|rates?|pricing|premiums?|AUM|NII|FFO|AFFO|\d{2,4}|and|&|,)`;
 const DET = String.raw`(?:(?:its|their|the|our|his|her|a|an)\s+)?`;
 /** raise verb + qualifiers + guidance / outlook / forecast  (qualifiers optional) */
-const STRONG_GUIDE_RE = new RegExp(String.raw`\b${RV}\s+${DET}(?:${GUIDE_QUAL}\s*){0,5}(?:guidance|outlook|forecasts?|projections?)\b`, 'i');
+const STRONG_GUIDE_RE = new RegExp(String.raw`\b${RV}\s+${DET}(?:${GUIDE_QUAL}\s*){0,8}(?:guidance|outlook|forecasts?|projections?)\b`, 'i');
 /** raise verb + at least ONE qualifier + target  ("raises FY27 revenue target"; a bare "raises target" is a price target) */
-const STRONG_TARGET_RE = new RegExp(String.raw`\b${RV}\s+${DET}(?:${GUIDE_QUAL}\s*){1,5}(?:targets?)\b`, 'i');
+const STRONG_TARGET_RE = new RegExp(String.raw`\b${RV}\s+${DET}(?:${GUIDE_QUAL}\s*){1,8}(?:targets?)\b`, 'i');
 /** a real raise that also says WHICH period / how much: used where the sentence is otherwise suspicious (index wrap) */
 const SPECIFIC_RE = /\b(?:FY\s?'?\d{2,4}|F\.?Y\.?\s?'?\d{2,4}|full[- ]year|fiscal|from\s+(?:Rs\.?|₹|INR|\$)?\s?[\d,.]+[^.]{0,40}?\bto\b|(?:Rs\.?|₹|INR|\$)\s?[\d,.]+\s*(?:crore|cr|lakh|million|mn|billion|bn)|\d+(?:\.\d+)?\s?%)/i;
 const MONEY = String.raw`(?:(?:rs\.?|inr|₹|us\$|\$|usd|eur|€|£)\s?\d[\d,.]*(?:\s?-\s?\d[\d,.]*)?(?:\s?(?:crore|cr|lakh|mn|million|billion|bn|trillion|tn))?|\d[\d,.]*(?:\s?-\s?\d[\d,.]*)?\s?(?:crore|cr|lakh|mn|million|billion|bn|trillion|tn))`;
@@ -760,7 +780,9 @@ export function nonGuidanceRaiseSentence(sentence: string): boolean {
     const seg = s.slice(Math.max(0, vm.index - 60), vm.index);
     const re = new RegExp(BROKER_SUBJECT_RE.source, 'gi'); let m: RegExpExecArray | null; let last: RegExpExecArray | null = null;
     while ((m = re.exec(seg)) !== null) last = m;
-    if (last && !/\b(?:after|as|following|because|when|while|but|say|says|said|note|notes|noted)\b/i.test(seg.slice(last.index + last[0].length)) && !COMPANY_VOICE_RE.test(seg.slice(last.index + last[0].length))) return true;
+    // zzz854: a broker / agency word that is part of the company's own name ('Abercrombie & Fitch raised ...', 'Citi Trends raised ...') is not an analyst subject
+    const nameWord = !!last && brokerWordIsCompanyName(s, Math.max(0, vm.index - 60) + last.index, last[0].length);
+    if (last && !nameWord && !/\b(?:after|as|following|because|when|while|but|say|says|said|note|notes|noted)\b/i.test(seg.slice(last.index + last[0].length)) && !COMPANY_VOICE_RE.test(seg.slice(last.index + last[0].length))) return true;
   }
   const strong = STRONG_GUIDE_RE.test(s) || STRONG_TARGET_RE.test(s);
   if (INDEX_PIECE_RE.test(s) && !(strong && SPECIFIC_RE.test(s))) return true;             // market wrap: only a specific company raise survives
@@ -868,7 +890,7 @@ export const isExchangeFiling = (c: Pick<GuCandidate, 'id' | 'kind' | 'market'>)
 /** processCandidates for India: same engine, same window rule, wording-only raises kept as CANDIDATE. */
 export function processRaiseCandidates(cands: GuCandidate[], ctxFor: (ticker: string) => GuContext, now: Date, window: GuWindow = '7D', extraFor?: GuExtraFor): GuidanceEvent[] {
   const kept = cands.filter((c) => withinWindow(c.eventDate || c.publishedAt, window, now)).map((c) => sanitizeRaiseCandidate(c)).filter((c): c is GuCandidate => !!c && isRaiseCandidate(c));
-  return rank(mergeCandidates(kept).map((sk) => buildWithExtras(sk, ctxFor(sk.ticker) ?? {}, now, extraFor)));
+  return rank(applyCrossEventChecks(mergeCandidates(kept).map((sk) => buildWithExtras(sk, ctxFor(sk.ticker) ?? {}, now, extraFor))));
 }
 
 /** An unresolved candidate whose company name matches a resolved candidate of the batch takes that symbol (one outlet wrote 'Cupid Ltd', another 'Cupid'). */

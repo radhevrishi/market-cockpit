@@ -320,7 +320,7 @@ describe('5. coverage text: per-source counts, never consensus as the reason', (
 describe('route wiring', () => {
   const r = read('app/api/v1/guidance-upgrades/route.ts').replace(/\/\/.*$/gm, '');
   test('every India input path is read and reported', () => {
-    for (const k of ["'news:articles:v39'", "'scraped-india-news:v1:latest'", 'concall-feed:v26:days:', 'gradedKey(', 'loadCatalog(', 'NSE_TICKER_NAMES', 'buildIndiaCandidates(', 'processRaiseCandidates(', 'reconcilePrimary(', 'quarantineUnresolved(', 'collectSubjectOnly(', 'istDateList('])
+    for (const k of ["'news:articles:v39'", "'scraped-india-news:v1:latest'", 'readConcallFeedWithFallback(', 'gradedKey(', 'loadCatalog(', 'NSE_TICKER_NAMES', 'buildIndiaCandidates(', 'processRaiseCandidates(', 'reconcilePrimary(', 'quarantineUnresolved(', 'collectSubjectOnly(', 'istDateList('])
       assert.ok(r.includes(k), k);
     assert.match(r, /Announcements with subject only/); assert.match(r, /Scraped India news/);
     assert.ok(!/dateList\(now, days \+ 1\)/.test(r.replace(/istDateList\(now, days \+ 1\)/g, '')), 'no UTC date list for India');

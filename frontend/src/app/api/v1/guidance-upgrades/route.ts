@@ -3,7 +3,7 @@
 //
 // Finds positive company guidance raises, verifies them against a primary source, and returns the engine's events.
 // PUBLIC company data only: no holdings, no personal data (My Book is overlaid in the browser).
-// NO PAID AI. Cache-first, bounded time, partial answers are labelled. zzz853: a small bounded queue (<= 12 documents, ~15 s per run) reads exchange / SEC
+// NO PAID AI in this route (zzz854: the AI verifier runs in /api/v1/ai-verify; this route only applies its cached verdicts). Cache-first, bounded time, partial answers are labelled. zzz853: a small bounded queue (<= 12 documents, ~15 s per run) reads exchange / SEC
 // documents through the repo's own text helpers (see guidance-upgrades-queue.ts); a document confirms an event only when company, metric, period and value are all read.
 //
 // Candidate feeds (all existing, all read from KV cache; a cold cache is reported, never rebuilt here):
@@ -23,7 +23,7 @@ import { kvGet, kvMGet, kvSet } from '@/lib/kv';
 import { loadCatalog } from '@/lib/symbolMaster';
 import { NSE_TICKER_NAMES } from '@/lib/nse-ticker-names';
 import { gradedKey } from '@/lib/graded-cache-key';
-import { isGuidanceUpgradeCandidate, mergeCandidates, processCandidates, rank, summarise, withinWindow } from '@/lib/guidance-upgrades';
+import { isGuidanceUpgradeCandidate, mergeCandidates, processCandidates, rank, summarise, withinWindow, partitionPipeline, withClassification, reviewItemOf } from '@/lib/guidance-upgrades';
 import { US_ENGINE_VERSION, US_ENGINE_PREVIOUS_VERSIONS } from '@/lib/us-engine-version';
 import type { GuCandidate, GuContext, GuScanSource, GuScanStatus, GuWindow, GuidanceEvent, GuidanceUpgradesResponse } from '@/lib/guidance-upgrades-types';
 import {
@@ -35,15 +35,19 @@ import {
 } from '@/lib/guidance-upgrades-candidates';
 import { readLedgers, writeEvents, readEventStore, mergeIntoStore, writeEventStore, storedCandidates, storeCoveredDays } from '@/lib/guidance-upgrades-ledger';
 import { scanIndia, scanUs, finaliseScan, makeRealIndiaFetchers, makeRealEdgarFetcher, type MarketScanResult } from '@/lib/guidance-upgrades-scan';
-import { loadUniverseRecords, makeExtraFor, universeLookup } from '@/lib/guidance-upgrades-reconcile';
+import { loadUniverseRecords, makeExtraFor, universeLookup, writeEventStatuses } from '@/lib/guidance-upgrades-reconcile';
 import type { GuUniverseRecordX } from '@/lib/guidance-universe';
 import { readNewsWithLastGood, makeKvNewsIo, newsFallbackNote, cacheStateText, type NewsRead } from '@/lib/guidance-upgrades-cache';
 import { readQueue, writeQueue, emptyQueue, enqueue, processQueue, doneCandidates, reportQueue, awaitingCount, unavailableCount, readNoEventCount, makeDefaultFetchDoc, DOC_BUDGET_MS, type QueueState } from '@/lib/guidance-upgrades-queue';
 import { assignEventDates, reconcilePrimary, queueInputsFromFilings, type PrimaryFiling } from '@/lib/guidance-upgrades-sources';
-import { computeCounts, checkEventInvariants } from '@/lib/guidance-upgrades-counts';
+import { computeCounts, checkEventInvariants, enforceEventInvariants, countsDetail, detectedEquation, GUIDANCE_BUCKETS, NOT_GUIDANCE_BUCKETS, BUCKET_LABEL, type GuCountsX, type CountBucket } from '@/lib/guidance-upgrades-counts';
+import { readConcallFeedWithFallback, makeKvFeedIo, type ConcallFeedRead } from '@/lib/concall-feed';
 import { buildCoverageCard, buildCoverageBlock } from '@/lib/guidance-upgrades-coverage';
 import { isRaiseBearingSubject, normCompanyName } from '@/lib/guidance-upgrades-candidates';
 import type { GuCacheRow } from '@/lib/guidance-upgrades-types';
+import { verifyEventsOverlay } from '@/lib/ai-verify';
+import { checkGuidanceResponseReconciles } from '@/lib/ai-verify-gate';
+import type { VerificationSummary } from '@/lib/ai-verify-types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -109,7 +113,8 @@ export async function GET(req: NextRequest) {
 
   // (a) news cache, (b) India filing feed cache, (c) India graded cache, (d) US graded cache — in parallel, each with the shared budget.
   const feedDays = days <= 2 ? [2, 7, 14, 30] : days <= 7 ? [7, 14, 30] : days <= 14 ? [14, 30] : [30];
-  const feedKeys = feedDays.map((d) => `concall-feed:v26:days:${d}`);
+  // zzz854: the India filing feed is read through the shared fallback reader (preferred key → shorter keys → last-good copy, every miss named)
+  let feedRead: ConcallFeedRead | null = null;
   // India graded sessions and announcements are keyed by the IST day (an evening filing belongs to that IST date, not the UTC one)
   const dates = istDateList(now, days + 1);
   const usDates = wantUS ? usSessionDates(now, days) : [];
@@ -122,7 +127,6 @@ export async function GET(req: NextRequest) {
   const inScanP: Promise<MarketScanResult | null> = inFetch
     ? storeP.then(([stIN]) => scanIndia({ now, days, window, fetchNse: inFetch.nse, fetchBse: inFetch.bse, readBlob: inFetch.blob, budgetMs: 12_000, storeCovered: storeCoveredDays(stIN), gradedDays: gradedDaysP })).catch(() => null)
     : Promise.resolve(null);
-  let feedKeyUsed = '';
   // zzz853: news cache with a last-good fallback (the live key lives 5 minutes and is refilled hourly, so a miss is normal and is not a data statement)
   const nr: { v: NewsRead | null } = { v: null };
   const timedNews = async (): Promise<Timed<any[]>> => {
@@ -133,7 +137,7 @@ export async function GET(req: NextRequest) {
   const queueP: Promise<QueueState | null> = withTimeout(readQueue(), 4_000, null);
   const [news, feed, graded, usSessions, scraped, retained, catalog, [storeIN, storeUS]] = await Promise.all([
     timedNews(),
-    wantIN ? timed((async () => { for (const k of feedKeys) { const v = await kvGet<any>(k); if (v && Array.isArray(v.filings)) { feedKeyUsed = k; return v; } } return null; })(), BUDGET_MS) : Promise.resolve<Timed<any>>({ v: null, timedOut: false }),
+    wantIN ? timed(readConcallFeedWithFallback(makeKvFeedIo(Math.min(BUDGET_MS, 6_000)), feedDays).then((r) => { feedRead = r; return r.feed; }), BUDGET_MS) : Promise.resolve<Timed<any>>({ v: null, timedOut: false }),
     gradedP,
     wantUS ? withTimeout(long
       ? loadUsSessions(usDates, [US_ENGINE_VERSION, ...US_ENGINE_PREVIOUS_VERSIONS.slice(0, 2)], (keys) => kvMGet<any>(keys), 15, { concurrency: 4, budgetMs: 10_000 })   // ~85 sessions: mget chunks of 15, 4 at a time, inside the budget
@@ -170,7 +174,7 @@ export async function GET(req: NextRequest) {
     }
     if (!newsList?.length) cov.IN.cacheEmpty.push(`India news cache (${nr.v?.row.text ?? whyEmpty(news, NEWS_KEY)})`);
     if (!scrapedList.length) cov.IN.cacheEmpty.push(`scraped India news (${whyEmpty(scraped, SCRAPED_NEWS_KEY)})`);
-    if (!Array.isArray(feed.v?.filings)) cov.IN.cacheEmpty.push(`exchange filing feed (${feed.timedOut ? 'timed out' : `none of ${feedKeys.join(', ')} found`})`);
+    if (!Array.isArray(feed.v?.filings)) cov.IN.cacheEmpty.push(`exchange filing feed (${feed.timedOut ? 'timed out' : (feedRead as ConcallFeedRead | null)?.label ?? 'not read'})`);
     if (gradedPayloads === 0) cov.IN.cacheEmpty.push(`results cache (${graded.timedOut ? 'timed out' : `no graded session found for ${dates[dates.length - 1]} to ${dates[0]}`})`);
   } else if (newsList) {
     for (const a of newsList) { const c = newsToCandidate(a); if (c) cands.push(c); }
@@ -327,7 +331,26 @@ export async function GET(req: NextRequest) {
     console.error('[guidance-upgrades] engine error', e?.message || e);
     return NextResponse.json({ ok: false, error: 'The guidance engine could not finish. Please try again.' }, { status: 500 });
   }
-  const events = withProvenance(tagOrigin(filterByMarket(all, market), cands.filter((c) => !storedIds.has(c.id)), [...storedIN, ...storedUS]));
+  const eventsBuilt = withProvenance(tagOrigin(filterByMarket(all, market), cands.filter((c) => !storedIds.has(c.id)), [...storedIN, ...storedUS]));
+  // zzz854 ORDER (each step sees the previous one's output):
+  //   1. build      — engine events with their pipeline (CARD / AUDIT / QUEUE / DROPPED); only VERIFIED events can be CARD / AUDIT
+  //   2. reconcile  — reconcilePrimary (above): primary filing found / secondary claim
+  //   3. AI overlay — cached AI verdicts for events the engine could not verify: confirmed (numbers matched) → VERIFIED + named document,
+  //                   then withClassification re-derives pipeline + decision (it reaches a card ONLY by the engine's own rules);
+  //                   contradicted → review queue (invalid) with the reason; anything else → queue, reason says the verification state;
+  //                   unchecked claims are queued for /api/v1/ai-verify. No paid AI call here.
+  //   4. invariants — enforceEventInvariants (final word: demotes / excludes, mutates in place)
+  //   5. summarise  — on the FULL list, so summary.pipeline covers every item
+  //   6. partition  — partitionPipeline: events = cards + audit (shown), reviewQueue = everything else (one awaiting concept)
+  const ov = await verifyEventsOverlay(eventsBuilt, (e) => { try { return withClassification(e); } catch { return e; } }, { timeoutMs: 2_000 }).catch(() => null);
+  const eventsAll: GuidanceEvent[] = ov ? ov.events : eventsBuilt;   // overlay failed: the engine pipeline alone (it never shows an unverified event)
+  enforceEventInvariants(eventsAll);
+  const part = partitionPipeline(eventsAll);
+  const isExcluded = (e: GuidanceEvent) => !!(e as any).excludedFromEvents;
+  const leaked = [...part.cards, ...part.audit].filter(isExcluded);   // excluded must never be shown: they join the queue with their reason
+  const events: GuidanceEvent[] = [...part.cards, ...part.audit].filter((e) => !isExcluded(e));
+  const aiById = new Map(eventsAll.map((e) => [e.guidance_event_id, (e as any).aiVerification]));
+  const reviewQueue = [...part.queue, ...leaked.map(reviewItemOf)].map((q) => (aiById.get(q.id) ? { ...q, aiVerification: aiById.get(q.id) } : q));
 
   // Write the ledger AFTER the answer is built; bounded, idempotent, never blocks the response for long.
   // Raise-worded India news is also kept (35 days, newest 150) so a 7D / 14D window still sees it after the feeds drop the article.
@@ -361,8 +384,11 @@ export async function GET(req: NextRequest) {
   };
   await withTimeout(Promise.all([
     persist('IN'), persist('US'),
+    // zzz854: the ledger records what is shown (cards + audit); every event's status goes to the universe digest
     writeEvents(events.filter((e) => e.market !== 'US' && isResolvedTicker(e.ticker)), ledIN, 'IN'),
     writeEvents(events.filter((e) => e.market === 'US'), ledUS, 'US'),
+    writeEventStatuses(eventsAll).catch(() => false),
+    (feedRead as ConcallFeedRead | null)?.wrote ?? Promise.resolve(),
     retainNext ? kvSet(RETAINED_KEY, retainNext, RETAINED_DAYS * 86_400).catch(() => 0) : Promise.resolve(0),
     // zzz853: the queue (last write wins: two overlapping runs may each save their own view; items are idempotent, so the next run re-derives anything lost)
     (qRun?.changed || enq.added > 0 || (queueReadOk && queue.items.length)) ? writeQueue(queue).catch(() => false) : Promise.resolve(false),
@@ -389,7 +415,7 @@ export async function GET(req: NextRequest) {
   const inExtra: GuScanSource[] = wantIN ? [
     srcRow('India news cache', read.news, newsList?.length ? null : (nr.v?.row.text ?? whyEmpty(news, NEWS_KEY)), `${read.news} India of ${inBuild?.counts.newsAll ?? 0} articles read${nr.v && nr.v.servedBy !== 'LIVE' ? ` (served from the ${nr.v.servedBy === 'NONE' ? 'fallback' : 'last good'} copy)` : ''}`),
     srcRow('Scraped India news', read.newsScraped, scrapedList.length ? null : whyEmpty(scraped, SCRAPED_NEWS_KEY), `${read.newsScraped} entries read (company named in the headline, no ticker)${read.retained ? `; ${read.retained} raise-worded items kept from earlier days` : ''}; ${newsRaise} with raise wording in this window`),
-    srcRow('Exchange filing feed cache', Array.isArray(feed.v?.filings) ? feed.v.filings.length : 0, Array.isArray(feed.v?.filings) ? null : (feed.timedOut ? 'concall-feed timed out' : `none of ${feedKeys.join(', ')} found`), `${feed.v?.filings?.length ?? 0} announcements read from ${feedKeyUsed}`),
+    srcRow('Exchange filing feed cache', Array.isArray(feed.v?.filings) ? feed.v.filings.length : 0, Array.isArray(feed.v?.filings) ? null : (feed.timedOut ? 'concall-feed timed out' : (feedRead as ConcallFeedRead | null)?.label ?? 'not read'), (feedRead as ConcallFeedRead | null)?.label ?? `${feed.v?.filings?.length ?? 0} announcements read`),
     resultsRow,
     srcRow('Announcements with subject only', unmatchedSubjects.length, null, `${unmatchedSubjects.length} announcement${unmatchedSubjects.length === 1 ? '' : 's'} name an AGM outcome, presentation, press release, call or results document${unmatchedSubjects.length ? ` (e.g. ${unmatchedSubjects.slice(0, 4).map((f) => f.company || f.ticker || 'company').join(', ')})` : ''}; the document is not opened here (filing seen, raise text not read), so they are NOT counted as raises${corroborated ? `; ${corroborated} raise${corroborated === 1 ? '' : 's'} have such a filing on file` : ''}`),
   ] : [];
@@ -438,7 +464,7 @@ export async function GET(req: NextRequest) {
   const enriched = events.filter((e) => !!e.v2?.numbersFrom).length;
   if (enriched) note += ` ${enriched} event${enriched === 1 ? '' : 's'} carry before and after numbers taken from the guidance universe record (source and verification tier named on each event).`;
 
-  const summary = summarise(events, window, now);
+  const summary = summarise(eventsAll, window, now);   // zzz854: full list (summary.pipeline covers cards, audit, queue and dropped)
   try {
     // fill V2 summary fields when the engine's summarise() did not
     const tally = (m: 'IN' | 'US') => { const l = events.filter((e) => e.market === m); return {
@@ -453,7 +479,7 @@ export async function GET(req: NextRequest) {
   } catch { /* summary extras are optional */ }
   // zzz853: canonical counts (one definition per number), invariants, coverage cards and the queue report
   const qWin: QueueState = { ...queue, items: queue.items.filter((x) => withinWindow(x.event_date, window, now)) };
-  const countsFor = (m: 'IN' | 'US') => computeCounts(events.filter((e) => e.market === m), {
+  const countsFor = (m: 'IN' | 'US') => computeCounts(eventsAll.filter((e) => e.market === m), {
     documentsAwaitingGrading: Math.max(awaitingCount(qWin, m), m === 'US' ? (scan.US?.awaitingGrading ?? 0) : 0),
     documentsUnavailable: unavailableCount(qWin, m), documentsReadNoEvent: readNoEventCount(qWin, m),
   });
@@ -465,9 +491,25 @@ export async function GET(req: NextRequest) {
     mixed: sum('mixed'), lowered: sum('lowered'), expectationPositive: sum('expectationPositive'), unverifiedClaims: sum('unverifiedClaims'),
     documentsAwaitingGrading: sum('documentsAwaitingGrading'), documentsUnavailable: sum('documentsUnavailable'),
   };
+  {
+    // zzz854: the summed counts also carry the bucket partition and the equations (sum of the markets requested)
+    const xs = [wantIN ? countsDetail(countsByMarket.IN) : null, wantUS ? countsDetail(countsByMarket.US) : null].filter((x): x is GuCountsX => !!x);
+    if (xs.length && xs.length === (wantIN ? 1 : 0) + (wantUS ? 1 : 0)) {
+      const buckets = Object.fromEntries([...GUIDANCE_BUCKETS, ...NOT_GUIDANCE_BUCKETS].map((k) => [k, xs.reduce((a, x) => a + (x.buckets[k] ?? 0), 0)])) as Record<CountBucket, number>;
+      const add = (k: 'detected' | 'notGuidance' | 'verifiedPrimaryRead' | 'shown' | 'queued' | 'dropped' | 'demotedByInvariant') => xs.reduce((a, x) => a + (x[k] ?? 0), 0);
+      const notGuidance = add('notGuidance');
+      Object.assign(summary.counts!, {
+        detected: add('detected'), buckets, notGuidance, verifiedPrimaryRead: add('verifiedPrimaryRead'), shown: add('shown'), queued: add('queued'), dropped: add('dropped'), demotedByInvariant: add('demotedByInvariant'),
+        equation: detectedEquation(buckets),
+        notGuidanceEquation: `Not guidance ${notGuidance} = ${buckets.capitalRaise} ${BUCKET_LABEL.capitalRaise} + ${buckets.nonGuidance} ${BUCKET_LABEL.nonGuidance} (in the audit list, never counted as guidance)`,
+      });
+    }
+  }
   const invariantViolations = [
-    ...(wantIN ? checkEventInvariants(events.filter((e) => e.market !== 'US'), countsByMarket.IN) : []),
-    ...(wantUS ? checkEventInvariants(events.filter((e) => e.market === 'US'), countsByMarket.US) : []),
+    ...(wantIN ? checkEventInvariants(eventsAll.filter((e) => e.market !== 'US'), countsByMarket.IN) : []),
+    ...(wantUS ? checkEventInvariants(eventsAll.filter((e) => e.market === 'US'), countsByMarket.US) : []),
+    // zzz854: after the AI overlay + partition, every event is in exactly one list and the counts are those lists
+    ...checkGuidanceResponseReconciles({ all: eventsAll, shown: events, queueLength: reviewQueue.length, counts: countsDetail(summary.counts) }),
   ];
   const cacheRows: GuCacheRow[] = [];
   if (nr.v) cacheRows.push(nr.v.row);
@@ -485,7 +527,11 @@ export async function GET(req: NextRequest) {
   }));
   const queueReport = reportQueue(queue, { processed: qRun?.done ?? 0, verified: qRun?.complete ?? 0, failed: (qRun?.failed ?? 0) + (qRun?.unavailable ?? 0) });
   if (reconcileNotFound) queueReport.note += ` ${reconcileNotFound} claim${reconcileNotFound === 1 ? '' : 's'} have no primary filing in the filings read so far.`;
-  const body: GuidanceUpgradesResponse = {
+  const verification: VerificationSummary = ov?.verification ?? { provider: 'unknown', model: null, available: false, unavailableReason: 'The AI verification state could not be read; unverified events stay in the review queue.', mode: 'enforce',
+    primaryVerified: eventsAll.filter((e) => e.verification === 'VERIFIED').length, checked: 0, confirmed: 0, contradicted: 0, awaiting: 0, awaitingByReason: {}, lastRunAt: null };
+  const body: GuidanceUpgradesResponse & { verification: VerificationSummary; reviewQueue: typeof reviewQueue; reviewQueueCount: number; awaitingVerificationCount: number } = {
+    // zzz854: events = cards + audit (shown); reviewQueue = every other item with its status and reason (awaiting numbers / primary / AI verification ...)
+    verification, reviewQueue: reviewQueue.slice(0, 600), reviewQueueCount: reviewQueue.length, awaitingVerificationCount: verification.awaiting,
     summary, events, scan,
     coverage: buildCoverageBlock(cards, window, days, now), invariantViolations, queue: queueReport,
     unresolved: unresolvedList.slice(0, 50), unresolvedCount: unresolvedList.length,

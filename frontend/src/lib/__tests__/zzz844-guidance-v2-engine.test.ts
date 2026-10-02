@@ -69,9 +69,11 @@ describe('Regression: Cupid-type AGM raise, India, no consensus', () => {
     assert.ok(['MULTI_QUARTER', 'MULTI_YEAR', 'STRUCTURAL'].includes(e.v2!.durabilityLevel), e.v2!.durabilityLevel);
     assert.match(e.v2!.durabilityWhy, /capacity/i);
   });
+  // zzz854: first line = metric + direction + window + source; second = the stated operating variable's own check
   test('driver-specific next evidence (1-2 items, no generic line)', () => {
     assert.ok(e.nextEvidence.length >= 1 && e.nextEvidence.length <= 2);
-    assert.match(e.nextEvidence[0], /Commissioning of the new plant and utilisation in the next quarter/);
+    assert.match(e.nextEvidence[0], /^Next quarterly results \(~[A-Z][a-z]{2} \d{4}\): quarterly revenue of about .+ to stay on track for the guided .+ — source:/);
+    assert.match(e.nextEvidence[1], /Commissioning of the new plant and utilisation in the next quarter/);
     assert.ok(e.nextEvidence.some(x => /order/i.test(x)));
     assert.ok(!e.nextEvidence.some(x => /repeats or raises this guidance again/i.test(x)));
   });
@@ -201,10 +203,12 @@ describe('Units and basis', () => {
 });
 
 describe('Why now, durability, decisions', () => {
-  test('unresolved driver uses the exact wording', () => {
+  // zzz854: no boilerplate — a dated, specific line naming the document; the text is always shown (whyNowResolved true)
+  test('unresolved driver: dated, specific wording', () => {
     const e = one([us('Zed raises FY27 revenue guidance to $10.8B from $10.0B')]);
-    assert.equal(e.v2!.whyNowResolved, false); assert.equal(e.v2!.operatingVariable, null);
-    assert.ok(e.whyNow.includes('Driver unresolved after primary-source + recent-event research'));
+    assert.equal(e.v2!.whyNowResolved, true); assert.equal(e.v2!.operatingVariable, null); assert.equal(e.whyNowDriver, 'Driver not stated');
+    assert.match(e.whyNow, /Why now: guidance raised on \d{4}-\d{2}-\d{2} in .+; driver not stated in the release/);
+    assert.ok(!e.whyNow.includes('Driver unresolved after primary-source + recent-event research'));
     assert.equal(e.v2!.durabilityLevel, 'UNKNOWN_INSUFFICIENT_EVIDENCE');
   });
   test('operating variable only when stated', () => {
@@ -214,15 +218,17 @@ describe('Why now, durability, decisions', () => {
     assert.deepEqual(nextEvidenceFor(null), []);
     assert.match(nextEvidenceFor('order pipeline + exports')[0], /Order book \/ export revenue share next quarter/);
   });
-  test('one-off driver -> ONE_OFF durability and REJECT with a reason', () => {
+  // zzz854: REJECT reserved for lowered / invalid / stale / capital raise; a verified one-off raise is WATCHLIST with the reason
+  test('one-off driver -> ONE_OFF durability and WATCHLIST with a reason', () => {
     const e = one([us('Zed raises FY27 EPS guidance to $4.75 from $4.20 due to a one-time tax benefit')]);
-    assert.equal(e.v2!.durabilityLevel, 'ONE_OFF'); assert.equal(e.decision, 'REJECT'); assert.match(e.decisionReason.at(-1)!, /^Result: REJECT — .{15,}/);
+    assert.equal(e.v2!.durabilityLevel, 'ONE_OFF'); assert.equal(e.decision, 'WATCHLIST'); assert.match(e.decisionReason.at(-1)!, /^Result: WATCHLIST — .{15,}/);
   });
-  test('small single-metric raise REJECT states why; small multi-metric raise is WATCHLIST, not REJECT', () => {
+  // zzz854: a small verified raise is never REJECT; it is tracked (WATCHLIST) and says why
+  test('small raises (single or multi metric) are WATCHLIST with the reason, never REJECT', () => {
     const s = one([us('Zed raises FY27 revenue guidance to $10.2B from $10.0B, driven by strong demand')]);
-    assert.equal(s.decision, 'REJECT'); assert.match(s.decisionReason.at(-1)!, /small raise/);
+    assert.equal(s.decision, 'WATCHLIST'); assert.match(s.decisionReason.at(-1)!, /small raise/);
     const m = one([us('Zed raises FY27 revenue guidance to $10.2B from $10.0B and EPS to $4.10 from $4.00, driven by strong demand')]);
-    assert.equal(m.decision, 'WATCHLIST'); assert.match(m.decisionReason.at(-1)!, /several measures moved together/);
+    assert.equal(m.decision, 'WATCHLIST'); assert.match(m.decisionReason.at(-1)!, /small raise/);
   });
   test('existing rules kept: missing P/E -> WATCHLIST; P/E >= 40 -> DELAYED_EP; unknown gap never IMMEDIATE_BUY', () => {
     const t = 'Zed raises FY27 revenue guidance to $10.8B from $10.0B and EPS to $4.75 from $4.00, driven by strong demand and a multi-year backlog. Demand should continue over the next few quarters.';
