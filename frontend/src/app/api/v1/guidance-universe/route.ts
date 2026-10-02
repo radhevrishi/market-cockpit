@@ -24,6 +24,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUniverseBundle, buildUniverseResponse, parseView, clampThreshold } from '@/lib/guidance-universe-service';
 import type { GgMetric } from '@/lib/growth-guidance-types';
 import { verifyUniverseClaims } from '@/lib/ai-verify';
+import { promoteConfirmed } from '@/lib/guidance-promote';
 import { loadPipelineEvidence, pipelineView } from '@/lib/guidance-pipeline-service';
 
 export const runtime = 'nodejs';
@@ -41,18 +42,23 @@ export async function GET(req: NextRequest) {
   const metric = METRICS.includes(m) ? m : null;
   try {
     const b = await getUniverseBundle(t0, sp.get('force') === '1');
-    const claimsBefore = b.build.claimsAwaiting ?? [];
+    const claimsBefore = b.build.claimsAwaiting ?? [];   // the claims before the AI gate
     const vr = await verifyUniverseClaims(claimsBefore, { timeoutMs: 2_500 }).catch(() => null);
     // the bundle may be a shared cached object: copy, never mutate
-    const gb = vr ? { ...b, build: { ...b.build, claimsAwaiting: vr.claims } } : b;
+    const gb0 = vr ? { ...b, build: { ...b.build, claimsAwaiting: vr.claims } } : b;
+    // zzz863: a claim the AI check CONFIRMED against the company's own document moves into Active (every other Active rule must already hold)
+    const pr = promoteConfirmed({ defaultRecords: gb0.build.defaultRecords ?? [], claimsAwaiting: gb0.build.claimsAwaiting ?? [] });
+    const gb = pr.promoted.length ? { ...gb0, build: { ...gb0.build, defaultRecords: pr.defaultRecords, claimsAwaiting: pr.claimsAwaiting } } : gb0;
     const body: any = buildUniverseResponse(gb, { market, metric, threshold: clampThreshold(sp.get('threshold')), view: parseView(sp.get('view')) });
     const removed = vr?.removed ?? [];
     body.verification = vr?.verification ?? { provider: 'unknown', model: null, available: false, unavailableReason: 'The verification state could not be read; claims stay awaiting verification.', mode: 'enforce', primaryVerified: 0, checked: 0, confirmed: 0, contradicted: 0, awaiting: claimsBefore.length, awaitingByReason: {}, lastRunAt: null };
     body.verificationAudit = removed.slice(0, 200);
+    body.promoted = pr.promoted.slice(0, 100);
     // counts reconcile after the gate: claims shown + contradicted removed = claims before the gate; the claims count is the list
     const after = gb.build.claimsAwaiting ?? [];
+    const promotedRecs = (gb.build.defaultRecords?.length ?? 0) - (gb0.build.defaultRecords?.length ?? 0);
     const recon: string[] = [];
-    if (after.length + removed.length !== claimsBefore.length) recon.push(`claims awaiting (${after.length}) + AI-contradicted removed (${removed.length}) does not equal claims before verification (${claimsBefore.length})`);
+    if (after.length + removed.length + promotedRecs !== claimsBefore.length) recon.push(`claims awaiting (${after.length}) + AI-contradicted removed (${removed.length}) + promoted to Active (${promotedRecs}) does not equal claims before verification (${claimsBefore.length})`);
     if (body.viewCounts?.claimsAwaiting != null && body.viewCounts.claimsAwaiting !== after.length) recon.push(`viewCounts.claimsAwaiting (${body.viewCounts.claimsAwaiting}) does not equal the claims list (${after.length})`);
     body.invariantViolations = [...(Array.isArray(body.invariantViolations) ? body.invariantViolations : []), ...recon];
     // zzz861: the real state of each market (distinct states, never a bare NO DATA), the claims table with its actionable status, and the wanted-companies list.
@@ -62,7 +68,8 @@ export async function GET(req: NextRequest) {
         const contra = removed.flatMap((r: any) => [String(r.ticker || '').toUpperCase(), String(r.company || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase()]).filter(Boolean);
         const act = (m: 'IN' | 'US') => (gb.build.defaultRecords ?? []).filter((r: any) => r.record.market === m).length;
         const vc = (gb.build.defaultRecords ?? []).flatMap((r: any) => [`${r.record.market}|${String(r.tickers?.[0] || r.record.ticker || '').toUpperCase()}`, `${r.record.market}|${String(r.record.company || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase()}`]);
-        const pv = pipelineView(ev, claimsBefore, { IN: act('IN'), US: act('US') }, new Date(), contra, vc);
+        const promotedKeys = new Set(pr.defaultRecords.slice(gb0.build.defaultRecords?.length ?? 0).map((r) => r.entityKey));
+        const pv = pipelineView(ev, claimsBefore.filter((r) => !promotedKeys.has(r.entityKey)), { IN: act('IN'), US: act('US') }, new Date(), contra, vc);
         body.extractCoverage = { ...(body.extractCoverage || { docs: 0, extracted: 0, rows: 0, lastExtractAt: null }), quality: pv.quality };
         // the collectors read this list (GET /api/v1/guidance-pipeline) so they go and fetch the company documents the claims are waiting on
         import('@/lib/kv').then((k) => k.kvSet('guidance-pipeline:wanted:v1', { at: new Date().toISOString(), wanted: pv.wanted }, 7 * 86_400)).catch(() => 0);

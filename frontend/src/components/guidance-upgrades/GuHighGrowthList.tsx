@@ -87,7 +87,8 @@ export function GuGroupList({ cohorts, showMarket, findRecord, onFull, emptyText
                       <VerBadge b={b} />
                       {rec && <span style={{ marginLeft: 'auto' }}><button type="button" className="gu-noprint" style={btn()} aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : key)}>{isOpen ? 'Hide' : 'Details'}</button></span>}
                     </div>
-                    <div style={{ display: 'grid', gap: 1, marginTop: 4, paddingLeft: 32 }}>
+                    <div style={{ fontSize: 11.5, color: R.dim, paddingLeft: 32 }}>{h.sourceName ? `${sourceDisplayName(h.sourceName)}${h.sourceDate ? `, ${String(h.sourceDate).slice(0, 10)}` : ''}` : UNKNOWN}</div>
+                    {(isOpen || !rec) && <div style={{ display: 'grid', gap: 1, marginTop: 4, paddingLeft: 32 }}>
                       {(h.metrics || []).map((m, j) => (
                         <div key={j} style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'baseline' }}>
                           <span style={{ fontSize: 12, fontWeight: 700, minWidth: 54 }}>{metricName(m.metric)}</span>
@@ -96,8 +97,7 @@ export function GuGroupList({ cohorts, showMarket, findRecord, onFull, emptyText
                           {m.calculationType && m.verificationStatus && <span data-gu-calc-status style={{ fontSize: 11, color: R.dim }}>Method: {CALCULATION_TYPE_TEXT[m.calculationType]} · Status: {VERIFICATION_STATUS_TEXT[m.verificationStatus]}{m.freshness && m.freshness !== 'UNKNOWN' ? ` · ${m.freshness.toLowerCase()}` : ''}</span>}
                         </div>
                       ))}
-                      <div style={{ fontSize: 11.5, color: R.dim }}>{h.sourceName ? `Source: ${sourceDisplayName(h.sourceName)}${h.sourceDate ? `, ${String(h.sourceDate).slice(0, 10)}` : ''}` : `Source: ${UNKNOWN}`}</div>
-                    </div>
+                    </div>}
                     {isOpen && rec && <GuCompanyDetail r={rec} onFull={onFull} />}
                   </li>
                 );
