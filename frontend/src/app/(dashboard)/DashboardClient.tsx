@@ -2,15 +2,17 @@
 
 import { ReactNode, useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { getFavourites, toggleFavourite, subscribeFavourites } from '@/lib/nav-favourites';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import {
   BarChart3, Newspaper, Calendar, Briefcase, Compass, Bell, Settings, LogOut, ChevronDown, BookMarked, Search,
   TrendingUp, Grid3X3, RefreshCw, Filter, Globe, Rocket, Shield, LineChart, Star, Microscope, Factory, Zap,
 } from 'lucide-react';
 import api from '@/lib/api';
-import TickerDrawer from '@/components/TickerDrawer';
+// zzz855 — the drawer (react-query + date-fns + its own fetches) only loads when a ticker is opened.
+const TickerDrawer = dynamic(() => import('@/components/TickerDrawer'), { ssr: false });
 import GlobalSearch from '@/components/GlobalSearch';
 import { PdfExportButton } from '@/components/PdfExportButton';
 import ScreenThemeToggle from '@/components/ScreenThemeToggle';
@@ -25,6 +27,7 @@ import { scheduleBookSync } from '@/lib/book-sync-client';
 import MobileNav from '@/components/pwa/MobileNav';
 import { InstallBanner, InstallAppCard } from '@/components/pwa/InstallApp';
 import pwa from '@/components/pwa/pwa.module.css';
+import { navPrefetch, shellFetchJson, whenIdle } from '@/lib/shell-fetch';
 
 interface NavItem { href: string; label: string; icon: ReactNode; }
 
@@ -315,26 +318,6 @@ const _LEGACY_NAV: NavItem[] = [
   // PATCH 0091: standalone /calendars also merged into Earnings Hub above
 ];
 
-// Static fallback shown while live data loads — no hardcoded prices to avoid showing stale data
-const MARKETS_FALLBACK = [
-  { symbol: 'NIFTY 50',  price: '—', change: '—', up: true },
-  { symbol: 'SENSEX',    price: '—', change: '—', up: true },
-  { symbol: 'S&P 500',   price: '—', change: '—', up: true },
-  { symbol: 'NASDAQ',    price: '—', change: '—', up: true },
-  { symbol: 'USD/INR',   price: '—', change: '—', up: true },
-  { symbol: 'GOLD',      price: '—', change: '—', up: true },
-  { symbol: 'CRUDE OIL', price: '—', change: '—', up: true },
-];
-
-interface MarketIndex {
-  symbol: string;
-  name?: string;
-  price: number | string;
-  change_pct?: number;
-  change?: number | string;
-  up?: boolean;
-}
-
 interface UserProfile {
   id: string;
   user_id: string;
@@ -364,11 +347,9 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const qc = useQueryClient();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userMenu, setUserMenu] = useState(false);
   const [drawerTicker, setDrawerTicker] = useState<{ symbol: string; exchange?: string } | null>(null);
-  const [showLoadingSkeleton, setShowLoadingSkeleton] = useState(true);
   const [authChecked, setAuthChecked] = useState(false);
 
   // PATCH 0283 — Global Conviction Beats count chip. Reads bench size from
@@ -383,11 +364,12 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
   const [convictionTitle, setConvictionTitle] = useState<string>('');
   // zzz833: one number, two markets, both named — the US bench comes from the same server list the US pages use
   const [usBenchCount, setUsBenchCount] = useState<number | null>(null);
-  useEffect(() => {
-    fetch('/api/v1/bench-us?view=tickers', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null))
+  // zzz855 — read after the page's own requests have started (idle), one shared request.
+  useEffect(() => whenIdle(() => {
+    shellFetchJson<any>('/api/v1/bench-us?view=tickers')
       .then((j) => { if (j && Array.isArray(j.entries)) setUsBenchCount(new Set(j.entries.map((e: any) => String(e?.ticker || '').toUpperCase()).filter(Boolean)).size); })
       .catch(() => { /* chip shows the India count and says the US list is not read */ });
-  }, []);
+  }), []);
   useEffect(() => {
     if (typeof window === 'undefined') return;
     let server: Array<{ ticker: string; company: string | null; tier: string | null; filing_date: string | null }> | null = null;
@@ -403,13 +385,18 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
     };
     const refresh = () => recount();
     recount();
-    fetch('/api/v1/bench?view=tickers', { cache: 'no-store' })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => { if (j && Array.isArray(j.entries)) { server = j.entries; recount(); } })
-      .catch(() => { /* badge keeps the browser count, title says so */ });
+    // zzz855 — idle + shared request (the count from this browser shows meanwhile, title says so)
+    let alive = true;
+    const cancelIdle = whenIdle(() => {
+      shellFetchJson<any>('/api/v1/bench?view=tickers')
+        .then((j) => { if (alive && j && Array.isArray(j.entries)) { server = j.entries; recount(); } })
+        .catch(() => { /* badge keeps the browser count, title says so */ });
+    });
     window.addEventListener('storage', refresh);
     window.addEventListener('conviction-beats:updated', refresh);
     return () => {
+      alive = false;
+      cancelIdle();
       window.removeEventListener('storage', refresh);
       window.removeEventListener('conviction-beats:updated', refresh);
     };
@@ -505,72 +492,10 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
     return () => document.removeEventListener('contextmenu', onContextMenu);
   }, []);
 
-  // Refetch market data when component re-mounts
-  useEffect(() => {
-    qc.invalidateQueries({ queryKey: ['market', 'indices'] });
-  }, [qc]);
-
-  // Show loading skeleton briefly — set short so pages feel fast
-  useEffect(() => {
-    const timer = setTimeout(() => setShowLoadingSkeleton(false), 600);
-    return () => clearTimeout(timer);
-  }, []);
-
-  // Live market indices — refresh every 60 s
-  // Tries FastAPI backend first, falls back to Next.js /api/market/indices route
-  // PATCH 0437 BUG-001 — localStorage cache prime so the ticker bar doesn't
-  // show all-zeros/dashes on cold load or after navigating back from an
-  // external link. Last successful payload primes initialData; React Query
-  // refetches fresh in background.
-  const { data: liveIndices, isLoading, error } = useQuery<MarketIndex[]>({
-    queryKey: ['market', 'indices'],
-    queryFn: async () => {
-      // Try 1: FastAPI backend (works when backend is running)
-      try {
-        const { data } = await api.get('/market/indices');
-        if (Array.isArray(data) && data.length > 0) {
-          setShowLoadingSkeleton(false);
-          try { if (typeof window !== 'undefined') window.localStorage.setItem('mc:ticker-bar:v1', JSON.stringify({ data, ts: Date.now() })); } catch {}
-          return data;
-        }
-      } catch {}
-
-      // Try 2: Next.js API route (direct NSE fetch — always available on Vercel)
-      try {
-        const res = await fetch('/api/market/indices');
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data) && data.length > 0) {
-            setShowLoadingSkeleton(false);
-            try { if (typeof window !== 'undefined') window.localStorage.setItem('mc:ticker-bar:v1', JSON.stringify({ data, ts: Date.now() })); } catch {}
-            return data;
-          }
-        }
-      } catch {}
-
-      setShowLoadingSkeleton(false);
-      return [];
-    },
-    initialData: (() => {
-      if (typeof window === 'undefined') return undefined;
-      try {
-        const raw = window.localStorage.getItem('mc:ticker-bar:v1');
-        if (!raw) return undefined;
-        const parsed = JSON.parse(raw);
-        // Use cache only if less than 30 min old — prevents showing day-old prices
-        if (Date.now() - (parsed.ts || 0) > 30 * 60_000) return undefined;
-        return parsed.data;
-      } catch { return undefined; }
-    })(),
-    // PATCH 0688 — bumped from 60s → 3min to ease Vercel free-tier CPU.
-    // Conviction-Beats count chip already updates via localStorage events
-    // when entries change; the polled refresh is a backstop, not primary.
-    staleTime: 60_000,
-    refetchInterval: 3 * 60_000,
-    refetchOnMount: 'always',
-    refetchOnWindowFocus: true,
-    retry: 2,
-  });
+  // zzz855 — the live indices query that used to sit here fed the header ticker bar,
+  // which was removed in zzz240. It still polled /market/indices every 3 minutes,
+  // on every window focus and on every mount, and wrote localStorage, while
+  // nothing rendered it. Removed; no visible change.
 
   // Fetch user profile
   // PATCH 0874 — SSR-safe token check. Reading localStorage in render
@@ -612,25 +537,6 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
     );
   }
 
-  // Shape live data into ticker format
-  // PATCH 0268 — Distinguish 'genuinely 0%' from 'change_pct missing'. The
-  // top strip showing '+0.00%' on every symbol was misleading — actually
-  // meant the API didn't return a change for that symbol. Now we render
-  // an em-dash instead so the user knows the change is unknown.
-  const markets = liveIndices && liveIndices.length > 0
-    ? liveIndices.map((m) => {
-        const hasChange = typeof m.change_pct === 'number' && Number.isFinite(m.change_pct);
-        const pct = hasChange ? m.change_pct! : 0;
-        const price = typeof m.price === 'number'
-          ? m.price.toLocaleString(undefined, { maximumFractionDigits: 2 })
-          : String(m.price);
-        const changeStr = hasChange ? `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` : '—';
-        return { symbol: m.symbol, price, change: changeStr, up: pct >= 0 };
-      })
-    : showLoadingSkeleton || isLoading
-      ? MARKETS_FALLBACK.map(m => ({ ...m, price: '...', change: '...' }))
-      : MARKETS_FALLBACK;
-
   const isActive = (href: string) =>
     href === '/' ? pathname === '/' : pathname === href || pathname?.startsWith(href + '/');
 
@@ -642,12 +548,6 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
   }
 
   const openSearch = () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true } as any));
-
-  const handleRetry = () => {
-    qc.invalidateQueries({ queryKey: ['market', 'indices'] });
-    qc.invalidateQueries({ queryKey: ['portfolios'] });
-    qc.invalidateQueries({ queryKey: ['watchlists'] });
-  };
 
   return (
     <div className={pwa.shell}>
@@ -702,10 +602,10 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
                 margin: '2px 12px 4px', fontSize: 8, color: '#FCD34D', fontWeight: 800,
                 letterSpacing: '0.5px', textAlign: 'center', textTransform: 'uppercase',
               }}>★ Favourites</div>
-              {favGroup.items.map((item) => {
+              {favGroup.items.map((item, fi) => {
                 const active = isActive(item.href);
                 return (
-                  <Link key={`fav-${item.href}`} href={item.href} title={`Favourite › ${item.label}`}
+                  <Link key={`fav-${item.href}`} href={item.href} prefetch={navPrefetch(item.href, fi)} title={`Favourite › ${item.label}`}
                     style={{
                       display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px',
                       padding: '10px 4px', margin: '2px 6px', borderRadius: '10px',
@@ -759,7 +659,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
                       background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
                       fontSize: 10, color: starred ? '#FCD34D' : 'var(--mc-bg-4)',
                     }}>{starred ? '★' : '☆'}</button>
-                  <Link href={item.href}
+                  <Link href={item.href} prefetch={navPrefetch(item.href, null)}
                     title={`${group.label} › ${item.label}`}
                     style={{
                       display: 'flex',
@@ -850,6 +750,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
               {convictionCount > 0 && (
                 <Link
                   href="/earnings-opportunities"
+                  prefetch={false}
                   title={`CB ${convictionCount + (usBenchCount || 0)} = India ${convictionCount} + US ${usBenchCount ?? '…'}: names meeting your Conviction Beats criteria in each market, added together (the Portfolio Catalysts pages show the India split as held + bench). Conviction Beats bench — India ${convictionTitle || `${convictionCount} tickers`}${usBenchCount != null ? `; US ${usBenchCount} on the server list` : '; US list not read yet'}. Open Earnings Opportunities to view the India bench.`}
                   style={{
                     display: 'inline-flex', alignItems: 'center', gap: 5,
@@ -909,7 +810,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
                       <p style={{ fontSize: '11px', color: 'var(--mc-text-4)', margin: 0 }}>Active Investor</p>
                     </div>
                     <div style={{ padding: '6px 0' }}>
-                      <Link href="/settings" style={{ display: 'block', padding: '8px 16px', fontSize: '13px', color: 'var(--mc-text-2)', textDecoration: 'none' }}>⚙️ Settings</Link>
+                      <Link href="/settings" prefetch={false} style={{ display: 'block', padding: '8px 16px', fontSize: '13px', color: 'var(--mc-text-2)', textDecoration: 'none' }}>⚙️ Settings</Link>
                       <button onClick={handleSignOut} style={{ width: '100%', textAlign: 'left', padding: '8px 16px', fontSize: '13px', color: 'var(--mc-bearish)', background: 'none', border: 'none', cursor: 'pointer', borderTop: '1px solid var(--mc-bg-4)' }}>
                         🚪 Sign Out
                       </button>

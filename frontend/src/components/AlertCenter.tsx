@@ -11,6 +11,9 @@ import {
   addRule, evaluateAlerts, getRules, notify, removeRule, requestNotifyPermission,
   syncRulesToServer, fetchServerHits,
 } from '@/lib/alerts';
+// zzz855 — shared, deduped bulk quotes + a poller that pauses in hidden tabs.
+import { getQuotes } from '@/lib/quotes-shared';
+import { pollWhenVisible } from '@/lib/client-fetch';
 
 const MONO = 'ui-monospace, "SF Mono", Menlo, monospace';
 const HITS_KEY = 'mc:alerts:hits:v1';
@@ -36,15 +39,11 @@ function describe(r: AlertRule): string {
   }
 }
 
+// zzz855 — was a private /api/market/quotes?fields=… call per market (the same
+// URL SignalScoreboard fired); now the one shared request from lib/quotes-shared
+// (20 s timeout, [] on failure, 60 s memo — so the 5-min poll still gets fresh rows).
 async function fetchMarket(market: 'india' | 'us'): Promise<Array<{ ticker: string; price: number; changePercent: number | null }>> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 20000);
-  try {
-    const res = await fetch(`/api/market/quotes?market=${market}&fields=ticker,price,changePercent`, { signal: ctrl.signal });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return Array.isArray(data?.stocks) ? data.stocks : [];
-  } catch { return []; } finally { clearTimeout(timer); }
+  try { return await getQuotes(market); } catch { return []; }
 }
 
 export default function AlertCenter() {
@@ -62,7 +61,10 @@ export default function AlertCenter() {
       const t = String(s?.ticker || '').toUpperCase().replace(/\.(NS|BO|NSE|BSE)$/i, '');
       const p = Number(s?.price);
       if (t && Number.isFinite(p) && p > 0) {
-        live.set(t, { price: p, chg: Number.isFinite(Number(s?.changePercent)) ? Number(s.changePercent) : null });
+        // shared rows carry changePercent as number | null — keep null as null
+        // (Number(null) would read as a fake 0% move).
+        const c = s?.changePercent;
+        live.set(t, { price: p, chg: c != null && Number.isFinite(Number(c)) ? Number(c) : null });
       }
     }
     const fired = notify(evaluateAlerts(live));
@@ -91,9 +93,10 @@ export default function AlertCenter() {
       if (Array.isArray(stored)) setHits(stored.slice(0, 20));
     } catch { /* ignore */ }
     if ('Notification' in window && Notification.permission === 'default') setNeedsPermission(true);
-    poll();
-    const id = setInterval(poll, 5 * 60 * 1000);
-    return () => clearInterval(id);
+    // zzz855 — every 5 min while visible; paused (no requests) in hidden tabs,
+    // catches up on return. Was a bare setInterval that kept polling quotes.
+    const stop = pollWhenVisible(() => { void poll(); }, 5 * 60 * 1000, { runImmediately: true });
+    return stop;
   }, [poll]);
 
   const onAdd = () => {

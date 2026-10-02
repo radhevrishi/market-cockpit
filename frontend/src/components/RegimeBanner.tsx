@@ -8,6 +8,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 import { useEffect, useRef, useState } from 'react';
+import { whenIdle } from '@/lib/shell-fetch';
 
 const MONO = 'ui-monospace, "SF Mono", Menlo, monospace';
 const CACHE_KEY = 'mc:regime:v1';
@@ -109,8 +110,9 @@ export default function RegimeBanner() {
     const cached = readCache();
     if (cached) { setData(cached); return; }
     const ctl = new AbortController();                              // zzz531 — no hung request / unmount leak
-    const timer = setTimeout(() => ctl.abort(), 15000);            // zzz531 — 15s budget
-    (async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // zzz855 — start after the page's own requests (idle); the 15s budget starts with the request.
+    const cancelIdle = whenIdle(() => { if (!alive) return; timer = setTimeout(() => ctl.abort(), 15000); void (async () => {
       const UNKNOWN = { kind: 'UNKNOWN' as RegimeKind, close: null, sma20: null, sma50: null, sma200: null, drawdownPct: null, above200: null, sma20Rising: null, washout: false, thrust: false, asOfTs: null, note: 'regime feed unavailable' };
       const degraded: RegimePayload = { india: UNKNOWN, usa: UNKNOWN };
       try {
@@ -122,8 +124,8 @@ export default function RegimeBanner() {
         if (alive) setData(json);
       } catch { if (alive) setData(degraded); /* keep the strip visible as UNKNOWN */ }
       finally { clearTimeout(timer); }
-    })();
-    return () => { alive = false; clearTimeout(timer); ctl.abort(); };
+    })(); });
+    return () => { alive = false; cancelIdle(); clearTimeout(timer); ctl.abort(); };
   }, []);
 
   // Close the dropdown on any outside click.

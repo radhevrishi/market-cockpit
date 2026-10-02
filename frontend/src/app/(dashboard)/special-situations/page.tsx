@@ -23,6 +23,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import MultibaggerRadar from '@/components/special-situations/MultibaggerRadar';
+import { ShowMoreBar } from '@/components/guidance-upgrades/GuMore';
 import { SsCountPanel, type SsCountFeed } from '@/components/special-situations/SsCountPanel';
 import { headerFromModel } from '@/components/special-situations/ss-counts';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -524,9 +525,12 @@ export default function SpecialSituationsPage() {
     });
   }, [canonicalEvents, tierFilter, catFilterSet, coverageFilterSet, monitoredOnly, monitoredMap]);
 
-  const tier1Canonical = filteredCanonicalEvents.filter((e) => e.tier === 'TIER_1');
-  const tier2Canonical = filteredCanonicalEvents.filter((e) => e.tier === 'TIER_2');
-  const watchlistCanonical = filteredCanonicalEvents.filter((e) => e.tier === 'WATCHLIST');
+  // zzz855: memoised so the All tab (and its risk/reward board) is not rebuilt on every unrelated render
+  const { tier1Canonical, tier2Canonical, watchlistCanonical } = useMemo(() => ({
+    tier1Canonical: filteredCanonicalEvents.filter((e) => e.tier === 'TIER_1'),
+    tier2Canonical: filteredCanonicalEvents.filter((e) => e.tier === 'TIER_2'),
+    watchlistCanonical: filteredCanonicalEvents.filter((e) => e.tier === 'WATCHLIST'),
+  }), [filteredCanonicalEvents]);
   // NOISE tier hidden from primary view (fund housekeeping, rumors, unclassified)
 
   // Legacy fallback: if events array is empty (cache pre-0105 deploy), fall back
@@ -540,9 +544,11 @@ export default function SpecialSituationsPage() {
       .sort((a, b) => b.score - a.score);
   }, [feed, region]);
 
-  const tier1 = allEvents.filter((e) => e.tier === 'TIER_1');
-  const tier2 = allEvents.filter((e) => e.tier === 'TIER_2');
-  const archive = allEvents.filter((e) => e.tier === 'ARCHIVE');
+  const { tier1, tier2, archive } = useMemo(() => ({
+    tier1: allEvents.filter((e) => e.tier === 'TIER_1'),
+    tier2: allEvents.filter((e) => e.tier === 'TIER_2'),
+    archive: allEvents.filter((e) => e.tier === 'ARCHIVE'),
+  }), [allEvents]);
 
   const last = dataUpdatedAt ? Math.max(0, Math.round((Date.now() - dataUpdatedAt) / 60000)) : null;
   const liveColor = last == null ? '#6B7A8D'
@@ -575,7 +581,8 @@ export default function SpecialSituationsPage() {
   const tier2Count = fromModel ? fromModel.tiers.TIER_2 : canonicalEvents.length > 0 ? tier2Canonical.length : tier2.length;
   const tier3Count = fromModel ? fromModel.tiers.WATCHLIST : canonicalEvents.length > 0 ? watchlistCanonical.length : archive.length;
   // zzz854 — the radar reads the route's events as sent (the adapter merges duplicates itself), so its sections reconcile with the count model.
-  const radarEvents: CanonicalEvent[] = (feed?.events || []).filter((e) => region === 'ALL' || e.region === region);
+  // zzz855: memoised — a new array here made the radar rebuild every card's analysis on each page re-render.
+  const radarEvents: CanonicalEvent[] = useMemo(() => (feed?.events || []).filter((e) => region === 'ALL' || e.region === region), [feed, region]);
   const tier3Label = canonicalEvents.length > 0 ? 'Watchlist' : 'Archive';
 
   return (
@@ -1205,6 +1212,7 @@ function AllSituationsCanonical({ isLoading, error, tier1, tier2, watchlist }: {
 
 function CanonicalSection({ meta, color, events, defaultExpanded }: { meta: { label: string; tagline: string }; color: string; events: CanonicalEvent[]; defaultExpanded?: boolean }) {
   const [collapsed, setCollapsed] = useState(!defaultExpanded);
+  const [limit, setLimit] = useState(30); // zzz855: 30 cards, then "Show 30 more" (was a dead end at 30)
   return (
     <div>
       <button onClick={() => setCollapsed(!collapsed)} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', borderLeft: `3px solid ${color}`, paddingLeft: 12, marginBottom: 8 }}>
@@ -1213,8 +1221,8 @@ function CanonicalSection({ meta, color, events, defaultExpanded }: { meta: { la
       </button>
       {!collapsed && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {events.slice(0, 30).map((e) => <CanonicalEventCard key={e.event_id} ev={e} />)}
-          {events.length > 30 && <div style={{ fontSize: 11, color: 'var(--mc-text-4)', textAlign: 'center' }}>Showing 30 of {events.length}.</div>}
+          {events.slice(0, limit).map((e) => <CanonicalEventCard key={e.event_id} ev={e} />)}
+          <ShowMoreBar shown={Math.min(limit, events.length)} total={events.length} step={30} color="var(--mc-text-4)" onMore={() => setLimit((l) => l + 30)} onAll={() => setLimit(events.length)} />
         </div>
       )}
     </div>
@@ -1673,6 +1681,7 @@ function AllSituations({ isLoading, error, tier1, tier2, archive }: { isLoading:
 
 function TierSection({ meta, events, defaultCollapsed }: { meta: { label: string; color: string; tagline: string }; events: ScoredEvent[]; defaultCollapsed?: boolean }) {
   const [collapsed, setCollapsed] = useState(!!defaultCollapsed);
+  const [limit, setLimit] = useState(50); // zzz855: 50 rows, then "Show 50 more"
   return (
     <div>
       <button onClick={() => setCollapsed(!collapsed)} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', borderLeft: `3px solid ${meta.color}`, paddingLeft: 12, marginBottom: 8 }}>
@@ -1683,8 +1692,8 @@ function TierSection({ meta, events, defaultCollapsed }: { meta: { label: string
       </button>
       {!collapsed && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {events.slice(0, 50).map((e) => <EventRow key={e.id} ev={e} />)}
-          {events.length > 50 && <div style={{ fontSize: 11, color: 'var(--mc-text-4)', textAlign: 'center' }}>Showing 50 of {events.length}.</div>}
+          {events.slice(0, limit).map((e) => <EventRow key={e.id} ev={e} />)}
+          <ShowMoreBar shown={Math.min(limit, events.length)} total={events.length} step={50} color="var(--mc-text-4)" onMore={() => setLimit((l) => l + 50)} onAll={() => setLimit(events.length)} />
         </div>
       )}
     </div>

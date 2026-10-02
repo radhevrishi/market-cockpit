@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { isIndianMarketOpen, isUSMarketOpen } from '@/lib/market-hours'
+import { visibleInterval } from '@/lib/shell-fetch'
 
 interface Market {
   name: string
@@ -39,9 +40,9 @@ export default function MarketHours() {
   const [tick, setTick] = useState(0)
   useEffect(() => {
     // Run immediately, then every 60 s. Cheap pure-fn call — no IO.
+    // zzz855: the timer sleeps while the tab is hidden and catches up on return.
     setTick((t) => t + 1)
-    const id = setInterval(() => setTick((t) => t + 1), 60_000)
-    return () => clearInterval(id)
+    return visibleInterval(() => setTick((t) => t + 1), 60_000)
   }, [])
   void tick
   const markets = MARKETS.map((m) => ({ ...m, isOpen: isMarketOpen(m) }))

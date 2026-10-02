@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { Home, Star, Search, Menu as MenuIcon, Settings, LogOut, Smartphone } from 'lucide-react';
 import { useInstallState } from './pwa-state';
 import s from './pwa.module.css';
+import { navPrefetch } from '@/lib/shell-fetch';
 
 export interface MobileNavItem { href: string; label: string; icon: ReactNode }
 export interface MobileNavGroup { id: string; label: string; items: MobileNavItem[] }
@@ -97,8 +98,8 @@ export default function MobileNav({ groups, favs, pathname, isActive, onToggleFa
               </div>
             ) : (
               <div className={s.favGrid}>
-                {favList.map((f) => (
-                  <Link key={f.href} href={f.href} className={`${s.favItem} ${isActive(f.href.split('?')[0]) && !f.href.includes('?') ? s.favItemActive : ''}`}>
+                {favList.map((f, fi) => (
+                  <Link key={f.href} href={f.href} prefetch={navPrefetch(f.href, fi)} className={`${s.favItem} ${isActive(f.href.split('?')[0]) && !f.href.includes('?') ? s.favItemActive : ''}`}>
                     <span className={s.favIcon} aria-hidden>{f.icon ?? <Star size={16} />}</span>
                     <span>{f.label}</span>
                   </Link>
@@ -124,7 +125,7 @@ export default function MobileNav({ groups, favs, pathname, isActive, onToggleFa
                   const active = !it.href.includes('?') && isActive(it.href);
                   return (
                     <div key={`${g.id}-${it.href}`} className={s.menuRow}>
-                      <Link href={it.href} className={`${s.menuLink} ${active ? s.menuLinkActive : ''}`} aria-current={active ? 'page' : undefined}>
+                      <Link href={it.href} prefetch={navPrefetch(it.href, null)} className={`${s.menuLink} ${active ? s.menuLinkActive : ''}`} aria-current={active ? 'page' : undefined}>
                         <span aria-hidden>{it.icon}</span>
                         <span className={s.menuLabel}>{it.label}</span>
                       </Link>
@@ -138,9 +139,9 @@ export default function MobileNav({ groups, favs, pathname, isActive, onToggleFa
             ))}
           </div>
           <div className={s.menuFooter}>
-            <Link href="/settings" className={s.menuLink}><Settings size={18} aria-hidden /> Settings</Link>
+            <Link href="/settings" prefetch={false} className={s.menuLink}><Settings size={18} aria-hidden /> Settings</Link>
             {!install.standalone && (
-              <Link href="/settings#install-app" className={s.menuLink}><Smartphone size={18} aria-hidden /> Install app</Link>
+              <Link href="/settings#install-app" prefetch={false} className={s.menuLink}><Smartphone size={18} aria-hidden /> Install app</Link>
             )}
             <button type="button" className={s.signOut} onClick={onSignOut}><LogOut size={18} aria-hidden /> Sign out</button>
           </div>

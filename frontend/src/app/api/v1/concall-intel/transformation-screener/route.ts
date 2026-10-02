@@ -18,7 +18,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextRequest, NextResponse } from 'next/server';
-import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
+import { swrGet, swrHeaders, privateCache, SwrUnusableError } from '@/lib/swr-cache';
 import { railwaySelfFetch } from '@/lib/railway-self-fetch';
 import { extractFirstPdf } from '@/lib/pdf-text-extractor';
 import { analyzeTransformation } from '@/lib/transformation-analyzer';
@@ -35,7 +35,7 @@ const CACHE_TTL = 12 * 60;               // zzz466 — 12 min (was 30) so new gr
 // force-refreshes — which is why fixed quotes appeared "still broken". A new
 // version orphans the stale entries so the very next request recomputes fresh.
 // zzz810 — v4: payload carries feed_status; cached empties from the broken feed are orphaned.
-const CACHE_KEY = (days: number, limit: number) => `transform-screener:v4:${days}:${limit}`;
+// zzz855: the cache now lives in lib/swr-cache under transform-screener:swr:v4:<days>:<limit>:<minPatterns>.
 
 export interface TransformScreenEntry {
   symbol: string;
@@ -134,28 +134,42 @@ export async function GET(req: NextRequest) {
   }
 }
 
+// zzz855 — stale-while-revalidate. A scan (live-feed read + up to 80 PDF analyses) took ~4.4 s even warm-ish and up to
+// 48 s cold, and ran on the reader's clock whenever the 12-min KV entry lapsed. Now the last good scan is served at once
+// (its generated_at is the age label; x-mc-cache / x-mc-cache-age headers too) while ONE background rescan runs.
+// ?refresh=1 / ?nocache=1 still rescans synchronously (the cron warmer uses it). A scan of a failed / empty feed is
+// never cached (zzz810 rule) and never replaces the last good scan. minPatterns is now part of the key (the old key
+// ignored it, so a request with a different floor could be served another floor's result).
+const SCREEN_FRESH_MS = CACHE_TTL * 1000;
+const SCREEN_MAX_STALE_MS = 24 * 3_600_000;
+type Built = { payload: ScreenPayload; cacheable: boolean };
 async function handle(req: NextRequest, days: number, limit: number, minPatterns: number) {
-  // zzz466 — force-refresh bypass: ?refresh=1 (or ?nocache=1) skips the cache
-  // READ so a fresh computation runs immediately (still written back to cache).
-  // Lets you see new grading at once instead of waiting out the cache window.
   const sp = req.nextUrl.searchParams;
   const forceFresh = sp.get('refresh') === '1' || sp.get('nocache') === '1';
-  // cached?
-  if (isRedisAvailable() && !forceFresh) {
-    const cached = await kvGet<ScreenPayload>(CACHE_KEY(days, limit));
-    if (cached) return NextResponse.json(cached, { headers: { 'Cache-Control': 's-maxage=120, stale-while-revalidate=600' } });
+  try {
+    const r = await swrGet<Built>({
+      key: `transform-screener:swr:v4:${days}:${limit}:${minPatterns}`, freshMs: SCREEN_FRESH_MS, maxStaleMs: SCREEN_MAX_STALE_MS, force: forceFresh,
+      build: () => buildScreen(req, days, limit, minPatterns, forceFresh),
+      isUsable: (b) => !!b && b.cacheable,
+    });
+    return NextResponse.json(r.value.payload, { headers: swrHeaders(r, privateCache(120, 1800)) });
+  } catch (e) {
+    if (e instanceof SwrUnusableError && (e.value as Built | undefined)?.payload) return NextResponse.json((e.value as Built).payload);
+    throw e;
   }
+}
 
+async function buildScreen(req: NextRequest, days: number, limit: number, minPatterns: number, forceFresh: boolean): Promise<Built> {
   const origin = new URL(req.url).origin;
   // zzz810 — a forced Rescan also forces the feed, so an empty/failed feed
   // is re-fetched from NSE/BSE instead of re-read from cache.
   const r = await railwaySelfFetch(`${origin}/api/v1/concall-intel/live-feed?days=${days}${forceFresh ? '&force=1' : ''}`, { cache: 'no-store' });
-  if (!r.ok) return NextResponse.json(emptyPayload(days, `Couldn't load the concall feed (live-feed HTTP ${r.status}) — retrying`), { status: 200 });
+  if (!r.ok) return { payload: emptyPayload(days, `Couldn't load the concall feed (live-feed HTTP ${r.status}) — retrying`), cacheable: false };
   const data = await r.json();
   const filings: any[] = Array.isArray(data.filings) ? data.filings : [];
   const feedStatus: FeedStatus | null = data.fetch_status ?? null;
   if (data.error && filings.length === 0) {
-    return NextResponse.json({ ...emptyPayload(days, `Couldn't load the concall feed (${data.error}) — retrying`), feed_status: feedStatus });
+    return { payload: { ...emptyPayload(days, `Couldn't load the concall feed (${data.error}) — retrying`), feed_status: feedStatus }, cacheable: false };
   }
   let concallsInFeed = 0, transcriptsInFeed = 0;
   for (const f of filings) {
@@ -291,8 +305,5 @@ async function handle(req: NextRequest, days: number, limit: number, minPatterns
   // zzz810 — never cache a scan of a feed that failed or came back empty;
   // the next open must retry the exchanges, not replay "0 in feed".
   const feedHealthy = filings.length > 0 && (!feedStatus || feedStatus.state === 'OK' || feedStatus.state === 'EMPTY');
-  if (isRedisAvailable() && feedHealthy) {
-    try { await kvSet(CACHE_KEY(days, limit), payload, CACHE_TTL); } catch { /* best effort */ }
-  }
-  return NextResponse.json(payload, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=1800' } });
+  return { payload, cacheable: feedHealthy };
 }

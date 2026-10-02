@@ -8,6 +8,7 @@ import { PRIMARY_SOURCE_STATE_LABEL, TAXONOMY_LABEL } from '@/lib/guidance-upgra
 import { verificationLine, awaitingRowLine, auditRowLine } from '@/components/special-situations/ss-counts';
 import { R, tint } from './gu-tokens';
 import { AiCheckBadge } from './GuBits';
+import { LazyDetails } from './GuMore';
 import { aiCheckOf, guVerificationLists, reviewQueueLine, reviewStatusCounts } from './gu-ui';
 
 const CAP = 80;
@@ -19,10 +20,10 @@ export function GuReviewQueue({ items, count }: { items: ReviewRow[] | null | un
   if (!n && !list.length) return null;
   const groups = reviewStatusCounts(list);
   return (
-    <details data-gu-review-queue className="gu-card" style={{ border: `1px solid ${R.border}`, borderRadius: 8, padding: '6px 10px', background: R.bg }}>
+    <LazyDetails data-gu-review-queue className="gu-card" style={{ border: `1px solid ${R.border}`, borderRadius: 8, padding: '6px 10px', background: R.bg }} summary={
       <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 800, letterSpacing: 0.4, color: R.text }}>
         REVIEW QUEUE ({n}) <span style={{ fontWeight: 400, color: R.dim }}>— found, but not shown as cards: {groups.length ? groups.map((g) => `${g.label} ${g.n}`).join(' · ') : 'reason on each row'}</span>
-      </summary>
+      </summary>}>
       <div style={{ fontSize: 12, color: R.dim, margin: '4px 0' }}>These are not upgrades. Each waits for something specific (numbers, the company document, a period check) or is not guidance at all.</div>
       <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 4 }}>
         {list.slice(0, CAP).map((r) => (
@@ -40,7 +41,7 @@ export function GuReviewQueue({ items, count }: { items: ReviewRow[] | null | un
         {list.length > CAP && <li style={{ fontSize: 12, color: R.dim }}>and {list.length - CAP} more.</li>}
         {list.length === 0 && <li style={{ fontSize: 12, color: R.dim }}>The list itself was not sent with this answer.</li>}
       </ul>
-    </details>
+    </LazyDetails>
   );
 }
 
@@ -65,21 +66,21 @@ export function GuVerificationBlock({ data }: { data: { verification?: Partial<V
         <div role={v.available ? undefined : 'alert'} style={v.available ? { fontSize: 12, color: R.dim } : { fontSize: 12.5, fontWeight: 700, border: `1px dashed ${R.amber}`, background: tint(R.amber, 10), borderRadius: 6, padding: '5px 9px' }}>{v.text}</div>
       )}
       {(nAwait > 0 || awaiting.length > 0) && (
-        <details data-gu-awaiting>
-          <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 800, letterSpacing: 0.4 }}>AWAITING VERIFICATION ({nAwait}) <span style={{ fontWeight: 400, color: R.dim }}>— not shown as upgrades until the company document confirms them</span></summary>
+        <LazyDetails data-gu-awaiting summary={
+          <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 800, letterSpacing: 0.4 }}>AWAITING VERIFICATION ({nAwait}) <span style={{ fontWeight: 400, color: R.dim }}>— not shown as upgrades until the company document confirms them</span></summary>}>
           <ul style={{ margin: '4px 0 0', paddingLeft: 18, fontSize: 12.5 }}>
             {(awaiting as AnyRow[]).slice(0, CAP).map((r, i) => <li key={String(r.id || r.claimId || i)} style={{ overflowWrap: 'anywhere' }}>{rowText(r, 'awaiting')}</li>)}
             {awaiting.length === 0 && <li style={{ color: R.dim }}>The list itself was not sent with this answer.</li>}
           </ul>
-        </details>
+        </LazyDetails>
       )}
       {audit.length > 0 && (
-        <details data-gu-ai-audit>
-          <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 800, letterSpacing: 0.4 }}>REMOVED AFTER THE AI CHECK ({audit.length}) <span style={{ fontWeight: 400, color: R.dim }}>— the company document does not support the claim</span></summary>
+        <LazyDetails data-gu-ai-audit summary={
+          <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 800, letterSpacing: 0.4 }}>REMOVED AFTER THE AI CHECK ({audit.length}) <span style={{ fontWeight: 400, color: R.dim }}>— the company document does not support the claim</span></summary>}>
           <ul style={{ margin: '4px 0 0', paddingLeft: 18, fontSize: 12.5 }}>
             {(audit as AnyRow[]).slice(0, CAP).map((r, i) => <li key={String(r.id || r.claimId || i)} style={{ overflowWrap: 'anywhere' }}>{rowText(r, 'audit')}</li>)}
           </ul>
-        </details>
+        </LazyDetails>
       )}
     </section>
   );

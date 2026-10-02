@@ -11,6 +11,10 @@ import { useEffect, useState } from 'react';
 import { openPassport } from '@/lib/engines';
 import { getScoreboard, getRecentSignals, scoreSignals } from '@/lib/signal-log';
 import type { SurfaceStats, SignalRecord } from '@/lib/signal-log';
+// zzz855 — shared, deduped bulk quotes (same request as AlertCenter + RiskRegimeCard)
+// and a visibility-aware poller (no work while the tab is hidden).
+import { getQuotes } from '@/lib/quotes-shared';
+import { pollWhenVisible } from '@/lib/client-fetch';
 
 const MONO = 'ui-monospace, "SF Mono", Menlo, monospace';
 
@@ -27,19 +31,12 @@ function surfaceLabel(id: string): string {
   return SURFACE_LABELS[id] || id;
 }
 
+// zzz855 — was its own /api/market/quotes?fields=… call per market, identical
+// to AlertCenter's; now both read the one shared request (lib/quotes-shared:
+// in-flight dedupe + 60 s memo, 20 s timeout, [] on failure — same contract).
 async function fetchQuotes(market: 'india' | 'us'): Promise<Array<{ ticker: string; price: number }>> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 20_000);
-  try {
-    const res = await fetch(`/api/market/quotes?market=${market}&fields=ticker,price,changePercent`, { signal: ctrl.signal });
-    if (!res.ok) return [];
-    const j = await res.json();
-    return Array.isArray(j?.stocks) ? j.stocks : [];
-  } catch {
-    return []; // silent — quotes are best-effort; scoreboard renders regardless
-  } finally {
-    clearTimeout(timer);
-  }
+  try { return await getQuotes(market); }
+  catch { return []; } // silent — quotes are best-effort; scoreboard renders regardless
 }
 
 function WindowCell({ scored, hit, avg }: { scored: number; hit: number; avg: number | null }) {
@@ -84,9 +81,10 @@ export default function SignalScoreboard() {
     // re-read the log every 30s (cheap localStorage read) and on tab focus —
     // no more "no signals logged yet" while pullbacks are visibly logging.
     const reread = () => { if (alive) { setStats(getScoreboard()); setRecent(getRecentSignals(12)); } };
-    const iv = setInterval(reread, 30_000);
+    // zzz855 — paused while the tab is hidden (was a bare 30 s setInterval).
+    const stopPoll = pollWhenVisible(reread, 30_000);
     window.addEventListener('focus', reread);
-    return () => { alive = false; clearInterval(iv); window.removeEventListener('focus', reread); };
+    return () => { alive = false; stopPoll(); window.removeEventListener('focus', reread); };
   }, []);
 
   const card: React.CSSProperties = {

@@ -4,6 +4,11 @@ import { useState, useEffect, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster, toast } from 'react-hot-toast';
 import { ThemeProvider } from '@/contexts/ThemeContext';
+import { ensureSafeStorage } from '@/lib/safe-storage';
+
+// zzz855 — backup install of the safe localStorage layer (the inline <head>
+// script in layout.tsx normally ran first; this is a no-op then).
+ensureSafeStorage();
 
 export function Providers({ children }: { children: ReactNode }) {
   // useState ensures each request gets its own QueryClient in SSR
@@ -14,7 +19,10 @@ export function Providers({ children }: { children: ReactNode }) {
           queries: {
             staleTime: 60 * 1000,      // 1 min
             retry: 1,
-            refetchOnWindowFocus: true,
+            // zzz855 — was true: every query on the page refetched each time the
+            // tab regained focus (a request storm when switching tabs). Pages
+            // that need live data poll on their own interval instead.
+            refetchOnWindowFocus: false,
           },
         },
       })

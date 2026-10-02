@@ -19,6 +19,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { getEngineViews, type EngineView, type Market } from '@/lib/engines';
 import { getQuoteMap, type Quote } from '@/lib/quotes-shared';
 import { fmtMoney } from '@/lib/sizing';
+// zzz855 — regime GET shared/deduped with RiskRegimeCard + NextBestActions on home.
+import { getJson } from '@/lib/client-fetch';
 
 const MONO = 'ui-monospace, "SF Mono", Menlo, monospace';
 
@@ -185,9 +187,8 @@ export default function CockpitHero() {
       const timer = setTimeout(() => ctl?.abort(), 15000);
       (async () => {
         try {
-          const r = await fetch('/api/market/regime', { signal: ctl!.signal });
-          if (!r.ok) return;
-          const j = await r.json();
+          const j = await getJson<any>('/api/market/regime', { signal: ctl!.signal, timeoutMs: 15_000, ttlMs: 5 * 60_000 });
+          if (!j) return;
           // build from the response directly — our fetch doesn't write RegimeBanner's cache
           if (aliveRef.current && j?.india && j?.usa) setRegime({ india: toMini(j.india), usa: toMini(j.usa) });
         } catch { /* leave regime null */ }

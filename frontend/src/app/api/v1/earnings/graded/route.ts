@@ -29,6 +29,7 @@ import { regradeIndiaDayPayload, versionOfGradedKey } from '@/lib/india-regrade'
 // with the Earnings Opportunities page. See lib/india-grade.ts for why.
 import { gradeIndiaRow as gradeRow, gradeIndiaRowExplained, deriveQuarterLabel } from '@/lib/india-grade';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
+import { swrGet, swrHeaders, privateCache, SwrUnusableError } from '@/lib/swr-cache';
 import { checkQuarterLabel, refetchTickers } from '@/lib/india-eo-card-data';  // zzz820 · zzz826
 import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta, decideTier, marketReactionDelta, typicalDailyMovePct, thinFloatGate, quadrantForIndiaRow } from '@/lib/earnings-grade-shared';
 
@@ -159,7 +160,8 @@ function _quarterEndFromFyLabel(label: any): string | null {
 
 
 // ─── Main handler ──────────────────────────────────────────────────────────
-export async function GET(req: Request) {
+// zzz855: the original handler, unchanged; GET (bottom of file) fronts plain ?date= reads with the SWR cache.
+async function gradedLegacyGET(req: Request) {
   const { searchParams } = new URL(req.url);
   const date = searchParams.get('date') || '';
   // PATCH 0160 — refreshMissing=1 means: load existing payload, find cards
@@ -1381,4 +1383,69 @@ export async function GET(req: Request) {
   }
 
   return NextResponse.json(payload, { headers: { 'Cache-Control': hubFailReason ? 'no-store' : 's-maxage=300, stale-while-revalidate=900' } });
+}
+
+// ─── zzz855: stale-while-revalidate front ─────────────────────────────────────
+// Today's session cache lives 5 min in KV; when it lapsed, the next page load paid a full hub + enrichment rebuild (~12 s).
+// Plain `?date=` reads now go through swrGet: the last good payload for the date is served at once (true age in
+// generated_at + x-mc-cache-age; `_cache` says hit/stale) and ONE background call to the original handler rebuilds it.
+// The original handler still owns every rule (auto-heal, PATCH 1002 empty guard, hub-fail no-store). A response it marks
+// no-store (hub down) or one with no graded cards is never put in this cache, so it can never replace a good day.
+// force / refreshMissing / cache_only / wipe / refetch go straight to the original handler; a successful force or
+// refreshMissing result is written into this cache so plain readers see it immediately.
+type GradedEnvelope = { body: any; status: number };
+const gradedCardCount = (b: any): number => {
+  const t = b?.by_tier; if (!t || typeof t !== 'object') return 0;
+  return (Object.values(t) as any[]).reduce((n: number, v: any) => n + (Array.isArray(v) ? v.length : 0), 0);
+};
+const gradedUsable = (e: GradedEnvelope): boolean => !!e && e.status === 200 && !!e.body?.by_tier && !e.body?._hub_fail && !e.body?.engine_stale && gradedCardCount(e.body) > 0;
+async function runLegacy(req: Request): Promise<{ env: GradedEnvelope; res: Response; noStore: boolean }> {
+  const res = await gradedLegacyGET(req);
+  const cc = res.headers.get('Cache-Control') || '';
+  const body = await res.clone().json().catch(() => null);
+  return { env: { body, status: res.status }, res, noStore: /no-store/.test(cc) };
+}
+
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const date = searchParams.get('date') || '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return gradedLegacyGET(req);
+  const todayIso = new Date().toISOString().slice(0, 10);
+  if (date > todayIso) return gradedLegacyGET(req);   // future dates are never cached
+  const isPast = date < todayIso;
+  const key = `graded-swr:${gradedKey(date)}`;
+  const freshMs = isPast ? 15 * 60_000 : 60_000;
+  const maxStaleMs = isPast ? 90 * 86_400_000 : 12 * 3_600_000;
+  const kvTtlS = isPast ? 90 * 86400 : 2 * 86400;
+  const cc = isPast ? privateCache(300, 86400) : privateCache(30, 300);
+  const passThrough = ['force', 'refreshMissing', 'cache_only', 'wipe', 'refetch'].some((p) => searchParams.has(p));
+
+  if (passThrough) {
+    const forceLike = searchParams.get('force') === '1' || searchParams.get('refreshMissing') === '1';
+    if (!forceLike) return gradedLegacyGET(req);
+    let legacy: Awaited<ReturnType<typeof runLegacy>> | null = null;
+    const build = async (): Promise<GradedEnvelope> => { legacy = await runLegacy(req); return legacy.noStore ? { ...legacy.env, status: 0 } : legacy.env; };
+    try { await swrGet<GradedEnvelope>({ key, freshMs, maxStaleMs, kvTtlS, build, isUsable: gradedUsable, force: true }); } catch { /* not cached: pass through below */ }
+    return legacy ? (legacy as { res: Response }).res : gradedLegacyGET(req);
+  }
+
+  // A no-store or empty answer is passed through as-is (uncached), exactly as before.
+  let passResponse: Response | null = null;
+  const build = async (): Promise<GradedEnvelope> => {
+    const l = await runLegacy(req);
+    if (l.noStore || !gradedUsable(l.env)) passResponse = l.res;
+    return l.noStore ? { ...l.env, status: 0 } : l.env;
+  };
+  try {
+    const r = await swrGet<GradedEnvelope>({ key, freshMs, maxStaleMs, kvTtlS, build, isUsable: gradedUsable });
+    if (r.source === 'build' && !r.rebuildFailed) {
+      return NextResponse.json(r.value.body, { status: r.value.status, headers: swrHeaders(r, cc) });
+    }
+    return NextResponse.json({ ...r.value.body, _cache: r.state, _cache_age_s: Math.round(r.ageMs / 1000), ...(r.rebuildFailed ? { _cache_note: 'Refresh failed; showing the last good grading for this date (see generated_at).' } : {}) },
+      { status: r.value.status, headers: swrHeaders(r, cc) });
+  } catch (e) {
+    if (passResponse) return passResponse;
+    if (e instanceof SwrUnusableError) return gradedLegacyGET(req);
+    throw e;
+  }
 }

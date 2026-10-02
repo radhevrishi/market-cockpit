@@ -13,6 +13,7 @@ import { btn } from './GuBits';
 import { VIEW_HINT, VIEW_ORDER, expiryLine, excludedWhy, reasonCountsLine, sourceDisplayName, viewCountsLine, viewLabel, type GuView } from './gu-ui';
 import { GuUniverseList } from './GuUniverseList';
 import { useGuUniverse } from './useGuUniverse';
+import { CappedList } from './GuMore';
 
 const pill = (on: boolean): React.CSSProperties => ({
   fontSize: 11, fontWeight: 800, letterSpacing: 0.3, padding: '4px 10px', borderRadius: 14, cursor: 'pointer',
@@ -69,11 +70,11 @@ export function GuUniverseBrowser({ held, onFull }: { held: string[]; onFull?: (
               <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: 0.4, color: R.dim }}>NO LONGER ACTIVE ({(data.inactive || []).length})</div>
               {(data.inactive || []).length === 0 ? <div style={{ fontSize: 12.5, color: R.dim }}>None.</div> : (
                 <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 3 }}>
-                  {(data.inactive || []).filter((x) => scope === 'ALL' || scope === 'MY_BOOK' || (scope === 'INDIA' ? x.market === 'IN' : x.market === 'US')).map((x, i) => (
+                  <CappedList inList color={R.dim} items={(data.inactive || []).filter((x) => scope === 'ALL' || scope === 'MY_BOOK' || (scope === 'INDIA' ? x.market === 'IN' : x.market === 'US'))} render={(x, i) => (
                     <li key={`${x.entityKey}-${i}`} className="gu-card" style={box({ padding: '5px 10px', fontSize: 13 })}>
                       <b>{x.company}</b> — {x.display} <span style={{ color: R.dim }}>{x.period} · {x.expiryReason || x.status}{x.sourceName ? ` · ${sourceDisplayName(x.sourceName)}` : ''}</span>
                     </li>
-                  ))}
+                  )} />
                 </ul>
               )}
               <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: 0.4, color: R.dim }}>LEFT OUT ON PURPOSE ({(data.excluded || []).length})</div>

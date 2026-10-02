@@ -24,6 +24,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { getQuoteMap } from '@/lib/quotes-shared';
+// zzz855 — regime is also fetched by NextBestActions: shared + deduped here.
+import { getJson } from '@/lib/client-fetch';
 
 const MONO = 'ui-monospace, "SF Mono", Menlo, monospace';
 const REGIME_KEY = 'mc:regime:v1';
@@ -64,9 +66,8 @@ export default function RiskRegimeCard() {
       const c = withCtl();
       (async () => {
         try {
-          const r = await fetch('/api/market/regime', { signal: c.signal });
-          if (!r.ok) return;
-          const j = await r.json();
+          const j = await getJson<any>('/api/market/regime', { signal: c.signal, timeoutMs: 15_000, ttlMs: 5 * 60_000 });
+          if (!j) return;
           if (aliveRef.current) setReg({ india: toReg(j?.india), usa: toReg(j?.usa) });
         } catch { /* static rules */ }
       })();
@@ -75,9 +76,8 @@ export default function RiskRegimeCard() {
     (async () => {
       const c = withCtl();
       try {
-        const r = await fetch('/api/v1/breadth', { signal: c.signal });
-        if (!r.ok) return;
-        const j = await r.json();
+        const j = await getJson<any>('/api/v1/breadth', { signal: c.signal, timeoutMs: 15_000, ttlMs: 5 * 60_000 });
+        if (!j) return;
         if (aliveRef.current && Number.isFinite(j?.composite)) setIndiaComposite(Number(j.composite));
       } catch { /* leave null → n/a */ }
     })();

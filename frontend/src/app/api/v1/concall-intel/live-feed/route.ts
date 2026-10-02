@@ -21,7 +21,9 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextRequest, NextResponse } from 'next/server';
-import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
+import { kvGet, kvSet, kvMGet, isRedisAvailable } from '@/lib/kv';
+import { parseListOptions, shapeLiveFeedPayload } from '@/lib/lean-view';
+import { privateCache } from '@/lib/swr-cache';
 import { fetchNSEAnnouncements, fetchBSEAnnouncements, type FilingRecord } from '@/lib/nse-bse-feed';
 import { scoreBullish, type BullishScore, type ConcallFilingType } from '@/lib/concall-bullish';
 import { loadConcallWindow, classifyConcallFiling, dedupeConcallFilings, displaySubject, buildFeedStatus, countConcalls, LAST_OK_KEY, type WindowStore, type FeedStatus } from '@/lib/concall-feed';
@@ -151,7 +153,7 @@ export async function GET(req: NextRequest) {
       theme_clusters: [],
       sources: { nse: 'NSE_BLOCKED', bse: 'BSE_BLOCKED' },
       error: 'live-feed temporarily unavailable',
-    }, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } });  // PATCH 0818
+    }, { headers: { 'Cache-Control': 'no-store' } });  // PATCH 0818 / zzz855: never cache an empty/error answer
   }
 }
 
@@ -185,12 +187,24 @@ async function handleLiveFeed(req: NextRequest) {
 
   // KV cache check
   const cacheKey = CACHE_KEY(days);
+  // zzz855 — opt-in lean shapes (?view=lean|summary, ?fields=, ?limit=); default response unchanged.
+  const listOpts = parseListOptions(req.nextUrl.searchParams);
+  const out = (p: FeedPayload) => shapeLiveFeedPayload(applyFilters(p, { exchangeFilter, bullishOnly }), listOpts);
+  if (!force) {
+    // zzz855 — in-process memo of the parsed KV payload (2.5 MB+ JSON; the home page asks for it 3× per load).
+    // 60 s, always ≤ the KV entry's own age window; same validity rule as the KV read below.
+    const m = FEED_MEMO.get(cacheKey);
+    if (m && Date.now() - m.ts < FEED_MEMO_MS) {
+      return NextResponse.json(out(m.payload), { headers: { 'Cache-Control': privateCache(60, 300), 'x-mc-cache': 'hit', 'x-mc-cache-age': String(Math.round((Date.now() - m.ts) / 1000)) } });
+    }
+  }
   if (!force && isRedisAvailable()) {
     const cached = await kvGet<FeedPayload>(cacheKey);
     // zzz810 — an empty or failed cached payload is not a store to serve:
     // fall through and backfill the window from the exchanges.
     if (cached && Array.isArray(cached.filings) && cached.filings.length > 0 && cached.fetch_status && cached.fetch_status.state !== 'FAILED') {
-      return NextResponse.json(applyFilters(cached, { exchangeFilter, bullishOnly }), { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } });  // PATCH 0818
+      feedMemoPut(cacheKey, cached);
+      return NextResponse.json(out(cached), { headers: { 'Cache-Control': privateCache(60, 300), 'x-mc-cache': 'hit' } });  // PATCH 0818 / zzz855 private
     }
   }
   // PATCH 0704 — cacheOnly path: no cache → return empty immediately so
@@ -235,7 +249,7 @@ async function handleLiveFeed(req: NextRequest) {
           sources: { nse: 'NSE_OK', bse: 'BSE_EMPTY' },
           cacheStatus: 'CF_WORKER_DIRECT',
         };
-        return NextResponse.json(payload, { headers: { 'Cache-Control': 's-maxage=120, stale-while-revalidate=600' } });
+        return NextResponse.json(payload, { headers: { 'Cache-Control': privateCache(30, 120) } });
       }
     } catch { /* fall through to empty payload */ }
     return NextResponse.json({
@@ -247,7 +261,7 @@ async function handleLiveFeed(req: NextRequest) {
       theme_clusters: [],
       sources: { nse: 'NSE_EMPTY', bse: 'BSE_EMPTY' },
       cacheStatus: 'CACHE_WARMING',
-    }, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } });  // PATCH 0818
+    }, { headers: { 'Cache-Control': 'no-store' } });  // PATCH 0818 / zzz855: never cache an empty/error answer
   }
 
   // zzz810 — window loading moved to lib/concall-feed.loadConcallWindow:
@@ -374,9 +388,14 @@ async function handleLiveFeed(req: NextRequest) {
     const ALL_PARALLEL_BUDGET_MS = 4000;     // hard cap on this phase
     try {
       const reads = await Promise.race([
-        Promise.all(HASHES_TO_CHECK.map(h =>
-          kvGet<ScoredFiling>(SCORED_KEY(h)).catch(() => null)
-        )),
+        // zzz855 — was one GET per hash (up to 2000 parallel round-trips); now MGET in chunks of 200.
+        (async () => {
+          const CH = 200;
+          const chunks: string[][] = [];
+          for (let i = 0; i < HASHES_TO_CHECK.length; i += CH) chunks.push(HASHES_TO_CHECK.slice(i, i + CH));
+          const parts = await Promise.all(chunks.map((c) => kvMGet<ScoredFiling>(c.map((h) => SCORED_KEY(h))).catch(() => c.map(() => null))));
+          return parts.flat();
+        })(),
         new Promise<null[]>((resolve) =>
           setTimeout(() => resolve(new Array(HASHES_TO_CHECK.length).fill(null)), ALL_PARALLEL_BUDGET_MS)
         ),
@@ -680,7 +699,17 @@ async function handleLiveFeed(req: NextRequest) {
     await kvSet(cacheKey, payload, ttl);
   }
 
-  return NextResponse.json(applyFilters(payload, { exchangeFilter, bullishOnly }), { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } });  // PATCH 0818
+  if (fetch_status.state !== 'FAILED' && fetch_status.state !== 'PARTIAL' && payload.filings.length > 0) feedMemoPut(cacheKey, payload);
+  return NextResponse.json(out(payload), { headers: { 'Cache-Control': privateCache(60, 300), 'x-mc-cache': 'miss' } });  // PATCH 0818 / zzz855 private
+}
+
+// zzz855 — per-instance memo of the full (unfiltered) payload per window.
+const FEED_MEMO_MS = 60_000;
+const FEED_MEMO: Map<string, { payload: FeedPayload; ts: number }> = (globalThis as any).__MC_LIVE_FEED_MEMO__ || new Map();
+(globalThis as any).__MC_LIVE_FEED_MEMO__ = FEED_MEMO;
+function feedMemoPut(key: string, payload: FeedPayload) {
+  FEED_MEMO.set(key, { payload, ts: Date.now() });
+  if (FEED_MEMO.size > 8) { const first = FEED_MEMO.keys().next().value; if (first !== undefined) FEED_MEMO.delete(first); }
 }
 
 // PATCH 0389 — Cross-exchange dedup. Same disclosure often filed on both

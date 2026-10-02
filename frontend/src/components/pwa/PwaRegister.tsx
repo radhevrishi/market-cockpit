@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { startInstallCapture, isStandalone } from './pwa-state';
 import s from './pwa.module.css';
+import { swUpdateDue, whenIdle } from '@/lib/shell-fetch';
 
 export default function PwaRegister({ version }: { version: string }) {
   const [waiting, setWaiting] = useState<ServiceWorker | null>(null);
@@ -35,8 +36,14 @@ export default function PwaRegister({ version }: { version: string }) {
     const offer = (w: ServiceWorker | null) => {
       if (w && sw.controller) setWaiting(w);   // an update, not a first install
     };
+    // zzz855: each update check downloads /sw.js; check at most once an hour when the tab comes back.
+    let lastCheck: number | null = Date.now();
     const onVisible = () => {
-      if (document.visibilityState === 'visible') reg?.update().catch(() => {});
+      if (document.visibilityState !== 'visible' || !reg) return;
+      const now = Date.now();
+      if (!swUpdateDue(lastCheck, now)) return;
+      lastCheck = now;
+      reg.update().catch(() => {});
     };
 
     const register = () => {
@@ -55,13 +62,18 @@ export default function PwaRegister({ version }: { version: string }) {
         })
         .catch(() => { /* no service worker: the site still works normally */ });
     };
-    if (document.readyState === 'complete') register();
-    else window.addEventListener('load', register, { once: true });
+    // zzz855: register after the page has loaded AND the browser is idle, so the
+    // worker's install (offline page fetch) never competes with first-load requests.
+    let cancelIdle = () => {};
+    const afterLoad = () => { cancelIdle = whenIdle(register, 5000); };
+    if (document.readyState === 'complete') afterLoad();
+    else window.addEventListener('load', afterLoad, { once: true });
 
     return () => {
+      cancelIdle();
+      window.removeEventListener('load', afterLoad);
       sw.removeEventListener('controllerchange', onControllerChange);
       document.removeEventListener('visibilitychange', onVisible);
-      window.removeEventListener('load', register);
     };
   }, [version]);
 

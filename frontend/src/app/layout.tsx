@@ -6,6 +6,7 @@ import { ToastProvider, CommandPalette } from '@/components/design-system';
 import PwaRegister from '@/components/pwa/PwaRegister';
 import { pwaBuildVersion } from '@/components/pwa/build-version';
 import { SCREEN_THEME_EARLY } from '@/lib/theme';
+import { safeStorageEarlyScript } from '@/lib/safe-storage';
 
 export const metadata: Metadata = {
   title: 'Market Cockpit — Bloomberg-lite for India + US Markets',
@@ -17,12 +18,19 @@ export const metadata: Metadata = {
 // first paint already has the right spacing. No data, no network.
 const PWA_EARLY = "try{window.addEventListener('beforeinstallprompt',function(e){e.preventDefault();window.__mcBip=e;});var sa=(window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches)||window.navigator.standalone===true;document.documentElement.setAttribute('data-pwa',sa?'standalone':'browser');}catch(e){}";
 
+// zzz855 — must be the FIRST script in <head>: installs the safe localStorage
+// layer (transparent compression of big values, quota guard that only evicts
+// API caches, read cache) before any page bundle reads storage. Self-contained
+// source of installSafeStorage(); providers.tsx installs it again as a backup.
+const SAFE_STORAGE_EARLY = safeStorageEarlyScript();
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const pwaVersion = pwaBuildVersion();
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
       <head>
         <meta charSet="utf-8" />
+        <script dangerouslySetInnerHTML={{ __html: SAFE_STORAGE_EARLY }} />
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
         <meta name="theme-color" content="#0A0E1A" />
         {/* PWA / iOS Home Screen (zzz796) */}

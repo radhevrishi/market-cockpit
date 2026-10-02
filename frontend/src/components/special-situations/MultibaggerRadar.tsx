@@ -24,6 +24,7 @@ import { radarReconcile, type CountModelIn } from './ss-counts';
 import { Chip, btn, input } from './RadarBits';
 import { RadarCard, RadarRow } from './RadarCard';
 import { LedgerPanel } from './LedgerPanel';
+import { LazyDetails, ShowMoreBar, usePrinting } from '@/components/guidance-upgrades/GuMore';
 import { HoldingsMonitor } from './HoldingsMonitor';
 
 type Region = 'ALL' | 'IN' | 'US' | 'GLOBAL';
@@ -89,7 +90,9 @@ export default function MultibaggerRadar({ events, holdings: holdingsProp, regio
   const [evF, setEvF] = useState<EvidenceStatus | 'ALL'>('ALL');
   const [kindF, setKindF] = useState<CatalystKind | 'ALL'>('ALL');
   const [heldOnly, setHeldOnly] = useState(false);
-  const [showAll, setShowAll] = useState<Record<string, boolean>>({});
+  // zzz855: per-bucket render limit (30, then 30 more); counts always come from the full bucket.
+  const [limits, setLimits] = useState<Record<string, number>>({});
+  const printing = usePrinting();
 
   const built = useMemo(() => {
     try {
@@ -201,8 +204,8 @@ export default function MultibaggerRadar({ events, holdings: holdingsProp, regio
           {radar.items.length > 0 && BUCKET_ORDER.filter((b) => bucketF === 'ALL' || bucketF === b).map((b) => {
             const all = radar.byBucket[b] || [];
             const list = all.filter(passes);
-            const expanded = !!showAll[b];
-            const shown = expanded ? list : list.slice(0, CARD_CAP);
+            const limit = printing ? list.length : (limits[b] ?? CARD_CAP);
+            const shown = list.slice(0, limit);
             const quarantined = isQuarantined(b);
             const secondary = b === 'SPECIAL_SITUATION';
             const heading = (
@@ -218,17 +221,17 @@ export default function MultibaggerRadar({ events, holdings: holdingsProp, regio
                 {shown.map((i) => (isOneLine(i)
                   ? <RadarRow key={i.id} item={i} hints={built.hints.get(i.id)} />
                   : <RadarCard key={i.id} item={i} held={isHeld(i)} ownerTag={i.ticker ? tags[normSymbol(i.ticker)] : undefined} ledgerIds={ledgerIds} onSaveLedger={onSave} now={now} hints={built.hints.get(i.id)} />))}
-                {list.length > shown.length && <button type="button" style={btn(R.cyan)} onClick={() => setShowAll((s) => ({ ...s, [b]: true }))}>Show all {list.length}</button>}
+                <ShowMoreBar shown={shown.length} total={list.length} step={CARD_CAP} color={R.cyan}
+                  onMore={() => setLimits((s) => ({ ...s, [b]: (s[b] ?? CARD_CAP) + CARD_CAP }))} onAll={() => setLimits((s) => ({ ...s, [b]: list.length }))} />
               </>
             );
             return (
               <section key={b} data-radar-bucket={b} data-radar-tier={quarantined ? 'quarantine' : secondary ? 'secondary' : 'primary'} aria-label={BUCKET_LABEL[b]} style={{ display: 'flex', flexDirection: 'column', gap: 8, opacity: quarantined ? 0.9 : 1 }}>
                 {quarantined ? (
-                  <details open={bucketF === b}>
-                    <summary style={{ cursor: 'pointer', listStyle: 'revert' }}>{heading}</summary>
+                  <LazyDetails open={bucketF === b} summary={<summary style={{ cursor: 'pointer', listStyle: 'revert' }}>{heading}</summary>}>
                     <div style={{ fontSize: 12, color: R.faint, padding: '6px 0' }}>{QUARANTINE_HEADER}</div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>{body}</div>
-                  </details>
+                  </LazyDetails>
                 ) : (<>{heading}{body}</>)}
               </section>
             );

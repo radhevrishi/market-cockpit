@@ -3,6 +3,8 @@ import { fetchNifty50, fetchNiftyNext50, fetchNifty500, fetchNifty200, fetchNift
 import { fetchQuotesWithFallback, US_TOP } from '@/lib/yahoo';
 // PATCH 0782 — KV blob primary source (populated by GH Actions scraper).
 import { kvGet } from '@/lib/kv';
+import { swrMemo, swrHeaders, privateCache, SwrUnusableError } from '@/lib/swr-cache';
+import { parseQuotesListOptions, shapeQuotesPayload } from '@/lib/lean-view';
 
 // PATCH 0873 — Restore force-dynamic. PATCH 0819 dropped it to let
 // Cache-Control headers control edge caching, but Next.js can still
@@ -13,9 +15,7 @@ import { kvGet } from '@/lib/kv';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // PATCH 0818 — 60 → 30, caps CPU per call for ~2000 tickers (NSE master) needs up to 60s
 
-// Response-level cache (avoids re-assembly on rapid polls)
-const responseCache = new Map<string, { data: any; ts: number }>();
-const inFlightBuilds = new Map<string, Promise<any>>();
+// Response-level cache: zzz855 moved to lib/swr-cache (swrMemo — memory layer + single flight + stale-while-revalidate)
 // PATCH 0873 — TTL 120s → 30s. 2-min cache on the live quote bar made
 // ticker prices visibly stale (user reported wrong %change on ticker bar).
 // CPU concern from 0818 is acceptable: heatmap is the heavy caller and it
@@ -93,60 +93,31 @@ export async function GET(request: Request) {
       _ttl = _postClose ? 600_000 : 7_200_000;
     }
   } catch {}
-  // Check response cache
-  const cached = responseCache.get(cacheKey);
-  if (!_forceFresh && cached && Date.now() - cached.ts < _ttl) {
-    return NextResponse.json(projectAndLimit(cached.data), {
-      headers: { 'Cache-Control': 's-maxage=30, stale-while-revalidate=60', 'X-Projection': allowFields || limitN != null ? '1' : '0' },
-    });
-  }
-
-  // PATCH: single-flight coalescing - concurrent cold callers share ONE rebuild (prevents 429 storms)
-  const __sfExisting = inFlightBuilds.get(cacheKey);
-  if (__sfExisting) {
-    try {
-      const __sfShared = await __sfExisting;
-      return NextResponse.json(projectAndLimit(__sfShared), { headers: { 'Cache-Control': 's-maxage=30, stale-while-revalidate=60' } });
-    } catch { /* owner build failed - fall through and build ourselves */ }
-  }
-  let __sfResolve: (v: any) => void = () => {};
-  let __sfReject: (e: any) => void = () => {};
-  const __sfPromise = new Promise<any>((res, rej) => { __sfResolve = res; __sfReject = rej; });
-  __sfPromise.catch(() => {});
-  inFlightBuilds.set(cacheKey, __sfPromise);
+  // zzz855 — stale-while-revalidate (per instance, memory only; the payload is >1 MB so it stays out of KV).
+  // Fresh within the market-aware TTL above. After that the last good build is served AT ONCE — its own
+  // updatedAt is the age label, plus x-mc-cache: stale / x-mc-cache-age — while ONE background rebuild
+  // runs (single flight per key, so the home page's parallel calls never start several ~25 s rebuilds).
+  // Stale window: 20 min while that market is open (prices move), 12 h when closed (last close is static).
+  // ?refresh=1 still rebuilds synchronously. An empty build is never cached and never replaces last-good.
+  let _marketOpenNow = false;
+  try { const mh = await import('@/lib/market-hours'); _marketOpenNow = market === 'india' ? mh.isIndianMarketOpen() : mh.isUSMarketOpen(); } catch {}
+  const _maxStale = _marketOpenNow ? 20 * 60_000 : 12 * 3_600_000;
+  const leanOpts = parseQuotesListOptions(searchParams);
+  const shape = (d: any) => shapeQuotesPayload(projectAndLimit(d), leanOpts);
+  const cc = privateCache(30, 120);
   try {
-    let responseData: any;
-
-    if (market === 'india') {
-      if (index === 'midsmall50') {
-        responseData = await fetchMidSmall50DataWithCache();
-      } else if (index === 'smallcap150') {
-        responseData = await fetchSmallcap150DataWithCache();
-      } else if (index === 'midcap150') {
-        responseData = await fetchMidcap150DataWithCache();
-      } else if (index === 'nifty50') {
-        responseData = await fetchNifty50DataWithCache();
-      } else {
-        responseData = await fetchIndianDataWithCache();
-      }
-    } else {
-      responseData = await fetchUSDataWithCache();
-    }
-
-    // Cache the response before returning
-    responseCache.set(cacheKey, { data: responseData, ts: Date.now() });
-    __sfResolve(responseData); inFlightBuilds.delete(cacheKey);
-    // Evict old entries if cache grows too large
-    if (responseCache.size > 20) {
-      const oldest = [...responseCache.entries()].sort((a, b) => a[1].ts - b[1].ts)[0];
-      responseCache.delete(oldest[0]);
-    }
-
-    return NextResponse.json(projectAndLimit(responseData), {
-      headers: { 'Cache-Control': 's-maxage=30, stale-while-revalidate=60' },
+    const r = await swrMemo<any>({
+      key: cacheKey, freshMs: _ttl, maxStaleMs: Math.max(_maxStale, _ttl), force: _forceFresh,
+      build: () => buildQuotes(market, index),
+      isUsable: (d) => !!d && ((Array.isArray(d.stocks) && d.stocks.length > 0) || (Array.isArray(d.gainers) && d.gainers.length > 0)),
+    });
+    return NextResponse.json(shape(r.value), {
+      headers: { ...swrHeaders(r, cc), 'X-Projection': allowFields || limitN != null || leanOpts.view !== 'full' || leanOpts.tickers ? '1' : '0' },
     });
   } catch (error) {
-    __sfReject(error); inFlightBuilds.delete(cacheKey);
+    if (error instanceof SwrUnusableError && error.value) {
+      return NextResponse.json(shape(error.value), { headers: { 'Cache-Control': 'no-store', 'x-mc-cache': 'miss' } });
+    }
     console.error('Market quotes error:', error);
     // PATCH zzz65 — shape parity. Success returns source/updatedAt; error must too
     // or the client's "as of" badge goes blank when an upstream fails.
@@ -160,7 +131,17 @@ export async function GET(request: Request) {
   }
 }
 
-// Lightweight endpoint for heatmap: only NIFTY Midcap 50 + Smallcap 50
+async function buildQuotes(market: string, index: string | null): Promise<any> {
+  if (market === 'india') {
+    if (index === 'midsmall50') return fetchMidSmall50DataWithCache();
+    if (index === 'smallcap150') return fetchSmallcap150DataWithCache();
+    if (index === 'midcap150') return fetchMidcap150DataWithCache();
+    if (index === 'nifty50') return fetchNifty50DataWithCache();
+    return fetchIndianDataWithCache();
+  }
+  return fetchUSDataWithCache();
+}
+
 async function fetchMidSmall50DataWithCache() {
   const [sectorMap, midcap50Data, smallcap50Data] = await Promise.all([
     buildDynamicSectorMap(),

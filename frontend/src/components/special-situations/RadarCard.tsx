@@ -21,6 +21,7 @@ import {
 } from './radar-tokens';
 import { Chip, Field, btn } from './RadarBits';
 import { LedgerForm } from './LedgerForm';
+import { LazyDetails } from '@/components/guidance-upgrades/GuMore';
 import { PORTFOLIO_TAG_LABEL } from '@/lib/multibagger-radar-types';
 
 const say = orNotYet;
@@ -252,8 +253,8 @@ export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now, 
         </div>
       )}
 
-      <details>
-        <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, color: R.cyan }}>Details: definition, break conditions, governance, timing (answers WHEN, not WHY)</summary>
+      {/* zzz855: the body is built on first open */}
+      <LazyDetails summary={<summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, color: R.cyan }}>Details: definition, break conditions, governance, timing (answers WHEN, not WHY)</summary>}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 8 }}>
           <Field label="Mechanism (general definition of this kind of event)">{say(item.mechanismHelp || item.mechanism)}</Field>
           {item.bottleneckQuestion && <Field label="Bottleneck question">{item.bottleneckQuestion}</Field>}
@@ -271,7 +272,7 @@ export function RadarCard({ item, held, ownerTag, ledgerIds, onSaveLedger, now, 
             {item.sourceUrl && <a href={item.sourceUrl} target="_blank" rel="noreferrer" style={{ color: R.cyan }}>Source filing</a>}
           </div>
         </div>
-      </details>
+      </LazyDetails>
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         {inLedger

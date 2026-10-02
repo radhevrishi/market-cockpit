@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
+import { swrGet, swrHeaders, privateCache, SwrUnusableError } from '@/lib/swr-cache';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -517,13 +518,43 @@ async function savePersistentSignals(signals: any[]): Promise<void> {
 // ════════════════════════════════════════════════════════════════════════
 // MAIN HANDLER
 // ════════════════════════════════════════════════════════════════════════
-export async function GET(request: Request) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const regionFilter = searchParams.get('region') || 'ALL';
+// zzz855 — this was rebuilt live on every request (14 RSS feeds + 2 KV reads, ~3.8 s). The build is now fronted by the
+// shared SWR cache per region: fresh 10 min, then the last good dashboard is served at once (x-mc-cache: stale +
+// x-mc-cache-age) while ONE background rebuild runs. A failed or empty build never replaces the last good one.
+const BN_FRESH_MS = 10 * 60_000;
+const BN_MAX_STALE_MS = 6 * 3_600_000;
+const bnUsable = (p: any): boolean => !!p && Array.isArray(p.buckets) && p.buckets.length > 0;
 
-    // Read from intelligence signals KV
-    const stored = await kvGet<any>('intelligence:signals');
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const regionFilter = searchParams.get('region') || 'ALL';
+  const force = searchParams.get('refresh') === '1';
+  try {
+    const r = await swrGet({
+      key: `bottleneck:dashboard:resp:v1:${regionFilter}`, freshMs: BN_FRESH_MS, maxStaleMs: BN_MAX_STALE_MS, force,
+      build: () => buildBottleneckDashboard(regionFilter), isUsable: bnUsable,
+    });
+    return NextResponse.json(r.value, { headers: swrHeaders(r, privateCache(120, 600)) });
+  } catch (error) {
+    if (!(error instanceof SwrUnusableError)) console.error('[Bottleneck API] Error:', error);
+    const v: any = error instanceof SwrUnusableError ? error.value : null;
+    if (v && typeof v === 'object') return NextResponse.json(v);
+    return NextResponse.json({
+      success: true,
+      total_articles: 0,
+      buckets: [],
+    });
+  }
+}
+
+async function buildBottleneckDashboard(regionFilter: string): Promise<any> {
+  {
+    // zzz855: the three independent reads now run in parallel (were sequential)
+    const [stored, rssSignals, persistentSignals] = await Promise.all([
+      kvGet<any>('intelligence:signals').catch(() => null),
+      fetchLiveRSSSignals(),
+      loadPersistentSignals(),
+    ]);
     let allSignals: any[] = [];
     if (stored) {
       allSignals = [
@@ -533,12 +564,10 @@ export async function GET(request: Request) {
       ];
     }
 
-    // Always fetch live RSS for broad coverage
-    const rssSignals = await fetchLiveRSSSignals();
+    // Always fetch live RSS for broad coverage (fetched above, in parallel)
     allSignals = [...allSignals, ...rssSignals];
 
-    // Load persistent signals from KV and merge with live signals
-    const persistentSignals = await loadPersistentSignals();
+    // Persistent signals from KV (loaded above) merged with live signals
 
     // Merge: combine live RSS + persistent, dedup by headline
     const mergedSignals = [...rssSignals, ...persistentSignals];
@@ -822,19 +851,12 @@ export async function GET(request: Request) {
       }
     }
 
-    return NextResponse.json({
+    return {
       success: true,
       total_articles: allSignals.length,
       filtered_articles: cleanSignals.length,
       noise_removed: allSignals.length - cleanSignals.length,
       buckets,
-    });
-  } catch (error) {
-    console.error('[Bottleneck API] Error:', error);
-    return NextResponse.json({
-      success: true,
-      total_articles: 0,
-      buckets: [],
-    });
+    };
   }
 }

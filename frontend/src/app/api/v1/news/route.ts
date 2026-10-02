@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
+import { parseListOptions, shapeNewsArticles } from '@/lib/lean-view';
+import { privateCache } from '@/lib/swr-cache';
 import { refreshNewsLastGood, makeKvNewsIo } from '@/lib/guidance-upgrades-cache';
 import { recordXRef } from '@/lib/news/cross-reference';
 import {
@@ -2495,6 +2497,11 @@ async function fetchAllNews(): Promise<any[]> {
   return articlesWithImpact;
 }
 
+// zzz855 — per-instance memo of the live article list (see GET)
+const NEWS_MEMO_MS = 60_000;
+const NEWS_MEMO: Map<string, { articles: any[]; ts: number }> = (globalThis as any).__MC_NEWS_MEMO__ || new Map();
+(globalThis as any).__MC_NEWS_MEMO__ = NEWS_MEMO;
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -2523,9 +2530,18 @@ export async function GET(request: Request) {
     let articles: any[] | null = null;
     // zzz854: which copy served this answer ('live' | 'lastgood; age=Nm'); sent as the X-News-Served-From header
     let newsServedFrom = 'live';
-    try {
-      articles = await kvGet<any[]>(CACHE_KEY);
-    } catch {}
+    // zzz855 — in-process memo of the KV article list (~285 KB JSON; the home page asks ~40×). 60 s, well inside the
+    // 5-min live key. Only a LIVE read is memoised; the :lastgood path below is unchanged and never memoised.
+    // A deep copy (structuredClone, ~ms) goes each way because later steps sort the array and decode fields in place.
+    const memo = NEWS_MEMO.get(CACHE_KEY);
+    if (memo && Date.now() - memo.ts < NEWS_MEMO_MS) {
+      articles = structuredClone(memo.articles);
+    } else {
+      try {
+        articles = await kvGet<any[]>(CACHE_KEY);
+      } catch {}
+      if (Array.isArray(articles) && articles.length > 0) NEWS_MEMO.set(CACHE_KEY, { articles: structuredClone(articles), ts: Date.now() });
+    }
 
     if (!articles || articles.length === 0) {
       articles = await fetchAllNews();
@@ -2554,7 +2570,7 @@ export async function GET(request: Request) {
         if (lg.servedFromLastGood && lg.articles) { articles = lg.articles; newsServedFrom = `lastgood; age=${lg.ageMinutes ?? 'unknown'}m`; console.warn('[news]', lg.label); }
       } catch { /* best effort */ }
       // never re-publish a stale copy under the live key (readers would take it for a fresh refresh)
-      if (newsServedFrom === 'live') { try { await kvSet(CACHE_KEY, articles, CACHE_TTL); } catch {} }
+      if (newsServedFrom === 'live') { try { await kvSet(CACHE_KEY, articles, CACHE_TTL); } catch {} if (articles.length > 0) NEWS_MEMO.set(CACHE_KEY, { articles: structuredClone(articles), ts: Date.now() }); }
     }
 
     // PATCH 1069 — Scraper-KV backstop. Server-side RSS fetches from this host
@@ -2763,7 +2779,7 @@ export async function GET(request: Request) {
       }
       // Top up if one side has fewer than 5
       const ranked = merged.slice(0, 10);
-      return NextResponse.json(ranked, { headers: { 'Cache-Control': 's-maxage=60, stale-while-revalidate=120', 'X-News-Served-From': newsServedFrom } } );// PATCH 0818
+      return NextResponse.json(shapeNewsArticles(ranked, parseListOptions(searchParams)), { headers: { 'Cache-Control': privateCache(30, 120), 'X-News-Served-From': newsServedFrom } } );// PATCH 0818 / zzz855 private + lean
     }
 
     // ── Phase 2.5 / 3.14: Anomaly detector ──
@@ -2998,7 +3014,8 @@ export async function GET(request: Request) {
       });
     }
 
-    return NextResponse.json(filtered, { headers: { 'Cache-Control': 's-maxage=60, stale-while-revalidate=120', 'X-News-Served-From': newsServedFrom } } );// PATCH 0818
+    // zzz855 — opt-in ?view=lean / ?fields= / ?limit= (default: the full array, unchanged)
+    return NextResponse.json(shapeNewsArticles(filtered, parseListOptions(searchParams)), { headers: { 'Cache-Control': privateCache(30, 120), 'X-News-Served-From': newsServedFrom } } );// PATCH 0818 / zzz855 private + lean
   } catch (error) {
     console.error('[News API] Error:', error);
     return NextResponse.json([], { status: 200 });

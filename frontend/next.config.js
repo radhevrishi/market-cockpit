@@ -5,6 +5,12 @@ const nextConfig = {
   // catches real bugs; production build just needs to compile.
   typescript: { ignoreBuildErrors: true },
   eslint: { ignoreDuringBuilds: true },
+  // zzz855 — compression is done by server.js (br + gzip, and it also covers
+  // App Router /api JSON, which Next's built-in gzip skipped). Turning Next's
+  // off avoids two layers touching the same response. If server.js is ever
+  // bypassed (plain `next start`, Vercel), responses are simply uncompressed
+  // by Next — Vercel's edge compresses on its own.
+  compress: false,
   reactStrictMode: false, // disable double-render in dev to avoid chunk race conditions
   swcMinify: true,
   // PATCH 0122 — fix Vercel build failure (all 10 deploys 0112-0121 errored

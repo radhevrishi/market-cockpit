@@ -12,6 +12,8 @@ import { useEffect, useState } from 'react';
 import { getEngineViews, openPassport } from '@/lib/engines';
 import { computeVerdict } from '@/lib/verdict';
 import { logSignals } from '@/lib/signal-log';
+// zzz855 — shared GET layer: /api/market/regime is deduped with RiskRegimeCard.
+import { getJson } from '@/lib/client-fetch';
 
 const MONO = 'ui-monospace, "SF Mono", Menlo, monospace';
 
@@ -24,17 +26,7 @@ interface Action {
 }
 
 async function fetchRegime(): Promise<any | null> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 10_000);
-  try {
-    const res = await fetch('/api/market/regime', { signal: ctrl.signal });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+  return getJson<any>('/api/market/regime', { timeoutMs: 10_000, ttlMs: 5 * 60_000 });
 }
 
 function buildActions(regime: any | null): Action[] {
@@ -141,9 +133,8 @@ export default function NextBestActions() {
       try {
         const syms = Array.from(new Set(top3.map((a) => a.ticker).filter(Boolean))) as string[];
         if (syms.length) {
-          const r = await fetch(`/api/market/spark?symbols=${encodeURIComponent(syms.join(','))}`, { cache: 'no-store' });
-          if (r.ok && alive) {
-            const j = await r.json();
+          const j = await getJson<any>(`/api/market/spark?symbols=${encodeURIComponent(syms.join(','))}`, { timeoutMs: 20_000, ttlMs: 10 * 60_000 });
+          if (j && alive) {
             const m = new Map<string, number[]>();
             for (const row of (j?.rows || [])) if (Array.isArray(row?.spark)) m.set(String(row.symbol), row.spark);
             setSparks(m);

@@ -17,6 +17,7 @@
 
 import { NextResponse, NextRequest } from 'next/server';
 import { dbQuery, dbAvailable } from '@/lib/db';
+import { snapshotEtag, etagMatches } from '@/lib/lean-view';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -104,22 +105,43 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ ok: false, error: 'invalid clientId' }, { status: 400 });
     }
     await ensureTable();
-    const rows = isValidClientId(clientId)
-      ? await dbQuery<{ client_id: string; snapshot_json: string; meta_json: string | null; updated_at: string }>(
-          `SELECT client_id, snapshot_json, meta_json, updated_at FROM mb_snapshots WHERE client_id = $1 AND market = $2 LIMIT 1`,
-          [clientId, market]
-        )
-      : await dbQuery<{ client_id: string; snapshot_json: string; meta_json: string | null; updated_at: string }>(
-          `SELECT client_id, snapshot_json, meta_json, updated_at FROM mb_snapshots WHERE market = $1 ORDER BY updated_at DESC LIMIT 1`,
-          [market]
-        );
+    // zzz855 — lighter reads. A cheap metadata query (no snapshot_json, which is ~1 MB) runs first:
+    //   ?view=meta  → returns { ok, snapshot: null, meta, updatedAt, clientId, view: 'meta' } so a caller can compare
+    //                 meta.count with its local row count and fetch the full snapshot only when it actually needs it.
+    //   default     → unchanged full response, now with an ETag (client + market + updated_at). The browser revalidates
+    //                 every time (Cache-Control: private, no-cache — user data is never served stale) and gets a 304
+    //                 with no body when the snapshot has not changed.
+    const viewMeta = url.searchParams.get('view') === 'meta';
+    type MetaRow = { client_id: string; meta_json: string | null; updated_at: string };
+    const metaRows = isValidClientId(clientId)
+      ? await dbQuery<MetaRow>(`SELECT client_id, meta_json, updated_at FROM mb_snapshots WHERE client_id = $1 AND market = $2 LIMIT 1`, [clientId, market])
+      : await dbQuery<MetaRow>(`SELECT client_id, meta_json, updated_at FROM mb_snapshots WHERE market = $1 ORDER BY updated_at DESC LIMIT 1`, [market]);
+    const noCache = { 'Cache-Control': 'private, no-cache' };
+    if (!metaRows.length) {
+      return NextResponse.json({ ok: true, snapshot: null, meta: null, ...(viewMeta ? { view: 'meta' } : {}) }, { headers: noCache });
+    }
+    const m0 = metaRows[0];
+    let meta: any = null;
+    try { meta = m0.meta_json ? JSON.parse(m0.meta_json) : null; } catch {}
+    if (viewMeta) {
+      return NextResponse.json({ ok: true, snapshot: null, meta, updatedAt: m0.updated_at, clientId: m0.client_id, view: 'meta' }, { headers: noCache });
+    }
+    const etag = snapshotEtag(m0.client_id, market, m0.updated_at);
+    if (etagMatches(req.headers.get('if-none-match'), etag)) {
+      return new NextResponse(null, { status: 304, headers: { ...noCache, ETag: etag } });
+    }
+    const rows = await dbQuery<{ client_id: string; snapshot_json: string; meta_json: string | null; updated_at: string }>(
+      `SELECT client_id, snapshot_json, meta_json, updated_at FROM mb_snapshots WHERE client_id = $1 AND market = $2 LIMIT 1`,
+      [m0.client_id, market]
+    );
     if (!rows.length) {
-      return NextResponse.json({ ok: true, snapshot: null, meta: null });
+      return NextResponse.json({ ok: true, snapshot: null, meta: null }, { headers: noCache });
     }
     const row = rows[0];
-    let meta: any = null;
+    meta = null;
     try { meta = row.meta_json ? JSON.parse(row.meta_json) : null; } catch {}
-    return NextResponse.json({ ok: true, snapshot: row.snapshot_json, meta, updatedAt: row.updated_at, clientId: row.client_id });
+    return NextResponse.json({ ok: true, snapshot: row.snapshot_json, meta, updatedAt: row.updated_at, clientId: row.client_id },
+      { headers: { ...noCache, ETag: snapshotEtag(row.client_id, market, row.updated_at) } });
   } catch (e: any) {
     // PATCH zzz65 — sanitize.
     console.error('[mb-snapshot GET] error', e?.message || e);

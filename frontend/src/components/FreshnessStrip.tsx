@@ -10,6 +10,7 @@
 
 import { useEffect, useState } from 'react';
 import { getEngineViews } from '@/lib/engines';
+import { readJsonMemo } from '@/lib/client-fetch';
 
 const MONO = 'ui-monospace, "SF Mono", Menlo, monospace';
 
@@ -25,8 +26,11 @@ interface Chip {
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
 
+// zzz855 — memoised: the multibagger / technicals keys are 0.5–1 MB each and
+// are parsed elsewhere on the home page too; parse once per stored string.
+// Read-only use here (lengths / timestamps), so sharing the parsed value is safe.
 function readJSON(key: string): any {
-  try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch { return null; }
+  return readJsonMemo<any>(key, null);
 }
 
 function relAge(ms: number): string {

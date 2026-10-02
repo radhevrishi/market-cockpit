@@ -230,12 +230,22 @@ interface FeedItem {
 // (slow + rate-limit-prone). Now layered: KV is the cross-container source
 // of truth, the in-memory variable is just a warm-path optimization.
 
-import { kvGet as ssKvGet, kvSet as ssKvSet, isRedisAvailable as ssRedisAvailable } from '@/lib/kv';
+import { swrGet, swrMemo, swrHeaders, privateCache } from '@/lib/swr-cache';
 
 const CACHE_TTL_MS = 30 * 60 * 1000;
 const CACHE_KV_KEY = 'specsit:feed:v1';
-const CACHE_KV_TTL_S = Math.round(CACHE_TTL_MS / 1000);
-let CACHE: { data: any; ts: number } | null = null;
+// zzz855: the in-memory CACHE variable is replaced by the shared SWR helper (memory + KV layers, single-flight refresh).
+const SS_MAX_STALE_MS = 24 * 60 * 60 * 1000;
+const feedUsable = (d: any): boolean => !!d && ((Number(d.total) || 0) > 0 || (Array.isArray(d.events) && d.events.length > 0));
+// The verification gate reads AI verdicts from KV and enqueues claims (up to ~3 s). Its output is memoised per feed build for
+// 60 s (fresh) / 10 min (served while ONE background re-gate runs), so new AI verdicts still show within about a minute.
+async function gatedFor(data: any, builtAt: number): Promise<any> {
+  const key = 'specsit:feed:gated';
+  const build = async () => ({ builtAt, value: await applyVerificationGate(data) });
+  let m = await swrMemo({ key, freshMs: 60_000, maxStaleMs: 10 * 60_000, build });
+  if (m.value.builtAt !== builtAt) m = await swrMemo({ key, freshMs: 60_000, maxStaleMs: 10 * 60_000, build, force: true });
+  return m.value.builtAt === builtAt ? m.value.value : applyVerificationGate(data);
+}
 
 // ─── XML parsing ────────────────────────────────────────────────────────────
 // Lightweight regex-based parser — RSS/Atom feeds expose flat <item> blocks
@@ -985,29 +995,24 @@ export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
     const force = url.searchParams.get('refresh') === '1';
-    const now = Date.now();
 
-    // PATCH 0454 P1-24 — Two-tier cache lookup: in-memory warm path first
-    // (cheap), then KV (cross-container). Skip both when ?refresh=1.
-    if (!force && CACHE && now - CACHE.ts < CACHE_TTL_MS) {
-      return NextResponse.json({ ...(await applyVerificationGate(CACHE.data)), cached: true, cache_age_min: Math.round((now - CACHE.ts) / 60000) });
-    }
-    if (!force && ssRedisAvailable()) {
-      try {
-        const persisted = await ssKvGet<{ data: any; ts: number }>(CACHE_KV_KEY);
-        if (persisted && now - persisted.ts < CACHE_TTL_MS) {
-          CACHE = persisted; // warm the in-mem too
-          return NextResponse.json({ ...(await applyVerificationGate(persisted.data)), cached: true, cache_age_min: Math.round((now - persisted.ts) / 60000), cache_origin: 'kv' });
-        }
-      } catch {}
-    }
-
-    const data = await buildFeed();
-    CACHE = { data, ts: now };
-    if (ssRedisAvailable()) {
-      try { await ssKvSet(CACHE_KV_KEY, CACHE, CACHE_KV_TTL_S); } catch {}
-    }
-    return NextResponse.json({ ...(await applyVerificationGate(data)), cached: false, cache_age_min: 0 });
+    // zzz855 — stale-while-revalidate. The build (20+ RSS/SEC sources) took ~12 s when the 30-min cache lapsed and a page
+    // paid for it. Now: fresh for 30 min; up to 24 h the last-good feed is served at once (labelled with its age via
+    // cache_age_min / cache_state) while ONE background rebuild runs. An empty rebuild (all sources down) never replaces
+    // last-good. Cold start with nothing cached still builds synchronously.
+    const r = await swrGet({
+      key: CACHE_KV_KEY, freshMs: CACHE_TTL_MS, maxStaleMs: SS_MAX_STALE_MS, force,
+      build: buildFeed, isUsable: feedUsable, kvTtlS: Math.round(SS_MAX_STALE_MS / 1000) + 86400,
+    });
+    const gated = await gatedFor(r.value, r.builtAt);
+    return NextResponse.json({
+      ...gated,
+      cached: r.source !== 'build',
+      cache_age_min: Math.round(r.ageMs / 60000),
+      ...(r.source === 'kv' ? { cache_origin: 'kv' } : {}),
+      cache_state: r.state,
+      ...(r.rebuildFailed ? { cache_note: 'Refresh failed; showing the last good feed (see cache_age_min).' } : {}),
+    }, { headers: swrHeaders(r, privateCache(60, 300)) });
   } catch (e: any) {
     // PATCH zzz65 — sanitize. Don't ship raw error.message to client.
     console.error('[special-situations/feed] error', e?.message || e);

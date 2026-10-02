@@ -4,10 +4,11 @@ import React from 'react';
 import type { GuidanceEvent } from '@/lib/guidance-upgrades-types';
 import { DURATION_LABEL, FLAG_LABEL, IMPACT_LABEL, MATERIALITY_LABEL, METRIC_LABEL, THESIS_LABEL, UNAVAILABLE, agoText, changeMarker, fmtBeforeAfter, fmtNumber, isHeadlineOnly, secondUpgradeText, showsDecision, tickerText, hasRealRaise, isReiteration, raiseVsPreviousText, sourceConflictLine } from '@/lib/guidance-upgrades-format';
 import { IMPACT_COLOR, R, TONE_COLOR, box } from './gu-tokens';
+import { CappedList } from './GuMore';
 import { primarySourceView, safeEventLabel, sourceDisplayName, taxonomyText } from './gu-ui';
 import { AiCheckBadge, BasisNote, OtherChanges, ValidationNotes, Chip, ConsensusLine, CrossLinks, DecisionChip, DetectedVia, DurabilityRow, Field, GapBadge, HeadlineOnlyBanner, InflectionBadge, MetricBasisChip, RangeBlock, SourceChip, StageChip, TopEndCutNote, UnitWarnings, UnverifiedBanner, WhyNow } from './GuBits';
 
-export function GuCard({ e, onOpen, now }: { e: GuidanceEvent; onOpen: (id: string) => void; now: Date }) {
+function GuCardBody({ e, onOpen, now }: { e: GuidanceEvent; onOpen: (id: string) => void; now: Date }) {
   const verified = showsDecision(e);
   const second = secondUpgradeText(e);
   const v = e.valuation;
@@ -89,6 +90,8 @@ export function GuCard({ e, onOpen, now }: { e: GuidanceEvent; onOpen: (id: stri
   );
 }
 
+/** zzz855: memoised, so opening one event's detail does not rebuild every card on the page. */
+export const GuCard = React.memo(GuCardBody);
 
 /** Audit area: events that are NOT a clean verified raise (repeats, mixed, lowered, adjusted-only). Shown apart, never counted as upgrades. */
 export function GuAuditArea({ events, onOpen, now }: { events: GuidanceEvent[]; onOpen: (id: string) => void; now: Date }) {
@@ -98,7 +101,7 @@ export function GuAuditArea({ events, onOpen, now }: { events: GuidanceEvent[]; 
       <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 0.4, color: R.dim }}>AUDIT ONLY ({events.length})</div>
       <div style={{ fontSize: 12, color: R.dim }}>These were found but are not clean raises. They are kept for checking and are not counted as upgrades.</div>
       <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 4 }}>
-        {events.map((e) => {
+        <CappedList items={events} color={R.dim} inList render={(e) => {
           const l = safeEventLabel(e);
           return (
             <li key={e.guidance_event_id} className="gu-card" style={box({ padding: '6px 10px', display: 'grid', gap: 2 })}>
@@ -112,7 +115,7 @@ export function GuAuditArea({ events, onOpen, now }: { events: GuidanceEvent[]; 
               <div style={{ fontSize: 12.5, color: R.dim }}>{l.note ?? e.pipeline?.reason ?? 'No audit note was given.'}{taxonomyText(e) ? ` (${taxonomyText(e)})` : ''}</div>
             </li>
           );
-        })}
+        }} />
       </ul>
     </section>
   );

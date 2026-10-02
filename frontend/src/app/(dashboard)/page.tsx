@@ -101,6 +101,43 @@ import { calculatePE, fetchQuoteAutofill, type QuoteAutoFill } from '@/lib/valua
 // PATCH 0888 — Authoritative ticker→long-form-name map for news search
 // PATCH 0901 — Reverse map for Super Investors flow rows (company-name → ticker)
 import { NSE_TICKER_NAMES as _NSE_TICKER_NAMES, resolveCompanyToTicker } from '@/lib/nse-ticker-names';
+// zzz855 — shared GET layer: in-flight dedupe + TTL cache + per-caller timeout,
+// fan-out limiter, visibility-aware polling, memoised big-localStorage reads.
+import { fetchJson, getJson, warmUrl, mapWithLimit, pollWhenVisible, onIdle, readJsonMemo, type FetchJsonResult } from '@/lib/client-fetch';
+
+// zzz855 — ONE India quotes request feeds every home consumer (Movers,
+// Portfolio P&L, Watchlist Pulse, Sector rotation/pulse, Conviction live,
+// Daily Signal Inbox pullbacks + momentum). It used to be 4 separate calls
+// (two of them the full ~1.16 MB universe, cache-busted). `fields=` is the
+// route's existing projection; the list is the union of every field the home
+// page reads off a quote row — keep it in sync when a panel reads a new field.
+const HOME_QUOTE_FIELDS = [
+  'ticker', 'symbol', 'company', 'price', 'changePercent', 'previousClose', 'open', 'dayHigh', 'dayLow',
+  'volume', 'vol20DAvg', 'volMultiple', 'deliveryPct', 'turnoverLacs', 'indexGroup', 'sector', 'industry',
+  'marketCap', 'pctOf52wHigh', 'mom1M', 'week52High', 'staleEOD',
+].join(',');
+const HOME_QUOTES_INDIA_URL = `/api/market/quotes?market=india&fields=${HOME_QUOTE_FIELDS}`;
+// zzz855 — news rows: exactly the fields the home page reads (In-Play filter +
+// render, Signals tiering + render, Movers attribution NewsInput, fan-out dedup).
+// Explicit list rather than view=lean because lean drops feed_type/date/time/market.
+const HOME_NEWS_FIELDS = [
+  'id', 'title', 'headline', 'summary', 'published_at', 'date', 'time', 'source', 'source_name', 'source_url', 'url',
+  'importance_score', 'is_synthetic', 'structural_status', 'feed_layer', 'feed_type', 'freshness_layer',
+  'primary_ticker', 'ticker_symbols', 'ticker', 'region', 'market', 'article_type',
+].join(',');
+// Movers attribution reads exactly these FilingInput fields (lib/movers-attribution.ts) + symbol for indexing.
+const HOME_FILING_FIELDS = 'symbol,subject,filing_type,filing_datetime,source_url,attachment_urls';
+// Freshness windows (client memory). Market data ≥ 60 s, news ≥ 5 min.
+const TTL_QUOTES = 55_000;          // just under the 60 s market-hours tick so each tick refreshes prices
+const TTL_NEWS = 5 * 60_000;        // news / filings feeds
+const TTL_FEED = 10 * 60_000;       // graded earnings, special situations, bottleneck, fundamentals
+const TTL_SLOW = 30 * 60_000;       // super-investor flow, earnings calendar, snapshots
+const FANOUT_CONCURRENCY = 6;
+
+/** Same contract as the page's old local safeDiag ({data,error,status}), routed through the shared layer. */
+function homeGet<T = any>(url: string, timeoutMs: number, ttlMs: number, force = false): Promise<FetchJsonResult<T>> {
+  return fetchJson<T>(url, { timeoutMs, ttlMs, force });
+}
 
 const BG = '#0A0E1A';
 const CARD = '#0D1623';
@@ -298,6 +335,9 @@ function decomposeScore(row: any): Record<string, number> {
   };
 }
 
+// zzz855 — India re-score result per source array (rows are never mutated in place).
+const _indiaRescoreMemo = new WeakMap<any[], any[]>();
+
 // PATCH 0606 — synchronous localStorage builder. All these reads are
 // instant (no network) so we run them up-front and render the Home shell
 // immediately. Network fetches populate the secondary sections later
@@ -308,6 +348,10 @@ function buildSyncState(indiaOverride?: any[]): Pick<HomeState, 'tier1' | 'tier2
   }
   let portfolio: PortfolioHolding[] = [];
   try { portfolio = JSON.parse(localStorage.getItem('mc_portfolio_holdings') || '[]') || []; } catch {}
+  // zzz855 — the multi-MB multibagger keys below are parsed ONCE and reused
+  // until the stored string changes (readJsonMemo); the India re-score is
+  // cached per source array. buildSyncState runs on mount and again after
+  // each IDB / server-snapshot restore, so this saves repeated 1 MB parses.
   const cbSet = (() => { try { return getConvictionTickers(); } catch { return new Set<string>(); } })();
   const cbList = (() => { try { return getConvictionList().slice(0, 30); } catch { return []; } })();
   const decisions = readDecisions();
@@ -318,10 +362,13 @@ function buildSyncState(indiaOverride?: any[]): Pick<HomeState, 'tier1' | 'tier2
   // scoring formula. Before this fix, home was reading raw localStorage with
   // old (pre-1101a-h) grades — the user saw Tier 1 INDIA (2) instead of (10).
   const indiaRawSrc: any[] = (indiaOverride && indiaOverride.length) ? indiaOverride : (() => {
-    try { return JSON.parse(localStorage.getItem('mb_excel_scored_v2') || '[]') || []; } catch { return []; }
+    const v = readJsonMemo<any[]>('mb_excel_scored_v2', []);
+    return Array.isArray(v) ? v : [];
   })();
   const indiaRaw: any[] = (() => {
     if (!indiaRawSrc.length) return [];
+    const memo = _indiaRescoreMemo.get(indiaRawSrc);
+    if (memo) return memo;
     try {
       const rescored = indiaRawSrc.map((r: any) => {
         try { return mbScoreIndia(r as MbIndiaRow); } catch { return r; }
@@ -336,6 +383,7 @@ function buildSyncState(indiaOverride?: any[]): Pick<HomeState, 'tier1' | 'tier2
           console.log(`[home] India rescore: ${ranked.length} rows · grades:`, gradeCount);
         }
       } catch {}
+      _indiaRescoreMemo.set(indiaRawSrc, ranked);
       return ranked;
     } catch (e) {
       try { console.warn('[home] India rescore threw, falling back to raw', e); } catch {}
@@ -343,7 +391,8 @@ function buildSyncState(indiaOverride?: any[]): Pick<HomeState, 'tier1' | 'tier2
     }
   })();
   const usaRaw: any[] = (() => {
-    try { return JSON.parse(localStorage.getItem('mb_usa_scored_v1') || '[]') || []; } catch { return []; }
+    const v = readJsonMemo<any[]>('mb_usa_scored_v1', []);
+    return Array.isArray(v) ? v : [];
   })();
   const indiaRows = indiaRaw.map((r: any) => ({ ...r, _market: 'IN' }));
   const usaRows = usaRaw.map((r: any) => ({ ...r, _market: 'US' }));
@@ -470,7 +519,8 @@ function buildSyncState(indiaOverride?: any[]): Pick<HomeState, 'tier1' | 'tier2
   // multibagger Tier 1 because the playbook is different: turnaround =
   // INFLECTION setup, multibagger = sustained quality).
   const turnaroundRaw: any[] = (() => {
-    try { return JSON.parse(localStorage.getItem('mb_turnaround_scored_v1') || '[]') || []; } catch { return []; }
+    const v = readJsonMemo<any[]>('mb_turnaround_scored_v1', []);
+    return Array.isArray(v) ? v : [];
   })();
   // PATCH 0899 — Loosened filter. Previous gate required isBestCandidate=true
   // OR (archetype=TURNAROUND AND totalScore>=60), which excluded every row
@@ -642,10 +692,9 @@ export default function HomeDashboard() {
     try {
       // PATCH 1101v — track ROW COUNT not just byte length so we can compare
       // with Railway's count and prefer the larger dataset.
-      const lsRaw = localStorage.getItem('mb_excel_scored_v2');
-      if (lsRaw) {
-        try { localRowCount = (JSON.parse(lsRaw) as any[])?.length || 0; } catch {}
-      }
+      // zzz855 — memoised parse (shared with buildSyncState) instead of a second 1 MB JSON.parse.
+      const lsRows = readJsonMemo<any[]>('mb_excel_scored_v2', []);
+      localRowCount = Array.isArray(lsRows) ? lsRows.length : 0;
       const req = indexedDB.open('mc-mb', 1);
       req.onsuccess = () => {
         try {
@@ -656,10 +705,10 @@ export default function HomeDashboard() {
             try {
               const raw = g.result as string | undefined;
               if (!raw) return;
-              let idbCount = 0;
-              try { idbCount = (JSON.parse(raw) as any[])?.length || 0; } catch {}
-              if (idbCount > localRowCount) localRowCount = idbCount;
+              // zzz855 — parse once (was parsed twice: once for the count, once for rows).
               const rows = JSON.parse(raw);
+              const idbCount = Array.isArray(rows) ? rows.length : 0;
+              if (idbCount > localRowCount) localRowCount = idbCount;
               if (Array.isArray(rows) && rows.length && alive) {
                 setData((prev: HomeState) => ({ ...prev, ...buildSyncState(rows) }));
               }
@@ -674,7 +723,12 @@ export default function HomeDashboard() {
     // prefer whichever dataset is bigger. Also extended to USA market so a
     // stale localStorage USA dataset (the "VCTR + LPG appearing on home but
     // missing from /multibagger") gets overridden by the current Railway state.
-    setTimeout(() => {
+    // zzz855 — the two snapshot pulls (~1.8 MB together) now start after first
+    // paint (idle callback, ≥ 800 ms so IDB hydration still goes first) and go
+    // through the shared GET layer (deduped; reused for 30 min on SPA re-visits).
+    let cancelIdle: () => void = () => {};
+    const snapTimer = setTimeout(() => { cancelIdle = onIdle(runSnapshotRestore, 4_000); }, 800);
+    function runSnapshotRestore() {
       if (!alive) return;
       try {
         const cid = localStorage.getItem('mb_client_id_v1');
@@ -686,9 +740,29 @@ export default function HomeDashboard() {
         const snapUrl = (market: string) => cid
           ? `/api/v1/multibagger/snapshot?clientId=${encodeURIComponent(cid)}&market=${market}`
           : `/api/v1/multibagger/snapshot?latest=1&market=${market}`;
+        // zzz855 — ask for the tiny `view=meta` first ({meta:{count,bytes,savedAt}}, no
+        // snapshot body). Skip the ~1 MB download only when the server's recorded
+        // count is known (> 0 — the POST stores 0 when the uploader sent none) and
+        // SMALLER than local: the exact case the code below would discard anyway
+        // ("keep local"). Equal/larger/unknown → full fetch, as before, now
+        // revalidated by ETag (cache: 'no-cache' → 304, no body, when unchanged).
+        // A server without view=meta support returns the full payload, used as-is.
+        const fetchSnapshot = async (market: string, localCount: () => number): Promise<any | null> => {
+          const m = await getJson<any>(`${snapUrl(market)}&view=meta`, { timeoutMs: 20_000, ttlMs: TTL_SLOW });
+          if (m && m.ok && typeof m.snapshot === 'string') return m;          // old server ignored view=meta
+          if (m && m.ok && m.view === 'meta') {
+            if (!m.clientId && !m.meta) return null;                          // no snapshot stored for this market
+            const cnt = m.meta?.count;
+            if (typeof cnt === 'number' && cnt > 0 && cnt < localCount()) {
+              if (!cid && m.clientId) { try { localStorage.setItem('mb_client_id_v1', m.clientId); } catch {} }
+              try { console.log(`[home] Railway ${market} has ${cnt} < local ${localCount()}, keeping local (meta)`); } catch {}
+              return null;
+            }
+          }
+          return getJson<any>(snapUrl(market), { timeoutMs: 60_000, ttlMs: TTL_SLOW, cache: 'no-cache' });
+        };
         // ── INDIA ──
-        fetch(snapUrl('IN'))
-          .then(r => r.ok ? r.json() : null)
+        fetchSnapshot('IN', () => localRowCount)
           .then(j => {
             if (!alive || !j || !j.ok || !j.snapshot) return;
             if (!cid && j.clientId) { try { localStorage.setItem('mb_client_id_v1', j.clientId); } catch {} }
@@ -735,12 +809,11 @@ export default function HomeDashboard() {
         // the "Clear All Data" button on /multibagger USA tab.
         let localUsaCount = 0;
         try {
-          const lsUsa = localStorage.getItem('mb_usa_scored_v1');
-          if (lsUsa) { try { localUsaCount = (JSON.parse(lsUsa) as any[])?.length || 0; } catch {} }
+          const lsUsa = readJsonMemo<any[]>('mb_usa_scored_v1', []);
+          localUsaCount = Array.isArray(lsUsa) ? lsUsa.length : 0;
         } catch {}
         try { console.log(`[home] USA local row count: ${localUsaCount}`); } catch {}
-        fetch(snapUrl('USA'))
-          .then(r => r.ok ? r.json() : null)
+        fetchSnapshot('USA', () => localUsaCount)
           .then(j => {
             if (!alive || !j || !j.ok || !j.snapshot) return;
             if (!cid && j.clientId) { try { localStorage.setItem('mb_client_id_v1', j.clientId); } catch {} }
@@ -762,8 +835,8 @@ export default function HomeDashboard() {
           })
           .catch((e) => { try { console.warn('[home] Railway USA fetch failed', e); } catch {} });
       } catch {}
-    }, 800); // Wait 800ms so IDB hydration has a chance first.
-    return () => { alive = false; };
+    }
+    return () => { alive = false; clearTimeout(snapTimer); cancelIdle(); };
   }, []);
   // PATCH 0605 — collapse defaults per institutional review
   // ("hide raw news feeds / low-confidence signals / secondary analytics")
@@ -788,21 +861,20 @@ export default function HomeDashboard() {
       const mins = ist.getUTCHours() * 60 + ist.getUTCMinutes();
       return day >= 1 && day <= 5 && mins >= (9*60+15) && mins <= (15*60+30);
     };
-    let tid: ReturnType<typeof setTimeout>;
-    const schedule = () => {
-      const open = isMarketOpen();
-      const delay = open ? 60_000 : 5 * 60_000; // 60s market hours, 5min after-hours
-      tid = setTimeout(() => {
-        // Don't fire refreshes in hidden/background tabs — multiple open tabs
-        // pile up against the per-IP rate limit and 429 the visible one.
-        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') { schedule(); return; }
-        setRefreshTick(t => t + 1);
-        setLastAutoRefreshAt(Date.now());
-      }, delay);
-    };
-    schedule();
-    return () => clearTimeout(tid);
-  }, [refreshTick]); // re-arms the next tick after each fire
+    // zzz855 — visibility-aware poller (shared helper): 60 s in market hours,
+    // 5 min after-hours, fully paused while the tab is hidden (no timers at
+    // all), resumes with jitter on return. Each tick re-runs the fetch chain,
+    // but every fetch in it goes through the shared GET layer with a TTL —
+    // prices refresh each tick, news ≥ 5 min, slow feeds 10–30 min — so a
+    // tick no longer re-downloads news, feeds and the 40-ticker fan-out.
+    const stop = pollWhenVisible(() => {
+      setRefreshTick(t => t + 1);
+      setLastAutoRefreshAt(Date.now());
+    }, () => (isMarketOpen() ? 60_000 : 5 * 60_000), { jitterMs: 3_000 });
+    return stop;
+  }, []);
+  // zzz855 — set by the manual "🔄 Auto" chip so that one run bypasses the TTL caches.
+  const forceRefreshRef = useRef(false);
 
   // PATCH 1061 — Playbook state-machine counts (HOLD/WATCH/EXIT). Read from
   // localStorage 'mc:playbook:states:v1' (written by /playbook). Shows a chip
@@ -836,22 +908,11 @@ export default function HomeDashboard() {
   // button onClick can invoke it. Self-contained safeDiag so it doesn't
   // depend on the parent useEffect closure.
   const [upcomingRetrying, setUpcomingRetrying] = useState(false);
-  const refetchUpcomingEarnings = useCallback(async () => {
+  const refetchUpcomingEarnings = useCallback(async (force = false) => {
     setUpcomingRetrying(true);
-    const safeDiag = async <T,>(url: string, timeoutMs = 15_000): Promise<{ data: T | null; error?: string; status?: number }> => {
-      try {
-        const ctl = new AbortController();
-        const t = setTimeout(() => ctl.abort(), timeoutMs);
-        const r = await fetch(url, { cache: 'no-store', signal: ctl.signal });
-        clearTimeout(t);
-        if (!r.ok) return { data: null, error: `http_${r.status}`, status: r.status };
-        try { return { data: await r.json() as T, status: r.status }; }
-        catch { return { data: null, error: 'parse' }; }
-      } catch (e: any) {
-        if (e?.name === 'AbortError') return { data: null, error: 'timeout' };
-        return { data: null, error: 'network' };
-      }
-    };
+    // zzz855 — shared GET layer; the calendar changes slowly so it is reused for
+    // 30 min across refresh ticks. Retry passes force=true (bypasses the cache).
+    const safeDiag = <T,>(url: string, timeoutMs = 15_000) => homeGet<T>(url, timeoutMs, TTL_SLOW, force);
     try {
       const now = new Date();
       const currentMonth = now.toISOString().slice(0, 7);
@@ -860,9 +921,9 @@ export default function HomeDashboard() {
         return m.toISOString().slice(0, 7);
       })();
       const [ra, rb, rc] = await Promise.all([
-        safeDiag<any>(`/api/market/earnings?market=india&month=${currentMonth}&_=${Date.now()}`, 28_000),
-        safeDiag<any>(`/api/market/earnings?market=india&month=${nextMonth}&_=${Date.now()}`, 28_000),
-        safeDiag<any>(`/api/v1/calendar?days=14&_=${Date.now()}`, 15_000),
+        safeDiag<any>(`/api/market/earnings?market=india&month=${currentMonth}`, 28_000),
+        safeDiag<any>(`/api/market/earnings?market=india&month=${nextMonth}`, 28_000),
+        safeDiag<any>(`/api/v1/calendar?days=14`, 15_000),
       ]);
       const aData = ra?.data, bData = rb?.data, cData = rc?.data;
       const flatten = (d: any): any[] => {
@@ -925,29 +986,32 @@ export default function HomeDashboard() {
     }
   }, []);
 
+  const firstFetchRunRef = useRef(true);
   useEffect(() => {
     let cancelled = false;
+    let cancelIdle: () => void = () => {};
+    // zzz855 — a manual "🔄 Auto" click bypasses the TTL caches for this one run.
+    const force = forceRefreshRef.current;
+    forceRefreshRef.current = false;
+    const isFirstRun = firstFetchRunRef.current;
+    firstFetchRunRef.current = false;
     (async () => {
+      // zzz855 — first load: let the shell, hero and above-the-fold widgets
+      // paint before this chain (≈20 requests) starts. Refresh ticks run at once.
+      if (isFirstRun) {
+        await new Promise<void>((resolve) => { cancelIdle = onIdle(resolve, 1_200); });
+        if (cancelled) return;
+      }
       // PATCH 0606 — individual section fetches in parallel; each fires its
       // own setState so slow endpoints don't hold up faster ones.
       // PATCH 0618 — captures WHY a fetch failed so we can surface real
       // diagnostics on the home dashboard. Returns [data, errorReason].
       // errorReason values: 'http_404' / 'http_500' / 'timeout' / 'network' / 'parse'.
-      const safeDiag = async <T,>(url: string, timeoutMs = 15_000): Promise<{ data: T | null; error?: string; status?: number }> => {
-        try {
-          const ctl = new AbortController();
-          const t = setTimeout(() => ctl.abort(), timeoutMs);
-          const r = await fetch(url, { cache: 'no-store', signal: ctl.signal });
-          clearTimeout(t);
-          if (!r.ok) return { data: null, error: `http_${r.status}`, status: r.status };
-          try { return { data: await r.json() as T, status: r.status }; }
-          catch { return { data: null, error: 'parse' }; }
-        } catch (e: any) {
-          if (e?.name === 'AbortError') return { data: null, error: 'timeout' };
-          return { data: null, error: 'network' };
-        }
-      };
-      const safe = async <T,>(url: string): Promise<T | null> => (await safeDiag<T>(url)).data;
+      // zzz855 — now routed through the shared GET layer: identical URLs are
+      // deduped (no more `_=${Date.now()}` busters), successful bodies are
+      // reused for `ttlMs` (default: news window, 5 min), failures never cached.
+      const safeDiag = <T,>(url: string, timeoutMs = 15_000, ttlMs = TTL_NEWS) => homeGet<T>(url, timeoutMs, ttlMs, force);
+      const safe = async <T,>(url: string, ttlMs = TTL_NEWS): Promise<T | null> => (await safeDiag<T>(url, 15_000, ttlMs)).data;
 
       // localStorage reads (alerts)
       let alerts: AlertRule[] = [];
@@ -994,7 +1058,7 @@ export default function HomeDashboard() {
       // API has 46 items. Fix: use safeDiag with 20s timeout, smaller limit
       // (40 -> still gets 25 items past filter), and surface the actual error
       // ('timeout' / 'http_500' / 'network') so we never wonder again.
-      safeDiag<any>(`/api/v1/news?limit=40&_=${Date.now()}`, 20_000).then(({ data: j, error, status }) => {
+      safeDiag<any>(`/api/v1/news?limit=40&fields=${HOME_NEWS_FIELDS}`, 20_000, TTL_NEWS).then(({ data: j, error, status }) => {
         if (cancelled) return;
         const raw: NewsItem[] = Array.isArray(j) ? j : (j?.articles || j?.items || []);
         const ageOk = (a: any) => {
@@ -1095,7 +1159,7 @@ export default function HomeDashboard() {
       });
 
       // Bottleneck dashboard
-      safe<any>('/api/v1/news/bottleneck-dashboard').then((j) => {
+      safe<any>('/api/v1/news/bottleneck-dashboard', TTL_FEED).then((j) => {
         if (cancelled) return;
         const bottleneck = ((j?.buckets || []) as BottleneckBucket[]).slice();
         const sevOrder: Record<string, number> = { high: 0, medium: 1, low: 2 };
@@ -1106,29 +1170,22 @@ export default function HomeDashboard() {
       });
 
       // PATCH 0617 — Concall Intelligence summary on Home.
-      // Pulls the same /concall-intel/live-feed used by Rating Actions
-      // (Patch 0599) and surfaces the top 5 most-recent hits with tier.
-      safe<any>(`/api/v1/concall-intel/live-feed?days=14&_=${Date.now()}`).then((j) => {
-        if (cancelled) return;
-        const raw = Array.isArray(j) ? j : (j?.items || j?.articles || j?.results || []);
-        const hits = (raw as any[])
-          .filter((a: any) => a && (a.headline || a.title))
-          .map((a: any) => ({
-            ticker: (a.ticker || a.primary_ticker || a.symbol || '').toString(),
-            company: a.company || a.company_name,
-            headline: a.headline || a.title || '',
-            tier: a.tier || a.investment_tier || a.classification,
-            published_at: a.published_at || a.date,
-          }))
-          .filter((h: any) => h.ticker && h.headline)
-          .slice(0, 8);
-        setData((d) => ({ ...d, concallHits: hits } as any));
-      });
+      // zzz855 — REMOVED the full (non-cacheOnly) live-feed?days=14 call that
+      // fed this panel: it downloaded ~2.5 MB on every load AND every refresh
+      // tick, yet the panel could never render — the feed's payload carries
+      // `filings[]`, while this mapper only looked for items/articles/results,
+      // so concallHits was always []. Behaviour is unchanged (the panel stays
+      // hidden, as before). To revive it, map `filings[]` from the cacheOnly
+      // feed already fetched by the Movers enrichment below.
 
       // PATCH 0621 — Strategic Visibility latest transformational news.
       // PATCH 0644 — bump timeout 18s -> 25s; retry once on first failure.
       const fetchStratVis = async (attempt: number = 0): Promise<void> => {
-        const { data: j } = await safeDiag<any>(`/api/v1/news?transformational=1&window_days=365&limit=8&_=${Date.now()}`, 25_000);
+        // zzz855 — the retry must bypass the cache (an empty-but-OK body would be served again).
+        const url = `/api/v1/news?transformational=1&window_days=365&limit=8`;
+        const { data: j } = attempt > 0
+          ? await homeGet<any>(url, 25_000, TTL_NEWS, true)
+          : await safeDiag<any>(url, 25_000, TTL_NEWS);
         if (cancelled) return;
         const articles = (j?.articles || j?.items || []).slice(0, 6);
         if (articles.length === 0 && attempt < 1) {
@@ -1150,7 +1207,10 @@ export default function HomeDashboard() {
       // can take 25-30s to rebuild the quotes blob; the old 30s timeout dropped
       // the response before moversUpdatedAt got captured, leaving the homepage
       // showing "STALE T-1 close (999m old)" even though /movers was live.
-      safeDiag<any>(`/api/market/quotes?market=india&_=${Date.now()}`, 60_000).then(async ({ data: j }) => {
+      // zzz855 — shared projected India quotes (see HOME_QUOTES_INDIA_URL); the
+      // Portfolio/Pulse/Sector block below and the Daily Signal Inbox join this
+      // same request instead of firing their own.
+      safeDiag<any>(HOME_QUOTES_INDIA_URL, 60_000, TTL_QUOTES).then(async ({ data: j }) => {
         if (cancelled) return;
         if (!j) return; // failed refresh (429/timeout) — keep the last-good movers/sector data instead of wiping it
         // Build the user's universe (UPPER + suffix-stripped tickers).
@@ -1229,8 +1289,9 @@ export default function HomeDashboard() {
         if (missing.length > 0) {
           try {
             const { data: pjson } = await safeDiag<any>(
-              `/api/market/quote?symbols=${encodeURIComponent(missing.join(','))}&_=${Date.now()}`,
-              15_000
+              `/api/market/quote?symbols=${encodeURIComponent(missing.join(','))}`,
+              15_000,
+              TTL_QUOTES,
             );
             universeStocks = (pjson?.stocks || []).filter((s: any) => s?.price > 0);
           } catch { /* Yahoo path will still run from broad endpoint cache */ }
@@ -1286,7 +1347,7 @@ export default function HomeDashboard() {
           .filter((t: string) => t.length > 0)
           .slice(0, 30);
         if (extremeTickers.length > 0) {
-          safeDiag<any>(`/api/market/fundamentals?tickers=${extremeTickers.join(',')}&_=${Date.now()}`, 12_000).then(({ data: f }) => {
+          safeDiag<any>(`/api/market/fundamentals?tickers=${extremeTickers.join(',')}`, 12_000, TTL_FEED).then(({ data: f }) => {
             if (cancelled) return;
             const fundamentals = (f?.fundamentals || {}) as Record<string, any>;
             setData((d) => ({ ...d, moverFundamentals: fundamentals } as any));
@@ -1296,7 +1357,7 @@ export default function HomeDashboard() {
           // GH Actions scrapes Google News + Moneycontrol + Trendlyne + Yahoo
           // hourly during market hours. Surfaces real headline as primary
           // driver when the local engine has 'no confirmed trigger'.
-          safeDiag<any>(`/api/market/mover-reasons?tickers=${extremeTickers.join(',')}&_=${Date.now()}`, 12_000).then(({ data: r }) => {
+          safeDiag<any>(`/api/market/mover-reasons?tickers=${extremeTickers.join(',')}`, 12_000, TTL_NEWS).then(({ data: r }) => {
             if (cancelled) return;
             const reasons = (r?.reasons || {}) as Record<string, any>;
             setData((d) => ({ ...d, moverReasons: reasons } as any));
@@ -1433,9 +1494,10 @@ export default function HomeDashboard() {
             const recentDates = _istLastNWeekdays(5);
 
             const [feedRes, ssRes, ...gradedResults] = await Promise.all([
-              safeDiag<any>('/api/v1/concall-intel/live-feed?days=14&bullishOnly=false&cacheOnly=1', 5_000),
-              safeDiag<any>('/api/v1/special-situations/feed', 12_000),  // PATCH 0823 — was /api/v1/special-situations (404)
-              ...recentDates.map((d) => safeDiag<any>(`/api/v1/earnings/graded?date=${d}`, 12_000)),
+              safeDiag<any>(`/api/v1/concall-intel/live-feed?days=14&bullishOnly=false&cacheOnly=1&fields=${HOME_FILING_FIELDS}`, 5_000, TTL_NEWS),
+              safeDiag<any>('/api/v1/special-situations/feed', 12_000, TTL_FEED),  // PATCH 0823 — was /api/v1/special-situations (404)
+              // zzz855 — same URLs as the Earnings-Today block below → shared, not re-sent.
+              ...recentDates.map((d) => safeDiag<any>(`/api/v1/earnings/graded?date=${d}`, 12_000, TTL_FEED)),
             ]);
             if (cancelled) return;
 
@@ -1651,7 +1713,8 @@ export default function HomeDashboard() {
             try {
               // 1. India multibagger rows have companyName populated from
               //    Screener uploads.
-              const indiaRows = JSON.parse(localStorage.getItem('mb_excel_scored_v2') || '[]');
+              // zzz855 — memoised (was a fresh ~1 MB + ~0.4 MB + ~0.6 MB JSON.parse every refresh tick).
+              const indiaRows = readJsonMemo<any>('mb_excel_scored_v2', []);
               if (Array.isArray(indiaRows)) {
                 for (const r of indiaRows) {
                   const t = (r?.symbol || '').toString().toUpperCase().trim();
@@ -1660,7 +1723,7 @@ export default function HomeDashboard() {
                 }
               }
               // 2. Conviction Beats has companyName too.
-              const cbList = JSON.parse(localStorage.getItem('mc:conviction-beats:v1') || '[]');
+              const cbList = readJsonMemo<any>('mc:conviction-beats:v1', []);
               if (Array.isArray(cbList)) {
                 for (const e of cbList) {
                   const t = (e?.symbol || e?.ticker || '').toString().toUpperCase().trim();
@@ -1669,7 +1732,7 @@ export default function HomeDashboard() {
                 }
               }
               // 3. USA multibagger.
-              const usaRows = JSON.parse(localStorage.getItem('mb_usa_scored_v1') || '[]');
+              const usaRows = readJsonMemo<any>('mb_usa_scored_v1', []);
               if (Array.isArray(usaRows)) {
                 for (const r of usaRows) {
                   const t = (r?.symbol || '').toString().toUpperCase().trim();
@@ -1697,8 +1760,19 @@ export default function HomeDashboard() {
             };
             const NEWS_TOTAL_BUDGET_MS = 8_000;
             const PER_TICKER_TIMEOUT_MS = 5_000;
+            // zzz855 — the per-ticker fan-out (2 requests × ~40 movers = ~80
+            // requests, re-fired on EVERY refresh tick) is now:
+            //   • ordered by |% move| so the biggest movers are looked up first,
+            //   • limited to 3 tickers (= 6 requests) in flight at once,
+            //   • bounded by the same 8 s budget — when it expires, tickers not
+            //     yet STARTED are skipped (never sent), exactly as rows that
+            //     timed out before were left without a news reason,
+            //   • cached 10 min per ticker, so refresh ticks reuse the results.
+            const newsBudgetCtl = new AbortController();
+            const newsOrder = moverTickers.slice().sort((a, b) =>
+              Math.abs(moverInputByTicker.get(b)?.changePercent ?? 0) - Math.abs(moverInputByTicker.get(a)?.changePercent ?? 0));
             const enrichAllNews = (async () => {
-              await Promise.all(moverTickers.map(async (t) => {
+              await mapWithLimit(newsOrder, Math.max(1, Math.floor(FANOUT_CONCURRENCY / 2)), async (t) => {
                 const meta = moverInputByTicker.get(t);
                 // PATCH 0887 — Build the BEST news-search query for this ticker.
                 // Priority: explicit local-name → derived prefix → bare ticker.
@@ -1719,12 +1793,14 @@ export default function HomeDashboard() {
                 const indiaSuffix = indiaQS.toString() ? `?${indiaQS.toString()}` : '';
                 const [stdRes, indiaRes] = await Promise.all([
                   safeDiag<any>(
-                    `/api/v1/news?search=${encodeURIComponent(mainSearch)}&limit=8`,
+                    `/api/v1/news?search=${encodeURIComponent(mainSearch)}&limit=8&fields=${HOME_NEWS_FIELDS}`,
                     PER_TICKER_TIMEOUT_MS,
+                    TTL_FEED,
                   ).catch(() => ({ data: null })),
                   safeDiag<any>(
                     `/api/v1/news-india/${encodeURIComponent(t)}${indiaSuffix}`,
                     PER_TICKER_TIMEOUT_MS,
+                    TTL_FEED,
                   ).catch(() => ({ data: null })),
                 ]);
                 const stdArticles: any[] = Array.isArray(stdRes?.data)
@@ -1748,19 +1824,22 @@ export default function HomeDashboard() {
                   merged.push(a);
                 }
                 if (merged.length > 0) newsByTicker[t] = merged;
-              }));
+              }, { signal: newsBudgetCtl.signal });
             })();
             await Promise.race([
               enrichAllNews,
               new Promise<void>((resolve) => setTimeout(resolve, NEWS_TOTAL_BUDGET_MS)),
             ]);
+            newsBudgetCtl.abort(); // budget spent — don't start the remaining tickers
             if (cancelled) return;
 
             // 5. Fire-and-forget warm: hit live-feed WITHOUT cacheOnly so the
             //    KV cache fills for next load. No await, no block on home.
+            // zzz855 — warmUrl drops the ~2.5 MB body as soon as headers arrive
+            // (the server has already cached its build by then) and fires at
+            // most once per 10 min instead of on every refresh tick.
             if (!feedData?.filings?.length) {
-              fetch('/api/v1/concall-intel/live-feed?days=14&bullishOnly=false', { cache: 'no-store' })
-                .catch(() => {/* fire-and-forget */});
+              warmUrl('/api/v1/concall-intel/live-feed?days=14&bullishOnly=false');
             }
 
             // 6. Run attribution engine — PATCH 0746 uses fireAttribution which
@@ -1791,11 +1870,11 @@ export default function HomeDashboard() {
           .filter((r: any) => r.ticker.length < 40)
           .map((r: any) => ({ ...r, kind: 'flow' as const, investorName: (r.investors || [])[0] }));
 
-        let j: any = await safe<any>(`/api/v1/super-investor-flow?days=60&_=${Date.now()}`);
+        let j: any = await safe<any>(`/api/v1/super-investor-flow?days=60`, TTL_SLOW);
         if (cancelled) return;
         let flow = cleanFlow(j?.rows || []);
         if (flow.length < 3) {
-          j = await safe<any>(`/api/v1/super-investor-flow?days=180&_=${Date.now()}`);
+          j = await safe<any>(`/api/v1/super-investor-flow?days=180`, TTL_SLOW);
           if (cancelled) return;
           flow = cleanFlow(j?.rows || []);
         }
@@ -1838,7 +1917,7 @@ export default function HomeDashboard() {
       // Falls back to broader corporate signals when no own-universe
       // hits, so the panel never goes empty for new users.
       // Region preference: 'India' tagged news first, then anything else.
-      safeDiag<any>(`/api/v1/news?limit=80&importance_min=2&article_type=CORPORATE&_=${Date.now()}`, 18_000).then(({ data: j }) => {
+      safeDiag<any>(`/api/v1/news?limit=80&importance_min=2&article_type=CORPORATE&fields=${HOME_NEWS_FIELDS}`, 18_000, TTL_NEWS).then(({ data: j }) => {
         if (cancelled) return;
         const raw = Array.isArray(j) ? j : (j?.articles || j?.items || []);
         const stripCdata = (s: any) => typeof s === 'string'
@@ -1900,7 +1979,9 @@ export default function HomeDashboard() {
       // all derived from a single quotes fetch which we also use for Movers.
       // The Movers fetch above already runs; we ride on the same /quotes call.
       // PATCH zzz103 — same 30s → 60s bump for portfolio/sector quotes fetch
-      safeDiag<any>(`/api/market/quotes?market=india&_=${Date.now()}`, 60_000).then(({ data: j }) => {
+      // zzz855 — same URL as the Movers fetch above → joins that request (was a
+      // second, cache-busted ~1.16 MB download of the identical universe).
+      safeDiag<any>(HOME_QUOTES_INDIA_URL, 60_000, TTL_QUOTES).then(({ data: j }) => {
         if (cancelled) return;
         const stocks: any[] = j?.stocks || [];
         const byTicker = new Map<string, any>();
@@ -2087,7 +2168,7 @@ export default function HomeDashboard() {
       // PATCH 0775 + 0841 + 0904 — Upcoming Earnings: now delegated to the
       // component-scope `refetchUpcomingEarnings` useCallback so the Retry
       // button can re-invoke it without window.location.reload() (Bug B).
-      refetchUpcomingEarnings();
+      refetchUpcomingEarnings(force);
 
       // PATCH 0773 — Rating Actions + Order Book fetchers DELETED.
       // Home dashboard no longer renders these panels (see render block
@@ -2100,28 +2181,19 @@ export default function HomeDashboard() {
       // dashboard). Sort by tier+score, dedup by ticker, slice to top 8.
       // Label reflects the date range used: 'today' / 'yesterday' / explicit date.
       (async () => {
-        const tradingDays = (() => {
-          const out: string[] = [];
-          const d = new Date();
-          const ist = new Date(d.getTime() + (d.getTimezoneOffset() + 330) * 60_000);
-          // include today as day 0
-          const todayDow = ist.getDay();
-          if (todayDow !== 0 && todayDow !== 6) out.push(ist.toISOString().slice(0, 10));
-          // walk back up to 10 calendar days, collecting up to 2 weekdays
-          for (let i = 0; i < 10 && out.length < 3; i++) {
-            ist.setDate(ist.getDate() - 1);
-            const dow = ist.getDay();
-            if (dow !== 0 && dow !== 6) out.push(ist.toISOString().slice(0, 10));
-          }
-          return out;
-        })();
+        // zzz855 — today (if a weekday) + previous weekdays, 3 in total, via the
+        // canonical IST helper. Same dates the Movers enrichment requests, so
+        // these graded calls are shared instead of sent twice. (The old inline
+        // version took .toISOString() of an IST-shifted local Date, which could
+        // land on the wrong calendar day outside UTC.)
+        const tradingDays = _istLastNWeekdays(3);
 
         // PATCH 0647 — parallelize 3 fetches with 25s timeout each (was 15s
         // sequential = up to 45s total + single failures wiping a whole day).
         // Each individual day uses safeDiag so timeouts don't break the chain.
         const dayResults = await Promise.all(
           tradingDays.map((date) =>
-            safeDiag<any>(`/api/v1/earnings/graded?date=${date}&_=${Date.now()}`, 25_000).then(({ data }) => ({ date, data }))
+            safeDiag<any>(`/api/v1/earnings/graded?date=${date}`, 25_000, TTL_FEED).then(({ data }) => ({ date, data }))
           )
         );
         if (cancelled) return;
@@ -2166,11 +2238,8 @@ export default function HomeDashboard() {
         // today is Saturday/Sunday IST; we shouldn't call Friday's data
         // "today". Compute the actual IST date and compare. If they differ
         // (= weekend or holiday), use the explicit weekday name instead.
-        const actualTodayIst = (() => {
-          const d = new Date();
-          const ist = new Date(d.getTime() + (d.getTimezoneOffset() + 330) * 60_000);
-          return ist.toISOString().slice(0, 10);
-        })();
+        const actualTodayIst = _istToday(); // zzz855 — same IST source as tradingDays
+
         const WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
         const labelForWeekendAware = (d: string) => {
           // When market is closed (today != tradingDays[0]), surface the
@@ -2200,7 +2269,7 @@ export default function HomeDashboard() {
         setNetLoading((n) => ({ ...n, earnings: false }));
       })();
     })();
-    return () => { cancelled = true; };
+    return () => { cancelled = true; cancelIdle(); };
     // PATCH 1057 — re-run the entire fetch chain whenever refreshTick changes
     // (every 60s during market hours, 5min after-hours). Each sub-fetch is
     // independent so partial failures don't break the others; setState is
@@ -2302,19 +2371,29 @@ export default function HomeDashboard() {
       const n = parseFloat(String(v).replace(/[,%]/g, ''));
       return isNaN(n) ? undefined : n;
     };
-    (async () => {
+    // zzz855 — these tiers sit mid-page: start after first paint (idle), fetch
+    // the ~11 CSVs in parallel (≤ 6 at once) instead of one after another, and
+    // let the browser revalidate (`no-cache` → 304 when unchanged) instead of
+    // re-downloading ~400 KB with `no-store` on every visit. Files are still
+    // processed in manifest order, so the first-file-wins dedup is unchanged.
+    const cancelIdle = onIdle(() => { void run(); }, 3_000);
+    const run = async () => {
       try {
+        if (cancelled) return;
         // Fetch manifest to know which CSVs are available today.
-        const m = await fetch('/data/tradingview/manifest.json', { cache: 'no-store' });
+        const m = await fetch('/data/tradingview/manifest.json', { cache: 'no-cache' });
         if (!m.ok) return;
         const manifest = await m.json();
         const files: string[] = (manifest.files || []).filter((f: any) => f.ok).map((f: any) => f.name);
+        const texts = await mapWithLimit(files, FANOUT_CONCURRENCY, async (fname) => {
+          const r = await fetch(`/data/tradingview/${fname}`, { cache: 'no-cache' });
+          return r.ok ? await r.text() : null;
+        });
+        if (cancelled) return;
         // Fetch + concat all CSVs; dedup by ticker.
         const seen = new Map<string, { row: Record<string, string>; ex: string }>();
-        for (const fname of files) {
-          const r = await fetch(`/data/tradingview/${fname}`, { cache: 'no-store' });
-          if (!r.ok) continue;
-          const text = await r.text();
+        for (const text of texts) {
+          if (text == null) continue;
           const lines = text.split('\n').filter(l => l.trim());
           if (lines.length < 2) continue;
           const header = parseCsvLine(lines[0]);
@@ -2386,8 +2465,8 @@ export default function HomeDashboard() {
         setTechTier2India(buildTier('ind'));
         setTechTier3Usa(buildTier('usa'));
       } catch { /* silent — empty state UI handles it */ }
-    })();
-    return () => { cancelled = true; };
+    };
+    return () => { cancelled = true; cancelIdle(); };
   }, []);
 
   // PATCH 1086 — NEW LENS button. Previous implementation chained two
@@ -2563,7 +2642,7 @@ export default function HomeDashboard() {
                 const color = marketOpen ? '#10B981' : '#94A3B8';
                 return (
                   <button
-                    onClick={() => { if (Date.now() - lastAutoRefreshAt < 20_000) return; /* throttle force-refresh: each press fires ~15 API calls and trips the rate limiter */ setRefreshTick(t => t + 1); setLastAutoRefreshAt(Date.now()); }}
+                    onClick={() => { if (Date.now() - lastAutoRefreshAt < 20_000) return; /* throttle force-refresh: each press fires ~15 API calls and trips the rate limiter */ forceRefreshRef.current = true; setRefreshTick(t => t + 1); setLastAutoRefreshAt(Date.now()); }}
                     title={`Auto-refresh every ${cadence} (${marketOpen ? 'market open' : 'market closed'}). Click to force-refresh now.`}
                     style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, background: `${color}15`, border: `1px solid ${color}40`, color, fontWeight: 700, cursor: 'pointer' }}>
                     🔄 Auto · {cadence} · last {sinceLabel}
@@ -3920,7 +3999,7 @@ export default function HomeDashboard() {
               <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-bullish)', letterSpacing: '0.4px' }}>
                 📈 TOP MOVERS · TOP LOSERS
               </span>
-              <button onClick={async () => { try { await Promise.all([fetch('/api/market/quotes?market=india&refresh=1', { cache: 'no-store' }), fetch('/api/market/quotes?market=us&refresh=1', { cache: 'no-store' })]); } catch {} if (typeof window !== 'undefined') window.location.reload(); }} title="Force-refresh movers from the latest NSE close" style={{ fontSize: 10, color: 'var(--mc-warn)', background: 'transparent', border: '1px solid var(--mc-warn)', borderRadius: 4, padding: '1px 6px', cursor: 'pointer', marginRight: 8 }}>🔄 Refresh</button>
+              <button onClick={async () => { try { await Promise.all([fetch('/api/market/quotes?market=india&refresh=1&fields=ticker', { cache: 'no-store' }), fetch('/api/market/quotes?market=us&refresh=1&fields=ticker', { cache: 'no-store' })]); } catch {} if (typeof window !== 'undefined') window.location.reload(); }} title="Force-refresh movers from the latest NSE close" style={{ fontSize: 10, color: 'var(--mc-warn)', background: 'transparent', border: '1px solid var(--mc-warn)', borderRadius: 4, padding: '1px 6px', cursor: 'pointer', marginRight: 8 }}>🔄 Refresh</button>
               <Link href="/movers" title="Home shows YOUR universe (Watchlist + Portfolio + CB) first, then fills with broad-market top movers. The /movers page shows the full NSE universe by raw % move." style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open →</Link>
             </div>
             {/* PATCH 0795 — module-level feed-gap banner (replaces per-row repetition) */}
@@ -4662,7 +4741,7 @@ export default function HomeDashboard() {
                     refetchUpcomingEarnings useCallback so ONLY this panel
                     refreshes instead of doing window.location.reload()
                     (which blew away every other panel's state too). */}
-                <button onClick={() => { refetchUpcomingEarnings(); }} disabled={upcomingRetrying}
+                <button onClick={() => { refetchUpcomingEarnings(true); }} disabled={upcomingRetrying}
                   style={{ marginTop: 8, padding: '4px 10px', fontSize: 10, background: 'transparent', color: upcomingRetrying ? 'var(--mc-text-4)' : 'var(--mc-cyan)', border: `1px solid ${upcomingRetrying ? 'var(--mc-text-4)' : 'var(--mc-cyan)'}`, borderRadius: 4, cursor: upcomingRetrying ? 'wait' : 'pointer' }}>
                   {upcomingRetrying ? '⏳ Retrying…' : '↻ Retry fetch'}
                 </button>
@@ -5319,17 +5398,15 @@ function DailySignalInbox() {
   const [transformSeen, setTransformSeen] = useState<number>(0);
   const [laneStatus, setLaneStatus] = useState<Record<LaneKey, boolean>>({ momentum: false, warrant: false, transform: false, bench: false });
 
-  const load = useCallback(async (force = false) => {
+  // zzz855 — `bypass` = a user click on Refresh/Fresh (skip the client TTL
+  // cache); the first load on mount reuses whatever the page already fetched.
+  const load = useCallback(async (force = false, bypass = false) => {
     setLoading(true);
     // Per-fetch timeout so one slow feed (e.g. a cold PDF-scanning warrant feed)
     // can NEVER stall the whole inbox the way the old Promise.all did.
-    const j = async (url: string, ms = 12000): Promise<any | null> => {
-      const ctl = new AbortController();
-      const t = setTimeout(() => ctl.abort(), ms);
-      try { const r = await fetch(url, { cache: 'no-store', signal: ctl.signal }); if (!r.ok) return null; return await r.json(); }
-      catch { return null; }
-      finally { clearTimeout(t); }
-    };
+    // zzz855 — routed through the shared GET layer (deduped + 10 min TTL).
+    const j = (url: string, ms = 12000, ttlMs = TTL_FEED): Promise<any | null> =>
+      getJson<any>(url, { timeoutMs: ms, ttlMs, force: bypass || force });
     const mergeLane = (lane: InboxSignal['lane'], rows: InboxSignal[], key: LaneKey) => {
       setSignals((prev) => [...prev.filter((s) => s.lane !== lane), ...rows]);
       setLaneStatus((prev) => ({ ...prev, [key]: rows.length > 0 || prev[key] }));
@@ -5379,7 +5456,10 @@ function DailySignalInbox() {
     // price, so the panel actually moves. Snapshot stays as the instant
     // fallback for any name the live feed doesn't cover.
     (async () => {
-      const q = await j('/api/market/quotes?market=india&fields=ticker,price,week52High,changePercent', 12000);
+      // zzz855 — the page-wide shared India quotes request (same URL as the
+      // Movers panel) instead of a separate projected call; it carries
+      // ticker/price/week52High/changePercent among its fields.
+      const q = await j(HOME_QUOTES_INDIA_URL, 60_000, TTL_QUOTES);
       const stocks: any[] = q && Array.isArray(q.stocks) ? q.stocks : [];
       if (!stocks.length) return;
       const live = new Map<string, { price: number; high: number | null; chg: number | null }>();
@@ -5439,9 +5519,8 @@ function DailySignalInbox() {
         const preset = getConvictionList().filter(passesQualityPreset);
         if (!preset.length) return;
         const syms = Array.from(new Set(preset.map((b: any) => String(b.ticker || '').toUpperCase().trim()).filter(Boolean))).slice(0, 24);
-        const r = await fetch(`/api/market/spark?symbols=${encodeURIComponent(syms.join(','))}`, { cache: 'no-store' });
-        if (!r.ok) return;
-        const j = await r.json();
+        const j = await getJson<any>(`/api/market/spark?symbols=${encodeURIComponent(syms.join(','))}`, { timeoutMs: 20_000, ttlMs: TTL_FEED, force: bypass || force });
+        if (!j) return;
         const bySym = new Map<string, any>();
         for (const row of (j?.rows || [])) if (row?.symbol) bySym.set(String(row.symbol), row);
         if (!bySym.size) return;
@@ -5479,7 +5558,9 @@ function DailySignalInbox() {
     // ══ PHASE 2 · NETWORK — each lane fills in independently as it returns ══
     // MOMENTUM = concall score-movers + today's price leaders (needs both).
     Promise.all([
-      j('/api/market/quotes?market=india&limit=40', 9000),
+      // zzz855 — shared India quotes; `limit=40` used to cap gainers at 40 —
+      // applied client-side below so the lane reads exactly the same rows.
+      j(HOME_QUOTES_INDIA_URL, 60_000, TTL_QUOTES).then((q) => (q && Array.isArray(q.gainers) ? { ...q, gainers: q.gainers.slice(0, 40) } : q)),
       j('/api/v1/concall-intel/movers', 10000),
     ]).then(([quotes, movers]) => {
       const rows: InboxSignal[] = []; const seen = new Set<string>();
@@ -5623,8 +5704,8 @@ function DailySignalInbox() {
           )}
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
-          <button onClick={() => load(false)} disabled={loading} style={{ fontSize: 10.5, fontWeight: 800, padding: '4px 10px', borderRadius: 6, cursor: loading ? 'wait' : 'pointer', border: '1px solid rgba(96,165,250,0.4)', background: 'transparent', color: '#60A5FA' }}>{loading ? '⏳' : '↻ Refresh'}</button>
-          <button onClick={() => load(true)} disabled={loading} title="Force a fresh server scan (bypasses the cache) — takes ~30-50s" style={{ fontSize: 10.5, fontWeight: 800, padding: '4px 10px', borderRadius: 6, cursor: loading ? 'wait' : 'pointer', border: '1px solid rgba(16,185,129,0.5)', background: 'transparent', color: '#10B981' }}>{loading ? '⏳' : '↻ Fresh'}</button>
+          <button onClick={() => load(false, true)} disabled={loading} style={{ fontSize: 10.5, fontWeight: 800, padding: '4px 10px', borderRadius: 6, cursor: loading ? 'wait' : 'pointer', border: '1px solid rgba(96,165,250,0.4)', background: 'transparent', color: '#60A5FA' }}>{loading ? '⏳' : '↻ Refresh'}</button>
+          <button onClick={() => load(true, true)} disabled={loading} title="Force a fresh server scan (bypasses the cache) — takes ~30-50s" style={{ fontSize: 10.5, fontWeight: 800, padding: '4px 10px', borderRadius: 6, cursor: loading ? 'wait' : 'pointer', border: '1px solid rgba(16,185,129,0.5)', background: 'transparent', color: '#10B981' }}>{loading ? '⏳' : '↻ Fresh'}</button>
           <button onClick={() => setCollapsed((c) => !c)} style={{ fontSize: 10.5, fontWeight: 800, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', border: '1px solid var(--mc-border-1)', background: 'transparent', color: DIM }}>{collapsed ? 'Show' : 'Hide'}</button>
         </div>
       </div>
@@ -5770,27 +5851,27 @@ interface FeedHealth {
 
 function PipelineHealth() {
   const [feeds, setFeeds] = useState<FeedHealth[]>([]);
-  const [loading, setLoading] = useState(true);
+  // zzz855 — collapsed by default, so it no longer probes 8 feeds (incl. the
+  // ~830 KB bench and the unparameterised /api/v1/news) on every home load.
+  // It checks on first open; ↻ re-checks. Until then the header says so.
+  const [loading, setLoading] = useState(false);
   const [collapsed, setCollapsed] = useState(true);
   const [checkedAt, setCheckedAt] = useState<number | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (bypass = false) => {
     setLoading(true);
     const now = Date.now();
-    const j = async (url: string): Promise<any | null> => {
-      try { const r = await fetch(url, { cache: 'no-store' }); if (!r.ok) return null; return await r.json(); }
-      catch { return null; }
-    };
+    const j = (url: string): Promise<any | null> => getJson<any>(url, { timeoutMs: 30_000, ttlMs: TTL_NEWS, force: bypass });
     const today = new Date().toISOString().slice(0, 10);
     const [graded, bench, live, movers, warrant, keyword, tv, news] = await Promise.all([
       j(`/api/v1/earnings/graded?date=${today}`),
       j('/api/v1/bench'),
-      j('/api/v1/concall-intel/live-feed?days=2'),
+      j('/api/v1/concall-intel/live-feed?days=2&view=summary'), // reads generated_at + counts only
       j('/api/v1/concall-intel/movers'),
       j('/api/v1/concall-intel/warrant-feed?days=7'),
       j('/api/v1/concall-intel/keyword-watch?days=14'),
       j('/data/tradingview/manifest.json'),
-      j('/api/v1/news'),
+      j('/api/v1/news?fields=published_at'), // only the newest published_at is read
     ]);
 
     const parse = (v: any): number | null => {
@@ -5825,7 +5906,8 @@ function PipelineHealth() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  // zzz855 — first expand triggers the first check (was: on mount).
+  useEffect(() => { if (!collapsed && checkedAt == null && !loading) load(); }, [collapsed, checkedAt, loading, load]);
 
   const STATUS_META: Record<FeedHealth['status'], { c: string; dot: string; label: string }> = {
     FRESH: { c: '#10B981', dot: '🟢', label: 'Fresh' },
@@ -5850,6 +5932,8 @@ function PipelineHealth() {
           <span style={{ fontSize: 12, fontWeight: 900, color: '#94A3B8', letterSpacing: '0.5px' }}>🩺 PIPELINE HEALTH</span>
           {loading ? (
             <span style={{ fontSize: 11, color: DIM }}>checking feeds…</span>
+          ) : checkedAt == null ? (
+            <span style={{ fontSize: 11, color: DIM }}>not checked yet — Show to check</span>
           ) : (
             <span style={{ fontSize: 11, fontWeight: 800, color: summaryColor }}>
               {problems === 0 ? 'all feeds healthy' : `${problems} feed${problems === 1 ? '' : 's'} need attention`}
@@ -5858,7 +5942,7 @@ function PipelineHealth() {
           {checkedAt && !loading && <span style={{ fontSize: 9.5, color: DIM }}>checked {agoStr(checkedAt)}</span>}
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
-          <button onClick={load} disabled={loading} style={{ fontSize: 10.5, fontWeight: 800, padding: '4px 10px', borderRadius: 6, cursor: loading ? 'wait' : 'pointer', border: '1px solid rgba(148,163,184,0.4)', background: 'transparent', color: '#94A3B8' }}>{loading ? '⏳' : '↻'}</button>
+          <button onClick={() => load(true)} disabled={loading} style={{ fontSize: 10.5, fontWeight: 800, padding: '4px 10px', borderRadius: 6, cursor: loading ? 'wait' : 'pointer', border: '1px solid rgba(148,163,184,0.4)', background: 'transparent', color: '#94A3B8' }}>{loading ? '⏳' : '↻'}</button>
           <button onClick={() => setCollapsed((c) => !c)} style={{ fontSize: 10.5, fontWeight: 800, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', border: '1px solid var(--mc-border-1)', background: 'transparent', color: DIM }}>{collapsed ? 'Show' : 'Hide'}</button>
         </div>
       </div>

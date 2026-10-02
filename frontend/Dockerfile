@@ -19,4 +19,8 @@ EXPOSE 3000
 
 ENV NODE_ENV=production
 ENV PORT=3000
-CMD ["npm", "run", "start"]
+# zzz855 — run the custom server (server.js: Next + br/gzip compression)
+# directly as PID 1 so Railway's SIGTERM reaches it and in-flight requests
+# finish. Same thing `npm run start` runs; npm -> sh -> node does not pass
+# SIGTERM on to node.
+CMD ["node", "server.js"]

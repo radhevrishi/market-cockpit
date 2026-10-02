@@ -90,9 +90,20 @@ self.addEventListener('install', function (event) {
   // reload") so a page is never swapped out from under the owner.
 });
 
+// zzz855 — navigation preload: the browser starts the page request while the
+// worker is still waking up, instead of after. Pages stay network-first and are
+// still never stored; this only removes the worker's start-up delay.
+function enableNavigationPreload() {
+  try {
+    var np = self.registration && self.registration.navigationPreload;
+    if (np && typeof np.enable === 'function') return np.enable().catch(function () { /* unsupported */ });
+  } catch (e) { /* unsupported */ }
+  return Promise.resolve();
+}
+
 self.addEventListener('activate', function (event) {
   event.waitUntil(
-    caches.keys().then(function (names) {
+    enableNavigationPreload().then(function () { return caches.keys(); }).then(function (names) {
       return Promise.all(names.map(function (n) {
         if (n.indexOf(PREFIX) === 0 && n !== STATIC_CACHE && n !== OFFLINE_CACHE) return caches.delete(n);
       }));
@@ -127,8 +138,11 @@ self.addEventListener('fetch', function (event) {
 
   if (route === 'navigate') {
     // Network first, never stored (pages hold private data).
+    // Use the preloaded response when the browser made one (zzz855), else fetch.
+    var preload = event.preloadResponse ? Promise.resolve(event.preloadResponse).catch(function () { return null; }) : Promise.resolve(null);
     event.respondWith(
-      fetch(req).catch(function () { return offlineResponse(); })
+      preload.then(function (pre) { return pre || fetch(req); })
+        .catch(function () { return offlineResponse(); })
     );
     return;
   }

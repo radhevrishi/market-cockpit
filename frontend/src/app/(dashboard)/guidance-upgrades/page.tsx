@@ -21,6 +21,7 @@ import { GgDetail } from '@/components/growth-guidance/GgDetail';
 import { PRINT_CSS, R, box } from '@/components/guidance-upgrades/gu-tokens';
 import { btn } from '@/components/guidance-upgrades/GuBits';
 import { splitAudit } from '@/components/guidance-upgrades/gu-ui';
+import { CappedList } from '@/components/guidance-upgrades/GuMore';
 
 export default function GuidanceUpgradesPage() {
   const [window_, setWindow] = useState<GuWindow>('7D');
@@ -55,10 +56,10 @@ export default function GuidanceUpgradesPage() {
   useEffect(() => {
     try { const id = new URLSearchParams(window.location.search).get('id'); if (id) setOpenId(id); } catch { /* no id */ }
   }, []);
-  const select = (id: string | null) => {
+  const select = useCallback((id: string | null) => {
     setOpenId(id);
     try { const u = new URL(window.location.href); if (id) u.searchParams.set('id', id); else u.searchParams.delete('id'); window.history.replaceState(null, '', u.toString()); } catch { /* cosmetic */ }
-  };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -75,7 +76,10 @@ export default function GuidanceUpgradesPage() {
   const filtered = useMemo(() => applyFilters(events, scope, metric), [events, scope, metric]);
   const { main: shown, audit: auditList } = useMemo(() => splitAudit(filtered), [filtered]);
   const { today: todayList, rest: restList } = useMemo(() => splitToday(shown, now), [shown, now]);
-  const open = openId ? events.find((e) => e.guidance_event_id === openId) || null : null;
+  const open = useMemo(() => (openId ? events.find((e) => e.guidance_event_id === openId) || null : null), [openId, events]);
+  const eventCounts = useMemo(() => ({ IN: events.filter((e) => e.market === 'IN').length, US: events.filter((e) => e.market === 'US').length }), [events]);
+  // zzz855: a window can hold hundreds of events. Each list renders 30 cards, then "Show N more"; every count above comes from the full list.
+  const card = useCallback((e: (typeof events)[number]) => <GuCard key={e.guidance_event_id} e={e} onOpen={select} now={now} />, [select, now]);
 
   return (
     <div className="gu-page" style={{ color: R.text, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -109,18 +113,18 @@ export default function GuidanceUpgradesPage() {
         {todayFirst && todayList.length > 0 && (
           <>
             <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 0.4, color: R.dim }}>TODAY</div>
-            {todayList.map((e) => <GuCard key={e.guidance_event_id} e={e} onOpen={select} now={now} />)}
+            <CappedList key={`today-${window_}-${scope}-${metric}`} items={todayList} render={card} color={R.dim} />
             {restList.length > 0 && <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 0.4, color: R.dim }}>EARLIER IN THIS WINDOW</div>}
-            {restList.map((e) => <GuCard key={e.guidance_event_id} e={e} onOpen={select} now={now} />)}
+            <CappedList key={`rest-${window_}-${scope}-${metric}`} items={restList} render={card} color={R.dim} />
           </>
         )}
-        {!(todayFirst && todayList.length > 0) && shown.map((e) => <GuCard key={e.guidance_event_id} e={e} onOpen={select} now={now} />)}
+        {!(todayFirst && todayList.length > 0) && <CappedList key={`all-${window_}-${scope}-${metric}`} items={shown} render={card} color={R.dim} />}
       </div>
       <GuAuditArea events={auditList} onOpen={select} now={now} />
       {/* zzz854: items that are not event cards, each with its reason; then the AI verification state (never silent) */}
       <GuReviewQueue items={data?.reviewQueue} count={data?.reviewQueueCount} />
       <GuVerificationBlock data={data as unknown as Parameters<typeof GuVerificationBlock>[0]['data']} />
-      <GuCoverage coverage={data?.coverage} queue={data?.queue} invariantViolations={data?.invariantViolations} unresolved={unresolvedCount(data?.unresolved)} scan={data?.scan} now={now} window={window_} byMarket={data?.freshness.byMarket} eventCounts={{ IN: events.filter((e) => e.market === 'IN').length, US: events.filter((e) => e.market === 'US').length }} />
+      <GuCoverage coverage={data?.coverage} queue={data?.queue} invariantViolations={data?.invariantViolations} unresolved={unresolvedCount(data?.unresolved)} scan={data?.scan} now={now} window={window_} byMarket={data?.freshness.byMarket} eventCounts={eventCounts} />
       {!data?.scan && data?.freshness.note && <div style={{ fontSize: 12, color: R.dim }}>{data.freshness.note}</div>}
       <div style={{ fontSize: 11, color: R.faint }}>Company data only. Not investment advice. Prices are context here, never the reason.</div>
       {ggOpen && <GgDetail c={ggOpen} onClose={() => setGgOpen(null)} unverified={ggOpen.verification === 'SECONDARY_ONLY' || ggOpen.verification === 'UNVERIFIED'} />}
