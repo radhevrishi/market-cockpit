@@ -4,6 +4,7 @@
 // (its own verbatim statement, or its stated prior and new growth); nothing is calculated or invented here.
 // Provenance stays honest: the record's own verification tier is carried, and a media-only record is never promoted to VERIFIED.
 // Pure and read-only. The universe lib/service are only READ (types here; the loader imports them lazily and fails to "no enrichment").
+import { classifyGuidanceChange, eventTypeOfStatus } from './guidance-semantics';
 import type { GuCandidate, GuEventV2, GuMetric } from './guidance-upgrades-types';
 import type { GuSkeleton, GuExtra } from './guidance-upgrades';
 import { extractGuidance } from './guidance-upgrades';
@@ -155,8 +156,14 @@ export function eventStatusesOf(events: readonly GuidanceEvent[]): GuEventStatus
       const per = ch.after?.period && ch.after.period !== 'UNSTATED' ? normPeriod(ch.after.period) : 'UNSTATED';
       let st: GuEventStatusKind = v.status;
       if (st === 'MIXED' || st === 'RAISED') { if (ch.direction === 'DOWN' && ch.before) st = 'LOWERED'; else if (ch.direction === 'FLAT' && ch.before) st = 'REITERATED'; }
+      // zzz860: the NUMBERS decide the type of change (low end and high end separately), so a raised midpoint with a cut top end is a RANGE_RESTRUCTURE, never a clean raise
+      let cls = null as ReturnType<typeof classifyGuidanceChange> | null;
+      if (ch.before && ch.after && (ch.before.low != null || ch.before.high != null) && ch.after.low != null && (ch.before.unit || '') === (ch.after.unit || '') && (!!ch.before.isGrowthRate === !!ch.after.isGrowthRate)) {
+        cls = classifyGuidanceChange({ text: v.status === 'INVALID' ? e.whyNow : null, company: e.company, metric, period: per, curr: { low: ch.after.low, high: ch.after.high }, prev: { low: ch.before.low, high: ch.before.high, metric, period: per } });
+        if (cls.comparable) { if (cls.type === 'RANGE_RESTRUCTURE' && (st === 'RAISED' || st === 'LOWERED')) st = 'MIXED'; else if (cls.type === 'GUIDANCE_LOWERED' && (st === 'MIXED' || st === 'RAISED')) st = 'LOWERED'; }
+      }
       const b = ptText(ch.before), a = ptText(ch.after);
-      out.push({ market: e.market, ticker: String(e.ticker).toUpperCase(), company: e.company, metric, period: per, date: e.announcement_date.slice(0, 10), status: st,
+      out.push({ eventType: eventTypeOfStatus(st, v.reason), market: e.market, ticker: String(e.ticker).toUpperCase(), company: e.company, metric, period: per, date: e.announcement_date.slice(0, 10), status: st,
         verified: e.verification === 'VERIFIED' && (st === 'INVALID' || !!e.primaryAvailable),
         label: STATUS_LABEL[st], display: b && a ? `${b} → ${a}` : a, sourceName: primary?.name ?? null, sourceUrl: e.primarySourceUrl ?? primary?.url ?? null, eventId: e.guidance_event_id ?? null, reason: v.reason });
     }

@@ -53,7 +53,7 @@ describe('sections and cohorts', () => {
     const out = html(React.createElement(GuGroupList, { cohorts: sectionRows(groups(), 'active', 'ALL'), emptyText: 'none' }));
     assert.match(out, /Annual \(one year\)/); assert.match(out, /Multi-year CAGR/); assert.match(out, /Quarterly/);
     assert.ok(out.indexOf('Annual (one year)') < out.indexOf('Multi-year CAGR') && out.indexOf('Multi-year CAGR') < out.indexOf('Quarterly'));
-    assert.match(out, /stated by company/);
+    assert.match(out, /primary source not yet verified/);   // zzz860: this fixture row carries no verification status, so it is never worded as 'company stated'
     assert.match(html(React.createElement(GuGroupList, { cohorts: sectionRows(undefined, 'active', 'ALL'), emptyText: 'No rows here' })), /No rows here/);
   });
 });
@@ -118,7 +118,7 @@ describe('growth basis', () => {
     assert.equal(t.detail, '₹210–225 Cr vs ₹108.23 Cr');
   });
   test('stated, implied, unknown never invent a number', () => {
-    assert.equal(basisText({ short: '+60%', growthType: 'EXPLICIT', basisLabel: 'stated by company' }).line, '+60% stated by company');
+    assert.equal(basisText({ short: '+60%', growthType: 'EXPLICIT', verificationStatus: 'primary_verified' }).line, '+60% · Company stated');   // zzz860
     assert.match(basisText({ short: '', growthType: 'IMPLIED', basisLabel: 'implied; no stated % and no sourced base' }).line, /^Unknown \(implied/);
     assert.equal(basisText({ growthType: 'UNKNOWN', basisLabel: 'no % stated' }).line, 'Unknown · no % stated');
   });

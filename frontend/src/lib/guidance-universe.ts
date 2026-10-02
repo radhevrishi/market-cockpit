@@ -26,6 +26,7 @@ import {
 } from './guidance-universe-integrity';
 export { normPeriod, amountText, pctText, PLAUSIBLE_REVENUE_GROWTH_PCT, REPORTING_LAG_DAYS, REGRESSION_TOLERANCE_PP, PRIOR_NEIGHBOURHOOD_PP };
 import { buildCompanyIndex, normCompanyName } from './guidance-upgrades-candidates';
+import { freshnessCounts, FRESHNESS_RULE, calculationTypeOf, verificationStatusOf, guidanceWording, freshnessOf, classifyGuidanceChange, type GuCalculationType, type GuVerificationStatus, type GuFreshnessTier, type GuEventType } from './guidance-semantics';
 import { NSE_TICKER_NAMES } from './nse-ticker-names';
 import { endOfPeriodLabel, qualityOf, revisionOf, type GgStoredEntry } from './growth-guidance';
 import type { ExtractedGuidance, GuidanceExtractResult, GuidanceMetricX } from './guidance-docs-types';
@@ -548,6 +549,11 @@ export interface GuPoint {
   // ── zzz854 (additive) ──
   /** ACTIVE (verified / derived / partial with the company document read) | REVIEW | CLAIMS (awaiting verification; never ranked in Active) */ listBucket: GuListBucket;
   /** why the point is a claim awaiting verification (secondary source only, document not read, last verified unknown ...), else null */ awaitingVerificationReason: string | null;
+  /** zzz860: HOW the number was got (explicit / derived / implied / amount_only / range), kept apart from verificationStatus */ calculationType: GuCalculationType;
+  /** zzz860: HOW SURE we are (unverified / secondary_only / primary_verified / partly_verified / contradicted / stale) */ verificationStatus: GuVerificationStatus;
+  /** zzz860: one freshness rule for every badge, count and list */ freshness: GuFreshnessTier;
+  /** zzz860: the sentence that says where the figure comes from ('Company stated' only when the company's own document was read) */ wording: string;
+  /** zzz860: what a change is (set only when an earlier figure for the same company + metric + period + basis exists) */ eventType: GuEventType | null;
   /** set when a newer primary-source event disagrees with this point (the event wins) */ eventOverride: GuEventOverride | null;
   /** the newest event (Layer B) for the same company + metric + period, verified or not */ latestEvent: GuEventStatus | null;
 }
@@ -573,6 +579,7 @@ export interface GuUniverseRecordX extends GuUniverseRecord {
   /** empty for a default-view record; for a review-queue record the reasons it is there (plus the informational ones) */ reviewReasons: string[]; reviewReasonCodes: string[]; inReviewQueue: boolean;
   /** informational notes that do NOT keep a record out of the default view (secondary-only, primary not found, stale verification ...) */ caveats: string[];
   /** zzz854: which list this record object belongs to (a company with points in two lists has one record object per list) */ listBucket: GuListBucket;
+  /** zzz860: from the headline point */ calculationType: GuCalculationType; verificationStatus: GuVerificationStatus; freshness: GuFreshnessTier; wording: string;
   /** zzz854: headline point's event override / newest matching event (see GuPoint) */ eventOverride: GuEventOverride | null; latestEvent: GuEventStatus | null;
 }
 export interface GuInactiveRecord {
@@ -828,6 +835,12 @@ function pointOf(it: Item, history: Prior[], ps: GuPeriodInfo, x: PointCtx): GuP
     : null;
   if (gate) rf('AWAITING_VERIFICATION', gate, true);
   const listBucket: GuListBucket = gate ? 'CLAIMS' : rflags.some((r) => r.blocks) ? 'REVIEW' : 'ACTIVE';
+  // ── zzz860: calculation type apart from verification status; wording; event type of the change against the earlier version ──
+  const calcType = calculationTypeOf({ growthType, isRange: (low != null && high != null && low !== high) || open, hasPercent: low != null });
+  const verStatus = verificationStatusOf({ primaryRead: read && !gate, tier, state: vs.state, contradicted: evx.override?.code === 'EVENT_CONFLICT', ageDays: ago, legacy: it.verification });
+  const prevVer = x.versions.length > 1 ? x.versions[x.versions.length - 2] : null;
+  const changeType: GuEventType | null = prevVer && (prevVer.low != null || prevVer.high != null) && low != null
+    ? classifyGuidanceChange({ text: it.statement, company: it.company, metric: it.metric, period: it.period, curr: { low, high: open ? null : (high ?? low) }, prev: { low: prevVer.low ?? null, high: prevVer.high ?? prevVer.low ?? null, metric: it.metric, period: it.period } }).type : null;
   const ver: GuVersionIn[] = x.versions.length ? x.versions : [versionOfItem(it)];
   const hist = buildHistory(ver, x.lifecycle);
   const lastStep = hist[hist.length - 1];
@@ -852,6 +865,7 @@ function pointOf(it: Item, history: Prior[], ps: GuPeriodInfo, x: PointCtx): GuP
     lastVerified, lastVerifiedDaysAgo: ago, staleVerification: isStale(ago),
     sources: x.sources, sourceConflict: x.conflict, primaryValue: x.primaryValue, mediaClaim: x.mediaClaim, reviewReasons: rflags, inDefaultView: listBucket === 'ACTIVE',
     listBucket, awaitingVerificationReason: gate, eventOverride: evx.override, latestEvent: evx.latest,
+    calculationType: calcType, verificationStatus: verStatus, freshness: freshnessOf(ago).tier, wording: guidanceWording(verStatus, calcType), eventType: changeType,
   };
 }
 const fmtPrior = (p: Prior) => { const pc = p.low == null ? null : pctText(p.low, p.high === p.low ? null : p.high, false); return p.abs ? `${amountText(p.abs)}${pc ? ` (about ${pc})` : ''}` : pc ?? 'no %'; };
@@ -1034,6 +1048,7 @@ export function buildUniverse(live: GgCompany[], ledgerRows: Array<{ market: 'IN
       reviewReasons: blockingAll ? [] : allReasons.map((r) => r.text), reviewReasonCodes: blockingAll ? [] : allReasons.map((r) => r.code), inReviewQueue: !blockingAll, caveats,
       listBucket: pts.every((p) => p.pt.listBucket === 'ACTIVE') ? 'ACTIVE' : pts.every((p) => p.pt.listBucket === 'CLAIMS') ? 'CLAIMS' : 'REVIEW',
       eventOverride: hp.eventOverride, latestEvent: hp.latestEvent,
+      calculationType: hp.calculationType, verificationStatus: hp.verificationStatus, freshness: hp.freshness, wording: hp.wording,
     };
   };
   const cmpRec = (a: GuUniverseRecordX, b: GuUniverseRecordX) => (a.record.market === b.record.market ? 0 : a.record.market === 'IN' ? -1 : 1) || (b.points[0].compareValue ?? -1) - (a.points[0].compareValue ?? -1) || a.record.company.localeCompare(b.record.company);
@@ -1139,6 +1154,7 @@ function shortGrowth(p: GuPoint): string {
 const hgMetricX = (p: GuPoint): GuHgMetricX => ({
   metric: p.metric, metricFamily: p.metricFamily, sourceMetricLabel: p.sourceMetricLabel, display: p.display, short: shortGrowth(p), compareValue: p.compareValue as number, period: p.period, periodNormalized: p.periodNormalized,
   verificationState: p.verificationState, growthType: p.growthType, guidanceType: p.guidanceType, basisLabel: p.basisLabel, headlineBasis: p.headlineBasis, revisionVsPriorGuidance: p.revisionVsPriorGuidance?.display ?? null, sourceConflict: p.sourceConflict,
+  calculationType: p.calculationType, verificationStatus: p.verificationStatus, wording: p.wording, freshness: p.freshness, lastVerifiedDaysAgo: p.lastVerifiedDaysAgo,
 });
 /**
  * zzz853: the high-growth rows GROUPED, never one mixed ranking. A point qualifies when it is management guidance, ACTIVE, has a CONFIRMED period, is not flagged / proxy,
@@ -1194,7 +1210,7 @@ export interface GuSummaryIntegrity {
   /** zzz853: grouped high-growth rows (cohort x trust). The flat `highGrowth` list above is kept as it was. */ highGrowthGroups: GuHighGrowthGroups;
   /** zzz853: record counts by verification state, computed from the SAME records as every other number here */ counts: GuStateCounts;
   /** the same split by point (one record can carry several metrics) */ pointCounts: GuStateCounts;
-  reviewQueueCount: number; reviewReasonCounts: Record<string, number>; staleVerificationCount: number; sourceConflictCount: number;
+  reviewQueueCount: number; reviewReasonCounts: Record<string, number>; /** zzz860: the one freshness rule: counts of the Active records by tier */ freshness: Record<GuFreshnessTier, number>; freshnessRule: string; staleVerificationCount: number; sourceConflictCount: number;
   /** auditable expiry: how many records left the active universe and why */ expiry: GuExpirySummary;
   /** zzz854: claims awaiting verification (never counted in Active) */ claimsAwaitingCount: number;
   /** zzz854: every header number with the equation it comes from (one filtered set per list) */ countEquations: GuCountEquations;
@@ -1246,6 +1262,7 @@ export function summarize(records: GuUniverseRecordX[], now: Date, threshold = H
     highGrowthGroups: groups, claimsAwaitingCount: claims.length, countEquations: countEquationsOf(records, groups, reviewQueue, claims),
     counts: stateCounts(records.map((r) => r.verificationState)), pointCounts: stateCounts(allPoints.map((p) => p.verificationState)),
     reviewQueueCount: reviewQueue.length, reviewReasonCounts: reasonCounts,
+    freshness: freshnessCounts(records.map((r) => r.lastVerifiedDaysAgo)), freshnessRule: FRESHNESS_RULE,
     staleVerificationCount: records.filter((r) => r.staleVerification).length, sourceConflictCount: records.filter((r) => r.sourceConflict).length,
     expiry: { expired: reasonsOf('EXPIRED'), superseded: reasonsOf('SUPERSEDED'), withdrawn: reasonsOf('WITHDRAWN'), total: inactive.length, reasons: reasonList },
   };

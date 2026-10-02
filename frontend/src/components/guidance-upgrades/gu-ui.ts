@@ -9,6 +9,8 @@ import type { GuUniverseRecord } from '../../lib/guidance-universe-types';
 import type { GuUniverseRecordX } from '../../lib/guidance-universe';
 import { hasRealRaise, isReiteration, eventLabelText, fmtBeforeAfter, METRIC_LABEL, PRIMARY_SOURCE_STATE_LABEL, REVIEW_STATUS_LABEL, TAXONOMY_LABEL, pipelineCountsLine, primaryStateLine, reviewItemLine, stageOf, STAGE_ORDER } from '../../lib/guidance-upgrades-format';
 import type { GuStage } from '../../lib/guidance-upgrades-types';
+import { AGING_MAX_DAYS } from '../../lib/guidance-config';
+import { freshnessOf, guidanceWording, type GuVerificationStatus } from '../../lib/guidance-semantics';
 
 export const UNKNOWN = 'Unknown';
 
@@ -192,7 +194,7 @@ export function revisionShort(display: string | null | undefined): string | null
   const signed = /^[+-]/.test(num) ? num : `${/^lowered/i.test(m[1]) ? '-' : '+'}${num}`;
   return `${signed}${m[3] === 'pp' ? ' pp' : '%'} vs prior guidance`;
 }
-interface BasisIn { short?: string | null; display?: string | null; growthType?: string | null; basisLabel?: string | null; revisionVsPriorGuidance?: string | { display?: string | null } | null }
+interface BasisIn { /** zzz860: verification status of the figure; decides whether 'Company stated' may be used */ verificationStatus?: string | null; calculationType?: string | null; short?: string | null; display?: string | null; growthType?: string | null; basisLabel?: string | null; revisionVsPriorGuidance?: string | { display?: string | null } | null }
 /** Basis text for one metric. Derived growth: '+94% vs FY26 actual (derived)'; when a prior-guidance revision also exists it is added: '... · +20.8% vs prior guidance'. */
 export function basisText(m: BasisIn): BasisText {
   const gt = String(m.growthType || '').toUpperCase();
@@ -207,14 +209,16 @@ export function basisText(m: BasisIn): BasisText {
   } else if (gt === 'IMPLIED') {
     main = `${base || UNKNOWN} ${m.basisLabel ? `(${m.basisLabel})` : '(implied, base not sourced)'}`.trim();
   } else if (gt === 'EXPLICIT') {
-    main = `${base || UNKNOWN} stated by company`;
+    // zzz860: 'Company stated' only when the company's own document was read; a media figure says who reports it
+    main = `${base || UNKNOWN} · ${guidanceWording(m.verificationStatus as GuVerificationStatus | null, 'explicit')}`;
   } else {
     main = `${base || UNKNOWN}${m.basisLabel ? ` · ${m.basisLabel}` : ''}`;
   }
+  if (gt !== 'EXPLICIT' && m.verificationStatus && gt) { const w = guidanceWording(m.verificationStatus as GuVerificationStatus, gt === 'DERIVED' ? 'derived' : gt === 'IMPLIED' ? 'implied' : 'amount_only'); detail = detail ? `${detail}. ${w}` : w; }
   return { main, detail, revision, line: revision ? `${main} · ${revision}` : main };
 }
 /** Basis for a whole universe record: growth vs prior-year actual AND the revision vs prior guidance, both when both exist. */
-export function recordBasis(r: { growthVsPriorYear?: { display?: string | null; type?: string | null; baseLabel?: string | null } | null; revisionVsPriorGuidance?: { display?: string | null } | null; basisLabel?: string | null; growthType?: string | null; display?: string | null } | null | undefined): BasisText | null {
+export function recordBasis(r: { verificationStatus?: string | null; growthVsPriorYear?: { display?: string | null; type?: string | null; baseLabel?: string | null } | null; revisionVsPriorGuidance?: { display?: string | null } | null; basisLabel?: string | null; growthType?: string | null; display?: string | null } | null | undefined): BasisText | null {
   if (!r) return null;
   const g = r.growthVsPriorYear;
   const revision = revisionShort(r.revisionVsPriorGuidance?.display);
@@ -222,22 +226,24 @@ export function recordBasis(r: { growthVsPriorYear?: { display?: string | null; 
   if (g?.display) {
     const t = String(g.type || r.growthType || '').toUpperCase();
     const sp = t === 'DERIVED' ? splitDerivedBasis(g.display) : { head: g.display, detail: null };
-    const main = sp.head; const detail = sp.detail;
+    let main = sp.head; let detail = sp.detail;
+    const vs = r.verificationStatus as GuVerificationStatus | null | undefined;
+    if (vs) { const w = guidanceWording(vs, t === 'DERIVED' ? 'derived' : t === 'IMPLIED' ? 'implied' : 'explicit'); if (t === 'DERIVED' || t === 'IMPLIED') detail = detail ? `${detail}. ${w}` : w; else main = `${main} · ${w}`; }
     return { main, detail, revision, line: revision ? `${main} · ${revision}` : main };
   }
-  if (r.growthType) return basisText({ short: r.display, growthType: r.growthType, basisLabel: r.basisLabel, revisionVsPriorGuidance: r.revisionVsPriorGuidance });
+  if (r.growthType) return basisText({ short: r.display, growthType: r.growthType, basisLabel: r.basisLabel, revisionVsPriorGuidance: r.revisionVsPriorGuidance, verificationStatus: (r as { verificationStatus?: string | null }).verificationStatus });
   return { main: '', detail: null, revision, line: revision || '' };
 }
 
 // ── last verified ─────────────────────────────────────────────────────────────────────────────────────────────────
-export const STALE_AFTER_DAYS = 60;
+export const STALE_AFTER_DAYS = AGING_MAX_DAYS;   // zzz860: one rule (guidance-config); kept as an alias
 /** 'Last verified 12 days ago' / 'Last verified 75 days ago (stale)' / 'Last verified: Unknown'. */
 export function lastVerifiedText(r: { lastVerified?: string | null; lastVerifiedDaysAgo?: number | null; staleVerification?: boolean | null } | null | undefined): { text: string; stale: boolean } {
   const d = r?.lastVerifiedDaysAgo;
   if (!isNum(d) || d < 0) return { text: r?.lastVerified ? `Last verified ${String(r.lastVerified).slice(0, 10)}` : `Last verified: ${UNKNOWN}`, stale: !!r?.staleVerification };
-  const stale = r?.staleVerification != null ? !!r.staleVerification : d > STALE_AFTER_DAYS;
+  const f = freshnessOf(d); const stale = f.stale;
   const when = d === 0 ? 'today' : d === 1 ? '1 day ago' : `${d} days ago`;
-  return { text: `Last verified ${when}${stale ? ' (stale)' : ''}`, stale };
+  return { text: `Last verified ${when}${f.tier === 'STALE' ? ' (stale)' : f.tier === 'AGING' ? ' (aging)' : ''}`, stale };
 }
 
 // ── freshness (three lines) ───────────────────────────────────────────────────────────────────────────────────────

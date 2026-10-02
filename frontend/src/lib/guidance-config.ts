@@ -13,6 +13,9 @@ export const PLAUSIBLE_REVENUE_GROWTH_PCT = 100;
 export const REPORTING_LAG_DAYS = 45;
 /** A record whose last verification is older than this gets a stale-verification warning. It stays ACTIVE: expiry is by period / status only. */
 export const STALE_VERIFICATION_DAYS = 60;
+/** zzz860: THE one freshness rule (badge, summary, review queue, universe and diagnostics all read it): fresh up to 30 days, aging 31 to 60, stale above 60. */
+export const FRESH_MAX_DAYS = 30;
+export const AGING_MAX_DAYS = STALE_VERIFICATION_DAYS;
 /**
  * zzz854 (documented decision): a record whose last verification is OLDER than this is moved out of the Active list into "Needs review"
  * (reason STALE_VERIFICATION). 90 days = one full reporting cycle: a newer quarterly filing exists and may have changed the guidance, so the

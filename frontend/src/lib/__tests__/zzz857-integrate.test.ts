@@ -229,7 +229,7 @@ describe('zzz857 reader', () => {
   });
   test('coverage: docs / extracted / rows / lastExtractAt', async () => {
     const x = await loadExtractedForUniverse(io);
-    assert.deepEqual({ ...x.coverage }, { docs: 6, extracted: 5, rows: 4, lastExtractAt: '2026-10-02T06:00:00Z' });
+    const { quality: _q, ...cov } = x.coverage as any; assert.ok(_q, 'zzz860: data quality is attached'); assert.deepEqual(cov, { docs: 6, extracted: 5, rows: 4, lastExtractAt: '2026-10-02T06:00:00Z' });
     assert.deepEqual(coverageOf(null, [], 0), { docs: 0, extracted: 0, rows: 0, lastExtractAt: null });
   });
   test('prior-year actual from a dated quarterly series (by date, never by position); none when a quarter is missing', async () => {

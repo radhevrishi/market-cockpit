@@ -12,10 +12,12 @@ import { QualityStrip, btn } from './GuBits';
 import { GuGroupList, GuHighGrowthList } from './GuHighGrowthList';
 import { useGuUniverse, type GuUniverseExt } from './useGuUniverse';
 import { GuFold, GuPanel, pillStyle } from './GuPanel';
+import { GuDataQuality } from './GuDataQuality';
+import { SCOPE_NOTE, scopedTitle } from '@/lib/guidance-semantics';
 import { BADGE_LEGEND, SECTIONS, SECTION_ACTIVE, cohortCountsLine, cohortTotal, freshnessLines, groupCountsLine, highestActiveHeading, sectionRows } from './gu-ui';
 
 type Mk = 'IN' | 'US' | 'ALL';
-const TOGGLE: Array<[Mk, string]> = [['IN', 'India'], ['US', 'USA'], ['ALL', 'All']];
+const TOGGLE: Array<[Mk, string]> = [['ALL', 'All markets'], ['IN', 'India'], ['US', 'USA']];
 const SECTION_ACCENT: Record<string, string> = { active: R.cyan, verified: R.green, derived: R.violet, claimsAwaiting: R.amber };
 
 export function recordFinder(data: GuUniverseExt | null): (entityKey: string) => GuUniverseRecord | null {
@@ -25,7 +27,7 @@ export function recordFinder(data: GuUniverseExt | null): (entityKey: string) =>
 }
 
 export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void }) {
-  const [mk, setMk] = useState<Mk>('IN');
+  const [mk, setMk] = useState<Mk>('ALL');
   const { data, state, retry, error } = useGuUniverse({ market: 'ALL', view: 'active' });
   const groups = data?.summary?.highGrowthGroups;
   const hasGroups = !!groups && !!groups.cohorts;
@@ -34,6 +36,7 @@ export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void 
   const quiet = legacy ? unlistedActiveLine(legacy) : null;
   const find = useMemo(() => recordFinder(data), [data]);
   const thr = data?.summary?.threshold ?? groups?.threshold ?? 30;
+  const scopeWord = SCOPE_NOTE[mk].toLowerCase().replace(' together', '');
   return (
     <GuPanel id="gu-high-growth" icon="🔥" title="Active high-growth guidance" accent={R.green}
       hint={`Companies that have guided ${thr}% or more growth and whose guidance is still in force.`}
@@ -47,6 +50,11 @@ export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void 
       )}
       {data && (
         <>
+          <GuDataQuality quality={data.extractCoverage?.quality} />
+          <div data-gu-scope style={{ fontSize: 12.5, color: R.dim }}>Showing: <b style={{ color: R.text }}>{SCOPE_NOTE[mk]}</b>. Switch the market above; every heading and count below follows it.</div>
+          {hasGroups && mk !== 'US' && cohortTotal(sectionRows(groups, 'active', 'IN')) === 0 && cohortTotal(sectionRows(groups, 'claimsAwaiting', 'IN')) > 0 && (
+            <div data-gu-india-note style={{ fontSize: 12.5, color: R.amber }}>India: no guidance is verified against the company's own document yet. {cohortTotal(sectionRows(groups, 'claimsAwaiting', 'IN'))} India claims reported by media are listed under "Claims awaiting verification" until their primary documents are read.</div>
+          )}
           <QualityStrip data={data} />
           {data.records.length === 0 ? <div style={{ fontSize: 13, color: R.dim }}>{ZERO_RECORDS_TEXT}</div> : (
             <>
@@ -59,7 +67,7 @@ export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void 
                 const accent = SECTION_ACCENT[sec.key] || R.cyan;
                 return (
                   <div key={sec.key} role="group" aria-label={sec.title}>
-                  <GuFold title={ha ? ha.title.replace(/\s*\(\d+\)\s*$/, '') : sec.title.replace(/\s*\(\d+\)\s*$/, '')} count={total} accent={accent} defaultOpen={sec.key !== 'claimsAwaiting' && total > 0}>
+                  <GuFold title={scopedTitle(ha ? ha.title.replace(/\s*\(\d+\)\s*$/, '') : sec.title.replace(/\s*\(\d+\)\s*$/, ''), mk)} count={total} accent={accent} defaultOpen={sec.key !== 'claimsAwaiting' && total > 0}>
                     {ha?.note && <div data-gu-highest-note style={{ fontSize: 12, color: R.dim }}>{ha.note}</div>}
                     {ha && data.countEquations?.highestActive && data.countEquations.highestActive.value !== total && <div style={{ fontSize: 12, color: R.amber }}>{total} rows are in this list; the count above says {data.countEquations.highestActive.value}.</div>}
                     <div style={{ fontSize: 12, color: R.dim }}>{sec.hint}</div>
@@ -70,7 +78,7 @@ export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void 
                       </div>
                     )}
                     <GuGroupList cohorts={rows} showMarket={mk === 'ALL'} findRecord={find} onFull={onFull}
-                      emptyText={sec.key === 'verified' ? `No strictly verified guidance of ${thr}% or more in this market in the current data.` : sec.key === 'derived' ? 'No derived growth of this size in this market.' : sec.key === 'claimsAwaiting' ? 'No claims awaiting verification in this market.' : `No active guidance of ${thr}% or more in this market in the current data.`} />
+                      emptyText={sec.key === 'verified' ? `No strictly verified guidance of ${thr}% or more for ${scopeWord} in the current data.` : sec.key === 'derived' ? `No derived growth of this size for ${scopeWord}.` : sec.key === 'claimsAwaiting' ? `No claims awaiting verification for ${scopeWord}.` : `No active guidance of ${thr}% or more for ${scopeWord} in the current data.`} />
                   </GuFold>
                   </div>
                 );
@@ -83,7 +91,7 @@ export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void 
                     ))}
                   </div>
                   <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: 0.4, color: R.text }}>{SECTION_ACTIVE}</div>
-                  <GuHighGrowthList rows={legacy.rows} showMarket={mk === 'ALL'} onFull={onFull} emptyText="No active guidance of 30% or more in this market in the current data." />
+                  <GuHighGrowthList rows={legacy.rows} showMarket={mk === 'ALL'} onFull={onFull} emptyText={`No active guidance of 30% or more for ${scopeWord} in the current data.`} />
                   {quiet && <div style={{ fontSize: 12, color: R.dim }}>{quiet}</div>}
                 </>
               )}

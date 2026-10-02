@@ -17,6 +17,7 @@ function lastScan(iso: string): string {
 
 function Cov120({ s }: { s: GuScanStatus }) {
   const c = coverage120(s);
+  const q = useGuUniverse({ market: 'ALL', view: 'active' }).data?.extractCoverage?.quality?.markets?.[s.market];   // zzz860: the collectors' own numbers
   return (
     <div role="group" aria-label={`${MARKET_NAME[s.market]} 120D coverage`} style={{ borderTop: `1px solid ${R.border}`, paddingTop: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -24,7 +25,12 @@ function Cov120({ s }: { s: GuScanStatus }) {
         <Chip color={STATE_COLOR[c.state]} dashed={c.state === 'NOT_AVAILABLE'}>{SCAN_STATE_LABEL[c.state]}</Chip>
       </div>
       <div style={{ fontSize: 12, color: R.dim }}><b>{c.days}</b> days · Sources {c.sources} · Unprocessed {c.unprocessed} · Missing {c.missing}</div>
-      {c.incomplete && <div role="note" style={{ fontSize: 12, fontWeight: 800, color: R.amber }}>{COVERAGE_120_INCOMPLETE}</div>}
+      {q && (
+        <div data-gu-cov120-numbers style={{ fontSize: 12, color: R.dim }}>
+          <b>{q.tradingDays}</b> trading days in the window · fully covered <b>{q.daysFullyCovered}</b> · partly <b>{q.daysPartial}</b> · failed <b>{q.daysFailed}</b> · not read <b>{q.daysNotRead}</b> · documents found <b>{q.documentsDiscovered}</b>, read <b>{q.documentsProcessed}</b>, pending <b>{q.documentsPending}</b>
+        </div>
+      )}
+      {((q && q.status !== 'COMPLETE') || c.incomplete) && <div role="note" style={{ fontSize: 12, fontWeight: 800, color: R.amber }}>PARTIAL COVERAGE. {COVERAGE_120_INCOMPLETE}</div>}
     </div>
   );
 }

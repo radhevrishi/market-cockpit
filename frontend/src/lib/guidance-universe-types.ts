@@ -67,7 +67,7 @@ export interface GuUniverseResponse {
 /** zzz857: one input of the universe build and how many guidance rows it gave. */
 export interface GuUniverseSourceInfo { id: 'LIVE' | 'LEDGER' | 'STORED' | 'RESEARCHED_SEED' | 'COMPANY_DOC'; label: string; rows: number; note?: string | null }
 /** zzz857: documents collected, documents with an extract result, extracted rows, newest extraction (ISO) */
-export interface GuExtractCoverage { docs: number; extracted: number; rows: number; lastExtractAt: string | null; error?: string }
+export interface GuExtractCoverage { docs: number; extracted: number; rows: number; lastExtractAt: string | null; error?: string; /** zzz860 */ quality?: import('./guidance-pipeline-coverage').GuDataQuality }
 
 export interface GuRegressionRow {
   ownerText: string;                    // exactly what the owner listed
@@ -152,6 +152,8 @@ export interface GuHgMetricX {
   metric: GgMetric; metricFamily: GuMetricFamily; sourceMetricLabel: string | null; display: string; /** short text such as '+60%' or '+60% (derived)' */ short: string; compareValue: number; period: string; periodNormalized: string;
   verificationState: GuVerificationState; growthType: GuGrowthType; guidanceType: GuGuidanceType; basisLabel: string; headlineBasis: 'GROWTH_VS_PRIOR_YEAR' | 'ABSOLUTE_TARGET_ONLY';
   revisionVsPriorGuidance: string | null; sourceConflict: boolean;
+  /** zzz860 (additive): calculation type and verification status kept apart, the wording rule, one freshness rule */
+  calculationType?: import('./guidance-semantics').GuCalculationType; verificationStatus?: import('./guidance-semantics').GuVerificationStatus; wording?: string; freshness?: import('./guidance-semantics').GuFreshnessTier; lastVerifiedDaysAgo?: number | null;
 }
 export interface GuHgGroupRow {
   id: string; rank: number; entityKey: string; company: string; ticker: string | null; market: GgMarket; cohort: GuCohort; trust: GuTrust;
@@ -188,6 +190,7 @@ export interface GuEventStatus {
   /** 'before → after' as the event shows it, or null */ display: string | null;
   sourceName: string | null; sourceUrl: string | null; eventId: string | null;
   /** why an event is INVALID (e.g. 'the narrative describes a capital raise, not guidance') */ reason?: string | null;
+  /** zzz860: what the change IS (GUIDANCE_RAISED / GUIDANCE_LOWERED / RANGE_RESTRUCTURE / REITERATION / CAPITAL_RAISE / NOT_GUIDANCE / UNRESOLVED), apart from how big it is */ eventType?: import('./guidance-semantics').GuEventType;
 }
 /** Set on a point when a newer primary-source event disagrees with it. The event wins; the point leaves the Active list. */
 export interface GuEventOverride {

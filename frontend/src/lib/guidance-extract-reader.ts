@@ -57,7 +57,7 @@ export async function getExtractResult(docId: string, io?: ExtractIo): Promise<G
   try { const r = await (io ?? await defaultIo()).get(extractKey(docId)); return isExtractResult(r) ? r : null; } catch { return null; }
 }
 
-export interface ExtractCoverage { docs: number; extracted: number; rows: number; lastExtractAt: string | null; error?: string }
+export interface ExtractCoverage { docs: number; extracted: number; rows: number; lastExtractAt: string | null; error?: string; /** zzz860: per-market data quality (documents discovered / processed / pending, days covered) */ quality?: import('./guidance-pipeline-coverage').GuDataQuality }
 /** Coverage for the UI: documents collected, documents with an extract result, extracted rows, newest extraction time. */
 export function coverageOf(docsIndex: unknown, results: GuidanceExtractResult[], indexed: number): ExtractCoverage {
   const rows = Array.isArray((docsIndex as any)?.rows) ? (docsIndex as any).rows : [];
@@ -166,5 +166,13 @@ export async function loadExtractedForUniverse(io?: ExtractIo): Promise<{ result
   const [list, docsIdx] = await Promise.all([listExtractResults({ io: x }), x.get(DOCS_INDEX_KEY).catch(() => null)]);
   const actuals = await loadPriorActuals(list.results, x);
   const coverage = coverageOf(docsIdx, list.results, list.indexed);
+  try {   // zzz860: data quality per market (never throws; absent when the stores cannot be read)
+    const [cIN, cUS] = await Promise.all([x.get(`guidance-docs:v1:coverage:IN`).catch(() => null), x.get(`guidance-docs:v1:coverage:US`).catch(() => null)]);
+    const { dataQualityOf } = await import('./guidance-pipeline-coverage');
+    const idxRows = Array.isArray((docsIdx as any)?.rows) ? (docsIdx as any).rows : [];
+    // a doc counts as processed when its index flag says so OR an extract result exists for it
+    const done = new Set(list.results.map((r) => r.docId));
+    coverage.quality = dataQualityOf(idxRows.map((r: any) => (done.has(r.docId) ? { ...r, extracted: true } : r)), { IN: cIN as any, US: cUS as any }, new Date());
+  } catch { /* quality is optional */ }
   return { results: list.results, actuals, coverage: list.error ? { ...coverage, error: list.error } : coverage };
 }
