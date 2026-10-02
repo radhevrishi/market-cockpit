@@ -5,7 +5,7 @@ import type { GuSummary, GuWindow } from '@/lib/guidance-upgrades-types';
 import type { MetricFilter, ScopeFilter } from '@/lib/guidance-upgrades-format';
 import { GU_WINDOWS, ageDays, countsLine, fmtConsensusAvail, fmtMarketCounts } from '@/lib/guidance-upgrades-format';
 import { R, box, tint } from './gu-tokens';
-import { eventCountsStrip, partitionView } from './gu-ui';
+import { eventCountsStrip, incompleteNote, partitionView } from './gu-ui';
 
 export const WINDOWS: GuWindow[] = GU_WINDOWS;
 const SCOPES: Array<[ScopeFilter, string]> = [['ALL', 'ALL'], ['INDIA', 'INDIA'], ['USA', 'USA'], ['MY_BOOK', 'MY BOOK'], ['HIGH', 'HIGH MATERIALITY']];
@@ -58,7 +58,7 @@ export function GuTopBar(p: {
         </div>
       </div>
       <div style={{ fontSize: 12, color: R.dim }}>The time window only filters these events. It does not filter the guidance universe above.</div>
-      {p.incomplete && <div data-gu-incomplete-note role="note" style={{ fontSize: 12, color: R.amber, fontWeight: 700 }}>0 verified upgrades DETECTED. Detection is incomplete (some exchange days or documents are not read yet), so this is not proof that no company raised guidance.</div>}
+      {p.incomplete && <div data-gu-incomplete-note role="note" style={{ fontSize: 12, color: R.amber, fontWeight: 700 }}>{incompleteNote(s?.pipeline, s?.pipelineByMarket)}</div>}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))', gap: 8 }}>
         {counts.map(([label, n, tip, split]) => (
           <div key={label} title={tip} style={box({ padding: '8px 10px' })}>

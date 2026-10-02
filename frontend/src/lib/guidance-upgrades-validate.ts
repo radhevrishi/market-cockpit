@@ -13,6 +13,8 @@ import type { GuChange, GuGuidancePoint, GuMarket, GuMetric, GuValidationIssue }
 export const GU_VALIDATION = {
   /** an in-year raise of an ANNUAL revenue / volume / order guide above this (relative %, same period) needs review */
   IMPLAUSIBLE_REVENUE_PCT: 50,
+  /** zzz863: a revenue-like raise above this (and below the implausible limit) is shown with a 'check for an acquisition' note */
+  LARGE_REVENUE_PCT: 25,
   /** an in-year change of an ANNUAL profit-like guide (EBITDA, EBIT, net profit, EPS, FCF) above this needs review */
   IMPLAUSIBLE_PROFIT_PCT: 100,
   /** margin guide moved more than this many points */
@@ -138,6 +140,11 @@ export function validateChange(c: GuChange, x: { announcementDate: string; marke
       : PROFIT_LIKE.has(m) ? GU_VALIDATION.IMPLAUSIBLE_PROFIT_PCT : REVENUE_LIKE.has(m) ? GU_VALIDATION.IMPLAUSIBLE_REVENUE_PCT : null;
     if (lim != null && a > lim && c.after.periodKind !== 'MULTI_YEAR_CAGR')
       push('IMPLAUSIBLE_CHANGE', 'REVIEW', `Needs review: implausible change, likely period or unit mix-up — ${name} ${fmt(c.before)} → ${fmt(c.after)} (${p >= 0 ? '+' : ''}${p.toFixed(1)}${c.after.isGrowthRate ? ' points' : '%'}) within ${per === 'UNSTATED' ? 'an unstated period' : per}`);
+    else if (lim == null || !c.after.isGrowthRate) {
+      // zzz863: a large but possible raise (revenue-like, over 25%) is shown with a check note: an acquisition inside the new figure is the usual cause
+      if (REVENUE_LIKE.has(m) && a > GU_VALIDATION.LARGE_REVENUE_PCT && a <= GU_VALIDATION.IMPLAUSIBLE_REVENUE_PCT && p > 0 && c.after.periodKind !== 'MULTI_YEAR_CAGR')
+        push('IMPLAUSIBLE_CHANGE', 'INFO', `Large revision (+${p.toFixed(0)}%): check whether the new ${name} includes an acquisition or a new segment. Organic growth is not stated unless the filing says so.`);
+    }
   }
   // single-point old figure with reported-style precision against an annual range 2.5x-6x larger: the quarterly-actual-vs-annual-guide signature
   if (!c.after.isGrowthRate && ABSOLUTE_AMOUNT.has(m) && !isRange(c.before) && isRange(c.after) && fractional(c.before.midpoint, false)

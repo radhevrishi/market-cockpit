@@ -38,10 +38,10 @@ export interface PipelineView {
   queueStages: Record<'IN' | 'US', Record<QueueStage, number>>;
 }
 /** The state of both markets from the evidence plus the universe's own lists. `activeByMarket` = Active rows that are verified / derived from company documents. */
-export function pipelineView(ev: PipelineEvidence, claimRows: GuUniverseRecordX[], activeByMarket: Record<'IN' | 'US', number>, now: Date, contradicted: string[] = []): PipelineView {
+export function pipelineView(ev: PipelineEvidence, claimRows: GuUniverseRecordX[], activeByMarket: Record<'IN' | 'US', number>, now: Date, contradicted: string[] = [], verifiedCompanies: string[] = []): PipelineView {
   const done = new Set(ev.extracted.map((r) => r.docId));
   const docs = ev.docs.map((r) => (done.has(r.docId) ? { ...r, extracted: true } : r));
-  const claims = resolveClaims(claimRows, { docs, extracted: ev.extracted, queue: ev.queue, contradicted });
+  const claims = resolveClaims(claimRows, { docs, extracted: ev.extracted, queue: ev.queue, contradicted, verifiedCompanies });
   const counts = claimCountsOf(claims, activeByMarket);
   const base = dataQualityOf(docs, ev.coverage, now, 120, { snapshot: ev.snapshot, claims: counts });
   const quality = dataQualityFrom(withClaimCounts(base.markets.IN, counts.IN), withClaimCounts(base.markets.US, counts.US));

@@ -61,7 +61,8 @@ export async function GET(req: NextRequest) {
       if (ev) {
         const contra = removed.flatMap((r: any) => [String(r.ticker || '').toUpperCase(), String(r.company || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase()]).filter(Boolean);
         const act = (m: 'IN' | 'US') => (gb.build.defaultRecords ?? []).filter((r: any) => r.record.market === m).length;
-        const pv = pipelineView(ev, claimsBefore, { IN: act('IN'), US: act('US') }, new Date(), contra);
+        const vc = (gb.build.defaultRecords ?? []).flatMap((r: any) => [`${r.record.market}|${String(r.tickers?.[0] || r.record.ticker || '').toUpperCase()}`, `${r.record.market}|${String(r.record.company || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase()}`]);
+        const pv = pipelineView(ev, claimsBefore, { IN: act('IN'), US: act('US') }, new Date(), contra, vc);
         body.extractCoverage = { ...(body.extractCoverage || { docs: 0, extracted: 0, rows: 0, lastExtractAt: null }), quality: pv.quality };
         // the collectors read this list (GET /api/v1/guidance-pipeline) so they go and fetch the company documents the claims are waiting on
         import('@/lib/kv').then((k) => k.kvSet('guidance-pipeline:wanted:v1', { at: new Date().toISOString(), wanted: pv.wanted }, 7 * 86_400)).catch(() => 0);

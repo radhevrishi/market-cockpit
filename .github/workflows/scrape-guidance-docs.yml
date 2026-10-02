@@ -20,8 +20,8 @@ name: Scrape Guidance Docs (India, every 2h evening IST)
 
 on:
   schedule:
-    # every 2 h from 15:20 to 23:20 IST (09:50–17:50 UTC), when results and call transcripts land
-    - cron: '50 9,11,13,15,17 * * *'
+    # every 2 h from 15:20 to 23:20 IST (09:50–17:50 UTC), when results and call transcripts land, plus an early-morning and a late-night sweep for filings made after hours (zzz863)
+    - cron: '50 3,9,11,13,15,17,21 * * *'
   workflow_dispatch:
     inputs:
       days:

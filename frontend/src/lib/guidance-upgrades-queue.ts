@@ -135,9 +135,15 @@ const dueAt = (x: GuQueueItem, nowMs: number): boolean => {
  */
 export function selectDue(q: QueueState, now: Date, max: number = MAX_DOCS_PER_RUN): GuQueueItem[] {
   const nowMs = now.getTime();
-  return q.items.filter((x) => dueAt(x, nowMs))
-    .sort((a, b) => PRIO_RANK[a.priority] - PRIO_RANK[b.priority] || a.discovered_at.localeCompare(b.discovered_at) || b.event_date.localeCompare(a.event_date))
-    .slice(0, max);
+  const sorted = q.items.filter((x) => dueAt(x, nowMs))
+    .sort((a, b) => PRIO_RANK[a.priority] - PRIO_RANK[b.priority] || a.discovered_at.localeCompare(b.discovered_at) || b.event_date.localeCompare(a.event_date));
+  // zzz863: each market is guaranteed half of the slots while it has documents waiting, so a large US backlog (or an India one) never starves the other market.
+  // Inside a market the order above is kept; unused slots go to whichever market still has documents.
+  const half = Math.ceil(max / 2);
+  const inM = sorted.filter((x) => x.market === 'IN'); const usM = sorted.filter((x) => x.market !== 'IN');
+  const chosen = new Set<GuQueueItem>([...inM.slice(0, half), ...usM.slice(0, half)]);
+  for (const x of sorted) { if (chosen.size >= max) break; chosen.add(x); }
+  return sorted.filter((x) => chosen.has(x)).slice(0, max);
 }
 /** zzz854: how long the current backlog takes to drain at the configured throughput (runs and hours, rounded up). */
 export function drainEstimate(waitingDocs: number, perRun = EXPECTED_DOCS_PER_RUN, runsPerHour = QUEUE_RUNS_PER_HOUR): { runs: number; hours: number; text: string } {

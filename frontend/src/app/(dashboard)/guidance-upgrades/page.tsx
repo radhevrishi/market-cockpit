@@ -106,6 +106,15 @@ export default function GuidanceUpgradesPage() {
           {events.length === 0 ? zeroEventWording(window_, data?.scan) : auditList.length > 0 && filtered.length === auditList.length ? 'No clean raises in this window. See the audit area below for what was found.' : 'Nothing matches these filters. Clear a filter to see the other raises.'}
         </div>
       )}
+      {state === 'ok' && (scope === 'INDIA' || scope === 'USA') && shown.length === 0 && (() => {
+        const m = data?.summary?.pipelineByMarket?.[scope === 'INDIA' ? 'IN' : 'US']; const nm = scope === 'INDIA' ? 'India' : 'USA';
+        return (
+          <div data-gu-market-funnel style={box({ padding: 12, fontSize: 12.5, color: R.dim })}>
+            <b style={{ color: R.text }}>{nm} in this window:</b> {m && typeof m.processed === 'number' ? `${m.processed} documents processed, ${m.verifiedUpgrades ?? 0} verified upgrades, ${m.awaitingNumbers ?? 0} still waiting for numbers, ${m.awaitingPrimary ?? 0} waiting for the company document.` : 'no documents have been processed yet.'}
+            {' '}No {nm} card is shown because nothing {nm} has passed every check. What was found is in the review queue below, and the pipeline status above says how much of {nm} is still unread.
+          </div>
+        );
+      })()}
       {shown.length > 0 && (
         <div className="gu-noprint" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           <button type="button" style={btn(todayFirst ? R.cyan : undefined, todayFirst)} aria-pressed={todayFirst} onClick={() => setTodayFirst((v) => !v)}>Today first</button>

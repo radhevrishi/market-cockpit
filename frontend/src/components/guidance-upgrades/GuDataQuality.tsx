@@ -36,8 +36,9 @@ export function GuDataQuality({ quality }: { quality: Q | null | undefined }) {
       <LazyDetails summary={<summary style={{ cursor: 'pointer', fontSize: 12, color: R.dim }}>Coverage numbers</summary>}>
         <div style={{ display: 'grid', gap: 3, fontSize: 12, color: R.dim }}>
           {[IN, US].map((m) => (
-            <div key={m.market}><b style={{ color: R.text }}>{m.market === 'IN' ? 'India' : 'USA'}, last {m.windowDays} days ({m.tradingDays} trading days):</b> {m.daysFullyCovered} fully covered, {m.daysPartial} partly covered, {m.daysFailed} failed, {m.daysNotRead} not read. Documents: {m.documentsDiscovered} found, {m.documentsProcessed} read, {m.documentsPending} pending.</div>
+            <div key={m.market}><b style={{ color: R.text }}>{m.market === 'IN' ? 'India' : 'USA'}, saved-document store, last {m.windowDays} days ({m.tradingDays} trading days):</b> {m.daysFullyCovered} fully covered, {m.daysPartial} partly covered, {m.daysFailed} failed, {m.daysNotRead} not read. Documents: {m.documentsDiscovered} found, {m.documentsProcessed} read, {m.documentsPending} pending.</div>
           ))}
+          <div data-gu-dq-why>These numbers count only documents the collectors have saved to the document store. The line above also counts filings the live scan found and queued, and the days it read straight from the exchange, so the two sets of numbers are different measures and are not expected to match.</div>
         </div>
       </LazyDetails>
     </div>

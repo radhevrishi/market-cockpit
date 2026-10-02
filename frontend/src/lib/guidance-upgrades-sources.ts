@@ -119,7 +119,9 @@ export function queueInputsFromFilings(filings: readonly PrimaryFiling[], matche
   const out: QueueInput[] = []; const seen = new Set<string>();
   for (const f of filings) {
     const watch = !!watched && watched({ market: f.market, ticker: f.ticker, company: f.company }) && GUIDANCE_BEARING_SUBJECT.test(f.subject);   // zzz862: a company that already has guidance: its new results / call / presentation filing is always read, first
-    if (!(f.anySubject || isRaiseBearingSubject(f.subject) || watch)) continue;
+    // zzz863: India company documents carry the guidance (results, outcome, call, presentation): every India filing of that kind is read, not only raise-worded subjects
+    const inDoc = f.market === 'IN' && GUIDANCE_BEARING_SUBJECT.test(f.subject);
+    if (!(f.anySubject || isRaiseBearingSubject(f.subject) || watch || inDoc)) continue;
     const k = `${f.market}|${f.url || ''}|${f.ticker || f.company}|${day(f.date)}|${f.subject.slice(0, 50)}`;
     if (seen.has(k)) continue; seen.add(k);
     const waiting = watch || matched.has(`${f.market}|${(f.ticker || '').toUpperCase()}`);

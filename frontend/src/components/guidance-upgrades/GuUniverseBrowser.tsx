@@ -1,7 +1,7 @@
 'use client';
 // zzz848 — 📊 GUIDANCE UNIVERSE: scope chips (All | India | USA | My Book), metric chips and the Active / All active view.
 // It never reads the event window. My Book is a client-side overlay using the holdings the page already loaded.
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { normSymbol } from '@/lib/portfolio-symbols';
 import {
   UNIVERSE_METRICS, UNIVERSE_SCOPES, UNIVERSE_UNAVAILABLE, ZERO_RECORDS_TEXT, universeNoticeLine, filterUniverse, sortUniverse, universeApiMarket, universeApiMetric,
@@ -23,6 +23,16 @@ export function GuUniverseBrowser({ held, onFull }: { held: string[]; onFull?: (
   const [metric, setMetric] = useState<UniverseMetric>('ALL');
   const [view, setView] = useState<GuView>('active');
   const { data, state, retry, error } = useGuUniverse({ market: universeApiMarket(scope), metric: universeApiMetric(metric), view });
+  // zzz863: choosing India (or USA) while its Active list is empty opens the first list that has rows for that market, and says so
+  const autoFor = useRef<string>('');
+  const mk = scope === 'INDIA' ? 'IN' : scope === 'USA' ? 'US' : null;
+  const mv = mk && data?.marketViews ? data.marketViews[mk] : null;
+  useEffect(() => {
+    if (!mk || !mv || view !== 'active' || autoFor.current === scope) return;
+    autoFor.current = scope;
+    if (mv.active === 0) { const next: GuView | null = mv.claims > 0 ? 'claims' : mv.review > 0 ? 'review' : null; if (next) setView(next); }
+  }, [scope, mk, mv, view]);
+  useEffect(() => { if (scope === 'ALL') autoFor.current = ''; }, [scope]);
   const heldSet = useMemo(() => new Set(held.map(normSymbol)), [held]);
   const list = useMemo(
     () => sortUniverse(filterUniverse(data?.records || [], scope, metric, (t) => heldSet.has(normSymbol(t)))),
@@ -59,6 +69,12 @@ export function GuUniverseBrowser({ held, onFull }: { held: string[]; onFull?: (
           {view === 'review' && reasonCountsLine(data.summary?.reviewReasonCounts) && <div style={{ fontSize: 12, color: R.dim }}><b>Reasons:</b> {reasonCountsLine(data.summary?.reviewReasonCounts)}</div>}
           {view === 'claims' && <div style={{ fontSize: 12, color: R.dim }}>{data.countEquations?.claimsAwaiting?.text || 'Claims awaiting verification are found in media or not yet confirmed by the company\'s own document. They are never ranked or counted in Active.'}</div>}
           {data.countEquations?.rows?.text && <div style={{ fontSize: 12, color: data.countEquations.rows.holds === false ? R.red : R.dim }}><b>How the lists add up:</b> {data.countEquations.rows.text}</div>}
+          {mk && mv && (
+            <div data-gu-market-lists style={{ fontSize: 12, color: R.dim }}>
+              <b style={{ color: R.text }}>{mk === 'IN' ? 'India' : 'USA'} rows by list:</b> {mv.active} active · {mv.review} need review · {mv.claims} awaiting verification · {mv.history} history.
+              {mv.active === 0 && ` No ${mk === 'IN' ? 'India' : 'USA'} guidance has been confirmed from a company document yet, so the Active list is empty. ${mv.claims + mv.review > 0 ? 'The rows below are what was found and is still being checked.' : 'Nothing has been found for this market yet.'}`}
+            </div>
+          )}
           <div style={{ fontSize: 12, color: R.dim }}>{list.length} shown</div>
           <div style={{ opacity: state === 'loading' ? 0.6 : 1 }}>
             <GuUniverseList records={list} showMarket={scope === 'ALL' || scope === 'MY_BOOK'} onFull={onFull} emptyText={data.records.length === 0 ? (view === 'review' ? 'Nothing is waiting for review.' : view === 'claims' ? 'No claims are waiting for verification.' : ZERO_RECORDS_TEXT) : "Nothing matches these filters. Clear a filter to see more."} />

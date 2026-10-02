@@ -31,6 +31,7 @@ export interface GuidanceClaim {
 export interface ClaimCtx {
   docs?: GuidanceDocIndexRow[]; extracted?: GuidanceExtractResult[]; queue?: GuQueueItem[];
   /** tickers (upper case) or normalised names the AI verifier contradicted */ contradicted?: string[];
+  /** zzz863: companies that already have verified Active guidance for another metric (market|TICKER and market|NORMALISED NAME) */ verifiedCompanies?: string[];
 }
 const METRIC: Record<string, string[]> = { REVENUE: ['REVENUE'], PAT: ['PAT'], EPS: ['EPS', 'ADJ_EPS'], EBITDA: ['EBITDA'], FCF: ['FCF'] };
 const normPeriod = (p: string): string => { const m = /^(FY|CY)\s?(?:20)?(\d{2})$/i.exec(String(p || '').trim()); return m ? `${m[1].toUpperCase()}${m[2]}` : String(p || '').toUpperCase().replace(/\s+/g, ''); };
@@ -98,7 +99,9 @@ export function resolveClaims(rows: GuUniverseRecordX[], ctx: ClaimCtx = {}): Gu
       why = 'A company document is on file but has not been read yet.';
     } else {
       primary = best ? 'NOT_YET_FETCHED' : 'NOT_FOUND'; docState = 'PENDING'; v = 'PRIMARY_NOT_FOUND';
-      why = best ? 'A filing for this company is queued; it has not been fetched and read yet.' : 'No company document for this company is on file yet.';
+      const hasOther = (ctx.verifiedCompanies || []).some((k) => k === `${mk}|${tk}` || k === `${mk}|${nm.toUpperCase()}`);
+      why = best ? 'A filing for this company is queued; it has not been fetched and read yet.'
+        : hasOther ? `The company has verified guidance for another metric, but no document stating ${String(p.metric).toLowerCase()} for ${p.period} has been read yet.` : 'No company document for this company is on file yet.';
     }
     const stage = best?.st ?? null;
     const terminal = v === 'VERIFIED' || v === 'CONTRADICTED' || v === 'NO_GUIDANCE_IN_DOCUMENT' || v === 'NOT_COMPARABLE';

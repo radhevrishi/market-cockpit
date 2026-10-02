@@ -542,3 +542,12 @@ export function recordReconcileLines(x: GuRecX | null | undefined): Array<{ text
   return eventReconcileLines({ eventOverride: x.eventOverride, latestEvent: x.latestEvent, awaitingVerificationReason: why || null });
 }
 export const LIST_BUCKET_WORD: Record<string, string> = { ACTIVE: 'Active', REVIEW: 'Needs review', CLAIMS: 'Claim awaiting verification' };
+
+/** zzz863: the note under the window chips when detection is incomplete. It states the REAL verified count (never "0" next to a tile that shows more) and the India / USA split. */
+export function incompleteNote(p: Partial<GuPipelineCounts> | null | undefined, byMarket?: { IN?: Partial<GuPipelineCounts>; US?: Partial<GuPipelineCounts> } | null): string {
+  const n = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : 0);
+  const v = n(p?.verifiedUpgrades); const vi = n(byMarket?.IN?.verifiedUpgrades); const vu = n(byMarket?.US?.verifiedUpgrades);
+  const head = `${v} verified upgrade${v === 1 ? '' : 's'} detected so far${byMarket ? ` (India ${vi}, USA ${vu})` : ''}.`;
+  const india = byMarket?.IN && vi < vu / 4 && n(byMarket.IN.processed) < n(byMarket.US?.processed) / 4 ? ' India is under-read compared with USA: most India exchange filings are still waiting to be read, so the India count is a floor, not the real number.' : '';
+  return `${head} Detection is incomplete (some exchange days or documents are not read yet), so this is not proof that no other company raised guidance.${india}`;
+}

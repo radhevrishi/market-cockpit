@@ -223,7 +223,12 @@ export function fmtMarketCounts(byMarket: GuSummary['byMarket'] | undefined, key
 export function fmtConsensusAvail(c: GuSummary['consensusAvailable'] | undefined): string | null {
   return c ? `Consensus available ${c.have}/${c.of}` : null;
 }
-export function fmtRangeBound(n: number | null | undefined, unit = ''): string { return n == null ? UNAVAILABLE : `${nf(n)}${unit}`; }
+/** zzz863: a range bound keeps the digits that tell low from high ($1.69B to $1.71B, never '1.7 to 1.7'): up to 2 decimals under 100, 1 under 1000, none above. */
+export function fmtRangeBound(n: number | null | undefined, unit = ''): string {
+  if (n == null) return UNAVAILABLE;
+  const a = Math.abs(n);
+  return `${n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: a >= 1000 ? 0 : a >= 100 ? 1 : 2 })}${unit}`;
+}
 /** 'low 10 / mid 11 / high 12' for one side of a range. */
 export function fmtRangeSide(low: number | null, mid: number | null, high: number | null, unit = ''): string {
   if (low == null && mid == null && high == null) return UNAVAILABLE;

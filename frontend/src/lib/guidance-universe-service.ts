@@ -157,7 +157,14 @@ export function buildUniverseResponse(b: GuBundle, p: GuResponseParams = {}) {
     scan: { note: scanNoteText(b.scan?.note), complete: b.scan?.complete },
     seed: { loaded: b.seed.rows.length, dropped: b.seed.dropped }, persisted: b.persisted,
     ...(view === 'history' ? { inactive, excluded: bd.excluded } : {}),
-    viewCounts, invariantViolations, servedFrom: b.servedFrom, builtAt: b.builtAt, ...(b.liveError ? { liveError: b.liveError } : {}),
+    viewCounts, marketViews: marketViewsOf(bd), invariantViolations, servedFrom: b.servedFrom, builtAt: b.builtAt, ...(b.liveError ? { liveError: b.liveError } : {}),
     filters: { market, metric, threshold, view },
   };
+}
+
+/** zzz863: rows per list for each market, whatever market filter the page applies, so an empty India (or USA) list can say where that market's rows are. */
+export function marketViewsOf(bd: Pick<GuUniverseBuild, 'defaultRecords' | 'reviewQueue' | 'claimsAwaiting' | 'inactive'>): Record<'IN' | 'US', { active: number; review: number; claims: number; history: number }> {
+  const n = (rs: Array<{ record: { market: string } }> | undefined, m: string) => (rs || []).filter((r) => r.record.market === m).length;
+  const h = (m: string) => (bd.inactive || []).filter((x) => x.market === m).length;
+  return { IN: { active: n(bd.defaultRecords, 'IN'), review: n(bd.reviewQueue, 'IN'), claims: n(bd.claimsAwaiting, 'IN'), history: h('IN') }, US: { active: n(bd.defaultRecords, 'US'), review: n(bd.reviewQueue, 'US'), claims: n(bd.claimsAwaiting, 'US'), history: h('US') } };
 }
