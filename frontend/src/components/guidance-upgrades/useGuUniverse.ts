@@ -58,6 +58,7 @@ export function useGuUniverse(o: { market?: 'IN' | 'US' | 'ALL'; metric?: string
   const [tick, setTick] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const url = guUniverseUrl({ market: o.market, metric: o.metric, view: o.view });
+  useEffect(() => { const h = () => setTick((t) => t + 1); window.addEventListener('gu-refresh', h); return () => window.removeEventListener('gu-refresh', h); }, []);
   useEffect(() => {
     let alive = true;
     setState('loading'); setError(null);

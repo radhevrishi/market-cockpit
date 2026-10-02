@@ -12,6 +12,7 @@ import { QualityStrip, btn } from './GuBits';
 import { GuGroupList, GuHighGrowthList } from './GuHighGrowthList';
 import { useGuUniverse, type GuUniverseExt } from './useGuUniverse';
 import { GuFold, GuPanel, pillStyle } from './GuPanel';
+import { GuVerifyButton } from './GuVerifyButton';
 import { GuDataQuality } from './GuDataQuality';
 import { GuClaimsTable } from './GuClaimsTable';
 import { SCOPE_NOTE, scopedTitle } from '@/lib/guidance-semantics';
@@ -52,9 +53,8 @@ export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void 
       {data && (
         <>
           <GuDataQuality quality={data.extractCoverage?.quality} />
-          <div data-gu-datasets style={{ fontSize: 12, color: R.dim }}>Four separate lists on this page: <b style={{ color: R.text }}>Guidance universe</b> (all guidance in force today) · <b style={{ color: R.text }}>Upgrade events</b> (changes inside the chosen window) · <b style={{ color: R.text }}>Claim queue</b> (media claims waiting for the company document) · <b style={{ color: R.text }}>Document queue</b> (company filings waiting to be read).</div>
+          <GuVerifyButton pending={data.viewCounts?.claimsAwaiting ?? null} />
           <GuClaimsTable claims={data.pipeline?.claims} market={mk} />
-          <div data-gu-scope style={{ fontSize: 12.5, color: R.dim }}>Showing: <b style={{ color: R.text }}>{SCOPE_NOTE[mk]}</b>. Switch the market above; every heading and count below follows it.</div>
           {hasGroups && mk !== 'US' && cohortTotal(sectionRows(groups, 'active', 'IN')) === 0 && cohortTotal(sectionRows(groups, 'claimsAwaiting', 'IN')) > 0 && (
             <div data-gu-india-note style={{ fontSize: 12.5, color: R.amber }}>India: no guidance is verified against the company's own document yet. {data.pipeline?.claimCounts?.IN?.claims ?? cohortTotal(sectionRows(groups, 'claimsAwaiting', 'IN'))} India claim rows reported by media ({cohortTotal(sectionRows(groups, 'claimsAwaiting', 'IN'))} of them at {thr}% or more, which is all this ranked list shows) wait for their company documents; see "Claims and what happens next".</div>
           )}
@@ -70,7 +70,7 @@ export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void 
                 const accent = SECTION_ACCENT[sec.key] || R.cyan;
                 return (
                   <div key={sec.key} role="group" aria-label={sec.title}>
-                  <GuFold title={scopedTitle(ha ? ha.title.replace(/\s*\(\d+\)\s*$/, '') : sec.title.replace(/\s*\(\d+\)\s*$/, ''), mk)} count={total} accent={accent} defaultOpen={sec.key !== 'claimsAwaiting' && total > 0}>
+                  <GuFold title={scopedTitle(ha ? ha.title.replace(/\s*\(\d+\)\s*$/, '') : sec.title.replace(/\s*\(\d+\)\s*$/, ''), mk)} count={total} accent={accent} defaultOpen={sec.key === 'active' && total > 0}>
                     {ha?.note && <div data-gu-highest-note style={{ fontSize: 12, color: R.dim }}>{ha.note}</div>}
                     {ha && data.countEquations?.highestActive && data.countEquations.highestActive.value !== total && <div style={{ fontSize: 12, color: R.amber }}>{total} rows are in this list; the count above says {data.countEquations.highestActive.value}.</div>}
                     <div style={{ fontSize: 12, color: R.dim }}>{sec.hint}</div>
@@ -99,10 +99,10 @@ export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void 
               )}
             </>
           )}
-          <div style={{ display: 'grid', gap: 2, borderTop: `1px dashed ${R.border}`, paddingTop: 6 }}>
+          <GuFold title="Freshness, legend and scan notes" accent={R.grey} hint="Where the data came from and what the badges mean">
             <FreshnessBlockUniverse data={data} />
             <div style={{ fontSize: 11.5, color: R.dim }} aria-label="Verification legend">{BADGE_LEGEND}</div>
-          </div>
+            </GuFold>
           {data.scan && !data.scan.complete && <div style={{ fontSize: 11.5, color: R.dim }}>Universe scan incomplete. {data.scan.note}</div>}
         </>
       )}

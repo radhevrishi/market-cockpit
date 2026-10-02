@@ -551,3 +551,16 @@ export function incompleteNote(p: Partial<GuPipelineCounts> | null | undefined, 
   const india = byMarket?.IN && vi < vu / 4 && n(byMarket.IN.processed) < n(byMarket.US?.processed) / 4 ? ' India is under-read compared with USA: most India exchange filings are still waiting to be read, so the India count is a floor, not the real number.' : '';
   return `${head} Detection is incomplete (some exchange days or documents are not read yet), so this is not proof that no other company raised guidance.${india}`;
 }
+
+/** zzz863: plain-English result of one "check with AI now" press (document read + claim verification). Counts only; never a key or document text. */
+export function aiRunText(ex: Record<string, unknown> | null | undefined, vf: Record<string, unknown> | null | undefined): { tone: 'green' | 'amber' | 'red'; text: string } {
+  const n = (o: Record<string, unknown> | null | undefined, k: string) => (o && typeof o[k] === 'number' && Number.isFinite(o[k] as number) ? (o[k] as number) : 0);
+  const off = [ex, vf].find((o) => o && o.available === false);
+  if (off) return { tone: 'red', text: `AI check is not available: ${String(off.unavailableReason || 'no AI key is set or the monthly cap is reached')}. Nothing was changed.` };
+  if (!ex && !vf) return { tone: 'red', text: 'The AI check could not run. Nothing was changed.' };
+  const read = n(ex, 'ok') + n(ex, 'noGuidance'); const conf = n(vf, 'confirmed'); const bad = n(vf, 'contradicted');
+  const open = n(vf, 'queueAfter');
+  const spent = n(ex, 'spentUsd') + n(vf, 'spentUsd');
+  const text = `Read ${read} company document${read === 1 ? '' : 's'} · checked ${n(vf, 'checked')} claim${n(vf, 'checked') === 1 ? '' : 's'}: ${conf} confirmed, ${bad} not supported by the document, ${n(vf, 'notFound') + n(vf, 'noPrimary')} still without a document${open ? ` · ${open} more wait for the next press` : ''}${spent ? ` · cost about $${spent.toFixed(2)}` : ''}.`;
+  return { tone: conf + read > 0 ? 'green' : 'amber', text };
+}

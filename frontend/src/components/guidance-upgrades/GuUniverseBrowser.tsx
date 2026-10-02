@@ -39,7 +39,7 @@ export function GuUniverseBrowser({ held, onFull }: { held: string[]; onFull?: (
     [data, scope, metric, heldSet],
   );
   return (
-    <GuPanel id="gu-universe" icon="📊" title="Guidance universe" accent={R.cyan} count={data ? list.length : null}
+    <GuPanel id="gu-universe" icon="📊" title="Guidance universe (full browser)" accent={R.cyan} count={data ? list.length : null} defaultOpen={false}
       hint="Every guidance still in force, whenever it was announced. The time window in the next section only filters events; it does not change this universe.">
       <div className="gu-noprint" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }} role="group" aria-label="Universe market">
         <span style={{ fontSize: 11, fontWeight: 800, color: R.dim, width: 56 }}>MARKET</span>
