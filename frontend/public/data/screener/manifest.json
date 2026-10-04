@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-10-03T15:19:57Z",
+  "lastSync": "2026-10-04T10:22:14Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -15,7 +15,7 @@
     },
     {
       "name": "debt-reduction.csv",
-      "size": 10099,
+      "size": 10096,
       "displayName": "Debt Reduction"
     },
     {
@@ -30,7 +30,7 @@
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 4070,
+      "size": 4496,
       "displayName": "Great Results and Pullback"
     },
     {
@@ -45,7 +45,7 @@
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 10918,
+      "size": 11351,
       "displayName": "Monthly Volume Pockets"
     },
     {
@@ -60,7 +60,7 @@
     },
     {
       "name": "pead-master-screener-rishi-framework.csv",
-      "size": 4730,
+      "size": 4729,
       "displayName": "PEAD MASTER SCREENER - Rishi Framework"
     },
     {
@@ -75,27 +75,27 @@
     },
     {
       "name": "turnarounds.csv",
-      "size": 19222,
+      "size": 19220,
       "displayName": "Turnarounds"
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 26437,
+      "size": 26439,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63324,
+      "size": 63322,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65556,
+      "size": 65561,
       "displayName": "Working watchlist"
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 7138,
+      "size": 8003,
       "displayName": "Weekly Volume Pockets"
     }
   ]
