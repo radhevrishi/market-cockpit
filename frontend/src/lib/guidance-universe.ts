@@ -949,6 +949,14 @@ export function buildUniverse(live: GgCompany[], ledgerRows: Array<{ market: 'IN
   for (const group of Array.from(slots.values())) {
     const e = entityOf.get(group[0])!;
     let eligible = group.filter((g) => !g.forced);
+    // zzz880: an amount that implies an impossible one-year change against last year's ACTUAL is a segment / partial / misread figure, not
+    // company guidance (Man Industries: "₹35–50 Cr" FY27 revenue against ₹3,592 Cr actual = −99% replaced the real ₹5,000–5,500 Cr guide).
+    // It never wins a slot — and it is removed BEFORE the company-document rule, so it can never supersede the sensible figure; it is listed under excluded with the reason, and the sensible figure stays current.
+    eligible = eligible.filter((g) => {
+      const why = implausibleImplied(g);
+      if (why) excluded.push({ company: g.company, ticker: g.ticker, market: g.market, metric: g.metric, period: g.period, reason: why, claimType: g.claimType });
+      return !why;
+    });
     // zzz857: a media / secondary claim (TIER3-4) for a slot the company's own document covers is SUPERSEDED by that document (never a 'conflict', never a claim awaiting verification)
     const doc = eligible.filter((g) => g.origin === 'COMPANY_DOC').sort((a, b) => -better(a, b))[0];
     if (doc) {
@@ -957,14 +965,6 @@ export function buildUniverse(live: GgCompany[], ledgerRows: Array<{ market: 'IN
       eligible = eligible.filter((g) => !media.includes(g));
     }
     for (const g of group.filter((x) => x.forced)) pushInactive(e, g, g.forced!, g.forced === 'WITHDRAWN' ? 'Management withdrew this guidance.' : g.forced === 'SUPERSEDED' ? 'Replaced by a later statement.' : 'The guided period has ended.');
-    // zzz880: an amount that implies an impossible one-year change against last year's ACTUAL is a segment / partial / misread figure, not
-    // company guidance (Man Industries: "₹35–50 Cr" FY27 revenue against ₹3,592 Cr actual = −99% replaced the real ₹5,000–5,500 Cr guide).
-    // It never wins a slot; it is listed under excluded with the reason, and the sensible figure stays current.
-    eligible = eligible.filter((g) => {
-      const why = implausibleImplied(g);
-      if (why) excluded.push({ company: g.company, ticker: g.ticker, market: g.market, metric: g.metric, period: g.period, reason: why, claimType: g.claimType });
-      return !why;
-    });
     if (!eligible.length) continue;
     eligible.sort((a, b) => -better(a, b));
     let win = eligible[0];
