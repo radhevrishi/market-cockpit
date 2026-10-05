@@ -329,6 +329,14 @@ interface XCand { r: GuidanceExtractResult; row: ExtractedGuidance; growth: Extr
 export function itemsFromExtracted(results: GuidanceExtractResult[] | null | undefined, actuals: Map<string, PriorActual> | null, now: Date): Item[] {
   void now;
   const chains = new Map<string, XCand[]>();
+  const rowImplausible = (r: GuidanceExtractResult, row: ExtractedGuidance, metric: GgMetric, period: string): boolean => {
+    const u = universeUnitOf(row.currency, row.unit); if (!u || row.unit === '%' || row.metric === 'REVENUE_GROWTH') return false;
+    const lo = row.low ?? row.high, hi = row.high ?? row.low; if (lo == null || hi == null) return false;
+    const pp = priorPeriodOf(period); const tkr = (r.ticker || '').toUpperCase();
+    const act = pp && tkr && (metric === 'REVENUE' || metric === 'PAT') ? actuals?.get(actualKey(r.market, tkr, metric, pp)) ?? null : null;
+    if (!act || act.unit !== u || !(act.value > 0)) return false;
+    return !!implausibleImplied({ gOrigin: 'IMPLIED', metric, low: (Math.min(lo, hi) / act.value - 1) * 100, high: (Math.max(lo, hi) / act.value - 1) * 100 });
+  };
   for (const r of results || []) {
     if (!r || (r.market !== 'IN' && r.market !== 'US') || r.status !== 'ok' || !Array.isArray(r.rows)) continue;
     const date = String(r.filedAt || '').slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
@@ -342,6 +350,9 @@ export function itemsFromExtracted(results: GuidanceExtractResult[] | null | und
       const k = `${metric}|${period}`; const cur = per.get(k);
       if (row.metric === 'REVENUE_GROWTH') { if (cur) cur.growth = cur.growth ?? row; else per.set(k, { r, row, growth: row, metric, period, date, notes: [] }); continue; }
       if (cur && cur.row.metric === 'REVENUE_GROWTH') { cur.row = row; continue; }
+      // zzz880: two rows for the same metric and period in one document — a figure that is implausible against last year's actual (a segment
+      // line) gives way to a sensible one (Man Industries Aug: "₹35–50 Cr" and "about ₹5,000 crore" in the same call)
+      if (cur && rowImplausible(r, cur.row, metric, period) && !rowImplausible(r, row, metric, period)) { cur.row = row; continue; }
       if (!cur) per.set(k, { r, row, growth: null, metric, period, date, notes: [] });
     }
     // companion figures that are not universe metrics (EBITDA margin) travel as a note on the same period's EBITDA, else revenue, point
@@ -353,7 +364,7 @@ export function itemsFromExtracted(results: GuidanceExtractResult[] | null | und
     for (const c of Array.from(per.values())) { const k = `${r.market}|${who}|${c.metric}|${c.period}`; (chains.get(k) || chains.set(k, []).get(k)!).push(c); }
   }
   const out: Item[] = [];
-  for (const list of Array.from(chains.values())) {
+  for (let list of Array.from(chains.values())) {
     list.sort((a, b) => a.date.localeCompare(b.date) || String(a.r.extractedAt || '').localeCompare(String(b.r.extractedAt || '')));
     let cur: XCand | null = null; let priors: Prior[] = []; let lastVerified: string | null = null; let notes: string[] = []; let rev: GuUniverseRecord['revision'] | undefined;
     let withdrawn = false; let confirmed: NonNullable<Item['confirmedBy']> = [];
@@ -363,6 +374,17 @@ export function itemsFromExtracted(results: GuidanceExtractResult[] | null | und
       const lo = c.row.low, hi = c.row.high ?? c.row.low; if (lo == null || hi == null) return null;
       return { value: Math.max(lo, hi), unit: u, ...(Math.min(lo, hi) < Math.max(lo, hi) ? { valueLow: Math.min(lo, hi) } : {}) };
     };
+    // zzz880: a document whose amount implies an impossible change against last year's actual (a segment / partial figure) does not take
+    // over the chain — the latest SENSIBLE figure stays current (Man Industries: Aug "₹35–50 Cr" vs May "₹5,000–5,500 Cr" for FY27).
+    const implausibleCand = (c: XCand): boolean => {
+      const a = absOf(c); if (!a) return false;
+      const pp = priorPeriodOf(c.period); const tkr = (c.r.ticker || '').toUpperCase();
+      const act = pp && tkr && (c.metric === 'REVENUE' || c.metric === 'PAT') ? actuals?.get(actualKey(c.r.market, tkr, c.metric, pp)) ?? null : null;
+      if (!act || act.unit !== a.unit || !(act.value > 0)) return false;
+      return !!implausibleImplied({ gOrigin: 'IMPLIED', metric: c.metric, low: ((a.valueLow ?? a.value) / act.value - 1) * 100, high: (a.value / act.value - 1) * 100 });
+    };
+    const sane = list.filter((c) => !implausibleCand(c));
+    if (sane.length && sane.length < list.length) list = sane;
     const priorOf = (c: XCand): Prior => { const g = c.growth; const gl = g ? (g.growthPctLow ?? g.low ?? null) : (c.row.growthPctLow ?? null); const gh = g ? (g.growthPctHigh ?? g.high ?? gl) : (c.row.growthPctHigh ?? gl);
       return { date: c.date, low: gl, high: gh, note: `${DOC_NAME[c.r.docKind]?.name || 'Company document'} (${c.date})`, abs: absOf(c) }; };
     for (const c of list) {

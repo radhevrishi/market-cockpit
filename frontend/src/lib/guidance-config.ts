@@ -22,7 +22,9 @@ export const AGING_MAX_DAYS = STALE_VERIFICATION_DAYS;
  * record is no longer shown as verified until it is re-checked. Between STALE_VERIFICATION_DAYS and this it stays Active with a caveat.
  * A record whose guided period has ended is never Active either (EXPIRED, handled by the period rules).
  */
-export const STALE_DEMOTE_DAYS = 90;
+// zzz880: 90 → 135. Indian companies guide the year once (May) and restate it at the next call; Q1 results are due by mid-August and calls run
+// into late August, so a sound May guide was being pulled from Active weeks before the company had a chance to restate it (Man Industries).
+export const STALE_DEMOTE_DAYS = 135;
 /** Two sources for the same company + metric + period whose dates are this close (days) and whose values differ are a SOURCE CONFLICT, not a revision. */
 export const SOURCE_CONFLICT_WINDOW_DAYS = 3;
 /** Derived / implied growth ranges at least this wide (percentage points) are shown with 0 decimals; narrower ones keep 1 decimal. */

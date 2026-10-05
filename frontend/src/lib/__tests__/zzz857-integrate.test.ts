@@ -100,10 +100,13 @@ describe('zzz857 universe: Man Industries from its own transcript', () => {
     assert.equal(q!.revision, 'MAINTAINED');
     assert.equal(q!.sourceUrl, MAN_URL);
     assert.ok(q!.sources.some((s) => /13\.08\.2026/.test(String(s.url)) && s.role === 'PRIMARY'));
-    // without the August document the May record is older than the stale limit by October -> needs review (existing rule)
+    // zzz880: without the August document the May record is ~130 days old in October — inside the 135-day limit, so it stays Active with
+    // the stale caveat; past 135 days it goes to review
     const b4 = buildUniverse([], [], [], OCT, { extracted: { results: [MAN_MAY], actuals: ACT } });
-    assert.equal(manOf(b4.defaultRecords), undefined);
-    assert.ok(revPt(manOf(b4.reviewQueue))!.reviewReasons.some((r) => r.code === 'STALE_VERIFICATION'));
+    assert.ok(revPt(manOf(b4.defaultRecords)), 'still Active at ~130 days');
+    const LATE = new Date(OCT.getTime() + 30 * 86_400_000);
+    const b5 = buildUniverse([], [], [], LATE, { extracted: { results: [MAN_MAY], actuals: ACT } });
+    assert.ok(revPt(manOf(b5.reviewQueue))!.reviewReasons.some((r) => r.code === 'STALE_VERIFICATION'));
   });
   test('a newer NEW figure for the same slot supersedes the older one (kept as prior); LOWERED moves the revision', () => {
     const nov = res({ docId: 'man-nov', filedAt: '2026-09-20', rows: [row({ low: 4600, high: 4800, status: 'LOWERED', quote: 'We now expect FY27 revenue of ₹4,600 to 4,800 crore.' })] });

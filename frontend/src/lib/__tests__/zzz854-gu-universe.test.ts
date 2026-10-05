@@ -134,7 +134,7 @@ describe('2. Active = verified / derived / partial-with-document-read; everythin
     assert.deepEqual(checkUniverseInvariants({ defaultRecords: b.defaultRecords, reviewQueue: b.reviewQueue, claimsAwaiting: b.claimsAwaiting, inactive: b.inactive, excluded: b.excluded }), []);
   });
   test(`stale: last verified more than ${STALE_DEMOTE_DAYS} days ago leaves Active for review (documented decision)`, () => {
-    const b = bld([co('Stale', { sourceDate: '2026-06-01' })]);
+    const b = bld([co('Stale', { sourceDate: '2026-05-01' })]);   // zzz880: older than 135 days on 1 Oct
     assert.equal(b.defaultRecords.length, 0); assert.ok(inList(b.reviewQueue, 'Stale')!.reviewReasonCodes.includes('STALE_VERIFICATION'));
   });
   test('invariants are enforced, not only reported: the shared rule set flags a media / unread / stale / conflicted Active point', () => {
