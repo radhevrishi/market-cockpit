@@ -64,6 +64,13 @@ async function nseCookie(f) {
   }
   return out;
 }
+/** The mc-proxy worker hop (Cloudflare IPs are the one route NSE answers reliably); null when PROXY_URL is not set. */
+function proxied(url, env) {
+  if (!env.PROXY_URL) return null;
+  const base = env.PROXY_URL.replace(/\/+$/, '').replace(/\/proxy$/, '');
+  const sec = env.PROXY_SECRET ? `secret=${encodeURIComponent(env.PROXY_SECRET)}&` : '';
+  return `${base}/proxy?${sec}url=${encodeURIComponent(url)}`;
+}
 const isWeekend = (isoDay) => { const w = new Date(`${isoDay}T00:00:00Z`).getUTCDay(); return w === 0 || w === 6; };
 async function getJson(f, url, cookie) {
   for (let i = 0; i < 3; i++) {
@@ -108,6 +115,16 @@ export async function run(d) {
       last = r;
       if (r.ok) { const rows = rowsOf(r.json); if (shown++ < 3) log(`${day}: answer shape ${shapeOf(r.json)}${typeof r.json?.msg === 'string' ? ` msg="${r.json.msg.slice(0, 120)}"` : ''}`); if (rows.length) { got = rows; break; } got = got || []; }
       await sleep(300);
+    }
+    // direct read empty or refused: the same queries through the mc-proxy worker (Cloudflare egress)
+    if (!got || !got.length) {
+      for (const u of urls) {
+        const pu = proxied(u, env); if (!pu) { if (shown < 4) { log('proxy: PROXY_URL not set, no proxy hop'); shown = 4; } break; }
+        const r = await getJson(f, pu, '');
+        last = last && last.ok ? last : r;
+        if (r.ok) { const rows = rowsOf(r.json); if (shown++ < 6) log(`${day}: proxy answer shape ${shapeOf(r.json)}${typeof r.json?.msg === 'string' ? ` msg="${r.json.msg.slice(0, 120)}"` : ''}`); if (rows.length) { got = rows; break; } got = got || []; }
+        await sleep(300);
+      }
     }
     if (got == null) { failed.push(day); log(`${day}: FAILED (${last?.error || 'no answer'})`); await sleep(400); continue; }
     // zero rows on a trading day cannot be told from a soft block ("no data found" is what a refused query says too): NOT a read day
