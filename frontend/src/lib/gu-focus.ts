@@ -71,7 +71,7 @@ export function buildFocusList(groups: GuHighGrowthGroups | null | undefined, ev
     const v = num(g.headline?.compareValue); if (v == null) continue;
     const r = get(g.market === 'US' ? 'US' : 'IN', g.ticker, g.company);
     if (r.growthPct != null && r.growthPct >= v) continue;
-    r.growth = `${g.text}${g.cohort === 'MULTI_YEAR_CAGR' ? ' a year (multi-year)' : ''}`; r.growthPct = v; r.growthPeriod = g.headline?.period || null; r.growthTrust = g.trust;
+    r.growth = g.cohort === 'MULTI_YEAR_CAGR' && !/CAGR/i.test(g.text) ? `${g.text} a year (multi-year)` : g.text; r.growthPct = v; r.growthPeriod = g.headline?.period || null; r.growthTrust = g.trust;
   }
   const out = Array.from(by.values());
   for (const r of out) {
