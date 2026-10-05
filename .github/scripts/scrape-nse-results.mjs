@@ -69,7 +69,7 @@ function proxied(url, env) {
   if (!env.PROXY_URL) return null;
   const base = env.PROXY_URL.replace(/\/+$/, '').replace(/\/proxy$/, '');
   const sec = env.PROXY_SECRET ? `secret=${encodeURIComponent(env.PROXY_SECRET)}&` : '';
-  return `${base}/proxy?${sec}url=${encodeURIComponent(url)}`;
+  return `${base}/proxy?${sec}nocache=1&url=${encodeURIComponent(url)}`;   // zzz879: never a cached "no data found"
 }
 const isWeekend = (isoDay) => { const w = new Date(`${isoDay}T00:00:00Z`).getUTCDay(); return w === 0 || w === 6; };
 async function getJson(f, url, cookie) {

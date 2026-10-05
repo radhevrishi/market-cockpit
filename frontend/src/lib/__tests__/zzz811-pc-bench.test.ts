@@ -350,9 +350,9 @@ describe('zzz811 — US: his US Conviction Beats criteria are applied, price cri
   });
   const LIST = [usE('AAA'), usE('BBB', { pct_vs_ma50: -3 }), usE('CCC', { sales_yoy_pct: 60 }), usE('DDD', { market_cap_musd: 150 }), usE('EEE', { sales_yoy_pct: 70, pct_vs_ma50: -1 })];
 
-  test('no saved filters and no opt-out → the preset + small/mid, incl. the 50/200-day price legs', () => {
+  test('no saved filters and no opt-out → the preset + under $30B (zzz879; was small/mid), incl. the 50/200-day price legs', () => {
     const f = usCbFiltersForOwner(() => null);
-    assert.deepEqual(f, { ...usPresetFilters(), cap: 'smid' });
+    assert.deepEqual(f, { ...usPresetFilters(), cap: 'u30' });
     assert.equal(f.aboveMa50, true);
     assert.equal(US_CB_FILTERS_KEY, 'mc:us-cb:filters:v1');
     assert.equal(US_CB_OPTOUT_KEY, 'mc:us-cb:preset:v1:optout');
@@ -360,7 +360,7 @@ describe('zzz811 — US: his US Conviction Beats criteria are applied, price cri
 
   test('his CUSTOM saved filters are used, not the defaults — PC set == the US CB page set', () => {
     const saved = JSON.stringify({ ...US_FILTER_DEFAULT, sales: 50, aboveMa50: true, cap: 'all' });
-    const store: Record<string, string> = { [US_CB_FILTERS_KEY]: saved };
+    const store: Record<string, string> = { [US_CB_FILTERS_KEY]: saved, 'mc:us-cb:u30-default:v1': '1' /* zzz879 move already ran */ };
     const f = usCbFiltersForOwner((k) => store[k] ?? null);
     assert.equal(f.sales, 50, 'his 50%, not the preset\'s threshold');
     assert.deepEqual(f, usCbSavedFilters(saved), 'the page initializer and PC read the same thing');
@@ -378,7 +378,7 @@ describe('zzz811 — US: his US Conviction Beats criteria are applied, price cri
 
   test('US opt-out with no saved filters → every name listed', () => {
     const f = usCbFiltersForOwner((k) => (k === US_CB_OPTOUT_KEY ? '1' : null));
-    assert.deepEqual(f, { ...US_FILTER_DEFAULT });
+    assert.deepEqual(f, { ...US_FILTER_DEFAULT, cap: 'u30' }, 'zzz879: the default band is under $30B');
     const win = computeUsNewWindow(LIST);
     assert.equal(LIST.filter((e: any) => passesUsConvictionFilter(e, f, win)).length, LIST.length);
   });

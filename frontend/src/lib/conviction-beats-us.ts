@@ -2237,7 +2237,18 @@ function capMatch(musd: number | null | undefined, filter: string | null | undef
   if (musd == null || !Number.isFinite(musd)) return false;
   const b = musd >= 200_000 ? 'mega' : musd >= 10_000 ? 'large' : musd >= 2_000 ? 'mid' : musd >= 300 ? 'small' : 'micro';
   if (filter === 'smid') return b === 'small' || b === 'mid';
+  if (filter === 'u30') return musd < US_CB_U30_MUSD;   // zzz879 — Rishi's default: everything under $30B
   return b === filter;
+}
+
+/** zzz879 — the "Under $30B" cap band (market cap in $M). */
+export const US_CB_U30_MUSD = 30_000;
+/** zzz879 — an entry whose filing is older than this many days is shown greyed
+ *  out: still on the bench (its history matters), but no longer a fresh idea. */
+export const US_BENCH_AGED_DAYS = 60;
+export function isUsBenchAged(e: { filing_date?: string | null }, days = US_BENCH_AGED_DAYS): boolean {
+  const a = usFilingAgeDays(e?.filing_date);
+  return a != null && a > days;
 }
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -2506,6 +2517,14 @@ export async function mergeServerUsBench(): Promise<{
 export const US_CB_FILTERS_KEY = 'mc:us-cb:filters:v1';
 export const US_CB_OPTOUT_KEY = 'mc:us-cb:preset:v1:optout';
 export const US_CB_SMID_FLAG_KEY = 'mc:us-cb:smid-default:v1';
+/** zzz879 — one-time move of the default cap band to "Under $30B". */
+export const US_CB_U30_FLAG_KEY = 'mc:us-cb:u30-default:v1';
+/** zzz879 — the move itself: a cap still on the old automatic default
+ *  (Small+Mid or All) becomes Under $30B. Any other band was a deliberate
+ *  choice and is kept. */
+export function usCbMigrateU30(f: UsConvFilters): UsConvFilters {
+  return (!f.cap || f.cap === 'all' || f.cap === 'smid') ? { ...f, cap: 'u30' } : f;
+}
 
 /** The page's useState initializer, verbatim: a saved set, migrated when it
  *  is an older edition of the preset (zzz662). Null when nothing is saved. */
@@ -2534,10 +2553,11 @@ export function usCbFiltersForOwner(get: (key: string) => string | null): UsConv
   let f = usCbSavedFilters(get(US_CB_FILTERS_KEY)) || { ...US_FILTER_DEFAULT };
   if (get(US_CB_OPTOUT_KEY) !== '1') {
     if (f.sales == null && f.eps == null && f.pead == null && f.opmDelta == null && f.cfoPatMin == null && f.mktCapMin == null && f.verdicts == null) {
-      f = { ...usPresetFilters(), cap: 'smid' };
+      f = { ...usPresetFilters(), cap: 'u30' };
     }
   }
   if (get(US_CB_SMID_FLAG_KEY) !== '1' && isUsPresetActive(f) && (!f.cap || f.cap === 'all')) f = { ...f, cap: 'smid' };
+  if (get(US_CB_U30_FLAG_KEY) !== '1') f = usCbMigrateU30(f);
   return f;
 }
 
@@ -2561,7 +2581,7 @@ export function usCbFailReasons(e: UsConvictionEntry, f: UsConvFilters, win?: Ne
     winMin: () => 'scorecard below your threshold', aboveMa50: () => 'price not above its 50-day average', aboveMa200: () => 'price not above its 200-day average',
     d1Bucket: () => 'day-one move outside your chip', driftBucket: () => 'move since results outside your chip',
     guidance: () => `guidance is not ${f.guidance}`, guideBeatOnly: () => 'did not beat its own prior guide', marginSlopeUp: () => 'margin not still widening',
-    shareShrinkOnly: () => 'share count not falling', thesis: () => `thesis not ${f.thesis}`, cap: () => `market-cap band not ${f.cap === 'smid' ? 'small/mid' : f.cap}`,
+    shareShrinkOnly: () => 'share count not falling', thesis: () => `thesis not ${f.thesis}`, cap: () => `market-cap band not ${f.cap === 'smid' ? 'small/mid' : f.cap === 'u30' ? 'under $30B' : f.cap}`,
     tiers: () => 'tier outside your list', verdicts: () => `quality read "${usVerdictWord(usVerdict(e).verdictLabel)}" is outside your chosen list (${(f.verdicts || []).map((v) => usVerdictWord(v)).join(' / ')})`, elite: () => 'not marked elite', multibagger: () => 'no multibagger setup',
     rule40: () => 'Rule of 40 not met (or not computable)', roce20: () => 'return on capital below 20% (or not known)', turnaround: () => 'not a turnaround', compounder: () => 'not a compounder',
     prelimOnly: () => 'not a preliminary release', sector: () => `sector not ${f.sector}`, quarter: () => 'another fiscal quarter', fy: () => 'another fiscal year', fromDate: () => 'filed outside your dates', toDate: () => 'filed outside your dates',

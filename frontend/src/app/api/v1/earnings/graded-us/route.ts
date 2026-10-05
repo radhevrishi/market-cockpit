@@ -30,6 +30,7 @@
 import { guidesNextQuarterBelowThisOne } from '@/lib/us-guidance-figures';
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
+import { sessionIndexOf, priorSessions, dropShownEarlier, US_SESSION_INDEX_KEY, US_SESSION_INDEX_TTL_S } from '@/lib/us-session-dedupe';
 import { gzipSync, gunzipSync } from 'zlib';
 
 // ── THE SESSION IS STORED COMPRESSED ──────────────────────────────────────
@@ -837,6 +838,45 @@ function visibilityGrowth(metrics: any[] | null | undefined): { pct: number; lab
   return best;
 }
 
+// ── zzz879 — ONE CARD PER COMPANY PER QUARTER ACROSS SESSIONS ─────────────
+// A one-session payload loses every card whose company+quarter an earlier
+// session (last 7) already showed — see lib/us-session-dedupe.ts. Applied when
+// the payload is SERVED, so the order sessions were graded in does not matter.
+// Each session's small index is kept in memory and in KV; a missing index is
+// built once from that session's stored payload.
+const _sessIdx = new Map<string, { at: number; index: string[] | null }>();
+const SESS_IDX_MEM_MS = 6 * 3600_000;
+async function sessionIndexFor(date: string): Promise<string[] | null> {
+  const m = _sessIdx.get(date);
+  if (m && Date.now() - m.at < SESS_IDX_MEM_MS) return m.index;
+  let index: string[] | null = null;
+  const stored = await sharedRead(US_SESSION_INDEX_KEY(date)).catch(() => undefined);
+  if (Array.isArray(stored)) index = stored as string[];
+  else {
+    const mem = _cache.get(`${date}|1`)?.data;
+    const p = mem?.by_tier ? mem : unzipPayload(await sharedRead(`us-graded:${US_ENGINE_VERSION}:${date}|1`).catch(() => null));
+    if (p?.by_tier) { index = sessionIndexOf(p); void kvSet(US_SESSION_INDEX_KEY(date), index, US_SESSION_INDEX_TTL_S).catch(() => {}); }
+  }
+  _sessIdx.set(date, { at: Date.now(), index });
+  return index;
+}
+async function withSessionDedupe(payload: any, date: string, days: number, explicit: string): Promise<any> {
+  if (explicit || days !== 1 || !payload?.by_tier) return payload;
+  try {
+    // this session's own index, for the sessions after it
+    if (!_sessIdx.get(date)?.index) {
+      const own = sessionIndexOf(payload);
+      _sessIdx.set(date, { at: Date.now(), index: own });
+      if (date < etToday()) void kvSet(US_SESSION_INDEX_KEY(date), own, US_SESSION_INDEX_TTL_S).catch(() => {});
+    }
+    const prior = priorSessions(date);
+    const idx = await Promise.all(prior.map((d) => sessionIndexFor(d).catch(() => null)));
+    return dropShownEarlier(payload, prior.map((d, i) => ({ date: d, index: idx[i] || [] })));
+  } catch {
+    return payload;                                   // never let the check break the page
+  }
+}
+
 export async function GET(req: Request) {
   const t0 = Date.now();
   const { searchParams } = new URL(req.url);
@@ -899,7 +939,7 @@ export async function GET(req: Request) {
     if (hit && (explicit
       ? Date.now() - hit.at < hit.ttl
       : snapshotFresh(date, hit.at, Date.now(), hit.ttl, hit.ttl))) {
-      return NextResponse.json(hit.data, {
+      return NextResponse.json(await withSessionDedupe(hit.data, date, days, explicit), {
         headers: { 'x-mc-cache': 'hit', 'Cache-Control': 'private, max-age=60' },
       });
     }
@@ -908,7 +948,7 @@ export async function GET(req: Request) {
         const shared = unzipPayload(await sharedRead(kvKey));
         if (shared?.by_tier) {
           _cache.set(cacheKey, { at: Date.now(), ttl: 90 * 24 * 3600_000, data: shared });
-          return NextResponse.json(shared, {
+          return NextResponse.json(await withSessionDedupe(shared, date, days, explicit), {
             headers: { 'x-mc-cache': 'shared', 'Cache-Control': 'private, max-age=60' },
           });
         }
@@ -925,7 +965,7 @@ export async function GET(req: Request) {
           if (!re) continue;
           _cache.set(cacheKey, { at: Date.now(), ttl: 90 * 24 * 3600_000, data: re });
           void kvSet(kvKey, zipPayload(re), 30 * 24 * 3600).catch(() => {});
-          return NextResponse.json(re, {
+          return NextResponse.json(await withSessionDedupe(re, date, days, explicit), {
             headers: { 'x-mc-cache': 'regraded', 'Cache-Control': 'private, max-age=60' },
           });
         }
@@ -2544,9 +2584,11 @@ export async function GET(req: Request) {
       void kvSet(kvKey, zipPayload(payload), 30 * 24 * 3600).catch(() => {});
       // zzz878: a completed session's BLOCKBUSTER / STRONG cards go onto the US Conviction bench now, not at the next daily job
       if (days === 1) void import('@/lib/server-bench-upsert').then((m) => m.upsertUsServerBench(payload, date)).catch(() => {});
+      // zzz879 — this session's index, and drop a stale one from memory
+      if (days === 1) { const own = sessionIndexOf(payload); _sessIdx.set(date, { at: Date.now(), index: own }); void kvSet(US_SESSION_INDEX_KEY(date), own, US_SESSION_INDEX_TTL_S).catch(() => {}); }
     }
 
-    return NextResponse.json(payload, {
+    return NextResponse.json(await withSessionDedupe(payload, date, days, explicit), {
       headers: {
         'x-mc-cache': 'miss',
         'x-mc-ms': String(Date.now() - t0),

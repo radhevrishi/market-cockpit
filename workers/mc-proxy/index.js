@@ -94,6 +94,33 @@ const BROWSER_HEADERS = {
  * six-company test. Company pages: fresh for 6h, servable for 48h, warmed
  * once a day by the scheduler below.
  */
+// ── zzz879 — NSE session cookie for /api/ calls, kept 5 minutes per isolate.
+let _nseCookie = { at: 0, value: '' };
+function setCookiesOf(res) {
+  const h = res.headers;
+  let list = [];
+  try { if (typeof h.getSetCookie === 'function') list = h.getSetCookie(); } catch { /* older runtime */ }
+  if (!list.length) { try { if (typeof h.getAll === 'function') list = h.getAll('set-cookie'); } catch { /* not available */ } }
+  if (!list.length) { const one = h.get('set-cookie'); if (one) list = one.split(/,(?=\s*[A-Za-z0-9_\-]+=)/); }
+  return list.map((c) => String(c).split(';')[0].trim()).filter((c) => c.includes('='));
+}
+async function nseSessionCookie(target) {
+  if (_nseCookie.value && Date.now() - _nseCookie.at < 5 * 60_000) return _nseCookie.value;
+  const page = /corporates-financial-results/.test(target.pathname)
+    ? 'https://www.nseindia.com/companies-listing/corporate-filings-financial-results'
+    : 'https://www.nseindia.com/companies-listing/corporate-filings-announcements';
+  const jar = new Map();
+  for (const u of ['https://www.nseindia.com/', page]) {
+    try {
+      const r = await fetch(u, { headers: { ...BROWSER_HEADERS, ...(jar.size ? { Cookie: Array.from(jar.values()).join('; ') } : {}) }, redirect: 'manual', signal: AbortSignal.timeout(8_000) });
+      for (const c of setCookiesOf(r)) jar.set(c.split('=')[0], c);
+    } catch { /* try the next page */ }
+  }
+  const value = Array.from(jar.values()).join('; ');
+  if (value) _nseCookie = { at: Date.now(), value };
+  return value;
+}
+
 function cacheWindows(target) {
   const isCompany = /^\/company\//.test(target.pathname);
   return isCompany
@@ -185,6 +212,20 @@ export default {
         outboundHeaders.set('Referer', 'https://www.bseindia.com/');
       }
       // Client Cookie and Host are deliberately NOT forwarded.
+      // zzz879 — NSE's /api/ answers "no data found" to a request with no
+      // session cookie (the GitHub results collector got 0 rows on every
+      // day). The worker opens the matching NSE page once, keeps the cookies
+      // it is given for 5 minutes, and sends them with the API call. The
+      // cookie is NSE's own, made here; nothing from the caller is forwarded.
+      if (/(^|\.)nseindia\.com$/.test(target.hostname) && target.hostname !== 'nsearchives.nseindia.com' && /^\/api\//.test(target.pathname)) {
+        const ck = await nseSessionCookie(target);
+        if (ck) {
+          outboundHeaders.set('Cookie', ck);
+          outboundHeaders.set('Accept', 'application/json, text/plain, */*');
+          outboundHeaders.set('X-Requested-With', 'XMLHttpRequest');
+          if (/corporates-financial-results/.test(target.pathname)) outboundHeaders.set('Referer', 'https://www.nseindia.com/companies-listing/corporate-filings-financial-results');
+        }
+      }
 
       // THE WORKER OWNS ITS OWN DEADLINE.                        (zzz735)
       //

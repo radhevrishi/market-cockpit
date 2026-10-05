@@ -13,6 +13,7 @@
 // getting correct data'.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { pendingReasonMap, pendingReasonWord } from '@/lib/eo-pending-reason';   // zzz879
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import type { CSSProperties } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -3761,6 +3762,7 @@ Source label: ${coverageStats.source}`}
           const shownElsewhere = new Set<string>(((view as any)?._dropped || []).filter((d: any) => /^already shown on /.test(String(d?.reason || ''))).map((d: any) => String(d.ticker || '').toUpperCase()));
           const pending = scheduled.filter((it) => !gradedTickers.has((it.symbol || '').toUpperCase()) && !shownElsewhere.has((it.symbol || '').toUpperCase()));
           if (pending.length === 0) return null;
+          const whyOf = pendingReasonMap(view);   // zzz879 — a short reason per name
           const copyPending = async (txt: string) => {
             try { await navigator.clipboard.writeText(txt); } catch {
               try {
@@ -3787,7 +3789,7 @@ Source label: ${coverageStats.source}`}
                 <span style={{ fontSize: 16, fontWeight: 800, color: 'var(--mc-warn)' }}>📅 SCHEDULED TODAY · RESULTS PENDING</span>
                 <span style={{ fontSize: 12, color: 'var(--mc-warn)', fontWeight: 800 }}>{pending.length} {pending.length === 1 ? 'company' : 'companies'}</span>
                 <span style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>
-                  · board meeting announced — financials not filed/parsed YET (nothing dropped)
+                  · each name says why it is not a card yet (hover for the full reason)
                 </span>
                 <span style={{ display: 'inline-flex', gap: 4, marginLeft: 'auto' }}>
                   <button
@@ -3811,13 +3813,16 @@ Source label: ${coverageStats.source}`}
                 </button>
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                {pending.slice(0, 60).map((it, i) => (
+                {pending.slice(0, 60).map((it, i) => {
+                  const why = whyOf.get(String(it.symbol || '').toUpperCase()) || pendingReasonWord(null);
+                  return (
                   <a key={`${filterDate}::${it.symbol || 'nosym'}::${it.company || ''}::${i}`} href={it.source_url} target="_blank" rel="noopener noreferrer"
-                    title={`${it.company || it.symbol} · click to open NSE filing page`}
+                    title={`${it.company || it.symbol} · ${why.full} · click to open NSE filing page`}
                     style={{ fontSize: 10.5, padding: '2px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-3)', color: 'var(--mc-text-3)', border: '1px solid #2A3550', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', textDecoration: 'none', fontWeight: 700 }}>
-                    {it.symbol}
+                    {it.symbol}<span style={{ fontFamily: 'ui-sans-serif, system-ui', fontWeight: 600, color: why.color }}> · {why.word}</span>
                   </a>
-                ))}
+                  );
+                })}
                 {pending.length > 60 && (
                   <span style={{ fontSize: 10.5, color: 'var(--mc-text-4)', padding: '2px 6px' }}>
                     +{pending.length - 60} more · use 📋 CSV to copy all

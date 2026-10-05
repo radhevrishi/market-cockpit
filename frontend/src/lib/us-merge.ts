@@ -109,7 +109,7 @@ export function mergeDayPayloads(
 
   // A name that ended up graded is not pending, whichever day said so.
   for (const [k, q] of Array.from(pending.entries())) {
-    if (rows.has(q.ticker) && q.reason !== 'reported-earlier') pending.delete(k);
+    if (rows.has(q.ticker) && (q.reason !== 'reported-earlier' || q.shown_on)) pending.delete(k);   // zzz879: its card is in this window
   }
   // Nor is a name that has already filed still "scheduled".
   {

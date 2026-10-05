@@ -1,0 +1,77 @@
+name: India results PDF backup (hourly)
+
+# zzz879 — when Screener has not added a quarter that a company HAS filed, the graded
+# route queues the name. Every hour this job asks the deployed app to take names filed
+# 2+ days ago, check Screener once more (no AI spent if it caught up), read the company's
+# own results PDF with the AI (Haiku) and keep the revenue / net profit / EPS only when
+# every figure is printed in the PDF and the period is the right quarter. Each company's
+# quarter is read once (stored 270 days); the day is then re-graded.
+#
+# Secrets: CRON_SECRET (same as the server), CRON_BASE_URL (optional).
+# The key travels in a header; only the HTTP status and counts are printed.
+
+on:
+  schedule:
+    - cron: '20 * * * *'
+  workflow_dispatch:
+    inputs:
+      max_items:
+        description: 'Companies to read in this run (1-25)'
+        required: false
+        default: '12'
+      max_usd:
+        description: 'Spend cap for this run in USD (max 1; the monthly cap still binds)'
+        required: false
+        default: '0.30'
+
+concurrency:
+  group: results-pdf
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  read:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Read queued results PDFs
+        id: main
+        env:
+          BASE: ${{ secrets.CRON_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          MAX_ITEMS: ${{ github.event.inputs.max_items || '12' }}
+          MAX_USD: ${{ github.event.inputs.max_usd || '0.30' }}
+        run: |
+          set -euo pipefail
+          BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
+          if [ -z "${CRON_SECRET}" ]; then echo "CRON_SECRET is not set in repository secrets"; exit 1; fi
+          case "$MAX_ITEMS" in ''|*[!0-9]*) MAX_ITEMS=12 ;; esac
+          case "$MAX_USD" in ''|*[!0-9.]*) MAX_USD=0.30 ;; esac
+          STATUS=$(curl -sS -o /tmp/rp.json -w "%{http_code}" --max-time 330 -X POST \
+            -H "x-cron-secret: ${CRON_SECRET}" "$BASE/api/v1/results-pdf?max_items=${MAX_ITEMS}&max_usd=${MAX_USD}" || echo "000")
+          echo "results-pdf HTTP $STATUS"
+          python3 - <<'PY' || true
+          import json
+          try:
+              j = json.load(open('/tmp/rp.json'))
+              print({k: j.get(k) for k in ['ok', 'skipped', 'queued', 'due', 'spentUsd', 'regraded']})
+              for o in (j.get('outcomes') or []): print(o.get('ticker'), o.get('want'), o.get('outcome'), '-', str(o.get('detail'))[:160])
+          except Exception as e:
+              print('response not readable:', e)
+          PY
+          if [ "$STATUS" != "200" ]; then exit 1; fi
+
+      - name: Heartbeat (always run)
+        if: always()
+        env:
+          BASE: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
+          OK="true"
+          if [[ "${{ steps.main.outcome }}" != "success" ]]; then OK="false"; fi
+          curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" \
+            -H 'Content-Type: application/json' \
+            -d "{\"name\":\"results-pdf\",\"phase\":\"end\",\"ok\":$OK,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -o /dev/null -w "heartbeat %{http_code}\n" || true

@@ -28,7 +28,7 @@ import { Award, RefreshCw, X, Undo2, ExternalLink, Star, Copy } from 'lucide-rea
 import {
   getUsConvictionList, removeUsConviction, clearUsConviction, syncUsConviction,
   restoreUsConvictionBin, readUsConvictionBin, hydrateUsConviction, usBenchPersistError, mergeServerUsBench, usCbSavedFilters, US_CB_OPTOUT_KEY, US_CB_FILTERS_KEY, US_CB_SMID_FLAG_KEY,
-  usFilingAgeDays, computeUsNewWindow, usVerdict, usRule40, usRoce,
+  usFilingAgeDays, isUsBenchAged, US_BENCH_AGED_DAYS, US_CB_U30_FLAG_KEY, usCbMigrateU30, computeUsNewWindow, usVerdict, usRule40, usRoce,
   passesUsConvictionFilter, usPresetFilters, isUsPresetActive, usCbCriteriaCheck,
   US_FILTER_DEFAULT, US_PRESET,
   // zzz828 — words not scores, same-period cash ratio, engine re-sync, hidden-names audit
@@ -260,8 +260,18 @@ export default function UsConvictionBeatsPage() {
         // Arista, which is the opposite of what turning it on was for. So
         // the preset now selects Small+Mid with it, exactly as if it were
         // one more of the preset's conditions.
-        ? { ...usPresetFilters(), cap: 'smid' } : prev
+        ? { ...usPresetFilters(), cap: 'u30' } : prev
     ));
+  }, []);
+
+  // zzz879 — the default cap band is now "Under $30B" (Rishi, 5 Oct 2026: 69 of
+  // the 168 bench names were $10B or bigger, and Small+Mid also hid the $10–30B
+  // names he does want). Runs once; a band picked by hand afterwards is kept.
+  useEffect(() => {
+    const K = US_CB_U30_FLAG_KEY;
+    try { if (localStorage.getItem(K) === '1') return; } catch { return; }
+    try { localStorage.setItem(K, '1'); } catch { /* repeats harmlessly */ }
+    setFilters((prev) => usCbMigrateU30(prev));
   }, []);
 
   // ── THE NEW DEFAULT HAS TO REACH AN EXISTING READER  (zzz612) ──────────
@@ -909,7 +919,7 @@ export default function UsConvictionBeatsPage() {
       // Turning the preset ON narrows to small+mid with it; turning it off
       // leaves the cap where the reader put it, so an explicit choice is
       // never overwritten in the direction that hides names.
-      return { ...usPresetFilters(), cap: 'smid', q: prev.q };
+      return { ...usPresetFilters(), cap: 'u30', q: prev.q };
     });
   };
 
@@ -1518,7 +1528,7 @@ export default function UsConvictionBeatsPage() {
           placeholder="Search ticker or company… (Enter to grade one that isn't here)"
           style={{ fontSize: 'var(--mc-text-xs)', padding: '6px 10px', borderRadius: 999, minWidth: 200, border: '1px solid var(--mc-bg-4)', backgroundColor: 'var(--mc-bg-2)', color: 'var(--mc-text-0)' }} />
         <span style={rowLabel}>Cap</span>
-        {[['all', 'All'], ['smid', 'Small+Mid'], ['small', 'Small'], ['mid', 'Mid'], ['large', 'Large'], ['mega', 'Mega']].map(([v, l]) => (
+        {[['all', 'All'], ['u30', 'Under $30B'], ['smid', 'Small+Mid'], ['small', 'Small'], ['mid', 'Mid'], ['large', 'Large'], ['mega', 'Mega']].map(([v, l]) => (
           <button key={v} onClick={() => setFilters((p) => ({ ...p, cap: v }))} style={chip(filters.cap === v)}>{l} ({countWith({ cap: v })})</button>
         ))}
         <span style={rowLabel}>Tier</span>
@@ -1843,6 +1853,7 @@ function BenchCard({ e, open, onToggle, onRemove, conf }: {
 }) {
   const v = usVerdict(e);
   const age = usFilingAgeDays(e.filing_date);
+  const aged = isUsBenchAged(e);
   const ds = driftState(e);
   const driftColor = ds === 'DRIFTING' ? '#EF4444' : ds === 'FADING' ? '#F59E0B' : ds === 'RUNNING' ? '#10B981' : 'var(--mc-text-3)';
 
@@ -1856,6 +1867,9 @@ function BenchCard({ e, open, onToggle, onRemove, conf }: {
   }), [e]);
 
   return (
+    // zzz879 — older than 60 days: greyed out, still on the bench.
+    <div style={aged ? { opacity: 0.45, filter: 'grayscale(0.7)' } : undefined}
+      title={aged ? `Filed ${age} days ago — older than ${US_BENCH_AGED_DAYS} days, greyed out. Still on the bench for its history.` : undefined}>
     <UsEarningsCard
       r={row as any}
       open={open}
@@ -1902,7 +1916,7 @@ function BenchCard({ e, open, onToggle, onRemove, conf }: {
           {ds && ds !== 'HOLDING' && (
             <Chip text={`${ds === 'DRIFTING' ? '⚠ ' : ''}${ds} ${fmtPct(e.move_pct, 0)}`} color={driftColor} />
           )}
-          {age != null && <Chip text={`·${age}d`} />}
+          {age != null && <Chip text={aged ? `OLD · ${age}d` : `·${age}d`} color={aged ? '#94A3B8' : undefined} />}
           {/* Tradeability. Two numbers, because a small cap that cannot be
               bought in size is not an opportunity however good the print was:
               under $2M traded a day a position of any size moves the price. */}
@@ -1923,6 +1937,7 @@ function BenchCard({ e, open, onToggle, onRemove, conf }: {
          and margin tables, the balance sheet) is in the expand panel, which is
          the same panel the Opportunities tab shows. */
     />
+    </div>
   );
 }
 
@@ -1965,7 +1980,7 @@ function BenchTable({ rows, sort, dir, onSort, onRemove }: { rows: UsConvictionE
             const roce = usRoce(e);
             const qm = e.quadrant ? QUADRANT_META[e.quadrant] : null;
             return (
-              <tr key={`${e.ticker}-${e.filing_date}`} style={{ borderBottom: '1px solid var(--mc-bg-3)' }}>
+              <tr key={`${e.ticker}-${e.filing_date}`} style={{ borderBottom: '1px solid var(--mc-bg-3)', ...(isUsBenchAged(e) ? { opacity: 0.45 } : {}) }} title={isUsBenchAged(e) ? `Filed more than ${US_BENCH_AGED_DAYS} days ago — greyed out` : undefined}>
                 <td style={{ ...td, textAlign: 'left', fontWeight: 800, color: 'var(--mc-text-0)' }}>
                   {e.source_url ? <a href={e.source_url} target="_blank" rel="noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>{e.ticker}</a> : e.ticker}
                 </td>

@@ -12,6 +12,7 @@
 // ~2-5s total when cold, <1s when warm (KV-cached).
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { RP_LATEST_KEY, overlayResultsPdf } from '@/lib/india-results-pdf';   // zzz879
 import { NextResponse } from 'next/server';
 import { isQuarterEndStale, yoyFromDatedSeries, sameFigure } from '@/lib/india-eo-card-data';  // zzz820
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
@@ -1411,7 +1412,31 @@ async function fetchGhFundamentals(sym: string): Promise<any | null> {
   }
 }
 
+// ── zzz879 — INDIA RESULTS PDF BACKUP ─────────────────────────────────────
+// When Screener has not added a quarter that the company HAS filed, the hourly
+// results-pdf job reads the company's own results PDF once (lib/india-results-
+// pdf.ts) and stores the figures. They are laid over this answer only when
+// they are NEWER than every other source's quarter and belong to this filing;
+// the moment Screener catches up its figures win again. Read through a small
+// in-memory cache so a 40-name chunk costs at most one KV read per name per
+// ten minutes.
+const _rpMem = new Map<string, { at: number; rec: any }>();
+async function resultsPdfRecord(symbol: string, fresh = false): Promise<any> {
+  const m = _rpMem.get(symbol);
+  if (!fresh && m && Date.now() - m.at < 10 * 60_000) return m.rec;
+  let rec: any = null;
+  try { rec = await Promise.race([kvGet(RP_LATEST_KEY(symbol)), new Promise((r) => setTimeout(() => r(null), 2_500))]); } catch { rec = null; }
+  _rpMem.set(symbol, { at: Date.now(), rec });
+  if (_rpMem.size > 3000) { const k = _rpMem.keys().next().value; if (k) _rpMem.delete(k); }
+  return rec;
+}
 async function enrichOne(symbol: string, filedHint?: string, bypassCache = false): Promise<any> {
+  const out = await enrichOneInner(symbol, filedHint, bypassCache);
+  if (!filedHint || !out || typeof out !== 'object') return out;
+  const rec = await resultsPdfRecord(String(symbol).toUpperCase(), bypassCache);
+  return rec ? overlayResultsPdf(out, rec, filedHint) : out;
+}
+async function enrichOneInner(symbol: string, filedHint?: string, bypassCache = false): Promise<any> {
   // Cache key includes filed date so a new filing busts old cache
   // PATCH 1013 — bumped v5 → v6 to invalidate stale entries lacking opm_pct.
   // zzz363 — bump v8->v9 to surface zzz360/zzz363 fields (stale KV was hiding them)

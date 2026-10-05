@@ -171,14 +171,36 @@ export const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null
 // (which runs with no browser) tests rows against the SAME numbers this chip
 // applies. Imported at the top of this file.
 
+// ── zzz879 — THE PRESET'S SIZE FLOOR IS A CHOICE ────────────────────────────
+// ₹3,000 Cr hid about 105 of the 195 bench names — HIIL (≈₹1,140 Cr) among
+// them — while the owner's universe is small caps. The preset now offers three
+// floors: ₹3k Cr (his saved setting, the default), ₹500 Cr, or any size. The
+// choice is remembered in this browser and Portfolio Catalysts reads the same
+// key through indiaPresetFilters(), so both apply the same floor.
+export const CB_PRESET_CAP_KEY = 'mc:cb:preset-cap:v1';
+export type CbCapFloor = 3000 | 500 | null;
+export const CB_CAP_FLOORS: ReadonlyArray<{ v: CbCapFloor; label: string }> = [
+  { v: 3000, label: '≥₹3k Cr' }, { v: 500, label: '≥₹500 Cr' }, { v: null, label: 'Any size' },
+];
+export function parseCbCapFloor(raw: string | null | undefined): CbCapFloor {
+  return raw === '500' ? 500 : raw === 'none' ? null : 3000;
+}
+export function cbCapFloorRaw(v: CbCapFloor): string { return v == null ? 'none' : String(v); }
+/** The saved floor in this browser; ₹3k Cr on the server or when nothing is saved. */
+export function readCbPresetCapFloor(): CbCapFloor {
+  if (typeof window === 'undefined') return INDIA_PRESET.mktCapMin as CbCapFloor;
+  try { return parseCbCapFloor(window.localStorage.getItem(CB_PRESET_CAP_KEY)); } catch { return 3000; }
+}
+const isCapFloor = (v: unknown): boolean => v == null || v === 3000 || v === 500;
+
 /** The preset as a filter patch. Spread over FILTER_DEFAULT (or prev). */
-export const indiaPresetFilters = () => ({
+export const indiaPresetFilters = (floor: CbCapFloor = readCbPresetCapFloor()) => ({
   sales: INDIA_PRESET.sales,
   eps: INDIA_PRESET.eps,
   pead: INDIA_PRESET.pead,
   opmDelta: INDIA_PRESET.opmDelta,
   cfoPatMin: INDIA_PRESET.cfoPatMin,
-  mktCapMin: INDIA_PRESET.mktCapMin,
+  mktCapMin: floor,
   pledgedMax: INDIA_PRESET.pledgedMax,
   verdicts: [...INDIA_PRESET.verdicts],
 });
@@ -192,7 +214,7 @@ export function isIndiaPresetActive(f: ConvFilters): boolean {
     && f.pead === INDIA_PRESET.pead
     && f.opmDelta === INDIA_PRESET.opmDelta
     && f.cfoPatMin === INDIA_PRESET.cfoPatMin
-    && f.mktCapMin === INDIA_PRESET.mktCapMin
+    && isCapFloor(f.mktCapMin)   // zzz879 — any of the three size floors
     && f.pledgedMax === INDIA_PRESET.pledgedMax
     && f.driftBucket == null
     && JSON.stringify((f.verdicts || []).map((v) => normalizeVerdictKey(v) || String(v)).sort()) === VERDICTS_SORTED;

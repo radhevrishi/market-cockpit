@@ -1387,7 +1387,7 @@ export default function UsEarningsOpportunitiesPage() {
               </div>
               {([
                 ['xbrl', 'Numbers not on EDGAR yet', (p: PendingFiler) => p.reason === 'xbrl-not-posted' || p.reason === 'quarter-stale'],
-                ['earlier', 'Announced before this window — only the 10-Q or a follow-up 8-K landed here', (p: PendingFiler) => p.reason === 'reported-earlier'],
+                ['earlier', 'Already shown earlier — same quarter, one card per company (the date is when its card was shown)', (p: PendingFiler) => p.reason === 'reported-earlier'],
                 ['price', 'No usable price history', (p: PendingFiler) => p.reason === 'no-price'],
               ] as Array<[string, string, (p: PendingFiler) => boolean]>).map(([k, label, pred]) => {
                 const list = data.pending!.filter(pred);
@@ -1403,13 +1403,13 @@ export default function UsEarningsOpportunitiesPage() {
                           title={`${p.company} · ${p.form} filed ${p.filed} · ${
                             p.reason === 'no-price' ? 'no price history (OTC / newly listed)'
                               : p.reason === 'quarter-stale' ? 'only the previous quarter is on file'
-                              : p.reason === 'reported-earlier' ? `announced ${p.filed} — before this window`
+                              : p.reason === 'reported-earlier' ? ((p as any).shown_on ? `same quarter already shown as a card on ${(p as any).shown_on}` : `announced ${p.filed} — before this window`)
                               : 'XBRL not posted yet'}`}
                           style={{
                             fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 6,
                             border: '1px solid var(--mc-bg-4)', color: k === 'earlier' ? 'var(--mc-text-3)' : 'var(--mc-text-2)',
                             textDecoration: 'none', backgroundColor: 'var(--mc-bg-2)',
-                          }}>{p.ticker}{k === 'earlier' ? <span style={{ fontWeight: 500, color: 'var(--mc-text-4)' }}> {p.filed.slice(5)}</span> : null}</a>
+                          }}>{p.ticker}{k === 'earlier' ? <span style={{ fontWeight: 500, color: 'var(--mc-text-4)' }}> {(p as any).shown_on ? `shown ${String((p as any).shown_on).slice(5)}` : p.filed.slice(5)}</span> : null}</a>
                       ))}
                     </div>
                   </div>

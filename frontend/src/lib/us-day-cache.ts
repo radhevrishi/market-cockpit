@@ -45,6 +45,7 @@
 import { US_ENGINE_VERSION } from './us-engine-version';
 import { regradeDayPayload } from './us-regrade';
 import { snapshotFresh } from './us-earnings-dates';
+import { US_SESSION_DEDUPE_VERSION } from './us-session-dedupe';
 
 const DB_NAME = 'mc-us-days';
 const DB_VERSION = 1;
@@ -176,6 +177,11 @@ export async function getCachedDay(day: string, isToday: boolean): Promise<any |
   void isToday;
   if (!snapshotFresh(day, at, Date.now(), 10 * 60_000, 30 * 24 * 3600_000)) return null;
   if (!p?.by_tier) return null;
+  // zzz879 — a day saved before the one-card-per-quarter check (no
+  // `session_dedupe` stamp) is shown, then re-fetched in the background exactly
+  // like an older-engine day, so a company already shown on an earlier session
+  // stops appearing twice in this browser too.
+  if (p.session_dedupe !== US_SESSION_DEDUPE_VERSION) return { ...p, _stale_engine: true };
   // A DAY GRADED BY AN OLDER ENGINE IS SHOWN, THEN REPLACED.
   //
   // The filings behind a completed session never change; the GRADE changes

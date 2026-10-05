@@ -28,7 +28,7 @@ import { cachedBseMatches, lookupBseCodes } from './bse-nse-lookup';
 import { readLocalBookInput, fetchSavedHoldings, fetchSyncedHeld } from './book-sources';
 import { readConvictionBeats } from '@/lib/conviction-beats';
 import { selectIndiaCb, cbTicker, heldKey, IN_CB_SOURCE, type PresetLabel, type CbCriteriaInfo } from './pc-bench';
-import { tierNowLabel } from '@/lib/india-cb-view';
+import { tierNowLabel, cbIsRemoved } from '@/lib/india-cb-view';
 import {
   serverBenchToCbEntries, mergeCbEntries, cbFiltersForOwner, readCbPresetOptOut, cbCriteriaCheck,
 } from '@/lib/conviction-filter-india';
@@ -544,7 +544,7 @@ export function useBook(opts?: { includeBench?: boolean }) {
         if (cancelled) return;
         const optedOut = readCbPresetOptOut();
         const filters = cbFiltersForOwner(optedOut);
-        const list = mergeCbEntries(cb.local as any, serverBenchToCbEntries(cb.server));
+        const list = mergeCbEntries(cb.local as any, serverBenchToCbEntries(cb.server)).filter((e: any) => !cbIsRemoved(e));   // zzz879
         // zzz823: pass / fail / NOT CHECKED — the same shared check the
         // Conviction Beats tab now applies (unknown data is never a fail).
         const sel = selectIndiaCb({

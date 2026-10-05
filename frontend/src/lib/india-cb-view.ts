@@ -154,8 +154,9 @@ export function hiddenReportLine(r: HiddenReport): string {
 }
 
 /** The preset bar, in words (no 0–100 number, no buy / sell words). */
-export function presetBarText(): string {
-  return 'Sales ≥20% · EPS ≥25% · PEAD 40 or more · margin not falling · cash ≥0.5x profit (same year) · market cap ≥₹3k Cr · no pledge · setup: Top / Good / Watch';
+export function presetBarText(capFloor: number | null = 3000): string {
+  const cap = capFloor == null ? 'any market cap' : `market cap ≥₹${capFloor >= 1000 ? `${capFloor / 1000}k` : capFloor} Cr`;
+  return `Sales ≥20% · EPS ≥25% · PEAD 40 or more · margin not falling · cash ≥0.5x profit (same year) · ${cap} · no pledge · setup: Top / Good / Watch`;
 }
 
 // ─── Stale tiers: re-sync from the current graded rows ────────────────────
@@ -219,8 +220,41 @@ export function cbResyncPatch(entry: any, row: any): ResyncPatch | null {
   return { ticker: String(entry.ticker).toUpperCase(), patch, change: same ? 'none' : change, from, to: now };
 }
 
+// ─── zzz879 — this browser's list checked against the server's list ──────
+// The bench in this browser keeps every card it ever saw. When a day is
+// re-graded and a card turns out to be wrong (STEAMHOUSE on 5 Oct: graded on
+// last quarter's numbers before its results were out), the server's list —
+// rebuilt daily from the graded days, last 60 days — drops it, but this browser
+// kept it until the owner pressed ×. Each visit now compares the two: a name
+// filed 2–55 days ago that the server does not list is greyed and labelled
+// (never deleted — × still removes it); it is un-greyed if the server lists it
+// again. Names older than the server's window are not judged.
+export const CB_SERVER_CHECK_MIN_AGE_DAYS = 2;
+export const CB_SERVER_CHECK_MAX_AGE_DAYS = 55;
+const ageDaysOf = (fd: unknown, now: number): number | null => {
+  const t = Date.parse(`${String(fd || '').slice(0, 10)}T00:00:00Z`);
+  return Number.isFinite(t) ? Math.floor((now - t) / 86_400_000) : null;
+};
+/** Patches that set / clear `_not_on_server` on this browser's bare bench entries. */
+export function cbServerReconcile(local: any[], serverTickers: Iterable<string>, now = Date.now()): Array<{ ticker: string; patch: Record<string, any> }> {
+  const srv = new Set(Array.from(serverTickers, (t) => key(t)));
+  const out: Array<{ ticker: string; patch: Record<string, any> }> = [];
+  for (const e of local || []) {
+    const t = key(e?.ticker);
+    if (!t || t.includes('@')) continue;
+    if (srv.has(t)) { if (e._not_on_server) out.push({ ticker: t, patch: { _not_on_server: null } }); continue; }
+    const age = ageDaysOf(e?.filing_date, now);
+    if (age == null || age < CB_SERVER_CHECK_MIN_AGE_DAYS || age > CB_SERVER_CHECK_MAX_AGE_DAYS) continue;
+    if (!e._not_on_server) out.push({ ticker: t, patch: { _not_on_server: true } });
+  }
+  return out;
+}
+/** A bench name the server no longer lists — greyed on the tab, left out of Portfolio Catalysts. */
+export const cbIsRemoved = (e: any): boolean => !!e?._not_on_server;
+
 /** The label a card carries when its current grade fell below STRONG. */
 export function tierNowLabel(e: any): string | null {
+  if (e?._not_on_server) return 'no longer on the results list (its card was removed, e.g. graded before the results were out) — × to remove';
   const t = String(e?._tier_now || '').toUpperCase();
   return t && t !== 'BLOCKBUSTER' && t !== 'STRONG' ? `now ${t} under current rules` : null;
 }

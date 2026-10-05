@@ -166,6 +166,15 @@ function _everyNameExplained(payload: any): boolean {
   return drops.every((d) => typeof d?.reason === 'string' && d.reason.length > 0 && !/fetch|timeout|timed out|failed|unknown|rate.?limit/i.test(d.reason));
 }
 
+/** zzz879 — the most recent quarter end strictly before a filing date ("2026-10-03" → "2026-09-30"). */
+function _lastQuarterEndBefore(iso: any): string | null {
+  const t = Date.parse(`${String(iso || '').slice(0, 10)}T00:00:00Z`);
+  if (!Number.isFinite(t)) return null;
+  const d = new Date(t - 86_400_000); const y = d.getUTCFullYear(); const m = d.getUTCMonth() + 1;
+  const q = m >= 10 ? [y, 9, 30] : m >= 7 ? [y, 6, 30] : m >= 4 ? [y, 3, 31] : [y - 1, 12, 31];
+  return `${q[0]}-${String(q[1]).padStart(2, '0')}-${q[2]}`;
+}
+
 /** zzz878 — "2026-06-30" → "Q1 FY27" (Indian fiscal year). Null for a date that is not a quarter end. */
 function _labelOfQuarterEnd(iso: any): string | null {
   const m = /^(\d{4})-(\d{2})-\d{2}/.exec(String(iso || ''));
@@ -466,6 +475,7 @@ async function gradedLegacyGET(req: Request) {
         // Re-grade ONLY the missing-data cards
         const replacedTickers = new Set<string>();
         const updatedCards: ParsedEarning[] = [];
+        const heldInPartial: Array<{ ticker: string; reason: string }> = [];   // zzz879
         for (const c of allCards) {
           // PATCH 0360 — keep card unchanged ONLY when it already has YoY
           // data (matches the new preview-detection criterion). A card with
@@ -513,10 +523,13 @@ async function gradedLegacyGET(req: Request) {
             continue;
           }
           // zzz876f — same rule as the full build: last quarter's numbers never grade a newer scheduled quarter
+          // zzz879 — a card whose label is a NEWER quarter than its numbers is held, not relabelled: a late filer's
+          // card already carries its real quarter (the full build relabels it), so only a scheduled-but-not-filed
+          // card reaches this. Relabelling it here put STEAMHOUSE / GLCL / LCCPROJECT back on 5 Oct.
           if (_olderThanScheduledQuarter((c as any).quarter, (c as any).filing_date || date, e)) {
             const _scr = _labelOfQuarterEnd(e?.latest_quarter_end_iso);
-            if (!_scr) { updatedCards.push(c); continue; }
-            (c as any).quarter = _scr;   // zzz878: the card carries the quarter its numbers belong to
+            heldInPartial.push({ ticker: c.ticker, reason: `results for ${(c as any).quarter} not out yet — Screener's newest quarter is ${_scr || 'older'} (scheduled, not filed)` });
+            continue;
           }
           // Re-grade with new enrichment data
           const row = {
@@ -635,6 +648,8 @@ async function gradedLegacyGET(req: Request) {
           _attempted_tickers: needTickers,
           _failed_tickers: failedTickers,
           _updated_tickers: [...replacedTickers],
+          // zzz879 — names held back in this pass join the day's pending list with their reason
+          ...(heldInPartial.length ? { _dropped: [...((existing as any)?._dropped || []).filter((d: any) => !heldInPartial.some((h) => h.ticker === d?.ticker)), ...heldInPartial] } : {}),
         };
         // Write back with same TTL strategy
         const ttl = isPast ? 365 * 24 * 3600 : 5 * 60;
@@ -1259,6 +1274,8 @@ async function gradedLegacyGET(req: Request) {
   // reason, and travels in the payload. "Why is X missing?" is answered by the
   // response itself instead of by re-deriving five guards by hand.
   const dropped: Array<{ ticker: string; reason: string; source?: string }> = [];
+  const _rpQueue: Array<{ ticker: string; filed: string; want: string; label: string | null; url: string | null; added_at: string }> = [];   // zzz879
+  const _rpAdd = (m: any, want: string | null) => { const f = String(m?.resultDate || '').slice(0, 10); if (want && /^\d{4}-\d{2}-\d{2}$/.test(f) && want < f) _rpQueue.push({ ticker: String(m.ticker || '').toUpperCase(), filed: f, want, label: m.quarter || null, url: m.source_url || null, added_at: new Date().toISOString() }); };
   for (const m of dayList) {
     const e = enrich[m.ticker] || {};
     // zzz800 — a ticker re-seeded from a previous grade whose enrichment came
@@ -1292,6 +1309,8 @@ async function gradedLegacyGET(req: Request) {
         const _alreadyGraded = !!_scrLabel && shownEarlier.has(`${String(m.ticker || '').toUpperCase()}|${_scrLabel.toUpperCase()}`);
         // a board meeting with NO confirmed filing (hub 'Upcoming') whose Screener numbers are older: the results are simply not out yet
         const _onlyScheduled = String(m.quality || '') === 'Upcoming';
+        // zzz879 — a filing that NAMES its quarter and is not on Screener yet: the results PDF backup reads it after 2 days
+        if (m.quarter_explicit === true && !_alreadyGraded && !_onlyScheduled) _rpAdd(m, _quarterEndFromFyLabel(m.quarter));
         if (m.quarter_explicit === true || _alreadyGraded || _onlyScheduled || !_scrLabel) { dropped.push({ ticker: m.ticker, reason: _alreadyGraded ? `${_older} (its ${_scrLabel} results are already shown on ${shownEarlier.get(`${String(m.ticker || '').toUpperCase()}|${_scrLabel!.toUpperCase()}`)})` : _older, source: m.__source }); continue; }
         m.quarter = _scrLabel;
       }
@@ -1310,6 +1329,7 @@ async function gradedLegacyGET(req: Request) {
       if (daysSince > 100 && !(_filedForThatQuarter && daysSince <= 125)) {
         console.log(`[graded] ${date}: dropping ${m.ticker} — screener quarter ${e.latest_quarter_end_iso} is ${Math.round(daysSince)}d stale (Q4 not filed yet)`);
         dropped.push({ ticker: m.ticker, reason: `Screener's latest quarter ${e.latest_quarter_end_iso} is ${Math.round(daysSince)}d before the filing (new quarter not on Screener yet)`, source: m.__source });
+        if (String(m.quality || '') !== 'Upcoming') _rpAdd(m, _lastQuarterEndBefore(m.resultDate));   // zzz879 — a confirmed filing: results PDF backup
         continue;
       }
     }
@@ -1422,6 +1442,7 @@ async function gradedLegacyGET(req: Request) {
     })
     .map((m: any) => m.ticker);
 
+  if (_rpQueue.length) void import('@/lib/india-results-pdf-run').then(async (mod) => { const k = await import('@/lib/kv'); await mod.enqueueResultsPdf({ get: (x) => k.kvGet(x), set: (x, v, t) => k.kvSet(x, v, t) }, _rpQueue as any); }).catch(() => {});   // zzz879
   const payload = {
     filing_date: date,
     candidates_total: graded.length,
@@ -1489,7 +1510,11 @@ const gradedCardCount = (b: any): number => {
   const t = b?.by_tier; if (!t || typeof t !== 'object') return 0;
   return (Object.values(t) as any[]).reduce((n: number, v: any) => n + (Array.isArray(v) ? v.length : 0), 0);
 };
-const gradedUsable = (e: GradedEnvelope): boolean => !!e && e.status === 200 && !!e.body?.by_tier && !e.body?._hub_fail && !e.body?.engine_stale && gradedCardCount(e.body) > 0;
+// zzz879 — an EMPTY day whose every name is pending for a stated reason (_everyNameExplained) is a real answer and replaces the
+// saved one. Requiring at least one card kept serving the wrong 5 Oct cards (STEAMHOUSE / GLCL / LCCPROJECT) for 90 days after
+// the corrected rebuild had held all three back.
+const gradedUsable = (e: GradedEnvelope): boolean => !!e && e.status === 200 && !!e.body?.by_tier && !e.body?._hub_fail && !e.body?.engine_stale
+  && (gradedCardCount(e.body) > 0 || _everyNameExplained(e.body));
 async function runLegacy(req: Request): Promise<{ env: GradedEnvelope; res: Response; noStore: boolean }> {
   const res = await gradedLegacyGET(req);
   const cc = res.headers.get('Cache-Control') || '';

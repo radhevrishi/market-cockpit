@@ -24,13 +24,14 @@ import {
   __NEW_WIN, computeNewWindow, setNewWindow, deriveQuarterFY, deriveGuidanceLabel, getD2Pct,
   cbIsFinancial, cbComputeQuality, passesConvictionFilter, mergeCbEntries, serverBenchToCbEntries, CB_PRESET_OPTOUT_KEY,
   cbCriteriaCheck, cbFiltersForOwner, readCbPresetOptOut,
+  CB_PRESET_CAP_KEY, CB_CAP_FLOORS, cbCapFloorRaw, type CbCapFloor, // zzz879
   cbCashView, cbVerdictLabel, cbPeadWord, // zzz827
 } from '@/lib/conviction-filter-india';
 // zzz827 — words not numbers, EO growth text, the hidden-names report, the stale-tier re-sync, the PC snapshot.
 import {
   cbStrengthWord, cbQualityWord, cbQualityBitWord, cbGrowthText, cbCompany, qTrendsState,
   buildHiddenReport, hiddenReportLine, presetBarText, CB_GRADED_V_KEY, CB_RESYNC_MAX_DATES, needsCbResync,
-  cbResyncPatch, resyncSummary, tierNowLabel, writeCbTabSnapshot, filtersMatchSaved, cbExportWords, type ResyncPatch,
+  cbResyncPatch, resyncSummary, tierNowLabel, writeCbTabSnapshot, cbServerReconcile, cbIsRemoved, /* zzz879 */ filtersMatchSaved, cbExportWords, type ResyncPatch,
 } from '@/lib/india-cb-view';
 import { GRADED_CACHE_VERSION } from '@/lib/graded-cache-key';
 import { CASH_RULE_V } from '@/lib/india-cash';
@@ -629,6 +630,14 @@ export default function WatchlistsPage() {
         // zzz811 — same mapping Portfolio Catalysts uses (lib/conviction-filter-india).
         const mapped: ConvictionEntry[] = serverBenchToCbEntries(ents);
         if (!cancelled) setServerBench(mapped);
+        // zzz879 — grey (never delete) this browser's names the server no longer lists; only when the server sent a real list
+        if (!cancelled && mapped.length >= 20) {
+          try {
+            const local = Object.entries(readConvictionBeats()).filter(([k]) => !k.includes('@')).map(([, v]) => v);
+            const patches = cbServerReconcile(local, mapped.map((m) => m.ticker));
+            if (patches.length) replaceConvictionFields(patches);
+          } catch {}
+        }
       } catch {}
     })();
     return () => { cancelled = true; };
@@ -3024,8 +3033,21 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild, onShow
                 style={presetActive
                   ? chipActive('#F59E0B')
                   : { ...chipBase, border: '1px solid #F59E0B', color: '#F59E0B', fontWeight: 800 }}>
-                ⚡ QUALITY PRESET · {presetBarText()} {presetActive ? '✓ ON' : '· OFF — click to enable'}
+                ⚡ QUALITY PRESET · {presetBarText(presetActive ? (filters.mktCapMin as number | null) : 3000)} {presetActive ? '✓ ON' : '· OFF — click to enable'}
               </button>
+              {/* zzz879 — the preset's size floor: ₹3k Cr (default), ₹500 Cr, or any size. Remembered. */}
+              {presetActive && (
+                <span data-testid="cb-cap-floor" style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}
+                  title="Smallest company size the preset shows. ₹500 Cr or Any size brings in the small caps a ₹3k Cr floor hides (HIIL is about ₹1,140 Cr). Your choice is remembered and Portfolio Catalysts uses it too.">
+                  <span style={{ fontSize: 10.5, color: 'var(--mc-text-3)', fontWeight: 700 }}>Size:</span>
+                  {CB_CAP_FLOORS.map((o) => (
+                    <button key={String(o.v)} onClick={() => {
+                      try { localStorage.setItem(CB_PRESET_CAP_KEY, cbCapFloorRaw(o.v as CbCapFloor)); } catch {}
+                      setFilters((prev) => ({ ...prev, mktCapMin: o.v }));
+                    }} style={filters.mktCapMin === o.v ? chipActive('#F59E0B') : chipBase}>{o.label}</button>
+                  ))}
+                </span>
+              )}
               {filters.mktCapMin != null && (
                 <span data-testid="cb-mktcap-excluded" style={{ fontSize: 10.5, color: 'var(--mc-text-3)', fontWeight: 700 }}
                   title="Market cap is your own setting. This is how many names on the list sit below it (a name with no market cap figure is 'not checked', not excluded).">
@@ -4473,7 +4495,7 @@ function ConvictionTable({ entries, onRemove, sort, setSort }: {
             const tierColor = e.tier === 'BLOCKBUSTER' ? '#F59E0B' : '#10B981';
             const tierLbl = e.tier === 'BLOCKBUSTER' ? '⭐' : '🟢';
             return (
-              <tr key={e.ticker + (e.filing_date || '')} style={{ transition: 'background 0.1s' }}
+              <tr key={e.ticker + (e.filing_date || '')} style={{ transition: 'background 0.1s', ...(cbIsRemoved(e) ? { opacity: 0.45 } : {}) }}
                 onMouseEnter={(ev) => { (ev.currentTarget as HTMLElement).style.background = 'var(--mc-bg-2)'; }}
                 onMouseLeave={(ev) => { (ev.currentTarget as HTMLElement).style.background = 'transparent'; }}>
                 <td style={{ ...td, color: tierColor, fontWeight: 800 }}>{tierLbl}</td>
@@ -4529,6 +4551,7 @@ function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { ent
         borderRadius: 8, display: 'flex', flexDirection: 'column', gap: density === 'ultra' ? 3 : density === 'compact' ? 5 : 6,
         transition: 'transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease',
         willChange: 'transform',
+        ...(cbIsRemoved(entry) ? { opacity: 0.45, filter: 'grayscale(0.8)' } : {}),   // zzz879
       }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -4536,7 +4559,7 @@ function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { ent
             {company}
           </div>
           {tierNow && (
-            <div data-testid="cb-tier-now" title="The grading engine has changed since this name was benched; under the current rules this filing grades below STRONG. It stays on your bench, labelled — remove it with × if you want it gone."
+            <div data-testid="cb-tier-now" title={cbIsRemoved(entry) ? "This name is not on the server's results list any more: its card was removed when the day was re-graded (for example it was graded on last quarter's numbers before the new results were out). Greyed, not deleted — remove it with ×." : "The grading engine has changed since this name was benched; under the current rules this filing grades below STRONG. It stays on your bench, labelled — remove it with × if you want it gone."}
               style={{ fontSize: 10, fontWeight: 800, color: '#F59E0B' }}>⚠ {tierNow}</div>
           )}
           <div style={{ fontSize: 10, fontFamily: 'ui-monospace, monospace', color: 'var(--mc-text-3)', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'baseline', rowGap: 2 }}>
