@@ -676,7 +676,8 @@ const nearDate = (a: string, b: string, days: number) => { const x = Date.parse(
 export function planQueue(rows: GuidanceDocIndexRow[], info: PlanInfo, mode: UsMode = 'prioritized'): QueuePlan {
   const seen = new Set<string>();
   const uniq = rows.filter((r) => r && r.docId && !r.extracted && !seen.has(r.docId) && (seen.add(r.docId), true));
-  const india = uniq.filter((r) => r.market === 'IN').sort(newestFirst);
+  // zzz870: documents that carry guidance (transcripts, presentations, results releases) are read BEFORE the other kinds, then newest first inside each group
+  const india = uniq.filter((r) => r.market === 'IN').sort((a, b) => kindTier(a.kind) - kindTier(b.kind) || newestFirst(a, b));
   const us = uniq.filter((r) => r.market !== 'IN').sort(newestFirst);
   const counts = { india: india.length, usHandoff: 0, usNoEvent: 0, usUnknown: 0, skippedGraded: 0, skippedVerified: 0, skippedMode: 0 };
   const t2: GuidanceDocIndexRow[] = []; const t3: GuidanceDocIndexRow[] = []; const t4: GuidanceDocIndexRow[] = [];

@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { parseListOptions, shapeNewsArticles } from '@/lib/lean-view';
 import { privateCache } from '@/lib/swr-cache';
-import { refreshNewsLastGood, makeKvNewsIo } from '@/lib/guidance-upgrades-cache';
+import { refreshNewsLastGood, makeKvNewsIo, NEWS_SHARED_LASTGOOD_KEY } from '@/lib/guidance-upgrades-cache';
+const NEWS_BG_REFRESH = { busy: false };   // zzz869: one background refresh per instance
 import { recordXRef } from '@/lib/news/cross-reference';
 import {
   buildInstitutionalEnvelope, shouldKeepEarnings, generateInstitutionalImpactLabel,
@@ -2543,6 +2544,31 @@ export async function GET(request: Request) {
       if (Array.isArray(articles) && articles.length > 0) NEWS_MEMO.set(CACHE_KEY, { articles: structuredClone(articles), ts: Date.now() });
     }
 
+    // zzz869 — the live key is refreshed only hourly. A reader that misses it used to wait for the full live fetch of every feed (20 s+),
+    // and the home page gave up at 20 s ("News feed unreachable (timeout)"). Serve the saved last-good copy at once and refresh in the background.
+    if (!articles || articles.length === 0) {
+      try {
+        const lgv: any = await Promise.race([kvGet<any>(NEWS_SHARED_LASTGOOD_KEY), new Promise((r) => setTimeout(() => r(null), 2500))]);
+        const la: any[] | null = Array.isArray(lgv) ? lgv : Array.isArray(lgv?.articles) ? lgv.articles : null;
+        if (la && la.length >= 8) {
+          articles = la;
+          const at = typeof lgv?.savedAt === 'string' ? Date.parse(lgv.savedAt) : NaN;
+          newsServedFrom = `lastgood; age=${Number.isFinite(at) ? Math.max(0, Math.round((Date.now() - at) / 60_000)) : 'unknown'}m`;
+          if (!NEWS_BG_REFRESH.busy) {
+            NEWS_BG_REFRESH.busy = true;
+            void (async () => {
+              try {
+                const fresh = await fetchAllNews();
+                if (Array.isArray(fresh) && fresh.length >= 8) {
+                  await refreshNewsLastGood(makeKvNewsIo(4_000), fresh);
+                  await kvSet(CACHE_KEY, fresh, CACHE_TTL);
+                }
+              } catch { /* best effort */ } finally { NEWS_BG_REFRESH.busy = false; }
+            })();
+          }
+        }
+      } catch { /* fall through to the live fetch */ }
+    }
     if (!articles || articles.length === 0) {
       articles = await fetchAllNews();
       // PATCH 0452 P0-5 — Annotate each article ONCE before caching. Stamps

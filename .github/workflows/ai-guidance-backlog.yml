@@ -1,0 +1,76 @@
+name: AI Guidance Backlog (manual, one click)
+
+# zzz870 — clears the waiting-document queue (India first) in ONE run instead of 25 documents an hour.
+# Same endpoint, same checks (every quote is checked against the document, every number against the quote) and the same
+# server-side monthly cap (AI_MONTHLY_CAP_USD), so it can never spend past that cap. You choose the spend for this run.
+# Order is unchanged: India first, transcripts / presentations / results first, newest first.
+#
+# Secrets: CRON_SECRET (same value as on the server), CRON_BASE_URL (optional). Nothing secret is ever printed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_usd:
+        description: 'Total spend cap for this run in USD (the monthly cap on the server still binds)'
+        required: false
+        default: '5'
+      max_minutes:
+        description: 'Stop after this many minutes (10-330)'
+        required: false
+        default: '120'
+
+concurrency:
+  group: ai-guidance-extract
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  backlog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+    steps:
+      - name: Extract until the queue or the cap is empty
+        env:
+          BASE: ${{ secrets.CRON_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          MAX_USD: ${{ github.event.inputs.max_usd || '5' }}
+          MAX_MIN: ${{ github.event.inputs.max_minutes || '120' }}
+        run: |
+          set -uo pipefail
+          BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
+          if [ -z "${CRON_SECRET}" ]; then echo "CRON_SECRET is not set in repository secrets"; exit 1; fi
+          case "$MAX_USD" in ''|*[!0-9.]*) MAX_USD=5 ;; esac
+          case "$MAX_MIN" in ''|*[!0-9]*) MAX_MIN=120 ;; esac
+          [ "$MAX_MIN" -lt 10 ] && MAX_MIN=10
+          [ "$MAX_MIN" -gt 330 ] && MAX_MIN=330
+          END=$(( $(date +%s) + MAX_MIN * 60 ))
+          LEFT_USD=$MAX_USD
+          TOTAL=0; EMPTY=0; BAD=0
+          for ROUND in $(seq 1 400); do
+            if [ "$(date +%s)" -ge "$END" ]; then echo "time limit reached"; break; fi
+            STATUS=$(curl -sS -o /tmp/ge.json -w "%{http_code}" --max-time 75 -X POST \
+              -H "x-cron-secret: ${CRON_SECRET}" -H 'Content-Type: application/json' \
+              "$BASE/api/v1/guidance-extract?limit=40&maxUsd=${LEFT_USD}" || echo "000")
+            if [ "$STATUS" != "200" ]; then BAD=$((BAD+1)); echo "round ${ROUND}: HTTP $STATUS (failure $BAD of 5)"; [ "$BAD" -ge 5 ] && break; sleep 20; continue; fi
+            BAD=0
+            OUT=$(LEFT_USD="$LEFT_USD" python3 - <<'PY' || echo "0 0 0 x"
+          import json, os
+          try:
+              r = (json.load(open('/tmp/ge.json')).get('run') or {})
+              att = int(r.get('attempted') or 0); spent = float(r.get('spentUsd') or 0)
+              left = max(float(os.environ['LEFT_USD']) - spent, 0)
+              print(f"{att} {left:.4f} {int(r.get('queued') or 0)} {r.get('stoppedBy')} ok={r.get('ok')} none={r.get('noGuidance')} rows={r.get('rowsKept')} unavailable={str(r.get('unavailableReason') or '')[:80].replace(' ','_')}")
+          except Exception as e:
+              print("0 0 0 unreadable")
+          PY
+            )
+            read ATT LEFT_USD QUEUED STOP REST <<< "$OUT"
+            TOTAL=$((TOTAL+ATT))
+            echo "round ${ROUND}: attempted=${ATT} queued=${QUEUED} stoppedBy=${STOP} ${REST:-} | total=${TOTAL} | usd left=${LEFT_USD}"
+            case "$STOP" in unavailable|no_store|cap|budget_usd) echo "stopped by the server: ${STOP}"; break ;; locked) echo "another extraction is running, waiting"; sleep 30; continue ;; esac
+            if [ "$ATT" -eq 0 ]; then EMPTY=$((EMPTY+1)); [ "$EMPTY" -ge 2 ] && { echo "nothing left to read"; break; }; else EMPTY=0; fi
+            if awk "BEGIN{exit !($LEFT_USD < 0.02)}"; then echo "spend cap for this run reached"; break; fi
+          done
+          echo "documents read in this run: ${TOTAL}"

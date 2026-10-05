@@ -143,6 +143,7 @@ export async function scanIndia(inp: IndiaScanInput): Promise<MarketScanResult> 
 
   // zzz866: the GitHub India collector's own day record (status 'ok' only; partial/failed days are never counted)
   const cd = await Promise.resolve(inp.collectorDays ?? null).catch(() => null);
+  const cdAll = cd;   // zzz870: on a long window the collector's older days count too (they are not re-read live)
   if (cd) for (const d of days) if (cd.has(d)) collDays.add(d);
   if (inp.collectorDays !== undefined) sources.push({ name: 'GitHub India collector', tier: 'PRIMARY', daysTried: days.slice(), daysOk: [...collDays], state: !cd || cd.size === 0 ? 'NOT_RUN' : stateFor(collDays.size, days.length), scanned: collDays.size,
     detail: !cd || cd.size === 0 ? 'no collector run recorded yet (run the "Scrape Guidance Docs" GitHub workflow; NSE and BSE refuse this server)' : `${collDays.size} of ${days.length} days fully indexed by the GitHub collector (company documents handed to the extractor)` });
@@ -171,7 +172,7 @@ export async function scanIndia(inp: IndiaScanInput): Promise<MarketScanResult> 
   } else {
     // long window: days covered = read live today (and graded, weekdays) OR already processed by an earlier run. A day that is neither is MISSING, never "zero events".
     const gradedDays = await Promise.resolve(inp.gradedDays ?? null).catch(() => null);
-    const cov = computeCoverage({ days: allDays, live: new Set([...liveOk, ...days.filter((d) => blobDays.has(d) || collDays.has(d))]), graded: gradedDays, store: inp.storeCovered });
+    const cov = computeCoverage({ days: allDays, live: new Set([...liveOk, ...days.filter((d) => blobDays.has(d) || collDays.has(d)), ...(cdAll ? allDays.filter((d) => cdAll!.has(d)) : [])]), graded: gradedDays, store: inp.storeCovered });
     const storeSeen = inp.storeCovered ? allDays.filter((d) => inp.storeCovered!.has(d)).length : 0;
     sources.push({
       name: 'Persisted event store', scanned: storeSeen, tier: 'SECONDARY',

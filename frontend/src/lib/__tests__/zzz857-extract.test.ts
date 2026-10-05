@@ -352,21 +352,21 @@ describe('runExtraction', () => {
   const inRows = [ir('in-old', 'IN', '2026-05-01', 'X', 'TRANSCRIPT'), ir('in-new', 'IN', '2026-09-30', 'Y', 'AGM_SPEECH'), ir('in-mid', 'IN', '2026-08-01', 'Z')];
   const info = { handoff: new Set(['us-handoff']), graded: new Set(['us-graded']), verified: new Map([['CCC', ['2026-09-18']]]), looked: new Set(['AAA', 'BBB', 'CCC', 'DDD']) };
 
-  test('plan: India (newest first) → US hand-offs → US with no verified event → US unknown; graded / verified skipped', () => {
+  test('plan: India (guidance-bearing kinds first, newest first inside each) → US hand-offs → US with no verified event → US unknown; graded / verified skipped', () => {
     const p = planQueue([...usRows, ...inRows, inRows[0]], info, 'prioritized');
-    assert.deepEqual(p.rows.map((x) => x.docId), ['in-new', 'in-mid', 'in-old', 'us-handoff', 'us-old-event', 'us-noevent', 'us-unknown', 'us-noticker']);
+    assert.deepEqual(p.rows.map((x) => x.docId), ['in-mid', 'in-old', 'in-new', 'us-handoff', 'us-old-event', 'us-noevent', 'us-unknown', 'us-noticker']);
     assert.deepEqual(p.counts, { india: 3, usHandoff: 1, usNoEvent: 2, usUnknown: 2, skippedGraded: 1, skippedVerified: 1, skippedMode: 0 });
   });
   test('plan: GUIDANCE_EXTRACT_US_MODE=handoff_only keeps only hand-offs for the US', () => {
     const p = planQueue([...usRows, ...inRows], info, 'handoff_only');
-    assert.deepEqual(p.rows.map((x) => x.docId), ['in-new', 'in-mid', 'in-old', 'us-handoff']);
+    assert.deepEqual(p.rows.map((x) => x.docId), ['in-mid', 'in-old', 'in-new', 'us-handoff']);
     assert.equal(p.counts.skippedMode, 6);
   });
   test('plan: unreadable priority inputs make US docs "unknown" (last), never skipped', async () => {
     const io: PriorityIo = { usQueue: async () => { throw new Error('kv down'); }, verifiedEventDates: async () => null };
     const p = await buildPlan([...usRows, ...inRows], io, 'prioritized');
     assert.equal(p.counts.usUnknown, 7); assert.equal(p.counts.skippedGraded + p.counts.skippedVerified, 0);
-    assert.deepEqual(p.rows.slice(0, 3).map((x) => x.docId), ['in-new', 'in-mid', 'in-old']);
+    assert.deepEqual(p.rows.slice(0, 3).map((x) => x.docId), ['in-mid', 'in-old', 'in-new']);
     const asked: string[][] = [];
     const io2: PriorityIo = { usQueue: async () => ({ handoff: info.handoff, graded: info.graded }), verifiedEventDates: async (t) => { asked.push(t); return new Map([['CCC', ['2026-09-18']]]); } };
     const p2 = await buildPlan([...usRows, ...inRows], io2, 'prioritized');

@@ -22,3 +22,8 @@ test('a partial collector set covers only its days', async () => {
   assert.equal(r.status.daysCovered, 1);
   assert.equal(r.status.complete, false);
 });
+test('long window: collector days older than the live window count as covered', async () => {
+  const old = new Set<string>(); for (let i = 0; i < 90; i++) old.add(new Date(now.getTime() - i * 86_400_000 + 19_800_000).toISOString().slice(0, 10));
+  const r = await scanIndia({ now, days: 120, fetchNse: blocked, fetchBse: blocked, collectorDays: old });
+  assert.ok(r.status.daysCovered >= 80, `covered ${r.status.daysCovered}`);
+});
