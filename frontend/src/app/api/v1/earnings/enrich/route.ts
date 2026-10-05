@@ -422,14 +422,8 @@ async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
     }
     return best;
   };
-  const direct = await bySlug(symbol);
-  if (direct) return direct;
-  // zzz876 — a BSE-primary company (Hawa Engineers HAWAENG = 539176, Hindusthan Insulators HIIL = 539984) has NO Screener page
-  // under its NSE symbol: Screener files it under the BSE code. Both pages 404'd, the numbers were never read, and the results
-  // card was dropped as "no fresh quarter on Screener". Screener's own search gives the slug; it is cached (180 d, misses 1 d).
-  const slug = await resolveScreenerSlug(symbol);
-  if (!slug || slug.toUpperCase() === symbol.toUpperCase()) return null;
-  return bySlug(slug);
+  // zzz876: a BSE-primary company has no page under its NSE symbol; enrichOne retries every source with the Screener slug
+  return bySlug(symbol);
 }
 
 /** zzz876 — the Screener URL slug for a ticker whose own symbol page does not exist (BSE code for BSE-primary names). KV cached. */
@@ -1557,6 +1551,18 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     scored.sort((a, b) => b.score - a.score);
     const best = scored[0];
     worker = best.worker; nse = best.nse; screener = best.screener; yahoo = best.yahoo; yahooFund = best.yahooFund; cfoOnly = best.cfoOnly; ghFund = best.ghFund;
+  }
+  // zzz876 — no quarterly numbers from any source under the NSE symbol: a BSE-primary company (HAWAENG → 539176, HIIL → 539984)
+  // lives on Screener under its BSE code. Resolve the slug once (cached) and run EVERY source again with it; take only what it adds.
+  const hasQuarter = (x: any) => !!(x && (x.latest_quarter_end_iso || x.sales_curr_cr != null || x.pat_curr_cr != null));
+  if (![worker, nse, screener, ghFund].some(hasQuarter) && !(cfoOnly && cfoOnly._trends)) {
+    const slug = await resolveScreenerSlug(symbol).catch(() => null);
+    if (slug && slug.toUpperCase() !== symbol.toUpperCase()) {
+      const r = await tryVariant(slug, filedHint);
+      worker = worker || r.worker; screener = screener || r.screener; ghFund = ghFund || r.ghFund;
+      if (r.cfoOnly && (r.cfoOnly._trends || !cfoOnly || !cfoOnly._trends)) cfoOnly = r.cfoOnly;
+      console.log(`[enrich] zzz876: ${symbol} → Screener slug ${slug} (worker ${!!r.worker}, screener ${!!r.screener}, trends ${!!r.cfoOnly?._trends})`);
+    }
   }
   // zzz820 — the Worker reads the CONSOLIDATED page only. For a company that
   // stopped consolidating, that page's newest quarter is years old while the
