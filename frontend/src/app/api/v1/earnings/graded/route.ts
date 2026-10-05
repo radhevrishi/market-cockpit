@@ -975,6 +975,9 @@ async function gradedLegacyGET(req: Request) {
   // dropGhosts (as `prior-grade`) and every freshness guard below, so a name
   // later rules would reject is still rejected — it is simply no longer
   // dropped for the accident of which feed happened to answer on the day.
+  // zzz877b — the previous grade's cards that carried real numbers, by ticker. If this pass gets NO data at all for one of them (a flaky
+  // Screener / relay read), the earlier card is kept instead of being dropped: a fetch failure is not evidence (MYSPAPE / PANCM, 29 Sep).
+  const priorCardsBy = new Map<string, any>();
   if (isRedisAvailable()) {
     try {
       const existingTickers = new Set<string>(dayList.map((r: any) => String(r.ticker || '').toUpperCase()));
@@ -985,6 +988,10 @@ async function gradedLegacyGET(req: Request) {
           ? (Object.values(prior.by_tier) as any[][]).flatMap((v) => (Array.isArray(v) ? v : []))
           : [];
         if (rows.length === 0) continue;
+        for (const c of rows) {
+          const sym0 = String(c?.ticker || '').toUpperCase();
+          if (sym0 && (c.sales_yoy_pct != null || c.net_profit_yoy_pct != null || c.eps_yoy_pct != null || c.sales_curr_cr != null || c.pat_curr_cr != null)) priorCardsBy.set(sym0, c);
+        }
         for (const c of rows) {
           const sym = String(c?.ticker || '').toUpperCase();
           if (!sym || existingTickers.has(sym)) continue;
@@ -1216,6 +1223,11 @@ async function gradedLegacyGET(req: Request) {
     // back EMPTY this pass (Screener rate-limit) has no evidence either way;
     // it was confirmed once, so keep it rather than let a transient miss
     // delete it.
+    {
+      const _noData = !e.latest_quarter_end_iso && !e.latest_quarter_label && e.sales_curr_cr == null && e.pat_curr_cr == null && e.sales_yoy_pct == null && e.pat_yoy_pct == null;
+      const _prior = priorCardsBy.get(String(m.ticker || '').toUpperCase());
+      if (_noData && _prior) { graded.push({ ..._prior, _kept_from_prior: true } as any); console.log(`[graded] ${date}: kept the previous card for ${m.ticker} (no data this pass)`); continue; }
+    }
     const _priorNoEvidence = m.__source === 'prior-grade' && !e.announce_date_iso && !e.latest_quarter_end_iso;
     if (!_priorNoEvidence && dropGhosts(m, e)) {
       console.log(`[graded] ${date}: dropping ghost-filing ${m.ticker} (no announce_date and quarter_end too far)`);
