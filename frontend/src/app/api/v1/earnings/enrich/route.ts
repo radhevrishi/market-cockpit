@@ -428,29 +428,37 @@ async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
 
 /** zzz876 — the Screener URL slug for a ticker whose own symbol page does not exist (BSE code for BSE-primary names). KV cached.
  *  Direct request first (Screener's search answers this server — the company-name lookup uses it), then the relay. */
+const slugWhy = new Map<string, string>();   // zzz876: why a slug lookup came back empty (shown in _screener_slug)
 async function resolveScreenerSlug(symbol: string): Promise<string | null> {
-  const key = `screener-slug:v2:${symbol.toUpperCase()}`;
+  const key = `screener-slug:v3:${symbol.toUpperCase()}`;
   if (isRedisAvailable()) {
     try { const c = await kvGet<string>(key); if (c === '-') return null; if (c && typeof c === 'string') return c; } catch {}
   }
-  const url = `https://www.screener.in/api/company/search/?q=${encodeURIComponent(symbol)}&v=3&fts=1`;
-  const pick = (arr: any): string | null => {
-    const list = Array.isArray(arr) ? arr : Array.isArray(arr?.companies) ? arr.companies : [];
-    for (const c of list) { const m = /^\/company\/([^/]+)\//.exec(String(c?.url || '')); if (m) return m[1]; }
-    return null;
+  // the same URL + headers as resolveCompanyNameFromScreenerSearch, which answers this server
+  const url = `https://www.screener.in/api/company/search/?q=${encodeURIComponent(symbol)}`;
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Referer': 'https://www.screener.in/',
   };
   let slug: string | null = null; let answered = false;
   for (const via of ['direct', 'relay'] as const) {
     try {
-      const init = { headers: { ...browserHeaders('https://www.screener.in/'), Accept: 'application/json, text/plain, */*' }, signal: AbortSignal.timeout(6000) };
+      const init = { headers, signal: AbortSignal.timeout(6000) };
       const res = via === 'direct' ? await fetch(url, init) : await proxiedFetch(url, init);
-      if (!res.ok) continue;
+      if (!res.ok) { slugWhy.set(symbol, `${via} HTTP ${res.status}`); continue; }
+      const json: any = await res.json().catch(() => null);
+      const list: any[] | null = Array.isArray(json) ? json : Array.isArray(json?.companies) ? json.companies : null;
+      if (!list) { slugWhy.set(symbol, `${via} answered with no list`); continue; }   // a challenge / HTML page is not an answer
       answered = true;
-      slug = pick(await res.json().catch(() => null));
+      const symUp = symbol.toUpperCase();
+      const slugs = list.map((c) => /^\/company\/([^/]+)\//.exec(String(c?.url || ''))?.[1] || '').filter(Boolean);
+      slug = slugs.find((x) => x.toUpperCase() === symUp) || slugs[0] || null;
       if (slug) break;
-    } catch {}
+    } catch (e: any) { slugWhy.set(symbol, `${via} ${e?.name === 'TimeoutError' ? 'timeout' : 'network error'}`); }
   }
-  // a miss is cached only when Screener really answered (a network failure is retried next time)
+  if (!slug && answered) slugWhy.set(symbol, 'search answered, no company');
   if (isRedisAvailable() && (slug || answered)) {
     try { await kvSet(key, slug || '-', slug ? 180 * 24 * 3600 : 6 * 3600); } catch {}
   }
@@ -1573,7 +1581,7 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
       if (r.cfoOnly && (r.cfoOnly._trends || !cfoOnly || !cfoOnly._trends)) cfoOnly = r.cfoOnly;
       console.log(`[enrich] zzz876: ${symbol} → Screener slug ${slug} (worker ${!!r.worker}, screener ${!!r.screener}, trends ${!!r.cfoOnly?._trends})`);
       slugUsed = `${slug} (worker ${r.worker ? 'yes' : 'no'}, page ${r.screener ? 'yes' : 'no'}, trends ${r.cfoOnly?._trends ? 'yes' : 'no'})`;
-    } else slugUsed = slug ? 'same as symbol' : 'not found';
+    } else slugUsed = slug ? 'same as symbol' : `not found (${slugWhy.get(symbol) || 'cached miss'})`;
   }
   // zzz820 — the Worker reads the CONSOLIDATED page only. For a company that
   // stopped consolidating, that page's newest quarter is years old while the
