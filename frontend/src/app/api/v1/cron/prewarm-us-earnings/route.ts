@@ -164,9 +164,37 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // zzz878 — RE-CHECK FILINGS THAT WERE WAITING FOR XBRL. A session is saved for 30 days the first time it grades; a filer whose
+  // XBRL was not on EDGAR yet stayed "waiting" in that saved copy for ever (28 such filings in September). Sessions from the last 10
+  // trading days that still carry one, and were graded more than 12 h ago, are re-queued (cache_only + force → the one-at-a-time
+  // background queue; an incomplete re-grade is never written, so the saved copy cannot be lost). At most 3 per run.
+  const xbrlRequeued: string[] = [];
+  try {
+    const { gunzipSync } = await import('zlib');
+    const unzip = (raw: any): any => {
+      if (!raw) return null;
+      if (typeof raw?.z === 'string') { try { return JSON.parse(gunzipSync(Buffer.from(raw.z, 'base64')).toString('utf8')); } catch { return null; } }
+      return raw?.by_tier ? raw : null;
+    };
+    for (const d of days.filter((x) => x < today).slice(0, 10)) {
+      if (xbrlRequeued.length >= 3 || Date.now() - t0 > DEADLINE_MS + 30_000) break;
+      const p = unzip(await kvGet<any>(`us-graded:${US_ENGINE_VERSION}:${d}|1`).catch(() => null));
+      if (!p?.by_tier) continue;
+      const waiting = (Array.isArray(p.pending) ? p.pending : []).filter((x: any) => x?.reason === 'xbrl-not-posted');
+      const ageMs = Date.now() - Date.parse(String(p.generated_at || ''));
+      if (!waiting.length || !(ageMs > 12 * 3600_000)) continue;
+      const port = process.env.PORT;
+      const url = port ? `http://127.0.0.1:${port}/api/v1/earnings/graded-us?date=${d}&days=1&cache_only=1&force=1`
+        : `${origin}/api/v1/earnings/graded-us?date=${d}&days=1&cache_only=1&force=1`;
+      const r = await fetch(url, { cache: 'no-store', headers: { 'x-mc-prewarm': 'xbrl-recheck' }, signal: AbortSignal.timeout(15_000) }).catch(() => null);
+      if (r && r.ok) xbrlRequeued.push(`${d} (${waiting.length} waiting)`);
+    }
+  } catch { /* best effort */ }
+
   return NextResponse.json({
     ok: true,
     engine_version: US_ENGINE_VERSION,
+    xbrl_rechecks_queued: xbrlRequeued,
     window_sessions: sessions,
     already_cached: cached.length,
     warmed: warmed.length,
