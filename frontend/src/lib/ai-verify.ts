@@ -41,7 +41,7 @@ export const locatedKey = (claimId: string) => `${LOCATED_PREFIX}${claimId}`;
 export const QUEUE_META_KEY = `ai-verify:${AI_VERIFY_VERSION}:queue-meta`;
 
 const DAY_S = 86_400;
-export const TTL_FINAL_S = 30 * DAY_S;          // confirmed / contradicted
+export const TTL_FINAL_S = 365 * DAY_S;         // confirmed / contradicted — a verdict on a fixed document never changes; never paid for twice (zzz875)
 export const TTL_NOT_FOUND_S = 7 * DAY_S;       // the document may be the wrong one; look again in a week
 export const TTL_NO_PRIMARY_S = 1 * DAY_S;      // a primary link may appear on the next refresh
 const BACKOFF_BASE_S = 2 * 3600;                // unreadable / error: 2h, 4h, 8h … capped at 48h

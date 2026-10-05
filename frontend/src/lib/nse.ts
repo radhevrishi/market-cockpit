@@ -380,9 +380,38 @@ function toNSEMonthDate(ddmmyyyy: string): string {
   return `${parts[0]}-${months[monthIdx]}-${parts[2]}`;
 }
 
+// zzz875 — the GitHub collector's copy of NSE's financial-results list (KV nse-results:v1:day:<day>), read FIRST: NSE refuses this
+// server, so the direct call below mostly times out and a filed result could never be confirmed. When every day of the range has
+// been read by the collector the direct call is skipped; otherwise the live answer (when any) is merged in by row identity.
+async function kvFinancialResults(fromDate: string, toDate: string): Promise<{ rows: any[]; complete: boolean } | null> {
+  try {
+    const [{ readNseResults, isoDayOf }, kv] = await Promise.all([import('./nse-results-store'), import('./kv')]);
+    const f = isoDayOf(fromDate), t = isoDayOf(toDate);
+    if (!f || !t) return null;
+    const r = await readNseResults({ get: (k) => kv.kvGet(k), mget: (ks) => kv.kvMGet(ks) }, f, t);
+    if (!r.rows.length && !r.daysRead.length) return null;
+    return { rows: r.rows, complete: r.daysMissing.length === 0 };
+  } catch { return null; }
+}
+function mergeResultRows(a: any[], b: unknown): any[] {
+  const list = Array.isArray(b) ? b : Array.isArray((b as any)?.data) ? (b as any).data : [];
+  if (!list.length) return a;
+  const seen = new Set<string>();
+  const keyOf = (r: any) => `${String(r?.symbol || r?.re_symbol || '').toUpperCase()}|${String(r?.seqNumber || r?.seq_num || r?.toDate || r?.re_to_date || '')}|${String(r?.broadCastDate || r?.re_broadcastDt || r?.broadcastDate || '').slice(0, 11)}`;
+  const out: any[] = [];
+  for (const r of [...a, ...list]) { const k = keyOf(r); if (!r || seen.has(k)) continue; seen.add(k); out.push(r); }
+  return out;
+}
+
 // Fetch quarterly financial results
 // Try multiple date format patterns and periods
 export async function fetchFinancialResults(fromDate: string, toDate: string) {
+  const stored = await kvFinancialResults(fromDate, toDate);
+  if (stored && stored.complete) return stored.rows;
+  const live = await fetchFinancialResultsLive(fromDate, toDate);
+  return stored ? mergeResultRows(stored.rows, live) : live;
+}
+async function fetchFinancialResultsLive(fromDate: string, toDate: string) {
   // NSE financial results API uses DD-Mon-YYYY format (e.g., "01-Mar-2026")
   const fromMon = toNSEMonthDate(fromDate);
   const toMon = toNSEMonthDate(toDate);
@@ -408,8 +437,14 @@ export async function fetchFinancialResults(fromDate: string, toDate: string) {
 
 // Fetch financial results for broader coverage - try different endpoints
 export async function fetchLatestFinancialResults() {
+  // zzz875: the collector's last 21 days first (NSE refuses this server); the live call only adds what KV lacks
+  const now = new Date();
+  const dd = (d: Date) => `${String(d.getUTCDate()).padStart(2, '0')}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${d.getUTCFullYear()}`;
+  const stored = await kvFinancialResults(dd(new Date(now.getTime() - 21 * 86_400_000)), dd(now));
+  if (stored && stored.complete) return stored.rows;
   // This endpoint might return the most recent results without date filter
-  return nseApiFetch('/api/corporates-financial-results?index=equities', 600000);
+  const live = await nseApiFetch('/api/corporates-financial-results?index=equities', 600000);
+  return stored ? mergeResultRows(stored.rows, live) : live;
 }
 
 // Fetch financial results for a specific company (for enriching announcements)

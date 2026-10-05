@@ -1,0 +1,64 @@
+name: Scrape NSE Financial Results list (every 2h, 7 days)
+
+# zzz875 — reads NSE's financial-results list (the filings the Earnings hub confirms a results
+# card from) for the last 7 days and stores it on the server (KV nse-results:v1:day:<day>).
+# NSE refuses the Railway server, so without this a company that filed its results was dropped
+# as "scheduled, no filing confirmed" (ANSALAPI / HAWAENG / HIIL on 3 Oct 2026). One-off backfill:
+# Actions → this workflow → "Run workflow" → days = 60.
+# Secrets: CRON_SECRET (same value as on the server), CRON_BASE_URL (optional). Nothing secret is printed.
+
+on:
+  schedule:
+    # every 2 h, 09:20–23:20 IST (03:50–17:50 UTC): results land after market hours and late evenings (Saturdays too)
+    - cron: '50 3,5,7,9,11,13,15,17 * * *'
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Days to read back from today (1-60)'
+        required: false
+        default: '7'
+
+concurrency:
+  group: scrape-nse-results
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Collect the results list
+        id: main
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+          IN_DAYS: ${{ github.event.inputs.days || '7' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CRON_SECRET}" ]; then echo "CRON_SECRET is not set in repository secrets"; exit 1; fi
+          export CRON_BASE_URL="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          case "$IN_DAYS" in ''|*[!0-9]*) IN_DAYS=7 ;; esac
+          if [ "$IN_DAYS" -gt 60 ]; then IN_DAYS=60; fi
+          export DAYS="$IN_DAYS"
+          node .github/scripts/scrape-nse-results.mjs
+      - name: Heartbeat (always run)
+        if: always()
+        env:
+          BASE: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
+          OK="true"
+          if [[ "${{ steps.main.outcome }}" != "success" ]]; then OK="false"; fi
+          curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" \
+            -H 'Content-Type: application/json' \
+            -d "{\"name\":\"scrape-nse-results\",\"phase\":\"end\",\"ok\":$OK,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -o /dev/null -w "heartbeat %{http_code}\n" || true
