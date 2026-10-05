@@ -35,6 +35,13 @@ Secrets (GitHub Actions + Railway env): `CRON_SECRET` (same in both), `SEC_CONTA
 - Rishi's Quality Preset has market cap ≥ ₹3,000 Cr; HIIL (~₹1,140 Cr) is on the bench but hidden by that preset.
 - Still pending honestly: ANSALAPI (Screener has only up to Mar 2026), OSWALOR, PALUCK, RENTOMOJO, BFUTILITIE, VIPULLTD, PRASOLCHEM; STEAMHOUSE / LCCPROJECT / GLCL for Q2 until Screener shows Sep 2026.
 
+## 4c. Audit of 5 Oct evening (zzz878 → zzz878c, live; suite 4265 pass, 1 known flaky)
+- India graded: an empty rebuild may replace a saved day only when every calendar name was held for a stated data reason (`_everyNameExplained`); one card per ticker+quarter (earliest of the previous 7 days wins, later day lists "already shown on <date>", page excludes those from "pending").
+- Quarter guard (`_olderThanScheduledQuarter`): hold only when the meeting is scheduled-only (hub 'Upcoming'), the board text named the period (hub `quarter_explicit`), or the older quarter is already shown earlier; a CONFIRMED filing with an older Screener quarter is graded and relabelled with its real quarter (`_labelOfQuarterEnd`). MPIMANIPAL / PRANAV 1 Oct back (Q1 FY27).
+- US: graded-us upserts BLOCKBUSTER/STRONG into `bench:us:server:v1` when a days=1 session is saved; prewarm-us-earnings re-queues (cache_only+force) up to 3 sessions/run from the last 10 that still have `xbrl-not-posted` filings and are >12 h old.
+- NOT done (deliberately): returning "pending" when bgClaim fails in graded-us — the background queue holds the claim and calls the same route, so it would deadlock.
+- Known remaining: US same ticker on two sessions (8-K then 10-Q, 6 cases in Sep) not deduped; Saturdays get queued on the US page; Rishi's `us-earnings-opportunities-watch` skill calls graded-us with days=5 (never warmed — slow); client benches keep a wrong card that entered earlier (STEAMHOUSE) until × / re-validate.
+
 ## 5. OPEN topics (priority order)
 0. Ask Rishi to add `PROXY_URL` / `PROXY_SECRET` GitHub secrets, then run "Scrape NSE Financial Results list" with days=10 and check `rows` > 0 in its log.
 1. **Check the result of the backlog run** (section 4). Then: Refresh the Guidance Upgrades page; India "Active guidance universe" and "Highest active guidance" should now hold many more India names; `GET /api/v1/guidance-pipeline?market=IN&window=120D` prints the engine counts (events_extracted, first_guidance, verified_raises, reiterations).
