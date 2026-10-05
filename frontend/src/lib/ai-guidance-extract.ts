@@ -39,6 +39,9 @@ export const EXTRACT_VERSION = 'v1';
 export const RESULT_PREFIX = `guidance-extract:${EXTRACT_VERSION}:`;
 export const resultKey = (docId: string) => `${RESULT_PREFIX}${docId}`;
 export const INDEX_KEY = `guidance-extract:${EXTRACT_VERSION}:index`;
+/** zzz873: docIds whose result is 'ok' with rows (what the universe reads). Same key as guidance-extract-reader EXTRACT_OK_INDEX_KEY. */
+export const OK_INDEX_KEY = `guidance-extract:${EXTRACT_VERSION}:index:ok`;
+export const OK_INDEX_MAX = 8_000;
 export const STATUS_KEY = `guidance-extract:${EXTRACT_VERSION}:status`;
 export const LOCK_KEY = `guidance-extract:${EXTRACT_VERSION}:lock`;
 export const failKey = (docId: string) => `guidance-extract:${EXTRACT_VERSION}:fail:${docId}`;
@@ -805,7 +808,7 @@ export async function runExtraction(deps: ExtractDeps, o: ExtractRunOpts = {}): 
       })());
       return loaded.get(c)!;
     };
-    const newIndexIds: string[] = [];
+    const newIndexIds: string[] = []; const okIds: string[] = [];
     let idx = 0; let started = 0; let stop: ExtractRunStat['stoppedBy'] | null = null;
     const next = (): number | null => (stop || idx >= rows.length ? null : idx++);
     const worker = async (): Promise<void> => {
@@ -841,7 +844,7 @@ export async function runExtraction(deps: ExtractDeps, o: ExtractRunOpts = {}): 
             continue;   // stays unextracted; retried after the backoff
           }
           result.note = `${result.note || 'error'} (gave up after ${attempts} attempts)`;
-        } else if (result.status === 'ok') stat.ok++;
+        } else if (result.status === 'ok') { stat.ok++; if (result.rows.length) okIds.push(row.docId); }
         else if (result.status === 'no_guidance') stat.noGuidance++;
         else if (result.status === 'unreadable') stat.unreadable++;
         await deps.kv.set(resultKey(row.docId), result, TTL_RESULT_S).catch(() => undefined);
@@ -856,6 +859,7 @@ export async function runExtraction(deps: ExtractDeps, o: ExtractRunOpts = {}): 
       const fresh = new Set(newIndexIds);
       await deps.kv.set(INDEX_KEY, [...newIndexIds, ...(Array.isArray(cur) ? cur : []).filter((id) => !fresh.has(id))].slice(0, INDEX_MAX), TTL_RESULT_S).catch(() => undefined);
     }
+    await updateOkIndex(deps.kv, okIds).catch(() => undefined);
     await finish();
     const reasonTxt = Object.entries(stat.dropReasons).map(([k, n]) => `${k}:${n}`).join(',');
     log(`[guidance-extract] run: queued=${stat.queued} attempted=${stat.attempted} ok=${stat.ok} none=${stat.noGuidance} unreadable=${stat.unreadable} errors=${stat.errors} rows=${stat.rowsKept} dropped=${stat.rowsDropped}${reasonTxt ? ` (${reasonTxt})` : ''} spent=$${stat.spentUsd} stop=${stat.stoppedBy} ms=${stat.elapsedMs}`);
@@ -863,6 +867,29 @@ export async function runExtraction(deps: ExtractDeps, o: ExtractRunOpts = {}): 
   } finally {
     if (deps.kv.del) await deps.kv.del(LOCK_KEY).catch(() => undefined);
   }
+}
+
+/**
+ * zzz873: keep the ok index (results with rows) current. Missing (first deploy): rebuilt once from the main index — every stored
+ * result is read in chunks and the 'ok' ones are kept, so results extracted before this index existed stay visible to the universe.
+ */
+export async function updateOkIndex(kv: KvIo, fresh: string[]): Promise<number> {
+  const cur = await kv.get<string[]>(OK_INDEX_KEY).catch(() => undefined);
+  let base: string[];
+  if (Array.isArray(cur)) base = cur;
+  else {
+    const all = (await kv.get<string[]>(INDEX_KEY).catch(() => null)) || [];
+    base = [];
+    for (let i = 0; i < all.length; i += 100) {
+      const got = await kv.mget<GuidanceExtractResult>(all.slice(i, i + 100).map(resultKey)).catch(() => []);
+      for (const r of got || []) if (r && r.status === 'ok' && Array.isArray(r.rows) && r.rows.length) base.push(r.docId);
+    }
+  }
+  const f = new Set(fresh);
+  const next = [...fresh, ...base.filter((id) => !f.has(id))].slice(0, OK_INDEX_MAX);
+  if (Array.isArray(cur) && !fresh.length) return next.length;
+  await kv.set(OK_INDEX_KEY, next, TTL_RESULT_S);
+  return next.length;
 }
 
 async function writeStatus(kv: KvIo, run: ExtractRunStat): Promise<void> {

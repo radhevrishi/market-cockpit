@@ -12,6 +12,12 @@ export const EXTRACT_INDEX_KEY = 'guidance-extract:v1:index';
 export const extractKey = (docId: string) => `guidance-extract:v1:${docId}`;
 export const DOCS_INDEX_KEY = 'guidance-docs:v1:index';
 export const EXTRACT_READ_CAP = 600;
+/** zzz873: docIds whose result is status 'ok' with rows (the ones the universe uses), newest extraction first. Written by the extractor
+ *  (runExtraction) and rebuilt from the main index once when missing. Lets the readers see EVERY useful result instead of only the
+ *  600 most recently extracted documents of all statuses (a 3,000-document backlog run would otherwise hide most of its own findings). */
+export const EXTRACT_OK_INDEX_KEY = 'guidance-extract:v1:index:ok';
+export const EXTRACT_OK_READ_CAP = 2_500;
+const MGET_CONCURRENCY = 4;
 
 export interface ExtractIo { get: <T = any>(key: string) => Promise<T | null>; mget: <T = any>(keys: string[]) => Promise<Array<T | null>> }
 async function defaultIo(): Promise<ExtractIo> {
@@ -41,12 +47,18 @@ export interface ExtractList { results: GuidanceExtractResult[]; indexed: number
 export async function listExtractResults(opts: { market?: 'IN' | 'US' | 'ALL'; limit?: number; includeEmpty?: boolean; io?: ExtractIo } = {}): Promise<ExtractList> {
   try {
     const io = opts.io ?? await defaultIo();
-    const ids = docIdsOf(await io.get(EXTRACT_INDEX_KEY)).slice(0, Math.max(1, opts.limit ?? EXTRACT_READ_CAP));
+    const [mainRaw, okRaw] = await Promise.all([io.get(EXTRACT_INDEX_KEY), io.get(EXTRACT_OK_INDEX_KEY)]);
+    const main = docIdsOf(mainRaw).slice(0, Math.max(1, opts.limit ?? EXTRACT_READ_CAP));
+    const okIds = okRaw == null ? null : docIdsOf(okRaw).slice(0, Math.max(1, opts.limit ?? EXTRACT_OK_READ_CAP));
+    // zzz873: results with rows come from the ok index (every useful result); the recent main index adds the empty / error results when asked
+    const ids = okIds == null ? main : opts.includeEmpty ? Array.from(new Set([...okIds, ...main])) : okIds;
     if (!ids.length) return { results: [], indexed: 0, read: 0 };
+    const chunks: string[][] = [];
+    for (let i = 0; i < ids.length; i += 100) chunks.push(ids.slice(i, i + 100));
     const out: GuidanceExtractResult[] = [];
-    for (let i = 0; i < ids.length; i += 100) {
-      const got = await io.mget<GuidanceExtractResult>(ids.slice(i, i + 100).map(extractKey));
-      for (const r of got || []) if (isExtractResult(r)) out.push(r);
+    for (let i = 0; i < chunks.length; i += MGET_CONCURRENCY) {
+      const got = await Promise.all(chunks.slice(i, i + MGET_CONCURRENCY).map((c) => io.mget<GuidanceExtractResult>(c.map(extractKey)).catch(() => [] as Array<GuidanceExtractResult | null>)));
+      for (const g of got) for (const r of g || []) if (isExtractResult(r)) out.push(r);
     }
     const mk = opts.market && opts.market !== 'ALL' ? opts.market : null;
     const results = sortResults(out.filter((r) => (!mk || r.market === mk) && (opts.includeEmpty || (r.status === 'ok' && r.rows.length > 0))));
