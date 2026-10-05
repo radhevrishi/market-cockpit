@@ -156,6 +156,18 @@ function _quarterEndFromFyLabel(label: any): string | null {
   return new Date(d).toISOString().slice(0, 10);
 }
 
+// zzz876f — the board meeting names the quarter (hub label, e.g. "Q2 FY27" for a 5 Oct meeting) and Screener's newest quarter is OLDER
+// than it: the numbers on Screener belong to the previous quarter (GLCL on 5 Oct showed its June-quarter figures under "Q2 FY27", the same
+// figures as its 30 Sep card). Those results are not out yet: the row stays pending, never graded on last quarter's numbers. Only the
+// explicit label counts (a label for a quarter that had not ended by the filing date is ignored), so a late filer is never held back.
+function _olderThanScheduledQuarter(label: any, resultDate: any, e: any): string | null {
+  const want = _quarterEndFromFyLabel(label);
+  const have = e?.latest_quarter_end_iso ? String(e.latest_quarter_end_iso).slice(0, 10) : _isoFromQuarterLabel(e?.latest_quarter_label);
+  const filed = String(resultDate || '').slice(0, 10);
+  if (!want || !have || !filed || want > filed) return null;
+  return have < want ? `scheduled for ${String(label).trim()} (quarter ending ${want}); Screener's newest quarter is ${have}: results for ${String(label).trim()} not on Screener yet` : null;
+}
+
 // ─── gradeRow (server-side, mirrors page.tsx PATCH 0158) ───────────────────
 
 
@@ -481,6 +493,8 @@ async function gradedLegacyGET(req: Request) {
             updatedCards.push(c);  // still no useful data → keep preview
             continue;
           }
+          // zzz876f — same rule as the full build: last quarter's numbers never grade a newer scheduled quarter
+          if (_olderThanScheduledQuarter((c as any).quarter, (c as any).filing_date || date, e)) { updatedCards.push(c); continue; }
           // Re-grade with new enrichment data
           const row = {
             // zzz414 — was `hub_quality: undefined`, which made gradeRow's
@@ -624,6 +638,8 @@ async function gradedLegacyGET(req: Request) {
         }
       }
       if (!_skipWrite) await kvSet(cacheKey, payload, ttl);
+      // zzz877: new BLOCKBUSTER / STRONG cards go onto the server Conviction bench now, not at the next daily job
+      if (!_skipWrite) { try { const { upsertServerBench } = await import('@/lib/server-bench-upsert'); await upsertServerBench(payload, date); } catch {} }
     } catch {}
         return NextResponse.json(payload, { headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=900' } });  // PATCH 0818
       }
@@ -1211,6 +1227,7 @@ async function gradedLegacyGET(req: Request) {
     // filed Q4 — screener is serving the prior quarter (Q3 Dec data).
     // Catches hub-confirmed Upcoming tickers like GENCON (2025-12-31 ÷
     // 2026-06-25 = 176 days) that haven't actually filed Q4 yet.
+    { const _older = _olderThanScheduledQuarter(m.quarter, m.resultDate, e); if (_older) { dropped.push({ ticker: m.ticker, reason: _older, source: m.__source }); continue; } }
     if (e?.latest_quarter_end_iso) {
       const q = new Date(e.latest_quarter_end_iso).getTime();
       const f = new Date(m.resultDate).getTime();
@@ -1379,6 +1396,8 @@ async function gradedLegacyGET(req: Request) {
         }
       }
       if (!_skipWrite) await kvSet(cacheKey, payload, ttl);
+      // zzz877: new BLOCKBUSTER / STRONG cards go onto the server Conviction bench now, not at the next daily job
+      if (!_skipWrite) { try { const { upsertServerBench } = await import('@/lib/server-bench-upsert'); await upsertServerBench(payload, date); } catch {} }
     } catch {}
   }
 
