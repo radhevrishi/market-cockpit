@@ -28,16 +28,23 @@ export function mergeIntoBench(prev: BenchDoc | null, rows: Row[], dateStr: stri
   return { doc: { updatedAt: now.toISOString(), count: entries.length, entries }, added, replaced };
 }
 
+/** zzz878 — the US bench (bench:us:server:v1, 30 d), same rules. Called by graded-us when a completed session is saved. */
+export const US_BENCH_KEY_UPSERT = 'bench:us:server:v1';
+export async function upsertUsServerBench(payload: any, dateStr: string): Promise<{ added: number; replaced: number } | null> {
+  return upsertServerBench(payload, dateStr, US_BENCH_KEY_UPSERT, 60 * 60 * 24 * 30);
+}
+
 /** Upsert the BLOCKBUSTER / STRONG rows of a graded payload. Best effort. */
-export async function upsertServerBench(payload: any, dateStr: string): Promise<{ added: number; replaced: number } | null> {
+export async function upsertServerBench(payload: any, dateStr: string, key: string = BENCH_KEY, ttlS: number = BENCH_TTL_S): Promise<{ added: number; replaced: number } | null> {
   try {
     const bt = payload?.by_tier || {};
     const rows: Row[] = [...(Array.isArray(bt.BLOCKBUSTER) ? bt.BLOCKBUSTER : []), ...(Array.isArray(bt.STRONG) ? bt.STRONG : [])];
     if (!rows.length) return { added: 0, replaced: 0 };
     const { kvGet, kvSet } = await import('./kv');
-    const prev = await kvGet<BenchDoc>(BENCH_KEY).catch(() => null);
+    const prev = await kvGet<BenchDoc & { engine_version?: string }>(key).catch(() => null);
     const { doc, added, replaced } = mergeIntoBench(prev && Array.isArray(prev.entries) ? prev : null, rows, dateStr);
-    if (added || replaced) await kvSet(BENCH_KEY, doc, BENCH_TTL_S);
+    // keep the doc's own extra fields (the US bench carries engine_version)
+    if (added || replaced) await kvSet(key, { ...(prev && typeof prev === 'object' ? prev : {}), ...doc }, ttlS);
     return { added, replaced };
   } catch { return null; }
 }

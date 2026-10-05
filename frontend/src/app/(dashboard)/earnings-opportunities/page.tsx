@@ -3757,7 +3757,9 @@ Source label: ${coverageStats.source}`}
           const gradedTickers = new Set<string>(
             TIER_ORDER.flatMap((t) => (view.by_tier[t] || []).map((s) => (s.ticker || '').toUpperCase()))
           );
-          const pending = scheduled.filter((it) => !gradedTickers.has((it.symbol || '').toUpperCase()));
+          // zzz878 — a name already graded on an earlier day for the same quarter is not "pending" here
+          const shownElsewhere = new Set<string>(((view as any)?._dropped || []).filter((d: any) => /^already shown on /.test(String(d?.reason || ''))).map((d: any) => String(d.ticker || '').toUpperCase()));
+          const pending = scheduled.filter((it) => !gradedTickers.has((it.symbol || '').toUpperCase()) && !shownElsewhere.has((it.symbol || '').toUpperCase()));
           if (pending.length === 0) return null;
           const copyPending = async (txt: string) => {
             try { await navigator.clipboard.writeText(txt); } catch {

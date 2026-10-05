@@ -156,6 +156,16 @@ function _quarterEndFromFyLabel(label: any): string | null {
   return new Date(d).toISOString().slice(0, 10);
 }
 
+// zzz878 — a rebuilt day with ZERO cards may replace a saved day that had cards ONLY when every name on the day's calendar was moved
+// to "pending" for a stated, data-based reason (not a fetch failure). PATCH 1002 blocked every empty write, which also froze wrong cards
+// in place after the engine learned to hold them back (STEAMHOUSE / GLCL / LCCPROJECT on 5 Oct kept their June-quarter cards).
+function _everyNameExplained(payload: any): boolean {
+  const drops: any[] = Array.isArray(payload?._dropped) ? payload._dropped : [];
+  const n = Number(payload?.raw_items_total) || 0;
+  if (n === 0 || drops.length < n) return false;
+  return drops.every((d) => typeof d?.reason === 'string' && d.reason.length > 0 && !/fetch|timeout|timed out|failed|unknown|rate.?limit/i.test(d.reason));
+}
+
 // zzz876f — the board meeting names the quarter (hub label, e.g. "Q2 FY27" for a 5 Oct meeting) and Screener's newest quarter is OLDER
 // than it: the numbers on Screener belong to the previous quarter (GLCL on 5 Oct showed its June-quarter figures under "Q2 FY27", the same
 // figures as its 30 Sep card). Those results are not out yet: the row stays pending, never graded on last quarter's numbers. Only the
@@ -631,7 +641,7 @@ async function gradedLegacyGET(req: Request) {
                         + (_prior.by_tier.STRONG?.length || 0)
                         + (_prior.by_tier.MIXED?.length || 0)
                         + (_prior.by_tier.AVOID?.length || 0);
-          if (_priorN > 0) {
+          if (_priorN > 0 && !_everyNameExplained(payload)) {
             _skipWrite = true;
             console.log(`[graded] PATCH 1002: final write blocked — payload empty but cache has ${_priorN} entries`);
           }
@@ -1213,6 +1223,25 @@ async function gradedLegacyGET(req: Request) {
     return true;
   };
   const graded: ParsedEarning[] = [];
+  // zzz878 — one card per company per quarter: if the same ticker + quarter was already graded on one of the previous 7 days, that
+  // earlier day keeps it and this day lists it as "already shown" (MOLBIO 5 & 8 Sep, LUMINO 21 & 22 Sep, HTEL, SKYWAYS … appeared twice:
+  // once on the board-meeting day, once on the filing day).
+  const shownEarlier = new Map<string, string>();
+  if (isRedisAvailable()) {
+    try {
+      const base = Date.parse(`${date}T00:00:00Z`);
+      for (let i = 1; i <= 7 && Number.isFinite(base); i++) {
+        const d = new Date(base - i * 86_400_000).toISOString().slice(0, 10);
+        for (const k of gradedKeyCandidates(d)) {
+          const p: any = await kvGet<any>(k).catch(() => null);
+          const rs: any[] = p?.by_tier ? (Object.values(p.by_tier) as any[][]).flatMap((v) => (Array.isArray(v) ? v : [])) : [];
+          if (!rs.length) continue;
+          for (const r of rs) { const key = `${String(r?.ticker || '').toUpperCase()}|${String(r?.quarter || '').toUpperCase()}`; if (r?.ticker && r?.quarter && !shownEarlier.has(key)) shownEarlier.set(key, d); }
+          break;
+        }
+      }
+    } catch { /* best effort */ }
+  }
   // zzz800 — every candidate that does not become a card is recorded with the
   // reason, and travels in the payload. "Why is X missing?" is answered by the
   // response itself instead of by re-deriving five guards by hand.
@@ -1335,7 +1364,11 @@ async function gradedLegacyGET(req: Request) {
     // so the page can put the freshest filing on top. A date-only value is
     // not a time and is not copied.
     if (g) { const _ft = (m as any).filing_iso; if (typeof _ft === 'string' && /\d{2}:\d{2}/.test(_ft)) (g as any).filing_time_iso = _ft; }
-    if (g) graded.push(g);
+    if (g) {
+      const _earlier = shownEarlier.get(`${String(g.ticker || m.ticker).toUpperCase()}|${String((g as any).quarter || '').toUpperCase()}`);
+      if (_earlier && _earlier < date) { dropped.push({ ticker: m.ticker, reason: `already shown on ${_earlier} (same ${String((g as any).quarter)} results)`, source: m.__source }); continue; }
+      graded.push(g);
+    }
     else dropped.push({ ticker: m.ticker, reason: dropReason || 'unknown', source: m.__source });
   }
 
@@ -1401,7 +1434,7 @@ async function gradedLegacyGET(req: Request) {
                         + (_prior.by_tier.STRONG?.length || 0)
                         + (_prior.by_tier.MIXED?.length || 0)
                         + (_prior.by_tier.AVOID?.length || 0);
-          if (_priorN > 0) {
+          if (_priorN > 0 && !_everyNameExplained(payload)) {
             _skipWrite = true;
             console.log(`[graded] PATCH 1002: final write blocked — payload empty but cache has ${_priorN} entries`);
           }

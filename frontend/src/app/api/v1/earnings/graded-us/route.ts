@@ -2542,6 +2542,8 @@ export async function GET(req: Request) {
     _outcome = { ok: true };
     if (!explicit && !includesToday && !incomplete) {
       void kvSet(kvKey, zipPayload(payload), 30 * 24 * 3600).catch(() => {});
+      // zzz878: a completed session's BLOCKBUSTER / STRONG cards go onto the US Conviction bench now, not at the next daily job
+      if (days === 1) void import('@/lib/server-bench-upsert').then((m) => m.upsertUsServerBench(payload, date)).catch(() => {});
     }
 
     return NextResponse.json(payload, {
