@@ -55,3 +55,18 @@ describe('zzz880 — "FY26-27" is one Indian fiscal year', () => {
     assert.equal(f.durationType, 'ANNUAL'); assert.equal(f.cohort, 'ANNUAL'); assert.equal(f.fiscalYear, 2027);
   });
 });
+
+describe('zzz880 — only like-for-like figures are compared across documents', () => {
+  const OCT2 = new Date('2026-09-01T09:00:00Z');
+  test('"other" metrics, different units and same-day copies are not compared / not doubled', () => {
+    const a = res({ docId: 'o1', filedAt: '2026-06-01', rows: [row({ metric: 'OTHER' as any, metricLabel: 'store count', unit: '', currency: null, low: 25, high: 25 })] });
+    const b = res({ docId: 'o2', filedAt: '2026-08-01', rows: [row({ metric: 'OTHER' as any, metricLabel: 'capex', unit: '', currency: null, low: 200, high: 200 })] });
+    for (const e of buildExtractedEvents([a, b], () => ({}), OCT2, '120D')) assert.ok(e.changes.every((c) => !c.before), 'no cross-document comparison for OTHER');
+    const lakh = res({ docId: 'l1', filedAt: '2026-08-01', rows: [row({ unit: 'lakh crore', low: 1, high: 1 })] });
+    const e2 = buildExtractedEvents([MAY, lakh], () => ({}), OCT2, '120D').find((e) => e.announcement_date === '2026-08-01')!;
+    assert.ok(e2.changes.every((c) => !c.before || c.before.unit === c.after.unit));
+    const pr = res({ docId: 'p1', filedAt: '2026-08-13', rows: [row({ low: 6000, high: 6500 })] });
+    const ppt = res({ docId: 'p2', filedAt: '2026-08-13', docKind: 'INVESTOR_PRESENTATION' as any, rows: [row({ low: 6000, high: 6500 })] });
+    assert.equal(buildExtractedEvents([pr, ppt], () => ({}), OCT2, '120D').length, 1);
+  });
+});

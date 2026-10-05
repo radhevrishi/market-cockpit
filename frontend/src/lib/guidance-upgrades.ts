@@ -1778,7 +1778,8 @@ function applyPrior(changes: GuChange[], prior?: GuGuidancePoint[]): GuChange[] 
   if (!prior?.length) return changes;
   return changes.map(c => {
     if (c.before) return c;
-    const p = prior.find(x => x.metric === c.metric && x.period === c.after.period && x.midpoint != null && x.isGrowthRate === c.after.isGrowthRate);
+    const p = prior.find(x => x.metric === c.metric && x.period === c.after.period && x.midpoint != null && x.isGrowthRate === c.after.isGrowthRate
+      && (x.unit == null || c.after.unit == null || x.unit === c.after.unit) && (x.currency == null || c.after.currency == null || x.currency === c.after.currency) && (x.periodKind || '') === (c.after.periodKind || ''));
     return p ? makeChange(p, c.after) : c;
   });
 }
@@ -2411,6 +2412,8 @@ export function skeletonsFromExtracted(results: readonly GuidanceExtractResult[]
  * Now every document the AI has read is history: for each document, the same company's latest EARLIER document (strictly earlier day)
  * that guided the same metric for the same period is its before-figure. Pure; the ledger points are kept as a fallback.
  */
+/** zzz880 — only clearly defined money / growth / margin metrics are compared across documents. */
+const CROSS_DOC_METRICS = new Set<GuMetric>(['REVENUE', 'REVENUE_GROWTH', 'EBITDA', 'EBIT', 'OP_MARGIN', 'EPS', 'ADJ_EPS', 'NET_PROFIT', 'FCF', 'ORGANIC_GROWTH']);
 export function priorPointsFromExtracted(sks: readonly GuSkeleton[]): (sk: GuSkeleton) => GuGuidancePoint[] {
   const byCo = new Map<string, Array<{ date: string; p: GuGuidancePoint; src: string }>>();
   for (const sk of sks) {
@@ -2418,6 +2421,7 @@ export function priorPointsFromExtracted(sks: readonly GuSkeleton[]): (sk: GuSke
     const list = byCo.get(k) || [];
     for (const c of sk.changes) {
       if (!c.after || c.after.valueKind === 'ACTUAL' || c.after.period === 'UNSTATED' || c.after.midpoint == null) continue;
+      if (!CROSS_DOC_METRICS.has(c.after.metric)) continue;   // "other", volume, backlog …: two documents' figures are not the same quantity
       list.push({ date: sk.announcement_date, p: c.after, src: sk.sources[0]?.name || 'earlier company document' });
     }
     byCo.set(k, list);
@@ -2427,7 +2431,7 @@ export function priorPointsFromExtracted(sks: readonly GuSkeleton[]): (sk: GuSke
     const seen = new Set<string>(); const out: GuGuidancePoint[] = [];
     for (const h of byCo.get(`${sk.market}|${sk.ticker}`) || []) {
       if (h.date >= sk.announcement_date) continue;
-      const key = `${h.p.metric}|${h.p.period}|${h.p.isGrowthRate}|${h.p.periodKind || ''}`;
+      const key = `${h.p.metric}|${h.p.period}|${h.p.isGrowthRate}|${h.p.periodKind || ''}|${h.p.unit || ''}|${h.p.currency || ''}`;
       if (seen.has(key)) continue; seen.add(key);
       out.push({ ...h.p, raw: `${h.p.raw ?? ''} (earlier guidance: ${h.src}, ${h.date})`.trim() });
     }
@@ -2439,8 +2443,11 @@ export function buildExtractedEvents(results: readonly GuidanceExtractResult[], 
   const out: GuidanceEvent[] = [];
   const sks = skeletonsFromExtracted(results);
   const earlierOf = priorPointsFromExtracted(sks);
+  const seenSig = new Set<string>();   // zzz880: two documents of the same day with the same figures (press release + presentation) are one event
   for (const sk of sks) {
     if (!withinWindow(sk.announcement_date, window, now)) continue;
+    const sig = `${sk.market}|${sk.ticker}|${sk.announcement_date}|${sk.changes.map((c) => `${c.metric}:${c.after.period}:${c.after.low}:${c.after.high}`).join(',')}`;
+    if (seenSig.has(sig)) continue; seenSig.add(sig);
     let ev: GuidanceEvent;
     const base = ctxFor(sk.ticker, sk.market) ?? {};
     const earlier = earlierOf(sk);
