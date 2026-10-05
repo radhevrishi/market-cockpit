@@ -428,7 +428,8 @@ async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
 
 /** zzz876 — the Screener URL slug for a ticker whose own symbol page does not exist (BSE code for BSE-primary names). KV cached.
  *  Direct request first (Screener's search answers this server — the company-name lookup uses it), then the relay. */
-const slugWhy = new Map<string, string>();   // zzz876: why a slug lookup came back empty (shown in _screener_slug)
+const slugWhy = new Map<string, string>();
+let slugQueue: Promise<void> = Promise.resolve();   // zzz876: why a slug lookup came back empty (shown in _screener_slug)
 async function resolveScreenerSlug(symbol: string): Promise<string | null> {
   const key = `screener-slug:v3:${symbol.toUpperCase()}`;
   if (isRedisAvailable()) {
@@ -443,6 +444,13 @@ async function resolveScreenerSlug(symbol: string): Promise<string | null> {
     'Referer': 'https://www.screener.in/',
   };
   let slug: string | null = null; let answered = false;
+  // zzz876e: lookups run ONE AT A TIME (a burst of parallel searches is rate-limited by Screener) with up to 3 rounds and backoff
+  const prev = slugQueue; let release: () => void = () => {};
+  slugQueue = new Promise<void>((r) => { release = r; });
+  await prev.catch(() => undefined);
+  try {
+  for (let round = 0; round < 3 && !slug && !answered; round++) {
+  if (round > 0) await new Promise((r) => setTimeout(r, 1200 * round + Math.floor(Math.random() * 600)));
   for (const via of ['direct', 'relay'] as const) {
     try {
       const init = { headers, signal: AbortSignal.timeout(6000) };
@@ -458,6 +466,8 @@ async function resolveScreenerSlug(symbol: string): Promise<string | null> {
       if (slug) break;
     } catch (e: any) { slugWhy.set(symbol, `${via} ${e?.name === 'TimeoutError' ? 'timeout' : 'network error'}`); }
   }
+  }
+  } finally { await new Promise((r) => setTimeout(r, 250)); release(); }
   if (!slug && answered) slugWhy.set(symbol, 'search answered, no company');
   if (isRedisAvailable() && (slug || answered)) {
     try { await kvSet(key, slug || '-', slug ? 180 * 24 * 3600 : 6 * 3600); } catch {}
