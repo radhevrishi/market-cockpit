@@ -166,6 +166,15 @@ function _everyNameExplained(payload: any): boolean {
   return drops.every((d) => typeof d?.reason === 'string' && d.reason.length > 0 && !/fetch|timeout|timed out|failed|unknown|rate.?limit/i.test(d.reason));
 }
 
+/** zzz878 — "2026-06-30" → "Q1 FY27" (Indian fiscal year). Null for a date that is not a quarter end. */
+function _labelOfQuarterEnd(iso: any): string | null {
+  const m = /^(\d{4})-(\d{2})-\d{2}/.exec(String(iso || ''));
+  if (!m) return null;
+  const y = +m[1], mo = +m[2];
+  const fy = (n: number) => String(n).slice(2);
+  return mo === 6 ? `Q1 FY${fy(y + 1)}` : mo === 9 ? `Q2 FY${fy(y + 1)}` : mo === 12 ? `Q3 FY${fy(y + 1)}` : mo === 3 ? `Q4 FY${fy(y)}` : null;
+}
+
 // zzz876f — the board meeting names the quarter (hub label, e.g. "Q2 FY27" for a 5 Oct meeting) and Screener's newest quarter is OLDER
 // than it: the numbers on Screener belong to the previous quarter (GLCL on 5 Oct showed its June-quarter figures under "Q2 FY27", the same
 // figures as its 30 Sep card). Those results are not out yet: the row stays pending, never graded on last quarter's numbers. Only the
@@ -504,7 +513,11 @@ async function gradedLegacyGET(req: Request) {
             continue;
           }
           // zzz876f — same rule as the full build: last quarter's numbers never grade a newer scheduled quarter
-          if (_olderThanScheduledQuarter((c as any).quarter, (c as any).filing_date || date, e)) { updatedCards.push(c); continue; }
+          if (_olderThanScheduledQuarter((c as any).quarter, (c as any).filing_date || date, e)) {
+            const _scr = _labelOfQuarterEnd(e?.latest_quarter_end_iso);
+            if (!_scr) { updatedCards.push(c); continue; }
+            (c as any).quarter = _scr;   // zzz878: the card carries the quarter its numbers belong to
+          }
           // Re-grade with new enrichment data
           const row = {
             // zzz414 — was `hub_quality: undefined`, which made gradeRow's
@@ -1268,7 +1281,21 @@ async function gradedLegacyGET(req: Request) {
     // filed Q4 — screener is serving the prior quarter (Q3 Dec data).
     // Catches hub-confirmed Upcoming tickers like GENCON (2025-12-31 ÷
     // 2026-06-25 = 176 days) that haven't actually filed Q4 yet.
-    { const _older = _olderThanScheduledQuarter(m.quarter, m.resultDate, e); if (_older) { dropped.push({ ticker: m.ticker, reason: _older, source: m.__source }); continue; } }
+    {
+      const _older = _olderThanScheduledQuarter(m.quarter, m.resultDate, e);
+      if (_older) {
+        // zzz878 — hold back when the meeting text named the quarter, when the older quarter's results were already graded on an earlier
+        // day (GLCL: June numbers on 30 Sep, again under a Q2 meeting on 5 Oct), or when the day has only a SCHEDULED meeting (no filing
+        // confirmed: STEAMHOUSE / LCCPROJECT 5 Oct). A CONFIRMED filing whose Screener quarter is older is a late filing of that quarter
+        // (a new listing files the quarter before its listing late: MPIMANIPAL, PRANAV 1 Oct): graded, labelled with the real quarter.
+        const _scrLabel = _labelOfQuarterEnd(e?.latest_quarter_end_iso);
+        const _alreadyGraded = !!_scrLabel && shownEarlier.has(`${String(m.ticker || '').toUpperCase()}|${_scrLabel.toUpperCase()}`);
+        // a board meeting with NO confirmed filing (hub 'Upcoming') whose Screener numbers are older: the results are simply not out yet
+        const _onlyScheduled = String(m.quality || '') === 'Upcoming';
+        if (m.quarter_explicit === true || _alreadyGraded || _onlyScheduled || !_scrLabel) { dropped.push({ ticker: m.ticker, reason: _alreadyGraded ? `${_older} (its ${_scrLabel} results are already shown on ${shownEarlier.get(`${String(m.ticker || '').toUpperCase()}|${_scrLabel!.toUpperCase()}`)})` : _older, source: m.__source }); continue; }
+        m.quarter = _scrLabel;
+      }
+    }
     if (e?.latest_quarter_end_iso) {
       const q = new Date(e.latest_quarter_end_iso).getTime();
       const f = new Date(m.resultDate).getTime();

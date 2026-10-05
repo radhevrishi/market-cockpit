@@ -242,6 +242,12 @@ function getExpectedQuarter(filingDate: Date): string {
 // ═══════════════════════════════════════════════════════════════════════════
 // (helpers live in @/lib/earnings/quarter-window so they can be unit-tested)
 
+/** zzz878 — true when the board-meeting text itself names the period ("quarter ended 30 September 2026"); false when the quarter is a
+ *  guess from the date. The graded step only trusts an explicit period to hold back a filing whose Screener numbers are older. */
+function hasExplicitPeriod(desc: string): boolean {
+  return /(?:period|quarter|half year|year)\s+ended\s+(?:on\s+)?(\d{1,2})?[- \/]?([a-z]+|\d{1,2})[- \/,]+(\d{4})/.test(String(desc || '').toLowerCase());
+}
+
 function getResultsQuarter(meetingDate: Date, desc: string): string {
   const lower = desc.toLowerCase();
   const periodMatch = lower.match(
@@ -476,6 +482,8 @@ interface EarningsEvent {
   company: string;
   resultDate: string;
   quarter: string;
+  /** zzz878 — the board-meeting text itself named the period (not guessed from the date) */
+  quarter_explicit?: boolean;
   quality: 'Excellent' | 'Great' | 'Good' | 'OK' | 'Weak' | 'Upcoming' | 'Preview';
   sector: string;
   industry: string;
@@ -936,6 +944,7 @@ export async function GET(request: Request) {
         // else the board-meeting date (which stays quality='Upcoming').
         resultDate: (confirmDate || meetingDate).toISOString().split('T')[0],
         quarter,
+        quarter_explicit: hasExplicitPeriod(desc),   // zzz878
         // CRITICAL FIX: only grade as filed (quality != Upcoming) when we
         // have explicit confirmation (outcomeAnn / financialResults / sub_cat
         // filing). Otherwise stays 'Upcoming' → Graded Tiers filters it out.
