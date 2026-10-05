@@ -61,3 +61,13 @@ Secrets (GitHub Actions + Railway env): `CRON_SECRET` (same in both), `SEC_CONTA
 
 ## 7. Start-of-next-chat checklist
 1. Read this file. 2. Clone the repo, `npm install` in frontend. 3. Read the backlog run log (section 4) and the pipeline endpoint (section 5.1). 4. Work from section 5 in order. 5. Keep replies in plain English with short tables; push to `main` after tests + build.
+
+## 4d. zzz879 (5 Oct 2026, evening) — review fixes
+
+- US Earnings Opps: one card per company per quarter across sessions (lib/us-session-dedupe.ts; graded-us applies it when serving a days=1 payload; per-session index `us-graded:session-index:v1:<date>`; browser day cache re-fetches days without `session_dedupe`). Verified live: HSCS, WOR, NTWK, LGCY, TRAK, MITQ moved to "already shown earlier".
+- US Conviction Beats: cap band `u30` (< $30B) is the default (one-time move from smid/all, flag `mc:us-cb:u30-default:v1`); entries filed > 60 days ago greyed (`isUsBenchAged`).
+- India Conviction Beats: browser list checked against /api/v1/bench each visit (`cbServerReconcile`): names filed 2–55 days ago that the server does not list get `_not_on_server` → greyed + labelled, left out of Portfolio Catalysts. NOTE: "Re-validate bench" never removed a name missing from the graded day — this check is what clears STEAMHOUSE-type leftovers. Preset size floor ₹3k / ₹500 / any (`mc:cb:preset-cap:v1`).
+- India EO: pending chips carry a reason (lib/eo-pending-reason.ts).
+- graded SWR front: an empty day is usable when `_everyNameExplained` (it was keeping the wrong 5 Oct cards for 90 days). Partial refresh holds a not-yet-filed card instead of relabelling it.
+- Results PDF backup: lib/india-results-pdf.ts (+ -run.ts), POST /api/v1/results-pdf (protected), .github/workflows/results-pdf.yml hourly :20. Queue `results-pdf:v1:queue`, records `results-pdf:v1:<SYM>:<qEnd>` + `:latest:<SYM>` (270 d, never re-read), fails back off 6/24/72 h, give up after 4. Enrich overlays the record only when newer than every other source and ≤ the filing. A gap > 150 days is labelled "late filing" and not queued (ANSALAPI 3 Oct = March results copy).
+- mc-proxy: NSE /api/ calls get NSE's session cookie. The NSE results collector still gets "no data found" even with PROXY_URL/PROXY_SECRET set (both confirmed set 5 Oct) — open item; the page does not depend on it (mc-scraper's results feed covers NSE).
