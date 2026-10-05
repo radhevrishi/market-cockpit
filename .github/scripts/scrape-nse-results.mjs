@@ -26,8 +26,31 @@ export function dayList(days, now = new Date()) {
   for (let i = 0; i < days; i++) out.push(new Date(now.getTime() + 330 * 60_000 - i * 86_400_000).toISOString().slice(0, 10));
   return out;
 }
-/** Rows out of whatever shape NSE answers with. */
-export function rowsOf(j) { return Array.isArray(j) ? j : Array.isArray(j?.data) ? j.data : []; }
+/** Rows out of whatever shape NSE answers with: a bare array, { data: [...] }, or the first array-valued property. */
+export function rowsOf(j) {
+  if (Array.isArray(j)) return j;
+  if (!j || typeof j !== 'object') return [];
+  if (Array.isArray(j.data)) return j.data;
+  for (const v of Object.values(j)) if (Array.isArray(v) && v.length && typeof v[0] === 'object') return v;
+  return [];
+}
+/** What the answer looked like, for the log (keys and lengths only, never values). */
+export function shapeOf(j) {
+  if (Array.isArray(j)) return `array[${j.length}]`;
+  if (!j || typeof j !== 'object') return typeof j;
+  return '{' + Object.entries(j).slice(0, 8).map(([k, v]) => `${k}:${Array.isArray(v) ? `array[${v.length}]` : typeof v}`).join(',') + '}';
+}
+const MONTHS = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
+/** Broadcast day (YYYY-MM-DD) of a raw row; null when absent. Mirrors lib/nse-results-store rowBroadcastDay. */
+export function rowDay(r) {
+  for (const c of [r?.broadCastDate, r?.re_broadcastDt, r?.broadcastDate, r?.re_date, r?.date, r?.re_submissionDate, r?.exchdisstime, r?.an_dt]) {
+    const t = String(c ?? '').trim(); if (!t) continue;
+    let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(t); if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+    m = /^(\d{1,2})[-\s/]([A-Za-z]{3})[-\s/](\d{4})/.exec(t); if (m) { const mo = MONTHS[m[2].toLowerCase()]; if (mo) return `${m[3]}-${mo}-${m[1].padStart(2, '0')}`; }
+    m = /^(\d{1,2})[-/](\d{2})[-/](\d{4})/.exec(t); if (m) return `${m[3]}-${m[2]}-${m[1].padStart(2, '0')}`;
+  }
+  return null;
+}
 
 async function nseCookie(f) {
   try {
@@ -55,6 +78,14 @@ export async function run(d) {
   const list = dayList(days, d.now || new Date());
   let cookie = await nseCookie(f);
   const rows = []; const readDays = []; const failed = [];
+  let shown = 0;
+  // 0) the plain list (no dates): NSE's own page loads this first; it holds the latest filings. Rows are kept for the days asked.
+  {
+    const r = await getJson(f, 'https://www.nseindia.com/api/corporates-financial-results?index=equities', cookie);
+    if (r.ok) { const got = rowsOf(r.json); log(`latest list: ${got.length} rows, shape ${shapeOf(r.json)}`); const want = new Set(list); for (const x of got) if (want.has(rowDay(x))) rows.push(x); }
+    else log(`latest list: FAILED (${r.error})`);
+    await sleep(400);
+  }
   for (const day of list) {
     // one day per call: the list is small per day and a failure stays local to that day
     let r = await getJson(f, `https://www.nseindia.com/api/corporates-financial-results?index=equities&period=Quarterly&from_date=${ddMonyyyy(day)}&to_date=${ddMonyyyy(day)}`, cookie);
@@ -62,6 +93,7 @@ export async function run(d) {
     if (!r.ok) r = await getJson(f, `https://www.nseindia.com/api/corporates-financial-results?index=equities&from_date=${ddmmyyyy(day)}&to_date=${ddmmyyyy(day)}`, cookie);
     if (!r.ok) { failed.push(day); log(`${day}: FAILED (${r.error})`); await sleep(400); continue; }
     const got = rowsOf(r.json);
+    if (shown++ < 2) log(`${day}: answer shape ${shapeOf(r.json)}`);
     readDays.push(day); rows.push(...got);
     log(`${day}: ${got.length} results rows`);
     await sleep(400);
