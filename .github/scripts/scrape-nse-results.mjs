@@ -93,7 +93,7 @@ export async function run(d) {
     if (!r.ok) r = await getJson(f, `https://www.nseindia.com/api/corporates-financial-results?index=equities&from_date=${ddmmyyyy(day)}&to_date=${ddmmyyyy(day)}`, cookie);
     if (!r.ok) { failed.push(day); log(`${day}: FAILED (${r.error})`); await sleep(400); continue; }
     const got = rowsOf(r.json);
-    if (shown++ < 2) log(`${day}: answer shape ${shapeOf(r.json)}`);
+    if (shown++ < 2) log(`${day}: answer shape ${shapeOf(r.json)}${typeof r.json?.msg === 'string' ? ` msg="${r.json.msg.slice(0, 120)}"` : ''}`);
     readDays.push(day); rows.push(...got);
     log(`${day}: ${got.length} results rows`);
     await sleep(400);
