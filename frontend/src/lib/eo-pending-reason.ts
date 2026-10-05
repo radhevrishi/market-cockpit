@@ -11,6 +11,7 @@ export function pendingReasonWord(reason?: string | null, failed = false): Pendi
   const r = String(reason || '').trim();
   if (failed || /fetch|timeout|timed out|rate.?limit|failed to load/i.test(r)) return { word: "numbers didn't load — retrying", color: RED, full: r || 'the numbers could not be fetched this time; the next refresh tries again' };
   if (!r) return { word: 'results not out yet', color: GREY, full: 'on the calendar; no results filing seen yet' };
+  if (/^late filing/i.test(r)) return { word: 'late filing of an old quarter — not graded as new', color: AMBER, full: r };
   if (/scheduled \(Upcoming\)|scheduled for|not out yet/i.test(r)) return { word: 'board meeting only — results not out yet', color: GREY, full: r };
   if (/not on Screener yet|new quarter not on Screener/i.test(r)) return { word: 'filed — waiting for the numbers', color: CYAN, full: r };
   if (/no financials and no hub|ghost-filing/i.test(r)) return { word: 'no results filing seen yet', color: GREY, full: r };

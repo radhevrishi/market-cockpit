@@ -1328,8 +1328,14 @@ async function gradedLegacyGET(req: Request) {
       const _filedForThatQuarter = _quarterEndFromFyLabel(m.quarter) === String(e.latest_quarter_end_iso).slice(0, 10);
       if (daysSince > 100 && !(_filedForThatQuarter && daysSince <= 125)) {
         console.log(`[graded] ${date}: dropping ${m.ticker} — screener quarter ${e.latest_quarter_end_iso} is ${Math.round(daysSince)}d stale (Q4 not filed yet)`);
-        dropped.push({ ticker: m.ticker, reason: `Screener's latest quarter ${e.latest_quarter_end_iso} is ${Math.round(daysSince)}d before the filing (new quarter not on Screener yet)`, source: m.__source });
-        if (String(m.quality || '') !== 'Upcoming') _rpAdd(m, _lastQuarterEndBefore(m.resultDate));   // zzz879 — a confirmed filing: results PDF backup
+        // zzz879 — more than ~5 months after Screener's quarter, the filing is almost always THAT quarter's results filed late (ANSALAPI on
+        // 3 Oct 2026: a newspaper copy of its March results, board meeting 29 Sep), not a newer quarter Screener is missing. Said so, and
+        // not sent to the results-PDF backup (there is no newer quarter to read).
+        const _late = daysSince > 150;
+        dropped.push({ ticker: m.ticker, reason: _late
+          ? `late filing: Screener's latest quarter ${e.latest_quarter_end_iso} is ${Math.round(daysSince)}d before the filing — most likely that quarter's results filed late, not a new quarter`
+          : `Screener's latest quarter ${e.latest_quarter_end_iso} is ${Math.round(daysSince)}d before the filing (new quarter not on Screener yet)`, source: m.__source });
+        if (!_late && String(m.quality || '') !== 'Upcoming') _rpAdd(m, _lastQuarterEndBefore(m.resultDate));   // zzz879 — a confirmed filing: results PDF backup
         continue;
       }
     }
