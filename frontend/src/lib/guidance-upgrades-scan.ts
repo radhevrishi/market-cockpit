@@ -73,6 +73,11 @@ export interface IndiaScanInput {
   /** zzz848: IST days that have a graded results session in the cache (null/absent = not required). Used for long windows. */
   gradedDays?: ReadonlySet<string> | null | Promise<ReadonlySet<string> | null>;
   window?: GuWindow;
+  /**
+   * zzz866: IST days the GitHub India collector fully indexed (KV guidance-docs:v1:coverage:IN, status 'ok'). NSE/BSE refuse this server, so the
+   * collector (which runs on GitHub) is the real India reader; a day it indexed counts as covered. Absent/null: behaviour unchanged.
+   */
+  collectorDays?: ReadonlySet<string> | null | Promise<ReadonlySet<string> | null>;
 }
 export interface MarketScanResult {
   status: GuScanStatus;
@@ -107,6 +112,7 @@ export async function scanIndia(inp: IndiaScanInput): Promise<MarketScanResult> 
   const sources: GuScanSource[] = [];
   const dayOk = new Map<string, boolean>(days.map((d) => [d, true]));
   const failedDays: Record<string, string[]> = {};
+  const collDays = new Set<string>();   // zzz866: days the GitHub collector fully indexed
   const blobDays = new Set<string>();   // zzz849: days the scraped blob really covers (never required, never a substitute for the exchange feeds)
 
   const runEx = async (name: string, f: DayFetcher | undefined) => {
@@ -135,6 +141,12 @@ export async function scanIndia(inp: IndiaScanInput): Promise<MarketScanResult> 
     sources.push({ name: 'Scraped filings blob', tier: 'FALLBACK', daysTried: days.slice(), daysOk: [...blobDays], state: have === 0 ? 'NOT_RUN' : stateFor(have, days.length), scanned: seen, detail: have === 0 ? 'scraped filings blob (corp-filings:v1:latest) missing, empty or older than the window: blob (optional source)' : `${have} of ${days.length} days covered by the scraped filings blob, ${seen} announcements: blob (optional source)` });
   } else sources.push({ name: 'Scraped filings blob', tier: 'FALLBACK', daysTried: days.slice(), daysOk: [], state: 'NOT_RUN', scanned: 0, detail: 'not wired (optional source)' });
 
+  // zzz866: the GitHub India collector's own day record (status 'ok' only; partial/failed days are never counted)
+  const cd = await Promise.resolve(inp.collectorDays ?? null).catch(() => null);
+  if (cd) for (const d of days) if (cd.has(d)) collDays.add(d);
+  if (inp.collectorDays !== undefined) sources.push({ name: 'GitHub India collector', tier: 'PRIMARY', daysTried: days.slice(), daysOk: [...collDays], state: !cd || cd.size === 0 ? 'NOT_RUN' : stateFor(collDays.size, days.length), scanned: collDays.size,
+    detail: !cd || cd.size === 0 ? 'no collector run recorded yet (run the "Scrape Guidance Docs" GitHub workflow; NSE and BSE refuse this server)' : `${collDays.size} of ${days.length} days fully indexed by the GitHub collector (company documents handed to the extractor)` });
+
   const relevant = rows.filter(isGuidanceRelevantFiling);
   const seenId = new Set<string>();
   const candidates: GuCandidate[] = [];
@@ -150,8 +162,8 @@ export async function scanIndia(inp: IndiaScanInput): Promise<MarketScanResult> 
   if (!long) {
     // windows up to 30D: exactly the previous numbers and rules
     // zzz849: a day read by the exchange feeds OR covered by the scraped blob counts as covered; COMPLETE still needs every required exchange feed
-    const daysCovered = days.filter((d) => dayOk.get(d) || blobDays.has(d)).length;
-    const complete = required.every((s) => s.state === 'COMPLETE') && liveOk.length === days.length;
+    const daysCovered = days.filter((d) => dayOk.get(d) || blobDays.has(d) || collDays.has(d)).length;
+    const complete = (required.every((s) => s.state === 'COMPLETE') && liveOk.length === days.length) || (days.length > 0 && daysCovered === days.length && collDays.size > 0 && days.every((d) => dayOk.get(d) || collDays.has(d)));
     status = {
       market: 'IN', windowFrom: days[days.length - 1], windowTo: days[0], complete, lastScanAt: now.toISOString(), sources,
       daysCovered, daysRequested: days.length, candidatesFound: candidates.length, processed: 0, awaitingGrading: 0, verified: 0, newestItemAt: newest, note: '',
@@ -159,7 +171,7 @@ export async function scanIndia(inp: IndiaScanInput): Promise<MarketScanResult> 
   } else {
     // long window: days covered = read live today (and graded, weekdays) OR already processed by an earlier run. A day that is neither is MISSING, never "zero events".
     const gradedDays = await Promise.resolve(inp.gradedDays ?? null).catch(() => null);
-    const cov = computeCoverage({ days: allDays, live: new Set([...liveOk, ...days.filter((d) => blobDays.has(d))]), graded: gradedDays, store: inp.storeCovered });
+    const cov = computeCoverage({ days: allDays, live: new Set([...liveOk, ...days.filter((d) => blobDays.has(d) || collDays.has(d))]), graded: gradedDays, store: inp.storeCovered });
     const storeSeen = inp.storeCovered ? allDays.filter((d) => inp.storeCovered!.has(d)).length : 0;
     sources.push({
       name: 'Persisted event store', scanned: storeSeen, tier: 'SECONDARY',
@@ -168,7 +180,7 @@ export async function scanIndia(inp: IndiaScanInput): Promise<MarketScanResult> 
         : `${storeSeen} of ${allDays.length} days already processed by earlier runs; ${cov.missing.length} still missing`,
     });
     status = {
-      market: 'IN', windowFrom: allDays[allDays.length - 1], windowTo: allDays[0], complete: required.every((s) => s.state === 'COMPLETE') && cov.missing.length === 0,
+      market: 'IN', windowFrom: allDays[allDays.length - 1], windowTo: allDays[0], complete: (required.every((s) => s.state === 'COMPLETE') || collDays.size > 0) && cov.missing.length === 0,
       lastScanAt: now.toISOString(), sources, daysCovered: cov.covered.length, daysRequested: allDays.length,
       candidatesFound: candidates.length, processed: 0, awaitingGrading: 0, verified: 0, newestItemAt: newest, note: '',
       missingDays: cov.missing.slice(0, MISSING_CAP), missingDaysCount: cov.missing.length, storeDays: cov.fromStore,
@@ -176,7 +188,7 @@ export async function scanIndia(inp: IndiaScanInput): Promise<MarketScanResult> 
     for (const r of required) r.detail += ` (live scan is bounded to ${LIVE_SCAN_MAX_DAYS} days per run; ${days.length} of ${allDays.length} days read this run)`;
   }
   status.windowDays = inp.days; status.sourcesCount = sources.filter((x) => x.state !== 'NOT_RUN' && x.state !== 'NOT_AVAILABLE').length;
-  const blobOnly = days.filter((d) => blobDays.has(d) && !dayOk.get(d)).length;
+  const blobOnly = days.filter((d) => blobDays.has(d) && !dayOk.get(d) && !collDays.has(d)).length;
   status.coveredBy = { exchange: liveOk.length, blob: blobDays.size, blobOnly };
   status.coverageLabel = coverageLabel(status.daysCovered, status.daysRequested, inp.window ?? windowOfDays(inp.days)) + (blobOnly > 0 && !status.complete ? ` — PARTIAL: ${BLOB_ONLY_NOTE}` : '');
   status.status = scanState(status);
@@ -375,7 +387,7 @@ export function makeBlobReader(load: () => Promise<any>, cap: number = BLOB_CAP)
     return rows.filter((r) => { const t = parseWhen(r?.filing_datetime ?? r?.filing_date ?? r?.an_dt ?? r?.NEWS_DT); return !!t && istDate(new Date(t)) === day; });
   };
 }
-export function makeRealIndiaFetchers(): { nse: DayFetcher; bse: DayFetcher; blob: BlobReader } {
+export function makeRealIndiaFetchers(): { nse: DayFetcher; bse: DayFetcher; blob: BlobReader; collector: () => Promise<ReadonlySet<string> | null> } {
   const mk = (which: 'NSE' | 'BSE'): DayFetcher => async (day, signal) => {
     const feed = await import('./nse-bse-feed');
     const r: any = which === 'NSE'
@@ -398,7 +410,9 @@ export function makeRealIndiaFetchers(): { nse: DayFetcher; bse: DayFetcher; blo
     if (!latest) latest = kvGet<any>(BLOB_KEY).catch(() => null);
     return latest;
   });
-  return { nse: mk('NSE'), bse: mk('BSE'), blob };
+  // zzz866: days the GitHub India collector indexed (KV guidance-docs:v1:coverage:IN); null when nothing is stored
+  const collector = async () => { const { readIndiaCollectorDays } = await import('./us-edgar-backfill'); return readIndiaCollectorDays(); };
+  return { nse: mk('NSE'), bse: mk('BSE'), blob, collector };
 }
 
 export function makeRealEdgarFetcher(): EdgarDayFetcherWithBackfill {

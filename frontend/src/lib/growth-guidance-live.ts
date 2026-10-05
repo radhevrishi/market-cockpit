@@ -53,7 +53,7 @@ export async function buildLiveGuidance(market: 'IN' | 'US' | 'ALL', now: Date, 
   const dates = istDateList(now, DAYS + 1);   // India graded sessions are keyed by the IST day
   const usDates = wantUS ? usSessionDates(now, DAYS) : [];
   const inFetch = wantIN ? makeRealIndiaFetchers() : null;
-  const inScanP: Promise<MarketScanResult | null> = inFetch ? scanIndia({ now, days: 14, fetchNse: inFetch.nse, fetchBse: inFetch.bse, readBlob: inFetch.blob, budgetMs: 11_000 }).catch(() => null) : Promise.resolve(null);
+  const inScanP: Promise<MarketScanResult | null> = inFetch ? scanIndia({ now, days: 14, fetchNse: inFetch.nse, fetchBse: inFetch.bse, readBlob: inFetch.blob, collectorDays: inFetch.collector(), budgetMs: 11_000 }).catch(() => null) : Promise.resolve(null);
   const [newsRead, feedRead, graded, usSessions, scraped, catalog] = await Promise.all([
     // zzz854: the news key lives 5 minutes; a durable last-good copy (>= 26 h) serves when it is absent, labelled stale with its age
     withTimeout(readNewsWithLastGood(makeKvNewsIo(Math.min(BUDGET_MS, 6_000))), BUDGET_MS, null as NewsRead | null),

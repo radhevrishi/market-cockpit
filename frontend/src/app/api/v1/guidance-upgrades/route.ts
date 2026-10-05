@@ -143,7 +143,7 @@ export async function GET(req: NextRequest) {
   const gradedDaysP: Promise<Set<string> | null> = gradedP.then((g) => (Array.isArray(g.v) ? new Set(dates.filter((_d, i) => !!(g.v as any[])[i]?.by_tier)) : null));
   // Live incremental India scan (exchange announcements per day + scraped filings blob): catches filings the caches have not seen yet.
   const inScanP: Promise<MarketScanResult | null> = inFetch
-    ? storeP.then(([stIN]) => scanIndia({ now, days, window, fetchNse: inFetch.nse, fetchBse: inFetch.bse, readBlob: inFetch.blob, budgetMs: 12_000, storeCovered: storeCoveredDays(stIN), gradedDays: gradedDaysP })).catch(() => null)
+    ? storeP.then(([stIN]) => scanIndia({ now, days, window, fetchNse: inFetch.nse, fetchBse: inFetch.bse, readBlob: inFetch.blob, collectorDays: inFetch.collector(), budgetMs: 12_000, storeCovered: storeCoveredDays(stIN), gradedDays: gradedDaysP })).catch(() => null)
     : Promise.resolve(null);
   // zzz853: news cache with a last-good fallback (the live key lives 5 minutes and is refilled hourly, so a miss is normal and is not a data statement)
   const nr: { v: NewsRead | null } = { v: null };

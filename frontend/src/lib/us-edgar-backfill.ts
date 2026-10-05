@@ -54,6 +54,15 @@ export async function readUsBackfillIndexedDays(): Promise<Set<string> | null> {
   } catch { return null; }
 }
 
+/** zzz866: the India collector's day record (same shape, market IN). Only days with status 'ok' are returned. */
+export async function readIndiaCollectorDays(): Promise<Set<string> | null> {
+  try {
+    const { kvGet } = await import('./kv');
+    const cov = parseUsBackfillCoverage(await kvGet<unknown>('guidance-docs:v1:coverage:IN'));
+    return cov ? backfillIndexedDays(cov) : null;
+  } catch { return null; }
+}
+
 /** GuidanceDoc docId: sha1(url) hex, first 20 chars. */
 export const guidanceDocIdOf = (url: string): string => createHash('sha1').update(String(url)).digest('hex').slice(0, 20);
 
