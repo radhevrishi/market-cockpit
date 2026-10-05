@@ -21,12 +21,14 @@ export interface GuPipelineInput {
   claims: number; claimsPrimaryFound: number; claimsPrimaryRead: number; claimsVerified: number; claimsContradicted: number;
   verifiedGuidance: number; processedNoGuidance: number;
   daysFailed: number; daysPartial: number; daysNotRead: number; tradingDays: number;
+  /** zzz864: the live scan's own days (days read of days asked). Coverage is never COMPLETE while this is short. */ scanTradingDays?: number; scanDaysRead?: number;
 }
 export type GuSourceCoverage = 'COMPLETE' | 'PARTIAL' | 'STALE' | 'SOURCE_FAILED' | 'NO_SOURCE_DATA';
 export type GuVerificationStage = 'VERIFIED' | 'PARTLY_VERIFIED' | 'PRIMARY_PENDING' | 'NOTHING_TO_VERIFY';
 export const SOURCE_COVERAGE_TEXT: Record<GuSourceCoverage, string> = { COMPLETE: 'COMPLETE', PARTIAL: 'PARTIAL', STALE: 'STALE (saved copy only)', SOURCE_FAILED: 'FAILED', NO_SOURCE_DATA: 'NO SOURCE DATA' };
 export const VERIFICATION_STAGE_TEXT: Record<GuVerificationStage, string> = { VERIFIED: 'VERIFIED', PARTLY_VERIFIED: 'PARTLY VERIFIED', PRIMARY_PENDING: 'PRIMARY PENDING', NOTHING_TO_VERIFY: 'NOTHING TO VERIFY' };
 export interface GuPipelineState {
+  /** zzz864: days the live scan read of the days it asked for (null when no scan was recorded) */ scan: { read: number; total: number } | null;
   /** zzz862: two separate questions. Did we read the sources (coverage)? Did the company's own documents confirm the claims (verification)? */ sourceCoverage: GuSourceCoverage; verification: GuVerificationStage;
   state: GuSourceState; status: GuCoverageStatus; headline: string; sources: GuSourceLine[];
   /** the blocking reasons, one sentence each, in plain words */ reasons: string[];
@@ -75,9 +77,11 @@ export function pipelineStateOf(i: GuPipelineInput): GuPipelineState {
       const q = Math.min(claimsOpen, i.claimsQueued ?? 0); const nd = Math.min(claimsOpen - q, i.claimsNoDocument ?? claimsOpen - q);
       reasons.push(`${plural(claimsOpen, 'claim')} not verified yet: ${nd} with no company document found, ${q} with a document queued, being read or awaiting extraction${claimsOpen - q - nd > 0 ? `, ${claimsOpen - q - nd} other` : ''}.`);
     }
-    status = blocked ? 'PRIMARY_PENDING' : failed.length || stale.length || i.daysFailed > 0 || i.daysPartial > 0 || i.daysNotRead > 0 || pending > 0 || claimsOpen > 0 ? 'PARTIAL' : 'COMPLETE';
+    status = blocked ? 'PRIMARY_PENDING' : failed.length || stale.length || i.daysFailed > 0 || i.daysPartial > 0 || i.daysNotRead > 0 || (i.scanTradingDays ?? 0) > (i.scanDaysRead ?? 0) || pending > 0 || claimsOpen > 0 ? 'PARTIAL' : 'COMPLETE';
   }
-  const partialSrc = failed.length > 0 || stale.length > 0 || i.servedFromStaleCache || i.daysFailed > 0 || i.daysPartial > 0 || i.daysNotRead > 0;
+  const scanShort = (i.scanTradingDays ?? 0) > 0 && (i.scanDaysRead ?? 0) < (i.scanTradingDays ?? 0);
+  if (scanShort && state !== 'NO_SOURCE_DATA' && state !== 'SOURCE_FAILED') reasons.unshift(`The live scan read ${i.scanDaysRead ?? 0} of ${i.scanTradingDays} days.`);
+  const partialSrc = failed.length > 0 || stale.length > 0 || i.servedFromStaleCache || i.daysFailed > 0 || i.daysPartial > 0 || i.daysNotRead > 0 || scanShort || pending > 0;
   const sourceCoverage: GuSourceCoverage = state === 'NO_SOURCE_DATA' ? 'NO_SOURCE_DATA' : state === 'SOURCE_FAILED' ? 'SOURCE_FAILED' : state === 'SOURCE_STALE' ? 'STALE' : partialSrc ? 'PARTIAL' : 'COMPLETE';
   const verification: GuVerificationStage = i.verifiedGuidance > 0 ? (claimsOpen > 0 || pending > 0 ? 'PARTLY_VERIFIED' : 'VERIFIED') : claimsOpen > 0 || pending > 0 ? 'PRIMARY_PENDING' : 'NOTHING_TO_VERIFY';
   const nse = i.sources.find((s) => s.name === 'NSE'); const bse = i.sources.find((s) => s.name === 'BSE');
@@ -85,5 +89,5 @@ export function pipelineStateOf(i: GuPipelineInput): GuPipelineState {
   const tail = [`${plural(pending, 'document')} pending`, `${plural(i.claims, 'claim')}`, `${i.verifiedGuidance} verified`];
   const head = i.sources.length ? `${i.sources.map((s) => `${s.name} ${mark(s)}${s.documents ? ` ${s.documents}` : ''}`).join(' | ')} | ` : '';
   const headline = `${MK[i.market]} — ${lead}: ${head}${tail.join(' | ')}`;
-  return { sourceCoverage, verification, state, status, headline, sources: i.sources, reasons, nse: nse ? nse.documents : null, bse: bse ? bse.documents : null };
+  return { scan: i.scanTradingDays ? { read: i.scanDaysRead ?? 0, total: i.scanTradingDays } : null, sourceCoverage, verification, state, status, headline, sources: i.sources, reasons, nse: nse ? nse.documents : null, bse: bse ? bse.documents : null };
 }

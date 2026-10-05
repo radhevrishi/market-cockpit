@@ -19,7 +19,7 @@ export function GuClaimsTable({ claims, market }: { claims: GuidanceClaim[] | un
   return (
     <GuFold title="Claims and what happens next" count={rows.length} accent={R.amber} defaultOpen={false}>
       <div data-gu-claims-table style={{ display: 'grid', gap: 6, fontSize: 12.5 }}>
-        <div data-gu-claims-summary style={{ color: R.dim }}><b style={{ color: R.text }}>{rows.length} claim rows across {companies} companies</b> (a company with revenue and profit claims has two rows). By stage: {parts.join(' · ')}. A claim is what a secondary source says; it stays out of the main lists until the company's own document confirms it.</div>
+        <div data-gu-claims-summary style={{ color: R.dim }}><b style={{ color: R.text }}>{rows.length} claim rows · {companies} distinct companies</b>. By stage: {parts.join(' · ')}. A claim is what a secondary source says; it stays out of the main lists until the company's own document confirms it.</div>
         {rows.slice(0, 120).map((c) => (
           <div key={c.claim_id} data-gu-claim={c.verification_status} style={{ border: `1px solid ${R.border}`, borderLeft: `3px solid ${STAGE_COLOR[c.stage]}`, borderRadius: 8, padding: '6px 10px', display: 'grid', gap: 2 }}>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline' }}>

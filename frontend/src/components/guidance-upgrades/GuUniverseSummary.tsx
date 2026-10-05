@@ -15,6 +15,7 @@ import { GuFold, GuPanel, pillStyle } from './GuPanel';
 import { GuVerifyButton } from './GuVerifyButton';
 import { GuDataQuality } from './GuDataQuality';
 import { GuClaimsTable } from './GuClaimsTable';
+import { GuDerivedAudit } from './GuIntegrityAudit';
 import { SCOPE_NOTE, scopedTitle } from '@/lib/guidance-semantics';
 import { BADGE_LEGEND, SECTIONS, SECTION_ACTIVE, cohortCountsLine, cohortTotal, freshnessLines, highestActiveHeading, rowCohortLine, rowTrustLine, sectionRows } from './gu-ui';
 
@@ -55,9 +56,15 @@ export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void 
           <GuDataQuality quality={data.extractCoverage?.quality} />
           <GuVerifyButton pending={data.viewCounts?.claimsAwaiting ?? null} />
           <GuClaimsTable claims={data.pipeline?.claims} market={mk} />
+          <GuDerivedAudit audit={data.derivedAudit} />
           {hasGroups && mk !== 'US' && cohortTotal(sectionRows(groups, 'active', 'IN')) === 0 && cohortTotal(sectionRows(groups, 'claimsAwaiting', 'IN')) > 0 && (
             <div data-gu-india-note style={{ fontSize: 12.5, color: R.amber }}>India: no guidance is verified against the company's own document yet. {data.pipeline?.claimCounts?.IN?.claims ?? cohortTotal(sectionRows(groups, 'claimsAwaiting', 'IN'))} India claim rows reported by media ({cohortTotal(sectionRows(groups, 'claimsAwaiting', 'IN'))} of them at {thr}% or more, which is all this ranked list shows) wait for their company documents; see "Claims and what happens next".</div>
           )}
+          <div data-gu-populations style={{ fontSize: 12.5, display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+            <span><b>Active guidance universe:</b> {data.summary?.all?.active ?? data.records.length}</span>
+            <span><b>High-growth active subset ({thr}% or more):</b> {hasGroups ? cohortTotal(sectionRows(groups, 'active', mk)) : (legacy ? legacy.rows.length : 0)}</span>
+            <span style={{ color: R.dim }}>The second is a part of the first.</span>
+          </div>
           <QualityStrip data={data} />
           {data.records.length === 0 ? <div style={{ fontSize: 13, color: R.dim }}>{ZERO_RECORDS_TEXT}</div> : (
             <>

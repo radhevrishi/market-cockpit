@@ -1717,8 +1717,8 @@ function buildScorecard(e: GuidanceEvent, ranges: GuRangeMath[], level: GuDurabi
     detail: best == null ? 'No before and after numbers, so the size cannot be measured.' : `Guidance moved up: ${sizeText}.` });
   items.push({ label: 'Earnings materiality', rating: e.materiality === 'HIGH' ? 'STRONG' : e.materiality === 'MEDIUM' ? 'OK' : e.materiality === 'LOW' ? 'WEAK' : 'UNKNOWN',
     detail: e.materialityBasis || DATA_UNAVAILABLE });
-  items.push({ label: 'Expectation gap', rating: e.expectationGap === 'UNKNOWN' ? 'UNKNOWN' : e.expectationGap === 'NEGATIVE' ? 'WEAK' : e.expectationGap === 'LARGE_POSITIVE' || e.expectationGap === 'POSITIVE' ? 'STRONG' : 'OK',
-    detail: e.expectationGap === 'UNKNOWN' ? 'No consensus number was supplied. The gap is unknown, not negative, and it does not lower the other scores.' : `Guidance versus consensus: ${e.gapPct != null ? signed(e.gapPct, 1) + '%' : DATA_UNAVAILABLE}.` });
+  items.push({ label: 'Guidance vs consensus', rating: e.expectationGap === 'UNKNOWN' ? 'UNKNOWN' : e.expectationGap === 'NEGATIVE' ? 'WEAK' : e.expectationGap === 'LARGE_POSITIVE' || e.expectationGap === 'POSITIVE' ? 'STRONG' : 'OK',
+    detail: e.expectationGap === 'UNKNOWN' ? 'No consensus number was supplied. The comparison is unknown, not negative, and it does not lower the other scores.' : `Guidance versus consensus: ${e.gapPct != null ? signed(e.gapPct, 1) + '%' : DATA_UNAVAILABLE}.` });
   const klasses = [...new Set(ranges.map(r => r.klass))].filter(k => k !== 'UNKNOWN');
   items.push({ label: 'Quality of the raise', rating: !clean ? 'WEAK' : e.guidance_quality === 'HIGH' ? 'STRONG' : e.guidance_quality === 'MEDIUM' ? 'OK' : e.guidance_quality === 'LOW' ? 'WEAK' : 'UNKNOWN',
     detail: `${!clean ? 'Not a clean raise: the low end of the range did not move up. ' : ''}Driver: ${e.guidance_driver}.${klasses.length ? ` Range check: ${klasses.join(', ').toLowerCase().replace(/_/g, ' ')}.` : ''}` });

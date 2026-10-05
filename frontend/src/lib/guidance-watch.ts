@@ -50,3 +50,27 @@ export function promoteWatched(items: GuQueueItem[], isWatched: (s: WatchSubject
 }
 export async function readWatch(): Promise<WatchSet | null> { try { const { kvGet } = await import('./kv'); return validWatch(await kvGet<WatchSet>(WATCH_KEY)); } catch { return null; } }
 export async function writeWatch(w: WatchSet): Promise<boolean> { try { const { kvSet } = await import('./kv'); await kvSet(WATCH_KEY, w, WATCH_TTL_S); return true; } catch { return false; } }
+
+// zzz865 — REQUESTED NAMES: company names the owner typed into the Coverage check. They join the watch set (both markets, by name), so their filings are queued first and read first.
+// Company names only (public information, never a holding). Bounded, validated, never throws.
+export const REQUEST_KEY = 'guidance-pipeline:requested:v1';
+export const REQUEST_MAX = 300;
+export function cleanRequestedNames(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  const out: string[] = []; const seen = new Set<string>();
+  for (const x of v) {
+    const raw = String(x ?? '').trim(); if (raw.length < 3 || raw.length > 80 || !/^[\p{L}\p{N}&.\-' ]+$/u.test(raw)) continue;
+    const k = normCompanyName(raw); if (!k || seen.has(k)) continue;
+    seen.add(k); out.push(k); if (out.length >= REQUEST_MAX) break;
+  }
+  return out;
+}
+export async function readRequested(): Promise<string[]> { try { const { kvGet } = await import('./kv'); return cleanRequestedNames(await kvGet<string[]>(REQUEST_KEY)); } catch { return []; } }
+export async function addRequested(names: unknown): Promise<string[] | null> {
+  try { const { kvGet, kvSet } = await import('./kv'); const cur = cleanRequestedNames(await kvGet<string[]>(REQUEST_KEY)); const merged = cleanRequestedNames([...cur, ...cleanRequestedNames(names)]); await kvSet(REQUEST_KEY, merged, 90 * 86_400); return merged; } catch { return null; }
+}
+/** Merge requested names into a watch set (both markets, names only). */
+export function withRequested(w: WatchSet, names: readonly string[]): WatchSet {
+  const add = (arr: string[]) => { const s = new Set(arr); for (const n of names) if (s.size < WATCH_MAX + REQUEST_MAX) s.add(n); return [...s]; };
+  return { ...w, IN: { ...w.IN, names: add(w.IN.names) }, US: { ...w.US, names: add(w.US.names) } };
+}

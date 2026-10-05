@@ -21,7 +21,15 @@ export function writeCache(key: string, data: unknown, now = Date.now()): void {
   try {
     if (typeof localStorage === 'undefined') return;
     const s = JSON.stringify({ at: now, data });
-    if (s.length > MAX_CHARS) { localStorage.removeItem(PREFIX + key); return; }
+    if (s.length > MAX_CHARS) {
+      // too big: keep a shorter copy (the first events and queue rows; counts stay exact) rather than nothing, so a refresh still shows data
+      const d = data as { events?: unknown[]; reviewQueue?: unknown[] };
+      if (d && Array.isArray(d.events)) {
+        const slim = JSON.stringify({ at: now, data: { ...d, events: d.events.slice(0, 120), reviewQueue: (d.reviewQueue || []).slice(0, 60) } });
+        if (slim.length <= MAX_CHARS) { localStorage.setItem(PREFIX + key, slim); return; }
+      }
+      localStorage.removeItem(PREFIX + key); return;
+    }
     localStorage.setItem(PREFIX + key, s);
   } catch { /* storage full or blocked: the memory copy still works */ }
 }

@@ -79,8 +79,8 @@ describe('Regression: Cupid-type AGM raise, India, no consensus', () => {
   });
   test('scorecard present, plain words, consensus unknown not dominating', () => {
     const sc = e.v2!.scorecard; assert.equal(sc.length, 8);
-    assert.deepEqual(sc.map(s => s.label), ['Size of the raise', 'Earnings materiality', 'Expectation gap', 'Quality of the raise', 'Durability', 'Valuation', 'Evidence', 'Portfolio impact']);
-    assert.equal(sc.find(s => s.label === 'Expectation gap')!.rating, 'UNKNOWN');
+    assert.deepEqual(sc.map(s => s.label), ['Size of the raise', 'Earnings materiality', 'Guidance vs consensus', 'Quality of the raise', 'Durability', 'Valuation', 'Evidence', 'Portfolio impact']);
+    assert.equal(sc.find(s => s.label === 'Guidance vs consensus')!.rating, 'UNKNOWN');
     for (const s of sc) { assert.ok(['STRONG', 'OK', 'WEAK', 'UNKNOWN'].includes(s.rating)); assert.ok(!/\b\d{1,3}\s*\/\s*100\b/.test(s.detail)); }
   });
   test('flags and meta: consensusAvailable false, stage, detectedVia, no cap flag without market cap', () => {

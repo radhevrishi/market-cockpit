@@ -32,6 +32,7 @@ export const PROTECTED_API_PREFIXES = [
   '/api/v1/ai-gainers/research',
   '/api/v1/india/ai-summary',
   '/api/v1/haiku/',
+  '/api/v1/guidance-requests',   // zzz865 — owner's read-first company list (writes)
   '/api/v1/special-focus',       // zzz780 — research memory
   '/api/v1/us-book',             // zzz790 — US book: holdings, cash, bench
   '/api/v1/catalyst/',            // zzz809 — filing reader (fetches documents; owner only); zzz825 us-filings (SEC lists)

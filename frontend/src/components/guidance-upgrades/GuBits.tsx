@@ -2,7 +2,7 @@
 // zzz843 — small presentational pieces for Guidance Upgrades.
 import React from 'react';
 import type { GuNumber, GuidanceEvent } from '@/lib/guidance-upgrades-types';
-import { AWAITING_PRIMARY, BASIS_LABEL, CONSENSUS_ABSENT, DECISION_LABEL, DURABILITY_LEVEL_LABEL, GAP_LABEL, HEADLINE_ONLY_BANNER, LABEL_WORD, STAGE_LABEL, TOP_END_CUT, decisionChipText, guidanceMarkerWord, hasTopEndCut, isHeadlineOnly, isRealRaiseClass, rangeClassLabel, STAGE_ORDER, UNAVAILABLE, WHY_NOW_UNRESOLVED, fmtNumber, fmtRangeLine, showsDecision, stageIndex, stageNote } from '@/lib/guidance-upgrades-format';
+import { AWAITING_PRIMARY, BASIS_LABEL, CONSENSUS_ABSENT, DECISION_LABEL, DURABILITY_LEVEL_LABEL, GAP_LABEL, consensusGapText, consensusFormulaText, HEADLINE_ONLY_BANNER, LABEL_WORD, STAGE_LABEL, TOP_END_CUT, decisionChipText, guidanceMarkerWord, hasTopEndCut, isHeadlineOnly, isRealRaiseClass, rangeClassLabel, STAGE_ORDER, UNAVAILABLE, WHY_NOW_UNRESOLVED, fmtNumber, fmtRangeLine, showsDecision, stageIndex, stageNote } from '@/lib/guidance-upgrades-format';
 import { DECISION_COLOR, GAP_COLOR, RATING_COLOR, R, TONE_COLOR, tint } from './gu-tokens';
 import { INVARIANT_BANNER, HEADLINE_BASIS_WORD, aiCheckOf, basisText, displayStage, freshnessLines, lastVerifiedText, otherChangeLines, qualityStrip, recordBasis, validationLines, type BasisText, type FreshnessIn, type GuBadge } from './gu-ui';
 import { PRIMARY_SOURCE_STATE_LABEL } from '@/lib/guidance-upgrades-format';
@@ -16,9 +16,10 @@ export function DecisionChip({ e }: { e: GuidanceEvent }) {
 }
 
 export function GapBadge({ e }: { e: GuidanceEvent }) {
+  const formula = consensusFormulaText(e as any);
   return (
-    <Chip color={GAP_COLOR[e.expectationGap]} dashed={e.expectationGap === 'UNKNOWN'} title="Guidance compared with what the market expected. Missing consensus is never treated as negative.">
-      {guidanceMarkerWord(e)} · Expectation gap: {GAP_LABEL[e.expectationGap]}{e.gapPct != null && e.expectationGap !== 'UNKNOWN' ? ` (${e.gapPct >= 0 ? '+' : ''}${e.gapPct.toFixed(1)}%)` : ''}
+    <Chip color={GAP_COLOR[e.expectationGap]} dashed={e.expectationGap === 'UNKNOWN'} title={formula || 'Guidance compared with the consensus number. Missing consensus is never treated as negative.'}>
+      {guidanceMarkerWord(e)} · Guidance vs consensus: {consensusGapText(e.expectationGap, e.gapPct)}
     </Chip>
   );
 }

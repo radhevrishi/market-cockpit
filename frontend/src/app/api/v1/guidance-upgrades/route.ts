@@ -24,6 +24,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvMGet, kvSet } from '@/lib/kv';
+import { auditUpgrades } from '@/lib/guidance-upgrade-audit';
+import { lastGoodKey, slimForStore, isUsableLastGood, lastGoodAgeMs, LASTGOOD_TTL_S, LASTGOOD_SERVE_MS } from '@/lib/guidance-lastgood';
 import { docFromQueueRead, storeQueueDocs } from '@/lib/guidance-queue-bridge';
 import { readWatch, watchMatcher, promoteWatched } from '@/lib/guidance-watch';
 import { snapshotOf, readSnapshot, writeSnapshot } from '@/lib/guidance-pipeline-snapshot';
@@ -106,6 +108,14 @@ export async function GET(req: NextRequest) {
   const hit = mem.get(memKey);
   if (hit && Date.now() - hit.at < MEM_TTL_MS && sp.get('force') !== '1') {
     return NextResponse.json(hit.body, { headers: { 'Cache-Control': 'no-store' } });
+  }
+  // zzz865: a cold server (new deploy, new instance) has no memory copy. A young saved copy in KV is served at once; the page then asks again with force=1 for fresh data.
+  const lgKey = lastGoodKey(window, market);
+  if (sp.get('force') !== '1') {
+    const lg = await withTimeout(kvGet<unknown>(lgKey), 2_500, null);
+    if (isUsableLastGood(lg) && lastGoodAgeMs(lg) < LASTGOOD_SERVE_MS) {
+      return NextResponse.json({ ...(lg.body as object), servedFromSaved: true, savedAt: new Date(lg.savedAt).toISOString() }, { headers: { 'Cache-Control': 'no-store' } });
+    }
   }
 
   const wantIN = market !== 'US';
@@ -353,6 +363,9 @@ export async function GET(req: NextRequest) {
     all = rank([...inEvents, ...usEvents]).filter((e) => withinWindow(e.announcement_date, window, now));
   } catch (e: any) {
     console.error('[guidance-upgrades] engine error', e?.message || e);
+    // zzz865: if the engine fails, an older saved copy is still better than an empty page (it is labelled as saved)
+    const lg2 = await withTimeout(kvGet<unknown>(lgKey), 2_500, null);
+    if (isUsableLastGood(lg2)) return NextResponse.json({ ...(lg2.body as object), servedFromSaved: true, savedAt: new Date(lg2.savedAt).toISOString() }, { headers: { 'Cache-Control': 'no-store' } });
     return NextResponse.json({ ok: false, error: 'The guidance engine could not finish. Please try again.' }, { status: 500 });
   }
   const eventsBuilt = withProvenance(tagOrigin(filterByMarket(all, market), cands.filter((c) => !storedIds.has(c.id)), [...storedIN, ...storedUS]));
@@ -556,17 +569,20 @@ export async function GET(req: NextRequest) {
   if (reconcileNotFound) queueReport.note += ` ${reconcileNotFound} claim${reconcileNotFound === 1 ? '' : 's'} have no primary filing in the filings read so far.`;
   const verification: VerificationSummary = ov?.verification ?? { provider: 'unknown', model: null, available: false, unavailableReason: 'The AI verification state could not be read; unverified events stay in the review queue.', mode: 'enforce',
     primaryVerified: eventsAll.filter((e) => e.verification === 'VERIFIED').length, checked: 0, confirmed: 0, contradicted: 0, awaiting: 0, awaitingByReason: {}, lastRunAt: null };
-  const body: GuidanceUpgradesResponse & { verification: VerificationSummary; reviewQueue: typeof reviewQueue; reviewQueueCount: number; awaitingVerificationCount: number; extracted: typeof extractInfo } = {
+  const body: GuidanceUpgradesResponse & { verification: VerificationSummary; reviewQueue: typeof reviewQueue; reviewQueueCount: number; awaitingVerificationCount: number; extracted: typeof extractInfo; upgradeAudit: ReturnType<typeof auditUpgrades> } = {
     // zzz857: company documents read by the AI extractor: how many fed this run, how many events they built, how many text-derived events they replaced
     extracted: extractInfo,
     // zzz854: events = cards + audit (shown); reviewQueue = every other item with its status and reason (awaiting numbers / primary / AI verification ...)
     verification, reviewQueue: reviewQueue.slice(0, 600), reviewQueueCount: reviewQueue.length, awaitingVerificationCount: verification.awaiting,
     summary, events, scan,
+    // zzz865: every verified upgrade re-checked against 13 assertions; the bucket sum is re-derived from the events (the counts are never edited)
+    upgradeAudit: auditUpgrades(eventsAll, (summary as any)?.pipeline?.processed ?? null),
     coverage: buildCoverageBlock(cards, window, days, now), invariantViolations, queue: queueReport,
     unresolved: unresolvedList.slice(0, 50), unresolvedCount: unresolvedList.length,
     freshness: { newestAnnouncement: newest, feedCheckedAt: checkedAt, note, byMarket },
   };
   mem.set(memKey, { at: Date.now(), body });
+  { const slim = slimForStore(body as any); if (slim) await withTimeout(kvSet(lgKey, { savedAt: Date.now(), body: slim.body }, LASTGOOD_TTL_S).catch(() => 0), 2_500, 0); }
   if (mem.size > 20) mem.delete(mem.keys().next().value as string);
   return NextResponse.json(body, { headers: { 'Cache-Control': 'no-store' } });
 }

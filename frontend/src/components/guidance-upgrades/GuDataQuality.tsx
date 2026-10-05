@@ -21,7 +21,7 @@ function Row({ m }: { m: GuMarketQuality }) {
   return (
     <div data-gu-dq-line={m.market} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline', fontSize: 12.5 }}>
       <b style={{ minWidth: 44 }}>{NAME[m.market]}</b>
-      {m.sourceCoverage && m.verification ? (<><Chip label="Sources" text={SOURCE_COVERAGE_TEXT[m.sourceCoverage]} color={SC_COLOR[m.sourceCoverage]} /><Chip label="Verification" text={VERIFICATION_STAGE_TEXT[m.verification]} color={VS_COLOR[m.verification]} /></>) : <span style={{ fontWeight: 800, color: COLOR[m.status] }}>{CHIP[m.status] ?? m.status}</span>}
+      {m.sourceCoverage && m.verification ? (<><Chip label="Sources" text={m.sourceCoverage === 'NO_SOURCE_DATA' || m.sourceCoverage === 'SOURCE_FAILED' ? SOURCE_COVERAGE_TEXT[m.sourceCoverage] : 'CONFIGURED'} color={m.sourceCoverage === 'NO_SOURCE_DATA' || m.sourceCoverage === 'SOURCE_FAILED' ? R.red : R.green} /><Chip label="Scan coverage" text={`${SOURCE_COVERAGE_TEXT[m.sourceCoverage]}${m.scan ? ` · ${m.scan.read} of ${m.scan.total} days` : ''}`} color={SC_COLOR[m.sourceCoverage]} /><Chip label="Verification" text={VERIFICATION_STAGE_TEXT[m.verification]} color={VS_COLOR[m.verification]} /></>) : <span style={{ fontWeight: 800, color: COLOR[m.status] }}>{CHIP[m.status] ?? m.status}</span>}
       {stats && <span style={{ color: R.dim }}>{stats}</span>}
     </div>
   );

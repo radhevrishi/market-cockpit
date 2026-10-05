@@ -16,14 +16,14 @@ const pill = (on: boolean): React.CSSProperties => ({
   border: `1px solid ${on ? R.cyan : R.border}`, background: on ? tint(R.cyan, 14) : 'transparent', color: on ? R.cyan : R.dim,
 });
 
-export function GuTitle({ newest, checkedAt }: { newest: string | null; checkedAt: string | null }) {
+export function GuTitle({ newest, checkedAt, loading }: { newest: string | null; checkedAt: string | null; loading?: boolean }) {
   const d = ageDays(newest);
   const hhmm = checkedAt ? new Date(checkedAt).toTimeString().slice(0, 5) : null;
   return (
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
       <h1 style={{ fontSize: 20, fontWeight: 900, letterSpacing: 0.8, margin: 0 }}>GUIDANCE UPGRADES</h1>
       <span style={{ fontSize: 12, color: R.dim }}>
-        {newest ? `newest announcement ${d === 0 ? 'today' : `${d} days ago`}` : 'no announcement in this window'}{hhmm ? ` · checked ${hhmm}` : ''}
+        {loading ? 'loading the latest announcements…' : newest ? `newest announcement ${d === 0 ? 'today' : `${d} days ago`}` : 'no announcement in this window'}{hhmm ? ` · checked ${hhmm}` : ''}
       </span>
     </div>
   );

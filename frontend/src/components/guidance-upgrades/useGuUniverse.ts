@@ -19,6 +19,7 @@ export interface GuUniverseExt extends Omit<GuUniverseResponse, 'summary'> {
   }>;
   viewCounts?: GuViewCounts; marketViews?: Record<'IN' | 'US', { active: number; review: number; claims: number; history: number }>; invariantViolations?: Array<GuInvariantViolation | string>; servedFrom?: GuServedFrom; builtAt?: string; liveError?: string;
   inactive?: GuInactiveRecord[]; excluded?: GuExcluded[];
+  /** zzz865: every derived growth, recalculated */ derivedAudit?: import('@/lib/guidance-derived-audit').DerivedAudit;
   /** zzz861: claims table (actionable status) and the wanted-companies list */
   pipeline?: { claims: import('@/lib/guidance-claims').GuidanceClaim[]; claimCounts: Record<'IN' | 'US', Record<string, number>>; wanted: import('@/lib/guidance-claims').WantedCompany[]; queueStages: Record<'IN' | 'US', Record<string, number>> };
 }

@@ -24,6 +24,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUniverseBundle, buildUniverseResponse, parseView, clampThreshold } from '@/lib/guidance-universe-service';
 import type { GgMetric } from '@/lib/growth-guidance-types';
 import { verifyUniverseClaims } from '@/lib/ai-verify';
+import { auditDerived } from '@/lib/guidance-derived-audit';
 import { promoteConfirmed } from '@/lib/guidance-promote';
 import { loadPipelineEvidence, pipelineView } from '@/lib/guidance-pipeline-service';
 
@@ -50,6 +51,8 @@ export async function GET(req: NextRequest) {
     const pr = promoteConfirmed({ defaultRecords: gb0.build.defaultRecords ?? [], claimsAwaiting: gb0.build.claimsAwaiting ?? [] });
     const gb = pr.promoted.length ? { ...gb0, build: { ...gb0.build, defaultRecords: pr.defaultRecords, claimsAwaiting: pr.claimsAwaiting } } : gb0;
     const body: any = buildUniverseResponse(gb, { market, metric, threshold: clampThreshold(sp.get('threshold')), view: parseView(sp.get('view')) });
+    // zzz865: every DERIVED growth in the Active list, recalculated from its own stored numbers (target, base, base period, formula)
+    try { body.derivedAudit = auditDerived((gb.build.defaultRecords ?? []) as any); } catch { /* the audit is additive */ }
     const removed = vr?.removed ?? [];
     body.verification = vr?.verification ?? { provider: 'unknown', model: null, available: false, unavailableReason: 'The verification state could not be read; claims stay awaiting verification.', mode: 'enforce', primaryVerified: 0, checked: 0, confirmed: 0, contradicted: 0, awaiting: claimsBefore.length, awaitingByReason: {}, lastRunAt: null };
     body.verificationAudit = removed.slice(0, 200);
@@ -74,7 +77,7 @@ export async function GET(req: NextRequest) {
         // the collectors read this list (GET /api/v1/guidance-pipeline) so they go and fetch the company documents the claims are waiting on
         import('@/lib/kv').then((k) => k.kvSet('guidance-pipeline:wanted:v1', { at: new Date().toISOString(), wanted: pv.wanted }, 7 * 86_400)).catch(() => 0);
         // zzz862: every company that has a guidance record is on the watch set: its new filings are queued first and read first (see lib/guidance-watch.ts)
-        import('@/lib/guidance-watch').then((w) => w.writeWatch(w.watchOf([...(gb.build.defaultRecords ?? []), ...(gb.build.reviewQueue ?? []), ...claimsBefore].map((r: any) => ({ market: r.record.market, ticker: r.tickers?.[0] || r.record.ticker, company: r.record.company }))))).catch(() => 0);
+        import('@/lib/guidance-watch').then(async (w) => w.writeWatch(w.withRequested(w.watchOf([...(gb.build.defaultRecords ?? []), ...(gb.build.reviewQueue ?? []), ...claimsBefore].map((r: any) => ({ market: r.record.market, ticker: r.tickers?.[0] || r.record.ticker, company: r.record.company }))), await w.readRequested()))).catch(() => 0);
         body.pipeline = { claims: pv.claims.slice(0, 600), claimCounts: pv.claimCounts, wanted: pv.wanted, queueStages: pv.queueStages, evidenceErrors: ev.errors };
       }
     } catch { /* the pipeline view is additive */ }

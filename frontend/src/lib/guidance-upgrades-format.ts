@@ -99,9 +99,22 @@ export function agoText(iso: string | null | undefined, now: Date = new Date()):
   return d == null ? 'date unknown' : d === 0 ? 'today' : `${d}d ago`;
 }
 
-/** 'Guidance up · Expectation gap: Negative' style note. Never says a missing consensus is negative. */
-export function gapNote(gap: GuGap): string {
-  return `Guidance up · Expectation gap: ${GAP_LABEL[gap]}`;
+/** 'Guidance up · Guidance vs consensus: -4.2%' style note. Never says a missing consensus is negative. */
+/** zzz865: the plain wording for the consensus comparison: a signed percentage, or 'not available'. Never a vague word like "Positive". */
+export function consensusGapText(gap: GuGap, gapPct: number | null | undefined): string {
+  return gap === 'UNKNOWN' || gapPct == null || !isFinite(gapPct) ? 'not available (no consensus number found)' : `${gapPct >= 0 ? '+' : ''}${gapPct.toFixed(1)}%`;
+}
+/** zzz865: the working behind the percentage, one sentence: guidance midpoint, consensus, formula, result. Empty when either number is missing. */
+export function consensusFormulaText(e: { gapPct?: number | null; expectationGap?: GuGap; consensus?: { value: number; unit?: string; source: string; period?: string; metric?: string } | null; changes?: Array<{ metric?: string; after?: { midpoint?: number | null; unit?: string | null } | null }> }): string {
+  const c = e.consensus; if (!c || e.gapPct == null || !isFinite(e.gapPct) || e.expectationGap === 'UNKNOWN') return '';
+  const ch = (e.changes || []).find((x) => x.metric === c.metric && x.after?.midpoint != null) ?? null;
+  const guided = ch?.after?.midpoint ?? (c.value * (1 + e.gapPct * 0.01));
+  const u = c.unit || ch?.after?.unit || '';
+  const f = (n: number) => `${u === '%' ? '' : u ? `${u} ` : ''}${Math.abs(n) >= 100 ? n.toFixed(0) : n.toFixed(2)}${u === '%' ? '%' : ''}`;
+  return `Guided midpoint ${f(guided)} ÷ consensus ${f(c.value)} − 1 = ${e.gapPct >= 0 ? '+' : ''}${e.gapPct.toFixed(1)}%. Consensus source: ${c.source}${c.period ? `, ${c.period}` : ''}.`;
+}
+export function gapNote(gap: GuGap, gapPct?: number | null): string {
+  return `Guidance up · Guidance vs consensus: ${consensusGapText(gap, gapPct)}`;
 }
 
 export function secondUpgradeText(e: GuidanceEvent): string | null {

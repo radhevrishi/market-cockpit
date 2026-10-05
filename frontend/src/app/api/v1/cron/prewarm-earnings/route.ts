@@ -70,9 +70,12 @@ const STALE_SCAN_TTL_S = 6 * 3600;
 // the graded route (refetch=1) to fetch the flagged tickers with the
 // enrichment cache bypassed, so corrected figures actually come back.
 const RECHECK_BUDGET = 2;
-const RECHECK_MIN = 3;
+// zzz865: was 3, so one or two waiting companies (ANSALAPI, HAWAENG, HIIL on 3 Oct) were never retried by the schedule; now any one qualifies
+const RECHECK_MIN = 1;
 const RECHECK_MAX_AGE_DAYS = 60;
 const RECHECK_LOCK_S = 20 * 3600;
+// zzz865: results filed in the last 3 days are retried every ~5 hours (four schedule runs a day), older dates keep the 20 hour lock
+const RECHECK_LOCK_RECENT_S = 5 * 3600;
 
 /** EXISTS for many keys in one Upstash pipeline call (never reads payloads).
  *  Null when the REST backend is not configured. */
@@ -239,10 +242,10 @@ export async function GET(req: Request) {
     } catch (e: any) { staleRebuilt = { error: e?.message || String(e) }; }
   }
 
-  const recentlyRechecked = async (date: string): Promise<boolean> => {
+  const recentlyRechecked = async (date: string, recent = false): Promise<boolean> => {
     try {
       const t = await kvGet<number>(`graded:recheck-lock:${date}`);
-      return !!t && Date.now() - Number(t) < RECHECK_LOCK_S * 1000;
+      return !!t && Date.now() - Number(t) < (recent ? RECHECK_LOCK_RECENT_S : RECHECK_LOCK_S) * 1000;
     } catch { return false; }
   };
 
@@ -311,7 +314,7 @@ export async function GET(req: Request) {
         // zzz822 — cards with no share price are re-fetched by a rebuild (the
         // fill pass only targets cards missing financial numbers).
         } else if ((waiting >= RECHECK_MIN || unconfirmed > 0 || noPrice > 0 || cashStale > 0) && i <= RECHECK_MAX_AGE_DAYS && rechecksUsed < recheckBudgetMax
-                   && !(await recentlyRechecked(date))) {
+                   && !(await recentlyRechecked(date, i <= 3))) {
           // zzz820 — rebuild so dropped companies are graded once their data lands.
           // zzz826 — with the flagged tickers re-fetched, not re-read from cache.
           try { await kvSet(`graded:recheck-lock:${date}`, Date.now(), RECHECK_LOCK_S); } catch {}

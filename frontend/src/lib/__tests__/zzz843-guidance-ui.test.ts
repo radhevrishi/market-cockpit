@@ -89,7 +89,7 @@ describe('formatters', () => {
     assert.equal(b.before, UNAVAILABLE); assert.equal(b.delta, null);
   });
   test('gap note never calls a missing consensus negative', () => {
-    assert.equal(gapNote('NEGATIVE'), 'Guidance up · Expectation gap: Negative');
+    assert.equal(gapNote('NEGATIVE', -4.2), 'Guidance up · Guidance vs consensus: -4.2%');
     assert.ok(!/negative/i.test(gapNote('UNKNOWN')));
   });
   test('filters: scope and metric', () => {

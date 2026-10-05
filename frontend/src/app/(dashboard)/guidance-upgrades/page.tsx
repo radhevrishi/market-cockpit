@@ -23,7 +23,9 @@ import { btn } from '@/components/guidance-upgrades/GuBits';
 import { splitAudit } from '@/components/guidance-upgrades/gu-ui';
 import { CappedList } from '@/components/guidance-upgrades/GuMore';
 import { GuPanel } from '@/components/guidance-upgrades/GuPanel';
-import { readCache, writeCache, FRESH_MS } from '@/lib/gu-client-cache';
+import { GuUpgradeAudit } from '@/components/guidance-upgrades/GuIntegrityAudit';
+import { GuNameCheck } from '@/components/guidance-upgrades/GuNameCheck';
+import { readCache, writeCache, FRESH_MS, ageText } from '@/lib/gu-client-cache';
 
 export default function GuidanceUpgradesPage() {
   const [window_, setWindow] = useState<GuWindow>('7D');
@@ -31,6 +33,7 @@ export default function GuidanceUpgradesPage() {
   const [metric, setMetric] = useState<MetricFilter>('ALL');
   const [data, setData] = useState<GuidanceUpgradesResponse | null>(null);
   const [state, setState] = useState<'loading' | 'ok' | 'error'>('loading');
+  const [refreshing, setRefreshing] = useState(false);
   const [held, setHeld] = useState<string[]>([]);
   const [bookLoaded, setBookLoaded] = useState(false);
   const [todayFirst, setTodayFirst] = useState(true);
@@ -49,14 +52,27 @@ export default function GuidanceUpgradesPage() {
       setData(hit.data); setState('ok');
       if (hit.ageMs < FRESH_MS) return;
     } else setState('loading');
-    try {
-      const r = await fetch(key, { cache: 'no-store', signal: ac.signal });
+    const get = async (url: string) => {
+      const r = await fetch(url, { cache: 'no-store', signal: ac.signal });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = await r.json();
       if (!j || !Array.isArray(j.events)) throw new Error('bad answer');
+      return j as GuidanceUpgradesResponse & { servedFromSaved?: boolean; savedAt?: string };
+    };
+    try {
+      let j = await get(key);
       if (ac.signal.aborted) return;
       writeCache(key, j);
-      setData(j as GuidanceUpgradesResponse); setState('ok');
+      setData(j); setState('ok');
+      // zzz865: the server may answer from its saved copy (fast); ask once more for the fresh build in the background, keeping the saved data on screen meanwhile
+      if (j.servedFromSaved) {
+        setRefreshing(true);
+        try {
+          const j2 = await get(`${key}&force=1`);
+          if (!ac.signal.aborted) { writeCache(key, j2); setData(j2); }
+        } catch { /* the saved copy stays on screen */ }
+        if (!ac.signal.aborted) setRefreshing(false);
+      }
     } catch { if (!ac.signal.aborted && !hit) setState('error'); }
   }, []);
 
@@ -94,9 +110,11 @@ export default function GuidanceUpgradesPage() {
   return (
     <div className="gu-page" style={{ color: R.text, display: 'flex', flexDirection: 'column', gap: 14 }}>
       <style>{PRINT_CSS}</style>
-      <GuTitle newest={data?.freshness.newestAnnouncement || null} checkedAt={data?.freshness.feedCheckedAt || null} />
+      <GuTitle newest={data?.freshness.newestAnnouncement || null} checkedAt={data?.freshness.feedCheckedAt || null} loading={!data} />
+      {refreshing && data && <div className="gu-noprint" style={{ fontSize: 11.5, color: R.dim }}>Showing the saved copy from {ageText(Date.now() - new Date((data as any).savedAt || Date.now()).getTime())}. Fresh data is loading in the background.</div>}
       <GuUniverseSummary onFull={setGgOpen} />
       <GuUniverseBrowser held={held} onFull={setGgOpen} />
+      <GuNameCheck />
       <GuPanel id="gu-events" icon="📈" title="Guidance raises in this window" accent={R.violet} count={state === 'ok' || data ? shown.length : null}
         hint="New guidance raises announced in the chosen time window. Click a card for the full check.">
       <GuTopBar summary={data?.summary || null} window={window_} onWindow={setWindow} scope={scope} onScope={setScope} metric={metric} onMetric={setMetric}
@@ -145,6 +163,7 @@ export default function GuidanceUpgradesPage() {
       {/* zzz859: audit, review queue, AI verification and coverage together, collapsed until opened */}
       <GuPanel id="gu-checks" icon="🔎" title="Checks, review queue and coverage" accent={R.grey} count={auditList.length + (data?.reviewQueueCount ?? 0)} defaultOpen={false}
         hint="What was found but not shown as a raise, why, and how much of the market was read.">
+      <GuUpgradeAudit audit={(data as any)?.upgradeAudit} />
       <GuAuditArea events={auditList} onOpen={select} now={now} />
       {/* zzz854: items that are not event cards, each with its reason; then the AI verification state (never silent) */}
       <GuReviewQueue items={data?.reviewQueue} count={data?.reviewQueueCount} />

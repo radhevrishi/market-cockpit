@@ -46,7 +46,7 @@ export function pipelineView(ev: PipelineEvidence, claimRows: GuUniverseRecordX[
   const base = dataQualityOf(docs, ev.coverage, now, 120, { snapshot: ev.snapshot, claims: counts });
   const quality = dataQualityFrom(withClaimCounts(base.markets.IN, counts.IN), withClaimCounts(base.markets.US, counts.US));
   const byDoc = new Map(ev.extracted.map((r) => [r.docId, r] as const));
-  const cc = (m: 'IN' | 'US') => ({ ...counts[m], awaiting: claims.filter((c) => c.market === m && c.claim_status === 'AWAITING_PRIMARY').length, documentsPending: quality.markets[m].documentsPending });
+  const cc = (m: 'IN' | 'US') => ({ ...counts[m], claimRows: claims.filter((c) => c.market === m).length, distinctCompanies: new Set(claims.filter((c) => c.market === m).map((c) => c.ticker ?? c.company)).size, awaiting: claims.filter((c) => c.market === m && c.claim_status === 'AWAITING_PRIMARY').length, documentsPending: quality.markets[m].documentsPending });
   return { quality, claims, wanted: wantedFromClaims(claims), claimCounts: { IN: cc('IN'), US: cc('US') },
     queueStages: { IN: queueStageCounts(ev.queue as any, byDoc, 'IN'), US: queueStageCounts(ev.queue as any, byDoc, 'US') } };
 }
