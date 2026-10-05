@@ -426,24 +426,33 @@ async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
   return bySlug(symbol);
 }
 
-/** zzz876 — the Screener URL slug for a ticker whose own symbol page does not exist (BSE code for BSE-primary names). KV cached. */
+/** zzz876 — the Screener URL slug for a ticker whose own symbol page does not exist (BSE code for BSE-primary names). KV cached.
+ *  Direct request first (Screener's search answers this server — the company-name lookup uses it), then the relay. */
 async function resolveScreenerSlug(symbol: string): Promise<string | null> {
-  const key = `screener-slug:v1:${symbol.toUpperCase()}`;
+  const key = `screener-slug:v2:${symbol.toUpperCase()}`;
   if (isRedisAvailable()) {
     try { const c = await kvGet<string>(key); if (c === '-') return null; if (c && typeof c === 'string') return c; } catch {}
   }
-  let slug: string | null = null;
-  try {
-    const res = await proxiedFetch(`https://www.screener.in/api/company/search/?q=${encodeURIComponent(symbol)}&v=3&fts=1`, { headers: browserHeaders('https://www.screener.in/'), signal: AbortSignal.timeout(8000) });
-    if (res.ok) {
-      const arr: any[] = await res.json().catch(() => []);
-      const hits = (Array.isArray(arr) ? arr : []).map((c) => String(c?.url || '')).map((u) => /^\/company\/([^/]+)\//.exec(u)?.[1] || '').filter(Boolean);
-      // the first real company hit; "Search everywhere" rows have no /company/ url
-      slug = hits[0] || null;
-    }
-  } catch {}
-  if (isRedisAvailable()) {
-    try { await kvSet(key, slug || '-', slug ? 180 * 24 * 3600 : 24 * 3600); } catch {}
+  const url = `https://www.screener.in/api/company/search/?q=${encodeURIComponent(symbol)}&v=3&fts=1`;
+  const pick = (arr: any): string | null => {
+    const list = Array.isArray(arr) ? arr : Array.isArray(arr?.companies) ? arr.companies : [];
+    for (const c of list) { const m = /^\/company\/([^/]+)\//.exec(String(c?.url || '')); if (m) return m[1]; }
+    return null;
+  };
+  let slug: string | null = null; let answered = false;
+  for (const via of ['direct', 'relay'] as const) {
+    try {
+      const init = { headers: { ...browserHeaders('https://www.screener.in/'), Accept: 'application/json, text/plain, */*' }, signal: AbortSignal.timeout(6000) };
+      const res = via === 'direct' ? await fetch(url, init) : await proxiedFetch(url, init);
+      if (!res.ok) continue;
+      answered = true;
+      slug = pick(await res.json().catch(() => null));
+      if (slug) break;
+    } catch {}
+  }
+  // a miss is cached only when Screener really answered (a network failure is retried next time)
+  if (isRedisAvailable() && (slug || answered)) {
+    try { await kvSet(key, slug || '-', slug ? 180 * 24 * 3600 : 6 * 3600); } catch {}
   }
   return slug;
 }
@@ -1554,6 +1563,7 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   }
   // zzz876 — no quarterly numbers from any source under the NSE symbol: a BSE-primary company (HAWAENG → 539176, HIIL → 539984)
   // lives on Screener under its BSE code. Resolve the slug once (cached) and run EVERY source again with it; take only what it adds.
+  let slugUsed: string | null = null;
   const hasQuarter = (x: any) => !!(x && (x.latest_quarter_end_iso || x.sales_curr_cr != null || x.pat_curr_cr != null));
   if (![worker, nse, screener, ghFund].some(hasQuarter) && !(cfoOnly && cfoOnly._trends)) {
     const slug = await resolveScreenerSlug(symbol).catch(() => null);
@@ -1562,7 +1572,8 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
       worker = worker || r.worker; screener = screener || r.screener; ghFund = ghFund || r.ghFund;
       if (r.cfoOnly && (r.cfoOnly._trends || !cfoOnly || !cfoOnly._trends)) cfoOnly = r.cfoOnly;
       console.log(`[enrich] zzz876: ${symbol} → Screener slug ${slug} (worker ${!!r.worker}, screener ${!!r.screener}, trends ${!!r.cfoOnly?._trends})`);
-    }
+      slugUsed = `${slug} (worker ${r.worker ? 'yes' : 'no'}, page ${r.screener ? 'yes' : 'no'}, trends ${r.cfoOnly?._trends ? 'yes' : 'no'})`;
+    } else slugUsed = slug ? 'same as symbol' : 'not found';
   }
   // zzz820 — the Worker reads the CONSOLIDATED page only. For a company that
   // stopped consolidating, that page's newest quarter is years old while the
@@ -1857,6 +1868,7 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   if (out.gap_pct === undefined) out.gap_pct = null;
   if ((out as any).d2_pct === undefined) out.d2_pct = null;
   if ((out as any).move_pct === undefined) out.move_pct = null;
+  if (slugUsed) (out as any)._screener_slug = slugUsed;   // zzz876: visible in the response, so a miss can be explained
   const _needsPrice = filedHint && (
     out.d1_pct == null || out.gap_pct == null ||
     (out as any).d2_pct == null || (out as any).move_pct == null
