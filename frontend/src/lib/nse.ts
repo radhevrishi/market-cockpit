@@ -432,7 +432,20 @@ async function fetchFinancialResultsLive(fromDate: string, toDate: string) {
     return result3;
   }
   const result4 = await nseApiFetch(`/api/corporates-financial-results?index=equities&from_date=${fromDate}&to_date=${toDate}`, 600000);
-  return result4;
+  if (result4 && (Array.isArray(result4) ? result4.length > 0 : result4?.data?.length > 0)) return result4;
+  // zzz875: NSE refuses this server directly; the mc-proxy worker (Cloudflare egress) is tried last when PROXY_URL / PROXY_SECRET are set
+  return (await viaProxyResults(`${NSE_BASE}/api/corporates-financial-results?index=equities&from_date=${fromDate}&to_date=${toDate}&period=Quarterly`)) ?? result4;
+}
+async function viaProxyResults(url: string): Promise<any[] | null> {
+  try {
+    const { isProxyConfigured, proxiedFetch } = await import('./proxy-fetch');
+    if (!isProxyConfigured()) return null;
+    const res = await proxiedFetch(url, { signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) return null;
+    const j: any = await res.json().catch(() => null);
+    const rows = Array.isArray(j) ? j : Array.isArray(j?.data) ? j.data : null;
+    return rows && rows.length ? rows : null;
+  } catch { return null; }
 }
 
 // Fetch financial results for broader coverage - try different endpoints
