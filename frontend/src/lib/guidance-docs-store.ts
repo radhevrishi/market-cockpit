@@ -43,15 +43,15 @@ export const EXTRACT_INDEX_KEY = 'guidance-extract:v1:index';
 export const docKey = (docId: string) => `guidance-docs:v1:doc:${docId}`;
 export const statusKey = (collector: string) => `guidance-docs:v1:status:${collector.replace(/[^a-z0-9_-]/gi, '').slice(0, 40) || 'unknown'}`;
 
-export const INDEX_CAP = 5000;   // ~1.4 MB of JSON; a 130-day India backfill alone can exceed 3000 (see report)
+export const INDEX_CAP = 9000;   // zzz874: ~2.6 MB of JSON; a 210-day India backfill holds ~7,000 documents (two earnings seasons)
 export const TEXT_CAP = 120_000;          // collector-side cap on raw text (contract)
 export const PASSAGE_CAP = 30_000;         // what is actually stored per doc
 export const HEAD_CHARS = 2_000;
-export const COVERAGE_KEEP_DAYS = 140;
-export const COVERAGE_TTL_S = 150 * 86_400;
+export const COVERAGE_KEEP_DAYS = 220;   // zzz874: keep the 210-day collector record
+export const COVERAGE_TTL_S = 230 * 86_400;
 export const coverageKey = (market: 'IN' | 'US') => `guidance-docs:v1:coverage:${market}`;
 const EXTRACT_RESULT_KEY = (docId: string) => `guidance-extract:v1:${docId}`;
-export const DOC_TTL_S = 120 * 86_400;
+export const DOC_TTL_S = 210 * 86_400;   // zzz874: a document stays as long as the collector window reaches
 export const SEEN_CAP = 20_000;
 export const MAX_DOCS_PER_REQUEST = 25;
 export const MAX_SEEN_PER_REQUEST = 2_000;
@@ -330,10 +330,10 @@ export function mergeIndex(prev: GuidanceDocIndex | null, docs: GuidanceDoc[], n
 }
 
 type SeenMap = { updatedAt: string; ids: Record<string, string> };
-/** Seen map: docId → "<outcome>:<YYYY-MM-DD>"; entries older than 130 days pruned, capped. */
+/** Seen map: docId → "<outcome>:<YYYY-MM-DD>"; entries older than 210 days pruned (zzz874), capped. */
 export function mergeSeen(prev: SeenMap | null, seen: SeenEntry[], now: Date, cap = SEEN_CAP): SeenMap {
   const day = now.toISOString().slice(0, 10);
-  const cutoff = new Date(now.getTime() - 130 * 86_400_000).toISOString().slice(0, 10);
+  const cutoff = new Date(now.getTime() - 210 * 86_400_000).toISOString().slice(0, 10);
   const entries = Object.entries(prev?.ids || {}).filter(([, v]) => typeof v === 'string' && (v.split(':')[1] || '') >= cutoff);
   const ids: Record<string, string> = Object.fromEntries(entries);
   for (const s of seen) ids[s.docId] = `${s.outcome}:${day}`;

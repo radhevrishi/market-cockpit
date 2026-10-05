@@ -48,7 +48,7 @@ export const failKey = (docId: string) => `guidance-extract:${EXTRACT_VERSION}:f
 export const FEATURE = 'guidance-extract';
 
 const DAY_S = 86_400;
-export const TTL_RESULT_S = 180 * DAY_S;        // the document does not change; outlives the document (120 d)
+export const TTL_RESULT_S = 270 * DAY_S;        // the document does not change; outlives the document (210 d)
 export const INDEX_MAX = 5_000;
 export const QUOTE_MAX = 300;
 export const MAX_ROWS = 40;
@@ -63,7 +63,7 @@ export const runMaxDocs = () => Math.min(100, Math.round(envNum('GUIDANCE_EXTRAC
 export const runMaxUsd = () => envNum('GUIDANCE_EXTRACT_RUN_MAX_USD', 0.6);
 export const runBudgetMs = () => Math.max(10_000, Math.min(55_000, Math.round(envNum('GUIDANCE_EXTRACT_RUN_BUDGET_MS', 50_000))));
 export const runConcurrency = () => Math.max(1, Math.min(6, Math.round(envNum('GUIDANCE_EXTRACT_CONCURRENCY', 3))));
-export const runSinceDays = () => Math.max(1, Math.min(400, Math.round(envNum('GUIDANCE_EXTRACT_SINCE_DAYS', 120))));
+export const runSinceDays = () => Math.max(1, Math.min(400, Math.round(envNum('GUIDANCE_EXTRACT_SINCE_DAYS', 210))));   // zzz874: two quarters
 export const maxExcerptChars = () => Math.max(4_000, Math.min(80_000, Math.round(envNum('GUIDANCE_EXTRACT_MAX_CHARS', 30_000))));
 
 /** Kinds read first (where companies state guidance). */

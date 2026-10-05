@@ -390,7 +390,7 @@ describe('runExtraction', () => {
     assert.equal((kv.store.get(INDEX_KEY)!.v as string[]).length, 3);
     assert.equal((kv.store.get(STATUS_KEY)!.v as any).lastRun.ok, 3);
     assert.ok(!kv.store.has(LOCK_KEY), 'lock released');
-    assert.ok(store.listed.every((o) => o.unextractedOnly === true && o.sinceDays === 120));
+    assert.ok(store.listed.every((o) => o.unextractedOnly === true && o.sinceDays === 210));   // zzz874: two quarters
     // second run: nothing left
     const s2 = await runExtraction(deps({ kv, store }), {});
     assert.equal(s2.attempted, 0);

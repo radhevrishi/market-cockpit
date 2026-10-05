@@ -21,8 +21,8 @@ export function parseMarket(v: string | null | undefined): MarketFilter {
 export function lookbackDays(w: GuWindow): number {
   return w === '24H' ? 1 : w === '3D' ? 3 : w === '7D' ? 7 : w === '14D' ? 14 : w === '120D' ? 120 : 30;
 }
-/** Longest window a date list may cover (120D + the 1-day edge). Lists for windows up to 30D are exactly as before. */
-export const MAX_LIST_DAYS = 130;
+/** Longest window a date list may cover (zzz874: 210 days — the collector reaches the previous quarter's calls; the page windows stay ≤ 120D). */
+export const MAX_LIST_DAYS = 210;
 /** Live source scans stay bounded: a window longer than this is served from the persisted event store plus a bounded live scan. */
 export const LIVE_SCAN_MAX_DAYS = 30;
 

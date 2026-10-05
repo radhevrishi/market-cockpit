@@ -296,7 +296,7 @@ describe('guidance-docs-store', () => {
     assert.equal(v.body.status!.days[0].filings, null, 'a failed day never reports 0 filings');
   });
 
-  test('ingest → listDocs / getDoc / markExtracted; dedupe by docId keeps extracted flag; TTL 120d', async () => {
+  test('ingest → listDocs / getDoc / markExtracted; dedupe by docId keeps extracted flag; TTL 210d (zzz874)', async () => {
     const kv = fakeKv();
     const now = new Date('2026-10-02T10:00:00Z');
     const a = doc();
@@ -308,7 +308,7 @@ describe('guidance-docs-store', () => {
     const r = await ingestDocs(v.body, kv, now);
     assert.equal(r.stored, 3);
     assert.equal(kv.store.get(docKey(a.docId))!.ttl, DOC_TTL_S);
-    assert.equal(DOC_TTL_S, 120 * 86_400);
+    assert.equal(DOC_TTL_S, 210 * 86_400);   // zzz874: as long as the collector reaches
     const all = await listDocs({}, kv, now);
     assert.deepEqual(all.map((x) => x.docId), [us.docId, b.docId, a.docId]);
     assert.equal((all[0] as any).text, undefined, 'index rows never carry text');
@@ -432,7 +432,7 @@ describe('wave 2: passages, compression, text drop, coverage', () => {
     assert.equal((await listDocs({}, kv, now))[0].extracted, true);
   });
 
-  test('coverage: US payload stored, failed never overwrites ok, >140 days older than newest dropped; IN from the collector', async () => {
+  test('coverage: US payload stored, failed never overwrites ok, >220 days older than newest dropped (zzz874); IN from the collector', async () => {
     const kv = fakeKv();
     const now = new Date('2026-10-02T10:00:00Z');
     const v = validateIngestBody({ market: 'US', collector: 'gh:edgar-guidance-backfill', docs: [], coverage: { market: 'US', days: { '2026-10-01': { status: 'ok', filings: 300, docs: 12, at: '2026-10-02T01:00:00Z' }, '2026-06-01': { status: 'partial', filings: 1, docs: 0 }, bad: { status: 'ok' } } } });
@@ -440,7 +440,7 @@ describe('wave 2: passages, compression, text drop, coverage', () => {
     if (!v.ok) return;
     const r = await ingestDocs(v.body, kv, now);
     assert.equal(r.coverageDays, 2);
-    assert.equal(kv.store.get(coverageKey('US'))!.ttl, 150 * 86_400);
+    assert.equal(kv.store.get(coverageKey('US'))!.ttl, 230 * 86_400);
     const v2 = validateIngestBody({ market: 'US', collector: 'gh:edgar-guidance-backfill', docs: [], coverage: { market: 'US', days: { '2026-10-01': { status: 'failed' }, '2026-09-30': { status: 'failed' } } } });
     assert.ok(v2.ok);
     if (!v2.ok) return;
@@ -450,7 +450,7 @@ describe('wave 2: passages, compression, text drop, coverage', () => {
     assert.equal(cov!.market, 'US');
     assert.equal(cov!.days['2026-10-01'].status, 'ok');
     assert.equal(cov!.days['2026-09-30'].status, 'failed');
-    const pruned = mergeCoverage(cov, 'US', { '2026-12-01': { status: 'ok' } }, now);
+    const pruned = mergeCoverage(cov, 'US', { '2027-02-01': { status: 'ok' } }, now);   // zzz874: 245 days after 2026-06-01 > 220 keep-days
     assert.equal(pruned.days['2026-06-01'], undefined);
     assert.equal(cov!.days['2026-06-01'].status, 'partial');
     // a US doc posted under market IN is rejected

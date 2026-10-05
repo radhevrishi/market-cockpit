@@ -19,7 +19,7 @@
 //
 // Env:
 //   CRON_SECRET (required to POST)   CRON_BASE_URL (default production URL)
-//   DAYS (default 7, max 130)        BSE_MODE auto|sub|all (default auto)
+//   DAYS (default 7, max 210 — zzz874: reaches the previous quarter's calls so a raise can be compared)        BSE_MODE auto|sub|all (default auto)
 //   MAX_DOWNLOADS (default 600)      RUN_BUDGET_MIN (default 50)
 //   PROXY_URL / PROXY_SECRET (optional mc-proxy worker)
 //   INCLUDE_PLAIN_RESULTS=1 (also read plain "Financial Results" PDFs; large)
@@ -317,7 +317,7 @@ export async function run(d) {
   };
   const http = makeHttp(deps);
   const now = d.now || new Date();
-  const days = Math.max(1, Math.min(130, Number(env.DAYS) || 7));
+  const days = Math.max(1, Math.min(210, Number(env.DAYS) || 7));
   const mode = ['sub', 'all', 'auto'].includes(env.BSE_MODE) ? env.BSE_MODE : 'auto';
   const maxDownloads = Math.max(1, Number(env.MAX_DOWNLOADS) || 600);
   const deadline = Date.now() + Math.max(1, Number(env.RUN_BUDGET_MIN) || 50) * 60_000;

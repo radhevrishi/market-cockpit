@@ -105,7 +105,7 @@ describe('2. window membership is by EVENT date, and 120D is a real window', () 
   test('date lists reach 120 days for a long window and keep their old length for 30 days', () => {
     assert.equal(istDateList(NOW, 120).length, 120); assert.equal(dateList(NOW, 120).length, 120); assert.equal(istDateList(NOW, 121).length, 121);
     assert.ok(usSessionDates(NOW, 120).length >= 84 && usSessionDates(NOW, 120).length <= 90);
-    assert.equal(istDateList(NOW, 500).length, 130);                    // hard bound
+    assert.equal(istDateList(NOW, 500).length, 210);                    // hard bound (zzz874: MAX_LIST_DAYS 210)
   });
 });
 

@@ -9,7 +9,7 @@ name: Scrape Guidance Docs (India, every 2h evening IST)
 #
 # Scheduled runs read the last 7 days (documents already stored or skipped are
 # not downloaded again). For the one-off 120-day backfill: Actions → this
-# workflow → "Run workflow" → days = 130.
+# workflow → "Run workflow" → days = 210 (zzz874: two quarters, so a raise has an earlier guidance to compare with).
 #
 # Secrets (repository → Settings → Secrets and variables → Actions):
 #   CRON_SECRET    — same value as CRON_SECRET on the server (service key)
@@ -25,7 +25,7 @@ on:
   workflow_dispatch:
     inputs:
       days:
-        description: 'Days to read back from today (1-130; 130 = the one-off 120-day backfill)'
+        description: 'Days to read back from today (1-210; 210 = the one-off backfill that reaches the previous quarter''s calls, zzz874)'
         required: false
         default: '7'
       bse_mode:
@@ -81,7 +81,7 @@ jobs:
           if [ -z "${CRON_SECRET}" ]; then echo "CRON_SECRET is not set in repository secrets"; exit 1; fi
           export CRON_BASE_URL="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
           case "$IN_DAYS" in ''|*[!0-9]*) IN_DAYS=7 ;; esac
-          if [ "$IN_DAYS" -gt 130 ]; then IN_DAYS=130; fi
+          if [ "$IN_DAYS" -gt 210 ]; then IN_DAYS=210; fi
           case "$IN_MODE" in auto|sub|all) ;; *) IN_MODE=auto ;; esac
           case "$IN_MAX" in ''|*[!0-9]*) IN_MAX=600 ;; esac
           export DAYS="$IN_DAYS" BSE_MODE="$IN_MODE" MAX_DOWNLOADS="$IN_MAX"
