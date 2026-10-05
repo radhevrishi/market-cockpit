@@ -70,3 +70,13 @@ describe('zzz880 — only like-for-like figures are compared across documents', 
     assert.equal(buildExtractedEvents([pr, ppt], () => ({}), OCT2, '120D').length, 1);
   });
 });
+
+import { mergeIndiaBench } from '../fundamentals/universe';
+describe('zzz880 — a removal hides that result, a newer filing comes back', () => {
+  test('dated removals', () => {
+    const server = [{ ticker: 'AAA', company: 'A', tier: 'STRONG', filing_date: '2026-10-03' }, { ticker: 'BBB', company: 'B', tier: 'STRONG', filing_date: '2026-08-10' }, { ticker: 'CCC', company: 'C', tier: 'STRONG', filing_date: '2026-09-01' }];
+    const mg = mergeIndiaBench(server, [], [{ ticker: 'AAA', filing_date: '2026-08-12' }, { ticker: 'BBB', filing_date: '2026-08-10' }, 'CCC']);
+    assert.deepEqual(mg.names.map((n) => n.symbol), ['AAA'], 'AAA filed again after its removal; BBB same filing; CCC removed without a date');
+    assert.equal(mg.removed, 2);
+  });
+});

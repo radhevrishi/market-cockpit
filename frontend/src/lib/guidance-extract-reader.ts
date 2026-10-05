@@ -172,7 +172,34 @@ export async function loadPriorActuals(results: GuidanceExtractResult[], io?: Ex
 }
 
 /** Everything the universe and the events need, in one bounded read. */
-export async function loadExtractedForUniverse(io?: ExtractIo): Promise<{ results: GuidanceExtractResult[]; actuals: Map<string, PriorActual>; coverage: ExtractCoverage }> {
+// ── zzz880 — THE UNIVERSE NEVER LOSES ITS COMPANY DOCUMENTS TO A SLOW READ ──────────────────────
+// ~2,500 extract results now take longer than the universe's old 5 s limit; a missed read built the list without them and India
+// (all of it from company documents) vanished. The last complete read is kept in memory: served at once while it is fresh, and while a
+// refresh runs in the background once it is older; a read that fails falls back to it.
+type XLoad = { results: GuidanceExtractResult[]; actuals: Map<string, PriorActual>; coverage: ExtractCoverage };
+let _xMemo: { at: number; v: XLoad } | null = null;
+let _xInflight: Promise<XLoad> | null = null;
+export const X_MEMO_FRESH_MS = 10 * 60_000;
+export const X_MEMO_MAX_MS = 12 * 3_600_000;
+function refreshExtracted(): Promise<XLoad> {
+  if (_xInflight) return _xInflight;
+  _xInflight = loadExtractedForUniverseRaw()
+    .then((v) => { if (!v.coverage.error && v.results.length) _xMemo = { at: Date.now(), v }; return v; })
+    .finally(() => { _xInflight = null; });
+  return _xInflight;
+}
+/** Cached + stale-while-revalidate wrapper (default store only; an injected io always reads directly). */
+export async function loadExtractedForUniverse(io?: ExtractIo): Promise<XLoad> {
+  if (io) return loadExtractedForUniverseRaw(io);
+  const age = _xMemo ? Date.now() - _xMemo.at : Infinity;
+  if (_xMemo && age < X_MEMO_FRESH_MS) return _xMemo.v;
+  if (_xMemo && age < X_MEMO_MAX_MS) { void refreshExtracted().catch(() => null); return _xMemo.v; }
+  const v = await refreshExtracted().catch((e: any) => ({ results: [], actuals: new Map(), coverage: { docs: 0, extracted: 0, rows: 0, lastExtractAt: null, error: String(e?.message || e).slice(0, 160) } } as XLoad));
+  return v.coverage.error && _xMemo ? _xMemo.v : v;
+}
+/** Test helper. */
+export function _resetExtractMemo(): void { _xMemo = null; _xInflight = null; }
+async function loadExtractedForUniverseRaw(io?: ExtractIo): Promise<XLoad> {
   const x = io ?? await defaultIo().catch(() => null as unknown as ExtractIo);
   if (!x) return { results: [], actuals: new Map(), coverage: { docs: 0, extracted: 0, rows: 0, lastExtractAt: null, error: 'KV unavailable' } };
   const [list, docsIdx] = await Promise.all([listExtractResults({ io: x }), x.get(DOCS_INDEX_KEY).catch(() => null)]);

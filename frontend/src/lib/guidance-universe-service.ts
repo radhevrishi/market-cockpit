@@ -63,7 +63,7 @@ export async function getUniverseBundle(t0: number, force = false, deps: GuServi
   // zzz857: company documents read by the AI extractor. A failed read never empties the universe; it is reported in `sources`.
   const EMPTY_X: GuExtractedIn = { results: [], actuals: new Map(), coverage: { docs: 0, extracted: 0, rows: 0, lastExtractAt: null } };
   const getX = deps.getExtracted ?? (deps.getLive ? (async () => EMPTY_X) : (async () => (await import('./guidance-extract-reader')).loadExtractedForUniverse()));
-  const xP = withT(getX(now).catch((e: any) => ({ ...EMPTY_X, coverage: { ...EMPTY_X.coverage, error: String(e?.message || e).slice(0, 160) } })), 5_000, { ...EMPTY_X, coverage: { ...EMPTY_X.coverage, error: 'timed out' } });
+  const xP = withT(getX(now).catch((e: any) => ({ ...EMPTY_X, coverage: { ...EMPTY_X.coverage, error: String(e?.message || e).slice(0, 160) } })), 20_000, { ...EMPTY_X, coverage: { ...EMPTY_X.coverage, error: 'timed out' } });   // zzz880: was 5 s (the cached read answers at once)
   const evP = withT(getEvents(now).then((x) => ({ ...x, error: undefined as string | undefined }), (e: any) => ({ statuses: [] as GuEventStatus[], source: 'unavailable', error: String(e?.message || e).slice(0, 160) })), 6_000, { statuses: [] as GuEventStatus[], source: 'unavailable', error: 'timed out' });
 
   let build: GuUniverseBuild | null = null; let scan = EMPTY_SCAN; let liveError: string | undefined;
@@ -81,6 +81,16 @@ export async function getUniverseBundle(t0: number, force = false, deps: GuServi
     srcInfo = sourcesInfo(live.all || [], live.ledger, stored, seed.rows.length, xIn, build);
   } catch (e: any) { liveError = String(e?.message || e).slice(0, 200); build = null; }
 
+  // zzz880: a build made WITHOUT the company documents (their read failed) is not a universe — it dropped every India row. The last
+  // complete build is served instead (said so in liveError), and the degraded build is never saved over it.
+  if (build && nonEmpty(build) && xIn.coverage.error && !deps.getLive) {
+    try {
+      const lg = await withT(kg(UNIVERSE_LASTGOOD_KEY) as Promise<LastGood | null>, 4_000, null);
+      if (lg && lg.build && nonEmpty(lg.build)) {
+        return { at: Date.now(), now, build: lg.build, seed: lg.seed || seed, scan: lg.scan || scan, persisted, servedFrom: 'last_good', builtAt: lg.builtAt || now.toISOString(), liveError: `company documents could not be read this time (${xIn.coverage.error}); showing the last complete build`, events: evMeta, sources: srcInfo, extractCoverage: xIn.coverage };
+      }
+    } catch { /* fall through to the live build */ }
+  }
   if (build && nonEmpty(build)) {
     try {
       const [pIN, pUS] = await Promise.all([withT(writeStored('IN', build.stored, now, sIN), 3_000, false), withT(writeStored('US', build.stored, now, sUS), 3_000, false)]);

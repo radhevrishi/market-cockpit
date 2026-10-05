@@ -20,7 +20,7 @@ import MarketHours from '@/components/MarketHours';
 import RegimeBanner from '@/components/RegimeBanner'; // zzz524 — portal-wide market regime
 import StockPassport from '@/components/StockPassport'; // zzz524 — global one-symbol overlay
 // PATCH 0283 — Surface Conviction Beats count in the global header.
-import { getConvictionTickers, getConvictionList, readConvictionBin } from '@/lib/conviction-beats';
+import { getConvictionTickers, getConvictionList, readConvictionBin, getBenchSince } from '@/lib/conviction-beats';
 import { mergeIndiaBench } from '@/lib/fundamentals/universe';
 import { scheduleBookSync } from '@/lib/book-sync-client';
 // zzz796 — installable app: phone tab bar, favourites sheet, menu drawer, install help.
@@ -375,10 +375,13 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
     let server: Array<{ ticker: string; company: string | null; tier: string | null; filing_date: string | null }> | null = null;
     const recount = () => {
       try {
-        const local = (getConvictionList() as any[]).map((e) => ({ ticker: String(e?.ticker || ''), company: e?.company || null }));
-        const removed = (readConvictionBin() as any[]).map((e) => String(e?.ticker || '')).filter(Boolean);
+        // zzz880: same scope as the Conviction Beats tab — its "bench starts on" date, and a removal hides only the filing it removed
+        const since = getBenchSince();
+        const okSince = (d: unknown) => !since || String(d || '').slice(0, 10) >= since;
+        const local = (getConvictionList() as any[]).filter((e) => okSince(e?.filing_date)).map((e) => ({ ticker: String(e?.ticker || ''), company: e?.company || null }));
+        const removed = (readConvictionBin() as any[]).map((e) => ({ ticker: String(e?.ticker || ''), filing_date: e?.filing_date || null })).filter((e) => !!e.ticker);
         if (!server) { setConvictionCount(getConvictionTickers().size); setConvictionTitle(`${getConvictionTickers().size} in this browser (server list not read yet)`); return; }
-        const mg = mergeIndiaBench(server, local, removed);
+        const mg = mergeIndiaBench(server.filter((x) => okSince(x.filing_date)), local, removed);
         setConvictionCount(mg.names.length);
         setConvictionTitle(`${mg.names.length} names: ${mg.server} on the server list${mg.localOnly ? ` + ${mg.localOnly} only in this browser` : ''}${mg.removed ? ` − ${mg.removed} removed here` : ''}`);
       } catch { try { setConvictionCount(getConvictionTickers().size); } catch { setConvictionCount(0); } }

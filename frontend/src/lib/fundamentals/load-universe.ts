@@ -64,11 +64,11 @@ async function loadIndia(): Promise<FundUniverse> {
     updatedAt = j?.updatedAt || null;
   } catch (e) { errors.push(`India Conviction Beats could not be read from the server (${humanError(e)})`); }
   let localCb: Array<{ ticker: string; company?: string | null }> = [];
-  let removed: string[] = [];
+  let removed: Array<{ ticker: string; filing_date: string | null }> = [];
   try {
     const m = await import('@/lib/conviction-beats');
     localCb = m.getConvictionList().map((e: any) => ({ ticker: String(e?.ticker || ''), company: e?.company || null }));
-    removed = m.readConvictionBin().map((e: any) => String(e?.ticker || '')).filter(Boolean);
+    removed = m.readConvictionBin().map((e: any) => ({ ticker: String(e?.ticker || ''), filing_date: e?.filing_date || null })).filter((e: { ticker: string }) => !!e.ticker);   // zzz880: the filing it removed
   } catch { /* no browser list (an installed app starts empty) */ }
   const cb = mergeIndiaBench(server, localCb, removed);
   sources.push(`India Conviction Beats: ${cb.server} from the server${when(updatedAt)}${cb.localOnly ? ` + ${cb.localOnly} only in this browser` : ''}${cb.removed ? ` − ${cb.removed} you removed` : ''}`);

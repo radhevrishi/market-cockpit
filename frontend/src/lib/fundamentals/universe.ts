@@ -193,12 +193,24 @@ export function compactIndiaBench(entries: unknown): IndiaBenchName[] {
 }
 
 /** Server list + this browser's list − the owner's removals. Pure. */
-export function mergeIndiaBench(server: IndiaBenchName[], local: Array<{ ticker: string; company?: string | null }>, removed: Iterable<string> = []): { names: Array<{ symbol: string; company: string | null }>; server: number; localOnly: number; removed: number } {
-  const off = new Set(Array.from(removed, (t) => normSymbol(t)).filter(Boolean));
+export function mergeIndiaBench(server: IndiaBenchName[], local: Array<{ ticker: string; company?: string | null }>, removed: Iterable<string | { ticker?: string | null; filing_date?: string | null }> = []): { names: Array<{ symbol: string; company: string | null }>; server: number; localOnly: number; removed: number } {
+  // zzz880: a removal carries the filing it removed. It hides THAT result (or an older one); a NEWER filing of the same company comes back
+  // (the header had shown "India 5" for good after a Clear All, while new results kept arriving). A bare ticker still hides the name.
+  const off = new Map<string, string | null>();
+  for (const r of Array.from(removed)) {
+    const t = normSymbol(typeof r === 'string' ? r : r?.ticker); if (!t) continue;
+    const d = typeof r === 'string' ? null : (String(r?.filing_date || '').slice(0, 10) || null);
+    const cur = off.has(t) ? off.get(t)! : undefined;
+    off.set(t, cur === undefined ? d : cur === null || d === null ? null : (d > cur ? d : cur));
+  }
   const out = new Map<string, { symbol: string; company: string | null }>();
   let removedN = 0;
   for (const s of server) {
-    if (off.has(s.ticker)) { removedN++; continue; }
+    if (off.has(s.ticker)) {
+      const upTo = off.get(s.ticker);
+      const sd = String(s.filing_date || '').slice(0, 10);
+      if (upTo === null || !sd || sd <= upTo!) { removedN++; continue; }
+    }
     out.set(s.ticker, { symbol: s.ticker, company: s.company });
   }
   let localOnly = 0;
