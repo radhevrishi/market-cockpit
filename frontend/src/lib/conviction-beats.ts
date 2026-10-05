@@ -146,6 +146,18 @@ const LS_KEY = 'mc:conviction-beats:v1';
 // silently draining the bench. Capped to the most recent 300 removals.
 const BIN_KEY = 'mc:conviction-beats:bin:v1';
 const BIN_CAP = 300;
+// zzz867 — "bench starts on" date. Clear All used to be undone within seconds: the 45-day self-scan and the 60-day server bench
+// put every name straight back. Now Clear All / Rebuild set a start date; nothing filed before it is added or shown.
+const SINCE_KEY = 'mc:conviction-beats:since:v1';
+export function getBenchSince(): string | null {
+  if (typeof window === 'undefined') return null;
+  try { const v = localStorage.getItem(SINCE_KEY); return v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null; } catch { return null; }
+}
+export function setBenchSince(day: string | null) {
+  if (typeof window === 'undefined') return;
+  try { if (day) localStorage.setItem(SINCE_KEY, day); else localStorage.removeItem(SINCE_KEY); } catch {}
+  try { window.dispatchEvent(new CustomEvent('conviction-beats:updated')); } catch {}
+}
 
 export function readConvictionBin(): ConvictionEntry[] {
   if (typeof window === 'undefined') return [];
@@ -318,9 +330,11 @@ type SyncEntry = Omit<ConvictionEntry, 'added_at' | 'tier'> & {
 export function syncFromEarningsOps(entries: Array<SyncEntry>): number {
   let count = 0;
   const map = readConvictionBeats();
+  const since = getBenchSince();
   for (const e of entries) {
     const ticker = e.ticker.toUpperCase();
     const bareKey = ticker;
+    if (since && e.tier !== 'MIXED' && e.tier !== 'AVOID' && String(e.filing_date || '') < since) continue;   // zzz867: before the bench start date
     const existing = map[bareKey];
     // PATCH 0997 — demotion path: incoming MIXED/AVOID with newer filing date
     // means the stock dropped out of BB/ST. Remove the bare-ticker entry.

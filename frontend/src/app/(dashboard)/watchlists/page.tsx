@@ -10,7 +10,7 @@ import { canonicalTicker } from '@/lib/ticker-normalize'; // PATCH 0721
 import { isPriceSuspect } from '@/lib/nse';
 import { CHAT_ID, BOT_SECRET } from '@/lib/config';
 import {
-  getConvictionList, removeConviction, syncFromEarningsOps,
+  getConvictionList, removeConviction, syncFromEarningsOps, getBenchSince, setBenchSince, clearConvictionBeats,
   patchConvictionEntries,  // zzz372
   replaceConvictionFields, readConvictionBeats, // zzz827
   readConvictionBin, restoreConvictionBin,
@@ -608,6 +608,15 @@ export default function WatchlistsPage() {
   // regardless of local scan history, prune bin, or sync quirks. The cron-
   // maintained 60-day server bench is authoritative for membership.
   const [serverBench, setServerBench] = useState<ConvictionEntry[]>([]);
+  const [benchSince, setBenchSinceState] = useState<string | null>(null);   // zzz867
+  const [rebuilding, setRebuilding] = useState(false);
+  useEffect(() => {
+    const r = () => setBenchSinceState(getBenchSince());
+    r(); window.addEventListener('conviction-beats:updated', r); window.addEventListener('storage', r);
+    return () => { window.removeEventListener('conviction-beats:updated', r); window.removeEventListener('storage', r); };
+  }, []);
+  const sinceOk = useCallback((e: any) => !benchSince || String(e?.filing_date || '') >= benchSince, [benchSince]);
+  const isoDaysAgo = (n: number) => new Date(Date.now() - n * 86400_000).toISOString().slice(0, 10);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -643,12 +652,15 @@ export default function WatchlistsPage() {
   // never visited never landed. Fix: on /watchlists mount + every 10min,
   // pull last 14 days of graded data and sync any BB/ST. Dedupe logic in
   // syncFromEarningsOps handles same-filing upserts safely.
+  const scanRef = useRef<null | (() => Promise<void>)>(null);
   useEffect(() => {
     let cancelled = false;
     const scan = async () => {
       const today = new Date();
       const dates: string[] = [];
-      for (let i = 0; i < 45; i++) {  // zzz421 — was 14; scan the full season so older BLOCKBUSTER/STRONG (RUBICON etc.) auto-populate
+      const sinceDay = getBenchSince();   // zzz867: no point reading days before the bench start date
+      const span = sinceDay ? Math.min(45, Math.max(1, Math.ceil((today.getTime() - Date.parse(sinceDay + 'T00:00:00Z')) / 86400_000) + 1)) : 45;
+      for (let i = 0; i < span; i++) {  // zzz421 — was 14; scan the full season so older BLOCKBUSTER/STRONG (RUBICON etc.) auto-populate
         const d = new Date(today.getTime() - i * 86400_000);
         dates.push(d.toISOString().slice(0, 10));
       }
@@ -701,9 +713,10 @@ export default function WatchlistsPage() {
       if (cancelled || entries.length === 0) return;
       try { syncFromEarningsOps(entries); } catch {}
     };
+    scanRef.current = scan;
     scan();
     const interval = setInterval(scan, 10 * 60 * 1000);
-    return () => { cancelled = true; clearInterval(interval); };
+    return () => { cancelled = true; scanRef.current = null; clearInterval(interval); };
   }, []);
 
   // zzz422 — merge the SERVER-authoritative Conviction bench (/api/v1/bench).
@@ -746,8 +759,8 @@ export default function WatchlistsPage() {
   }, []);
   const convictionCount = (() => {
     const set = new Set<string>();
-    for (const e of convictionEntries) { const t = String(e.ticker || '').toUpperCase(); if (t) set.add(t); }
-    for (const e of serverBench) { const t = String(e.ticker || '').toUpperCase(); if (t) set.add(t); }
+    for (const e of convictionEntries) { if (!sinceOk(e)) continue; const t = String(e.ticker || '').toUpperCase(); if (t) set.add(t); }
+    for (const e of serverBench) { if (!sinceOk(e)) continue; const t = String(e.ticker || '').toUpperCase(); if (t) set.add(t); }
     return set.size;
   })();  // zzz426 — count includes server-bench members
 
@@ -1269,7 +1282,7 @@ export default function WatchlistsPage() {
       {activeTab === 'portfolio-earnings' ? <PortfolioEarningsTab /> : activeTab === 'ei-elite' ? <EIEliteTab /> : activeTab === 'fundamentals' ? <FundamentalsAnalyzerPage scope="watchlist" /> : activeTab === 'conviction' ? (
         <>
         <ConvictionBeatsPanel
-          entries={mergeCbEntries(convictionEntries, serverBench) /* zzz426 merge server bench — zzz811: shared with Portfolio Catalysts */}
+          entries={mergeCbEntries(convictionEntries, serverBench).filter(sinceOk) /* zzz426 merge server bench — zzz811: shared with Portfolio Catalysts */}
           onRemove={(t) => { removeConviction(t); setConvictionEntries(getConvictionList()); }}
           /* PATCH zzz99 — bulk Clear All for Conviction Beats. Iterates the
              current list and removes each ticker via the same per-entry API
@@ -1277,20 +1290,26 @@ export default function WatchlistsPage() {
              any cross-tab listeners all fire exactly as they do on × clicks.
              Snapshot ticker list first because removeConviction mutates the
              source the snapshot is derived from. */
+          benchSince={benchSince}
+          seasonBusy={rebuilding}
           onClearAll={() => {
-            const all = getConvictionList().map((e) => e.ticker);
-            for (const t of all) removeConviction(t);
-            // Belt-and-braces: nuke the LS key directly in case the lib
-            // missed an entry (legacy/malformed row). Both known keys are
-            // tried so we cover any historical schema rename.
-            try {
-              if (typeof window !== 'undefined') {
-                window.localStorage.removeItem('mc:conviction-beats');
-                window.localStorage.removeItem('conviction-beats');
-              }
-            } catch {}
+            // zzz867: wipe the local bench AND set the start date to today, so the 45-day self-scan and the 60-day server bench cannot put old names back
+            try { clearConvictionBeats(); } catch {}
+            try { if (typeof window !== 'undefined') { window.localStorage.removeItem('mc:conviction-beats'); window.localStorage.removeItem('conviction-beats'); } } catch {}
+            setBenchSince(isoDaysAgo(0));
             setConvictionEntries(getConvictionList());
           }}
+          onRebuild={async (days: number) => {
+            // zzz867: start a new earnings season: wipe, set the start date to N days ago, then read just those days again
+            setRebuilding(true);
+            try {
+              try { clearConvictionBeats(); } catch {}
+              setBenchSince(isoDaysAgo(days));
+              setConvictionEntries(getConvictionList());
+              await scanRef.current?.();
+            } finally { setConvictionEntries(getConvictionList()); setRebuilding(false); }
+          }}
+          onShowAll={() => { setBenchSince(null); scanRef.current?.(); }}
         />
         <DecayWatch />{/* zzz514 — moved below the panel per request */}
         </>
@@ -1646,7 +1665,7 @@ function cbDriftState(e: ConvictionEntry): { drifting: boolean; movePct: number 
 // zzz827 — true while a fill pass runs; a card says "Q-TRENDS loading…" only then.
 let __cbFillRunning = false;
 
-function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: ConvictionEntry[]; onRemove: (t: string) => void; onClearAll?: () => void }) {
+function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild, onShowAll, benchSince, seasonBusy }: { entries: ConvictionEntry[]; onRemove: (t: string) => void; onClearAll?: () => void; onRebuild?: (days: number) => void | Promise<void>; onShowAll?: () => void; benchSince?: string | null; seasonBusy?: boolean }) {
   // PATCH zzz99 — bulk Clear All button for Conviction Beats.
   // User flow: starting fresh for next earnings cycle, drain the entire
   // bench at once instead of clicking × on every row. Guarded by
@@ -2887,6 +2906,24 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll }: { entries: Conv
                 }}>
                 🗑 Clear All ({entries.length})
               </button>
+            )}
+            {onRebuild && (
+              <button
+                onClick={() => {
+                  if (seasonBusy) return;
+                  if (window.confirm('Start a new earnings season? This clears the bench and rebuilds it from the last 10 days of results only. Older names will not come back.')) void onRebuild(10);
+                }}
+                disabled={!!seasonBusy}
+                title="Clear the bench, then rebuild it from only the last 10 days of results (BLOCKBUSTER and STRONG only). Older names are not added back."
+                style={{ ...chipActive('var(--mc-state-persistent)'), cursor: seasonBusy ? 'wait' : 'pointer' }}>
+                🔁 {seasonBusy ? 'Rebuilding…' : 'Rebuild last 10 days'}
+              </button>
+            )}
+            {benchSince && (
+              <span style={{ fontSize: 10.5, padding: '3px 8px', borderRadius: 4, border: '1px solid #cbd5e1', color: '#334155', fontWeight: 600 }}>
+                Showing results filed from {benchSince}
+                {onShowAll && <button onClick={onShowAll} style={{ marginLeft: 8, background: 'none', border: 'none', color: '#2563eb', cursor: 'pointer', fontSize: 10.5, textDecoration: 'underline' }}>show all</button>}
+              </span>
             )}
             {fillProgress && (
               <span style={{ fontSize: 10.5, padding: '3px 8px', borderRadius: 4, background: 'rgba(167,139,250,0.10)', border: '1px solid rgba(167,139,250,0.35)', color: '#A78BFA', fontWeight: 600 }}>{fillProgress}</span>
