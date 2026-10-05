@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-10-05T12:26:57Z",
+  "lastSync": "2026-10-05T16:42:46Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -25,7 +25,7 @@
     },
     {
       "name": "future-leaders.csv",
-      "size": 3635,
+      "size": 4035,
       "displayName": "Future Leaders"
     },
     {
@@ -40,7 +40,7 @@
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 4870,
+      "size": 4466,
       "displayName": "Lowequitycapital"
     },
     {
@@ -75,7 +75,7 @@
     },
     {
       "name": "turnarounds.csv",
-      "size": 19222,
+      "size": 19223,
       "displayName": "Turnarounds"
     },
     {
