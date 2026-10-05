@@ -90,6 +90,7 @@ export async function run(d) {
   const baseUrl = (env.CRON_BASE_URL || 'https://market-cockpit-production.up.railway.app').replace(/\/+$/, '');
   const days = Math.max(1, Math.min(60, Number(env.DAYS) || 7));
   const list = dayList(days, d.now || new Date());
+  log(`relay settings: PROXY_URL ${env.PROXY_URL ? 'set' : 'MISSING'}, PROXY_SECRET ${env.PROXY_SECRET ? 'set' : 'MISSING'}`);   // never the values
   let cookie = await nseCookie(f);
   const rows = []; const readDays = []; const failed = [];
   let shown = 0;

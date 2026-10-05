@@ -41,8 +41,8 @@ jobs:
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
-          PROXY_URL: ${{ secrets.PROXY_URL }}
-          PROXY_SECRET: ${{ secrets.PROXY_SECRET }}
+          PROXY_URL: ${{ secrets.PROXY_URL || vars.PROXY_URL }}
+          PROXY_SECRET: ${{ secrets.PROXY_SECRET || vars.PROXY_SECRET }}
           IN_DAYS: ${{ github.event.inputs.days || '7' }}
         run: |
           set -euo pipefail
