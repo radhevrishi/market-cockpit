@@ -127,6 +127,8 @@ export async function GET(req: NextRequest) {
   const cands: GuCandidate[] = [];
   let newsArticles: any[] = [];
   const peByTicker: Record<'IN' | 'US', Map<string, number>> = { IN: new Map(), US: new Map() };
+  // zzz880: market cap per ticker from the graded results (India ₹ Cr, US $M): the focus list keeps small / mid caps; events carry it as context
+  const capByTicker: Record<'IN' | 'US', Map<string, number>> = { IN: new Map(), US: new Map() };
   const usConsensus = new Map<string, NonNullable<GuContext['consensus']>>();
   const usCuts = new Map<string, string[]>();
   const usTickers = new Set<string>();
@@ -196,6 +198,7 @@ export async function GET(req: NextRequest) {
     if (Array.isArray(graded.v)) for (const p of graded.v) for (const r of collectGradedRows(p)) {
       const t = String(r?.symbol || r?.ticker || '').toUpperCase().replace(/\.(NS|BO)$/, ''); const pe = Number(r?.pe);
       if (t && Number.isFinite(pe) && pe > 0) peByTicker.IN.set(t, pe);
+      const mc = Number(r?.market_cap_cr); if (t && Number.isFinite(mc) && mc > 0 && !capByTicker.IN.has(t)) capByTicker.IN.set(t, mc);
     }
     if (!newsList?.length) cov.IN.cacheEmpty.push(`India news cache (${nr.v?.row.text ?? whyEmpty(news, NEWS_KEY)})`);
     if (!scrapedList.length) cov.IN.cacheEmpty.push(`scraped India news (${whyEmpty(scraped, SCRAPED_NEWS_KEY)})`);
@@ -213,6 +216,7 @@ export async function GET(req: NextRequest) {
         for (const r of collectGradedRows(s.payload)) {
           const t = String(r?.ticker || '').trim().toUpperCase();
           if (t) usTickers.add(t);
+          { const mc = Number(r?.market_cap_musd); if (t && Number.isFinite(mc) && mc > 0 && !capByTicker.US.has(t)) capByTicker.US.set(t, mc); }
           const res: UsRowResult | null = usGradedRowToCandidate(r, s.date, s.payload?.generated_at);
           if (!res) continue;
           cands.push(res.cand);
@@ -327,10 +331,11 @@ export async function GET(req: NextRequest) {
     const led = ledgers.get(t);
     const ln = linksByTicker.get(t);
     const pe = peByTicker[m].get(t);
+    const mcap = capByTicker[m].get(t);
     return {
       // consensus: US only, and only an estimate the graded row already matched to that guided period. India: none exists.
       consensus: m === 'US' ? usConsensus.get(t) : undefined,
-      priceContext: pe ? { pe } : undefined,
+      priceContext: pe || mcap ? { ...(pe ? { pe } : {}), ...(mcap ? { marketCap: mcap } : {}) } : undefined,
       newsIds: ln?.ids.length ? ln.ids : undefined,
       bottleneckThemes: ln?.themes.length ? ln.themes : undefined,
       ledger: led?.rows, priorGuidance: led?.points,
@@ -586,6 +591,8 @@ export async function GET(req: NextRequest) {
     unresolved: unresolvedList.slice(0, 50), unresolvedCount: unresolvedList.length,
     freshness: { newestAnnouncement: newest, feedCheckedAt: checkedAt, note, byMarket },
   };
+  // zzz880: market caps seen in the graded results (India ₹ Cr, US $M), for the focus list's small / mid filter
+  (body as any).caps = { IN: Object.fromEntries(capByTicker.IN), US: Object.fromEntries(capByTicker.US) };
   mem.set(memKey, { at: Date.now(), body });
   { const slim = slimForStore(body as any); if (slim) await withTimeout(kvSet(lgKey, { savedAt: Date.now(), body: slim.body }, LASTGOOD_TTL_S).catch(() => 0), 2_500, 0); }
   if (mem.size > 20) mem.delete(mem.keys().next().value as string);

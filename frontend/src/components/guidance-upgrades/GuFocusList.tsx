@@ -5,16 +5,21 @@ import { R, tint } from './gu-tokens';
 import { pillStyle } from './GuPanel';
 import { useGuUniverse } from './useGuUniverse';
 import { buildFocusList, type FocusVerdict } from '@/lib/gu-focus';
+import { INDIA_LARGE_CAPS } from '@/lib/india-large-caps';
 import type { GuidanceEvent } from '@/lib/guidance-upgrades-types';
 
 const VERDICT_COLOR: Record<FocusVerdict, string> = { 'TOP FOCUS': R.green, 'STRONG RAISE': R.green, 'HIGH GROWTH': R.cyan, RAISED: R.violet, WATCH: R.grey };
 const FLAG = { IN: '🇮🇳', US: '🇺🇸' } as const;
 type Mk = 'ALL' | 'IN' | 'US';
 
-export function GuFocusList({ events, window, onOpen }: { events: readonly GuidanceEvent[]; window: string; onOpen: (id: string) => void }) {
+export function GuFocusList({ events, window, onOpen, caps }: { events: readonly GuidanceEvent[]; window: string; onOpen: (id: string) => void; caps?: { IN?: Record<string, number>; US?: Record<string, number> } | null }) {
   const { data } = useGuUniverse({ market: 'ALL', view: 'active' });
   const [mk, setMk] = useState<Mk>('ALL');
-  const all = useMemo(() => buildFocusList(data?.summary?.highGrowthGroups, events, new Date(), 60), [data, events]);
+  // zzz880: small & mid caps by default (India under ₹30,000 Cr, US under $30B); a name whose size is not known stays, labelled
+  const [smid, setSmid] = useState(true);
+  const everyone = useMemo(() => buildFocusList(data?.summary?.highGrowthGroups, events, new Date(), 80, { caps, indiaLarge: INDIA_LARGE_CAPS }), [data, events, caps]);
+  const all = useMemo(() => (smid ? everyone.filter((r) => r.size !== 'LARGE') : everyone), [everyone, smid]);
+  const largeHidden = everyone.length - all.length;
   const rows = useMemo(() => all.filter((r) => mk === 'ALL' || r.market === mk).slice(0, 15), [all, mk]);
   const top = all.filter((r) => r.verdict === 'TOP FOCUS').length;
   const th: React.CSSProperties = { textAlign: 'left', padding: '6px 8px', fontSize: 11, fontWeight: 800, color: R.dim, borderBottom: `1px solid ${tint(R.grey, 40)}`, whiteSpace: 'nowrap' };
@@ -26,7 +31,11 @@ export function GuFocusList({ events, window, onOpen }: { events: readonly Guida
         <span style={{ fontSize: 12.5, color: R.dim }}>
           {all.length ? `${top} with both a guidance raise and 30%+ growth guided · ${all.length} names in total` : 'Loading…'}
         </span>
-        <span role="group" aria-label="Market" style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+        <span role="group" aria-label="Market" style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <button type="button" style={pillStyle(smid, R.amber)} aria-pressed={smid} onClick={() => setSmid((v) => !v)}
+            title="India under ₹30,000 Cr, USA under $30B. A company whose size is not known is kept and says so.">
+            {smid ? `Small & mid only${largeHidden ? ` (${largeHidden} large hidden)` : ''}` : 'All sizes'}
+          </button>
           {(['ALL', 'IN', 'US'] as Mk[]).map((k) => (
             <button key={k} type="button" style={pillStyle(mk === k, R.green)} aria-pressed={mk === k} onClick={() => setMk(k)}>
               {k === 'ALL' ? 'All' : k === 'IN' ? 'India' : 'USA'} ({k === 'ALL' ? all.length : all.filter((r) => r.market === k).length})
@@ -51,7 +60,7 @@ export function GuFocusList({ events, window, onOpen }: { events: readonly Guida
                   <td style={{ ...td, color: R.dim, fontVariantNumeric: 'tabular-nums' }}>{i + 1}</td>
                   <td style={td}>
                     <b>{r.company}</b>
-                    <div style={{ fontSize: 11.5, color: R.dim }}>{FLAG[r.market]} {r.ticker || ''}</div>
+                    <div style={{ fontSize: 11.5, color: R.dim }}>{FLAG[r.market]} {r.ticker || ''}{r.capText ? ` · ${r.capText}` : ' · size n/a'}</div>
                   </td>
                   <td style={td}>
                     {r.raised ? (

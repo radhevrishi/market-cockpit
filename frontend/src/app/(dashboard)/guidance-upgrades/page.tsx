@@ -114,7 +114,7 @@ export default function GuidanceUpgradesPage() {
       <GuTitle newest={data?.freshness.newestAnnouncement || null} checkedAt={data?.freshness.feedCheckedAt || null} loading={!data} />
       {refreshing && data && <div className="gu-noprint" style={{ fontSize: 11.5, color: R.dim }}>Showing the saved copy from {ageText(Date.now() - new Date((data as any).savedAt || Date.now()).getTime())}. Fresh data is loading in the background.</div>}
       {/* zzz880 — the companies to look at first, before any detail */}
-      <GuFocusList events={events} window={window_} onOpen={select} />
+      <GuFocusList events={events} window={window_} onOpen={select} caps={(data as any)?.caps ?? null} />
       <GuUniverseSummary onFull={setGgOpen} />
       <GuUniverseBrowser held={held} onFull={setGgOpen} />
       <GuNameCheck />

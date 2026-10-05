@@ -12,6 +12,20 @@ export interface FocusRow {
   raised: string | null; raisePct: number | null; raiseDate: string | null; eventId: string | null;
   growth: string | null; growthPct: number | null; growthPeriod: string | null; growthTrust: string | null;
   verdict: FocusVerdict; why: string; score: number;
+  /** zzz880: 'SMALL_MID' / 'LARGE' from a market cap or the large-cap list; null when not known */
+  size: 'SMALL_MID' | 'LARGE' | null; capText: string | null;
+}
+export interface FocusSizeIn { caps?: { IN?: Record<string, number>; US?: Record<string, number> } | null; indiaLarge?: ReadonlySet<string> }
+/** India large cap from ₹30,000 Cr; US from $30B (Rishi's US default band). */
+export function sizeOf(market: 'IN' | 'US', ticker: string | null, s: FocusSizeIn | undefined): { size: FocusRow['size']; capText: string | null } {
+  const t = (ticker || '').toUpperCase();
+  const cap = t ? s?.caps?.[market]?.[t] : undefined;
+  if (typeof cap === 'number' && cap > 0) {
+    if (market === 'IN') return { size: cap >= 30_000 ? 'LARGE' : 'SMALL_MID', capText: `₹${Math.round(cap).toLocaleString('en-IN')} Cr` };
+    return { size: cap >= 30_000 ? 'LARGE' : 'SMALL_MID', capText: cap >= 1000 ? `$${(cap / 1000).toFixed(1)}B` : `$${Math.round(cap)}M` };
+  }
+  if (market === 'IN' && t && s?.indiaLarge?.has(t)) return { size: 'LARGE', capText: 'large cap' };
+  return { size: null, capText: null };
 }
 
 const DAY = 86_400_000;
@@ -50,12 +64,12 @@ export function raiseLine(e: GuidanceEvent): { text: string; pct: number | null 
 
 const isShownUpgrade = (e: GuidanceEvent) => e.verification === 'VERIFIED' && e.taxonomy === 'formal_upgrade' && (!e.pipeline || e.pipeline.status === 'CARD');
 
-export function buildFocusList(groups: GuHighGrowthGroups | null | undefined, events: readonly GuidanceEvent[] | null | undefined, now: Date, limit = 15): FocusRow[] {
+export function buildFocusList(groups: GuHighGrowthGroups | null | undefined, events: readonly GuidanceEvent[] | null | undefined, now: Date, limit = 15, sizeIn?: FocusSizeIn): FocusRow[] {
   const by = new Map<string, FocusRow>();
   const get = (market: 'IN' | 'US', ticker: string | null, company: string) => {
     const k = keyOf(market, ticker, company);
     let r = by.get(k);
-    if (!r) { r = { key: k, company, ticker, market, raised: null, raisePct: null, raiseDate: null, eventId: null, growth: null, growthPct: null, growthPeriod: null, growthTrust: null, verdict: 'WATCH', why: '', score: 0 }; by.set(k, r); }
+    if (!r) { r = { key: k, company, ticker, market, raised: null, raisePct: null, raiseDate: null, eventId: null, growth: null, growthPct: null, growthPeriod: null, growthTrust: null, verdict: 'WATCH', why: '', score: 0, ...sizeOf(market, ticker, sizeIn) }; by.set(k, r); }
     return r;
   };
   for (const e of events || []) {
@@ -77,9 +91,12 @@ export function buildFocusList(groups: GuHighGrowthGroups | null | undefined, ev
   for (const r of out) {
     const days = r.raiseDate ? Math.max(0, Math.round((now.getTime() - Date.parse(`${r.raiseDate}T00:00:00Z`)) / DAY)) : null;
     const g = Math.min(100, r.growthPct ?? 0), p = Math.min(60, Math.max(0, r.raisePct ?? 0));
-    r.score = g + p + (r.raised && r.growth ? 60 : 0) + (days != null ? (days <= 14 ? 20 : days <= 45 ? 10 : 0) : 0) + (r.growthTrust === 'verified' || r.raised ? 10 : 0);
-    if (r.raised && r.growth) { r.verdict = 'TOP FOCUS'; r.why = `Raised its guidance and guides ${r.growthPct}%+ growth — both signals`; }
+    // zzz880: a raise of under 5% (Kestra +2.9%) is real but small: it never makes a name TOP FOCUS on its own
+    const meaningful = !!r.raised && (r.raisePct == null || r.raisePct >= 5);
+    r.score = g + p + (meaningful && r.growth ? 60 : 0) + (days != null ? (days <= 14 ? 20 : days <= 45 ? 10 : 0) : 0) + (r.growthTrust === 'verified' || r.raised ? 10 : 0);
+    if (meaningful && r.growth) { r.verdict = 'TOP FOCUS'; r.why = `Raised its guidance and guides ${r.growthPct}%+ growth — both signals`; }
     else if (r.raised && (r.raisePct ?? 0) >= 15) { r.verdict = 'STRONG RAISE'; r.why = `Guidance raised by ${Math.round(r.raisePct!)}% — a large upgrade, checked in the company's own filing`; }
+    else if (r.raised && r.growth) { r.verdict = 'HIGH GROWTH'; r.why = `Guides ${r.growthPct}% growth; also a small guidance raise (${Math.round((r.raisePct ?? 0) * 10) / 10}%)`; }
     else if (r.growth && (r.growthPct ?? 0) >= 50) { r.verdict = 'HIGH GROWTH'; r.why = `Guides ${r.growthPct}% growth${r.growthTrust === 'derived' ? ' (worked out from the company’s own numbers)' : ''}`; }
     else if (r.raised) { r.verdict = 'RAISED'; r.why = 'Guidance raised, checked in the company’s own filing'; }
     else { r.verdict = 'WATCH'; r.why = `Guides ${r.growthPct}% growth`; }

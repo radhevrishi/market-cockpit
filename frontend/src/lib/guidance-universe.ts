@@ -213,6 +213,16 @@ const proxyOf = (metric: GgMetric, statement: string): string | null => {
 type Inactive = 'EXPIRED' | 'SUPERSEDED' | 'WITHDRAWN';
 interface Prior { date: string; low: number | null; high: number | null; note: string; abs?: { value: number; unit: string; valueLow?: number } | null }
 interface ItemBase { value: number; unit: string; period: string; kind?: 'PRIOR_YEAR_ACTUAL' | 'PRIOR_GUIDANCE' }
+/** zzz880: an implied single-year change no company guides (revenue below −60% or above +400%; profit lines below −95% or above +1000%). Pure. */
+export function implausibleImplied(g: { gOrigin?: string; low: number | null; high: number | null; metric: string; pkind?: string; base?: { value: number; unit: string; period: string } | null; abs?: { value: number; unit: string; valueLow?: number } | null }): string | null {
+  if (g.gOrigin !== 'IMPLIED' || g.pkind === 'MULTI_YEAR_CAGR' || g.low == null) return null;
+  const hi = g.high ?? g.low;
+  const [min, max] = g.metric === 'REVENUE' ? [-60, 400] : [-95, 1000];
+  if (g.low >= min && hi <= max) return null;
+  const amt = g.abs ? `${g.abs.valueLow != null && g.abs.valueLow !== g.abs.value ? `${g.abs.valueLow}–` : ''}${g.abs.value} ${g.abs.unit}` : 'the guided amount';
+  const base = g.base ? ` against last year's ${g.base.value} ${g.base.unit}` : '';
+  return `Implausible against last year's actual: ${amt}${base} would be ${Math.round(g.low)}%; most likely a segment, one-off or partial figure, so it is not used as company guidance.`;
+}
 interface Item {
   origin: GuUniverseRecordOrigin; market: 'IN' | 'US'; ticker: string | null; company: string; metric: GgMetric;
   low: number | null; high: number | null; open: boolean; gOrigin: GgGrowthOrigin; abs: { value: number; unit: string; valueLow?: number } | null; cumulativeYears?: number | null;
@@ -947,6 +957,14 @@ export function buildUniverse(live: GgCompany[], ledgerRows: Array<{ market: 'IN
       eligible = eligible.filter((g) => !media.includes(g));
     }
     for (const g of group.filter((x) => x.forced)) pushInactive(e, g, g.forced!, g.forced === 'WITHDRAWN' ? 'Management withdrew this guidance.' : g.forced === 'SUPERSEDED' ? 'Replaced by a later statement.' : 'The guided period has ended.');
+    // zzz880: an amount that implies an impossible one-year change against last year's ACTUAL is a segment / partial / misread figure, not
+    // company guidance (Man Industries: "₹35–50 Cr" FY27 revenue against ₹3,592 Cr actual = −99% replaced the real ₹5,000–5,500 Cr guide).
+    // It never wins a slot; it is listed under excluded with the reason, and the sensible figure stays current.
+    eligible = eligible.filter((g) => {
+      const why = implausibleImplied(g);
+      if (why) excluded.push({ company: g.company, ticker: g.ticker, market: g.market, metric: g.metric, period: g.period, reason: why, claimType: g.claimType });
+      return !why;
+    });
     if (!eligible.length) continue;
     eligible.sort((a, b) => -better(a, b));
     let win = eligible[0];

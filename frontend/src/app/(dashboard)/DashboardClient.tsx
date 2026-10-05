@@ -364,6 +364,8 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
   const [convictionTitle, setConvictionTitle] = useState<string>('');
   // zzz833: one number, two markets, both named — the US bench comes from the same server list the US pages use
   const [usBenchCount, setUsBenchCount] = useState<number | null>(null);
+  // zzz880: the Conviction Beats "bench starts on" date, shown in the chip so a small India count explains itself ("India 4 (from 10-01)")
+  const [benchSinceHeader, setBenchSinceHeader] = useState<string | null>(null);
   // zzz855 — read after the page's own requests have started (idle), one shared request.
   useEffect(() => whenIdle(() => {
     shellFetchJson<any>('/api/v1/bench-us?view=tickers')
@@ -377,6 +379,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
       try {
         // zzz880: same scope as the Conviction Beats tab — its "bench starts on" date, and a removal hides only the filing it removed
         const since = getBenchSince();
+        setBenchSinceHeader(since);
         const okSince = (d: unknown) => !since || String(d || '').slice(0, 10) >= since;
         const local = (getConvictionList() as any[]).filter((e) => okSince(e?.filing_date)).map((e) => ({ ticker: String(e?.ticker || ''), company: e?.company || null }));
         const removed = (readConvictionBin() as any[]).map((e) => ({ ticker: String(e?.ticker || ''), filing_date: e?.filing_date || null })).filter((e) => !!e.ticker);
@@ -767,7 +770,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
                 <Link
                   href="/earnings-opportunities"
                   prefetch={false}
-                  title={`CB ${convictionCount + (usBenchCount || 0)} = India ${convictionCount} + US ${usBenchCount ?? '…'}: names meeting your Conviction Beats criteria in each market, added together (the Portfolio Catalysts pages show the India split as held + bench). Conviction Beats bench — India ${convictionTitle || `${convictionCount} tickers`}${usBenchCount != null ? `; US ${usBenchCount} on the server list` : '; US list not read yet'}. Open Earnings Opportunities to view the India bench.`}
+                  title={`${benchSinceHeader ? `India counts only results filed from ${benchSinceHeader} (the start date set on Conviction Beats — press "Show all" there to see every name). ` : ''}CB ${convictionCount + (usBenchCount || 0)} = India ${convictionCount} + US ${usBenchCount ?? '…'}: names meeting your Conviction Beats criteria in each market, added together (the Portfolio Catalysts pages show the India split as held + bench). Conviction Beats bench — India ${convictionTitle || `${convictionCount} tickers`}${usBenchCount != null ? `; US ${usBenchCount} on the server list` : '; US list not read yet'}. Open Earnings Opportunities to view the India bench.`}
                   style={{
                     display: 'inline-flex', alignItems: 'center', gap: 5,
                     padding: '5px 10px', borderRadius: 8,
@@ -777,7 +780,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
                     letterSpacing: '0.4px', textDecoration: 'none',
                     fontVariantNumeric: 'tabular-nums',
                   }}
-                >🏆 CB {convictionCount + (usBenchCount || 0)}<span style={{ fontWeight: 600, opacity: 0.85 }}> · India {convictionCount}{usBenchCount != null ? ` · US ${usBenchCount}` : ' · US …'}</span></Link>
+                >🏆 CB {convictionCount + (usBenchCount || 0)}<span style={{ fontWeight: 600, opacity: 0.85 }}> · India {convictionCount}{benchSinceHeader ? ` (from ${benchSinceHeader.slice(5)})` : ''}{usBenchCount != null ? ` · US ${usBenchCount}` : ' · US …'}</span></Link>
               )}
 
               {/* PATCH 0074: theme cycler + PDF export — visible on every tab */}

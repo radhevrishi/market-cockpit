@@ -1779,7 +1779,9 @@ function applyPrior(changes: GuChange[], prior?: GuGuidancePoint[]): GuChange[] 
   return changes.map(c => {
     if (c.before) return c;
     const p = prior.find(x => x.metric === c.metric && x.period === c.after.period && x.midpoint != null && x.isGrowthRate === c.after.isGrowthRate
-      && (x.unit == null || c.after.unit == null || x.unit === c.after.unit) && (x.currency == null || c.after.currency == null || x.currency === c.after.currency) && (x.periodKind || '') === (c.after.periodKind || ''));
+      && (x.unit == null || c.after.unit == null || x.unit === c.after.unit) && (x.currency == null || c.after.currency == null || x.currency === c.after.currency) && (x.periodKind || '') === (c.after.periodKind || '')
+      // zzz880: a figure from an EARLIER document must carry exactly the same unit and currency (KSH: "67,000–74,000" with no unit vs "₹75,000")
+      && (!String(x.raw || '').includes('(earlier guidance:') || ((x.unit || '') === (c.after.unit || '') && (x.currency || '') === (c.after.currency || ''))));
     return p ? makeChange(p, c.after) : c;
   });
 }

@@ -31,3 +31,14 @@ test('raise line names the largest raise and how many more', () => {
   const l = raiseLine(e)!; assert.match(l.text, /EBITDA: ₹5 Cr → ₹7 Cr \(\+40%\) \+ 1 more/); assert.equal(l.pct, 40);
 });
 test('empty inputs give an empty list', () => { assert.deepEqual(buildFocusList(null, [], NOW), []); });
+
+import { sizeOf } from '../gu-focus';
+test('zzz880 — size: caps, large-cap list, unknown; a tiny raise is not top focus', () => {
+  assert.deepEqual(sizeOf('IN', 'X', { caps: { IN: { X: 1140 } } }), { size: 'SMALL_MID', capText: '₹1,140 Cr' });
+  assert.equal(sizeOf('US', 'DELL', { caps: { US: { DELL: 90_000 } } }).size, 'LARGE');
+  assert.equal(sizeOf('IN', 'BAJFINANCE', { indiaLarge: new Set(['BAJFINANCE']) }).size, 'LARGE');
+  assert.equal(sizeOf('US', 'NTWK', {}).size, null);
+  const small = ev('KMTS', 'US', '2026-09-14', [137, 137], [141, 141]);
+  const out = buildFocusList(groups([hg('KMTS', 'US', 48)]), [small], NOW);
+  assert.equal(out[0].verdict, 'HIGH GROWTH'); assert.match(out[0].why, /small guidance raise/);
+});
