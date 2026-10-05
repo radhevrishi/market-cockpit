@@ -145,8 +145,13 @@ export async function scanIndia(inp: IndiaScanInput): Promise<MarketScanResult> 
   const cd = await Promise.resolve(inp.collectorDays ?? null).catch(() => null);
   const cdAll = cd;   // zzz870: on a long window the collector's older days count too (they are not re-read live)
   if (cd) for (const d of days) if (cd.has(d)) collDays.add(d);
-  if (inp.collectorDays !== undefined) sources.push({ name: 'GitHub India collector', tier: 'PRIMARY', daysTried: days.slice(), daysOk: [...collDays], state: !cd || cd.size === 0 ? 'NOT_RUN' : stateFor(collDays.size, days.length), scanned: collDays.size,
-    detail: !cd || cd.size === 0 ? 'no collector run recorded yet (run the "Scrape Guidance Docs" GitHub workflow; NSE and BSE refuse this server)' : `${collDays.size} of ${days.length} days fully indexed by the GitHub collector (company documents handed to the extractor)` });
+  // zzz872: the collector reads EVERY day of the window (it is not bounded like the live scan), so its source row covers the whole window:
+  // on a 120D page its 86 trading days are all "tried", and every day it fully indexed is "ok". Before this fix the row only carried the
+  // 30 live-scan days, so the coverage card could never show more than 30 days read for India.
+  const collWindow = long ? allDays : days;
+  const collOkAll = cd ? collWindow.filter((d) => cd.has(d)) : [];
+  if (inp.collectorDays !== undefined) sources.push({ name: 'GitHub India collector', tier: 'PRIMARY', daysTried: collWindow.slice(), daysOk: collOkAll, state: !cd || cd.size === 0 ? 'NOT_RUN' : stateFor(collOkAll.length, collWindow.length), scanned: collOkAll.length,
+    detail: !cd || cd.size === 0 ? 'no collector run recorded yet (run the "Scrape Guidance Docs" GitHub workflow; NSE and BSE refuse this server)' : `${collOkAll.length} of ${collWindow.length} days fully indexed by the GitHub collector (company documents handed to the extractor)` });
 
   const relevant = rows.filter(isGuidanceRelevantFiling);
   const seenId = new Set<string>();
@@ -172,7 +177,10 @@ export async function scanIndia(inp: IndiaScanInput): Promise<MarketScanResult> 
   } else {
     // long window: days covered = read live today (and graded, weekdays) OR already processed by an earlier run. A day that is neither is MISSING, never "zero events".
     const gradedDays = await Promise.resolve(inp.gradedDays ?? null).catch(() => null);
-    const cov = computeCoverage({ days: allDays, live: new Set([...liveOk, ...days.filter((d) => blobDays.has(d) || collDays.has(d)), ...(cdAll ? allDays.filter((d) => cdAll!.has(d)) : [])]), graded: gradedDays, store: inp.storeCovered });
+    // zzz872: a day the GitHub collector fully indexed needs no graded results session to count as read (the collector read the exchange's
+    // own announcement list for that day); the graded-session requirement stays for days only the live feeds answered.
+    const isWeekend = (d: string) => { const w = new Date(`${d}T00:00:00Z`).getUTCDay(); return w === 0 || w === 6; };
+    const cov = computeCoverage({ days: allDays, live: new Set([...liveOk, ...days.filter((d) => blobDays.has(d) || collDays.has(d)), ...(cdAll ? allDays.filter((d) => cdAll!.has(d)) : [])]), graded: gradedDays, store: inp.storeCovered, freeDay: (d) => isWeekend(d) || !!cdAll?.has(d) });
     const storeSeen = inp.storeCovered ? allDays.filter((d) => inp.storeCovered!.has(d)).length : 0;
     sources.push({
       name: 'Persisted event store', scanned: storeSeen, tier: 'SECONDARY',

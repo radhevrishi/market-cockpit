@@ -3,7 +3,8 @@
 //
 // Rules (each one has a test):
 //  - A failed query is never ZERO_RESULTS (it is UNKNOWN). EMPTY (query worked, zero rows) is never COMPLETE.
-//  - A day is READ only when EVERY PRIMARY exchange feed answered it. A fallback (scraped blob) or a cache never makes a day read.
+//  - A day is READ only when EVERY PRIMARY exchange feed answered it, OR when the GitHub collector (a PRIMARY reader of the exchange's own
+//    announcement list, zzz872) fully indexed it. A fallback (scraped blob) or a cache never makes a day read.
 //  - read + partial + failed === attempted, always.
 //  - Overall COMPLETE only if every PRIMARY source is COMPLETE, no day is missing and no document awaits grading.
 //  - zzz854: an India PRIMARY exchange feed that "answered" two or more trading days with ZERO announcements is a FAILED read (an exchange files
@@ -25,6 +26,8 @@ export function failureKindOf(s: Pick<GuScanSource, 'failReasons' | 'detail'>): 
   const t = `${(s.failReasons || []).join(' ')} ${s.detail || ''}`;
   return BLOCKED_RE.test(t) ? 'BLOCKED' : TIMEOUT_RE.test(t) ? 'TIMEOUT' : 'ERROR';
 }
+/** zzz872: a PRIMARY source that is a collector (GitHub India collector / EDGAR backfill): it reads whole days on its own. */
+export const isCollectorSource = (s: Pick<GuScanSource, 'name' | 'tier'>): boolean => (s.tier ?? 'SECONDARY') === 'PRIMARY' && /\bcollector\b|\bbackfill\b/i.test(String(s.name || ''));
 const isWeekdayStr = (d: string): boolean => { const w = new Date(`${d}T12:00:00Z`).getUTCDay(); return w >= 1 && w <= 5; };
 const dayList = (now: Date, n: number): string[] => Array.from({ length: n }, (_, i) => new Date(now.getTime() - i * 86_400_000).toISOString().slice(0, 10));
 
@@ -85,6 +88,12 @@ export function buildCoverageCard(i: CardInput): CoverageCardX {
   });
   const primary = raw.filter((s) => (s.tier ?? 'SECONDARY') === 'PRIMARY');
   const fallback = raw.filter((s) => s.tier === 'FALLBACK');
+  // zzz872: the GitHub collector is a PRIMARY reader on its own (it reads the exchange's full announcement list for a day and stores the company
+  // documents). A day it fully indexed is READ, even when the live NSE / BSE feeds refused this server that day. Before this fix a day had to be
+  // answered by EVERY primary source, so a collector-only day was always "partial" and India showed 0 days read.
+  const collectors = primary.filter(isCollectorSource);
+  const exchanges = primary.filter((s) => !isCollectorSource(s));
+  const collectorRead = (d: string) => collectors.some((s) => s.daysOk?.includes(d));
 
   // the calendar of the window, and the trading days (weekdays) the exchanges owe
   const gen = dayList(i.now, i.windowDays);
@@ -98,8 +107,8 @@ export function buildCoverageCard(i: CardInput): CoverageCardX {
 
   let read = 0; let primaryPartial = 0; let fallbackOnly = 0; let failed = 0;
   for (const d of attempted) {
-    const answered = primary.filter((s) => s.daysOk?.includes(d)).length;
-    if (primary.length > 0 && answered === primary.length) read++;
+    const answered = exchanges.filter((s) => s.daysOk?.includes(d)).length;
+    if (collectorRead(d) || (exchanges.length > 0 && answered === exchanges.length)) read++;
     else if (answered > 0) primaryPartial++;
     else if (fallback.some((s) => s.daysOk?.includes(d))) fallbackOnly++;   // labelled partial coverage, never covered
     else failed++;
@@ -114,16 +123,23 @@ export function buildCoverageCard(i: CardInput): CoverageCardX {
   const primaryRows = sources.filter((r) => r.tier === 'PRIMARY');
   const anyPrimaryAnswered = primaryRows.some((r) => r.daysSucceeded > 0 || (r.queryStatus === 'SUCCESS' && r.daysAttempted === 0));
 
+  // zzz872: when the collector fully indexed every trading day of the window, the live exchange feeds' failures (they refuse this server) do not
+  // make the coverage partial: the days were read. Their rows stay visible as FAILED, with the note that the collector covered them.
+  const collectorFull = collectors.length > 0 && trading.length > 0 && trading.every(collectorRead);
+  const isCollectorRow = (r: CoverageSourceRowX) => isCollectorSource({ name: r.name, tier: r.tier } as GuScanSource);
+
   let overall: CoverageOverall; let overallReason: string;
   if (primaryRows.length === 0 || !anyPrimaryAnswered) {
     overall = 'FAILED'; overallReason = 'no primary exchange feed answered for any day';
   } else {
-    const notComplete = primaryRows.filter((r) => r.status !== 'COMPLETE');
-    if (notComplete.length === 0 && failed === 0 && partial === 0 && unreadDays === 0 && awaiting === 0) { overall = 'COMPLETE'; overallReason = 'every primary source answered every trading day and nothing awaits grading'; }
+    const notComplete = primaryRows.filter((r) => r.status !== 'COMPLETE' && !(collectorFull && !isCollectorRow(r)));
+    const coveredNote = collectorFull && primaryRows.some((r) => !isCollectorRow(r) && r.status !== 'COMPLETE') ? '; the live NSE / BSE feeds refuse this server, every trading day was read by the GitHub collector instead' : '';
+    if (notComplete.length === 0 && failed === 0 && partial === 0 && unreadDays === 0 && awaiting === 0) { overall = 'COMPLETE'; overallReason = `every trading day was read${coveredNote || ' by every primary source'} and nothing awaits grading`; }
     else {
       overall = 'PARTIAL';
       const why: string[] = [];
       if (notComplete.length) why.push(`${notComplete.map((r) => `${r.name} ${r.status}`).join(', ')}`);
+      if (coveredNote) why.push(coveredNote.slice(2));
       if (failed) why.push(`${failed} day${failed === 1 ? '' : 's'} nobody answered`);
       if (partial) why.push(`${partial} day${partial === 1 ? '' : 's'} partly covered`);
       if (unreadDays) why.push(`${unreadDays} day${unreadDays === 1 ? '' : 's'} not read this run`);
@@ -171,8 +187,10 @@ export function checkCoverageCard(c: CoverageCard): string[] {
   if (c.daysPartialCoverage !== c.daysPrimaryPartial + c.daysFallbackOnly) v.push(`${id}: partial days do not add up`);
   if (c.daysAttempted + c.daysNotAttempted !== c.tradingDays) v.push(`${id}: attempted + not attempted does not equal trading days`);
   const primary = c.sources.filter((s) => s.tier === 'PRIMARY');
+  // zzz872: a collector row that read every trading day covers the exchange rows (they may be FAILED: the exchanges refuse this server)
+  const collectorFull = primary.some((s) => isCollectorSource(s) && s.status === 'COMPLETE' && s.daysSucceeded >= c.tradingDays);
   if (c.overall === 'COMPLETE') {
-    if (primary.some((s) => s.status !== 'COMPLETE')) v.push(`${id}: overall COMPLETE while a primary source is not COMPLETE`);
+    if (primary.some((s) => s.status !== 'COMPLETE' && !(collectorFull && !isCollectorSource(s)))) v.push(`${id}: overall COMPLETE while a primary source is not COMPLETE`);
     if (c.daysFailed > 0 || c.daysPartialCoverage > 0) v.push(`${id}: overall COMPLETE while days failed or are partial`);
     if (c.documentsAwaitingGrading > 0) v.push(`${id}: overall COMPLETE while documents await grading`);
   }

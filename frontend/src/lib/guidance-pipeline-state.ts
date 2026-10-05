@@ -48,9 +48,16 @@ const MK = { IN: 'INDIA', US: 'USA' } as const;
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const mark = (s: GuSourceLine) => (s.state === 'OK' ? '✓' : s.state === 'PARTIAL' ? '◐' : s.state === 'STALE' ? '⏱' : s.state === 'EMPTY' ? '∅' : '✕');
 
+const isCollectorLine = (s: Pick<GuSourceLine, 'name'>) => /\bcollector\b|\bbackfill\b/i.test(String(s.name || ''));
+const isExchangeLine = (s: Pick<GuSourceLine, 'name'>) => /^(NSE|BSE|SEC)$/i.test(String(s.name || '').trim());
+
 export function pipelineStateOf(i: GuPipelineInput): GuPipelineState {
   const live = i.sources.filter((s) => s.state === 'OK' || s.state === 'PARTIAL');
-  const failed = i.sources.filter((s) => s.state === 'FAILED');
+  // zzz872: when the GitHub collector read the window (state OK), the live NSE / BSE / SEC feeds that refuse this server are COVERED, not failed:
+  // the collector read the exchanges' own announcement lists for those days. They are still listed, with that explanation.
+  const collectorOk = i.sources.some((s) => isCollectorLine(s) && s.state === 'OK');
+  const covered = collectorOk ? i.sources.filter((s) => s.state === 'FAILED' && isExchangeLine(s)) : [];
+  const failed = i.sources.filter((s) => s.state === 'FAILED' && !covered.includes(s));
   const stale = i.sources.filter((s) => s.state === 'STALE');
   const anySourceRows = i.sources.some((s) => s.documents > 0);
   const anyEvidence = i.documentsDiscovered > 0 || i.queueAwaiting > 0 || i.queueReadNoGuidance > 0 || i.claims > 0 || i.verifiedGuidance > 0 || anySourceRows || i.scanAt != null;
@@ -71,6 +78,7 @@ export function pipelineStateOf(i: GuPipelineInput): GuPipelineState {
     else state = failed.length || i.daysFailed > 0 || i.daysPartial > 0 ? 'SOURCE_PARTIAL' : 'DOCUMENTS_PROCESSED_NO_GUIDANCE';
     const blocked = i.verifiedGuidance === 0 && (claimsOpen > 0 || pending > 0);
     if (failed.length) reasons.push(`${failed.map((s) => s.name).join(' and ')} ${failed.length === 1 ? 'did' : 'do'} not answer; the other sources keep running.`);
+    if (covered.length) reasons.push(`${covered.map((s) => s.name).join(' and ')} refuse${covered.length === 1 ? 's' : ''} this server; the GitHub collector read ${covered.length === 1 ? 'its' : 'their'} announcement lists instead, so those days count as read.`);
     if (stale.length || i.servedFromStaleCache) reasons.push('A saved copy of one feed is in use; it is used to discover, not to verify.');
     if (pending > 0) reasons.push(`${plural(pending, 'document')} still to be read.`);
     if (claimsOpen > 0) {
@@ -81,7 +89,9 @@ export function pipelineStateOf(i: GuPipelineInput): GuPipelineState {
   }
   const scanShort = (i.scanTradingDays ?? 0) > 0 && (i.scanDaysRead ?? 0) < (i.scanTradingDays ?? 0);
   if (scanShort && state !== 'NO_SOURCE_DATA' && state !== 'SOURCE_FAILED') reasons.unshift(`The live scan read ${i.scanDaysRead ?? 0} of ${i.scanTradingDays} days.`);
-  const partialSrc = failed.length > 0 || stale.length > 0 || i.servedFromStaleCache || i.daysFailed > 0 || i.daysPartial > 0 || i.daysNotRead > 0 || scanShort || pending > 0;
+  // zzz872: "Scan coverage" answers ONE question — were the sources read? Documents still waiting for the AI reader are a VERIFICATION matter
+  // (PRIMARY PENDING / PARTLY VERIFIED below), so they no longer make the coverage chip PARTIAL on their own.
+  const partialSrc = failed.length > 0 || stale.length > 0 || i.servedFromStaleCache || i.daysFailed > 0 || i.daysPartial > 0 || i.daysNotRead > 0 || scanShort;
   const sourceCoverage: GuSourceCoverage = state === 'NO_SOURCE_DATA' ? 'NO_SOURCE_DATA' : state === 'SOURCE_FAILED' ? 'SOURCE_FAILED' : state === 'SOURCE_STALE' ? 'STALE' : partialSrc ? 'PARTIAL' : 'COMPLETE';
   const verification: GuVerificationStage = i.verifiedGuidance > 0 ? (claimsOpen > 0 || pending > 0 ? 'PARTLY_VERIFIED' : 'VERIFIED') : claimsOpen > 0 || pending > 0 ? 'PRIMARY_PENDING' : 'NOTHING_TO_VERIFY';
   const nse = i.sources.find((s) => s.name === 'NSE'); const bse = i.sources.find((s) => s.name === 'BSE');
