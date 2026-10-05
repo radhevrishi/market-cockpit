@@ -601,6 +601,22 @@ export type DocOutcome = GuidanceExtractResult & { costUsd: number; reasons?: Re
 
 const MIN_TEXT = 200;
 
+// zzz870 — FREE pre-screen: a document is sent to the model only when some stretch of it (two neighbouring sentences) holds a forward-looking word,
+// a number with a unit, AND a future period. Meeting notices, intimations, scanned forms and plain results tables fail this and cost nothing.
+// It is deliberately loose (a transcript or presentation nearly always passes): it removes obvious junk, it never judges guidance.
+const SCREEN_NUMBER_RE = /\d[\d,.]*\s?(?:%|per ?cent|crores?|cr\b|lakhs?|million|mn\b|billion|bn\b|bps|basis points|x\b)|[₹$€£]\s?\d|\brs\.?\s?\d/i;
+const SCREEN_PERIOD_RE = /\bFY\s?'?(?:2[6-9]|3\d|20\d{2})\b|\bQ[1-4]\s?'?FY|\bH[12]\s?'?FY|full[- ]year|next (?:year|fiscal|financial)|current (?:fiscal|financial|year)|this (?:fiscal |financial )?year|\b20(?:2[6-9]|3\d)\b|coming (?:year|quarters?)|\bCAGR\b|year[- ]on[- ]year|\byoy\b|going forward|\b(?:years?|quarters?|fiscal|annual|annually|fy\d{2})\b/i;
+export function hasForwardNumber(text: string): boolean {
+  const t = String(text || '');
+  const parts = t.split(/(?<=[.!?])\s+|\n+/);
+  for (let i = 0; i < parts.length; i++) {
+    const w = i + 1 < parts.length ? `${parts[i]} ${parts[i + 1]}` : parts[i];
+    if (w.length > 4_000) continue;
+    if (FORWARD_RE.test(w) && SCREEN_NUMBER_RE.test(w) && SCREEN_PERIOD_RE.test(w)) return true;
+  }
+  return false;
+}
+
 export async function extractDoc(doc: GuidanceDoc, deps: Pick<ExtractDeps, 'callModel' | 'availability' | 'now' | 'nonce' | 'selectPassages'>, opts: { timeoutMs?: number; av?: Availability } = {}): Promise<DocOutcome> {
   const now = (deps.now || (() => new Date()))();
   const base = (status: GuidanceExtractResult['status'], extra: Partial<DocOutcome> = {}): DocOutcome => ({
@@ -611,6 +627,8 @@ export async function extractDoc(doc: GuidanceDoc, deps: Pick<ExtractDeps, 'call
   if (!av.available) return base('unavailable', { note: redact(av.reason || 'AI extraction unavailable', 300), stop: 'unavailable' });
   const text = String(doc.text || '');
   if (text.replace(/\s+/g, ' ').trim().length < MIN_TEXT) return base('unreadable', { note: 'no readable text in the document' });
+  // zzz870: no forward-looking number anywhere in the document → no model call, no cost (labelled, counted, never hidden)
+  if (!hasForwardNumber(text)) return base('no_guidance', { model: 'screen', note: 'screened out for free: no forward-looking number for a future period found in the text (no AI call)' });
   let excerpt: string;
   try { excerpt = deps.selectPassages ? deps.selectPassages(text, doc.kind) : selectPassages(text, doc.kind); } catch { excerpt = selectPassages(text, doc.kind); }
   if (!excerpt || excerpt.length < MIN_TEXT) excerpt = selectPassages(text, doc.kind);
@@ -723,7 +741,7 @@ export async function buildPlan(rows: GuidanceDocIndexRow[], io: PriorityIo | un
 
 export interface ExtractRunStat {
   at: string; available: boolean; unavailableReason: string | null; provider: string; model: string | null;
-  queued: number; attempted: number; ok: number; noGuidance: number; unreadable: number; errors: number; skippedBackoff: number; alreadyDone: number; missingDoc: number;
+  queued: number; attempted: number; ok: number; noGuidance: number; screened?: number; unreadable: number; errors: number; skippedBackoff: number; alreadyDone: number; missingDoc: number;
   rowsKept: number; rowsDropped: number; dropReasons: Record<string, number>; spentUsd: number;
   stoppedBy: 'done' | 'limit' | 'budget_usd' | 'time' | 'cap' | 'unavailable' | 'locked' | 'no_store'; elapsedMs: number;
   usMode?: UsMode; plan?: QueuePlan['counts'];
@@ -808,6 +826,8 @@ export async function runExtraction(deps: ExtractDeps, o: ExtractRunOpts = {}): 
         stat.attempted++;
         const r = await extractDoc(doc, deps, { av, timeoutMs: Math.max(3_000, Math.min(45_000, remaining - 1_500)) });
         stat.spentUsd += r.costUsd || 0;
+        // zzz870: a document the free screen removed used no AI, so it does not use up this run's document allowance
+        if (r.model === 'screen') { started--; stat.attempted--; stat.screened = (stat.screened || 0) + 1; }
         if (r.stop) { stop = r.stop; stat.available = false; stat.unavailableReason = r.note || null; stat.attempted--; return; }
         const { costUsd: _c, reasons, adjusted: _a, stop: _s, ...result } = r;
         if (reasons) for (const [k, n] of Object.entries(reasons)) stat.dropReasons[k] = (stat.dropReasons[k] || 0) + n;

@@ -1,7 +1,7 @@
 name: AI Guidance Backlog (manual, one click)
 
 # zzz870 — clears the waiting-document queue (India first) in ONE run instead of 25 documents an hour.
-# Same endpoint, same checks (every quote is checked against the document, every number against the quote) and the same
+# A free text screen first removes documents with no forward-looking number (no AI call, no cost). Same endpoint, same checks (every quote is checked against the document, every number against the quote) and the same
 # server-side monthly cap (AI_MONTHLY_CAP_USD), so it can never spend past that cap. You choose the spend for this run.
 # Order is unchanged: India first, transcripts / presentations / results first, newest first.
 #
@@ -13,7 +13,7 @@ on:
       max_usd:
         description: 'Total spend cap for this run in USD (the monthly cap on the server still binds)'
         required: false
-        default: '5'
+        default: '3'
       max_minutes:
         description: 'Stop after this many minutes (10-330)'
         required: false
@@ -35,13 +35,13 @@ jobs:
         env:
           BASE: ${{ secrets.CRON_BASE_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
-          MAX_USD: ${{ github.event.inputs.max_usd || '5' }}
+          MAX_USD: ${{ github.event.inputs.max_usd || '3' }}
           MAX_MIN: ${{ github.event.inputs.max_minutes || '120' }}
         run: |
           set -uo pipefail
           BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
           if [ -z "${CRON_SECRET}" ]; then echo "CRON_SECRET is not set in repository secrets"; exit 1; fi
-          case "$MAX_USD" in ''|*[!0-9.]*) MAX_USD=5 ;; esac
+          case "$MAX_USD" in ''|*[!0-9.]*) MAX_USD=3 ;; esac
           case "$MAX_MIN" in ''|*[!0-9]*) MAX_MIN=120 ;; esac
           [ "$MAX_MIN" -lt 10 ] && MAX_MIN=10
           [ "$MAX_MIN" -gt 330 ] && MAX_MIN=330
@@ -59,9 +59,9 @@ jobs:
           import json, os
           try:
               r = (json.load(open('/tmp/ge.json')).get('run') or {})
-              att = int(r.get('attempted') or 0); spent = float(r.get('spentUsd') or 0)
+              att = int(r.get('attempted') or 0) + int(r.get('screened') or 0); spent = float(r.get('spentUsd') or 0)
               left = max(float(os.environ['LEFT_USD']) - spent, 0)
-              print(f"{att} {left:.4f} {int(r.get('queued') or 0)} {r.get('stoppedBy')} ok={r.get('ok')} none={r.get('noGuidance')} rows={r.get('rowsKept')} unavailable={str(r.get('unavailableReason') or '')[:80].replace(' ','_')}")
+              print(f"{att} {left:.4f} {int(r.get('queued') or 0)} {r.get('stoppedBy')} screened={r.get('screened')} ok={r.get('ok')} none={r.get('noGuidance')} rows={r.get('rowsKept')} unavailable={str(r.get('unavailableReason') or '')[:80].replace(' ','_')}")
           except Exception as e:
               print("0 0 0 unreadable")
           PY
