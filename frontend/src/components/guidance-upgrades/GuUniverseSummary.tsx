@@ -16,6 +16,7 @@ import { GuVerifyButton } from './GuVerifyButton';
 import { GuDataQuality } from './GuDataQuality';
 import { GuClaimsTable } from './GuClaimsTable';
 import { GuDerivedAudit } from './GuIntegrityAudit';
+import { GuAtAGlance } from './GuAtAGlance';
 import { SCOPE_NOTE, scopedTitle } from '@/lib/guidance-semantics';
 import { BADGE_LEGEND, SECTIONS, SECTION_ACTIVE, cohortCountsLine, cohortTotal, freshnessLines, highestActiveHeading, rowCohortLine, rowTrustLine, sectionRows } from './gu-ui';
 
@@ -53,6 +54,12 @@ export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void 
       )}
       {data && (
         <>
+          {/* zzz880 — the plain summary first; the technical checks are folded below it */}
+          <GuAtAGlance data={data} threshold={thr} />
+          {(data.invariantViolations?.length ?? 0) > 0 && (
+            <div role="alert" style={{ fontSize: 12.5, color: R.red }}>A data check failed for {data.invariantViolations!.length} row{data.invariantViolations!.length === 1 ? '' : 's'} — those rows are kept out of the ranked list. Details under "Data quality and checks".</div>
+          )}
+          <GuFold title="Data quality and checks" accent={R.grey} hint="Sources, scan coverage, verification, claims and how each growth figure was calculated">
           <GuDataQuality quality={data.extractCoverage?.quality} />
           <GuVerifyButton pending={data.viewCounts?.claimsAwaiting ?? null} />
           <GuClaimsTable claims={data.pipeline?.claims} market={mk} />
@@ -66,6 +73,8 @@ export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void 
             <span style={{ color: R.dim }}>The second is a part of the first.</span>
           </div>
           <QualityStrip data={data} />
+          {data.scan && !data.scan.complete && <div style={{ fontSize: 11.5, color: R.dim }}>Universe scan incomplete. {data.scan.note}</div>}
+          </GuFold>
           {data.records.length === 0 ? <div style={{ fontSize: 13, color: R.dim }}>{ZERO_RECORDS_TEXT}</div> : (
             <>
               {hasGroups ? SECTIONS.map((sec) => {
@@ -110,7 +119,6 @@ export function GuUniverseSummary({ onFull }: { onFull?: (c: GgCompany) => void 
             <FreshnessBlockUniverse data={data} />
             <div style={{ fontSize: 11.5, color: R.dim }} aria-label="Verification legend">{BADGE_LEGEND}</div>
             </GuFold>
-          {data.scan && !data.scan.complete && <div style={{ fontSize: 11.5, color: R.dim }}>Universe scan incomplete. {data.scan.note}</div>}
         </>
       )}
     </GuPanel>

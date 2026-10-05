@@ -2349,6 +2349,9 @@ export function extractedPeriod(p: string): string {
   s = s.replace(/^(FY|CY)\s?(\d{2,4})\s*-\s*(?:FY|CY)?\s?(\d{2,4})$/i, (_m, a: string, x: string, y: string) => `${a.toUpperCase()}${x.slice(-2)}-${y.slice(-2)}`);
   s = s.replace(/^(FY|CY)\s?(\d{2,4})$/i, (_m, a: string, y: string) => `${a.toUpperCase()}${y.slice(-2)}`);
   s = s.replace(/^(Q[1-4]|H[12])\s?(FY|CY)\s?(\d{2,4})$/i, (_m, q: string, a: string, y: string) => `${q.toUpperCase()} ${a.toUpperCase()}${y.slice(-2)}`);
+  // zzz880 — "FY26-27" is the single Indian fiscal year 2026-27 (FY27), not a span
+  const one = /^FY(\d{2})-(\d{2})$/.exec(s);
+  if (one && (parseInt(one[1], 10) + 1) % 100 === parseInt(one[2], 10)) s = `FY${one[2]}`;
   return s;
 }
 function extractedPoint(row: GuidanceExtractResult['rows'][number], metric: GuMetric, period: string, lo: number | null, hi: number | null): GuGuidancePoint | null {
@@ -2399,12 +2402,50 @@ export function skeletonsFromExtracted(results: readonly GuidanceExtractResult[]
   return out;
 }
 /** Build the extracted events through the SAME engine path (validators, taxonomy, pipeline, decision). Window is cut on the document date. */
+/**
+ * zzz880 — THE COMPANY'S OWN EARLIER DOCUMENTS ARE ITS PRIOR GUIDANCE.
+ *
+ * India showed 0 upgrades in 120 days: 1,196 of 1,345 company documents were "first guidance (not a raise)". The before-figure came only
+ * from the ledger, and the ledger is written only for events already SHOWN — India had none, so no India document could ever be compared
+ * with anything (a closed loop). US 8-Ks restate "raised from X to Y" in the same filing, which is why the US worked.
+ * Now every document the AI has read is history: for each document, the same company's latest EARLIER document (strictly earlier day)
+ * that guided the same metric for the same period is its before-figure. Pure; the ledger points are kept as a fallback.
+ */
+export function priorPointsFromExtracted(sks: readonly GuSkeleton[]): (sk: GuSkeleton) => GuGuidancePoint[] {
+  const byCo = new Map<string, Array<{ date: string; p: GuGuidancePoint; src: string }>>();
+  for (const sk of sks) {
+    const k = `${sk.market}|${sk.ticker}`;
+    const list = byCo.get(k) || [];
+    for (const c of sk.changes) {
+      if (!c.after || c.after.valueKind === 'ACTUAL' || c.after.period === 'UNSTATED' || c.after.midpoint == null) continue;
+      list.push({ date: sk.announcement_date, p: c.after, src: sk.sources[0]?.name || 'earlier company document' });
+    }
+    byCo.set(k, list);
+  }
+  for (const l of Array.from(byCo.values())) l.sort((a, b) => b.date.localeCompare(a.date));   // newest first: the most recent earlier guide wins
+  return (sk) => {
+    const seen = new Set<string>(); const out: GuGuidancePoint[] = [];
+    for (const h of byCo.get(`${sk.market}|${sk.ticker}`) || []) {
+      if (h.date >= sk.announcement_date) continue;
+      const key = `${h.p.metric}|${h.p.period}|${h.p.isGrowthRate}|${h.p.periodKind || ''}`;
+      if (seen.has(key)) continue; seen.add(key);
+      out.push({ ...h.p, raw: `${h.p.raw ?? ''} (earlier guidance: ${h.src}, ${h.date})`.trim() });
+    }
+    return out;
+  };
+}
+
 export function buildExtractedEvents(results: readonly GuidanceExtractResult[], ctxFor: (ticker: string, market: GuMarket) => GuContext, now: Date, window: GuWindow = '7D'): GuidanceEvent[] {
   const out: GuidanceEvent[] = [];
-  for (const sk of skeletonsFromExtracted(results)) {
+  const sks = skeletonsFromExtracted(results);
+  const earlierOf = priorPointsFromExtracted(sks);
+  for (const sk of sks) {
     if (!withinWindow(sk.announcement_date, window, now)) continue;
     let ev: GuidanceEvent;
-    try { ev = buildGuidanceEvent(sk, ctxFor(sk.ticker, sk.market) ?? {}, now); } catch { continue; }
+    const base = ctxFor(sk.ticker, sk.market) ?? {};
+    const earlier = earlierOf(sk);
+    const ctx: GuContext = earlier.length ? { ...base, priorGuidance: [...earlier, ...(base.priorGuidance || [])] } : base;
+    try { ev = buildGuidanceEvent(sk, ctx, now); } catch { continue; }
     if (ev.v2) ev.v2 = { ...ev.v2, detectedVia: Array.from(new Set([EXTRACTED_VIA, ...ev.v2.detectedVia])), verifiedBy: `${sk.sources[0].name}, ${sk.announcement_date} (${EXTRACTED_VIA})` };
     out.push(withPrimarySourceState({ ...ev, primaryState: 'PRIMARY_SOURCE_READ' }));
   }

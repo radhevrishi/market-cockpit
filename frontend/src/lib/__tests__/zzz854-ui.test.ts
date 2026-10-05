@@ -153,7 +153,7 @@ describe('one count model for the page', () => {
     const u = verificationLine({ available: false, unavailableReason: 'No API key configured.' })!;
     assert.equal(u.available, false); assert.ok(u.text.startsWith(AI_UNAVAILABLE_TEXT)); assert.match(u.text, /No API key configured/);
     const a = verificationLine({ available: true, provider: 'openai', model: 'm1', checked: 10, confirmed: 7, contradicted: 1, awaiting: 30, primaryVerified: 50, lastRunAt: '2026-10-01T06:05:00Z', mode: 'enforce' })!;
-    assert.match(a.text, /50 confirmed by the filing itself · 10 checked · 7 confirmed · 1 contradicted · 30 awaiting · last run 2026-10-01 06:05 UTC/);
+    assert.match(a.text, /^50 confirmed directly from the company's own filing \(no AI check needed\)\. AI check of the rest.*: 10 checked, 7 confirmed, 1 contradicted, 30 waiting · last run 2026-10-01 06:05 UTC/);   // zzz880 wording
     assert.match(verificationLine({ available: true, lastRunAt: null })!.text, /not run yet/);
     assert.equal(beforeVerificationLine({ TIER_1: 16, TIER_2: 281, WATCHLIST: 245 }), 'Before the AI check (raw tiers): Tier 1 16 · Tier 2 281 · Watchlist 245');
     assert.equal(beforeVerificationLine(null), null);

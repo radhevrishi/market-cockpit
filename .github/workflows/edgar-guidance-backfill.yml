@@ -69,7 +69,8 @@ jobs:
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
-          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          # zzz880: same contact line the server already uses (lib/us-edgar.ts) when no secret is set; the job failed every run without one
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT || vars.SEC_USER_AGENT || 'market-cockpit research radhev.232@gmail.com' }}
           SEC_CONTACT_EMAIL: ${{ secrets.SEC_CONTACT_EMAIL }}
           UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
           UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}

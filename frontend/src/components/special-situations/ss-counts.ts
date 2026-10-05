@@ -47,9 +47,11 @@ export function verificationLine(v: Partial<VerificationSummary> | null | undefi
   if (v.available === false) return { text: `${AI_UNAVAILABLE_TEXT}${v.unavailableReason ? ` ${String(v.unavailableReason).trim()}` : ''}`, available: false };
   const who = [v.provider && v.provider !== 'unknown' ? v.provider : null, v.model || null].filter(Boolean).join(' ');
   const last = hhmm(v.lastRunAt);
-  const parts = [`${n0(v.checked)} checked`, `${n0(v.confirmed)} confirmed`, `${n0(v.contradicted)} contradicted`, `${n0(v.awaiting)} awaiting`];
-  if (num(v.primaryVerified)) parts.unshift(`${v.primaryVerified} confirmed by the filing itself`);
-  return { text: `AI check against the company document${who ? ` (${who})` : ''}: ${parts.join(' · ')}${last ? ` · last run ${last}` : ' · not run yet'}${v.mode === 'report' ? ' · report mode: unchecked items are still listed, with their label' : ''}`, available: true };
+  // zzz880: two different things, said separately — "606 confirmed by the filing itself · 0 checked · 0 confirmed" read as a contradiction.
+  // (1) items the company's own filing already proves (no AI needed); (2) what the AI check has done for the rest.
+  const prim = num(v.primaryVerified) ? `${v.primaryVerified} confirmed directly from the company's own filing (no AI check needed). ` : '';
+  const ai = `AI check of the rest${who ? ` (${who})` : ''}: ${n0(v.checked)} checked, ${n0(v.confirmed)} confirmed, ${n0(v.contradicted)} contradicted, ${n0(v.awaiting)} waiting`;
+  return { text: `${prim}${ai}${last ? ` · last run ${last}` : ' · not run yet'}${v.mode === 'report' ? ' · report mode: unchecked items are still listed, with their label' : ''}`, available: true };
 }
 
 const AWAIT_REASON_WORD: Record<string, string> = {

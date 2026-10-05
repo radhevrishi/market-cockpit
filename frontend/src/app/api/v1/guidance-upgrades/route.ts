@@ -74,6 +74,8 @@ const BUDGET_MS = 22_000;
 const PER_MARKET_CAP = 300;
 const PER_MARKET_CAP_LONG = 600;
 const mem = new Map<string, { at: number; body: GuidanceUpgradesResponse }>();
+/** zzz880 — the last complete AI-extract list per market scope, for a read that misses its time limit. */
+const lastExtract = new Map<string, { at: number; list: ExtractList }>();
 const MEM_TTL_MS = 2 * 60_000;
 
 function noScan(m: 'IN' | 'US', now: Date, why: string, days: number, window: GuWindow = '7D'): GuScanStatus {
@@ -154,7 +156,10 @@ export async function GET(req: NextRequest) {
   };
   const queueP: Promise<QueueState | null> = withTimeout(readQueue(), 4_000, null);
   // zzz857: rows the AI extractor read (quote-checked) from the companies' own documents: PRIMARY candidates, built by the same engine
-  const extractP: Promise<ExtractList | null> = withTimeout(listExtractResults({ market: market === 'ALL' ? 'ALL' : market }), 6_000, null);
+  // zzz880: a slow read used to return null and EVERY AI-read event vanished from that load (Cupid "there, then gone after refresh").
+  // 12 s, and a read that still misses falls back to the last complete list this server read (company documents never un-happen).
+  const extractP: Promise<ExtractList | null> = withTimeout(listExtractResults({ market: market === 'ALL' ? 'ALL' : market }), 12_000, null)
+    .then((l) => { const k = market === 'ALL' ? 'ALL' : market; if (l && !l.error && l.results.length) { lastExtract.set(k, { at: Date.now(), list: l }); return l; } const prev = lastExtract.get(k); return prev && Date.now() - prev.at < 6 * 3_600_000 ? prev.list : l; });
   const [news, feed, graded, usSessions, scraped, retained, catalog, [storeIN, storeUS]] = await Promise.all([
     timedNews(),
     wantIN ? timed(readConcallFeedWithFallback(makeKvFeedIo(Math.min(BUDGET_MS, 6_000)), feedDays).then((r) => { feedRead = r; return r.feed; }), BUDGET_MS) : Promise.resolve<Timed<any>>({ v: null, timedOut: false }),
@@ -379,7 +384,7 @@ export async function GET(req: NextRequest) {
   //   4. invariants — enforceEventInvariants (final word: demotes / excludes, mutates in place)
   //   5. summarise  — on the FULL list, so summary.pipeline covers every item
   //   6. partition  — partitionPipeline: events = cards + audit (shown), reviewQueue = everything else (one awaiting concept)
-  const ov = await verifyEventsOverlay(eventsBuilt, (e) => { try { return withClassification(e); } catch { return e; } }, { timeoutMs: 2_000 }).catch(() => null);
+  const ov = await verifyEventsOverlay(eventsBuilt, (e) => { try { return withClassification(e); } catch { return e; } }, { timeoutMs: 6_000 }).catch(() => null);   // zzz880: was 2 s — a slow read dropped every AI-confirmed event from that load
   const eventsAll: GuidanceEvent[] = ov ? ov.events : eventsBuilt;   // overlay failed: the engine pipeline alone (it never shows an unverified event)
   enforceEventInvariants(eventsAll);
   const part = partitionPipeline(eventsAll);

@@ -20,7 +20,17 @@ export function normPeriod(p: string): string {
   let s = String(p || '').trim().replace(/[–—]/g, '-').replace(/\s+/g, ' ');
   s = s.replace(/^(fy|cy)\s?(\d{2,4})(?:-(\d{2,4}))?$/i, (_m, a: string, y: string, z?: string) => `${a.toUpperCase()}${y.slice(-2)}${z ? `-${z.slice(-2)}` : ''}`);
   s = s.replace(/^(q[1-4]|h[12]) ?(fy|cy)\s?(\d{2,4})$/i, (_m, q: string, a: string, y: string) => `${q.toUpperCase()} ${a.toUpperCase()}${y.slice(-2)}`);
-  return s;
+  return collapseIndianFy(s);
+}
+/**
+ * zzz880 — "FY26-27" (also "FY2026-27", "FY 2026-2027") is ONE Indian fiscal year, 2026-27 = FY27, not a two-year span. Read as a span it
+ * was classified multi-year and tripped the CAGR check 12 times (Piccadily, RVNL, SBC Exports, Synergy Green, …). Only a span of exactly
+ * one year collapses; "FY25-28" stays a multi-year range.
+ */
+export function collapseIndianFy(s: string): string {
+  const m = /^FY(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return s;
+  return (parseInt(m[1], 10) + 1) % 100 === parseInt(m[2], 10) ? `FY${m[2]}` : s;
 }
 export interface GuPeriodFacts {
   periodLabelSource: string; periodNormalized: string; fiscalYear: number | null; fiscalYearStart: number | null; fiscalQuarter: number | null;

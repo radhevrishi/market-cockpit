@@ -387,16 +387,29 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
     recount();
     // zzz855 — idle + shared request (the count from this browser shows meanwhile, title says so)
     let alive = true;
-    const cancelIdle = whenIdle(() => {
+    // zzz880 — one failed read (e.g. during a redeploy) left the chip on "India 5" (this browser's own names) for the whole session.
+    // The read now retries (5 s, 20 s, 60 s) and runs again when the tab comes back into view.
+    const retryTimers: ReturnType<typeof setTimeout>[] = [];
+    const readServer = (attempt: number) => {
       shellFetchJson<any>('/api/v1/bench?view=tickers')
-        .then((j) => { if (alive && j && Array.isArray(j.entries)) { server = j.entries; recount(); } })
+        .then((j) => {
+          if (!alive) return;
+          if (j && Array.isArray(j.entries)) { server = j.entries; recount(); return; }
+          const wait = [5_000, 20_000, 60_000][attempt];
+          if (wait != null) retryTimers.push(setTimeout(() => readServer(attempt + 1), wait));
+        })
         .catch(() => { /* badge keeps the browser count, title says so */ });
-    });
+    };
+    const cancelIdle = whenIdle(() => readServer(0));
+    const onVisible = () => { if (document.visibilityState === 'visible') readServer(3); };
+    document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('storage', refresh);
     window.addEventListener('conviction-beats:updated', refresh);
     return () => {
       alive = false;
       cancelIdle();
+      retryTimers.forEach(clearTimeout);
+      document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('storage', refresh);
       window.removeEventListener('conviction-beats:updated', refresh);
     };
