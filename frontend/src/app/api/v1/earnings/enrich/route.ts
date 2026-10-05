@@ -407,19 +407,51 @@ async function fetchScreenerHtml(url: string): Promise<string | null> {
 // (isQuarterEndStale lives in lib/india-eo-card-data so it is unit-tested.)
 
 async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
-  const urls = [
-    `https://www.screener.in/company/${encodeURIComponent(symbol)}/consolidated/`,
-    `https://www.screener.in/company/${encodeURIComponent(symbol)}/`,
-  ];
-  let best: any | null = null;
-  for (const url of urls) {
-    const r = await fetchScreenerForUrl(url);
-    if (!r) continue;
-    if (!best || String(r.latest_quarter_end_iso || '') > String(best.latest_quarter_end_iso || '')) best = r;
-    // A fresh page is final (consolidated preferred when both are current).
-    if (!isQuarterEndStale(best.latest_quarter_end_iso)) break;
+  const bySlug = async (slug: string): Promise<any | null> => {
+    const urls = [
+      `https://www.screener.in/company/${encodeURIComponent(slug)}/consolidated/`,
+      `https://www.screener.in/company/${encodeURIComponent(slug)}/`,
+    ];
+    let best: any | null = null;
+    for (const url of urls) {
+      const r = await fetchScreenerForUrl(url);
+      if (!r) continue;
+      if (!best || String(r.latest_quarter_end_iso || '') > String(best.latest_quarter_end_iso || '')) best = r;
+      // A fresh page is final (consolidated preferred when both are current).
+      if (!isQuarterEndStale(best.latest_quarter_end_iso)) break;
+    }
+    return best;
+  };
+  const direct = await bySlug(symbol);
+  if (direct) return direct;
+  // zzz876 — a BSE-primary company (Hawa Engineers HAWAENG = 539176, Hindusthan Insulators HIIL = 539984) has NO Screener page
+  // under its NSE symbol: Screener files it under the BSE code. Both pages 404'd, the numbers were never read, and the results
+  // card was dropped as "no fresh quarter on Screener". Screener's own search gives the slug; it is cached (180 d, misses 1 d).
+  const slug = await resolveScreenerSlug(symbol);
+  if (!slug || slug.toUpperCase() === symbol.toUpperCase()) return null;
+  return bySlug(slug);
+}
+
+/** zzz876 — the Screener URL slug for a ticker whose own symbol page does not exist (BSE code for BSE-primary names). KV cached. */
+async function resolveScreenerSlug(symbol: string): Promise<string | null> {
+  const key = `screener-slug:v1:${symbol.toUpperCase()}`;
+  if (isRedisAvailable()) {
+    try { const c = await kvGet<string>(key); if (c === '-') return null; if (c && typeof c === 'string') return c; } catch {}
   }
-  return best;
+  let slug: string | null = null;
+  try {
+    const res = await proxiedFetch(`https://www.screener.in/api/company/search/?q=${encodeURIComponent(symbol)}&v=3&fts=1`, { headers: browserHeaders('https://www.screener.in/'), signal: AbortSignal.timeout(8000) });
+    if (res.ok) {
+      const arr: any[] = await res.json().catch(() => []);
+      const hits = (Array.isArray(arr) ? arr : []).map((c) => String(c?.url || '')).map((u) => /^\/company\/([^/]+)\//.exec(u)?.[1] || '').filter(Boolean);
+      // the first real company hit; "Search everywhere" rows have no /company/ url
+      slug = hits[0] || null;
+    }
+  } catch {}
+  if (isRedisAvailable()) {
+    try { await kvSet(key, slug || '-', slug ? 180 * 24 * 3600 : 24 * 3600); } catch {}
+  }
+  return slug;
 }
 
 async function fetchScreenerForUrl(url: string): Promise<any | null> {
