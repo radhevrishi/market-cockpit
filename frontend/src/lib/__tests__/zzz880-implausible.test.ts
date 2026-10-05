@@ -24,3 +24,15 @@ test('zzz880 — Man Industries: the later segment figure does not replace the F
   const pt = man?.points.find((p: any) => p.metric === 'REVENUE' && /FY27/.test(p.period));
   assert.ok(pt, 'FY27 revenue is active'); assert.match(String(pt!.display), /\+39|5,000/);
 });
+
+test('zzz880 — a segment / geography figure does not replace the company guide (Man Industries "India would be around ₹3,800 crores")', () => {
+  const row = (o: any) => ({ metric: 'REVENUE', metricLabel: 'revenue', period: 'FY27', periodKind: 'ANNUAL', basis: 'REPORTED', currency: 'INR', unit: 'crore', low: null, high: null, status: 'NEW', quote: 'q', confidence: 0.9, ...o });
+  const res = (o: any) => ({ docId: 'd', market: 'IN', ticker: 'MANINDS', company: 'Man Industries (India) Ltd', docUrl: 'https://x/t.pdf', docKind: 'TRANSCRIPT', filedAt: '2026-05-27', extractedAt: 'x', model: 't', status: 'ok', rows: [], dropped: 0, ...o });
+  const may = res({ docId: 'may', rows: [row({ low: 5000, high: 5500, quote: 'For FY27 we are guiding a consolidated revenue of ₹5,000 crore to ₹5,500 crore.' })] });
+  const aug = res({ docId: 'aug', filedAt: '2026-08-18', rows: [row({ low: 3800, high: 3800, quote: 'Currently, with Saudi, which would be around INR1,200 crores or some-odd crores, India would be around INR3,800 crores.' })] });
+  const act = new Map([[actualKey('IN', 'MANINDS', 'REVENUE', 'FY26'), { market: 'IN', ticker: 'MANINDS', metric: 'REVENUE', period: 'FY26', value: 3592.5, unit: '₹ Cr', source: 'FY26 results' } as any]]);
+  const b = buildUniverse([], [], [], new Date('2026-09-20T10:00:00Z'), { extracted: { results: [may, aug] as any, actuals: act } });
+  const all = [...b.defaultRecords, ...b.reviewQueue];
+  const pt = all.flatMap((r: any) => r.points).find((p: any) => p.metric === 'REVENUE' && /FY27/.test(p.period));
+  assert.ok(pt); assert.match(String(pt!.display), /5,000/); assert.match(String(pt!.notes), /segment figure/);
+});

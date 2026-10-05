@@ -213,6 +213,8 @@ const proxyOf = (metric: GgMetric, statement: string): string | null => {
 type Inactive = 'EXPIRED' | 'SUPERSEDED' | 'WITHDRAWN';
 interface Prior { date: string; low: number | null; high: number | null; note: string; abs?: { value: number; unit: string; valueLow?: number } | null }
 interface ItemBase { value: number; unit: string; period: string; kind?: 'PRIOR_YEAR_ACTUAL' | 'PRIOR_GUIDANCE' }
+/** zzz880: words that tie a figure to one part of the company (a business, unit, plant, geography or subsidiary), not the whole. */
+export const SEGMENT_RE = /\b(segment|division|vertical|subsidiar(?:y|ies)|this business|the \w+ business|business unit|plant|facility|domestic|exports?\b|india (?:would|will|should|is)|saudi|middle east|us business|europe(?:an)? business|standalone|stand-alone|geograph)/i;
 /** zzz880: an implied single-year change no company guides (revenue below −60% or above +400%; profit lines below −95% or above +1000%). Pure. */
 export function implausibleImplied(g: { gOrigin?: string; low: number | null; high: number | null; metric: string; pkind?: string; base?: { value: number; unit: string; period: string } | null; abs?: { value: number; unit: string; valueLow?: number } | null }): string | null {
   if (g.gOrigin !== 'IMPLIED' || g.pkind === 'MULTI_YEAR_CAGR' || g.low == null) return null;
@@ -400,6 +402,13 @@ export function itemsFromExtracted(results: GuidanceExtractResult[] | null | und
           notes.push(`reiterated ${single ? '~' : ''}${single ? crText(abs.value, abs.unit) : (abs.unit === '₹ Cr' ? `₹${(abs.valueLow as number).toLocaleString('en-US')}–${abs.value.toLocaleString('en-US')} crore` : amountText(abs))}${where} on ${c.date}`);
         } else notes.push(`reiterated on ${c.date}`);
         const dn = DOC_NAME[c.r.docKind] || DOC_NAME.OTHER_COMPANY_DOC; confirmed.push({ name: `${dn.name} (${c.r.company})`, type: dn.type, url: c.r.docUrl || null, date: c.date });
+        continue;
+      }
+      // zzz880: a SEGMENT / geography figure is not the company's guide. A later figure below the current company guide (under 95% of its
+      // low end) whose sentence talks about one business, unit or country is noted and skipped (Man Industries Aug: "with Saudi … around
+      // ₹1,200 crores … India would be around ₹3,800 crores" — the two parts of the ₹5,000 Cr guide, not a cut to ₹3,800 Cr).
+      if (cur && !withdrawn && abs && ca && abs.unit === ca.unit && abs.value < 0.95 * (ca.valueLow ?? ca.value) && SEGMENT_RE.test(String(c.row.quote || ''))) {
+        notes.push(`a segment figure (${amountText(abs)}) in the ${c.date} document was not read as the company guide`);
         continue;
       }
       // a new figure (or a 'reiterated' figure outside the current range, read on its numbers)
