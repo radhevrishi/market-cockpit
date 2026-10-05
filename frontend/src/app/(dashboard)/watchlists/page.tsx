@@ -2219,13 +2219,16 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild, onShow
     window.addEventListener('conviction-beats:updated', refresh);
     return () => window.removeEventListener('conviction-beats:updated', refresh);
   }, []);
-  const runRebuild = useCallback(async () => {
+  const runRebuild = useCallback(async (days: number = 60, fresh: boolean = false) => {
     if (rebuilding) return;
     setRebuilding(true);
     try {
+      // zzz868: a fresh rebuild wipes the bench and sets the start date; a plain rebuild only adds (and widens the start date to match)
+      if (fresh) { try { clearConvictionBeats(); } catch {} }
+      setBenchSince(new Date(Date.now() - days * 86400_000).toISOString().slice(0, 10));
       const dates: string[] = [];
       const now = new Date();
-      for (let i = 0; i < 60; i++) {
+      for (let i = 0; i <= days; i++) {
         const d = new Date(now.getTime() - i * 24 * 3600_000);
         const dow = d.getDay();
         if (dow === 0 || dow === 6) continue;  // NSE closed
@@ -2612,7 +2615,15 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild, onShow
         {/* zzz229 — recovery actions when the bench drained unexpectedly
             (browser storage eviction or rule-change demotions). */}
         <div style={{ marginTop: 14, display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
-          <button onClick={runRebuild} disabled={rebuilding}
+          <button onClick={() => { if (window.confirm('Start a new earnings season? This rebuilds the bench from the last 10 days of results only.')) void runRebuild(10, true); }} disabled={rebuilding}
+            title="Clear the bench and rebuild it from only the last 10 days of results (BLOCKBUSTER and STRONG only)."
+            style={{
+              padding: '8px 16px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: rebuilding ? 'wait' : 'pointer',
+              backgroundColor: 'color-mix(in srgb, var(--mc-warn) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 40%, transparent)', color: 'var(--mc-warn)',
+            }}>
+            🔁 {rebuilding ? 'Rebuilding…' : 'Rebuild last 10 days'}
+          </button>
+          <button onClick={() => void runRebuild(60, false)} disabled={rebuilding}
             title="Re-fetch server grading for the last 60 trading days and re-add every BLOCKBUSTER/STRONG print. Add-only: never deletes anything. Takes ~30s."
             style={{
               padding: '8px 16px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: rebuilding ? 'wait' : 'pointer',
@@ -2862,7 +2873,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild, onShow
               <option value="micro">MICRO &lt; ₹500 Cr</option>
             </select>
             {/* zzz229 — Rebuild from history (add-only) + recycle-bin restore */}
-            <button onClick={runRebuild} disabled={rebuilding}
+            <button onClick={() => void runRebuild(60, false)} disabled={rebuilding}
               title="Re-fetch server grading for the last 60 trading days and re-add every BLOCKBUSTER/STRONG print that's missing from the bench. Add-only — never deletes."
               style={{ ...(rebuilding ? chipActive('var(--mc-cyan)') : chipBase), cursor: rebuilding ? 'wait' : 'pointer' }}>
               ♻ {rebuilding ? 'Rebuilding…' : 'Rebuild 60d'}
@@ -2910,13 +2921,13 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild, onShow
             {onRebuild && (
               <button
                 onClick={() => {
-                  if (seasonBusy) return;
-                  if (window.confirm('Start a new earnings season? This clears the bench and rebuilds it from the last 10 days of results only. Older names will not come back.')) void onRebuild(10);
+                  if (rebuilding) return;
+                  if (window.confirm('Start a new earnings season? This clears the bench and rebuilds it from the last 10 days of results only. Older names will not come back.')) void runRebuild(10, true);
                 }}
-                disabled={!!seasonBusy}
+                disabled={!!rebuilding}
                 title="Clear the bench, then rebuild it from only the last 10 days of results (BLOCKBUSTER and STRONG only). Older names are not added back."
-                style={{ ...chipActive('var(--mc-state-persistent)'), cursor: seasonBusy ? 'wait' : 'pointer' }}>
-                🔁 {seasonBusy ? 'Rebuilding…' : 'Rebuild last 10 days'}
+                style={{ ...chipActive('var(--mc-state-persistent)'), cursor: rebuilding ? 'wait' : 'pointer' }}>
+                🔁 {rebuilding ? 'Rebuilding…' : 'Rebuild last 10 days'}
               </button>
             )}
             {benchSince && (
