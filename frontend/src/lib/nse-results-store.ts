@@ -22,6 +22,7 @@ export interface NseResultsCoverage { v: 1; updatedAt: string; days: Record<stri
 
 const MONTHS: Record<string, string> = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+export const isWeekendDay = (d: string): boolean => { const w = new Date(`${d}T00:00:00Z`).getUTCDay(); return w === 0 || w === 6; };
 
 /** The broadcast day (YYYY-MM-DD) of a raw NSE results row: "03-Oct-2026 21:42:15", "03-10-2026", "2026-10-03T16:12:15" or "03 Oct 2026". Null when absent. */
 export function rowBroadcastDay(row: any): string | null {
@@ -100,9 +101,10 @@ export async function ingestNseResults(kv: DocsKv, rows: unknown[], readDays: st
     await kv.set(NSE_RESULTS_DAY_KEY(day), merged, NSE_RESULTS_TTL_S);
     daysWritten.push(day); rowsStored += list.length;
   }
-  // a day that was READ but had no rows is still covered (a quiet Sunday is a real answer from NSE)
+  // a WEEKEND day read with no rows is covered (a quiet Sunday is a real answer); a weekday with zero rows is not — NSE answers
+  // "no data found" to a refused query too, and silence never passes
   const cov: Record<string, number> = {};
-  for (const d of readDays) if (DAY_RE.test(d)) cov[d] = byDay.get(d)?.length ?? 0;
+  for (const d of readDays) if (DAY_RE.test(d) && ((byDay.get(d)?.length ?? 0) > 0 || isWeekendDay(d))) cov[d] = byDay.get(d)?.length ?? 0;
   for (const [d, list] of byDay) cov[d] = Math.max(cov[d] ?? 0, list.length);
   const prevCov = await kv.get<NseResultsCoverage>(NSE_RESULTS_COVERAGE_KEY).catch(() => null);
   await kv.set(NSE_RESULTS_COVERAGE_KEY, mergeCoverage(prevCov && prevCov.v === 1 ? prevCov : null, cov, now), NSE_RESULTS_TTL_S);
@@ -113,7 +115,8 @@ export async function readNseResults(kv: Pick<DocsKv, 'get'> & { mget?: <T>(keys
   const days = dayRange(fromIso, toIso);
   if (!days.length) return { rows: [], daysRead: [], daysMissing: [] };
   const cov = await kv.get<NseResultsCoverage>(NSE_RESULTS_COVERAGE_KEY).catch(() => null);
-  const read = new Set(Object.keys(cov?.days || {}));
+  // a weekday recorded with zero rows (older collector runs) does not count as read
+  const read = new Set(Object.entries(cov?.days || {}).filter(([d, v]) => (v?.rows ?? 0) > 0 || isWeekendDay(d)).map(([d]) => d));
   const keys = days.map(NSE_RESULTS_DAY_KEY);
   const got = kv.mget ? await kv.mget<NseResultsDay>(keys).catch(() => keys.map(() => null)) : await Promise.all(keys.map((k) => kv.get<NseResultsDay>(k).catch(() => null)));
   const rows: any[] = [];

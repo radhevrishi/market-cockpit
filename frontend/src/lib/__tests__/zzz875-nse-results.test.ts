@@ -52,6 +52,11 @@ describe('zzz875 — NSE results store', () => {
     assert.deepEqual(got.daysRead, ['2026-10-03', '2026-10-04', '2026-10-05']);
     assert.deepEqual(got.daysMissing, ['2026-10-01', '2026-10-02']);
     assert.ok(got.rows.some((x) => x.symbol === 'HAWAENG' && x.broadCastDate.startsWith('03-Oct-2026')), 'the Saturday filing is there, in NSE\'s own field names');
+    // a weekday the collector "read" with zero rows is NOT covered (NSE says "no data found" to a refused query too)
+    const kv2 = memKv();
+    await ingestNseResults(kv2, [], ['2026-10-01', '2026-10-04'], now);
+    const r2 = await readNseResults(kv2, '2026-10-01', '2026-10-04');
+    assert.deepEqual(r2.daysRead, ['2026-10-04']); assert.ok(r2.daysMissing.includes('2026-10-01'));
     const empty = await readNseResults(memKv(), '2026-10-01', '2026-10-05');
     assert.equal(empty.rows.length, 0); assert.equal(empty.daysMissing.length, 5);
   });

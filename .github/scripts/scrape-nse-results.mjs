@@ -53,11 +53,18 @@ export function rowDay(r) {
 }
 
 async function nseCookie(f) {
-  try {
-    const res = await f('https://www.nseindia.com/', { headers: { 'User-Agent': UA, Accept: 'text/html' }, signal: AbortSignal.timeout(10_000) });
-    return (res.headers.getSetCookie?.() || []).map((c) => c.split(';')[0]).join('; ');
-  } catch { return ''; }
+  // the results page itself (not the home page): NSE sets the api cookies for this section there
+  let out = '';
+  for (const u of ['https://www.nseindia.com/', 'https://www.nseindia.com/companies-listing/corporate-filings-financial-results']) {
+    try {
+      const res = await f(u, { headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml', 'Accept-Language': 'en-US,en;q=0.9', Cookie: out }, signal: AbortSignal.timeout(10_000) });
+      const set = (res.headers.getSetCookie?.() || []).map((c) => c.split(';')[0]);
+      if (set.length) out = [...new Set([...out.split('; ').filter(Boolean), ...set])].join('; ');
+    } catch { /* keep what we have */ }
+  }
+  return out;
 }
+const isWeekend = (isoDay) => { const w = new Date(`${isoDay}T00:00:00Z`).getUTCDay(); return w === 0 || w === 6; };
 async function getJson(f, url, cookie) {
   for (let i = 0; i < 3; i++) {
     try {
@@ -87,15 +94,26 @@ export async function run(d) {
     await sleep(400);
   }
   for (const day of list) {
-    // one day per call: the list is small per day and a failure stays local to that day
-    let r = await getJson(f, `https://www.nseindia.com/api/corporates-financial-results?index=equities&period=Quarterly&from_date=${ddMonyyyy(day)}&to_date=${ddMonyyyy(day)}`, cookie);
-    if (!r.ok && r.blocked) { cookie = await nseCookie(f); r = await getJson(f, `https://www.nseindia.com/api/corporates-financial-results?index=equities&period=Quarterly&from_date=${ddMonyyyy(day)}&to_date=${ddMonyyyy(day)}`, cookie); }
-    if (!r.ok) r = await getJson(f, `https://www.nseindia.com/api/corporates-financial-results?index=equities&from_date=${ddmmyyyy(day)}&to_date=${ddmmyyyy(day)}`, cookie);
-    if (!r.ok) { failed.push(day); log(`${day}: FAILED (${r.error})`); await sleep(400); continue; }
-    const got = rowsOf(r.json);
-    if (shown++ < 2) log(`${day}: answer shape ${shapeOf(r.json)}${typeof r.json?.msg === 'string' ? ` msg="${r.json.msg.slice(0, 120)}"` : ''}`);
-    readDays.push(day); rows.push(...got);
-    log(`${day}: ${got.length} results rows`);
+    // one day per call: the list is small per day and a failure stays local to that day. The website's own query first
+    // (DD-MM-YYYY with period=Quarterly), then the other spellings.
+    const urls = [
+      `https://www.nseindia.com/api/corporates-financial-results?index=equities&from_date=${ddmmyyyy(day)}&to_date=${ddmmyyyy(day)}&period=Quarterly`,
+      `https://www.nseindia.com/api/corporates-financial-results?index=equities&period=Quarterly&from_date=${ddMonyyyy(day)}&to_date=${ddMonyyyy(day)}`,
+      `https://www.nseindia.com/api/corporates-financial-results?index=equities&from_date=${ddmmyyyy(day)}&to_date=${ddmmyyyy(day)}`,
+    ];
+    let got = null; let last = null;
+    for (const u of urls) {
+      let r = await getJson(f, u, cookie);
+      if (!r.ok && r.blocked) { cookie = await nseCookie(f); r = await getJson(f, u, cookie); }
+      last = r;
+      if (r.ok) { const rows = rowsOf(r.json); if (shown++ < 3) log(`${day}: answer shape ${shapeOf(r.json)}${typeof r.json?.msg === 'string' ? ` msg="${r.json.msg.slice(0, 120)}"` : ''}`); if (rows.length) { got = rows; break; } got = got || []; }
+      await sleep(300);
+    }
+    if (got == null) { failed.push(day); log(`${day}: FAILED (${last?.error || 'no answer'})`); await sleep(400); continue; }
+    // zero rows on a trading day cannot be told from a soft block ("no data found" is what a refused query says too): NOT a read day
+    if (got.length || isWeekend(day)) readDays.push(day); else failed.push(day);
+    rows.push(...got);
+    log(`${day}: ${got.length} results rows${!got.length && !isWeekend(day) ? ' (weekday with zero rows: not counted as read)' : ''}`);
     await sleep(400);
   }
   let posted = false;
