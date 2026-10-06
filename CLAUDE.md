@@ -3502,3 +3502,31 @@ Triggered by the 2026 technology audit (report: MarketCockpit_2026_Technology_Au
 change + beat + persistence, price only as confirmation); quantified EPS/FCF impact on catalysts; concall management-language
 ledger; US post-results estimate revisions; RS vs index in Technicals; read-only MCP server; splitting the 12 pages over 3,000 lines;
 stale heartbeats (prewarm-earnings, data-watch) investigation; removing ?secret= acceptance once logs show no old callers.
+
+---
+
+## 25 · 2026-10-06 (afternoon) — zzz885 → zzz908
+
+- **Scheduling moved into the app.** `frontend/src/lib/app-scheduler.ts` runs 32 jobs (all HTTP-only workflows) with a Redis lock per slot, one retry after 45 s, heartbeats with the old names. Read-only view: `GET /api/v1/cron/schedule`. Those workflows keep only `workflow_dispatch`. GitHub keeps scrapers, the CSV syncs, backup, CI and deploy-workers (see `docs/SCHEDULING.md`, `docs/RELIABILITY.md`). All workflows are pinned to `ubuntu-24.04`. There is a daily `actions-watchdog`, and collectors exit 75 = "upstream deferred" (green with a warning).
+- **New libs:**
+
+  | Area | Files |
+  |---|---|
+  | Guidance page | `gu-lean.ts` (lean lists; `?id=` / `?entity=` for full detail) |
+  | Conviction / catalysts | `cb-new-info.ts`, `thesis/catalyst-impact.ts` (no price inputs — thesis-engine rule), `thesis/wording-ledger.ts` |
+  | US / market data | `us-estimate-revision.ts` (+ `/api/v1/us-estimate-revisions`), `relative-strength.ts` (+ `/api/v1/index-returns`) |
+  | Shared records | `company-record.ts` (+ `/api/v1/company/[ticker]`, protected), `mcp-server.ts` (+ `/api/v1/mcp`, read-only, protected) |
+  | News / data quality | `news/transformational-dedup.ts`, `guidance-growth-quote.ts`, `company-alias.ts` (news tags), `metric-basis.ts`, `concall-prior-compare.ts` |
+  | Calendar / holidays | `calendar-dates.ts`, `nse-holidays-server.ts` (KV `nse-holidays:v1`, collector `scrape-nse-holidays`), `book-totals.ts`, `small-mid-filter.ts`, `eo-fallback-label.ts` |
+
+- **Pages split** (pure moves; tests read page plus sibling files): watchlists, portfolio, earnings-opportunities, concall-intel, home (`(dashboard)/_home/`), multibagger. The type baseline was re-keyed (still 179).
+- **Rules learned:**
+  - A Guidance Upgrades UI file must not contain the word "best" (zzz848 test).
+  - The thesis engine must not read price or market cap (thesis-status static test).
+  - Turbopack refuses a symlinked `node_modules`, so worktrees need `cp -al`.
+- **Owner actions still open:**
+  - Suspend the Render service `market-cockpit-api`.
+  - Turn on Railway "Wait for CI".
+  - Check the GitHub Actions minutes quota.
+  - Set the Telegram secrets for the watchdog.
+  - Decide on email (nodemailer/SMTP) if alerts move off Claude tasks.
