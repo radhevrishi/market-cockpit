@@ -100,7 +100,7 @@ export async function runGuidanceEval(): Promise<EvalScore> {
   const out: CaseScore[] = []; let model: string | null = null;
   const deps = { callModel: x.realCallModel, availability: x.realAvailability, now: () => new Date(), nonce: () => Math.random().toString(36).slice(2, 10), selectPassages: (t: string) => t } as any;
   for (const c of GUIDANCE_GOLDEN) {
-    const doc: GuidanceDoc = { docId: `eval-${c.id}`, market: c.market, ticker: null, company: c.company, kind: 'TRANSCRIPT' as any, title: `${c.company} — evaluation passage`, url: 'https://eval.invalid/', sourceHost: 'eval', filedAt: '2026-08-15', textChars: c.text.length, text: c.text };
+    const doc: GuidanceDoc = { docId: `eval-${c.id}`, market: c.market, ticker: null, company: c.company, kind: 'TRANSCRIPT' as any, title: `${c.company} — evaluation passage`, url: 'https://eval.invalid/', sourceHost: 'eval', filedAt: '2026-08-15', collectedAt: '2026-08-15T00:00:00Z', collector: 'ai-eval', textChars: c.text.length, text: c.text };
     const t0 = Date.now();
     const r = await x.extractDoc(doc, deps, { timeoutMs: 45_000 }).catch((e: any) => ({ status: 'error', rows: [], costUsd: 0, note: String(e?.message || e) } as any));
     model = r.model || model;
