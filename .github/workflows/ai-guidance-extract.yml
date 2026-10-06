@@ -30,7 +30,7 @@ on:
         required: false
         default: '40'
       max_usd:
-        description: 'Spend cap for this run in USD (max 2; the monthly cap still binds)'
+        description: 'Spend cap for this run in USD (max 2 per round on the server; the daily ceiling + any zzz928 extra allowance and the monthly cap still bind)'
         required: false
         default: '0.60'
       max_minutes:
@@ -39,6 +39,18 @@ on:
         default: '10'
       doc_ids:
         description: 'zzz917: read only these documents now (comma-separated doc ids, max 60). Each is one small paid read; the monthly cap binds.'
+        required: false
+        default: ''
+      extra_usd:
+        description: 'zzz928: one-off EXTRA reading allowance in USD on top of the $0.25/day ceiling (max 15, clamped on the server; 0 = clear; empty = leave as is)'
+        required: false
+        default: ''
+      extra_until_hours:
+        description: 'zzz928: how long the extra allowance lasts, in hours (max 12, clamped on the server)'
+        required: false
+        default: '6'
+      extra_concurrency:
+        description: 'zzz928: documents read at once while the allowance is active (1-10, default 8)'
         required: false
         default: ''
 
@@ -63,10 +75,24 @@ jobs:
           MAX_USD: ${{ github.event.inputs.max_usd || '0.25' }}   # zzz918: was 0.40 (zzz915: was 1.20); the route also caps each UTC day
           MAX_MIN: ${{ github.event.inputs.max_minutes || '20' }}
           DOC_IDS: ${{ github.event.inputs.doc_ids || '' }}
+          EXTRA_USD: ${{ github.event.inputs.extra_usd || '' }}
+          EXTRA_HOURS: ${{ github.event.inputs.extra_until_hours || '6' }}
+          EXTRA_CONC: ${{ github.event.inputs.extra_concurrency || '' }}
         run: |
           set -euo pipefail
           BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
           if [ -z "${CRON_SECRET}" ]; then echo "CRON_SECRET is not set in repository secrets"; exit 1; fi
+          # zzz928: set / update / clear the one-off extra allowance first (the server clamps it to <= $15 and <= 12 hours)
+          EXTRA_USD=$(printf '%s' "$EXTRA_USD" | tr -cd '0-9.')
+          EXTRA_HOURS=$(printf '%s' "$EXTRA_HOURS" | tr -cd '0-9.')
+          EXTRA_CONC=$(printf '%s' "$EXTRA_CONC" | tr -cd '0-9')
+          if [ -n "$EXTRA_USD" ]; then
+            STATUS=$(curl -sS -o /tmp/ge-allow.json -w "%{http_code}" --max-time 30 -X POST -H "x-cron-secret: ${CRON_SECRET}" \
+              "$BASE/api/v1/guidance-extract?action=allowance&usd=${EXTRA_USD}&hours=${EXTRA_HOURS:-6}&concurrency=${EXTRA_CONC}&reason=workflow" || echo "000")
+            echo "allowance HTTP $STATUS: $(python3 -c "import json;print(json.dumps(json.load(open('/tmp/ge-allow.json')).get('allowance')))" 2>/dev/null)"
+            if [ "$STATUS" != "200" ]; then exit 1; fi
+            sleep 16   # the route allows 4 POSTs a minute
+          fi
           # zzz917: targeted reads (owner asked for specific companies) — one POST ?docId= per id, then stop
           IDS=$(printf '%s' "$DOC_IDS" | tr -cd 'A-Za-z0-9_,-' | tr ',' ' ')
           if [ -n "$IDS" ]; then
@@ -89,7 +115,7 @@ jobs:
           END=$(( $(date +%s) + MAX_MIN * 60 ))
           LEFT_USD=$MAX_USD
           TOTAL=0; EMPTY=0; FAILED=0
-          for ROUND in $(seq 1 40); do
+          for ROUND in $(seq 1 80); do
             if [ "$(date +%s)" -ge "$END" ]; then echo "minutes for this run used (${MAX_MIN}); the next hourly run continues"; break; fi
             STATUS=$(curl -sS -o /tmp/guidance-extract.json -w "%{http_code}" --max-time 75 -X POST \
               -H "x-cron-secret: ${CRON_SECRET}" -H 'Content-Type: application/json' \
@@ -111,6 +137,7 @@ jobs:
               left = int(r.get('queued') or 0) - done - int(r.get('skippedBackoff') or 0)
               stop = r.get('stoppedBy')
               again = 1 if (stop in ('time', 'limit') and usd > 0.02 and left > 0 and done > 0) else 0
+              if stop == 'locked' and usd > 0.02: again = 2   # zzz928: the app's hourly reader holds the lock; wait and retry
               print(f"{again} {max(usd, 0):.4f} {done}")
           except Exception as e:
               print('response not readable:', e, file=sys.stderr)
@@ -119,6 +146,7 @@ jobs:
             )
             read AGAIN LEFT_USD DONE <<< "$NEXT"
             TOTAL=$((TOTAL + DONE))
+            if [ "$AGAIN" = "2" ]; then sleep 20; continue; fi
             if [ "$AGAIN" != "1" ]; then break; fi
           done
           echo "documents handled in this run: ${TOTAL} (usd left of the run cap: ${LEFT_USD})"

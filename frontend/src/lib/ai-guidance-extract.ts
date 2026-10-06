@@ -855,7 +855,7 @@ export async function runExtraction(deps: ExtractDeps, o: ExtractRunOpts = {}): 
   const budgetMs = o.budgetMs ?? runBudgetMs();
   const deadline = t0 + budgetMs;
   const minStartMs = Math.min(15_000, Math.max(1_000, Math.round(budgetMs / 4)));
-  const concurrency = Math.max(1, Math.min(6, o.concurrency ?? runConcurrency()));
+  const concurrency = Math.max(1, Math.min(10, o.concurrency ?? runConcurrency()));   // zzz928: up to 10 while an extra allowance is active (the route decides)
   const log = deps.log || (() => {});
   const av = await deps.availability();
   const stat: ExtractRunStat = {

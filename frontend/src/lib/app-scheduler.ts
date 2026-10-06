@@ -224,13 +224,23 @@ async function aiVerifyJob(ctx: JobCtx): Promise<JobOutcome> {
 }
 
 const EXTRACT_MINUTES = 20, EXTRACT_USD = 0.25, EXTRACT_LIMIT = 40;   // zzz915: $0.40 a run (was 1.20); the route also enforces a daily ceiling
+/** zzz928: the run cap for one hourly job — $2 while the one-off extra allowance is active (the route still enforces the day
+ *  budget + allowance left, so this is only an upper bound), otherwise the normal $0.25. */
+export function extractRunUsd(status: any): number {
+  const a = status?.allowance;
+  return a && a.active === true && Number(a.leftUsd) > 0 ? 2 : EXTRACT_USD;
+}
 async function guidanceExtractJob(ctx: JobCtx): Promise<JobOutcome> {
   const end = Math.min(ctx.deadline, Date.now() + EXTRACT_MINUTES * MIN);
-  let usd = EXTRACT_USD, total = 0;
-  for (let round = 1; round <= 40; round++) {
+  const st = await ctx.call('/api/v1/guidance-extract', { timeoutMs: 30_000, retry: false });
+  let usd = extractRunUsd(st.json), total = 0;
+  if (usd > EXTRACT_USD) ctx.log(`extra allowance active: left $${Number(st.json?.allowance?.leftUsd).toFixed(2)} until ${st.json?.allowance?.until}`);
+  for (let round = 1; round <= 60; round++) {
     if (Date.now() >= end) break;
     const r = await ctx.call(`/api/v1/guidance-extract?limit=${EXTRACT_LIMIT}&maxUsd=${usd.toFixed(4)}`, { method: 'POST', timeoutMs: 75_000, retry: false });
     if (r.status !== 200) return fail(r, 'guidance-extract');
+    // zzz928: another reader (a hand-run workflow) holds the run lock — wait and try again instead of ending the job
+    if (r.json?.run?.stoppedBy === 'locked') { await ctx.sleep(20_000); continue; }
     const nx = guidanceExtractNext(usd, r.json?.run);
     usd = nx.usd; total += nx.done;
     if (!nx.again) break;
@@ -402,7 +412,7 @@ export const APP_JOBS: readonly AppJob[] = [
   { name: 'daily-summary', crons: ['30 16 * * 1-5'], timeoutMs: 4 * MIN, workflow: 'daily-summary.yml', does: 'POST /api/v1/cron/daily-summary', run: http('POST', '/api/v1/cron/daily-summary', 60_000) },
   { name: 'data-watch', crons: ['30 5 * * *', '30 10 * * 1-5', '30 14 * * 1-5'], timeoutMs: 15 * MIN, workflow: 'data-watch.yml', does: 'GET /api/v1/cron/data-watch (heals what it can)', run: dataWatchJob },
   { name: 'ai-verify', crons: ['35 * * * *'], timeoutMs: 8 * MIN, workflow: 'ai-verify.yml', does: 'POST /api/v1/ai-verify, up to 4 rounds (100 claims, $1.50 a run)', run: aiVerifyJob },
-  { name: 'ai-guidance-extract', crons: ['50 * * * *'], timeoutMs: 23 * MIN, workflow: 'ai-guidance-extract.yml', does: 'POST /api/v1/guidance-extract, rounds for up to 20 min ($0.25 a run, $0.25 a day)', run: guidanceExtractJob },
+  { name: 'ai-guidance-extract', crons: ['50 * * * *'], timeoutMs: 23 * MIN, workflow: 'ai-guidance-extract.yml', does: 'POST /api/v1/guidance-extract, rounds for up to 20 min ($0.25 a run, $0.25 a day; up to $2 a run while a zzz928 extra allowance is active)', run: guidanceExtractJob },
   { name: 'results-pdf', crons: ['20 * * * *'], timeoutMs: 7 * MIN, workflow: 'results-pdf.yml', does: 'POST /api/v1/results-pdf?max_items=12&max_usd=0.30', run: resultsPdfJob },
   { name: 'score-ai-ledger', crons: ['20 2 * * *'], timeoutMs: 25 * MIN, workflow: 'score-ai-ledger.yml', does: 'GET /api/v1/ai/desk (us, india), then GET /api/v1/ai/ledger?score=1 up to 6 passes', run: scoreLedgerJob },
   { name: 'ai-eval', crons: ['41 3 * * 1'], timeoutMs: 6 * MIN, workflow: 'ai-eval.yml', does: 'GET /api/v1/ai-eval?run=1 (fails below precision 0.90 / recall 0.80)', run: aiEvalJob },
