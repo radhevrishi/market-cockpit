@@ -13,6 +13,8 @@ import { useSkyGoldFacts, SkyScoreCell, SkyBreakdownRow } from './GuSkyGold';
 import { fairValue, type FvResult } from '@/lib/gu-fair-value';
 import { sortByReported, reportedLabel } from '@/lib/gu-focus-sort';
 import { FvCells, FV_HEAD, FV_COLS } from './GuFairValue';
+import { opportunityScore, type Opportunity } from '@/lib/gu-opportunity';
+import { OppCells, OppHead, OppBreakdownRow, OPP_COLS } from './GuOpportunity';
 
 function FocusTable({ title, sub, head, empty, children }: { title: string; sub: string; head: React.ReactNode[]; empty: string; children: React.ReactNode }) {
   const th: React.CSSProperties = { textAlign: 'left', padding: '6px 8px', fontSize: 11, fontWeight: 800, color: R.dim, borderBottom: `1px solid ${tint(R.grey, 40)}`, whiteSpace: 'nowrap' };
@@ -53,11 +55,16 @@ const VERDICT_COLOR: Record<FocusVerdict, string> = { 'TOP FOCUS': R.green, 'STR
 const FLAG = { IN: '🇮🇳', US: '🇺🇸' } as const;
 type Mk = 'ALL' | 'IN' | 'US';
 const FOCUS_STEP = 20;
-type SortBy = 'rank' | 'score' | 'new' | 'old';   // zzz927: 'new' / 'old' = by the date the news was reported
+type SortBy = 'rank' | 'score' | 'opp' | 'new' | 'old';   // zzz927: 'new' / 'old' = by the date the news was reported
 const skyKey = (r: FocusRow) => (r.ticker ? `${r.market}:${r.ticker.toUpperCase()}` : null);
 /** zzz923: rows by score (a higher score first; no score last), the focus rank breaking ties */
 function bySky(rows: FocusRow[], scores: Map<string, SkyScore | null>): FocusRow[] {
   const v = (r: FocusRow) => scores.get(r.key)?.score ?? -1;
+  return rows.map((r, i) => ({ r, i })).sort((a, b) => v(b.r) - v(a.r) || a.i - b.i).map((x) => x.r);
+}
+/** zzz929: rows by Opportunity score (a higher score first; no score last), the focus rank breaking ties */
+function byOpp(rows: FocusRow[], opps: Map<string, Opportunity | null>): FocusRow[] {
+  const v = (r: FocusRow) => opps.get(r.key)?.score ?? -1;
   return rows.map((r, i) => ({ r, i })).sort((a, b) => v(b.r) - v(a.r) || a.i - b.i).map((x) => x.r);
 }
 function ScoreHead({ sort, onSort }: { sort: SortBy; onSort: () => void }) {
@@ -144,11 +151,6 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
     }
     return m;
   }, [listed, facts, skyFailed]);
-  const [sortA, setSortA] = useState<SortBy>('rank');
-  const [sortB, setSortB] = useState<SortBy>('rank');
-  const [openSky, setOpenSky] = useState<string | null>(null);
-  const raisedSorted = sortA === 'score' ? bySky(raisedAll, scores) : sortA === 'new' || sortA === 'old' ? sortByReported(raisedAll, (r) => r.raiseDate, sortA) : raisedAll;
-  const growthSorted = sortB === 'score' ? bySky(growthAll, scores) : sortB === 'new' || sortB === 'old' ? sortByReported(growthAll, (r) => r.growthDate, sortB) : growthAll;
   // zzz927: fair value per listed row (the auto-valuation method on the figures read for the score; no model call, no extra request)
   const fvs = useMemo(() => {
     const m = new Map<string, FvResult | null>();
@@ -160,9 +162,27 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
     }
     return m;
   }, [listed, facts, skyFailed]);
+  // zzz929: the Opportunity score (separate from Sky Gold), from the same figures, the fair value and the Sky Gold facts; no extra request
+  const opps = useMemo(() => {
+    const m = new Map<string, Opportunity | null>();
+    for (const r of listed) {
+      const k = skyKey(r);
+      if (k && !(k in facts) && !skyFailed) { m.set(r.key, null); continue; }
+      m.set(r.key, opportunityScore(r, k ? facts[k] ?? null : null, fvs.get(r.key) ?? null));
+    }
+    return m;
+  }, [listed, facts, fvs, skyFailed]);
+  const [sortA, setSortA] = useState<SortBy>('rank');
+  const [sortB, setSortB] = useState<SortBy>('rank');
+  const [openSky, setOpenSky] = useState<string | null>(null);
+  const raisedSorted = sortA === 'score' ? bySky(raisedAll, scores) : sortA === 'opp' ? byOpp(raisedAll, opps) : sortA === 'new' || sortA === 'old' ? sortByReported(raisedAll, (r) => r.raiseDate, sortA) : raisedAll;
+  const growthSorted = sortB === 'score' ? bySky(growthAll, scores) : sortB === 'opp' ? byOpp(growthAll, opps) : sortB === 'new' || sortB === 'old' ? sortByReported(growthAll, (r) => r.growthDate, sortB) : growthAll;
   const fvCell = (r: FocusRow) => <FvCells fv={fvs.get(r.key) ?? null} waiting={skyLoading || (!skyFailed && !!skyKey(r))} td={td} />;
   const raisedRows = allA ? raisedSorted : raisedSorted.slice(0, FOCUS_STEP);
   const growthRows = allB ? growthSorted : growthSorted.slice(0, FOCUS_STEP);
+  const [openOpp, setOpenOpp] = useState<string | null>(null);
+  const oppCell = (r: FocusRow) => <OppCells o={opps.get(r.key) ?? null} waiting={skyLoading || (!skyFailed && !!skyKey(r))} open={openOpp === r.key} onToggle={() => setOpenOpp((v) => (v === r.key ? null : r.key))} td={td} />;
+  const oppOpen = (r: FocusRow, cols: number) => { const o = openOpp === r.key ? opps.get(r.key) : null; return o ? <OppBreakdownRow key={`${r.key}-opp`} o={o} cols={cols} /> : null; };
   const skyCell = (r: FocusRow) => <SkyScoreCell s={scores.get(r.key) ?? null} waiting={skyLoading || (!skyFailed && !!skyKey(r))} open={openSky === r.key} onToggle={() => setOpenSky((v) => (v === r.key ? null : r.key))} td={td} />;
   const skyOpen = (r: FocusRow, cols: number) => {
     const s = openSky === r.key ? scores.get(r.key) : null;
@@ -200,11 +220,14 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
       <div style={{ fontSize: 12, color: R.dim }}>
         <b>Reported</b> is the date of the announcement or document the row comes from — click its header to sort newest or oldest first. <b>Fair value</b> uses the same method as the Auto-Valuation page on the company's own public figures: next-year sales or profit grown at the guided growth, times the sector's usual multiples (P/E, EV/EBITDA, P/S blended), with a bear and a bull case on hover. It needs no AI. A dash means a figure is missing or looks wrong (reason on hover); banks, lenders and insurers show a dash because they are valued on book value. “check” means upside above +150%, methods that disagree, or growth that was capped. An estimate, not advice.
       </div>
+      <div style={{ fontSize: 12, color: R.dim }}>
+        <b>Opportunity</b> is a separate score from Sky Gold: Sky Gold asks whether the business can carry the plan; Opportunity asks how much the guidance changes profit and how supportive the setup is. It is built from six parts — implied EPS growth, raise quality (broad improvement, operating leverage, revenue only, or low quality), whether the guided growth is feasible from here, fair-value upside (only when not marked “check”), how long the guidance runs, and, for USA names, guided growth against the analyst EPS estimate (India has no such source, so nothing is shown). <b>Implied EPS</b> is the profit growth the guidance points to with the share count unchanged; a “~” means a rough estimate (sales growth at today's margin). A part that is not known earns nothing, and a high score needs most parts known and strong. Click the score for every part, the old → new change, and the growth still needed in the rest of the year. Public figures only, no AI.
+      </div>
       {raisedAll.length + growthAll.length === 0 ? (
         <div style={{ fontSize: 13, color: R.dim }}>{all.length ? 'No names for this market in the current data.' : 'Reading the guidance data…'}</div>
       ) : (<>
         <FocusTable title={`A. Raised their guidance (${raisedAll.length})`} sub={`Old and new figures both read from the company's own filing, ${window} window.${smallRaises ? ` ${smallRaises} small raise${smallRaises === 1 ? '' : 's'} (under 5%, or only EPS from a small base) left out.` : ''}`}
-          head={[<RankHead key="n" sort={sortA} onReset={() => setSortA('rank')} />, 'Company', 'What was raised (old → new)', <DateHead key="d" sort={sortA} onSort={() => setSortA((v) => (v === 'new' ? 'old' : 'new'))} />, ...FV_HEAD, <ScoreHead key="s" sort={sortA} onSort={() => setSortA((v) => (v === 'score' ? 'rank' : 'score'))} />, 'Verdict']} empty="No raise of 5% or more in this window for this market.">
+          head={[<RankHead key="n" sort={sortA} onReset={() => setSortA('rank')} />, 'Company', 'What was raised (old → new)', <DateHead key="d" sort={sortA} onSort={() => setSortA((v) => (v === 'new' ? 'old' : 'new'))} />, ...FV_HEAD, 'Implied EPS', <OppHead key="o" sort={sortA} onSort={() => setSortA((v) => (v === 'opp' ? 'rank' : 'opp'))} />, <ScoreHead key="s" sort={sortA} onSort={() => setSortA((v) => (v === 'score' ? 'rank' : 'score'))} />, 'Verdict']} empty="No raise of 5% or more in this window for this market.">
           {raisedRows.map((r, i) => (<React.Fragment key={r.key}>
             <tr>
               <td style={{ ...td, color: R.dim }}>{i + 1}</td>
@@ -217,15 +240,17 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
               </td>
               <td style={{ ...td, whiteSpace: 'nowrap' }} data-reported>{reportedLabel(r.raiseDate)}</td>
               {fvCell(r)}
+              {oppCell(r)}
               {skyCell(r)}
               <VerdictCell r={r} td={td} />
             </tr>
-            {skyOpen(r, 5 + 1 + FV_COLS)}
+            {skyOpen(r, 5 + 1 + FV_COLS + OPP_COLS)}
+            {oppOpen(r, 5 + 1 + FV_COLS + OPP_COLS)}
           </React.Fragment>))}
-          {raisedAll.length > FOCUS_STEP && <MoreRow shown={raisedRows.length} total={raisedAll.length} open={allA} onToggle={() => setAllA((v) => !v)} cols={5 + 1 + FV_COLS} />}
+          {raisedAll.length > FOCUS_STEP && <MoreRow shown={raisedRows.length} total={raisedAll.length} open={allA} onToggle={() => setAllA((v) => !v)} cols={5 + 1 + FV_COLS + OPP_COLS} />}
         </FocusTable>
         <FocusTable title={`B. Guiding 30%+ growth — no raise yet (${growthAll.length})`} sub="The company's own guidance still in force. First guidance or a repeat, so there is no old figure to compare."
-          head={[<RankHead key="n" sort={sortB} onReset={() => setSortB('rank')} />, 'Company', 'Growth guided', 'Source', <DateHead key="d" sort={sortB} onSort={() => setSortB((v) => (v === 'new' ? 'old' : 'new'))} />, ...FV_HEAD, <ScoreHead key="s" sort={sortB} onSort={() => setSortB((v) => (v === 'score' ? 'rank' : 'score'))} />, 'Verdict']} empty="No 30%+ growth guidance for this market.">
+          head={[<RankHead key="n" sort={sortB} onReset={() => setSortB('rank')} />, 'Company', 'Growth guided', 'Source', <DateHead key="d" sort={sortB} onSort={() => setSortB((v) => (v === 'new' ? 'old' : 'new'))} />, ...FV_HEAD, 'Implied EPS', <OppHead key="o" sort={sortB} onSort={() => setSortB((v) => (v === 'opp' ? 'rank' : 'opp'))} />, <ScoreHead key="s" sort={sortB} onSort={() => setSortB((v) => (v === 'score' ? 'rank' : 'score'))} />, 'Verdict']} empty="No 30%+ growth guidance for this market.">
           {growthRows.map((r, i) => (<React.Fragment key={r.key}>
             <tr>
               <td style={{ ...td, color: R.dim }}>{i + 1}</td>
@@ -234,12 +259,14 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
               <td style={{ ...td, fontSize: 12 }}>{r.growthSource || 'Company document'}<div style={{ fontSize: 11.5, color: R.dim }}>{r.raised ? `small raise ${r.raiseDate}` : ''}</div></td>
               <td style={{ ...td, whiteSpace: 'nowrap' }} data-reported>{reportedLabel(r.growthDate)}</td>
               {fvCell(r)}
+              {oppCell(r)}
               {skyCell(r)}
               <VerdictCell r={r} td={td} />
             </tr>
-            {skyOpen(r, 6 + 1 + FV_COLS)}
+            {skyOpen(r, 6 + 1 + FV_COLS + OPP_COLS)}
+            {oppOpen(r, 6 + 1 + FV_COLS + OPP_COLS)}
           </React.Fragment>))}
-          {growthAll.length > FOCUS_STEP && <MoreRow shown={growthRows.length} total={growthAll.length} open={allB} onToggle={() => setAllB((v) => !v)} cols={6 + 1 + FV_COLS} />}
+          {growthAll.length > FOCUS_STEP && <MoreRow shown={growthRows.length} total={growthAll.length} open={allB} onToggle={() => setAllB((v) => !v)} cols={6 + 1 + FV_COLS + OPP_COLS} />}
         </FocusTable>
         {heldShown.length > 0 && (
           <div data-gu-held style={{ fontSize: 12, color: R.dim, display: 'grid', gap: 2 }}>

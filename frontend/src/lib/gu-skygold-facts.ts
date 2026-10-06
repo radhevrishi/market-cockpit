@@ -34,7 +34,14 @@ export interface SkyFacts {
   /** the company's own sector / industry words (screener.in "Sector" / "Industry", Nasdaq "Sector" / "Industry") */ sector: string | null; industry: string | null;
   /** latest full-year net profit and operating profit (India ₹ Cr); USA: latest quarter × 4 ($M, net income only; no operating-profit-before-depreciation figure exists) */ patFy: number | null; opFy: number | null;
   /** borrowings on the latest balance sheet (India ₹ Cr); cash is not read, so this is gross debt */ borrowings: number | null;
+  /** zzz929 (India only, screener.in): the last quarters and last full years as printed — header ('Jun 2026', 'Mar 2026') with sales, operating profit and net profit (₹ Cr).
+   *  Used to work out how much growth is still needed in the rest of the guided year. null when the table is missing. */
+  quarters: PeriodSeries | null; years: PeriodSeries | null;
+  /** zzz929 (USA, Yahoo estimate trend): the street's EPS growth for the NEXT fiscal year over the current one (+1y estimate ÷ 0y estimate − 1), and the calendar year that next fiscal year ends in */
+  streetEpsGrowthPct: number | null; streetEpsEndYear: number | null;
 }
+/** zzz929: parallel arrays, oldest first; a figure the page does not print is null. */
+export interface PeriodSeries { labels: string[]; sales: (number | null)[]; op: (number | null)[]; pat: (number | null)[] }
 
 export const emptyFacts = (market: 'IN' | 'US', ticker: string, source: string): SkyFacts => ({
   market, ticker, source, period: null, salesYoyQ: null, patYoyQ: null, salesCagr3y: null, profitCagr3y: null, salesGrowthFy: null, opGrowthFy: null,
@@ -42,6 +49,7 @@ export const emptyFacts = (market: 'IN' | 'US', ticker: string, source: string):
   shareCountChange2y: null, promoterNow: null, promoterYearAgo: null, debtorDaysNow: null, debtorDaysPrev: null, otherIncomePctOfPbt: null,
   salesBase: null, pe: null, mcap: null, backlogGrowth: null, estimateChange: null,
   price: null, priceDate: null, sector: null, industry: null, patFy: null, opFy: null, borrowings: null,
+  quarters: null, years: null, streetEpsGrowthPct: null, streetEpsEndYear: null,
 });
 
 const fin = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -83,6 +91,17 @@ export function promoterTrend(html: string): { now: number | null; yearAgo: numb
   return { now: null, yearAgo: null };
 }
 
+/** zzz929: the last `n` dated columns of a screener.in table as a PeriodSeries (a trailing 'TTM' or blank column is skipped). null when the table or its sales row is missing. */
+export function seriesOf(t: Table | null, n: number): PeriodSeries | null {
+  if (!t) return null;
+  const L = lastDated(t);
+  const sales = row(t, 'Sales', 'Revenue'), op = row(t, 'Operating Profit', 'Financing Profit'), pat = row(t, 'Net Profit');
+  if (L < 0 || !sales) return null;
+  const from = Math.max(0, L - n + 1);
+  const cut = (r: (number | null)[] | null) => { const o: (number | null)[] = []; for (let k = from; k <= L; k++) o.push(at(r, k)); return o; };
+  return { labels: t.headers.slice(from, L + 1).map((h) => h.trim()), sales: cut(sales), op: cut(op), pat: cut(pat) };
+}
+
 /** Pure: the screener.in company page into SkyFacts. Null when the page has no quarterly table. */
 export function inFactsFromHtml(ticker: string, html: string, basis: 'consolidated' | 'standalone', url: string): SkyFacts | null {
   const q = financialsFromHtml(ticker, html, basis, url);
@@ -98,6 +117,8 @@ export function inFactsFromHtml(ticker: string, html: string, basis: 'consolidat
   const sales = row(pl, 'Sales', 'Revenue'), op = row(pl, 'Operating Profit', 'Financing Profit'), np = row(pl, 'Net Profit'), eps = row(pl, 'EPS in Rs');
   const oi = row(pl, 'Other Income'), pbt = row(pl, 'Profit before tax');
   f.salesBase = at(sales, L);
+  f.years = seriesOf(pl, 3);
+  f.quarters = seriesOf(parseSection(html, 'quarters'), 10);
   f.patFy = at(np, L); f.opFy = at(op, L);
   f.salesGrowthFy = pctChange(at(sales, L), at(sales, L - 1));
   f.opGrowthFy = pctChange(at(op, L), at(op, L - 1));
@@ -141,7 +162,7 @@ export function inFactsFromHtml(ticker: string, html: string, basis: 'consolidat
 }
 
 /** Pure: the cached SEC row (us-thesis:facts) and the estimate trend rows into SkyFacts. Null when the row has no figures. */
-export function usFactsFromRow(ticker: string, r: any, trend?: Array<{ period: string; current: number | null; d90: number | null; d60?: number | null }> | null): SkyFacts | null {
+export function usFactsFromRow(ticker: string, r: any, trend?: Array<{ period: string; current: number | null; d90: number | null; d60?: number | null; end_date?: string | null }> | null): SkyFacts | null {
   if (!r || r.source !== 'sec-xbrl') return null;
   const f = emptyFacts('US', ticker.toUpperCase(), 'SEC XBRL filings (latest quarter)');
   f.period = r.fiscal_label || r.q_end || null;
@@ -161,5 +182,10 @@ export function usFactsFromRow(ticker: string, r: any, trend?: Array<{ period: s
   const fy = (trend || []).find((x) => x?.period === '+1y') || (trend || []).find((x) => x?.period === '0y');
   const before = fy ? fin(fy.d90) ?? fin(fy.d60 ?? null) : null, now = fy ? fin(fy.current) : null;
   if (before != null && now != null && Math.abs(before) >= 0.05) f.estimateChange = r1(((now - before) / Math.abs(before)) * 100);
+  // zzz929: the street's EPS growth for the next fiscal year over the current one (needs a positive current-year estimate, so the % means something)
+  const cur = (trend || []).find((x) => x?.period === '0y'), nxt = (trend || []).find((x) => x?.period === '+1y');
+  const c0 = cur ? fin(cur.current) : null, c1 = nxt ? fin(nxt.current) : null;
+  const yr = Number(String((nxt as any)?.end_date ?? '').slice(0, 4));
+  if (c0 != null && c1 != null && c0 >= 0.05) { f.streetEpsGrowthPct = r1(((c1 - c0) / c0) * 100); f.streetEpsEndYear = Number.isFinite(yr) && yr > 1990 ? yr : null; }
   return f;
 }

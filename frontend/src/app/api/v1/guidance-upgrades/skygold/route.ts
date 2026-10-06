@@ -27,7 +27,7 @@ const MAX_PER_MARKET = 80;
 const DEADLINE_MS = 40_000;
 const TTL_OK = 24 * 3600;
 const TTL_FAIL = 6 * 3600;
-const inKey = (t: string) => `gu-skygold:in:v3:${t}`;   // zzz925: v2 — a name the old symbol-only lookup missed (BMW) is read again; zzz927: v3 — price, sector and the fair-value figures are read too
+const inKey = (t: string) => `gu-skygold:in:v4:${t}`;   // zzz925: v2 — a name the old symbol-only lookup missed (BMW) is read again; zzz927: v3 — price, sector and the fair-value figures are read too
 const slugKey = (t: string) => `gu-skygold:slug:v1:${t}`;
 const usCapKey = (t: string) => `gu-skygold:uscap:v2:${t}`;   // zzz927: v2 — also the price, sector and industry (30 min cache, so the price stays current)
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36';

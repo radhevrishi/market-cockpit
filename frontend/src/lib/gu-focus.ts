@@ -22,7 +22,10 @@ export interface FocusRow {
   growthMetric?: string | null; growthMetrics?: string[]; growthCohort?: string | null; cutDate?: string | null;
   /** zzz925: how the headline growth was obtained ('EXPLICIT' = stated by the company) and, for a worked-out growth, the amounts it came from */
   growthType?: string | null; growthDerivation?: { previousValue: number; currentLow: number; currentHigh: number; unit: string; basePeriod: string } | null;
+  /** zzz929: the old → new figures of the headline raise (metric, period, midpoints) — for the implied-profit change; null when the row has no raise */
+  raiseDetail?: RaiseDetail | null;
 }
+export interface RaiseDetail { metric: string; period: string; beforeMid: number | null; afterMid: number | null; isGrowthRate: boolean; unit: string | null; currency: string | null; periodKind: string | null; periodYears: number | null }
 export interface FocusSizeIn { caps?: { IN?: Record<string, number>; US?: Record<string, number> } | null; indiaLarge?: ReadonlySet<string> }
 /** India large cap from ₹30,000 Cr; US from $30B (Rishi's US default band). */
 export function sizeOf(market: 'IN' | 'US', ticker: string | null, s: FocusSizeIn | undefined): { size: FocusRow['size']; capText: string | null } {
@@ -73,7 +76,7 @@ function relMid(c: any): number | null {
   const b = num(c?.before?.midpoint), a = num(c?.after?.midpoint);
   return b != null && a != null && b > 0 ? Math.round(((a - b) / b) * 1000) / 10 : null;
 }
-export function raiseLine(e: GuidanceEvent): { text: string; pct: number | null; smallBaseOnly: boolean; pp: boolean; ppDelta: number | null } | null {
+export function raiseLine(e: GuidanceEvent): { text: string; pct: number | null; smallBaseOnly: boolean; pp: boolean; ppDelta: number | null; detail: RaiseDetail } | null {
   const ups = (e.changes || []).filter((c: any) => c?.direction === 'UP' && c?.before && c?.after);
   if (!ups.length) return null;
   const pctOf = (c: any) => num(c.percentageChange) ?? num(c.percentagePointChange);
@@ -95,6 +98,8 @@ export function raiseLine(e: GuidanceEvent): { text: string; pct: number | null;
     // zzz882: a growth-rate raise (25–30% → 40–50%, +17.5 pp) is sized by how much the guided growth itself rose (27.5 → 45 = +64%),
     // so India raises given as growth rates rank next to US raises given in dollars instead of sinking to the bottom
     pct: small ? null : isPp ? relMid(c) : pct, smallBaseOnly: small, pp: isPp, ppDelta: isPp ? pct : null,
+    detail: { metric: String(c.metric), period: String(c.after.period || ''), beforeMid: num(c.before?.midpoint), afterMid: num(c.after?.midpoint), isGrowthRate: !!c.after.isGrowthRate, unit: c.after.unit ?? null, currency: c.after.currency ?? null,
+      periodKind: c.after.periodKind ?? null, periodYears: num(c.after.periodYears) },
   };
 }
 
@@ -113,7 +118,7 @@ export function buildFocusList(groups: GuHighGrowthGroups | null | undefined, ev
     const l = raiseLine(e); if (!l) continue;
     const r = get(e.market === 'US' ? 'US' : 'IN', e.ticker || null, e.company || e.ticker);
     if (r.raiseDate && r.raiseDate >= e.announcement_date) continue;   // the newest raise wins
-    r.raised = l.text; r.raisePct = l.pct; r.raisePp = l.pp; r.raisePpDelta = l.ppDelta; r.smallRaise = l.smallBaseOnly || (l.pct != null && l.pct < 5); r.raiseDate = e.announcement_date; r.eventId = e.guidance_event_id;
+    r.raised = l.text; r.raisePct = l.pct; r.raisePp = l.pp; r.raisePpDelta = l.ppDelta; r.smallRaise = l.smallBaseOnly || (l.pct != null && l.pct < 5); r.raiseDate = e.announcement_date; r.eventId = e.guidance_event_id; r.raiseDetail = l.detail;
   }
   const rows: GuHgGroupRow[] = groups ? [...(groups.cohorts?.ANNUAL || []), ...(groups.cohorts?.MULTI_YEAR_CAGR || [])] : [];
   for (const g of rows) {

@@ -147,6 +147,13 @@ const PROFIT_METRICS = new Set(['PAT', 'NET_PROFIT', 'EPS', 'ADJ_EPS', 'EBITDA',
 export type GrowthClass = 'revenue' | 'profit' | 'other';
 export const growthClass = (metric: string | null | undefined): GrowthClass => (REVENUE_METRICS.has(String(metric || '')) ? 'revenue' : PROFIT_METRICS.has(String(metric || '')) ? 'profit' : 'other');
 
+/** zzz929: the one place that decides which guided growth is usable for a one-year projection (verified / derived, above zero, capped at GROWTH_CAP_PCT)
+ *  and whether it is a sales or a profit rate. gu-opportunity reads the same function, so the implied-profit math cannot drift from the fair-value math. */
+export function statedGrowth(g: FvGrowth | null | undefined): { raw: number; base: number; capped: boolean; cls: GrowthClass } | null {
+  if (!g || !fin(g.growthPct) || g.growthPct <= 0 || !(g.growthTrust === 'verified' || g.growthTrust === 'derived')) return null;
+  return { raw: g.growthPct, base: Math.min(g.growthPct, GROWTH_CAP_PCT), capped: g.growthPct > GROWTH_CAP_PCT, cls: growthClass(g.growthMetric) };
+}
+
 const none = (reason: string, currency: '₹' | '$', price: number | null, extra: Partial<FvResult> = {}): FvResult => ({
   ok: false, reason, currency, price, base: null, bear: null, bull: null, checks: [], methods: [], sectorLabel: '', sectorKnown: false, basis: null, growth: null, inputs: [], ...extra,
 });
@@ -171,8 +178,9 @@ export function fairValue(f: FvFacts | null | undefined, g: FvGrowth | null | un
   const inputs: string[] = [];
 
   // ── growth: company-stated preferred; one year forward ──────────────────────────────────────────────────────────────────
-  const stated = g && fin(g.growthPct) && g.growthPct > 0 && (g.growthTrust === 'verified' || g.growthTrust === 'derived') ? g : null;
-  const cls = stated ? growthClass(stated.growthMetric) : 'other';
+  const sg0 = statedGrowth(g);
+  const stated = sg0 ? g! : null;
+  const cls = sg0 ? sg0.cls : 'other';
   const histKnown = [f.salesGrowthFy, f.salesCagr3y].filter(fin) as number[];
   const hist = histKnown.length ? histKnown.reduce((a, b) => a + b, 0) / histKnown.length : null;
   const salesFalling = fin(f.salesGrowthFy) ? f.salesGrowthFy < 0 : fin(f.salesCagr3y) ? f.salesCagr3y < 0 : false;
@@ -181,9 +189,9 @@ export function fairValue(f: FvFacts | null | undefined, g: FvGrowth | null | un
   let useCls: GrowthClass;
   if (stated && cls !== 'other') {
     basis = 'guided'; useCls = cls;
-    const raw = stated.growthPct as number;
-    const base = Math.min(raw, GROWTH_CAP_PCT);
-    if (raw > GROWTH_CAP_PCT) checks.push(`guided growth ${r1(raw)}% capped at ${GROWTH_CAP_PCT}% for one year`);
+    const raw = sg0!.raw;
+    const base = sg0!.base;
+    if (sg0!.capped) checks.push(`guided growth ${r1(raw)}% capped at ${GROWTH_CAP_PCT}% for one year`);
     gs = { bear: r1(base * 0.5), base: r1(base), bull: r1(Math.min(base * 1.15, GROWTH_CAP_PCT)) };
     inputs.push(`growth ${r1(base)}% (${stated.growthType === 'DERIVED' || stated.growthTrust === 'derived' ? 'worked out from company numbers' : 'stated by the company'}${stated.growthCohort === 'MULTI_YEAR_CAGR' ? ', a yearly pace from a multi-year plan' : ''}), applied to ${cls === 'revenue' ? 'sales' : 'profit'} for one year; bear half of it, bull +15%`);
     if (salesFalling) checks.push('reported sales fell last year');
