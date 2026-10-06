@@ -90,7 +90,7 @@ describe('zzz799 — the page reads in full', () => {
     assert.match(tabs, /nonUsTag\(r\)/);
   });
   test('India Portfolio analytics: top contributors / loser drag go to 10', () => {
-    const india = readFileSync(join(__dirname, '..', '..', 'app', '(dashboard)', 'portfolio', 'page.tsx'), 'utf8');
+    const india = ['page.tsx', 'PortfolioAnalytics.tsx', 'PortfolioSummary.tsx', 'PortfolioRegimeExposure.tsx', 'holding-forms.tsx', 'helpers.ts', 'constants.ts', 'types.ts'].map((f) => readFileSync(join(__dirname, '..', '..', 'app', '(dashboard)', 'portfolio', f), 'utf8')).join('\n'); // zzz900 — page split into sibling modules
     assert.match(india, /const topContribs = attrSorted\.filter\(r => \(r\.pnl \|\| 0\) > 0\)\.slice\(0, 10\)/);
     assert.match(india, /const worstDrags = \[\.\.\.attrSorted\]\.reverse\(\)\.filter\(r => \(r\.pnl \|\| 0\) < 0\)\.slice\(0, 10\)/);
     assert.doesNotMatch(india, /Top 5 drove/);

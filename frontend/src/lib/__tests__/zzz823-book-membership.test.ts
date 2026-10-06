@@ -14,6 +14,7 @@ import { usCbCriteriaCheck, usPresetFilters, passesUsConvictionFilter } from '..
 import { splitOffLists } from '../catalyst/cross-view';
 
 const read = (p: string) => readFileSync(join(__dirname, '..', '..', p), 'utf8');
+const readWatchlists = () => ['page.tsx', 'ConvictionBeatsPanel.tsx', 'ConvictionTable.tsx', 'HubFilterRail.tsx', 'EIEliteTab.tsx', 'components.tsx', 'useEnrichedConvictionCards.ts', 'helpers.ts', 'constants.ts', 'types.ts'].map((f) => read(`app/(dashboard)/watchlists/${f}`)).join('\n'); // zzz900 — page split into sibling modules
 
 // A synthetic India entry that meets the whole preset on real data.
 const good = (ticker: string, over: Record<string, any> = {}) => ({
@@ -170,7 +171,7 @@ describe('zzz823 — Special Focus and 10-day counts are book + bench only', () 
     const useBook = read('lib/thesis/use-book.ts');
     assert.doesNotMatch(useBook, /readHoldingSymbols|fetchServerBook/, 'the old six-source book is gone');
     assert.match(useBook, /resolveIndiaBook\(/);
-    const wl = read('app/(dashboard)/watchlists/page.tsx');
+    const wl = readWatchlists();
     assert.match(wl, /cbCriteriaCheck\(e, filters\)/);
     assert.match(wl, /entries\.filter\(\(e\) => cbCheckOf\.get\(e\)\?\.state !== 'fail'\)/);
     assert.doesNotMatch(wl, /for \(const key of \['mc_portfolio_tickers', 'mc_portfolio_holdings_v1'\]\)/);

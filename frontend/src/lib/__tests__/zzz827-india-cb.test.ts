@@ -22,6 +22,7 @@ import { INDIA_PRESET } from '../quality-preset';
 import { driftWord } from '../india-eo-card-data';
 
 const read = (p: string) => readFileSync(join(__dirname, '..', '..', p), 'utf8');
+const readWatchlists = () => ['page.tsx', 'ConvictionBeatsPanel.tsx', 'ConvictionTable.tsx', 'HubFilterRail.tsx', 'EIEliteTab.tsx', 'components.tsx', 'useEnrichedConvictionCards.ts', 'helpers.ts', 'constants.ts', 'types.ts'].map((f) => read(`app/(dashboard)/watchlists/${f}`)).join('\n'); // zzz900 — page split into sibling modules
 const preset = cbFiltersForOwner(false);
 
 /** A synthetic entry that meets the whole preset on real, same-year data. */
@@ -176,7 +177,7 @@ describe('zzz827 — Q-TRENDS never "loading" for ever', () => {
     assert.equal(qTrendsState({ ...bare, cb_enrich_v: 377 }, true), 'not-available');
   });
   test('the card uses the rule and the fill flag clears', () => {
-    const wl = read('app/(dashboard)/watchlists/page.tsx');
+    const wl = readWatchlists();
     assert.match(wl, /qTrendsState\(e, __cbFillRunning\)/);
     assert.doesNotMatch(wl, /Q-TRENDS loading… \(auto-filling from Screener\)/);
     assert.match(wl, /finally \{ fillRunningRef\.current = false; __cbFillRunning = false; \}/);
@@ -212,7 +213,7 @@ describe('zzz827 — stale tiers re-synced from the current grading', () => {
     assert.equal(needsCbResync('v26', 'v26'), false);
     assert.match(resyncSummary([{ ticker: 'A', patch: {}, change: 'tier', from: 'BLOCKBUSTER', to: 'STRONG' }, { ticker: 'B', patch: {}, change: 'mixed', from: 'STRONG', to: 'MIXED' }], 'v26', 3, 5),
       /current grading \(v26\) \(3 of 5 filing dates read — the rest next visit\): 1 changed tier, 1 now below STRONG \(kept, labelled\)/);
-    const wl = read('app/(dashboard)/watchlists/page.tsx');
+    const wl = readWatchlists();
     assert.match(wl, /needsCbResync\(stored, GRADED_CACHE_VERSION\)/);
     assert.match(wl, /CB_RESYNC_MAX_DATES/);
     assert.match(wl, /replaceConvictionFields\(patches/);
@@ -262,7 +263,7 @@ describe('zzz827 — Portfolio Catalysts shows the whole Conviction Beats list',
     assert.equal(filtersMatchSaved({ ...FILTER_DEFAULT, ...indiaPresetFilters() }, false), true);
     assert.equal(filtersMatchSaved({ ...FILTER_DEFAULT, ...indiaPresetFilters(), d1Bucket: 2 }, false), false);
     assert.equal(filtersMatchSaved({ ...FILTER_DEFAULT }, true), true);
-    const wl = read('app/(dashboard)/watchlists/page.tsx');
+    const wl = readWatchlists();
     assert.match(wl, /writeCbTabSnapshot\(\{ tickers, savedCriteria: filtersMatchSaved\(filters, readCbPresetOptOut\(\)\)/);
     const pc = read('app/(dashboard)/portfolio-catalysts/page.tsx');
     assert.match(pc, /\['cb', `\\uD83C\\uDFC6 Conviction Beats \$\{cbRows\.length\}`/);
@@ -290,7 +291,7 @@ describe('zzz827 — words, never a 0–100 number; no buy / sell wording', () =
     assert.deepEqual([w.strength, w.drift, w.setup, w.cash], ['very high', 'weak', 'Top setup', '1.20x (FY26 full year)']);
   });
   test('the Conviction Beats tab shows no score numbers and no buy / sell labels', () => {
-    const wl = read('app/(dashboard)/watchlists/page.tsx');
+    const wl = readWatchlists();
     // The two numbers next to the tier, the QUALITY number, the table / Excel score columns.
     assert.doesNotMatch(wl, /\{entry\.composite_score\}<\/span>/);
     assert.doesNotMatch(wl, /\{pead\.score\}<\/span>/);
