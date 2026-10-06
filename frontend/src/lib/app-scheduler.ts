@@ -408,6 +408,10 @@ export const APP_JOBS: readonly AppJob[] = [
   { name: 'ai-eval', crons: ['41 3 * * 1'], timeoutMs: 6 * MIN, workflow: 'ai-eval.yml', does: 'GET /api/v1/ai-eval?run=1 (fails below precision 0.90 / recall 0.80)', run: aiEvalJob },
   { name: 'daily-research-gainers-us', crons: ['30 21 * * 1-5'], timeoutMs: 45 * MIN, workflow: 'daily-research.yml', does: 'US gainers: GET /api/v1/ai-gainers, POST /api/v1/ai-gainers/research rounds', run: (ctx) => gainersJob(ctx, 'US') },
   { name: 'daily-research-portfolio', crons: ['13 14 * * *'], timeoutMs: 45 * MIN, workflow: 'daily-research.yml', does: 'GET /api/v1/book/state, /api/v1/thesis/recent-reporters, /api/v1/india/ai-summary per reporter', run: (ctx) => portfolioJob(ctx) },
+  // zzz911 — India earnings alerts moved from Claude scheduled tasks into the app (rules only, no AI; lib/india-earnings-alert).
+  // App-only jobs (no workflow ever ran them); the manual button lives in book-watch.yml like the other owner alerts.
+  { name: 'in-earnings-alert', crons: ['27 4-16 * * 1-6'], timeoutMs: 3 * MIN, workflow: BOOK, does: 'GET /api/v1/cron/india-earnings-alert (new Blockbuster/Strong preset passers, sent once each)', run: http('GET', '/api/v1/cron/india-earnings-alert', 90_000) },
+  { name: 'in-earnings-eod', crons: ['37 15 * * 1-5'], timeoutMs: 3 * MIN, workflow: BOOK, does: 'GET /api/v1/cron/india-earnings-eod (evening check-in, always one message)', run: http('GET', '/api/v1/cron/india-earnings-eod', 90_000) },
 ];
 
 /** Workflows that keep their GitHub schedule, and why (shown by /api/v1/cron/schedule and docs/SCHEDULING.md). */

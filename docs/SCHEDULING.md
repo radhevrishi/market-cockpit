@@ -42,6 +42,8 @@ The code is in `frontend/src/lib/app-scheduler.ts` (`APP_JOBS`). `instrumentatio
 | ai-eval | `41 3 * * 1` | GET /api/v1/ai-eval?run=1. The heartbeat is marked failed when precision is below 0.90 or recall is below 0.80. | ai-eval.yml |
 | daily-research-gainers-us | `30 21 * * 1-5` | US gainers: board, then research rounds | daily-research.yml |
 | daily-research-portfolio | `13 14 * * *` | reads the Indian holdings that reported in the last 4 days | daily-research.yml |
+| in-earnings-alert (zzz911) | `27 4-16 * * 1-6` | GET /api/v1/cron/india-earnings-alert — new India Blockbuster/Strong results passing the Quality Preset (small and mid caps), each sent once, by Telegram and/or email | book-watch.yml (manual input `india-earnings-alert`) |
+| in-earnings-eod (zzz911) | `37 15 * * 1-5` | GET /api/v1/cron/india-earnings-eod — the evening check-in, always one message per weekday | book-watch.yml (manual input `india-earnings-eod`) |
 
 You can see the live schedule (last success, next run, and the state of the current slot) at `GET /api/v1/cron/schedule`. It is public and contains no secrets.
 

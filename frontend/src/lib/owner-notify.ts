@@ -111,6 +111,27 @@ export async function notifyOwnerOnce(key: string, m: NotifyMessage, ttlDays = 1
   return r;
 }
 
+/**
+ * zzz911 — one message about several items, each item sent only once. Every key is reserved first (SET NX); `build`
+ * gets only the keys this call reserved (another run may hold the rest) and returns the message, or null to send
+ * nothing. If no channel delivered, the reserved keys are released so the next run tries again.
+ * Returns null when there was nothing new.
+ */
+export async function notifyOwnerOnceMany(keys: readonly string[], build: (freshKeys: string[]) => NotifyMessage | null, ttlDays = 120): Promise<(NotifyResult & { keys: string[] }) | null> {
+  const fresh: string[] = [];
+  for (const key of keys) {
+    const ok = await kvSetNX(`${ONCE_PREFIX}:${key}`, new Date().toISOString(), Math.round(ttlDays * 86400)).catch(() => true);
+    if (ok) fresh.push(key);
+  }
+  if (!fresh.length) return null;
+  const release = () => Promise.all(fresh.map((k) => kvDel(`${ONCE_PREFIX}:${k}`).catch(() => undefined)));
+  const m = build(fresh);
+  if (!m) { await release(); return null; }
+  const r = await notifyOwner(m);
+  if (r.telegram !== 'sent' && r.email !== 'sent') await release();
+  return { ...r, keys: fresh };
+}
+
 /** Of the given keys, which have NOT been sent yet (does not reserve them). */
 export async function unsentKeys(keys: readonly string[]): Promise<string[]> {
   if (!keys.length) return [];

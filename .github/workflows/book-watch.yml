@@ -25,7 +25,7 @@ name: Book Watch
 # ----------
 
 on:
-  # zzz907: the schedule now runs INSIDE the app (frontend/src/lib/app-scheduler.ts, job(s): refresh-bench, book-watch, eo-bb-evening, user-alerts) because GitHub's cron
+  # zzz907: the schedule now runs INSIDE the app (frontend/src/lib/app-scheduler.ts, job(s): refresh-bench, book-watch, eo-bb-evening, user-alerts; zzz911: in-earnings-alert, in-earnings-eod) because GitHub's cron
   # skipped/delayed runs and every run cost paid Actions minutes (private repo). Kept for hand runs and as an emergency fallback.
   workflow_dispatch:
     inputs:
@@ -38,6 +38,8 @@ on:
           - refresh-bench
           - eo-blockbuster-alert
           - user-alerts
+          - india-earnings-alert
+          - india-earnings-eod
 
 concurrency:
   group: book-watch-${{ github.event.schedule || github.event.inputs.endpoint || 'manual' }}
@@ -68,6 +70,8 @@ jobs:
                 refresh-bench)         echo "path=/api/v1/cron/refresh-bench" >> "$GITHUB_OUTPUT"; echo "label=refresh-bench" >> "$GITHUB_OUTPUT"; echo "method=GET" >> "$GITHUB_OUTPUT" ;;
                 eo-blockbuster-alert)  echo "path=/api/bot/eo-blockbuster-alert" >> "$GITHUB_OUTPUT"; echo "label=eo-bb-manual" >> "$GITHUB_OUTPUT"; echo "method=GET" >> "$GITHUB_OUTPUT" ;;
                 user-alerts)           echo "path=/api/v1/cron/user-alerts" >> "$GITHUB_OUTPUT"; echo "label=user-alerts-manual" >> "$GITHUB_OUTPUT"; echo "method=GET" >> "$GITHUB_OUTPUT" ;;
+                india-earnings-alert)  echo "path=/api/v1/cron/india-earnings-alert" >> "$GITHUB_OUTPUT"; echo "label=in-earnings-alert" >> "$GITHUB_OUTPUT"; echo "method=GET" >> "$GITHUB_OUTPUT" ;;
+                india-earnings-eod)    echo "path=/api/v1/cron/india-earnings-eod" >> "$GITHUB_OUTPUT"; echo "label=in-earnings-eod" >> "$GITHUB_OUTPUT"; echo "method=GET" >> "$GITHUB_OUTPUT" ;;
                 *)                     echo "path=/api/v1/cron/book-watch" >> "$GITHUB_OUTPUT"; echo "label=book-watch" >> "$GITHUB_OUTPUT"; echo "method=GET" >> "$GITHUB_OUTPUT"; PREWARM="yes" ;;
               esac ;;
           esac
