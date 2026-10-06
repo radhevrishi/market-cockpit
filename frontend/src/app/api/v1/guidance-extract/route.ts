@@ -31,11 +31,11 @@ import { nextCronRun } from '@/lib/ai-verify';
 import { kvGet, kvIncrByFloat } from '@/lib/kv';
 
 // zzz915 — a DAILY spend ceiling for scheduled reading (owner, 6 Oct: the hourly runs cleared a backlog at ~$1/hour, which
-// is far above the ~$10/month the site should cost). Default $0.40 a day (≈ $12/month at most; normal days use cents).
+// is far above the ~$10/month the site should cost). Default $0.25 a day (≈ $7.50/month at most; zzz918 lowered it from $0.40 after the owner's spend check).
 // Set GUIDANCE_EXTRACT_DAILY_USD in Railway to change it. A single-document re-read (?docId=) is never blocked by it.
 function dailyCapUsd(): number {
   const v = Number(process.env.GUIDANCE_EXTRACT_DAILY_USD);
-  return Number.isFinite(v) && v >= 0 ? Math.min(v, 20) : 0.4;
+  return Number.isFinite(v) && v >= 0 ? Math.min(v, 20) : 0.25;
 }
 const dayKey = (d = new Date()) => `guidance-extract:day-usd:v1:${d.toISOString().slice(0, 10)}`;
 

@@ -3545,7 +3545,7 @@ stale heartbeats (prewarm-earnings, data-watch) investigation; removing ?secret=
   `conviction-catalyst-brief` + `portfolio-thesis-watch` (`lib/owner-briefs/`). The Claude tasks stay ON until the owner
   sets a channel and sees the app messages arrive — then disable them (ids in the zzz911–914 commit messages / §25 report).
 - zzz915 — COST: guidance reading had cost $17 in a few days (hourly $1.20 runs on a backlog). Now $0.40 a run and a
-  **$0.40 per UTC day ceiling** in `/api/v1/guidance-extract` (`GUIDANCE_EXTRACT_DAILY_USD`). Never raise without asking.
+  **$0.25 per UTC day ceiling** (zzz918; was $0.40) in `/api/v1/guidance-extract` (`GUIDANCE_EXTRACT_DAILY_USD`). Never raise without asking.
   Provider is OpenAI gpt-5-mini; spend is visible in `/api/v1/system-status` → `anthropicSpend`.
 - zzz916 — guidance coverage: the docs index was being WIPED by a timed-out read + overwrite (now meta record, lock,
   503 on suspicious empty read); intimation letters were stored as transcripts (collector now follows links + Screener.in

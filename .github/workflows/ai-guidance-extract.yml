@@ -60,7 +60,7 @@ jobs:
           BASE: ${{ secrets.CRON_BASE_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           LIMIT: ${{ github.event.inputs.limit || '40' }}
-          MAX_USD: ${{ github.event.inputs.max_usd || '0.40' }}   # zzz915: was 1.20; the route also caps each UTC day
+          MAX_USD: ${{ github.event.inputs.max_usd || '0.25' }}   # zzz918: was 0.40 (zzz915: was 1.20); the route also caps each UTC day
           MAX_MIN: ${{ github.event.inputs.max_minutes || '20' }}
           DOC_IDS: ${{ github.event.inputs.doc_ids || '' }}
         run: |
@@ -80,7 +80,7 @@ jobs:
             exit 0
           fi
           case "$LIMIT" in ''|*[!0-9]*) LIMIT=40 ;; esac
-          case "$MAX_USD" in ''|*[!0-9.]*) MAX_USD=0.40 ;; esac
+          case "$MAX_USD" in ''|*[!0-9.]*) MAX_USD=0.25 ;; esac
           case "$MAX_MIN" in ''|*[!0-9]*) MAX_MIN=20 ;; esac
           [ "$MAX_MIN" -lt 1 ] && MAX_MIN=1
           [ "$MAX_MIN" -gt 25 ] && MAX_MIN=25
