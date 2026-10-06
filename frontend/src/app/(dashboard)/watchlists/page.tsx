@@ -3047,7 +3047,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild, onShow
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <button
                 onClick={handleToggle}
-                title="Your saved screen: sales growth at least 20% · EPS growth at least 25% · PEAD (post-results drift) 40 or more · operating margin not falling · cash from operations at least half of profit (same fiscal year; not checked when the figure is missing; skipped for lenders) · market cap at least ₹3,000 Cr (your setting) · no promoter pledge (an unknown pledge is not a fail) · setup Top / Good / Watch. A missing figure is 'not checked', never a fail. Auto-applied on first visit; click to switch it off (remembered) or on again."
+                title="Your saved screen: sales growth at least 20% · EPS growth at least 25% · PEAD (post-results drift) 40 or more · operating margin not falling · operating margin 0% or more (unknown passes) · cash from operations at least half of profit (same fiscal year; not checked when the figure is missing; skipped for lenders) · market cap at least ₹3,000 Cr (your setting) · no promoter pledge (an unknown pledge is not a fail) · setup Top / Good / Watch. A missing figure is 'not checked', never a fail. Auto-applied on first visit; click to switch it off (remembered) or on again."
                 style={presetActive
                   ? chipActive('#F59E0B')
                   : { ...chipBase, border: '1px solid #F59E0B', color: '#F59E0B', fontWeight: 800 }}>
@@ -3098,7 +3098,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild, onShow
         ])}
         {/* zzz226e — absolute OPM level chips (latest quarter %) */}
         {renderChipGroup('OPM LEVEL', '#F472B6', 'opmMin', [
-          { v: 10, lbl: '≥10%' }, { v: 12, lbl: '≥12%' }, { v: 15, lbl: '≥15%' }, { v: 20, lbl: '≥20%' },
+          { v: 0, lbl: '≥0%' }, { v: 10, lbl: '≥10%' }, { v: 12, lbl: '≥12%' }, { v: 15, lbl: '≥15%' }, { v: 20, lbl: '≥20%' },
         ])}
         {/* zzz304 — CFO/PAT minimum ratio chips (earnings quality: cash conversion). */}
         {renderChipGroup('CFO/PAT MIN', '#34D399', 'cfoPatMin' as any, [

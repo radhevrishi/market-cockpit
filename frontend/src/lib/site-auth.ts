@@ -50,6 +50,8 @@ export const PROTECTED_API_PREFIXES = [
   '/api/v1/cron/trigger-screener-sync',   // starts a GitHub workflow
   '/api/v1/user-state',          // zzz883 — the owner's personal data (book, decisions, theses, ledgers)
   '/api/v1/intel-archive',
+  '/api/v1/company/',            // zzz892 — one record per company (reads the Postgres record of truth)
+  '/api/v1/mcp',                 // zzz893 — read-only data connection for Claude
   '/api/v1/ai-eval',             // zzz883 — AI golden-set evaluation (paid AI)       // zzz883 — writes events / AI extractions to Postgres
 ] as const;
 

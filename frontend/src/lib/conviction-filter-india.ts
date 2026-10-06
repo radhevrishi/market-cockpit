@@ -203,6 +203,7 @@ export const indiaPresetFilters = (floor: CbCapFloor = readCbPresetCapFloor()) =
   eps: INDIA_PRESET.eps,
   pead: INDIA_PRESET.pead,
   opmDelta: INDIA_PRESET.opmDelta,
+  opmMin: INDIA_PRESET.opmMin,   // zzz893
   cfoPatMin: INDIA_PRESET.cfoPatMin,
   mktCapMin: floor,
   mktCapMax: CB_SMALL_MID_MAX_CR,
@@ -218,6 +219,7 @@ export function isIndiaPresetActive(f: ConvFilters): boolean {
     && f.eps === INDIA_PRESET.eps
     && f.pead === INDIA_PRESET.pead
     && f.opmDelta === INDIA_PRESET.opmDelta
+    && f.opmMin === INDIA_PRESET.opmMin   // zzz893
     && f.cfoPatMin === INDIA_PRESET.cfoPatMin
     && isCapFloor(f.mktCapMin)   // zzz879 — any of the three size floors
     && f.pledgedMax === INDIA_PRESET.pledgedMax
@@ -738,7 +740,10 @@ export function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): bool
   // zzz226e — absolute OPM level threshold (latest quarter %)
   if (f.opmMin != null) {
     const o = (e as any).opm_pct;
-    if (typeof o !== 'number' || o < f.opmMin) return false;
+    // zzz893: '≥0%' (positive margin, part of the preset) lets an UNKNOWN margin through — unknown is not a loss;
+    // the higher levels still need a number, as before
+    if (typeof o !== 'number') { if (f.opmMin > 0) return false; }
+    else if (o < f.opmMin) return false;
   }
   // zzz304 — minimum CFO/PAT ratio filter.
   // zzz359 (BUG 4) — NULL-SAFE. Q1 press releases rarely bundle a cash-flow

@@ -156,7 +156,7 @@ export function hiddenReportLine(r: HiddenReport): string {
 /** The preset bar, in words (no 0–100 number, no buy / sell words). */
 export function presetBarText(capFloor: number | null = 3000): string {
   const cap = capFloor == null ? 'any market cap' : `market cap ≥₹${capFloor >= 1000 ? `${capFloor / 1000}k` : capFloor} Cr`;
-  return `Sales ≥20% · EPS ≥25% · PEAD 40 or more · margin not falling · cash ≥0.5x profit (same year) · ${cap} · no pledge · setup: Top / Good / Watch`;
+  return `Sales ≥20% · EPS ≥25% · PEAD 40 or more · margin not falling · margin ≥0% · cash ≥0.5x profit (same year) · ${cap} · no pledge · setup: Top / Good / Watch`;
 }
 
 // ─── Stale tiers: re-sync from the current graded rows ────────────────────
@@ -283,7 +283,7 @@ export interface CbTabSnapshot {
 
 /** Are the tab's live chips the owner's saved criteria (preset on, or everything off)? */
 export function filtersMatchSaved(f: ConvFilters, optedOut: boolean): boolean {
-  if (!optedOut) return isIndiaPresetActive(f) && cbActiveKeys(f).every((k) => ['sales', 'eps', 'pead', 'opmDelta', 'cfoPatMin', 'mktCapMin', 'mktCapMax', 'pledgedMax', 'verdicts'].includes(k));
+  if (!optedOut) return isIndiaPresetActive(f) && cbActiveKeys(f).every((k) => ['sales', 'eps', 'pead', 'opmDelta', 'opmMin', 'cfoPatMin', 'mktCapMin', 'mktCapMax', 'pledgedMax', 'verdicts'].includes(k));
   return cbActiveKeys(f).length === 0;
 }
 

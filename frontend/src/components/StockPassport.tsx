@@ -65,6 +65,18 @@ export default function StockPassport() {
   const [open, setOpen] = useState(false);
   const [symbol, setSymbol] = useState('');
   const [query, setQuery] = useState('');
+  // zzz892: the shared server record for this company (results, guidance, archived events, AI reads, technicals)
+  const [rec, setRec] = useState<{ summary: string[]; sections: Array<{ name: string; state: string; source: string; asOf: string | null; note?: string }> } | null>(null);
+  useEffect(() => {
+    if (!open || !symbol) { setRec(null); return; }
+    let alive = true;
+    fetch(`/api/v1/company/${encodeURIComponent(symbol)}`).then((r) => (r.ok ? r.json() : null)).then((j) => {
+      if (!alive || !j?.record) return;
+      const R = j.record;
+      setRec({ summary: R.summary || [], sections: (['results', 'guidance', 'events', 'extractions', 'technicals'] as const).map((k) => ({ name: k, state: R[k]?.state, source: R[k]?.source, asOf: R[k]?.asOf ?? null, note: R[k]?.note })) });
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [open, symbol]);
 
   useEffect(() => {
     const onOpen = (e: Event) => {
@@ -236,6 +248,17 @@ export default function StockPassport() {
                     {c}
                   </span>
                 ))}
+              </div>
+            )}
+
+            {/* zzz892 — what the server knows about this company, from the one shared record */}
+            {rec && (
+              <div style={{ ...cardStyle, marginTop: 14 }}>
+                <div style={cardTitleStyle}>🗂 Company record (server, shared by every tab)</div>
+                {rec.summary.map((l, i) => <div key={i} style={{ fontSize: 11, color: 'var(--mc-text-2)', padding: '1px 0' }}>{l}</div>)}
+                <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginTop: 4 }} title={rec.sections.map((x) => `${x.name}: ${x.state} — ${x.source}${x.asOf ? ` (as of ${x.asOf.slice(0, 16).replace('T', ' ')})` : ''}${x.note ? ` · ${x.note}` : ''}`).join('\n')}>
+                  {rec.sections.map((x) => `${x.name} ${x.state === 'OK' ? '✓' : x.state === 'NOT_FOUND' ? '—' : '⚠'}`).join(' · ')}
+                </div>
               </div>
             )}
 

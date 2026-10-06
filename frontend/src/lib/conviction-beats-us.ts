@@ -2218,7 +2218,7 @@ export function usPresetFilters(): UsConvFilters {
   return {
     ...US_FILTER_DEFAULT,
     sales: US_PRESET.sales, eps: US_PRESET.eps, pead: US_PRESET.pead,
-    opmDelta: US_PRESET.opmDelta, cfoPatMin: US_PRESET.cfoPatMin,
+    opmDelta: US_PRESET.opmDelta, cfoPatMin: US_PRESET.cfoPatMin, opmMin: 0,   // zzz893 — positive operating margin
     mktCapMin: US_PRESET.mktCapMinMusd, verdicts: [...US_PRESET.verdicts],
     aboveMa50: US_PRESET.requireAboveMa50, aboveMa200: US_PRESET.requireAboveMa200,
   };
@@ -2226,7 +2226,7 @@ export function usPresetFilters(): UsConvFilters {
 
 export function isUsPresetActive(f: UsConvFilters): boolean {
   return f.sales === US_PRESET.sales && f.eps === US_PRESET.eps && f.pead === US_PRESET.pead
-    && f.opmDelta === US_PRESET.opmDelta && f.cfoPatMin === US_PRESET.cfoPatMin
+    && f.opmDelta === US_PRESET.opmDelta && f.cfoPatMin === US_PRESET.cfoPatMin && f.opmMin === 0
     && f.mktCapMin === US_PRESET.mktCapMinMusd
     && !!f.aboveMa50 === US_PRESET.requireAboveMa50 && !!f.aboveMa200 === US_PRESET.requireAboveMa200
     && JSON.stringify((f.verdicts || []).slice().sort()) === JSON.stringify(['BUY', 'STRONG BUY', 'WATCH']);
@@ -2312,7 +2312,9 @@ export function passesUsConvictionFilter(e: UsConvictionEntry, f: UsConvFilters,
     if (sales > 0 && !(pat / sales >= f.opLev)) return false;
   }
   if (f.opmMin != null) {
-    if (num(e.opm_pct) == null || (e.opm_pct as number) < f.opmMin) return false;
+    // zzz893: '≥0%' lets an unknown margin through (unknown is not a loss); higher levels need a number
+    if (num(e.opm_pct) == null) { if (f.opmMin > 0) return false; }
+    else if ((e.opm_pct as number) < f.opmMin) return false;
   }
   if (f.opmDelta != null) {
     if (num(e.opm_pct) == null || num(e.opm_prev_pct) == null) return false;

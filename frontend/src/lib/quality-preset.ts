@@ -24,6 +24,7 @@ export const INDIA_PRESET = {
   eps: 25,
   pead: 40,        // zzz659 — was 60. PEAD is a drift proxy, not a quality score.
   opmDelta: 0,
+  opmMin: 0,       // zzz893 — operating margin must be positive (OPM LEVEL ≥0%); an unknown margin passes
   cfoPatMin: 0.5,
   mktCapMin: 3000, // ₹ Cr
   pledgedMax: 0,   // zzz360 — a null pledge passes; this gates KNOWN pledges.
@@ -78,6 +79,8 @@ export function indiaPresetCheck(r: any): { pass: boolean; reasons: string[] } {
     const d = r.opm_pct - r.opm_prev_pct;
     if (d < INDIA_PRESET.opmDelta) reasons.push(`operating margin fell ${fmt(Math.abs(d))} points`);
   }
+
+  if (typeof r.opm_pct === 'number' && r.opm_pct < INDIA_PRESET.opmMin) reasons.push(`operating margin is negative (${fmt(r.opm_pct)}%)`);
 
   const cfo = r.cfo_to_pat_ratio;
   if (typeof cfo === 'number' && cfo < INDIA_PRESET.cfoPatMin) reasons.push(`cash from operations is ${fmt(cfo)}x profit (needs ${INDIA_PRESET.cfoPatMin}x)`);
