@@ -1,0 +1,39 @@
+name: AI evaluation (weekly + on demand)
+
+# zzz883 — the guidance extractor is scored against a fixed, hand-checked golden set (frontend/src/lib/ai-eval.ts):
+# precision, recall, false-positive rate, cost and the prompt version. Fails (red) when precision < 0.90 or recall < 0.80,
+# so a prompt / model change that makes the extractor worse is noticed. Cost about $0.03 a run.
+on:
+  schedule:
+    - cron: '41 3 * * 1'
+  workflow_dispatch: {}
+
+concurrency:
+  group: ai-eval
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Run the golden set
+        env:
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          curl -fsS --max-time 300 -H "x-cron-secret: $CRON_SECRET" "$BASE/api/v1/ai-eval?run=1" -o eval.json
+          python3 - <<'PY'
+          import json, sys
+          d = json.load(open('eval.json'))
+          print(f"prompt {d.get('promptVersion')} · model {d.get('model')} · precision {d.get('precision')} · recall {d.get('recall')} · false-positive rate {d.get('falsePositiveRate')} · cost ${d.get('costUsd')} · avg {d.get('avgMs')} ms")
+          for c in d.get('cases', []):
+              print(f"  {c['id']:16s} {c['status']:12s} expected {c['expected']} found {c['found']} TP {c['truePos']} FP {c['falsePos']} FN {c['falseNeg']}")
+          p, r = d.get('precision'), d.get('recall')
+          if p is None or r is None or p < 0.90 or r < 0.80:
+              print('::error::guidance extractor below the bar (precision ≥ 0.90, recall ≥ 0.80)'); sys.exit(1)
+          PY
