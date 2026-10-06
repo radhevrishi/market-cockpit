@@ -662,6 +662,7 @@ export default function WatchlistsPage() {
   // pull last 14 days of graded data and sync any BB/ST. Dedupe logic in
   // syncFromEarningsOps handles same-filing upserts safely.
   const scanRef = useRef<null | (() => Promise<void>)>(null);
+  const scannedDaysRef = useRef<Set<string>>(new Set());   // zzz883: past days already read in this visit
   useEffect(() => {
     let cancelled = false;
     const scan = async () => {
@@ -674,12 +675,23 @@ export default function WatchlistsPage() {
         dates.push(d.toISOString().slice(0, 10));
       }
       const entries: Array<any> = [];
-      for (const dstr of dates) {
+      // zzz883 speed: a finished day never changes, so each past day is read once per visit (was every 10 minutes, one by one);
+      // the last 2 days are re-read; reads go 6 at a time; nothing runs while the tab is hidden. The server bench (/api/v1/bench,
+      // merged below) stays the complete record.
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      const recent = new Set(dates.slice(0, 2));
+      const todo = dates.filter((d) => recent.has(d) || !scannedDaysRef.current.has(d));
+      const payloads: Array<{ dstr: string; j: any }> = [];
+      for (let i = 0; i < todo.length; i += 6) {
+        if (cancelled) return;
+        const got = await Promise.all(todo.slice(i, i + 6).map(async (dstr) => {
+          try { const r = await fetch('/api/v1/earnings/graded?date=' + dstr); if (!r.ok) return null; return { dstr, j: await r.json() }; } catch { return null; }
+        }));
+        for (const g of got) if (g) { payloads.push(g); scannedDaysRef.current.add(g.dstr); }
+      }
+      for (const { j } of payloads) {
         if (cancelled) return;
         try {
-          const r = await fetch('/api/v1/earnings/graded?date=' + dstr);
-          if (!r.ok) continue;
-          const j: any = await r.json();
           for (const tier of ['BLOCKBUSTER', 'STRONG'] as const) {
             for (const c of (j?.by_tier?.[tier] || [])) {
               let qParsed: 'Q1' | 'Q2' | 'Q3' | 'Q4' | undefined;
@@ -724,7 +736,7 @@ export default function WatchlistsPage() {
     };
     scanRef.current = scan;
     scan();
-    const interval = setInterval(scan, 10 * 60 * 1000);
+    const interval = setInterval(scan, 30 * 60 * 1000);   // zzz883: 30 min (was 10); only the last 2 days are re-read
     return () => { cancelled = true; scanRef.current = null; clearInterval(interval); };
   }, []);
 

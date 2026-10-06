@@ -219,14 +219,18 @@ export default function UsPortfolioCatalystsPage() {
       const tickers = secKey.split(',').filter(Boolean);
       const rows: UsFilingMeta[] = [];
       let failed = 0; let error: string | null = null;
-      for (let i = 0; i < tickers.length && !dead; i += 60) {
+      // zzz883 speed: two 60-name slices at a time (was one after another); the server keeps SEC's rate limit per call
+      const one = async (i: number) => {
         try {
           const r = await fetch('/api/v1/catalyst/us-filings', { method: 'POST', headers: { 'content-type': 'application/json' }, cache: 'no-store', body: JSON.stringify({ tickers: tickers.slice(i, i + 60), days: 10 }) });
-          if (!r.ok) { error = `the SEC filing list answered HTTP ${r.status}`; failed += Math.min(60, tickers.length - i); continue; }
+          if (!r.ok) { error = `the SEC filing list answered HTTP ${r.status}`; failed += Math.min(60, tickers.length - i); return; }
           const j = await r.json();
           rows.push(...(Array.isArray(j?.filings) ? j.filings : []));
           failed += (Array.isArray(j?.failed) ? j.failed.filter((f: any) => !/not an SEC filer/.test(String(f?.error || ''))).length : 0);
         } catch (e: any) { error = `the SEC filing list could not be reached (${String(e?.message || e).slice(0, 80)})`; failed += Math.min(60, tickers.length - i); }
+      };
+      for (let i = 0; i < tickers.length && !dead; i += 120) {
+        await Promise.all([one(i), ...(i + 60 < tickers.length ? [one(i + 60)] : [])]);
         if (!dead) setSecRows({ rows: [...rows], failed, error });
       }
     })();

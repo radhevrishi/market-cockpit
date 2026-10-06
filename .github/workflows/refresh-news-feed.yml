@@ -12,6 +12,11 @@ on:
     - cron: '0 * * * *'   # top of every hour (UTC)
   workflow_dispatch: {}
 
+# zzz883: one run at a time — a slow run is never overlapped by the next scheduled one
+concurrency:
+  group: refresh-news-feed
+  cancel-in-progress: false
+
 jobs:
   refresh:
     runs-on: ubuntu-latest

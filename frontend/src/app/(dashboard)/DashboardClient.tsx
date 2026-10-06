@@ -119,7 +119,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/concall-intel?tab=radar', label: 'Transformation Radar', icon: <Rocket className="w-4 h-4" /> },
       { href: '/guidance-extractor',  label: 'Guidance Extractor',   icon: <BarChart3 className="w-4 h-4" /> },
       { href: '/company-intel',  label: 'Company Intelligence', icon: <BookMarked className="w-4 h-4" /> },
-      { href: '/ai-desk',        label: 'AI Desk',              icon: <Microscope className="w-4 h-4" /> },
+      // zzz883: 'AI Desk' was listed twice — it lives under Earnings as 'AI Research Desk'
     ],
   },
   {

@@ -33,6 +33,11 @@ on:
     - cron: '20 2 * * *'     # 02:20 UTC daily — after US close, before IST open
   workflow_dispatch: {}
 
+# zzz883: one run at a time — a slow run is never overlapped by the next scheduled one
+concurrency:
+  group: score-ai-ledger
+  cancel-in-progress: false
+
 jobs:
   mark:
     runs-on: ubuntu-latest

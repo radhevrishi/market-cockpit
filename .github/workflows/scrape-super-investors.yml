@@ -23,6 +23,11 @@ on:
         required: false
         default: '24'
 
+# zzz883: one run at a time — a slow run is never overlapped by the next scheduled one
+concurrency:
+  group: scrape-super-investors
+  cancel-in-progress: false
+
 jobs:
   scrape:
     runs-on: ubuntu-latest

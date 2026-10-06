@@ -7953,9 +7953,11 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       // Per-file source records for EACH tab (with proper per-file row counts)
       const usaSourcesPerFile: TechSource[] = [];
       const indSourcesPerFile: TechSource[] = [];
+      // zzz883 speed: all CSV files are requested at once (they were fetched one after another)
+      const csvFetches = new Map<string, Promise<Response>>(files.map((f: any) => [f.name, fetch(`/data/tradingview/${f.name}`, { cache: 'no-store' })]));
       for (const f of files) {
         try {
-          const csvResp = await fetch(`/data/tradingview/${f.name}`, { cache: 'no-store' });
+          const csvResp = await csvFetches.get(f.name)!;
           const label = `📡 ${f.displayName || f.name}`;
           if (!csvResp.ok) {
             const w = `HTTP ${csvResp.status}`;

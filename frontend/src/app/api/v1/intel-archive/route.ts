@@ -4,6 +4,8 @@
 // PROTECTED (service key / login). Called hourly by .github/workflows/refresh-guidance-upgrades.yml after the page is warmed.
 import { NextRequest, NextResponse } from 'next/server';
 import { getPool } from '@/lib/db';
+import { internalBase } from '@/lib/internal-base';
+import { railwaySelfFetch } from '@/lib/railway-self-fetch';
 import { ensureSchema } from '@/lib/db-migrate';
 import { listExtractResults } from '@/lib/guidance-extract-reader';
 import { archiveRowsFromEvents, extractionRow } from '@/lib/intel-archive';
@@ -16,11 +18,11 @@ export async function POST(req: NextRequest) {
   if (!getPool()) return NextResponse.json({ ok: false, error: 'Postgres not configured (DATABASE_URL)' }, { status: 503 });
   if (!(await ensureSchema())) return NextResponse.json({ ok: false, error: 'migrations failed — see server log' }, { status: 503 });
   const pool = getPool()!;
-  const base = `${req.nextUrl.protocol}//${req.nextUrl.host}`;
+  const base = internalBase(req);   // the app's own address inside Railway (the public host is not reachable from inside)
   const out = { events: 0, eventsNew: 0, extractions: 0, extractionsNew: 0, errors: [] as string[] };
   // 1. guidance events (the cached 120-day answer; the warm-up step just built it)
   try {
-    const r = await fetch(`${base}/api/v1/guidance-upgrades?window=120D&market=ALL`, { cache: 'no-store', signal: AbortSignal.timeout(60_000) });
+    const r = await railwaySelfFetch(`${base}/api/v1/guidance-upgrades?window=120D&market=ALL`, { cache: 'no-store', signal: AbortSignal.timeout(60_000) });
     if (!r.ok) throw new Error(`guidance-upgrades HTTP ${r.status}`);
     const j = await r.json();
     const rows = archiveRowsFromEvents(Array.isArray(j?.events) ? j.events : []);

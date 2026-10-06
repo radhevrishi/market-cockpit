@@ -1,3 +1,0 @@
-"""
-Celery workers and tasks.
-"""

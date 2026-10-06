@@ -1,3 +1,0 @@
-"""
-Pydantic request/response schemas.
-"""

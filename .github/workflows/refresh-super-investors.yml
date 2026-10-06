@@ -17,6 +17,11 @@ on:
         required: false
         default: '0'
 
+# zzz883: one run at a time — a slow run is never overlapped by the next scheduled one
+concurrency:
+  group: refresh-super-investors
+  cancel-in-progress: false
+
 jobs:
   refresh:
     runs-on: ubuntu-latest

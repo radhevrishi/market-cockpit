@@ -1,3 +1,10 @@
+# Market Cockpit
+
+> **zzz883 (Oct 2026):** the app is ONE Next.js service (`frontend/`) deployed on Railway from `frontend/Dockerfile`.
+> The old FastAPI `backend/`, `worker/`, `valuation-engine/`, Docker Compose and launcher scripts were never deployed and have been
+> removed (they stay in git history). Local run: `cd frontend && npm ci --legacy-peer-deps && npm run dev`.
+> Checks before a change ships: `node scripts/run-tests.mjs`, `node scripts/tsc-gate.mjs`, `npx next build` (CI runs all three).
+
 # 📈 Market Cockpit
 
 > Bloomberg-lite financial dashboard for India + US equity investors — built with FastAPI, Next.js 14, and SQLite.

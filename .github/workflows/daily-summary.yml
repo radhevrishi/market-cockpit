@@ -9,6 +9,11 @@ on:
     - cron: '30 16 * * 1-5'    # Mon-Fri 16:30 UTC = 22:00 IST
   workflow_dispatch: {}
 
+# zzz883: one run at a time — a slow run is never overlapped by the next scheduled one
+concurrency:
+  group: daily-summary
+  cancel-in-progress: false
+
 jobs:
   digest:
     runs-on: ubuntu-latest
