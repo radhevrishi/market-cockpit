@@ -12,17 +12,20 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
-import { kvGet, kvSet } from '@/lib/kv';
+import { kvGet, kvSet, kvMGet, kvExistsMany } from '@/lib/kv';
+import { scanGradedDays, mergePartial, boundEntries } from '@/lib/bench-scan';
 import { verifyCronSecret } from '@/lib/verifyAuth';
 import { gradedKeyCandidates, GRADED_CACHE_VERSION } from '@/lib/graded-cache-key';
 import { withCurrentIndiaRules } from '@/lib/india-regrade';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 120;  // zzz421 — 60-day scan needs a little more headroom
+export const maxDuration = 120;
 
 const BENCH_KEY = 'bench:server:v1';
 const BENCH_TTL_S = 60 * 60 * 24 * 7; // ~7 days
+const SCAN_DEADLINE_MS = 45_000;   // zzz919 — stop reading well inside every caller's timeout (60 s book-watch, 90 s scheduler)
+const BENCH_MAX_BYTES = 6 * 1024 * 1024;   // zzz919 — kvSet's remote cap is 8 MB; stay clear of it
 const SCAN_DAYS = 60;  // zzz421 — was 10; hold the whole earnings season, not just last 10 days
 
 type Tier = 'BLOCKBUSTER' | 'STRONG' | 'MIXED' | 'AVOID';
@@ -73,93 +76,82 @@ export async function GET(req: Request) {
     );
   }
 
-  // Iterate newest date first so first-write-wins yields the newest filing
-  // per ticker.
+  // zzz919 — batched scan (see lib/bench-scan.ts): one EXISTS pipeline over all
+  // candidate keys, then MGET of only the newest existing namespace per day,
+  // newest day first, under a deadline. The old loop did ~2000 sequential
+  // round trips (60 days x 17 namespaces, 2 per miss) and was cut at 90 s -> 502.
+  //
+  // Rules kept from zzz665/zzz665c/zzz819: the current namespace wins; an
+  // EMPTY payload is an absence, not an answer (falls to an older namespace);
+  // a legacy day is regraded in memory under the current rules.
+  const started = Date.now();
+  const deadlineAt = started + SCAN_DEADLINE_MS;
+  const rowCount = (p: GradedPayload | null): number =>
+    !p?.by_tier ? 0 : (Object.values(p.by_tier) as any[][])
+      .reduce((n, v) => n + (Array.isArray(v) ? v.length : 0), 0);
+  const dates: string[] = [];
+  for (let offset = 0; offset < SCAN_DAYS; offset++) dates.push(istDateStr(offset));   // newest first
+
+  const scan = await scanGradedDays(dates, {
+    candidates: gradedKeyCandidates,
+    exists: kvExistsMany,
+    mget: (keys) => kvMGet<GradedPayload>(keys),
+    rowCount,
+    adopt: (hit, key) => withCurrentIndiaRules(hit, key),
+    isCurrent: (key) => key.startsWith(`graded:${GRADED_CACHE_VERSION}:`),
+    now: Date.now,
+  }, deadlineAt);
+
   const byTicker = new Map<string, any>();  // zzz427 — carry full graded card
   let blockbuster = 0;
   let strong = 0;
-  let scannedDays = 0;
   // How many days could only be answered by an ABANDONED cache namespace. A
   // healthy steady state is 0; a high number right after a version bump is
   // expected and should fall to 0 as the new engine re-grades each session.
-  let legacyDays = 0;
+  const legacyDays = scan.days.filter((d) => d.legacy).length;
+  const scannedDays = scan.scannedDays;
 
-  for (let offset = 0; offset < SCAN_DAYS; offset++) {
-    const dateStr = istDateStr(offset);
-    // zzz665 — this read used a HARD-CODED 'graded:v10:' while the graded route
-    // had moved on to v14. A kvGet on a key nobody writes returns null, and
-    // null here means "nothing filed that day", so the cron rebuilt the bench
-    // from the previous generation of cached sessions and reported success
-    // every night. The key now comes from ONE definition both sides import.
-    //
-    // The legacy fallback is deliberate: on the day a version is bumped nothing
-    // has been written to the new namespace yet, and without it the bench would
-    // empty itself overnight. Current key always wins; older ones only answer
-    // for a day the current engine has not graded yet.
-    // zzz665c — AN EMPTY PAYLOAD IS NOT AN ANSWER, IT IS AN ABSENCE.
-    //
-    // Re-grading a date more than ~14 days old legitimately returns ZERO rows:
-    // the hub only carries the current month and the live-NSE augment window has
-    // closed, so the discovery sources no longer know that day had filings. The
-    // route then caches that empty result with a long TTL, because for a settled
-    // day "nothing filed" is normally a fact worth remembering.
-    //
-    // Combine those two and a version bump becomes destructive. The first run
-    // after a bump finds the new namespace cold, re-grades the whole window,
-    // gets empty for every old date, and an earlier version of this loop would
-    // have accepted those empties because `by_tier` EXISTS — it is just an
-    // object full of empty arrays. The bench would have been wiped of every
-    // name older than a fortnight, permanently, and the cron would have
-    // reported success while doing it.
-    //
-    // So a payload only wins if it actually CONTAINS something. A genuinely
-    // empty day falls through to the older namespaces, finds nothing there
-    // either, and is skipped — which costs nothing and is the same outcome.
-    const rowCount = (p: GradedPayload | null): number =>
-      !p?.by_tier ? 0 : (Object.values(p.by_tier) as any[][])
-        .reduce((n, v) => n + (Array.isArray(v) ? v.length : 0), 0);
-
-    let payload: GradedPayload | null = null;
-    let usedLegacy = false;
-    for (const key of gradedKeyCandidates(dateStr)) {
-      try {
-        const hit = await kvGet<GradedPayload>(key);
-        if (rowCount(hit) > 0) {
-          // zzz819 — a legacy day is regraded in memory under the current
-          // rules, so the bench never carries a verdict the engine has retired.
-          payload = withCurrentIndiaRules(hit, key);
-          if (!key.startsWith(`graded:${GRADED_CACHE_VERSION}:`)) usedLegacy = true;
-          break;
-        }
-      } catch { /* try the next namespace */ }
-    }
-    if (usedLegacy) legacyDays++;
-    scannedDays++;
-    if (!payload || !payload.by_tier) continue;
-
-    const bb = Array.isArray(payload.by_tier.BLOCKBUSTER) ? payload.by_tier.BLOCKBUSTER : [];
-    const st = Array.isArray(payload.by_tier.STRONG) ? payload.by_tier.STRONG : [];
+  for (const day of scan.days) {   // newest first → first-write-wins keeps the newest filing per ticker
+    const bt = day.payload?.by_tier;
+    if (!bt) continue;
+    const bb = Array.isArray(bt.BLOCKBUSTER) ? bt.BLOCKBUSTER : [];
+    const st = Array.isArray(bt.STRONG) ? bt.STRONG : [];
     blockbuster += bb.length;
     strong += st.length;
-
     for (const row of [...bb, ...st]) {
       if (!row || !row.ticker) continue;
-      const key = row.ticker;
-      if (byTicker.has(key)) continue; // newest date already won (first-write-wins)
-      // zzz427 — store the FULL graded card so bench cards render complete
-      // (financials, OPM, PE, drift, quality flags) without any client rebuild.
-      byTicker.set(key, { ...(row as any), seen_date: dateStr });
+      if (byTicker.has(row.ticker)) continue;
+      // zzz427 — store the FULL graded card so bench cards render complete.
+      byTicker.set(row.ticker, { ...(row as any), seen_date: day.date });
     }
   }
 
-  const entries = Array.from(byTicker.values());
+  let entries: any[] = Array.from(byTicker.values());
+
+  // A scan that ran out of time must not SHRINK the bench: keep the previous
+  // entries for the days it never reached.
+  if (scan.partial) {
+    const reachedDates = dates.filter((d) => !scan.skipped.includes(d));
+    const oldestReached = reachedDates.length ? reachedDates[reachedDates.length - 1] : null;
+    let prior: any[] = [];
+    try { prior = (await kvGet<any>(BENCH_KEY))?.entries ?? []; } catch { /* keep none */ }
+    entries = mergePartial(entries, Array.isArray(prior) ? prior : [], oldestReached);
+  }
+
+  // Bounded payload: full cards for a whole season can pass what KV should
+  // carry; drop the OLDEST names, never the newest, and say so.
+  const bounded = boundEntries(entries, BENCH_MAX_BYTES);
+  entries = bounded.entries;
   const updatedAt = new Date().toISOString();
 
-  await kvSet(
-    BENCH_KEY,
-    { updatedAt, count: entries.length, entries },
-    BENCH_TTL_S,
-  );
+  // Do not overwrite a good bench with nothing because the scan found nothing in time.
+  if (entries.length > 0 || !scan.partial) {
+    await kvSet(
+      BENCH_KEY,
+      { updatedAt, count: entries.length, entries },
+      BENCH_TTL_S,
+    );
+  }
 
   return NextResponse.json({
     ok: true,
@@ -169,6 +161,12 @@ export async function GET(req: Request) {
       ? `${legacyDays} of ${scannedDays} day(s) were only available under an older cache namespace. Expected right after a version bump; it should fall to 0 as those sessions are re-graded.`
       : undefined,
     scannedDays,
+    partial: scan.partial,
+    skipped_days: scan.skipped.length,
+    partial_note: scan.partial ? `Scan stopped at ${SCAN_DEADLINE_MS / 1000}s; ${scan.skipped.length} oldest day(s) not reached — previous bench kept for them. Next run continues.` : undefined,
+    trimmed: bounded.trimmed,
+    mget_calls: scan.mgetCalls,
+    elapsed_ms: Date.now() - started,
     blockbuster,
     strong,
     total: entries.length,

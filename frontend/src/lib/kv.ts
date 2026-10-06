@@ -274,3 +274,34 @@ export async function kvSwap(tempKey: string, prodKey: string, ttlSeconds?: numb
 export function isRedisAvailable(): boolean {
   return getRedis() !== null;
 }
+
+/**
+ * zzz919 — EXISTS for many keys in Upstash pipeline calls (chunks of 500).
+ * Never reads a payload, so it is cheap even for megabyte values, and a
+ * missing key costs one pipeline slot instead of two round trips (kvGet
+ * retries a miss over raw REST). Returns null when the REST backend is not
+ * configured or any chunk fails — callers then fall back to reading.
+ */
+export async function kvExistsMany(keys: string[]): Promise<boolean[] | null> {
+  if (keys.length === 0) return [];
+  const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+  if (!url || !token) return null;
+  const out: boolean[] = [];
+  for (let i = 0; i < keys.length; i += 500) {
+    const chunk = keys.slice(i, i + 500);
+    try {
+      const r = await fetch(`${url.replace(/\/+$/, '')}/pipeline`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(chunk.map((k) => ['EXISTS', k])),
+        cache: 'no-store', signal: AbortSignal.timeout(15_000),
+      });
+      if (!r.ok) return null;
+      const j: any = await r.json();
+      if (!Array.isArray(j) || j.length !== chunk.length) return null;
+      for (const x of j) out.push(Number(x?.result) > 0);
+    } catch { return null; }
+  }
+  return out;
+}

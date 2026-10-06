@@ -243,7 +243,7 @@ describe('7 · coverage: honest reasons, last-checked, bounded re-check', () => 
     assert.match(cron, /RECHECK_BUDGET = 2/);
     assert.match(cron, /graded:recheck-lock:/);
     assert.match(cron, /recheckableDrops\(j\?\._dropped\)/);
-    assert.match(cron, /Date\.now\(\) - start > DEADLINE_MS/);
+    assert.match(cron, /!budget\.canStart\(MIN_STEP_MS\)/);   // zzz919: the run budget replaced the fixed DEADLINE_MS
   });
   test('stale (previous-rules) rows say RS / Stage were not recorded', () => {
     assert.equal(notRecordedNote({ _engine_stale: true, rs_rating: null, stage: null }), 'RS & Stage not recorded (older grading rules)');

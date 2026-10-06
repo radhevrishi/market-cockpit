@@ -17,7 +17,7 @@
 //
 // RECENT dates (<= RECENT_DAYS) always get force + fill (freshest intraday).
 // OLDER dates get a cheap health check and are healed or filled only when
-// needed, newest-first, capped by HEAL_BUDGET / FILL_BUDGET and DEADLINE_MS so
+// needed, newest-first, capped by HEAL_BUDGET / FILL_BUDGET and the run Budget (zzz919) so
 // the job always finishes inside its 5-min window. Past days are immutable, so
 // once complete they're skipped forever — the window converges then maintains.
 // ═══════════════════════════════════════════════════════════════════════════
@@ -29,6 +29,7 @@ import { kvGet, kvSet } from '@/lib/kv';
 import { recheckableDrops, unconfirmedRows, missingDetailCounts, pickStaleRebuild, cashRefetchRows } from '@/lib/india-eo-card-data';  // zzz820 / zzz822 / zzz826
 import { GRADED_CACHE_VERSION, GRADED_CACHE_LEGACY } from '@/lib/graded-cache-key';
 import { INDIA_REGRADABLE_FROM } from '@/lib/india-regrade';
+import { Budget, orderOffsets, nextCursor, MIN_STEP_MS } from '@/lib/prewarm-budget';   // zzz919
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -38,7 +39,7 @@ const WINDOW_DAYS = 60;   // zzz822 — was 45; the page's 60-session window rea
 const RECENT_DAYS = 2;
 const HEAL_BUDGET = 5;         // max force-rebuilds (missing cards) per run
 const FILL_BUDGET = 5;         // max refreshMissing passes (missing detail) per run
-const DEADLINE_MS = 250_000;   // stop starting new work after ~4m10s
+const CURSOR_KEY = 'prewarm-earnings:cursor:v1';   // zzz919 — where the older-date rotation resumes
 const UNDERCOUNT_RATIO = 0.6;
 const MIN_RAW = 8;
 // zzz822 — was 8: a date with 1–7 cards missing numbers was never refilled
@@ -118,6 +119,9 @@ export async function GET(req: Request) {
   const healBudgetMax = Math.max(0, parseInt(searchParams.get('heal') || String(HEAL_BUDGET), 10));
   const fillBudgetMax = Math.max(0, parseInt(searchParams.get('fill') || String(FILL_BUDGET), 10));
   const start = Date.now();
+  // zzz919 — ONE budget for the whole run. The scheduler allows 240 s; the old
+  // run could not know that and was cut mid-step. Every step below asks it.
+  const budget = new Budget(start);
   const today = new Date();
 
   const results: any[] = [];
@@ -126,21 +130,18 @@ export async function GET(req: Request) {
   const recheckBudgetMax = Math.max(0, parseInt(searchParams.get('recheck') || String(RECHECK_BUDGET), 10) || 0);
   let budgetStopped = false;
 
-  // zzz429 — rebuild the server Conviction Beats bench FIRST, before the heal/fill
-  // loop. Previously this ran AFTER the loop, but the loop runs to DEADLINE_MS
-  // (~4m10s) and the bench call's 90s timeout then overran the 300s function cap on
-  // later runs — so the bench blob went stale (stuck at the first run of the day and
-  // never picking up zzz427's full-card format). Running it first guarantees it
-  // executes every run. It reads current graded KV; that day's own heal improves the
-  // NEXT run's bench, which is fine — the window converges either way.
+  // zzz429 — rebuild the server Conviction Beats bench FIRST (it is now a
+  // batched scan that finishes in seconds — zzz919). Timeout is bounded by the
+  // run budget, not a fixed 110 s.
   let benchRefreshed: any = null;
   try {
     const bs = expected ? `?secret=${encodeURIComponent(expected)}` : '';
-    const br = await railwaySelfFetch(`${origin}/api/v1/cron/refresh-bench${bs}`, { cache: 'no-store', signal: AbortSignal.timeout(110_000) });
-    if (br.ok) { const bj = await br.json(); benchRefreshed = { count: bj?.count, blockbuster: bj?.blockbuster, strong: bj?.strong }; }
+    const br = await railwaySelfFetch(`${origin}/api/v1/cron/refresh-bench${bs}`, { cache: 'no-store', signal: AbortSignal.timeout(budget.timeout(60_000)) });
+    if (br.ok) { const bj = await br.json(); benchRefreshed = { count: bj?.count, blockbuster: bj?.blockbuster, strong: bj?.strong, partial: bj?.partial }; }
     else benchRefreshed = { status: br.status };
   } catch (e: any) { benchRefreshed = { error: e?.message || String(e) }; }
 
+  let themeRotationWarmed: any = null;
   // zzz477 — piggyback the CONCALL INTEL + TRANSFORMATION RADAR warm on this
   // already-scheduled 4×/day sweep (the GitHub workflow file is protected and
   // can't be edited via remote tools). concall-intel-warm extracts fresh live-feed
@@ -149,38 +150,42 @@ export async function GET(req: Request) {
   // on the newest filings automatically, no user ↻ Fresh. Fire-and-forget: never
   // let it block or fail the earnings sweep.
   let concallWarmed: any = null;
+  const runOptionalWarms = async () => {
   try {
     const cs = expected ? `?secret=${encodeURIComponent(expected)}` : '';
-    const cr = await railwaySelfFetch(`${origin}/api/v1/cron/concall-intel-warm${cs}`, { cache: 'no-store', signal: AbortSignal.timeout(120_000) });
+    const cr = await railwaySelfFetch(`${origin}/api/v1/cron/concall-intel-warm${cs}`, { cache: 'no-store', signal: AbortSignal.timeout(budget.timeout(120_000)) });
     concallWarmed = cr.ok ? (await cr.json())?.results ?? { ok: true } : { status: cr.status };
   } catch (e: any) { concallWarmed = { error: e?.message || String(e) }; }
 
   // zzz483 — also pre-warm the THEME ROTATION dashboard (both regions) on the same
   // 4×/day sweep so it's graded on fresh prices and opens instantly, fully
   // unattended for the long term. Fire-and-forget, never blocks the earnings sweep.
-  let themeRotationWarmed: any = null;
   try {
     const rr = await Promise.all(['us', 'india'].map((rg) =>
-      railwaySelfFetch(`${origin}/api/market/theme-rotation?region=${rg}&refresh=1`, { cache: 'no-store', signal: AbortSignal.timeout(90_000) })
+      railwaySelfFetch(`${origin}/api/market/theme-rotation?region=${rg}&refresh=1`, { cache: 'no-store', signal: AbortSignal.timeout(budget.timeout(90_000)) })
         .then((r) => r.ok).catch(() => false)));
     themeRotationWarmed = { us: rr[0], india: rr[1] };
   } catch (e: any) { themeRotationWarmed = { error: e?.message || String(e) }; }
+  };
+  // zzz919 — these two warms run IN PARALLEL with the date loop (they used to run
+  // before it, in series, and ate up to 210 s). Each is capped by the run budget.
+  const warmsPromise = runOptionalWarms();
 
   const forceGraded = async (date: string) => {
     const r = await railwaySelfFetch(`${origin}/api/v1/earnings/graded?date=${date}&force=1`, {
-      cache: 'no-store', signal: AbortSignal.timeout(180_000),
+      cache: 'no-store', signal: AbortSignal.timeout(budget.timeout(180_000)),
     });
     return r.ok ? await r.json() : null;
   };
   const recheckGraded = async (date: string) => {
     const r = await railwaySelfFetch(`${origin}/api/v1/earnings/graded?date=${date}&force=1&refetch=1`, {
-      cache: 'no-store', signal: AbortSignal.timeout(180_000),
+      cache: 'no-store', signal: AbortSignal.timeout(budget.timeout(180_000)),
     });
     return r.ok ? await r.json() : null;
   };
   const fillGraded = async (date: string) => {
     const r = await railwaySelfFetch(`${origin}/api/v1/earnings/graded?date=${date}&refreshMissing=1`, {
-      cache: 'no-store', signal: AbortSignal.timeout(180_000),
+      cache: 'no-store', signal: AbortSignal.timeout(budget.timeout(180_000)),
     });
     return r.ok ? await r.json() : null;
   };
@@ -194,7 +199,7 @@ export async function GET(req: Request) {
 
   // ── zzz822 — STALE REBUILD (oldest rules first), before the daily sweep ──
   let staleRebuilt: any = null;
-  if (STALE_BUDGET > 0 && Date.now() - start < 120_000) {
+  if (STALE_BUDGET > 0 && budget.canStart(60_000)) {
     try {
       const scanKey = `graded:stale-scan:${GRADED_CACHE_VERSION}`;
       let scan: { at: number; stale: Array<{ date: string; version: string }> } | null = null;
@@ -250,8 +255,14 @@ export async function GET(req: Request) {
     } catch { return false; }
   };
 
-  for (let i = 0; i <= windowDays; i++) {
-    if (Date.now() - start > DEADLINE_MS) { budgetStopped = true; break; }
+  // zzz919 — newest 12 dates every run; older dates rotate from a stored cursor
+  // so a run that stops early is continued by the next slot, not repeated.
+  let cursor = 0;
+  try { cursor = Number(await kvGet<number>(CURSOR_KEY)) || 0; } catch { cursor = 0; }
+  const offsets = orderOffsets(windowDays, cursor);
+  let firstUnreached: number | null = null;
+  for (const i of offsets) {
+    if (!budget.canStart(MIN_STEP_MS)) { budgetStopped = true; firstUnreached = i; break; }
     const d = new Date(today);
     d.setDate(d.getDate() - i);
     const date = d.toISOString().slice(0, 10);
@@ -261,7 +272,7 @@ export async function GET(req: Request) {
       if (i <= RECENT_DAYS) {
         try {
           const liveRes = await railwaySelfFetch(`${origin}/api/v1/earnings/today-live?date=${date}&force=1`, {
-            cache: 'no-store', signal: AbortSignal.timeout(20_000),
+            cache: 'no-store', signal: AbortSignal.timeout(budget.timeout(20_000)),
           });
           entry.today_live_status = liveRes.status;
           if (liveRes.ok) entry.today_live_count = (await liveRes.json())?.count || 0;
@@ -275,7 +286,7 @@ export async function GET(req: Request) {
         refreshed++;
       } else {
         const chk = await railwaySelfFetch(`${origin}/api/v1/earnings/graded?date=${date}`, {
-          cache: 'no-store', signal: AbortSignal.timeout(30_000),
+          cache: 'no-store', signal: AbortSignal.timeout(budget.timeout(30_000)),
         });
         entry.graded_status = chk.status;
         let cand = 0, raw = 0, failed = 0;
@@ -336,6 +347,10 @@ export async function GET(req: Request) {
     results.push(entry);
   }
 
+  // Where the next slot resumes (0 = everything reached).
+  try { await kvSet(CURSOR_KEY, firstUnreached === null ? 0 : nextCursor(firstUnreached), 7 * 86400); } catch { /* best effort */ }
+  await warmsPromise;   // already bounded by the budget
+
   return NextResponse.json({
     status: 'ok',
     bench: benchRefreshed,
@@ -347,6 +362,9 @@ export async function GET(req: Request) {
     refreshed, healed, filled, healthy, rechecked,
     heals_used: healsUsed, fills_used: fillsUsed, rechecks_used: rechecksUsed,
     budget_stopped: budgetStopped,
+    // zzz919 — running out of time is a PARTIAL SUCCESS: the next slot continues
+    partial: budgetStopped,
+    note: budgetStopped ? `Stopped at ${Math.round(budget.elapsed() / 1000)}s of ${Math.round((budget.elapsed() + budget.remaining()) / 1000)}s budget; ${offsets.length - results.length} date(s) left for the next run (cursor saved).` : undefined,
     elapsed_ms: Date.now() - start,
     results,
     completed_at: new Date().toISOString(),
