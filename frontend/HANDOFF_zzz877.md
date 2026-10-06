@@ -83,3 +83,10 @@ Secrets (GitHub Actions + Railway env): `CRON_SECRET` (same in both), `SEC_CONTA
 - ChatGPT review points taken: India processing, US coverage contradiction, AI counter wording. Cupid was already correctly held in review (unit mix-up). Not taken: queue re-prioritisation (already guidance-first), three India sections (claims section exists).
 - zzz880c/d: 🎯 Focus list (lib/gu-focus.ts, components/guidance-upgrades/GuFocusList.tsx) at the top of /guidance-upgrades — raise AND 30%+ growth first. Universe extract read cached in memory (SWR, 10 min fresh / 12 h max, 20 s limit) and a build without company documents is never served/saved over the last complete one (India had dropped to 0 in force). Header CB: dated removals (a newer filing comes back) + the tab's "bench starts on" date.
 - US EDGAR backfill confirmed working after the SEC contact fix (30 days, 318 documents); a 90-day run was started.
+
+### 4f. zzz881 (6 Oct) — guidance correctness pass
+- `lib/guidance-prior-match.ts` (pure, no imports): `earlierPriorMismatch` refuses an earlier-document "old guidance" when it is industry/sector, segment vs company, a different measure (deposits vs advances), capex as FCF, a reported quarter, a misprint correction, a sentence with no measure, or a "raise" whose new floor is not above the old ceiling. Live India raises went from 20 (17 wrong) to CPPLUS, YASHO, KFINTECH, CUPID.
+- `growthScopeIssue` keeps segment / plant / export / channel figures, shares of revenue, visibility, volumes and reported results out of the 30%+ ranking (EFCIL, EPIGRAL, KISSHT, UDS …). A company-wide revenue phrase said first still counts (ROSSTECH, CRDO).
+- `dropPartFigures` (guidance-upgrades.ts): a same-metric amount under half of the largest one in the same document is a part (Cupid ₹150 Cr).
+- Focus list: two tables (A raised, B growth, no raise); small-base EPS, floor-only and zero-base raises never count as strong; raises < 5% left out and counted.
+- guidance-upgrades route: the extract read is shared and fills the memo after the 12 s wait (after a deploy the first load used to drop every AI-read event).
