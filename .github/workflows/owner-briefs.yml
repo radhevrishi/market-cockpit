@@ -1,0 +1,56 @@
+name: Owner briefs (hand run)
+
+# zzz914: the schedule runs INSIDE the app (frontend/src/lib/app-scheduler.ts, jobs: conviction-catalyst-brief,
+# portfolio-thesis-watch). These two briefs used to be Claude scheduled tasks that needed the owner's Mac awake; the book now
+# lives on the server, so the app composes and sends them itself. This workflow is only the manual button / emergency fallback.
+on:
+  workflow_dispatch:
+    inputs:
+      brief:
+        description: 'Which brief'
+        required: true
+        default: 'portfolio-thesis-watch'
+        type: choice
+        options: [portfolio-thesis-watch, conviction-catalyst-brief]
+      force:
+        description: 'Send again even if today''s brief already went out'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: owner-briefs-${{ inputs.brief }}
+  cancel-in-progress: false
+
+jobs:
+  brief:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - name: Run the brief
+        id: main
+        env:
+          BASE: ${{ secrets.CRON_BASE_URL }}
+          SECRET: ${{ secrets.CRON_SECRET }}
+          BRIEF: ${{ inputs.brief }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
+          Q=""; if [ "$FORCE" = "true" ]; then Q="?force=1"; fi
+          CODE=$(curl -s -m 200 -X POST -H "x-cron-secret: $SECRET" "$BASE/api/v1/cron/$BRIEF$Q" -o /tmp/brief.json -w "%{http_code}") || CODE=000
+          echo "HTTP $CODE"
+          # counts only — the response never carries holdings
+          python3 -c "import json; d=json.load(open('/tmp/brief.json')); print('ok:', d.get('ok'), '| one line:', d.get('oneLine'), '| partial:', bool(d.get('partial')), '| counts:', d.get('counts'))" || true
+          [ "$CODE" = "200" ] || exit 1
+          python3 -c "import json,sys; sys.exit(0 if json.load(open('/tmp/brief.json')).get('ok') else 1)"
+
+      - name: Heartbeat (always run)
+        if: always()
+        env:
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          OK="true"; if [[ "${{ steps.main.outcome }}" != "success" ]]; then OK="false"; fi
+          curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" -H 'Content-Type: application/json' \
+            -d "{\"name\":\"${{ inputs.brief }}\",\"phase\":\"end\",\"ok\":$OK,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -o /dev/null -w "heartbeat %{http_code}\n" || true

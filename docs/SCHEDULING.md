@@ -47,6 +47,8 @@ The code is in `frontend/src/lib/app-scheduler.ts` (`APP_JOBS`). `instrumentatio
 | us-earnings-watch (zzz912, was two Claude tasks) | :07 every 2 h 11–23 UTC Mon–Fri, :07 at 00–02 UTC Tue–Sat | GET /api/v1/cron/us-earnings-watch: graded-us (3 days up to the newest EDGAR filing date) → US Quality Preset + under $30B → one ranked Telegram/email alert of names not sent before | us-earnings-watch.yml |
 | gainers-in-backup | `41 11 * * 1-5` | India gainers sweep, only when GitHub's gainers-in run (10:50) is missing or stalled; no re-process, inside the route's 70-read daily ceiling | daily-research.yml |
 | gainers-brief-in | 11:57, 12:37, 13:31 Mon–Fri | POST /api/v1/cron/gainers-brief: Daily Gainers Brief from the stored research (no model call), Telegram + email via owner-notify, once per session. Earlier slots send only a complete sweep; 13:31 always sends (PARTIAL when incomplete) | gainers-brief.yml |
+| conviction-catalyst-brief | `29 4 * * 1-5` | POST /api/v1/cron/conviction-catalyst-brief — the owner's morning conviction brief (rules + stored research; AI only for new names, at most $0.05 a run), sent once a day by Telegram/email | owner-briefs.yml |
+| portfolio-thesis-watch | `15 2 * * 1-5` | POST /api/v1/cron/portfolio-thesis-watch — India holdings: thesis drift new since the last run, the owner's written triggers checked (no AI, no price), sent once a day | owner-briefs.yml |
 
 You can see the live schedule (last success, next run, and the state of the current slot) at `GET /api/v1/cron/schedule`. It is public and contains no secrets.
 
