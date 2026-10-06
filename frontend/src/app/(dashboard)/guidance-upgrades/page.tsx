@@ -35,6 +35,8 @@ export default function GuidanceUpgradesPage() {
   const [data, setData] = useState<GuidanceUpgradesResponse | null>(null);
   const [state, setState] = useState<'loading' | 'ok' | 'error'>('loading');
   const [refreshing, setRefreshing] = useState(false);
+  // zzz882: when the fresh load fails, the saved copy stays on screen — and the page now SAYS so, with its age and a retry (Rishi saw a 3-hour-old copy as if live)
+  const [savedOnly, setSavedOnly] = useState<number | null>(null);
   const [held, setHeld] = useState<string[]>([]);
   const [bookLoaded, setBookLoaded] = useState(false);
   const [todayFirst, setTodayFirst] = useState(true);
@@ -50,7 +52,7 @@ export default function GuidanceUpgradesPage() {
     const key = `/api/v1/guidance-upgrades?window=${w}&market=ALL`;
     const hit = force ? null : readCache<GuidanceUpgradesResponse>(key);
     if (hit && Array.isArray((hit.data as { events?: unknown })?.events)) {
-      setData(hit.data); setState('ok');
+      setData(hit.data); setState('ok'); setSavedOnly(null);
       if (hit.ageMs < FRESH_MS) return;
     } else setState('loading');
     const get = async (url: string) => {
@@ -64,7 +66,7 @@ export default function GuidanceUpgradesPage() {
       let j = await get(key);
       if (ac.signal.aborted) return;
       writeCache(key, j);
-      setData(j); setState('ok');
+      setData(j); setState('ok'); setSavedOnly(null);
       // zzz865: the server may answer from its saved copy (fast); ask once more for the fresh build in the background, keeping the saved data on screen meanwhile
       if (j.servedFromSaved) {
         setRefreshing(true);
@@ -74,7 +76,13 @@ export default function GuidanceUpgradesPage() {
         } catch { /* the saved copy stays on screen */ }
         if (!ac.signal.aborted) setRefreshing(false);
       }
-    } catch { if (!ac.signal.aborted && !hit) setState('error'); }
+    } catch {
+      if (ac.signal.aborted) return;
+      if (!hit) { setState('error'); return; }
+      setSavedOnly(hit.at);
+      // one automatic retry after 20 s (a deploy restarts the server for about a minute)
+      setTimeout(() => { if (acRef.current === ac) void load(w, true); }, 20_000);
+    }
   }, []);
 
   useEffect(() => { void load(window_); return () => acRef.current?.abort(); }, [window_, load]);
@@ -112,6 +120,12 @@ export default function GuidanceUpgradesPage() {
     <div className="gu-page" style={{ color: R.text, display: 'flex', flexDirection: 'column', gap: 14 }}>
       <style>{PRINT_CSS}</style>
       <GuTitle newest={data?.freshness.newestAnnouncement || null} checkedAt={data?.freshness.feedCheckedAt || null} loading={!data} />
+      {savedOnly != null && data && (
+        <div role="status" className="gu-noprint" style={{ fontSize: 12.5, padding: '6px 10px', borderRadius: 6, border: `1px solid ${R.amber}`, color: R.text }}>
+          ⚠ Showing a saved copy from {ageText(Date.now() - savedOnly)} — the fresh load did not answer. It retries by itself in 20 seconds.{' '}
+          <button type="button" onClick={() => void load(window_, true)} style={{ textDecoration: 'underline', background: 'none', border: 0, color: 'inherit', cursor: 'pointer', padding: 0 }}>Retry now</button>
+        </div>
+      )}
       {refreshing && data && <div className="gu-noprint" style={{ fontSize: 11.5, color: R.dim }}>Showing the saved copy from {ageText(Date.now() - new Date((data as any).savedAt || Date.now()).getTime())}. Fresh data is loading in the background.</div>}
       {/* zzz880 — the companies to look at first, before any detail */}
       <GuFocusList events={events} window={window_} onOpen={select} caps={(data as any)?.caps ?? null} />

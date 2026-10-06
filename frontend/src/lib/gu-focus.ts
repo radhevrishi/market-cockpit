@@ -14,6 +14,7 @@ export interface FocusRow {
   verdict: FocusVerdict; why: string; score: number;
   /** zzz881: date of the growth guidance document (growth-only rows) */ growthDate?: string | null; growthSource?: string | null;
   /** zzz881: the raise is real but small (under 5%) or only a small-base EPS */ smallRaise?: boolean;
+  /** zzz882: the raise is a growth rate (percentage points); raisePct is then the relative rise of the guided growth */ raisePp?: boolean;
   /** zzz880: 'SMALL_MID' / 'LARGE' from a market cap or the large-cap list; null when not known */
   size: 'SMALL_MID' | 'LARGE' | null; capText: string | null;
 }
@@ -63,13 +64,17 @@ export function isSmallEpsBase(c: any): boolean {
 /** The headline raise of one verified upgrade event, in words: 'FY27 revenue ₹250 Cr → ₹275 Cr (+10%)'.
  *  zzz881: the headline is the raise that best shows the business moved — revenue / profit first; an EPS from a small base is shown
  *  last and never counts as the size of the raise. `pct` is that size (null when only a small-base EPS or a pp change was raised). */
+function relMid(c: any): number | null {
+  const b = num(c?.before?.midpoint), a = num(c?.after?.midpoint);
+  return b != null && a != null && b > 0 ? Math.round(((a - b) / b) * 1000) / 10 : null;
+}
 export function raiseLine(e: GuidanceEvent): { text: string; pct: number | null; smallBaseOnly: boolean; pp: boolean } | null {
   const ups = (e.changes || []).filter((c: any) => c?.direction === 'UP' && c?.before && c?.after);
   if (!ups.length) return null;
   const pctOf = (c: any) => num(c.percentageChange) ?? num(c.percentagePointChange);
   // zzz881: only the floor moved (top end the same, Planet Labs EBITDA $0–10M → $3–10M) or the old figure started at zero: not a strong raise
   const weak = (c: any) => isSmallEpsBase(c) || (num(c.before?.high) != null && num(c.before?.high) === num(c.after?.high)) || (num(c.before?.low) != null && (num(c.before?.low) as number) <= 0);
-  const strength = (c: any): number => (weak(c) ? -1 : num(c.percentageChange) ?? (num(c.percentagePointChange) != null ? 0 : -1));
+  const strength = (c: any): number => (weak(c) ? -1 : num(c.percentageChange) ?? (num(c.percentagePointChange) != null ? relMid(c) ?? 0 : -1));
   const c: any = ups.slice().sort((a: any, b: any) => strength(b) - strength(a) || (pctOf(b) ?? 0) - (pctOf(a) ?? 0))[0];
   const pct = pctOf(c);
   const isPp = num(c.percentageChange) == null && num(c.percentagePointChange) != null;
@@ -81,7 +86,9 @@ export function raiseLine(e: GuidanceEvent): { text: string; pct: number | null;
   const smallNote = !small ? '' : isSmallEpsBase(c) ? ` — from a small base of ${c.before?.currency || ''}${num(c.before?.midpoint) ?? '?'} a share` : ' — only the low end moved, or it started from zero';
   return {
     text: `${c.after.period || ''} ${METRIC_WORD[c.metric] || String(c.metric).toLowerCase()}: ${rangeText(c.before)} → ${rangeText(c.after)}${sign}${smallNote}${more}`.trim(),
-    pct: isPp || small ? null : pct, smallBaseOnly: small, pp: isPp,
+    // zzz882: a growth-rate raise (25–30% → 40–50%, +17.5 pp) is sized by how much the guided growth itself rose (27.5 → 45 = +64%),
+    // so India raises given as growth rates rank next to US raises given in dollars instead of sinking to the bottom
+    pct: small ? null : isPp ? relMid(c) : pct, smallBaseOnly: small, pp: isPp,
   };
 }
 
@@ -100,7 +107,7 @@ export function buildFocusList(groups: GuHighGrowthGroups | null | undefined, ev
     const l = raiseLine(e); if (!l) continue;
     const r = get(e.market === 'US' ? 'US' : 'IN', e.ticker || null, e.company || e.ticker);
     if (r.raiseDate && r.raiseDate >= e.announcement_date) continue;   // the newest raise wins
-    r.raised = l.text; r.raisePct = l.pct; r.smallRaise = l.smallBaseOnly || (!l.pp && (l.pct ?? 0) < 5); r.raiseDate = e.announcement_date; r.eventId = e.guidance_event_id;
+    r.raised = l.text; r.raisePct = l.pct; r.raisePp = l.pp; r.smallRaise = l.smallBaseOnly || (l.pct != null && l.pct < 5); r.raiseDate = e.announcement_date; r.eventId = e.guidance_event_id;
   }
   const rows: GuHgGroupRow[] = groups ? [...(groups.cohorts?.ANNUAL || []), ...(groups.cohorts?.MULTI_YEAR_CAGR || [])] : [];
   for (const g of rows) {
@@ -118,7 +125,7 @@ export function buildFocusList(groups: GuHighGrowthGroups | null | undefined, ev
     const meaningful = !!r.raised && !r.smallRaise;
     r.score = g + p + (meaningful && r.growth ? 60 : 0) + (days != null ? (days <= 14 ? 20 : days <= 45 ? 10 : 0) : 0) + (r.growthTrust === 'verified' || r.raised ? 10 : 0);
     if (meaningful && r.growth) { r.verdict = 'TOP FOCUS'; r.why = `Raised its guidance and guides ${r.growthPct}%+ growth — both signals`; }
-    else if (r.raised && (r.raisePct ?? 0) >= 15) { r.verdict = 'STRONG RAISE'; r.why = `Guidance raised by ${Math.round(r.raisePct!)}% — a large upgrade, checked in the company's own filing`; }
+    else if (r.raised && (r.raisePct ?? 0) >= 15) { r.verdict = 'STRONG RAISE'; r.why = r.raisePp ? `Guided growth rate raised a lot (about ${Math.round(r.raisePct!)}% higher than before) — checked in the company's own filing` : `Guidance raised by ${Math.round(r.raisePct!)}% — a large upgrade, checked in the company's own filing`; }
     else if (r.raised && r.growth) { r.verdict = 'HIGH GROWTH'; r.why = `Guides ${r.growthPct}% growth; also a small guidance raise (${Math.round((r.raisePct ?? 0) * 10) / 10}%)`; }
     else if (r.growth && (r.growthPct ?? 0) >= 50) { r.verdict = 'HIGH GROWTH'; r.why = `Guides ${r.growthPct}% growth${r.growthTrust === 'derived' ? ' (worked out from the company’s own numbers)' : ''}`; }
     else if (r.raised) { r.verdict = r.smallRaise ? 'WATCH' : 'RAISED'; r.why = r.smallRaise ? 'Small raise (under 5%, or only EPS from a small base) — real, but not a strong signal' : 'Guidance raised, checked in the company’s own filing'; }

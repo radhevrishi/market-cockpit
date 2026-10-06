@@ -1,6 +1,18 @@
 // zzz863 — stale-while-revalidate for the Guidance Upgrades page. The last answer is kept in memory (survives moving between pages) and in localStorage (survives closing the tab),
 // so coming back shows the page at once and fetches fresh data in the background. Public company data only (never holdings). Every storage call is guarded: no storage = no cache, never an error.
-const PREFIX = 'mc:gu:v1:';
+// zzz882: v2 — a copy saved by an older version of the checks (wrong India raises before zzz881) is never shown again
+const PREFIX = 'mc:gu:v2:';
+const OLD_PREFIXES = ['mc:gu:v1:'];
+let _swept = false;
+function sweepOld(): void {
+  if (_swept) return; _swept = true;
+  try {
+    if (typeof localStorage === 'undefined') return;
+    const kill: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && OLD_PREFIXES.some((p) => k.startsWith(p))) kill.push(k); }
+    for (const k of kill) localStorage.removeItem(k);
+  } catch { /* no storage */ }
+}
 const MAX_CHARS = 2_500_000;
 const mem = new Map<string, { at: number; data: unknown }>();
 export interface CacheHit<T> { at: number; data: T; ageMs: number }
@@ -9,6 +21,7 @@ export function readCache<T>(key: string, now = Date.now()): CacheHit<T> | null 
   if (m) return { at: m.at, data: m.data as T, ageMs: now - m.at };
   try {
     if (typeof localStorage === 'undefined') return null;
+    sweepOld();
     const raw = localStorage.getItem(PREFIX + key); if (!raw) return null;
     const j = JSON.parse(raw) as { at?: number; data?: unknown };
     if (!j || typeof j.at !== 'number' || j.data == null) return null;

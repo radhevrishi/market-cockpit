@@ -34,7 +34,7 @@ test('India EPS ₹3 base counts as small; pp raise is meaningful', () => {
   assert.equal(isSmallEpsBase(ch('EPS', [2, 4], [5, 6], 80, '₹')), true);
   const e = ev('EFCIL', [{ metric: 'REVENUE_GROWTH', direction: 'UP', percentagePointChange: 10, before: { low: 40, high: 40, midpoint: 40, isGrowthRate: true, period: 'FY27' }, after: { low: 50, high: 50, midpoint: 50, isGrowthRate: true, period: 'FY27' } }], { market: 'IN' });
   const rows = buildFocusList(null, [e], new Date('2026-10-06'));
-  assert.equal(rows[0].smallRaise, false); assert.equal(rows[0].verdict, 'RAISED');
+  assert.equal(rows[0].smallRaise, false); assert.equal(rows[0].verdict, 'STRONG RAISE');   // zzz882: 40 → 50% is a 25% higher guided growth
 });
 test('range never prints two equal ends', () => {
   assert.equal(fmtPoint({ low: 1.685, high: 1.693, currency: '$', unit: 'B' } as any), '$1.685–1.693B');
@@ -44,4 +44,11 @@ test('Planet Labs: only the floor moved ($0–10M → $3–10M) is not a strong 
   const e = ev('PL', [ch('EBITDA', [0, 10], [3, 10], 30, '$', 'M')]);
   const rows = buildFocusList(null, [e], new Date('2026-10-06'));
   assert.equal(rows[0].smallRaise, true); assert.notEqual(rows[0].verdict, 'STRONG RAISE');
+});
+test('zzz882: a growth-rate raise is sized by how much the guided growth rose (CP Plus 25–30% → 40–50%)', () => {
+  const g = (lo: number, hi: number) => ({ low: lo, high: hi, midpoint: (lo + hi) / 2, isGrowthRate: true, period: 'FY27' });
+  const e = ev('CPPLUS', [{ metric: 'REVENUE_GROWTH', direction: 'UP', percentagePointChange: 17.5, before: g(25, 30), after: g(40, 50) }], { market: 'IN' });
+  const r = buildFocusList(null, [e], new Date('2026-10-06'))[0];
+  assert.equal(r.raisePct, 63.6); assert.equal(r.verdict, 'STRONG RAISE'); assert.match(r.why, /growth rate/);
+  assert.match(r.raised!, /\+17\.5 pp/);
 });
