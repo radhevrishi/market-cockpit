@@ -45,6 +45,8 @@ The code is in `frontend/src/lib/app-scheduler.ts` (`APP_JOBS`). `instrumentatio
 | in-earnings-alert (zzz911) | `27 4-16 * * 1-6` | GET /api/v1/cron/india-earnings-alert — new India Blockbuster/Strong results passing the Quality Preset (small and mid caps), each sent once, by Telegram and/or email | book-watch.yml (manual input `india-earnings-alert`) |
 | in-earnings-eod (zzz911) | `37 15 * * 1-5` | GET /api/v1/cron/india-earnings-eod — the evening check-in, always one message per weekday | book-watch.yml (manual input `india-earnings-eod`) |
 | us-earnings-watch (zzz912, was two Claude tasks) | :07 every 2 h 11–23 UTC Mon–Fri, :07 at 00–02 UTC Tue–Sat | GET /api/v1/cron/us-earnings-watch: graded-us (3 days up to the newest EDGAR filing date) → US Quality Preset + under $30B → one ranked Telegram/email alert of names not sent before | us-earnings-watch.yml |
+| gainers-in-backup | `41 11 * * 1-5` | India gainers sweep, only when GitHub's gainers-in run (10:50) is missing or stalled; no re-process, inside the route's 70-read daily ceiling | daily-research.yml |
+| gainers-brief-in | 11:57, 12:37, 13:31 Mon–Fri | POST /api/v1/cron/gainers-brief: Daily Gainers Brief from the stored research (no model call), Telegram + email via owner-notify, once per session. Earlier slots send only a complete sweep; 13:31 always sends (PARTIAL when incomplete) | gainers-brief.yml |
 
 You can see the live schedule (last success, next run, and the state of the current slot) at `GET /api/v1/cron/schedule`. It is public and contains no secrets.
 

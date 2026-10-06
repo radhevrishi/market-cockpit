@@ -414,6 +414,9 @@ export const APP_JOBS: readonly AppJob[] = [
   { name: 'in-earnings-eod', crons: ['37 15 * * 1-5'], timeoutMs: 3 * MIN, workflow: BOOK, does: 'GET /api/v1/cron/india-earnings-eod (evening check-in, always one message)', run: http('GET', '/api/v1/cron/india-earnings-eod', 90_000) },
   // zzz912 — was two Claude scheduled tasks (US hours every 2 h, late after-close sweep 20:00–22:00 ET). Rules only, no AI.
   { name: 'us-earnings-watch', crons: ['7 11-23/2 * * 1-5', '7 0-2 * * 2-6'], timeoutMs: 27 * MIN, workflow: 'us-earnings-watch.yml', does: 'GET /api/v1/cron/us-earnings-watch (graded-us → US Quality Preset, under $30B → one ranked alert of new names)', run: http('GET', '/api/v1/cron/us-earnings-watch', 12 * MIN) },
+  // zzz913 — Daily Gainers Brief (was a Claude scheduled task). Logic in lib/gainers-brief.ts (loaded lazily: no import edit here).
+  { name: 'gainers-in-backup', crons: ['41 11 * * 1-5'], timeoutMs: 40 * MIN, workflow: 'daily-research.yml', does: 'GET /api/v1/ai-gainers/research?market=IN; only when GitHub’s gainers-in sweep is missing or stalled: GET /api/v1/ai-gainers?market=IN, POST /api/v1/ai-gainers/research rounds (no re-process)', run: async (ctx) => (await import('./gainers-brief')).gainersInBackupJob(ctx) },
+  { name: 'gainers-brief-in', crons: ['57 11 * * 1-5', '37 12 * * 1-5', '31 13 * * 1-5'], timeoutMs: 4 * MIN, workflow: 'gainers-brief.yml', does: 'POST /api/v1/cron/gainers-brief?final=0 (sends when the sweep is complete); the 13:31 slot sends with final=1 (PARTIAL when incomplete)', run: async (ctx) => (await import('./gainers-brief')).gainersBriefJob(ctx) },
 ];
 
 /** Workflows that keep their GitHub schedule, and why (shown by /api/v1/cron/schedule and docs/SCHEDULING.md). */

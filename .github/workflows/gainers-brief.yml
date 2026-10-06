@@ -1,0 +1,46 @@
+name: Daily Gainers Brief (hand run)
+
+# zzz913: the brief is scheduled INSIDE the app (frontend/src/lib/app-scheduler.ts, job gainers-brief-in: 11:57, 12:37 and
+# 13:31 UTC Mon-Fri). This workflow has no schedule; it is the hand-run button and the emergency fallback.
+# It sends with final=1: whatever research is stored goes out (marked PARTIAL when the sweep is incomplete).
+# The brief is sent once per session date, so a hand run after the app already sent it does nothing.
+on:
+  workflow_dispatch:
+    inputs:
+      dry:
+        description: 'Only compose the brief and print it (do not send)'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: gainers-brief
+  cancel-in-progress: false
+
+jobs:
+  brief:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Compose and send
+        id: main
+        env:
+          BASE: ${{ secrets.CRON_BASE_URL }}
+          SECRET: ${{ secrets.CRON_SECRET }}
+          DRY: ${{ github.event.inputs.dry == 'true' && '1' || '0' }}
+        run: |
+          BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
+          CODE=$(curl -s -m 150 -X POST -H "x-cron-secret: $SECRET" "$BASE/api/v1/cron/gainers-brief?final=1&dry=$DRY" -o /tmp/brief.json -w "%{http_code}") || CODE=000
+          echo "HTTP $CODE"
+          python3 -c "import json; d=json.load(open('/tmp/brief.json')); print({k: d.get(k) for k in ('decision','sent','already','date','coverage','partial','channels','errors')}); print(d.get('text',''))" || true
+          if [ "$CODE" != "200" ]; then exit 1; fi
+
+      - name: Heartbeat (always run)
+        if: always() && github.event.inputs.dry != 'true'
+        env:
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          OK="true"; if [[ "${{ steps.main.outcome }}" != "success" ]]; then OK="false"; fi
+          curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" -H 'Content-Type: application/json' \
+            -d "{\"name\":\"gainers-brief-in\",\"phase\":\"end\",\"ok\":$OK}" -o /dev/null -w "heartbeat %{http_code}\n" || true
