@@ -12,9 +12,14 @@ const MARK: Record<SkyStatus, { t: string; c: string; w: string }> = {
 };
 
 export type SkyFactsMap = Record<string, SkyFacts | null>;
-/** Facts for 'IN:TICKER' / 'US:TICKER' keys. Asks only for names not asked yet; asks once more for names the server did not reach. */
-export function useSkyGoldFacts(keys: string[]): { facts: SkyFactsMap; loading: boolean; failed: boolean } {
+export type SkyCaps = { IN: Record<string, number>; US: Record<string, number> };
+/** Facts for 'IN:TICKER' / 'US:TICKER' keys. Asks only for names not asked yet; asks once more for names the server did not reach.
+ *  zzz925: also the market caps the server read (India ₹ Cr, USA $M), and India company names so a BSE-only company is found by name. */
+export function useSkyGoldFacts(keys: string[], names?: Record<string, string>): { facts: SkyFactsMap; caps: SkyCaps; loading: boolean; failed: boolean } {
   const [facts, setFacts] = useState<SkyFactsMap>({});
+  const [caps, setCaps] = useState<SkyCaps>({ IN: {}, US: {} });
+  const namesRef = useRef(names);
+  useEffect(() => { namesRef.current = names; }, [names]);   // runs before the fetch effect below
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
   const asked = useRef<Set<string>>(new Set());
@@ -28,9 +33,11 @@ export function useSkyGoldFacts(keys: string[]): { facts: SkyFactsMap; loading: 
     let stop = false;
     const ask = async (want: string[], tries: number): Promise<void> => {
       const q = (mk: string) => want.filter((k) => k.startsWith(`${mk}:`)).map((k) => k.slice(3)).join(',');
-      const r = await fetch(`/api/v1/guidance-upgrades/skygold?in=${encodeURIComponent(q('IN'))}&us=${encodeURIComponent(q('US'))}`, { cache: 'no-store' });
+      const nm = want.filter((k) => k.startsWith('IN:') && namesRef.current?.[k]).map((k) => `&n=${encodeURIComponent(`${k.slice(3)}:${namesRef.current![k]}`)}`).join('');
+      const r = await fetch(`/api/v1/guidance-upgrades/skygold?in=${encodeURIComponent(q('IN'))}&us=${encodeURIComponent(q('US'))}${nm}`, { cache: 'no-store' });
       const j = await r.json().catch(() => null);
       if (!r.ok || !j?.ok) throw new Error(String(j?.error || r.status));
+      if (!stop && j.caps && typeof j.caps === 'object') setCaps((p) => ({ IN: { ...p.IN, ...(j.caps.IN || {}) }, US: { ...p.US, ...(j.caps.US || {}) } }));
       const pend: string[] = Array.isArray(j.pending) ? j.pending : [];
       if (!stop) setFacts((p) => {
         const n = { ...p };
@@ -46,7 +53,7 @@ export function useSkyGoldFacts(keys: string[]): { facts: SkyFactsMap; loading: 
     return () => { stop = true; setLoading(false); todo.forEach((k) => { if (!doneSet.has(k)) askedSet.delete(k); }); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig]);
-  return { facts, loading, failed };
+  return { facts, caps, loading, failed };
 }
 
 /** The score cell: '83 STRONG', 'not enough data', or '…' while the figures load. Click opens the breakdown. */

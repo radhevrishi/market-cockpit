@@ -792,6 +792,36 @@ function impliedCheck(it: Item): { reject?: string; review?: string } {
   return {};
 }
 
+/** zzz925: amounts printed in a sentence, in `unit` ('$B', '$M', '₹ Cr'); other units are skipped. Pure. */
+export function amountsIn(text: string | null | undefined, unit: string, opts: { skipFrom?: boolean } = {}): number[] {
+  const t = String(text || '').replace(/(\d),(?=\d{2,3}\b)/g, '$1');
+  const out: number[] = [];
+  // "raised to ₹725–750 Cr from ₹600 Cr": the figure after "from" is the earlier GUIDANCE, not a reported year (skipFrom)
+  const fromBefore = (i: number) => !!opts.skipFrom && /\bfrom\s*(?:₹|rs\.?|inr|\$)?\s*$/i.test(t.slice(Math.max(0, i - 12), i));
+  const u = unit.replace(/\s+/g, '');
+  // a range names its unit once ("$5.56 - $5.66 billion", "₹550–600 Cr"): both ends are read
+  if (u === '₹Cr') {
+    for (const m of t.matchAll(/(\d+(?:\.\d+)?)(?:\s*(?:-|–|to)\s*(?:₹|rs\.?|inr)?\s?(\d+(?:\.\d+)?))?\s*(?:cr\b|crores?\b)/gi)) { if (fromBefore(m.index ?? 0)) continue; out.push(Number(m[1])); if (m[2]) out.push(Number(m[2])); }
+    return out;
+  }
+  if (u !== '$B' && u !== '$M') return out;
+  for (const m of t.matchAll(/\$\s?(\d+(?:\.\d+)?)(?:\s*(?:-|–|to)\s*\$?\s?(\d+(?:\.\d+)?))?\s*(billion|bn|b|million|mn|m)\b/gi)) {
+    if (fromBefore(m.index ?? 0)) continue;
+    const bil = /^b/i.test(m[3]);
+    for (const raw of [m[1], m[2]]) { if (!raw) continue; const v = Number(raw); out.push(u === '$B' ? (bil ? v : v / 1000) : (bil ? v * 1000 : v)); }
+  }
+  return out;
+}
+/** zzz925: why the base of a worked-out growth is doubtful: the same sentence prints a figure for the measure that is well above the base and
+ *  below the target (the company's own prior-year figure, or a run-rate) — the base was a part of the year or another line. Null = fine. Pure. */
+export function derivedBaseDoubt(statement: string | null | undefined, d: Pick<GuGrowthDerivation, 'previousValue' | 'currentLow' | 'unit' | 'basePeriod'>): string | null {
+  if (!(d.previousValue > 0)) return null;
+  const bigger = amountsIn(statement, d.unit, { skipFrom: true }).filter((a) => a >= 1.5 * d.previousValue && a < d.currentLow * 0.999);
+  if (!bigger.length) return null;
+  const a = Math.max(...bigger);
+  return `The growth was worked out against a ${d.basePeriod} base of ${amountText({ value: d.previousValue, unit: d.unit })}, but the same sentence prints ${amountText({ value: a, unit: d.unit })} for the measure — the base looks like a part of the year, so the worked-out growth needs review.`;
+}
+
 /** Context a point needs that lives outside its own item: the version chain, lifecycle, sources of the slot. */
 interface PointCtx { now: Date; versions: GuVersionIn[]; lifecycle: GuLifecycle; expiryReason: string | null; sources: GuSourceEntry[]; conflict: boolean; primaryValue: GuSourceEntry | null; mediaClaim: GuSourceEntry | null; pf: ReturnType<typeof periodFacts>; resolved: boolean; dupOf: string | null; /** zzz854: event statuses for this company + metric (any period) */ events?: GuEventStatus[] }
 
@@ -870,6 +900,9 @@ function pointOf(it: Item, history: Prior[], ps: GuPeriodInfo, x: PointCtx): GuP
     }
   }
   if (it.needsReview) flags.push(it.needsReview);
+  // zzz925: a worked-out growth whose own sentence prints a bigger figure for the measure than the base it was divided by (Pinnacle West:
+  // "2025 Actual … Operating revenues $5.34 billion; 2026 Guidance $5.56 - $5.66 billion" was divided by a $1.94B "FY25 actual" = +189%)
+  if (derivation && it.abs) { const dbt = derivedBaseDoubt(it.statement, derivation); if (dbt) flags.push(dbt); }
   const cv = compareValue(low, high, open);
   if (it.metric === 'REVENUE' && cv != null && cv >= PLAUSIBLE_REVENUE_GROWTH_PCT && !(origin === 'STATED' && low != null && (figureIn(it.statement, low) || multipleOf(it.statement) === 1 + low / 100)) && !(origin === 'IMPLIED' && it.baseStatedByCompany && derivation))
     flags.push(`Revenue growth of about ${fnum(cv)}% is at or above ${PLAUSIBLE_REVENUE_GROWTH_PCT}%, which is implausible for an established company unless management clearly stated it as a percent. The source text does not show that, so it needs review.`);
@@ -1239,7 +1272,7 @@ export function selectHighGrowth(records: GuUniverseRecordX[], thr = HIGH_GROWTH
   const rows: Array<Omit<GuHighGrowthRowX, 'rank'>> = [];
   for (const r of records) {
     for (const horizon of ['SINGLE_YEAR', 'MULTI_YEAR_CAGR'] as GuHighGrowthHorizon[]) {
-      const q = (m: GgMetric) => r.points.filter((p) => p.metric === m && p.hg === horizon && p.compareValue != null && p.compareValue >= thr && !growthScopeIssue(p.statement, p.metricFamily)).sort((a, b) => (b.compareValue as number) - (a.compareValue as number))[0] || null;
+      const q = (m: GgMetric) => r.points.filter((p) => p.metric === m && p.hg === horizon && p.compareValue != null && p.compareValue >= thr && !growthScopeIssue(p.statement, p.metricFamily, r.record.company)).sort((a, b) => (b.compareValue as number) - (a.compareValue as number))[0] || null;
       const rev = q('REVENUE'), pat = q('PAT'); if (!rev && !pat) continue;
       const head = !pat || (rev && (rev.compareValue as number) >= (pat.compareValue as number)) ? rev! : pat;
       rows.push({
@@ -1284,6 +1317,7 @@ const hgMetricX = (p: GuPoint): GuHgMetricX => ({
   metric: p.metric, metricFamily: p.metricFamily, sourceMetricLabel: p.sourceMetricLabel, display: p.display, short: shortGrowth(p), compareValue: p.compareValue as number, period: p.period, periodNormalized: p.periodNormalized,
   verificationState: p.verificationState, growthType: p.growthType, guidanceType: p.guidanceType, basisLabel: p.basisLabel, headlineBasis: p.headlineBasis, revisionVsPriorGuidance: p.revisionVsPriorGuidance?.display ?? null, sourceConflict: p.sourceConflict,
   calculationType: p.calculationType, verificationStatus: p.verificationStatus, wording: p.wording, freshness: p.freshness, lastVerifiedDaysAgo: p.lastVerifiedDaysAgo,
+  derivation: p.growthDerivation ?? null,
 });
 /**
  * zzz853: the high-growth rows GROUPED, never one mixed ranking. A point qualifies when it is management guidance, ACTIVE, has a CONFIRMED period, is not flagged / proxy,
@@ -1293,14 +1327,14 @@ const hgMetricX = (p: GuPoint): GuHgMetricX => ({
  */
 export function selectHighGrowthGroups(records: GuUniverseRecordX[], thr = HIGH_GROWTH_THRESHOLD, claims: GuUniverseRecordX[] = []): GuHighGrowthGroups {
   const FAM = new Set<GuMetricFamily>(['REVENUE', 'NET_PROFIT', 'EBITDA']);
-  const base = (p: GuPoint) => FAM.has(p.metricFamily) && !!p.cohort && p.compareValue != null && p.low != null && p.compareValue >= thr && p.claimType === 'MANAGEMENT_GUIDANCE' && p.status === 'ACTIVE' && p.periodRunState === 'ACTIVE' && !p.proxy && !p.needsReview
+  const base = (p: GuPoint, company?: string | null) => FAM.has(p.metricFamily) && !!p.cohort && p.compareValue != null && p.low != null && p.compareValue >= thr && p.claimType === 'MANAGEMENT_GUIDANCE' && p.status === 'ACTIVE' && p.periodRunState === 'ACTIVE' && !p.proxy && !p.needsReview
     // zzz881: a segment / plant / channel figure, a share of revenue, a reported result or a volume is never ranked as company growth
-    && !growthScopeIssue(p.statement, p.metricFamily);
+    && !growthScopeIssue(p.statement, p.metricFamily, company);
   type Acc = { r: GuUniverseRecordX; cohort: GuCohort; trust: GuTrust; pts: GuPoint[] };
   const byTrust = new Map<string, Acc>(); const byCohort = new Map<string, Acc>();
   const add = (m: Map<string, Acc>, k: string, r: GuUniverseRecordX, cohort: GuCohort, trust: GuTrust, p: GuPoint) => { const cur = m.get(k) || { r, cohort, trust, pts: [] }; cur.pts.push(p); m.set(k, cur); };
   for (const r of records) for (const p of r.points) {
-    if (!base(p) || p.periodStatus !== 'CONFIRMED' || !p.inDefaultView || (p.listBucket && p.listBucket !== 'ACTIVE')) continue;
+    if (!base(p, r.record.company) || p.periodStatus !== 'CONFIRMED' || !p.inDefaultView || (p.listBucket && p.listBucket !== 'ACTIVE')) continue;
     const trust = trustOf(p.verificationState); if (!trust || trust === 'claimsAwaiting') continue;   // zzz854: an unverified claim is never in the ranked Active list
     // zzz862: a verification older than the freshness limit (60 days) is not "strictly verified" any more: it stays in Active (with its re-check tag) but leaves the strict list
     if (!(trust === 'verified' && p.freshness === 'STALE')) add(byTrust, `${r.entityKey}|${p.cohort}|${trust}`, r, p.cohort!, trust, p);
@@ -1308,7 +1342,7 @@ export function selectHighGrowthGroups(records: GuUniverseRecordX[], thr = HIGH_
   }
   // zzz854: claims awaiting verification come from their OWN list, never from the Active records
   for (const r of claims) for (const p of r.points) {
-    if (!base(p) || (p.listBucket && p.listBucket !== 'CLAIMS')) continue;
+    if (!base(p, r.record.company) || (p.listBucket && p.listBucket !== 'CLAIMS')) continue;
     add(byTrust, `${r.entityKey}|${p.cohort}|claimsAwaiting`, r, p.cohort!, 'claimsAwaiting', p);
   }
   const rowOf = (a: Acc, id: string): Omit<GuHgGroupRow, 'rank'> => {

@@ -4,7 +4,7 @@ import React, { useMemo, useState } from 'react';
 import { R, tint } from './gu-tokens';
 import { pillStyle } from './GuPanel';
 import { useGuUniverse } from './useGuUniverse';
-import { buildFocusList, type FocusVerdict } from '@/lib/gu-focus';
+import { buildFocusList, holdInconsistentGrowth, type FocusVerdict } from '@/lib/gu-focus';
 import { INDIA_LARGE_CAPS } from '@/lib/india-large-caps';
 import type { GuidanceEvent } from '@/lib/guidance-upgrades-types';
 import type { FocusRow } from '@/lib/gu-focus';
@@ -86,15 +86,27 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
   const skySig = useMemo(() => buildFocusList(data?.summary?.highGrowthGroups, events, new Date(), Infinity, { caps, indiaLarge: INDIA_LARGE_CAPS })
     .filter((r) => (!smid || r.size !== 'LARGE') && ((r.raised && !r.smallRaise) || r.growth)).map(skyKey).filter(Boolean).sort().join(','), [data, events, caps, smid]);
   const skyKeys = useMemo(() => (skySig ? skySig.split(',') : []), [skySig]);
-  const { facts, loading: skyLoading, failed: skyFailed } = useSkyGoldFacts(skyKeys);
+  // zzz925: India company names go with the request, so a BSE-only company (BMW Industries, filed as "BMW") is found on screener.in by name
+  const skyNames = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const r of buildFocusList(data?.summary?.highGrowthGroups, events, new Date(), Infinity)) if (r.market === 'IN' && r.ticker) m[`IN:${r.ticker.toUpperCase()}`] = r.company;
+    return m;
+  }, [data, events]);
+  const { facts, caps: skyCaps, loading: skyLoading, failed: skyFailed } = useSkyGoldFacts(skyKeys, skyNames);
+  // zzz925: the market caps read for the score fill sizes the graded results do not have — India from screener.in, USA from Nasdaq
+  // (graded caps win). Before this, almost every US row said "size not known" and large caps stayed in "Small & mid only".
   const capsAll = useMemo(() => {
-    const inCaps: Record<string, number> = {};
+    const inCaps: Record<string, number> = { ...skyCaps.IN };
     for (const [k, f] of Object.entries(facts)) if (k.startsWith('IN:') && f?.mcap && f.mcap > 0) inCaps[k.slice(3)] = f.mcap;
-    return { IN: { ...inCaps, ...(caps?.IN || {}) }, US: caps?.US || {} };
-  }, [facts, caps]);
-  const everyone = useMemo(() => buildFocusList(data?.summary?.highGrowthGroups, events, new Date(), Infinity, { caps: capsAll, indiaLarge: INDIA_LARGE_CAPS }), [data, events, capsAll]);   // zzz906: no cut-off before filtering (a small raise like Yasho fell outside the old top 80)
+    return { IN: { ...inCaps, ...(caps?.IN || {}) }, US: { ...skyCaps.US, ...(caps?.US || {}) } };
+  }, [facts, caps, skyCaps]);
+  const built = useMemo(() => buildFocusList(data?.summary?.highGrowthGroups, events, new Date(), Infinity, { caps: capsAll, indiaLarge: INDIA_LARGE_CAPS }), [data, events, capsAll]);   // zzz906: no cut-off before filtering (a small raise like Yasho fell outside the old top 80)
+  // zzz925: a growth worked out from company numbers must agree with the revenue the company reports (Pinnacle West "+189%" was divided
+  // by a part-year base): such a growth is held back for review and listed under the tables, never ranked
+  const { rows: everyone, held } = useMemo(() => holdInconsistentGrowth(built, (r) => (r.ticker ? facts[`${r.market}:${r.ticker.toUpperCase()}`]?.salesBase : null)), [built, facts]);
   const all = useMemo(() => (smid ? everyone.filter((r) => r.size !== 'LARGE') : everyone), [everyone, smid]);
   const largeHidden = everyone.length - all.length;
+  const heldShown = held.filter((h) => (mk === 'ALL' || h.market === mk));
   const inMk = useMemo(() => all.filter((r) => mk === 'ALL' || r.market === mk), [all, mk]);
   // zzz881: two lists, no empty columns — (A) companies that RAISED guidance, (B) companies guiding 30%+ growth with no raise yet.
   // A small raise (under 5%, or only EPS from a small base) is kept out of (A) and counted, never shown as a strong signal.
@@ -153,7 +165,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
         Ranked by: a guidance raise <b>and</b> 30%+ growth first, then the size of the raise (revenue / profit — an EPS from a tiny base never counts as a big raise), then the growth guided, then how recent. Only figures checked against the company's own documents.
       </div>
       <div style={{ fontSize: 12, color: R.dim }}>
-        <b>Sky Gold score</b> (from the “Identify Next SKY GOLD” framework): is the big plan backed by the business today? 7 main checks — a clear target from the company, sales already growing 20%+, the target reachable from the current pace, margins steady, ROCE 20%+, cash following profit, debt under control. Each main check missed holds the score down, so 80+ (STRONG) needs 6 of 7 met with real figures; supporting checks (raise, specific plan, profit faster than sales, own cash, orders, estimates, valuation, small base) add points; red flags (guidance cut, slower-paying customers, new shares, promoters selling, other income) take points off. A figure not known never counts as met; too few figures shows “not enough data”. Click a score for every check. Bands: 80+ STRONG · 65–79 GOOD · 50–64 MIXED · under 50 WEAK.{skyFailed ? ' The company figures could not be read just now — scores use the guidance checks only.' : ''}
+        <b>Sky Gold score</b> (from the “Identify Next SKY GOLD” framework): is the big plan backed by the business today? 7 main checks — a clear target from the company, sales already growing 20%+, the target reachable from the current pace, margins steady, ROCE 20%+, cash following profit, debt under control. Each main check missed holds the score down: 80+ (STRONG) needs 6 of 7 met with real figures and 65+ (GOOD) needs 5 of 7 (with 4 met the score stays at 62 or below, with 3 at 52); a growth worked out from company numbers counts as only half a clear target; supporting checks (raise, specific plan, profit faster than sales, own cash, orders, estimates, valuation, small base) add points; red flags (guidance cut, slower-paying customers, new shares, promoters selling, other income) take points off. A figure not known never counts as met; too few figures shows “not enough data”. Click a score for every check. Bands: 80+ STRONG · 65–79 GOOD · 50–64 MIXED · under 50 WEAK.{skyFailed ? ' The company figures could not be read just now — scores use the guidance checks only.' : ''}
       </div>
       {raisedAll.length + growthAll.length === 0 ? (
         <div style={{ fontSize: 13, color: R.dim }}>{all.length ? 'No names for this market in the current data.' : 'Reading the guidance data…'}</div>
@@ -192,6 +204,12 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
           </React.Fragment>))}
           {growthAll.length > FOCUS_STEP && <MoreRow shown={growthRows.length} total={growthAll.length} open={allB} onToggle={() => setAllB((v) => !v)} cols={6} />}
         </FocusTable>
+        {heldShown.length > 0 && (
+          <div data-gu-held style={{ fontSize: 12, color: R.dim, display: 'grid', gap: 2 }}>
+            <b style={{ color: R.amber }}>Held back for review ({heldShown.length}) — a growth worked out from company numbers that does not match the revenue the company reports:</b>
+            {heldShown.map((h) => <span key={h.key}>{FLAG[h.market]} <b>{h.company}</b> ({h.growth}): {h.reason}.</span>)}
+          </div>
+        )}
       </>)}
     </section>
   );

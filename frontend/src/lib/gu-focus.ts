@@ -20,6 +20,8 @@ export interface FocusRow {
   size: 'SMALL_MID' | 'LARGE' | null; capText: string | null;
   /** zzz923: the guided metric(s) and cohort of the growth row, and a verified guidance cut in the window (for the Sky Gold score) */
   growthMetric?: string | null; growthMetrics?: string[]; growthCohort?: string | null; cutDate?: string | null;
+  /** zzz925: how the headline growth was obtained ('EXPLICIT' = stated by the company) and, for a worked-out growth, the amounts it came from */
+  growthType?: string | null; growthDerivation?: { previousValue: number; currentLow: number; currentHigh: number; unit: string; basePeriod: string } | null;
 }
 export interface FocusSizeIn { caps?: { IN?: Record<string, number>; US?: Record<string, number> } | null; indiaLarge?: ReadonlySet<string> }
 /** India large cap from ₹30,000 Cr; US from $30B (Rishi's US default band). */
@@ -121,6 +123,7 @@ export function buildFocusList(groups: GuHighGrowthGroups | null | undefined, ev
     if (r.growthPct != null && r.growthPct >= v) continue;
     r.growth = g.cohort === 'MULTI_YEAR_CAGR' && !/CAGR/i.test(g.text) ? `${g.text} a year (multi-year)` : g.text; r.growthPct = v; r.growthPeriod = g.headline?.period || null; r.growthTrust = g.trust; r.growthDate = g.sourceDate || null; r.growthSource = g.sourceName || null;
     r.growthMetric = (g.headline as any)?.metric ?? null; r.growthCohort = g.cohort ?? null;
+    r.growthType = (g.headline as any)?.growthType ?? null; r.growthDerivation = (g.headline as any)?.derivation ?? null;
     r.growthMetrics = Array.from(new Set([...(g.metrics || []).map((m: any) => String(m?.metric || '')), String((g.headline as any)?.metric || '')].filter(Boolean)));
   }
   // zzz923: a verified guidance cut in the same window is a red flag on a row already listed (it never adds a row)
@@ -145,4 +148,45 @@ export function buildFocusList(groups: GuHighGrowthGroups | null | undefined, ev
     else { r.verdict = 'WATCH'; r.why = `Guides ${r.growthPct}% growth`; }
   }
   return out.sort((a, b) => b.score - a.score || a.company.localeCompare(b.company)).slice(0, limit);
+}
+
+// ── zzz925: a worked-out revenue growth must agree with the revenue the company actually reports ─────────────────────────
+// Pinnacle West (a utility) showed "Revenue +187–192% (derived)": $5.56–5.66B guided against a "FY25 actual" of $1.94B, while the
+// company's reported yearly revenue is about $5.8B — the base was a part-year figure. A derived growth whose base is far below the
+// reported yearly revenue (or whose target is not far above it while the growth claims a big jump) is held back for review, not shown.
+/** Amount in the unit the company facts use (India ₹ Cr, USA $M); null when the unit cannot be placed. */
+export function toFactsUnit(v: number, unit: string, market: 'IN' | 'US'): number | null {
+  const u = String(unit || '').replace(/\s+/g, ' ').trim();
+  if (market === 'IN') return /^₹ ?Cr$/i.test(u) ? v : null;
+  if (/^\$ ?B$/i.test(u)) return v * 1000;
+  if (/^\$ ?M$/i.test(u)) return v;
+  return null;
+}
+export interface GrowthHold { key: string; company: string; ticker: string | null; market: 'IN' | 'US'; growth: string; reason: string }
+/** Pure: why a row's guided growth disagrees with the reported yearly revenue (null = fine or not checkable). `salesBase` = the latest
+ *  full year's revenue (India) or the latest quarter × 4 (USA), in the facts unit. */
+export function derivedGrowthIssue(r: Pick<FocusRow, 'market' | 'growthPct' | 'growthType' | 'growthTrust' | 'growthMetric' | 'growthDerivation'>, salesBase: number | null | undefined): string | null {
+  const d = r.growthDerivation;
+  if (!d || r.growthMetric !== 'REVENUE' || (r.growthType !== 'DERIVED' && r.growthTrust !== 'derived')) return null;
+  if (typeof salesBase !== 'number' || !Number.isFinite(salesBase) || salesBase <= 0) return null;
+  const base = toFactsUnit(d.previousValue, d.unit, r.market), lo = toFactsUnit(d.currentLow, d.unit, r.market), hi = toFactsUnit(d.currentHigh, d.unit, r.market);
+  if (base == null || lo == null || hi == null) return null;
+  const fmt = (v: number) => (r.market === 'IN' ? `₹${Math.round(v).toLocaleString('en-IN')} Cr` : v >= 1000 ? `$${(v / 1000).toFixed(2)}B` : `$${Math.round(v)}M`);
+  const vsReported = ((lo + hi) / 2 / salesBase - 1) * 100;
+  if (base < 0.5 * salesBase) return `worked out from a base of ${fmt(base)} for ${d.basePeriod}, but the company reports yearly revenue of about ${fmt(salesBase)} — the base looks like a part of the year; against reported revenue the target is ${vsReported >= 0 ? '+' : ''}${Math.round(vsReported)}%`;
+  if ((r.growthPct ?? 0) >= 100 && vsReported < 0.5 * (r.growthPct ?? 0)) return `a ${r.growthPct}% jump worked out from company numbers, but the target is only ${vsReported >= 0 ? '+' : ''}${Math.round(vsReported)}% above the yearly revenue the company reports (${fmt(salesBase)})`;
+  return null;
+}
+/** Pure: rows with a growth that fails the check lose that growth (a row with a raise stays, on its raise only); the held rows are listed. */
+export function holdInconsistentGrowth(rows: FocusRow[], salesBaseOf: (r: FocusRow) => number | null | undefined): { rows: FocusRow[]; held: GrowthHold[] } {
+  const held: GrowthHold[] = [];
+  const out: FocusRow[] = [];
+  for (const r of rows) {
+    const why = r.growth ? derivedGrowthIssue(r, salesBaseOf(r)) : null;
+    if (!why) { out.push(r); continue; }
+    held.push({ key: r.key, company: r.company, ticker: r.ticker, market: r.market, growth: r.growth!, reason: why });
+    if (r.raised) out.push({ ...r, growth: null, growthPct: null, growthPeriod: null, growthTrust: null, growthType: null, growthDerivation: null,
+      verdict: r.smallRaise ? 'WATCH' : r.verdict === 'TOP FOCUS' ? 'RAISED' : r.verdict, why: r.verdict === 'TOP FOCUS' || r.verdict === 'HIGH GROWTH' ? (r.smallRaise ? 'Small raise (under 5%, or only EPS from a small base) — real, but not a strong signal' : 'Guidance raised, checked in the company’s own filing') : r.why });
+  }
+  return { rows: out, held };
 }

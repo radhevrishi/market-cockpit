@@ -6,7 +6,8 @@
 // controlled → no governance red flags → guidance raised, not delayed → estimates rising → valuation not pricing the whole plan.
 //
 // So the score has three parts:
-//   MUST-HAVES (7) — the main requirements. Each missing must-have CAPS the score; 80+ needs 6 of 7 passed with real data.
+//   MUST-HAVES (7) — the main requirements. Each missing must-have CAPS the score; 80+ needs 6 of 7 passed with real data and
+//                    65+ (GOOD) needs 5 of 7 (zzz925: the owner's rule — a high score only when most and the main requirements are met).
 //   SUPPORTING (8) — add points, but can never lift a name past the cap its must-haves set.
 //   RED FLAGS      — the framework's "promotional risk" penalty: points off, and any 10+ points of red flags caps the score at 79.
 // A figure that is not known is shown as "not known" and earns nothing — never counted as a pass. Fewer than 4 must-haves with
@@ -30,6 +31,8 @@ export interface SkyScore {
 export interface SkyGuidance {
   growthPct: number | null;            // headline guided growth, % a year
   growthTrust: string | null;          // 'verified' | 'derived' | …
+  /** zzz925: how the headline growth was obtained — 'EXPLICIT' = a percent the company itself stated; 'DERIVED' / 'IMPLIED' = worked out */
+  growthType?: string | null;
   growthMetric: string | null;         // REVENUE / PAT / EBITDA / EPS / FCF
   growthMetrics: string[];             // every metric the company guided
   multiYear: boolean;                  // a multi-year plan (CAGR) rather than one year
@@ -37,7 +40,8 @@ export interface SkyGuidance {
   cutInWindow: boolean;                // a verified guidance cut in the same window
 }
 
-export const MUST_CAPS: Record<number, number> = { 7: 100, 6: 89, 5: 79, 4: 69, 3: 59, 2: 49, 1: 39, 0: 39 };
+// zzz925: tightened (was 5→79, 4→69, 3→59 …): FLAIR and GPT Infra reached GOOD (68, 69) with only 4 of 7 main checks met
+export const MUST_CAPS: Record<number, number> = { 7: 100, 6: 89, 5: 74, 4: 62, 3: 52, 2: 42, 1: 32, 0: 32 };
 export const MIN_MUST_KNOWN = 4;
 export const RED_FLAG_CAP = 79;
 export const bandOf = (s: number): SkyBand => (s >= 80 ? 'STRONG' : s >= 65 ? 'GOOD' : s >= 50 ? 'MIXED' : 'WEAK');
@@ -66,9 +70,11 @@ export function skyGoldScore(g: SkyGuidance, facts: SkyFacts | null): SkyScore {
   // M1 a big, clear target from the company itself (framework: "management 3–5Y target", specific and testable)
   {
     const big = n(g.growthPct) && g.growthPct >= 30;
-    const st: SkyStatus = (big && g.growthTrust === 'verified') || (g.raised && !g.smallRaise) ? 'pass' : big ? 'partial' : g.raised ? 'partial' : 'fail';
+    // zzz925: met only for a target the company itself STATED (or its own raise); a growth worked out from company numbers is half at most
+    const stated = big && g.growthTrust === 'verified' && (g.growthType == null || g.growthType === 'EXPLICIT');
+    const st: SkyStatus = stated || (g.raised && !g.smallRaise) ? 'pass' : big ? 'partial' : g.raised ? 'partial' : 'fail';
     add({ id: 'target', label: 'Big, clear target from the company', kind: 'must', weight: 12, status: st,
-      detail: st === 'pass' ? (big && g.growthTrust === 'verified' ? `the company itself guides ${g.growthPct}% growth` : 'the company raised its own figures (checked in its filing)')
+      detail: st === 'pass' ? (stated ? `the company itself guides ${g.growthPct}% growth` : 'the company raised its own figures (checked in its filing)')
         : big ? `${g.growthPct}% growth is worked out from the company's numbers, not stated by it` : g.raised ? 'only a small raise' : 'no big target stated' });
   }
   // M2 revenue already growing 20%+ (framework: "Revenue CAGR >20%" — customers first, revenue already showing)
@@ -203,9 +209,9 @@ export function skyGoldScore(g: SkyGuidance, facts: SkyFacts | null): SkyScore {
 }
 
 /** The guidance half from a focus-list row (gu-focus FocusRow). */
-export function guidanceOfRow(r: { growthPct: number | null; growthTrust: string | null; growthMetric?: string | null; growthMetrics?: string[]; growthCohort?: string | null; raised: string | null; smallRaise?: boolean; cutDate?: string | null }): SkyGuidance {
+export function guidanceOfRow(r: { growthPct: number | null; growthTrust: string | null; growthType?: string | null; growthMetric?: string | null; growthMetrics?: string[]; growthCohort?: string | null; raised: string | null; smallRaise?: boolean; cutDate?: string | null }): SkyGuidance {
   return {
-    growthPct: r.growthPct, growthTrust: r.growthTrust, growthMetric: r.growthMetric ?? null, growthMetrics: r.growthMetrics ?? (r.growthMetric ? [r.growthMetric] : []),
+    growthPct: r.growthPct, growthTrust: r.growthTrust, growthType: r.growthType ?? null, growthMetric: r.growthMetric ?? null, growthMetrics: r.growthMetrics ?? (r.growthMetric ? [r.growthMetric] : []),
     multiYear: r.growthCohort === 'MULTI_YEAR_CAGR', raised: !!r.raised, smallRaise: !!r.smallRaise, cutInWindow: !!r.cutDate,
   };
 }

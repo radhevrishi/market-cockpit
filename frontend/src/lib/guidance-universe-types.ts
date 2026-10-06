@@ -154,6 +154,8 @@ export interface GuHgMetricX {
   revisionVsPriorGuidance: string | null; sourceConflict: boolean;
   /** zzz860 (additive): calculation type and verification status kept apart, the wording rule, one freshness rule */
   calculationType?: import('./guidance-semantics').GuCalculationType; verificationStatus?: import('./guidance-semantics').GuVerificationStatus; wording?: string; freshness?: import('./guidance-semantics').GuFreshnessTier; lastVerifiedDaysAgo?: number | null;
+  /** zzz925 (additive): for a worked-out growth, the amounts it came from (target and base), so a reader can check it against reported revenue */
+  derivation?: GuGrowthDerivation | null;
 }
 export interface GuHgGroupRow {
   id: string; rank: number; entityKey: string; company: string; ticker: string | null; market: GgMarket; cohort: GuCohort; trust: GuTrust;

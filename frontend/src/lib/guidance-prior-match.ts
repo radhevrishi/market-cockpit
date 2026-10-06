@@ -69,10 +69,28 @@ const YOY = /\b(yoy|y-o-y|year[- ]on[- ]year|year over year|year-over-year)\b/i;
 const NOT_REVENUE = /\b(volumes?|average value|realis|realiz|average selling price|asp)\b/i;
 const REVENUE_WORD = /\b(revenue|sales|top ?line|turnover|income)\b/i;
 
-/** Why a guidance point must not be ranked as company-wide growth (null = fine). */
-export function growthScopeIssue(statement: string | null | undefined, family: string): string | null {
+// zzz925 — three more ways a figure that is not company growth reached the 30%+ list (owner's page, 6 Oct):
+//   • Gogo "+84%": "revenue … split ~84% service revenue and ~16% equipment revenue" — a MIX of revenue, not growth;
+//   • Kodiak "+69–70.5%": "69.0 | % | 70.5 | %" — a table cell (a margin) with no growth word and no measure named;
+//   • Modine "+60–80%": "Data Centers +60% to +80%" — one end market named in front of the figure, not the company.
+const GROWTH_WORD = /\b(grow|grows|growing|growth|grew|increase[sd]?|increasing|rise|rising|up|higher|expand(?:s|ing)?|expansion|jump|surge|yoy|y-o-y|y\/y|year[- ]on[- ]year|year[- ]over[- ]year|cagr|double|doubling|triple|tripling|compared|versus|vs)\b|\+\s?\d/i;
+const MIX_CUE = /\b(split|mix|share of|contribution|contribute[sd]?|comprise[sd]?)\b|\|/i;
+const MARGIN_ONLY = /\bmargins?\b/i;
+/** A capitalised name in front of the figure: "Data Centers +60% to +80%", "Commercial HVAC: 30%". */
+const LEADING_NAME = /^\s*([A-Z][A-Za-z&/-]+(?:\s+[A-Z][A-Za-z&/-]+){0,3})\s*[:\-–—]?\s*(?:up\s+|~\s*|\+\s*)?\d/;
+const NOT_A_PART = /^(?:(?:FY|CY|Q[1-4]|H[12])\S*|Fiscal|Full|Year|Annual|Total|Overall|Consolidated|Company|Group|Revenues?|Net|Sales|Turnover|Top|Guidance|Outlook|Expected|Expect|We|Our|The|For|In|Approximately|About|Around|Over|Growth|Organic|Reported|Adjusted|EBITDA|EPS|PAT|Profit|Income|Operating|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*$/i;
+
+/** Why a guidance point must not be ranked as company-wide growth (null = fine). `company` (optional): its own name is never "a part". */
+export function growthScopeIssue(statement: string | null | undefined, family: string, company?: string | null): string | null {
   const t = String(statement || '');
   if (!t) return null;
+  if (!GROWTH_WORD.test(t) && (MIX_CUE.test(t) || (MARGIN_ONLY.test(t) && !REVENUE_WORD.test(t)))) return /\|/.test(t) && !/[a-z]{3,}/i.test(t.replace(/\|/g, ' ')) ? 'a table figure with no measure named, not growth' : 'a share / mix / margin figure, not growth';
+  const lead = LEADING_NAME.exec(t);
+  if (lead && !REVENUE_WORD.test(t) && !COMPANY_WIDE.test(t)) {
+    const own = String(company || '').toLowerCase();
+    const words = lead[1].split(/\s+/).filter((w) => !NOT_A_PART.test(w));
+    if (words.length && !words.every((w) => own.includes(w.toLowerCase()))) return `one part of the company (${lead[1].trim()}), not the whole company`;
+  }
   if (PAST_ACTUAL.test(t) && YOY.test(t) && !FUTURE.test(t)) return 'a reported result, not guidance';
   if (CORRECTION.test(t)) return 'a correction, not new guidance';
   if (INDUSTRY.test(t) && !FIRST_PERSON.test(t)) return 'about the industry, not the company';
