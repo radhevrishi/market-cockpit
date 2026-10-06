@@ -27,6 +27,7 @@ import { verifyUniverseClaims } from '@/lib/ai-verify';
 import { auditDerived } from '@/lib/guidance-derived-audit';
 import { promoteConfirmed } from '@/lib/guidance-promote';
 import { loadPipelineEvidence, pipelineView } from '@/lib/guidance-pipeline-service';
+import { leanUniverseBody, findUniverseRow } from '@/lib/gu-lean';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -50,6 +51,12 @@ export async function GET(req: NextRequest) {
     // zzz863: a claim the AI check CONFIRMED against the company's own document moves into Active (every other Active rule must already hold)
     const pr = promoteConfirmed({ defaultRecords: gb0.build.defaultRecords ?? [], claimsAwaiting: gb0.build.claimsAwaiting ?? [] });
     const gb = pr.promoted.length ? { ...gb0, build: { ...gb0.build, defaultRecords: pr.defaultRecords, claimsAwaiting: pr.claimsAwaiting } } : gb0;
+    // zzz886: one full row for an opened company (the list itself is sent lean)
+    const ent = sp.get('entity');
+    if (ent) {
+      const row = findUniverseRow([gb.build.defaultRecords ?? [], gb.build.reviewQueue ?? [], gb.build.claimsAwaiting ?? [], (gb.build as any).inactive ?? []], ent);
+      return NextResponse.json(row ? { ok: true, row } : { ok: false, error: 'This company is no longer in the guidance universe.' }, { status: row ? 200 : 404, headers: { 'Cache-Control': 'no-store' } });
+    }
     const body: any = buildUniverseResponse(gb, { market, metric, threshold: clampThreshold(sp.get('threshold')), view: parseView(sp.get('view')) });
     // zzz865: every DERIVED growth in the Active list, recalculated from its own stored numbers (target, base, base period, formula)
     try { body.derivedAudit = auditDerived((gb.build.defaultRecords ?? []) as any); } catch { /* the audit is additive */ }
@@ -81,7 +88,7 @@ export async function GET(req: NextRequest) {
         body.pipeline = { claims: pv.claims.slice(0, 600), claimCounts: pv.claimCounts, wanted: pv.wanted, queueStages: pv.queueStages, evidenceErrors: ev.errors };
       }
     } catch { /* the pipeline view is additive */ }
-    return NextResponse.json(body, { headers: { 'Cache-Control': 'no-store' } });
+    return NextResponse.json(sp.get('lean') === '1' ? leanUniverseBody(body) : body, { headers: { 'Cache-Control': 'no-store' } });
   } catch (e: any) {
     console.error('[guidance-universe] error', e?.message || e);
     return NextResponse.json({ ok: false, error: 'The guidance universe could not be built. Please try again.' }, { status: 500 });

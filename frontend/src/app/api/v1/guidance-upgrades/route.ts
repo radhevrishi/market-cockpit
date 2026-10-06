@@ -23,6 +23,7 @@
 // India has no analyst-estimates feed, so India consensus stays DATA UNAVAILABLE.
 // ═══════════════════════════════════════════════════════════════════════════
 import { NextRequest, NextResponse } from 'next/server';
+import { leanEventsBody } from '@/lib/gu-lean';
 import { kvGet, kvMGet, kvSet } from '@/lib/kv';
 import { auditUpgrades } from '@/lib/guidance-upgrade-audit';
 import { lastGoodKey, slimForStore, isUsableLastGood, lastGoodAgeMs, LASTGOOD_TTL_S, LASTGOOD_SERVE_MS } from '@/lib/guidance-lastgood';
@@ -101,7 +102,23 @@ async function timed<T>(p: Promise<T>, ms: number): Promise<Timed<T>> {
 }
 const whyEmpty = (t: Timed<unknown>, key: string): string => (t.timedOut ? `${key} timed out` : `${key} missing or empty`);
 
+// zzz886: `lean=1` sends the list without the detail-only text; `id=` sends one full event (opened card). Both reuse the cached answer.
 export async function GET(req: NextRequest) {
+  const sp0 = new URL(req.url).searchParams;
+  const lean = sp0.get('lean') === '1'; const id = sp0.get('id');
+  if (!lean && !id) return getFull(req);
+  const u = new URL(req.url); u.searchParams.delete('lean'); u.searchParams.delete('id');
+  const res = await getFull(new NextRequest(u, { headers: req.headers }));
+  if (!res.ok) return res;
+  const body = await res.json();
+  if (id) {
+    const ev = [...(Array.isArray(body?.events) ? body.events : []), ...(Array.isArray(body?.reviewQueue) ? body.reviewQueue : [])].find((e: any) => e?.guidance_event_id === id);
+    return NextResponse.json(ev ? { ok: true, event: ev } : { ok: false, error: 'This event is not in the chosen window any more.' }, { status: ev ? 200 : 404, headers: { 'Cache-Control': 'no-store' } });
+  }
+  return NextResponse.json(leanEventsBody(body), { headers: { 'Cache-Control': 'no-store' } });
+}
+
+async function getFull(req: NextRequest) {
   const t0 = Date.now();
   const sp = new URL(req.url).searchParams;
   const window = parseWindow(sp.get('window'));

@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import type { GuUniverseResponse, GuViewCounts, GuInvariantViolation, GuServedFrom, GuHighGrowthGroups, GuStateCounts, GuExpirySummary } from '@/lib/guidance-universe-types';
 import type { GuExcluded, GuInactiveRecord } from '@/lib/guidance-universe';
 import { isUniverseUsable } from '@/lib/guidance-upgrades-format';
-import { readCache, writeCache, FRESH_MS } from '@/lib/gu-client-cache';
+import { readCacheAsync, writeCache, FRESH_MS } from '@/lib/gu-client-cache';
 import type { GuView } from './gu-ui';
 
 export type UniverseState = 'loading' | 'ok' | 'error';
@@ -30,6 +30,7 @@ export function guUniverseUrl(o: { market?: 'IN' | 'US' | 'ALL'; metric?: string
   if (o.metric) q.set('metric', o.metric);
   q.set('threshold', String(o.threshold ?? 30));
   q.set('view', o.view || 'active');
+  q.set('lean', '1');   // zzz886: rows without detail-only text; an opened company fetches its full row (?entity=)
   return `/api/v1/guidance-universe?${q.toString()}`;
 }
 
@@ -64,13 +65,15 @@ export function useGuUniverse(o: { market?: 'IN' | 'US' | 'ALL'; metric?: string
   useEffect(() => {
     let alive = true;
     // zzz863: show the saved copy at once, fetch fresh data in the background (skipped when the copy is under 90 seconds old)
-    const hit = tick === 0 ? readCache<GuUniverseExt>(url) : null;
-    if (hit && isUniverseUsable(hit.data)) {
-      setData(hit.data); setState('ok'); setError(null);
-      if (hit.ageMs < FRESH_MS) return () => { alive = false; };
-    } else { setState('loading'); }
-    setError(null);
+    // zzz886: the saved copy may be in IndexedDB (too big for localStorage), so it is read asynchronously
     (async () => {
+      const hit = tick === 0 ? await readCacheAsync<GuUniverseExt>(url) : null;
+      if (!alive) return;
+      if (hit && isUniverseUsable(hit.data)) {
+        setData(hit.data); setState('ok'); setError(null);
+        if (hit.ageMs < FRESH_MS) return;
+      } else { setState('loading'); }
+      setError(null);
       try {
         const j = await fetchUniverse(url, tick > 0);
         if (!alive) return;

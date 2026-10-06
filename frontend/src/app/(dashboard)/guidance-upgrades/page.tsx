@@ -26,7 +26,7 @@ import { CappedList } from '@/components/guidance-upgrades/GuMore';
 import { GuPanel } from '@/components/guidance-upgrades/GuPanel';
 import { GuUpgradeAudit } from '@/components/guidance-upgrades/GuIntegrityAudit';
 import { GuNameCheck } from '@/components/guidance-upgrades/GuNameCheck';
-import { readCache, writeCache, FRESH_MS, ageText } from '@/lib/gu-client-cache';
+import { readCacheAsync, writeCache, FRESH_MS, ageText } from '@/lib/gu-client-cache';
 
 export default function GuidanceUpgradesPage() {
   const [window_, setWindow] = useState<GuWindow>('7D');
@@ -49,8 +49,9 @@ export default function GuidanceUpgradesPage() {
     acRef.current?.abort();
     const ac = new AbortController(); acRef.current = ac;
     // zzz863: the saved answer for this window is shown at once; fresh data is fetched in the background (skipped when it is under 90 seconds old)
-    const key = `/api/v1/guidance-upgrades?window=${w}&market=ALL`;
-    const hit = force ? null : readCache<GuidanceUpgradesResponse>(key);
+    const key = `/api/v1/guidance-upgrades?window=${w}&market=ALL&lean=1`;   // zzz886: list without detail-only text; an opened card fetches its full event
+    const hit = force ? null : await readCacheAsync<GuidanceUpgradesResponse>(key);
+    if (ac.signal.aborted) return;
     if (hit && Array.isArray((hit.data as { events?: unknown })?.events)) {
       setData(hit.data); setState('ok'); setSavedOnly(null);
       if (hit.ageMs < FRESH_MS) return;
@@ -111,7 +112,17 @@ export default function GuidanceUpgradesPage() {
   const filtered = useMemo(() => applyFilters(events, scope, metric), [events, scope, metric]);
   const { main: shown, audit: auditList } = useMemo(() => splitAudit(filtered), [filtered]);
   const { today: todayList, rest: restList } = useMemo(() => splitToday(shown, now), [shown, now]);
-  const open = useMemo(() => (openId ? events.find((e) => e.guidance_event_id === openId) || null : null), [openId, events]);
+  const openLean = useMemo(() => (openId ? events.find((e) => e.guidance_event_id === openId) || null : null), [openId, events]);
+  // zzz886: the opened card's full event (why this decision, chain, impacts …), fetched once; the lean row shows meanwhile
+  const [fullEv, setFullEv] = useState<Record<string, any>>({});
+  useEffect(() => {
+    if (!openLean || !(openLean as any).lean || fullEv[openLean.guidance_event_id]) return;
+    let alive = true; const id = openLean.guidance_event_id;
+    fetch(`/api/v1/guidance-upgrades?window=${window_}&market=ALL&id=${encodeURIComponent(id)}`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null)).then((j) => { if (alive && j?.event) setFullEv((m) => ({ ...m, [id]: j.event })); }).catch(() => {});
+    return () => { alive = false; };
+  }, [openLean, window_, fullEv]);
+  const open = useMemo(() => (openLean ? (fullEv[openLean.guidance_event_id] ? { ...openLean, ...fullEv[openLean.guidance_event_id], lean: false } : openLean) : null), [openLean, fullEv]);
   const eventCounts = useMemo(() => ({ IN: events.filter((e) => e.market === 'IN').length, US: events.filter((e) => e.market === 'US').length }), [events]);
   // zzz855: a window can hold hundreds of events. Each list renders 30 cards, then "Show N more"; every count above comes from the full list.
   const card = useCallback((e: (typeof events)[number]) => <GuCard key={e.guidance_event_id} e={e} onOpen={select} now={now} />, [select, now]);

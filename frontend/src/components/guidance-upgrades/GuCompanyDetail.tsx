@@ -1,7 +1,7 @@
 'use client';
 // zzz849 — company details for one active guidance record. Sections: current guidance, guidance, history, why, next proof, source.
 // Every line comes from the record. Nothing is invented; a missing value says so.
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import type { GuUniverseRecord } from '@/lib/guidance-universe-types';
 import type { GgGuidancePoint } from '@/lib/growth-guidance-types';
 import { fmtGrowthDisplay, metricShort, recordPeriodUnclear, PERIOD_UNCLEAR_HINT, PERIOD_UNCLEAR_LABEL } from '@/lib/guidance-upgrades-format';
@@ -22,7 +22,31 @@ function backed(r: GuUniverseRecord, p: GgGuidancePoint): boolean {
 }
 function money(a: NonNullable<GgGuidancePoint['absoluteTarget']>): string { return `${a.currency || ''}${a.value} ${a.unit}`.trim(); }
 
+// zzz886: list rows arrive lean (no history / sources / long text); opening one fetches the full row once and keeps it for the visit
+const fullRows = new Map<string, GuUniverseRecord>();
 export function GuCompanyDetail({ r, onFull }: { r: GuUniverseRecord; onFull?: (c: GgCompany) => void }) {
+  const key = (r as unknown as { entityKey?: string; lean?: boolean }).entityKey;
+  const isLean = !!(r as unknown as { lean?: boolean }).lean;
+  const [full, setFull] = useState<GuUniverseRecord | null>(key ? fullRows.get(key) ?? null : null);
+  const [loadNote, setLoadNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isLean || !key || full) return;
+    let alive = true;
+    fetch(`/api/v1/guidance-universe?entity=${encodeURIComponent(key)}`, { cache: 'no-store' })
+      .then((x) => (x.ok ? x.json() : null))
+      .then((j) => { if (!alive) return; if (j?.row) { fullRows.set(key, j.row); setFull(j.row); } else setLoadNote('The full record could not be loaded; showing the summary.'); })
+      .catch(() => { if (alive) setLoadNote('The full record could not be loaded; showing the summary.'); });
+    return () => { alive = false; };
+  }, [isLean, key, full]);
+  return (
+    <>
+      {isLean && !full && <div style={{ fontSize: 11.5, color: R.dim }}>{loadNote || 'Loading the full record…'}</div>}
+      <GuCompanyDetailBody r={full || r} onFull={full || !isLean ? onFull : undefined} />
+    </>
+  );
+}
+
+function GuCompanyDetailBody({ r, onFull }: { r: GuUniverseRecord; onFull?: (c: GgCompany) => void }) {
   const c = r.record;
   const pts = [c.primary, ...(c.others || [])].filter((p): p is GgGuidancePoint => !!p);
   const srcs = c.sources || [];
