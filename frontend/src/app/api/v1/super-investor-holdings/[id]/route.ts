@@ -85,7 +85,7 @@ function staticFallback(inv: SuperInvestor, fetchedAt: string): LiveHoldingsResp
 
 export async function GET(
   _req: NextRequest,
-  ctx: { params: { id: string } | Promise<{ id: string }> },
+  ctx: { params: Promise<{ id: string } | Promise<{ id: string }>> },
 ) {
   // Next 15 makes params async; both shapes are safe to await.
   const params = await ctx.params;

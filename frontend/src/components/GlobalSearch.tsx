@@ -78,8 +78,8 @@ export default function GlobalSearch() {
   const [selected, setSelected] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
   // const router = useRouter()  // Replaced with custom events
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>()
-  const tickerDebounceRef = useRef<ReturnType<typeof setTimeout>>()
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const tickerDebounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const tickerAbortRef = useRef<AbortController | null>(null)
 
   // Open on Cmd+K / Ctrl+K

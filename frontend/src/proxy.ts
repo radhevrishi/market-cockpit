@@ -67,7 +67,6 @@ function clientIp(req: NextRequest): string {
   return (
     req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
     req.headers.get('x-real-ip') ||
-    req.ip ||
     'anon'
   );
 }
@@ -84,7 +83,8 @@ function isService(req: NextRequest): boolean {
     || hasServiceKey(req.nextUrl.searchParams.get('secret'));
 }
 
-export async function middleware(req: NextRequest) {
+// zzz883 (Next 16): "middleware" is now called "proxy" and runs on Node.js
+export async function proxy(req: NextRequest) {
   const path = req.nextUrl.pathname;
 
   // PATCH 0699 — Handle legacy slug redirects before any other middleware logic.

@@ -40,10 +40,8 @@ function classifyClient(name: string): 'Institutional' | 'Retail' {
   return INSTITUTIONAL_KEYWORDS.some(kw => lower.includes(kw)) ? 'Institutional' : 'Retail';
 }
 
-export async function GET(
-  request: Request,
-  { params }: { params: { symbol: string } }
-): Promise<NextResponse<TickerDetailResponse>> {
+export async function GET(request: Request, props: { params: Promise<{ symbol: string }> }): Promise<NextResponse<TickerDetailResponse>> {
+  const params = await props.params;
   const symbol = params.symbol.toUpperCase();
 
   try {

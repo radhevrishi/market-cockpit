@@ -138,8 +138,8 @@ function parseCsv(csv: string): { columns: string[]; rows: any[]; name: string }
   return { columns, rows, name: '' };
 }
 
-export async function GET(req: NextRequest, context: { params: { id: string } }) {
-  const { id } = context.params;
+export async function GET(req: NextRequest, context: { params: Promise<{ id: string }> }) {
+  const { id } = (await context.params);
   if (!id || !/^\d+$/.test(id)) return Response.json({ err: 'bad id' }, { status: 400 });
   const { html, csv } = await fetchScreen(id);
   if (!html && !csv) {

@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PUBLIC_PAGE_PATHS } from '../site-auth';
 
-const SRC = readFileSync(join(__dirname, '..', '..', 'middleware.ts'), 'utf8');
+const SRC = readFileSync(join(__dirname, '..', '..', 'proxy.ts')   /* zzz883: Next 16 renamed middleware → proxy */, 'utf8');
 
 // Pull the matcher string literal out of the source and unescape it the way
 // the TypeScript compiler would ('\\.' in source → '\.' at runtime).

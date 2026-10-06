@@ -714,7 +714,7 @@ function AutoFillBtn({ ticker, market, onFill, currentPrice, onNotInUniverse }: 
   );
 }
 
-function NumberInput({ label, value, onChange, suffix, inputRef, highlight, helper, ticker }: { label: string; value: number; onChange: (v: number) => void; suffix?: string; inputRef?: React.RefObject<HTMLInputElement>; highlight?: boolean; helper?: string; ticker?: string }) {
+function NumberInput({ label, value, onChange, suffix, inputRef, highlight, helper, ticker }: { label: string; value: number; onChange: (v: number) => void; suffix?: string; inputRef?: React.RefObject<HTMLInputElement | null>; highlight?: boolean; helper?: string; ticker?: string }) {
   // PATCH 0696 — optional ref + highlight border + helper text + ticker
   // deeplink. When `highlight` toggles true (ticker not in live universe),
   // the caller useEffects this input's ref into focus.
