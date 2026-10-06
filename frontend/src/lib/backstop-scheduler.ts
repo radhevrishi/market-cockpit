@@ -27,6 +27,9 @@ export const BACKSTOP_JOBS: readonly BackstopJob[] = [
   { name: 'hub-ingest', slotsUtc: ['18:07'], path: (d) => `/api/market/earnings?ingest=1&force=1&month=${ym(d)}`, method: 'POST', graceMin: 60 },
   { name: 'hub-ingest-next', slotsUtc: ['18:15'], path: (d) => `/api/market/earnings?ingest=1&force=1&month=${ym(d, 1)}`, method: 'POST', graceMin: 60 },
   { name: 'archive-to-postgres', slotsUtc: ['19:30'], path: () => '/api/v1/cron/archive-to-postgres?months=2&ahead=1', method: 'POST', graceMin: 60 },
+  // zzz906: two more GitHub often skips (both went stale on 6 Oct)
+  { name: 'refresh-bench', slotsUtc: ['03:04'], path: () => '/api/v1/cron/refresh-bench', method: 'GET', graceMin: 60 },
+  { name: 'intelligence-compute', slotsUtc: ['04:07'], path: () => '/api/market/intelligence/compute', method: 'POST', graceMin: 60, days: [1, 2, 3, 4, 5] },
   { name: 'refresh-us-bench', slotsUtc: ['05:45'], path: () => '/api/v1/cron/refresh-us-bench', method: 'POST', graceMin: 60 },
 ];
 
