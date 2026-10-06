@@ -171,6 +171,10 @@ function renderProse(d: any): string {
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
+function isSecUrl(raw: string): boolean {
+  try { const u = new URL(raw); return u.protocol === 'https:' && (u.hostname === 'www.sec.gov' || u.hostname === 'sec.gov') && !u.username && !u.password && (u.port === '' || u.port === '443'); } catch { return false; }
+}
+
 export async function GET(req: NextRequest) {
   const u = new URL(req.url);
   const cik = Number(u.searchParams.get('cik') || 0);
@@ -182,6 +186,10 @@ export async function GET(req: NextRequest) {
   // release when that filing is a 10-Q. Optional: a row that carries a proper
   // 8-K never needs it.
   const filingDate = String(u.searchParams.get('filing_date') || '').slice(0, 10);
+  // zzz882 security: the filing URL is fetched server-side, so it must be an SEC address — never localhost, this app or any other host
+  if (filingUrl && !isSecUrl(filingUrl)) {
+    return NextResponse.json({ ok: false, error: 'filing_url must be an https://www.sec.gov/ address' }, { status: 400 });
+  }
   if (!ticker && (!cik || !accession || !filingUrl)) {
     return NextResponse.json({ ok: false, error: 'cik, accession and filing_url are required' }, { status: 400 });
   }

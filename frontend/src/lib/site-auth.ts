@@ -43,6 +43,11 @@ export const PROTECTED_API_PREFIXES = [
   '/api/v1/guidance-docs',       // zzz857 — company guidance documents (collector ingest uses the x-cron-secret header)
   '/api/v1/results-pdf',         // zzz879 — India results PDF backup (paid AI; cron uses the x-cron-secret header)
   '/api/v1/guidance-extract',    // zzz857 — AI guidance extractor (paid AI; cron uses the x-cron-secret header)
+  // zzz882 security audit: paid-AI and job-starting routes that were open to anyone
+  '/api/v1/us/ai-summary',       // paid AI + fetches a filing URL
+  '/api/v1/ai/desk',             // paid AI (score-ai-ledger cron sends x-cron-secret)
+  '/api/v1/ai-gainers',          // paid AI (daily-research sends x-mc-key)
+  '/api/v1/cron/trigger-screener-sync',   // starts a GitHub workflow
 ] as const;
 
 /** Never gated: the login flow itself, and machine endpoints with their own auth. */

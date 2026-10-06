@@ -33,7 +33,7 @@ export async function runResultsPdf(d: RpDeps, o: RpRunOptions = {}): Promise<Rp
   const maxItems = o.maxItems ?? 12, maxUsd = o.maxUsd ?? 0.3, budget = o.budgetMs ?? 200_000;
   const now = d.now ? d.now() : new Date();
   const t0 = Date.now();
-  const got = await d.kv.setNX(RP_LOCK_KEY, now.toISOString(), 300).catch(() => true);
+  const got = await d.kv.setNX(RP_LOCK_KEY, now.toISOString(), 300).catch(() => false);   // zzz882: unconfirmed lock = skip (no double AI spend)
   if (!got) return { ok: true, skipped: 'another run is in progress', queued: 0, due: 0, outcomes: [], spentUsd: 0, regraded: [] };
   try {
     const queue = mergeQueue(await d.kv.get<RpQueueItem[]>(RP_QUEUE_KEY), []);

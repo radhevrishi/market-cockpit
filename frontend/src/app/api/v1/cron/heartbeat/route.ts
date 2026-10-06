@@ -65,9 +65,12 @@ interface HeartbeatRow {
   updated_at: string;
 }
 
+// zzz882 security: the POST is open (≈20 workflows call it without a key), so it is bounded: a plain job name, at most 120 names, GitHub run links only
+const NAME_RE = /^[a-z0-9][a-z0-9:._-]{0,59}$/i;
+const MAX_NAMES = 120;
 async function addToNamesIndex(name: string) {
   const cur = (await kvGet<string[]>(NAMES_KEY)) || [];
-  if (!cur.includes(name)) {
+  if (!cur.includes(name) && cur.length < MAX_NAMES) {
     cur.push(name);
     await kvSet(NAMES_KEY, cur, NAMES_TTL);
   }
@@ -84,12 +87,14 @@ export async function POST(req: Request) {
 
   const name = String(body?.name || '').slice(0, 80);
   if (!name) return NextResponse.json({ ok: false, error: 'name required' }, { status: 400 });
+  if (!NAME_RE.test(name)) return NextResponse.json({ ok: false, error: 'bad name' }, { status: 400 });
+  { const cur = (await kvGet<string[]>(NAMES_KEY)) || []; if (!cur.includes(name) && cur.length >= MAX_NAMES) return NextResponse.json({ ok: false, error: 'too many job names' }, { status: 429 }); }
 
   const phase = body?.phase === 'start' ? 'start' : 'end';
   const ok = !!body?.ok;
   const exit_code = typeof body?.exit_code === 'number' ? body.exit_code : null;
   const error = body?.error ? String(body.error).slice(0, 500) : null;
-  const run_url = body?.run_url ? String(body.run_url).slice(0, 500) : null;
+  const run_url = body?.run_url && /^https:\/\/github\.com\//.test(String(body.run_url)) ? String(body.run_url).slice(0, 500) : null;
   const now = new Date().toISOString();
 
   const existing = (await kvGet<HeartbeatRow>(ROW_KEY(name))) || {

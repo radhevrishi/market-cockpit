@@ -43,10 +43,12 @@ jobs:
         continue-on-error: true      # a quiet market must never fail the marking step
         env:
           CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
           for R in us india; do
-            CODE=$(curl -s -m 280 "$BASE/api/v1/ai/desk?region=$R" -o "/tmp/desk-$R.json" -w "%{http_code}") || CODE=000
+            # zzz882: /api/v1/ai/desk spends AI money, so it now needs the service key
+            CODE=$(curl -s -m 280 -H "x-cron-secret: $CRON_SECRET" "$BASE/api/v1/ai/desk?region=$R" -o "/tmp/desk-$R.json" -w "%{http_code}") || CODE=000
             echo "desk $R: HTTP $CODE"
             [ "$CODE" = "200" ] || continue
             F="/tmp/desk-$R.json"

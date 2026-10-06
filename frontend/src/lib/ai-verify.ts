@@ -743,7 +743,8 @@ export function realKv(timeoutMs = 4_000): KvIo {
     get: async <T>(k: string) => { const m = await import('./kv'); return race(m.kvGet<T>(k), null); },
     set: async (k, v, ttl) => { const m = await import('./kv'); await race(m.kvSet(k, v, ttl), undefined); },
     mget: async <T>(keys: string[]) => { const m = await import('./kv'); return race(m.kvMGet<T>(keys), keys.map(() => null) as Array<T | null>); },
-    setNX: async (k, v, ttl) => { const m = await import('./kv'); return race(m.kvSetNX(k, v, ttl), true); },
+    // zzz882: a lock that cannot be confirmed is NOT taken — two overlapping paid runs cost twice; the next hourly run picks the work up
+    setNX: async (k, v, ttl) => { const m = await import('./kv'); return race(m.kvSetNX(k, v, ttl), false); },
     del: async (k) => { const m = await import('./kv'); await race(m.kvDel(k), undefined); },
   };
 }
