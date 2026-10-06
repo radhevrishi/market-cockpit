@@ -39,9 +39,10 @@ jobs:
             const fs=require("fs"), c=require("crypto");
             const exp=JSON.parse(fs.readFileSync("user-data.json","utf8")), list=JSON.parse(fs.readFileSync("list.json","utf8"));
             if(!exp.ok||!Array.isArray(exp.items)) { console.error("export not ok"); process.exit(1); }
+            const canon=(v)=>Array.isArray(v)?`[${v.map(canon).join(",")}]`:(v&&typeof v==="object")?`{${Object.keys(v).sort().map(k=>JSON.stringify(k)+":"+canon(v[k])).join(",")}}`:JSON.stringify(v??null);
             const want=new Map((list.keys||[]).map(k=>[k.key,k.hash]));
             let bad=0;
-            for(const it of exp.items){ const h=c.createHash("sha256").update(JSON.stringify(it.value??null)).digest("hex").slice(0,24); if(want.has(it.key)&&want.get(it.key)!==h){ console.error("MISMATCH",it.key); bad++; } }
+            for(const it of exp.items){ const h=c.createHash("sha256").update(canon(it.value)).digest("hex").slice(0,24); if(want.has(it.key)&&want.get(it.key)!==h){ console.error("MISMATCH",it.key); bad++; } }
             console.log(`store=${exp.store} items=${exp.items.length} keys-on-server=${want.size} mismatches=${bad}`);
             if(bad||exp.items.length<want.size) process.exit(1);'
       - name: Encrypt

@@ -21,7 +21,13 @@ const HISTORY_KEEP = 60;
 const kvKey = (k: string) => `user-state:v1:${k}`;
 
 export function isUserStateKey(k: unknown): k is UserStateKey { return typeof k === 'string' && (USER_STATE_KEYS as readonly string[]).includes(k); }
-export function hashOf(v: unknown): string { return createHash('sha256').update(JSON.stringify(v ?? null)).digest('hex').slice(0, 24); }
+/** zzz883: canonical JSON (object keys sorted) — Postgres JSONB re-orders keys, so a plain JSON.stringify hash would not survive a round trip. */
+export function canonicalJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(',')}]`;
+  if (v && typeof v === 'object') return `{${Object.keys(v as object).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson((v as any)[k])}`).join(',')}}`;
+  return JSON.stringify(v ?? null);
+}
+export function hashOf(v: unknown): string { return createHash('sha256').update(canonicalJson(v)).digest('hex').slice(0, 24); }
 
 export interface UserStateRow { key: string; value: unknown; hash: string; version: number; updatedAt: string; device?: string | null }
 export interface UserStateMeta { key: string; hash: string; version: number; updatedAt: string; bytes: number }
@@ -30,8 +36,9 @@ async function pgOk(): Promise<boolean> { return getPool() ? ensureSchema() : fa
 
 export async function listUserState(): Promise<{ store: 'postgres' | 'redis'; keys: UserStateMeta[] }> {
   if (await pgOk()) {
-    const rows = (await getPool()!.query('SELECT key, hash, version, bytes, updated_at FROM user_state ORDER BY key')).rows;
-    return { store: 'postgres', keys: rows.map((r: any) => ({ key: r.key, hash: r.hash, version: Number(r.version), bytes: Number(r.bytes), updatedAt: new Date(r.updated_at).toISOString() })) };
+    const rows = (await getPool()!.query('SELECT key, value, version, bytes, updated_at FROM user_state ORDER BY key')).rows;
+    // the hash is recomputed from the stored value (canonical JSON), so it always describes exactly what is stored
+    return { store: 'postgres', keys: rows.map((r: any) => ({ key: r.key, hash: hashOf(r.value), version: Number(r.version), bytes: Number(r.bytes), updatedAt: new Date(r.updated_at).toISOString() })) };
   }
   const out: UserStateMeta[] = [];
   for (const k of USER_STATE_KEYS) {
@@ -44,7 +51,7 @@ export async function listUserState(): Promise<{ store: 'postgres' | 'redis'; ke
 export async function getUserState(key: UserStateKey): Promise<UserStateRow | null> {
   if (await pgOk()) {
     const r = (await getPool()!.query('SELECT key, value, hash, version, device, updated_at FROM user_state WHERE key = $1', [key])).rows[0];
-    if (r) return { key: r.key, value: r.value, hash: r.hash, version: Number(r.version), device: r.device, updatedAt: new Date(r.updated_at).toISOString() };
+    if (r) return { key: r.key, value: r.value, hash: hashOf(r.value), version: Number(r.version), device: r.device, updatedAt: new Date(r.updated_at).toISOString() };
   }
   return (await kvGet<UserStateRow>(kvKey(key)).catch(() => null)) || null;
 }

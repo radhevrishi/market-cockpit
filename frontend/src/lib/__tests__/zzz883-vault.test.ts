@@ -33,3 +33,8 @@ test('archive: only shown events, with source, evidence and engine version; extr
   assert.equal(x.promptVersion, 'gx-1'); assert.equal(x.model, 'gpt-5-mini');
   assert.equal(extractionRow({ ...x, promptVersion: undefined } as any).promptVersion, 'pre-zzz883');
 });
+import { canonicalJson } from '../user-state-store';
+test('canonical JSON ignores key order (Postgres JSONB re-orders keys)', () => {
+  assert.equal(canonicalJson({ b: 1, a: [{ d: 2, c: 3 }] }), canonicalJson({ a: [{ c: 3, d: 2 }], b: 1 }));
+  assert.equal(hashOf({ b: 1, a: 2 }), hashOf({ a: 2, b: 1 }));
+});
