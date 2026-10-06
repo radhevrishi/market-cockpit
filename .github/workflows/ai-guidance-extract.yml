@@ -37,6 +37,10 @@ on:
         description: 'Stop sending rounds after this many minutes (1-12)'
         required: false
         default: '10'
+      doc_ids:
+        description: 'zzz917: read only these documents now (comma-separated doc ids, max 60). Each is one small paid read; the monthly cap binds.'
+        required: false
+        default: ''
 
 concurrency:
   group: ai-guidance-extract
@@ -58,10 +62,23 @@ jobs:
           LIMIT: ${{ github.event.inputs.limit || '40' }}
           MAX_USD: ${{ github.event.inputs.max_usd || '0.40' }}   # zzz915: was 1.20; the route also caps each UTC day
           MAX_MIN: ${{ github.event.inputs.max_minutes || '20' }}
+          DOC_IDS: ${{ github.event.inputs.doc_ids || '' }}
         run: |
           set -euo pipefail
           BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
           if [ -z "${CRON_SECRET}" ]; then echo "CRON_SECRET is not set in repository secrets"; exit 1; fi
+          # zzz917: targeted reads (owner asked for specific companies) — one POST ?docId= per id, then stop
+          IDS=$(printf '%s' "$DOC_IDS" | tr -cd 'A-Za-z0-9_,-' | tr ',' ' ')
+          if [ -n "$IDS" ]; then
+            N=0
+            for ID in $IDS; do
+              N=$((N + 1)); [ "$N" -gt 60 ] && break
+              STATUS=$(curl -sS -o /tmp/ge1.json -w "%{http_code}" --max-time 75 -X POST -H "x-cron-secret: ${CRON_SECRET}" "$BASE/api/v1/guidance-extract?docId=${ID}&limit=1&maxUsd=0.05" || echo "000")
+              python3 -c "import json;r=(json.load(open('/tmp/ge1.json')).get('run') or {});print('$ID HTTP $STATUS', 'ok=',r.get('ok'),'noGuidance=',r.get('noGuidance'),'rowsKept=',r.get('rowsKept'),'usd=',r.get('spentUsd'))" 2>/dev/null || echo "$ID HTTP $STATUS"
+              sleep 16   # the route allows 4 POSTs a minute
+            done
+            exit 0
+          fi
           case "$LIMIT" in ''|*[!0-9]*) LIMIT=40 ;; esac
           case "$MAX_USD" in ''|*[!0-9.]*) MAX_USD=0.40 ;; esac
           case "$MAX_MIN" in ''|*[!0-9]*) MAX_MIN=20 ;; esac
