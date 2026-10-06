@@ -36,7 +36,7 @@ The code is in `frontend/src/lib/app-scheduler.ts` (`APP_JOBS`). `instrumentatio
 | daily-summary | `30 16 * * 1-5` | POST /api/v1/cron/daily-summary | daily-summary.yml |
 | data-watch | 05:30 daily, 10:30 and 14:30 Mon–Fri | GET /api/v1/cron/data-watch | data-watch.yml |
 | ai-verify | `35 * * * *` | POST /api/v1/ai-verify, up to 4 rounds (100 claims, $1.50 per run) | ai-verify.yml |
-| ai-guidance-extract | `50 * * * *` | POST /api/v1/guidance-extract, rounds for up to 20 minutes ($1.20 per run) | ai-guidance-extract.yml |
+| ai-guidance-extract | `50 * * * *` | POST /api/v1/guidance-extract, rounds for up to 20 minutes ($0.40 per run; at most $0.40 per UTC day, GUIDANCE_EXTRACT_DAILY_USD) | ai-guidance-extract.yml |
 | results-pdf | `20 * * * *` | POST /api/v1/results-pdf?max_items=12&max_usd=0.30 | results-pdf.yml |
 | score-ai-ledger | `20 2 * * *` | GET /api/v1/ai/desk (us, india), then GET /api/v1/ai/ledger?score=1, up to 6 passes | score-ai-ledger.yml |
 | ai-eval | `41 3 * * 1` | GET /api/v1/ai-eval?run=1. The heartbeat is marked failed when precision is below 0.90 or recall is below 0.80. | ai-eval.yml |

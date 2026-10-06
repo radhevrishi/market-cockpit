@@ -113,9 +113,10 @@ test('history key is the research route’s own store key', () => {
 });
 
 test('scheduler: both jobs registered at the end, odd minutes, lock shorter than every window, final slot is 13:31', () => {
-  const tail = APP_JOBS.slice(-2).map((j) => j.name);
-  assert.deepEqual(tail, ['gainers-in-backup', 'gainers-brief-in']);
-  for (const j of APP_JOBS.slice(-2)) {
+  // zzz914 appended its jobs after these, so look them up by name rather than position
+  const mine = ['gainers-in-backup', 'gainers-brief-in'].map((n) => APP_JOBS.find((j) => j.name === n)!);
+  assert.ok(mine.every(Boolean));
+  for (const j of mine) {
     for (const c of j.crons) { assert.ok(parseCron(c)); assert.equal(Number(c.split(' ')[0]) % 2, 1, `${j.name}: odd minute`); }
     let s = prevSlot(j.crons, at('2026-10-05T00:00:00Z'))!;
     for (let k = 0; k < 40; k++) { assert.ok(slotWindowMs(j, s) > lockTtlSec(j) * 1000); s = prevSlot(j.crons, new Date(s.getTime() + 7 * 86_400_000))!; }

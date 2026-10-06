@@ -28,6 +28,16 @@ import {
   redact, usMode, GUIDANCE_EXTRACT_SCHEDULE,
 } from '@/lib/ai-guidance-extract';
 import { nextCronRun } from '@/lib/ai-verify';
+import { kvGet, kvIncrByFloat } from '@/lib/kv';
+
+// zzz915 — a DAILY spend ceiling for scheduled reading (owner, 6 Oct: the hourly runs cleared a backlog at ~$1/hour, which
+// is far above the ~$10/month the site should cost). Default $0.40 a day (≈ $12/month at most; normal days use cents).
+// Set GUIDANCE_EXTRACT_DAILY_USD in Railway to change it. A single-document re-read (?docId=) is never blocked by it.
+function dailyCapUsd(): number {
+  const v = Number(process.env.GUIDANCE_EXTRACT_DAILY_USD);
+  return Number.isFinite(v) && v >= 0 ? Math.min(v, 20) : 0.4;
+}
+const dayKey = (d = new Date()) => `guidance-extract:day-usd:v1:${d.toISOString().slice(0, 10)}`;
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -83,8 +93,16 @@ export async function POST(req: NextRequest) {
   const budgetMs = Math.max(10_000, Math.min(55_000, Number(sp.get('budgetMs')) || runBudgetMs()));
   const docId = sp.get('docId');
   if (docId && !DOC_ID_RE.test(docId)) return NextResponse.json({ ok: false, error: 'invalid docId' }, { status: 400, headers: NO_STORE });
+  // zzz915: daily ceiling (UTC day) on top of the per-run and monthly caps
+  const dayCap = dailyCapUsd();
+  const spentToday = Number(await kvGet<number | string>(dayKey()).catch(() => 0)) || 0;
+  const dayLeft = Math.max(0, dayCap - spentToday);
+  if (!docId && dayLeft < 0.01) {
+    return NextResponse.json({ ok: true, run: { stoppedBy: 'daily_cap', queued: 0, attempted: 0, spentUsd: 0, note: `daily reading budget used ($${spentToday.toFixed(2)} of $${dayCap.toFixed(2)}); resumes tomorrow (UTC)` } }, { headers: NO_STORE });
+  }
   try {
-    const run = await runExtraction(await realDeps(), { limit, maxUsd, budgetMs, concurrency: runConcurrency(), docIds: docId ? [docId] : undefined });
+    const run = await runExtraction(await realDeps(), { limit, maxUsd: docId ? maxUsd : Math.min(maxUsd, dayLeft), budgetMs, concurrency: runConcurrency(), docIds: docId ? [docId] : undefined });
+    if (run && Number((run as any).spentUsd) > 0) await kvIncrByFloat(dayKey(), Number((run as any).spentUsd), 3 * 86_400).catch(() => null);
     // 'unavailable' / 'cap' / 'no_store' are honest answers (200 with the reason), not server errors
     return NextResponse.json({ ok: true, run }, { headers: NO_STORE });
   } catch (e: any) {
