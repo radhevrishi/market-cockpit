@@ -3560,3 +3560,10 @@ stale heartbeats (prewarm-earnings, data-watch) investigation; removing ?secret=
   and place in `guidance-extract:v1:index` / `:index:ok` (`clearExtraction`), so the hourly extractor reads it again under the current rules inside its
   normal daily cap. The old rows of that document leave the universe until it is re-read. In this mode the day listing, intimation retries and
   queue sweep do not run, and the scheduled job's heartbeat / status / coverage are not touched. Empty input = behaviour unchanged.
+- zzz922–929 (6–7 Oct night): hand-run collector capped at 90 min; Sky Gold score on the focus list (`lib/gu-skygold-score.ts`,
+  `gu-skygold-facts.ts`, `/api/v1/guidance-upgrades/skygold`; GOOD needs 5 of 7 main checks, STRONG 6 of 7; US caps from Nasdaq);
+  BSE-only names resolved in re-collect; India raises fixed (per-market extract index `guidance-extract:v1:index:ok:IN|US`,
+  both-ends-up = raise); Reported date sort + fair value (`lib/gu-fair-value.ts`, auto-valuation bands, no AI); opportunity score
+  (`lib/gu-opportunity.ts`, separate from Sky Gold); one-off extra AI allowance (`lib/guidance-extract-allowance.ts`, ≤ $15 / ≤ 12 h,
+  `POST /api/v1/guidance-extract?action=allowance`). The owner's OpenAI PROJECT has its own enforced spend limit (hit at ~$23 in
+  Oct) — a 429 "enforced spend limit" now stops runs as "cap reached" instead of failing documents.
