@@ -1,10 +1,12 @@
 # Production Dockerfile for Next.js 14 frontend
 # Replaces dev-mode Dockerfile. Uses npm install (no lockfile required).
-FROM node:20-alpine
+# zzz882: Node 20 reached end of life on 30 Apr 2026 (no security fixes); package.json engines already says 22.x
+FROM node:22-alpine
 WORKDIR /app
 
 # Install dependencies
-COPY package.json ./
+# zzz882: the lockfile is copied too, so every build installs the same tested versions
+COPY package.json package-lock.json ./
 RUN npm install --no-audit --no-fund --legacy-peer-deps
 
 # Copy source

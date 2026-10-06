@@ -37,6 +37,10 @@ app
       });
     });
 
+    // zzz882 security: the app uses no WebSockets. Refuse every protocol upgrade outright (CVE-2026-44578, an SSRF through
+    // WebSocket-upgrade handling, affects Next 13.4–15.5.15 and has no 14.x patch).
+    server.on('upgrade', (req, socket) => { try { socket.destroy(); } catch { /* already closed */ } });
+
     server.listen(port, () => {
       console.log(`  ▲ Next.js production server (compression ${compressOn ? 'br/gzip' : 'off'}) on port ${port}`);
     });
