@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
+import { buildAliasIndex, defaultAliasIndex, tagTickers, type AliasIndex, type ExtraAlias } from '@/lib/company-alias';
+import { loadCatalog } from '@/lib/symbolMaster';
 import { parseListOptions, shapeNewsArticles } from '@/lib/lean-view';
 import { privateCache } from '@/lib/swr-cache';
 import { refreshNewsLastGood, makeKvNewsIo, NEWS_SHARED_LASTGOOD_KEY } from '@/lib/guidance-upgrades-cache';
@@ -814,11 +816,37 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
 }
 
 // ── Ticker extraction ────────────────────────────────────────────────
-const JUNK_TICKERS = new Set(['ON', 'A', 'IT', 'ALL', 'AN', 'IS', 'ARE', 'OR', 'SO', 'GO', 'DO', 'HE', 'WE', 'AI', 'IN', 'AT', 'TO', 'BY', 'US']);
+// zzz903: tags come from the alias matcher (lib/company-alias), not from capitalised words. The old rule
+// (`/\b[A-Z]{2,15}\b/` minus a short junk list) turned "PSU", "PAT", "LIVE", "UK", "SK", "DRAM" into company tags.
+// The static table (curated + NSE_TICKER_NAMES) is extended once per instance (6h) with the Conviction bench
+// (ticker + company) and the NSE symbol catalogue; any read that fails or is slow leaves the static table in use.
+let _newsAliasIndex: AliasIndex = defaultAliasIndex();
+let _newsAliasAt = 0;
+const NEWS_ALIAS_TTL_MS = 6 * 3600_000;
+async function ensureNewsAliasIndex(): Promise<void> {
+  if (Date.now() - _newsAliasAt < NEWS_ALIAS_TTL_MS) return;
+  _newsAliasAt = Date.now();
+  const within = <T,>(p: Promise<T>, ms = 3000): Promise<T | null> =>
+    Promise.race([p.catch(() => null), new Promise<null>((r) => setTimeout(() => r(null), ms))]);
+  try {
+    const [benchIn, benchUs, catalog] = await Promise.all([
+      within(kvGet<any>('bench:server:v1')),
+      within(kvGet<any>('bench:us:server:v1')),
+      within(loadCatalog()),
+    ]);
+    const extra: ExtraAlias[] = [];
+    for (const e of (benchIn?.entries || [])) if (e?.ticker) extra.push({ ticker: String(e.ticker), market: 'IN', name: String(e.company || e.name || '') });
+    for (const e of (benchUs?.entries || [])) if (e?.ticker) extra.push({ ticker: String(e.ticker), market: 'US', name: String(e.company || e.name || e.company_name || '') });
+    for (const [sym, ent] of Object.entries(catalog?.entries || {})) {
+      if ((ent as any)?.series && !['EQ', 'BE', 'SM', 'ST', 'BZ'].includes(String((ent as any).series))) continue;
+      extra.push({ ticker: sym, market: 'IN', name: String((ent as any)?.companyName || ''), lowTrust: true });
+    }
+    if (extra.length) _newsAliasIndex = buildAliasIndex(extra);
+  } catch { /* keep the static table */ }
+}
 
 function extractTickers(title: string): string[] {
-  const words = title.match(/\b[A-Z]{2,15}\b/g) || [];
-  return words.filter(w => !JUNK_TICKERS.has(w) && w.length >= 2).slice(0, 3);
+  return tagTickers(title, _newsAliasIndex, 3);
 }
 
 // ── Market Consequence Engine ────────────────────────────────────────
@@ -1234,6 +1262,7 @@ function generateImpact(
 // ── Fetch all RSS feeds ──────────────────────────────────────────────
 async function fetchAllNews(): Promise<any[]> {
   const articles: any[] = [];
+  await ensureNewsAliasIndex();
 
   const feedResults = await Promise.allSettled(
     RSS_FEEDS.map(async (feed) => {
@@ -2610,6 +2639,7 @@ export async function GET(request: Request) {
       const realCount = (articles || []).filter((a: any) => !/^\[STRUCTURAL ALERT\]/.test(a?.title || '')).length;
       if (realCount < 8) {
         const blob: any = await kvGet<any>('scraped-india-news:v1:latest');
+        await ensureNewsAliasIndex();
         const scraped: any[] = Array.isArray(blob) ? blob : (blob?.entries || blob?.items || []);
         if (Array.isArray(scraped) && scraped.length) {
           const seen = new Set((articles || []).map((a: any) => (a?.title || '').toLowerCase().slice(0, 60)));
@@ -2618,7 +2648,8 @@ export async function GET(request: Request) {
             .slice(0, 40)
             .map((s: any) => {
               const cl = classifyArticle(s.title, s.snippet || '');
-              const tk = extractTickers(s.title);
+              // zzz903: a scraper row that already names its tickers keeps them as supplied
+              const tk: string[] = Array.isArray(s.tickers) && s.tickers.length ? s.tickers.map(String) : extractTickers(s.title);
               return {
                 id: `scraped-${Buffer.from(String(s.url)).toString('base64').slice(-20)}`,
                 title: s.title, headline: s.title, summary: s.snippet || '',
