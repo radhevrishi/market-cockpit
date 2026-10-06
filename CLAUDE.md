@@ -1467,6 +1467,11 @@ Pre-session patches existed (0073–0095). Recent session highlights:
 
 ## 13 · Hard Rules for ALL Future Sessions
 
+> **zzz883 (6 Oct 2026) — read §24 first.** Stack is now Next.js 16.3 + React 19.2 on Node 22 (Railway, Dockerfile). `middleware.ts`
+> is `src/proxy.ts`. `next lint` no longer exists (ESLint 9 flat config: `npm run lint`). Before pushing ANY change run the same three
+> checks CI runs: `node scripts/run-tests.mjs`, `node scripts/tsc-gate.mjs` (type ratchet — no new type errors), `npx next build`.
+> Job secrets go in the `x-cron-secret` HEADER, never `?secret=`. Personal data lives in Postgres (`/api/v1/user-state`).
+
 1. **Always type-check before commit:** `cd /sessions/<sandbox>/mnt/market-cockpit/frontend && timeout 35 npx tsc --noEmit`
 2. **For ANY edit that touches `app/(dashboard)/.../page.tsx`, ALSO run `next build --no-lint` (or at minimum `next lint`) before pushing.** Next.js 14 App Router enforces strict export rules on page files — only `default` export + allowlisted metadata exports are permitted. Adding `export interface Foo` or `export function bar` to a page file passes `tsc --noEmit` BUT fails Vercel's `next build` with:
    ```
@@ -3453,3 +3458,47 @@ Expected as of P0956 deploy `42a7e36`:
   SENORES Positive HIGH +0.75 (8 via Screener.in),
   PRICOLLTD Neutral MEDIUM +0.15 (5 via Screener.in),
   KPL llm-failed (Screener.in found PDF but Haiku parse fails).
+
+
+---
+
+## 24 · DAY-OF-AUDIT HANDOFF — 2026-10-06 (zzz881 → zzz883g)
+
+Triggered by the 2026 technology audit (report: MarketCockpit_2026_Technology_Audit.docx, sent in chat) and "fix all".
+
+**Shipped (all live, CI green):**
+- zzz881/882 — guidance correctness: earlier-document priors only for the same measure + scope (`lib/guidance-prior-match.ts`),
+  growth ranking skips segment/share/volume/reported figures, part figures dropped, focus list in two tables, stale browser copy
+  banner + cache v2.
+- zzz882b/c — security: paid-AI routes protected, SSRF guard (SEC-only filing_url), locks fail closed, heartbeat bounded,
+  Node 22 image + lockfile, WebSocket upgrades refused.
+- zzz883 — CI (`.github/workflows/ci.yml`): tests (failing file re-run once), type ratchet (`scripts/tsc-baseline.json`), build.
+  Golden tests `zzz883-golden.test.ts`. 9 unused packages removed.
+- zzz883b — Postgres record of truth: `lib/db-migrate.ts` (versioned migrations, advisory lock), `user_state` (+history),
+  `intel_event`, `ai_extraction`. Browser personal data synced by `lib/user-vault-client.ts` (started in DashboardClient).
+  Hourly archive `POST /api/v1/intel-archive` (refresh-guidance-upgrades workflow). Nightly encrypted backup with restore test
+  (`backup-user-data.yml`, artifact 90 days, passphrase = BACKUP_PASSPHRASE or CRON_SECRET). Book KV TTL 2 years.
+  Extraction records carry `promptVersion` (fingerprint of prompt + schema).
+- zzz883c — live USD/INR (`lib/fx.ts`, `/api/v1/fx`; was a fixed 85, live is ~96), Technicals ₹ crore was 10× too big (fixed),
+  results-PDF figures must sit on their own printed row, EO auto-jump banner, India CB preset ceiling ₹30,000 Cr (`mktCapMax`),
+  Fundamentals reasons carry their period, neutral words instead of buy/sell on My Book + Fundamentals, My Book slow fetches
+  parallel every 15 min.
+- zzz883d — secrets via header (`lib/request-secret.ts`; instrumentation moves self-call `?secret=` into the header; workflows
+  switched); x-vercel-cron header no longer trusted (9 routes); compute wipe switches owner-only (`lib/site-auth-request.ts`);
+  untrusted-data rule on every model call (`lib/ai-fence.ts`, added in `anthropic-meter`), fences at 6 more call sites; quote
+  coverage 85% (`lib/quote-coverage.ts`); atomic AI spend total (`kvIncrByFloat`); system-status dates per request.
+- zzz883e — CB scan incremental/parallel, Technicals CSVs parallel, US catalysts slices in pairs, duplicate AI Desk nav removed,
+  dead backend/worker/valuation-engine/cloudflare-worker + launchers + 66 patches removed.
+- zzz883f — Next.js 16.3.8 + React 19.2 + ESLint 9 (Turbopack build, serverExternalPackages, proxy.ts).
+- zzz883g — AI eval: `lib/ai-eval.ts` golden set, `/api/v1/ai-eval?run=1`, weekly `ai-eval.yml`.
+
+**Owner actions still needed (cannot be done from code):**
+- Railway → service → Settings → turn on "Wait for CI" so a red CI blocks the deploy.
+- Railway → Variables: delete `NEXT_PUBLIC_BOT_SECRET` if set (anything NEXT_PUBLIC_ is visible in the browser).
+- Optional: GitHub secret `BACKUP_PASSPHRASE` (otherwise the backup is encrypted with CRON_SECRET).
+
+**Not done yet (next candidates, in order):** lean list payloads for guidance-upgrades (4.8 MB) / universe (6.5 MB); tabs reading
+`intel_event` instead of their own copies (shared intelligence layer); "new information" score for Conviction Beats (guidance
+change + beat + persistence, price only as confirmation); quantified EPS/FCF impact on catalysts; concall management-language
+ledger; US post-results estimate revisions; RS vs index in Technicals; read-only MCP server; splitting the 12 pages over 3,000 lines;
+stale heartbeats (prewarm-earnings, data-watch) investigation; removing ?secret= acceptance once logs show no old callers.
