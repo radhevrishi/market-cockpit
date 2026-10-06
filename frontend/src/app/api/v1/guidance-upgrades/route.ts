@@ -76,6 +76,7 @@ const PER_MARKET_CAP_LONG = 600;
 const mem = new Map<string, { at: number; body: GuidanceUpgradesResponse }>();
 /** zzz880 — the last complete AI-extract list per market scope, for a read that misses its time limit. */
 const lastExtract = new Map<string, { at: number; list: ExtractList }>();
+const extractInflight = new Map<string, Promise<ExtractList | null>>();
 const MEM_TTL_MS = 2 * 60_000;
 
 function noScan(m: 'IN' | 'US', now: Date, why: string, days: number, window: GuWindow = '7D'): GuScanStatus {
@@ -160,8 +161,25 @@ export async function GET(req: NextRequest) {
   // zzz857: rows the AI extractor read (quote-checked) from the companies' own documents: PRIMARY candidates, built by the same engine
   // zzz880: a slow read used to return null and EVERY AI-read event vanished from that load (Cupid "there, then gone after refresh").
   // 12 s, and a read that still misses falls back to the last complete list this server read (company documents never un-happen).
-  const extractP: Promise<ExtractList | null> = withTimeout(listExtractResults({ market: market === 'ALL' ? 'ALL' : market }), 12_000, null)
-    .then((l) => { const k = market === 'ALL' ? 'ALL' : market; if (l && !l.error && l.results.length) { lastExtract.set(k, { at: Date.now(), list: l }); return l; } const prev = lastExtract.get(k); return prev && Date.now() - prev.at < 6 * 3_600_000 ? prev.list : l; });
+  // zzz881: the read is SHARED and keeps running after the 12 s wait gives up, so its result still lands in the memo for the next load
+  // (after a deploy the first read is cold and slow: before this, every load re-started it and the AI-read events stayed missing).
+  const xKey = market === 'ALL' ? 'ALL' : market;
+  const fromMemo = (): ExtractList | null => {
+    const fresh = (e?: { at: number; list: ExtractList }) => (e && Date.now() - e.at < 6 * 3_600_000 ? e : undefined);
+    const own = fresh(lastExtract.get(xKey)); if (own) return own.list;
+    const all = fresh(lastExtract.get('ALL'));   // an IN / US load can use a complete ALL read
+    return all && xKey !== 'ALL' ? { ...all.list, results: all.list.results.filter((r) => r.market === xKey) } : null;
+  };
+  let shared = extractInflight.get(xKey);
+  if (!shared) {
+    shared = listExtractResults({ market: xKey })
+      .then((l) => { if (l && !l.error && l.results.length) lastExtract.set(xKey, { at: Date.now(), list: l }); return l; })
+      .catch(() => null as ExtractList | null)
+      .finally(() => { extractInflight.delete(xKey); });
+    extractInflight.set(xKey, shared);
+  }
+  const extractP: Promise<ExtractList | null> = withTimeout(shared, 12_000, null)
+    .then((l) => (l && !l.error && l.results.length ? l : fromMemo() ?? l));
   const [news, feed, graded, usSessions, scraped, retained, catalog, [storeIN, storeUS]] = await Promise.all([
     timedNews(),
     wantIN ? timed(readConcallFeedWithFallback(makeKvFeedIo(Math.min(BUDGET_MS, 6_000)), feedDays).then((r) => { feedRead = r; return r.feed; }), BUDGET_MS) : Promise.resolve<Timed<any>>({ v: null, timedOut: false }),
