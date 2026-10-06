@@ -10,6 +10,7 @@
 //  - decisions are only IMMEDIATE_BUY / WATCHLIST / DELAYED_EP / REJECT (+ UNVERIFIED); thesis labels only A/B/F/G
 //  - no visible 0-100 scores (rankKey is internal only)
 
+import { earlierPriorMismatch } from './guidance-prior-match';
 import type {
   GuCandidate, GuChange, GuChain, GuContext, GuDecision, GuDuration, GuEvidence, GuFlag, GuGap,
   GuGuidancePoint, GuHistoryStats, GuLedgerRow, GuMarket, GuMateriality, GuMetric, GuNumber,
@@ -53,9 +54,9 @@ export const GU_THRESHOLDS = {
 const round = (n: number, d = 4): number => { const f = 10 ** d; return Math.round(n * f) / f; };
 const DASH = '–';
 
-function fmtNum(n: number | null | undefined): string {
+function fmtNum(n: number | null | undefined, d = 2): string {
   if (n == null || !isFinite(n)) return DATA_UNAVAILABLE;
-  const r = round(n, 2);
+  const r = round(n, d);
   if (Math.abs(r) >= 1000) return r.toLocaleString('en-US', { maximumFractionDigits: 2 });
   return String(r);
 }
@@ -67,7 +68,10 @@ function scaleLabel(u: string | undefined): string {
 }
 export function fmtPoint(p: GuGuidancePoint | null | undefined): string {
   if (!p || p.low == null || p.high == null) return DATA_UNAVAILABLE;
-  const rng = p.low === p.high ? fmtNum(p.low) : `${fmtNum(p.low)}${DASH}${fmtNum(p.high)}`;
+  // zzz881: never print a range whose two ends look the same ('$1.69–1.69B' for 1.685–1.693): add decimals until they differ
+  let d = 2;
+  while (p.low !== p.high && d < 4 && fmtNum(p.low, d) === fmtNum(p.high, d)) d++;
+  const rng = p.low === p.high ? fmtNum(p.low) : `${fmtNum(p.low, d)}${DASH}${fmtNum(p.high, d)}`;
   if (p.isGrowthRate) return `${rng}%`;
   return `${p.currency ?? ''}${rng}${scaleLabel(p.unit)}`;
 }
@@ -1069,7 +1073,10 @@ export function computeValuation(ctx: GuContext, changes: GuChange[], opts?: { m
       formula: vm
         ? `(New EPS - old EPS) / old EPS = ${fmtNum(pct)}%. At ${fmtNum(pc.pe)}x, value per share moves ${fmtNum(vm.before)} to ${fmtNum(vm.after)}`
         : '(New EPS - old EPS) / old EPS, with the P/E multiple unchanged',
-      assumptions: ['The P/E multiple stays the same', 'Only the EPS guidance changes', 'Not a price forecast'],
+      assumptions: ['The P/E multiple stays the same', 'Only the EPS guidance changes', 'Not a price forecast',
+        // zzz881: Rubrik $0.30 → $0.50 = +67% while revenue moved +2.8% — say so beside the number
+        ...(Math.abs(ep.before!.midpoint!) < (/₹|INR|Rs/i.test(String(ep.after.currency || '')) ? 5 : 1)
+          ? [`Small base: the old ${epWord} was only ${ep.after.currency || ''}${fmtNum(ep.before!.midpoint!)} a share, so the percentage looks much bigger than the change in the business`] : [])],
     };
   }
   let multipleSensitivityPct: GuNumber = na('UNAVAILABLE', 'Not assumed. No multiple sensitivity supplied');
@@ -1781,7 +1788,9 @@ function applyPrior(changes: GuChange[], prior?: GuGuidancePoint[]): GuChange[] 
     const p = prior.find(x => x.metric === c.metric && x.period === c.after.period && x.midpoint != null && x.isGrowthRate === c.after.isGrowthRate
       && (x.unit == null || c.after.unit == null || x.unit === c.after.unit) && (x.currency == null || c.after.currency == null || x.currency === c.after.currency) && (x.periodKind || '') === (c.after.periodKind || '')
       // zzz880: a figure from an EARLIER document must carry exactly the same unit and currency (KSH: "67,000–74,000" with no unit vs "₹75,000")
-      && (!String(x.raw || '').includes('(earlier guidance:') || ((x.unit || '') === (c.after.unit || '') && (x.currency || '') === (c.after.currency || ''))));
+      && (!String(x.raw || '').includes('(earlier guidance:') || ((x.unit || '') === (c.after.unit || '') && (x.currency || '') === (c.after.currency || '')
+        // zzz881: same measure, same scope, company guidance on both sides, and a clean raise — else it is not "the old guidance"
+        && !earlierPriorMismatch(x, c.after, c.metric))));
     return p ? makeChange(p, c.after) : c;
   });
 }

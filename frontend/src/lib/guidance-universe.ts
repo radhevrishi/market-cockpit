@@ -9,6 +9,7 @@
 //   - it is not a proxy for another measure (e.g. presales instead of revenue),
 //   - its comparison value is >= threshold, where the comparison value is: the stated figure for a point, the MIDPOINT for a closed range
 //     (the range itself is still displayed), and the LOWER BOUND for an open-ended "80%+" figure (no invented midpoint).
+import { growthScopeIssue } from './guidance-prior-match';
 import type { GgCompany, GgGrowthOrigin, GgGuidancePoint, GgKind, GgLedgerRow, GgMetric, GgOrganic, GgPeriodKind, GgRevision, GgSourceRef, GgVerification } from './growth-guidance-types';
 import type { GuHighGrowthHorizon, GuHighGrowthMetric, GuHighGrowthRowX, GuMarketSummary, GuPeriodStatus, GuRegressionResponse, GuRegressionRow, GuRegressionStatus, GuSummaryAdditions, GuUniverseBucket, GuUniverseRecord, GuUniverseRecordOrigin, GuUniverseSummary } from './guidance-universe-types';
 import type {
@@ -1159,7 +1160,7 @@ export function selectHighGrowth(records: GuUniverseRecordX[], thr = HIGH_GROWTH
   const rows: Array<Omit<GuHighGrowthRowX, 'rank'>> = [];
   for (const r of records) {
     for (const horizon of ['SINGLE_YEAR', 'MULTI_YEAR_CAGR'] as GuHighGrowthHorizon[]) {
-      const q = (m: GgMetric) => r.points.filter((p) => p.metric === m && p.hg === horizon && p.compareValue != null && p.compareValue >= thr).sort((a, b) => (b.compareValue as number) - (a.compareValue as number))[0] || null;
+      const q = (m: GgMetric) => r.points.filter((p) => p.metric === m && p.hg === horizon && p.compareValue != null && p.compareValue >= thr && !growthScopeIssue(p.statement, p.metricFamily)).sort((a, b) => (b.compareValue as number) - (a.compareValue as number))[0] || null;
       const rev = q('REVENUE'), pat = q('PAT'); if (!rev && !pat) continue;
       const head = !pat || (rev && (rev.compareValue as number) >= (pat.compareValue as number)) ? rev! : pat;
       rows.push({
@@ -1213,7 +1214,9 @@ const hgMetricX = (p: GuPoint): GuHgMetricX => ({
  */
 export function selectHighGrowthGroups(records: GuUniverseRecordX[], thr = HIGH_GROWTH_THRESHOLD, claims: GuUniverseRecordX[] = []): GuHighGrowthGroups {
   const FAM = new Set<GuMetricFamily>(['REVENUE', 'NET_PROFIT', 'EBITDA']);
-  const base = (p: GuPoint) => FAM.has(p.metricFamily) && !!p.cohort && p.compareValue != null && p.low != null && p.compareValue >= thr && p.claimType === 'MANAGEMENT_GUIDANCE' && p.status === 'ACTIVE' && p.periodRunState === 'ACTIVE' && !p.proxy && !p.needsReview;
+  const base = (p: GuPoint) => FAM.has(p.metricFamily) && !!p.cohort && p.compareValue != null && p.low != null && p.compareValue >= thr && p.claimType === 'MANAGEMENT_GUIDANCE' && p.status === 'ACTIVE' && p.periodRunState === 'ACTIVE' && !p.proxy && !p.needsReview
+    // zzz881: a segment / plant / channel figure, a share of revenue, a reported result or a volume is never ranked as company growth
+    && !growthScopeIssue(p.statement, p.metricFamily);
   type Acc = { r: GuUniverseRecordX; cohort: GuCohort; trust: GuTrust; pts: GuPoint[] };
   const byTrust = new Map<string, Acc>(); const byCohort = new Map<string, Acc>();
   const add = (m: Map<string, Acc>, k: string, r: GuUniverseRecordX, cohort: GuCohort, trust: GuTrust, p: GuPoint) => { const cur = m.get(k) || { r, cohort, trust, pts: [] }; cur.pts.push(p); m.set(k, cur); };

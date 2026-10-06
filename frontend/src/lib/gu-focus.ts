@@ -12,6 +12,8 @@ export interface FocusRow {
   raised: string | null; raisePct: number | null; raiseDate: string | null; eventId: string | null;
   growth: string | null; growthPct: number | null; growthPeriod: string | null; growthTrust: string | null;
   verdict: FocusVerdict; why: string; score: number;
+  /** zzz881: date of the growth guidance document (growth-only rows) */ growthDate?: string | null; growthSource?: string | null;
+  /** zzz881: the raise is real but small (under 5%) or only a small-base EPS */ smallRaise?: boolean;
   /** zzz880: 'SMALL_MID' / 'LARGE' from a market cap or the large-cap list; null when not known */
   size: 'SMALL_MID' | 'LARGE' | null; capText: string | null;
 }
@@ -49,17 +51,36 @@ function rangeText(p: any): string {
   return lo === hi ? a : `${a}–${b}`;
 }
 
-/** The headline raise of one verified upgrade event, in words: 'FY27 revenue ₹250 Cr → ₹275 Cr (+10%)'. */
-export function raiseLine(e: GuidanceEvent): { text: string; pct: number | null } | null {
+/** zzz881: an EPS whose old midpoint is under $1 (US) or ₹5 (India) a share: a % from that base looks huge (Rubrik $0.30 → $0.50 = +67%)
+ *  while revenue moved +2.8%. Such a figure is shown, but never sets how strong the raise is. */
+export function isSmallEpsBase(c: any): boolean {
+  if (c?.metric !== 'EPS' && c?.metric !== 'ADJ_EPS') return false;
+  const m = num(c?.before?.midpoint) ?? num(c?.before?.low);
+  if (m == null) return false;
+  const lim = /₹|INR|Rs/i.test(String(c?.before?.currency || c?.after?.currency || '')) ? 5 : 1;
+  return Math.abs(m) < lim;
+}
+/** The headline raise of one verified upgrade event, in words: 'FY27 revenue ₹250 Cr → ₹275 Cr (+10%)'.
+ *  zzz881: the headline is the raise that best shows the business moved — revenue / profit first; an EPS from a small base is shown
+ *  last and never counts as the size of the raise. `pct` is that size (null when only a small-base EPS or a pp change was raised). */
+export function raiseLine(e: GuidanceEvent): { text: string; pct: number | null; smallBaseOnly: boolean; pp: boolean } | null {
   const ups = (e.changes || []).filter((c: any) => c?.direction === 'UP' && c?.before && c?.after);
   if (!ups.length) return null;
   const pctOf = (c: any) => num(c.percentageChange) ?? num(c.percentagePointChange);
-  const c: any = ups.slice().sort((a: any, b: any) => (pctOf(b) ?? 0) - (pctOf(a) ?? 0))[0];
+  const strength = (c: any): number => (isSmallEpsBase(c) ? -1 : num(c.percentageChange) ?? (num(c.percentagePointChange) != null ? 0 : -1));
+  const c: any = ups.slice().sort((a: any, b: any) => strength(b) - strength(a) || (pctOf(b) ?? 0) - (pctOf(a) ?? 0))[0];
   const pct = pctOf(c);
   const isPp = num(c.percentageChange) == null && num(c.percentagePointChange) != null;
+  const small = isSmallEpsBase(c);
   const sign = pct == null ? '' : ` (${pct >= 0 ? '+' : ''}${Math.round(pct * 10) / 10}${isPp ? ' pp' : '%'})`;
-  const more = ups.length > 1 ? ` + ${ups.length - 1} more` : '';
-  return { text: `${c.after.period || ''} ${METRIC_WORD[c.metric] || String(c.metric).toLowerCase()}: ${rangeText(c.before)} → ${rangeText(c.after)}${sign}${more}`.trim(), pct: isPp ? null : pct };
+  const others = ups.filter((u: any) => u !== c);
+  const smallOther = others.find((u: any) => isSmallEpsBase(u));
+  const more = others.length ? ` + ${others.length} more${smallOther ? ` (incl. EPS +${Math.round(pctOf(smallOther) ?? 0)}% from a small base)` : ''}` : '';
+  const smallNote = small ? ` — from a small base of ${c.before?.currency || ''}${num(c.before?.midpoint) ?? '?'} a share` : '';
+  return {
+    text: `${c.after.period || ''} ${METRIC_WORD[c.metric] || String(c.metric).toLowerCase()}: ${rangeText(c.before)} → ${rangeText(c.after)}${sign}${smallNote}${more}`.trim(),
+    pct: isPp || small ? null : pct, smallBaseOnly: small, pp: isPp,
+  };
 }
 
 const isShownUpgrade = (e: GuidanceEvent) => e.verification === 'VERIFIED' && e.taxonomy === 'formal_upgrade' && (!e.pipeline || e.pipeline.status === 'CARD');
@@ -77,7 +98,7 @@ export function buildFocusList(groups: GuHighGrowthGroups | null | undefined, ev
     const l = raiseLine(e); if (!l) continue;
     const r = get(e.market === 'US' ? 'US' : 'IN', e.ticker || null, e.company || e.ticker);
     if (r.raiseDate && r.raiseDate >= e.announcement_date) continue;   // the newest raise wins
-    r.raised = l.text; r.raisePct = l.pct; r.raiseDate = e.announcement_date; r.eventId = e.guidance_event_id;
+    r.raised = l.text; r.raisePct = l.pct; r.smallRaise = l.smallBaseOnly || (!l.pp && (l.pct ?? 0) < 5); r.raiseDate = e.announcement_date; r.eventId = e.guidance_event_id;
   }
   const rows: GuHgGroupRow[] = groups ? [...(groups.cohorts?.ANNUAL || []), ...(groups.cohorts?.MULTI_YEAR_CAGR || [])] : [];
   for (const g of rows) {
@@ -85,20 +106,20 @@ export function buildFocusList(groups: GuHighGrowthGroups | null | undefined, ev
     const v = num(g.headline?.compareValue); if (v == null) continue;
     const r = get(g.market === 'US' ? 'US' : 'IN', g.ticker, g.company);
     if (r.growthPct != null && r.growthPct >= v) continue;
-    r.growth = g.cohort === 'MULTI_YEAR_CAGR' && !/CAGR/i.test(g.text) ? `${g.text} a year (multi-year)` : g.text; r.growthPct = v; r.growthPeriod = g.headline?.period || null; r.growthTrust = g.trust;
+    r.growth = g.cohort === 'MULTI_YEAR_CAGR' && !/CAGR/i.test(g.text) ? `${g.text} a year (multi-year)` : g.text; r.growthPct = v; r.growthPeriod = g.headline?.period || null; r.growthTrust = g.trust; r.growthDate = g.sourceDate || null; r.growthSource = g.sourceName || null;
   }
   const out = Array.from(by.values());
   for (const r of out) {
     const days = r.raiseDate ? Math.max(0, Math.round((now.getTime() - Date.parse(`${r.raiseDate}T00:00:00Z`)) / DAY)) : null;
     const g = Math.min(100, r.growthPct ?? 0), p = Math.min(60, Math.max(0, r.raisePct ?? 0));
     // zzz880: a raise of under 5% (Kestra +2.9%) is real but small: it never makes a name TOP FOCUS on its own
-    const meaningful = !!r.raised && (r.raisePct == null || r.raisePct >= 5);
+    const meaningful = !!r.raised && !r.smallRaise;
     r.score = g + p + (meaningful && r.growth ? 60 : 0) + (days != null ? (days <= 14 ? 20 : days <= 45 ? 10 : 0) : 0) + (r.growthTrust === 'verified' || r.raised ? 10 : 0);
     if (meaningful && r.growth) { r.verdict = 'TOP FOCUS'; r.why = `Raised its guidance and guides ${r.growthPct}%+ growth — both signals`; }
     else if (r.raised && (r.raisePct ?? 0) >= 15) { r.verdict = 'STRONG RAISE'; r.why = `Guidance raised by ${Math.round(r.raisePct!)}% — a large upgrade, checked in the company's own filing`; }
     else if (r.raised && r.growth) { r.verdict = 'HIGH GROWTH'; r.why = `Guides ${r.growthPct}% growth; also a small guidance raise (${Math.round((r.raisePct ?? 0) * 10) / 10}%)`; }
     else if (r.growth && (r.growthPct ?? 0) >= 50) { r.verdict = 'HIGH GROWTH'; r.why = `Guides ${r.growthPct}% growth${r.growthTrust === 'derived' ? ' (worked out from the company’s own numbers)' : ''}`; }
-    else if (r.raised) { r.verdict = 'RAISED'; r.why = 'Guidance raised, checked in the company’s own filing'; }
+    else if (r.raised) { r.verdict = r.smallRaise ? 'WATCH' : 'RAISED'; r.why = r.smallRaise ? 'Small raise (under 5%, or only EPS from a small base) — real, but not a strong signal' : 'Guidance raised, checked in the company’s own filing'; }
     else { r.verdict = 'WATCH'; r.why = `Guides ${r.growthPct}% growth`; }
   }
   return out.sort((a, b) => b.score - a.score || a.company.localeCompare(b.company)).slice(0, limit);

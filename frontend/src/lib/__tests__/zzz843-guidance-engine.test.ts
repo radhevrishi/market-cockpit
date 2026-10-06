@@ -761,7 +761,9 @@ describe('product rules', () => {
     for (const l of imports) assert.ok(!/(price|quote|yahoo|market-data)/i.test(l), l);
     assert.ok(!/\bfetch\s*\(|XMLHttpRequest|require\(|process\.env|Math\.random|Date\.now\(|new Date\(\)/.test(src.replace(/\/\/.*$/gm, '')), 'no I/O, no randomness, no wall-clock');
     // zzz854: the engine may also import the validation module, which is itself pure and imports only the types file
-    assert.deepEqual([...new Set(imports.map(l => /from\s+['"]([^'"]+)['"]/.exec(l)?.[1]).filter(Boolean))].sort(), ['./guidance-upgrades-types', './guidance-upgrades-validate']);
+    // zzz881: and the earlier-document match rules, a pure module with no imports at all
+    assert.deepEqual([...new Set(imports.map(l => /from\s+['"]([^'"]+)['"]/.exec(l)?.[1]).filter(Boolean))].sort(), ['./guidance-prior-match', './guidance-upgrades-types', './guidance-upgrades-validate']);
+    assert.ok(!/^\s*import\b/m.test(readFileSync(join(__dirname, '..', 'guidance-prior-match.ts'), 'utf8')), 'guidance-prior-match imports nothing');
     const vsrc = readFileSync(join(__dirname, '..', 'guidance-upgrades-validate.ts'), 'utf8');
     assert.deepEqual([...new Set(vsrc.split('\n').map(l => /from\s+['"]([^'"]+)['"]/.exec(l)?.[1]).filter(Boolean))], ['./guidance-upgrades-types']);
     assert.ok(!/\bfetch\s*\(|process\.env|Math\.random|Date\.now\(|new Date\(\)/.test(vsrc.replace(/\/\/.*$/gm, '')));

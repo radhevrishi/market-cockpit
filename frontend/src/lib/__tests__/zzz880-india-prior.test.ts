@@ -36,8 +36,8 @@ describe('zzz880 — earlier company documents are the prior guidance', () => {
     for (const e of evs) assert.equal(e.taxonomy, 'first_guidance', `${e.ticker} ${e.announcement_date}`);
   });
   test('a lower range later is a downgrade, an equal one a reiteration', () => {
-    const low = res({ docId: 'acme-low', filedAt: '2026-08-13', rows: [row({ low: 4500, high: 4800 })] });
-    const same = res({ docId: 'acme-same', filedAt: '2026-08-13', rows: [row({ low: 5000, high: 5500 })] });
+    const low = res({ docId: 'acme-low', filedAt: '2026-08-13', rows: [row({ low: 4500, high: 4800, quote: 'For FY27 we now see revenue of ₹4,500 to 4,800 crore.' })] });
+    const same = res({ docId: 'acme-same', filedAt: '2026-08-13', rows: [row({ low: 5000, high: 5500, quote: 'We maintain FY27 revenue of ₹5,000 to 5,500 crore.' })] });
     assert.equal(buildExtractedEvents([MAY, low], () => ({}), OCT, '120D').find((e) => e.announcement_date === '2026-08-13')!.changes[0].direction, 'DOWN');
     assert.equal(buildExtractedEvents([MAY, same], () => ({}), OCT, '120D').find((e) => e.announcement_date === '2026-08-13')!.taxonomy, 'reiteration');
   });

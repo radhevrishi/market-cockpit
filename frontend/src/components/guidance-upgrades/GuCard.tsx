@@ -75,7 +75,7 @@ function GuCardBody({ e, onOpen, now }: { e: GuidanceEvent; onOpen: (id: string)
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 8 }}>
         <Field label="Materiality">{MATERIALITY_LABEL[e.materiality]}</Field>
         <Field label="How long it lasts">{DURATION_LABEL[e.duration]}</Field>
-        <Field label="Earnings effect, same multiple">{v ? fmtNumber(v.earningsEffectPct) : UNAVAILABLE}</Field>
+        <Field label="Earnings effect, same multiple">{v ? fmtNumber(v.earningsEffectPct) : UNAVAILABLE}{v && (v.earningsEffectPct as any)?.assumptions?.some((a: string) => a.startsWith('Small base')) ? <span title={(v.earningsEffectPct as any).assumptions.find((a: string) => a.startsWith('Small base'))} style={{ fontSize: 11, opacity: 0.75 }}> (small EPS base)</span> : null}</Field>
         <Field label="Multiple effect (separate)">{v ? fmtNumber(v.multipleSensitivityPct) : UNAVAILABLE}</Field>
         <Field label="Consensus (optional)"><ConsensusLine e={e} /></Field>
       </div>
