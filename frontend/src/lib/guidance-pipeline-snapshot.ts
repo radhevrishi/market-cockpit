@@ -25,7 +25,7 @@ export function snapshotOf(cards: CoverageCard[], queue: QueueState | null, now:
       return { name: nm, state: st, documents: s.recordsRead, daysOk: s.daysSucceeded, daysTried: s.daysAttempted, detail: s.reason ? String(s.reason).slice(0, 160) : null };
     });
     const items = (queue?.items || []).filter((x) => x.market === c.market);
-    const open = items.filter((x) => x.processing_status === 'QUEUED' || x.processing_status === 'READING' || x.processing_status === 'FAILED').length;
+    const open = items.filter((x) => !(x as any).delegated_to && (x.processing_status === 'QUEUED' || x.processing_status === 'READING' || x.processing_status === 'FAILED')).length;   // zzz916: delegated India items are not waiting
     const stale = c.cache.find((r) => (r.servedBy === 'LASTGOOD' || r.servedBy === 'SHARED_LASTGOOD') && r.items > 0) ?? null;
     markets[c.market] = {
       sources: lines, scanAt: now.toISOString(), tradingDays: c.tradingDays, daysRead: c.daysSuccessfullyRead, daysPartial: c.daysPartialCoverage, daysFailed: c.daysFailed,

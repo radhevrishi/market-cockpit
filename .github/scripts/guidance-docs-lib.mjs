@@ -106,7 +106,8 @@ export function extractPeriodHint(title) {
 
 // ── guidance cue ────────────────────────────────────────────────────────────
 
-const CUE_WORD = /\b(guidance|guiding|guided|guide|outlook|expects?|expecting|expected to|target(?:s|ing|ed)?|growth|grow(?:ing)?|aspir(?:e|ation)|envisag(?:e|ing)|visibility|anticipat(?:e|ing)|forecast)\b/i;
+// zzz916: + aim / plan / double / triple / CAGR / "looking at" / trajectory ("we aim to double revenue to ₹2,000 crore by FY29" had none of the older words)
+const CUE_WORD = /\b(guidance|guiding|guided|guide|outlook|expects?|expecting|expected to|target(?:s|ing|ed)?|growth|grow(?:ing)?|aspir(?:e|ation)|envisag(?:e|ing)|visibility|anticipat(?:e|ing)|forecast|aim(?:s|ing)?|plan(?:s|ning)?|doubl(?:e|ing)|tripl(?:e|ing)|cagr|looking at|trajectory)\b/i;
 const CUE_NUMBER = /(\bFY\s*'?2?\d\b|\bFY\s*20\d\d|\bcrores?\b|\bcr\.?\b|\bmargins?\b|\d\s?%|\bbillion\b|\bmillion\b|\blakhs?\b)/i;
 
 /** A document worth keeping: a forward-looking word AND a financial/number cue. */
@@ -122,11 +123,19 @@ export function isUnreadableText(text) {
 }
 
 /** A cover letter whose real document lives on the company site: the first
- *  https PDF link that is not an exchange host. Only for short texts. */
+ *  https PDF link that is not an exchange host. Only for short texts.
+ *  zzz916: see findLinkedPdfs (also transcript-named links without ".pdf"). */
 export function findLinkedPdf(text) {
+  return findLinkedPdfs(text)[0] || null;
+}
+
+/** zzz916 — every candidate document link in a short cover letter, best first: ".pdf" links, then links whose path names a transcript /
+ *  concall (the download step checks the bytes really are a PDF). Exchange / SEC hosts, IPs and audio / web pages are skipped. */
+export function findLinkedPdfs(text) {
   const t = String(text || '');
-  if (t.length > 6000) return null;
+  if (t.length > 6000) return [];
   const re = /https?:\/\/[^\s"'<>()\]]+/gi;
+  const pdfs = []; const named = [];
   for (const m of t.matchAll(re)) {
     const u = m[0].replace(/[.,;:]+$/, '');
     let x;
@@ -134,11 +143,143 @@ export function findLinkedPdf(text) {
     const h = x.hostname.toLowerCase();
     if (/(^|\.)(bseindia\.com|nseindia\.com|sec\.gov)$/.test(h)) continue;
     if (/^\d+(\.\d+)+$/.test(h) || !/\.[a-z]{2,}$/.test(h)) continue;
-    if (!/\.pdf$/i.test(x.pathname)) continue;
     x.protocol = 'https:';
-    return x.toString();
+    if (/\.pdf$/i.test(x.pathname)) pdfs.push(x.toString());
+    else if (/transcript|con-?call|earnings-?call/i.test(x.pathname) && !/\.(mp3|mp4|m4a|wav|html?|aspx?|php)$/i.test(x.pathname)) named.push(x.toString());
   }
-  return null;
+  return Array.from(new Set([...pdfs, ...named]));
+}
+
+// ── zzz916: intimation letters (they point to the document; they are not it) ─
+
+/**
+ * An exchange "intimation" that only POINTS to the document: "the transcript of the earnings call is available on our website at …",
+ * "audio recording … uploaded", "please find the link". Short (a page or two) and says the document lives elsewhere. Such a filing is
+ * never stored as the transcript and never marked "read, no guidance": the collector follows its link, then Screener.in's concall list,
+ * and records it as an intimation still waiting for the real document.
+ */
+const POINTS_ELSEWHERE = /\b(transcripts?|audio|recording|presentation|concall|con\.? call|conference call|earnings call)\b[^.]{0,160}?\b(available|uploaded|hosted|placed|posted|accessible|can be (?:accessed|viewed|found)|link)\b|\b(weblink|web link|following link|below link|link below|hyperlink|website of the company|company'?s website|our website)\b/i;
+export function isIntimationText(text) {
+  const t = String(text || '');
+  const letters = (t.match(/[A-Za-z]/g) || []).length;
+  if (letters > 4_500) return false;                 // a real transcript / deck is longer than a cover letter
+  return POINTS_ELSEWHERE.test(t.replace(/\s+/g, ' '));
+}
+
+// ── zzz916: Screener.in concall list (fetched by the collector from GitHub's network) ──
+
+const SCREENER_MON = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+const decodeHtml = (s) => String(s || '').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;|&#x27;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+
+/** BSE "AnnPdfOpen.aspx?Pname=<file>.pdf" (Screener's links) → the attachment URL it redirects to; http → https for exchange hosts. */
+export function normaliseExchangePdfUrl(u) {
+  let x;
+  try { x = new URL(decodeHtml(u)); } catch { return null; }
+  const h = x.hostname.toLowerCase();
+  if (/(^|\.)bseindia\.com$/.test(h) && /annpdfopen\.aspx$/i.test(x.pathname)) {
+    const p = x.searchParams.get('Pname') || x.searchParams.get('pname') || '';
+    return /^[A-Za-z0-9._-]+\.pdf$/i.test(p) ? `https://www.bseindia.com/xml-data/corpfiling/AttachHis/${p}` : null;
+  }
+  if (/(^|\.)(bseindia\.com|nseindia\.com)$/.test(h)) x.protocol = 'https:';
+  if (x.protocol !== 'https:' && x.protocol !== 'http:') return null;
+  return x.toString();
+}
+
+/**
+ * A Screener.in company page → { name, bseCode, nseSymbol, concalls: [{ month: 'YYYY-MM', label, transcript, ppt }] } (page order, newest first).
+ * Reads the current markup (<li> rows with a "Mon YYYY" label and button-chip links: text "Transcript" / title "Raw Transcript", text "PPT")
+ * and the older one (a.concall-link). A locked row (a <div class="button-chip"> without a link) gives null for that document.
+ * (The app's own parser in api/v1/haiku/forward-guidance still looks for the old a.concall-link only.)
+ */
+export function parseScreenerCompany(html) {
+  const s = String(html || '');
+  const title = /<title>\s*([^<|]+?)\s+share price/i.exec(s);
+  const name = title ? decodeHtml(title[1]).trim() : null;
+  const bse = /bseindia\.com\/stock-share-price\/[^"'\s]*?\/(\d{6})\/?["']/i.exec(s);
+  const nse = /nseindia\.com\/get-quotes\/equity\?symbol=([A-Z0-9&%-]+)/i.exec(s);
+  const at = s.search(/>\s*Concalls\s*</i);
+  const concalls = [];
+  if (at >= 0) {
+    const seg = s.slice(at, at + 80_000);
+    const end = seg.search(/<\/ul>/i);
+    const body = end > 0 ? seg.slice(0, end) : seg;
+    for (const li of body.split(/<li\b/i).slice(1)) {
+      const lm = /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(20\d{2})\b/.exec(li.replace(/<[^>]+>/g, ' '));
+      if (!lm) continue;
+      const mon = SCREENER_MON[lm[1].toLowerCase()];
+      const links = Array.from(li.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)).map((m) => {
+        const href = /href="([^"]+)"/i.exec(m[1]);
+        const ttl = /title="([^"]*)"/i.exec(m[1]);
+        return { href: href ? decodeHtml(href[1]) : null, text: m[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(), title: ttl ? ttl[1] : '', cls: m[1] };
+      }).filter((l) => l.href && /^https?:\/\//i.test(l.href));
+      const tr = links.find((l) => /^transcript$/i.test(l.text) || /raw transcript/i.test(l.title) || (/concall-link/.test(l.cls) && !/\b(ppt|rec|notes)\b/i.test(l.text)));
+      const ppt = links.find((l) => /^ppt$/i.test(l.text) || /presentation/i.test(l.title));
+      concalls.push({ month: `${lm[2]}-${String(mon).padStart(2, '0')}`, label: `${lm[1]} ${lm[2]}`, transcript: tr ? tr.href : null, ppt: ppt ? ppt.href : null });
+    }
+  }
+  return { name, bseCode: bse ? bse[1] : null, nseSymbol: nse ? decodeURIComponent(nse[1]).toUpperCase() : null, concalls };
+}
+
+/**
+ * Screener search API answer → the company page path ("/company/539682/consolidated/"), or null. A hit must BE the queried company:
+ * its page path names the query, or (for a query of 5+ letters) its name does once spaces are dropped ("Mobavenue AI Tech" for
+ * MOBAVENUE). The first hit is never taken on trust ("BMW" finds BMW Ventures, not BMW Industries).
+ */
+export function screenerSearchPath(json, query) {
+  const rows = Array.isArray(json) ? json : [];
+  const q = String(query || '').trim().toUpperCase();
+  if (!q) return null;
+  const squash = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const ok = (r) => r && typeof r.url === 'string' && /^\/company\/[A-Za-z0-9&%-]+\/(?:consolidated\/)?$/.test(r.url);
+  const hit = rows.find((r) => ok(r) && r.url.toUpperCase().includes(`/${q}/`))
+    || (q.length >= 5 && /[A-Z]/.test(q) ? rows.find((r) => ok(r) && squash(r.name).startsWith(squash(q))) : null);
+  return hit ? hit.url : null;
+}
+
+/** The concall row that belongs to an exchange filing dated `filedAtIso`: the newest call in the ~75 days up to (and 10 days after) it. */
+export function pickConcallFor(concalls, filedAtIso) {
+  const t = Date.parse(filedAtIso);
+  if (!Number.isFinite(t)) return null;
+  const rows = (Array.isArray(concalls) ? concalls : []).map((c) => ({ c, start: Date.parse(`${c.month}-01T00:00:00Z`) })).filter((x) => Number.isFinite(x.start));
+  const ok = rows.filter((x) => x.start <= t + 10 * 86_400_000 && t - x.start <= 75 * 86_400_000).sort((a, b) => b.start - a.start);
+  return ok.length ? ok[0].c : null;
+}
+
+/** Calls whose month is on or after the window start (YYYY-MM-DD). */
+export function concallsSince(concalls, sinceDay) {
+  const since = String(sinceDay || '').slice(0, 7);
+  return (Array.isArray(concalls) ? concalls : []).filter((c) => c && c.month >= since);
+}
+
+const LONG_MON = 'january|february|march|april|june|july|august|september|october|november|december|sept|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec';
+/** The call date printed on a transcript's first page when it falls in `month` (YYYY-MM); else the 1st of that month. ISO; null without a month. */
+export function callDateFrom(text, month) {
+  const head = String(text || '').slice(0, 4000);
+  const [y, m] = String(month || '').split('-').map(Number);
+  if (!y || !m) return null;
+  const pick = (yy, mm, dd) => (yy === y && mm === m && dd >= 1 && dd <= 31 ? `${yy}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}T00:00:00.000Z` : null);
+  const mi = (w) => SCREENER_MON[String(w).slice(0, 3).toLowerCase()];
+  let r;
+  for (const x of head.matchAll(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(${LONG_MON})\\.?,?\\s+(20\\d{2})\\b`, 'gi'))) if ((r = pick(Number(x[3]), mi(x[2]), Number(x[1])))) return r;
+  for (const x of head.matchAll(new RegExp(`\\b(${LONG_MON})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(20\\d{2})\\b`, 'gi'))) if ((r = pick(Number(x[3]), mi(x[1]), Number(x[2])))) return r;
+  for (const x of head.matchAll(/\b(\d{1,2})[.\/-](\d{1,2})[.\/-](20\d{2})\b/g)) if ((r = pick(Number(x[3]), Number(x[2]), Number(x[1])))) return r;
+  return `${y}-${String(m).padStart(2, '0')}-01T00:00:00.000Z`;
+}
+
+/**
+ * "FREDUN, 539682 ,baroext:513502" → ['FREDUN','539682','BAROEXT:513502'] (at most 2000). A token is an NSE / BSE symbol, a 6-digit
+ * BSE code, or SYMBOL:CODE — the symbol the site uses for a BSE-only company plus its BSE code (looked up by code, filed under the symbol).
+ */
+export function parseTickerList(s) {
+  return Array.from(new Set(String(s || '').split(/[\s,;]+/).map((x) => x.trim().toUpperCase().replace(/^(NSE|BSE):(?=[A-Z0-9])/, '')).filter((x) => /^[A-Z0-9][A-Z0-9&-]{0,19}(?::\d{6})?$/.test(x)))).slice(0, 2000);
+}
+/** A sweep token → { lookup (what Screener is asked for), ticker (what the document is filed under, null = not known), bseCode }. */
+export function sweepTarget(token) {
+  const t = String(token || '').toUpperCase();
+  const m = /^([A-Z0-9][A-Z0-9&-]{0,19}):(\d{6})$/.exec(t);
+  if (m) return { lookup: m[2], ticker: /^\d+$/.test(m[1]) ? null : m[1], bseCode: m[2] };
+  if (/^\d{6}$/.test(t)) return { lookup: t, ticker: null, bseCode: t };
+  return { lookup: t, ticker: t, bseCode: null };
 }
 
 // ── exchange rows → filings ─────────────────────────────────────────────────

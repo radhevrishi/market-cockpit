@@ -7,6 +7,7 @@
 // Nothing is guessed: a missing quarter, an undated series or a period that cannot be placed returns no actual ('Not established').
 // Never throws: every reader returns empty on failure and says so.
 import type { ExtractedGuidance, GuidanceExtractResult } from './guidance-docs-types';
+import { lastCompletedFy } from './guidance-horizon';
 
 export const EXTRACT_INDEX_KEY = 'guidance-extract:v1:index';
 export const extractKey = (docId: string) => `guidance-extract:v1:${docId}`;
@@ -87,6 +88,16 @@ export function priorPeriodOf(period: string): string | null {
   if (!m) return null;
   const y = parseInt(m[2], 10) - 1; return y >= 0 ? `${m[1].toUpperCase()}${String(y).padStart(2, '0')}` : null;
 }
+/**
+ * zzz916: the base year for a target two or more fiscal years after the document: the last COMPLETED Indian fiscal year on the document
+ * date ('FY29' guided in Aug 2026 → 'FY26'). Null for a one-year-ahead target (its base is the prior year, priorPeriodOf) or a bad period.
+ */
+export function baseFyFor(period: string, filedAt: string | null | undefined): string | null {
+  const m = /^FY\s?(?:20)?(\d{2})$/i.exec(String(period || '').trim()); if (!m) return null;
+  const lc = lastCompletedFy(filedAt); if (lc == null) return null;
+  const y = parseInt(m[1], 10);
+  return y - lc >= 2 && y - lc <= 8 ? `FY${String(lc).padStart(2, '0')}` : null;
+}
 const MON: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
 /** 'Mar 2026' -> 2026*12+3 */
 const monthIdx = (s: string): number | null => { const m = /^([A-Za-z]{3})[a-z]*\.?\s+(\d{4})$/.exec(String(s || '').trim()); if (!m || !MON[m[1].toLowerCase()]) return null; return parseInt(m[2], 10) * 12 + MON[m[1].toLowerCase()]; };
@@ -149,8 +160,12 @@ export async function loadPriorActuals(results: GuidanceExtractResult[], io?: Ex
       for (const row of r.rows) {
         if (row.periodKind !== 'ANNUAL' || (row.metric !== 'REVENUE' && row.metric !== 'PAT')) continue;
         const pp = priorPeriodOf(row.period); if (!pp) continue;
+        const t = r.ticker.toUpperCase();
+        // zzz916: a target two or more years out ("₹2,000 Cr by FY29") is set against the last COMPLETED year at the document date (FY26)
+        const lc = baseFyFor(row.period, r.filedAt);
+        if (lc && !out.has(actualKey('IN', r.ticker, row.metric, lc))) (want.get(t) || want.set(t, new Set()).get(t)!).add(lc);
         if (out.has(actualKey('IN', r.ticker, row.metric, pp))) continue;
-        const t = r.ticker.toUpperCase(); (want.get(t) || want.set(t, new Set()).get(t)!).add(pp);
+        (want.get(t) || want.set(t, new Set()).get(t)!).add(pp);
       }
     }
     const tickers = Array.from(want.keys()).slice(0, 150);

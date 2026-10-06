@@ -49,7 +49,7 @@ import { scanIndia, scanUs, finaliseScan, makeRealIndiaFetchers, makeRealEdgarFe
 import { loadUniverseRecords, makeExtraFor, universeLookup, writeEventStatuses } from '@/lib/guidance-upgrades-reconcile';
 import type { GuUniverseRecordX } from '@/lib/guidance-universe';
 import { readNewsWithLastGood, makeKvNewsIo, newsFallbackNote, cacheStateText, type NewsRead } from '@/lib/guidance-upgrades-cache';
-import { readQueue, writeQueue, emptyQueue, enqueue, processQueue, doneCandidates, reportQueue, awaitingCount, unavailableCount, readNoEventCount, makeDefaultFetchDoc, DOC_BUDGET_MS, type QueueState } from '@/lib/guidance-upgrades-queue';
+import { readQueue, writeQueue, emptyQueue, enqueue, processQueue, doneCandidates, reportQueue, awaitingCount, unavailableCount, readNoEventCount, makeDefaultFetchDoc, DOC_BUDGET_MS, delegateIndiaToCollector, type QueueState } from '@/lib/guidance-upgrades-queue';
 import { assignEventDates, reconcilePrimary, queueInputsFromFilings, type PrimaryFiling } from '@/lib/guidance-upgrades-sources';
 import { computeCounts, checkEventInvariants, enforceEventInvariants, countsDetail, detectedEquation, GUIDANCE_BUCKETS, NOT_GUIDANCE_BUCKETS, BUCKET_LABEL, type GuCountsX, type CountBucket } from '@/lib/guidance-upgrades-counts';
 import { readConcallFeedWithFallback, makeKvFeedIo, type ConcallFeedRead } from '@/lib/concall-feed';
@@ -301,6 +301,8 @@ async function getFull(req: NextRequest) {
   const enq = enqueue(queue, queueInputsFromFilings(filingPool, waitingKeys, isWatched), now);
   queue = enq.queue;
   const watchPromoted = promoteWatched(queue.items, isWatched);
+  // zzz916: India filings are read by the GitHub documents collector (its own exchange listing + Screener.in), never by this route
+  delegateIndiaToCollector(queue);
   const qLeft = Math.min(DOC_BUDGET_MS, 26_000 - (Date.now() - t0));
   // zzz861: every filing the worker reads is also stored as a company document, so the AI extractor can read it and the universe can change
   const bridged: Array<Record<string, unknown>> = [];

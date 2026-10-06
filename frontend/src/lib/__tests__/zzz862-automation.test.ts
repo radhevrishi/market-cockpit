@@ -85,7 +85,8 @@ describe('watch set: companies that already have guidance are queued and read fi
     const mk = (id: string, market: 'IN' | 'US', ticker: string, day: string): GuidanceDocIndexRow => ({ docId: id.repeat(20).slice(0, 20), market, ticker, company: ticker, kind: 'TRANSCRIPT', filedAt: day, url: 'u', textChars: 1 });
     const rows = [mk('a', 'IN', 'NEWER', '2026-10-02'), mk('b', 'IN', 'SYRMA', '2026-09-20'), mk('c', 'US', 'NTWK', '2026-09-01'), mk('d', 'US', 'ZZ', '2026-10-01')];
     const p = planQueue(rows, { handoff: null, graded: null, verified: null, looked: new Set(), watched: isW });
-    assert.deepEqual(p.rows.slice(0, 2).map((r) => r.ticker).sort(), ['NTWK', 'SYRMA']);
+    // zzz916: watched first WITHIN each market, and every India document before any US one
+    assert.deepEqual(p.rows.map((r) => r.ticker), ['SYRMA', 'NEWER', 'NTWK', 'ZZ']);
     assert.deepEqual(planQueue(rows, { handoff: null, graded: null, verified: null, looked: new Set() }).rows[0].ticker, 'NEWER');   // without a watch set: unchanged
   });
 });

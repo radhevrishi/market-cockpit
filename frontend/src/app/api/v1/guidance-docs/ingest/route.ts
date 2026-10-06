@@ -12,6 +12,10 @@
 //   GET   ?market=IN|US → { known: docIds already stored or skipped } so a
 //         collector does not download them again; storage { docs, textBytes };
 //         the market's coverage (days read); the collector status (?collector=).
+//         zzz916: &extras=1 → intimations (exchange letters whose real document
+//         is still to be found; the collector retries them via Screener.in);
+//         &queueTickers=1 → India tickers whose call / presentation / release
+//         filings sit in the events queue (the collector's Screener.in sweep).
 //   A body over 6 MB is refused with 413 — never truncated.
 //
 // PROTECTED (lib/site-auth PROTECTED_API_PREFIXES '/api/v1/guidance-docs'):
@@ -22,7 +26,8 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { SITE_COOKIE, expectedToken, safeEqual, hasServiceKey } from '@/lib/site-auth';
-import { validateIngestBody, ingestDocs, knownDocIds, readCollectorStatus, readCoverage, storageStats, realDocsKv } from '@/lib/guidance-docs-store';
+import { validateIngestBody, ingestDocs, knownDocIds, readCollectorStatus, readCoverage, storageStats, realDocsKv, pendingIntimations, DocsIndexUnreadableError } from '@/lib/guidance-docs-store';
+import { readQueue, collectorQueueTickers } from '@/lib/guidance-upgrades-queue';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -43,15 +48,20 @@ export async function GET(req: NextRequest) {
   const sp = new URL(req.url).searchParams;
   const m = sp.get('market');
   const market = m === 'IN' || m === 'US' ? m : undefined;
-  const kv = realDocsKv();
+  const kv = realDocsKv(15_000);   // zzz916: the index is large; a short read used to hand the collector an incomplete known list
   const collector = sp.get('collector');
-  const [known, status, storage, coverage] = await Promise.all([
+  const extras = sp.get('extras') === '1' && market === 'IN';
+  const wantQueue = sp.get('queueTickers') === '1' && market === 'IN';
+  const [known, status, storage, coverage, intimations, queue] = await Promise.all([
     knownDocIds(kv, market),
     collector ? readCollectorStatus(kv, collector) : Promise.resolve(null),
     storageStats(kv),
     market ? readCoverage(kv, market) : Promise.resolve(null),
+    extras ? pendingIntimations(kv).catch(() => []) : Promise.resolve(undefined),
+    wantQueue ? readQueue().catch(() => null) : Promise.resolve(null),
   ]);
-  return NextResponse.json({ ok: true, known, count: known.length, storage, coverage, status }, { headers: NO_STORE });
+  const queueTickers = wantQueue ? collectorQueueTickers(queue) : undefined;
+  return NextResponse.json({ ok: true, known, count: known.length, storage, coverage, status, ...(intimations ? { intimations } : {}), ...(queueTickers ? { queueTickers } : {}) }, { headers: NO_STORE });
 }
 
 export async function POST(req: NextRequest) {
@@ -72,9 +82,11 @@ export async function POST(req: NextRequest) {
   const v = validateIngestBody(raw);
   if (!v.ok) return NextResponse.json({ ok: false, error: v.error }, { status: 400, headers: NO_STORE });
   try {
-    const r = await ingestDocs(v.body, realDocsKv());
+    // zzz916: a longer read timeout (the index is large) — a read that still fails makes ingest refuse (503), never overwrite
+    const r = await ingestDocs(v.body, realDocsKv(15_000));
     return NextResponse.json({ ok: true, ...r, rejected: v.rejected }, { headers: NO_STORE });
   } catch (e: any) {
+    if (e instanceof DocsIndexUnreadableError) return NextResponse.json({ ok: false, error: 'index busy or unreadable; retry' }, { status: 503, headers: NO_STORE });
     console.error('[guidance-docs/ingest] store failed:', String(e?.message || e).slice(0, 200));
     return NextResponse.json({ ok: false, error: 'store failed' }, { status: 500, headers: NO_STORE });
   }

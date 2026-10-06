@@ -24,6 +24,16 @@
 //   PROXY_URL / PROXY_SECRET (optional mc-proxy worker)
 //   INCLUDE_PLAIN_RESULTS=1 (also read plain "Financial Results" PDFs; large)
 //   DRY_RUN=1 (collect + extract, do not POST)
+//
+// zzz916 additions:
+//   • NSE SME (Emerge) companies are listed too (corporate-announcements index=sme), every day, best effort.
+//   • An INTIMATION (a short letter saying the transcript / recording / deck is "available at <link>") is never stored as the
+//     document and never marked "read, no guidance": its links are followed, then Screener.in's concall list for the company
+//     (the call nearest before the filing). Still not found → recorded as a pending intimation (server list) and retried on later runs.
+//   • Screener.in concall sweep: SCREENER_TICKERS (NSE symbols or BSE codes) and, with SCREENER_QUEUE=1, the India companies whose
+//     call / presentation filings sit in the events queue: every transcript (or the deck when there is no transcript) of a call on or
+//     after the window start is collected. This is how BSE-only companies are reached while BSE refuses GitHub's network.
+//     SCREENER_MAX (company pages per run; default 40 scheduled, 800 manual), SCREENER_DELAY_MS (default 1500).
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { execFile } from 'node:child_process';
@@ -32,9 +42,10 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-  classifySubject, extractPeriodHint, hasGuidanceCue, isUnreadableText, findLinkedPdf,
+  classifySubject, extractPeriodHint, hasGuidanceCue, isUnreadableText, findLinkedPdfs, isIntimationText,
   bseRowToFiling, nseRowToFiling, parseEquityL, parseBseScripList, parseCuratedMap, resolveTicker,
   buildDoc, chunkBatches, docIdFor, dayList, MAX_BATCH_DOCS, MAX_BATCH_BYTES,
+  parseScreenerCompany, screenerSearchPath, normaliseExchangePdfUrl, pickConcallFor, concallsSince, callDateFrom, parseTickerList, sweepTarget,
 } from './guidance-docs-lib.mjs';
 import { installResilientFetch, exitTransient, exitForError } from './lib/resilient-fetch.mjs';   // zzz908
 
@@ -142,8 +153,8 @@ async function nseCookie(deps) {
   } catch { return ''; }
 }
 
-async function listNseDay(http, deps, day) {
-  const target = `https://www.nseindia.com/api/corporate-announcements?index=equities&from_date=${ddmmyyyy(day)}&to_date=${ddmmyyyy(day)}`;
+async function listNseDay(http, deps, day, index = 'equities') {
+  const target = `https://www.nseindia.com/api/corporate-announcements?index=${index}&from_date=${ddmmyyyy(day)}&to_date=${ddmmyyyy(day)}`;
   if (!deps.nseCookieValue) deps.nseCookieValue = await nseCookie(deps);
   let { res } = await http.get(target, { headers: { ...NSE_HEADERS, Cookie: deps.nseCookieValue } }, { retries: 1 });
   if (!res) { deps.nseCookieValue = await nseCookie(deps); ({ res } = await http.get(target, { headers: { ...NSE_HEADERS, Cookie: deps.nseCookieValue } }, { retries: 1 })); }
@@ -259,14 +270,53 @@ async function postIngest(deps, body) {
   return false;
 }
 
-async function knownIds(deps) {
-  if (!deps.env.CRON_SECRET) return new Set();
+/** Known docIds plus (zzz916) the server's pending intimations and, when asked, the India tickers waiting in the events queue. */
+async function knownIds(deps, o = {}) {
+  const empty = { known: new Set(), intimations: [], queueTickers: [] };
+  if (!deps.env.CRON_SECRET) return empty;
   try {
-    const res = await deps.fetch(`${deps.baseUrl}/api/v1/guidance-docs/ingest?market=IN`, { headers: { 'x-cron-secret': deps.env.CRON_SECRET }, signal: AbortSignal.timeout(30_000) });
-    if (!res.ok) { deps.log(`known-ids HTTP ${res.status} (continuing without)`); return new Set(); }
+    const q = `market=IN&extras=1${o.queue ? '&queueTickers=1' : ''}`;
+    const res = await deps.fetch(`${deps.baseUrl}/api/v1/guidance-docs/ingest?${q}`, { headers: { 'x-cron-secret': deps.env.CRON_SECRET }, signal: AbortSignal.timeout(45_000) });
+    if (!res.ok) { deps.log(`known-ids HTTP ${res.status} (continuing without)`); return empty; }
     const j = await res.json();
-    return new Set(Array.isArray(j?.known) ? j.known : []);
-  } catch { deps.log('known-ids unavailable (continuing without)'); return new Set(); }
+    return {
+      known: new Set(Array.isArray(j?.known) ? j.known : []),
+      intimations: Array.isArray(j?.intimations) ? j.intimations.filter((x) => x && typeof x.url === 'string' && /^[0-9a-f]{20}$/.test(String(x.docId || ''))) : [],
+      queueTickers: Array.isArray(j?.queueTickers) ? parseTickerList(j.queueTickers.join(',')) : [],
+    };
+  } catch { deps.log('known-ids unavailable (continuing without)'); return empty; }
+}
+
+// ── zzz916: Screener.in concall list ────────────────────────────────────────
+
+const SCREENER = 'https://www.screener.in';
+const SCREENER_HEADERS = { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8', 'Accept-Language': 'en-US,en;q=0.9' };
+
+/** The company's Screener page (consolidated, then standalone, then the search API), parsed. Cached per run; null when not found. */
+async function screenerCompany(http, deps, token) {
+  const key = String(token || '').toUpperCase();
+  if (!key) return null;
+  if (deps.screenerCache.has(key)) return deps.screenerCache.get(key);
+  if (deps.screenerPages >= deps.screenerMax) return null;     // budget: a target not looked up this run is retried next run
+  const get = async (path) => {
+    deps.screenerPages++;
+    const { res } = await http.get(`${SCREENER}${path}`, { headers: SCREENER_HEADERS }, { retries: 1, timeoutMs: 25_000 });
+    await deps.sleep(deps.screenerDelayMs);
+    return res ? res.text() : null;
+  };
+  let page = null;
+  for (const path of [`/company/${encodeURIComponent(key)}/consolidated/`, `/company/${encodeURIComponent(key)}/`]) {
+    const html = await get(path);
+    if (html && /Concalls/i.test(html)) { page = parseScreenerCompany(html); break; }
+  }
+  if (!page) {
+    const js = await get(`/api/company/search/?q=${encodeURIComponent(key)}`);
+    let path = null;
+    try { path = screenerSearchPath(JSON.parse(js || '[]'), key); } catch { path = null; }
+    if (path) { const html = await get(path); if (html && /Concalls/i.test(html)) page = parseScreenerCompany(html); }
+  }
+  deps.screenerCache.set(key, page);
+  return page;
 }
 
 /**
@@ -302,11 +352,14 @@ export function coverageRows(statusDays, at) {
 
 // ── main run (all I/O injected) ─────────────────────────────────────────────
 
+const RESOLVABLE_KINDS = new Set(['TRANSCRIPT', 'PRESENTATION', 'RESULTS_RELEASE', 'AGM_SPEECH']);
+
 /**
  * @param {{ fetch: typeof fetch, pdftotext: (buf: Buffer) => Promise<string>, sleep?: (ms:number)=>Promise<void>, log?: (s:string)=>void, env?: Record<string,string|undefined>, now?: Date }} d
  */
 export async function run(d) {
   const env = d.env || process.env;
+  const manual = env.GITHUB_EVENT_NAME === 'workflow_dispatch';
   const deps = {
     fetch: d.fetch, pdftotext: d.pdftotext, env,
     sleep: d.sleep || ((ms) => new Promise((r) => setTimeout(r, ms))),
@@ -314,7 +367,12 @@ export async function run(d) {
     apiDelayMs: Number(env.API_DELAY_MS ?? 400),
     baseUrl: (env.CRON_BASE_URL || 'https://market-cockpit-production.up.railway.app').replace(/\/+$/, ''),
     nseCookieValue: '',
-    counts: { listed: 0, matched: 0, known: 0, downloaded: 0, stored: 0, unreadable: 0, noCue: 0, tooBig: 0, errors: 0, linked: 0, posted: 0, postFailed: 0, ingestRejected: 0 },
+    // zzz916: Screener.in budget (company pages per run) and pacing
+    screenerMax: Math.max(0, Number(env.SCREENER_MAX ?? (manual ? 800 : 40)) || 0),
+    screenerDelayMs: Math.max(0, Number(env.SCREENER_DELAY_MS ?? 1500) || 0),
+    screenerPages: 0, screenerCache: new Map(),
+    counts: { listed: 0, matched: 0, known: 0, downloaded: 0, stored: 0, unreadable: 0, noCue: 0, tooBig: 0, errors: 0, linked: 0, posted: 0, postFailed: 0, ingestRejected: 0,
+      smeListed: 0, intimations: 0, intimationsResolved: 0, intimationsPending: 0, screenerPages: 0, screenerDocs: 0, screenerOffHost: 0 },
   };
   const http = makeHttp(deps);
   const now = d.now || new Date();
@@ -325,38 +383,78 @@ export async function run(d) {
   const includePlainResults = env.INCLUDE_PLAIN_RESULTS === '1';
   const c = deps.counts;
 
-  const known = await knownIds(deps);
+  const server = await knownIds(deps, { queue: env.SCREENER_QUEUE === '1' });
+  const known = server.known;
   const wanted = env.WANTED === '0' ? [] : await fetchWanted(deps);
   const isWanted = wantedMatcher(wanted);
-  deps.log(`wanted companies: ${wanted.length}`);
+  deps.log(`wanted companies: ${wanted.length}; pending intimations: ${server.intimations.length}; queue tickers: ${server.queueTickers.length}`);
   const maps = await loadTickerMaps(http, deps);
   deps.log(`maps: isin→nse ${maps.isinToNse.size}, bse→isin ${maps.bseToIsin.size}, curated ${maps.curated.size}; known docs ${known.size}`);
 
   const pending = [];        // docs waiting to be posted
   const seen = [];           // skipped docIds
+  const intimations = [];    // zzz916: intimations still waiting for the real document
   const statusDays = [];
   let downloads = 0, stoppedBy = null;
 
   const flush = async (final) => {
     const batches = chunkBatches(pending.splice(0), { maxDocs: MAX_BATCH_DOCS, maxBytes: MAX_BATCH_BYTES });
     for (const b of batches) {
-      const ok = await postIngest(deps, { market: 'IN', collector: COLLECTOR, docs: b, seen: seen.splice(0, 2000) });
+      const ok = await postIngest(deps, { market: 'IN', collector: COLLECTOR, docs: b, seen: seen.splice(0, 2000), intimations: intimations.splice(0, 500) });
       if (ok) c.posted += b.length; else c.postFailed += b.length;
     }
-    if (final || seen.length >= 500) {
-      while (seen.length) {
-        const ok = await postIngest(deps, { market: 'IN', collector: COLLECTOR, docs: [], seen: seen.splice(0, 2000) });
+    if (final || seen.length >= 500 || intimations.length >= 200) {
+      while (seen.length || intimations.length) {
+        const ok = await postIngest(deps, { market: 'IN', collector: COLLECTOR, docs: [], seen: seen.splice(0, 2000), intimations: intimations.splice(0, 500) });
         if (!ok) break;
       }
     }
   };
 
+  /** Download + read one PDF; null when it cannot be read. */
+  const readPdf = async (url) => {
+    const dl = await downloadPdf(http, deps, url);
+    if (!dl.buf) return { text: null, outcome: dl.outcome };
+    c.downloaded++;
+    return { text: await deps.pdftotext(dl.buf), outcome: 'ok' };
+  };
+
+  /**
+   * zzz916 — the real document behind an intimation, from the company's Screener.in concall list: the call nearest before the
+   * exchange filing; the transcript for a transcript intimation, the deck for a presentation (each falls back to the other).
+   * Returns { text, url, kind, company } or null. Never returns the intimation itself, another intimation, or an unreadable PDF.
+   */
+  const usedThisRun = new Set();
+  const resolveViaScreener = async (t) => {
+    const token = t.bseCode || t.ticker;   // a BSE code is unambiguous on Screener; an NSE symbol is the page name
+    if (!token || Date.now() > deadline) return null;
+    const page = await screenerCompany(http, deps, token);
+    if (!page) return null;
+    const call = pickConcallFor(page.concalls, t.filedAt);
+    if (!call) return null;
+    const order = t.kind === 'PRESENTATION' ? [call.ppt, call.transcript] : [call.transcript, call.ppt];
+    for (const raw of order.filter(Boolean)) {
+      const url = normaliseExchangePdfUrl(raw);
+      if (!url) continue;
+      const id = docIdFor(url);
+      // a document already stored is posted again WITH the intimation as its exchangeUrl, so the store retires the intimation (idempotent per docId)
+      if (id === t.docId || usedThisRun.has(id)) continue;
+      const r = await readPdf(url);
+      if (!r.text || isUnreadableText(r.text) || isIntimationText(r.text)) continue;
+      known.add(id); usedThisRun.add(id);
+      return { text: r.text, url, kind: url === normaliseExchangePdfUrl(call.ppt || '') ? 'PRESENTATION' : 'TRANSCRIPT', company: page.name };
+    }
+    return null;
+  };
+
   const daysList = dayList(days, now);
-  for (let di = 0; di < daysList.length; di++) {
+  const windowStart = daysList[daysList.length - 1];
+  // zzz916: SKIP_LISTING=1 → only the Screener.in phase (the window still bounds which calls are collected)
+  for (let di = 0; di < (env.SKIP_LISTING === '1' ? 0 : daysList.length); di++) {
     const day = daysList[di];
     if (Date.now() > deadline) { stoppedBy = 'time'; break; }
     if (downloads >= maxDownloads) { stoppedBy = 'max_downloads'; break; }
-    const dayMode = mode === 'auto' ? (di < 2 || env.GITHUB_EVENT_NAME === 'workflow_dispatch' ? 'all' : 'sub') : mode;
+    const dayMode = mode === 'auto' ? (di < 2 || manual ? 'all' : 'sub') : mode;
 
     // 1) list the day: BSE → (proxy) → NSE
     let filings = [];
@@ -374,6 +472,11 @@ export async function run(d) {
         deps.log(`${day}: FAILED (all sources)`);
         continue;
       }
+    }
+    // zzz916: NSE SME (Emerge) companies are not in index=equities — listed every day, best effort (a failure never fails the day)
+    if (env.NSE_SME !== '0') {
+      const sme = await listNseDay(http, deps, day, 'sme');
+      if (sme.ok) { const sf = sme.rows.map(nseRowToFiling).filter(Boolean); c.smeListed += sf.length; filings = filings.concat(sf); }
     }
     c.listed += filings.length;
 
@@ -412,20 +515,29 @@ export async function run(d) {
       }
       c.downloaded++;
       let text = await deps.pdftotext(dl.buf);
-      let docUrl = f.url, exchangeUrl = null;
-      // a cover letter that links the real transcript / deck on the company site
-      const linked = (kind === 'TRANSCRIPT' || kind === 'PRESENTATION' || kind === 'AGM_SPEECH') ? findLinkedPdf(text) : null;
-      if (linked && !known.has(docIdFor(linked))) {
-        const l = await downloadPdf(http, deps, linked);
-        if (l.buf) {
+      let docUrl = f.url, exchangeUrl = null, docKind = kind;
+      const ticker = resolveTicker(f, maps);
+      // a cover letter that links the real transcript / deck on the company site (zzz916: every candidate link, not only the first)
+      if (RESOLVABLE_KINDS.has(kind)) {
+        for (const linked of findLinkedPdfs(text)) {
+          if (known.has(docIdFor(linked))) continue;
+          const l = await downloadPdf(http, deps, linked);
+          if (!l.buf) continue;
           const lt = await deps.pdftotext(l.buf);
-          if (!isUnreadableText(lt)) { text = lt; docUrl = linked; exchangeUrl = f.url; c.linked++; known.add(docIdFor(linked)); }
+          if (!isUnreadableText(lt) && !isIntimationText(lt)) { text = lt; docUrl = linked; exchangeUrl = f.url; c.linked++; known.add(docIdFor(linked)); break; }
         }
+      }
+      // zzz916: an intimation is not the document. Screener.in's concall list next; else it waits as a pending intimation.
+      if (!exchangeUrl && RESOLVABLE_KINDS.has(kind) && isIntimationText(text)) {
+        c.intimations++;
+        const t = { docId: exId, url: f.url, ticker, bseCode: f.bseCode ?? null, company: f.company, kind, filedAt: f.filedAt };
+        const real = await resolveViaScreener(t);
+        if (real) { text = real.text; docUrl = real.url; exchangeUrl = f.url; docKind = real.kind; c.intimationsResolved++; }
+        else { c.intimationsPending++; seen.push({ docId: exId, outcome: 'intimation' }); intimations.push(t); continue; }
       }
       if (isUnreadableText(text)) { c.unreadable++; seen.push({ docId: exId, outcome: 'unreadable' }); continue; }
       if (!hasGuidanceCue(text)) { c.noCue++; seen.push({ docId: exId, outcome: 'no_cue' }); continue; }
-      const ticker = resolveTicker(f, maps);
-      const doc = buildDoc({ filing: f, kind, text, url: docUrl, exchangeUrl, ticker, collector: COLLECTOR });
+      const doc = buildDoc({ filing: f, kind: docKind, text, url: docUrl, exchangeUrl, ticker, collector: COLLECTOR });
       if (exchangeUrl) seen.push({ docId: exId, outcome: 'linked' });
       pending.push(doc);
       dayStored++; c.stored++;
@@ -440,6 +552,59 @@ export async function run(d) {
     deps.log(`${day}: ${source} listed ${filings.length}, matched ${matches.length}, new docs ${dayStored}`);
     if (stoppedBy) break;
   }
+
+  // 4) zzz916: Screener.in — intimations waiting from earlier runs, then the concall sweep (explicit tickers, events-queue tickers)
+  const screenerStop = () => Date.now() > deadline || deps.screenerPages >= deps.screenerMax;
+  if (deps.screenerMax > 0) {
+    // pending intimations: a different slice each run (stateless rotation) so a long list is not stuck on its first entries
+    const pend = server.intimations.filter((t) => t.ticker || t.bseCode);
+    const rot = pend.length ? Math.floor(now.getTime() / (2 * 3_600_000)) % pend.length : 0;
+    for (const t of [...pend.slice(rot), ...pend.slice(0, rot)]) {
+      if (screenerStop()) break;
+      const real = await resolveViaScreener(t);
+      if (!real) continue;
+      const f = { exchange: 'NSE', bseCode: t.bseCode ?? null, nseSymbol: t.ticker ?? null, company: t.company || real.company || t.ticker || 'Unknown', subject: `${real.kind === 'PRESENTATION' ? 'Investor presentation' : 'Earnings call transcript'} (the exchange filing was an intimation)`, headline: '', filedAt: t.filedAt, url: t.url };
+      if (!hasGuidanceCue(real.text)) { c.noCue++; continue; }
+      pending.push(buildDoc({ filing: f, kind: real.kind, text: real.text, url: real.url, exchangeUrl: t.url, ticker: t.ticker ?? null, collector: COLLECTOR }));
+      c.intimationsResolved++; c.stored++;
+      if (pending.length >= MAX_BATCH_DOCS) await flush(false);
+    }
+    // the sweep
+    const sweep = parseTickerList([env.SCREENER_TICKERS || '', ...(env.SCREENER_QUEUE === '1' ? server.queueTickers : [])].join(','));
+    for (const token of sweep) {
+      if (screenerStop()) { c.screenerStopped = sweep.length; break; }
+      const tg = sweepTarget(token);
+      const page = await screenerCompany(http, deps, tg.lookup);
+      if (!page) continue;
+      const ticker = tg.ticker || page.nseSymbol || null;
+      const bseCode = tg.bseCode || page.bseCode || null;
+      for (const call of concallsSince(page.concalls, windowStart)) {
+        if (Date.now() > deadline) break;
+        const raw = call.transcript || call.ppt;
+        const url = raw ? normaliseExchangePdfUrl(raw) : null;
+        if (!url) continue;
+        let host = '';
+        try { host = new URL(url).hostname; } catch { continue; }
+        // a company-site link needs an exchange filing to vouch for it (store host policy); the sweep has none
+        if (!/(^|\.)(bseindia\.com|nseindia\.com)$/.test(host)) { c.screenerOffHost++; continue; }
+        const id = docIdFor(url);
+        if (known.has(id)) { c.known++; continue; }
+        known.add(id);
+        const r = await readPdf(url);
+        if (!r.text) { if (r.outcome === 'too_big' || r.outcome === 'unreadable') seen.push({ docId: id, outcome: r.outcome }); else c.errors++; continue; }
+        if (isUnreadableText(r.text)) { c.unreadable++; seen.push({ docId: id, outcome: 'unreadable' }); continue; }
+        if (isIntimationText(r.text)) { c.intimations++; seen.push({ docId: id, outcome: 'intimation' }); continue; }
+        if (!hasGuidanceCue(r.text)) { c.noCue++; seen.push({ docId: id, outcome: 'no_cue' }); continue; }
+        const kind = call.transcript ? 'TRANSCRIPT' : 'PRESENTATION';
+        const hint = extractPeriodHint(r.text.slice(0, 3000));
+        const f = { exchange: 'BSE', bseCode: bseCode ?? null, nseSymbol: ticker, company: page.name || ticker || token, subject: `${kind === 'TRANSCRIPT' ? 'Earnings call transcript' : 'Investor presentation'} (${call.label} call; Screener.in concall list)`, headline: hint ? `${hint} ${kind === 'TRANSCRIPT' ? 'earnings call transcript' : 'investor presentation'} (${call.label})` : '', filedAt: callDateFrom(r.text, call.month), url };
+        pending.push(buildDoc({ filing: f, kind, text: r.text, url, ticker, collector: COLLECTOR }));
+        c.screenerDocs++; c.stored++;
+        if (pending.length >= MAX_BATCH_DOCS) await flush(false);
+      }
+    }
+  }
+  c.screenerPages = deps.screenerPages;
 
   await flush(true);
   const failedDays = statusDays.filter((s) => s.status === 'failed').length;

@@ -32,7 +32,8 @@ import { freshnessCounts, FRESHNESS_RULE, calculationTypeOf, verificationStatusO
 import { NSE_TICKER_NAMES } from './nse-ticker-names';
 import { endOfPeriodLabel, qualityOf, revisionOf, type GgStoredEntry } from './growth-guidance';
 import type { ExtractedGuidance, GuidanceExtractResult, GuidanceMetricX } from './guidance-docs-types';
-import { actualKey, priorPeriodOf, universeUnitOf, type PriorActual } from './guidance-extract-reader';
+import { actualKey, priorPeriodOf, universeUnitOf, baseFyFor, type PriorActual } from './guidance-extract-reader';
+import { cagrPct, isLowBoundOnly, isOpenHorizonLabel, multipleOf, nextYearsOf, perYearStated, scopeIssueOf, LONG_TERM_LABEL } from './guidance-horizon';   // zzz916
 
 export const GU_VERSION = 'zzz849-gu-v2';
 const DAY = 86_400_000;
@@ -166,6 +167,7 @@ export function periodStatusOf(period: string, pkind: GgPeriodKind, market: 'IN'
   return { status: 'ACTIVE', end: endAdj, inferred: false, note, reason: '' };
 }
 const multiYears = (period: string, cumulativeYears?: number | null): number | null => {
+  const nx = nextYearsOf(period); if (nx && nx > 1) return nx;   // zzz916: "Next 3 years"
   const m = /^FY(\d{2})-(\d{2})$/.exec(normPeriod(period)); if (m) { const n = parseInt(m[2], 10) - parseInt(m[1], 10) + 1; if (n > 1) return n; }
   return cumulativeYears && cumulativeYears > 1 ? cumulativeYears : null;
 };
@@ -189,7 +191,10 @@ export function displayOf(i: GuDisplayIn): string {
     return `${amountText(i.abs)} target (no % stated)`;
   }
   const pct = pctText(i.low, i.high, i.open);
-  if (i.periodKind === 'MULTI_YEAR_CAGR') {
+  if (i.periodKind === 'MULTI_YEAR_CAGR' && isOpenHorizonLabel(i.period)) {
+    // zzz916: a standing rate with no year: "Long-term revenue growth +30%+ a year (no fixed year)"
+    core = `${i.period === LONG_TERM_LABEL ? 'Long-term' : 'Medium-term'} ${METRIC_WORD[i.metric]} growth ${pct} a year (no fixed year)`;
+  } else if (i.periodKind === 'MULTI_YEAR_CAGR') {
     const y = multiYears(i.period, i.cumulativeYears);
     core = `${y ? `${y}-yr` : 'Multi-year'} ${METRIC_WORD[i.metric]} CAGR ${pct}`;
   } else core = pct;
@@ -239,6 +244,10 @@ interface Item {
   /** zzz853: other sources for the same slot whose value differs (a conflict, not a revision) */ conflicts?: Item[];
   /** zzz857 (COMPANY_DOC): the revision the company's own document states (NEW -> INITIAL, REITERATED -> MAINTAINED ...); wins over text heuristics */ extRevision?: GuUniverseRecord['revision'];
   /** zzz857: why there is no growth % (e.g. 'growth not established: no FY26 actual available') */ growthNote?: string | null;
+  /** zzz916: the % is a yearly rate (CAGR) worked out from a target amount several years out and an earlier base (document / results / "doubling") */
+  cagrFromBase?: { years: number; targetPeriod: string; how: 'document' | 'results' | 'multiple'; baseText: string } | null;
+  /** zzz916: the base of an implied growth is quoted from the same company document ("₹220 Cr from FY26 base of ₹106 Cr"): the company itself states the jump */
+  baseStatedByCompany?: boolean;
   /** zzz857: later company documents that reiterated this guidance (listed as extra primary sources) */ confirmedBy?: Array<{ name: string; type: string; url: string | null; date: string | null }>;
 }
 const srcPrimary = (rank: number, type: string) => rank <= 7 && !/media|news/i.test(type);
@@ -428,37 +437,87 @@ export function itemsFromExtracted(results: GuidanceExtractResult[] | null | und
     const g = c.growth; const sLo = g ? (g.growthPctLow ?? (g.unit === '%' || g.metric === 'REVENUE_GROWTH' ? g.low : null)) : (row.growthPctLow ?? null);
     const sHi = g ? (g.growthPctHigh ?? (g.unit === '%' || g.metric === 'REVENUE_GROWTH' ? g.high ?? sLo : null)) : (row.growthPctHigh ?? sLo);
     let low: number | null = null, high: number | null = null; let gOrigin: GgGrowthOrigin = 'STATED'; let base: ItemBase | null = null; let growthNote: string | null = null;
-    const pkind: GgPeriodKind = row.periodKind === 'ANNUAL' ? (/^CY/.test(c.period) ? 'CY' : 'FY') : /^(FY|CY)\d{2}-\d{2}$/.test(c.period) ? 'MULTI_YEAR_CAGR' : /^CY/.test(c.period) ? 'CY' : 'FY';
-    const ny = /^(?:FY|CY)(\d{2})-(\d{2})$/.exec(c.period); const years = ny ? parseInt(ny[2], 10) - parseInt(ny[1], 10) + 1 : null;
-    if (sLo != null) { low = sLo; high = sHi ?? sLo; }
+    // zzz916: a horizon with no year named ("Next 2 years", "Long term (no fixed year)") is a multi-year RATE, like "FY25-29"
+    const horizonPeriod = row.periodKind === 'MULTI_YEAR' && (nextYearsOf(c.period) != null || isOpenHorizonLabel(c.period));
+    let pkind: GgPeriodKind = row.periodKind === 'ANNUAL' ? (/^CY/.test(c.period) ? 'CY' : 'FY') : (/^(FY|CY)\d{2}-\d{2}$/.test(c.period) || horizonPeriod) ? 'MULTI_YEAR_CAGR' : /^CY/.test(c.period) ? 'CY' : 'FY';
+    let period = c.period;
+    const ny = /^(?:FY|CY)(\d{2})-(\d{2})$/.exec(c.period); const years = ny ? parseInt(ny[2], 10) - parseInt(ny[1], 10) + 1 : (nextYearsOf(c.period) ?? null);
+    const gq = String((g && g !== row ? g.quote : null) || row.quote || '');
+    const statementQuote = String((sLo != null && g && g !== row && g.quote ? g.quote : row.quote) || '');
+    let needsReview: string | null = null;
+    let cagrFromBase: Item['cagrFromBase'] = null; let baseStatedByCompany = false;
+    let open = false;
+    if (sLo != null) {
+      low = sLo; high = sHi ?? sLo;
+      // zzz916: "30%+", "at least 30%", "minimum 35%" — a floor, shown as "+30%+" and compared on its lower bound
+      const rawHi = g ? (g.growthPctHigh ?? (g.unit === '%' || g.metric === 'REVENUE_GROWTH' ? g.high : null)) : row.growthPctHigh;
+      open = (rawHi == null || rawHi === sLo) && isLowBoundOnly(gq, sLo);
+      if (open) high = sLo;
+    }
     else if (abs && pkind !== 'MULTI_YEAR_CAGR') {
       const pp = priorPeriodOf(c.period); const tkr = (r.ticker || '').toUpperCase();
       const act = pp && tkr && (c.metric === 'REVENUE' || c.metric === 'PAT') ? actuals?.get(actualKey(r.market, tkr, c.metric, pp)) ?? null : null;
+      // zzz916: a target two or more years out ("₹2,000 Cr by FY29") is not one year's growth: set it against an earlier stated base and
+      // work out the yearly rate (CAGR), labelled "worked out from company numbers". Base, in order: the document's own figure for an earlier
+      // year; the last completed year's reported actual; "doubling / tripling" from the last completed year.
+      const lc = !act && r.market === 'IN' ? baseFyFor(c.period, r.filedAt) : null;
+      const yT = /^FY(\d{2})$/.exec(c.period);
       if (act && act.unit === abs.unit && act.value > 0) {
-        gOrigin = 'IMPLIED'; base = { value: act.value, unit: act.unit, period: act.period, kind: 'PRIOR_YEAR_ACTUAL' };
+        gOrigin = 'IMPLIED'; base = { value: act.value, unit: act.unit, period: act.period, kind: 'PRIOR_YEAR_ACTUAL' }; baseStatedByCompany = !!act.quote;   // zzz916: both figures in the company's own words
         low = ((abs.valueLow ?? abs.value) / act.value - 1) * 100; high = (abs.value / act.value - 1) * 100;
         notes.unshift(`${act.period} actual ${amountText({ value: act.value, unit: act.unit })} from ${act.source}${act.quote ? `: "${act.quote.slice(0, 160)}"` : ''}`);
+      } else if (lc && yT && (c.metric === 'REVENUE' || c.metric === 'PAT')) {
+        const yTarget = parseInt(yT[1], 10);
+        const own = row.priorActual && universeUnitOf(row.currency, row.unit) === abs.unit && /^FY\s?(?:20)?\d{2}$/i.test(row.priorActual.period) ? row.priorActual : null;
+        const ownY = own ? parseInt(own.period.replace(/\D/g, '').slice(-2), 10) : null;
+        const tkr = (r.ticker || '').toUpperCase();
+        const res = tkr ? actuals?.get(actualKey(r.market, tkr, c.metric, lc)) ?? null : null;
+        const k = multipleOf(row.quote);
+        let b: { value: number; year: number; how: 'document' | 'results' | 'multiple'; text: string } | null = null;
+        if (own && ownY != null && ownY < yTarget && own.value > 0) b = { value: own.value, year: ownY, how: 'document', text: `FY${String(ownY).padStart(2, '0')} ${amountText({ value: own.value, unit: abs.unit })} stated in the same document` };
+        else if (res && res.unit === abs.unit && res.value > 0) b = { value: res.value, year: parseInt(lc.slice(2), 10), how: 'results', text: `${lc} actual ${amountText({ value: res.value, unit: res.unit })} (${res.source})` };
+        else if (k && k > 1) b = { value: abs.value / k, year: parseInt(lc.slice(2), 10), how: 'multiple', text: `${k === 2 ? 'doubling' : `${k}x`} from the ${lc} level (about ${amountText({ value: Math.round(abs.value / k), unit: abs.unit })})` };
+        const n = b ? yTarget - b.year : 0;
+        const lo = b ? cagrPct(abs.valueLow ?? abs.value, b.value, n) : null; const hi = b ? cagrPct(abs.value, b.value, n) : null;
+        if (b && lo != null && hi != null && n >= 2) {
+          gOrigin = 'IMPLIED'; low = lo; high = hi; pkind = 'MULTI_YEAR_CAGR';
+          period = `FY${String(b.year).padStart(2, '0')}-${String(yTarget).padStart(2, '0')}`;
+          base = { value: b.value, unit: abs.unit, period: `FY${String(b.year).padStart(2, '0')}`, kind: 'PRIOR_YEAR_ACTUAL' };
+          cagrFromBase = { years: n, targetPeriod: c.period, how: b.how, baseText: b.text };
+          notes.unshift(`worked out from company numbers: ${amountText(abs)} by ${c.period} against ${b.text} is about ${fnum(lo)}${lo !== hi ? `–${fnum(hi)}` : ''}% a year over ${n} years`);
+        } else growthNote = `growth not established: no ${pp || 'prior-year'} actual available`;
       } else growthNote = `growth not established: no ${pp || 'prior-year'} actual available`;
     } else if (!abs) continue;   // neither a % nor an amount the universe can place (unit not recognised)
     else growthNote = 'growth not established';
     // zzz895: a STATED growth must be in the quoted sentence, be one year's growth, and be about the metric it is filed under
     if (sLo != null) {
-      const gq = String((g && g !== row ? g.quote : null) || row.quote || '');
       // the number test applies when the row IS the growth figure (a % row); a growth % attached to an amount row is checked for period and metric only
+      // zzz916: "double" / "triple" stand for +100% / +200%
       const isPctRow = !!g && (g.unit === '%' || g.metric === 'REVENUE_GROWTH');
-      if (growthQuoteIssue(gq, sLo, sHi ?? sLo, c.metric, { annual: pkind !== 'MULTI_YEAR_CAGR', numberCheck: isPctRow })) continue;
+      const k = multipleOf(gq); const byMultiple = k != null && Math.abs(sLo - (k - 1) * 100) < 1e-6;
+      if (growthQuoteIssue(gq, sLo, sHi ?? sLo, c.metric, { annual: pkind !== 'MULTI_YEAR_CAGR', numberCheck: isPctRow && !byMultiple })) continue;
+      // zzz916: "30-35% over the next 2 years" with no "a year / CAGR / annually" — yearly rate or total? kept, labelled, never ranked
+      if (horizonPeriod && !perYearStated(gq) && !byMultiple) needsReview = `The company gives ${fnum(sLo)}${sHi != null && sHi !== sLo ? `–${fnum(sHi)}` : ''}% ${isOpenHorizonLabel(c.period) ? `over the ${c.period.replace(/ \(no fixed year\)$/, '').toLowerCase()}` : `over the ${c.period.toLowerCase()}`} without saying whether that is a yearly rate or the total, so it is kept for review and not ranked.`;
+    }
+    // zzz916: a segment / subsidiary / brand / geography figure, or a foreign-currency figure from an Indian company, is not the company's own
+    // guidance: kept for review with the reason, never shown or ranked as company revenue / profit. A figure for another measure (AUM, volume,
+    // stores, bookings, advances) or a quarter-on-quarter rate filed as revenue / profit is not company guidance at all: dropped.
+    const scope = scopeIssueOf(statementQuote, { metric: row.metric === 'REVENUE_GROWTH' ? 'REVENUE' : c.metric, market: r.market, currency: row.currency, metricLabel: row.metricLabel, company: r.company });
+    if (scope) {
+      if (/^one part of the company|figure from an Indian company/.test(scope)) needsReview = `Not the company-wide figure: ${scope}.`;
+      else continue;
     }
     const dn = DOC_NAME[r.docKind] || DOC_NAME.OTHER_COMPANY_DOC;
     const ticker = (r.ticker || '').trim().toUpperCase().replace(/\.(NS|BO)$/, '') || null;
-    const statement = String((sLo != null && g && g !== row && g.quote ? g.quote : row.quote) || '').slice(0, 300);
+    const statement = statementQuote.slice(0, 300);
     out.push({
-      origin: 'COMPANY_DOC', market: r.market, ticker, company: r.company || ticker || 'Unknown company', metric: c.metric, low, high, open: false, gOrigin, abs, base, needsReview: null,
-      cumulativeYears: pkind === 'MULTI_YEAR_CAGR' && sLo == null ? years : null,
-      period: c.period, pkind, kind: 'MANAGEMENT_GUIDANCE', organic: 'UNKNOWN', statement, driver: null, mechanisms: [],
+      origin: 'COMPANY_DOC', market: r.market, ticker, company: r.company || ticker || 'Unknown company', metric: c.metric, low, high, open, gOrigin, abs, base, needsReview,
+      cumulativeYears: pkind === 'MULTI_YEAR_CAGR' && sLo == null && !cagrFromBase ? years : cagrFromBase ? cagrFromBase.years : null,
+      period, pkind, kind: 'MANAGEMENT_GUIDANCE', organic: 'UNKNOWN', statement, driver: null, mechanisms: [],
       src: { name: `${dn.name} (${r.company})`, type: dn.type, url: r.docUrl || null, date: c.date, rank: 4 }, verification: 'VERIFIED', priors,
       notes: [...c.notes, ...notes].join('; ') || null, withdrawn, forced: withdrawn ? 'WITHDRAWN' : undefined,
       primarySourceRead: true, sourceMetricLabel: row.metric === 'REVENUE_GROWTH' ? null : row.metricLabel || null, lastVerified, extRevision: rev, growthNote, confirmedBy: confirmed,
-      periodContext: null,
+      periodContext: null, cagrFromBase, baseStatedByCompany,
     });
   }
   return out;
@@ -706,6 +765,7 @@ const figureIn = (statement: string, n: number): boolean => new RegExp(`(?:^|[^0
 
 /** Like-for-like check for an implied growth %. reject = drop the % and show the amount only; review = keep it but flag it and never count it. */
 function impliedCheck(it: Item): { reject?: string; review?: string } {
+  if (it.cagrFromBase && it.abs && it.base) return {};   // zzz916: a yearly rate worked out over several years (checked where it was built)
   const tl = lenOfKind(it.pkind);
   if (tl == null) return { reject: `Implied growth dropped: the target period (${it.period}) is not a single year, half or quarter, so it cannot be set against a one-period base.` };
   if (!it.abs) return { reject: 'Implied growth dropped: there is no stated target amount to work it out from.' };
@@ -793,6 +853,7 @@ function pointOf(it: Item, history: Prior[], ps: GuPeriodInfo, x: PointCtx): GuP
     const chk = impliedCheck(it);
     if (chk.reject) { impliedRejected = chk.reject; low = null; high = null; open = false; growthType = 'UNKNOWN'; if (!/no stated target amount/.test(chk.reject)) notComparable = chk.reject.replace(/^Implied growth dropped:\s*/i, ''); }
     else if (chk.review) { flags.push(chk.review); growthBasis = 'inferred_no_sourced_base'; }
+    else if (it.cagrFromBase && it.abs && it.base) { growthType = 'DERIVED'; growthBasis = 'cagr_worked_out_from_company_numbers'; }
     else if (it.abs && it.base) {
       const d = deriveGrowth({ target: it.abs, base: it.base, storedLow: it.low, storedHigh: it.high });
       if (d.ok && d.consistent) { growthType = 'DERIVED'; growthBasis = d.basis; derivation = { previousValue: d.previousValue, currentLow: d.currentLow, currentHigh: d.currentHigh, unit: d.unit, basePeriod: d.basePeriod, growthLow: d.growthLow, growthMid: d.growthMid, growthHigh: d.growthHigh, basis: d.basis }; }
@@ -802,7 +863,7 @@ function pointOf(it: Item, history: Prior[], ps: GuPeriodInfo, x: PointCtx): GuP
   }
   if (it.needsReview) flags.push(it.needsReview);
   const cv = compareValue(low, high, open);
-  if (it.metric === 'REVENUE' && cv != null && cv >= PLAUSIBLE_REVENUE_GROWTH_PCT && !(origin === 'STATED' && low != null && figureIn(it.statement, low)))
+  if (it.metric === 'REVENUE' && cv != null && cv >= PLAUSIBLE_REVENUE_GROWTH_PCT && !(origin === 'STATED' && low != null && (figureIn(it.statement, low) || multipleOf(it.statement) === 1 + low / 100)) && !(origin === 'IMPLIED' && it.baseStatedByCompany && derivation))
     flags.push(`Revenue growth of about ${fnum(cv)}% is at or above ${PLAUSIBLE_REVENUE_GROWTH_PCT}%, which is implausible for an established company unless management clearly stated it as a percent. The source text does not show that, so it needs review.`);
   const needsReview = flags.length ? flags.join(' ') : null;
   // ── display with its basis ──
@@ -813,6 +874,7 @@ function pointOf(it: Item, history: Prior[], ps: GuPeriodInfo, x: PointCtx): GuP
   const tgtText = it.abs ? amountText(it.abs) : null;
   let basisLabel: string;
   if (growthType === 'EXPLICIT') basisLabel = 'stated by company';
+  else if (growthType === 'DERIVED' && it.cagrFromBase) basisLabel = `a year, worked out from company numbers: ${tgtText} by ${it.cagrFromBase.targetPeriod} vs ${it.cagrFromBase.baseText}, over ${it.cagrFromBase.years} years`;
   else if (growthType === 'DERIVED' && derivation) {
     const bt = amountText({ value: derivation.previousValue, unit: derivation.unit });
     basisLabel = derivation.basis === 'absolute_vs_prior_guidance' ? `vs prior guidance (derived: ${tgtText} vs ${bt})` : `vs ${it.base!.period} actual (derived: ${tgtText} vs ${bt})`;
@@ -820,6 +882,7 @@ function pointOf(it: Item, history: Prior[], ps: GuPeriodInfo, x: PointCtx): GuP
   else basisLabel = notComparable ? `GROWTH NOT COMPARABLE: ${notComparable}` : it.growthNote || 'no % stated';
   let core: string;
   if (growthType === 'EXPLICIT') core = displayOf({ metric: it.metric, low, high, open, origin: 'STATED', periodKind: it.pkind, period: it.period, abs: it.abs, cumulativeYears: it.cumulativeYears, proxy });
+  else if (growthType === 'DERIVED' && it.cagrFromBase) core = `${it.cagrFromBase.years}-yr ${METRIC_WORD[it.metric]} CAGR ${pctShown}${proxy ? ` (${proxy})` : ''} (${basisLabel})`;
   else if (growthType === 'DERIVED' || growthType === 'IMPLIED') core = `${pctShown}${proxy ? ` (${proxy})` : ''} ${growthType === 'DERIVED' ? basisLabel : `(${basisLabel})`}`;
   else core = tgtText ? `${tgtText} target (${notComparable ? basisLabel : it.growthNote || 'no % stated'})` : '—';
   const tails: string[] = [];

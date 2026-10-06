@@ -55,12 +55,33 @@ export const DOC_TTL_S = 210 * 86_400;   // zzz874: a document stays as long as 
 export const SEEN_CAP = 20_000;
 export const MAX_DOCS_PER_REQUEST = 25;
 export const MAX_SEEN_PER_REQUEST = 2_000;
+// zzz916 — index integrity + intimations
+/** {rows, seen, updatedAt} written with every index / seen write: a read that comes back empty while this says rows exist is a failed read, never "no index". */
+export const DOCS_INDEX_META_KEY = 'guidance-docs:v1:index-meta';
+/** short lock around every read-modify-write of the index (collector ingest vs the extractor's markExtracted) */
+export const DOCS_INDEX_LOCK_KEY = 'guidance-docs:v1:index-lock';
+/** exchange intimations ("transcript available at <link>") whose real document has not been found yet */
+export const INTIMATIONS_KEY = 'guidance-docs:v1:intimations';
+export const MAX_INTIMATIONS_PER_REQUEST = 500;
+export const INTIMATIONS_CAP = 3_000;
+export const INTIMATION_RETRY_DAYS = 60;
+/** a stored "transcript" / "presentation" this short is an intimation letter, not the document */
+export const SHORT_DOC_CHARS = 2_500;
+export class DocsIndexUnreadableError extends Error {
+  constructor(what: string) { super(`${what} could not be read; refusing to overwrite it (retry later)`); this.name = 'DocsIndexUnreadableError'; }
+}
 
 const KINDS: readonly GuidanceDocKind[] = ['TRANSCRIPT', 'PRESENTATION', 'RESULTS_RELEASE', 'AGM_SPEECH', 'OTHER_COMPANY_DOC'];
 
 export interface DocsKv {
   get<T = any>(k: string): Promise<T | null>;
   set(k: string, v: any, ttlS?: number): Promise<void>;
+  /** zzz916 (optional): SET NX EX — the index lock. Absent (tests) → no locking. */
+  setNX?(k: string, v: any, ttlS: number): Promise<boolean>;
+  del?(k: string): Promise<void>;
+  sleep?(ms: number): Promise<void>;
+  /** zzz916 (optional): null ONLY when the key does not exist; throws when the read fails (timeout, HTTP error). */
+  getStrict?<T = any>(k: string): Promise<T | null>;
 }
 
 // ── passage selection + compression ─────────────────────────────────────────
@@ -180,7 +201,9 @@ export function isAllowedDocUrl(url: string, exchangeUrl?: string | null): boole
 
 // ── validation (hand-rolled: no zod in this repo) ───────────────────────────
 
-export interface SeenEntry { docId: string; outcome: 'unreadable' | 'no_cue' | 'too_big' | 'error' | 'linked' }
+export interface SeenEntry { docId: string; outcome: 'unreadable' | 'no_cue' | 'too_big' | 'error' | 'linked' | 'intimation' }
+/** zzz916: an exchange intimation whose real document (transcript / deck) has not been found yet. */
+export interface IntimationEntry { docId: string; url: string; ticker: string | null; bseCode: string | null; company: string; kind: GuidanceDocKind; filedAt: string; firstSeen?: string }
 export interface DayStatus {
   date: string;                       // YYYY-MM-DD
   source: string;                     // 'BSE' | 'BSE_PROXY' | 'NSE' | 'NSE_PROXY' | 'NONE'
@@ -204,6 +227,7 @@ export interface IngestBody {
   seen: SeenEntry[];
   status: { days: DayStatus[]; run?: CollectorStatus['lastRun'] } | null;
   coverage: { market: 'IN' | 'US'; days: Record<string, Partial<CoverageDay> & { status: CoverageDay['status'] }> } | null;
+  /** zzz916 */ intimations?: IntimationEntry[];
 }
 
 const isStr = (v: unknown, max = 2000): v is string => typeof v === 'string' && v.length <= max;
@@ -278,8 +302,13 @@ export function validateIngestBody(raw: any):
   });
   const seen: SeenEntry[] = [];
   for (const s of seenRaw) {
-    if (s && isDocId(s.docId) && ['unreadable', 'no_cue', 'too_big', 'error', 'linked'].includes(s.outcome)) seen.push({ docId: s.docId, outcome: s.outcome });
+    if (s && isDocId(s.docId) && ['unreadable', 'no_cue', 'too_big', 'error', 'linked', 'intimation'].includes(s.outcome)) seen.push({ docId: s.docId, outcome: s.outcome });
   }
+  // zzz916: intimations (validated one by one; a bad entry is dropped, never the request)
+  const intRaw = raw.intimations ?? [];
+  if (!Array.isArray(intRaw) || intRaw.length > MAX_INTIMATIONS_PER_REQUEST) return { ok: false, error: `intimations must be an array of at most ${MAX_INTIMATIONS_PER_REQUEST}` };
+  const intimations: IntimationEntry[] = [];
+  for (const x of intRaw) { const v = validIntimation(x); if (v) intimations.push(v); }
   let status: IngestBody['status'] = null;
   if (raw.status != null) {
     if (typeof raw.status !== 'object' || !Array.isArray(raw.status.days) || raw.status.days.length > 200) return { ok: false, error: 'status.days must be an array (≤200)' };
@@ -310,7 +339,20 @@ export function validateIngestBody(raw: any):
     }
     coverage = { market: cm, days };
   }
-  return { ok: true, body: { collector: raw.collector, market: raw.market ?? null, docs, seen, status, coverage }, rejected };
+  return { ok: true, body: { collector: raw.collector, market: raw.market ?? null, docs, seen, status, coverage, intimations }, rejected };
+}
+
+/** zzz916: one intimation entry, or null. The url must be an exchange attachment (that is what an intimation is). */
+export function validIntimation(x: any): IntimationEntry | null {
+  if (!x || typeof x !== 'object' || !isDocId(x.docId) || !isStr(x.url, 1000)) return null;
+  if (!isExchangeHost(hostOf(x.url))) return null;
+  const ticker = x.ticker == null ? null : (isStr(x.ticker, 24) && /^[A-Z0-9&.\-_]{1,24}$/.test(x.ticker) ? x.ticker : undefined);
+  const bseCode = x.bseCode == null ? null : (isStr(x.bseCode, 6) && /^\d{6}$/.test(x.bseCode) ? x.bseCode : undefined);
+  if (ticker === undefined || bseCode === undefined) return null;
+  if (!KINDS.includes(x.kind) || !isIsoish(x.filedAt)) return null;
+  const company = isStr(x.company, 200) && x.company.trim() ? x.company.trim() : (ticker || bseCode || '');
+  if (!company) return null;
+  return { docId: x.docId, url: x.url, ticker, bseCode, company, kind: x.kind, filedAt: new Date(x.filedAt).toISOString(), ...(isIsoish(x.firstSeen) ? { firstSeen: new Date(x.firstSeen).toISOString() } : {}) };
 }
 
 // ── pure merges ─────────────────────────────────────────────────────────────
@@ -324,9 +366,29 @@ export function toIndexRow(d: GuidanceDoc, extracted?: boolean, textBytes?: numb
 export function mergeIndex(prev: GuidanceDocIndex | null, docs: GuidanceDoc[], now: Date, cap = INDEX_CAP, bytes?: Map<string, number>): GuidanceDocIndex {
   const byId = new Map<string, GuidanceDocIndexRow>();
   for (const r of prev?.rows || []) if (r && r.docId) byId.set(r.docId, r);
+  // zzz916: a document that arrives with an `exchangeUrl` replaces the intimation stored earlier under that exchange url (the short
+  // "transcript available at <link>" letter): its row leaves the index, so it is no longer listed as the company's "transcript, read, no guidance"
+  const replaced = new Set(docs.map((d) => d.exchangeUrl).filter((u): u is string => !!u));
+  if (replaced.size) for (const [id, r] of Array.from(byId.entries())) if (replaced.has(r.url) && isShortDocRow(r)) byId.delete(id);
   for (const d of docs) byId.set(d.docId, toIndexRow(d, byId.get(d.docId)?.extracted, bytes?.get(d.docId)));
   const rows = Array.from(byId.values()).sort((a, b) => (b.filedAt || '').localeCompare(a.filedAt || '') || a.docId.localeCompare(b.docId));
   return { updatedAt: now.toISOString(), rows: rows.slice(0, cap) };
+}
+
+/** zzz916: a stored transcript / presentation this short is an intimation letter, not the document. */
+export function isShortDocRow(r: Pick<GuidanceDocIndexRow, 'kind' | 'textChars'>): boolean {
+  return (r.kind === 'TRANSCRIPT' || r.kind === 'PRESENTATION') && typeof r.textChars === 'number' && r.textChars > 0 && r.textChars < SHORT_DOC_CHARS;
+}
+
+type IntimationList = { updatedAt: string; items: IntimationEntry[] };
+/** zzz916: add new intimations (first-seen date kept), drop the ones a stored document now replaces and the ones older than the retry window; capped, newest first. */
+export function mergeIntimations(prev: IntimationList | null, add: IntimationEntry[], resolvedUrls: Set<string>, now: Date, cap = INTIMATIONS_CAP): IntimationList {
+  const byId = new Map<string, IntimationEntry>();
+  for (const x of prev?.items || []) if (x && x.docId) byId.set(x.docId, x);
+  for (const x of add) byId.set(x.docId, { ...x, firstSeen: byId.get(x.docId)?.firstSeen || x.firstSeen || now.toISOString() });
+  const cut = new Date(now.getTime() - INTIMATION_RETRY_DAYS * 86_400_000).toISOString();
+  const items = Array.from(byId.values()).filter((x) => !resolvedUrls.has(x.url) && x.filedAt >= cut).sort((a, b) => b.filedAt.localeCompare(a.filedAt) || a.docId.localeCompare(b.docId)).slice(0, cap);
+  return { updatedAt: now.toISOString(), items };
 }
 
 type SeenMap = { updatedAt: string; ids: Record<string, string> };
@@ -397,14 +459,28 @@ export async function ingestDocs(body: IngestBody, kv: DocsKv, now = new Date())
   }
   let indexRows = 0;
   if (docs.length) {
-    const prev = await kv.get<GuidanceDocIndex>(DOCS_INDEX_KEY).catch(() => null);
-    const next = mergeIndex(prev, docs, now, INDEX_CAP, bytes);
-    await kv.set(DOCS_INDEX_KEY, next, DOC_TTL_S);
-    indexRows = next.rows.length;
+    // zzz916: read-modify-write under the index lock, and never on top of a read that failed (a slow read used to come back null and
+    // the whole index was replaced by this one batch: 381 India rows left on 6 Oct where thousands had been stored)
+    indexRows = (await withIndexLock(kv, async () => {
+      const prev = await readIndexStrict(kv);
+      const next = mergeIndex(prev, docs, now, INDEX_CAP, bytes);
+      await writeIndex(kv, next, now);
+      return next.rows.length;
+    }, true)) ?? 0;
   }
   if (body.seen.length) {
     const prev = await kv.get<SeenMap>(DOCS_SEEN_KEY).catch(() => null);
-    await kv.set(DOCS_SEEN_KEY, mergeSeen(prev, body.seen, now), DOC_TTL_S);
+    const meta = await kv.get<IndexMeta>(DOCS_INDEX_META_KEY).catch(() => null);
+    if (!prev && (meta?.seen ?? 0) > 0) throw new DocsIndexUnreadableError('the seen list');
+    const merged = mergeSeen(prev, body.seen, now);
+    await kv.set(DOCS_SEEN_KEY, merged, DOC_TTL_S);
+    await patchMeta(kv, { seen: Object.keys(merged.ids).length }, now);
+  }
+  // zzz916: intimations waiting for their real document; a stored document carrying the intimation's url as exchangeUrl resolves it
+  const resolved = new Set(docs.map((d) => d.exchangeUrl).filter((u): u is string => !!u));
+  if ((body.intimations && body.intimations.length) || resolved.size) {
+    const prev = await kv.get<IntimationList>(INTIMATIONS_KEY).catch(() => null);
+    if (body.intimations?.length || prev?.items?.some((x) => resolved.has(x.url))) await kv.set(INTIMATIONS_KEY, mergeIntimations(prev, body.intimations || [], resolved, now), DOC_TTL_S);
   }
   if (body.status) {
     const k = statusKey(body.collector);
@@ -419,6 +495,66 @@ export async function ingestDocs(body: IngestBody, kv: DocsKv, now = new Date())
     coverageDays = Object.keys(merged.days).length;
   }
   return { stored: docs.length, seen: body.seen.length, indexRows, coverageDays };
+}
+
+// ── zzz916: index integrity ─────────────────────────────────────────────────
+
+type IndexMeta = { rows?: number; seen?: number; updatedAt?: string };
+async function patchMeta(kv: DocsKv, patch: IndexMeta, now: Date): Promise<void> {
+  const cur = await kv.get<IndexMeta>(DOCS_INDEX_META_KEY).catch(() => null);
+  await kv.set(DOCS_INDEX_META_KEY, { ...(cur && typeof cur === 'object' ? cur : {}), ...patch, updatedAt: now.toISOString() }, DOC_TTL_S);
+}
+/** The index, or null when there truly is none. Throws when the read failed although the meta record says rows exist. */
+export async function readIndexStrict(kv: DocsKv): Promise<GuidanceDocIndex | null> {
+  const idx = await kv.get<GuidanceDocIndex>(DOCS_INDEX_KEY).catch(() => null);
+  if (idx && Array.isArray(idx.rows)) return idx;
+  const meta = await kv.get<IndexMeta>(DOCS_INDEX_META_KEY).catch(() => null);
+  if ((meta?.rows ?? 0) > 0) throw new DocsIndexUnreadableError('the documents index');
+  // no meta yet (the first write after zzz916 deploys): a store that can tell "missing" from "failed" is asked once more, strictly
+  if (!meta && kv.getStrict) {
+    let again: GuidanceDocIndex | null;
+    try { again = await kv.getStrict<GuidanceDocIndex>(DOCS_INDEX_KEY); } catch { throw new DocsIndexUnreadableError('the documents index'); }
+    if (again && Array.isArray(again.rows)) return again;
+  }
+  return null;
+}
+async function writeIndex(kv: DocsKv, next: GuidanceDocIndex, now: Date): Promise<void> {
+  await kv.set(DOCS_INDEX_KEY, next, DOC_TTL_S);
+  await patchMeta(kv, { rows: next.rows.length }, now);
+}
+/**
+ * Run `fn` holding the index lock (SET NX, 30 s). Without lock support (tests) it simply runs. `must` = the caller cannot skip the
+ * write (ingest: throw so the collector retries); otherwise (markExtracted) a lock not obtained skips the index update (null).
+ */
+export async function withIndexLock<T>(kv: DocsKv, fn: () => Promise<T>, must: boolean): Promise<T | null> {
+  if (!kv.setNX) return fn();
+  const sleep = kv.sleep || ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  for (let i = 0; i < 10; i++) {
+    const got = await kv.setNX(DOCS_INDEX_LOCK_KEY, { at: Date.now() }, 30).catch(() => false);
+    if (got) {
+      try { return await fn(); } finally { if (kv.del) await kv.del(DOCS_INDEX_LOCK_KEY).catch(() => undefined); }
+    }
+    await sleep(300 + i * 150);
+  }
+  if (must) throw new DocsIndexUnreadableError('the documents index lock');
+  return null;
+}
+
+/**
+ * zzz916: intimations the collector should try to resolve (Screener.in concall list): the collector's pending list, plus stored
+ * India transcripts / presentations so short they are intimation letters (stored before zzz916). Within the retry window, newest first.
+ */
+export async function pendingIntimations(kv: DocsKv, now = new Date()): Promise<IntimationEntry[]> {
+  const [list, idx] = await Promise.all([kv.get<IntimationList>(INTIMATIONS_KEY).catch(() => null), kv.get<GuidanceDocIndex>(DOCS_INDEX_KEY).catch(() => null)]);
+  const cut = new Date(now.getTime() - INTIMATION_RETRY_DAYS * 86_400_000).toISOString();
+  const out = new Map<string, IntimationEntry>();
+  for (const x of list?.items || []) if (x && x.filedAt >= cut) out.set(x.docId, x);
+  for (const r of idx?.rows || []) {
+    if (!r || r.market !== 'IN' || !isShortDocRow(r) || (r.filedAt || '') < cut || out.has(r.docId)) continue;
+    if (!isExchangeHost(hostOf(r.url))) continue;
+    out.set(r.docId, { docId: r.docId, url: r.url, ticker: r.ticker, bseCode: null, company: r.company, kind: r.kind, filedAt: r.filedAt });
+  }
+  return Array.from(out.values()).sort((a, b) => b.filedAt.localeCompare(a.filedAt)).slice(0, 1_500);
 }
 
 /** docIds a collector need not download again: stored docs + seen (skipped) docs. */
@@ -481,24 +617,29 @@ export async function getDoc(docId: string, kv: DocsKv = realDocsKv()): Promise<
  *  (metadata + url kept) so steady-state storage stays small. Returns false
  *  when the doc is not indexed. */
 export async function markExtracted(docId: string, kv: DocsKv = realDocsKv(), now = new Date()): Promise<boolean> {
-  const idx = await kv.get<GuidanceDocIndex>(DOCS_INDEX_KEY).catch(() => null);
-  if (!idx || !Array.isArray(idx.rows)) return false;
-  const row = idx.rows.find((r) => r.docId === docId);
-  if (!row) return false;
-  const result = await kv.get<{ status?: string }>(EXTRACT_RESULT_KEY(docId)).catch(() => null);
-  const final = !!result && (result.status === 'ok' || result.status === 'no_guidance');
-  let changed = false;
-  if (final) {
-    const d = await kv.get<StoredDoc>(docKey(docId)).catch(() => null);
-    if (d && typeof d === 'object' && !d.textDropped) {
-      const { textGz, textEnc, text, ...meta } = d;
-      await kv.set(docKey(docId), { ...meta, textDropped: true }, DOC_TTL_S);
+  // zzz916: the index flag is set under the index lock on a FRESH read (the read-modify-write used to race the collector's ingest and
+  // could drop documents stored in between). The extractor's own index is the source of truth for "extracted", so a skipped flag is harmless.
+  const r = await withIndexLock(kv, async () => {
+    const idx = await kv.get<GuidanceDocIndex>(DOCS_INDEX_KEY).catch(() => null);
+    if (!idx || !Array.isArray(idx.rows)) return false;
+    const row = idx.rows.find((x) => x.docId === docId);
+    if (!row) return false;
+    const result = await kv.get<{ status?: string }>(EXTRACT_RESULT_KEY(docId)).catch(() => null);
+    const final = !!result && (result.status === 'ok' || result.status === 'no_guidance');
+    let changed = false;
+    if (final) {
+      const d = await kv.get<StoredDoc>(docKey(docId)).catch(() => null);
+      if (d && typeof d === 'object' && !d.textDropped) {
+        const { textGz, textEnc, text, ...meta } = d;
+        await kv.set(docKey(docId), { ...meta, textDropped: true }, DOC_TTL_S);
+      }
+      if (row.textBytes !== 0) { row.textBytes = 0; changed = true; }
     }
-    if (row.textBytes !== 0) { row.textBytes = 0; changed = true; }
-  }
-  if (!row.extracted) { row.extracted = true; changed = true; }
-  if (changed) await kv.set(DOCS_INDEX_KEY, { updatedAt: now.toISOString(), rows: idx.rows }, DOC_TTL_S);
-  return true;
+    if (!row.extracted) { row.extracted = true; changed = true; }
+    if (changed) await writeIndex(kv, { updatedAt: now.toISOString(), rows: idx.rows }, now);
+    return true;
+  }, false).catch(() => null);
+  return r ?? true;
 }
 
 /** Docs indexed and the compressed text bytes they hold (from the index). */
@@ -525,5 +666,22 @@ export function realDocsKv(timeoutMs = 5_000): DocsKv {
     get: async <T>(k: string) => { const m = await import('./kv'); return race(m.kvGet<T>(k), null); },
     // writes are not raced: an ingest must fail loudly rather than report a store it did not make
     set: async (k, v, ttl) => { const m = await import('./kv'); await m.kvSet(k, v, ttl); },
+    // zzz916: the index lock (a lock that cannot be confirmed is not taken)
+    setNX: async (k, v, ttl) => { const m = await import('./kv'); return race(m.kvSetNX(k, v, ttl), false); },
+    del: async (k) => { const m = await import('./kv'); await race(m.kvDel(k), undefined); },
+    // zzz916: a read that tells "missing" (null) from "failed" (throws) — Upstash REST answers {"result":null} for a missing key
+    getStrict: async <T>(k: string): Promise<T | null> => {
+      const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
+      const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+      if (!url || !token) { const m = await import('./kv'); return m.kvGet<T>(k); }   // in-memory mode: nothing can fail remotely
+      const res = await fetch(`${url.replace(/\/+$/, '')}/get/${encodeURIComponent(k)}`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store', signal: AbortSignal.timeout(Math.max(timeoutMs, 15_000)) });
+      if (!res.ok) throw new Error(`KV HTTP ${res.status}`);
+      const j: any = await res.json();
+      const raw = j?.result;
+      if (raw === null || raw === undefined) return null;
+      if (typeof raw !== 'string') return raw as T;
+      let p: any = JSON.parse(raw); if (typeof p === 'string') p = JSON.parse(p);
+      return p as T;
+    },
   };
 }

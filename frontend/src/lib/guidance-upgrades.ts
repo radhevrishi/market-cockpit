@@ -2374,10 +2374,12 @@ function extractedPoint(row: GuidanceExtractResult['rows'][number], metric: GuMe
   const currency = rate ? undefined : cur === 'INR' ? '₹' : cur === 'USD' ? '$' : cur === 'EUR' ? '€' : cur === 'GBP' ? '£' : undefined;
   const unit = rate ? '%' : u === 'crore' || u === 'crores' ? 'Cr' : u === 'million' ? 'M' : u === 'billion' ? 'B' : u === 'thousand' ? 'K' : u === 'per_share' ? '' : u === 'lakh crore' ? 'L Cr' : '';
   const basis: GuGuidancePoint['basis'] = row.basis === 'ADJUSTED' ? 'NON_GAAP' : row.basis === 'GAAP' ? 'GAAP' : row.basis === 'REPORTED' ? 'REPORTED' : 'UNSTATED';
-  const multi = row.periodKind === 'MULTI_YEAR' && rate && /^(FY|CY)\d{2}-\d{2}$/.test(period);
+  // zzz916: a rate over a span with no year named ("Next 2 years", "Long term (no fixed year)") is multi-year too, never a one-year change
+  const nextN = /^next (\d{1,2}) years?$/i.exec(period);
+  const multi = row.periodKind === 'MULTI_YEAR' && rate && (/^(FY|CY)\d{2}-\d{2}$/.test(period) || !!nextN || /^(long|medium) term/i.test(period));
   const ys = multi ? /^(?:FY|CY)(\d{2})-(\d{2})$/.exec(period) : null;
   return { metric, period, low: Math.min(l, h), high: Math.max(l, h), midpoint: round((l + h) / 2, 6), isGrowthRate: rate, currency, unit, basis, raw: String(row.quote || '').slice(0, 300), valueKind: 'GUIDANCE',
-    ...(multi ? { periodKind: 'MULTI_YEAR_CAGR' as const, ...(ys ? { periodYears: parseInt(ys[2], 10) - parseInt(ys[1], 10) + 1 } : {}) } : {}) };
+    ...(multi ? { periodKind: 'MULTI_YEAR_CAGR' as const, ...(ys ? { periodYears: parseInt(ys[2], 10) - parseInt(ys[1], 10) + 1 } : nextN ? { periodYears: parseInt(nextN[1], 10) } : {}) } : {}) };
 }
 /** One skeleton per extract result that has at least one usable row. Pure. */
 export function skeletonsFromExtracted(results: readonly GuidanceExtractResult[]): GuSkeleton[] {

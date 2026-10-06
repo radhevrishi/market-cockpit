@@ -110,16 +110,52 @@ export function enqueue(q: QueueState, inputs: readonly QueueInput[], now: Date)
 /** Keep the value inside one KV value: drop the oldest finished items first, never an item that is still waiting. */
 export function bound(q: QueueState): QueueState {
   let items = q.items.slice();
-  const keepRank = (x: GuQueueItem) => (x.processing_status === 'DONE' ? 0 : x.processing_status === 'SOURCE_UNAVAILABLE' ? 1 : 2);
+  // zzz916: an item delegated to the documents collector is dropped first (the collector reads the same filing from its own daily listing)
+  const keepRank = (x: GuQueueItem) => ((x as GuQueueItemD).delegated_to || x.processing_status === 'DONE' ? 0 : x.processing_status === 'SOURCE_UNAVAILABLE' ? 1 : 2);
   const sortForDrop = (a: GuQueueItem, b: GuQueueItem) => keepRank(a) - keepRank(b) || a.event_date.localeCompare(b.event_date);
   if (items.length > QUEUE_MAX_ITEMS) items = items.sort(sortForDrop).slice(items.length - QUEUE_MAX_ITEMS);
   while (items.length > 1 && JSON.stringify(items).length > QUEUE_MAX_CHARS) { items = items.sort(sortForDrop); items = items.slice(Math.ceil(items.length * 0.1)); }
   return { ...q, items };
 }
 
+// ── zzz916: India filings belong to the GitHub documents collector ─────────────────────────────────────────────────
+// The app cannot read NSE / BSE attachments reliably (both refuse Railway's datacenter range) and the hourly route seldom had time left for
+// the queue, so ~900 India items sat QUEUED with 0 attempts and showed as an "N documents not processed" backlog. The collector
+// (.github/scripts/scrape-guidance-docs.mjs) lists EVERY NSE / BSE filing of each day itself, follows intimations to the real transcript
+// and reads companies' Screener.in concall lists; it also takes the tickers of these items (GET /api/v1/guidance-docs/ingest
+// ?queueTickers=1). So India items are marked `delegated_to: 'documents-collector'`: never read here, never counted as waiting.
+export type GuQueueItemD = GuQueueItem & { delegated_to?: 'documents-collector' | null };
+export const COLLECTOR_DELEGATE = 'documents-collector' as const;
+/** Mark every open India item as handled by the documents collector. Returns how many changed (0 = nothing to write). */
+export function delegateIndiaToCollector(q: QueueState): number {
+  let n = 0;
+  for (const x of q.items as GuQueueItemD[]) {
+    if (x.market !== 'IN' || x.delegated_to) continue;
+    if (x.processing_status === 'DONE' || x.processing_status === 'SOURCE_UNAVAILABLE') continue;
+    x.delegated_to = COLLECTOR_DELEGATE; x.next_attempt = null; if (x.processing_status === 'READING') x.processing_status = 'QUEUED';
+    n++;
+  }
+  return n;
+}
+export const delegatedCount = (q: QueueState, market: 'IN' | 'US'): number => (q.items as GuQueueItemD[]).filter((x) => x.market === market && !!x.delegated_to).length;
+const CALL_SUBJECT = /transcript|con(?:ference)?\.? ?call|earnings call|analyst|institutional investor|investor (?:meet|presentation|call|day)|presentation|press release|media release|results/i;
+/** India tickers whose call / presentation / release filings are delegated to the collector (event date within `days`), for its Screener.in sweep. */
+export function collectorQueueTickers(q: QueueState | null | undefined, now = new Date(), days = 120): string[] {
+  const cut = new Date(now.getTime() - days * 86_400_000).toISOString().slice(0, 10);
+  const out = new Set<string>();
+  for (const x of (q?.items || []) as GuQueueItemD[]) {
+    if (x.market !== 'IN' || !x.delegated_to || !x.ticker || x.event_date < cut) continue;
+    if (!CALL_SUBJECT.test(`${x.subject} ${x.source_type}`)) continue;
+    const t = String(x.ticker).toUpperCase().replace(/^(NSE|BSE):/, '');
+    if (/^[A-Z0-9][A-Z0-9&-]{0,19}$/.test(t)) out.add(t);
+  }
+  return Array.from(out).sort().slice(0, 1_500);
+}
+
 // ── what is due ────────────────────────────────────────────────────────────────────────────────────────────────────
 const dueAt = (x: GuQueueItem, nowMs: number): boolean => {
-  if (!x.source_url) return false;                                                   // no link yet: nothing to read (wording stays 'Awaiting primary source')
+  if (!x.source_url) return false;
+  if ((x as GuQueueItemD).delegated_to) return false;                               // zzz916: read by the GitHub documents collector, not here                                                   // no link yet: nothing to read (wording stays 'Awaiting primary source')
   const t = x.next_attempt ? Date.parse(x.next_attempt) : 0;
   switch (x.processing_status) {
     case 'QUEUED': return !t || t <= nowMs;
@@ -306,16 +342,19 @@ export function doneCandidates(q: QueueState): GuCandidate[] {
   return q.items.filter((x) => x.processing_status === 'DONE' && x.result?.complete && x.result.candidate).map((x) => x.result!.candidate!);
 }
 
-const waiting = (x: GuQueueItem): boolean => x.processing_status === 'QUEUED' || x.processing_status === 'READING' || x.processing_status === 'FAILED';
+const waiting = (x: GuQueueItem): boolean => !(x as GuQueueItemD).delegated_to && (x.processing_status === 'QUEUED' || x.processing_status === 'READING' || x.processing_status === 'FAILED');
 export function reportQueue(q: QueueState, run: { processed: number; verified: number; failed: number } = { processed: 0, verified: 0, failed: 0 }): GuQueueReport {
   const by = (s: GuQueueStatus) => q.items.filter((x) => x.processing_status === s).length;
   const open = q.items.filter(waiting);
   const byPriority: Record<GuQueuePriority, number> = { P0: 0, P1: 0, P2: 0 };
   for (const x of open) byPriority[x.priority]++;
   const backlogByMarket = { IN: open.filter((x) => x.market === 'IN').length, US: open.filter((x) => x.market === 'US').length };
-  const note = open.length === 0 ? 'No documents are waiting to be read.'
-    : `${open.length} document${open.length === 1 ? '' : 's'} waiting to be read (${by('QUEUED')} queued + ${by('FAILED')} retrying after a failed fetch; P0 ${byPriority.P0}, P1 ${byPriority.P1}, P2 ${byPriority.P2}); up to ${MAX_DOCS_PER_RUN} are read per run (${QUEUE_CONCURRENCY} at a time), highest priority and longest-waiting first; ${drainEstimate(open.length).text}.`;
-  return { total: q.items.length, queued: by('QUEUED'), reading: by('READING'), done: by('DONE'), failed: by('FAILED'), sourceUnavailable: by('SOURCE_UNAVAILABLE'), byPriority,
+  const deleg = (q.items as GuQueueItemD[]).filter((x) => !!x.delegated_to).length;
+  const delegNote = deleg ? ` ${deleg} India filing${deleg === 1 ? ' is' : 's are'} read by the documents collector (GitHub, every 2 hours) from its own exchange listing, not from this queue.` : '';
+  const qd = open.filter((x) => x.processing_status === 'QUEUED').length; const fd = open.filter((x) => x.processing_status === 'FAILED').length;
+  const note = (open.length === 0 ? 'No documents are waiting to be read.'
+    : `${open.length} document${open.length === 1 ? '' : 's'} waiting to be read (${qd} queued + ${fd} retrying after a failed fetch; P0 ${byPriority.P0}, P1 ${byPriority.P1}, P2 ${byPriority.P2}); up to ${MAX_DOCS_PER_RUN} are read per run (${QUEUE_CONCURRENCY} at a time), highest priority and longest-waiting first; ${drainEstimate(open.length).text}.`) + delegNote;
+  return { total: q.items.length, queued: qd, reading: open.filter((x) => x.processing_status === 'READING').length, done: by('DONE'), failed: fd, sourceUnavailable: by('SOURCE_UNAVAILABLE'), byPriority,
     processedThisRun: run.processed, verifiedThisRun: run.verified, failedThisRun: run.failed, backlogByMarket, note };
 }
 /** documents still to be read in one market: waiting items (a SOURCE_UNAVAILABLE item is counted apart) */

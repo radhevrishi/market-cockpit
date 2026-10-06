@@ -54,7 +54,8 @@ export function allWindows(ev: PipelineEvidence, now: Date, market?: 'IN' | 'US'
   const out: any = { IN: {}, US: {} };
   for (const m of ['IN', 'US'] as const) {
     if (market && m !== market) continue;
-    const waiting = ev.queue.filter((x) => x.market === m && (x.processing_status === 'QUEUED' || x.processing_status === 'READING' || x.processing_status === 'FAILED')).length;
+    // zzz916: India items delegated to the documents collector are not waiting here
+    const waiting = ev.queue.filter((x) => x.market === m && !(x as any).delegated_to && (x.processing_status === 'QUEUED' || x.processing_status === 'READING' || x.processing_status === 'FAILED')).length;
     for (const k of Object.keys(WINDOW_DAYS) as GuWindowKey[]) out[m][k] = windowQuery(m, k, now, ev.docs.map((r) => (ev.extracted.some((e) => e.docId === r.docId) ? { ...r, extracted: true } : r)), ev.extracted, ev.coverage[m], waiting);
   }
   return out;

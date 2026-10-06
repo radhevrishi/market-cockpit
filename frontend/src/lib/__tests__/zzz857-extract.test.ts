@@ -354,19 +354,20 @@ describe('runExtraction', () => {
 
   test('plan: India (guidance-bearing kinds first, newest first inside each) → US hand-offs → US with no verified event → US unknown; graded / verified skipped', () => {
     const p = planQueue([...usRows, ...inRows, inRows[0]], info, 'prioritized');
-    assert.deepEqual(p.rows.map((x) => x.docId), ['in-mid', 'in-old', 'in-new', 'us-handoff', 'us-old-event', 'us-noevent', 'us-unknown', 'us-noticker']);
+    // zzz916: India transcripts / presentations first, then results releases, then the rest
+    assert.deepEqual(p.rows.map((x) => x.docId), ['in-old', 'in-mid', 'in-new', 'us-handoff', 'us-old-event', 'us-noevent', 'us-unknown', 'us-noticker']);
     assert.deepEqual(p.counts, { india: 3, usHandoff: 1, usNoEvent: 2, usUnknown: 2, skippedGraded: 1, skippedVerified: 1, skippedMode: 0 });
   });
   test('plan: GUIDANCE_EXTRACT_US_MODE=handoff_only keeps only hand-offs for the US', () => {
     const p = planQueue([...usRows, ...inRows], info, 'handoff_only');
-    assert.deepEqual(p.rows.map((x) => x.docId), ['in-mid', 'in-old', 'in-new', 'us-handoff']);
+    assert.deepEqual(p.rows.map((x) => x.docId), ['in-old', 'in-mid', 'in-new', 'us-handoff']);
     assert.equal(p.counts.skippedMode, 6);
   });
   test('plan: unreadable priority inputs make US docs "unknown" (last), never skipped', async () => {
     const io: PriorityIo = { usQueue: async () => { throw new Error('kv down'); }, verifiedEventDates: async () => null };
     const p = await buildPlan([...usRows, ...inRows], io, 'prioritized');
     assert.equal(p.counts.usUnknown, 7); assert.equal(p.counts.skippedGraded + p.counts.skippedVerified, 0);
-    assert.deepEqual(p.rows.slice(0, 3).map((x) => x.docId), ['in-mid', 'in-old', 'in-new']);
+    assert.deepEqual(p.rows.slice(0, 3).map((x) => x.docId), ['in-old', 'in-mid', 'in-new']);
     const asked: string[][] = [];
     const io2: PriorityIo = { usQueue: async () => ({ handoff: info.handoff, graded: info.graded }), verifiedEventDates: async (t) => { asked.push(t); return new Map([['CCC', ['2026-09-18']]]); } };
     const p2 = await buildPlan([...usRows, ...inRows], io2, 'prioritized');
@@ -455,7 +456,10 @@ describe('priorActual and the passage selector seam', () => {
   test('checks: year before the guided year, value + year + unit in a verbatim quote, annual only', () => {
     assert.ok(checkPriorActual({ ...base, prior_actual_period: 'FY26', prior_actual_value: 3592, prior_actual_quote: 'In FY26 revenue was ₹3,592 crore' }, 'crore', T).ok);
     const bad = (o: any, unit: string | null = 'crore') => { const r = checkPriorActual({ ...base, prior_actual_period: 'FY26', prior_actual_value: 3592, prior_actual_quote: 'In FY26 revenue was ₹3,592 crore', ...o }, unit, T); return r.ok ? 'ok' : r.reason; };
-    assert.equal(bad({ prior_actual_period: 'FY25', prior_actual_value: 3525, prior_actual_quote: 'Was FY25 revenue ₹3,525 crore?' }), 'wrong_year');
+    // zzz916: an earlier base year is allowed (a target several years out is measured from it); this FY25 quote is still refused — it is a question
+    assert.equal(bad({ prior_actual_period: 'FY25', prior_actual_value: 3525, prior_actual_quote: 'Was FY25 revenue ₹3,525 crore?' }), 'question');
+    assert.equal(bad({ prior_actual_period: 'FY27' }), 'wrong_year');
+    assert.equal(bad({ prior_actual_period: 'FY28' }), 'wrong_year');
     assert.equal(bad({ prior_actual_value: 3600 }), 'number_not_in_quote');
     assert.equal(bad({ prior_actual_quote: 'In FY26 revenue was ₹3,600 crore' }), 'quote_not_in_document');
     assert.equal(bad({ period_kind: 'QUARTER' }), 'not_annual');

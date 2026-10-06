@@ -10,6 +10,11 @@ name: Scrape Guidance Docs (India, every 2h evening IST)
 # Scheduled runs read the last 7 days (documents already stored or skipped are
 # not downloaded again). For the one-off 120-day backfill: Actions → this
 # workflow → "Run workflow" → days = 210 (zzz874: two quarters, so a raise has an earlier guidance to compare with).
+# zzz916: an intimation ("transcript available at <link>") is followed to the real document (its link, then
+# Screener.in's concall list); NSE SME companies are listed too; screener_tickers / screener_queue collect the
+# Screener.in concall transcripts of named companies (BSE-only companies, which BSE's refusal of GitHub hides).
+# Q1 FY27 backfill (two manual runs): (1) days = 90, skip_listing = 1, screener_queue = 1,
+# screener_tickers = <companies to make sure of>; (2) days = 90 (full NSE + SME listing, intimations followed).
 #
 # Secrets (repository → Settings → Secrets and variables → Actions):
 #   CRON_SECRET    — same value as CRON_SECRET on the server (service key)
@@ -38,6 +43,22 @@ on:
         default: '6000'
       include_plain_results:
         description: 'Also read plain "Financial Results" PDFs (1 = yes; large, few carry guidance)'
+        required: false
+        default: '0'
+      screener_tickers:
+        description: 'zzz916: NSE symbols or BSE codes (comma separated) whose Screener.in concall transcripts inside the window are collected (reaches BSE-only and SME companies)'
+        required: false
+        default: ''
+      screener_queue:
+        description: 'zzz916: 1 = also sweep the India companies whose call / presentation filings sit in the events queue'
+        required: false
+        default: '0'
+      screener_max:
+        description: 'zzz916: max Screener.in company pages read in this run'
+        required: false
+        default: '800'
+      skip_listing:
+        description: 'zzz916: 1 = skip the day-by-day exchange listing and run only the Screener.in phase (days still sets the window)'
         required: false
         default: '0'
 
@@ -76,6 +97,10 @@ jobs:
           IN_MODE: ${{ github.event.inputs.bse_mode || 'auto' }}
           IN_MAX: ${{ github.event.inputs.max_downloads || '' }}
           IN_PLAIN: ${{ github.event.inputs.include_plain_results || '0' }}
+          IN_SCR_TICKERS: ${{ github.event.inputs.screener_tickers || '' }}
+          IN_SCR_QUEUE: ${{ github.event.inputs.screener_queue || '0' }}
+          IN_SCR_MAX: ${{ github.event.inputs.screener_max || '' }}
+          IN_SKIP_LIST: ${{ github.event.inputs.skip_listing || '0' }}
         run: |
           set -euo pipefail
           if [ -z "${CRON_SECRET}" ]; then echo "CRON_SECRET is not set in repository secrets"; exit 1; fi
@@ -86,6 +111,11 @@ jobs:
           case "$IN_MAX" in ''|*[!0-9]*) IN_MAX=600 ;; esac
           export DAYS="$IN_DAYS" BSE_MODE="$IN_MODE" MAX_DOWNLOADS="$IN_MAX"
           export INCLUDE_PLAIN_RESULTS="$([ "$IN_PLAIN" = "1" ] && echo 1 || echo 0)"
+          # zzz916: Screener.in concall sweep (symbols / BSE codes only; anything else is dropped)
+          export SCREENER_TICKERS="$(printf '%s' "$IN_SCR_TICKERS" | tr -cd 'A-Za-z0-9,:&-' | cut -c1-20000)"
+          export SCREENER_QUEUE="$([ "$IN_SCR_QUEUE" = "1" ] && echo 1 || echo 0)"
+          case "$IN_SCR_MAX" in ''|*[!0-9]*) ;; *) export SCREENER_MAX="$IN_SCR_MAX" ;; esac
+          export SKIP_LISTING="$([ "$IN_SKIP_LIST" = "1" ] && echo 1 || echo 0)"
           # leave ~10 min of the job limit for the final POSTs
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then export RUN_BUDGET_MIN=325; else export RUN_BUDGET_MIN=48; fi
           rc=0; node .github/scripts/scrape-guidance-docs.mjs || rc=$?

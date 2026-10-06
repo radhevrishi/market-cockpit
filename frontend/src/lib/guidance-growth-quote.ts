@@ -15,14 +15,19 @@ export function quoteHasNumber(quote: string, v: number | null | undefined): boo
   return want.some((w) => new RegExp(`(^|[^\\d.])${w.replace('.', '\\.')}(?:\\.0+)?(?!\\d)`).test(q));
 }
 const MULTI_YEAR = /\b(over|in|during|across|within)\s+(?:the\s+)?(?:next|coming)?\s*(?:\d+|two|three|four|five|six|seven|ten)(?:\s*(?:to|-|–|or)\s*(?:\d+|two|three|four|five|six|seven|ten))?\s+years?\b/i;
-const NOT_REVENUE = /\b(aum|assets under management|loan book|advances|disbursements?|deposits?|order (?:book|inflows?|intake)|gmv|gross merchandise|volumes?|tonnage|footfall|customers?|subscribers?|capacity)\b/i;
+// zzz916: + pre-sales / bookings / stores / outlets / premium (Sobha pre-sales, Arvind bookings, Sapphire stores are not revenue)
+const NOT_REVENUE = /\b(aum|assets under management|loan book|advances|disbursements?|deposits?|order (?:book|inflows?|intake)|gmv|gross merchandise|volumes?|tonnage|footfall|customers?|subscribers?|capacity|pre-?sales|bookings?|stores?|outlets?|store count|premiums?)\b/i;
 const IS_REVENUE = /\b(revenue|sales|top[\s-]?line|turnover|income from operations|total income)\b/i;
+/** zzz916: quarter-on-quarter growth is never one year's growth */
+const QOQ = /\bquarter[- ]on[- ]quarter\b|\bq-?o-?q\b|\bsequential(?:ly)?\b/i;
 
 export function growthQuoteIssue(quote: string | null | undefined, low: number | null, high: number | null, metric: string, opts: { annual: boolean; numberCheck?: boolean }): string | null {
   const q = String(quote || '');
   if (!q.trim()) return null;   // no quote to test (older rows): leave to the existing checks
   if (opts.numberCheck !== false && low != null && !quoteHasNumber(q, low) && !quoteHasNumber(q, high)) return 'the quoted sentence does not contain this growth figure';
   if (opts.annual && MULTI_YEAR.test(q)) return 'the growth is stated over several years (cumulative), not for one year';
-  if (metric === 'REVENUE' && NOT_REVENUE.test(q) && !IS_REVENUE.test(q)) return `the sentence is about ${(NOT_REVENUE.exec(q)?.[0] || 'another measure').toUpperCase()} growth, not revenue`;
+  if (QOQ.test(q)) return 'the growth is quarter-on-quarter, not for a year';
+  // "pre-sales" contains the word "sales": it is not revenue
+  if (metric === 'REVENUE' && NOT_REVENUE.test(q) && !IS_REVENUE.test(q.replace(/\bpre-?sales\b/gi, ' '))) return `the sentence is about ${(NOT_REVENUE.exec(q)?.[0] || 'another measure').toUpperCase()} growth, not revenue`;
   return null;
 }
