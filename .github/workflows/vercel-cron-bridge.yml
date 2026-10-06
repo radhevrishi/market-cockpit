@@ -17,37 +17,8 @@ name: Vercel Cron Bridge
 # ----------
 
 on:
-  schedule:
-    # Times in UTC. IST = UTC + 5:30.
-    - cron: '7 1 * * *'        # 01:00 UTC daily   -> refresh-earnings-calendar
-    - cron: '7 4 * * 1-5'      # 04:00 UTC Mon-Fri -> intelligence/compute
-    - cron: '15 4 * * 1-5'     # 04:15 UTC Mon-Fri -> earnings-guidance/ingest
-    - cron: '35 4 * * 1-5'     # 04:35 UTC Mon-Fri -> movers-alert?mode=full
-    - cron: '50 4 * * 1-5'     # 04:50 UTC Mon-Fri -> watchlist-alert?mode=full
-    - cron: '30 5 * * *'       # 05:30 UTC daily   -> eo-blockbuster-alert (morning)
-    - cron: '30 15 * * *'      # 15:30 UTC daily   -> eo-blockbuster-alert (evening)
-    # PATCH 1031 - pre-warm the Earnings Opportunities graded cache (last 7
-    # days) on Railway so the page is always a warm hit (no Hard Refresh).
-    - cron: '7 3 * * *'        # 03:00 UTC daily   -> prewarm-earnings (08:30 IST pre-market)
-    - cron: '7 6 * * *'        # 06:00 UTC daily   -> prewarm-earnings (11:30 IST mid-session)
-    - cron: '7 11 * * *'       # 11:00 UTC daily   -> prewarm-earnings (16:30 IST post-close)
-    - cron: '7 14 * * *'       # 14:00 UTC daily   -> prewarm-earnings (19:30 IST evening filings)
-    # PATCH zzz593 - pre-warm the US graded sessions on Railway. Every US number
-    # comes from sec.gov behind an 8 req/s fair-access gate, so a cold 30-session
-    # window costs ~12 minutes of queue time. Warming it after the US close means
-    # the page reads Redis instead of EDGAR and opens instantly.
-    - cron: '20 1 * * 2-6'     # 01:20 UTC Tue-Sat -> prewarm-us-earnings (after the US close)
-    - cron: '40 1 * * 2-6'     # 01:40 UTC Tue-Sat -> prewarm-us-earnings (second pass)
-    - cron: '20 5 * * *'       # 05:20 UTC daily   -> prewarm-us-earnings (catch-up)
-    - cron: '45 5 * * *'       # 05:45 UTC daily   -> refresh-us-bench (after the prewarm)
-    - cron: '10 13 * * 1-5'    # 18:40 IST weekdays -> refresh-guidance (after the India close)
-    # Phase 1 - durable Postgres archive: persist each day's KV snapshot into
-    # raw_filings + earnings_events + calendar_snapshots (idempotent, never destructive).
-    - cron: '30 19 * * *'      # 19:30 UTC daily   -> archive-to-postgres (after evening filings settle)
-    # Ingestion: refresh the current-month KV snapshot from NSE/BSE (live = ingestion
-    # only). Runs BEFORE the archive cron so archive-to-postgres then persists KV->PG.
-    - cron: '7 18 * * *'       # 18:00 UTC daily   -> hub ingest (current month)
-    - cron: '15 18 * * *'      # 18:15 UTC daily   -> hub ingest (NEXT month: upcoming board meetings, zzz748)
+  # zzz907: the schedule now runs INSIDE the app (frontend/src/lib/app-scheduler.ts, job(s): refresh-earnings-calendar, intelligence-compute, earnings-guidance-ingest, movers-alert, watchlist-alert, eo-blockbuster-morning/-evening, prewarm-earnings, prewarm-us-earnings, refresh-us-bench, refresh-guidance, archive-to-postgres, hub-ingest, hub-ingest-next) because GitHub's cron
+  # skipped/delayed runs and every run cost paid Actions minutes (private repo). Kept for hand runs and as an emergency fallback.
   workflow_dispatch:
     inputs:
       endpoint:

@@ -6,26 +6,8 @@ name: Refresh Movers (2x/day post-close)
 # cache) so the home Movers widget shows the latest NSE close without a manual click.
 
 on:
-  schedule:
-    # PATCH zzz103 — Intraday warmers added so Railway's in-memory cache
-    # stays hot during NSE hours. The Cloudflare Worker mc-movers handles
-    # the actual KV refresh every 5min; these crons keep Railway pre-warmed
-    # so the homepage Top Movers widget doesn't pay the 25-30s cold rebuild.
-    - cron: '30 3 * * 1-5'    # 09:00 IST — pre-open warm
-    - cron: '30 5 * * 1-5'    # 11:00 IST — mid-morning warm
-    - cron: '30 7 * * 1-5'    # 13:00 IST — mid-day warm
-    - cron: '2 9 * * 1-5'     # 14:30 IST — pre-close warm
-    # Post-close refreshes (final EOD bhavcopy attribution).
-    # PATCH zzz231 — added denser post-close warmers as a belt-and-suspenders
-    # backup for the Cloudflare mc-movers worker cron. If the CF worker
-    # misses a run, these force Railway to recompute /api/market/quotes so
-    # the Home page movers block stays fresh right through the evening.
-    - cron: '15 10 * * 1-5'   # 15:45 IST (Mon-Fri) - just after close
-    - cron: '45 10 * * 1-5'   # 16:15 IST (Mon-Fri)
-    - cron: '30 11 * * 1-5'   # 17:00 IST (Mon-Fri)
-    - cron: '30 12 * * 1-5'   # 18:00 IST (Mon-Fri)
-    - cron: '30 13 * * 1-5'   # 19:00 IST (Mon-Fri) - after final EOD bhavcopy
-    - cron: '30 15 * * 1-5'   # 21:00 IST (Mon-Fri) - late warm before sleep
+  # zzz907: the schedule now runs INSIDE the app (frontend/src/lib/app-scheduler.ts, job(s): refresh-movers) because GitHub's cron
+  # skipped/delayed runs and every run cost paid Actions minutes (private repo). Kept for hand runs and as an emergency fallback.
   workflow_dispatch: {}
 
 concurrency:

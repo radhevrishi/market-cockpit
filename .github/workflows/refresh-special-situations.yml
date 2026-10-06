@@ -5,12 +5,8 @@ name: Refresh Special Situations (15-min, market hours)
 # 15 min of RSS publication — without requiring the user to visit the page.
 
 on:
-  schedule:
-    # Every 15 min during IST market hours (08:30 IST → 18:00 IST = 03:00 → 12:30 UTC)
-    - cron: '*/15 3-12 * * 1-5'
-    # Off-hours: hourly to keep ledger warm
-    - cron: '11 13-23 * * *'
-    - cron: '11 0-2 * * *'
+  # zzz907: the schedule now runs INSIDE the app (frontend/src/lib/app-scheduler.ts, job(s): refresh-special-situations) because GitHub's cron
+  # skipped/delayed runs and every run cost paid Actions minutes (private repo). Kept for hand runs and as an emergency fallback.
   workflow_dispatch: {}
 
 concurrency:

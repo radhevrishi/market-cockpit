@@ -15,6 +15,7 @@
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { warmNseHolidays } from '@/lib/nse-holidays-server';
+import { staleAfterHoursFor } from '@/lib/app-scheduler';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -178,7 +179,10 @@ export async function GET(req: Request) {
       // per-row flag still rendered red, contradicting "stale_count: 0".
       let freshest = lastOkMs;
       for (const a of ALIASES[name] || []) { const ar = await kvGet<HeartbeatRow>(ROW_KEY(a)); const t = ar?.last_ok_at ? Date.parse(ar.last_ok_at) : 0; if (t > freshest) freshest = t; }
-      const slowCadence = SLOW_JOB_HOURS[name];
+      // zzz907: jobs the app schedules itself get their threshold from their schedule (longest normal gap between slots
+      // + 6 h, never stricter than the global one) — a weekly job is not stale after 25 h. Others keep SLOW_JOB_HOURS.
+      const fromSchedule = staleAfterHoursFor(name, staleHours, now);
+      const slowCadence = fromSchedule ?? SLOW_JOB_HOURS[name];
       const rowCutoff = slowCadence ? Math.min(cutoff, Date.now() - slowCadence * 3600 * 1000) : cutoff;
       const rawStale = !freshest || freshest < rowCutoff;
       const stale = rawStale && !isTestName(name);
@@ -192,6 +196,8 @@ export async function GET(req: Request) {
         run_url: r.run_url,
         hours_since_ok: hoursSinceOk,
         stale,
+        stale_after_hours: slowCadence ? Math.max(slowCadence, staleHours) : staleHours,
+        scheduled_by: fromSchedule !== null ? 'app' : 'other',
         is_test: isTestName(name),
       };
     }),

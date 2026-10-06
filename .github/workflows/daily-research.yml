@@ -3,10 +3,11 @@ name: Daily Research (Gainers + Portfolio Catalysts)
 # zzz773 — the owner's daily clicks, on a schedule. Uses only public app
 # endpoints; model spend is bounded by the server's own daily ceilings.
 on:
+  # zzz907: portfolio (13:14 UTC daily) and gainers-us (21:30 UTC Mon-Fri) now run INSIDE the app (frontend/src/lib/app-scheduler.ts,
+  # jobs daily-research-portfolio / daily-research-gainers-us) because GitHub's cron skipped runs and each run cost paid minutes.
+  # gainers-in stays here: it pre-fetches screener.in pages from GitHub's network (screener.in does not answer the app host).
   schedule:
     - cron: '50 10 * * 1-5'   # 16:20 IST Mon-Fri → India gainers after the close
-    - cron: '13 14 * * *'      # 19:30 IST daily   → portfolio: read holdings that reported
-    - cron: '30 21 * * 1-5'   # 17:30 ET Mon-Fri  → US gainers after the close
   workflow_dispatch:
     inputs:
       job:

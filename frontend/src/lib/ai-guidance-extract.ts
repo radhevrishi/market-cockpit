@@ -55,7 +55,7 @@ export const MAX_ROWS = 40;
 const FAIL_BACKOFF_BASE_S = 2 * 3600;            // error: retry in 2h, 4h, 8h; after 3 attempts the error is stored as final
 const FAIL_MAX_ATTEMPTS = 3;
 
-/** The extractor workflow schedule (.github/workflows/ai-guidance-extract.yml — keep in sync; a test checks it). UTC. */
+/** The extractor schedule, UTC. zzz907: run by the app (lib/app-scheduler.ts job 'ai-guidance-extract' — keep in sync; a test checks it). */
 export const GUIDANCE_EXTRACT_SCHEDULE = '50 * * * *';
 
 const envNum = (k: string, d: number) => { const v = Number(process.env[k]); return Number.isFinite(v) && v > 0 ? v : d; };

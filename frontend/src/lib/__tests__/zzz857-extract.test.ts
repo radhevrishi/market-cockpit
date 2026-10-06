@@ -483,7 +483,8 @@ describe('wiring', () => {
   });
   test('workflow schedule mirrors GUIDANCE_EXTRACT_SCHEDULE and uses the secret header', () => {
     const yml = readFileSync(join(__dirname, '../../../../.github/workflows/ai-guidance-extract.yml'), 'utf8');
-    assert.ok(yml.includes(`cron: '${GUIDANCE_EXTRACT_SCHEDULE}'`));
+    // zzz907: the schedule runs in the app now (lib/app-scheduler.ts); the workflow stays for hand runs
+    assert.ok(readFileSync(join(__dirname, '../app-scheduler.ts'), 'utf8').includes(`name: 'ai-guidance-extract', crons: ['${GUIDANCE_EXTRACT_SCHEDULE}']`));
     assert.match(yml, /x-cron-secret: \$\{CRON_SECRET\}/);
     assert.match(yml, /workflow_dispatch:[\s\S]*limit:/);
     assert.match(yml, /Heartbeat/);

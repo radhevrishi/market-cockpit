@@ -9,7 +9,7 @@ import {
 } from '../calendar-dates';
 import { quarterEndDate, previousQuarter, isAcceptableQuarter } from '../earnings/quarter-window';
 import { quarterEndIso } from '../india-eo-card-data';
-import { BACKSTOP_JOBS, dueBackstops } from '../backstop-scheduler';
+import { APP_JOBS, dueSlot } from '../app-scheduler';   // zzz907: the backstop became the app scheduler
 
 const at = (iso: string) => new Date(iso);
 
@@ -149,14 +149,19 @@ test('recurring macro rules keep producing events decades out', () => {
   assert.deepEqual(withHol.filter((e) => e.type === 'expiry').map((e) => e.date), ['2026-10-26']);
 });
 
-test('backstop hub ingests use the slot month, not the clock', () => {
-  const hub = BACKSTOP_JOBS.find((j) => j.name === 'hub-ingest')!;
-  const next = BACKSTOP_JOBS.find((j) => j.name === 'hub-ingest-next')!;
-  const due = dueBackstops(at('2099-12-31T20:00:00Z'), [hub, next], {});
-  assert.equal(due.length, 2);
-  for (const d of due) assert.equal(d.slot.toISOString().slice(0, 10), '2099-12-31');
-  assert.match(hub.path(due[0].slot), /month=2099-12$/);
-  assert.match(next.path(due[1].slot), /month=2100-01$/);
-  assert.match(hub.path(at('2039-12-31T18:07:00Z')), /month=2039-12$/);
-  assert.match(next.path(at('2056-03-31T18:15:00Z')), /month=2056-04$/);
+test('scheduled hub ingests use the slot month, not the clock', () => {
+  const hub = APP_JOBS.find((j) => j.name === 'hub-ingest')!;
+  const next = APP_JOBS.find((j) => j.name === 'hub-ingest-next')!;
+  const due = [dueSlot(hub, at('2099-12-31T20:00:00Z'), null), dueSlot(next, at('2099-12-31T20:00:00Z'), null)];
+  for (const d of due) assert.equal(d!.slot.toISOString().slice(0, 10), '2099-12-31');
+  const paths: string[] = [];
+  const ctx = (slot: Date) => ({ slot, deadline: Date.now() + 1e6, sleep: async () => {}, log: () => {}, call: async (p: string) => { paths.push(p); return { status: 200, ok: true, json: {}, text: '', error: null, ms: 0 }; } });
+  return (async () => {
+    await hub.run(ctx(due[0]!.slot)); await next.run(ctx(due[1]!.slot));
+    await hub.run(ctx(at('2039-12-31T18:07:00Z'))); await next.run(ctx(at('2056-03-31T18:15:00Z')));
+    assert.match(paths[0], /month=2099-12$/);
+    assert.match(paths[1], /month=2100-01$/);
+    assert.match(paths[2], /month=2039-12$/);
+    assert.match(paths[3], /month=2056-04$/);
+  })();
 });

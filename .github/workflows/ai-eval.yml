@@ -4,8 +4,8 @@ name: AI evaluation (weekly + on demand)
 # precision, recall, false-positive rate, cost and the prompt version. Fails (red) when precision < 0.90 or recall < 0.80,
 # so a prompt / model change that makes the extractor worse is noticed. Cost about $0.03 a run.
 on:
-  schedule:
-    - cron: '41 3 * * 1'
+  # zzz907: the schedule now runs INSIDE the app (frontend/src/lib/app-scheduler.ts, job(s): ai-eval) because GitHub's cron
+  # skipped/delayed runs and every run cost paid Actions minutes (private repo). Kept for hand runs and as an emergency fallback.
   workflow_dispatch: {}
 
 concurrency:

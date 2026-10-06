@@ -406,7 +406,8 @@ describe('9 schedule and defaults', () => {
   });
   test('workflow runs hourly on the schedule the pages report, repeats rounds that stopped on time, keeps the key in a header', () => {
     const wf = readFileSync(join(__dirname, '../../../../.github/workflows/ai-verify.yml'), 'utf8');
-    assert.ok(wf.includes(`cron: '${AI_VERIFY_SCHEDULE}'`), 'schedule in sync with AI_VERIFY_SCHEDULE');
+    // zzz907: the schedule runs in the app now (lib/app-scheduler.ts); the workflow stays for hand runs
+    assert.ok(readFileSync(join(__dirname, '../app-scheduler.ts'), 'utf8').includes(`name: 'ai-verify', crons: ['${AI_VERIFY_SCHEDULE}']`), 'schedule in sync with AI_VERIFY_SCHEDULE');
     assert.match(AI_VERIFY_SCHEDULE, /^\d+ \* \* \* \*$/, 'hourly');
     assert.ok(wf.includes("stoppedBy') == 'time'"));
     assert.ok(wf.includes('x-cron-secret: ${CRON_SECRET}'));

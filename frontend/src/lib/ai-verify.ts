@@ -64,7 +64,7 @@ export const runBudgetMs = () => Math.max(10_000, Math.min(55_000, Math.round(en
 /** document searches against SEC per run (India matching is in memory and unbounded) */
 export const runLocateMax = () => Math.max(1, Math.min(400, Math.round(envNum('AI_VERIFY_LOCATE_MAX', 120))));
 
-/** zzz856: the verifier workflow schedule (.github/workflows/ai-verify.yml — keep in sync; a test checks it). UTC. */
+/** zzz856: the verifier schedule, UTC. zzz907: run by the app (lib/app-scheduler.ts job 'ai-verify' — keep in sync; a test checks it). */
 export const AI_VERIFY_SCHEDULE = '35 * * * *';
 
 function cronFieldMatches(field: string, v: number): boolean {

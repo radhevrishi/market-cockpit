@@ -11,8 +11,8 @@ name: India results PDF backup (hourly)
 # The key travels in a header; only the HTTP status and counts are printed.
 
 on:
-  schedule:
-    - cron: '20 * * * *'
+  # zzz907: the schedule now runs INSIDE the app (frontend/src/lib/app-scheduler.ts, job(s): results-pdf) because GitHub's cron
+  # skipped/delayed runs and every run cost paid Actions minutes (private repo). Kept for hand runs and as an emergency fallback.
   workflow_dispatch:
     inputs:
       max_items:

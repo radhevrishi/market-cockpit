@@ -8,8 +8,8 @@
 // host, so the key cannot leak to a third party.
 export async function register() {
   if (process.env.NEXT_RUNTIME !== 'nodejs') return;
-  // zzz885: run important jobs ourselves when GitHub's scheduler drops them (see lib/backstop-scheduler.ts)
-  try { (await import('./lib/backstop-scheduler')).startBackstopScheduler(); } catch (e) { console.warn('[backstop] not started', e); }
+  // zzz907: the app runs its own scheduled jobs (was a backstop for GitHub's cron, zzz885) — see lib/app-scheduler.ts
+  try { (await import('./lib/app-scheduler')).startAppScheduler(); } catch (e) { console.warn('[app-scheduler] not started', e); }
   // zzz905: register the KV reader so every server path's holiday check uses the collected NSE calendar (refreshes 12-hourly)
   try { void (await import('./lib/nse-holidays-server')).warmNseHolidays(); } catch (e) { console.warn('[nse-holidays] warm skipped', e); }
   const { isProtectedApi, serviceKeys } = await import('./lib/site-auth');

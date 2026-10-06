@@ -9,10 +9,8 @@ name: Data watch (did each pipeline produce data?)
 # ════════════════════════════════════════════════════════════════════════
 
 on:
-  schedule:
-    - cron: '30 5 * * *'     # 11:00 IST — morning: calendar + India gainers sweep
-    - cron: '30 10 * * 1-5'  # 16:00 IST — post-close: gainers final sweep
-    - cron: '30 14 * * 1-5'  # 10:30 ET  — US pre-market filers graded by now
+  # zzz907: the schedule now runs INSIDE the app (frontend/src/lib/app-scheduler.ts, job(s): data-watch) because GitHub's cron
+  # skipped/delayed runs and every run cost paid Actions minutes (private repo). Kept for hand runs and as an emergency fallback.
   workflow_dispatch:
     inputs:
       no_heal:

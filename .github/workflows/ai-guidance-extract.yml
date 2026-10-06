@@ -21,8 +21,8 @@ name: AI Guidance Extract (hourly)
 # the environment, and only the HTTP status + counts are echoed.
 
 on:
-  schedule:
-    - cron: '50 * * * *'
+  # zzz907: the schedule now runs INSIDE the app (frontend/src/lib/app-scheduler.ts, job(s): ai-guidance-extract) because GitHub's cron
+  # skipped/delayed runs and every run cost paid Actions minutes (private repo). Kept for hand runs and as an emergency fallback.
   workflow_dispatch:
     inputs:
       limit:

@@ -29,8 +29,8 @@ name: Warm the AI desk, then mark the prediction ledger
 # ═══════════════════════════════════════════════════════════════════════════
 
 on:
-  schedule:
-    - cron: '20 2 * * *'     # 02:20 UTC daily — after US close, before IST open
+  # zzz907: the schedule now runs INSIDE the app (frontend/src/lib/app-scheduler.ts, job(s): score-ai-ledger) because GitHub's cron
+  # skipped/delayed runs and every run cost paid Actions minutes (private repo). Kept for hand runs and as an emergency fallback.
   workflow_dispatch: {}
 
 # zzz883: one run at a time — a slow run is never overlapped by the next scheduled one

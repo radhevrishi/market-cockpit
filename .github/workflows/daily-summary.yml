@@ -5,8 +5,8 @@ name: Daily 22:00 IST market digest
 # top movers, special situations — using the alert dispatcher pipeline.
 
 on:
-  schedule:
-    - cron: '30 16 * * 1-5'    # Mon-Fri 16:30 UTC = 22:00 IST
+  # zzz907: the schedule now runs INSIDE the app (frontend/src/lib/app-scheduler.ts, job(s): daily-summary) because GitHub's cron
+  # skipped/delayed runs and every run cost paid Actions minutes (private repo). Kept for hand runs and as an emergency fallback.
   workflow_dispatch: {}
 
 # zzz883: one run at a time — a slow run is never overlapped by the next scheduled one

@@ -5,9 +5,8 @@ name: Refresh Guidance Upgrades (hourly)
 # opening the page. Uses only the public read routes (no secrets).
 
 on:
-  schedule:
-    # zzz854: every hour, every day (the AI verifier queue is fed from these runs)
-    - cron: '10 * * * *'
+  # zzz907: the schedule now runs INSIDE the app (frontend/src/lib/app-scheduler.ts, job(s): refresh-guidance-upgrades) because GitHub's cron
+  # skipped/delayed runs and every run cost paid Actions minutes (private repo). Kept for hand runs and as an emergency fallback.
   workflow_dispatch: {}
 
 concurrency:

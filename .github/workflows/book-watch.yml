@@ -25,18 +25,8 @@ name: Book Watch
 # ----------
 
 on:
-  schedule:
-    # Times in UTC. IST = UTC + 5:30.
-    - cron: '4 3 * * *'        # 08:30 IST daily    -> refresh-bench (pre-market)
-    - cron: '30 5 * * 1-5'     # 11:00 IST Mon-Fri  -> book-watch (morning)
-    - cron: '4 12 * * 1-5'     # 17:30 IST Mon-Fri  -> book-watch (post-close)
-    - cron: '30 13 * * *'      # 19:00 IST daily    -> eo-blockbuster-alert (evening filings)
-    - cron: '4 15 * * 1-6'     # 20:30 IST Mon-Sat  -> book-watch (evening + Sat catch)
-    # zzz526 — user-alerts: evaluate the Alert Center rules server-side so
-    # alerts push (Telegram/Slack) even with the portal closed.
-    - cron: '45 4-9 * * 1-5'   # 10:15-15:15 IST hourly Mon-Fri -> user-alerts (NSE session)
-    - cron: '45 15 * * 1-5'    # 21:15 IST Mon-Fri -> user-alerts (US morning session)
-    - cron: '45 19 * * 1-5'    # 01:15 IST Tue-Sat -> user-alerts (US afternoon session)
+  # zzz907: the schedule now runs INSIDE the app (frontend/src/lib/app-scheduler.ts, job(s): refresh-bench, book-watch, eo-bb-evening, user-alerts) because GitHub's cron
+  # skipped/delayed runs and every run cost paid Actions minutes (private repo). Kept for hand runs and as an emergency fallback.
   workflow_dispatch:
     inputs:
       endpoint:
