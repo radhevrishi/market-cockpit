@@ -1,6 +1,7 @@
 'use client';
 
 import { usdInrNow } from '@/lib/fx-client';   // zzz883 — live USD/INR instead of a fixed 85
+import { rsVsIndex, type IndexReturns, type RsVsIndex } from '@/lib/relative-strength';   // zzz891
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 // PATCH 0055: Multibagger framework extensions — dilution / reinvestment /
 // coverage / historical reference panel.
@@ -7542,6 +7543,13 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
   }
 
   const [dataTick, bumpData] = React.useReducer((x: number) => x + 1, 0);
+  // zzz891: the index's own returns for the same windows (NIFTY 50 / S&P 500), once per visit
+  const [idxRet, setIdxRet] = React.useState<IndexReturns | null>(null);
+  React.useEffect(() => {
+    let alive = true;
+    fetch(`/api/v1/index-returns?market=${market === 'IND' ? 'IN' : 'US'}`).then((r) => (r.ok ? r.json() : null)).then((j) => { if (alive && j?.ok) setIdxRet(j as IndexReturns); }).catch(() => {});
+    return () => { alive = false; };
+  }, [market]);
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
     const refresh = () => bumpData();
@@ -9158,7 +9166,8 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
   const [sortField, setSortField] = React.useState<string>('totalScore');
   const [sortAsc, setSortAsc] = React.useState<boolean>(false);
   const sortedAll = React.useMemo(() => {
-    let arr = [...techRows];
+    // zzz891: each row carries its return minus the index (NIFTY 50 / S&P 500) over the same windows, so it can be sorted
+    let arr = techRows.map((r: any) => { const rs = rsVsIndex(r, idxRet); return { ...r, rsIdx3m: rs.rel3m, rsIdx: rs }; });
     // ADDITIVE (audit) — optional confluence filter: only bench/radar-backed names.
     if (confluenceOnly) arr = arr.filter(r => onBench(r.symbol) || onRadar(r.symbol));
     // ADDITIVE (audit R3) — sector/group leadership filter (from the leading-groups strip).
@@ -9182,7 +9191,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       return 0;
     });
     return arr;
-  }, [techRows, sortField, sortAsc, confluenceOnly, onBench, onRadar, groupFilter, groupKeyOf]);
+  }, [techRows, sortField, sortAsc, confluenceOnly, onBench, onRadar, groupFilter, groupKeyOf, idxRet]);
   const handleSort = (field: string) => {
     if (sortField === field) setSortAsc(!sortAsc);
     else { setSortField(field); setSortAsc(field === 'symbol' || field === 'company'); }
@@ -10334,6 +10343,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
                 <th onClick={() => handleSort('perf1w')} style={{ padding: '8px 6px', textAlign: 'right' }}>1W{sortIcon('perf1w')}</th>
                 <th onClick={() => handleSort('perf1m')} style={{ padding: '8px 6px', textAlign: 'right' }}>1M{sortIcon('perf1m')}</th>
                 <th onClick={() => handleSort('perf3m')} style={{ padding: '8px 6px', textAlign: 'right' }}>3M{sortIcon('perf3m')}</th>
+                <th onClick={() => handleSort('rsIdx3m')} title={idxRet ? `3-month return minus ${idxRet.index} (${idxRet.r3m != null ? `${idxRet.r3m >= 0 ? '+' : ''}${idxRet.r3m}%` : '—'}). Hover a cell for 1M / 6M / 12M.` : 'Index returns loading'} style={{ padding: '8px 6px', textAlign: 'right' }}>vs {market === 'IND' ? 'NIFTY' : 'S&P'}{sortIcon('rsIdx3m')}</th>
                 <th onClick={() => handleSort('revGrowthQtr')} style={{ padding: '8px 6px', textAlign: 'right' }}>REV-Q{sortIcon('revGrowthQtr')}</th>
                 <th onClick={() => handleSort('epsGrowthTTM')} style={{ padding: '8px 6px', textAlign: 'right' }}>EPS-TTM{sortIcon('epsGrowthTTM')}</th>
                 <th onClick={() => handleSort('adrPct')} style={{ padding: '8px 6px', textAlign: 'right' }}>ADR{sortIcon('adrPct')}</th>
@@ -10369,6 +10379,8 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
                     <td style={{ padding: '6px 6px', textAlign: 'right', color: typeof r.perf1w === 'number' && r.perf1w >= 5 ? '#10B981' : (typeof r.perf1w === 'number' && r.perf1w < 0 ? '#EF4444' : TXT), fontWeight: typeof r.perf1w === 'number' && r.perf1w >= 5 ? 700 : 400 }}>{fmtPct(r.perf1w)}</td>
                     <td style={{ padding: '6px 6px', textAlign: 'right', color: typeof r.perf1m === 'number' && r.perf1m >= 15 ? '#10B981' : (typeof r.perf1m === 'number' && r.perf1m < 0 ? '#EF4444' : TXT), fontWeight: typeof r.perf1m === 'number' && r.perf1m >= 15 ? 700 : 400 }}>{fmtPct(r.perf1m)}</td>
                     <td style={{ padding: '6px 6px', textAlign: 'right', color: TXT }}>{fmtPct(r.perf3m)}</td>
+                    {(() => { const rs = (r as any).rsIdx as RsVsIndex | undefined; const v = rs?.rel3m; return (
+                      <td title={rs?.text || ''} style={{ padding: '6px 6px', textAlign: 'right', cursor: 'help', fontWeight: 700, color: rs?.verdict === 'LEADING' ? '#10B981' : rs?.verdict === 'LAGGING' ? '#EF4444' : MUTED }}>{typeof v === 'number' ? `${v >= 0 ? '+' : ''}${v.toFixed(1)}` : '—'}</td>); })()}
                     <td style={{ padding: '6px 6px', textAlign: 'right', color: typeof r.revGrowthQtr === 'number' && r.revGrowthQtr >= 20 ? '#84CC16' : TXT }}>{fmtPct(r.revGrowthQtr)}</td>
                     <td style={{ padding: '6px 6px', textAlign: 'right', color: typeof r.epsGrowthTTM === 'number' && r.epsGrowthTTM >= 25 ? '#84CC16' : TXT }}>{fmtPct(r.epsGrowthTTM)}</td>
                     <td style={{ padding: '6px 6px', textAlign: 'right', color: typeof r.adrPct === 'number' && r.adrPct >= 4 && r.adrPct <= 7 ? '#10B981' : TXT }}>{typeof r.adrPct === 'number' ? `${r.adrPct.toFixed(1)}` : '—'}</td>

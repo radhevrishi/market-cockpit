@@ -23,6 +23,7 @@
 
 'use client';
 
+import { UsEstimateRevisionChip } from './us-estimate-revision-chip';   // zzz890
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, ExternalLink, Sparkles, FileText, Download } from 'lucide-react';
 import { scoreReleaseCommentary, type CommentaryScore } from '@/lib/earnings/commentary-score';
@@ -395,6 +396,8 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
         <Chip text={r.quarter} />
         {r.sector && <Chip text={r.sector} />}
         {r.market_cap_musd != null && <Chip text={fmtUsd(r.market_cap_musd)} />}
+        {/* zzz890 — did the street carry this print into its estimates? */}
+        <UsEstimateRevisionChip ticker={r.ticker} filingDate={(r as any).filing_date || (r as any).session_day || null} />
         {/* "EPS beat −10%" IS NOT A SENTENCE. The word was fixed while the
             number was signed, so a miss came out labelled a beat and the reader
             had to notice the minus to know which it was. The noun now follows

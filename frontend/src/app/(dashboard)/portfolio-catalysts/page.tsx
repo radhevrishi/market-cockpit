@@ -36,6 +36,7 @@ import TickerExportToolbar from '@/components/TickerExportToolbar';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useBook } from '@/lib/thesis/use-book';
 import { ThesisCard } from '@/components/thesis-card';
+import { impactBaseOf, catalystsFromLedger, catalystImpact } from '@/lib/thesis/catalyst-impact';   // zzz888
 import { SpecialFocusPanel, PersistentStrip, detectForRow } from '@/components/special-focus-panel';
 import { STATUS_META, type ThesisStatus } from '@/lib/thesis/status';
 import { isSmallMidCap, SMALL_MID_CAP_MAX_CR } from '@/lib/thesis/universe';
@@ -943,6 +944,7 @@ export default function PortfolioCatalystsPage() {
           promiseNote={r.state === 'done' ? r.promiseNote : null}
           dataSource={r.dataSource}
           dataPeriod={r.graded?.period || null}
+          impacts={(() => { try { const b = impactBaseOf(r.graded); return catalystsFromLedger(r.ledger).map((c) => catalystImpact(b, c)); } catch { return null; } })()}
           sources={r.sourceUrl ? [{ label: 'Source filing', url: r.sourceUrl }] : []}
         />
         </div>

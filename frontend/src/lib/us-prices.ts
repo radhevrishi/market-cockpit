@@ -449,3 +449,34 @@ export async function pooled<T, R>(items: T[], limit: number, fn: (item: T, idx:
   await Promise.all(workers);
   return out;
 }
+
+// ─── zzz890: how the street's estimates moved — Yahoo's epsTrend keeps the consensus as it stood 7 / 30 / 60 / 90 days ago,
+// and epsRevisions counts analysts revising up / down. Read once per ticker per 6 hours. Public data, no key.
+export interface EstimateTrendRow { period: string; end_date: string | null; current: number | null; d7: number | null; d30: number | null; d60: number | null; d90: number | null; up7: number | null; up30: number | null; down7: number | null; down30: number | null }
+const _et = new Map<string, { at: number; data: EstimateTrendRow[] }>();
+export async function yahooEstimateTrend(ticker: string): Promise<EstimateTrendRow[]> {
+  const t = String(ticker || '').toUpperCase();
+  if (!/^[A-Z0-9.\-]{1,10}$/.test(t)) return [];
+  const hit = _et.get(t);
+  if (hit && Date.now() - hit.at < 6 * 3600_000) return hit.data;
+  let out: EstimateTrendRow[] = [];
+  try {
+    const c = await yahooCrumb();
+    if (c) {
+      const url = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(t)}?modules=earningsTrend&crumb=${encodeURIComponent(c.crumb)}`;
+      const res = await fetch(url, { headers: { 'User-Agent': BROWSER_UA, 'Cookie': c.cookie }, cache: 'no-store', signal: AbortSignal.timeout(9000) });
+      if (res.ok) {
+        const j: any = await res.json();
+        const raw = (v: any) => (typeof v?.raw === 'number' && Number.isFinite(v.raw) ? v.raw : null);
+        out = (j?.quoteSummary?.result?.[0]?.earningsTrend?.trend || [])
+          .filter((x: any) => ['0q', '+1q', '0y', '+1y'].includes(String(x?.period)))
+          .map((x: any) => ({ period: String(x.period), end_date: x?.endDate ?? null,
+            current: raw(x?.epsTrend?.current), d7: raw(x?.epsTrend?.['7daysAgo']), d30: raw(x?.epsTrend?.['30daysAgo']), d60: raw(x?.epsTrend?.['60daysAgo']), d90: raw(x?.epsTrend?.['90daysAgo']),
+            up7: raw(x?.epsRevisions?.upLast7days), up30: raw(x?.epsRevisions?.upLast30days), down7: raw(x?.epsRevisions?.downLast7Days ?? x?.epsRevisions?.downLast7days), down30: raw(x?.epsRevisions?.downLast30days) }));
+      } else if (res.status === 401) { _crumb = null; }
+    }
+  } catch { out = []; }
+  if (_et.size > 2000) { const oldest = Array.from(_et.entries()).sort((a, b) => a[1].at - b[1].at).slice(0, 400); for (const [k] of oldest) _et.delete(k); }
+  _et.set(t, { at: out.length ? Date.now() : Date.now() - 6 * 3600_000 + 60_000, data: out });
+  return out;
+}

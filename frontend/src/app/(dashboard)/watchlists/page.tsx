@@ -1,5 +1,6 @@
 'use client';
 
+import { newInfoScore, newInfoWord } from '@/lib/cb-new-info';   // zzz887
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams } from 'next/navigation'; // PATCH 0914 — read ?tab=conviction
 import { Plus, Trash2, TrendingUp, TrendingDown, RefreshCw, Download, ArrowUpDown, AlertTriangle, Award } from 'lucide-react';
@@ -2342,7 +2343,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild, onShow
       return nv;
     });
   };
-  const [tableSort, setTableSort] = useState<{col: string; dir: 'asc'|'desc'}>({col: 'pead', dir: 'desc'});
+  const [tableSort, setTableSort] = useState<{col: string; dir: 'asc'|'desc'}>({col: 'newinfo', dir: 'desc'});   // zzz887: rank by new information
   // zzz254 — density toggle: comfy (default) | compact | ultra
   const [density, setDensity] = useState<'comfy'|'compact'|'ultra'>('comfy');
   useEffect(() => {
@@ -2550,6 +2551,11 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild, onShow
   let filteredEntries = entries.filter((e) => cbCheckOf.get(e)?.state !== 'fail');
   if (filters.sortByPead) {
     filteredEntries = [...filteredEntries].sort((a, b) => peadScore(b).score - peadScore(a).score);
+  }
+  // zzz887: by default the bench is ranked by NEW INFORMATION (guidance change, acceleration, margin turn, cash, persistence), not by size of the beat
+  if (!filters.sortByPead && !cheapStrong) {
+    const ni = new Map(filteredEntries.map((e) => [e, newInfoScore(e as any).score] as const));
+    filteredEntries = [...filteredEntries].sort((a, b) => (ni.get(b) ?? 0) - (ni.get(a) ?? 0));
   }
   // ── ADDITIVE zzzUP1 — "On Radar" narrows to transformation-screener names.
   if (onRadarOnly) {
@@ -4459,6 +4465,7 @@ function ConvictionTable({ entries, onRemove, sort, setSort }: {
     { key: 'filed',     label: 'Filed',   get: (e) => e.filing_date || '' },
     { key: 'sector',    label: 'Sector',  get: (e) => resolveSector(e) || '' },
     { key: 'mcap',      label: 'MktCap',  align: 'right', get: (e) => e.market_cap_cr ?? 0 },
+    { key: 'newinfo',   label: 'New info', align: 'right', get: (e) => newInfoScore(e).score },   // zzz887
     { key: 'composite', label: 'Strength', align: 'right', get: (e) => e.composite_score ?? 0 },
     { key: 'pead',      label: 'Drift',   align: 'right', get: (e) => peadScore(e).score },
     { key: 'sales',     label: 'Sales',   align: 'right', get: (e) => e.sales_yoy_pct ?? -999 },
@@ -4520,6 +4527,11 @@ function ConvictionTable({ entries, onRemove, sort, setSort }: {
                 <td style={{ ...td, color: 'var(--mc-text-3)' }}>{e.filing_date || '—'}</td>
                 <td style={{ ...td, color: 'var(--mc-text-3)' }}>{resolveSector(e) || '—'}</td>
                 <td style={{ ...td, textAlign: 'right', color: 'var(--mc-text-3)' }}>{fmtMcap((e as any).market_cap_cr)}</td>
+                {(() => { const ni = newInfoScore(e as any); return (
+                  <td style={{ ...td, textAlign: 'right', fontWeight: 800, color: ni.score >= 40 ? 'var(--mc-bullish)' : ni.score >= 25 ? 'var(--mc-text-1)' : 'var(--mc-text-4)', cursor: 'help' }}
+                    title={`Why this rank: ${ni.why}\n\n${ni.parts.map((p) => `${p.points >= 0 ? '+' : ''}${p.points}  ${p.text}`).join('\n')}`}>
+                    {newInfoWord(ni.score)} {ni.score}{ni.price === 'CONFIRMS' ? ' ✓' : ni.price === 'FADED' ? ' ✗' : ''}
+                  </td>); })()}
                 <td style={{ ...td, textAlign: 'right', color: tierColor, fontWeight: 800 }}>{cbStrengthWord(e.composite_score)}</td>
                 <td style={{ ...td, textAlign: 'right', color: peadColor(peadScore(e).score), fontWeight: 700 }}>{cbPeadWord(peadScore(e).score)}</td>
                 <td style={{ ...td, textAlign: 'right', color: pctColor(e.sales_yoy_pct) }}>{cbGrowthText(e.sales_yoy_pct)}</td>
@@ -4625,6 +4637,11 @@ function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { ent
           </div>
         </div>
       </div>
+      {/* zzz887 — why this rank: what is NEW in this filing (guidance, acceleration, margin, cash, persistence); price only confirms */}
+      {(() => { const ni = newInfoScore(entry as any); return (
+        <div title={ni.parts.map((p) => `${p.points >= 0 ? '+' : ''}${p.points}  ${p.text}`).join('\n')} style={{ fontSize: 10.5, color: 'var(--mc-text-3)', lineHeight: 1.35, cursor: 'help' }}>
+          <b style={{ color: ni.score >= 40 ? 'var(--mc-bullish)' : 'var(--mc-text-2)' }}>New info: {newInfoWord(ni.score)} ({ni.score})</b> — {ni.why}
+        </div>); })()}
       {/* Always-visible DRIFT chip. A BLOCKBUSTER/STRONG bench name fading
           <= -12% since its print is the market fading the beat — the earliest
           sell tell. Renders without any filter toggle and is also armed to

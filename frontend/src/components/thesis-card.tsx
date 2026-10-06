@@ -21,6 +21,7 @@
 
 'use client';
 
+import { wordingLedger } from '@/lib/thesis/wording-ledger';   // zzz889
 import { isQuickReadPeriod, QUICK_READ_LABEL } from '@/lib/thesis/quick-read';
 import { useState } from 'react';
 import { STATUS_META, type ThesisAssessment } from '@/lib/thesis/status';
@@ -478,6 +479,8 @@ export interface ThesisCardProps {
    *  next to the ticker rather than buried in a tooltip. (zzz731) */
   origin?: BookOrigin;
   defaultOpen?: boolean;
+  /** zzz888: the stated catalysts turned into rough revenue / profit / EPS / first-year cash effects (lib/thesis/catalyst-impact) */
+  impacts?: import('@/lib/thesis/catalyst-impact').CatalystImpact[] | null;
 }
 
 function Section({ label, color, children }: { label: string; color?: string; children: React.ReactNode }) {
@@ -1541,6 +1544,39 @@ export function ThesisCard(p: ThesisCardProps) {
                 {p.capex!.nextCheck && (
                   <div style={{ fontSize: 13, color: C.amber, marginTop: 3 }}>→ {p.capex!.nextCheck}</div>
                 )}
+              </Section>
+            );
+          })()}
+
+          {/* zzz888 — what the catalysts are worth: stated-assumption arithmetic on the company's own figures */}
+          {p.impacts && p.impacts.length > 0 && (
+            <Section label="CATALYST IMPACT — rough estimate from the stated figures (not a forecast)">
+              {p.impacts.map((m, i) => (
+                <div key={i} data-testid="catalyst-impact" style={{ fontSize: 13.5, color: C.text, lineHeight: 1.5, marginBottom: 4 }}>
+                  <div>{m.line}</div>
+                  {m.assumptions.length > 0 && <div style={{ fontSize: 12, color: C.faint }}>Assumes: {m.assumptions.join('; ')}.{m.source ? ` Source: ${m.source}${m.period ? ` (${m.period})` : ''}.` : ''}</div>}
+                </div>
+              ))}
+            </Section>
+          )}
+
+          {/* zzz889 — how management's words changed from call to call (fixed word list, verbatim quotes) */}
+          {(() => {
+            const wl = p.ledger ? wordingLedger(p.ledger) : null;
+            if (!wl || !wl.topics.length) return null;
+            const kindColor = (k: string) => (k === 'WARMER' ? C.green : k === 'UNCHANGED' ? C.dim : C.amber);
+            const toneWord = (t: number) => (t >= 1 ? 'positive' : t > 0 ? 'mildly positive' : t === 0 ? 'neutral' : t > -1 ? 'cautious' : 'negative');
+            return (
+              <Section label="MANAGEMENT WORDING — call over call (own words, no AI)">
+                <div data-testid="wording-summary" style={{ fontSize: 13.5, color: C.text, marginBottom: 4 }}>{wl.summary}</div>
+                {wl.shifts.slice(-6).reverse().map((sh, i) => (
+                  <div key={i} style={{ fontSize: 13, lineHeight: 1.5, marginBottom: 4 }}>
+                    <span style={{ color: kindColor(sh.kind), fontWeight: 800 }}>{sh.kind === 'WARMER' ? '▲' : '▼'} {sh.text}</span>
+                    <div style={{ fontSize: 12, color: C.dim }}>Before ({sh.from.period}, {toneWord(sh.from.tone)}): “{sh.from.quote}”</div>
+                    <div style={{ fontSize: 12, color: C.dim }}>Now ({sh.to.period}, {toneWord(sh.to.tone)}): “{sh.to.quote}” — {sh.to.source}</div>
+                  </div>
+                ))}
+                {!wl.shifts.length && <div style={{ fontSize: 12.5, color: C.dim }}>{wl.topics.map((t) => `${t.label}: ${toneWord(t.points[t.points.length - 1].tone)}`).join(' · ')}</div>}
               </Section>
             );
           })()}
