@@ -2381,6 +2381,22 @@ function extractedPoint(row: GuidanceExtractResult['rows'][number], metric: GuMe
   return { metric, period, low: Math.min(l, h), high: Math.max(l, h), midpoint: round((l + h) / 2, 6), isGrowthRate: rate, currency, unit, basis, raw: String(row.quote || '').slice(0, 300), valueKind: 'GUIDANCE',
     ...(multi ? { periodKind: 'MULTI_YEAR_CAGR' as const, ...(ys ? { periodYears: parseInt(ys[2], 10) - parseInt(ys[1], 10) + 1 } : nextN ? { periodYears: parseInt(nextN[1], 10) } : {}) } : {}) };
 }
+/**
+ * zzz926: a growth RATE the extractor filed under an amount metric ("35% growth in our top line" as REVENUE, unit missing or '%') is the
+ * revenue growth rate. Before, it became an amount of "35" with no unit (never comparable) or a REVENUE rate that never met the
+ * REVENUE_GROWTH figure of the company's other call, so India's call-to-call comparisons failed. Pure.
+ */
+export function normaliseRateRow(row: GuidanceExtractResult['rows'][number]): { metric: GuMetric | undefined; row: GuidanceExtractResult['rows'][number] } {
+  const metric = X_EV_METRIC[row.metric];
+  const unitless = row.unit == null || String(row.unit).trim() === '';
+  const same = (a: unknown, b: unknown) => a != null && b != null && Math.abs(Number(a) - Number(b)) < 1e-9;
+  const g = row as { growthPctLow?: number | null; growthPctHigh?: number | null };   // the extractor's stated growth % (optional fields)
+  const statedRate = unitless && same(g.growthPctLow, row.low) && (row.high == null || g.growthPctHigh == null || same(g.growthPctHigh, row.high));
+  const isRate = row.unit === '%' || statedRate;
+  const r = statedRate ? { ...row, unit: '%' } : row;
+  if (isRate && metric === 'REVENUE') return { metric: 'REVENUE_GROWTH', row: r };
+  return { metric, row: r };
+}
 /** One skeleton per extract result that has at least one usable row. Pure. */
 export function skeletonsFromExtracted(results: readonly GuidanceExtractResult[]): GuSkeleton[] {
   const out: GuSkeleton[] = [];
@@ -2390,9 +2406,11 @@ export function skeletonsFromExtracted(results: readonly GuidanceExtractResult[]
     const ticker = (r.ticker || '').trim().toUpperCase().replace(/\.(NS|BO)$/, '') || (r.company || '').trim().toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
     if (!ticker) continue;
     const changes: GuChange[] = []; let raisedNoPrior = false; const metrics: string[] = [];
-    for (const row of r.rows) {
-      if (!row || row.status === 'WITHDRAWN' || row.status === 'UNCLEAR') continue;
-      const metric = X_EV_METRIC[row.metric]; if (!metric) continue;
+    for (const row0 of r.rows) {
+      if (!row0 || row0.status === 'WITHDRAWN' || row0.status === 'UNCLEAR') continue;
+      const nr = normaliseRateRow(row0);
+      const metric = nr.metric; if (!metric) continue;
+      const row = nr.row;
       const period = extractedPeriod(row.period) || 'UNSTATED';
       const after = extractedPoint(row, metric, period, row.low, row.high); if (!after) continue;
       let before: GuGuidancePoint | null = null;

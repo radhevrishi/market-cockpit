@@ -391,7 +391,9 @@ describe('runExtraction', () => {
     assert.equal((kv.store.get(INDEX_KEY)!.v as string[]).length, 3);
     assert.equal((kv.store.get(STATUS_KEY)!.v as any).lastRun.ok, 3);
     assert.ok(!kv.store.has(LOCK_KEY), 'lock released');
-    assert.ok(store.listed.every((o) => o.unextractedOnly === true && o.sinceDays === 210));   // zzz874: two quarters
+    assert.ok(store.listed.filter((o) => o.unextractedOnly === true).length === 2);
+    // zzz874: two quarters; zzz926: plus one India listing of the documents already read (copies / calls already read are not re-read first)
+    assert.ok(store.listed.every((o) => o.sinceDays === 210 && (o.unextractedOnly === true || o.market === 'IN')));
     // second run: nothing left
     const s2 = await runExtraction(deps({ kv, store }), {});
     assert.equal(s2.attempted, 0);

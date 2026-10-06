@@ -39,6 +39,19 @@ function dailyCapUsd(): number {
 }
 const dayKey = (d = new Date()) => `guidance-extract:day-usd:v1:${d.toISOString().slice(0, 10)}`;
 
+/** zzz926: one step of the per-market ok lists (lib/guidance-extract-market-index.ts): new results first, then the one-time walk of the
+ *  older ones. KV only (no AI). Never fails the request: a failed strict read writes nothing and the next call tries again. */
+async function syncMarketLists(maxIds: number): Promise<{ done: boolean; pos: number; total: number; IN: number; US: number } | { error: string }> {
+  try {
+    const mi = await import('@/lib/guidance-extract-market-index');
+    // the answer waits at most 8 s; a longer step finishes in the background (its writes are complete or not made at all)
+    const step = mi.syncMarketIndex(await mi.realMarketIndexIo(), { maxIds });
+    const st = await Promise.race([step, new Promise<null>((r) => setTimeout(() => r(null), 8_000))]);
+    if (!st) { step.catch(() => undefined); return { error: 'still running (finishes in the background)' }; }
+    return { done: st.done, pos: st.pos, total: st.total, IN: st.counts.IN, US: st.counts.US };
+  } catch (e: any) { return { error: redact(e?.message || 'market index sync failed', 120) }; }
+}
+
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -98,13 +111,15 @@ export async function POST(req: NextRequest) {
   const spentToday = Number(await kvGet<number | string>(dayKey()).catch(() => 0)) || 0;
   const dayLeft = Math.max(0, dayCap - spentToday);
   if (!docId && dayLeft < 0.01) {
-    return NextResponse.json({ ok: true, run: { stoppedBy: 'daily_cap', queued: 0, attempted: 0, spentUsd: 0, note: `daily reading budget used ($${spentToday.toFixed(2)} of $${dayCap.toFixed(2)}); resumes tomorrow (UTC)` } }, { headers: NO_STORE });
+    const marketIndex = await syncMarketLists(1_500);   // zzz926: no reading today, but the per-market lists keep catching up (KV reads only)
+    return NextResponse.json({ ok: true, run: { stoppedBy: 'daily_cap', queued: 0, attempted: 0, spentUsd: 0, note: `daily reading budget used ($${spentToday.toFixed(2)} of $${dayCap.toFixed(2)}); resumes tomorrow (UTC)` }, marketIndex }, { headers: NO_STORE });
   }
   try {
     const run = await runExtraction(await realDeps(), { limit, maxUsd: docId ? maxUsd : Math.min(maxUsd, dayLeft), budgetMs, concurrency: runConcurrency(), docIds: docId ? [docId] : undefined });
     if (run && Number((run as any).spentUsd) > 0) await kvIncrByFloat(dayKey(), Number((run as any).spentUsd), 3 * 86_400).catch(() => null);
+    const marketIndex = await syncMarketLists(docId ? 200 : 500);
     // 'unavailable' / 'cap' / 'no_store' are honest answers (200 with the reason), not server errors
-    return NextResponse.json({ ok: true, run }, { headers: NO_STORE });
+    return NextResponse.json({ ok: true, run, marketIndex }, { headers: NO_STORE });
   } catch (e: any) {
     console.error('[guidance-extract] run failed:', redact(e?.message || e));
     return NextResponse.json({ ok: false, error: 'extraction run failed' }, { status: 500, headers: NO_STORE });

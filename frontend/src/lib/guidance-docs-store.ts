@@ -530,6 +530,11 @@ export async function clearExtraction(kv: DocsKv, docIds: string[]): Promise<voi
     const next = cur.filter((id) => !gone.has(String(id)));
     if (next.length !== cur.length) await kv.set(k, next, 270 * 86_400);
   }
+  // zzz926: and from the per-market ok lists (guidance-extract-market-index.ts); read strictly like the two above
+  const { removeFromMarketIndexes } = await import('./guidance-extract-market-index');
+  try {
+    await removeFromMarketIndexes({ get: <T>(k: string) => (kv.getStrict ? kv.getStrict<T>(k) : kv.get<T>(k)), set: (k, v, ttl) => kv.set(k, v, ttl) }, docIds);
+  } catch { throw new DocsIndexUnreadableError('the extractor market index'); }
 }
 
 // ── zzz916: index integrity ─────────────────────────────────────────────────

@@ -48,9 +48,16 @@ export interface ExtractList { results: GuidanceExtractResult[]; indexed: number
 export async function listExtractResults(opts: { market?: 'IN' | 'US' | 'ALL'; limit?: number; includeEmpty?: boolean; io?: ExtractIo } = {}): Promise<ExtractList> {
   try {
     const io = opts.io ?? await defaultIo();
-    const [mainRaw, okRaw] = await Promise.all([io.get(EXTRACT_INDEX_KEY), io.get(EXTRACT_OK_INDEX_KEY)]);
+    const { MARKET_INDEX_KEY, MARKET_STATE_KEY, idsToRead } = await import('./guidance-extract-market-index');
+    const [mainRaw, okRaw, inRaw, usRaw, stRaw] = await Promise.all([io.get(EXTRACT_INDEX_KEY), io.get(EXTRACT_OK_INDEX_KEY),
+      io.get(MARKET_INDEX_KEY('IN')).catch(() => null), io.get(MARKET_INDEX_KEY('US')).catch(() => null), io.get(MARKET_STATE_KEY).catch(() => null)]);
     const main = docIdsOf(mainRaw).slice(0, Math.max(1, opts.limit ?? EXTRACT_READ_CAP));
-    const okIds = okRaw == null ? null : docIdsOf(okRaw).slice(0, Math.max(1, opts.limit ?? EXTRACT_OK_READ_CAP));
+    // zzz926: the per-market lists hold EVERY kept result of a market (the shared list was cut at its newest 2,500, which hid India's
+    // older calls — the earlier guidance a later call is compared with). An explicit `limit` keeps the old shared-list behaviour.
+    const okIds = okRaw == null && inRaw == null && usRaw == null ? null
+      : opts.limit != null ? docIdsOf(okRaw).slice(0, Math.max(1, opts.limit))
+      : idsToRead({ market: opts.market ?? 'ALL', shared: okRaw == null ? null : docIdsOf(okRaw), sharedCap: EXTRACT_OK_READ_CAP,
+          IN: Array.isArray(inRaw) ? docIdsOf(inRaw) : null, US: Array.isArray(usRaw) ? docIdsOf(usRaw) : null, state: stRaw });
     // zzz873: results with rows come from the ok index (every useful result); the recent main index adds the empty / error results when asked
     const ids = okIds == null ? main : opts.includeEmpty ? Array.from(new Set([...okIds, ...main])) : okIds;
     if (!ids.length) return { results: [], indexed: 0, read: 0 };

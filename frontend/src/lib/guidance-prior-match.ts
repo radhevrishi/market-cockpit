@@ -15,6 +15,9 @@ const ACTUAL_VERB = /\b(year[- ]on[- ]year|y-o-y|yoy|up \d|reported|reporting|de
 const FUTURE = /\b(expect|target|guid|aim|will|project|estimat|outlook|plan|envisag|confident of|on track)\w*/i;
 const COMPANY_LEVEL = /\b(total|consolidated|overall|company[- ]level|including)\b/i;
 const SEGMENT = /\b(segment|division|vertical|subsidiar(?:y|ies)|business unit|plant|facility|domestic|exports?|e-?commerce|LAP|EPC|services revenue|retail project|maintenance|channel|D&B|standalone|geograph\w*)\b/i;
+// zzz926: a region named as the subject of the figure ("India would be around ₹3,800 crores", "Saudi will be ₹1,200 crores", "our
+// international business") is one part of the company (MAN Industries: the India part read as the company's FY27 revenue).
+export const GEO_PART = /\b(?:india|indian operations|saudi(?: arabia)?|ksa|uae|gcc|middle east|usa|uk|europe|africa|latam|china|international|overseas)\s+(?:would|will|should|could|is expected to|is likely to)\s+(?:be|do|contribute|grow)\b|\b(?:international|overseas|export)\s+(?:business|operations|revenue|sales)\b/i;
 const SUBJECTS: Array<[string, RegExp]> = [
   ['deposit', /\bdeposits?\b/i], ['advances', /\b(advances|loan book|loans?|credit growth)\b/i], ['aum', /\b(aum|assets under management)\b/i],
   ['disbursement', /\bdisburse\w*/i], ['capex', /\b(capex|capital expenditure)\b/i], ['revenue', /\b(revenue|sales|top ?line|turnover|income from operations)\b/i],
@@ -37,7 +40,7 @@ export function earlierPriorMismatch(prior: { raw?: string | null; high?: number
     if (CORRECTION.test(t)) return `the ${side} sentence corrects a misprint; it is not a new guide`;
   }
   if (QUARTER_ACTUAL.test(a) && ACTUAL_VERB.test(a) && !FUTURE.test(a)) return 'the new figure is a reported quarter, not guidance';
-  const segB = SEGMENT.test(b), segA = SEGMENT.test(a);
+  const segB = SEGMENT.test(b) || GEO_PART.test(b), segA = SEGMENT.test(a) || GEO_PART.test(a);
   if (segB !== segA) return `a ${segB ? 'segment (old)' : 'segment (new)'} figure is compared with a company figure`;
   if (segB && segA && (COMPANY_LEVEL.test(a) !== COMPANY_LEVEL.test(b))) return 'a segment figure is compared with a company total';
   const sb = subjects(b), sa = subjects(a);
@@ -45,9 +48,13 @@ export function earlierPriorMismatch(prior: { raw?: string | null; high?: number
   if (!sa.size && !GENERIC.test(a)) return 'the new sentence does not say which measure it is';
   if (sb.size && sa.size && ![...sb].some((x) => sa.has(x))) return `different measures (${[...sb].join('/')} vs ${[...sa].join('/')})`;
   if (metric === 'FCF' && (sb.has('capex') || sa.has('capex')) && !(sb.has('fcf') && sa.has('fcf'))) return 'capital spending is not free cash flow';
-  // a RAISE against an earlier document must lift the floor above the old ceiling; an equal or lower figure is kept (reiteration / cut)
+  // A RAISE against an earlier document must move the WHOLE range up: both ends higher (20–25% → 25–30%, ₹1,500 → ₹1,600 Cr) or the new
+  // floor above the old ceiling. zzz926: before, only "floor above the old ceiling" counted, so the usual India raise (20–25% → 25–30%)
+  // was thrown away while any lower figure still counted as a cut — India showed 13 cuts, 51 reiterations and 0 raises in 120 days.
+  // A narrowed range (low end up, top end the same or lower: 20–24% → 22–24%) is still not a raise. Equal / lower figures are kept.
   const midB = prior.low != null && prior.high != null ? (prior.low + prior.high) / 2 : null, midA = after.low != null && after.high != null ? (after.low + after.high) / 2 : null;
-  if (midB != null && midA != null && midA > midB && prior.high != null && after.low != null && !(after.low > prior.high)) return 'the new range overlaps the old one (narrowed, not raised)';
+  if (midB != null && midA != null && midA > midB && prior.high != null && prior.low != null && after.low != null && after.high != null
+    && !(after.low > prior.high) && !(after.low > prior.low && after.high > prior.high)) return 'the new range overlaps the old one (narrowed, not raised)';
   return null;
 }
 
@@ -99,6 +106,7 @@ export function growthScopeIssue(statement: string | null | undefined, family: s
   const companyFirst = !!cg && (!ps || cg.index < ps.index);
   if (SHARE_OF.test(t) && !cg) return 'a share of revenue or order visibility, not growth';
   if (ps && !COMPANY_WIDE.test(t) && !companyFirst) return 'one segment / plant / channel, not the whole company';
+  if (GEO_PART.test(t) && !COMPANY_WIDE.test(t) && !companyFirst) return 'one region of the company, not the whole company';
   if (family === 'REVENUE' && NOT_REVENUE.test(t) && !REVENUE_WORD.test(t)) return 'volume or price, not revenue';
   return null;
 }

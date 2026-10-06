@@ -35,6 +35,7 @@ import type {
   ExtractedGuidance, GuidanceBasisX, GuidanceDoc, GuidanceDocIndexRow, GuidanceDocKind, GuidanceExtractResult, GuidanceMetricX,
 } from './guidance-docs-types';
 import { horizonOf, isLowBoundOnly, multipleOf, isIntimationLetter, spokenNumbersIn } from './guidance-horizon';
+import { INDIA_LARGE_CAPS } from './india-large-caps';
 
 export const EXTRACT_VERSION = 'v1';
 export const RESULT_PREFIX = `guidance-extract:${EXTRACT_VERSION}:`;
@@ -737,10 +738,43 @@ export interface PriorityIo {
   /** zzz862: companies that already have a guidance record (active / review / claim). Their new documents are read FIRST. Optional; null = unreadable (no reordering). */
   watchSet?(): Promise<import('./guidance-watch').WatchSet | null>;
 }
-export interface PlanInfo { handoff: Set<string> | null; graded: Set<string> | null; verified: Map<string, string[]> | null; looked: Set<string>; /** zzz862: true for a document of a company that already has guidance */ watched?: ((s: { market: string; ticker?: string | null; company?: string | null }) => boolean) | null }
+export interface PlanInfo { handoff: Set<string> | null; graded: Set<string> | null; verified: Map<string, string[]> | null; looked: Set<string>; /** zzz862: true for a document of a company that already has guidance */ watched?: ((s: { market: string; ticker?: string | null; company?: string | null }) => boolean) | null;
+  /** zzz926: India documents already read (their copies are not read again; a call already read as a transcript needs no deck first) */ readIndia?: GuidanceDocIndexRow[] }
 export interface QueuePlan {
   rows: GuidanceDocIndexRow[];
   counts: { india: number; usHandoff: number; usNoEvent: number; usUnknown: number; skippedGraded: number; skippedVerified: number; skippedMode: number };
+  /** zzz926: how India's documents were ordered under the daily budget */
+  india?: { leads: number; followers: number; large: number; copies: number };
+}
+
+// ── zzz926: India order under the small daily budget ───────────────────────────
+// Reading every India document costs ~$0.003 and the day allows $0.25 (~80 documents) against a 2,400-document backlog, so what is
+// read first decides what the page can show. Order inside India:
+//   1. one LEAD document per company call — its transcript (else its deck, else its results release) — small & mid caps first;
+//   2. FOLLOWERS: a deck / results release of a call whose transcript exists (read or waiting) — it mostly repeats the transcript;
+//   3. large caps (the owner's lists hide them) — leads, then followers;
+//   4. COPIES — the same document filed twice (NSE and BSE, or re-filed): same company, kind and length within 60 days of one already
+//      read or queued. They go after everything, US included (reading one twice costs twice and finds nothing new).
+const CALL_DAYS = 10;
+const companyKey = (r: Pick<GuidanceDocIndexRow, 'ticker' | 'company'>) => (String(r.ticker || '').toUpperCase().trim() || String(r.company || '').toLowerCase().replace(/\b(limited|ltd|india)\b/g, '').replace(/[^a-z0-9]+/g, ''));
+const dayDiff = (a: string, b: string) => { const x = Date.parse(String(a).slice(0, 10)); const y = Date.parse(String(b).slice(0, 10)); return Number.isFinite(x) && Number.isFinite(y) ? Math.abs(x - y) / 86_400_000 : Infinity; };
+export function orderIndia(india: GuidanceDocIndexRow[], readIndia: readonly GuidanceDocIndexRow[], isLarge: (ticker: string | null | undefined) => boolean):
+  { leads: GuidanceDocIndexRow[]; followers: GuidanceDocIndexRow[]; large: GuidanceDocIndexRow[]; copies: GuidanceDocIndexRow[] } {
+  const seen: GuidanceDocIndexRow[] = readIndia.slice();
+  const isCopy = (r: GuidanceDocIndexRow) => (r.textChars || 0) > 0 && seen.some((x) => x.docId !== r.docId && companyKey(x) === companyKey(r) && x.kind === r.kind && x.textChars === r.textChars && dayDiff(x.filedAt, r.filedAt) <= 60);
+  const transcripts = [...readIndia, ...india].filter((r) => r.kind === 'TRANSCRIPT');
+  const hasTranscript = (r: GuidanceDocIndexRow) => transcripts.some((t) => t.docId !== r.docId && companyKey(t) === companyKey(r) && dayDiff(t.filedAt, r.filedAt) <= CALL_DAYS);
+  const out = { leads: [] as GuidanceDocIndexRow[], followers: [] as GuidanceDocIndexRow[], large: [] as GuidanceDocIndexRow[], copies: [] as GuidanceDocIndexRow[] };
+  const largeFollowers: GuidanceDocIndexRow[] = [];
+  for (const r of india) {   // already in the read order (tier, then newest)
+    if (isCopy(r)) { out.copies.push(r); continue; }
+    seen.push(r);
+    const follower = (r.kind === 'PRESENTATION' || r.kind === 'RESULTS_RELEASE') && hasTranscript(r);
+    if (isLarge(r.ticker)) (follower ? largeFollowers : out.large).push(r);
+    else (follower ? out.followers : out.leads).push(r);
+  }
+  out.large.push(...largeFollowers);
+  return out;
 }
 
 const newestFirst = (a: GuidanceDocIndexRow, b: GuidanceDocIndexRow) => String(b.filedAt).localeCompare(String(a.filedAt)) || kindTier(a.kind) - kindTier(b.kind) || a.docId.localeCompare(b.docId);
@@ -753,9 +787,11 @@ export function planQueue(rows: GuidanceDocIndexRow[], info: PlanInfo, mode: UsM
   const uniq = rows.filter((r) => r && r.docId && !r.extracted && !seen.has(r.docId) && (seen.add(r.docId), true));
   // zzz870: documents that carry guidance are read BEFORE the other kinds, then newest first inside each group.
   // zzz916: inside India, transcripts and presentations first, then results releases, then the rest (the daily AI budget is small)
-  const india = uniq.filter((r) => r.market === 'IN').sort((a, b) => indiaTier(a.kind) - indiaTier(b.kind) || newestFirst(a, b));
+  const indiaSorted = uniq.filter((r) => r.market === 'IN').sort((a, b) => indiaTier(a.kind) - indiaTier(b.kind) || newestFirst(a, b));
+  const io = orderIndia(indiaSorted, info.readIndia || [], (t) => !!t && INDIA_LARGE_CAPS.has(String(t).toUpperCase()));
+  const india = [...io.leads, ...io.followers, ...io.large];
   const us = uniq.filter((r) => r.market !== 'IN').sort(newestFirst);
-  const counts = { india: india.length, usHandoff: 0, usNoEvent: 0, usUnknown: 0, skippedGraded: 0, skippedVerified: 0, skippedMode: 0 };
+  const counts = { india: indiaSorted.length, usHandoff: 0, usNoEvent: 0, usUnknown: 0, skippedGraded: 0, skippedVerified: 0, skippedMode: 0 };
   const t2: GuidanceDocIndexRow[] = []; const t3: GuidanceDocIndexRow[] = []; const t4: GuidanceDocIndexRow[] = [];
   for (const r of us) {
     if (info.handoff?.has(r.docId)) { t2.push(r); continue; }
@@ -772,12 +808,14 @@ export function planQueue(rows: GuidanceDocIndexRow[], info: PlanInfo, mode: UsM
   // zzz916: ...first WITHIN its market — every India document is read before any US one (the owner's market first under the daily budget)
   const w = info.watched;
   const watchedFirst = (xs: GuidanceDocIndexRow[]) => (w ? [...xs.filter((r) => w({ market: r.market, ticker: r.ticker, company: r.company })), ...xs.filter((r) => !w({ market: r.market, ticker: r.ticker, company: r.company }))] : xs);
-  return { rows: [...watchedFirst(india), ...watchedFirst([...t2, ...t3, ...t4])], counts };
+  // zzz926: watched first inside each India group (a watched company's deck must not jump ahead of another company's transcript)
+  return { rows: [...watchedFirst(io.leads), ...watchedFirst(io.followers), ...watchedFirst(io.large), ...watchedFirst([...t2, ...t3, ...t4]), ...io.copies], counts,
+    india: { leads: io.leads.length, followers: io.followers.length, large: io.large.length, copies: io.copies.length } };
 }
 
 /** Reads the priority inputs (bounded) and plans the run. Never throws: unreadable inputs make documents "unknown", never skipped. */
-export async function buildPlan(rows: GuidanceDocIndexRow[], io: PriorityIo | undefined, mode: UsMode): Promise<QueuePlan> {
-  const info: PlanInfo = { handoff: null, graded: null, verified: null, looked: new Set(), watched: null };
+export async function buildPlan(rows: GuidanceDocIndexRow[], io: PriorityIo | undefined, mode: UsMode, readIndia?: GuidanceDocIndexRow[]): Promise<QueuePlan> {
+  const info: PlanInfo = { handoff: null, graded: null, verified: null, looked: new Set(), watched: null, readIndia: readIndia || [] };
   if (io?.watchSet) { const ws = await io.watchSet().catch(() => null); if (ws) { const { watchMatcher } = await import('./guidance-watch'); info.watched = watchMatcher(ws); } }
   const usRows = rows.filter((r) => r.market !== 'IN');
   if (io && usRows.length) {
@@ -845,7 +883,11 @@ export async function runExtraction(deps: ExtractDeps, o: ExtractRunOpts = {}): 
         return await finish();
       }
       const mode = o.usMode ?? usMode();
-      const plan = await buildPlan(got.flatMap((g) => (g.status === 'fulfilled' && Array.isArray(g.value) ? g.value : [])), deps.priority, mode);
+      // zzz926: India documents already read (for copies and calls already read as a transcript); unreadable = none (no reordering)
+      const allIn = await Promise.resolve(deps.store.listDocs({ market: 'IN', sinceDays: since })).catch(() => [] as GuidanceDocIndexRow[]);
+      const queuedIds = new Set(got.flatMap((g) => (g.status === 'fulfilled' && Array.isArray(g.value) ? g.value.map((r) => r.docId) : [])));
+      const readIndia = (Array.isArray(allIn) ? allIn : []).filter((r) => r && r.market === 'IN' && !queuedIds.has(r.docId));
+      const plan = await buildPlan(got.flatMap((g) => (g.status === 'fulfilled' && Array.isArray(g.value) ? g.value : [])), deps.priority, mode, readIndia);
       rows = plan.rows; stat.usMode = mode; stat.plan = plan.counts;
     }
     stat.queued = rows.length;
