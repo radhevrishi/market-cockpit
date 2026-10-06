@@ -88,7 +88,7 @@ permissions:
 jobs:
   collect:
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && 340 || 60 }}
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && 90 || 60 }}   # zzz922: was 340 — a hand-run sweep held the only slot for 3+ hours and blocked other runs
     steps:
       - name: Checkout repo
         uses: actions/checkout@v5
@@ -148,7 +148,7 @@ jobs:
           export RECOLLECT_DAYS="$IN_RECOLLECT_DAYS"
           if [ -n "$RECOLLECT_TICKERS" ]; then echo "re-collect run: $(printf '%s' "$RECOLLECT_TICKERS" | tr ',' '\n' | grep -c .) companies, ${RECOLLECT_DAYS} days"; fi
           # leave ~10 min of the job limit for the final POSTs
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then export RUN_BUDGET_MIN=325; else export RUN_BUDGET_MIN=48; fi
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then export RUN_BUDGET_MIN=80; else export RUN_BUDGET_MIN=48; fi
           rc=0; node .github/scripts/scrape-guidance-docs.mjs || rc=$?
           # zzz908: exit 75 = upstream down / not published yet → green run + warning + "deferred" heartbeat note;
           # the next scheduled run retries. Any other non-zero exit (bug, auth, bad data) stays red.
