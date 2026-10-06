@@ -18,6 +18,8 @@ export interface FocusRow {
   /** zzz895: the size of a growth-rate raise in percentage points (10% → 12–15% = +3.5 pp) */ raisePpDelta?: number | null;
   /** zzz880: 'SMALL_MID' / 'LARGE' from a market cap or the large-cap list; null when not known */
   size: 'SMALL_MID' | 'LARGE' | null; capText: string | null;
+  /** zzz923: the guided metric(s) and cohort of the growth row, and a verified guidance cut in the window (for the Sky Gold score) */
+  growthMetric?: string | null; growthMetrics?: string[]; growthCohort?: string | null; cutDate?: string | null;
 }
 export interface FocusSizeIn { caps?: { IN?: Record<string, number>; US?: Record<string, number> } | null; indiaLarge?: ReadonlySet<string> }
 /** India large cap from ₹30,000 Cr; US from $30B (Rishi's US default band). */
@@ -118,6 +120,14 @@ export function buildFocusList(groups: GuHighGrowthGroups | null | undefined, ev
     const r = get(g.market === 'US' ? 'US' : 'IN', g.ticker, g.company);
     if (r.growthPct != null && r.growthPct >= v) continue;
     r.growth = g.cohort === 'MULTI_YEAR_CAGR' && !/CAGR/i.test(g.text) ? `${g.text} a year (multi-year)` : g.text; r.growthPct = v; r.growthPeriod = g.headline?.period || null; r.growthTrust = g.trust; r.growthDate = g.sourceDate || null; r.growthSource = g.sourceName || null;
+    r.growthMetric = (g.headline as any)?.metric ?? null; r.growthCohort = g.cohort ?? null;
+    r.growthMetrics = Array.from(new Set([...(g.metrics || []).map((m: any) => String(m?.metric || '')), String((g.headline as any)?.metric || '')].filter(Boolean)));
+  }
+  // zzz923: a verified guidance cut in the same window is a red flag on a row already listed (it never adds a row)
+  for (const e of events || []) {
+    if (e.verification !== 'VERIFIED' || e.taxonomy !== 'downgrade') continue;
+    const r = by.get(keyOf(e.market === 'US' ? 'US' : 'IN', e.ticker || null, e.company || e.ticker));
+    if (r && (!r.cutDate || r.cutDate < e.announcement_date)) r.cutDate = e.announcement_date;
   }
   const out = Array.from(by.values());
   for (const r of out) {
