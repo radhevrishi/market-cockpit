@@ -146,19 +146,19 @@ jobs:
             *)
               # Manual dispatch path
               case "$INPUT" in
-                intelligence/compute)        echo "path=/api/market/intelligence/compute" >> "$GITHUB_OUTPUT"; echo "label=intelligence-manual" >> "$GITHUB_OUTPUT" ;;
-                earnings-guidance/ingest)    echo "path=/api/market/earnings-guidance/ingest" >> "$GITHUB_OUTPUT"; echo "label=earnings-guidance-manual" >> "$GITHUB_OUTPUT" ;;
-                movers-alert)                echo "path=/api/bot/movers-alert?mode=full" >> "$GITHUB_OUTPUT"; echo "label=movers-manual" >> "$GITHUB_OUTPUT" ;;
-                watchlist-alert)             echo "path=/api/bot/watchlist-alert?mode=full" >> "$GITHUB_OUTPUT"; echo "label=watchlist-manual" >> "$GITHUB_OUTPUT" ;;
-                refresh-earnings-calendar)   echo "path=/api/v1/cron/refresh-earnings-calendar" >> "$GITHUB_OUTPUT"; echo "label=cal-manual" >> "$GITHUB_OUTPUT" ;;
+                intelligence/compute)        echo "path=/api/market/intelligence/compute" >> "$GITHUB_OUTPUT"; echo "label=intelligence-compute" >> "$GITHUB_OUTPUT" ;;
+                earnings-guidance/ingest)    echo "path=/api/market/earnings-guidance/ingest" >> "$GITHUB_OUTPUT"; echo "label=earnings-guidance-ingest" >> "$GITHUB_OUTPUT" ;;
+                movers-alert)                echo "path=/api/bot/movers-alert?mode=full" >> "$GITHUB_OUTPUT"; echo "label=movers-alert" >> "$GITHUB_OUTPUT" ;;
+                watchlist-alert)             echo "path=/api/bot/watchlist-alert?mode=full" >> "$GITHUB_OUTPUT"; echo "label=watchlist-alert" >> "$GITHUB_OUTPUT" ;;
+                refresh-earnings-calendar)   echo "path=/api/v1/cron/refresh-earnings-calendar" >> "$GITHUB_OUTPUT"; echo "label=refresh-earnings-calendar" >> "$GITHUB_OUTPUT" ;;
                 eo-blockbuster-alert)        echo "path=/api/bot/eo-blockbuster-alert" >> "$GITHUB_OUTPUT"; echo "label=eo-manual" >> "$GITHUB_OUTPUT" ;;
-                prewarm-earnings)            echo "path=/api/v1/cron/prewarm-earnings" >> "$GITHUB_OUTPUT"; echo "label=prewarm-manual" >> "$GITHUB_OUTPUT" ;;
-                prewarm-us-earnings)         echo "path=/api/v1/cron/prewarm-us-earnings?sessions=30" >> "$GITHUB_OUTPUT"; echo "label=prewarm-us-manual" >> "$GITHUB_OUTPUT" ;;
-                refresh-us-bench)            echo "path=/api/v1/cron/refresh-us-bench" >> "$GITHUB_OUTPUT"; echo "label=refresh-us-bench-manual" >> "$GITHUB_OUTPUT" ;;
-                refresh-guidance)            echo "path=/api/v1/cron/refresh-guidance" >> "$GITHUB_OUTPUT"; echo "label=refresh-guidance-manual" >> "$GITHUB_OUTPUT" ;;
-                archive-to-postgres)         echo "path=/api/v1/cron/archive-to-postgres?months=2&ahead=1" >> "$GITHUB_OUTPUT"; echo "label=archive-manual" >> "$GITHUB_OUTPUT" ;;
-                hub-ingest)                  echo "path=/api/market/earnings?ingest=1&force=1&month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"; echo "label=hub-ingest-manual" >> "$GITHUB_OUTPUT" ;;
-                hub-ingest-next)             echo "path=/api/market/earnings?ingest=1&force=1&month=$(date -u -d "$(date -u +%Y-%m-01) +1 month" +%Y-%m)" >> "$GITHUB_OUTPUT"; echo "label=hub-ingest-next-manual" >> "$GITHUB_OUTPUT" ;;
+                prewarm-earnings)            echo "path=/api/v1/cron/prewarm-earnings" >> "$GITHUB_OUTPUT"; echo "label=prewarm-earnings" >> "$GITHUB_OUTPUT" ;;
+                prewarm-us-earnings)         echo "path=/api/v1/cron/prewarm-us-earnings?sessions=30" >> "$GITHUB_OUTPUT"; echo "label=prewarm-us-earnings" >> "$GITHUB_OUTPUT" ;;
+                refresh-us-bench)            echo "path=/api/v1/cron/refresh-us-bench" >> "$GITHUB_OUTPUT"; echo "label=refresh-us-bench" >> "$GITHUB_OUTPUT" ;;
+                refresh-guidance)            echo "path=/api/v1/cron/refresh-guidance" >> "$GITHUB_OUTPUT"; echo "label=refresh-guidance" >> "$GITHUB_OUTPUT" ;;
+                archive-to-postgres)         echo "path=/api/v1/cron/archive-to-postgres?months=2&ahead=1" >> "$GITHUB_OUTPUT"; echo "label=archive-to-postgres" >> "$GITHUB_OUTPUT" ;;
+                hub-ingest)                  echo "path=/api/market/earnings?ingest=1&force=1&month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"; echo "label=hub-ingest" >> "$GITHUB_OUTPUT" ;;
+                hub-ingest-next)             echo "path=/api/market/earnings?ingest=1&force=1&month=$(date -u -d "$(date -u +%Y-%m-01) +1 month" +%Y-%m)" >> "$GITHUB_OUTPUT"; echo "label=hub-ingest-next" >> "$GITHUB_OUTPUT" ;;
                 *)
                   echo "::error title=No route::Unknown schedule and no manual input"
                   exit 1
