@@ -9,6 +9,7 @@
 //   - it is not a proxy for another measure (e.g. presales instead of revenue),
 //   - its comparison value is >= threshold, where the comparison value is: the stated figure for a point, the MIDPOINT for a closed range
 //     (the range itself is still displayed), and the LOWER BOUND for an open-ended "80%+" figure (no invented midpoint).
+import { growthQuoteIssue } from './guidance-growth-quote';   // zzz895
 import { growthScopeIssue } from './guidance-prior-match';
 import type { GgCompany, GgGrowthOrigin, GgGuidancePoint, GgKind, GgLedgerRow, GgMetric, GgOrganic, GgPeriodKind, GgRevision, GgSourceRef, GgVerification } from './growth-guidance-types';
 import type { GuHighGrowthHorizon, GuHighGrowthMetric, GuHighGrowthRowX, GuMarketSummary, GuPeriodStatus, GuRegressionResponse, GuRegressionRow, GuRegressionStatus, GuSummaryAdditions, GuUniverseBucket, GuUniverseRecord, GuUniverseRecordOrigin, GuUniverseSummary } from './guidance-universe-types';
@@ -440,9 +441,16 @@ export function itemsFromExtracted(results: GuidanceExtractResult[] | null | und
       } else growthNote = `growth not established: no ${pp || 'prior-year'} actual available`;
     } else if (!abs) continue;   // neither a % nor an amount the universe can place (unit not recognised)
     else growthNote = 'growth not established';
+    // zzz895: a STATED growth must be in the quoted sentence, be one year's growth, and be about the metric it is filed under
+    if (sLo != null) {
+      const gq = String((g && g !== row ? g.quote : null) || row.quote || '');
+      // the number test applies when the row IS the growth figure (a % row); a growth % attached to an amount row is checked for period and metric only
+      const isPctRow = !!g && (g.unit === '%' || g.metric === 'REVENUE_GROWTH');
+      if (growthQuoteIssue(gq, sLo, sHi ?? sLo, c.metric, { annual: pkind !== 'MULTI_YEAR_CAGR', numberCheck: isPctRow })) continue;
+    }
     const dn = DOC_NAME[r.docKind] || DOC_NAME.OTHER_COMPANY_DOC;
     const ticker = (r.ticker || '').trim().toUpperCase().replace(/\.(NS|BO)$/, '') || null;
-    const statement = String(row.quote || '').slice(0, 300);
+    const statement = String((sLo != null && g && g !== row && g.quote ? g.quote : row.quote) || '').slice(0, 300);
     out.push({
       origin: 'COMPANY_DOC', market: r.market, ticker, company: r.company || ticker || 'Unknown company', metric: c.metric, low, high, open: false, gOrigin, abs, base, needsReview: null,
       cumulativeYears: pkind === 'MULTI_YEAR_CAGR' && sLo == null ? years : null,
