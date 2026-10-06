@@ -53,7 +53,7 @@ import {
   bseRowToFiling, nseRowToFiling, parseEquityL, parseBseScripList, parseCuratedMap, resolveTicker,
   buildDoc, chunkBatches, docIdFor, dayList, MAX_BATCH_DOCS, MAX_BATCH_BYTES,
   parseScreenerCompany, screenerSearchPath, normaliseExchangePdfUrl, pickConcallFor, concallsSince, callDateFrom, parseTickerList, sweepTarget,
-  parseRecollectTickers, recollectDays, nseRangeUrl, bseScripRangeUrl,
+  parseRecollectTickers, recollectDays, parseBseScripIds, validBseCode, nseRangeUrl, bseScripRangeUrl,
 } from './guidance-docs-lib.mjs';
 import { installResilientFetch, exitTransient, exitForError } from './lib/resilient-fetch.mjs';   // zzz908
 
@@ -203,7 +203,7 @@ async function loadTickerMaps(http, deps) {
       let rows = null;
       try { rows = JSON.parse(await res.text()); } catch { rows = null; }
       const m = parseBseScripList(Array.isArray(rows) ? rows : rows?.Table);
-      if (m.size > 500) { maps.bseToIsin = m; break; }
+      if (m.size > 500) { maps.bseToIsin = m; maps.bseIdToCode = parseBseScripIds(Array.isArray(rows) ? rows : rows?.Table); break; }
     }
   }
   return maps;
@@ -565,6 +565,21 @@ export async function run(d) {
     return stored;
   };
 
+  /**
+   * zzz924: the BSE scrip code of an NSE-style symbol, one lookup per company: (1) the BSE scrip master already loaded for the run (its trading id),
+   * (2) the company's Screener.in page ("BSE: 5xxxxx"; cached, so the later concall sweep reuses it). A code must be 6 digits starting with 5;
+   * a Screener page naming a different NSE symbol is not this company. null = could not resolve.
+   */
+  const resolveBseCode = async (symbol) => {
+    const sym = String(symbol || '').toUpperCase();
+    const fromList = validBseCode(maps.bseIdToCode?.get(sym));
+    if (fromList) return { code: fromList, via: 'BSE scrip list' };
+    const page = await screenerCompany(http, deps, sym);
+    const code = validBseCode(page?.bseCode);
+    if (code && (!page.nseSymbol || page.nseSymbol === sym)) return { code, via: 'Screener.in' };
+    return null;
+  };
+
   /** zzz921: one company's filings over a date range: NSE per symbol (equities, then SME), BSE per scrip. Strictly that company's rows. */
   const listCompanyRange = async (tg, from, to) => {
     const out = []; const byUrl = new Set();
@@ -580,10 +595,17 @@ export async function run(d) {
         if (rows.length) break;
       }
     }
-    if (tg.bseCode) {
-      let rows = await bseQueryDay(http, deps, from, { cat: '-1', sub: '-1' }, false, { scrip: tg.bseCode, toDay: to });
-      if (rows === null && deps.env.PROXY_URL) rows = await bseQueryDay(http, deps, from, { cat: '-1', sub: '-1' }, true, { scrip: tg.bseCode, toDay: to });
-      (rows || []).map(bseRowToFiling).filter((f) => f && f.bseCode === tg.bseCode).forEach(add);
+    // zzz924: a symbol-only entry that lists nothing on NSE (equities and SME) is probably BSE-only: find its BSE scrip code and list BSE filings
+    let bseCode = tg.bseCode;
+    if (!bseCode && tg.ticker && !out.length) {
+      const hit = await resolveBseCode(tg.ticker);
+      if (hit) { bseCode = hit.code; deps.log(`recollect: ${tg.ticker}: BSE code ${hit.code} (resolved via ${hit.via})`); }
+      else deps.log(`recollect: ${tg.ticker}: listed 0 on NSE and no BSE code could be resolved (not in the BSE scrip list, Screener.in gave none); give it as ${tg.ticker}:<BSE code>`);
+    }
+    if (bseCode) {
+      let rows = await bseQueryDay(http, deps, from, { cat: '-1', sub: '-1' }, false, { scrip: bseCode, toDay: to });
+      if (rows === null && deps.env.PROXY_URL) rows = await bseQueryDay(http, deps, from, { cat: '-1', sub: '-1' }, true, { scrip: bseCode, toDay: to });
+      (rows || []).map(bseRowToFiling).filter((f) => f && f.bseCode === bseCode).forEach(add);
       await deps.sleep(deps.apiDelayMs);
     }
     return out.sort((a, b) => b.filedAt.localeCompare(a.filedAt));

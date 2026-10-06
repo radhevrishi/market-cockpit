@@ -410,6 +410,25 @@ export function parseBseScripList(rows) {
   return out;
 }
 
+/** zzz924: a BSE scrip code is six digits starting with 5 (the equity / SME ranges); anything else is never used to list filings. */
+export function validBseCode(c) {
+  return /^5\d{5}$/.test(String(c ?? '').trim()) ? String(c).trim() : null;
+}
+
+/** BSE ListofScripData rows → Map(trading id such as "MOBAVENUE" → code). Ids that appear twice (ambiguous) or carry an invalid code are left out. */
+export function parseBseScripIds(rows) {
+  const out = new Map(); const dup = new Set();
+  for (const r of Array.isArray(rows) ? rows : []) {
+    const id = String(r?.scrip_id ?? r?.SCRIP_ID ?? '').trim().toUpperCase();
+    const code = validBseCode(r?.SCRIP_CD);
+    if (!id || !code) continue;
+    if (out.has(id) && out.get(id) !== code) dup.add(id);
+    out.set(id, code);
+  }
+  for (const d of dup) out.delete(d);
+  return out;
+}
+
 /** frontend/src/lib/bse-nse-mapping.ts curated rows → Map(code → symbol). */
 export function parseCuratedMap(tsSource) {
   const out = new Map();
