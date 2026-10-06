@@ -6,12 +6,14 @@
 //   • Finkurve "Revenue +50–60%" — the sentence is about AUM growth, not revenue.
 // `growthQuoteIssue` returns the reason such a figure is not shown (null when it is fine). Pure, unit-tested.
 
+import { spokenNumbersIn } from './guidance-horizon';
 const n2 = (v: number) => (Number.isInteger(v) ? String(v) : String(Math.round(v * 10) / 10));
 /** The quoted sentence contains the figure (as written: "15", "15.0", "fifteen" is not checked — the AI quotes digits). */
 export function quoteHasNumber(quote: string, v: number | null | undefined): boolean {
   if (v == null || !Number.isFinite(v)) return true;
   const q = String(quote || '').replace(/,/g, '');
   const want = [n2(v), String(Math.round(v))];
+  if (spokenNumbersIn(q).includes(v) || spokenNumbersIn(q).includes(Math.round(v))) return true;
   return want.some((w) => new RegExp(`(^|[^\\d.])${w.replace('.', '\\.')}(?:\\.0+)?(?!\\d)`).test(q));
 }
 const MULTI_YEAR = /\b(over|in|during|across|within)\s+(?:the\s+)?(?:next|coming)?\s*(?:\d+|two|three|four|five|six|seven|ten)(?:\s*(?:to|-|–|or)\s*(?:\d+|two|three|four|five|six|seven|ten))?\s+years?\b/i;

@@ -34,7 +34,7 @@
 import type {
   ExtractedGuidance, GuidanceBasisX, GuidanceDoc, GuidanceDocIndexRow, GuidanceDocKind, GuidanceExtractResult, GuidanceMetricX,
 } from './guidance-docs-types';
-import { horizonOf, isLowBoundOnly, multipleOf, isIntimationLetter } from './guidance-horizon';
+import { horizonOf, isLowBoundOnly, multipleOf, isIntimationLetter, spokenNumbersIn } from './guidance-horizon';
 
 export const EXTRACT_VERSION = 'v1';
 export const RESULT_PREFIX = `guidance-extract:${EXTRACT_VERSION}:`;
@@ -123,6 +123,7 @@ export function numbersInText(text: string): number[] {
     const v = Number(m[0].replace(/,/g, ''));
     if (Number.isFinite(v)) out.push(v);
   }
+  out.push(...spokenNumbersIn(s));   // zzz920: "seventy percent"
   return out;
 }
 
@@ -453,7 +454,22 @@ export function checkPriorActual(r: Pick<RawRow, 'period' | 'period_kind' | 'pri
   return { ok: true, value: { period: per.trim().replace(/\s+/g, ' ').toUpperCase(), value: val, quote: q.slice(0, QUOTE_MAX) } };
 }
 
-export interface Checked { rows: ExtractedGuidance[]; dropped: number; reasons: Record<string, number>; adjusted: Record<string, number> }
+/**
+ * zzz920: a RATE filed as an amount row. A model that answers metric REVENUE / PAT with unit "%" and the figure in low / high (not growth_pct_*) meant a
+ * growth rate ("30%+ revenue growth annually in the long term" → REVENUE, unit %, low 30). Left alone it had no growth figure and no amount, so a
+ * standing rate was dropped as "long_term_without_period" and a yearly one vanished from the page. The figure moves to growth_pct_low / high.
+ */
+export function rateRowOf(r: RawRow): RawRow {
+  if (!['REVENUE', 'PAT', 'EBITDA', 'EPS', 'ADJ_EPS'].includes(r.metric)) return r;
+  if (normaliseUnit(r.unit) !== '%' || r.growth_pct_low != null || r.growth_pct_high != null || r.low == null) return r;
+  // a share ("44-45% of revenue coming from X", "mix") is not a growth rate; a growth cue is required
+  const q = String(r.quote || '');
+  if (!/\b(?:grow|growth|growing|cagr|yoy|y-o-y|annually|per year|per annum|p\.a\.)\b/i.test(q)) return r;
+  if (/\b(?:share|contribution|contribute|coming from|mix|%\s*of\s+(?:our\s+|the\s+|total\s+)?(?:revenue|sales))\b/i.test(q) && !/\b(?:grow|growth|cagr)\b[^.]{0,30}\d/i.test(q)) return r;
+  return { ...r, growth_pct_low: r.low, growth_pct_high: r.high, low: null, high: null };
+}
+
+export interface Checked { rows: ExtractedGuidance[]; dropped: number; reasons: Record<string, number>; adjusted: Record<string, number>; /** zzz920: the first few dropped rows (reason + quote) so "why was it dropped" is answerable without re-reading the document */ samples: Array<{ reason: string; quote: string }> }
 
 /** Speaker turn containing a quote (normalised match). null when not a transcript / not found in a turn. */
 function turnOfQuote(q: string, turns: Turn[]): Turn[] {
@@ -473,15 +489,16 @@ export function checkRows(rawRows: unknown[], doc: Pick<GuidanceDoc, 'kind' | 't
   const normFull = seenText == null ? normText : normaliseForMatch(full);
   const turns = doc.kind === 'TRANSCRIPT' ? parseTurns(full) : [];
   const reasons: Record<string, number> = {}; const adjusted: Record<string, number> = {};
-  const drop = (r: string) => { reasons[r] = (reasons[r] || 0) + 1; };
+  const samples: Array<{ reason: string; quote: string }> = []; let curQuote = '';
+  const drop = (r: string) => { reasons[r] = (reasons[r] || 0) + 1; if (curQuote && samples.length < 8) samples.push({ reason: r, quote: curQuote.slice(0, 220) }); };
   const adj = (r: string) => { adjusted[r] = (adjusted[r] || 0) + 1; };
   const kept: ExtractedGuidance[] = [];
   const seen = new Map<string, number>();
   for (const raw of rawRows) {
     const v = validateRawRow(raw);
     if (!v.ok) { drop('invalid_row'); continue; }
-    const r = v.value;
-    const quote = r.quote.trim();
+    const r = rateRowOf(v.value);
+    const quote = r.quote.trim(); curQuote = quote;
     // 1. quote verbatim in the document
     if (!quoteInText(quote, text, normText)) { drop('quote_not_in_document'); continue; }
     const nq = stripEnds(normaliseForMatch(quote));
@@ -585,7 +602,7 @@ export function checkRows(rawRows: unknown[], doc: Pick<GuidanceDoc, 'kind' | 't
     kept.push(row);
   }
   const dropped = Object.values(reasons).reduce((a, b) => a + b, 0);
-  return { rows: kept, dropped, reasons, adjusted };
+  return { rows: kept, dropped, reasons, adjusted, samples };
 }
 
 // ── dependencies (all injectable for tests) ─────────────────────────────────
@@ -685,7 +702,7 @@ export async function extractDoc(doc: GuidanceDoc, deps: Pick<ExtractDeps, 'call
   const status: GuidanceExtractResult['status'] = chk.rows.length ? 'ok' : 'no_guidance';
   const parts = Object.entries(chk.reasons).map(([k, n]) => `${k}=${n}`);
   return base(status, {
-    model: res.model, costUsd: res.costUsd, rows: chk.rows, dropped: chk.dropped, reasons: chk.reasons, adjusted: chk.adjusted,
+    model: res.model, costUsd: res.costUsd, rows: chk.rows, dropped: chk.dropped, reasons: chk.reasons, adjusted: chk.adjusted, dropSamples: chk.samples.length ? chk.samples : undefined,
     note: parts.length ? `dropped: ${parts.join(', ')}` : undefined,
   });
 }

@@ -106,5 +106,7 @@ export interface GuidanceExtractResult {
   status: 'ok' | 'no_guidance' | 'unreadable' | 'unavailable' | 'error';
   rows: ExtractedGuidance[];     // only rows that passed quote + number checks
   dropped: number;               // rows the checks removed
+  /** zzz920: the first few dropped rows (reason + quote ≤ 220 chars) — diagnostics only */
+  dropSamples?: Array<{ reason: string; quote: string }>;
   note?: string;
 }

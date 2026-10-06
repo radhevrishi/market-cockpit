@@ -45,8 +45,8 @@ export async function GET(req: NextRequest) {
     }
     out[t] = {
       documents: docs.map((d, k) => ({ docId: d.docId, kind: d.kind, filedAt: d.filedAt, textChars: d.textChars, extracted: !!d.extracted,
-        extract: res[k] ? { status: res[k]!.status, kept: res[k]!.rows.length, dropped: res[k]!.dropped, note: res[k]!.note ?? null, promptVersion: res[k]!.promptVersion ?? null,
-          rows: res[k]!.rows.slice(0, 12).map((x) => ({ metric: x.metric, period: x.period, periodKind: x.periodKind, low: x.low, high: x.high, unit: x.unit, status: x.status, growthLow: x.growthPctLow ?? null, quote: String(x.quote || '').slice(0, 160) })) } : null })),
+        extract: res[k] ? { status: res[k]!.status, extractedAt: res[k]!.extractedAt ?? null, dropSamples: (res[k]!.dropSamples || []).slice(0, 8), kept: res[k]!.rows.length, dropped: res[k]!.dropped, note: res[k]!.note ?? null, promptVersion: res[k]!.promptVersion ?? null,
+          rows: res[k]!.rows.slice(0, 12).map((x) => ({ metric: x.metric, period: x.period, periodKind: x.periodKind, low: x.low, high: x.high, unit: x.unit, status: x.status, growthLow: x.growthPctLow ?? null, quote: String(x.quote || '').slice(0, 320) })) } : null })),
       queue: q.slice(0, 10).map((x: any) => ({ status: x.processing_status, delegatedTo: x.delegated_to ?? null, source_type: x.source_type, subject: String(x.subject || '').slice(0, 120), event_date: x.event_date, attempts: x.attempt_count, last_error: x.last_error })),
       universe: uni,
     };

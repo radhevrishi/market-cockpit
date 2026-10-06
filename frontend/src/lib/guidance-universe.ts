@@ -33,7 +33,7 @@ import { NSE_TICKER_NAMES } from './nse-ticker-names';
 import { endOfPeriodLabel, qualityOf, revisionOf, type GgStoredEntry } from './growth-guidance';
 import type { ExtractedGuidance, GuidanceExtractResult, GuidanceMetricX } from './guidance-docs-types';
 import { actualKey, priorPeriodOf, universeUnitOf, baseFyFor, type PriorActual } from './guidance-extract-reader';
-import { cagrPct, isLowBoundOnly, isOpenHorizonLabel, multipleOf, nextYearsOf, perYearStated, scopeIssueOf, LONG_TERM_LABEL } from './guidance-horizon';   // zzz916
+import { cagrPct, isLowBoundOnly, isOpenHorizonLabel, multipleOf, nextYearsOf, perYearStated, scopeIssueOf, metricFromQuote, fcfIssueOf, LONG_TERM_LABEL } from './guidance-horizon';   // zzz916
 
 export const GU_VERSION = 'zzz849-gu-v2';
 const DAY = 86_400_000;
@@ -357,11 +357,19 @@ export function itemsFromExtracted(results: GuidanceExtractResult[] | null | und
     const hasAdj = new Set(rows.filter((x) => x.metric === 'ADJ_EPS').map((x) => xPeriod(x.period)));
     const per = new Map<string, XCand>();   // one candidate per metric + period in this document
     for (const row of rows) {
-      const metric = X_METRIC[row.metric]; if (!metric) continue;
+      let metric = X_METRIC[row.metric]; if (!metric) continue;
+      // zzz920: a sentence about PAT / EBITDA / EPS filed as revenue moves to that metric; a "free cash flow" row about capex / debt / working capital is not guidance for it
+      const reclass = metricFromQuote(row.metric, row.quote, row.metricLabel); if (reclass) metric = reclass;
+      if (metric === 'FCF' && fcfIssueOf(row.quote, row.metricLabel)) continue;
       const period = xPeriod(row.period); if (!period) continue;
       if (row.metric === 'EPS' && hasAdj.has(period)) continue;   // GAAP and adjusted are never mixed: the adjusted line is the headline
       const k = `${metric}|${period}`; const cur = per.get(k);
-      if (row.metric === 'REVENUE_GROWTH') { if (cur) cur.growth = cur.growth ?? row; else per.set(k, { r, row, growth: row, metric, period, date, notes: [] }); continue; }
+      if (row.metric === 'REVENUE_GROWTH') {
+        // zzz920: several growth rows for one period in a document — a named part (segment / plant) gives way to the company-wide one
+        const rank = (x: ExtractedGuidance): number => scopeIssueOf(x.quote, { metric, market: r.market, currency: x.currency, metricLabel: x.metricLabel, company: r.company }) ? 2 : /\b(?:consolidated|overall|total|group|company[- ]level|blended)\b/i.test(`${x.metricLabel || ''} ${x.quote || ''}`) ? 0 : 1;
+        if (cur) { if (cur.growth && rank(row) < rank(cur.growth)) cur.growth = row; else cur.growth = cur.growth ?? row; } else per.set(k, { r, row, growth: row, metric, period, date, notes: [] });
+        continue;
+      }
       if (cur && cur.row.metric === 'REVENUE_GROWTH') { cur.row = row; continue; }
       // zzz880: two rows for the same metric and period in one document — a figure that is implausible against last year's actual (a segment
       // line) gives way to a sensible one (Man Industries Aug: "₹35–50 Cr" and "about ₹5,000 crore" in the same call)
@@ -502,7 +510,7 @@ export function itemsFromExtracted(results: GuidanceExtractResult[] | null | und
     // zzz916: a segment / subsidiary / brand / geography figure, or a foreign-currency figure from an Indian company, is not the company's own
     // guidance: kept for review with the reason, never shown or ranked as company revenue / profit. A figure for another measure (AUM, volume,
     // stores, bookings, advances) or a quarter-on-quarter rate filed as revenue / profit is not company guidance at all: dropped.
-    const scope = scopeIssueOf(statementQuote, { metric: row.metric === 'REVENUE_GROWTH' ? 'REVENUE' : c.metric, market: r.market, currency: row.currency, metricLabel: row.metricLabel, company: r.company });
+    const scope = scopeIssueOf(statementQuote, { metric: c.metric, market: r.market, currency: row.currency, metricLabel: row.metricLabel, company: r.company });
     if (scope) {
       if (/^one part of the company|figure from an Indian company/.test(scope)) needsReview = `Not the company-wide figure: ${scope}.`;
       else continue;
