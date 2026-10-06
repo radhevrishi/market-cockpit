@@ -10,6 +10,9 @@ import type { GuidanceEvent } from '@/lib/guidance-upgrades-types';
 import type { FocusRow } from '@/lib/gu-focus';
 import { skyGoldScore, guidanceOfRow, type SkyScore } from '@/lib/gu-skygold-score';
 import { useSkyGoldFacts, SkyScoreCell, SkyBreakdownRow } from './GuSkyGold';
+import { fairValue, type FvResult } from '@/lib/gu-fair-value';
+import { sortByReported, reportedLabel } from '@/lib/gu-focus-sort';
+import { FvCells, FV_HEAD, FV_COLS } from './GuFairValue';
 
 function FocusTable({ title, sub, head, empty, children }: { title: string; sub: string; head: React.ReactNode[]; empty: string; children: React.ReactNode }) {
   const th: React.CSSProperties = { textAlign: 'left', padding: '6px 8px', fontSize: 11, fontWeight: 800, color: R.dim, borderBottom: `1px solid ${tint(R.grey, 40)}`, whiteSpace: 'nowrap' };
@@ -50,7 +53,7 @@ const VERDICT_COLOR: Record<FocusVerdict, string> = { 'TOP FOCUS': R.green, 'STR
 const FLAG = { IN: '🇮🇳', US: '🇺🇸' } as const;
 type Mk = 'ALL' | 'IN' | 'US';
 const FOCUS_STEP = 20;
-type SortBy = 'rank' | 'score';
+type SortBy = 'rank' | 'score' | 'new' | 'old';   // zzz927: 'new' / 'old' = by the date the news was reported
 const skyKey = (r: FocusRow) => (r.ticker ? `${r.market}:${r.ticker.toUpperCase()}` : null);
 /** zzz923: rows by score (a higher score first; no score last), the focus rank breaking ties */
 function bySky(rows: FocusRow[], scores: Map<string, SkyScore | null>): FocusRow[] {
@@ -64,6 +67,21 @@ function ScoreHead({ sort, onSort }: { sort: SortBy; onSort: () => void }) {
       Sky Gold score {sort === 'score' ? '▼' : '⇅'}
     </button>
   );
+}
+/** zzz927: the "Reported" column header: click sorts newest first, click again oldest first (the "#" header goes back to the focus order). */
+function DateHead({ sort, onSort }: { sort: SortBy; onSort: () => void }) {
+  const on = sort === 'new' || sort === 'old';
+  return (
+    <button type="button" onClick={onSort} aria-pressed={on} title="Sort by the date the news was reported; click again to flip newest / oldest"
+      style={{ all: 'unset', cursor: 'pointer', color: on ? R.green : R.dim, fontWeight: 800 }}>
+      Reported {sort === 'new' ? '▼' : sort === 'old' ? '▲' : '⇅'}
+    </button>
+  );
+}
+function RankHead({ sort, onReset }: { sort: SortBy; onReset: () => void }) {
+  return sort === 'rank'
+    ? <>#</>
+    : <button type="button" onClick={onReset} title="Back to the focus order" style={{ all: 'unset', cursor: 'pointer', color: R.green, fontWeight: 800 }}>#↺</button>;
 }
 function MoreRow({ shown, total, open, onToggle, cols }: { shown: number; total: number; open: boolean; onToggle: () => void; cols: number }) {
   if (total <= FOCUS_STEP) return null;
@@ -129,8 +147,20 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
   const [sortA, setSortA] = useState<SortBy>('rank');
   const [sortB, setSortB] = useState<SortBy>('rank');
   const [openSky, setOpenSky] = useState<string | null>(null);
-  const raisedSorted = sortA === 'score' ? bySky(raisedAll, scores) : raisedAll;
-  const growthSorted = sortB === 'score' ? bySky(growthAll, scores) : growthAll;
+  const raisedSorted = sortA === 'score' ? bySky(raisedAll, scores) : sortA === 'new' || sortA === 'old' ? sortByReported(raisedAll, (r) => r.raiseDate, sortA) : raisedAll;
+  const growthSorted = sortB === 'score' ? bySky(growthAll, scores) : sortB === 'new' || sortB === 'old' ? sortByReported(growthAll, (r) => r.growthDate, sortB) : growthAll;
+  // zzz927: fair value per listed row (the auto-valuation method on the figures read for the score; no model call, no extra request)
+  const fvs = useMemo(() => {
+    const m = new Map<string, FvResult | null>();
+    for (const r of listed) {
+      const k = skyKey(r);
+      if (k && !(k in facts) && !skyFailed) { m.set(r.key, null); continue; }
+      const f = k ? facts[k] ?? null : null;
+      m.set(r.key, f ? fairValue(f, r, r.company) : { ok: false, reason: 'company figures not found', currency: r.market === 'US' ? '$' : '₹', price: null, base: null, bear: null, bull: null, checks: [], methods: [], sectorLabel: '', sectorKnown: false, basis: null, growth: null, inputs: [] });
+    }
+    return m;
+  }, [listed, facts, skyFailed]);
+  const fvCell = (r: FocusRow) => <FvCells fv={fvs.get(r.key) ?? null} waiting={skyLoading || (!skyFailed && !!skyKey(r))} td={td} />;
   const raisedRows = allA ? raisedSorted : raisedSorted.slice(0, FOCUS_STEP);
   const growthRows = allB ? growthSorted : growthSorted.slice(0, FOCUS_STEP);
   const skyCell = (r: FocusRow) => <SkyScoreCell s={scores.get(r.key) ?? null} waiting={skyLoading || (!skyFailed && !!skyKey(r))} open={openSky === r.key} onToggle={() => setOpenSky((v) => (v === r.key ? null : r.key))} td={td} />;
@@ -167,11 +197,14 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
       <div style={{ fontSize: 12, color: R.dim }}>
         <b>Sky Gold score</b> (from the “Identify Next SKY GOLD” framework): is the big plan backed by the business today? 7 main checks — a clear target from the company, sales already growing 20%+, the target reachable from the current pace, margins steady, ROCE 20%+, cash following profit, debt under control. Each main check missed holds the score down: 80+ (STRONG) needs 6 of 7 met with real figures and 65+ (GOOD) needs 5 of 7 (with 4 met the score stays at 62 or below, with 3 at 52); a growth worked out from company numbers counts as only half a clear target; supporting checks (raise, specific plan, profit faster than sales, own cash, orders, estimates, valuation, small base) add points; red flags (guidance cut, slower-paying customers, new shares, promoters selling, other income) take points off. A figure not known never counts as met; too few figures shows “not enough data”. Click a score for every check. Bands: 80+ STRONG · 65–79 GOOD · 50–64 MIXED · under 50 WEAK.{skyFailed ? ' The company figures could not be read just now — scores use the guidance checks only.' : ''}
       </div>
+      <div style={{ fontSize: 12, color: R.dim }}>
+        <b>Reported</b> is the date of the announcement or document the row comes from — click its header to sort newest or oldest first. <b>Fair value</b> uses the same method as the Auto-Valuation page on the company's own public figures: next-year sales or profit grown at the guided growth, times the sector's usual multiples (P/E, EV/EBITDA, P/S blended), with a bear and a bull case on hover. It needs no AI. A dash means a figure is missing or looks wrong (reason on hover); banks, lenders and insurers show a dash because they are valued on book value. “check” means upside above +150%, methods that disagree, or growth that was capped. An estimate, not advice.
+      </div>
       {raisedAll.length + growthAll.length === 0 ? (
         <div style={{ fontSize: 13, color: R.dim }}>{all.length ? 'No names for this market in the current data.' : 'Reading the guidance data…'}</div>
       ) : (<>
         <FocusTable title={`A. Raised their guidance (${raisedAll.length})`} sub={`Old and new figures both read from the company's own filing, ${window} window.${smallRaises ? ` ${smallRaises} small raise${smallRaises === 1 ? '' : 's'} (under 5%, or only EPS from a small base) left out.` : ''}`}
-          head={['#', 'Company', 'What was raised (old → new)', <ScoreHead key="s" sort={sortA} onSort={() => setSortA((v) => (v === 'score' ? 'rank' : 'score'))} />, 'Verdict']} empty="No raise of 5% or more in this window for this market.">
+          head={[<RankHead key="n" sort={sortA} onReset={() => setSortA('rank')} />, 'Company', 'What was raised (old → new)', <DateHead key="d" sort={sortA} onSort={() => setSortA((v) => (v === 'new' ? 'old' : 'new'))} />, ...FV_HEAD, <ScoreHead key="s" sort={sortA} onSort={() => setSortA((v) => (v === 'score' ? 'rank' : 'score'))} />, 'Verdict']} empty="No raise of 5% or more in this window for this market.">
           {raisedRows.map((r, i) => (<React.Fragment key={r.key}>
             <tr>
               <td style={{ ...td, color: R.dim }}>{i + 1}</td>
@@ -182,27 +215,31 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
                   <div style={{ fontSize: 11.5, color: R.dim }}>announced {r.raiseDate}{r.growth ? <> · also guides <b style={{ color: R.green }}>{r.growth}</b> ({r.growthPeriod})</> : ''}</div>
                 </button>
               </td>
+              <td style={{ ...td, whiteSpace: 'nowrap' }} data-reported>{reportedLabel(r.raiseDate)}</td>
+              {fvCell(r)}
               {skyCell(r)}
               <VerdictCell r={r} td={td} />
             </tr>
-            {skyOpen(r, 5)}
+            {skyOpen(r, 5 + 1 + FV_COLS)}
           </React.Fragment>))}
-          {raisedAll.length > FOCUS_STEP && <MoreRow shown={raisedRows.length} total={raisedAll.length} open={allA} onToggle={() => setAllA((v) => !v)} cols={5} />}
+          {raisedAll.length > FOCUS_STEP && <MoreRow shown={raisedRows.length} total={raisedAll.length} open={allA} onToggle={() => setAllA((v) => !v)} cols={5 + 1 + FV_COLS} />}
         </FocusTable>
         <FocusTable title={`B. Guiding 30%+ growth — no raise yet (${growthAll.length})`} sub="The company's own guidance still in force. First guidance or a repeat, so there is no old figure to compare."
-          head={['#', 'Company', 'Growth guided', 'Source', <ScoreHead key="s" sort={sortB} onSort={() => setSortB((v) => (v === 'score' ? 'rank' : 'score'))} />, 'Verdict']} empty="No 30%+ growth guidance for this market.">
+          head={[<RankHead key="n" sort={sortB} onReset={() => setSortB('rank')} />, 'Company', 'Growth guided', 'Source', <DateHead key="d" sort={sortB} onSort={() => setSortB((v) => (v === 'new' ? 'old' : 'new'))} />, ...FV_HEAD, <ScoreHead key="s" sort={sortB} onSort={() => setSortB((v) => (v === 'score' ? 'rank' : 'score'))} />, 'Verdict']} empty="No 30%+ growth guidance for this market.">
           {growthRows.map((r, i) => (<React.Fragment key={r.key}>
             <tr>
               <td style={{ ...td, color: R.dim }}>{i + 1}</td>
               <CompanyCell r={r} td={td} />
               <td style={td}><b style={{ color: R.green }}>{r.growth}</b><div style={{ fontSize: 11.5, color: R.dim }}>{r.growthPeriod || ''}{r.growthTrust === 'derived' ? ' · worked out from company numbers' : ' · stated by company'}</div></td>
-              <td style={{ ...td, fontSize: 12 }}>{r.growthSource || 'Company document'}<div style={{ fontSize: 11.5, color: R.dim }}>{r.growthDate || ''}{r.raised ? ` · small raise ${r.raiseDate}` : ''}</div></td>
+              <td style={{ ...td, fontSize: 12 }}>{r.growthSource || 'Company document'}<div style={{ fontSize: 11.5, color: R.dim }}>{r.raised ? `small raise ${r.raiseDate}` : ''}</div></td>
+              <td style={{ ...td, whiteSpace: 'nowrap' }} data-reported>{reportedLabel(r.growthDate)}</td>
+              {fvCell(r)}
               {skyCell(r)}
               <VerdictCell r={r} td={td} />
             </tr>
-            {skyOpen(r, 6)}
+            {skyOpen(r, 6 + 1 + FV_COLS)}
           </React.Fragment>))}
-          {growthAll.length > FOCUS_STEP && <MoreRow shown={growthRows.length} total={growthAll.length} open={allB} onToggle={() => setAllB((v) => !v)} cols={6} />}
+          {growthAll.length > FOCUS_STEP && <MoreRow shown={growthRows.length} total={growthAll.length} open={allB} onToggle={() => setAllB((v) => !v)} cols={6 + 1 + FV_COLS} />}
         </FocusTable>
         {heldShown.length > 0 && (
           <div data-gu-held style={{ fontSize: 12, color: R.dim, display: 'grid', gap: 2 }}>

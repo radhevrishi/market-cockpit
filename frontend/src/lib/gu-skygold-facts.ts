@@ -6,6 +6,7 @@
 // (the score shows it as "not known", never as a pass). Pure: no fetch, no storage. No price is read here except the P/E and
 // market cap screener.in prints (used for the valuation check and the size label, never in lib/thesis).
 import { financialsFromHtml, parseSection } from './thesis/screener-financials';
+import { parseTopRatios } from './ai-gainers/screener-company';
 
 export interface SkyFacts {
   market: 'IN' | 'US'; ticker: string;
@@ -28,6 +29,11 @@ export interface SkyFacts {
   pe: number | null; mcap: number | null;
   /** USA: remaining performance obligations (order backlog) vs a year earlier, % */ backlogGrowth: number | null;
   /** USA: next-fiscal-year EPS estimate now vs about 90 days ago, % */ estimateChange: number | null;
+  /** zzz927 (fair value inputs, public figures only): the share price the source printed (India ₹ from screener.in, USA $ from Nasdaq), the day it was read */
+  price: number | null; priceDate: string | null;
+  /** the company's own sector / industry words (screener.in "Sector" / "Industry", Nasdaq "Sector" / "Industry") */ sector: string | null; industry: string | null;
+  /** latest full-year net profit and operating profit (India ₹ Cr); USA: latest quarter × 4 ($M, net income only; no operating-profit-before-depreciation figure exists) */ patFy: number | null; opFy: number | null;
+  /** borrowings on the latest balance sheet (India ₹ Cr); cash is not read, so this is gross debt */ borrowings: number | null;
 }
 
 export const emptyFacts = (market: 'IN' | 'US', ticker: string, source: string): SkyFacts => ({
@@ -35,6 +41,7 @@ export const emptyFacts = (market: 'IN' | 'US', ticker: string, source: string):
   opmNow: null, opmYearAgo: null, roce: null, cfoToPat: null, cfoYear: null, lossMaking: null, cfo: null, fcf: null, debtToEquity: null, debtGrowthX: null,
   shareCountChange2y: null, promoterNow: null, promoterYearAgo: null, debtorDaysNow: null, debtorDaysPrev: null, otherIncomePctOfPbt: null,
   salesBase: null, pe: null, mcap: null, backlogGrowth: null, estimateChange: null,
+  price: null, priceDate: null, sector: null, industry: null, patFy: null, opFy: null, borrowings: null,
 });
 
 const fin = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -91,6 +98,7 @@ export function inFactsFromHtml(ticker: string, html: string, basis: 'consolidat
   const sales = row(pl, 'Sales', 'Revenue'), op = row(pl, 'Operating Profit', 'Financing Profit'), np = row(pl, 'Net Profit'), eps = row(pl, 'EPS in Rs');
   const oi = row(pl, 'Other Income'), pbt = row(pl, 'Profit before tax');
   f.salesBase = at(sales, L);
+  f.patFy = at(np, L); f.opFy = at(op, L);
   f.salesGrowthFy = pctChange(at(sales, L), at(sales, L - 1));
   f.opGrowthFy = pctChange(at(op, L), at(op, L - 1));
   // other income against profit before tax: the TTM column when printed, else the latest year
@@ -107,6 +115,7 @@ export function inFactsFromHtml(ticker: string, html: string, basis: 'consolidat
   const eq = (k: number) => { const c = at(cap, k), r = at(res, k); return c != null && r != null ? c + r : null; };
   const bNow = at(bor, B), eNow = eq(B);
   if (bNow != null && eNow != null && eNow > 0) f.debtToEquity = Math.round((bNow / eNow) * 100) / 100;
+  f.borrowings = bNow;
   const bPrev = at(bor, B - 1);
   if (bNow != null && bPrev != null && bPrev > 0) f.debtGrowthX = Math.round((bNow / bPrev) * 100) / 100;
 
@@ -119,6 +128,12 @@ export function inFactsFromHtml(ticker: string, html: string, basis: 'consolidat
   const R = lastDated(ra);
   const dd = row(ra, 'Debtor Days');
   f.debtorDaysNow = at(dd, R); f.debtorDaysPrev = at(dd, R - 1);
+
+  // zzz927: the price printed on the page and the company's own sector / industry words (for the fair-value estimate)
+  const top = parseTopRatios(html);
+  f.price = top.price != null && top.price > 0 ? top.price : null;
+  const tag = (t: string) => { const m = new RegExp(`title="${t}">([^<]+)<`).exec(html); return m ? m[1].replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim() : null; };
+  f.sector = tag('Sector'); f.industry = tag('Industry');
 
   const pr = promoterTrend(html);
   f.promoterNow = pr.now; f.promoterYearAgo = pr.yearAgo;
@@ -141,6 +156,7 @@ export function usFactsFromRow(ticker: string, r: any, trend?: Array<{ period: s
   f.cfo = cfo; f.fcf = cfo != null && capex != null ? r1(cfo - Math.abs(capex)) : null;
   const rev = fin(r.revenue_curr_musd);
   f.salesBase = rev != null ? Math.round(rev * 4) : null;
+  f.patFy = ni != null ? Math.round(ni * 4) : null;   // latest quarter × 4 (a run-rate, said so wherever it is shown)
   f.backlogGrowth = fin(r.rpo_growth_pct);
   const fy = (trend || []).find((x) => x?.period === '+1y') || (trend || []).find((x) => x?.period === '0y');
   const before = fy ? fin(fy.d90) ?? fin(fy.d60 ?? null) : null, now = fy ? fin(fy.current) : null;

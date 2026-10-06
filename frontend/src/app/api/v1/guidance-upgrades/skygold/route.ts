@@ -17,7 +17,7 @@ import { inFactsFromHtml, usFactsFromRow, type SkyFacts } from '@/lib/gu-skygold
 import { usFactsBatch } from '@/lib/us-thesis/facts-server';
 import { yahooEstimateTrend, pooled, type EstimateTrendRow } from '@/lib/us-prices';
 import { proxiedFetch } from '@/lib/proxy-fetch';
-import { nasdaqMarketCapMusd, pickScreenerSlug } from '@/lib/gu-skygold-lookup';
+import { nasdaqMarketCapMusd, nasdaqQuoteFields, pickScreenerSlug } from '@/lib/gu-skygold-lookup';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -27,9 +27,9 @@ const MAX_PER_MARKET = 80;
 const DEADLINE_MS = 40_000;
 const TTL_OK = 24 * 3600;
 const TTL_FAIL = 6 * 3600;
-const inKey = (t: string) => `gu-skygold:in:v2:${t}`;   // zzz925: v2 — a name the old symbol-only lookup missed (BMW) is read again
+const inKey = (t: string) => `gu-skygold:in:v3:${t}`;   // zzz925: v2 — a name the old symbol-only lookup missed (BMW) is read again; zzz927: v3 — price, sector and the fair-value figures are read too
 const slugKey = (t: string) => `gu-skygold:slug:v1:${t}`;
-const usCapKey = (t: string) => `gu-skygold:uscap:v1:${t}`;
+const usCapKey = (t: string) => `gu-skygold:uscap:v2:${t}`;   // zzz927: v2 — also the price, sector and industry (30 min cache, so the price stays current)
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36';
 
 /** zzz925: the screener.in page slug of a company whose symbol page does not exist, from the screener.in search (by company name). KV cached. */
@@ -54,17 +54,26 @@ async function screenerSlug(t: string, company: string | null): Promise<string |
   return null;
 }
 
-/** zzz925: US market cap in $ million from the Nasdaq quote summary. KV cached (24 h; a miss 2 h). */
-async function usCap(t: string): Promise<number | null> {
-  const hit = await kvGet<{ cap: number | null }>(usCapKey(t)).catch(() => null);
-  if (hit && typeof hit === 'object') return hit.cap ?? null;
-  let cap: number | null = null;
-  try {
-    const res = await fetch(`https://api.nasdaq.com/api/quote/${encodeURIComponent(t)}/summary?assetclass=stocks`, { headers: { 'User-Agent': UA, Accept: 'application/json' }, cache: 'no-store', signal: AbortSignal.timeout(8000) });
-    if (res.ok) cap = nasdaqMarketCapMusd(await res.json().catch(() => null));
-  } catch { cap = null; }
-  await kvSet(usCapKey(t), { cap }, cap != null ? TTL_OK : 2 * 3600).catch(() => null);
-  return cap;
+interface UsQuote { cap: number | null; price: number | null; sector: string | null; industry: string | null; at: string }
+/** zzz925: US market cap in $ million from the Nasdaq quote summary. zzz927: also the share price (last sale), sector and industry for the
+ *  fair-value estimate — two Nasdaq calls per name (summary + info), one batched pass for the listed names, KV cached 30 min (a miss 30 min). */
+async function usCap(t: string): Promise<UsQuote> {
+  const hit = await kvGet<UsQuote>(usCapKey(t)).catch(() => null);
+  if (hit && typeof hit === 'object' && 'cap' in hit) return hit;
+  const get = async (url: string) => {
+    try {
+      const res = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json' }, cache: 'no-store', signal: AbortSignal.timeout(8000) });
+      return res.ok ? await res.json().catch(() => null) : null;
+    } catch { return null; }
+  };
+  const [summary, info] = await Promise.all([
+    get(`https://api.nasdaq.com/api/quote/${encodeURIComponent(t)}/summary?assetclass=stocks`),
+    get(`https://api.nasdaq.com/api/quote/${encodeURIComponent(t)}/info?assetclass=stocks`),
+  ]);
+  const q = nasdaqQuoteFields(summary, info);
+  const out: UsQuote = { cap: summary ? nasdaqMarketCapMusd(summary) : null, price: q.price, sector: q.sector, industry: q.industry, at: new Date().toISOString().slice(0, 10) };
+  await kvSet(usCapKey(t), out, 30 * 60).catch(() => null);
+  return out;
 }
 
 const list = (v: string | null, re: RegExp) => Array.from(new Set(String(v || '').split(',').map((s) => s.trim().toUpperCase()).filter((s) => re.test(s)))).slice(0, MAX_PER_MARKET);
@@ -89,6 +98,7 @@ async function inFactsAt(t: string, slug: string): Promise<{ facts: SkyFacts | n
     const f = inFactsFromHtml(t, got.html, basis, url);
     if (!f) { last = 'no quarterly table'; continue; }
     if (!isCurrentPeriod(f.period)) { last = `latest ${basis} quarter is ${f.period} — too old`; continue; }
+    f.priceDate = f.price != null ? new Date().toISOString().slice(0, 10) : null;   // zzz927: the day the page was read (cached up to 24 h)
     if (f.salesYoyQ != null || f.roce != null) return { facts: f, error: null, missing: false };
     fallback = fallback || f; last = `${basis} table has no year-ago quarter`;
   }
@@ -151,21 +161,26 @@ export async function GET(req: NextRequest) {
       })().catch(() => ({} as Record<string, EstimateTrendRow[]>)),
       // zzz925: market caps, 6 at a time, each bounded (8 s) — names not answered stay "size not known"
       (async () => {
-        const out: Record<string, number> = {};
+        const out: Record<string, UsQuote> = {};
         await pooled(US, 6, async (t) => {
           if (Date.now() - t0 > DEADLINE_MS - 8_000) return;
           const c = await usCap(t).catch(() => null);
-          if (c != null) out[t] = c;
+          if (c) out[t] = c;
         });
         return out;
-      })().catch(() => ({} as Record<string, number>)),
+      })().catch(() => ({} as Record<string, UsQuote>)),
     ]);
-    Object.assign(caps.US, usCaps);
+    for (const [t, q] of Object.entries(usCaps)) if (q.cap != null) caps.US[t] = q.cap;
     for (const t of US) {
       const row = batch?.rows?.[t];
       if (row?.retrieval_failed) { pending.push(`US:${t}`); errors[`US:${t}`] = String(row.why || 'SEC request failed'); continue; }
       facts[`US:${t}`] = usFactsFromRow(t, row, trends[t]);
-      if (facts[`US:${t}`] && usCaps[t] != null) facts[`US:${t}`]!.mcap = usCaps[t];
+      const uf = facts[`US:${t}`], uq = usCaps[t];
+      if (uf && uq) {
+        if (uq.cap != null) uf.mcap = uq.cap;
+        // zzz927: the share price, sector and industry for the fair-value estimate (same Nasdaq read as the market cap)
+        uf.price = uq.price; uf.priceDate = uq.price != null ? uq.at : null; uf.sector = uq.sector; uf.industry = uq.industry;
+      }
       if (!facts[`US:${t}`]) errors[`US:${t}`] = String(row?.why || 'no SEC figures');
     }
   })();

@@ -33,3 +33,18 @@ export function pickScreenerSlug(list: Array<{ name?: string; url?: string }> | 
   const hit = rows.filter((c) => c.name && (c.name === want || ((c.name.startsWith(`${want} `) || want.startsWith(`${c.name} `)) && Math.min(c.name.split(' ').length, want.split(' ').length) >= 2)));
   return hit.length === 1 ? hit[0].slug : hit.find((c) => c.name === want)?.slug ?? null;
 }
+
+/** zzz927: "$574.19" / "574.19" → 574.19 (null when not a positive number). */
+export function dollarNum(raw: unknown): number | null {
+  if (raw == null) return null;
+  const v = Number(String(raw).replace(/[$,\s]/g, ''));
+  return Number.isFinite(v) && v > 0 ? v : null;
+}
+/** zzz927: the share price, sector and industry for the fair-value estimate, from the two Nasdaq answers the route already reads
+ *  (quote summary → previous close, sector, industry; quote info → last sale). The last sale wins; the previous close is the fallback. */
+export function nasdaqQuoteFields(summary: any, info: any): { price: number | null; sector: string | null; industry: string | null } {
+  const sd = summary?.data?.summaryData;
+  const price = dollarNum(info?.data?.primaryData?.lastSalePrice) ?? dollarNum(sd?.PreviousClose?.value);
+  const txt = (v: unknown) => { const t = typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : ''; return t && t !== 'N/A' ? t : null; };
+  return { price, sector: txt(sd?.Sector?.value), industry: txt(sd?.Industry?.value) };
+}
