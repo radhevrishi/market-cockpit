@@ -3552,3 +3552,11 @@ stale heartbeats (prewarm-earnings, data-watch) investigation; removing ?secret=
   concall list, pending list 60 days); NSE SME + Screener sweep for BSE-only names (`screener_tickers`, `SYMBOL:BSECODE`);
   India events-queue items are delegated to the documents collector; India read before US; multi-year / "30%+" /
   "double" / "₹X Cr from ₹Y Cr" phrasings in `lib/guidance-horizon.ts`; segment/AUM/bookings never become revenue growth.
+- zzz921 — targeted RE-COLLECT of guidance documents. `scrape-guidance-docs.yml` (manual only) has `recollect_tickers` (comma list, max 30 NSE
+  symbols / BSE codes / `SYMBOL:BSECODE`, sanitised with `tr`) and `recollect_days` (default 120, max 210). For just those companies the collector
+  ignores its known / seen memory, lists their filings again (NSE per symbol, BSE per scrip, Screener.in concall list; ≤ 10 documents each, newest
+  first) and POSTs them to `/api/v1/guidance-docs/ingest` with `reextract: true` (service key only; market IN + ≥ 1 doc). The store then writes the
+  doc again WITH text, flags its index row unextracted (index lock + strict read, zzz916 rules unchanged) and clears the extractor's result, back-off
+  and place in `guidance-extract:v1:index` / `:index:ok` (`clearExtraction`), so the hourly extractor reads it again under the current rules inside its
+  normal daily cap. The old rows of that document leave the universe until it is re-read. In this mode the day listing, intimation retries and
+  queue sweep do not run, and the scheduled job's heartbeat / status / coverage are not touched. Empty input = behaviour unchanged.

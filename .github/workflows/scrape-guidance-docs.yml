@@ -16,6 +16,14 @@ name: Scrape Guidance Docs (India, every 2h evening IST)
 # Q1 FY27 backfill (two manual runs): (1) days = 90, skip_listing = 1, screener_queue = 1,
 # screener_tickers = <companies to make sure of>; (2) days = 90 (full NSE + SME listing, intimations followed).
 #
+# zzz921: RE-COLLECT (manual only). Documents already read are remembered (stored or skipped) and the extractor drops their text once read,
+# so after an extraction rule is fixed they can never be read again. Run this workflow with recollect_tickers = a comma list (max 30 NSE symbols,
+# BSE codes or SYMBOL:BSECODE) and, optionally, recollect_days (default 120, max 210). For just those companies the known / skipped memory is
+# ignored: their NSE / BSE filings and Screener.in concall list inside the window are fetched again (newest first, at most 10 documents per
+# company) and stored UNEXTRACTED again (POST /api/v1/guidance-docs/ingest with reextract = true, service key); the hourly extractor then reads them
+# under the current rules within its normal daily spend cap. In this mode the day-by-day listing, the intimation retries and the queue sweep do NOT run.
+# Empty recollect_tickers = the workflow behaves exactly as before.
+#
 # Secrets (repository → Settings → Secrets and variables → Actions):
 #   CRON_SECRET    — same value as CRON_SECRET on the server (service key)
 #   CRON_BASE_URL  — optional; the deployed app's base URL
@@ -61,6 +69,14 @@ on:
         description: 'zzz916: 1 = skip the day-by-day exchange listing and run only the Screener.in phase (days still sets the window)'
         required: false
         default: '0'
+      recollect_tickers:
+        description: 'zzz921: RE-COLLECT these companies only (comma list, max 30: NSE symbols, BSE codes or SYMBOL:BSECODE). Their documents are read again and stored unextracted so the extractor re-reads them. Leave empty for a normal run'
+        required: false
+        default: ''
+      recollect_days:
+        description: 'zzz921: how many days back the re-collect reads (1-210, default 120)'
+        required: false
+        default: '120'
 
 concurrency:
   group: scrape-guidance-docs
@@ -101,6 +117,8 @@ jobs:
           IN_SCR_QUEUE: ${{ github.event.inputs.screener_queue || '0' }}
           IN_SCR_MAX: ${{ github.event.inputs.screener_max || '' }}
           IN_SKIP_LIST: ${{ github.event.inputs.skip_listing || '0' }}
+          IN_RECOLLECT: ${{ github.event.inputs.recollect_tickers || '' }}
+          IN_RECOLLECT_DAYS: ${{ github.event.inputs.recollect_days || '120' }}
         run: |
           set -euo pipefail
           if [ -z "${CRON_SECRET}" ]; then echo "CRON_SECRET is not set in repository secrets"; exit 1; fi
@@ -116,6 +134,19 @@ jobs:
           export SCREENER_QUEUE="$([ "$IN_SCR_QUEUE" = "1" ] && echo 1 || echo 0)"
           case "$IN_SCR_MAX" in ''|*[!0-9]*) ;; *) export SCREENER_MAX="$IN_SCR_MAX" ;; esac
           export SKIP_LISTING="$([ "$IN_SKIP_LIST" = "1" ] && echo 1 || echo 0)"
+          # zzz921: re-collect (manual runs only). Symbols / BSE codes only, at most 30; days 1-210.
+          RECOLLECT_TICKERS=""
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            RECOLLECT_TICKERS="$(printf '%s' "$IN_RECOLLECT" | cut -c1-2000 | tr -cd 'A-Za-z0-9,:&-' | cut -d, -f1-30)"
+          fi
+          # an input that sanitises to nothing must not turn into a normal run
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ -n "$IN_RECOLLECT" ] && [ -z "$RECOLLECT_TICKERS" ]; then echo "::error title=Re-collect::recollect_tickers held no valid NSE symbol or BSE code"; exit 1; fi
+          export RECOLLECT_TICKERS
+          case "$IN_RECOLLECT_DAYS" in ''|*[!0-9]*) IN_RECOLLECT_DAYS=120 ;; esac
+          if [ "$IN_RECOLLECT_DAYS" -lt 1 ]; then IN_RECOLLECT_DAYS=120; fi
+          if [ "$IN_RECOLLECT_DAYS" -gt 210 ]; then IN_RECOLLECT_DAYS=210; fi
+          export RECOLLECT_DAYS="$IN_RECOLLECT_DAYS"
+          if [ -n "$RECOLLECT_TICKERS" ]; then echo "re-collect run: $(printf '%s' "$RECOLLECT_TICKERS" | tr ',' '\n' | grep -c .) companies, ${RECOLLECT_DAYS} days"; fi
           # leave ~10 min of the job limit for the final POSTs
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then export RUN_BUDGET_MIN=325; else export RUN_BUDGET_MIN=48; fi
           rc=0; node .github/scripts/scrape-guidance-docs.mjs || rc=$?
@@ -129,7 +160,8 @@ jobs:
         run: echo "::notice title=Deferred::An upstream source was down or had not published yet. Stored data was kept; the next scheduled run retries. The daily actions-watchdog flags a job that stays deferred for 24 h."
 
       - name: Heartbeat (always run)
-        if: always()
+        # a targeted re-collect is not the scheduled collection: it must not refresh that job's heartbeat
+        if: always() && github.event.inputs.recollect_tickers == ''
         env:
           BASE: ${{ secrets.CRON_BASE_URL }}
         run: |

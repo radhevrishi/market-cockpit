@@ -51,6 +51,9 @@ export const COVERAGE_KEEP_DAYS = 220;   // zzz874: keep the 210-day collector r
 export const COVERAGE_TTL_S = 230 * 86_400;
 export const coverageKey = (market: 'IN' | 'US') => `guidance-docs:v1:coverage:${market}`;
 const EXTRACT_RESULT_KEY = (docId: string) => `guidance-extract:v1:${docId}`;
+/** zzz921: the extractor's other per-document state (same keys as ai-guidance-extract.ts OK_INDEX_KEY / failKey; kept here so the store never imports the extractor) */
+export const EXTRACT_OK_INDEX_KEY = 'guidance-extract:v1:index:ok';
+const EXTRACT_FAIL_KEY = (docId: string) => `guidance-extract:v1:fail:${docId}`;
 export const DOC_TTL_S = 210 * 86_400;   // zzz874: a document stays as long as the collector window reaches
 export const SEEN_CAP = 20_000;
 export const MAX_DOCS_PER_REQUEST = 25;
@@ -228,6 +231,8 @@ export interface IngestBody {
   status: { days: DayStatus[]; run?: CollectorStatus['lastRun'] } | null;
   coverage: { market: 'IN' | 'US'; days: Record<string, Partial<CoverageDay> & { status: CoverageDay['status'] }> } | null;
   /** zzz916 */ intimations?: IntimationEntry[];
+  /** zzz921: true = these documents are re-collected: each is stored again as UNEXTRACTED (the extractor's old result for it is cleared). Needs market 'IN'. */
+  reextract?: boolean;
 }
 
 const isStr = (v: unknown, max = 2000): v is string => typeof v === 'string' && v.length <= max;
@@ -287,8 +292,13 @@ export function validateIngestBody(raw: any):
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: 'body must be a JSON object' };
   if (!isStr(raw.collector, 60) || !/^[a-z0-9_:.-]{2,60}$/i.test(raw.collector)) return { ok: false, error: 'collector must be a short slug' };
   if (raw.market != null && raw.market !== 'IN' && raw.market !== 'US') return { ok: false, error: 'market must be IN or US' };
+  // zzz921: the re-extract flag is a strict boolean, India only, and means nothing without documents
+  if (raw.reextract != null && typeof raw.reextract !== 'boolean') return { ok: false, error: 'reextract must be a boolean' };
+  const reextract = raw.reextract === true;
   const docsRaw = raw.docs ?? [];
   if (!Array.isArray(docsRaw)) return { ok: false, error: 'docs must be an array' };
+  if (reextract && raw.market !== 'IN') return { ok: false, error: 'reextract needs market IN' };
+  if (reextract && !docsRaw.length) return { ok: false, error: 'reextract needs at least one document' };
   if (docsRaw.length > MAX_DOCS_PER_REQUEST) return { ok: false, error: `at most ${MAX_DOCS_PER_REQUEST} docs per request` };
   const seenRaw = raw.seen ?? [];
   if (!Array.isArray(seenRaw) || seenRaw.length > MAX_SEEN_PER_REQUEST) return { ok: false, error: `seen must be an array of at most ${MAX_SEEN_PER_REQUEST}` };
@@ -339,7 +349,7 @@ export function validateIngestBody(raw: any):
     }
     coverage = { market: cm, days };
   }
-  return { ok: true, body: { collector: raw.collector, market: raw.market ?? null, docs, seen, status, coverage, intimations }, rejected };
+  return { ok: true, body: { collector: raw.collector, market: raw.market ?? null, docs, seen, status, coverage, intimations, ...(reextract ? { reextract: true } : {}) }, rejected };
 }
 
 /** zzz916: one intimation entry, or null. The url must be an exchange attachment (that is what an intimation is). */
@@ -363,14 +373,15 @@ export function toIndexRow(d: GuidanceDoc, extracted?: boolean, textBytes?: numb
 
 /** Merge new rows into the index: dedupe by docId (new data wins, the
  *  extracted flag survives), newest filedAt first, capped. */
-export function mergeIndex(prev: GuidanceDocIndex | null, docs: GuidanceDoc[], now: Date, cap = INDEX_CAP, bytes?: Map<string, number>): GuidanceDocIndex {
+export function mergeIndex(prev: GuidanceDocIndex | null, docs: GuidanceDoc[], now: Date, cap = INDEX_CAP, bytes?: Map<string, number>, resetExtracted?: Set<string>): GuidanceDocIndex {
   const byId = new Map<string, GuidanceDocIndexRow>();
   for (const r of prev?.rows || []) if (r && r.docId) byId.set(r.docId, r);
   // zzz916: a document that arrives with an `exchangeUrl` replaces the intimation stored earlier under that exchange url (the short
   // "transcript available at <link>" letter): its row leaves the index, so it is no longer listed as the company's "transcript, read, no guidance"
   const replaced = new Set(docs.map((d) => d.exchangeUrl).filter((u): u is string => !!u));
   if (replaced.size) for (const [id, r] of Array.from(byId.entries())) if (replaced.has(r.url) && isShortDocRow(r)) byId.delete(id);
-  for (const d of docs) byId.set(d.docId, toIndexRow(d, byId.get(d.docId)?.extracted, bytes?.get(d.docId)));
+  // zzz921: a re-collected document comes back UNEXTRACTED (resetExtracted); every other re-ingest keeps its flag
+  for (const d of docs) byId.set(d.docId, toIndexRow(d, resetExtracted?.has(d.docId) ? false : byId.get(d.docId)?.extracted, bytes?.get(d.docId)));
   const rows = Array.from(byId.values()).sort((a, b) => (b.filedAt || '').localeCompare(a.filedAt || '') || a.docId.localeCompare(b.docId));
   return { updatedAt: now.toISOString(), rows: rows.slice(0, cap) };
 }
@@ -444,7 +455,7 @@ export async function readCoverage(kv: DocsKv, market: 'IN' | 'US'): Promise<Cov
 
 // ── KV operations ───────────────────────────────────────────────────────────
 
-export async function ingestDocs(body: IngestBody, kv: DocsKv, now = new Date()): Promise<{ stored: number; seen: number; indexRows: number; coverageDays: number }> {
+export async function ingestDocs(body: IngestBody, kv: DocsKv, now = new Date()): Promise<{ stored: number; seen: number; indexRows: number; coverageDays: number; reextracted?: number }> {
   // docs first, then the index (a reader never sees an index row whose doc is missing)
   const unique = new Map<string, GuidanceDoc>();
   for (const d of body.docs) unique.set(d.docId, d);
@@ -458,16 +469,21 @@ export async function ingestDocs(body: IngestBody, kv: DocsKv, now = new Date())
     await kv.set(docKey(d.docId), stored, DOC_TTL_S);
   }
   let indexRows = 0;
+  const reIds = body.reextract ? docs.filter((d) => d.market === 'IN').map((d) => d.docId) : [];
   if (docs.length) {
     // zzz916: read-modify-write under the index lock, and never on top of a read that failed (a slow read used to come back null and
     // the whole index was replaced by this one batch: 381 India rows left on 6 Oct where thousands had been stored)
     indexRows = (await withIndexLock(kv, async () => {
       const prev = await readIndexStrict(kv);
-      const next = mergeIndex(prev, docs, now, INDEX_CAP, bytes);
+      const next = mergeIndex(prev, docs, now, INDEX_CAP, bytes, reIds.length ? new Set(reIds) : undefined);
       await writeIndex(kv, next, now);
       return next.rows.length;
     }, true)) ?? 0;
   }
+  // zzz921: the extractor's old result for a re-collected document is cleared AFTER the index row is unextracted again. If this fails the request
+  // fails (the collector retries; the whole step is idempotent); if only the clearing is missed, the extractor finds the old result, re-flags the row
+  // and nothing is lost — it just is not read again, which the next re-collect fixes.
+  if (reIds.length) await clearExtraction(kv, reIds);
   if (body.seen.length) {
     const prev = await kv.get<SeenMap>(DOCS_SEEN_KEY).catch(() => null);
     const meta = await kv.get<IndexMeta>(DOCS_INDEX_META_KEY).catch(() => null);
@@ -494,7 +510,26 @@ export async function ingestDocs(body: IngestBody, kv: DocsKv, now = new Date())
     await kv.set(coverageKey(m), merged, COVERAGE_TTL_S);
     coverageDays = Object.keys(merged.days).length;
   }
-  return { stored: docs.length, seen: body.seen.length, indexRows, coverageDays };
+  return { stored: docs.length, seen: body.seen.length, indexRows, coverageDays, ...(reIds.length ? { reextracted: reIds.length } : {}) };
+}
+
+/**
+ * zzz921: forget what the extractor knows about these documents so it reads them again: its result, its error back-off, and their place in its
+ * main and ok indexes (listDocs also skips ids found in the main index). The index arrays are read strictly when the store can (a failed read
+ * throws, never "nothing to remove") and written back only when something changed. The documents index row is NOT touched here.
+ */
+export async function clearExtraction(kv: DocsKv, docIds: string[]): Promise<void> {
+  if (!docIds.length) return;
+  const drop = async (k: string) => { if (kv.del) await kv.del(k); else await kv.set(k, null, 60); };
+  for (const id of docIds) { await drop(EXTRACT_RESULT_KEY(id)); await drop(EXTRACT_FAIL_KEY(id)); }
+  const gone = new Set(docIds);
+  for (const k of [EXTRACT_INDEX_KEY, EXTRACT_OK_INDEX_KEY]) {
+    let cur: unknown;
+    try { cur = kv.getStrict ? await kv.getStrict<string[]>(k) : await kv.get<string[]>(k); } catch { throw new DocsIndexUnreadableError('the extractor index'); }
+    if (!Array.isArray(cur)) continue;
+    const next = cur.filter((id) => !gone.has(String(id)));
+    if (next.length !== cur.length) await kv.set(k, next, 270 * 86_400);
+  }
 }
 
 // ── zzz916: index integrity ─────────────────────────────────────────────────

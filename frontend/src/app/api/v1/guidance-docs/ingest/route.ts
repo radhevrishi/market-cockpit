@@ -16,6 +16,8 @@
 //         is still to be found; the collector retries them via Screener.in);
 //         &queueTickers=1 → India tickers whose call / presentation / release
 //         filings sit in the events queue (the collector's Screener.in sweep).
+//         zzz921: `reextract: true` (market 'IN' + ≥ 1 document, service key only) = the documents are re-collected: each is stored again as
+//         UNEXTRACTED and the extractor's old result for it is cleared, so the extractor reads it again under the current rules.
 //   A body over 6 MB is refused with 413 — never truncated.
 //
 // PROTECTED (lib/site-auth PROTECTED_API_PREFIXES '/api/v1/guidance-docs'):

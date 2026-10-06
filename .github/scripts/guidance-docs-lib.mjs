@@ -282,6 +282,36 @@ export function sweepTarget(token) {
   return { lookup: t, ticker: t, bseCode: null };
 }
 
+// ── zzz921: targeted re-collect ─────────────────────────────────────────────
+
+export const RECOLLECT_MAX_TICKERS = 30;
+export const RECOLLECT_DEFAULT_DAYS = 120;
+export const RECOLLECT_MAX_DAYS = 210;
+/**
+ * The `recollect_tickers` input → targets. Anything but letters, digits, & - : and separators is dropped first (the workflow does the same with `tr`),
+ * then each token must be an NSE symbol, a BSE code or SYMBOL:BSECODE; duplicates removed; at most 30. Never throws.
+ */
+export function parseRecollectTickers(s, max = RECOLLECT_MAX_TICKERS) {
+  const clean = String(s || '').replace(/[^A-Za-z0-9,;:&\-\s]/g, '').slice(0, 2000);
+  return parseTickerList(clean).slice(0, Math.max(0, Math.min(RECOLLECT_MAX_TICKERS, max)));
+}
+/** `recollect_days` → 1..210, default 120 (anything not a whole number falls back to the default). */
+export function recollectDays(v) {
+  const n = /^\d{1,4}$/.test(String(v ?? '').trim()) ? Number(v) : NaN;
+  if (!Number.isFinite(n) || n < 1) return RECOLLECT_DEFAULT_DAYS;
+  return Math.min(RECOLLECT_MAX_DAYS, n);
+}
+/** NSE per-company announcements over a date range (days YYYY-MM-DD). */
+export function nseRangeUrl({ symbol, index = 'equities', from, to }) {
+  const f = (d) => { const [y, m, dd] = d.split('-'); return `${dd}-${m}-${y}`; };
+  return `https://www.nseindia.com/api/corporate-announcements?index=${index === 'sme' ? 'sme' : 'equities'}&symbol=${encodeURIComponent(symbol)}&from_date=${f(from)}&to_date=${f(to)}`;
+}
+/** BSE per-scrip announcements over a date range, all categories. */
+export function bseScripRangeUrl({ scrip, from, to, page = 1 }) {
+  const y = (d) => d.replace(/-/g, '');
+  return `https://api.bseindia.com/BseIndiaAPI/api/AnnSubCategoryGetData/w?pageno=${page}&strCat=-1&strPrevDate=${y(from)}&strScrip=${encodeURIComponent(scrip)}&strSearch=P&strToDate=${y(to)}&strType=C&subcategory=-1`;
+}
+
 // ── exchange rows → filings ─────────────────────────────────────────────────
 
 /** BSE NEWS_DT has no zone; it is IST. */
