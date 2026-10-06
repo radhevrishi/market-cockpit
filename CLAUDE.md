@@ -3530,3 +3530,25 @@ stale heartbeats (prewarm-earnings, data-watch) investigation; removing ?secret=
   - Check the GitHub Actions minutes quota.
   - Set the Telegram secrets for the watchdog.
   - Decide on email (nodemailer/SMTP) if alerts move off Claude tasks.
+
+## 26 · 2026-10-06 (evening) — zzz909 → zzz916
+
+- zzz909 — `/api/v1/guidance-diagnose` (protected) + manual `guidance-diagnose.yml`: per company, the stored documents,
+  what the extractor filed, queue stage and universe placement. First thing to run for "why is X missing".
+- zzz910 — `lib/owner-notify.ts`: `notifyOwner`, `notifyOwnerOnce` (KV send-once, 120 days), `notifyOwnerOnceMany/Each`.
+  Telegram (`TELEGRAM_BOT_TOKEN[_TOPIC]` + `TELEGRAM_CHAT_ID[_TOPIC]`, topics EARNINGS/ALERTS/BRIEF/PORTFOLIO) and email
+  (`RESEND_API_KEY` + `NOTIFY_EMAIL_TO`, or `SMTP_*` via nodemailer). No channel set = 'skipped'.
+- Claude scheduled tasks moved into the app (7 new APP_JOBS, total 39): zzz911 `in-earnings-alert` (hourly) +
+  `in-earnings-eod`; zzz912 `us-earnings-watch` (one job, fixes the late sweep: EDGAR files after 17:30 ET under the next
+  weekday — `edgarFilingDateNow()`), gainers heartbeat moved to `workers/mc-guardian/gainers-check.js` via public
+  `/api/v1/cron/gainers-pulse`; zzz913 `gainers-in-backup` + `gainers-brief-in` (from stored research, no AI); zzz914
+  `conviction-catalyst-brief` + `portfolio-thesis-watch` (`lib/owner-briefs/`). The Claude tasks stay ON until the owner
+  sets a channel and sees the app messages arrive — then disable them (ids in the zzz911–914 commit messages / §25 report).
+- zzz915 — COST: guidance reading had cost $17 in a few days (hourly $1.20 runs on a backlog). Now $0.40 a run and a
+  **$0.40 per UTC day ceiling** in `/api/v1/guidance-extract` (`GUIDANCE_EXTRACT_DAILY_USD`). Never raise without asking.
+  Provider is OpenAI gpt-5-mini; spend is visible in `/api/v1/system-status` → `anthropicSpend`.
+- zzz916 — guidance coverage: the docs index was being WIPED by a timed-out read + overwrite (now meta record, lock,
+  503 on suspicious empty read); intimation letters were stored as transcripts (collector now follows links + Screener.in
+  concall list, pending list 60 days); NSE SME + Screener sweep for BSE-only names (`screener_tickers`, `SYMBOL:BSECODE`);
+  India events-queue items are delegated to the documents collector; India read before US; multi-year / "30%+" /
+  "double" / "₹X Cr from ₹Y Cr" phrasings in `lib/guidance-horizon.ts`; segment/AUM/bookings never become revenue growth.
