@@ -86,7 +86,9 @@ const BOOK_KEY = (chatId: string) => `book:v1:${chatId}`;
 const DISPATCHED_KEY = (chatId: string) => `book-watch:dispatched:v1:${chatId}`;
 const FEED_KEY = (chatId: string) => `book-watch:feed:v1:${chatId}`;
 
-const BOOK_TTL_S = 60 * 60 * 24 * 60;     // 60 days
+// zzz883: the book is personal data, not a cache — it must not vanish after 60 quiet days. 2 years, refreshed on every sync;
+// the full copy also lives in Postgres through /api/v1/user-state (mc_portfolio_holdings / mc_watchlist_tickers / the bench).
+const BOOK_TTL_S = 60 * 60 * 24 * 730;
 const DISPATCH_TTL_S = 60 * 60 * 24 * 4;  // 4 days (dedup window)
 const FEED_TTL_S = 60 * 60 * 24 * 30;     // 30 days
 const FEED_MAX = 200;

@@ -48,6 +48,8 @@ export const PROTECTED_API_PREFIXES = [
   '/api/v1/ai/desk',             // paid AI (score-ai-ledger cron sends x-cron-secret)
   '/api/v1/ai-gainers',          // paid AI (daily-research sends x-mc-key)
   '/api/v1/cron/trigger-screener-sync',   // starts a GitHub workflow
+  '/api/v1/user-state',          // zzz883 — the owner's personal data (book, decisions, theses, ledgers)
+  '/api/v1/intel-archive',       // zzz883 — writes events / AI extractions to Postgres
 ] as const;
 
 /** Never gated: the login flow itself, and machine endpoints with their own auth. */

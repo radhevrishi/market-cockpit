@@ -17,7 +17,7 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 12
     steps:
       - name: Scan recent guidance events (30D and 120D) and rebuild the universe
         id: main
@@ -31,6 +31,16 @@ jobs:
           done
           curl -fsS --max-time 100 "$BASE/api/v1/guidance-universe?market=ALL&force=1" -o /dev/null -w "universe %{http_code}\n" || FAIL=1
           exit $FAIL
+
+      # zzz883 — archive what the page shows (events) and every AI extraction (model + prompt version) into Postgres
+      - name: Archive events and AI extractions to Postgres
+        continue-on-error: true
+        env:
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          curl -sS --max-time 130 -X POST -H "x-cron-secret: $CRON_SECRET" "$BASE/api/v1/intel-archive" | head -c 600; echo
 
       - name: Heartbeat (always run)
         if: always()

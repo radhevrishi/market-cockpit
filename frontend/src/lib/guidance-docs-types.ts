@@ -101,6 +101,8 @@ export interface GuidanceExtractResult {
   filedAt: string;
   extractedAt: string;
   model: string | null;
+  /** zzz883: fingerprint of the system prompt + answer schema used (changes automatically when either is edited). Absent on older records. */
+  promptVersion?: string;
   status: 'ok' | 'no_guidance' | 'unreadable' | 'unavailable' | 'error';
   rows: ExtractedGuidance[];     // only rows that passed quote + number checks
   dropped: number;               // rows the checks removed

@@ -23,6 +23,7 @@ import StockPassport from '@/components/StockPassport'; // zzz524 — global one
 import { getConvictionTickers, getConvictionList, readConvictionBin, getBenchSince } from '@/lib/conviction-beats';
 import { mergeIndiaBench } from '@/lib/fundamentals/universe';
 import { scheduleBookSync } from '@/lib/book-sync-client';
+import { startVaultSync } from '@/lib/user-vault-client';   // zzz883 — personal data copied to the server
 // zzz796 — installable app: phone tab bar, favourites sheet, menu drawer, install help.
 import MobileNav from '@/components/pwa/MobileNav';
 import { InstallBanner, InstallAppCard } from '@/components/pwa/InstallApp';
@@ -450,6 +451,8 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => { setSidebarOpen(false); }, [pathname]);
+  // zzz883: decisions, theses, ledgers, saved valuations, book and notes are copied to Postgres and restored on a new browser
+  useEffect(() => startVaultSync(), []);
 
   // Handle ?ticker= query parameter to open drawer
   // PATCH 0692 — drop the hardcoded NASDAQ fallback so the drawer can infer

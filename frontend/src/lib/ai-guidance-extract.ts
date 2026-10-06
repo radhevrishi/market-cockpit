@@ -620,11 +620,18 @@ export function hasForwardNumber(text: string): boolean {
   return false;
 }
 
+/** zzz883: prompt + schema fingerprint stored on every record, so a result can always be traced to the exact instructions it came from. */
+export const EXTRACT_PROMPT_VERSION = (() => {
+  const src = JSON.stringify([SYSTEM_PROMPT, GUIDANCE_TOOL]);
+  let h = 0x811c9dc5; for (let i = 0; i < src.length; i++) { h ^= src.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return `gx-${h.toString(16)}`;
+})();
+
 export async function extractDoc(doc: GuidanceDoc, deps: Pick<ExtractDeps, 'callModel' | 'availability' | 'now' | 'nonce' | 'selectPassages'>, opts: { timeoutMs?: number; av?: Availability } = {}): Promise<DocOutcome> {
   const now = (deps.now || (() => new Date()))();
   const base = (status: GuidanceExtractResult['status'], extra: Partial<DocOutcome> = {}): DocOutcome => ({
     docId: doc.docId, market: doc.market, ticker: doc.ticker, company: doc.company, docUrl: doc.url, docKind: doc.kind, filedAt: doc.filedAt,
-    extractedAt: now.toISOString(), model: null, status, rows: [], dropped: 0, costUsd: 0, ...extra,
+    extractedAt: now.toISOString(), model: null, promptVersion: EXTRACT_PROMPT_VERSION, status, rows: [], dropped: 0, costUsd: 0, ...extra,
   });
   const av = opts.av || await deps.availability();
   if (!av.available) return base('unavailable', { note: redact(av.reason || 'AI extraction unavailable', 300), stop: 'unavailable' });

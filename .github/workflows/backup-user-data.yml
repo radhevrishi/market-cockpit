@@ -1,0 +1,57 @@
+name: Backup personal data (nightly, with restore test)
+
+# zzz883 — the owner's book, decisions, theses, ledgers, saved valuations and notes live in Postgres (+ a Redis mirror).
+# Every night this job:
+#   1. downloads the full export through the protected route,
+#   2. RESTORE TEST: re-computes the server's hash of every value from the downloaded file — the backup must reproduce the data exactly,
+#   3. encrypts it (AES-256, key = BACKUP_PASSPHRASE secret, falling back to CRON_SECRET) and keeps it 90 days as a workflow artifact.
+# To restore by hand: download the artifact, then
+#   openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in user-data.json.enc -out user-data.json -pass env:PASS
+# and PUT each item back to /api/v1/user-state.
+on:
+  schedule:
+    - cron: '17 1 * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: backup-user-data
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Export
+        env:
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          curl -fsS --max-time 120 -H "x-cron-secret: $CRON_SECRET" "$BASE/api/v1/user-state?export=1" -o user-data.json
+          curl -fsS --max-time 60 -H "x-cron-secret: $CRON_SECRET" "$BASE/api/v1/user-state?list=1" -o list.json
+      - name: Restore test (every value must hash back to what the server holds)
+        run: |
+          node -e '
+            const fs=require("fs"), c=require("crypto");
+            const exp=JSON.parse(fs.readFileSync("user-data.json","utf8")), list=JSON.parse(fs.readFileSync("list.json","utf8"));
+            if(!exp.ok||!Array.isArray(exp.items)) { console.error("export not ok"); process.exit(1); }
+            const want=new Map((list.keys||[]).map(k=>[k.key,k.hash]));
+            let bad=0;
+            for(const it of exp.items){ const h=c.createHash("sha256").update(JSON.stringify(it.value??null)).digest("hex").slice(0,24); if(want.has(it.key)&&want.get(it.key)!==h){ console.error("MISMATCH",it.key); bad++; } }
+            console.log(`store=${exp.store} items=${exp.items.length} keys-on-server=${want.size} mismatches=${bad}`);
+            if(bad||exp.items.length<want.size) process.exit(1);'
+      - name: Encrypt
+        env:
+          PASS: ${{ secrets.BACKUP_PASSPHRASE || secrets.CRON_SECRET }}
+        run: |
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -in user-data.json -out user-data.json.enc -pass env:PASS
+          shred -u user-data.json list.json || rm -f user-data.json list.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: user-data-${{ github.run_id }}
+          path: user-data.json.enc
+          retention-days: 90
