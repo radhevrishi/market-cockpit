@@ -1,0 +1,39 @@
+name: Guidance diagnose (manual)
+
+# zzz909 — "why is company X not on the guidance page?" Prints, per company, the documents the collector stored, what the
+# AI extractor filed from each, the events-queue stage and where it sits in the guidance universe. Read-only; company data only.
+on:
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: 'Tickers, comma-separated (max 80)'
+        required: true
+      market:
+        description: 'IN or US'
+        required: false
+        default: 'IN'
+
+concurrency:
+  group: guidance-diagnose
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Diagnose
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+          TICKERS: ${{ github.event.inputs.tickers }}
+          MARKET: ${{ github.event.inputs.market || 'IN' }}
+        run: |
+          BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          T=$(printf '%s' "$TICKERS" | tr -cd 'A-Za-z0-9,&.-')
+          M=$(printf '%s' "$MARKET" | tr -cd 'A-Z')
+          curl -s --max-time 90 -H "x-cron-secret: $CRON_SECRET" "$BASE/api/v1/guidance-diagnose?market=$M&tickers=$T" -o /tmp/diag.json -w "HTTP %{http_code}\n"
+          python3 -c "import json;print(json.dumps(json.load(open('/tmp/diag.json')),indent=1))" | head -c 900000

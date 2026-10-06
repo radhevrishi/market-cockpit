@@ -52,7 +52,8 @@ export const PROTECTED_API_PREFIXES = [
   '/api/v1/intel-archive',
   '/api/v1/company/',            // zzz892 — one record per company (reads the Postgres record of truth)
   '/api/v1/mcp',                 // zzz893 — read-only data connection for Claude
-  '/api/v1/ai-eval',             // zzz883 — AI golden-set evaluation (paid AI)       // zzz883 — writes events / AI extractions to Postgres
+  '/api/v1/ai-eval',             // zzz883 — AI golden-set evaluation (paid AI)
+  '/api/v1/guidance-diagnose',   // zzz909 — per-company guidance pipeline trace (workflow sends x-cron-secret)
 ] as const;
 
 /** Never gated: the login flow itself, and machine endpoints with their own auth. */
