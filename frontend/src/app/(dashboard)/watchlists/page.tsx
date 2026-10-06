@@ -1,5 +1,6 @@
 'use client';
 
+import { resolveFyYear } from '@/lib/calendar-dates';   // zzz897 — two-digit FY → nearest century (was `yy < 50 ? 20yy : 19yy`, wrong from 2050)
 import { newInfoScore, newInfoWord } from '@/lib/cb-new-info';   // zzz887
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams } from 'next/navigation'; // PATCH 0914 — read ?tab=conviction
@@ -701,7 +702,7 @@ export default function WatchlistsPage() {
                 const qm = c.quarter.match(/Q([1-4])/i);
                 if (qm) qParsed = ('Q' + qm[1]) as any;
                 const fm = c.quarter.match(/FY\s?(\d{2})/i);
-                if (fm) { const yy = parseInt(fm[1], 10); fyParsed = yy < 50 ? 2000 + yy : 1900 + yy; }
+                if (fm) { const yy = parseInt(fm[1], 10); fyParsed = resolveFyYear(yy); }
               }
               entries.push({
                 ticker: c.ticker, company: c.company, tier,
@@ -763,7 +764,7 @@ export default function WatchlistsPage() {
             let qParsed: 'Q1'|'Q2'|'Q3'|'Q4'|undefined; let fyParsed: number|undefined;
             if (typeof e.quarter === 'string') {
               const qm = e.quarter.match(/Q([1-4])/i); if (qm) qParsed = ('Q'+qm[1]) as any;
-              const fm = e.quarter.match(/FY\s?(\d{2})/i); if (fm) { const yy = parseInt(fm[1],10); fyParsed = yy<50?2000+yy:1900+yy; }
+              const fm = e.quarter.match(/FY\s?(\d{2})/i); if (fm) { const yy = parseInt(fm[1],10); fyParsed = resolveFyYear(yy); }
             }
             return {
               ticker: e.ticker, company: e.company || e.ticker, tier: e.tier,
@@ -2137,7 +2138,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild, onShow
           let qParsed: any, fyParsed: any;
           if (typeof c.quarter === 'string') {
             const qm = c.quarter.match(/Q([1-4])/i); if (qm) qParsed = 'Q' + qm[1];
-            const fm = c.quarter.match(/FY\s?(\d{2})/i); if (fm) { const yy = parseInt(fm[1], 10); fyParsed = yy < 50 ? 2000 + yy : 1900 + yy; }
+            const fm = c.quarter.match(/FY\s?(\d{2})/i); if (fm) { const yy = parseInt(fm[1], 10); fyParsed = resolveFyYear(yy); }
           }
           syncEntries.push({
             ...(c as any),
@@ -2278,7 +2279,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild, onShow
                 market_cap_cr: typeof c.market_cap_cr === 'number' ? c.market_cap_cr : null,
                 source_url: c.filing_url,
                 ...(qm ? { quarter: ('Q' + qm[1]) as any } : {}),
-                ...(fm ? { fiscal_year: (parseInt(fm[1], 10) < 50 ? 2000 + parseInt(fm[1], 10) : 1900 + parseInt(fm[1], 10)) } : {}),
+                ...(fm ? { fiscal_year: resolveFyYear(parseInt(fm[1], 10)) } : {}),
                 d1_pct: typeof c.d1_pct === 'number' ? c.d1_pct : null,
                 gap_pct: typeof c.gap_pct === 'number' ? c.gap_pct : null,
                 // zzz236 — carry d2_pct + move_pct from graded response into bench entry.
@@ -3444,7 +3445,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild, onShow
             const realCurrentFY = calM <= 6 ? calY % 100 : (calY + 1) % 100;
             return ctxFY === realCurrentFY;
           })();
-          const ctxFYFull = ctxFY < 50 ? 2000 + ctxFY : 2000 + ctxFY;
+          const ctxFYFull = resolveFyYear(ctxFY);
           const calForQ1Q2Q3 = ctxFYFull - 1;
           const calForQ4 = ctxFYFull;
           const qMeta: Record<string, { label: string; reports: string; filed: string }> = {
@@ -3552,7 +3553,7 @@ function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild, onShow
                   {presentFY.map((fy) => {
                     const active = filters.fy === fy;
                     const n = countFY(fy);
-                    const fyFull = fy < 50 ? 2000 + fy : 2000 + fy;
+                    const fyFull = resolveFyYear(fy);
                     return (
                       <button key={fy} onClick={() => toggleFY(fy)}
                         style={active ? chipActive('#A78BFA') : chipBase}

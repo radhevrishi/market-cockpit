@@ -1,3 +1,4 @@
+import { resolveFyYear } from '@/lib/calendar-dates';
 import { CASH_RATIO_HIGH, CASH_RULE_V } from './india-cash';  // zzz826
 // ═══════════════════════════════════════════════════════════════════════════
 // INDIA EARNINGS OPPORTUNITIES — WHAT A CARD MAY HONESTLY SHOW  (zzz820)
@@ -56,7 +57,7 @@ export function quarterEndIso(label: string | null | undefined): string | null {
   const m = String(label || '').match(/Q([1-4])\s*FY\s?'?(\d{2}|\d{4})\b/i);
   if (!m) return null;
   const q = +m[1];
-  const fy = m[2].length === 4 ? +m[2] : 2000 + +m[2];
+  const fy = m[2].length === 4 ? +m[2] : resolveFyYear(+m[2]);   // zzz897 — was 2000 + yy
   if (q === 1) return `${fy - 1}-06-30`;
   if (q === 2) return `${fy - 1}-09-30`;
   if (q === 3) return `${fy - 1}-12-31`;

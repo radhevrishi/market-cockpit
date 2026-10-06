@@ -17,7 +17,8 @@
 
 import { NextResponse } from 'next/server';
 import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header first, ?secret= only for old callers
-import { kvSet, isRedisAvailable } from '@/lib/kv';
+import { kvSet, kvDel, kvMGet, isRedisAvailable } from '@/lib/kv';
+import { calendarWindow, parseIsoDay, daysBetween, planCalendarWrites, calendarKeyTtlSeconds } from '@/lib/calendar-dates';   // zzz897
 import { fetchUpcomingBoardMeetings } from '@/lib/earnings/upcoming-meetings';
 
 export const runtime = 'nodejs';
@@ -73,12 +74,11 @@ export async function GET(req: Request) {
   // results) over [today-14d, today+60d], every listed company, not just
   // the Nifty universe the small and mid caps here were never in.
   const calendar: Record<string, Set<string>> = {};   // date → tickers
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const horizon = new Date(today);
-  horizon.setDate(horizon.getDate() + 60);
-  const back = new Date(today);
-  back.setDate(back.getDate() - 14);
+  // zzz897 — the window is anchored on the IST date and compared as YYYY-MM-DD strings (was server-local
+  // Date objects compared with UTC-parsed meeting dates — off by a day on any non-UTC host).
+  const win = calendarWindow(new Date(), 14, 60);
+  const back = parseIsoDay(win.from)!;
+  const horizon = parseIsoDay(win.to)!;
 
   let scanned = 0;
   let withMeeting = 0;
@@ -88,8 +88,7 @@ export async function GET(req: Request) {
     scanned++;
     const meetDate = parseNseDate(m.bm_date);
     if (!meetDate) continue;
-    const md = new Date(meetDate);
-    if (md > horizon || md < back) continue;
+    if (meetDate > win.to || meetDate < win.from) continue;
     if (!calendar[meetDate]) calendar[meetDate] = new Set();
     calendar[meetDate].add(m.bm_symbol);
     withMeeting++;
@@ -97,12 +96,25 @@ export async function GET(req: Request) {
   const tickers = { length: scanned };   // kept for the response shape below
 
   // ── Step 3: Write to KV ────────────────────────────────────────────────
+  // zzz897 — when both exchanges answered, every date in the window is rewritten and a date whose meeting moved
+  // is cleared (it used to keep the old ticker for 30 days); when one exchange failed, new names are merged
+  // into what is stored instead of replacing it, so a one-sided outage cannot drop the other exchange's names.
+  const found: Record<string, string[]> = {};
+  for (const [d, set] of Object.entries(calendar)) found[d] = [...set];
+  const windowDays = daysBetween(win.from, win.to);
+  const existing: Record<string, string[] | null> = {};
+  try {
+    const rows = await kvMGet<string[]>(windowDays.map((d) => `earnings-cal:auto:${d}`));
+    windowDays.forEach((d, i) => { existing[d] = Array.isArray(rows[i]) ? rows[i] : null; });
+  } catch {}
+  const bothOk = up.nse.ok && up.bse.ok && !up.nse.error && !up.bse.error;
+  const plan = withMeeting === 0 ? {} : planCalendarWrites(found, existing, win, bothOk);
   let writes = 0;
-  for (const [date, set] of Object.entries(calendar)) {
-    const tickerList = [...set];
+  let cleared = 0;
+  for (const [date, tickerList] of Object.entries(plan)) {
     try {
-      await kvSet(`earnings-cal:auto:${date}`, tickerList, 30 * 24 * 3600);  // 30 day TTL
-      writes++;
+      if (tickerList.length) { await kvSet(`earnings-cal:auto:${date}`, tickerList, calendarKeyTtlSeconds(date)); writes++; }  // zzz897: until 30 days after the date (was a flat 30 days, shorter than the 60-day look-ahead)
+      else { await kvDel(`earnings-cal:auto:${date}`); cleared++; }
     } catch {}
   }
   // Also write a summary index
@@ -114,6 +126,8 @@ export async function GET(req: Request) {
         scanned_tickers: scanned,
         meetings_found: withMeeting,
         dates_written: writes,
+        dates_cleared: cleared,
+        window: win,
         date_range: Object.keys(calendar).sort(),
         fetch_error: fetchError,
         sources: { nse: up.nse, bse: up.bse },
@@ -134,6 +148,9 @@ export async function GET(req: Request) {
     universe_size: tickers.length,
     meetings_found: withMeeting,
     dates_written: writes,
+    dates_cleared: cleared,
+    merge_mode: bothOk ? 'replace' : 'merge',
+    window: win,
     dates: Object.keys(calendar).sort(),
     sample: Object.entries(calendar).slice(0, 5).map(([d, s]) => ({ date: d, count: s.size, sample: [...s].slice(0, 10) })),
     completed_at: new Date().toISOString(),

@@ -134,13 +134,15 @@ jobs:
               echo "label=archive-to-postgres" >> "$GITHUB_OUTPUT"
               ;;
             "7 18 * * *")
-              echo "path=/api/market/earnings?ingest=1&force=1&month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+              # zzz897 — month of the SLOT (18:07 UTC), not of the run: GitHub often starts this hours late, and a run that
+              # slips past midnight UTC on the last day of a month used to ingest NEXT month and skip the one just ending.
+              echo "path=/api/market/earnings?ingest=1&force=1&month=$(date -u -d '6 hours ago' +%Y-%m)" >> "$GITHUB_OUTPUT"
               echo "label=hub-ingest" >> "$GITHUB_OUTPUT"
               ;;
             "15 18 * * *")
               # zzz748 — next month's board-meeting intimations. Without this the
               # "next 30 days" list was empty whenever it crossed a month boundary.
-              echo "path=/api/market/earnings?ingest=1&force=1&month=$(date -u -d "$(date -u +%Y-%m-01) +1 month" +%Y-%m)" >> "$GITHUB_OUTPUT"
+              echo "path=/api/market/earnings?ingest=1&force=1&month=$(date -u -d "$(date -u -d '6 hours ago' +%Y-%m-01) +1 month" +%Y-%m)" >> "$GITHUB_OUTPUT"
               echo "label=hub-ingest-next" >> "$GITHUB_OUTPUT"
               ;;
             *)

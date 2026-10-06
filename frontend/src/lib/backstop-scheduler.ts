@@ -73,7 +73,8 @@ export function startBackstopScheduler(): void {
         if (!(await kvSetNX(d.lockKey, { at: new Date().toISOString() }, 12 * 3600))) continue;   // another copy took it, or already done
         const t0 = Date.now(); let status = 0; let err: string | null = null;
         try {
-          const r = await fetch(base + d.job.path(new Date()), { method: d.job.method, headers: { 'content-type': 'application/json', 'x-cron-secret': process.env.CRON_SECRET || '' }, signal: AbortSignal.timeout(14 * 60_000) });
+          const r = await fetch(base + d.job.path(d.slot),   // zzz897: month from the SLOT's date, not the clock (a catch-up after midnight UTC on the 1st must still ingest the month that just ended)
+           { method: d.job.method, headers: { 'content-type': 'application/json', 'x-cron-secret': process.env.CRON_SECRET || '' }, signal: AbortSignal.timeout(14 * 60_000) });
           status = r.status; await r.text().catch(() => '');
         } catch (e: any) { err = String(e?.message || e).slice(0, 200); }
         const ok = status >= 200 && status < 300;

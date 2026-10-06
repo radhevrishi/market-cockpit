@@ -13,6 +13,7 @@
 // getting correct data'.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { resolveFyYear } from '@/lib/calendar-dates';
 import { pendingReasonMap, pendingReasonWord } from '@/lib/eo-pending-reason';   // zzz879
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import type { CSSProperties } from 'react';
@@ -1899,7 +1900,7 @@ export default function EarningsOpportunitiesPage() {
             // Expand 2-digit to 4-digit (FY26 → 2026); assume 21st century
             // through 2099. After 2099 the heuristic switches centuries.
             const yy = parseInt(fm[1], 10);
-            fyParsed = yy < 50 ? 2000 + yy : 1900 + yy;
+            fyParsed = resolveFyYear(yy);   // zzz897 — `yy < 50 ? 20yy : 19yy` read FY50 (2050) as 1950
           }
         }
         entries.push({

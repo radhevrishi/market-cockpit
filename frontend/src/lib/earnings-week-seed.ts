@@ -11,6 +11,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { kvGet, isRedisAvailable } from './kv';
+import { daysBetween } from './calendar-dates';
 
 const KV_KEY_PREFIX = 'earnings-cal:auto:';
 
@@ -34,12 +35,10 @@ export async function getCalendarEntriesInRange(
   const out: Array<{ ticker: string; date: string }> = [];
   // Iterate day-by-day across the range — KV doesn't support range scans efficiently
   // but we typically query 6-week ranges max (28 days back + 14 forward).
-  const from = new Date(fromIso);
-  const to = new Date(toIso);
-  for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
-    const iso = d.toISOString().slice(0, 10);
-    const tickers = await getCalendarTickersForDate(iso);
-    for (const t of tickers) out.push({ ticker: t, date: iso });
-  }
+  // zzz897 — pure YYYY-MM-DD stepping (was `new Date(iso)` UTC parse + local setDate, which repeats or skips a
+  // day across a DST change on a non-UTC host), and keys read in parallel.
+  const days = daysBetween(fromIso, toIso, 120);
+  const lists = await Promise.all(days.map((iso) => getCalendarTickersForDate(iso)));
+  days.forEach((iso, i) => { for (const t of lists[i]) out.push({ ticker: t, date: iso }); });
   return out;
 }

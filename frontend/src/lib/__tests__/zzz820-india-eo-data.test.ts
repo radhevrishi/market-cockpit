@@ -270,7 +270,7 @@ describe('8 · feed and export', () => {
   });
   test('hub: a parsed period is believed only if it had ended by the meeting date', () => {
     const hub = read('api', 'market', 'earnings', 'route.ts');
-    assert.match(hub, /quarterEndDate\(q\)/);
+    assert.match(hub, /quarterEndDate\(q(, meetingDate)?\)/);   // zzz897: century resolved against the meeting date
     assert.match(hub, /lagDays >= -1 && lagDays <= 200/);
   });
 });

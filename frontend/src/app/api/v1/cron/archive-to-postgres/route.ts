@@ -6,6 +6,7 @@
 // Safe + idempotent: re-running never duplicates (ON CONFLICT) and never
 // touches the live calendar read-path.
 // GET /api/v1/cron/archive-to-postgres?secret=<CRON_SECRET|token>&months=2&market=india
+import { resolveFyYear, parseQuarterLabel, expectedResultsQuarterOf } from '@/lib/calendar-dates';   // zzz897
 import { NextResponse } from 'next/server';
 import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header first, ?secret= only for old callers
 import { createHash } from 'crypto';
@@ -44,16 +45,14 @@ function deriveFiscal(quarter: string | undefined, resultDate: string): { fy: nu
   if (m) {
     const fq = parseInt(m[1], 10);
     let fy = parseInt(m[2], 10);
-    if (fy < 100) fy += 2000;
+    if (fy < 100) fy = resolveFyYear(fy, new Date(resultDate + 'T00:00:00Z'));   // zzz897 — was `fy += 2000` (FY00 in 2100 → 2000)
     return { fy, fq };
   }
+  // zzz897 — a filing reports the quarter that ENDED before it (a May filing is Q4, not Q1 of the next year), the same
+  // rule the calendar builder uses (expectedResultsQuarterOf). The old fallback used the quarter containing the date.
   const d = new Date(resultDate + 'T00:00:00Z');
-  const mo = d.getUTCMonth() + 1;
-  const yr = d.getUTCFullYear();
-  if (mo >= 4 && mo <= 6) return { fy: yr + 1, fq: 1 };
-  if (mo >= 7 && mo <= 9) return { fy: yr + 1, fq: 2 };
-  if (mo >= 10 && mo <= 12) return { fy: yr + 1, fq: 3 };
-  return { fy: yr, fq: 4 };
+  const p = parseQuarterLabel(expectedResultsQuarterOf(d.getUTCFullYear(), d.getUTCMonth() + 1), d);
+  return p ? { fy: p.fy, fq: p.q } : { fy: d.getUTCFullYear(), fq: 4 };
 }
 
 function checksum(symbol: string, resultDate: string, source: string, fy: number, fq: number): string {

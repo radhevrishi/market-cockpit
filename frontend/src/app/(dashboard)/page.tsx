@@ -26,6 +26,7 @@
 // Those are flagged honestly in the disclosure block at the bottom.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { istMonth, addMonthsYm } from '@/lib/calendar-dates';   // zzz897
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
 // PATCH 1101p — Re-score restored multibagger rows on home page. The /multibagger
@@ -915,11 +916,10 @@ export default function HomeDashboard() {
     const safeDiag = <T,>(url: string, timeoutMs = 15_000) => homeGet<T>(url, timeoutMs, TTL_SLOW, force);
     try {
       const now = new Date();
-      const currentMonth = now.toISOString().slice(0, 7);
-      const nextMonth = (() => {
-        const m = new Date(now); m.setMonth(now.getMonth() + 1);
-        return m.toISOString().slice(0, 7);
-      })();
+      // zzz897 — IST month, and month + 1 without day overflow (setMonth on Jan 31 / Oct 31 jumped to Mar / Dec and
+      // skipped the next month's board meetings entirely).
+      const currentMonth = istMonth(now);
+      const nextMonth = addMonthsYm(currentMonth, 1);
       const [ra, rb, rc] = await Promise.all([
         safeDiag<any>(`/api/market/earnings?market=india&month=${currentMonth}`, 28_000),
         safeDiag<any>(`/api/market/earnings?market=india&month=${nextMonth}`, 28_000),
@@ -959,7 +959,9 @@ export default function HomeDashboard() {
       const allIn7d = all
         .filter((e: any) => e?.resultDate && e?.ticker)
         .map((e: any) => {
-          const dt = new Date(e.resultDate); dt.setHours(0, 0, 0, 0);
+          // zzz897 — YYYY-MM-DD read as a LOCAL day (new Date('YYYY-MM-DD') is UTC midnight = the day before west of UTC)
+          const _p = String(e.resultDate).slice(0, 10).split('-').map(Number);
+          const dt = _p.length === 3 && _p.every(Number.isFinite) ? new Date(_p[0], _p[1] - 1, _p[2]) : new Date(e.resultDate); dt.setHours(0, 0, 0, 0);
           const daysAhead = Math.round((dt.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
           const sym = (e.ticker || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
           return {
@@ -973,7 +975,10 @@ export default function HomeDashboard() {
             onWatchlist: watchSet.has(sym),
           };
         })
-        .filter((e: any) => e._dt >= today && e._dt <= windowEnd);
+        .filter((e: any) => e._dt >= today && e._dt <= windowEnd)
+        // zzz897 — the same company arrives from the month calendar AND /api/v1/calendar; keep one row (earliest date, named row first)
+        .sort((a: any, b: any) => a.daysAhead - b.daysAhead || (b.company && b.company !== b.ticker ? 1 : 0) - (a.company && a.company !== a.ticker ? 1 : 0))
+        .filter((e: any, i: number, arr: any[]) => arr.findIndex((x: any) => String(x.ticker).toUpperCase() === String(e.ticker).toUpperCase()) === i);
       allIn7d.sort((a: any, b: any) => {
         if (a.onCb !== b.onCb) return a.onCb ? -1 : 1;
         if (a.onWatchlist !== b.onWatchlist) return a.onWatchlist ? -1 : 1;

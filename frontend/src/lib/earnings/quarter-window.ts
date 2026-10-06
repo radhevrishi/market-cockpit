@@ -12,28 +12,26 @@
 // cannot pass as this season's filing.
 // ═══════════════════════════════════════════════════════════════════════════
 
-export function quarterEndDate(q: string): Date | null {
-  const m = String(q || '').match(/Q([1-4])\s*FY\s?(\d{2})/i);
-  if (!m) return null;
-  const qn = +m[1];
-  const fy = 2000 + +m[2];           // FY27 ends 31-Mar-2027
-  if (qn === 1) return new Date(Date.UTC(fy - 1, 5, 30));
-  if (qn === 2) return new Date(Date.UTC(fy - 1, 8, 30));
-  if (qn === 3) return new Date(Date.UTC(fy - 1, 11, 31));
-  return new Date(Date.UTC(fy, 2, 31));
+import { parseQuarterLabel, fiscalQuarterEnd, fy2 } from '@/lib/calendar-dates';
+
+/** zzz897 — the two-digit FY is resolved to the century nearest `ref` (was `2000 + yy`, so FY00 in 2100 meant 2000). */
+export function quarterEndDate(q: string, ref: Date = new Date()): Date | null {
+  const p = parseQuarterLabel(q, ref);
+  return p ? fiscalQuarterEnd(p.q, p.fy) : null;
 }
 
+/** zzz897 — Q1 FY00 → Q4 FY99 (was "Q4 FY-1"). */
 export function previousQuarter(q: string): string | null {
   const m = String(q || '').match(/Q([1-4])\s*FY\s?(\d{2})/i);
   if (!m) return null;
   const qn = +m[1], fy = +m[2];
-  return qn === 1 ? `Q4 FY${String(fy - 1).padStart(2, '0')}` : `Q${qn - 1} FY${String(fy).padStart(2, '0')}`;
+  return qn === 1 ? `Q4 FY${fy2(fy - 1)}` : `Q${qn - 1} FY${fy2(fy)}`;
 }
 
 export function isAcceptableQuarter(quarter: string, expected: string, filingDate: Date | null): boolean {
   if (quarter === expected) return true;
   if (!filingDate || quarter !== previousQuarter(expected)) return false;
-  const qEnd = quarterEndDate(quarter);
+  const qEnd = quarterEndDate(quarter, filingDate);
   if (!qEnd) return false;
   const days = (filingDate.getTime() - qEnd.getTime()) / 86_400_000;
   return days >= 0 && days <= 120;

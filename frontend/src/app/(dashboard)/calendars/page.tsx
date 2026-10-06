@@ -1,5 +1,6 @@
 'use client';
 
+import { weekdayOfIso } from '@/lib/calendar-dates';   // zzz897
 import { useEffect, useState } from 'react';
 
 interface EarningsResult {
@@ -216,9 +217,10 @@ export default function CalendarPage() {
   // emits a non-ISO string (e.g. "2026-5-9", "TBD", "").
   const formatShortDate = (dateStr: string) => {
     if (!dateStr) return '—';
-    const d = new Date(dateStr);
+    // zzz897 — a bare YYYY-MM-DD parses as UTC midnight; read it in UTC so viewers west of UTC don't see the day before.
+    const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(dateStr) ? `${dateStr}T00:00:00Z` : dateStr);
     if (!Number.isFinite(d.getTime())) return '—';
-    return `${d.getDate()} ${d.toLocaleDateString('en-US', { month: 'short' })}`;
+    return `${d.getUTCDate()} ${d.toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' })}`;
   };
 
   return (
@@ -412,8 +414,8 @@ export default function CalendarPage() {
                   const upCount = dayResults.filter(r => r.quality === 'Upcoming').length;
                   // AUDIT_100 #43 — distinguish weekend cells from "filing day but nothing reported".
                   // Weekend cells stay grey; weekday-with-no-results gets a faint · glyph.
-                  const cellDate = new Date(cell.dateStr);
-                  const isWeekend = cellDate.getDay() === 0 || cellDate.getDay() === 6;
+                  const cellDow = weekdayOfIso(cell.dateStr);   // zzz897 — time-zone-proof (getDay() on a UTC-parsed date shaded Fri/Sun west of UTC)
+                  const isWeekend = cellDow === 0 || cellDow === 6;
 
                   return (
                     <div key={idx} style={{

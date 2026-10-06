@@ -1,4 +1,5 @@
 import { isAcceptableQuarter, quarterEndDate } from '@/lib/earnings/quarter-window';
+import { fiscalQuarterOf, expectedResultsQuarterOf, istDateIso, istMonth, addDaysIso } from '@/lib/calendar-dates';   // zzz897
 import { NextResponse } from 'next/server';
 import {
   fetchBoardMeetings,
@@ -207,22 +208,13 @@ function containsConditionalBlock(text: string): boolean {
 // QUARTER LOGIC
 // ════════════════════════════════════
 
+// zzz897 — one shared, century-safe implementation (lib/calendar-dates); local getters kept because parseDate builds local dates.
 function getFiscalQuarter(date: Date): string {
-  const month = date.getMonth() + 1;
-  const year = date.getFullYear();
-  if (month >= 4 && month <= 6) return `Q1 FY${(year + 1).toString().slice(2)}`;
-  if (month >= 7 && month <= 9) return `Q2 FY${(year + 1).toString().slice(2)}`;
-  if (month >= 10 && month <= 12) return `Q3 FY${(year + 1).toString().slice(2)}`;
-  return `Q4 FY${year.toString().slice(2)}`;
+  return fiscalQuarterOf(date.getFullYear(), date.getMonth() + 1);
 }
 
 function getExpectedQuarter(filingDate: Date): string {
-  const m = filingDate.getMonth() + 1;
-  const y = filingDate.getFullYear();
-  if (m >= 1 && m <= 3) return `Q3 FY${y.toString().slice(2)}`;
-  if (m >= 4 && m <= 6) return `Q4 FY${y.toString().slice(2)}`;
-  if (m >= 7 && m <= 9) return `Q1 FY${(y + 1).toString().slice(2)}`;
-  return `Q2 FY${(y + 1).toString().slice(2)}`;
+  return expectedResultsQuarterOf(filingDate.getFullYear(), filingDate.getMonth() + 1);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -273,7 +265,7 @@ function getResultsQuarter(meetingDate: Date, desc: string): string {
       // outside 1–12 (a US-style "06/30/2026" read day-first) used to roll
       // the Date forward into a later year; it is now rejected outright.
       const q = getFiscalQuarter(new Date(yearStr, month - 1, 1));
-      const qEnd = quarterEndDate(q);
+      const qEnd = quarterEndDate(q, meetingDate);
       const lagDays = qEnd ? (meetingDate.getTime() - qEnd.getTime()) / 86_400_000 : NaN;
       if (Number.isFinite(lagDays) && lagDays >= -1 && lagDays <= 200) return q;
     }
@@ -544,7 +536,7 @@ export async function GET(request: Request) {
   // "264 filings" (force=1, recovery ran) and "No filings" (cached empty served).
   // Past months are immutable, so an empty cache entry for one is never the
   // truth we want to serve; fall through to live + recovery instead.
-  const _isPastMonthTop = !!month && month < new Date().toISOString().slice(0, 7);
+  const _isPastMonthTop = !!month && month < istMonth();
   const _cachedEmptyPast = _isPastMonthTop && (!cached?.data?.results || cached.data.results.length === 0);
   if (!force && cached && Date.now() - cached.ts < EARNINGS_ROUTE_CACHE_TTL && !_cachedEmptyPast) {
     return NextResponse.json(cached.data, {
@@ -564,8 +556,10 @@ export async function GET(request: Request) {
       fromDate = new Date(year, m - 1, 1);
       toDate = new Date(year, m, 0);
     } else {
-      fromDate = new Date(now.getFullYear(), now.getMonth(), 1);
-      toDate = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      // zzz897 — the current month is India's (IST), not the server clock's.
+      const [cy, cm] = istMonth(now).split('-').map(Number);
+      fromDate = new Date(cy, cm - 1, 1);
+      toDate = new Date(cy, cm, 0);
     }
 
     const expectedQuarter = getExpectedQuarter(fromDate);
@@ -580,7 +574,7 @@ export async function GET(request: Request) {
     // ════════════════════════════════════════════════════════════════════
     const ingestMode = searchParams.get('ingest') === '1';
     if (!ingestMode && dbAvailable()) {
-      const monthKey = month || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const monthKey = month || istMonth(now);   // zzz897
       const _base = {
         quarter: expectedQuarter,
         dateRange: { from: fromDate.toISOString().split('T')[0], to: toDate.toISOString().split('T')[0] },
@@ -1193,14 +1187,17 @@ export async function GET(request: Request) {
     // Past dates rely entirely on actual NSE/BSE filing confirmation (Sources A-D).
     // This prevents GARUDA-style cards (scheduled meeting but no actual filing
     // on that date) from polluting historical date views.
-    const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
-    const todayIsoStr = today.toISOString().slice(0, 10);
-    const tomorrowIsoStr = tomorrow.toISOString().slice(0, 10);
+    // zzz897 — "today" is the IST date (the UTC date is still yesterday from 00:00 to 05:30 IST).
+    const todayIsoStr = istDateIso();
+    const tomorrowIsoStr = addDaysIso(todayIsoStr, 1);
     let kvCalendarAdded = 0;
     try {
       const fromIso = fromDate.toISOString().slice(0, 10);
       const toIso = toDate.toISOString().slice(0, 10);
-      const calEntries = await getCalendarEntriesInRange(fromIso, toIso);
+      // zzz897 — only today/tomorrow are ever used below, so only those keys are read (was every day of the month, one by one).
+      const lo = fromIso > todayIsoStr ? fromIso : todayIsoStr;
+      const hi = toIso < tomorrowIsoStr ? toIso : tomorrowIsoStr;
+      const calEntries = lo <= hi ? await getCalendarEntriesInRange(lo, hi) : [];
       for (const entry of calEntries) {
         const ticker = entry.ticker;
         if (eventsMap.has(ticker)) continue;
@@ -1435,7 +1432,7 @@ export async function GET(request: Request) {
     // PAST month (NSE rolled it out of its recent window), rebuild from the
     // KV month snapshot or the per-date graded:v8 caches so the calendar
     // doesn't go blank. Current month is always authoritative from live.
-    const isPastMonth = !!month && month < new Date().toISOString().slice(0, 7);
+    const isPastMonth = !!month && month < istMonth();
     if (results.length === 0 && isPastMonth && market === 'india' && isRedisAvailable()) {
       try {
         let recovered: any[] = [];

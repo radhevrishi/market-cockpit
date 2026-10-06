@@ -22,6 +22,7 @@
 //   3. Applies gradeRow logic, sorts into tiers, returns OpportunitiesPayload
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { quarterEndDate as _quarterEndDateZ897 } from '@/lib/earnings/quarter-window';   // zzz897
 import { NextResponse } from 'next/server';
 import { gradedKey, gradedKeyCandidates, GRADED_CACHE_VERSION } from '@/lib/graded-cache-key';
 import { regradeIndiaDayPayload, versionOfGradedKey } from '@/lib/india-regrade';
@@ -149,11 +150,9 @@ function _isoFromQuarterLabel(label: any): string | null {
 
 /** zzz800 — "Q4 FY26" → "2026-03-31" (the quarter's last day), or null. */
 function _quarterEndFromFyLabel(label: any): string | null {
-  const m = String(label || '').match(/Q([1-4])\s*FY\s?(\d{2})/i);
-  if (!m) return null;
-  const qn = +m[1], fy = 2000 + +m[2];
-  const d = qn === 1 ? Date.UTC(fy - 1, 5, 30) : qn === 2 ? Date.UTC(fy - 1, 8, 30) : qn === 3 ? Date.UTC(fy - 1, 11, 31) : Date.UTC(fy, 2, 31);
-  return new Date(d).toISOString().slice(0, 10);
+  // zzz897 — century resolved against today (was `2000 + yy`)
+  const d = _quarterEndDateZ897(String(label || ''));
+  return d ? d.toISOString().slice(0, 10) : null;
 }
 
 // zzz878 — a rebuilt day with ZERO cards may replace a saved day that had cards ONLY when every name on the day's calendar was moved

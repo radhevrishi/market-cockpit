@@ -21,6 +21,7 @@
 //   6. Display unified institutional report — no questions asked.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { istDateIso } from '@/lib/calendar-dates';   // zzz897
 import { useState, useCallback, useEffect } from 'react';
 import Link from 'next/link';
 import {
@@ -508,14 +509,16 @@ export default function AutoValuationPage() {
         if (!r.ok || cancelled) return;
         const j = await r.json();
         const map: Record<string, string> = {};
-        // Calendar buckets: { 'YYYY-MM-DD': [{ticker, ...}, ...] }
-        const buckets = j?.buckets || j?.data || {};
-        if (buckets && typeof buckets === 'object') {
-          for (const [date, list] of Object.entries(buckets)) {
-            if (!Array.isArray(list)) continue;
+        // zzz897 — company events are keyed by date in `by_date` ('YYYY-MM-DD' → [{ticker,…}]). `buckets` is keyed
+        // 'tomorrow' / 'this_week' / 'this_month', so reading it as dates stored a bucket NAME as the earnings date.
+        const byDate = j?.by_date || {};
+        if (byDate && typeof byDate === 'object') {
+          for (const date of Object.keys(byDate).sort()) {
+            const list = byDate[date];
+            if (!Array.isArray(list) || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
             for (const item of list) {
               const t = String((item as any)?.ticker || (item as any)?.symbol || '').toUpperCase();
-              if (t && !map[t]) map[t] = date;  // first occurrence wins (earliest date)
+              if (t && !map[t]) map[t] = date;  // dates walked in order, so first occurrence = earliest date
             }
           }
         }
@@ -1076,7 +1079,7 @@ export default function AutoValuationPage() {
                 // PATCH 0855 — Earnings proximity chip
                 const earnDate = upcomingEarningsByTicker[ticker];
                 if (earnDate) {
-                  const daysOut = Math.round((new Date(earnDate).getTime() - Date.now()) / 86400000);
+                  const daysOut = Math.round((Date.parse(`${earnDate}T00:00:00Z`) - Date.parse(`${istDateIso()}T00:00:00Z`)) / 86400000);   // zzz897 — whole IST days (a today-dated filing read as -1 after 05:30 IST)
                   if (daysOut >= 0 && daysOut <= 14) {
                     const eColor = daysOut <= 3 ? '#EF4444' : daysOut <= 7 ? '#F59E0B' : '#22D3EE';
                     chips.push(

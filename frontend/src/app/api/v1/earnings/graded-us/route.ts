@@ -27,6 +27,7 @@
 // before the filing date is treated as "XBRL pending", never graded.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { resolveFyYear } from '@/lib/calendar-dates';   // zzz897
 import { guidesNextQuarterBelowThisOne } from '@/lib/us-guidance-figures';
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
@@ -379,12 +380,12 @@ function withEstimates(
     const y = /^FY(\d{2})$/.exec(f.period_label);
     if (m) {
       const q = Number(m[1]);
-      const fy = m[2] ? 2000 + Number(m[2]) : null;
+      const fy = m[2] ? resolveFyYear(Number(m[2])) : null;   // zzz897
       if (fy == null) return q > fiscal_q ? q - fiscal_q : q - fiscal_q + 4;   // unlabelled: the next one round
       return (fy - fiscal_fy) * 4 + (q - fiscal_q);
     }
     if (y) {
-      const fy = 2000 + Number(y[1]);
+      const fy = resolveFyYear(Number(y[1]));
       // A fiscal year ends with its Q4.
       return (fy - fiscal_fy) * 4 + (4 - fiscal_q);
     }
