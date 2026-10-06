@@ -39,8 +39,11 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install
         run: npm ci --no-audit --no-fund --legacy-peer-deps
+      # Reports high/critical advisories in runtime packages. continue-on-error keeps known,
+      # not-yet-fixable advisories from blocking a deploy, but the step still shows as failed.
       - name: Security audit (high and critical only, report)
-        run: npm audit --omit=dev --audit-level=high || echo "::warning::npm audit found high/critical advisories — see the log"
+        continue-on-error: true
+        run: npm audit --omit=dev --audit-level=high
       - name: Tests
         run: node scripts/run-tests.mjs
       - name: Type-check ratchet
