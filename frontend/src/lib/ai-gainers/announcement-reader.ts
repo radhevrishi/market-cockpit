@@ -34,6 +34,8 @@
 // find it in a share-transfer notice.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { quoteMostlyInDocument } from '../quote-coverage';
+import { fenceDoc } from '@/lib/ai-fence';   // zzz883: document text is data, never instructions
 import {
   OPERATING_CATALYSTS, CORPORATE_CATALYSTS, NEGATIVE_CATALYSTS,
   type CatalystType, type Materiality, type StructuralDuration,
@@ -105,7 +107,8 @@ export function quoteIsInDocument(documentText: string, quote: string): boolean 
   // Match on a leading window rather than the whole quote: a model may append
   // a clause from the next sentence, which is a formatting slip rather than a
   // fabrication. A 60-character run that is absent IS a fabrication.
-  return normaliseForQuoteMatch(documentText).includes(q.slice(0, 60));
+  // zzz883: the matched part must cover 85% of the quote — the first 60 characters alone let the end (the number) be invented
+  return quoteMostlyInDocument(normaliseForQuoteMatch(documentText), q);
 }
 
 const TOOL = {
@@ -253,7 +256,7 @@ export async function readAnnouncementDetailed(
       tool_choice: { type: 'tool', name: TOOL.name },
       messages: [{
         role: 'user',
-        content: `${a.symbol}${a.subject ? ` — ${a.subject}` : ''}\n\n${text.slice(0, READ_CHARS)}`,
+        content: `${a.symbol}${a.subject ? ` — ${a.subject}` : ''}\n\n${fenceDoc(text.slice(0, READ_CHARS))}`,
       }],
     }, { signal: AbortSignal.timeout(40_000) });
     if (!resp.ok) return fail;

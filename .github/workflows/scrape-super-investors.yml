@@ -60,7 +60,7 @@ jobs:
           def http_post(url, payload, timeout=30):
               data = json.dumps(payload).encode('utf-8')
               req = urllib.request.Request(url, data=data, method='POST',
-                  headers={'Content-Type': 'application/json'})
+                  headers={'Content-Type': 'application/json', 'x-cron-secret': SECRET})
               with urllib.request.urlopen(req, timeout=timeout) as r:
                   return r.status, r.read().decode('utf-8', errors='replace')
 
@@ -166,7 +166,7 @@ jobs:
               print('No batch to send — bailing without POSTing.')
               sys.exit(0)
           # ── 4. POST batch to ingest ─────────────────────────────────────
-          target = f'{BASE}/api/v1/super-investor-holdings/ingest?secret={urllib.parse.quote(SECRET)}'
+          target = f'{BASE}/api/v1/super-investor-holdings/ingest'   # zzz883: secret in the header
           code, body = http_post(target, {'batch': batch})
           print('ingest:', code, body[:400])
           sys.exit(0 if code == 200 else 1)

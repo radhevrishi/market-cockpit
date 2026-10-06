@@ -19,6 +19,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextRequest, NextResponse } from 'next/server';
+import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header first, ?secret= only for old callers
 import { dispatchAlert } from '@/lib/alert-dispatcher';
 import { internalBase } from '@/lib/internal-base';
 
@@ -41,7 +42,7 @@ async function check(req: NextRequest): Promise<NextResponse | null> {
       { status: 503 },
     );
   }
-  const secret = req.nextUrl.searchParams.get('secret');
+  const secret = secretFromRequest(req);
   if (secret !== expected) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }

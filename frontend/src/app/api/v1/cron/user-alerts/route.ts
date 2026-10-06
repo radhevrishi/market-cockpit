@@ -13,6 +13,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
+import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header first, ?secret= only for old callers
 import { kvGet, kvSet } from '@/lib/kv';
 import { dispatchAlert } from '@/lib/alert-dispatcher';
 
@@ -52,7 +53,7 @@ function ema(c: number[], w: number): number | null {
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const secret = searchParams.get('secret');
+  const secret = secretFromRequest(request);
   if (process.env.CRON_SECRET && secret !== process.env.CRON_SECRET) {
     return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
   }

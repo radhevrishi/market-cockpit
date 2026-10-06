@@ -27,6 +27,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextRequest, NextResponse } from 'next/server';
+import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header first, ?secret= only for old callers
 import { kvGet, kvSet, kvDel, isRedisAvailable } from '@/lib/kv';
 import { extractGuidance, guidanceSummary } from '@/lib/company-intel/guidance-extractor';
 // PATCH 0458 — maintainIndex lives in /lib now; route files can't export helpers.
@@ -54,7 +55,7 @@ const TTL_S = 365 * 24 * 3600; // 1 year
 // Background workers should pass the secret; users hitting the UI in a
 // browser are fine because the Referer header is automatic.
 function checkMutation(req: NextRequest): NextResponse | null {
-  const secret = req.nextUrl.searchParams.get('secret');
+  const secret = secretFromRequest(req);
   const expected = process.env.COMPANY_INTEL_SECRET || process.env.CRON_SECRET;
   if (expected && secret === expected) return null;
   const ref = req.headers.get('referer') || '';

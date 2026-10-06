@@ -16,6 +16,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
+import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header first, ?secret= only for old callers
 import { kvSet, isRedisAvailable } from '@/lib/kv';
 import { fetchUpcomingBoardMeetings } from '@/lib/earnings/upcoming-meetings';
 
@@ -46,9 +47,9 @@ export async function GET(req: Request) {
   // env in production rejects; Vercel Cron header bypasses for the cron
   // pipeline. Dev / preview without env still permits ad-hoc triggers.
   const { searchParams } = new URL(req.url);
-  const provided = searchParams.get('secret') || '';
+  const provided = secretFromRequest(req) || '';
   const expected = process.env.CRON_SECRET || '';
-  const vercelHeader = req.headers.get('x-vercel-cron') || req.headers.get('x-vercel-signature') || '';
+  const vercelHeader = '' /* zzz883: x-vercel-cron no longer trusted (forgeable on Railway) */;
 
   // PATCH 1041 — CRON_SECRET is unset on this deploy and the GitHub Actions
   // bridge can't send a Vercel header, so the old code 503'd every cron run and

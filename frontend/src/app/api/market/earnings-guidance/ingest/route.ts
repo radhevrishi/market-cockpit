@@ -26,6 +26,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header first, ?secret= only for old callers
 import { kvGet, kvSet, kvSetNX, kvSwap, kvDel } from '@/lib/kv';
 import { resolveScreenerSymbol } from '@/lib/symbolMaster';
 
@@ -810,7 +811,7 @@ function checkSecret(request: NextRequest): NextResponse | null {
   const required = process.env.CRON_SECRET || process.env.MC_BOT_SECRET;
   if (!required) return NextResponse.json({ error: 'cron-secret-unset' }, { status: 503 });
   const { searchParams } = new URL(request.url);
-  const secret = searchParams.get('secret');
+  const secret = secretFromRequest(request);
   if (secret !== required) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   return null;
 }

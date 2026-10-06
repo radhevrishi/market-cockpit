@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header first, ?secret= only for old callers
 // PATCH 0715 — centralized IST helpers.
 import { istNow as _istNow } from '@/lib/market-hours';
 import { ImageResponse } from 'next/og';
@@ -991,7 +992,7 @@ export async function GET(request: Request) {
   const diagnostics: Record<string, any> = { timestamp: new Date().toISOString(), steps: [] };
 
   const { searchParams } = new URL(request.url);
-  const secret = searchParams.get('secret');
+  const secret = secretFromRequest(request);
   const watchlistParam = searchParams.get('watchlist');
 
   console.log(`[WATCHLIST] Incoming request: mode=${searchParams.get('mode')}, secret=${secret ? 'provided' : 'missing'}`);
@@ -999,7 +1000,7 @@ export async function GET(request: Request) {
 
   // Fail-closed when both BOT_SECRET and CRON_SECRET are unset; allow Vercel-cron header bypass.
   // PATCH 1095 — accept BOT_SECRET OR CRON_SECRET so vercel-cron-bridge.yml works uniformly.
-  const vercelCron = request.headers.get('x-vercel-cron') || request.headers.get('x-vercel-signature') || '';
+  const vercelCron = '' /* zzz883: x-vercel-cron no longer trusted (forgeable on Railway) */;
   if (!BOT_SECRET && !CRON_SECRET) {
     if (!vercelCron) {
       return NextResponse.json({ error: 'server-misconfigured: MC_BOT_SECRET / CRON_SECRET not set' }, { status: 503 });

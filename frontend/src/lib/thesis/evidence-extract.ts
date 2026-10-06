@@ -41,6 +41,8 @@
 // browser. The model call is the only asynchronous step.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { quoteMostlyInDocument } from '../quote-coverage';
+import { fenceDoc } from '@/lib/ai-fence';   // zzz883: document text is data, never instructions
 import type { VarKey } from './taxonomy';
 import { normaliseForQuoteMatch } from '@/lib/ai-gainers/announcement-reader';
 import { anthropicMessages } from '@/lib/anthropic-meter';
@@ -271,7 +273,7 @@ export async function extractStructuralEvents(
   if (!capped.length) return { events: spoken, pipeline };
 
   const prompt = `${ticker}\n\n` + capped
-    .map((p, i) => `[${i + 1}] FAMILY: ${p.family} | SOURCE: ${p.doc}\n${p.text}`)
+    .map((p, i) => `[${i + 1}] FAMILY: ${p.family} | SOURCE: ${p.doc}\n${fenceDoc(p.text)}`)
     .join('\n\n');
 
   let raw: any[] = [];
@@ -339,7 +341,8 @@ export function validateEvents(raw: any[], passages: Passage[]): { kept: Structu
     // The first 60 normalised characters must be present verbatim. Long
     // quotes drift at the end (a trailing clause dropped) far more often than
     // at the start, and 60 characters is already too specific to fake.
-    if (!corpus.includes(q.slice(0, 60))) { drop('evidence sentence not found in the document'); continue; }
+    // zzz883: 85% of the evidence sentence must be in the document, not just its first 60 characters
+    if (!quoteMostlyInDocument(corpus, q)) { drop('evidence sentence not found in the document'); continue; }
 
     const before = e?.before == null ? null : String(e.before).trim() || null;
     const after = e?.after == null ? null : String(e.after).trim() || null;

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header first, ?secret= only for old callers
 import { ImageResponse } from 'next/og';
 import React from 'react';
 // PATCH 0715 — centralized IST helpers.
@@ -1525,7 +1526,7 @@ export async function GET(request: Request) {
   const diagnostics: Record<string, any> = { timestamp: new Date().toISOString(), steps: [] };
 
   const { searchParams } = new URL(request.url);
-  const secret = searchParams.get('secret');
+  const secret = secretFromRequest(request);
 
   console.log(`[BOT] Incoming request: mode=${searchParams.get('mode')}, secret=${secret ? 'provided' : 'missing'}`);
   diagnostics.steps.push('request_received');
@@ -1533,7 +1534,7 @@ export async function GET(request: Request) {
   // Fail-closed: when env is unset, refuse all requests rather than
   // letting an empty `?secret=` match an empty `BOT_SECRET`. Vercel cron
   // is allowed to bypass via its auto-added x-vercel-cron header.
-  const vercelCron = request.headers.get('x-vercel-cron') || request.headers.get('x-vercel-signature') || '';
+  const vercelCron = '' /* zzz883: x-vercel-cron no longer trusted (forgeable on Railway) */;
   // PATCH 1095 — accept BOT_SECRET OR CRON_SECRET. Either is sufficient.
   // Server is misconfigured only when BOTH are unset (no auth available).
   if (!BOT_SECRET && !CRON_SECRET) {

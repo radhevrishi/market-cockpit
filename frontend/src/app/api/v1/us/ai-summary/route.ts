@@ -25,6 +25,7 @@
 //     endpoint says so plainly and the card shows the documents instead.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { fenceDoc } from '@/lib/ai-fence';   // zzz883: document text is data, never instructions
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { persistUsReading } from '@/lib/thesis/us-evidence';
@@ -320,7 +321,7 @@ export async function GET(req: NextRequest) {
       tool_choice: { type: 'tool', name: SUMMARY_TOOL.name },
       messages: [{
         role: 'user',
-        content: `Earnings press release${ticker ? ` for ${ticker}` : ''} — read it and call file_earnings_summary.\n\n<release>\n${clipped}\n</release>`,
+        content: `Earnings press release${ticker ? ` for ${ticker}` : ''} — read it and call file_earnings_summary.\n\n${fenceDoc(clipped)}`,
       }],
     }, { signal: AbortSignal.timeout(50_000) });
     if (!resp.ok) {

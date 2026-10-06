@@ -3,6 +3,7 @@
 // after market close + post-call digest window.
 
 import { NextRequest, NextResponse } from 'next/server';
+import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header first, ?secret= only for old callers
 import { railwaySelfFetch } from '@/lib/railway-self-fetch'; // PATCH 0985
 
 // PATCH 0452 P0-7 — Require CRON_SECRET env; no hardcoded fallback.
@@ -16,7 +17,7 @@ export async function GET(req: NextRequest) {
   if (!SECRET) {
     return NextResponse.json({ error: 'CRON_SECRET env not configured on server' }, { status: 503 });
   }
-  const secret = req.nextUrl.searchParams.get('secret');
+  const secret = secretFromRequest(req);
   if (secret !== SECRET) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }

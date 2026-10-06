@@ -1,6 +1,7 @@
 // Probe: does FMP cover Indian earnings for the last N days (free backfill source)?
 // Read-only, no writes. GET /api/v1/admin/fmp-probe?secret=mc-fmp-1043&days=95
 import { NextResponse } from 'next/server';
+import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header first, ?secret= only for old callers
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -10,7 +11,7 @@ const ONESHOT = 'mc-fmp-1043';
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const provided = searchParams.get('secret') || '';
+  const provided = secretFromRequest(req) || '';
   const expected = process.env.CRON_SECRET || '';
   if (provided !== ONESHOT && expected !== '' && provided !== expected) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });

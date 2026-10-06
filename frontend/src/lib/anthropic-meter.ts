@@ -46,7 +46,8 @@
 // figures comparable.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
+import { withUntrustedRule } from './ai-fence';
+import { kvGet, kvSet, isRedisAvailable, kvIncrByFloat } from '@/lib/kv';
 
 export const METER_VERSION = 'v1';
 
@@ -201,6 +202,9 @@ async function record(feature: string, usd: number, u: Usage | null, blocked: bo
   const month = monthOf();
   const shard = Math.floor(Math.random() * SHARDS);
   const key = shardKey(month, shard);
+  // zzz883: an ATOMIC monthly total next to the per-feature shards — the shards can lose an update when two calls land together,
+  // the total cannot, and the spend cap reads the larger of the two
+  if (usd > 0) await kvIncrByFloat(totalKey(month), usd, SHARD_TTL_S).catch(() => null);
   try {
     const cur = (await kvGet<SpendLedger>(key)) || emptyLedger(month);
     await kvSet(key, applyCall(cur, feature, usd, u, new Date().toISOString(), blocked, failure), SHARD_TTL_S);
@@ -216,10 +220,20 @@ async function record(feature: string, usd: number, u: Usage | null, blocked: bo
 
 export interface GateResult { allowed: boolean; spent: number; cap: number; message?: string }
 
+const totalKey = (month: string) => `anthropic:spend-total:${METER_VERSION}:${month}`;
+let lastSpent: { month: string; usd: number } | null = null;
 export async function spendGate(): Promise<GateResult> {
   const cap = monthlyCapUsd();
   let spent = 0;
-  try { spent = (await readSpend()).total_usd; } catch { spent = 0; }
+  const month = monthOf();
+  try {
+    const [led, tot] = await Promise.all([readSpend(), kvGet<number | string>(totalKey(month)).catch(() => null)]);
+    spent = Math.max(led.total_usd, Number(tot) || 0);
+    lastSpent = { month, usd: spent };
+  } catch {
+    // zzz883: a failed read no longer means "$0 spent" — the last known figure this server saw is used
+    spent = lastSpent && lastSpent.month === month ? lastSpent.usd : 0;
+  }
   if (spent >= cap) {
     return { allowed: false, spent, cap, message: `Monthly AI cap reached ($${spent.toFixed(2)} of $${cap}) — raise AI_MONTHLY_CAP_USD in Railway to continue` };
   }
@@ -323,6 +337,8 @@ export function fromOpenAIResponse(j: any): Record<string, any> {
  * 402 with `{ error: { type: 'spend_cap', message } }`.
  */
 export async function anthropicMessages(feature: string, body: MessagesBody, opts: { signal?: AbortSignal; apiKey?: string; anthropicOnly?: boolean } = {}): Promise<Response> {
+  // zzz883: every model call carries the untrusted-data rule in its system prompt
+  if (feature !== 'health-probe') body = { ...body, system: withUntrustedRule((body as any).system) as any };
   const prov = provider();
   // anthropicOnly: a request that only the Messages API can carry (a native
   // PDF `document` block for OCR) is never translated to Chat Completions,

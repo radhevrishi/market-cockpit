@@ -31,6 +31,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextRequest, NextResponse } from 'next/server';
+import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header first, ?secret= only for old callers
 import { kvSet, kvGet } from '@/lib/kv';
 import { SUPER_INVESTORS } from '@/lib/super-investors';
 
@@ -290,7 +291,7 @@ async function refresh(force: boolean): Promise<{
 }
 
 export async function GET(req: NextRequest) {
-  const denied = await check(req.nextUrl.searchParams.get('secret'));
+  const denied = await check(secretFromRequest(req));
   if (denied) return denied;
   const force = req.nextUrl.searchParams.get('force') === '1';
   const body = await refresh(force);
@@ -298,7 +299,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const denied = await check(req.nextUrl.searchParams.get('secret'));
+  const denied = await check(secretFromRequest(req));
   if (denied) return denied;
   const force = req.nextUrl.searchParams.get('force') === '1';
   const body = await refresh(force);

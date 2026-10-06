@@ -16,6 +16,7 @@
 // by /api/v1/cron/* routes).
 
 import { NextRequest, NextResponse } from 'next/server';
+import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header first, ?secret= only for old callers
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 
 type SourceTier = 'PRIMARY' | 'SPECIALIST' | 'SECONDARY' | 'AGGREGATOR';
@@ -39,7 +40,7 @@ function requireSecret(req: NextRequest): boolean {
   // env in production rejects; missing env in development still permits
   // local testing.
   if (!expected) return process.env.NODE_ENV !== 'production';
-  return req.nextUrl.searchParams.get('secret') === expected;
+  return secretFromRequest(req) === expected;
 }
 
 function normalizeDomain(d: string): string {

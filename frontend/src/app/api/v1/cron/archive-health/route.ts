@@ -4,6 +4,7 @@
 // Optional Telegram alert when TELEGRAM_BOT_TOKEN_EARNINGS + TELEGRAM_CHAT_ID set.
 // GET /api/v1/cron/archive-health?secret=<CRON_SECRET|token>&days=45&alert=1
 import { NextResponse } from 'next/server';
+import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header first, ?secret= only for old callers
 import { getPool, dbAvailable } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -36,9 +37,9 @@ async function telegram(text: string): Promise<boolean> {
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const provided = searchParams.get('secret') || '';
+  const provided = secretFromRequest(req) || '';
   const expected = process.env.CRON_SECRET || '';
-  const vercelCron = req.headers.get('x-vercel-cron');
+  const vercelCron = null /* zzz883: x-vercel-cron no longer trusted (forgeable on Railway) */;
   if (!vercelCron && provided !== ONESHOT && expected !== '' && provided !== expected) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }

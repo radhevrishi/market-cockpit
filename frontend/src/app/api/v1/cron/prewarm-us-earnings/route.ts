@@ -38,6 +38,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextRequest, NextResponse } from 'next/server';
+import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header first, ?secret= only for old callers
 import { railwaySelfFetch } from '@/lib/railway-self-fetch';
 import { windowSessions } from '@/lib/us-merge';
 import { usEasternDate } from '@/lib/us-earnings-dates';
@@ -73,7 +74,7 @@ function etToday(): string {
 
 export async function GET(req: NextRequest) {
   const u = new URL(req.url);
-  const secret = u.searchParams.get('secret') || req.headers.get('x-cron-secret') || '';
+  const secret = secretFromRequest(req) || req.headers.get('x-cron-secret') || '';
   const expected = process.env.CRON_SECRET || '';
   if (!expected || secret !== expected) {
     return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });

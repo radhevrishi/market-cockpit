@@ -23,7 +23,19 @@ export async function register() {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input?.url;
       if (url && /^https?:\/\//i.test(url)) {
         const u = new URL(url);
-        if ((own.has(u.hostname) || u.hostname.endsWith('.railway.internal')) && isProtectedApi(u.pathname)) {
+        const isOwn = own.has(u.hostname) || u.hostname.endsWith('.railway.internal');
+        // zzz883 security: a call to THIS app that carries ?secret= gets it moved into the x-cron-secret header, so the secret
+        // never appears in a URL (access logs). Only for this app's own host; other hosts are never touched.
+        if (isOwn && u.searchParams.has('secret')) {
+          const sec = u.searchParams.get('secret') || '';
+          u.searchParams.delete('secret');
+          const headers = new Headers(init?.headers || (typeof input === 'object' && !(input instanceof URL) ? input.headers : undefined));
+          if (sec && !headers.has('x-cron-secret')) headers.set('x-cron-secret', sec);
+          if (isProtectedApi(u.pathname) && !headers.has('x-mc-key')) headers.set('x-mc-key', key);
+          const req2 = typeof input === 'object' && !(input instanceof URL) ? { method: input.method, body: (input as any).body } : {};
+          return orig(u.toString(), { ...req2, ...(init || {}), headers });
+        }
+        if (isOwn && isProtectedApi(u.pathname)) {
           const headers = new Headers(init?.headers || (typeof input === 'object' && !(input instanceof URL) ? input.headers : undefined));
           if (!headers.has('x-mc-key')) headers.set('x-mc-key', key);
           return orig(input, { ...(init || {}), headers });

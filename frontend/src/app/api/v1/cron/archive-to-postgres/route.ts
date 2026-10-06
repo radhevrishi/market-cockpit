@@ -7,6 +7,7 @@
 // touches the live calendar read-path.
 // GET /api/v1/cron/archive-to-postgres?secret=<CRON_SECRET|token>&months=2&market=india
 import { NextResponse } from 'next/server';
+import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header first, ?secret= only for old callers
 import { createHash } from 'crypto';
 import { kvGet } from '@/lib/kv';
 import { getPool, dbAvailable } from '@/lib/db';
@@ -72,9 +73,9 @@ async function chunkedInsert(pool: any, rows: any[][], build: (offset: number, b
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const provided = searchParams.get('secret') || '';
+  const provided = secretFromRequest(req) || '';
   const expected = process.env.CRON_SECRET || '';
-  const vercelCron = req.headers.get('x-vercel-cron');
+  const vercelCron = null /* zzz883: x-vercel-cron no longer trusted (forgeable on Railway) */;
   // Allow when: cron header present, one-shot token, matching secret, OR no
   // CRON_SECRET configured on the server (consistent with the other warming
   // crons, which run open when unset). Only block a wrong secret when one is set.

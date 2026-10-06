@@ -17,7 +17,7 @@ name: Book Watch
 #                     prints ~16:00–19:00 IST reaches you the same evening
 #                     instead of waiting for the next morning run.
 #
-# Endpoints are secret-gated; the secret is passed as a ?secret= URL param.
+# Endpoints are secret-gated; the secret is sent in the x-cron-secret header (zzz883).
 # Required secret: CRON_SECRET (same value as the Railway env var).
 # Optional secret: CRON_BASE_URL (defaults to the live Railway deployment).
 # Push delivery (Slack/SMTP/webhook/Telegram) lights up when those env vars are
@@ -93,16 +93,16 @@ jobs:
           # Pre-warm the server bench before a book-watch evaluation so it reads fresh.
           if [ "${{ steps.route.outputs.prewarm }}" = "yes" ]; then
             curl -s -o /dev/null -w "prewarm refresh-bench %{http_code}\n" --max-time 60 \
-              -X GET "$BASE/api/v1/cron/refresh-bench?secret=$CRON_SECRET" || true
+              -X GET -H "x-cron-secret: $CRON_SECRET" "$BASE/api/v1/cron/refresh-bench" || true
           fi
           PATH_PART="${{ steps.route.outputs.path }}"
           METHOD="${{ steps.route.outputs.method }}"
           LABEL="${{ steps.route.outputs.label }}"
           echo "label=$LABEL" >> "$GITHUB_OUTPUT"
-          URL="$BASE$PATH_PART?secret=$CRON_SECRET"
+          URL="$BASE$PATH_PART"   # zzz883: the secret goes in the x-cron-secret header, never the URL
           echo "> $METHOD $BASE$PATH_PART  (label=$LABEL)"
           STATUS=$(curl -s -o /tmp/response.json -w "%{http_code}" -X "$METHOD" \
-            -H 'Content-Type: application/json' --max-time 90 "$URL" || echo "000")
+            -H 'Content-Type: application/json' -H "x-cron-secret: $CRON_SECRET" --max-time 90 "$URL" || echo "000")
           echo "- HTTP $STATUS"
           echo "status=$STATUS" >> "$GITHUB_OUTPUT"
           head -c 800 /tmp/response.json || true

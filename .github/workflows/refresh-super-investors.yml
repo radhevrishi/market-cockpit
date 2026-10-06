@@ -33,7 +33,7 @@ jobs:
           echo "base: $BASE  force: $FORCE"
           CODE=000
           for i in 1 2 3; do
-            CODE=$(curl -s -m 60 -X POST "$BASE/api/v1/cron/refresh-super-investors?secret=$SECRET&force=$FORCE" \
+            CODE=$(curl -s -m 60 -X POST -H "x-cron-secret: $SECRET" "$BASE/api/v1/cron/refresh-super-investors?force=$FORCE" \
               -o /tmp/superinv.json -w "%{http_code}") || CODE=000
             echo "attempt $i: HTTP $CODE"
             [ "$CODE" = "200" ] && break

@@ -19,6 +19,7 @@
 // records, capped at 50 entries, 365-day TTL.
 
 import { NextRequest, NextResponse } from 'next/server';
+import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header first, ?secret= only for old callers
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 
 interface ThemeSnapshot {
@@ -71,7 +72,7 @@ function shallowDiff(prev: ThemeSnapshot, curr: ThemeSnapshot): {
 function requireSecret(req: NextRequest): boolean {
   const expected = process.env.CRON_SECRET;
   if (!expected) return true;
-  return req.nextUrl.searchParams.get('secret') === expected;
+  return secretFromRequest(req) === expected;
 }
 
 export const runtime = 'nodejs';
@@ -92,7 +93,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ buc
 export async function POST(req: NextRequest, { params }: { params: Promise<{ bucket_id: string }> }) {
   // PATCH 0462 — same-origin Referer OR secret gate. Previously this was
   // unauthenticated, so any external caller could pollute the revision log.
-  const secret = req.nextUrl.searchParams.get('secret');
+  const secret = secretFromRequest(req);
   const expected = process.env.CRON_SECRET;
   const ref = req.headers.get('referer') || '';
   const origin = req.nextUrl.origin;

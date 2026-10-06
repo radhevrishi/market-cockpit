@@ -14,6 +14,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextRequest, NextResponse } from 'next/server';
+import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header first, ?secret= only for old callers
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { railwaySelfFetch } from '@/lib/railway-self-fetch'; // PATCH 0985
 
@@ -77,7 +78,7 @@ export async function POST(req: NextRequest) {
   if (!required) {
     return NextResponse.json({ error: 'cron-secret-unset' }, { status: 503 });
   }
-  const secret = req.nextUrl.searchParams.get('secret');
+  const secret = secretFromRequest(req);
   if (secret !== required) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }

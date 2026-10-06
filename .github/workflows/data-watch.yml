@@ -36,11 +36,11 @@ jobs:
           CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
         run: |
           BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
-          Q="secret=${CRON_SECRET}"
+          Q="x=1"
           if [ "${{ github.event.inputs.no_heal }}" = "true" ]; then Q="$Q&no_heal=1"; fi
           # Railway has no function time limit; a heal (two month ingests +
           # archive + a gainers sweep) can take several minutes.
-          CODE=$(curl -s -m 780 -o /tmp/watch.json -w "%{http_code}" "$BASE/api/v1/cron/data-watch?$Q") || CODE=000
+          CODE=$(curl -s -m 780 -o /tmp/watch.json -w "%{http_code}" -H "x-cron-secret: $CRON_SECRET" "$BASE/api/v1/cron/data-watch?$Q") || CODE=000
           echo "HTTP $CODE"
           python3 - <<'PY' || true
           import json

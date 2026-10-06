@@ -9,6 +9,7 @@
 // 90-day TTL; refreshed on every transition.
 
 import { NextRequest, NextResponse } from 'next/server';
+import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header first, ?secret= only for old callers
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import {
   LifecycleRecord, LifecycleState, LIFECYCLE_CONFIG,
@@ -21,7 +22,7 @@ const TTL_SECONDS = 90 * 24 * 60 * 60;
 function isAdmin(req: NextRequest): boolean {
   const expected = process.env.CRON_SECRET;
   if (!expected) return true; // dev fallback
-  return req.nextUrl.searchParams.get('secret') === expected;
+  return secretFromRequest(req) === expected;
 }
 
 export const runtime = 'nodejs';
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eve
   // PATCH 0462 — same-origin Referer OR secret gate. Previously this was
   // unauthenticated, so any external caller could flip lifecycle state on
   // any event, poisoning shared KV.
-  const secret = req.nextUrl.searchParams.get('secret');
+  const secret = secretFromRequest(req);
   const expected = process.env.CRON_SECRET;
   const ref = req.headers.get('referer') || '';
   const origin = req.nextUrl.origin;

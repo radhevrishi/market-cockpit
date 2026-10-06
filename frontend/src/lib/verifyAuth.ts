@@ -14,6 +14,7 @@
 //   const auth = verifyCronSecret(req);
 //   if (!auth.ok) return NextResponse.json({ error: auth.reason }, { status: 401 });
 
+import { secretFromRequest } from './request-secret';
 import { timingSafeEqual } from 'node:crypto';
 
 export type VerifyResult = { ok: true } | { ok: false; reason: string };
@@ -56,9 +57,8 @@ export function verifyCronSecret(
   const { requireSecret = true } = opts;
   const expected = (process.env.CRON_SECRET || '').trim();
 
-  // Vercel's cron service stamps requests with this header.
-  const vercelCron = req.headers.get('x-vercel-cron') || req.headers.get('x-vercel-signature');
-  if (vercelCron) return { ok: true };
+  // zzz883 security: the old "x-vercel-cron header = trusted" shortcut is gone. The app runs on Railway, where ANYONE can send
+  // that header — it let every caller skip the secret. Jobs now authenticate with the secret like everything else.
 
   if (!expected) {
     if (requireSecret) {
@@ -67,8 +67,7 @@ export function verifyCronSecret(
     return { ok: true }; // open mode for non-critical warming routes
   }
 
-  const url = new URL(req.url);
-  const provided = (url.searchParams.get('secret') || '').trim();
+  const provided = (secretFromRequest(req) || '').trim();   // zzz883: header first; ?secret= only for old callers
   if (!provided) return { ok: false, reason: 'secret required' };
   if (!timingSafeEqualString(provided, expected)) {
     return { ok: false, reason: 'unauthorized' };

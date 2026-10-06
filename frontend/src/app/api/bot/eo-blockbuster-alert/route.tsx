@@ -21,6 +21,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
+import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header first, ?secret= only for old callers
 // PATCH 0715 — centralized IST helpers.
 import { istNow as _istNow, formatISTTime as _formatISTTime } from '@/lib/market-hours';
 import { ImageResponse } from 'next/og';
@@ -800,9 +801,9 @@ async function sendTelegram(
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const provided = searchParams.get('secret') || '';
+  const provided = secretFromRequest(req) || '';
   const expected = process.env.CRON_SECRET || '';
-  const vercelHeader = req.headers.get('x-vercel-cron') || req.headers.get('x-vercel-signature') || '';
+  const vercelHeader = '' /* zzz883: x-vercel-cron no longer trusted (forgeable on Railway) */;
 
   if (!vercelHeader && expected && provided !== expected) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });

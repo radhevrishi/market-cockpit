@@ -24,6 +24,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
+import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header first, ?secret= only for old callers
 // PATCH 0715 — centralized IST helpers.
 import { istToday as _istToday, istNow as _istNow } from '@/lib/market-hours';
 
@@ -556,7 +557,7 @@ async function runSetup(): Promise<any> {
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   if (searchParams.get('setup') === '1') {
-    const provided = searchParams.get('secret') || '';
+    const provided = secretFromRequest(req) || '';
     if (provided !== SECRET) {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
     }

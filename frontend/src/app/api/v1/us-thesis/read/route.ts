@@ -23,6 +23,7 @@
 // kept. No price is read anywhere in this route.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { fenceDoc } from '@/lib/ai-fence';   // zzz883: document text is data, never instructions
 import { NextRequest, NextResponse } from 'next/server';
 import { cikForTicker, submissions, companyFacts } from '@/lib/us-edgar';
 import { anthropicMessages, activeModel, modelConfigured, modelKeyName } from '@/lib/anthropic-meter';
@@ -229,7 +230,7 @@ export async function GET(req: NextRequest) {
     const resp = await anthropicMessages('us-catalysts-summary', {
       model: activeModel(MODEL), max_tokens: 4096, system: US_SYSTEM,
       tools: [SUMMARY_TOOL], tool_choice: { type: 'tool', name: SUMMARY_TOOL.name },
-      messages: [{ role: 'user', content: `${ticker}${fiscalLabel ? ` — ${fiscalLabel}` : ''}${periodic?.reportDate ? ` (quarter ended ${periodic.reportDate})` : ''}\n\n${text}` }],
+      messages: [{ role: 'user', content: `${ticker}${fiscalLabel ? ` — ${fiscalLabel}` : ''}${periodic?.reportDate ? ` (quarter ended ${periodic.reportDate})` : ''}\n\n${fenceDoc(text)}` }],
     }, { signal: AbortSignal.timeout(Math.max(20_000, Math.min(70_000, left() - 30_000))) });
     if (!resp.ok) {
       let detail = '';

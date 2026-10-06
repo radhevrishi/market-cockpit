@@ -35,6 +35,7 @@
 // summary of whatever text happened to come back.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { fenceDoc } from '@/lib/ai-fence';   // zzz883: document text is data, never instructions
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import {
@@ -541,7 +542,7 @@ export async function GET(req: NextRequest) {
       system: SYSTEM,
       tools: [SUMMARY_TOOL],
       tool_choice: { type: 'tool', name: SUMMARY_TOOL.name },
-      messages: [{ role: 'user', content: `${ticker}${(quarter || priorTarget) ? ` — ${quarter || priorTarget}` : ''}\n\n${text}` }],
+      messages: [{ role: 'user', content: `${ticker}${(quarter || priorTarget) ? ` — ${quarter || priorTarget}` : ''}\n\n${fenceDoc(text)}` }],
     }, { signal: AbortSignal.timeout(110_000) });
     if (!resp.ok) {
       // THE API'S OWN MESSAGE, not just the status. "HTTP 400" hid, for a

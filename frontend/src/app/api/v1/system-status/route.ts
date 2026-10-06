@@ -21,11 +21,12 @@ interface Probe {
 // PATCH 1058 — /api/v1/earnings/graded requires a ?date= param, otherwise
 // upstream returns 400 and the section gets marked DOWN. Stamp today's
 // ISO yyyy-mm-dd on the probe URL.
-const TODAY_ISO = new Date().toISOString().slice(0, 10);
-const PROBES: Probe[] = [
-  { name: 'EO graded (today)',     url: `/api/v1/earnings/graded?date=${TODAY_ISO}`,    category: 'earnings', expectedField: 'by_tier' },
+// zzz883: dates are worked out on EVERY request (they used to be fixed when the server started, and the scan probe asked for May 2026)
+const istToday = () => new Date(Date.now() + 5.5 * 3_600_000).toISOString().slice(0, 10);
+const probesNow = (): Probe[] => [
+  { name: 'EO graded (today)',     url: `/api/v1/earnings/graded?date=${istToday()}`,    category: 'earnings', expectedField: 'by_tier' },
   { name: 'EO calendar',           url: '/api/v1/calendar?days=7',                     category: 'earnings', expectedField: 'buckets' },
-  { name: 'Earnings scan',         url: '/api/market/earnings?market=india&month=2026-05', category: 'earnings', expectedField: 'results' },
+  { name: 'Earnings scan',         url: `/api/market/earnings?market=india&month=${istToday().slice(0, 7)}`, category: 'earnings', expectedField: 'results' },
   { name: 'Quotes (movers)',       url: '/api/market/quotes?market=india',             category: 'movers',   expectedField: 'stocks' },
   { name: 'Mover reasons',         url: '/api/market/mover-reasons?tickers=RELIANCE',  category: 'movers',   expectedField: 'reasons' },
   { name: 'Fundamentals',          url: '/api/market/fundamentals?tickers=RELIANCE',   category: 'movers',   expectedField: 'fundamentals' },
@@ -67,7 +68,7 @@ async function probe(p: Probe, origin: string): Promise<any> {
 
 export async function GET(request: Request) {
   const origin = internalBase(request); // PATCH 1013 — Railway self-fetch fix
-  const results = await Promise.all(PROBES.map(p => probe(p, origin)));
+  const results = await Promise.all(probesNow().map(p => probe(p, origin)));
   const summary = {
     total: results.length,
     healthy: results.filter(r => r.status === 'HEALTHY').length,

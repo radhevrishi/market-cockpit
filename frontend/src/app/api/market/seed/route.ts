@@ -14,6 +14,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header first, ?secret= only for old callers
 import { refreshSymbolMaster } from '@/lib/symbolMaster';
 
 export const dynamic = 'force-dynamic';
@@ -49,7 +50,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const startTime = Date.now();
 
   const { searchParams } = new URL(request.url);
-  const secret = searchParams.get('secret');
+  const secret = secretFromRequest(request);
 
   // PATCH 0460 — require CRON_SECRET (or back-compat MC_BOT_SECRET) for
   // any caller. Previously a hardcoded 'mc-bot-2026' string was the only

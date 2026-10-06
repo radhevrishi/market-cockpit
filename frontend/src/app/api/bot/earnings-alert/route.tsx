@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header first, ?secret= only for old callers
 import { ImageResponse } from 'next/og';
 
 export const dynamic = 'force-dynamic';
@@ -330,7 +331,7 @@ function formatEarningsText(card: CardFromAPI): string {
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const secret = searchParams.get('secret');
+  const secret = secretFromRequest(request);
   const forceSymbol = searchParams.get('symbol');
   // PATCH 0460 — gated testMode. Previously ?test=true bypassed auth
   // entirely (so anyone could trigger the alert pipeline). testMode is

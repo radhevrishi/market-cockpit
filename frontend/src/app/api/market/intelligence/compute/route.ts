@@ -5674,6 +5674,15 @@ export async function GET(request: Request) {
     // distributed lock + meta + prod blob before running. Used when the
     // page is stuck on the skeleton response despite stale-lock detection.
     const url = new URL(request.url);
+    // zzz883 security: the wipe switches are for the owner only (they delete the live signals)
+    const wantsWipe = url.searchParams.get('clearLock') === '1' || url.searchParams.get('wipeProd') === '1';
+    if (wantsWipe) {
+      const { verifyCronSecret } = await import('@/lib/verifyAuth');
+      const { siteAuthOk } = await import('@/lib/site-auth-request');
+      if (!verifyCronSecret(request).ok && !(await siteAuthOk(request))) {
+        return NextResponse.json({ ok: false, error: 'clearLock / wipeProd need the owner login or the service key' }, { status: 401 });
+      }
+    }
     if (url.searchParams.get('clearLock') === '1') {
       console.log('[Compute] clearLock=1 — wiping lock + meta + prod blob');
       await kvDel(LOCK_KEY);

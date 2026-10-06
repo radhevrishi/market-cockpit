@@ -24,7 +24,7 @@ jobs:
           echo "base: $BASE"
           CODE=000
           for i in 1 2 3; do
-            CODE=$(curl -s -m 60 -X POST "$BASE/api/v1/cron/daily-summary?secret=$SECRET" \
+            CODE=$(curl -s -m 60 -X POST -H "x-cron-secret: $SECRET" "$BASE/api/v1/cron/daily-summary" \
               -o /tmp/digest.json -w "%{http_code}") || CODE=000
             echo "attempt $i: HTTP $CODE"
             [ "$CODE" = "200" ] && break

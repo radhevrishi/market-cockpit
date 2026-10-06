@@ -189,12 +189,8 @@ jobs:
           # page stays cold (forcing constant manual Hard Refresh / backfill).
           # Override-able via the CRON_BASE_URL repo secret if the host changes.
           BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
-          # If the path already has ? params, append &secret=; else use ?secret=
-          if [[ "$PATH_PART" == *"?"* ]]; then
-            URL="$BASE$PATH_PART&secret=$CRON_SECRET"
-          else
-            URL="$BASE$PATH_PART?secret=$CRON_SECRET"
-          fi
+          # zzz883: the secret is sent in the x-cron-secret header, never in the URL
+          URL="$BASE$PATH_PART"
           # Don't print the URL with secret in logs
           SAFE_URL="$BASE$PATH_PART"
           echo "> POST $SAFE_URL  (label=$LABEL)"
@@ -225,6 +221,7 @@ jobs:
           hit_once() {
             curl -s -o /tmp/response.json -w "%{http_code}" -X "$METHOD" \
               -H 'Content-Type: application/json' \
+              -H "x-cron-secret: $CRON_SECRET" \
               --max-time 240 \
               "$URL" || echo "000"
           }

@@ -13,6 +13,7 @@
 // Cache key: `haiku-fg:v1:${ticker}:${period}`  TTL: 365 days (quarterly results
 // are immutable — no reason to ever refetch unless user explicitly forces).
 
+import { fenceDoc } from '@/lib/ai-fence';   // zzz883: document text is data, never instructions
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { extractFirstPdf } from '@/lib/pdf-text-extractor';
@@ -682,7 +683,7 @@ CONFIDENCE — REFLECTS DATA DENSITY, NOT YOUR PERSONAL CERTAINTY:
 
 If "numbers" array would be empty, omit hard numbers in the rationale too — say "Directional only" rather than inventing figures.`;
 
-  const userPrompt = `Ticker: ${ticker}\nPeriod: ${period}\nSource type: ${source}\nSource filename: ${sourceFilename}\nPDF length: ${pdfText.length} chars\n\n=== FILING TEXT ===\n${text}`;
+  const userPrompt = `Ticker: ${ticker}\nPeriod: ${period}\nSource type: ${source}\nSource filename: ${sourceFilename}\nPDF length: ${pdfText.length} chars\n\n${fenceDoc(text)}`;
 
   // ── PATCH 0962 — Cost-guarded retry loop. ISSUE #7. ────────────────────────
   //   * Retry ONLY on transient failures (network error, 5xx, empty body, OR

@@ -216,6 +216,23 @@ export async function kvSetNX(key: string, value: any, ttlSeconds: number): Prom
   return true;
 }
 
+/** zzz883 — atomic add (never loses an update when two calls write at once). Returns the new total, or null when Redis is off. */
+export async function kvIncrByFloat(key: string, by: number, ttlSeconds?: number): Promise<number | null> {
+  const r = getRedis();
+  if (!r || !Number.isFinite(by)) return null;
+  try {
+    const v = await r.incrbyfloat(key, by);
+    if (ttlSeconds) await r.expire(key, ttlSeconds).catch(() => {});
+    return Number(v);
+  } catch (e) { console.error(`[KV] INCRBYFLOAT failed for ${key}:`, e); return null; }
+}
+/** zzz883 — atomic set add (job-name index etc.). */
+export async function kvSAdd(key: string, member: string, ttlSeconds?: number): Promise<boolean> {
+  const r = getRedis();
+  if (!r) return false;
+  try { await r.sadd(key, member); if (ttlSeconds) await r.expire(key, ttlSeconds).catch(() => {}); return true; } catch { return false; }
+}
+
 /**
  * Atomic rename: swap temp key to production key
  * Writes temp first, then overwrites production atomically.
