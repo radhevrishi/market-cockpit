@@ -48,7 +48,7 @@ permissions:
 jobs:
   extract:
     runs-on: ubuntu-latest
-    timeout-minutes: 16
+    timeout-minutes: 30
     steps:
       - name: Run extraction rounds
         id: main
@@ -56,17 +56,17 @@ jobs:
           BASE: ${{ secrets.CRON_BASE_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           LIMIT: ${{ github.event.inputs.limit || '40' }}
-          MAX_USD: ${{ github.event.inputs.max_usd || '0.60' }}
-          MAX_MIN: ${{ github.event.inputs.max_minutes || '10' }}
+          MAX_USD: ${{ github.event.inputs.max_usd || '1.20' }}   # zzz906: was 0.60 — the US backlog grew faster than it was read
+          MAX_MIN: ${{ github.event.inputs.max_minutes || '20' }}
         run: |
           set -euo pipefail
           BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
           if [ -z "${CRON_SECRET}" ]; then echo "CRON_SECRET is not set in repository secrets"; exit 1; fi
           case "$LIMIT" in ''|*[!0-9]*) LIMIT=40 ;; esac
-          case "$MAX_USD" in ''|*[!0-9.]*) MAX_USD=0.60 ;; esac
-          case "$MAX_MIN" in ''|*[!0-9]*) MAX_MIN=10 ;; esac
+          case "$MAX_USD" in ''|*[!0-9.]*) MAX_USD=1.20 ;; esac
+          case "$MAX_MIN" in ''|*[!0-9]*) MAX_MIN=20 ;; esac
           [ "$MAX_MIN" -lt 1 ] && MAX_MIN=1
-          [ "$MAX_MIN" -gt 12 ] && MAX_MIN=12
+          [ "$MAX_MIN" -gt 25 ] && MAX_MIN=25
           # zzz872: keep sending rounds until the queue is empty, the spend cap for this run is used, or the minutes are up.
           # Before, the job stopped after ONE round of 25 documents and left most of its allowance unused (3,500 documents would have taken weeks).
           END=$(( $(date +%s) + MAX_MIN * 60 ))

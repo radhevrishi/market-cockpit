@@ -62,7 +62,7 @@ const envNum = (k: string, d: number) => { const v = Number(process.env[k]); ret
 export const runMaxDocs = () => Math.min(100, Math.round(envNum('GUIDANCE_EXTRACT_RUN_MAX_DOCS', 25)));
 export const runMaxUsd = () => envNum('GUIDANCE_EXTRACT_RUN_MAX_USD', 0.6);
 export const runBudgetMs = () => Math.max(10_000, Math.min(55_000, Math.round(envNum('GUIDANCE_EXTRACT_RUN_BUDGET_MS', 50_000))));
-export const runConcurrency = () => Math.max(1, Math.min(6, Math.round(envNum('GUIDANCE_EXTRACT_CONCURRENCY', 3))));
+export const runConcurrency = () => Math.max(1, Math.min(6, Math.round(envNum('GUIDANCE_EXTRACT_CONCURRENCY', 5))));
 export const runSinceDays = () => Math.max(1, Math.min(400, Math.round(envNum('GUIDANCE_EXTRACT_SINCE_DAYS', 210))));   // zzz874: two quarters
 export const maxExcerptChars = () => Math.max(4_000, Math.min(80_000, Math.round(envNum('GUIDANCE_EXTRACT_MAX_CHARS', 30_000))));
 

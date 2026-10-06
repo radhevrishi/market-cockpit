@@ -11,7 +11,7 @@ import type { FocusRow } from '@/lib/gu-focus';
 
 function FocusTable({ title, sub, head, empty, children }: { title: string; sub: string; head: string[]; empty: string; children: React.ReactNode }) {
   const th: React.CSSProperties = { textAlign: 'left', padding: '6px 8px', fontSize: 11, fontWeight: 800, color: R.dim, borderBottom: `1px solid ${tint(R.grey, 40)}`, whiteSpace: 'nowrap' };
-  const has = React.Children.count(children) > 0;
+  const has = React.Children.toArray(children).length > 0;   // zzz906: toArray drops false / null
   return (
     <div style={{ display: 'grid', gap: 4 }}>
       <b style={{ fontSize: 14 }}>{title}</b>
@@ -47,21 +47,37 @@ function VerdictCell({ r, td }: { r: FocusRow; td: React.CSSProperties }) {
 const VERDICT_COLOR: Record<FocusVerdict, string> = { 'TOP FOCUS': R.green, 'STRONG RAISE': R.green, 'HIGH GROWTH': R.cyan, RAISED: R.violet, WATCH: R.grey };
 const FLAG = { IN: '🇮🇳', US: '🇺🇸' } as const;
 type Mk = 'ALL' | 'IN' | 'US';
+const FOCUS_STEP = 20;
+function MoreRow({ shown, total, open, onToggle, cols }: { shown: number; total: number; open: boolean; onToggle: () => void; cols: number }) {
+  if (total <= FOCUS_STEP) return null;
+  return (
+    <tr><td colSpan={cols} style={{ padding: '8px', textAlign: 'center' }}>
+      <button type="button" onClick={onToggle} aria-expanded={open} style={{ fontSize: 13, fontWeight: 800, padding: '6px 14px', borderRadius: 999, cursor: 'pointer', border: `1px solid ${R.green}`, background: 'transparent', color: R.green }}>
+        {open ? `− Show the top ${FOCUS_STEP} only` : `+ Show all ${total} (${total - shown} more)`}
+      </button>
+    </td></tr>
+  );
+}
 
 export function GuFocusList({ events, window, onOpen, caps }: { events: readonly GuidanceEvent[]; window: string; onOpen: (id: string) => void; caps?: { IN?: Record<string, number>; US?: Record<string, number> } | null }) {
   const { data } = useGuUniverse({ market: 'ALL', view: 'active' });
   const [mk, setMk] = useState<Mk>('ALL');
   // zzz880: small & mid caps by default (India under ₹30,000 Cr, US under $30B); a name whose size is not known stays, labelled
   const [smid, setSmid] = useState(true);
-  const everyone = useMemo(() => buildFocusList(data?.summary?.highGrowthGroups, events, new Date(), 80, { caps, indiaLarge: INDIA_LARGE_CAPS }), [data, events, caps]);
+  const everyone = useMemo(() => buildFocusList(data?.summary?.highGrowthGroups, events, new Date(), Infinity, { caps, indiaLarge: INDIA_LARGE_CAPS }), [data, events, caps]);   // zzz906: no cut-off before filtering (a small raise like Yasho fell outside the old top 80)
   const all = useMemo(() => (smid ? everyone.filter((r) => r.size !== 'LARGE') : everyone), [everyone, smid]);
   const largeHidden = everyone.length - all.length;
   const inMk = useMemo(() => all.filter((r) => mk === 'ALL' || r.market === mk), [all, mk]);
   // zzz881: two lists, no empty columns — (A) companies that RAISED guidance, (B) companies guiding 30%+ growth with no raise yet.
   // A small raise (under 5%, or only EPS from a small base) is kept out of (A) and counted, never shown as a strong signal.
-  const raisedRows = useMemo(() => inMk.filter((r) => r.raised && !r.smallRaise).slice(0, 12), [inMk]);
+  // zzz906: the first 20 of each ranked list; "+ Show all" opens the rest (owner request, 6 Oct)
+  const [allA, setAllA] = useState(false);
+  const [allB, setAllB] = useState(false);
+  const raisedAll = useMemo(() => inMk.filter((r) => r.raised && !r.smallRaise), [inMk]);
+  const growthAll = useMemo(() => inMk.filter((r) => !(r.raised && !r.smallRaise) && r.growth), [inMk]);
+  const raisedRows = allA ? raisedAll : raisedAll.slice(0, FOCUS_STEP);
+  const growthRows = allB ? growthAll : growthAll.slice(0, FOCUS_STEP);
   const smallRaises = inMk.filter((r) => r.raised && r.smallRaise).length;
-  const growthRows = useMemo(() => inMk.filter((r) => !(r.raised && !r.smallRaise) && r.growth).slice(0, 15), [inMk]);
   const top = all.filter((r) => r.verdict === 'TOP FOCUS').length;
   const td: React.CSSProperties = { textAlign: 'left', padding: '8px', fontSize: 13, borderBottom: `1px solid ${tint(R.grey, 18)}`, verticalAlign: 'top' };
   return (
@@ -86,10 +102,10 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
       <div style={{ fontSize: 12, color: R.dim }}>
         Ranked by: a guidance raise <b>and</b> 30%+ growth first, then the size of the raise (revenue / profit — an EPS from a tiny base never counts as a big raise), then the growth guided, then how recent. Only figures checked against the company's own documents.
       </div>
-      {raisedRows.length + growthRows.length === 0 ? (
+      {raisedAll.length + growthAll.length === 0 ? (
         <div style={{ fontSize: 13, color: R.dim }}>{all.length ? 'No names for this market in the current data.' : 'Reading the guidance data…'}</div>
       ) : (<>
-        <FocusTable title={`A. Raised their guidance (${raisedRows.length})`} sub={`Old and new figures both read from the company's own filing, ${window} window.${smallRaises ? ` ${smallRaises} small raise${smallRaises === 1 ? '' : 's'} (under 5%, or only EPS from a small base) left out.` : ''}`}
+        <FocusTable title={`A. Raised their guidance (${raisedAll.length})`} sub={`Old and new figures both read from the company's own filing, ${window} window.${smallRaises ? ` ${smallRaises} small raise${smallRaises === 1 ? '' : 's'} (under 5%, or only EPS from a small base) left out.` : ''}`}
           head={['#', 'Company', 'What was raised (old → new)', 'Verdict']} empty="No raise of 5% or more in this window for this market.">
           {raisedRows.map((r, i) => (
             <tr key={r.key}>
@@ -104,8 +120,9 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
               <VerdictCell r={r} td={td} />
             </tr>
           ))}
+          {raisedAll.length > FOCUS_STEP && <MoreRow shown={raisedRows.length} total={raisedAll.length} open={allA} onToggle={() => setAllA((v) => !v)} cols={4} />}
         </FocusTable>
-        <FocusTable title={`B. Guiding 30%+ growth — no raise yet (${growthRows.length})`} sub="The company's own guidance still in force. First guidance or a repeat, so there is no old figure to compare."
+        <FocusTable title={`B. Guiding 30%+ growth — no raise yet (${growthAll.length})`} sub="The company's own guidance still in force. First guidance or a repeat, so there is no old figure to compare."
           head={['#', 'Company', 'Growth guided', 'Source', 'Verdict']} empty="No 30%+ growth guidance for this market.">
           {growthRows.map((r, i) => (
             <tr key={r.key}>
@@ -116,6 +133,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
               <VerdictCell r={r} td={td} />
             </tr>
           ))}
+          {growthAll.length > FOCUS_STEP && <MoreRow shown={growthRows.length} total={growthAll.length} open={allB} onToggle={() => setAllB((v) => !v)} cols={5} />}
         </FocusTable>
       </>)}
     </section>
