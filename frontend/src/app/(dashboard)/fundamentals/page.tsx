@@ -21,6 +21,8 @@ import PortfolioQualityHeader from '@/components/PortfolioQualityHeader'; // zzz
 // zzz799 — the Portfolio Fundamentals list = this country's Portfolio Book + Conviction Beats (server lists).
 import { buildUniverseRows, ORIGIN_CHIP, type FundUniverse, type FundSourceFilter } from '@/lib/fundamentals/universe';
 import { loadFundUniverse, loadFundPool } from '@/lib/fundamentals/load-universe';
+// zzz904 — basis tags: every figure says which period it comes from (REPORTED / TTM / FY<yy> / EST / GUIDED / DERIVED / PRICE).
+import { inferBasis, basisForCandidates, combineBases, describeBasisMix, makeBasis, type MetricBasis } from '@/lib/metric-basis';
 
 // PATCH 1101rrr — IndexedDB fallback for when localStorage hits its 5MB
 // quota. Same key namespace so loads/saves transparently move between the
@@ -128,6 +130,67 @@ const COL = {
   txt: '#e6edf3', muted: '#8896a8', dim: '#5b6677',
   green: '#3fb950', red: '#f85149', amber: '#d29922', blue: '#58a6ff', violet: '#a78bfa', cyan: '#39d0d8',
 };
+
+// zzz904 — small basis tag shown next to a figure or column header. Hover explains the basis in plain words.
+const BASIS_COLOR: Record<MetricBasis['kind'], string> = {
+  REPORTED: '#39d0d8', TTM: '#58a6ff', FY: '#a78bfa', ESTIMATE: '#d29922', GUIDED: '#d29922', DERIVED: '#8896a8', PRICE: '#5b6677', UNKNOWN: '#5b6677',
+};
+function BasisTag({ b }: { b?: MetricBasis | null }) {
+  if (!b) return null;
+  const c = BASIS_COLOR[b.kind];
+  return (
+    <span title={b.title} style={{ marginLeft: 4, fontSize: 8.5, fontWeight: 700, letterSpacing: 0.3, padding: '0 4px', borderRadius: 3, border: `1px solid ${c}66`, color: c, verticalAlign: 'middle', whiteSpace: 'nowrap', textTransform: 'none', fontVariantNumeric: 'normal' }}>{b.label}</span>
+  );
+}
+// India (Screener.in export): basis of a column, with the latest completed FY named from today's date.
+// Computed field '_OpLev' = Profit growth ÷ Sales growth (both FY).
+function indiaBasis(col: string): MetricBasis {
+  const asOf = new Date();
+  if (col === '_OpLev') return combineBases([inferBasis('Profit growth', { market: 'INDIA', asOf }), inferBasis('Sales growth', { market: 'INDIA', asOf })], { market: 'INDIA', asOf });
+  return inferBasis(col, { market: 'INDIA', asOf });
+}
+// India strength / warning chips → the column(s) each one reads.
+const INDIA_FLAG_COLS: Record<string, string[]> = {
+  'Profit shrinking': ['Profit growth'], 'Sales shrinking': ['Sales growth'], 'Qtr profit down YoY': ['YOY Quarterly profit growth'],
+  'Profit decelerating vs 3Y': ['Profit growth', 'Profit growth 3Years'], 'Margin squeeze': ['OPM latest quarter', 'OPM last year'],
+  'High debt D/E>1': ['Debt to equity'], 'Weak cash conversion': ['CFO to PAT'], 'Low ROCE<10': ['Return on capital employed'],
+  'Expensive PEG>2': ['PEG Ratio'], 'Rich P/E>80': ['Price to Earning'], 'Promoter reducing': ['Change in promoter holding 3Years'],
+  'High pledge': ['Pledged percentage'], 'Below 200-DMA': ['DMA 200'], 'Below 50-DMA': ['DMA 50'],
+  'Profit compounding>20': ['Profit growth'], 'Sales growth>15': ['Sales growth'], 'Qtr profit accelerating': ['YOY Quarterly profit growth'],
+  '3Y profit compounder': ['Profit growth 3Years'], 'Margin expanding': ['OPM latest quarter', 'OPM last year'], 'Low debt D/E<0.3': ['Debt to equity'],
+  'Strong cash conversion': ['CFO to PAT'], 'High ROCE>20': ['Return on capital employed'], 'Attractive PEG<1': ['PEG Ratio'],
+  'Promoter increasing': ['Change in promoter holding 3Years'], 'Zero pledge': ['Pledged percentage'], '1Y return>30%': ['Return over 1year'],
+  'Above 200-DMA': ['DMA 200'], 'Above 50-DMA': ['DMA 50'],
+};
+const indiaFlagBasis = (flag: string): MetricBasis | null => {
+  const cols = INDIA_FLAG_COLS[flag];
+  return cols ? combineBases(cols.map(indiaBasis), { market: 'INDIA', asOf: new Date() }) : null;
+};
+
+// zzz904 — USA (TradingView export) column candidates, shared by the value reader and its basis tag.
+const USA_COLS = {
+  revAnn: ['Revenue growth %, Annual YoY', 'Revenue growth, Annual YoY'],
+  revQtr: ['Revenue growth %, Quarterly YoY', 'Revenue growth, Quarterly YoY'],
+  fcfMargin: ['Free cash flow margin %, Annual', 'FCF margin, Annual'],
+  gpm: ['Gross margin %, Trailing 12 months', 'Gross margin %, TTM'],
+  opm: ['Operating margin %, Trailing 12 months', 'Operating margin %, TTM'],
+  perf1y: ['Performance %, 1 year', 'Performance, 1 Year %'],
+  fwdPe: ['Forward non-GAAP price to earnings, Annual', 'Forward P/E', 'Fwd P/E'],
+  pe: ['Price to earnings ratio', 'P/E'],
+  roic: ['Return on invested capital %, Annual', 'ROIC'],
+  roce: ['Return on capital employed %, Annual', 'ROCE'],
+  roe: ['Return on equity %, Trailing 12 months', 'ROE TTM'],
+  netMargin: ['Net margin %, Trailing 12 months', 'Net margin TTM'],
+  perf3m: ['Performance %, 3 months'],
+  perf6m: ['Performance %, 6 months'],
+  beta: ['Beta, 5 years', 'Beta 5y', 'Beta'],
+  ebitdaMargin: ['EBITDA margin %, Trailing 12 months', 'EBITDA margin %, TTM'],
+  epsGrowth: ['Earnings per share diluted growth %, TTM YoY', 'EPS growth %, TTM YoY'],
+  peg: ['Price to earning to growth, Trailing 12 months', 'PEG'],
+  piotroski: ['Piotroski F-score, Trailing 12 months', 'Piotroski F-score, Annual'],
+  targetPrice: ['Target price, 1 year', 'Target price 1 year'],
+  mcap: ['Market capitalization', 'Market Cap'],
+} as const;
 
 const SAMPLE_HINT = 'Name, NSE Code, Sales growth, Profit growth, Return on capital employed, OPM, Price to Earning, PEG Ratio, Debt to equity …';
 
@@ -891,7 +954,7 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
     roic?: number; roce?: number; roe?: number; netMargin?: number;
     perf1y?: number; perf3m?: number; perf6m?: number;
     rsRating?: number; beta?: number; ebitdaMargin?: number;
-    epsGrowth?: number; pegFwd?: number; targetUpside?: number;
+    epsGrowth?: number; pegTtm?: number; targetUpside?: number;
     piotroski?: number; analystRating?: string;
     isOutlier?: boolean; // PATCH 1101uu — flagged when a value was clipped
     ema50?: number; ema200?: number; // PATCH 1101uu — moving averages
@@ -902,14 +965,14 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
     const symbol = String(get(r, 'Symbol', 'Ticker') ?? '').trim().toUpperCase();
     const company = String(get(r, 'Description', 'Company name', 'Company') ?? '').trim();
     const sector = String(get(r, 'Sector', 'Industry') ?? '').trim();
-    const mcap = n(get(r, 'Market capitalization', 'Market Cap'));
+    const mcap = n(get(r, ...USA_COLS.mcap));
     const mcapB = mcap !== undefined ? Math.round(mcap / 1e9 * 100) / 100 : undefined;
     const price = n(get(r, 'Price', 'Last', 'Close'));
-    const revAnn = n(get(r, 'Revenue growth %, Annual YoY', 'Revenue growth, Annual YoY'));
-    const revQtr = n(get(r, 'Revenue growth %, Quarterly YoY', 'Revenue growth, Quarterly YoY'));
-    const fcfMargin = n(get(r, 'Free cash flow margin %, Annual', 'FCF margin, Annual'));
-    const gpm = n(get(r, 'Gross margin %, Trailing 12 months', 'Gross margin %, TTM'));
-    const opm = n(get(r, 'Operating margin %, Trailing 12 months', 'Operating margin %, TTM'));
+    const revAnn = n(get(r, ...USA_COLS.revAnn));
+    const revQtr = n(get(r, ...USA_COLS.revQtr));
+    const fcfMargin = n(get(r, ...USA_COLS.fcfMargin));
+    const gpm = n(get(r, ...USA_COLS.gpm));
+    const opm = n(get(r, ...USA_COLS.opm));
     // PATCH 1101uu — Sanity-clip R40 to [-200, 500] band so corporate-action
     // anomalies (TE +25574% revenue from spinoff, HGRAF -11438% FCF margin from
     // single-quarter freak) don't poison leader lists and medians.
@@ -926,27 +989,27 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
     }
     // PATCH 1101uu — same clip for 1Y return (SNDK showed 4718% post-spinoff).
     const perf1yClipped = (() => {
-      const v = n(get(r, 'Performance %, 1 year', 'Performance, 1 Year %'));
+      const v = n(get(r, ...USA_COLS.perf1y));
       if (v === undefined) return undefined;
       if (v > 1000 || v < -100) { isOutlier = true; return Math.max(-100, Math.min(1000, v)); }
       return v;
     })();
-    const fwdPe = n(get(r, 'Forward non-GAAP price to earnings, Annual', 'Forward P/E', 'Fwd P/E'));
-    const pe = n(get(r, 'Price to earnings ratio', 'P/E'));
-    const roic = n(get(r, 'Return on invested capital %, Annual', 'ROIC'));
-    const roce = n(get(r, 'Return on capital employed %, Annual', 'ROCE'));
-    const roe = n(get(r, 'Return on equity %, Trailing 12 months', 'ROE TTM'));
-    const netMargin = n(get(r, 'Net margin %, Trailing 12 months', 'Net margin TTM'));
+    const fwdPe = n(get(r, ...USA_COLS.fwdPe));
+    const pe = n(get(r, ...USA_COLS.pe));
+    const roic = n(get(r, ...USA_COLS.roic));
+    const roce = n(get(r, ...USA_COLS.roce));
+    const roe = n(get(r, ...USA_COLS.roe));
+    const netMargin = n(get(r, ...USA_COLS.netMargin));
     const perf1y = perf1yClipped;
-    const perf3m = n(get(r, 'Performance %, 3 months'));
-    const perf6m = n(get(r, 'Performance %, 6 months'));
-    const beta = n(get(r, 'Beta, 5 years', 'Beta 5y', 'Beta'));
-    const ebitdaMargin = n(get(r, 'EBITDA margin %, Trailing 12 months', 'EBITDA margin %, TTM'));
-    const epsGrowth = n(get(r, 'Earnings per share diluted growth %, TTM YoY', 'EPS growth %, TTM YoY'));
-    const peg = n(get(r, 'Price to earning to growth, Trailing 12 months', 'PEG'));
-    const piotroski = n(get(r, 'Piotroski F-score, Trailing 12 months', 'Piotroski F-score, Annual'));
+    const perf3m = n(get(r, ...USA_COLS.perf3m));
+    const perf6m = n(get(r, ...USA_COLS.perf6m));
+    const beta = n(get(r, ...USA_COLS.beta));
+    const ebitdaMargin = n(get(r, ...USA_COLS.ebitdaMargin));
+    const epsGrowth = n(get(r, ...USA_COLS.epsGrowth));
+    const peg = n(get(r, ...USA_COLS.peg));
+    const piotroski = n(get(r, ...USA_COLS.piotroski));
     const analystRating = String(get(r, 'Analyst Rating', 'Analyst rating') ?? '').trim() || undefined;
-    const targetPrice = n(get(r, 'Target price, 1 year', 'Target price 1 year'));
+    const targetPrice = n(get(r, ...USA_COLS.targetPrice));
     const targetUpside = (targetPrice && price && price > 0) ? Math.round(((targetPrice - price) / price) * 100) : undefined;
     let rsRating: number | undefined;
     if (perf1y !== undefined || perf3m !== undefined || perf6m !== undefined) {
@@ -970,13 +1033,33 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
       // Cap to keep table tidy; companies turning from loss to profit can show enormous ratios.
       opLev = Math.max(-9.9, Math.min(99.9, Math.round(v * 10) / 10));
     }
-    return { raw: r, symbol, company, sector, mcapB, price, r40, fwdPe, pe, revAnn, revQtr, fcfMargin, gpm, opm, roic, roce, roe, netMargin, perf1y, perf3m, perf6m, rsRating, beta, ebitdaMargin, epsGrowth, pegFwd: peg, targetUpside, piotroski, analystRating, isOutlier, ema50, ema200, pctVsEma50, pctVsEma200, opLev };
+    return { raw: r, symbol, company, sector, mcapB, price, r40, fwdPe, pe, revAnn, revQtr, fcfMargin, gpm, opm, roic, roce, roe, netMargin, perf1y, perf3m, perf6m, rsRating, beta, ebitdaMargin, epsGrowth, pegTtm: peg, targetUpside, piotroski, analystRating, isOutlier, ema50, ema200, pctVsEma50, pctVsEma200, opLev };
   }).filter(r => r.symbol && r.symbol.length > 0 && r.symbol.length < 20 && !/^\d+$/.test(r.symbol)), [data]);
   // PATCH 1101vv — Filter out ghost India rows that have no Symbol (these are
   // remnants from pre-1101tt accidental India CSV uploads to USA tab. They
   // have NSE Code / BSE Code populated but no Symbol, so they render as
   // nameless rows showing only an "Industry" cell). Now: rows must have a
   // proper-looking Symbol (1-19 chars, not all digits) to be included.
+
+  // zzz904 — basis of every USA figure, read from the column the export actually used (first candidate present).
+  const B = useMemo(() => {
+    const headers = new Set<string>();
+    for (const r of data) for (const k of Object.keys(r)) headers.add(k);
+    const o = { market: 'USA' as const };
+    const b = (k: keyof typeof USA_COLS) => basisForCandidates(headers, [...USA_COLS[k]], o);
+    const revAnn = b('revAnn'), fcfMargin = b('fcfMargin'), epsGrowth = b('epsGrowth'), targetPrice = b('targetPrice');
+    const price = makeBasis('PRICE', o);
+    const m: Record<string, MetricBasis> = {
+      mcapB: b('mcap'), revAnn, revQtr: b('revQtr'), fcfMargin, gpm: b('gpm'), opm: b('opm'), fwdPe: b('fwdPe'), pe: b('pe'),
+      roic: b('roic'), roce: b('roce'), roe: b('roe'), netMargin: b('netMargin'), perf1y: b('perf1y'), perf3m: b('perf3m'),
+      beta: b('beta'), ebitdaMargin: b('ebitdaMargin'), epsGrowth, pegTtm: b('peg'), piotroski: b('piotroski'),
+      r40: combineBases([revAnn, fcfMargin], o),
+      opLev: combineBases([epsGrowth, revAnn], o),
+      rsRating: price,
+      targetUpside: combineBases([targetPrice, price], o),
+    };
+    return m;
+  }, [data]);
 
   const sortedRows = useMemo(() => {
     const out = [...rows];
@@ -1103,12 +1186,12 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
         {[
           { label: 'Stocks', val: rows.length, color: '#22D3EE' },
-          { label: 'Median R40', val: med(r40s), color: '#22D3EE' },
+          { label: `Median R40 · ${B.r40.label}`, val: med(r40s), color: '#22D3EE' },
           { label: 'R40 Elite (≥60)', val: eliteR40, color: '#10B981' },
           { label: 'R40 Pass (≥40)', val: passingR40, color: '#3B82F6' },
           { label: 'RS ≥80', val: topRs, color: '#10B981' },
-          { label: 'Median Fwd P/E', val: med(fwdPes), color: '#F59E0B' },
-          { label: 'Median ROIC %', val: med(roics), color: '#10B981' },
+          { label: `Median Fwd P/E · ${B.fwdPe.label}`, val: med(fwdPes), color: '#F59E0B' },
+          { label: `Median ROIC % · ${B.roic.label}`, val: med(roics), color: '#10B981' },
         ].map((s, i) => (
           <div key={i} style={{ background: COL.panel2, border: `1px solid ${COL.line}`, borderRadius: 6, padding: '8px 12px' }}>
             <div style={{ fontSize: 10, color: COL.muted, fontWeight: 700, letterSpacing: '0.4px' }}>{s.label}</div>
@@ -1144,33 +1227,36 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
         const score = (r: UsaRow) => {
           const strengths: string[] = [];
           const triggers: string[] = [];
+          // zzz904 — every sign names its basis; `used` feeds the "combines bases" sentence.
+          const used: Array<{ name: string; basis: MetricBasis }> = [];
+          const tag = (k: string, name: string) => { used.push({ name, basis: B[k] }); return B[k].label; };
           if (typeof r.r40 === 'number') {
-            if (r.r40 >= 60) strengths.push('R40 elite ≥60 · last quarter + full year');
-            else if (r.r40 < 0) triggers.push('R40 negative — cash burning · last quarter + full year');
+            if (r.r40 >= 60) strengths.push(`R40 elite ≥60 · ${tag('r40', 'Rule of 40')}`);
+            else if (r.r40 < 0) triggers.push(`R40 negative — cash burning · ${tag('r40', 'Rule of 40')}`);
           }
           if (typeof r.rsRating === 'number') {
-            if (r.rsRating >= 80) strengths.push('RS Rating top 20% · price');
-            else if (r.rsRating <= 20) triggers.push('RS bottom 20% · price');
+            if (r.rsRating >= 80) strengths.push(`RS Rating top 20% · ${tag('rsRating', 'RS rating')}`);
+            else if (r.rsRating <= 20) triggers.push(`RS bottom 20% · ${tag('rsRating', 'RS rating')}`);
           }
-          if (typeof r.roic === 'number' && r.roic >= 20) strengths.push('ROIC ≥20% · last full year');
-          else if (typeof r.roic === 'number' && r.roic < 5) triggers.push('ROIC <5% · last full year');
-          if (typeof r.fcfMargin === 'number' && r.fcfMargin >= 15) strengths.push('FCF margin ≥15% · last full year');
-          else if (typeof r.fcfMargin === 'number' && r.fcfMargin < 0) triggers.push('FCF negative · last full year');
-          if (typeof r.ebitdaMargin === 'number' && r.ebitdaMargin >= 30) strengths.push('EBITDA margin ≥30% · last 12 months');
-          if (typeof r.opLev === 'number' && r.opLev >= 1.5) strengths.push(`Op-Lev ${r.opLev.toFixed(1)}× (margins expanding) · last 12 months`);
-          if (typeof r.gpm === 'number' && r.gpm >= 60) strengths.push('Gross margin ≥60% · last 12 months');
-          if (typeof r.netMargin === 'number' && r.netMargin >= 20) strengths.push('Net margin ≥20% · last 12 months');
-          if (typeof r.perf1y === 'number' && r.perf1y >= 30) strengths.push('1Y return ≥30% · price');
-          else if (typeof r.perf1y === 'number' && r.perf1y < -20) triggers.push('1Y return <-20% · price');
-          if (typeof r.pegFwd === 'number' && r.pegFwd > 0 && r.pegFwd < 1) strengths.push('PEG <1 · analyst estimate');
-          else if (typeof r.pegFwd === 'number' && r.pegFwd > 3) triggers.push('PEG >3 · analyst estimate');
-          if (typeof r.fwdPe === 'number' && r.fwdPe > 0 && r.fwdPe > 80) triggers.push('Fwd P/E >80 · analyst estimate');
-          if (typeof r.beta === 'number' && r.beta >= 2) triggers.push('Beta ≥2 · price');
-          if (typeof r.piotroski === 'number' && r.piotroski >= 7) strengths.push('Piotroski ≥7/9 · last full year');
-          else if (typeof r.piotroski === 'number' && r.piotroski <= 3) triggers.push('Piotroski ≤3/9 · last full year');
-          if (typeof r.targetUpside === 'number' && r.targetUpside >= 20) strengths.push('Analyst target ≥20% above price · analyst estimate');
-          else if (typeof r.targetUpside === 'number' && r.targetUpside <= -10) triggers.push('Analyst target below price · analyst estimate');
-          return { strengths, triggers };
+          if (typeof r.roic === 'number' && r.roic >= 20) strengths.push(`ROIC ≥20% · ${tag('roic', 'ROIC')}`);
+          else if (typeof r.roic === 'number' && r.roic < 5) triggers.push(`ROIC <5% · ${tag('roic', 'ROIC')}`);
+          if (typeof r.fcfMargin === 'number' && r.fcfMargin >= 15) strengths.push(`FCF margin ≥15% · ${tag('fcfMargin', 'FCF margin')}`);
+          else if (typeof r.fcfMargin === 'number' && r.fcfMargin < 0) triggers.push(`FCF negative · ${tag('fcfMargin', 'FCF margin')}`);
+          if (typeof r.ebitdaMargin === 'number' && r.ebitdaMargin >= 30) strengths.push(`EBITDA margin ≥30% · ${tag('ebitdaMargin', 'EBITDA margin')}`);
+          if (typeof r.opLev === 'number' && r.opLev >= 1.5) strengths.push(`Op-Lev ${r.opLev.toFixed(1)}× (margins expanding) · ${tag('opLev', 'operating leverage')}`);
+          if (typeof r.gpm === 'number' && r.gpm >= 60) strengths.push(`Gross margin ≥60% · ${tag('gpm', 'gross margin')}`);
+          if (typeof r.netMargin === 'number' && r.netMargin >= 20) strengths.push(`Net margin ≥20% · ${tag('netMargin', 'net margin')}`);
+          if (typeof r.perf1y === 'number' && r.perf1y >= 30) strengths.push(`1Y return ≥30% · ${tag('perf1y', '1Y return')}`);
+          else if (typeof r.perf1y === 'number' && r.perf1y < -20) triggers.push(`1Y return <-20% · ${tag('perf1y', '1Y return')}`);
+          if (typeof r.pegTtm === 'number' && r.pegTtm > 0 && r.pegTtm < 1) strengths.push(`PEG <1 · ${tag('pegTtm', 'PEG')}`);
+          else if (typeof r.pegTtm === 'number' && r.pegTtm > 3) triggers.push(`PEG >3 · ${tag('pegTtm', 'PEG')}`);
+          if (typeof r.fwdPe === 'number' && r.fwdPe > 0 && r.fwdPe > 80) triggers.push(`Fwd P/E >80 · ${tag('fwdPe', 'P/E')}`);
+          if (typeof r.beta === 'number' && r.beta >= 2) triggers.push(`Beta ≥2 · ${tag('beta', 'beta')}`);
+          if (typeof r.piotroski === 'number' && r.piotroski >= 7) strengths.push(`Piotroski ≥7/9 · ${tag('piotroski', 'Piotroski score')}`);
+          else if (typeof r.piotroski === 'number' && r.piotroski <= 3) triggers.push(`Piotroski ≤3/9 · ${tag('piotroski', 'Piotroski score')}`);
+          if (typeof r.targetUpside === 'number' && r.targetUpside >= 20) strengths.push(`Analyst target ≥20% above price · ${tag('targetUpside', 'analyst target')}`);
+          else if (typeof r.targetUpside === 'number' && r.targetUpside <= -10) triggers.push(`Analyst target below price · ${tag('targetUpside', 'analyst target')}`);
+          return { strengths, triggers, mix: describeBasisMix(used) };
         };
         const scored = rows.map(r => ({ r, s: score(r) }));
         const mustHold = scored.filter(x => x.s.strengths.length >= 3).sort((a, b) => b.s.strengths.length - a.s.strengths.length).slice(0, 25);
@@ -1183,7 +1269,7 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
               {mustHold.map(({ r, s }) => (
                 <div key={r.symbol} style={{ display: 'grid', gridTemplateColumns: '60px 1fr auto', gap: 8, padding: '5px 0', borderTop: `1px solid ${COL.line}`, fontSize: 11 }}>
                   <span style={{ color: '#10B981', fontWeight: 800 }}>{r.symbol}</span>
-                  <span style={{ color: COL.muted, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.strengths.slice(0, 4).join(' · ')}</span>
+                  <span style={{ color: COL.muted, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.strengths.slice(0, 4).join(' · ')}{s.mix ? <span style={{ display: 'block', color: COL.amber, fontSize: 9.5 }} title="These signs come from different periods — weigh them accordingly.">Combines bases: {s.mix}</span> : null}</span>
                   <span style={{ color: '#10B981', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{s.strengths.length}</span>
                 </div>
               ))}
@@ -1195,7 +1281,7 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
               {exitTriggers.map(({ r, s }) => (
                 <div key={r.symbol} style={{ display: 'grid', gridTemplateColumns: '60px 1fr auto', gap: 8, padding: '5px 0', borderTop: `1px solid ${COL.line}`, fontSize: 11 }}>
                   <span style={{ color: '#EF4444', fontWeight: 800 }}>{r.symbol}</span>
-                  <span style={{ color: COL.muted, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.triggers.slice(0, 4).join(' · ')}</span>
+                  <span style={{ color: COL.muted, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.triggers.slice(0, 4).join(' · ')}{s.mix ? <span style={{ display: 'block', color: COL.amber, fontSize: 9.5 }} title="These signs come from different periods — weigh them accordingly.">Combines bases: {s.mix}</span> : null}</span>
                   <span style={{ color: '#EF4444', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{s.triggers.length}</span>
                 </div>
               ))}
@@ -1215,7 +1301,8 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
           // Exclude clipped outliers from leader lists so corporate actions don't dominate
           if (desc) filtered = filtered.filter(r => !r.isOutlier);
           const sorted = filtered.sort((a, b) => desc ? ((b[key] as number) - (a[key] as number)) : ((a[key] as number) - (b[key] as number))).slice(0, 10);
-          return { label, color, items: sorted.map(r => ({ symbol: r.symbol, company: r.company, val: fmt(r[key] as number) })) };
+          const bk = B[key as string];
+          return { label: bk ? `${label} · ${bk.label}` : label, color, items: sorted.map(r => ({ symbol: r.symbol, company: r.company, val: fmt(r[key] as number) })) };
         };
         const leaders = [
           lead('rsRating', true, 'Top 10 — RS Rating', '#10B981', (v) => String(v), true),
@@ -1232,7 +1319,7 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
           lead('perf1y', true, 'Top 10 — 1-year return %', '#F59E0B', (v) => `${v.toFixed(0)}%`, true),
           lead('perf3m', true, 'Top 10 — 3-month return %', '#F59E0B', (v) => `${v.toFixed(0)}%`, true),
           lead('targetUpside', true, 'Top 10 — Implied upside vs target', '#22D3EE', (v) => `${v >= 0 ? '↑' : '↓'} ${Math.abs(v)}%`),
-          lead('pegFwd', false, 'Bottom 10 — PEG (cheapest)', '#10B981', (v) => v.toFixed(2), true),
+          lead('pegTtm', false, 'Bottom 10 — PEG (cheapest)', '#10B981', (v) => v.toFixed(2), true),
           lead('fwdPe', true, 'Top 10 — Richest Fwd P/E', '#EF4444', (v) => `${v.toFixed(0)}×`, true),
           lead('mcapB', true, 'Top 10 — Largest Market Cap $B', '#22D3EE', (v) => `$${v.toLocaleString()}B`, true),
           lead('mcapB', false, 'Bottom 10 — Smallest Market Cap $B', '#22D3EE', (v) => `$${v.toLocaleString()}B`, true),
@@ -1312,19 +1399,19 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
               <th style={headerCell}>TICKER</th>
               <th style={headerCell}>COMPANY</th>
               <th style={headerCell}>SECTOR</th>
-              <th style={headerCell as any} onClick={() => setSort('mcapB')}>MCAP $B{arrow('mcapB')}</th>
-              <th style={headerCell as any} onClick={() => setSort('r40')}>R40{arrow('r40')}</th>
-              <th style={headerCell as any} onClick={() => setSort('rsRating')}>RS{arrow('rsRating')}</th>
-              <th style={headerCell as any} onClick={() => setSort('revAnn')}>REV YOY{arrow('revAnn')}</th>
-              <th style={headerCell as any} onClick={() => setSort('fcfMargin')}>FCF M{arrow('fcfMargin')}</th>
-              <th style={headerCell as any} onClick={() => setSort('ebitdaMargin')}>EBITDA M{arrow('ebitdaMargin')}</th>
-              <th style={headerCell as any} onClick={() => setSort('opLev')} title="Operating Leverage = EPS growth ÷ Revenue growth (YoY). >1 = margins expanding (positive op-lev). >2 = strong.">OP LEV{arrow('opLev')}</th>
-              <th style={headerCell as any} onClick={() => setSort('roic')}>ROIC{arrow('roic')}</th>
-              <th style={headerCell as any} onClick={() => setSort('fwdPe')}>FWD P/E{arrow('fwdPe')}</th>
-              <th style={headerCell as any} onClick={() => setSort('pegFwd')}>PEG{arrow('pegFwd')}</th>
-              <th style={headerCell as any} onClick={() => setSort('targetUpside')}>UPSIDE{arrow('targetUpside')}</th>
-              <th style={headerCell as any} onClick={() => setSort('beta')}>BETA{arrow('beta')}</th>
-              <th style={headerCell as any} onClick={() => setSort('piotroski')}>PIO{arrow('piotroski')}</th>
+              <th style={headerCell as any} onClick={() => setSort('mcapB')}>MCAP $B{arrow('mcapB')}<BasisTag b={B.mcapB} /></th>
+              <th style={headerCell as any} onClick={() => setSort('r40')}>R40{arrow('r40')}<BasisTag b={B.r40} /></th>
+              <th style={headerCell as any} onClick={() => setSort('rsRating')}>RS{arrow('rsRating')}<BasisTag b={B.rsRating} /></th>
+              <th style={headerCell as any} onClick={() => setSort('revAnn')}>REV YOY{arrow('revAnn')}<BasisTag b={B.revAnn} /></th>
+              <th style={headerCell as any} onClick={() => setSort('fcfMargin')}>FCF M{arrow('fcfMargin')}<BasisTag b={B.fcfMargin} /></th>
+              <th style={headerCell as any} onClick={() => setSort('ebitdaMargin')}>EBITDA M{arrow('ebitdaMargin')}<BasisTag b={B.ebitdaMargin} /></th>
+              <th style={headerCell as any} onClick={() => setSort('opLev')} title="Operating Leverage = EPS growth ÷ Revenue growth (YoY). >1 = margins expanding (positive op-lev). >2 = strong.">OP LEV{arrow('opLev')}<BasisTag b={B.opLev} /></th>
+              <th style={headerCell as any} onClick={() => setSort('roic')}>ROIC{arrow('roic')}<BasisTag b={B.roic} /></th>
+              <th style={headerCell as any} onClick={() => setSort('fwdPe')}>FWD P/E{arrow('fwdPe')}<BasisTag b={B.fwdPe} /></th>
+              <th style={headerCell as any} onClick={() => setSort('pegTtm')}>PEG{arrow('pegTtm')}<BasisTag b={B.pegTtm} /></th>
+              <th style={headerCell as any} onClick={() => setSort('targetUpside')}>UPSIDE{arrow('targetUpside')}<BasisTag b={B.targetUpside} /></th>
+              <th style={headerCell as any} onClick={() => setSort('beta')}>BETA{arrow('beta')}<BasisTag b={B.beta} /></th>
+              <th style={headerCell as any} onClick={() => setSort('piotroski')}>PIO{arrow('piotroski')}<BasisTag b={B.piotroski} /></th>
               <th style={headerCell}>✕</th>
             </tr>
           </thead>
@@ -1343,7 +1430,7 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
                 <td style={{ ...cell, color: typeof r.opLev === 'number' ? (r.opLev >= 2 ? '#10B981' : r.opLev >= 1.5 ? '#22C55E' : r.opLev >= 1 ? '#84CC16' : r.opLev > 0 ? '#F59E0B' : '#EF4444') : COL.muted, fontWeight: 800 }} title={r.opLev !== undefined ? `EPS YoY ${r.epsGrowth?.toFixed(0) ?? '—'}% ÷ Rev YoY ${r.revAnn?.toFixed(0) ?? '—'}%` : 'needs rev YoY ≥2% + EPS YoY'}>{r.opLev !== undefined ? `${r.opLev.toFixed(1)}×` : '—'}</td>
                 <td style={cell}>{r.roic !== undefined ? `${r.roic.toFixed(0)}%` : '—'}</td>
                 <td style={cell}>{r.fwdPe !== undefined ? `${r.fwdPe.toFixed(0)}×` : '—'}</td>
-                <td style={cell}>{r.pegFwd !== undefined ? r.pegFwd.toFixed(2) : '—'}</td>
+                <td style={cell}>{r.pegTtm !== undefined ? r.pegTtm.toFixed(2) : '—'}</td>
                 <td style={{ ...cell, color: typeof r.targetUpside === 'number' ? (r.targetUpside >= 20 ? '#10B981' : r.targetUpside >= 0 ? '#22D3EE' : '#EF4444') : COL.muted, fontWeight: 700 }}>
                   {r.targetUpside !== undefined ? `${r.targetUpside >= 0 ? '↑' : '↓'} ${Math.abs(r.targetUpside)}%` : '—'}
                 </td>
@@ -1362,7 +1449,7 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
         </table>
       </div>
       <div style={{ fontSize: 10, color: COL.dim, textAlign: 'center', marginTop: 6 }}>
-        TradingView USA fundamentals · all metrics computed in-browser. R40 = revenue growth + FCF margin · RS = O&apos;Neil-style 1-99 from 3M/6M/1Y composite · Upside = vs analyst 1-year target · PEG = trailing.
+        TradingView USA fundamentals · all metrics computed in-browser. R40 = revenue growth + FCF margin · RS = O&apos;Neil-style 1-99 from 3M/6M/1Y composite · Upside = vs analyst 1-year target · PEG = trailing. Basis tags: REPORTED = latest quarter · TTM = last 12 months · FY = last full year · EST = analyst forward · DERIVED = mixes bases · PRICE = market data. &quot;Combines bases&quot; under a name means its signs come from different periods.
       </div>
     </div>
   );
@@ -1446,8 +1533,8 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
   }, [liveCmp]);
 
   const kpiDefs: [string, string, string][] = [
-    ['Sales growth', 'Sales growth (1Y, Screener)', '%'],   // zzz883: Screener's "Sales growth" is a one-year figure; not labelled TTM
-    ['Profit growth', 'Profit growth (1Y, Screener)', '%'],
+    ['Sales growth', 'Sales growth', '%'],   // zzz883/zzz904: Screener's "Sales growth" compares the last two full years (FY tag), not TTM
+    ['Profit growth', 'Profit growth', '%'],
     ['YOY Quarterly sales growth', 'Sales gr (YoY Qtr)', '%'],
     ['YOY Quarterly profit growth', 'Profit gr (YoY Qtr)', '%'],
     ['Sales growth 3Years', 'Sales CAGR 3Y', '%'],
@@ -1462,7 +1549,7 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
     ['Promoter holding', 'Promoter holding', '%'],
   ];
 
-  // zzz125 — Operating Leverage for India = Profit growth ÷ Sales growth (TTM YoY).
+  // zzz125 — Operating Leverage for India = Profit growth ÷ Sales growth (both last-full-year YoY on Screener; zzz904 relabelled from 'TTM').
   // >1.0 = margins expanding; >2.0 = strong operating leverage; <1.0 = no leverage.
   // Skip rows where sales growth is < 2% (noisy / mean-reverts).
   const opLevRows = useMemo(() => {
@@ -1596,7 +1683,7 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
 
   const MoverTable = ({ rows }: { rows: { d: Row; delta: number }[] }) => (
     <table style={tbl}>
-      <thead><tr><th style={thR}></th><th style={thL}>Company</th><th style={thR}>OPM now</th><th style={thR}>OPM 1Y</th><th style={thR}>Δ pp</th></tr></thead>
+      <thead><tr><th style={thR}></th><th style={thL}>Company</th><th style={thR}>OPM now<BasisTag b={indiaBasis('OPM latest quarter')} /></th><th style={thR}>OPM 1Y<BasisTag b={indiaBasis('OPM last year')} /></th><th style={thR}>Δ pp<BasisTag b={indiaFlagBasis('Margin expanding')} /></th></tr></thead>
       <tbody>
         {rows.map((o, i) => (
           <tr key={i}>
@@ -1646,7 +1733,7 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
             <table style={tbl}>
               <thead><tr>
                 <th style={thR}></th><th style={thL}>Company</th><th style={thR}>#</th>
-                <th style={thL}>Strengths</th><th style={thR}>Profit gr.</th><th style={thR}>Sales gr.</th><th style={thR}>ROCE</th><th style={thR}>D/E</th>
+                <th style={thL}>Strengths</th><th style={thR}>Profit gr.<BasisTag b={indiaBasis('Profit growth')} /></th><th style={thR}>Sales gr.<BasisTag b={indiaBasis('Sales growth')} /></th><th style={thR}>ROCE<BasisTag b={indiaBasis('Return on capital employed')} /></th><th style={thR}>D/E<BasisTag b={indiaBasis('Debt to equity')} /></th>
               </tr></thead>
               <tbody>
                 {holders.slice(0, 25).map((o, i) => {
@@ -1659,7 +1746,7 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
                       <td style={{ ...tdL, paddingTop: 7, paddingBottom: 7 }}>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                           {o.flags.map((fl, k) => (
-                            <span key={k} style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', color: tech(fl) ? COL.cyan : COL.green, background: tech(fl) ? 'rgba(57,208,216,.12)' : 'rgba(63,185,80,.12)', border: `1px solid ${tech(fl) ? 'rgba(57,208,216,.3)' : 'rgba(63,185,80,.3)'}` }}>{fl}</span>
+                            <span key={k} style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', color: tech(fl) ? COL.cyan : COL.green, background: tech(fl) ? 'rgba(57,208,216,.12)' : 'rgba(63,185,80,.12)', border: `1px solid ${tech(fl) ? 'rgba(57,208,216,.3)' : 'rgba(63,185,80,.3)'}` }}>{fl}<BasisTag b={indiaFlagBasis(fl)} /></span>
                           ))}
                         </div>
                       </td>
@@ -1690,7 +1777,7 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
             <table style={tbl}>
               <thead><tr>
                 <th style={thR}></th><th style={thL}>Company</th><th style={thR}>#</th>
-                <th style={thL}>Triggers</th><th style={thR}>Profit gr.</th><th style={thR}>Sales gr.</th><th style={thR}>ROCE</th><th style={thR}>D/E</th>
+                <th style={thL}>Triggers</th><th style={thR}>Profit gr.<BasisTag b={indiaBasis('Profit growth')} /></th><th style={thR}>Sales gr.<BasisTag b={indiaBasis('Sales growth')} /></th><th style={thR}>ROCE<BasisTag b={indiaBasis('Return on capital employed')} /></th><th style={thR}>D/E<BasisTag b={indiaBasis('Debt to equity')} /></th>
               </tr></thead>
               <tbody>
                 {flagged.slice(0, 25).map((o, i) => {
@@ -1703,7 +1790,7 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
                       <td style={{ ...tdL, paddingTop: 7, paddingBottom: 7 }}>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                           {o.flags.map((fl, k) => (
-                            <span key={k} style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', color: tech(fl) ? COL.amber : COL.red, background: tech(fl) ? 'rgba(210,153,34,.12)' : 'rgba(248,81,73,.12)', border: `1px solid ${tech(fl) ? 'rgba(210,153,34,.3)' : 'rgba(248,81,73,.3)'}` }}>{fl}</span>
+                            <span key={k} style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', color: tech(fl) ? COL.amber : COL.red, background: tech(fl) ? 'rgba(210,153,34,.12)' : 'rgba(248,81,73,.12)', border: `1px solid ${tech(fl) ? 'rgba(210,153,34,.3)' : 'rgba(248,81,73,.3)'}` }}>{fl}<BasisTag b={indiaFlagBasis(fl)} /></span>
                           ))}
                         </div>
                       </td>
@@ -1748,14 +1835,14 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
                         <td style={{ ...tdL, paddingTop: 7, paddingBottom: 7 }}>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                             {o.strengths.map((fl, k) => (
-                              <span key={k} style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', color: tech(fl) ? COL.cyan : COL.green, background: tech(fl) ? 'rgba(57,208,216,.12)' : 'rgba(63,185,80,.12)', border: `1px solid ${tech(fl) ? 'rgba(57,208,216,.3)' : 'rgba(63,185,80,.3)'}` }}>{fl}</span>
+                              <span key={k} style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', color: tech(fl) ? COL.cyan : COL.green, background: tech(fl) ? 'rgba(57,208,216,.12)' : 'rgba(63,185,80,.12)', border: `1px solid ${tech(fl) ? 'rgba(57,208,216,.3)' : 'rgba(63,185,80,.3)'}` }}>{fl}<BasisTag b={indiaFlagBasis(fl)} /></span>
                             ))}
                           </div>
                         </td>
                         <td style={{ ...tdL, paddingTop: 7, paddingBottom: 7 }}>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                             {o.triggers.map((fl, k) => (
-                              <span key={k} style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', color: tech(fl) ? COL.amber : COL.red, background: tech(fl) ? 'rgba(210,153,34,.12)' : 'rgba(248,81,73,.12)', border: `1px solid ${tech(fl) ? 'rgba(210,153,34,.3)' : 'rgba(248,81,73,.3)'}` }}>{fl}</span>
+                              <span key={k} style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', color: tech(fl) ? COL.amber : COL.red, background: tech(fl) ? 'rgba(210,153,34,.12)' : 'rgba(248,81,73,.12)', border: `1px solid ${tech(fl) ? 'rgba(210,153,34,.3)' : 'rgba(248,81,73,.3)'}` }}>{fl}<BasisTag b={indiaFlagBasis(fl)} /></span>
                             ))}
                           </div>
                         </td>
@@ -1773,7 +1860,7 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
       <div style={grid2}>
         <Card title="Quality compounders" dot={COL.violet} hint="ROCE + 3Y growth + margins − leverage">
           <table style={tbl}>
-            <thead><tr><th style={thR}></th><th style={thL}>Company</th><th style={thR}>Score</th><th style={thR}>ROCE</th><th style={thR}>Profit 3Y</th><th style={thR}>D/E</th></tr></thead>
+            <thead><tr><th style={thR}></th><th style={thL}>Company</th><th style={thR}>Score<BasisTag b={combineBases(['Return on capital employed', 'Profit growth 3Years', 'Sales growth 3Years', 'OPM', 'Debt to equity'].map(indiaBasis))} /></th><th style={thR}>ROCE<BasisTag b={indiaBasis('Return on capital employed')} /></th><th style={thR}>Profit 3Y<BasisTag b={indiaBasis('Profit growth 3Years')} /></th><th style={thR}>D/E<BasisTag b={indiaBasis('Debt to equity')} /></th></tr></thead>
             <tbody>
               {quality.map((o, i) => (
                 <tr key={i}>
@@ -1830,7 +1917,7 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
           return (
             <div key={k} style={kpiCard}>
               <div style={{ fontSize: 10.5, letterSpacing: .4, textTransform: 'uppercase', color: COL.muted, marginBottom: 7, fontWeight: 600 }}>
-                {lab}<span style={{ color: COL.dim, fontWeight: 500 }}> · avg</span>
+                {lab}<BasisTag b={indiaBasis(k)} /><span style={{ color: COL.dim, fontWeight: 500 }}> · avg</span>
               </div>
               <div style={{ fontSize: 23, fontWeight: 700, color: cls }}>{isNaN(head) ? '—' : fmt(head, 1) + unit}</div>
               <div style={{ fontSize: 11, color: COL.dim, marginTop: 4 }}>median <b style={{ color: COL.muted }}>{isNaN(s.median) ? '—' : fmt(s.median, 1) + unit}</b> · n={s.n}</div>
@@ -1838,9 +1925,9 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
           );
         })}
         {/* zzz125 — Operating Leverage KPI card (computed: profit growth ÷ sales growth) */}
-        <div style={{ ...kpiCard, border: '1px solid #84CC1640' }} title="Operating Leverage = Profit growth ÷ Sales growth (TTM YoY). >1 = margins expanding · >2 = strong">
+        <div style={{ ...kpiCard, border: '1px solid #84CC1640' }} title={`Operating Leverage = Profit growth ÷ Sales growth (both ${indiaBasis('Sales growth').label} YoY). >1 = margins expanding · >2 = strong`}>
           <div style={{ fontSize: 10.5, letterSpacing: .4, textTransform: 'uppercase', color: '#84CC16', marginBottom: 7, fontWeight: 700 }}>
-            ⚡ Op Leverage<span style={{ color: COL.dim, fontWeight: 500 }}> · avg</span>
+            ⚡ Op Leverage<BasisTag b={indiaBasis('_OpLev')} /><span style={{ color: COL.dim, fontWeight: 500 }}> · avg</span>
           </div>
           <div style={{ fontSize: 23, fontWeight: 700, color: isNaN(opLevStat.trimmed) ? COL.txt : opLevStat.trimmed >= 1.5 ? '#10B981' : opLevStat.trimmed >= 1 ? '#84CC16' : opLevStat.trimmed > 0 ? '#F59E0B' : '#EF4444' }}>{isNaN(opLevStat.trimmed) ? '—' : `${fmt(opLevStat.trimmed, 1)}×`}</div>
           <div style={{ fontSize: 11, color: COL.dim, marginTop: 4 }}>median <b style={{ color: COL.muted }}>{isNaN(opLevStat.median) ? '—' : `${fmt(opLevStat.median, 1)}×`}</b> · n={opLevStat.n}</div>
@@ -1859,20 +1946,20 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
 
       {/* Sales growth leaders */}
       <div style={grid2}>
-        <Card title="Top 10 — Sales growth (TTM)" dot={COL.green} hint="highest revenue momentum">
+        <Card title={`Top 10 — Sales growth (${indiaBasis('Sales growth').label})`} dot={COL.green} hint="highest revenue momentum">
           <LeaderTable rows={leaders('Sales growth', 'desc')} valKey="Sales growth" unit="%" name={name} nse={nse} />
         </Card>
-        <Card title="Bottom 10 — Sales growth (TTM)" dot={COL.red} hint="weakest / shrinking">
+        <Card title={`Bottom 10 — Sales growth (${indiaBasis('Sales growth').label})`} dot={COL.red} hint="weakest / shrinking">
           <LeaderTable rows={leaders('Sales growth', 'asc')} valKey="Sales growth" unit="%" name={name} nse={nse} />
         </Card>
       </div>
 
       {/* Profit growth leaders */}
       <div style={grid2}>
-        <Card title="Top 10 — Profit growth (TTM)" dot={COL.green} hint="highest earnings momentum">
+        <Card title={`Top 10 — Profit growth (${indiaBasis('Profit growth').label})`} dot={COL.green} hint="highest earnings momentum">
           <LeaderTable rows={leaders('Profit growth', 'desc')} valKey="Profit growth" unit="%" name={name} nse={nse} />
         </Card>
-        <Card title="Bottom 10 — Profit growth (TTM)" dot={COL.red} hint="earnings under pressure">
+        <Card title={`Bottom 10 — Profit growth (${indiaBasis('Profit growth').label})`} dot={COL.red} hint="earnings under pressure">
           <LeaderTable rows={leaders('Profit growth', 'asc')} valKey="Profit growth" unit="%" name={name} nse={nse} />
         </Card>
       </div>
@@ -1884,7 +1971,7 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
         </Card>
         <Card title="Operating Leverage — How it works" dot="#84CC16">
           <div style={{ padding: 12, fontSize: 13, color: COL.muted, lineHeight: 1.55 }}>
-            <div style={{ marginBottom: 8 }}><b style={{ color: '#84CC16' }}>Formula:</b> Profit growth % ÷ Sales growth % (both TTM YoY)</div>
+            <div style={{ marginBottom: 8 }}><b style={{ color: '#84CC16' }}>Formula:</b> Profit growth % ÷ Sales growth % (both {indiaBasis('Sales growth').label} YoY — Screener&apos;s growth columns compare the last two full years)</div>
             <ul style={{ margin: 0, paddingLeft: 18 }}>
               <li><b style={{ color: '#10B981' }}>≥ 2.0×</b> — strong operating leverage, margins expanding fast</li>
               <li><b style={{ color: '#84CC16' }}>1.0–2.0×</b> — positive leverage, fixed-cost absorption working</li>
@@ -1945,10 +2032,10 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
 
       {/* Histograms */}
       <div style={grid2}>
-        <Card title="Distribution — Sales growth (TTM)" dot={COL.green}>
+        <Card title={`Distribution — Sales growth (${indiaBasis('Sales growth').label})`} dot={COL.green}>
           <Histogram values={col('Sales growth')} color={COL.green} unit="Sales gr %" />
         </Card>
-        <Card title="Distribution — Profit growth (TTM)" dot={COL.violet}>
+        <Card title={`Distribution — Profit growth (${indiaBasis('Profit growth').label})`} dot={COL.violet}>
           <Histogram values={col('Profit growth')} color={COL.violet} unit="Profit gr %" />
         </Card>
       </div>
@@ -2024,8 +2111,8 @@ function LeaderTable({ rows, valKey, unit, name, nse, extra }: {
     <table style={tbl}>
       <thead>
         <tr>
-          <th style={thR}></th><th style={thL}>Company</th><th style={thR}>{unit === 'x' ? 'Value (x)' : unit === '%' ? 'Value %' : 'Value (' + unit.trim() + ')'}</th>
-          {ex.map((e, i) => <th key={i} style={thR}>{e[1]}</th>)}
+          <th style={thR}></th><th style={thL}>Company</th><th style={thR}>{unit === 'x' ? 'Value (x)' : unit === '%' ? 'Value %' : 'Value (' + unit.trim() + ')'}<BasisTag b={indiaBasis(valKey)} /></th>
+          {ex.map((e, i) => <th key={i} style={thR}>{e[1]}<BasisTag b={indiaBasis(e[0])} /></th>)}
         </tr>
       </thead>
       <tbody>
@@ -2106,12 +2193,12 @@ function IndiaHoldingsTable({ rows, name, nse }: { rows: Row[]; name: (d: Row) =
           <thead>
             <tr>
               <th style={hzL} onClick={() => setSort('name')}>Company{arr('name')}</th>
-              <th style={hzR} onClick={() => setSort('prom')}>Promoter %{arr('prom')}</th>
-              <th style={hzR} onClick={() => setSort('chg')}>Δ 3Y{arr('chg')}</th>
+              <th style={hzR} onClick={() => setSort('prom')}>Promoter %{arr('prom')}<BasisTag b={indiaBasis('Promoter holding')} /></th>
+              <th style={hzR} onClick={() => setSort('chg')}>Δ 3Y{arr('chg')}<BasisTag b={indiaBasis('Change in promoter holding 3Years')} /></th>
               <th style={thR}>Trend</th>
-              <th style={hzR} onClick={() => setSort('plg')}>Pledge %{arr('plg')}</th>
-              {hasFII && <th style={hzR} onClick={() => setSort('fii')}>FII %{arr('fii')}</th>}
-              {hasDII && <th style={hzR} onClick={() => setSort('dii')}>DII %{arr('dii')}</th>}
+              <th style={hzR} onClick={() => setSort('plg')}>Pledge %{arr('plg')}<BasisTag b={indiaBasis('Pledged percentage')} /></th>
+              {hasFII && <th style={hzR} onClick={() => setSort('fii')}>FII %{arr('fii')}<BasisTag b={indiaBasis('FII holding')} /></th>}
+              {hasDII && <th style={hzR} onClick={() => setSort('dii')}>DII %{arr('dii')}<BasisTag b={indiaBasis('DII holding')} /></th>}
             </tr>
           </thead>
           <tbody>
@@ -2300,8 +2387,8 @@ function Quadrant({ data, name }: { data: Row[]; name: (d: Row) => string }) {
               <title>{`${p.nm} · Sales ${p.x.toFixed(0)}%  Profit ${p.y.toFixed(0)}%`}</title>
             </circle>
           ))}
-          <text x={W / 2} y={H - 10} fill={COL.muted} fontSize={11} textAnchor="middle">Sales growth % (TTM)</text>
-          <text x={14} y={H / 2} fill={COL.muted} fontSize={11} textAnchor="middle" transform={`rotate(-90 14 ${H / 2})`}>Profit growth % (TTM)</text>
+          <text x={W / 2} y={H - 10} fill={COL.muted} fontSize={11} textAnchor="middle">{`Sales growth % (${indiaBasis('Sales growth').label})`}</text>
+          <text x={14} y={H / 2} fill={COL.muted} fontSize={11} textAnchor="middle" transform={`rotate(-90 14 ${H / 2})`}>{`Profit growth % (${indiaBasis('Profit growth').label})`}</text>
         </svg>
       </div>
       {off ? <div style={{ color: COL.dim, fontSize: 11, marginTop: 8 }}>{off} stock(s) had growth beyond ±{CL}% and were clamped to the chart edge to keep the quadrant readable.</div> : null}

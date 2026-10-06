@@ -89,6 +89,10 @@ export function parseUSARow(row: Record<string,unknown>): USARow | null {
       row['Revenue 3-year CAGR, %'] ??
       row['Revenue growth %, 3 year CAGR']
     ),
+    // zzz904 — the field is named 3yr but TradingView's 5-year column wins when present; record which span it really is.
+    revGrowthCagrYears: n(row['Revenue growth %, 5 year CAGR']) !== undefined ? 5
+      : n(row['Revenue growth %, 3-year CAGR'] ?? row['Revenue 3-year CAGR, %'] ?? row['Revenue growth %, 3 year CAGR']) !== undefined ? 3 : undefined,
+    ruleOf40RevBasis: revQtr !== undefined ? 'QTR' : revAnn !== undefined ? 'ANN' : undefined,
     // Gross margin TTM (TradingView: "Gross margin %, Trailing 12 months")
     grossMarginTtm: n(
       row['Gross margin %, Trailing 12 months'] ??  // TradingView exact

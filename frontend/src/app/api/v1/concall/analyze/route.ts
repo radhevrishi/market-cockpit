@@ -5,7 +5,9 @@
 //   body: { transcript?: string; pdf_url?: string; ticker?: string }
 //
 // Returns the MRI master-prompt structured analysis:
-//   1. Tone & Confidence — directional read, change-vs-prior-quarter
+//   1. Tone & Confidence — directional read for THIS transcript only. The route keeps no
+//      history (zzz904): the 'vs previous call' comparison is built in the browser from the
+//      earlier analysis of the same ticker on file (lib/concall-prior-compare.ts).
 //   2. Guidance Map      — what was promised, raised, lowered, withdrawn
 //   3. Key Themes        — top 3-5 catalysts management dwelled on
 //   4. Red Flags         — defensive answers, deflections, accounting tells
@@ -293,6 +295,8 @@ export async function POST(req: Request) {
     themes,
     red_flags: flags,
     transformation,
+    // zzz904 — explicit: this response compares with nothing; see lib/concall-prior-compare.ts
+    prior_comparison: 'not done server-side',
     generated_at: new Date().toISOString(),
   });
 }

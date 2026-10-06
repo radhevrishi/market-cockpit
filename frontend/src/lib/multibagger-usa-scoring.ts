@@ -22,7 +22,9 @@ export interface USARow {
   marketCapUsd?: number;          // Market capitalization (USD)
   revenueGrowthQtr?: number;      // Revenue growth %, Quarterly YoY
   revenueGrowthAnn?: number;      // Revenue growth %, Annual YoY
-  revGrowth3yr?: number;          // Revenue growth %, 3-year CAGR (sustained growth check)
+  revGrowth3yr?: number;          // Revenue growth %, multi-year CAGR (sustained growth check) — TradingView's 5-year column first, 3-year as fallback
+  revGrowthCagrYears?: number;    // zzz904 — span of the column revGrowth3yr was read from (5 or 3); labels only, scoring unchanged
+  ruleOf40RevBasis?: 'QTR' | 'ANN'; // zzz904 — which revenue growth the parsed ruleOf40 used (Quarterly YoY first, Annual fallback)
   grossMarginAnn?: number;        // Gross margin %, Annual (GPM)
   grossMarginTtm?: number;        // Gross margin %, TTM (more current, for expansion check)
   fcfMarginAnn?: number;          // Free cash flow margin %, Annual
@@ -304,13 +306,14 @@ export function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGr
       && typeof row.revenueGrowthAnn === 'number'
       && typeof (row.fcfMarginAnn ?? row.fcfMarginTtm) === 'number') {
     (row as any).ruleOf40 = (row.revenueGrowthAnn ?? 0) + (row.fcfMarginAnn ?? row.fcfMarginTtm ?? 0);
+    row.ruleOf40RevBasis = 'ANN'; // zzz904 — this fallback uses annual revenue growth
   }
   const ruleOf40 = row.ruleOf40;
   if (ruleOf40 !== undefined) {
     const willFireDnaAtCap =
          ((row.ruleOf40 ?? 0) >= 40 && (effectiveGM ?? 0) >= 60 && (row.revenueGrowthAnn ?? 0) >= 20 && (row.fcfMarginAnn ?? 0) >= 10)
       || ((row.roe ?? 0) >= 18 && (row.roic ?? 0) >= 15 && (row.fcfMarginAnn ?? 0) >= 15 && (row.de ?? 99) < 0.5 && (row.revenueGrowthAnn ?? 0) >= 12);
-    if (ruleOf40 >= 60 && !willFireDnaAtCap) strengths.push(`🏆 Rule of 40: ${ruleOf40.toFixed(0)} — elite (Rev ${(row.revenueGrowthAnn??0).toFixed(0)}% + FCF ${(row.fcfMarginAnn??0).toFixed(0)}%)`);
+    if (ruleOf40 >= 60 && !willFireDnaAtCap) strengths.push(`🏆 Rule of 40: ${ruleOf40.toFixed(0)} — elite (Rev ${row.ruleOf40RevBasis === 'QTR' ? `${(row.revenueGrowthQtr??0).toFixed(0)}% latest-qtr YoY` : `${(row.revenueGrowthAnn??0).toFixed(0)}% FY`} + FCF ${(row.fcfMarginAnn??0).toFixed(0)}% FY)`);
     else if (ruleOf40 >= 40 && !willFireDnaAtCap) strengths.push(`✅ Rule of 40: ${ruleOf40.toFixed(0)} — passes institutional benchmark (≥40)`);
     else if (ruleOf40 < 20) risks.push(`⚠️ Rule of 40: ${ruleOf40.toFixed(0)} — below threshold (need ≥40 for premium multiple)`);
   }
@@ -335,9 +338,9 @@ export function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGr
   if (row.revGrowth3yr !== undefined) {
     const s = svUS(row.revGrowth3yr, b.revGrowth); growS += s * 0.8; growC += 0.8;
     if (row.revenueGrowthAnn !== undefined && row.revGrowth3yr < row.revenueGrowthAnn * 0.5) {
-      growS -= 12; risks.push(`Revenue spike risk: ${row.revenueGrowthAnn.toFixed(0)}% annual vs ${row.revGrowth3yr.toFixed(0)}% 3yr CAGR — recent surge may not be sustained`);
+      growS -= 12; risks.push(`Revenue spike risk: ${row.revenueGrowthAnn.toFixed(0)}% annual vs ${row.revGrowth3yr.toFixed(0)}% ${row.revGrowthCagrYears ?? 3}yr CAGR — recent surge may not be sustained`);
     } else if (row.revGrowth3yr > 25) {
-      strengths.push(`Sustained growth: ${row.revGrowth3yr.toFixed(1)}% 3yr CAGR — not a one-year spike`);
+      strengths.push(`Sustained growth: ${row.revGrowth3yr.toFixed(1)}% ${row.revGrowthCagrYears ?? 3}yr CAGR — not a one-year spike`);
     }
   }
   if (row.epsGrowth !== undefined) {
@@ -1026,7 +1029,7 @@ export function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGr
       && row.revenueGrowthAnn > row.revGrowth3yr * 1.8
       && row.revenueGrowthAnn > 15) {
     score = Math.min(score, 72);
-    risks.push(`Cycle-peak / base-effect cap: annual growth ${row.revenueGrowthAnn.toFixed(0)}% is ${(row.revenueGrowthAnn/Math.max(row.revGrowth3yr,1)).toFixed(1)}× the 3yr CAGR ${row.revGrowth3yr.toFixed(0)}% — recent surge unlikely to sustain. Capped at 72.`);
+    risks.push(`Cycle-peak / base-effect cap: annual growth ${row.revenueGrowthAnn.toFixed(0)}% is ${(row.revenueGrowthAnn/Math.max(row.revGrowth3yr,1)).toFixed(1)}× the ${row.revGrowthCagrYears ?? 3}yr CAGR ${row.revGrowth3yr.toFixed(0)}% — recent surge unlikely to sustain. Capped at 72.`);
   }
 
   // (12) SELL / STRONG SELL ANALYST RATING — HARD CAP at 50.

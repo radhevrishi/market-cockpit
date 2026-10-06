@@ -18,6 +18,7 @@ import { WarrantMomentumFeed } from './WarrantMomentumFeed';
 import { KeywordWatchFeed, MoversPanel } from './components';
 import { ConcallAnalyticsTab } from './ConcallAnalyticsTab';
 import { TransformationRadar, TransformationFrameworkTab, TransformationScreenerTab } from './components2';
+import { comparePriorCall, type ConcallCorpus } from '@/lib/concall-prior-compare'; // zzz904
 
 export default function ConcallIntelPage() {
   const [ticker, setTicker] = useState('');
@@ -26,6 +27,8 @@ export default function ConcallIntelPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Analysis | null>(null);
+  // zzz904 — corpus key of the analysis on screen, so the 'vs previous call' lookup never compares a call with itself.
+  const [resultKey, setResultKey] = useState<string | null>(null);
   // AUDIT_100 #36 — phase hint during 65s spinner. Approximate timing based on
   // observed Vercel serverless behaviour for the existing route (download
   // → extract → analyze). Pure client-side timer; no SSE wiring required.
@@ -75,6 +78,7 @@ export default function ConcallIntelPage() {
       const key = hashInput(`${ticker}|${pdfUrl}|${transcript.slice(0, 500)}`);
       if (corpus[key]) {
         setResult(corpus[key].result);
+        setResultKey(key);
         return;
       }
     }
@@ -99,6 +103,7 @@ export default function ConcallIntelPage() {
       }
       const j = await res.json();
       setResult(j);
+      setResultKey(hashInput(`${ticker}|${pdfUrl}|${transcript.slice(0, 500)}`));
       saveCorpus(j);
     } catch (e: any) {
       setError(e?.name === 'AbortError' ? 'Request timed out after 65s' : (e?.message || 'fetch failed'));
@@ -107,6 +112,14 @@ export default function ConcallIntelPage() {
       setLoading(false);
     }
   };
+
+  // zzz904 — compare with the same company's earlier analysed call when one is on file; otherwise say so.
+  const prior = (() => {
+    if (!result) return null;
+    let corpus: ConcallCorpus = {};
+    try { corpus = JSON.parse(localStorage.getItem(CORPUS_KEY) || '{}'); } catch { /* empty corpus */ }
+    return comparePriorCall(result, corpus, resultKey);
+  })();
 
   const toneColor = (s: number) => s >= 70 ? '#10B981' : s >= 55 ? '#22D3EE' : s >= 40 ? '#F59E0B' : s >= 25 ? '#F97316' : '#EF4444';
 
@@ -307,6 +320,23 @@ export default function ConcallIntelPage() {
               <div style={{ marginTop: 4 }}>Transcript length: {result.length.toLocaleString()} chars</div>
             </div>
           </div>
+
+          {/* zzz904 — vs previous call (real comparison against the earlier analysis on file, or an honest 'none yet') */}
+          {prior && (
+            <div style={{ backgroundColor: 'var(--mc-bg-0)', border: '1px solid var(--mc-bg-4)', borderLeft: '3px solid var(--mc-text-3)', borderRadius: 8, padding: '12px 14px' }}>
+              {prior.status === 'COMPARED' ? (
+                <>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-text-2)', letterSpacing: '0.4px', marginBottom: 6 }}>{prior.heading.toUpperCase()}</div>
+                  {prior.lines.map((l, i) => (
+                    <div key={i} style={{ fontSize: 11.5, padding: '3px 0', color: 'var(--mc-text-1)' }}>· {l}</div>
+                  ))}
+                  <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginTop: 6, fontStyle: 'italic' }}>Compared with the earlier analysis of the same ticker stored in this browser. Wording tone uses a fixed word list (no AI).</div>
+                </>
+              ) : (
+                <div style={{ fontSize: 11.5, color: 'var(--mc-text-3)' }}>{prior.message}</div>
+              )}
+            </div>
+          )}
 
           {/* Guidance Map */}
           {result.guidance.length > 0 && (
