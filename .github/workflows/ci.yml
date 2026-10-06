@@ -1,0 +1,49 @@
+name: CI (tests, types, build)
+
+# zzz883 — every push to main and every pull request is checked before it can be trusted:
+#   1. all ~4,300 tests (a failing file is re-run once),
+#   2. the type-check ratchet (no new type errors; see frontend/scripts/tsc-gate.mjs),
+#   3. a production `next build`.
+# Turn on Railway → service → Settings → "Wait for CI" so a red run blocks the deploy.
+on:
+  push:
+    branches: [main]
+    paths: ['frontend/**', '.github/workflows/ci.yml']
+  pull_request:
+    paths: ['frontend/**', '.github/workflows/ci.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      NODE_OPTIONS: --max-old-space-size=6144
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        run: npm ci --no-audit --no-fund --legacy-peer-deps
+      - name: Security audit (high and critical only, report)
+        run: npm audit --omit=dev --audit-level=high || echo "::warning::npm audit found high/critical advisories — see the log"
+      - name: Tests
+        run: node scripts/run-tests.mjs
+      - name: Type-check ratchet
+        run: node scripts/tsc-gate.mjs
+      - name: Production build
+        run: npx next build
