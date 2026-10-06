@@ -67,16 +67,18 @@ export function raiseLine(e: GuidanceEvent): { text: string; pct: number | null;
   const ups = (e.changes || []).filter((c: any) => c?.direction === 'UP' && c?.before && c?.after);
   if (!ups.length) return null;
   const pctOf = (c: any) => num(c.percentageChange) ?? num(c.percentagePointChange);
-  const strength = (c: any): number => (isSmallEpsBase(c) ? -1 : num(c.percentageChange) ?? (num(c.percentagePointChange) != null ? 0 : -1));
+  // zzz881: only the floor moved (top end the same, Planet Labs EBITDA $0–10M → $3–10M) or the old figure started at zero: not a strong raise
+  const weak = (c: any) => isSmallEpsBase(c) || (num(c.before?.high) != null && num(c.before?.high) === num(c.after?.high)) || (num(c.before?.low) != null && (num(c.before?.low) as number) <= 0);
+  const strength = (c: any): number => (weak(c) ? -1 : num(c.percentageChange) ?? (num(c.percentagePointChange) != null ? 0 : -1));
   const c: any = ups.slice().sort((a: any, b: any) => strength(b) - strength(a) || (pctOf(b) ?? 0) - (pctOf(a) ?? 0))[0];
   const pct = pctOf(c);
   const isPp = num(c.percentageChange) == null && num(c.percentagePointChange) != null;
-  const small = isSmallEpsBase(c);
+  const small = weak(c);
   const sign = pct == null ? '' : ` (${pct >= 0 ? '+' : ''}${Math.round(pct * 10) / 10}${isPp ? ' pp' : '%'})`;
   const others = ups.filter((u: any) => u !== c);
   const smallOther = others.find((u: any) => isSmallEpsBase(u));
   const more = others.length ? ` + ${others.length} more${smallOther ? ` (incl. EPS +${Math.round(pctOf(smallOther) ?? 0)}% from a small base)` : ''}` : '';
-  const smallNote = small ? ` — from a small base of ${c.before?.currency || ''}${num(c.before?.midpoint) ?? '?'} a share` : '';
+  const smallNote = !small ? '' : isSmallEpsBase(c) ? ` — from a small base of ${c.before?.currency || ''}${num(c.before?.midpoint) ?? '?'} a share` : ' — only the low end moved, or it started from zero';
   return {
     text: `${c.after.period || ''} ${METRIC_WORD[c.metric] || String(c.metric).toLowerCase()}: ${rangeText(c.before)} → ${rangeText(c.after)}${sign}${smallNote}${more}`.trim(),
     pct: isPp || small ? null : pct, smallBaseOnly: small, pp: isPp,

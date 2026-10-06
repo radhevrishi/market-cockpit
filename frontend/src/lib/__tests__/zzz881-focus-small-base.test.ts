@@ -40,3 +40,8 @@ test('range never prints two equal ends', () => {
   assert.equal(fmtPoint({ low: 1.685, high: 1.693, currency: '$', unit: 'B' } as any), '$1.685–1.693B');
   assert.equal(fmtPoint({ low: 425, high: 441, currency: '$', unit: 'M' } as any), '$425–441M');
 });
+test('Planet Labs: only the floor moved ($0–10M → $3–10M) is not a strong raise', () => {
+  const e = ev('PL', [ch('EBITDA', [0, 10], [3, 10], 30, '$', 'M')]);
+  const rows = buildFocusList(null, [e], new Date('2026-10-06'));
+  assert.equal(rows[0].smallRaise, true); assert.notEqual(rows[0].verdict, 'STRONG RAISE');
+});
