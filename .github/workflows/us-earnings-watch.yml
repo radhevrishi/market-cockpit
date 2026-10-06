@@ -1,0 +1,35 @@
+name: US earnings watch (hand run)
+
+# zzz912: the US earnings alert. Its schedule runs INSIDE the app (frontend/src/lib/app-scheduler.ts, job: us-earnings-watch):
+# every 2 hours 11:07–23:07 UTC Mon–Fri, then 00:07–02:07 UTC Tue–Sat for the late after-close reporters. It replaced two
+# Claude scheduled tasks. This workflow is only for hand runs and as an emergency fallback. dry_run shows what would be sent.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Show what would be sent, send nothing'
+        type: boolean
+        default: true
+
+concurrency:
+  group: us-earnings-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Run the US earnings watch
+        env:
+          BASE: ${{ secrets.CRON_BASE_URL }}
+          SECRET: ${{ secrets.CRON_SECRET }}
+          DRY: ${{ github.event.inputs.dry_run == 'true' && '1' || '0' }}
+        run: |
+          BASE="${BASE:-https://market-cockpit-production.up.railway.app}"
+          CODE=$(curl -s -m 780 -H "x-cron-secret: $SECRET" "$BASE/api/v1/cron/us-earnings-watch?dry=$DRY" -o /tmp/watch.json -w "%{http_code}") || CODE=000
+          echo "HTTP $CODE"
+          cat /tmp/watch.json || true
+          case "$CODE" in 000|429) echo "::warning title=Deferred::app not reachable (HTTP $CODE)"; exit 0 ;; esac
+          [ "$CODE" = "200" ] || exit 1

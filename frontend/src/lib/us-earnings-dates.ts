@@ -131,6 +131,33 @@ export function afterHoursAnnouncementDate(
   return null;
 }
 
+// ─── zzz912 — the EDGAR filing date RIGHT NOW ─────────────────────────────
+//
+// The same 17:30 ET cutoff, seen from the clock: from 17:30 ET on a weekday
+// until midnight, every new 8-K carries the NEXT weekday's filing date. A
+// sweep at 20:00 ET that asks only for "today" therefore never sees the
+// evening reporters — they sit under tomorrow's date, which the grader used
+// to refuse as "the future". This is the latest filing date that can already
+// hold filings (holidays are not known here; a holiday simply has none).
+export const EDGAR_CUTOFF_ET_MIN = 17 * 60 + 30;
+
+/** Minutes after midnight US Eastern at a UTC instant. */
+export function etMinutesOfDay(utcMs: number = Date.now()): number {
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: ET_TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(utcMs));
+  const h = Number(parts.find((p) => p.type === 'hour')?.value || 0);
+  const m = Number(parts.find((p) => p.type === 'minute')?.value || 0);
+  return (h % 24) * 60 + m;
+}
+
+/** The newest EDGAR filing date in use at `utcMs`: today (ET), or the next weekday once a weekday passes 17:30 ET. */
+export function edgarFilingDateNow(utcMs: number = Date.now()): string {
+  const today = usEasternDate(utcMs);
+  if (isWeekendIso(today) || etMinutesOfDay(utcMs) < EDGAR_CUTOFF_ET_MIN) return today;
+  let d = addDaysIso(today, 1);
+  while (isWeekendIso(d)) d = addDaysIso(d, 1);
+  return d;
+}
+
 // ─── counted exclusions ───────────────────────────────────────────────────
 export type ExclusionCounts = Record<string, number>;
 

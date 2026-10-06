@@ -86,7 +86,7 @@ import {
 import { priorGuidanceFor, compareToGuide, type GuideVsActual } from '@/lib/us-prior-guidance';
 import { quadrantScore } from '@/lib/earnings-grade-shared';
 import {
-  usEasternDate, classifyXbrlFreshness, snapshotFresh, normalizeUsTicker, mergeExclusions, formatExclusions,
+  usEasternDate, edgarFilingDateNow, classifyXbrlFreshness, snapshotFresh, normalizeUsTicker, mergeExclusions, formatExclusions,
   type ExclusionCounts,
 } from '@/lib/us-earnings-dates';
 
@@ -887,7 +887,11 @@ export async function GET(req: Request) {
   const today = etToday();
   let date = (searchParams.get('date') || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) date = today;
-  if (date > today) date = today;                      // never grade the future
+  // Never grade the future — but after 17:30 ET EDGAR already stamps new 8-Ks
+  // with the next weekday's date, so that date is allowed (zzz912: the late
+  // after-close sweep could never see the evening reporters).
+  const maxDate = edgarFilingDateNow();
+  if (date > maxDate) date = maxDate;
 
   let days = parseInt(searchParams.get('days') || '', 10);
   if (!Number.isFinite(days) || days < 1) days = DEFAULT_WINDOW_DAYS;

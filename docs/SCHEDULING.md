@@ -44,6 +44,7 @@ The code is in `frontend/src/lib/app-scheduler.ts` (`APP_JOBS`). `instrumentatio
 | daily-research-portfolio | `13 14 * * *` | reads the Indian holdings that reported in the last 4 days | daily-research.yml |
 | in-earnings-alert (zzz911) | `27 4-16 * * 1-6` | GET /api/v1/cron/india-earnings-alert — new India Blockbuster/Strong results passing the Quality Preset (small and mid caps), each sent once, by Telegram and/or email | book-watch.yml (manual input `india-earnings-alert`) |
 | in-earnings-eod (zzz911) | `37 15 * * 1-5` | GET /api/v1/cron/india-earnings-eod — the evening check-in, always one message per weekday | book-watch.yml (manual input `india-earnings-eod`) |
+| us-earnings-watch (zzz912, was two Claude tasks) | :07 every 2 h 11–23 UTC Mon–Fri, :07 at 00–02 UTC Tue–Sat | GET /api/v1/cron/us-earnings-watch: graded-us (3 days up to the newest EDGAR filing date) → US Quality Preset + under $30B → one ranked Telegram/email alert of names not sent before | us-earnings-watch.yml |
 
 You can see the live schedule (last success, next run, and the state of the current slot) at `GET /api/v1/cron/schedule`. It is public and contains no secrets.
 

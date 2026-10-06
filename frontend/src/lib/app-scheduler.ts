@@ -412,6 +412,8 @@ export const APP_JOBS: readonly AppJob[] = [
   // App-only jobs (no workflow ever ran them); the manual button lives in book-watch.yml like the other owner alerts.
   { name: 'in-earnings-alert', crons: ['27 4-16 * * 1-6'], timeoutMs: 3 * MIN, workflow: BOOK, does: 'GET /api/v1/cron/india-earnings-alert (new Blockbuster/Strong preset passers, sent once each)', run: http('GET', '/api/v1/cron/india-earnings-alert', 90_000) },
   { name: 'in-earnings-eod', crons: ['37 15 * * 1-5'], timeoutMs: 3 * MIN, workflow: BOOK, does: 'GET /api/v1/cron/india-earnings-eod (evening check-in, always one message)', run: http('GET', '/api/v1/cron/india-earnings-eod', 90_000) },
+  // zzz912 — was two Claude scheduled tasks (US hours every 2 h, late after-close sweep 20:00–22:00 ET). Rules only, no AI.
+  { name: 'us-earnings-watch', crons: ['7 11-23/2 * * 1-5', '7 0-2 * * 2-6'], timeoutMs: 27 * MIN, workflow: 'us-earnings-watch.yml', does: 'GET /api/v1/cron/us-earnings-watch (graded-us → US Quality Preset, under $30B → one ranked alert of new names)', run: http('GET', '/api/v1/cron/us-earnings-watch', 12 * MIN) },
 ];
 
 /** Workflows that keep their GitHub schedule, and why (shown by /api/v1/cron/schedule and docs/SCHEDULING.md). */

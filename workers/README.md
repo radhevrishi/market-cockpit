@@ -19,6 +19,12 @@ npx wrangler deploy
 Test: open https://mc-guardian.radhev-232.workers.dev/run — you should see all
 probes ok:true. Status anytime at the root URL.
 
+Gainers pipeline check (zzz912, replaced a Claude scheduled task): on weekdays
+from 14:20 UTC, once a day, it reads the app's public `/api/v1/cron/gainers-pulse`.
+Silent when the India gainers research produced output in the last two trading
+sessions; one Telegram ("Gainers pipeline has not run in 48h") when it did not,
+after the same verdict twice in a row. `/gainers` shows the verdict without sending.
+
 ## 2. mc-alerts — always-on buy-zone alerts
 The Buy Strategy page's alert system only works while the browser tab is open.
 This Worker runs every 5 minutes during IST market hours, checks the Nifty

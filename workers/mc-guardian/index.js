@@ -2,6 +2,9 @@
 // Cron: every 10 minutes. Alerts via Telegram on NEW failures and on recovery
 // (no repeat spam). State lives in KV. Manual run: GET /run. Status: GET /.
 // Secrets (wrangler secret put ...): TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID.
+// zzz912: plus a once-a-day (weekdays, from 14:20 UTC) gainers pipeline check — see gainers-check.js. GET /gainers shows the verdict (sends nothing).
+
+import { gainersCheckDue, decideGainers } from './gainers-check.js';
 
 // 10y-ops Section 7.3: portal URL is env-overridable. When migrating off
 // Railway, set PORTAL_URL via `wrangler secret put PORTAL_URL` — no code change.
@@ -61,6 +64,26 @@ async function tg(env, text) {
   } catch { return false; }
 }
 
+const GAINERS_KEY = 'guardian:gainers-check';
+
+async function gainersCheck(env, now, peek) {
+  const state = await env.KV.get(GAINERS_KEY, 'json');
+  if (!peek && !gainersCheckDue(now, state)) return { skipped: true };
+  let reading;
+  try {
+    const r = await fetch(getBase(env) + '/api/v1/cron/gainers-pulse', { headers: { 'user-agent': 'mc-guardian/1.0' }, signal: AbortSignal.timeout(30000) });
+    const body = r.ok ? await r.json().catch(() => null) : null;
+    reading = r.ok && body ? { ok: true, body } : { ok: false, why: 'HTTP ' + r.status };
+  } catch (e) { reading = { ok: false, why: String((e && e.message) || e).slice(0, 120) }; }
+  if (peek) return { peek: true, due_today: gainersCheckDue(now, state), state, verdict: reading.ok ? reading.body : reading };
+  const d = decideGainers(now, state, reading);
+  let notified = false;
+  if (d.action === 'alert') notified = await tg(env, d.text);
+  if (d.action === 'alert' && !notified) d.state.done = false;   // no Telegram → try again next run
+  await env.KV.put(GAINERS_KEY, JSON.stringify(d.state), { expirationTtl: 3 * 86400 });
+  return { action: d.action, notified, verdict: reading.ok ? reading.body : reading };
+}
+
 async function run(env) {
   const BASE = getBase(env);
   const PROBES = makeProbes(BASE);
@@ -84,10 +107,14 @@ async function run(env) {
 }
 
 export default {
-  async scheduled(event, env, ctx) { ctx.waitUntil(run(env)); },
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(run(env));
+    ctx.waitUntil(gainersCheck(env, new Date(event.scheduledTime || Date.now()), false).catch(() => null));
+  },
   async fetch(req, env) {
     const url = new URL(req.url);
     if (url.pathname === '/run') return Response.json(await run(env));
+    if (url.pathname === '/gainers') return Response.json(await gainersCheck(env, new Date(), true));   // read-only: shows the verdict, sends nothing
     const state = await env.KV.get('guardian:state', 'json');
     return Response.json(state || { ok: true, note: 'no runs yet — hit /run or wait for the cron' });
   },

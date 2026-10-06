@@ -139,3 +139,28 @@ export async function unsentKeys(keys: readonly string[]): Promise<string[]> {
   const got = await kvMGet<string>(keys.map((k) => `${ONCE_PREFIX}:${k}`)).catch(() => keys.map(() => null));
   return keys.filter((_, i) => !got[i]);
 }
+
+/**
+ * zzz912 — one message for several "send once" keys (one ranked alert for several companies, keyed per company).
+ * Reserves every key not sent yet; `build` gets the keys reserved by THIS call and returns the message (or null to send
+ * nothing). If nothing was delivered, the reserved keys are released so the next run tries again.
+ * Returns null when every key was already sent (or `build` returned null).
+ */
+export async function notifyOwnerOnceEach(
+  keys: readonly string[],
+  build: (freshKeys: string[]) => NotifyMessage | null,
+  ttlDays = 120,
+): Promise<{ result: NotifyResult; keys: string[] } | null> {
+  const fresh: string[] = [];
+  for (const key of Array.from(new Set(keys))) {
+    const ok = await kvSetNX(`${ONCE_PREFIX}:${key}`, new Date().toISOString(), Math.round(ttlDays * 86400)).catch(() => true);
+    if (ok) fresh.push(key);
+  }
+  if (!fresh.length) return null;
+  const release = async () => { for (const k of fresh) await kvDel(`${ONCE_PREFIX}:${k}`).catch(() => undefined); };
+  const m = build(fresh);
+  if (!m) { await release(); return null; }
+  const result = await notifyOwner(m);
+  if (result.telegram !== 'sent' && result.email !== 'sent') await release();
+  return { result, keys: fresh };
+}
