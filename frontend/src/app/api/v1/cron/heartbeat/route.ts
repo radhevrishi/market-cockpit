@@ -14,6 +14,7 @@
 
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
+import { warmNseHolidays } from '@/lib/nse-holidays-server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -51,6 +52,9 @@ const MANUAL_OR_RETIRED = /^manual-|-manual$|^test-|-test$|^validation|smoke-tes
 const RETIRED = new Set<string>(['refresh-movers-live']);
 
 // zzz885: two workflows send the same evening alert under different names; the job is healthy if EITHER ran.
+// zzz905: jobs that run less than daily, with the hours after which silence means trouble (monthly + a few days' slack).
+const SLOW_JOB_HOURS: Record<string, number> = { 'scrape-nse-holidays': 24 * 35 };
+
 const ALIASES: Record<string, string[]> = { 'eo-bb-evening': ['eo-blockbuster-evening'], 'eo-blockbuster-evening': ['eo-bb-evening'] };
 
 function isTestName(name: string): boolean {
@@ -174,7 +178,9 @@ export async function GET(req: Request) {
       // per-row flag still rendered red, contradicting "stale_count: 0".
       let freshest = lastOkMs;
       for (const a of ALIASES[name] || []) { const ar = await kvGet<HeartbeatRow>(ROW_KEY(a)); const t = ar?.last_ok_at ? Date.parse(ar.last_ok_at) : 0; if (t > freshest) freshest = t; }
-      const rawStale = !freshest || freshest < cutoff;
+      const slowCadence = SLOW_JOB_HOURS[name];
+      const rowCutoff = slowCadence ? Math.min(cutoff, Date.now() - slowCadence * 3600 * 1000) : cutoff;
+      const rawStale = !freshest || freshest < rowCutoff;
       const stale = rawStale && !isTestName(name);
       return {
         name,
@@ -195,7 +201,11 @@ export async function GET(req: Request) {
   // PATCH 1101xxx — exclude test/manual entries from the alert count.
   const staleCount = filtered.filter((r) => r.stale && !isTestName(r.name)).length;
 
-  return NextResponse.json({ ok: staleCount === 0, stale_count: staleCount, rows: filtered });
+  // zzz905: say so when the current year has no NSE holiday list (every weekday would be treated as a trading day).
+  let holidays_missing_for: number | null = null;
+  let holidays_next_year_missing: boolean | undefined;
+  try { const st = await warmNseHolidays(); holidays_missing_for = st.missingFor; holidays_next_year_missing = st.nextYearMissing; } catch { /* informational */ }
+  return NextResponse.json({ ok: staleCount === 0, stale_count: staleCount, rows: filtered, holidays_missing_for, holidays_next_year_missing });
 }
 
 // PATCH 1101xxx — DELETE a heartbeat (cleanup endpoint). Useful for removing

@@ -152,7 +152,7 @@ export async function POST(request: Request) {
       updatedAt: new Date().toISOString(),
     };
 
-    await kvSet(kvKey(chatId), data);
+    await kvSet(kvKey(chatId), data); // no TTL: the user's Telegram portfolio (record)
 
     return NextResponse.json({
       ok: true,

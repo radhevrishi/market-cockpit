@@ -31,6 +31,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { kvGet, kvSet } from '@/lib/kv';
+import { warmNseHolidays } from '@/lib/nse-holidays-server';
 import { fetchIndiaGainers, INDIA_GAINERS_URL, indiaSession, partitionByCap, LARGE_CAP_MIN_CR, describeIndiaCriteria } from '@/lib/ai-gainers/screener-gainers';
 import { marketRunOf } from '@/lib/ai-gainers/research-present';
 import { CATALYST_WINDOWS } from '@/lib/ai-gainers/research-view';
@@ -369,6 +370,7 @@ function materialityFromTier(tier: string, ageDays?: unknown): GainerEvent['mate
 }
 
 export async function GET(req: NextRequest) {
+  await warmNseHolidays(); // zzz905: India session/holiday logic uses the collected NSE calendar, not only 2026
   // A thrown error must come back as JSON the page can read, never as the
   // framework's HTML 500 that the client then fails to parse. (zzz766)
   try { return await scan(req); } catch (e: any) {

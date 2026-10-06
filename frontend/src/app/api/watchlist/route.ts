@@ -133,7 +133,7 @@ export async function POST(request: Request) {
     }
 
     // Persist to KV store (no TTL — watchlist should persist forever)
-    await kvSet(kvKey(chatId), updated);
+    await kvSet(kvKey(chatId), updated); // no TTL: the user's Telegram watchlist (record); watchlist-meta likewise
 
     return NextResponse.json({
       ok: true,

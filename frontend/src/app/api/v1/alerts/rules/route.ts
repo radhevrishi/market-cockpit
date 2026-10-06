@@ -40,7 +40,7 @@ export async function POST(request: Request) {
       level: typeof r?.level === 'number' && Number.isFinite(r.level) ? r.level : undefined,
       createdAt: typeof r?.createdAt === 'number' ? r.createdAt : Date.now(),
     })).filter((r: any) => r.id && r.ticker && r.kind);
-    await kvSet(RULES_KEY, clean);
+    await kvSet(RULES_KEY, clean); // no TTL: the user's alert rules (record)
     return NextResponse.json({ ok: true, count: clean.length });
   } catch (e: any) {
     // zzz530 — a real save failure must surface as an error status, not a silent 200 "ok"

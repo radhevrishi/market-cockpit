@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { kvMGet, isRedisAvailable } from '@/lib/kv';
-import { NSE_HOLIDAYS } from '@/lib/market-hours';
+import { nseHolidaySet } from '@/lib/market-hours';
+import { warmNseHolidays } from '@/lib/nse-holidays-server';
 import { istDateIso, addDaysIso, daysBetween, recurringIndiaMacroEvents } from '@/lib/calendar-dates';   // zzz897
 
 export const dynamic = 'force-dynamic';
@@ -128,11 +129,12 @@ export async function GET(request: Request) {
     const [fmpEarnings, indiaByDate] = await Promise.all([
       fetchFmpEarningsCalendar(horizonDays),
       fetchIndiaBoardMeetings(todayStr, month),
+      warmNseHolidays(), // zzz905: macro-event dates skip holidays of every year, not only 2026
     ]);
 
     const all: Array<any> = [
       ...CALENDAR_STATIC.filter(e => e.date >= todayStr && e.date <= month),
-      ...recurringIndiaMacroEvents(todayStr, month, NSE_HOLIDAYS),
+      ...recurringIndiaMacroEvents(todayStr, month, nseHolidaySet()),
       ...fmpEarnings,
     ];
 

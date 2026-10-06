@@ -22,7 +22,7 @@ import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 type SourceTier = 'PRIMARY' | 'SPECIALIST' | 'SECONDARY' | 'AGGREGATOR';
 const VALID_TIERS = new Set<SourceTier>(['PRIMARY', 'SPECIALIST', 'SECONDARY', 'AGGREGATOR']);
 
-const KV_KEY = 'source-tiers:overrides:v1';
+const KV_KEY = 'source-tiers:overrides:v1'; // no TTL on writes: editor-curated overrides (record)
 
 interface Override {
   tier: SourceTier;

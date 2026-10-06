@@ -102,7 +102,7 @@ export async function upsertDetections(list: PersistentCatalyst[], origin: 'port
   if (!list.length) return { changed: 0, blob: await loadPersist() };
   const blob = await loadPersist();
   const { changed } = mergeDetections(blob, list, origin);
-  if (changed) await kvSet(PERSIST_KEY, blob);
+  if (changed) await kvSet(PERSIST_KEY, blob); // no TTL: persistent catalyst records incl. user confirmations
   return { changed, blob };
 }
 
@@ -115,7 +115,7 @@ export async function setUserState(id: string, state: UserFocusState | null, not
   // evidence state stays visible — confirmation never hides deterioration.
   if (state === 'confirmed' && !rec.sfId) rec.sfId = ++blob.seq;
   if (state === 'confirmed') rec.everSpecialFocus = true;
-  await kvSet(PERSIST_KEY, blob);
+  await kvSet(PERSIST_KEY, blob); // no TTL: persistent catalyst records incl. user confirmations
   return rec;
 }
 
@@ -192,7 +192,7 @@ export function mergeCatalystFindings(prior: Record<string, CatalystRecord>, fin
 export async function rememberGainerCatalysts(findings: Record<string, any>, today: string | null): Promise<{ changed: number; records: Record<string, CatalystRecord> }> {
   const prior = await loadCatalystRecords();
   const { records, changed } = mergeCatalystFindings(prior, findings, today);
-  if (changed) await kvSet(CATALYST_KEY, { version: 1, records } as CatalystBlob).catch(() => null);
+  if (changed) await kvSet(CATALYST_KEY, { version: 1, records } as CatalystBlob).catch(() => null); // no TTL: catalyst record history
   return { changed, records };
 }
 

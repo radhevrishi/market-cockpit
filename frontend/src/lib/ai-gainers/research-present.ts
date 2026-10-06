@@ -7,7 +7,7 @@
 // than against every name the day's store has ever seen.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { NSE_HOLIDAYS } from '@/lib/market-hours';
+import { isNseHolidayDate } from '@/lib/market-hours';
 import { closeMinutes, lastCompletedNyseSession } from './us-gainers';
 
 /** HTML entities and SQL-style doubled apostrophes in stored text:
@@ -168,7 +168,7 @@ export function calendarDaysBetween(fromYmd: string | null | undefined, toYmd: s
   return Number.isFinite(a) && Number.isFinite(b) ? Math.round((b - a) / 86_400_000) : null;
 }
 
-const isInTradingDay = (ymd: string) => { const d = new Date(`${ymd}T12:00:00Z`).getUTCDay(); return d !== 0 && d !== 6 && !NSE_HOLIDAYS.has(ymd); };
+const isInTradingDay = (ymd: string) => { const d = new Date(`${ymd}T12:00:00Z`).getUTCDay(); return d !== 0 && d !== 6 && !isNseHolidayDate(ymd); };
 function lastCompletedInSession(now: Date): string {
   let ymd = exchangeDateOf('IN', now);
   const mins = (() => { const p = new Intl.DateTimeFormat('en-GB', { timeZone: TZ.IN, hourCycle: 'h23', hour: '2-digit', minute: '2-digit' }).formatToParts(now); return parseInt(p.find((x) => x.type === 'hour')?.value || '0', 10) * 60 + parseInt(p.find((x) => x.type === 'minute')?.value || '0', 10); })();

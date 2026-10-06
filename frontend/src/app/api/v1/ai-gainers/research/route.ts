@@ -32,6 +32,7 @@ import { chooseDocuments, readIndiaDocuments, relatedFilings, INDIA_HISTORY_BUDG
 import { fetchEdgarResearch, fetchEdgarText, readUsFilingDocument, usFindingEvidence, type EdgarResearch, type UsDocReadResult } from '@/lib/ai-gainers/edgar-research';
 import { mergeAnnouncements, buildFinding, classifyAnnouncement, coverage, ageDaysOf, isBackdropFiling, filedAfterClose, indiaSessionCloseIso, refreshFindingMove, pickReadCandidate, compactInputs, rescoreFromInputs, staleRuleTickers, RULES_VERSION, type Finding, type AnnouncementLite, type StoredSweepInputs, type Returns } from '@/lib/ai-gainers/catalyst-research';
 import { presentFindings, presentErrorLines } from '@/lib/ai-gainers/research-present';
+import { warmNseHolidays } from '@/lib/nse-holidays-server';
 import { indiaSession, isLargeCap, LARGE_CAP_MIN_CR } from '@/lib/ai-gainers/screener-gainers';
 import { readAnnouncementCached, type ReadAnnouncement } from '@/lib/ai-gainers/announcement-reader';
 import { extractPdfText } from '@/lib/pdf-text-extractor';
@@ -394,6 +395,7 @@ function pressItemsOf(news: NewsContext | null | undefined): Array<{ title: stri
 
 // Both handlers answer JSON even when they throw. (zzz766)
 export async function GET(req: NextRequest) {
+  await warmNseHolidays(); // zzz905
   try {
     const { searchParams } = new URL(req.url);
     const market = (searchParams.get('market') || 'IN').toUpperCase() === 'US' ? 'US' : 'IN';
@@ -487,6 +489,7 @@ async function viewFor(st: ResearchState, market: 'IN' | 'US', date: string, ses
 }
 
 export async function POST(req: NextRequest) {
+  await warmNseHolidays(); // zzz905
   try {
     let body: any = {};
     try { body = await req.json(); } catch { body = {}; }

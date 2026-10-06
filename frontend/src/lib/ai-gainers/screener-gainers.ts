@@ -32,7 +32,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { fetchScreenerHtml, screenerProxyConfigured } from '@/lib/earnings/screener-fetch';
-import { NSE_HOLIDAYS } from '@/lib/market-hours';
+import { isNseHolidayDate } from '@/lib/market-hours';
 
 export interface ScreenerGainer {
   ticker: string;
@@ -254,7 +254,7 @@ export interface IndiaSession {
 
 const IST_MS = 5.5 * 3600_000;
 const ymd = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-const isTradingDate = (d: Date) => d.getUTCDay() !== 0 && d.getUTCDay() !== 6 && !NSE_HOLIDAYS.has(ymd(d));
+const isTradingDate = (d: Date) => d.getUTCDay() !== 0 && d.getUTCDay() !== 6 && !isNseHolidayDate(ymd(d));
 
 export function indiaSession(now: Date = new Date()): IndiaSession {
   const ist = new Date(now.getTime() + IST_MS);            // wall-clock IST in the UTC fields
@@ -263,7 +263,7 @@ export function indiaSession(now: Date = new Date()): IndiaSession {
   const dow = today.getUTCDay();
   let state: IndiaSession['state'];
   if (dow === 0 || dow === 6) state = 'weekend';
-  else if (NSE_HOLIDAYS.has(ymd(today))) state = 'holiday';
+  else if (isNseHolidayDate(ymd(today))) state = 'holiday';
   else if (mins < 9 * 60 + 15) state = 'pre_open';
   else if (mins <= 15 * 60 + 30) state = 'open';
   else state = 'closed';

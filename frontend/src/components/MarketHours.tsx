@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { isIndianMarketOpen, isUSMarketOpen } from '@/lib/market-hours'
+import { isIndianMarketOpen, isUSMarketOpen, primeNseHolidaysInBrowser } from '@/lib/market-hours'
 import { visibleInterval } from '@/lib/shell-fetch'
 
 interface Market {
@@ -42,6 +42,8 @@ export default function MarketHours() {
     // Run immediately, then every 60 s. Cheap pure-fn call — no IO.
     // zzz855: the timer sleeps while the tab is hidden and catches up on return.
     setTick((t) => t + 1)
+    // zzz905: holidays beyond the built-in 2026 list come from the collected NSE calendar; re-render once loaded.
+    primeNseHolidaysInBrowser().then(() => setTick((t) => t + 1)).catch(() => {})
     return visibleInterval(() => setTick((t) => t + 1), 60_000)
   }, [])
   void tick

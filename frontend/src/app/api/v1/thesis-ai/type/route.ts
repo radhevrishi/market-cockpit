@@ -97,6 +97,7 @@ export async function POST(req: NextRequest) {
   ]);
   const r = applyAiRecord(types2, ai2, key, record);
   if (r.applied) {
+    // no TTL: user-picked thesis types + the paid AI classifications beside them (small per-market maps, records)
     await Promise.all([kvSet(typesKey(market), r.types), kvSet(aiTypesKey(market), r.ai)]).catch(() => undefined);
   }
   return NextResponse.json({ ok: true, record, applied: r.applied, why: r.why, cached });

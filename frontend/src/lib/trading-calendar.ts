@@ -17,7 +17,7 @@
 // exchange holiday calendar. Hardcoded list covers 2025 + 2026.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { istNow } from '@/lib/market-hours';
+import { istNow, isNseHolidayDate } from '@/lib/market-hours';
 
 export type Exchange = 'NSE' | 'NYSE';
 
@@ -88,7 +88,8 @@ function isWeekend(d: Date): boolean {
 
 function isHoliday(d: Date, exchange: Exchange): boolean {
   const iso = isoDate(d);
-  return exchange === 'NSE' ? NSE_HOLIDAYS.has(iso) : NYSE_HOLIDAYS.has(iso);
+  // zzz905: NSE also consults the collected official calendar (lib/market-hours), which covers years after 2026.
+  return exchange === 'NSE' ? (NSE_HOLIDAYS.has(iso) || isNseHolidayDate(iso)) : NYSE_HOLIDAYS.has(iso);
 }
 
 function isClosedDay(d: Date, exchange: Exchange): boolean {

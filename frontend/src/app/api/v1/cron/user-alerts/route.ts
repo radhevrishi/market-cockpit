@@ -113,7 +113,8 @@ export async function GET(request: Request) {
   if (fired.length) {
     try {
       const prev = (await kvGet<any[]>(HITS_KEY)) || [];
-      await kvSet(HITS_KEY, [...fired, ...prev].slice(0, 30));
+      // zzz905: display-only "recent hits" list → expires 30 days after the last alert fired
+      await kvSet(HITS_KEY, [...fired, ...prev].slice(0, 30), 30 * 24 * 3600);
     } catch { /* display-only */ }
   }
   return NextResponse.json({ ok: true, evaluated: rules.length, tickersResolved: bars.size, fired: fired.length, hits: fired });

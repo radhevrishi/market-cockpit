@@ -89,6 +89,7 @@ export async function putUserState(key: UserStateKey, value: unknown, opts: { ba
     conflict = !!cur && opts.baseVersion != null && Number(opts.baseVersion) < cur.version;
   }
   // the Redis mirror never expires (it is the fallback copy, not a cache)
+  // no TTL: KV mirror of the user's personal data (Postgres is the record of truth; this copy must not vanish either)
   await kvSet(kvKey(key), { key, value, hash, version, device, updatedAt: new Date().toISOString() } satisfies UserStateRow).catch(() => {});
   return { ok: true, version, hash, conflict, store, unchanged };
 }

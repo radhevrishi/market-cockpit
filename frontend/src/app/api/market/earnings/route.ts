@@ -1521,7 +1521,7 @@ export async function GET(request: Request) {
           // PATCH 1041 — PERMANENT snapshot (no TTL). Railway Redis is noeviction,
           // so a captured month is kept forever → builds a durable 10-year archive
           // that never expires and never goes blank when NSE's live window moves.
-          kvSet(MONTH_SNAP_KEY(market, month), results).catch(() => null);
+          kvSet(MONTH_SNAP_KEY(market, month), results).catch(() => null); // no TTL: permanent month archive (PATCH 1041)
         }
       } catch {}
     }

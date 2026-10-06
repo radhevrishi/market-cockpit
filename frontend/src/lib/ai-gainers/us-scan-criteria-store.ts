@@ -19,5 +19,5 @@ export async function loadUsScanCriteria(): Promise<LoadedCriteria> {
 
 /** Saved without expiry: these are settings, not cache. */
 export async function saveUsScanCriteria(c: UsScanCriteria): Promise<void> {
-  await kvSet(US_SCAN_CRITERIA_KV_KEY, c);
+  await kvSet(US_SCAN_CRITERIA_KV_KEY, c); // no TTL: the user's saved US scan criteria (a setting)
 }

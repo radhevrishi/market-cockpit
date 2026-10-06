@@ -34,14 +34,14 @@ export const PRIOR_BATCH_KEY = 'evidence:batch:v1:prior';
 
 // ── THE KV SEAM (zzz770). Production uses @/lib/kv; tests inject an
 // in-memory map so the whole persist → reload path runs without a network.
-type KvLike = { get: <T = any>(k: string) => Promise<T | null>; set: (k: string, v: any) => Promise<void> };
-let kv: KvLike = { get: realKvGet, set: (k, v) => realKvSet(k, v) };
+type KvLike = { get: <T = any>(k: string) => Promise<T | null>; set: (k: string, v: any, ttlSeconds?: number) => Promise<void> };
+let kv: KvLike = { get: realKvGet, set: (k, v, ttl) => realKvSet(k, v, ttl) };
 /** Test-only: swap the store's KV (pass null to restore the real one). */
 export function setEvidenceKvForTests(fake: KvLike | null): void {
-  kv = fake || { get: realKvGet, set: (k, v) => realKvSet(k, v) };
+  kv = fake || { get: realKvGet, set: (k, v, ttl) => realKvSet(k, v, ttl) };
 }
 const kvGet = <T = any>(k: string) => kv.get<T>(k);
-const kvSet = (k: string, v: any) => kv.set(k, v);
+const kvSet = (k: string, v: any, ttlSeconds?: number) => kv.set(k, v, ttlSeconds);
 
 /** One structured JSON line per evidence run (zzz770). */
 function logRun(entry: RunLogEntry): void {
@@ -83,7 +83,7 @@ export async function loadLedgers(tickers: string[], concurrency = 16): Promise<
 
 export async function saveLedger(ledger: CompanyLedger): Promise<{ ok: boolean; error: string | null }> {
   try {
-    await kvSet(KEY(ledger.ticker), ledger);
+    await kvSet(KEY(ledger.ticker), ledger); // no TTL: the evidence ledger is a database, not a cache (see header)
     // Read-back is the only proof the write landed: kvSet logs Redis errors
     // and returns, so a quota-exhausted store would otherwise "succeed".
     const back = await kvGet<CompanyLedger>(KEY(ledger.ticker));
@@ -236,4 +236,5 @@ export interface BatchHeader { batch_id: string; started_at: string; finished_at
 export async function loadBatch(kind: 'evidence' | 'prior' = 'evidence'): Promise<BatchHeader | null> {
   try { return (await kvGet<BatchHeader>(kind === 'prior' ? PRIOR_BATCH_KEY : BATCH_KEY)) || null; } catch { return null; }
 }
-export async function saveBatch(b: BatchHeader, kind: 'evidence' | 'prior' = 'evidence'): Promise<void> { await kvSet(kind === 'prior' ? PRIOR_BATCH_KEY : BATCH_KEY, b); }
+// zzz905: the batch header is job status, not a record — it expires 90 days after the last batch touched it.
+export async function saveBatch(b: BatchHeader, kind: 'evidence' | 'prior' = 'evidence'): Promise<void> { await kvSet(kind === 'prior' ? PRIOR_BATCH_KEY : BATCH_KEY, b, 90 * 24 * 3600); }

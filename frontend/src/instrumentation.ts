@@ -10,6 +10,8 @@ export async function register() {
   if (process.env.NEXT_RUNTIME !== 'nodejs') return;
   // zzz885: run important jobs ourselves when GitHub's scheduler drops them (see lib/backstop-scheduler.ts)
   try { (await import('./lib/backstop-scheduler')).startBackstopScheduler(); } catch (e) { console.warn('[backstop] not started', e); }
+  // zzz905: register the KV reader so every server path's holiday check uses the collected NSE calendar (refreshes 12-hourly)
+  try { void (await import('./lib/nse-holidays-server')).warmNseHolidays(); } catch (e) { console.warn('[nse-holidays] warm skipped', e); }
   const { isProtectedApi, serviceKeys } = await import('./lib/site-auth');
   const key = serviceKeys()[0];
   if (!key) return;

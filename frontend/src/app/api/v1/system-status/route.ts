@@ -115,9 +115,14 @@ export async function GET(request: Request) {
     const { kvGet } = await import('@/lib/kv');
     dataWatch = (await kvGet<any>('data-watch:last')) || null;
   } catch (e: any) { dataWatch = { error: String(e?.message || e) }; }
+  // zzz905 — NSE holiday calendar coverage (missingFor = current year has no list).
+  let nseHolidays: any = undefined;
+  try { nseHolidays = await (await import('@/lib/nse-holidays-server')).warmNseHolidays(); }
+  catch (e: any) { nseHolidays = { error: String(e?.message || e) }; }
   return NextResponse.json({
     generated_at: new Date().toISOString(),
     summary,
+    nseHolidays,
     signalsVersions,
     anthropicSpend,
     dataWatch,

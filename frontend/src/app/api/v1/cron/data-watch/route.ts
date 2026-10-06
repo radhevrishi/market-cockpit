@@ -30,6 +30,7 @@ import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header fi
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { internalBase } from '@/lib/internal-base';
 import { istToday, istNow, isNseHoliday } from '@/lib/market-hours';
+import { warmNseHolidays } from '@/lib/nse-holidays-server';
 import { readSpend, monthlyCapUsd, provider, openaiModel } from '@/lib/anthropic-meter';
 import { readBookState } from '@/lib/book-store';
 import { indiaResultsSeason, upcomingFloor, failureSignature, type WatchLevel, type WatchCheck, type WatchResult } from '@/lib/data-watch';
@@ -74,6 +75,7 @@ async function telegram(text: string): Promise<{ sent: boolean; why?: string }> 
 }
 
 export async function GET(req: Request) {
+  await warmNseHolidays(); // zzz905: holiday check below must know years beyond 2026
   const { searchParams } = new URL(req.url);
   const provided = secretFromRequest(req) || '';
   const expected = process.env.CRON_SECRET || '';

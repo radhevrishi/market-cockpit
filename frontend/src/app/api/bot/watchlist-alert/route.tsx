@@ -85,7 +85,7 @@ async function getWatchlist(chatId: string): Promise<string[]> {
   // to customize from here.
   if (DEFAULT_WATCHLIST.length > 0) {
     try {
-      await kvSet(`watchlist:${chatId}`, [...DEFAULT_WATCHLIST]);
+      await kvSet(`watchlist:${chatId}`, [...DEFAULT_WATCHLIST]); // no TTL: user watchlist (record) — same for the edits below
       watchlistStorage[chatId] = { stocks: [...DEFAULT_WATCHLIST], addedAt: Date.now() };
       console.log(`[WATCHLIST] First-time seed: wrote ${DEFAULT_WATCHLIST.length} DEFAULT_WATCHLIST to KV for ${chatId}`);
       return [...DEFAULT_WATCHLIST];

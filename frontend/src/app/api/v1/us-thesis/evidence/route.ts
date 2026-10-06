@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
     const aiMap = (await kvGet<AiMap>(US_AI_TYPES_KEY).catch(() => null)) || {};
     // zzz837: the owner's picker always wins — it also removes any AI record for the name.
     const r = applyUserType(map, aiMap, ticker, pattern);
-    await Promise.all([saveUsThesisTypes(r.types), kvSet(US_AI_TYPES_KEY, r.ai)]);
+    await Promise.all([saveUsThesisTypes(r.types), kvSet(US_AI_TYPES_KEY, r.ai)]); // no TTL: thesis type records
     return NextResponse.json({ ok: true, thesis_types: r.types, thesis_ai: r.ai });
   }
   if (action === 'status') {

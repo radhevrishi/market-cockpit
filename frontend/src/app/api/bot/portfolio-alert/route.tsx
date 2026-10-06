@@ -130,7 +130,7 @@ async function savePortfolioToKv(chatId: string, symbols: string[]): Promise<voi
         merged.push({ symbol: up, entryPrice: 0, quantity: 0, weight: 0, addedAt: new Date().toISOString() });
       }
     }
-    await kvSet(`portfolio:${chatId}`, { holdings: merged, updatedAt: new Date().toISOString() });
+    await kvSet(`portfolio:${chatId}`, { holdings: merged, updatedAt: new Date().toISOString() }); // no TTL: user portfolio (record)
     console.log(`[PORTFOLIO] Saved ${merged.length} holdings to KV as PortfolioData`);
   } catch (e) {
     console.error('[PORTFOLIO] savePortfolioToKv failed:', e);

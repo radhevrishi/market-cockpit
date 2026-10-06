@@ -1,0 +1,55 @@
+name: Scrape NSE trading holidays
+
+# zzz905 — keeps KV `nse-holidays:v1` holding NSE's official equity holiday list for every year, so the app's trading-day
+# logic (lib/market-hours isNseHolidayDate) keeps working after 2026 without code edits. Monthly, plus mid-December when
+# NSE publishes next year's list. The collector merges: years already stored are never dropped. See
+# .github/scripts/scrape-nse-holidays.mjs.
+
+on:
+  schedule:
+    - cron: '23 4 3 * *'     # 3rd of every month, 09:53 IST
+    - cron: '41 5 17 12 *'   # 17 Dec — next year's list is usually out by then
+  workflow_dispatch:
+
+concurrency:
+  group: scrape-nse-holidays
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v5
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Collect NSE holidays
+        env:
+          UPSTASH_REDIS_REST_URL:   ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+          PROXY_URL:    ${{ secrets.PROXY_URL }}
+          PROXY_SECRET: ${{ secrets.PROXY_SECRET }}
+        run: |
+          if [ -z "$UPSTASH_REDIS_REST_URL" ] || [ -z "$UPSTASH_REDIS_REST_TOKEN" ]; then
+            echo "::error title=Missing secrets::Add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          node .github/scripts/scrape-nse-holidays.mjs
+
+      - name: Heartbeat (always run)
+        if: always()
+        env:
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          OK="true"
+          if [[ "${{ job.status }}" != "success" ]]; then OK="false"; fi
+          curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" \
+            -H 'Content-Type: application/json' \
+            -d "{\"name\":\"scrape-nse-holidays\",\"phase\":\"end\",\"ok\":$OK,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -o /dev/null -w "heartbeat %{http_code}\n" || true
