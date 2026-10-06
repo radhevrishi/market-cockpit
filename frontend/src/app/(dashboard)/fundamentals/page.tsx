@@ -1145,31 +1145,31 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
           const strengths: string[] = [];
           const triggers: string[] = [];
           if (typeof r.r40 === 'number') {
-            if (r.r40 >= 60) strengths.push('R40 elite ≥60');
-            else if (r.r40 < 0) triggers.push('R40 negative — cash burning');
+            if (r.r40 >= 60) strengths.push('R40 elite ≥60 · last quarter + full year');
+            else if (r.r40 < 0) triggers.push('R40 negative — cash burning · last quarter + full year');
           }
           if (typeof r.rsRating === 'number') {
-            if (r.rsRating >= 80) strengths.push('RS Rating top 20%');
-            else if (r.rsRating <= 20) triggers.push('RS bottom 20%');
+            if (r.rsRating >= 80) strengths.push('RS Rating top 20% · price');
+            else if (r.rsRating <= 20) triggers.push('RS bottom 20% · price');
           }
-          if (typeof r.roic === 'number' && r.roic >= 20) strengths.push('ROIC ≥20% (Buffett tier)');
-          else if (typeof r.roic === 'number' && r.roic < 5) triggers.push('ROIC <5%');
-          if (typeof r.fcfMargin === 'number' && r.fcfMargin >= 15) strengths.push('FCF margin ≥15%');
-          else if (typeof r.fcfMargin === 'number' && r.fcfMargin < 0) triggers.push('FCF negative');
-          if (typeof r.ebitdaMargin === 'number' && r.ebitdaMargin >= 30) strengths.push('EBITDA margin ≥30%');
-          if (typeof r.opLev === 'number' && r.opLev >= 1.5) strengths.push(`Op-Lev ${r.opLev.toFixed(1)}× (margins expanding)`);
-          if (typeof r.gpm === 'number' && r.gpm >= 60) strengths.push('Gross margin ≥60% (moat)');
-          if (typeof r.netMargin === 'number' && r.netMargin >= 20) strengths.push('Net margin ≥20%');
-          if (typeof r.perf1y === 'number' && r.perf1y >= 30) strengths.push('1Y return ≥30%');
-          else if (typeof r.perf1y === 'number' && r.perf1y < -20) triggers.push('1Y return <-20%');
-          if (typeof r.pegFwd === 'number' && r.pegFwd > 0 && r.pegFwd < 1) strengths.push('PEG <1 (cheap vs growth)');
-          else if (typeof r.pegFwd === 'number' && r.pegFwd > 3) triggers.push('PEG >3 (rich)');
-          if (typeof r.fwdPe === 'number' && r.fwdPe > 0 && r.fwdPe > 80) triggers.push('Fwd P/E >80');
-          if (typeof r.beta === 'number' && r.beta >= 2) triggers.push('Beta ≥2 (volatile)');
-          if (typeof r.piotroski === 'number' && r.piotroski >= 7) strengths.push('Piotroski ≥7/9');
-          else if (typeof r.piotroski === 'number' && r.piotroski <= 3) triggers.push('Piotroski ≤3/9');
-          if (typeof r.targetUpside === 'number' && r.targetUpside >= 20) strengths.push('Analyst upside ≥20%');
-          else if (typeof r.targetUpside === 'number' && r.targetUpside <= -10) triggers.push('Analyst downside');
+          if (typeof r.roic === 'number' && r.roic >= 20) strengths.push('ROIC ≥20% · last full year');
+          else if (typeof r.roic === 'number' && r.roic < 5) triggers.push('ROIC <5% · last full year');
+          if (typeof r.fcfMargin === 'number' && r.fcfMargin >= 15) strengths.push('FCF margin ≥15% · last full year');
+          else if (typeof r.fcfMargin === 'number' && r.fcfMargin < 0) triggers.push('FCF negative · last full year');
+          if (typeof r.ebitdaMargin === 'number' && r.ebitdaMargin >= 30) strengths.push('EBITDA margin ≥30% · last 12 months');
+          if (typeof r.opLev === 'number' && r.opLev >= 1.5) strengths.push(`Op-Lev ${r.opLev.toFixed(1)}× (margins expanding) · last 12 months`);
+          if (typeof r.gpm === 'number' && r.gpm >= 60) strengths.push('Gross margin ≥60% · last 12 months');
+          if (typeof r.netMargin === 'number' && r.netMargin >= 20) strengths.push('Net margin ≥20% · last 12 months');
+          if (typeof r.perf1y === 'number' && r.perf1y >= 30) strengths.push('1Y return ≥30% · price');
+          else if (typeof r.perf1y === 'number' && r.perf1y < -20) triggers.push('1Y return <-20% · price');
+          if (typeof r.pegFwd === 'number' && r.pegFwd > 0 && r.pegFwd < 1) strengths.push('PEG <1 · analyst estimate');
+          else if (typeof r.pegFwd === 'number' && r.pegFwd > 3) triggers.push('PEG >3 · analyst estimate');
+          if (typeof r.fwdPe === 'number' && r.fwdPe > 0 && r.fwdPe > 80) triggers.push('Fwd P/E >80 · analyst estimate');
+          if (typeof r.beta === 'number' && r.beta >= 2) triggers.push('Beta ≥2 · price');
+          if (typeof r.piotroski === 'number' && r.piotroski >= 7) strengths.push('Piotroski ≥7/9 · last full year');
+          else if (typeof r.piotroski === 'number' && r.piotroski <= 3) triggers.push('Piotroski ≤3/9 · last full year');
+          if (typeof r.targetUpside === 'number' && r.targetUpside >= 20) strengths.push('Analyst target ≥20% above price · analyst estimate');
+          else if (typeof r.targetUpside === 'number' && r.targetUpside <= -10) triggers.push('Analyst target below price · analyst estimate');
           return { strengths, triggers };
         };
         const scored = rows.map(r => ({ r, s: score(r) }));
@@ -1178,8 +1178,8 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
         return (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: 12 }}>
             <div style={{ background: COL.panel2, border: `1px solid ${COL.line}`, borderRadius: 8, padding: 12 }}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: '#10B981', marginBottom: 4, letterSpacing: '0.4px' }}>✅ MUST HOLD / KEEP CONVICTION ({mustHold.length})</div>
-              <div style={{ fontSize: 10, color: COL.muted, marginBottom: 8 }}>≥3 institutional strengths. More green flags = stronger case to hold/add.</div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: '#10B981', marginBottom: 4, letterSpacing: '0.4px' }}>✅ STRONG ON MANY MEASURES ({mustHold.length})</div>
+              <div style={{ fontSize: 10, color: COL.muted, marginBottom: 8 }}>3 or more strengths. Each names the period it comes from. The decision stays yours.</div>
               {mustHold.map(({ r, s }) => (
                 <div key={r.symbol} style={{ display: 'grid', gridTemplateColumns: '60px 1fr auto', gap: 8, padding: '5px 0', borderTop: `1px solid ${COL.line}`, fontSize: 11 }}>
                   <span style={{ color: '#10B981', fontWeight: 800 }}>{r.symbol}</span>
@@ -1190,8 +1190,8 @@ function UsaFundamentalsDashboard({ data, onRemove, onClear }: { data: Row[]; on
               {mustHold.length === 0 && <div style={{ color: COL.muted, fontSize: 11 }}>No stocks meet ≥3 strengths.</div>}
             </div>
             <div style={{ background: COL.panel2, border: `1px solid ${COL.line}`, borderRadius: 8, padding: 12 }}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: '#EF4444', marginBottom: 4, letterSpacing: '0.4px' }}>⚠️ EXIT / REVIEW TRIGGERS ({exitTriggers.length})</div>
-              <div style={{ fontSize: 10, color: COL.muted, marginBottom: 8 }}>≥2 red flags. More triggers = stronger case to exit/trim.</div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: '#EF4444', marginBottom: 4, letterSpacing: '0.4px' }}>⚠️ WARNING SIGNS — REVIEW THE THESIS ({exitTriggers.length})</div>
+              <div style={{ fontSize: 10, color: COL.muted, marginBottom: 8 }}>2 or more warning signs. Each sign names the period it comes from. The decision stays yours.</div>
               {exitTriggers.map(({ r, s }) => (
                 <div key={r.symbol} style={{ display: 'grid', gridTemplateColumns: '60px 1fr auto', gap: 8, padding: '5px 0', borderTop: `1px solid ${COL.line}`, fontSize: 11 }}>
                   <span style={{ color: '#EF4444', fontWeight: 800 }}>{r.symbol}</span>
@@ -1446,8 +1446,8 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
   }, [liveCmp]);
 
   const kpiDefs: [string, string, string][] = [
-    ['Sales growth', 'Sales growth (TTM)', '%'],
-    ['Profit growth', 'Profit growth (TTM)', '%'],
+    ['Sales growth', 'Sales growth (1Y, Screener)', '%'],   // zzz883: Screener's "Sales growth" is a one-year figure; not labelled TTM
+    ['Profit growth', 'Profit growth (1Y, Screener)', '%'],
     ['YOY Quarterly sales growth', 'Sales gr (YoY Qtr)', '%'],
     ['YOY Quarterly profit growth', 'Profit gr (YoY Qtr)', '%'],
     ['Sales growth 3Years', 'Sales CAGR 3Y', '%'],
@@ -1639,10 +1639,10 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
       {holders.length > 0 && (
         <div style={{ marginTop: 22 }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, margin: '0 0 4px', flexWrap: 'wrap' }}>
-            <div style={{ fontSize: 12, letterSpacing: 1.4, textTransform: 'uppercase', color: COL.dim, fontWeight: 700 }}>Must hold / keep conviction</div>
+            <div style={{ fontSize: 12, letterSpacing: 1.4, textTransform: 'uppercase', color: COL.dim, fontWeight: 700 }}>Strong on many measures</div>
             <div style={{ fontSize: 11, color: COL.dim }}>{holders.length} of {data.length} names show fundamental or technical strength · ranked by strength count</div>
           </div>
-          <Card title={`Keep / accumulate candidates — ${holders.length} strong`} dot={COL.green} hint="more green flags = stronger case to hold / add">
+          <Card title={`Strong on many measures — ${holders.length}`} dot={COL.green} hint="more strengths = stronger evidence; the decision stays yours">
             <table style={tbl}>
               <thead><tr>
                 <th style={thR}></th><th style={thL}>Company</th><th style={thR}>#</th>
@@ -1683,10 +1683,10 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
       {flagged.length > 0 && (
         <div style={{ marginTop: 22 }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, margin: '0 0 4px', flexWrap: 'wrap' }}>
-            <div style={{ fontSize: 12, letterSpacing: 1.4, textTransform: 'uppercase', color: COL.dim, fontWeight: 700 }}>Exit / review triggers</div>
+            <div style={{ fontSize: 12, letterSpacing: 1.4, textTransform: 'uppercase', color: COL.dim, fontWeight: 700 }}>Warning signs — review the thesis</div>
             <div style={{ fontSize: 11, color: COL.dim }}>{flagged.length} of {data.length} names show fundamental or technical deterioration · ranked by trigger count</div>
           </div>
-          <Card title={`Sell / trim candidates — ${flagged.length} flagged`} dot={COL.red} hint="more triggers = stronger case to exit / review">
+          <Card title={`Names with warning signs — ${flagged.length}`} dot={COL.red} hint="more signs = review sooner; the decision stays yours">
             <table style={tbl}>
               <thead><tr>
                 <th style={thR}></th><th style={thL}>Company</th><th style={thR}>#</th>
@@ -1900,11 +1900,11 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
       <div style={grid2}>
         <Card title="Top 10 — Sales growth (YoY Qtr)" dot={COL.green} hint="latest-quarter revenue acceleration">
           <LeaderTable rows={leaders('YOY Quarterly sales growth', 'desc')} valKey="YOY Quarterly sales growth" unit="%" name={name} nse={nse}
-            extra={[['Sales growth', 'TTM', '%']]} />
+            extra={[['Sales growth', '1Y', '%']]} />
         </Card>
         <Card title="Top 10 — Profit growth (YoY Qtr)" dot={COL.green} hint="latest-quarter earnings acceleration">
           <LeaderTable rows={leaders('YOY Quarterly profit growth', 'desc')} valKey="YOY Quarterly profit growth" unit="%" name={name} nse={nse}
-            extra={[['Profit growth', 'TTM', '%']]} />
+            extra={[['Profit growth', '1Y', '%']]} />
         </Card>
       </div>
 
@@ -1912,11 +1912,11 @@ function Dashboard({ data, onRemove, onAdd, onClear }: { data: Row[]; onRemove: 
       <div style={grid2}>
         <Card title="Bottom 10 — Sales growth (YoY Qtr)" dot={COL.red} hint="latest-quarter revenue weakest">
           <LeaderTable rows={leaders('YOY Quarterly sales growth', 'asc')} valKey="YOY Quarterly sales growth" unit="%" name={name} nse={nse}
-            extra={[['Sales growth', 'TTM', '%']]} />
+            extra={[['Sales growth', '1Y', '%']]} />
         </Card>
         <Card title="Bottom 10 — Profit growth (YoY Qtr)" dot={COL.red} hint="latest-quarter earnings weakest">
           <LeaderTable rows={leaders('YOY Quarterly profit growth', 'asc')} valKey="YOY Quarterly profit growth" unit="%" name={name} nse={nse}
-            extra={[['Profit growth', 'TTM', '%']]} />
+            extra={[['Profit growth', '1Y', '%']]} />
         </Card>
       </div>
 

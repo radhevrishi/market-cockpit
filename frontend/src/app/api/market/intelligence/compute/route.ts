@@ -36,7 +36,9 @@ const STORE_TTL = 3600;
 export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
 
-const INR_TO_USD = 85;
+// zzz883: live USD/INR (lib/fx), refreshed at the start of every request; 85 only until the first rate arrives
+let INR_TO_USD = 85;
+async function refreshFx() { try { const { getUsdInr } = await import('@/lib/fx'); INR_TO_USD = (await getUsdInr()).usdInr; } catch { /* keep the last rate */ } }
 
 // ==================== FETCH RESILIENCE HELPERS ====================
 
@@ -5660,6 +5662,7 @@ async function autoLoadSymbols(): Promise<{ watchlist: string[]; portfolio: stri
 // ==================== ROUTE HANDLERS ====================
 
 export async function GET(request: Request) {
+  await refreshFx();
   console.log('[Compute] GET triggered (cron)');
   // PATCH 1101zzz / AUDIT H5 — rate-limit. Compute pass fans out news fetches
   // + symbol resolution for 100+ tickers and is the heaviest endpoint in the
@@ -5698,6 +5701,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  await refreshFx();
   console.log('[Compute] POST triggered');
   try {
     const body = await request.json().catch(() => ({})) as any;

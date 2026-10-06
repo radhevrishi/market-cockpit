@@ -1,5 +1,6 @@
 'use client';
 
+import { usdInrNow } from '@/lib/fx-client';   // zzz883 — live USD/INR instead of a fixed 85
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 // PATCH 0055: Multibagger framework extensions — dilution / reinvestment /
 // coverage / historical reference panel.
@@ -8509,9 +8510,9 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       // in India = a top-100 large cap. Use SEBI-adjusted USD tiers for India.
       if (market === 'IND') {
         // India tiers: sweet spot $150M-$1.5B (₹1300 Cr - ₹12,700 Cr, small-mid)
-        if (typeof mcap === 'number' && mcap >= 0.15 && mcap <= 1.5) { qullaScore += 10; qReasons.push(`small-mid ₹${(mcap*85).toFixed(0)}kCr`); }
+        if (typeof mcap === 'number' && mcap >= 0.15 && mcap <= 1.5) { qullaScore += 10; qReasons.push(`small-mid ₹${Math.round(mcap * usdInrNow().usdInr * 100).toLocaleString('en-IN')} Cr`); }
         else if (typeof mcap === 'number' && mcap < 0.15 && mcap >= 0.05) { qullaScore += 6; qReasons.push(`micro ₹${(mcap*8500).toFixed(0)}Cr`); }
-        else if (typeof mcap === 'number' && mcap > 1.5 && mcap <= 5) { qullaScore += 5; qReasons.push(`mid ₹${(mcap*85).toFixed(0)}kCr`); }
+        else if (typeof mcap === 'number' && mcap > 1.5 && mcap <= 5) { qullaScore += 5; qReasons.push(`mid ₹${Math.round(mcap * usdInrNow().usdInr * 100).toLocaleString('en-IN')} Cr`); }
       } else {
         // USA tiers: sweet spot $1-10B
         if (typeof mcap === 'number' && mcap >= 1 && mcap <= 10) { qullaScore += 10; qReasons.push(`small-mid $${mcap.toFixed(1)}B`); }
@@ -10575,7 +10576,7 @@ function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
                   // zzz160 — Show USD + INR-crore for India stocks (₹85/USD approx)
                   ['Market Cap', typeof expandedRow.mcapB === 'number'
                     ? (market === 'IND'
-                        ? `$${expandedRow.mcapB.toFixed(1)}B (₹${(expandedRow.mcapB * 85).toFixed(0)}kCr)`
+                        ? `$${expandedRow.mcapB.toFixed(1)}B (₹${Math.round(expandedRow.mcapB * usdInrNow().usdInr * 100).toLocaleString('en-IN')} Cr${usdInrNow().live ? '' : ' approx.'})`
                         : `$${expandedRow.mcapB.toFixed(1)}B`)
                     : '—'],
                   ['ATR (14d)', typeof expandedRow.atr14 === 'number' ? `${CUR}${expandedRow.atr14.toFixed(2)}` : '—'],

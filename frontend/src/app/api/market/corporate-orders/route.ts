@@ -135,7 +135,7 @@ function parseOrderValue(text: string): number | null {
   const usdMnMatch = combined.match(/(?:usd|\$)\s*([\d,]+(?:\.\d+)?)\s*(?:million|mn|m)\b/i);
   if (usdMnMatch) {
     const val = parseFloat(usdMnMatch[1].replace(/,/g, ''));
-    return val * 8.5; // ~85 INR/USD, then /10 for Cr
+    return val * FX.usdInr / 10; // zzz883: live USD/INR (was a fixed 85), then /10 for Cr
   }
 
   // INR million — e.g. "Rs. 500 million"
@@ -149,7 +149,7 @@ function parseOrderValue(text: string): number | null {
   const usdBnMatch = combined.match(/(?:usd|\$)\s*([\d,]+(?:\.\d+)?)\s*(?:billion|bn|b)\b/i);
   if (usdBnMatch) {
     const val = parseFloat(usdBnMatch[1].replace(/,/g, ''));
-    return val * 8500; // ~85 INR/USD * 100 for Cr
+    return val * FX.usdInr * 100; // zzz883: live USD/INR × 100 for Cr
   }
 
   // INR billion — e.g. "Rs. 10 Bn"
@@ -582,7 +582,10 @@ function filterForOrders(announcements: any[]): CorporateOrder[] {
 /**
  * Main GET handler
  */
+// zzz883: live USD/INR, refreshed per request
+const FX = { usdInr: 85 };
 export async function GET(request: Request): Promise<NextResponse<CorporateOrdersResponse>> {
+  try { const { getUsdInr } = await import('@/lib/fx'); FX.usdInr = (await getUsdInr()).usdInr; } catch { /* keep last */ }
   const startTime = Date.now();
 
   try {

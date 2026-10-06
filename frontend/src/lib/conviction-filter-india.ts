@@ -99,6 +99,8 @@ export type ConvFilters = {
   freshBypass?: boolean;
   // zzz348 — minimum market cap in Cr (null = no min)
   mktCapMin?: number | null;
+  /** zzz883 — size CEILING (₹ Cr). The preset sets ₹30,000 Cr: small and mid caps only (Rishi's rule). Unknown size passes. */
+  mktCapMax?: number | null;
   // zzz304 — minimum CFO/PAT ratio (Screener). Filters low earnings quality;
   // 0.5 = weak, 0.8 = healthy, 1.0 = pristine cash conversion.
   cfoPatMin?: number | null;
@@ -178,6 +180,8 @@ export const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null
 // choice is remembered in this browser and Portfolio Catalysts reads the same
 // key through indiaPresetFilters(), so both apply the same floor.
 export const CB_PRESET_CAP_KEY = 'mc:cb:preset-cap:v1';
+/** zzz883 — small & mid only: India large cap from ₹30,000 Cr (same line as the guidance focus list). */
+export const CB_SMALL_MID_MAX_CR = 30_000;
 export type CbCapFloor = 3000 | 500 | null;
 export const CB_CAP_FLOORS: ReadonlyArray<{ v: CbCapFloor; label: string }> = [
   { v: 3000, label: '≥₹3k Cr' }, { v: 500, label: '≥₹500 Cr' }, { v: null, label: 'Any size' },
@@ -201,6 +205,7 @@ export const indiaPresetFilters = (floor: CbCapFloor = readCbPresetCapFloor()) =
   opmDelta: INDIA_PRESET.opmDelta,
   cfoPatMin: INDIA_PRESET.cfoPatMin,
   mktCapMin: floor,
+  mktCapMax: CB_SMALL_MID_MAX_CR,
   pledgedMax: INDIA_PRESET.pledgedMax,
   verdicts: [...INDIA_PRESET.verdicts],
 });
@@ -759,6 +764,11 @@ export function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): bool
     const mc = (e as any).market_cap_cr;
     if (typeof mc !== 'number' || mc < f.mktCapMin) return false;
   }
+  // zzz883 — size ceiling (small & mid only). A name whose size is unknown is kept.
+  if (f.mktCapMax != null) {
+    const mc = (e as any).market_cap_cr;
+    if (typeof mc === 'number' && Number.isFinite(mc) && mc > f.mktCapMax) return false;
+  }
   // zzz329 — maximum trailing P/E filter (excludes negative-earnings tickers)
   if (f.peMax != null) {
     const p = (e as any).pe;
@@ -992,6 +1002,7 @@ export function cbFailReasons(e: ConvictionEntry, f: ConvFilters): string[] {
     cfoPatMin: () => `cash from operations ${finN(cash.ratio) ? cash.ratio.toFixed(2) : 'not known'}x profit${cash.basis ? `, ${cash.basis}` : ''} (needs ${f.cfoPatMin}x)`,
     pledgedMax: () => `promoter pledge ${fmtN(x.pledged_pct)}% (needs ${f.pledgedMax}% or less)`,
     mktCapMin: () => `market cap ₹${fmtN(x.market_cap_cr)} Cr (needs ₹${f.mktCapMin} Cr)`,
+    mktCapMax: () => `market cap ₹${fmtN(x.market_cap_cr)} Cr (large cap — above ₹${fmtN(f.mktCapMax)} Cr)`,
     peMax: () => `P/E above ${f.peMax}`,
     score: () => 'grade strength below your chip',
     opmMin: () => `operating margin below ${f.opmMin}%`,

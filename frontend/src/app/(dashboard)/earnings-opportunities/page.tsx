@@ -1103,6 +1103,8 @@ export default function EarningsOpportunitiesPage() {
   // any filings NSE knows about, even when the hub aggregator missed them.
   // Stops the moment we find a populated date.
   const autoJumpedRef = useRef(false);
+  // zzz883: when the page lands on an earlier day because today has no graded results, it says so (never looks like today)
+  const [autoJump, setAutoJump] = useState<{ from: string; to: string } | null>(null);
   const autoWalkProbingRef = useRef(false);
   // PATCH 0498 — Reset autoJumpedRef when filterDate clears (user clicked
   // Latest button) so the walk-back fires again from today.
@@ -1156,6 +1158,7 @@ export default function EarningsOpportunitiesPage() {
             if (targetDate <= resolvedDateForGrading) {
               autoJumpedRef.current = true;
               autoWalkProbingRef.current = false;
+              setAutoJump({ from: resolvedDateForGrading, to: targetDate });
               setFilterDate(targetDate);
               return;
             }
@@ -1178,6 +1181,7 @@ export default function EarningsOpportunitiesPage() {
           if (total >= 1) {
             autoJumpedRef.current = true;
             autoWalkProbingRef.current = false;
+            setAutoJump({ from: resolvedDateForGrading, to: iso });
             setFilterDate(iso);
             return;
           }
@@ -2986,6 +2990,11 @@ export default function EarningsOpportunitiesPage() {
                 1. fetch error AND we're showing stale data → red banner
                 2. data._builtForDate != resolvedDate → amber banner
                 3. fetch error but no stale data → red banner with retry */}
+          {autoJump && filterDate === autoJump.to && (
+            <div role="status" style={{ margin: '6px 0', padding: '6px 10px', borderRadius: 6, border: '1px solid #F59E0B', background: '#92400E22', color: '#FDE68A', fontSize: 12.5 }}>
+              No graded results for {autoJump.from} yet — showing {autoJump.to}, the latest day that has results. Use the date arrows or "Latest" to change.
+            </div>
+          )}
           {(() => {
             const builtFor = (gradedData as any)?._builtForDate as string | undefined;
             const mismatch = builtFor && builtFor !== resolvedDateForGrading;

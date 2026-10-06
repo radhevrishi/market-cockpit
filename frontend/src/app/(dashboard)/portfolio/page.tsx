@@ -1065,10 +1065,10 @@ function PortfolioAnalytics({ rows, onSelectCap, onSelectTier, selectedTier }: {
   //   BLOCKBUSTER = gold, STRONG = green, MIXED = amber, AVOID = red, NONE = slate.
   //   MIXED used to be red-on-brown which read as "broken" instead of "caution".
   const etCol: any = {
-    BLOCKBUSTER: { fg: '#FCD34D', bg: '#3F2A0A', bd: '#F59E0B', act: 'HOLD/ADD' },
-    STRONG:      { fg: '#86EFAC', bg: '#052E1A', bd: '#22C55E', act: 'HOLD' },
-    MIXED:       { fg: '#FDE68A', bg: '#3B2E0A', bd: '#EAB308', act: 'REVIEW' },
-    AVOID:       { fg: '#FCA5A5', bg: '#3F0F0F', bd: '#DC2626', act: 'TRIM' },
+    BLOCKBUSTER: { fg: '#FCD34D', bg: '#3F2A0A', bd: '#F59E0B', act: 'results very strong' },
+    STRONG:      { fg: '#86EFAC', bg: '#052E1A', bd: '#22C55E', act: 'results strong' },
+    MIXED:       { fg: '#FDE68A', bg: '#3B2E0A', bd: '#EAB308', act: 'review the thesis' },
+    AVOID:       { fg: '#FCA5A5', bg: '#3F0F0F', bd: '#DC2626', act: 'results weak — check the thesis' },
     NONE:        { fg: '#94A3B8', bg: '#1F2937', bd: '#475569', act: '-' },
   };
 
@@ -1839,6 +1839,7 @@ export default function PortfolioPage() {
   }, []);
 
   // Fetch live quotes — bulk first, then individual for missing
+  const slowAtRef = useRef(0);   // zzz883: when signals + trend were last fetched
   const fetchData = useCallback(async () => {
     setIsRefreshing(true);
     setFetchError(null);
@@ -1909,9 +1910,11 @@ export default function PortfolioPage() {
 
       setQuotes(allQuotes);
 
-      // Fetch intelligence signals
-      // PATCH 0465 — 15s timeout so a slow intelligence pipeline doesn't
-      // block the whole portfolio refresh loop.
+      // zzz883: signals and trend change slowly — fetched together (not one after the other) and at most every 15 minutes;
+      // prices keep their 60-second refresh.
+      if (Date.now() - slowAtRef.current >= 15 * 60_000) {
+        slowAtRef.current = Date.now();
+        const loadIntel = async () => {
       try {
         const intelCtl = new AbortController();
         const intelTimer = setTimeout(() => intelCtl.abort(), 15_000);
@@ -1934,6 +1937,8 @@ export default function PortfolioPage() {
         }
       } catch (e) { console.error('Intelligence fetch failed:', e); }
 
+        };
+        const loadTrend = async () => {
       // PATCH 0445 BUG-021 — fetch RRG trend labels in parallel.
       // PATCH 0465 — bounded with 15s timeout (trend endpoint can be slow).
       try {
@@ -1956,6 +1961,9 @@ export default function PortfolioPage() {
         }
       } catch (e) { console.error('Trend fetch failed:', e); }
 
+        };
+        await Promise.allSettled([loadIntel(), loadTrend()]);
+      }
       setLastRefresh(new Date());
       setLoading(false);
     } catch (e: any) {
@@ -2353,7 +2361,7 @@ export default function PortfolioPage() {
       'Entry Price': r.entryPrice,
       'Qty': r.quantity,
       'Weight %': parseFloat(r.weight.toFixed(1)),
-      'CMP': r.cmp,
+      'CMP': r.cmp > 0 ? r.cmp : '',   // zzz883: no quote = blank, never 0
       'Day Change %': parseFloat(r.changePercent.toFixed(2)),
       'Invested': Math.round(r.investedValue),
       'Current Value': Math.round(r.currentValue),
@@ -2361,7 +2369,8 @@ export default function PortfolioPage() {
       'P&L %': parseFloat(r.pnlPercent.toFixed(2)),
       'Score': r.score !== undefined ? parseFloat(r.score.toFixed(0)) : '',
       'Trend': r.sectorTrend || '',
-      'Decision': r.decision || '',
+      // zzz883: the book never tells you to buy or sell — the column is the evidence signal, in neutral words
+      'Signal': ({ BUY: 'positive', ADD: 'positive', WATCH: 'watch', HOLD: 'neutral', NEUTRAL: 'neutral', TRIM: 'caution', EXIT: 'negative', AVOID: 'negative' } as Record<string, string>)[String(r.decision || '').toUpperCase()] || '',
     }));
 
     // Add summary row
@@ -2371,12 +2380,12 @@ export default function PortfolioPage() {
     data.push({
       '#': 0, 'Symbol': '', 'Company': 'TOTAL', 'Sector': '',
       'Entry Price': 0, 'Qty': 0, 'Weight %': 100,
-      'CMP': 0, 'Day Change %': 0,
+      'CMP': '', 'Day Change %': 0,
       'Invested': Math.round(totalInvested),
       'Current Value': Math.round(totalCurrent),
       'P&L': Math.round(totalPnl),
       'P&L %': totalInvested > 0 ? parseFloat(((totalPnl / totalInvested) * 100).toFixed(2)) : 0,
-      'Score': '', 'Trend': '', 'Decision': '',
+      'Score': '', 'Trend': '', 'Signal': '',
     });
 
     const ws = XLSX.utils.json_to_sheet(data);

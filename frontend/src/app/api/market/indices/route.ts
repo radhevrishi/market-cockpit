@@ -117,9 +117,9 @@ export async function GET(request: Request) {
 
     // Static FX placeholder — explicit null so the front-end renders '—'
     // instead of a misleading '+0.00%' (PATCH 0445 BUG-001).
-    indices.push(
-      { symbol: 'USD/INR', price: 85.50, change_pct: null, change: null },
-    );
+    // zzz883: the live rate (lib/fx) instead of a fixed 85.50
+    { const { getUsdInr } = await import('@/lib/fx'); const fx = await getUsdInr();
+      indices.push({ symbol: 'USD/INR', price: fx.usdInr, change_pct: null, change: null, ...(fx.live ? {} : { stale: true }) } as any); }
 
     _cache = { data: indices, ts: Date.now() };
     return NextResponse.json(indices);

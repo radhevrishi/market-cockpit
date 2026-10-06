@@ -8,7 +8,8 @@ const DOC = 'Statement of Standalone Unaudited Financial Results for the quarter
   + 'Particulars Quarter ended 30.09.2026 30.06.2026 30.09.2025 Revenue from operations 12,345.67 11,000.00 9,876.54 Other income 12.00 '
   + 'Total income 12,357.67 Profit before tax 1,500.25 Profit for the period 1,120.50 980.00 (210.75) Earnings per equity share Basic 4.56 3.98 (0.86) '
   + 'x'.repeat(1300);
-const ans = (o: any = {}) => ({ is_results_statement: true, period_end: '2026-09-30', basis: 'standalone', unit: 'lakh', revenue_current: 12345.67, revenue_year_ago: 9876.54, net_profit_current: 1120.5, net_profit_year_ago: -210.75, eps_current: 4.56, eps_year_ago: -0.86, ...o });
+const ans = (o: any = {}) => ({ is_results_statement: true, period_end: '2026-09-30', basis: 'standalone', unit: 'lakh', revenue_current: 12345.67, revenue_year_ago: 9876.54, net_profit_current: 1120.5, net_profit_year_ago: -210.75, eps_current: 4.56, eps_year_ago: -0.86,
+  revenue_line: 'Revenue from operations 12,345.67 11,000.00 9,876.54', net_profit_line: 'Profit for the period 1,120.50 980.00 (210.75)', eps_line: 'Earnings per equity share Basic 4.56 3.98 (0.86)', ...o });
 const P = { ticker: 'hiil', want: '2026-09-30', filed: '2026-10-03', docText: DOC, url: 'https://nsearchives.nseindia.com/x.pdf', model: 'haiku' };
 
 describe('zzz879 — checking the answer', () => {
@@ -27,7 +28,12 @@ describe('zzz879 — checking the answer', () => {
     assert.match((checkResultsAnswer(ans({ is_results_statement: false }), P) as any).reason, /not a results statement/);
     assert.match((checkResultsAnswer(ans({ revenue_current: null }), P) as any).reason, /no revenue/);
     assert.match((checkResultsAnswer(ans({ unit: 'billion' }), P) as any).reason, /unknown unit/);
-    assert.match((checkResultsAnswer(ans({ revenue_year_ago: 11 }), { ...P, docText: DOC + ' 11 ' }) as any).reason, /same company quarter/);
+    assert.match((checkResultsAnswer(ans({ revenue_year_ago: 11, revenue_line: 'Revenue from operations 12,345.67 11 9,876.54' }), { ...P, docText: DOC.replace('11,000.00 9,876.54', '11 9,876.54') }) as any).reason, /same company quarter/);
+    // zzz883: every figure must be on its own printed row, and the row must be in the document
+    assert.match((checkResultsAnswer(ans({ revenue_line: undefined }), P) as any).reason, /printed row was not copied/);
+    assert.match((checkResultsAnswer(ans({ revenue_line: 'Total income 12,357.67' }), P) as any).reason, /12345.67 is not on the copied revenue row/);
+    assert.match((checkResultsAnswer(ans({ revenue_line: 'Revenue from operations 12,345.67 9,876.54 made up' }), P) as any).reason, /not in the document/);
+    assert.match((checkResultsAnswer(ans({ net_profit_line: 'Revenue from operations 12,345.67 11,000.00 9,876.54' }), P) as any).reason, /does not name net profit/);
   });
   test('text checks', () => {
     assert.equal(looksLikeResultsText(DOC), true);

@@ -283,7 +283,7 @@ export interface CbTabSnapshot {
 
 /** Are the tab's live chips the owner's saved criteria (preset on, or everything off)? */
 export function filtersMatchSaved(f: ConvFilters, optedOut: boolean): boolean {
-  if (!optedOut) return isIndiaPresetActive(f) && cbActiveKeys(f).every((k) => ['sales', 'eps', 'pead', 'opmDelta', 'cfoPatMin', 'mktCapMin', 'pledgedMax', 'verdicts'].includes(k));
+  if (!optedOut) return isIndiaPresetActive(f) && cbActiveKeys(f).every((k) => ['sales', 'eps', 'pead', 'opmDelta', 'cfoPatMin', 'mktCapMin', 'mktCapMax', 'pledgedMax', 'verdicts'].includes(k));
   return cbActiveKeys(f).length === 0;
 }
 

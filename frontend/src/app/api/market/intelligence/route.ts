@@ -7,7 +7,9 @@ import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
 
-const INR_TO_USD = 85;
+// zzz883: live USD/INR (lib/fx), refreshed at the start of every request; 85 only until the first rate arrives
+let INR_TO_USD = 85;
+async function refreshFx() { try { const { getUsdInr } = await import('@/lib/fx'); INR_TO_USD = (await getUsdInr()).usdInr; } catch { /* keep the last rate */ } }
 
 // ==================== ROUTE-LEVEL CACHE (BUG-01 fix) ====================
 // 3-minute in-memory cache for the full intelligence response
@@ -1581,6 +1583,7 @@ function scoreBuyerQuality(name: string): number {
 // ==================== MAIN HANDLER ====================
 
 export async function GET(request: Request): Promise<NextResponse<IntelligenceResponse>> {
+  await refreshFx();
   const startTime = Date.now();
 
   try {
