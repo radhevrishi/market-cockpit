@@ -19,6 +19,7 @@ import { resolveTicker } from '@/lib/bse-nse-mapping';
 // zzz433 — Conviction × Transformation cross-link on the Radar tab
 import { readPortfolioSymbols, normSymbol, classifySource, SOURCE_META, type SymbolSource } from '@/lib/portfolio-symbols';
 import { readConvictionBeats, type ConvictionEntry } from '@/lib/conviction-beats';
+import { passesSmallMid, smallMidCounts, knownCapCr, readSmallMidPref, writeSmallMidPref, SMALL_MID_MAX_CR } from '@/lib/small-mid-filter'; // zzz898
 
 // zzz432 — automatic multibagger transformation radar block
 interface TransformationRadarData {
@@ -3950,6 +3951,13 @@ function TransformationScreenerTab() {
     [bench],
   );
   const [sourceFilter, setSourceFilter] = useState<SymbolSource | null>(null);
+  // zzz898 — "Small & mid only" (default on, India ceiling ₹30,000 Cr). The radar feed carries no market
+  // cap, so sizes are looked up (cached enrich, Screener figures); a name whose size is unknown stays, labelled.
+  const [smallMidOnly, setSmallMidOnlyState] = useState<boolean>(true);
+  useEffect(() => { setSmallMidOnlyState(readSmallMidPref('mc:radar:small-mid-only:v1')); }, []);
+  const setSmallMidOnly = (on: boolean) => { setSmallMidOnlyState(on); writeSmallMidPref('mc:radar:small-mid-only:v1', on); };
+  const [capMap, setCapMap] = useState<Map<string, number | null>>(new Map());
+  const [capLoading, setCapLoading] = useState(false);
 
   const load = useCallback(async (d: number, force = false) => {
     setLoading(true); setErr(null);
@@ -3982,14 +3990,38 @@ function TransformationScreenerTab() {
   }, [feedState, loading, days, load]);
 
   const allEntries = data?.entries ?? [];
+  // zzz898 — look up the size of every ranked name (chunks of 40, best-effort; failures leave the size unknown)
+  useEffect(() => {
+    const syms = Array.from(new Set((data?.entries ?? []).map((e) => String(e.symbol || '').toUpperCase()).filter(Boolean)));
+    if (syms.length === 0) return;
+    let alive = true;
+    setCapLoading(true);
+    (async () => {
+      const m = new Map<string, number | null>();
+      const chunks: string[][] = [];
+      for (let i = 0; i < syms.length; i += 40) chunks.push(syms.slice(i, i + 40));
+      await Promise.all(chunks.map(async (c) => {
+        try {
+          const r = await fetch(`/api/v1/earnings/enrich?symbols=${encodeURIComponent(c.join(','))}`, { signal: AbortSignal.timeout(60_000) });
+          if (!r.ok) return;
+          const j = await r.json();
+          for (const s of c) m.set(s, knownCapCr(j?.data?.[s]?.market_cap_cr));
+        } catch { /* size stays unknown */ }
+      }));
+      if (alive) { setCapMap(m); setCapLoading(false); }
+    })();
+    return () => { alive = false; };
+  }, [data]);
+  const capOf = (sym: unknown): number | null => capMap.get(String(sym || '').toUpperCase()) ?? null;
+  const sizeCounts = smallMidCounts(allEntries, (e) => capOf(e.symbol));
   const sourceOf = useCallback(
     (sym: unknown): SymbolSource => classifySource(sym, owned, benchKeys),
     [owned, benchKeys],
   );
   const ownedCount = allEntries.filter((e) => sourceOf(e.symbol) === 'portfolio').length;
-  const entries = sourceFilter
+  const entries = (sourceFilter
     ? allEntries.filter((e) => sourceOf(e.symbol) === sourceFilter)
-    : allEntries;
+    : allEntries).filter((e) => passesSmallMid(capOf(e.symbol), smallMidOnly));   // zzz898
   const sweetSpotCount = entries.filter((e) => e.stage_sweet_spot).length;
   const tripleCount = entries.filter((e) => e.triple.count === 3).length;
   const onBenchCount = entries.filter((e) => bench[e.symbol?.toUpperCase()]).length;
@@ -4052,6 +4084,20 @@ function TransformationScreenerTab() {
                 }}>{m.icon} {m.label} {n}</button>
             );
           })}
+          {/* zzz898 — Small & mid only (default on) */}
+          <span style={{ width: 1, height: 14, background: TF.border, margin: '0 4px' }} />
+          <button onClick={() => setSmallMidOnly(!smallMidOnly)}
+            title={`Hide names with a market cap of ₹${SMALL_MID_MAX_CR.toLocaleString('en-IN')} Cr or more. Names whose size is not available stay visible, marked "size n/a".`}
+            style={{
+              fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 20, cursor: 'pointer',
+              border: `1px solid #38BDF8${smallMidOnly ? '' : '55'}`,
+              background: smallMidOnly ? '#38BDF8' : '#38BDF818',
+              color: smallMidOnly ? '#0B1220' : '#38BDF8',
+            }}>
+            {smallMidOnly ? '✓ ' : ''}◧ Small &amp; mid only
+            {smallMidOnly && sizeCounts.hiddenLarge > 0 ? ` · ${sizeCounts.hiddenLarge} large hidden` : ''}
+            {capLoading ? ' · sizes loading…' : sizeCounts.unknown > 0 ? ` · ${sizeCounts.unknown} size n/a` : ''}
+          </button>
         </div>
       )}
 
@@ -4145,6 +4191,12 @@ function TransformationScreenerTab() {
                 );
               })()}
               {e.scored_from === 'SUBJECT' && <span style={{ fontSize: 9, color: TF.dim, fontStyle: 'italic' }}>subject-only</span>}
+              {(() => {   // zzz898 — size, or an honest "size n/a"
+                const c = capOf(e.symbol);
+                return c != null
+                  ? <span title="Market cap (₹ Cr, Screener)" style={{ fontSize: 9.5, fontWeight: 700, color: TF.muted, ...TFM }}>₹{Math.round(c).toLocaleString('en-IN')} Cr</span>
+                  : <span title="Market cap not available — kept on the Small & mid view because its size is unknown" style={{ fontSize: 9, color: TF.dim, border: `1px dashed ${TF.border}`, borderRadius: 3, padding: '0 5px' }}>{capLoading ? 'size …' : 'size n/a'}</span>;
+              })()}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <div style={{ textAlign: 'right' }}>

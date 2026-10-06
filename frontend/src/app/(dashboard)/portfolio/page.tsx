@@ -13,6 +13,7 @@ import PortfolioEarningsTab from '../watchlists/PortfolioEarningsTab'; // zzz285
 import TickerExportToolbar from '@/components/TickerExportToolbar';
 import ReturnVsIndexCard from '@/components/ReturnVsIndexCard';
 import CockpitHero from '@/components/CockpitHero'; // zzz533 — premium market-context band
+import { isPricedRow, pricedValue, bookTotals, unpricedNote, neutralSignalLabel } from '@/lib/book-totals'; // zzz898
 import { openPassport } from '@/lib/engines'; // zzz526 — symbol → Stock Passport // zzz514
 
 /* ── Types ──────────────────────────────────────────────────────────── */
@@ -251,8 +252,10 @@ function computePortfolioCagr(rows: PortfolioRow[], holdings: PortfolioHolding[]
   const avgYears = weightedYears / totalInvested;
   if (avgYears < 0.01) return null;
 
-  const totalCurrent = rows.reduce((s, r) => s + r.currentValue, 0);
-  const totalInv = rows.reduce((s, r) => s + r.investedValue, 0);
+  // zzz898 — only priced holdings: an unpriced one has no current value (never valued at cost)
+  const bt = bookTotals(rows);
+  const totalCurrent = bt.current;
+  const totalInv = bt.pricedInvested;
   if (totalInv <= 0 || totalCurrent <= 0) return null;
   const totalReturnPct = (totalCurrent / totalInv - 1) * 100;
   // Hold-period < 1 year: do NOT annualize. Show raw return.
@@ -416,7 +419,7 @@ function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: 
   const dayPnl = rows.reduce((s, r) => s + r.dayPnl, 0);
   const gainers = rows.filter(r => r.cmp > 0 && r.pnl > 0).length;
   const losers = rows.filter(r => r.cmp > 0 && r.pnl < 0).length;
-  const noData = rows.filter(r => r.cmp === 0).length;
+  const noData = rows.filter(r => !isPricedRow(r)).length; // zzz898: NaN / missing price counts too
 
   const best = priced.length >= 2 ? priced.reduce((a, b) => a.pnlPercent > b.pnlPercent ? a : b) : null;
   const worst = priced.length >= 2 ? priced.reduce((a, b) => a.pnlPercent < b.pnlPercent ? a : b) : null;
@@ -540,7 +543,7 @@ function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: 
     { label: 'CURRENT VALUE (equity)',
       // PATCH 1101zzz27 — show last-good when feed stale, with refresh indicator.
       value: priced.length > 0 ? fmt(totalCurrent) : (showingStale && lastGood ? fmt(lastGood.totalCurrent) : '—'),
-      sub: showingStale ? '🔄 refreshing prices…' : undefined,
+      sub: showingStale ? '🔄 refreshing prices…' : (noData > 0 ? unpricedNote(noData) : undefined), // zzz898
       color: '#F5F7FA',
     },
     priced.length > 0
@@ -551,7 +554,7 @@ function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: 
           // PATCH 1101zzz27 — use effective values + stale indicator.
           // zzz378 — removed duplicate `value:` key (the totalPnl one was dead — JS
           // kept the effective* one below; TS1117). Effective values are intended.
-          sub: showingStale ? '🔄 refreshing prices…' : (totalCash > 0 ? 'equity only' : undefined),
+          sub: showingStale ? '🔄 refreshing prices…' : ([totalCash > 0 ? 'equity only' : '', unpricedNote(noData)].filter(Boolean).join(' · ') || undefined), // zzz898
           value: `${effectiveTotalPnl < 0 ? '-' : ''}${fmt(Math.abs(effectiveTotalPnl))} (${fmtPct(effectiveTotalPnlPct)})`,
           color: effectiveTotalPnl >= 0 ? '#10B981' : '#EF4444',
         }
@@ -957,7 +960,7 @@ function PortfolioAnalytics({ rows, onSelectCap, onSelectTier, selectedTier }: {
   // silently valued a dead/BSE-only/weekend-missing holding at cost (P&L hidden, book
   // overstated) — and made the Analytics tab disagree with the Summary card.
   const pricedRows = rows.filter(r => (r.cmp || 0) > 0);
-  const totalCur = pricedRows.reduce((a, r) => a + (r.currentValue || 0), 0) || 1;
+  const totalCur = pricedRows.reduce((a, r) => a + pricedValue(r), 0) || 1;
   const totalInv = pricedRows.reduce((a, r) => a + (r.investedValue || 0), 0) || 1;
   const totalPnl = pricedRows.reduce((a, r) => a + (r.pnl || 0), 0);
   const dayPnl = pricedRows.reduce((a, r) => a + (r.dayPnl || 0), 0);
@@ -967,9 +970,10 @@ function PortfolioAnalytics({ rows, onSelectCap, onSelectTier, selectedTier }: {
   const capLabel: Record<string, string> = { large: 'Large cap', mid: 'Mid cap', small: 'Small cap', micro: 'Micro cap', other: 'Unclassified' };
   const capStats = capOrder.map(k => {
     const rs = rows.filter(r => normCapBucket(r.cap) === k);
-    const value = rs.reduce((a, r) => a + (r.currentValue || 0), 0);
-    const pnl = rs.reduce((a, r) => a + (r.pnl || 0), 0);
-    const inv = rs.reduce((a, r) => a + (r.investedValue || 0), 0);
+    const rsP = rs.filter(isPricedRow); // zzz898: unknown prices stay out of value + return
+    const value = rsP.reduce((a, r) => a + pricedValue(r), 0);
+    const pnl = rsP.reduce((a, r) => a + (r.pnl || 0), 0);
+    const inv = rsP.reduce((a, r) => a + (r.investedValue || 0), 0);
     return { k, count: rs.length, value, pnl, retPct: inv > 0 ? (pnl / inv) * 100 : 0, valPct: (value / totalCur) * 100 };
   }).filter(x => x.count > 0);
 
@@ -984,10 +988,10 @@ function PortfolioAnalytics({ rows, onSelectCap, onSelectTier, selectedTier }: {
   const sectors = [...secMap.entries()].map(([sector, v]) => ({ sector, ...v, valPct: (v.value / totalCur) * 100 })).sort((a, b) => b.value - a.value);
 
   // Concentration
-  const byVal = [...rows].sort((a, b) => (b.currentValue || 0) - (a.currentValue || 0));
-  const top5pct = (byVal.slice(0, 5).reduce((a, r) => a + (r.currentValue || 0), 0) / totalCur) * 100;
-  const largest = byVal[0] ? { sym: byVal[0].symbol, pct: ((byVal[0].currentValue || 0) / totalCur) * 100 } : null;
-  const hhi = rows.reduce((a, r) => { const w = (r.currentValue || 0) / totalCur; return a + w * w; }, 0) * 10000; // Herfindahl (0-10000)
+  const byVal = [...pricedRows].sort((a, b) => (b.currentValue || 0) - (a.currentValue || 0));
+  const top5pct = (byVal.slice(0, 5).reduce((a, r) => a + pricedValue(r), 0) / totalCur) * 100;
+  const largest = byVal[0] ? { sym: byVal[0].symbol, pct: (pricedValue(byVal[0]) / totalCur) * 100 } : null;
+  const hhi = rows.reduce((a, r) => { const w = pricedValue(r) / totalCur; return a + w * w; }, 0) * 10000; // Herfindahl (0-10000)
 
   // Performance / risk
   const priced = rows.filter(r => r.cmp > 0);
@@ -1217,7 +1221,7 @@ function PortfolioAnalytics({ rows, onSelectCap, onSelectTier, selectedTier }: {
         const effectiveN = hhi > 0 ? Math.round(10000 / hhi) : 0;
         const capBetaMap: Record<string, number> = { large: 0.85, mid: 1.05, small: 1.25, micro: 1.45, other: 1.0 };
         const wtdBeta = rows.reduce((a, r) => {
-          const w = (r.currentValue || 0) / totalCur;
+          const w = pricedValue(r) / totalCur;
           return a + w * (capBetaMap[normCapBucket(r.cap)] ?? 1.0);
         }, 0);
         // Cross-sectional 1D vol proxy (std dev of holdings' 1D change%)
@@ -1244,7 +1248,7 @@ function PortfolioAnalytics({ rows, onSelectCap, onSelectTier, selectedTier }: {
         // Style tilt (heuristic from cap + score buckets)
         let tiltMomentum = 0, tiltQuality = 0, tiltValue = 0, tiltDeep = 0;
         for (const r of rows) {
-          const w = (r.currentValue || 0) / totalCur;
+          const w = pricedValue(r) / totalCur;
           const s = r.score;
           const c = normCapBucket(r.cap);
           if (typeof s === 'number' && s >= 75) tiltMomentum += w;
@@ -1256,7 +1260,7 @@ function PortfolioAnalytics({ rows, onSelectCap, onSelectTier, selectedTier }: {
         // Position size distribution (weight buckets)
         const sizeBuckets: Record<string, number> = { XS: 0, S: 0, M: 0, L: 0, XL: 0 };
         for (const r of rows) {
-          const w = ((r.currentValue || 0) / totalCur) * 100;
+          const w = (pricedValue(r) / totalCur) * 100;
           if (w < 1) sizeBuckets.XS++;
           else if (w < 2) sizeBuckets.S++;
           else if (w < 4) sizeBuckets.M++;
@@ -1264,19 +1268,19 @@ function PortfolioAnalytics({ rows, onSelectCap, onSelectTier, selectedTier }: {
           else sizeBuckets.XL++;
         }
         // Concentration alerts
-        const heavyPositions = rows.filter(r => ((r.currentValue || 0) / totalCur) * 100 >= 5).length;
+        const heavyPositions = rows.filter(r => (pricedValue(r) / totalCur) * 100 >= 5).length;
         const heavySectors = sectors.filter(s => s.valPct >= 25).length;
         const heavySector = sectors[0] && sectors[0].valPct >= 25 ? sectors[0] : null;
         // Loser concentration — % of value in loss-making positions
-        const loserVal = priced2.filter(r => (r.pnl || 0) < 0).reduce((a, r) => a + (r.currentValue || 0), 0);
+        const loserVal = priced2.filter(r => (r.pnl || 0) < 0).reduce((a, r) => a + pricedValue(r), 0);
         const loserValPct = totalCur > 0 ? (loserVal / totalCur) * 100 : 0;
         // Trim / turnaround candidates
         const trimCands = priced2.filter(r => {
-          const w = ((r.currentValue || 0) / totalCur) * 100;
+          const w = (pricedValue(r) / totalCur) * 100;
           return w >= 4 && (r.pnlPercent || 0) >= 30;
         }).sort((a, b) => (b.pnl || 0) - (a.pnl || 0)).slice(0, 4);
         const turnCands = priced2.filter(r => {
-          const w = ((r.currentValue || 0) / totalCur) * 100;
+          const w = (pricedValue(r) / totalCur) * 100;
           return w <= 2 && (r.pnlPercent || 0) <= -5 && (r.pnlPercent || 0) >= -25;
         }).sort((a, b) => (a.pnlPercent || 0) - (b.pnlPercent || 0)).slice(0, 4);
         // Sector risk-adjusted return leaders / laggards
@@ -1461,21 +1465,21 @@ function PortfolioAnalytics({ rows, onSelectCap, onSelectTier, selectedTier }: {
               </div>
               {/* Trim / turnaround candidates */}
               <div style={card}>
-                <div style={h}>Actionable signals</div>
-                <div style={{ fontSize: 10.5, color: 'var(--mc-warn)', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>✂ TRIM CANDIDATES</div>
+                <div style={h}>Position facts</div>
+                <div style={{ fontSize: 10.5, color: 'var(--mc-warn)', fontWeight: 800, letterSpacing: '0.4px', marginBottom: 4 }}>▲ LARGE WINNERS — REVIEW SIZE</div>
                 {trimCands.length ? trimCands.map(r => (
                   <div key={r.symbol} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, padding: '2px 0' }}>
                     <span style={{ color: 'var(--mc-text-2)' }}>{r.symbol}</span>
-                    <span style={{ color: 'var(--mc-bullish)', fontWeight: 700 }}>{pctTxt(r.pnlPercent || 0)} · {(((r.currentValue || 0) / totalCur) * 100).toFixed(1)}%</span>
+                    <span style={{ color: 'var(--mc-bullish)', fontWeight: 700 }}>{pctTxt(r.pnlPercent || 0)} · {((pricedValue(r) / totalCur) * 100).toFixed(1)}%</span>
                   </div>
-                )) : <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 6 }}>No trim triggers (need weight ≥4% AND return ≥30%)</div>}
-                <div style={{ fontSize: 10.5, color: '#22D3EE', fontWeight: 800, letterSpacing: '0.4px', marginTop: 10, marginBottom: 4 }}>↻ TURNAROUND WATCH</div>
+                )) : <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 6 }}>None (weight ≥4% AND return ≥30%)</div>}
+                <div style={{ fontSize: 10.5, color: '#22D3EE', fontWeight: 800, letterSpacing: '0.4px', marginTop: 10, marginBottom: 4 }}>▼ SMALL LOSERS — REVIEW THESIS</div>
                 {turnCands.length ? turnCands.map(r => (
                   <div key={r.symbol} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, padding: '2px 0' }}>
                     <span style={{ color: 'var(--mc-text-2)' }}>{r.symbol}</span>
-                    <span style={{ color: 'var(--mc-bearish)', fontWeight: 700 }}>{pctTxt(r.pnlPercent || 0)} · {(((r.currentValue || 0) / totalCur) * 100).toFixed(1)}%</span>
+                    <span style={{ color: 'var(--mc-bearish)', fontWeight: 700 }}>{pctTxt(r.pnlPercent || 0)} · {((pricedValue(r) / totalCur) * 100).toFixed(1)}%</span>
                   </div>
-                )) : <div style={{ fontSize: 11, color: 'var(--mc-text-4)' }}>No turnaround watch (weight ≤2% AND return between -25% and -5%)</div>}
+                )) : <div style={{ fontSize: 11, color: 'var(--mc-text-4)' }}>None (weight ≤2% AND return between -25% and -5%)</div>}
               </div>
               {/* Position size distribution */}
               <div style={card}>
@@ -1607,7 +1611,7 @@ function classifyRegime(sector: string, phase: typeof REGIME_PHASES_PF[number]):
 function PortfolioRegimeExposure({ rows }: { rows: PortfolioRow[] }) {
   const [phaseKey, setPhaseKey] = useState<string>('stag');
   const phase = REGIME_PHASES_PF.find(p => p.key === phaseKey) || REGIME_PHASES_PF[3];
-  const totalValue = useMemo(() => rows.reduce((a, r) => a + (r.currentValue || 0), 0), [rows]);
+  const totalValue = useMemo(() => rows.reduce((a, r) => a + (pricedValue(r)), 0), [rows]);
 
   // buckets for the selected phase
   const buckets = useMemo(() => {
@@ -1616,7 +1620,7 @@ function PortfolioRegimeExposure({ rows }: { rows: PortfolioRow[] }) {
     };
     rows.forEach(r => {
       const b = classifyRegime(r.sector, phase);
-      out[b].value += r.currentValue || 0;
+      out[b].value += pricedValue(r);
       out[b].rows.push(r);
     });
     return out;
@@ -1627,8 +1631,8 @@ function PortfolioRegimeExposure({ rows }: { rows: PortfolioRow[] }) {
     let fav = 0, exp = 0;
     rows.forEach(r => {
       const b = classifyRegime(r.sector, p);
-      if (b === 'FAVORED') fav += r.currentValue || 0;
-      else if (b === 'EXPOSED') exp += r.currentValue || 0;
+      if (b === 'FAVORED') fav += pricedValue(r);
+      else if (b === 'EXPOSED') exp += pricedValue(r);
     });
     return { p, favPct: totalValue > 0 ? (fav / totalValue) * 100 : 0, expPct: totalValue > 0 ? (exp / totalValue) * 100 : 0 };
   }), [rows, totalValue]);
@@ -1700,7 +1704,7 @@ function PortfolioRegimeExposure({ rows }: { rows: PortfolioRow[] }) {
               <div style={{ fontSize: 10.5, color: 'var(--mc-text-4)', marginTop: 2 }}>{fmtCr(buckets[b].value)} · {buckets[b].rows.length} holding{buckets[b].rows.length === 1 ? '' : 's'}</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 8 }}>
                 {buckets[b].rows.slice().sort((x, y) => (y.currentValue || 0) - (x.currentValue || 0)).slice(0, 12).map(r => (
-                  <span key={r.symbol} title={`${r.sector || 'sector n/a'} · ${pct(r.currentValue || 0).toFixed(1)}% of book`} style={{
+                  <span key={r.symbol} title={`${r.sector || 'sector n/a'} · ${pct(pricedValue(r)).toFixed(1)}% of book`} style={{
                     fontSize: 10.5, fontWeight: 700, padding: '2px 7px', borderRadius: 5,
                     background: `${BUCKET_META[b].c}18`, color: BUCKET_META[b].c, border: `1px solid ${BUCKET_META[b].c}33`,
                   }}>{r.symbol}</span>
@@ -2362,29 +2366,29 @@ export default function PortfolioPage() {
       'Qty': r.quantity,
       'Weight %': parseFloat(r.weight.toFixed(1)),
       'CMP': r.cmp > 0 ? r.cmp : '',   // zzz883: no quote = blank, never 0
-      'Day Change %': parseFloat(r.changePercent.toFixed(2)),
+      // zzz898: no price = blank cells, never 0
+      'Day Change %': isPricedRow(r) && Number.isFinite(r.changePercent) && r.changePercent !== 0 ? parseFloat(r.changePercent.toFixed(2)) : '' as any,
       'Invested': Math.round(r.investedValue),
-      'Current Value': Math.round(r.currentValue),
-      'P&L': Math.round(r.pnl),
-      'P&L %': parseFloat(r.pnlPercent.toFixed(2)),
+      'Current Value': isPricedRow(r) ? Math.round(r.currentValue) : '' as any,
+      'P&L': isPricedRow(r) ? Math.round(r.pnl) : '' as any,
+      'P&L %': isPricedRow(r) ? parseFloat(r.pnlPercent.toFixed(2)) : '' as any,
       'Score': r.score !== undefined ? parseFloat(r.score.toFixed(0)) : '',
       'Trend': r.sectorTrend || '',
       // zzz883: the book never tells you to buy or sell — the column is the evidence signal, in neutral words
-      'Signal': ({ BUY: 'positive', ADD: 'positive', WATCH: 'watch', HOLD: 'neutral', NEUTRAL: 'neutral', TRIM: 'caution', EXIT: 'negative', AVOID: 'negative' } as Record<string, string>)[String(r.decision || '').toUpperCase()] || '',
+      'Signal': neutralSignalLabel(r.decision),
     }));
 
     // Add summary row
-    const totalInvested = sortedRows.reduce((s, r) => s + r.investedValue, 0);
-    const totalCurrent = sortedRows.reduce((s, r) => s + r.currentValue, 0);
-    const totalPnl = totalCurrent - totalInvested;
+    // zzz898 — totals cover priced holdings only; unpriced ones are counted, not valued at cost
+    const bt = bookTotals(sortedRows);
     data.push({
-      '#': 0, 'Symbol': '', 'Company': 'TOTAL', 'Sector': '',
-      'Entry Price': 0, 'Qty': 0, 'Weight %': 100,
-      'CMP': '', 'Day Change %': 0,
-      'Invested': Math.round(totalInvested),
-      'Current Value': Math.round(totalCurrent),
-      'P&L': Math.round(totalPnl),
-      'P&L %': totalInvested > 0 ? parseFloat(((totalPnl / totalInvested) * 100).toFixed(2)) : 0,
+      '#': 0, 'Symbol': '', 'Company': bt.unpricedCount > 0 ? `TOTAL (priced only — ${unpricedNote(bt.unpricedCount)})` : 'TOTAL', 'Sector': '',
+      'Entry Price': '' as any, 'Qty': '' as any, 'Weight %': 100,
+      'CMP': '', 'Day Change %': '' as any,
+      'Invested': Math.round(bt.pricedInvested),
+      'Current Value': bt.pricedCount > 0 ? Math.round(bt.current) : '' as any,
+      'P&L': bt.pnl !== null ? Math.round(bt.pnl) : '' as any,
+      'P&L %': bt.pnlPct !== null ? parseFloat(bt.pnlPct.toFixed(2)) : '' as any,
       'Score': '', 'Trend': '', 'Signal': '',
     });
 
@@ -2636,8 +2640,8 @@ export default function PortfolioPage() {
                             )}
                           </span>
                         ) : (
-                          <span style={{ display: 'inline-block', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600', backgroundColor: 'rgba(251,191,36,0.1)', color: 'var(--mc-warn)' }}>
-                            N/A
+                          <span title="not available — no live price for this holding" style={{ display: 'inline-block', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600', backgroundColor: 'rgba(251,191,36,0.1)', color: 'var(--mc-warn)' }}>
+                            —
                           </span>
                         )}
                       </td>
@@ -2684,6 +2688,8 @@ export default function PortfolioPage() {
                               }
                             }
                           } catch {}
+                          // zzz898: no price = no weight (left out of totals), never 0%
+                          if (!isPricedRow(r)) return <span title="not available — no live price" style={{ color: 'var(--mc-text-4)' }}>—</span>;
                           if (recommendedMax === undefined) {
                             return <span style={{ color: 'var(--mc-text-3)' }}>{r.weight.toFixed(1)}%</span>;
                           }
@@ -2705,7 +2711,7 @@ export default function PortfolioPage() {
                         {fmt(r.investedValue)}
                       </td>
                       <td style={{ padding: '10px 12px', textAlign: 'right', color: 'var(--mc-text-0)', fontVariantNumeric: 'tabular-nums' }}>
-                        {r.cmp > 0 ? fmt(r.currentValue) : '—'}
+                        {r.cmp > 0 ? fmt(r.currentValue) : <span title="not available — no live price">—</span>}
                       </td>
                       <td style={{ padding: '10px 12px', textAlign: 'right' }}>
                         {r.cmp > 0 ? (
@@ -2717,7 +2723,7 @@ export default function PortfolioPage() {
                               {fmtPct(r.pnlPercent)}
                             </div>
                           </div>
-                        ) : '—'}
+                        ) : <span title="not available — no live price">—</span>}
                       </td>
                       {/* Score */}
                       <td style={{ padding: '10px 12px', textAlign: 'right' }}>
@@ -2752,7 +2758,7 @@ export default function PortfolioPage() {
                             : 'rgba(100,116,139,0.1)',
                           color: dayColor, fontVariantNumeric: 'tabular-nums',
                         }}
-                        title={!hasQuote ? 'Quote unavailable' : undefined}>
+                        title={!hasQuote ? 'not available — no live quote' : undefined}>
                           {hasQuote ? fmtPct(r.changePercent) : '—'}
                         </span>
                       </td>

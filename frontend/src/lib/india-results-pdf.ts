@@ -50,7 +50,16 @@ export interface RpRecord {
   pat_curr_cr: number | null; pat_prev_cr: number | null; pat_yoy_pct: number | null;
   eps_curr: number | null; eps_prev: number | null; eps_yoy_pct: number | null;
   source_url: string; extracted_at: string; model: string;
+  /** zzz898 — the printed rows the figures were copied from, and the figures as printed (document unit).
+   *  A record without them (read before zzz898) is not laid over other sources. */
+  quotes?: RpQuotes;
 }
+export interface RpQuotes {
+  revenue_line: string; net_profit_line: string | null; eps_line: string | null;
+  printed: { revenue_current: number; revenue_year_ago: number | null; net_profit_current: number | null; net_profit_year_ago: number | null; eps_current: number | null; eps_year_ago: number | null };
+}
+/** zzz898 — a field where the PDF and the other source (Screener / enrich) disagree for the same quarter. */
+export interface RpDisagreement { field: string; other: number; pdf: number; quote: string | null }
 export interface RpFail { at: string; tries: number; reason: string }
 
 const DAY = 86_400_000;
@@ -205,28 +214,83 @@ export function checkResultsAnswer(raw: any, p: { ticker: string; want: string; 
       pat_curr_cr, pat_prev_cr, pat_yoy_pct: yoy(pat_curr_cr, pat_prev_cr),
       eps_curr: ec, eps_prev: ep, eps_yoy_pct: yoy(ec, ep),
       source_url: p.url, extracted_at: (p.now || new Date()).toISOString(), model: p.model,
+      quotes: {
+        revenue_line: String(raw.revenue_line).trim(),
+        net_profit_line: typeof raw.net_profit_line === 'string' && raw.net_profit_line.trim() ? raw.net_profit_line.trim() : null,
+        eps_line: typeof raw.eps_line === 'string' && raw.eps_line.trim() ? raw.eps_line.trim() : null,
+        printed: { revenue_current: rc, revenue_year_ago: rp, net_profit_current: nc, net_profit_year_ago: np, eps_current: ec, eps_year_ago: ep },
+      },
     },
   };
+}
+
+/** zzz898 — is this printed figure on the quoted row (to the last printed decimal)? A null figure needs no row. Pure. */
+export function figureOnRow(v: number | null | undefined, line: string | null | undefined): boolean {
+  if (v == null) return true;
+  if (typeof line !== 'string' || line.trim().length < 6) return false;
+  return numbersIn(line).some((d) => Math.abs(Math.abs(v) - Math.abs(d)) <= 0.005);
+}
+
+/** zzz898 — which figure groups of a stored record are backed by their quoted row. Pure. */
+export function quoteSupport(rec: RpRecord): { revenue: boolean; pat: boolean; eps: boolean } {
+  const q = rec.quotes;
+  if (!q || !q.printed) return { revenue: false, pat: false, eps: false };
+  const pr = q.printed;
+  return {
+    revenue: figureOnRow(pr.revenue_current, q.revenue_line) && figureOnRow(pr.revenue_year_ago, q.revenue_line),
+    pat: (pr.net_profit_current == null && pr.net_profit_year_ago == null) || (figureOnRow(pr.net_profit_current, q.net_profit_line) && figureOnRow(pr.net_profit_year_ago, q.net_profit_line)),
+    eps: (pr.eps_current == null && pr.eps_year_ago == null) || (figureOnRow(pr.eps_current, q.eps_line) && figureOnRow(pr.eps_year_ago, q.eps_line)),
+  };
+}
+
+/** zzz898 — same quarter in both sources: list the figures that differ by more than 2% (never overwritten). Pure. */
+export function resultsPdfDisagreements(out: any, rec: RpRecord): RpDisagreement[] {
+  const q = rec.quotes;
+  const pairs: Array<[string, unknown, number | null, string | null]> = [
+    ['sales_curr_cr', out?.sales_curr_cr, rec.sales_curr_cr, q?.revenue_line ?? null],
+    ['sales_prev_cr', out?.sales_prev_cr, rec.sales_prev_cr, q?.revenue_line ?? null],
+    ['pat_curr_cr', out?.pat_curr_cr, rec.pat_curr_cr, q?.net_profit_line ?? null],
+    ['pat_prev_cr', out?.pat_prev_cr, rec.pat_prev_cr, q?.net_profit_line ?? null],
+    ['eps_curr', out?.eps_curr, rec.eps_curr, q?.eps_line ?? null],
+  ];
+  const res: RpDisagreement[] = [];
+  for (const [field, o, p, quote] of pairs) {
+    const ov = typeof o === 'number' && Number.isFinite(o) ? o : null;
+    if (ov == null || p == null) continue;
+    const diff = Math.abs(ov - p);
+    if (diff > 0.05 && diff > Math.max(Math.abs(ov), Math.abs(p)) * 0.02) res.push({ field, other: ov, pdf: p, quote });
+  }
+  return res;
 }
 
 /** The enrich overlay: use the PDF record only when it is NEWER than what the other sources have and not after the filing. Pure. */
 export function overlayResultsPdf(out: any, rec: RpRecord | null | undefined, filedHint: string | null | undefined): any {
   if (!rec || rec.v !== 1 || !ISO.test(rec.latest_quarter_end_iso)) return out;
   const have = isoDay(out?.latest_quarter_end_iso);
-  if (have && have >= rec.latest_quarter_end_iso) return out;               // Screener (or another source) has caught up
+  // zzz898: Screener (or another source) has the same quarter — its figures stay; a PDF that disagrees is RECORDED, never silently applied
+  if (have && have === rec.latest_quarter_end_iso) {
+    const dis = resultsPdfDisagreements(out, rec);
+    return dis.length ? { ...out, _results_pdf_disagreement: { url: rec.source_url, basis: rec.basis, fields: dis } } : out;
+  }
+  if (have && have > rec.latest_quarter_end_iso) return out;                 // Screener (or another source) is ahead
   const filed = isoDay(filedHint);
   if (!ISO.test(filed) || rec.latest_quarter_end_iso > filed) return out;    // never a quarter that had not ended by the filing
   if (Math.abs(Date.parse(`${rec.filed}T00:00:00Z`) - Date.parse(`${filed}T00:00:00Z`)) > 10 * DAY) return out;   // a different filing
+  // zzz898: only figures backed by their quoted printed row are laid over; revenue must be, or nothing is used
+  const sup = quoteSupport(rec);
+  if (!sup.revenue) return { ...out, _results_pdf_skipped: rec.quotes ? 'revenue is not on the quoted PDF row' : 'PDF record has no quoted rows (read before row checks) — not used' };
+  const unsupported = [!sup.pat ? 'net profit' : '', !sup.eps ? 'EPS' : ''].filter(Boolean);
   const [y, m] = rec.latest_quarter_end_iso.split('-');
   const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   return {
     ...out,
     sales_curr_cr: rec.sales_curr_cr, sales_prev_cr: rec.sales_prev_cr, sales_yoy_pct: rec.sales_yoy_pct,
-    pat_curr_cr: rec.pat_curr_cr, pat_prev_cr: rec.pat_prev_cr, pat_yoy_pct: rec.pat_yoy_pct,
-    eps_curr: rec.eps_curr, eps_prev: rec.eps_prev, eps_yoy_pct: rec.eps_yoy_pct,
+    // a figure without its quoted row stays empty (the old quarter's value would be wrong for this one)
+    pat_curr_cr: sup.pat ? rec.pat_curr_cr : null, pat_prev_cr: sup.pat ? rec.pat_prev_cr : null, pat_yoy_pct: sup.pat ? rec.pat_yoy_pct : null,
+    eps_curr: sup.eps ? rec.eps_curr : null, eps_prev: sup.eps ? rec.eps_prev : null, eps_yoy_pct: sup.eps ? rec.eps_yoy_pct : null,
     // the other sources' margin / operating-profit figures belong to the OLD quarter: not checked, never carried over
     opm_pct: null, opm_prev_pct: null, op_profit_curr_cr: null, op_profit_prev_cr: null, op_profit_yoy_pct: null,
     latest_quarter_end_iso: rec.latest_quarter_end_iso, latest_quarter_label: `${MON[+m - 1]} ${y}`,
-    financials_source: 'results-pdf', _results_pdf: { url: rec.source_url, basis: rec.basis, unit: rec.unit, read_at: rec.extracted_at, model: rec.model },
+    financials_source: 'results-pdf', _results_pdf: { url: rec.source_url, basis: rec.basis, unit: rec.unit, read_at: rec.extracted_at, model: rec.model, quotes: rec.quotes ? { revenue: rec.quotes.revenue_line, net_profit: rec.quotes.net_profit_line, eps: rec.quotes.eps_line } : null, ...(unsupported.length ? { unsupported } : {}) },
   };
 }

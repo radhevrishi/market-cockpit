@@ -38,6 +38,8 @@ import { scoreReleaseCommentary } from '@/lib/earnings/commentary-score';
 import { classifyGradedRow, ABFG_META, type AbfgPattern } from '@/lib/earnings/pattern-abfg';
 // PATCH 0715 — centralized IST helpers.
 import { istToday as _istToday, isIndianMarketOpen as isIndianMarketOpenLocal } from '@/lib/market-hours';
+import { eoFallbackLabel } from '@/lib/eo-fallback-label'; // zzz898
+import { passesSmallMid, smallMidCounts, knownCapCr, readSmallMidPref, writeSmallMidPref, SMALL_MID_MAX_CR } from '@/lib/small-mid-filter'; // zzz898
 import { gradeIndiaRow as gradeRow } from '@/lib/india-grade';
 // zzz814 — multi-day window (1d … 60d), as on the US page.
 import {
@@ -663,6 +665,10 @@ export default function EarningsOpportunitiesPage() {
   }, []);
   // PATCH 1022 — market-cap range filter (uses market_cap_cr in ₹ Cr)
   const [capFilter, setCapFilter] = useState<'all' | 'sweet' | 'mega' | 'large' | 'mid' | 'small' | 'micro'>('all');
+  // zzz898 — "Small & mid only" (default on): hides names known to be ≥ ₹30,000 Cr; unknown size stays, labelled.
+  const [smallMidOnly, setSmallMidOnlyState] = useState<boolean>(true);
+  useEffect(() => { setSmallMidOnlyState(readSmallMidPref('mc:eo:small-mid-only:v1')); }, []);
+  const setSmallMidOnly = (on: boolean) => { setSmallMidOnlyState(on); writeSmallMidPref('mc:eo:small-mid-only:v1', on); };
   // PATCH zzz75 — Always default to ONE day before today (previous weekday,
   // skipping Sat/Sun backward to Fri). User explicitly wants the page to
   // start on yesterday, NOT auto-jump to a dense-earnings calendar date.
@@ -2372,6 +2378,7 @@ export default function EarningsOpportunitiesPage() {
     }
     // PATCH 1022 — market-cap range filter (₹ Cr)
     if (capFilter !== 'all') stocks = stocks.filter((s: any) => capInRange(s.market_cap_cr, capFilter));
+    if (smallMidOnly) stocks = stocks.filter((s: any) => passesSmallMid(s.market_cap_cr, true));   // zzz898
     // zzz703 — pattern filter, applied last so it composes with the rest.
     if (patternOnly) stocks = stocks.filter((s: any) => classifyGradedRow(s)?.pattern === patternOnly);
     return stocks;
@@ -2390,11 +2397,11 @@ export default function EarningsOpportunitiesPage() {
   // filter vanished even when an older result in the window passed.)
   const windowFiltered: WindowRow<ParsedEarning>[] = useMemo(() => {
     if (!windowOn) return [];
-    if (!anyRowFilter) return win.rows;
+    if (!anyRowFilter && !smallMidOnly) return win.rows;   // zzz898: the size toggle filters the window too
     const passSet = new Set<any>(applyRowFilters(win.entries as unknown as ParsedEarning[]));
     return dedupeWindowEntries(win.entries, (e) => passSet.has(e));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [windowOn, win.entries, win.rows, anyRowFilter, eliteOnly, peadOnly, multibaggerOnly, turnaroundOnly, radarOnly, beatCheapOnly, capFilter, patternOnly, radarMap]);
+  }, [windowOn, win.entries, win.rows, anyRowFilter, eliteOnly, peadOnly, multibaggerOnly, turnaroundOnly, radarOnly, beatCheapOnly, capFilter, patternOnly, radarMap, smallMidOnly]);
   /** zzz817 — the tier chips' counts, with every OTHER filter applied, so a
    *  chip always says how many cards clicking it shows. */
   const tierChipCounts: Record<EarningsTier, number> = windowOn
@@ -2428,6 +2435,7 @@ export default function EarningsOpportunitiesPage() {
     else if (radarOnly) { if (!radarMap.has(String(s.ticker || '').toUpperCase())) out.push('transformation radar'); }
     else if (beatCheapOnly) { if (!(typeof s.pe === 'number' && s.pe > 0 && s.pe <= 35)) out.push('Beat + Cheap (PE ≤ 35)'); }
     if (capFilter !== 'all' && !capInRange(s.market_cap_cr, capFilter)) out.push(`cap filter: ${capFilter}`);
+    if (!passesSmallMid(s.market_cap_cr, smallMidOnly)) out.push('Small & mid only (market cap ≥ ₹30,000 Cr)');   // zzz898
     if (patternOnly && classifyGradedRow(s)?.pattern !== patternOnly) out.push(`pattern ${patternOnly}`);
     // zzz817 — the tier chips filter too.
     if (tierSel.length > 0 && !passesTier(s, tierSel)) out.push(`tier filter: ${tierSel.join(' + ')}`);
@@ -2435,7 +2443,7 @@ export default function EarningsOpportunitiesPage() {
     if (!anyFilter && s.tier && !expanded[s.tier as EarningsTier]) out.push(`tier ${s.tier} collapsed`);
     if (viewMode !== 'GRADED') out.push('Calendar view open');
     return out;
-  }, [eliteOnly, peadOnly, multibaggerOnly, turnaroundOnly, radarOnly, beatCheapOnly, capFilter, patternOnly, radarMap, expanded, viewMode, tierSel]);
+  }, [eliteOnly, peadOnly, multibaggerOnly, turnaroundOnly, radarOnly, beatCheapOnly, capFilter, patternOnly, radarMap, expanded, viewMode, tierSel, smallMidOnly]);
   const [searchPin, setSearchPin] = useState<{ ticker: string; nonce: number } | null>(null);
   const pinTicker = useCallback((ticker: string) => {
     setViewMode('GRADED');
@@ -2993,7 +3001,7 @@ export default function EarningsOpportunitiesPage() {
                 3. fetch error but no stale data → red banner with retry */}
           {autoJump && filterDate === autoJump.to && (
             <div role="status" style={{ margin: '6px 0', padding: '6px 10px', borderRadius: 6, border: '1px solid #F59E0B', background: '#92400E22', color: '#FDE68A', fontSize: 12.5 }}>
-              No graded results for {autoJump.from} yet — showing {autoJump.to}, the latest day that has results. Use the date arrows or "Latest" to change.
+              {eoFallbackLabel(autoJump.from, autoJump.to, todayIstISO())}
             </div>
           )}
           {(() => {
@@ -3340,6 +3348,14 @@ Source label: ${coverageStats.source}`}
                     <option key={b.key} value={b.key.toLowerCase()}>{b.key} {b.label}</option>
                   ))}
                 </select>
+                {/* zzz898 — Small & mid only (default on). Unknown-size names stay visible and are labelled "size n/a". */}
+                {(() => {
+                  const sm = smallMidCounts(allC, (s: any) => s.market_cap_cr);
+                  return chip(smallMidOnly, '#38BDF8',
+                    smallMidOnly ? `◧ Small & mid only${sm.hiddenLarge ? ` · ${sm.hiddenLarge} large hidden` : ''}` : '◧ Small & mid only',
+                    allC.length - sm.hiddenLarge,
+                    () => setSmallMidOnly(!smallMidOnly));
+                })()}
               </>
             );
           })()}
@@ -4622,6 +4638,12 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
             <span style={{ fontWeight: 700, color: 'var(--mc-text-2)', marginLeft: 5 }}>
               ₹{Math.round(stock.market_cap_cr).toLocaleString('en-IN')} Cr
             </span>
+          </span>
+        )}
+        {knownCapCr(stock.market_cap_cr) == null && (
+          <span title={`Market cap not available — kept on the "Small & mid only" view (ceiling ₹${SMALL_MID_MAX_CR.toLocaleString('en-IN')} Cr) because its size is unknown`}
+            style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-3)', border: '1px dashed var(--mc-bg-4)', color: 'var(--mc-text-4)', fontWeight: 700 }}>
+            size n/a
           </span>
         )}
         {stock.price != null && (

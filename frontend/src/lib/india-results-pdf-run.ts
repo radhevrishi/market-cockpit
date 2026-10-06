@@ -40,7 +40,9 @@ export async function runResultsPdf(d: RpDeps, o: RpRunOptions = {}): Promise<Rp
     const done = new Set<string>(); const fails = new Map<string, RpFail>();
     for (const q of queue) {
       const k = `${q.ticker}|${q.want}`;
-      if (await d.kv.get(RP_RESULT_KEY(q.ticker, q.want))) done.add(k);
+      // zzz898: a record read before row quotes were stored is re-read once (it is not used for the overlay)
+      const have = await d.kv.get<RpRecord>(RP_RESULT_KEY(q.ticker, q.want));
+      if (have && (have as any).quotes) done.add(k);
       const f = await d.kv.get<RpFail>(RP_FAIL_KEY(q.ticker, q.want));
       if (f) fails.set(k, f);
     }
