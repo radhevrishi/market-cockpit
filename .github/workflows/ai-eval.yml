@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   eval:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Run the golden set
@@ -26,7 +26,7 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
-          curl -fsS --max-time 300 -H "x-cron-secret: $CRON_SECRET" "$BASE/api/v1/ai-eval?run=1" -o eval.json
+          curl -fsS --max-time 300 --retry 2 --retry-delay 30 -H "x-cron-secret: $CRON_SECRET" "$BASE/api/v1/ai-eval?run=1" -o eval.json
           python3 - <<'PY'
           import json, sys
           d = json.load(open('eval.json'))

@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   scrape:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
@@ -31,6 +31,7 @@ jobs:
         with:
           node-version: '22'
       - name: Run rolling stats scraper
+        id: main
         env:
           UPSTASH_REDIS_REST_URL:   ${{ secrets.UPSTASH_REDIS_REST_URL }}
           UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
@@ -39,4 +40,12 @@ jobs:
             echo "::error title=Missing secrets::Set UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN in repo secrets."
             exit 1
           fi
-          node .github/scripts/scrape-rolling-stats.mjs
+          rc=0; node .github/scripts/scrape-rolling-stats.mjs || rc=$?
+          # zzz908: exit 75 = upstream down / not published yet → green run + warning + "deferred" heartbeat note;
+          # the next scheduled run retries. Any other non-zero exit (bug, auth, bad data) stays red.
+          if [ "$rc" -eq 75 ]; then echo "deferred=1" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if [ "$rc" -ne 0 ]; then exit "$rc"; fi
+
+      - name: Upstream deferred (data not updated this run)
+        if: steps.main.outputs.deferred == '1'
+        run: echo "::notice title=Deferred::An upstream source was down or had not published yet. Stored data was kept; the next scheduled run retries. The daily actions-watchdog flags a job that stays deferred for 24 h."

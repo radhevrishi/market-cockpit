@@ -27,6 +27,8 @@
 // GH Actions free tier: workflow can run hourly for unlimited public repos.
 // Polite throttling: 1 sec between each ticker's 4-source fetch batch.
 // ═══════════════════════════════════════════════════════════════════════════
+import { installResilientFetch, exitTransient, exitForError } from './lib/resilient-fetch.mjs';   // zzz908: retries + transient-vs-real exit
+installResilientFetch();
 
 const FETCH_TIMEOUT_MS = 10_000;
 const TICKER_THROTTLE_MS = 600;
@@ -388,30 +390,40 @@ async function main() {
     return;
   }
 
-  let ok = 0, withReason = 0;
-  for (let i = 0; i < extreme.length; i++) {
-    const t = extreme[i];
-    try {
-      const result = await processTicker(t);
-      await kvSet(`mover-reasons:v1:${t.ticker}`, result, KV_TTL_SECONDS);
-      ok++;
-      if (result.topReason) withReason++;
-      if ((i + 1) % 10 === 0 || i === extreme.length - 1) {
-        console.log(`  ${i + 1}/${extreme.length} processed (with-reason=${withReason})`);
+  // zzz908: the job was killed at its 8-minute limit twice (23 Sep, 2 Oct) when the four sources hung: 80 tickers
+  // one after another × up to 10 s each. Now 4 tickers in parallel and a time budget — tickers not reached in the
+  // budget keep their previous 24 h entry and are picked up by the next run, instead of the whole run being killed.
+  const BUDGET_MS = Number(process.env.MOVER_BUDGET_MS) || 6 * 60_000;
+  const WORKERS = 4;
+  let ok = 0, withReason = 0, done = 0, next = 0, skipped = 0; let lastErr = null;
+  async function worker() {
+    for (;;) {
+      const i = next++;
+      if (i >= extreme.length) return;
+      if (Date.now() - startedAt > BUDGET_MS) { skipped++; continue; }
+      const t = extreme[i];
+      try {
+        const result = await processTicker(t);
+        await kvSet(`mover-reasons:v1:${t.ticker}`, result, KV_TTL_SECONDS);
+        ok++;
+        if (result.topReason) withReason++;
+      } catch (e) {
+        lastErr = e;
+        console.log(`  ${t.ticker}: ${e?.message || e}`);
       }
-    } catch (e) {
-      console.log(`  ${t.ticker}: ${e?.message || e}`);
+      done++;
+      if (done % 10 === 0) console.log(`  ${done}/${extreme.length} processed (with-reason=${withReason})`);
+      await new Promise((r) => setTimeout(r, TICKER_THROTTLE_MS));
     }
-    if (i < extreme.length - 1) await new Promise((r) => setTimeout(r, TICKER_THROTTLE_MS));
   }
+  await Promise.all(Array.from({ length: WORKERS }, worker));
+  if (skipped) console.log(`::warning title=Mover reasons time budget::${skipped} ticker(s) not reached in ${Math.round(BUDGET_MS / 1000)}s — previous entries kept, next run covers them`);
+  // every KV write failing is not "no news": surface it (classified transient vs real by the message)
+  if (ok === 0 && done > 0) throw lastErr || new Error('no ticker could be stored');
 
   const elapsed = Math.round((Date.now() - startedAt) / 1000);
   console.log(`✓ done in ${elapsed}s · ok=${ok}/${extreme.length} · with-public-reason=${withReason}`);
   console.log(`::notice title=Mover reasons::${withReason}/${extreme.length} movers got public-source headlines.`);
 }
 
-main().catch((e) => {
-  console.error(`::error title=Scraper crashed::${e?.message || e}`);
-  console.error(e?.stack || e);
-  process.exit(1);
-});
+main().catch((e) => exitForError(e, 'Scraper crashed'));

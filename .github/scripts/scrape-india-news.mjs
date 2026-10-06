@@ -21,6 +21,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ─── Configuration ──────────────────────────────────────────────────────────
+import { installResilientFetch, exitTransient, exitForError } from './lib/resilient-fetch.mjs';   // zzz908: retries + transient-vs-real exit
+installResilientFetch();
 
 const FEEDS = [
   { name: 'ET Markets',         url: 'https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms' },
@@ -251,8 +253,8 @@ async function main() {
   }
 
   if (!payload.entries || payload.entries.length < 20) {
-    console.error(`Refusing to overwrite KV: only ${payload.entries ? payload.entries.length : 0} entries scraped — keeping previous blob.`);
-    process.exit(1);
+    // zzz908: RSS sources thin / unreachable this run — previous blob kept; the next run retries.
+    exitTransient(`only ${payload.entries ? payload.entries.length : 0} entries scraped — keeping previous blob.`);
   }
 
   await kvSet(KV_KEY, payload, KV_TTL_SECONDS);
@@ -318,8 +320,4 @@ async function main() {
   console.log(`::notice title=Scrape complete::${finalEntries.length} Indian news entries cached for 24h, ${writtenTickers} per-ticker indexes.`);
 }
 
-main().catch((e) => {
-  console.error(`::error title=Scraper crashed::${e?.message || e}`);
-  console.error(e?.stack || e);
-  process.exit(1);
-});
+main().catch((e) => exitForError(e, 'Scraper crashed'));

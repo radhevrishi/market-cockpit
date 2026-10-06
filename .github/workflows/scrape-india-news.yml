@@ -28,7 +28,7 @@ concurrency:
 
 jobs:
   scrape:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Checkout repo
@@ -49,7 +49,15 @@ jobs:
             echo "::error title=Missing secrets::Add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in Settings → Secrets and variables → Actions."
             exit 1
           fi
-          node .github/scripts/scrape-india-news.mjs
+          rc=0; node .github/scripts/scrape-india-news.mjs || rc=$?
+          # zzz908: exit 75 = upstream down / not published yet → green run + warning + "deferred" heartbeat note;
+          # the next scheduled run retries. Any other non-zero exit (bug, auth, bad data) stays red.
+          if [ "$rc" -eq 75 ]; then echo "deferred=1" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if [ "$rc" -ne 0 ]; then exit "$rc"; fi
+
+      - name: Upstream deferred (data not updated this run)
+        if: steps.main.outputs.deferred == '1'
+        run: echo "::notice title=Deferred::An upstream source was down or had not published yet. Stored data was kept; the next scheduled run retries. The daily actions-watchdog flags a job that stays deferred for 24 h."
 
       - name: Heartbeat (always run)
         if: always()
@@ -60,7 +68,8 @@ jobs:
           BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
           OK="true"
           if [[ "${{ steps.main.outcome }}" != "success" ]]; then OK="false"; fi
+          NOTE=''; if [[ "${{ steps.main.outputs.deferred }}" == "1" ]]; then NOTE=',"error":"deferred: upstream not available, data kept as it was"'; fi
           curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" \
             -H 'Content-Type: application/json' \
-            -d "{\"name\":\"scrape-india-news\",\"phase\":\"end\",\"ok\":$OK,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -d "{\"name\":\"scrape-india-news\",\"phase\":\"end\",\"ok\":$OK$NOTE,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
             -o /dev/null -w "heartbeat %{http_code}\n" || true

@@ -40,7 +40,7 @@ concurrency:
 
 jobs:
   mark:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - name: Warm both decks so the ledger records without a reader

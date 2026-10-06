@@ -32,9 +32,15 @@ on:
 permissions:
   contents: read
 
+# zzz908: two pushes in quick succession must not deploy out of order
+concurrency:
+  group: deploy-workers
+  cancel-in-progress: false
+
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -62,6 +68,22 @@ jobs:
         continue-on-error: true
 
       - name: Deploy ${{ matrix.worker }}
+        id: deploy1
+        continue-on-error: true   # zzz908: one retry below for a transient Cloudflare API / npm hiccup
+        uses: cloudflare/wrangler-action@v4
+        with:
+          wranglerVersion: '4'
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: workers/${{ matrix.worker }}
+          command: deploy
+
+      - name: Wait before retrying the deploy
+        if: steps.deploy1.outcome == 'failure'
+        run: sleep 45
+
+      - name: Deploy ${{ matrix.worker }} (retry)
+        if: steps.deploy1.outcome == 'failure'
         uses: cloudflare/wrangler-action@v4
         with:
           wranglerVersion: '4'

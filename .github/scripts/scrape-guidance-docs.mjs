@@ -36,6 +36,7 @@ import {
   bseRowToFiling, nseRowToFiling, parseEquityL, parseBseScripList, parseCuratedMap, resolveTicker,
   buildDoc, chunkBatches, docIdFor, dayList, MAX_BATCH_DOCS, MAX_BATCH_BYTES,
 } from './guidance-docs-lib.mjs';
+import { installResilientFetch, exitTransient, exitForError } from './lib/resilient-fetch.mjs';   // zzz908
 
 export { classifySubject, extractPeriodHint, hasGuidanceCue, buildDoc, chunkBatches, docIdFor };
 
@@ -461,12 +462,13 @@ if (isMain) {
     console.error('::error title=Missing secret::CRON_SECRET is not set');
     process.exit(1);
   }
+  installResilientFetch();
   run({ fetch: globalThis.fetch, pdftotext: pdftotextCli })
     .then((r) => {
       if (r.counts.postFailed > 0) { console.error(`::error title=Ingest failed::${r.counts.postFailed} docs not stored`); process.exit(1); }
       const failed = r.statusDays.filter((s) => s.status === 'failed').length;
-      if (failed && failed === r.statusDays.length) { console.error('::error title=All sources failed::no day could be read from BSE or NSE'); process.exit(1); }
+      if (failed && failed === r.statusDays.length) exitTransient('no day could be read from BSE or NSE (exchange outage / refusal); days stay marked failed and are re-read next run');
       if (failed) console.log(`::warning title=Some days failed::${failed} day(s) unread (recorded as failed)`);
     })
-    .catch((e) => { console.error(`::error title=Collector crashed::${String(e?.message || e).slice(0, 200)}`); process.exit(1); });
+    .catch((e) => exitForError(e, 'Collector crashed'));
 }

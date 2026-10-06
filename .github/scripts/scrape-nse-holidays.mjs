@@ -26,6 +26,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { pathToFileURL } from 'node:url';
+import { installResilientFetch, exitTransient, exitForError } from './lib/resilient-fetch.mjs';   // zzz908
 
 export const KV_KEY = 'nse-holidays:v1';
 export const KV_TTL = 5 * 365 * 24 * 3600;   // refreshed monthly; long enough to outlive any outage
@@ -153,7 +154,7 @@ async function main() {
   if (!KV_URL || !KV_TOKEN) { console.error('::error title=Missing env::Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.'); process.exit(1); }
 
   const got = await fetchHolidayMaster();
-  if (!got) { console.error('::error title=NSE holidays::could not read the NSE holiday list (direct and proxy). Nothing written.'); process.exit(1); }
+  if (!got) exitTransient('could not read the NSE holiday list (direct and proxy). Nothing written.');   // zzz908: NSE outage, next run retries
   const incoming = yearsFromHolidayMaster(got.json);
   for (const [y, l] of Object.entries(incoming)) console.log(`fetched ${y}: ${l.length} dates`);
 
@@ -169,5 +170,6 @@ async function main() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((e) => { console.error(`::error title=NSE holidays::${e?.message || e}`); process.exit(1); });
+  installResilientFetch();
+  main().catch((e) => exitForError(e, 'NSE holidays'));
 }

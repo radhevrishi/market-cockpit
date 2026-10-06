@@ -31,6 +31,8 @@
 //
 // Pure Node 20 — built-in fetch, simple regex-based HTML parsing.
 // ═══════════════════════════════════════════════════════════════════════════
+import { installResilientFetch, exitTransient, exitForError } from './lib/resilient-fetch.mjs';   // zzz908: retries + transient-vs-real exit
+installResilientFetch();
 
 const SCREENER_BASE = 'https://www.screener.in';
 const FETCH_TIMEOUT_MS = 15_000;
@@ -361,8 +363,4 @@ async function main() {
   console.log(`::notice title=Screener scrape::${ok} tickers updated, ${fail} failed, ${exceptional} flagged with exceptional items.`);
 }
 
-main().catch((e) => {
-  console.error(`::error title=Scraper crashed::${e?.message || e}`);
-  console.error(e?.stack || e);
-  process.exit(1);
-});
+main().catch((e) => exitForError(e, 'Scraper crashed'));

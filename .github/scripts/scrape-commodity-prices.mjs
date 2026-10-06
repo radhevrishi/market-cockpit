@@ -18,6 +18,8 @@
 //   UPSTASH_REDIS_REST_URL
 //   UPSTASH_REDIS_REST_TOKEN
 // ═══════════════════════════════════════════════════════════════════════════
+import { installResilientFetch, exitTransient, exitForError } from './lib/resilient-fetch.mjs';   // zzz908: retries + transient-vs-real exit
+installResilientFetch();
 
 const KV_URL   = process.env.UPSTASH_REDIS_REST_URL;
 const KV_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -156,8 +158,4 @@ async function main() {
   console.log(`::notice title=Quotes scrape complete::${receivedCount} commodity quotes cached for transmission page.`);
 }
 
-main().catch((e) => {
-  console.error(`::error title=Scraper crashed::${e?.message || e}`);
-  console.error(e?.stack || e);
-  process.exit(1);
-});
+main().catch((e) => exitForError(e, 'Scraper crashed'));

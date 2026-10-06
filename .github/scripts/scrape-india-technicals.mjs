@@ -61,6 +61,8 @@
 //   KV  india-tech-hist:v1:latest  — the accumulating close history
 //   KV  india-tech:v1:latest       — the computed technicals the app reads
 // ═══════════════════════════════════════════════════════════════════════════
+import { installResilientFetch, exitTransient, exitForError } from './lib/resilient-fetch.mjs';   // zzz908: retries + transient-vs-real exit
+installResilientFetch();
 
 const OUT_KEY    = 'india-tech:v1:latest';
 // ═══════════════════════════════════════════════════════════════════════════
@@ -574,7 +576,4 @@ async function main() {
   }, null, 2));
 }
 
-main().catch((e) => {
-  console.error('::error title=India technicals scrape failed::' + String(e?.message || e));
-  process.exit(1);
-});
+main().catch((e) => exitForError(e, 'Scraper crashed'));

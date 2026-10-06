@@ -28,6 +28,7 @@
 
 import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
+import { exitForError } from './lib/resilient-fetch.mjs';   // zzz908: transient-vs-real exit
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════════════
 // Pure helpers (exported for tests: frontend/src/lib/__tests__/zzz857-us.test.ts)
@@ -488,4 +489,4 @@ async function main() {
 }
 
 const isMain = (() => { try { return !!process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href; } catch { return false; } })();
-if (isMain) main().catch((e) => { console.error(`edgar-guidance-backfill failed: ${String((e && e.message) || e).slice(0, 200)}`); process.exit(1); });
+if (isMain) main().catch((e) => exitForError(e, 'edgar-guidance-backfill failed'));

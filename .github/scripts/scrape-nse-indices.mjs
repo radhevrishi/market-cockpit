@@ -20,6 +20,8 @@
 //
 // Pure Node 20.
 // ═══════════════════════════════════════════════════════════════════════════
+import { installResilientFetch, exitTransient, exitForError } from './lib/resilient-fetch.mjs';   // zzz908: retries + transient-vs-real exit
+installResilientFetch();
 
 const ARCHIVES_BASE = 'https://archives.nseindia.com';
 
@@ -309,8 +311,8 @@ async function main() {
   console.log(`  FINAL ticker universe: ${tickerCap.size} unique symbols (${indexCount} indexed + ${tickerCap.size - indexCount} other)`);
 
   if (tickerCap.size < 50) {
-    console.log('::error title=Too few tickers::Constituent CSV fetches returned <50 rows total.');
-    process.exit(1);
+    // zzz908: NSE archives refusing / not answering from this runner — keep the 7-day blob, the next run retries.
+    exitTransient('Constituent CSV fetches returned <50 rows total; previous universe blob kept.');
   }
 
   // Phase 3: NSE BHAVCOPY → EOD prices for all NSE-listed equities. PATCH 0790.
@@ -379,8 +381,4 @@ async function main() {
   console.log(`::notice title=Scrape complete::${tickers.length} NSE tickers cached for 7d.`);
 }
 
-main().catch((e) => {
-  console.error(`::error title=Scraper crashed::${e?.message || e}`);
-  console.error(e?.stack || e);
-  process.exit(1);
-});
+main().catch((e) => exitForError(e, 'Scraper crashed'));

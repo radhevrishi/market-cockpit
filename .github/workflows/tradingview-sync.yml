@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   sync:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -72,29 +72,8 @@ jobs:
 
       - name: Commit synced files + debug screenshots
         if: always()
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add frontend/public/data/tradingview/
-          if git diff --staged --quiet; then
-            echo "No changes."
-          else
-            git commit -m "[skip ci] TradingView sync $(date -u +%Y-%m-%dT%H:%M:%SZ) (incl. debug)"
-            # zzz177 -- retry push with rebase on non-fast-forward. Same fix pattern as
-            # screener-sync.yml -- concurrent scheduled + dispatched runs race, and simple
-            # `git push` fails when a sibling job pushed a commit 1-2 seconds earlier.
-            for i in 1 2 3 4 5; do
-              if git push; then
-                echo "push succeeded on attempt $i"
-                exit 0
-              fi
-              echo "push failed on attempt $i -- pulling with rebase and retrying"
-              git pull --rebase --autostash origin main || true
-              sleep 2
-            done
-            echo "::error::push failed after 5 attempts"
-            exit 1
-          fi
+        # zzz908: shared helper (see screener-sync) — never stuck in a half-done rebase on a generated file.
+        run: bash .github/scripts/push-data.sh "[skip ci] TradingView sync $(date -u +%Y-%m-%dT%H:%M:%SZ) (incl. debug)" frontend/public/data/tradingview/
 
       - name: Fail the workflow if sync failed
         if: steps.tv_sync.outcome == 'failure'

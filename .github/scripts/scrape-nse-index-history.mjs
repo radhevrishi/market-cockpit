@@ -41,6 +41,8 @@
 //   { generatedAt, sessions: N, indices: { "^CNXREALTY": { ts:[], close:[] } },
 //     knownEmpty: ["14092026", ...] }
 // ═══════════════════════════════════════════════════════════════════════════
+import { installResilientFetch, exitTransient, exitForError } from './lib/resilient-fetch.mjs';   // zzz908: retries + transient-vs-real exit
+installResilientFetch();
 
 const ARCHIVES = 'https://archives.nseindia.com/content/indices';
 const KV_KEY = 'nse-index-history:v1:latest';
@@ -236,7 +238,8 @@ async function fetchSession(ddmmyyyy) {
 
   if (!added && !holidays) {
     console.log('nothing new resolved — leaving the stored history exactly as it was');
-    if (failed) process.exitCode = 1;
+    // zzz908: every session fetch failed (NSE archive down / refusing) — stored history untouched; the next run continues.
+    if (failed) exitTransient(`${failed} session fetch(es) failed and nothing new was resolved`);
     return;
   }
 
@@ -275,7 +278,4 @@ async function fetchSession(ddmmyyyy) {
   if (wanted.length > todo.length) {
     console.log(`${wanted.length - todo.length} sessions still missing; the next run continues (coverage only ever accumulates).`);
   }
-})().catch((e) => {
-  console.error(`::error title=NSE index history failed::${e.message}`);
-  process.exit(1);
-});
+})().catch((e) => exitForError(e, 'Scraper crashed'));

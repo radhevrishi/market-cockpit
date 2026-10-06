@@ -30,7 +30,7 @@ concurrency:
 
 jobs:
   scrape:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
       - name: Checkout (for the roster + parser)
@@ -172,10 +172,30 @@ jobs:
               sys.exit(0)
           # ── 4. POST batch to ingest ─────────────────────────────────────
           target = f'{BASE}/api/v1/super-investor-holdings/ingest'   # zzz883: secret in the header
-          code, body = http_post(target, {'batch': batch})
-          print('ingest:', code, body[:400])
+          # zzz908: retry the app ingest on 5xx / network errors; an app that stays down is a deferral (exit 0 +
+          # warning, the next 6-hourly run re-scrapes), while 4xx (secret, route, payload) stays red.
+          import urllib.error
+          code, body = 0, ''
+          for attempt in range(1, 4):
+              try:
+                  code, body = http_post(target, {'batch': batch}, timeout=60)
+              except urllib.error.HTTPError as e:
+                  code, body = e.code, (e.read() or b'').decode('utf-8', errors='replace')
+              except Exception as e:
+                  code, body = 0, str(e)
+              print(f'ingest attempt {attempt}:', code, body[:300])
+              if code == 200 or (400 <= code < 500 and code != 429): break
+              time.sleep(10 * attempt)
+          if code == 0 or code == 429 or code >= 500:
+              print(f'::warning title=Deferred::app ingest not reachable (HTTP {code}); the next run re-scrapes')
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as fh: fh.write('deferred=1\n')
+              sys.exit(0)
           sys.exit(0 if code == 200 else 1)
           PY
+
+      - name: Upstream deferred (data not updated this run)
+        if: steps.main.outputs.deferred == '1'
+        run: echo "::notice title=Deferred::The app did not accept the scrape (down / redeploying). The next scheduled run retries. The daily actions-watchdog flags a job that stays deferred for 24 h."
 
       - name: Heartbeat (always run)
         if: always()
@@ -185,7 +205,8 @@ jobs:
           BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
           OK="true"
           if [[ "${{ steps.main.outcome }}" != "success" ]]; then OK="false"; fi
+          NOTE=''; if [[ "${{ steps.main.outputs.deferred }}" == "1" ]]; then NOTE=',"error":"deferred: app not reachable, retried next run"'; fi
           curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" \
             -H 'Content-Type: application/json' \
-            -d "{\"name\":\"scrape-super-investors\",\"phase\":\"end\",\"ok\":$OK,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -d "{\"name\":\"scrape-super-investors\",\"phase\":\"end\",\"ok\":$OK$NOTE,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
             -o /dev/null -w "heartbeat %{http_code}\n" || true

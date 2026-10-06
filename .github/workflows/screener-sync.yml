@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   sync:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -228,26 +228,6 @@ jobs:
           echo "============================="
 
       - name: Commit data + debug
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add frontend/public/data/screener/
-          if git diff --staged --quiet; then
-            echo "No changes."
-          else
-            git commit -m "[skip ci] Sync Screener.in CSVs $(date -u +%Y-%m-%d)"
-            # zzz177 -- retry push with rebase on non-fast-forward. Concurrent scheduled +
-            # dispatched runs can race; simple `git push` fails when a sibling job pushed
-            # a commit 1-2 seconds earlier (root cause of run #33 failure at 07:01 UTC).
-            for i in 1 2 3 4 5; do
-              if git push; then
-                echo "push succeeded on attempt $i"
-                exit 0
-              fi
-              echo "push failed on attempt $i -- pulling with rebase and retrying"
-              git pull --rebase --autostash origin main || true
-              sleep 2
-            done
-            echo "::error::push failed after 5 attempts"
-            exit 1
-          fi
+        # zzz908: shared helper — a content conflict on the generated manifest (28 Sep 2026) used to leave the
+        # rebase half-done and all 5 push retries failed. The helper re-applies this run's folder on top of main.
+        run: bash .github/scripts/push-data.sh "[skip ci] Sync Screener.in CSVs $(date -u +%Y-%m-%d)" frontend/public/data/screener/

@@ -11,6 +11,8 @@
 //                             no model call).
 // Model spend stays bounded by the server's own daily ceilings.
 // ═══════════════════════════════════════════════════════════════════════════
+import { installResilientFetch, exitForError } from './lib/resilient-fetch.mjs';   // zzz908: retries + transient-vs-real exit
+installResilientFetch();
 
 const BASE = (process.env.CRON_BASE_URL || 'https://market-cockpit-production.up.railway.app').replace(/\/+$/, '');
 const JOB = process.argv[2] || 'gainers-in';
@@ -132,7 +134,9 @@ async function portfolio(days = 4) {
   console.log(`::notice title=portfolio::${reported.length} reported · ${read} read · ${skipped} unchanged · ${failed} failed`);
 }
 
-if (JOB === 'gainers-in') await gainers('IN');
-else if (JOB === 'gainers-us') await gainers('US');
-else if (JOB === 'portfolio') await portfolio();
-else { console.log(`unknown job ${JOB}`); process.exit(1); }
+try {
+  if (JOB === 'gainers-in') await gainers('IN');
+  else if (JOB === 'gainers-us') await gainers('US');
+  else if (JOB === 'portfolio') await portfolio();
+  else { console.log(`unknown job ${JOB}`); process.exit(1); }
+} catch (e) { exitForError(e, `daily-research ${JOB}`); }

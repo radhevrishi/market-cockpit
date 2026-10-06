@@ -26,6 +26,8 @@
 //
 // Pure Node 20 — built-in fetch only.
 // ═══════════════════════════════════════════════════════════════════════════
+import { installResilientFetch, exitTransient, exitForError } from './lib/resilient-fetch.mjs';   // zzz908: retries + transient-vs-real exit
+installResilientFetch();
 
 const ARCHIVES_BASE = 'https://nsearchives.nseindia.com';
 const FETCH_TIMEOUT_MS = 25_000;
@@ -135,8 +137,8 @@ async function main() {
 
   const bhavs = await fetchRecentBhavs();
   if (bhavs.length < 5) {
-    console.error(`::error title=Too few BHAVCOPY days::collected ${bhavs.length} of ${DAYS_WINDOW}`);
-    process.exit(1);
+    // zzz908: NSE archive not published yet / refusing — previous stats kept; the next run retries.
+    exitTransient(`Too few BHAVCOPY days: collected ${bhavs.length} of ${DAYS_WINDOW}`);
   }
   console.log(`  ✓ collected ${bhavs.length} sessions (need ≥5 for meaningful stats)`);
 
@@ -247,8 +249,4 @@ async function main() {
   console.log(`✓ wrote ${KV_KEY} (${payload.stockCount} tickers, ${Math.round(payloadSize / 1024)} KB) in ${elapsed}ms`);
 }
 
-main().catch((e) => {
-  console.error(`::error title=Scraper crashed::${e?.message || e}`);
-  console.error(e?.stack || e);
-  process.exit(1);
-});
+main().catch((e) => exitForError(e, 'Scraper crashed'));

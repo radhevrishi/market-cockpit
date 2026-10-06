@@ -11,6 +11,7 @@
 // Env: CRON_SECRET (required)  CRON_BASE_URL (default production)  DAYS (default 7, max 60)  DRY_RUN=1
 // ═══════════════════════════════════════════════════════════════════════════
 import { pathToFileURL } from 'node:url';
+import { installResilientFetch, exitTransient, exitForError } from './lib/resilient-fetch.mjs';
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 const HEADERS = { 'User-Agent': UA, Accept: 'application/json, text/plain, */*', 'Accept-Language': 'en-US,en;q=0.9', Referer: 'https://www.nseindia.com/companies-listing/corporate-filings-financial-results' };
@@ -134,29 +135,35 @@ export async function run(d) {
     log(`${day}: ${got.length} results rows${!got.length && !isWeekend(day) ? ' (weekday with zero rows: not counted as read)' : ''}`);
     await sleep(400);
   }
-  let posted = false;
+  let posted = false; let ingestStatus = null;   // zzz908: last ingest answer (HTTP code or 'network') for the exit classification
   if (env.DRY_RUN === '1') posted = true;
   else if (readDays.length) {
     for (let i = 0; i < 4 && !posted; i++) {
       try {
         const res = await f(`${baseUrl}/api/v1/nse-results/ingest`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-cron-secret': env.CRON_SECRET || '' }, body: JSON.stringify({ collector: 'gh-nse-results', rows: rows.slice(0, 8000), readDays }), signal: AbortSignal.timeout(90_000) });
         if (res.ok) { const j = await res.json().catch(() => ({})); log(`ingest ok: days ${j.daysWritten?.length ?? '?'}, rows ${j.rowsStored ?? '?'}, dropped ${j.dropped ?? '?'}`); posted = true; break; }
-        log(`ingest HTTP ${res.status}`);
+        ingestStatus = res.status; log(`ingest HTTP ${res.status}`);
         if (res.status === 400 || res.status === 401 || res.status === 413) break;
-      } catch { log('ingest network error'); }
+      } catch { ingestStatus = 'network'; log('ingest network error'); }
       await sleep(3000 * 2 ** i);
     }
   }
   log(`done: ${JSON.stringify({ days, daysRead: readDays.length, failedDays: failed.length, rows: rows.length, posted })}`);
-  return { readDays, failed, rows: rows.length, posted };
+  return { readDays, failed, rows: rows.length, posted, ingestStatus };
 }
 
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
   if (!process.env.CRON_SECRET && process.env.DRY_RUN !== '1') { console.error('::error title=Missing secret::CRON_SECRET is not set'); process.exit(1); }
+  installResilientFetch();
   run({ fetch: globalThis.fetch }).then((r) => {
-    if (r.failed.length && r.failed.length === r.readDays.length + r.failed.length) { console.error('::error title=NSE refused every day::no day could be read'); process.exit(1); }
-    if (!r.posted) { console.error('::error title=Ingest failed::rows were read but not stored'); process.exit(1); }
+    // zzz908: NSE refusing / timing out on every day is an upstream outage, not a bug — the next run re-reads the same days.
+    if (r.failed.length && r.failed.length === r.readDays.length + r.failed.length) exitTransient('NSE refused or did not answer for every day; nothing new stored');
+    if (!r.posted) {
+      // the app being down / redeploying (5xx, network) is transient; 401 (secret), 404 (route missing), 400/413 (payload) are real
+      if (r.ingestStatus === 'network' || (typeof r.ingestStatus === 'number' && (r.ingestStatus === 429 || r.ingestStatus >= 500))) exitTransient(`app ingest unavailable (${r.ingestStatus}); rows were read but not stored`);
+      console.error(`::error title=Ingest failed::rows were read but not stored (ingest answered ${r.ingestStatus ?? 'nothing'})`); process.exit(1);
+    }
     if (r.failed.length) console.log(`::warning title=Some days failed::${r.failed.length} day(s) not read`);
-  }).catch((e) => { console.error(`::error title=Collector crashed::${String(e?.message || e).slice(0, 200)}`); process.exit(1); });
+  }).catch((e) => exitForError(e, 'Collector crashed'));
 }
