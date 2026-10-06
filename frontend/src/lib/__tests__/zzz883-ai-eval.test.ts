@@ -22,3 +22,10 @@ test('scoring: precision, recall, false positives on negatives', () => {
   const s = summarise([a, b], { promptVersion: 'gx-1', model: 'm', at: 'now' });
   assert.equal(s.precision, 0.5); assert.equal(s.recall, 1); assert.equal(s.falsePositiveRate, 1); assert.equal(s.costUsd, 0.005);
 });
+import { normPeriodEval } from '../ai-eval';
+test('period and margin matching are tolerant of format, not of value', () => {
+  assert.equal(normPeriodEval('FY2027'), 'FY27'); assert.equal(normPeriodEval('fy 27'), 'FY27'); assert.equal(normPeriodEval('Q1 FY27'), 'Q1FY27');
+  const r = (o: any) => ({ metric: 'EBITDA_MARGIN', period: 'FY27', unit: '%', low: 24, high: 24, ...o }) as any;
+  assert.ok(matchRow(r({}), { family: 'MARGIN', period: 'FY27', growth: false, low: 23, high: 25 }));
+  assert.ok(!matchRow(r({ low: 20, high: 20 }), { family: 'MARGIN', period: 'FY27', growth: false, low: 23, high: 25 }));
+});

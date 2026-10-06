@@ -58,17 +58,24 @@ const close = (a: number | null | undefined, b: number) => a != null && Math.abs
 /** Scale-free match: ₹1,600 crore may be filed as 1600 (crore) or 16000 (million); $1.685bn as 1.685 (billion) or 1685 (million). */
 const closeScaled = (a: number | null | undefined, b: number) => a != null && [1, 1000, 0.001, 10, 0.1].some((k) => close(a * k, b));
 
+/** 'FY2027', 'FY 27', 'fy27' → 'FY27' */
+export function normPeriodEval(p: string): string {
+  const t = String(p || '').toUpperCase().replace(/\s/g, '');
+  const m = /^FY(?:20)?(\d{2})$/.exec(t);
+  return m ? `FY${m[1]}` : t;
+}
 export function matchRow(r: ExtractedGuidance, e: EvalExpect): boolean {
-  if (familyOf(r) !== e.family || String(r.period || '').toUpperCase().replace(/\s/g, '') !== e.period) return false;
+  if (familyOf(r) !== e.family || normPeriodEval(r.period) !== e.period) return false;
   if (e.growth) {
     const lo = r.growthPctLow ?? (isGrowth(r) ? r.low : null), hi = r.growthPctHigh ?? (isGrowth(r) ? r.high : null);
     return close(lo, e.low) && close(hi ?? lo, e.high);
   }
-  if (e.family === 'MARGIN') return close(r.low, e.low) && close(r.high ?? r.low, e.high);
+  // a margin "24% plus-minus 100 bps" may be filed as 23–25 or as 24: the midpoint is what must match
+  if (e.family === 'MARGIN') { const mid = ((r.low ?? 0) + (r.high ?? r.low ?? 0)) / 2; return r.low != null && close(mid, (e.low + e.high) / 2); }
   return !isGrowth(r) && closeScaled(r.low, e.low) && closeScaled(r.high ?? r.low, e.high);
 }
 
-export interface CaseScore { id: string; expected: number; found: number; truePos: number; falsePos: number; falseNeg: number; rows: number; costUsd: number; ms: number; status: string }
+export interface CaseScore { id: string; expected: number; found: number; truePos: number; falsePos: number; falseNeg: number; rows: number; costUsd: number; ms: number; status: string; /** what was filed, for diagnosing a miss */ filed?: Array<{ metric: string; period: string; low: number | null; high: number | null; unit: string | null; growthLow?: number | null }> }
 export interface EvalScore { cases: CaseScore[]; precision: number | null; recall: number | null; falsePositiveRate: number | null; costUsd: number; avgMs: number; promptVersion: string | null; model: string | null; at: string }
 
 /** Pure: score one case's filed rows. A filed row that matches nothing expected is a false positive. */
@@ -104,7 +111,8 @@ export async function runGuidanceEval(): Promise<EvalScore> {
     const t0 = Date.now();
     const r = await x.extractDoc(doc, deps, { timeoutMs: 45_000 }).catch((e: any) => ({ status: 'error', rows: [], costUsd: 0, note: String(e?.message || e) } as any));
     model = r.model || model;
-    out.push({ ...scoreCase(c, r.rows || []), costUsd: Number(r.costUsd || 0), ms: Date.now() - t0, status: r.status });
+    const sc = scoreCase(c, r.rows || []);
+    out.push({ ...sc, costUsd: Number(r.costUsd || 0), ms: Date.now() - t0, status: r.status, ...(sc.falsePos || sc.falseNeg ? { filed: (r.rows || []).map((x: ExtractedGuidance) => ({ metric: x.metric, period: x.period, low: x.low, high: x.high, unit: x.unit, growthLow: x.growthPctLow ?? null })) } : {}) });
     if (r.stop === 'cap' || r.stop === 'unavailable') break;
   }
   return summarise(out, { promptVersion: x.EXTRACT_PROMPT_VERSION, model, at: new Date().toISOString() });

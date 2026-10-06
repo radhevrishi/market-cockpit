@@ -1,8 +1,10 @@
 // PostgreSQL connection (canonical earnings archive). Lazy + server-only so the
 // pg driver's Node-core deps (net/tls/dns/fs) never enter the client bundle.
-import type { Pool as PgPool } from 'pg';
-
-declare const __non_webpack_require__: NodeRequire | undefined;
+// zzz883: a plain import. The old webpack-only `__non_webpack_require__` trick broke under Next 16 / Turbopack (its require shim
+// cannot find 'pg', so the pool silently became null). 'pg' is listed in serverExternalPackages, so it is loaded from
+// node_modules at run time and never bundled; only server route handlers import this file.
+import { Pool } from 'pg';
+type PgPool = Pool;
 
 export function dbAvailable(): boolean {
   return !!(process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.PG_URL);
@@ -15,9 +17,6 @@ export function getPool(): PgPool | null {
   const g = globalThis as any;
   if (g.__MC_PG_POOL__) return g.__MC_PG_POOL__ as PgPool;
   try {
-    const req: NodeRequire = (typeof __non_webpack_require__ !== 'undefined' ? __non_webpack_require__ : require) as NodeRequire;
-    const mod: any = req('pg');
-    const Pool = mod.Pool || (mod.default && mod.default.Pool);
     const pool: PgPool = new Pool({
       connectionString: url,
       max: 5,
