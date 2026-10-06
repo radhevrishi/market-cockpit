@@ -80,3 +80,13 @@ test('wiring: route sets the allowance only on POST (protected) and charges both
   const yml = readFileSync(join(__dirname, '../../../../.github/workflows/ai-guidance-extract.yml'), 'utf8');
   assert.match(yml, /extra_usd:/); assert.match(yml, /extra_until_hours:/);
 });
+
+test('zzz928b: a provider spend / quota limit stops the run (never a per-document error)', async () => {
+  const { modelErrorKind } = await import('../ai-guidance-extract');
+  assert.equal(modelErrorKind(429, '', 'Your project has reached its configured enforced spend limit. Update your limit at https://platform.openai.com/x'), 'spend_cap');
+  assert.equal(modelErrorKind(429, 'insufficient_quota', 'You exceeded your current quota'), 'spend_cap');
+  assert.equal(modelErrorKind(402, '', ''), 'spend_cap');
+  assert.equal(modelErrorKind(429, '', 'Rate limit reached for gpt-5-mini on tokens per min'), 'error');
+  assert.equal(modelErrorKind(500, '', 'server error'), 'error');
+  assert.equal(modelErrorKind(401, 'no_key', ''), 'no_key');
+});

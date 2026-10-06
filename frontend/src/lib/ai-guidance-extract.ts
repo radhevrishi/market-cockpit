@@ -1047,6 +1047,15 @@ export async function realAvailability(): Promise<Availability> {
   return v;
 }
 
+/** zzz928b: a provider-side spend / quota limit (OpenAI 429 "reached its configured enforced spend limit", insufficient_quota,
+ *  billing) STOPS the run like our own cap — it is never a per-document error (errors back off and become final after 3 tries,
+ *  so a quota stop would otherwise mark the whole backlog as failed). Plain 429 rate limits stay per-document errors. */
+export function modelErrorKind(status: number, type: string, message: string): 'spend_cap' | 'no_key' | 'error' {
+  if (status === 402 || type === 'spend_cap' || type === 'insufficient_quota') return 'spend_cap';
+  if (status === 429 && /spend limit|insufficient[_ ]quota|exceeded your current quota|billing/i.test(String(message || ''))) return 'spend_cap';
+  return type === 'no_key' ? 'no_key' : 'error';
+}
+
 export async function realCallModel(req: { system: string; user: string; maxTokens: number; timeoutMs?: number }): Promise<ModelCallResult> {
   const m = await import('./anthropic-meter');
   const requested = 'claude-haiku-4-5-20251001';
@@ -1061,8 +1070,7 @@ export async function realCallModel(req: { system: string; user: string; maxToke
   if (!resp.ok) {
     let type = ''; let message = `HTTP ${resp.status}`;
     try { const j: any = await resp.json(); type = String(j?.error?.type || ''); message = String(j?.error?.message || message); } catch { /* keep status */ }
-    const kind = resp.status === 402 || type === 'spend_cap' ? 'spend_cap' : type === 'no_key' ? 'no_key' : 'error';
-    return { ok: false, kind, status: resp.status, message: redact(message) };
+    return { ok: false, kind: modelErrorKind(resp.status, type, message), status: resp.status, message: redact(message) };
   }
   let j: any;
   try { j = await resp.json(); } catch { return { ok: false, kind: 'error', status: 502, message: 'answer was not JSON' }; }
