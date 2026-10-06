@@ -31,3 +31,11 @@ test('growth ranking keeps company-wide guidance only', () => {
   assert.equal(growthScopeIssue("we maintain that revenue guidance of 75% growth over the previous year", 'REVENUE'), null);
   assert.equal(growthScopeIssue("we'll continue to grow our business by about 40% YoY.", 'REVENUE'), null);
 });
+import { dropPartFigures } from '../guidance-upgrades';
+test('a part figure in the same document does not become the company guide (Cupid ₹150 Cr next to ₹725–750 Cr)', () => {
+  const pt = (low: number, high: number) => ({ metric: 'REVENUE', period: 'FY27', low, high, midpoint: (low + high) / 2, unit: 'Cr', currency: '₹', isGrowthRate: false }) as any;
+  const ch = (a: any) => ({ metric: 'REVENUE', before: null, after: a, absoluteChange: null, percentageChange: null, percentagePointChange: null, direction: 'UNKNOWN' }) as any;
+  const out = dropPartFigures({ changes: [ch(pt(725, 750)), ch(pt(150, 150))] });
+  assert.equal(out.changes.length, 1); assert.equal(out.changes[0].after.low, 725);
+  assert.equal(dropPartFigures({ changes: [ch(pt(725, 750)), ch(pt(600, 600))] }).changes.length, 2);
+});

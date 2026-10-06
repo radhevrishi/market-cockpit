@@ -2455,8 +2455,9 @@ export function buildExtractedEvents(results: readonly GuidanceExtractResult[], 
   const sks = skeletonsFromExtracted(results);
   const earlierOf = priorPointsFromExtracted(sks);
   const seenSig = new Set<string>();   // zzz880: two documents of the same day with the same figures (press release + presentation) are one event
-  for (const sk of sks) {
-    if (!withinWindow(sk.announcement_date, window, now)) continue;
+  for (const sk0 of sks) {
+    if (!withinWindow(sk0.announcement_date, window, now)) continue;
+    const sk = dropPartFigures(sk0);
     const sig = `${sk.market}|${sk.ticker}|${sk.announcement_date}|${sk.changes.map((c) => `${c.metric}:${c.after.period}:${c.after.low}:${c.after.high}`).join(',')}`;
     if (seenSig.has(sig)) continue; seenSig.add(sig);
     let ev: GuidanceEvent;
@@ -2468,6 +2469,15 @@ export function buildExtractedEvents(results: readonly GuidanceExtractResult[], 
     out.push(withPrimarySourceState({ ...ev, primaryState: 'PRIMARY_SOURCE_READ' }));
   }
   return out;
+}
+/** zzz881: one document gives "revenue ₹725–750 Cr" AND "₹150 Cr" (a new business) for the same year: the small one is a part of the
+ *  company, not its guide (Cupid AGM highlights). A same-metric, same-period, same-unit amount under half of the largest one is dropped. */
+export function dropPartFigures<T extends { changes: GuChange[] }>(sk: T): T {
+  const key = (c: GuChange) => `${c.metric}|${c.after.period}|${c.after.unit ?? ''}|${c.after.currency ?? ''}`;
+  const top = new Map<string, number>();
+  for (const c of sk.changes) if (!c.after.isGrowthRate && c.after.low != null && c.after.low > 0) top.set(key(c), Math.max(top.get(key(c)) ?? 0, c.after.low));
+  const keep = sk.changes.filter((c) => c.after.isGrowthRate || c.after.high == null || !(c.after.high < 0.5 * (top.get(key(c)) ?? 0)));
+  return keep.length === sk.changes.length || !keep.length ? sk : { ...sk, changes: keep };
 }
 const evNameKey = (s: string) => String(s || '').toLowerCase().replace(/\b(limited|ltd|inc|corp|corporation|plc|co|company|india)\b/g, '').replace(/[^a-z0-9]+/g, '');
 /** Days apart within which a news / regex event and a company-document event are the same announcement. */
