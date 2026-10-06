@@ -27,11 +27,11 @@ name: Book Watch
 on:
   schedule:
     # Times in UTC. IST = UTC + 5:30.
-    - cron: '0 3 * * *'        # 08:30 IST daily    -> refresh-bench (pre-market)
+    - cron: '4 3 * * *'        # 08:30 IST daily    -> refresh-bench (pre-market)
     - cron: '30 5 * * 1-5'     # 11:00 IST Mon-Fri  -> book-watch (morning)
-    - cron: '0 12 * * 1-5'     # 17:30 IST Mon-Fri  -> book-watch (post-close)
+    - cron: '4 12 * * 1-5'     # 17:30 IST Mon-Fri  -> book-watch (post-close)
     - cron: '30 13 * * *'      # 19:00 IST daily    -> eo-blockbuster-alert (evening filings)
-    - cron: '0 15 * * 1-6'     # 20:30 IST Mon-Sat  -> book-watch (evening + Sat catch)
+    - cron: '4 15 * * 1-6'     # 20:30 IST Mon-Sat  -> book-watch (evening + Sat catch)
     # zzz526 — user-alerts: evaluate the Alert Center rules server-side so
     # alerts push (Telegram/Slack) even with the portal closed.
     - cron: '45 4-9 * * 1-5'   # 10:15-15:15 IST hourly Mon-Fri -> user-alerts (NSE session)
@@ -65,11 +65,11 @@ jobs:
           INPUT="${{ github.event.inputs.endpoint }}"
           PREWARM="no"
           case "$SCHEDULE" in
-            "0 3 * * *")
+            "4 3 * * *")
               echo "path=/api/v1/cron/refresh-bench" >> "$GITHUB_OUTPUT"; echo "label=refresh-bench" >> "$GITHUB_OUTPUT"; echo "method=GET" >> "$GITHUB_OUTPUT" ;;
             "30 13 * * *")
               echo "path=/api/bot/eo-blockbuster-alert" >> "$GITHUB_OUTPUT"; echo "label=eo-bb-evening" >> "$GITHUB_OUTPUT"; echo "method=GET" >> "$GITHUB_OUTPUT" ;;
-            "30 5 * * 1-5"|"0 12 * * 1-5"|"0 15 * * 1-6")
+            "30 5 * * 1-5"|"4 12 * * 1-5"|"4 15 * * 1-6")
               echo "path=/api/v1/cron/book-watch" >> "$GITHUB_OUTPUT"; echo "label=book-watch" >> "$GITHUB_OUTPUT"; echo "method=GET" >> "$GITHUB_OUTPUT"; PREWARM="yes" ;;
             "45 4-9 * * 1-5"|"45 15 * * 1-5"|"45 19 * * 1-5")
               echo "path=/api/v1/cron/user-alerts" >> "$GITHUB_OUTPUT"; echo "label=user-alerts" >> "$GITHUB_OUTPUT"; echo "method=GET" >> "$GITHUB_OUTPUT" ;;

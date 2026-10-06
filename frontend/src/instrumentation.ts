@@ -8,6 +8,8 @@
 // host, so the key cannot leak to a third party.
 export async function register() {
   if (process.env.NEXT_RUNTIME !== 'nodejs') return;
+  // zzz885: run important jobs ourselves when GitHub's scheduler drops them (see lib/backstop-scheduler.ts)
+  try { (await import('./lib/backstop-scheduler')).startBackstopScheduler(); } catch (e) { console.warn('[backstop] not started', e); }
   const { isProtectedApi, serviceKeys } = await import('./lib/site-auth');
   const key = serviceKeys()[0];
   if (!key) return;

@@ -9,8 +9,8 @@ on:
     # Every 15 min during IST market hours (08:30 IST → 18:00 IST = 03:00 → 12:30 UTC)
     - cron: '*/15 3-12 * * 1-5'
     # Off-hours: hourly to keep ledger warm
-    - cron: '0 13-23 * * *'
-    - cron: '0 0-2 * * *'
+    - cron: '11 13-23 * * *'
+    - cron: '11 0-2 * * *'
   workflow_dispatch: {}
 
 concurrency:

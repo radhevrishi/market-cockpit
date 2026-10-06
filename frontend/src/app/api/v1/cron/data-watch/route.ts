@@ -311,9 +311,10 @@ export async function GET(req: Request) {
   }
 
   if (isRedisAvailable()) { try { await kvSet(LAST_KEY, result, 7 * 24 * 3600); } catch { /* status page shows the previous run */ } }
-  // The watch's own heartbeat: green only when nothing is failing.
+  // zzz885: the watch's own heartbeat says the WATCH RAN (green). Failing checks are reported by the checks themselves
+  // (Telegram + /system-status); making this row red too fed the 'Cron heartbeats' check its own failure, so it never recovered.
   try {
-    await fetch(`${base}/api/v1/cron/heartbeat`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'data-watch', phase: 'end', ok: fails === 0, exit_code: fails === 0 ? 200 : 503, error: fails ? checks.filter((c) => c.level === 'fail').map((c) => c.name).join('; ') : null }), signal: AbortSignal.timeout(10_000) });
+    await fetch(`${base}/api/v1/cron/heartbeat`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'data-watch', phase: 'end', ok: true, exit_code: 200, error: fails ? `ran; failing checks: ${checks.filter((c) => c.level === 'fail').map((c) => c.name).join('; ')}`.slice(0, 400) : null }), signal: AbortSignal.timeout(10_000) });
   } catch { /* the KV record above is the durable one */ }
 
   return NextResponse.json(result, { status: fails ? 503 : 200 });

@@ -50,6 +50,9 @@ const MANUAL_OR_RETIRED = /^manual-|-manual$|^test-|-test$|^validation|smoke-tes
 // retired, and the health view should say neither.
 const RETIRED = new Set<string>(['refresh-movers-live']);
 
+// zzz885: two workflows send the same evening alert under different names; the job is healthy if EITHER ran.
+const ALIASES: Record<string, string[]> = { 'eo-bb-evening': ['eo-blockbuster-evening'], 'eo-blockbuster-evening': ['eo-bb-evening'] };
+
 function isTestName(name: string): boolean {
   return MANUAL_OR_RETIRED.test(name) || RETIRED.has(name);
 }
@@ -169,7 +172,9 @@ export async function GET(req: Request) {
       // PATCH 1101zzz18 — gate the per-row `stale` flag on isTestName() too.
       // PATCH 1101xxx already excluded test rows from the COUNT, but the
       // per-row flag still rendered red, contradicting "stale_count: 0".
-      const rawStale = !r.last_ok_at || lastOkMs < cutoff;
+      let freshest = lastOkMs;
+      for (const a of ALIASES[name] || []) { const ar = await kvGet<HeartbeatRow>(ROW_KEY(a)); const t = ar?.last_ok_at ? Date.parse(ar.last_ok_at) : 0; if (t > freshest) freshest = t; }
+      const rawStale = !freshest || freshest < cutoff;
       const stale = rawStale && !isTestName(name);
       return {
         name,

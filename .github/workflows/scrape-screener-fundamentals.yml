@@ -17,7 +17,7 @@ name: Scrape Screener Fundamentals (daily, rotating)
 on:
   schedule:
     # 23:30 IST daily → 18:00 UTC. After Indian market close.
-    - cron: '0 18 * * *'
+    - cron: '14 18 * * *'
   workflow_dispatch: {}
 
 concurrency:

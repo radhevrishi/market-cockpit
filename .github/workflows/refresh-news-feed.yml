@@ -9,7 +9,7 @@ name: Refresh News Feed (hourly)
 
 on:
   schedule:
-    - cron: '0 * * * *'   # top of every hour (UTC)
+    - cron: '9 * * * *'   # top of every hour (UTC)
   workflow_dispatch: {}
 
 # zzz883: one run at a time — a slow run is never overlapped by the next scheduled one

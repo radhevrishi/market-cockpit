@@ -19,8 +19,8 @@ name: Vercel Cron Bridge
 on:
   schedule:
     # Times in UTC. IST = UTC + 5:30.
-    - cron: '0 1 * * *'        # 01:00 UTC daily   -> refresh-earnings-calendar
-    - cron: '0 4 * * 1-5'      # 04:00 UTC Mon-Fri -> intelligence/compute
+    - cron: '7 1 * * *'        # 01:00 UTC daily   -> refresh-earnings-calendar
+    - cron: '7 4 * * 1-5'      # 04:00 UTC Mon-Fri -> intelligence/compute
     - cron: '15 4 * * 1-5'     # 04:15 UTC Mon-Fri -> earnings-guidance/ingest
     - cron: '35 4 * * 1-5'     # 04:35 UTC Mon-Fri -> movers-alert?mode=full
     - cron: '50 4 * * 1-5'     # 04:50 UTC Mon-Fri -> watchlist-alert?mode=full
@@ -28,10 +28,10 @@ on:
     - cron: '30 15 * * *'      # 15:30 UTC daily   -> eo-blockbuster-alert (evening)
     # PATCH 1031 - pre-warm the Earnings Opportunities graded cache (last 7
     # days) on Railway so the page is always a warm hit (no Hard Refresh).
-    - cron: '0 3 * * *'        # 03:00 UTC daily   -> prewarm-earnings (08:30 IST pre-market)
-    - cron: '0 6 * * *'        # 06:00 UTC daily   -> prewarm-earnings (11:30 IST mid-session)
-    - cron: '0 11 * * *'       # 11:00 UTC daily   -> prewarm-earnings (16:30 IST post-close)
-    - cron: '0 14 * * *'       # 14:00 UTC daily   -> prewarm-earnings (19:30 IST evening filings)
+    - cron: '7 3 * * *'        # 03:00 UTC daily   -> prewarm-earnings (08:30 IST pre-market)
+    - cron: '7 6 * * *'        # 06:00 UTC daily   -> prewarm-earnings (11:30 IST mid-session)
+    - cron: '7 11 * * *'       # 11:00 UTC daily   -> prewarm-earnings (16:30 IST post-close)
+    - cron: '7 14 * * *'       # 14:00 UTC daily   -> prewarm-earnings (19:30 IST evening filings)
     # PATCH zzz593 - pre-warm the US graded sessions on Railway. Every US number
     # comes from sec.gov behind an 8 req/s fair-access gate, so a cold 30-session
     # window costs ~12 minutes of queue time. Warming it after the US close means
@@ -46,7 +46,7 @@ on:
     - cron: '30 19 * * *'      # 19:30 UTC daily   -> archive-to-postgres (after evening filings settle)
     # Ingestion: refresh the current-month KV snapshot from NSE/BSE (live = ingestion
     # only). Runs BEFORE the archive cron so archive-to-postgres then persists KV->PG.
-    - cron: '0 18 * * *'       # 18:00 UTC daily   -> hub ingest (current month)
+    - cron: '7 18 * * *'       # 18:00 UTC daily   -> hub ingest (current month)
     - cron: '15 18 * * *'      # 18:15 UTC daily   -> hub ingest (NEXT month: upcoming board meetings, zzz748)
   workflow_dispatch:
     inputs:
@@ -76,7 +76,7 @@ concurrency:
 jobs:
   bridge:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 12
     steps:
       - name: Resolve target endpoint from schedule
         id: route
@@ -85,11 +85,11 @@ jobs:
           INPUT="${{ github.event.inputs.endpoint }}"
           echo "Schedule: '$SCHEDULE' / Input: '$INPUT'"
           case "$SCHEDULE" in
-            "0 1 * * *")
+            "7 1 * * *")
               echo "path=/api/v1/cron/refresh-earnings-calendar" >> "$GITHUB_OUTPUT"
               echo "label=refresh-earnings-calendar" >> "$GITHUB_OUTPUT"
               ;;
-            "0 4 * * 1-5")
+            "7 4 * * 1-5")
               echo "path=/api/market/intelligence/compute" >> "$GITHUB_OUTPUT"
               echo "label=intelligence-compute" >> "$GITHUB_OUTPUT"
               ;;
@@ -113,7 +113,7 @@ jobs:
               echo "path=/api/bot/eo-blockbuster-alert" >> "$GITHUB_OUTPUT"
               echo "label=eo-blockbuster-evening" >> "$GITHUB_OUTPUT"
               ;;
-            "0 3 * * *"|"0 6 * * *"|"0 11 * * *"|"0 14 * * *")
+            "7 3 * * *"|"7 6 * * *"|"7 11 * * *"|"7 14 * * *")
               echo "path=/api/v1/cron/prewarm-earnings" >> "$GITHUB_OUTPUT"
               echo "label=prewarm-earnings" >> "$GITHUB_OUTPUT"
               ;;
@@ -133,7 +133,7 @@ jobs:
               echo "path=/api/v1/cron/archive-to-postgres?months=2&ahead=1" >> "$GITHUB_OUTPUT"
               echo "label=archive-to-postgres" >> "$GITHUB_OUTPUT"
               ;;
-            "0 18 * * *")
+            "7 18 * * *")
               echo "path=/api/market/earnings?ingest=1&force=1&month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
               echo "label=hub-ingest" >> "$GITHUB_OUTPUT"
               ;;

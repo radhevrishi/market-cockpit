@@ -5,7 +5,7 @@ name: Daily Research (Gainers + Portfolio Catalysts)
 on:
   schedule:
     - cron: '50 10 * * 1-5'   # 16:20 IST Mon-Fri → India gainers after the close
-    - cron: '0 14 * * *'      # 19:30 IST daily   → portfolio: read holdings that reported
+    - cron: '13 14 * * *'      # 19:30 IST daily   → portfolio: read holdings that reported
     - cron: '30 21 * * 1-5'   # 17:30 ET Mon-Fri  → US gainers after the close
   workflow_dispatch:
     inputs:
@@ -39,7 +39,7 @@ jobs:
         run: |
           case "${{ github.event.schedule }}" in
             "50 10 * * 1-5") echo "name=gainers-in" >> "$GITHUB_OUTPUT" ;;
-            "0 14 * * *")    echo "name=portfolio"  >> "$GITHUB_OUTPUT" ;;
+            "13 14 * * *")    echo "name=portfolio"  >> "$GITHUB_OUTPUT" ;;
             "30 21 * * 1-5") echo "name=gainers-us" >> "$GITHUB_OUTPUT" ;;
             *)               echo "name=${{ github.event.inputs.job }}" >> "$GITHUB_OUTPUT" ;;
           esac
