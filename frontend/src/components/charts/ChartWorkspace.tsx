@@ -8,7 +8,8 @@ import {
   RANGE_KEYS, barIndexAt, cleanTicker, dataRangeFor, drawingKey, fmtMoney, fmtPrice, rangeStart, sanitizeSettings, validTicker,
   type ChartSettings, type DrawingName, type HeaderStats, type Market, type RangeKey, type SavedDrawing, type Timeframe,
 } from '@/lib/chart-math';
-import { loadDrawings, loadSettings, saveDrawings, saveSettings } from '@/lib/chart-storage';
+import { CHART_DRAWINGS_KEY, loadDrawings, loadSettings, saveDrawings, saveSettings } from '@/lib/chart-storage';
+import WatchlistPanel, { AddToWatchlist, useWatchlistStore } from './WatchlistPanel';
 
 type KC = typeof import('klinecharts');
 type Tool = 'cursor' | 'mcHLine' | 'segment' | 'rayLine' | 'mcRect' | 'parallelStraightLine' | 'fibonacciLine' | 'mcText' | 'mcMeasure';
@@ -31,6 +32,19 @@ const TOOLS: { id: Tool; label: string; icon: string; hint: string }[] = [
   { id: 'mcText', label: 'Text', icon: 'T', hint: 'Text note: click where it goes' },
   { id: 'mcMeasure', label: 'Measure', icon: '⇲', hint: 'Measure: click A, then B' },
 ];
+const PANEL_OPEN_KEY = 'mc:chart-panel-open';   // per-browser convenience only
+const LAYOUT_CSS = `
+.mc-charts-root { height: calc(100vh - 72px); min-height: 520px; }
+.mc-charts-main { display: flex; flex: 1; min-height: 0; gap: 8px; }
+.mc-charts-left { display: flex; flex: 1; min-width: 0; min-height: 0; gap: 8px; }
+.mc-charts-panel { width: 360px; flex-shrink: 0; min-height: 0; }
+@media (max-width: 900px) {
+  .mc-charts-root { height: auto; }
+  .mc-charts-main { flex-direction: column; }
+  .mc-charts-left { height: 62vh; flex: none; }
+  .mc-charts-panel { width: 100%; height: 70vh; }
+}
+`;
 const TF_TO_INTERVAL: Record<Timeframe, string> = { D: '1d', W: '1wk', M: '1mo' };
 const TF_TO_PERIOD = { D: { type: 'day', span: 1 }, W: { type: 'week', span: 1 }, M: { type: 'month', span: 1 } } as const;
 
@@ -99,6 +113,10 @@ export default function ChartWorkspace() {
   const [drawColor, setDrawColor] = useState('#2962FF');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [wlStore, wlUpdate] = useWatchlistStore();
+  // this component only renders in the browser (next/dynamic, ssr:false), so storage can be read on first render
+  const [panelOpen, setPanelOpen] = useState(() => { try { return localStorage.getItem(PANEL_OPEN_KEY) !== '0'; } catch { return true; } });
+  const togglePanel = () => setPanelOpen((v) => { try { localStorage.setItem(PANEL_OPEN_KEY, v ? '0' : '1'); } catch { /* storage blocked */ } return !v; });
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<Chart | null>(null);
@@ -359,6 +377,21 @@ export default function ChartWorkspace() {
     applyIndicators(s);
   }, [applyIndicators]);
 
+  // a watchlist row (or ↑/↓) loads that ticker; timeframe and range stay as they are
+  const pickFromList = useCallback((m: Market, t: string) => {
+    setQuery(t); setQueryMarket(m); setMarket(m); setTicker(t); setError(null);
+  }, []);
+
+  // drawings changed on another device and were just brought down: show them
+  useEffect(() => {
+    const onRestored = (e: Event) => {
+      const keys = (e as CustomEvent).detail?.keys;
+      if (Array.isArray(keys) && keys.includes(CHART_DRAWINGS_KEY) && keyRef.current) restoreDrawings(keyRef.current);
+    };
+    window.addEventListener('mc:vault:restored', onRestored);
+    return () => window.removeEventListener('mc:vault:restored', onRestored);
+  }, [restoreDrawings]);
+
   const submitSearch = (e: React.FormEvent) => {
     e.preventDefault();
     const t = cleanTicker(query);
@@ -380,7 +413,8 @@ export default function ChartWorkspace() {
   });
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 16px', height: 'calc(100vh - 72px)', minHeight: 520, color: 'var(--mc-text-1)' }}>
+    <div className="mc-charts-root" style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 16px', color: 'var(--mc-text-1)' }}>
+      <style>{LAYOUT_CSS}</style>
       {/* search + timeframe + range */}
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
         <form onSubmit={submitSearch} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -408,11 +442,13 @@ export default function ChartWorkspace() {
             <SettingsPanel settings={settings} onChange={updateSettings} onClose={() => setShowSettings(false)} />
           )}
         </div>
+        <button type="button" style={btn(panelOpen)} onClick={togglePanel} title="Show or hide the watchlist panel">Watchlist</button>
       </div>
 
       {/* header numbers */}
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '4px 16px', fontSize: 13 }}>
         <span style={{ fontSize: 18, fontWeight: 700, color: 'var(--mc-text-0)' }}>{ticker}</span>
+        <AddToWatchlist store={wlStore} update={wlUpdate} market={market} ticker={ticker} />
         <span style={{ color: 'var(--mc-text-3)' }}>{info?.name || ''}{info?.exchange ? ` · ${info.exchange}` : ''}</span>
         {stats?.last != null && (
           <span style={{ fontWeight: 700, color: 'var(--mc-text-0)', fontVariantNumeric: 'tabular-nums' }}>
@@ -429,7 +465,8 @@ export default function ChartWorkspace() {
         {error && <span style={{ color: 'var(--mc-bearish, #DC2626)' }}>{error}</span>}
       </div>
 
-      <div style={{ display: 'flex', flex: 1, minHeight: 0, gap: 8 }}>
+      <div className="mc-charts-main">
+      <div className="mc-charts-left">
         {/* drawing toolbar */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 40, flexShrink: 0 }}>
           {TOOLS.map((t) => (
@@ -453,6 +490,12 @@ export default function ChartWorkspace() {
             </div>
           )}
         </div>
+      </div>
+      {panelOpen && (
+        <div className="mc-charts-panel">
+          <WatchlistPanel store={wlStore} update={wlUpdate} currentKey={`${market}:${ticker}`} onPick={pickFromList} />
+        </div>
+      )}
       </div>
     </div>
   );

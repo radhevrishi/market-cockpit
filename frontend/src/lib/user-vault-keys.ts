@@ -6,5 +6,6 @@ export const USER_STATE_KEYS_CLIENT = [
   'mc:saved-valuations:v1', 'mc:book-flags:v1', 'mc_portfolio_holdings', 'mc_watchlist_tickers',
   'mc:conviction-beats:v1', 'mc:conviction-beats-us:v1', 'mc:saved-views:v1', 'mc:news-alerts:v1', NOTES_BUNDLE,
   'mc:chart-drawings:v1', 'mc:chart-settings:v1',   // zzz937 — /charts drawings (per ticker) + moving-average settings
+  'mc:chart-watchlists:v1',                         // zzz940 — /charts watchlist panel (lists, sections, flags)
   'mc:stock-screens:v1',   // zzz938 — saved stock screens
 ] as const;
