@@ -2,6 +2,7 @@
 // Never invents a number: an absolute target only becomes a growth % when a base is supplied (labelled IMPLIED).
 // Research only: no BUY/SELL wording. Holdings are never read here (portfolio.held is always false).
 import { HIGH_GROWTH_THRESHOLD } from './guidance-config';
+import { fiscalYearNamedIn } from './guidance-horizon';
 import type {
   GgMarket, GgMetric, GgKind, GgVerification, GgPeriodKind, GgOrganic, GgQuality, GgValidity, GgTracking, GgRevision, GgOutcome,
   GgExpectations, GgInflection, GgMap2x2, GgCapBand, GgCatalyst, GgLeverage, GgRerating, GgAlertKind, GgSort, GgSourceRef,
@@ -115,7 +116,11 @@ export function periodOf(sentence: string, fullText: string, pub: Date, market: 
   const cyAll = Array.from(s.matchAll(/\bCY\s?'?(\d{4}|\d{2})\b|\bcalendar (?:year )?(\d{4})\b/gi));
   const pick = (arr: RegExpMatchArray[]) => arr.slice().sort((a, b) => Math.abs((a.index ?? 0) - matchIdx) - Math.abs((b.index ?? 0) - matchIdx))[0];
   if (fyAll.length) {
-    const m = pick(fyAll); const y = yy(m[1] || m[2] || m[3]);
+    // zzz942: a year named as the comparison BASE ("growth of 48% compared to FY26") is not the guided year when another year is
+    // named ("Increased FY27 revenue guidance … compared to FY26" was filed as FY26 because FY26 sat closer to the 48%)
+    const BASE_BEFORE = /\b(?:compared\s+(?:to|with)|vs\.?|versus|from|over|than|relative\s+to|against)\s+(?:the\s+)?(?:prior\s+|previous\s+|last\s+)?(?:year'?s?\s+)?$/i;
+    const notBase = fyAll.filter((x) => !BASE_BEFORE.test(s.slice(Math.max(0, (x.index ?? 0) - 24), x.index ?? 0)));
+    const m = pick(notBase.length ? notBase : fyAll); const y = yy(m[1] || m[2] || m[3]);
     const before = s.slice(Math.max(0, (m.index ?? 0) - 25), m.index ?? 0);
     const cur = currentFyYear(pub, market);
     const cum = /\b(?:by|over|within|through|until|till)\s*$/i.test(before) && y - cur + 1 > 1 ? y - cur + 1 : null;
@@ -671,10 +676,12 @@ export function exFromEntry(e: GgStoredEntry, market: 'IN' | 'US', ticker: strin
     absoluteTarget: e.absLow != null ? { value: e.absLow, unit: e.absUnit || '', currency: e.absUnit === '₹ Cr' ? 'INR' : 'USD' } : null, base: null,
     period: e.period, periodKind: e.periodKind, organic: organicOf(e.statement), basis: 'UNSTATED', originalStatement: e.statement, unit: e.unit, prior: null,
   };
+  // zzz942: entries stored before the base-year fix keep their old year — the sentence names the guided year, so it wins
+  if (e.periodKind === 'FY' && /^FY\d{2}$/.test(e.period)) { const fy = fiscalYearNamedIn(e.statement); if (fy && fy !== e.period) point.period = fy; }
   if (e.absHigh != null && e.absHigh !== e.absLow) (point as any).absoluteHigh = e.absHigh;
   const src: GgSourceRef = { name: e.source, rank: e.sourceRank, type: SOURCE_RANKS[e.sourceRank] || 'Stored evidence', date: e.date, url: e.sourceUrl, primary: e.sourceRank <= 6 };
   const cand: GuCandidate = { id: e.docId, ticker, market, title: e.statement, text: '', sourceName: e.source, publishedAt: e.date };
-  return { point, cand, src, hist: false, fp: `${ticker}|stored|${e.key}`, end: endOfPeriodLabel(e.period, e.date, market), mgmtVoice: true, fromLedger: true, docId: e.docId, announcedAt: e.date };
+  return { point, cand, src, hist: false, fp: `${ticker}|stored|${e.key}`, end: endOfPeriodLabel(point.period, e.date, market), mgmtVoice: true, fromLedger: true, docId: e.docId, announcedAt: e.date };
 }
 const hash = (s: string): string => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); };
 const sameDay = (iso: string, now: Date, market: 'IN' | 'US'): boolean => {
