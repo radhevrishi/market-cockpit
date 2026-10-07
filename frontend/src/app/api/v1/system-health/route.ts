@@ -1,39 +1,5 @@
-// ═══════════════════════════════════════════════════════════════════════════
-// /api/v1/system-health (PATCH zzz71)
-//
-// zzz71 changes (over zzz70):
-//   - Railway compute row now ships REAL DATA observed on Railway billing
-//     dashboard 2026-06-23 (was: $3.50 estimate / 70%). Actual: $6.40 / 128%
-//     — OVER included credit. Status: FAIL (RED).
-//   - Cost breakdown surfaced inline so user sees Memory = $5.26/mo = 82% of
-//     bill is the #1 cost driver (NOT CPU or egress).
-//   - Postgres row clarified: Volume cost is $0.03/mo (0.5%) — not a problem.
-//   - "Unused Capacity" Railway row flipped from "warn / tightest" to "fail /
-//     over limit" with quick-win fix list.
-//   - Executive summary banner on the page will auto-flag the 128% as
-//     CRITICAL (page.tsx already triggers RED when largest consumer > 80%).
-//
-// One-screen self-service health checkup. Probes:
-//   - 5 Cloudflare Workers /health endpoints
-//   - GitHub Actions runs for the two key workflows
-//   - Data freshness (earnings calendar, movers, mc-scraper last_run)
-//   - Resource usage vs. free-tier limits (REAL ESTIMATES, not "Unknown")
-//
-// zzz69 changes (over zzz68):
-//   - Resource section now ships HONEST ESTIMATES (no "Unknown — check dashboard"):
-//       * CF Workers: ~4,550 req/day total (observed via CF dashboard 2026-06-23)
-//       * CF KV writes: ~375 writes/day (estimated from mc-scraper code: ~5 writes
-//         per cron x ~75 cron runs/day) → 37% of 1k/day limit
-//       * CF KV reads: ~250 reads/day (~50 page views x ~5 keys each) → <1%
-//       * Upstash Redis: ~270 cmds/day (rate-limit SETs + cache GETs/SETs) → 2.7%
-//       * Postgres storage: ~200MB (earnings facts + snapshots + filings) → 20%
-//       * Railway compute: ~$4-5/mo (always-on Next.js server)
-//   - Each item is honest about HOW the number was derived ("Estimated from
-//     worker code comment" vs "Observed on dashboard YYYY-MM-DD").
-//   - UI ships progress bars + colour-coded percentages + executive summary banner.
-//
-// Promise.allSettled with per-probe 8s timeout. In-memory 60s cache.
-// ═══════════════════════════════════════════════════════════════════════════
+// System health: live probes plus explicitly labelled historical resource baselines.
+// Missing billing telemetry is unknown; it must not claim present quota headroom.
 import { NextResponse } from 'next/server';
 import { internalBase } from '@/lib/internal-base';
 
@@ -237,13 +203,14 @@ async function probeWorkflow(wf: { name: string; file: string; description: stri
   const start = Date.now();
   const apiUrl = `https://api.github.com/repos/radhevrishi/market-cockpit/actions/workflows/${wf.file}/runs?per_page=5`;
   const htmlUrl = `https://github.com/radhevrishi/market-cockpit/actions/workflows/${wf.file}`;
+  if (!process.env.GITHUB_TOKEN) return { name: wf.name, status: 'warn', url: htmlUrl, details: 'Private repository: workflow status unavailable without GITHUB_TOKEN.', description: wf.description };
   try {
     const headers: Record<string, string> = { 'User-Agent': 'market-cockpit-health' };
     if (process.env.GITHUB_TOKEN) headers['Authorization'] = `Bearer ${process.env.GITHUB_TOKEN}`;
     const res = await fetch(apiUrl, { headers, signal: AbortSignal.timeout(8000), cache: 'no-store' });
     const latency = Date.now() - start;
     if (!res.ok) {
-      return { name: wf.name, status: 'warn', url: htmlUrl, details: `GitHub API HTTP ${res.status} (rate-limited?)`, latency_ms: latency, description: wf.description };
+      return { name: wf.name, status: 'warn', url: htmlUrl, details: `GitHub API HTTP ${res.status}; verify repository access and workflow availability.`, latency_ms: latency, description: wf.description };
     }
     const j = await res.json();
     const runs: any[] = j?.workflow_runs || [];
@@ -310,17 +277,17 @@ async function probeFreshness(
 async function probeWorkerRequestCount(): Promise<{ total: number | null; per: Record<string, number | null> }> {
   const per: Record<string, number | null> = {};
   let total = 0;
-  let anyKnown = false;
+  let knownCount = 0;
   await Promise.all(WORKERS.map(async (w) => {
     try {
       const res = await fetch(w.url, { signal: AbortSignal.timeout(5000), cache: 'no-store' });
       if (!res.ok) { per[w.name] = null; return; }
       const j: any = await res.json().catch(() => null);
       const n = j?.requests_today ?? j?.req_today ?? j?.today_count ?? j?.requests?.today ?? null;
-      if (typeof n === 'number' && Number.isFinite(n)) {
+      if (typeof n === 'number' && Number.isFinite(n) && n >= 0) {
         per[w.name] = n;
         total += n;
-        anyKnown = true;
+        knownCount++;
       } else {
         per[w.name] = null;
       }
@@ -328,7 +295,7 @@ async function probeWorkerRequestCount(): Promise<{ total: number | null; per: R
       per[w.name] = null;
     }
   }));
-  return { total: anyKnown ? total : null, per };
+  return { total: knownCount === WORKERS.length ? total : null, per };
 }
 
 function pct(current: number | null, limit: number): number | null {
@@ -382,7 +349,7 @@ async function buildResourceSection(): Promise<HealthSection> {
       details: isLive
         ? `${current.toLocaleString()} / 100,000 (${p}%) — live sum from /health endpoints`
         : `~${current.toLocaleString()} / 100,000 (${p}%) · baseline from CF dashboard ${OBSERVED_DATE}. Breakdown: indiaearninghub ~3,800 · mc-scraper ~400 · mc-guardian ~150 · mc-alerts ~100 · mc-movers ~100`,
-      description: 'Total HTTP requests across all 5 Workers. Free tier is 100k/day — if you blow past it, requests get throttled and dashboards stop refreshing. Currently sitting comfortably at <5%.',
+      description: 'Total HTTP requests across all 5 Workers. A live total requires a valid counter from every worker; incomplete counters do not establish spare capacity.',
       url: 'https://dash.cloudflare.com/?to=/:account/workers/overview',
     });
   }
@@ -427,15 +394,13 @@ async function buildResourceSection(): Promise<HealthSection> {
     });
   }
 
-  // 4. GitHub Actions minutes — public repo, unlimited
+  // Repository privacy is verified; current billing usage requires account telemetry.
   items.push({
-    name: 'GitHub Actions minutes',
-    status: 'ok',
-    limit: '2,000 min/month (private) — unlimited for public repo',
-    current: 'Unlimited (repo is public)',
-    percent: 0,
-    details: 'Public repo → unlimited minutes. If repo is ever flipped private, monitor this.',
-    description: 'CI minutes used by vercel-cron-bridge and deploy-workers workflows. Public repos get unlimited, so this is not a concern today.',
+    name: 'GitHub Actions minutes', status: 'warn',
+    limit: 'Private repository — allowance depends on the account plan',
+    current: 'Current usage unavailable', percent: null,
+    details: 'Check account billing and workflow failures; private repositories do not receive the public-repository unlimited allowance.',
+    description: 'Scrapers, backups and CI depend on the available Actions allowance.',
     url: 'https://github.com/settings/billing',
   });
 
@@ -505,6 +470,17 @@ async function buildResourceSection(): Promise<HealthSection> {
     });
   }
 
+  // Only the worker request probe is live. Historical observations and code
+  // estimates must not imply current quota headroom or a current billing failure.
+  for (const item of items) {
+    if (item.name === 'GitHub Actions minutes' || (item.name === 'Cloudflare Workers' && workerReqTotal != null)) continue;
+    item.status = 'warn';
+    item.percent = null;
+    item.current = `Current usage unavailable (baseline ${OBSERVED_DATE})`;
+    item.details = `Historical baseline, not current telemetry: ${item.details || ''}`;
+    item.description = 'Confirm current usage and plan limits in the provider dashboard before changing capacity or spend.';
+  }
+
   // Rollup: take worst item status — fail trumps warn trumps ok
   let status: SectionStatus = 'healthy';
   if (items.some(i => i.status === 'fail')) status = 'critical';
@@ -521,7 +497,7 @@ async function buildResourceSection(): Promise<HealthSection> {
       'If you hit Cloudflare KV writes (1k/day): a cron is writing too aggressively. Most likely mc-scraper writing per-symbol. Batch writes into one big KV object per cron run.',
       'If you hit Upstash Redis (10k cmds/day): switch the hottest keys to in-memory cache inside the Next.js server (the route is single-instance on Railway, so in-memory works).',
       'If Postgres > 800MB: archive earnings_facts older than 8 quarters to a JSON file in repo, then DELETE from table. Always VACUUM after.',
-      'RAILWAY COMPUTE IS OVER INCLUDED CREDIT ($6.40 / $5.00 = 128%). #1 cost driver is MEMORY at $5.26/mo (82% of bill) — not CPU. Fix priority (zzz71): (a) audit module-level Map/CACHE caches in route.ts files — most are unbounded — add LRU eviction (~30-60MB saved); (b) pg Pool max 5→2 in lib/db.ts (~15MB); (c) remove unused deps `ioredis` + `socket.io-client` from package.json (~10MB); (d) `.unref()` the rate-limit cleanup interval in lib/rateLimit.ts so the Node event loop can idle. Also pause any unused Railway services (e.g. `zestful-learning`).',
+      'The June Railway bill is historical. Measure current memory, CPU, storage and egress before choosing cost reductions; verify a service is unused before pausing it.',
       'Numbers are estimates derived from worker code + traffic patterns + dashboard observations. For live counts, add CLOUDFLARE_API_TOKEN and UPSTASH_REDIS_REST_TOKEN to Railway env vars.',
     ],
     links: [
@@ -821,65 +797,16 @@ function envItem(name: string, optional = false, helpText = ''): HealthItem {
       ],
     },
     resourceSection,  // zzz68: NEW section
-    // zzz70 — Unused Capacity / Opportunities. Most free-tier limits are barely
-    // touched (5% / 0% / 38% / 3% / 20% / 70%) — surface ideas for using the headroom.
     {
-      name: 'Unused Capacity — Ideas',
-      status: 'healthy' as SectionStatus,
-      kind: 'opportunities' as any,
-      items: [
-        {
-          name: 'CF Workers at ~5% (~95k req/day headroom)',
-          status: 'ok' as ItemStatus,
-          details: 'Could add a 6th Worker',
-          description: 'IDEA: spin up a worker that scrapes BSE filings (currently we only have NSE via mc-scraper). Or add a Worker that polls trendlyne / tickertape as a fallback for the 7 documented straggler symbols (DATAPATTNS, KENNAMET etc.). Each new Worker would add ~500 req/day and you would still be under 10%.',
-        },
-        {
-          name: 'CF KV reads at ~0% (~99.7k reads/day headroom)',
-          status: 'ok' as ItemStatus,
-          details: 'Could cache more, longer',
-          description: 'IDEA: extend KV cache TTL on hot endpoints (intelligence, breadth, transmission) from current 6h to 24h. Each page load saves a Postgres query. Or pre-warm the next 30 days of calendar entries so Earnings Opportunities is instant on every date click.',
-        },
-        {
-          name: 'CF KV writes at ~38% (~620 writes/day headroom)',
-          status: 'ok' as ItemStatus,
-          details: 'Moderate — be careful',
-          description: 'IDEA: batch the mc-scraper per-symbol writes into one big JSON per day (saves ~150 writes). Use the freed budget to also write graded results to KV instead of Postgres (faster reads). DO NOT add a new write-heavy cron without first batching the existing ones.',
-        },
-        {
-          name: 'GitHub Actions: unlimited (public repo)',
-          status: 'ok' as ItemStatus,
-          details: 'Use freely',
-          description: 'IDEA: add a "weekly earnings season prep" cron that runs every Sunday — pre-fetches likely-filing companies for the week and warms cache. Or add a "deploy verifier" cron that runs daily, hits 10 critical endpoints, and Telegrams you on regression.',
-        },
-        {
-          name: 'Upstash Redis at ~3% (~9.7k cmds/day headroom)',
-          status: 'ok' as ItemStatus,
-          details: 'Plenty of room',
-          description: 'IDEA: move ALL hot reads (movers, breadth, intelligence) from Postgres → Upstash. Currently Postgres serves them — Redis would be 10x faster. At current usage you could 30x your Redis usage and still be under quota.',
-        },
-        {
-          name: 'Postgres at ~20% (~800MB headroom)',
-          status: 'ok' as ItemStatus,
-          details: 'Store more history',
-          description: 'IDEA: enable longer earnings history — currently we keep ~2 years; could extend to 5 years (adds ~150MB). Or add a "filing history" table that retains every NSE filing seen — useful for backtests. Or add a "search index" for company search by ISIN / sector.',
-        },
-        {
-          name: 'Railway compute at 128% — OVER LIMIT',
-          status: 'fail' as ItemStatus,
-          details: 'NEGATIVE headroom — $1.40 over included',
-          description: 'CRITICAL (zzz71): Memory ($5.26/mo = 82% of bill) is the #1 cost driver. The always-on Next.js server holds ~250MB RSS. QUICK WINS to cut Memory 30-50%: (1) add LRU eviction to /api/market/* responseCache Maps (saves 30-60MB), (2) drop pg Pool max 5→2 (saves ~15MB), (3) remove unused deps ioredis + socket.io-client (saves ~10MB), (4) .unref() rate-limit cleanup interval so Railway can idle the process. See PATCH zzz71 memory audit for file:line evidence.',
-        },
-      ],
-      troubleshooting: [
-        'WHAT THIS SECTION IS: you are barely using your free-tier quotas. Each row above suggests a feature you could add WITHOUT moving to a paid tier.',
-        'PRIORITY: pick the 1-2 ideas that match what you actually want next. Most users do not need more capacity — but if you have an idea blocked by "I dont want to pay", check here first.',
-        'REPEATED PATTERN: every time we added a new feature this session, we used <2% of available capacity. You have years of feature runway on free tier.',
-        'EXCEPTION: Railway compute is the tightest. Watch it monthly. Everything else is wide open.',
-      ],
+      name: 'Capacity planning', status: 'degraded' as SectionStatus,
+      items: [{
+        name: 'Measure current usage first', status: 'warn' as ItemStatus,
+        details: 'Historical baselines do not establish current spare capacity.',
+        description: 'Review current provider usage, plan limits and failed jobs before adding scheduled work or changing hosting.',
+      }],
+      troubleshooting: ['The repository is private. Check GitHub Actions billing as well as Railway, Cloudflare and Upstash usage.'],
       links: [
-        { label: 'CF dashboard (all services)', url: 'https://dash.cloudflare.com' },
-        { label: 'Upstash console', url: 'https://console.upstash.com' },
+        { label: 'GitHub billing', url: 'https://github.com/settings/billing' },
         { label: 'Railway billing', url: 'https://railway.app/account/billing' },
       ],
     },

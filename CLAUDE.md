@@ -3582,3 +3582,18 @@ stale heartbeats (prewarm-earnings, data-watch) investigation; removing ?secret=
   build-screener-us (22:45 UTC weekdays) and build-screener-in (hourly :25); first page visit with no snapshot kicks a build
   (lib/screener/run.ts). India gross margin = sales × (1 − Material Cost %), none for material < 1% (service companies); F-score
   uses other assets ÷ other liabilities for the current-ratio point. Saved screens: mc:stock-screens:v1 (synced).
+
+
+## 27 · 2026-10-07 — Codex reliability follow-up
+
+Built on Claude zzz940b (`72c12cc`); chart/watchlist keys and home links preserved.
+
+- `773cfd0` (PR #2): durable acknowledgement for Redis-primary personal-state and US-book saves; PostgreSQL commits keep best-effort Redis mirroring. Redis failures no longer populate a new personal-data memory value and pretend it was saved. Best-effort caches retain their existing API.
+- Memory KV fallback now enforces TTLs on cache, lock and swap operations; remote payload limits count UTF-8 bytes.
+- Type ratchet fails on compiler/configuration/invocation failures and cannot write a zero-error baseline after failure. Located diagnostic exits 1 and 2 remain compatible with the ratchet.
+- Test runner uses Node's tsx loader with four workers; the shell timing test always cleans up its interval after assertion failures.
+- Health resources distinguish live counters from June historical estimates. Private GitHub Actions allowance and absent workflow access are unknown; do not claim unlimited minutes. Worker totals require every worker counter.
+
+Validation: 4,887 tests passed, zero failed; type ratchet passed at 175 existing errors (baseline 175); production build passed for PR #2. Local Node 24; production remains Node 22. Railway reported successful deployment for `773cfd0`.
+
+Remaining operational work needs provider access/current telemetry: inspect Actions billing and backup-job failures, enable Railway Wait for CI, verify current spend, and confirm obsolete Render service is unused before suspension. Never raise the guidance AI daily cap without asking. Broader audit work (concurrent-save conflicts, restore drills, market-qualified identities, fiscal-period and data-quality fixes) remains separate; these commits do not claim it is finished.
