@@ -10,7 +10,7 @@ import type { GuidanceEvent } from '@/lib/guidance-upgrades-types';
 import type { FocusRow } from '@/lib/gu-focus';
 import { skyGoldScore, guidanceOfRow, type SkyScore } from '@/lib/gu-skygold-score';
 import { useSkyGoldFacts, SkyScoreCell, SkyBreakdownRow } from './GuSkyGold';
-import { fairValue, type FvResult } from '@/lib/gu-fair-value';
+import { fairValue, fvGrowthOf, fvStatus, type FvResult } from '@/lib/gu-fair-value';
 import { sortByReported, reportedLabel } from '@/lib/gu-focus-sort';
 import { FvCells, FV_HEAD, FV_COLS } from './GuFairValue';
 import { opportunityScore, type Opportunity } from '@/lib/gu-opportunity';
@@ -42,11 +42,14 @@ function CompanyCell({ r, td }: { r: FocusRow; td: React.CSSProperties }) {
     </td>
   );
 }
-function VerdictCell({ r, td }: { r: FocusRow; td: React.CSSProperties }) {
+function VerdictCell({ r, td, fv }: { r: FocusRow; td: React.CSSProperties; fv?: FvResult | null }) {
+  // zzz934: the verdict is about the GUIDANCE; the price is a separate question — said in one line when the price already runs far ahead
+  const st = fv?.ok && fv.base ? fvStatus(fv.base.upsidePct) : null;
   return (
     <td style={td}>
       <b style={{ color: VERDICT_COLOR[r.verdict], whiteSpace: 'nowrap' }}>{r.verdict}</b>
       <div style={{ fontSize: 11.5, color: R.dim }}>{r.why}</div>
+      {st && (st.key === 'far-above' || st.key === 'above') ? <div style={{ fontSize: 11, color: R.amber, fontWeight: 700 }}>Guidance strong, but the price is {st.key === 'far-above' ? 'far ' : ''}above fair value</div> : null}
     </td>
   );
 }
@@ -158,7 +161,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
       const k = skyKey(r);
       if (k && !(k in facts) && !skyFailed) { m.set(r.key, null); continue; }
       const f = k ? facts[k] ?? null : null;
-      m.set(r.key, f ? fairValue(f, r, r.company) : { ok: false, reason: 'company figures not found', currency: r.market === 'US' ? '$' : '₹', price: null, base: null, bear: null, bull: null, checks: [], methods: [], sectorLabel: '', sectorKnown: false, basis: null, growth: null, inputs: [] });
+      m.set(r.key, f ? fairValue(f, fvGrowthOf(r), r.company) : { ok: false, reason: 'company figures not found', currency: r.market === 'US' ? '$' : '₹', price: null, base: null, bear: null, bull: null, checks: [], methods: [], sectorLabel: '', sectorKnown: false, basis: null, growth: null, inputs: [] });
     }
     return m;
   }, [listed, facts, skyFailed]);
@@ -249,7 +252,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
               {fvCell(r)}
               {oppCell(r)}
               {skyCell(r)}
-              <VerdictCell r={r} td={td} />
+              <VerdictCell r={r} td={td} fv={fvs.get(r.key) ?? null} />
             </tr>
             {skyOpen(r, 5 + 1 + FV_COLS + OPP_COLS)}
             {oppOpen(r, 5 + 1 + FV_COLS + OPP_COLS)}
@@ -262,13 +265,13 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
             <tr>
               <td style={{ ...td, color: R.dim }}>{i + 1}</td>
               <CompanyCell r={r} td={td} />
-              <td style={td}><b style={{ color: R.green }}>{r.growth}</b><div style={{ fontSize: 11.5, color: R.dim }}>{r.growthPeriod || ''}{r.growthTrust === 'derived' ? ' · worked out from company numbers' : ' · stated by company'}</div></td>
+              <td style={td}><b style={{ color: r.growthTrust === 'derived' ? R.amber : R.green }}>{r.growth}</b><div style={{ fontSize: 11.5, color: R.dim }}>{r.growthPeriod || ''}{r.growthTrust === 'derived' ? <b style={{ color: R.amber }}> · worked out by us from company numbers — not a stated target</b> : ' · stated by company'}</div></td>
               <td style={{ ...td, fontSize: 12 }}>{r.growthSource || 'Company document'}<div style={{ fontSize: 11.5, color: R.dim }}>{r.raised ? `small raise ${r.raiseDate}` : ''}</div></td>
               <td style={{ ...td, whiteSpace: 'nowrap' }} data-reported>{reportedLabel(r.growthDate)}</td>
               {fvCell(r)}
               {oppCell(r)}
               {skyCell(r)}
-              <VerdictCell r={r} td={td} />
+              <VerdictCell r={r} td={td} fv={fvs.get(r.key) ?? null} />
             </tr>
             {skyOpen(r, 6 + 1 + FV_COLS + OPP_COLS)}
             {oppOpen(r, 6 + 1 + FV_COLS + OPP_COLS)}

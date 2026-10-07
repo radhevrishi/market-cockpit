@@ -49,7 +49,20 @@ export function useSkyGoldFacts(keys: string[], names?: Record<string, string>):
       if (pend.length && !stop) { setFacts((p) => { const n = { ...p }; for (const k of pend) n[k] = n[k] ?? null; return n; }); pend.forEach((k) => done.current.add(k)); }
     };
     setLoading(true); setFailed(false);
-    ask(todo, 2).catch(() => { if (!stop) { setFailed(true); todo.forEach((k) => asked.current.delete(k)); } }).finally(() => { if (!stop) setLoading(false); });
+    // zzz934: ask in slices of 40 names (two at a time) — one call for 200+ US names used to lose every name past 80
+    const CHUNK = 40;
+    const slices: string[][] = [];
+    for (let i = 0; i < todo.length; i += CHUNK) slices.push(todo.slice(i, i + CHUNK));
+    const run = async () => {
+      let k = 0;
+      const lane = async () => { while (k < slices.length && !stop) { const sl = slices[k++]; try { await ask(sl, 3); } catch {
+        if (stop) return;
+        await new Promise((res) => setTimeout(res, 3000));   // one more try for a slice that failed (a slow upstream), then give up on it only
+        try { await ask(sl, 2); } catch { if (!stop) { setFailed(true); sl.forEach((x) => asked.current.delete(x)); } }
+      } } };
+      await Promise.all([lane(), lane()]);
+    };
+    run().catch(() => { if (!stop) { setFailed(true); todo.forEach((k) => asked.current.delete(k)); } }).finally(() => { if (!stop) setLoading(false); });
     return () => { stop = true; setLoading(false); todo.forEach((k) => { if (!doneSet.has(k)) askedSet.delete(k); }); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig]);

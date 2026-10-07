@@ -76,7 +76,8 @@ async function usCap(t: string): Promise<UsQuote> {
   return out;
 }
 
-const list = (v: string | null, re: RegExp) => Array.from(new Set(String(v || '').split(',').map((s) => s.trim().toUpperCase()).filter((s) => re.test(s)))).slice(0, MAX_PER_MARKET);
+// zzz934: names past the per-call limit are no longer dropped silently (US rows 81+ showed "company figures not found") — they go back as `pending`
+const listAll = (v: string | null, re: RegExp) => Array.from(new Set(String(v || '').split(',').map((s) => s.trim().toUpperCase()).filter((s) => re.test(s))));
 
 async function inFacts(t: string, company: string | null): Promise<{ facts: SkyFacts | null; error: string | null }> {
   const first = await inFactsAt(t, screenerSymbol(t));
@@ -109,7 +110,8 @@ export async function GET(req: NextRequest) {
   const limited = rateLimitResponse(req, 20, 60_000);
   if (limited) return limited;
   const sp = req.nextUrl.searchParams;
-  const IN = list(sp.get('in'), /^[A-Z0-9][A-Z0-9&-]{0,19}$/);
+  const inAll = listAll(sp.get('in'), /^[A-Z0-9][A-Z0-9&-]{0,19}$/);
+  const IN = inAll.slice(0, MAX_PER_MARKET);
   // zzz925: optional company names for India symbols ('n=BMW:BMW Industries Ltd'), used only when the symbol has no screener.in page
   const names = new Map<string, string>();
   for (const v of sp.getAll('n').slice(0, MAX_PER_MARKET)) {
@@ -117,12 +119,14 @@ export async function GET(req: NextRequest) {
     const name = v.slice(i + 1).replace(/[^\p{L}\p{N}&().,' -]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
     if (name) names.set(v.slice(0, i).trim().toUpperCase(), name);
   }
-  const US = list(sp.get('us'), /^[A-Z][A-Z0-9.\-]{0,9}$/);
+  const usAll = listAll(sp.get('us'), /^[A-Z][A-Z0-9.\-]{0,9}$/);
+  const US = usAll.slice(0, MAX_PER_MARKET);
   if (!IN.length && !US.length) return NextResponse.json({ ok: false, error: 'in or us tickers required' }, { status: 400 });
   const t0 = Date.now();
   const facts: Record<string, SkyFacts | null> = {};   // key 'IN:TICKER' / 'US:TICKER'
   const errors: Record<string, string> = {};
-  const pending: string[] = [];
+  const pending: string[] = [...inAll.slice(MAX_PER_MARKET).map((t) => `IN:${t}`), ...usAll.slice(MAX_PER_MARKET).map((t) => `US:${t}`)];
+  const capSkipped = new Set<string>();
   const caps: { IN: Record<string, number>; US: Record<string, number> } = { IN: {}, US: {} };
 
   const india = (async () => {
@@ -163,7 +167,7 @@ export async function GET(req: NextRequest) {
       (async () => {
         const out: Record<string, UsQuote> = {};
         await pooled(US, 6, async (t) => {
-          if (Date.now() - t0 > DEADLINE_MS - 8_000) return;
+          if (Date.now() - t0 > DEADLINE_MS - 8_000) { capSkipped.add(t); return; }
           const c = await usCap(t).catch(() => null);
           if (c) out[t] = c;
         });
@@ -173,7 +177,9 @@ export async function GET(req: NextRequest) {
     for (const [t, q] of Object.entries(usCaps)) if (q.cap != null) caps.US[t] = q.cap;
     for (const t of US) {
       const row = batch?.rows?.[t];
-      if (row?.retrieval_failed) { pending.push(`US:${t}`); errors[`US:${t}`] = String(row.why || 'SEC request failed'); continue; }
+      if (row?.retrieval_failed || !row) { pending.push(`US:${t}`); errors[`US:${t}`] = String(row?.why || 'SEC figures not reached in time'); continue; }
+      // zzz934: the price / size read was cut off by the time limit — ask again rather than show "share price not available" (the SEC row is cached)
+      if (capSkipped.has(t)) { pending.push(`US:${t}`); continue; }
       facts[`US:${t}`] = usFactsFromRow(t, row, trends[t]);
       const uf = facts[`US:${t}`], uq = usCaps[t];
       if (uf && uq) {

@@ -30,6 +30,8 @@ export interface FvFacts {
   sector: string | null; industry: string | null;
   /** zzz931: other income as % of profit before tax (India, screener.in) — profit that is mostly other income is not valued on a P/E */ otherIncomePctOfPbt?: number | null;
   /** zzz931 (USA): the street's EPS estimate for the next fiscal year, $ a share — a second method (P/E) for a company with no current profit */ streetEpsNext?: number | null;
+  /** zzz934: operating margin of the latest quarter, % (USA: a net profit far above it is a one-off, e.g. a tax credit) */ opmNow?: number | null;
+  /** zzz934: latest quarter's sales growth over the year-ago quarter, % (USA: the only sales history the SEC row gives) */ salesYoyQ?: number | null;
 }
 /** The guided growth of the row (company-stated preferred). */
 export interface FvGrowth {
@@ -49,6 +51,7 @@ export interface FvResult {
   basis: 'guided' | 'history' | null;
   /** the growth used in each case, % */ growth: { bear: number; base: number; bull: number } | null;
   /** short plain lines on the inputs used (shown in the tooltip) */ inputs: string[];
+  /** zzz934: what the market pays today for one year of the company's profit (market value ÷ latest yearly profit), null when there is no profit */ marketPe?: number | null;
 }
 
 // ── limits ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -120,6 +123,9 @@ export function sectorOf(industry: string | null | undefined, sector: string | n
   if (text) for (const [re, key] of SECTOR_WORDS) if (re.test(text)) return { key, label: key };
   return { key: null, label: text ? `${industry || sector} (no sector band — generic multiples)` : 'sector not known (generic multiples)' };
 }
+
+/** zzz934: sector bands used for US companies too (cycle / commodity bands); every other US sector uses the general multiples. */
+export const US_SECTOR_OK = new Set(['Steel & Metals', 'Mining', 'Oil & Gas — Upstream', 'Oil & Gas — Refining & Marketing', 'Aviation', 'Cement', 'Telecom', 'Power Utility (Generation)', 'Textiles & Apparel', 'EPC / Civil Construction', 'Packaging']);
 
 // ── multiple bands (the engine's, kept in step by hand — engine.ts lines ~1150-1200) ────────────────────────────────────────────
 function deriveSecondary(primary: FvMethod, mid: number, sec: string): Partial<Bands> {
@@ -206,7 +212,11 @@ export function fairValue(f: FvFacts | null | undefined, g: FvGrowth | null | un
   const price = fin(f.price) && f.price > 0 ? f.price : null;
   const unit = f.market === 'US' ? 'M' : ' Cr';
   const money = (v: number) => (f.market === 'US' ? `$${Math.round(v).toLocaleString('en-US')}M` : `₹${Math.round(v).toLocaleString('en-IN')} Cr`);
-  const sec = sectorOf(f.industry, f.sector, company);
+  let sec = sectorOf(f.industry, f.sector, company);
+  // zzz934: the sector bands are India's (retail P/E 50-90×, consumer 40-70×). A US department store or restaurant on those came out at +250%+
+  // (Kohl's, Vince). A US company uses the general market multiples unless its sector band is a cycle band that holds in both markets.
+  const usGeneral = f.market === 'US' && !!sec.key && !US_SECTOR_OK.has(sec.key);
+  if (usGeneral) sec = { key: null, label: `${f.industry || f.sector} — general US market multiples` };
   const text = `${f.industry || ''} ${f.sector || ''}`;
   if (/blank checks?|blank cheques?|shell compan/i.test(text) || /\bacquisition (?:corp|corporation|company|co\b|ltd|limited)|\bspac\b/i.test(String(company || ''))) return none('a blank-cheque (SPAC) company has no business of its own to value', currency, price, { sectorLabel: sec.label });
   if (isFinancialText(text) || (sec.key && /Financial Services|Insurance/.test(sec.key))) return none('a bank, lender or insurer is valued on book value, which is not read here', currency, price, { sectorLabel: sec.label });
@@ -219,7 +229,13 @@ export function fairValue(f: FvFacts | null | undefined, g: FvGrowth | null | un
   const ebitda = f.market === 'IN' && fin(f.opFy) ? f.opFy : null;
   // zzz931: profit that is largely other income (treasury gains, one-off sales) is not earning power: the other-income share of profit before
   // tax is taken out before a P/E is applied (Dilip Buildcon FY26: 82% of profit before tax was other income), and above 60% no P/E is used
-  const reportedPat = fin(f.patFy) ? f.patFy : null;
+  let reportedPat = fin(f.patFy) ? f.patFy : null;
+  // zzz934 (USA): a quarter's net profit far above its operating margin is a one-off (a tax credit, a gain on a sale) — Twilio's quarter × 4
+  // read as $4.3B of profit on $6B of sales. That profit is not earning power: no P/E on it and no margin taken from it.
+  let oneOff = false;
+  if (f.market === 'US' && reportedPat != null && reportedPat > 0 && fin(f.opmNow) && fin(f.salesBase) && f.salesBase > 0 && (reportedPat / f.salesBase) * 100 > Math.max(f.opmNow, 0) + 5) {
+    oneOff = true; inputs.push(`net profit (${r1((reportedPat / f.salesBase) * 100)}% of sales) is far above the operating margin (${r1(f.opmNow)}%) — a one-off, so P/E not used`); reportedPat = null;
+  }
   const oi = fin(f.otherIncomePctOfPbt) ? Math.max(0, Math.min(100, f.otherIncomePctOfPbt)) : null;
   let pat = reportedPat;
   if (pat != null && pat > 0 && oi != null && oi >= 25) {
@@ -231,9 +247,12 @@ export function fairValue(f: FvFacts | null | undefined, g: FvGrowth | null | un
   const sg0 = statedGrowth(g);
   const stated = sg0 ? g! : null;
   const cls = sg0 ? sg0.cls : 'other';
-  const histKnown = [f.salesGrowthFy, f.salesCagr3y].filter(fin) as number[];
+  let histKnown = [f.salesGrowthFy, f.salesCagr3y].filter(fin) as number[];
+  // zzz934 (USA): the SEC row has no yearly history — the latest quarter's growth over the year-ago quarter is the sales pace used
+  const usQuarterPace = !histKnown.length && f.market === 'US' && fin(f.salesYoyQ);
+  if (usQuarterPace) histKnown = [f.salesYoyQ as number];
   const hist = histKnown.length ? histKnown.reduce((a, b) => a + b, 0) / histKnown.length : null;
-  const salesFalling = fin(f.salesGrowthFy) ? f.salesGrowthFy < 0 : fin(f.salesCagr3y) ? f.salesCagr3y < 0 : false;
+  const salesFalling = fin(f.salesGrowthFy) ? f.salesGrowthFy < 0 : fin(f.salesCagr3y) ? f.salesCagr3y < 0 : usQuarterPace ? (f.salesYoyQ as number) < 0 : false;
   let basis: 'guided' | 'history';
   let gs: { bear: number; base: number; bull: number };
   let useCls: GrowthClass;
@@ -252,7 +271,7 @@ export function fairValue(f: FvFacts | null | undefined, g: FvGrowth | null | un
     const h = Math.max(HIST_GROWTH_MIN, Math.min(HIST_GROWTH_MAX, hist));
     if (h < 0) gs = { bear: r1(h), base: 0, bull: 5 };   // declining-sales guard: continued decline / flat / mild recovery
     else gs = { bear: r1(h * 0.5), base: r1(h), bull: r1(Math.min(h * 1.25, HIST_GROWTH_MAX)) };
-    inputs.push(`no company growth rate to use — past sales pace ${r1(h)}% a year used (lower confidence)${h < 0 ? '; sales falling, so base case is flat' : ''}`);
+    inputs.push(`no company growth rate to use — past sales pace ${r1(h)}% a year used${usQuarterPace ? ' (latest quarter vs the year-ago quarter)' : ''} (lower confidence)${h < 0 ? '; sales falling, so base case is flat' : ''}`);
     if (stated && cls === 'other') inputs.push(`guided ${stated.growthMetric || 'measure'} growth is not a sales or profit growth rate and was not used`);
     if (h < 0) checks.push('reported sales are falling');
   }
@@ -268,7 +287,7 @@ export function fairValue(f: FvFacts | null | undefined, g: FvGrowth | null | un
   const bands = bandsFor(sec.key, declining);
   const patOk = pat != null && pat > 0 && !(ebitda != null && pat > ebitda);   // profit above operating profit = other income / one-offs
   if (pat != null && pat > 0 && !patOk) inputs.push('net profit is above operating profit (other income) — P/E not used');
-  if ((pat == null && reportedPat == null) || (pat != null && pat <= 0)) inputs.push(pat == null ? 'net profit not read — P/E on reported profit not used' : 'loss-making — P/E on reported profit not used');
+  if (!oneOff && ((pat == null && reportedPat == null) || (pat != null && pat <= 0))) inputs.push(pat == null ? 'net profit not read — P/E on reported profit not used' : 'loss-making — P/E on reported profit not used');
   const ebitdaOk = ebitda != null && ebitda > 0 && fin(f.borrowings);
   // zzz931 (USA): no current profit, but the street's next-year EPS is positive → P/E on that EPS (shares = market value ÷ price), not grown
   // again (it is already next year's figure), lower confidence. A second method from figures already read, so a loss-maker is cross-checked.
@@ -324,12 +343,14 @@ export function fairValue(f: FvFacts | null | undefined, g: FvGrowth | null | un
   if (base.upsidePct < -60) checks.push('far below the market price — the sector band may not fit this company');
   const vals = rows.map((r) => r.baseFair).filter((v) => v > 0);
   if (vals.length >= 2 && Math.max(...vals) / Math.min(...vals) > DISAGREE_RATIO) checks.push(`methods disagree (${rows.map((r) => `${r.label} ${currency}${r.baseFair.toLocaleString(f.market === 'US' ? 'en-US' : 'en-IN')}`).join(' · ')})`);
-  if (!sec.key) checks.push('no sector band — generic multiples used');
+  if (!sec.key && f.market !== 'US') checks.push('no sector band — generic multiples used');
   if (basis === 'history') checks.push('based on past sales growth, not company guidance');
   inputs.push(`price ${currency}${price.toLocaleString(f.market === 'US' ? 'en-US' : 'en-IN')} · market value ${money(f.mcap)} · yearly sales ${money(sales)}${pat != null ? ` · net profit ${money(pat)}` : ''}${ebitda != null ? ` · operating profit ${money(ebitda)}` : ''}${fin(f.borrowings) ? ` · borrowings ${money(f.borrowings)}` : ''}`);
   inputs.push(`sector: ${sec.label}`);
   void unit;
-  return { ok: true, reason: null, currency, price, base, bear, bull, checks, methods: rows, sectorLabel: sec.label, sectorKnown: !!sec.key, basis, growth: gs, inputs };
+  const marketPe = fin(f.patFy) && f.patFy > 0 && !oneOff ? r1(mcap / f.patFy) : null;
+  if (marketPe != null) inputs.push(`the market pays about ${Math.round(marketPe)}× the latest yearly profit today`);
+  return { ok: true, reason: null, currency, price, base, bear, bull, checks, methods: rows, sectorLabel: sec.label, sectorKnown: !!sec.key, basis, growth: gs, inputs, marketPe };
 }
 
 // ── words for the tooltip ──────────────────────────────────────────────────────────────────────────────────────────────────
@@ -350,3 +371,29 @@ export function fvTooltip(r: FvResult): string {
 }
 export const fmtPrice = (v: number | null | undefined, cur: '₹' | '$'): string => (typeof v === 'number' && Number.isFinite(v) ? `${cur}${v.toLocaleString(cur === '$' ? 'en-US' : 'en-IN', { maximumFractionDigits: v >= 100 ? 0 : 2 })}` : '—');
 export const fmtUpside = (v: number): string => `${v >= 0 ? '+' : ''}${Math.round(v)}%`;
+
+// ── zzz934: valuation in words, kept apart from the guidance verdict (a strong raise is not the same as a low price) ────────────────
+export type FvStatus = 'below' | 'near' | 'above' | 'far-above';
+/** Where the price sits against the base-case fair value. Plain words, no trade advice. */
+export function fvStatus(upsidePct: number): { key: FvStatus; label: string } {
+  if (upsidePct >= 25) return { key: 'below', label: 'priced below fair value' };
+  if (upsidePct > -15) return { key: 'near', label: 'near fair value' };
+  if (upsidePct > -50) return { key: 'above', label: 'priced above fair value' };
+  return { key: 'far-above', label: 'priced far above — market expects more' };
+}
+
+/** zzz934: the growth the fair value uses for a row. The row's own guided growth first; a raise of a growth RATE (revenue growth 1–3% → 3–4%)
+ *  is the company's own new rate, so it is used when the row has no other growth (Kohl's / BJ's showed "no growth rate guided" while one was). */
+export interface FvRowIn extends FvGrowth {
+  raiseDetail?: { metric: string; afterMid: number | null; isGrowthRate: boolean; periodKind: string | null } | null;
+}
+export function fvGrowthOf(r: FvRowIn | null | undefined): FvGrowth | null {
+  if (!r) return null;
+  if (statedGrowth(r) && growthClass(r.growthMetric) !== 'other') return r;
+  const d = r.raiseDetail;
+  if (d && d.isGrowthRate && fin(d.afterMid) && d.afterMid > 0 && !/MARGIN/i.test(d.metric)) {
+    const metric = d.metric === 'REVENUE_GROWTH' || d.metric === 'ORGANIC_GROWTH' ? 'REVENUE' : d.metric.replace(/_GROWTH$/, '');
+    if (growthClass(metric) !== 'other') return { growthPct: d.afterMid, growthTrust: 'verified', growthType: 'STATED', growthMetric: metric, growthCohort: d.periodKind };
+  }
+  return r;
+}
