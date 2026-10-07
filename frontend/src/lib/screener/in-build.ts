@@ -11,7 +11,7 @@ import { fetchScreenerHtml } from '@/lib/earnings/screener-fetch';
 import { screenerSymbol } from '@/lib/earnings/screener-documents';
 import { isCurrentPeriod } from '@/lib/thesis/screener-financials';
 import { inFigures, type InFigures } from './in-assemble';
-import { sma, sparkCloses } from './us-build';
+import { sma, sparkCloses, sparkLastError } from './us-build';
 import type { ScreenRow } from './types';
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
@@ -160,7 +160,7 @@ async function refreshSma(universe: string[], latest: string, budgetMs: number, 
     }
     await sleep(200);
   }
-  if (due.length) notes.push(`SMA 50 / 200: ${done} of ${due.length} companies updated for ${latest}`);
+  if (due.length) notes.push(`SMA 50 / 200: ${done} of ${due.length} companies updated for ${latest}${done < due.length && sparkLastError ? ` (last Yahoo refusal: ${sparkLastError})` : ''}`);
   return m;
 }
 

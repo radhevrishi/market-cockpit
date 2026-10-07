@@ -2211,6 +2211,7 @@ export default function HomeDashboard() {
             <Link href="/buy-strategy"           style={navChip('#FFD700')}>🛒 Buy Strategy</Link>
             <Link href="/playbook#cadence"       style={navChip('#22D3EE')}>🗓 Cadence</Link>
             <Link href="/capex-tracker"          style={navChip('#F0883E')}>🏗 Capex Tracker</Link>
+            <Link href="/charts"                 style={navChip('#22D3EE')}>📈 Charts + Watchlist</Link>
             <Link href="/earnings-hub?tab=concall" style={navChip('#A78BFA')}>🧠 Concall AI</Link>
             <Link href="/concall-intel"          style={navChip('#A78BFA')}>🎙 Concall Intel</Link>
             {/* zzz239 — 🏆 Conviction Beats moved to Favourites row above */}
@@ -2238,6 +2239,7 @@ export default function HomeDashboard() {
             {/* zzz239 — 🔬 Portfolio Fundamentals moved to Favourites row above */}
             <Link href="/position-sizing"        style={navChip('#22D3EE')}>📐 Position Sizing</Link>
             <Link href="/portfolio-simulator"     style={navChip('#A78BFA')}>🎲 Portfolio Simulator</Link>
+            <Link href="/stock-screener"         style={navChip('#8B5CF6')}>🧮 Stock Screener</Link>
             <Link href="/winning-playbook"      style={navChip('#F59E0B')}>🏆 Winning Playbook</Link>
             <Link href="/playbook#relationships" style={navChip('#2dd4bf')}>🤝 Relationships</Link>
             <Link href="/risk"                   style={navChip('#EF4444')}>🛡️ Risk Desk</Link>
@@ -4289,6 +4291,8 @@ export default function HomeDashboard() {
                 { href: '/multibagger', label: '🚀 Multibagger' },
                 { href: '/valuations', label: '💎 Valuations' },
                 { href: '/screener', label: '🔍 Screener' },
+                { href: '/stock-screener', label: '🧮 Stock Screener' },
+                { href: '/charts', label: '📈 Charts + Watchlist' },
                 { href: '/strategic-visibility', label: '⭐ Strategic Visibility' },
                 { href: '/transmission', label: '🔄 Transmission' },
                 { href: '/breadth', label: '📊 Breadth' },
@@ -4362,6 +4366,9 @@ const FAVS: Array<{ href: string; label: string; color: string; ext?: boolean }>
   { href: '/exit-radar', label: '🚨 Exit Radar', color: '#EF4444' },
   { href: '/ai-gainers', label: '📊 AI Daily Gainers', color: '#A78BFA' },
   // zzz843 — positive guidance raises, verified and quantified.
+  // zzz940 — our own charts with the watchlist beside them, and our own stock screener (TradingView replaced)
+  { href: '/charts', label: '📈 Charts + Watchlist', color: '#22D3EE' },
+  { href: '/stock-screener', label: '🧮 Stock Screener', color: '#8B5CF6' },
   { href: '/guidance-upgrades', label: '📈 Guidance Upgrades', color: '#10B981' },
   // zzz846 — management growth guidance 30%+, verified.
   { href: '/growth-guidance', label: '📈 Growth Guidance', color: '#10B981' },

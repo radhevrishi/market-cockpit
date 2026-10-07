@@ -118,19 +118,30 @@ export function sma(closes: readonly number[], n: number): number | null {
   const s = closes.slice(-n);
   return Math.round((s.reduce((a, b) => a + b, 0) / n) * 100) / 100;
 }
-/** Daily closes for up to 20 Yahoo symbols per call (oldest first, gaps dropped). */
+/** Why the last daily-price read failed (shown in the build notes), e.g. 'query1 HTTP 429'. */
+export let sparkLastError: string | null = null;
+let sparkRoute = 0;   // the route that answered last time is tried first
+/** Daily closes for up to 20 Yahoo symbols per call (oldest first, gaps dropped). Yahoo sometimes refuses a datacenter address, so
+ *  the call goes direct (query1, then query2) and then through the repo's Cloudflare relay (PROXY_URL + PROXY_SECRET). */
 export async function sparkCloses(symbols: string[]): Promise<Map<string, number[]>> {
   const out = new Map<string, number[]>();
-  for (let attempt = 0; attempt < 2 && out.size === 0; attempt++) {
+  const path = `/v7/finance/spark?symbols=${symbols.map(encodeURIComponent).join(',')}&range=1y&interval=1d`;
+  const relay = (process.env.PROXY_URL || '').replace(/\/$/, ''), secret = process.env.PROXY_SECRET || '';
+  const routes: Array<[string, string]> = [['query1', `https://query1.finance.yahoo.com${path}`], ['query2', `https://query2.finance.yahoo.com${path}`]];
+  if (relay && secret) routes.push(['relay', `${relay}/proxy?url=${encodeURIComponent(`https://query1.finance.yahoo.com${path}`)}&secret=${encodeURIComponent(secret)}`]);
+  for (let k = 0; k < routes.length && out.size === 0; k++) {
+    const idx = (sparkRoute + k) % routes.length;
+    const [name, url] = routes[idx];
     try {
-      const res = await fetch(`https://query1.finance.yahoo.com/v7/finance/spark?symbols=${symbols.map(encodeURIComponent).join(',')}&range=1y&interval=1d`, { headers: { 'User-Agent': BROWSER_UA }, cache: 'no-store', signal: AbortSignal.timeout(20_000) });
-      if (!res.ok) { await sleep(2000); continue; }
+      const res = await fetch(url, { headers: { 'User-Agent': BROWSER_UA, Accept: 'application/json' }, cache: 'no-store', signal: AbortSignal.timeout(20_000) });
+      if (!res.ok) { sparkLastError = `${name} HTTP ${res.status}`; continue; }
       const j: any = await res.json();
       for (const r of j?.spark?.result || []) {
         const c: any[] = r?.response?.[0]?.indicators?.quote?.[0]?.close || [];
         out.set(String(r.symbol), c.filter(fin));
       }
-    } catch { await sleep(2000); }
+      if (out.size) sparkRoute = idx; else sparkLastError = `${name} answered with no prices`;
+    } catch (e: any) { sparkLastError = `${name} ${e?.name === 'TimeoutError' ? 'timed out' : 'failed'}`; }
   }
   return out;
 }
@@ -182,8 +193,8 @@ export async function buildUsSnapshot(now = new Date()): Promise<{ ok: boolean; 
   for (let k = 0; k < syms.length; k += 20) batches.push(syms.slice(k, k + 20));
   let bi = 0;
   const pw = async () => { while (bi < batches.length) { const b = batches[bi++]; const m = await sparkCloses(b); m.forEach((v, k) => closes.set(k, v)); await sleep(150); } };
-  await Promise.all([pw(), pw(), pw()]);
-  notes.push(`daily prices: ${closes.size} of ${syms.length} companies`);
+  await Promise.all([pw(), pw()]);
+  notes.push(`daily prices: ${closes.size} of ${syms.length} companies${closes.size < syms.length * 0.9 && sparkLastError ? ` (last Yahoo refusal: ${sparkLastError})` : ''}`);
   const profiles = await loadProfiles(universe.filter((r) => (r.mc ?? 0) >= 100).map((r) => r.t), notes, 4 * 60_000);
 
   const rows: ScreenRow[] = [];
