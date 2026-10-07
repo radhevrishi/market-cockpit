@@ -22,7 +22,7 @@ export function newId(prefix: string): string {
   return `${prefix}${Date.now().toString(36)}${_seq.toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
 
-export const itemKey = (it: { m: Market; t: string }) => `${it.m}:${it.t}`;
+export const itemKey = (it: { m: Market; t: string; x?: string }) => it.m === 'IN' && it.x === 'BSE' ? `IN:BSE:${it.t}` : `${it.m}:${it.t}`;
 const isFlag = (f: unknown): f is Flag => typeof f === 'string' && (FLAGS as readonly string[]).includes(f);
 export function nextFlag(f: Flag | undefined): Flag | undefined {
   if (!f) return FLAGS[0];
@@ -63,7 +63,7 @@ export function sanitizeStore(raw: unknown): WlStore {
         if (!it || count >= MAX_ITEMS) continue;
         const t = typeof it.t === 'string' ? it.t.trim().toUpperCase() : it.t;
         if (!validItem(it.m, t)) continue;
-        const k = `${it.m}:${t}`;
+        const k = itemKey({ m: it.m, t, x: it.x });
         if (seenItem.has(k)) continue;
         seenItem.add(k); count++;
         const out: WlItem = { m: it.m, t };
@@ -179,7 +179,7 @@ export function removeSection(l: WlList, id: string): WlList {
 // ── sorting + screen order ──────────────────────────────────────────────────
 export type SortKey = 'symbol' | 'last' | 'chg';
 export type SortState = { key: SortKey; dir: 'asc' | 'desc' } | null;
-export interface Quote { last: number | null; chgPct: number | null; name?: string | null; ext?: number | null }
+export interface Quote { last: number | null; chgPct: number | null; name?: string | null; ext?: number | null; at?: number; marketTime?: number | null; stale?: boolean }
 
 /** Header click: first click (numbers high→low, symbol A→Z), second flips, third goes back to his own order. */
 export function nextSort(cur: SortState, key: SortKey): SortState {
@@ -207,15 +207,20 @@ export function sortItems(items: WlItem[], sort: SortState, quotes: Record<strin
   }).map((x) => x.it);
 }
 export interface ViewRow { sectionId: string; item: WlItem }
+export interface WatchlistView { query?: string; market?: Market | 'ALL' }
 /** Rows in the order they are on screen: per section, sorted, collapsed sections skipped, optional flag filter. */
-export function viewRows(l: WlList, sort: SortState, quotes: Record<string, Quote | undefined>, flagFilter: Flag | null): { section: WlSection; rows: WlItem[] }[] {
+export function viewRows(l: WlList, sort: SortState, quotes: Record<string, Quote | undefined>, flagFilter: Flag | null, view: WatchlistView = {}): { section: WlSection; rows: WlItem[] }[] {
+  const query = (view.query || '').trim().toLocaleLowerCase();
   return l.sections.map((s) => {
-    const items = flagFilter ? s.items.filter((it) => it.flag === flagFilter) : s.items;
-    return { section: s, rows: s.collapsed ? [] : sortItems(items, sort, quotes) };
+    const items = s.items.filter((it) => (!flagFilter || it.flag === flagFilter)
+      && (!view.market || view.market === 'ALL' || it.m === view.market)
+      && (!query || `${it.t} ${it.x || ''} ${quotes[itemKey(it)]?.name || ''}`.toLocaleLowerCase().includes(query)));
+    // Search includes collapsed sections, without changing their stored state.
+    return { section: s, rows: s.collapsed && !query ? [] : sortItems(items, sort, quotes) };
   });
 }
-export function flatRows(l: WlList, sort: SortState, quotes: Record<string, Quote | undefined>, flagFilter: Flag | null): ViewRow[] {
-  return viewRows(l, sort, quotes, flagFilter).flatMap((g) => g.rows.map((item) => ({ sectionId: g.section.id, item })));
+export function flatRows(l: WlList, sort: SortState, quotes: Record<string, Quote | undefined>, flagFilter: Flag | null, view: WatchlistView = {}): ViewRow[] {
+  return viewRows(l, sort, quotes, flagFilter, view).flatMap((g) => g.rows.map((item) => ({ sectionId: g.section.id, item })));
 }
 /** ↑/↓: the row after (or before) the current ticker; first / last row when the current one is not in view. */
 export function stepRow(rows: ViewRow[], currentKey: string, dir: 1 | -1): ViewRow | null {
@@ -267,7 +272,7 @@ export function parseTradingView(text: string, defaultMarket: Market = 'US'): Pa
       sym = sym.replace(/_/g, '.');
     }
     if (!validItem(m, sym)) { skip(tok); continue; }
-    const k = `${m}:${sym}`;
+    const k = itemKey({ m, t: sym, x: ex });
     if (seen.has(k)) continue;
     seen.add(k);
     if (!cur) { cur = { name: '', items: [] }; sections.push(cur); }

@@ -34,11 +34,22 @@ export function loadDrawingStore(): DrawingStoreV2 {
   return s;
 }
 export function loadDrawings(key: string): SavedDrawing[] { return drawingsFor(loadDrawingStore(), key); }
+/** zzz954: a BSE-listed row now has its own key (IN:BSE:X). Until something is saved under that key, show the drawings saved
+ *  earlier under the plain India key (IN:X), so nothing drawn before the change disappears. */
+export function loadDrawingsWithLegacy(key: string): SavedDrawing[] {
+  const store = loadDrawingStore();
+  const m = /^IN:BSE:(.+)$/.exec(key);
+  if (m && !store.items[key]) return drawingsFor(store, `IN:${m[1]}`);
+  return drawingsFor(store, key);
+}
 
 /** Save one ticker's drawings. Returns the time saved, or null when nothing changed / storage refused. */
 export function saveDrawings(key: string, list: SavedDrawing[], now = Date.now()): number | null {
   const cur = loadDrawingStore();
-  const next = setDrawings(cur, key, list, now);
+  let next = setDrawings(cur, key, list, now);
+  // zzz954: clearing a BSE row that was showing its older plain-India drawings must stick (store an empty entry)
+  const m = /^IN:BSE:(.+)$/.exec(key);
+  if (next === cur && m && !cur.items[key] && !list.length && drawingsFor(cur, `IN:${m[1]}`).length) next = { v: 2, items: { ...cur.items, [key]: { at: now, d: [] } } };
   if (next === cur) return null;
   return writeJson(CHART_DRAWINGS_KEY, next) ? next.items[key].at : null;
 }

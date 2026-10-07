@@ -26,10 +26,13 @@ import { EIEliteTab } from './EIEliteTab';
 import { SummaryBar, WatchlistTable, EmptyState } from './components';
 import { setStoredTickers, getStoredTickers, fetchStockQuotes, fetchIndividualQuotes } from './helpers';
 import { type StockQuote, type SortField, type SortOrder } from './types';
+import { useWorkspaceLight, workspaceThemeClass } from '@/lib/workspace-theme';
+import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
 
 // ── Main Page ──────────────────────────────────────────────────────────────────
 
 export default function WatchlistsPage() {
+  const [wlLight, toggleWlLight] = useWorkspaceLight(true);   // zzz954: shared white / dark choice (white by default)
   const [tickers, setTickers] = useState<string[]>([]);
   const [quotes, setQuotes] = useState<StockQuote[]>([]);
   const [loading, setLoading] = useState(true);
@@ -643,7 +646,8 @@ export default function WatchlistsPage() {
   }, [sortedItems]);
 
   return (
-    <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
+    <div className={workspaceThemeClass(wlLight, true)} style={{ padding: '24px', background: 'var(--mc-bg-0)', minHeight: '100%' }}>
+    <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
       {/* PATCH 0557 — backend-degraded banner. */}
       <DegradedBanner />
       {/* ── Header ────────────────────────────────────────────────────────── */}
@@ -655,6 +659,7 @@ export default function WatchlistsPage() {
           </>)}
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
+          <WorkspaceThemeToggle light={wlLight} onToggle={toggleWlLight} style={{ borderRadius: 10, padding: '10px 14px', fontWeight: 600 }} />
           <button
             onClick={() => fetchData()}
             disabled={isRefreshing}
@@ -759,7 +764,7 @@ export default function WatchlistsPage() {
             fontSize: 13, fontWeight: 700, cursor: 'pointer',
             display: 'inline-flex', alignItems: 'center', gap: 6,
           }}>
-          ���� Portfolio Earnings
+          💼 Portfolio Earnings
         </button>
       </div>
 
@@ -874,6 +879,7 @@ export default function WatchlistsPage() {
           50% { opacity: 1; }
         }
       `}</style>
+    </div>
     </div>
   );
 }

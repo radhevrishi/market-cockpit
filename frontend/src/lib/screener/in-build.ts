@@ -192,7 +192,7 @@ export function assembleInRow(t: string, name: string, latest: BhavDay, bhav: Bh
     revQYoY: f?.revQYoY ?? null, revAYoY: f?.revAYoY ?? null, gpQYoY: f?.gpQYoY ?? null, gmFY: f?.gmFY ?? null,
     ebitdaQoQ: f?.ebitdaQoQ ?? null, ebitdaAYoY: f?.ebitdaAYoY ?? null, epsQYoY: f?.epsQYoY ?? null, opmTTM: store?.raw ? f?.opmTTM ?? null : null,
     ps: mc != null && sales != null && sales > 0 ? r2(mc / sales) : null,
-    evRev: mc != null && sales != null && sales > 0 ? r2((mc + (f?.borrowings ?? 0) - (f?.cash ?? 0)) / sales) : null,
+    evRev: mc != null && sales != null && sales > 0 && f?.borrowings != null && f?.cash != null ? r2((mc + f.borrowings - f.cash) / sales) : null,
     de: store?.raw ? f?.de ?? null : null, cash: f?.cash ?? null, emp: p?.emp ?? null, flt: null, bb: null, fs: f?.fs ?? null, q: f?.q ?? null,
     ...(f?.approx?.length ? { approx: f.approx } : {}),
     tvSec: tvSectorOf('IN', f?.sector, f?.industry), exch: f ? (f.bse ? ['NSE', 'BSE'] : ['NSE']) : ['NSE'],

@@ -230,7 +230,7 @@ export async function fetchQuotes(symbols: string[]): Promise<any[]> {
 // returns 401 (crumb-gated). Returns price + chartPreviousClose + longName per symbol.
 // Use this as the price-fallback when the v7/quote batch comes back empty.
 // Shape: Map<base-symbol-without-.NS-suffix, { lastPrice, prevClose, pChange, companyName }>
-export async function fetchYahooSparkBatch(symbolsWithSuffix: string[]): Promise<Map<string, { lastPrice: number | null; prevClose: number | null; pChange: number | null; companyName: string | null; extPct?: number | null }>> {
+export async function fetchYahooSparkBatch(symbolsWithSuffix: string[], preserveExchange = false): Promise<Map<string, { lastPrice: number | null; prevClose: number | null; pChange: number | null; companyName: string | null; extPct?: number | null; marketTime?: number | null }>> {
   const out = new Map<string, { lastPrice: number | null; prevClose: number | null; pChange: number | null; companyName: string | null; extPct?: number | null }>();
   if (symbolsWithSuffix.length === 0) return out;
   const BATCH = 20;
@@ -264,7 +264,9 @@ export async function fetchYahooSparkBatch(symbolsWithSuffix: string[]): Promise
         if (!sym) continue;
         // Index by base (no .NS / .BO suffix) for easy multibagger lookup
         const baseSym = sym.replace(/\.(NS|BO)$/i, '');
-        out.set(baseSym, { lastPrice: price, prevClose, pChange, companyName, extPct: extendedHoursPct(meta, Date.now()) });
+        const quote = { lastPrice: price, prevClose, pChange, companyName, extPct: extendedHoursPct(meta, Date.now()), marketTime: typeof meta.regularMarketTime === 'number' ? meta.regularMarketTime * 1000 : null };
+        out.set(baseSym, quote);
+        if (preserveExchange) out.set(sym, quote);   // opt in: existing consumers retain their base-symbol map
       }
     }
     if (i + CONC < chunks.length) await new Promise(r => setTimeout(r, GAP_MS));

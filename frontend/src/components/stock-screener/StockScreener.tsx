@@ -11,6 +11,11 @@ import {
   type CmpOp, type Filter, type NumKey, type NumOp, type Screen, type FieldGroup,
 } from '@/lib/screener/filters';
 import { TV_SECTORS } from '@/lib/screener/tv-sectors';
+import { pollWhenVisible } from '@/lib/client-fetch';
+import { useWorkspaceLight, workspaceThemeClass } from '@/lib/workspace-theme';
+import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
+import { useWatchlistStore } from '@/components/charts/WatchlistPanel';
+import { activeList, updateList, addItem, listCount, type WlItem } from '@/lib/chart-watchlist';
 
 const C = {
   text: 'var(--mc-text-0)', text1: 'var(--mc-text-1)', dim: 'var(--mc-text-3, #6b7280)', border: 'var(--mc-border-1)',
@@ -22,8 +27,8 @@ const LAST_KEY = 'mc:stock-screener:last:v1';   // the screen open last time (th
 function readSaved(): Screen[] {
   try { return cleanScreens(JSON.parse(localStorage.getItem(SCREENS_KEY) || '[]')); } catch { return []; }
 }
-function writeSaved(list: Screen[]) {
-  try { localStorage.setItem(SCREENS_KEY, JSON.stringify(list)); } catch { /* storage full or blocked */ }
+function writeSaved(list: Screen[]): boolean {
+  try { localStorage.setItem(SCREENS_KEY, JSON.stringify(list)); return true; } catch { return false; }
 }
 const saved0 = (): Screen[] => (typeof window === 'undefined' ? [] : readSaved());
 const newId = () => `my-${Date.now().toString(36)}`;
@@ -35,10 +40,14 @@ function firstScreen(): Screen {
 }
 
 export default function StockScreener() {
+  const [light, toggleLight] = useWorkspaceLight();   // zzz954: shared white / dark choice
   const [first] = useState<Screen>(() => firstScreen());
   const [market, setMarket] = useState<ScreenMarket>(first.market);
   const [snaps, setSnaps] = useState<Partial<Record<ScreenMarket, Snap>>>({});
-  const [err, setErr] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Partial<Record<ScreenMarket, string | null>>>({});
+  const err = errors[market] || null;
+  const [refresh, setRefresh] = useState(0);
+  const [loading, setLoading] = useState(false);
   const [saved, setSaved] = useState<Screen[]>(() => readSaved());   // the page loads in the browser only (ssr:false)
   const [screenId, setScreenId] = useState<string>(first.id);
   const [filters, setFilters] = useState<Filter[]>(() => JSON.parse(JSON.stringify((saved0().find((x) => x.id === first.id) || first).filters)));
@@ -48,6 +57,9 @@ export default function StockScreener() {
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 }>({ key: 'mc', dir: -1 });
   const [showAll, setShowAll] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [watchlists, updateWatchlists, watchlistSaveError, retryWatchlistSave] = useWatchlistStore();
+  const [addingMatches, setAddingMatches] = useState(false);
+  const [targetList, setTargetList] = useState('');
 
   // every screen the owner can pick: his saved ones win over a built-in with the same id
   const screens = useMemo(() => {
@@ -66,22 +78,44 @@ export default function StockScreener() {
   const note = BUILT_IN_SCREENS.find((s) => s.id === screenId)?.note;
 
   useEffect(() => {
-    if (snaps[market]) return;
-    let stop = false;
-    fetch(`/api/v1/stock-screener?market=${market}`, { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((j) => { if (stop) return; if (!j?.ok) { setErr(j?.error || 'could not load'); return; } setErr(null); setSnaps((p) => ({ ...p, [market]: { builtAt: j.builtAt, rows: j.rows || [], notes: j.notes || [], sources: j.sources || [] } })); })
-      .catch(() => { if (!stop) setErr('could not load the screener data'); });
-    return () => { stop = true; };
-  }, [market, snaps]);
+    const reload = () => {
+      const next = readSaved();
+      setSaved(next);
+      if (dirty) { setMsg('Saved screens updated; your unsaved filters have been kept.'); return; }
+      const list = new Map(BUILT_IN_SCREENS.map((s) => [s.id, s]));
+      for (const s of next) list.set(s.id, s);
+      loadScreen(list.has(screenId) ? screenId : BUILT_IN_SCREENS[0].id, Array.from(list.values()));
+    };
+    const storage = (e: StorageEvent) => { if (e.key === SCREENS_KEY || e.key === null) reload(); };
+    const restored = (e: Event) => { const keys = (e as CustomEvent).detail?.keys; if (!Array.isArray(keys) || keys.includes(SCREENS_KEY)) reload(); };
+    window.addEventListener('storage', storage); window.addEventListener('mc:vault:restored', restored);
+    return () => { window.removeEventListener('storage', storage); window.removeEventListener('mc:vault:restored', restored); };
+  }, [dirty, screenId, loadScreen]);
+
+  useEffect(() => {
+    let stopped = false, empty = false;
+    let ctrl: AbortController | null = null;
+    const load = () => {
+      ctrl?.abort();
+      ctrl = new AbortController();
+      const signal = ctrl.signal;
+      setLoading(true);
+      fetch(`/api/v1/stock-screener?market=${market}`, { cache: 'no-store', signal })
+        .then(async (r) => { const j = await r.json(); if (!r.ok || !j?.ok || !Array.isArray(j.rows)) throw new Error(j?.error || 'Could not load the screener data'); return j; })
+        .then((j) => {
+          if (stopped || signal.aborted) return;
+          empty = !j.rows.length;
+          setErrors((p) => ({ ...p, [market]: null }));
+          setSnaps((p) => ({ ...p, [market]: { builtAt: j.builtAt, rows: j.rows, notes: j.notes || [], sources: j.sources || [] } }));
+        })
+        .catch((e) => { if (!stopped && !signal.aborted) setErrors((p) => ({ ...p, [market]: e?.message || 'Could not load the screener data' })); })
+        .finally(() => { if (!stopped && !signal.aborted) setLoading(false); });
+    };
+    const stop = pollWhenVisible(load, () => empty ? 90_000 : 300_000, { runImmediately: true });
+    return () => { stopped = true; stop(); ctrl?.abort(); };
+  }, [market, refresh]);
 
   const snap = snaps[market];
-  // the first build may still be running on the server: look again every 90 s until it has rows
-  useEffect(() => {
-    if (!snap || snap.rows.length) return;
-    const id = setTimeout(() => setSnaps((p) => { const n = { ...p }; delete n[market]; return n; }), 90_000);
-    return () => clearTimeout(id);
-  }, [snap, market]);
   const rows = useMemo(() => snap?.rows || [], [snap]);
   const result = useMemo(() => runScreen(rows, filters), [rows, filters]);
   const counts = useMemo(() => filterCounts(rows, filters), [rows, filters]);
@@ -115,6 +149,20 @@ export default function StockScreener() {
     return out;
   }, [result, sort]);
   const shown = showAll ? sorted : sorted.slice(0, 200);
+  const addMatches = () => {
+    if (!watchlists || !sorted.length) return;
+    if (targetList && !watchlists.lists.some((l) => l.id === targetList)) { setMsg('Could not add: the selected watchlist no longer exists. Choose a destination.'); return; }
+    const target = watchlists.lists.find((l) => l.id === targetList) || activeList(watchlists);
+    let next = target;
+    for (const r of sorted) {
+      const item: WlItem = { m: market, t: r.t, ...(r.exch?.[0] ? { x: r.exch[0] } : {}) };
+      next = addItem(next, null, item);
+    }
+    const added = listCount(next) - listCount(target);
+    updateWatchlists((s) => updateList(s, target.id, () => next));
+    setMsg(`${added} symbols added to ${target.name}${sorted.length > added ? `; ${sorted.length - added} already present or beyond the list limit` : ''}.`);
+    setAddingMatches(false);
+  };
 
   const change = (next: Filter[]) => { setFilters(next); setDirty(true); };
   const save = (asNew: boolean) => {
@@ -122,16 +170,18 @@ export default function StockScreener() {
     const nm = asNew ? (window.prompt('Name for this screen', `${name} (copy)`) || '').trim() : name;
     if (!nm) return;
     const s: Screen = { id, name: nm.slice(0, 80), market, filters };
-    const list = [...saved.filter((x) => x.id !== id), s];
-    writeSaved(list); setSaved(list); setScreenId(id); setName(s.name); setDirty(false);
+    const list = [...readSaved().filter((x) => x.id !== id), s];
+    if (!writeSaved(list)) { setDirty(true); setMsg('Not saved: storage is full or blocked. Your filters are still open; retry Save or download the results.'); return; }
+    setSaved(list); setScreenId(id); setName(s.name); setDirty(false);
     try { localStorage.setItem(LAST_KEY, id); } catch { /* blocked */ }
     setMsg(`Saved "${s.name}"`); setTimeout(() => setMsg(null), 2500);
   };
   const removeSaved = () => {
     const isBuiltIn = builtInIds.has(screenId);
     if (!window.confirm(isBuiltIn ? 'Put this screen back to how it is in TradingView?' : `Delete "${name}"?`)) return;
-    const list = saved.filter((x) => x.id !== screenId);
-    writeSaved(list); setSaved(list);
+    const list = readSaved().filter((x) => x.id !== screenId);
+    if (!writeSaved(list)) { setMsg('Could not save the deletion/reset: storage is full or blocked. Please retry.'); return; }
+    setSaved(list);
     loadScreen(isBuiltIn ? screenId : BUILT_IN_SCREENS[0].id, [...BUILT_IN_SCREENS, ...list]);
   };
   const copyTickers = () => {
@@ -164,9 +214,10 @@ export default function StockScreener() {
   const mine = screens.filter((s) => !builtInIds.has(s.id));
 
   return (
-    <div style={{ padding: '12px 16px', display: 'grid', gap: 10, color: C.text }}>
+    <div className={workspaceThemeClass(light, true)} style={{ padding: '12px 16px', display: 'grid', gap: 10, color: C.text, background: 'var(--mc-bg-0)', minHeight: '100%' }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <b style={{ fontSize: 18 }}>Stock Screener</b>
+        <WorkspaceThemeToggle light={light} onToggle={toggleLight} />
         <select value={screenId} onChange={(e) => loadScreen(e.target.value)} style={{ ...btn(), fontSize: 14, maxWidth: 380 }} aria-label="Screens">
           <optgroup label="🇺🇸 USA — your TradingView screens">{screens.filter((s) => builtInIds.has(s.id) && s.market === 'US').map(opt)}</optgroup>
           <optgroup label="🇮🇳 India — your TradingView screens">{screens.filter((s) => builtInIds.has(s.id) && s.market === 'IN').map(opt)}</optgroup>
@@ -178,7 +229,7 @@ export default function StockScreener() {
         <span style={{ marginLeft: 8, display: 'inline-flex', gap: 4 }}>
           {(['US', 'IN'] as const).map((m) => <button key={m} type="button" style={btn(market === m)} onClick={() => { setMarket(m); setDirty(true); }}>{m === 'US' ? '🇺🇸 USA' : '🇮🇳 India'}</button>)}
         </span>
-        {msg ? <span style={{ color: C.green, fontSize: 13, fontWeight: 700 }}>{msg}</span> : null}
+        {msg ? <span role="status" style={{ color: /^(Not saved|Could not)/.test(msg) ? C.red : C.text1, fontSize: 13, fontWeight: 700 }}>{msg}</span> : null}
       </div>
       {note && !dirty ? <div style={{ fontSize: 12.5, color: C.dim }}>ℹ {note}</div> : null}
 
@@ -228,11 +279,20 @@ export default function StockScreener() {
       <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', fontSize: 13 }}>
         <b style={{ fontSize: 15 }}>{snap ? `${result.length} of ${rows.length} companies match` : err ? '' : 'Loading…'}</b>
         {builtAt ? <span style={{ color: C.dim }}>data built {builtAt.toLocaleString()}{latestQ ? ` · most figures to ${latestQ}` : ''}{rows.length && withFigures < rows.length * 0.9 ? ` · company figures read for ${withFigures} of ${rows.length} so far (the rest are read in the next runs)` : ''} · the small number on each filter = companies passing that filter alone</span> : null}
-        {err ? <span style={{ color: C.red }}>{err}</span> : null}
+        {err ? <span role="alert" style={{ color: C.red }}>{err}{snap ? ' — showing the last loaded snapshot' : ''}</span> : null}
         <span style={{ flex: 1 }} />
+        <button type="button" style={btn()} disabled={loading} onClick={() => setRefresh((v) => v + 1)}>{loading ? 'Refreshing…' : err ? 'Retry' : 'Refresh'}</button>
         <button type="button" style={btn()} onClick={copyTickers} disabled={!sorted.length}>Copy tickers</button>
         <button type="button" style={btn()} onClick={downloadCsv} disabled={!sorted.length}>Download CSV</button>
+        <button type="button" style={btn()} onClick={() => setAddingMatches((v) => !v)} disabled={!sorted.length || !watchlists}>Add matches to watchlist</button>
       </div>
+      {addingMatches && watchlists && <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, padding: 10, border: `1px solid ${C.border}`, borderRadius: 8 }}>
+        <label>Destination <select aria-label="Watchlist for screener matches" value={targetList || activeList(watchlists).id} onChange={(e) => setTargetList(e.target.value)} style={btn()}>{watchlists.lists.map((l) => <option key={l.id} value={l.id}>{l.name} ({listCount(l)})</option>)}</select></label>
+        <span style={{ fontSize: 12, color: C.dim }}>{sorted.length} matching symbols; duplicates are skipped; each list holds up to 1,000.</span>
+        <button type="button" style={btn()} onClick={addMatches}>Add symbols</button>
+        <button type="button" style={btn()} onClick={() => setAddingMatches(false)}>Cancel</button>
+      </div>}
+      {watchlistSaveError && <div role="alert" style={{ color: C.amber }}>{watchlistSaveError} <button type="button" style={btn()} onClick={retryWatchlistSave}>Retry watchlist save</button></div>}
       {snap?.notes?.length ? (
         <details style={{ fontSize: 12, color: C.dim }}>
           <summary style={{ cursor: 'pointer' }}>Where the figures come from, and what could not be read</summary>

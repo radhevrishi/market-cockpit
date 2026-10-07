@@ -19,8 +19,10 @@ const US_ALIAS: Record<string, string> = {
 };
 
 /** Yahoo symbols to try, best first. */
-export function yahooCandidates(market: YMarket, ticker: string): string[] {
+export function yahooCandidates(market: YMarket, ticker: string, exchange?: string): string[] {
   const t = String(ticker || '').trim().toUpperCase();
+  if (market === 'IN' && exchange === 'BSE') return [`${t}.BO`];
+  if (market === 'IN' && exchange === 'NSE') { const a = IN_ALIAS[t]; return a ? [a] : [`${t}.NS`]; }
   if (market === 'IN') { const a = IN_ALIAS[t]; return a ? [a] : [`${t}.NS`, `${t}.BO`]; }
   const a = US_ALIAS[t];
   return a ? [a] : [t.replace(/[./]/g, '-')];

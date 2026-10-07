@@ -9,16 +9,22 @@ import {
   RANGE_KEYS, atr, barIndexAt, cleanTicker, dataRangeFor, drawingKey, fmtMoney, fmtPrice, macd, rangeStart, rsi, validTicker,
   type Bar, type DrawingName, type HeaderStats, type Market, type RangeKey, type SavedDrawing, type Timeframe,
 } from '@/lib/chart-math';
-import { CHART_DRAWINGS_KEY, loadDrawings, saveDrawings } from '@/lib/chart-storage';
+import { CHART_DRAWINGS_KEY, loadDrawings, loadDrawingsWithLegacy, saveDrawings } from '@/lib/chart-storage';
 import { EXTRA_INFO, legendRows, priceSeriesOf, seriesValues, toggleRow, type ChartLayout, type LegendRow } from '@/lib/chart-layouts';
 import WatchlistPanel, { AddToWatchlist, useWatchlistStore } from './WatchlistPanel';
 import { IndicatorLegend, IndicatorsPanel, LayoutPicker, useLayouts } from './LayoutControls';
+import { pollWhenVisible } from '@/lib/client-fetch';
+import { cacheChart, freshChart, type CachedChart } from '@/lib/chart-refresh';
+import WatchlistResizeHandle, { clampWatchlistWidth } from './WatchlistResizeHandle';
+import { useWorkspaceLight, workspaceThemeClass } from '@/lib/workspace-theme';
+import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
 
 type KC = typeof import('klinecharts');
 type Tool = 'cursor' | 'mcHLine' | 'segment' | 'rayLine' | 'mcRect' | 'parallelStraightLine' | 'fibonacciLine' | 'mcText' | 'mcMeasure';
 interface ChartResponse {
   ok: boolean; error?: string; ticker: string; market: Market; name: string | null; currency: string | null; exchange: string | null;
   stats: HeaderStats; bars: { t: number[]; o: number[]; h: number[]; l: number[]; c: number[]; v: number[] };
+  asOf?: string;
 }
 
 const DRAW_GROUP = 'mc-draw';
@@ -47,12 +53,15 @@ html.mc-chart-focus .mc-charts-root { height: 100vh; padding-top: 8px !important
 .mc-scale-btn.on { background: var(--mc-accent); border-color: var(--mc-accent); color: #fff; }
 .mc-charts-main { display: flex; flex: 1; min-height: 0; gap: 8px; }
 .mc-charts-left { display: flex; flex: 1; min-width: 0; min-height: 0; gap: 8px; }
-.mc-charts-panel { width: 400px; flex-shrink: 0; min-height: 0; }
+.mc-charts-panel { width: var(--mc-watchlist-width, 400px); max-width: 55%; flex-shrink: 0; min-height: 0; }
+.mc-watchlist-resize { width: 6px; flex-shrink: 0; cursor: col-resize; touch-action: none; border-radius: 4px; background: var(--mc-border-3); }
+.mc-watchlist-resize:hover, .mc-watchlist-resize:focus-visible { background: var(--mc-accent); outline: none; }
 @media (max-width: 900px) {
   .mc-charts-root { height: auto; }
   .mc-charts-main { flex-direction: column; }
   .mc-charts-left { height: 62vh; flex: none; }
-  .mc-charts-panel { width: 100%; height: 70vh; }
+  .mc-charts-panel { width: 100%; max-width: none; height: 70vh; }
+  .mc-watchlist-resize { display: none; }
 }
 `;
 const TF_TO_INTERVAL: Record<Timeframe, string> = { D: '1d', W: '1wk', M: '1mo' };
@@ -109,6 +118,7 @@ export default function ChartWorkspace() {
   const initialTf: Timeframe = (['D', 'W', 'M'] as const).find((x) => x === (sp.get('tf') || '').toUpperCase()) || 'W';
 
   const [market, setMarket] = useState<Market>(initialMarket);
+  const [exchange, setExchange] = useState<string | undefined>(() => sp.get('x') === 'BSE' || /^BSE:|\.BO$/i.test(sp.get('t') || '') ? 'BSE' : sp.get('x') === 'NSE' ? 'NSE' : undefined);
   const [ticker, setTicker] = useState(initialTicker);
   const [tf, setTf] = useState<Timeframe>(initialTf);
   const [range, setRange] = useState<RangeKey>(initialTf === 'D' ? '1Y' : initialTf === 'W' ? '5Y' : 'All');
@@ -129,12 +139,15 @@ export default function ChartWorkspace() {
   const [drawColor, setDrawColor] = useState('#2962FF');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const [wlStore, wlUpdate] = useWatchlistStore();
+  const [wlStore, wlUpdate, wlSaveError, retryWatchlistSave] = useWatchlistStore();
+  const [refresh, setRefresh] = useState(0);
   // this component only renders in the browser (next/dynamic, ssr:false), so storage can be read on first render
   const [panelOpen, setPanelOpen] = useState(() => { try { return localStorage.getItem(PANEL_OPEN_KEY) !== '0'; } catch { return true; } });
+  const [panelWidth, setPanelWidth] = useState(() => { try { const n = Number(localStorage.getItem('mc:watchlist-width')); return Number.isFinite(n) && n >= 280 ? Math.min(620, n) : 400; } catch { return 400; } });
+  const resizePanel = (n: number, persist: boolean) => { const width = clampWatchlistWidth(n); setPanelWidth(width); if (persist) try { localStorage.setItem('mc:watchlist-width', String(width)); } catch { /* display preference only */ } };
   // zzz943: white chart page (TradingView's white view) by default, whatever the site theme; one click to dark
-  const [chartLight, setChartLight] = useState(() => { try { return localStorage.getItem('mc:chart-light:v1') !== '0'; } catch { return true; } });
-  const toggleLight = () => setChartLight((v) => { try { localStorage.setItem('mc:chart-light:v1', v ? '0' : '1'); } catch { /* storage blocked */ } return !v; });
+  // zzz954: one white / dark choice shared with Watchlists and the Stock Screener (white when nothing is saved)
+  const [chartLight, toggleLight] = useWorkspaceLight();
   // zzz946 — focus mode (remembered in this browser only) and the browser's own full screen
   const [focus, setFocus] = useState(() => { try { return localStorage.getItem(FOCUS_KEY) === '1'; } catch { return false; } });
   const focusRef = useRef(focus);
@@ -163,7 +176,9 @@ export default function ChartWorkspace() {
   const barsRef = useRef<KLineData[]>([]);
   const keyRef = useRef<string>('');
   const suppressSaveRef = useRef(false);
-  const cacheRef = useRef(new Map<string, ChartResponse>());
+  const cacheRef = useRef(new Map<string, CachedChart<ChartResponse>>());
+  const loadedUrlRef = useRef('');
+  const barUpdatesRef = useRef<((data: KLineData) => void) | null>(null);
   const workingRef = useRef<ChartLayout>(L.working);
   useEffect(() => { workingRef.current = L.working; }, [L.working]);
   const toolRef = useRef<string>('cursor');
@@ -172,9 +187,9 @@ export default function ChartWorkspace() {
 
   // keep the URL linkable: /charts?t=QQQ&m=US&tf=W
   useEffect(() => {
-    const q = `?t=${encodeURIComponent(ticker)}&m=${market}&tf=${tf}`;
+    const q = `?t=${encodeURIComponent(ticker)}&m=${market}&tf=${tf}${market === 'IN' && exchange ? `&x=${exchange}` : ''}`;
     if (typeof window !== 'undefined' && window.location.search !== q) router.replace(`/charts${q}`, { scroll: false });
-  }, [ticker, market, tf, router]);
+  }, [ticker, market, tf, exchange, router]);
 
   // ── drawings ────────────────────────────────────────────────────────────────
   const persist = useCallback(() => {
@@ -189,7 +204,8 @@ export default function ChartWorkspace() {
         ...((o.styles as any)?.line?.color ? { color: String((o.styles as any).line.color) } : {}),
       }));
     const at = saveDrawings(keyRef.current, list);
-    if (at != null) setSavedAt(at);
+    if (at != null) { setSavedAt(at); setNote(null); }
+    else if (JSON.stringify(loadDrawings(keyRef.current)) !== JSON.stringify(list)) { setSavedAt(null); setSyncedAt(null); setNote('Drawing changes are not saved: storage is full or blocked. Keep this page open and retry.'); }
   }, []);
   const persistSoon = useCallback(() => { setTimeout(persist, 0); }, [persist]);
 
@@ -214,7 +230,7 @@ export default function ChartWorkspace() {
     chart.removeOverlay({ groupId: DRAW_GROUP });
     chart.removeOverlay({ groupId: MEASURE_GROUP });
     keyRef.current = key;
-    for (const d of loadDrawings(key)) {
+    for (const d of loadDrawingsWithLegacy(key)) {
       chart.createOverlay(overlaySpec(d.name, d.color || '#2962FF', {
         points: d.points.map((p) => ({ timestamp: p.t, value: p.p })),
         ...(d.text ? { extendData: d.text } : {}),
@@ -319,7 +335,11 @@ export default function ChartWorkspace() {
       });
       if (!chart) { setError('The chart could not start in this browser.'); return; }
       chartRef.current = chart;
-      chart.setDataLoader({ getBars: ({ type, callback }) => { callback(type === 'init' ? barsRef.current : [], false); } });
+      chart.setDataLoader({
+        getBars: ({ type, callback }) => { callback(type === 'init' ? barsRef.current : [], false); },
+        subscribeBar: ({ callback }) => { barUpdatesRef.current = callback; },
+        unsubscribeBar: () => { barUpdatesRef.current = null; },
+      });
       applyIndicators(workingRef.current);
       // the legend follows the crosshair like TradingView's (last bar when the mouse is off the chart)
       let raf = 0;
@@ -353,37 +373,60 @@ export default function ChartWorkspace() {
   // ── load data when ticker / timeframe / needed history changes ────────────
   useEffect(() => {
     if (!ready) return;
-    const ctrl = new AbortController();
-    const url = `/api/v1/chart/${encodeURIComponent(ticker)}?market=${market}&interval=${TF_TO_INTERVAL[tf]}&range=${dataRange}`;
+    let ctrl: AbortController | null = null;
+    let disposed = false;
+    const ttl = tf === 'D' ? 300_000 : 1_800_000;
+    const url = `/api/v1/chart/${encodeURIComponent(ticker)}?market=${market}&interval=${TF_TO_INTERVAL[tf]}&range=${dataRange}${market === 'IN' && exchange ? `&exchange=${exchange}` : ''}`;
     const show = (j: ChartResponse) => {
       const chart = chartRef.current;
       if (!chart) return;
       const b = j.bars;
+      const prior = barsRef.current;
+      const sameUrl = loadedUrlRef.current === url;
       barsRef.current = b.t.map((t, i) => ({ timestamp: t, open: b.o[i], high: b.h[i], low: b.l[i], close: b.c[i], volume: b.v[i] }));
       setBars(b.t.map((t, i) => ({ t, o: b.o[i], h: b.h[i], l: b.l[i], c: b.c[i], v: b.v[i] })));
       setHoverIdx(null);
       const last = b.c[b.c.length - 1] ?? 1;
-      chart.setPeriod(TF_TO_PERIOD[tf] as any);
-      chart.setSymbol({ ticker: `${ticker}`, pricePrecision: Math.abs(last) < 1 ? 4 : 2, volumePrecision: 0 });
+      if (!sameUrl) {
+        chart.setPeriod(TF_TO_PERIOD[tf] as any);
+        chart.setSymbol({ ticker: `${market}:${exchange || ''}:${ticker}`, pricePrecision: Math.abs(last) < 1 ? 4 : 2, volumePrecision: 0 });
+        // A range change keeps symbol/period identical: explicitly reload its expanded history.
+        chart.resetData();
+      } else {
+        const prefixUnchanged = prior.length > 0 && prior.length <= barsRef.current.length && prior.slice(0, -1).every((bar, i) => JSON.stringify(bar) === JSON.stringify(barsRef.current[i]));
+        if (prefixUnchanged && barUpdatesRef.current) {
+          for (const bar of barsRef.current.slice(prior.length - 1)) barUpdatesRef.current(bar);
+        } else if (JSON.stringify(prior) !== JSON.stringify(barsRef.current)) chart.resetData();
+      }
       setInfo(j);
       setError(null);
-      restoreDrawings(drawingKey(market, ticker));
-      setLoadedVersion((v) => v + 1);
+      const key = drawingKey(market, ticker, exchange);
+      if (keyRef.current !== key) { setSavedAt(null); setSyncedAt(null); restoreDrawings(key); }
+      if (!sameUrl) setLoadedVersion((v) => v + 1);
+      loadedUrlRef.current = url;
     };
-    const cached = cacheRef.current.get(url);
-    if (cached) { show(cached); return; }
-    setLoading(true);
-    fetch(url, { signal: ctrl.signal })
+    const load = (force = false) => {
+      ctrl?.abort();
+      ctrl = new AbortController();
+      const signal = ctrl.signal;
+      const cached = force ? null : freshChart(cacheRef.current, url, ttl);
+      if (cached) { show(cached); setLoading(false); return; }
+      setLoading(true);
+      fetch(url, { signal, cache: 'no-store' })
       .then(async (r) => {
         const j = (await r.json().catch(() => null)) as ChartResponse | null;
         if (!r.ok || !j?.ok) throw new Error(j?.error || `Could not load ${ticker} (HTTP ${r.status}).`);
-        cacheRef.current.set(url, j);
+        if (disposed || signal.aborted) return;
+        cacheChart(cacheRef.current, url, j);
         show(j);
       })
-      .catch((e) => { if (!ctrl.signal.aborted) setError(String(e?.message || e)); })
-      .finally(() => { if (!ctrl.signal.aborted) setLoading(false); });
-    return () => ctrl.abort();
-  }, [ready, ticker, market, tf, dataRange, restoreDrawings]);
+      .catch((e) => { if (!disposed && !signal.aborted) setError(`${String(e?.message || e)} — refresh failed; any displayed data is the last successful load.`); })
+      .finally(() => { if (!disposed && !signal.aborted) setLoading(false); });
+    };
+    load();
+    const stop = pollWhenVisible(() => { if (toolRef.current === 'cursor') load(true); }, ttl);
+    return () => { disposed = true; stop(); ctrl?.abort(); };
+  }, [ready, ticker, market, exchange, tf, dataRange, restoreDrawings, refresh]);
 
   // zoom to the chosen range after each load and whenever the range buttons change
   useEffect(() => {
@@ -442,7 +485,9 @@ export default function ChartWorkspace() {
     chart.removeOverlay({ groupId: DRAW_GROUP });
     chart.removeOverlay({ groupId: MEASURE_GROUP });
     suppressSaveRef.current = false;
-    saveDrawings(keyRef.current, []);
+    const at = saveDrawings(keyRef.current, []);
+    if (at != null) { setSavedAt(at); setNote(null); }
+    else if (loadDrawings(keyRef.current).length) { setSavedAt(null); setSyncedAt(null); setNote('Drawing deletion is not saved: storage is full or blocked. Keep this page open and retry.'); }
     setSelectedId(null);
   }, [ticker]);
 
@@ -503,7 +548,8 @@ export default function ChartWorkspace() {
   }, [cancelDrawing, deleteSelected, selectedId, resetChart]);
 
   // a watchlist row (or ↑/↓) loads that ticker; timeframe and range stay as they are
-  const pickFromList = useCallback((m: Market, t: string) => {
+  const pickFromList = useCallback((m: Market, t: string, x?: string) => {
+    setExchange(m === 'IN' && (x === 'NSE' || x === 'BSE') ? x : undefined);
     setQuery(t); setQueryMarket(m); setMarket(m); setTicker(t); setError(null);
   }, []);
 
@@ -530,6 +576,7 @@ export default function ChartWorkspace() {
     setQuery(t);
     setMarket(queryMarket);
     setTicker(t);
+    setExchange(queryMarket === 'IN' && (/^BSE:/i.test(query) || /\.BO$/i.test(query)) ? 'BSE' : queryMarket === 'IN' && (/^NSE:/i.test(query) || /\.NS$/i.test(query)) ? 'NSE' : undefined);
   };
 
   const stats = info?.stats;
@@ -567,7 +614,7 @@ export default function ChartWorkspace() {
   });
 
   return (
-    <div className={`mc-charts-root${chartLight ? ' mc-chart-light' : ''}`} style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 16px', color: 'var(--mc-text-1)' }}>
+    <div className={`mc-charts-root ${workspaceThemeClass(chartLight)}`} style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 16px', color: 'var(--mc-text-1)' }}>
       <style>{LAYOUT_CSS}</style>
       {/* search + timeframe + range */}
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
@@ -595,7 +642,7 @@ export default function ChartWorkspace() {
           <button type="button" style={btn(showIndicators)} onClick={() => setShowIndicators((v) => !v)}>Indicators ▾</button>
           {showIndicators && <IndicatorsPanel L={L} onClose={() => setShowIndicators(false)} />}
         </div>
-        <button type="button" style={btn(false)} onClick={toggleLight} title="Switch the chart page between white and dark">{chartLight ? '🌙 Dark' : '☀ White'}</button>
+        <WorkspaceThemeToggle light={chartLight} onToggle={toggleLight} style={btn(false)} />
         <button type="button" style={btn(panelOpen)} onClick={togglePanel} title="Show or hide the watchlist panel">Watchlist</button>
         <div style={{ position: 'relative', display: 'flex' }}>
           <button type="button" style={{ ...btn(focus), borderRadius: '6px 0 0 6px' }} onClick={() => setFocus((v) => !v)}
@@ -614,7 +661,7 @@ export default function ChartWorkspace() {
       {/* header numbers */}
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '4px 16px', fontSize: 13 }}>
         <span style={{ fontSize: 18, fontWeight: 700, color: 'var(--mc-text-0)' }}>{ticker}</span>
-        <AddToWatchlist store={wlStore} update={wlUpdate} market={market} ticker={ticker} />
+        <AddToWatchlist store={wlStore} update={wlUpdate} market={market} ticker={ticker} exchange={exchange} />
         <span style={{ color: 'var(--mc-text-3)' }}>{info?.name || ''}{info?.exchange ? ` · ${info.exchange}` : ''}</span>
         {stats?.last != null && (
           <span style={{ fontWeight: 700, color: 'var(--mc-text-0)', fontVariantNumeric: 'tabular-nums' }}>
@@ -630,6 +677,10 @@ export default function ChartWorkspace() {
         <Stat label="Float %" value={stats?.floatPct != null ? `${stats.floatPct.toFixed(1)}%` : '—'} title={market === 'US' ? 'Shares that trade freely, as a % of all shares (from the stock screener data)' : 'Not available for India yet (needs the promoter holding)'} />
         <Stat label={market === 'IN' ? 'Avg ₹ Vol' : 'Avg $ Vol'} value={fmtMoney(stats?.avgValue ?? null, market)} title="Average traded value (close × volume) over the last 20 days" />
         {loading && <span style={{ color: 'var(--mc-text-3)' }}>Loading…</span>}
+        <button type="button" disabled={loading} style={btn(false)} onClick={() => { cacheRef.current.clear(); setRefresh((v) => v + 1); }}>Refresh</button>
+        {info?.asOf && <span style={{ fontSize: 11, color: 'var(--mc-text-3)' }}>Loaded {new Date(info.asOf).toLocaleTimeString()}</span>}
+        {wlSaveError && <span role="alert" style={{ color: 'var(--mc-warn, #D97706)' }}>{wlSaveError} <button type="button" onClick={retryWatchlistSave}>Retry save</button></span>}
+        {note?.includes('not saved') && <button type="button" onClick={persist}>Retry drawing save</button>}
         {error && <span style={{ color: 'var(--mc-bearish, #DC2626)' }}>{error}</span>}
       </div>
 
@@ -675,11 +726,12 @@ export default function ChartWorkspace() {
           )}
         </div>
       </div>
-      {panelOpen && (
-        <div className="mc-charts-panel">
-          <WatchlistPanel store={wlStore} update={wlUpdate} currentKey={`${market}:${ticker}`} onPick={pickFromList} />
+      {panelOpen && (<>
+        <WatchlistResizeHandle width={panelWidth} onChange={resizePanel} />
+        <div className="mc-charts-panel" style={{ '--mc-watchlist-width': `${panelWidth}px` } as React.CSSProperties}>
+          <WatchlistPanel store={wlStore} update={wlUpdate} currentKey={drawingKey(market, ticker, exchange)} onPick={pickFromList} />
         </div>
-      )}
+      </>)}
       </div>
     </div>
   );

@@ -331,7 +331,7 @@ export function usFigures(fd: FrameData, cik: number, periods: { quarters: strin
   if (I) {
     const eq = valueAt(fd, EQ, cik, I);
     const d = debtAt(fd, cik, I);
-    out.debt = mil(d.v);
+    out.debt = d.tagged ? mil(d.v) : null;
     if (!d.tagged) approx.push('de');
     if (eq != null) out.de = eq > 0 ? r2(d.v / eq) : 99;
     const cash = cashAt(fd, cik, I);

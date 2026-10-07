@@ -38,6 +38,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ ticker: str
   const { ticker: raw } = await ctx.params;
   const sp = req.nextUrl.searchParams;
   const market: Market = String(sp.get('market') || 'US').toUpperCase() === 'IN' ? 'IN' : 'US';
+  const exchange = sp.get('exchange') === 'BSE' ? 'BSE' : sp.get('exchange') === 'NSE' ? 'NSE' : undefined;
   const ticker = cleanTicker(decodeURIComponent(raw || ''));
   if (!validTicker(market, ticker)) return NextResponse.json({ ok: false, error: 'That does not look like a ticker.' }, { status: 400 });
   const interval = String(sp.get('interval') || '1d');
@@ -48,12 +49,12 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ ticker: str
   const range = rangeRaw as DataRange;
 
   const ttl = tf === 'D' ? 5 * 60_000 : 30 * 60_000;
-  const ck = `${market}:${ticker}:${interval}:${range}`;
+  const ck = `${market}:${ticker}:${interval}:${range}:${exchange || 'auto'}`;
   const hit = _resp.get(ck);
   const headers = { 'Cache-Control': `private, max-age=${Math.round(ttl / 1000)}` };
   if (hit && Date.now() - hit.at < ttl) return NextResponse.json(hit.body, { headers });
 
-  const series = await getDailySeries(market, ticker, range);
+  const series = await getDailySeries(market, ticker, range, exchange);
   if (!series) return NextResponse.json({ ok: false, error: `No price history found for ${ticker} (${market === 'IN' ? 'NSE / BSE' : 'US'}).` }, { status: 404 });
   const bars = aggregateBars(series.bars, tf);
   const body = {
