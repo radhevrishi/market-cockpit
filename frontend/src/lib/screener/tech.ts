@@ -138,7 +138,7 @@ export function techFigures(b: DailyBars): TechFigures {
   out.perf1W = perfDays(7); out.perf1M = perfDays(30); out.perf3M = perfDays(90); out.perf6M = perfDays(180);
   out.perf1Y = perfDays(365); out.perf5Y = perfDays(1825);
   const ys = lastOnOrBefore(b.d, `${Number(today.slice(0, 4)) - 1}-12-31`) + 1;   // first session of this year
-  out.perfYTD = ys > 0 && ys < n ? pct(last, b.o[ys]) : null;
+  out.perfYTD = ys >= 0 && ys < n ? pct(last, b.o[ys]) : null;   // a listing this year: since its first available session
   out.perfAll = n > 1 ? pct(last, b.o[0]) : null;
   const avg = (k: number) => (n >= k ? Math.round(b.v.slice(n - k).reduce((a, x) => a + x, 0) / k) : null);
   out.avgVol10 = avg(10); out.avgVol30 = avg(30); out.avgVol60 = avg(60);

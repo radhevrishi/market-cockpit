@@ -23,7 +23,7 @@ test('TradingView import: new lines, unknown exchanges counted, BSE codes kept a
   const p = parseTradingView('﻿NSE:M_M\nNSE:BAJAJ_AUTO\r\nBSE:543193\nFX:EURUSD, BINANCE:BTCUSDT ,NSE:M_M\nAMEX:SPY\nNYSE:BRK.B\n\n');
   assert.deepEqual(p.sections.length, 1);
   assert.equal(p.sections[0].name, '');
-  assert.deepEqual(p.sections[0].items.map(itemKey), ['IN:M&M', 'IN:BAJAJ-AUTO', 'IN:543193', 'US:SPY', 'US:BRK.B']);
+  assert.deepEqual(p.sections[0].items.map(itemKey), ['IN:M&M', 'IN:BAJAJ-AUTO', 'IN:BSE:543193', 'US:SPY', 'US:BRK.B']);
   assert.equal(p.skipped, 2);
   assert.deepEqual(p.skippedExamples, ['FX:EURUSD', 'BINANCE:BTCUSDT']);
   assert.equal(p.bseCodes, 1);

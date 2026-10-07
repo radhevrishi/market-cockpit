@@ -354,7 +354,7 @@ export const DRAWING_NAMES = ['mcHLine', 'segment', 'rayLine', 'mcRect', 'mcText
 export type DrawingName = (typeof DRAWING_NAMES)[number];
 export interface SavedDrawing { name: DrawingName; points: { t: number; p: number }[]; text?: string; color?: string }
 export type DrawingStore = Record<string, SavedDrawing[]>;
-export const drawingKey = (market: Market, ticker: string) => `${market}:${ticker}`;
+export const drawingKey = (market: Market, ticker: string, exchange?: string) => market === 'IN' && exchange === 'BSE' ? `IN:BSE:${ticker}` : `${market}:${ticker}`;
 export function sanitizeDrawings(raw: unknown): SavedDrawing[] {
   if (!Array.isArray(raw)) return [];
   const out: SavedDrawing[] = [];

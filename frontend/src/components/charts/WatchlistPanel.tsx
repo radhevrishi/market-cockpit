@@ -11,6 +11,7 @@ import {
   type Flag, type Quote, type SortState, type WlItem, type WlList, type WlStore,
 } from '@/lib/chart-watchlist';
 import { pollWhenVisible } from '@/lib/client-fetch';
+import { refreshedQuotes } from '@/lib/chart-refresh';
 
 // ── storage hook ──────────────────────────────────────────────────────────────
 function readJson(key: string): unknown {
@@ -25,12 +26,16 @@ function loadOrSeed(): WlStore {
 
 /** The owner's chart watchlists: read once (seeded on the very first visit), saved on every change, reloaded when another
  *  tab or device changes them. */
-export function useWatchlistStore(): [WlStore | null, (fn: (s: WlStore) => WlStore) => void] {
+export function useWatchlistStore(): [WlStore | null, (fn: (s: WlStore) => WlStore) => void, string | null, () => void] {
   // rendered in the browser only (the /charts workspace is loaded with ssr:false), so storage is read on first render
   const [store, setStore] = useState<WlStore | null>(() => (typeof window === 'undefined' ? null : loadOrSeed()));
   const lastWritten = useRef<string>('');
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveAttempt, setSaveAttempt] = useState(0);
+  const unsavedRef = useRef(false);
   useEffect(() => {
     const reload = () => {
+      if (unsavedRef.current) return; // keep local unsaved edits until they are saved or the page is deliberately reopened
       let raw: string | null = null;
       try { raw = localStorage.getItem(CHART_WATCHLISTS_KEY); } catch { return; }
       if (!raw || raw === lastWritten.current) return;
@@ -46,11 +51,16 @@ export function useWatchlistStore(): [WlStore | null, (fn: (s: WlStore) => WlSto
     if (!store) return;
     const json = JSON.stringify(store);
     if (json === lastWritten.current) return;
-    lastWritten.current = json;
-    try { localStorage.setItem(CHART_WATCHLISTS_KEY, json); } catch { /* storage full or blocked */ }
-  }, [store]);
+    try {
+      localStorage.setItem(CHART_WATCHLISTS_KEY, json);
+      lastWritten.current = json; unsavedRef.current = false; setSaveError(null);
+    } catch {
+      unsavedRef.current = true;
+      setSaveError('Watchlist changes are not saved. Storage is full or blocked. Keep this page open and retry, or export the list.');
+    }
+  }, [store, saveAttempt]);
   const update = useCallback((fn: (s: WlStore) => WlStore) => setStore((s) => (s ? fn(s) : s)), []);
-  return [store, update];
+  return [store, update, saveError, () => setSaveAttempt((n) => n + 1)];
 }
 
 // ── quotes ────────────────────────────────────────────────────────────────────
@@ -73,7 +83,7 @@ function useQuotes(keys: string[]): Record<string, Quote> {
           if (signal.aborted) return;
           const next: Record<string, Quote> = {};
           for (const j of res) if (j?.quotes) Object.assign(next, j.quotes);
-          setQuotes((prev) => ({ ...prev, ...next }));
+          setQuotes((prev) => refreshedQuotes(prev, next, all));
         });
     };
     const stop = pollWhenVisible(load, 60_000, { runImmediately: true });
@@ -185,14 +195,14 @@ function ImportDialog({ store, update, onClose }: { store: WlStore; update: (fn:
 }
 
 // ── "Add to watchlist" (chart header) ─────────────────────────────────────────
-export function AddToWatchlist({ store, update, market, ticker }: { store: WlStore | null; update: (fn: (s: WlStore) => WlStore) => void; market: Market; ticker: string }) {
+export function AddToWatchlist({ store, update, market, ticker, exchange }: { store: WlStore | null; update: (fn: (s: WlStore) => WlStore) => void; market: Market; ticker: string; exchange?: string }) {
   const [open, setOpen] = useState(false);
   const [listId, setListId] = useState('');
   const [sectionId, setSectionId] = useState('');
   const [done, setDone] = useState<string | null>(null);
   if (!store) return null;
   const list = store.lists.find((l) => l.id === listId) || activeList(store);
-  const key = `${market}:${ticker}`;
+  const key = itemKey({ m: market, t: ticker, x: exchange });
   const inLists = store.lists.filter((l) => findItem(l, key)).map((l) => l.name);
   return (
     <span style={{ position: 'relative' }}>
@@ -216,7 +226,7 @@ export function AddToWatchlist({ store, update, market, ticker }: { store: WlSto
           {inLists.length > 0 && <div style={{ fontSize: 12, color: 'var(--mc-text-3)' }}>Already in: {inLists.join(', ')}</div>}
           <button type="button" style={{ ...smallBtn, background: 'var(--mc-accent)', color: '#fff', borderColor: 'var(--mc-accent)' }}
             disabled={!!findItem(list, key)}
-            onClick={() => { update((s) => updateList(s, list.id, (l) => addItem(l, sectionId || null, { m: market, t: ticker }))); setDone(`Added to ${list.name}`); setTimeout(() => setOpen(false), 700); }}>
+            onClick={() => { update((s) => updateList(s, list.id, (l) => addItem(l, sectionId || null, { m: market, t: ticker, ...(exchange ? { x: exchange } : {}) }))); setDone(`Added to ${list.name}`); setTimeout(() => setOpen(false), 700); }}>
             {findItem(list, key) ? 'Already in this list' : `Add ${ticker}`}
           </button>
           {done && <div style={{ fontSize: 12, color: 'var(--mc-bullish, #059669)' }}>{done}</div>}
@@ -228,7 +238,7 @@ export function AddToWatchlist({ store, update, market, ticker }: { store: WlSto
 
 // ── the panel ─────────────────────────────────────────────────────────────────
 export default function WatchlistPanel({ store, update, currentKey, onPick }: {
-  store: WlStore | null; update: (fn: (s: WlStore) => WlStore) => void; currentKey: string; onPick: (m: Market, t: string) => void;
+  store: WlStore | null; update: (fn: (s: WlStore) => WlStore) => void; currentKey: string; onPick: (m: Market, t: string, exchange?: string) => void;
 }) {
   const [sort, setSort] = useState<SortState>(null);
   const [flagFilter, setFlagFilter] = useState<Flag | null>(null);
@@ -261,7 +271,7 @@ export default function WatchlistPanel({ store, update, currentKey, onPick }: {
       const next = stepRow(rows, currentKey, e.key === 'ArrowDown' ? 1 : -1);
       if (!next) return;
       e.preventDefault();
-      onPick(next.item.m, next.item.t);
+      onPick(next.item.m, next.item.t, next.item.x);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -280,10 +290,11 @@ export default function WatchlistPanel({ store, update, currentKey, onPick }: {
     const t = cleanTicker(addText);
     const m: Market = /^(NASDAQ|NYSE|AMEX|NYSEARCA|BATS):/i.test(addText.trim()) ? 'US' : /^(NSE|BSE):/i.test(addText.trim()) ? 'IN' : addMarket;
     if (!validTicker(m, t)) { say(`"${addText}" does not look like a ${m === 'IN' ? 'NSE' : 'US'} ticker.`); return; }
-    if (findItem(list, `${m}:${t}`)) { say(`${t} is already in this list.`); return; }
-    setList((l) => addItem(l, addSec || null, { m, t }));
+    const x = m === 'IN' && (/^BSE:/i.test(addText.trim()) || /\.BO$/i.test(addText.trim())) ? 'BSE' : undefined;
+    if (findItem(list, itemKey({ m, t, x }))) { say(`${t} is already in this list.`); return; }
+    setList((l) => addItem(l, addSec || null, { m, t, ...(x ? { x } : {}) }));
     setAddText('');
-    onPick(m, t);
+    onPick(m, t, x);
   };
   const sortArrow = (k: 'symbol' | 'last' | 'chg') => (sort?.key === k ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : '');
   const canDrag = !sort && !flagFilter;
@@ -391,7 +402,7 @@ export default function WatchlistPanel({ store, update, currentKey, onPick }: {
               return (
                 <div key={k} data-key={k} className={`mcwl-row${active ? ' active' : ''}`} role="button" tabIndex={-1}
                   title={`${q?.name || it.t}${it.m === 'IN' && /^\d{6}$/.test(it.t) ? ' — BSE code: price and chart may not load' : ''}`}
-                  onClick={() => onPick(it.m, it.t)}
+                  onClick={() => onPick(it.m, it.t, it.x)}
                   draggable={canDrag}
                   onDragStart={() => { dragKey.current = k; }}
                   onDragOver={(e) => { if (canDrag) e.preventDefault(); }}
@@ -412,7 +423,7 @@ export default function WatchlistPanel({ store, update, currentKey, onPick }: {
                     <span title={chg == null ? 'No price yet' : chg >= 0 ? 'Up today' : 'Down today'} style={{ display: 'inline-block', width: 5, height: 5, borderRadius: 5, margin: '0 4px 2px 3px', verticalAlign: 'middle', background: chg == null ? 'var(--mc-border-2)' : chg >= 0 ? 'var(--mc-bullish, #059669)' : 'var(--mc-bearish, #DC2626)' }} />
                     <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--mc-text-4)' }}>{it.m === 'US' ? 'US' : it.x === 'BSE' ? 'BSE' : 'NSE'}</span>
                   </span>
-                  <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{q?.last != null ? fmtPrice(q.last, Math.abs(q.last) < 1 ? 4 : 2) : '—'}</span>
+                  <span title={q ? `${q.stale ? 'Refresh failed — last known value. ' : ''}${q.marketTime ? `Market quote: ${new Date(q.marketTime).toLocaleString()}. ` : ''}${q.at ? `Received: ${new Date(q.at).toLocaleString()}` : ''}` : 'No quote received'} style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{q?.last != null ? fmtPrice(q.last, Math.abs(q.last) < 1 ? 4 : 2) : '—'}{q?.stale && <span aria-label={`Stale quote for ${it.t}`} style={{ color: 'var(--mc-warn, #D97706)' }}> ⚠</span>}</span>
                   <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: chg == null ? 'var(--mc-text-3)' : chg >= 0 ? 'var(--mc-bullish, #059669)' : 'var(--mc-bearish, #DC2626)' }}>
                     {chg != null ? `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%` : '—'}
                   </span>
@@ -445,7 +456,7 @@ export default function WatchlistPanel({ store, update, currentKey, onPick }: {
         )}
       </div>
       <div style={{ padding: '5px 8px', fontSize: 11, color: 'var(--mc-text-3)', borderTop: '1px solid var(--mc-border-3)' }}>
-        {msg || '↑ / ↓ flips through the list · click a flag to change its colour · drag rows to reorder'}
+        {msg || (Object.values(quotes).some((q) => q.stale) ? '⚠ Refresh failed for some symbols — showing their last known quotes.' : '↑ / ↓ flips through the list · click a flag to change its colour · drag rows to reorder')}
       </div>
       {importing && <ImportDialog store={store} update={update} onClose={() => setImporting(false)} />}
     </div>

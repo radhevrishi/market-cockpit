@@ -11,6 +11,7 @@ import {
   type CmpOp, type Filter, type NumKey, type NumOp, type Screen, type FieldGroup,
 } from '@/lib/screener/filters';
 import { TV_SECTORS } from '@/lib/screener/tv-sectors';
+import { pollWhenVisible } from '@/lib/client-fetch';
 
 const C = {
   text: 'var(--mc-text-0)', text1: 'var(--mc-text-1)', dim: 'var(--mc-text-3, #6b7280)', border: 'var(--mc-border-1)',
@@ -22,8 +23,8 @@ const LAST_KEY = 'mc:stock-screener:last:v1';   // the screen open last time (th
 function readSaved(): Screen[] {
   try { return cleanScreens(JSON.parse(localStorage.getItem(SCREENS_KEY) || '[]')); } catch { return []; }
 }
-function writeSaved(list: Screen[]) {
-  try { localStorage.setItem(SCREENS_KEY, JSON.stringify(list)); } catch { /* storage full or blocked */ }
+function writeSaved(list: Screen[]): boolean {
+  try { localStorage.setItem(SCREENS_KEY, JSON.stringify(list)); return true; } catch { return false; }
 }
 const saved0 = (): Screen[] => (typeof window === 'undefined' ? [] : readSaved());
 const newId = () => `my-${Date.now().toString(36)}`;
@@ -38,7 +39,10 @@ export default function StockScreener() {
   const [first] = useState<Screen>(() => firstScreen());
   const [market, setMarket] = useState<ScreenMarket>(first.market);
   const [snaps, setSnaps] = useState<Partial<Record<ScreenMarket, Snap>>>({});
-  const [err, setErr] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Partial<Record<ScreenMarket, string | null>>>({});
+  const err = errors[market] || null;
+  const [refresh, setRefresh] = useState(0);
+  const [loading, setLoading] = useState(false);
   const [saved, setSaved] = useState<Screen[]>(() => readSaved());   // the page loads in the browser only (ssr:false)
   const [screenId, setScreenId] = useState<string>(first.id);
   const [filters, setFilters] = useState<Filter[]>(() => JSON.parse(JSON.stringify((saved0().find((x) => x.id === first.id) || first).filters)));
@@ -66,22 +70,44 @@ export default function StockScreener() {
   const note = BUILT_IN_SCREENS.find((s) => s.id === screenId)?.note;
 
   useEffect(() => {
-    if (snaps[market]) return;
-    let stop = false;
-    fetch(`/api/v1/stock-screener?market=${market}`, { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((j) => { if (stop) return; if (!j?.ok) { setErr(j?.error || 'could not load'); return; } setErr(null); setSnaps((p) => ({ ...p, [market]: { builtAt: j.builtAt, rows: j.rows || [], notes: j.notes || [], sources: j.sources || [] } })); })
-      .catch(() => { if (!stop) setErr('could not load the screener data'); });
-    return () => { stop = true; };
-  }, [market, snaps]);
+    const reload = () => {
+      const next = readSaved();
+      setSaved(next);
+      if (dirty) { setMsg('Saved screens updated; your unsaved filters have been kept.'); return; }
+      const list = new Map(BUILT_IN_SCREENS.map((s) => [s.id, s]));
+      for (const s of next) list.set(s.id, s);
+      loadScreen(list.has(screenId) ? screenId : BUILT_IN_SCREENS[0].id, Array.from(list.values()));
+    };
+    const storage = (e: StorageEvent) => { if (e.key === SCREENS_KEY || e.key === null) reload(); };
+    const restored = (e: Event) => { const keys = (e as CustomEvent).detail?.keys; if (!Array.isArray(keys) || keys.includes(SCREENS_KEY)) reload(); };
+    window.addEventListener('storage', storage); window.addEventListener('mc:vault:restored', restored);
+    return () => { window.removeEventListener('storage', storage); window.removeEventListener('mc:vault:restored', restored); };
+  }, [dirty, screenId, loadScreen]);
+
+  useEffect(() => {
+    let stopped = false, empty = false;
+    let ctrl: AbortController | null = null;
+    const load = () => {
+      ctrl?.abort();
+      ctrl = new AbortController();
+      const signal = ctrl.signal;
+      setLoading(true);
+      fetch(`/api/v1/stock-screener?market=${market}`, { cache: 'no-store', signal })
+        .then(async (r) => { const j = await r.json(); if (!r.ok || !j?.ok || !Array.isArray(j.rows)) throw new Error(j?.error || 'Could not load the screener data'); return j; })
+        .then((j) => {
+          if (stopped || signal.aborted) return;
+          empty = !j.rows.length;
+          setErrors((p) => ({ ...p, [market]: null }));
+          setSnaps((p) => ({ ...p, [market]: { builtAt: j.builtAt, rows: j.rows, notes: j.notes || [], sources: j.sources || [] } }));
+        })
+        .catch((e) => { if (!stopped && !signal.aborted) setErrors((p) => ({ ...p, [market]: e?.message || 'Could not load the screener data' })); })
+        .finally(() => { if (!stopped && !signal.aborted) setLoading(false); });
+    };
+    const stop = pollWhenVisible(load, () => empty ? 90_000 : 300_000, { runImmediately: true });
+    return () => { stopped = true; stop(); ctrl?.abort(); };
+  }, [market, refresh]);
 
   const snap = snaps[market];
-  // the first build may still be running on the server: look again every 90 s until it has rows
-  useEffect(() => {
-    if (!snap || snap.rows.length) return;
-    const id = setTimeout(() => setSnaps((p) => { const n = { ...p }; delete n[market]; return n; }), 90_000);
-    return () => clearTimeout(id);
-  }, [snap, market]);
   const rows = useMemo(() => snap?.rows || [], [snap]);
   const result = useMemo(() => runScreen(rows, filters), [rows, filters]);
   const counts = useMemo(() => filterCounts(rows, filters), [rows, filters]);
@@ -122,16 +148,18 @@ export default function StockScreener() {
     const nm = asNew ? (window.prompt('Name for this screen', `${name} (copy)`) || '').trim() : name;
     if (!nm) return;
     const s: Screen = { id, name: nm.slice(0, 80), market, filters };
-    const list = [...saved.filter((x) => x.id !== id), s];
-    writeSaved(list); setSaved(list); setScreenId(id); setName(s.name); setDirty(false);
+    const list = [...readSaved().filter((x) => x.id !== id), s];
+    if (!writeSaved(list)) { setDirty(true); setMsg('Not saved: storage is full or blocked. Your filters are still open; retry Save or download the results.'); return; }
+    setSaved(list); setScreenId(id); setName(s.name); setDirty(false);
     try { localStorage.setItem(LAST_KEY, id); } catch { /* blocked */ }
     setMsg(`Saved "${s.name}"`); setTimeout(() => setMsg(null), 2500);
   };
   const removeSaved = () => {
     const isBuiltIn = builtInIds.has(screenId);
     if (!window.confirm(isBuiltIn ? 'Put this screen back to how it is in TradingView?' : `Delete "${name}"?`)) return;
-    const list = saved.filter((x) => x.id !== screenId);
-    writeSaved(list); setSaved(list);
+    const list = readSaved().filter((x) => x.id !== screenId);
+    if (!writeSaved(list)) { setMsg('Could not save the deletion/reset: storage is full or blocked. Please retry.'); return; }
+    setSaved(list);
     loadScreen(isBuiltIn ? screenId : BUILT_IN_SCREENS[0].id, [...BUILT_IN_SCREENS, ...list]);
   };
   const copyTickers = () => {
@@ -228,8 +256,9 @@ export default function StockScreener() {
       <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', fontSize: 13 }}>
         <b style={{ fontSize: 15 }}>{snap ? `${result.length} of ${rows.length} companies match` : err ? '' : 'Loading…'}</b>
         {builtAt ? <span style={{ color: C.dim }}>data built {builtAt.toLocaleString()}{latestQ ? ` · most figures to ${latestQ}` : ''}{rows.length && withFigures < rows.length * 0.9 ? ` · company figures read for ${withFigures} of ${rows.length} so far (the rest are read in the next runs)` : ''} · the small number on each filter = companies passing that filter alone</span> : null}
-        {err ? <span style={{ color: C.red }}>{err}</span> : null}
+        {err ? <span role="alert" style={{ color: C.red }}>{err}{snap ? ' — showing the last loaded snapshot' : ''}</span> : null}
         <span style={{ flex: 1 }} />
+        <button type="button" style={btn()} disabled={loading} onClick={() => setRefresh((v) => v + 1)}>{loading ? 'Refreshing…' : err ? 'Retry' : 'Refresh'}</button>
         <button type="button" style={btn()} onClick={copyTickers} disabled={!sorted.length}>Copy tickers</button>
         <button type="button" style={btn()} onClick={downloadCsv} disabled={!sorted.length}>Download CSV</button>
       </div>

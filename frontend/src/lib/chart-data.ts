@@ -57,16 +57,16 @@ async function fetchYahooDaily(symbol: string, range: DataRange): Promise<DailyS
 }
 
 /** Yahoo symbols to try for a ticker: India .NS then .BO; US with "." written as "-" (BRK.B → BRK-B). */
-export function yahooSymbolsFor(market: Market, ticker: string): string[] {
-  return yahooCandidates(market, ticker);   // zzz943: index names (CNXSMALLCAP, NIFTY, SPX…) and renamed tickers (TATAMOTORS) mapped
+export function yahooSymbolsFor(market: Market, ticker: string, exchange?: string): string[] {
+  return yahooCandidates(market, ticker, exchange);   // zzz943: index names (CNXSMALLCAP, NIFTY, SPX…) and renamed tickers (TATAMOTORS) mapped
 }
 
-export async function getDailySeries(market: Market, ticker: string, range: DataRange): Promise<DailySeries | null> {
-  const key = `${market}:${ticker}:${range}`;
+export async function getDailySeries(market: Market, ticker: string, range: DataRange, exchange?: string): Promise<DailySeries | null> {
+  const key = `${market}:${ticker}:${range}:${exchange || 'auto'}`;
   const hit = _cache.get(key);
   if (hit && Date.now() - hit.at < (hit.data ? OK_TTL_MS : FAIL_TTL_MS)) return hit.data;
   let data: DailySeries | null = null;
-  for (const sym of yahooSymbolsFor(market, ticker)) {
+  for (const sym of yahooSymbolsFor(market, ticker, exchange)) {
     data = await fetchYahooDaily(sym, range);
     if (data) break;
   }
