@@ -54,7 +54,7 @@ const SHORT: Array<[RegExp, string]> = [
   [/market value not available/, 'market value not read'],
   [/yearly sales not available/, 'sales not read'],
   [/no growth rate guided and no sales history/, 'no growth figure to project'],
-  [/only (\d) valuation method/, 'only one usable valuation method — not shown'],
+  [/only (\d) valuation method/, 'not enough usable valuation methods — not shown'],
   [/more than \+\d+%/, 'model result too high — not shown'],
   [/below -\d+%/, 'market far above any sector multiple'],
   [/outside the plausible range/, 'projection implausible — not shown'],
