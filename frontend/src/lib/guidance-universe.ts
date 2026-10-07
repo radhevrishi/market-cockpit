@@ -33,7 +33,7 @@ import { NSE_TICKER_NAMES } from './nse-ticker-names';
 import { endOfPeriodLabel, qualityOf, revisionOf, type GgStoredEntry } from './growth-guidance';
 import type { ExtractedGuidance, GuidanceExtractResult, GuidanceMetricX } from './guidance-docs-types';
 import { actualKey, priorPeriodOf, universeUnitOf, baseFyFor, type PriorActual } from './guidance-extract-reader';
-import { cagrPct, isLowBoundOnly, isOpenHorizonLabel, multipleOf, nextYearsOf, perYearStated, scopeIssueOf, metricFromQuote, fcfIssueOf, LONG_TERM_LABEL } from './guidance-horizon';   // zzz916
+import { cagrPct, isLowBoundOnly, isOpenHorizonLabel, multipleOf, nextYearsOf, perYearStated, scopeIssueOf, metricFromQuote, fcfIssueOf, LONG_TERM_LABEL, totalToAnnual, lastCompletedFy, spacIssueOf } from './guidance-horizon';   // zzz916 · zzz931
 
 export const GU_VERSION = 'zzz849-gu-v2';
 const DAY = 86_400_000;
@@ -245,7 +245,8 @@ interface Item {
   /** zzz857 (COMPANY_DOC): the revision the company's own document states (NEW -> INITIAL, REITERATED -> MAINTAINED ...); wins over text heuristics */ extRevision?: GuUniverseRecord['revision'];
   /** zzz857: why there is no growth % (e.g. 'growth not established: no FY26 actual available') */ growthNote?: string | null;
   /** zzz916: the % is a yearly rate (CAGR) worked out from a target amount several years out and an earlier base (document / results / "doubling") */
-  cagrFromBase?: { years: number; targetPeriod: string; how: 'document' | 'results' | 'multiple'; baseText: string } | null;
+  /** zzz931: how 'total' = a total change over a span stated in words ("double in 3 years"), turned into the yearly rate; no amount or base */
+  cagrFromBase?: { years: number; targetPeriod: string; how: 'document' | 'results' | 'multiple' | 'total'; baseText: string; yearsMin?: number } | null;
   /** zzz916: the base of an implied growth is quoted from the same company document ("₹220 Cr from FY26 base of ₹106 Cr"): the company itself states the jump */
   baseStatedByCompany?: boolean;
   /** zzz857: later company documents that reiterated this guidance (listed as extra primary sources) */ confirmedBy?: Array<{ name: string; type: string; url: string | null; date: string | null }>;
@@ -497,20 +498,39 @@ export function itemsFromExtracted(results: GuidanceExtractResult[] | null | und
       } else growthNote = `growth not established: no ${pp || 'prior-year'} actual available`;
     } else if (!abs) continue;   // neither a % nor an amount the universe can place (unit not recognised)
     else growthNote = 'growth not established';
+    // zzz931: a single-year row whose sentence states a CAGR to a year two or more years out ("₹1,000 Cr+ by FY32, implying a 30–35% CAGR")
+    // is a multi-year yearly rate, not one year's growth (Hardwyn showed "+30–35% FY32" as a one-year figure)
+    if (sLo != null && (pkind === 'FY' || pkind === 'CY') && /\bcagr\b/i.test(gq)) {
+      const yT = /^FY(\d{2})$/.exec(period); const lc = lastCompletedFy(c.date);
+      if (yT && lc != null && parseInt(yT[1], 10) - lc >= 2) { pkind = 'MULTI_YEAR_CAGR'; period = `FY${String(lc).padStart(2, '0')}-${yT[1]}`; }
+    }
+    // zzz931: a TOTAL change over several years ("double in next 3 years", "doubling over the next four to five years", "grow 50% over 3
+    // years") was shown as that total a year (+100% a year). It becomes the yearly rate, labelled as worked out from the company's words.
+    if (sLo != null && pkind === 'MULTI_YEAR_CAGR') {
+      const t = totalToAnnual(gq, sLo, sHi ?? sLo, period);
+      if (t) {
+        gOrigin = 'IMPLIED'; low = t.low; high = t.high; open = false;
+        cagrFromBase = { years: t.years, yearsMin: t.yearsMin, targetPeriod: period, how: 'total', baseText: t.phrase };
+        notes.unshift(`worked out from the company's words: "${t.phrase}" is ${t.kind === 'multiple' ? `${t.factor}x` : `+${fnum(sLo)}${sHi != null && sHi !== sLo ? `–${fnum(sHi)}` : ''}%`} in total over ${t.yearsMin !== t.years ? `${t.yearsMin}–${t.years}` : t.years} years, about ${fnum(t.low)}${t.low !== t.high ? `–${fnum(t.high)}` : ''}% a year`);
+      }
+    }
     // zzz895: a STATED growth must be in the quoted sentence, be one year's growth, and be about the metric it is filed under
     if (sLo != null) {
       // the number test applies when the row IS the growth figure (a % row); a growth % attached to an amount row is checked for period and metric only
       // zzz916: "double" / "triple" stand for +100% / +200%
       const isPctRow = !!g && (g.unit === '%' || g.metric === 'REVENUE_GROWTH');
       const k = multipleOf(gq); const byMultiple = k != null && Math.abs(sLo - (k - 1) * 100) < 1e-6;
-      if (growthQuoteIssue(gq, sLo, sHi ?? sLo, c.metric, { annual: pkind !== 'MULTI_YEAR_CAGR', numberCheck: isPctRow && !byMultiple })) continue;
+      if (growthQuoteIssue(gq, sLo, sHi ?? sLo, c.metric, { annual: pkind !== 'MULTI_YEAR_CAGR', numberCheck: isPctRow && !byMultiple, rateCheck: isPctRow })) continue;
       // zzz916: "30-35% over the next 2 years" with no "a year / CAGR / annually" — yearly rate or total? kept, labelled, never ranked
-      if (horizonPeriod && !perYearStated(gq) && !byMultiple) needsReview = `The company gives ${fnum(sLo)}${sHi != null && sHi !== sLo ? `–${fnum(sHi)}` : ''}% ${isOpenHorizonLabel(c.period) ? `over the ${c.period.replace(/ \(no fixed year\)$/, '').toLowerCase()}` : `over the ${c.period.toLowerCase()}`} without saying whether that is a yearly rate or the total, so it is kept for review and not ranked.`;
+      if (horizonPeriod && !perYearStated(gq) && !byMultiple && cagrFromBase?.how !== 'total') needsReview = `The company gives ${fnum(sLo)}${sHi != null && sHi !== sLo ? `–${fnum(sHi)}` : ''}% ${isOpenHorizonLabel(c.period) ? `over the ${c.period.replace(/ \(no fixed year\)$/, '').toLowerCase()}` : `over the ${c.period.toLowerCase()}`} without saying whether that is a yearly rate or the total, so it is kept for review and not ranked.`;
     }
     // zzz916: a segment / subsidiary / brand / geography figure, or a foreign-currency figure from an Indian company, is not the company's own
     // guidance: kept for review with the reason, never shown or ranked as company revenue / profit. A figure for another measure (AUM, volume,
     // stores, bookings, advances) or a quarter-on-quarter rate filed as revenue / profit is not company guidance at all: dropped.
     const scope = scopeIssueOf(statementQuote, { metric: c.metric, market: r.market, currency: row.currency, metricLabel: row.metricLabel, company: r.company });
+    // zzz931: a blank-cheque company (SPAC) projects the TARGET it plans to merge with; that is not its own guidance (Hall Chadwick Acquisition Corp)
+    const spac = spacIssueOf(r.company, statementQuote);
+    if (spac) needsReview = `Not the company's own guidance: ${spac}.`;
     if (scope) {
       if (/^one part of the company|figure from an Indian company/.test(scope)) needsReview = `Not the company-wide figure: ${scope}.`;
       else continue;
@@ -773,7 +793,7 @@ const figureIn = (statement: string, n: number): boolean => new RegExp(`(?:^|[^0
 
 /** Like-for-like check for an implied growth %. reject = drop the % and show the amount only; review = keep it but flag it and never count it. */
 function impliedCheck(it: Item): { reject?: string; review?: string } {
-  if (it.cagrFromBase && it.abs && it.base) return {};   // zzz916: a yearly rate worked out over several years (checked where it was built)
+  if (it.cagrFromBase && ((it.abs && it.base) || it.cagrFromBase.how === 'total')) return {};   // zzz916 / zzz931: a yearly rate worked out over several years (checked where it was built)
   const tl = lenOfKind(it.pkind);
   if (tl == null) return { reject: `Implied growth dropped: the target period (${it.period}) is not a single year, half or quarter, so it cannot be set against a one-period base.` };
   if (!it.abs) return { reject: 'Implied growth dropped: there is no stated target amount to work it out from.' };
@@ -891,7 +911,7 @@ function pointOf(it: Item, history: Prior[], ps: GuPeriodInfo, x: PointCtx): GuP
     const chk = impliedCheck(it);
     if (chk.reject) { impliedRejected = chk.reject; low = null; high = null; open = false; growthType = 'UNKNOWN'; if (!/no stated target amount/.test(chk.reject)) notComparable = chk.reject.replace(/^Implied growth dropped:\s*/i, ''); }
     else if (chk.review) { flags.push(chk.review); growthBasis = 'inferred_no_sourced_base'; }
-    else if (it.cagrFromBase && it.abs && it.base) { growthType = 'DERIVED'; growthBasis = 'cagr_worked_out_from_company_numbers'; }
+    else if (it.cagrFromBase && ((it.abs && it.base) || it.cagrFromBase.how === 'total')) { growthType = 'DERIVED'; growthBasis = 'cagr_worked_out_from_company_numbers'; }
     else if (it.abs && it.base) {
       const d = deriveGrowth({ target: it.abs, base: it.base, storedLow: it.low, storedHigh: it.high });
       if (d.ok && d.consistent) { growthType = 'DERIVED'; growthBasis = d.basis; derivation = { previousValue: d.previousValue, currentLow: d.currentLow, currentHigh: d.currentHigh, unit: d.unit, basePeriod: d.basePeriod, growthLow: d.growthLow, growthMid: d.growthMid, growthHigh: d.growthHigh, basis: d.basis }; }
@@ -915,6 +935,7 @@ function pointOf(it: Item, history: Prior[], ps: GuPeriodInfo, x: PointCtx): GuP
   const tgtText = it.abs ? amountText(it.abs) : null;
   let basisLabel: string;
   if (growthType === 'EXPLICIT') basisLabel = 'stated by company';
+  else if (growthType === 'DERIVED' && it.cagrFromBase?.how === 'total') basisLabel = `a year, worked out from the company's total: "${it.cagrFromBase.baseText}" over ${it.cagrFromBase.yearsMin && it.cagrFromBase.yearsMin !== it.cagrFromBase.years ? `${it.cagrFromBase.yearsMin}–${it.cagrFromBase.years}` : it.cagrFromBase.years} years`;
   else if (growthType === 'DERIVED' && it.cagrFromBase) basisLabel = `a year, worked out from company numbers: ${tgtText} by ${it.cagrFromBase.targetPeriod} vs ${it.cagrFromBase.baseText}, over ${it.cagrFromBase.years} years`;
   else if (growthType === 'DERIVED' && derivation) {
     const bt = amountText({ value: derivation.previousValue, unit: derivation.unit });

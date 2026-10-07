@@ -551,4 +551,9 @@ export const SECTOR_CALCULATOR_MAP: Record<string, { calc: 'PS' | 'PE' | 'EV_EBI
                                     examples: ['UPL (UPL)', 'PIIND (PI Industries)', 'BAYERCROP (Bayer CropScience)', 'SUMICHEM (Sumitomo Chemical)', 'RALLIS (Rallis India)'] },
   'API / Bulk Drugs':             { calc: 'EV_EBITDA',  multipleHint: 'EV/EBITDA 14-22x · capacity-utilization-driven',
                                     examples: ['DIVISLAB (Divis Labs)', 'GRANULES (Granules India)', 'LAURUSLABS (Laurus Labs)', 'AARTIDRUGS (Aarti Drugs)', 'NEULAND (Neuland Labs)'] },
+  // zzz931: contractors (roads, EPC, civil works) were valued on the property-developer band (P/E 22-35x) — they trade on EV/EBITDA near 8-12x
+  'EPC / Civil Construction':     { calc: 'EV_EBITDA',  multipleHint: 'EV/EBITDA 8-12x · order-book execution, working-capital heavy',
+                                    examples: ['KNRCON (KNR Constructions)', 'PNCINFRA (PNC Infratech)', 'HGINFRA (H.G. Infra)', 'JKIL (J.Kumar Infra)', 'GPTINFRA (GPT Infraprojects)'] },
+  'Packaging':                    { calc: 'EV_EBITDA',  multipleHint: 'EV/EBITDA 7-11x · polymer-price and capacity cycle',
+                                    examples: ['UFLEX (UFlex)', 'JINDALPOLY (Jindal Poly Films)', 'EPL (EPL)', 'POLYPLEX (Polyplex)', 'TCPLPACK (TCPL Packaging)'] },
 };

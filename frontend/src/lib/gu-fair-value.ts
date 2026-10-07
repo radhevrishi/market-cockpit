@@ -28,6 +28,8 @@ export interface FvFacts {
   borrowings: number | null;
   salesGrowthFy: number | null; salesCagr3y: number | null;
   sector: string | null; industry: string | null;
+  /** zzz931: other income as % of profit before tax (India, screener.in) — profit that is mostly other income is not valued on a P/E */ otherIncomePctOfPbt?: number | null;
+  /** zzz931 (USA): the street's EPS estimate for the next fiscal year, $ a share — a second method (P/E) for a company with no current profit */ streetEpsNext?: number | null;
 }
 /** The guided growth of the row (company-stated preferred). */
 export interface FvGrowth {
@@ -96,12 +98,18 @@ const SECTOR_WORDS: Array<[RegExp, string]> = [
   [/refiner|oil marketing|petroleum products/i, 'Oil & Gas — Refining & Marketing'],
   [/oil|gas explor|exploration|crude|petroleum/i, 'Oil & Gas — Upstream'],
   [/railway|\brail\b/i, 'Rail / Metro / Mobility'],
-  [/real estate|realty|construction|engineering & construction|infrastructure/i, 'Real Estate / Construction'],
+  // zzz931: contractors are not property developers (DBL / GPT Infra / Markolines were on the developers' P/E 22-35x band)
+  [/civil construction|\bepc\b|engineering & construction|construction & engineering|\broads?\b|highway|infrastructure|heavy construction/i, 'EPC / Civil Construction'],
+  [/construction materials|building materials|building products/i, 'Industrials / Capital Goods'],
+  [/packaging|containers? & packaging|packaging films/i, 'Packaging'],
+  [/real estate|realty|residential|construction/i, 'Real Estate / Construction'],
   [/brew|distill|liquor|alcohol|spirits|wine/i, 'Breweries / Distilleries'],
   [/tobacco|cigarette/i, 'Tobacco / Cigarettes'],
   [/\btea\b|coffee|plantation/i, 'Plantations / Tea / Coffee'],
   [/media|broadcast|publishing|print|entertainment/i, 'Media / Print / Broadcasting'],
   [/education|edtech|training/i, 'Education / Edtech'],
+  // zzz931: Nasdaq files HPE under "Retail: Computer Software & Peripheral Equipment" — a computer maker, not a retailer (was on the retail P/E 50-90x band)
+  [/computer software|peripheral equipment|computer manufacturing|computer hardware/i, 'IT / Tech Services'],
   [/retail|e-?commerce|department store|internet retail/i, 'Retail & E-Commerce'],
   [/consumer durables|jewel|watches|fmcg|household|personal care|packaged food|food products|beverage|footwear|consumer staples/i, 'Consumer Durables / FMCG'],
   [/prepackaged software|software|it services|information technology|computer services|it consulting/i, 'IT / Tech Services'],
@@ -141,6 +149,39 @@ export function bandsFor(sectorKey: string | null, declining: boolean): Bands {
   return b;
 }
 
+// ── zzz931: the derived multiples must fit the company's own margins ─────────────────────────────────────────────────────────
+// A sector band is built from ONE native multiple (P/E for developers, EV/EBITDA for cement …); the engine derives the other two from it with
+// fixed ratios, which silently assume a margin: a P/S of 0.14 × the P/E assumes a 14% net margin, an EV/EBITDA of 0.7 × the P/E assumes
+// profit is 70% of EBITDA. On a 2–4% net-margin business (a packaging maker, a payments aggregator, an apparel retailer) those derived
+// multiples valued every rupee of sales as if it earned 14%, which is why a block of India rows came out at "more than +250%".
+// Each DERIVED band is now scaled DOWN (never up) to the company's own margin; the sector's native multiple is left as it is.
+export const MARGIN_SCALE_MIN = 0.15;
+export interface MarginFit { ps: number; ev: number; notes: string[] }
+/** Pure. `netMargin` / `conversion` (profit ÷ EBITDA) are the company's own (null = not known); the band gives what it assumes. */
+export function marginFit(sectorKey: string | null, bands: Bands, netMargin: number | null, conversion: number | null): MarginFit {
+  const native = sectorKey ? SECTOR_CALCULATOR_MAP[sectorKey]?.calc ?? null : null;   // null = generic band: all three are rule-of-thumb
+  const notes: string[] = [];
+  const clamp = (v: number) => Math.round(Math.max(MARGIN_SCALE_MIN, Math.min(1, v)) * 100) / 100;
+  const pct = (v: number) => `${Math.round(v * 1000) / 10}%`;
+  let ps = 1, ev = 1;
+  if (native !== 'PS' && bands.PE.base > 0) {
+    const assumed = bands.PS.base / bands.PE.base;   // net margin the P/S band assumes
+    if (netMargin != null && assumed > 0) {
+      ps = clamp(netMargin / assumed);
+      if (ps < 1) notes.push(`P/S multiple scaled ×${r2(ps)} to the company's own net margin (${netMargin > 0 ? pct(netMargin) : 'a loss'} vs ${pct(assumed)} the sector band assumes)`);
+    }
+  }
+  if (native !== 'EV_EBITDA' && bands.PE.base > 0) {
+    const assumed = bands.EV_EBITDA.base / bands.PE.base;   // profit ÷ EBITDA the EV/EBITDA band assumes
+    if (conversion != null && assumed > 0) {
+      ev = clamp(conversion / assumed);
+      if (ev < 1) notes.push(`EV/EBITDA multiple scaled ×${r2(ev)} to how much of the company's EBITDA reaches net profit (${pct(Math.max(0, conversion))} vs ${pct(assumed)} the band assumes)`);
+    }
+  }
+  return { ps, ev, notes };
+}
+const scaleBand = (b: Band, k: number): Band => (k === 1 ? b : { bear: r2(b.bear * k), base: r2(b.base * k), bull: r2(b.bull * k) });
+
 // ── growth ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 const REVENUE_METRICS = new Set(['REVENUE', 'REVENUE_GROWTH', 'ORGANIC_GROWTH']);
 const PROFIT_METRICS = new Set(['PAT', 'NET_PROFIT', 'EPS', 'ADJ_EPS', 'EBITDA', 'EBIT']);
@@ -167,15 +208,24 @@ export function fairValue(f: FvFacts | null | undefined, g: FvGrowth | null | un
   const money = (v: number) => (f.market === 'US' ? `$${Math.round(v).toLocaleString('en-US')}M` : `₹${Math.round(v).toLocaleString('en-IN')} Cr`);
   const sec = sectorOf(f.industry, f.sector, company);
   const text = `${f.industry || ''} ${f.sector || ''}`;
+  if (/blank checks?|blank cheques?|shell compan/i.test(text) || /\bacquisition (?:corp|corporation|company|co\b|ltd|limited)|\bspac\b/i.test(String(company || ''))) return none('a blank-cheque (SPAC) company has no business of its own to value', currency, price, { sectorLabel: sec.label });
   if (isFinancialText(text) || (sec.key && /Financial Services|Insurance/.test(sec.key))) return none('a bank, lender or insurer is valued on book value, which is not read here', currency, price, { sectorLabel: sec.label });
   if (price == null) return none('share price not available', currency, price, { sectorLabel: sec.label });
   if (!fin(f.mcap) || f.mcap <= 0) return none('market value not available', currency, price, { sectorLabel: sec.label });
   if (!fin(f.salesBase) || f.salesBase <= 0) return none('yearly sales not available', currency, price, { sectorLabel: sec.label });
   const sales = f.salesBase;
-  const pat = fin(f.patFy) ? f.patFy : null;
-  const ebitda = f.market === 'IN' && fin(f.opFy) ? f.opFy : null;
   const checks: string[] = [];
   const inputs: string[] = [];
+  const ebitda = f.market === 'IN' && fin(f.opFy) ? f.opFy : null;
+  // zzz931: profit that is largely other income (treasury gains, one-off sales) is not earning power: the other-income share of profit before
+  // tax is taken out before a P/E is applied (Dilip Buildcon FY26: 82% of profit before tax was other income), and above 60% no P/E is used
+  const reportedPat = fin(f.patFy) ? f.patFy : null;
+  const oi = fin(f.otherIncomePctOfPbt) ? Math.max(0, Math.min(100, f.otherIncomePctOfPbt)) : null;
+  let pat = reportedPat;
+  if (pat != null && pat > 0 && oi != null && oi >= 25) {
+    if (oi > 60) { inputs.push(`other income is ${r1(oi)}% of profit before tax — P/E not used`); pat = null; }
+    else { pat = r2(pat * (1 - oi / 100)); inputs.push(`other income is ${r1(oi)}% of profit before tax — P/E applied to the core profit ${money(pat)} (reported ${money(reportedPat as number)})`); }
+  }
 
   // ── growth: company-stated preferred; one year forward ──────────────────────────────────────────────────────────────────
   const sg0 = statedGrowth(g);
@@ -218,8 +268,20 @@ export function fairValue(f: FvFacts | null | undefined, g: FvGrowth | null | un
   const bands = bandsFor(sec.key, declining);
   const patOk = pat != null && pat > 0 && !(ebitda != null && pat > ebitda);   // profit above operating profit = other income / one-offs
   if (pat != null && pat > 0 && !patOk) inputs.push('net profit is above operating profit (other income) — P/E not used');
-  if (pat == null || pat <= 0) inputs.push(pat == null ? 'net profit not read — P/E not used' : 'loss-making — P/E not used');
+  if ((pat == null && reportedPat == null) || (pat != null && pat <= 0)) inputs.push(pat == null ? 'net profit not read — P/E on reported profit not used' : 'loss-making — P/E on reported profit not used');
   const ebitdaOk = ebitda != null && ebitda > 0 && fin(f.borrowings);
+  // zzz931 (USA): no current profit, but the street's next-year EPS is positive → P/E on that EPS (shares = market value ÷ price), not grown
+  // again (it is already next year's figure), lower confidence. A second method from figures already read, so a loss-maker is cross-checked.
+  const streetEarn = f.market === 'US' && !patOk && fin(f.streetEpsNext) && f.streetEpsNext > 0 && fin(f.mcap) && f.mcap > 0 ? r2(f.streetEpsNext * (f.mcap / price)) : null;
+  if (streetEarn != null) inputs.push(`no current profit — P/E applied to the analysts' next-year EPS $${f.streetEpsNext} (about ${money(streetEarn)} of profit), low confidence`);
+  // the derived multiples scaled to the company's own margins
+  // core profit for the margin test: the profit the P/E reads; else reported profit less its other-income share; a loss counts as no margin
+  const coreProfit = patOk ? (pat as number) : streetEarn != null ? streetEarn : reportedPat != null && reportedPat > 0 && oi != null ? reportedPat * (1 - oi / 100) : reportedPat != null && reportedPat <= 0 ? 0 : null;
+  const netMargin = coreProfit != null ? coreProfit / sales : null;
+  const conversion = ebitda != null && ebitda > 0 && coreProfit != null ? coreProfit / ebitda : null;
+  const fit = marginFit(sec.key, bands, netMargin, conversion);
+  bands.PS = scaleBand(bands.PS, fit.ps); bands.EV_EBITDA = scaleBand(bands.EV_EBITDA, fit.ev);
+  inputs.push(...fit.notes);
   if (f.market === 'US') inputs.push('USA: latest quarter × 4 used as the yearly base; EV/EBITDA not used (no depreciation figure read)');
   else if (!ebitdaOk) inputs.push(ebitda == null ? 'operating profit not read — EV/EBITDA not used' : ebitda <= 0 ? 'operating loss — EV/EBITDA not used' : 'borrowings not read — EV/EBITDA not used');
   const m1 = useCls === 'revenue';
@@ -228,13 +290,14 @@ export function fairValue(f: FvFacts | null | undefined, g: FvGrowth | null | un
     : { PS: 'LOW', PE: 'HIGH', EV_EBITDA: stated && /EBITDA|EBIT/.test(String(stated.growthMetric)) ? 'HIGH' : 'MED' };
   if (f.market === 'US') for (const k of ['PS', 'PE'] as const) conf[k] = conf[k] === 'HIGH' ? 'MED' : conf[k] === 'MED' ? 'LOW' : 'LOW';   // a one-quarter run-rate: one notch lower
   if (!sec.key) for (const k of ['PS', 'PE', 'EV_EBITDA'] as const) conf[k] = conf[k] === 'HIGH' ? 'MED' : conf[k] === 'MED' ? 'LOW' : 'LOW';   // generic band: one notch lower
+  if (streetEarn != null) conf.PE = 'LOW';   // the street's estimate, not the company's figure
 
   // equity value of each method in each case (same unit as the market value)
   const equity = (m: FvMethod, k: 'bear' | 'base' | 'bull'): number | null => {
     const gr = 1 + gs[k] / 100;
     const mult = bands[m][k];
     if (m === 'PS') return m1 ? sales * gr * mult : null;                                  // a profit-only growth gives no sales projection
-    if (m === 'PE') return patOk ? (pat as number) * gr * mult : null;
+    if (m === 'PE') return patOk ? (pat as number) * gr * mult : streetEarn != null ? streetEarn * mult : null;
     if (m === 'EV_EBITDA') { if (!ebitdaOk || f.market !== 'IN') return null; const v = (ebitda as number) * gr * mult - (f.borrowings as number); return v > 0 ? v : null; }
     return null;
   };

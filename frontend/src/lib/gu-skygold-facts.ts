@@ -39,6 +39,8 @@ export interface SkyFacts {
   quarters: PeriodSeries | null; years: PeriodSeries | null;
   /** zzz929 (USA, Yahoo estimate trend): the street's EPS growth for the NEXT fiscal year over the current one (+1y estimate ÷ 0y estimate − 1), and the calendar year that next fiscal year ends in */
   streetEpsGrowthPct: number | null; streetEpsEndYear: number | null;
+  /** zzz931 (USA, Yahoo estimate trend): the street's EPS estimate for the next fiscal year, $ a share (fair value: a P/E for a company with no current profit) */
+  streetEpsNext?: number | null;
 }
 /** zzz929: parallel arrays, oldest first; a figure the page does not print is null. */
 export interface PeriodSeries { labels: string[]; sales: (number | null)[]; op: (number | null)[]; pat: (number | null)[] }
@@ -49,7 +51,7 @@ export const emptyFacts = (market: 'IN' | 'US', ticker: string, source: string):
   shareCountChange2y: null, promoterNow: null, promoterYearAgo: null, debtorDaysNow: null, debtorDaysPrev: null, otherIncomePctOfPbt: null,
   salesBase: null, pe: null, mcap: null, backlogGrowth: null, estimateChange: null,
   price: null, priceDate: null, sector: null, industry: null, patFy: null, opFy: null, borrowings: null,
-  quarters: null, years: null, streetEpsGrowthPct: null, streetEpsEndYear: null,
+  quarters: null, years: null, streetEpsGrowthPct: null, streetEpsEndYear: null, streetEpsNext: null,
 });
 
 const fin = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -186,6 +188,7 @@ export function usFactsFromRow(ticker: string, r: any, trend?: Array<{ period: s
   const cur = (trend || []).find((x) => x?.period === '0y'), nxt = (trend || []).find((x) => x?.period === '+1y');
   const c0 = cur ? fin(cur.current) : null, c1 = nxt ? fin(nxt.current) : null;
   const yr = Number(String((nxt as any)?.end_date ?? '').slice(0, 4));
+  if (c1 != null && c1 > 0) f.streetEpsNext = c1;
   if (c0 != null && c1 != null && c0 >= 0.05) { f.streetEpsGrowthPct = r1(((c1 - c0) / c0) * 100); f.streetEpsEndYear = Number.isFinite(yr) && yr > 1990 ? yr : null; }
   return f;
 }

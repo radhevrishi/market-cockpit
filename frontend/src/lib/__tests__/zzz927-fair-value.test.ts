@@ -42,20 +42,21 @@ describe('Reported date sort', () => {
 });
 
 describe('fair value — worked example (generic sector band)', () => {
-  // sales 500, op profit 100, net profit 50, borrowings 100, market value 1000 at ₹100. Guided revenue growth 20% for one year.
-  // forward: sales 600, EBITDA 120, PAT 60.   Generic band (sector not known): P/E 18/25/35, P/S 2/3.5/6, EV/EBITDA 10/14/20.
-  // base equity: P/S 600×3.5 = 2100 · P/E 60×25 = 1500 · EV 120×14 − 100 = 1580.
+  // zzz931: margins set to exactly what the generic band assumes (net 14% = P/S 3.5 ÷ P/E 25; profit / EBITDA 0.56 = 14 ÷ 25), so no band is scaled.
+  // sales 500, op profit 125, net profit 70, borrowings 100, market value 1000 at ₹100. Guided revenue growth 20% for one year.
+  // forward: sales 600, EBITDA 150, PAT 84.   Generic band (sector not known): P/E 18/25/35, P/S 2/3.5/6, EV/EBITDA 10/14/20.
+  // base equity: P/S 600×3.5 = 2100 · P/E 84×25 = 2100 · EV 150×14 − 100 = 2000.
   // confidence (revenue guided; generic band one notch down): P/S MED 0.7, P/E LOW 0.3, EV LOW 0.3 → weights .45×.7, .35×.3, .2×.3.
   test('base / bear / bull and the upside', () => {
-    const r = fairValue(F(), G());
+    const r = fairValue(F({ patFy: 70, opFy: 125 }), G());
     assert.equal(r.ok, true);
     const w = { ps: 0.45 * 0.7, pe: 0.35 * 0.3, ev: 0.2 * 0.3 };
     const eq = (s: number, p: number, e: number) => (w.ps * s + w.pe * p + w.ev * e) / (w.ps + w.pe + w.ev);
-    const base = eq(600 * 3.5, 60 * 25, 120 * 14 - 100);
-    assert.equal(r.base!.fair, Math.round(100 * (base / 1000) * 100) / 100);
-    assert.equal(r.base!.upsidePct, Math.round((base / 1000 - 1) * 1000) / 10);
+    const base = eq(600 * 3.5, 84 * 25, 150 * 14 - 100);
+    assert.ok(Math.abs(r.base!.fair - 100 * (base / 1000)) <= 0.01);
+    assert.ok(Math.abs(r.base!.upsidePct - (base / 1000 - 1) * 100) <= 0.1);   // one decimal (108.75 sits on the rounding edge)
     // bear: growth 10% (half of 20), bear multiples; bull: growth 23%, bull multiples
-    const bear = eq(550 * 2, 55 * 18, 110 * 10 - 100), bull = eq(615 * 6, 61.5 * 35, 123 * 20 - 100);
+    const bear = eq(550 * 2, 77 * 18, 137.5 * 10 - 100), bull = eq(615 * 6, 86.1 * 35, 153.75 * 20 - 100);
     assert.equal(r.bear!.fair, Math.round(100 * (bear / 1000) * 100) / 100);
     assert.equal(r.bull!.fair, Math.round(100 * (bull / 1000) * 100) / 100);
     assert.deepEqual(r.growth, { bear: 10, base: 20, bull: 23 });
@@ -190,7 +191,8 @@ describe('fair value — guided growth guards (the auto-valuation plausibility g
     assert.ok(a.inputs.some((i) => /stated by the company/.test(i)));
   });
   test('methods that disagree by more than 2.5× are flagged "check"', () => {
-    const r = fairValue(F({ patFy: 5 }), G());   // tiny profit: P/E value far below the sales-multiple value
+    // zzz931: a tiny profit no longer makes P/S and P/E disagree (P/S is scaled to the margin); heavy borrowings still pull EV/EBITDA far below
+    const r = fairValue(F({ patFy: 70, opFy: 125, borrowings: 1500 }), G());
     assert.equal(r.ok, true);
     assert.ok(r.checks.some((c) => /methods disagree/.test(c)));
   });
@@ -199,8 +201,8 @@ describe('fair value — guided growth guards (the auto-valuation plausibility g
     assert.ok(r.checks.some((c) => /sales fell last year/.test(c)));
   });
   test('upside between +150% and +250% is shown with a "check"', () => {
-    // the worked example is +90% at a market value of 1000; at 640 it is about +197%
-    const r = fairValue(F({ mcap: 640 }), G());
+    // the worked example is about +107% at a market value of 1000; at 700 it is about +196%
+    const r = fairValue(F({ patFy: 70, opFy: 125, mcap: 700 }), G());
     assert.equal(r.ok, true);
     assert.ok(r.base!.upsidePct > 150 && r.base!.upsidePct <= 250, String(r.base!.upsidePct));
     assert.ok(r.checks.some((c) => /upside above \+150%/.test(c)));

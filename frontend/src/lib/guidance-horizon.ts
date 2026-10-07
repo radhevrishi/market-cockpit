@@ -41,7 +41,7 @@ export const MEDIUM_TERM_LABEL = 'Medium term (no fixed year)';
 export const isOpenHorizonLabel = (p: string | null | undefined): boolean => /^(long|medium) term \(no fixed year\)$/i.test(String(p || '').trim());
 export const nextYearsOf = (p: string | null | undefined): number | null => { const m = /^next (\d{1,2}) years?$/i.exec(String(p || '').trim()); return m ? Number(m[1]) : null; };
 
-export interface Horizon { label: string; years: number | null; kind: 'NEXT_N_YEARS' | 'LONG_TERM' | 'MEDIUM_TERM' }
+export interface Horizon { label: string; years: number | null; kind: 'NEXT_N_YEARS' | 'LONG_TERM' | 'MEDIUM_TERM'; /** zzz931: the lower bound of a stated span ('four to five years' → 4); = years when one figure */ yearsMin?: number | null }
 /**
  * A growth horizon stated WITHOUT fiscal years: "over the next 2 years", "next three to four years" (the upper bound), "40% CAGR over 3
  * years", "a 3-year CAGR", "in the long term", "over the medium term". Null when the text names none.
@@ -49,9 +49,9 @@ export interface Horizon { label: string; years: number | null; kind: 'NEXT_N_YE
 export function horizonOf(text: string): Horizon | null {
   const t = String(text || '').replace(/\s+/g, ' ');
   let m = new RegExp(`\\b(?:over|in|during|across|within|for)?\\s*(?:the\\s+)?(?:next|coming|following)\\s+${NUMW}(?:\\s*(?:to|-|–|or)\\s*${NUMW})?\\s+(?:financial\\s+|fiscal\\s+)?years?\\b`, 'i').exec(t);
-  if (m) { const n = num(m[2] || m[1]); if (n) return { label: `Next ${n} years`, years: n, kind: 'NEXT_N_YEARS' }; }
+  if (m) { const n = num(m[2] || m[1]); if (n) return { label: `Next ${n} years`, years: n, kind: 'NEXT_N_YEARS', ...(m[2] && num(m[1]) ? { yearsMin: Math.min(n, num(m[1])!) } : {}) }; }
   m = new RegExp(`\\b(?:over|in|across|within)\\s+(?:a\\s+(?:period\\s+of\\s+)?)?${NUMW}(?:\\s*(?:to|-|–|or)\\s*${NUMW})?\\s+years?\\b`, 'i').exec(t);
-  if (m) { const n = num(m[2] || m[1]); if (n) return { label: `Next ${n} years`, years: n, kind: 'NEXT_N_YEARS' }; }
+  if (m) { const n = num(m[2] || m[1]); if (n) return { label: `Next ${n} years`, years: n, kind: 'NEXT_N_YEARS', ...(m[2] && num(m[1]) ? { yearsMin: Math.min(n, num(m[1])!) } : {}) }; }
   m = new RegExp(`\\b${NUMW}[- ]years?\\s+(?:revenue\\s+|sales\\s+|profit\\s+|pat\\s+)?cagr\\b`, 'i').exec(t);
   if (m) { const n = num(m[1]); if (n) return { label: `Next ${n} years`, years: n, kind: 'NEXT_N_YEARS' }; }
   if (/\blong[- ]term\b|\blong[- ]run\b|\bover the long haul\b|\bsustainabl[ey]\b[^.]{0,40}\bannual(?:ly)?\b/i.test(t)) return { label: LONG_TERM_LABEL, years: null, kind: 'LONG_TERM' };
@@ -81,6 +81,41 @@ export function multipleOf(text: string): number | null {
   if (/\btripl(?:e|es|ed|ing)\b|\b3x\b|\bthree[- ]fold\b/i.test(t)) return 3;
   const m = /\b([2-5](?:\.\d)?)\s?x\b/i.exec(t); if (m) return Number(m[1]);
   return null;
+}
+
+/**
+ * zzz931 — a TOTAL change over several years, turned into the yearly rate. Novartis India "doubling over the next four to five years",
+ * Diffusion "double in next 3 years", Transpek "double our size … in next 5 years" were shown as "+100% a year" (the extractor files a
+ * multiple as +100%). A multiple ("double", "2x", "triple", "5x") or a plain "grow X% over N years" is the whole change over the span:
+ * yearly rate = multiple^(1/N) − 1 (a range when the span is a range: four to five years → 2^(1/5) … 2^(1/4)). Only a rate the text
+ * says is yearly ("CAGR", "a year", "every year", "year-on-year", "per annum", "doubling every year") stays as stated. Pure.
+ *   `low` / `high` are the stored growth figures (%), `period` the stored period ('Next 3 years', 'FY26-29').
+ */
+export interface TotalToAnnual { low: number; high: number; years: number; yearsMin: number; kind: 'multiple' | 'percent'; factor: number; phrase: string }
+const TOTAL_PCT = /\b(?:grow(?:s|ing|n)?|increas(?:e|es|ing)|rise|rising|expand(?:s|ing)?|scal(?:e|ing)|tak(?:e|ing))\s+(?:up\s+)?(?:(?:our|the|its)\s+)?(?:(?!at\b|by\b|around\b|about\b)[a-z]+\s+){0,2}(?:by\s+)?(?:about\s+|around\s+|roughly\s+|nearly\s+|close to\s+|~\s*)?\d+(?:\.\d+)?\s*(?:%|per ?cent)|\b(?:cumulative(?:ly)?|in total|in aggregate)\b/i;
+export function totalToAnnual(quote: string | null | undefined, low: number | null | undefined, high: number | null | undefined, period: string | null | undefined): TotalToAnnual | null {
+  const q = String(quote || '').replace(/\s+/g, ' ');
+  if (!q.trim() || low == null || !Number.isFinite(low) || low <= 0) return null;
+  const hi = high != null && Number.isFinite(high) && high >= low ? high : low;
+  // the span: from the words ("next four to five years") or the stored period ("FY26-29" = 3 years of growth)
+  const hz = horizonOf(q);
+  let yMax: number | null = hz?.years ?? null, yMin: number | null = hz?.yearsMin ?? yMax;
+  if (yMax == null) { const n = nextYearsOf(period); if (n) { yMax = n; yMin = n; } }
+  if (yMax == null) { const m = /^(?:FY|CY)(\d{2})-(\d{2})$/i.exec(String(period || '').trim()); if (m) { const n = parseInt(m[2], 10) - parseInt(m[1], 10); if (n >= 1) { yMax = n; yMin = n; } } }
+  if (yMax == null || yMax < 2 || yMax > 15) return null;
+  const ymin = Math.max(1, Math.min(yMax, yMin ?? yMax));
+  const k = multipleOf(q);
+  const rate = (f: number, n: number) => Math.round((Math.pow(f, 1 / n) - 1) * 1000) / 10;
+  if (k != null && k > 1 && Math.abs(low - (k - 1) * 100) < 1e-6) {
+    // "doubling every year", "2x year-on-year": the multiple IS the yearly rate
+    const at = q.search(/\bdoubl|\btripl|\b\d(?:\.\d)?\s?x\b|\btwo[- ]fold|\bthree[- ]fold|\btwice\b/i);
+    if (at >= 0 && perYearStated(q.slice(Math.max(0, at - 25), at + 60).replace(/\bannuali[sz]ed run[- ]rate\b/gi, ' '))) return null;
+    const phrase = (/(?:doubl\w*|tripl\w*|\d(?:\.\d)?\s?x|two[- ]fold|three[- ]fold|twice)\b[^.;,]{0,70}/i.exec(q)?.[0] || `${k}x`).trim();
+    return { low: rate(k, yMax), high: rate(k, ymin), years: yMax, yearsMin: ymin, kind: 'multiple', factor: k, phrase };
+  }
+  if (perYearStated(q) || !TOTAL_PCT.test(q) || hz?.kind !== 'NEXT_N_YEARS') return null;   // a % total needs a span in words ("over the next 3 years")
+  const phrase = (TOTAL_PCT.exec(q)?.[0] || `${low}%`).trim();
+  return { low: rate(1 + low / 100, yMax), high: rate(1 + hi / 100, ymin), years: yMax, yearsMin: ymin, kind: 'percent', factor: 1 + low / 100, phrase };
 }
 
 /** Compound annual growth % from a base to a target over `years` (one decimal). Null when not computable. */
@@ -134,6 +169,34 @@ export function labelPartOf(label: string | null | undefined): string | null {
   if (!before) return null;
   const words = before.split(/\s+/).filter((w) => /[a-z]/i.test(w) && !/^fy\s?'?\d{2,4}$/i.test(w) && !/^\d[\d,.]*$/.test(w) && !LABEL_QUALIFIER_OK.has(w.toLowerCase().replace(/[^a-z-]/g, '')));
   return words.length ? words.join(' ') : null;
+}
+/** zzz931: "our ESAI business", "our IoT segment", "the healthcare business", "the annuity recurring business", "Our Park business" — a named
+ *  part of the company; "our business", "the core business", "our overall business" are the whole company. */
+const NAMED_BUSINESS = /\b(?:our|the|its|this)\s+((?:[A-Za-z][\w&'-]*\s+){0,2}[A-Za-z][\w&'-]*)\s+(business|segment|division|vertical)\b/gi;
+/** "revenue from the derivatives and specialty segment", "sales from our export business" */
+const REVENUE_FROM_PART = /\b(?:revenues?|sales|turnover)\s+from\s+(?:the\s+|our\s+|its\s+)?((?:[A-Za-z][\w&'-]*\s+){0,4}?)(segment|business|division|vertical|portfolio|category)\b/i;
+/** "growth of 40%, 45% in our exports" — exports alone are one part */
+const IN_EXPORTS = /\b(?:in|of|from)\s+(?:our\s+|the\s+|its\s+)?exports?\b(?!\s+and\s+domestic)/i;
+const WHOLE_COMPANY_WORDS = new Set(['the', 'our', 'this', 'that', 'its', 'overall', 'entire', 'whole', 'core', 'main', 'existing', 'current', 'total', 'company', 'consolidated', 'standalone', 'combined', 'own', 'base', 'underlying', 'organic', 'domestic', 'india', 'indian', 'entire', 'group', 'broader', 'larger', 'global', 'business', 'new', 'company\'s', 'companys', 'and', 'of', 'amount', 'size', 'scale', 'visibility', 'outlook', 'pipeline', 'nature', 'way', 'rest', 'kind', 'type', 'same', 'level', 'quality', 'momentum', 'mix']);
+export function namedPartOf(quote: string, company?: string | null): string | null {
+  const q = String(quote || '');
+  const own = String(company || '').toLowerCase().replace(/[^a-z0-9& ]+/g, ' ');
+  const isPart = (phrase: string): boolean => {
+    const words = phrase.toLowerCase().split(/\s+/).map((w) => w.replace(/[^a-z0-9&'-]/g, '')).filter((w) => w.length >= 2);
+    const named = words.filter((w) => !WHOLE_COMPANY_WORDS.has(w) && !LABEL_QUALIFIER_OK.has(w) && !GENERIC_PART_WORDS.has(w));
+    return named.length > 0 && !named.every((w) => own.includes(w));
+  };
+  const rf = REVENUE_FROM_PART.exec(q); if (rf && rf[1].trim() && isPart(rf[1])) return `${rf[1].trim()} ${rf[2].toLowerCase()}`;
+  // a part that is only MENTIONED next to a company-wide figure is not the subject ("muted growth in the GPL business, we remain confident of
+  // revenue growth of 10-12%"): the sentence must not also name the company's own revenue / sales (other than "<part> revenue")
+  const companyWide = (cut: RegExp) => /\b(revenues?|sales|top[\s-]?line|turnover|consolidated|overall|company[- ]level)\b/i.test(q.replace(cut, ' '));
+  for (const m of q.matchAll(NAMED_BUSINESS)) {
+    if (!isPart(m[1])) continue;
+    const esc = m[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (!companyWide(new RegExp(`${esc}(?:\\s+[A-Za-z-]+){0,3}`, 'gi'))) return `${m[1].trim()} ${m[2].toLowerCase()}`;
+  }
+  if (IN_EXPORTS.test(q) && !companyWide(/\bexports?\s+(?:revenues?|sales|turnover)\b/gi)) return 'exports';
+  return null;
 }
 const QOQ = /\bquarter[- ]on[- ]quarter\b|\bq-?o-?q\b|\bsequential(?:ly)?\b|\bevery quarter\b|\bper quarter\b|\beach quarter\b/i;
 
@@ -191,6 +254,8 @@ export function scopeIssueOf(quote: string | null | undefined, opts: { metric: s
     if (fromPart && !NOT_A_PART_NAME.test(fromPart[1]) && !GENERIC_PART_WORDS.has(fromPart[1].toLowerCase()) && !ownWord(fromPart[1].toLowerCase())) return `one part of the company (${fromPart[1]}), not the whole company`;
     const lp = labelPartOf(label);
     if (lp && !lp.split(/\s+/).every((w) => ownWord(w.toLowerCase()))) return `one part of the company (${lp} revenue), not the whole company`;
+    const np = namedPartOf(q, opts.company);   // zzz931
+    if (np) return `one part of the company (${np}), not the whole company`;
   }
   if (opts.market === 'IN' && opts.currency && /^(USD|EUR|GBP|AED|SGD)$/i.test(opts.currency)) {
     return `a ${String(opts.currency).toUpperCase()} figure from an Indian company (a foreign subsidiary or segment), not the company's own ${profit ? 'profit' : 'revenue'}`;
@@ -220,6 +285,18 @@ export function fcfIssueOf(quote: string | null | undefined, label?: string | nu
   if (!t.trim()) return null;
   if (/\bfree[- ]cash|\bfcf\b|\bcash flows?\b|\bcash generation\b/i.test(t)) return null;
   return 'not free cash flow (the sentence is about capex, debt, working capital or another outflow)';
+}
+
+/**
+ * zzz931: a blank-cheque company (SPAC) has no business of its own: the revenue it "projects" is the target company's, from the merger deck
+ * (Hall Chadwick Acquisition Corp "~164% revenue CAGR 2027E–2029E"). Name: "… Acquisition Corp / Corporation / Company / Ltd / Inc",
+ * "SPAC", "blank check"; or the sentence speaks of a business combination / the target. Null = not a SPAC. Pure.
+ */
+export function spacIssueOf(company: string | null | undefined, quote?: string | null): string | null {
+  const n = String(company || '');
+  if (/\bacquisition\s+(?:corp(?:oration)?|company|co\.?|ltd|limited|inc(?:orporated)?|holdings?)\b|\bspac\b|\bblank[- ]?che(?:ck|que)\b/i.test(n)) return 'a blank-cheque (SPAC) company — the figures describe the business it plans to merge with';
+  if (/\b(?:business combination|de-?spac|blank[- ]?che(?:ck|que)|special purpose acquisition)\b/i.test(String(quote || ''))) return 'the figures belong to a planned business combination (SPAC merger), not to the company itself';
+  return null;
 }
 
 // ── intimation letters ──────────────────────────────────────────────────────
