@@ -36,8 +36,15 @@ const TOOLS: { id: Tool; label: string; icon: string; hint: string }[] = [
   { id: 'mcMeasure', label: 'Measure', icon: '⇲', hint: 'Measure: click A, then B' },
 ];
 const PANEL_OPEN_KEY = 'mc:chart-panel-open';   // per-browser convenience only
+const FOCUS_KEY = 'mc:chart-focus:v1';           // zzz946 — focus mode on/off, this browser only
 const LAYOUT_CSS = `
 .mc-charts-root { height: calc(100vh - 72px); min-height: 520px; }
+/* zzz946 — focus mode: the site's top bar and left menu are hidden so the chart + watchlist fill the window */
+html.mc-chart-focus .desktop-sidebar, html.mc-chart-focus header { display: none !important; }
+html.mc-chart-focus .mc-charts-root { height: 100vh; padding-top: 8px !important; }
+.mc-scale-btn { width: 22px; height: 20px; padding: 0; font-size: 11px; font-weight: 700; border-radius: 4px; cursor: pointer;
+  border: 1px solid var(--mc-border-1); background: var(--mc-bg-1); color: var(--mc-text-3); }
+.mc-scale-btn.on { background: var(--mc-accent); border-color: var(--mc-accent); color: #fff; }
 .mc-charts-main { display: flex; flex: 1; min-height: 0; gap: 8px; }
 .mc-charts-left { display: flex; flex: 1; min-width: 0; min-height: 0; gap: 8px; }
 .mc-charts-panel { width: 400px; flex-shrink: 0; min-height: 0; }
@@ -128,6 +135,26 @@ export default function ChartWorkspace() {
   // zzz943: white chart page (TradingView's white view) by default, whatever the site theme; one click to dark
   const [chartLight, setChartLight] = useState(() => { try { return localStorage.getItem('mc:chart-light:v1') !== '0'; } catch { return true; } });
   const toggleLight = () => setChartLight((v) => { try { localStorage.setItem('mc:chart-light:v1', v ? '0' : '1'); } catch { /* storage blocked */ } return !v; });
+  // zzz946 — focus mode (remembered in this browser only) and the browser's own full screen
+  const [focus, setFocus] = useState(() => { try { return localStorage.getItem(FOCUS_KEY) === '1'; } catch { return false; } });
+  const focusRef = useRef(focus);
+  useEffect(() => {
+    focusRef.current = focus;
+    try { localStorage.setItem(FOCUS_KEY, focus ? '1' : '0'); } catch { /* storage blocked */ }
+    const html = document.documentElement;
+    html.classList.toggle('mc-chart-focus', focus);
+    return () => { html.classList.remove('mc-chart-focus'); };
+  }, [focus]);
+  const [focusMenu, setFocusMenu] = useState(false);
+  const browserFullScreen = () => {
+    setFocusMenu(false);
+    try {
+      if (document.fullscreenElement) void document.exitFullscreen();
+      else { setFocus(true); void document.documentElement.requestFullscreen?.(); }
+    } catch { /* not allowed here */ }
+  };
+  const rangeRef = useRef(range);
+  useEffect(() => { rangeRef.current = range; }, [range]);
   const togglePanel = () => setPanelOpen((v) => { try { localStorage.setItem(PANEL_OPEN_KEY, v ? '0' : '1'); } catch { /* storage blocked */ } return !v; });
 
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -198,6 +225,16 @@ export default function ChartWorkspace() {
     setTimeout(() => { suppressSaveRef.current = false; }, 0);
   }, [overlaySpec]);
 
+  // ── price scale (zzz946): A = fit the candles on screen, L = log scale ─────────
+  const [manualScale, setManualScale] = useState(false);   // the price axis was dragged by hand (A shows off until reset)
+  const applyScale = useCallback((lay: ChartLayout) => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const name = lay.scale.auto ? (lay.scale.log ? 'mcFitLog' : 'mcFit') : (lay.scale.log ? 'mcLog' : 'normal');
+    chart.overrideYAxis({ paneId: 'candle_pane', name });   // re-creating the axis also drops any hand-dragged zoom
+    setManualScale(false);
+  }, []);
+
   // ── indicators (zzz944: from the working layout) ─────────────────────────────
   const applyIndicators = useCallback((lay: ChartLayout) => {
     const chart = chartRef.current;
@@ -230,7 +267,8 @@ export default function ChartWorkspace() {
       chart.createIndicator({ name, paneId, calcParams: x.params, styles: { lines: lines.map((l) => ({ smooth: false, dashedValue: [4, 4], ...l })) as any } });
       chart.setPaneOptions({ id: paneId, height: 110 });
     }
-  }, []);
+    applyScale(lay);
+  }, [applyScale]);
 
   // zzz943: re-colour the chart when the page switches between white and dark (the class is on the page, not on <html>)
   useEffect(() => {
@@ -408,16 +446,61 @@ export default function ChartWorkspace() {
     setSelectedId(null);
   }, [ticker]);
 
+  const autoOn = L.working.scale.auto && !manualScale;
+  const toggleAuto = useCallback(() => {
+    if (L.working.scale.auto && !manualScale) { L.setWorking((w) => ({ ...w, scale: { ...w.scale, auto: false } })); return; }
+    if (!L.working.scale.auto) L.setWorking((w) => ({ ...w, scale: { ...w.scale, auto: true } }));
+    else applyScale(L.working);   // already "auto" in the layout, only dragged by hand: refit now
+  }, [L, manualScale, applyScale]);
+  const toggleAutoRef = useRef(toggleAuto);
+  useEffect(() => { toggleAutoRef.current = toggleAuto; }, [toggleAuto]);
+
+  // dragging the price axis by hand turns "A" off (as in TradingView); double-clicking it turns auto-fit back on
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || !ready) return;
+    const onAxis = (e: MouseEvent) => {
+      const chart = chartRef.current;
+      const b = chart?.getSize('candle_pane', 'yAxis');
+      if (!b) return false;
+      const r = el.getBoundingClientRect();
+      const x = e.clientX - r.left, y = e.clientY - r.top;
+      return x >= b.left && x <= b.left + b.width && y >= b.top && y <= b.top + b.height;
+    };
+    let down: { x: number; y: number } | null = null;
+    const md = (e: MouseEvent) => { down = onAxis(e) ? { x: e.clientX, y: e.clientY } : null; };
+    const mm = (e: MouseEvent) => { if (down && Math.abs(e.clientY - down.y) > 3) { setManualScale(true); down = null; } };
+    const mu = () => { down = null; };
+    const dbl = (e: MouseEvent) => {
+      if (!onAxis(e)) return;
+      if (!workingRef.current.scale.auto) L.setWorking((w) => ({ ...w, scale: { ...w.scale, auto: true } }));
+      else applyScale(workingRef.current);
+    };
+    el.addEventListener('mousedown', md, true);
+    window.addEventListener('mousemove', mm, true);
+    window.addEventListener('mouseup', mu, true);
+    el.addEventListener('dblclick', dbl, true);
+    return () => { el.removeEventListener('mousedown', md, true); window.removeEventListener('mousemove', mm, true); window.removeEventListener('mouseup', mu, true); el.removeEventListener('dblclick', dbl, true); };
+  }, [ready, L, applyScale]);
+
+  // Reset chart (Alt+R, like TradingView): back to the chosen range, scrolled to the latest bar, price axis refitted
+  const resetChart = useCallback(() => {
+    applyRange(rangeRef.current);
+    applyScale(workingRef.current);
+  }, [applyRange, applyScale]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-      if (e.key === 'Escape') cancelDrawing();
+      if (e.altKey && (e.code === 'KeyR' || e.key === 'r' || e.key === 'R')) { e.preventDefault(); resetChart(); return; }
+      if (e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'F' || e.code === 'KeyF')) { e.preventDefault(); setFocus((v) => !v); return; }
+      if (e.key === 'Escape') { if (toolRef.current !== 'cursor') cancelDrawing(); else if (focusRef.current) setFocus(false); }
       else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) { e.preventDefault(); deleteSelected(); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [cancelDrawing, deleteSelected, selectedId]);
+  }, [cancelDrawing, deleteSelected, selectedId, resetChart]);
 
   // a watchlist row (or ↑/↓) loads that ticker; timeframe and range stay as they are
   const pickFromList = useCallback((m: Market, t: string) => {
@@ -514,6 +597,18 @@ export default function ChartWorkspace() {
         </div>
         <button type="button" style={btn(false)} onClick={toggleLight} title="Switch the chart page between white and dark">{chartLight ? '🌙 Dark' : '☀ White'}</button>
         <button type="button" style={btn(panelOpen)} onClick={togglePanel} title="Show or hide the watchlist panel">Watchlist</button>
+        <div style={{ position: 'relative', display: 'flex' }}>
+          <button type="button" style={{ ...btn(focus), borderRadius: '6px 0 0 6px' }} onClick={() => setFocus((v) => !v)}
+            title={focus ? 'Show the site menu and top bar again (Esc or Shift+F)' : 'Focus: hide the site menu and top bar (Shift+F)'}>{focus ? '⤡ Exit focus' : '⛶ Focus'}</button>
+          <button type="button" aria-label="Full screen options" style={{ ...btn(false), borderRadius: '0 6px 6px 0', borderLeft: 'none', padding: '4px 6px' }} onClick={() => setFocusMenu((v) => !v)}>▾</button>
+          {focusMenu && (
+            <div onMouseLeave={() => setFocusMenu(false)} style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 40, minWidth: 220, padding: 4, borderRadius: 8, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-1)', boxShadow: '0 8px 24px rgba(0,0,0,.15)' }}>
+              <button type="button" style={menuItemStyle} onClick={() => { setFocus((v) => !v); setFocusMenu(false); }}>{focus ? 'Leave focus mode' : 'Focus mode'} <span style={{ color: 'var(--mc-text-3)' }}>Shift+F</span></button>
+              <button type="button" style={menuItemStyle} onClick={browserFullScreen}>Browser full screen <span style={{ color: 'var(--mc-text-3)' }}>(Esc leaves)</span></button>
+              <button type="button" style={menuItemStyle} onClick={() => { resetChart(); setFocusMenu(false); }}>Reset chart <span style={{ color: 'var(--mc-text-3)' }}>Alt+R</span></button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* header numbers */}
@@ -554,9 +649,18 @@ export default function ChartWorkspace() {
             style={{ ...btn(false), width: 40, height: 34, padding: 0, fontSize: 15, opacity: selectedId ? 1 : 0.6 }}>⌫</button>
           <button type="button" title="Remove all drawings on this ticker" aria-label="Clear all" onClick={clearAll}
             style={{ ...btn(false), width: 40, height: 34, padding: 0, fontSize: 15 }}>🗑</button>
+          <button type="button" title="Reset chart: back to the chosen range, latest bar, price axis refitted (Alt+R)" aria-label="Reset chart" onClick={resetChart}
+            style={{ ...btn(false), width: 40, height: 34, padding: 0, fontSize: 16 }}>⟲</button>
         </div>
         <div style={{ position: 'relative', flex: 1, minWidth: 0, border: '1px solid var(--mc-border-1)', borderRadius: 8, background: 'var(--mc-bg-0)', overflow: 'hidden' }}>
           <div ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
+          <div style={{ position: 'absolute', right: 4, bottom: 4, zIndex: 6, display: 'flex', gap: 3 }}>
+            <button type="button" className={`mc-scale-btn${autoOn ? ' on' : ''}`} aria-label="Auto-fit price scale" aria-pressed={autoOn} onClick={toggleAuto}
+              title={autoOn ? 'Auto (on): the price axis fits the candles on screen. Click to turn off.' : 'Auto (off): click to fit the price axis to the candles on screen (or double-click the price axis)'}>A</button>
+            <button type="button" className={`mc-scale-btn${L.working.scale.log ? ' on' : ''}`} aria-label="Log price scale" aria-pressed={L.working.scale.log}
+              onClick={() => L.setWorking((w) => ({ ...w, scale: { ...w.scale, log: !w.scale.log } }))}
+              title={L.working.scale.log ? 'Log scale (on): equal % moves look equal. Click for a normal scale.' : 'Log scale: equal % moves look equal'}>L</button>
+          </div>
           <IndicatorLegend rows={rows} valueOf={valueOf} onToggle={(id) => L.setWorking((w) => toggleRow(w, id))} decimals={pxDecimals} colorOf={(c) => (!chartLight && (luminance(c) ?? 1) < 0.18 ? '#E5E7EB' : c)} />
           {(savedAt || syncedAt) && (
             <div title="Drawings are saved in this browser at once and copied to your account about once a minute, so they come back on your other devices"
@@ -580,6 +684,8 @@ export default function ChartWorkspace() {
     </div>
   );
 }
+
+const menuItemStyle: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', gap: 12, width: '100%', textAlign: 'left', padding: '6px 10px', border: 'none', background: 'none', color: 'var(--mc-text-1)', fontSize: 13, borderRadius: 4, cursor: 'pointer' };
 
 function Stat({ label, value, title }: { label: string; value: string; title: string }) {
   return (

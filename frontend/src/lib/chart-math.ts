@@ -118,6 +118,21 @@ export function headerStats(daily: Bar[]): HeaderStats {
 
 // ── indicators (pure; null until there is enough history) ───────────────────
 
+/** zzz946 — auto-fit (TradingView's "A"): the low and high of the candles on screen only (drawings and indicator lines that are
+ *  far away do not squash the candles). `from`/`to` are bar indexes (to exclusive). null when nothing is on screen. */
+export function fitPriceRange(lows: number[], highs: number[], from: number, to: number): { min: number; max: number } | null {
+  let min = Infinity, max = -Infinity;
+  const a = Math.max(0, Math.floor(from)), b = Math.min(lows.length, highs.length, Math.ceil(to));
+  for (let i = a; i < b; i++) {
+    const l = lows[i], h = highs[i];
+    if (Number.isFinite(l) && l < min) min = l;
+    if (Number.isFinite(h) && h > max) max = h;
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+  if (min === max) { const pad = Math.abs(min) * 0.01 || 1; return { min: min - pad, max: max + pad }; }
+  return { min, max };
+}
+
 /** RSI with Wilder's smoothing (the TradingView way). */
 export function rsi(closes: number[], period = 14): (number | null)[] {
   const out: (number | null)[] = new Array(closes.length).fill(null);

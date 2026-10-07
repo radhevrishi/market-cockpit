@@ -2,7 +2,7 @@
 // lib/chart-math so it is unit-tested), a horizontal line with its price label on the right edge, a rectangle, a text
 // note and the measure tool. Browser-only: this module is imported from inside a useEffect.
 import * as kc from 'klinecharts';
-import { atr, barsBetween, ema, fmtPrice, macd, measureLabel, rsi, type Bar } from '@/lib/chart-math';
+import { atr, barsBetween, ema, fitPriceRange, fmtPrice, macd, measureLabel, rsi, type Bar } from '@/lib/chart-math';
 import { seriesValues, type PriceSeries } from '@/lib/chart-layouts';
 
 const toBars = (list: kc.KLineData[]): Bar[] => list.map((d) => ({ t: d.timestamp, o: d.open, h: d.high, l: d.low, c: d.close, v: d.volume ?? 0 }));
@@ -106,6 +106,34 @@ export function registerChartExtras(): typeof kc {
     figures: [{ key: 'atr', title: 'ATR: ', type: 'line' }],
     calc: (dataList, indicator) => rows(dataList.length, { atr: atr(toBars(dataList), Number(indicator.calcParams[0]) || 14) }),
   });
+
+  // zzz946 — price axes that fit the candles on screen only (TradingView "A"), in normal and log scale. When the candles
+  // cannot be read the library's own range (candles + indicators) is used.
+  const fitRange = (chart: kc.Chart, fallback: kc.AxisRange): { min: number; max: number } => {
+    const list = chart.getDataList();
+    const vr = chart.getVisibleRange();
+    const r = fitPriceRange(list.map((d) => d.low), list.map((d) => d.high), vr.from, vr.to);
+    return r ?? { min: fallback.from, max: fallback.to };
+  };
+  kc.registerYAxis({
+    name: 'mcFit',
+    createRange: ({ chart, defaultRange }) => {
+      const { min, max } = fitRange(chart, defaultRange);
+      return { from: min, to: max, range: max - min, realFrom: min, realTo: max, realRange: max - min, displayFrom: min, displayTo: max, displayRange: max - min };
+    },
+  });
+  const lg = (v: number) => (v < 0 ? -Math.log10(Math.abs(v)) : Math.log10(v));
+  const ix = (v: number) => (v < 0 ? -(10 ** Math.abs(v)) : 10 ** v);
+  const logTemplate = {
+    minSpan: (precision: number) => 0.05 * 10 ** -precision,
+    valueToRealValue: (v: number) => lg(v),
+    realValueToDisplayValue: (v: number) => ix(v),
+    displayValueToRealValue: (v: number) => lg(v),
+    realValueToValue: (v: number) => ix(v),
+  };
+  const logRange = (min: number, max: number) => ({ from: min, to: max, range: max - min, realFrom: lg(min), realTo: lg(max), realRange: lg(max) - lg(min), displayFrom: min, displayTo: max, displayRange: max - min });
+  kc.registerYAxis({ name: 'mcFitLog', ...logTemplate, createRange: ({ chart, defaultRange }) => { const { min, max } = fitRange(chart, defaultRange); return logRange(min, max); } });
+  kc.registerYAxis({ name: 'mcLog', ...logTemplate, createRange: ({ defaultRange }) => logRange(defaultRange.from, defaultRange.to) });
 
   // Horizontal support / resistance line, price label always shown on the right edge.
   kc.registerOverlay({

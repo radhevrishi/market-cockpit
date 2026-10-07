@@ -11,7 +11,9 @@ export type LineKind = 'EMA' | 'SMA';
 export interface MaLine { id: string; kind: LineKind; period: number; color: string; on: boolean }
 export type ExtraType = 'BOLL' | 'RSI' | 'MACD' | 'ATR' | 'ST';
 export interface Extra { id: string; type: ExtraType; params: number[]; color: string; on: boolean }
-export interface ChartLayout { id: string; name: string; updatedAt: number; lines: MaLine[]; volume: { on: boolean; avg: number }; extras: Extra[] }
+export interface ChartLayout { id: string; name: string; updatedAt: number; lines: MaLine[]; volume: { on: boolean; avg: number }; extras: Extra[]; scale: LayoutScale }
+/** zzz946 — price scale: `auto` fits the visible candles (TradingView "A"); `log` = logarithmic (TradingView "L"). */
+export interface LayoutScale { auto: boolean; log: boolean }
 export interface LayoutStore { v: 1; layouts: ChartLayout[]; deleted: Record<string, number>; activeId: string }
 
 export const MAX_LAYOUTS = 40, MAX_LINES = 12, MAX_EXTRAS = 8;
@@ -74,6 +76,7 @@ export function cleanLayout(raw: any, fallbackName = 'Layout'): ChartLayout {
     updatedAt: Number.isFinite(Number(raw?.updatedAt)) ? Number(raw.updatedAt) : 0,
     lines,
     volume: { on: raw?.volume?.on !== false, avg: clampNum(raw?.volume?.avg, 1, 200, 20, true) },
+    scale: { auto: raw?.scale?.auto !== false, log: raw?.scale?.log === true },
     extras,
   };
 }
@@ -91,6 +94,7 @@ function manualSR(): Omit<ChartLayout, 'id' | 'updatedAt'> {
       { id: 'e21', kind: 'EMA', period: 21, color: '#F23645', on: true },
     ],
     volume: { on: true, avg: 20 },
+    scale: { auto: true, log: false },
     extras: [],
   };
 }
@@ -125,6 +129,7 @@ export function sameSettings(a: ChartLayout, b: ChartLayout): boolean {
   const pick = (l: ChartLayout) => JSON.stringify({
     lines: l.lines.map((x) => [x.kind, x.period, x.color.toLowerCase(), x.on]),
     volume: [l.volume.on, l.volume.avg],
+    scale: [l.scale.auto, l.scale.log],
     extras: l.extras.map((x) => [x.type, x.params, x.color.toLowerCase(), x.on]),
   });
   return pick(a) === pick(b);
