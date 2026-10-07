@@ -12,6 +12,7 @@
 
 import { Redis } from '@upstash/redis';
 import { MemoryKvStore } from './kv-memory';
+import { VERSIONED_SET_LUA, parseVersionedResult, type VersionedValue } from './kv-versioned';
 
 let redis: Redis | null = null;
 let redisAvailable: boolean | null = null;
@@ -94,6 +95,13 @@ export async function kvGet<T = any>(key: string): Promise<T | null> {
   return null;
 }
 
+/** Backup reads must distinguish absent data from unavailable storage. */
+export async function kvGetDurable<T = any>(key: string): Promise<T | null> {
+  const r = getRedis();
+  if (!r) throw new Error('Durable storage is unavailable');
+  return await r.get<T>(key);
+}
+
 /**
  * zzz814 — read MANY keys in ONE Upstash command (MGET). A 60-day India
  * earnings window is ~84 graded days; reading them one GET at a time would be
@@ -161,6 +169,18 @@ export async function kvMGet<T = any>(keys: string[]): Promise<Array<T | null>> 
 const KV_REMOTE_MAX_BYTES = 8 * 1024 * 1024;  // 8 MB safety cap (Upstash hard limit is 10 MB)
 
 /** Personal data must receive a durable acknowledgement before reporting success. */
+export async function kvSetVersioned<T extends VersionedValue>(key: string, value: T, baseVersion: number | null | undefined) {
+  const base = baseVersion ?? 0;
+  if (!Number.isSafeInteger(base) || base < 0 || base >= Number.MAX_SAFE_INTEGER) throw new Error('Invalid base version');
+  const serialized = JSON.stringify({ ...value, version: base + 1 });
+  if (Buffer.byteLength(serialized, 'utf8') > KV_REMOTE_MAX_BYTES) throw new Error('Durable KV value exceeds the storage limit');
+  const r = getRedis();
+  if (!r) throw new Error('Durable storage is unavailable; save was not confirmed');
+  const result = parseVersionedResult<T>(await r.eval(VERSIONED_SET_LUA, [key], [serialized, baseVersion ?? 0]));
+  if (result.ok && result.row) MEM_STORE.set(key, JSON.stringify(result.row));
+  return result;
+}
+
 export async function kvSetDurable(key: string, value: any, ttlSeconds?: number): Promise<void> {
   const serialized = typeof value === 'string' ? value : JSON.stringify(value);
   if (typeof serialized !== 'string' || Buffer.byteLength(serialized, 'utf8') > KV_REMOTE_MAX_BYTES) {

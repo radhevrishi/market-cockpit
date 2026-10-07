@@ -6,7 +6,7 @@
 //   GET  ?export=1        → everything (the nightly backup job)
 //   PUT  {key, value, baseVersion, device}
 import { NextRequest, NextResponse } from 'next/server';
-import { isUserStateKey, listUserState, getUserState, putUserState, userStateHistory, exportUserState } from '@/lib/user-state-store';
+import { isUserStateKey, listUserState, getUserState, putUserState, userStateHistory, exportUserState, UserStateConflict } from '@/lib/user-state-store';
 
 export const dynamic = 'force-dynamic';
 const noStore = { 'Cache-Control': 'no-store' };
@@ -32,10 +32,12 @@ export async function PUT(req: NextRequest) {
   try { body = await req.json(); } catch { return NextResponse.json({ ok: false, error: 'invalid json' }, { status: 400 }); }
   if (!isUserStateKey(body?.key)) return NextResponse.json({ ok: false, error: 'unknown key' }, { status: 400 });
   if (!('value' in (body || {}))) return NextResponse.json({ ok: false, error: 'value required' }, { status: 400 });
+  if (body.baseVersion != null && (!Number.isSafeInteger(body.baseVersion) || body.baseVersion < 0)) return NextResponse.json({ ok: false, error: 'invalid baseVersion' }, { status: 400 });
   try {
     const r = await putUserState(body.key, body.value, { baseVersion: body.baseVersion ?? null, device: body.device ?? null });
     return NextResponse.json(r, { headers: noStore });
   } catch (e: any) {
+    if (e instanceof UserStateConflict) return NextResponse.json({ ok: false, conflict: true, version: e.version, hash: e.hash, error: e.message }, { status: 409, headers: noStore });
     const msg = String(e?.message || e).slice(0, 200);
     return NextResponse.json({ ok: false, error: msg }, { status: /too large/.test(msg) ? 413 : 500 });
   }

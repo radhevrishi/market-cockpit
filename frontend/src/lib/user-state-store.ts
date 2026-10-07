@@ -7,7 +7,9 @@
 import { createHash } from 'node:crypto';
 import { getPool } from './db';
 import { ensureSchema } from './db-migrate';
-import { kvGet, kvSet, kvSetDurable } from './kv';
+import { kvGet, kvGetDurable, kvSet, kvSetVersioned } from './kv';
+import { US_BOOK_KEY, US_BOOK_OWNER } from './us-book-store';
+import type { UsBook } from './us-book/model';
 
 /** The browser keys that hold personal data. Anything else is refused (no arbitrary storage). */
 export const USER_STATE_KEYS = [
@@ -34,6 +36,9 @@ export function hashOf(v: unknown): string { return createHash('sha256').update(
 
 export interface UserStateRow { key: string; value: unknown; hash: string; version: number; updatedAt: string; device?: string | null }
 export interface UserStateMeta { key: string; hash: string; version: number; updatedAt: string; bytes: number }
+export class UserStateConflict extends Error {
+  constructor(public version: number, public hash: string) { super('Another device saved a newer version; local changes were not overwritten'); }
+}
 
 async function pgOk(): Promise<boolean> { return getPool() ? ensureSchema() : false; }
 
@@ -61,11 +66,12 @@ export async function getUserState(key: UserStateKey): Promise<UserStateRow | nu
 
 /**
  * Saves a value. `baseVersion` is the version the device last saw: if the server already moved past it (another device saved),
- * the write still goes through — last writer wins — but the other device's copy is safe in history. Same hash = no-op.
+ * a different value requires the exact current version. Same hash = safe no-op.
  */
 export async function putUserState(key: UserStateKey, value: unknown, opts: { baseVersion?: number | null; device?: string | null } = {}): Promise<{ ok: boolean; version: number; hash: string; conflict: boolean; store: string; unchanged?: boolean }> {
   const json = JSON.stringify(value ?? null);
-  if (json.length > MAX_VALUE_BYTES) throw new Error(`value too large (${json.length} bytes, max ${MAX_VALUE_BYTES})`);
+  const bytes = Buffer.byteLength(json, 'utf8');
+  if (bytes > MAX_VALUE_BYTES) throw new Error(`value too large (${bytes} bytes, max ${MAX_VALUE_BYTES})`);
   const hash = hashOf(value);
   const device = opts.device ? String(opts.device).slice(0, 40) : null;
   let version = 1; let conflict = false; let store = 'redis'; let unchanged = false;
@@ -73,29 +79,30 @@ export async function putUserState(key: UserStateKey, value: unknown, opts: { ba
     const pool = getPool()!; const c = await pool.connect();
     try {
       await c.query('BEGIN');
+      // Row locks cannot serialize two inserts when no row exists yet.
+      await c.query('SELECT pg_advisory_xact_lock(883, hashtext($1))', [key]);
       const cur = (await c.query('SELECT hash, version FROM user_state WHERE key = $1 FOR UPDATE', [key])).rows[0];
       if (cur && cur.hash === hash) { await c.query('COMMIT'); return { ok: true, version: Number(cur.version), hash, conflict: false, store: 'postgres', unchanged: true }; }
       version = cur ? Number(cur.version) + 1 : 1;
-      conflict = !!cur && opts.baseVersion != null && Number(opts.baseVersion) < Number(cur.version);
+      if ((opts.baseVersion ?? 0) !== Number(cur?.version ?? 0)) throw new UserStateConflict(Number(cur?.version ?? 0), cur?.hash ?? '');
       await c.query(`INSERT INTO user_state (key, value, hash, version, bytes, device, updated_at) VALUES ($1, $2::jsonb, $3, $4, $5, $6, now())
                      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, hash = EXCLUDED.hash, version = EXCLUDED.version, bytes = EXCLUDED.bytes, device = EXCLUDED.device, updated_at = now()`,
-        [key, json, hash, version, json.length, device]);
+        [key, json, hash, version, bytes, device]);
       await c.query('INSERT INTO user_state_history (key, value, hash, version, device) VALUES ($1, $2::jsonb, $3, $4, $5)', [key, json, hash, version, device]);
       await c.query(`DELETE FROM user_state_history WHERE key = $1 AND id NOT IN (SELECT id FROM user_state_history WHERE key = $1 ORDER BY saved_at DESC LIMIT ${HISTORY_KEEP})`, [key]);
       await c.query('COMMIT');
       store = 'postgres';
     } catch (e) { await c.query('ROLLBACK').catch(() => {}); throw e; } finally { c.release(); }
   } else {
-    const cur = await kvGet<UserStateRow>(kvKey(key)).catch(() => null);
-    unchanged = !!cur && cur.hash === hash;
-    version = unchanged ? cur!.version : (cur?.version || 0) + 1;
-    conflict = !!cur && opts.baseVersion != null && Number(opts.baseVersion) < cur.version;
+    const row = { key, value, hash, version, device, updatedAt: new Date().toISOString() } satisfies UserStateRow;
+    const result = await kvSetVersioned(kvKey(key), row, opts.baseVersion);
+    if (!result.ok) throw new UserStateConflict(result.row?.version ?? 0, result.row?.hash ?? '');
+    return { ok: true, version: result.row!.version, hash, conflict: false, store, unchanged: result.unchanged };
   }
   // the Redis mirror never expires (it is the fallback copy, not a cache)
   // no TTL: KV mirror of the user's personal data (Postgres is the record of truth; this copy must not vanish either)
   const row = { key, value, hash, version, device, updatedAt: new Date().toISOString() } satisfies UserStateRow;
   if (store === 'postgres') await kvSet(kvKey(key), row).catch(() => {});
-  else await kvSetDurable(kvKey(key), row);
   return { ok: true, version, hash, conflict, store, unchanged };
 }
 
@@ -106,8 +113,17 @@ export async function userStateHistory(key: UserStateKey, limit = 20): Promise<A
 }
 
 /** Full export for the nightly off-site backup (protected route only). */
-export async function exportUserState(): Promise<{ exportedAt: string; store: string; items: UserStateRow[] }> {
+export async function exportUserState() {
   const items: UserStateRow[] = [];
-  for (const k of USER_STATE_KEYS) { const r = await getUserState(k); if (r) items.push(r); }
-  return { exportedAt: new Date().toISOString(), store: (await pgOk()) ? 'postgres' : 'redis', items };
+  const postgres = await pgOk();
+  if (postgres) {
+    // One statement: a consistent snapshot, unaffected by concurrent device saves.
+    const rows = (await getPool()!.query('SELECT key, value, version, device, updated_at FROM user_state WHERE key = ANY($1::text[]) ORDER BY key', [USER_STATE_KEYS])).rows;
+    for (const r of rows) items.push({ key: r.key, value: r.value, hash: hashOf(r.value), version: Number(r.version), device: r.device, updatedAt: new Date(r.updated_at).toISOString() });
+  } else {
+    for (const k of USER_STATE_KEYS) { const r = await kvGetDurable<UserStateRow>(kvKey(k)); if (r) items.push(r); }
+  }
+  const key = US_BOOK_KEY(US_BOOK_OWNER);
+  const value = await kvGetDurable<UsBook>(key);
+  return { formatVersion: 2, exportedAt: new Date().toISOString(), store: postgres ? 'postgres' : 'redis', items, usBook: { key, value, hash: hashOf(value) } };
 }

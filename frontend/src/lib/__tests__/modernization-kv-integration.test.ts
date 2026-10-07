@@ -15,8 +15,9 @@ function runKv(body: string, configured = false) {
     writeFileSync(join(root, 'node_modules/@upstash/redis/package.json'), '{"type":"module","exports":"./index.js"}');
     writeFileSync(join(root, 'node_modules/@upstash/redis/index.js'), 'export class Redis { async set() { globalThis.remoteWrites++; if (globalThis.rejectWrite) throw new Error("transport failed"); return globalThis.noAck ? null : "OK"; } }');
     const source = readFileSync(fileURLToPath(new URL('../kv.ts', import.meta.url)), 'utf8');
-    writeFileSync(join(root, 'kv.ts'), source.replace("from './kv-memory'", "from './kv-memory.ts'"));
+    writeFileSync(join(root, 'kv.ts'), source.replace("from './kv-memory'", "from './kv-memory.ts'").replace("from './kv-versioned'", "from './kv-versioned.ts'"));
     copyFileSync(fileURLToPath(new URL('../kv-memory.ts', import.meta.url)), join(root, 'kv-memory.ts'));
+    copyFileSync(fileURLToPath(new URL('../kv-versioned.ts', import.meta.url)), join(root, 'kv-versioned.ts'));
     writeFileSync(join(root, 'run.mjs'), `import assert from 'node:assert/strict';\nlet time = 0; Date.now = () => time; globalThis.remoteWrites = 0;\nglobalThis.fetch = () => { throw new Error('Network forbidden in KV regression'); };\nconst kv = await import('./kv.ts');\n${body}\n`);
     const env = { ...process.env };
     for (const k of ['UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN', 'KV_REST_API_URL', 'KV_REST_API_TOKEN']) delete env[k];

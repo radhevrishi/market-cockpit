@@ -9,7 +9,8 @@
     "start:next": "next start",
     "lint": "eslint src --quiet",
     "test": "tsx --test 'src/lib/__tests__/*.test.ts'",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify": "node scripts/run-tests.mjs && node scripts/tsc-gate.mjs && next build"
   },
   "engines": {
     "node": "22.x",

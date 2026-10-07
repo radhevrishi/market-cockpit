@@ -10,7 +10,13 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dir = 'src/lib/__tests__';
 const files = readdirSync(join(root, dir)).filter((f) => f.endsWith('.test.ts')).map((f) => `${dir}/${f}`);
 // Use Node's loader directly: no tsx CLI IPC socket and bounded worker memory.
-const run = (list) => spawnSync(process.execPath, ['--import', 'tsx', '--test', '--test-concurrency=4', '--test-reporter=tap', ...list], { cwd: root, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+// Deployment builds may have provider variables. Tests use their own fakes,
+// never production databases, Redis, paid model keys or notification credentials.
+const testEnv = { ...process.env };
+for (const name of Object.keys(testEnv)) {
+  if (/(?:SECRET|PASSWORD|TOKEN|API_KEY|FMP_KEY|SESSIONID)(?:_|$)/.test(name) || /^(?:DATABASE_URL|POSTGRES_URL|PG_URL|REDIS_URL|KV_URL|NOTIFY_EMAIL_TO|TELEGRAM_CHAT_ID(?:_.*)?|SMTP_.*)$/.test(name)) delete testEnv[name];
+}
+const run = (list) => spawnSync(process.execPath, ['--import', 'tsx', '--test', '--test-concurrency=4', '--test-reporter=tap', ...list], { cwd: root, env: testEnv, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
 const r = run(files);
 const tap = String(r.stdout || '');
 const pass = /^# pass (\d+)/m.exec(tap)?.[1], fail = Number(/^# fail (\d+)/m.exec(tap)?.[1] || 0);

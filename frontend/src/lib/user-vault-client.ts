@@ -71,13 +71,28 @@ export async function syncVaultOnce(): Promise<{ pushed: string[]; pulled: strin
       const plan = vaultPlan(lh, meta[key], server[key]);
       if (plan.kind === 'push' && local != null) {
         const p = await fetch('/api/v1/user-state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, value: local, baseVersion: meta[key]?.version ?? null, device }), signal: AbortSignal.timeout(20_000) });
-        if (p.ok) { const pj = await p.json(); meta[key] = { hash: lh!, version: Number(pj.version) }; pushed.push(key); }
+        if (p.status === 409) {
+          // Keep both versions: local edit stays active; a recovery copy is explicit.
+          localStorage.setItem(`mc:vault:conflict:${key}`, JSON.stringify({ at: new Date().toISOString(), value: local }));
+          window.dispatchEvent(new CustomEvent('mc:vault:conflict', { detail: { key } }));
+          return { pushed, pulled, error: `Sync conflict for ${key}; local edits preserved` };
+        }
+        if (!p.ok) return { pushed, pulled, error: `save HTTP ${p.status}` };
+        const pj = await p.json();
+        if (!pj.ok) return { pushed, pulled, error: 'save was not confirmed' };
+        meta[key] = { hash: lh!, version: Number(pj.version) }; pushed.push(key);
+        localStorage.setItem(META_KEY, JSON.stringify(meta));
       } else if (plan.kind === 'pull') {
         if (local != null) { try { localStorage.setItem(`mc:vault:backup:${key}`, JSON.stringify({ at: new Date().toISOString(), value: local })); } catch { /* quota */ } }
         const g = await fetch(`/api/v1/user-state?key=${encodeURIComponent(key)}`, { cache: 'no-store', signal: AbortSignal.timeout(20_000) });
         if (g.ok) {
           const gj = await g.json();
-          if (gj.found) { writeLocal(key, gj.value); meta[key] = { hash: localHashOf(readLocal(key)) || '', version: Number(gj.version) }; pulled.push(key); }
+          if (gj.found) {
+            // The user may edit while the network request is in flight.
+            if (localHashOf(readLocal(key)) !== lh) return { pushed, pulled, error: 'Local edit changed during sync; pull deferred' };
+            writeLocal(key, gj.value); meta[key] = { hash: localHashOf(readLocal(key)) || '', version: Number(gj.version) }; pulled.push(key);
+            localStorage.setItem(META_KEY, JSON.stringify(meta));
+          }
         }
       }
     }
@@ -87,6 +102,36 @@ export async function syncVaultOnce(): Promise<{ pushed: string[]; pulled: strin
   } catch (e: any) {
     return { pushed, pulled, error: String(e?.message || e) };
   } finally { running = false; }
+}
+
+/** Explicit resolution from the conflict notice; every server write remains version checked. */
+export async function resolveVaultConflict(key: string, choice: 'local' | 'server'): Promise<void> {
+  if (!(USER_STATE_KEYS_CLIENT as readonly string[]).includes(key)) throw new Error('Unknown saved-data key');
+  const local = readLocal(key); const hash = localHashOf(local);
+  const response = await fetch(`/api/v1/user-state?key=${encodeURIComponent(key)}`, { cache: 'no-store', signal: AbortSignal.timeout(20_000) });
+  if (!response.ok) throw new Error('Could not read the saved copy');
+  const server = await response.json();
+  if (!server.ok || !server.found) throw new Error('Saved copy is unavailable');
+  if (localHashOf(readLocal(key)) !== hash) throw new Error('Your local copy changed; try again');
+  let version = Number(server.version);
+  if (choice === 'local') {
+    if (local == null) throw new Error('Local copy is unavailable');
+    const put = await fetch('/api/v1/user-state', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, value: local, baseVersion: version, device: localStorage.getItem(DEVICE_KEY) }), signal: AbortSignal.timeout(20_000) });
+    if (!put.ok) throw new Error(put.status === 409 ? 'The saved copy changed again; try again' : 'Save was not confirmed');
+    const saved = await put.json();
+    if (!saved.ok) throw new Error('Save was not confirmed');
+    version = Number(saved.version);
+  } else {
+    localStorage.setItem(`mc:vault:conflict:${key}`, JSON.stringify({ at: new Date().toISOString(), value: local }));
+    writeLocal(key, server.value);
+  }
+  let meta: Record<string, any>;
+  try { meta = JSON.parse(localStorage.getItem(META_KEY) || '{}') || {}; } catch { meta = {}; }
+  // A newer local edit during PUT must still be detected by the next sync.
+  meta[key] = { hash: choice === 'local' ? hash : localHashOf(readLocal(key)), version };
+  localStorage.setItem(META_KEY, JSON.stringify(meta));
+  window.dispatchEvent(new CustomEvent('mc:vault:restored', { detail: { keys: [key] } }));
 }
 
 /** Starts the background sync (idempotent). Returns a stop function. */

@@ -24,6 +24,7 @@ import { getConvictionTickers, getConvictionList, readConvictionBin, getBenchSin
 import { mergeIndiaBench } from '@/lib/fundamentals/universe';
 import { scheduleBookSync } from '@/lib/book-sync-client';
 import { startVaultSync } from '@/lib/user-vault-client';   // zzz883 — personal data copied to the server
+import VaultSyncNotice from '@/components/VaultSyncNotice';
 // zzz796 — installable app: phone tab bar, favourites sheet, menu drawer, install help.
 import MobileNav from '@/components/pwa/MobileNav';
 import { InstallBanner, InstallAppCard } from '@/components/pwa/InstallApp';
@@ -842,6 +843,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
         </header>
 
         {/* Page content — add bottom padding on mobile for bottom nav */}
+        <VaultSyncNotice />
         <main className={`mobile-main-content ${pwa.main}`} style={{ flex: 1, overflowY: 'auto', backgroundColor: 'var(--mc-bg-0)' }}>
           {/* zzz796 — "Install app" help on Settings (kept here so the page itself is untouched). */}
           {pathname?.startsWith('/settings') && (

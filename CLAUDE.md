@@ -3597,3 +3597,12 @@ Built on Claude zzz940b (`72c12cc`); chart/watchlist keys and home links preserv
 Validation: 4,887 tests passed, zero failed; type ratchet passed at 175 existing errors (baseline 175); production build passed for PR #2. Local Node 24; production remains Node 22. Railway reported successful deployment for `773cfd0`.
 
 Remaining operational work needs provider access/current telemetry: inspect Actions billing and backup-job failures, enable Railway Wait for CI, verify current spend, and confirm obsolete Render service is unused before suspension. Never raise the guidance AI daily cap without asking. Broader audit work (concurrent-save conflicts, restore drills, market-qualified identities, fiscal-period and data-quality fixes) remains separate; these commits do not claim it is finished.
+
+
+## 28. Pending reliability work — 2026-10-07
+
+Implemented atomic version checks for personal-state saves in PostgreSQL (including first inserts) and Redis. Stale writes return HTTP 409; the browser preserves local edits and offers explicit conflict resolution. Backups now include the US book, validate canonical hashes, authenticate encrypted artifacts with AES-256-GCM, and rehearse restore in disposable PostgreSQL/Redis before upload. No production restore is performed.
+
+Deployment must use repository-root build context and `frontend/Dockerfile`; its `npm run verify` executes tests with production credentials stripped, the existing type-error baseline gate, and Next build. This gate is independent of unavailable GitHub Actions execution. Do not enable Railway Wait for CI until hosted jobs can actually execute.
+
+Operational blockers remain: GitHub Actions jobs fail before steps run; account billing/execution settings need administrator diagnosis. Scheduled backup execution therefore remains unverified. Railway has no GITHUB_TOKEN, so GitHub usage telemetry remains unavailable; do not manufacture healthy counters or copy private credentials. Historical usage is not a current bill. Render retirement requires verified service ownership and redundancy checks. Preserve Claude's chart/screener changes when integrating.
