@@ -38,8 +38,28 @@ export function parseYahooChart(j: any): DailySeries | null {
     if (prev && prev.t > t) continue;
     bars.push({ t, o, h, l, c, v });
   }
-  if (!bars.length) return null;
   const m = r.meta || {};
+  // zzz957 — Yahoo often leaves today's daily bar with an empty close (seen on BSE: TATVA.BO ended at 6 Oct while its quote
+  // was 7 Oct). When the quote in the same answer is from a later day than the last full bar, add that day from the quote
+  // (price, day high / low, volume; open from the bar's own open when Yahoo gave it, else the previous close).
+  const px = Number(m.regularMarketPrice), mt = Number(m.regularMarketTime);
+  if (Number.isFinite(px) && px > 0 && Number.isFinite(mt) && mt > 0) {
+    const d = new Date((mt + off) * 1000);
+    const t = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+    const last = bars[bars.length - 1];
+    if (!last || t > last.t) {
+      let o: number | null = null;
+      for (let i = ts.length - 1; i >= 0; i--) {
+        const di = new Date((ts[i] + off) * 1000);
+        if (Date.UTC(di.getUTCFullYear(), di.getUTCMonth(), di.getUTCDate()) !== t) break;
+        if (Number.isFinite(q.open?.[i])) { o = q.open[i]; }
+      }
+      const open = o ?? last?.c ?? px;
+      const hi = Number(m.regularMarketDayHigh), lo = Number(m.regularMarketDayLow), vol = Number(m.regularMarketVolume);
+      bars.push({ t, o: open, h: Math.max(Number.isFinite(hi) ? hi : px, open, px), l: Math.min(Number.isFinite(lo) && lo > 0 ? lo : px, open, px), c: px, v: Number.isFinite(vol) ? vol : 0 });
+    }
+  }
+  if (!bars.length) return null;
   return { symbol: String(m.symbol || ''), name: m.longName || m.shortName || null, currency: m.currency || null, exchange: m.fullExchangeName || m.exchangeName || null, bars };
 }
 

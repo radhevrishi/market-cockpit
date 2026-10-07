@@ -128,7 +128,9 @@ const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinit
 const TV_SET = new Set<string>(TV_SECTORS);
 const DAY = 86_400_000;
 
-export function passes(r: ScreenRow, f: Filter, now: Date = new Date()): boolean {
+/** exactOnly (zzz957): a figure this company has only as an approximation (≈ on the row, e.g. EV / revenue with debt taken as 0
+ *  because no debt line is filed) fails the filter instead of passing on an assumption. */
+export function passes(r: ScreenRow, f: Filter, now: Date = new Date(), exactOnly = false): boolean {
   if (f.kind === 'sector') {
     if (!f.sectors.length) return true;
     // a screen saved before zzz948 ticks the source's own sector names; TradingView names are matched against our TradingView sector
@@ -137,6 +139,7 @@ export function passes(r: ScreenRow, f: Filter, now: Date = new Date()): boolean
     return !!v && f.sectors.includes(v);
   }
   if (f.kind === 'exch') return !f.ex.length || (Array.isArray(r.exch) && r.exch.some((e) => f.ex.includes(e)));
+  if (exactOnly && Array.isArray(r.approx) && filterKeys(f).some((k) => r.approx!.includes(k))) return false;
   const a = r[f.key] as number | null | undefined;
   if (!fin(a)) return false;
   if (f.kind === 'date') {
@@ -158,11 +161,11 @@ export function passes(r: ScreenRow, f: Filter, now: Date = new Date()): boolean
   const v2 = fin(f.v2) ? f.v2 : f.v;
   return a >= Math.min(f.v, v2) && a <= Math.max(f.v, v2);
 }
-export const runScreen = (rows: readonly ScreenRow[], filters: readonly Filter[], now: Date = new Date()): ScreenRow[] => rows.filter((r) => filters.every((f) => passes(r, f, now)));
+export const runScreen = (rows: readonly ScreenRow[], filters: readonly Filter[], now: Date = new Date(), exactOnly = false): ScreenRow[] => rows.filter((r) => filters.every((f) => passes(r, f, now, exactOnly)));
 
 /** How many companies each single filter keeps (so the owner sees which filter is the tight one). */
-export function filterCounts(rows: readonly ScreenRow[], filters: readonly Filter[], now: Date = new Date()): number[] {
-  return filters.map((f) => rows.reduce((n, r) => n + (passes(r, f, now) ? 1 : 0), 0));
+export function filterCounts(rows: readonly ScreenRow[], filters: readonly Filter[], now: Date = new Date(), exactOnly = false): number[] {
+  return filters.map((f) => rows.reduce((n, r) => n + (passes(r, f, now, exactOnly) ? 1 : 0), 0));
 }
 /** The fields a filter reads (to show them as columns and to tell how many companies have the figure yet). */
 export function filterKeys(f: Filter): NumKey[] {

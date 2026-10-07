@@ -7,19 +7,35 @@ export const WORKSPACE_LIGHT_KEY = 'mc:workspace-light:v1';
 const LEGACY_CHART_KEY = 'mc:chart-light:v1';
 const EVENT = 'mc:workspace-theme';
 
-/** true = white. No saved choice → white. */
+// zzz957: the choice made in this visit, used when the browser refuses to store it (private mode, full or blocked storage) —
+// otherwise the switch flipped back at once, because the re-read found the old saved value.
+let memChoice: boolean | null = null;
+
+/** true = white. No saved choice → white. A choice made this visit that storage would not keep wins over storage. */
 export function readWorkspaceLight(storage: Pick<Storage, 'getItem'> | null): boolean {
+  if (memChoice != null) return memChoice;
   try {
     const v = storage?.getItem(WORKSPACE_LIGHT_KEY) ?? storage?.getItem(LEGACY_CHART_KEY) ?? null;
     return v !== '0';
   } catch { return true; }
 }
+/** Store the choice; returns false when the browser would not keep it (the choice still holds for this visit). */
+export function writeWorkspaceLight(storage: Pick<Storage, 'setItem' | 'getItem'> | null, light: boolean): boolean {
+  try {
+    storage?.setItem(WORKSPACE_LIGHT_KEY, light ? '1' : '0');
+    if (storage?.getItem(WORKSPACE_LIGHT_KEY) === (light ? '1' : '0')) { memChoice = null; return true; }
+  } catch { /* blocked */ }
+  memChoice = light;
+  return false;
+}
+/** Test helper. */
+export function _resetWorkspaceThemeMemory(): void { memChoice = null; }
 
 /** ssrSafe: for a page rendered on the server too — start white (what the server drew) and read the saved choice after mounting. */
 export function useWorkspaceLight(ssrSafe = false): [boolean, () => void] {
-  const [light, setLight] = useState(() => (ssrSafe || typeof window === 'undefined' ? true : readWorkspaceLight(window.localStorage)));
+  const [light, setLight] = useState(() => { if (ssrSafe || typeof window === 'undefined') return true; try { return readWorkspaceLight(window.localStorage); } catch { return readWorkspaceLight(null); } });
   useEffect(() => {
-    const sync = () => setLight(readWorkspaceLight(window.localStorage));
+    const sync = () => { let store: Storage | null = null; try { store = window.localStorage; } catch { /* blocked */ } setLight(readWorkspaceLight(store)); };
     if (ssrSafe) sync();
     const onStorage = (e: StorageEvent) => { if (e.key === WORKSPACE_LIGHT_KEY || e.key === null) sync(); };
     window.addEventListener('storage', onStorage);
@@ -27,8 +43,10 @@ export function useWorkspaceLight(ssrSafe = false): [boolean, () => void] {
     return () => { window.removeEventListener('storage', onStorage); window.removeEventListener(EVENT, sync); };
   }, [ssrSafe]);
   const toggle = useCallback(() => {
-    const next = !readWorkspaceLight(window.localStorage);
-    try { window.localStorage.setItem(WORKSPACE_LIGHT_KEY, next ? '1' : '0'); } catch { /* storage blocked: this visit only */ }
+    let store: Storage | null = null;
+    try { store = window.localStorage; } catch { /* blocked */ }
+    const next = !readWorkspaceLight(store);
+    writeWorkspaceLight(store, next);
     setLight(next);
     window.dispatchEvent(new Event(EVENT));
   }, []);

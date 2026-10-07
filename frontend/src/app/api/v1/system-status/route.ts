@@ -24,7 +24,9 @@ interface Probe {
 // zzz883: dates are worked out on EVERY request (they used to be fixed when the server started, and the scan probe asked for May 2026)
 const istToday = () => new Date(Date.now() + 5.5 * 3_600_000).toISOString().slice(0, 10);
 const probesNow = (): Probe[] => [
-  { name: 'EO graded (today)',     url: `/api/v1/earnings/graded?date=${istToday()}`,    category: 'earnings', expectedField: 'by_tier' },
+  // zzz957: cache_only — the probe used to START a full grading build for today's date on every status check (a new IST day has
+  // nothing cached yet), took > 8 s and was reported DOWN while adding load. Now it only reads; an ungraded day shows EMPTY.
+  { name: 'EO graded (today)',     url: `/api/v1/earnings/graded?date=${istToday()}&cache_only=1`, category: 'earnings', expectedField: 'by_tier' },
   { name: 'EO calendar',           url: '/api/v1/calendar?days=7',                     category: 'earnings', expectedField: 'buckets' },
   { name: 'Earnings scan',         url: `/api/market/earnings?market=india&month=${istToday().slice(0, 7)}`, category: 'earnings', expectedField: 'results' },
   { name: 'Quotes (movers)',       url: '/api/market/quotes?market=india',             category: 'movers',   expectedField: 'stocks' },
@@ -65,7 +67,30 @@ async function probe(p: Probe, origin: string): Promise<any> {
   }
 }
 
+// zzz957: one result is shared for 30 s, so repeated checks (several tabs, monitors, a person refreshing) do not each fire
+// eleven self-requests at once and slow the very pages they measure. ?fresh=1 always measures again.
+let _memo: { at: number; body: any } | null = null;
+let _inflight: Promise<any> | null = null;
+const MEMO_MS = 30_000;
+/** Optional extras must never hold the status answer up: give each at most `ms`. */
+function capped<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([p, new Promise<T>((r) => setTimeout(() => r(fallback), ms))]);
+}
+
 export async function GET(request: Request) {
+  const fresh = new URL(request.url).searchParams.get('fresh') === '1';
+  if (!fresh && _memo && Date.now() - _memo.at < MEMO_MS) return NextResponse.json({ ..._memo.body, cached_for_s: Math.round((Date.now() - _memo.at) / 1000) }, { headers: { 'Cache-Control': 'no-store' } });
+  if (!fresh && _inflight) return NextResponse.json(await _inflight, { headers: { 'Cache-Control': 'no-store' } });
+  const run = buildStatus(request);
+  if (!fresh) _inflight = run;
+  try {
+    const body = await run;
+    _memo = { at: Date.now(), body };
+    return NextResponse.json(body, { headers: { 'Cache-Control': 'no-store' } });
+  } finally { if (_inflight === run) _inflight = null; }
+}
+
+async function buildStatus(request: Request): Promise<any> {
   const origin = internalBase(request); // PATCH 1013 — Railway self-fetch fix
   const results = await Promise.all(probesNow().map(p => probe(p, origin)));
   const summary = {
@@ -116,9 +141,9 @@ export async function GET(request: Request) {
   } catch (e: any) { dataWatch = { error: String(e?.message || e) }; }
   // zzz905 — NSE holiday calendar coverage (missingFor = current year has no list).
   let nseHolidays: any = undefined;
-  try { nseHolidays = await (await import('@/lib/nse-holidays-server')).warmNseHolidays(); }
+  try { nseHolidays = await capped((await import('@/lib/nse-holidays-server')).warmNseHolidays() as Promise<any>, 3000, { pending: 'still loading' }); }
   catch (e: any) { nseHolidays = { error: String(e?.message || e) }; }
-  return NextResponse.json({
+  return {
     generated_at: new Date().toISOString(),
     // zzz955 — which deploy is running (git commit when Railway built it; build id otherwise)
     build: { commit: (process.env.MC_BUILD_COMMIT || process.env.RAILWAY_GIT_COMMIT_SHA || '').slice(0, 40) || null, deployment: process.env.RAILWAY_DEPLOYMENT_ID || null },
@@ -128,5 +153,5 @@ export async function GET(request: Request) {
     anthropicSpend,
     dataWatch,
     probes: results,
-  }, { headers: { 'Cache-Control': 's-maxage=60, stale-while-revalidate=300' } });
+  };
 }

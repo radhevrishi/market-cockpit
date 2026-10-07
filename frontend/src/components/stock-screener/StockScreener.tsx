@@ -41,6 +41,9 @@ function firstScreen(): Screen {
 
 export default function StockScreener() {
   const [light, toggleLight] = useWorkspaceLight();   // zzz954: shared white / dark choice
+  // zzz957: "exact figures only" — approximate (≈) figures fail filters instead of passing on an assumption; remembered here
+  const [exactOnly, setExactOnly] = useState(() => { try { return localStorage.getItem('mc:screener-exact:v1') === '1'; } catch { return false; } });
+  const toggleExact = () => setExactOnly((v) => { try { localStorage.setItem('mc:screener-exact:v1', v ? '0' : '1'); } catch { /* this visit only */ } return !v; });
   const [first] = useState<Screen>(() => firstScreen());
   const [market, setMarket] = useState<ScreenMarket>(first.market);
   const [snaps, setSnaps] = useState<Partial<Record<ScreenMarket, Snap>>>({});
@@ -117,8 +120,8 @@ export default function StockScreener() {
 
   const snap = snaps[market];
   const rows = useMemo(() => snap?.rows || [], [snap]);
-  const result = useMemo(() => runScreen(rows, filters), [rows, filters]);
-  const counts = useMemo(() => filterCounts(rows, filters), [rows, filters]);
+  const result = useMemo(() => runScreen(rows, filters, new Date(), exactOnly), [rows, filters, exactOnly]);
+  const counts = useMemo(() => filterCounts(rows, filters, new Date(), exactOnly), [rows, filters, exactOnly]);
   // how many companies have each field yet (a field still filling shows a note on its filter)
   const known = useMemo(() => {
     const m = new Map<string, number>();
@@ -281,6 +284,9 @@ export default function StockScreener() {
         {builtAt ? <span style={{ color: C.dim }}>data built {builtAt.toLocaleString()}{latestQ ? ` · most figures to ${latestQ}` : ''}{rows.length && withFigures < rows.length * 0.9 ? ` · company figures read for ${withFigures} of ${rows.length} so far (the rest are read in the next runs)` : ''} · the small number on each filter = companies passing that filter alone</span> : null}
         {err ? <span role="alert" style={{ color: C.red }}>{err}{snap ? ' — showing the last loaded snapshot' : ''}</span> : null}
         <span style={{ flex: 1 }} />
+        <label title="On: a figure worked out with an assumption (shown with ≈, e.g. EV / revenue with debt taken as 0 because the company files no debt line) does not count as passing a filter" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 13, cursor: 'pointer' }}>
+          <input type="checkbox" checked={exactOnly} onChange={toggleExact} aria-label="Exact figures only" /> Exact figures only (no ≈)
+        </label>
         <button type="button" style={btn()} disabled={loading} onClick={() => setRefresh((v) => v + 1)}>{loading ? 'Refreshing…' : err ? 'Retry' : 'Refresh'}</button>
         <button type="button" style={btn()} onClick={copyTickers} disabled={!sorted.length}>Copy tickers</button>
         <button type="button" style={btn()} onClick={downloadCsv} disabled={!sorted.length}>Download CSV</button>

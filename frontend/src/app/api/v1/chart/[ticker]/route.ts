@@ -63,6 +63,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ ticker: str
     stats: { ...headerStats(series.bars), floatPct: await floatFor(market, ticker).catch(() => null) },
     bars: packBars(bars),
     asOf: new Date().toISOString(),
+    lastBarAt: series.bars.length ? new Date(series.bars[series.bars.length - 1].t).toISOString().slice(0, 10) : null,   // zzz957: date of the newest daily candle
   };
   if (_resp.size >= 300) { const first = _resp.keys().next().value; if (first) _resp.delete(first); }
   _resp.set(ck, { at: Date.now(), body });

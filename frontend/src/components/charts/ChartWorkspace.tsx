@@ -17,6 +17,7 @@ import { pollWhenVisible } from '@/lib/client-fetch';
 import { cacheChart, freshChart, type CachedChart } from '@/lib/chart-refresh';
 import WatchlistResizeHandle, { clampWatchlistWidth } from './WatchlistResizeHandle';
 import { useWorkspaceLight, workspaceThemeClass } from '@/lib/workspace-theme';
+import { loadView, rightPadBars, saveView } from '@/lib/chart-view-prefs';
 import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
 
 type KC = typeof import('klinecharts');
@@ -24,7 +25,7 @@ type Tool = 'cursor' | 'mcHLine' | 'segment' | 'rayLine' | 'mcRect' | 'parallelS
 interface ChartResponse {
   ok: boolean; error?: string; ticker: string; market: Market; name: string | null; currency: string | null; exchange: string | null;
   stats: HeaderStats; bars: { t: number[]; o: number[]; h: number[]; l: number[]; c: number[]; v: number[] };
-  asOf?: string;
+  asOf?: string; lastBarAt?: string | null;
 }
 
 const DRAW_GROUP = 'mc-draw';
@@ -48,7 +49,7 @@ const LAYOUT_CSS = `
 /* zzz946 — focus mode: the site's top bar and left menu are hidden so the chart + watchlist fill the window */
 html.mc-chart-focus .desktop-sidebar, html.mc-chart-focus header { display: none !important; }
 html.mc-chart-focus .mc-charts-root { height: 100vh; padding-top: 8px !important; }
-.mc-scale-btn { width: 22px; height: 20px; padding: 0; font-size: 11px; font-weight: 700; border-radius: 4px; cursor: pointer;
+.mc-scale-btn { min-width: 34px; height: 22px; padding: 0 6px; font-size: 12px; font-weight: 600; border-radius: 4px; cursor: pointer;
   border: 1px solid var(--mc-border-1); background: var(--mc-bg-1); color: var(--mc-text-3); }
 .mc-scale-btn.on { background: var(--mc-accent); border-color: var(--mc-accent); color: #fff; }
 .mc-charts-main { display: flex; flex: 1; min-height: 0; gap: 8px; }
@@ -85,7 +86,7 @@ function luminance(hex: string): number | null {
 function visibleOnTheme(color: string): string {
   const bg = luminance(cssVar('--mc-bg-0', '#ffffff'));
   const c = luminance(color);
-  return bg != null && c != null && bg < 0.3 && c < 0.18 ? '#E5E7EB' : color;
+  return bg != null && c != null && bg < 0.3 && c < 0.18 ? '#B2B5BE' : color;   // zzz956: light grey (not white) so its price-scale label stays readable
 }
 function themeSignature(): string {
   return ['--mc-bg-0', '--mc-text-3', '--mc-border-1', '--mc-border-3'].map((n) => cssVar(n, '')).join('|');
@@ -94,18 +95,23 @@ function themeStyles(): DeepPartial<Styles> {
   const text = cssVar('--mc-text-3', '#475569');
   const grid = cssVar('--mc-border-3', '#E2E8F0');
   const axis = cssVar('--mc-border-1', '#CBD5E1');
-  const up = '#26A69A', down = '#EF5350';
+  // zzz956 — copied from the owner's TradingView chart settings: TradingView's candle colours, coloured by the PREVIOUS close
+  // ("Color bars based on previous close" is on there), no grid lines, no high / low price labels, no OHLC line in the top-left
+  // (his legend shows the indicators only), the moving averages' last values on the price scale, a dashed crosshair.
+  const up = '#089981', down = '#F23645';
   const legend = { color: text, size: 12 };
+  void grid;
   return {
-    grid: { horizontal: { color: grid, style: 'solid' }, vertical: { color: grid, style: 'solid' } },
+    grid: { show: false },
     candle: {
-      bar: { upColor: up, downColor: down, upBorderColor: up, downBorderColor: down, upWickColor: up, downWickColor: down },
-      priceMark: { last: { upColor: up, downColor: down }, high: { color: text }, low: { color: text } },
-      tooltip: { title: { show: false }, legend },
+      bar: { compareRule: 'previous_close', upColor: up, downColor: down, noChangeColor: '#787B86', upBorderColor: up, downBorderColor: down, noChangeBorderColor: '#787B86', upWickColor: up, downWickColor: down, noChangeWickColor: '#787B86' },
+      priceMark: { high: { show: false }, low: { show: false }, last: { show: true, compareRule: 'previous_close', upColor: up, downColor: down } },
+      tooltip: { showRule: 'none', title: { show: false }, legend },
     },
-    indicator: { tooltip: { title: { color: text }, legend } },
-    xAxis: { axisLine: { color: axis }, tickLine: { color: axis }, tickText: { color: text } },
-    yAxis: { axisLine: { color: axis }, tickLine: { color: axis }, tickText: { color: text } },
+    indicator: { tooltip: { title: { color: text }, legend }, lastValueMark: { show: true } },
+    xAxis: { axisLine: { show: false }, tickLine: { show: false }, tickText: { color: text } },
+    yAxis: { axisLine: { show: false }, tickLine: { show: false }, tickText: { color: text, size: 12 } },
+    crosshair: { horizontal: { line: { style: 'dashed' } }, vertical: { line: { style: 'dashed' } } },
     separator: { color: axis },
   };
 }
@@ -115,13 +121,17 @@ export default function ChartWorkspace() {
   const sp = useSearchParams();
   const initialMarket: Market = (sp.get('m') || '').toUpperCase() === 'IN' ? 'IN' : 'US';
   const initialTicker = (() => { const t = cleanTicker(sp.get('t') || ''); return validTicker(initialMarket, t) ? t : initialMarket === 'IN' ? 'RELIANCE' : 'QQQ'; })();
-  const initialTf: Timeframe = (['D', 'W', 'M'] as const).find((x) => x === (sp.get('tf') || '').toUpperCase()) || 'W';
+  const view0 = useMemo(() => loadView(), []);   // zzz956: his last timeframe + the range he chose per timeframe (TradingView-like default: D, 3M)
+  const initialTf: Timeframe = (['D', 'W', 'M'] as const).find((x) => x === (sp.get('tf') || '').toUpperCase()) || view0.tf;
 
   const [market, setMarket] = useState<Market>(initialMarket);
   const [exchange, setExchange] = useState<string | undefined>(() => sp.get('x') === 'BSE' || /^BSE:|\.BO$/i.test(sp.get('t') || '') ? 'BSE' : sp.get('x') === 'NSE' ? 'NSE' : undefined);
   const [ticker, setTicker] = useState(initialTicker);
   const [tf, setTf] = useState<Timeframe>(initialTf);
-  const [range, setRange] = useState<RangeKey>(initialTf === 'D' ? '1Y' : initialTf === 'W' ? '5Y' : 'All');
+  const [range, setRangeState] = useState<RangeKey>(view0.ranges[initialTf]);
+  const viewRef = useRef(view0);
+  const setRange = (r: RangeKey) => { setRangeState(r); viewRef.current = { ...viewRef.current, ranges: { ...viewRef.current.ranges, [tf]: r } }; saveView(viewRef.current); };
+  const pickTf = (x: Timeframe) => { setTf(x); setRangeState(viewRef.current.ranges[x]); viewRef.current = { ...viewRef.current, tf: x }; saveView(viewRef.current); };
   const [query, setQuery] = useState(initialTicker);
   const [queryMarket, setQueryMarket] = useState<Market>(initialMarket);
   const [info, setInfo] = useState<ChartResponse | null>(null);
@@ -247,7 +257,7 @@ export default function ChartWorkspace() {
     const chart = chartRef.current;
     if (!chart) return;
     const name = lay.scale.auto ? (lay.scale.log ? 'mcFitLog' : 'mcFit') : (lay.scale.log ? 'mcLog' : 'normal');
-    chart.overrideYAxis({ paneId: 'candle_pane', name });   // re-creating the axis also drops any hand-dragged zoom
+    chart.overrideYAxis({ paneId: 'candle_pane', name, gap: { top: 0.1, bottom: 0.1 } });   // TradingView's 10% top / bottom margins   // re-creating the axis also drops any hand-dragged zoom
     setManualScale(false);
   }, []);
 
@@ -267,7 +277,8 @@ export default function ChartWorkspace() {
       }, true);
     }
     if (lay.volume.on) {
-      chart.createIndicator({ name: 'VOL', paneId: VOL_PANE, calcParams: [lay.volume.avg], styles: { lines: [{ color: '#F59E0B', size: 1.5, style: 'solid', smooth: false, dashedValue: [2, 2] }] } });
+      // volume bars in the candle colours (half strength), like TradingView's Volume
+      chart.createIndicator({ name: 'VOL', paneId: VOL_PANE, calcParams: [lay.volume.avg], styles: { bars: [{ upColor: 'rgba(8,153,129,0.5)', downColor: 'rgba(242,54,69,0.5)', noChangeColor: 'rgba(120,123,134,0.5)' }], lines: [{ color: '#F59E0B', size: 1.5, style: 'solid', smooth: false, dashedValue: [2, 2] }] } });
       chart.setPaneOptions({ id: VOL_PANE, height: 100 });
     }
     const guide = visibleOnTheme('#787B86');
@@ -309,7 +320,7 @@ export default function ChartWorkspace() {
     const start = rangeStart(r, times[times.length - 1]);
     const firstIdx = start == null ? 0 : Math.max(0, barIndexAt(times, start - 1) + 1);
     const n = Math.max(8, bars.length - firstIdx);
-    const pad = Math.max(3, Math.round(n * 0.04));
+    const pad = rightPadBars(n);   // zzz956: room right of the last candle, like TradingView
     const space = Math.min(40, Math.max(0.3, width / (n + pad)));
     chart.setBarSpace(space);
     chart.setOffsetRightDistance(pad * space);
@@ -630,7 +641,7 @@ export default function ChartWorkspace() {
         </form>
         <span style={{ width: 1, height: 22, background: 'var(--mc-border-1)' }} />
         {(['D', 'W', 'M'] as Timeframe[]).map((x) => (
-          <button key={x} type="button" title={x === 'D' ? 'Daily' : x === 'W' ? 'Weekly' : 'Monthly'} style={btn(tf === x)} onClick={() => setTf(x)}>{x}</button>
+          <button key={x} type="button" title={x === 'D' ? 'Daily' : x === 'W' ? 'Weekly' : 'Monthly'} style={btn(tf === x)} onClick={() => pickTf(x)}>{x}</button>
         ))}
         <span style={{ width: 1, height: 22, background: 'var(--mc-border-1)' }} />
         {RANGE_KEYS.map((r) => (
@@ -678,7 +689,7 @@ export default function ChartWorkspace() {
         <Stat label={market === 'IN' ? 'Avg ₹ Vol' : 'Avg $ Vol'} value={fmtMoney(stats?.avgValue ?? null, market)} title="Average traded value (close × volume) over the last 20 days" />
         {loading && <span style={{ color: 'var(--mc-text-3)' }}>Loading…</span>}
         <button type="button" disabled={loading} style={btn(false)} onClick={() => { cacheRef.current.clear(); setRefresh((v) => v + 1); }}>Refresh</button>
-        {info?.asOf && <span style={{ fontSize: 11, color: 'var(--mc-text-3)' }}>Loaded {new Date(info.asOf).toLocaleTimeString()}</span>}
+        {info?.asOf && <span style={{ fontSize: 11, color: 'var(--mc-text-3)' }} title="Last candle = the newest trading day in the chart data; loaded = when this page fetched it">{info.lastBarAt ? `Last candle ${new Date(`${info.lastBarAt}T00:00:00Z`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' })} · ` : ''}loaded {new Date(info.asOf).toLocaleTimeString()}</span>}
         {wlSaveError && <span role="alert" style={{ color: 'var(--mc-warn, #D97706)' }}>{wlSaveError} <button type="button" onClick={retryWatchlistSave}>Retry save</button></span>}
         {note?.includes('not saved') && <button type="button" onClick={persist}>Retry drawing save</button>}
         {error && <span style={{ color: 'var(--mc-bearish, #DC2626)' }}>{error}</span>}
@@ -707,12 +718,12 @@ export default function ChartWorkspace() {
           <div ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
           <div style={{ position: 'absolute', right: 4, bottom: 4, zIndex: 6, display: 'flex', gap: 3 }}>
             <button type="button" className={`mc-scale-btn${autoOn ? ' on' : ''}`} aria-label="Auto-fit price scale" aria-pressed={autoOn} onClick={toggleAuto}
-              title={autoOn ? 'Auto (on): the price axis fits the candles on screen. Click to turn off.' : 'Auto (off): click to fit the price axis to the candles on screen (or double-click the price axis)'}>A</button>
+              title={autoOn ? 'Auto-fit (on, the default): the price axis fits the candles on screen, like TradingView\'s "auto". Click to turn it off.' : 'Auto-fit (off): click to fit the price axis to the candles on screen again (or double-click the price axis)'}>auto</button>
             <button type="button" className={`mc-scale-btn${L.working.scale.log ? ' on' : ''}`} aria-label="Log price scale" aria-pressed={L.working.scale.log}
               onClick={() => L.setWorking((w) => ({ ...w, scale: { ...w.scale, log: !w.scale.log } }))}
-              title={L.working.scale.log ? 'Log scale (on): equal % moves look equal. Click for a normal scale.' : 'Log scale: equal % moves look equal'}>L</button>
+              title={L.working.scale.log ? 'Log scale (on): equal % moves look equal. Click for a normal scale.' : 'Log scale: equal % moves look equal'}>log</button>
           </div>
-          <IndicatorLegend rows={rows} valueOf={valueOf} onToggle={(id) => L.setWorking((w) => toggleRow(w, id))} decimals={pxDecimals} colorOf={(c) => (!chartLight && (luminance(c) ?? 1) < 0.18 ? '#E5E7EB' : c)} />
+          <IndicatorLegend rows={rows} valueOf={valueOf} onToggle={(id) => L.setWorking((w) => toggleRow(w, id))} decimals={pxDecimals} colorOf={(c) => (!chartLight && (luminance(c) ?? 1) < 0.18 ? '#B2B5BE' : c)} />
           {(savedAt || syncedAt) && (
             <div title="Drawings are saved in this browser at once and copied to your account about once a minute, so they come back on your other devices"
               style={{ position: 'absolute', left: 8, bottom: 30, zIndex: 5, padding: '2px 8px', borderRadius: 6, fontSize: 11, background: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-1)', color: 'var(--mc-bullish, #059669)', pointerEvents: 'none' }}>

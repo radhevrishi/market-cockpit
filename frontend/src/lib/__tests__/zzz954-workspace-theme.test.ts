@@ -29,3 +29,17 @@ test('zzz954 theme: Charts, Watchlists and Stock Screener all carry the switch',
   assert.match(src('styles/design-system.css'), /\.mc-workspace-dark \{/);
   assert.match(src('app/globals.css'), /\.mc-light-legacy \[style\*="#0a0a0f"\]/);
 });
+
+test('zzz957 theme: when the browser refuses to store the choice, it still holds for this visit (no flip back)', async () => {
+  const { writeWorkspaceLight, readWorkspaceLight: read, _resetWorkspaceThemeMemory } = await import('../workspace-theme');
+  _resetWorkspaceThemeMemory();
+  const blocked = { getItem: () => null, setItem: () => { throw new Error('QuotaExceeded'); } };
+  assert.equal(read(blocked), true);
+  assert.equal(writeWorkspaceLight(blocked, false), false);
+  assert.equal(read(blocked), false, 'dark kept although storage refused');
+  const ok: Record<string, string> = {};
+  const store = { getItem: (k: string) => ok[k] ?? null, setItem: (k: string, v: string) => { ok[k] = v; } };
+  assert.equal(writeWorkspaceLight(store, true), true);
+  assert.equal(read(store), true);
+  _resetWorkspaceThemeMemory();
+});
