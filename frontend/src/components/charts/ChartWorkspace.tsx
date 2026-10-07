@@ -17,7 +17,7 @@ import { pollWhenVisible } from '@/lib/client-fetch';
 import { cacheChart, freshChart, type CachedChart } from '@/lib/chart-refresh';
 import WatchlistResizeHandle, { clampWatchlistWidth } from './WatchlistResizeHandle';
 import { useWorkspaceLight, workspaceThemeClass } from '@/lib/workspace-theme';
-import { loadView, rightPadBars, saveView } from '@/lib/chart-view-prefs';
+import { fitBarSpace, loadView, saveView } from '@/lib/chart-view-prefs';
 import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
 
 type KC = typeof import('klinecharts');
@@ -319,9 +319,8 @@ export default function ChartWorkspace() {
     const times = bars.map((b) => b.timestamp);
     const start = rangeStart(r, times[times.length - 1]);
     const firstIdx = start == null ? 0 : Math.max(0, barIndexAt(times, start - 1) + 1);
-    const n = Math.max(8, bars.length - firstIdx);
-    const pad = rightPadBars(n);   // zzz956: room right of the last candle, like TradingView
-    const space = Math.min(40, Math.max(0.3, width / (n + pad)));
+    // zzz956: room right of the last candle, like TradingView; zzz960: at most 15 px a bar (TradingView's spacing) for 3M and longer
+    const { space, pad } = fitBarSpace(width, bars.length - firstIdx, r);
     chart.setBarSpace(space);
     chart.setOffsetRightDistance(pad * space);
     chart.scrollToRealTime();
