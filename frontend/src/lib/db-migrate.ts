@@ -79,6 +79,31 @@ export const MIGRATIONS: readonly Migration[] = [
       );
       CREATE INDEX IF NOT EXISTS ai_extraction_ticker_idx ON ai_extraction (market, ticker, filed_at DESC);`,
   },
+  {
+    // zzz938 — our own stock screener: the daily snapshot the page reads, per-company stored pieces (profile, prices) and the
+    // SEC frame files kept between builds (older periods change rarely, so they are not downloaded every day)
+    id: 3, name: 'stock_screener',
+    sql: `
+      CREATE TABLE IF NOT EXISTS screener_snapshot (
+        market      TEXT PRIMARY KEY,
+        built_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+        rows        JSONB NOT NULL,
+        meta        JSONB
+      );
+      CREATE TABLE IF NOT EXISTS screener_store (
+        market      TEXT NOT NULL,
+        ticker      TEXT NOT NULL,
+        kind        TEXT NOT NULL,
+        payload     JSONB NOT NULL,
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (market, ticker, kind)
+      );
+      CREATE TABLE IF NOT EXISTS sec_frame_cache (
+        key         TEXT PRIMARY KEY,
+        data        JSONB NOT NULL,
+        fetched_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+      );`,
+  },
 ] as const;
 
 const LOCK_ID = 88_301_883;   // advisory-lock id for migrations

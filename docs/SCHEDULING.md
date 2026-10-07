@@ -24,6 +24,7 @@ The code is in `frontend/src/lib/app-scheduler.ts` (`APP_JOBS`). `instrumentatio
 | refresh-guidance | `10 13 * * 1-5` | POST /api/v1/cron/refresh-guidance | vercel-cron-bridge.yml |
 | archive-to-postgres | `30 19 * * *` | POST /api/v1/cron/archive-to-postgres?months=2&ahead=1 | vercel-cron-bridge.yml |
 | hub-ingest / hub-ingest-next | `7 18` / `15 18 * * *` | POST /api/market/earnings?ingest=1&force=1&month=… (the slot's month / the next month) | vercel-cron-bridge.yml |
+| build-screener-us | `45 22 * * 1-5` | POST /api/v1/cron/build-screener?market=US | vercel-cron-bridge.yml |
 | refresh-bench | `4 3 * * *` | GET /api/v1/cron/refresh-bench | book-watch.yml |
 | book-watch | 05:30 and 12:04 Mon–Fri, 15:04 Mon–Sat | GET refresh-bench, then GET /api/v1/cron/book-watch | book-watch.yml |
 | eo-bb-evening | `30 13 * * *` | GET /api/bot/eo-blockbuster-alert | book-watch.yml |

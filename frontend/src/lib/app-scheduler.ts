@@ -398,6 +398,8 @@ export const APP_JOBS: readonly AppJob[] = [
   // zzz897: the month comes from the SLOT's date, never the clock (a run after midnight UTC on the 1st still ingests the month that just ended)
   { name: 'hub-ingest', crons: ['7 18 * * *'], timeoutMs: 10 * MIN, workflow: BRIDGE, does: 'POST /api/market/earnings?ingest=1&force=1&month=<slot month>', run: http('POST', (s) => `/api/market/earnings?ingest=1&force=1&month=${ym(s)}`, 240_000) },
   { name: 'hub-ingest-next', crons: ['15 18 * * *'], timeoutMs: 10 * MIN, workflow: BRIDGE, does: 'POST /api/market/earnings?ingest=1&force=1&month=<slot month + 1>', run: http('POST', (s) => `/api/market/earnings?ingest=1&force=1&month=${ym(s, 1)}`, 240_000) },
+  // zzz938 — our own stock screener (USA): Nasdaq list + SEC figures + Yahoo prices, after the US close on weekdays
+  { name: 'build-screener-us', crons: ['45 22 * * 1-5'], timeoutMs: 15 * MIN, workflow: BRIDGE, does: 'POST /api/v1/cron/build-screener?market=US', run: http('POST', '/api/v1/cron/build-screener?market=US', 840_000) },
   // book-watch.yml — all GET
   { name: 'refresh-bench', crons: ['4 3 * * *'], timeoutMs: 4 * MIN, workflow: BOOK, does: 'GET /api/v1/cron/refresh-bench', run: http('GET', '/api/v1/cron/refresh-bench', 90_000) },
   { name: 'book-watch', crons: ['30 5 * * 1-5', '4 12 * * 1-5', '4 15 * * 1-6'], timeoutMs: 5 * MIN, workflow: BOOK, does: 'GET /api/v1/cron/refresh-bench, then GET /api/v1/cron/book-watch', run: bookWatchJob },

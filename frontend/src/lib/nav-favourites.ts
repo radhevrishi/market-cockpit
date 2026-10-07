@@ -39,6 +39,8 @@ const SEED: readonly string[] = [
   '/concall-intel?tab=radar',
   '/market-snapshot',
   '/guidance-upgrades',
+  '/stock-screener',
+  '/charts',
 ];
 
 // ── INTRODUCING A NEW TAB TO A RAIL THAT HAS ALREADY BEEN STARRED. (zzz713)
@@ -60,7 +62,8 @@ const OFFER: readonly string[] = ['/portfolio-catalysts', '/exit-radar', '/ai-ga
 // zzz841 — Market Snapshot, offered once like every new tab.
 // zzz843 — Guidance Upgrades, offered once like every new tab.
 // zzz846 — Growth Guidance, offered once like every new tab.
-const OFFER_ALL: readonly string[] = [...OFFER, '/market-snapshot', '/guidance-upgrades', '/growth-guidance'];
+// zzz938 — our own Stock Screener and Charts (replace TradingView), offered once like every new tab.
+const OFFER_ALL: readonly string[] = [...OFFER, '/market-snapshot', '/guidance-upgrades', '/growth-guidance', '/stock-screener', '/charts'];
 
 function applyOffers(cur: string[]): string[] {
   let offered: string[] = [];

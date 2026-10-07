@@ -435,6 +435,31 @@ export async function yahooForwardEstimates(ticker: string): Promise<ForwardEsti
   return out;
 }
 
+/** zzz938 — employees and free float for the stock screener (one quoteSummary call; null when Yahoo does not answer).
+ *  floatPct = float shares ÷ shares outstanding × 100. `blocked` = Yahoo refused (rate limit / crumb), so the caller can stop early. */
+export async function yahooProfileStats(ticker: string): Promise<{ employees: number | null; floatPct: number | null; blocked?: boolean } | null> {
+  const t = String(ticker || '').toUpperCase().replace(/[./]/g, '-');
+  if (!/^[A-Z0-9][A-Z0-9-]{0,14}$/.test(t)) return null;
+  try {
+    const c = await yahooCrumb();
+    if (!c) return { employees: null, floatPct: null, blocked: true };
+    const url = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(t)}?modules=assetProfile,defaultKeyStatistics&crumb=${encodeURIComponent(c.crumb)}`;
+    const res = await fetch(url, { headers: { 'User-Agent': BROWSER_UA, 'Cookie': c.cookie }, cache: 'no-store', signal: AbortSignal.timeout(9000) });
+    if (res.status === 401) { _crumb = null; return { employees: null, floatPct: null, blocked: true }; }
+    if (res.status === 429) return { employees: null, floatPct: null, blocked: true };
+    if (!res.ok) return null;
+    const j: any = await res.json();
+    const r = j?.quoteSummary?.result?.[0];
+    if (!r) return null;
+    const emp = r?.assetProfile?.fullTimeEmployees;
+    const fl = r?.defaultKeyStatistics?.floatShares?.raw, so = r?.defaultKeyStatistics?.sharesOutstanding?.raw;
+    return {
+      employees: typeof emp === 'number' && emp >= 0 ? emp : null,
+      floatPct: typeof fl === 'number' && typeof so === 'number' && so > 0 ? Math.round((fl / so) * 1000) / 10 : null,
+    };
+  } catch { return null; }
+}
+
 /** Small concurrency-limited map — keeps us polite to both Yahoo and SEC. */
 export async function pooled<T, R>(items: T[], limit: number, fn: (item: T, idx: number) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);

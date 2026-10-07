@@ -160,6 +160,8 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/rerating',       label: 'Re-rating',       icon: <TrendingUp className="w-4 h-4" /> },
       { href: '/stock-sheet',    label: 'Stock Sheet',     icon: <BookMarked className="w-4 h-4" /> },
       { href: '/screener',       label: 'Screener',        icon: <Filter className="w-4 h-4" /> },
+      { href: '/stock-screener', label: 'Stock Screener',  icon: <Filter className="w-4 h-4" /> },   // zzz938 — our own screener (USA + India)
+      { href: '/charts',         label: 'Charts',          icon: <LineChart className="w-4 h-4" /> },   // zzz937 — our own charts with drawings
     ],
   },
   {
@@ -295,6 +297,8 @@ const _LEGACY_NAV: NavItem[] = [
   { href: '/bottleneck-workbench', label: 'Bottleneck Workbench', icon: <Microscope className="w-5 h-5" /> },
   { href: '/rrg',           label: 'RRG',                icon: <RefreshCw className="w-5 h-5" /> },
   { href: '/screener',      label: 'Screener',           icon: <Filter className="w-5 h-5" /> },
+  { href: '/stock-screener', label: 'Stock Screener',   icon: <Filter className="w-5 h-5" /> },
+  { href: '/charts',        label: 'Charts',             icon: <LineChart className="w-5 h-5" /> },
   // PATCH 0168: Market Breadth Indicator
   { href: '/breadth',       label: 'Breadth',            icon: <BarChart3 className="w-5 h-5" /> },
   // PATCH 0096 / 0170: Live Input Cost → Equity Transmission
