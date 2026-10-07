@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cleanTicker, fmtPrice, validTicker, type Market } from '@/lib/chart-math';
 import {
-  CHART_WATCHLISTS_KEY, FLAGS, FLAG_COLORS, activeList, addItem, addList, addSection, findItem, flatRows, importParsed, itemKey,
+  CHART_WATCHLISTS_KEY, FLAGS, FLAG_COLORS, activeList, addItem, addList, addSection, findItem, flatRows, importParsed, importTvBundle, parseTvBundle, itemKey,
   listCount, moveItem, nextFlag, nextSort, parseTradingView, patchItem, patchSection, removeItem, removeList, removeSection,
   renameList, sanitizeStore, seedStore, serializeTradingView, stepRow, updateList, viewRows,
   type Flag, type Quote, type SortState, type WlItem, type WlList, type WlStore,
@@ -125,13 +125,20 @@ function ImportDialog({ store, update, onClose }: { store: WlStore; update: (fn:
   const [name, setName] = useState('Imported list');
   const [mode, setMode] = useState<'new' | 'append'>('new');
   const [msg, setMsg] = useState<string | null>(null);
-  const preview = useMemo(() => (text.trim() ? parseTradingView(text) : null), [text]);
+  const bundle = useMemo(() => (text.trim().startsWith('{') ? parseTvBundle(text) : null), [text]);
+  const preview = useMemo(() => (text.trim() && !bundle ? parseTradingView(text) : null), [text, bundle]);
   const onFile = (f: File | undefined) => {
     if (!f) return;
-    if (f.size > 1_000_000) { setMsg('That file is too big for a watchlist (over 1 MB).'); return; }
-    f.text().then((t) => { setText(t); setName(f.name.replace(/\.(txt|csv)$/i, '').slice(0, 60) || 'Imported list'); }).catch(() => setMsg('Could not read that file.'));
+    if (f.size > 3_000_000) { setMsg('That file is too big for a watchlist (over 3 MB).'); return; }
+    f.text().then((t) => { setText(t); setName(f.name.replace(/\.(txt|csv|json)$/i, '').slice(0, 60) || 'Imported list'); }).catch(() => setMsg('Could not read that file.'));
   };
   const run = () => {
+    if (bundle) {
+      if (!bundle.lists.length) { setMsg('That file has no lists.'); return; }
+      update((s) => importTvBundle(s, bundle).store);
+      onClose();
+      return;
+    }
     if (!preview || !preview.count) { setMsg('No symbols found. TradingView lists look like: ###SECTION,NSE:TCS,NASDAQ:AKAM'); return; }
     update((s) => importParsed(s, preview, mode === 'new' ? { mode: 'new', name } : { mode: 'append', listId: s.activeId }));
     onClose();
@@ -141,8 +148,8 @@ function ImportDialog({ store, update, onClose }: { store: WlStore; update: (fn:
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div style={{ width: 'min(560px, 100%)', maxHeight: '90vh', overflow: 'auto', background: 'var(--mc-bg-1)', color: 'var(--mc-text-1)', border: '1px solid var(--mc-border-1)', borderRadius: 10, padding: 16, display: 'flex', flexDirection: 'column', gap: 10, fontSize: 13 }}>
         <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--mc-text-0)' }}>Import a TradingView watchlist</div>
-        <div style={{ color: 'var(--mc-text-3)' }}>In TradingView: watchlist menu → Export list. Upload that .txt file here, or paste its text.</div>
-        <input type="file" accept=".txt,.csv,text/plain" aria-label="Watchlist file" onChange={(e) => onFile(e.target.files?.[0])} />
+        <div style={{ color: 'var(--mc-text-3)' }}>In TradingView: watchlist menu → Export list. Upload that .txt file here, or paste its text. An all-lists .json file (every list at once) also works.</div>
+        <input type="file" accept=".txt,.csv,.json,text/plain,application/json" aria-label="Watchlist file" onChange={(e) => onFile(e.target.files?.[0])} />
         <textarea aria-label="Watchlist text" value={text} onChange={(e) => setText(e.target.value)} rows={6} placeholder="###SECTION,NSE:TATVA,NSE:BBOX,###US,NASDAQ:AKAM"
           style={{ ...inputStyle, fontFamily: 'ui-monospace, Menlo, monospace', resize: 'vertical' }} />
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
@@ -154,6 +161,12 @@ function ImportDialog({ store, update, onClose }: { store: WlStore; update: (fn:
             <input type="radio" checked={mode === 'append'} onChange={() => setMode('append')} /> Add to “{activeList(store).name}”
           </label>
         </div>
+        {bundle && (() => { const r = importTvBundle(store, bundle); return (
+          <div style={{ color: 'var(--mc-text-2)' }}>
+            All-lists file: {r.lists} list{r.lists === 1 ? '' : 's'}, {r.symbols} symbols, {r.flagged} coloured flags.
+            {r.replaced > 0 && <> {r.replaced} list{r.replaced === 1 ? '' : 's'} with the same name will be replaced; your other lists stay.</>}
+            {r.skipped > 0 && <> Skipped {r.skipped} rows this page does not chart (indices like TVC:GOLD, FRED, ECONOMICS, other countries).</>}
+          </div>); })()}
         {preview && (
           <div style={{ color: 'var(--mc-text-2)' }}>
             Found {preview.count} symbol{preview.count === 1 ? '' : 's'} in {preview.sections.length} section{preview.sections.length === 1 ? '' : 's'}.

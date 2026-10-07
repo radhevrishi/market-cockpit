@@ -315,3 +315,46 @@ export function importParsed(s: WlStore, parsed: ParseResult, opts: { mode: 'new
     return out;
   });
 }
+
+// ── zzz945: all TradingView lists in one file ───────────────────────────────
+// {"mcTradingViewLists":1,"lists":[{"name":"INDIA PORTFOLIO","text":"###SECTION,NSE:TATVA,…"}],"flags":{"red":["NSE:TATVA",…]},
+//  "active":"india and usa themes"}. A list with the same name as one already here is REPLACED (re-importing does not duplicate);
+// other lists are untouched. Flags ("colored" TradingView lists) are put on the rows of the imported lists.
+export interface TvBundle { lists: { name: string; text: string }[]; flags: Partial<Record<string, string[]>>; active?: string }
+export function parseTvBundle(text: string): TvBundle | null {
+  let j: any;
+  try { j = JSON.parse(String(text || '').replace(/^﻿/, '')); } catch { return null; }
+  if (!j || typeof j !== 'object' || j.mcTradingViewLists !== 1 || !Array.isArray(j.lists)) return null;
+  const lists = j.lists.filter((l: any) => l && typeof l.name === 'string' && typeof l.text === 'string').map((l: any) => ({ name: l.name, text: l.text }));
+  const flags: Record<string, string[]> = {};
+  if (j.flags && typeof j.flags === 'object') for (const f of FLAGS) if (Array.isArray(j.flags[f])) flags[f] = j.flags[f].filter((x: unknown) => typeof x === 'string');
+  return { lists, flags, active: typeof j.active === 'string' ? j.active : undefined };
+}
+export interface BundleResult { store: WlStore; lists: number; symbols: number; skipped: number; replaced: number; flagged: number }
+export function importTvBundle(s: WlStore, b: TvBundle): BundleResult {
+  const flagOf = new Map<string, Flag>();
+  for (const f of FLAGS) for (const sec of parseTradingView((b.flags[f] || []).join(',')).sections) for (const it of sec.items) if (!flagOf.has(itemKey(it))) flagOf.set(itemKey(it), f);
+  let lists = s.lists.slice();
+  let symbols = 0, skipped = 0, replaced = 0, flagged = 0, added = 0;
+  let activeId = s.activeId;
+  for (const bl of b.lists) {
+    const parsed = parseTradingView(bl.text);
+    skipped += parsed.skipped;
+    if (!parsed.count) continue;
+    const name = cleanName(bl.name, 'Watchlist');
+    const secs = parsed.sections.map((p) => ({
+      id: newId('s'), name: p.name, collapsed: false,
+      items: p.items.map((it) => { const f = flagOf.get(itemKey(it)); if (f) flagged++; return f ? { ...it, flag: f } : it; }),
+    }));
+    const one = sanitizeStore({ lists: [{ id: newId('l'), name, sections: secs }] }).lists[0];
+    const at = lists.findIndex((l) => l.name.toLowerCase() === name.toLowerCase());
+    if (at >= 0) { one.id = lists[at].id; lists[at] = one; replaced++; }
+    else if (lists.length < MAX_LISTS) lists.push(one);
+    else continue;
+    added++;
+    symbols += listCount(one);
+    if (b.active && b.active.toLowerCase() === name.toLowerCase()) activeId = one.id;
+  }
+  if (!lists.some((l) => l.id === activeId)) activeId = lists[0]?.id || s.activeId;
+  return { store: { lists, activeId }, lists: added, symbols, skipped, replaced, flagged };
+}
