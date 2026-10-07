@@ -3,6 +3,7 @@
 // India tries .NS first, then .BO for the ones still missing. In-memory cache 45 s. Public market data. Max 300 symbols.
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchYahooSparkBatch } from '@/lib/yahoo';
+import { yahooCandidates } from '@/lib/yahoo-symbol';
 import { IN_TICKER_RE, US_TICKER_RE } from '@/lib/chart-math';
 
 export const runtime = 'nodejs';
@@ -42,15 +43,21 @@ export async function GET(req: NextRequest) {
     out[k] = q; _cache.set(k, { at: now, q });
     return true;
   };
-  const [inNs, us] = await Promise.all([
-    needIn.length ? fetchYahooSparkBatch(needIn.map((t) => `${t}.NS`)) : Promise.resolve(new Map()),
-    needUs.length ? fetchYahooSparkBatch(needUs.map((t) => t.replace(/\./g, '-'))) : Promise.resolve(new Map()),
-  ]);
-  const missIn = needIn.filter((t) => !put(`IN:${t}`, inNs.get(t)));
-  for (const t of needUs) if (!put(`US:${t}`, us.get(t.replace(/\./g, '-')))) _cache.set(`US:${t}`, { at: now, q: null });
-  if (missIn.length) {
-    const bo = await fetchYahooSparkBatch(missIn.map((t) => `${t}.BO`));
-    for (const t of missIn) if (!put(`IN:${t}`, bo.get(t))) _cache.set(`IN:${t}`, { at: now, q: null });
+  // zzz943: one spark batch for every first-choice Yahoo symbol (index names and renamed tickers mapped), then .BO for India misses
+  const first = new Map<string, string>();   // Yahoo symbol → our key
+  for (const t of needIn) first.set(yahooCandidates('IN', t)[0], `IN:${t}`);
+  for (const t of needUs) first.set(yahooCandidates('US', t)[0], `US:${t}`);
+  const got = first.size ? await fetchYahooSparkBatch(Array.from(first.keys())) : new Map();
+  const miss: string[] = [];
+  for (const [ysym, k] of first) {
+    const base = ysym.replace(/\.(NS|BO)$/i, '');
+    if (!put(k, got.get(base) ?? got.get(ysym))) miss.push(k);
+  }
+  const second = new Map<string, string>();
+  for (const k of miss) { const c = yahooCandidates(k.slice(0, 2) as 'IN' | 'US', k.slice(3))[1]; if (c) second.set(c, k); else _cache.set(k, { at: now, q: null }); }
+  if (second.size) {
+    const bo = await fetchYahooSparkBatch(Array.from(second.keys()));
+    for (const [ysym, k] of second) if (!put(k, bo.get(ysym.replace(/\.(NS|BO)$/i, '')) ?? bo.get(ysym))) _cache.set(k, { at: now, q: null });
   }
   if (_cache.size > 3000) { for (const [k, v] of _cache) if (now - v.at > TTL_MS) _cache.delete(k); }
   return NextResponse.json({ ok: true, quotes: out, asOf: new Date(now).toISOString() }, { headers: { 'Cache-Control': 'private, max-age=30' } });

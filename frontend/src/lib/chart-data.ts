@@ -1,4 +1,5 @@
 // zzz937 — server-only: daily OHLCV for the /charts page from Yahoo's chart API, India via .NS (falling back to .BO).
+import { yahooCandidates } from './yahoo-symbol';
 // Kept in memory only (a few minutes) — chart series are large and must not go to Redis.
 import type { Bar, Market } from './chart-math';
 
@@ -57,7 +58,7 @@ async function fetchYahooDaily(symbol: string, range: DataRange): Promise<DailyS
 
 /** Yahoo symbols to try for a ticker: India .NS then .BO; US with "." written as "-" (BRK.B → BRK-B). */
 export function yahooSymbolsFor(market: Market, ticker: string): string[] {
-  return market === 'IN' ? [`${ticker}.NS`, `${ticker}.BO`] : [ticker.replace(/\./g, '-')];
+  return yahooCandidates(market, ticker);   // zzz943: index names (CNXSMALLCAP, NIFTY, SPX…) and renamed tickers (TATAMOTORS) mapped
 }
 
 export async function getDailySeries(market: Market, ticker: string, range: DataRange): Promise<DailySeries | null> {

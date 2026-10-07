@@ -411,3 +411,22 @@ html:root[data-theme="light"] {
   --background: #ffffff; --foreground: #0b1220; --card: #ffffff; --border: #cbd5e1;
 }
 html:root[data-theme="light"] .mc-stat-card { box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08); }
+
+
+/* zzz943 — /charts can be white (TradingView's white view) while the rest of the site stays dark: the same light colours, scoped */
+.mc-chart-light {
+  color-scheme: light;
+  --mc-bg-0: #ffffff; --mc-bg-1: #ffffff; --mc-bg-2: #f7f8fa; --mc-bg-3: #f1f5f9; --mc-bg-4: #cbd5e1;
+  --mc-border-0: #cbd5e1; --mc-border-1: #cbd5e1; --mc-border-2: #94a3b8; --mc-border-3: #e2e8f0;
+  --mc-text-0: #0b1220; --mc-text-1: #0f172a; --mc-text-2: #1e293b; --mc-text-3: #334155; --mc-text-4: #475569;
+  --mc-bullish: #047857; --mc-bullish-2: #15803d; --mc-bearish: #b91c1c; --mc-bearish-2: #b91c1c;
+  --mc-warn: #b45309; --mc-err: #b91c1c; --mc-info: #1d4ed8;
+  --mc-accent: #0369a1; --mc-accent-light: #0369a1; --mc-accent-dark: #075985;
+  --mc-cyan: #0e7490; --mc-saffron: #c2410c;
+  --mc-state-live: #0e7490; --mc-state-warm: #0f766e; --mc-state-stale: #b45309; --mc-state-persistent: #6d28d9; --mc-state-archived: #475569;
+  --mc-verdict-up: #047857; --mc-verdict-flat: #475569; --mc-verdict-down: #be123c;
+  --mc-verdict-absent: #64748b; --mc-verdict-alarm: #e11d48; --mc-verdict-warn: #b45309;
+  --tc-text: #0b1220; --tc-dim: #1e293b; --tc-faint: #334155; --tc-accent: #0e7490;
+  --background: #ffffff; --foreground: #0b1220; --card: #ffffff; --border: #cbd5e1;
+  background: #ffffff; color: #0f172a;
+}

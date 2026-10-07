@@ -50,7 +50,9 @@ const TF_TO_PERIOD = { D: { type: 'day', span: 1 }, W: { type: 'week', span: 1 }
 
 function cssVar(name: string, fallback: string): string {
   if (typeof window === 'undefined') return fallback;
-  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  // zzz943: read from the chart page itself — it can be white while the site is dark
+  const root = document.querySelector('.mc-charts-root') || document.documentElement;
+  const v = getComputedStyle(root).getPropertyValue(name).trim();
   return v || fallback;
 }
 /** 0 (black) … 1 (white) for a #rrggbb colour; null if it is not one. */
@@ -116,6 +118,9 @@ export default function ChartWorkspace() {
   const [wlStore, wlUpdate] = useWatchlistStore();
   // this component only renders in the browser (next/dynamic, ssr:false), so storage can be read on first render
   const [panelOpen, setPanelOpen] = useState(() => { try { return localStorage.getItem(PANEL_OPEN_KEY) !== '0'; } catch { return true; } });
+  // zzz943: white chart page (TradingView's white view) by default, whatever the site theme; one click to dark
+  const [chartLight, setChartLight] = useState(() => { try { return localStorage.getItem('mc:chart-light:v1') !== '0'; } catch { return true; } });
+  const toggleLight = () => setChartLight((v) => { try { localStorage.setItem('mc:chart-light:v1', v ? '0' : '1'); } catch { /* storage blocked */ } return !v; });
   const togglePanel = () => setPanelOpen((v) => { try { localStorage.setItem(PANEL_OPEN_KEY, v ? '0' : '1'); } catch { /* storage blocked */ } return !v; });
 
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -202,6 +207,14 @@ export default function ChartWorkspace() {
       chart.setPaneOptions({ id: VOL_PANE, height: 110 });
     }
   }, []);
+
+  // zzz943: re-colour the chart when the page switches between white and dark (the class is on the page, not on <html>)
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!ready || !chart) return;
+    chart.setStyles(themeStyles());
+    applyIndicators(settingsRef.current);
+  }, [chartLight, ready, applyIndicators]);
 
   // ── visible range ───────────────────────────────────────────────────────────
   const applyRange = useCallback((r: RangeKey) => {
@@ -413,7 +426,7 @@ export default function ChartWorkspace() {
   });
 
   return (
-    <div className="mc-charts-root" style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 16px', color: 'var(--mc-text-1)' }}>
+    <div className={`mc-charts-root${chartLight ? ' mc-chart-light' : ''}`} style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 16px', color: 'var(--mc-text-1)' }}>
       <style>{LAYOUT_CSS}</style>
       {/* search + timeframe + range */}
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
@@ -442,6 +455,7 @@ export default function ChartWorkspace() {
             <SettingsPanel settings={settings} onChange={updateSettings} onClose={() => setShowSettings(false)} />
           )}
         </div>
+        <button type="button" style={btn(false)} onClick={toggleLight} title="Switch the chart page between white and dark">{chartLight ? '🌙 Dark' : '☀ White'}</button>
         <button type="button" style={btn(panelOpen)} onClick={togglePanel} title="Show or hide the watchlist panel">Watchlist</button>
       </div>
 
