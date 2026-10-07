@@ -91,11 +91,11 @@ const btw = (key: NumKey, v: number, v2: number): Filter => ({ kind: 'num', key,
 const smaUp: Filter = { kind: 'cmp', key: 'sma50', op: 'above', other: 'sma200' };
 export const BUILT_IN_SCREENS: readonly Screen[] = [
   { id: 'us-super-scalers', name: 'Future Super Scalers like NBIS', market: 'US', builtIn: true, filters: [
-    { kind: 'sector', sectors: [] }, btw('vol', 30_000, 1e14), btw('mc', 200, 30_000), n('revAYoY', 'gt', 10), n('de', 'lt', 2), n('revQYoY', 'gt', 20), smaUp,
+    { kind: 'sector', sectors: [] }, n('vol', 'gt', 30_000), btw('mc', 200, 30_000), n('revAYoY', 'gt', 10), n('de', 'lt', 2), n('revQYoY', 'gt', 20), smaUp,
   ] },
   { id: 'us-future-nvda', name: 'Future NVDA ALAB APP PLTR', market: 'US', builtIn: true, filters: [
     { kind: 'sector', sectors: [] }, n('ebitdaQoQ', 'gt', 0), n('revQYoY', 'gt', 25), n('revAYoY', 'gt', 10), n('emp', 'gt', 100), n('gmFY', 'gt', 25),
-    n('de', 'lt', 1), btw('ps', 3, 333), n('gpQYoY', 'gt', 50), n('opmTTM', 'gt', -15), btw('flt', 80, 111_111), n('bb', 'gt', -25),
+    n('de', 'lt', 1), btw('ps', 3, 333), n('gpQYoY', 'gt', 50), n('opmTTM', 'gt', -15), n('bb', 'gt', -25),
   ] },
   { id: 'in-zachs', name: 'ZACHS SCREENER India', market: 'IN', builtIn: true, filters: [
     n('revQYoY', 'gt', 9), n('epsQYoY', 'gt', 15), btw('mc', 10, 5_000), smaUp, { kind: 'sector', sectors: [] }, n('gpQYoY', 'gt', 5), btw('ps', 0, 7),

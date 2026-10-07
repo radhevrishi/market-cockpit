@@ -195,7 +195,7 @@ export async function buildUsSnapshot(now = new Date()): Promise<{ ok: boolean; 
   const pw = async () => { while (bi < batches.length) { const b = batches[bi++]; const m = await sparkCloses(b); m.forEach((v, k) => closes.set(k, v)); await sleep(150); } };
   await Promise.all([pw(), pw()]);
   notes.push(`daily prices: ${closes.size} of ${syms.length} companies${closes.size < syms.length * 0.9 && sparkLastError ? ` (last Yahoo refusal: ${sparkLastError})` : ''}`);
-  const profiles = await loadProfiles(universe.filter((r) => (r.mc ?? 0) >= 100).map((r) => r.t), notes, 4 * 60_000);
+  const profiles = await loadProfiles(universe.filter((r) => (r.mc ?? 0) >= 100).map((r) => r.t), notes, 6 * 60_000);
 
   const rows: ScreenRow[] = [];
   let noSec = 0;

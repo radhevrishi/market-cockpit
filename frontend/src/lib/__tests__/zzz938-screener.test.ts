@@ -19,7 +19,7 @@ describe('filters', () => {
   });
   test('the owner\'s US screens run and each filter has its own count', () => {
     const s = BUILT_IN_SCREENS.find((x) => x.id === 'us-future-nvda')!;
-    const rows = [row({ t: 'A' }), row({ t: 'B', gpQYoY: 10 }), row({ t: 'C', flt: null })];
+    const rows = [row({ t: 'A' }), row({ t: 'B', gpQYoY: 10 }), row({ t: 'C', emp: null })];  // zzz947: TradingView's float filter is a share count (80+ shares = any float), not float %, so it is not a filter here
     assert.deepEqual(runScreen(rows, s.filters).map((r) => r.t), ['A']);
     const c = filterCounts(rows, s.filters);
     assert.equal(c.length, s.filters.length);
