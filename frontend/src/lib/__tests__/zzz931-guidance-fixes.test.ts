@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { totalToAnnual, horizonOf, spacIssueOf, scopeIssueOf, namedPartOf } from '../guidance-horizon';
 import { growthQuoteIssue } from '../guidance-growth-quote';
-import { itemsFromExtracted, buildUniverse, type GuUniverseRecordX } from '../guidance-universe';
+import { itemsFromExtracted, buildUniverse, displayOf, type GuUniverseRecordX } from '../guidance-universe';
 import { fairValue, marginFit, bandsFor, sectorOf, type FvFacts } from '../gu-fair-value';
 import { usFactsFromRow } from '../gu-skygold-facts';
 import type { ExtractedGuidance, GuidanceExtractResult } from '../guidance-docs-types';
@@ -65,7 +65,7 @@ describe('1 · a total over several years becomes the yearly rate', () => {
   });
   test('universe: a one-year row whose sentence states a CAGR to a year 2+ years out is a multi-year rate (Hardwyn "by FY32 … 30–35% CAGR")', () => {
     const [it] = itemsFromExtracted([xres('HARDWYN', 'Hardwyn India Ltd', [row({ quote: 'Looking ahead, we have set an ambitious yet achievable target of reaching ₹1,000 Crore+ in revenue by FY32, implying a 30–35% CAGR.', growthPctLow: 30, growthPctHigh: 35, period: 'FY32', periodKind: 'ANNUAL' })])], null, NOW);
-    assert.equal(it.pkind, 'MULTI_YEAR_CAGR'); assert.equal(it.period, 'FY26-32'); assert.deepEqual([it.low, it.high], [30, 35]);
+    assert.equal(it.pkind, 'MULTI_YEAR_CAGR'); assert.equal(it.period, 'FY27-32'); assert.equal(displayOf({ metric: it.metric, low: it.low, high: it.high, open: it.open, origin: 'STATED', periodKind: it.pkind, period: it.period, abs: null }), '6-yr revenue CAGR +30–35%'); assert.deepEqual([it.low, it.high], [30, 35]);
   });
 });
 

@@ -502,7 +502,7 @@ export function itemsFromExtracted(results: GuidanceExtractResult[] | null | und
     // is a multi-year yearly rate, not one year's growth (Hardwyn showed "+30–35% FY32" as a one-year figure)
     if (sLo != null && (pkind === 'FY' || pkind === 'CY') && /\bcagr\b/i.test(gq)) {
       const yT = /^FY(\d{2})$/.exec(period); const lc = lastCompletedFy(c.date);
-      if (yT && lc != null && parseInt(yT[1], 10) - lc >= 2) { pkind = 'MULTI_YEAR_CAGR'; period = `FY${String(lc).padStart(2, '0')}-${yT[1]}`; }
+      if (yT && lc != null && parseInt(yT[1], 10) - lc >= 2) { pkind = 'MULTI_YEAR_CAGR'; period = `FY${String(lc + 1).padStart(2, '0')}-${yT[1]}`; }   // the page's convention: FY27-32 = six growth years FY27…FY32
     }
     // zzz931: a TOTAL change over several years ("double in next 3 years", "doubling over the next four to five years", "grow 50% over 3
     // years") was shown as that total a year (+100% a year). It becomes the yearly rate, labelled as worked out from the company's words.
