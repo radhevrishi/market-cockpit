@@ -15,6 +15,7 @@ import WatchlistPanel, { AddToWatchlist, useWatchlistStore } from './WatchlistPa
 import { IndicatorLegend, IndicatorsPanel, LayoutPicker, useLayouts } from './LayoutControls';
 import { pollWhenVisible } from '@/lib/client-fetch';
 import { cacheChart, freshChart, type CachedChart } from '@/lib/chart-refresh';
+import WatchlistResizeHandle, { clampWatchlistWidth } from './WatchlistResizeHandle';
 
 type KC = typeof import('klinecharts');
 type Tool = 'cursor' | 'mcHLine' | 'segment' | 'rayLine' | 'mcRect' | 'parallelStraightLine' | 'fibonacciLine' | 'mcText' | 'mcMeasure';
@@ -50,12 +51,15 @@ html.mc-chart-focus .mc-charts-root { height: 100vh; padding-top: 8px !important
 .mc-scale-btn.on { background: var(--mc-accent); border-color: var(--mc-accent); color: #fff; }
 .mc-charts-main { display: flex; flex: 1; min-height: 0; gap: 8px; }
 .mc-charts-left { display: flex; flex: 1; min-width: 0; min-height: 0; gap: 8px; }
-.mc-charts-panel { width: 400px; flex-shrink: 0; min-height: 0; }
+.mc-charts-panel { width: var(--mc-watchlist-width, 400px); max-width: 55%; flex-shrink: 0; min-height: 0; }
+.mc-watchlist-resize { width: 6px; flex-shrink: 0; cursor: col-resize; touch-action: none; border-radius: 4px; background: var(--mc-border-3); }
+.mc-watchlist-resize:hover, .mc-watchlist-resize:focus-visible { background: var(--mc-accent); outline: none; }
 @media (max-width: 900px) {
   .mc-charts-root { height: auto; }
   .mc-charts-main { flex-direction: column; }
   .mc-charts-left { height: 62vh; flex: none; }
-  .mc-charts-panel { width: 100%; height: 70vh; }
+  .mc-charts-panel { width: 100%; max-width: none; height: 70vh; }
+  .mc-watchlist-resize { display: none; }
 }
 `;
 const TF_TO_INTERVAL: Record<Timeframe, string> = { D: '1d', W: '1wk', M: '1mo' };
@@ -137,6 +141,8 @@ export default function ChartWorkspace() {
   const [refresh, setRefresh] = useState(0);
   // this component only renders in the browser (next/dynamic, ssr:false), so storage can be read on first render
   const [panelOpen, setPanelOpen] = useState(() => { try { return localStorage.getItem(PANEL_OPEN_KEY) !== '0'; } catch { return true; } });
+  const [panelWidth, setPanelWidth] = useState(() => { try { const n = Number(localStorage.getItem('mc:watchlist-width')); return Number.isFinite(n) && n >= 280 ? Math.min(620, n) : 400; } catch { return 400; } });
+  const resizePanel = (n: number, persist: boolean) => { const width = clampWatchlistWidth(n); setPanelWidth(width); if (persist) try { localStorage.setItem('mc:watchlist-width', String(width)); } catch { /* display preference only */ } };
   // zzz943: white chart page (TradingView's white view) by default, whatever the site theme; one click to dark
   const [chartLight, setChartLight] = useState(() => { try { return localStorage.getItem('mc:chart-light:v1') !== '0'; } catch { return true; } });
   const toggleLight = () => setChartLight((v) => { try { localStorage.setItem('mc:chart-light:v1', v ? '0' : '1'); } catch { /* storage blocked */ } return !v; });
@@ -718,11 +724,12 @@ export default function ChartWorkspace() {
           )}
         </div>
       </div>
-      {panelOpen && (
-        <div className="mc-charts-panel">
+      {panelOpen && (<>
+        <WatchlistResizeHandle width={panelWidth} onChange={resizePanel} />
+        <div className="mc-charts-panel" style={{ '--mc-watchlist-width': `${panelWidth}px` } as React.CSSProperties}>
           <WatchlistPanel store={wlStore} update={wlUpdate} currentKey={drawingKey(market, ticker, exchange)} onPick={pickFromList} />
         </div>
-      )}
+      </>)}
       </div>
     </div>
   );

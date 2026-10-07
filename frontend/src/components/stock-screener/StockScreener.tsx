@@ -12,6 +12,8 @@ import {
 } from '@/lib/screener/filters';
 import { TV_SECTORS } from '@/lib/screener/tv-sectors';
 import { pollWhenVisible } from '@/lib/client-fetch';
+import { useWatchlistStore } from '@/components/charts/WatchlistPanel';
+import { activeList, updateList, addItem, listCount, type WlItem } from '@/lib/chart-watchlist';
 
 const C = {
   text: 'var(--mc-text-0)', text1: 'var(--mc-text-1)', dim: 'var(--mc-text-3, #6b7280)', border: 'var(--mc-border-1)',
@@ -52,6 +54,9 @@ export default function StockScreener() {
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 }>({ key: 'mc', dir: -1 });
   const [showAll, setShowAll] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [watchlists, updateWatchlists, watchlistSaveError, retryWatchlistSave] = useWatchlistStore();
+  const [addingMatches, setAddingMatches] = useState(false);
+  const [targetList, setTargetList] = useState('');
 
   // every screen the owner can pick: his saved ones win over a built-in with the same id
   const screens = useMemo(() => {
@@ -141,6 +146,20 @@ export default function StockScreener() {
     return out;
   }, [result, sort]);
   const shown = showAll ? sorted : sorted.slice(0, 200);
+  const addMatches = () => {
+    if (!watchlists || !sorted.length) return;
+    if (targetList && !watchlists.lists.some((l) => l.id === targetList)) { setMsg('Could not add: the selected watchlist no longer exists. Choose a destination.'); return; }
+    const target = watchlists.lists.find((l) => l.id === targetList) || activeList(watchlists);
+    let next = target;
+    for (const r of sorted) {
+      const item: WlItem = { m: market, t: r.t, ...(r.exch?.[0] ? { x: r.exch[0] } : {}) };
+      next = addItem(next, null, item);
+    }
+    const added = listCount(next) - listCount(target);
+    updateWatchlists((s) => updateList(s, target.id, () => next));
+    setMsg(`${added} symbols added to ${target.name}${sorted.length > added ? `; ${sorted.length - added} already present or beyond the list limit` : ''}.`);
+    setAddingMatches(false);
+  };
 
   const change = (next: Filter[]) => { setFilters(next); setDirty(true); };
   const save = (asNew: boolean) => {
@@ -206,7 +225,7 @@ export default function StockScreener() {
         <span style={{ marginLeft: 8, display: 'inline-flex', gap: 4 }}>
           {(['US', 'IN'] as const).map((m) => <button key={m} type="button" style={btn(market === m)} onClick={() => { setMarket(m); setDirty(true); }}>{m === 'US' ? '🇺🇸 USA' : '🇮🇳 India'}</button>)}
         </span>
-        {msg ? <span style={{ color: C.green, fontSize: 13, fontWeight: 700 }}>{msg}</span> : null}
+        {msg ? <span role="status" style={{ color: /^(Not saved|Could not)/.test(msg) ? C.red : C.text1, fontSize: 13, fontWeight: 700 }}>{msg}</span> : null}
       </div>
       {note && !dirty ? <div style={{ fontSize: 12.5, color: C.dim }}>ℹ {note}</div> : null}
 
@@ -261,7 +280,15 @@ export default function StockScreener() {
         <button type="button" style={btn()} disabled={loading} onClick={() => setRefresh((v) => v + 1)}>{loading ? 'Refreshing…' : err ? 'Retry' : 'Refresh'}</button>
         <button type="button" style={btn()} onClick={copyTickers} disabled={!sorted.length}>Copy tickers</button>
         <button type="button" style={btn()} onClick={downloadCsv} disabled={!sorted.length}>Download CSV</button>
+        <button type="button" style={btn()} onClick={() => setAddingMatches((v) => !v)} disabled={!sorted.length || !watchlists}>Add matches to watchlist</button>
       </div>
+      {addingMatches && watchlists && <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, padding: 10, border: `1px solid ${C.border}`, borderRadius: 8 }}>
+        <label>Destination <select aria-label="Watchlist for screener matches" value={targetList || activeList(watchlists).id} onChange={(e) => setTargetList(e.target.value)} style={btn()}>{watchlists.lists.map((l) => <option key={l.id} value={l.id}>{l.name} ({listCount(l)})</option>)}</select></label>
+        <span style={{ fontSize: 12, color: C.dim }}>{sorted.length} matching symbols; duplicates are skipped; each list holds up to 1,000.</span>
+        <button type="button" style={btn()} onClick={addMatches}>Add symbols</button>
+        <button type="button" style={btn()} onClick={() => setAddingMatches(false)}>Cancel</button>
+      </div>}
+      {watchlistSaveError && <div role="alert" style={{ color: C.amber }}>{watchlistSaveError} <button type="button" style={btn()} onClick={retryWatchlistSave}>Retry watchlist save</button></div>}
       {snap?.notes?.length ? (
         <details style={{ fontSize: 12, color: C.dim }}>
           <summary style={{ cursor: 'pointer' }}>Where the figures come from, and what could not be read</summary>

@@ -207,15 +207,20 @@ export function sortItems(items: WlItem[], sort: SortState, quotes: Record<strin
   }).map((x) => x.it);
 }
 export interface ViewRow { sectionId: string; item: WlItem }
+export interface WatchlistView { query?: string; market?: Market | 'ALL' }
 /** Rows in the order they are on screen: per section, sorted, collapsed sections skipped, optional flag filter. */
-export function viewRows(l: WlList, sort: SortState, quotes: Record<string, Quote | undefined>, flagFilter: Flag | null): { section: WlSection; rows: WlItem[] }[] {
+export function viewRows(l: WlList, sort: SortState, quotes: Record<string, Quote | undefined>, flagFilter: Flag | null, view: WatchlistView = {}): { section: WlSection; rows: WlItem[] }[] {
+  const query = (view.query || '').trim().toLocaleLowerCase();
   return l.sections.map((s) => {
-    const items = flagFilter ? s.items.filter((it) => it.flag === flagFilter) : s.items;
-    return { section: s, rows: s.collapsed ? [] : sortItems(items, sort, quotes) };
+    const items = s.items.filter((it) => (!flagFilter || it.flag === flagFilter)
+      && (!view.market || view.market === 'ALL' || it.m === view.market)
+      && (!query || `${it.t} ${it.x || ''} ${quotes[itemKey(it)]?.name || ''}`.toLocaleLowerCase().includes(query)));
+    // Search includes collapsed sections, without changing their stored state.
+    return { section: s, rows: s.collapsed && !query ? [] : sortItems(items, sort, quotes) };
   });
 }
-export function flatRows(l: WlList, sort: SortState, quotes: Record<string, Quote | undefined>, flagFilter: Flag | null): ViewRow[] {
-  return viewRows(l, sort, quotes, flagFilter).flatMap((g) => g.rows.map((item) => ({ sectionId: g.section.id, item })));
+export function flatRows(l: WlList, sort: SortState, quotes: Record<string, Quote | undefined>, flagFilter: Flag | null, view: WatchlistView = {}): ViewRow[] {
+  return viewRows(l, sort, quotes, flagFilter, view).flatMap((g) => g.rows.map((item) => ({ sectionId: g.section.id, item })));
 }
 /** ↑/↓: the row after (or before) the current ticker; first / last row when the current one is not in view. */
 export function stepRow(rows: ViewRow[], currentKey: string, dir: 1 | -1): ViewRow | null {
