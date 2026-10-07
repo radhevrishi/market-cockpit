@@ -211,18 +211,25 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
           ))}
         </span>
       </div>
-      <div style={{ fontSize: 12, color: R.dim }}>
-        Ranked by: a guidance raise <b>and</b> 30%+ growth first, then the size of the raise (revenue / profit — an EPS from a tiny base never counts as a big raise), then the growth guided, then how recent. Only figures checked against the company's own documents.
-      </div>
-      <div style={{ fontSize: 12, color: R.dim }}>
-        <b>Sky Gold score</b> (from the “Identify Next SKY GOLD” framework): is the big plan backed by the business today? 7 main checks — a clear target from the company, sales already growing 20%+, the target reachable from the current pace, margins steady, ROCE 20%+, cash following profit, debt under control. Each main check missed holds the score down: 80+ (STRONG) needs 6 of 7 met with real figures and 65+ (GOOD) needs 5 of 7 (with 4 met the score stays at 62 or below, with 3 at 52); a growth worked out from company numbers counts as only half a clear target; supporting checks (raise, specific plan, profit faster than sales, own cash, orders, estimates, valuation, small base) add points; red flags (guidance cut, slower-paying customers, new shares, promoters selling, other income) take points off. A figure not known never counts as met; too few figures shows “not enough data”. Click a score for every check. Bands: 80+ STRONG · 65–79 GOOD · 50–64 MIXED · under 50 WEAK.{skyFailed ? ' The company figures could not be read just now — scores use the guidance checks only.' : ''}
-      </div>
-      <div style={{ fontSize: 12, color: R.dim }}>
-        <b>Reported</b> is the date of the announcement or document the row comes from — click its header to sort newest or oldest first. <b>Fair value</b> uses the same method as the Auto-Valuation page on the company's own public figures: next-year sales or profit grown at the guided growth, times the sector's usual multiples (P/E, EV/EBITDA, P/S blended), with a bear and a bull case on hover. It needs no AI. A dash means a figure is missing or looks wrong (reason on hover); banks, lenders and insurers show a dash because they are valued on book value. “check” means upside above +150%, methods that disagree, or growth that was capped. An estimate, not advice.
-      </div>
-      <div style={{ fontSize: 12, color: R.dim }}>
-        <b>Opportunity</b> is a separate score from Sky Gold: Sky Gold asks whether the business can carry the plan; Opportunity asks how much the guidance changes profit and how supportive the setup is. It is built from six parts — implied EPS growth, raise quality (broad improvement, operating leverage, revenue only, or low quality), whether the guided growth is feasible from here, fair-value upside (only when not marked “check”), how long the guidance runs, and, for USA names, guided growth against the analyst EPS estimate (India has no such source, so nothing is shown). <b>Implied EPS</b> is the profit growth the guidance points to with the share count unchanged; a “~” means a rough estimate (sales growth at today's margin). A part that is not known earns nothing, and a high score needs most parts known and strong. Click the score for every part, the old → new change, and the growth still needed in the rest of the year. Public figures only, no AI.
-      </div>
+      {/* zzz930: owner asked for the explanations to stay collapsed until opened */}
+      <details style={{ fontSize: 12, color: R.dim }}>
+        <summary style={{ cursor: 'pointer', fontWeight: 700, color: R.text }}>How the ranking, scores, fair value and dates work</summary>
+        <div style={{ display: 'grid', gap: 6, marginTop: 6 }}>
+        <div style={{ fontSize: 12, color: R.dim }}>
+          Ranked by: a guidance raise <b>and</b> 30%+ growth first, then the size of the raise (revenue / profit — an EPS from a tiny base never counts as a big raise), then the growth guided, then how recent. Only figures checked against the company's own documents.
+        </div>
+        <div style={{ fontSize: 12, color: R.dim }}>
+          <b>Sky Gold score</b> (from the “Identify Next SKY GOLD” framework): is the big plan backed by the business today? 7 main checks — a clear target from the company, sales already growing 20%+, the target reachable from the current pace, margins steady, ROCE 20%+, cash following profit, debt under control. Each main check missed holds the score down: 80+ (STRONG) needs 6 of 7 met with real figures and 65+ (GOOD) needs 5 of 7 (with 4 met the score stays at 62 or below, with 3 at 52); a growth worked out from company numbers counts as only half a clear target; supporting checks (raise, specific plan, profit faster than sales, own cash, orders, estimates, valuation, small base) add points; red flags (guidance cut, slower-paying customers, new shares, promoters selling, other income) take points off. A figure not known never counts as met; too few figures shows “not enough data”. Click a score for every check. Bands: 80+ STRONG · 65–79 GOOD · 50–64 MIXED · under 50 WEAK.
+        </div>
+        <div style={{ fontSize: 12, color: R.dim }}>
+          <b>Reported</b> is the date of the announcement or document the row comes from — click its header to sort newest or oldest first. <b>Fair value</b> uses the same method as the Auto-Valuation page on the company's own public figures: next-year sales or profit grown at the guided growth, times the sector's usual multiples (P/E, EV/EBITDA, P/S blended), with a bear and a bull case on hover. It needs no AI. A dash means a figure is missing or looks wrong (reason on hover); banks, lenders and insurers show a dash because they are valued on book value. “check” means upside above +150%, methods that disagree, or growth that was capped. An estimate, not advice.
+        </div>
+        <div style={{ fontSize: 12, color: R.dim }}>
+          <b>Opportunity</b> is a separate score from Sky Gold: Sky Gold asks whether the business can carry the plan; Opportunity asks how much the guidance changes profit and how supportive the setup is. It is built from six parts — implied EPS growth, raise quality (broad improvement, operating leverage, revenue only, or low quality), whether the guided growth is feasible from here, fair-value upside (only when not marked “check”), how long the guidance runs, and, for USA names, guided growth against the analyst EPS estimate (India has no such source, so nothing is shown). <b>Implied EPS</b> is the profit growth the guidance points to with the share count unchanged; a “~” means a rough estimate (sales growth at today's margin). A part that is not known earns nothing, and a high score needs most parts known and strong. Click the score for every part, the old → new change, and the growth still needed in the rest of the year. Public figures only, no AI.
+        </div>
+        </div>
+      </details>
+      {skyFailed && <div style={{ fontSize: 12, color: R.amber }}>The company figures could not be read just now — scores use the guidance checks only.</div>}
       {raisedAll.length + growthAll.length === 0 ? (
         <div style={{ fontSize: 13, color: R.dim }}>{all.length ? 'No names for this market in the current data.' : 'Reading the guidance data…'}</div>
       ) : (<>
