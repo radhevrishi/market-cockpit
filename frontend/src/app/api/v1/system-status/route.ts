@@ -16,6 +16,7 @@ interface Probe {
   url: string;
   category: 'earnings' | 'movers' | 'news' | 'signals' | 'breadth' | 'special';
   expectedField?: string;
+  timeoutMs?: number;
 }
 
 // PATCH 1058 — /api/v1/earnings/graded requires a ?date= param, otherwise
@@ -26,7 +27,7 @@ const istToday = () => new Date(Date.now() + 5.5 * 3_600_000).toISOString().slic
 const probesNow = (): Probe[] => [
   // zzz957: cache_only — the probe used to START a full grading build for today's date on every status check (a new IST day has
   // nothing cached yet), took > 8 s and was reported DOWN while adding load. Now it only reads; an ungraded day shows EMPTY.
-  { name: 'EO graded (today)',     url: `/api/v1/earnings/graded?date=${istToday()}&cache_only=1`, category: 'earnings', expectedField: 'by_tier' },
+  { name: 'EO graded (today)',     url: `/api/v1/earnings/graded?date=${istToday()}&cache_only=1`, category: 'earnings', expectedField: 'by_tier', timeoutMs: 15_000 },   // a graded day is a large stored record: reading it takes ~6 s
   { name: 'EO calendar',           url: '/api/v1/calendar?days=7',                     category: 'earnings', expectedField: 'buckets' },
   { name: 'Earnings scan',         url: `/api/market/earnings?market=india&month=${istToday().slice(0, 7)}`, category: 'earnings', expectedField: 'results' },
   { name: 'Quotes (movers)',       url: '/api/market/quotes?market=india',             category: 'movers',   expectedField: 'stocks' },
@@ -42,7 +43,7 @@ const probesNow = (): Probe[] => [
 async function probe(p: Probe, origin: string): Promise<any> {
   const start = Date.now();
   try {
-    const res = await fetch(origin + p.url, { signal: AbortSignal.timeout(8000), cache: 'no-store' });
+    const res = await fetch(origin + p.url, { signal: AbortSignal.timeout(p.timeoutMs ?? 8000), cache: 'no-store' });
     const elapsed = Date.now() - start;
     if (!res.ok) {
       return { ...p, status: 'DOWN', httpCode: res.status, latencyMs: elapsed };
