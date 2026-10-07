@@ -3606,3 +3606,23 @@ Implemented atomic version checks for personal-state saves in PostgreSQL (includ
 Deployment must use repository-root build context and `frontend/Dockerfile`; its `npm run verify` executes tests with production credentials stripped, the existing type-error baseline gate, and Next build. This gate is independent of unavailable GitHub Actions execution. Do not enable Railway Wait for CI until hosted jobs can actually execute.
 
 Operational blockers remain: GitHub Actions jobs fail before steps run; account billing/execution settings need administrator diagnosis. Scheduled backup execution therefore remains unverified. Railway has no GITHUB_TOKEN, so GitHub usage telemetry remains unavailable; do not manufacture healthy counters or copy private credentials. Historical usage is not a current bill. Render retirement requires verified service ownership and redundancy checks. Preserve Claude's chart/screener changes when integrating.
+
+
+## 28 · zzz948 (7 Oct 2026) — the owner's TradingView screens built into /stock-screener
+
+- All 40 of his own TradingView screens (2 Europe ones skipped) are BUILT_IN_SCREENS in `lib/screener/filters.ts`, under their TradingView
+  names; [america,india] screens are one US + one India copy; identical pairs merged ("NBIS Main = NBIS 2", the two "Crash Scenario").
+  Market caps: TradingView raw currency → `capOf` ($ million / ₹ crore). Filter kinds: num (gt/ge/lt/le/between), cmp (above/below/ge/le),
+  near (lo–hi % above another field), sector (TradingView's 21, row field `tvSec`), exch, date (thisMonth / pastYears).
+- New libs: `tech.ts` (pure: SMA/EMA/RSI d-w-m/ATR%/ADR%/performance/volumes/52w high — formulas checked against TradingView: performance =
+  close ÷ OPEN of the session on/before today − 7/30/90/180/365/1825 days; ADR = 20 days; Wilder RSI/ATR), `tech-fetch.ts` (one Yahoo chart
+  per company, 5 years, kept as figures in sec_frame_cache `screener-tech:US|IN`), `tv-sectors.ts` (industry → TradingView sector, learnt
+  once from TradingView; ~80% agree). India price figures lay NSE's own bhav prices (OHLCV, 65 sessions) over Yahoo's (`overlayNse`).
+- US company figures: `sec-assemble.ts` got NI / pre-tax / CFO / capex / assets / liabilities / leases / shares-outstanding frames (13 quarters,
+  9 instants, ~540 frame files). TradingView rules copied: growth = (now − before) ÷ |before|, none when a loss turns into a profit; debt
+  includes operating + finance leases; buyback = year-end shares outstanding; EPS = continuing operations first.
+- India: screener.in pages are stored boiled down (`InRaw`, v2) and figures worked out at every build (`inFiguresFromRaw`), so formula
+  changes need no re-read. Gross profit = sales − (material + manufacturing + employee cost) − depreciation (TradingView within ~1 point).
+  "Latest quarter" balance-sheet figures exist only when screener.in has a balance sheet for that quarter (TradingView is the same).
+  Old stored companies (f only) are re-read first after deploy: ~19 India runs (~9–10 h) until every company has the new figures.
+- Snapshot rows leave nulls out (`rowsJson`); the page treats a missing figure as null.

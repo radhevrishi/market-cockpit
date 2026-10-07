@@ -437,9 +437,11 @@ export async function yahooForwardEstimates(ticker: string): Promise<ForwardEsti
 
 /** zzz938 — employees and free float for the stock screener (one quoteSummary call; null when Yahoo does not answer).
  *  floatPct = float shares ÷ shares outstanding × 100. `blocked` = Yahoo refused (rate limit / crumb), so the caller can stop early. */
-export async function yahooProfileStats(ticker: string): Promise<{ employees: number | null; floatPct: number | null; blocked?: boolean } | null> {
-  const t = String(ticker || '').toUpperCase().replace(/[./]/g, '-');
-  if (!/^[A-Z0-9][A-Z0-9-]{0,14}$/.test(t)) return null;
+export async function yahooProfileStats(ticker: string, suffix: '' | '.NS' = ''): Promise<{ employees: number | null; floatPct: number | null; blocked?: boolean } | null> {
+  // zzz948: suffix '.NS' reads an NSE company (India screener: employees)
+  const base = String(ticker || '').toUpperCase().replace(/[./]/g, '-');
+  if (!/^[A-Z0-9&][A-Z0-9&-]{0,19}$/.test(base)) return null;
+  const t = `${base}${suffix}`;
   try {
     const c = await yahooCrumb();
     if (!c) return { employees: null, floatPct: null, blocked: true };

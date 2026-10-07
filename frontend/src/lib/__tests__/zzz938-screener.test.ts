@@ -7,7 +7,7 @@ import { parseNasdaqList, sma } from '../screener/us-build';
 import type { ScreenRow } from '../screener/types';
 
 const row = (o: Partial<ScreenRow>): ScreenRow => ({ t: 'X', n: 'X', sec: 'Technology', ind: null, px: 10, chg: 0, vol: 100_000, avgVol10: null, mc: 500, sma50: 11, sma200: 10,
-  revQYoY: 30, revAYoY: 20, gpQYoY: 60, gmFY: 50, ebitdaQoQ: 5, ebitdaAYoY: 10, epsQYoY: 20, opmTTM: 5, ps: 5, evRev: 5, de: 0.5, cash: 10, emp: 500, flt: 90, bb: 0, fs: 6, q: 'Q2 2026', ...o });
+  revQYoY: 30, revAYoY: 20, gpQYoY: 60, gmFY: 50, ebitdaQoQ: 5, ebitdaAYoY: 10, epsQYoY: 20, opmTTM: 5, ps: 5, evRev: 5, de: 0.5, cash: 10, emp: 500, flt: 90, bb: 0, fs: 6, q: 'Q2 2026', tvSec: 'Technology Services', ...o });
 
 describe('filters', () => {
   test('a missing figure fails the filter; between, above and sector work', () => {

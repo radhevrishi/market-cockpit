@@ -1,14 +1,17 @@
 // zzz938 — builds the USA screener snapshot once a day (server only). Free sources, no AI:
 //   1. Nasdaq stock list — every US-listed stock: price, day change, volume, market cap, sector, industry (one call);
 //   2. SEC frames — every company's filed figures, one file per figure per period (lib/screener/sec-assemble.ts);
-//   3. Yahoo daily closes (20 names a call) — SMA 50 / SMA 200;
+//   3. Yahoo daily bars (zzz948: one chart per company, 5 years) — moving averages, RSI, ATR, performance, volumes, 52-week high
+//      (lib/screener/tech.ts); the lighter 20-a-call closes are kept as a fallback for SMA 50 / 200;
 //   4. Yahoo company profile — employees and free float, refreshed about once a week per company (a slice each day).
 // The snapshot is written to Postgres (screener_snapshot) and the page reads it whole.
 import { dbQuery, getPool } from '@/lib/db';
 import { ensureSchema } from '@/lib/db-migrate';
 import { yahooProfileStats } from '@/lib/us-prices';
 import { FRAME_PLAN, framePeriods, usFigures, type FrameData, type FrameEntry } from './sec-assemble';
-import type { ScreenRow, ScreenSnapshot } from './types';
+import { refreshTech, type TechStored } from './tech-fetch';
+import { tvSectorOf } from './tv-sectors';
+import { rowsJson, type ScreenRow, type ScreenSnapshot } from './types';
 
 const SEC_UA = process.env.SEC_USER_AGENT || 'market-cockpit research radhev.232@gmail.com';
 const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
@@ -16,7 +19,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
 // ── 1. Nasdaq list ─────────────────────────────────────────────────────────────────────────────────────────────────────
-export interface NasdaqRow { t: string; n: string; px: number | null; chg: number | null; vol: number | null; mc: number | null; sec: string | null; ind: string | null }
+export interface NasdaqRow { t: string; n: string; px: number | null; chg: number | null; vol: number | null; mc: number | null; sec: string | null; ind: string | null; ex?: string; ipoYear?: number | null }
 const num = (s: unknown): number | null => { const v = parseFloat(String(s ?? '').replace(/[$,%\s]/g, '')); return Number.isFinite(v) ? v : null; };
 /** Not common stock: warrants, rights, units, preferred, notes, depositary receipts (TradingView's "Common stock" leaves these out). */
 const NOT_COMMON = /\b(warrants?|rights?|units?|preferred|pref\.?|depositary|depository|\bADRs?\b|\bADSs?\b|notes? due|debentures?|subordinated|\d+(\.\d+)?%\s)/i;
@@ -34,22 +37,36 @@ export function parseNasdaqList(j: any): NasdaqRow[] {
       t: sym.replace('/', '.'), n: name.replace(/\s+(Common Stock|Class [A-C] Common Stock|Ordinary Shares?|Class [A-C] Ordinary Shares?)$/i, '').slice(0, 90),
       px: num(r?.lastsale), chg: num(r?.pctchange), vol: num(r?.volume), mc: mcRaw != null && mcRaw > 0 ? Math.round(mcRaw / 1e4) / 100 : null,
       sec: String(r?.sector || '').trim() || null, ind: String(r?.industry || '').trim() || null,
+      ipoYear: (() => { const y = parseInt(String(r?.ipoyear || ''), 10); return y > 1900 && y < 2100 ? y : null; })(),
     });
   }
   return out;
 }
-async function nasdaqList(): Promise<NasdaqRow[]> {
-  const res = await fetch('https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=10000&offset=0&download=true', {
+async function nasdaqFetch(exchange: string | null): Promise<NasdaqRow[]> {
+  const res = await fetch(`https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=10000&offset=0&download=true${exchange ? `&exchange=${exchange}` : ''}`, {
     headers: { 'User-Agent': BROWSER_UA, Accept: 'application/json, text/plain, */*', Origin: 'https://www.nasdaq.com', Referer: 'https://www.nasdaq.com/' },
     cache: 'no-store', signal: AbortSignal.timeout(45_000),
   });
   if (!res.ok) throw new Error(`Nasdaq list HTTP ${res.status}`);
   return parseNasdaqList(await res.json());
 }
+/** The list, one exchange at a time so each row knows its exchange (TradingView's names: NASDAQ / NYSE / AMEX). If an exchange
+ *  cannot be read, the whole list is read in one go (exchange then unknown — an exchange filter fails for those rows). */
+export async function nasdaqList(notes: string[]): Promise<NasdaqRow[]> {
+  try {
+    const parts = await Promise.all([['nasdaq', 'NASDAQ'], ['nyse', 'NYSE'], ['amex', 'AMEX']].map(async ([q, ex]) => (await nasdaqFetch(q)).map((r) => ({ ...r, ex }))));
+    const seen = new Set<string>();
+    const out: NasdaqRow[] = [];
+    for (const r of parts.flat()) if (!seen.has(r.t)) { seen.add(r.t); out.push(r); }
+    if (out.length > 3000) return out;
+  } catch { /* fall through */ }
+  notes.push('Nasdaq list by exchange could not be read — exchange unknown this run');
+  return nasdaqFetch(null);
+}
 
 // ── 2. SEC frames (Postgres-cached) ───────────────────────────────────────────────────────────────────────────────────
 type Compact = Record<string, [number, string?, string?]>;
-async function secTickers(): Promise<Map<string, number>> {
+export async function secTickers(): Promise<Map<string, number>> {
   const res = await fetch('https://www.sec.gov/files/company_tickers.json', { headers: { 'User-Agent': SEC_UA }, cache: 'no-store', signal: AbortSignal.timeout(30_000) });
   if (!res.ok) throw new Error(`SEC tickers HTTP ${res.status}`);
   const j: any = await res.json();
@@ -147,12 +164,13 @@ export async function sparkCloses(symbols: string[]): Promise<Map<string, number
 }
 
 // ── 4. profiles (employees, float) — a slice per build ─────────────────────────────────────────────────────────────────
-interface Prof { emp: number | null; flt: number | null }
-async function loadProfiles(tickers: string[], notes: string[], budgetMs: number): Promise<Map<string, Prof>> {
+export interface Prof { emp: number | null; flt: number | null }
+/** Employees (and float) from Yahoo's company profile, refreshed about weekly per company, a slice per run. India passes '.NS'. */
+export async function loadProfiles(market: 'US' | 'IN', tickers: string[], notes: string[], budgetMs: number): Promise<Map<string, Prof>> {
   const out = new Map<string, Prof>();
   const age = new Map<string, number>();
   try {
-    const rows = await dbQuery<{ ticker: string; payload: Prof; age: number }>(`SELECT ticker, payload, EXTRACT(EPOCH FROM (now() - updated_at)) / 86400 AS age FROM screener_store WHERE market = 'US' AND kind = 'prof'`);
+    const rows = await dbQuery<{ ticker: string; payload: Prof; age: number }>(`SELECT ticker, payload, EXTRACT(EPOCH FROM (now() - updated_at)) / 86400 AS age FROM screener_store WHERE market = $1 AND kind = 'prof'`, [market]);
     for (const r of rows) { out.set(r.ticker, r.payload); age.set(r.ticker, Number(r.age)); }
   } catch { /* none yet */ }
   const due = tickers.filter((t) => !age.has(t) || (age.get(t) as number) > 7).sort((a, b) => (age.get(a) ?? 99) < (age.get(b) ?? 99) ? 1 : -1);
@@ -161,66 +179,98 @@ async function loadProfiles(tickers: string[], notes: string[], budgetMs: number
   const worker = async () => {
     while (i < due.length && !blocked && Date.now() - t0 < budgetMs) {
       const t = due[i++];
-      const p = await yahooProfileStats(t);
+      const p = await yahooProfileStats(t, market === 'IN' ? '.NS' : '');
       if (p?.blocked) { blocked = true; break; }
       if (p) {
         const v = { emp: p.employees, flt: p.floatPct };
         out.set(t, v); done++;
-        await dbQuery(`INSERT INTO screener_store (market, ticker, kind, payload, updated_at) VALUES ('US', $1, 'prof', $2, now()) ON CONFLICT (market, ticker, kind) DO UPDATE SET payload = EXCLUDED.payload, updated_at = now()`, [t, JSON.stringify(v)]).catch(() => null);
+        await dbQuery(`INSERT INTO screener_store (market, ticker, kind, payload, updated_at) VALUES ($1, $2, 'prof', $3, now()) ON CONFLICT (market, ticker, kind) DO UPDATE SET payload = EXCLUDED.payload, updated_at = now()`, [market, t, JSON.stringify(v)]).catch(() => null);
       }
       await sleep(300);
     }
   };
   await Promise.all([worker(), worker()]);
-  notes.push(`employees / float: ${done} companies refreshed this run, ${out.size} known, ${Math.max(0, due.length - done)} still to read${blocked ? ' (Yahoo paused the reads; the next run continues)' : ''}`);
+  notes.push(`employees${market === 'US' ? ' / float' : ''} (Yahoo company profile): ${done} companies refreshed this run, ${out.size} known, ${Math.max(0, due.length - done)} still to read${blocked ? ' (Yahoo paused the reads; the next run continues)' : ''}`);
   return out;
 }
 
+/** Pure: one screener row per listed company from the pieces the build read (used by the build and by the cross-check). */
+export function assembleUsRows(universe: NasdaqRow[], ciks: Map<string, number>, fd: FrameData, periods: ReturnType<typeof framePeriods>,
+  tech: Map<string, TechStored>, closes: Map<string, number[]>, profiles: Map<string, Prof>): { rows: ScreenRow[]; noSec: number } {
+  const ysym = (t: string) => t.replace(/[./]/g, '-');
+  const rows: ScreenRow[] = [];
+  let noSec = 0;
+  for (const r of universe) {
+    const key = ysym(r.t);
+    const cik = ciks.get(key);
+    const f = cik ? usFigures(fd, cik, periods) : null;
+    if (!f?.q) noSec++;
+    const p = profiles.get(r.t);
+    const tf = tech.get(r.t);
+    const c = closes.get(key) || [];
+    const revTTM = f?.revTTM ?? null;
+    const mc = r.mc;
+    const ipoD = tf?.ipoD ?? (r.ipoYear ? Math.floor(Date.UTC(r.ipoYear, 0, 1) / DAY) : null);
+    rows.push({
+      t: r.t, n: r.n, sec: r.sec, ind: r.ind, px: r.px, chg: r.chg, vol: r.vol, avgVol10: tf?.avgVol10 ?? null, mc,
+      sma50: tf?.sma50 ?? sma(c, 50), sma200: tf?.sma200 ?? sma(c, 200),
+      revQYoY: f?.revQYoY ?? null, revAYoY: f?.revAYoY ?? null, gpQYoY: f?.gpQYoY ?? null, gmFY: f?.gmFY ?? null,
+      ebitdaQoQ: f?.ebitdaQoQ ?? null, ebitdaAYoY: f?.ebitdaAYoY ?? null, epsQYoY: f?.epsQYoY ?? null, opmTTM: f?.opmTTM ?? null,
+      ps: mc != null && revTTM != null && revTTM > 0 ? r2(mc / revTTM) : null,
+      evRev: mc != null && revTTM != null && revTTM > 0 ? r2((mc + (f?.debt ?? 0) - (f?.cash ?? 0)) / revTTM) : null,
+      de: f?.de ?? null, cash: f?.cash ?? null, emp: p?.emp ?? null, flt: p?.flt ?? null, bb: f?.bb ?? null, fs: f?.fs ?? null, q: f?.q ?? null,
+      ...(f?.approx?.length ? { approx: f.approx } : {}),
+      tvSec: tvSectorOf('US', r.sec, r.ind), exch: r.ex ? [r.ex] : null,
+      ...(tf ? {
+        sma21: tf.sma21, sma100: tf.sma100, sma150: tf.sma150, ema10: tf.ema10, ema21: tf.ema21, ema50: tf.ema50, rsi: tf.rsi, rsiW: tf.rsiW, rsiM: tf.rsiM,
+        atrP: tf.atrP, adrP: tf.adrP, chgOpen: tf.chgOpen, chg1W: tf.chg1W, perf1W: tf.perf1W, perf1M: tf.perf1M, perf3M: tf.perf3M,
+        perf6M: tf.perf6M, perfYTD: tf.perfYTD, perf1Y: tf.perf1Y, perf5Y: tf.perf5Y, perfAll: tf.perfAll, avgVol30: tf.avgVol30, avgVol60: tf.avgVol60, vol1W: tf.vol1W, hi52: tf.hi52,
+      } : {}),
+      ipoD,
+      roeTTM: f?.roeTTM ?? null, roeFY: f?.roeFY ?? null, roceTTM: f?.roceTTM ?? null, roceFY: f?.roceFY ?? null, nmTTM: f?.nmTTM ?? null, ptmTTM: f?.ptmTTM ?? null,
+      opmFY: f?.opmFY ?? null, pe: mc != null && f?.niTTM != null && f.niTTM > 0 ? r2(mc / f.niTTM) : null,
+      pcf: mc != null && f?.cash != null && f.cash > 0 ? r2(mc / f.cash) : null, netDebt: f?.netDebt ?? null, niFY: f?.niFY ?? null,
+      epsTTMYoY: f?.epsTTMYoY ?? null, revTTMYoY: f?.revTTMYoY ?? null, gpAYoY: f?.gpAYoY ?? null, ebitdaTTMYoY: f?.ebitdaTTMYoY ?? null, ebitdaQYoY: f?.ebitdaQYoY ?? null,
+      deFY: f?.deFY ?? null, fcfEmp: f?.fcfFY != null && p?.emp ? Math.round(f.fcfFY / p.emp) : null,
+      debtEbitdaQ: f?.debtEbitdaQ ?? null, debtEbitdaA: f?.debtEbitdaA ?? null, liabQ: f?.liabQ ?? null, liabA: f?.liabA ?? null,
+      debtAssetsQ: f?.debtAssetsQ ?? null, debtAssetsA: f?.debtAssetsA ?? null, debtCapQ: f?.debtCapQ ?? null, debtCapA: f?.debtCapA ?? null,
+    });
+  }
+  return { rows, noSec };
+}
+
 // ── build ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+const DAY = 86_400_000;
+const r2 = (v: number) => Math.round(v * 100) / 100;
 export async function buildUsSnapshot(now = new Date()): Promise<{ ok: boolean; rows: number; notes: string[]; ms: number }> {
   const t0 = Date.now();
+  const deadline = t0 + 12.5 * 60_000;   // the scheduler gives the job 15 minutes
   const notes: string[] = [];
   if (!getPool() || !(await ensureSchema())) return { ok: false, rows: 0, notes: ['Postgres is not available'], ms: 0 };
-  const list = await nasdaqList();
+  const list = await nasdaqList(notes);
   const universe = list.filter((r) => r.mc != null && r.mc >= 20);   // under $20M: not tradable for the owner's screens
   notes.push(`Nasdaq list: ${list.length} common stocks, ${universe.length} with a market cap of $20M or more`);
   const [ciks, periods] = [await secTickers(), framePeriods(now)];
   const fd = await loadFrames(periods, notes);
-  // closes → SMA (20 names a call, 3 calls at a time)
+  // price figures: one Yahoo chart per company (5 years of daily bars), refreshed every run within the time left
+  const ysym = (t: string) => t.replace(/[./]/g, '-');
+  const tech = await refreshTech({
+    market: 'US', tickers: universe.map((r) => r.t), symbolOf: ysym, notes, concurrency: 8,
+    due: () => true, budgetMs: Math.max(60_000, Math.min(6.5 * 60_000, deadline - Date.now() - 3 * 60_000)),
+  });
+  // a company Yahoo's chart did not answer for and that has no stored figures: SMA 50 / 200 from the lighter price call
+  const noTech = universe.filter((r) => !tech.get(r.t)).map((r) => ysym(r.t));
   const closes = new Map<string, number[]>();
-  const syms = universe.map((r) => r.t.replace(/[./]/g, '-'));
-  const batches: string[][] = [];
-  for (let k = 0; k < syms.length; k += 20) batches.push(syms.slice(k, k + 20));
-  let bi = 0;
-  const pw = async () => { while (bi < batches.length) { const b = batches[bi++]; const m = await sparkCloses(b); m.forEach((v, k) => closes.set(k, v)); await sleep(150); } };
-  await Promise.all([pw(), pw()]);
-  notes.push(`daily prices: ${closes.size} of ${syms.length} companies${closes.size < syms.length * 0.9 && sparkLastError ? ` (last Yahoo refusal: ${sparkLastError})` : ''}`);
-  const profiles = await loadProfiles(universe.filter((r) => (r.mc ?? 0) >= 100).map((r) => r.t), notes, 6 * 60_000);
-
-  const rows: ScreenRow[] = [];
-  let noSec = 0;
-  for (const r of universe) {
-    const key = r.t.replace(/[./]/g, '-');
-    const cik = ciks.get(key);
-    const f = cik ? usFigures(fd, cik, periods) : null;
-    if (!f) noSec++;
-    const c = closes.get(key) || [];
-    const p = profiles.get(r.t);
-    const revTTM = f?.revTTM ?? null;
-    rows.push({
-      t: r.t, n: r.n, sec: r.sec, ind: r.ind, px: r.px, chg: r.chg, vol: r.vol, avgVol10: null, mc: r.mc,
-      sma50: sma(c, 50), sma200: sma(c, 200),
-      revQYoY: f?.revQYoY ?? null, revAYoY: f?.revAYoY ?? null, gpQYoY: f?.gpQYoY ?? null, gmFY: f?.gmFY ?? null,
-      ebitdaQoQ: f?.ebitdaQoQ ?? null, ebitdaAYoY: f?.ebitdaAYoY ?? null, epsQYoY: f?.epsQYoY ?? null, opmTTM: f?.opmTTM ?? null,
-      ps: r.mc != null && revTTM != null && revTTM > 0 ? Math.round((r.mc / revTTM) * 100) / 100 : null,
-      evRev: r.mc != null && revTTM != null && revTTM > 0 ? Math.round(((r.mc + (f?.debt ?? 0) - (f?.cash ?? 0)) / revTTM) * 100) / 100 : null,
-      de: f?.de ?? null, cash: f?.cash ?? null, emp: p?.emp ?? null, flt: p?.flt ?? null, bb: f?.bb ?? null, fs: null, q: f?.q ?? null,
-      ...(f?.approx?.length ? { approx: f.approx } : {}),
-    });
+  if (noTech.length) {
+    for (let k = 0; k < noTech.length && Date.now() < deadline - 2 * 60_000; k += 20) { const m = await sparkCloses(noTech.slice(k, k + 20)); m.forEach((v, s) => closes.set(s, v)); await sleep(150); }
+    notes.push(`${noTech.length} companies have no price figures yet${closes.size ? ` — SMA 50 / 200 for ${closes.size} of them from Yahoo's daily closes` : ''}${sparkLastError && !closes.size ? ` (last Yahoo refusal: ${sparkLastError})` : ''}`);
   }
-  if (noSec) notes.push(`${noSec} listed companies have no SEC figures (foreign filers on Form 20-F / 40-F, new listings) — their figure filters fail`);
+  const profiles = await loadProfiles('US', universe.filter((r) => (r.mc ?? 0) >= 100).map((r) => r.t), notes, Math.max(30_000, deadline - Date.now() - 30_000));
+
+  const { rows, noSec } = assembleUsRows(universe, ciks, fd, periods, tech, closes, profiles);
+  if (noSec) notes.push(`${noSec} listed companies have no quarterly SEC figures (foreign companies filing 20-F / 40-F, which file no quarterly figures in SEC's data; new listings) — their company-figure filters fail`);
   const snap: ScreenSnapshot = { market: 'US', builtAt: new Date().toISOString(), rows, notes, sources: ['Nasdaq stock list', 'SEC filings (XBRL frames)', 'Yahoo daily prices', 'Yahoo company profile'] };
   await dbQuery(`INSERT INTO screener_snapshot (market, built_at, rows, meta) VALUES ('US', now(), $1, $2) ON CONFLICT (market) DO UPDATE SET built_at = now(), rows = EXCLUDED.rows, meta = EXCLUDED.meta`,
-    [JSON.stringify(rows), JSON.stringify({ notes, sources: snap.sources })]);
+    [rowsJson(rows), JSON.stringify({ notes, sources: snap.sources })]);
   return { ok: true, rows: rows.length, notes, ms: Date.now() - t0 };
 }
