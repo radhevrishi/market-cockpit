@@ -14,6 +14,7 @@ export const USER_STATE_KEYS = [
   'mc:decisions:v1', 'mc:thesis:v1', 'mc:coffeecan:v1', 'mc:mb-ledger:v1', 'mc:mb-tags:v1', 'mc:signal-log:v1',
   'mc:saved-valuations:v1', 'mc:book-flags:v1', 'mc_portfolio_holdings', 'mc_watchlist_tickers',
   'mc:conviction-beats:v1', 'mc:conviction-beats-us:v1', 'mc:saved-views:v1', 'mc:news-alerts:v1', 'mc:notes:bundle',
+  'mc:chart-drawings:v1', 'mc:chart-settings:v1',   // zzz937 — /charts
 ] as const;
 export type UserStateKey = (typeof USER_STATE_KEYS)[number];
 export const MAX_VALUE_BYTES = 3_000_000;
