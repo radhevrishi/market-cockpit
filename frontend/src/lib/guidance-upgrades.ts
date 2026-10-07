@@ -1305,7 +1305,7 @@ export function trackingLine(e: Pick<GuidanceEvent, 'announcement_date'>, c: GuC
   if (grain === 'ANNUAL' && c.after.low != null && c.after.low > 0 && c.after.periodKind !== 'MULTI_YEAR_CAGR') {
     const q4 = round(c.after.low / 4, 4);
     const q = { ...c.after, low: q4, high: q4, midpoint: q4 };
-    return `${win}: quarterly ${name} of about ${fmtPoint(q)} or more (guided low end ÷ 4, seasonality not considered) to stay on track for the guided ${g} for ${p} — ${src}.`;
+    return `${win}: annual ${name} guidance ${g} for ${p}; simple quarterly average ${fmtPoint(q)} (guided low end ÷ 4, seasonality not considered). This average is not a next-quarter target; reported year-to-date results are needed to assess delivery — ${src}.`;
   }
   return `${win}: ${name} tracking toward the guided ${g} for ${p} — ${src}.`;
 }

@@ -325,7 +325,9 @@ describe('8-9. WHY NOW, next evidence and audit rows are specific', () => {
   });
   test('next evidence: metric, direction, window, source', () => {
     const e = build([us('Zed raises FY26 guidance', 'Zed US Inc raised FY26 revenue guidance to $330 million to $340 million from $320 million to $330 million.')]);
-    assert.match(e.nextEvidence[0], /^Next quarterly results \(~Dec 2026\): quarterly revenue of about \$82\.5M or more \(guided low end ÷ 4, seasonality not considered\) to stay on track for the guided \$330–340M for FY26 — source: the company's next results release\.$/);
+    assert.match(e.nextEvidence[0], /^Next quarterly results \(~[A-Z][a-z]{2} \d{4}\): annual revenue guidance .+; simple quarterly average .+ — source:/);
+    assert.match(e.nextEvidence[0], /not a next-quarter target; reported year-to-date results are needed/);
+    assert.doesNotMatch(e.nextEvidence[0], /or more|to stay on track/);
     const q = build([us('Zed raises Q4 FY26 guidance', 'Zed US Inc raised Q4 FY26 revenue guidance to $90 million from $85 million.')]);
     assert.match(q.nextEvidence[0], /^Q4 FY26 results: revenue at or above the guided \$90M/);
   });

@@ -256,7 +256,7 @@ describe('facts and wiring', () => {
   test('the page has the Opportunity sort and both new columns in both tables, default order unchanged', () => {
     const s = read('components/guidance-upgrades/GuFocusList.tsx');
     assert.equal((s.match(/<OppHead /g) || []).length, 2);
-    assert.equal((s.match(/'Implied EPS'/g) || []).length, 2);
+    assert.equal((s.match(/'EPS estimate \(fixed shares\)'/g) || []).length, 2);
     assert.equal((s.match(/\{oppCell\(r\)\}/g) || []).length, 2);
     assert.match(s, /useState<SortBy>\('rank'\)|useState<SortBy>\('rank'\)/);
     assert.match(s, /byOpp\(raisedAll, opps\)/); assert.match(s, /byOpp\(growthAll, opps\)/);

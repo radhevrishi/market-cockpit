@@ -376,10 +376,10 @@ export const fmtUpside = (v: number): string => `${v >= 0 ? '+' : ''}${Math.roun
 export type FvStatus = 'below' | 'near' | 'above' | 'far-above';
 /** Where the price sits against the base-case fair value. Plain words, no trade advice. */
 export function fvStatus(upsidePct: number): { key: FvStatus; label: string } {
-  if (upsidePct >= 25) return { key: 'below', label: 'priced below fair value' };
-  if (upsidePct > -15) return { key: 'near', label: 'near fair value' };
-  if (upsidePct > -50) return { key: 'above', label: 'priced above fair value' };
-  return { key: 'far-above', label: 'priced far above — market expects more' };
+  if (upsidePct >= 25) return { key: 'below', label: 'priced below model fair value' };
+  if (upsidePct > -15) return { key: 'near', label: 'near model fair value' };
+  if (upsidePct > -50) return { key: 'above', label: 'priced above model fair value' };
+  return { key: 'far-above', label: 'priced far above model fair value' };
 }
 
 /** zzz934: the growth the fair value uses for a row. The row's own guided growth first; a raise of a growth RATE (revenue growth 1–3% → 3–4%)

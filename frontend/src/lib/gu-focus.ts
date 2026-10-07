@@ -12,7 +12,7 @@ export interface FocusRow {
   raised: string | null; raisePct: number | null; raiseDate: string | null; eventId: string | null;
   growth: string | null; growthPct: number | null; growthPeriod: string | null; growthTrust: string | null;
   verdict: FocusVerdict; why: string; score: number;
-  /** zzz881: date of the growth guidance document (growth-only rows) */ growthDate?: string | null; growthSource?: string | null;
+  /** zzz881: date of the growth guidance document (growth-only rows) */ growthDate?: string | null; growthSource?: string | null; growthSourceUrl?: string | null; growthFreshness?: string | null; growthVerifiedDaysAgo?: number | null;
   /** zzz881: the raise is real but small (under 5%) or only a small-base EPS */ smallRaise?: boolean;
   /** zzz882: the raise is a growth rate (percentage points); raisePct is then the relative rise of the guided growth */ raisePp?: boolean;
   /** zzz895: the size of a growth-rate raise in percentage points (10% → 12–15% = +3.5 pp) */ raisePpDelta?: number | null;
@@ -126,7 +126,7 @@ export function buildFocusList(groups: GuHighGrowthGroups | null | undefined, ev
     const v = num(g.headline?.compareValue); if (v == null) continue;
     const r = get(g.market === 'US' ? 'US' : 'IN', g.ticker, g.company);
     if (r.growthPct != null && r.growthPct >= v) continue;
-    r.growth = g.cohort === 'MULTI_YEAR_CAGR' && !/CAGR/i.test(g.text) ? `${g.text} a year (multi-year)` : g.text; r.growthPct = v; r.growthPeriod = g.headline?.period || null; r.growthTrust = g.trust; r.growthDate = g.sourceDate || null; r.growthSource = g.sourceName || null;
+    r.growth = g.cohort === 'MULTI_YEAR_CAGR' && !/CAGR/i.test(g.text) ? `${g.text} a year (multi-year)` : g.text; r.growthPct = v; r.growthPeriod = g.headline?.period || null; r.growthTrust = g.trust; r.growthDate = g.sourceDate || null; r.growthSource = g.sourceName || null; r.growthSourceUrl = g.sourceUrl || null; r.growthFreshness = g.headline.freshness ?? null; r.growthVerifiedDaysAgo = g.headline.lastVerifiedDaysAgo ?? null;
     r.growthMetric = (g.headline as any)?.metric ?? null; r.growthCohort = g.cohort ?? null;
     r.growthType = (g.headline as any)?.growthType ?? null; r.growthDerivation = (g.headline as any)?.derivation ?? null;
     r.growthMetrics = Array.from(new Set([...(g.metrics || []).map((m: any) => String(m?.metric || '')), String((g.headline as any)?.metric || '')].filter(Boolean)));
@@ -194,4 +194,10 @@ export function holdInconsistentGrowth(rows: FocusRow[], salesBaseOf: (r: FocusR
       verdict: r.smallRaise ? 'WATCH' : r.verdict === 'TOP FOCUS' ? 'RAISED' : r.verdict, why: r.verdict === 'TOP FOCUS' || r.verdict === 'HIGH GROWTH' ? (r.smallRaise ? 'Small raise (under 5%, or only EPS from a small base) — real, but not a strong signal' : 'Guidance raised, checked in the company’s own filing') : r.why });
   }
   return { rows: out, held };
+}
+
+/** Select the growth horizon before merging companies, so an annual target is not lost to a larger CAGR. Raises are unaffected. */
+export function focusGrowthHorizon(groups: GuHighGrowthGroups | null | undefined, horizon: 'ALL' | 'ANNUAL' | 'MULTI_YEAR_CAGR'): GuHighGrowthGroups | null | undefined {
+  if (!groups?.cohorts || horizon === 'ALL') return groups;
+  return { ...groups, cohorts: { ...groups.cohorts, ANNUAL: horizon === 'ANNUAL' ? groups.cohorts.ANNUAL : [], MULTI_YEAR_CAGR: horizon === 'MULTI_YEAR_CAGR' ? groups.cohorts.MULTI_YEAR_CAGR : [] } };
 }

@@ -31,6 +31,8 @@ export function OppCells({ o, waiting, open, onToggle, td }: { o: Opportunity | 
     <>
       <td style={{ ...td, whiteSpace: 'nowrap' }} title={o.implied.pct == null ? `Implied EPS growth not worked out: ${o.implied.reason}` : `${o.implied.basis}. EPS = net profit growth with the share count unchanged.`}>
         <b style={{ color: o.implied.pct != null && o.implied.pct >= 20 ? R.green : undefined }}>{ic.main}</b>
+        <div style={{ fontSize: 10.5, color: R.dim }}>{o.implied.pct == null ? '' : o.implied.approx ? 'Model estimate · fixed shares' : 'Guidance-based · fixed shares'}</div>
+        {o.implied.basis.includes('capped at 100%') ? <div style={{ fontSize: 10.5, color: R.amber }}>Growth capped in model</div> : null}
         {ic.sub ? <div style={{ fontSize: 10.5, color: R.dim }}>{ic.sub}</div> : null}
       </td>
       <td style={td}>

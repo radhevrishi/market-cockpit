@@ -357,7 +357,7 @@ describe('G. driver and durability come from the text only', () => {
     const e = build([primary('Zed Alpha raises FY27 guidance', `${BASE} The raise is driven by strong demand from export customers.`)]);
     assert.equal(e.verification, 'VERIFIED');
     // zzz854: metric + direction + window + source, tied to the guided range
-    assert.ok(e.nextEvidence.some((x) => /^Next quarterly results \(~[A-Z][a-z]{2} 20\d\d\): quarterly revenue of about .+ to stay on track for the guided ₹725–750 Cr for FY27 — source:/.test(x)), e.nextEvidence.join(' | '));
+    assert.ok(e.nextEvidence.some((x) => /^Next quarterly results \(~[A-Z][a-z]{2} 20\d\d\): annual revenue guidance ₹725–750 Cr for FY27; simple quarterly average .+not a next-quarter target.+ — source:/.test(x)), e.nextEvidence.join(' | '));
   });
 });
 

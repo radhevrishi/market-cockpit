@@ -4,7 +4,7 @@ import React, { useMemo, useState } from 'react';
 import { R, tint } from './gu-tokens';
 import { pillStyle } from './GuPanel';
 import { useGuUniverse } from './useGuUniverse';
-import { buildFocusList, holdInconsistentGrowth, type FocusVerdict } from '@/lib/gu-focus';
+import { buildFocusList, holdInconsistentGrowth, focusGrowthHorizon, type FocusVerdict } from '@/lib/gu-focus';
 import { INDIA_LARGE_CAPS } from '@/lib/india-large-caps';
 import type { GuidanceEvent } from '@/lib/guidance-upgrades-types';
 import type { FocusRow } from '@/lib/gu-focus';
@@ -49,7 +49,7 @@ function VerdictCell({ r, td, fv }: { r: FocusRow; td: React.CSSProperties; fv?:
     <td style={td}>
       <b style={{ color: VERDICT_COLOR[r.verdict], whiteSpace: 'nowrap' }}>{r.verdict}</b>
       <div style={{ fontSize: 11.5, color: R.dim }}>{r.why}</div>
-      {st && (st.key === 'far-above' || st.key === 'above') ? <div style={{ fontSize: 11, color: R.amber, fontWeight: 700 }}>Guidance strong, but the price is {st.key === 'far-above' ? 'far ' : ''}above fair value</div> : null}
+      {st && (st.key === 'far-above' || st.key === 'above') ? <div style={{ fontSize: 11, color: R.amber, fontWeight: 700 }}>Guidance strong, but the price is {st.key === 'far-above' ? 'far ' : ''}above model fair value</div> : null}
     </td>
   );
 }
@@ -107,6 +107,7 @@ function MoreRow({ shown, total, open, onToggle, cols }: { shown: number; total:
 export function GuFocusList({ events, window, onOpen, caps }: { events: readonly GuidanceEvent[]; window: string; onOpen: (id: string) => void; caps?: { IN?: Record<string, number>; US?: Record<string, number> } | null }) {
   const { data } = useGuUniverse({ market: 'ALL', view: 'active' });
   const [mk, setMk] = useState<Mk>('ALL');
+  const [horizon, setHorizon] = useState<'ALL' | 'ANNUAL' | 'MULTI_YEAR_CAGR'>('ALL');
   // zzz880: small & mid caps by default (India under ₹30,000 Cr, US under $30B); a name whose size is not known stays, labelled
   const [smid, setSmid] = useState(true);
   // zzz923: the screener.in market cap read for the score fills an India size the graded results do not have (graded caps win)
@@ -128,7 +129,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
     for (const [k, f] of Object.entries(facts)) if (k.startsWith('IN:') && f?.mcap && f.mcap > 0) inCaps[k.slice(3)] = f.mcap;
     return { IN: { ...inCaps, ...(caps?.IN || {}) }, US: { ...skyCaps.US, ...(caps?.US || {}) } };
   }, [facts, caps, skyCaps]);
-  const built = useMemo(() => buildFocusList(data?.summary?.highGrowthGroups, events, new Date(), Infinity, { caps: capsAll, indiaLarge: INDIA_LARGE_CAPS }), [data, events, capsAll]);   // zzz906: no cut-off before filtering (a small raise like Yasho fell outside the old top 80)
+  const built = useMemo(() => buildFocusList(focusGrowthHorizon(data?.summary?.highGrowthGroups, horizon), events, new Date(), Infinity, { caps: capsAll, indiaLarge: INDIA_LARGE_CAPS }), [data, events, capsAll, horizon]);   // zzz906: no cut-off before filtering (a small raise like Yasho fell outside the old top 80)
   // zzz925: a growth worked out from company numbers must agree with the revenue the company reports (Pinnacle West "+189%" was divided
   // by a part-year base): such a growth is held back for review and listed under the tables, never ranked
   const { rows: everyone, held } = useMemo(() => holdInconsistentGrowth(built, (r) => (r.ticker ? facts[`${r.market}:${r.ticker.toUpperCase()}`]?.salesBase : null)), [built, facts]);
@@ -214,6 +215,11 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
           ))}
         </span>
       </div>
+      <div role="group" aria-label="Growth horizon" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={{ fontSize: 12, color: R.dim }}>Growth horizon:</span>
+        {(['ALL', 'ANNUAL', 'MULTI_YEAR_CAGR'] as const).map((h) => <button key={h} type="button" aria-pressed={horizon === h} style={pillStyle(horizon === h, R.cyan)} onClick={() => setHorizon(h)}>{h === 'ALL' ? 'All horizons' : h === 'ANNUAL' ? 'Annual' : 'Multi-year CAGR'}</button>)}
+        <span style={{ fontSize: 11.5, color: R.dim }}>Filters growth targets; guidance raises remain visible.</span>
+      </div>
       {/* zzz930: owner asked for the explanations to stay collapsed until opened */}
       <details style={{ fontSize: 12, color: R.dim }}>
         <summary style={{ cursor: 'pointer', fontWeight: 700, color: R.text }}>How the ranking, scores, fair value and dates work</summary>
@@ -237,7 +243,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
         <div style={{ fontSize: 13, color: R.dim }}>{all.length ? 'No names for this market in the current data.' : 'Reading the guidance data…'}</div>
       ) : (<>
         <FocusTable title={`A. Raised their guidance (${raisedAll.length})`} sub={`Old and new figures both read from the company's own filing, ${window} window.${smallRaises ? ` ${smallRaises} small raise${smallRaises === 1 ? '' : 's'} (under 5%, or only EPS from a small base) left out.` : ''}`}
-          head={[<RankHead key="n" sort={sortA} onReset={() => setSortA('rank')} />, 'Company', 'What was raised (old → new)', <DateHead key="d" sort={sortA} onSort={() => setSortA((v) => (v === 'new' ? 'old' : 'new'))} />, ...FV_HEAD, 'Implied EPS', <OppHead key="o" sort={sortA} onSort={() => setSortA((v) => (v === 'opp' ? 'rank' : 'opp'))} />, <ScoreHead key="s" sort={sortA} onSort={() => setSortA((v) => (v === 'score' ? 'rank' : 'score'))} />, 'Verdict']} empty="No raise of 5% or more in this window for this market.">
+          head={[<RankHead key="n" sort={sortA} onReset={() => setSortA('rank')} />, 'Company', 'What was raised (old → new)', <DateHead key="d" sort={sortA} onSort={() => setSortA((v) => (v === 'new' ? 'old' : 'new'))} />, ...FV_HEAD, 'EPS estimate (fixed shares)', <OppHead key="o" sort={sortA} onSort={() => setSortA((v) => (v === 'opp' ? 'rank' : 'opp'))} />, <ScoreHead key="s" sort={sortA} onSort={() => setSortA((v) => (v === 'score' ? 'rank' : 'score'))} />, 'Verdict']} empty="No raise of 5% or more in this window for this market.">
           {raisedRows.map((r, i) => (<React.Fragment key={r.key}>
             <tr>
               <td style={{ ...td, color: R.dim }}>{i + 1}</td>
@@ -260,13 +266,18 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
           {raisedAll.length > FOCUS_STEP && <MoreRow shown={raisedRows.length} total={raisedAll.length} open={allA} onToggle={() => setAllA((v) => !v)} cols={5 + 1 + FV_COLS + OPP_COLS} />}
         </FocusTable>
         <FocusTable title={`B. Guiding 30%+ growth — no qualifying raise in this window (${growthAll.length})`} sub="Active guidance with 30%+ growth and no raise qualifying for table A in the selected window. This can include first guidance, repeats, older raises, or a small raise."
-          head={[<RankHead key="n" sort={sortB} onReset={() => setSortB('rank')} />, 'Company', 'Growth guided', 'Source', <DateHead key="d" sort={sortB} onSort={() => setSortB((v) => (v === 'new' ? 'old' : 'new'))} />, ...FV_HEAD, 'Implied EPS', <OppHead key="o" sort={sortB} onSort={() => setSortB((v) => (v === 'opp' ? 'rank' : 'opp'))} />, <ScoreHead key="s" sort={sortB} onSort={() => setSortB((v) => (v === 'score' ? 'rank' : 'score'))} />, 'Verdict']} empty="No 30%+ growth guidance for this market.">
+          head={[<RankHead key="n" sort={sortB} onReset={() => setSortB('rank')} />, 'Company', 'Growth guided', 'Source', <DateHead key="d" sort={sortB} onSort={() => setSortB((v) => (v === 'new' ? 'old' : 'new'))} />, ...FV_HEAD, 'EPS estimate (fixed shares)', <OppHead key="o" sort={sortB} onSort={() => setSortB((v) => (v === 'opp' ? 'rank' : 'opp'))} />, <ScoreHead key="s" sort={sortB} onSort={() => setSortB((v) => (v === 'score' ? 'rank' : 'score'))} />, 'Verdict']} empty="No 30%+ growth guidance for this market.">
           {growthRows.map((r, i) => (<React.Fragment key={r.key}>
             <tr>
               <td style={{ ...td, color: R.dim }}>{i + 1}</td>
               <CompanyCell r={r} td={td} />
               <td style={td}><b style={{ color: r.growthTrust === 'derived' ? R.amber : R.green }}>{r.growth}</b><div style={{ fontSize: 11.5, color: R.dim }}>{r.growthPeriod || ''}{r.growthTrust === 'derived' ? <b style={{ color: R.amber }}> · worked out by us from company numbers — not a stated target</b> : ' · stated by company'}</div></td>
-              <td style={{ ...td, fontSize: 12 }}>{r.growthSource || 'Company document'}<div style={{ fontSize: 11.5, color: R.dim }}>{r.raised ? `small raise ${r.raiseDate}` : ''}</div></td>
+              <td style={{ ...td, fontSize: 12 }}>
+                {r.growthSourceUrl && /^https?:\/\//i.test(r.growthSourceUrl) ? <a href={r.growthSourceUrl} target="_blank" rel="noopener noreferrer">{r.growthSource || 'Company document'}</a> : r.growthSource || 'Company document'}
+                <div style={{ fontSize: 11.5, color: r.growthFreshness === 'STALE' ? R.amber : R.dim }}>{r.growthTrust === 'derived' ? 'Derived from company figures' : 'Source verified'}{r.growthFreshness === 'STALE' ? ' · recheck required' : ''}</div>
+                <div style={{ fontSize: 11, color: R.dim }}>{typeof r.growthVerifiedDaysAgo === 'number' && Number.isFinite(r.growthVerifiedDaysAgo) && r.growthVerifiedDaysAgo >= 0 ? `Last verified ${r.growthVerifiedDaysAgo} days ago` : 'Verification age unavailable'}</div>
+                <div style={{ fontSize: 11.5, color: R.dim }}>{r.raised ? `small raise ${r.raiseDate}` : ''}</div>
+              </td>
               <td style={{ ...td, whiteSpace: 'nowrap' }} data-reported>{reportedLabel(r.growthDate)}</td>
               {fvCell(r)}
               {oppCell(r)}

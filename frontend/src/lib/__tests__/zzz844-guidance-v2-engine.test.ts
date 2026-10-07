@@ -72,7 +72,9 @@ describe('Regression: Cupid-type AGM raise, India, no consensus', () => {
   // zzz854: first line = metric + direction + window + source; second = the stated operating variable's own check
   test('driver-specific next evidence (1-2 items, no generic line)', () => {
     assert.ok(e.nextEvidence.length >= 1 && e.nextEvidence.length <= 2);
-    assert.match(e.nextEvidence[0], /^Next quarterly results \(~[A-Z][a-z]{2} \d{4}\): quarterly revenue of about .+ to stay on track for the guided .+ — source:/);
+    assert.match(e.nextEvidence[0], /^Next quarterly results \(~[A-Z][a-z]{2} \d{4}\): annual revenue guidance .+; simple quarterly average .+ — source:/);
+    assert.match(e.nextEvidence[0], /not a next-quarter target; reported year-to-date results are needed/);
+    assert.doesNotMatch(e.nextEvidence[0], /or more|to stay on track/);
     assert.match(e.nextEvidence[1], /Commissioning of the new plant and utilisation in the next quarter/);
     assert.ok(e.nextEvidence.some(x => /order/i.test(x)));
     assert.ok(!e.nextEvidence.some(x => /repeats or raises this guidance again/i.test(x)));

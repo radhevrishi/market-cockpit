@@ -179,13 +179,15 @@ export function requiredRemaining(r: OppRow, f: SkyFacts | null): Required {
   const priorFy = yi >= 0 ? y[key][yi] : null;
   if (!fin(priorFy) || priorFy <= 0 || pytd <= 0) return noReq("last year's full-year figure is not read, or is zero or negative");
   if (priorFy - pytd <= 0) return noReq('the quarters left in last year had no figure to compare with');
-  const target = priorFy * (1 + g.base / 100);
+  // Revenue delivery must be checked against the actual guidance, not the valuation scenario cap.
+  const targetGrowth = g.cls === 'revenue' ? g.raw : g.base;
+  const target = priorFy * (1 + targetGrowth / 100);
   const need = r1(((target - ytd) / (priorFy - pytd) - 1) * 100), pace = r1((ytd / pytd - 1) * 100);
   const far = need - pace > 15 && (pace <= 0 || need >= 1.4 * pace);
   const left = 4 - n;
   const word = key === 'sales' ? 'sales' : key === 'op' ? 'operating profit' : 'net profit';
   return { computed: true, reason: null, needPct: need, pacePct: pace, quartersDone: n, far,
-    text: `Needs ${sg(need)} in the remaining ${left} quarter${left === 1 ? '' : 's'} to reach the guided ${word} (${sg(g.base)} for the year); so far ${sg(pace)} over ${n} quarter${n === 1 ? '' : 's'}${far ? ' — far above the current pace' : ''}` };
+    text: `Needs ${sg(need)} in the remaining ${left} quarter${left === 1 ? '' : 's'} to reach the guided ${word} (${sg(targetGrowth)} for the year); so far ${sg(pace)} over ${n} quarter${n === 1 ? '' : 's'}${far ? ' — far above the current pace' : ''}` };
 }
 
 // ── guidance against the street (item 5, USA only) ────────────────────────────────────────────────────────────────────────

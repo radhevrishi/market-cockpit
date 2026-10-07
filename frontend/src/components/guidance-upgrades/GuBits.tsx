@@ -287,7 +287,7 @@ export function QualityStrip({ data }: { data: Parameters<typeof qualityStrip>[0
         <div role="alert" style={{ border: `1px solid ${R.red}`, background: tint(R.red, 8), borderRadius: 6, padding: '6px 10px', fontSize: 12.5 }}>
           <b style={{ color: R.red }}>{INVARIANT_BANNER}</b>
           <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{q.violations.slice(0, 5).map((v, i) => <li key={i}>{v}</li>)}</ul>
-          {q.violations.length > 5 && <div>and {q.violations.length - 5} more.</div>}
+          {q.violations.length > 5 && <details><summary style={{ cursor: 'pointer' }}>Show {q.violations.length - 5} more failed checks</summary><ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{q.violations.slice(5).map((v, i) => <li key={i}>{v}</li>)}</ul></details>}
         </div>
       )}
       {(q.liveError || q.servedNote) && (

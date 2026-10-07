@@ -5,7 +5,7 @@ import React from 'react';
 import { R } from './gu-tokens';
 import { fvTooltip, fmtPrice, fmtUpside, fvStatus, type FvResult } from '@/lib/gu-fair-value';
 
-export const FV_HEAD = ['Price', 'Fair value', 'Upside'];
+export const FV_HEAD = ['Price', 'Model fair value', 'Model upside'];
 export const FV_COLS = 3;
 
 /** One result per row: null while the company figures are still being read. */
@@ -35,6 +35,8 @@ export function FvCells({ fv, waiting, td }: { fv: FvResult | null; waiting: boo
       <td style={{ ...td, whiteSpace: 'nowrap' }} title={tip}>
         <b>{fmtPrice(fv.base.fair, fv.currency)}</b>
         <div style={{ fontSize: 10.5, color: R.dim }}>{fmtPrice(fv.bear?.fair, fv.currency)} – {fmtPrice(fv.bull?.fair, fv.currency)}</div>
+        <div style={{ fontSize: 10.5, color: R.dim }}>{fv.basis === 'history' ? 'Historical-growth model' : 'Guidance-based model'}</div>
+        {fv.inputs.some((v) => v.includes('latest quarter × 4 used as the yearly base')) ? <div style={{ fontSize: 10.5, color: R.amber }}>Quarter ×4 base</div> : null}
       </td>
       <td style={{ ...td, whiteSpace: 'nowrap' }} title={tip}>
         <b style={{ color: col }}>{fmtUpside(up)}</b>
