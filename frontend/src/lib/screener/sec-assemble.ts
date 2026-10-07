@@ -171,7 +171,8 @@ export function usFigures(fd: FrameData, cik: number, periods: { quarters: strin
     const gpSeries = (p: string): number | null => {
       for (const c of GP) { const v = quarterSeries(fd, c, cik, quarters).get(p)?.v; if (fin(v)) return v; }
       const rev = (() => { let b: number | null = null; for (const c of REV) { const v = quarterSeries(fd, c, cik, quarters).get(p)?.v; if (fin(v) && (b == null || v > b)) b = v; } return b; })();
-      for (const c of COGS) { const v = quarterSeries(fd, c, cik, quarters).get(p)?.v; if (fin(v) && rev != null) return rev - v; }
+      // worked out from cost of revenue: only when it gives a sensible gross profit (banks file interest cost there — SoFi read −3,300%)
+      for (const c of COGS) { const v = quarterSeries(fd, c, cik, quarters).get(p)?.v; if (fin(v) && rev != null && rev > 0 && v >= 0 && v <= rev) return rev - v; }
       return null;
     };
     const g1 = gpSeries(L), g0 = gpSeries(prevYear(L));
@@ -198,7 +199,7 @@ export function usFigures(fd: FrameData, cik: number, periods: { quarters: strin
   if (A && Aprev) {
     out.revAYoY = growthOver(fd, REV, cik, A, Aprev, quarters, true);
     const rev = valueAt(fd, REV, cik, A);
-    const gp = valueAt(fd, GP, cik, A) ?? (() => { const c = valueAt(fd, COGS, cik, A); return rev != null && c != null ? rev - c : null; })();
+    const gp = valueAt(fd, GP, cik, A) ?? (() => { const c = valueAt(fd, COGS, cik, A); return rev != null && rev > 0 && c != null && c >= 0 && c <= rev ? rev - c : null; })();
     if (rev != null && rev > 0 && gp != null) out.gmFY = r1((gp / rev) * 100);
     const eA = (y: string) => { const op = fd.OperatingIncomeLoss?.[y]?.[cik]?.v; if (!fin(op)) return null; const d = valueAt(fd, DDA, cik, y); return { v: op + (d != null ? Math.abs(d) : 0), approx: d == null }; };
     const a1 = eA(A), a0 = eA(Aprev);
