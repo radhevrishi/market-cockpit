@@ -2,7 +2,7 @@
 // zzz883 CI — type-check gate. The code base carries older type errors (the build ignores them), so the gate is a RATCHET:
 // it fails when any file gets MORE errors than in scripts/tsc-baseline.json, or a new file starts having errors.
 // Fixing errors is always allowed; run `node scripts/tsc-gate.mjs --update` afterwards to lock the lower numbers in.
-import { execSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,9 +10,21 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const basePath = join(here, 'tsc-baseline.json');
-let out = '';
-try { out = execSync('npx tsc --noEmit -p .', { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }); }
-catch (e) { out = String(e.stdout || '') + String(e.stderr || ''); }
+const compiler = spawnSync('npx', ['--no-install', 'tsc', '--noEmit', '--pretty', 'false', '-p', '.'], {
+  cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+});
+const out = String(compiler.stdout || '') + String(compiler.stderr || '');
+// A missing compiler, bad project/configuration, signal or buffer overflow is
+// not a clean type-check. Never turn it into a zero-error baseline.
+const hasLocatedDiagnostic = /^.+?\(\d+,\d+\): error TS\d+/m.test(out);
+const hasGlobalDiagnostic = /^\s*(?:error\s+)?TS\d+:/m.test(out);
+if (compiler.error || compiler.signal || hasGlobalDiagnostic ||
+    (compiler.status !== 0 && (![1, 2].includes(compiler.status) || !hasLocatedDiagnostic))) {
+  console.error(`TypeScript could not complete (exit ${compiler.status ?? 'none'}${compiler.signal ? `, signal ${compiler.signal}` : ''}).`);
+  if (compiler.error) console.error(compiler.error.message);
+  console.error(out.slice(-8000));
+  process.exit(1);
+}
 const counts = {};
 for (const line of out.split('\n')) {
   const m = /^(.+?)\(\d+,\d+\): error TS\d+/.exec(line.trim());

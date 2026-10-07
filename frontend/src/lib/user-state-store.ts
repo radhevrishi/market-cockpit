@@ -7,7 +7,7 @@
 import { createHash } from 'node:crypto';
 import { getPool } from './db';
 import { ensureSchema } from './db-migrate';
-import { kvGet, kvSet } from './kv';
+import { kvGet, kvSet, kvSetDurable } from './kv';
 
 /** The browser keys that hold personal data. Anything else is refused (no arbitrary storage). */
 export const USER_STATE_KEYS = [
@@ -87,13 +87,15 @@ export async function putUserState(key: UserStateKey, value: unknown, opts: { ba
     } catch (e) { await c.query('ROLLBACK').catch(() => {}); throw e; } finally { c.release(); }
   } else {
     const cur = await kvGet<UserStateRow>(kvKey(key)).catch(() => null);
-    if (cur && cur.hash === hash) return { ok: true, version: cur.version, hash, conflict: false, store, unchanged: true };
-    version = (cur?.version || 0) + 1;
+    unchanged = !!cur && cur.hash === hash;
+    version = unchanged ? cur!.version : (cur?.version || 0) + 1;
     conflict = !!cur && opts.baseVersion != null && Number(opts.baseVersion) < cur.version;
   }
   // the Redis mirror never expires (it is the fallback copy, not a cache)
   // no TTL: KV mirror of the user's personal data (Postgres is the record of truth; this copy must not vanish either)
-  await kvSet(kvKey(key), { key, value, hash, version, device, updatedAt: new Date().toISOString() } satisfies UserStateRow).catch(() => {});
+  const row = { key, value, hash, version, device, updatedAt: new Date().toISOString() } satisfies UserStateRow;
+  if (store === 'postgres') await kvSet(kvKey(key), row).catch(() => {});
+  else await kvSetDurable(kvKey(key), row);
   return { ok: true, version, hash, conflict, store, unchanged };
 }
 

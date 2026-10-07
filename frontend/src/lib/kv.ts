@@ -11,6 +11,7 @@
  */
 
 import { Redis } from '@upstash/redis';
+import { MemoryKvStore } from './kv-memory';
 
 let redis: Redis | null = null;
 let redisAvailable: boolean | null = null;
@@ -41,8 +42,9 @@ function getRedis(): Redis | null {
 }
 
 // In-memory fallback store
-const MEM_STORE = (globalThis as any).__MC_KV_STORE__ || new Map<string, string>();
-(globalThis as any).__MC_KV_STORE__ = MEM_STORE;
+// Versioned key avoids treating legacy non-expiring Map entries as fresh.
+const MEM_STORE: MemoryKvStore = (globalThis as any).__MC_KV_STORE_V2__ || new MemoryKvStore();
+(globalThis as any).__MC_KV_STORE_V2__ = MEM_STORE;
 
 /**
  * Get a value from the KV store
@@ -158,15 +160,29 @@ export async function kvMGet<T = any>(keys: string[]): Promise<Array<T | null>> 
  */
 const KV_REMOTE_MAX_BYTES = 8 * 1024 * 1024;  // 8 MB safety cap (Upstash hard limit is 10 MB)
 
+/** Personal data must receive a durable acknowledgement before reporting success. */
+export async function kvSetDurable(key: string, value: any, ttlSeconds?: number): Promise<void> {
+  const serialized = typeof value === 'string' ? value : JSON.stringify(value);
+  if (typeof serialized !== 'string' || Buffer.byteLength(serialized, 'utf8') > KV_REMOTE_MAX_BYTES) {
+    throw new Error('Durable KV value exceeds the storage limit or is not serializable');
+  }
+  const r = getRedis();
+  if (!r) throw new Error('Durable storage is unavailable; save was not confirmed');
+  const result = ttlSeconds ? await r.set(key, value, { ex: ttlSeconds }) : await r.set(key, value);
+  if (result !== 'OK') throw new Error('Durable storage did not acknowledge the save');
+  MEM_STORE.set(key, serialized, ttlSeconds);
+}
+
 export async function kvSet(key: string, value: any, ttlSeconds?: number): Promise<void> {
   const serialized = typeof value === 'string' ? value : JSON.stringify(value);
 
   // Always update memory store (fast path)
-  MEM_STORE.set(key, serialized);
+  MEM_STORE.set(key, serialized, ttlSeconds);
 
   // PATCH 1018 — skip oversized remote writes (Upstash 10 MB limit)
-  if (serialized.length > KV_REMOTE_MAX_BYTES) {
-    console.warn(`[KV] Skipping remote SET for ${key} — payload ${(serialized.length / 1048576).toFixed(1)} MB > ${(KV_REMOTE_MAX_BYTES / 1048576).toFixed(0)} MB safety cap. (Memory cache still populated.)`);
+  const serializedBytes = Buffer.byteLength(serialized, 'utf8');
+  if (serializedBytes > KV_REMOTE_MAX_BYTES) {
+    console.warn(`[KV] Skipping remote SET for ${key} — payload ${(serializedBytes / 1048576).toFixed(1)} MB > ${(KV_REMOTE_MAX_BYTES / 1048576).toFixed(0)} MB safety cap. (Memory cache still populated.)`);
     return;
   }
 
@@ -212,7 +228,7 @@ export async function kvSetNX(key: string, value: any, ttlSeconds: number): Prom
   }
   // In-memory fallback
   if (MEM_STORE.has(key)) return false;
-  MEM_STORE.set(key, typeof value === 'string' ? value : JSON.stringify(value));
+  MEM_STORE.set(key, typeof value === 'string' ? value : JSON.stringify(value), ttlSeconds);
   return true;
 }
 
@@ -252,7 +268,7 @@ export async function kvSwap(tempKey: string, prodKey: string, ttlSeconds?: numb
       await r.del(tempKey);
       // Also update memory store
       const serialized = typeof val === 'string' ? val : JSON.stringify(val);
-      MEM_STORE.set(prodKey, serialized);
+      MEM_STORE.set(prodKey, serialized, ttlSeconds);
       MEM_STORE.delete(tempKey);
       return true;
     } catch (e) {
@@ -263,7 +279,7 @@ export async function kvSwap(tempKey: string, prodKey: string, ttlSeconds?: numb
   // In-memory fallback
   const val = MEM_STORE.get(tempKey);
   if (!val) return false;
-  MEM_STORE.set(prodKey, val);
+  MEM_STORE.set(prodKey, val, ttlSeconds);
   MEM_STORE.delete(tempKey);
   return true;
 }

@@ -9,7 +9,8 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dir = 'src/lib/__tests__';
 const files = readdirSync(join(root, dir)).filter((f) => f.endsWith('.test.ts')).map((f) => `${dir}/${f}`);
-const run = (list) => spawnSync('npx', ['tsx', '--test', '--test-reporter=tap', ...list], { cwd: root, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+// Use Node's loader directly: no tsx CLI IPC socket and bounded worker memory.
+const run = (list) => spawnSync(process.execPath, ['--import', 'tsx', '--test', '--test-concurrency=4', '--test-reporter=tap', ...list], { cwd: root, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
 const r = run(files);
 const tap = String(r.stdout || '');
 const pass = /^# pass (\d+)/m.exec(tap)?.[1], fail = Number(/^# fail (\d+)/m.exec(tap)?.[1] || 0);

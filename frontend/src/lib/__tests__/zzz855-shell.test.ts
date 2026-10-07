@@ -47,6 +47,7 @@ describe('timers that sleep while the tab is hidden', () => {
     const doc = { hidden: false, addEventListener: (t: string, f: () => void) => { listeners[t] = f; }, removeEventListener: (t: string) => { delete listeners[t]; } };
     let n = 0;
     const stop = visibleInterval(() => { n++; }, 5, doc);
+    try {
     await new Promise((r) => setTimeout(r, 22));
     assert.ok(n >= 2, `ticks while visible (${n})`);
     doc.hidden = true; const before = n;
@@ -56,6 +57,7 @@ describe('timers that sleep while the tab is hidden', () => {
     assert.equal(n, before + 1, 'one catch-up on return');
     stop();
     assert.equal(listeners.visibilitychange, undefined, 'cleanup removes the listener');
+    } finally { stop(); }
   });
   test('service worker update check at most once an hour', () => {
     assert.equal(swUpdateDue(null, 1000), true);

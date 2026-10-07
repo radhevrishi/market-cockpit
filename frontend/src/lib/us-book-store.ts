@@ -10,7 +10,7 @@
 // a Redis error and returns, so a quota-exhausted store would "succeed").
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { kvGet as realKvGet, kvSet as realKvSet } from '@/lib/kv';
+import { kvGet as realKvGet, kvSetDurable as realKvSet } from '@/lib/kv';
 import { emptyUsBook, sanitizeUsBook, type UsBook } from '@/lib/us-book/model';
 import type { UsProfile } from '@/lib/us-book/profile';
 
