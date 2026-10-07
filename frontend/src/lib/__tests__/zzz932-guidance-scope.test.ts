@@ -43,6 +43,7 @@ describe('zzz932', () => {
   });
   test('3 · CSB Bank: wholesale / book words are not revenue', () => {
     assert.match(sc(Q.CSB, 'CSB Bank Limited')!, /book \/ segment/);
+    assert.match(sc('Gold, I think we should be growing around 30% to 35%, somewhere in that range.', 'CSB Bank Limited')!, /book \/ segment/);
     assert.match(sc('Gold loan portfolio should grow 25% to 30%')!, /book \/ segment/);
     assert.equal(itemsFromExtracted([xres('CSBBANK', 'CSB Bank Limited', [row({ quote: Q.CSB, growthPctLow: 35, growthPctHigh: 40 })])], null, NOW).length, 0);
     assert.equal(sc('Revenue from wholesale will grow 20% this year'), null, 'a sentence that says revenue stays');

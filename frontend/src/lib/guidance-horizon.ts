@@ -144,7 +144,7 @@ const NOT_COMPANY_MEASURE: Array<[string, RegExp]> = [
   ['order inflow', /\b(order (?:book|inflows?|intake))\b/i],
   ['premium', /\b(first[- ]year premium|premiums?)\b/i],
 ];
-const BOOK_SEGMENT = /\b(wholesale|retail book|sme book|corporate book|gold loans?|msme book|retail (?:loans?|advances|portfolio)|loan growth)\b/i;
+const BOOK_SEGMENT = /^\s*(?:gold|retail|sme|msme|agri(?:culture)?|corporate|microfinance|housing|vehicle|wholesale)\b[^.]{0,30}\b(?:grow\w*|growth)\b|\b(wholesale|retail book|sme book|corporate book|gold loans?|msme book|retail (?:loans?|advances|portfolio)|loan growth)\b/i;
 const COMPANY_MEASURE = /\b(revenues?|sales|top[\s-]?line|turnover|income from operations|total income|bottom[\s-]?line|net profit|profit after tax|pat|profitability|ebitda)\b/i;
 /** A named part of the company before the measure: "US CrudeChem revenue", "export revenue", "Tech & Payments revenue", "product revenue". */
 const PART_BEFORE_MEASURE = /\b((?:(?:US|USA|UK|EU|Europe(?:an)?|international|overseas|export|exports|domestic|subsidiary|segment|division|vertical|plant|product|services?|non-[a-z]+|[A-Z][a-z]+[A-Z][A-Za-z]+|[A-Z][A-Za-z]*\s*&\s*[A-Z][a-z]+)\s+){1,3})(?:business\s+)?(?:revenues?|sales|turnover)\b/;
