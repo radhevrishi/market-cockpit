@@ -1,5 +1,6 @@
 // Yahoo Finance API utility for server-side data fetching
 // Uses the v8 chart API and v7 quote API
+import { extendedHoursPct } from './chart-math';   // zzz944 — pre / after-hours change for the /charts watchlist "Ext" column
 
 const YF_BASE = 'https://query1.finance.yahoo.com';
 const YF_BASE2 = 'https://query2.finance.yahoo.com';
@@ -229,8 +230,8 @@ export async function fetchQuotes(symbols: string[]): Promise<any[]> {
 // returns 401 (crumb-gated). Returns price + chartPreviousClose + longName per symbol.
 // Use this as the price-fallback when the v7/quote batch comes back empty.
 // Shape: Map<base-symbol-without-.NS-suffix, { lastPrice, prevClose, pChange, companyName }>
-export async function fetchYahooSparkBatch(symbolsWithSuffix: string[]): Promise<Map<string, { lastPrice: number | null; prevClose: number | null; pChange: number | null; companyName: string | null }>> {
-  const out = new Map<string, { lastPrice: number | null; prevClose: number | null; pChange: number | null; companyName: string | null }>();
+export async function fetchYahooSparkBatch(symbolsWithSuffix: string[]): Promise<Map<string, { lastPrice: number | null; prevClose: number | null; pChange: number | null; companyName: string | null; extPct?: number | null }>> {
+  const out = new Map<string, { lastPrice: number | null; prevClose: number | null; pChange: number | null; companyName: string | null; extPct?: number | null }>();
   if (symbolsWithSuffix.length === 0) return out;
   const BATCH = 20;
   const CONC = 4;
@@ -263,7 +264,7 @@ export async function fetchYahooSparkBatch(symbolsWithSuffix: string[]): Promise
         if (!sym) continue;
         // Index by base (no .NS / .BO suffix) for easy multibagger lookup
         const baseSym = sym.replace(/\.(NS|BO)$/i, '');
-        out.set(baseSym, { lastPrice: price, prevClose, pChange, companyName });
+        out.set(baseSym, { lastPrice: price, prevClose, pChange, companyName, extPct: extendedHoursPct(meta, Date.now()) });
       }
     }
     if (i + CONC < chunks.length) await new Promise(r => setTimeout(r, GAP_MS));

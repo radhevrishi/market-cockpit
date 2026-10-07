@@ -2,7 +2,8 @@
 // plus the header numbers (ADR%, RVol, average traded value, last price, day change) worked out from DAILY bars.
 // Public market data (Yahoo). Cached in memory only: 5 min for daily, 30 min for weekly / monthly. Nothing written to Redis.
 import { NextRequest, NextResponse } from 'next/server';
-import { aggregateBars, cleanTicker, headerStats, validTicker, type Bar, type Market, type Timeframe } from '@/lib/chart-math';
+import { aggregateBars, cleanTicker, floatPct, headerStats, validTicker, type Bar, type Market, type Timeframe } from '@/lib/chart-math';
+import { dbAvailable, dbQuery } from '@/lib/db';
 import { DATA_RANGES, getDailySeries, type DataRange } from '@/lib/chart-data';
 
 export const runtime = 'nodejs';
@@ -11,6 +12,22 @@ export const maxDuration = 30;
 
 const INTERVALS: Record<string, Timeframe> = { '1d': 'D', '1wk': 'W', '1mo': 'M' };
 const _resp = new Map<string, { at: number; body: unknown }>();
+
+// zzz944 — Float %: the stock screener's US snapshot already holds free float (% of shares, from Yahoo profiles). The whole
+// ticker → float map is read once an hour (small) instead of asking Yahoo per chart. India: not known yet (needs promoter holding).
+let _float: { at: number; map: Map<string, number> } | null = null;
+async function floatFor(market: Market, ticker: string): Promise<number | null> {
+  if (market !== 'US' || !dbAvailable()) return null;
+  if (!_float || Date.now() - _float.at > 3600_000) {
+    const map = new Map<string, number>();
+    try {
+      const rows = await dbQuery<{ t: string; f: number }>(`SELECT r->>'t' AS t, (r->>'flt')::float AS f FROM screener_snapshot, jsonb_array_elements(rows) r WHERE market = 'US' AND jsonb_typeof(r->'flt') = 'number'`);
+      for (const r of rows) if (r.t && Number.isFinite(Number(r.f))) map.set(String(r.t).toUpperCase(), Number(r.f));
+    } catch { /* no snapshot yet */ }
+    _float = { at: Date.now(), map };
+  }
+  return floatPct({ pct: _float.map.get(ticker) ?? null });
+}
 
 function packBars(bars: Bar[]) {
   const r2 = (x: number) => Math.round(x * 10000) / 10000;
@@ -42,7 +59,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ ticker: str
   const body = {
     ok: true, ticker, market, interval, range,
     symbol: series.symbol, name: series.name, currency: series.currency, exchange: series.exchange,
-    stats: headerStats(series.bars),
+    stats: { ...headerStats(series.bars), floatPct: await floatFor(market, ticker).catch(() => null) },
     bars: packBars(bars),
     asOf: new Date().toISOString(),
   };

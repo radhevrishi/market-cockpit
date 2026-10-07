@@ -179,7 +179,7 @@ export function removeSection(l: WlList, id: string): WlList {
 // ── sorting + screen order ──────────────────────────────────────────────────
 export type SortKey = 'symbol' | 'last' | 'chg';
 export type SortState = { key: SortKey; dir: 'asc' | 'desc' } | null;
-export interface Quote { last: number | null; chgPct: number | null; name?: string | null }
+export interface Quote { last: number | null; chgPct: number | null; name?: string | null; ext?: number | null }
 
 /** Header click: first click (numbers high→low, symbol A→Z), second flips, third goes back to his own order. */
 export function nextSort(cur: SortState, key: SortKey): SortState {

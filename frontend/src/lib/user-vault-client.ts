@@ -8,6 +8,7 @@
 //   • local missing, server has it           → restore
 // Nothing is ever deleted on either side by this code; every server write is kept in history (last 60 versions per key).
 import { USER_STATE_KEYS_CLIENT, NOTES_PREFIX, NOTES_BUNDLE } from './user-vault-keys';
+import { VAULT_MERGERS } from './chart-sync';
 
 const META_KEY = 'mc:vault:meta:v1';
 const DEVICE_KEY = 'mc:vault:device:v1';
@@ -50,6 +51,21 @@ function writeLocal(key: string, value: any): void {
 }
 const localHashOf = (v: unknown | null) => (v == null ? null : quickHash(JSON.stringify(v)));
 
+/** zzz944 — the parsed JSON inside a stored wrapper ({__raw, parsed}) or null. */
+export function unwrapVaultValue(v: any): unknown {
+  if (!v || typeof v !== 'object') return null;
+  if (v.parsed !== undefined) return v.parsed;
+  if (typeof v.__raw === 'string') { try { return JSON.parse(v.__raw); } catch { return null; } }
+  return null;
+}
+/** zzz944 — for keys that are merged (chart drawings, chart layouts): combine both copies; say whether this device's copy
+ *  changes and whether the server needs the merged copy. Pure. */
+export function mergeDecision(localParsed: unknown, serverParsed: unknown, merger: (l: unknown, s: unknown) => unknown): { merged: unknown; changedLocal: boolean; needPush: boolean } {
+  const merged = merger(localParsed, serverParsed);
+  const m = JSON.stringify(merged);
+  return { merged, changedLocal: m !== JSON.stringify(localParsed), needPush: m !== JSON.stringify(serverParsed) };
+}
+
 let running = false;
 export async function syncVaultOnce(): Promise<{ pushed: string[]; pulled: string[]; error?: string }> {
   if (running || typeof window === 'undefined' || typeof localStorage === 'undefined') return { pushed: [], pulled: [] };
@@ -68,6 +84,30 @@ export async function syncVaultOnce(): Promise<{ pushed: string[]; pulled: strin
     for (const k of j.keys || []) server[k.key] = { hash: meta[k.key]?.version === k.version ? meta[k.key].hash : `srv:${k.hash}`, version: Number(k.version) };
     for (const key of USER_STATE_KEYS_CLIENT) {
       const local = readLocal(key); const lh = localHashOf(local);
+      // zzz944: merged keys — when the server holds a copy this device has not merged yet, combine both instead of letting one
+      // replace the other (first contact used to hand the server copy the win and wiped this device's chart drawings)
+      const merger = VAULT_MERGERS[key];
+      const srv = server[key];
+      if (merger && local != null && srv && (!meta[key] || meta[key].version !== srv.version)) {
+        const g = await fetch(`/api/v1/user-state?key=${encodeURIComponent(key)}`, { cache: 'no-store', signal: AbortSignal.timeout(20_000) });
+        if (!g.ok) continue;
+        const gj = await g.json();
+        if (!gj.found) continue;
+        const dec = mergeDecision(unwrapVaultValue(local), unwrapVaultValue(gj.value), merger);
+        if (dec.changedLocal) {
+          try { localStorage.setItem(`mc:vault:backup:${key}`, JSON.stringify({ at: new Date().toISOString(), value: local })); } catch { /* quota */ }
+          writeLocal(key, { __raw: JSON.stringify(dec.merged) });
+          pulled.push(key);
+        }
+        const now = readLocal(key); const nh = localHashOf(now)!;
+        if (dec.needPush && now != null) {
+          const p = await fetch('/api/v1/user-state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, value: now, baseVersion: Number(gj.version), device }), signal: AbortSignal.timeout(20_000) });
+          if (p.ok) { const pj = await p.json(); meta[key] = { hash: nh, version: Number(pj.version) }; pushed.push(key); }
+        } else {
+          meta[key] = { hash: nh, version: Number(gj.version) };
+        }
+        continue;
+      }
       const plan = vaultPlan(lh, meta[key], server[key]);
       if (plan.kind === 'push' && local != null) {
         const p = await fetch('/api/v1/user-state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, value: local, baseVersion: meta[key]?.version ?? null, device }), signal: AbortSignal.timeout(20_000) });
@@ -98,6 +138,7 @@ export async function syncVaultOnce(): Promise<{ pushed: string[]; pulled: strin
     }
     localStorage.setItem(META_KEY, JSON.stringify(meta));
     if (pulled.length) window.dispatchEvent(new CustomEvent('mc:vault:restored', { detail: { keys: pulled } }));
+    if (pushed.length) window.dispatchEvent(new CustomEvent('mc:vault:pushed', { detail: { keys: pushed, at: Date.now() } }));
     return { pushed, pulled };
   } catch (e: any) {
     return { pushed, pulled, error: String(e?.message || e) };

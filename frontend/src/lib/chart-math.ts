@@ -4,6 +4,17 @@
 
 export interface Bar { t: number; o: number; h: number; l: number; c: number; v: number }
 export type Market = 'IN' | 'US';
+
+/** zzz944 — US extended-hours change % (TradingView's "Ext" column) from a Yahoo chart/spark `meta`: only while the pre-market
+ *  or after-hours session is open, the extended price (meta.fulldayPrice) vs the regular-session price; otherwise null. */
+export function extendedHoursPct(meta: any, nowMs: number): number | null {
+  const reg = Number(meta?.regularMarketPrice), ext = Number(meta?.fulldayPrice);
+  if (!(reg > 0) || !(ext > 0)) return null;
+  const p = meta?.currentTradingPeriod;
+  const inWin = (w: any) => !!w && Number.isFinite(Number(w.start)) && Number.isFinite(Number(w.end)) && nowMs >= Number(w.start) * 1000 && nowMs < Number(w.end) * 1000;
+  if (!inWin(p?.pre) && !inWin(p?.post)) return null;
+  return (100 * (ext - reg)) / reg;
+}
 export type Timeframe = 'D' | 'W' | 'M';
 export type RangeKey = '1M' | '3M' | '6M' | 'YTD' | '1Y' | '5Y' | 'All';
 export const RANGE_KEYS: RangeKey[] = ['1M', '3M', '6M', 'YTD', '1Y', '5Y', 'All'];
@@ -73,14 +84,130 @@ export function avgDollarVolume(bars: Bar[], n = 20): number | null {
   return Number.isFinite(v) ? v : null;
 }
 
-export interface HeaderStats { last: number | null; prevClose: number | null; change: number | null; changePct: number | null; adrPct: number | null; rvol: number | null; avgValue: number | null }
+/** PVol — the last day's volume as a % of the highest daily volume of the `n` days BEFORE it (100 = matched the high). */
+export function peakVolumePct(bars: Bar[], n = 50): number | null {
+  if (bars.length < 2) return null;
+  const prev = bars.slice(-(n + 1), -1).map((b) => b.v).filter((v) => v > 0);
+  if (!prev.length) return null;
+  const hi = Math.max(...prev);
+  return hi > 0 ? (100 * bars[bars.length - 1].v) / hi : null;
+}
+
+/** Float % — freely traded shares as a % of all shares. `floatShares`/`sharesOut` when both are known, else a ready % (e.g.
+ *  the screener's US figure), else 100 − promoter % (India). Out-of-range answers become null. */
+export function floatPct(o: { floatShares?: number | null; sharesOut?: number | null; pct?: number | null; promoterPct?: number | null }): number | null {
+  const ok = (v: number | null | undefined) => (v != null && Number.isFinite(v) && v > 0 && v <= 100 ? v : null);
+  if (o.floatShares && o.sharesOut && o.floatShares > 0 && o.sharesOut > 0) return ok((100 * o.floatShares) / o.sharesOut);
+  if (o.pct != null) return ok(o.pct);
+  if (o.promoterPct != null && Number.isFinite(o.promoterPct) && o.promoterPct >= 0 && o.promoterPct < 100) return ok(100 - o.promoterPct);
+  return null;
+}
+
+export interface HeaderStats {
+  last: number | null; prevClose: number | null; change: number | null; changePct: number | null;
+  adrPct: number | null; rvol: number | null; pvol: number | null; avgValue: number | null; floatPct?: number | null;
+}
 /** Numbers for the header line — always from DAILY bars, whatever timeframe is on screen. */
 export function headerStats(daily: Bar[]): HeaderStats {
   const last = daily.length ? daily[daily.length - 1].c : null;
   const prevClose = daily.length > 1 ? daily[daily.length - 2].c : null;
   const change = last != null && prevClose != null ? last - prevClose : null;
   const changePct = change != null && prevClose ? (100 * change) / prevClose : null;
-  return { last, prevClose, change, changePct, adrPct: adrPct(daily), rvol: relVolume(daily), avgValue: avgDollarVolume(daily) };
+  return { last, prevClose, change, changePct, adrPct: adrPct(daily), rvol: relVolume(daily), pvol: peakVolumePct(daily), avgValue: avgDollarVolume(daily) };
+}
+
+// ── indicators (pure; null until there is enough history) ───────────────────
+
+/** RSI with Wilder's smoothing (the TradingView way). */
+export function rsi(closes: number[], period = 14): (number | null)[] {
+  const out: (number | null)[] = new Array(closes.length).fill(null);
+  if (!(period >= 1) || closes.length <= period) return out;
+  let gain = 0, loss = 0;
+  for (let i = 1; i <= period; i++) { const d = closes[i] - closes[i - 1]; if (d > 0) gain += d; else loss -= d; }
+  gain /= period; loss /= period;
+  const val = () => (loss === 0 ? (gain === 0 ? 50 : 100) : 100 - 100 / (1 + gain / loss));
+  out[period] = val();
+  for (let i = period + 1; i < closes.length; i++) {
+    const d = closes[i] - closes[i - 1];
+    gain = (gain * (period - 1) + Math.max(0, d)) / period;
+    loss = (loss * (period - 1) + Math.max(0, -d)) / period;
+    out[i] = val();
+  }
+  return out;
+}
+
+/** Bollinger Bands: middle = SMA(n); upper / lower = middle ± k × standard deviation (population, as TradingView). */
+export function bollinger(closes: number[], period = 20, k = 2): { mid: (number | null)[]; up: (number | null)[]; lo: (number | null)[] } {
+  const mid = sma(closes, period);
+  const up: (number | null)[] = new Array(closes.length).fill(null);
+  const lo: (number | null)[] = new Array(closes.length).fill(null);
+  for (let i = period - 1; i < closes.length; i++) {
+    const m = mid[i];
+    if (m == null) continue;
+    let v = 0;
+    for (let j = i - period + 1; j <= i; j++) v += (closes[j] - m) ** 2;
+    const sd = Math.sqrt(v / period);
+    up[i] = m + k * sd; lo[i] = m - k * sd;
+  }
+  return { mid, up, lo };
+}
+
+/** MACD: fast EMA − slow EMA; signal = EMA of MACD; histogram = MACD − signal. */
+export function macd(closes: number[], fast = 12, slow = 26, signal = 9): { macd: (number | null)[]; signal: (number | null)[]; hist: (number | null)[] } {
+  const f = ema(closes, fast), s = ema(closes, slow);
+  const m = closes.map((_, i) => (f[i] != null && s[i] != null ? (f[i] as number) - (s[i] as number) : null));
+  const start = m.findIndex((v) => v != null);
+  const sig: (number | null)[] = new Array(closes.length).fill(null);
+  if (start >= 0) {
+    const e = ema(m.slice(start) as number[], signal);
+    e.forEach((v, i) => { sig[start + i] = v; });
+  }
+  const hist = m.map((v, i) => (v != null && sig[i] != null ? v - (sig[i] as number) : null));
+  return { macd: m, signal: sig, hist };
+}
+
+/** True range of each bar (the first bar uses high − low). */
+export function trueRange(bars: Bar[]): number[] {
+  return bars.map((b, i) => (i === 0 ? b.h - b.l : Math.max(b.h - b.l, Math.abs(b.h - bars[i - 1].c), Math.abs(b.l - bars[i - 1].c))));
+}
+/** ATR with Wilder's smoothing (RMA), seeded with the simple average of the first `period` true ranges. */
+export function atr(bars: Bar[], period = 14): (number | null)[] {
+  const tr = trueRange(bars);
+  const out: (number | null)[] = new Array(bars.length).fill(null);
+  if (!(period >= 1) || bars.length < period) return out;
+  let prev = 0;
+  for (let i = 0; i < period; i++) prev += tr[i];
+  prev /= period;
+  out[period - 1] = prev;
+  for (let i = period; i < bars.length; i++) { prev = (prev * (period - 1) + tr[i]) / period; out[i] = prev; }
+  return out;
+}
+
+/** Supertrend, following TradingView's ta.supertrend: bands at (high + low) / 2 ± mult × ATR that only tighten while the
+ *  previous close stays on their side; it starts in a down trend (line = upper band) and flips when the close crosses the
+ *  current band. Returns the line and the direction (1 = up, line below price; −1 = down, line above price). */
+export function supertrend(bars: Bar[], period = 10, mult = 3): { line: (number | null)[]; dir: (1 | -1 | null)[] } {
+  const a = atr(bars, period);
+  const line: (number | null)[] = new Array(bars.length).fill(null);
+  const dir: (1 | -1 | null)[] = new Array(bars.length).fill(null);
+  let loPrev = 0, upPrev = 0, d: 1 | -1 = -1, started = false;
+  for (let i = 0; i < bars.length; i++) {
+    const av = a[i];
+    if (av == null) continue;
+    const hl2 = (bars[i].h + bars[i].l) / 2;
+    let lo = hl2 - mult * av, up = hl2 + mult * av;
+    if (started) {
+      const pc = bars[i - 1].c;
+      if (!(lo > loPrev || pc < loPrev)) lo = loPrev;
+      if (!(up < upPrev || pc > upPrev)) up = upPrev;
+      d = d === -1 ? (bars[i].c > up ? 1 : -1) : (bars[i].c < lo ? -1 : 1);
+    } else {
+      d = -1; started = true;
+    }
+    loPrev = lo; upPrev = up;
+    line[i] = d === 1 ? lo : up; dir[i] = d;
+  }
+  return { line, dir };
 }
 
 /** UTC midnight of the Monday of the week holding `t`. */

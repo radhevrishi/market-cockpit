@@ -10,7 +10,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
-interface Q { last: number | null; chgPct: number | null; name: string | null }
+interface Q { last: number | null; chgPct: number | null; name: string | null; ext?: number | null }
 const _cache = new Map<string, { at: number; q: Q | null }>();
 const TTL_MS = 45_000;
 const MAX = 300;
@@ -37,9 +37,9 @@ export async function GET(req: NextRequest) {
     const t = k.slice(3);
     (k.startsWith('IN:') ? needIn : needUs).push(t);
   }
-  const put = (k: string, v: { lastPrice: number | null; pChange: number | null; companyName: string | null } | undefined) => {
+  const put = (k: string, v: { lastPrice: number | null; pChange: number | null; companyName: string | null; extPct?: number | null } | undefined) => {
     if (!v || v.lastPrice == null) return false;
-    const q: Q = { last: v.lastPrice, chgPct: v.pChange != null && Number.isFinite(v.pChange) ? v.pChange : null, name: v.companyName };
+    const q: Q = { last: v.lastPrice, chgPct: v.pChange != null && Number.isFinite(v.pChange) ? v.pChange : null, name: v.companyName, ext: k.startsWith('US:') && v.extPct != null && Number.isFinite(v.extPct) ? v.extPct : null };
     out[k] = q; _cache.set(k, { at: now, q });
     return true;
   };

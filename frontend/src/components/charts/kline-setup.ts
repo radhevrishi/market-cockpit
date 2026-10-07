@@ -2,7 +2,15 @@
 // lib/chart-math so it is unit-tested), a horizontal line with its price label on the right edge, a rectangle, a text
 // note and the measure tool. Browser-only: this module is imported from inside a useEffect.
 import * as kc from 'klinecharts';
-import { barsBetween, ema, fmtPrice, measureLabel } from '@/lib/chart-math';
+import { atr, barsBetween, ema, fmtPrice, macd, measureLabel, rsi, type Bar } from '@/lib/chart-math';
+import { seriesValues, type PriceSeries } from '@/lib/chart-layouts';
+
+const toBars = (list: kc.KLineData[]): Bar[] => list.map((d) => ({ t: d.timestamp, o: d.open, h: d.high, l: d.low, c: d.close, v: d.volume ?? 0 }));
+const rows = <T extends Record<string, number>>(n: number, cols: Record<string, (number | null)[]>): T[] => {
+  const out: T[] = [];
+  for (let i = 0; i < n; i++) { const r: Record<string, number> = {}; for (const [k, arr] of Object.entries(cols)) { const v = arr[i]; if (v != null && Number.isFinite(v)) r[k] = v; } out.push(r as T); }
+  return out;
+};
 
 let registered = false;
 
@@ -37,6 +45,66 @@ export function registerChartExtras(): typeof kc {
         return row;
       });
     },
+  });
+
+  // zzz944 — every price-pane line of a layout (EMA / SMA lines, Bollinger Bands, Supertrend) in one indicator; the series are
+  // in extendData, colours in styles.lines. Its own legend is drawn by the page (with an eye toggle), so the library's is off.
+  kc.registerIndicator<Record<string, number>, number, PriceSeries[]>({
+    name: 'MC_LINES',
+    shortName: 'Lines',
+    series: 'price',
+    precision: 2,
+    calcParams: [],
+    shouldOhlc: false,
+    figures: [],
+    regenerateFigures: (params) => params.map((_, i) => ({ key: `s${i}`, title: '', type: 'line' })),
+    // the page draws this legend itself (values in the line colours + an eye toggle), so the library's row stays empty
+    createTooltipDataSource: () => ({ name: '', calcParamsText: '', features: [], legends: [] }),
+    calc: (dataList, indicator) => {
+      const bars = toBars(dataList);
+      const specs = indicator.extendData || [];
+      const cols: Record<string, (number | null)[]> = {};
+      specs.forEach((sp, i) => { cols[`s${i}`] = seriesValues(sp, bars); });
+      return rows(dataList.length, cols);
+    },
+  });
+  kc.registerIndicator<Record<string, number>, number>({
+    name: 'MC_RSI', shortName: 'RSI', series: 'normal', precision: 2, calcParams: [14], minValue: 0, maxValue: 100,
+    figures: [
+      { key: 'rsi', title: 'RSI: ', type: 'line' },
+      { key: 'r70', title: '', type: 'line' }, { key: 'r50', title: '', type: 'line' }, { key: 'r30', title: '', type: 'line' },
+    ],
+    // only the RSI value in the pane's top line (not the 70 / 50 / 30 guide lines)
+    createTooltipDataSource: ({ indicator, crosshair }) => {
+      const list = indicator.result as Array<Record<string, number>>;
+      const i = typeof crosshair.dataIndex === 'number' ? crosshair.dataIndex : list.length - 1;
+      const v = list[i]?.rsi;
+      const color = String((indicator.styles as any)?.lines?.[0]?.color || '#7E57C2');
+      return { name: `RSI ${indicator.calcParams[0]}`, calcParamsText: '', features: [], legends: [{ title: '', value: { text: v != null ? v.toFixed(2) : '—', color } }] };
+    },
+    calc: (dataList, indicator) => {
+      const r = rsi(dataList.map((d) => d.close), Number(indicator.calcParams[0]) || 14);
+      return rows(dataList.length, { rsi: r, r70: dataList.map(() => 70), r50: dataList.map(() => 50), r30: dataList.map(() => 30) });
+    },
+  });
+  kc.registerIndicator<Record<string, number>, number>({
+    name: 'MC_MACD', shortName: 'MACD', series: 'normal', precision: 2, calcParams: [12, 26, 9],
+    figures: [
+      { key: 'hist', title: 'Hist: ', type: 'bar', baseValue: 0,
+        styles: ({ data }) => { const v = (data.current as any)?.hist; return { color: v == null || v >= 0 ? 'rgba(8,153,129,0.6)' : 'rgba(242,54,69,0.6)' }; } },
+      { key: 'macd', title: 'MACD: ', type: 'line' },
+      { key: 'signal', title: 'Signal: ', type: 'line' },
+    ],
+    calc: (dataList, indicator) => {
+      const [f, sl, sg] = indicator.calcParams.map(Number);
+      const m = macd(dataList.map((d) => d.close), f || 12, sl || 26, sg || 9);
+      return rows(dataList.length, { hist: m.hist, macd: m.macd, signal: m.signal });
+    },
+  });
+  kc.registerIndicator<Record<string, number>, number>({
+    name: 'MC_ATR', shortName: 'ATR', series: 'normal', precision: 2, calcParams: [14],
+    figures: [{ key: 'atr', title: 'ATR: ', type: 'line' }],
+    calc: (dataList, indicator) => rows(dataList.length, { atr: atr(toBars(dataList), Number(indicator.calcParams[0]) || 14) }),
   });
 
   // Horizontal support / resistance line, price label always shown on the right edge.

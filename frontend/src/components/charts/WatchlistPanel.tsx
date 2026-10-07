@@ -84,7 +84,7 @@ function useQuotes(keys: string[]): Record<string, Quote> {
 
 // ── small pieces ──────────────────────────────────────────────────────────────
 const PANEL_CSS = `
-.mcwl-row { position: relative; display: grid; grid-template-columns: 20px minmax(0,1fr) 84px 70px; align-items: center; gap: 4px;
+.mcwl-row { position: relative; display: grid; grid-template-columns: 18px minmax(0,1fr) 76px 64px 54px; align-items: center; gap: 4px;
   padding: 4px 8px 4px 4px; font-size: 13px; cursor: pointer; border-left: 3px solid transparent; user-select: none; }
 .mcwl-row:hover { background: var(--mc-bg-2); }
 .mcwl-row.active { background: color-mix(in srgb, var(--mc-accent) 14%, transparent); border-left-color: var(--mc-accent); }
@@ -344,11 +344,12 @@ export default function WatchlistPanel({ store, update, currentKey, onPick }: {
       </div>
 
       {/* column headers (click to sort) */}
-      <div style={{ display: 'grid', gridTemplateColumns: '20px minmax(0,1fr) 84px 70px', gap: 4, padding: '5px 8px 5px 7px', fontSize: 11, fontWeight: 700, color: 'var(--mc-text-3)', borderBottom: '1px solid var(--mc-border-3)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '18px minmax(0,1fr) 76px 64px 54px', gap: 4, padding: '5px 8px 5px 7px', fontSize: 11, fontWeight: 700, color: 'var(--mc-text-3)', borderBottom: '1px solid var(--mc-border-3)' }}>
         <span />
         <button type="button" className="mcwl-ib" style={{ textAlign: 'left', fontWeight: 700, fontSize: 11 }} onClick={() => setSort((s) => nextSort(s, 'symbol'))}>Symbol{sortArrow('symbol')}</button>
         <button type="button" className="mcwl-ib" style={{ textAlign: 'right', fontWeight: 700, fontSize: 11 }} onClick={() => setSort((s) => nextSort(s, 'last'))}>Last{sortArrow('last')}</button>
         <button type="button" className="mcwl-ib" style={{ textAlign: 'right', fontWeight: 700, fontSize: 11 }} onClick={() => setSort((s) => nextSort(s, 'chg'))}>Chg%{sortArrow('chg')}</button>
+        <span style={{ textAlign: 'right' }} title="Pre-market / after-hours change (US only, while that session is open)">Ext</span>
       </div>
 
       <div ref={bodyRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
@@ -393,11 +394,17 @@ export default function WatchlistPanel({ store, update, currentKey, onPick }: {
                     onClick={(e) => { e.stopPropagation(); setList((l) => patchItem(l, k, { flag: nextFlag(it.flag) })); }}
                     style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', lineHeight: 0 }}><FlagDot flag={it.flag} /></button>
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600, color: 'var(--mc-text-0)' }}>
-                    {it.t} <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--mc-text-4)' }}>{it.m === 'US' ? 'US' : it.x === 'BSE' ? 'BSE' : 'NSE'}</span>
+                    {it.t}
+                    {/* small dot like TradingView's: green = up today, red = down, grey = no price */}
+                    <span title={chg == null ? 'No price yet' : chg >= 0 ? 'Up today' : 'Down today'} style={{ display: 'inline-block', width: 5, height: 5, borderRadius: 5, margin: '0 4px 2px 3px', verticalAlign: 'middle', background: chg == null ? 'var(--mc-border-2)' : chg >= 0 ? 'var(--mc-bullish, #059669)' : 'var(--mc-bearish, #DC2626)' }} />
+                    <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--mc-text-4)' }}>{it.m === 'US' ? 'US' : it.x === 'BSE' ? 'BSE' : 'NSE'}</span>
                   </span>
                   <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{q?.last != null ? fmtPrice(q.last, Math.abs(q.last) < 1 ? 4 : 2) : '—'}</span>
                   <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: chg == null ? 'var(--mc-text-3)' : chg >= 0 ? 'var(--mc-bullish, #059669)' : 'var(--mc-bearish, #DC2626)' }}>
                     {chg != null ? `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%` : '—'}
+                  </span>
+                  <span title="Pre-market / after-hours change (US only, while that session is open)" style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12, color: q?.ext == null ? 'var(--mc-text-4)' : q.ext >= 0 ? 'var(--mc-bullish, #059669)' : 'var(--mc-bearish, #DC2626)' }}>
+                    {q?.ext != null ? `${q.ext >= 0 ? '+' : ''}${q.ext.toFixed(2)}%` : ''}
                   </span>
                   <span className="mcwl-actions" onClick={(e) => e.stopPropagation()}>
                     {sectionsForMove && (
