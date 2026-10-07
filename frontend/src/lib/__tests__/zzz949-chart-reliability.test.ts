@@ -65,7 +65,10 @@ test('EV/revenue is unavailable with missing debt/cash, but accepts reported zer
   const I = periods.instants[0];
   fd.StockholdersEquity = { [I]: { '123': { v: 50e6 } } };
   fd.CashAndCashEquivalentsAtCarryingValue = { [I]: { '123': { v: 0 } } };
-  assert.equal(assemble().evRev, null, 'an absent debt tag is not known zero');
+  // zzz954: no debt or lease line filed at all → EV uses 0 debt (as for debt / equity) and the figure is marked ≈ on the row
+  assert.equal(assemble().evRev, 1, 'no debt line filed → 0 debt, approximate');
+  assert.ok(assemble().approx?.includes('evRev'), 'marked approximate');
   fd.LongTermDebt = { [I]: { '123': { v: 0 } } };
   assert.equal(assemble().evRev, 1);
+  assert.ok(!assemble().approx?.includes('evRev'), 'a filed zero is a known figure');
 });

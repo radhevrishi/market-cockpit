@@ -9,13 +9,15 @@ import {
   RANGE_KEYS, atr, barIndexAt, cleanTicker, dataRangeFor, drawingKey, fmtMoney, fmtPrice, macd, rangeStart, rsi, validTicker,
   type Bar, type DrawingName, type HeaderStats, type Market, type RangeKey, type SavedDrawing, type Timeframe,
 } from '@/lib/chart-math';
-import { CHART_DRAWINGS_KEY, loadDrawings, saveDrawings } from '@/lib/chart-storage';
+import { CHART_DRAWINGS_KEY, loadDrawings, loadDrawingsWithLegacy, saveDrawings } from '@/lib/chart-storage';
 import { EXTRA_INFO, legendRows, priceSeriesOf, seriesValues, toggleRow, type ChartLayout, type LegendRow } from '@/lib/chart-layouts';
 import WatchlistPanel, { AddToWatchlist, useWatchlistStore } from './WatchlistPanel';
 import { IndicatorLegend, IndicatorsPanel, LayoutPicker, useLayouts } from './LayoutControls';
 import { pollWhenVisible } from '@/lib/client-fetch';
 import { cacheChart, freshChart, type CachedChart } from '@/lib/chart-refresh';
 import WatchlistResizeHandle, { clampWatchlistWidth } from './WatchlistResizeHandle';
+import { useWorkspaceLight, workspaceThemeClass } from '@/lib/workspace-theme';
+import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
 
 type KC = typeof import('klinecharts');
 type Tool = 'cursor' | 'mcHLine' | 'segment' | 'rayLine' | 'mcRect' | 'parallelStraightLine' | 'fibonacciLine' | 'mcText' | 'mcMeasure';
@@ -144,8 +146,8 @@ export default function ChartWorkspace() {
   const [panelWidth, setPanelWidth] = useState(() => { try { const n = Number(localStorage.getItem('mc:watchlist-width')); return Number.isFinite(n) && n >= 280 ? Math.min(620, n) : 400; } catch { return 400; } });
   const resizePanel = (n: number, persist: boolean) => { const width = clampWatchlistWidth(n); setPanelWidth(width); if (persist) try { localStorage.setItem('mc:watchlist-width', String(width)); } catch { /* display preference only */ } };
   // zzz943: white chart page (TradingView's white view) by default, whatever the site theme; one click to dark
-  const [chartLight, setChartLight] = useState(() => { try { return localStorage.getItem('mc:chart-light:v1') !== '0'; } catch { return true; } });
-  const toggleLight = () => setChartLight((v) => { try { localStorage.setItem('mc:chart-light:v1', v ? '0' : '1'); } catch { /* storage blocked */ } return !v; });
+  // zzz954: one white / dark choice shared with Watchlists and the Stock Screener (white when nothing is saved)
+  const [chartLight, toggleLight] = useWorkspaceLight();
   // zzz946 — focus mode (remembered in this browser only) and the browser's own full screen
   const [focus, setFocus] = useState(() => { try { return localStorage.getItem(FOCUS_KEY) === '1'; } catch { return false; } });
   const focusRef = useRef(focus);
@@ -228,7 +230,7 @@ export default function ChartWorkspace() {
     chart.removeOverlay({ groupId: DRAW_GROUP });
     chart.removeOverlay({ groupId: MEASURE_GROUP });
     keyRef.current = key;
-    for (const d of loadDrawings(key)) {
+    for (const d of loadDrawingsWithLegacy(key)) {
       chart.createOverlay(overlaySpec(d.name, d.color || '#2962FF', {
         points: d.points.map((p) => ({ timestamp: p.t, value: p.p })),
         ...(d.text ? { extendData: d.text } : {}),
@@ -612,7 +614,7 @@ export default function ChartWorkspace() {
   });
 
   return (
-    <div className={`mc-charts-root${chartLight ? ' mc-chart-light' : ''}`} style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 16px', color: 'var(--mc-text-1)' }}>
+    <div className={`mc-charts-root ${workspaceThemeClass(chartLight)}`} style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 16px', color: 'var(--mc-text-1)' }}>
       <style>{LAYOUT_CSS}</style>
       {/* search + timeframe + range */}
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
@@ -640,7 +642,7 @@ export default function ChartWorkspace() {
           <button type="button" style={btn(showIndicators)} onClick={() => setShowIndicators((v) => !v)}>Indicators ▾</button>
           {showIndicators && <IndicatorsPanel L={L} onClose={() => setShowIndicators(false)} />}
         </div>
-        <button type="button" style={btn(false)} onClick={toggleLight} title="Switch the chart page between white and dark">{chartLight ? '🌙 Dark' : '☀ White'}</button>
+        <WorkspaceThemeToggle light={chartLight} onToggle={toggleLight} style={btn(false)} />
         <button type="button" style={btn(panelOpen)} onClick={togglePanel} title="Show or hide the watchlist panel">Watchlist</button>
         <div style={{ position: 'relative', display: 'flex' }}>
           <button type="button" style={{ ...btn(focus), borderRadius: '6px 0 0 6px' }} onClick={() => setFocus((v) => !v)}

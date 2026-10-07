@@ -211,15 +211,20 @@ export function assembleUsRows(universe: NasdaqRow[], ciks: Map<string, number>,
     const revTTM = f?.revTTM ?? null;
     const mc = r.mc;
     const ipoD = tf?.ipoD ?? (r.ipoYear ? Math.floor(Date.UTC(r.ipoYear, 0, 1) / DAY) : null);
+    // zzz954: no debt or lease line filed at all (most such companies have no debt) → EV uses 0 debt, marked ≈ like debt / equity;
+    // a company with no cash figure gets no EV / revenue (never a guessed 0)
+    const noDebtFiled = f != null && f.debt == null && !!f.approx?.includes('de');
+    const evDebt = f?.debt ?? (noDebtFiled ? 0 : null);
+    const approx = [...(f?.approx || []), ...(noDebtFiled ? ['evRev'] : [])];
     rows.push({
       t: r.t, n: r.n, sec: r.sec, ind: r.ind, px: r.px, chg: r.chg, vol: r.vol, avgVol10: tf?.avgVol10 ?? null, mc,
       sma50: tf?.sma50 ?? sma(c, 50), sma200: tf?.sma200 ?? sma(c, 200),
       revQYoY: f?.revQYoY ?? null, revAYoY: f?.revAYoY ?? null, gpQYoY: f?.gpQYoY ?? null, gmFY: f?.gmFY ?? null,
       ebitdaQoQ: f?.ebitdaQoQ ?? null, ebitdaAYoY: f?.ebitdaAYoY ?? null, epsQYoY: f?.epsQYoY ?? null, opmTTM: f?.opmTTM ?? null,
       ps: mc != null && revTTM != null && revTTM > 0 ? r2(mc / revTTM) : null,
-      evRev: mc != null && revTTM != null && revTTM > 0 && f?.debt != null && f?.cash != null ? r2((mc + f.debt - f.cash) / revTTM) : null,
+      evRev: mc != null && revTTM != null && revTTM > 0 && evDebt != null && f?.cash != null ? r2((mc + evDebt - f.cash) / revTTM) : null,
       de: f?.de ?? null, cash: f?.cash ?? null, emp: p?.emp ?? null, flt: p?.flt ?? null, bb: f?.bb ?? null, fs: f?.fs ?? null, q: f?.q ?? null,
-      ...(f?.approx?.length ? { approx: f.approx } : {}),
+      ...(approx.length ? { approx } : {}),
       tvSec: tvSectorOf('US', r.sec, r.ind), exch: r.ex ? [r.ex] : null,
       ...(tf ? {
         sma21: tf.sma21, sma100: tf.sma100, sma150: tf.sma150, ema10: tf.ema10, ema21: tf.ema21, ema50: tf.ema50, rsi: tf.rsi, rsiW: tf.rsiW, rsiM: tf.rsiM,

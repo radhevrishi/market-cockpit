@@ -12,6 +12,8 @@ import {
 } from '@/lib/screener/filters';
 import { TV_SECTORS } from '@/lib/screener/tv-sectors';
 import { pollWhenVisible } from '@/lib/client-fetch';
+import { useWorkspaceLight, workspaceThemeClass } from '@/lib/workspace-theme';
+import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
 import { useWatchlistStore } from '@/components/charts/WatchlistPanel';
 import { activeList, updateList, addItem, listCount, type WlItem } from '@/lib/chart-watchlist';
 
@@ -38,6 +40,7 @@ function firstScreen(): Screen {
 }
 
 export default function StockScreener() {
+  const [light, toggleLight] = useWorkspaceLight();   // zzz954: shared white / dark choice
   const [first] = useState<Screen>(() => firstScreen());
   const [market, setMarket] = useState<ScreenMarket>(first.market);
   const [snaps, setSnaps] = useState<Partial<Record<ScreenMarket, Snap>>>({});
@@ -211,9 +214,10 @@ export default function StockScreener() {
   const mine = screens.filter((s) => !builtInIds.has(s.id));
 
   return (
-    <div style={{ padding: '12px 16px', display: 'grid', gap: 10, color: C.text }}>
+    <div className={workspaceThemeClass(light, true)} style={{ padding: '12px 16px', display: 'grid', gap: 10, color: C.text, background: 'var(--mc-bg-0)', minHeight: '100%' }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <b style={{ fontSize: 18 }}>Stock Screener</b>
+        <WorkspaceThemeToggle light={light} onToggle={toggleLight} />
         <select value={screenId} onChange={(e) => loadScreen(e.target.value)} style={{ ...btn(), fontSize: 14, maxWidth: 380 }} aria-label="Screens">
           <optgroup label="🇺🇸 USA — your TradingView screens">{screens.filter((s) => builtInIds.has(s.id) && s.market === 'US').map(opt)}</optgroup>
           <optgroup label="🇮🇳 India — your TradingView screens">{screens.filter((s) => builtInIds.has(s.id) && s.market === 'IN').map(opt)}</optgroup>

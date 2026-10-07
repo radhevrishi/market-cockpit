@@ -430,3 +430,18 @@ html:root[data-theme="light"] .mc-stat-card { box-shadow: 0 1px 2px rgba(15, 23,
   --background: #ffffff; --foreground: #0b1220; --card: #ffffff; --border: #cbd5e1;
   background: #ffffff; color: #0f172a;
 }
+
+/* zzz954 — the dark choice on Charts / Watchlists / Stock Screener, even when the site itself uses the white theme */
+.mc-workspace-dark {
+  color-scheme: dark;
+  --mc-bg-0: #0A0E1A; --mc-bg-1: #0F1828; --mc-bg-2: #111B35; --mc-bg-3: #172234; --mc-bg-4: #1A2540;
+  --mc-border-0: #1A2540; --mc-border-1: #1E2D45; --mc-border-2: #2D3E5F; --mc-border-3: #172234;
+  --mc-text-0: #F5F7FA; --mc-text-1: #E6EDF3; --mc-text-2: #CBD5E1; --mc-text-3: #94A3B8; --mc-text-4: #6B7A8D;
+  --mc-bullish: #10B981; --mc-bullish-2: #2EA043; --mc-bearish: #EF4444; --mc-bearish-2: #DC2626;
+  --mc-warn: #F59E0B; --mc-err: #EF4444; --mc-info: #3B82F6;
+  --mc-accent: #0F7ABF; --mc-accent-light: #1E8FD4; --mc-accent-dark: #0A5A99; --mc-cyan: #22D3EE; --mc-saffron: #FF9933;
+  background: #0A0E1A; color: #E6EDF3;
+}
+/* zzz954 — the page area behind Charts / Watchlists / Stock Screener follows their white / dark choice to the bottom of the window */
+main:has(.mc-chart-light) { background-color: #ffffff !important; }
+main:has(.mc-workspace-dark) { background-color: #0A0E1A !important; }
