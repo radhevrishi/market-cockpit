@@ -4340,6 +4340,10 @@ export default function HomeDashboard() {
 // added in future code releases appear automatically in their default slot.
 // ════════════════════════════════════════════════════════════════════════════
 const FAVS: Array<{ href: string; label: string; color: string; ext?: boolean }> = [
+  // zzz940/941 — our own charts with the watchlist beside them and our own stock screener (TradingView replaced): FIRST, so a
+  // saved drag order also gets them at the front (a new chip goes after its default neighbour, and the first one has none)
+  { href: '/charts', label: '📈 Charts + Watchlist', color: '#22D3EE' },
+  { href: '/stock-screener', label: '🧮 Stock Screener', color: '#8B5CF6' },
   { href: '/cockpit', label: '🛩️ Action Cockpit', color: '#F59E0B' },
   { href: '/cheat-entry', label: '🥷 Cheat Entry', color: '#10B981' },
   { href: '/bounce-desk', label: '🌊 Bounce Desk', color: '#A78BFA' },
@@ -4366,9 +4370,6 @@ const FAVS: Array<{ href: string; label: string; color: string; ext?: boolean }>
   { href: '/exit-radar', label: '🚨 Exit Radar', color: '#EF4444' },
   { href: '/ai-gainers', label: '📊 AI Daily Gainers', color: '#A78BFA' },
   // zzz843 — positive guidance raises, verified and quantified.
-  // zzz940 — our own charts with the watchlist beside them, and our own stock screener (TradingView replaced)
-  { href: '/charts', label: '📈 Charts + Watchlist', color: '#22D3EE' },
-  { href: '/stock-screener', label: '🧮 Stock Screener', color: '#8B5CF6' },
   { href: '/guidance-upgrades', label: '📈 Guidance Upgrades', color: '#10B981' },
   // zzz846 — management growth guidance 30%+, verified.
   { href: '/growth-guidance', label: '📈 Growth Guidance', color: '#10B981' },
