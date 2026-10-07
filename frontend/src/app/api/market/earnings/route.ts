@@ -1096,11 +1096,11 @@ export async function GET(request: Request) {
     let bseDupesSkipped = 0;
     try {
       const monthStr = `${fromDate.getFullYear()}-${String(fromDate.getMonth() + 1).padStart(2, '0')}`;
-      const bseRes = await fetch(
-        `https://mc-pulse-bots.onrender.com/api/bse/earnings?month=${monthStr}`,
-        { signal: AbortSignal.timeout(8000) }
-      );
-      if (bseRes.ok) {
+      // zzz933: the old Render proxy (mc-pulse-bots) returned no BSE rows and 2012-era NSE rows, and cold-started in ~20 s.
+      // It is off unless MC_PULSE_BOTS_URL is set, so the Render service can be deleted.
+      const pulse = (process.env.MC_PULSE_BOTS_URL || '').replace(/\/+$/, '');
+      const bseRes = pulse ? await fetch(`${pulse}/api/bse/earnings?month=${monthStr}`, { signal: AbortSignal.timeout(8000) }) : null;
+      if (bseRes && bseRes.ok) {
         const bseData = await bseRes.json();
 
         for (const r of (bseData.results || [])) {
@@ -1307,11 +1307,12 @@ export async function GET(request: Request) {
       .map(([ticker]) => ticker);
 
     let qualityEnrichedCount = 0;
-    if (confirmedTickers.length > 0 && confirmedTickers.length <= 30) {
+    const pulseBase = (process.env.MC_PULSE_BOTS_URL || '').replace(/\/+$/, '');   // zzz933: old Render proxy, off by default
+    if (pulseBase && confirmedTickers.length > 0 && confirmedTickers.length <= 30) {
       try {
         const symbolsStr = confirmedTickers.join(',');
         const frRes = await fetch(
-          `https://mc-pulse-bots.onrender.com/api/nse/financial-results?symbols=${encodeURIComponent(symbolsStr)}`,
+          `${pulseBase}/api/nse/financial-results?symbols=${encodeURIComponent(symbolsStr)}`,
           { signal: AbortSignal.timeout(15000) }
         );
         if (frRes.ok) {

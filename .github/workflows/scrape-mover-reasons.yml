@@ -19,9 +19,8 @@ on:
     # snapshots, post-close sweep, evening update. Same operational value
     # for users (they don't refresh /movers every hour), much less load.
     - cron: '15 5 * * 1-5'   # 10:45 IST — mid-morning snapshot
-    - cron: '15 8 * * 1-5'   # 13:45 IST — afternoon snapshot
     - cron: '3 11 * * 1-5'   # 16:30 IST — post-close sweep
-    - cron: '3 14 * * *'     # 19:30 IST daily — evening update for weekend viewing
+    - cron: '3 14 * * 1-5'   # 19:30 IST — evening update (zzz933: weekdays only, mid-day run dropped, for GitHub minutes)
   workflow_dispatch: {}
 
 concurrency:
