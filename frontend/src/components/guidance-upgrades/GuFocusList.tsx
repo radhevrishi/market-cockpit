@@ -193,14 +193,14 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
     return s ? <SkyBreakdownRow key={`${r.key}-sky`} s={s} facts={k ? facts[k] ?? null : null} cols={cols} /> : null;
   };
   const smallRaises = inMk.filter((r) => r.raised && r.smallRaise).length;
-  const top = all.filter((r) => r.verdict === 'TOP FOCUS').length;
+  const top = inMk.filter((r) => r.verdict === 'TOP FOCUS').length;
   const td: React.CSSProperties = { textAlign: 'left', padding: '8px', fontSize: 13, borderBottom: `1px solid ${tint(R.grey, 18)}`, verticalAlign: 'top' };
   return (
     <section data-gu-focus aria-label="Focus list" style={{ border: `2px solid ${tint(R.green, 55)}`, borderRadius: 10, padding: '12px 14px', display: 'grid', gap: 8 }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
         <b style={{ fontSize: 16 }}>🎯 Focus list — the companies to look at first</b>
         <span style={{ fontSize: 12.5, color: R.dim }}>
-          {all.length ? `${top} with both a guidance raise and 30%+ growth guided · ${all.length} names in total` : 'Loading…'}
+          {all.length ? `${top} with both a guidance raise and 30%+ growth guided · ${inMk.length} eligible names · ${raisedAll.length + growthAll.length} in these tables` : 'Loading…'}
         </span>
         <span role="group" aria-label="Market" style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <button type="button" style={pillStyle(smid, R.amber)} aria-pressed={smid} onClick={() => setSmid((v) => !v)}
@@ -219,7 +219,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
         <summary style={{ cursor: 'pointer', fontWeight: 700, color: R.text }}>How the ranking, scores, fair value and dates work</summary>
         <div style={{ display: 'grid', gap: 6, marginTop: 6 }}>
         <div style={{ fontSize: 12, color: R.dim }}>
-          Ranked by: a guidance raise <b>and</b> 30%+ growth first, then the size of the raise (revenue / profit — an EPS from a tiny base never counts as a big raise), then the growth guided, then how recent. Only figures checked against the company's own documents.
+          Default rank uses an additive guidance signal score: guided growth (up to 100 points), raise size (up to 60), a bonus for both a meaningful raise and growth (60), recent raises (up to 20), and verified growth or a raise (10). Ties use company name. It is not a ranking by business quality or expected return; Opportunity and Sky Gold have separate sorts.
         </div>
         <div style={{ fontSize: 12, color: R.dim }}>
           <b>Sky Gold score</b> (from the “Identify Next SKY GOLD” framework): is the big plan backed by the business today? 7 main checks — a clear target from the company, sales already growing 20%+, the target reachable from the current pace, margins steady, ROCE 20%+, cash following profit, debt under control. Each main check missed holds the score down: 80+ (STRONG) needs 6 of 7 met with real figures and 65+ (GOOD) needs 5 of 7 (with 4 met the score stays at 62 or below, with 3 at 52); a growth worked out from company numbers counts as only half a clear target; supporting checks (raise, specific plan, profit faster than sales, own cash, orders, estimates, valuation, small base) add points; red flags (guidance cut, slower-paying customers, new shares, promoters selling, other income) take points off. A figure not known never counts as met; too few figures shows “not enough data”. Click a score for every check. Bands: 80+ STRONG · 65–79 GOOD · 50–64 MIXED · under 50 WEAK.
@@ -259,7 +259,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
           </React.Fragment>))}
           {raisedAll.length > FOCUS_STEP && <MoreRow shown={raisedRows.length} total={raisedAll.length} open={allA} onToggle={() => setAllA((v) => !v)} cols={5 + 1 + FV_COLS + OPP_COLS} />}
         </FocusTable>
-        <FocusTable title={`B. Guiding 30%+ growth — no raise yet (${growthAll.length})`} sub="The company's own guidance still in force. First guidance or a repeat, so there is no old figure to compare."
+        <FocusTable title={`B. Guiding 30%+ growth — no qualifying raise in this window (${growthAll.length})`} sub="Active guidance with 30%+ growth and no raise qualifying for table A in the selected window. This can include first guidance, repeats, older raises, or a small raise."
           head={[<RankHead key="n" sort={sortB} onReset={() => setSortB('rank')} />, 'Company', 'Growth guided', 'Source', <DateHead key="d" sort={sortB} onSort={() => setSortB((v) => (v === 'new' ? 'old' : 'new'))} />, ...FV_HEAD, 'Implied EPS', <OppHead key="o" sort={sortB} onSort={() => setSortB((v) => (v === 'opp' ? 'rank' : 'opp'))} />, <ScoreHead key="s" sort={sortB} onSort={() => setSortB((v) => (v === 'score' ? 'rank' : 'score'))} />, 'Verdict']} empty="No 30%+ growth guidance for this market.">
           {growthRows.map((r, i) => (<React.Fragment key={r.key}>
             <tr>

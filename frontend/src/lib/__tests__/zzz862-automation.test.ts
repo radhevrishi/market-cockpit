@@ -23,9 +23,9 @@ const claimOf = (n: RegExp): GuUniverseRecordX => { const r = (build.claimsAwait
 const grow = (trust: string, id: string): any => ({ id, trust, company: id, market: 'US' });
 
 describe('trust counts count what is listed (companies), not page-wide rows', () => {
-  test('9 companies listed: 8 verified + 1 derived = 9 (the page used to say 8 + 0 + 19)', () => {
+  test('9 guidance rows listed: 8 verified + 1 derived = 9 (the page used to say 8 + 0 + 19)', () => {
     const rows: any = { ANNUAL: [...Array(8).keys()].map((i) => grow('verified', `v${i}`)).concat([grow('derived', 'h')]), MULTI_YEAR_CAGR: [], QUARTERLY: [] };
-    assert.equal(rowTrustLine(rows), '8 verified · 1 derived · 0 partial · 0 unverified (9 companies listed)');
+    assert.equal(rowTrustLine(rows), '8 verified · 1 derived · 0 partial · 0 unverified (9 guidance rows listed)');
     assert.equal(rowCohortLine(rows), '9 annual · 0 multi-year CAGR · 0 quarterly');
   });
 });

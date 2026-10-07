@@ -98,7 +98,7 @@ export function rowTrustLine(c: CohortRows): string {
   const all = COHORT_ORDER.flatMap((k) => c[k]);
   const n = (t: GuTrust) => all.filter((r) => r.trust === t).length;
   const stale = all.filter((r) => r.trust === 'verified' && (r.headline as any)?.freshness === 'STALE').length;
-  return `${n('verified')} verified · ${n('derived')} derived · ${n('partial')} partial · ${n('claimsAwaiting')} unverified (${all.length} companies listed${stale ? `; ${stale} of the verified need a fresh check` : ''})`;
+  return `${n('verified')} verified · ${n('derived')} derived · ${n('partial')} partial · ${n('claimsAwaiting')} unverified (${all.length} guidance rows listed${stale ? `; ${stale} of the verified need a fresh check` : ''})`;
 }
 export function rowCohortLine(c: CohortRows): string { return `${c.ANNUAL.length} annual · ${c.MULTI_YEAR_CAGR.length} multi-year CAGR · ${c.QUARTERLY.length} quarterly`; }
 export function cohortCountsLine(c: Partial<GuHighGrowthGroups['counts']> | null | undefined): string | null {
