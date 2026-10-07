@@ -3567,3 +3567,6 @@ stale heartbeats (prewarm-earnings, data-watch) investigation; removing ?secret=
   (`lib/gu-opportunity.ts`, separate from Sky Gold); one-off extra AI allowance (`lib/guidance-extract-allowance.ts`, ≤ $15 / ≤ 12 h,
   `POST /api/v1/guidance-extract?action=allowance`). The owner's OpenAI PROJECT has its own enforced spend limit (hit at ~$23 in
   Oct) — a 429 "enforced spend limit" now stops runs as "cap reached" instead of failing documents.
+- zzz935 (7 Oct): Super Investors REMOVED at the owner's request — page, nav entries, home panel, auto-valuation "SUPER INV" chip,
+  APIs (super-investor-flow / -holdings / -news, mfi-concentration, cron/refresh-super-investors), lib/super-investors.ts, both
+  GitHub workflows (scrape + refresh) and the app-scheduler job. /super-investors redirects to /smart-money. Do not bring it back.

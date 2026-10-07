@@ -311,7 +311,6 @@ const DEFAULT_PAGES: CommandItem[] = [
   { label: 'Activity Log',         url: '/activity-log' },
   { label: 'IPOs',                 url: '/ipos' },
   { label: 'Smart Money',          url: '/smart-money' },
-  { label: 'Super Investors',      url: '/super-investors' },
   { label: 'Market Snapshot',      url: '/market-snapshot' },
   { label: 'Stock Sheet',          url: '/stock-sheet' },
   { label: 'Auto Valuation',       url: '/auto-valuation' },

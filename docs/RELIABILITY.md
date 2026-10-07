@@ -42,8 +42,7 @@ CI also shows "npm audit found high/critical advisories" as a warning — worth 
    malformed data, an ingest that refused the payload.
    Deferred cases: NSE refusing every day (nse-results, guidance-docs), NSE archive not published
    (rolling-stats, index-history, indices), news RSS too thin (india-news), NSE holiday list unreachable,
-   the app down / redeploying (nse-results ingest, results-pdf, daily-summary, refresh-super-investors,
-   super-investors ingest), and any final error whose message is a network error / timeout / 429 / 5xx.
+   the app down / redeploying (nse-results ingest, results-pdf, daily-summary), and any final error whose message is a network error / timeout / 429 / 5xx.
 
 3. **Runner image pinned to `ubuntu-24.04`** in every workflow listed below, so GitHub's move of `ubuntu-latest`
    to Ubuntu 26 on **19 Oct 2026** cannot change the machine under the jobs silently. Move to a newer image on
@@ -52,8 +51,8 @@ CI also shows "npm audit found high/critical advisories" as a warning — worth 
    Pinned here: scrape-commodity-prices, scrape-corp-filings, scrape-guidance-docs, scrape-india-news,
    scrape-india-technicals, scrape-mover-reasons, scrape-nse-holidays, scrape-nse-index-history,
    scrape-nse-indices, scrape-nse-results, scrape-rolling-stats, scrape-screener-fundamentals,
-   scrape-super-investors, edgar-guidance-backfill, screener-sync, tradingview-sync, results-pdf,
-   daily-research, daily-summary, score-ai-ledger, refresh-super-investors, ai-eval, deploy-workers, ci,
+   edgar-guidance-backfill, screener-sync, tradingview-sync, results-pdf,
+   daily-research, daily-summary, score-ai-ledger, ai-eval, deploy-workers, ci,
    and the new actions-watchdog.
 
    **Still on `ubuntu-latest` (owned by the scheduling work, pin them too):** vercel-cron-bridge, book-watch,

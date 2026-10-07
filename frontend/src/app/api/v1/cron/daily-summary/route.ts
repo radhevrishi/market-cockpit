@@ -8,7 +8,6 @@
 //   • Top breadth regime + composite
 //   • Today's biggest movers (best/worst 3 from /api/market/quotes)
 //   • Today's special-situations highlights (first 3 by signal score)
-//   • Today's super-investor news / moves (if any)
 //   • Active alert rules count (KV: superinv-style fold-in)
 //
 // Sends the digest via the existing `dispatchAlert()` pipeline → all
@@ -68,7 +67,6 @@ interface SummaryParts {
   topGainers: QuoteLite[];
   topLosers: QuoteLite[];
   specsit: { title: string; ticker?: string }[];
-  superInvNews: { headline: string; source?: string }[];
   asOf: string;
 }
 
@@ -118,15 +116,11 @@ async function compose(req: NextRequest): Promise<SummaryParts> {
     }
   }
 
-  // ── Super-investor news placeholder (per-investor query is paid-cycle expensive) ──
-  const superInvNews: { headline: string; source?: string }[] = [];
-
   return {
     breadthLine,
     topGainers,
     topLosers,
     specsit: specsitFlat,
-    superInvNews,
     asOf: new Date().toISOString(),
   };
 }
@@ -154,13 +148,6 @@ function format(parts: SummaryParts): { title: string; body: string } {
     lines.push('Special situations:');
     for (const s of parts.specsit) {
       lines.push(`  • ${s.title}`);
-    }
-  }
-  if (parts.superInvNews.length) {
-    lines.push('');
-    lines.push('Super-investor news:');
-    for (const n of parts.superInvNews) {
-      lines.push(`  • ${n.headline}`);
     }
   }
   return {

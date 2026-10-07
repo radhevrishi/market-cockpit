@@ -179,7 +179,6 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'Smart Money & IPOs',
     icon: <Rocket className="w-5 h-5" />,
     items: [
-      { href: '/super-investors', label: 'Super Investors', icon: <Star className="w-4 h-4" /> },
       { href: '/smart-money',     label: 'Smart Money',     icon: <Briefcase className="w-4 h-4" /> },
       { href: '/ipos',            label: 'IPOs',            icon: <Rocket className="w-4 h-4" /> },
     ],
@@ -281,14 +280,8 @@ const _LEGACY_NAV: NavItem[] = [
   // guidance text. Slots next to Multibagger because it shares the same
   // localStorage upload universe (mb_excel_scored_v2).
   { href: '/valuations',    label: 'Valuations',         icon: <Star className="w-5 h-5" /> },
-  // PATCH 0482 — Super Investor Tracker. Coat-tail dashboard for 10 Indian
-  // growth-style investors: Kacholia / Kedia / Porinju / Pabrai / Andrade /
-  // Mukherjea / Anand Shah / Khemani / Bakshi / Mittal. Holdings table +
-  // news / interviews per investor.
-  // PATCH 0554 — Moved above Decision Logbook per user.
-  { href: '/super-investors', label: 'Super Investors',  icon: <Star className="w-5 h-5" /> },
   // PATCH 0107 / 0171: Concall Intelligence Engine v2.
-  // PATCH 0553/0554 — Sits next to Super Investors, both above Decision Logbook.
+  // PATCH 0553/0554 — above Decision Logbook (zzz935: Super Investors removed).
   { href: '/concall-intel', label: 'Concall Intelligence', icon: <Microscope className="w-5 h-5" /> },
   // PATCH 0454 TIER1-A — Decision Logbook (queryable journal of every BUY /
   // WATCH / NEUTRAL / REJECTED across both markets, with CSV export).

@@ -33,7 +33,6 @@ const probesNow = (): Probe[] => [
   { name: 'News feed',             url: '/api/v1/news?limit=10',                       category: 'news' },
   { name: 'Signals (intelligence)', url: '/api/market/intelligence?days=30',           category: 'signals',  expectedField: 'signals' },
   { name: 'Special Situations',    url: '/api/v1/special-situations/feed',             category: 'special',  expectedField: 'events' },
-  { name: 'Super Investors',       url: '/api/v1/super-investor-flow',                 category: 'special' },
   { name: 'Concall live-feed',     url: '/api/v1/concall-intel/live-feed?days=7&cacheOnly=1', category: 'signals', expectedField: 'filings' },
   { name: 'Market Breadth',        url: '/api/v1/breadth',                             category: 'breadth',  expectedField: 'pillars' },
 ];

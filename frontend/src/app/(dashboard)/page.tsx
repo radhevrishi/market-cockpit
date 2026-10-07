@@ -60,10 +60,6 @@ import { getConvictionTickers } from '@/lib/conviction-beats';
 import { canonicalTicker } from '@/lib/ticker-normalize'; // PATCH 0721
 // PATCH 0715 — centralized IST helpers.
 import { istToday as _istToday, istLastNWeekdays as _istLastNWeekdays, isIndianMarketOpen as _isIndianMarketOpen } from '@/lib/market-hours';
-// PATCH 0624 — pull rich static roster directly so the Home Super Investors
-// panel can show real holdings + disclosure dates instead of the thin
-// /super-investor-flow output.
-import { SUPER_INVESTORS } from '@/lib/super-investors';
 // PATCH 0627 — Critical Themes data for Home panel.
 import { getTopThemesForHome } from '@/lib/critical-themes';
 // zzz524 — million-dollar wiring: home intelligence layer
@@ -76,8 +72,7 @@ import AlertCenter from '@/components/AlertCenter';
 // PATCH 0631 — Valuation Quick-Check on Home
 import { type QuoteAutoFill } from '@/lib/valuation-calculators';
 // PATCH 0888 — Authoritative ticker→long-form-name map for news search
-// PATCH 0901 — Reverse map for Super Investors flow rows (company-name → ticker)
-import { NSE_TICKER_NAMES as _NSE_TICKER_NAMES, resolveCompanyToTicker } from '@/lib/nse-ticker-names';
+import { NSE_TICKER_NAMES as _NSE_TICKER_NAMES } from '@/lib/nse-ticker-names';
 // zzz855 — shared GET layer: in-flight dedupe + TTL cache + per-caller timeout,
 // fan-out limiter, visibility-aware polling, memoised big-localStorage reads.
 import { getJson, warmUrl, mapWithLimit, pollWhenVisible, onIdle, readJsonMemo } from '@/lib/client-fetch';
@@ -1310,62 +1305,6 @@ export default function HomeDashboard() {
         }
       });
 
-      // PATCH 0624 — Super Investors panel = flow API + static roster combined.
-      // The flow API is genuinely sparse upstream (only 7 rows in 180d at probe
-      // time). The /lib/super-investors.ts static roster has 10 investors with
-      // 100+ disclosed holdings, each with a disclosedOn date — that's the
-      // dataset that actually gives the user something to act on.
-      // Strategy: take live flow rows first (recent activity), then top up with
-      // the most-recently-disclosed static holdings — dedupe by ticker.
-      (async () => {
-        const cleanFlow = (rawRows: any[]) => (rawRows || [])
-          .filter((r: any) => r?.ticker && r?.investors?.length)
-          .filter((r: any) => !/^Q\d\s|first time|^Q[1-4]\s/i.test(r.ticker))
-          .filter((r: any) => r.ticker.length < 40)
-          .map((r: any) => ({ ...r, kind: 'flow' as const, investorName: (r.investors || [])[0] }));
-
-        let j: any = await safe<any>(`/api/v1/super-investor-flow?days=60`, TTL_SLOW);
-        if (cancelled) return;
-        let flow = cleanFlow(j?.rows || []);
-        if (flow.length < 3) {
-          j = await safe<any>(`/api/v1/super-investor-flow?days=180`, TTL_SLOW);
-          if (cancelled) return;
-          flow = cleanFlow(j?.rows || []);
-        }
-
-        // Static roster: flatten + sort by stake desc, then by disclosure date desc
-        const rosterRows = SUPER_INVESTORS.flatMap((inv) =>
-          (inv.topHoldings || []).map((h) => ({
-            ticker: h.ticker,
-            company: h.company,
-            stakePct: h.stakePct,
-            disclosedOn: h.disclosedOn,
-            investorName: inv.name,
-            investors: [inv.name],
-            kind: 'roster' as const,
-            topDirection: 'ACCUM',
-            lastMoveAt: h.disclosedOn,
-          })),
-        )
-        .sort((a, b) => {
-          const dateCompare = (b.disclosedOn || '').localeCompare(a.disclosedOn || '');
-          if (dateCompare !== 0) return dateCompare;
-          return (b.stakePct || 0) - (a.stakePct || 0);
-        });
-
-        // Merge: flow first (recent activity), then roster, dedupe by ticker
-        const seen = new Set<string>();
-        const combined: any[] = [];
-        for (const r of [...flow, ...rosterRows]) {
-          const k = (r.ticker || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
-          if (!k || seen.has(k)) continue;
-          seen.add(k);
-          combined.push(r);
-          if (combined.length >= 12) break;
-        }
-        setData((d) => ({ ...d, superInvestors: combined } as any));
-      })();
-
       // PATCH 0778 — Signals: corporate news pulled at importance>=2,
       // then prioritized to (CB ∪ Watchlist ∪ Portfolio) names first.
       // Falls back to broader corporate signals when no own-universe
@@ -2306,7 +2245,6 @@ export default function HomeDashboard() {
             <Link href="/special-situations"     style={navChip('#EF4444')}>🎯 Special Sit</Link>
             <Link href="/strategic-visibility"   style={navChip('#A78BFA')}>⭐ Strategic Vis</Link>
             <Link href="/playbook#stress"        style={navChip('#38bdf8')}>🧘 Stress</Link>
-            <Link href="/super-investors"        style={navChip('#A78BFA')}>🦅 Super Investors</Link>
             <Link href="/tax-planner"            style={navChip('#F59E0B')}>🧾 Tax Planner</Link>
             <Link href="/thesis"                 style={navChip('#A78BFA')}>📓 Thesis Tracker</Link>
             <Link href="/valuation-bands"        style={navChip('#22D3EE')}>📊 Valuation Bands</Link>
@@ -3315,7 +3253,7 @@ export default function HomeDashboard() {
           </div>
         )}
 
-        {/* ═══════════════ PATCH 0621 — TWO-COL: STRATEGIC VIS + SUPER INVESTORS ═ */}
+        {/* ═══════════════ PATCH 0621 — STRATEGIC VIS (zzz935: Super Investors removed) ═ */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12 }}>
 
           {/* STRATEGIC VISIBILITY — latest transformational events */}
@@ -3362,86 +3300,6 @@ export default function HomeDashboard() {
             )}
           </div>
 
-          {/* SUPER INVESTORS — PATCH 0624: combined flow + static roster */}
-          <div style={{ ...cardStyle, borderLeft: '3px solid var(--mc-state-persistent)' }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-state-persistent)', letterSpacing: '0.4px' }}>
-                🦅 SUPER INVESTORS — holdings + flow ({data.superInvestors?.length || 0})
-              </span>
-              <Link href="/super-investors" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open Tracker →</Link>
-            </div>
-            <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
-              Marquee-investor positions (live flow + most-recent BSE 1%+ disclosures)
-            </div>
-            {!data.superInvestors ? (
-              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
-            ) : data.superInvestors.length === 0 ? (
-              <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>No marquee positions found.</div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                {data.superInvestors.slice(0, 10).map((r: any, i: number) => {
-                  const dirColor = r.topDirection === 'ACCUM' ? '#10B981' : r.topDirection === 'DIST' ? '#EF4444' : '#94A3B8';
-                  const dirGlyph = r.topDirection === 'ACCUM' ? '▲' : r.topDirection === 'DIST' ? '▼' : '◆';
-                  const dateStr = r.disclosedOn || r.lastMoveAt;
-                  const fmtDate = dateStr ? (() => {
-                    const m = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
-                    return m ? `${m[3]}-${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(m[2])-1]}` : dateStr;
-                  })() : '';
-                  const investor = r.investorName || (r.investors && r.investors[0]) || '';
-                  // Compact investor display (initial + lastname)
-                  const investorShort = investor.split(' ').length > 1
-                    ? investor.split(' ').map((p: string, idx: number) => idx === 0 ? p[0] + '.' : p).join(' ').slice(0, 14)
-                    : investor.slice(0, 12);
-                  // PATCH 0734 — for news-derived rows the "ticker" is actually the
-                  // company name (no real ticker parseable from headlines).
-                  // PATCH 0901 — Try reverse-resolving the company name to a ticker
-                  // (Sammaan Capital → SAMMAANCAP, TV Today Network → TVTODAY,
-                  // Nazara → NAZARA, etc) so all rows show a ticker chip and align
-                  // visually with roster rows. When unresolvable, reserve the same
-                  // column width with an em-dash so the layout doesn't reflow.
-                  const rawTicker = (r.ticker || '').toString().replace(/\.(NS|BO)$/i, '');
-                  let resolvedTicker = '';
-                  if (/^[A-Z][A-Z0-9&-]{1,9}$/.test(rawTicker)) {
-                    resolvedTicker = rawTicker;
-                  } else {
-                    // ticker field is a company-name string — reverse-lookup
-                    const fromName = resolveCompanyToTicker(r.company || rawTicker);
-                    if (fromName) resolvedTicker = fromName;
-                  }
-                  const isRealTicker = !!resolvedTicker;
-                  const linkHref = isRealTicker
-                    ? `/stock-sheet?ticker=${encodeURIComponent(resolvedTicker)}`
-                    : '/super-investors';
-                  return (
-                    <Link key={(r.ticker || '') + i} href={linkHref}
-                      title={isRealTicker ? `Open ${resolvedTicker} stock sheet` : 'No NSE ticker found — open Super Investors tracker'}
-                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid var(--mc-bg-4)' }}>
-                      <span style={{ fontSize: 9, color: isRealTicker ? 'var(--mc-state-persistent)' : DIM, fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 70, textAlign: 'left' }}>
-                        {isRealTicker ? resolvedTicker.slice(0, 10) : '—'}
-                      </span>
-                      <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {r.company || rawTicker}
-                      </span>
-                      <span style={{ fontSize: 9, color: DIM, fontStyle: 'italic', whiteSpace: 'nowrap', minWidth: 76, textAlign: 'right' }} title={investor}>
-                        {investorShort}
-                      </span>
-                      {typeof r.stakePct === 'number' && (
-                        <span style={{ fontSize: 9, color: 'var(--mc-state-persistent)', fontWeight: 800, fontVariantNumeric: 'tabular-nums', minWidth: 36, textAlign: 'right' }}>
-                          {r.stakePct.toFixed(1)}%
-                        </span>
-                      )}
-                      {r.kind === 'flow' && (
-                        <span style={{ fontSize: 9, color: dirColor, fontWeight: 800 }}>{dirGlyph}{r.netActions ?? r.addCount ?? 0}</span>
-                      )}
-                      {fmtDate && (
-                        <span style={{ fontSize: 9, color: DIM, fontFamily: 'ui-monospace, monospace', minWidth: 38, textAlign: 'right' }}>{fmtDate}</span>
-                      )}
-                    </Link>
-                  );
-                })}
-              </div>
-            )}
-          </div>
         </div>
 
         {/* ═══════════════ PATCH 0621 — TWO-COL: MOVERS + SIGNALS ═══════════ */}
@@ -4433,7 +4291,6 @@ export default function HomeDashboard() {
                 { href: '/screener', label: '🔍 Screener' },
                 { href: '/strategic-visibility', label: '⭐ Strategic Visibility' },
                 { href: '/transmission', label: '🔄 Transmission' },
-                { href: '/super-investors', label: '👥 Super Investors' },
                 { href: '/breadth', label: '📊 Breadth' },
                 { href: '/heatmap', label: '🔥 Heatmap' },
                 { href: '/rrg', label: '🎯 RRG' },

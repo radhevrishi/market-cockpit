@@ -61,6 +61,7 @@ const SLUG_REDIRECTS: Record<string, string> = {
   '/my-book': '/portfolio',
   '/concall-ai': '/earnings-analysis',
   '/re-rating': '/rerating',
+  '/super-investors': '/smart-money',   // zzz935: Super Investors removed (owner, 7 Oct) — old bookmarks land on Smart Money
 };
 
 function clientIp(req: NextRequest): string {

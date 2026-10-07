@@ -471,7 +471,6 @@ export default function AutoValuationPage() {
   const [secNote, setSecNote] = useState<Record<string, string>>({});
   // PATCH 0855 — Live data overlays for saved bench + active report.
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
-  const [smartMoneyByTicker, setSmartMoneyByTicker] = useState<Record<string, any>>({});
   const [upcomingEarningsByTicker, setUpcomingEarningsByTicker] = useState<Record<string, string>>({});
   useEffect(() => {
     let cancelled = false;
@@ -486,20 +485,6 @@ export default function AutoValuationPage() {
           if (s.ticker && s.price) map[String(s.ticker).toUpperCase()] = Number(s.price);
         }
         if (!cancelled) setLivePrices(map);
-      } catch {}
-    })();
-    // Smart-money rows for ticker overlay
-    (async () => {
-      try {
-        const r = await fetch('/api/v1/super-investor-flow?days=180', { cache: 'no-store' });
-        if (!r.ok || cancelled) return;
-        const j = await r.json();
-        const rows = j?.rows || [];
-        const map: Record<string, any> = {};
-        for (const row of rows) {
-          if (row?.ticker) map[String(row.ticker).toUpperCase()] = row;
-        }
-        if (!cancelled) setSmartMoneyByTicker(map);
       } catch {}
     })();
     // Upcoming earnings (next 14d) for earnings-soon chip
@@ -1063,19 +1048,6 @@ export default function AutoValuationPage() {
                 if (sa && sa.state === 'ACCELERATING') chips.push(<span key="sa" title={`Latest YoY ${sa.latestYoY.toFixed(0)}% vs 5y CAGR ${sa.cagr5y.toFixed(0)}%`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: 'color-mix(in srgb, var(--mc-bullish) 15%, transparent)', color: 'var(--mc-bullish)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 38%, transparent)', borderRadius: 3 }}>⇑ SALES ACCEL +{sa.delta.toFixed(0)}pp</span>);
                 else if (sa && sa.state === 'DECELERATING') chips.push(<span key="sa" title={`Latest YoY ${sa.latestYoY.toFixed(0)}% vs 5y CAGR ${sa.cagr5y.toFixed(0)}%`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: 'color-mix(in srgb, var(--mc-warn) 15%, transparent)', color: 'var(--mc-warn)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', borderRadius: 3 }}>⇓ SALES DECEL {sa.delta.toFixed(0)}pp</span>);
                 if (dna) { const dnaColor = dna.matched >= 5 ? '#10B981' : dna.matched >= 3 ? '#22D3EE' : '#94A3B8'; chips.push(<span key="dna" title={`500-bagger DNA: ${dna.criteria.join(' · ')}`} style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: `${dnaColor}25`, color: dnaColor, border: `1px solid ${dnaColor}60`, borderRadius: 3 }}>🧬 DNA {dna.matched}/6</span>); }
-                // PATCH 0855 — Smart-money overlay
-                const sm = smartMoneyByTicker[ticker];
-                if (sm) {
-                  const accent = sm.topDirection === 'ACCUM' ? '#10B981' : sm.topDirection === 'EXIT' ? '#EF4444' : '#94A3B8';
-                  const arrow = sm.topDirection === 'ACCUM' ? '⬆' : sm.topDirection === 'EXIT' ? '⬇' : '◆';
-                  const investors = Array.isArray(sm.investors) ? sm.investors.slice(0, 3).join(', ') : '';
-                  chips.push(
-                    <span key="sm" title={`Super investors ${sm.topDirection || 'active'} · ${investors || 'recent activity'} · ${sm.netActions || 0} net actions`}
-                      style={{ fontSize: 10, fontWeight: 800, padding: '3px 8px', background: `${accent}25`, color: accent, border: `1px solid ${accent}60`, borderRadius: 3 }}>
-                      {arrow} SUPER INV {sm.netActions != null ? sm.netActions : ''}
-                    </span>
-                  );
-                }
                 // PATCH 0855 — Earnings proximity chip
                 const earnDate = upcomingEarningsByTicker[ticker];
                 if (earnDate) {

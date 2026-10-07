@@ -14,9 +14,6 @@
  "src/app/api/market/earnings-scan/route.ts": 1,
  "src/app/api/market/quotes/route.ts": 2,
  "src/app/api/v1/haiku/forward-guidance/route.ts": 1,
- "src/app/api/v1/mfi-concentration/route.ts": 1,
- "src/app/api/v1/super-investor-flow/route.ts": 1,
- "src/app/api/v1/super-investor-holdings/route.ts": 2,
  "src/lib/coffeecan-store.ts": 1,
  "src/lib/multibagger-usa-scoring.ts": 7
 }

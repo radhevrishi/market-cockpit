@@ -56,20 +56,6 @@ export interface HomeState {
   // scope, confidence, peer count). Replaces the kind/label/url tuple.
   moversAttrib?: Record<string, MoverAttribution>;
   // PATCH 0624 — extended shape: kind='flow' (live) or 'roster' (static curated holdings)
-  superInvestors?: Array<{
-    ticker: string;
-    company?: string;
-    addCount?: number;
-    exitCount?: number;
-    totalSignalScore?: number;
-    investors?: string[];
-    topDirection?: string;
-    lastMoveAt?: string;
-    kind?: 'flow' | 'roster';
-    stakePct?: number;
-    disclosedOn?: string;
-    investorName?: string;
-  }>;
   signals?: Array<{ id?: string; title?: string; headline?: string; published_at?: string; source_name?: string; primary_ticker?: string; ticker_symbols?: any[]; importance_score?: number }>;
   // PATCH 0800 — Screener fundamentals per ticker, fetched on-demand for top movers
   moverFundamentals?: Record<string, any>;

@@ -32,7 +32,6 @@ The code is in `frontend/src/lib/app-scheduler.ts` (`APP_JOBS`). `instrumentatio
 | refresh-news-feed | `9 * * * *` | POST /api/v1/news/refresh, GET /api/v1/news?market=all, GET /api/v1/news/in-play | refresh-news-feed.yml |
 | refresh-special-situations | every 15 min 03–12 Mon–Fri, then :11 past every other hour | GET /api/v1/special-situations/feed?refresh=1 | refresh-special-situations.yml |
 | refresh-guidance-upgrades | `10 * * * *` | GET guidance-upgrades (30D, 120D), guidance-universe, then POST /api/v1/intel-archive | refresh-guidance-upgrades.yml |
-| refresh-super-investors | `17 */6 * * *` | POST /api/v1/cron/refresh-super-investors | refresh-super-investors.yml |
 | daily-summary | `30 16 * * 1-5` | POST /api/v1/cron/daily-summary | daily-summary.yml |
 | data-watch | 05:30 daily, 10:30 and 14:30 Mon–Fri | GET /api/v1/cron/data-watch | data-watch.yml |
 | ai-verify | `35 * * * *` | POST /api/v1/ai-verify, up to 4 rounds (100 claims, $1.50 per run) | ai-verify.yml |
