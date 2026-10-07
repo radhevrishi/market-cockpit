@@ -63,6 +63,12 @@ export default function StockScreener() {
   }, [market, snaps]);
 
   const snap = snaps[market];
+  // the first build may still be running on the server: look again every 90 s until it has rows
+  useEffect(() => {
+    if (!snap || snap.rows.length) return;
+    const id = setTimeout(() => setSnaps((p) => { const n = { ...p }; delete n[market]; return n; }), 90_000);
+    return () => clearTimeout(id);
+  }, [snap, market]);
   const rows = useMemo(() => snap?.rows || [], [snap]);
   const result = useMemo(() => runScreen(rows, filters), [rows, filters]);
   const counts = useMemo(() => filterCounts(rows, filters), [rows, filters]);
@@ -130,6 +136,7 @@ export default function StockScreener() {
   };
   const btn = (on = false): React.CSSProperties => ({ padding: '5px 10px', borderRadius: 6, border: `1px solid ${on ? C.accent : C.border}`, background: on ? C.accent : C.bg1, color: on ? '#fff' : C.text1, fontSize: 13, fontWeight: 600, cursor: 'pointer' });
   const builtAt = snap?.builtAt ? new Date(snap.builtAt) : null;
+  const withFigures = useMemo(() => rows.filter((r) => r.q).length, [rows]);
   const latestQ = useMemo(() => { const m = new Map<string, number>(); for (const r of rows) if (r.q) m.set(r.q, (m.get(r.q) || 0) + 1); return Array.from(m.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || null; }, [rows]);
 
   return (
@@ -179,7 +186,7 @@ export default function StockScreener() {
 
       <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', fontSize: 13 }}>
         <b style={{ fontSize: 15 }}>{snap ? `${result.length} of ${rows.length} companies match` : err ? '' : 'Loading…'}</b>
-        {builtAt ? <span style={{ color: C.dim }}>data built {builtAt.toLocaleString()}{latestQ ? ` · most figures to ${latestQ}` : ''} · the small number on each filter = companies passing that filter alone</span> : null}
+        {builtAt ? <span style={{ color: C.dim }}>data built {builtAt.toLocaleString()}{latestQ ? ` · most figures to ${latestQ}` : ''}{rows.length && withFigures < rows.length * 0.9 ? ` · company figures read for ${withFigures} of ${rows.length} so far (the rest are read in the next runs)` : ''} · the small number on each filter = companies passing that filter alone</span> : null}
         {err ? <span style={{ color: C.red }}>{err}</span> : null}
         <span style={{ flex: 1 }} />
         <button type="button" style={btn()} onClick={copyTickers} disabled={!sorted.length}>Copy tickers</button>

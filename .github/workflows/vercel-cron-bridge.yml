@@ -17,7 +17,7 @@ name: Vercel Cron Bridge
 # ----------
 
 on:
-  # zzz907: the schedule now runs INSIDE the app (frontend/src/lib/app-scheduler.ts, job(s): refresh-earnings-calendar, intelligence-compute, earnings-guidance-ingest, movers-alert, watchlist-alert, eo-blockbuster-morning/-evening, prewarm-earnings, prewarm-us-earnings, refresh-us-bench, refresh-guidance, archive-to-postgres, hub-ingest, hub-ingest-next, build-screener-us) because GitHub's cron
+  # zzz907: the schedule now runs INSIDE the app (frontend/src/lib/app-scheduler.ts, job(s): refresh-earnings-calendar, intelligence-compute, earnings-guidance-ingest, movers-alert, watchlist-alert, eo-blockbuster-morning/-evening, prewarm-earnings, prewarm-us-earnings, refresh-us-bench, refresh-guidance, archive-to-postgres, hub-ingest, hub-ingest-next, build-screener-us, build-screener-in) because GitHub's cron
   # skipped/delayed runs and every run cost paid Actions minutes (private repo). Kept for hand runs and as an emergency fallback.
   workflow_dispatch:
     inputs:
@@ -40,6 +40,7 @@ on:
           - hub-ingest
           - hub-ingest-next
           - build-screener-us
+          - build-screener-in
 
 concurrency:
   group: vercel-cron-bridge-${{ github.event.schedule || github.event.inputs.endpoint || 'manual' }}
@@ -132,6 +133,7 @@ jobs:
                 refresh-guidance)            echo "path=/api/v1/cron/refresh-guidance" >> "$GITHUB_OUTPUT"; echo "label=refresh-guidance" >> "$GITHUB_OUTPUT" ;;
                 archive-to-postgres)         echo "path=/api/v1/cron/archive-to-postgres?months=2&ahead=1" >> "$GITHUB_OUTPUT"; echo "label=archive-to-postgres" >> "$GITHUB_OUTPUT" ;;
                 hub-ingest)                  echo "path=/api/market/earnings?ingest=1&force=1&month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"; echo "label=hub-ingest" >> "$GITHUB_OUTPUT" ;;
+                build-screener-in)           echo "path=/api/v1/cron/build-screener?market=IN" >> "$GITHUB_OUTPUT"; echo "label=build-screener-in" >> "$GITHUB_OUTPUT" ;;
                 build-screener-us)           echo "path=/api/v1/cron/build-screener?market=US" >> "$GITHUB_OUTPUT"; echo "label=build-screener-us" >> "$GITHUB_OUTPUT" ;;
                 hub-ingest-next)             echo "path=/api/market/earnings?ingest=1&force=1&month=$(date -u -d "$(date -u +%Y-%m-01) +1 month" +%Y-%m)" >> "$GITHUB_OUTPUT"; echo "label=hub-ingest-next" >> "$GITHUB_OUTPUT" ;;
                 *)

@@ -3571,3 +3571,14 @@ stale heartbeats (prewarm-earnings, data-watch) investigation; removing ?secret=
   APIs (super-investor-flow / -holdings / -news, mfi-concentration, cron/refresh-super-investors), lib/super-investors.ts, both
   GitHub workflows (scrape + refresh) and the app-scheduler job. /super-investors redirects to /smart-money. Do not bring it back.
 - zzz936 (7 Oct): scrape-commodity-prices workflow + script removed — the site never read its KV key (commodity-prices:v1:latest); /transmission fetches live.
+- zzz937–939 (7 Oct): OWN CHARTS + STOCK SCREENER (replace TradingView).
+  /charts — KLineChart 10 (components/charts/*, lib/chart-math.ts, /api/v1/chart/[ticker] Yahoo OHLCV, in-memory cache); drawings and
+  EMA settings in localStorage mc:chart-drawings:v1 / mc:chart-settings:v1 (synced by the vault).
+  /stock-screener — lib/screener/*: filters.ts (fields, chips, built-in screens = owner's 3 TradingView screens), sec-assemble.ts (USA
+  from SEC frames; a fiscal year's last quarter = year − other three), us-build.ts (Nasdaq list + SEC frames cached in Postgres
+  sec_frame_cache + Yahoo spark closes → SMA + Yahoo profile employees/float a slice a run), in-assemble.ts + in-build.ts (NSE
+  EQUITY_L + bhavcopy via direct or mc-proxy relay, screener.in pages + 3 schedule answers each via fetchScreenerHtml, a 9-min
+  slice per hourly run, re-read ~weekly). Postgres migration 3: screener_snapshot / screener_store / sec_frame_cache. Jobs
+  build-screener-us (22:45 UTC weekdays) and build-screener-in (hourly :25); first page visit with no snapshot kicks a build
+  (lib/screener/run.ts). India gross margin = sales × (1 − Material Cost %), none for material < 1% (service companies); F-score
+  uses other assets ÷ other liabilities for the current-ratio point. Saved screens: mc:stock-screens:v1 (synced).
