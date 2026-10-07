@@ -48,7 +48,7 @@ CI also shows "npm audit found high/critical advisories" as a warning — worth 
    to Ubuntu 26 on **19 Oct 2026** cannot change the machine under the jobs silently. Move to a newer image on
    purpose, one workflow first, when 24.04 nears its end of support (GitHub usually announces ~6 months ahead).
 
-   Pinned here: scrape-commodity-prices, scrape-corp-filings, scrape-guidance-docs, scrape-india-news,
+   Pinned here: scrape-corp-filings, scrape-guidance-docs, scrape-india-news,
    scrape-india-technicals, scrape-mover-reasons, scrape-nse-holidays, scrape-nse-index-history,
    scrape-nse-indices, scrape-nse-results, scrape-rolling-stats, scrape-screener-fundamentals,
    edgar-guidance-backfill, screener-sync, tradingview-sync, results-pdf,

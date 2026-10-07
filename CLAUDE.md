@@ -3570,3 +3570,4 @@ stale heartbeats (prewarm-earnings, data-watch) investigation; removing ?secret=
 - zzz935 (7 Oct): Super Investors REMOVED at the owner's request — page, nav entries, home panel, auto-valuation "SUPER INV" chip,
   APIs (super-investor-flow / -holdings / -news, mfi-concentration, cron/refresh-super-investors), lib/super-investors.ts, both
   GitHub workflows (scrape + refresh) and the app-scheduler job. /super-investors redirects to /smart-money. Do not bring it back.
+- zzz936 (7 Oct): scrape-commodity-prices workflow + script removed — the site never read its KV key (commodity-prices:v1:latest); /transmission fetches live.
