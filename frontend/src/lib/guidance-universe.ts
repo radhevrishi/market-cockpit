@@ -33,7 +33,7 @@ import { NSE_TICKER_NAMES } from './nse-ticker-names';
 import { endOfPeriodLabel, qualityOf, revisionOf, type GgStoredEntry } from './growth-guidance';
 import type { ExtractedGuidance, GuidanceExtractResult, GuidanceMetricX } from './guidance-docs-types';
 import { actualKey, priorPeriodOf, universeUnitOf, baseFyFor, type PriorActual } from './guidance-extract-reader';
-import { cagrPct, isLowBoundOnly, isOpenHorizonLabel, multipleOf, nextYearsOf, perYearStated, scopeIssueOf, metricFromQuote, fcfIssueOf, LONG_TERM_LABEL, totalToAnnual, lastCompletedFy, spacIssueOf } from './guidance-horizon';   // zzz916 · zzz931
+import { cagrPct, isLowBoundOnly, isOpenHorizonLabel, multipleOf, nextYearsOf, perYearStated, scopeIssueOf, metricFromQuote, fcfIssueOf, LONG_TERM_LABEL, totalToAnnual, lastCompletedFy, spacIssueOf, fiscalYearNamedIn } from './guidance-horizon';   // zzz916 · zzz931
 
 export const GU_VERSION = 'zzz849-gu-v2';
 const DAY = 86_400_000;
@@ -450,6 +450,8 @@ export function itemsFromExtracted(results: GuidanceExtractResult[] | null | und
     const horizonPeriod = row.periodKind === 'MULTI_YEAR' && (nextYearsOf(c.period) != null || isOpenHorizonLabel(c.period));
     let pkind: GgPeriodKind = row.periodKind === 'ANNUAL' ? (/^CY/.test(c.period) ? 'CY' : 'FY') : (/^(FY|CY)\d{2}-\d{2}$/.test(c.period) || horizonPeriod) ? 'MULTI_YEAR_CAGR' : /^CY/.test(c.period) ? 'CY' : 'FY';
     let period = c.period;
+    // zzz932: a one-year row takes its fiscal year from the sentence when the sentence names exactly one ("Increased FY27 revenue guidance … growth of 48% compared to FY26" was filed as FY26)
+    if (pkind === 'FY' && /^FY\d{2}$/.test(c.period)) { const fy = fiscalYearNamedIn(String((g && g !== row ? g.quote : null) || row.quote || '')); if (fy && fy !== c.period) period = fy; }
     const ny = /^(?:FY|CY)(\d{2})-(\d{2})$/.exec(c.period); const years = ny ? parseInt(ny[2], 10) - parseInt(ny[1], 10) + 1 : (nextYearsOf(c.period) ?? null);
     const gq = String((g && g !== row ? g.quote : null) || row.quote || '');
     const statementQuote = String((sLo != null && g && g !== row && g.quote ? g.quote : row.quote) || '');

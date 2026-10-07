@@ -18,7 +18,7 @@ export function quoteHasNumber(quote: string, v: number | null | undefined): boo
 }
 const MULTI_YEAR = /\b(over|in|during|across|within)\s+(?:the\s+)?(?:next|coming)?\s*(?:\d+|two|three|four|five|six|seven|ten)(?:\s*(?:to|-|–|or)\s*(?:\d+|two|three|four|five|six|seven|ten))?\s+years?\b/i;
 // zzz916: + pre-sales / bookings / stores / outlets / premium (Sobha pre-sales, Arvind bookings, Sapphire stores are not revenue)
-const NOT_REVENUE = /\b(aum|assets under management|loan book|advances|disbursements?|deposits?|order (?:book|inflows?|intake)|gmv|gross merchandise|gross order value|gov|volumes?|tonnage|footfall|customers?|subscribers?|capacity|pre-?sales|bookings?|stores?|outlets?|store count|premiums?)\b/i;
+const NOT_REVENUE = /\b(aum|assets under management|loan book|advances|disbursements?|deposits?|order (?:book|inflows?|intake)|gmv|gross merchandise|gross order value|gov|volumes?|tonnage|footfall|customers?|subscribers?|capacity|pre-?sales|bookings?|stores?|outlets?|store count|premiums?|wholesale|retail book|sme book|gold loans?)\b/i;
 const IS_REVENUE = /\b(revenue|sales|top[\s-]?line|turnover|income from operations|total income)\b/i;
 /** zzz916: quarter-on-quarter growth is never one year's growth */
 const QOQ = /\bquarter[- ]on[- ]quarter\b|\bq-?o-?q\b|\bsequential(?:ly)?\b/i;

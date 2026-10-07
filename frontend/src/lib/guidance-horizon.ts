@@ -144,6 +144,7 @@ const NOT_COMPANY_MEASURE: Array<[string, RegExp]> = [
   ['order inflow', /\b(order (?:book|inflows?|intake))\b/i],
   ['premium', /\b(first[- ]year premium|premiums?)\b/i],
 ];
+const BOOK_SEGMENT = /\b(wholesale|retail book|sme book|corporate book|gold loans?|msme book|retail (?:loans?|advances|portfolio)|loan growth)\b/i;
 const COMPANY_MEASURE = /\b(revenues?|sales|top[\s-]?line|turnover|income from operations|total income|bottom[\s-]?line|net profit|profit after tax|pat|profitability|ebitda)\b/i;
 /** A named part of the company before the measure: "US CrudeChem revenue", "export revenue", "Tech & Payments revenue", "product revenue". */
 const PART_BEFORE_MEASURE = /\b((?:(?:US|USA|UK|EU|Europe(?:an)?|international|overseas|export|exports|domestic|subsidiary|segment|division|vertical|plant|product|services?|non-[a-z]+|[A-Z][a-z]+[A-Z][A-Za-z]+|[A-Z][A-Za-z]*\s*&\s*[A-Z][a-z]+)\s+){1,3})(?:business\s+)?(?:revenues?|sales|turnover)\b/;
@@ -178,6 +179,11 @@ const REVENUE_FROM_PART = /\b(?:revenues?|sales|turnover)\s+from\s+(?:the\s+|our
 /** "growth of 40%, 45% in our exports" — exports alone are one part */
 const IN_EXPORTS = /\b(?:in|of|from)\s+(?:our\s+|the\s+|its\s+)?exports?\b(?!\s+and\s+domestic)/i;
 const WHOLE_COMPANY_WORDS = new Set(['the', 'our', 'this', 'that', 'its', 'overall', 'entire', 'whole', 'core', 'main', 'existing', 'current', 'total', 'company', 'consolidated', 'standalone', 'combined', 'own', 'base', 'underlying', 'organic', 'domestic', 'india', 'indian', 'entire', 'group', 'broader', 'larger', 'global', 'business', 'new', 'company\'s', 'companys', 'and', 'of', 'amount', 'size', 'scale', 'visibility', 'outlook', 'pipeline', 'nature', 'way', 'rest', 'kind', 'type', 'same', 'level', 'quality', 'momentum', 'mix']);
+const SUBJECT_STOP = new Set(['we', 'our', 'the', 'it', 'its', 'this', 'that', 'they', 'management', 'company', 'india', 'overall', 'growth', 'next', 'going', 'looking', 'so', 'yes', 'but', 'ok', 'okay', 'also', 'total', 'net', 'adjusted', 'reported', 'organic', 'full', 'consolidated', 'standalone', 'group', 'guidance', 'outlook', 'fy', 'cy', 'q1', 'q2', 'q3', 'q4', 'h1', 'h2', 'ebitda', 'pat', 'eps', 'margin', 'margins', 'profit', 'there', 'these', 'those', 'i', 'in', 'on', 'for', 'with', 'as', 'at', 'by', 'if', 'what', 'how', 'when', 'now', 'currently']);
+const SUBJECT_PART = /^\s*((?:[A-Z][\w&'-]*)(?:\s+(?:and|&)\s+[A-Z][\w&'-]*|\s+[A-Z][\w&'-]*){0,4})\s+(?:will|would|should|is|are|shall|to|has|have|grew|grow|expected|continues?)\b/;
+const ROW_PART = /^\s*((?:[A-Z][\w&/'-]*)(?:\s+[A-Z][\w&/'-]*){0,3})\s*[|:]?\s*\(?[+\-–]\s?\d/;
+/** a sentence that names the company's own measure or the whole company: not about a part */
+const MEASURE_OR_WHOLE = /\b(revenues?|sales|top[\s-]?line|turnover|income|ebitda|profit|pat|eps|margins?|guidance|consolidated|overall|total|company|group|we|our|us)\b/i;
 export function namedPartOf(quote: string, company?: string | null): string | null {
   const q = String(quote || '');
   const own = String(company || '').toLowerCase().replace(/[^a-z0-9& ]+/g, ' ');
@@ -195,6 +201,10 @@ export function namedPartOf(quote: string, company?: string | null): string | nu
     const esc = m[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     if (!companyWide(new RegExp(`${esc}(?:\\s+[A-Za-z-]+){0,3}`, 'gi'))) return `${m[1].trim()} ${m[2].toLowerCase()}`;
   }
+  // zzz932: the sentence is ABOUT a named product line / table row and never says revenue, sales, growth guidance or the company
+  // ("Creative and Steel Bottles will, of course, higher number digits, like about almost 40%", "Data Centers +60% to +80%")
+  const sp = SUBJECT_PART.exec(q) || ROW_PART.exec(q);
+  if (sp && !MEASURE_OR_WHOLE.test(q) && !sp[1].toLowerCase().split(/\s+/).some((w) => SUBJECT_STOP.has(w)) && isPart(sp[1])) return sp[1].trim();
   if (IN_EXPORTS.test(q) && !companyWide(/\bexports?\s+(?:revenues?|sales|turnover)\b/gi)) return 'exports';
   return null;
 }
@@ -226,6 +236,9 @@ export function scopeIssueOf(quote: string | null | undefined, opts: { metric: s
     // "revenue growth … driven by volume growth" is still revenue: a measure is out only when it stands in for revenue / profit
     if (!hasCompanyMeasure) return `${what}, not company ${profit ? 'profit' : 'revenue'}`;
   }
+  // zzz932: a book / segment of a lender (CSB Bank "wholesale will continue to grow … 35% to 40%") is not the company's revenue — read on the
+  // sentence alone, because the model's label may say "revenue growth" for it
+  if (!profit && BOOK_SEGMENT.test(q) && !COMPANY_MEASURE.test(q.replace(/\bpre-?sales\b/gi, ' '))) return 'a book / segment of the business, not company revenue';
   if (!profit) {
     const m = PART_BEFORE_MEASURE.exec(hay);
     if (m && !/\b(consolidated|overall|total|company[- ]level|blended|group)\b/i.test(hay)) {
@@ -308,4 +321,22 @@ export function isIntimationLetter(text: string): boolean {
   const letters = (t.match(/[A-Za-z]/g) || []).length;
   if (letters > 4_500) return false;
   return POINTS_ELSEWHERE.test(t.replace(/\s+/g, ' '));
+}
+
+/**
+ * zzz932: the ONE fiscal year a sentence is about, when it names one explicitly ("Increased FY27 revenue guidance to $141 million,
+ * representing growth of 48% compared to FY26" → FY27; the year after "compared to / from / vs / over" is the base, not the subject).
+ * Null when it names none, or several that cannot be told apart, or when the sentence reports a past result. Pure.
+ */
+export function fiscalYearNamedIn(quote: string | null | undefined): string | null {
+  const q = String(quote || '');
+  if (/\b(?:reported|delivered|achieved|came in|grew|was|were|posted|recorded)\b/i.test(q)) return null;
+  const re = /\b(?:FY|fiscal(?:\s+year)?|F)\s?['’]?\s?((?:20)?\d{2})\b/gi;
+  const found = new Set<string>();
+  for (let m = re.exec(q); m; m = re.exec(q)) {
+    const before = q.slice(Math.max(0, m.index - 24), m.index);
+    if (/\b(?:compared\s+(?:to|with)|vs\.?|versus|from|over|than|relative\s+to|against|prior\s+to|versus\s+the)\s+(?:the\s+)?(?:prior\s+|previous\s+|last\s+)?(?:year'?s?\s+)?$/i.test(before)) continue;
+    found.add(`FY${m[1].slice(-2)}`);
+  }
+  return found.size === 1 ? [...found][0] : null;
 }
