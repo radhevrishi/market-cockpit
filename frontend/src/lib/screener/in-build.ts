@@ -13,6 +13,7 @@ import { ensureSchema } from '@/lib/db-migrate';
 import { fetchScreenerHtml } from '@/lib/earnings/screener-fetch';
 import { screenerSymbol } from '@/lib/earnings/screener-documents';
 import { isCurrentPeriod } from '@/lib/thesis/screener-financials';
+import { yieldToServer } from './yield';
 import { inFiguresFromRaw, rawFromHtml, type InFigures, type InRaw } from './in-assemble';
 import { loadProfiles, type Prof } from './us-build';
 import { refreshTech, type TechStored } from './tech-fetch';
@@ -247,7 +248,12 @@ export async function buildInSnapshot(opts: { fundBudgetMs?: number } = {}): Pro
   });
   const profiles = await loadProfiles('IN', universe, notes, Math.max(20_000, Math.min(1.5 * 60_000, deadline - Date.now() - 30_000)));
 
-  const rows: ScreenRow[] = universe.map((t) => assembleInRow(t, names.get(t) || t, latest, bhav, funds.get(t), tech.get(t), profiles.get(t)));
+  // zzz957: the build runs inside the web server — let other requests in between slices, so a build never freezes the site
+  const rows: ScreenRow[] = [];
+  for (let k = 0; k < universe.length; k += 100) {
+    for (const t of universe.slice(k, k + 100)) rows.push(assembleInRow(t, names.get(t) || t, latest, bhav, funds.get(t), tech.get(t), profiles.get(t)));
+    await yieldToServer();
+  }
   const sources = ['NSE company list', 'NSE daily price files', 'screener.in company pages', 'Yahoo daily prices', 'Yahoo company profile'];
   await dbQuery(`INSERT INTO screener_snapshot (market, built_at, rows, meta) VALUES ('IN', now(), $1, $2) ON CONFLICT (market) DO UPDATE SET built_at = now(), rows = EXCLUDED.rows, meta = EXCLUDED.meta`,
     [rowsJson(rows), JSON.stringify({ notes, sources })]);

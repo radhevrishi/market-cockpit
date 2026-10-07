@@ -5,6 +5,7 @@
 //      (lib/screener/tech.ts); the lighter 20-a-call closes are kept as a fallback for SMA 50 / 200;
 //   4. Yahoo company profile — employees and free float, refreshed about once a week per company (a slice each day).
 // The snapshot is written to Postgres (screener_snapshot) and the page reads it whole.
+import { yieldToServer } from './yield';
 import { dbQuery, getPool } from '@/lib/db';
 import { ensureSchema } from '@/lib/db-migrate';
 import { yahooProfileStats } from '@/lib/us-prices';
@@ -114,7 +115,7 @@ async function loadFrames(periods: ReturnType<typeof framePeriods>, notes: strin
     while (i < jobs.length) {
       const j = jobs[i++];
       const c = cached.get(j.key);
-      if (c && c.age < j.maxAgeH) { put(j.concept, j.period, c.data); continue; }
+      if (c && c.age < j.maxAgeH) { put(j.concept, j.period, c.data); await yieldToServer(); continue; }
       const data = await fetchFrame(j.tax, j.concept, j.unit, j.period);
       await sleep(250);   // SEC asks for at most 10 requests a second; 3 workers × 4/s stays under it
       if (!data) { failed++; if (c) put(j.concept, j.period, c.data); continue; }
@@ -272,7 +273,14 @@ export async function buildUsSnapshot(now = new Date()): Promise<{ ok: boolean; 
   }
   const profiles = await loadProfiles('US', universe.filter((r) => (r.mc ?? 0) >= 100).map((r) => r.t), notes, Math.max(30_000, deadline - Date.now() - 30_000));
 
-  const { rows, noSec } = assembleUsRows(universe, ciks, fd, periods, tech, closes, profiles);
+  // zzz957: in slices, letting other requests in between (the build runs inside the web server)
+  const rows: ScreenRow[] = [];
+  let noSec = 0;
+  for (let k = 0; k < universe.length; k += 200) {
+    const part = assembleUsRows(universe.slice(k, k + 200), ciks, fd, periods, tech, closes, profiles);
+    rows.push(...part.rows); noSec += part.noSec;
+    await yieldToServer();
+  }
   if (noSec) notes.push(`${noSec} listed companies have no quarterly SEC figures (foreign companies filing 20-F / 40-F, which file no quarterly figures in SEC's data; new listings) — their company-figure filters fail`);
   const snap: ScreenSnapshot = { market: 'US', builtAt: new Date().toISOString(), rows, notes, sources: ['Nasdaq stock list', 'SEC filings (XBRL frames)', 'Yahoo daily prices', 'Yahoo company profile'] };
   await dbQuery(`INSERT INTO screener_snapshot (market, built_at, rows, meta) VALUES ('US', now(), $1, $2) ON CONFLICT (market) DO UPDATE SET built_at = now(), rows = EXCLUDED.rows, meta = EXCLUDED.meta`,
