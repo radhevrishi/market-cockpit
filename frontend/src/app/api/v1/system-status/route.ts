@@ -120,6 +120,8 @@ export async function GET(request: Request) {
   catch (e: any) { nseHolidays = { error: String(e?.message || e) }; }
   return NextResponse.json({
     generated_at: new Date().toISOString(),
+    // zzz955 — which deploy is running (git commit when Railway built it; build id otherwise)
+    build: { commit: (process.env.MC_BUILD_COMMIT || process.env.RAILWAY_GIT_COMMIT_SHA || '').slice(0, 40) || null, deployment: process.env.RAILWAY_DEPLOYMENT_ID || null },
     summary,
     nseHolidays,
     signalsVersions,

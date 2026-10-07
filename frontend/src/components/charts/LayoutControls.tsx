@@ -196,7 +196,7 @@ export function IndicatorLegend({ rows, valueOf, onToggle, decimals, colorOf = (
       {rows.map((r) => {
         const vals = r.on ? valueOf(r) : [];
         return (
-          <div key={r.id} className="mc-legend-row" style={{ display: 'flex', alignItems: 'center', gap: 6, pointerEvents: 'auto', color: r.on ? 'var(--mc-text-1)' : 'var(--mc-text-4)', lineHeight: '18px' }}>
+          <div key={r.id} className="mc-legend-row" style={{ display: 'flex', alignItems: 'center', gap: 6, pointerEvents: 'none', color: r.on ? 'var(--mc-text-1)' : 'var(--mc-text-4)', lineHeight: '18px' }}>
             <span style={{ fontWeight: 600 }}>{r.label}</span>
             {r.pane && r.on && <span style={{ color: 'var(--mc-text-3)' }}>(lower pane)</span>}
             {!r.pane && r.on && <span style={{ color: 'var(--mc-text-3)' }}>close</span>}
@@ -205,7 +205,7 @@ export function IndicatorLegend({ rows, valueOf, onToggle, decimals, colorOf = (
               <span key={i} style={{ color: colorOf(r.series[i]?.color || (r.label.startsWith('MACD') && i === 1 ? '#FF6D00' : r.color)), fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{v != null ? fmtPrice(v, decimals) : '—'}</span>
             ))}
             <button type="button" onClick={() => onToggle(r.id)} aria-label={`${r.on ? 'Hide' : 'Show'} ${r.label}`} title={r.on ? 'Hide this line' : 'Show this line'}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', fontSize: 12, color: 'var(--mc-text-3)', lineHeight: 1 }}>{r.on ? '👁' : '◌'}</button>
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', fontSize: 12, color: 'var(--mc-text-3)', lineHeight: 1, pointerEvents: 'auto' }}>{r.on ? '👁' : '◌'}</button>
           </div>
         );
       })}

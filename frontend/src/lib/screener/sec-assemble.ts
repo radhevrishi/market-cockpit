@@ -34,6 +34,9 @@ export const OPLEASE = ['OperatingLeaseLiability'];
 export const OPLEASE_PARTS = ['OperatingLeaseLiabilityNoncurrent', 'OperatingLeaseLiabilityCurrent'];
 export const FINLEASE = ['FinanceLeaseLiability'];
 export const CASH = ['CashAndCashEquivalentsAtCarryingValue'];
+/** zzz955 — used only when the line above is not filed: many filers (CSX, Copart, Biogen…) report cash only with restricted cash
+ *  included, banks report "cash and due from banks", a few report plain "Cash". Without these their EV and cash filters were blank. */
+export const CASH_ALT = ['CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents', 'CashAndDueFromBanks', 'Cash'];
 // zzz948 — more figures for the owner's full set of screens
 // net income: the first one filed, in this order (Broadcom / Caterpillar file only the second or third)
 export const NI = ['NetIncomeLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic', 'ProfitLoss'];
@@ -56,7 +59,7 @@ export const FRAME_PLAN: ReadonlyArray<[string, 'us-gaap' | 'dei', string, 'q' |
   ...REV.map((c) => fq(c)), ...COGS.map((c) => fq(c)), fq('GrossProfit'), fq('OperatingIncomeLoss'), ...DDA.map((c) => fq(c)),
   ...EPS.map((c) => fq(c, 'USD-per-shares')), ...NI.map((c) => fq(c)), ...PRETAX.map((c) => fq(c)),
   fa('WeightedAverageNumberOfDilutedSharesOutstanding', 'shares'), ...CFO.map((c) => fa(c)), ...CAPEX.map((c) => fa(c)),
-  ...[...EQ, ...DEBT_TOTAL, ...DEBT_NONCUR, ...DEBT_CUR, ...STB, ...DEBT_CL, ...DEBT_CL_CUR, ...OPLEASE, ...OPLEASE_PARTS, ...FINLEASE, ...CASH, ...CASH_STI, ...STI, ...ASSETS, ...LIAB, ...ASSETS_CUR, ...LIAB_CUR].map((c) => fi(c)),
+  ...[...EQ, ...DEBT_TOTAL, ...DEBT_NONCUR, ...DEBT_CUR, ...STB, ...DEBT_CL, ...DEBT_CL_CUR, ...OPLEASE, ...OPLEASE_PARTS, ...FINLEASE, ...CASH, ...CASH_ALT, ...CASH_STI, ...STI, ...ASSETS, ...LIAB, ...ASSETS_CUR, ...LIAB_CUR].map((c) => fi(c)),
   ...SHARES_OUT.map((c) => fi(c, 'shares')),
 ];
 
@@ -200,9 +203,14 @@ function debtAt(fd: FrameData, cik: number, I: string): { v: number; tagged: boo
   return { v: borrow + (st ?? 0) + (op ?? 0), tagged };
 }
 /** Cash and short-term investments at one date (the combined tag, else cash + short-term investments). */
+/** First filed of the fallback cash lines, in order (not the largest: restricted cash is only a stand-in). */
+function altCash(fd: FrameData, cik: number, I: string): number | null {
+  for (const c of CASH_ALT) { const v = fd[c]?.[I]?.[cik]?.v; if (fin(v)) return v; }
+  return null;
+}
 function cashAt(fd: FrameData, cik: number, I: string): number | null {
   const both = valueAt(fd, CASH_STI, cik, I);
-  const c = valueAt(fd, CASH, cik, I), s = valueAt(fd, STI, cik, I);
+  const c = valueAt(fd, CASH, cik, I) ?? altCash(fd, cik, I), s = valueAt(fd, STI, cik, I);
   const sum = c != null ? c + (s ?? 0) : null;
   if (both != null && sum != null) return Math.max(both, sum);
   return both ?? sum;
@@ -326,7 +334,7 @@ export function usFigures(fd: FrameData, cik: number, periods: { quarters: strin
     if (lab) { IA = `${lab}I`; IAprev = instantShift(IA, -4); }
   }
   // balance sheet: the newest instant with equity filed
-  const I = instants.find((p) => valueAt(fd, EQ, cik, p) != null) || instants.find((p) => valueAt(fd, CASH, cik, p) != null) || null;
+  const I = instants.find((p) => valueAt(fd, EQ, cik, p) != null) || instants.find((p) => valueAt(fd, CASH, cik, p) != null || altCash(fd, cik, p) != null) || null;
   const pct = (x: number, y: number) => r1((x / y) * 100);
   if (I) {
     const eq = valueAt(fd, EQ, cik, I);

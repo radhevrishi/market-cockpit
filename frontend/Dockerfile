@@ -13,6 +13,11 @@ COPY frontend/ ./
 COPY .github/ /app/.github/
 COPY workers/ /app/workers/
 
+# zzz955 — Railway passes its build variables to a declared ARG: keep the git commit so the running app can say which
+# commit it is (shown by /api/v1/system-status → build). Empty when built elsewhere.
+ARG RAILWAY_GIT_COMMIT_SHA=""
+ENV MC_BUILD_COMMIT=$RAILWAY_GIT_COMMIT_SHA
+
 # Build Next.js for production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_OPTIONS=--max-old-space-size=4096
