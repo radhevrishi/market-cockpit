@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-10-08T11:25:58Z",
+  "lastSync": "2026-10-08T18:53:14Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -10,12 +10,12 @@
     },
     {
       "name": "capex.csv",
-      "size": 9060,
+      "size": 9061,
       "displayName": "CAPEX"
     },
     {
       "name": "debt-reduction.csv",
-      "size": 10097,
+      "size": 10098,
       "displayName": "Debt Reduction"
     },
     {
@@ -25,17 +25,17 @@
     },
     {
       "name": "future-leaders.csv",
-      "size": 4052,
+      "size": 4053,
       "displayName": "Future Leaders"
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 1982,
+      "size": 2799,
       "displayName": "Great Results and Pullback"
     },
     {
       "name": "ipobases.csv",
-      "size": 5667,
+      "size": 5263,
       "displayName": "IPOBASES"
     },
     {
@@ -45,7 +45,7 @@
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 10140,
+      "size": 7131,
       "displayName": "Monthly Volume Pockets"
     },
     {
@@ -60,17 +60,17 @@
     },
     {
       "name": "pead-master-screener-rishi-framework.csv",
-      "size": 4294,
+      "size": 4293,
       "displayName": "PEAD MASTER SCREENER - Rishi Framework"
     },
     {
       "name": "rajeev-thakkar-ppfas-screener.csv",
-      "size": 4490,
+      "size": 4489,
       "displayName": "Rajeev Thakkar PPFAS Screener"
     },
     {
       "name": "stocks-like-bajaj-consumer.csv",
-      "size": 2817,
+      "size": 2818,
       "displayName": "Stocks like Bajaj Consumer"
     },
     {
@@ -85,17 +85,17 @@
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63313,
+      "size": 63316,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65565,
+      "size": 65572,
       "displayName": "Working watchlist"
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 4721,
+      "size": 3868,
       "displayName": "Weekly Volume Pockets"
     }
   ]
