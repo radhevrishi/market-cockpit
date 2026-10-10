@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-10-09T18:23:12Z",
+  "lastSync": "2026-10-10T10:40:04Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -10,7 +10,7 @@
     },
     {
       "name": "capex.csv",
-      "size": 8658,
+      "size": 8657,
       "displayName": "CAPEX"
     },
     {
@@ -20,7 +20,7 @@
     },
     {
       "name": "fii.csv",
-      "size": 3823,
+      "size": 3370,
       "displayName": "FII"
     },
     {
@@ -30,7 +30,7 @@
     },
     {
       "name": "great-results-and-pullback.csv",
-      "size": 2812,
+      "size": 3232,
       "displayName": "Great Results and Pullback"
     },
     {
@@ -40,12 +40,12 @@
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 4467,
+      "size": 4466,
       "displayName": "Lowequitycapital"
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 6385,
+      "size": 6860,
       "displayName": "Monthly Volume Pockets"
     },
     {
@@ -65,7 +65,7 @@
     },
     {
       "name": "rajeev-thakkar-ppfas-screener.csv",
-      "size": 4490,
+      "size": 4488,
       "displayName": "Rajeev Thakkar PPFAS Screener"
     },
     {
@@ -75,27 +75,27 @@
     },
     {
       "name": "turnarounds.csv",
-      "size": 19229,
+      "size": 19227,
       "displayName": "Turnarounds"
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 26437,
+      "size": 26436,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63322,
+      "size": 63317,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65572,
+      "size": 65573,
       "displayName": "Working watchlist"
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 3861,
+      "size": 4732,
       "displayName": "Weekly Volume Pockets"
     }
   ]
