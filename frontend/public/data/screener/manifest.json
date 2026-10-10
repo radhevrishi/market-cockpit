@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-10-10T10:40:04Z",
+  "lastSync": "2026-10-10T17:22:22Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -40,7 +40,7 @@
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 4466,
+      "size": 4891,
       "displayName": "Lowequitycapital"
     },
     {
@@ -90,7 +90,7 @@
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65573,
+      "size": 65568,
       "displayName": "Working watchlist"
     },
     {
