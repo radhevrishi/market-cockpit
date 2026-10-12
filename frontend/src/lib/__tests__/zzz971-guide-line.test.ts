@@ -60,7 +60,7 @@ test('zzz971 tier: mixed / cautious from outside move STRONG to MIXED; raised st
   assert.ok(kmx.caveat_tags.some((t: string) => t.startsWith('guidance mixed')));
 
   const peng: any = { ticker: 'PENG', tier: 'STRONG', caveat_tags: [], guidance: 'RAISED' };
-  assert.equal(applyGuideCheck(peng, { checked_at: '', lowered: false, direction: 'raised', scope: 'company', what: 'raised FY27 outlook', quote: '', source: 'filing', url: null, usd: 0 }), false);
+  assert.equal(applyGuideCheck(peng, { checked_at: '', lowered: false, direction: 'raised', scope: 'company', what: 'raised FY27 outlook', quote: 'The Company also raised its outlook for its fiscal 2027 full year.', source: 'filing', url: null, usd: 0 }), false);
   assert.equal(peng.tier, 'STRONG');
   assert.equal(peng.guide_line.direction, 'raised');
 
@@ -112,4 +112,10 @@ test('zzz971c "inflation expectations have increased" is not a raise; the plain 
   assert.ok(up2('Our full-year expectations were raised to $3.10.'));
   const peng = guideLine({ guidance: 'RAISED', guidance_snippets: ['Penguin Solutions Announces Fourth-Quarter Results Record Results Across Key Metrics Raises Fiscal 2027 Outlook', 'The Company also raised its outlook for its fiscal 2027 full year as compared to the preliminary view provided last quarter.'] });
   assert.match(peng.text, /^Guidance raised — The Company also raised its outlook/);
+});
+
+test('zzz976 a stored free "raised" made by older rules is re-read and dropped', () => {
+  const l = guideLine({ guidance: 'RAISED', guidance_snippets: ['The company\'s outlook for fiscal 2027 is for consolidated sales to increase.'],
+    guide_check: { direction: 'raised', source: 'filing', quote: 'Inflation expectations have increased since we held our last earnings call on July 22.', what: 'Inflation expectations have increased since we held our last earnings call on July 22.' } });
+  assert.doesNotMatch(l.text, /Inflation/);
 });

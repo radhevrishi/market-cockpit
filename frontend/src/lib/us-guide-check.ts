@@ -36,7 +36,7 @@ import { guideLine } from './us-guide-line';
 // zzz971 — v2 records the DIRECTION (raised / lowered / kept / no guidance), not only "lowered". v1 results (lowered yes/no,
 // some of them paid AI answers) are still read: a v1 "lowered" stands as is; a v1 "not lowered" is re-checked for free only.
 // v3 (zzz971b): v2's first run had loose matches (negations, "capital raised … forecast") — re-read, free only
-export const GUIDE_CHECK_V = 'v3';
+export const GUIDE_CHECK_V = 'v4';   // v4 (zzz976): v3 held raises read by the pre-zzz971d rules ('inflation expectations have increased')
 export const guideCheckKey = (ticker: string, filingDate: string) => `us-guide-check:${GUIDE_CHECK_V}:${String(ticker).toUpperCase()}:${filingDate}`;
 export const guideCheckKeyV1 = (ticker: string, filingDate: string) => `us-guide-check:v1:${String(ticker).toUpperCase()}:${filingDate}`;
 const TTL_S = 200 * 24 * 3600;

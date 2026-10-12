@@ -109,7 +109,9 @@ export function guideLine(r: any): GuideLine {
   const changes: GuideChangeLike[] = Array.isArray(r?.guide_change) ? r.guide_change.filter(Boolean) : [];
   const label = String(r?.guidance || '').toUpperCase();
   const gc: GuideCheckLike | null = r?.guide_check && typeof r.guide_check === 'object' ? r.guide_check : null;
-  const gcDir = gc ? String(gc.direction || (gc.lowered ? 'lowered' : '')) : '';
+  let gcDir = gc ? String(gc.direction || (gc.lowered ? 'lowered' : '')) : '';
+  // a stored free-source "raised" is re-read with today's rules (records made before a detector fix stay honest)
+  if (gc && gcDir === 'raised' && gc.source !== 'ai-web' && !guideRaisedInText(String(gc.quote || gc.what || ''))) gcDir = '';
   const gcSrc = gc?.source ? (SOURCE_WORD[String(gc.source)] || String(gc.source)) : '';
   const gcUrl = gc?.url || null;
   const releaseUrl = r?.guidance_url || r?.release_url || null;
