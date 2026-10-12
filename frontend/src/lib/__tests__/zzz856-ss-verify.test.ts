@@ -369,8 +369,8 @@ describe('8 run', () => {
     const claims = [mk('w1', 'WATCHLIST'), mk('t2', 'TIER_2'), mk('t1', 'TIER_1'), mk('w2', 'WATCHLIST')];
     await kv.set(QUEUE_KEY, mergeQueue({ items: [], updatedAt: null }, claims, NOW).queue);
     const seen: string[] = [];
-    const d = deps(kv, { delayMs: 300, seen });
-    const run = await runVerification(d, { limit: 10, budgetMs: 1_000, concurrency: 1 });
+    const d = deps(kv, { delayMs: 400, seen });
+    const run = await runVerification(d, { limit: 10, budgetMs: 2_000, concurrency: 1 });
     assert.equal(run.stoppedBy, 'time');
     assert.ok(seen.length >= 1 && seen.length < 4);
     assert.match(seen[0], /CO t1 INC/, 'Tier 1 first');
