@@ -463,10 +463,12 @@ export function InGuideOneLiner({ stock }: { stock: ParsedEarning }) {
   const [head, ...rest] = gl.text.split(sep);
   const title = [gl.title, gl.source ? `Source: ${gl.source}` : '', moved ? `Moved from ${moved} to MIXED because of this.` : ''].filter(Boolean).join('\n');
   return (
+    // zzz980 — sized for the India card (its text is 13px; the 11px line read as a footnote): a strip with a coloured edge
     <div title={title} data-guide={gl.direction}
-      style={{ fontSize: 11, lineHeight: 1.35, color: 'var(--mc-text-2)', margin: '-3px 0 8px', display: 'flex', gap: 5, alignItems: 'baseline', minWidth: 0 }}>
-      <span aria-hidden style={{ flexShrink: 0 }}>{IN_GUIDE_GLYPH[gl.direction] || '…'}</span>
-      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+      style={{ fontSize: 12.5, lineHeight: 1.4, color: 'var(--mc-text-1)', margin: '2px 0 10px', display: 'flex', gap: 7, alignItems: 'baseline', minWidth: 0,
+        padding: '5px 9px', borderRadius: 6, background: 'var(--mc-bg-1)', borderLeft: `3px solid ${color}` }}>
+      <span aria-hidden style={{ flexShrink: 0, fontSize: 13 }}>{gl.direction === 'unknown' ? '◌' : (IN_GUIDE_GLYPH[gl.direction] || '◌')}</span>
+      <span style={{ minWidth: 0, flex: 1, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
         <b style={{ color }}>{head}</b>
         {rest.length > 0 && <span>{sep === ': ' ? ': ' : ' — '}{rest.join(sep)}</span>}
         {moved && <span style={{ color: 'var(--mc-text-4)' }}> · moved from {moved} to MIXED</span>}
