@@ -146,9 +146,11 @@ async function refreshFunds(universe: string[], budgetMs: number, notes: string[
   const rows = await dbQuery<{ ticker: string; payload: FundStore; age: number }>(`SELECT ticker, payload, EXTRACT(EPOCH FROM (now() - updated_at)) / 86400 AS age FROM screener_store WHERE market = 'IN' AND kind = 'fund'`).catch(() => []);
   for (const r of rows) { store.set(r.ticker, r.payload); age.set(r.ticker, Number(r.age)); }
   // never read first; then companies stored the old way (before zzz948); then a failed read after 2 days; then older than 6 days
-  const rank = (t: string) => (!age.has(t) ? 0 : !store.get(t)?.raw && !store.get(t)?.err ? 1 : 2);
+  // zzz989c — pages stored before zzz984 kept no 'cash from investing' line (FCF margin / Rule of 40 empty): read them again soon
+  const lacksCfi = (t: string) => { const cf = store.get(t)?.raw?.T?.cf; return !!cf && !Object.keys(cf.rows).some((k) => /cash from investing/i.test(k)); };
+  const rank = (t: string) => (!age.has(t) ? 0 : !store.get(t)?.raw && !store.get(t)?.err ? 1 : lacksCfi(t) && (age.get(t) as number) > 0.25 ? 1.5 : 2);
   const due = universe
-    .filter((t) => !age.has(t) || (!store.get(t)?.raw && !store.get(t)?.err) || (store.get(t)?.err ? (age.get(t) as number) > 2 : (age.get(t) as number) > 6))
+    .filter((t) => !age.has(t) || (!store.get(t)?.raw && !store.get(t)?.err) || (lacksCfi(t) && (age.get(t) as number) > 0.25) || (store.get(t)?.err ? (age.get(t) as number) > 2 : (age.get(t) as number) > 6))
     .sort((a, b) => rank(a) - rank(b) || (age.get(b) ?? 0) - (age.get(a) ?? 0));
   const t0 = Date.now();
   const today = iso(new Date());
