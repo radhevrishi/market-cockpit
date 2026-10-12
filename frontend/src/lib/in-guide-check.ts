@@ -168,7 +168,9 @@ export async function overlayInGuideLines(payload: any): Promise<any> {
       const f = dayOf(filingOf(r));
       const announced = (intimByTicker.get(String(r.ticker || '').toUpperCase()) || []).filter((x) => { const a = dayOf(String(x.filedAt || '')); return Number.isFinite(a) && Number.isFinite(f) && a >= f - 3 * DAY && a <= f + 60 * DAY; });
       const k = aiKeyOf(r);
-      const pending = (pendingFor.get(rowKey(r)) || []).filter((x: any) => !_extract.get(x.docId)?.v).map((x: any) => ({ kind: x.kind, filedAt: x.filedAt, url: x.url }));
+      // a second copy of a document already read (the exchange often files the same release / deck twice) is not "waiting"
+      const readSig = new Set((pendingFor.get(rowKey(r)) || []).filter((x: any) => _extract.get(x.docId)?.v).map((x: any) => `${x.kind}|${String(x.filedAt || '').slice(0, 10)}`));
+      const pending = (pendingFor.get(rowKey(r)) || []).filter((x: any) => !_extract.get(x.docId)?.v && !readSig.has(`${x.kind}|${String(x.filedAt || '').slice(0, 10)}`)).map((x: any) => ({ kind: x.kind, filedAt: x.filedAt, url: x.url }));
       return { extracts, ai: k ? _ai.get(k)?.v ?? null : null, standing, pending, announced };
     };
     const out = applyInGuideLines(payload, storedFor);
