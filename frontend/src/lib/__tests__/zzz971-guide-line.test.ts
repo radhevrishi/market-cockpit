@@ -71,3 +71,38 @@ test('zzz971 tier: mixed / cautious from outside move STRONG to MIXED; raised st
 
   assert.equal(withDirection({ checked_at: '', lowered: false, scope: 'none', what: '', quote: '', source: 'ai-web', url: null, usd: 0 })!.direction, 'not-lowered');
 });
+
+import { guideLoweredInText as lo2, guideRaisedInText as up2, guideDirectionInCoverage as cov2, focusQuote } from '../us-guide-text';
+test('zzz971b the first live run’s wrong reads stay fixed', () => {
+  // CarMax call: a negation is not a cut
+  assert.equal(lo2('And we are going to focus on driving efficiencies in COGS and logistics in order to actually not have to go with margins lower than our initial guidance.'), null);
+  // Byrna call: "expectations and inventory beginning to trend lower" is not a cut
+  assert.equal(lo2('We are also seeing progress, with gross margins outperforming our internal expectations and inventory beginning to trend lower.'), null);
+  // Atossa: "capital raised and … forecast" is not a raise
+  assert.equal(up2('CFO Patel stated, "Based on the capital raised and management’s operating cash flow forecast, management concluded that substantial doubt was alleviated."'), null);
+  // PepsiCo: "slashes guidance" is a cut, quoted without the page menu
+  const pep = cov2('PepsiCo CFO touts cost discipline, slashes guidance | CFO Dive Skip to main content CONTINUE TO SITE Informa TechTarget | Banking Dive', 'PepsiCo, Inc.');
+  assert.equal(pep?.direction, 'lowered');
+  assert.equal(pep?.quote, 'PepsiCo CFO touts cost discipline, slashes guidance');
+  // CarMax write-up: CAF income guided below FY26 — quoted without the section heading in front
+  const kmx = cov2('Email [email protected] RISKS Daniels warned that CarMax Auto Finance income for fiscal 2027 is anticipated to be &quot;slightly lower than FY 26,&quot; as the company scales Tier 2.', 'CarMax, Inc.');
+  assert.equal(kmx?.direction, 'cautious');
+  assert.match(kmx!.quote, /^Daniels warned that CarMax Auto Finance income/);
+  // still caught
+  assert.ok(lo2('The Company lowered its fiscal 2027 GE program sales outlook to $32 million to $35 million.'));
+  assert.ok(lo2('Full-year guidance was cut to $1.2 billion from $1.3 billion.'));
+  assert.ok(up2('The Company also raised its outlook for its fiscal 2027 full year as compared to the preliminary view provided last quarter.'));
+  assert.equal(focusQuote('short sentence here.', 0, 5), 'short sentence here.');
+});
+
+test('zzz971b the card line picks the outlook sentence, not the headline block; wording vs arithmetic is said honestly', () => {
+  const peng = guideLine({ guidance: 'RAISED', guidance_snippets: ['Press Release FOR IMMEDIATE RELEASE Penguin Solutions Announces Fourth-Quarter and Full-Year Fiscal 2026 Results Record Results', 'The Company also raised its outlook for its fiscal 2027 full year as compared to the preliminary view provided last quarter.'] });
+  assert.equal(peng.direction, 'raised');
+  assert.match(peng.text, /^Guidance raised — The Company also raised its outlook/);
+  const ntwk = guideLine({ guidance: 'RAISED', guidance_snippets: ['Full-year revenue increased 12.5% to a record $74.4 million, exceeding guidance of $73 million.'] });
+  assert.equal(ntwk.direction, 'unknown');
+  const ctas = guideLine({ guidance: 'RAISED', guidance_figures: [fig({ metric: 'eps', low: 4.74, high: 4.86, unit: 'usd_share' })], guide_change: [{ metric: 'eps', basis: 'gaap', period_label: 'FY27', prev_low: 4.74, prev_high: 4.86, direction: 'reiterated' }],
+    guidance_snippets: ['Schneider concluded, As we look forward to fiscal 2027, we are raising our full fiscal year financial guidance.'] });
+  assert.equal(ctas.direction, 'maintained');
+  assert.match(ctas.text, /calls it a raise/);
+});

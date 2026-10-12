@@ -25,6 +25,22 @@
 
 import { ownGuideMove, ownGuideVerdict, type GuideFigLike, type GuideChangeLike } from './us-guide-verdict';
 import { fmtGuideRange, GUIDE_METRIC_LABEL, type GuideMetric } from './us-guidance-figures';
+import { guideLoweredInText, guideRaisedInText, guideKeptInText, focusQuote } from './us-guide-text';
+
+/** The clearest sentence of the release's guidance quotes for one direction — not the headline block in front of it. */
+function snippetFor(snips: string[], kind: 'raised' | 'lowered' | 'maintained' | 'any'): string {
+  // one quote at a time: a headline block with no full stop would otherwise run into the next quote
+  for (const sn of snips) {
+    const hit = kind === 'raised' ? guideRaisedInText(sn) : kind === 'lowered' ? guideLoweredInText(sn) : kind === 'maintained' ? guideKeptInText(sn) : null;
+    if (hit) return hit.quote;
+  }
+  if (kind !== 'any') return '';
+  for (const sn of snips) {
+    const m = /\b(?:outlook|guidance|expects?|forecast)\b/i.exec(sn);
+    if (m) return focusQuote(sn, m.index, m[0].length, 160);
+  }
+  return '';
+}
 
 export type GuideDirection = 'raised' | 'lowered' | 'mixed' | 'cautious' | 'maintained' | 'withdrawn' | 'none' | 'not-lowered' | 'unknown';
 
@@ -93,7 +109,8 @@ export function guideLine(r: any): GuideLine {
   const releaseUrl = r?.guidance_url || r?.release_url || null;
   const mv = moves(figs, changes);
   const gv = ownGuideVerdict(figs, changes, label || null);
-  const firstSnippet = Array.isArray(r?.guidance_snippets) && r.guidance_snippets[0] ? String(r.guidance_snippets[0]) : '';
+  const snips: string[] = Array.isArray(r?.guidance_snippets) ? r.guidance_snippets.filter((x: any) => typeof x === 'string') : [];
+  const firstSnippet = snippetFor(snips, 'any');
 
   // 1. a cut found outside the release (or inside its other exhibits) — always wins
   if (gc && (gcDir === 'lowered' || gcDir === 'withdrawn' || gc.lowered)) {
@@ -118,7 +135,8 @@ export function guideLine(r: any): GuideLine {
   }
   // 2. the release's own figures against the previous release
   if (label === 'WITHDRAWN') {
-    return { direction: 'withdrawn', text: `Guidance withdrawn${firstSnippet ? ` — ${clip(firstSnippet, 130)}` : ''}`, title: firstSnippet, source: 'the release', url: releaseUrl, lowered: true };
+    const said = snippetFor(snips, 'lowered') || firstSnippet;
+    return { direction: 'withdrawn', text: `Guidance withdrawn${said ? ` — ${clip(said, 130)}` : ''}`, title: said, source: 'the release', url: releaseUrl, lowered: true };
   }
   if (gv?.verdict === 'MIXED') {
     const t = `Guidance mixed — raised ${clip(mv.up.join('; '), 70)}; cut ${clip(mv.down.join('; '), 70)}`;
@@ -129,19 +147,30 @@ export function guideLine(r: any): GuideLine {
     };
   }
   if (gv?.verdict === 'LOWERED') {
-    const what = mv.down.length ? clip(mv.down.join('; '), 140) : clip(firstSnippet, 140);
-    return { direction: 'lowered', text: `Guidance lowered${what ? ` — ${what}` : ''}`, title: firstSnippet || mv.down.join('\n'), source: 'the release', url: releaseUrl, lowered: true };
+    const said = snippetFor(snips, 'lowered');
+    const what = mv.down.length ? clip(mv.down.join('; '), 140) : clip(said || firstSnippet, 140);
+    return { direction: 'lowered', text: `Guidance lowered${what ? ` — ${what}` : ''}`, title: said || firstSnippet || mv.down.join('\n'), source: 'the release', url: releaseUrl, lowered: true };
   }
   if (gv?.verdict === 'RAISED') {
-    const what = mv.up.length ? clip(mv.up.join('; '), 140) : clip(firstSnippet, 140);
-    return { direction: 'raised', text: `Guidance raised${what ? ` — ${what}` : ''}`, title: firstSnippet || mv.up.join('\n'), source: 'the release', url: releaseUrl, lowered: false };
+    const said = snippetFor(snips, 'raised');
+    // the release's wording alone (no ranges to compare) must actually say it raised — "revenue exceeded guidance" is not a raise
+    if (!gv.computed && !said && !(gc && gcDir === 'raised')) {
+      return { direction: 'unknown', text: 'Guidance direction unclear — the release is read as raised, but no sentence says so', title: firstSnippet, source: 'the release', url: releaseUrl, lowered: false };
+    }
+    const what = mv.up.length ? clip(mv.up.join('; '), 140) : clip(said || (gc?.what ?? ''), 140);
+    return { direction: 'raised', text: `Guidance raised${what ? ` — ${what}` : ''}`, title: said || mv.up.join('\n'), source: 'the release', url: releaseUrl, lowered: false };
   }
   // 3. the release said nothing that settles it — what the outside check found
   if (gc && gcDir === 'raised') {
     return { direction: 'raised', text: `Guidance raised — ${clip(gc.what || gc.quote || '', 140)}`, title: `${gc.quote ? `“${clip(gc.quote, 400)}”\n\n` : ''}Source: ${gcSrc}${gcUrl ? ` — ${gcUrl}` : ''}`, source: gcSrc, url: gcUrl, lowered: false };
   }
   if (gv?.verdict === 'REITERATED') {
-    return { direction: 'maintained', text: `Guidance kept${firstSnippet ? ` — ${clip(firstSnippet, 130)}` : ' — same ranges as last time'}`, title: firstSnippet, source: 'the release', url: releaseUrl, lowered: false };
+    const saysRaise = snippetFor(snips, 'raised');
+    if (gv.computed && saysRaise) {
+      return { direction: 'maintained', text: 'Guidance kept — ranges about the same as last time (the release calls it a raise)', title: `${saysRaise}\n\nLine by line, the new ranges are within rounding of the previous release's.`, source: 'the release', url: releaseUrl, lowered: false };
+    }
+    const said = snippetFor(snips, 'maintained');
+    return { direction: 'maintained', text: `Guidance kept — ${said ? clip(said, 130) : 'same ranges as last time'}`, title: said || firstSnippet, source: 'the release', url: releaseUrl, lowered: false };
   }
   if (gc && gcDir === 'maintained') {
     return { direction: 'maintained', text: `Guidance kept — ${clip(gc.what || gc.quote || 'outlook reaffirmed', 140)}`, title: `${gc.quote ? `“${clip(gc.quote, 400)}”\n\n` : ''}Source: ${gcSrc}`, source: gcSrc, url: gcUrl, lowered: false };

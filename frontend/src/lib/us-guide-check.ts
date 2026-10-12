@@ -35,7 +35,8 @@ import { guideLine } from './us-guide-line';
 
 // zzz971 — v2 records the DIRECTION (raised / lowered / kept / no guidance), not only "lowered". v1 results (lowered yes/no,
 // some of them paid AI answers) are still read: a v1 "lowered" stands as is; a v1 "not lowered" is re-checked for free only.
-export const GUIDE_CHECK_V = 'v2';
+// v3 (zzz971b): v2's first run had loose matches (negations, "capital raised … forecast") — re-read, free only
+export const GUIDE_CHECK_V = 'v3';
 export const guideCheckKey = (ticker: string, filingDate: string) => `us-guide-check:${GUIDE_CHECK_V}:${String(ticker).toUpperCase()}:${filingDate}`;
 export const guideCheckKeyV1 = (ticker: string, filingDate: string) => `us-guide-check:v1:${String(ticker).toUpperCase()}:${filingDate}`;
 const TTL_S = 200 * 24 * 3600;
@@ -67,88 +68,9 @@ export function withDirection(g: GuideCheck | null | undefined): GuideCheck | nu
   return { ...g, direction: g.lowered ? 'lowered' : 'not-lowered' };
 }
 
-// ── 1. the filing's own words ─────────────────────────────────────────────────
-const OUTLOOK = String.raw`(?:outlook|guidance|forecast|expectations?|full[- ]year\s+(?:revenue|sales|eps|earnings)\s+range)`;
-const DOWN_VERB = String.raw`(?:lower(?:ed|s|ing)?|reduc(?:e|ed|es|ing)|cut(?:s|ting)?|trim(?:med|s|ming)?|revis(?:ed|es|ing)\s+(?:down(?:ward)?|lower)|narrow(?:ed|s)?\s+(?:to\s+)?the\s+low(?:er)?\s+end|withdr(?:ew|awn|aws))`;
-const RE_VERB_THEN_OUTLOOK = new RegExp(String.raw`\b${DOWN_VERB}\s+(?:its|our|the|their)?\s*(?:[\w$.,%–\-]+\s+){0,6}?${OUTLOOK}\b`, 'i');
-const RE_OUTLOOK_THEN_VERB = new RegExp(String.raw`\b${OUTLOOK}\s+(?:[\w$.,%–\-]+\s+){0,6}?(?:was|were|is|are|has\s+been|have\s+been|being)?\s*${DOWN_VERB}\b`, 'i');
-// "lower costs", "reduced its debt", "cut expenses" are not an outlook cut, even near the word "guidance"
-const NOT_A_CUT = /\b(?:costs?|expenses?|debt|leverage|interest|tax(?:es)?|net\s+loss|losses|headcount|share\s+count|risk|emissions|inventory\s+levels)\b/i;
-const RAISED = /\b(?:rais(?:ed|es|ing)|increas(?:ed|es|ing)|lift(?:ed|s)|boost(?:ed|s))\s+(?:its|our|the)?\s*(?:[\w$.,%–\-]+\s+){0,4}?(?:outlook|guidance|forecast)/i;
-
-/** A sentence in the filing that says management lowered an outlook. Null when there is none. */
-export function guideLoweredInText(text: string): { quote: string; scope: 'company' | 'segment' } | null {
-  if (!text) return null;
-  const sentences = text.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+(?=[A-Z“"(])/);
-  for (const sn of sentences) {
-    if (sn.length > 500 || sn.length < 20) continue;
-    if (/\bforward[- ]looking\s+statements?\b|\bsafe\s+harbor\b|\bcould\s+(?:cause|differ)|\bmay\s+(?:lower|reduce|cut)|\bif\s+we\b/i.test(sn)) continue;
-    const m = RE_VERB_THEN_OUTLOOK.exec(sn) || RE_OUTLOOK_THEN_VERB.exec(sn);
-    if (!m) continue;
-    if (NOT_A_CUT.test(m[0])) continue;
-    if (RAISED.test(sn) && !/\bbut\b|\bwhile\b|\bhowever\b|\bpartially\s+offset\b/i.test(sn)) continue;
-    const segment = /\b(?:segment|division|program(?:me)?s?|product\s+line|business\s+unit|customer|platform)\b/i.test(sn);
-    return { quote: sn.trim().slice(0, 400), scope: segment ? 'segment' : 'company' };
-  }
-  return null;
-}
-
-const UP_VERB = String.raw`(?:rais(?:ed|es|ing)|increas(?:ed|es|ing)|lift(?:ed|s|ing)?|boost(?:ed|s|ing)?|upgrad(?:ed|es|ing)|revis(?:ed|es|ing)\s+(?:up(?:ward)?|higher)|hik(?:ed|es))`;
-const KEEP_VERB = String.raw`(?:reaffirm(?:ed|s|ing)?|reiterat(?:ed|es|ing)|maintain(?:ed|s|ing)?|confirm(?:ed|s|ing)?|kept|keeps|unchanged)`;
-const RE_UP = [
-  new RegExp(String.raw`\b${UP_VERB}\s+(?:its|our|the|their)?\s*(?:[\w$.,%–\-]+\s+){0,6}?${OUTLOOK}\b`, 'i'),
-  new RegExp(String.raw`\b${OUTLOOK}\s+(?:[\w$.,%–\-]+\s+){0,6}?(?:was|were|is|are|has\s+been|have\s+been|being)?\s*${UP_VERB}\b`, 'i'),
-];
-const RE_KEEP = [
-  new RegExp(String.raw`\b${KEEP_VERB}\s+(?:its|our|the|their)?\s*(?:[\w$.,%–\-]+\s+){0,6}?${OUTLOOK}\b`, 'i'),
-  new RegExp(String.raw`\b${OUTLOOK}\s+(?:[\w$.,%–\-]+\s+){0,4}?(?:was|were|is|are|remains?)?\s*${KEEP_VERB}\b`, 'i'),
-];
-const NOT_A_RAISE = /\b(?:prices?|pricing|dividend|buyback|repurchase|capital|debt|stake|investment|wages?|rates?|costs?|expenses?|tax(?:es)?|headcount|shares?\s+outstanding)\b/i;
-
-function scanSentences(text: string, res: RegExp[], skip: RegExp): string | null {
-  if (!text) return null;
-  const sentences = text.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+(?=[A-Z“"(])/);
-  for (const sn of sentences) {
-    if (sn.length > 500 || sn.length < 20) continue;
-    if (/\bforward[- ]looking\s+statements?\b|\bsafe\s+harbor\b|\bcould\s+(?:cause|differ)|\bmay\s+(?:raise|increase)|\bif\s+we\b|\bwould\b/i.test(sn)) continue;
-    for (const re of res) {
-      const m = re.exec(sn);
-      if (m && !skip.test(m[0])) return sn.trim().slice(0, 400);
-    }
-  }
-  return null;
-}
-/** A sentence saying management RAISED an outlook. Only call after the lowered check — a cut anywhere wins. */
-export function guideRaisedInText(text: string): { quote: string } | null {
-  const q = scanSentences(text, RE_UP, NOT_A_RAISE);
-  return q ? { quote: q } : null;
-}
-/** A sentence saying management kept / reaffirmed its outlook. */
-export function guideKeptInText(text: string): { quote: string } | null {
-  const q = scanSentences(text, RE_KEEP, /\b(?:dividend|rating|listing|compliance)\b/i);
-  return q ? { quote: q } : null;
-}
-
-// zzz971 — A PROFIT LINE GUIDED BELOW LAST YEAR. Not a cut versus management's own earlier range, but the owner counts it:
-// "CAF income expected to be slightly below FY26", "GPU expected to decline year over year in Q3 and Q4".
-const PROFIT_LINE = String.raw`(?:income|profit|profits|margins?|eps|earnings(?:\s+per\s+share)?|gpu|gross\s+profit(?:\s+per\s+unit)?|ebitda|operating\s+income)`;
-const FUTURE = String.raw`(?:expect(?:s|ed|ing)?|anticipat(?:e|es|ed|ing)|guid(?:e|es|ed|ing|ance)|outlook|forecast(?:s|ed|ing)?|project(?:s|ed|ing)?|will\s+be|to\s+remain)`;
-const DOWN_WORD = String.raw`(?:below|lower\s+than|less\s+than|declin(?:e|es|ed|ing)|down|decreas(?:e|es|ed|ing)|compress(?:ed|ion)?|contract(?:ion)?|pressure[ds]?)`;
-const VS_LAST = String.raw`(?:year[- ]over[- ]year|y\/y|yoy|(?:the\s+)?prior\s+year|last\s+year|a\s+year\s+ago|fiscal\s+(?:year\s+)?(?:20)?\d{2}|fy\s?'?\d{2})`;
-const RE_CAUTION = new RegExp(String.raw`\b${PROFIT_LINE}\b[^.]{0,80}?\b${FUTURE}\b[^.]{0,80}?\b${DOWN_WORD}\b[^.]{0,60}?\b${VS_LAST}|\b${FUTURE}\b[^.]{0,60}?\b${PROFIT_LINE}\b[^.]{0,60}?\b${DOWN_WORD}\b[^.]{0,60}?\b${VS_LAST}`, 'i');
-const NOT_A_CAUTION = /\b(?:net\s+loss|losses|loss\s+per|costs?|expenses?|tax\s+rate|interest\s+expense|share\s+count|decline\s+less\s+than|less\s+than\s+(?:previously|initially|earlier)|smaller\s+decline|better\s+than)\b/i;
-/** A sentence guiding a profit line below last year. */
-export function guideCautionInText(text: string): { quote: string } | null {
-  if (!text) return null;
-  for (const sn of text.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+(?=[A-Z“"(])/)) {
-    if (sn.length > 400 || sn.length < 25) continue;
-    if (/\bforward[- ]looking\s+statements?\b|\bsafe\s+harbor\b|\bcould\b|\bmay\b|\bif\b/i.test(sn)) continue;
-    const m = RE_CAUTION.exec(sn);
-    if (!m || NOT_A_CAUTION.test(m[0])) continue;
-    return { quote: sn.trim().slice(0, 400) };
-  }
-  return null;
-}
+// ── 1. the filing's own words — the detectors live in us-guide-text (pure, shared with the card) ──
+import { guideLoweredInText, guideRaisedInText, guideKeptInText, guideCautionInText, guideDirectionInCoverage } from './us-guide-text';
+export { guideLoweredInText, guideRaisedInText, guideKeptInText, guideCautionInText, guideLoweredInCoverage, guideDirectionInCoverage, focusQuote } from './us-guide-text';
 
 async function filingText(filingUrl: string | null | undefined): Promise<string> {
   if (!filingUrl) return '';
@@ -178,29 +100,6 @@ export function callCoverageLinks(rssXml: string, filingDate: string): Array<{ t
     out.push({ title, url, at: new Date(at).toISOString() });
   }
   return out.slice(0, 4);
-}
-function aboutCompany(text: string, company: string): string {
-  const word = (company || '').split(/[\s,.]+/).find((w) => w.length >= 4 && !/^(the|inc|corp|corporation|company|holdings|group|technologies|solutions)$/i.test(w)) || '';
-  const alts = ['the company', 'management', 'we', 'our', 'it', word.replace(/[^A-Za-z0-9]/g, '')].filter(Boolean);
-  const about = new RegExp(`\\b(${alts.join('|')})\\b`, 'i');
-  return text.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+(?=[A-Z“"(])/).filter((sn) => about.test(sn)).join(' ');
-}
-/** A lowered-outlook sentence in a call write-up that is about THIS company (its name, or "the company" / "management"). */
-export function guideLoweredInCoverage(text: string, company: string): { quote: string; scope: 'company' | 'segment' } | null {
-  return guideLoweredInText(aboutCompany(text, company));
-}
-/** zzz971 — the direction a call write-up states for THIS company: lowered wins over raised, raised over kept. */
-export function guideDirectionInCoverage(text: string, company: string): { direction: 'lowered' | 'mixed' | 'cautious' | 'raised' | 'maintained'; quote: string; scope: 'company' | 'segment' } | null {
-  const own = aboutCompany(text, company);
-  const lo = guideLoweredInText(own);
-  if (lo) return { direction: 'lowered', ...lo };
-  const up = guideRaisedInText(own);
-  const caution = guideCautionInText(own);
-  if (caution) return { direction: up ? 'mixed' : 'cautious', quote: up ? `${up.quote} … ${caution.quote}`.slice(0, 400) : caution.quote, scope: 'company' };
-  if (up) return { direction: 'raised', quote: up.quote, scope: 'company' };
-  const keep = guideKeptInText(own);
-  if (keep) return { direction: 'maintained', quote: keep.quote, scope: 'company' };
-  return null;
 }
 async function callCoverageCheck(row: any): Promise<GuideCheck | null> {
   let xml = '';
