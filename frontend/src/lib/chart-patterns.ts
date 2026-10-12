@@ -21,8 +21,22 @@
 //  4. Stage from the closes after the pattern's key point: no close beyond the pivot → 'forming'; first close beyond the
 //     pivot within the last 5 bars → 'breakout' (bearish: breakdown); broke out within the last 40 bars and now more than
 //     7.5% back through the pivot → 'failed'. A pattern that broke out longer ago and held is complete, not reported.
-//  5. Confidence = weighted share of soft rules passed (hard rules return nothing). < 0.35 dropped.
-//     Likelihood words: ≥ 0.75 'very likely', ≥ 0.55 'likely', else 'possible'.
+//  5. Confidence ("shape score") = weighted share of soft rules passed (hard rules return nothing). < 0.35 dropped.
+//     Likelihood words: ≥ 0.75 'very likely', ≥ 0.55 'likely', else 'possible'. A heuristic fit score, NOT a calibrated
+//     probability that the pattern is real or that a trade works.
+//
+// zzz990 (chart-pattern audit 2026-10-12) — data-quality and geometry rules:
+//  • Bars with a non-finite / non-positive close, an infinite open / high / low or an out-of-order time are rejected
+//    (analyzePatterns reports how many). Missing / zero / non-finite volume stays MISSING (NaN): a volume rule scores 0
+//    without enough valid observations and a usable baseline, so deleting volume can never raise a score; hits whose
+//    span has too little volume carry volumeOk = false ("volume not confirmed").
+//  • IPO base needs a listing date (firstTradeT) and a history that begins within a few days of it — the first bar of the
+//    supplied history is never taken as the listing. It is the FIRST base after listing only: once an earlier post-listing
+//    base broke out and the stock advanced > 20% past that pivot, a later consolidation is not an IPO base.
+//  • Sloping boundaries (flags, pennants, wedges, H&S necklines) are projected bar by bar for the stage, capped at the
+//    pattern's expiry (pennant / wedge apex, a flag's own length past its body); the displayed level and the distance to it
+//    use the same projection at the last bar. Horizontal pivots are unchanged.
+//  • Active structures (forming / breaking out) rank before failed ones.
 
 export interface PBar { t: number; o: number; h: number; l: number; c: number; v: number }
 export type PatternId = 'flat_base' | 'u_base' | 'cup' | 'cup_handle' | 'ascending_base' | 'vcp' | 'base_on_base' | 'ipo_base' | 'bull_flag' | 'bull_pennant' | 'ascending_triangle' | 'double_bottom' | 'triple_bottom' | 'falling_wedge' | 'high_tight_flag' | 'inverse_hs' | 'double_top' | 'triple_top' | 'head_shoulders' | 'descending_triangle' | 'bear_flag' | 'rising_wedge';
@@ -35,9 +49,9 @@ const M = (id: PatternId, label: string, bias: PatternBias, family: PatternFamil
 export const PATTERN_META: Record<PatternId, PatternMeta> = {
   flat_base: M('flat_base', 'Flat base', 'bullish', 'base', 'Flat & ascending bases', 'At least 5 weeks moving sideways, no more than 15% deep, after a rise.'),
   u_base: M('u_base', 'U / rounding base', 'bullish', 'base', 'Cup & U', 'A rounded, saucer-shaped base without the classic cup proportions.'),
-  cup: M('cup', 'Cup', 'bullish', 'base', 'Cup & U', 'A rounded U-shaped base 7–65 weeks long and 12–33% deep, right side back near the left high; no handle yet.'),
+  cup: M('cup', 'Cup', 'bullish', 'base', 'Cup & U', 'A rounded U-shaped base 7–65 weeks long and 12–33% deep (deeper, to 50%, scores lower), right side back near the left high; no handle yet.'),
   cup_handle: M('cup_handle', 'Cup with handle', 'bullish', 'base', 'Cup & U', 'A cup followed by a short, shallow pullback (handle) in its upper half on lighter volume.'),
-  ascending_base: M('ascending_base', 'Ascending base', 'bullish', 'base', 'Flat & ascending bases', 'Three pullbacks of 10–20% over 9–16 weeks, each low and high above the last.'),
+  ascending_base: M('ascending_base', 'Ascending base', 'bullish', 'base', 'Flat & ascending bases', 'Three pullbacks of 10–20% over 9–16 weeks, each low and high above the last (8–22% pullbacks over 8–19 weeks accepted with a lower score).'),
   vcp: M('vcp', 'VCP (volatility contraction)', 'bullish', 'base', 'VCP', 'Two to six pullbacks, each smaller than the one before, with volume drying up in the last.'),
   base_on_base: M('base_on_base', 'Base on base', 'bullish', 'base', 'IPO & base-on-base', 'A new base forming just above an earlier base whose breakout gained less than 20%.'),
   ipo_base: M('ipo_base', 'IPO base', 'bullish', 'base', 'IPO & base-on-base', 'The first base after listing (within about two years), a correction from the post-listing high.'),
@@ -47,7 +61,7 @@ export const PATTERN_META: Record<PatternId, PatternMeta> = {
   double_bottom: M('double_bottom', 'Double bottom (W)', 'bullish', 'reversal', 'Double/triple', 'Two lows at about the same price with a middle peak at least 10% higher, after a fall.'),
   triple_bottom: M('triple_bottom', 'Triple bottom', 'bullish', 'reversal', 'Double/triple', 'Three lows at about the same price with peaks between them, after a fall.'),
   falling_wedge: M('falling_wedge', 'Falling wedge', 'bullish', 'reversal', 'Triangles & wedges', 'Highs and lows both falling, the highs faster, so the range narrows.'),
-  high_tight_flag: M('high_tight_flag', 'High tight flag', 'bullish', 'continuation', 'Flags & pennants', 'A 90–100%+ rise in 8 weeks or less, then a 3–5 week pullback of no more than 25%.'),
+  high_tight_flag: M('high_tight_flag', 'High tight flag', 'bullish', 'continuation', 'Flags & pennants', 'A rise of 90% or more (full score at 100%) in 8 weeks (40 trading days) or less, then a 2–5 week (10–25 trading-day) pullback of no more than 25%.'),
   inverse_hs: M('inverse_hs', 'Inverse head & shoulders', 'bullish', 'reversal', 'Head & shoulders', 'Three lows with the middle one deepest, after a fall; buy point above the neckline.'),
   double_top: M('double_top', 'Double top', 'bearish', 'reversal', 'Double/triple', 'Two highs at about the same price with a dip of at least 10% between them, after a rise.'),
   triple_top: M('triple_top', 'Triple top', 'bearish', 'reversal', 'Double/triple', 'Three highs at about the same price with dips between them, after a rise.'),
@@ -66,6 +80,8 @@ export interface PatternHit {
   pivot: number | null; distToPivotPct: number | null;
   note: string;
   lines: PatternLine[];
+  /** zzz990 — false when the bars of this pattern carry too little usable volume: volume rules got no credit ("volume not confirmed"). */
+  volumeOk?: boolean;
 }
 export interface DetectOptions { firstTradeT?: number; maxBars?: number }
 export interface PatternTag { id: PatternId; b: 'U' | 'D'; s: 'f' | 'b' | 'x'; c: number; p: number | null; d: number | null }
@@ -76,8 +92,12 @@ const DAY = 86_400_000;
 const MIN_CONF = 0.35;
 /** Default history used for detection: ~2.8 years (65-week base + a year of prior trend + margin). */
 const DEFAULT_MAX_BARS = 700;
-/** Without a listing date, a history shorter than this many bars is taken to start at the listing (IPO base). */
-const SHORT_HISTORY_BARS = 450;
+/** zzz990 (CP-03) — the supplied history must begin within this many days of the given listing date for an IPO base. */
+const LISTING_TOLERANCE_DAYS = 7;
+/** Fewer usable daily bars than this: nothing is analysed (reported as too little history, not as "no pattern"). */
+export const PATTERN_MIN_BARS = 30;
+/** zzz990 (CP-08) — high tight flag rules, shared by the detector, PATTERN_META text and the tests. */
+export const HTF_RULES = { minRise: 0.9, fullRise: 1.0, maxPoleBars: 40, minFlagBars: 10, maxFlagBars: 25, maxDepth: 0.25 } as const;
 
 const clamp01 = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x);
 /** Linear 0 at `bad` → 1 at `good` (either direction). */
@@ -182,14 +202,19 @@ function fitLine(xs: number[], ys: number[]): { a: number; b: number; maxRes: nu
 interface S {
   n: number; t: number[]; o: number[]; h: number[]; l: number[]; c: number[]; v: number[];
   mxH: Sparse; mnL: Sparse; pv: Float64Array; pc: Float64Array; atrPct: Float64Array; listT: number | null;
+  /** prefix count of bars with usable volume (v is NaN where volume is missing) */
+  pn: Float64Array;
 }
 
 function build(bars: PBar[], listT: number | null): S {
   const n = bars.length;
   const t: number[] = new Array(n), o: number[] = new Array(n), h: number[] = new Array(n), l: number[] = new Array(n), c: number[] = new Array(n), v: number[] = new Array(n);
   for (let i = 0; i < n; i++) { const b = bars[i]; t[i] = b.t; o[i] = b.o; h[i] = b.h; l[i] = b.l; c[i] = b.c; v[i] = b.v; }
-  const pv = new Float64Array(n + 1), pc = new Float64Array(n + 1);
-  for (let i = 0; i < n; i++) { pv[i + 1] = pv[i] + v[i]; pc[i + 1] = pc[i] + c[i]; }
+  const pv = new Float64Array(n + 1), pc = new Float64Array(n + 1), pn = new Float64Array(n + 1);
+  for (let i = 0; i < n; i++) {
+    const ok = Number.isFinite(v[i]) && v[i] > 0;
+    pv[i + 1] = pv[i] + (ok ? v[i] : 0); pn[i + 1] = pn[i] + (ok ? 1 : 0); pc[i + 1] = pc[i] + c[i];
+  }
   const atrPct = new Float64Array(n);
   let atr = 0;
   for (let i = 0; i < n; i++) {
@@ -197,11 +222,21 @@ function build(bars: PBar[], listT: number | null): S {
     atr = i === 0 ? tr : i < 14 ? (atr * i + tr) / (i + 1) : (atr * 13 + tr) / 14;
     atrPct[i] = c[i] > 0 ? atr / c[i] : 0;
   }
-  return { n, t, o, h, l, c, v, mxH: new Sparse(h, true), mnL: new Sparse(l, false), pv, pc, atrPct, listT };
+  return { n, t, o, h, l, c, v, mxH: new Sparse(h, true), mnL: new Sparse(l, false), pv, pc, pn, atrPct, listT };
 }
 
-const avgVol = (s: S, a: number, b: number) => { a = Math.max(0, a); b = Math.min(s.n - 1, b); return b < a ? 0 : (s.pv[b + 1] - s.pv[a]) / (b - a + 1); };
+/** Average of the USABLE volumes in [a, b]; NaN (no evidence) unless ≥ 60% of the window (at least 3 bars, or all of a
+ *  shorter window) has volume. */
+function avgVol(s: S, a: number, b: number): number {
+  a = Math.max(0, a); b = Math.min(s.n - 1, b);
+  if (b < a) return NaN;
+  const len = b - a + 1, k = s.pn[b + 1] - s.pn[a];
+  if (k < Math.min(len, Math.max(3, Math.ceil(0.6 * len)))) return NaN;
+  return (s.pv[b + 1] - s.pv[a]) / k;
+}
 const vol50 = (s: S, i: number) => avgVol(s, i - 49, i);
+/** Ratio of two volume averages; NaN (scores 0 through ramp) when either side is missing or the baseline is not usable. */
+const volRatio = (num: number, den: number) => (Number.isFinite(num) && Number.isFinite(den) && den > 0 && num >= 0 ? num / den : NaN);
 const sma = (s: S, i: number, p: number) => { const a = Math.max(0, i - p + 1); return (s.pc[i + 1] - s.pc[a]) / (i - a + 1); };
 /** Rise into index i: high[i] over the lowest low of the prior ~6 months. */
 const priorUp = (s: S, i: number) => s.h[i] / s.mnL.val(i - 130, i) - 1;
@@ -237,6 +272,8 @@ interface Raw {
   pivot: number; depth: number | null; detail: string; lines: PatternLine[];
   /** Sloped pivot (flag / wedge line, neckline): the level at bar i, used for the stage instead of the flat pivot. */
   lineAt?: (i: number) => number;
+  /** zzz990 (CP-05) — bar index past which a sloped line is no longer projected (apex / flag length); breaks after it do not count. */
+  expiry?: number;
 }
 
 const LP = (kind: PatternLine['kind'], s: S, i0: number, p0: number, i1: number, p1: number): PatternLine => ({ kind, points: [[s.t[i0], p0], [s.t[i1], p1]] });
@@ -300,7 +337,7 @@ function detectLipBases(s: S, e: number, recs: number[], out: Map<PatternId, Raw
 
     // Flat base
     if (len <= 130 && depth <= 0.15 && depth >= 0.02 && up >= 0.2) {
-      const volDry = avgVol(s, e - 9, e) / Math.max(1, vol50(s, sIdx));
+      const volDry = volRatio(avgVol(s, e - 9, e), vol50(s, sIdx));
       const conf = wscore([
         [2, ramp(up, 0.2, 0.35)], [2, ramp(depth, 0.15, 0.1)], [1, ramp(len, 25, 35)], [1, ramp(posInRange, 0.3, 0.75)],
         [2, ramp(volDry, 1.1, 0.75)], [2, ramp(tight3, 0.06, 0.025)], [1, trendOK(s, e)],
@@ -334,7 +371,7 @@ function detectLipBases(s: S, e: number, recs: number[], out: Map<PatternId, Raw
       [2, ramp(up, 0.2, 0.3)], [2, depthScore], [2, ramp(round, 0.33, 0.48)], [1, symScore], [1, ramp(len, 35, 45)], [1, trendOK(s, e)],
     ];
     if (classic && handleValid) {
-      const volDry = avgVol(s, r, e) / Math.max(1, vol50(s, r));
+      const volDry = volRatio(avgVol(s, r, e), vol50(s, r));
       const drift = closeSlope(s, r, e) <= 0.0005 ? 1 : 0;
       const conf = wscore([...common, [2, ramp(recovery, 0.85, 0.97)], [2, ramp(hDepth, 0.15, 0.1)], [1, ramp(volDry, 1.15, 0.8)], [1, drift], [1, ramp(hLen, 4, 7)]]);
       push(out, { id: 'cup_handle', conf, start: sIdx, end: e, keyFrom: r, pivot: rightH, depth,
@@ -378,7 +415,7 @@ function detectLipBases(s: S, e: number, recs: number[], out: Map<PatternId, Raw
 }
 
 /** IPO base (O'Neil): within ~2 years of listing; correction from the post-listing high, ≥ 3 bars, 8–50% deep
- *  (25–50% is classic for longer ones); pivot = post-listing high. */
+ *  (25–50% is classic for longer ones); pivot = post-listing high. Only the FIRST base after listing (zzz990 CP-02). */
 function detectIpoBase(s: S, e: number, out: Map<PatternId, Raw>) {
   if (s.listT == null) return;
   const age = (s.t[e] - s.listT) / DAY;
@@ -387,6 +424,9 @@ function detectIpoBase(s: S, e: number, out: Map<PatternId, Raw>) {
   while (first < e && s.t[first] < s.listT) first++;
   const sIdx = s.mxH.idx(first, e - 3);
   if (sIdx < 0 || s.h[sIdx] < s.mxH.val(sIdx, e)) return;
+  const earlier = firstBaseBreakout(s, first, sIdx);
+  // an earlier post-listing base already broke out and the stock then advanced > 20% past its pivot: this is a later base
+  if (earlier != null && s.h[sIdx] > earlier * 1.2) return;
   const len = e - sIdx + 1;
   const lip = s.h[sIdx];
   const m = s.mnL.idx(sIdx, e);
@@ -395,11 +435,26 @@ function detectIpoBase(s: S, e: number, out: Map<PatternId, Raw>) {
   const posInRange = (s.c[e] - s.l[m]) / (lip - s.l[m]);
   if (posInRange < 0.25) return; // still falling — not a base yet
   const depthOk = len <= 25 ? ramp(depth, 0.5, 0.3) : (depth >= 0.25 ? ramp(depth, 0.55, 0.45) : ramp(depth, 0.08, 0.2));
-  const conf = wscore([[2, ramp(len, 3, 15)], [2, depthOk], [1, ramp(posInRange, 0.3, 0.75)], [1, ramp(730 - age, 0, 365)], [1, ramp(avgVol(s, e - 9, e) / Math.max(1, avgVol(s, sIdx - 20, sIdx)), 1.2, 0.7)]]);
+  const conf = wscore([[2, ramp(len, 3, 15)], [2, depthOk], [1, ramp(posInRange, 0.3, 0.75)], [1, ramp(730 - age, 0, 365)], [1, ramp(volRatio(avgVol(s, e - 9, e), avgVol(s, sIdx - 20, sIdx)), 1.2, 0.7)]]);
   push(out, { id: 'ipo_base', conf, start: sIdx, end: e, keyFrom: sIdx, pivot: lip, depth,
     detail: `${Math.round(age / 30.4)} months after listing`,
     lines: [LP('pivot', s, sIdx, lip, e, lip), LP('support', s, m, s.l[m], e, s.l[m])] });
 }
+
+/**
+ * The pivot of the first post-listing base that broke out before bar `until`, or null. A base = a pullback of ≥ 8% from a
+ * running post-listing high lasting ≥ 3 bars; its breakout = the first close above that high afterwards.
+ */
+export function firstBaseBreakoutOf(H: ArrayLike<number>, L: ArrayLike<number>, C: ArrayLike<number>, from: number, until: number): number | null {
+  if (from < 0 || from >= until) return null;
+  let runHi = H[from], runHiI = from, minSince = Infinity;
+  for (let i = from + 1; i < until; i++) {
+    if (C[i] > runHi && i - runHiI >= 3 && 1 - minSince / runHi >= 0.08) return runHi;
+    if (H[i] > runHi) { runHi = H[i]; runHiI = i; minSince = Infinity; } else if (L[i] < minSince) minSince = L[i];
+  }
+  return null;
+}
+const firstBaseBreakout = (s: S, from: number, until: number) => firstBaseBreakoutOf(s.h, s.l, s.c, from, until);
 
 /**
  * VCP (Minervini): within a base (lip record 3–65 weeks back), 2–6 successive pullbacks each < 92% of the one before
@@ -433,7 +488,7 @@ function detectVcp(s: S, e: number, recs: number[], zz: Pivot[], out: Map<Patter
     if (s.mxH.val(lastC.hi.i + 1, e) > pivot) continue;
     let lowsRise = 0;
     for (let k = j + 1; k < cs.length; k++) if (cs[k].lo.p >= cs[k - 1].lo.p * 0.99) lowsRise++;
-    const volDry = avgVol(s, lastC.hi.i, e) / Math.max(1, vol50(s, firstC.hi.i));
+    const volDry = volRatio(avgVol(s, lastC.hi.i, e), vol50(s, firstC.hi.i));
     const conf = wscore([
       [2, ramp(up, 0.2, 0.35)], [2, ramp(count, 1, 3)], [2, ramp(lastC.d, 0.12, 0.07)], [1, lowsRise / Math.max(1, count - 1)],
       [2, ramp(volDry, 1.1, 0.7)], [1, trendOK(s, e)], [1, ramp(tightRatio(cs, j), 0.8, 0.5)],
@@ -473,19 +528,21 @@ function detectAscendingBase(s: S, e: number, zz: Pivot[], out: Map<PatternId, R
     lines: [LP('pivot', s, c.hi.i, pivot, e, pivot), LP('trend', s, a.lo.i, a.lo.p, c.lo.i, c.lo.p)] });
 }
 
-/** High tight flag (O'Neil): pole ≥ 90% (full at 100%) in ≤ 8 weeks (40 bars), then a 2–6 week (3–5 best) flag no more
- *  than 25% deep (≤ 20% best); pivot = flag high. */
+/** High tight flag (O'Neil), strict profile HTF_RULES (zzz990 CP-08 — the gates are exactly what PATTERN_META says):
+ *  pole ≥ 90% (full score at 100%) in ≤ 8 weeks (40 bars), then a 10–25 bar (2–5 week) flag no more than 25% deep
+ *  (≤ 15% best); pivot = flag high. 85–90% poles are NOT high tight flags (they can still read as a bull flag). */
 function detectHTF(s: S, e: number, recs: number[], out: Map<PatternId, Raw>) {
+  const R = HTF_RULES;
   for (const sIdx of recs) {
     const len = e - sIdx + 1;
-    if (len < 8 || len > 32) continue;
-    const p = s.mnL.idx(sIdx - 40, sIdx - 1);
+    if (len < R.minFlagBars || len > R.maxFlagBars) continue;
+    const p = s.mnL.idx(sIdx - R.maxPoleBars, sIdx - 1);
     if (p < 0) continue;
     const rise = s.h[sIdx] / s.l[p] - 1;
-    if (rise < 0.85) continue;
+    if (rise < R.minRise) continue;
     const depth = 1 - s.mnL.val(sIdx, e) / s.h[sIdx];
-    if (depth > 0.25) continue;
-    const conf = wscore([[3, ramp(rise, 0.85, 1.0)], [2, ramp(depth, 0.25, 0.15)], [1, ramp(len, 8, 15) * ramp(len, 32, 26)], [1, ramp(avgVol(s, sIdx, e) / Math.max(1, avgVol(s, p, sIdx)), 1.1, 0.7)]]);
+    if (depth > R.maxDepth) continue;
+    const conf = wscore([[3, ramp(rise, R.minRise - 0.05, R.fullRise)], [2, ramp(depth, R.maxDepth, 0.15)], [1, ramp(len, R.minFlagBars, 15)], [1, ramp(volRatio(avgVol(s, sIdx, e), avgVol(s, p, sIdx)), 1.1, 0.7)]]);
     push(out, { id: 'high_tight_flag', conf, start: p, end: e, keyFrom: sIdx, pivot: s.h[sIdx], depth,
       detail: `pole +${Math.round(rise * 100)}% in ${sIdx - p} days, flag ${Math.round(depth * 100)}% deep`,
       lines: [LP('pivot', s, sIdx, s.h[sIdx], e, s.h[sIdx]), LP('trend', s, p, s.l[p], sIdx, s.h[sIdx])] });
@@ -527,7 +584,7 @@ function detectFlags(s: S, e: number, recs: number[], floors: number[], out: Map
     if (p < 0) continue;
     const top = s.h[sIdx], base = s.l[p];
     const rise = top / base - 1;
-    if (rise < 0.15 || rise >= 0.85) continue; // ≥ 85% in 4 weeks is a high tight flag
+    if (rise < 0.15 || rise >= HTF_RULES.minRise) continue; // ≥ 90% is a high tight flag's pole
     const lo = s.mnL.val(sIdx, e);
     const retr = (top - lo) / (top - base);
     if (retr > 0.5) continue;
@@ -536,15 +593,18 @@ function detectFlags(s: S, e: number, recs: number[], floors: number[], out: Map
     const w0 = ch.U(sIdx) - ch.L(sIdx), w1 = ch.U(e) - ch.L(e);
     const wr = w0 > 0 ? w1 / w0 : 1;
     const pivot = ch.U(e);
-    const commonParts: Array<[number, number]> = [[3, ramp(rise, 0.15, 0.25)], [2, ramp(retr, 0.5, 0.33)], [1, ramp(sIdx - p, 25, 10)], [1, ramp(avgVol(s, sIdx, e) / Math.max(1, avgVol(s, p, sIdx)), 1.1, 0.75)], [1, ramp(len, 4, 7)]];
+    // the boundary is projected at most one flag length past the body; a pennant's lines stop at their apex
+    const flagExpiry = e + len;
+    const apex = w0 > w1 && w1 > 0 ? sIdx + (w0 * (e - sIdx)) / (w0 - w1) : Infinity;
+    const commonParts: Array<[number, number]> = [[3, ramp(rise, 0.15, 0.25)], [2, ramp(retr, 0.5, 0.33)], [1, ramp(sIdx - p, 25, 10)], [1, ramp(volRatio(avgVol(s, sIdx, e), avgVol(s, p, sIdx)), 1.1, 0.75)], [1, ramp(len, 4, 7)]];
     const lines = [LP('trend', s, sIdx, ch.U(sIdx), e, ch.U(e)), LP('trend', s, sIdx, ch.L(sIdx), e, ch.L(e)), LP('trend', s, p, base, sIdx, top)];
     if (su <= 0.0015 && sl <= 0.0015 && wr >= 0.6 && wr <= 1.5) {
       const conf = wscore([...commonParts, [2, ramp(Math.abs(wr - 1), 0.5, 0.15)], [1, su <= 0 ? 1 : 0.5]]);
-      push(out, { id: 'bull_flag', conf, start: p, end: e, keyFrom: sIdx + 1, pivot, depth: 1 - lo / top, lineAt: ch.U,
+      push(out, { id: 'bull_flag', conf, start: p, end: e, keyFrom: sIdx + 1, pivot, depth: 1 - lo / top, lineAt: ch.U, expiry: flagExpiry,
         detail: `pole +${Math.round(rise * 100)}% in ${sIdx - p} days, ${len}-day flag`, lines });
     } else if (su < 0 && sl >= -0.0005 && wr < 0.6) {
       const conf = wscore([...commonParts, [2, ramp(wr, 0.6, 0.3)]]);
-      push(out, { id: 'bull_pennant', conf, start: p, end: e, keyFrom: sIdx + 1, pivot, depth: 1 - lo / top, lineAt: ch.U,
+      push(out, { id: 'bull_pennant', conf, start: p, end: e, keyFrom: sIdx + 1, pivot, depth: 1 - lo / top, lineAt: ch.U, expiry: Math.min(flagExpiry, Math.floor(apex)),
         detail: `pole +${Math.round(rise * 100)}% in ${sIdx - p} days, ${len}-day pennant`, lines });
     }
   }
@@ -566,7 +626,7 @@ function detectFlags(s: S, e: number, recs: number[], floors: number[], out: Map
     if (!(su >= -0.0015 && sl >= -0.0015 && wr >= 0.5 && wr <= 1.6)) continue;
     if (!(s.c[e] < sma(s, e, 50))) continue; // a bear flag sits in a downtrend: below its 50-day average
     const conf = wscore([[3, ramp(drop, 0.15, 0.25)], [2, ramp(retr, 0.5, 0.33)], [1, ramp(sIdx - p, 25, 10)], [2, ramp(Math.abs(wr - 1), 0.6, 0.15)], [1, ramp(len, 4, 7)], [1, s.c[e] < sma(s, e, 50) ? 1 : 0]]);
-    push(out, { id: 'bear_flag', conf, start: p, end: e, keyFrom: sIdx + 1, pivot: ch.L(e), depth: drop, lineAt: ch.L,
+    push(out, { id: 'bear_flag', conf, start: p, end: e, keyFrom: sIdx + 1, pivot: ch.L(e), depth: drop, lineAt: ch.L, expiry: e + len,
       detail: `pole −${Math.round(drop * 100)}% in ${sIdx - p} days, ${len}-day flag`,
       lines: [LP('trend', s, sIdx, ch.U(sIdx), e, ch.U(e)), LP('trend', s, sIdx, ch.L(sIdx), e, ch.L(e)), LP('trend', s, p, top, sIdx, bot)] });
   }
@@ -623,12 +683,14 @@ function detectTriWedge(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>) 
         detail: `${Ls.length} touches of ${fmt(lMin)}, highs falling`, lines: [LP('support', s, a, lMin, e, lMin), lineSet[0]] });
     }
     const converging = wStart > 0 && wEnd > 0 && wEnd < 0.75 * wStart;
+    // where the two lines meet (the apex): a wedge's boundary is not projected past it
+    const apex = fh.b !== fl.b ? Math.floor((fl.a - fh.a) / (fh.b - fl.b)) : Infinity;
     const wedgeOk = converging && touches >= 5 && len >= 20 && fitQ <= 0.025 && contain >= 0.9;
     if (wedgeOk && chH <= -0.04 && chL <= -0.015 && chH < chL) {
       const piv = fh.a + fh.b * e;
       {
         const c = wscore([[2, ramp(touches, 5, 7)], [2, ramp(wEnd / wStart, 0.75, 0.4)], [2, ramp(fitQ, 0.025, 0.01)], [2, ramp(contain, 0.9, 0.98)], [1, ramp(len, 15, 30)], [1, ramp(priorDown(s, a), 0.05, 0.2)]]);
-        push(out, { id: 'falling_wedge', conf: c, start: a, end: e, keyFrom: lastH.i + 1, pivot: piv, depth: 1 - lMin / hMax, lineAt: (i) => fh.a + fh.b * i,
+        push(out, { id: 'falling_wedge', conf: c, start: a, end: e, keyFrom: lastH.i + 1, pivot: piv, depth: 1 - lMin / hMax, lineAt: (i) => fh.a + fh.b * i, expiry: apex,
           detail: `${touches} touches, range narrowing`, lines: lineSet });
       }
     }
@@ -636,7 +698,7 @@ function detectTriWedge(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>) 
       const piv = fl.a + fl.b * e;
       {
         const c = wscore([[2, ramp(touches, 5, 7)], [2, ramp(wEnd / wStart, 0.75, 0.4)], [2, ramp(fitQ, 0.025, 0.01)], [2, ramp(contain, 0.9, 0.98)], [1, ramp(len, 15, 30)], [1, ramp(priorUp(s, a), 0.05, 0.2)]]);
-        push(out, { id: 'rising_wedge', conf: c, start: a, end: e, keyFrom: lastL.i + 1, pivot: piv, depth: 1 - lMin / hMax, lineAt: (i) => fl.a + fl.b * i,
+        push(out, { id: 'rising_wedge', conf: c, start: a, end: e, keyFrom: lastL.i + 1, pivot: piv, depth: 1 - lMin / hMax, lineAt: (i) => fl.a + fl.b * i, expiry: apex,
           detail: `${touches} touches, range narrowing`, lines: lineSet });
       }
     }
@@ -770,15 +832,26 @@ function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<P
 
 // ───────────────────────────── stage + driver ─────────────────────────────
 
-/** Stage from closes since the pattern's key point (see header). null = completed long ago / not current. */
-function stageOf(s: S, e: number, from: number, pivot: number, bull: boolean, lineAt?: (i: number) => number): { stage: PatternStage; f: number } | null {
+/** Bar index up to which a sloped boundary is projected (its expiry, at most the last bar). */
+const capOf = (last: number, lineAt?: (i: number) => number, expiry?: number) => (lineAt && expiry != null && Number.isFinite(expiry) ? Math.max(0, Math.min(last, Math.floor(expiry))) : last);
+
+/**
+ * Stage from closes since the pattern's key point (see header). null = completed long ago / not current.
+ * zzz990 (CP-05): a sloped boundary is PROJECTED to each compared bar (never frozen at the body end), up to its expiry;
+ * a break after the expiry does not count, and a pattern still unbroken when its apex has passed has expired (null).
+ * The "now" comparisons (failed / still holding the break) use the projected level at the last bar — the same level the
+ * hit displays and measures its distance from.
+ */
+export function stageOf(s: Pick<S, 'n' | 'c'>, e: number, from: number, pivot: number, bull: boolean, lineAt?: (i: number) => number, expiry?: number): { stage: PatternStage; f: number } | null {
   const last = s.n - 1;
-  const lv = (i: number) => (lineAt ? lineAt(Math.min(i, e)) : pivot); // a sloped line is frozen at the body end
+  const cap = capOf(last, lineAt, expiry);
+  const lv = (i: number) => (lineAt ? lineAt(Math.min(i, cap)) : pivot);
+  const searchEnd = lineAt ? cap : last;
   let f = -1;
-  for (let i = Math.max(0, from); i <= last; i++) if (bull ? s.c[i] > lv(i) : s.c[i] < lv(i)) { f = i; break; }
-  if (f < 0) return e === last ? { stage: 'forming', f } : null;
+  for (let i = Math.max(0, from); i <= searchEnd; i++) if (bull ? s.c[i] > lv(i) : s.c[i] < lv(i)) { f = i; break; }
+  if (f < 0) return e === last && searchEnd === last ? { stage: 'forming', f } : null;
   if (e < last && f > e + 3) return null;
-  const since = last - f, cl = s.c[last], level = lv(f);
+  const since = last - f, cl = s.c[last], level = lv(last);
   if (bull ? cl < level * 0.925 : cl > level * 1.075) return since <= 40 ? { stage: 'failed', f } : null;
   if (since <= 4) return (bull ? cl >= level * 0.97 : cl <= level * 1.03) ? { stage: 'breakout', f } : { stage: 'forming', f };
   return null;
@@ -792,30 +865,63 @@ const likelihoodOf = (c: number): PatternHit['likelihood'] => (c >= 0.75 ? 'very
 const lenWords = (bars: number) => (bars >= 10 ? `${Math.max(1, Math.round(bars / 5))} wk` : `${bars} days`);
 const lenNote = (bars: number) => (bars >= 10 ? `${Math.max(1, Math.round(bars / 5))} weeks` : `${bars} days`);
 
-function cleanBars(bars: PBar[]): PBar[] {
+export interface CleanedBars { bars: PBar[]; rejected: number; repaired: number }
+/**
+ * zzz990 (CP-10) — validated bars. Rejected: no bar, a non-finite time, a non-finite or non-positive close, an open / high /
+ * low that is a non-finite NUMBER (Infinity, NaN), or a time not after the previous bar's. Repaired (counted): a missing or
+ * non-positive open / high / low (from the close), a high / low that does not contain the open and close. Volume: anything
+ * but a finite positive number stays NaN (missing — never zero evidence).
+ */
+export function cleanBars(bars: PBar[]): CleanedBars {
   const out: PBar[] = [];
-  let lastT = -Infinity;
+  let lastT = -Infinity, rejected = 0, repaired = 0;
+  const badNum = (x: unknown) => typeof x === 'number' && !Number.isFinite(x);
   for (const b of bars || []) {
-    if (!b) continue;
+    if (!b) { rejected++; continue; }
     const t = Number(b.t), c = Number(b.c);
-    if (!Number.isFinite(t) || !(c > 0) || t <= lastT) continue;
-    let h = Number(b.h), l = Number(b.l), o = Number(b.o), v = Number(b.v);
-    if (!(o > 0)) o = c;
-    if (!(h > 0)) h = Math.max(o, c);
-    if (!(l > 0)) l = Math.min(o, c);
+    if (!Number.isFinite(t) || !Number.isFinite(c) || !(c > 0) || t <= lastT || badNum(b.o) || badNum(b.h) || badNum(b.l)) { rejected++; continue; }
+    let h = Number(b.h), l = Number(b.l), o = Number(b.o);
+    const v0 = Number(b.v);
+    let fixed = false;
+    if (!(o > 0)) { o = c; fixed = true; }
+    if (!(h > 0)) { h = Math.max(o, c); fixed = true; }
+    if (!(l > 0)) { l = Math.min(o, c); fixed = true; }
+    if (h < Math.max(o, c) || l > Math.min(o, c)) fixed = true;
     h = Math.max(h, o, c); l = Math.min(l, o, c);
-    if (!(v >= 0)) v = 0;
-    out.push({ t, o, h, l, c, v });
+    if (fixed) repaired++;
+    out.push({ t, o, h, l, c, v: Number.isFinite(v0) && v0 > 0 ? v0 : NaN });
     lastT = t;
   }
-  return out;
+  return { bars: out, rejected, repaired };
 }
 
-/** All patterns found on the latest data, strongest first; at most one hit per PatternId. Empty when nothing qualifies (confidence < 0.35 dropped). */
+/** All patterns found on the latest data, active (forming / breaking out) first then failed, strongest first within each;
+ *  at most one hit per PatternId. Empty when nothing qualifies (confidence < 0.35 dropped) or there are too few bars. */
 export function detectPatterns(bars: PBar[], opts?: DetectOptions): PatternHit[] {
-  const all = cleanBars(bars);
-  if (all.length < 30) return [];
-  const listT = opts?.firstTradeT != null && Number.isFinite(opts.firstTradeT) ? Number(opts.firstTradeT) : all.length < SHORT_HISTORY_BARS ? all[0].t : null;
+  return analyzePatterns(bars, opts).hits;
+}
+
+export interface PatternAnalysis {
+  hits: PatternHit[];
+  /** bars left after validation (cleanBars) */
+  usableBars: number; rejectedBars: number; repairedBars: number;
+  /** share (0..1) of the analysed bars that carry usable volume */
+  volumeCoverage: number;
+  /** fewer than PATTERN_MIN_BARS usable bars: nothing was analysed — not the same as "no pattern" */
+  tooShort: boolean;
+  /** whether the listing date was accepted for the IPO-base rule (given AND the history starts within a few days of it) */
+  listingKnown: boolean;
+}
+
+/** detectPatterns plus what the data allowed (validation counts, volume coverage, too-short history). */
+export function analyzePatterns(bars: PBar[], opts?: DetectOptions): PatternAnalysis {
+  const cleaned = cleanBars(bars);
+  const all = cleaned.bars;
+  const base = { usableBars: all.length, rejectedBars: cleaned.rejected, repairedBars: cleaned.repaired };
+  if (all.length < PATTERN_MIN_BARS) return { hits: [], ...base, volumeCoverage: 0, tooShort: true, listingKnown: false };
+  // zzz990 (CP-03) — never infer the listing from the first bar; a given listing date counts only when the history covers it
+  const ft = opts?.firstTradeT != null && Number.isFinite(Number(opts.firstTradeT)) ? Number(opts.firstTradeT) : null;
+  const listT = ft != null && Math.abs(all[0].t - ft) <= LISTING_TOLERANCE_DAYS * DAY ? ft : null;
   const maxBars = Math.max(60, Math.floor(opts?.maxBars ?? DEFAULT_MAX_BARS));
   const s = build(all.length > maxBars ? all.slice(-maxBars) : all, listT);
   const last = s.n - 1;
@@ -850,10 +956,14 @@ export function detectPatterns(bars: PBar[], opts?: DetectOptions): PatternHit[]
     detectReversals(s, e, zzM, raws);
     for (const raw of raws.values()) {
       const bull = PATTERN_META[raw.id].bias === 'bullish';
-      const st = stageOf(s, e, raw.keyFrom, raw.pivot, bull, raw.lineAt);
+      const st = stageOf(s, e, raw.keyFrom, raw.pivot, bull, raw.lineAt, raw.expiry);
       if (!st) continue;
       let conf = raw.conf;
-      if (st.stage === 'breakout' && st.f >= 0) conf = Math.min(1, conf + (s.v[st.f] >= 1.4 * vol50(s, st.f - 1) ? 0.05 : 0));
+      // breakout-volume bonus only with a real volume on the breakout day and a usable 50-day baseline
+      if (st.stage === 'breakout' && st.f >= 0 && Number.isFinite(s.v[st.f]) && s.v[st.f] > 0) {
+        const base50 = vol50(s, st.f - 1);
+        if (Number.isFinite(base50) && base50 > 0 && s.v[st.f] >= 1.4 * base50) conf = Math.min(1, conf + 0.05);
+      }
       if (st.stage === 'failed') conf *= 0.9;
       const r2 = { ...raw, conf };
       const prev = best.get(raw.id);
@@ -868,24 +978,42 @@ export function detectPatterns(bars: PBar[], opts?: DetectOptions): PatternHit[]
     const meta = PATTERN_META[raw.id];
     const bull = meta.bias === 'bullish';
     const conf = Math.round(raw.conf * 1000) / 1000;
-    const dist = (close / raw.pivot - 1) * 100;
+    // zzz990 (CP-05) — a sloped boundary's level now: projected to the last bar (capped at its expiry)
+    const cap = capOf(last, raw.lineAt, raw.expiry);
+    const level = raw.lineAt ? raw.lineAt(cap) : raw.pivot;
+    if (!(level > 0) || !Number.isFinite(level)) continue;
+    const dist = (close / level - 1) * 100;
+    // zzz990 (CP-04) — volume evidence over the pattern's span
+    const spanA = Math.max(0, raw.start), spanLen = last - spanA + 1;
+    const volCov = spanLen > 0 ? (s.pn[last + 1] - s.pn[spanA]) / spanLen : 0;
+    const volumeOk = volCov >= 0.6 && Number.isFinite(avgVol(s, last - 9, last));
     const lengthBars = raw.end - raw.start + 1;
     const distWords = Math.abs(dist) < 0.5 ? 'close at the level' : `close ${Math.abs(dist).toFixed(0)}% ${dist < 0 ? 'below' : 'above'}`;
     const stageWords = st.stage === 'breakout' ? `; ${bull ? 'broke out' : 'broke down'} ${last - st.f === 0 ? 'today' : `${last - st.f} day${last - st.f === 1 ? '' : 's'} ago`}`
       : st.stage === 'failed' ? `; ${bull ? 'breakout' : 'breakdown'} failed` : '';
-    const note = `${meta.label}, ${lenNote(lengthBars)}${raw.depth != null ? `, ${Math.round(raw.depth * 100)}% deep` : ''}${raw.detail ? ` — ${raw.detail}` : ''}; ${bull ? 'pivot' : 'breakdown'} ${fmt(raw.pivot)}, ${distWords}${stageWords}`;
+    const note = `${meta.label}, ${lenNote(lengthBars)}${raw.depth != null ? `, ${Math.round(raw.depth * 100)}% deep` : ''}${raw.detail ? ` — ${raw.detail}` : ''}; ${bull ? 'pivot' : 'breakdown'} ${fmt(level)}, ${distWords}${stageWords}${volumeOk ? '' : '; volume not confirmed (no usable volume data)'}`;
     const lines = raw.lines.slice();
-    if (!lines.some((x) => x.kind === 'pivot')) lines.unshift({ kind: 'pivot', points: [[s.t[raw.start], raw.pivot], [s.t[last], raw.pivot]] });
+    if (!lines.some((x) => x.kind === 'pivot')) {
+      if (raw.lineAt) {
+        // the sloped boundary itself, from the pattern's key point to now (the same line the level is read from)
+        const k0 = Math.max(raw.start, Math.min(raw.keyFrom, raw.end, cap));
+        lines.unshift({ kind: 'pivot', points: [[s.t[k0], raw.lineAt(k0)], [s.t[cap], level]] });
+      } else lines.unshift({ kind: 'pivot', points: [[s.t[raw.start], raw.pivot], [s.t[last], raw.pivot]] });
+    }
     hits.push({
       id: raw.id, label: meta.label, bias: meta.bias, family: meta.family,
       stage: st.stage, confidence: conf, likelihood: likelihoodOf(conf),
       startT: s.t[raw.start], endT: s.t[raw.end], lengthBars,
       depthPct: raw.depth != null ? Math.round(raw.depth * 1000) / 10 : null,
-      pivot: Math.round(raw.pivot * 10000) / 10000, distToPivotPct: Math.round(dist * 100) / 100,
-      note, lines,
+      pivot: Math.round(level * 10000) / 10000, distToPivotPct: Math.round(dist * 100) / 100,
+      note, lines, volumeOk,
     });
   }
-  return resolve(hits);
+  const winA = Math.max(0, last - 59);
+  return {
+    hits: resolve(hits), ...base, tooShort: false, listingKnown: listT != null,
+    volumeCoverage: Math.round(((s.pn[last + 1] - s.pn[winA]) / (last - winA + 1)) * 1000) / 1000,
+  };
 }
 
 /** Shapes that describe the same structure: keep only the strongest of each group. */
@@ -915,7 +1043,9 @@ function resolve(hits: PatternHit[]): PatternHit[] {
     const c = Math.round(h.confidence * CONFLICT_DAMP * 1000) / 1000;
     return { ...h, confidence: c, likelihood: likelihoodOf(c) };
   }).filter((h) => h.confidence >= MIN_CONF);
-  out.sort((a, b) => b.confidence - a.confidence || (a.stage === 'breakout' ? -1 : 0));
+  // zzz990 — active structures (forming / breaking out) first, failed ones after; strongest first within each
+  const failed = (h: PatternHit) => (h.stage === 'failed' ? 1 : 0);
+  out.sort((a, b) => failed(a) - failed(b) || b.confidence - a.confidence || (a.stage === 'breakout' ? -1 : b.stage === 'breakout' ? 1 : 0));
   return out;
 }
 

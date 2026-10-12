@@ -18,6 +18,8 @@ export interface DailySeries {
   lastBarOpenInferred?: boolean;
   /** zzz969 — cash dividends (ex-day at UTC midnight of the exchange's local date) */
   divs?: Array<{ t: number; amount: number }>;
+  /** zzz990 (CP-03) — Yahoo meta.firstTradeDate (the listing / first trade), ms; null when Yahoo does not send it */
+  firstTradeT?: number | null;
 }
 
 const _cache = new Map<string, { at: number; data: DailySeries | null }>();
@@ -82,7 +84,8 @@ export function parseYahooChart(j: any): DailySeries | null {
   return { divs, symbol: String(m.symbol || ''), name: m.longName || m.shortName || null, currency: m.currency || null, exchange: m.fullExchangeName || m.exchangeName || null, bars,
     granularity: typeof m.dataGranularity === 'string' ? m.dataGranularity : null,
     quoteAt: Number.isFinite(mt) && mt > 0 ? new Date(mt * 1000).toISOString() : null,
-    lastBarSynthetic: synthetic, lastBarOpenInferred: openInferred };
+    lastBarSynthetic: synthetic, lastBarOpenInferred: openInferred,
+    firstTradeT: Number.isFinite(Number(m.firstTradeDate)) && m.firstTradeDate != null ? Number(m.firstTradeDate) * 1000 : null };
 }
 
 async function fetchYahooDaily(symbol: string, range: DataRange): Promise<DailySeries | null> {

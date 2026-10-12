@@ -70,6 +70,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ ticker: str
     bars: packBars(bars),
     asOf: new Date().toISOString(),
     lastBarAt: series.bars.length ? new Date(series.bars[series.bars.length - 1].t).toISOString().slice(0, 10) : null,   // zzz957: date of the newest daily candle
+    firstTradeT: series.firstTradeT ?? null,   // zzz990 (CP-03): listing / first-trade date (ms) for the chart-pattern IPO-base rule
     // zzz967 (DT-01) — where the numbers come from and what was filled in
     provenance: {
       source: 'Yahoo Finance chart API', nativeGranularity: series.granularity || '1d', displayInterval: interval,

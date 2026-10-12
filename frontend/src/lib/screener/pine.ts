@@ -18,7 +18,7 @@ import type { TechStored } from './tech-fetch';
 import { tvFigures, rsRatings, type TvFigures } from './tv-screens';
 
 /** Bump when the engine or the stored tag changes: every stored entry without it is re-read on the next build. */
-export const PATTERN_SCAN_VERSION = 3;   // 2 = zzz984: + the owner's TradingView indicator fields (tv-screens.ts); 3 = zzz987: + Stage Analysis (TheWrap method)
+export const PATTERN_SCAN_VERSION = 4;   // 2 = zzz984: + the owner's TradingView indicator fields (tv-screens.ts); 3 = zzz987: + Stage Analysis (TheWrap method); 4 = zzz990: chart-pattern audit (volume missingness, IPO first base + listing date, projected sloped boundaries, strict HTF)
 /** Only hits at least this likely are stored (the engine's own floor is 35 as well). */
 export const PATTERN_MIN_STORE = 35;
 

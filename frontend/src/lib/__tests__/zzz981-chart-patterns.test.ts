@@ -157,12 +157,14 @@ test('zzz981 base on base: new base just above an earlier base whose breakout ga
 
 test('zzz981 IPO base: short history from listing, correction from the post-listing high', () => {
   const b = gen([[40, 80], [15, 62], [15, 74]], { start: 50, history: 0 });
-  expectHit(b, 'ipo_base', (x) => { assert.ok(near(x.pivot, 80.5, 0.02)); assert.ok(x.depthPct! > 18 && x.depthPct! < 28); });
+  // zzz990 (CP-03): the listing date must be given — the first bar of a short history is never taken as the listing
+  expectHit(b, 'ipo_base', (x) => { assert.ok(near(x.pivot, 80.5, 0.02)); assert.ok(x.depthPct! > 18 && x.depthPct! < 28); }, { firstTradeT: b[0].t });
+  assert.ok(!ids(detectPatterns(b)).includes('ipo_base'), 'no listing date → no IPO base');
   // long history with an explicit listing date far in the past → no IPO base
   const long = gen([[600, 60], [40, 80], [15, 62], [15, 74]], { start: 50, history: 0 });
   assert.ok(!ids(detectPatterns(long, { firstTradeT: long[0].t })).includes('ipo_base'));
-  // ... but a recent listing date makes it one
-  expectHit(long, 'ipo_base', undefined, { firstTradeT: long[long.length - 75].t });
+  // zzz990 (CP-03): a "recent" listing date that the history does not start at (bars long before it) is not trusted
+  assert.ok(!ids(detectPatterns(long, { firstTradeT: long[long.length - 75].t })).includes('ipo_base'));
 });
 
 // ───────── continuation ─────────
@@ -329,11 +331,12 @@ test('zzz981 toTags is compact', () => {
   assert.ok(JSON.stringify(tags[0]).length < 70);
 });
 
-test('zzz981 results: at most one hit per id, strongest first, lines carry [t, price]', () => {
+test('zzz981 results: at most one hit per id, active before failed (zzz990), strongest first within each, lines carry [t, price]', () => {
   for (let seed = 1; seed <= 4; seed++) {
     const hits = detectPatterns(randomWalk(1300, seed + 40, 0.0006));
     assert.equal(new Set(ids(hits)).size, hits.length);
-    for (let k = 1; k < hits.length; k++) assert.ok(hits[k - 1].confidence >= hits[k].confidence);
+    const rank = (h: PatternHit) => (h.stage === 'failed' ? 1 : 0);
+    for (let k = 1; k < hits.length; k++) assert.ok(rank(hits[k - 1]) < rank(hits[k]) || (rank(hits[k - 1]) === rank(hits[k]) && hits[k - 1].confidence >= hits[k].confidence));
     for (const h of hits) for (const l of h.lines) for (const [t, p] of l.points) assert.ok(Number.isFinite(t) && Number.isFinite(p));
   }
 });

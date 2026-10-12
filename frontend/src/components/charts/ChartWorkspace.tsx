@@ -36,6 +36,7 @@ interface ChartResponse {
   stats: HeaderStats; bars: { t: number[]; o: number[]; h: number[]; l: number[]; c: number[]; v: number[] };
   asOf?: string; lastBarAt?: string | null;
   interval?: string; range?: string;   // zzz982 — lets the chart-pattern indicator reuse daily bars already on screen
+  firstTradeT?: number | null;   // zzz990 (CP-03) — Yahoo's first-trade (listing) date, ms; the IPO-base rule needs it
   requestedExchange?: string | null;
   basis?: 'price' | 'tr'; dividends?: number;
   provenance?: { source: string; nativeGranularity: string; displayInterval: string; firstBarAt: string | null; quoteAt: string | null; priceBasis: string; lastBarFromQuote: boolean; lastBarOpenInferred: boolean; highLowRepaired: string };
@@ -725,7 +726,7 @@ export default function ChartWorkspace() {
   const stats = live?.stats;
   const cur = live?.currency === 'INR' ? '₹' : live?.currency === 'USD' ? '$' : live?.currency ? `${live.currency} ` : (market === 'IN' ? '₹' : '$');
   // zzz982 — "Automate chart patterns": runs only while that indicator is in the working layout
-  const patterns = usePatternIndicator({ on: patternsOn(L.working), ready, ticker, market, exchange, basis, live, bars, chartRef, cacheRef, cur });
+  const patterns = usePatternIndicator({ on: patternsOn(L.working), ready, ticker, market, exchange, basis, live, bars, chartRef, cacheRef, cur, chart: { loading, error } });
   // zzz987 — "Stage Analysis (TheWrap method)": runs only while that indicator is in the working layout
   const stageInd = useStageIndicator({ on: stageOn(L.working), ready, ticker, market, exchange, basis, live, bars, chartRef, cacheRef, light: chartLight });
   const changeColor = (stats?.change ?? 0) >= 0 ? 'var(--mc-bullish, #059669)' : 'var(--mc-bearish, #DC2626)';
@@ -887,7 +888,7 @@ export default function ChartWorkspace() {
               title={basis === 'tr' ? `${TOTAL_RETURN_LABEL}. On: history adjusted for ${live?.dividends ?? 0} cash dividends; the latest price is unchanged. Drawings are one set for both views and stay at the price values they were drawn on. Click for prices as printed.` : `Show: ${TOTAL_RETURN_LABEL}`}>TR</button>
           </div>
           <IndicatorLegend rows={rows} valueOf={valueOf} onToggle={(id) => L.setWorking((w) => toggleRow(w, id))} decimals={pxDecimals} colorOf={(c) => (!chartLight && (luminance(c) ?? 1) < 0.18 ? '#B2B5BE' : c)} textOf={(c) => readableOn(c, chartLight ? '#FFFFFF' : '#0A0E1A')} />
-          <PatternBanner p={patterns} cur={cur} light={chartLight} onTurnOff={() => L.setWorking((w) => withPatterns(w, false))} />
+          <PatternBanner p={patterns} cur={cur} light={chartLight} tf={tf} onTurnOff={() => L.setWorking((w) => withPatterns(w, false))} />
           <StageBanner s={stageInd} light={chartLight} shifted={patterns.on} onTurnOff={() => L.setWorking((w) => withStage(w, false))} />
           {(savedAt || syncedAt) && (
             <div title="Drawings are saved in this browser at once and copied to your account about once a minute, so they come back on your other devices"
