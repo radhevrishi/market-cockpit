@@ -453,10 +453,14 @@ export function InGuideOneLiner({ stock }: { stock: ParsedEarning }) {
   const gl: InGuideLine = raw && typeof raw.text === 'string' && typeof raw.direction === 'string' ? raw : inGuideLine(stock, null);
   const color = gl.direction === 'raised' ? 'var(--mc-bullish)'
     : gl.direction === 'lowered' || gl.direction === 'withdrawn' ? 'var(--mc-bearish)'
-    : gl.direction === 'mixed' || gl.direction === 'cautious' ? 'var(--mc-caution, #F59E0B)'
+    : gl.direction === 'mixed' || gl.direction === 'cautious' || (gl.direction === 'standing' && gl.pace === 'behind') ? 'var(--mc-caution, #F59E0B)'
+    : gl.direction === 'standing' && gl.pace === 'ahead' ? 'var(--mc-bullish)'
+    : gl.direction === 'standing' ? 'var(--mc-text-1)'
     : 'var(--mc-text-3)';
   const moved = (stock as any).tier_before_guide_check;
-  const [head, ...rest] = gl.text.split(' — ');
+  // zzz977: "Standing guidance (deck, Jul 2026): FY27 …" — the label before the colon is the bold part
+  const sep = gl.direction === 'standing' && !gl.text.includes(' — ') ? ': ' : ' — ';
+  const [head, ...rest] = gl.text.split(sep);
   const title = [gl.title, gl.source ? `Source: ${gl.source}` : '', moved ? `Moved from ${moved} to MIXED because of this.` : ''].filter(Boolean).join('\n');
   return (
     <div title={title} data-guide={gl.direction}
@@ -464,7 +468,7 @@ export function InGuideOneLiner({ stock }: { stock: ParsedEarning }) {
       <span aria-hidden style={{ flexShrink: 0 }}>{IN_GUIDE_GLYPH[gl.direction] || '…'}</span>
       <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
         <b style={{ color }}>{head}</b>
-        {rest.length > 0 && <span> — {rest.join(' — ')}</span>}
+        {rest.length > 0 && <span>{sep === ': ' ? ': ' : ' — '}{rest.join(sep)}</span>}
         {moved && <span style={{ color: 'var(--mc-text-4)' }}> · moved from {moved} to MIXED</span>}
         {gl.source && <span style={{ color: 'var(--mc-text-4)' }}> · {gl.source}</span>}
       </span>

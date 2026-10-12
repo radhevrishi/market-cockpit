@@ -737,9 +737,12 @@ export interface PriorityIo {
   verifiedEventDates(tickers: string[]): Promise<Map<string, string[]> | null>;
   /** zzz862: companies that already have a guidance record (active / review / claim). Their new documents are read FIRST. Optional; null = unreadable (no reordering). */
   watchSet?(): Promise<import('./guidance-watch').WatchSet | null>;
+  /** zzz977: India BLOCKBUSTER / STRONG companies of this results season whose new call is not read yet (EO page). Read first. */
+  eoTop?(): Promise<Set<string> | null>;
 }
 export interface PlanInfo { handoff: Set<string> | null; graded: Set<string> | null; verified: Map<string, string[]> | null; looked: Set<string>; /** zzz862: true for a document of a company that already has guidance */ watched?: ((s: { market: string; ticker?: string | null; company?: string | null }) => boolean) | null;
-  /** zzz926: India documents already read (their copies are not read again; a call already read as a transcript needs no deck first) */ readIndia?: GuidanceDocIndexRow[] }
+  /** zzz926: India documents already read (their copies are not read again; a call already read as a transcript needs no deck first) */ readIndia?: GuidanceDocIndexRow[];
+  /** zzz977: India top-tier earnings companies waiting for their new guidance (upper-case NSE symbols / BSE codes) */ eoTop?: Set<string> | null }
 export interface QueuePlan {
   rows: GuidanceDocIndexRow[];
   counts: { india: number; usHandoff: number; usNoEvent: number; usUnknown: number; skippedGraded: number; skippedVerified: number; skippedMode: number };
@@ -809,7 +812,11 @@ export function planQueue(rows: GuidanceDocIndexRow[], info: PlanInfo, mode: UsM
   const w = info.watched;
   const watchedFirst = (xs: GuidanceDocIndexRow[]) => (w ? [...xs.filter((r) => w({ market: r.market, ticker: r.ticker, company: r.company })), ...xs.filter((r) => !w({ market: r.market, ticker: r.ticker, company: r.company }))] : xs);
   // zzz926: watched first inside each India group (a watched company's deck must not jump ahead of another company's transcript)
-  return { rows: [...watchedFirst(io.leads), ...watchedFirst(io.followers), ...watchedFirst(io.large), ...watchedFirst([...t2, ...t3, ...t4]), ...io.copies], counts,
+  // zzz977: inside each India group, this season's BLOCKBUSTER / STRONG companies come before everyone else (then watched ones)
+  const top = info.eoTop;
+  const isTop = (r: GuidanceDocIndexRow) => !!top && !!r.ticker && top.has(String(r.ticker).toUpperCase());
+  const inFirst = (xs: GuidanceDocIndexRow[]) => (top && top.size ? [...watchedFirst(xs.filter(isTop)), ...watchedFirst(xs.filter((r) => !isTop(r)))] : watchedFirst(xs));
+  return { rows: [...inFirst(io.leads), ...inFirst(io.followers), ...inFirst(io.large), ...watchedFirst([...t2, ...t3, ...t4]), ...io.copies], counts,
     india: { leads: io.leads.length, followers: io.followers.length, large: io.large.length, copies: io.copies.length } };
 }
 
@@ -817,6 +824,7 @@ export function planQueue(rows: GuidanceDocIndexRow[], info: PlanInfo, mode: UsM
 export async function buildPlan(rows: GuidanceDocIndexRow[], io: PriorityIo | undefined, mode: UsMode, readIndia?: GuidanceDocIndexRow[]): Promise<QueuePlan> {
   const info: PlanInfo = { handoff: null, graded: null, verified: null, looked: new Set(), watched: null, readIndia: readIndia || [] };
   if (io?.watchSet) { const ws = await io.watchSet().catch(() => null); if (ws) { const { watchMatcher } = await import('./guidance-watch'); info.watched = watchMatcher(ws); } }
+  if (io?.eoTop && rows.some((r) => r.market === 'IN')) info.eoTop = await io.eoTop().catch(() => null);
   const usRows = rows.filter((r) => r.market !== 'IN');
   if (io && usRows.length) {
     const q = await io.usQueue().catch(() => null);
@@ -1104,6 +1112,11 @@ export async function realStore(): Promise<GuidanceDocStore> {
 export function realPriority(): PriorityIo {
   return {
     watchSet: async () => (await import('./guidance-watch')).readWatch(),
+    eoTop: async () => {
+      const { kvGet } = await import('./kv');
+      const m = await kvGet<Record<string, string>>('guidance-priority:v1:IN');
+      return m && typeof m === 'object' ? new Set(Object.keys(m).map((k) => k.toUpperCase())) : null;
+    },
     usQueue: async () => {
       const qm = await import('./guidance-upgrades-queue');
       const q = await qm.readQueue();

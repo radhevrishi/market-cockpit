@@ -29,10 +29,12 @@ import { guideLoweredInText, guideRaisedInText, guideKeptInText, guideCautionInT
 import type { GuideDirection } from './us-guide-line';
 
 /** Bumped whenever the line or the tier rule changes: a browser copy of a day without it is fetched again. */
-export const IN_OVERLAY_VERSION = 'in-guide-v1';
+export const IN_OVERLAY_VERSION = 'in-guide-v2';
 export const IN_GUIDE_TAGS = { lowered: 'guidance lowered', mixed: 'guidance mixed', cautious: 'guidance cautious' } as const;
 
-export type InGuideDirection = GuideDirection | 'positive';
+/** zzz977: 'standing' = no new guidance yet this season, the last call's guidance shown with this quarter's pace against it;
+ *  'pending' = the call / deck of this season is filed (or announced) but not read yet. Neither moves a tier. */
+export type InGuideDirection = GuideDirection | 'positive' | 'standing' | 'pending';
 
 export interface InGuideLine {
   direction: InGuideDirection;
@@ -45,6 +47,8 @@ export interface InGuideLine {
   url: string | null;
   /** true = a BLOCKBUSTER / STRONG row must be MIXED */
   lowered: boolean;
+  /** zzz977: this quarter's growth against the standing guidance (shown, never moves a tier) */
+  pace?: 'ahead' | 'on-track' | 'behind' | null;
 }
 
 /** One stored extracted figure (shape of ExtractedGuidance in guidance-docs-types, only what is read here). */
@@ -66,6 +70,12 @@ export interface InGuideStored {
   extracts?: InExtractDocLike[] | null;
   /** the stored AI forward-guidance read for this quarter */
   ai?: InAiGuidanceLike | null;
+  /** zzz977: extracted documents of the PREVIOUS season(s) (filed 3–200 days before these results) — the guidance standing today */
+  standing?: InExtractDocLike[] | null;
+  /** zzz977: this season's transcript / deck / release already collected but not read yet */
+  pending?: Array<{ kind?: string; filedAt?: string; url?: string }> | null;
+  /** zzz977: this season's call / transcript announced by the exchange (intimation), the document itself not out yet */
+  announced?: Array<{ kind?: string; filedAt?: string; url?: string }> | null;
 }
 
 // ── text: the Indian wordings the US detectors miss ──────────────────────────
@@ -217,6 +227,64 @@ export function rowText(row: any): string {
 
 // ── the verdict ──────────────────────────────────────────────────────────────
 /** The one-line guidance verdict for a graded India row. `stored` is what the server found for the row (may be empty). */
+const shortDate = (iso?: string) => { const t = Date.parse(String(iso || '').slice(0, 10)); return Number.isFinite(t) ? new Date(t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' }) : ''; };
+const monYr = (iso?: string) => { const t = Date.parse(String(iso || '').slice(0, 10)); return Number.isFinite(t) ? new Date(t).toLocaleDateString('en-GB', { month: 'short', year: 'numeric', timeZone: 'UTC' }) : ''; };
+/** 'Q2 FY27' → 'FY27' */
+const fyOf = (q: unknown) => { const m = /FY\s?'?(\d{2,4})/i.exec(String(q || '')); return m ? `FY${m[1].slice(-2)}` : null; };
+const sameFy = (period: unknown, fy: string | null) => !!fy && new RegExp(`\\b${fy}\\b`, 'i').test(String(period || '').replace(/FY\s?'?20(\d{2})/i, 'FY$1'));
+
+/**
+ * zzz977 — THE GUIDANCE STANDING TODAY, and this quarter's pace against it. Early in a results season the new call has not been
+ * held or read, so "not checked" told the owner nothing. Management's guidance from the previous call is still the bar the
+ * quarter is measured against: "FY27 revenue growth 20–25% (Jul call) — this quarter +31% → ahead". Shown only; never moves a tier
+ * (the owner's rule is about management LOWERING guidance, which only the new call can show).
+ */
+export function standingGuidance(row: any, standing: readonly InExtractDocLike[] | null | undefined): { text: string; title: string; pace: InGuideLine['pace']; source: string; url: string | null } | null {
+  const docs = (Array.isArray(standing) ? standing : []).filter((d) => d && Array.isArray(d.rows) && d.rows.length)
+    .slice().sort((a, b) => String(b.filedAt || '').localeCompare(String(a.filedAt || '')));
+  if (!docs.length) return null;
+  const fy = fyOf(row?.quarter);
+  const figs = latestFigures(docs).filter((f) => f.row.status !== 'WITHDRAWN' && f.row.metric !== 'OTHER');
+  if (!figs.length) return null;
+  // the year being reported first (FY27 while reporting a FY27 quarter), main lines first
+  const rank = (f: Fig) => (sameFy(f.row.period, fy) ? 0 : 1) * 10 + (MAIN.has(f.row.metric) ? 0 : 1) * 5 + (f.row.metric === 'REVENUE_GROWTH' || f.row.metric === 'REVENUE' ? 0 : 1);
+  const pick = figs.slice().sort((a, b) => rank(a) - rank(b)).slice(0, 2);
+  // pace: guided revenue growth for this year against this quarter's year-on-year sales growth
+  let pace: InGuideLine['pace'] = null; let paceTxt = '';
+  const g = figs.find((f) => sameFy(f.row.period, fy) && (f.row.metric === 'REVENUE_GROWTH' || f.row.metric === 'REVENUE'));
+  const yoy = typeof row?.sales_yoy_pct === 'number' && Number.isFinite(row.sales_yoy_pct) ? row.sales_yoy_pct : null;
+  if (g && yoy != null) {
+    let lo: number | null = null, hi: number | null = null;
+    if (isNum(g.row.growthPctLow) || isNum(g.row.growthPctHigh)) { lo = isNum(g.row.growthPctLow) ? g.row.growthPctLow : g.row.growthPctHigh!; hi = isNum(g.row.growthPctHigh) ? g.row.growthPctHigh : lo; }
+    else if (g.row.metric === 'REVENUE_GROWTH' && String(g.row.unit || '') === '%' && (isNum(g.row.low) || isNum(g.row.high))) { lo = isNum(g.row.low) ? g.row.low : g.row.high!; hi = isNum(g.row.high) ? g.row.high : lo; }
+    else if (g.row.metric === 'REVENUE' && g.row.priorActual && isNum(g.row.priorActual.value) && g.row.priorActual.value > 0 && (isNum(g.row.low) || isNum(g.row.high))) {
+      const l = isNum(g.row.low) ? g.row.low : g.row.high!, h = isNum(g.row.high) ? g.row.high : l;
+      lo = Math.round((l / g.row.priorActual.value - 1) * 1000) / 10; hi = Math.round((h / g.row.priorActual.value - 1) * 1000) / 10;
+    }
+    if (lo != null && hi != null) {
+      const a = Math.min(lo, hi), b = Math.max(lo, hi);
+      // one quarter is noisy: a 5-point band either side before it is called ahead / behind
+      pace = yoy < a - 5 ? 'behind' : yoy > b + 5 ? 'ahead' : 'on-track';
+      paceTxt = ` · this quarter sales ${yoy >= 0 ? '+' : ''}${Math.round(yoy * 10) / 10}% → ${pace === 'behind' ? 'running BELOW it' : pace === 'ahead' ? 'running ahead' : 'on track'}`;
+    }
+  }
+  const d0 = pick[0].doc;
+  const when = monYr(d0.filedAt);
+  return {
+    text: `Standing guidance (${docWord(d0.docKind)}, ${when}): ${clip(pick.map((f) => figText(f.row)).join('; '), 110)}${paceTxt}`,
+    title: `${pick.map((f) => (f.row.quote ? `“${clip(f.row.quote, 300)}”` : figText(f.row))).join('\n')}\n\nThis is the guidance management gave BEFORE these results. The new call has not been read yet, so whether it was raised, kept or cut is not known. ${pace === 'behind' ? 'This quarter’s sales growth is more than 5 points below the guided range — watch whether the call trims it.' : pace === 'ahead' ? 'This quarter’s sales growth is more than 5 points above the guided range — a raise is possible on the call.' : pace ? 'This quarter’s sales growth is within 5 points of the guided range.' : ''}`.trim(),
+    pace, source: docWord(d0.docKind), url: d0.docUrl || null,
+  };
+}
+/** What is known about this season's call / deck when none has been read yet. */
+function pendingNote(stored?: InGuideStored | null): string {
+  const p = (stored?.pending || []).filter(Boolean).sort((a, b) => String(b.filedAt || '').localeCompare(String(a.filedAt || '')));
+  if (p.length) return `${docWord(p[0].kind)} filed ${shortDate(p[0].filedAt)} — in the reading queue`;
+  const a = (stored?.announced || []).filter(Boolean).sort((x, y) => String(y.filedAt || '').localeCompare(String(x.filedAt || '')));
+  if (a.length) return `${docWord(a[0].kind).replace('concall transcript', 'concall')} announced ${shortDate(a[0].filedAt)} — document not out yet`;
+  return '';
+}
+
 export function inGuideLine(row: any, stored?: InGuideStored | null): InGuideLine {
   const docs = extractsForFiling(stored?.extracts || [], row?._window_date || row?.filing_date);
   const figs = latestFigures(docs);
@@ -305,8 +373,17 @@ export function inGuideLine(row: any, stored?: InGuideStored | null): InGuideLin
   if (gs === 'raised' || gs === 'positive outlook') {
     return { direction: 'positive', text: 'Positive outlook words in the filings (order book / capacity) — no guided figure', title: 'The concall-intelligence word list matched order-book / capacity / raise language. No guided figure was found.', source: 'concall feed', url: null, lowered: false };
   }
-  if (docs.length) return { direction: 'none', text: 'No forward guidance in the documents read for this quarter', title: docs.map((d) => `${docWord(d.docKind)} · ${String(d.filedAt || '').slice(0, 10)}`).join('\n'), source: docWord(docs[0].docKind), url: docs[0].docUrl || null, lowered: false };
-  return { direction: 'unknown', text: 'Guidance not checked yet — no concall or deck read for this quarter', title: 'No guidance document of this results season has been read yet. The call transcript usually follows the results by one to three weeks.', source: '', url: null, lowered: false };
+  // zzz977: nothing new this season — the guidance standing from the last call, this quarter's pace against it, and where the new call is
+  const st = standingGuidance(row, stored?.standing);
+  const pend = pendingNote(stored);
+  if (docs.length) {
+    const read = `No forward guidance in this quarter's ${docWord(docs[0].docKind)}`;
+    if (st) return { direction: 'standing', text: `${read} · ${st.text}`, title: `${docs.map((d) => `${docWord(d.docKind)} · ${String(d.filedAt || '').slice(0, 10)}`).join('\n')}\n\n${st.title}`, source: st.source, url: st.url, lowered: false, pace: st.pace };
+    return { direction: 'none', text: `${read}${pend ? ` · ${pend}` : ''}`, title: docs.map((d) => `${docWord(d.docKind)} · ${String(d.filedAt || '').slice(0, 10)}`).join('\n'), source: docWord(docs[0].docKind), url: docs[0].docUrl || null, lowered: false };
+  }
+  if (st) return { direction: 'standing', text: `${st.text}${pend ? ` · new: ${pend}` : ' · new call not read yet'}`, title: st.title, source: st.source, url: st.url, lowered: false, pace: st.pace };
+  if (pend) return { direction: 'pending', text: `New guidance not read yet — ${pend}`, title: 'The call transcript or investor deck of this results season has been collected or announced but not read yet. It is read in order by the hourly guidance reader (this season’s top-tier companies first), within its daily allowance.', source: '', url: (stored?.pending?.[0]?.url || stored?.announced?.[0]?.url) || null, lowered: false };
+  return { direction: 'unknown', text: 'No guidance on record — no earlier call read and no call / deck filed yet for this quarter', title: 'No guidance document of this results season has been collected yet, and no earlier call of this company has been read. The call transcript usually follows the results by one to three weeks.', source: '', url: null, lowered: false };
 }
 
 const TOP = new Set(['BLOCKBUSTER', 'STRONG']);
@@ -349,5 +426,5 @@ export function applyInGuideLines(payload: any, storedFor: (row: any) => InGuide
 }
 
 export const IN_GUIDE_GLYPH: Record<InGuideDirection, string> = {
-  raised: '📈', lowered: '📉', mixed: '↕', cautious: '⚠', maintained: '➖', withdrawn: '⛔', none: '◌', 'not-lowered': '✓', unknown: '…', positive: '↗',
+  raised: '📈', lowered: '📉', mixed: '↕', cautious: '⚠', maintained: '➖', withdrawn: '⛔', none: '◌', 'not-lowered': '✓', unknown: '…', positive: '↗', standing: '📌', pending: '⏳',
 };
