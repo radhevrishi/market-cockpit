@@ -22,6 +22,8 @@ import { fitBarSpace, loadView, saveView } from '@/lib/chart-view-prefs';
 import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
 import { readableOn, textOnColor } from '@/lib/readable-color';
 import { addSet, activeSetOf, chooseSet, loadSets, removeSet, saveSets, setsOf, withSet, DRAWING_SETS_KEY, MAIN_SET, type SetsStore } from '@/lib/chart-drawing-sets';
+import { PatternBanner, usePatternIndicator } from './PatternIndicator';
+import { patternsOn, withPatterns } from './pattern-view';
 
 type KC = typeof import('klinecharts');
 type Tool = 'cursor' | 'mcHLine' | 'segment' | 'rayLine' | 'mcRect' | 'parallelStraightLine' | 'fibonacciLine' | 'mcText' | 'mcMeasure';
@@ -29,6 +31,7 @@ interface ChartResponse {
   ok: boolean; error?: string; ticker: string; market: Market; name: string | null; currency: string | null; exchange: string | null;
   stats: HeaderStats; bars: { t: number[]; o: number[]; h: number[]; l: number[]; c: number[]; v: number[] };
   asOf?: string; lastBarAt?: string | null;
+  interval?: string; range?: string;   // zzz982 — lets the chart-pattern indicator reuse daily bars already on screen
   requestedExchange?: string | null;
   basis?: 'price' | 'tr'; dividends?: number;
   provenance?: { source: string; nativeGranularity: string; displayInterval: string; firstBarAt: string | null; quoteAt: string | null; priceBasis: string; lastBarFromQuote: boolean; lastBarOpenInferred: boolean; highLowRepaired: string };
@@ -707,6 +710,8 @@ export default function ChartWorkspace() {
   const live = sameChartIdentity(info, ticker, market, exchange) ? info : null;
   const stats = live?.stats;
   const cur = live?.currency === 'INR' ? '₹' : live?.currency === 'USD' ? '$' : live?.currency ? `${live.currency} ` : (market === 'IN' ? '₹' : '$');
+  // zzz982 — "Automate chart patterns": runs only while that indicator is in the working layout
+  const patterns = usePatternIndicator({ on: patternsOn(L.working), ready, ticker, market, exchange, basis, live, bars, chartRef, cacheRef, cur });
   const changeColor = (stats?.change ?? 0) >= 0 ? 'var(--mc-bullish, #059669)' : 'var(--mc-bearish, #DC2626)';
   const activeHint = useMemo(() => TOOLS.find((t) => t.id === tool)?.hint, [tool]);
   useEffect(() => { toolRef.current = tool; }, [tool]);
@@ -865,6 +870,7 @@ export default function ChartWorkspace() {
               title={basis === 'tr' ? `${TOTAL_RETURN_LABEL}. On: history adjusted for ${live?.dividends ?? 0} cash dividends; the latest price is unchanged. Drawings are one set for both views and stay at the price values they were drawn on. Click for prices as printed.` : `Show: ${TOTAL_RETURN_LABEL}`}>TR</button>
           </div>
           <IndicatorLegend rows={rows} valueOf={valueOf} onToggle={(id) => L.setWorking((w) => toggleRow(w, id))} decimals={pxDecimals} colorOf={(c) => (!chartLight && (luminance(c) ?? 1) < 0.18 ? '#B2B5BE' : c)} textOf={(c) => readableOn(c, chartLight ? '#FFFFFF' : '#0A0E1A')} />
+          <PatternBanner p={patterns} cur={cur} light={chartLight} onTurnOff={() => L.setWorking((w) => withPatterns(w, false))} />
           {(savedAt || syncedAt) && (
             <div title="Drawings are saved in this browser at once and copied to your account about once a minute, so they come back on your other devices"
               style={{ position: 'absolute', left: 8, bottom: 30, zIndex: 5, padding: '2px 8px', borderRadius: 6, fontSize: 11, background: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-1)', color: 'var(--mc-bullish, #059669)', pointerEvents: 'none' }}>

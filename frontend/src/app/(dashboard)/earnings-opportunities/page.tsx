@@ -18,7 +18,7 @@ import { pendingReasonMap, pendingReasonWord } from '@/lib/eo-pending-reason';  
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import type { CSSProperties } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Calendar as CalendarIcon, ExternalLink, RefreshCw, ChevronDown, ChevronRight, Grid3X3, FileText } from 'lucide-react';
+import { Calendar as CalendarIcon, ExternalLink, RefreshCw, ChevronDown, ChevronRight, Grid3X3, FileText, Star } from 'lucide-react';
 import api from '@/lib/api';
 // PATCH 0186 — Auto-sync BLOCKBUSTER/STRONG cards into Conviction Beats pipeline
 import { syncFromEarningsOps, type ConvictionTier } from '@/lib/conviction-beats';
@@ -65,6 +65,7 @@ import type { CalendarPayload, EarningsTier, ParsedEarning, OpportunitiesPayload
 import { TIER_ORDER, GRADED_ENGINE_LABEL } from './constants';
 import { useMarketEarnings, buildCalendarFromHub, dedupePayloadByCompany, istDaysAgoISO, todayISO, todayIstISO, deriveQuarterLabel, fmtCr, fmtPx, fmtPct } from './helpers';
 import { QuadrantBadge, IndiaAiSummary, CalendarView, MarginTile, MetricTile, InGuideOneLiner } from './components';
+import { btn, panel, pillBadge, chipStyle, tierChip, tierTag, cardShell, tierSection, tierText, tierCountPill, TIER_HEAD_BTN, CARD_GRID, TILE_ROW, Tile } from './eo-style';   // zzz981 — the US look
 
 // PATCH 1022 — market-cap range matcher (value in ₹ Cr).
 // zzz822 — the bands now live in ONE table (CAP_BUCKETS in
@@ -1995,120 +1996,26 @@ export default function EarningsOpportunitiesPage() {
   })();
 
   return (
-    <div className="mc-flow-mobile" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--mc-bg-0)' }}>
+    <div className="mc-flow-mobile" style={{ padding: '20px', maxWidth: 1500, margin: '0 auto' }}>
+      {/* zzz981 — the page now uses the US Earnings Opportunities frame: a centred
+          1500px column, a title row with pill badges, a grey subtitle, one
+          bordered controls bar, then the tier / filter chips. Every India
+          control is still here; only its look and place changed. */}
+      {/* PATCH 0557 — backend-degraded banner. */}
+      <DegradedBanner />
       {/* ── Header ──────────────────────────────────────────────────────── */}
-      <div style={{ padding: '20px 24px 14px', borderBottom: '1px solid var(--mc-bg-4)', backgroundColor: 'var(--mc-bg-1)' }}>
-        {/* PATCH 0557 — backend-degraded banner. */}
-        <DegradedBanner />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
-          <h1 style={{ fontSize: 22, fontWeight: 900, color: 'var(--mc-text-1)', margin: 0 }}>Earnings Opportunities</h1>
-          {/* PATCH 0915 — Direct link to NSE's official calendar so user can
-              verify the universe vs our aggregator. User feedback: hub
-              shows 93 filings for the date but NSE's calendar shows 118+. */}
-          <a
-            href="https://www.nseindia.com/companies-listing/corporate-filings-financial-results"
-            target="_blank" rel="noopener noreferrer"
-            title="Open NSE's official corporate-filings page in a new tab to verify the full universe of filings for any date"
-            style={{ fontSize: 10, padding: '4px 10px', borderRadius: 6, border: '1px solid color-mix(in srgb, var(--mc-text-3) 38%, transparent)', background: 'transparent', color: 'var(--mc-text-3)', fontWeight: 700, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}
-          >🔗 NSE official ↗</a>
-          <button onClick={async () => {
-            // PATCH zzz90 (EO4) — show feedback toast after refresh completes
-            const r = await refetch();
-            const total = (r?.data as any)?.candidates_total ?? 0;
-            const d = resolvedDateForGrading || 'today';
-            setRefreshFeedback(total > 0 ? `✓ Refreshed — ${total} filings for ${d}` : `✓ Refreshed — no NSE/BSE filings for ${d}`);
-            setTimeout(() => setRefreshFeedback(null), 8000);
-          }} disabled={hardRefreshing}
-            title="Hard refresh — busts cache, re-fetches NSE/BSE feeds, pulls in newly-filed tickers (works for any date including weekends)"
-            style={{
-              padding: '4px 10px', borderRadius: 6,
-              border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)',
-              background: hardRefreshing ? 'color-mix(in srgb, var(--mc-cyan) 19%, transparent)' : 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)',
-              color: 'var(--mc-cyan)',
-              fontSize: 11, fontWeight: 700,
-              cursor: hardRefreshing ? 'not-allowed' : 'pointer',
-              display: 'inline-flex', alignItems: 'center', gap: 4,
-              opacity: hardRefreshing ? 0.8 : 1,
-            }}>
-            <RefreshCw style={{ width: 11, height: 11, animation: hardRefreshing ? 'spin 0.8s linear infinite' : 'none' }} />
-            {hardRefreshing ? 'Refetching…' : 'Hard Refresh'}
-            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-          </button>
-          {/* PATCH 0360 / 0361 — One-shot backfill of the last 60 weekdays.
-              Heals all preview-shape cached payloads so every past date
-              becomes instant cache-hit going forward. */}
-          <button
-            onClick={runBackfill}
-            disabled={backfilling}
-            title="One-time fill of the last 60 weekdays. Chains 2-date batches with retry. Once done, past-date pages serve from cache instantly with no Refresh needed."
-            style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid color-mix(in srgb, var(--mc-state-persistent) 38%, transparent)', background: backfilling ? 'color-mix(in srgb, var(--mc-state-persistent) 19%, transparent)' : 'color-mix(in srgb, var(--mc-state-persistent) 8%, transparent)', color: 'var(--mc-state-persistent)', fontSize: 11, fontWeight: 700, cursor: backfilling ? 'wait' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, opacity: backfilling ? 0.8 : 1 }}>
-            <RefreshCw style={{ width: 11, height: 11, animation: backfilling ? 'spin 0.8s linear infinite' : 'none' }} />
-            {backfilling ? 'Backfilling…' : 'Backfill 60d'}
-          </button>
-          {/* PATCH 0999 — Slow Backfill (80d, ~2h, resumable) */}
-          {!slowBf?.running && (
-            <button
-              onClick={() => startSlowBackfill(80)}
-              title="Politely backfills 80 weekdays over ~2 hours. One request every 90s — never trips Screener rate limits. Resumes if you reload."
-              style={{
-                padding: '4px 10px', borderRadius: 6,
-                border: '1px solid #6366F160', background: '#6366F115',
-                color: '#A5B4FC', fontSize: 11, fontWeight: 700,
-                cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4,
-              }}>
-              🌙 Slow Backfill (80d · 2h)
-            </button>
-          )}
-          {/* PATCH 1003 — 60d variant of Slow Backfill */}
-          {!slowBf?.running && (
-            <button
-              onClick={() => startSlowBackfill(60)}
-              title="Politely backfills 60 weekdays over ~90 minutes. One request every 90s — never trips Screener rate limits."
-              style={{
-                padding: '4px 10px', borderRadius: 6,
-                border: '1px solid #6366F140', background: '#6366F108',
-                color: '#A5B4FC', fontSize: 11, fontWeight: 700,
-                cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4,
-              }}>
-              🌙 Slow Backfill (60d · 1.5h)
-            </button>
-          )}{/* PATCH 1004 — restored missing </button> closing tag */}
-          {slowBf?.running && (
-            <button
-              onClick={stopSlowBackfill}
-              title="Stop the slow backfill. Already-done dates stay cached."
-              style={{
-                padding: '4px 10px', borderRadius: 6,
-                border: '1px solid color-mix(in srgb, var(--mc-bearish) 38%, transparent)', background: 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)',
-                color: '#FCA5A5', fontSize: 11, fontWeight: 700, cursor: 'pointer',
-              }}>
-              ⏹ Stop Slow Backfill
-            </button>
-          )}
-          {slowBfProgressLabel && (
-            <span style={{
-              fontSize: 10.5, fontWeight: 700,
-              padding: '3px 8px', borderRadius: 4,
-              backgroundColor: slowBfProgressLabel.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 9%, transparent)' : '#6366F118',
-              border: `1px solid ${slowBfProgressLabel.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 25%, transparent)' : '#6366F140'}`,
-              color: slowBfProgressLabel.startsWith('✓') ? 'var(--mc-bullish)' : '#A5B4FC',
-              maxWidth: 420, lineHeight: 1.3,
-            }}>
-              {slowBfProgressLabel}
-            </span>
-          )}
-          {backfillProgress && (
-            <span style={{
-              fontSize: 10.5, fontWeight: 700,
-              padding: '3px 8px', borderRadius: 4,
-              backgroundColor: backfillProgress.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 9%, transparent)' : backfillProgress.startsWith('⚠') ? 'color-mix(in srgb, var(--mc-bearish) 9%, transparent)' : 'color-mix(in srgb, var(--mc-state-persistent) 9%, transparent)',
-              border: `1px solid ${backfillProgress.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 25%, transparent)' : backfillProgress.startsWith('⚠') ? 'color-mix(in srgb, var(--mc-bearish) 25%, transparent)' : 'color-mix(in srgb, var(--mc-state-persistent) 25%, transparent)'}`,
-              color: backfillProgress.startsWith('✓') ? 'var(--mc-bullish)' : backfillProgress.startsWith('⚠') ? 'var(--mc-bearish)' : 'var(--mc-state-persistent)',
-              maxWidth: 480, lineHeight: 1.3,
-            }}>
-              {backfillProgress}
-            </span>
-          )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
+        <Star className="w-5 h-5" style={{ color: '#F59E0B' }} />
+        <h1 style={{ fontSize: 'var(--mc-text-h3)', fontWeight: 800, color: 'var(--mc-text-0)', margin: 0 }}>Earnings Opportunities</h1>
+        <span style={pillBadge()}>NSE · BSE</span>
+        {/* PATCH 0915 — Direct link to NSE's official calendar so user can
+            verify the universe vs our aggregator. */}
+        <a
+          href="https://www.nseindia.com/companies-listing/corporate-filings-financial-results"
+          target="_blank" rel="noopener noreferrer"
+          title="Open NSE's official corporate-filings page in a new tab to verify the full universe of filings for any date"
+          style={pillBadge('var(--mc-text-3)')}
+        >🔗 NSE official ↗</a>
           {/* PATCH 0362 — Live indicator. Only renders when viewing today's
               date during market hours. Tells the user the page is auto-
               refreshing every 4 min, with the last refresh timestamp so
@@ -2124,8 +2031,8 @@ export default function EarningsOpportunitiesPage() {
                 : 'Market closed — manual refresh only. Re-opens 9 AM IST.'}
                 style={{
                   display: 'inline-flex', alignItems: 'center', gap: 5,
-                  fontSize: 10.5, fontWeight: 700,
-                  padding: '3px 9px', borderRadius: 4,
+                  fontSize: 'var(--mc-text-xs)', fontWeight: 700,
+                  padding: '3px 10px', borderRadius: 999,
                   backgroundColor: inMarketHours ? 'color-mix(in srgb, var(--mc-bullish) 9%, transparent)' : 'color-mix(in srgb, var(--mc-text-3) 8%, transparent)',
                   border: `1px solid ${inMarketHours ? 'color-mix(in srgb, var(--mc-bullish) 38%, transparent)' : 'color-mix(in srgb, var(--mc-text-3) 25%, transparent)'}`,
                   color: inMarketHours ? 'var(--mc-bullish)' : 'var(--mc-text-3)',
@@ -2139,96 +2046,6 @@ export default function EarningsOpportunitiesPage() {
               </span>
             );
           })()}
-          {/* AUDIT_100 #26 — confidence band: show "X of Y enriched · M missing" chip
-              next to the refresh button so users see coverage at a glance. */}
-          {resolvedDateForGrading && !windowOn && (() => {
-            // zzz822 — single-date coverage chip; the window has its own counts.
-            const allCards = ((view.by_tier?.BLOCKBUSTER ?? []) as ParsedEarning[])
-              .concat(view.by_tier?.STRONG ?? [])
-              .concat(view.by_tier?.MIXED ?? [])
-              .concat(view.by_tier?.AVOID ?? []);
-            const total = allCards.length;
-            const missing = allCards.filter((c) => c.sales_curr_cr == null && c.pat_curr_cr == null).length;
-            const enriched = total - missing;
-            if (total === 0) return null;
-            const ratio = enriched / total;
-            const tone = ratio >= 0.95 ? '#10B981' : ratio >= 0.75 ? '#22D3EE' : ratio >= 0.5 ? '#F59E0B' : '#EF4444';
-            const glyph = ratio >= 0.95 ? '✓' : ratio >= 0.5 ? '⚠' : '✗';
-            return (
-              <span title={`${enriched} of ${total} cards have Screener/Yahoo financials enriched. ${missing} missing.`}
-                style={{
-                  fontSize: 10.5, fontWeight: 700, color: tone,
-                  border: `1px solid ${tone}50`, backgroundColor: `${tone}12`,
-                  padding: '3px 8px', borderRadius: 4, letterSpacing: 0.3,
-                  fontFamily: 'ui-monospace, monospace',
-                }}>
-                {glyph} {enriched}/{total} enriched{missing > 0 ? ` · ${missing} missing` : ''}
-              </span>
-            );
-          })()}
-          {/* PATCH 0189 — Partial refresh button with INLINE feedback */}
-          {resolvedDateForGrading && (() => {
-            // zzz415 — count with the SAME criterion the server's refreshMissing
-            // uses, so the button label matches what a refresh will attempt.
-            // Old rule (no absolutes at all) under-counted: a card with raw
-            // Rev/PAT but no OPM (VIKRAN-class) was invisible here ("Refresh 1
-            // missing" while 2 cards showed screener-gap) yet the server
-            // attempted it. New rule: missing = (no YoY AND no absolutes) OR
-            // margin missing/stale-zero. Absolute-only names (recent IPOs with
-            // no year-ago quarter) clear once their OPM lands, so the counter
-            // converges instead of sticking forever.
-            const missing = ((view.by_tier?.BLOCKBUSTER ?? []) as ParsedEarning[])
-              .concat(view.by_tier?.STRONG ?? [])
-              .concat(view.by_tier?.MIXED ?? [])
-              .concat(view.by_tier?.AVOID ?? [])
-              .filter((c) => {
-                const noYoY = c.sales_yoy_pct == null && c.net_profit_yoy_pct == null && c.eps_yoy_pct == null;
-                const noAbs = c.sales_curr_cr == null && c.pat_curr_cr == null && (c as any).eps_curr == null;
-                const opmCur = (c as any).opm_pct, opmPrev = (c as any).opm_prev_pct, salesCur = (c as any).sales_curr_cr;
-                const opmStaleZero = (opmCur === 0 || opmPrev === 0) && salesCur != null && Number(salesCur) >= 100;
-                const noMargin = (opmCur == null && opmPrev == null) || opmStaleZero;
-                return (noYoY && noAbs) || noMargin;
-              }).length;
-            // Show button if missing > 0 OR a feedback message is currently displayed.
-            // Don't hide button just because data isn't there to fetch.
-            if (missing === 0 && !refreshFeedback) return null;
-            return (
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                {missing > 0 && (
-                  <button
-                    onClick={refreshMissingMutate}
-                    disabled={refreshing}
-                    title={`Fetch financials for ${missing} cards that don't have data yet — works on past dates too (weekend filings, etc.)`}
-                    style={{
-                      padding: '4px 10px', borderRadius: 6,
-                      border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)',
-                      background: refreshing ? 'color-mix(in srgb, var(--mc-warn) 19%, transparent)' : 'color-mix(in srgb, var(--mc-warn) 8%, transparent)',
-                      color: 'var(--mc-warn)',
-                      fontSize: 11,
-                      cursor: refreshing ? 'not-allowed' : 'pointer',
-                      display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 700,
-                      opacity: refreshing ? 0.8 : 1,
-                    }}>
-                    <RefreshCw style={{ width: 11, height: 11, animation: refreshing ? 'spin 0.8s linear infinite' : 'none' }} />
-                    {refreshing ? `Refreshing ${missing}…` : `Refresh ${missing} missing`}
-                  </button>
-                )}
-                {/* Inline feedback right next to the button — impossible to miss */}
-                {refreshFeedback && (
-                  <span style={{
-                    fontSize: 10.5, fontWeight: 700,
-                    padding: '3px 8px', borderRadius: 4,
-                    backgroundColor: refreshFeedback.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 9%, transparent)' : 'color-mix(in srgb, var(--mc-bearish) 9%, transparent)',
-                    border: `1px solid ${refreshFeedback.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 25%, transparent)' : 'color-mix(in srgb, var(--mc-bearish) 25%, transparent)'}`,
-                    color: refreshFeedback.startsWith('✓') ? 'var(--mc-bullish)' : 'var(--mc-bearish)',
-                    maxWidth: 480, lineHeight: 1.3,
-                  }}>
-                    {refreshFeedback}
-                  </span>
-                )}
-              </div>
-            );
-          })()}
           {/* PATCH 0698 — IST market-hours-aware label. During 09:15-15:30 IST
               (Mon-Fri) the pipeline is actively polling; outside those hours
               honestly say 'Market closed · historical data only' rather than
@@ -2237,7 +2054,7 @@ export default function EarningsOpportunitiesPage() {
             // PATCH 0715 — centralized via isIndianMarketOpen (lib/market-hours).
             const isMarketOpen = isIndianMarketOpenLocal();
             return (
-              <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--mc-text-4)' }}>
+              <span style={{ marginLeft: 'auto', fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-3)' }}>
                 {windowOn
                   // zzz822 — the sources-polled count belongs to one date, not the window.
                   ? (isMarketOpen ? 'Market open · window shows stored grades' : 'Market closed · window shows stored grades')
@@ -2247,21 +2064,17 @@ export default function EarningsOpportunitiesPage() {
               </span>
             );
           })()}
-        </div>
-
-        <div style={{ backgroundColor: 'var(--mc-bg-0)', border: '1px solid var(--mc-bg-4)', borderRadius: 8, padding: '10px 14px', marginBottom: 14 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-            <div style={{ fontSize: 12, color: 'var(--mc-text-3)', lineHeight: 1.55 }}>
-              Yesterday's earnings, scored overnight — find the exceptional setups before the market opens.<br/>
-              Every Indian filing graded into one of four conviction tiers — from <strong style={{ color: 'var(--mc-warn)' }}>BLOCKBUSTER</strong> through <strong style={{ color: 'var(--mc-bullish)' }}>STRONG</strong>, <strong style={{ color: '#FACC15' }}>MIXED</strong>, and <strong style={{ color: 'var(--mc-bearish)' }}>AVOID</strong>.
-            </div>
-            <button onClick={() => setShowAbout((s) => !s)}
-              style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-              How it works {showAbout ? '▴' : '▾'}
-            </button>
-          </div>
-          {showAbout && (
-            <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--mc-bg-4)', fontSize: 11.5, color: 'var(--mc-text-3)', lineHeight: 1.7 }}>
+      </div>
+      <p style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-sm)', margin: '0 0 16px', lineHeight: 1.55 }}>
+        Yesterday&apos;s earnings, scored overnight — find the exceptional setups before the market opens.
+        Every Indian filing graded into one of four conviction tiers — from <strong style={{ color: 'var(--mc-warn)' }}>BLOCKBUSTER</strong> through <strong style={{ color: 'var(--mc-bullish)' }}>STRONG</strong>, <strong style={{ color: 'color-mix(in srgb, #FACC15 60%, var(--mc-text-1))' }}>MIXED</strong>, and <strong style={{ color: 'var(--mc-bearish)' }}>AVOID</strong>.{' '}
+        <button onClick={() => setShowAbout((s) => !s)} aria-expanded={showAbout}
+          style={{ ...btn(showAbout), padding: '2px 10px' }}>
+          How it works {showAbout ? '▴' : '▾'}
+        </button>
+      </p>
+      {showAbout && (
+            <div style={{ ...panel(), fontSize: 11.5, color: 'var(--mc-text-3)', lineHeight: 1.7 }}>
               {/* zzz227 — exact grading rules, mirrored from the grader code so the
                   doc can never drift from behaviour without a code change here too. */}
               {/* zzz820b — the India tier is PRICE-FREE since engine v24 (zzz819):
@@ -2326,10 +2139,14 @@ export default function EarningsOpportunitiesPage() {
                 Educational only. Not investment advice. Server pipeline fetches BSE/NSE results announcements + Indian results RSS feeds; worker enriches with Stage / RS / OPM / ADTV. Parser accuracy depends on RSS title richness — missing fields are treated conservatively (never punished for AVOID, but ELITE requires them).
               </div>
             </div>
-          )}
-        </div>
+      )}
 
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+      {/* ── controls (one bordered bar, as on the US page) ── */}
+      <div style={{
+        display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center',
+        padding: 12, borderRadius: 'var(--mc-radius)', backgroundColor: 'var(--mc-bg-1)',
+        border: '1px solid var(--mc-bg-4)', marginBottom: 12,
+      }}>
           {/* zzz276 — Search across the last 120 business days of graded filings.
               Institutional pattern: debounced typeahead, keyboard nav, recent picks.
               Click a result → jump to that filing date + scroll to the card. */}
@@ -2362,98 +2179,309 @@ export default function EarningsOpportunitiesPage() {
               pinTicker(r.ticker);
             }}
           />
-          {/* PATCH 0916 — FILING DATE box now includes an inline native
-              date picker so user can jump to ANY date with one click + one
-              calendar pick. Plus quick-jump chips for Today / Yesterday /
-              7 days ago. User feedback: "now only posible to go one day
-              back liek that make it eay edtion or selecting directyl
-              needed date by calendar option". */}
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: `1px solid ${isStaleView ? 'color-mix(in srgb, var(--mc-warn) 38%, transparent)' : 'var(--mc-bg-4)'}`, borderRadius: 8, padding: '2px 4px 2px 12px', backgroundColor: 'var(--mc-bg-0)', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 11, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.4px' }}>FILING DATE</span>
-            <span style={{ fontSize: 12, color: 'var(--mc-cyan)', fontWeight: 700 }}>· {filingDateLabel}</span>
-            {isStaleView && (
+          {/* PATCH 0916 — date picker + quick jumps, zzz981 — laid out like the US
+              controls bar: ← date → · Today · Yesterday · −7d · Window. */}
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-3)', fontWeight: 700 }}>
+            Filing date <span style={{ color: 'var(--mc-cyan)' }}>· {filingDateLabel}</span>
+          </span>
+          {isStaleView && (
+            <span style={{
+              fontSize: 9.5, fontWeight: 800, color: 'var(--mc-warn)',
+              padding: '1px 6px', borderRadius: 3,
+              backgroundColor: 'color-mix(in srgb, var(--mc-warn) 13%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)',
+              display: 'inline-flex', alignItems: 'center', gap: 3,
+              marginLeft: 6,
+            }}>
               <span style={{
-                fontSize: 9.5, fontWeight: 800, color: 'var(--mc-warn)',
-                padding: '1px 6px', borderRadius: 3,
-                backgroundColor: 'color-mix(in srgb, var(--mc-warn) 13%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)',
-                display: 'inline-flex', alignItems: 'center', gap: 3,
-                marginLeft: 6,
-              }}>
-                <span style={{
-                  display: 'inline-block', width: 7, height: 7, borderRadius: '50%',
-                  backgroundColor: 'var(--mc-warn)', animation: 'pulse 1s infinite',
-                }} />
-                LOADING
-                <style>{`@keyframes pulse { 0%,100%{opacity:1}50%{opacity:.3} }`}</style>
-              </span>
-            )}
-            <button onClick={() => shiftDate(-1)} title="Previous trading day"
-              style={{ padding: '6px 10px', background: 'none', border: 'none', color: 'var(--mc-text-3)', fontSize: 14, cursor: 'pointer' }}>←</button>
-            <button onClick={() => shiftDate(1)} title="Next trading day"
-              style={{ padding: '6px 10px', background: 'none', border: 'none', color: 'var(--mc-text-3)', fontSize: 14, cursor: 'pointer' }}>→</button>
-            {/* PATCH 0916 — Inline calendar picker inside the FILING DATE box */}
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 8px', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', borderRadius: 5, backgroundColor: 'color-mix(in srgb, var(--mc-cyan) 6%, transparent)', cursor: 'pointer', marginLeft: 4 }}
-              title="Click to open a calendar — jump to any date (past or future)">
-              <CalendarIcon style={{ width: 12, height: 12, color: 'var(--mc-cyan)' }} />
-              <span style={{ fontSize: 10, color: 'var(--mc-cyan)', fontWeight: 800, letterSpacing: '0.3px' }}>PICK DATE</span>
-              <input
-                type="date"
-                value={effectiveDate}
-                onChange={(e) => { if (e.target.value) setFilterDate(e.target.value); }}
-                style={{ background: 'transparent', border: 'none', color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 700, outline: 'none', cursor: 'pointer', width: 110, padding: 0 }}
-              />
-            </label>
-            {/* PATCH 0916 — Quick-jump shortcuts */}
-            <button
-              onClick={() => {
-                const today = new Date();
-                setFilterDate(todayIstISO());  // PATCH zzz90 (EO3) — IST-anchored Today
-              }}
-              title="Jump to today"
-              style={{ padding: '4px 8px', background: 'transparent', border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-3)', fontSize: 10, fontWeight: 700, borderRadius: 4, cursor: 'pointer' }}
-            >Today</button>
-            <button
-              onClick={() => {
-                const d = new Date(); d.setDate(d.getDate() - 1);
-                // Skip Sun/Sat backwards
-                while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() - 1);
-                setFilterDate(d.toISOString().slice(0, 10));
-              }}
-              title="Jump to most recent trading day before today"
-              style={{ padding: '4px 8px', background: 'transparent', border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-3)', fontSize: 10, fontWeight: 700, borderRadius: 4, cursor: 'pointer' }}
-            >Yesterday</button>
-            <button
-              onClick={() => {
-                const d = new Date(); d.setDate(d.getDate() - 7);
-                setFilterDate(d.toISOString().slice(0, 10));
-              }}
-              title="Jump to 7 days ago"
-              style={{ padding: '4px 8px', background: 'transparent', border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-3)', fontSize: 10, fontWeight: 700, borderRadius: 4, cursor: 'pointer' }}
-            >−7d</button>
-            {/* zzz814 — multi-day window, as on the US page. Counted in IST
-                trading sessions (Mon–Fri) back from the date above; the
-                weekends in between are read too, because Indian companies
-                file on them. 1d is the single-date view. */}
-            <span className="mc-no-print" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 6, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.4px', marginRight: 2 }}>WINDOW</span>
-              {IN_WINDOWS.map((d) => {
-                const on = windowDays === d;
-                return (
-                  <button key={d}
-                    onClick={() => { setWindowDays(d); if (d > 1) setViewMode('GRADED'); }}
-                    title={d === 1
-                      ? 'One date — the date above'
-                      : `${d} trading sessions (Mon–Fri, IST) back from the date above, plus the weekends in between — Indian companies file on Saturdays and Sundays too. Days already graded load from the server store at once; days never graded are graded one at a time, newest first.`}
-                    style={{
-                      padding: '3px 7px', borderRadius: 4, fontSize: 10.5, fontWeight: 800, cursor: 'pointer',
-                      border: `1px solid ${on ? 'var(--mc-cyan)' : 'var(--mc-bg-4)'}`,
-                      background: on ? 'color-mix(in srgb, var(--mc-cyan) 16%, transparent)' : 'transparent',
-                      color: on ? 'var(--mc-cyan)' : 'var(--mc-text-3)',
-                    }}>{d}d</button>
-                );
-              })}
+                display: 'inline-block', width: 7, height: 7, borderRadius: '50%',
+                backgroundColor: 'var(--mc-warn)', animation: 'pulse 1s infinite',
+              }} />
+              LOADING
+              <style>{`@keyframes pulse { 0%,100%{opacity:1}50%{opacity:.3} }`}</style>
             </span>
-          </div>
+          )}
+          <button onClick={() => shiftDate(-1)} title="Previous trading day" style={btn()}>←</button>
+          {/* PATCH 0916 — Inline calendar picker */}
+          <input
+            type="date"
+            value={effectiveDate}
+            title="Click to open a calendar — jump to any date (past or future)"
+            onChange={(e) => { if (e.target.value) setFilterDate(e.target.value); }}
+            style={{ ...btn(), padding: '6px 10px', colorScheme: 'light dark' }}
+          />
+          <button onClick={() => shiftDate(1)} title="Next trading day" style={btn()}>→</button>
+          {/* PATCH 0916 — Quick-jump shortcuts */}
+          <button
+            onClick={() => {
+              setFilterDate(todayIstISO());  // PATCH zzz90 (EO3) — IST-anchored Today
+            }}
+            title="Jump to today"
+            style={btn(effectiveDate === todayIstISO())}
+          >Today</button>
+          <button
+            onClick={() => {
+              const d = new Date(); d.setDate(d.getDate() - 1);
+              // Skip Sun/Sat backwards
+              while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() - 1);
+              setFilterDate(d.toISOString().slice(0, 10));
+            }}
+            title="Jump to most recent trading day before today"
+            style={btn()}
+          >Yesterday</button>
+          <button
+            onClick={() => {
+              const d = new Date(); d.setDate(d.getDate() - 7);
+              setFilterDate(d.toISOString().slice(0, 10));
+            }}
+            title="Jump to 7 days ago"
+            style={btn()}
+          >−7d</button>
+          {/* zzz814 — multi-day window, as on the US page. Counted in IST
+              trading sessions (Mon–Fri) back from the date above; the
+              weekends in between are read too, because Indian companies
+              file on them. 1d is the single-date view. */}
+          <span className="mc-no-print" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-xs)', marginLeft: 8 }}>Window</span>
+            {IN_WINDOWS.map((d) => {
+              const on = windowDays === d;
+              return (
+                <button key={d}
+                  onClick={() => { setWindowDays(d); if (d > 1) setViewMode('GRADED'); }}
+                  title={d === 1
+                    ? 'One date — the date above'
+                    : `${d} trading sessions (Mon–Fri, IST) back from the date above, plus the weekends in between — Indian companies file on Saturdays and Sundays too. Days already graded load from the server store at once; days never graded are graded one at a time, newest first.`}
+                  style={btn(on)}>{d}d</button>
+              );
+            })}
+          </span>
+          </span>
+          <label style={{ ...btn(), display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px' }}>
+            <CalendarIcon style={{ width: 12, height: 12, color: 'var(--mc-text-3)' }} />
+            <span style={{ fontSize: 11, color: 'var(--mc-text-3)', fontWeight: 600 }}>Jump to</span>
+            <input type="date" value={filterDate} onChange={(e) => setFilterDate(e.target.value)}
+              style={{ background: 'transparent', border: 'none', color: 'var(--mc-cyan)', fontSize: 'var(--mc-text-xs)', fontWeight: 700, outline: 'none', cursor: 'pointer', colorScheme: 'light dark' }} />
+          </label>
+          {filterDate && (
+            <button onClick={() => setFilterDate('')} title="Show latest available"
+              style={btn()}>
+              ↩ Latest
+            </button>
+          )}
+          <span style={{ flex: 1 }} />
+          {/* PATCH 0502 — Always-visible Force Re-scan button. Previously
+              this was buried in the empty-state pill cluster, so users with
+              partial coverage (a few stale cards) couldn't trigger a fresh
+              pull. Now visible on every render. */}
+          {resolvedDateForGrading && (
+            <button
+              onClick={async () => {
+                if (forceRescanning) return;
+                setForceRescanning(true);
+                try {
+                  const d = resolvedDateForGrading;
+                  try { localStorage.removeItem('mc:graded:v10:' + d); localStorage.removeItem('mc:graded:v9:' + d); localStorage.removeItem('mc:graded:v8:' + d); } catch {}  // PATCH 0992
+                  await Promise.allSettled([
+                    fetch(`/api/v1/earnings/today-live?date=${d}&force=1`, { cache: 'no-store' }),
+                    fetch(`/api/v1/earnings/graded?date=${d}&force=1&refreshMissing=1`, { cache: 'no-store' }),
+                  ]);
+                  await Promise.all([refetchHub(), refetchGraded()]);
+                } finally {
+                  setForceRescanning(false);
+                }
+              }}
+              disabled={forceRescanning}
+              title="Force re-scan NSE + BSE for this date. Bypasses all caches. Works on any date including weekends."
+              style={{ ...btn(forceRescanning, 'var(--mc-bullish)'), cursor: forceRescanning ? 'wait' : 'pointer' }}
+            >
+              {forceRescanning ? '⏳ Scanning…' : '🔄 Force NSE+BSE'}
+            </button>
+          )}
+          <button onClick={async () => {
+            // PATCH zzz90 (EO4) — show feedback toast after refresh completes
+            const r = await refetch();
+            const total = (r?.data as any)?.candidates_total ?? 0;
+            const d = resolvedDateForGrading || 'today';
+            setRefreshFeedback(total > 0 ? `✓ Refreshed — ${total} filings for ${d}` : `✓ Refreshed — no NSE/BSE filings for ${d}`);
+            setTimeout(() => setRefreshFeedback(null), 8000);
+          }} disabled={hardRefreshing}
+            title="Hard refresh — busts cache, re-fetches NSE/BSE feeds, pulls in newly-filed tickers (works for any date including weekends)"
+            style={{ ...btn(hardRefreshing), cursor: hardRefreshing ? 'not-allowed' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5, opacity: hardRefreshing ? 0.8 : 1 }}>
+            <RefreshCw style={{ width: 11, height: 11, animation: hardRefreshing ? 'spin 0.8s linear infinite' : 'none' }} />
+            {hardRefreshing ? 'Refetching…' : 'Hard Refresh'}
+            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+          </button>
+          {/* PATCH 0189 — Partial refresh button with INLINE feedback */}
+          {resolvedDateForGrading && (() => {
+            // zzz415 — count with the SAME criterion the server's refreshMissing
+            // uses, so the button label matches what a refresh will attempt.
+            // Old rule (no absolutes at all) under-counted: a card with raw
+            // Rev/PAT but no OPM (VIKRAN-class) was invisible here ("Refresh 1
+            // missing" while 2 cards showed screener-gap) yet the server
+            // attempted it. New rule: missing = (no YoY AND no absolutes) OR
+            // margin missing/stale-zero. Absolute-only names (recent IPOs with
+            // no year-ago quarter) clear once their OPM lands, so the counter
+            // converges instead of sticking forever.
+            const missing = ((view.by_tier?.BLOCKBUSTER ?? []) as ParsedEarning[])
+              .concat(view.by_tier?.STRONG ?? [])
+              .concat(view.by_tier?.MIXED ?? [])
+              .concat(view.by_tier?.AVOID ?? [])
+              .filter((c) => {
+                const noYoY = c.sales_yoy_pct == null && c.net_profit_yoy_pct == null && c.eps_yoy_pct == null;
+                const noAbs = c.sales_curr_cr == null && c.pat_curr_cr == null && (c as any).eps_curr == null;
+                const opmCur = (c as any).opm_pct, opmPrev = (c as any).opm_prev_pct, salesCur = (c as any).sales_curr_cr;
+                const opmStaleZero = (opmCur === 0 || opmPrev === 0) && salesCur != null && Number(salesCur) >= 100;
+                const noMargin = (opmCur == null && opmPrev == null) || opmStaleZero;
+                return (noYoY && noAbs) || noMargin;
+              }).length;
+            // Show button if missing > 0 OR a feedback message is currently displayed.
+            // Don't hide button just because data isn't there to fetch.
+            if (missing === 0 && !refreshFeedback) return null;
+            return (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                {missing > 0 && (
+                  <button
+                    onClick={refreshMissingMutate}
+                    disabled={refreshing}
+                    title={`Fetch financials for ${missing} cards that don't have data yet — works on past dates too (weekend filings, etc.)`}
+                    style={{ ...btn(true, 'var(--mc-warn)'), cursor: refreshing ? 'not-allowed' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5, opacity: refreshing ? 0.8 : 1 }}>
+                    <RefreshCw style={{ width: 11, height: 11, animation: refreshing ? 'spin 0.8s linear infinite' : 'none' }} />
+                    {refreshing ? `Refreshing ${missing}…` : `Refresh ${missing} missing`}
+                  </button>
+                )}
+                {/* Inline feedback right next to the button — impossible to miss */}
+                {refreshFeedback && (
+                  <span style={{
+                    fontSize: 10.5, fontWeight: 700,
+                    padding: '3px 8px', borderRadius: 4,
+                    backgroundColor: refreshFeedback.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 9%, transparent)' : 'color-mix(in srgb, var(--mc-bearish) 9%, transparent)',
+                    border: `1px solid ${refreshFeedback.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 25%, transparent)' : 'color-mix(in srgb, var(--mc-bearish) 25%, transparent)'}`,
+                    color: refreshFeedback.startsWith('✓') ? 'var(--mc-bullish)' : 'var(--mc-bearish)',
+                    maxWidth: 480, lineHeight: 1.3,
+                  }}>
+                    {refreshFeedback}
+                  </span>
+                )}
+              </div>
+            );
+          })()}
+          {/* PATCH 0360 / 0361 — One-shot backfill of the last 60 weekdays.
+              Heals all preview-shape cached payloads so every past date
+              becomes instant cache-hit going forward. */}
+          <button
+            onClick={runBackfill}
+            disabled={backfilling}
+            title="One-time fill of the last 60 weekdays. Chains 2-date batches with retry. Once done, past-date pages serve from cache instantly with no Refresh needed."
+            style={{ ...btn(backfilling, 'var(--mc-state-persistent)'), cursor: backfilling ? 'wait' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <RefreshCw style={{ width: 11, height: 11, animation: backfilling ? 'spin 0.8s linear infinite' : 'none' }} />
+            {backfilling ? 'Backfilling…' : 'Backfill 60d'}
+          </button>
+          {/* PATCH 0999 — Slow Backfill (80d, ~2h, resumable) */}
+          {!slowBf?.running && (
+            <button
+              onClick={() => startSlowBackfill(80)}
+              title="Politely backfills 80 weekdays over ~2 hours. One request every 90s — never trips Screener rate limits. Resumes if you reload."
+              style={btn()}>
+              🌙 Slow Backfill (80d · 2h)
+            </button>
+          )}
+          {/* PATCH 1003 — 60d variant of Slow Backfill */}
+          {!slowBf?.running && (
+            <button
+              onClick={() => startSlowBackfill(60)}
+              title="Politely backfills 60 weekdays over ~90 minutes. One request every 90s — never trips Screener rate limits."
+              style={btn()}>
+              🌙 Slow Backfill (60d · 1.5h)
+            </button>
+          )}
+          {slowBf?.running && (
+            <button
+              onClick={stopSlowBackfill}
+              title="Stop the slow backfill. Already-done dates stay cached."
+              style={btn(true, 'var(--mc-bearish)')}>
+              ⏹ Stop Slow Backfill
+            </button>
+          )}
+          {/* AUDIT_100 #57 — Export the graded tiers to CSV. zzz814 — one builder
+              for a single date and a window (lib/india-earnings-window): the
+              rows that pass the active filters, all four tiers, with the date
+              each was graded on, the quadrant scores, "also reported" dates in
+              a window and which engine graded it. The old column mapping read
+              fields the payload never carried (company_name, score, sales_yoy)
+              and wrote blank Company / Score / YoY cells. */}
+          {resolvedDateForGrading && activeView.by_tier && (
+            TIER_ORDER.reduce((n, t) => n + (activeView.by_tier[t]?.length || 0), 0) > 0
+          ) && (
+            <span className="mc-no-print" style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
+              <button
+                onClick={() => {
+                  const csv = windowCsv(exportRows(), (r: any) => r._window_date || r.filing_date || resolvedDateForGrading || '');
+                  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = windowOn
+                    ? `earnings-opportunities-${win.dates[win.dates.length - 1] || ''}_to_${resolvedDateForGrading}-${windowDays}d.csv`
+                    : `earnings-opportunities-${resolvedDateForGrading}.csv`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                title={windowOn
+                  ? `Download every company in this ${windowDays}-session window that passes the current filters (latest result per company) as CSV`
+                  : 'Download all 4 tiers (BLOCKBUSTER/STRONG/MIXED/AVOID) for this date as CSV — the current filters apply'}
+                style={btn()}
+              >
+                📊 Export CSV{windowOn ? ` · ${windowDays}d` : ''}
+              </button>
+              <button
+                onClick={async () => {
+                  const txt = tradingViewList(exportRows());
+                  try { await navigator.clipboard.writeText(txt); } catch {
+                    try {
+                      const ta = document.createElement('textarea');
+                      ta.value = txt; ta.style.position = 'fixed'; ta.style.top = '-1000px';
+                      document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+                      document.body.removeChild(ta);
+                    } catch {}
+                  }
+                  setTvCopyNote(`✓ Copied ${txt ? txt.split(',').length : 0}`);
+                  setTimeout(() => setTvCopyNote(null), 4000);
+                }}
+                title="Copy the companies that pass the current filters as NSE:TICKER,NSE:TICKER (TradingView watchlist import), in the order shown"
+                style={btn()}
+              >
+                {tvCopyNote || '📈 TradingView'}
+              </button>
+            </span>
+          )}
+          {slowBfProgressLabel && (
+            <span style={{
+              fontSize: 10.5, fontWeight: 700,
+              padding: '3px 8px', borderRadius: 4,
+              backgroundColor: slowBfProgressLabel.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 9%, transparent)' : '#6366F118',
+              border: `1px solid ${slowBfProgressLabel.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 25%, transparent)' : '#6366F140'}`,
+              color: slowBfProgressLabel.startsWith('✓') ? 'var(--mc-bullish)' : '#A5B4FC',
+              maxWidth: 420, lineHeight: 1.3,
+            }}>
+              {slowBfProgressLabel}
+            </span>
+          )}
+          {backfillProgress && (
+            <span style={{
+              fontSize: 10.5, fontWeight: 700,
+              padding: '3px 8px', borderRadius: 4,
+              backgroundColor: backfillProgress.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 9%, transparent)' : backfillProgress.startsWith('⚠') ? 'color-mix(in srgb, var(--mc-bearish) 9%, transparent)' : 'color-mix(in srgb, var(--mc-state-persistent) 9%, transparent)',
+              border: `1px solid ${backfillProgress.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 25%, transparent)' : backfillProgress.startsWith('⚠') ? 'color-mix(in srgb, var(--mc-bearish) 25%, transparent)' : 'color-mix(in srgb, var(--mc-state-persistent) 25%, transparent)'}`,
+              color: backfillProgress.startsWith('✓') ? 'var(--mc-bullish)' : backfillProgress.startsWith('⚠') ? 'var(--mc-bearish)' : 'var(--mc-state-persistent)',
+              maxWidth: 480, lineHeight: 1.3,
+            }}>
+              {backfillProgress}
+            </span>
+          )}
+      </div>
+
+      {/* ── status: fallback / error banners, coverage and counts ── */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 8 }}>
           {/* PATCH 0736 — surface server timeout / date mismatch so user
               doesn't see the same data on multiple consecutive dates and
               think the app is broken. Three states:
@@ -2500,131 +2528,35 @@ export default function EarningsOpportunitiesPage() {
               </div>
             );
           })()}
-          {/* PATCH 0493 — Sparse-day hint banner */}
-          {sparseDayHint && (
-            <button
-              onClick={() => setFilterDate(sparseDayHint.date)}
-              style={{
-                padding: '6px 12px', borderRadius: 8,
-                border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', backgroundColor: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)',
-                color: 'var(--mc-warn)', fontSize: 11, fontWeight: 700,
-                cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
-              }}
-              title="The previous date with filings — click to view"
-            >
-              ← {sparseDayHint.label} had {sparseDayHint.count} filings
-            </button>
-          )}
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', border: '1px solid var(--mc-bg-4)', borderRadius: 8, backgroundColor: 'var(--mc-bg-0)', cursor: 'pointer' }}>
-            <CalendarIcon style={{ width: 12, height: 12, color: 'var(--mc-text-3)' }} />
-            <span style={{ fontSize: 11, color: 'var(--mc-text-3)', fontWeight: 600 }}>Jump to</span>
-            <input type="date" value={filterDate} onChange={(e) => setFilterDate(e.target.value)}
-              style={{ background: 'transparent', border: 'none', color: 'var(--mc-cyan)', fontSize: 12, fontWeight: 700, outline: 'none', cursor: 'pointer' }} />
-          </label>
-          {filterDate && (
-            <button onClick={() => setFilterDate('')} title="Show latest available"
-              style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid var(--mc-bg-4)', backgroundColor: 'transparent', color: 'var(--mc-text-3)', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
-              ↩ Latest
-            </button>
-          )}
-          {/* PATCH 0502 — Always-visible Force Re-scan button. Previously
-              this was buried in the empty-state pill cluster, so users with
-              partial coverage (a few stale cards) couldn't trigger a fresh
-              pull. Now visible on every render. */}
-          {resolvedDateForGrading && (
-            <button
-              onClick={async () => {
-                if (forceRescanning) return;
-                setForceRescanning(true);
-                try {
-                  const d = resolvedDateForGrading;
-                  try { localStorage.removeItem('mc:graded:v10:' + d); localStorage.removeItem('mc:graded:v9:' + d); localStorage.removeItem('mc:graded:v8:' + d); } catch {}  // PATCH 0992
-                  await Promise.allSettled([
-                    fetch(`/api/v1/earnings/today-live?date=${d}&force=1`, { cache: 'no-store' }),
-                    fetch(`/api/v1/earnings/graded?date=${d}&force=1&refreshMissing=1`, { cache: 'no-store' }),
-                  ]);
-                  await Promise.all([refetchHub(), refetchGraded()]);
-                } finally {
-                  setForceRescanning(false);
-                }
-              }}
-              disabled={forceRescanning}
-              title="Force re-scan NSE + BSE for this date. Bypasses all caches. Works on any date including weekends."
-              style={{
-                padding: '6px 14px', borderRadius: 8,
-                border: '1px solid color-mix(in srgb, var(--mc-bullish) 50%, transparent)',
-                backgroundColor: forceRescanning ? 'color-mix(in srgb, var(--mc-bullish) 19%, transparent)' : 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)',
-                color: 'var(--mc-bullish)', fontSize: 11, fontWeight: 800, cursor: forceRescanning ? 'wait' : 'pointer',
-                letterSpacing: '0.3px', display: 'inline-flex', alignItems: 'center', gap: 6,
-              }}
-            >
-              {forceRescanning ? '⏳ Scanning…' : '🔄 Force NSE+BSE'}
-            </button>
-          )}
-          {/* AUDIT_100 #57 — Export the graded tiers to CSV. zzz814 — one builder
-              for a single date and a window (lib/india-earnings-window): the
-              rows that pass the active filters, all four tiers, with the date
-              each was graded on, the quadrant scores, "also reported" dates in
-              a window and which engine graded it. The old column mapping read
-              fields the payload never carried (company_name, score, sales_yoy)
-              and wrote blank Company / Score / YoY cells. */}
-          {resolvedDateForGrading && activeView.by_tier && (
-            TIER_ORDER.reduce((n, t) => n + (activeView.by_tier[t]?.length || 0), 0) > 0
-          ) && (
-            <span className="mc-no-print" style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
-              <button
-                onClick={() => {
-                  const csv = windowCsv(exportRows(), (r: any) => r._window_date || r.filing_date || resolvedDateForGrading || '');
-                  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = windowOn
-                    ? `earnings-opportunities-${win.dates[win.dates.length - 1] || ''}_to_${resolvedDateForGrading}-${windowDays}d.csv`
-                    : `earnings-opportunities-${resolvedDateForGrading}.csv`;
-                  a.click();
-                  URL.revokeObjectURL(url);
-                }}
-                title={windowOn
-                  ? `Download every company in this ${windowDays}-session window that passes the current filters (latest result per company) as CSV`
-                  : 'Download all 4 tiers (BLOCKBUSTER/STRONG/MIXED/AVOID) for this date as CSV — the current filters apply'}
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
+          {/* AUDIT_100 #26 — confidence band: show "X of Y enriched · M missing" chip
+              next to the refresh button so users see coverage at a glance. */}
+          {resolvedDateForGrading && !windowOn && (() => {
+            // zzz822 — single-date coverage chip; the window has its own counts.
+            const allCards = ((view.by_tier?.BLOCKBUSTER ?? []) as ParsedEarning[])
+              .concat(view.by_tier?.STRONG ?? [])
+              .concat(view.by_tier?.MIXED ?? [])
+              .concat(view.by_tier?.AVOID ?? []);
+            const total = allCards.length;
+            const missing = allCards.filter((c) => c.sales_curr_cr == null && c.pat_curr_cr == null).length;
+            const enriched = total - missing;
+            if (total === 0) return null;
+            const ratio = enriched / total;
+            const tone = ratio >= 0.95 ? '#10B981' : ratio >= 0.75 ? '#22D3EE' : ratio >= 0.5 ? '#F59E0B' : '#EF4444';
+            const glyph = ratio >= 0.95 ? '✓' : ratio >= 0.5 ? '⚠' : '✗';
+            return (
+              <span title={`${enriched} of ${total} cards have Screener/Yahoo financials enriched. ${missing} missing.`}
                 style={{
-                  padding: '6px 12px', borderRadius: 8,
-                  border: '1px solid color-mix(in srgb, var(--mc-warn) 50%, transparent)',
-                  backgroundColor: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)',
-                  color: 'var(--mc-warn)', fontSize: 11, fontWeight: 800, cursor: 'pointer',
-                  letterSpacing: '0.3px', display: 'inline-flex', alignItems: 'center', gap: 6,
-                }}
-              >
-                📊 Export CSV{windowOn ? ` · ${windowDays}d` : ''}
-              </button>
-              <button
-                onClick={async () => {
-                  const txt = tradingViewList(exportRows());
-                  try { await navigator.clipboard.writeText(txt); } catch {
-                    try {
-                      const ta = document.createElement('textarea');
-                      ta.value = txt; ta.style.position = 'fixed'; ta.style.top = '-1000px';
-                      document.body.appendChild(ta); ta.select(); document.execCommand('copy');
-                      document.body.removeChild(ta);
-                    } catch {}
-                  }
-                  setTvCopyNote(`✓ Copied ${txt ? txt.split(',').length : 0}`);
-                  setTimeout(() => setTvCopyNote(null), 4000);
-                }}
-                title="Copy the companies that pass the current filters as NSE:TICKER,NSE:TICKER (TradingView watchlist import), in the order shown"
-                style={{
-                  padding: '6px 12px', borderRadius: 8,
-                  border: '1px solid color-mix(in srgb, var(--mc-cyan) 50%, transparent)',
-                  backgroundColor: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)',
-                  color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 800, cursor: 'pointer',
-                  letterSpacing: '0.3px', display: 'inline-flex', alignItems: 'center', gap: 6,
-                }}
-              >
-                {tvCopyNote || '📈 TradingView'}
-              </button>
-            </span>
-          )}
+                  fontSize: 10.5, fontWeight: 700, color: tone,
+                  border: `1px solid ${tone}50`, backgroundColor: `${tone}12`,
+                  padding: '3px 10px', borderRadius: 999, letterSpacing: 0.3,
+                  fontFamily: 'ui-monospace, monospace',
+                }}>
+                {glyph} {enriched}/{total} enriched{missing > 0 ? ` · ${missing} missing` : ''}
+              </span>
+            );
+          })()}
           {/* PATCH 0503 — Source coverage telemetry chip. Surfaces which
               exchange provided how many filings + the merged total so the
               user can spot coverage gaps at a glance.
@@ -2643,7 +2575,7 @@ BSE corp-announcements: ${coverageStats.bse} filings
 Total after dedup: ${coverageStats.total}
 Source label: ${coverageStats.source}`}
               style={{
-                padding: '4px 10px', borderRadius: 6,
+                padding: '3px 10px', borderRadius: 999,
                 border: `1px solid ${coverageStats.total >= 10 ? 'color-mix(in srgb, var(--mc-bullish) 25%, transparent)' : coverageStats.total > 0 ? 'color-mix(in srgb, var(--mc-warn) 25%, transparent)' : 'color-mix(in srgb, var(--mc-bearish) 25%, transparent)'}`,
                 backgroundColor: coverageStats.total >= 10 ? 'color-mix(in srgb, var(--mc-bullish) 6%, transparent)' : coverageStats.total > 0 ? 'color-mix(in srgb, var(--mc-warn) 6%, transparent)' : 'color-mix(in srgb, var(--mc-bearish) 6%, transparent)',
                 color: coverageStats.total >= 10 ? 'var(--mc-bullish)' : coverageStats.total > 0 ? 'var(--mc-warn)' : 'var(--mc-bearish)',
@@ -2654,7 +2586,31 @@ Source label: ${coverageStats.source}`}
               NSE {coverageStats.nse} · BSE {coverageStats.bse} · merged {coverageStats.total}
             </span>
           )}
-          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--mc-text-4)' }}
+          {/* PATCH 0909 — Upstream hub-fail banner. When the graded API
+              fell back to live-NSE only (or stale KV), let the user know
+              why the list might look short. */}
+          {!windowOn && (view as any)?._hub_fail && (
+            <span
+              title={`Earnings hub was unreachable (${(view as any)._hub_fail}). Showing live NSE filings only. Retry in a moment to get the full list.`}
+              style={{ fontSize: 'var(--mc-text-xs)', padding: '3px 10px', borderRadius: 999, background: 'color-mix(in srgb, var(--mc-warn) 13%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', color: 'var(--mc-warn)', fontWeight: 800 }}
+            >⚠ upstream degraded · partial list</span>
+          )}
+          {/* PATCH 0493 — Sparse-day hint banner */}
+          {sparseDayHint && (
+            <button
+              onClick={() => setFilterDate(sparseDayHint.date)}
+              style={{
+                padding: '6px 12px', borderRadius: 8,
+                border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', backgroundColor: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)',
+                color: 'var(--mc-warn)', fontSize: 11, fontWeight: 700,
+                cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+              }}
+              title="The previous date with filings — click to view"
+            >
+              ← {sparseDayHint.label} had {sparseDayHint.count} filings
+            </button>
+          )}
+          <span style={{ marginLeft: 'auto', fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-3)' }}
             title={windowOn ? `Whole ${windowDays}-session window: one line per company (latest result shown), the graded results read across every loaded day, and how many of the window's dates have loaded. The single-date counts appear when the window is 1d.` : "A company can only be GRADED once it has actually FILED its results and our parser has read them. Companies that have only ANNOUNCED a board meeting for this date (results not filed yet) can't be graded — they show in the '📅 SCHEDULED TODAY' block below and move into a grade tier the moment their results are filed. So 'filed & graded' + 'results pending' = the full cohort for the day. A mismatch near filing day is expected, not a bug."}>
             {windowOn ? (() => {
               // zzz820 — with a window selected this line used to show the
@@ -2681,28 +2637,18 @@ Source label: ${coverageStats.source}`}
               return `${filed} filed & graded · ${view.raw_items_total} scanned`;
             })()}
           </span>
-          {/* PATCH 0909 — Upstream hub-fail banner. When the graded API
-              fell back to live-NSE only (or stale KV), let the user know
-              why the list might look short. */}
-          {!windowOn && (view as any)?._hub_fail && (
-            <span
-              title={`Earnings hub was unreachable (${(view as any)._hub_fail}). Showing live NSE filings only. Retry in a moment to get the full list.`}
-              style={{ fontSize: 10, padding: '3px 8px', borderRadius: 4, background: 'color-mix(in srgb, var(--mc-warn) 13%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', color: 'var(--mc-warn)', fontWeight: 800 }}
-            >⚠ upstream degraded · partial list</span>
-          )}
+      </div>
+
+      {/* ── tier + quality + cap chips (the US chip row) ── */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
           {/* zzz817 — the tier chips ARE filters: click one to show only that
               tier, click more to add them, "All" clears. Counts respect every
               other filter. Kept in the URL (?tier=BLOCKBUSTER,STRONG). */}
-          <span className="eo-tier-chips" style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span className="eo-tier-chips" style={{ display: 'contents' }}>
             <button onClick={() => setTierSel([])}
               title="Show every tier"
               aria-pressed={!tierFilterOn}
-              style={{
-                fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 20, cursor: 'pointer',
-                border: `1px solid ${!tierFilterOn ? 'var(--mc-cyan)' : 'var(--mc-bg-4)'}`,
-                backgroundColor: !tierFilterOn ? 'color-mix(in srgb, var(--mc-cyan) 14%, transparent)' : 'transparent',
-                color: !tierFilterOn ? 'var(--mc-cyan)' : 'var(--mc-text-3)',
-              }}>All {counts.reduce((n, c) => n + c.n, 0)}</button>
+              style={btn(!tierFilterOn)}>All {counts.reduce((n, c) => n + c.n, 0)}</button>
             {/* zzz818 — one click = exactly BLOCKBUSTER + STRONG (the same
                 multi-select as picking both); click again to clear. */}
             {(() => {
@@ -2713,8 +2659,8 @@ Source label: ${coverageStats.source}`}
                   aria-pressed={on}
                   title={on ? 'Showing BLOCKBUSTER + STRONG — click to show every tier' : `Show only BLOCKBUSTER and STRONG — ${n} with the current filters`}
                   style={{
-                    fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 20, cursor: 'pointer',
-                    border: `${on ? 2 : 1}px solid ${on ? '#10B981' : 'color-mix(in srgb, #10B981 50%, #F59E0B)'}`,
+                    fontSize: 'var(--mc-text-xs)', fontWeight: 800, padding: '5px 10px', borderRadius: 999, cursor: 'pointer',
+                    border: `${on ? 2 : 1}px solid #10B981`,
                     background: on ? 'color-mix(in srgb, #10B981 26%, transparent)' : 'linear-gradient(90deg, #F59E0B15, #10B98115)',
                     color: 'color-mix(in srgb, #10B981 55%, var(--mc-text-1))',
                   }}>
@@ -2729,13 +2675,7 @@ Source label: ${coverageStats.source}`}
                 <button key={c.tier} onClick={() => setTierSel((sel) => toggleTier(sel, c.tier))}
                   aria-pressed={on}
                   title={on ? `Showing ${m.label} — click to remove it from the filter` : `Show only ${m.label}${tierFilterOn ? ' (added to the tiers already picked)' : ''} — ${c.n} ${c.n === 1 ? 'company' : 'companies'} with the current filters`}
-                  style={{
-                    fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 20, cursor: 'pointer',
-                    border: `${on ? 2 : 1}px solid ${m.color}${on ? '' : '50'}`,
-                    backgroundColor: on ? `color-mix(in srgb, ${m.color} 28%, transparent)` : `${m.color}15`,
-                    color: `color-mix(in srgb, ${m.color} 60%, var(--mc-text-1))`,
-                    boxShadow: on ? `0 0 0 1px ${m.color}` : 'none',
-                  }}>
+                  style={tierChip(m.color, on)}>
                   {on ? '✓ ' : ''}{m.icon} {m.label} {c.n}
                 </button>
               );
@@ -2752,20 +2692,15 @@ Source label: ${coverageStats.source}`}
             // Live count across ALL tiers — these rows mostly live in MIXED.
             const turnaroundN = allC.filter((s) => s.quadrant === 'TURNAROUND ACCELERATOR').length;
             const chip = (active: boolean, color: string, label: string, n: number, onClick: () => void) => (
-              <button onClick={onClick} style={{
-                fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 20, cursor: 'pointer',
-                border: `1px solid ${color}${active ? '' : '50'}`,
-                backgroundColor: active ? color : `${color}15`,
-                color: active ? 'var(--mc-bg-0)' : color,
-              }}>{label} {n}</button>
+              <button onClick={onClick} aria-pressed={active} style={btn(active, color)}>{label} {n}</button>
             );
             return (
               <>
-                <span style={{ width: 1, height: 14, background: 'var(--mc-bg-4)', margin: '0 2px' }} />
+                <span style={{ width: 1, height: 20, backgroundColor: 'var(--mc-bg-4)', margin: '0 2px' }} />
                 {/* zzz696 — the badge switch sits with the filters because it is
                     the same kind of decision: what the card shows you. */}
                 <CardBadgesToggle compact />
-                <span style={{ width: 1, height: 14, background: 'var(--mc-bg-4)', margin: '0 2px' }} />
+                <span style={{ width: 1, height: 20, backgroundColor: 'var(--mc-bg-4)', margin: '0 2px' }} />
                 {/* zzz703 — A/B/F/G. Ordered by the spec's own ranking, not
                     alphabetically: A is the highest-expectancy setup and G the
                     best base rate, so they lead. */}
@@ -2783,7 +2718,7 @@ Source label: ${coverageStats.source}`}
                       }}>{m.icon} {k}</button>
                   );
                 })}
-                <span style={{ width: 1, height: 14, background: 'var(--mc-bg-4)', margin: '0 2px' }} />
+                <span style={{ width: 1, height: 20, backgroundColor: 'var(--mc-bg-4)', margin: '0 2px' }} />
                 {chip(eliteOnly, '#FCD34D', '⭐ ELITE', eliteN, () => { setEliteOnly(v => !v); setPeadOnly(false); setMultibaggerOnly(false); setRadarOnly(false); setBeatCheapOnly(false); setTurnaroundOnly(false); })}
                 {chip(peadOnly, '#F87171', '🔥 PEAD≥70', peadN, () => { setPeadOnly(v => !v); setEliteOnly(false); setMultibaggerOnly(false); setRadarOnly(false); setBeatCheapOnly(false); setTurnaroundOnly(false); })}
                 {chip(multibaggerOnly, '#67E8F9', '💎 MULTIBAGGER', mbN, () => { setMultibaggerOnly(v => !v); setEliteOnly(false); setPeadOnly(false); setRadarOnly(false); setBeatCheapOnly(false); setTurnaroundOnly(false); })}
@@ -2792,17 +2727,12 @@ Source label: ${coverageStats.source}`}
                 {chip(radarOnly, '#34D399', '🚀 On Radar', radarN, () => { setRadarOnly(v => !v); setEliteOnly(false); setPeadOnly(false); setMultibaggerOnly(false); setBeatCheapOnly(false); setTurnaroundOnly(false); })}
                 {chip(beatCheapOnly, '#A3E635', '💰 Beat + Cheap', beatCheapN, () => { setBeatCheapOnly(v => !v); setEliteOnly(false); setPeadOnly(false); setMultibaggerOnly(false); setRadarOnly(false); setTurnaroundOnly(false); })}
                 {/* PATCH 1022 — market-cap range selector */}
-                <span style={{ width: 1, height: 14, background: 'var(--mc-bg-4)', margin: '0 2px' }} />
+                <span style={{ width: 1, height: 20, backgroundColor: 'var(--mc-bg-4)', margin: '0 2px' }} />
                 <select
                   value={capFilter}
                   onChange={(e) => setCapFilter(e.target.value as any)}
                   title="Filter by market cap (₹ Cr)"
-                  style={{
-                    fontSize: 11, fontWeight: 800, padding: '3px 8px', borderRadius: 20, cursor: 'pointer',
-                    border: `1px solid ${capFilter !== 'all' ? '#34D399' : '#34D39950'}`,
-                    backgroundColor: capFilter !== 'all' ? '#34D399' : '#34D39915',
-                    color: capFilter !== 'all' ? 'var(--mc-bg-0)' : '#34D399',
-                  }}>
+                  style={btn(capFilter !== 'all', '#10B981')}>
                   <option value="all">🏦 Mkt Cap · All</option>
                   <option value="sweet">🎯 Multibagger ₹5k–50k Cr</option>
                   {CAP_BUCKETS.map((b) => (
@@ -2820,12 +2750,11 @@ Source label: ${coverageStats.source}`}
               </>
             );
           })()}
-        </div>
+      </div>
 
         {/* ── Coverage Probe (PATCH 0174) ─────────────────────────────────── */}
         <div style={{
-          marginTop: 10, padding: '10px 14px',
-          backgroundColor: 'var(--mc-bg-0)', border: '1px solid var(--mc-bg-4)', borderRadius: 8,
+          ...panel(), padding: 12,
           display: 'flex', flexDirection: 'column', gap: 6,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -3082,27 +3011,25 @@ Source label: ${coverageStats.source}`}
             </div>
           )}
         </div>
-      </div>
 
       {/* ── Tab toggle ──────────────────────────────────────────────────── */}
-      <div style={{ padding: '10px 24px', borderBottom: '1px solid var(--mc-bg-4)', backgroundColor: 'var(--mc-bg-0)', display: 'flex', gap: 6 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14 }}>
         <button onClick={() => setViewMode('CALENDAR')}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 6, border: `1px solid ${viewMode === 'CALENDAR' ? 'color-mix(in srgb, var(--mc-cyan) 38%, transparent)' : 'var(--mc-border-1)'}`, backgroundColor: viewMode === 'CALENDAR' ? 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)' : 'transparent', color: viewMode === 'CALENDAR' ? 'var(--mc-cyan)' : 'var(--mc-text-3)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+          style={{ ...btn(viewMode === 'CALENDAR'), display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <Grid3X3 style={{ width: 12, height: 12 }} /> Calendar
         </button>
         <button onClick={() => setViewMode('GRADED')}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 6, border: `1px solid ${viewMode === 'GRADED' ? 'color-mix(in srgb, var(--mc-cyan) 38%, transparent)' : 'var(--mc-border-1)'}`, backgroundColor: viewMode === 'GRADED' ? 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)' : 'transparent', color: viewMode === 'GRADED' ? 'var(--mc-cyan)' : 'var(--mc-text-3)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+          style={{ ...btn(viewMode === 'GRADED'), display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <FileText style={{ width: 12, height: 12 }} /> Graded Tiers
         </button>
-        <span style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--mc-text-4)', alignSelf: 'center' }}>
+        <span style={{ marginLeft: 'auto', fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-3)' }}>
           {viewMode === 'CALENDAR' ? `${calRange.from} → ${calRange.to} · ${calData?.total ?? 0} filings` : (windowOn ? `${win.rows.length} companies (${win.entries.length} results) · ${win.progress.ready}/${win.progress.total} days` : `${view.candidates_total} graded`)}
         </span>
       </div>
 
       {/* ── Body ──────────────────────────────────────────────────────────── */}
       <div className="mc-flow-mobile" style={{
-        flex: 1, overflowY: 'auto', padding: '18px 24px',
-        display: 'flex', flexDirection: 'column', gap: 14,
+        display: 'flex', flexDirection: 'column', gap: 18,
         opacity: isStaleView ? 0.5 : 1,
         transition: 'opacity 0.2s',
         pointerEvents: isStaleView ? 'none' : 'auto',
@@ -3154,7 +3081,7 @@ Source label: ${coverageStats.source}`}
             return `${dow} ${dt.getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][dt.getUTCMonth()]}`;
           };
           return (
-            <div style={{ color: 'var(--mc-text-3)', fontSize: 13, padding: '36px 28px', textAlign: 'center', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 10 }}>
+            <div style={{ color: 'var(--mc-text-3)', fontSize: 13, padding: '36px 28px', textAlign: 'center', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 'var(--mc-radius)' }}>
               <div style={{ fontSize: 40, marginBottom: 10 }}>📭</div>
               <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--mc-text-1)', marginBottom: 4 }}>
                 No earnings filings for {filingDateLabel}
@@ -3261,7 +3188,7 @@ Source label: ${coverageStats.source}`}
             }
           };
           return (
-            <div style={{ backgroundColor: 'color-mix(in srgb, var(--mc-warn) 6%, var(--mc-bg-1))', border: '1px solid color-mix(in srgb, var(--mc-warn) 30%, transparent)', borderLeft: '4px solid var(--mc-warn)', borderRadius: 12, padding: '14px 18px' }}>
+            <div style={{ backgroundColor: 'color-mix(in srgb, var(--mc-warn) 6%, var(--mc-bg-1))', border: '1px solid color-mix(in srgb, var(--mc-warn) 30%, transparent)', borderLeft: '4px solid var(--mc-warn)', borderRadius: 'var(--mc-radius)', padding: '12px 14px' }}>
               {/* Cohort reconciliation banner: makes the day's TRUE total
                   unmistakable so a "1 graded" header never looks like a bug.
                   filed = graded tiers count; pending = this block. */}
@@ -3322,7 +3249,7 @@ Source label: ${coverageStats.source}`}
         {/* zzz818 — a tier chip that leaves nothing on this date says so. */}
         {viewMode === 'GRADED' && !windowOn && tierFilterOn && view.candidates_total > 0
           && TIER_ORDER.every((t) => !passesTier({ tier: t }, tierSel) || applyRowFilters(view.by_tier[t] || []).length === 0) && (
-          <div className="eo-tier-empty" style={{ color: 'var(--mc-text-2)', fontSize: 13, padding: '24px', textAlign: 'center', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 10 }}>
+          <div className="eo-tier-empty" style={{ color: 'var(--mc-text-2)', fontSize: 13, padding: '24px', textAlign: 'center', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 'var(--mc-radius)' }}>
             {tierEmptyMessage(tierSel, 'date')}.{' '}
             <button onClick={() => setTierSel([])} style={{ background: 'none', border: 'none', color: 'var(--mc-cyan)', fontWeight: 800, cursor: 'pointer', fontSize: 13 }}>Show all tiers</button>
           </div>
@@ -3347,16 +3274,16 @@ Source label: ${coverageStats.source}`}
           const _filterActive = anyRowFilter || tierFilterOn;
           const isOpen = _filterActive || !!pinnedRow ? true : expanded[tier];
           return (
-            <div key={tier} style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderLeft: `4px solid ${meta.color}`, borderRadius: 12 }}>
-              <button onClick={() => setExpanded((s) => ({ ...s, [tier]: !s[tier] }))}
-                style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', color: 'inherit' }}>
-                {isOpen ? <ChevronDown style={{ width: 16, height: 16, color: 'var(--mc-text-4)' }} /> : <ChevronRight style={{ width: 16, height: 16, color: 'var(--mc-text-4)' }} />}
-                <span style={{ fontSize: 16, fontWeight: 800, color: meta.color }}>{meta.icon} {meta.label}</span>
-                <span style={{ fontSize: 12, color: 'var(--mc-text-3)' }}>{stocks.length} {stocks.length === 1 ? 'company' : 'companies'}</span>
-                <span style={{ fontSize: 11, color: 'var(--mc-text-4)' }}>· {meta.tagline}</span>
+            <div key={tier} style={tierSection(meta.color)}>
+              <button onClick={() => setExpanded((s) => ({ ...s, [tier]: !s[tier] }))} style={TIER_HEAD_BTN}>
+                {isOpen ? <ChevronDown style={{ width: 16, height: 16, color: meta.color }} /> : <ChevronRight style={{ width: 16, height: 16, color: meta.color }} />}
+                <span style={{ fontSize: 16 }}>{meta.icon}</span>
+                <span style={{ fontWeight: 800, color: tierText(meta.color), letterSpacing: 0.4 }}>{meta.label}</span>
+                <span style={tierCountPill(meta.color)} title="Number of companies in this group">{stocks.length} {stocks.length === 1 ? 'company' : 'companies'}</span>
+                <span style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-xs)' }}>{meta.tagline}</span>
               </button>
               {isOpen && (
-                <div style={{ padding: '0 18px 16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(460px, 100%), 1fr))', gap: 12 }}>
+                <div style={{ ...CARD_GRID, padding: '0 14px 14px' }}>
                   {stocks.map((s) => (pinnedRow && s.ticker === pinnedRow.ticker && pinnedReasons.length > 0) ? (
                     <div key={s.ticker + ':' + s.company} style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
                       <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--mc-warn, #F59E0B)' }}>
@@ -3462,15 +3389,9 @@ Source label: ${coverageStats.source}`}
             budget -= out.length;
             return out;
           };
-          const gridStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(460px, 100%), 1fr))', gap: 12 } as const;
+          const gridStyle = CARD_GRID;
           const toggleBtn = (v: WindowView, label: string) => (
-            <button key={v} onClick={() => setWindowView(v)}
-              style={{
-                padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 800, cursor: 'pointer',
-                border: `1px solid ${windowView === v ? 'var(--mc-cyan)' : 'var(--mc-bg-4)'}`,
-                background: windowView === v ? 'color-mix(in srgb, var(--mc-cyan) 14%, transparent)' : 'transparent',
-                color: windowView === v ? 'var(--mc-cyan)' : 'var(--mc-text-3)',
-              }}>{label}</button>
+            <button key={v} onClick={() => setWindowView(v)} style={btn(windowView === v)}>{label}</button>
           );
           const tierCountChips = (c: Record<WindowTier, number>) => TIER_ORDER.map((t) => (c[t] > 0
             ? <span key={t} style={{ color: `color-mix(in srgb, ${TIER_META[t].color} 60%, var(--mc-text-1))`, fontWeight: 800 }}>{TIER_META[t].icon} {c[t]}</span>
@@ -3491,7 +3412,7 @@ Source label: ${coverageStats.source}`}
           const foldedTotal = dGroups.reduce((n, g) => n + g.folded.MIXED + g.folded.AVOID, 0);
           return (
             <>
-              <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderLeft: '4px solid var(--mc-cyan)', borderRadius: 12, padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderLeft: '4px solid var(--mc-cyan)', borderRadius: 'var(--mc-radius)', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                   <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--mc-text-1)' }}>
                     🗓 {windowDays}-session window · {fmtShortDate(oldest)} → {fmtShortDate(resolvedDateForGrading)}
@@ -3586,12 +3507,12 @@ Source label: ${coverageStats.source}`}
               </div>
 
               {win.rows.length === 0 && p.done && (
-                <div style={{ color: 'var(--mc-text-3)', fontSize: 13, padding: '28px', textAlign: 'center', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 10 }}>
+                <div style={{ color: 'var(--mc-text-3)', fontSize: 13, padding: '28px', textAlign: 'center', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 'var(--mc-radius)' }}>
                   {p.failed > 0 ? 'Nothing could be loaded for this window yet — retry the dates above.' : 'No graded results in this window.'}
                 </div>
               )}
               {win.rows.length > 0 && rows.length === 0 && (
-                <div style={{ color: 'var(--mc-text-3)', fontSize: 13, padding: '28px', textAlign: 'center', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 10 }}>
+                <div style={{ color: 'var(--mc-text-3)', fontSize: 13, padding: '28px', textAlign: 'center', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 'var(--mc-radius)' }}>
                   {tierFilterOn ? tierEmptyMessage(tierSel, 'window') + '.' : `${win.rows.length} companies in the window — none pass the current filters.`}
                   {tierFilterOn && <> <button onClick={() => setTierSel([])} style={{ background: 'none', border: 'none', color: 'var(--mc-cyan)', fontWeight: 800, cursor: 'pointer', fontSize: 13 }}>Show all tiers</button></>}
                 </div>
@@ -3606,7 +3527,7 @@ Source label: ${coverageStats.source}`}
                 const ng = (notGradedByDate[g.date] || []).length;
                 const hasMixedAvoid = g.counts.MIXED + g.counts.AVOID > 0;
                 return (
-                  <div key={g.date} data-window-date={g.date} style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 12, padding: '12px 16px 16px' }}>
+                  <div key={g.date} data-window-date={g.date} style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 'var(--mc-radius)', padding: '12px 14px 14px' }}>
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
                       <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--mc-text-1)' }}>📅 {fmtLong(g.date)}</span>
                       <span style={{ fontSize: 11.5, color: 'var(--mc-text-3)' }}>{g.rows.length} {g.rows.length === 1 ? 'company' : 'companies'}</span>
@@ -3645,15 +3566,15 @@ Source label: ${coverageStats.source}`}
                 const meta = TIER_META[g.tier];
                 const cards = budget > 0 ? takeCards(g.list, true) : [];
                 return (
-                  <div key={g.tier} style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderLeft: `4px solid ${meta.color}`, borderRadius: 12 }}>
-                    <button onClick={() => setExpanded((s) => ({ ...s, [g.tier]: !s[g.tier] }))}
-                      style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', color: 'inherit' }}>
-                      {g.open ? <ChevronDown style={{ width: 16, height: 16, color: 'var(--mc-text-4)' }} /> : <ChevronRight style={{ width: 16, height: 16, color: 'var(--mc-text-4)' }} />}
-                      <span style={{ fontSize: 16, fontWeight: 800, color: `color-mix(in srgb, ${meta.color} 60%, var(--mc-text-1))` }}>{meta.icon} {meta.label}</span>
-                      <span style={{ fontSize: 12, color: 'var(--mc-text-3)' }}>{g.rows.length} {g.rows.length === 1 ? 'company' : 'companies'} across the window</span>
-                      <span style={{ fontSize: 11, color: 'var(--mc-text-4)' }}>· {g.open ? 'newest first' : 'click to show'}</span>
+                  <div key={g.tier} style={tierSection(meta.color)}>
+                    <button onClick={() => setExpanded((s) => ({ ...s, [g.tier]: !s[g.tier] }))} style={TIER_HEAD_BTN}>
+                      {g.open ? <ChevronDown style={{ width: 16, height: 16, color: meta.color }} /> : <ChevronRight style={{ width: 16, height: 16, color: meta.color }} />}
+                      <span style={{ fontSize: 16 }}>{meta.icon}</span>
+                      <span style={{ fontWeight: 800, color: tierText(meta.color), letterSpacing: 0.4 }}>{meta.label}</span>
+                      <span style={tierCountPill(meta.color)}>{g.rows.length} {g.rows.length === 1 ? 'company' : 'companies'} across the window</span>
+                      <span style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-xs)' }}>{g.open ? 'newest first' : 'click to show'}</span>
                     </button>
-                    {cards.length > 0 && <div style={{ ...gridStyle, padding: '0 18px 16px' }}>{cards}</div>}
+                    {cards.length > 0 && <div style={{ ...gridStyle, padding: '0 14px 14px' }}>{cards}</div>}
                   </div>
                 );
               })}
@@ -3682,16 +3603,10 @@ Source label: ${coverageStats.source}`}
 function TierBadge({ tier }: { tier: string }) {
   const m = TIER_META[tier as EarningsTier];
   if (!m) return null;
+  // zzz981 — the compact US tier tag.
   return (
     <span className="eo-tier-badge" data-tier={tier} title={`${m.label} — ${m.tagline}`}
-      style={{
-        display: 'inline-flex', alignItems: 'center', gap: 3, marginRight: 8, padding: '1px 7px',
-        borderRadius: 4, fontSize: 10, fontWeight: 900, letterSpacing: '0.4px', verticalAlign: 'middle', whiteSpace: 'nowrap',
-        border: `1.5px solid ${m.color}`,
-        backgroundColor: `color-mix(in srgb, ${m.color} 16%, transparent)`,
-        color: `color-mix(in srgb, ${m.color} 55%, var(--mc-text-1))`,
-        WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact',
-      } as CSSProperties}>
+      style={tierTag(m.color)}>
       {m.icon} {m.label}
     </span>
   );
@@ -3750,34 +3665,29 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
     <div
       id={`eo-card-${stock.ticker}`}
       data-ticker={stock.ticker}
-      style={{
-      backgroundColor: 'var(--mc-bg-0)',
-      border: '1px solid var(--mc-bg-4)',
-      borderLeft: `3px solid ${tierColor}`,
-      borderRadius: 10,
-      padding: '12px 14px',
-    }}>
-      {/* ── Header: COMPANY + pill row ────────────────────────────────────── */}
-      <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--mc-text-1)', lineHeight: 1.2, marginBottom: 4 }}>
+      style={cardShell(tierColor)}>
+      {/* ── Header: TICKER · tier tag · company · price — the US card header (zzz981) ── */}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontWeight: 800, fontSize: 15, color: 'var(--mc-text-0)' }}>{stock.ticker}</span>
         {/* zzz817 — the card says its tier, next to the name, in every view
             (a window day mixes all four tiers). */}
         {_unconf
           ? <span className="eo-tier-badge" data-tier="UNCONFIRMED"
               title="The stored growth figures may compare against the wrong quarter last year (Screener's table has a gap). Not counted as BLOCKBUSTER or STRONG until the date is regraded with correct figures."
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginRight: 8, padding: '1px 7px', borderRadius: 4, fontSize: 10, fontWeight: 900, letterSpacing: '0.3px', verticalAlign: 'middle', whiteSpace: 'nowrap', border: '1.5px solid var(--mc-text-4)', color: 'var(--mc-text-2)' }}>
+              style={{ ...tierTag('#94A3B8'), color: 'var(--mc-text-2)' }}>
               ⚪ {UNCONFIRMED_LABEL}
-              <span style={{ fontWeight: 600, color: 'var(--mc-text-4)', letterSpacing: 0 }}>(was {_unconf})</span>
+              <span style={{ fontWeight: 600, color: 'var(--mc-text-4)', letterSpacing: 0 }}> (was {_unconf})</span>
             </span>
           : <TierBadge tier={stock.tier} />}
-        {decodeEntities(String(stock.company || ''))}
-        <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 600, marginLeft: 6, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-          {stock.ticker}
+        <span style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          title={decodeEntities(String(stock.company || ''))}>
+          {decodeEntities(String(stock.company || ''))}
         </span>
         {/* PATCH 0362 — NEW badge: card arrived since last auto-refresh */}
         {isFresh && (
           <span title="Filed since your last auto-refresh — under 10 minutes ago"
             style={{
-              marginLeft: 8, padding: '1px 7px', borderRadius: 4,
+              padding: '3px 6px', borderRadius: 3, alignSelf: 'center', lineHeight: 1,
               fontSize: 9, fontWeight: 900, letterSpacing: '0.5px',
               backgroundColor: 'var(--mc-bullish)', color: 'var(--mc-bg-0)',
               animation: 'pulse 1.5s ease-in-out infinite',
@@ -3785,10 +3695,15 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
             ⚡ NEW
           </span>
         )}
+        {stock.price != null && (
+          <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-text-0)', whiteSpace: 'nowrap' }}>
+            {fmtPx(stock.price)}
+          </span>
+        )}
       </div>
       {/* zzz820b — why a top-tier quarter was held at a lower tier (engine v24). */}
       {capReasonOf(stock) && (
-        <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--mc-text-2)', marginBottom: 4, lineHeight: 1.35 }}>
+        <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--mc-text-2)', marginTop: 4, lineHeight: 1.35 }}>
           {capReasonOf(stock)}
         </div>
       )}
@@ -3796,15 +3711,16 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
       {/* zzz975 — once the guidance line knows the direction, the "unknown" note would contradict it. */}
       {typeof (stock as any).guidance_note === 'string' && (stock as any).guidance_note
         && !['raised', 'lowered', 'mixed', 'cautious', 'maintained', 'withdrawn'].includes(String((stock as any).guide_line?.direction || '')) && (
-        <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginBottom: 4, lineHeight: 1.35 }}
+        <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginTop: 3, lineHeight: 1.35 }}
           title="Guidance status: unknown. Unknown guidance can hold back a top-tier result that needs it; it never lowers a grade.">
           Guidance: unknown{String((stock as any).guidance_note).startsWith('so ') ? ', ' : ' — '}{(stock as any).guidance_note}
         </div>
       )}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', fontSize: 10.5, marginBottom: 8 }}>
+
+      {/* ── Chip row (US: 6px gap, right under the header) ── */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', margin: '6px 0 9px' }}>
         {/* zzz696 — everything from the quadrant badge to the sector chip is
-            opt-in. The PRICE below is not: it shares this row but it is a
-            number, not a label, and the card should never lose it. */}
+            opt-in. The size chip is not: it is a number, not a label. */}
         {/* zzz703 — pattern verdict, visible whatever the badge switch says. */}
         {(() => {
           const ab = classifyGradedRow(stock);
@@ -3812,8 +3728,7 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
           const m = ABFG_META[ab.pattern];
           return (
             <span title={`${ab.because}\n\nThe bet: ${m.bet}\n\nWhat ends it: ${ab.exitCondition}`}
-              style={{ padding: '1px 7px', borderRadius: 3, border: `1px solid ${m.color}`,
-                backgroundColor: `${m.color}18`, color: m.color, fontWeight: 800, letterSpacing: '0.3px' }}>
+              style={{ ...chipStyle(m.color), cursor: 'help' }}>
               {m.icon} {ab.pattern} · {m.name}
             </span>
           );
@@ -3825,14 +3740,42 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
             card with no financials has no basis for either number, and showing
             a 0 or a "—" there would invent a verdict we do not have. */}
         <QuadrantBadge stock={stock} />
+        {_q.label && (
+          <span title={(_q.corrected || (stock as any)._quarter_note) ? `Quarter corrected from the filing date (${_q.reason || (stock as any)._quarter_note}). Indian FY runs April–March.` : 'Results quarter (Indian FY runs April–March)'}
+            style={chipStyle()}>
+            {_q.label}
+          </span>
+        )}
+        {stock.sector && (
+          <span style={chipStyle()}>
+            {stock.sector}
+          </span>
+        )}
+        </>}
+        {/* zzz822 — size label on EVERY card with a market cap, from the one
+            band table the Mkt Cap filter uses (stored labels were set by
+            other thresholds, or missing). */}
+        {stock.market_cap_cr != null && Number.isFinite(stock.market_cap_cr) && stock.market_cap_cr > 0 && (
+          <span title={`Market cap band: ${CAP_BUCKETS.find((b) => b.key === capBucket(stock.market_cap_cr))?.label ?? ''} (same bands as the Mkt Cap filter)`}
+            style={chipStyle()}>
+            {capBucket(stock.market_cap_cr)}
+            <span style={{ color: 'var(--mc-text-2)', marginLeft: 5 }}>
+              ₹{Math.round(stock.market_cap_cr).toLocaleString('en-IN')} Cr
+            </span>
+          </span>
+        )}
+        {knownCapCr(stock.market_cap_cr) == null && (
+          <span title={`Market cap not available — kept on the "Small & mid only" view (ceiling ₹${SMALL_MID_MAX_CR.toLocaleString('en-IN')} Cr) because its size is unknown`}
+            style={{ ...chipStyle(undefined, true), color: 'var(--mc-text-4)' }}>
+            size n/a
+          </span>
+        )}
+        {showBadges && <>
         {radar && typeof radar.transformation_score === 'number' && (
-          <span title="On the concall-intel transformation radar — turnaround/re-rating candidate from the transformation screener" style={{
-            padding: '1px 6px', borderRadius: 3,
-            border: '1px solid #34D399', background: '#064E3B', color: '#6EE7B7', fontWeight: 800, letterSpacing: '0.3px',
-          }}>🚀 On transformation radar</span>
+          <span title="On the concall-intel transformation radar — turnaround/re-rating candidate from the transformation screener" style={chipStyle('#10B981')}>🚀 On transformation radar</span>
         )}
         {stock.pe != null && (
-          <span style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-2)', fontWeight: 700 }}>
+          <span style={chipStyle()}>
             PE {stock.pe.toFixed(1)}
           </span>
         )}
@@ -3841,18 +3784,8 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
             Mirrors the US card's chip. Absent when the source has no ROCE. */}
         {typeof stock.roce === 'number' && (
           <span title="Return on capital employed (Screener, annual) — the largest single input to the QUALITY score"
-            style={{
-              padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-1)',
-              border: '1px solid var(--mc-bg-4)', fontWeight: 700,
-              color: stock.roce >= 20 ? 'var(--mc-bullish)' : stock.roce < 8 ? 'var(--mc-bearish)' : 'var(--mc-text-2)',
-            }}>
+            style={chipStyle(stock.roce >= 20 ? 'var(--mc-bullish)' : stock.roce < 8 ? 'var(--mc-bearish)' : undefined)}>
             ROCE {stock.roce.toFixed(0)}%
-          </span>
-        )}
-        {_q.label && (
-          <span title={(_q.corrected || (stock as any)._quarter_note) ? `Quarter corrected from the filing date (${_q.reason || (stock as any)._quarter_note}). Indian FY runs April–March.` : 'Results quarter (Indian FY runs April–March)'}
-            style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-3)', fontWeight: 700 }}>
-            {_q.label}
           </span>
         )}
         {/* zzz822 — 💧 only a believable DAILY AVERAGE; a results-day spike
@@ -3863,161 +3796,52 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
           const lv = liquidityView(stock);
           const thin = lv.cr != null && lv.cr < 1;
           return (
-            <span title={lv.title} style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-1)', border: `1px solid ${thin ? '#7F1D1D' : 'var(--mc-bg-4)'}`, color: thin ? '#F87171' : 'var(--mc-text-3)', fontWeight: 700 }}>
+            <span title={lv.title} style={chipStyle(thin ? 'var(--mc-bearish)' : undefined)}>
               💧 {lv.cr == null ? '—' : `${lv.cr >= 1 ? `₹${lv.cr.toFixed(1)} Cr/d` : `₹${Math.round(lv.cr * 100)} L/d`} ${lv.label ?? 'avg'}`}{thin ? ' · thin' : ''}
             </span>
           );
         })()}
-        {stock.sector && (
-          <span style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-3)' }}>
-            {stock.sector}
-          </span>
-        )}
         {timing && (
-          <span style={{ fontSize: 12 }}>{timing}</span>
+          <span style={{ fontSize: 11 }}>{timing}</span>
+        )}
+        {/* PATCH 1006 — Institutional badges (ELITE / drift / MULTIBAGGER), in the
+            chip row as on the US card. zzz696 — opt-in. */}
+        {(stock as any).is_elite && (
+          <span title="ELITE — an independent institutional gate, not a tier. Every criterion required; a missing figure fails it." style={chipStyle('#F59E0B')}>⭐ ELITE</span>
+        )}
+        {typeof (stock as any).pead_score === 'number' && (() => {
+          const p = (stock as any).pead_score as number;
+          // zzz278 — show PEAD on every card. Color by tier: red ≥70 (fire),
+          // amber 50-69 (warm), grey <50 (cool).
+          const c = p >= 70 ? '#EF4444' : p >= 50 ? '#F59E0B' : undefined;
+          const icon = p >= 70 ? '🔥' : p >= 50 ? '⚡' : '📊';
+          return (
+            <span title="Post-earnings drift (PEAD): how strongly prices have tended to keep moving after results like this one — strong, moderate or weak" style={chipStyle(c)}>{icon} {driftWord(p)}</span>
+          );
+        })()}
+        {(stock as any).multibagger_setup && (
+          <span title="MULTIBAGGER SETUP — at least 2 of 4 quality signals (ROCE ≥ 25% · OPM ≥ 18% · OPM expanding ≥ +1pp · pledge ≤ 5%) and not loss-making" style={chipStyle('#8B5CF6')}>💎 MULTIBAGGER</span>
         )}
         </>}
-        {/* zzz822 — size label on EVERY card with a market cap, from the one
-            band table the Mkt Cap filter uses (stored labels were set by
-            other thresholds, or missing). */}
-        {stock.market_cap_cr != null && Number.isFinite(stock.market_cap_cr) && stock.market_cap_cr > 0 && (
-          <span title={`Market cap band: ${CAP_BUCKETS.find((b) => b.key === capBucket(stock.market_cap_cr))?.label ?? ''} (same bands as the Mkt Cap filter)`}
-            style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-3)', border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-3)', fontWeight: 800, letterSpacing: '0.3px' }}>
-            {capBucket(stock.market_cap_cr)}
-            <span style={{ fontWeight: 700, color: 'var(--mc-text-2)', marginLeft: 5 }}>
-              ₹{Math.round(stock.market_cap_cr).toLocaleString('en-IN')} Cr
-            </span>
-          </span>
-        )}
-        {knownCapCr(stock.market_cap_cr) == null && (
-          <span title={`Market cap not available — kept on the "Small & mid only" view (ceiling ₹${SMALL_MID_MAX_CR.toLocaleString('en-IN')} Cr) because its size is unknown`}
-            style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-3)', border: '1px dashed var(--mc-bg-4)', color: 'var(--mc-text-4)', fontWeight: 700 }}>
-            size n/a
-          </span>
-        )}
-        {stock.price != null && (
-          <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 800, color: 'var(--mc-text-1)' }}>
-            {fmtPx(stock.price)}
-          </span>
-        )}
       </div>
 
       {/* zzz975 — one thin line: did management raise, keep or lower its guidance (always visible). */}
       <InGuideOneLiner stock={stock} />
 
-      {/* ── Intraday move + RS + Stage row ────────────────────────────────── */}
-      {(stock.gap_pct != null || stock.d1_pct != null || stock.move_pct != null || stock.rs_rating != null || stock.stage != null) && (
-        <div style={{ display: 'flex', gap: 10, fontSize: 10, color: 'var(--mc-text-3)', marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          {stock.move_pct != null && (
-            <span>Move <strong style={{ color: stock.move_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(stock.move_pct)}</strong></span>
-          )}
-          {stock.gap_pct != null && (
-            <span>Gap <strong style={{ color: stock.gap_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(stock.gap_pct)}</strong></span>
-          )}
-          {stock.d1_pct != null && (
-            <span>D1 <strong style={{ color: stock.d1_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(stock.d1_pct)}</strong></span>
-          )}
-          {stock.rs_rating != null && (
-            <span style={{
-              padding: '1px 6px', borderRadius: 3,
-              backgroundColor: stock.rs_rating >= 80 ? 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)' : stock.rs_rating >= 50 ? 'color-mix(in srgb, var(--mc-warn) 8%, transparent)' : 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)',
-              color:           stock.rs_rating >= 80 ? 'var(--mc-bullish)'    : stock.rs_rating >= 50 ? 'var(--mc-warn)'    : 'var(--mc-bearish)',
-              border: '1px solid currentColor', fontWeight: 700,
-            }}>RS {stock.rs_rating}</span>
-          )}
-          {stock.stage != null && (
-            <span style={{
-              padding: '1px 6px', borderRadius: 3,
-              backgroundColor: stock.stage === 2 ? 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)' : stock.stage === 4 ? 'color-mix(in srgb, var(--mc-bearish) 8%, transparent)' : 'color-mix(in srgb, var(--mc-text-4) 8%, transparent)',
-              color:           stock.stage === 2 ? 'var(--mc-bullish)'    : stock.stage === 4 ? 'var(--mc-bearish)'    : 'var(--mc-text-3)',
-              border: '1px solid currentColor', fontWeight: 700,
-            }}>Stage {stock.stage}</span>
-          )}
-        </div>
-      )}
-
-      {/* zzz820b — price facts beside the grade, never inside it (engine v24). */}
-      {_ctx.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center', marginBottom: 6 }}
-          title="Share-price facts shown for context. The tier is decided from the reported numbers only.">
-          <span style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700 }}>Price context — not part of the grade:</span>
-          {_ctx.map((t) => (
-            <span key={t} style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 3, border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-3)', fontWeight: 600 }}>{t}</span>
-          ))}
-        </div>
-      )}
-
-      {/* zzz826 — shell-company flags: market cap / trading based, so context
-          like the price chips, never the tier. The Mkt Cap filter hides them. */}
-      {Array.isArray((stock as any).size_flags) && (stock as any).size_flags.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center', marginBottom: 6 }}
-          title="Size flags: from market cap and trading value (share-price figures), so they do not change the tier. Use the Mkt Cap filter to hide small companies.">
-          <span style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700 }}>Size — not part of the grade:</span>
-          {((stock as any).size_flags as string[]).map((t) => (
-            <span key={t} style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 3, border: '1px solid var(--mc-warn)', color: 'var(--mc-warn)', fontWeight: 700 }}>
-              {t === 'very small company' ? 'Very small company' : t === 'barely trades' ? 'Barely trades' : t}
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* PATCH 1006 — Institutional badges row.  zzz696 — opt-in. */}
-      {showBadges && ((stock as any).is_elite || typeof (stock as any).pead_score === 'number' || (stock as any).multibagger_setup) && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
-          {(stock as any).is_elite && (
-            <span title="ELITE — an independent institutional gate, not a tier. Every criterion required; a missing figure fails it." style={{
-              fontSize: 10, fontWeight: 900, letterSpacing: '0.3px',
-              padding: '2px 8px', borderRadius: 4,
-              border: '1px solid #FCD34D', background: '#78350F',
-              color: '#FCD34D',
-            }}>⭐ ELITE</span>
-          )}
-          {typeof (stock as any).pead_score === 'number' && (() => {
-            const p = (stock as any).pead_score as number;
-            // zzz278 — show PEAD on every card. Color by tier: red ≥70 (fire),
-            // amber 50-69 (warm), grey <50 (cool). Threshold notation kept in title.
-            const style = p >= 70
-              ? { border: '1px solid #F87171', background: '#7F1D1D', color: '#FCA5A5', icon: '🔥' }
-              : p >= 50
-                ? { border: '1px solid #F59E0B', background: '#78350F', color: '#FCD34D', icon: '⚡' }
-                : { border: '1px solid #6B7280', background: '#1F2937', color: '#9CA3AF', icon: '📊' };
-            return (
-              <span title="Post-earnings drift (PEAD): how strongly prices have tended to keep moving after results like this one — strong, moderate or weak" style={{
-                fontSize: 10, fontWeight: 800, letterSpacing: '0.3px',
-                padding: '2px 8px', borderRadius: 4,
-                border: style.border, background: style.background, color: style.color,
-              }}>{style.icon} {driftWord(p)}</span>
-            );
-          })()}
-          {(stock as any).multibagger_setup && (
-            <span title="MULTIBAGGER SETUP — at least 2 of 4 quality signals (ROCE ≥ 25% · OPM ≥ 18% · OPM expanding ≥ +1pp · pledge ≤ 5%) and not loss-making" style={{
-              fontSize: 10, fontWeight: 800, letterSpacing: '0.3px',
-              padding: '2px 8px', borderRadius: 4,
-              border: '1px solid #67E8F9', background: '#164E63',
-              color: '#A5F3FC',
-            }}>💎 MULTIBAGGER</span>
-          )}
-        </div>
-      )}
-
-      {/* ── Three metric tiles + score ────────────────────────────────────── */}
-      {/* PATCH 1003 — 2x3 grid: 4 metrics + score (was 2x2 = 3 metrics + score) */}
-      <div className="mc-grid-2-mobile" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-        <MetricTile label={_useSalesQoQ ? 'SALES QoQ' : 'SALES YOY'}  pct={_useSalesQoQ ? _salesQoQ : _g.sales}      curr={fmtCr(stock.sales_curr_cr)} prev={_useSalesQoQ ? fmtCr(_salesPrevQ) : fmtCr(_g.salesPrev)} note={!_useSalesQoQ && _g.withheld ? 'year-ago not matched' : undefined} noteTitle={_g.withheld || undefined} />
+      {/* ── The figure tiles: ONE ROW like the US TileRow — sales leads (zzz981) ── */}
+      <div className="mc-grid-2-mobile" style={TILE_ROW}>
+        <MetricTile size="lead" label={_useSalesQoQ ? 'SALES QoQ' : 'SALES YOY'}  pct={_useSalesQoQ ? _salesQoQ : _g.sales}      curr={fmtCr(stock.sales_curr_cr)} prev={_useSalesQoQ ? fmtCr(_salesPrevQ) : fmtCr(_g.salesPrev)} note={!_useSalesQoQ && _g.withheld ? 'year-ago not matched' : undefined} noteTitle={_g.withheld || undefined} />
         <MetricTile label={_usePatQoQ ? 'NET PROFIT QoQ' : 'NET PROFIT YOY'} pct={_usePatQoQ ? _patQoQ : (_patTraj && !_g.withheld ? null : _g.pat)} word={!_usePatQoQ && _patTraj && !_g.withheld ? { text: _patTraj.short, good: _patTraj.improving, title: _patTraj.label } : undefined} curr={fmtCr(stock.pat_curr_cr)}   prev={_usePatQoQ ? fmtCr(_patPrevQ) : fmtCr(_g.patPrev)} note={_usePatQoQ ? undefined : (_g.withheld ? 'year-ago not matched' : (_g.patNote || undefined))} noteTitle={_g.withheld || (_g.patNote ? 'This quarter\'s profit is known; the same quarter last year is not in the source, so no growth figure is shown (it is not worked out from EPS).' : undefined)} />
         <MetricTile label={_useEpsQoQ ? 'EPS QoQ' : 'EPS YOY'}    pct={_useEpsQoQ ? _epsQoQ : (_epsTraj && !_g.withheld ? null : _g.eps)}        word={!_useEpsQoQ && _epsTraj && !_g.withheld ? { text: _epsTraj.short, good: _epsTraj.improving, title: _epsTraj.label } : undefined} curr={fmtPx(stock.eps_curr)}     prev={_useEpsQoQ ? fmtPx(_epsPrevQ) : fmtPx(_g.epsPrev)} note={!_useEpsQoQ && _g.withheld ? 'year-ago not matched' : undefined} noteTitle={_g.withheld || undefined} />
         <MarginTile m={_margin} />
-        {/* zzz694 — cash sits beside the score, so the figure that decides the
-            tier is on the card rather than only in the caveat pills. The score
-            gives up its full-width row for it; a 94 that is capped by cash is
-            better read next to the cash than alone. */}
+        {/* zzz694 — cash sits in the row, so the figure that decides the tier
+            is on the card rather than only in the caveat pills. */}
         <CashTile v={cashTileView(stock)} />
         {/* zzz820 — the 0–100 composite is no longer printed (owner rule: no
             visible scores). The tile says the grade in words instead. */}
-        <div title={TIER_META[stock.tier].tagline} style={{ padding: '6px 10px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: `1px solid ${tierColor}40`, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-          <div style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.6px' }}>GRADE</div>
-          <div style={{ fontSize: 14, fontWeight: 900, color: tierColor, lineHeight: 1.1, marginTop: 2 }}>{_unconf ? 'UNCONFIRMED' : TIER_META[stock.tier].label}</div>
-        </div>
+        <Tile size="compact" label="GRADE" title={TIER_META[stock.tier].tagline}
+          value={_unconf ? 'UNCONFIRMED' : TIER_META[stock.tier].label}
+          color={`color-mix(in srgb, ${tierColor} 60%, var(--mc-text-1))`} />
       </div>
 
       {/* zzz820 — the tier was set from the stored growth figures; when those
@@ -4028,9 +3852,58 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
         </div>
       )}
 
-      {/* ── Brief narrative ───────────────────────────────────────────────── */}
-      <div style={{ marginTop: 8, fontSize: 11, color: 'var(--mc-text-2)', lineHeight: 1.5, fontStyle: 'italic', backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 6, padding: '6px 9px' }}>
-        📝 {narrativeForDisplay(stock)}
+      {/* ── Price line (US "Reaction · Since · RS · Stage") — context only ── */}
+      {(stock.gap_pct != null || stock.d1_pct != null || stock.move_pct != null || stock.rs_rating != null || stock.stage != null) && (
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', margin: '9px 0 0', fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', alignItems: 'baseline' }}>
+          {stock.d1_pct != null && (
+            <span>D1 <b style={{ color: stock.d1_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(stock.d1_pct)}</b></span>
+          )}
+          {stock.gap_pct != null && (
+            <span>Gap <b style={{ color: stock.gap_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(stock.gap_pct)}</b></span>
+          )}
+          {stock.move_pct != null && (
+            <span>Move <b style={{ color: stock.move_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(stock.move_pct)}</b></span>
+          )}
+          {stock.rs_rating != null && (
+            <span>RS <b style={{ color: stock.rs_rating >= 80 ? 'var(--mc-bullish)' : stock.rs_rating >= 50 ? 'var(--mc-warn)' : 'var(--mc-bearish)' }}>{stock.rs_rating}</b></span>
+          )}
+          {stock.stage != null && (
+            <span>Stage <b style={{ color: stock.stage === 2 ? 'var(--mc-bullish)' : stock.stage === 4 ? 'var(--mc-bearish)' : 'var(--mc-text-0)' }}>{stock.stage}</b></span>
+          )}
+          <span style={{ color: 'var(--mc-text-4)', fontStyle: 'italic' }} title="Move, gap, Day-1 reaction, RS and stage are market context. None of them raises or lowers the grade.">
+            price context · not graded
+          </span>
+        </div>
+      )}
+
+      {/* zzz820b — price facts beside the grade, never inside it (engine v24). */}
+      {_ctx.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center', marginTop: 7 }}
+          title="Share-price facts shown for context. The tier is decided from the reported numbers only.">
+          <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700 }}>Price context — not part of the grade:</span>
+          {_ctx.map((t) => (
+            <span key={t} style={chipStyle()}>{t}</span>
+          ))}
+        </div>
+      )}
+
+      {/* zzz826 — shell-company flags: market cap / trading based, so context
+          like the price chips, never the tier. The Mkt Cap filter hides them. */}
+      {Array.isArray((stock as any).size_flags) && (stock as any).size_flags.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center', marginTop: 7 }}
+          title="Size flags: from market cap and trading value (share-price figures), so they do not change the tier. Use the Mkt Cap filter to hide small companies.">
+          <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700 }}>Size — not part of the grade:</span>
+          {((stock as any).size_flags as string[]).map((t) => (
+            <span key={t} style={chipStyle('var(--mc-warn)')}>
+              {t === 'very small company' ? 'Very small company' : t === 'barely trades' ? 'Barely trades' : t}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* ── Narrative — the US narrative style ── */}
+      <div style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', marginTop: 9, lineHeight: 1.5 }}>
+        {narrativeForDisplay(stock)}
       </div>
 
       <IndiaAiSummary stock={stock} />
@@ -4039,7 +3912,7 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
       {(stock.methodology_tags.length > 0 || _cavs.length > 0) && (
         <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 5 }}>
           {stock.methodology_tags.map((t) => (
-            <span key={t} style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 3, backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)', color: 'var(--mc-bullish)', border: '1px solid color-mix(in srgb, var(--mc-bullish) 25%, transparent)', fontWeight: 700 }}>✓ {t}</span>
+            <span key={t} style={chipStyle('var(--mc-bullish)')}>✓ {t}</span>
           ))}
           {_cavs.map((t) => {
             // zzz503 — "newly listed" / "no YoY yet" are CONTEXT, not risk
@@ -4052,7 +3925,7 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
             const _reaction = MARKET_REACTION_CAVEATS.has(t);
             const _c = _info ? 'var(--mc-cyan)' : _reaction ? 'var(--mc-text-3)' : 'var(--mc-warn)';
             return (
-              <span key={t} title={_reaction ? 'Price reaction after the print, not a judgement on the reported numbers' : undefined} style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 3, backgroundColor: `color-mix(in srgb, ${_c} 8%, transparent)`, color: _c, border: `1px solid color-mix(in srgb, ${_c} 25%, transparent)`, fontWeight: 700 }}>{_info ? 'ℹ' : _reaction ? '📉 market reaction:' : '⚠'} {t === 'newly listed' ? 'new listing — no YoY history' : t}</span>
+              <span key={t} title={_reaction ? 'Price reaction after the print, not a judgement on the reported numbers' : undefined} style={chipStyle(_c)}>{_info ? 'ℹ' : _reaction ? '📉 market reaction:' : '⚠'} {t === 'newly listed' ? 'new listing — no YoY history' : t}</span>
             );
           })}
         </div>
@@ -4064,21 +3937,20 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
           /get-quotes/equity URL into stock.filing_url which redirects to
           a generic quote page, not the financial-results filings page.
           Generating at render time means stale caches don't poison the link. */}
-      <div style={{ marginTop: 8, paddingTop: 7, borderTop: '1px solid var(--mc-bg-4)' }}>
+      <div style={{ marginTop: 9, paddingTop: 7, borderTop: '1px solid var(--mc-bg-4)', display: 'flex', gap: 12, flexWrap: 'wrap' }}>
         <a
           href={`https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(stock.ticker)}`}
           target="_blank" rel="noopener noreferrer"
           title="Open NSE financial-results filings filter for this ticker"
-          style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-          <ExternalLink style={{ width: 10, height: 10 }} /> 📄 NSE Filings · {stock.ticker}
+          style={{ fontSize: 'var(--mc-text-xs)', fontWeight: 700, color: 'var(--mc-cyan)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <ExternalLink style={{ width: 11, height: 11 }} /> 📄 NSE Filings · {stock.ticker}
         </a>
-        {' '}
         <a
           href={`https://www.bseindia.com/corporates/ann.html?scrip=${encodeURIComponent(stock.ticker)}`}
           target="_blank" rel="noopener noreferrer"
           title="Open BSE corporate announcements filter for this ticker"
-          style={{ fontSize: 10, color: 'var(--mc-text-3)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 10 }}>
-          <ExternalLink style={{ width: 10, height: 10 }} /> 📄 BSE
+          style={{ fontSize: 'var(--mc-text-xs)', fontWeight: 700, color: 'var(--mc-text-3)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <ExternalLink style={{ width: 11, height: 11 }} /> 📄 BSE
         </a>
       </div>
     </div>
@@ -4109,21 +3981,15 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
 // and insurers read 'not meaningful for lenders', and the engine's cash basis
 // (e.g. 'FY26 full year') is shown under the ratio when it sends one.
 function CashTile({ v }: { v: CashTileView }) {
-  const color = v.color === 'good' ? '#10B981' : v.color === 'warn' ? '#F59E0B' : v.color === 'bad' ? '#EF4444' : '#6B7A8D';
+  const color = v.color === 'good' ? 'var(--mc-bullish)' : v.color === 'warn' ? 'var(--mc-warn, #F59E0B)' : v.color === 'bad' ? 'var(--mc-bearish)' : 'var(--mc-text-3)';
+  // zzz981 — a normal US tile; the cash basis (e.g. "FY26 full year") stays as a second line.
   return (
-    <div title="Operating cash flow ÷ net profit for the year: does cash back the reported profit?" style={{ padding: '6px 10px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: '1px solid var(--mc-bg-4)', display: 'flex', flexDirection: 'column', gap: 1 }}>
-      <div style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.6px' }}>CASH  CFO/PAT</div>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-        <div style={{ fontSize: 16, fontWeight: 800, color, lineHeight: 1 }}>{v.text}</div>
-      </div>
-      <div style={{ fontSize: 9, color: 'var(--mc-text-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {v.note}
-      </div>
-      {v.basis && (
-        <div style={{ fontSize: 9, color: 'var(--mc-text-4)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+    <Tile label="CASH CFO/PAT" value={v.text} color={color} sub={v.note}
+      title="Operating cash flow ÷ net profit for the year: does cash back the reported profit?"
+      extra={v.basis && (
+        <div style={{ fontSize: 10, color: 'var(--mc-text-4)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {v.basis}
         </div>
-      )}
-    </div>
+      )} />
   );
 }

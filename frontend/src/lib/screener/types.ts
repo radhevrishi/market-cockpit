@@ -2,6 +2,8 @@
 // One row per company, built on the server from free sources (USA: Nasdaq list + SEC filings + Yahoo prices;
 // India: NSE + screener.in + Yahoo prices). The page downloads the whole snapshot once and filters in the browser, so changing a filter is instant.
 
+import type { ScreenPatternTag } from './pine';
+
 export type ScreenMarket = 'US' | 'IN';
 
 /** One company in the snapshot. Money: USA $ million, India ₹ crore. Percent fields are plain percent (25 = 25%). null = not known.
@@ -77,6 +79,9 @@ export interface ScreenRow {
   liabQ?: number | null; liabA?: number | null;            // total liabilities (money)
   debtAssetsQ?: number | null; debtAssetsA?: number | null;
   debtCapQ?: number | null; debtCapA?: number | null;      // debt ÷ (debt + equity)
+  // ── zzz983: chart patterns (Pine Screener) — read from the same daily bars as the price figures (lib/screener/pine.ts) ──
+  pat?: ScreenPatternTag[];  // patterns the latest bars show, likelihood ≥ 35 (absent = none found, or not scanned yet)
+  patAt?: string;            // date of the last bar the patterns were read from (absent = not scanned yet)
 }
 
 export interface ScreenSnapshot {

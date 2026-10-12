@@ -12,8 +12,9 @@ import { tvSectorMapping } from './tv-sectors';
 
 // ── formula version ────────────────────────────────────────────────────────────────────────────────────────────────────
 /** Bump with a line in FORMULA_CHANGES whenever a figure is worked out differently. */
-export const FORMULA_VERSION = '2026.10.12b';
+export const FORMULA_VERSION = '2026.10.12c';
 export const FORMULA_CHANGES: ReadonlyArray<{ v: string; what: string }> = [
+  { v: '2026.10.12c', what: 'Chart patterns (Pine Screener) read from the same daily bars as the price figures: 21 bullish / bearish patterns with stage, likelihood, pivot and distance, as of the last bar date. Screen filters themselves are unchanged.' },
   { v: '2026.10.12b', what: 'Completed-sessions mode re-works market cap, P/E, P/S, price ÷ cash and EV / revenue at the closing price (they used the live price); India "Other Construction Materials" mapped to Non-Energy Minerals, four companies checked one by one.' },
   { v: '2026.10.12', what: 'Last-5-trading-sessions change added; US companies without quarterly figures now say why; close-confirmed price figures kept for snapshots read during trading.' },
   { v: '2026.10.07', what: 'US cash read from restricted-cash / bank-cash lines when the plain line is not filed (EV / revenue and cash filters).' },

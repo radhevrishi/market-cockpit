@@ -9,6 +9,7 @@ import {
 } from '@/lib/chart-layouts';
 import { loadLayoutStore, saveLayoutStore } from '@/lib/chart-storage';
 import { fmtPrice } from '@/lib/chart-math';
+import { patternsOn, withPatterns } from './pattern-view';
 
 // ── store hook ────────────────────────────────────────────────────────────────
 const LAYOUT_DRAFT_KEY = 'mc:chart-layout-draft:v1';
@@ -178,8 +179,18 @@ export function IndicatorsPanel({ L, onClose }: { L: ReturnType<typeof useLayout
         <input type="number" min={1} max={200} value={w.volume.avg} onChange={(e) => setW((l) => ({ ...l, volume: { ...l.volume, avg: Number(e.target.value) || l.volume.avg } }))} style={{ ...input, width: 50 }} aria-label="Volume average length" />
         <span>bars</span>
       </div>
-      {w.extras.length > 0 && <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-text-3)', margin: '8px 0 4px', paddingTop: 8, borderTop: '1px solid var(--mc-border-3)' }}>OTHER INDICATORS</div>}
-      {w.extras.map((x) => {
+      {/* zzz982 — chart-pattern detection on the daily bars, one line at the top of the chart */}
+      <div style={{ margin: '8px 0', paddingTop: 8, borderTop: '1px solid var(--mc-border-3)' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+          <input type="checkbox" checked={patternsOn(w)} onChange={(e) => setW((l) => withPatterns(l, e.target.checked))} aria-label="Automate chart patterns" />
+          <b style={{ fontWeight: 600 }}>📐 Automate chart patterns</b>
+        </label>
+        <div style={{ paddingLeft: 22, marginTop: 2, fontSize: 12, color: 'var(--mc-text-3)' }}>
+          Names the pattern the daily chart is forming (flat base, cup with handle, VCP, flags, double bottom, head &amp; shoulders …) in one line at the top of the chart, with its pivot, and draws it.
+        </div>
+      </div>
+      {w.extras.some((x) => x.type !== 'PAT') && <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-text-3)', margin: '8px 0 4px', paddingTop: 8, borderTop: '1px solid var(--mc-border-3)' }}>OTHER INDICATORS</div>}
+      {w.extras.filter((x) => x.type !== 'PAT').map((x) => {
         const info = EXTRA_INFO[x.type];
         return (
           <div key={x.id} style={{ marginBottom: 8 }}>
@@ -205,7 +216,7 @@ export function IndicatorsPanel({ L, onClose }: { L: ReturnType<typeof useLayout
           <option value="">+ Add an indicator…</option>
           {w.lines.length < MAX_LINES && <option value="EMA">EMA line</option>}
           {w.lines.length < MAX_LINES && <option value="SMA">SMA line</option>}
-          {w.extras.length < MAX_EXTRAS && EXTRA_TYPES.map((t) => <option key={t} value={t}>{EXTRA_INFO[t].label}</option>)}
+          {w.extras.length < MAX_EXTRAS && EXTRA_TYPES.filter((t) => t !== 'PAT').map((t) => <option key={t} value={t}>{EXTRA_INFO[t].label}</option>)}
         </select>
       </div>
       <div style={{ marginTop: 8, color: 'var(--mc-text-3)', fontSize: 12 }}>

@@ -9,7 +9,7 @@ export const CHART_LAYOUTS_KEY = 'mc:chart-layouts:v1';
 
 export type LineKind = 'EMA' | 'SMA';
 export interface MaLine { id: string; kind: LineKind; period: number; color: string; on: boolean }
-export type ExtraType = 'BOLL' | 'RSI' | 'MACD' | 'ATR' | 'ST';
+export type ExtraType = 'BOLL' | 'RSI' | 'MACD' | 'ATR' | 'ST' | 'PAT';
 export interface Extra { id: string; type: ExtraType; params: number[]; color: string; on: boolean }
 export interface ChartLayout { id: string; name: string; updatedAt: number; lines: MaLine[]; volume: { on: boolean; avg: number }; extras: Extra[]; scale: LayoutScale }
 /** zzz946 — price scale: `auto` fits the visible candles (TradingView "A"); `log` = logarithmic (TradingView "L"). */
@@ -25,6 +25,9 @@ export const EXTRA_INFO: Record<ExtraType, { label: string; pane: boolean; defau
   RSI: { label: 'RSI', pane: true, defaults: [14], names: ['Length'], min: [2], max: [200], color: '#7E57C2' },
   MACD: { label: 'MACD', pane: true, defaults: [12, 26, 9], names: ['Fast', 'Slow', 'Signal'], min: [1, 2, 1], max: [200, 400, 200], color: '#2962FF' },
   ATR: { label: 'ATR', pane: true, defaults: [14], names: ['Length'], min: [1], max: [200], color: '#E91E63' },
+  // zzz982 — "Automate chart patterns": no line of its own; a status line at the top of the chart + the lead pattern drawn
+  // (components/charts/pattern-view). Off unless added to the layout.
+  PAT: { label: 'Automate chart patterns', pane: false, defaults: [], names: [], min: [], max: [], color: '#2962FF' },
 };
 export const EXTRA_TYPES = Object.keys(EXTRA_INFO) as ExtraType[];
 
@@ -173,7 +176,7 @@ export function mergeLayoutStores(aRaw: unknown, bRaw: unknown): LayoutStore {
 
 // ── labels ────────────────────────────────────────────────────────────────────
 export const lineLabel = (l: MaLine) => `${l.kind} ${l.period}`;
-export const extraLabel = (e: Extra) => `${EXTRA_INFO[e.type].label} ${e.params.join(' ')}`;
+export const extraLabel = (e: Extra) => `${EXTRA_INFO[e.type].label} ${e.params.join(' ')}`.trim();
 export function newExtra(type: ExtraType): Extra {
   const info = EXTRA_INFO[type];
   return { id: newLayoutId('x'), type, params: info.defaults.slice(), color: info.color, on: true };
@@ -205,6 +208,7 @@ export interface LegendRow { id: string; source: 'line' | 'extra'; label: string
 export function legendRows(l: ChartLayout): LegendRow[] {
   const rows: LegendRow[] = l.lines.map((x) => ({ id: x.id, source: 'line', label: lineLabel(x), color: x.color, on: x.on, pane: false, series: [{ spec: { kind: x.kind, a: x.period }, color: x.color }] }));
   for (const e of l.extras) {
+    if (e.type === 'PAT') continue;   // zzz982 — shown as its own status line at the top of the chart, not a legend row
     const info = EXTRA_INFO[e.type];
     const series: LegendRow['series'] = e.type === 'BOLL'
       ? [{ spec: { kind: 'BBU', a: e.params[0], b: e.params[1] }, color: e.color }, { spec: { kind: 'BBM', a: e.params[0], b: e.params[1] }, color: BB_MID_COLOR }, { spec: { kind: 'BBL', a: e.params[0], b: e.params[1] }, color: e.color }]

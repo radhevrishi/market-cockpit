@@ -3,7 +3,8 @@
 // Moved verbatim out of page.tsx (pure refactor, no behaviour change).
 import { useState, useMemo, useCallback } from 'react';
 import { QUADRANT_META } from '@/lib/earnings-grade-shared';
-import { CommentaryScoreBlock, SummaryView } from '@/components/us-earnings-card';
+import { CommentaryScoreBlock, SummaryView, growthColor } from '@/components/us-earnings-card';
+import { Tile, TILE_SCALE, type TileSize } from './eo-style';
 import { scoreReleaseCommentary } from '@/lib/earnings/commentary-score';
 import { partWord, axisWord, decodeEntities, type MarginView } from '@/lib/india-eo-card-data';
 import { inGuideLine, IN_GUIDE_GLYPH, type InGuideLine } from '@/lib/in-guide-line';
@@ -40,10 +41,11 @@ export function QuadrantBadge({ stock }: { stock: ParsedEarning }) {
     `Independent of the tier — the quadrant never promotes a row.`;
   return (
     <span title={title} style={{
-      padding: '1px 6px', borderRadius: 3,
+      // zzz981 — the US quadrant badge shape (10px pill).
+      fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 999, cursor: 'help',
       border: `1px solid ${meta.color}`,
-      backgroundColor: `${meta.color}1F`,
-      color: meta.color, fontWeight: 800, letterSpacing: '0.3px', whiteSpace: 'nowrap',
+      backgroundColor: `color-mix(in srgb, ${meta.color} 12%, transparent)`,
+      color: `color-mix(in srgb, ${meta.color} 70%, var(--mc-text-1))`, letterSpacing: '0.3px', whiteSpace: 'nowrap',
     }}>
       {meta.icon} {meta.label}
       <span style={{ fontWeight: 700, opacity: 0.85, marginLeft: 5 }}>· {qualW} · {inflW}</span>
@@ -383,62 +385,45 @@ export function CalendarView({ data, loading, from, to, onPickDate }: { data: Ca
 // zzz820 — now driven by marginView(): a stored 0.0% is shown as unknown, and
 // banks / NBFCs / insurers get NET MARGIN (net profit ÷ total income) instead
 // of an operating margin that means nothing for a lender.
-export function MarginTile({ m }: { m: MarginView }) {
+export function MarginTile({ m, size = 'normal' }: { m: MarginView; size?: TileSize }) {
   const hasV = m.value != null;
   const delta = m.value != null && m.prev != null ? m.value - m.prev : null;
-  const deltaColor = delta == null ? '#6B7A8D'
-                    : delta >= 1 ? '#10B981'
-                    : delta >= -0.5 ? '#94A3B8'
-                    : '#EF4444';
-  const deltaLabel = delta == null ? '—'
-                    : `${delta >= 0 ? '+' : ''}${delta.toFixed(1)} pp`;
+  // zzz981 — the US OPM tile: the level, coloured by which way it moved, and the
+  // move in points underneath.
+  const deltaLabel = delta == null ? null : `${delta >= 0 ? '+' : ''}${delta.toFixed(1)}pp YoY`;
+  const color = !hasV ? 'var(--mc-text-4)' : delta == null ? undefined : delta >= 1 ? 'var(--mc-bullish)' : delta >= -0.5 ? undefined : 'var(--mc-bearish)';
   return (
-    <div title={m.title} style={{ padding: '9px 12px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: '1px solid var(--mc-bg-4)', display: 'flex', flexDirection: 'column', gap: 1 }}>
-      <div style={{ fontSize: 10.5, color: 'var(--mc-text-3)', fontWeight: 700, letterSpacing: '0.5px' }}>{m.label}</div>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-        <div style={{ fontSize: 22, fontWeight: 900, color: hasV ? 'var(--mc-text-1)' : 'var(--mc-text-4)', lineHeight: 1 }}>
-          {hasV ? `${(m.value as number).toFixed(1)}%` : '—'}
-        </div>
-        <div style={{ fontSize: 12.5, fontWeight: 700, color: deltaColor }}>
-          {deltaLabel}
-        </div>
-      </div>
-      <div style={{ fontSize: 10.5, color: 'var(--mc-text-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {m.note}
-      </div>
-    </div>
+    <Tile size={size} title={m.title} label={m.label}
+      value={hasV ? `${(m.value as number).toFixed(1)}%` : '—'} color={color}
+      sub={deltaLabel ? `${deltaLabel} · ${m.note}` : m.note} />
   );
 }
 
-export function MetricTile({ label, pct, curr, prev, word, note, noteTitle }: { label: string; pct: number | null; curr: string | null; prev: string | null; word?: { text: string; good: boolean; title?: string }; note?: string; noteTitle?: string }) {
-  const color = word ? (word.good ? '#10B981' : '#EF4444') : pct == null ? '#6B7A8D' : pct >= 0 ? '#10B981' : '#EF4444';
+export function MetricTile({ label, pct, curr, prev, word, note, noteTitle, size = 'normal' }: { label: string; pct: number | null; curr: string | null; prev: string | null; word?: { text: string; good: boolean; title?: string }; note?: string; noteTitle?: string; size?: TileSize }) {
+  // zzz981 — US growth colours: ≥25% green, 0–25% plain, below zero red.
+  const color = word ? (word.good ? 'var(--mc-bullish)' : 'var(--mc-bearish)') : growthColor(pct);
   // zzz385 — clamp base-effect blow-ups on the card tile (mirror the narrative fmtP
   // clamp): a near-zero prior base makes YoY % explode (e.g. ₹0.5 Cr → ₹50 Cr PAT =
   // +5000%). Exact precision is meaningless there and reads as fabricated, so show
-  // '>500%' above the threshold. The curr-vs-prev ₹Cr line below still shows the real
+  // '>500%' above the threshold. The prior → current ₹Cr line below still shows the real
   // magnitude so the low base is obvious.
   const pctLabel = pct == null || !Number.isFinite(pct)
     ? '—'
     : pct >= 500 ? '>500%'
     : `${pct >= 0 ? '+' : ''}${pct.toFixed(0)}%`;
+  // US format: "prior → current".
+  const sub = (curr || prev) ? (prev ? `${prev} → ${curr || '—'}` : (curr || '—')) : undefined;
   return (
-    <div style={{ padding: '10px 12px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: '1px solid var(--mc-bg-4)' }}>
-      <div style={{ fontSize: 10.5, color: 'var(--mc-text-3)', fontWeight: 700, letterSpacing: '0.5px' }}>{label}</div>
-      {word
-        ? <div title={word.title} style={{ fontSize: 15, fontWeight: 900, color, marginTop: 4, lineHeight: 1.15 }}>{word.text}</div>
-        : <div style={{ fontSize: 24, fontWeight: 900, color, marginTop: 3, lineHeight: 1, letterSpacing: -0.4 }}>{pctLabel}</div>}
-      {(curr || prev) && (
-        <div style={{ fontSize: 11, color: 'var(--mc-text-3)', marginTop: 3, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-          {curr || '—'}{prev && ` vs ${prev}`}
-        </div>
-      )}
-      {/* zzz820 — why a figure is '—' (never a guess in its place). */}
-      {note && (
-        <div title={noteTitle} style={{ fontSize: 10.5, color: 'var(--mc-text-3)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: noteTitle ? 'help' : undefined }}>
+    <Tile size={size} label={label} color={color}
+      value={word ? word.text : pctLabel} valueTitle={word?.title}
+      title={sub ? `${label}: ${sub}` : undefined}
+      sub={sub}
+      // zzz820 — why a figure is '—' (never a guess in its place).
+      extra={note ? (
+        <div title={noteTitle} style={{ fontSize: TILE_SCALE[size].sub, color: 'var(--mc-text-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: noteTitle ? 'help' : undefined }}>
           ⓘ {note}
         </div>
-      )}
-    </div>
+      ) : undefined} />
   );
 }
 
@@ -463,12 +448,11 @@ export function InGuideOneLiner({ stock }: { stock: ParsedEarning }) {
   const [head, ...rest] = gl.text.split(sep);
   const title = [gl.title, gl.source ? `Source: ${gl.source}` : '', moved ? `Moved from ${moved} to MIXED because of this.` : ''].filter(Boolean).join('\n');
   return (
-    // zzz980 — sized for the India card (its text is 13px; the 11px line read as a footnote): a strip with a coloured edge
+    // zzz981 — the US GuideOneLiner look the owner liked: one 11px line under the chips, bold coloured head, no box.
     <div title={title} data-guide={gl.direction}
-      style={{ fontSize: 12.5, lineHeight: 1.4, color: 'var(--mc-text-1)', margin: '2px 0 10px', display: 'flex', gap: 7, alignItems: 'baseline', minWidth: 0,
-        padding: '5px 9px', borderRadius: 6, background: 'var(--mc-bg-1)', borderLeft: `3px solid ${color}` }}>
-      <span aria-hidden style={{ flexShrink: 0, fontSize: 13 }}>{gl.direction === 'unknown' ? '◌' : (IN_GUIDE_GLYPH[gl.direction] || '◌')}</span>
-      <span style={{ minWidth: 0, flex: 1, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+      style={{ fontSize: 11, lineHeight: 1.35, color: 'var(--mc-text-2)', margin: '-3px 0 8px', display: 'flex', gap: 5, alignItems: 'baseline', minWidth: 0 }}>
+      <span aria-hidden style={{ flexShrink: 0 }}>{gl.direction === 'unknown' ? '◌' : (IN_GUIDE_GLYPH[gl.direction] || '◌')}</span>
+      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
         <b style={{ color }}>{head}</b>
         {rest.length > 0 && <span>{sep === ': ' ? ': ' : ' — '}{rest.join(sep)}</span>}
         {moved && <span style={{ color: 'var(--mc-text-4)' }}> · moved from {moved} to MIXED</span>}

@@ -63,7 +63,8 @@ const OFFER: readonly string[] = ['/portfolio-catalysts', '/exit-radar', '/ai-ga
 // zzz843 — Guidance Upgrades, offered once like every new tab.
 // zzz846 — Growth Guidance, offered once like every new tab.
 // zzz938 — our own Stock Screener and Charts (replace TradingView), offered once like every new tab.
-const OFFER_ALL: readonly string[] = [...OFFER, '/market-snapshot', '/guidance-upgrades', '/growth-guidance', '/stock-screener', '/charts'];
+// zzz983 — Pine Screener (chart patterns), offered once like every new tab.
+const OFFER_ALL: readonly string[] = [...OFFER, '/market-snapshot', '/guidance-upgrades', '/growth-guidance', '/stock-screener', '/charts', '/pine-screener'];
 
 function applyOffers(cur: string[]): string[] {
   let offered: string[] = [];

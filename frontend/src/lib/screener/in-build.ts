@@ -17,6 +17,7 @@ import { yieldToServer } from './yield';
 import { inFiguresFromRaw, rawFromHtml, type InFigures, type InRaw } from './in-assemble';
 import { loadProfiles, type Prof } from './us-build';
 import { refreshTech, type TechStored } from './tech-fetch';
+import { rowPatternFields } from './pine';
 import type { NseDay } from './tech';
 import { tvSectorOf } from './tv-sectors';
 import { rowsJson, type ScreenRow } from './types';
@@ -205,6 +206,7 @@ export function assembleInRow(t: string, name: string, latest: BhavDay, bhav: Bh
       // zzz969 — the moving averages etc. were read mid-session: keep last-completed-session values (price stays NSE's close)
       ...(tf.cc ? { cc: Object.fromEntries(Object.entries(tf.cc).filter(([k]) => k !== 'px' && k !== 'chg' && k !== 'vol')) } : {}),
     } : {}),
+    ...rowPatternFields(tf),   // zzz983 — chart patterns (Pine Screener)
     earnD: earnIso ? Math.floor(Date.parse(`${earnIso.slice(0, 10)}T00:00:00Z`) / DAY) : null,
     roeTTM: f?.roeTTM ?? null, roeFY: f?.roeFY ?? null, roceTTM: f?.roceTTM ?? null, roceFY: f?.roceFY ?? null, nmTTM: f?.nmTTM ?? null, ptmTTM: f?.ptmTTM ?? null,
     opmFY: f?.opmFY ?? null, pe: mc != null && f?.npTTM != null && f.npTTM > 0 ? r2(mc / f.npTTM) : null,

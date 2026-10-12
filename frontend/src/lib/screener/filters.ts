@@ -6,7 +6,7 @@
 import type { ScreenRow, ScreenMarket } from './types';
 import { TV_SECTORS, allSectorsExcept, type TvSector } from './tv-sectors';
 
-type NonNum = 't' | 'n' | 'sec' | 'ind' | 'q' | 'approx' | 'tvSec' | 'exch' | 'nq' | 'cc';
+type NonNum = 't' | 'n' | 'sec' | 'ind' | 'q' | 'approx' | 'tvSec' | 'exch' | 'nq' | 'cc' | 'pat' | 'patAt';
 export type NumKey = Exclude<keyof ScreenRow, NonNum>;
 export type FieldUnit = '%' | 'x' | 'money' | 'num' | 'price' | 'shares' | 'usd' | 'date';
 export type FieldGroup = 'Price & volume' | 'Moving averages' | 'Momentum' | 'Growth' | 'Margins & returns' | 'Valuation' | 'Balance sheet' | 'Company';

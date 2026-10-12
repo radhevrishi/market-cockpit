@@ -2235,6 +2235,7 @@ export default function HomeDashboard() {
             <Link href="/monte-carlo"            style={navChip('#06B6D4')}>🎲 Monte Carlo</Link>
             <Link href="/playbook#mastery"       style={navChip('#84cc16')}>🏏 Peak Performance</Link>
             <Link href="/pead-tracker"           style={navChip('#10B981')}>📊 PEAD Tracker</Link>
+            <Link href="/pine-screener"          style={navChip('#8B5CF6')}>🧩 Pine Screener</Link>
             <Link href="/playbook"               style={navChip('#F59E0B')}>📚 Playbook</Link>
             {/* zzz239 — 🔬 Portfolio Fundamentals moved to Favourites row above */}
             <Link href="/position-sizing"        style={navChip('#22D3EE')}>📐 Position Sizing</Link>
@@ -4292,6 +4293,7 @@ export default function HomeDashboard() {
                 { href: '/valuations', label: '💎 Valuations' },
                 { href: '/screener', label: '🔍 Screener' },
                 { href: '/stock-screener', label: '🧮 Stock Screener' },
+                { href: '/pine-screener', label: '🧩 Pine Screener' },
                 { href: '/charts', label: '📈 Charts + Watchlist' },
                 { href: '/strategic-visibility', label: '⭐ Strategic Visibility' },
                 { href: '/transmission', label: '🔄 Transmission' },
@@ -4344,6 +4346,7 @@ const FAVS: Array<{ href: string; label: string; color: string; ext?: boolean }>
   // saved drag order also gets them at the front (a new chip goes after its default neighbour, and the first one has none)
   { href: '/charts', label: '📈 Charts + Watchlist', color: '#22D3EE' },
   { href: '/stock-screener', label: '🧮 Stock Screener', color: '#8B5CF6' },
+  { href: '/pine-screener', label: '🧩 Pine Screener', color: '#8B5CF6' },   // zzz983 — chart patterns across every company
   { href: '/cockpit', label: '🛩️ Action Cockpit', color: '#F59E0B' },
   { href: '/cheat-entry', label: '🥷 Cheat Entry', color: '#10B981' },
   { href: '/bounce-desk', label: '🌊 Bounce Desk', color: '#A78BFA' },

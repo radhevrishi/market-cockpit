@@ -8,7 +8,7 @@ import { getFavourites, toggleFavourite, subscribeFavourites } from '@/lib/nav-f
 import { useQuery } from '@tanstack/react-query';
 import {
   BarChart3, Newspaper, Calendar, Briefcase, Compass, Bell, Settings, LogOut, ChevronDown, BookMarked, Search,
-  TrendingUp, Grid3X3, RefreshCw, Filter, Globe, Rocket, Shield, LineChart, Star, Microscope, Factory, Zap,
+  TrendingUp, Grid3X3, RefreshCw, Filter, Globe, Rocket, Shield, LineChart, Star, Microscope, Factory, Zap, ScanSearch,
 } from 'lucide-react';
 import api from '@/lib/api';
 // zzz855 — the drawer (react-query + date-fns + its own fetches) only loads when a ticker is opened.
@@ -162,6 +162,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/stock-sheet',    label: 'Stock Sheet',     icon: <BookMarked className="w-4 h-4" /> },
       { href: '/screener',       label: 'Screener',        icon: <Filter className="w-4 h-4" /> },
       { href: '/stock-screener', label: 'Stock Screener',  icon: <Filter className="w-4 h-4" /> },   // zzz938 — our own screener (USA + India)
+      { href: '/pine-screener',  label: 'Pine Screener',   icon: <ScanSearch className="w-4 h-4" /> },   // zzz983 — chart patterns across every company
       { href: '/charts',         label: 'Charts',          icon: <LineChart className="w-4 h-4" /> },   // zzz937 — our own charts with drawings
     ],
   },
@@ -299,6 +300,7 @@ const _LEGACY_NAV: NavItem[] = [
   { href: '/rrg',           label: 'RRG',                icon: <RefreshCw className="w-5 h-5" /> },
   { href: '/screener',      label: 'Screener',           icon: <Filter className="w-5 h-5" /> },
   { href: '/stock-screener', label: 'Stock Screener',   icon: <Filter className="w-5 h-5" /> },
+  { href: '/pine-screener',  label: 'Pine Screener',    icon: <ScanSearch className="w-5 h-5" /> },   // zzz983
   { href: '/charts',        label: 'Charts',             icon: <LineChart className="w-5 h-5" /> },
   // PATCH 0168: Market Breadth Indicator
   { href: '/breadth',       label: 'Breadth',            icon: <BarChart3 className="w-5 h-5" /> },

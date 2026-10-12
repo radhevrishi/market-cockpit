@@ -187,6 +187,34 @@ export function registerChartExtras(): typeof kc {
     },
   });
 
+  // zzz982 — one line of a detected chart pattern (components/charts/pattern-view overlayLinesOf). Locked and ignores the
+  // mouse, so it cannot be selected, dragged or deleted like a drawing; it lives in its own overlay group and is never saved.
+  kc.registerOverlay<{ color: string; dashed: boolean; size: number; label?: string }>({
+    name: 'mcPatternLine',
+    totalStep: 3,
+    lock: true,
+    needDefaultPointFigure: false,
+    needDefaultXAxisFigure: false,
+    needDefaultYAxisFigure: false,
+    createPointFigures: ({ coordinates, overlay }) => {
+      if (coordinates.length < 2) return [];
+      const d = overlay.extendData || { color: '#2962FF', dashed: false, size: 1 };
+      const [a, b] = coordinates;
+      const figs: kc.OverlayFigure[] = [{
+        type: 'line', ignoreEvent: true, attrs: { coordinates: [a, b] },
+        styles: { style: d.dashed ? 'dashed' : 'solid', dashedValue: [6, 4], color: d.color, size: d.size },
+      }];
+      if (d.label) {
+        figs.push({
+          type: 'text', ignoreEvent: true,
+          attrs: { x: Math.max(a.x, b.x), y: (a.x >= b.x ? a.y : b.y) - 3, text: d.label, align: 'right', baseline: 'bottom' },
+          styles: { color: textOnColor(d.color), backgroundColor: d.color, borderColor: d.color, borderRadius: 2, paddingLeft: 4, paddingRight: 4, paddingTop: 2, paddingBottom: 2, size: 11, weight: 600 },
+        });
+      }
+      return figs;
+    },
+  });
+
   // Horizontal support / resistance line, price label always shown on the right edge.
   kc.registerOverlay({
     name: 'mcHLine',
