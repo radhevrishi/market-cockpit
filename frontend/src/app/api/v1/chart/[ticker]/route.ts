@@ -58,12 +58,21 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ ticker: str
   if (!series) return NextResponse.json({ ok: false, error: `No price history found for ${ticker} (${market === 'IN' ? 'NSE / BSE' : 'US'}).` }, { status: 404 });
   const bars = aggregateBars(series.bars, tf);
   const body = {
-    ok: true, ticker, market, interval, range,
+    ok: true, ticker, market, interval, range, requestedExchange: market === 'IN' ? (exchange ?? null) : null,   // zzz967 (CH-02)
     symbol: series.symbol, name: series.name, currency: series.currency, exchange: series.exchange,
     stats: { ...headerStats(series.bars), floatPct: await floatFor(market, ticker).catch(() => null) },
     bars: packBars(bars),
     asOf: new Date().toISOString(),
     lastBarAt: series.bars.length ? new Date(series.bars[series.bars.length - 1].t).toISOString().slice(0, 10) : null,   // zzz957: date of the newest daily candle
+    // zzz967 (DT-01) — where the numbers come from and what was filled in
+    provenance: {
+      source: 'Yahoo Finance chart API', nativeGranularity: series.granularity || '1d', displayInterval: interval,
+      firstBarAt: series.bars.length ? new Date(series.bars[0].t).toISOString().slice(0, 10) : null,
+      quoteAt: series.quoteAt ?? null,
+      priceBasis: 'split-adjusted, not dividend-adjusted',
+      lastBarFromQuote: !!series.lastBarSynthetic, lastBarOpenInferred: !!series.lastBarOpenInferred,
+      highLowRepaired: 'high/low widened to include open and close when the provider row is inconsistent',
+    },
   };
   if (_resp.size >= 300) { const first = _resp.keys().next().value; if (first) _resp.delete(first); }
   _resp.set(ck, { at: Date.now(), body });

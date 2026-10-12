@@ -747,6 +747,7 @@ async function fetchIndianDataWithCache() {
           let price = 0, prevClose = 0, change = 0, changePercent = 0;
           let volume = 0, marketCap = 0, open = 0, dayHigh = 0, dayLow = 0, yearHigh = 0, yearLow = 0;
           let companyFromYahoo = '';
+          let quoteTime: string | null = null, priceSource: 'yahoo' | 'nse-bhavcopy' = 'nse-bhavcopy';
           // PATCH 0936 — track whether this row is BHAVCOPY-only (= T-1 EOD
           // data being shown as live). If the Indian market is open AND we
           // have no Yahoo live coverage for this ticker, the BHAVCOPY change%
@@ -768,11 +769,15 @@ async function fetchIndianDataWithCache() {
             const computedPct = (price > 0 && prevClose > 0) ? ((price - prevClose) / prevClose) * 100 : 0;
             change = reportedChg !== 0 ? reportedChg : computedChg;
             changePercent = reportedPct !== 0 ? reportedPct : computedPct;
-            volume = liveQ.regularMarketVolume || t.volume || 0;
+            // zzz967 (WL-01) — one session, one source: never mix today's Yahoo price with the previous session's
+            // NSE bhavcopy open / high / low / volume (RELIANCE ₹1,155.20 under a day low of ₹1,160.20). Missing = 0 = unavailable.
+            volume = liveQ.regularMarketVolume || 0;
             marketCap = liveQ.marketCap || 0;
-            open = liveQ.regularMarketOpen || t.open || 0;
-            dayHigh = liveQ.regularMarketDayHigh || t.dayHigh || 0;
-            dayLow = liveQ.regularMarketDayLow || t.dayLow || 0;
+            open = liveQ.regularMarketOpen || 0;
+            dayHigh = liveQ.regularMarketDayHigh || 0;
+            dayLow = liveQ.regularMarketDayLow || 0;
+            quoteTime = Number(liveQ.regularMarketTime) > 0 ? new Date(Number(liveQ.regularMarketTime) * 1000).toISOString() : null;
+            priceSource = 'yahoo';
             yearHigh = liveQ.fiftyTwoWeekHigh || 0;
             yearLow = liveQ.fiftyTwoWeekLow || 0;
             companyFromYahoo = liveQ.shortName || '';
@@ -810,7 +815,13 @@ async function fetchIndianDataWithCache() {
             yearHigh = q.fiftyTwoWeekHigh || 0;
             yearLow = q.fiftyTwoWeekLow || 0;
             companyFromYahoo = q.shortName || '';
+            quoteTime = Number(q.regularMarketTime) > 0 ? new Date(Number(q.regularMarketTime) * 1000).toISOString() : null;
+            priceSource = 'yahoo';
           }
+          // zzz967 (WL-01) — a high / low that does not contain the price belongs to another moment: show it as unavailable
+          // rather than clamping it to the price.
+          let rangeStale = false;
+          if (price > 0 && dayHigh > 0 && dayLow > 0 && (price > dayHigh * 1.0005 || price < dayLow * 0.9995)) { dayHigh = 0; dayLow = 0; rangeStale = true; }
 
           const sector = sectorMap[t.ticker] || normalizeSector(t.industry || '') || NIFTY50_SECTORS[t.ticker] || 'Other';
           // Cap derivation: index-canonical first; for 'Other' use mcap if available
@@ -838,6 +849,7 @@ async function fetchIndianDataWithCache() {
             open,
             dayHigh,
             dayLow,
+            rangeStale, priceSource, quoteTime,   // zzz967 (WL-01) — provenance
             yearHigh: yearHigh || rs?.high52w || 0,
             yearLow: yearLow || rs?.low52w || 0,
             indexGroup: cap,

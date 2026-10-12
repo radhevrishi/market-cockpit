@@ -63,8 +63,9 @@ export const fetchStockQuotes = async (market: string = 'india'): Promise<StockQ
       price: stock.price || 0,
       change: stock.change || 0,
       changePercent: stock.changePercent || 0,
-      dayHigh: stock.dayHigh || stock.price || 0,
-      dayLow: stock.dayLow || stock.price || 0,
+      // zzz967 (WL-01) — never pad a missing high / low with the price; 0 shows as '—'
+      dayHigh: stock.dayHigh || 0,
+      dayLow: stock.dayLow || 0,
       // PATCH 0445 — optional columns
       volume: stock.volume ?? null,
       marketCap: stock.marketCap ?? stock.mcap ?? null,
@@ -114,8 +115,9 @@ export const fetchIndividualQuotes = async (symbols: string[]): Promise<StockQuo
         price: stock.price || 0,
         change: stock.change || 0,
         changePercent: stock.changePercent || 0,
-        dayHigh: stock.dayHigh || stock.price || 0,
-        dayLow: stock.dayLow || stock.price || 0,
+        // zzz967 (WL-01) — never pad a missing high / low with the price; 0 shows as '—'
+        dayHigh: stock.dayHigh || 0,
+        dayLow: stock.dayLow || 0,
         // PATCH 0445 — optional columns
         volume: stock.volume ?? null,
         marketCap: stock.marketCap ?? stock.mcap ?? null,

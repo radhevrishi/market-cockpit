@@ -36,6 +36,7 @@ export interface ScreenRow {
   fs: number | null;         // Piotroski F-score (0–9), latest full year
   q: string | null;          // the latest quarter the figures describe (e.g. 'Q2 2026')
   approx?: string[];         // fields worked out in a rougher way for this company (shown with ≈)
+  nq?: 'recent-listing' | 'not-in-sec' | 'annual-only' | 'missing-tags';   // zzz967 (SC-02) — why there are no quarterly figures (US)
 
   // ── zzz948: TradingView names ───────────────────────────────────────────────────────────────────────────────────────
   tvSec?: string | null;     // TradingView sector (worked out from the industry — lib/screener/tv-sectors.ts)

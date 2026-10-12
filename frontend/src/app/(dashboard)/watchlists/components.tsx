@@ -241,7 +241,11 @@ export function WatchlistTable({
                     {item.flag || '⚪'}
                   </button>
                 </td>
-                <td style={{ padding: '12px 16px', color: 'var(--mc-info)', fontWeight: '700' }}>{item.ticker}</td>
+                {/* zzz967 (WL-02) — the ticker opens the same instrument on Charts (India list → NSE) */}
+                <td style={{ padding: '12px 16px', fontWeight: '700' }}>
+                  <a href={`/charts?m=IN&t=${encodeURIComponent(item.ticker)}`} title={`Open ${item.ticker} on Charts`} aria-label={`Open ${item.ticker} chart`}
+                    style={{ color: 'var(--mc-info)', textDecoration: 'none' }}>{item.ticker} <span aria-hidden style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
+                </td>
                 <td style={{ padding: '12px 16px', color: 'var(--mc-text-0)', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {item.company}
                 </td>

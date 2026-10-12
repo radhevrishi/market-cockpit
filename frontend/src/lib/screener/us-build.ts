@@ -226,6 +226,9 @@ export function assembleUsRows(universe: NasdaqRow[], ciks: Map<string, number>,
       evRev: mc != null && revTTM != null && revTTM > 0 && evDebt != null && f?.cash != null ? r2((mc + evDebt - f.cash) / revTTM) : null,
       de: f?.de ?? null, cash: f?.cash ?? null, emp: p?.emp ?? null, flt: p?.flt ?? null, bb: f?.bb ?? null, fs: f?.fs ?? null, q: f?.q ?? null,
       ...(approx.length ? { approx } : {}),
+      // zzz967 (SC-02) — WHY a company has no quarterly figures (not "still to come"): recent listing, annual-only filer,
+      // not in SEC's company list, or in SEC but without the tags read
+      ...(!f?.q ? { nq: ipoD != null && ipoD > Math.floor(Date.now() / DAY) - 400 ? 'recent-listing' : !cik ? 'not-in-sec' : (f?.niFY != null || f?.revAYoY != null) ? 'annual-only' : 'missing-tags' } : {}),
       tvSec: tvSectorOf('US', r.sec, r.ind), exch: r.ex ? [r.ex] : null,
       ...(tf ? {
         sma21: tf.sma21, sma100: tf.sma100, sma150: tf.sma150, ema10: tf.ema10, ema21: tf.ema21, ema50: tf.ema50, rsi: tf.rsi, rsiW: tf.rsiW, rsiM: tf.rsiM,

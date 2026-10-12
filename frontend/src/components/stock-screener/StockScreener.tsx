@@ -16,6 +16,7 @@ import { useWorkspaceLight, workspaceThemeClass } from '@/lib/workspace-theme';
 import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
 import { useWatchlistStore } from '@/components/charts/WatchlistPanel';
 import { activeList, updateList, addItem, listCount, type WlItem } from '@/lib/chart-watchlist';
+import { toCsv } from '@/lib/csv';
 
 const C = {
   text: 'var(--mc-text-0)', text1: 'var(--mc-text-1)', dim: 'var(--mc-text-3, #6b7280)', border: 'var(--mc-border-1)',
@@ -192,10 +193,17 @@ export default function StockScreener() {
     navigator.clipboard?.writeText(txt).then(() => { setMsg(`Copied ${sorted.length} tickers`); setTimeout(() => setMsg(null), 2500); }).catch(() => {});
   };
   const downloadCsv = () => {
-    const head = ['Ticker', 'Company', 'Sector', ...cols.map((k) => fieldOf(k)?.label || k)];
-    const esc = (v: unknown) => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-    const body = sorted.map((r) => [r.t, r.n, r.tvSec || r.sec, ...cols.map((k) => r[k])].map(esc).join(','));
-    const blob = new Blob([[head.join(','), ...body].join('\n')], { type: 'text/csv' });
+    // zzz967 (SC-01) — headers go through the same encoder as cells ("Revenue growth, quarterly YoY" used to split into two
+    // columns: 26 header fields over 18 data fields); units in the header; market, snapshot time and ≈ fields on every row.
+    const unitOf = (k: string) => {
+      const u = fieldOf(k as any)?.unit;
+      return u === '%' ? '%' : u === 'x' ? '×' : u === 'money' ? (market === 'US' ? '$ million' : '₹ crore') : u === 'price' ? (market === 'US' ? 'USD' : 'INR') : u === 'usd' ? 'USD' : u === 'shares' ? 'shares' : u === 'date' ? 'date' : '';
+    };
+    const head = ['Ticker', 'Market', 'Company', 'Sector', ...cols.map((k) => { const l = fieldOf(k)?.label || k; const u = unitOf(k); return u ? `${l} (${u})` : l; }), 'Approximate (≈) fields', 'Snapshot built (UTC)'];
+    const built = snap?.builtAt || '';
+    const body = sorted.map((r) => [r.t, market === 'IN' ? 'NSE' : 'US', r.n, r.tvSec || r.sec, ...cols.map((k) => r[k]),
+      (r.approx || []).filter((k: string) => cols.includes(k as any)).map((k: string) => fieldOf(k as any)?.label || k).join('; '), built]);
+    const blob = new Blob(['\uFEFF' + toCsv([head, ...body])], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${name.replace(/[^\w-]+/g, '_')}.csv`; a.click(); URL.revokeObjectURL(a.href);
   };
 
@@ -212,6 +220,14 @@ export default function StockScreener() {
   const btn = (on = false): React.CSSProperties => ({ padding: '5px 10px', borderRadius: 6, border: `1px solid ${on ? C.accent : C.border}`, background: on ? C.accent : C.bg1, color: on ? '#fff' : C.text1, fontSize: 13, fontWeight: 600, cursor: 'pointer' });
   const builtAt = snap?.builtAt ? new Date(snap.builtAt) : null;
   const withFigures = useMemo(() => rows.filter((r) => r.q).length, [rows]);
+  // zzz967 (SC-02) — say WHY the rest have none: a refresh cannot add quarterly figures an annual-only filer never files
+  const coverageWhy = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const r of rows) if (!r.q) { const k = r.nq || (market === 'IN' ? 'pending' : 'unknown'); c[k] = (c[k] || 0) + 1; }
+    const label: Record<string, string> = { 'annual-only': 'annual-only filers (20-F / 40-F, no quarterly figures)', 'recent-listing': 'recent listings (no year-ago quarter yet)',
+      'not-in-sec': 'not in SEC’s company list', 'missing-tags': 'in SEC but without the tags read', pending: 'still to be read (next runs)', unknown: 'reason not recorded (older snapshot)' };
+    return Object.entries(c).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n} ${label[k] || k}`).join(', ');
+  }, [rows, market]);
   const latestQ = useMemo(() => { const m = new Map<string, number>(); for (const r of rows) if (r.q) m.set(r.q, (m.get(r.q) || 0) + 1); return Array.from(m.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || null; }, [rows]);
   const opt = (s: Screen) => <option key={s.id} value={s.id}>{s.name}</option>;
   const mine = screens.filter((s) => !builtInIds.has(s.id));
@@ -281,7 +297,7 @@ export default function StockScreener() {
 
       <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', fontSize: 13 }}>
         <b style={{ fontSize: 15 }}>{snap ? `${result.length} of ${rows.length} companies match` : err ? '' : 'Loading…'}</b>
-        {builtAt ? <span style={{ color: C.dim }}>data built {builtAt.toLocaleString()}{latestQ ? ` · most figures to ${latestQ}` : ''}{rows.length && withFigures < rows.length * 0.9 ? ` · company figures read for ${withFigures} of ${rows.length} so far (the rest are read in the next runs)` : ''} · the small number on each filter = companies passing that filter alone</span> : null}
+        {builtAt ? <span style={{ color: C.dim }}>data built {builtAt.toLocaleString()}{latestQ ? ` · most figures to ${latestQ}` : ''}{rows.length && withFigures < rows.length * 0.9 ? ` · company figures for ${withFigures} of ${rows.length}${coverageWhy ? ` — ${coverageWhy}` : ''}` : ''} · the small number on each filter = companies passing that filter alone</span> : null}
         {err ? <span role="alert" style={{ color: C.red }}>{err}{snap ? ' — showing the last loaded snapshot' : ''}</span> : null}
         <span style={{ flex: 1 }} />
         <label title="On: a figure worked out with an assumption (shown with ≈, e.g. EV / revenue with debt taken as 0 because the company files no debt line) does not count as passing a filter" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 13, cursor: 'pointer' }}>

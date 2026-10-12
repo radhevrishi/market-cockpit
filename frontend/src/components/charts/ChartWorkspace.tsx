@@ -19,6 +19,7 @@ import WatchlistResizeHandle, { clampWatchlistWidth } from './WatchlistResizeHan
 import { useWorkspaceLight, workspaceThemeClass } from '@/lib/workspace-theme';
 import { fitBarSpace, loadView, saveView } from '@/lib/chart-view-prefs';
 import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
+import { readableOn } from '@/lib/readable-color';
 
 type KC = typeof import('klinecharts');
 type Tool = 'cursor' | 'mcHLine' | 'segment' | 'rayLine' | 'mcRect' | 'parallelStraightLine' | 'fibonacciLine' | 'mcText' | 'mcMeasure';
@@ -26,6 +27,15 @@ interface ChartResponse {
   ok: boolean; error?: string; ticker: string; market: Market; name: string | null; currency: string | null; exchange: string | null;
   stats: HeaderStats; bars: { t: number[]; o: number[]; h: number[]; l: number[]; c: number[]; v: number[] };
   asOf?: string; lastBarAt?: string | null;
+  requestedExchange?: string | null;
+  provenance?: { source: string; nativeGranularity: string; displayInterval: string; firstBarAt: string | null; quoteAt: string | null; priceBasis: string; lastBarFromQuote: boolean; lastBarOpenInferred: boolean; highLowRepaired: string };
+}
+
+/** zzz967 (CH-02) — ticker, market and exchange travel as one identity; a response for another one is never shown as this one. */
+export function sameChartIdentity(info: { ticker?: string; market?: string; requestedExchange?: string | null } | null | undefined, ticker: string, market: string, exchange?: string): boolean {
+  if (!info) return false;
+  return String(info.ticker || '').toUpperCase() === String(ticker || '').toUpperCase() && info.market === market
+    && (info.requestedExchange ?? null) === (market === 'IN' ? (exchange ?? null) : null);
 }
 
 const DRAW_GROUP = 'mc-draw';
@@ -380,6 +390,21 @@ export default function ChartWorkspace() {
     };
   }, [applyIndicators]);
 
+  // zzz967 (CH-02) — a new symbol clears the old candles at once, so NVDA never sits under QQQ's bars while it loads
+  useEffect(() => {
+    if (!ready) return;
+    const chart = chartRef.current;
+    if (!chart || !barsRef.current.length) return;
+    const shown = loadedUrlRef.current;
+    const shownEx = (shown.match(/&exchange=(NSE|BSE)/) || [])[1];
+    if (shown.startsWith(`/api/v1/chart/${encodeURIComponent(ticker)}?market=${market}&`) && (market !== 'IN' || shownEx === exchange)) return;
+    barsRef.current = [];
+    setBars([]);
+    setHoverIdx(null);
+    loadedUrlRef.current = '';
+    chart.resetData();
+  }, [ready, ticker, market, exchange]);
+
   // ── load data when ticker / timeframe / needed history changes ────────────
   useEffect(() => {
     if (!ready) return;
@@ -589,8 +614,10 @@ export default function ChartWorkspace() {
     setExchange(queryMarket === 'IN' && (/^BSE:/i.test(query) || /\.BO$/i.test(query)) ? 'BSE' : queryMarket === 'IN' && (/^NSE:/i.test(query) || /\.NS$/i.test(query)) ? 'NSE' : undefined);
   };
 
-  const stats = info?.stats;
-  const cur = market === 'IN' ? '₹' : '$';
+  // zzz967 (CH-02) — header numbers only from a response for THIS ticker / market / exchange
+  const live = sameChartIdentity(info, ticker, market, exchange) ? info : null;
+  const stats = live?.stats;
+  const cur = live?.currency === 'INR' ? '₹' : live?.currency === 'USD' ? '$' : live?.currency ? `${live.currency} ` : (market === 'IN' ? '₹' : '$');
   const changeColor = (stats?.change ?? 0) >= 0 ? 'var(--mc-bullish, #059669)' : 'var(--mc-bearish, #DC2626)';
   const activeHint = useMemo(() => TOOLS.find((t) => t.id === tool)?.hint, [tool]);
   useEffect(() => { toolRef.current = tool; }, [tool]);
@@ -672,7 +699,7 @@ export default function ChartWorkspace() {
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '4px 16px', fontSize: 13 }}>
         <span style={{ fontSize: 18, fontWeight: 700, color: 'var(--mc-text-0)' }}>{ticker}</span>
         <AddToWatchlist store={wlStore} update={wlUpdate} market={market} ticker={ticker} exchange={exchange} />
-        <span style={{ color: 'var(--mc-text-3)' }}>{info?.name || ''}{info?.exchange ? ` · ${info.exchange}` : ''}</span>
+        <span style={{ color: 'var(--mc-text-3)' }}>{live ? `${live.name || ''}${live.exchange ? ` · ${live.exchange}` : ''}` : (loading ? `Loading ${ticker}…` : '')}</span>
         {stats?.last != null && (
           <span style={{ fontWeight: 700, color: 'var(--mc-text-0)', fontVariantNumeric: 'tabular-nums' }}>
             {cur}{fmtPrice(stats.last, Math.abs(stats.last) < 1 ? 4 : 2)}{' '}
@@ -688,7 +715,9 @@ export default function ChartWorkspace() {
         <Stat label={market === 'IN' ? 'Avg ₹ Vol' : 'Avg $ Vol'} value={fmtMoney(stats?.avgValue ?? null, market)} title="Average traded value (close × volume) over the last 20 days" />
         {loading && <span style={{ color: 'var(--mc-text-3)' }}>Loading…</span>}
         <button type="button" disabled={loading} style={btn(false)} onClick={() => { cacheRef.current.clear(); setRefresh((v) => v + 1); }}>Refresh</button>
-        {info?.asOf && <span style={{ fontSize: 11, color: 'var(--mc-text-3)' }} title="Last candle = the newest trading day in the chart data; loaded = when this page fetched it">{info.lastBarAt ? `Last candle ${new Date(`${info.lastBarAt}T00:00:00Z`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' })} · ` : ''}loaded {new Date(info.asOf).toLocaleTimeString()}</span>}
+        {live?.asOf && <span style={{ fontSize: 11, color: 'var(--mc-text-3)' }}
+          title={`Last candle = the newest trading day in the chart data; loaded = when this page fetched it.${live.provenance ? `\nSource: ${live.provenance.source} · ${live.provenance.priceBasis} · history from ${live.provenance.firstBarAt ?? '?'}${live.provenance.quoteAt ? ` · quote ${new Date(live.provenance.quoteAt).toLocaleString()}` : ''}${live.provenance.lastBarFromQuote ? `\nNewest candle built from the live quote${live.provenance.lastBarOpenInferred ? ' (open not given — previous close used)' : ''}` : ''}` : ''}`}>
+          {live.lastBarAt ? `Last candle ${new Date(`${live.lastBarAt}T00:00:00Z`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' })}${live.provenance?.lastBarFromQuote ? ' (from quote)' : ''} · ` : ''}loaded {new Date(live.asOf).toLocaleTimeString()}</span>}
         {wlSaveError && <span role="alert" style={{ color: 'var(--mc-warn, #D97706)' }}>{wlSaveError} <button type="button" onClick={retryWatchlistSave}>Retry save</button></span>}
         {note?.includes('not saved') && <button type="button" onClick={persist}>Retry drawing save</button>}
         {error && <span style={{ color: 'var(--mc-bearish, #DC2626)' }}>{error}</span>}
@@ -722,7 +751,7 @@ export default function ChartWorkspace() {
               onClick={() => L.setWorking((w) => ({ ...w, scale: { ...w.scale, log: !w.scale.log } }))}
               title={L.working.scale.log ? 'Log scale (on): equal % moves look equal. Click for a normal scale.' : 'Log scale: equal % moves look equal'}>log</button>
           </div>
-          <IndicatorLegend rows={rows} valueOf={valueOf} onToggle={(id) => L.setWorking((w) => toggleRow(w, id))} decimals={pxDecimals} colorOf={(c) => (!chartLight && (luminance(c) ?? 1) < 0.18 ? '#B2B5BE' : c)} />
+          <IndicatorLegend rows={rows} valueOf={valueOf} onToggle={(id) => L.setWorking((w) => toggleRow(w, id))} decimals={pxDecimals} colorOf={(c) => (!chartLight && (luminance(c) ?? 1) < 0.18 ? '#B2B5BE' : c)} textOf={(c) => readableOn(c, chartLight ? '#FFFFFF' : '#0A0E1A')} />
           {(savedAt || syncedAt) && (
             <div title="Drawings are saved in this browser at once and copied to your account about once a minute, so they come back on your other devices"
               style={{ position: 'absolute', left: 8, bottom: 30, zIndex: 5, padding: '2px 8px', borderRadius: 6, fontSize: 11, background: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-1)', color: 'var(--mc-bullish, #059669)', pointerEvents: 'none' }}>

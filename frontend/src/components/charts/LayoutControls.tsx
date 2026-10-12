@@ -187,8 +187,10 @@ export function IndicatorsPanel({ L, onClose }: { L: ReturnType<typeof useLayout
 }
 
 // ── legend at the top-left of the chart ───────────────────────────────────────
-export function IndicatorLegend({ rows, valueOf, onToggle, decimals, colorOf = (c: string) => c }: {
+export function IndicatorLegend({ rows, valueOf, onToggle, decimals, colorOf = (c: string) => c, textOf = (c: string) => c }: {
   rows: LegendRow[]; valueOf: (row: LegendRow) => (number | null)[]; onToggle: (id: string) => void; decimals: number; colorOf?: (c: string) => string;
+  /** zzz967 (UI-01) — readable text colour for a line colour (the swatch keeps the line colour itself) */
+  textOf?: (c: string) => string;
 }) {
   if (!rows.length) return null;
   return (
@@ -201,9 +203,15 @@ export function IndicatorLegend({ rows, valueOf, onToggle, decimals, colorOf = (
             {r.pane && r.on && <span style={{ color: 'var(--mc-text-3)' }}>(lower pane)</span>}
             {!r.pane && r.on && <span style={{ color: 'var(--mc-text-3)' }}>close</span>}
             {!r.on && <span>(hidden)</span>}
-            {vals.map((v, i) => (
-              <span key={i} style={{ color: colorOf(r.series[i]?.color || (r.label.startsWith('MACD') && i === 1 ? '#FF6D00' : r.color)), fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{v != null ? fmtPrice(v, decimals) : '—'}</span>
-            ))}
+            {vals.map((v, i) => {
+              const lineC = colorOf(r.series[i]?.color || (r.label.startsWith('MACD') && i === 1 ? '#FF6D00' : r.color));
+              return (
+                <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: textOf(lineC), fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+                  <span aria-hidden style={{ width: 8, height: 8, borderRadius: 2, background: lineC, display: 'inline-block' }} />
+                  {v != null ? fmtPrice(v, decimals) : '—'}
+                </span>
+              );
+            })}
             <button type="button" onClick={() => onToggle(r.id)} aria-label={`${r.on ? 'Hide' : 'Show'} ${r.label}`} title={r.on ? 'Hide this line' : 'Show this line'}
               style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', fontSize: 12, color: 'var(--mc-text-3)', lineHeight: 1, pointerEvents: 'auto' }}>{r.on ? '👁' : '◌'}</button>
           </div>

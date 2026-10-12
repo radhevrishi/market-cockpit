@@ -59,12 +59,15 @@
 // percentage: growth that is not small-base arithmetic, a healthy margin, known
 // cash backing, an independent confirmation (two for micro-caps) and no open
 // forensics flag. Misses cap at STRONG, or MIXED when three or more combine.
-export const US_ENGINE_VERSION = '2026.09.25-b';
+// 2026.10.12-a (zzz962/963) — working-capital quarters read from the release's cash-flow statement (Penguin Solutions) and a
+// lowered outlook keeps a quarter out of BLOCKBUSTER/STRONG. Browsers held the old day for 30 days, so PENG stayed MIXED on
+// screen; the bump makes every browser re-read its days (regraded in-process, no SEC re-read).
+export const US_ENGINE_VERSION = '2026.10.12-a';
 
 /** zzz807 — earlier engine versions whose cached days can be REGRADED in-process
  *  (their rows carry every figure the grade reads). Newest first. A rules-only
  *  bump appends the version it replaces here, so no cached day is ever sent
  *  back to SEC just because a rule changed. */
 export const US_ENGINE_PREVIOUS_VERSIONS: readonly string[] = [
-  '2026.09.25-a', '2026.09.17-c', '2026.09.17-b', '2026.09.17-a', '2026.09.16-a',
+  '2026.09.25-b', '2026.09.25-a', '2026.09.17-c', '2026.09.17-b', '2026.09.17-a', '2026.09.16-a',
 ];
