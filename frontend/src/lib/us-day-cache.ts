@@ -42,7 +42,7 @@
 //      feature still works where IndexedDB does not, not to be fast.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { US_ENGINE_VERSION } from './us-engine-version';
+import { US_ENGINE_VERSION, US_OVERLAY_VERSION } from './us-engine-version';
 import { regradeDayPayload } from './us-regrade';
 import { snapshotFresh } from './us-earnings-dates';
 import { US_SESSION_DEDUPE_VERSION } from './us-session-dedupe';
@@ -210,6 +210,8 @@ export async function getCachedDay(day: string, isToday: boolean): Promise<any |
     } catch { /* fall through to the stale path */ }
     return { ...p, _stale_engine: true };
   }
+  // zzz970 — a day stored before the server's corrections existed (or regraded in this browser) is shown, then re-fetched
+  if (p.overlay_v !== US_OVERLAY_VERSION) return { ...p, _stale_engine: true };
   if (Date.now() - Date.parse(`${day}T00:00:00Z`) < 14 * 86_400_000 && Date.now() - (rec.cachedAt || 0) > 2 * 3600_000) {
     return { ...p, _stale_engine: true };
   }

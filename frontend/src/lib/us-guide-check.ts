@@ -43,7 +43,7 @@ export interface GuideCheck {
   scope: 'company' | 'segment' | 'none' | 'unknown';
   what: string;          // plain words: "GE engine-program sales outlook cut to $32–35M from $34–38M"
   quote: string;         // the sentence or figures it rests on
-  source: 'filing' | 'ai-web';
+  source: 'filing' | 'call-coverage' | 'ai-web';
   url: string | null;
   usd: number;
 }
@@ -82,7 +82,64 @@ async function filingText(filingUrl: string | null | undefined): Promise<string>
   return texts.join('\n\n').slice(0, 400_000);
 }
 
-// ── 2. AI with a web search ──────────────────────────────────────────────────
+// ── 2. the earnings-call coverage (free) ─────────────────────────────────────
+// zzz970 — Park Aerospace cut its GE-program outlook on the CALL; the 8-K said nothing. Yahoo Finance's free headline feed
+// for the ticker lists the call write-ups (MarketBeat "earnings call summary", Motley Fool transcripts, Benzinga…) within a
+// day. Those pages are read and searched for a lowered-outlook sentence about the company. No AI, no paid source.
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+const CALL_TITLE = /earnings call|call summary|call transcript|call highlights|transcript|conference call|why .* stock is (falling|plunging|sinking|down|dropping|tumbling|soaring|jumping)|guidance|outlook|forecast/i;
+const decodeXml = (s: string) => s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'");
+export function callCoverageLinks(rssXml: string, filingDate: string): Array<{ title: string; url: string; at: string }> {
+  const from = Date.parse(`${filingDate}T00:00:00Z`) - 86_400_000, to = from + 9 * 86_400_000;
+  const out: Array<{ title: string; url: string; at: string }> = [];
+  for (const m of rssXml.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
+    const it = m[1];
+    const title = decodeXml((/<title>([\s\S]*?)<\/title>/.exec(it) || [])[1] || '').trim();
+    const url = decodeXml((/<link>([\s\S]*?)<\/link>/.exec(it) || [])[1] || '').trim();
+    const at = Date.parse(((/<pubDate>([\s\S]*?)<\/pubDate>/.exec(it) || [])[1] || '').trim());
+    if (!title || !/^https:\/\//.test(url) || !Number.isFinite(at) || at < from || at > to) continue;
+    if (!CALL_TITLE.test(title)) continue;
+    out.push({ title, url, at: new Date(at).toISOString() });
+  }
+  return out.slice(0, 4);
+}
+/** A lowered-outlook sentence in a call write-up that is about THIS company (its name, or "the company" / "management"). */
+export function guideLoweredInCoverage(text: string, company: string): { quote: string; scope: 'company' | 'segment' } | null {
+  const word = (company || '').split(/[\s,.]+/).find((w) => w.length >= 4 && !/^(the|inc|corp|corporation|company|holdings|group|technologies|solutions)$/i.test(w)) || '';
+  const alts = ['the company', 'management', 'we', 'our', 'it', word.replace(/[^A-Za-z0-9]/g, '')].filter(Boolean);
+  const about = new RegExp(`\\b(${alts.join('|')})\\b`, 'i');
+  const sentences = text.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+(?=[A-Z“"(])/);
+  for (const sn of sentences) {
+    if (!about.test(sn)) continue;
+    const hit = guideLoweredInText(sn);
+    if (hit) return hit;
+  }
+  return null;
+}
+async function callCoverageCheck(row: any): Promise<GuideCheck | null> {
+  let xml = '';
+  try {
+    const r = await fetch(`https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(String(row.ticker))}&region=US&lang=en-US`, { headers: { 'User-Agent': UA }, cache: 'no-store', signal: AbortSignal.timeout(10_000) });
+    if (r.ok) xml = await r.text();
+  } catch { /* no feed this time */ }
+  if (!xml) return null;
+  const links = callCoverageLinks(xml, row.filing_date);
+  for (const l of links) {
+    try {
+      const r = await fetch(l.url, { headers: { 'User-Agent': UA }, cache: 'no-store', redirect: 'follow', signal: AbortSignal.timeout(12_000) });
+      if (!r.ok) continue;
+      const html = (await r.text()).slice(0, 1_500_000);
+      const text = htmlToText(html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, ' '));
+      const hit = guideLoweredInCoverage(text, row.company || row.ticker);
+      if (hit) {
+        return { checked_at: new Date().toISOString(), lowered: true, scope: hit.scope, what: `call coverage: ${hit.quote.slice(0, 160)}`, quote: hit.quote, source: 'call-coverage', url: l.url, usd: 0 };
+      }
+    } catch { /* next article */ }
+  }
+  return null;
+}
+
+// ── 3. AI with a web search ──────────────────────────────────────────────────
 const dailyKey = (day: string) => `us-guide-check:usd:${day}`;
 export const dailyCapUsd = () => { const v = Number(process.env.US_GUIDE_CHECK_DAILY_USD); return Number.isFinite(v) && v >= 0 ? v : 0.15; };
 
@@ -135,8 +192,9 @@ export async function checkRow(row: any, opts: { allowAi: boolean }): Promise<Gu
   let res: GuideCheck | null = null;
   if (hit) {
     res = { checked_at: new Date().toISOString(), lowered: true, scope: hit.scope, what: 'management lowered its outlook in the filing', quote: hit.quote, source: 'filing', url: row.filing_url || null, usd: 0 };
-  } else if (opts.allowAi) {
-    res = await aiGuideCheck(row);
+  } else {
+    res = await callCoverageCheck(row).catch(() => null);
+    if (!res && opts.allowAi) res = await aiGuideCheck(row);
   }
   if (res) await kvSet(key, res, TTL_S).catch(() => {});
   return res;

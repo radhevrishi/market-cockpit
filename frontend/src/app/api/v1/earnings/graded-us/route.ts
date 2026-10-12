@@ -67,7 +67,7 @@ import { nasdaqEarningsOnDetailed, type ExpectedReporter } from '@/lib/us-nasdaq
 import { guidanceFromFiling, releaseDocument, type Guidance } from '@/lib/us-guidance';
 import { financialsFromReleaseHtml, periodEndFromReleaseHtml, releaseAttributesCashToWorkingCapital } from '@/lib/us-pr-financials';
 import { balanceSheetFromReleaseHtml } from '@/lib/us-pr-balance';
-import { US_ENGINE_VERSION, US_ENGINE_PREVIOUS_VERSIONS } from '@/lib/us-engine-version';
+import { US_ENGINE_VERSION, US_ENGINE_PREVIOUS_VERSIONS, US_OVERLAY_VERSION } from '@/lib/us-engine-version';
 import { regradeDayPayload } from '@/lib/us-regrade';
 import { overlayGuideChecks } from '@/lib/us-guide-check';
 import { GradeQueue, decideCacheOnly, classifyFilerFetch } from '@/lib/us-rescan';
@@ -865,7 +865,7 @@ async function sessionIndexFor(date: string): Promise<string[] | null> {
 // zzz963 — every served payload also carries the lowered-outlook check (lib/us-guide-check): a top-tier row whose management
 // lowered guidance (filing, slides, call or news) is shown as MIXED. Results are computed by the us-guide-check job.
 async function withSessionDedupe(payload: any, date: string, days: number, explicit: string): Promise<any> {
-  try { payload = await overlayGuideChecks(payload); } catch { /* never let the check break the page */ }
+  try { payload = await overlayGuideChecks(payload); if (payload?.by_tier) payload = { ...payload, overlay_v: US_OVERLAY_VERSION }; } catch { /* never let the check break the page */ }
   return withSessionDedupeInner(payload, date, days, explicit);
 }
 async function withSessionDedupeInner(payload: any, date: string, days: number, explicit: string): Promise<any> {

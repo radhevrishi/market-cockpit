@@ -71,3 +71,7 @@ export const US_ENGINE_VERSION = '2026.10.12-a';
 export const US_ENGINE_PREVIOUS_VERSIONS: readonly string[] = [
   '2026.09.25-b', '2026.09.25-a', '2026.09.17-c', '2026.09.17-b', '2026.09.17-a', '2026.09.16-a',
 ];
+
+/** zzz970 — corrections the SERVER applies when it hands a day out (lowered-outlook check, working-capital re-read). A day a
+ *  browser stored without this stamp — or regraded itself — is re-fetched, so it cannot keep showing the uncorrected grade. */
+export const US_OVERLAY_VERSION = '2026.10.12-b';

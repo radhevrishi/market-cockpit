@@ -35,3 +35,18 @@ test('zzz962b a working-capital quarter swaps the no-cash caveat before regradin
   assert.ok(!r.caveat_tags.includes('profit without operating cash'));
   assert.equal(r.wc_rechecked, true);
 });
+
+import { callCoverageLinks, guideLoweredInCoverage } from '../us-guide-check';
+test('zzz970 call coverage: the write-ups of the call are found, and a lowered outlook about the company is caught', () => {
+  const rss = `<rss><channel>
+    <item><title>Park Aerospace Corp. Q2 2027 Earnings Call Summary</title><link>https://www.marketbeat.com/a</link><pubDate>Fri, 09 Oct 2026 00:02:17 +0000</pubDate></item>
+    <item><title>Park Aerospace Announces Dividend</title><link>https://x.com/b</link><pubDate>Fri, 09 Oct 2026 00:02:17 +0000</pubDate></item>
+    <item><title>Old earnings call transcript</title><link>https://x.com/c</link><pubDate>Fri, 10 Jul 2026 00:02:17 +0000</pubDate></item>
+  </channel></rss>`;
+  const links = callCoverageLinks(rss, '2026-10-08');
+  assert.deepEqual(links.map((l) => l.url), ['https://www.marketbeat.com/a']);
+  const hit = guideLoweredInCoverage('Sales rose 27%. Commercial aerospace sales benefited from GE engine programs, while the company lowered its full-year outlook for those programs to $32 million–$35 million. Other news.', 'Park Aerospace Corp');
+  assert.ok(hit);
+  assert.equal(hit!.scope, 'segment');
+  assert.equal(guideLoweredInCoverage('Penguin raised its fiscal 2027 outlook to 40% growth.', 'Penguin Solutions'), null);
+});
