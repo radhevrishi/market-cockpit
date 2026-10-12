@@ -31,21 +31,40 @@ import { composeUsNarrative, applySetupGates, US_TIER_ORDER, type EarningsTier }
 import { releaseAttributesCashToWorkingCapital } from './us-pr-financials';
 import { regradeRow } from './us-regrade';
 import { US_ENGINE_VERSION } from './us-engine-version';
+import { guideLine } from './us-guide-line';
 
-export const GUIDE_CHECK_V = 'v1';
+// zzz971 — v2 records the DIRECTION (raised / lowered / kept / no guidance), not only "lowered". v1 results (lowered yes/no,
+// some of them paid AI answers) are still read: a v1 "lowered" stands as is; a v1 "not lowered" is re-checked for free only.
+export const GUIDE_CHECK_V = 'v2';
 export const guideCheckKey = (ticker: string, filingDate: string) => `us-guide-check:${GUIDE_CHECK_V}:${String(ticker).toUpperCase()}:${filingDate}`;
+export const guideCheckKeyV1 = (ticker: string, filingDate: string) => `us-guide-check:v1:${String(ticker).toUpperCase()}:${filingDate}`;
 const TTL_S = 200 * 24 * 3600;
+/** a check that found nothing and could not use AI is kept a day, so the next runs move on and AI can try it later */
+const UNSETTLED_TTL_S = 20 * 3600;
 const TOP: EarningsTier[] = ['BLOCKBUSTER', 'STRONG'];
+
+/** mixed = one guided line better, a profit line guided down (CarMax FY27: GPU decline smaller, CAF income below FY26).
+ *  cautious = a profit line guided below last year, nothing raised. Both keep a quarter out of BLOCKBUSTER / STRONG. */
+export type GuideCheckDirection = 'raised' | 'lowered' | 'mixed' | 'cautious' | 'maintained' | 'withdrawn' | 'none' | 'not-lowered' | 'unknown';
 
 export interface GuideCheck {
   checked_at: string;
   lowered: boolean;
+  /** zzz971 — absent on v1 results */
+  direction?: GuideCheckDirection;
   scope: 'company' | 'segment' | 'none' | 'unknown';
   what: string;          // plain words: "GE engine-program sales outlook cut to $32–35M from $34–38M"
   quote: string;         // the sentence or figures it rests on
   source: 'filing' | 'call-coverage' | 'ai-web';
   url: string | null;
   usd: number;
+}
+
+/** v1 results carried only `lowered` */
+export function withDirection(g: GuideCheck | null | undefined): GuideCheck | null {
+  if (!g || typeof g !== 'object') return null;
+  if (g.direction) return g;
+  return { ...g, direction: g.lowered ? 'lowered' : 'not-lowered' };
 }
 
 // ── 1. the filing's own words ─────────────────────────────────────────────────
@@ -70,6 +89,63 @@ export function guideLoweredInText(text: string): { quote: string; scope: 'compa
     if (RAISED.test(sn) && !/\bbut\b|\bwhile\b|\bhowever\b|\bpartially\s+offset\b/i.test(sn)) continue;
     const segment = /\b(?:segment|division|program(?:me)?s?|product\s+line|business\s+unit|customer|platform)\b/i.test(sn);
     return { quote: sn.trim().slice(0, 400), scope: segment ? 'segment' : 'company' };
+  }
+  return null;
+}
+
+const UP_VERB = String.raw`(?:rais(?:ed|es|ing)|increas(?:ed|es|ing)|lift(?:ed|s|ing)?|boost(?:ed|s|ing)?|upgrad(?:ed|es|ing)|revis(?:ed|es|ing)\s+(?:up(?:ward)?|higher)|hik(?:ed|es))`;
+const KEEP_VERB = String.raw`(?:reaffirm(?:ed|s|ing)?|reiterat(?:ed|es|ing)|maintain(?:ed|s|ing)?|confirm(?:ed|s|ing)?|kept|keeps|unchanged)`;
+const RE_UP = [
+  new RegExp(String.raw`\b${UP_VERB}\s+(?:its|our|the|their)?\s*(?:[\w$.,%–\-]+\s+){0,6}?${OUTLOOK}\b`, 'i'),
+  new RegExp(String.raw`\b${OUTLOOK}\s+(?:[\w$.,%–\-]+\s+){0,6}?(?:was|were|is|are|has\s+been|have\s+been|being)?\s*${UP_VERB}\b`, 'i'),
+];
+const RE_KEEP = [
+  new RegExp(String.raw`\b${KEEP_VERB}\s+(?:its|our|the|their)?\s*(?:[\w$.,%–\-]+\s+){0,6}?${OUTLOOK}\b`, 'i'),
+  new RegExp(String.raw`\b${OUTLOOK}\s+(?:[\w$.,%–\-]+\s+){0,4}?(?:was|were|is|are|remains?)?\s*${KEEP_VERB}\b`, 'i'),
+];
+const NOT_A_RAISE = /\b(?:prices?|pricing|dividend|buyback|repurchase|capital|debt|stake|investment|wages?|rates?|costs?|expenses?|tax(?:es)?|headcount|shares?\s+outstanding)\b/i;
+
+function scanSentences(text: string, res: RegExp[], skip: RegExp): string | null {
+  if (!text) return null;
+  const sentences = text.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+(?=[A-Z“"(])/);
+  for (const sn of sentences) {
+    if (sn.length > 500 || sn.length < 20) continue;
+    if (/\bforward[- ]looking\s+statements?\b|\bsafe\s+harbor\b|\bcould\s+(?:cause|differ)|\bmay\s+(?:raise|increase)|\bif\s+we\b|\bwould\b/i.test(sn)) continue;
+    for (const re of res) {
+      const m = re.exec(sn);
+      if (m && !skip.test(m[0])) return sn.trim().slice(0, 400);
+    }
+  }
+  return null;
+}
+/** A sentence saying management RAISED an outlook. Only call after the lowered check — a cut anywhere wins. */
+export function guideRaisedInText(text: string): { quote: string } | null {
+  const q = scanSentences(text, RE_UP, NOT_A_RAISE);
+  return q ? { quote: q } : null;
+}
+/** A sentence saying management kept / reaffirmed its outlook. */
+export function guideKeptInText(text: string): { quote: string } | null {
+  const q = scanSentences(text, RE_KEEP, /\b(?:dividend|rating|listing|compliance)\b/i);
+  return q ? { quote: q } : null;
+}
+
+// zzz971 — A PROFIT LINE GUIDED BELOW LAST YEAR. Not a cut versus management's own earlier range, but the owner counts it:
+// "CAF income expected to be slightly below FY26", "GPU expected to decline year over year in Q3 and Q4".
+const PROFIT_LINE = String.raw`(?:income|profit|profits|margins?|eps|earnings(?:\s+per\s+share)?|gpu|gross\s+profit(?:\s+per\s+unit)?|ebitda|operating\s+income)`;
+const FUTURE = String.raw`(?:expect(?:s|ed|ing)?|anticipat(?:e|es|ed|ing)|guid(?:e|es|ed|ing|ance)|outlook|forecast(?:s|ed|ing)?|project(?:s|ed|ing)?|will\s+be|to\s+remain)`;
+const DOWN_WORD = String.raw`(?:below|lower\s+than|less\s+than|declin(?:e|es|ed|ing)|down|decreas(?:e|es|ed|ing)|compress(?:ed|ion)?|contract(?:ion)?|pressure[ds]?)`;
+const VS_LAST = String.raw`(?:year[- ]over[- ]year|y\/y|yoy|(?:the\s+)?prior\s+year|last\s+year|a\s+year\s+ago|fiscal\s+(?:year\s+)?(?:20)?\d{2}|fy\s?'?\d{2})`;
+const RE_CAUTION = new RegExp(String.raw`\b${PROFIT_LINE}\b[^.]{0,80}?\b${FUTURE}\b[^.]{0,80}?\b${DOWN_WORD}\b[^.]{0,60}?\b${VS_LAST}|\b${FUTURE}\b[^.]{0,60}?\b${PROFIT_LINE}\b[^.]{0,60}?\b${DOWN_WORD}\b[^.]{0,60}?\b${VS_LAST}`, 'i');
+const NOT_A_CAUTION = /\b(?:net\s+loss|losses|loss\s+per|costs?|expenses?|tax\s+rate|interest\s+expense|share\s+count|decline\s+less\s+than|less\s+than\s+(?:previously|initially|earlier)|smaller\s+decline|better\s+than)\b/i;
+/** A sentence guiding a profit line below last year. */
+export function guideCautionInText(text: string): { quote: string } | null {
+  if (!text) return null;
+  for (const sn of text.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+(?=[A-Z“"(])/)) {
+    if (sn.length > 400 || sn.length < 25) continue;
+    if (/\bforward[- ]looking\s+statements?\b|\bsafe\s+harbor\b|\bcould\b|\bmay\b|\bif\b/i.test(sn)) continue;
+    const m = RE_CAUTION.exec(sn);
+    if (!m || NOT_A_CAUTION.test(m[0])) continue;
+    return { quote: sn.trim().slice(0, 400) };
   }
   return null;
 }
@@ -103,17 +179,27 @@ export function callCoverageLinks(rssXml: string, filingDate: string): Array<{ t
   }
   return out.slice(0, 4);
 }
-/** A lowered-outlook sentence in a call write-up that is about THIS company (its name, or "the company" / "management"). */
-export function guideLoweredInCoverage(text: string, company: string): { quote: string; scope: 'company' | 'segment' } | null {
+function aboutCompany(text: string, company: string): string {
   const word = (company || '').split(/[\s,.]+/).find((w) => w.length >= 4 && !/^(the|inc|corp|corporation|company|holdings|group|technologies|solutions)$/i.test(w)) || '';
   const alts = ['the company', 'management', 'we', 'our', 'it', word.replace(/[^A-Za-z0-9]/g, '')].filter(Boolean);
   const about = new RegExp(`\\b(${alts.join('|')})\\b`, 'i');
-  const sentences = text.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+(?=[A-Z“"(])/);
-  for (const sn of sentences) {
-    if (!about.test(sn)) continue;
-    const hit = guideLoweredInText(sn);
-    if (hit) return hit;
-  }
+  return text.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+(?=[A-Z“"(])/).filter((sn) => about.test(sn)).join(' ');
+}
+/** A lowered-outlook sentence in a call write-up that is about THIS company (its name, or "the company" / "management"). */
+export function guideLoweredInCoverage(text: string, company: string): { quote: string; scope: 'company' | 'segment' } | null {
+  return guideLoweredInText(aboutCompany(text, company));
+}
+/** zzz971 — the direction a call write-up states for THIS company: lowered wins over raised, raised over kept. */
+export function guideDirectionInCoverage(text: string, company: string): { direction: 'lowered' | 'mixed' | 'cautious' | 'raised' | 'maintained'; quote: string; scope: 'company' | 'segment' } | null {
+  const own = aboutCompany(text, company);
+  const lo = guideLoweredInText(own);
+  if (lo) return { direction: 'lowered', ...lo };
+  const up = guideRaisedInText(own);
+  const caution = guideCautionInText(own);
+  if (caution) return { direction: up ? 'mixed' : 'cautious', quote: up ? `${up.quote} … ${caution.quote}`.slice(0, 400) : caution.quote, scope: 'company' };
+  if (up) return { direction: 'raised', quote: up.quote, scope: 'company' };
+  const keep = guideKeptInText(own);
+  if (keep) return { direction: 'maintained', quote: keep.quote, scope: 'company' };
   return null;
 }
 async function callCoverageCheck(row: any): Promise<GuideCheck | null> {
@@ -124,30 +210,37 @@ async function callCoverageCheck(row: any): Promise<GuideCheck | null> {
   } catch { /* no feed this time */ }
   if (!xml) return null;
   const links = callCoverageLinks(xml, row.filing_date);
+  // every write-up is read before deciding: a cut in the second article beats a raise in the first
+  let best: GuideCheck | null = null;
+  const rank = { lowered: 5, mixed: 4, cautious: 3, raised: 2, maintained: 1 } as const;
   for (const l of links) {
     try {
       const r = await fetch(l.url, { headers: { 'User-Agent': UA }, cache: 'no-store', redirect: 'follow', signal: AbortSignal.timeout(12_000) });
       if (!r.ok) continue;
       const html = (await r.text()).slice(0, 1_500_000);
       const text = htmlToText(html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, ' '));
-      const hit = guideLoweredInCoverage(text, row.company || row.ticker);
-      if (hit) {
-        return { checked_at: new Date().toISOString(), lowered: true, scope: hit.scope, what: `call coverage: ${hit.quote.slice(0, 160)}`, quote: hit.quote, source: 'call-coverage', url: l.url, usd: 0 };
-      }
+      const hit = guideDirectionInCoverage(text, row.company || row.ticker);
+      if (!hit) continue;
+      if (best && rank[best.direction as keyof typeof rank] >= rank[hit.direction]) continue;
+      best = { checked_at: new Date().toISOString(), lowered: hit.direction === 'lowered', direction: hit.direction, scope: hit.direction === 'lowered' ? hit.scope : 'company', what: hit.quote.slice(0, 200), quote: hit.quote, source: 'call-coverage', url: l.url, usd: 0 };
+      if (hit.direction === 'lowered') break;
     } catch { /* next article */ }
   }
-  return null;
+  return best;
 }
 
 // ── 3. AI with a web search ──────────────────────────────────────────────────
 const dailyKey = (day: string) => `us-guide-check:usd:${day}`;
 export const dailyCapUsd = () => { const v = Number(process.env.US_GUIDE_CHECK_DAILY_USD); return Number.isFinite(v) && v >= 0 ? v : 0.15; };
 
-const SYSTEM = `You check one fact about one US company's latest earnings report: did management LOWER any forward guidance?
-Count as lowered: a cut, reduction, downward revision or withdrawal of an outlook, forecast or guidance range for the company, a segment, a product line, or a named customer programme — versus what management itself had guided before — stated in the earnings release, the investor presentation, the earnings call, or reported by news in the days after the release.
-Do NOT count: guidance below analyst consensus but not below management's own prior range; lower costs, debt or tax; a lower quarter that was never guided; a range merely narrowed around the same midpoint; guidance that was raised.
+const SYSTEM = `You check one fact about one US company's latest earnings report: which way did management move its OWN forward guidance?
+Answer "lowered" if ANY outlook, forecast or guidance range was cut, reduced, revised down or withdrawn — for the company, a segment, a product line or a named customer programme — versus what management itself had guided before, in the earnings release, the investor presentation, the earnings call, or as reported by news in the days after. A cut on one line counts even if other lines were raised (say both in "what").
+Answer "mixed" if one guided line improved but another profit line (income, margin, gross profit per unit, EPS, a financing or segment income line) is guided below last year or below the earlier outlook — e.g. "GPU decline now expected under $200, CAF income expected slightly below last year".
+Answer "cautious" if nothing was raised but a profit line is guided below last year.
+Answer "raised" if guidance was raised and nothing was cut or guided down. "maintained" if it was reaffirmed / unchanged. "none" if the company gives no guidance.
+Do NOT count as lowered: guidance below analyst consensus but not below management's own prior range; lower costs, debt or tax; a lower quarter that was never guided; a range merely narrowed around the same midpoint.
 Search the web. Answer ONLY with one JSON object, no other text:
-{"lowered": true|false, "scope": "company"|"segment"|"none", "what": "<plain words, include old and new figures if known, max 30 words>", "quote": "<the sentence or figures from your source, max 40 words>", "source_url": "<the page you read it on, or empty>"}`;
+{"direction": "raised"|"lowered"|"mixed"|"cautious"|"maintained"|"none", "scope": "company"|"segment", "what": "<plain words, include old and new figures if known, max 30 words>", "quote": "<the sentence or figures from your source, max 40 words>", "source_url": "<the page you read it on, or empty>"}`;
 
 function parseAnswer(text: string): any | null {
   const m = text.match(/\{[\s\S]*\}/);
@@ -162,55 +255,106 @@ export async function aiGuideCheck(row: { ticker: string; company?: string; quar
   if (spent >= dailyCapUsd()) return null;
   const prompt = `Company: ${row.company || row.ticker} (ticker ${row.ticker}, US-listed).
 Earnings report filed: ${row.filing_date}${row.quarter ? ` (${row.quarter}${row.period_end ? `, period ended ${row.period_end}` : ''})` : ''}.
-Question: in this earnings report, its slides, its call or the news of the following days, did management lower any guidance or outlook (company-wide, a segment, a product line or a key customer programme) versus its own prior guidance?`;
+Question: in this earnings report, its slides, its call or the news of the following days, did management raise, keep or lower its guidance or outlook (company-wide, a segment, a product line or a key customer programme) versus its own prior guidance?`;
   const r = await webResearch('us-guide-check', SYSTEM, prompt, { maxSearches: 3, signal: AbortSignal.timeout(90_000) });
   if (r.usd > 0) await kvIncrByFloat(dailyKey(day), r.usd, 3 * 24 * 3600).catch(() => null);
   if (!r.ok) return null;
   const a = parseAnswer(r.text);
-  if (!a || typeof a.lowered !== 'boolean') return null;
+  if (!a) return null;
+  const raw = String(a.direction || (a.lowered === true ? 'lowered' : a.lowered === false ? 'not-lowered' : '')).toLowerCase();
+  if (!['raised', 'lowered', 'mixed', 'cautious', 'maintained', 'none', 'withdrawn', 'not-lowered'].includes(raw)) return null;
   const url = typeof a.source_url === 'string' && /^https?:\/\//.test(a.source_url) ? a.source_url : (r.urls[0] || null);
   const what = String(a.what || '').slice(0, 240);
-  // an AI "lowered" needs something to stand on: a link and words saying what was cut
-  const lowered = a.lowered === true && !!url && what.length >= 8;
+  // a "lowered" or "raised" from AI needs something to stand on: a link and words saying what moved
+  const backed = !!url && what.length >= 8;
+  let direction = raw as GuideCheckDirection;
+  if ((direction === 'lowered' || direction === 'withdrawn' || direction === 'mixed' || direction === 'cautious') && !backed) direction = 'not-lowered';
+  if (direction === 'raised' && !backed) direction = 'unknown';
+  const lowered = direction === 'lowered' || direction === 'withdrawn';
   return {
     checked_at: new Date().toISOString(),
-    lowered,
+    lowered, direction,
     scope: lowered ? (a.scope === 'segment' ? 'segment' : 'company') : 'none',
-    what: lowered ? what : '',
+    what: direction === 'unknown' ? '' : what,
     quote: String(a.quote || '').slice(0, 300),
     source: 'ai-web', url, usd: r.usd,
   };
 }
 
-/** Check one row: the filing first (free), AI web search only if the filing says nothing. Cached per filing. */
-export async function checkRow(row: any, opts: { allowAi: boolean }): Promise<GuideCheck | null> {
+/**
+ * Check one row, cheapest first: the filing's exhibits → the earnings-call write-ups (both free) → AI with a web search
+ * (extra, within its daily ceiling). A LOWERED anywhere stops the search. For a top-tier row, a raise or "kept" from the free
+ * steps is not the end — the call can still carry a segment cut — so AI is asked when it is allowed; for other rows the
+ * first direction found settles it. Cached per filing. `settledByRelease`: the release's own figures already give the
+ * direction, so a non-top row only needs the free look for a hidden cut.
+ */
+export async function checkRow(row: any, opts: { allowAi: boolean; top?: boolean; settledByRelease?: boolean }): Promise<GuideCheck | null> {
   const key = guideCheckKey(row.ticker, row.filing_date);
   const cached = await kvGet<GuideCheck>(key).catch(() => null);
-  if (cached) return cached;
+  if (cached && cached.direction !== 'unknown') return cached;
+  // an earlier v1 answer: a cut stands; a paid "not lowered" is kept unless the free look finds a direction
+  const v1 = withDirection(await kvGet<GuideCheck>(guideCheckKeyV1(row.ticker, row.filing_date)).catch(() => null));
+  if (v1?.lowered) { await kvSet(key, v1, TTL_S).catch(() => {}); return v1; }
+
+  const now = () => new Date().toISOString();
   const text = await filingText(row.filing_url);
-  const hit = guideLoweredInText(text);
-  let res: GuideCheck | null = null;
-  if (hit) {
-    res = { checked_at: new Date().toISOString(), lowered: true, scope: hit.scope, what: 'management lowered its outlook in the filing', quote: hit.quote, source: 'filing', url: row.filing_url || null, usd: 0 };
-  } else {
-    res = await callCoverageCheck(row).catch(() => null);
-    if (!res && opts.allowAi) res = await aiGuideCheck(row);
+  const lo = guideLoweredInText(text);
+  if (lo) {
+    const res: GuideCheck = { checked_at: now(), lowered: true, direction: 'lowered', scope: lo.scope, what: 'management lowered its outlook in the filing', quote: lo.quote, source: 'filing', url: row.filing_url || null, usd: 0 };
+    await kvSet(key, res, TTL_S).catch(() => {});
+    return res;
   }
-  if (res) await kvSet(key, res, TTL_S).catch(() => {});
-  return res;
+  const cov = await callCoverageCheck(row).catch(() => null);
+  if (cov && (cov.direction === 'lowered' || cov.direction === 'mixed' || cov.direction === 'cautious')) { await kvSet(key, cov, TTL_S).catch(() => {}); return cov; }
+  const up = guideRaisedInText(text);
+  const caution = guideCautionInText(text);
+  if (caution) {
+    const res: GuideCheck = { checked_at: now(), lowered: false, direction: up ? 'mixed' : 'cautious', scope: 'company', what: caution.quote.slice(0, 200), quote: up ? `${up.quote} … ${caution.quote}`.slice(0, 400) : caution.quote, source: 'filing', url: row.filing_url || null, usd: 0 };
+    await kvSet(key, res, TTL_S).catch(() => {});
+    return res;
+  }
+  const keep = up ? null : guideKeptInText(text);
+  const free: GuideCheck | null = cov
+    || (up ? { checked_at: now(), lowered: false, direction: 'raised', scope: 'company', what: up.quote.slice(0, 160), quote: up.quote, source: 'filing', url: row.filing_url || null, usd: 0 } : null)
+    || (keep ? { checked_at: now(), lowered: false, direction: 'maintained', scope: 'company', what: keep.quote.slice(0, 160), quote: keep.quote, source: 'filing', url: row.filing_url || null, usd: 0 } : null);
+
+  // a paid v1 "not lowered" is not paid for twice
+  const paidBefore = v1 && v1.source === 'ai-web';
+  const wantAi = opts.allowAi && !paidBefore && (opts.top ? true : (!free && !opts.settledByRelease));
+  if (wantAi) {
+    const ai = await aiGuideCheck(row).catch(() => null);
+    if (ai && ai.direction !== 'unknown') {
+      // AI found a cut → it wins; AI found nothing new → keep the free finding when there is one
+      const pick = (ai.lowered || ai.direction === 'mixed' || ai.direction === 'cautious') ? ai : (free && (ai.direction === 'not-lowered' || ai.direction === 'none') ? free : (free?.direction === 'raised' && ai.direction === 'maintained' ? free : ai));
+      await kvSet(key, pick, TTL_S).catch(() => {});
+      return pick;
+    }
+  }
+  if (free) { await kvSet(key, free, TTL_S).catch(() => {}); return free; }
+  if (v1) { await kvSet(key, v1, TTL_S).catch(() => {}); return v1; }
+  // nothing found and no AI this time: remembered for a day so the job moves on, then tried again (AI may be allowed then)
+  const unsettled: GuideCheck = { checked_at: now(), lowered: false, direction: 'unknown', scope: 'unknown', what: '', quote: '', source: 'call-coverage', url: null, usd: 0 };
+  await kvSet(key, unsettled, UNSETTLED_TTL_S).catch(() => {});
+  return unsettled;
 }
 
 // ── applying it ──────────────────────────────────────────────────────────────
 export const GUIDE_LOWERED_TAG = 'guidance lowered';
 const shortWhat = (g: GuideCheck) => (g.what || g.quote || '').replace(/\s+/g, ' ').slice(0, 140);
+const clipTag = (s: string) => s.replace(/\s+/g, ' ').slice(0, 140);
 
-/** Put one result on a row: a top-tier row whose outlook was lowered becomes MIXED. Returns true when the tier moved. */
+/**
+ * Put one result on a row and its one-line guidance verdict (`guide_line`). A top-tier row whose guidance was lowered,
+ * cut on a main line, or guided down on a profit line (mixed / cautious) becomes MIXED. Returns true when the tier moved.
+ */
 export function applyGuideCheck(row: any, g: GuideCheck | null | undefined): boolean {
   if (!row) return false;
-  const cut = !!g?.lowered || (row.caveat_tags || []).includes('guidance cut');
-  if (g) row.guide_check = g;
+  if (g) row.guide_check = withDirection(g);
+  const line = guideLine(row);
+  row.guide_line = line;
+  const cut = line.lowered || (row.caveat_tags || []).includes('guidance cut');
   if (!cut || !TOP.includes(row.tier)) return false;
-  const tag = g?.lowered ? `${GUIDE_LOWERED_TAG} — ${shortWhat(g)}` : GUIDE_LOWERED_TAG;
+  const tag = `${line.direction === 'mixed' ? 'guidance mixed' : line.direction === 'cautious' ? 'guidance cautious' : GUIDE_LOWERED_TAG} — ${clipTag(line.text.replace(/^Guidance \w+(?: \([^)]*\))? — /, ''))}`;
   row.caveat_tags = Array.from(new Set([...(row.caveat_tags || []), tag]));
   row.tier_before_guide_check = row.tier;
   row.tier = 'MIXED';
@@ -272,30 +416,31 @@ const _wcMemo = new Map<string, { at: number; v: boolean }>();
 export async function overlayGuideChecks(payload: any): Promise<any> {
   if (!payload?.by_tier) return payload;
   try { payload = await overlayWorkingCapital(payload); } catch { /* keep the payload as stored */ }
-  const top: any[] = [];
-  for (const t of TOP) for (const r of (payload.by_tier[t] || [])) top.push(r);
-  if (!top.length) return payload;
+  // zzz971 — every row gets its one-line guidance verdict; v2 results first, a v1 result where no v2 exists yet
+  const all: any[] = [];
+  for (const t of US_TIER_ORDER) for (const r of (payload.by_tier[t] || [])) all.push(r);
+  if (!all.length) return payload;
   const now = Date.now();
-  const need = top.filter((r) => { const m = _memo.get(guideCheckKey(r.ticker, r.filing_date)); return !m || now - m.at > MEMO_MS; });
+  const need = all.filter((r) => { const m = _memo.get(guideCheckKey(r.ticker, r.filing_date)); return !m || now - m.at > MEMO_MS; });
   if (need.length) {
-    const vals = await kvMGet<GuideCheck>(need.map((r) => guideCheckKey(r.ticker, r.filing_date))).catch(() => need.map(() => null));
-    need.forEach((r, i) => _memo.set(guideCheckKey(r.ticker, r.filing_date), { at: now, v: vals[i] || null }));
+    const k2 = need.map((r) => guideCheckKey(r.ticker, r.filing_date));
+    const k1 = need.map((r) => guideCheckKeyV1(r.ticker, r.filing_date));
+    const vals = await kvMGet<GuideCheck>([...k2, ...k1]).catch(() => [...k2, ...k1].map(() => null));
+    need.forEach((r, i) => _memo.set(k2[i], { at: now, v: withDirection(vals[i] || vals[need.length + i] || null) }));
   }
   let moved = 0;
-  const copy = { ...payload, by_tier: { ...payload.by_tier } };
-  for (const t of TOP) {
-    const keep: any[] = [];
+  const copy = { ...payload, by_tier: {} as Record<string, any[]> };
+  for (const t of US_TIER_ORDER) copy.by_tier[t] = [];
+  for (const t of US_TIER_ORDER) {
     for (const r0 of (payload.by_tier[t] || [])) {
-      const g = _memo.get(guideCheckKey(r0.ticker, r0.filing_date))?.v || null;
-      const willMove = !!g?.lowered || (r0.caveat_tags || []).includes('guidance cut');
-      if (!g && !willMove) { keep.push(r0); continue; }
       const r = { ...r0 };
-      if (applyGuideCheck(r, g)) { copy.by_tier.MIXED = [r, ...(copy.by_tier.MIXED || [])]; moved++; }
-      else keep.push(r);
+      const g = _memo.get(guideCheckKey(r0.ticker, r0.filing_date))?.v || null;
+      if (applyGuideCheck(r, g)) { copy.by_tier.MIXED.unshift(r); moved++; }
+      else copy.by_tier[t].push(r);
     }
-    copy.by_tier[t] = keep;
   }
-  if (moved) copy.notes = [...(payload.notes || []), `${moved} top-tier row${moved > 1 ? 's' : ''} moved to MIXED: management lowered its outlook (filing, slides, call or news)`];
+  for (const t of Object.keys(payload.by_tier)) if (!(t in copy.by_tier)) copy.by_tier[t] = payload.by_tier[t];
+  if (moved) copy.notes = [...(payload.notes || []), `${moved} top-tier row${moved > 1 ? 's' : ''} moved to MIXED: guidance lowered, cut on a main line, or a profit line guided down (filing, slides, call or news)`];
   return copy;
 }
 
@@ -312,15 +457,20 @@ function lastWeekdays(n: number): string[] {
 }
 
 /** Check the top-tier rows of the last few sessions that have no result yet. Newest first; AI only within the daily ceiling. */
-export async function runUsGuideChecks(opts: { sessions?: number; maxRows?: number; budgetMs?: number } = {}): Promise<{ checked: number; lowered: string[]; ai_calls: number; skipped_budget: number; usd: number; wc_fixed: number }> {
+export async function runUsGuideChecks(opts: { sessions?: number; maxRows?: number; budgetMs?: number } = {}): Promise<{ checked: number; lowered: string[]; ai_calls: number; skipped_budget: number; usd: number; wc_fixed: number; directions: number }> {
   const t0 = Date.now();
   const budget = opts.budgetMs ?? 4 * 60_000;
   const rows: any[] = [];
   let wcFixed = 0;
-  for (const date of lastWeekdays(opts.sessions ?? 6)) {
+  // zzz971 — three weeks back: a STRONG card from a fortnight ago (CarMax, 29 Sep) is still on the page and still needs its line
+  for (const date of lastWeekdays(opts.sessions ?? 15)) {
     const p = unzip(await kvGet<any>(`us-graded:${US_ENGINE_VERSION}:${date}|1`).catch(() => null));
     if (!p?.by_tier) continue;
     for (const t of TOP) for (const r of (p.by_tier[t] || [])) rows.push(r);
+    // zzz971 — other rows only when their release does not settle the direction (free look first, AI after the top rows)
+    for (const t of US_TIER_ORDER) if (!TOP.includes(t)) for (const r of (p.by_tier[t] || [])) {
+      if (guideLine(r).direction === 'unknown') rows.push(r);
+    }
     // zzz962b — re-read the release of rows held down by "profit without operating cash"
     for (const t of US_TIER_ORDER) for (const r of (p.by_tier[t] || [])) {
       if (!(r.caveat_tags || []).includes(NO_CASH_TAG) || Date.now() - t0 > budget / 2) continue;
@@ -335,22 +485,31 @@ export async function runUsGuideChecks(opts: { sessions?: number; maxRows?: numb
       if (explained) { wcFixed++; const nr = regradeWithWorkingCapital(r); if (TOP.includes(nr.tier)) rows.push(nr); }
     }
   }
+  { // the same filing shows on several session days — keep one copy (the top-tier one first)
+    const by = new Map<string, any>();
+    for (const r of rows) { const k = guideCheckKey(r.ticker, r.filing_date); const o = by.get(k); if (!o || (TOP.includes(r.tier) && !TOP.includes(o.tier))) by.set(k, r); }
+    rows.length = 0; rows.push(...by.values());
+  }
   const keys = rows.map((r) => guideCheckKey(r.ticker, r.filing_date));
   const have = await kvMGet<GuideCheck>(keys).catch(() => keys.map(() => null));
-  const todo = rows.filter((_, i) => !have[i]).sort((a, b) => String(b.filing_date).localeCompare(String(a.filing_date)) || (TOP.indexOf(a.tier) - TOP.indexOf(b.tier)));
-  const out = { checked: 0, lowered: [] as string[], ai_calls: 0, skipped_budget: 0, usd: 0, wc_fixed: wcFixed };
+  const isTop = (r: any) => TOP.includes(r.tier);
+  const todo = rows.filter((_, i) => !have[i] || (have[i] as any)?.direction === 'unknown')
+    .sort((a, b) => (Number(isTop(b)) - Number(isTop(a))) || String(b.filing_date).localeCompare(String(a.filing_date)) || (TOP.indexOf(a.tier) - TOP.indexOf(b.tier)));
+  const out = { checked: 0, lowered: [] as string[], ai_calls: 0, skipped_budget: 0, usd: 0, wc_fixed: wcFixed, directions: 0 };
   const seen = new Set<string>();
-  for (const r of todo.slice(0, opts.maxRows ?? 25)) {
+  for (const r of todo.slice(0, opts.maxRows ?? 40)) {
     const k = guideCheckKey(r.ticker, r.filing_date);
     if (seen.has(k)) continue; seen.add(k);
     if (Date.now() - t0 > budget) { out.skipped_budget++; continue; }
     const day = new Date().toISOString().slice(0, 10);
     const spent = Number(await kvGet<number>(dailyKey(day)).catch(() => 0)) || 0;
-    const g = await checkRow(r, { allowAi: spent < dailyCapUsd() });
+    const settled = guideLine(r).direction !== 'unknown';
+    const g = await checkRow(r, { allowAi: spent < dailyCapUsd(), top: isTop(r), settledByRelease: settled });
     if (!g) { out.skipped_budget++; continue; }
     out.checked++;
     if (g.source === 'ai-web') { out.ai_calls++; out.usd += g.usd; }
-    if (g.lowered) out.lowered.push(`${r.ticker}: ${shortWhat(g)}`);
+    if (g.lowered || g.direction === 'mixed' || g.direction === 'cautious') out.lowered.push(`${r.ticker}: ${g.direction} — ${shortWhat(g)}`);
+    else if (g.direction && g.direction !== 'unknown') out.directions = (out.directions || 0) + 1;
     _memo.delete(k);
   }
   return out;

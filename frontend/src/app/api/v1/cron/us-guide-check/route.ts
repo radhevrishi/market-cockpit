@@ -12,7 +12,8 @@ export async function POST(req: Request) {
   const auth = verifyCronSecret(req, { requireSecret: true });
   if (!auth.ok) return NextResponse.json({ ok: false, error: auth.reason }, { status: auth.reason.includes('not configured') ? 503 : 401 });
   try {
-    const r = await runUsGuideChecks({ budgetMs: 200_000 });
+    const n = Number(new URL(req.url).searchParams.get('sessions'));
+    const r = await runUsGuideChecks({ budgetMs: 200_000, sessions: Number.isFinite(n) && n >= 1 ? Math.min(30, Math.floor(n)) : undefined });
     return NextResponse.json({ ok: true, ...r });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 502 });

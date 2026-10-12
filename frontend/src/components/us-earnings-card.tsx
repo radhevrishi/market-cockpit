@@ -35,6 +35,7 @@ import {
 } from '@/lib/us-earnings-core';
 import { fmtGuideRange, GUIDE_METRIC_LABEL, type GuidanceFigure } from '@/lib/us-guidance-figures';
 import { fyLike, ownGuideMove, ownGuideVerdict } from '@/lib/us-guide-verdict';
+import { guideLine, GUIDE_LINE_GLYPH, type GuideLine } from '@/lib/us-guide-line';
 import { QUADRANT_META, type EarningsQuadrant } from '@/lib/earnings-grade-shared';
 import { fmtKeyMetric, KEY_METRIC_LABEL, type KeyMetric, type KeyMetricId } from '@/lib/us-key-metrics';
 import UsValuationPanel from './us-valuation-panel';
@@ -487,6 +488,8 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
         </>}
       </div>
 
+      <GuideOneLiner r={r} />
+
       <TileRow r={r} gaapEpsY={gaapEpsY} opmD={opmD}
         adjEpsCur={adjEpsCur} adjEpsPrev={adjEpsPrev} epsEst={epsEst} surp={surp} hasAdjEps={hasAdjEps} />
 
@@ -642,6 +645,37 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
             <ChevronUp className="w-3 h-3" /> LESS
           </button>
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * zzz971 — ONE THIN LINE: did management raise, keep or lower its guidance? Always shown (not a badge). The server sets
+ * `guide_line` from the release, the earnings-call write-ups and, when allowed, an AI web check; a row read before that
+ * runs gets the same verdict from its own release figures here.
+ */
+export function GuideOneLiner({ r }: { r: UsGradedRow }) {
+  const gl: GuideLine = ((r as any).guide_line && typeof (r as any).guide_line.text === 'string') ? (r as any).guide_line : guideLine(r);
+  const color = gl.direction === 'raised' ? 'var(--mc-bullish)'
+    : gl.direction === 'lowered' || gl.direction === 'withdrawn' ? 'var(--mc-bearish)'
+    : gl.direction === 'mixed' || gl.direction === 'cautious' ? 'var(--mc-caution, #F59E0B)'
+    : 'var(--mc-text-3)';
+  const moved = (r as any).tier_before_guide_check;
+  return (
+    <div title={[gl.title, gl.source ? `Source: ${gl.source}` : ''].filter(Boolean).join('\n')}
+      style={{ fontSize: 11, lineHeight: 1.35, color: 'var(--mc-text-2)', margin: '-3px 0 8px', display: 'flex', gap: 5, alignItems: 'baseline', minWidth: 0 }}>
+      <span aria-hidden style={{ flexShrink: 0 }}>{GUIDE_LINE_GLYPH[gl.direction]}</span>
+      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+        <b style={{ color }}>{gl.text.split(' — ')[0]}</b>
+        {gl.text.includes(' — ') && <span> — {gl.text.split(' — ').slice(1).join(' — ')}</span>}
+        {moved && <span style={{ color: 'var(--mc-text-4)' }}> · moved from {moved} to MIXED</span>}
+        {gl.source && gl.source !== 'the release' && <span style={{ color: 'var(--mc-text-4)' }}> · {gl.source}</span>}
+      </span>
+      {gl.url && /^https?:\/\//.test(gl.url) && (
+        <a href={gl.url} target="_blank" rel="noopener noreferrer" style={{ flexShrink: 0, color: 'var(--mc-text-4)' }} aria-label="Open the source">
+          <ExternalLink className="w-3 h-3" />
+        </a>
       )}
     </div>
   );
