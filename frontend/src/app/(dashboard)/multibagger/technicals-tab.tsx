@@ -7,6 +7,7 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { getConvictionTickers, readConvictionBeats } from '@/lib/conviction-beats';
 import { getDecision } from '@/lib/decisions';
 import { armBookFlag } from '@/lib/book-flags-client';
+import { extensionCheck } from '@/lib/tech-extension';
 import { getTradingviewSyncStatus } from '@/lib/screener-data-loader';
 import { CHECKLIST } from '@/lib/multibagger-india-scoring';
 import { F, MUTED } from './constants';
@@ -1574,11 +1575,17 @@ export function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
   const copyAllBest = () => {
     const seen = new Set<string>();
     const out: string[] = [];
+    // zzz961 — leave out EXTENDED names (> 30% above the 50-day, > 90% above the 200-day, or ≥ 10 daily ranges above the 50-day)
+    const rowByBare = new Map<string, TechRow>();
+    for (const r of techRows) rowByBare.set((r.symbol.includes(':') ? (r.symbol.split(':').pop() || '') : r.symbol).toUpperCase(), r);
+    const skipped: string[] = [];
     const addSection = (title: string, syms: string[]) => {
       const fresh = syms.filter(sym => {
-        const bare = (sym.includes(':') ? sym.split(':')[1] : sym).toUpperCase();
+        const bare = (sym.includes(':') ? (sym.split(':').pop() || '') : sym).toUpperCase();
         if (!bare || seen.has(bare)) return false;
         seen.add(bare);
+        const ext = extensionCheck(rowByBare.get(bare));
+        if (ext.extended) { skipped.push(`${bare} (${ext.reason})`); return false; }
         return true;
       });
       if (fresh.length) { out.push(`###${title}`); out.push(...fresh); }
@@ -1657,7 +1664,8 @@ export function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       copyToClipboard('', 'nothing — no best picks computed yet');
       return;
     }
-    copyToClipboard(out.join(','), `ALL BEST — ${seen.size} names, sectioned for TV watchlist`);
+    if (skipped.length) console.info('[Copy ALL BEST] extended names left out:', skipped.join('; '));
+    copyToClipboard(out.join(','), `ALL BEST — ${seen.size - skipped.length} names, sectioned for TV watchlist${skipped.length ? ` · ${skipped.length} extended left out (${skipped.slice(0, 6).map(x => x.split(' ')[0]).join(', ')}${skipped.length > 6 ? '…' : ''})` : ''}`);
   };
 
   // zzz133 — SORT state for ALL TICKERS table
@@ -1940,7 +1948,7 @@ export function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 6 }}>
           <div style={{ fontSize: 26, fontWeight: 900, color: TXT }}>📈 Technicals — Qullamaggie · Zanger · Bonde · Minervini</div>
           <button onClick={copyAllBest}
-            title="Copy every best pick — Champions, Buy Zone, SEPA Elite/Good, Volume Pockets, Momentum, Quality + Multibaggers (A+/A/B+) — as ONE sectioned TradingView watchlist"
+            title="Copy every best pick — Champions, Buy Zone, SEPA Elite/Good, Volume Pockets, Momentum, Quality + Multibaggers (A+/A/B+) — as ONE sectioned TradingView watchlist. Extended names are left out: more than 30% above the 50-day average, more than 90% above the 200-day average, or 10+ average daily ranges above the 50-day average."
             style={{ marginLeft: 'auto', background: 'linear-gradient(135deg, #F59E0B, #22D3EE)', color: '#0B1220', border: 'none', padding: '9px 16px', borderRadius: 8, fontSize: 13, fontWeight: 900, cursor: 'pointer', whiteSpace: 'nowrap' }}>
             ⭐ Copy ALL BEST → TV
           </button>

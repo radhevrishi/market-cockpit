@@ -81,7 +81,7 @@ async function gate() {
   _lastSlot = slot;
   if (slot > now) await new Promise((r) => setTimeout(r, slot - now));
 }
-async function secGet(url: string): Promise<string | null> {
+export async function secGet(url: string): Promise<string | null> {
   try {
     await gate();
     const res = await fetch(url, {

@@ -102,6 +102,9 @@ export function indiaInputFromCard(c: any, fromVersion: string | null):
     eps_curr: num(c.eps_curr), eps_prev: num(c.eps_prev),
     opm_pct: num(c.opm_pct), opm_prev_pct: num(c.opm_prev_pct),
     ocf_to_pat_ratio: num(c.ocf_to_pat_ratio ?? c.cfo_to_pat_ratio),
+    // zzz965 — the cash tile needs the year and the two annual figures too, or it reads '—'
+    ocf_annual_cr: num(c.ocf_annual_cr), pat_annual_cr: num(c.pat_annual_cr),
+    cash_fy: typeof c.cash_fy === 'string' ? c.cash_fy : null, cash_basis: typeof c.cash_basis === 'string' ? c.cash_basis : null,
     roce: num(c.roce),
     gap_pct: num(c.gap_pct), d1_pct: num(c.d1_pct), move_pct: num(c.move_pct),
     rs_rating: num(c.rs_rating), stage: num(c.stage), pct_from_52w_high: num(c.pct_from_52w_high),

@@ -69,6 +69,7 @@ import { financialsFromReleaseHtml, periodEndFromReleaseHtml, releaseAttributesC
 import { balanceSheetFromReleaseHtml } from '@/lib/us-pr-balance';
 import { US_ENGINE_VERSION, US_ENGINE_PREVIOUS_VERSIONS } from '@/lib/us-engine-version';
 import { regradeDayPayload } from '@/lib/us-regrade';
+import { overlayGuideChecks } from '@/lib/us-guide-check';
 import { GradeQueue, decideCacheOnly, classifyFilerFetch } from '@/lib/us-rescan';
 import { readEstimateSnapshot } from '@/lib/us-estimate-snapshot';
 import { oneOffsFromReleaseHtml, absoluteOneOffsFromReleaseHtml, epsExOneOffs, type OneOff, type AbsoluteOneOff } from '@/lib/us-one-offs';
@@ -861,7 +862,13 @@ async function sessionIndexFor(date: string): Promise<string[] | null> {
   _sessIdx.set(date, { at: Date.now(), index });
   return index;
 }
+// zzz963 — every served payload also carries the lowered-outlook check (lib/us-guide-check): a top-tier row whose management
+// lowered guidance (filing, slides, call or news) is shown as MIXED. Results are computed by the us-guide-check job.
 async function withSessionDedupe(payload: any, date: string, days: number, explicit: string): Promise<any> {
+  try { payload = await overlayGuideChecks(payload); } catch { /* never let the check break the page */ }
+  return withSessionDedupeInner(payload, date, days, explicit);
+}
+async function withSessionDedupeInner(payload: any, date: string, days: number, explicit: string): Promise<any> {
   if (explicit || days !== 1 || !payload?.by_tier) return payload;
   try {
     // this session's own index, for the sessions after it

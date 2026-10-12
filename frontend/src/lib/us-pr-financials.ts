@@ -1044,5 +1044,56 @@ export function releaseAttributesCashToWorkingCapital(html: string | null | unde
   const sentences = text.split(/(?<=[.!?])\s+/);
   const cash = /\b(?:operating\s+cash|cash\s+(?:flow\s+)?(?:from|used\s+in|provided\s+by)\s+operat\w*|cash\s+flow)/i;
   const wc = /\bworking\s+capital\b|\binventor(?:y|ies)\s+(?:build|investment|increase)|\binvestment\s+in\s+inventor|\b(?:higher|increase\w*\s+in)\s+(?:accounts\s+)?receivables/i;
-  return sentences.some((sn) => sn.length < 600 && cash.test(sn) && wc.test(sn) && !/\bnon-?gaap\s+measure|\bdefin/i.test(sn));
+  if (sentences.some((sn) => sn.length < 600 && cash.test(sn) && wc.test(sn) && !/\bnon-?gaap\s+measure|\bdefin/i.test(sn))) return true;
+  // zzz962 — or the release's OWN cash-flow statement shows it: Penguin Solutions Q4 FY26 had operating cash of −$163m on $95m
+  // of profit, but receivables and inventory absorbed $342m as AI orders ramped; before those working-capital lines the
+  // quarter converted ~90% of its profit. No sentence said so, so the card read "profit without operating cash" → MIXED.
+  const wcb = cashStatementWorkingCapitalBuild(text);
+  return !!wcb && wcb.explained;
+}
+
+/** First number of a statement row, in the release's own units: "(250,467)" → −250467, "—" → 0. */
+function firstRowNumber(seg: string): number | null {
+  const m = seg.match(/^\s*\$?\s*(\(?-?[\d,]+(?:\.\d+)?\)?|—|–|-)(?=\s|$)/);
+  if (!m) return null;
+  const tok = m[1];
+  if (/^[—–-]$/.test(tok)) return 0;
+  const neg = tok.startsWith('(') || tok.startsWith('-');
+  const n = Number(tok.replace(/[(),\-]/g, ''));
+  return Number.isFinite(n) ? (neg ? -n : n) : null;
+}
+
+/**
+ * zzz962 — Read the current-quarter column of the cash-flow statement printed in the release: net income, the
+ * "changes in operating assets and liabilities" block, and operating cash. `explained` = the working-capital block
+ * consumed cash, and operating cash BEFORE it covers at least half of net income (the profit was earned; it is
+ * sitting in receivables / inventory). Text must already be tag-free.
+ */
+export function cashStatementWorkingCapitalBuild(text: string): { ni: number; cfo: number; wc: number; preWcCfo: number; explained: boolean } | null {
+  const start = text.search(/cash\s+flows?\s+from\s+operating\s+activities/i);
+  if (start < 0) return null;
+  const body = text.slice(start, start + 6000);
+  const niM = body.match(/\bnet\s+income(?:\s*\(loss\))?\s+(\$?\s*\(?[\d,]+\)?)/i);
+  const wcStart = body.search(/changes\s+in\s+(?:operating\s+)?assets\s+and\s+liabilities[^:]*:?/i);
+  const cfoRe = /net\s+cash\s+(?:provided\s+by\s+\(used\s+(?:for|in)\)|\(used\s+(?:for|in)\)\s+provided\s+by|provided\s+by|used\s+(?:for|in))\s+operating\s+activities(?:\s+from\s+continuing\s+operations)?/i;
+  const cfoIdx = body.search(cfoRe);
+  if (!niM || wcStart < 0 || cfoIdx < 0 || cfoIdx < wcStart) return null;
+  const ni = firstRowNumber(niM[1]);
+  const cfoTail = body.slice(cfoIdx).replace(cfoRe, '');
+  const cfo = firstRowNumber(cfoTail);
+  if (ni == null || cfo == null) return null;
+  const block = body.slice(wcStart, cfoIdx).replace(/^changes\s+in\s+(?:operating\s+)?assets\s+and\s+liabilities[^:]*:?/i, '');
+  // every "label  n1 n2 n3 …" row → its first number
+  let wc = 0, rows = 0;
+  const rowRe = /([A-Za-z][A-Za-z ,&'()\-\/]*?)\s+(\(?-?[\d,]+\)?|—|–)(?:\s+(?:\(?-?[\d,]+\)?|—|–))*/g;
+  let m: RegExpExecArray | null;
+  while ((m = rowRe.exec(block))) {
+    const v = firstRowNumber(m[2]);
+    if (v == null) continue;
+    wc += v; rows++;
+  }
+  if (rows === 0) return null;
+  const preWcCfo = cfo - wc;
+  const explained = ni > 0 && cfo < ni && wc < 0 && preWcCfo >= 0.5 * ni;
+  return { ni, cfo, wc, preWcCfo, explained };
 }

@@ -4233,7 +4233,9 @@ export function gradeUsRow(input: UsGradeInput): UsGradedRow | null {
   // quarter; it is a quarter to look at twice, which is what MIXED means.
   // Either fact alone is survivable — a genuine operating-leverage quarter
   // converts cash, and a working-capital quarter still grows its revenue.
-  if (cfoPat != null && cfoPat < 1
+  // zzz962 — not when the release's own statements show the cash went into receivables / inventory
+  // (Penguin Solutions: revenue +68%, profit converted ~90% before an AI-order inventory build).
+  if (cfoPat != null && cfoPat < 1 && !input.cash_explained_by_working_capital
       && caveat_tags.some((t) => t === 'optical eps' || t.startsWith('gaap '))) {
     capTier('MIXED', 'earnings outrun both revenue and cash');
   }

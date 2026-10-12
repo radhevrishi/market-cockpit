@@ -179,7 +179,7 @@ export function indiaCashView(row: any): IndiaCashView {
     ({ ocf: null, pat: null, ratio: null, basis: null, fy, note });
   if (indiaFinancialKind(row)) return none('not meaningful for lenders');
   const fy = typeof row?.cash_fy === 'string' && row.cash_fy.trim() ? row.cash_fy.trim() : null;
-  if (!fy) return none(null);
+  if (!fy) return none(null);   // a ratio with no fiscal year may be annual CFO ÷ one quarter (zzz821) — the year must travel with it (zzz965)
   let ocf = n(row?.ocf_annual_cr);
   const pat = n(row?.pat_annual_cr);
   if (ocf === 0) ocf = null;

@@ -9,6 +9,7 @@ import { BORDER, TEXT, DIM, CARD, SECTOR_SCENARIOS, GUIDANCE_METHODS } from './c
 import { PRACTICE_EXAMPLES } from './constants2';
 import { exSlug } from './helpers';
 import { type SectorScenario, type PracticeExample } from './types';
+import { ReturnLessons } from './ReturnLessons';
 
 export function SectorScenarioRow({ sector, scenario }: { sector: string; scenario: SectorScenario }) {
   const isPE = scenario.method === 'PE';
@@ -665,6 +666,9 @@ export function LearnTab() {
         </div>
       </div>
 
+      {/* zzz966 — growth vs valuation vs return, with the Return Lab */}
+      <ReturnLessons />
+
       {/* Master pattern table */}
       <div style={{ background: '#1A1F33', border: `1px solid ${BORDER}`, borderRadius: 8, padding: '14px 16px' }}>
         <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.5px', marginBottom: 10 }}>
@@ -721,8 +725,8 @@ export function LearnTab() {
         <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-warn)', marginBottom: 8 }}>⚖️ INSTITUTIONAL LESSONS</div>
         <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: TEXT, lineHeight: 1.7 }}>
           <li><b>Always pick the multiple your stock ACTUALLY trades at</b> (5-yr median), not the sector average. Premium names trade above sector, value names below.</li>
-          <li><b>For ranges, base-case = midpoint</b>, but discount the upper bound by 20% — most managements miss their stretch.</li>
-          <li><b>Conservative / floor guidance → BEAR case anchor</b>. Stretch / ambition guidance → BULL case. Don\'t use one as your base.</li>
+          <li><b>For ranges, base-case = midpoint.</b> Haircut the top end only on evidence — this management’s own record of meeting guidance, order cover, plant use — not by a fixed 20%.</li>
+          <li><b>Conservative / floor guidance → BEAR case anchor</b>. Stretch / ambition guidance → BULL case. Don’t use one as your base.</li>
           <li><b>Margin guidance compounds.</b> A 200-bp margin expansion on 30% revenue growth is 35%+ EBITDA growth — much bigger than each individually.</li>
           <li><b>Multi-year CAGR → discount terminal multiple.</b> Markets re-rate downward as growth approaches the horizon. Apply 80% of base multiple for the terminal year.</li>
           <li><b>Peak revenue ≠ steady-state revenue.</b> Peak assumes 100% capacity utilization. Discount 10-15% for realistic ramp.</li>

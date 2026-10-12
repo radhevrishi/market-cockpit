@@ -424,3 +424,81 @@ async function openaiMessages(feature: string, body: MessagesBody, opts: { signa
   await record(feature, costOf(model, translated.usage), translated.usage, false);
   return new Response(JSON.stringify(translated), { status: 200, headers: { 'content-type': 'application/json' } });
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz963 — ONE QUESTION ANSWERED WITH A WEB SEARCH.
+//
+// Some facts are not in the filing: Park Aerospace cut its GE-program sales
+// outlook on the CALL and in the slide deck, while the 8-K release carried no
+// guidance at all. The stock fell 11% and the card had no way to know why.
+// This asks the model to search (OpenAI Responses `web_search`, or Anthropic's
+// `web_search` server tool), under the same monthly cap and ledger, with the
+// search fee ($10 per 1,000 searches) added to the token cost.
+// ═══════════════════════════════════════════════════════════════════════════
+export const WEB_SEARCH_USD = 0.01;
+export interface WebResearchResult { ok: boolean; text: string; urls: string[]; usd: number; error?: string }
+
+export async function webResearch(feature: string, system: string, prompt: string, opts: { maxSearches?: number; signal?: AbortSignal } = {}): Promise<WebResearchResult> {
+  const gate = await spendGate();
+  if (!gate.allowed) { await record(feature, 0, null, true); return { ok: false, text: '', urls: [], usd: 0, error: gate.message || 'spend cap' }; }
+  const sys = withUntrustedRule(system) as string;
+  const prov = provider();
+  try {
+    if (prov === 'openai') {
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey) return { ok: false, text: '', urls: [], usd: 0, error: 'no OPENAI_API_KEY' };
+      const model = openaiModel();
+      const resp = await fetch('https://api.openai.com/v1/responses', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ model, instructions: sys, input: prompt, tools: [{ type: 'web_search' }], reasoning: { effort: 'low' }, max_output_tokens: 4000 }),
+        signal: opts.signal,
+      });
+      if (!resp.ok) {
+        const t = await resp.text().catch(() => '');
+        await record(feature, 0, null, false, { status: resp.status, message: t.slice(0, 300) });
+        return { ok: false, text: '', urls: [], usd: 0, error: `HTTP ${resp.status}` };
+      }
+      const j: any = await resp.json();
+      const out: any[] = Array.isArray(j?.output) ? j.output : [];
+      const searches = out.filter((o) => o?.type === 'web_search_call').length;
+      let text = ''; const urls: string[] = [];
+      for (const o of out) if (o?.type === 'message') for (const c of (o.content || [])) {
+        if (c?.type === 'output_text') { text += c.text || ''; for (const a of (c.annotations || [])) if (a?.url) urls.push(a.url); }
+      }
+      const u = j?.usage || {};
+      const cached = Number(u?.input_tokens_details?.cached_tokens) || 0;
+      const usage: Usage = { input_tokens: Math.max(0, (Number(u.input_tokens) || 0) - cached), output_tokens: Number(u.output_tokens) || 0, cache_read_input_tokens: cached };
+      const usd = costOf(model, usage) + searches * WEB_SEARCH_USD;
+      await record(feature, usd, usage, false);
+      return { ok: true, text, urls: Array.from(new Set(urls)), usd };
+    }
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return { ok: false, text: '', urls: [], usd: 0, error: 'no ANTHROPIC_API_KEY' };
+    const model = 'claude-haiku-4-5-20251001';
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model, max_tokens: 2000, system: sys, messages: [{ role: 'user', content: prompt }],
+        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: opts.maxSearches ?? 3 }] }),
+      signal: opts.signal,
+    });
+    if (!resp.ok) {
+      const t = await resp.text().catch(() => '');
+      await record(feature, 0, null, false, { status: resp.status, message: t.slice(0, 300) });
+      return { ok: false, text: '', urls: [], usd: 0, error: `HTTP ${resp.status}` };
+    }
+    const j: any = await resp.json();
+    let text = ''; const urls: string[] = [];
+    for (const c of (j?.content || [])) {
+      if (c?.type === 'text') { text += c.text || ''; for (const ci of (c.citations || [])) if (ci?.url) urls.push(ci.url); }
+    }
+    const searches = Number(j?.usage?.server_tool_use?.web_search_requests) || 0;
+    const usd = costOf(model, j?.usage) + searches * WEB_SEARCH_USD;
+    await record(feature, usd, j?.usage || null, false);
+    return { ok: true, text, urls: Array.from(new Set(urls)), usd };
+  } catch (e: any) {
+    await record(feature, 0, null, false, { status: 0, message: String(e?.message || e) });
+    return { ok: false, text: '', urls: [], usd: 0, error: String(e?.message || e) };
+  }
+}

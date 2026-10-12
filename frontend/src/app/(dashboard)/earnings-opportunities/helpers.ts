@@ -387,6 +387,7 @@ export function useEarningsOpportunitiesJoined(
       ocf_annual_cr: e.ocf_annual_cr ?? null,
       pat_annual_cr: e.pat_annual_cr ?? null,
       ocf_to_pat_ratio: e.ocf_to_pat_ratio ?? null,
+      cash_fy: e.cash_fy ?? null, cash_basis: e.cash_basis ?? null,   // zzz965
       // Period match
       period_ended: e.period_ended,
       latest_quarter_end_iso: e.latest_quarter_end_iso,

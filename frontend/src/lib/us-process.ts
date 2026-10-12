@@ -308,7 +308,7 @@ export function bucketFor(e: UsConvictionEntry): BucketVerdict {
     const r: string[] = [];
     if (pctile != null && pctile >= 85) r.push(`Operating margin is at the ${pctile}th percentile of its own filed history — there is little room above it.`);
     if (decel === true) r.push('Revenue growth is slower than it was a year ago.');
-    if (has('guidance cut') || e.guidance === 'LOWERED') r.push('Management has cut its own outlook.');
+    if (has('guidance cut') || has('guidance lowered') || e.guidance === 'LOWERED') r.push('Management has cut its own outlook.');
     if (has('peak') || has('commodity')) r.push('The engine flagged cycle or commodity exposure on this print.');
     if (r.length >= 2) {
       if (growth.seriesCagr != null && growth.seriesCagr >= 20) against.push(`Earnings have still compounded ${growth.seriesCagr.toFixed(0)}%/yr across the filed series.`);

@@ -131,7 +131,11 @@ export async function proxy(req: NextRequest) {
   const limit = isHeavy ? 30 : 600;
   const windowMs = 60_000;
 
-  const { allowed, remaining, resetInMs } = checkRateLimit(ip, limit, windowMs);
+  // zzz964 — each class has its OWN counter. It used to be one counter per IP shared by every route, checked against 30 for the
+  // login: an open dashboard making 30+ ordinary API calls a minute meant the very first password attempt read
+  // "Too many attempts — wait a minute".
+  const bucket = path.startsWith('/api/auth/login') ? 'login' : isHeavy ? 'heavy' : 'all';
+  const { allowed, remaining, resetInMs } = checkRateLimit(`${ip}|${bucket}`, limit, windowMs);
   if (!allowed) {
     return NextResponse.json(
       {
