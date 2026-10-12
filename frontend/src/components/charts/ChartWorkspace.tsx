@@ -6,12 +6,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { Chart, DeepPartial, KLineData, OverlayCreate, Styles } from 'klinecharts';
 import {
-  RANGE_KEYS, atr, barIndexAt, cleanTicker, dataRangeFor, drawingKey, fmtMoney, fmtPrice, macd, rangeStart, rsi, validTicker,
+  RANGE_KEYS, TOTAL_RETURN_LABEL, atr, barIndexAt, cleanTicker, dataRangeFor, drawingKey, fmtMoney, fmtPrice, macd, rangeStart, rsi, validTicker,
   type Bar, type DrawingName, type HeaderStats, type Market, type RangeKey, type SavedDrawing, type Timeframe,
 } from '@/lib/chart-math';
 import { CHART_DRAWINGS_KEY, loadDrawings, loadDrawingsWithLegacy, saveDrawings } from '@/lib/chart-storage';
 import { EXTRA_INFO, legendRows, priceSeriesOf, seriesValues, toggleRow, type ChartLayout, type LegendRow } from '@/lib/chart-layouts';
-import WatchlistPanel, { AddToWatchlist, useWatchlistStore } from './WatchlistPanel';
+import WatchlistPanel, { AddToWatchlist, useWatchlistStore, type WatchlistNavOverride } from './WatchlistPanel';
+import { marketOfExchange, reviewFromUrl, reviewPosition, stepQueue, type ReviewQueue } from '@/lib/chart-review-queue';
 import { IndicatorLegend, IndicatorsPanel, LayoutPicker, useLayouts } from './LayoutControls';
 import { pollWhenVisible } from '@/lib/client-fetch';
 import { cacheChart, freshChart, type CachedChart } from '@/lib/chart-refresh';
@@ -19,7 +20,7 @@ import WatchlistResizeHandle, { clampWatchlistWidth } from './WatchlistResizeHan
 import { useWorkspaceLight, workspaceThemeClass } from '@/lib/workspace-theme';
 import { fitBarSpace, loadView, saveView } from '@/lib/chart-view-prefs';
 import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
-import { readableOn } from '@/lib/readable-color';
+import { readableOn, textOnColor } from '@/lib/readable-color';
 import { addSet, activeSetOf, chooseSet, loadSets, removeSet, saveSets, setsOf, withSet, DRAWING_SETS_KEY, MAIN_SET, type SetsStore } from '@/lib/chart-drawing-sets';
 
 type KC = typeof import('klinecharts');
@@ -43,6 +44,7 @@ export function sameChartIdentity(info: { ticker?: string; market?: string; requ
 const DRAW_GROUP = 'mc-draw';
 const MEASURE_GROUP = 'mc-measure';
 const VOL_PANE = 'mc_vol_pane';
+const LAST_VALUES_GROUP = 'mc-lastvals';   // N-06: our own last-value axis tags (readable text colour per tag)
 const TOOLS: { id: Tool; label: string; icon: string; hint: string }[] = [
   { id: 'cursor', label: 'Cursor', icon: '↖', hint: 'Move and select (Esc)' },
   { id: 'mcHLine', label: 'Horizontal line', icon: '━', hint: 'Support / resistance line: click once' },
@@ -117,10 +119,13 @@ function themeStyles(): DeepPartial<Styles> {
     grid: { show: false },
     candle: {
       bar: { compareRule: 'previous_close', upColor: up, downColor: down, noChangeColor: '#787B86', upBorderColor: up, downBorderColor: down, noChangeBorderColor: '#787B86', upWickColor: up, downWickColor: down, noChangeWickColor: '#787B86' },
-      priceMark: { high: { show: false }, low: { show: false }, last: { show: true, compareRule: 'previous_close', upColor: up, downColor: down } },
+      // N-06: one text colour serves both the up and the down tag, so it is the one that reads on both (black on these two)
+      priceMark: { high: { show: false }, low: { show: false }, last: { show: true, compareRule: 'previous_close', upColor: up, downColor: down, text: { color: textOnColor([up, down, '#787B86']) } } },
       tooltip: { showRule: 'none', title: { show: false }, legend },
     },
-    indicator: { tooltip: { title: { color: text }, legend }, lastValueMark: { show: true } },
+    // N-06: the library's indicator last-value tags use one white text for every line (yellow EMA = 1.41:1); they are drawn by
+    // the 'mcLastValues' overlay instead (kline-setup), with black or white text per tag
+    indicator: { tooltip: { title: { color: text }, legend }, lastValueMark: { show: false } },
     xAxis: { axisLine: { show: false }, tickLine: { show: false }, tickText: { color: text } },
     yAxis: { axisLine: { show: false }, tickLine: { show: false }, tickText: { color: text, size: 12 } },
     crosshair: { horizontal: { line: { style: 'dashed' } }, vertical: { line: { style: 'dashed' } } },
@@ -131,13 +136,27 @@ function themeStyles(): DeepPartial<Styles> {
 export default function ChartWorkspace() {
   const router = useRouter();
   const sp = useSearchParams();
-  const initialMarket: Market = (sp.get('m') || '').toUpperCase() === 'IN' ? 'IN' : 'US';
-  const initialTicker = (() => { const t = cleanTicker(sp.get('t') || ''); return validTicker(initialMarket, t) ? t : initialMarket === 'IN' ? 'RELIANCE' : 'QQQ'; })();
+  // the screener opens /charts?symbol=<SYM>&exchange=<EX>&review=screener; the page's own links use t / m / x
+  const urlSymbol = sp.get('symbol');
+  const urlExchange = (sp.get('exchange') || '').trim().toUpperCase();
+  const initialMarket: Market = urlSymbol ? marketOfExchange(urlExchange) : (sp.get('m') || '').toUpperCase() === 'IN' ? 'IN' : 'US';
+  const initialTicker = (() => { const t = cleanTicker(urlSymbol || sp.get('t') || ''); return validTicker(initialMarket, t) ? t : initialMarket === 'IN' ? 'RELIANCE' : 'QQQ'; })();
   const view0 = useMemo(() => loadView(), []);   // zzz956: his last timeframe + the range he chose per timeframe (TradingView-like default: D, 3M)
   const initialTf: Timeframe = (['D', 'W', 'M'] as const).find((x) => x === (sp.get('tf') || '').toUpperCase()) || view0.tf;
 
   const [market, setMarket] = useState<Market>(initialMarket);
-  const [exchange, setExchange] = useState<string | undefined>(() => sp.get('x') === 'BSE' || /^BSE:|\.BO$/i.test(sp.get('t') || '') ? 'BSE' : sp.get('x') === 'NSE' ? 'NSE' : undefined);
+  const [exchange, setExchange] = useState<string | undefined>(() => urlSymbol
+    ? (initialMarket === 'IN' && (urlExchange === 'NSE' || urlExchange === 'BSE') ? urlExchange : undefined)
+    : sp.get('x') === 'BSE' || /^BSE:|\.BO$/i.test(sp.get('t') || '') ? 'BSE' : sp.get('x') === 'NSE' ? 'NSE' : undefined);
+  // origin-aware review: with ?review=screener and the screener's stored result list containing this symbol, previous / next
+  // step through those results instead of the watchlist (lib/chart-review-queue). Without the flag nothing changes.
+  const [review, setReview] = useState<ReviewQueue | null>(() => {
+    let ss: Storage | null = null;
+    try { ss = window.sessionStorage; } catch { /* storage blocked: no review */ }
+    const ex0 = urlSymbol ? urlExchange : (sp.get('x') || '');
+    return reviewFromUrl(sp.get('review'), ss, initialTicker, ex0, initialMarket);
+  });
+  const [reviewIdx, setReviewIdx] = useState(-1);
   const [ticker, setTicker] = useState(initialTicker);
   const [tf, setTf] = useState<Timeframe>(initialTf);
   const [range, setRangeState] = useState<RangeKey>(view0.ranges[initialTf]);
@@ -217,9 +236,9 @@ export default function ChartWorkspace() {
 
   // keep the URL linkable: /charts?t=QQQ&m=US&tf=W
   useEffect(() => {
-    const q = `?t=${encodeURIComponent(ticker)}&m=${market}&tf=${tf}${market === 'IN' && exchange ? `&x=${exchange}` : ''}`;
+    const q = `?t=${encodeURIComponent(ticker)}&m=${market}&tf=${tf}${market === 'IN' && exchange ? `&x=${exchange}` : ''}${review ? '&review=screener' : ''}`;
     if (typeof window !== 'undefined' && window.location.search !== q) router.replace(`/charts${q}`, { scroll: false });
-  }, [ticker, market, tf, exchange, router]);
+  }, [ticker, market, tf, exchange, router, review]);
 
   // ── drawings ────────────────────────────────────────────────────────────────
   const persist = useCallback(() => {
@@ -245,7 +264,7 @@ export default function ChartWorkspace() {
   const overlaySpec = useCallback((name: DrawingName, color: string, extra: Partial<OverlayCreate> = {}): OverlayCreate => ({
     name,
     groupId: DRAW_GROUP,
-    styles: { line: { color, size: name === 'mcHLine' ? 1.5 : 1.5 }, text: { color: '#ffffff', backgroundColor: color, borderColor: color } },
+    styles: { line: { color, size: name === 'mcHLine' ? 1.5 : 1.5 }, text: { color: textOnColor(color), backgroundColor: color, borderColor: color } },   // N-06
     onDrawEnd: () => { persistSoon(); finishDrawing(); },
     onPressedMoveEnd: () => persistSoon(),
     onRemoved: () => persistSoon(),
@@ -288,7 +307,9 @@ export default function ChartWorkspace() {
     if (!chart) return;
     for (const n of ['MC_EMA', 'MC_LINES', 'VOL', 'MC_RSI', 'MC_MACD', 'MC_ATR']) chart.removeIndicator({ name: n });
     const series = priceSeriesOf(lay);
+    const tagPanes: string[] = [];
     if (series.length) {
+      tagPanes.push('candle_pane');
       chart.createIndicator({
         name: 'MC_LINES', paneId: 'candle_pane', calcParams: series.map((_, i) => i), extendData: series.map((x) => x.spec),
         styles: {
@@ -301,6 +322,7 @@ export default function ChartWorkspace() {
       // volume bars in the candle colours (half strength), like TradingView's Volume
       chart.createIndicator({ name: 'VOL', paneId: VOL_PANE, calcParams: [lay.volume.avg], styles: { bars: [{ upColor: 'rgba(8,153,129,0.5)', downColor: 'rgba(242,54,69,0.5)', noChangeColor: 'rgba(120,123,134,0.5)' }], lines: [{ color: '#F59E0B', size: 1.5, style: 'solid', smooth: false, dashedValue: [2, 2] }] } });
       chart.setPaneOptions({ id: VOL_PANE, height: 100 });
+      tagPanes.push(VOL_PANE);
     }
     const guide = visibleOnTheme('#787B86');
     for (const x of lay.extras) {
@@ -314,6 +336,13 @@ export default function ChartWorkspace() {
           : [{ color: x.color, size: 1.5, style: 'solid' }];
       chart.createIndicator({ name, paneId, calcParams: x.params, styles: { lines: lines.map((l) => ({ smooth: false, dashedValue: [4, 4], ...l })) as any } });
       chart.setPaneOptions({ id: paneId, height: 110 });
+      tagPanes.push(paneId);
+    }
+    // N-06 — last-value tags on each pane's price axis, text colour chosen per tag (see kline-setup 'mcLastValues')
+    chart.removeOverlay({ groupId: LAST_VALUES_GROUP });
+    const page = cssVar('--mc-bg-0', '#ffffff');
+    for (const paneId of tagPanes) {
+      try { chart.createOverlay({ name: 'mcLastValues', groupId: LAST_VALUES_GROUP, paneId, lock: true, extendData: page, points: [{ timestamp: 0, value: 0 }] }); } catch { /* tags only */ }
     }
     applyScale(lay);
   }, [applyScale]);
@@ -422,7 +451,7 @@ export default function ChartWorkspace() {
     let ctrl: AbortController | null = null;
     let disposed = false;
     const ttl = tf === 'D' ? 300_000 : 1_800_000;
-    const url = `/api/v1/chart/${encodeURIComponent(ticker)}?market=${market}&interval=${TF_TO_INTERVAL[tf]}&range=${dataRange}${market === 'IN' && exchange ? `&exchange=${exchange}` : ''}${basis === 'tr' ? '&basis=tr' : ''}`;
+    const url = `/api/v1/chart/${encodeURIComponent(ticker)}?market=${market}&interval=${TF_TO_INTERVAL[tf]}&range=${dataRange}${market === 'IN' && exchange ? `&exchange=${exchange}` : ''}${basis === 'tr' ? '&basis=tr&adj=2' : ''}`;   // N-05: adj=2 — never reuse a browser-cached answer from the old dividend factor
     const show = (j: ChartResponse) => {
       const chart = chartRef.current;
       if (!chart) return;
@@ -619,6 +648,34 @@ export default function ChartWorkspace() {
     setQuery(t); setQueryMarket(m); setMarket(m); setTicker(t); setError(null);
   }, []);
 
+  // ── screener review: position, previous / next, ↑ / ↓ keys ──────────────────
+  const reviewPos = review ? reviewPosition(review, ticker, exchange, market) : null;
+  // remember the last position found in the list (state adjusted during render, React's documented pattern) so a symbol picked
+  // by hand mid-review still steps on from where the review was
+  if (reviewPos?.position != null && reviewPos.position - 1 !== reviewIdx) setReviewIdx(reviewPos.position - 1);
+  const reviewStep = useCallback((dir: 1 | -1) => {
+    const r = stepQueue(review, ticker, exchange, dir, reviewIdx, market);
+    if (!r) return;
+    setReviewIdx(r.index);
+    pickFromList(r.target.market, r.target.ticker, r.target.exchange);
+  }, [review, ticker, exchange, reviewIdx, market, pickFromList]);
+  const reviewCanPrev = !!review && !!stepQueue(review, ticker, exchange, -1, reviewIdx, market);
+  const reviewCanNext = !!review && !!stepQueue(review, ticker, exchange, 1, reviewIdx, market);
+  const reviewNav = useMemo<WatchlistNavOverride | null>(() => (review ? { label: 'screener result', canPrev: reviewCanPrev, canNext: reviewCanNext, go: reviewStep } : null), [review, reviewCanPrev, reviewCanNext, reviewStep]);
+  useEffect(() => {
+    if (!review) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
+      e.preventDefault();
+      reviewStep(e.key === 'ArrowDown' ? 1 : -1);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [review, reviewStep]);
+
   // drawings changed on another device and were just brought down: show them
   useEffect(() => {
     const onRestored = (e: Event) => {
@@ -767,6 +824,16 @@ export default function ChartWorkspace() {
         {error && <span style={{ color: 'var(--mc-bearish, #DC2626)' }}>{error}</span>}
       </div>
 
+      {review && reviewPos && (
+        <div role="region" aria-label="Screener review" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '4px 10px', borderRadius: 6, fontSize: 13, border: '1px solid var(--mc-accent)', background: 'var(--mc-bg-1)', color: 'var(--mc-text-1)' }}>
+          <span>Reviewing screener results: <b>{review.label}</b> · {reviewPos.position ?? '–'} / {reviewPos.total}</span>
+          <button type="button" style={btn(false)} disabled={!reviewCanPrev} onClick={() => reviewStep(-1)} title="Previous screener result (↑)">← Prev</button>
+          <button type="button" style={btn(false)} disabled={!reviewCanNext} onClick={() => reviewStep(1)} title="Next screener result (↓)">Next →</button>
+          <button type="button" style={btn(false)} onClick={() => router.push(review.returnUrl)}>Back to screen</button>
+          <span style={{ flex: 1 }} />
+          <button type="button" aria-label="Stop reviewing screener results" title="Stop reviewing: ↑ / ↓ step through the watchlist again" style={{ ...btn(false), padding: '2px 8px' }} onClick={() => setReview(null)}>×</button>
+        </div>
+      )}
       <div className="mc-charts-main">
       <div className="mc-charts-left">
         {/* drawing toolbar */}
@@ -795,7 +862,7 @@ export default function ChartWorkspace() {
               onClick={() => L.setWorking((w) => ({ ...w, scale: { ...w.scale, log: !w.scale.log } }))}
               title={L.working.scale.log ? 'Log scale (on): equal % moves look equal. Click for a normal scale.' : 'Log scale: equal % moves look equal'}>log</button>
             <button type="button" className={`mc-scale-btn${basis === 'tr' ? ' on' : ''}`} aria-label="Total return" aria-pressed={basis === 'tr'} onClick={toggleBasis}
-              title={basis === 'tr' ? `Total return (on): history adjusted for ${live?.dividends ?? 0} cash dividends, as if reinvested — the latest price is unchanged. Drawings stay at the price values they were drawn on. Click for prices as printed.` : 'Total return: adjust the history for dividends (reinvested), like TradingView\'s "adjust for dividends"'}>TR</button>
+              title={basis === 'tr' ? `${TOTAL_RETURN_LABEL}. On: history adjusted for ${live?.dividends ?? 0} cash dividends; the latest price is unchanged. Drawings are one set for both views and stay at the price values they were drawn on. Click for prices as printed.` : `Show: ${TOTAL_RETURN_LABEL}`}>TR</button>
           </div>
           <IndicatorLegend rows={rows} valueOf={valueOf} onToggle={(id) => L.setWorking((w) => toggleRow(w, id))} decimals={pxDecimals} colorOf={(c) => (!chartLight && (luminance(c) ?? 1) < 0.18 ? '#B2B5BE' : c)} textOf={(c) => readableOn(c, chartLight ? '#FFFFFF' : '#0A0E1A')} />
           {(savedAt || syncedAt) && (
@@ -814,7 +881,7 @@ export default function ChartWorkspace() {
       {panelOpen && (<>
         <WatchlistResizeHandle width={panelWidth} onChange={resizePanel} />
         <div className="mc-charts-panel" style={{ '--mc-watchlist-width': `${panelWidth}px` } as React.CSSProperties}>
-          <WatchlistPanel store={wlStore} update={wlUpdate} currentKey={drawingKey(market, ticker, exchange)} onPick={pickFromList} />
+          <WatchlistPanel store={wlStore} update={wlUpdate} currentKey={drawingKey(market, ticker, exchange)} onPick={pickFromList} navOverride={reviewNav} />
         </div>
       </>)}
       </div>

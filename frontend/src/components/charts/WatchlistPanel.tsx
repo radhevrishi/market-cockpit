@@ -243,8 +243,13 @@ export function AddToWatchlist({ store, update, market, ticker, exchange }: { st
 }
 
 // ── the panel ─────────────────────────────────────────────────────────────────
-export default function WatchlistPanel({ store, update, currentKey, onPick }: {
+/** Origin-aware review (screener results): when set, the ↑ / ↓ buttons step through that list instead of this watchlist, and the
+ *  panel leaves the ↑ / ↓ keys to the chart page (which steps the same list). */
+export interface WatchlistNavOverride { label: string; canPrev: boolean; canNext: boolean; go: (dir: 1 | -1) => void }
+
+export default function WatchlistPanel({ store, update, currentKey, onPick, navOverride }: {
   store: WlStore | null; update: (fn: (s: WlStore) => WlStore) => void; currentKey: string; onPick: (m: Market, t: string, exchange?: string) => void;
+  navOverride?: WatchlistNavOverride | null;
 }) {
   const [sort, setSort] = useState<SortState>(null);
   const [flagFilter, setFlagFilter] = useState<Flag | null>(null);
@@ -293,6 +298,7 @@ export default function WatchlistPanel({ store, update, currentKey, onPick }: {
 
   // ↑ / ↓ flips through the list and loads each chart (not while typing in a box)
   useEffect(() => {
+    if (navOverride) return undefined;   // reviewing another list: the chart page owns ↑ / ↓
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
       if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
@@ -305,7 +311,7 @@ export default function WatchlistPanel({ store, update, currentKey, onPick }: {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [rows, currentKey, onPick]);
+  }, [rows, currentKey, onPick, navOverride]);
 
   // keep the active row in view
   useEffect(() => {
@@ -383,8 +389,13 @@ export default function WatchlistPanel({ store, update, currentKey, onPick }: {
       <div style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '3px 8px 7px', fontSize: 11 }}>
         {(['ALL', 'IN', 'US'] as const).map((m) => <button key={m} type="button" aria-label={`Show ${m === 'ALL' ? 'all markets' : m === 'IN' ? 'India' : 'USA'}`} aria-pressed={marketFilter === m} onClick={() => setMarketFilter(m)} style={{ ...smallBtn, borderColor: marketFilter === m ? 'var(--mc-accent)' : 'var(--mc-border-1)', color: marketFilter === m ? 'var(--mc-accent)' : 'var(--mc-text-3)' }}>{m === 'ALL' ? 'All' : m === 'IN' ? 'India' : 'USA'}</button>)}
         <span style={{ flex: 1 }} />
+        {navOverride ? (<>
+          <button type="button" aria-label={`Previous ${navOverride.label}`} title={`Previous ${navOverride.label} (↑)`} disabled={!navOverride.canPrev} onClick={() => navOverride.go(-1)} style={smallBtn}>↑</button>
+          <button type="button" aria-label={`Next ${navOverride.label}`} title={`Next ${navOverride.label} (↓)`} disabled={!navOverride.canNext} onClick={() => navOverride.go(1)} style={smallBtn}>↓</button>
+        </>) : (<>
         <button type="button" aria-label="Previous watchlist symbol" disabled={!stepRow(rows, currentKey, -1)} onClick={() => navigate(-1)} style={smallBtn}>↑</button>
         <button type="button" aria-label="Next watchlist symbol" disabled={!stepRow(rows, currentKey, 1)} onClick={() => navigate(1)} style={smallBtn}>↓</button>
+        </>)}
       </div>
       <div title="Counts for visible rows, using the last received daily-change figures. Unknown quotes are excluded from up/down counts." style={{ display: 'flex', gap: 8, padding: '5px 8px', fontSize: 11, background: 'var(--mc-bg-1)', borderBlock: '1px solid var(--mc-border-3)' }}>
         <span>{rows.length}/{listCount(list)} shown</span><span style={{ color: 'var(--mc-bullish, #059669)' }}>↑ {up}</span><span style={{ color: 'var(--mc-bearish, #DC2626)' }}>↓ {down}</span>{flat > 0 && <span>{flat} flat</span>}{unknown > 0 && <span>{unknown} unknown</span>}

@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { debouncedSetItem, getItemSync } from '@/lib/debounced-storage';
 import { istToday as _istToday } from '@/lib/market-hours';
 import { gradeIndiaRow as gradeRow } from '@/lib/india-grade';
+import { applyInGuideLine } from '@/lib/in-guide-line';   // zzz975
 import type { CalendarItem, CalendarPayload, MarketEarningsResult, MarketEarningsResponse, EarningsTier, ParsedEarning, OpportunitiesPayload } from './types';
 import { ISO_DATE_RE, TIER_ORDER } from './constants';
 
@@ -399,7 +400,7 @@ export function useEarningsOpportunitiesJoined(
   const graded: ParsedEarning[] = [];
   for (const row of joined) {
     const g = gradeRow(row);
-    if (g) graded.push(g);
+    if (g) { applyInGuideLine(g, null); graded.push(g); }   // zzz975 — the guidance line from the filing's own text
   }
   const by_tier: Record<EarningsTier, ParsedEarning[]> = {
     BLOCKBUSTER: [], STRONG: [], MIXED: [], AVOID: [],

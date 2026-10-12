@@ -8,11 +8,13 @@
 //   · formula version — when a calculation changes, the page can say which saved screens moved and why.
 import type { ScreenRow, ScreenMarket } from './types';
 import { fieldOf, passes, filterKeys, filterLabel, type Filter, type NumKey } from './filters';
+import { tvSectorMapping } from './tv-sectors';
 
 // ── formula version ────────────────────────────────────────────────────────────────────────────────────────────────────
 /** Bump with a line in FORMULA_CHANGES whenever a figure is worked out differently. */
-export const FORMULA_VERSION = '2026.10.12';
+export const FORMULA_VERSION = '2026.10.12b';
 export const FORMULA_CHANGES: ReadonlyArray<{ v: string; what: string }> = [
+  { v: '2026.10.12b', what: 'Completed-sessions mode re-works market cap, P/E, P/S, price ÷ cash and EV / revenue at the closing price (they used the live price); India "Other Construction Materials" mapped to Non-Energy Minerals, four companies checked one by one.' },
   { v: '2026.10.12', what: 'Last-5-trading-sessions change added; US companies without quarterly figures now say why; close-confirmed price figures kept for snapshots read during trading.' },
   { v: '2026.10.07', what: 'US cash read from restricted-cash / bank-cash lines when the plain line is not filed (EV / revenue and cash filters).' },
 ];
@@ -36,10 +38,34 @@ export function naReason(r: ScreenRow, key: string): string | null {
 }
 
 // ── close-confirmed view ───────────────────────────────────────────────────────────────────────────────────────────────
-/** The row as of the last completed session (only rows read during trading carry `cc`). */
+/** Figures that move one-for-one with the price while shares outstanding stay the same (market cap = shares × price). */
+const PRICE_PROPORTIONAL = ['mc', 'ps', 'pe', 'pcf'] as const;
+const r2 = (v: number) => Math.round(v * 100) / 100;
+/**
+ * The row as of the last completed session (only rows read during trading carry `cc`).
+ * zzz974 (audit N-02): the technical figures came from the close, but market cap and the valuation ratios kept the LIVE price —
+ * a price rule and a valuation rule then judged two different prices. Now, when the closing price differs, market cap, P/E, P/S
+ * and price ÷ cash are re-worked at the close (same shares), and EV / revenue moves by exactly the market-cap change over
+ * revenue (debt and cash do not change with the price). When the two prices are too far apart to be one share count
+ * (a split or a bad quote: ratio outside 0.5–2) those figures are dropped — unknown, so they fail a filter — instead of guessed.
+ */
 export function closeConfirmed(r: ScreenRow): ScreenRow {
   if (!r.cc) return r;
-  return { ...r, ...(r.cc as Partial<ScreenRow>) };
+  const out: ScreenRow = { ...r, ...(r.cc as Partial<ScreenRow>) };
+  const p0 = r.px, p1 = (r.cc as any).px;
+  if (typeof p1 !== 'number' || p1 === p0) return out;
+  const k = typeof p0 === 'number' && p0 > 0 && p1 > 0 ? p1 / p0 : NaN;
+  const o = out as any, src = r as any;
+  if (!(k >= 0.5 && k <= 2)) {
+    for (const key of [...PRICE_PROPORTIONAL, 'evRev']) if (o[key] != null) o[key] = null;
+    out.ccBasis = 'unavailable';
+    return out;
+  }
+  for (const key of PRICE_PROPORTIONAL) if (typeof src[key] === 'number') o[key] = key === 'mc' ? Math.round(src[key] * k * 10) / 10 : r2(src[key] * k);
+  // EV / revenue = (cap + debt − cash) / revenue → it changes by (cap change) / revenue = the change in P/S
+  if (typeof src.evRev === 'number') o.evRev = typeof src.ps === 'number' && typeof o.ps === 'number' ? r2(src.evRev + (o.ps - src.ps)) : null;
+  out.ccBasis = 'scaled';
+  return out;
 }
 
 // ── exact explanation ──────────────────────────────────────────────────────────────────────────────────────────────────
@@ -55,7 +81,11 @@ export function explainRow(r: ScreenRow, filters: readonly Filter[], market: Scr
   return filters.map((f) => {
     const pass = passes(r, f, now, exactOnly);
     const label = filterLabel(f, market);
-    if (f.kind === 'sector') return { label, pass, detail: `sector: ${r.tvSec || r.sec || 'not known'}`, nearMiss: false };
+    if (f.off) return { label: `${label} (paused)`, pass: true, detail: 'paused — not applied until you turn it back on', nearMiss: false };
+    if (f.kind === 'sector') {
+      const m = tvSectorMapping(market, r.sec, r.ind, r.t);
+      return { label, pass, detail: `sector: ${r.tvSec || r.sec || 'not known'} — ${m.note}; source: ${[r.sec, r.ind].filter(Boolean).join(' · ') || 'none'}`, nearMiss: false };
+    }
     if (f.kind === 'exch') return { label, pass, detail: `exchange: ${(r.exch || []).join(' / ') || 'not known'}`, nearMiss: false };
     const keys = filterKeys(f);
     const na = keys.map((k) => naReason(r, k)).find(Boolean);
@@ -97,25 +127,64 @@ export const SHORTLISTS_KEY = 'mc:screen-shortlists:v1';
 export interface Shortlist {
   id: string; name: string; savedAt: string; market: ScreenMarket; screenId: string; screenName: string;
   filters: Filter[]; exactOnly: boolean; closeOnly: boolean; snapshotBuiltAt: string | null; formulaVersion: string;
+  /** figures for the first DETAIL_LIMIT companies (older shortlists: the only record) */
   rows: Array<{ t: string; n: string; v: Record<string, number | null> }>;
+  /** zzz974 (audit N-03) — EVERY company of the result, so a big result is compared like for like. Absent on older shortlists. */
+  all?: string[];
+  total?: number;
+  sort?: { key: string; dir: 1 | -1 };
+}
+export const DETAIL_LIMIT = 1000;
+/** The full membership of a shortlist, and whether it is complete (an old shortlist of exactly 1,000 may have been cut). */
+export function membership(sl: Shortlist): { tickers: string[]; complete: boolean } {
+  if (Array.isArray(sl.all) && sl.all.length) return { tickers: sl.all, complete: true };
+  const t = sl.rows.map((r) => r.t);
+  return { tickers: t, complete: t.length < DETAIL_LIMIT };
 }
 export const MAX_SHORTLISTS = 60;
-export function makeShortlist(p: Omit<Shortlist, 'id' | 'savedAt' | 'formulaVersion' | 'rows'>, rows: readonly ScreenRow[], cols: readonly string[]): Shortlist {
+export function makeShortlist(p: Omit<Shortlist, 'id' | 'savedAt' | 'formulaVersion' | 'rows' | 'all' | 'total'>, rows: readonly ScreenRow[], cols: readonly string[]): Shortlist {
+  // the price is always kept, so a later change in a valuation ratio can be told apart from a change in the price
+  const keep = Array.from(new Set(['px', 'mc', ...cols]));
   return {
     ...p, id: `sl-${Date.now().toString(36)}`, savedAt: new Date().toISOString(), formulaVersion: FORMULA_VERSION,
-    rows: rows.slice(0, 1000).map((r) => ({ t: r.t, n: r.n, v: Object.fromEntries(cols.map((k) => [k, typeof r[k as NumKey] === 'number' ? (r[k as NumKey] as number) : null])) })),
+    rows: rows.slice(0, DETAIL_LIMIT).map((r) => ({ t: r.t, n: r.n, v: Object.fromEntries(keep.map((k) => [k, typeof r[k as NumKey] === 'number' ? (r[k as NumKey] as number) : null])) })),
+    all: rows.map((r) => r.t), total: rows.length,
   };
 }
 export function cleanShortlists(raw: unknown): Shortlist[] {
   if (!Array.isArray(raw)) return [];
-  return raw.filter((s: any) => s && typeof s.id === 'string' && Array.isArray(s.rows) && Array.isArray(s.filters) && (s.market === 'US' || s.market === 'IN')).slice(-MAX_SHORTLISTS);
+  return raw.filter((s: any) => s && typeof s.id === 'string' && Array.isArray(s.rows) && Array.isArray(s.filters) && (s.market === 'US' || s.market === 'IN'))
+    .map((s: any) => (s.all !== undefined && !(Array.isArray(s.all) && s.all.every((x: unknown) => typeof x === 'string')) ? { ...s, all: undefined } : s))
+    .slice(-MAX_SHORTLISTS);
 }
 
-const PRICE_KEYS = /^(px|chg|chgOpen|chg1W|perf|vol|avgVol|hi52|sma|ema|rsi|atrP|adrP|mc|pe|ps|evRev|pcf)/;
+const PRICE_KEYS = /^(px|chg|chgOpen|chg1W|perf|vol|avgVol|hi52|sma|ema|rsi|atrP|adrP)/;
+/** Ratios with the price on top: they change when the price OR the figure underneath (earnings, sales, cash) changes. */
+const PRICE_RATIOS = new Set(['mc', 'pe', 'ps', 'evRev', 'pcf']);
 export interface ChangeLine { t: string; n: string; kind: 'entered' | 'exited'; why: string }
-/** What changed between a saved shortlist and the same filters on today's snapshot, and the likely cause of each change. */
-export function diffShortlist(sl: Shortlist, nowRows: readonly ScreenRow[], nowMatches: readonly ScreenRow[], market: ScreenMarket, now = new Date()): { entered: ChangeLine[]; exited: ChangeLine[]; stayed: number; formulaChanged: string[] } {
-  const was = new Map(sl.rows.map((r) => [r.t, r]));
+
+/** zzz974 (audit N-04) — a valuation ratio's change is only called price movement when the saved and current prices explain it. */
+export function ratioCause(key: string, oldV: number | null, newV: number | null, oldPx: number | null | undefined, newPx: number | null | undefined): string {
+  const name = fieldOf(key as NumKey)?.label || key;
+  const vals = `${name} ${exact(oldV)} → ${exact(newV)}`;
+  if (typeof oldV !== 'number' || typeof newV !== 'number' || oldV === 0) return `${vals} — cause not established`;
+  if (typeof oldPx !== 'number' || typeof newPx !== 'number' || oldPx <= 0) return `${vals} — valuation ratio changed; price not saved then, so the cause is not established`;
+  const pxMove = newPx / oldPx, ratioMove = newV / oldV;
+  if (key === 'evRev') {
+    // debt and cash sit in EV too: only say "price" when the price moved and the ratio moved the same way
+    return pxMove === 1 ? `${vals} — valuation ratio changed with the price unchanged (new revenue, debt or cash figures)`
+      : `${vals} — price ${exact(oldPx)} → ${exact(newPx)}; revenue, debt or cash may also have changed (not separated)`;
+  }
+  if (Math.abs(ratioMove - pxMove) <= 0.02 * Math.max(1, Math.abs(pxMove))) return `${vals} — price movement (${exact(oldPx)} → ${exact(newPx)})`;
+  if (pxMove === 1) return `${vals} — valuation ratio changed with the price unchanged (new ${key === 'pe' ? 'earnings' : key === 'ps' ? 'sales' : key === 'pcf' ? 'cash' : 'share-count'} figures)`;
+  return `${vals} — price ${exact(oldPx)} → ${exact(newPx)} and the ${key === 'pe' ? 'earnings' : key === 'ps' ? 'sales' : key === 'pcf' ? 'cash' : 'share-count'} figure both changed (mixed)`;
+}
+
+/** What changed between a saved shortlist and the same filters on today's snapshot, and — only where the saved figures show it — why. */
+export function diffShortlist(sl: Shortlist, nowRows: readonly ScreenRow[], nowMatches: readonly ScreenRow[], market: ScreenMarket, now = new Date()): { entered: ChangeLine[]; exited: ChangeLine[]; stayed: number; formulaChanged: string[]; complete: boolean; savedTotal: number } {
+  const mem = membership(sl);
+  const was = new Set(mem.tickers);
+  const detail = new Map(sl.rows.map((r) => [r.t, r]));
   const isNow = new Set(nowMatches.map((r) => r.t));
   const allNow = new Map(nowRows.map((r) => [r.t, r]));
   const formulaChanged = changesSince(sl.formulaVersion);
@@ -123,30 +192,36 @@ export function diffShortlist(sl: Shortlist, nowRows: readonly ScreenRow[], nowM
     const keys = Array.from(new Set(failed.flatMap(filterKeys)));
     const moved = keys.filter((k) => old && old[k] !== undefined && old[k] !== (cur[k as NumKey] ?? null));
     if (moved.length) {
-      const price = moved.filter((k) => PRICE_KEYS.test(k));
-      const fig = moved.filter((k) => !PRICE_KEYS.test(k));
       const parts: string[] = [];
-      if (price.length) parts.push(`price movement (${price.map((k) => `${fieldOf(k)?.label || k} ${exact(old![k])} → ${exact(cur[k as NumKey] as number)}`).join('; ')})`);
-      if (fig.length) parts.push(`new or corrected figures (${fig.map((k) => `${fieldOf(k)?.label || k} ${exact(old![k])} → ${exact(cur[k as NumKey] as number)}`).join('; ')})`);
+      const price = moved.filter((k) => PRICE_KEYS.test(k) && !PRICE_RATIOS.has(k));
+      const ratios = moved.filter((k) => PRICE_RATIOS.has(k));
+      const fig = moved.filter((k) => !PRICE_KEYS.test(k) && !PRICE_RATIOS.has(k));
+      if (price.length) parts.push(`price movement (${price.map((k) => `${fieldOf(k as NumKey)?.label || k} ${exact(old![k])} → ${exact(cur[k as NumKey] as number)}`).join('; ')})`);
+      for (const k of ratios) parts.push(ratioCause(k, old![k], (cur[k as NumKey] as number) ?? null, old!.px, cur.px));
+      if (fig.length) parts.push(`new or corrected figures (${fig.map((k) => `${fieldOf(k as NumKey)?.label || k} ${exact(old![k])} → ${exact(cur[k as NumKey] as number)}`).join('; ')})`);
       return parts.join(' and ');
     }
-    if (formulaChanged.length) return 'a formula change (see the list of changes)';
-    return keys.length ? `${keys.map((k) => fieldOf(k)?.label || k).join(', ')} not saved in the old shortlist — cause not known` : 'cause not known';
+    if (formulaChanged.length) return 'a formula change may be the cause (see the list of changes) — not proven';
+    return keys.length ? `${keys.map((k) => fieldOf(k)?.label || k).join(', ')} not saved in the old shortlist — cause not established` : 'cause not established';
   };
   const exited: ChangeLine[] = [];
-  for (const r of sl.rows) {
-    if (isNow.has(r.t)) continue;
-    const cur = allNow.get(r.t);
-    if (!cur) { exited.push({ t: r.t, n: r.n, kind: 'exited', why: 'no longer in the snapshot (delisted, renamed or below the size floor)' }); continue; }
+  for (const t of mem.tickers) {
+    if (isNow.has(t)) continue;
+    const saved = detail.get(t);
+    const cur = allNow.get(t);
+    const n = saved?.n || cur?.n || '';
+    if (!cur) { exited.push({ t, n, kind: 'exited', why: 'no longer in the snapshot (delisted, renamed or below the size floor)' }); continue; }
     const failed = sl.filters.filter((f) => !passes(cur, f, now, sl.exactOnly));
-    exited.push({ t: r.t, n: r.n, kind: 'exited', why: `now fails ${failed.map((f) => filterLabel(f, market)).join(', ') || 'a filter'} — ${cause(r.v, cur, failed)}` });
+    exited.push({ t, n, kind: 'exited', why: `now fails ${failed.map((f) => filterLabel(f, market)).join(', ') || 'a filter'} — ${saved ? cause(saved.v, cur, failed) : 'its figures were not kept (beyond the first 1,000) — cause not established'}` });
   }
   const entered: ChangeLine[] = [];
-  for (const cur of nowMatches) {
-    if (was.has(cur.t)) continue;
-    entered.push({ t: cur.t, n: cur.n, kind: 'entered', why: 'was not in the saved result — it now passes every filter (price movement, a new filing or a corrected figure)' });
+  if (mem.complete) {
+    for (const cur of nowMatches) {
+      if (was.has(cur.t)) continue;
+      entered.push({ t: cur.t, n: cur.n, kind: 'entered', why: 'not in the saved result; now passes every filter — its figures were not saved then, so the cause is not established' });
+    }
   }
-  return { entered, exited, stayed: sl.rows.filter((r) => isNow.has(r.t)).length, formulaChanged };
+  return { entered, exited, stayed: mem.tickers.filter((t) => isNow.has(t)).length, formulaChanged, complete: mem.complete, savedTotal: sl.total ?? mem.tickers.length };
 }
 
 // ── formula impact (per saved screen, remembered per browser) ──────────────────────────────────────────────────────────

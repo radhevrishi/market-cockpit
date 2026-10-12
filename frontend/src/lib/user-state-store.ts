@@ -20,7 +20,7 @@ export const USER_STATE_KEYS = [
   'mc:chart-watchlists:v1',                         // zzz940 — /charts watchlist panel
   'mc:chart-layouts:v1',                            // zzz944 — /charts named layouts
   'mc:stock-screens:v1',   // zzz938 — saved stock screens
-  'mc:screen-shortlists:v1', 'mc:chart-drawing-sets:v1',   // zzz969 — saved screener shortlists; named drawing sets per chart
+  'mc:screen-shortlists:v1', 'mc:chart-drawing-sets:v1', 'mc:screen-review:v1',   // zzz969 — saved screener shortlists; named drawing sets per chart
 ] as const;
 export type UserStateKey = (typeof USER_STATE_KEYS)[number];
 export const MAX_VALUE_BYTES = 3_000_000;

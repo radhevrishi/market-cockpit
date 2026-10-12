@@ -26,3 +26,22 @@ export function readableOn(color: string, bg: string, min = 4.5): string {
   }
   return hex(toward);
 }
+
+/** N-06 — text colour (black or white) for a label drawn ON a filled background `bg` (a price-axis tag in the line's own colour).
+ *  A semi-transparent rgba() background is first blended over `page`. Returns whichever of black / white contrasts more with the
+ *  background (one of them always reaches 4.5:1). Several backgrounds (e.g. the up / down colours of one tag) → the colour whose
+ *  WORST contrast across them is higher. The user's line colour itself is never changed. */
+export function blendOver(color: string, page = '#FFFFFF'): string {
+  const c = parse(color), p = parse(page) || [255, 255, 255];
+  if (!c) return color;
+  const parts = (String(color).match(/^\s*rgba?\(([^)]*)\)/i)?.[1] || '').split(/[\s,/]+/).filter(Boolean);
+  let alpha = 1;
+  if (parts.length === 4) { const v = parts[3].endsWith('%') ? Number(parts[3].slice(0, -1)) / 100 : Number(parts[3]); if (Number.isFinite(v)) alpha = Math.max(0, Math.min(1, v)); }
+  return hex(c.map((v, i) => v * alpha + p[i] * (1 - alpha)));
+}
+export function textOnColor(bg: string | string[], page = '#FFFFFF'): '#000000' | '#FFFFFF' {
+  const list = (Array.isArray(bg) ? bg : [bg]).map((b) => blendOver(b, page)).filter((b) => parse(b));
+  if (!list.length) return '#FFFFFF';
+  const worst = (t: string) => Math.min(...list.map((b) => contrast(t, b) ?? 0));
+  return worst('#000000') >= worst('#FFFFFF') ? '#000000' : '#FFFFFF';
+}

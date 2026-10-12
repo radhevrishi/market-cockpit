@@ -55,10 +55,10 @@ test('workspace UI: failed saves, restore, refresh, market errors and quote reco
     assert.match(document.body.textContent!, /Restored/);
     version = 2;
     await click('Refresh');
-    assert.equal(document.querySelector('a[title="Open the chart"]')!.textContent, 'TEST2');
+    assert.equal(document.querySelector('a[title^="Open the chart"]')!.textContent, 'TEST2');
     version = 3;
     await act(async () => { [...polls.values()][0](); await settle(); });
-    assert.equal(document.querySelector('a[title="Open the chart"]')!.textContent, 'TEST3', 'populated snapshots refresh automatically');
+    assert.equal(document.querySelector('a[title^="Open the chart"]')!.textContent, 'TEST3', 'populated snapshots refresh automatically');
     failIndia = true;
     await click('🇮🇳 India'); assert.match(document.body.textContent!, /India fixture unavailable/);
     await click('🇺🇸 USA'); assert.doesNotMatch(document.body.textContent!, /India fixture unavailable/);

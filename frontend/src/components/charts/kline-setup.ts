@@ -4,6 +4,7 @@
 import * as kc from 'klinecharts';
 import { atr, barsBetween, ema, fitPriceRange, fmtPrice, macd, measureLabel, rsi, type Bar } from '@/lib/chart-math';
 import { seriesValues, type PriceSeries } from '@/lib/chart-layouts';
+import { textOnColor } from '@/lib/readable-color';
 
 const toBars = (list: kc.KLineData[]): Bar[] => list.map((d) => ({ t: d.timestamp, o: d.open, h: d.high, l: d.low, c: d.close, v: d.volume ?? 0 }));
 const rows = <T extends Record<string, number>>(n: number, cols: Record<string, (number | null)[]>): T[] => {
@@ -135,6 +136,57 @@ export function registerChartExtras(): typeof kc {
   kc.registerYAxis({ name: 'mcFitLog', ...logTemplate, createRange: ({ chart, defaultRange }) => { const { min, max } = fitRange(chart, defaultRange); return logRange(min, max); } });
   kc.registerYAxis({ name: 'mcLog', ...logTemplate, createRange: ({ defaultRange }) => logRange(defaultRange.from, defaultRange.to) });
 
+  // N-06 — last-value tags on the price axis for every indicator line / bar in a pane. KLineChart's own indicator
+  // lastValueMark uses ONE text colour for all lines (white), so a yellow EMA tag read at 1.41:1. This overlay draws the same
+  // tags with black or white text chosen per tag from its background (lib/readable-color textOnColor); the line colours are
+  // untouched. One instance per pane (extendData = the page background, for semi-transparent bar colours).
+  kc.registerOverlay<string>({
+    name: 'mcLastValues',
+    totalStep: 2,
+    lock: true,
+    needDefaultPointFigure: false,
+    needDefaultXAxisFigure: false,
+    needDefaultYAxisFigure: false,
+    createPointFigures: () => [],
+    createYAxisFigures: ({ chart, overlay, bounding, yAxis }) => {
+      if (!yAxis) return [];
+      const page = typeof overlay.extendData === 'string' ? overlay.extendData : '#FFFFFF';
+      const defaults = chart.getStyles().indicator as any;
+      const fromZero = yAxis.isFromZero();
+      const out: kc.OverlayFigure[] = [];
+      for (const ind of chart.getIndicators({ paneId: overlay.paneId })) {
+        if (!ind.visible) continue;
+        const res = (ind.result || []) as Array<Record<string, number>>;
+        const i = res.length - 1;
+        const data = res[i];
+        if (!data) continue;
+        const st = (ind.styles || {}) as any;
+        const lines = (st.lines?.length ? st.lines : defaults.lines) as any[];
+        const barsSt = (st.bars?.length ? st.bars : defaults.bars) as any[];
+        let li = 0, bi = 0;
+        for (const fig of ind.figures as any[]) {
+          let color: string | undefined;
+          if (fig.type === 'line') { color = lines[li % lines.length]?.color; li++; }
+          else if (fig.type === 'bar') { color = barsSt[bi % barsSt.length]?.noChangeColor; bi++; }
+          else continue;
+          try {
+            const dyn = fig.styles?.({ data: { prev: res[i - 1], current: data, next: undefined }, indicator: ind, barSpace: chart.getBarSpace(), defaultStyles: defaults });
+            if (dyn?.color) color = String(dyn.color);
+          } catch { /* keep the default colour */ }
+          const v = data[fig.key];
+          if (typeof v !== 'number' || !Number.isFinite(v) || !color) continue;
+          const text = ind.shouldFormatBigNumber ? kc.utils.formatBigNumber(String(Math.round(v))) : fmtPrice(v, ind.precision ?? 2);
+          out.push({
+            type: 'text', ignoreEvent: true,
+            attrs: { x: fromZero ? 0 : bounding.width, y: yAxis.convertToNicePixel(v), text, align: fromZero ? 'left' : 'right', baseline: 'middle' },
+            styles: { style: 'fill', color: textOnColor(color, page), backgroundColor: color, borderColor: 'transparent', borderSize: 0, borderRadius: 2, paddingLeft: 4, paddingRight: 4, paddingTop: 4, paddingBottom: 4, size: 12 },
+          });
+        }
+      }
+      return out;
+    },
+  });
+
   // Horizontal support / resistance line, price label always shown on the right edge.
   kc.registerOverlay({
     name: 'mcHLine',
@@ -154,7 +206,7 @@ export function registerChartExtras(): typeof kc {
         type: 'text',
         ignoreEvent: true,
         attrs: { x: fromZero ? 0 : bounding.width, y: coordinates[0].y, text: fmtPrice(v, pricePrecision(chart)), align: fromZero ? 'left' : 'right', baseline: 'middle' },
-        styles: { color: '#ffffff', backgroundColor: c, borderColor: c, borderRadius: 2, paddingLeft: 4, paddingRight: 4, paddingTop: 2, paddingBottom: 2, size: 11 },
+        styles: { color: textOnColor(c), backgroundColor: c, borderColor: c, borderRadius: 2, paddingLeft: 4, paddingRight: 4, paddingTop: 2, paddingBottom: 2, size: 11 },   // N-06
       }];
     },
   });
@@ -214,7 +266,7 @@ export function registerChartExtras(): typeof kc {
         {
           type: 'text', ignoreEvent: true,
           attrs: { x: x + w / 2, y: up ? y - 6 : y + h + 6, text: label, align: 'center', baseline: up ? 'bottom' : 'top' },
-          styles: { color: '#ffffff', backgroundColor: c, borderRadius: 3, paddingLeft: 6, paddingRight: 6, paddingTop: 3, paddingBottom: 3, size: 12, weight: 600 },
+          styles: { color: textOnColor(c), backgroundColor: c, borderRadius: 3, paddingLeft: 6, paddingRight: 6, paddingTop: 3, paddingBottom: 3, size: 12, weight: 600 },
         },
       ];
     },

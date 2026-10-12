@@ -237,7 +237,7 @@ export function assembleUsRows(universe: NasdaqRow[], ciks: Map<string, number>,
       // zzz967 (SC-02) — WHY a company has no quarterly figures (not "still to come"): recent listing, annual-only filer,
       // not in SEC's company list, or in SEC but without the tags read
       ...(!f?.q ? { nq: ipoD != null && ipoD > Math.floor(Date.now() / DAY) - 400 ? 'recent-listing' : !cik ? 'not-in-sec' : (f?.niFY != null || f?.revAYoY != null) ? 'annual-only' : 'missing-tags' } : {}),
-      tvSec: tvSectorOf('US', r.sec, r.ind), exch: r.ex ? [r.ex] : null,
+      tvSec: tvSectorOf('US', r.sec, r.ind, r.t), exch: r.ex ? [r.ex] : null,
       ...(tf ? {
         sma21: tf.sma21, sma100: tf.sma100, sma150: tf.sma150, ema10: tf.ema10, ema21: tf.ema21, ema50: tf.ema50, rsi: tf.rsi, rsiW: tf.rsiW, rsiM: tf.rsiM,
         atrP: tf.atrP, adrP: tf.adrP, chgOpen: tf.chgOpen, chg1W: tf.chg1W, perf1W: tf.perf1W, perf1M: tf.perf1M, perf3M: tf.perf3M,

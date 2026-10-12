@@ -2,7 +2,7 @@
 // plus the header numbers (ADR%, RVol, average traded value, last price, day change) worked out from DAILY bars.
 // Public market data (Yahoo). Cached in memory only: 5 min for daily, 30 min for weekly / monthly. Nothing written to Redis.
 import { NextRequest, NextResponse } from 'next/server';
-import { aggregateBars, backAdjustDividends, cleanTicker, floatPct, headerStats, validTicker, type Bar, type Market, type Timeframe } from '@/lib/chart-math';
+import { TOTAL_RETURN_LABEL, aggregateBars, backAdjustDividendsDetailed, cleanTicker, floatPct, headerStats, validTicker, type Bar, type Market, type Timeframe } from '@/lib/chart-math';
 import { dbAvailable, dbQuery } from '@/lib/db';
 import { DATA_RANGES, getDailySeries, type DataRange } from '@/lib/chart-data';
 
@@ -47,11 +47,13 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ ticker: str
   const rangeRaw = String(sp.get('range') || (tf === 'D' ? '2y' : tf === 'W' ? '10y' : 'max'));
   if (!(DATA_RANGES as string[]).includes(rangeRaw)) return NextResponse.json({ ok: false, error: 'range must be 2y, 5y, 10y or max.' }, { status: 400 });
   const range = rangeRaw as DataRange;
-  // zzz969 — price basis: 'price' (split-adjusted closes, as printed) or 'tr' (total return: dividends reinvested)
+  // zzz969 — price basis: 'price' (split-adjusted closes, as printed) or 'tr' (total return: dividends reinvested at the ex-date
+  // close — N-05). Yahoo sends dividend amounts on the same split-adjusted basis as the closes (see backAdjustDividendsDetailed).
   const basis: 'price' | 'tr' = sp.get('basis') === 'tr' ? 'tr' : 'price';
 
   const ttl = tf === 'D' ? 5 * 60_000 : 30 * 60_000;
-  const ck = `${market}:${ticker}:${interval}:${range}:${exchange || 'auto'}:${basis}`;
+  // N-05: 'tr2' — the reinvest-at-ex-date-close formula; never serve bars cached under the old factor
+  const ck = `${market}:${ticker}:${interval}:${range}:${exchange || 'auto'}:${basis === 'tr' ? 'tr2' : basis}`;
   const hit = _resp.get(ck);
   const headers = { 'Cache-Control': `private, max-age=${Math.round(ttl / 1000)}` };
   if (hit && Date.now() - hit.at < ttl) return NextResponse.json(hit.body, { headers });
@@ -59,7 +61,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ ticker: str
   const series = await getDailySeries(market, ticker, range, exchange);
   if (!series) return NextResponse.json({ ok: false, error: `No price history found for ${ticker} (${market === 'IN' ? 'NSE / BSE' : 'US'}).` }, { status: 404 });
   const divs = series.divs || [];
-  const bars = aggregateBars(basis === 'tr' ? backAdjustDividends(series.bars, divs) : series.bars, tf);
+  const adj = basis === 'tr' ? backAdjustDividendsDetailed(series.bars, divs) : null;
+  const bars = aggregateBars(adj ? adj.bars : series.bars, tf);
   const body = {
     ok: true, ticker, market, interval, range, basis, dividends: divs.length, requestedExchange: market === 'IN' ? (exchange ?? null) : null,   // zzz967 (CH-02)
     symbol: series.symbol, name: series.name, currency: series.currency, exchange: series.exchange,
@@ -72,7 +75,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ ticker: str
       source: 'Yahoo Finance chart API', nativeGranularity: series.granularity || '1d', displayInterval: interval,
       firstBarAt: series.bars.length ? new Date(series.bars[0].t).toISOString().slice(0, 10) : null,
       quoteAt: series.quoteAt ?? null,
-      priceBasis: basis === 'tr' ? `total return — ${divs.length} cash dividends reinvested (history back-adjusted; the latest price is unchanged)` : 'split-adjusted, not dividend-adjusted',
+      priceBasis: adj
+        ? `${TOTAL_RETURN_LABEL}; ${divs.length} cash dividends, history back-adjusted, the latest price is unchanged${adj.fallbacks.length ? `; ${adj.fallbacks.length} without an ex-date close used the previous close instead` : ''}`
+        : 'split-adjusted, not dividend-adjusted',
+      ...(adj ? { dividendMethod: 'reinvest-at-ex-date-close', dividendFallbacks: adj.fallbacks.map((f) => ({ date: new Date(f.t).toISOString().slice(0, 10), amount: f.amount, reason: f.reason })) } : {}),
       lastBarFromQuote: !!series.lastBarSynthetic, lastBarOpenInferred: !!series.lastBarOpenInferred,
       highLowRepaired: 'high/low widened to include open and close when the provider row is inconsistent',
     },

@@ -38,6 +38,8 @@ export interface ScreenRow {
   approx?: string[];         // fields worked out in a rougher way for this company (shown with ≈)
   /** zzz969 — read during a trading session: the same price figures as of the last COMPLETED session (close-confirmed mode) */
   cc?: Partial<Record<string, number | null>>;
+  /** zzz974 — set by the completed-sessions view: valuation figures re-worked at the close ('scaled') or dropped ('unavailable') */
+  ccBasis?: 'scaled' | 'unavailable';
   nq?: 'recent-listing' | 'not-in-sec' | 'annual-only' | 'missing-tags';   // zzz967 (SC-02) — why there are no quarterly figures (US)
 
   // ── zzz948: TradingView names ───────────────────────────────────────────────────────────────────────────────────────

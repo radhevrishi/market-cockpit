@@ -35,12 +35,12 @@ test('zzz969 drawing sets: main keeps the old key, others get #id, and the sync 
 });
 
 import { backAdjustDividends } from '../chart-math';
-test('zzz969 total return: bars before the ex-day are scaled by (1 − dividend ÷ prior close); the latest price is unchanged', () => {
+test('zzz969 / N-05 total return: bars before the ex-day are scaled by P_ex ÷ (P_ex + dividend); the latest price is unchanged', () => {
   const d = (i: number, c: number) => ({ t: Date.UTC(2026, 0, 1 + i), o: c, h: c, l: c, c, v: 10 });
   const bars = [d(0, 100), d(1, 100), d(2, 98), d(3, 99)];
   const out = backAdjustDividends(bars, [{ t: bars[2].t, amount: 2 }]);
   assert.equal(out[3].c, 99);
   assert.equal(out[2].c, 98);
-  assert.ok(Math.abs(out[1].c - 98) < 1e-9);   // 100 × (1 − 2/100)
+  assert.ok(Math.abs(out[1].c - 100 * 98 / 100) < 1e-9);   // 100 × 98 / (98 + 2) — reinvested at the ex-date close
   assert.equal(out[1].v, 10);
 });

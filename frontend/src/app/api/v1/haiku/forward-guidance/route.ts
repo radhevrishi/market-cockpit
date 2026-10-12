@@ -16,6 +16,7 @@
 import { fenceDoc } from '@/lib/ai-fence';   // zzz883: document text is data, never instructions
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
+import { HAIKU_FG_PROMPT_VERSION, HAIKU_FG_PARSER_VERSION, haikuFgKey } from '@/lib/haiku-fg-key';   // zzz975
 import { extractFirstPdf } from '@/lib/pdf-text-extractor';
 import { anthropicMessages, modelConfigured, modelKeyName } from '@/lib/anthropic-meter';
 
@@ -43,8 +44,8 @@ const CF_WORKER_URL = process.env.CF_WORKER_URL || 'https://mc-scraper.radhev-23
 //      short-lived (24h) so re-uploads can break out of stale state.
 // ════════════════════════════════════════════════════════════════════════════
 const SCHEMA_VERSION = 3;                    // bump if AIForwardGuidance shape changes
-const PROMPT_VERSION = 'p1055-balanced-v1';  // PATCH 1055 — balanced bull/bear prompt + hedge penalty
-const PARSER_VERSION = 'p1055-hedge-v1';     // PATCH 1055 — post-process hedging-language penalty
+const PROMPT_VERSION = HAIKU_FG_PROMPT_VERSION;  // PATCH 1055 — balanced bull/bear prompt + hedge penalty (zzz975: in lib/haiku-fg-key)
+const PARSER_VERSION = HAIKU_FG_PARSER_VERSION;  // PATCH 1055 — post-process hedging-language penalty
 const CACHE_TTL_POS_S = 365 * 24 * 3600;     // 1 year — quarterly results immutable
 const CACHE_TTL_NEG_S = 24 * 3600;           // 24 hours — re-uploads & worker fixes get retried
 const STATUS_TTL_S = 6 * 3600;               // mini job-store ticker checkpoints (ISSUE #2)
@@ -52,7 +53,7 @@ const STATUS_TTL_S = 6 * 3600;               // mini job-store ticker checkpoint
 function buildCacheKey(ticker: string, period: string): string {
   // PATCH 0962 — v3 key includes prompt + parser version so any schema /
   // prompt evolution auto-invalidates without manual cache purges.
-  return `haiku-fg:v3:${PROMPT_VERSION}:${PARSER_VERSION}:${ticker.toUpperCase()}:${period}`;
+  return haikuFgKey(ticker, period);   // zzz975 — shared with the India EO guidance line (read only)
 }
 
 function buildStatusKey(ticker: string, period: string): string {

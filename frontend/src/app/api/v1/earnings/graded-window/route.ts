@@ -35,6 +35,7 @@ import { NextResponse } from 'next/server';
 import { GRADED_CACHE_VERSION, GRADED_CACHE_LEGACY } from '@/lib/graded-cache-key';
 import { kvMGet } from '@/lib/kv';
 import { regradeIndiaDayPayload, stripGradeInput } from '@/lib/india-regrade';
+import { overlayInGuideLines } from '@/lib/in-guide-check';   // zzz975
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -108,7 +109,8 @@ export async function GET(req: Request) {
           }
         } catch { /* keep the stale label */ }
       }
-      const out = stripGradeInput(f.payload);
+      // zzz975 — the guidance line (and a lowered-guidance top tier moved to MIXED), read before the grader input is dropped
+      const out = stripGradeInput(await overlayInGuideLines(f.payload));
       bytes += JSON.stringify(out).length;
       days.push({ date: d, payload: out, engine: f.engine, stale: f.stale });
     }

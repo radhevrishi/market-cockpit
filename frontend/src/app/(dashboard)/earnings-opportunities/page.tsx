@@ -39,6 +39,8 @@ import { istToday as _istToday, isIndianMarketOpen as isIndianMarketOpenLocal } 
 import { eoFallbackLabel } from '@/lib/eo-fallback-label'; // zzz898
 import { passesSmallMid, smallMidCounts, knownCapCr, readSmallMidPref, writeSmallMidPref, SMALL_MID_MAX_CR } from '@/lib/small-mid-filter'; // zzz898
 import { gradeIndiaRow as gradeRow } from '@/lib/india-grade';
+// zzz975 — one guidance line per card; a lowered outlook moves a top-tier quarter to MIXED (server overlay, same pure rule here).
+import { IN_OVERLAY_VERSION, applyInGuideLine } from '@/lib/in-guide-line';
 // zzz814 — multi-day window (1d … 60d), as on the US page.
 import {
   IN_WINDOWS, parseWindowParam, parseWindowViewParam, withWindowParams, rowsByTier,
@@ -62,7 +64,7 @@ import { checkQuarterLabel, growthView, marginView, driftWord, notRecordedNote, 
 import type { CalendarPayload, EarningsTier, ParsedEarning, OpportunitiesPayload, ViewMode } from './types';
 import { TIER_ORDER, GRADED_ENGINE_LABEL } from './constants';
 import { useMarketEarnings, buildCalendarFromHub, dedupePayloadByCompany, istDaysAgoISO, todayISO, todayIstISO, deriveQuarterLabel, fmtCr, fmtPx, fmtPct } from './helpers';
-import { QuadrantBadge, IndiaAiSummary, CalendarView, MarginTile, MetricTile } from './components';
+import { QuadrantBadge, IndiaAiSummary, CalendarView, MarginTile, MetricTile, InGuideOneLiner } from './components';
 
 // PATCH 1022 — market-cap range matcher (value in ₹ Cr).
 // zzz822 — the bands now live in ONE table (CAP_BUCKETS in
@@ -358,7 +360,8 @@ export default function EarningsOpportunitiesPage() {
     } catch {}
   }, []);
 
-  const readLsCache = (date: string): OpportunitiesPayload | undefined => {
+  // zzz975 — `current`: only a copy saved after the guidance line existed (in_overlay_v) counts as a stand-in for the network.
+  const readLsCache = (date: string, opts?: { current?: boolean }): OpportunitiesPayload | undefined => {
     if (!date || typeof window === 'undefined') return undefined;
     try {
       // PATCH 0545 — getItemSync prefers any in-flight pending write so a
@@ -401,6 +404,7 @@ export default function EarningsOpportunitiesPage() {
       if (rawItems >= 8 && bestCount < 0.6 * rawItems) {
         return undefined;  // undercounted cache — force refetch
       }
+      if (opts?.current && parsed?.in_overlay_v !== IN_OVERLAY_VERSION) return undefined;
       return parsed;
     } catch { return undefined; }
   };
@@ -431,7 +435,7 @@ export default function EarningsOpportunitiesPage() {
       const yIso = istDaysAgoISO(1);  // zzz800 — IST, was local-day/UTC-date mix
       const isPastDate = resolvedDateForGrading < yIso;
       if (isPastDate) {
-        const cached = readLsCache(resolvedDateForGrading);
+        const cached = readLsCache(resolvedDateForGrading, { current: true });
         if (cached) return dedupePayloadByCompany(cached as OpportunitiesPayload);
       }
       // PATCH 0741 + 0842 + 0968 BUG-D — Client-side timeout.
@@ -535,6 +539,7 @@ export default function EarningsOpportunitiesPage() {
     initialDataUpdatedAt: () => {
       const cached = readLsCache(resolvedDateForGrading);
       if (!cached) return undefined;
+      if ((cached as any).in_overlay_v !== IN_OVERLAY_VERSION) return 0;   // zzz975 — saved before the guidance line: refetch now
       const t = (cached as any)._cachedAt;
       return typeof t === 'number' ? t : 0;
     },
@@ -1510,6 +1515,7 @@ export default function EarningsOpportunitiesPage() {
         };
         const g = gradeRow(row);
         if (g) {
+          applyInGuideLine(g, null);   // zzz975 — from the filing's own text (the stored documents are read on the server)
           g.source = `force-included · ${g.source}`;
           out.push(g);
         }
@@ -3787,7 +3793,9 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
         </div>
       )}
       {/* zzz826 — guidance we do not have is said to be unknown, never "not raised". */}
-      {typeof (stock as any).guidance_note === 'string' && (stock as any).guidance_note && (
+      {/* zzz975 — once the guidance line knows the direction, the "unknown" note would contradict it. */}
+      {typeof (stock as any).guidance_note === 'string' && (stock as any).guidance_note
+        && !['raised', 'lowered', 'mixed', 'cautious', 'maintained', 'withdrawn'].includes(String((stock as any).guide_line?.direction || '')) && (
         <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginBottom: 4, lineHeight: 1.35 }}
           title="Guidance status: unknown. Unknown guidance can hold back a top-tier result that needs it; it never lowers a grade.">
           Guidance: unknown{String((stock as any).guidance_note).startsWith('so ') ? ', ' : ' — '}{(stock as any).guidance_note}
@@ -3893,6 +3901,9 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
           </span>
         )}
       </div>
+
+      {/* zzz975 — one thin line: did management raise, keep or lower its guidance (always visible). */}
+      <InGuideOneLiner stock={stock} />
 
       {/* ── Intraday move + RS + Stage row ────────────────────────────────── */}
       {(stock.gap_pct != null || stock.d1_pct != null || stock.move_pct != null || stock.rs_rating != null || stock.stage != null) && (

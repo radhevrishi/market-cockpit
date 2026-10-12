@@ -30,6 +30,7 @@ import { regradeIndiaDayPayload, versionOfGradedKey } from '@/lib/india-regrade'
 // with the Earnings Opportunities page. See lib/india-grade.ts for why.
 import { gradeIndiaRow as gradeRow, gradeIndiaRowExplained, deriveQuarterLabel } from '@/lib/india-grade';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
+import { overlayInGuideLines } from '@/lib/in-guide-check';   // zzz975
 import { swrGet, swrHeaders, privateCache, SwrUnusableError } from '@/lib/swr-cache';
 import { checkQuarterLabel, refetchTickers } from '@/lib/india-eo-card-data';  // zzz820 · zzz826
 import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta, decideTier, marketReactionDelta, typicalDailyMovePct, thinFloatGate, quadrantForIndiaRow } from '@/lib/earnings-grade-shared';
@@ -1527,7 +1528,7 @@ async function runLegacy(req: Request): Promise<{ env: GradedEnvelope; res: Resp
   return { env: { body, status: res.status }, res, noStore: /no-store/.test(cc) };
 }
 
-export async function GET(req: Request) {
+async function gradedSwrGET(req: Request) {
   const { searchParams } = new URL(req.url);
   const date = searchParams.get('date') || '';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return gradedLegacyGET(req);
@@ -1569,4 +1570,22 @@ export async function GET(req: Request) {
     if (e instanceof SwrUnusableError) return gradedLegacyGET(req);
     throw e;
   }
+}
+
+// ─── zzz975: the guidance line on every served day ───────────────────────────
+// Applied to the RESPONSE only (every path above: swr hit, rebuild, force, regrade, legacy), never to what is stored, so a regrade
+// from the stored grader input is unchanged and a concall read later updates the line on the next read. Each row gets `guide_line`;
+// a BLOCKBUSTER / STRONG row whose guidance was lowered (or a profit line guided below last year) is shown as MIXED.
+// `in_overlay_v` lets the browser refetch a day it saved before this existed.
+export async function GET(req: Request) {
+  const res = await gradedSwrGET(req);
+  try {
+    if (res.status !== 200 || !/json/i.test(res.headers.get('content-type') || '')) return res;
+    const body = await res.clone().json().catch(() => null);
+    if (!body?.by_tier) return res;
+    const out = await overlayInGuideLines(body);
+    const headers = new Headers(res.headers);
+    headers.delete('content-length');
+    return NextResponse.json(out, { status: res.status, headers });
+  } catch { return res; }
 }

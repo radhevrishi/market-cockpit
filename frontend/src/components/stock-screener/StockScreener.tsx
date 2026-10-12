@@ -3,14 +3,15 @@
 // browser, so every change is instant. Filters are chips like TradingView's: click to change, × to remove, + to add.
 // zzz948 — all of the owner's own TradingView screens are built in (grouped USA / India, under their TradingView names), with
 // "≥ another field", "within 0–10% above", exchange and date filters, and a note on a filter whose data is still being filled.
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { ScreenRow, ScreenMarket } from '@/lib/screener/types';
 import {
   FIELDS, BUILT_IN_SCREENS, SCREENS_KEY, cleanScreens, fieldOf, filterCounts, filterKeys, filterLabel, fmtValue, runScreen,
   type CmpOp, type Filter, type NumKey, type NumOp, type Screen, type FieldGroup,
 } from '@/lib/screener/filters';
-import { TV_SECTORS } from '@/lib/screener/tv-sectors';
+import { TV_SECTORS, tvSectorOf, tvSectorMapping } from '@/lib/screener/tv-sectors';
+import { writeReviewQueue, REVIEW_STATES, readReviewStates, writeReviewState, reviewKey, readViewState, writeViewState, findInResults, type ReviewState } from '@/lib/screener/workflow';
 import { pollWhenVisible } from '@/lib/client-fetch';
 import { useWorkspaceLight, workspaceThemeClass } from '@/lib/workspace-theme';
 import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
@@ -18,7 +19,7 @@ import { useWatchlistStore } from '@/components/charts/WatchlistPanel';
 import { activeList, updateList, addItem, listCount, type WlItem } from '@/lib/chart-watchlist';
 import { toCsv } from '@/lib/csv';
 import {
-  explainRow, naReason, closeConfirmed, stableOrder, exact, makeShortlist, cleanShortlists, diffShortlist, formulaImpact, changesSince,
+  explainRow, naReason, closeConfirmed, stableOrder, exact, makeShortlist, cleanShortlists, diffShortlist, formulaImpact, changesSince, membership,
   FORMULA_VERSION, SHORTLISTS_KEY, SCREEN_RUNS_KEY, type Shortlist, type ScreenRun,
 } from '@/lib/screener/research';
 
@@ -73,8 +74,12 @@ export default function StockScreener() {
   const [name, setName] = useState(() => draft0?.name || (saved0().find((x) => x.id === first.id) || first).name);
   const [dirty, setDirty] = useState(!!draft0);
   const [editIdx, setEditIdx] = useState<number | null>(null);
-  const [sort, setSort] = useState<{ key: string; dir: 1 | -1 }>({ key: 'mc', dir: -1 });
-  const [showAll, setShowAll] = useState(false);
+  // zzz974 — coming back from a chart keeps the sort, the find text and the place on the page (this tab only)
+  const [sort, setSortRaw] = useState<{ key: string; dir: 1 | -1 }>(() => readViewState(first.id)?.sort || { key: 'mc', dir: -1 });
+  const [findText, setFindText] = useState<string>(() => readViewState(first.id)?.find || '');
+  const [reviewFilter, setReviewFilter] = useState<ReviewState | 'all'>('all');
+  const [reviewStates, setReviewStates] = useState<Record<string, ReviewState>>(() => readReviewStates());
+  const [showAll, setShowAll] = useState(() => !!readViewState(first.id)?.showAll);
   const [msg, setMsg] = useState<string | null>(null);
   const [watchlists, updateWatchlists, watchlistSaveError, retryWatchlistSave] = useWatchlistStore();
   const [addingMatches, setAddingMatches] = useState(false);
@@ -96,6 +101,7 @@ export default function StockScreener() {
     const s = list.find((x) => x.id === id);
     if (!s) return;
     setScreenId(s.id); setMarket(s.market); setFilters(JSON.parse(JSON.stringify(s.filters))); setName(s.name); setDirty(false); setEditIdx(null); setShowAll(false);
+    const vs = readViewState(s.id); setSortRaw(vs?.sort || { key: 'mc', dir: -1 }); setFindText(vs?.find || '');
     try { localStorage.setItem(LAST_KEY, s.id); } catch { /* blocked */ }
   }, [screens]);
   const note = BUILT_IN_SCREENS.find((s) => s.id === screenId)?.note;
@@ -139,9 +145,12 @@ export default function StockScreener() {
   }, [market, refresh]);
 
   const snap = snaps[market];
-  const rawRows = useMemo(() => snap?.rows || [], [snap]);
+  // zzz974 (N-01) — sectors are worked out again here so a corrected mapping applies before the next snapshot build
+  const rawRows = useMemo(() => (snap?.rows || []).map((r) => { const tv = tvSectorOf(market, r.sec, r.ind, r.t); return tv && tv !== r.tvSec ? { ...r, tvSec: tv } : r; }), [snap, market]);
   const intradayRows = useMemo(() => rawRows.filter((r) => r.cc).length, [rawRows]);
   const rows = useMemo(() => (closeOnly ? rawRows.map(closeConfirmed) : rawRows), [rawRows, closeOnly]);
+  const valuationDropped = useMemo(() => (closeOnly ? rows.filter((r) => r.ccBasis === 'unavailable').length : 0), [rows, closeOnly]);
+  const setSort = (s2: { key: string; dir: 1 | -1 }) => { setSortRaw(s2); writeViewState(screenId, { sort: s2 }); };
   const result = useMemo(() => runScreen(rows, filters, new Date(), exactOnly), [rows, filters, exactOnly]);
   const counts = useMemo(() => filterCounts(rows, filters, new Date(), exactOnly), [rows, filters, exactOnly]);
   // how many companies have each field yet (a field still filling shows a note on its filter)
@@ -179,7 +188,30 @@ export default function StockScreener() {
   const [frozen, setFrozen] = useState<{ ctx: string; keys: string[] } | null>(null);
   const ordered = useMemo(() => stableOrder(frozen && frozen.ctx === ctx ? frozen.keys : null, sorted, (r) => r.t), [sorted, ctx, frozen]);
   if (sorted.length && (!frozen || frozen.ctx !== ctx)) setFrozen({ ctx, keys: sorted.map((r) => r.t) });   // a new view: its own order
-  const shown = showAll ? ordered.rows : ordered.rows.slice(0, 200);
+  const narrowed = useMemo(() => findInResults(ordered.rows, findText).filter((r) => reviewFilter === 'all' || (reviewStates[reviewKey(market, r.t)] || 'unreviewed') === reviewFilter), [ordered.rows, findText, reviewFilter, reviewStates, market]);
+  const shown = showAll ? narrowed : narrowed.slice(0, 200);
+  useEffect(() => { writeViewState(screenId, { find: findText }); }, [screenId, findText]);
+  // the place on the page: remembered on leaving, restored once when the rows are back
+  const scrollRestored = useRef(false);
+  useEffect(() => {
+    const save = () => writeViewState(screenId, { scrollY: window.scrollY, showAll });
+    window.addEventListener('pagehide', save);
+    return () => { save(); window.removeEventListener('pagehide', save); };
+  }, [screenId, showAll]);
+  useEffect(() => {
+    if (scrollRestored.current || !sorted.length) return;
+    scrollRestored.current = true;
+    const y = readViewState(screenId)?.scrollY;
+    if (typeof y === 'number' && y > 0) requestAnimationFrame(() => window.scrollTo(0, y));
+  }, [sorted.length, screenId]);
+  const setReview = (t: string, st: ReviewState) => setReviewStates(writeReviewState(market, t, st));
+  /** zzz974 — open a chart in "review the screen's results" mode: Next / Previous step through this result, in this order */
+  const openForReview = (t: string, exch?: string | null) => {
+    writeReviewQueue(name, narrowed.map((r) => ({ symbol: r.t, exchange: market === 'IN' ? (r.exch?.[0] || 'NSE') : (r.exch?.[0] || 'US'), name: r.n })));
+    writeViewState(screenId, { scrollY: window.scrollY, showAll });
+    const ex = market === 'IN' ? (exch || 'NSE') : (exch || '');
+    return `/charts?symbol=${encodeURIComponent(t)}&exchange=${encodeURIComponent(ex)}&t=${encodeURIComponent(t)}&m=${market}&tf=D&review=screener`;
+  };
   const addMatches = () => {
     if (!watchlists || !sorted.length) return;
     if (targetList && !watchlists.lists.some((l) => l.id === targetList)) { setMsg('Could not add: the selected watchlist no longer exists. Choose a destination.'); return; }
@@ -221,8 +253,8 @@ export default function StockScreener() {
     if (!sorted.length) return;
     const nm = (window.prompt('Name for this shortlist', `${name} — ${new Date().toLocaleDateString()}`) || '').trim();
     if (!nm) return;
-    const sl = makeShortlist({ name: nm.slice(0, 80), market, screenId, screenName: name, filters, exactOnly, closeOnly, snapshotBuiltAt: snap?.builtAt || null }, sorted, cols as string[]);
-    if (writeShortlists([...shortlists, sl].slice(-60))) { setMsg(`Shortlist "${sl.name}" saved (${sl.rows.length} companies)`); setTimeout(() => setMsg(null), 3000); }
+    const sl = makeShortlist({ name: nm.slice(0, 80), market, screenId, screenName: name, filters, exactOnly, closeOnly, snapshotBuiltAt: snap?.builtAt || null, sort }, sorted, cols as string[]);
+    if (writeShortlists([...shortlists, sl].slice(-60))) { setMsg(`Shortlist "${sl.name}" saved (${sl.total} companies${(sl.total ?? 0) > sl.rows.length ? `; figures kept for the first ${sl.rows.length}` : ''})`); setTimeout(() => setMsg(null), 3000); }
   };
   const openShortlist = openSl ? shortlists.find((x) => x.id === openSl) || null : null;
   const slDiff = useMemo(() => {
@@ -280,10 +312,12 @@ export default function StockScreener() {
       const u = fieldOf(k as any)?.unit;
       return u === '%' ? '%' : u === 'x' ? '×' : u === 'money' ? (market === 'US' ? '$ million' : '₹ crore') : u === 'price' ? (market === 'US' ? 'USD' : 'INR') : u === 'usd' ? 'USD' : u === 'shares' ? 'shares' : u === 'date' ? 'date' : '';
     };
-    const head = ['Ticker', 'Market', 'Company', 'Sector', ...cols.map((k) => { const l = fieldOf(k)?.label || k; const u = unitOf(k); return u ? `${l} (${u})` : l; }), 'Approximate (≈) fields', 'Snapshot built (UTC)'];
+    // zzz974 — also the quarter the figures describe, the price basis (live / last close) and the export format version
+    const head = ['Ticker', 'Market', 'Company', 'Sector', 'Sector basis', ...cols.map((k) => { const l = fieldOf(k)?.label || k; const u = unitOf(k); return u ? `${l} (${u})` : l; }), 'Quarter', 'Approximate (≈) fields', 'Price basis', 'Snapshot built (UTC)', 'Formula version', 'Export format'];
     const built = snap?.builtAt || '';
-    const body = sorted.map((r) => [r.t, market === 'IN' ? 'NSE' : 'US', r.n, r.tvSec || r.sec, ...cols.map((k) => r[k]),
-      (r.approx || []).filter((k: string) => cols.includes(k as any)).map((k: string) => fieldOf(k as any)?.label || k).join('; '), built]);
+    const body = sorted.map((r) => [r.t, market === 'IN' ? 'NSE' : 'US', r.n, r.tvSec || r.sec, tvSectorMapping(market, r.sec, r.ind, r.t).basis, ...cols.map((k) => r[k]), r.q || '',
+      (r.approx || []).filter((k: string) => cols.includes(k as any)).map((k: string) => fieldOf(k as any)?.label || k).join('; '),
+      closeOnly && r.cc ? (r.ccBasis === 'unavailable' ? 'last completed session (valuations dropped: price gap too large)' : 'last completed session') : r.cc ? 'live (read during trading)' : 'last close', built, FORMULA_VERSION, 'mc-screener-csv/2']);
     const blob = new Blob(['\uFEFF' + toCsv([head, ...body])], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${name.replace(/[^\w-]+/g, '_')}.csv`; a.click(); URL.revokeObjectURL(a.href);
   };
@@ -355,7 +389,7 @@ export default function StockScreener() {
       {intradayRows > 0 ? (
         <div style={{ fontSize: 12.5, color: closeOnly ? C.green : C.amber }}>
           {closeOnly
-            ? `◉ Completed sessions only: ${intradayRows} companies were read during trading — their price, change and moving averages are the last CLOSE, not today's live values.`
+            ? `◉ Completed sessions only: ${intradayRows} companies were read during trading — their price, change, moving averages, market cap and valuation ratios are worked out at the last CLOSE, not today's live price.${valuationDropped ? ` For ${valuationDropped} the close and live price are too far apart to be one share count (a split or a bad quote), so their valuation figures are left unknown.` : ''}`
             : `◌ ${intradayRows} companies were read during today's session — a cross above SMA 50 now may not hold at the close. Tick "Completed sessions only" to screen on closing prices.`}
         </div>
       ) : null}
@@ -371,10 +405,12 @@ export default function StockScreener() {
           const filling = rows.length > 0 && !wrongMarket && !sparse && have < rows.length * 0.5;
           const tip = [approx ? `Approximate — ${approx}` : '', sparse ? `${have} of ${rows.length} companies have this figure — ${sparse}` : '', wrongMarket ? 'Not available for this market' : '', filling ? `Data still filling: ${have} of ${rows.length} companies have this figure so far (the rest come in the next runs)` : '', 'Click to change'].filter(Boolean).join('\n');
           return (
-            <span key={i} style={{ display: 'inline-flex', alignItems: 'center', borderRadius: 6, background: editIdx === i ? C.accent : '#374151', color: '#fff', fontSize: 13, overflow: 'hidden' }}>
-              <button type="button" onClick={() => setEditIdx(editIdx === i ? null : i)} title={tip} style={{ all: 'unset', cursor: 'pointer', padding: '5px 9px' }}>
-                {filterLabel(f, market)}{approx ? ' ≈' : ''}{wrongMarket ? ' (n/a)' : ''}{filling ? ' ⏳' : ''}{sparse ? <span style={{ opacity: 0.7, fontSize: 11 }}> (few have it)</span> : null} <span style={{ opacity: 0.65, fontSize: 11 }}>· {counts[i] ?? 0}</span>
+            <span key={i} style={{ display: 'inline-flex', alignItems: 'center', borderRadius: 6, background: editIdx === i ? C.accent : '#374151', color: '#fff', fontSize: 13, overflow: 'hidden', opacity: f.off ? 0.5 : 1 }}>
+              <button type="button" onClick={() => setEditIdx(editIdx === i ? null : i)} title={f.off ? 'Paused — not applied. Click to change or turn back on.' : tip} style={{ all: 'unset', cursor: 'pointer', padding: '5px 9px', textDecoration: f.off ? 'line-through' : undefined }}>
+                {f.off ? '⏸ ' : ''}{filterLabel(f, market)}{approx ? ' ≈' : ''}{wrongMarket ? ' (n/a)' : ''}{filling ? ' ⏳' : ''}{sparse ? <span style={{ opacity: 0.7, fontSize: 11 }}> (few have it)</span> : null} <span style={{ opacity: 0.65, fontSize: 11 }}>· {counts[i] ?? 0}</span>
               </button>
+              <button type="button" aria-label={f.off ? 'Turn this filter back on' : 'Pause this filter'} title={f.off ? 'Turn back on' : 'Pause (keep it, but do not apply it)'} onClick={() => change(filters.map((x, k) => (k === i ? ({ ...x, off: !x.off } as Filter) : x)))}
+                style={{ all: 'unset', cursor: 'pointer', padding: '5px 7px', borderLeft: '1px solid rgba(255,255,255,0.2)' }}>{f.off ? '▶' : '⏸'}</button>
               <button type="button" aria-label="Remove filter" onClick={() => { change(filters.filter((_, k) => k !== i)); setEditIdx(null); }}
                 style={{ all: 'unset', cursor: 'pointer', padding: '5px 8px', borderLeft: '1px solid rgba(255,255,255,0.2)' }}>×</button>
             </span>
@@ -405,6 +441,7 @@ export default function StockScreener() {
 
       <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', fontSize: 13 }}>
         <b style={{ fontSize: 15 }}>{snap ? `${result.length} of ${rows.length} companies match` : err ? '' : 'Loading…'}</b>
+        {filters.some((f) => f.off) ? <span style={{ color: C.amber }}>{filters.filter((f) => f.off).length} filter{filters.filter((f) => f.off).length > 1 ? 's' : ''} paused</span> : null}
         {builtAt ? <span style={{ color: C.dim }}>data built {builtAt.toLocaleString()}{latestQ ? ` · most figures to ${latestQ}` : ''}{rows.length && withFigures < rows.length * 0.9 ? ` · company figures for ${withFigures} of ${rows.length}${coverageWhy ? ` — ${coverageWhy}` : ''}` : ''} · the small number on each filter = companies passing that filter alone</span> : null}
         {err ? <span role="alert" style={{ color: C.red }}>{err}{snap ? ' — showing the last loaded snapshot' : ''}</span> : null}
         <span style={{ flex: 1 }} />
@@ -419,7 +456,7 @@ export default function StockScreener() {
         {shortlists.length ? (
           <select value={openSl || ''} onChange={(e) => setOpenSl(e.target.value || null)} style={btn()} aria-label="Saved shortlists">
             <option value="">Shortlists ({shortlists.length})</option>
-            {shortlists.slice().reverse().map((x) => <option key={x.id} value={x.id}>{x.market === 'IN' ? '🇮🇳' : '🇺🇸'} {x.name} · {x.rows.length}</option>)}
+            {shortlists.slice().reverse().map((x) => <option key={x.id} value={x.id}>{x.market === 'IN' ? '🇮🇳' : '🇺🇸'} {x.name} · {x.total ?? membership(x).tickers.length}</option>)}
           </select>
         ) : null}
         <button type="button" style={btn()} disabled={loading} onClick={() => setRefresh((v) => v + 1)}>{loading ? 'Refreshing…' : err ? 'Retry' : 'Refresh'}</button>
@@ -449,11 +486,16 @@ export default function StockScreener() {
             <span style={{ color: C.dim }}>saved {new Date(openShortlist.savedAt).toLocaleString()} · screen “{openShortlist.screenName}” · data built {openShortlist.snapshotBuiltAt ? new Date(openShortlist.snapshotBuiltAt).toLocaleString() : 'unknown'} · formulas {openShortlist.formulaVersion}{openShortlist.exactOnly ? ' · exact only' : ''}{openShortlist.closeOnly ? ' · completed sessions only' : ''}</span>
             <span style={{ flex: 1 }} />
             <button type="button" style={btn()} onClick={() => { setFilters(JSON.parse(JSON.stringify(openShortlist.filters))); setMarket(openShortlist.market); setDirty(true); }}>Load its filters</button>
-            <button type="button" style={btn()} onClick={() => { navigator.clipboard?.writeText(openShortlist.rows.map((r) => (openShortlist.market === 'IN' ? `NSE:${r.t}` : r.t)).join(',')); setMsg('Copied the saved tickers'); }}>Copy saved tickers</button>
+            <button type="button" style={btn()} onClick={() => { navigator.clipboard?.writeText(membership(openShortlist).tickers.map((t) => (openShortlist.market === 'IN' ? `NSE:${t}` : t)).join(',')); setMsg('Copied the saved tickers'); }}>Copy saved tickers</button>
             <button type="button" style={btn()} onClick={() => { if (window.confirm(`Delete shortlist "${openShortlist.name}"?`)) { writeShortlists(shortlists.filter((x) => x.id !== openShortlist.id)); setOpenSl(null); } }}>Delete</button>
             <button type="button" style={btn()} onClick={() => setOpenSl(null)}>Close</button>
           </div>
-          <div style={{ color: C.dim }}>Saved result ({openShortlist.rows.length}): {openShortlist.rows.slice(0, 60).map((r) => r.t).join(', ')}{openShortlist.rows.length > 60 ? '…' : ''}</div>
+          {(() => { const m = membership(openShortlist); return (
+            <div style={{ color: C.dim }}>Saved result ({m.tickers.length}): {m.tickers.slice(0, 60).join(', ')}{m.tickers.length > 60 ? '…' : ''}
+              {!m.complete ? <span style={{ color: C.amber }}> · saved before full lists were kept: only the first {m.tickers.length} were stored, so companies that entered cannot be told apart from ones beyond that cut — entrants are not listed</span> : null}
+              {openShortlist.total && openShortlist.total > openShortlist.rows.length ? <span> · figures kept for the first {openShortlist.rows.length}</span> : null}
+            </div>
+          ); })()}
           {openShortlist.market !== market ? <div style={{ color: C.amber }}>Switch to {openShortlist.market === 'IN' ? 'India' : 'USA'} to compare with today.</div> : slDiff ? (
             <>
               <div><b>Today with the same filters:</b> {slDiff.stayed} still in · <span style={{ color: C.green }}>{slDiff.entered.length} entered</span> · <span style={{ color: C.red }}>{slDiff.exited.length} left</span></div>
@@ -466,6 +508,17 @@ export default function StockScreener() {
       ) : null}
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 13 }}>
+        <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>Find in results
+          <input value={findText} onChange={(e) => setFindText(e.target.value)} placeholder="ticker or name" aria-label="Find in results" style={{ ...btn(), width: 150, fontWeight: 400 }} />
+        </label>
+        {findText ? <span style={{ color: C.dim }}>{narrowed.length} of {ordered.rows.length} shown <button type="button" style={btn()} onClick={() => setFindText('')}>Clear</button></span> : null}
+        <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>Review
+          <select value={reviewFilter} onChange={(e) => setReviewFilter(e.target.value as ReviewState | 'all')} style={btn()} aria-label="Show companies by review state">
+            <option value="all">all</option>
+            {REVIEW_STATES.map((x) => <option key={x.id} value={x.id}>{x.label} ({ordered.rows.filter((r) => (reviewStates[reviewKey(market, r.t)] || 'unreviewed') === x.id).length})</option>)}
+          </select>
+        </label>
+        <span style={{ width: 12 }} />
         <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>Why is a company in or out?
           <input list="mc-screener-tickers" value={whyTicker} onChange={(e) => setWhyTicker(e.target.value)} placeholder="ticker" aria-label="Explain a company" style={{ ...btn(), width: 120, fontWeight: 400 }} />
         </label>
@@ -487,6 +540,7 @@ export default function StockScreener() {
             <tr style={{ background: C.bg1, position: 'sticky', top: 0, zIndex: 1 }}>
               <th style={th}>#</th>
               <Th label="Company" k="t" sort={sort} setSort={setSort} />
+              <th style={th} title="Your review progress for each company (kept in this browser, synced with your other devices)">Review</th>
               <Th label="Sector" k="tvSec" sort={sort} setSort={setSort} />
               {cols.map((k) => <Th key={k} label={fieldOf(k)?.label || k} k={k} sort={sort} setSort={setSort} num />)}
               <Th label="Quarter" k="q" sort={sort} setSort={setSort} />
@@ -497,10 +551,18 @@ export default function StockScreener() {
               <tr key={r.t} style={{ borderTop: `1px solid ${C.border}` }}>
                 <td style={{ ...td, color: C.dim }}><button type="button" onClick={() => setWhyTicker(r.t)} title="Show every filter for this company, with exact values" style={{ all: 'unset', cursor: 'pointer' }}>{i + 1}</button></td>
                 <td style={td}>
-                  <Link href={`/charts?t=${encodeURIComponent(r.t)}&m=${market}&tf=D`} style={{ color: C.accent, fontWeight: 700, textDecoration: 'none' }} title="Open the chart">{r.t}</Link>
+                  <Link href={`/charts?t=${encodeURIComponent(r.t)}&m=${market}&tf=D`} onClick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); window.location.assign(openForReview(r.t, r.exch?.[0])); }} style={{ color: C.accent, fontWeight: 700, textDecoration: 'none' }} title="Open the chart — Next / Previous on the chart step through these results in this order">{r.t}</Link>
                   <div style={{ fontSize: 11.5, color: C.dim, maxWidth: 240, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.n}</div>
                 </td>
-                <td style={{ ...td, fontSize: 12, color: C.dim, maxWidth: 160 }} title={[r.sec, r.ind].filter(Boolean).join(' · ')}>{r.tvSec || r.sec || '—'}</td>
+                <td style={td}>
+                  <select value={reviewStates[reviewKey(market, r.t)] || 'unreviewed'} onChange={(e) => setReview(r.t, e.target.value as ReviewState)} aria-label={`Review state for ${r.t}`}
+                    style={{ fontSize: 11.5, padding: '2px 4px', borderRadius: 5, border: `1px solid ${C.border}`, background: C.bg, color: (reviewStates[reviewKey(market, r.t)] || 'unreviewed') === 'unreviewed' ? C.dim : C.text }}>
+                    {REVIEW_STATES.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
+                  </select>
+                </td>
+                {(() => { const m = tvSectorMapping(market, r.sec, r.ind, r.t); return (
+                  <td style={{ ...td, fontSize: 12, color: C.dim, maxWidth: 160 }} title={`Source: ${[r.sec, r.ind].filter(Boolean).join(' · ') || 'none'}\nTradingView sector ${m.note}`}>{r.tvSec || r.sec || '—'}{m.basis === 'sector' ? ' ≈' : m.basis === 'checked' ? ' ✓' : ''}</td>
+                ); })()}
                 {cols.map((k) => {
                   const d = fieldOf(k); const v = r[k] as number | null;
                   const ax = r.approx?.includes(k);
@@ -514,8 +576,8 @@ export default function StockScreener() {
             ))}
           </tbody>
         </table>
-        {sorted.length > 200 ? (
-          <div style={{ padding: 8, textAlign: 'center' }}><button type="button" style={btn()} onClick={() => setShowAll((v) => !v)}>{showAll ? 'Show the first 200' : `Show all ${sorted.length}`}</button></div>
+        {narrowed.length > 200 ? (
+          <div style={{ padding: 8, textAlign: 'center' }}><button type="button" style={btn()} onClick={() => setShowAll((v) => !v)}>{showAll ? 'Show the first 200' : `Show all ${narrowed.length}`}</button></div>
         ) : null}
         {snap && !sorted.length ? <div style={{ padding: 14, color: C.dim, fontSize: 13 }}>{rows.length ? 'No company passes every filter. The small number on each filter shows which one is the tight one.' : (snap.notes[0] || 'No data yet.')}</div> : null}
       </div>
@@ -539,7 +601,7 @@ function Th({ label, k, sort, setSort, num }: { label: string; k: string; sort: 
 function FilterEditor({ f, market, tvSecCount, onChange, onClose }: { f: Filter; market: ScreenMarket; tvSecCount: Map<string, number>; onChange: (f: Filter) => void; onClose: () => void }) {
   const box: React.CSSProperties = { border: `1px solid ${C.border}`, borderRadius: 8, padding: 10, background: C.bg1, display: 'grid', gap: 8, fontSize: 13 };
   const inp: React.CSSProperties = { width: 110, padding: '4px 6px', borderRadius: 5, border: `1px solid ${C.border}`, background: C.bg, color: C.text };
-  const done = <button type="button" onClick={onClose} style={{ ...inp, width: 'auto', cursor: 'pointer' }}>Done</button>;
+  const done = <>{f.off ? <span style={{ color: C.amber, fontSize: 12 }}>⏸ paused — not applied</span> : null}<button type="button" onClick={() => onChange({ ...f, off: !f.off } as Filter)} style={{ ...inp, width: 'auto', cursor: 'pointer' }}>{f.off ? 'Turn on' : 'Pause'}</button><button type="button" onClick={onClose} style={{ ...inp, width: 'auto', cursor: 'pointer' }}>Done</button></>;
   const fieldSelect = (value: NumKey, set: (k: NumKey) => void, unit?: string) => (
     <select value={value} onChange={(e) => set(e.target.value as NumKey)} style={{ ...inp, width: 'auto' }}>
       {FIELDS.filter((x) => x.markets.includes(market) && (!unit || x.unit === unit)).map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}

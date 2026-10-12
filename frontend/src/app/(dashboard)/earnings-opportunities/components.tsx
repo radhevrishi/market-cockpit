@@ -6,6 +6,7 @@ import { QUADRANT_META } from '@/lib/earnings-grade-shared';
 import { CommentaryScoreBlock, SummaryView } from '@/components/us-earnings-card';
 import { scoreReleaseCommentary } from '@/lib/earnings/commentary-score';
 import { partWord, axisWord, decodeEntities, type MarginView } from '@/lib/india-eo-card-data';
+import { inGuideLine, IN_GUIDE_GLYPH, type InGuideLine } from '@/lib/in-guide-line';
 import type { CalendarPayload, ParsedEarning } from './types';
 
 /**
@@ -436,6 +437,39 @@ export function MetricTile({ label, pct, curr, prev, word, note, noteTitle }: { 
         <div title={noteTitle} style={{ fontSize: 9, color: 'var(--mc-text-3)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: noteTitle ? 'help' : undefined }}>
           ⓘ {note}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * zzz975 — ONE THIN LINE UNDER THE CHIPS: did management raise, keep or lower its guidance?
+ * The server puts `guide_line` on every served row (lib/in-guide-check); a card the browser graded itself gets the same
+ * pure verdict from its own text. Raised green, lowered red, mixed / cautious amber, everything else grey. The tooltip
+ * carries the company's sentence and where it came from; a top-tier quarter moved for it says so.
+ */
+export function InGuideOneLiner({ stock }: { stock: ParsedEarning }) {
+  const raw = (stock as any).guide_line;
+  const gl: InGuideLine = raw && typeof raw.text === 'string' && typeof raw.direction === 'string' ? raw : inGuideLine(stock, null);
+  const color = gl.direction === 'raised' ? 'var(--mc-bullish)'
+    : gl.direction === 'lowered' || gl.direction === 'withdrawn' ? 'var(--mc-bearish)'
+    : gl.direction === 'mixed' || gl.direction === 'cautious' ? 'var(--mc-caution, #F59E0B)'
+    : 'var(--mc-text-3)';
+  const moved = (stock as any).tier_before_guide_check;
+  const [head, ...rest] = gl.text.split(' — ');
+  const title = [gl.title, gl.source ? `Source: ${gl.source}` : '', moved ? `Moved from ${moved} to MIXED because of this.` : ''].filter(Boolean).join('\n');
+  return (
+    <div title={title} data-guide={gl.direction}
+      style={{ fontSize: 11, lineHeight: 1.35, color: 'var(--mc-text-2)', margin: '-3px 0 8px', display: 'flex', gap: 5, alignItems: 'baseline', minWidth: 0 }}>
+      <span aria-hidden style={{ flexShrink: 0 }}>{IN_GUIDE_GLYPH[gl.direction] || '…'}</span>
+      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+        <b style={{ color }}>{head}</b>
+        {rest.length > 0 && <span> — {rest.join(' — ')}</span>}
+        {moved && <span style={{ color: 'var(--mc-text-4)' }}> · moved from {moved} to MIXED</span>}
+        {gl.source && <span style={{ color: 'var(--mc-text-4)' }}> · {gl.source}</span>}
+      </span>
+      {gl.url && /^https?:\/\//.test(gl.url) && (
+        <a href={gl.url} target="_blank" rel="noopener noreferrer" style={{ flexShrink: 0, color: 'var(--mc-text-4)', textDecoration: 'none' }} aria-label="Open the source">↗</a>
       )}
     </div>
   );

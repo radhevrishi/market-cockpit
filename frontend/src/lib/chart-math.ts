@@ -253,24 +253,48 @@ export function aggregateBars(daily: Bar[], tf: Timeframe): Bar[] {
   return out;
 }
 
-/** zzz969 — total return: daily bars back-adjusted for cash dividends (TradingView's "adjust for dividends"): every bar before an
- *  ex-dividend day is multiplied by (1 − dividend ÷ the close before it), so the latest price is unchanged and a move over any
- *  period includes the dividends paid. Volume is untouched. Dividends with no earlier close are skipped. */
-export function backAdjustDividends(daily: Bar[], divs: ReadonlyArray<{ t: number; amount: number }>): Bar[] {
-  if (!divs.length || !daily.length) return daily.slice();
+/** zzz969 / N-05 — total return: daily bars back-adjusted for cash dividends, with each dividend REINVESTED AT THE EX-DATE
+ *  CLOSE. Every bar before an ex-date is multiplied by P_ex ÷ (P_ex + D), where P_ex is the ex-date bar's close and D the
+ *  dividend; factors compound across dividends, the latest price is unchanged and volume is untouched.
+ *  Check: previous close 100, ex-date close 110, dividend 10 → the old bar becomes 100 × 110 / 120 = 91.67, so the move is
+ *  +20% = (110 + 10) / 100 − 1, the wealth of a holder who reinvested the 10 at 110. (The older "1 − D ÷ previous close"
+ *  factor gave 90 and +22.2%.)
+ *  When the ex-date has no bar (holiday / data gap) or its close is missing / ≤ 0, the previous-close factor
+ *  (1 − D ÷ previous close) is used and that dividend is listed in `fallbacks`.
+ *  Split basis: Yahoo's chart API (events=div,split) returns closes AND dividend amounts both split-adjusted (NVDA's March 2024
+ *  dividend of $0.04 comes back as 0.004 next to closes near $90 before the 10:1 split), so no split conversion is needed. */
+export interface DividendAdjustment { bars: Bar[]; fallbacks: Array<{ t: number; amount: number; reason: 'no-ex-date-bar' | 'ex-close-missing' }>; skipped: number }
+export function backAdjustDividendsDetailed(daily: Bar[], divs: ReadonlyArray<{ t: number; amount: number }>): DividendAdjustment {
+  const fallbacks: DividendAdjustment['fallbacks'] = [];
+  let skipped = 0;
+  if (!divs.length || !daily.length) return { bars: daily.slice(), fallbacks, skipped };
+  const times = daily.map((b) => b.t);
   const factor = new Array(daily.length).fill(1);
   for (const d of divs) {
-    if (!(d.amount > 0)) continue;
-    let i = barIndexAt(daily.map((b) => b.t), d.t);          // the ex-day bar (or the last bar before it)
-    if (i >= 0 && daily[i].t === d.t) i -= 1;                 // the close BEFORE the ex-day
-    if (i < 0) continue;
-    const prevClose = daily[i].c;
-    if (!(prevClose > d.amount)) continue;
-    const f = 1 - d.amount / prevClose;
-    for (let k = 0; k <= i; k++) factor[k] *= f;
+    if (!(d.amount > 0)) { skipped++; continue; }
+    const at = barIndexAt(times, d.t);
+    const onExDate = at >= 0 && daily[at].t === d.t;
+    const before = onExDate ? at - 1 : at;                    // last bar BEFORE the ex-date
+    if (before < 0) { skipped++; continue; }                  // nothing earlier to adjust
+    const exClose = onExDate ? daily[at].c : NaN;
+    let f: number;
+    if (Number.isFinite(exClose) && exClose > 0) f = exClose / (exClose + d.amount);
+    else {
+      const prevClose = daily[before].c;
+      if (!(prevClose > d.amount)) { skipped++; continue; }
+      f = 1 - d.amount / prevClose;
+      fallbacks.push({ t: d.t, amount: d.amount, reason: onExDate ? 'ex-close-missing' : 'no-ex-date-bar' });
+    }
+    for (let k = 0; k <= before; k++) factor[k] *= f;
   }
-  return daily.map((b, i) => (factor[i] === 1 ? { ...b } : { t: b.t, o: b.o * factor[i], h: b.h * factor[i], l: b.l * factor[i], c: b.c * factor[i], v: b.v }));
+  const bars = daily.map((b, i) => (factor[i] === 1 ? { ...b } : { t: b.t, o: b.o * factor[i], h: b.h * factor[i], l: b.l * factor[i], c: b.c * factor[i], v: b.v }));
+  return { bars, fallbacks, skipped };
 }
+export function backAdjustDividends(daily: Bar[], divs: ReadonlyArray<{ t: number; amount: number }>): Bar[] {
+  return backAdjustDividendsDetailed(daily, divs).bars;
+}
+/** The one wording used wherever the total-return view is named (tooltip, provenance). */
+export const TOTAL_RETURN_LABEL = 'Total return — dividends reinvested at the ex-date close (chart adjustment, not an investment-account record)';
 
 /** Index of the bar at or just before `t` (bars sorted oldest first); -1 if `t` is before the first bar. */
 export function barIndexAt(times: number[], t: number): number {

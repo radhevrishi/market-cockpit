@@ -26,6 +26,12 @@ interface TickerSearchProps {
   allowBulk?: boolean;
   /** Auto-clear on select */
   clearOnSelect?: boolean;
+  /** zzz972 — told every time the typed text changes (incl. clear / select). */
+  onQueryChange?: (query: string) => void;
+  /** zzz972 — heading shown at the top of the suggestion list (e.g. "Add to list"). */
+  dropdownLabel?: string;
+  /** zzz972 — names of lists that already hold a suggested ticker, shown under it. */
+  membershipFor?: (ticker: string) => string[];
 }
 
 /* ── Component ─────────────────────────────────────────── */
@@ -37,6 +43,9 @@ export default function TickerSearch({
   placeholder = 'Search by company name or ticker...',
   allowBulk = false,
   clearOnSelect = true,
+  onQueryChange,
+  dropdownLabel,
+  membershipFor,
 }: TickerSearchProps) {
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState<TickerSuggestion[]>([]);
@@ -50,6 +59,11 @@ export default function TickerSearch({
   const abortRef = useRef<AbortController | null>(null);
 
   const existingSet = useMemo(() => new Set(existingTickers), [existingTickers]);
+
+  // zzz972 — report the typed text (a ref keeps an inline callback from re-firing the effect).
+  const onQueryChangeRef = useRef(onQueryChange);
+  useEffect(() => { onQueryChangeRef.current = onQueryChange; }, [onQueryChange]);
+  useEffect(() => { onQueryChangeRef.current?.(query); }, [query]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -258,6 +272,11 @@ export default function TickerSearch({
           marginTop: '4px', maxHeight: '320px', overflowY: 'auto',
           boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
         }}>
+          {dropdownLabel && (
+            <div style={{ padding: '6px 14px', fontSize: '10px', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--mc-text-4)', borderBottom: '1px solid var(--mc-bg-4)' }}>
+              {dropdownLabel}{suggestions.length > 0 ? ` (${suggestions.length})` : ''}
+            </div>
+          )}
           {suggestions.length > 0 ? suggestions.map((sug, idx) => {
             const isExisting = existingSet.has(sug.ticker);
             const isSelected = idx === selectedIdx;
@@ -287,6 +306,15 @@ export default function TickerSearch({
                     {sug.company}
                     {sug.sector !== '—' && <span style={{ color: 'var(--mc-text-4)' }}> · {sug.sector}</span>}
                   </div>
+                  {(() => {
+                    let inLists: string[] = [];
+                    try { inLists = membershipFor ? membershipFor(sug.ticker) : []; } catch { inLists = []; }
+                    return inLists.length > 0 ? (
+                      <div style={{ fontSize: '11px', color: 'var(--mc-warn)', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={'Already in: ' + inLists.join(' · ')}>
+                        in: {inLists.join(' · ')}
+                      </div>
+                    ) : null;
+                  })()}
                 </div>
                 <div style={{ textAlign: 'right', marginLeft: '12px', flexShrink: 0 }}>
                   {sug.price > 0 ? (

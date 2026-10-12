@@ -8,7 +8,9 @@ import toast from 'react-hot-toast';
 import TickerSearch, { type TickerSuggestion } from '@/components/TickerSearch';
 import { canonicalTicker } from '@/lib/ticker-normalize'; // PATCH 0721
 import { CHAT_ID, BOT_SECRET } from '@/lib/config';
-import { getConvictionList, removeConviction, syncFromEarningsOps, getBenchSince, setBenchSince, clearConvictionBeats, replaceConvictionFields, readConvictionBeats, type ConvictionEntry } from '@/lib/conviction-beats';
+import { findInList, buildMembershipIndex, membershipsFor, isBulkQuery } from '@/lib/watchlist-find'; // zzz972
+import { CHART_WATCHLISTS_KEY } from '@/lib/chart-watchlist'; // zzz972 — read-only: which chart lists hold a company
+import { getConvictionTickers, getConvictionList, removeConviction, syncFromEarningsOps, getBenchSince, setBenchSince, clearConvictionBeats, replaceConvictionFields, readConvictionBeats, type ConvictionEntry } from '@/lib/conviction-beats';
 // zzz811 — the Conviction Beats filter lives in one module, shared with Portfolio Catalysts.
 import { mergeCbEntries, serverBenchToCbEntries } from '@/lib/conviction-filter-india';
 // zzz827 — words not numbers, EO growth text, the hidden-names report, the stale-tier re-sync, the PC snapshot.
@@ -37,6 +39,7 @@ export default function WatchlistsPage() {
   const [quotes, setQuotes] = useState<StockQuote[]>([]);
   const [loading, setLoading] = useState(true);
   const [tickerInput, setTickerInput] = useState('');
+  const [findQuery, setFindQuery] = useState(''); // zzz972 — the search box also narrows the rows already in the list
   const [sortField, setSortField] = useState<SortField>('ticker');
   const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
@@ -586,6 +589,27 @@ export default function WatchlistsPage() {
     }));
   }, [quotes]);
 
+  // zzz972 — rows matching the search box (ticker or company); empty box = all rows.
+  const findActive = findQuery.trim().length > 0 && !isBulkQuery(findQuery);
+  const visibleItems = useMemo(() => findInList(sortedItems, findQuery), [sortedItems, findQuery]);
+
+  // zzz972 — which lists already hold a suggested company. Read-only, re-read from this browser while typing.
+  const membershipIndex = useMemo(() => {
+    const readJson = (key: string): unknown => {
+      try { const r = window.localStorage.getItem(key); return r ? JSON.parse(r) : null; } catch { return null; }
+    };
+    if (typeof window === 'undefined' || !findActive) return buildMembershipIndex({});
+    let conviction: string[] = [];
+    try { conviction = [...getConvictionTickers(), ...convictionEntries.map((e) => String(e.ticker || '')), ...serverBench.map((e) => String(e.ticker || ''))]; } catch { conviction = []; }
+    return buildMembershipIndex({
+      watchlist: tickers,
+      chartStore: readJson(CHART_WATCHLISTS_KEY),
+      portfolio: readJson('mc_portfolio_holdings'),
+      conviction,
+    });
+  }, [findActive, tickers, serverBench, convictionEntries]);   // built when a search starts; lists rarely change mid-typing
+  const membershipFor = useCallback((t: string) => membershipsFor(membershipIndex, t), [membershipIndex]);
+
   // Handle remove ticker — with rollback on failure
   const handleRemoveTicker = useCallback((ticker: string) => {
     const prevTickers = [...tickers];
@@ -811,9 +835,12 @@ export default function WatchlistsPage() {
             onSelect={handleSearchSelect}
             quotes={searchSuggestions}
             existingTickers={tickers}
-            placeholder="Search company name or ticker... (or paste bulk: INFY, TCS, RELIANCE)"
+            placeholder="Find in list or add: company name or ticker... (or paste bulk: INFY, TCS, RELIANCE)"
             allowBulk={true}
             clearOnSelect={true}
+            onQueryChange={setFindQuery}
+            dropdownLabel="Add to list"
+            membershipFor={membershipFor}
           />
         </div>
       </div>
@@ -844,11 +871,19 @@ export default function WatchlistsPage() {
         <div>
           <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <p style={{ fontSize: '12px', color: 'var(--mc-text-3)', margin: 0 }}>
-              {sortedItems.length} stocks · Last refreshed: {lastRefresh ? lastRefresh.toLocaleTimeString() : '—'}
+              {findActive
+                ? <><strong style={{ color: 'var(--mc-text-1)' }}>In this list ({visibleItems.length})</strong> matching “{findQuery.trim()}” · {sortedItems.length} stocks in all</>
+                : <>{sortedItems.length} stocks</>}
+              {' '}· Last refreshed: {lastRefresh ? lastRefresh.toLocaleTimeString() : '—'}
             </p>
           </div>
+          {findActive && visibleItems.length === 0 && (
+            <p style={{ fontSize: '13px', color: 'var(--mc-text-3)', margin: '0 0 12px' }}>
+              Not in this list. Pick it from “Add to list” to add it.
+            </p>
+          )}
           <WatchlistTable
-            items={sortedItems}
+            items={visibleItems}
             sortField={sortField}
             sortOrder={sortOrder}
             onSort={handleSort}

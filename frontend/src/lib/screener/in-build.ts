@@ -196,7 +196,7 @@ export function assembleInRow(t: string, name: string, latest: BhavDay, bhav: Bh
     evRev: mc != null && sales != null && sales > 0 && f?.borrowings != null && f?.cash != null ? r2((mc + f.borrowings - f.cash) / sales) : null,
     de: store?.raw ? f?.de ?? null : null, cash: f?.cash ?? null, emp: p?.emp ?? null, flt: null, bb: null, fs: f?.fs ?? null, q: f?.q ?? null,
     ...(f?.approx?.length ? { approx: f.approx } : {}),
-    tvSec: tvSectorOf('IN', f?.sector, f?.industry), exch: f ? (f.bse ? ['NSE', 'BSE'] : ['NSE']) : ['NSE'],
+    tvSec: tvSectorOf('IN', f?.sector, f?.industry, t), exch: f ? (f.bse ? ['NSE', 'BSE'] : ['NSE']) : ['NSE'],
     ...(tf ? {
       sma21: tf.sma21, sma100: tf.sma100, sma150: tf.sma150, ema10: tf.ema10, ema21: tf.ema21, ema50: tf.ema50, rsi: tf.rsi, rsiW: tf.rsiW, rsiM: tf.rsiM,
       atrP: tf.atrP, adrP: tf.adrP, chgOpen: tf.chgOpen, chg1W: tf.chg1W, perf1W: tf.perf1W, perf1M: tf.perf1M, perf3M: tf.perf3M,

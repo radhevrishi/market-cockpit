@@ -115,13 +115,15 @@ export const fieldOf = (k: string): FieldDef | undefined => FIELDS.find((f) => f
  *   date   — a date field this calendar month, or within the last `v` years. */
 export type CmpOp = 'above' | 'below' | 'ge' | 'le';
 export type NumOp = 'gt' | 'ge' | 'lt' | 'le' | 'between';
-export type Filter =
+/** zzz974 — `off`: the rule is paused (kept in the screen, not applied). */
+export type Filter = (
   | { kind: 'num'; key: NumKey; op: NumOp; v: number; v2?: number }
   | { kind: 'cmp'; key: NumKey; op: CmpOp; other: NumKey }
   | { kind: 'near'; key: NumKey; other: NumKey; lo: number; hi: number }
   | { kind: 'sector'; sectors: string[] }
   | { kind: 'exch'; ex: string[] }
-  | { kind: 'date'; key: NumKey; op: 'thisMonth' | 'pastYears'; v?: number };
+  | { kind: 'date'; key: NumKey; op: 'thisMonth' | 'pastYears'; v?: number }
+) & { off?: boolean };
 
 export interface Screen { id: string; name: string; market: ScreenMarket; filters: Filter[]; builtIn?: boolean; note?: string }
 
@@ -132,6 +134,7 @@ const DAY = 86_400_000;
 /** exactOnly (zzz957): a figure this company has only as an approximation (≈ on the row, e.g. EV / revenue with debt taken as 0
  *  because no debt line is filed) fails the filter instead of passing on an assumption. */
 export function passes(r: ScreenRow, f: Filter, now: Date = new Date(), exactOnly = false): boolean {
+  if (f.off) return true;
   if (f.kind === 'sector') {
     if (!f.sectors.length) return true;
     // a screen saved before zzz948 ticks the source's own sector names; TradingView names are matched against our TradingView sector
@@ -377,6 +380,10 @@ export const BUILT_IN_SCREENS: readonly Screen[] = [
 /** Saved screens are kept in the browser (synced to the owner's database by the vault). Pure clean-up of what was stored. */
 export const SCREENS_KEY = 'mc:stock-screens:v1';
 function cleanFilter(f: any): Filter | null {
+  const c = cleanFilterShape(f);
+  return c && f.off === true ? { ...c, off: true } : c;
+}
+function cleanFilterShape(f: any): Filter | null {
   if (!f || typeof f !== 'object') return null;
   if (f.kind === 'sector') return Array.isArray(f.sectors) ? { kind: 'sector', sectors: f.sectors.filter((s: unknown) => typeof s === 'string').slice(0, 40) } : null;
   if (f.kind === 'exch') return Array.isArray(f.ex) ? { kind: 'exch', ex: f.ex.filter((s: unknown) => typeof s === 'string').slice(0, 10) } : null;
