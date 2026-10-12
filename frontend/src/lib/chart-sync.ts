@@ -13,7 +13,8 @@ export const CHART_DRAWINGS_KEY = 'mc:chart-drawings:v1';
 export interface DrawingEntry { at: number; d: SavedDrawing[] }
 export interface DrawingStoreV2 { v: 2; items: Record<string, DrawingEntry> }
 
-const KEY_RE = /^(IN|US):(?:BSE:)?[A-Z0-9][A-Z0-9&.\-]{0,19}$/;
+// zzz969 — an optional '#<set-id>' names a second drawing set for the same chart (lib/chart-drawing-sets.ts)
+const KEY_RE = /^(IN|US):(?:BSE:)?[A-Z0-9][A-Z0-9&.\-]{0,19}(?:#[a-z0-9-]{1,24})?$/;
 
 /** Read either shape: the old `{ "US:QQQ": [...] }` (time 0 — older than anything saved since) or v2. */
 export function readDrawingStore(raw: unknown): DrawingStoreV2 {

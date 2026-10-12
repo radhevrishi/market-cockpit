@@ -12,7 +12,7 @@ test('actual chart load effect: A → pending B → cached A, polling and exchan
   const end = source.indexOf('  }, [ready, ticker, market', start);
   assert.ok(start >= 0 && end > start);
   const body = source.slice(start + '  useEffect(() => {'.length, end);
-  const names = ['ready','ticker','market','exchange','tf','dataRange','TF_TO_INTERVAL','chartRef','barsRef','setBars','setHoverIdx','TF_TO_PERIOD','setInfo','setError','restoreDrawings','drawingKey','setLoadedVersion','cacheRef','setLoading','fetch','loadedUrlRef','barUpdatesRef','keyRef','setSavedAt','setSyncedAt','freshChart','cacheChart','pollWhenVisible','toolRef'];
+  const names = ['ready','ticker','market','exchange','tf','dataRange','TF_TO_INTERVAL','chartRef','barsRef','setBars','setHoverIdx','TF_TO_PERIOD','setInfo','setError','restoreDrawings','drawingKey','setLoadedVersion','cacheRef','setLoading','fetch','loadedUrlRef','barUpdatesRef','keyRef','setSavedAt','setSyncedAt','freshChart','cacheChart','pollWhenVisible','toolRef','basis'];
   const compiled = transformSync(`function effect(${names.join(',')}) {${body}}`, { loader: 'ts', target: 'es2022' }).code;
   const effect = new Function(`${compiled};return effect;`)();
   let loading = false, info: any, error: any, restores = 0, requests = 0, price = 1;
@@ -20,7 +20,7 @@ test('actual chart load effect: A → pending B → cached A, polling and exchan
   const updates: any[] = [], polls = new Set<() => void>();
   const chart = { setPeriod() {}, setSymbol() {}, resetData() {} };
   const fetcher = async (url: string) => { requests++; if (url.includes('/B?')) return new Promise(() => {}); return { ok: true, json: async () => ({ ok: true, ticker: 'A', bars: { t: [1], o: [1], h: [price], l: [1], c: [price], v: [1] } }) }; };
-  const call = (ticker: string, exchange?: string) => effect(true, ticker, 'IN', exchange, 'D', '2y', { D: '1d' }, { current: chart }, barsRef, () => {}, () => {}, { D: {} }, (j: any) => { info = j; }, (e: any) => { error = e; }, (k: string) => { restores++; keyRef.current = k; }, drawingKey, () => {}, cacheRef, (v: boolean) => { loading = v; }, fetcher, loadedUrlRef, { current: (bar: any) => updates.push(bar) }, keyRef, () => {}, () => {}, freshChart, cacheChart, (fn: () => void) => { polls.add(fn); return () => polls.delete(fn); }, { current: 'cursor' });
+  const call = (ticker: string, exchange?: string) => effect(true, ticker, 'IN', exchange, 'D', '2y', { D: '1d' }, { current: chart }, barsRef, () => {}, () => {}, { D: {} }, (j: any) => { info = j; }, (e: any) => { error = e; }, (k: string) => { restores++; keyRef.current = k; }, drawingKey, () => {}, cacheRef, (v: boolean) => { loading = v; }, fetcher, loadedUrlRef, { current: (bar: any) => updates.push(bar) }, keyRef, () => {}, () => {}, freshChart, cacheChart, (fn: () => void) => { polls.add(fn); return () => polls.delete(fn); }, { current: 'cursor' }, 'price');
   const settle = () => new Promise((r) => setTimeout(r, 10));
   let cleanup = call('A'); await settle();
   assert.equal(loading, false); assert.equal(info.ticker, 'A');

@@ -4,6 +4,7 @@ import { type ConvictionEntry } from '@/lib/conviction-beats';
 import { type EarningsScanCard } from '@/components/EarningsScanCard';
 import { COL_PREFS_KEY, DEFAULT_TICKERS, STORAGE_KEY, RICH_LS_KEY, RICH_TTL_MS } from './constants';
 import { type OptionalCol, type StockQuote, type RichCache, type HubFilters } from './types';
+import { sharedFetchJson } from '@/lib/tab-shared-fetch';
 
 export function loadColPrefs(): Set<OptionalCol> {
   if (typeof window === 'undefined') return new Set();
@@ -52,9 +53,9 @@ export const fetchStockQuotes = async (market: string = 'india'): Promise<StockQ
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), 25_000); // PATCH 1037
   try {
-    const res = await fetch(`/api/market/quotes?market=${market}`, { signal: ctl.signal });
-    if (!res.ok) throw new Error('Failed to fetch quotes');
-    const data = await res.json();
+    // zzz969 — one request for all open tabs (Watchlists, Movers, Heatmap poll the same URL)
+    const data: any = await sharedFetchJson(`/api/market/quotes?market=${market}`, 50_000, ctl.signal);
+    if (!data) throw new Error('Failed to fetch quotes');
     return (data.stocks || []).map((stock: any) => ({
       ticker: stock.ticker,
       company: stock.company || stock.ticker,

@@ -24,6 +24,7 @@
 // double the NSE API quota burn.
 
 import { useQuery } from '@tanstack/react-query';
+import { sharedFetchJson } from '@/lib/tab-shared-fetch';
 
 export type MarketQuote = {
   symbol?: string;
@@ -123,9 +124,9 @@ export async function fetchQuotesShared(opts: FetchQuotesOpts = {}): Promise<Quo
   if (!shared || opts.force) {
     shared = (async () => {
       try {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`quotes ${res.status}`);
-        const json = (await res.json()) as QuotesResponse;
+        // zzz969 — shared with the other open tabs; a forced refresh always asks the server
+        const json = (opts.force ? await fetch(url).then((r) => { if (!r.ok) throw new Error(`quotes ${r.status}`); return r.json(); }) : await sharedFetchJson<QuotesResponse>(url, ttl)) as QuotesResponse | null;
+        if (!json) throw new Error('quotes unavailable');
         _payloadCache.set(url, { ts: Date.now(), payload: json });
         return json;
       } finally {

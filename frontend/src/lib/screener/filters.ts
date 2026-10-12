@@ -6,7 +6,7 @@
 import type { ScreenRow, ScreenMarket } from './types';
 import { TV_SECTORS, allSectorsExcept, type TvSector } from './tv-sectors';
 
-type NonNum = 't' | 'n' | 'sec' | 'ind' | 'q' | 'approx' | 'tvSec' | 'exch';
+type NonNum = 't' | 'n' | 'sec' | 'ind' | 'q' | 'approx' | 'tvSec' | 'exch' | 'nq' | 'cc';
 export type NumKey = Exclude<keyof ScreenRow, NonNum>;
 export type FieldUnit = '%' | 'x' | 'money' | 'num' | 'price' | 'shares' | 'usd' | 'date';
 export type FieldGroup = 'Price & volume' | 'Moving averages' | 'Momentum' | 'Growth' | 'Margins & returns' | 'Valuation' | 'Balance sheet' | 'Company';
@@ -22,7 +22,7 @@ export const FIELDS: readonly FieldDef[] = [
   { key: 'px', label: 'Price', unit: 'price', markets: BOTH, group: 'Price & volume' },
   { key: 'chg', label: 'Change today', unit: '%', markets: BOTH, group: 'Price & volume' },
   { key: 'chgOpen', label: 'Change from open', unit: '%', markets: BOTH, group: 'Price & volume' },
-  { key: 'chg1W', label: 'Change this week', unit: '%', markets: BOTH, group: 'Price & volume' },
+  { key: 'chg1W', label: 'Change this week (since last week’s close)', unit: '%', markets: BOTH, group: 'Price & volume' },
   { key: 'mc', label: 'Market cap', unit: 'money', markets: BOTH, group: 'Price & volume' },
   { key: 'vol', label: 'Volume (last day)', unit: 'shares', markets: BOTH, group: 'Price & volume' },
   { key: 'vol1W', label: 'Volume this week', unit: 'shares', markets: BOTH, group: 'Price & volume' },
@@ -46,7 +46,8 @@ export const FIELDS: readonly FieldDef[] = [
   { key: 'rsiM', label: 'RSI 14, monthly', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: 'worked out on 5 years of monthly closes (TradingView uses the whole history) — usually within 1 point', IN: 'worked out on 5 years of monthly closes (TradingView uses the whole history) — usually within 1 point' } },
   { key: 'atrP', label: 'ATR % (14 days)', unit: '%', markets: BOTH, group: 'Momentum', approxNote: { IN: PRICE_IN } },
   { key: 'adrP', label: 'Average day range %', unit: '%', markets: BOTH, group: 'Momentum', approxNote: { IN: PRICE_IN } },
-  { key: 'perf1W', label: 'Performance 1 week', unit: '%', markets: BOTH, group: 'Momentum' },
+  { key: 'perf5D', label: 'Change, last 5 trading sessions', unit: '%', markets: BOTH, group: 'Momentum', sparse: { US: 'filled as each company’s prices are re-read after 12 Oct 2026', IN: 'filled as each company’s prices are re-read after 12 Oct 2026' } },
+  { key: 'perf1W', label: 'Performance 1 week (7 calendar days)', unit: '%', markets: BOTH, group: 'Momentum' },
   { key: 'perf1M', label: 'Performance 1 month', unit: '%', markets: BOTH, group: 'Momentum' },
   { key: 'perf3M', label: 'Performance 3 months', unit: '%', markets: BOTH, group: 'Momentum' },
   { key: 'perf6M', label: 'Performance 6 months', unit: '%', markets: BOTH, group: 'Momentum' },

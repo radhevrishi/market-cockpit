@@ -36,6 +36,8 @@ export interface ScreenRow {
   fs: number | null;         // Piotroski F-score (0–9), latest full year
   q: string | null;          // the latest quarter the figures describe (e.g. 'Q2 2026')
   approx?: string[];         // fields worked out in a rougher way for this company (shown with ≈)
+  /** zzz969 — read during a trading session: the same price figures as of the last COMPLETED session (close-confirmed mode) */
+  cc?: Partial<Record<string, number | null>>;
   nq?: 'recent-listing' | 'not-in-sec' | 'annual-only' | 'missing-tags';   // zzz967 (SC-02) — why there are no quarterly figures (US)
 
   // ── zzz948: TradingView names ───────────────────────────────────────────────────────────────────────────────────────
@@ -49,7 +51,7 @@ export interface ScreenRow {
   adrP?: number | null;      // average day range %, 20 days
   chgOpen?: number | null;   // change from today's open %
   chg1W?: number | null;     // change this week (vs last week's close) %
-  perf1W?: number | null; perf1M?: number | null; perf3M?: number | null; perf6M?: number | null;
+  perf5D?: number | null; perf1W?: number | null; perf1M?: number | null; perf3M?: number | null; perf6M?: number | null;
   perfYTD?: number | null; perf1Y?: number | null; perf5Y?: number | null; perfAll?: number | null;
   avgVol30?: number | null; avgVol60?: number | null;
   vol1W?: number | null;     // this week's volume so far

@@ -253,6 +253,25 @@ export function aggregateBars(daily: Bar[], tf: Timeframe): Bar[] {
   return out;
 }
 
+/** zzz969 — total return: daily bars back-adjusted for cash dividends (TradingView's "adjust for dividends"): every bar before an
+ *  ex-dividend day is multiplied by (1 − dividend ÷ the close before it), so the latest price is unchanged and a move over any
+ *  period includes the dividends paid. Volume is untouched. Dividends with no earlier close are skipped. */
+export function backAdjustDividends(daily: Bar[], divs: ReadonlyArray<{ t: number; amount: number }>): Bar[] {
+  if (!divs.length || !daily.length) return daily.slice();
+  const factor = new Array(daily.length).fill(1);
+  for (const d of divs) {
+    if (!(d.amount > 0)) continue;
+    let i = barIndexAt(daily.map((b) => b.t), d.t);          // the ex-day bar (or the last bar before it)
+    if (i >= 0 && daily[i].t === d.t) i -= 1;                 // the close BEFORE the ex-day
+    if (i < 0) continue;
+    const prevClose = daily[i].c;
+    if (!(prevClose > d.amount)) continue;
+    const f = 1 - d.amount / prevClose;
+    for (let k = 0; k <= i; k++) factor[k] *= f;
+  }
+  return daily.map((b, i) => (factor[i] === 1 ? { ...b } : { t: b.t, o: b.o * factor[i], h: b.h * factor[i], l: b.l * factor[i], c: b.c * factor[i], v: b.v }));
+}
+
 /** Index of the bar at or just before `t` (bars sorted oldest first); -1 if `t` is before the first bar. */
 export function barIndexAt(times: number[], t: number): number {
   let lo = 0, hi = times.length - 1, ans = -1;

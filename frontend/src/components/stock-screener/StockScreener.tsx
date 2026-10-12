@@ -17,6 +17,10 @@ import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
 import { useWatchlistStore } from '@/components/charts/WatchlistPanel';
 import { activeList, updateList, addItem, listCount, type WlItem } from '@/lib/chart-watchlist';
 import { toCsv } from '@/lib/csv';
+import {
+  explainRow, naReason, closeConfirmed, stableOrder, exact, makeShortlist, cleanShortlists, diffShortlist, formulaImpact, changesSince,
+  FORMULA_VERSION, SHORTLISTS_KEY, SCREEN_RUNS_KEY, type Shortlist, type ScreenRun,
+} from '@/lib/screener/research';
 
 const C = {
   text: 'var(--mc-text-0)', text1: 'var(--mc-text-1)', dim: 'var(--mc-text-3, #6b7280)', border: 'var(--mc-border-1)',
@@ -33,6 +37,13 @@ function writeSaved(list: Screen[]): boolean {
 }
 const saved0 = (): Screen[] => (typeof window === 'undefined' ? [] : readSaved());
 const newId = () => `my-${Date.now().toString(36)}`;
+// zzz969 — unsaved filters per screen, kept so a reload or a screen switch does not lose them
+const DRAFTS_KEY = 'mc:screener-drafts:v1';
+type Draft = { market: ScreenMarket; name: string; filters: Filter[]; at: string };
+function readDrafts(): Record<string, Draft> { try { return typeof window === 'undefined' ? {} : (JSON.parse(localStorage.getItem(DRAFTS_KEY) || '{}') || {}); } catch { return {}; } }
+function writeDraft(id: string, d: Omit<Draft, 'at'> | null): void {
+  try { const all = readDrafts(); if (d) all[id] = { ...d, at: new Date().toISOString() }; else delete all[id]; localStorage.setItem(DRAFTS_KEY, JSON.stringify(all)); } catch { /* drafts are a convenience */ }
+}
 const GROUPS: FieldGroup[] = ['Price & volume', 'Moving averages', 'Momentum', 'Growth', 'Margins & returns', 'Valuation', 'Balance sheet', 'Company'];
 function firstScreen(): Screen {
   let id: string | null = null;
@@ -45,8 +56,12 @@ export default function StockScreener() {
   // zzz957: "exact figures only" — approximate (≈) figures fail filters instead of passing on an assumption; remembered here
   const [exactOnly, setExactOnly] = useState(() => { try { return localStorage.getItem('mc:screener-exact:v1') === '1'; } catch { return false; } });
   const toggleExact = () => setExactOnly((v) => { try { localStorage.setItem('mc:screener-exact:v1', v ? '0' : '1'); } catch { /* this visit only */ } return !v; });
+  // zzz969 — close-confirmed mode: price figures of the last COMPLETED session when the snapshot was read during trading
+  const [closeOnly, setCloseOnly] = useState(() => { try { return localStorage.getItem('mc:screener-close-only:v1') === '1'; } catch { return false; } });
+  const toggleClose = () => setCloseOnly((v) => { try { localStorage.setItem('mc:screener-close-only:v1', v ? '0' : '1'); } catch { /* this visit only */ } return !v; });
   const [first] = useState<Screen>(() => firstScreen());
-  const [market, setMarket] = useState<ScreenMarket>(first.market);
+  const [draft0] = useState<Draft | null>(() => { const d = readDrafts()[first.id]; return d && Array.isArray(d.filters) ? d : null; });
+  const [market, setMarket] = useState<ScreenMarket>(draft0?.market || first.market);
   const [snaps, setSnaps] = useState<Partial<Record<ScreenMarket, Snap>>>({});
   const [errors, setErrors] = useState<Partial<Record<ScreenMarket, string | null>>>({});
   const err = errors[market] || null;
@@ -54,9 +69,9 @@ export default function StockScreener() {
   const [loading, setLoading] = useState(false);
   const [saved, setSaved] = useState<Screen[]>(() => readSaved());   // the page loads in the browser only (ssr:false)
   const [screenId, setScreenId] = useState<string>(first.id);
-  const [filters, setFilters] = useState<Filter[]>(() => JSON.parse(JSON.stringify((saved0().find((x) => x.id === first.id) || first).filters)));
-  const [name, setName] = useState(() => (saved0().find((x) => x.id === first.id) || first).name);
-  const [dirty, setDirty] = useState(false);
+  const [filters, setFilters] = useState<Filter[]>(() => draft0?.filters || JSON.parse(JSON.stringify((saved0().find((x) => x.id === first.id) || first).filters)));
+  const [name, setName] = useState(() => draft0?.name || (saved0().find((x) => x.id === first.id) || first).name);
+  const [dirty, setDirty] = useState(!!draft0);
   const [editIdx, setEditIdx] = useState<number | null>(null);
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 }>({ key: 'mc', dir: -1 });
   const [showAll, setShowAll] = useState(false);
@@ -64,6 +79,10 @@ export default function StockScreener() {
   const [watchlists, updateWatchlists, watchlistSaveError, retryWatchlistSave] = useWatchlistStore();
   const [addingMatches, setAddingMatches] = useState(false);
   const [targetList, setTargetList] = useState('');
+  const [whyTicker, setWhyTicker] = useState('');
+  const [shortlists, setShortlists] = useState<Shortlist[]>(() => { try { return cleanShortlists(JSON.parse(localStorage.getItem(SHORTLISTS_KEY) || '[]')); } catch { return []; } });
+  const [openSl, setOpenSl] = useState<string | null>(null);
+  const [pendingSwitch, setPendingSwitch] = useState<string | null>(null);
 
   // every screen the owner can pick: his saved ones win over a built-in with the same id
   const screens = useMemo(() => {
@@ -120,7 +139,9 @@ export default function StockScreener() {
   }, [market, refresh]);
 
   const snap = snaps[market];
-  const rows = useMemo(() => snap?.rows || [], [snap]);
+  const rawRows = useMemo(() => snap?.rows || [], [snap]);
+  const intradayRows = useMemo(() => rawRows.filter((r) => r.cc).length, [rawRows]);
+  const rows = useMemo(() => (closeOnly ? rawRows.map(closeConfirmed) : rawRows), [rawRows, closeOnly]);
   const result = useMemo(() => runScreen(rows, filters, new Date(), exactOnly), [rows, filters, exactOnly]);
   const counts = useMemo(() => filterCounts(rows, filters, new Date(), exactOnly), [rows, filters, exactOnly]);
   // how many companies have each field yet (a field still filling shows a note on its filter)
@@ -152,7 +173,13 @@ export default function StockScreener() {
     });
     return out;
   }, [result, sort]);
-  const shown = showAll ? sorted : sorted.slice(0, 200);
+  // zzz969 — rows keep their places when new data arrives (the snapshot reloads every few minutes); "Re-sort now" re-orders
+  const [resortTick, setResortTick] = useState(0);
+  const ctx = `${market}|${screenId}|${JSON.stringify(filters)}|${sort.key}|${sort.dir}|${exactOnly}|${closeOnly}|${resortTick}`;
+  const [frozen, setFrozen] = useState<{ ctx: string; keys: string[] } | null>(null);
+  const ordered = useMemo(() => stableOrder(frozen && frozen.ctx === ctx ? frozen.keys : null, sorted, (r) => r.t), [sorted, ctx, frozen]);
+  if (sorted.length && (!frozen || frozen.ctx !== ctx)) setFrozen({ ctx, keys: sorted.map((r) => r.t) });   // a new view: its own order
+  const shown = showAll ? ordered.rows : ordered.rows.slice(0, 200);
   const addMatches = () => {
     if (!watchlists || !sorted.length) return;
     if (targetList && !watchlists.lists.some((l) => l.id === targetList)) { setMsg('Could not add: the selected watchlist no longer exists. Choose a destination.'); return; }
@@ -169,6 +196,59 @@ export default function StockScreener() {
   };
 
   const change = (next: Filter[]) => { setFilters(next); setDirty(true); };
+
+  // ── zzz969 — drafts: unsaved filters survive a reload, and switching screens asks first ──────────────────────────────
+  useEffect(() => { if (dirty) writeDraft(screenId, { market, name, filters }); }, [dirty, screenId, market, name, filters]);
+  const [draftNote, setDraftNote] = useState<string | null>(() => (draft0 ? `Restored your unsaved filters from ${new Date(draft0.at).toLocaleString()}.` : null));
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
+  const askSwitch = (id: string) => { if (id === screenId) return; if (dirty) setPendingSwitch(id); else switchTo(id); };
+  const switchTo = (id: string) => {
+    setPendingSwitch(null); setDraftNote(null);
+    const d = readDrafts()[id];
+    loadScreen(id);
+    if (d && Array.isArray(d.filters)) { setFilters(d.filters); setMarket(d.market); setName(d.name); setDirty(true); setDraftNote(`Your unsaved filters for this screen (from ${new Date(d.at).toLocaleString()}) are open.`); }
+  };
+  const discardDraft = () => { writeDraft(screenId, null); setDraftNote(null); loadScreen(screenId); };
+
+  // ── zzz969 — shortlists: a saved result that can be reopened exactly, and what changed since ────────────────────────
+  const writeShortlists = (list: Shortlist[]) => { try { localStorage.setItem(SHORTLISTS_KEY, JSON.stringify(list)); setShortlists(list); return true; } catch { setMsg('Not saved: storage is full or blocked.'); return false; } };
+  const saveShortlist = () => {
+    if (!sorted.length) return;
+    const nm = (window.prompt('Name for this shortlist', `${name} — ${new Date().toLocaleDateString()}`) || '').trim();
+    if (!nm) return;
+    const sl = makeShortlist({ name: nm.slice(0, 80), market, screenId, screenName: name, filters, exactOnly, closeOnly, snapshotBuiltAt: snap?.builtAt || null }, sorted, cols as string[]);
+    if (writeShortlists([...shortlists, sl].slice(-60))) { setMsg(`Shortlist "${sl.name}" saved (${sl.rows.length} companies)`); setTimeout(() => setMsg(null), 3000); }
+  };
+  const openShortlist = openSl ? shortlists.find((x) => x.id === openSl) || null : null;
+  const slDiff = useMemo(() => {
+    if (!openShortlist || openShortlist.market !== market || !rawRows.length) return null;
+    const base = openShortlist.closeOnly ? rawRows.map(closeConfirmed) : rawRows;
+    return diffShortlist(openShortlist, base, runScreen(base, openShortlist.filters, new Date(), openShortlist.exactOnly), market);
+  }, [openShortlist, rawRows, market]);
+
+  // ── zzz969 — formula-version impact: did a calculation change since this screen last ran in this browser? ───────────
+  const [impactSeen, setImpactSeen] = useState<string | null>(null);
+  const prevRun = useMemo<ScreenRun | undefined>(() => { try { return (JSON.parse(localStorage.getItem(SCREEN_RUNS_KEY) || '{}') || {})[screenId]; } catch { return undefined; } }, [screenId]);   // read once per screen
+  const impact = useMemo(() => {
+    if (!snap || !rows.length || dirty || impactSeen === screenId) return null;
+    const imp = formulaImpact(prevRun, result.map((r) => r.t));
+    return imp && (imp.added.length || imp.removed.length) ? imp : null;
+  }, [snap, rows.length, dirty, impactSeen, screenId, prevRun, result]);
+  useEffect(() => {
+    if (!snap || !rows.length || dirty) return;
+    let runs: Record<string, ScreenRun> = {};
+    try { runs = JSON.parse(localStorage.getItem(SCREEN_RUNS_KEY) || '{}') || {}; } catch { /* none */ }
+    runs[screenId] = { v: FORMULA_VERSION, at: new Date().toISOString(), tickers: result.map((r) => r.t).slice(0, 2000) };
+    try { localStorage.setItem(SCREEN_RUNS_KEY, JSON.stringify(runs)); } catch { /* a convenience */ }
+  }, [snap, screenId]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  const whyRow = useMemo(() => { const t = whyTicker.trim().toUpperCase(); return t ? rows.find((r) => r.t === t) || null : null; }, [whyTicker, rows]);
+  const whyChecks = useMemo(() => (whyRow ? explainRow(whyRow, filters, market, new Date(), exactOnly) : []), [whyRow, filters, market, exactOnly]);
   const save = (asNew: boolean) => {
     const id = asNew ? newId() : screenId;
     const nm = asNew ? (window.prompt('Name for this screen', `${name} (copy)`) || '').trim() : name;
@@ -177,6 +257,7 @@ export default function StockScreener() {
     const list = [...readSaved().filter((x) => x.id !== id), s];
     if (!writeSaved(list)) { setDirty(true); setMsg('Not saved: storage is full or blocked. Your filters are still open; retry Save or download the results.'); return; }
     setSaved(list); setScreenId(id); setName(s.name); setDirty(false);
+    writeDraft(screenId, null); writeDraft(id, null); setDraftNote(null);
     try { localStorage.setItem(LAST_KEY, id); } catch { /* blocked */ }
     setMsg(`Saved "${s.name}"`); setTimeout(() => setMsg(null), 2500);
   };
@@ -237,7 +318,7 @@ export default function StockScreener() {
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <b style={{ fontSize: 18 }}>Stock Screener</b>
         <WorkspaceThemeToggle light={light} onToggle={toggleLight} />
-        <select value={screenId} onChange={(e) => loadScreen(e.target.value)} style={{ ...btn(), fontSize: 14, maxWidth: 380 }} aria-label="Screens">
+        <select value={screenId} onChange={(e) => askSwitch(e.target.value)} style={{ ...btn(), fontSize: 14, maxWidth: 380 }} aria-label="Screens">
           <optgroup label="🇺🇸 USA — your TradingView screens">{screens.filter((s) => builtInIds.has(s.id) && s.market === 'US').map(opt)}</optgroup>
           <optgroup label="🇮🇳 India — your TradingView screens">{screens.filter((s) => builtInIds.has(s.id) && s.market === 'IN').map(opt)}</optgroup>
           {mine.length ? <optgroup label="Made here">{mine.map((s) => <option key={s.id} value={s.id}>{s.market === 'IN' ? '🇮🇳' : '🇺🇸'} {s.name}</option>)}</optgroup> : null}
@@ -251,6 +332,33 @@ export default function StockScreener() {
         {msg ? <span role="status" style={{ color: /^(Not saved|Could not)/.test(msg) ? C.red : C.text1, fontSize: 13, fontWeight: 700 }}>{msg}</span> : null}
       </div>
       {note && !dirty ? <div style={{ fontSize: 12.5, color: C.dim }}>ℹ {note}</div> : null}
+      {pendingSwitch ? (
+        <div role="dialog" aria-label="Unsaved filters" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: 10, border: `1px solid ${C.amber}`, borderRadius: 8, fontSize: 13 }}>
+          <b>&quot;{name}&quot; has unsaved filter changes.</b>
+          <button type="button" style={btn(true)} onClick={() => { save(false); switchTo(pendingSwitch); }}>Save and switch</button>
+          <button type="button" style={btn()} onClick={() => switchTo(pendingSwitch)} title="Your changes stay saved as a draft for this screen and come back when you open it again">Keep draft and switch</button>
+          <button type="button" style={btn()} onClick={() => { writeDraft(screenId, null); switchTo(pendingSwitch); }}>Discard and switch</button>
+          <button type="button" style={btn()} onClick={() => setPendingSwitch(null)}>Stay</button>
+        </div>
+      ) : null}
+      {draftNote ? <div style={{ fontSize: 12.5, color: C.amber }}>✎ {draftNote} <button type="button" style={btn()} onClick={() => save(false)}>Save</button> <button type="button" style={btn()} onClick={discardDraft}>Discard draft</button></div> : null}
+      {impact ? (
+        <div style={{ fontSize: 12.5, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 10px' }}>
+          <b>Formulas changed since this screen last ran here</b> — {impact.added.length} entered, {impact.removed.length} left
+          {impact.added.length ? <span> · in: {impact.added.slice(0, 12).join(', ')}{impact.added.length > 12 ? '…' : ''}</span> : null}
+          {impact.removed.length ? <span> · out: {impact.removed.slice(0, 12).join(', ')}{impact.removed.length > 12 ? '…' : ''}</span> : null}
+          <ul style={{ margin: '4px 0 0 16px', color: C.dim }}>{impact.notes.map((x, i) => <li key={i}>{x}</li>)}</ul>
+          <span style={{ color: C.dim }}>(price moves and new filings can also change the list — the shortlist panel shows the cause per company)</span>
+          <button type="button" style={{ ...btn(), marginLeft: 8 }} onClick={() => setImpactSeen(screenId)}>OK</button>
+        </div>
+      ) : null}
+      {intradayRows > 0 ? (
+        <div style={{ fontSize: 12.5, color: closeOnly ? C.green : C.amber }}>
+          {closeOnly
+            ? `◉ Completed sessions only: ${intradayRows} companies were read during trading — their price, change and moving averages are the last CLOSE, not today's live values.`
+            : `◌ ${intradayRows} companies were read during today's session — a cross above SMA 50 now may not hold at the close. Tick "Completed sessions only" to screen on closing prices.`}
+        </div>
+      ) : null}
 
       {/* filter chips */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -303,6 +411,17 @@ export default function StockScreener() {
         <label title="On: a figure worked out with an assumption (shown with ≈, e.g. EV / revenue with debt taken as 0 because the company files no debt line) does not count as passing a filter" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 13, cursor: 'pointer' }}>
           <input type="checkbox" checked={exactOnly} onChange={toggleExact} aria-label="Exact figures only" /> Exact figures only (no ≈)
         </label>
+        <label title="On: for companies read during today's trading session, price, change and moving averages are taken from the last completed session (a close-confirmed breakout), not the live price" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 13, cursor: 'pointer' }}>
+          <input type="checkbox" checked={closeOnly} onChange={toggleClose} aria-label="Completed sessions only" /> Completed sessions only
+        </label>
+        {ordered.moved ? <button type="button" style={btn(true)} onClick={() => setResortTick((v) => v + 1)} title="New data arrived; rows were kept in place so you do not click the wrong one">Re-sort now</button> : null}
+        <button type="button" style={btn()} onClick={saveShortlist} disabled={!sorted.length} title="Keep this result: the companies, their figures, the filters and the snapshot time — reopen it later to see what changed">Save shortlist</button>
+        {shortlists.length ? (
+          <select value={openSl || ''} onChange={(e) => setOpenSl(e.target.value || null)} style={btn()} aria-label="Saved shortlists">
+            <option value="">Shortlists ({shortlists.length})</option>
+            {shortlists.slice().reverse().map((x) => <option key={x.id} value={x.id}>{x.market === 'IN' ? '🇮🇳' : '🇺🇸'} {x.name} · {x.rows.length}</option>)}
+          </select>
+        ) : null}
         <button type="button" style={btn()} disabled={loading} onClick={() => setRefresh((v) => v + 1)}>{loading ? 'Refreshing…' : err ? 'Retry' : 'Refresh'}</button>
         <button type="button" style={btn()} onClick={copyTickers} disabled={!sorted.length}>Copy tickers</button>
         <button type="button" style={btn()} onClick={downloadCsv} disabled={!sorted.length}>Download CSV</button>
@@ -323,10 +442,49 @@ export default function StockScreener() {
         </details>
       ) : null}
 
+      {openShortlist ? (
+        <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: 10, fontSize: 13, display: 'grid', gap: 6 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+            <b>Shortlist: {openShortlist.name}</b>
+            <span style={{ color: C.dim }}>saved {new Date(openShortlist.savedAt).toLocaleString()} · screen “{openShortlist.screenName}” · data built {openShortlist.snapshotBuiltAt ? new Date(openShortlist.snapshotBuiltAt).toLocaleString() : 'unknown'} · formulas {openShortlist.formulaVersion}{openShortlist.exactOnly ? ' · exact only' : ''}{openShortlist.closeOnly ? ' · completed sessions only' : ''}</span>
+            <span style={{ flex: 1 }} />
+            <button type="button" style={btn()} onClick={() => { setFilters(JSON.parse(JSON.stringify(openShortlist.filters))); setMarket(openShortlist.market); setDirty(true); }}>Load its filters</button>
+            <button type="button" style={btn()} onClick={() => { navigator.clipboard?.writeText(openShortlist.rows.map((r) => (openShortlist.market === 'IN' ? `NSE:${r.t}` : r.t)).join(',')); setMsg('Copied the saved tickers'); }}>Copy saved tickers</button>
+            <button type="button" style={btn()} onClick={() => { if (window.confirm(`Delete shortlist "${openShortlist.name}"?`)) { writeShortlists(shortlists.filter((x) => x.id !== openShortlist.id)); setOpenSl(null); } }}>Delete</button>
+            <button type="button" style={btn()} onClick={() => setOpenSl(null)}>Close</button>
+          </div>
+          <div style={{ color: C.dim }}>Saved result ({openShortlist.rows.length}): {openShortlist.rows.slice(0, 60).map((r) => r.t).join(', ')}{openShortlist.rows.length > 60 ? '…' : ''}</div>
+          {openShortlist.market !== market ? <div style={{ color: C.amber }}>Switch to {openShortlist.market === 'IN' ? 'India' : 'USA'} to compare with today.</div> : slDiff ? (
+            <>
+              <div><b>Today with the same filters:</b> {slDiff.stayed} still in · <span style={{ color: C.green }}>{slDiff.entered.length} entered</span> · <span style={{ color: C.red }}>{slDiff.exited.length} left</span></div>
+              {slDiff.formulaChanged.length ? <div style={{ color: C.amber }}>Formulas changed since it was saved: {slDiff.formulaChanged.join(' · ')}</div> : null}
+              {slDiff.exited.length ? <details open><summary style={{ cursor: 'pointer' }}>Left ({slDiff.exited.length})</summary><ul style={{ margin: '4px 0 0 16px' }}>{slDiff.exited.slice(0, 80).map((x) => <li key={x.t}><b>{x.t}</b> — {x.why}</li>)}</ul></details> : null}
+              {slDiff.entered.length ? <details><summary style={{ cursor: 'pointer' }}>Entered ({slDiff.entered.length})</summary><ul style={{ margin: '4px 0 0 16px' }}>{slDiff.entered.slice(0, 80).map((x) => <li key={x.t}><b>{x.t}</b> — {x.why}</li>)}</ul></details> : null}
+            </>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 13 }}>
+        <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>Why is a company in or out?
+          <input list="mc-screener-tickers" value={whyTicker} onChange={(e) => setWhyTicker(e.target.value)} placeholder="ticker" aria-label="Explain a company" style={{ ...btn(), width: 120, fontWeight: 400 }} />
+        </label>
+        <datalist id="mc-screener-tickers">{rows.slice(0, 3000).map((r) => <option key={r.t} value={r.t}>{r.n}</option>)}</datalist>
+        {whyTicker && !whyRow ? <span style={{ color: C.dim }}>not in this snapshot</span> : null}
+      </div>
+      {whyRow ? (
+        <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: 10, fontSize: 13 }}>
+          <b>{whyRow.t}</b> <span style={{ color: C.dim }}>{whyRow.n}</span> — {whyChecks.every((c) => c.pass) ? <span style={{ color: C.green }}>passes every filter</span> : <span style={{ color: C.red }}>fails {whyChecks.filter((c) => !c.pass).length} of {whyChecks.length}</span>}
+          <ul style={{ margin: '6px 0 0 16px' }}>
+            {whyChecks.map((c, i) => <li key={i} style={{ color: c.pass ? C.text1 : C.red }}>{c.pass ? '✓' : '✗'} {c.label}: <span style={{ color: c.nearMiss ? C.amber : C.dim }}>{c.detail}</span></li>)}
+          </ul>
+        </div>
+      ) : null}
+
       <div style={{ overflowX: 'auto', border: `1px solid ${C.border}`, borderRadius: 8 }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
-            <tr style={{ background: C.bg1 }}>
+            <tr style={{ background: C.bg1, position: 'sticky', top: 0, zIndex: 1 }}>
               <th style={th}>#</th>
               <Th label="Company" k="t" sort={sort} setSort={setSort} />
               <Th label="Sector" k="tvSec" sort={sort} setSort={setSort} />
@@ -337,7 +495,7 @@ export default function StockScreener() {
           <tbody>
             {shown.map((r, i) => (
               <tr key={r.t} style={{ borderTop: `1px solid ${C.border}` }}>
-                <td style={{ ...td, color: C.dim }}>{i + 1}</td>
+                <td style={{ ...td, color: C.dim }}><button type="button" onClick={() => setWhyTicker(r.t)} title="Show every filter for this company, with exact values" style={{ all: 'unset', cursor: 'pointer' }}>{i + 1}</button></td>
                 <td style={td}>
                   <Link href={`/charts?t=${encodeURIComponent(r.t)}&m=${market}&tf=D`} style={{ color: C.accent, fontWeight: 700, textDecoration: 'none' }} title="Open the chart">{r.t}</Link>
                   <div style={{ fontSize: 11.5, color: C.dim, maxWidth: 240, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.n}</div>
@@ -347,7 +505,9 @@ export default function StockScreener() {
                   const d = fieldOf(k); const v = r[k] as number | null;
                   const ax = r.approx?.includes(k);
                   const col = k === 'chg' && typeof v === 'number' ? (v >= 0 ? C.green : C.red) : C.text;
-                  return <td key={k} style={{ ...td, textAlign: 'right', color: col, whiteSpace: 'nowrap' }} title={ax ? 'Approximate for this company' : undefined}>{ax ? '≈' : ''}{fmtValue(v, d?.unit || 'num', market)}</td>;
+                  const na = naReason(r, k);
+                  const tip = [typeof v === 'number' ? `Exact value: ${exact(v)} (filters compare this, not the rounded figure)` : na ? `Not applicable: ${na}` : 'Not known', ax ? 'Approximate for this company' : '', na && typeof v === 'number' ? 'Not meaningful for financial companies' : ''].filter(Boolean).join('\n');
+                  return <td key={k} style={{ ...td, textAlign: 'right', color: col, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }} title={tip}>{ax ? '≈' : ''}{v == null && na ? <span style={{ color: C.dim, fontStyle: 'italic' }}>n/a</span> : fmtValue(v, d?.unit || 'num', market)}</td>;
                 })}
                 <td style={{ ...td, fontSize: 12, color: C.dim, whiteSpace: 'nowrap' }}>{r.q || '—'}</td>
               </tr>

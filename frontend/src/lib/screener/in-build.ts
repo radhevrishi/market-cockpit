@@ -201,7 +201,9 @@ export function assembleInRow(t: string, name: string, latest: BhavDay, bhav: Bh
       sma21: tf.sma21, sma100: tf.sma100, sma150: tf.sma150, ema10: tf.ema10, ema21: tf.ema21, ema50: tf.ema50, rsi: tf.rsi, rsiW: tf.rsiW, rsiM: tf.rsiM,
       atrP: tf.atrP, adrP: tf.adrP, chgOpen: tf.chgOpen, chg1W: tf.chg1W, perf1W: tf.perf1W, perf1M: tf.perf1M, perf3M: tf.perf3M,
       perf6M: tf.perf6M, perfYTD: tf.perfYTD, perf1Y: tf.perf1Y, perf5Y: tf.perf5Y, perfAll: tf.perfAll, avgVol30: tf.avgVol30, avgVol60: tf.avgVol60, vol1W: tf.vol1W, hi52: tf.hi52,
-      ipoD: tf.ipoD,
+      ipoD: tf.ipoD, perf5D: tf.perf5D ?? null,
+      // zzz969 — the moving averages etc. were read mid-session: keep last-completed-session values (price stays NSE's close)
+      ...(tf.cc ? { cc: Object.fromEntries(Object.entries(tf.cc).filter(([k]) => k !== 'px' && k !== 'chg' && k !== 'vol')) } : {}),
     } : {}),
     earnD: earnIso ? Math.floor(Date.parse(`${earnIso.slice(0, 10)}T00:00:00Z`) / DAY) : null,
     roeTTM: f?.roeTTM ?? null, roeFY: f?.roeFY ?? null, roceTTM: f?.roceTTM ?? null, roceFY: f?.roceFY ?? null, nmTTM: f?.nmTTM ?? null, ptmTTM: f?.ptmTTM ?? null,

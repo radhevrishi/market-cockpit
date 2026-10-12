@@ -22,6 +22,14 @@ const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinit
 // ── 1. Nasdaq list ─────────────────────────────────────────────────────────────────────────────────────────────────────
 export interface NasdaqRow { t: string; n: string; px: number | null; chg: number | null; vol: number | null; mc: number | null; sec: string | null; ind: string | null; ex?: string; ipoYear?: number | null }
 const num = (s: unknown): number | null => { const v = parseFloat(String(s ?? '').replace(/[$,%\s]/g, '')); return Number.isFinite(v) ? v : null; };
+/** zzz969 — the US regular session (Mon–Fri 9:30–16:00 New York time; holidays not checked — a holiday build simply has no live price). */
+export function usSessionOpen(now = new Date()): boolean {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(now).map((x) => [x.type, x.value]));
+  if (p.weekday === 'Sat' || p.weekday === 'Sun') return false;
+  const m = (Number(p.hour) % 24) * 60 + Number(p.minute);
+  return m >= 570 && m < 960;
+}
+
 /** Not common stock: warrants, rights, units, preferred, notes, depositary receipts (TradingView's "Common stock" leaves these out). */
 const NOT_COMMON = /\b(warrants?|rights?|units?|preferred|pref\.?|depositary|depository|\bADRs?\b|\bADSs?\b|notes? due|debentures?|subordinated|\d+(\.\d+)?%\s)/i;
 /** Pure: the Nasdaq screener download → common-stock rows (market cap in $ million). */
@@ -234,6 +242,9 @@ export function assembleUsRows(universe: NasdaqRow[], ciks: Map<string, number>,
         sma21: tf.sma21, sma100: tf.sma100, sma150: tf.sma150, ema10: tf.ema10, ema21: tf.ema21, ema50: tf.ema50, rsi: tf.rsi, rsiW: tf.rsiW, rsiM: tf.rsiM,
         atrP: tf.atrP, adrP: tf.adrP, chgOpen: tf.chgOpen, chg1W: tf.chg1W, perf1W: tf.perf1W, perf1M: tf.perf1M, perf3M: tf.perf3M,
         perf6M: tf.perf6M, perfYTD: tf.perfYTD, perf1Y: tf.perf1Y, perf5Y: tf.perf5Y, perfAll: tf.perfAll, avgVol30: tf.avgVol30, avgVol60: tf.avgVol60, vol1W: tf.vol1W, hi52: tf.hi52,
+        perf5D: tf.perf5D ?? null,
+        // zzz969 — read during the US session: the price figures of the last COMPLETED session (close-confirmed mode)
+        ...(tf.cc ? { cc: tf.cc } : usSessionOpen() && tf.close != null ? { cc: { px: tf.close, chg: null } } : {}),
       } : {}),
       ipoD,
       roeTTM: f?.roeTTM ?? null, roeFY: f?.roeFY ?? null, roceTTM: f?.roceTTM ?? null, roceFY: f?.roceFY ?? null, nmTTM: f?.nmTTM ?? null, ptmTTM: f?.ptmTTM ?? null,

@@ -11,11 +11,20 @@ import { loadLayoutStore, saveLayoutStore } from '@/lib/chart-storage';
 import { fmtPrice } from '@/lib/chart-math';
 
 // ── store hook ────────────────────────────────────────────────────────────────
+const LAYOUT_DRAFT_KEY = 'mc:chart-layout-draft:v1';
 /** Saved layouts + the working copy on screen. `dirty` = the working copy differs from the saved layout (● in the picker). */
 export function useLayouts() {
   // the /charts workspace renders in the browser only (ssr:false), so storage is read on first render
   const [store, setStore] = useState<LayoutStore>(() => loadLayoutStore());
-  const [working, setWorking] = useState<ChartLayout>(() => cleanLayout(activeLayout(store)));
+  // zzz969 — an unsaved indicator change survives a reload (kept as a draft per layout until Save / Undo / switch)
+  const [working, setWorking] = useState<ChartLayout>(() => {
+    const base = cleanLayout(activeLayout(store));
+    try {
+      const d = JSON.parse(localStorage.getItem(LAYOUT_DRAFT_KEY) || 'null');
+      if (d && d.id === store.activeId && d.working) { const w = cleanLayout(d.working); if (!sameSettings(w, base)) return w; }
+    } catch { /* no draft */ }
+    return base;
+  });
   const lastWritten = useRef('');
   const workingRef = useRef(working);
   useEffect(() => { workingRef.current = working; }, [working]);
@@ -51,8 +60,21 @@ export function useLayouts() {
 
   const saved = activeLayout(store);
   const dirty = !sameSettings(working, saved);
-  const switchTo = useCallback((id: string) => {
-    const n = { ...storeRef.current, activeId: id };
+  useEffect(() => {
+    try {
+      if (dirty) localStorage.setItem(LAYOUT_DRAFT_KEY, JSON.stringify({ id: store.activeId, working, at: Date.now() }));
+      else localStorage.removeItem(LAYOUT_DRAFT_KEY);
+    } catch { /* drafts are a convenience */ }
+  }, [dirty, working, store.activeId]);
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
+  const switchTo = useCallback((id: string, saveFirst = false) => {
+    const base = saveFirst ? saveLayout(storeRef.current, workingRef.current) : storeRef.current;
+    const n = { ...base, activeId: id };
     storeRef.current = n; setStore(n); setWorking(cleanLayout(activeLayout(n)));
   }, []);
   const save = useCallback(() => setStore((s) => saveLayout(s, workingRef.current)), []);
@@ -79,7 +101,14 @@ export function LayoutPicker({ L }: { L: ReturnType<typeof useLayouts> }) {
   const [open, setOpen] = useState(false);
   const pick = (id: string) => {
     if (id === L.store.activeId) { setOpen(false); return; }
-    if (L.dirty && !window.confirm(`“${L.saved.name}” has unsaved changes. Switch anyway and drop them?`)) return;
+    if (L.dirty) {
+      // zzz969 — Save / Discard / Stay instead of a yes-no that only offered to drop the changes
+      const ans = window.prompt(`“${L.saved.name}” has unsaved indicator changes.\nType S to save them first, D to discard them, or press Cancel to stay.`, 'S');
+      if (ans == null) return;
+      const keep = /^s/i.test(ans.trim());
+      if (!keep && !/^d/i.test(ans.trim())) return;
+      L.switchTo(id, keep); setOpen(false); return;
+    }
     L.switchTo(id); setOpen(false);
   };
   return (

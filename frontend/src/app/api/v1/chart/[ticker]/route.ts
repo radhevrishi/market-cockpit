@@ -2,7 +2,7 @@
 // plus the header numbers (ADR%, RVol, average traded value, last price, day change) worked out from DAILY bars.
 // Public market data (Yahoo). Cached in memory only: 5 min for daily, 30 min for weekly / monthly. Nothing written to Redis.
 import { NextRequest, NextResponse } from 'next/server';
-import { aggregateBars, cleanTicker, floatPct, headerStats, validTicker, type Bar, type Market, type Timeframe } from '@/lib/chart-math';
+import { aggregateBars, backAdjustDividends, cleanTicker, floatPct, headerStats, validTicker, type Bar, type Market, type Timeframe } from '@/lib/chart-math';
 import { dbAvailable, dbQuery } from '@/lib/db';
 import { DATA_RANGES, getDailySeries, type DataRange } from '@/lib/chart-data';
 
@@ -47,18 +47,21 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ ticker: str
   const rangeRaw = String(sp.get('range') || (tf === 'D' ? '2y' : tf === 'W' ? '10y' : 'max'));
   if (!(DATA_RANGES as string[]).includes(rangeRaw)) return NextResponse.json({ ok: false, error: 'range must be 2y, 5y, 10y or max.' }, { status: 400 });
   const range = rangeRaw as DataRange;
+  // zzz969 — price basis: 'price' (split-adjusted closes, as printed) or 'tr' (total return: dividends reinvested)
+  const basis: 'price' | 'tr' = sp.get('basis') === 'tr' ? 'tr' : 'price';
 
   const ttl = tf === 'D' ? 5 * 60_000 : 30 * 60_000;
-  const ck = `${market}:${ticker}:${interval}:${range}:${exchange || 'auto'}`;
+  const ck = `${market}:${ticker}:${interval}:${range}:${exchange || 'auto'}:${basis}`;
   const hit = _resp.get(ck);
   const headers = { 'Cache-Control': `private, max-age=${Math.round(ttl / 1000)}` };
   if (hit && Date.now() - hit.at < ttl) return NextResponse.json(hit.body, { headers });
 
   const series = await getDailySeries(market, ticker, range, exchange);
   if (!series) return NextResponse.json({ ok: false, error: `No price history found for ${ticker} (${market === 'IN' ? 'NSE / BSE' : 'US'}).` }, { status: 404 });
-  const bars = aggregateBars(series.bars, tf);
+  const divs = series.divs || [];
+  const bars = aggregateBars(basis === 'tr' ? backAdjustDividends(series.bars, divs) : series.bars, tf);
   const body = {
-    ok: true, ticker, market, interval, range, requestedExchange: market === 'IN' ? (exchange ?? null) : null,   // zzz967 (CH-02)
+    ok: true, ticker, market, interval, range, basis, dividends: divs.length, requestedExchange: market === 'IN' ? (exchange ?? null) : null,   // zzz967 (CH-02)
     symbol: series.symbol, name: series.name, currency: series.currency, exchange: series.exchange,
     stats: { ...headerStats(series.bars), floatPct: await floatFor(market, ticker).catch(() => null) },
     bars: packBars(bars),
@@ -69,7 +72,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ ticker: str
       source: 'Yahoo Finance chart API', nativeGranularity: series.granularity || '1d', displayInterval: interval,
       firstBarAt: series.bars.length ? new Date(series.bars[0].t).toISOString().slice(0, 10) : null,
       quoteAt: series.quoteAt ?? null,
-      priceBasis: 'split-adjusted, not dividend-adjusted',
+      priceBasis: basis === 'tr' ? `total return — ${divs.length} cash dividends reinvested (history back-adjusted; the latest price is unchanged)` : 'split-adjusted, not dividend-adjusted',
       lastBarFromQuote: !!series.lastBarSynthetic, lastBarOpenInferred: !!series.lastBarOpenInferred,
       highLowRepaired: 'high/low widened to include open and close when the provider row is inconsistent',
     },

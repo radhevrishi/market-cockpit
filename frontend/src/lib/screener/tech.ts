@@ -24,6 +24,8 @@ export interface TechFigures {
   perfYTD: number | null; perf1Y: number | null; perf5Y: number | null; perfAll: number | null;
   avgVol10: number | null; avgVol30: number | null; avgVol60: number | null; vol1W: number | null;
   hi52: number | null;
+  /** zzz969 — last bar's close; change over the last 5 trading sessions (not 7 calendar days) */
+  close?: number | null; perf5D?: number | null;
 }
 
 const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -116,6 +118,7 @@ export function techFigures(b: DailyBars): TechFigures {
     d: n ? b.d[n - 1] : null, sma21: null, sma50: null, sma100: null, sma150: null, sma200: null, ema10: null, ema21: null, ema50: null,
     rsi: null, rsiW: null, rsiM: null, atrP: null, adrP: null, chgOpen: null, chg1W: null, perf1W: null, perf1M: null, perf3M: null, perf6M: null,
     perfYTD: null, perf1Y: null, perf5Y: null, perfAll: null, avgVol10: null, avgVol30: null, avgVol60: null, vol1W: null, hi52: null,
+    close: null, perf5D: null,
   };
   if (!n) return out;
   const c = b.c, last = c[n - 1], today = b.d[n - 1];
@@ -149,6 +152,22 @@ export function techFigures(b: DailyBars): TechFigures {
   let hi = -Infinity;
   for (let i = n - 1; i >= 0 && b.d[i] > from; i--) hi = Math.max(hi, b.h[i]);
   out.hi52 = Number.isFinite(hi) ? r2(hi) : null;
+  out.close = r2(last);
+  out.perf5D = n > 5 ? pct(last, c[n - 6]) : null;
+  return out;
+}
+
+/** zzz969 — the price figures as of the last COMPLETED session, for a history whose last bar is today's unfinished session. */
+export function closedFigures(b: DailyBars): Record<string, number | null> | null {
+  const n = b.c.length;
+  if (n < 3) return null;
+  const cut: DailyBars = { d: b.d.slice(0, -1), o: b.o.slice(0, -1), h: b.h.slice(0, -1), l: b.l.slice(0, -1), c: b.c.slice(0, -1), v: b.v.slice(0, -1) };
+  const f = techFigures(cut);
+  const out: Record<string, number | null> = {};
+  for (const k of ['sma21', 'sma50', 'sma100', 'sma150', 'sma200', 'ema10', 'ema21', 'ema50', 'rsi', 'atrP', 'adrP', 'chgOpen', 'chg1W', 'perf1W', 'perf1M', 'perf3M', 'perf6M', 'perfYTD', 'perf1Y', 'perf5D', 'avgVol10', 'avgVol30', 'avgVol60', 'hi52'] as const) out[k] = (f as any)[k] ?? null;
+  out.px = f.close ?? null;
+  out.chg = cut.c.length > 1 ? r2((cut.c[cut.c.length - 1] / cut.c[cut.c.length - 2] - 1) * 100) : null;
+  out.vol = cut.v[cut.v.length - 1] ?? null;
   return out;
 }
 
@@ -184,7 +203,7 @@ export function overlayNse(b: DailyBars, days: ReadonlyArray<{ date: string; day
 }
 
 /** Yahoo v8 chart JSON → daily bars (sessions with no close dropped; a missing open / high / low falls back to the close). */
-export function barsFromYahoo(j: any): { bars: DailyBars; firstTrade: number | null; exchange: string | null } | null {
+export function barsFromYahoo(j: any): { bars: DailyBars; firstTrade: number | null; exchange: string | null; partial?: boolean } | null {
   const r = j?.chart?.result?.[0];
   if (!r) return null;
   const ts: number[] = r.timestamp || [];
@@ -205,5 +224,10 @@ export function barsFromYahoo(j: any): { bars: DailyBars; firstTrade: number | n
   }
   if (!bars.c.length) return null;
   const ft = r.meta?.firstTradeDate;
-  return { bars, firstTrade: fin(ft) ? ft : null, exchange: typeof r.meta?.fullExchangeName === 'string' ? r.meta.fullExchangeName : null };
+  // zzz969 — is the last bar today's session, still trading?
+  const reg = r.meta?.currentTradingPeriod?.regular;
+  const nowS = Date.now() / 1000;
+  const partial = !!reg && fin(reg.start) && fin(reg.end) && nowS >= reg.start && nowS < reg.end
+    && bars.d[bars.d.length - 1] === new Date((reg.start + off) * 1000).toISOString().slice(0, 10);
+  return { bars, firstTrade: fin(ft) ? ft : null, exchange: typeof r.meta?.fullExchangeName === 'string' ? r.meta.fullExchangeName : null, partial };
 }

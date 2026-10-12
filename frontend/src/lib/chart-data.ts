@@ -16,6 +16,8 @@ export interface DailySeries {
   quoteAt?: string | null;
   lastBarSynthetic?: boolean;
   lastBarOpenInferred?: boolean;
+  /** zzz969 — cash dividends (ex-day at UTC midnight of the exchange's local date) */
+  divs?: Array<{ t: number; amount: number }>;
 }
 
 const _cache = new Map<string, { at: number; data: DailySeries | null }>();
@@ -69,7 +71,15 @@ export function parseYahooChart(j: any): DailySeries | null {
     }
   }
   if (!bars.length) return null;
-  return { symbol: String(m.symbol || ''), name: m.longName || m.shortName || null, currency: m.currency || null, exchange: m.fullExchangeName || m.exchangeName || null, bars,
+  const divs: Array<{ t: number; amount: number }> = [];
+  for (const d of Object.values<any>(r.events?.dividends || {})) {
+    const at = Number(d?.date), amount = Number(d?.amount);
+    if (!Number.isFinite(at) || !(amount > 0)) continue;
+    const dd = new Date((at + off) * 1000);
+    divs.push({ t: Date.UTC(dd.getUTCFullYear(), dd.getUTCMonth(), dd.getUTCDate()), amount });
+  }
+  divs.sort((a, b) => a.t - b.t);
+  return { divs, symbol: String(m.symbol || ''), name: m.longName || m.shortName || null, currency: m.currency || null, exchange: m.fullExchangeName || m.exchangeName || null, bars,
     granularity: typeof m.dataGranularity === 'string' ? m.dataGranularity : null,
     quoteAt: Number.isFinite(mt) && mt > 0 ? new Date(mt * 1000).toISOString() : null,
     lastBarSynthetic: synthetic, lastBarOpenInferred: openInferred };

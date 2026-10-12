@@ -20,6 +20,7 @@ import { useWorkspaceLight, workspaceThemeClass } from '@/lib/workspace-theme';
 import { fitBarSpace, loadView, saveView } from '@/lib/chart-view-prefs';
 import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
 import { readableOn } from '@/lib/readable-color';
+import { addSet, activeSetOf, chooseSet, loadSets, removeSet, saveSets, setsOf, withSet, DRAWING_SETS_KEY, MAIN_SET, type SetsStore } from '@/lib/chart-drawing-sets';
 
 type KC = typeof import('klinecharts');
 type Tool = 'cursor' | 'mcHLine' | 'segment' | 'rayLine' | 'mcRect' | 'parallelStraightLine' | 'fibonacciLine' | 'mcText' | 'mcMeasure';
@@ -28,6 +29,7 @@ interface ChartResponse {
   stats: HeaderStats; bars: { t: number[]; o: number[]; h: number[]; l: number[]; c: number[]; v: number[] };
   asOf?: string; lastBarAt?: string | null;
   requestedExchange?: string | null;
+  basis?: 'price' | 'tr'; dividends?: number;
   provenance?: { source: string; nativeGranularity: string; displayInterval: string; firstBarAt: string | null; quoteAt: string | null; priceBasis: string; lastBarFromQuote: boolean; lastBarOpenInferred: boolean; highLowRepaired: string };
 }
 
@@ -196,6 +198,14 @@ export default function ChartWorkspace() {
   const barsRef = useRef<KLineData[]>([]);
   const keyRef = useRef<string>('');
   const suppressSaveRef = useRef(false);
+  // zzz969 — named drawing sets: keyRef stays the chart's key; drawings are stored under the open set's key
+  const [setsStore, setSetsStore] = useState<SetsStore>(() => loadSets());
+  // zzz969 — price basis: as printed, or total return (dividends reinvested); remembered
+  const [basis, setBasis] = useState<'price' | 'tr'>(() => { try { return localStorage.getItem('mc:chart-basis:v1') === 'tr' ? 'tr' : 'price'; } catch { return 'price'; } });
+  const toggleBasis = () => setBasis((b) => { const n = b === 'tr' ? 'price' : 'tr'; try { localStorage.setItem('mc:chart-basis:v1', n); } catch { /* this visit */ } return n; });
+  const setsRef = useRef(setsStore);
+  useEffect(() => { setsRef.current = setsStore; }, [setsStore]);
+  const storeKeyOf = useCallback((base: string) => withSet(base, activeSetOf(setsRef.current, base)), []);
   const cacheRef = useRef(new Map<string, CachedChart<ChartResponse>>());
   const loadedUrlRef = useRef('');
   const barUpdatesRef = useRef<((data: KLineData) => void) | null>(null);
@@ -223,10 +233,11 @@ export default function ChartWorkspace() {
         ...(typeof o.extendData === 'string' ? { text: o.extendData } : {}),
         ...((o.styles as any)?.line?.color ? { color: String((o.styles as any).line.color) } : {}),
       }));
-    const at = saveDrawings(keyRef.current, list);
+    const sk = storeKeyOf(keyRef.current);
+    const at = saveDrawings(sk, list);
     if (at != null) { setSavedAt(at); setNote(null); }
-    else if (JSON.stringify(loadDrawings(keyRef.current)) !== JSON.stringify(list)) { setSavedAt(null); setSyncedAt(null); setNote('Drawing changes are not saved: storage is full or blocked. Keep this page open and retry.'); }
-  }, []);
+    else if (JSON.stringify(loadDrawings(sk)) !== JSON.stringify(list)) { setSavedAt(null); setSyncedAt(null); setNote('Drawing changes are not saved: storage is full or blocked. Keep this page open and retry.'); }
+  }, [storeKeyOf]);
   const persistSoon = useCallback(() => { setTimeout(persist, 0); }, [persist]);
 
   const finishDrawing = useCallback(() => { setTool('cursor'); }, []);
@@ -250,7 +261,7 @@ export default function ChartWorkspace() {
     chart.removeOverlay({ groupId: DRAW_GROUP });
     chart.removeOverlay({ groupId: MEASURE_GROUP });
     keyRef.current = key;
-    for (const d of loadDrawingsWithLegacy(key)) {
+    for (const d of loadDrawingsWithLegacy(storeKeyOf(key))) {
       chart.createOverlay(overlaySpec(d.name, d.color || '#2962FF', {
         points: d.points.map((p) => ({ timestamp: p.t, value: p.p })),
         ...(d.text ? { extendData: d.text } : {}),
@@ -259,7 +270,7 @@ export default function ChartWorkspace() {
     setSelectedId(null);
     setTool('cursor');
     setTimeout(() => { suppressSaveRef.current = false; }, 0);
-  }, [overlaySpec]);
+  }, [overlaySpec, storeKeyOf]);
 
   // ── price scale (zzz946): A = fit the candles on screen, L = log scale ─────────
   const [manualScale, setManualScale] = useState(false);   // the price axis was dragged by hand (A shows off until reset)
@@ -411,7 +422,7 @@ export default function ChartWorkspace() {
     let ctrl: AbortController | null = null;
     let disposed = false;
     const ttl = tf === 'D' ? 300_000 : 1_800_000;
-    const url = `/api/v1/chart/${encodeURIComponent(ticker)}?market=${market}&interval=${TF_TO_INTERVAL[tf]}&range=${dataRange}${market === 'IN' && exchange ? `&exchange=${exchange}` : ''}`;
+    const url = `/api/v1/chart/${encodeURIComponent(ticker)}?market=${market}&interval=${TF_TO_INTERVAL[tf]}&range=${dataRange}${market === 'IN' && exchange ? `&exchange=${exchange}` : ''}${basis === 'tr' ? '&basis=tr' : ''}`;
     const show = (j: ChartResponse) => {
       const chart = chartRef.current;
       if (!chart) return;
@@ -461,7 +472,7 @@ export default function ChartWorkspace() {
     load();
     const stop = pollWhenVisible(() => { if (toolRef.current === 'cursor') load(true); }, ttl);
     return () => { disposed = true; stop(); ctrl?.abort(); };
-  }, [ready, ticker, market, exchange, tf, dataRange, restoreDrawings, refresh]);
+  }, [ready, ticker, market, exchange, tf, dataRange, restoreDrawings, refresh, basis]);
 
   // zoom to the chosen range after each load and whenever the range buttons change
   useEffect(() => {
@@ -520,11 +531,31 @@ export default function ChartWorkspace() {
     chart.removeOverlay({ groupId: DRAW_GROUP });
     chart.removeOverlay({ groupId: MEASURE_GROUP });
     suppressSaveRef.current = false;
-    const at = saveDrawings(keyRef.current, []);
+    const sk = storeKeyOf(keyRef.current);
+    const at = saveDrawings(sk, []);
     if (at != null) { setSavedAt(at); setNote(null); }
-    else if (loadDrawings(keyRef.current).length) { setSavedAt(null); setSyncedAt(null); setNote('Drawing deletion is not saved: storage is full or blocked. Keep this page open and retry.'); }
+    else if (loadDrawings(sk).length) { setSavedAt(null); setSyncedAt(null); setNote('Drawing deletion is not saved: storage is full or blocked. Keep this page open and retry.'); }
     setSelectedId(null);
-  }, [ticker]);
+  }, [ticker, storeKeyOf]);
+  // switch / add / remove drawing sets for this chart
+  const pickSet = useCallback((value: string) => {
+    const base = keyRef.current;
+    if (!base) return;
+    persist();
+    let next = setsRef.current;
+    if (value === '__new') {
+      const nm = (window.prompt('Name for the new drawing set (e.g. Long-term thesis, Earnings setup, Tactical levels)', '') || '').trim();
+      if (!nm) return;
+      next = addSet(next, base, nm).store;
+    } else if (value === '__del') {
+      const cur = activeSetOf(next, base);
+      if (cur === MAIN_SET) return;
+      if (!window.confirm('Remove this drawing set from the list? Its drawings are kept in storage and come back if a set with the same name is made again.')) return;
+      next = removeSet(next, base, cur);
+    } else next = chooseSet(next, base, value);
+    setsRef.current = next; setSetsStore(next); saveSets(next);
+    restoreDrawings(base);
+  }, [persist, restoreDrawings]);
 
   const autoOn = L.working.scale.auto && !manualScale;
   const toggleAuto = useCallback(() => {
@@ -593,7 +624,8 @@ export default function ChartWorkspace() {
     const onRestored = (e: Event) => {
       const keys = (e as CustomEvent).detail?.keys;
       // (not in the middle of drawing a line — that would cancel it; the next ticker / timeframe change shows the merge)
-      if (Array.isArray(keys) && keys.includes(CHART_DRAWINGS_KEY) && keyRef.current && toolRef.current === 'cursor') restoreDrawings(keyRef.current);
+      if (Array.isArray(keys) && keys.includes(DRAWING_SETS_KEY)) { const s2 = loadSets(); setsRef.current = s2; setSetsStore(s2); }   // zzz969
+      if (Array.isArray(keys) && (keys.includes(CHART_DRAWINGS_KEY) || keys.includes(DRAWING_SETS_KEY)) && keyRef.current && toolRef.current === 'cursor') restoreDrawings(keyRef.current);
     };
     const onPushed = (e: Event) => {
       const d = (e as CustomEvent).detail;
@@ -699,6 +731,18 @@ export default function ChartWorkspace() {
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '4px 16px', fontSize: 13 }}>
         <span style={{ fontSize: 18, fontWeight: 700, color: 'var(--mc-text-0)' }}>{ticker}</span>
         <AddToWatchlist store={wlStore} update={wlUpdate} market={market} ticker={ticker} exchange={exchange} />
+        {(() => {
+          const base = drawingKey(market, ticker, exchange);
+          const cur = activeSetOf(setsStore, base);
+          return (
+            <select aria-label="Drawing set" title="Separate drawing sets for this chart — each keeps its own lines and notes" value={cur} onChange={(e) => pickSet(e.target.value)}
+              style={{ fontSize: 12, padding: '2px 6px', borderRadius: 6, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-1)', color: 'var(--mc-text-1)' }}>
+              {setsOf(setsStore, base).map((x) => <option key={x.id} value={x.id}>✎ {x.name}</option>)}
+              <option value="__new">+ New drawing set…</option>
+              {cur !== MAIN_SET ? <option value="__del">Remove this set from the list</option> : null}
+            </select>
+          );
+        })()}
         <span style={{ color: 'var(--mc-text-3)' }}>{live ? `${live.name || ''}${live.exchange ? ` · ${live.exchange}` : ''}` : (loading ? `Loading ${ticker}…` : '')}</span>
         {stats?.last != null && (
           <span style={{ fontWeight: 700, color: 'var(--mc-text-0)', fontVariantNumeric: 'tabular-nums' }}>
@@ -750,6 +794,8 @@ export default function ChartWorkspace() {
             <button type="button" className={`mc-scale-btn${L.working.scale.log ? ' on' : ''}`} aria-label="Log price scale" aria-pressed={L.working.scale.log}
               onClick={() => L.setWorking((w) => ({ ...w, scale: { ...w.scale, log: !w.scale.log } }))}
               title={L.working.scale.log ? 'Log scale (on): equal % moves look equal. Click for a normal scale.' : 'Log scale: equal % moves look equal'}>log</button>
+            <button type="button" className={`mc-scale-btn${basis === 'tr' ? ' on' : ''}`} aria-label="Total return" aria-pressed={basis === 'tr'} onClick={toggleBasis}
+              title={basis === 'tr' ? `Total return (on): history adjusted for ${live?.dividends ?? 0} cash dividends, as if reinvested — the latest price is unchanged. Drawings stay at the price values they were drawn on. Click for prices as printed.` : 'Total return: adjust the history for dividends (reinvested), like TradingView\'s "adjust for dividends"'}>TR</button>
           </div>
           <IndicatorLegend rows={rows} valueOf={valueOf} onToggle={(id) => L.setWorking((w) => toggleRow(w, id))} decimals={pxDecimals} colorOf={(c) => (!chartLight && (luminance(c) ?? 1) < 0.18 ? '#B2B5BE' : c)} textOf={(c) => readableOn(c, chartLight ? '#FFFFFF' : '#0A0E1A')} />
           {(savedAt || syncedAt) && (

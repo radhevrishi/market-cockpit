@@ -12,6 +12,7 @@ import {
 } from '@/lib/chart-watchlist';
 import { pollWhenVisible } from '@/lib/client-fetch';
 import { refreshedQuotes } from '@/lib/chart-refresh';
+import { sharedFetchJson } from '@/lib/tab-shared-fetch';
 
 // ── storage hook ──────────────────────────────────────────────────────────────
 function readJson(key: string): unknown {
@@ -77,8 +78,8 @@ function useQuotes(keys: string[]): Record<string, Quote> {
       const chunks: string[][] = [];
       for (let i = 0; i < all.length; i += 300) chunks.push(all.slice(i, i + 300));
       const signal = ctrl.signal;
-      Promise.all(chunks.map((c) => fetch(`/api/v1/chart-quotes?s=${encodeURIComponent(c.join(','))}`, { signal, cache: 'no-store' })
-        .then((r) => (r.ok ? r.json() : null)).catch(() => null)))
+      // zzz969 — shared with the other open tabs (one request per URL for all of them)
+      Promise.all(chunks.map((c) => sharedFetchJson<any>(`/api/v1/chart-quotes?s=${encodeURIComponent(c.join(','))}`, 50_000, signal).catch(() => null)))
         .then((res) => {
           if (signal.aborted) return;
           const next: Record<string, Quote> = {};
@@ -266,8 +267,21 @@ export default function WatchlistPanel({ store, update, currentKey, onPick }: {
   const keys = useMemo(() => (list ? list.sections.flatMap((s) => s.items.map(itemKey)) : []), [list]);
   const quotes = useQuotes(keys);
   const view = useMemo(() => ({ query: search, market: marketFilter }), [search, marketFilter]);
-  const groups = useMemo(() => (list ? viewRows(list, sort, quotes, flagFilter, view) : []), [list, sort, quotes, flagFilter, view]);
-  const rows = useMemo(() => (list ? flatRows(list, sort, quotes, flagFilter, view) : []), [list, sort, quotes, flagFilter, view]);
+  // zzz969 — sorted by price / change: rows keep their order while quotes tick (so a click never lands on the wrong ticker);
+  // "Re-sort" applies the newest quotes. The values shown are always live.
+  const liveSort = sort?.key === 'last' || sort?.key === 'chg';
+  const sortCtx = `${list?.id || ''}|${keys.length}|${sort?.key || ''}|${sort?.dir || ''}|${flagFilter || ''}|${search}|${marketFilter}`;
+  const [frozenQ, setFrozenQ] = useState<{ ctx: string; tick: number; q: typeof quotes } | null>(null);
+  const [resort, setResort] = useState(0);
+  if (liveSort && Object.keys(quotes).length && (!frozenQ || frozenQ.ctx !== sortCtx || frozenQ.tick !== resort)) setFrozenQ({ ctx: sortCtx, tick: resort, q: quotes });
+  const orderQuotes = liveSort && frozenQ ? frozenQ.q : quotes;
+  const groups = useMemo(() => (list ? viewRows(list, sort, orderQuotes, flagFilter, view) : []), [list, sort, orderQuotes, flagFilter, view]);
+  const rows = useMemo(() => (list ? flatRows(list, sort, orderQuotes, flagFilter, view) : []), [list, sort, orderQuotes, flagFilter, view]);
+  const orderStale = useMemo(() => {
+    if (!liveSort || !list) return false;
+    const live = flatRows(list, sort, quotes, flagFilter, view);
+    return live.some((r, i) => itemKey(r.item) !== itemKey(rows[i]?.item || r.item));
+  }, [liveSort, list, sort, quotes, flagFilter, view, rows]);
   const setList = useCallback((fn: (l: WlList) => WlList) => update((s) => updateList(s, s.activeId, fn)), [update]);
   const say = (m: string) => { setMsg(m); setTimeout(() => setMsg((cur) => (cur === m ? null : cur)), 3500); };
   useEffect(() => {
@@ -411,7 +425,7 @@ export default function WatchlistPanel({ store, update, currentKey, onPick }: {
         <button type="button" className="mcwl-ib" style={{ textAlign: 'right', fontWeight: 700, fontSize: 11 }} onClick={() => setSort((s) => nextSort(s, 'last'))}>Last{sortArrow('last')}</button>
         <button type="button" className="mcwl-ib" style={{ textAlign: 'right', fontWeight: 700, fontSize: 11 }} onClick={() => setSort((s) => nextSort(s, 'chg'))}>Chg%{sortArrow('chg')}</button>
         <span style={{ textAlign: 'right' }} title="Pre-market / after-hours change (US only, while that session is open)">Ext</span>
-        <span />
+        {orderStale ? <button type="button" className="mcwl-ib" onClick={() => setResort((v) => v + 1)} aria-label="Re-sort with the latest prices" title="Prices moved; rows were kept in place so a click does not land on the wrong ticker. Click to re-sort." style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-accent)', padding: 0 }}>↻</button> : <span />}
       </div>
 
       <div ref={bodyRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>

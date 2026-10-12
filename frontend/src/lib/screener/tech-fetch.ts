@@ -2,7 +2,7 @@
 // open / high / low / close / volume (~50 KB). Measured from a data-centre address: 150 companies in ~2 s with 8 at a time.
 // Only the worked-out figures are kept (lib/screener/tech.ts); the bars themselves are not stored.
 import { dbQuery } from '@/lib/db';
-import { barsFromYahoo, overlayNse, techFigures, type NseDay, type TechFigures } from './tech';
+import { barsFromYahoo, closedFigures, overlayNse, techFigures, type NseDay, type TechFigures } from './tech';
 
 // the same browser string the rest of the app uses for Yahoo (lib/us-prices.ts explains why it must be exactly this)
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
@@ -10,7 +10,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const DAY = 86_400_000;
 
 /** What is kept per company: the figures, the first trading day (days since 1970) and the date the figures were worked out. */
-export type TechStored = TechFigures & { ipoD: number | null };
+/** zzz969 — `cc`: the same figures as of the last completed session, kept when the read happened during trading. */
+export type TechStored = TechFigures & { ipoD: number | null; cc?: Record<string, number | null> | null };
 
 let route = 0;
 let lastErr: string | null = null;
@@ -63,7 +64,8 @@ export async function refreshTech(opts: {
         const got = barsFromYahoo(r.j);
         if (got) {
           const bars = nseOf ? overlayNse(got.bars, nseOf(t)) : got.bars;
-          store.set(t, { ...techFigures(bars), ipoD: got.firstTrade != null ? Math.floor((got.firstTrade * 1000) / DAY) : null });
+          const cc = got.partial ? closedFigures(bars) : null;
+          store.set(t, { ...techFigures(bars), ipoD: got.firstTrade != null ? Math.floor((got.firstTrade * 1000) / DAY) : null, ...(cc ? { cc } : {}) });
           ok++;
         } else miss++;
       } else if (r.status === 404) miss++;
