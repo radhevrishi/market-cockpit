@@ -99,3 +99,11 @@ test('zzz978 Anthropic credit / key errors stop the run instead of failing each 
   assert.equal(modelErrorKind(500, 'api_error', 'Internal server error'), 'error');
   assert.equal(modelErrorKind(429, 'rate_limit_error', 'Number of request tokens has exceeded your per-minute rate limit'), 'error');
 });
+
+test('zzz978b pasted keys are cleaned of spaces, line breaks and quotes', async () => {
+  const { cleanKeyValue } = await import('../anthropic-meter');
+  assert.equal(cleanKeyValue('  sk-ant-api03-abc\n'), 'sk-ant-api03-abc');
+  assert.equal(cleanKeyValue('"sk-ant-api03-abc"'), 'sk-ant-api03-abc');
+  assert.equal(cleanKeyValue('ANTHROPIC_API_KEY=sk-ant-api03-abc'), 'sk-ant-api03-abc');
+  assert.equal(cleanKeyValue('\uFEFFsk-ant-api03-abc'), 'sk-ant-api03-abc');
+});

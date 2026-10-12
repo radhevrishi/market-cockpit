@@ -49,6 +49,25 @@
 import { withUntrustedRule } from './ai-fence';
 import { kvGet, kvSet, isRedisAvailable, kvIncrByFloat } from '@/lib/kv';
 
+// zzz978b — a key pasted with a space, a line break or quote marks around it is rejected by the provider as invalid.
+// Clean both keys once, before anything reads them. The value itself is never logged.
+export function cleanKeyValue(v: string | undefined): string | undefined {
+  if (typeof v !== 'string') return v;
+  const c = v.replace(/[\u200B-\u200D\uFEFF]/g, '').trim().replace(/^["'`]+|["'`]+$/g, '').trim().replace(/^(?:ANTHROPIC_API_KEY|OPENAI_API_KEY)\s*=\s*/i, '').trim();
+  return c;
+}
+for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'] as const) {
+  const v = process.env[k];
+  const c = cleanKeyValue(v);
+  if (v && c !== v) process.env[k] = c;
+}
+/** What the Anthropic key looks like, without revealing it: its length and whether it has the usual sk-ant- start. */
+export function anthropicKeyShape(): string {
+  const k = process.env.ANTHROPIC_API_KEY || '';
+  if (!k) return 'no key set';
+  return `${k.length} characters, ${/^sk-ant-/.test(k) ? 'starts with sk-ant- as an Anthropic key should' : 'does NOT start with sk-ant- (not an Anthropic API key?)'}`;
+}
+
 export const METER_VERSION = 'v1';
 
 /** USD per million tokens. */

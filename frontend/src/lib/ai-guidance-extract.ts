@@ -1085,7 +1085,10 @@ export async function realCallModel(req: { system: string; user: string; maxToke
   if (!resp.ok) {
     let type = ''; let message = `HTTP ${resp.status}`;
     try { const j: any = await resp.json(); type = String(j?.error?.type || ''); message = String(j?.error?.message || message); } catch { /* keep status */ }
-    return { ok: false, kind: modelErrorKind(resp.status, type, message), status: resp.status, message: redact(message) };
+    const kind = modelErrorKind(resp.status, type, message);
+    // zzz978b: a rejected key says what the server's key looks like (length, prefix) — never the key itself
+    const hint = kind === 'no_key' && m.provider() === 'anthropic' ? ` (the server's key: ${m.anthropicKeyShape()})` : '';
+    return { ok: false, kind, status: resp.status, message: redact(message + hint) };
   }
   let j: any;
   try { j = await resp.json(); } catch { return { ok: false, kind: 'error', status: 502, message: 'answer was not JSON' }; }
