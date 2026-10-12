@@ -849,6 +849,8 @@ export interface ExtractRunStat {
   rowsKept: number; rowsDropped: number; dropReasons: Record<string, number>; spentUsd: number;
   stoppedBy: 'done' | 'limit' | 'budget_usd' | 'time' | 'cap' | 'unavailable' | 'locked' | 'no_store'; elapsedMs: number;
   usMode?: UsMode; plan?: QueuePlan['counts'];
+  /** zzz978: the first error's message (redacted), so a failing provider can be seen without reading server logs */
+  errorSample?: string;
 }
 export interface ExtractStatus { lastRunAt: string | null; lastRun: ExtractRunStat | null }
 export interface ExtractRunOpts { limit?: number; maxUsd?: number; budgetMs?: number; concurrency?: number; sinceDays?: number; docIds?: string[]; usMode?: UsMode }
@@ -942,6 +944,7 @@ export async function runExtraction(deps: ExtractDeps, o: ExtractRunOpts = {}): 
         stat.rowsKept += result.rows.length; stat.rowsDropped += result.dropped;
         if (result.status === 'error') {
           stat.errors++;
+          if (!stat.errorSample && result.note) stat.errorSample = redact(String(result.note), 200);
           const attempts = (fr?.attempts || 0) + 1;
           if (attempts < FAIL_MAX_ATTEMPTS) {
             const retryAfter = new Date(nowFn().getTime() + FAIL_BACKOFF_BASE_S * 1000 * Math.pow(2, attempts - 1)).toISOString();
@@ -967,7 +970,7 @@ export async function runExtraction(deps: ExtractDeps, o: ExtractRunOpts = {}): 
     await updateOkIndex(deps.kv, okIds).catch(() => undefined);
     await finish();
     const reasonTxt = Object.entries(stat.dropReasons).map(([k, n]) => `${k}:${n}`).join(',');
-    log(`[guidance-extract] run: queued=${stat.queued} attempted=${stat.attempted} ok=${stat.ok} none=${stat.noGuidance} unreadable=${stat.unreadable} errors=${stat.errors} rows=${stat.rowsKept} dropped=${stat.rowsDropped}${reasonTxt ? ` (${reasonTxt})` : ''} spent=$${stat.spentUsd} stop=${stat.stoppedBy} ms=${stat.elapsedMs}`);
+    log(`[guidance-extract] run: queued=${stat.queued} attempted=${stat.attempted} ok=${stat.ok} none=${stat.noGuidance} unreadable=${stat.unreadable} errors=${stat.errors}${stat.errorSample ? ` [first error: ${stat.errorSample}]` : ''} rows=${stat.rowsKept} dropped=${stat.rowsDropped}${reasonTxt ? ` (${reasonTxt})` : ''} spent=$${stat.spentUsd} stop=${stat.stoppedBy} ms=${stat.elapsedMs}`);
     return stat;
   } finally {
     if (deps.kv.del) await deps.kv.del(LOCK_KEY).catch(() => undefined);
@@ -1061,6 +1064,10 @@ export async function realAvailability(): Promise<Availability> {
 export function modelErrorKind(status: number, type: string, message: string): 'spend_cap' | 'no_key' | 'error' {
   if (status === 402 || type === 'spend_cap' || type === 'insufficient_quota') return 'spend_cap';
   if (status === 429 && /spend limit|insufficient[_ ]quota|exceeded your current quota|billing/i.test(String(message || ''))) return 'spend_cap';
+  // zzz978: Anthropic — "Your credit balance is too low" (400) is a quota stop; a rejected / revoked key (401, 403,
+  // authentication_error / permission_error) stops the run too. Neither is the document's fault, so no back-off is written.
+  if (/credit balance is too low|purchase credits|billing/i.test(String(message || ''))) return 'spend_cap';
+  if (status === 401 || status === 403 || type === 'authentication_error' || type === 'permission_error') return 'no_key';
   return type === 'no_key' ? 'no_key' : 'error';
 }
 

@@ -90,3 +90,12 @@ test('zzz928b: a provider spend / quota limit stops the run (never a per-documen
   assert.equal(modelErrorKind(500, '', 'server error'), 'error');
   assert.equal(modelErrorKind(401, 'no_key', ''), 'no_key');
 });
+
+test('zzz978 Anthropic credit / key errors stop the run instead of failing each document', async () => {
+  const { modelErrorKind } = await import('../ai-guidance-extract');
+  assert.equal(modelErrorKind(400, 'invalid_request_error', 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'), 'spend_cap');
+  assert.equal(modelErrorKind(401, 'authentication_error', 'invalid x-api-key'), 'no_key');
+  assert.equal(modelErrorKind(403, 'permission_error', 'not allowed'), 'no_key');
+  assert.equal(modelErrorKind(500, 'api_error', 'Internal server error'), 'error');
+  assert.equal(modelErrorKind(429, 'rate_limit_error', 'Number of request tokens has exceeded your per-minute rate limit'), 'error');
+});
