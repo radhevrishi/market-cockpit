@@ -41,7 +41,8 @@ export function pillBadge(color = 'var(--mc-cyan)'): CSSProperties {
 export function chipStyle(color?: string, dashed = false): CSSProperties {
   const c = color || 'var(--mc-text-3)';
   return {
-    fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 999,
+    fontSize: 11.5, fontWeight: 700, padding: '3px 8px', borderRadius: 999, lineHeight: 1.3,
+    display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', verticalAlign: 'middle',
     border: `1px ${dashed ? 'dashed' : 'solid'} ${color ? c : 'var(--mc-bg-4)'}`, color: c,
     backgroundColor: color ? `color-mix(in srgb, ${c} 10%, transparent)` : 'transparent',
     whiteSpace: 'nowrap',
@@ -60,8 +61,8 @@ export function tierChip(color: string, on: boolean): CSSProperties {
 /** The compact tier tag on a US card header. */
 export function tierTag(color: string): CSSProperties {
   return {
-    fontSize: 9, fontWeight: 800, letterSpacing: 0.4, lineHeight: 1,
-    padding: '3px 5px', borderRadius: 3, whiteSpace: 'nowrap',
+    fontSize: 11, fontWeight: 800, letterSpacing: 0.4, lineHeight: 1.1,
+    padding: '3px 6px', borderRadius: 3, whiteSpace: 'nowrap',
     color: `color-mix(in srgb, ${color} 60%, var(--mc-text-1))`, border: `1px solid ${color}`,
     background: `${color}14`, alignSelf: 'center',
     WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact',
@@ -72,7 +73,7 @@ export function tierTag(color: string): CSSProperties {
 export function cardShell(tierColor: string): CSSProperties {
   return {
     backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-bg-4)',
-    borderRadius: 'var(--mc-radius)', padding: 12, borderTop: `3px solid ${tierColor}`,
+    borderRadius: 'var(--mc-radius)', padding: '14px 14px 12px', borderTop: `3px solid ${tierColor}`,
     minWidth: 0, position: 'relative',
   };
 }
@@ -92,15 +93,21 @@ export const CARD_GRID: CSSProperties = {
 // ── FIGURE TILES — the US `TILE_SCALE`, numbers copied exactly ─────────────
 export type TileSize = 'lead' | 'normal' | 'compact';
 export const TILE_SCALE: Record<TileSize, { pad: string; val: number; lab: number; sub: number }> = {
-  lead:    { pad: '11px 13px', val: 25, lab: 10.5, sub: 10.5 },
-  normal:  { pad: '7px 9px',   val: 15, lab: 10,   sub: 10 },
-  compact: { pad: '5px 8px',   val: 12.5, lab: 8.5, sub: 8.5 },
+  // zzz988 — labels and sub-lines at least 11px (the owner: "too small"); the
+  // figures keep the US weight, normal/compact one step up so they read at a glance.
+  lead:    { pad: '11px 13px', val: 25, lab: 12, sub: 12 },
+  normal:  { pad: '8px 10px',  val: 17, lab: 11.5, sub: 11.5 },
+  compact: { pad: '7px 9px',   val: 14, lab: 11, sub: 11 },
 };
 /** US `TILE_FR` as flex grow, plus a minimum width so the row WRAPS on a narrow card instead of crushing. */
-const TILE_FLEX: Record<TileSize, string> = { lead: '1.55 1 96px', normal: '1 1 62px', compact: '0.78 1 52px' };
+const TILE_FLEX: Record<TileSize, string> = { lead: '1.55 1 110px', normal: '1 1 84px', compact: '0.78 1 72px' };
 
-/** One row of tiles (wraps on a narrow card). */
-export const TILE_ROW: CSSProperties = { display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'stretch' };
+/** The tile block: an even grid (3 a row on a desktop card, 2 on a phone via .mc-grid-2-mobile),
+ *  so tiles line up in columns instead of wrapping into ragged rows (zzz988). */
+export const TILE_ROW: CSSProperties = {
+  display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(112px, 100%), 1fr))',
+  gap: 8, alignItems: 'stretch', margin: '2px 0 0',
+};
 
 /** US `Tile`, with an optional title and extra lines (India's "why this is —" notes). */
 export function Tile({ label, value, sub, color, size = 'normal', title, extra, valueTitle }: {
@@ -115,11 +122,11 @@ export function Tile({ label, value, sub, color, size = 'normal', title, extra, 
       backgroundColor: lead ? 'var(--mc-bg-2)' : 'var(--mc-bg-1)',
       border: '1px solid var(--mc-bg-4)',
       borderLeft: lead ? `3px solid ${color || 'var(--mc-text-1)'}` : '1px solid var(--mc-bg-4)',
-      borderRadius: 6, padding: s.pad, minWidth: 0,
+      borderRadius: 6, padding: s.pad, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1,
     }}>
-      <div style={{ fontSize: s.lab, color: lead ? 'var(--mc-text-2)' : 'var(--mc-text-3)', fontWeight: 700, letterSpacing: 0.3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</div>
+      <div style={{ fontSize: s.lab, color: lead ? 'var(--mc-text-2)' : 'var(--mc-text-3)', fontWeight: 700, letterSpacing: 0.3, lineHeight: 1.25, overflowWrap: 'break-word' }}>{label}</div>
       <div title={valueTitle} style={{ fontSize: s.val, fontWeight: lead ? 900 : 800, color: color || 'var(--mc-text-0)', lineHeight: 1.2, letterSpacing: lead ? -0.5 : 0 }}>{value}</div>
-      {sub && <div style={{ fontSize: s.sub, color: 'var(--mc-text-4)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub}</div>}
+      {sub && <div style={{ fontSize: s.sub, color: 'var(--mc-text-4)', lineHeight: 1.35, marginTop: 2, overflowWrap: 'break-word' }}>{sub}</div>}
       {extra}
     </div>
   );

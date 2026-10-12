@@ -41,8 +41,9 @@ export function QuadrantBadge({ stock }: { stock: ParsedEarning }) {
     `Independent of the tier — the quadrant never promotes a row.`;
   return (
     <span title={title} style={{
-      // zzz981 — the US quadrant badge shape (10px pill).
-      fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 999, cursor: 'help',
+      // zzz981 — the US quadrant badge shape (pill); zzz988 — 11.5px, never smaller.
+      fontSize: 11.5, fontWeight: 800, padding: '3px 8px', borderRadius: 999, cursor: 'help', lineHeight: 1.3,
+      display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', verticalAlign: 'middle',
       border: `1px solid ${meta.color}`,
       backgroundColor: `color-mix(in srgb, ${meta.color} 12%, transparent)`,
       color: `color-mix(in srgb, ${meta.color} 70%, var(--mc-text-1))`, letterSpacing: '0.3px', whiteSpace: 'nowrap',
@@ -124,7 +125,7 @@ export function IndiaAiSummary({ stock }: { stock: ParsedEarning }) {
 
   const chip = (active: boolean): React.CSSProperties => ({
     display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer',
-    fontSize: 10.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999,
+    fontSize: 11.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999,
     border: `1px solid ${active ? 'color-mix(in srgb, var(--mc-cyan) 45%, transparent)' : 'var(--mc-bg-4)'}`,
     backgroundColor: active ? 'color-mix(in srgb, var(--mc-cyan) 14%, transparent)' : 'var(--mc-bg-1)',
     color: active ? 'var(--mc-cyan)' : 'var(--mc-text-2)',
@@ -157,7 +158,7 @@ export function IndiaAiSummary({ stock }: { stock: ParsedEarning }) {
           </a>
         )}
       </div>
-      {pdfErr && <div style={{ marginTop: 5, fontSize: 10, color: '#F59E0B' }}>{pdfErr}</div>}
+      {pdfErr && <div style={{ marginTop: 5, fontSize: 11.5, color: '#F59E0B' }}>{pdfErr}</div>}
       {open && (
         <div style={{
           marginTop: 7, padding: '10px 12px', borderRadius: 8,
@@ -170,9 +171,9 @@ export function IndiaAiSummary({ stock }: { stock: ParsedEarning }) {
               carries them, otherwise the concall transcript from its screener.in document list. A few seconds the first time.
             </div>
           )}
-          {state === 'error' && <div style={{ fontSize: 11, color: '#F59E0B' }}>{err}</div>}
+          {state === 'error' && <div style={{ fontSize: 13, color: '#F59E0B', lineHeight: 1.45 }}>{err}</div>}
           {state === 'done' && prov.note && (
-            <div style={{ marginBottom: 8, fontSize: 10, color: 'var(--mc-text-4)', lineHeight: 1.5 }}>
+            <div style={{ marginBottom: 8, fontSize: 13, color: 'var(--mc-text-4)', lineHeight: 1.5 }}>
               ℹ {prov.note}
             </div>
           )}
@@ -181,7 +182,7 @@ export function IndiaAiSummary({ stock }: { stock: ParsedEarning }) {
           )}
           {state === 'done' && struct && <SummaryView d={struct} />}
           {state === 'done' && (
-            <div style={{ marginTop: 8, fontSize: 9.5, color: 'var(--mc-text-4)', lineHeight: 1.5 }}>
+            <div style={{ marginTop: 8, fontSize: 13, color: 'var(--mc-text-4)', lineHeight: 1.5 }}>
               Written from the company&rsquo;s own filed results only — no news, no estimates, no market reaction. Every
               figure is checked against the filing before it is shown, and any line carrying a figure the filing does
               not print is dropped. Empty sections mean the filing is silent on them. Educational, not investment advice.
@@ -230,11 +231,11 @@ export function CalendarView({ data, loading, from, to, onPickDate }: { data: Ca
         <p style={{ marginTop: 8, lineHeight: 1.6 }}>
           The NSE Earnings Calendar GitHub Action needs to run at least once to populate the KV cache. Either:
         </p>
-        <ol style={{ marginTop: 6, paddingLeft: 22, lineHeight: 1.7, fontSize: 12 }}>
+        <ol style={{ marginTop: 6, paddingLeft: 22, lineHeight: 1.7, fontSize: 13 }}>
           <li>Wait for the next 30-minute cron tick (runs 03:00–13:00 UTC on weekdays)</li>
           <li>Trigger manually: GitHub repo → Actions → "NSE Earnings Calendar Scrape" → Run workflow</li>
         </ol>
-        <p style={{ marginTop: 8, fontSize: 11, color: 'var(--mc-text-4)' }}>
+        <p style={{ marginTop: 8, fontSize: 13, color: 'var(--mc-text-4)', lineHeight: 1.5 }}>
           Make sure these GitHub repo secrets are set: <code>UPSTASH_REDIS_REST_URL</code>, <code>UPSTASH_REDIS_REST_TOKEN</code>.
         </p>
       </div>
@@ -284,22 +285,22 @@ export function CalendarView({ data, loading, from, to, onPickDate }: { data: Ca
             <button
               onClick={() => copyToClipboard(allTickers.join(','), 'plain CSV')}
               title="Copy all tickers (CSV — Excel-friendly)"
-              style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+              style={{ fontSize: 11.5, padding: '3px 8px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
             >📋 CSV ({allTickers.length})</button>
             <button
               onClick={() => copyToClipboard(allTickers.map(t => `NSE:${t}`).join(','), 'TradingView')}
               title="Copy as NSE:TICKER,NSE:TICKER (TradingView watchlist import format)"
-              style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+              style={{ fontSize: 11.5, padding: '3px 8px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
             >📊 TradingView</button>
             <button
               onClick={() => copyToClipboard(allTickers.join('\n'), 'one per line')}
               title="Copy one ticker per line"
-              style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+              style={{ fontSize: 11.5, padding: '3px 8px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
             >↓ Lines</button>
           </span>
         )}
         {data?.scraped_at && (
-          <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--mc-text-4)' }}>scraped {new Date(data.scraped_at).toLocaleString('en-IN')}</span>
+          <span style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--mc-text-4)' }}>scraped {new Date(data.scraped_at).toLocaleString('en-IN')}</span>
         )}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 10 }}>
@@ -332,7 +333,7 @@ export function CalendarView({ data, loading, from, to, onPickDate }: { data: Ca
                         copyToClipboard(day, `${weekday} ${dayLabel}`);
                       }}
                       title={`Copy ${items.length} tickers filing ${weekday} ${dayLabel}`}
-                      style={{ fontSize: 9, padding: '1px 5px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', color: 'var(--mc-cyan)', borderRadius: 3, cursor: 'pointer', fontWeight: 700 }}
+                      style={{ fontSize: 11, padding: '1px 5px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', color: 'var(--mc-cyan)', borderRadius: 3, cursor: 'pointer', fontWeight: 700 }}
                     >📋</button>
                   )}
                   {items.length > 0 && (
@@ -343,9 +344,9 @@ export function CalendarView({ data, loading, from, to, onPickDate }: { data: Ca
               <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 {items.length === 0 ? (
                   ingestedSet.has(d) ? (
-                    <span title="Ingested for this date - no results filed (confirmed zero)" style={{ fontSize: 10.5, color: 'var(--mc-text-4)' }}>No filings</span>
+                    <span title="Ingested for this date - no results filed (confirmed zero)" style={{ fontSize: 11.5, color: 'var(--mc-text-4)' }}>No filings</span>
                   ) : (
-                    <span title="Data unavailable - this date was never ingested (outside NSE source window). Not zero." style={{ fontSize: 10.5, fontWeight: 700, color: '#B45309' }}>Data unavailable</span>
+                    <span title="Data unavailable - this date was never ingested (outside NSE source window). Not zero." style={{ fontSize: 11.5, fontWeight: 700, color: '#B45309' }}>Data unavailable</span>
                   )
                 ) : (expandedDates[d] ? items : items.slice(0, 12)).map((it, i) => (
                   // Stable UNIQUE key per company-in-day. Keying on it.symbol
@@ -355,7 +356,7 @@ export function CalendarView({ data, loading, from, to, onPickDate }: { data: Ca
                   <a key={`${d}::${it.symbol || 'nosym'}::${it.company || ''}::${i}`} href={it.source_url} target="_blank" rel="noopener noreferrer"
                     onClick={(e) => e.stopPropagation()}
                     title={`${decodeEntities(String(it.company || ''))} · ${it.quarter || ''}`}
-                    style={{ fontSize: 10, padding: '1px 5px', borderRadius: 3, backgroundColor: 'color-mix(in srgb, var(--mc-accent) 8%, transparent)', color: '#38A9E8', border: '1px solid color-mix(in srgb, var(--mc-accent) 25%, transparent)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', textDecoration: 'none', fontWeight: 700 }}>
+                    style={{ fontSize: 11.5, padding: '1px 5px', borderRadius: 3, backgroundColor: 'color-mix(in srgb, var(--mc-accent) 8%, transparent)', color: '#38A9E8', border: '1px solid color-mix(in srgb, var(--mc-accent) 25%, transparent)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', textDecoration: 'none', fontWeight: 700 }}>
                     {it.symbol}
                   </a>
                 ))}
@@ -365,7 +366,7 @@ export function CalendarView({ data, loading, from, to, onPickDate }: { data: Ca
                       e.stopPropagation();
                       setExpandedDates((s) => ({ ...s, [d]: !s[d] }));
                     }}
-                    style={{ fontSize: 10, color: 'var(--mc-cyan)', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', padding: '1px 6px', borderRadius: 3, cursor: 'pointer', fontWeight: 700 }}>
+                    style={{ fontSize: 11.5, color: 'var(--mc-cyan)', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', padding: '1px 6px', borderRadius: 3, cursor: 'pointer', fontWeight: 700 }}>
                     {expandedDates[d] ? '− show less' : `+${items.length - 12} more`}
                   </button>
                 )}
@@ -420,7 +421,7 @@ export function MetricTile({ label, pct, curr, prev, word, note, noteTitle, size
       sub={sub}
       // zzz820 — why a figure is '—' (never a guess in its place).
       extra={note ? (
-        <div title={noteTitle} style={{ fontSize: TILE_SCALE[size].sub, color: 'var(--mc-text-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: noteTitle ? 'help' : undefined }}>
+        <div title={noteTitle} style={{ fontSize: TILE_SCALE[size].sub, color: 'var(--mc-text-3)', lineHeight: 1.3, overflowWrap: 'break-word', cursor: noteTitle ? 'help' : undefined }}>
           ⓘ {note}
         </div>
       ) : undefined} />
@@ -448,11 +449,12 @@ export function InGuideOneLiner({ stock }: { stock: ParsedEarning }) {
   const [head, ...rest] = gl.text.split(sep);
   const title = [gl.title, gl.source ? `Source: ${gl.source}` : '', moved ? `Moved from ${moved} to MIXED because of this.` : ''].filter(Boolean).join('\n');
   return (
-    // zzz981 — the US GuideOneLiner look the owner liked: one 11px line under the chips, bold coloured head, no box.
+    // zzz981 — the US GuideOneLiner look the owner liked: bold coloured head, no box.
+    // zzz988 — 13px and WRAPS (up to 3 lines, full sentence in the tooltip) instead of one clipped line.
     <div title={title} data-guide={gl.direction}
-      style={{ fontSize: 11, lineHeight: 1.35, color: 'var(--mc-text-2)', margin: '-3px 0 8px', display: 'flex', gap: 5, alignItems: 'baseline', minWidth: 0 }}>
+      style={{ fontSize: 13, lineHeight: 1.45, color: 'var(--mc-text-2)', margin: '0 0 10px', display: 'flex', gap: 6, alignItems: 'baseline', minWidth: 0 }}>
       <span aria-hidden style={{ flexShrink: 0 }}>{gl.direction === 'unknown' ? '◌' : (IN_GUIDE_GLYPH[gl.direction] || '◌')}</span>
-      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+      <span style={{ minWidth: 0, flex: 1, overflow: 'hidden', overflowWrap: 'break-word', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' }}>
         <b style={{ color }}>{head}</b>
         {rest.length > 0 && <span>{sep === ': ' ? ': ' : ' — '}{rest.join(sep)}</span>}
         {moved && <span style={{ color: 'var(--mc-text-4)' }}> · moved from {moved} to MIXED</span>}

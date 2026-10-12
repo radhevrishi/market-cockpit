@@ -18,12 +18,16 @@
 //    `st12` = 1 when stage 2 now and stage 1 in one of the previous 6 weeks.
 //  • Volume pocket pivot (TAPLOT): an up day whose volume beats every down day's volume of the 10 sessions before it, closing
 //    above both its 10-day and 50-day averages; `ppD` = sessions since the latest one in the last 10 (else null).
+//  • zzz987 — Stage Analysis (TheWrap method — our own version from the published rules, lib/stage-analysis.ts): `twSt` stage 1–4,
+//    `sata` 0–10, `mrs` Mansfield RS vs the market's index (S&P 500 / Nifty 50; null without the index) and `twWk` weeks in the
+//    stage. Weekly bars resampled from these daily bars; the index's weekly closes come from tech-fetch.ts (read once per build).
 //  • Swing data: RVol = last session's volume ÷ the average of the 50 sessions before it (`rvol`); average daily traded value
 //    over 20 sessions (`adv`, in the currency — the row shows it as $ million / ₹ crore, `adv$`).
 //  • Ripster EMA clouds (5/12 and 34/50): `ripB` = 1 when close > EMA34 and EMA50 and both EMA5 and EMA12 are above both EMA34
 //    and EMA50, else 0.
 import type { DailyBars } from './tech';
 import { periodCloses } from './tech';
+import { stageFromDaily } from '../stage-analysis';
 
 export interface TvFigures {
   tt: number | null; ttOk: number | null;
@@ -34,6 +38,8 @@ export interface TvFigures {
   ppD: number | null;
   rvol: number | null; adv: number | null;
   ripB: number | null;
+  /** zzz987 — Stage Analysis (TheWrap method) */
+  twSt?: number | null; sata?: number | null; mrs?: number | null; twWk?: number | null;
 }
 
 const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -144,8 +150,9 @@ export function pocketPivotAge(b: DailyBars, within = 10): number | null {
   return null;
 }
 
-export function tvFigures(b: DailyBars): TvFigures {
-  const out: TvFigures = { tt: null, ttOk: null, rsiMA: null, rsiX: null, gcD: null, dcD: null, emaXU: null, emaXD: null, rsRaw: null, stage: null, st12: null, ppD: null, rvol: null, adv: null, ripB: null };
+/** `bench` = the market index's weekly closes by week (Monday) key, for Mansfield RS; without it `mrs` stays null. */
+export function tvFigures(b: DailyBars, bench?: ReadonlyMap<string, number> | null): TvFigures {
+  const out: TvFigures = { tt: null, ttOk: null, rsiMA: null, rsiX: null, gcD: null, dcD: null, emaXU: null, emaXD: null, rsRaw: null, stage: null, st12: null, ppD: null, rvol: null, adv: null, ripB: null, twSt: null, sata: null, mrs: null, twWk: null };
   const c = b.c, n = c.length;
   if (n < 30) return out;
   const L = n - 1;
@@ -182,6 +189,11 @@ export function tvFigures(b: DailyBars): TvFigures {
     const slowTop = Math.max(e34, e50);
     out.ripB = c[L] > e34 && c[L] > e50 && Math.min(e5, e12) > slowTop ? 1 : 0;
   }
+  // zzz987 — Stage Analysis (TheWrap method)
+  try {
+    const w = stageFromDaily(b, bench);
+    if (w && w.sata != null) { out.sata = w.sata; out.twSt = w.stage; out.twWk = w.weeks; out.mrs = w.mrs; }
+  } catch { /* never costs the other figures */ }
   return out;
 }
 

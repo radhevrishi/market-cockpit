@@ -229,7 +229,7 @@ test('zzz983 page renders the matches and switches bias / sub-pattern (JSDOM)', 
   const root = createRoot(document.getElementById('root')!);
   const settle = () => new Promise<void>((r) => setTimeout(r, 20));
   const text = () => document.body.textContent || '';
-  const tickers = () => Array.from(document.querySelectorAll('tbody tr td:nth-child(2) a')).map((a) => a.textContent).sort();
+  const tickers = () => Array.from(document.querySelectorAll('tbody tr td:nth-child(3) a')).map((a) => a.textContent).sort();
   const click = async (pred: (b: HTMLButtonElement) => boolean) => {
     const b = Array.from(document.querySelectorAll('button')).find(pred);
     assert.ok(b, 'button');

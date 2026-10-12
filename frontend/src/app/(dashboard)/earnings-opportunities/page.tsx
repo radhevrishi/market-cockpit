@@ -2065,7 +2065,7 @@ export default function EarningsOpportunitiesPage() {
             );
           })()}
       </div>
-      <p style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-sm)', margin: '0 0 16px', lineHeight: 1.55 }}>
+      <p style={{ color: 'var(--mc-text-3)', fontSize: 13, margin: '0 0 16px', lineHeight: 1.55, maxWidth: 980 }}>
         Yesterday&apos;s earnings, scored overnight — find the exceptional setups before the market opens.
         Every Indian filing graded into one of four conviction tiers — from <strong style={{ color: 'var(--mc-warn)' }}>BLOCKBUSTER</strong> through <strong style={{ color: 'var(--mc-bullish)' }}>STRONG</strong>, <strong style={{ color: 'color-mix(in srgb, #FACC15 60%, var(--mc-text-1))' }}>MIXED</strong>, and <strong style={{ color: 'var(--mc-bearish)' }}>AVOID</strong>.{' '}
         <button onClick={() => setShowAbout((s) => !s)} aria-expanded={showAbout}
@@ -2074,7 +2074,7 @@ export default function EarningsOpportunitiesPage() {
         </button>
       </p>
       {showAbout && (
-            <div style={{ ...panel(), fontSize: 11.5, color: 'var(--mc-text-3)', lineHeight: 1.7 }}>
+            <div style={{ ...panel(), fontSize: 13, color: 'var(--mc-text-3)', lineHeight: 1.7 }}>
               {/* zzz227 — exact grading rules, mirrored from the grader code so the
                   doc can never drift from behaviour without a code change here too. */}
               {/* zzz820b — the India tier is PRICE-FREE since engine v24 (zzz819):
@@ -2135,7 +2135,7 @@ export default function EarningsOpportunitiesPage() {
                   · <strong>forex gain / loss</strong> (−8) — currency moves flatter or hurt the print
                 </div>
               </div>
-              <div style={{ marginTop: 10, fontSize: 10.5, color: 'var(--mc-text-4)', fontStyle: 'italic' }}>
+              <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--mc-text-4)', fontStyle: 'italic' }}>
                 Educational only. Not investment advice. Server pipeline fetches BSE/NSE results announcements + Indian results RSS feeds; worker enriches with Stage / RS / OPM / ADTV. Parser accuracy depends on RSS title richness — missing fields are treated conservatively (never punished for AVOID, but ELITE requires them).
               </div>
             </div>
@@ -2187,7 +2187,7 @@ export default function EarningsOpportunitiesPage() {
           </span>
           {isStaleView && (
             <span style={{
-              fontSize: 9.5, fontWeight: 800, color: 'var(--mc-warn)',
+              fontSize: 11, fontWeight: 800, color: 'var(--mc-warn)',
               padding: '1px 6px', borderRadius: 3,
               backgroundColor: 'color-mix(in srgb, var(--mc-warn) 13%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)',
               display: 'inline-flex', alignItems: 'center', gap: 3,
@@ -2352,7 +2352,7 @@ export default function EarningsOpportunitiesPage() {
                 {/* Inline feedback right next to the button — impossible to miss */}
                 {refreshFeedback && (
                   <span style={{
-                    fontSize: 10.5, fontWeight: 700,
+                    fontSize: 11.5, fontWeight: 700,
                     padding: '3px 8px', borderRadius: 4,
                     backgroundColor: refreshFeedback.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 9%, transparent)' : 'color-mix(in srgb, var(--mc-bearish) 9%, transparent)',
                     border: `1px solid ${refreshFeedback.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 25%, transparent)' : 'color-mix(in srgb, var(--mc-bearish) 25%, transparent)'}`,
@@ -2456,7 +2456,7 @@ export default function EarningsOpportunitiesPage() {
           )}
           {slowBfProgressLabel && (
             <span style={{
-              fontSize: 10.5, fontWeight: 700,
+              fontSize: 11.5, fontWeight: 700,
               padding: '3px 8px', borderRadius: 4,
               backgroundColor: slowBfProgressLabel.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 9%, transparent)' : '#6366F118',
               border: `1px solid ${slowBfProgressLabel.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 25%, transparent)' : '#6366F140'}`,
@@ -2468,7 +2468,7 @@ export default function EarningsOpportunitiesPage() {
           )}
           {backfillProgress && (
             <span style={{
-              fontSize: 10.5, fontWeight: 700,
+              fontSize: 11.5, fontWeight: 700,
               padding: '3px 8px', borderRadius: 4,
               backgroundColor: backfillProgress.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 9%, transparent)' : backfillProgress.startsWith('⚠') ? 'color-mix(in srgb, var(--mc-bearish) 9%, transparent)' : 'color-mix(in srgb, var(--mc-state-persistent) 9%, transparent)',
               border: `1px solid ${backfillProgress.startsWith('✓') ? 'color-mix(in srgb, var(--mc-bullish) 25%, transparent)' : backfillProgress.startsWith('⚠') ? 'color-mix(in srgb, var(--mc-bearish) 25%, transparent)' : 'color-mix(in srgb, var(--mc-state-persistent) 25%, transparent)'}`,
@@ -2548,7 +2548,7 @@ export default function EarningsOpportunitiesPage() {
             return (
               <span title={`${enriched} of ${total} cards have Screener/Yahoo financials enriched. ${missing} missing.`}
                 style={{
-                  fontSize: 10.5, fontWeight: 700, color: tone,
+                  fontSize: 11.5, fontWeight: 700, color: tone,
                   border: `1px solid ${tone}50`, backgroundColor: `${tone}12`,
                   padding: '3px 10px', borderRadius: 999, letterSpacing: 0.3,
                   fontFamily: 'ui-monospace, monospace',
@@ -2579,7 +2579,7 @@ Source label: ${coverageStats.source}`}
                 border: `1px solid ${coverageStats.total >= 10 ? 'color-mix(in srgb, var(--mc-bullish) 25%, transparent)' : coverageStats.total > 0 ? 'color-mix(in srgb, var(--mc-warn) 25%, transparent)' : 'color-mix(in srgb, var(--mc-bearish) 25%, transparent)'}`,
                 backgroundColor: coverageStats.total >= 10 ? 'color-mix(in srgb, var(--mc-bullish) 6%, transparent)' : coverageStats.total > 0 ? 'color-mix(in srgb, var(--mc-warn) 6%, transparent)' : 'color-mix(in srgb, var(--mc-bearish) 6%, transparent)',
                 color: coverageStats.total >= 10 ? 'var(--mc-bullish)' : coverageStats.total > 0 ? 'var(--mc-warn)' : 'var(--mc-bearish)',
-                fontSize: 10.5, fontWeight: 700, fontFamily: 'monospace',
+                fontSize: 11.5, fontWeight: 700, fontFamily: 'monospace',
                 cursor: 'help',
               }}
             >
@@ -2758,10 +2758,10 @@ Source label: ${coverageStats.source}`}
           display: 'flex', flexDirection: 'column', gap: 6,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.6px' }}>
+            <span style={{ fontSize: 11.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.6px' }}>
               🔍 COVERAGE PROBE
             </span>
-            <span style={{ fontSize: 10.5, color: 'var(--mc-text-3)' }}>
+            <span style={{ fontSize: 11.5, color: 'var(--mc-text-3)' }}>
               Missing a ticker that's on EarningsPulse for this date? Probe our pipeline to see which layer dropped it.
             </span>
             <input
@@ -2825,12 +2825,12 @@ Source label: ${coverageStats.source}`}
             <div style={{
               marginTop: 4, padding: '8px 12px',
               backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 6,
-              fontSize: 11, color: 'var(--mc-text-2)', lineHeight: 1.5,
+              fontSize: 13, color: 'var(--mc-text-2)', lineHeight: 1.5,
             }}>
               {auditResult.error ? (
                 <span style={{ color: 'var(--mc-bearish)' }}>⚠ {auditResult.error}</span>
               ) : auditResult.expected_total === 0 ? (
-                <span style={{ color: 'var(--mc-text-4)', fontSize: 10.5 }}>{auditResult.note}</span>
+                <span style={{ color: 'var(--mc-text-4)', fontSize: 11.5 }}>{auditResult.note}</span>
               ) : (
                 <>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6, flexWrap: 'wrap' }}>
@@ -2840,11 +2840,11 @@ Source label: ${coverageStats.source}`}
                     }}>
                       {auditResult.gap === 0 ? '✓' : '⚠'} Coverage: {auditResult.matched}/{auditResult.expected_total} ({auditResult.coverage_pct}%)
                     </span>
-                    <span style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>{auditResult.note}</span>
+                    <span style={{ fontSize: 11.5, color: 'var(--mc-text-4)' }}>{auditResult.note}</span>
                   </div>
                   {auditResult.missing && auditResult.missing.length > 0 && (
                     <div style={{ marginTop: 4 }}>
-                      <div style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+                      <div style={{ fontSize: 11.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
                         MISSING ({auditResult.missing.length}):
                       </div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
@@ -2854,7 +2854,7 @@ Source label: ${coverageStats.source}`}
                             onClick={() => { setProbeTicker(t); setAuditResult(null); }}
                             title="Click to load into probe for diagnosis"
                             style={{
-                              padding: '2px 8px', fontSize: 10, fontWeight: 700,
+                              padding: '2px 8px', fontSize: 11.5, fontWeight: 700,
                               borderRadius: 4, backgroundColor: 'color-mix(in srgb, var(--mc-bearish) 9%, transparent)',
                               border: '1px solid color-mix(in srgb, var(--mc-bearish) 25%, transparent)', color: 'var(--mc-bearish)',
                               fontFamily: 'ui-monospace, monospace', cursor: 'pointer',
@@ -2868,10 +2868,10 @@ Source label: ${coverageStats.source}`}
                   )}
                   {auditResult.we_have && auditResult.we_have.length > 0 && auditResult.we_have.length <= 30 && (
                     <details style={{ marginTop: 6 }}>
-                      <summary style={{ fontSize: 10, color: 'var(--mc-text-4)', cursor: 'pointer' }}>
+                      <summary style={{ fontSize: 11.5, color: 'var(--mc-text-4)', cursor: 'pointer' }}>
                         ✓ {auditResult.we_have.length} matched
                       </summary>
-                      <div style={{ marginTop: 4, fontSize: 9.5, color: 'var(--mc-bullish)', fontFamily: 'ui-monospace, monospace' }}>
+                      <div style={{ marginTop: 4, fontSize: 11, color: 'var(--mc-bullish)', fontFamily: 'ui-monospace, monospace' }}>
                         {auditResult.we_have.join(', ')}
                       </div>
                     </details>
@@ -2887,7 +2887,7 @@ Source label: ${coverageStats.source}`}
               {autoFillTickers.length > 0 && (
                 <span style={{
                   display: 'inline-flex', alignItems: 'center', gap: 4,
-                  padding: '2px 8px', fontSize: 10, fontWeight: 800,
+                  padding: '2px 8px', fontSize: 11.5, fontWeight: 800,
                   borderRadius: 4, backgroundColor: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)',
                   border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', color: 'var(--mc-cyan)',
                   letterSpacing: '0.4px',
@@ -2897,13 +2897,13 @@ Source label: ${coverageStats.source}`}
               )}
               {userForceIncludeForDate.length > 0 && (
                 <>
-                  <span style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.4px' }}>
+                  <span style={{ fontSize: 11, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.4px' }}>
                     MANUALLY ADDED:
                   </span>
                   {userForceIncludeForDate.map((t) => (
                     <span key={t} style={{
                       display: 'inline-flex', alignItems: 'center', gap: 4,
-                      padding: '2px 4px 2px 8px', fontSize: 10, fontWeight: 700,
+                      padding: '2px 4px 2px 8px', fontSize: 11.5, fontWeight: 700,
                       borderRadius: 4, backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 9%, transparent)',
                       border: '1px solid color-mix(in srgb, var(--mc-bullish) 25%, transparent)', color: 'var(--mc-bullish)',
                       fontFamily: 'ui-monospace, monospace',
@@ -2927,7 +2927,7 @@ Source label: ${coverageStats.source}`}
             <div style={{
               marginTop: 4, padding: '10px 12px',
               backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 6,
-              fontSize: 11, color: 'var(--mc-text-2)', lineHeight: 1.5,
+              fontSize: 13, color: 'var(--mc-text-2)', lineHeight: 1.5,
             }}>
               {probeResult.error ? (
                 <span style={{ color: 'var(--mc-bearish)' }}>⚠ {probeResult.error}</span>
@@ -2954,7 +2954,7 @@ Source label: ${coverageStats.source}`}
                           padding: '4px 10px', borderRadius: 6,
                           border: '1px solid color-mix(in srgb, var(--mc-bullish) 38%, transparent)',
                           backgroundColor: 'color-mix(in srgb, var(--mc-bullish) 8%, transparent)',
-                          color: 'var(--mc-bullish)', fontSize: 10.5, fontWeight: 800,
+                          color: 'var(--mc-bullish)', fontSize: 11.5, fontWeight: 800,
                           cursor: 'pointer', whiteSpace: 'nowrap',
                         }}
                       >
@@ -2964,8 +2964,8 @@ Source label: ${coverageStats.source}`}
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
                     <div style={{ padding: '6px 8px', backgroundColor: 'var(--mc-bg-0)', borderRadius: 4, borderLeft: `3px solid ${probeResult.layers?.universe?.found ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}` }}>
-                      <div style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.4px' }}>L1 · UNIVERSE</div>
-                      <div style={{ fontSize: 10.5, marginTop: 2 }}>
+                      <div style={{ fontSize: 11, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.4px' }}>L1 · UNIVERSE</div>
+                      <div style={{ fontSize: 11.5, marginTop: 2 }}>
                         {probeResult.layers?.universe?.found ? (
                           <span style={{ color: 'var(--mc-bullish)' }}>
                             ✓ Found{probeResult.layers.universe.exact === false ? ` (date ${probeResult.layers.universe.resultDate})` : ''}
@@ -2978,8 +2978,8 @@ Source label: ${coverageStats.source}`}
                       </div>
                     </div>
                     <div style={{ padding: '6px 8px', backgroundColor: 'var(--mc-bg-0)', borderRadius: 4, borderLeft: `3px solid ${probeResult.layers?.enrichment?.found && probeResult.layers?.enrichment?.sales_yoy_pct != null ? 'var(--mc-bullish)' : 'var(--mc-warn)'}` }}>
-                      <div style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.4px' }}>L2 · ENRICHMENT</div>
-                      <div style={{ fontSize: 10.5, marginTop: 2 }}>
+                      <div style={{ fontSize: 11, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.4px' }}>L2 · ENRICHMENT</div>
+                      <div style={{ fontSize: 11.5, marginTop: 2 }}>
                         {probeResult.layers?.enrichment?.found && probeResult.layers?.enrichment?.sales_yoy_pct != null ? (
                           <span style={{ color: 'var(--mc-bullish)' }}>
                             ✓ Rev {probeResult.layers.enrichment.sales_yoy_pct >= 0 ? '+' : ''}{Math.round(probeResult.layers.enrichment.sales_yoy_pct)}% · PAT {probeResult.layers.enrichment.pat_yoy_pct >= 0 ? '+' : ''}{Math.round(probeResult.layers.enrichment.pat_yoy_pct)}% · EPS {probeResult.layers.enrichment.eps_yoy_pct >= 0 ? '+' : ''}{Math.round(probeResult.layers.enrichment.eps_yoy_pct)}%
@@ -2992,8 +2992,8 @@ Source label: ${coverageStats.source}`}
                       </div>
                     </div>
                     <div style={{ padding: '6px 8px', backgroundColor: 'var(--mc-bg-0)', borderRadius: 4, borderLeft: `3px solid ${probeResult.layers?.graded?.found ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}` }}>
-                      <div style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.4px' }}>L3 · GRADED</div>
-                      <div style={{ fontSize: 10.5, marginTop: 2 }}>
+                      <div style={{ fontSize: 11, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.4px' }}>L3 · GRADED</div>
+                      <div style={{ fontSize: 11.5, marginTop: 2 }}>
                         {probeResult.layers?.graded?.found ? (
                           <span style={{ color: 'var(--mc-bullish)' }}>
                             ✓ {probeResult.layers.graded.tier}
@@ -3086,9 +3086,9 @@ Source label: ${coverageStats.source}`}
               <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--mc-text-1)', marginBottom: 4 }}>
                 No earnings filings for {filingDateLabel}
               </div>
-              <div style={{ fontSize: 12, color: 'var(--mc-text-4)', marginBottom: 14, lineHeight: 1.5 }}>
+              <div style={{ fontSize: 13, color: 'var(--mc-text-4)', marginBottom: 14, lineHeight: 1.5 }}>
                 NSE + BSE corporate-actions pipeline polled. No Q4 results announced for this date.
-                {lastScraped && <><br/><span style={{ fontSize: 10.5, color: 'var(--mc-text-4)' }}>📡 Calendar last refreshed: <strong style={{ color: 'var(--mc-text-3)' }}>{lastScraped}</strong></span></>}
+                {lastScraped && <><br/><span style={{ fontSize: 11.5, color: 'var(--mc-text-4)' }}>📡 Calendar last refreshed: <strong style={{ color: 'var(--mc-text-3)' }}>{lastScraped}</strong></span></>}
               </div>
               {rankedDates.length > 0 && (
                 <>
@@ -3147,7 +3147,7 @@ Source label: ${coverageStats.source}`}
                       NSE Filings →
                     </a>
                   </div>
-                  <div style={{ marginTop: 10, fontSize: 10.5, color: 'var(--mc-warn)', fontStyle: 'italic' }}>
+                  <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--mc-warn)', fontStyle: 'italic' }}>
                     💡 Companies DO file on weekends during peak earnings season. Hit ‘Force re-scan’ if you believe this date should have filings — bypasses all caches and re-polls NSE+BSE directly.
                   </div>
                 </>
@@ -3202,23 +3202,23 @@ Source label: ${coverageStats.source}`}
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
                 <span style={{ fontSize: 16, fontWeight: 800, color: 'var(--mc-warn)' }}>📅 SCHEDULED TODAY · RESULTS PENDING</span>
                 <span style={{ fontSize: 12, color: 'var(--mc-warn)', fontWeight: 800 }}>{pending.length} {pending.length === 1 ? 'company' : 'companies'}</span>
-                <span style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>
+                <span style={{ fontSize: 11.5, color: 'var(--mc-text-4)' }}>
                   · each name says why it is not a card yet (hover for the full reason)
                 </span>
                 <span style={{ display: 'inline-flex', gap: 4, marginLeft: 'auto' }}>
                   <button
                     onClick={() => copyPending(pending.map((p) => (p.symbol || '').toUpperCase()).join(','))}
                     title="Copy pending tickers (CSV)"
-                    style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+                    style={{ fontSize: 11.5, padding: '3px 8px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
                   >📋 CSV</button>
                   <button
                     onClick={() => copyPending(pending.map((p) => `NSE:${(p.symbol || '').toUpperCase()}`).join(','))}
                     title="Copy as NSE:TICKER for TradingView"
-                    style={{ fontSize: 10, padding: '3px 8px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+                    style={{ fontSize: 11.5, padding: '3px 8px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
                   >📊 TradingView</button>
                 </span>
               </div>
-              <div style={{ fontSize: 11, color: 'var(--mc-text-3)', marginBottom: 8, lineHeight: 1.5 }}>
+              <div style={{ fontSize: 13, color: 'var(--mc-text-3)', marginBottom: 8, lineHeight: 1.5 }}>
                 These companies announced a board meeting for {filterDate} but their results aren&apos;t in the parser yet.
                 Graded tiers below show only filings that have actually been published + parsed. As each company files
                 throughout the day, they&apos;ll move out of this list and into the appropriate grade tier.{' '}
@@ -3232,13 +3232,13 @@ Source label: ${coverageStats.source}`}
                   return (
                   <a key={`${filterDate}::${it.symbol || 'nosym'}::${it.company || ''}::${i}`} href={it.source_url} target="_blank" rel="noopener noreferrer"
                     title={`${it.company || it.symbol} · ${why.full} · click to open NSE filing page`}
-                    style={{ fontSize: 10.5, padding: '2px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-3)', color: 'var(--mc-text-3)', border: '1px solid #2A3550', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', textDecoration: 'none', fontWeight: 700 }}>
+                    style={{ fontSize: 11.5, padding: '2px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-3)', color: 'var(--mc-text-3)', border: '1px solid #2A3550', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', textDecoration: 'none', fontWeight: 700 }}>
                     {it.symbol}<span style={{ fontFamily: 'ui-sans-serif, system-ui', fontWeight: 600, color: why.color }}> · {why.word}</span>
                   </a>
                   );
                 })}
                 {pending.length > 60 && (
-                  <span style={{ fontSize: 10.5, color: 'var(--mc-text-4)', padding: '2px 6px' }}>
+                  <span style={{ fontSize: 11.5, color: 'var(--mc-text-4)', padding: '2px 6px' }}>
                     +{pending.length - 60} more · use 📋 CSV to copy all
                   </span>
                 )}
@@ -3278,17 +3278,17 @@ Source label: ${coverageStats.source}`}
               <button onClick={() => setExpanded((s) => ({ ...s, [tier]: !s[tier] }))} style={TIER_HEAD_BTN}>
                 {isOpen ? <ChevronDown style={{ width: 16, height: 16, color: meta.color }} /> : <ChevronRight style={{ width: 16, height: 16, color: meta.color }} />}
                 <span style={{ fontSize: 16 }}>{meta.icon}</span>
-                <span style={{ fontWeight: 800, color: tierText(meta.color), letterSpacing: 0.4 }}>{meta.label}</span>
+                <span style={{ fontWeight: 800, fontSize: 15, color: tierText(meta.color), letterSpacing: 0.4 }}>{meta.label}</span>
                 <span style={tierCountPill(meta.color)} title="Number of companies in this group">{stocks.length} {stocks.length === 1 ? 'company' : 'companies'}</span>
-                <span style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-xs)' }}>{meta.tagline}</span>
+                <span style={{ color: 'var(--mc-text-3)', fontSize: 12.5, lineHeight: 1.4, minWidth: 0, overflowWrap: 'break-word' }}>{meta.tagline}</span>
               </button>
               {isOpen && (
                 <div style={{ ...CARD_GRID, padding: '0 14px 14px' }}>
                   {stocks.map((s) => (pinnedRow && s.ticker === pinnedRow.ticker && pinnedReasons.length > 0) ? (
                     <div key={s.ticker + ':' + s.company} style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-                      <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--mc-warn, #F59E0B)' }}>
+                      <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--mc-warn, #F59E0B)' }}>
                         🔍 {s.ticker} {hiddenNote(pinnedReasons)} ·{' '}
-                        <button onClick={() => setSearchPin(null)} style={{ background: 'none', border: 'none', padding: 0, color: 'var(--mc-cyan)', cursor: 'pointer', fontSize: 10.5, fontWeight: 800 }}>hide</button>
+                        <button onClick={() => setSearchPin(null)} style={{ background: 'none', border: 'none', padding: 0, color: 'var(--mc-cyan)', cursor: 'pointer', fontSize: 11.5, fontWeight: 800 }}>hide</button>
                       </div>
                       <EarningsCard stock={s} isFresh={freshTickers.has(s.ticker)} radar={radarMap.get(String(s.ticker || '').toUpperCase())} />
                     </div>
@@ -3372,13 +3372,13 @@ Source label: ${coverageStats.source}`}
             return (
               <div key={s._window_date + ':' + s.ticker + ':' + s.company} style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
                 {isPinned && (
-                  <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--mc-warn, #F59E0B)' }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--mc-warn, #F59E0B)' }}>
                     🔍 {s.ticker} {hiddenNote(pinnedReasons)} ·{' '}
-                    <button onClick={() => setSearchPin(null)} style={{ background: 'none', border: 'none', padding: 0, color: 'var(--mc-cyan)', cursor: 'pointer', fontSize: 10.5, fontWeight: 800 }}>hide</button>
+                    <button onClick={() => setSearchPin(null)} style={{ background: 'none', border: 'none', padding: 0, color: 'var(--mc-cyan)', cursor: 'pointer', fontSize: 11.5, fontWeight: 800 }}>hide</button>
                   </div>
                 )}
                 {notes.length > 0 && (
-                  <div style={{ fontSize: 10.5, fontWeight: 600, color: s._engine_stale || newer.length ? 'var(--mc-warn)' : 'var(--mc-text-3)' }}>{notes.join(' · ')}</div>
+                  <div style={{ fontSize: 11.5, fontWeight: 600, color: s._engine_stale || newer.length ? 'var(--mc-warn)' : 'var(--mc-text-3)' }}>{notes.join(' · ')}</div>
                 )}
                 <EarningsCard stock={s} isFresh={freshTickers.has(s.ticker)} radar={radarMap.get(String(s.ticker || '').toUpperCase())} />
               </div>
@@ -3443,12 +3443,12 @@ Source label: ${coverageStats.source}`}
                   </div>
                 )}
                 {(p.queued > 0 || p.grading) && (
-                  <div style={{ fontSize: 11, color: 'var(--mc-text-4)', lineHeight: 1.5 }}>
+                  <div style={{ fontSize: 13, color: 'var(--mc-text-4)', lineHeight: 1.5 }}>
                     Days already graded appear at once. Days never graded are graded here one at a time, newest first, through the same India path as a single date (NSE/BSE list + Screener enrichment, rate-limited) — typically 20–60 seconds each. Results show as each day lands; nothing is graded twice.
                   </div>
                 )}
                 {staleDates.length > 0 && (
-                  <div style={{ fontSize: 11, color: 'var(--mc-warn)', lineHeight: 1.5 }}>
+                  <div style={{ fontSize: 13, color: 'var(--mc-warn)', lineHeight: 1.5 }}>
                     {staleDates.length} {staleDates.length === 1 ? 'date was' : 'dates were'} graded under the previous rules ({Array.from(new Set(staleDates.map((d) => win.days.find((x) => x.date === d)?.engine).filter(Boolean))).join(', ')}; current {GRADED_ENGINE_LABEL}) and {staleDates.length === 1 ? 'is' : 'are'} shown as stored — every company on them is listed. {staleDates.length === 1 ? 'It is' : 'They are'} being rebuilt automatically under the current rules, oldest rules first, a few dates per run (several runs a day), so the older grades catch up over a few days. Open a single date to rebuild it now.
                   </div>
                 )}
@@ -3467,7 +3467,7 @@ Source label: ${coverageStats.source}`}
                     could not be graded, cards without numbers or a price, and
                     days read while the results feed was down are all counted. */}
                 {notGradedN > 0 && (
-                  <div className="eo-window-issues" style={{ fontSize: 11, color: 'var(--mc-warn)', lineHeight: 1.6 }}>
+                  <div className="eo-window-issues" style={{ fontSize: 13, color: 'var(--mc-warn)', lineHeight: 1.6 }}>
                     ⚠ <strong>{notGradedN.toLocaleString('en-IN')} {notGradedN === 1 ? 'company' : 'companies'} filed but couldn&apos;t be graded</strong>
                     {' '}({Object.entries(notGradedReasons).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k}: ${n}${lastCheckedByReason[k] ? ` (oldest check ${fmtShortDate(lastCheckedByReason[k])})` : ''}`).join(' · ')}) — each date is re-checked automatically about once a day while data is still missing; open a date to retry now:{' '}
                     {Object.keys(notGradedByDate).sort().reverse().slice(0, 14).map((d) => (
@@ -3480,19 +3480,19 @@ Source label: ${coverageStats.source}`}
                   </div>
                 )}
                 {unconfirmedDrops.length > 0 && (
-                  <div style={{ fontSize: 11, color: 'var(--mc-text-3)', lineHeight: 1.5 }}
+                  <div style={{ fontSize: 13, color: 'var(--mc-text-3)', lineHeight: 1.5 }}
                     title={Object.keys(unconfirmedByDate).sort().reverse().map((d) => `${fmtShortDate(d)}: ${unconfirmedByDate[d].join(', ')}`).join('\n')}>
                     ⓘ {unconfirmedDrops.length.toLocaleString('en-IN')} {unconfirmedDrops.length === 1 ? 'company had' : 'companies had'} a results board meeting in the window but no confirmed results filing yet — not graded, not counted as a failure (hover for the list).
                   </div>
                 )}
                 {(issues.noData.length > 0 || issues.noPrice > 0) && (
-                  <div style={{ fontSize: 11, color: 'var(--mc-text-3)', lineHeight: 1.5 }}>
+                  <div style={{ fontSize: 13, color: 'var(--mc-text-3)', lineHeight: 1.5 }}>
                     {issues.noData.length > 0 && <>ⓘ {issues.noData.length.toLocaleString('en-IN')} {issues.noData.length === 1 ? 'company is' : 'companies are'} listed without financial numbers yet (the card says so — open its date to retry). </>}
                     {issues.noPrice > 0 && <>ⓘ {issues.noPrice.toLocaleString('en-IN')} {issues.noPrice === 1 ? 'card has' : 'cards have'} no share price yet.</>}
                   </div>
                 )}
                 {issues.partialDays.length > 0 && (
-                  <div style={{ fontSize: 11, color: 'var(--mc-warn)', lineHeight: 1.5 }}>
+                  <div style={{ fontSize: 13, color: 'var(--mc-warn)', lineHeight: 1.5 }}>
                     ⚠ {issues.partialDays.length} {issues.partialDays.length === 1 ? 'day was' : 'days were'} read while the results feed was down — the list for {issues.partialDays.length === 1 ? 'it' : 'them'} may be partial:{' '}
                     {issues.partialDays.map((d) => (
                       <button key={d} onClick={() => openDate(d)} style={{ background: 'none', border: 'none', padding: '0 6px 0 0', color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 700, cursor: 'pointer', textDecoration: 'underline dotted' }}>{fmtShortDate(d)}</button>
@@ -3500,7 +3500,7 @@ Source label: ${coverageStats.source}`}
                   </div>
                 )}
                 {windowView === 'date' && !showAllInDay && foldedTotal > 0 && (
-                  <div className="mc-no-print" style={{ fontSize: 11, color: 'var(--mc-text-3)', lineHeight: 1.5 }}>
+                  <div className="mc-no-print" style={{ fontSize: 13, color: 'var(--mc-text-3)', lineHeight: 1.5 }}>
                     Each day shows ⭐ BLOCKBUSTER and 🟢 STRONG first; its 🟡 MIXED and 🔴 AVOID are one click away under that day. To list only one tier across the whole window, click its chip above (⭐ 🟢 🟡 🔴).
                   </div>
                 )}
@@ -3530,22 +3530,22 @@ Source label: ${coverageStats.source}`}
                   <div key={g.date} data-window-date={g.date} style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 'var(--mc-radius)', padding: '12px 14px 14px' }}>
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
                       <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--mc-text-1)' }}>📅 {fmtLong(g.date)}</span>
-                      <span style={{ fontSize: 11.5, color: 'var(--mc-text-3)' }}>{g.rows.length} {g.rows.length === 1 ? 'company' : 'companies'}</span>
-                      <span style={{ fontSize: 11.5, display: 'inline-flex', gap: 8 }}>{tierCountChips(g.counts)}</span>
+                      <span style={{ fontSize: 12.5, color: 'var(--mc-text-3)' }}>{g.rows.length} {g.rows.length === 1 ? 'company' : 'companies'}</span>
+                      <span style={{ fontSize: 12.5, display: 'inline-flex', gap: 8, flexWrap: 'wrap' }}>{tierCountChips(g.counts)}</span>
                       {later > 0 && (
-                        <span style={{ fontSize: 10.5, color: 'var(--mc-text-4)' }} title="These companies also filed on this date, but are listed under another date in the window — normally their latest result.">
+                        <span style={{ fontSize: 11.5, color: 'var(--mc-text-4)' }} title="These companies also filed on this date, but are listed under another date in the window — normally their latest result.">
                           · +{later} listed under another date
                         </span>
                       )}
                       {ng > 0 && (
-                        <span style={{ fontSize: 10.5, color: 'var(--mc-warn)', fontWeight: 700 }} title={(notGradedByDate[g.date] || []).join('\n')}>
+                        <span style={{ fontSize: 11.5, color: 'var(--mc-warn)', fontWeight: 700 }} title={(notGradedByDate[g.date] || []).join('\n')}>
                           · ⚠ {ng} couldn&apos;t be graded
                         </span>
                       )}
-                      {stale && <span style={{ fontSize: 10.5, color: 'var(--mc-warn)', fontWeight: 700 }}>· graded under the previous rules</span>}
+                      {stale && <span style={{ fontSize: 11.5, color: 'var(--mc-warn)', fontWeight: 700 }}>· graded under the previous rules</span>}
                       <button className="mc-no-print" onClick={() => openDate(g.date)}
                         title="Open this date on its own (single-date view, where it can be refreshed or re-graded)"
-                        style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 700, cursor: 'pointer', padding: 0 }}>open date →</button>
+                        style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--mc-cyan)', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', padding: 0 }}>open date →</button>
                     </div>
                     {g.visible.length > 0 && <div style={gridStyle}>{takeCards(g.visible, false)}</div>}
                     {/* zzz817 — this day's own MIXED / AVOID expander. */}
@@ -3570,9 +3570,9 @@ Source label: ${coverageStats.source}`}
                     <button onClick={() => setExpanded((s) => ({ ...s, [g.tier]: !s[g.tier] }))} style={TIER_HEAD_BTN}>
                       {g.open ? <ChevronDown style={{ width: 16, height: 16, color: meta.color }} /> : <ChevronRight style={{ width: 16, height: 16, color: meta.color }} />}
                       <span style={{ fontSize: 16 }}>{meta.icon}</span>
-                      <span style={{ fontWeight: 800, color: tierText(meta.color), letterSpacing: 0.4 }}>{meta.label}</span>
+                      <span style={{ fontWeight: 800, fontSize: 15, color: tierText(meta.color), letterSpacing: 0.4 }}>{meta.label}</span>
                       <span style={tierCountPill(meta.color)}>{g.rows.length} {g.rows.length === 1 ? 'company' : 'companies'} across the window</span>
-                      <span style={{ color: 'var(--mc-text-3)', fontSize: 'var(--mc-text-xs)' }}>{g.open ? 'newest first' : 'click to show'}</span>
+                      <span style={{ color: 'var(--mc-text-3)', fontSize: 12.5 }}>{g.open ? 'newest first' : 'click to show'}</span>
                     </button>
                     {cards.length > 0 && <div style={{ ...gridStyle, padding: '0 14px 14px' }}>{cards}</div>}
                   </div>
@@ -3668,7 +3668,7 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
       style={cardShell(tierColor)}>
       {/* ── Header: TICKER · tier tag · company · price — the US card header (zzz981) ── */}
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-        <span style={{ fontWeight: 800, fontSize: 15, color: 'var(--mc-text-0)' }}>{stock.ticker}</span>
+        <span style={{ fontWeight: 800, fontSize: 16, color: 'var(--mc-text-0)', overflowWrap: 'anywhere' }}>{stock.ticker}</span>
         {/* zzz817 — the card says its tier, next to the name, in every view
             (a window day mixes all four tiers). */}
         {_unconf
@@ -3679,7 +3679,7 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
               <span style={{ fontWeight: 600, color: 'var(--mc-text-4)', letterSpacing: 0 }}> (was {_unconf})</span>
             </span>
           : <TierBadge tier={stock.tier} />}
-        <span style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+        <span style={{ fontSize: 13, color: 'var(--mc-text-2)', flex: '1 1 150px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
           title={decodeEntities(String(stock.company || ''))}>
           {decodeEntities(String(stock.company || ''))}
         </span>
@@ -3688,7 +3688,7 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
           <span title="Filed since your last auto-refresh — under 10 minutes ago"
             style={{
               padding: '3px 6px', borderRadius: 3, alignSelf: 'center', lineHeight: 1,
-              fontSize: 9, fontWeight: 900, letterSpacing: '0.5px',
+              fontSize: 11, fontWeight: 900, letterSpacing: '0.5px',
               backgroundColor: 'var(--mc-bullish)', color: 'var(--mc-bg-0)',
               animation: 'pulse 1.5s ease-in-out infinite',
             }}>
@@ -3696,14 +3696,14 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
           </span>
         )}
         {stock.price != null && (
-          <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-text-0)', whiteSpace: 'nowrap' }}>
+          <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--mc-text-0)', whiteSpace: 'nowrap', marginLeft: 'auto' }}>
             {fmtPx(stock.price)}
           </span>
         )}
       </div>
       {/* zzz820b — why a top-tier quarter was held at a lower tier (engine v24). */}
       {capReasonOf(stock) && (
-        <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--mc-text-2)', marginTop: 4, lineHeight: 1.35 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--mc-text-2)', marginTop: 4, lineHeight: 1.35 }}>
           {capReasonOf(stock)}
         </div>
       )}
@@ -3711,14 +3711,14 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
       {/* zzz975 — once the guidance line knows the direction, the "unknown" note would contradict it. */}
       {typeof (stock as any).guidance_note === 'string' && (stock as any).guidance_note
         && !['raised', 'lowered', 'mixed', 'cautious', 'maintained', 'withdrawn'].includes(String((stock as any).guide_line?.direction || '')) && (
-        <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginTop: 3, lineHeight: 1.35 }}
+        <div style={{ fontSize: 13, color: 'var(--mc-text-3)', marginTop: 3, lineHeight: 1.35 }}
           title="Guidance status: unknown. Unknown guidance can hold back a top-tier result that needs it; it never lowers a grade.">
           Guidance: unknown{String((stock as any).guidance_note).startsWith('so ') ? ', ' : ' — '}{(stock as any).guidance_note}
         </div>
       )}
 
       {/* ── Chip row (US: 6px gap, right under the header) ── */}
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', margin: '6px 0 9px' }}>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', margin: '8px 0 10px' }}>
         {/* zzz696 — everything from the quadrant badge to the sector chip is
             opt-in. The size chip is not: it is a number, not a label. */}
         {/* zzz703 — pattern verdict, visible whatever the badge switch says. */}
@@ -3847,14 +3847,14 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
       {/* zzz820 — the tier was set from the stored growth figures; when those
           may be measured against the wrong year-ago quarter, say so. */}
       {_g.withheld && (
-        <div title={_g.withheld} style={{ marginTop: 6, fontSize: 10.5, color: 'var(--mc-warn)', fontWeight: 700, lineHeight: 1.4 }}>
+        <div title={_g.withheld} style={{ marginTop: 6, fontSize: 13, color: 'var(--mc-warn)', fontWeight: 700, lineHeight: 1.4 }}>
           ⚠ Growth not shown: last year&apos;s same quarter is missing from the Screener table, so the stored growth (and the grade built on it) may compare against the wrong quarter. Check the filing before relying on it.
         </div>
       )}
 
       {/* ── Price line (US "Reaction · Since · RS · Stage") — context only ── */}
       {(stock.gap_pct != null || stock.d1_pct != null || stock.move_pct != null || stock.rs_rating != null || stock.stage != null) && (
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', margin: '9px 0 0', fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', alignItems: 'baseline' }}>
+        <div style={{ display: 'flex', gap: '6px 14px', flexWrap: 'wrap', margin: '10px 0 0', fontSize: 12.5, color: 'var(--mc-text-2)', alignItems: 'baseline', lineHeight: 1.4 }}>
           {stock.d1_pct != null && (
             <span>D1 <b style={{ color: stock.d1_pct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{fmtPct(stock.d1_pct)}</b></span>
           )}
@@ -3880,7 +3880,7 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
       {_ctx.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center', marginTop: 7 }}
           title="Share-price facts shown for context. The tier is decided from the reported numbers only.">
-          <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700 }}>Price context — not part of the grade:</span>
+          <span style={{ fontSize: 11.5, color: 'var(--mc-text-4)', fontWeight: 700 }}>Price context — not part of the grade:</span>
           {_ctx.map((t) => (
             <span key={t} style={chipStyle()}>{t}</span>
           ))}
@@ -3892,7 +3892,7 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
       {Array.isArray((stock as any).size_flags) && (stock as any).size_flags.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center', marginTop: 7 }}
           title="Size flags: from market cap and trading value (share-price figures), so they do not change the tier. Use the Mkt Cap filter to hide small companies.">
-          <span style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 700 }}>Size — not part of the grade:</span>
+          <span style={{ fontSize: 11.5, color: 'var(--mc-text-4)', fontWeight: 700 }}>Size — not part of the grade:</span>
           {((stock as any).size_flags as string[]).map((t) => (
             <span key={t} style={chipStyle('var(--mc-warn)')}>
               {t === 'very small company' ? 'Very small company' : t === 'barely trades' ? 'Barely trades' : t}
@@ -3902,7 +3902,7 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
       )}
 
       {/* ── Narrative — the US narrative style ── */}
-      <div style={{ fontSize: 'var(--mc-text-xs)', color: 'var(--mc-text-2)', marginTop: 9, lineHeight: 1.5 }}>
+      <div style={{ fontSize: 13, color: 'var(--mc-text-2)', marginTop: 10, paddingTop: 9, borderTop: '1px dashed var(--mc-bg-4)', lineHeight: 1.55, overflowWrap: 'break-word' }}>
         {narrativeForDisplay(stock)}
       </div>
 
@@ -3910,7 +3910,7 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
 
       {/* ── Methodology + caveat pills ────────────────────────────────────── */}
       {(stock.methodology_tags.length > 0 || _cavs.length > 0) && (
-        <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+        <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
           {stock.methodology_tags.map((t) => (
             <span key={t} style={chipStyle('var(--mc-bullish)')}>✓ {t}</span>
           ))}
@@ -3937,20 +3937,20 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
           /get-quotes/equity URL into stock.filing_url which redirects to
           a generic quote page, not the financial-results filings page.
           Generating at render time means stale caches don't poison the link. */}
-      <div style={{ marginTop: 9, paddingTop: 7, borderTop: '1px solid var(--mc-bg-4)', display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+      <div style={{ marginTop: 12, paddingTop: 9, borderTop: '1px solid var(--mc-bg-4)', display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
         <a
           href={`https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(stock.ticker)}`}
           target="_blank" rel="noopener noreferrer"
           title="Open NSE financial-results filings filter for this ticker"
-          style={{ fontSize: 'var(--mc-text-xs)', fontWeight: 700, color: 'var(--mc-cyan)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-          <ExternalLink style={{ width: 11, height: 11 }} /> 📄 NSE Filings · {stock.ticker}
+          style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--mc-cyan)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+          <ExternalLink style={{ width: 12, height: 12 }} /> 📄 NSE Filings · {stock.ticker}
         </a>
         <a
           href={`https://www.bseindia.com/corporates/ann.html?scrip=${encodeURIComponent(stock.ticker)}`}
           target="_blank" rel="noopener noreferrer"
           title="Open BSE corporate announcements filter for this ticker"
-          style={{ fontSize: 'var(--mc-text-xs)', fontWeight: 700, color: 'var(--mc-text-3)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-          <ExternalLink style={{ width: 11, height: 11 }} /> 📄 BSE
+          style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--mc-text-3)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+          <ExternalLink style={{ width: 12, height: 12 }} /> 📄 BSE
         </a>
       </div>
     </div>
@@ -3987,7 +3987,7 @@ function CashTile({ v }: { v: CashTileView }) {
     <Tile label="CASH CFO/PAT" value={v.text} color={color} sub={v.note}
       title="Operating cash flow ÷ net profit for the year: does cash back the reported profit?"
       extra={v.basis && (
-        <div style={{ fontSize: 10, color: 'var(--mc-text-4)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        <div style={{ fontSize: 11.5, color: 'var(--mc-text-4)', lineHeight: 1.3, overflowWrap: 'break-word' }}>
           {v.basis}
         </div>
       )} />

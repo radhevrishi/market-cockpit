@@ -22,6 +22,9 @@ const eq = (key: NumKey, v: number): Filter => ({ kind: 'num', key, op: 'between
 
 /** zzz984 — his own "minervni script" (Minervini trend template, all six rules) — computed field ttOk (tv-screens.ts). */
 const TREND_TEMPLATE: Filter[] = [ge('ttOk', 1)];
+/** zzz987 — Stage Analysis (TheWrap method) columns and the note every one of its screens starts with. */
+const TW_COLS: NumKey[] = ['twSt', 'sata', 'mrs', 'twWk', 'rsR'];
+const TW_NOTE = 'Stage Analysis (TheWrap method) — our own version that follows the published rules (weekly 10/30/40-week averages, 13-week closing range, SATA score, Mansfield RS vs the index); not the original script.';
 const ABOVE_200: Filter[] = [{ kind: 'cmp', key: 'px', op: 'above', other: 'sma200' }];
 const BELOW_200: Filter[] = [{ kind: 'cmp', key: 'px', op: 'below', other: 'sma200' }];
 
@@ -60,6 +63,16 @@ export const BUILT_IN_PINE_SCREENS: readonly PineScreen[] = [
     'Your RSI script: RSI 14 above the 50 line and above its own 14-session average.'),
   rules('tv-golden-cross', 'Golden cross (last 20 days)', [le('gcD', 19)], ['gcD'], 'tv', 'MA Cross: SMA 50 crossed above SMA 200 in the last 20 sessions.'),
   rules('tv-death-cross', 'Death cross (last 20 days)', [le('dcD', 19)], ['dcD'], 'tv', 'MA Cross: SMA 50 crossed below SMA 200 in the last 20 sessions.'),
+  // zzz987 — Stage Analysis (TheWrap method): our own version following the published rules of Tar_H's invite-only
+  // "TheWrap🌯 Stage Analysis" (lib/stage-analysis.ts) — not the original script, so readings can differ from TradingView.
+  rules('tw-stage2-sata6', 'Stage 2 · SATA ≥ 6 (TheWrap method)', [eq('twSt', 2), ge('sata', 6)], TW_COLS, 'tv',
+    `${TW_NOTE} Stage 2 (advancing) with a SATA score of 6 or more out of 10.`),
+  rules('tw-fresh-stage2', 'Fresh Stage 2 (≤ 4 weeks, TheWrap method)', [eq('twSt', 2), le('twWk', 4)], TW_COLS, 'tv',
+    `${TW_NOTE} Stage 2 that began in the last 4 weeks: a close above the 13-week range high and the 40-week average with SATA ≥ 6.`),
+  rules('tw-stage4-sata3', 'Stage 4 · SATA ≤ 3 (TheWrap method)', [eq('twSt', 4), le('sata', 3)], TW_COLS, 'tv',
+    `${TW_NOTE} Stage 4 (declining) with a SATA score of 3 or less — names to avoid or short.`),
+  rules('tw-stage1-bases', 'Stage 1 bases (TheWrap method)', [eq('twSt', 1)], TW_COLS, 'tv',
+    `${TW_NOTE} Stage 1 (basing): after Stage 4, price back above its 30-week average while the 40-week average is still falling.`),
   rules('tv-ema-cross-up', 'EMA 10/21 cross up (last 5 days)', [le('emaXU', 4)], ['emaXU'], 'tv', 'MA Cross: EMA 10 crossed above EMA 21 in the last 5 sessions.'),
 
   // ── zzz984: momentum & trend (his favourite indicators) ───────────────────────────────────────────────────────────────

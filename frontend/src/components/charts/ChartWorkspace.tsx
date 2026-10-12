@@ -24,6 +24,10 @@ import { readableOn, textOnColor } from '@/lib/readable-color';
 import { addSet, activeSetOf, chooseSet, loadSets, removeSet, saveSets, setsOf, withSet, DRAWING_SETS_KEY, MAIN_SET, type SetsStore } from '@/lib/chart-drawing-sets';
 import { PatternBanner, usePatternIndicator } from './PatternIndicator';
 import { patternsOn, withPatterns } from './pattern-view';
+import { StageBanner, useStageIndicator } from './StageIndicator';
+import { stageOn, withStage } from './stage-view';
+import SymbolSearch from './SymbolSearch';
+import type { SymbolItem } from '@/lib/symbol-search';
 
 type KC = typeof import('klinecharts');
 type Tool = 'cursor' | 'mcHLine' | 'segment' | 'rayLine' | 'mcRect' | 'parallelStraightLine' | 'fibonacciLine' | 'mcText' | 'mcMeasure';
@@ -696,8 +700,8 @@ export default function ChartWorkspace() {
     return () => { window.removeEventListener('mc:vault:restored', onRestored); window.removeEventListener('mc:vault:pushed', onPushed); };
   }, [restoreDrawings]);
 
-  const submitSearch = (e: React.FormEvent) => {
-    e.preventDefault();
+  const submitSearch = (e?: React.FormEvent) => {
+    e?.preventDefault();
     const t = cleanTicker(query);
     if (!validTicker(queryMarket, t)) { setError(`"${query}" does not look like a ${queryMarket === 'IN' ? 'NSE / BSE' : 'US'} ticker.`); return; }
     setQuery(t);
@@ -706,12 +710,24 @@ export default function ChartWorkspace() {
     setExchange(queryMarket === 'IN' && (/^BSE:/i.test(query) || /\.BO$/i.test(query)) ? 'BSE' : queryMarket === 'IN' && (/^NSE:/i.test(query) || /\.NS$/i.test(query)) ? 'NSE' : undefined);
   };
 
+  // zzz986 — a suggestion picked in the ticker box: its own market (and BSE when that is its exchange)
+  const pickSymbol = (s: SymbolItem) => {
+    setError(null);
+    setQuery(s.t);
+    setQueryMarket(s.m);
+    setMarket(s.m);
+    setTicker(s.t);
+    setExchange(s.m === 'IN' && s.x === 'BSE' ? 'BSE' : undefined);
+  };
+
   // zzz967 (CH-02) — header numbers only from a response for THIS ticker / market / exchange
   const live = sameChartIdentity(info, ticker, market, exchange) ? info : null;
   const stats = live?.stats;
   const cur = live?.currency === 'INR' ? '₹' : live?.currency === 'USD' ? '$' : live?.currency ? `${live.currency} ` : (market === 'IN' ? '₹' : '$');
   // zzz982 — "Automate chart patterns": runs only while that indicator is in the working layout
   const patterns = usePatternIndicator({ on: patternsOn(L.working), ready, ticker, market, exchange, basis, live, bars, chartRef, cacheRef, cur });
+  // zzz987 — "Stage Analysis (TheWrap method)": runs only while that indicator is in the working layout
+  const stageInd = useStageIndicator({ on: stageOn(L.working), ready, ticker, market, exchange, basis, live, bars, chartRef, cacheRef, light: chartLight });
   const changeColor = (stats?.change ?? 0) >= 0 ? 'var(--mc-bullish, #059669)' : 'var(--mc-bearish, #DC2626)';
   const activeHint = useMemo(() => TOOLS.find((t) => t.id === tool)?.hint, [tool]);
   useEffect(() => { toolRef.current = tool; }, [tool]);
@@ -755,8 +771,9 @@ export default function ChartWorkspace() {
             <option value="US">US</option>
             <option value="IN">India</option>
           </select>
-          <input aria-label="Ticker" value={query} onChange={(e) => setQuery(e.target.value.toUpperCase())} placeholder="Ticker, e.g. QQQ"
-            style={{ width: 150, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-0)', color: 'var(--mc-text-0)', fontSize: 13 }} />
+          <SymbolSearch value={query} onChange={setQuery} market={queryMarket} onPick={pickSymbol}
+            onSubmitTyped={() => submitSearch()} isTypedTicker={(v) => validTicker(queryMarket, cleanTicker(v))}
+            inputStyle={{ width: 190, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-0)', color: 'var(--mc-text-0)', fontSize: 13 }} />
           <button type="submit" style={btn(false)}>Open</button>
         </form>
         <span style={{ width: 1, height: 22, background: 'var(--mc-border-1)' }} />
@@ -871,6 +888,7 @@ export default function ChartWorkspace() {
           </div>
           <IndicatorLegend rows={rows} valueOf={valueOf} onToggle={(id) => L.setWorking((w) => toggleRow(w, id))} decimals={pxDecimals} colorOf={(c) => (!chartLight && (luminance(c) ?? 1) < 0.18 ? '#B2B5BE' : c)} textOf={(c) => readableOn(c, chartLight ? '#FFFFFF' : '#0A0E1A')} />
           <PatternBanner p={patterns} cur={cur} light={chartLight} onTurnOff={() => L.setWorking((w) => withPatterns(w, false))} />
+          <StageBanner s={stageInd} light={chartLight} shifted={patterns.on} onTurnOff={() => L.setWorking((w) => withStage(w, false))} />
           {(savedAt || syncedAt) && (
             <div title="Drawings are saved in this browser at once and copied to your account about once a minute, so they come back on your other devices"
               style={{ position: 'absolute', left: 8, bottom: 30, zIndex: 5, padding: '2px 8px', borderRadius: 6, fontSize: 11, background: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-1)', color: 'var(--mc-bullish, #059669)', pointerEvents: 'none' }}>

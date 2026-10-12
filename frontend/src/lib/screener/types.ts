@@ -98,6 +98,11 @@ export interface ScreenRow {
   ripB?: number | null;      // Ripster EMA clouds bullish (1 / 0)
   fcfmTTM?: number | null;   // free-cash-flow margin % (≈ latest full year — see FIELDS)
   r40?: number | null;       // revenue growth quarterly YoY + FCF margin (the owner's custom Rule of 40)
+  // ── zzz987: Stage Analysis (TheWrap method — our own version from the published rules, lib/stage-analysis.ts) ──────────
+  twSt?: number | null;      // stage 1–4 on weekly bars (state machine)
+  sata?: number | null;      // SATA score 0–10
+  mrs?: number | null;       // Mansfield RS vs S&P 500 (US) / Nifty 50 (India)
+  twWk?: number | null;      // weeks in the current stage
 }
 
 export interface ScreenSnapshot {

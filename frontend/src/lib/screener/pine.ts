@@ -18,7 +18,7 @@ import type { TechStored } from './tech-fetch';
 import { tvFigures, rsRatings, type TvFigures } from './tv-screens';
 
 /** Bump when the engine or the stored tag changes: every stored entry without it is re-read on the next build. */
-export const PATTERN_SCAN_VERSION = 2;   // 2 = zzz984: + the owner's TradingView indicator fields (tv-screens.ts)
+export const PATTERN_SCAN_VERSION = 3;   // 2 = zzz984: + the owner's TradingView indicator fields (tv-screens.ts); 3 = zzz987: + Stage Analysis (TheWrap method)
 /** Only hits at least this likely are stored (the engine's own floor is 35 as well). */
 export const PATTERN_MIN_STORE = 35;
 
@@ -49,12 +49,13 @@ export function patternsFromBars(b: DailyBars, ipoD: number | null | undefined):
 }
 
 /** What the screener build keeps per company from one download of its daily bars: price figures + chart patterns. */
-export function techEntry(bars: DailyBars, firstTradeSec: number | null, partial?: boolean): TechStored {
+/** `bench` (zzz987) = the market index's weekly closes by week key, for the Mansfield RS of the Stage Analysis. */
+export function techEntry(bars: DailyBars, firstTradeSec: number | null, partial?: boolean, bench?: ReadonlyMap<string, number> | null): TechStored {
   const ipoD = firstTradeSec != null ? Math.floor((firstTradeSec * 1000) / DAY) : null;
   const cc = partial ? closedFigures(bars) : null;
   const p = patternsFromBars(bars, ipoD);
   let tv: Partial<TvFigures> = {};
-  try { tv = tvFigures(bars); } catch { /* never costs the price figures */ }
+  try { tv = tvFigures(bars, bench); } catch { /* never costs the price figures */ }
   return { ...techFigures(bars), ipoD, ...(cc ? { cc } : {}), pat: p.pat, patAt: p.patAt, patV: PATTERN_SCAN_VERSION, ...tv };
 }
 
@@ -66,7 +67,7 @@ export function rowPatternFields(tf: TechStored | undefined): Pick<ScreenRow, 'p
 
 /** zzz984 — the TradingView-script fields a row carries (entries read before scan version 2 carry none). `adv$` = average daily
  *  traded value in the market's money unit ($ million / ₹ crore). The RS Rating is ranked later, over the whole snapshot. */
-export const TV_ROW_KEYS = ['tt', 'ttOk', 'rsiMA', 'rsiX', 'gcD', 'dcD', 'emaXU', 'emaXD', 'stage', 'st12', 'ppD', 'rvol', 'ripB'] as const;
+export const TV_ROW_KEYS = ['tt', 'ttOk', 'rsiMA', 'rsiX', 'gcD', 'dcD', 'emaXU', 'emaXD', 'stage', 'st12', 'ppD', 'rvol', 'ripB', 'twSt', 'sata', 'mrs', 'twWk'] as const;
 export function rowTvFields(tf: TechStored | undefined, market: ScreenMarket): Partial<ScreenRow> {
   if (!tf || !(typeof tf.patV === 'number' && tf.patV >= 2)) return {};
   const o: Partial<ScreenRow> = {};
@@ -120,7 +121,7 @@ export interface PineQuery {
   cols: NumKey[];
 }
 /** zzz984 — the extra columns the owner can switch on (the TradingView-script fields first). */
-export const OPTIONAL_COLS: readonly NumKey[] = ['tt', 'rsR', 'stage', 'r40', 'revQYoY', 'fcfmTTM', 'rsiMA', 'rsiX', 'gcD', 'dcD', 'emaXU', 'emaXD', 'ppD', 'rvol', 'adv$', 'adrP', 'ripB', 'ttOk', 'st12', 'perf1M', 'perf6M', 'perf1Y'];
+export const OPTIONAL_COLS: readonly NumKey[] = ['tt', 'rsR', 'stage', 'twSt', 'sata', 'mrs', 'twWk', 'r40', 'revQYoY', 'fcfmTTM', 'rsiMA', 'rsiX', 'gcD', 'dcD', 'emaXU', 'emaXD', 'ppD', 'rvol', 'adv$', 'adrP', 'ripB', 'ttOk', 'st12', 'perf1M', 'perf6M', 'perf1Y'];
 
 export const DEFAULT_QUERY: PineQuery = {
   bias: 'U', ids: [], stages: ['f', 'b'], minConf: 55, dist: { on: true, lo: -15, hi: 5 },
@@ -225,6 +226,8 @@ export const LEAN_KEYS = [
   'rsi', 'adrP', 'perf1W', 'perf1M', 'perf3M', 'perf6M', 'perfYTD', 'perf1Y', 'q', 'ipoD', 'earnD', 'pat', 'patAt',
   // zzz984 — the TradingView-script fields and the Rule of 40 parts
   'tt', 'ttOk', 'rsR', 'rsiMA', 'rsiX', 'gcD', 'dcD', 'emaXU', 'emaXD', 'stage', 'st12', 'ppD', 'rvol', 'adv$', 'ripB', 'revQYoY', 'fcfmTTM', 'r40', 'approx',
+  // zzz987 — Stage Analysis (TheWrap method)
+  'twSt', 'sata', 'mrs', 'twWk',
 ] as const satisfies ReadonlyArray<keyof ScreenRow>;
 export function leanRow(r: ScreenRow): Partial<ScreenRow> & { live?: 1 } {
   const o: Record<string, unknown> = {};
@@ -293,4 +296,33 @@ export function cleanPineScreens(raw: unknown): PineScreen[] {
     out.push({ id: x.id.slice(0, 60), name: x.name.slice(0, 80), ...(x.market === 'US' || x.market === 'IN' ? { market: x.market } : {}), q: cleanQuery(x.q) });
   }
   return out;
+}
+
+/** zzz989 — "show data first": what the stored snapshot can answer right now. A rule whose figure no company has yet (a field
+ *  added by a newer build that has not run) is PAUSED instead of emptying the list, and a "chart pattern required" choice is
+ *  dropped while the market has not been scanned for patterns. The page names every paused rule; nothing is hidden. */
+export interface Available { q: PineQuery; paused: NumKey[]; patternsPaused: boolean }
+const filterKeys = (f: Filter): NumKey[] => (f.kind === 'num' || f.kind === 'date' ? [f.key] : f.kind === 'cmp' || f.kind === 'near' ? [f.key, f.other] : []);
+export function availableQuery(rows: readonly ScreenRow[], q: PineQuery, scanned: number): Available {
+  const has = new Map<NumKey, boolean>();
+  const present = (k: NumKey): boolean => {
+    let v = has.get(k);
+    if (v === undefined) { v = rows.some((r) => (r as any)[k] != null); has.set(k, v); }
+    return v;
+  };
+  const paused: NumKey[] = [];
+  const filters = q.filters.map((f) => {
+    if ((f as { off?: boolean }).off || !rows.length) return f;
+    const miss = filterKeys(f).filter((k) => !present(k));
+    if (!miss.length) return f;
+    for (const k of miss) if (!paused.includes(k)) paused.push(k);
+    return { ...f, off: true } as Filter;
+  });
+  const patternsPaused = q.need !== 'any' && rows.length > 0 && scanned === 0 && !rows.some((r) => r.pat?.length);
+  return { q: { ...q, filters, ...(patternsPaused ? { need: 'any' as const } : {}) }, paused, patternsPaused };
+}
+
+/** zzz989 — the watchlist / bench link: keep only the companies on a chosen list (null = every company). */
+export function onList(hits: PineHit[], tickers: ReadonlySet<string> | null): PineHit[] {
+  return tickers ? hits.filter((h) => tickers.has(h.row.t.toUpperCase())) : hits;
 }

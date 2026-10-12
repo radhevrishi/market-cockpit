@@ -19,6 +19,7 @@ const FQ_IN = 'India: only companies that published a balance sheet for their la
 const PRICE_IN = 'India: Yahoo daily prices, with NSE\'s own official prices for the last 3 months';
 const FCFM_US = 'USA: FCF margin of the latest full year — (operating cash flow − capex) ÷ revenue; SEC data holds quarterly cash flows only as year-to-date totals';
 const FCFM_IN = 'India: latest full year, (cash from operations + cash from investing) ÷ sales — screener.in prints no capex line; filled as company pages are re-read';
+const TW_NOTE = 'Our own version that follows the published rules of TheWrap Stage Analysis (weekly 10 / 30 / 40-week averages, 13-week closing range, 10-point SATA score) — not the original script; readings can differ from TradingView';
 export const FIELDS: readonly FieldDef[] = [
   // price & volume
   { key: 'px', label: 'Price', unit: 'price', markets: BOTH, group: 'Price & volume' },
@@ -73,6 +74,11 @@ export const FIELDS: readonly FieldDef[] = [
   { key: 'rvol', label: 'Relative volume (vs 50 sessions)', unit: 'x', markets: BOTH, group: 'Price & volume' },
   { key: 'adv$', label: 'Average daily traded value, 20 sessions', unit: 'money', markets: BOTH, group: 'Price & volume' },
   { key: 'ripB', label: 'Ripster EMA clouds bullish (1 = yes)', unit: 'num', markets: BOTH, group: 'Momentum' },
+  // zzz987 — Stage Analysis (TheWrap method): our own version that follows the published rules (lib/stage-analysis.ts), not the original script
+  { key: 'twSt', label: 'Stage Analysis (TheWrap method): stage 1–4', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: TW_NOTE, IN: TW_NOTE } },
+  { key: 'sata', label: 'Stage Analysis (TheWrap method): SATA score 0–10', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: TW_NOTE, IN: TW_NOTE } },
+  { key: 'mrs', label: 'Mansfield RS (weekly, vs index)', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: '((close ÷ S&P 500) ÷ its 52-week average − 1) × 100, weekly closes', IN: '((close ÷ Nifty 50) ÷ its 52-week average − 1) × 100, weekly closes' } },
+  { key: 'twWk', label: 'Stage Analysis (TheWrap method): weeks in stage', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: TW_NOTE, IN: TW_NOTE } },
   // growth
   { key: 'r40', label: 'Revenue growth YoY + FCF margin (Rule of 40)', unit: '%', markets: BOTH, group: 'Growth', approxNote: { US: FCFM_US, IN: FCFM_IN } },
   { key: 'revQYoY', label: 'Revenue growth, quarterly YoY', unit: '%', markets: BOTH, group: 'Growth' },

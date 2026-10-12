@@ -144,8 +144,8 @@ test('zzz984 RS Rating: weighted performance ranked 1–99 within the market, ti
 
 test('zzz984 build path: techEntry carries the fields, rows get them (adv$ in the market unit), older entries none', () => {
   const tf = techEntry(bars(UP, () => 2_000_000), null, false);
-  assert.equal(PATTERN_SCAN_VERSION, 2);
-  assert.equal(tf.patV, 2); assert.equal(tf.tt, 6); assert.equal(tf.stage, 2); assert.equal(tf.ripB, 1);
+  assert.ok(PATTERN_SCAN_VERSION >= 2);   // zzz987 bumped it to 3 (Stage Analysis); the zzz984 fields are carried from 2 on
+  assert.equal(tf.patV, PATTERN_SCAN_VERSION); assert.equal(tf.tt, 6); assert.equal(tf.stage, 2); assert.equal(tf.ripB, 1);
   const us = rowTvFields(tf, 'US'), inr = rowTvFields(tf, 'IN');
   assert.equal(us.tt, 6); assert.equal(us.ttOk, 1); assert.equal(us.stage, 2);
   assert.ok(Math.abs((us['adv$'] as number) - tf.adv! / 1e6) < 0.01);

@@ -3,13 +3,15 @@
 // TradingView-style legend at the top-left of the chart with an eye toggle per line.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  CHART_LAYOUTS_KEY, EXTRA_INFO, EXTRA_TYPES, MAX_EXTRAS, MAX_LINES, activeLayout, cleanLayout, deleteLayout, mergeLayoutStores,
+  CHART_LAYOUTS_KEY, EXTRA_INFO, EXTRA_TYPES, SPECIAL_EXTRAS, MAX_EXTRAS, MAX_LINES, activeLayout, cleanLayout, deleteLayout, mergeLayoutStores,
   newExtra, newLayoutId, renameLayout, saveLayout, saveLayoutAs, sameSettings, toggleRow,
   type ChartLayout, type Extra, type ExtraType, type LayoutStore, type LegendRow, type MaLine,
 } from '@/lib/chart-layouts';
 import { loadLayoutStore, saveLayoutStore } from '@/lib/chart-storage';
 import { fmtPrice } from '@/lib/chart-math';
 import { patternsOn, withPatterns } from './pattern-view';
+import { stageOn, withStage } from './stage-view';
+import { STAGE_TOOLTIP } from '@/lib/stage-analysis';
 
 // ── store hook ────────────────────────────────────────────────────────────────
 const LAYOUT_DRAFT_KEY = 'mc:chart-layout-draft:v1';
@@ -189,8 +191,18 @@ export function IndicatorsPanel({ L, onClose }: { L: ReturnType<typeof useLayout
           Names the pattern the daily chart is forming (flat base, cup with handle, VCP, flags, double bottom, head &amp; shoulders …) in one line at the top of the chart, with its pivot, and draws it.
         </div>
       </div>
-      {w.extras.some((x) => x.type !== 'PAT') && <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-text-3)', margin: '8px 0 4px', paddingTop: 8, borderTop: '1px solid var(--mc-border-3)' }}>OTHER INDICATORS</div>}
-      {w.extras.filter((x) => x.type !== 'PAT').map((x) => {
+      {/* zzz987 — Stage Analysis (TheWrap method): our own version from the published rules */}
+      <div style={{ margin: '8px 0', paddingTop: 8, borderTop: '1px solid var(--mc-border-3)' }} title={STAGE_TOOLTIP}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+          <input type="checkbox" checked={stageOn(w)} onChange={(e) => setW((l) => withStage(l, e.target.checked))} aria-label="Stage Analysis (TheWrap method)" />
+          <b style={{ fontWeight: 600 }}>Stage Analysis (TheWrap method)</b>
+        </label>
+        <div style={{ paddingLeft: 22, marginTop: 2, fontSize: 12, color: 'var(--mc-text-3)' }}>
+          Weekly stages 1–4 as coloured bands (blue basing, green advancing, blue topping, red declining), the SATA score out of 10 and a Mansfield RS pane against the S&amp;P 500 / Nifty 50. Our own version that follows the published rules — not the original script.
+        </div>
+      </div>
+      {w.extras.some((x) => !SPECIAL_EXTRAS.has(x.type)) && <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-text-3)', margin: '8px 0 4px', paddingTop: 8, borderTop: '1px solid var(--mc-border-3)' }}>OTHER INDICATORS</div>}
+      {w.extras.filter((x) => !SPECIAL_EXTRAS.has(x.type)).map((x) => {
         const info = EXTRA_INFO[x.type];
         return (
           <div key={x.id} style={{ marginBottom: 8 }}>
@@ -216,7 +228,7 @@ export function IndicatorsPanel({ L, onClose }: { L: ReturnType<typeof useLayout
           <option value="">+ Add an indicator…</option>
           {w.lines.length < MAX_LINES && <option value="EMA">EMA line</option>}
           {w.lines.length < MAX_LINES && <option value="SMA">SMA line</option>}
-          {w.extras.length < MAX_EXTRAS && EXTRA_TYPES.filter((t) => t !== 'PAT').map((t) => <option key={t} value={t}>{EXTRA_INFO[t].label}</option>)}
+          {w.extras.length < MAX_EXTRAS && EXTRA_TYPES.filter((t) => !SPECIAL_EXTRAS.has(t)).map((t) => <option key={t} value={t}>{EXTRA_INFO[t].label}</option>)}
         </select>
       </div>
       <div style={{ marginTop: 8, color: 'var(--mc-text-3)', fontSize: 12 }}>

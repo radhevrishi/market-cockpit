@@ -5,6 +5,7 @@ import { dbQuery } from '@/lib/db';
 import { barsFromYahoo, overlayNse, type NseDay, type TechFigures } from './tech';
 import { techEntry, PATTERN_SCAN_VERSION, type ScreenPatternTag } from './pine';
 import type { TvFigures } from './tv-screens';
+import { benchWeekly } from '../stage-analysis';
 
 // the same browser string the rest of the app uses for Yahoo (lib/us-prices.ts explains why it must be exactly this)
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
@@ -56,6 +57,15 @@ export async function refreshTech(opts: {
   const due = opts.tickers.filter((t) => { const s = store.get(t); return opts.due(s) || (!!s && s.patV !== PATTERN_SCAN_VERSION); }).sort((a, b) => (store.get(a)?.d || '').localeCompare(store.get(b)?.d || ''));
   if (!due.length) return store;
   const nseOf = opts.nse ? await opts.nse() : null;
+  // zzz987 — the market index's weekly closes (S&P 500 / Nifty 50), read once per run, for the Stage Analysis' Mansfield RS.
+  // If Yahoo does not answer, the companies still get their stage and SATA; Mansfield RS (and its two SATA points) stay empty.
+  let bench: Map<string, number> | null = null;
+  try {
+    const br = await yahooDaily(opts.market === 'US' ? '^GSPC' : '^NSEI');
+    const bb = 'j' in br ? barsFromYahoo(br.j) : null;
+    if (bb) bench = benchWeekly(bb.bars.d, bb.bars.c);
+  } catch { bench = null; }
+  if (!bench?.size) opts.notes.push(`Stage Analysis: the ${opts.market === 'US' ? 'S&P 500' : 'Nifty 50'} history could not be read this run — Mansfield RS left empty for the companies updated now`);
   const t0 = Date.now();
   let i = 0, ok = 0, miss = 0, fails = 0, streak = 0, stopped = false;
   const worker = async () => {
@@ -67,7 +77,7 @@ export async function refreshTech(opts: {
         const got = barsFromYahoo(r.j);
         if (got) {
           const bars = nseOf ? overlayNse(got.bars, nseOf(t)) : got.bars;
-          store.set(t, techEntry(bars, got.firstTrade, got.partial));   // price figures + chart patterns from the same bars
+          store.set(t, techEntry(bars, got.firstTrade, got.partial, bench));   // price figures + chart patterns from the same bars
           ok++;
         } else miss++;
       } else if (r.status === 404) miss++;

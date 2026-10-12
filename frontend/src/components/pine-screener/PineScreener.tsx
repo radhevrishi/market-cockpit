@@ -10,7 +10,7 @@ import type { ScreenMarket, ScreenRow } from '@/lib/screener/types';
 import { PATTERN_META, type PatternId } from '@/lib/chart-patterns';
 import {
   DEFAULT_QUERY, LIKELIHOODS, OPTIONAL_COLS, PINE_GROUPS, PINE_SCREENS_KEY, STAGES, cleanPineScreens, cleanQuery, dirDist, likelihoodWord, patternCounts, patternGroups,
-  runPine, turnoverOf, type PerfKey, type PineHit, type PineQuery, type PineScreen, type PineStage, type ScreenPatternTag,
+  runPine, turnoverOf, availableQuery, onList, type PerfKey, type PineHit, type PineQuery, type PineScreen, type PineStage, type ScreenPatternTag,
 } from '@/lib/screener/pine';
 import { BUILT_IN_PINE_SCREENS } from '@/lib/screener/pine-presets';
 import { fmtValue, filterLabel, fieldOf, type NumKey } from '@/lib/screener/filters';
@@ -20,7 +20,8 @@ import { pollWhenVisible } from '@/lib/client-fetch';
 import { useWorkspaceLight, workspaceThemeClass } from '@/lib/workspace-theme';
 import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
 import { useWatchlistStore } from '@/components/charts/WatchlistPanel';
-import { activeList, updateList, addItem, listCount, type WlItem } from '@/lib/chart-watchlist';
+import { activeList, updateList, addItem, removeItem, findItem, itemKey, listCount, type WlItem } from '@/lib/chart-watchlist';
+import { getConvictionTickers } from '@/lib/conviction-beats';
 import { toCsv } from '@/lib/csv';
 
 const C = {
@@ -28,7 +29,8 @@ const C = {
   bg: 'var(--mc-bg-0)', bg1: 'var(--mc-bg-1)', accent: 'var(--mc-accent)', green: 'var(--mc-bullish, #059669)', red: 'var(--mc-bearish, #DC2626)', amber: 'var(--mc-warn, #D97706)',
 };
 type Row = ScreenRow & { live?: 1 };
-interface Snap { builtAt: string | null; rows: Row[]; total: number; scanned: number; withPattern: number; patAt: string | null; notes: string[] }
+interface Snap { builtAt: string | null; rows: Row[]; total: number; scanned: number; withPattern: number; patAt: string | null; notes: string[]; building: boolean }
+const SCOPE_KEY = 'mc:pine-screener:scope:v1';   // zzz989 — which list the results are limited to (this browser only)
 const LAST_KEY = 'mc:pine-screener:last:v1';   // the screen + unsaved choices open last time (this browser only)
 type Last = { id: string; market: ScreenMarket; q: PineQuery; dirty: boolean };
 
@@ -50,12 +52,15 @@ const COL_SHORT: Partial<Record<NumKey, string>> = {
   tt: 'TT rules', ttOk: 'TT all 6', rsR: 'RS Rating', stage: 'Stage', st12: 'Stage 1→2', r40: 'Rule of 40', revQYoY: 'Rev Q YoY', fcfmTTM: 'FCF margin',
   rsiMA: 'RSI avg', rsiX: 'RSI × avg (d)', gcD: 'Golden × (d)', dcD: 'Death × (d)', emaXU: 'EMA10×21 up (d)', emaXD: 'EMA10×21 dn (d)', ppD: 'Pocket pivot (d)',
   rvol: 'RVol', 'adv$': 'Avg value', adrP: 'ADR %', ripB: 'Ripster', perf1M: 'Perf 1M', perf6M: 'Perf 6M', perf1Y: 'Perf 1Y',
+  twSt: 'TW stage', sata: 'SATA', mrs: 'Mansfield RS', twWk: 'Weeks in stage',   // zzz987 — Stage Analysis (TheWrap method)
 };
 const YES_NO = new Set<string>(['ttOk', 'st12', 'ripB']);
 function fmtCol(k: NumKey, v: number | null | undefined, market: ScreenMarket): string {
   if (v == null || !Number.isFinite(v)) return '—';
   if (YES_NO.has(k)) return v >= 1 ? 'yes' : 'no';
   if (k === 'tt') return `${v}/6`;
+  if (k === 'sata') return `${v}/10`;
+  if (k === 'mrs') return `${v > 0 ? '+' : ''}${v.toFixed(1)}`;
   if (k === 'rvol') return `${v.toFixed(2)}×`;
   const d = fieldOf(k);
   if (d?.unit === '%') return pct(v);
@@ -95,6 +100,15 @@ export default function PineScreener() {
   const [adding, setAdding] = useState(false);
   const [targetList, setTargetList] = useState('');
   const [showMore, setShowMore] = useState(false);
+  // zzz989 — watchlist link: '' = every company, 'wl:<id>' = one of my watchlists, 'cb' = the Conviction Beats bench
+  const [scope, setScope] = useState<string>(() => { try { return localStorage.getItem(SCOPE_KEY) || ''; } catch { return ''; } });
+  useEffect(() => { try { localStorage.setItem(SCOPE_KEY, scope); } catch { /* a convenience */ } }, [scope]);
+  const [cbTick, setCbTick] = useState(0);
+  useEffect(() => {
+    const bump = () => setCbTick((v) => v + 1);
+    window.addEventListener('conviction-beats:updated', bump); window.addEventListener('storage', bump);
+    return () => { window.removeEventListener('conviction-beats:updated', bump); window.removeEventListener('storage', bump); };
+  }, []);
   const note = screens.find((s) => s.id === screenId)?.note;
   const flash = (m: string) => { setMsg(m); setTimeout(() => setMsg(null), 2800); };
 
@@ -119,22 +133,50 @@ export default function PineScreener() {
         .then(async (r) => { const j = await r.json(); if (!r.ok || !j?.ok || !Array.isArray(j.rows)) throw new Error(j?.error || 'Could not load the pattern data'); return j; })
         .then((j) => {
           if (stopped || signal.aborted) return;
-          empty = !j.rows.length;
+          empty = !j.rows.length || !j.scanned || !!j.building;
           setErrors((p) => ({ ...p, [market]: null }));
-          setSnaps((p) => ({ ...p, [market]: { builtAt: j.builtAt, rows: j.rows, total: j.total || 0, scanned: j.scanned || 0, withPattern: j.withPattern || 0, patAt: j.patAt || null, notes: j.notes || [] } }));
+          setSnaps((p) => ({ ...p, [market]: { builtAt: j.builtAt, rows: j.rows, total: j.total || 0, scanned: j.scanned || 0, withPattern: j.withPattern || 0, patAt: j.patAt || null, notes: j.notes || [], building: !!j.building } }));
         })
         .catch((e) => { if (!stopped && !signal.aborted) setErrors((p) => ({ ...p, [market]: e?.message || 'Could not load the pattern data' })); })
         .finally(() => { if (!stopped && !signal.aborted) setLoading(false); });
     };
-    const stop = pollWhenVisible(load, () => (empty ? 120_000 : 300_000), { runImmediately: true });
+    const stop = pollWhenVisible(load, () => (empty ? 60_000 : 300_000), { runImmediately: true });
     return () => { stopped = true; stop(); ctrl?.abort(); };
   }, [market, refresh]);
 
   const snap = snaps[market];
   const err = errors[market] || null;
   const rows = useMemo(() => snap?.rows || [], [snap]);
-  const hits = useMemo(() => runPine(rows, q, market), [rows, q, market]);
-  const counts = useMemo(() => patternCounts(rows, q, market), [rows, q, market]);
+  // zzz989 — answer with what the stored data has now: rules on figures no company has yet are paused (and named), and the
+  // pattern requirement waits until the market has been scanned, so the list is never empty just because a build is pending.
+  const avail = useMemo(() => availableQuery(rows, q, snap?.scanned || 0), [rows, q, snap]);
+  const listTickers = useMemo<Set<string> | null>(() => {
+    void cbTick;
+    if (!scope) return null;
+    if (scope === 'cb') { try { return new Set(Array.from(getConvictionTickers()).map((t) => String(t).toUpperCase())); } catch { return new Set(); } }
+    const l = watchlists?.lists.find((x) => `wl:${x.id}` === scope);
+    if (!l) return null;
+    const s = new Set<string>();
+    for (const sec of l.sections) for (const it of sec.items) if (it.m === market) s.add(it.t.toUpperCase());
+    return s;
+  }, [scope, watchlists, market, cbTick]);
+  const scopeName = scope === 'cb' ? 'Conviction Beats' : watchlists?.lists.find((x) => `wl:${x.id}` === scope)?.name || '';
+  const hits = useMemo(() => onList(runPine(rows, avail.q, market), listTickers), [rows, avail, market, listTickers]);
+  const counts = useMemo(() => patternCounts(listTickers ? rows.filter((r) => listTickers.has(r.t.toUpperCase())) : rows, avail.q, market), [rows, avail, market, listTickers]);
+  // the ★ on each row: on / off in the chosen watchlist (or the active one when the results are not limited to a watchlist)
+  const starList = watchlists ? (watchlists.lists.find((x) => `wl:${x.id}` === scope) || watchlists.lists.find((x) => x.id === targetList) || activeList(watchlists)) : null;
+  const starKey = (r: Row) => itemKey({ m: market, t: r.t, ...(r.exch?.[0] ? { x: r.exch[0] } : {}) });
+  const onStar = (r: Row): boolean => !!starList && !!(findItem(starList, starKey(r)) || findItem(starList, `${market}:${r.t}`));
+  const toggleStar = (r: Row) => {
+    if (!starList) return;
+    const key = findItem(starList, starKey(r)) ? starKey(r) : findItem(starList, `${market}:${r.t}`) ? `${market}:${r.t}` : null;
+    if (key) { updateWatchlists((s) => updateList(s, starList.id, (l) => removeItem(l, key))); flash(`${r.t} removed from ${starList.name}`); return; }
+    const before = listCount(starList);
+    const next = addItem(starList, null, { m: market, t: r.t, ...(r.exch?.[0] ? { x: r.exch[0] } : {}) });
+    if (listCount(next) === before) { flash(`Could not add ${r.t}: ${starList.name} is full (1,000)`); return; }
+    updateWatchlists((s) => updateList(s, starList.id, () => next));
+    flash(`${r.t} added to ${starList.name}`);
+  };
   const groups = useMemo(() => patternGroups(q.bias), [q.bias]);
   const sorted = useMemo(() => {
     const val = (h: PineHit): number | string | null => {
@@ -261,6 +303,14 @@ export default function PineScreener() {
         <span style={{ marginLeft: 8, display: 'inline-flex', gap: 4 }}>
           {(['US', 'IN'] as const).map((m) => <button key={m} type="button" style={btn(market === m)} onClick={() => { setMarket(m); setShowAll(false); }}>{m === 'US' ? '🇺🇸 USA' : '🇮🇳 India'}</button>)}
         </span>
+        <label style={{ display: 'inline-flex', gap: 5, alignItems: 'center', fontSize: 13 }} title="Limit the results to one of your watchlists or the Conviction Beats bench (same market)">
+          <span style={{ color: C.dim }}>Companies</span>
+          <select value={scope} onChange={(e) => { setScope(e.target.value); setShowAll(false); }} style={{ ...btn(!!scope), maxWidth: 240 }} aria-label="Limit to a list">
+            <option value="">All listed companies</option>
+            {watchlists ? <optgroup label="My watchlists">{watchlists.lists.map((l) => <option key={l.id} value={`wl:${l.id}`}>★ {l.name} ({listCount(l)})</option>)}</optgroup> : null}
+            <option value="cb">🏆 Conviction Beats</option>
+          </select>
+        </label>
         {msg ? <span role="status" style={{ color: /^(Not saved|Could not)/.test(msg) ? C.red : C.text1, fontSize: 13, fontWeight: 700 }}>{msg}</span> : null}
       </div>
       {note && !dirty ? <div style={{ fontSize: 12.5, color: C.dim }}>ℹ {note}</div> : null}
@@ -366,6 +416,7 @@ export default function PineScreener() {
       {/* summary + actions */}
       <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', fontSize: 13 }}>
         <b style={{ fontSize: 15 }}>{snap ? `${hits.length} companies` : err ? '' : 'Loading…'}</b>
+        {snap?.building ? <span style={{ color: C.amber, fontWeight: 700 }} title="A screener build for this market is running now">● building</span> : null}
         {snap ? <span style={{ color: C.dim }}>{snap.withPattern} of {snap.total} show any pattern{snap.patAt ? ` · patterns as of the ${snap.patAt} close` : ''}{builtAt ? ` · data built ${builtAt.toLocaleString()}` : ''}{snap.scanned && snap.scanned < snap.total ? ` · ${snap.total - snap.scanned} companies not scanned yet` : ''}</span> : null}
         {err ? <span role="alert" style={{ color: C.red }}>{err}{snap ? ' — showing the last loaded data' : ''}</span> : null}
         <span style={{ flex: 1 }} />
@@ -385,6 +436,12 @@ export default function PineScreener() {
       ) : null}
       {watchlistSaveError ? <div role="alert" style={{ color: C.amber }}>{watchlistSaveError} <button type="button" style={btn()} onClick={retryWatchlistSave}>Retry watchlist save</button></div> : null}
       {notScanned || snap?.notes.length ? <div style={{ fontSize: 12.5, color: C.amber }}>⏳ {snap?.notes[0] || 'Chart patterns are read during the screener build; the next build adds them.'}</div> : null}
+      {avail.paused.length || avail.patternsPaused ? (
+        <div role="status" style={{ fontSize: 12.5, color: C.amber, border: `1px solid ${C.amber}`, borderRadius: 6, padding: '6px 10px' }}>
+          ⏸ Shown without {[...avail.paused.map((k) => COL_SHORT[k] || fieldOf(k)?.label || k), ...(avail.patternsPaused ? ['the chart-pattern requirement'] : [])].join(', ')} — {snap?.building ? 'a build is filling these figures in now' : 'the next build of this market fills these figures in'}; the rule{avail.paused.length + (avail.patternsPaused ? 1 : 0) > 1 ? 's apply' : ' applies'} again by itself as soon as the data has {avail.paused.length + (avail.patternsPaused ? 1 : 0) > 1 ? 'them' : 'it'}. This page refreshes every minute meanwhile.
+        </div>
+      ) : null}
+      {scope && listTickers ? <div style={{ fontSize: 12.5, color: C.dim }}>Limited to <b style={{ color: C.text1 }}>{scopeName}</b> ({listTickers.size} {market === 'IN' ? 'Indian' : 'US'} symbols on it) · <button type="button" style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setScope('')}>show every company</button></div> : null}
       <details open={showMore} onToggle={(e) => setShowMore((e.target as HTMLDetailsElement).open)} style={{ fontSize: 12, color: C.dim }}>
         <summary style={{ cursor: 'pointer' }}>How the patterns are found</summary>
         <div style={{ display: 'grid', gap: 4, marginTop: 4 }}>
@@ -400,6 +457,7 @@ export default function PineScreener() {
           <thead>
             <tr style={{ background: C.bg1, position: 'sticky', top: 0, zIndex: 1 }}>
               <th style={th}>#</th>
+              <th style={th} title={starList ? `★ = on ${starList.name}; click to add / remove` : 'Watchlists'}>★</th>
               <Th label="Company" k="t" sort={sort} setSort={setSort} />
               <Th label="Pattern" k="pattern" sort={sort} setSort={setSort} />
               <Th label="Likelihood" k="conf" sort={sort} setSort={setSort} num />
@@ -423,6 +481,10 @@ export default function PineScreener() {
               return (
                 <tr key={r.t} style={{ borderTop: `1px solid ${C.border}` }}>
                   <td style={{ ...td, color: C.dim }}>{i + 1}</td>
+                  <td style={td}>
+                    <button type="button" onClick={() => toggleStar(r)} disabled={!starList} aria-pressed={onStar(r)} aria-label={`${onStar(r) ? 'Remove' : 'Add'} ${r.t} ${onStar(r) ? 'from' : 'to'} ${starList?.name || 'watchlist'}`}
+                      title={starList ? `${onStar(r) ? 'On' : 'Add to'} ${starList.name}` : ''} style={{ all: 'unset', cursor: starList ? 'pointer' : 'default', fontSize: 15, color: onStar(r) ? C.amber : C.dim }}>{onStar(r) ? '★' : '☆'}</button>
+                  </td>
                   <td style={td}>
                     <Link href={`/charts?t=${encodeURIComponent(r.t)}&m=${market}&tf=D`} onClick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); window.location.assign(openForReview(r)); }}
                       style={{ color: C.accent, fontWeight: 700, textDecoration: 'none' }} title="Open the chart — Next / Previous on the chart step through these results in this order">{r.t}</Link>
@@ -461,8 +523,8 @@ export default function PineScreener() {
         {narrowed.length > 200 ? <div style={{ padding: 8, textAlign: 'center' }}><button type="button" style={btn()} onClick={() => setShowAll((v) => !v)}>{showAll ? 'Show the first 200' : `Show all ${narrowed.length}`}</button></div> : null}
         {snap && !hits.length ? (
           <div style={{ padding: 14, color: C.dim, fontSize: 13 }}>
-            {notScanned ? 'No patterns yet — they are added by the next screener build of this market.'
-              : !rows.length ? 'No companies in the stored data yet.'
+            {!rows.length ? (snap.building ? 'The first build of this market is running — companies appear here when it finishes.' : 'No companies in the stored data yet.')
+              : scope && listTickers && !listTickers.size ? `${scopeName} has no ${market === 'IN' ? 'Indian' : 'US'} symbols — switch market or list.`
               : 'No company matches. Widen the pivot window, lower the likelihood, add a stage or untick patterns — the number on each pattern shows where the matches are.'}
           </div>
         ) : null}
