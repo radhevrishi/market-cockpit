@@ -19,7 +19,7 @@
 //   2. AI with a web search — the call, the deck on the company site and the
 //      news of the next days. Only for top-tier rows the filing did not
 //      settle, under its own small daily ceiling (US_GUIDE_CHECK_DAILY_USD,
-//      default $0.15 ≈ 10–15 checks) inside the monthly AI cap. A "lowered"
+//      default $1 a day (zzz979; ≈ 14 Claude web checks) inside the monthly AI cap. A "lowered"
 //      answer is only accepted with a source link and a quoted figure.
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -130,7 +130,8 @@ async function callCoverageCheck(row: any): Promise<GuideCheck | null> {
 
 // ── 3. AI with a web search ──────────────────────────────────────────────────
 const dailyKey = (day: string) => `us-guide-check:usd:${day}`;
-export const dailyCapUsd = () => { const v = Number(process.env.US_GUIDE_CHECK_DAILY_USD); return Number.isFinite(v) && v >= 0 ? v : 0.15; };
+// zzz979: $1 a day (owner, 12 Oct 2026 — about 14 Claude web checks a day); the env var still overrides
+export const dailyCapUsd = () => { const raw = process.env.US_GUIDE_CHECK_DAILY_USD; const v = Number(raw); return raw != null && raw !== '' && Number.isFinite(v) && v >= 0 ? v : 1; };
 
 const SYSTEM = `You check one fact about one US company's latest earnings report: which way did management move its OWN forward guidance?
 Answer "lowered" if ANY outlook, forecast or guidance range was cut, reduced, revised down or withdrawn — for the company, a segment, a product line or a named customer programme — versus what management itself had guided before, in the earnings release, the investor presentation, the earnings call, or as reported by news in the days after. A cut on one line counts even if other lines were raised (say both in "what").
