@@ -393,17 +393,17 @@ export function MarginTile({ m }: { m: MarginView }) {
   const deltaLabel = delta == null ? '—'
                     : `${delta >= 0 ? '+' : ''}${delta.toFixed(1)} pp`;
   return (
-    <div title={m.title} style={{ padding: '6px 10px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: '1px solid var(--mc-bg-4)', display: 'flex', flexDirection: 'column', gap: 1 }}>
-      <div style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.6px' }}>{m.label}</div>
+    <div title={m.title} style={{ padding: '9px 12px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: '1px solid var(--mc-bg-4)', display: 'flex', flexDirection: 'column', gap: 1 }}>
+      <div style={{ fontSize: 10.5, color: 'var(--mc-text-3)', fontWeight: 700, letterSpacing: '0.5px' }}>{m.label}</div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-        <div style={{ fontSize: 16, fontWeight: 800, color: hasV ? 'var(--mc-text-1)' : 'var(--mc-text-4)', lineHeight: 1 }}>
+        <div style={{ fontSize: 22, fontWeight: 900, color: hasV ? 'var(--mc-text-1)' : 'var(--mc-text-4)', lineHeight: 1 }}>
           {hasV ? `${(m.value as number).toFixed(1)}%` : '—'}
         </div>
-        <div style={{ fontSize: 11, fontWeight: 700, color: deltaColor }}>
+        <div style={{ fontSize: 12.5, fontWeight: 700, color: deltaColor }}>
           {deltaLabel}
         </div>
       </div>
-      <div style={{ fontSize: 9, color: 'var(--mc-text-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+      <div style={{ fontSize: 10.5, color: 'var(--mc-text-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
         {m.note}
       </div>
     </div>
@@ -422,19 +422,19 @@ export function MetricTile({ label, pct, curr, prev, word, note, noteTitle }: { 
     : pct >= 500 ? '>500%'
     : `${pct >= 0 ? '+' : ''}${pct.toFixed(0)}%`;
   return (
-    <div style={{ padding: '8px 10px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: '1px solid var(--mc-bg-4)' }}>
-      <div style={{ fontSize: 9.5, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.6px' }}>{label}</div>
+    <div style={{ padding: '10px 12px', backgroundColor: 'var(--mc-bg-1)', borderRadius: 6, border: '1px solid var(--mc-bg-4)' }}>
+      <div style={{ fontSize: 10.5, color: 'var(--mc-text-3)', fontWeight: 700, letterSpacing: '0.5px' }}>{label}</div>
       {word
-        ? <div title={word.title} style={{ fontSize: 12, fontWeight: 900, color, marginTop: 4, lineHeight: 1.1 }}>{word.text}</div>
-        : <div style={{ fontSize: 18, fontWeight: 900, color, marginTop: 2, lineHeight: 1 }}>{pctLabel}</div>}
+        ? <div title={word.title} style={{ fontSize: 15, fontWeight: 900, color, marginTop: 4, lineHeight: 1.15 }}>{word.text}</div>
+        : <div style={{ fontSize: 24, fontWeight: 900, color, marginTop: 3, lineHeight: 1, letterSpacing: -0.4 }}>{pctLabel}</div>}
       {(curr || prev) && (
-        <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginTop: 2, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+        <div style={{ fontSize: 11, color: 'var(--mc-text-3)', marginTop: 3, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
           {curr || '—'}{prev && ` vs ${prev}`}
         </div>
       )}
       {/* zzz820 — why a figure is '—' (never a guess in its place). */}
       {note && (
-        <div title={noteTitle} style={{ fontSize: 9, color: 'var(--mc-text-3)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: noteTitle ? 'help' : undefined }}>
+        <div title={noteTitle} style={{ fontSize: 10.5, color: 'var(--mc-text-3)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: noteTitle ? 'help' : undefined }}>
           ⓘ {note}
         </div>
       )}
