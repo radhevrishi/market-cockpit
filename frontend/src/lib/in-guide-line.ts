@@ -29,7 +29,7 @@ import { guideLoweredInText, guideRaisedInText, guideKeptInText, guideCautionInT
 import type { GuideDirection } from './us-guide-line';
 
 /** Bumped whenever the line or the tier rule changes: a browser copy of a day without it is fetched again. */
-export const IN_OVERLAY_VERSION = 'in-guide-v2';
+export const IN_OVERLAY_VERSION = 'in-guide-v3';
 export const IN_GUIDE_TAGS = { lowered: 'guidance lowered', mixed: 'guidance mixed', cautious: 'guidance cautious' } as const;
 
 /** zzz977: 'standing' = no new guidance yet this season, the last call's guidance shown with this quarter's pace against it;

@@ -87,12 +87,13 @@ async function intimations(): Promise<Map<string, Intim[]>> {
 }
 const DAY = 86_400_000;
 const dayOf = (iso: string) => Date.parse(`${String(iso || '').slice(0, 10)}T00:00:00Z`);
-/** Pure: the documents filed 3–200 days BEFORE these results (the previous season's calls), newest first, at most two. */
+/** Pure: the documents filed 3–200 days BEFORE these results (the previous season's calls), newest first, at most six
+ *  (a results release without guidance often sits in front of the transcript that has it). */
 export function standingDocIds(list: readonly IndexRow[], filing: string): string[] {
   const f = dayOf(filing);
   if (!Number.isFinite(f)) return [];
   return list.filter((x) => { const a = dayOf(x.filedAt); return x.extracted !== false && Number.isFinite(a) && a < f - 3 * DAY && a >= f - STANDING_DAYS * DAY; })
-    .sort((a, b) => String(b.filedAt).localeCompare(String(a.filedAt))).slice(0, 2).map((x) => x.docId);
+    .sort((a, b) => String(b.filedAt).localeCompare(String(a.filedAt))).slice(0, 6).map((x) => x.docId);
 }
 let _prioWritten = '';
 
@@ -134,9 +135,10 @@ export async function overlayInGuideLines(payload: any): Promise<any> {
     for (const r of rows) {
       const list = byTicker?.get(String(r.ticker || '').toUpperCase()) || [];
       const season = extractsForFiling(list.map((x) => ({ ...x, rows: [] })), filingOf(r)) as unknown as IndexRow[];
-      const ids = season.filter((x) => x.extracted !== false).map((x) => x.docId);
+      const ids = season.map((x) => x.docId);
       docIdsFor.set(rowKey(r), ids);
-      pendingFor.set(rowKey(r), season.filter((x) => x.extracted === false).map((x) => ({ kind: x.kind, filedAt: x.filedAt, url: x.url })));
+      // which of them are still unread is decided below, from whether a stored result exists
+      pendingFor.set(rowKey(r), season.map((x) => ({ kind: x.kind, filedAt: x.filedAt, url: x.url, docId: x.docId } as any)));
       const st = standingDocIds(list, filingOf(r));
       standingFor.set(rowKey(r), st);
       for (const id of [...ids, ...st]) wantDocs.add(id);
@@ -166,7 +168,8 @@ export async function overlayInGuideLines(payload: any): Promise<any> {
       const f = dayOf(filingOf(r));
       const announced = (intimByTicker.get(String(r.ticker || '').toUpperCase()) || []).filter((x) => { const a = dayOf(String(x.filedAt || '')); return Number.isFinite(a) && Number.isFinite(f) && a >= f - 3 * DAY && a <= f + 60 * DAY; });
       const k = aiKeyOf(r);
-      return { extracts, ai: k ? _ai.get(k)?.v ?? null : null, standing, pending: pendingFor.get(rowKey(r)) || [], announced };
+      const pending = (pendingFor.get(rowKey(r)) || []).filter((x: any) => !_extract.get(x.docId)?.v).map((x: any) => ({ kind: x.kind, filedAt: x.filedAt, url: x.url }));
+      return { extracts, ai: k ? _ai.get(k)?.v ?? null : null, standing, pending, announced };
     };
     const out = applyInGuideLines(payload, storedFor);
     void notePriority(out).catch(() => null);
