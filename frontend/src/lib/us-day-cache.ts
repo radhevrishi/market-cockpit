@@ -199,11 +199,18 @@ export async function getCachedDay(day: string, isToday: boolean): Promise<any |
   // day is regraded here, in-process, in milliseconds, stored back under the
   // new version, and returned already correct. Only a day that cannot be
   // regraded is served stale and sent to the server's queue.
+  // zzz968 — some corrections are applied by the SERVER when it hands a day out (a lowered outlook found later by the
+  // guide check; a working-capital quarter re-read from its release — Penguin Solutions). A browser regrade cannot
+  // see them, so a regraded day is shown and then re-fetched, and a recent session (last 14 days) is re-fetched in the
+  // background once it is two hours old.
   if (p.engine_version !== US_ENGINE_VERSION) {
     try {
       const re = regradeDayPayload(p);
-      if (re) { void putCachedDay(day, re); return re; }
+      if (re) return { ...re, _stale_engine: true };
     } catch { /* fall through to the stale path */ }
+    return { ...p, _stale_engine: true };
+  }
+  if (Date.now() - Date.parse(`${day}T00:00:00Z`) < 14 * 86_400_000 && Date.now() - (rec.cachedAt || 0) > 2 * 3600_000) {
     return { ...p, _stale_engine: true };
   }
   // A scan that found filers but graded NONE of them is a failed scan, not a
