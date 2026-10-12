@@ -106,3 +106,10 @@ test('zzz971b the card line picks the outlook sentence, not the headline block; 
   assert.equal(ctas.direction, 'maintained');
   assert.match(ctas.text, /calls it a raise/);
 });
+
+test('zzz971c "inflation expectations have increased" is not a raise; the plain sentence beats the headline', () => {
+  assert.equal(up2('Inflation expectations have increased since we held our last earnings call on July 22.'), null);
+  assert.ok(up2('Our full-year expectations were raised to $3.10.'));
+  const peng = guideLine({ guidance: 'RAISED', guidance_snippets: ['Penguin Solutions Announces Fourth-Quarter Results Record Results Across Key Metrics Raises Fiscal 2027 Outlook', 'The Company also raised its outlook for its fiscal 2027 full year as compared to the preliminary view provided last quarter.'] });
+  assert.match(peng.text, /^Guidance raised — The Company also raised its outlook/);
+});

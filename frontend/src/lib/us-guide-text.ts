@@ -34,9 +34,12 @@ const KEEP_ACTIVE = String.raw`(?:reaffirm(?:ed|s|ing)?|reiterat(?:ed|es|ing)|ma
 const KEEP_PASSIVE = String.raw`(?:reaffirmed|reiterated|maintained|unchanged|confirmed)`;
 const BE = String.raw`(?:was|were|is|are|has\s+been|have\s+been|being|now|remains?)?\s*`;
 
+// After the noun only the company's own words count: "inflation expectations have increased" (RPM) is not a raise, so
+// "expectations" needs "our / its / the company's / full-year" right before it in that order.
+const OUTLOOK_OWN = String.raw`(?:outlook|guidance|forecast|(?:our|its|the\s+company['’]s|full[- ]year|annual)\s+expectations?)`;
 const pair = (active: string, passive: string, gap = 6) => [
   new RegExp(String.raw`\b${active}\s+${DET}${GAP}{0,${gap}}?${OUTLOOK}\b`, 'i'),
-  new RegExp(String.raw`\b${OUTLOOK}\s+${GAP}{0,${Math.min(gap, 5)}}?${BE}${passive}\b`, 'i'),
+  new RegExp(String.raw`\b${OUTLOOK_OWN}\s+${GAP}{0,${Math.min(gap, 5)}}?${BE}${passive}\b`, 'i'),
 ];
 const RE_DOWN = pair(DOWN_ACTIVE, DOWN_PASSIVE);
 const RE_UP = pair(UP_ACTIVE, UP_PASSIVE);

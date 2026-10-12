@@ -74,4 +74,4 @@ export const US_ENGINE_PREVIOUS_VERSIONS: readonly string[] = [
 
 /** zzz970 — corrections the SERVER applies when it hands a day out (lowered-outlook check, working-capital re-read). A day a
  *  browser stored without this stamp — or regraded itself — is re-fetched, so it cannot keep showing the uncorrected grade. */
-export const US_OVERLAY_VERSION = '2026.10.12-d';
+export const US_OVERLAY_VERSION = '2026.10.12-e';

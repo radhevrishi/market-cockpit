@@ -30,10 +30,16 @@ import { guideLoweredInText, guideRaisedInText, guideKeptInText, focusQuote } fr
 /** The clearest sentence of the release's guidance quotes for one direction — not the headline block in front of it. */
 function snippetFor(snips: string[], kind: 'raised' | 'lowered' | 'maintained' | 'any'): string {
   // one quote at a time: a headline block with no full stop would otherwise run into the next quote
+  // a plain sentence beats the headline block ("Press Release FOR IMMEDIATE RELEASE Penguin Solutions Announces …")
+  const headline = (q: string) => /FOR IMMEDIATE RELEASE|Press Release|\bAnnounces\b|\bReports\b[^.]{0,80}\bResults\b/.test(q) || (q.replace(/[^A-Z]/g, '').length / Math.max(1, q.replace(/[^A-Za-z]/g, '').length)) > 0.35;
+  let fallback = '';
   for (const sn of snips) {
     const hit = kind === 'raised' ? guideRaisedInText(sn) : kind === 'lowered' ? guideLoweredInText(sn) : kind === 'maintained' ? guideKeptInText(sn) : null;
-    if (hit) return hit.quote;
+    if (!hit) continue;
+    if (!headline(hit.quote)) return hit.quote;
+    fallback ||= hit.quote;
   }
+  if (fallback) return fallback;
   if (kind !== 'any') return '';
   for (const sn of snips) {
     const m = /\b(?:outlook|guidance|expects?|forecast)\b/i.exec(sn);
