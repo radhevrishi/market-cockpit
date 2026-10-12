@@ -41,6 +41,7 @@ on:
           - hub-ingest-next
           - build-screener-us
           - build-screener-in
+          - us-guide-check
 
 concurrency:
   group: vercel-cron-bridge-${{ github.event.schedule || github.event.inputs.endpoint || 'manual' }}
@@ -135,6 +136,7 @@ jobs:
                 hub-ingest)                  echo "path=/api/market/earnings?ingest=1&force=1&month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"; echo "label=hub-ingest" >> "$GITHUB_OUTPUT" ;;
                 build-screener-in)           echo "path=/api/v1/cron/build-screener?market=IN" >> "$GITHUB_OUTPUT"; echo "label=build-screener-in" >> "$GITHUB_OUTPUT" ;;
                 build-screener-us)           echo "path=/api/v1/cron/build-screener?market=US" >> "$GITHUB_OUTPUT"; echo "label=build-screener-us" >> "$GITHUB_OUTPUT" ;;
+                us-guide-check)              echo "path=/api/v1/cron/us-guide-check" >> "$GITHUB_OUTPUT"; echo "label=us-guide-check-manual" >> "$GITHUB_OUTPUT" ;;
                 hub-ingest-next)             echo "path=/api/market/earnings?ingest=1&force=1&month=$(date -u -d "$(date -u +%Y-%m-01) +1 month" +%Y-%m)" >> "$GITHUB_OUTPUT"; echo "label=hub-ingest-next" >> "$GITHUB_OUTPUT" ;;
                 *)
                   echo "::error title=No route::Unknown schedule and no manual input"

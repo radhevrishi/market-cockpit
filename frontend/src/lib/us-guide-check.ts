@@ -27,7 +27,9 @@ import { gunzipSync } from 'node:zlib';
 import { kvGet, kvSet, kvMGet, kvIncrByFloat } from './kv';
 import { webResearch, modelConfigured } from './anthropic-meter';
 import { filingExhibits, htmlToText, secGet } from './us-guidance';
-import { composeUsNarrative, type EarningsTier } from './us-earnings-core';
+import { composeUsNarrative, applySetupGates, US_TIER_ORDER, type EarningsTier } from './us-earnings-core';
+import { releaseAttributesCashToWorkingCapital } from './us-pr-financials';
+import { regradeRow } from './us-regrade';
 import { US_ENGINE_VERSION } from './us-engine-version';
 
 export const GUIDE_CHECK_V = 'v1';
@@ -167,8 +169,51 @@ const _memo = new Map<string, { at: number; v: GuideCheck | null }>();
 const MEMO_MS = 5 * 60_000;
 
 /** Served-payload overlay: reads cached results for the top-tier rows (one batched KV read) and applies them. */
+// ── zzz962b — cached days graded before the working-capital read existed ─────
+// A day is cached for 30 days and its regrade has no release text, so a quarter like Penguin's stayed "profit without
+// operating cash" → MIXED. The job re-reads just those releases (free, SEC) and stores the answer; the overlay regrades
+// the row with it.
+export const wcCheckKey = (ticker: string, filingDate: string) => `us-wc-check:v1:${String(ticker).toUpperCase()}:${filingDate}`;
+const NO_CASH_TAG = 'profit without operating cash';
+const WC_TAG = 'negative operating cash — the release attributes it to working capital';
+
+export function regradeWithWorkingCapital(row: any): any {
+  const r = { ...row, caveat_tags: (row.caveat_tags || []).map((t: string) => (t === NO_CASH_TAG ? WC_TAG : t)) };
+  if (r.grade_input && typeof r.grade_input === 'object') r.grade_input = { ...r.grade_input, cash_explained_by_working_capital: true };
+  const out = regradeRow(r);
+  try { applySetupGates([out]); } catch { /* single-row gate only demotes */ }
+  if (row.prelim && out.tier === 'BLOCKBUSTER') out.tier = 'STRONG';
+  if (out.narrative_stem) {
+    try { out.narrative = composeUsNarrative(out.narrative_stem, out.caveat_tags || [], out.methodology_tags || [], out.tier, out.company || out.ticker, out.quarter, out.market_context || []) + (out.narrative_tail || ''); } catch { /* keep */ }
+  }
+  out.wc_rechecked = true;
+  return out;
+}
+
+async function overlayWorkingCapital(payload: any): Promise<any> {
+  const cands: Array<{ t: string; r: any }> = [];
+  for (const t of US_TIER_ORDER) for (const r of (payload.by_tier[t] || [])) if ((r.caveat_tags || []).includes(NO_CASH_TAG)) cands.push({ t, r });
+  if (!cands.length) return payload;
+  const now = Date.now();
+  const keys = cands.map((c) => wcCheckKey(c.r.ticker, c.r.filing_date));
+  const need = keys.filter((k) => { const m = _wcMemo.get(k); return !m || now - m.at > MEMO_MS; });
+  if (need.length) {
+    const vals = await kvMGet<{ explained: boolean }>(need).catch(() => need.map(() => null));
+    need.forEach((k, i) => _wcMemo.set(k, { at: now, v: vals[i]?.explained === true }));
+  }
+  const hits = cands.filter((c, i) => _wcMemo.get(keys[i])?.v);
+  if (!hits.length) return payload;
+  const by_tier: Record<string, any[]> = {};
+  for (const t of US_TIER_ORDER) by_tier[t] = (payload.by_tier[t] || []).filter((r: any) => !hits.some((h) => h.r === r));
+  for (const h of hits) { const nr = regradeWithWorkingCapital(h.r); (by_tier[nr.tier] || by_tier.MIXED).push(nr); }
+  for (const t of US_TIER_ORDER) by_tier[t].sort((a: any, b: any) => ((b.composite_score ?? 0) - (a.composite_score ?? 0)));
+  return { ...payload, by_tier };
+}
+const _wcMemo = new Map<string, { at: number; v: boolean }>();
+
 export async function overlayGuideChecks(payload: any): Promise<any> {
   if (!payload?.by_tier) return payload;
+  try { payload = await overlayWorkingCapital(payload); } catch { /* keep the payload as stored */ }
   const top: any[] = [];
   for (const t of TOP) for (const r of (payload.by_tier[t] || [])) top.push(r);
   if (!top.length) return payload;
@@ -209,19 +254,33 @@ function lastWeekdays(n: number): string[] {
 }
 
 /** Check the top-tier rows of the last few sessions that have no result yet. Newest first; AI only within the daily ceiling. */
-export async function runUsGuideChecks(opts: { sessions?: number; maxRows?: number; budgetMs?: number } = {}): Promise<{ checked: number; lowered: string[]; ai_calls: number; skipped_budget: number; usd: number }> {
+export async function runUsGuideChecks(opts: { sessions?: number; maxRows?: number; budgetMs?: number } = {}): Promise<{ checked: number; lowered: string[]; ai_calls: number; skipped_budget: number; usd: number; wc_fixed: number }> {
   const t0 = Date.now();
   const budget = opts.budgetMs ?? 4 * 60_000;
   const rows: any[] = [];
+  let wcFixed = 0;
   for (const date of lastWeekdays(opts.sessions ?? 6)) {
     const p = unzip(await kvGet<any>(`us-graded:${US_ENGINE_VERSION}:${date}|1`).catch(() => null));
     if (!p?.by_tier) continue;
     for (const t of TOP) for (const r of (p.by_tier[t] || [])) rows.push(r);
+    // zzz962b — re-read the release of rows held down by "profit without operating cash"
+    for (const t of US_TIER_ORDER) for (const r of (p.by_tier[t] || [])) {
+      if (!(r.caveat_tags || []).includes(NO_CASH_TAG) || Date.now() - t0 > budget / 2) continue;
+      const k = wcCheckKey(r.ticker, r.filing_date);
+      if (await kvGet(k).catch(() => null)) continue;
+      const ex = await filingExhibits(r.filing_url || '').catch(() => []);
+      const doc = ex.find((e) => /^EX-99\.1/i.test(e.type)) || ex.find((e) => /^EX-99/i.test(e.type));
+      const html = doc ? await secGet(doc.url).catch(() => null) : null;
+      if (!html) continue;
+      const explained = releaseAttributesCashToWorkingCapital(html);
+      await kvSet(k, { explained, checked_at: new Date().toISOString() }, TTL_S).catch(() => {});
+      if (explained) { wcFixed++; const nr = regradeWithWorkingCapital(r); if (TOP.includes(nr.tier)) rows.push(nr); }
+    }
   }
   const keys = rows.map((r) => guideCheckKey(r.ticker, r.filing_date));
   const have = await kvMGet<GuideCheck>(keys).catch(() => keys.map(() => null));
   const todo = rows.filter((_, i) => !have[i]).sort((a, b) => String(b.filing_date).localeCompare(String(a.filing_date)) || (TOP.indexOf(a.tier) - TOP.indexOf(b.tier)));
-  const out = { checked: 0, lowered: [] as string[], ai_calls: 0, skipped_budget: 0, usd: 0 };
+  const out = { checked: 0, lowered: [] as string[], ai_calls: 0, skipped_budget: 0, usd: 0, wc_fixed: wcFixed };
   const seen = new Set<string>();
   for (const r of todo.slice(0, opts.maxRows ?? 25)) {
     const k = guideCheckKey(r.ticker, r.filing_date);

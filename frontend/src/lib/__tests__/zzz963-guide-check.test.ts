@@ -28,3 +28,10 @@ test('zzz963 a lowered outlook moves only BLOCKBUSTER/STRONG to MIXED', () => {
   assert.equal(applyGuideCheck(cutTag, null), true);
   assert.equal(cutTag.tier, 'MIXED');
 });
+
+import { regradeWithWorkingCapital } from '../us-guide-check';
+test('zzz962b a working-capital quarter swaps the no-cash caveat before regrading', () => {
+  const r = regradeWithWorkingCapital({ ticker: 'PENG', tier: 'MIXED', caveat_tags: ['profit without operating cash', 'prelim · 10-Q pending'] });
+  assert.ok(!r.caveat_tags.includes('profit without operating cash'));
+  assert.equal(r.wc_rechecked, true);
+});
