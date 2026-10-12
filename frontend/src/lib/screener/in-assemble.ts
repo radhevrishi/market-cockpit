@@ -44,6 +44,9 @@ export interface InFigures {
   deFY: number | null; netDebt: number | null; liabQ: number | null; liabA: number | null;
   debtAssetsQ: number | null; debtAssetsA: number | null; debtCapQ: number | null; debtCapA: number | null;
   debtEbitdaQ: number | null; debtEbitdaA: number | null;
+  /** zzz984 — free-cash-flow margin of the latest full year, ≈ (cash from operations + cash from investing) ÷ sales; screener.in's
+   *  page prints no capex line, and pages read before zzz984 kept no investing line (blank until re-read) */
+  fcfmFY?: number | null;
 }
 
 const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -112,7 +115,7 @@ export function rawFromHtml(html: string, s: InSchedules = {}): InRaw {
     price: fin(top.price) ? top.price : null, mcapCr: fin(top.marketCapCr) ? top.marketCapCr : null, roce: Number.isFinite(roce) ? roce : null,
     T: {
       q: trim(parseSection(html, 'quarters'), PL_ROWS), a: trim(parseSection(html, 'profit-loss'), PL_ROWS), bs: trim(parseSection(html, 'balance-sheet'), BS_ROWS),
-      cf: trim(parseSection(html, 'cash-flow'), ['cash from operating activity']), r: trim(parseSection(html, 'ratios'), ['roce %']),
+      cf: trim(parseSection(html, 'cash-flow'), ['cash from operating activity', 'cash from investing activity']), r: trim(parseSection(html, 'ratios'), ['roce %']),
     },
     cogsQ: cogsPct(s.expQ), cogsA: cogsPct(s.expA), cash: sched(s.otherAssets, 'Cash Equivalents'),
     ann,
@@ -245,6 +248,19 @@ export function inFiguresFromRaw(raw: InRaw): InFigures {
           chk(fin(sales[a]) && fin(sales[b]) ? (sales[a] as number) / TA1 > (sales[b] as number) / TA0 : null);
           if (known >= 8) { out.fs = known === 9 ? pts : r1((pts * 9) / known); if (known < 9 || gm1 == null) approx.push('fs'); }
         }
+      }
+    }
+  }
+  // zzz984 — FCF margin (latest year with both cash-flow lines and sales): (operations + investing) ÷ sales, marked ≈
+  if (A && CF) {
+    const cfo = row(CF, 'Cash from Operating Activity'), cfi = row(CF, 'Cash from Investing Activity'), sales = row(A, 'Sales', 'Revenue');
+    if (cfo && cfi && sales) {
+      for (let i = CF.headers.length - 1; i >= 0; i--) {
+        const h = CF.headers[i], ai = A.headers.indexOf(h);
+        if (monthIndex(h) == null || ai < 0 || !fin(cfo[i]) || !fin(cfi[i]) || !fin(sales[ai]) || !((sales[ai] as number) > 0)) continue;
+        out.fcfmFY = r1((((cfo[i] as number) + (cfi[i] as number)) / (sales[ai] as number)) * 100);
+        approx.push('fcfmTTM', 'r40');
+        break;
       }
     }
   }

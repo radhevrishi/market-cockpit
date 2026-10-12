@@ -17,7 +17,7 @@ import { yieldToServer } from './yield';
 import { inFiguresFromRaw, rawFromHtml, type InFigures, type InRaw } from './in-assemble';
 import { loadProfiles, type Prof } from './us-build';
 import { refreshTech, type TechStored } from './tech-fetch';
-import { rowPatternFields } from './pine';
+import { rowPatternFields, rowTvFields, applyRsRating, ruleOf40 } from './pine';
 import type { NseDay } from './tech';
 import { tvSectorOf } from './tv-sectors';
 import { rowsJson, type ScreenRow } from './types';
@@ -207,6 +207,8 @@ export function assembleInRow(t: string, name: string, latest: BhavDay, bhav: Bh
       ...(tf.cc ? { cc: Object.fromEntries(Object.entries(tf.cc).filter(([k]) => k !== 'px' && k !== 'chg' && k !== 'vol')) } : {}),
     } : {}),
     ...rowPatternFields(tf),   // zzz983 — chart patterns (Pine Screener)
+    ...rowTvFields(tf, 'IN'),   // zzz984 — the owner's TradingView script fields
+    ...(f?.fcfmFY != null ? { fcfmTTM: f.fcfmFY, r40: ruleOf40(f.revQYoY, f.fcfmFY) } : {}),
     earnD: earnIso ? Math.floor(Date.parse(`${earnIso.slice(0, 10)}T00:00:00Z`) / DAY) : null,
     roeTTM: f?.roeTTM ?? null, roeFY: f?.roeFY ?? null, roceTTM: f?.roceTTM ?? null, roceFY: f?.roceFY ?? null, nmTTM: f?.nmTTM ?? null, ptmTTM: f?.ptmTTM ?? null,
     opmFY: f?.opmFY ?? null, pe: mc != null && f?.npTTM != null && f.npTTM > 0 ? r2(mc / f.npTTM) : null,
@@ -258,6 +260,7 @@ export async function buildInSnapshot(opts: { fundBudgetMs?: number } = {}): Pro
     for (const t of universe.slice(k, k + 100)) rows.push(assembleInRow(t, names.get(t) || t, latest, bhav, funds.get(t), tech.get(t), profiles.get(t)));
     await yieldToServer();
   }
+  applyRsRating(rows, (t) => tech.get(t)?.rsRaw);   // zzz984 — RS Rating ranked over the whole India snapshot
   const sources = ['NSE company list', 'NSE daily price files', 'screener.in company pages', 'Yahoo daily prices', 'Yahoo company profile'];
   await dbQuery(`INSERT INTO screener_snapshot (market, built_at, rows, meta) VALUES ('IN', now(), $1, $2) ON CONFLICT (market) DO UPDATE SET built_at = now(), rows = EXCLUDED.rows, meta = EXCLUDED.meta`,
     [rowsJson(rows), JSON.stringify({ notes, sources })]);

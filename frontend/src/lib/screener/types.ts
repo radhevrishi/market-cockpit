@@ -82,6 +82,22 @@ export interface ScreenRow {
   // ── zzz983: chart patterns (Pine Screener) — read from the same daily bars as the price figures (lib/screener/pine.ts) ──
   pat?: ScreenPatternTag[];  // patterns the latest bars show, likelihood ≥ 35 (absent = none found, or not scanned yet)
   patAt?: string;            // date of the last bar the patterns were read from (absent = not scanned yet)
+  // ── zzz984: the owner's TradingView Pine Screener setups (lib/screener/tv-screens.ts), from the same daily bars ─────────────
+  tt?: number | null;        // Minervini trend template: rules passed 0–6
+  ttOk?: number | null;      // 1 = all six rules pass, 0 = not
+  rsiMA?: number | null;     // 14-session average of RSI 14
+  rsiX?: number | null;      // sessions since RSI crossed above its average (within 10; absent = none)
+  gcD?: number | null; dcD?: number | null;       // sessions since SMA 50 crossed above / below SMA 200 (within 20)
+  emaXU?: number | null; emaXD?: number | null;   // sessions since EMA 10 crossed above / below EMA 21 (within 20)
+  rsR?: number | null;       // RS Rating 1–99 within the market's snapshot (IBD-style weighted 12-month performance)
+  stage?: number | null;     // Weinstein stage 1–4 (30-week average)
+  st12?: number | null;      // 1 = stage 2 now after stage 1 within the previous 6 weeks
+  ppD?: number | null;       // sessions since the latest volume pocket pivot (within 10)
+  rvol?: number | null;      // relative volume: last session ÷ 50-session average
+  'adv$'?: number | null;    // average daily traded value, 20 sessions (money: $ million / ₹ crore)
+  ripB?: number | null;      // Ripster EMA clouds bullish (1 / 0)
+  fcfmTTM?: number | null;   // free-cash-flow margin % (≈ latest full year — see FIELDS)
+  r40?: number | null;       // revenue growth quarterly YoY + FCF margin (the owner's custom Rule of 40)
 }
 
 export interface ScreenSnapshot {

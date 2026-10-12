@@ -61,8 +61,9 @@ test('remote size guard uses UTF-8 bytes instead of character count', () => {
     const large = '₹'.repeat(3000000);
     assert.ok(large.length < 8 * 1024 * 1024);
     assert.ok(Buffer.byteLength(large, 'utf8') > 8 * 1024 * 1024);
+    // zzz985: over the 8 MB cap (counted in UTF-8 bytes) the value is gzip-packed and still stored
     await kv.kvSet('oversize', large, 60);
-    assert.equal(globalThis.remoteWrites, 1);
+    assert.equal(globalThis.remoteWrites, 2);
   `, true);
 });
 

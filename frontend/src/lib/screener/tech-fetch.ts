@@ -4,6 +4,7 @@
 import { dbQuery } from '@/lib/db';
 import { barsFromYahoo, overlayNse, type NseDay, type TechFigures } from './tech';
 import { techEntry, PATTERN_SCAN_VERSION, type ScreenPatternTag } from './pine';
+import type { TvFigures } from './tv-screens';
 
 // the same browser string the rest of the app uses for Yahoo (lib/us-prices.ts explains why it must be exactly this)
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
@@ -12,7 +13,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** What is kept per company: the figures, the first trading day (days since 1970) and the date the figures were worked out. */
 /** zzz969 — `cc`: the same figures as of the last completed session, kept when the read happened during trading. */
 /** zzz983 — `pat` / `patAt` / `patV`: the chart patterns read from the same bars (lib/screener/pine.ts), kept with the figures. */
-export type TechStored = TechFigures & { ipoD: number | null; cc?: Record<string, number | null> | null; pat?: ScreenPatternTag[]; patAt?: string | null; patV?: number };
+export type TechStored = TechFigures & { ipoD: number | null; cc?: Record<string, number | null> | null; pat?: ScreenPatternTag[]; patAt?: string | null; patV?: number } & Partial<TvFigures>;
 
 let route = 0;
 let lastErr: string | null = null;

@@ -2,30 +2,38 @@
 // the Stock Screener's filter language. Add a screen by adding an entry here (e.g. the owner's own TradingView Pine screens):
 // an `id` (stable, used in saved choices), a `name`, an optional `note` (shown under the controls), an optional `market`
 // (opens that market) and a `q` — any field left out of `q` takes DEFAULT_QUERY's value (see screen()).
-import type { Filter } from './filters';
-import { DEFAULT_QUERY, type PineQuery, type PineScreen } from './pine';
+import type { Filter, NumKey } from './filters';
+import { DEFAULT_QUERY, type PineGroup, type PineQuery, type PineScreen } from './pine';
 
-const screen = (id: string, name: string, q: Partial<PineQuery>, note?: string, market?: PineScreen['market']): PineScreen =>
-  ({ id, name, q: { ...DEFAULT_QUERY, ...q, dist: { ...DEFAULT_QUERY.dist, ...(q.dist || {}) } }, builtIn: true, ...(note ? { note } : {}), ...(market ? { market } : {}) });
+type Opts = { note?: string; market?: PineScreen['market']; group?: PineGroup };
+const screen = (id: string, name: string, q: Partial<PineQuery>, o: Opts | string = {}): PineScreen => {
+  const opt: Opts = typeof o === 'string' ? { note: o } : o;
+  return {
+    id, name, q: { ...DEFAULT_QUERY, ...q, dist: { ...DEFAULT_QUERY.dist, ...(q.dist || {}) } }, builtIn: true, group: opt.group || 'patterns',
+    ...(opt.note ? { note: opt.note } : {}), ...(opt.market ? { market: opt.market } : {}),
+  };
+};
+/** A screen decided by rules alone (no chart pattern needed); bullish and bearish patterns are still shown next to each company. */
+const rules = (id: string, name: string, filters: Filter[], cols: NumKey[], group: PineGroup, note: string, q: Partial<PineQuery> = {}): PineScreen =>
+  screen(id, name, { bias: 'both', need: 'any', stages: ['f', 'b'], minConf: 55, dist: { on: false, lo: -15, hi: 5 }, filters, cols, ...q }, { note, group });
+const ge = (key: NumKey, v: number): Filter => ({ kind: 'num', key, op: 'ge', v });
+const le = (key: NumKey, v: number): Filter => ({ kind: 'num', key, op: 'le', v });
+const eq = (key: NumKey, v: number): Filter => ({ kind: 'num', key, op: 'between', v, v2: v });
 
-/** Minervini's trend template: price over the 50 / 150 / 200-day averages, stacked, within 25% of the 52-week high. */
-const TREND_TEMPLATE: Filter[] = [
-  { kind: 'cmp', key: 'px', op: 'above', other: 'sma50' },
-  { kind: 'cmp', key: 'sma50', op: 'above', other: 'sma150' },
-  { kind: 'cmp', key: 'sma150', op: 'above', other: 'sma200' },
-  { kind: 'near', key: 'px', other: 'hi52', lo: -25, hi: 0 },
-];
+/** zzz984 — his own "minervni script" (Minervini trend template, all six rules) — computed field ttOk (tv-screens.ts). */
+const TREND_TEMPLATE: Filter[] = [ge('ttOk', 1)];
 const ABOVE_200: Filter[] = [{ kind: 'cmp', key: 'px', op: 'above', other: 'sma200' }];
 const BELOW_200: Filter[] = [{ kind: 'cmp', key: 'px', op: 'below', other: 'sma200' }];
 
 export const BUILT_IN_PINE_SCREENS: readonly PineScreen[] = [
+  // ── chart patterns (zzz983) ─────────────────────────────────────────────────────────────────────────────────────────
   screen('all-bullish', 'All bullish patterns', { bias: 'U' }, 'Every bullish pattern, forming or just broken out, likely or better, from 15% below the pivot to 5% above it.'),
   screen('all-bearish', 'All bearish patterns', { bias: 'D' }, 'Every bearish pattern, forming or just broken down, likely or better, from 15% above the breakdown level to 5% below it.'),
   screen('oneil-bases', "Bullish bases (O'Neil)", {
     bias: 'U', ids: ['flat_base', 'cup', 'cup_handle', 'u_base', 'ascending_base', 'base_on_base', 'ipo_base'], dist: { on: true, lo: -10, hi: 5 }, filters: ABOVE_200,
   }, "O'Neil's bases within 10% of the buy point (pivot), price above its 200-day average."),
-  screen('minervini-vcp', 'Minervini VCP', { bias: 'U', ids: ['vcp'], dist: { on: true, lo: -8, hi: 5 }, filters: TREND_TEMPLATE },
-    'Volatility contraction patterns in stocks that pass the trend template (price > 50 > 150 > 200-day averages, within 25% of the 52-week high).'),
+  screen('minervini-vcp', 'Minervini VCP', { bias: 'U', ids: ['vcp'], dist: { on: true, lo: -8, hi: 5 }, filters: TREND_TEMPLATE, cols: ['tt', 'rsR'] },
+    'Volatility contraction patterns in stocks that pass all six rules of your Minervini trend-template script.'),
   screen('breakouts-today', 'Breakouts (last 5 sessions)', { bias: 'U', stages: ['b'], dist: { on: true, lo: 0, hi: 8 } },
     'Bullish patterns whose first close above the pivot came in the last 5 sessions, still no more than 8% above it.'),
   screen('flags-pennants', 'Flags & pennants', { bias: 'U', ids: ['bull_flag', 'bull_pennant', 'high_tight_flag'], dist: { on: true, lo: -10, hi: 5 } },
@@ -40,4 +48,33 @@ export const BUILT_IN_PINE_SCREENS: readonly PineScreen[] = [
   screen('bear-continuation', 'Bear flags, descending triangles & rising wedges', { bias: 'D', ids: ['bear_flag', 'descending_triangle', 'rising_wedge'] }),
   screen('failed-breakouts', 'Failed breakouts', { bias: 'U', stages: ['x'], dist: { on: false, lo: -30, hi: 5 } },
     'Bullish patterns that broke out in the last 40 sessions and fell more than 7.5% back through the pivot — a warning sign.'),
+
+  // ── zzz984: his own TradingView scripts / the indicators in his Pine Screener ───────────────────────────────────────
+  rules('tv-trend-template', 'Minervini Trend Template (your script)', TREND_TEMPLATE, ['tt', 'rsR', 'stage'], 'tv',
+    'Your "minervni script": close > SMA 50 > SMA 150 > SMA 200, SMA 200 rising on each of the last 20 sessions, close > 1.3 × the 250-session low and > 0.75 × the 250-session high — all six rules.'),
+  rules('tv-rule-of-40', 'Rule of 40 (your script)', [ge('r40', 40)], ['r40', 'revQYoY', 'fcfmTTM'], 'tv',
+    'Your "Revenue Growth YoY + FCF Margin" script: latest quarter\'s revenue growth % + FCF margin % ≥ 40. FCF margin ≈ the latest full year (see the column tip).'),
+  rules('tv-rsi-cross', 'RSI crossed above its average', [le('rsiX', 9)], ['rsiMA', 'rsiX'], 'tv',
+    'Your RSI script: RSI 14 crossed above its 14-session average in the last 10 sessions.'),
+  rules('tv-rsi-50', 'RSI > 50 and above its average', [{ kind: 'num', key: 'rsi', op: 'gt', v: 50 }, { kind: 'cmp', key: 'rsi', op: 'above', other: 'rsiMA' }], ['rsiMA', 'rsiX'], 'tv',
+    'Your RSI script: RSI 14 above the 50 line and above its own 14-session average.'),
+  rules('tv-golden-cross', 'Golden cross (last 20 days)', [le('gcD', 19)], ['gcD'], 'tv', 'MA Cross: SMA 50 crossed above SMA 200 in the last 20 sessions.'),
+  rules('tv-death-cross', 'Death cross (last 20 days)', [le('dcD', 19)], ['dcD'], 'tv', 'MA Cross: SMA 50 crossed below SMA 200 in the last 20 sessions.'),
+  rules('tv-ema-cross-up', 'EMA 10/21 cross up (last 5 days)', [le('emaXU', 4)], ['emaXU'], 'tv', 'MA Cross: EMA 10 crossed above EMA 21 in the last 5 sessions.'),
+
+  // ── zzz984: momentum & trend (his favourite indicators) ───────────────────────────────────────────────────────────────
+  rules('rs-80', 'RS Rating ≥ 80', [ge('rsR', 80)], ['rsR', 'stage'], 'momentum',
+    'IBD-style RS Rating (Fred6724): 0.4 × 3-month + 0.2 × 6, 9 and 12-month performance, ranked 1–99 against every company of this market.'),
+  rules('stage-2', 'Stage 2 uptrend', [eq('stage', 2)], ['stage', 'rsR'], 'momentum', 'Weinstein stage 2: price above a rising 30-week average.'),
+  rules('stage-1-2', 'Stage 1 → 2 transition', [ge('st12', 1)], ['stage', 'rsR'], 'momentum', 'Weinstein stage 2 now, stage 1 within the previous 6 weeks — a fresh advance out of a base.'),
+  rules('pocket-pivot', 'Pocket pivot (last 5 days)', [le('ppD', 4)], ['ppD', 'rvol'], 'momentum',
+    'Volume pocket pivot (TAPLOT): an up day with more volume than any down day of the previous 10 sessions, closing above its 10 and 50-day averages.'),
+  rules('ripster-bull', 'Ripster clouds bullish', [ge('ripB', 1)], ['ripB'], 'momentum', 'Ripster EMA clouds: close above EMA 34 / 50 with EMA 5 and 12 above both.'),
+  rules('high-rvol', 'High relative volume (≥ 2×)', [ge('rvol', 2)], ['rvol', 'adv$'], 'momentum', 'Swing data: the last session traded at least twice its 50-session average volume.'),
+  screen('tt-bullish-base', 'Trend Template + bullish base (likely+)', {
+    bias: 'U', ids: ['flat_base', 'cup', 'cup_handle', 'u_base', 'ascending_base', 'base_on_base', 'ipo_base', 'vcp'], minConf: 55, filters: TREND_TEMPLATE, cols: ['tt', 'rsR', 'stage'],
+  }, { group: 'momentum', note: 'All six trend-template rules pass AND a bullish base (O\'Neil bases or VCP) is forming or just broke out, likely or better.' }),
+  screen('rs80-stage2-forming', 'RS ≥ 80 + Stage 2 + pattern forming', {
+    bias: 'U', stages: ['f'], minConf: 55, filters: [ge('rsR', 80), eq('stage', 2)], cols: ['rsR', 'stage', 'tt'],
+  }, { group: 'momentum', note: 'Leaders (RS Rating 80+) in a stage 2 uptrend with a bullish pattern still forming.' }),
 ];

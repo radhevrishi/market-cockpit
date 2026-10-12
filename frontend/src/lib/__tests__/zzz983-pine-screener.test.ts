@@ -117,7 +117,7 @@ test('zzz983 filters: bias, sub-pattern, stage, likelihood and pivot window', ()
   // only the tags that pass are returned, the strongest is the "best"
   const cup = runPine(ROWS, Q({ minConf: 35 }), 'US').find((h) => h.row.t === 'CUP')!;
   assert.deepEqual(cup.tags.map((t) => t.id), ['cup_handle', 'vcp']);
-  assert.equal(cup.best.id, 'cup_handle');
+  assert.equal(cup.best?.id, 'cup_handle');
   assert.equal(bestTag([T('vcp', 'f', 60, 0), T('flat_base', 'b', 60, 1)]).id, 'flat_base');   // a breakout wins a tie
   assert.deepEqual(matchTags({ pat: [{ id: 'nope' } as any] }, Q({ bias: 'both' })), []);       // unknown ids ignored
 });
@@ -150,10 +150,15 @@ test('zzz983 chip counts ignore the sub-pattern and bias choices but respect the
 
 test('zzz983 lean rows for the page: only companies with a (matching-bias) pattern, scan coverage counted', () => {
   const rows = [...ROWS, { t: 'OLD', n: 'Old', px: 1 } as ScreenRow].map((r) => (r.t === 'OLD' ? r : { ...r, patAt: '2026-10-09', sma200: 10, roeTTM: 5 }));
-  const l = leanRows(rows);
+  const l = leanRows(rows, null, true);
   assert.equal(l.total, 9); assert.equal(l.scanned, 8); assert.equal(l.withPattern, 7); assert.equal(l.patAt, '2026-10-09');
+  assert.equal(l.rows.length, 7);
   assert.ok(l.rows.every((r) => !('roeTTM' in r)) && l.rows.every((r) => 'sma200' in r));
-  assert.deepEqual(leanRows(rows, 'D').rows.map((r) => r.t).sort(), ['HS', 'TOP']);
+  assert.deepEqual(leanRows(rows, 'D', true).rows.map((r) => r.t).sort(), ['HS', 'TOP']);
+  // zzz984: by default every company is sent (rules-only screens need them all); a company without a pattern carries no `pat`
+  const all = leanRows(rows);
+  assert.equal(all.rows.length, 9); assert.equal(all.withPattern, 7);
+  assert.ok(!('pat' in all.rows.find((r) => r.t === 'NONE')!));
 });
 
 test('zzz983 built-in Pine screens are well formed and their rules only read fields sent to the page', () => {

@@ -17,6 +17,8 @@ const BOTH: ScreenMarket[] = ['US', 'IN'];
 const GP_IN = 'India: sales − (material + manufacturing + employee cost) − depreciation, from screener.in\'s expense split (Indian results print no gross profit; this matches TradingView\'s figure within about 1 point for most companies)';
 const FQ_IN = 'India: only companies that published a balance sheet for their latest quarter have this (most publish one twice a year) — the same on TradingView';
 const PRICE_IN = 'India: Yahoo daily prices, with NSE\'s own official prices for the last 3 months';
+const FCFM_US = 'USA: FCF margin of the latest full year — (operating cash flow − capex) ÷ revenue; SEC data holds quarterly cash flows only as year-to-date totals';
+const FCFM_IN = 'India: latest full year, (cash from operations + cash from investing) ÷ sales — screener.in prints no capex line; filled as company pages are re-read';
 export const FIELDS: readonly FieldDef[] = [
   // price & volume
   { key: 'px', label: 'Price', unit: 'price', markets: BOTH, group: 'Price & volume' },
@@ -55,7 +57,24 @@ export const FIELDS: readonly FieldDef[] = [
   { key: 'perf1Y', label: 'Performance 1 year', unit: '%', markets: BOTH, group: 'Momentum' },
   { key: 'perf5Y', label: 'Performance 5 years', unit: '%', markets: BOTH, group: 'Momentum', approxNote: { US: 'a company listed less than 5 years ago: since its first day', IN: 'a company listed less than 5 years ago: since its first day' } },
   { key: 'perfAll', label: 'Performance since listing', unit: '%', markets: BOTH, group: 'Momentum', approxNote: { US: 'over the last 5 years at most (exact for anything listed in the last 5 years)', IN: 'over the last 5 years at most (exact for anything listed in the last 5 years)' } },
+  // zzz984 — the owner's TradingView Pine Screener setups (lib/screener/tv-screens.ts): filled as each company's prices are re-read
+  { key: 'tt', label: 'Trend template: rules passed (0–6)', unit: 'num', markets: BOTH, group: 'Momentum' },
+  { key: 'ttOk', label: 'Trend template: all 6 rules (1 = yes)', unit: 'num', markets: BOTH, group: 'Momentum' },
+  { key: 'rsR', label: 'RS Rating (1–99)', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: 'IBD-style: 0.4 × 3-month + 0.2 × 6, 9 and 12-month performance, ranked against every US company in this screener', IN: 'IBD-style: 0.4 × 3-month + 0.2 × 6, 9 and 12-month performance, ranked against every NSE company in this screener' } },
+  { key: 'rsiMA', label: 'RSI 14 average (14 sessions)', unit: 'num', markets: BOTH, group: 'Momentum' },
+  { key: 'rsiX', label: 'Sessions since RSI crossed above its average', unit: 'num', markets: BOTH, group: 'Momentum', sparse: { US: 'only companies whose RSI crossed above its average in the last 10 sessions', IN: 'only companies whose RSI crossed above its average in the last 10 sessions' } },
+  { key: 'gcD', label: 'Sessions since golden cross (SMA 50 over 200)', unit: 'num', markets: BOTH, group: 'Moving averages', sparse: { US: 'only crosses in the last 20 sessions', IN: 'only crosses in the last 20 sessions' } },
+  { key: 'dcD', label: 'Sessions since death cross (SMA 50 under 200)', unit: 'num', markets: BOTH, group: 'Moving averages', sparse: { US: 'only crosses in the last 20 sessions', IN: 'only crosses in the last 20 sessions' } },
+  { key: 'emaXU', label: 'Sessions since EMA 10 crossed above EMA 21', unit: 'num', markets: BOTH, group: 'Moving averages', sparse: { US: 'only crosses in the last 20 sessions', IN: 'only crosses in the last 20 sessions' } },
+  { key: 'emaXD', label: 'Sessions since EMA 10 crossed below EMA 21', unit: 'num', markets: BOTH, group: 'Moving averages', sparse: { US: 'only crosses in the last 20 sessions', IN: 'only crosses in the last 20 sessions' } },
+  { key: 'stage', label: 'Weinstein stage (1–4)', unit: 'num', markets: BOTH, group: 'Momentum' },
+  { key: 'st12', label: 'Stage 1 → 2 transition (1 = yes)', unit: 'num', markets: BOTH, group: 'Momentum' },
+  { key: 'ppD', label: 'Sessions since volume pocket pivot', unit: 'num', markets: BOTH, group: 'Price & volume', sparse: { US: 'only pocket pivots in the last 10 sessions', IN: 'only pocket pivots in the last 10 sessions' } },
+  { key: 'rvol', label: 'Relative volume (vs 50 sessions)', unit: 'x', markets: BOTH, group: 'Price & volume' },
+  { key: 'adv$', label: 'Average daily traded value, 20 sessions', unit: 'money', markets: BOTH, group: 'Price & volume' },
+  { key: 'ripB', label: 'Ripster EMA clouds bullish (1 = yes)', unit: 'num', markets: BOTH, group: 'Momentum' },
   // growth
+  { key: 'r40', label: 'Revenue growth YoY + FCF margin (Rule of 40)', unit: '%', markets: BOTH, group: 'Growth', approxNote: { US: FCFM_US, IN: FCFM_IN } },
   { key: 'revQYoY', label: 'Revenue growth, quarterly YoY', unit: '%', markets: BOTH, group: 'Growth' },
   { key: 'revAYoY', label: 'Revenue growth, annual YoY', unit: '%', markets: BOTH, group: 'Growth' },
   { key: 'revTTMYoY', label: 'Revenue growth, TTM YoY', unit: '%', markets: BOTH, group: 'Growth' },
@@ -68,6 +87,7 @@ export const FIELDS: readonly FieldDef[] = [
   { key: 'ebitdaTTMYoY', label: 'EBITDA growth, TTM YoY', unit: '%', markets: BOTH, group: 'Growth', approxNote: { US: 'USA: operating profit + depreciation where filed, else operating profit' } },
   { key: 'ebitdaAYoY', label: 'EBITDA growth, annual YoY', unit: '%', markets: BOTH, group: 'Growth', approxNote: { US: 'USA: operating profit + depreciation where filed, else operating profit' } },
   // margins & returns
+  { key: 'fcfmTTM', label: 'FCF margin', unit: '%', markets: BOTH, group: 'Margins & returns', approxNote: { US: FCFM_US, IN: FCFM_IN } },
   { key: 'gmFY', label: 'Gross margin, FY', unit: '%', markets: BOTH, group: 'Margins & returns', approxNote: { IN: GP_IN } },
   { key: 'opmTTM', label: 'Operating margin, TTM', unit: '%', markets: BOTH, group: 'Margins & returns', approxNote: { IN: 'India: operating profit after depreciation (before other income)' } },
   { key: 'opmFY', label: 'Operating margin, FY', unit: '%', markets: BOTH, group: 'Margins & returns', approxNote: { IN: 'India: operating profit after depreciation (before other income)' } },

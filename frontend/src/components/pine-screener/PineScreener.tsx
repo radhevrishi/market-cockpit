@@ -9,11 +9,11 @@ import Link from 'next/link';
 import type { ScreenMarket, ScreenRow } from '@/lib/screener/types';
 import { PATTERN_META, type PatternId } from '@/lib/chart-patterns';
 import {
-  DEFAULT_QUERY, LIKELIHOODS, PINE_SCREENS_KEY, STAGES, cleanPineScreens, cleanQuery, dirDist, likelihoodWord, patternCounts, patternGroups,
+  DEFAULT_QUERY, LIKELIHOODS, OPTIONAL_COLS, PINE_GROUPS, PINE_SCREENS_KEY, STAGES, cleanPineScreens, cleanQuery, dirDist, likelihoodWord, patternCounts, patternGroups,
   runPine, turnoverOf, type PerfKey, type PineHit, type PineQuery, type PineScreen, type PineStage, type ScreenPatternTag,
 } from '@/lib/screener/pine';
 import { BUILT_IN_PINE_SCREENS } from '@/lib/screener/pine-presets';
-import { fmtValue, filterLabel } from '@/lib/screener/filters';
+import { fmtValue, filterLabel, fieldOf, type NumKey } from '@/lib/screener/filters';
 import { TV_SECTORS } from '@/lib/screener/tv-sectors';
 import { writeReviewQueue } from '@/lib/screener/workflow';
 import { pollWhenVisible } from '@/lib/client-fetch';
@@ -45,6 +45,22 @@ const STAGE_GLYPH = (t: ScreenPatternTag) => (t.s === 'f' ? '◌' : t.s === 'b' 
 const stageWord = (t: ScreenPatternTag) => (t.s === 'f' ? 'forming' : t.s === 'b' ? (t.b === 'U' ? 'broke out' : 'broke down') : (t.b === 'U' ? 'breakout failed' : 'breakdown failed'));
 const pct = (v: number | null | undefined, digits = 1) => (v == null || !Number.isFinite(v) ? '—' : `${v > 0 ? '+' : ''}${v.toFixed(digits)}%`);
 const PERF_LABEL: Record<PerfKey, string> = { perf1M: '1M', perf3M: '3M', perf6M: '6M', perf1Y: '1Y' };
+/** zzz984 — short headers for the optional columns (the full label is the header's tooltip). */
+const COL_SHORT: Partial<Record<NumKey, string>> = {
+  tt: 'TT rules', ttOk: 'TT all 6', rsR: 'RS Rating', stage: 'Stage', st12: 'Stage 1→2', r40: 'Rule of 40', revQYoY: 'Rev Q YoY', fcfmTTM: 'FCF margin',
+  rsiMA: 'RSI avg', rsiX: 'RSI × avg (d)', gcD: 'Golden × (d)', dcD: 'Death × (d)', emaXU: 'EMA10×21 up (d)', emaXD: 'EMA10×21 dn (d)', ppD: 'Pocket pivot (d)',
+  rvol: 'RVol', 'adv$': 'Avg value', adrP: 'ADR %', ripB: 'Ripster', perf1M: 'Perf 1M', perf6M: 'Perf 6M', perf1Y: 'Perf 1Y',
+};
+const YES_NO = new Set<string>(['ttOk', 'st12', 'ripB']);
+function fmtCol(k: NumKey, v: number | null | undefined, market: ScreenMarket): string {
+  if (v == null || !Number.isFinite(v)) return '—';
+  if (YES_NO.has(k)) return v >= 1 ? 'yes' : 'no';
+  if (k === 'tt') return `${v}/6`;
+  if (k === 'rvol') return `${v.toFixed(2)}×`;
+  const d = fieldOf(k);
+  if (d?.unit === '%') return pct(v);
+  return fmtValue(v, d?.unit || 'num', market);
+}
 
 export default function PineScreener() {
   const [light, toggleLight] = useWorkspaceLight();
@@ -124,11 +140,11 @@ export default function PineScreener() {
     const val = (h: PineHit): number | string | null => {
       const r = h.row, b = h.best;
       switch (sort.key) {
-        case 'conf': return b.c + (b.s === 'b' ? 0.5 : 0);
-        case 'dist': return dirDist(b);
-        case 'len': return b.l ?? null;
-        case 'pivot': return b.p;
-        case 'pattern': return PATTERN_META[b.id].label;
+        case 'conf': return b ? b.c + (b.s === 'b' ? 0.5 : 0) : null;
+        case 'dist': return b ? dirDist(b) : null;
+        case 'len': return b?.l ?? null;
+        case 'pivot': return b?.p ?? null;
+        case 'pattern': return b ? PATTERN_META[b.id].label : null;
         case 't': return r.t;
         case 'tvSec': return r.tvSec || r.sec || '';
         case 'turn': return turnoverOf(r, market);
@@ -195,10 +211,11 @@ export default function PineScreener() {
   const money = market === 'US' ? '$ million' : '₹ crore';
   const downloadCsv = () => {
     const head = ['Ticker', 'Market', 'Company', 'Sector', 'Pattern', 'Bias', 'Stage', 'Likelihood (%)', 'Pivot', 'To pivot (%)', 'Length (weeks)', 'Depth (%)', 'Other patterns',
-      `Price (${market === 'US' ? 'USD' : 'INR'})`, 'Change (%)', `Market cap (${money})`, `Avg daily value (${money})`, `Perf ${PERF_LABEL[q.perfKey]} (%)`, 'RSI 14', 'Patterns as of', 'Snapshot built (UTC)'];
-    const body = narrowed.map(({ row: r, best: b, tags }) => [r.t, market === 'IN' ? 'NSE' : 'US', r.n, r.tvSec || r.sec || '', PATTERN_META[b.id].label, b.b === 'U' ? 'bullish' : 'bearish', stageWord(b), b.c,
-      b.p ?? '', dirDist(b) ?? '', b.l != null ? Math.round((b.l / 5) * 10) / 10 : '', b.dp ?? '', tags.filter((t) => t !== b).map((t) => `${PATTERN_META[t.id].label} (${t.c})`).join('; '),
-      r.px ?? '', r.chg ?? '', r.mc ?? '', (() => { const v = turnoverOf(r, market); return v == null ? '' : Math.round(v * 100) / 100; })(), r[q.perfKey] ?? '', r.rsi ?? '', r.patAt || '', snap?.builtAt || '']);
+      `Price (${market === 'US' ? 'USD' : 'INR'})`, 'Change (%)', `Market cap (${money})`, `Avg daily value (${money})`, `Perf ${PERF_LABEL[q.perfKey]} (%)`, 'RSI 14', ...q.cols.map((k) => { const d = fieldOf(k); const u = d?.unit === '%' ? ' (%)' : d?.unit === 'money' ? ` (${money})` : ''; return `${d?.label || k}${u}`; }), 'Approximate (≈) fields', 'Patterns as of', 'Snapshot built (UTC)'];
+    const body = narrowed.map(({ row: r, best: b, tags }) => [r.t, market === 'IN' ? 'NSE' : 'US', r.n, r.tvSec || r.sec || '', b ? PATTERN_META[b.id].label : '', b ? (b.b === 'U' ? 'bullish' : 'bearish') : '', b ? stageWord(b) : '', b?.c ?? '',
+      b?.p ?? '', b ? dirDist(b) ?? '' : '', b?.l != null ? Math.round((b.l / 5) * 10) / 10 : '', b?.dp ?? '', tags.filter((t) => t !== b).map((t) => `${PATTERN_META[t.id].label} (${t.c})`).join('; '),
+      r.px ?? '', r.chg ?? '', r.mc ?? '', (() => { const v = turnoverOf(r, market); return v == null ? '' : Math.round(v * 100) / 100; })(), r[q.perfKey] ?? '', r.rsi ?? '',
+      ...q.cols.map((k) => (r as any)[k] ?? ''), (r.approx || []).filter((k) => (q.cols as string[]).includes(k)).join('; '), r.patAt || '', snap?.builtAt || '']);
     const blob = new Blob(['﻿' + toCsv([head, ...body])], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `pine_${name.replace(/[^\w-]+/g, '_')}_${market}.csv`; a.click(); URL.revokeObjectURL(a.href);
   };
@@ -233,7 +250,7 @@ export default function PineScreener() {
         <span style={{ fontSize: 12, color: C.dim }}>chart patterns across every listed company</span>
         <WorkspaceThemeToggle light={light} onToggle={toggleLight} />
         <select value={screenId} onChange={(e) => loadScreen(e.target.value)} style={{ ...btn(), fontSize: 14, maxWidth: 360 }} aria-label="Pine screens">
-          <optgroup label="Built-in pattern screens">{screens.filter((s) => builtInIds.has(s.id)).map(opt)}</optgroup>
+          {PINE_GROUPS.map((g) => <optgroup key={g.id} label={g.label}>{screens.filter((s) => builtInIds.has(s.id) && (s.group || 'patterns') === g.id).map(opt)}</optgroup>)}
           {mine.length ? <optgroup label="Made here">{mine.map(opt)}</optgroup> : null}
         </select>
         <button type="button" style={btn(dirty)} onClick={() => (builtInIds.has(screenId) ? save(true) : save(false))} title={builtInIds.has(screenId) ? 'Built-in screens are kept as they are: this saves your choices as a new screen' : 'Save the choices into this screen'}>Save{dirty ? ' •' : ''}</button>
@@ -256,6 +273,9 @@ export default function PineScreener() {
               style={{ all: 'unset', cursor: 'pointer', padding: '6px 14px', fontWeight: 800, fontSize: 13.5, background: q.bias === b ? col : C.bg1, color: q.bias === b ? '#fff' : C.text1 }}>{label}</button>
           ))}
         </span>
+        <label title="Off: the screen's rules alone decide (e.g. your trend-template script) and any chart pattern is shown beside the company" style={{ display: 'inline-flex', gap: 5, alignItems: 'center', cursor: 'pointer' }}>
+          <input type="checkbox" checked={q.need !== 'any'} onChange={(e) => change({ need: e.target.checked ? 'pattern' : 'any' })} aria-label="Require a chart pattern" /> Require a chart pattern
+        </label>
         <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
           <span style={{ color: C.dim }}>Stage</span>
           {STAGES.map((s) => <button key={s.id} type="button" title={s.tip} aria-pressed={q.stages.includes(s.id)} style={btn(q.stages.includes(s.id))} onClick={() => toggleStage(s.id)}>{s.label}</button>)}
@@ -330,6 +350,19 @@ export default function PineScreener() {
         ) : null}
       </div>
 
+      {/* zzz984 — extra columns (the TradingView-script fields and more) */}
+      <details style={{ fontSize: 12.5 }}>
+        <summary style={{ cursor: 'pointer', color: C.dim }}>Columns{q.cols.length ? ` (${q.cols.length} extra)` : ''} — trend template, RS Rating, stage, Rule of 40, RSI, crosses, pocket pivots, volume…</summary>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', marginTop: 6 }}>
+          {OPTIONAL_COLS.map((k) => (
+            <label key={k} title={fieldOf(k)?.label} style={{ display: 'inline-flex', gap: 5, alignItems: 'center', cursor: 'pointer' }}>
+              <input type="checkbox" checked={q.cols.includes(k)} onChange={(e) => change({ cols: e.target.checked ? [...q.cols, k] : q.cols.filter((x) => x !== k) })} />
+              {COL_SHORT[k] || fieldOf(k)?.label || k}
+            </label>
+          ))}
+        </div>
+      </details>
+
       {/* summary + actions */}
       <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', fontSize: 13 }}>
         <b style={{ fontSize: 15 }}>{snap ? `${hits.length} companies` : err ? '' : 'Loading…'}</b>
@@ -373,6 +406,7 @@ export default function PineScreener() {
               <Th label="Pivot" k="pivot" sort={sort} setSort={setSort} num />
               <Th label="To pivot" k="dist" sort={sort} setSort={setSort} num />
               <Th label="Length" k="len" sort={sort} setSort={setSort} num />
+              {q.cols.map((k) => <Th key={k} label={COL_SHORT[k] || fieldOf(k)?.label || k} k={k} sort={sort} setSort={setSort} num title={fieldOf(k)?.label} />)}
               <Th label="Price" k="px" sort={sort} setSort={setSort} num />
               <Th label="Chg" k="chg" sort={sort} setSort={setSort} num />
               <Th label="Mkt cap" k="mc" sort={sort} setSort={setSort} num />
@@ -384,7 +418,7 @@ export default function PineScreener() {
           </thead>
           <tbody>
             {shown.map(({ row: r, tags, best: b }, i) => {
-              const dd = dirDist(b);
+              const dd = b ? dirDist(b) : null;
               const turn = turnoverOf(r, market);
               return (
                 <tr key={r.t} style={{ borderTop: `1px solid ${C.border}` }}>
@@ -400,10 +434,18 @@ export default function PineScreener() {
                       {tags.map((t) => <PatternChip key={t.id} t={t} main={t === b} market={market} patAt={r.patAt} />)}
                     </div>
                   </td>
-                  <td style={{ ...td, ...numTd }} title={`${likelihoodWord(b.c)} (${b.c}/100)`}>{b.c} <span style={{ fontSize: 11, color: C.dim }}>{likelihoodWord(b.c)}</span></td>
-                  <td style={{ ...td, ...numTd }}>{fmtValue(b.p, 'price', market)}</td>
-                  <td style={{ ...td, ...numTd, color: dd == null ? C.dim : dd >= 0 ? (b.b === 'U' ? C.green : C.red) : C.text }} title={b.d == null ? '' : `close ${Math.abs(b.d).toFixed(1)}% ${b.d < 0 ? 'below' : 'above'} the ${b.b === 'U' ? 'pivot' : 'breakdown level'}`}>{pct(dd)}</td>
-                  <td style={{ ...td, ...numTd }} title={b.dp != null ? `${b.dp}% deep` : ''}>{b.l != null ? (b.l >= 10 ? `${Math.max(1, Math.round(b.l / 5))} wk` : `${b.l} d`) : '—'}</td>
+                  {b ? (
+                    <>
+                      <td style={{ ...td, ...numTd }} title={`${likelihoodWord(b.c)} (${b.c}/100)`}>{b.c} <span style={{ fontSize: 11, color: C.dim }}>{likelihoodWord(b.c)}</span></td>
+                      <td style={{ ...td, ...numTd }}>{fmtValue(b.p, 'price', market)}</td>
+                      <td style={{ ...td, ...numTd, color: dd == null ? C.dim : dd >= 0 ? (b.b === 'U' ? C.green : C.red) : C.text }} title={b.d == null ? '' : `close ${Math.abs(b.d).toFixed(1)}% ${b.d < 0 ? 'below' : 'above'} the ${b.b === 'U' ? 'pivot' : 'breakdown level'}`}>{pct(dd)}</td>
+                      <td style={{ ...td, ...numTd }} title={b.dp != null ? `${b.dp}% deep` : ''}>{b.l != null ? (b.l >= 10 ? `${Math.max(1, Math.round(b.l / 5))} wk` : `${b.l} d`) : '—'}</td>
+                    </>
+                  ) : <td colSpan={4} style={{ ...td, color: C.dim, fontSize: 12 }}>no matching chart pattern</td>}
+                  {q.cols.map((k) => {
+                    const d = fieldOf(k); const v = (r as any)[k] as number | null | undefined; const ax = r.approx?.includes(k);
+                    return <td key={k} style={{ ...td, ...numTd }} title={[d?.label, ax ? `Approximate — ${d?.approxNote?.[market] || ''}` : ''].filter(Boolean).join('\n')}>{ax && v != null ? '≈' : ''}{fmtCol(k, v, market)}</td>;
+                  })}
                   <td style={{ ...td, ...numTd }}>{fmtValue(r.px, 'price', market)}</td>
                   <td style={{ ...td, ...numTd, color: typeof r.chg === 'number' ? (r.chg >= 0 ? C.green : C.red) : C.dim }}>{pct(r.chg)}</td>
                   <td style={{ ...td, ...numTd }}>{fmtValue(r.mc, 'money', market)}</td>
@@ -420,7 +462,7 @@ export default function PineScreener() {
         {snap && !hits.length ? (
           <div style={{ padding: 14, color: C.dim, fontSize: 13 }}>
             {notScanned ? 'No patterns yet — they are added by the next screener build of this market.'
-              : !rows.length ? 'No company shows a pattern in the stored data.'
+              : !rows.length ? 'No companies in the stored data yet.'
               : 'No company matches. Widen the pivot window, lower the likelihood, add a stage or untick patterns — the number on each pattern shows where the matches are.'}
           </div>
         ) : null}
@@ -448,10 +490,10 @@ function PatternChip({ t, main, market, patAt }: { t: ScreenPatternTag; main: bo
 const th: React.CSSProperties = { textAlign: 'left', padding: '7px 8px', fontSize: 11.5, fontWeight: 800, color: 'var(--mc-text-3, #6b7280)', whiteSpace: 'nowrap' };
 const td: React.CSSProperties = { padding: '6px 8px', verticalAlign: 'top' };
 const numTd: React.CSSProperties = { textAlign: 'right', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' };
-function Th({ label, k, sort, setSort, num }: { label: string; k: string; sort: { key: string; dir: 1 | -1 }; setSort: (s: { key: string; dir: 1 | -1 }) => void; num?: boolean }) {
+function Th({ label, k, sort, setSort, num, title }: { label: string; k: string; sort: { key: string; dir: 1 | -1 }; setSort: (s: { key: string; dir: 1 | -1 }) => void; num?: boolean; title?: string }) {
   const on = sort.key === k;
   return (
-    <th style={{ ...th, textAlign: num ? 'right' : 'left' }}>
+    <th style={{ ...th, textAlign: num ? 'right' : 'left' }} title={title}>
       <button type="button" onClick={() => setSort({ key: k, dir: on ? (sort.dir === 1 ? -1 : 1) : num ? -1 : 1 })} style={{ all: 'unset', cursor: 'pointer', color: on ? 'var(--mc-accent)' : undefined }}>
         {label} {on ? (sort.dir === -1 ? '▼' : '▲') : ''}
       </button>

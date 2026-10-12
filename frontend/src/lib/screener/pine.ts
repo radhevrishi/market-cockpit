@@ -12,12 +12,13 @@
 // pivot / liquidity), counts per pattern for the chips, and the cleaning of saved Pine screens.
 import { detectPatterns, toTags, PATTERN_META, PATTERN_IDS, type PatternId, type PatternTag, type PBar } from '../chart-patterns';
 import { techFigures, closedFigures, type DailyBars } from './tech';
-import { passes, cleanScreens, type Filter } from './filters';
+import { passes, cleanScreens, fieldOf, type Filter, type NumKey } from './filters';
 import type { ScreenMarket, ScreenRow } from './types';
 import type { TechStored } from './tech-fetch';
+import { tvFigures, rsRatings, type TvFigures } from './tv-screens';
 
 /** Bump when the engine or the stored tag changes: every stored entry without it is re-read on the next build. */
-export const PATTERN_SCAN_VERSION = 1;
+export const PATTERN_SCAN_VERSION = 2;   // 2 = zzz984: + the owner's TradingView indicator fields (tv-screens.ts)
 /** Only hits at least this likely are stored (the engine's own floor is 35 as well). */
 export const PATTERN_MIN_STORE = 35;
 
@@ -52,13 +53,35 @@ export function techEntry(bars: DailyBars, firstTradeSec: number | null, partial
   const ipoD = firstTradeSec != null ? Math.floor((firstTradeSec * 1000) / DAY) : null;
   const cc = partial ? closedFigures(bars) : null;
   const p = patternsFromBars(bars, ipoD);
-  return { ...techFigures(bars), ipoD, ...(cc ? { cc } : {}), pat: p.pat, patAt: p.patAt, patV: PATTERN_SCAN_VERSION };
+  let tv: Partial<TvFigures> = {};
+  try { tv = tvFigures(bars); } catch { /* never costs the price figures */ }
+  return { ...techFigures(bars), ipoD, ...(cc ? { cc } : {}), pat: p.pat, patAt: p.patAt, patV: PATTERN_SCAN_VERSION, ...tv };
 }
 
 /** The pattern fields a screener row carries, from a stored entry (nothing when the entry predates the pattern scan). */
 export function rowPatternFields(tf: TechStored | undefined): Pick<ScreenRow, 'pat' | 'patAt'> {
   if (!tf || tf.patV == null) return {};
   return { ...(tf.pat?.length ? { pat: tf.pat } : {}), ...(tf.patAt ? { patAt: tf.patAt } : {}) };
+}
+
+/** zzz984 — the TradingView-script fields a row carries (entries read before scan version 2 carry none). `adv$` = average daily
+ *  traded value in the market's money unit ($ million / ₹ crore). The RS Rating is ranked later, over the whole snapshot. */
+export const TV_ROW_KEYS = ['tt', 'ttOk', 'rsiMA', 'rsiX', 'gcD', 'dcD', 'emaXU', 'emaXD', 'stage', 'st12', 'ppD', 'rvol', 'ripB'] as const;
+export function rowTvFields(tf: TechStored | undefined, market: ScreenMarket): Partial<ScreenRow> {
+  if (!tf || !(typeof tf.patV === 'number' && tf.patV >= 2)) return {};
+  const o: Partial<ScreenRow> = {};
+  for (const k of TV_ROW_KEYS) { const v = (tf as any)[k]; if (v != null) (o as any)[k] = v; }
+  if (typeof tf.adv === 'number') o['adv$'] = Math.round((tf.adv / (market === 'US' ? 1e6 : 1e7)) * 100) / 100;
+  return o;
+}
+/** zzz984 — RS Rating 1–99 for every row of one market's snapshot, from the stored weighted performance (`rsRaw`). */
+export function applyRsRating(rows: ScreenRow[], rawOf: (t: string) => number | null | undefined): void {
+  const rank = rsRatings(rows.map((r) => ({ t: r.t, v: rawOf(r.t) })));
+  for (const r of rows) { const v = rank.get(r.t); if (v != null) r.rsR = v; }
+}
+/** zzz984 — the owner's "Revenue Growth YoY + FCF Margin" (custom Rule of 40): latest quarter's revenue growth + FCF margin. */
+export function ruleOf40(revQYoY: number | null | undefined, fcfm: number | null | undefined): number | null {
+  return fin(revQYoY) && fin(fcfm) ? Math.round((revQYoY + fcfm) * 10) / 10 : null;
 }
 
 // ── the page's filters (pure) ─────────────────────────────────────────────────────────────────────────────────────────
@@ -91,11 +114,18 @@ export interface PineQuery {
   sectors: string[];                            // TradingView sectors (empty = all)
   /** extra rules in the Stock Screener's own filter language (e.g. the trend template) */
   filters: Filter[];
+  /** zzz984 — 'pattern': a company must show a matching chart pattern; 'any': the rules alone decide (patterns still shown) */
+  need: 'pattern' | 'any';
+  /** zzz984 — extra columns shown in the result table (Stock Screener field keys) */
+  cols: NumKey[];
 }
+/** zzz984 — the extra columns the owner can switch on (the TradingView-script fields first). */
+export const OPTIONAL_COLS: readonly NumKey[] = ['tt', 'rsR', 'stage', 'r40', 'revQYoY', 'fcfmTTM', 'rsiMA', 'rsiX', 'gcD', 'dcD', 'emaXU', 'emaXD', 'ppD', 'rvol', 'adv$', 'adrP', 'ripB', 'ttOk', 'st12', 'perf1M', 'perf6M', 'perf1Y'];
 
 export const DEFAULT_QUERY: PineQuery = {
   bias: 'U', ids: [], stages: ['f', 'b'], minConf: 55, dist: { on: true, lo: -15, hi: 5 },
   mcMin: null, mcMax: null, pxMin: null, turnMin: null, perfKey: 'perf3M', perfMin: null, sectors: [], filters: [],
+  need: 'pattern', cols: [],
 };
 
 const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -140,7 +170,8 @@ export function passesCompany(r: ScreenRow, q: PineQuery, market: ScreenMarket, 
   return q.filters.every((f) => passes(r, f, now));
 }
 
-export interface PineHit { row: ScreenRow; tags: ScreenPatternTag[]; best: ScreenPatternTag }
+/** `best` is null only for a company that passed a rules-only screen (need 'any') without a matching pattern. */
+export interface PineHit { row: ScreenRow; tags: ScreenPatternTag[]; best: ScreenPatternTag | null }
 /** Strongest first; a breakout beats a forming / failed reading of the same strength. */
 export function bestTag(tags: readonly ScreenPatternTag[]): ScreenPatternTag {
   const rank = (t: ScreenPatternTag) => t.c + (t.s === 'b' ? 0.5 : t.s === 'x' ? -0.5 : 0);
@@ -150,9 +181,9 @@ export function runPine(rows: readonly ScreenRow[], q: PineQuery, market: Screen
   const out: PineHit[] = [];
   for (const r of rows) {
     const tags = matchTags(r, q);
-    if (!tags.length || !passesCompany(r, q, market, now)) continue;
+    if ((q.need !== 'any' && !tags.length) || !passesCompany(r, q, market, now)) continue;
     tags.sort((a, b) => b.c - a.c);
-    out.push({ row: r, tags, best: bestTag(tags) });
+    out.push({ row: r, tags, best: tags.length ? bestTag(tags) : null });
   }
   return out;
 }
@@ -192,6 +223,8 @@ export function patternGroups(bias: PineBias): Array<{ group: string; bias: 'bul
 export const LEAN_KEYS = [
   't', 'n', 'sec', 'ind', 'tvSec', 'exch', 'px', 'chg', 'mc', 'vol', 'avgVol10', 'avgVol30', 'sma50', 'sma150', 'sma200', 'ema21', 'hi52',
   'rsi', 'adrP', 'perf1W', 'perf1M', 'perf3M', 'perf6M', 'perfYTD', 'perf1Y', 'q', 'ipoD', 'earnD', 'pat', 'patAt',
+  // zzz984 — the TradingView-script fields and the Rule of 40 parts
+  'tt', 'ttOk', 'rsR', 'rsiMA', 'rsiX', 'gcD', 'dcD', 'emaXU', 'emaXD', 'stage', 'st12', 'ppD', 'rvol', 'adv$', 'ripB', 'revQYoY', 'fcfmTTM', 'r40', 'approx',
 ] as const satisfies ReadonlyArray<keyof ScreenRow>;
 export function leanRow(r: ScreenRow): Partial<ScreenRow> & { live?: 1 } {
   const o: Record<string, unknown> = {};
@@ -199,16 +232,19 @@ export function leanRow(r: ScreenRow): Partial<ScreenRow> & { live?: 1 } {
   if (r.cc) o.live = 1;   // read during a session: the latest bar (and its patterns) is the live, unfinished day
   return o as Partial<ScreenRow> & { live?: 1 };
 }
-export function leanRows(rows: readonly ScreenRow[], bias?: 'U' | 'D' | null): { rows: Array<Partial<ScreenRow>>; total: number; scanned: number; withPattern: number; patAt: string | null } {
+/** zzz984 — every company is sent (rules-only screens need them all); `patternsOnly` keeps the companies with a pattern. */
+export function leanRows(rows: readonly ScreenRow[], bias?: 'U' | 'D' | null, patternsOnly = false): { rows: Array<Partial<ScreenRow>>; total: number; scanned: number; withPattern: number; patAt: string | null } {
   let scanned = 0, withPattern = 0;
   const dates = new Map<string, number>();
   const out: Array<Partial<ScreenRow>> = [];
   for (const r of rows) {
     if (r.patAt) { scanned++; dates.set(r.patAt, (dates.get(r.patAt) || 0) + 1); }
     const pat = Array.isArray(r.pat) ? r.pat.filter((t) => t && PATTERN_META[t.id] && (!bias || t.b === bias)) : [];
-    if (!pat.length) continue;
-    withPattern++;
-    out.push({ ...leanRow(r), pat });
+    if (pat.length) withPattern++;
+    else if (patternsOnly) continue;
+    const lr = leanRow(r);
+    if (pat.length) lr.pat = pat; else delete lr.pat;
+    out.push(lr);
   }
   const patAt = Array.from(dates.entries()).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? 1 : -1))[0]?.[0] || null;
   return { rows: out, total: rows.length, scanned, withPattern, patAt };
@@ -216,7 +252,12 @@ export function leanRows(rows: readonly ScreenRow[], bias?: 'U' | 'D' | null): {
 
 // ── saved Pine screens ────────────────────────────────────────────────────────────────────────────────────────────────
 export const PINE_SCREENS_KEY = 'mc:pine-screens:v1';
-export interface PineScreen { id: string; name: string; note?: string; market?: ScreenMarket; q: PineQuery; builtIn?: boolean }
+/** zzz984 — where a built-in screen is listed: the owner's own TradingView scripts, chart patterns, momentum & trend. */
+export type PineGroup = 'tv' | 'patterns' | 'momentum';
+export const PINE_GROUPS: ReadonlyArray<{ id: PineGroup; label: string }> = [
+  { id: 'tv', label: 'Your TradingView screens' }, { id: 'patterns', label: 'Chart patterns' }, { id: 'momentum', label: 'Momentum & trend' },
+];
+export interface PineScreen { id: string; name: string; note?: string; market?: ScreenMarket; q: PineQuery; builtIn?: boolean; group?: PineGroup }
 
 const numOrNull = (v: unknown, lo = -1e15, hi = 1e15) => (fin(v) && v >= lo && v <= hi ? v : null);
 /** Pure clean-up of a stored / pasted query: anything unknown falls back to the default. */
@@ -238,6 +279,8 @@ export function cleanQuery(raw: unknown): PineQuery {
     perfMin: numOrNull(x.perfMin, -100, 100000),
     sectors: Array.isArray(x.sectors) ? x.sectors.filter((s: unknown) => typeof s === 'string').slice(0, 40) : [],
     filters,
+    need: x.need === 'any' ? 'any' : 'pattern',
+    cols: Array.isArray(x.cols) ? Array.from(new Set<NumKey>(x.cols.filter((k: unknown): k is NumKey => typeof k === 'string' && !!fieldOf(k)))).slice(0, 30) : [],
   };
 }
 export function cleanPineScreens(raw: unknown): PineScreen[] {

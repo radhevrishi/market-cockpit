@@ -11,6 +11,7 @@
  */
 
 import { Redis } from '@upstash/redis';
+import { gzipSync, gunzipSync } from 'node:zlib';
 import { MemoryKvStore } from './kv-memory';
 import { VERSIONED_SET_LUA, parseVersionedResult, type VersionedValue } from './kv-versioned';
 
@@ -50,6 +51,20 @@ const MEM_STORE: MemoryKvStore = (globalThis as any).__MC_KV_STORE_V2__ || new M
 /**
  * Get a value from the KV store
  */
+// zzz985 — a value too big for the shared cache (feeds of 8–11 MB: filings windows, the concall feed, special situations)
+// was skipped and rebuilt from scratch after every restart, freezing requests for 10–15 s. Such values are now stored
+// gzip-compressed (JSON shrinks ~10×) in a small wrapper; every reader here unpacks it. Values under the cap are untouched.
+const GZ_MARK = '__mc_gz';
+export function packLarge(serialized: string): { [GZ_MARK]: 1; d: string } {
+  return { [GZ_MARK]: 1, d: gzipSync(Buffer.from(serialized, 'utf8'), { level: 6 }).toString('base64') };
+}
+export function unpackLarge<T = any>(v: any): T {
+  if (v && typeof v === 'object' && v[GZ_MARK] === 1 && typeof v.d === 'string') {
+    try { return JSON.parse(gunzipSync(Buffer.from(v.d, 'base64')).toString('utf8')) as T; } catch { return null as unknown as T; }
+  }
+  return v as T;
+}
+
 export async function kvGet<T = any>(key: string): Promise<T | null> {
   // PATCH 1018 — client FIRST (fast for small/cached keys), then a BOUNDED
   // raw-REST fallback only when the client returns nothing. The previous
@@ -61,7 +76,7 @@ export async function kvGet<T = any>(key: string): Promise<T | null> {
   if (r) {
     try {
       const val = await r.get<T>(key);
-      if (val !== null && val !== undefined) return val;
+      if (val !== null && val !== undefined) return unpackLarge<T>(val);
     } catch (e) {
       console.error(`[KV] Redis GET failed for ${key}:`, e);
     }
@@ -80,10 +95,10 @@ export async function kvGet<T = any>(key: string): Promise<T | null> {
         let raw: any = j?.result;
         if (raw !== null && raw !== undefined) {
           if (typeof raw === 'string') {
-            try { let p: any = JSON.parse(raw); if (typeof p === 'string') p = JSON.parse(p); return p as T; }
+            try { let p: any = JSON.parse(raw); if (typeof p === 'string') p = JSON.parse(p); return unpackLarge<T>(p); }
             catch { return raw as unknown as T; }
           }
-          return raw as T;
+          return unpackLarge<T>(raw);
         }
       }
     } catch { /* fall through to memory */ }
@@ -116,10 +131,10 @@ export async function kvMGet<T = any>(keys: string[]): Promise<Array<T | null>> 
   const parse = (raw: any): any => {
     if (raw === null || raw === undefined) return null;
     if (typeof raw === 'string') {
-      try { let p: any = JSON.parse(raw); if (typeof p === 'string') p = JSON.parse(p); return p; }
+      try { let p: any = JSON.parse(raw); if (typeof p === 'string') p = JSON.parse(p); return unpackLarge(p); }
       catch { return raw; }
     }
-    return raw;
+    return unpackLarge(raw);
   };
   const _url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
   const _token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
@@ -202,8 +217,15 @@ export async function kvSet(key: string, value: any, ttlSeconds?: number): Promi
   // PATCH 1018 — skip oversized remote writes (Upstash 10 MB limit)
   const serializedBytes = Buffer.byteLength(serialized, 'utf8');
   if (serializedBytes > KV_REMOTE_MAX_BYTES) {
-    console.warn(`[KV] Skipping remote SET for ${key} — payload ${(serializedBytes / 1048576).toFixed(1)} MB > ${(KV_REMOTE_MAX_BYTES / 1048576).toFixed(0)} MB safety cap. (Memory cache still populated.)`);
-    return;
+    // zzz985: store it compressed instead of not at all
+    let packed: { __mc_gz: 1; d: string } | null = null;
+    try { packed = packLarge(serialized); } catch { packed = null; }
+    const packedBytes = packed ? packed.d.length + 20 : Infinity;
+    if (!packed || packedBytes > KV_REMOTE_MAX_BYTES) {
+      console.warn(`[KV] Skipping remote SET for ${key} — payload ${(serializedBytes / 1048576).toFixed(1)} MB > ${(KV_REMOTE_MAX_BYTES / 1048576).toFixed(0)} MB safety cap even compressed. (Memory cache still populated.)`);
+      return;
+    }
+    value = packed;
   }
 
   const r = getRedis();

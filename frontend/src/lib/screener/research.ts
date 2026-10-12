@@ -12,8 +12,9 @@ import { tvSectorMapping } from './tv-sectors';
 
 // ── formula version ────────────────────────────────────────────────────────────────────────────────────────────────────
 /** Bump with a line in FORMULA_CHANGES whenever a figure is worked out differently. */
-export const FORMULA_VERSION = '2026.10.12c';
+export const FORMULA_VERSION = '2026.10.12d';
 export const FORMULA_CHANGES: ReadonlyArray<{ v: string; what: string }> = [
+  { v: '2026.10.12d', what: 'Your TradingView Pine Screener setups added as figures (trend template, RSI vs its average, MA crosses, RS Rating, Weinstein stage, pocket pivots, relative volume, traded value, Ripster clouds) and FCF margin + Rule of 40 (FCF margin ≈ latest full year). Existing figures unchanged; every company is re-scanned as its prices are re-read.' },
   { v: '2026.10.12c', what: 'Chart patterns (Pine Screener) read from the same daily bars as the price figures: 21 bullish / bearish patterns with stage, likelihood, pivot and distance, as of the last bar date. Screen filters themselves are unchanged.' },
   { v: '2026.10.12b', what: 'Completed-sessions mode re-works market cap, P/E, P/S, price ÷ cash and EV / revenue at the closing price (they used the live price); India "Other Construction Materials" mapped to Non-Energy Minerals, four companies checked one by one.' },
   { v: '2026.10.12', what: 'Last-5-trading-sessions change added; US companies without quarterly figures now say why; close-confirmed price figures kept for snapshots read during trading.' },

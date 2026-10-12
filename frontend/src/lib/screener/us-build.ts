@@ -11,7 +11,7 @@ import { ensureSchema } from '@/lib/db-migrate';
 import { yahooProfileStats } from '@/lib/us-prices';
 import { FRAME_PLAN, framePeriods, usFigures, type FrameData, type FrameEntry } from './sec-assemble';
 import { refreshTech, type TechStored } from './tech-fetch';
-import { rowPatternFields } from './pine';
+import { rowPatternFields, rowTvFields, applyRsRating, ruleOf40 } from './pine';
 import { tvSectorOf } from './tv-sectors';
 import { rowsJson, type ScreenRow, type ScreenSnapshot } from './types';
 
@@ -225,7 +225,7 @@ export function assembleUsRows(universe: NasdaqRow[], ciks: Map<string, number>,
     // a company with no cash figure gets no EV / revenue (never a guessed 0)
     const noDebtFiled = f != null && f.debt == null && !!f.approx?.includes('de');
     const evDebt = f?.debt ?? (noDebtFiled ? 0 : null);
-    const approx = [...(f?.approx || []), ...(noDebtFiled ? ['evRev'] : [])];
+    const approx = [...(f?.approx || []), ...(noDebtFiled ? ['evRev'] : []), ...(f?.fcfmFY != null ? ['fcfmTTM', 'r40'] : [])];   // zzz984: FCF margin is the latest full year's
     rows.push({
       t: r.t, n: r.n, sec: r.sec, ind: r.ind, px: r.px, chg: r.chg, vol: r.vol, avgVol10: tf?.avgVol10 ?? null, mc,
       sma50: tf?.sma50 ?? sma(c, 50), sma200: tf?.sma200 ?? sma(c, 200),
@@ -249,6 +249,8 @@ export function assembleUsRows(universe: NasdaqRow[], ciks: Map<string, number>,
       } : {}),
       ipoD,
       ...rowPatternFields(tf),   // zzz983 — chart patterns (Pine Screener)
+      ...rowTvFields(tf, 'US'),   // zzz984 — the owner's TradingView script fields
+      ...(f?.fcfmFY != null ? { fcfmTTM: f.fcfmFY, r40: ruleOf40(f.revQYoY, f.fcfmFY) } : {}),
       roeTTM: f?.roeTTM ?? null, roeFY: f?.roeFY ?? null, roceTTM: f?.roceTTM ?? null, roceFY: f?.roceFY ?? null, nmTTM: f?.nmTTM ?? null, ptmTTM: f?.ptmTTM ?? null,
       opmFY: f?.opmFY ?? null, pe: mc != null && f?.niTTM != null && f.niTTM > 0 ? r2(mc / f.niTTM) : null,
       pcf: mc != null && f?.cash != null && f.cash > 0 ? r2(mc / f.cash) : null, netDebt: f?.netDebt ?? null, niFY: f?.niFY ?? null,
@@ -297,6 +299,7 @@ export async function buildUsSnapshot(now = new Date()): Promise<{ ok: boolean; 
     rows.push(...part.rows); noSec += part.noSec;
     await yieldToServer();
   }
+  applyRsRating(rows, (t) => tech.get(t)?.rsRaw);   // zzz984 — RS Rating ranked over the whole US snapshot
   if (noSec) notes.push(`${noSec} listed companies have no quarterly SEC figures (foreign companies filing 20-F / 40-F, which file no quarterly figures in SEC's data; new listings) — their company-figure filters fail`);
   const snap: ScreenSnapshot = { market: 'US', builtAt: new Date().toISOString(), rows, notes, sources: ['Nasdaq stock list', 'SEC filings (XBRL frames)', 'Yahoo daily prices', 'Yahoo company profile'] };
   await dbQuery(`INSERT INTO screener_snapshot (market, built_at, rows, meta) VALUES ('US', now(), $1, $2) ON CONFLICT (market) DO UPDATE SET built_at = now(), rows = EXCLUDED.rows, meta = EXCLUDED.meta`,
