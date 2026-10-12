@@ -3356,7 +3356,7 @@ Source label: ${coverageStats.source}`}
                 <span style={{ fontSize: 11, color: 'var(--mc-text-4)' }}>· {meta.tagline}</span>
               </button>
               {isOpen && (
-                <div style={{ padding: '0 18px 16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(360px, 100%), 1fr))', gap: 12 }}>
+                <div style={{ padding: '0 18px 16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(460px, 100%), 1fr))', gap: 12 }}>
                   {stocks.map((s) => (pinnedRow && s.ticker === pinnedRow.ticker && pinnedReasons.length > 0) ? (
                     <div key={s.ticker + ':' + s.company} style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
                       <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--mc-warn, #F59E0B)' }}>
@@ -3462,7 +3462,7 @@ Source label: ${coverageStats.source}`}
             budget -= out.length;
             return out;
           };
-          const gridStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(360px, 100%), 1fr))', gap: 12 } as const;
+          const gridStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(460px, 100%), 1fr))', gap: 12 } as const;
           const toggleBtn = (v: WindowView, label: string) => (
             <button key={v} onClick={() => setWindowView(v)}
               style={{
