@@ -62,8 +62,8 @@ test('zzz999 distance to the 21 / 50 / 200-day averages uses the scan close (the
   assert.equal(maVerdict(maPosition(row('C', { scanPx: 115, sma21: 110, sma50: 112, sma200: 120 } as any))).word, 'Below 200-day');
   assert.equal(maVerdict(maPosition(row('D', { scanPx: 105, sma21: 108, sma50: 110, sma200: 100 } as any))).word, 'Below 50-day');
   assert.equal(maVerdict(maPosition(row('E', { scanPx: 105, sma21: 108, sma50: 100, sma200: 90 } as any))).word, 'Below 21-day');
-  assert.equal(maVerdict(maPosition(row('F', { scanPx: 105, sma21: 100, sma50: 100, sma200: 90 } as any)), [T('double_top', 'b', 70, -4)]).word, 'Breaking down');
-  assert.equal(maVerdict(maPosition(row('G', { scanPx: 105, sma21: 100, sma50: 100, sma200: 120 } as any)), [T('flat_base', 'b', 70, 2)]).word, 'Breaking out');
+  assert.equal(maVerdict(maPosition(row('F', { scanPx: 105, sma21: 100, sma50: 100, sma200: 90 } as any)), [T('double_top', 'b', 70, -4)]).word, 'Breaking down · still above 200-day');   // zzz1002
+  assert.equal(maVerdict(maPosition(row('G', { scanPx: 105, sma21: 100, sma50: 100, sma200: 120 } as any)), [T('flat_base', 'b', 70, 2)]).word, 'Breaking out · below 200-day');   // zzz1002
   for (const v of ['Above all MAs', 'Below all MAs', 'Below 200-day', 'Breaking down']) assert.doesNotMatch(v, /\b(buy|sell)\b/i);
 });
 
@@ -80,7 +80,7 @@ test('zzz999 portfolio check: every holding is listed — with patterns on D / W
   assert.equal(by.get('HAS')!.verdict.word, 'Above all MAs');
   assert.deepEqual(by.get('BARE')!.patterns.map((p) => p.tags?.length ?? null), [0, null, null], 'no daily pattern; weekly / monthly not scanned');
   assert.equal(by.get('BARE')!.verdict.word, 'Below all MAs');
-  assert.equal(by.get('TOP')!.verdict.word, 'Breaking down');
+  assert.equal(by.get('TOP')!.verdict.word.startsWith('Breaking down'), true);   // zzz1002: '· still above 200-day' when above both averages
   assert.equal(by.get('MISSING')!.row, null); assert.equal(by.get('MISSING')!.verdict.word, 'Not in the data');
   assert.deepEqual(out.map((x) => x.ticker).slice(0, 2).sort(), ['BARE', 'TOP'], 'weak first');
   assert.equal(out.at(-1)!.ticker, 'MISSING');
@@ -201,5 +201,22 @@ test('zzz1001 a weekly/monthly breakdown does not override the averages in the p
   const { maVerdict: mv } = await import('../screener/pine-view');
   const ma = { close: 118, d21: 2, d50: 4, d200: 18, at: '2026-10-13', basis: 'scan' } as any;
   assert.equal(mv(ma, [{ id: 'double_top', b: 'D', s: 'b', c: 70, tf: 'M' } as any]).word, 'Above all MAs');
-  assert.equal(mv(ma, [{ id: 'double_top', b: 'D', s: 'b', c: 70 } as any]).word, 'Breaking down');
+  assert.equal(mv(ma, [{ id: 'double_top', b: 'D', s: 'b', c: 70 } as any]).word, 'Breaking down · still above 200-day');
+});
+
+test('zzz1002 portfolio check shows strong setups near their pivot by default; breaks against the trend are said as such', async () => {
+  const pv = await import('../screener/pine-view');
+  // PPIH-like: a double top forming with the breakdown level 33% below → hidden; a likely rising-wedge breakdown → shown
+  assert.equal(pv.isActivePattern({ c: 86, s: 'f', d: 32.9 }), false);
+  assert.equal(pv.isActivePattern({ c: 68, s: 'b', d: -2.4 }), true);
+  assert.equal(pv.isActivePattern({ c: 41, s: 'f', d: -3 }), false);
+  assert.equal(pv.isActivePattern({ c: 65, s: 'f', d: -5.9 }), true);
+  const up = { close: 514, d21: -1.5, d50: 4.7, d200: 42, at: 'x', basis: 'scan' } as any;
+  assert.equal(pv.maVerdict(up, [{ id: 'rising_wedge', b: 'D', s: 'b', c: 70 } as any]).word, 'Breaking down · still above 200-day');
+  const dn = { close: 10, d21: 3, d50: -2, d200: -9, at: 'x', basis: 'scan' } as any;
+  assert.equal(pv.maVerdict(dn, [{ id: 'falling_wedge', b: 'U', s: 'b', c: 70 } as any]).word, 'Breaking out · below 200-day');
+  const rows = [{ t: 'PPIH', scanPx: 30.6, sma21: 31, sma50: 29, sma200: 29.7, pat: [{ id: 'double_top', b: 'D', s: 'f', c: 86, d: 32.9 }, { id: 'cup_handle', b: 'U', s: 'f', c: 48, d: -6 }], scan: { st: 'ready', v: 5 } } as any];
+  const [x] = pv.portfolioCheck(rows, ['PPIH']);
+  assert.equal(x.hidden, 2);
+  assert.equal(x.active.flatMap((p) => p.tags || []).length, 0);
 });

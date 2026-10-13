@@ -118,9 +118,19 @@ export function maVerdict(ma: MaPosition, tags: readonly ScreenPatternTag[] = []
   // down' while 18% above its 200-day, from a monthly double top)
   const live = tags.filter((t) => t.s === 'b' && (t.tf == null || t.tf === 'D'));
   const down = live.find((t) => t.b === 'D'), up = live.find((t) => t.b === 'U');
-  if (down) return { word: 'Breaking down', tone: 'down', why: `${PATTERN_META[down.id]?.label || down.id} (${tfWord(down.tf)}) closed through its breakdown level` };
+  // zzz1002 — a break against the bigger trend is said as such (a rising-wedge breakdown 40% above the 200-day is a pullback so far)
+  const above200 = ma.d200 != null && ma.d200 >= 0, above50 = ma.d50 != null && ma.d50 >= 0;
+  if (down) {
+    const why = `${PATTERN_META[down.id]?.label || down.id} (${tfWord(down.tf)}) closed through its breakdown level`;
+    if (above200 && above50) return { word: 'Breaking down · still above 200-day', tone: 'mixed', why: `${why}; the close is still above its 50 and 200-day averages` };
+    return { word: 'Breaking down', tone: 'down', why };
+  }
   if (ma.close == null) return { word: 'No price data', tone: 'none', why: 'No close is stored for this company yet' };
-  if (up) return { word: 'Breaking out', tone: 'up', why: `${PATTERN_META[up.id]?.label || up.id} (${tfWord(up.tf)}) closed above its pivot` };
+  if (up) {
+    const why = `${PATTERN_META[up.id]?.label || up.id} (${tfWord(up.tf)}) closed above its pivot`;
+    if (ma.d200 != null && ma.d200 < 0) return { word: 'Breaking out · below 200-day', tone: 'mixed', why: `${why}; the close is still below its 200-day average` };
+    return { word: 'Breaking out', tone: 'up', why };
+  }
   const a = (d: number | null) => (d == null ? null : d >= 0);
   const a21 = a(ma.d21), a50 = a(ma.d50), a200 = a(ma.d200);
   if (a200 == null) {
@@ -137,12 +147,24 @@ export function maVerdict(ma: MaPosition, tags: readonly ScreenPatternTag[] = []
 }
 
 // ── the "My portfolio" chart check ─────────────────────────────────────────────────────────────────────────────────────
+/** zzz1002 — a pattern worth showing on a holding by default: likely or better (shape score ≥ 55) and, while still forming,
+ *  within 15% of its pivot / breakdown level (seen: PPIH 'double top forming' with the breakdown level 33% below the price — two old
+ *  peaks, nothing to act on). Breakouts / breakdowns and recent failures of a likely pattern always show. */
+export const ACTIVE_MIN_SCORE = 55, ACTIVE_MAX_DIST = 15;
+export function isActivePattern(t: Pick<ScreenPatternTag, 'c' | 's' | 'd'>): boolean {
+  if (!(t.c >= ACTIVE_MIN_SCORE)) return false;
+  if (t.s !== 'f') return true;
+  return t.d == null || Math.abs(t.d) <= ACTIVE_MAX_DIST;
+}
 export interface PortfolioCheckRow {
   /** the holding as saved (normalised) */
   ticker: string;
   /** the screener row, null when the company is not in this market's data (unlisted here, renamed, or not read yet) */
   row: ScreenRow | null;
   patterns: TfPatterns[];
+  /** the patterns shown by default (isActivePattern), per timeframe; `hidden` = how many weaker / far-off ones are left out */
+  active: TfPatterns[];
+  hidden: number;
   /** strongest pattern on any timeframe (null = none) */
   best: ScreenPatternTag | null;
   ma: MaPosition;
@@ -161,9 +183,11 @@ export function portfolioCheck(rows: readonly ScreenRow[], holdings: readonly st
     const row = byT.get(t) || null;
     const patterns = row ? allPatterns(row) : (['D', 'W', 'M'] as const).map((tf) => ({ tf, tags: null }));
     const tags = patterns.flatMap((p) => p.tags || []);
+    const active = patterns.map((p) => ({ tf: p.tf, tags: p.tags ? p.tags.filter(isActivePattern) : null }));
+    const shown = active.flatMap((p) => p.tags || []);
     const ma = row ? maPosition(row) : { close: null, basis: null, at: null, d21: null, d50: null, d200: null };
-    const verdict: Verdict = row ? maVerdict(ma, tags) : { word: 'Not in the data', tone: 'none', why: 'This holding is not in this market\'s screener data (another market, a new listing or a changed symbol)' };
-    out.push({ ticker: t, row, patterns, best: tags.length ? bestTag(tags) : null, ma, verdict });
+    const verdict: Verdict = row ? maVerdict(ma, shown) : { word: 'Not in the data', tone: 'none', why: 'This holding is not in this market\'s screener data (another market, a new listing or a changed symbol)' };
+    out.push({ ticker: t, row, patterns, active, hidden: tags.length - shown.length, best: shown.length ? bestTag(shown) : tags.length ? bestTag(tags) : null, ma, verdict });
   }
   const rank: Record<VerdictTone, number> = { down: 0, mixed: 1, up: 2, none: 3 };
   return out.sort((a, b) => rank[a.verdict.tone] - rank[b.verdict.tone] || a.ticker.localeCompare(b.ticker));
