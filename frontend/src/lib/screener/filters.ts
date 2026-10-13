@@ -18,6 +18,7 @@ const GP_IN = 'India: sales − (material + manufacturing + employee cost) − d
 const FQ_IN = 'India: only companies that published a balance sheet for their latest quarter have this (most publish one twice a year) — the same on TradingView';
 const PRICE_IN = 'India: Yahoo daily prices, with NSE\'s own official prices for the last 3 months';
 const FCFM_US = 'USA: FCF margin of the latest full year — (operating cash flow − capex) ÷ revenue; SEC data holds quarterly cash flows only as year-to-date totals';
+const R40_BLANK = '. Rule of 40 is left blank when revenue growth is above +300% or the FCF margin is outside −100%…+100% (a tiny sales base — the sum would mean nothing)';
 const FCFM_IN = 'India: latest full year, (cash from operations + cash from investing) ÷ sales — screener.in prints no capex line; filled as company pages are re-read';
 const TW_NOTE = 'Our own version that follows the published rules of TheWrap Stage Analysis (weekly 10 / 30 / 40-week averages, 13-week closing range, 10-point SATA score) — not the original script; readings can differ from TradingView';
 export const FIELDS: readonly FieldDef[] = [
@@ -80,7 +81,7 @@ export const FIELDS: readonly FieldDef[] = [
   { key: 'mrs', label: 'Mansfield RS (weekly, vs index)', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: '((close ÷ S&P 500) ÷ its 52-week average − 1) × 100, weekly closes', IN: '((close ÷ Nifty 50) ÷ its 52-week average − 1) × 100, weekly closes' } },
   { key: 'twWk', label: 'Stage Analysis (TheWrap method): weeks in stage', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: TW_NOTE, IN: TW_NOTE } },
   // growth
-  { key: 'r40', label: 'Revenue growth YoY + FCF margin (Rule of 40)', unit: '%', markets: BOTH, group: 'Growth', approxNote: { US: FCFM_US, IN: FCFM_IN } },
+  { key: 'r40', label: 'Revenue growth YoY + FCF margin (Rule of 40)', unit: '%', markets: BOTH, group: 'Growth', approxNote: { US: FCFM_US + R40_BLANK, IN: FCFM_IN + R40_BLANK } },
   { key: 'revQYoY', label: 'Revenue growth, quarterly YoY', unit: '%', markets: BOTH, group: 'Growth' },
   { key: 'revAYoY', label: 'Revenue growth, annual YoY', unit: '%', markets: BOTH, group: 'Growth' },
   { key: 'revTTMYoY', label: 'Revenue growth, TTM YoY', unit: '%', markets: BOTH, group: 'Growth' },

@@ -220,3 +220,15 @@ test('zzz984 built-in screens: well formed, grouped, and the owner\'s scripts ar
   assert.equal(cleanQuery({}).need, DEFAULT_QUERY.need);
   assert.deepEqual(cleanQuery({ cols: ['tt', 'nope', 'tt'] }).cols, ['tt']);
 });
+
+test('zzz991 Rule of 40 is blank for tiny-base artefacts (MOVE: +3,590% growth, −2,602% FCF margin)', async () => {
+  const { ruleOf40: r40, leanRows: lean } = await import('../screener/pine');
+  assert.equal(r40(3590.3, -2602.3), null);
+  assert.equal(r40(301, 10), null);
+  assert.equal(r40(50, -101), null);
+  assert.equal(r40(300, -100), 200);
+  assert.equal(r40(46.3, 14.5), 60.8);
+  const out = lean([{ t: 'MOVE', revQYoY: 3590.3, fcfmTTM: -2602.3, r40: 988 } as any, { t: 'RSI', revQYoY: 46.3, fcfmTTM: 14.5, r40: 60.8 } as any]);
+  assert.equal(out.rows[0].r40, null);
+  assert.equal(out.rows[1].r40, 60.8);
+});

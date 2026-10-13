@@ -1,6 +1,7 @@
 // zzz938 — the stock screener snapshot for the page: every company with its figures, built once a day (lib/screener/us-build.ts).
 // Public market data only. Kept in memory for 5 minutes so page loads do not each read 2 MB from Postgres.
 import { NextResponse } from 'next/server';
+import { ruleOf40Usable } from '@/lib/screener/pine';
 import { dbQuery, getPool } from '@/lib/db';
 import { ensureSchema } from '@/lib/db-migrate';
 import { kickBuild } from '@/lib/screener/run';
@@ -21,7 +22,11 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: true, market, builtAt: null, rows: [], building: started, notes: [started ? 'The first build is running now — open this page again in about 10 minutes.' : 'The first build has not finished yet — it runs on a schedule.'], sources: [] });
   }
   const r = rows[0];
-  const body = JSON.stringify({ ok: true, market, builtAt: r.built_at, rows: r.rows, notes: r.meta?.notes || [], sources: r.meta?.sources || [] });
+  // zzz991 — snapshots built before the Rule of 40 guard: blank the tiny-base artefacts here too
+  let outRows: unknown = r.rows;
+  if (typeof outRows === 'string') { try { outRows = JSON.parse(outRows); } catch { /* served as stored */ } }
+  if (Array.isArray(outRows)) for (const row of outRows as any[]) if (row && row.r40 != null && !ruleOf40Usable(row.revQYoY, row.fcfmTTM)) row.r40 = null;
+  const body = JSON.stringify({ ok: true, market, builtAt: r.built_at, rows: outRows, notes: r.meta?.notes || [], sources: r.meta?.sources || [] });
   mem.set(market, { at: Date.now(), body });
   return new NextResponse(body, { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, max-age=300' } });
 }

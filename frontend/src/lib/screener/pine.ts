@@ -81,8 +81,15 @@ export function applyRsRating(rows: ScreenRow[], rawOf: (t: string) => number | 
   for (const r of rows) { const v = rank.get(r.t); if (v != null) r.rsR = v; }
 }
 /** zzz984 — the owner's "Revenue Growth YoY + FCF Margin" (custom Rule of 40): latest quarter's revenue growth + FCF margin. */
+/** zzz991 — left blank when an input is not meaningful, so a company cannot pass on an artefact of a tiny sales base:
+ *  revenue growth above +300% (growth from almost nothing) or an FCF margin outside −100%…+100% (cash flow larger than
+ *  all sales). Example: MOVE, growth +3,590% and FCF margin −2,602%, summed to +988% and passed "≥ 40". */
+export const R40_MAX_GROWTH = 300, R40_MAX_ABS_FCFM = 100;
+export function ruleOf40Usable(revQYoY: number | null | undefined, fcfm: number | null | undefined): boolean {
+  return fin(revQYoY) && fin(fcfm) && revQYoY <= R40_MAX_GROWTH && Math.abs(fcfm) <= R40_MAX_ABS_FCFM;
+}
 export function ruleOf40(revQYoY: number | null | undefined, fcfm: number | null | undefined): number | null {
-  return fin(revQYoY) && fin(fcfm) ? Math.round((revQYoY + fcfm) * 10) / 10 : null;
+  return ruleOf40Usable(revQYoY, fcfm) ? Math.round(((revQYoY as number) + (fcfm as number)) * 10) / 10 : null;
 }
 
 // ── the page's filters (pure) ─────────────────────────────────────────────────────────────────────────────────────────
@@ -246,6 +253,8 @@ export function leanRows(rows: readonly ScreenRow[], bias?: 'U' | 'D' | null, pa
     if (pat.length) withPattern++;
     else if (patternsOnly) continue;
     const lr = leanRow(r);
+    // zzz991 — snapshots built before the guard: recompute so a tiny-base artefact never passes a Rule of 40 rule
+    if (lr.r40 != null && !ruleOf40Usable(r.revQYoY, r.fcfmTTM)) lr.r40 = null;
     if (pat.length) lr.pat = pat; else delete lr.pat;
     out.push(lr);
   }
