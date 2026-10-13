@@ -7,7 +7,7 @@
 //                    Its question: "which charts are setting up now?"
 //   Stock Screener = fundamentals and the general rule editor. A Stock screen (built-in or saved) can be the Pine Screener's company
 //                    list, so the two combine without a second editor.
-import { PATTERN_META, type PatternId } from '../chart-patterns';
+import { PATTERN_META, POINT_ROLES, PATTERN_MIN_HISTORY, type PatternId, type PointRole } from '../chart-patterns';
 import * as PINE from './pine';
 import { runPineFull, pineFilters, r40Text, bestTag, tagScanClose, tagLengthText, turnoverOf, ruleState, matchTags, STAGES, type PineHit, type PineQuery, type PineRun, type ScreenPatternTag, type ScanStatus } from './pine';
 import { BUILT_IN_PINE_SCREENS } from './pine-presets';
@@ -93,20 +93,33 @@ export { normTicker };
 
 // ── moving-average position (same source for price and average) ────────────────────────────────────────────────────────
 export interface MaPosition {
-  /** the close compared with the averages: the scan close (the same daily bars the averages are worked out from) */
+  /** the close compared with the averages: the DAILY TECHNICAL close (scanPx — the last bar of the daily bars the averages are
+   *  worked out from; during a session that is the unfinished live bar). Never the pattern's analysis close. */
   close: number | null;
-  /** 'scan' = the scan close; 'quote' = the latest quote, used only when the row has no scan close (older data) */
+  /** 'scan' = the daily technical close (scanPx); 'quote' = the latest quote, used only when the row has no scan close (older data) */
   basis: 'scan' | 'quote' | null;
   at: string | null;
+  /** zzz1008 — the technical close's session: 'provisional' = an unfinished live bar (the row was read during trading), else 'completed' */
+  session?: 'completed' | 'provisional' | null;
   /** % above (+) / below (−) each simple average; null when the average is not known (too little history) */
   d21: number | null; d50: number | null; d200: number | null;
 }
 const distTo = (c: number | null, ma: unknown): number | null => (c != null && fin(ma) && ma > 0 ? Math.round((c / ma - 1) * 1000) / 10 : null);
+/** zzz1008 (BVN) — ONE documented close for the 21 / 50 / 200-day distances: the daily technical close `scanPx` dated `scanAt`, the
+ *  last bar of the very bars the averages come from (it may be today's live bar — session 'provisional'). Previously the completed
+ *  session's close (the daily pattern's analysis close, a day older during a session) was compared with averages that include the
+ *  live bar. Older rows without scanPx: the analysis close, then the quote. */
+export function technicalSession(r: Partial<ScreenRow> & { live?: 1 }): 'completed' | 'provisional' | null {
+  if (!fin(r.scanPx)) return null;
+  const live = (r as any).scanLive?.asOf;
+  return r.live || (r as any).cc || (live && r.scanAt && live === r.scanAt) ? 'provisional' : 'completed';
+}
 export function maPosition(r: Partial<ScreenRow>): MaPosition {
-  const sc = tagScanClose(r, { tf: 'D' });
-  const close = sc.px != null && sc.px > 0 ? sc.px : fin(r.px) && r.px > 0 ? r.px : null;
-  const basis = sc.px != null && sc.px > 0 ? 'scan' : close != null ? 'quote' : null;
-  return { close, basis, at: basis === 'scan' ? sc.at : r.pxAt || null, d21: distTo(close, r.sma21), d50: distTo(close, r.sma50), d200: distTo(close, r.sma200) };
+  let close: number | null = fin(r.scanPx) && r.scanPx > 0 ? r.scanPx : null, at: string | null = close != null ? r.scanAt || null : null;
+  let basis: MaPosition['basis'] = close != null ? 'scan' : null;
+  if (close == null) { const sc = tagScanClose(r, { tf: 'D' }); if (sc.px != null && sc.px > 0) { close = sc.px; at = sc.at; basis = 'scan'; } }
+  if (close == null && fin(r.px) && r.px > 0) { close = r.px; at = r.pxAt || null; basis = 'quote'; }
+  return { close, basis, at, session: basis === 'scan' ? technicalSession(r) ?? 'completed' : null, d21: distTo(close, r.sma21), d50: distTo(close, r.sma50), d200: distTo(close, r.sma200) };
 }
 
 // ── every pattern on a company (all timeframes, regardless of the query) ────────────────────────────────────────────────
@@ -118,7 +131,12 @@ export function allPatterns(r: unknown): TfPatterns[] {
     return { tf, tags: t ? t.slice().sort((a, b) => b.c - a.c) : null };
   });
 }
-export const stageWord = (t: Pick<ScreenPatternTag, 's' | 'b'>) => (t.s === 'f' ? 'forming' : t.s === 'b' ? (t.b === 'U' ? 'broke out' : 'broke down') : (t.b === 'U' ? 'breakout failed' : 'breakdown failed'));
+/** zzz1008 (NOW / EDIT) — a breakout whose analysis close is back on the near side of the pivot (within the 3% the stage rule allows):
+ *  the historical event stays ('broke out'), the current condition is said with it. Uses the tag's own `d` (analysis close). */
+export const isReturned = (t: Pick<ScreenPatternTag, 's' | 'b'> & { d?: number | null }): boolean => t.s === 'b' && fin(t.d) && (t.b === 'U' ? t.d < 0 : t.d > 0);
+export const stageWord = (t: Pick<ScreenPatternTag, 's' | 'b'> & { d?: number | null }) => (t.s === 'f' ? 'forming'
+  : t.s === 'b' ? (isReturned(t) ? (t.b === 'U' ? 'broke out · back below pivot' : 'broke down · back above level') : (t.b === 'U' ? 'broke out' : 'broke down'))
+    : (t.b === 'U' ? 'breakout failed' : 'breakdown failed'));
 export const tfWord = (tf?: string | null) => (tf === 'W' ? 'weekly' : tf === 'M' ? 'monthly' : 'daily');
 export { tagLengthText, tagScanClose };
 
@@ -129,7 +147,8 @@ export function maVerdict(ma: MaPosition, tags: readonly ScreenPatternTag[] = []
   // zzz1001 — "Breaking out / down" only from a DAILY pattern that broke in the last few sessions; an older weekly / monthly
   // breakdown is shown as a chip but does not override where the price sits against its averages (seen: AARTIPHARM 'Breaking
   // down' while 18% above its 200-day, from a monthly double top)
-  const live = tags.filter((t) => t.s === 'b' && (t.tf == null || t.tf === 'D'));
+  // zzz1008 — a breakout already back through its pivot is not "breaking out" now
+  const live = tags.filter((t) => t.s === 'b' && (t.tf == null || t.tf === 'D') && !isReturned(t));
   const down = live.find((t) => t.b === 'D'), up = live.find((t) => t.b === 'U');
   // zzz1002 — a break against the bigger trend is said as such (a rising-wedge breakdown 40% above the 200-day is a pullback so far)
   const above200 = ma.d200 != null && ma.d200 >= 0, above50 = ma.d50 != null && ma.d50 >= 0;
@@ -388,6 +407,7 @@ export function querySummary(q: PineQuery, scopeName: string): string {
   parts.push(`Shape ≥ ${q.minConf}`);
   const r40 = r40Text(q);   // zzz1007 — the Rule of 40 control is named, never folded into "N more limits"
   if (r40) parts.push(r40);
+  if (q.returned === false && q.stages.includes('b')) parts.push(q.bias === 'D' ? 'Breakdowns holding below the level' : q.bias === 'both' ? 'Breaks holding beyond the level' : 'Breakouts holding above the pivot');   // zzz1008
   const lim = [q.mcMin, q.mcMax, q.pxMin, q.turnMin, q.perfMin].filter((v) => v != null).length + (q.sectors.length ? 1 : 0) + q.filters.filter((f) => !f.off).length;
   if (lim) parts.push(`${lim} more limit${lim === 1 ? '' : 's'}`);
   if (q.need === 'any' && !q.ids.length) parts.push('rules decide');
@@ -446,7 +466,7 @@ export function coverageLine(c: TfCoverage): string {
   const scanned = c.ready + c.noPattern;
   const tail = [c.insufficient ? `${n0(c.insufficient)} too little history` : '', c.invalid ? `${n0(c.invalid)} data rejected` : '', c.stale ? `${n0(c.stale)} stale version` : '',
     c.errors ? `${n0(c.errors)} scan errors` : '', c.unscanned ? `${n0(c.unscanned)} not scanned` : ''].filter(Boolean);
-  const when = scanned ? sessionLabel({ tf: c.tf, session: c.session, at: c.at, obsAt: c.obsAt }) : 'no reading';
+  const when = scanned ? sessionLabel({ tf: c.tf, session: c.session, at: c.at, obsAt: c.obsAt }) : c.stale ? 'scan rebuilding, no current reading yet' : 'no reading';
   const mixed = c.provisional && c.provisional < scanned ? ` (${n0(c.provisional)} provisional)` : '';
   return `${TF_WORD[c.tf]} — ${when}${mixed}: ${n0(scanned)} of ${n0(c.total)} scanned (${n0(c.ready)} with a pattern, ${n0(c.noPattern)} none)${tail.length ? ` · ${tail.join(' · ')}` : ''}`;
 }
@@ -495,13 +515,14 @@ export function portfolioFocus(items: readonly PortfolioCheckRow[], mode: Exclud
 
 // ── "Why not listed?" ─────────────────────────────────────────────────────────────────────────────────────────────────────
 /** Why one tag does not pass the pattern part of the query ([] = it passes). Mirrors filters.tagPasses. */
-export function tagRejectReasons(t: ScreenPatternTag, q: Pick<PineQuery, 'bias' | 'ids' | 'stages' | 'minConf' | 'dist' | 'tfs'>): string[] {
+export function tagRejectReasons(t: ScreenPatternTag, q: Pick<PineQuery, 'bias' | 'ids' | 'stages' | 'minConf' | 'dist' | 'tfs'> & { returned?: boolean }): string[] {
   const out: string[] = [];
   const tf = tfOf(t);
   if (!(q.tfs.length ? q.tfs : ['D']).includes(tf)) out.push(`timeframe ${tf} not selected`);
   if (q.bias !== 'both' && t.b !== q.bias) out.push(`${t.b === 'U' ? 'bullish' : 'bearish'} pattern; the screen asks for ${q.bias === 'U' ? 'bullish' : 'bearish'}`);
   if (q.ids.length && !q.ids.includes(t.id)) out.push('not one of the ticked pattern types');
   if (!q.stages.includes(t.s)) out.push(`stage "${stageWord(t)}" not selected`);
+  else if (q.returned === false && isReturned(t)) out.push(`${t.b === 'U' ? 'breakout back below the pivot' : 'breakdown back above the level'} — the screen counts only ${t.b === 'U' ? 'breakouts' : 'breakdowns'} holding beyond it`);   // zzz1008
   if (!(t.c >= q.minConf)) out.push(`shape score ${t.c} below ${q.minConf}`);
   if (q.dist.on) {
     const d = tagDirDist(t);
@@ -586,10 +607,13 @@ export function listCoverageRows(o: { rows: readonly ScreenRow[]; q: PineQuery; 
 
 // ── the chart hand-off identity ─────────────────────────────────────────────────────────────────────────────────────────
 /** Extra chart-link parameters that carry what the row was read on: pattern id, analysis timeframe, its as-of date and session. */
+/** zzz1008 — plus the pattern window (`pf` / `pt`: first turning point → analysis date) when the tag carries its geometry; the chart
+ *  opens on the analysis timeframe `atf`, turns the pattern indicator on, selects `pat` and fits the window with prior-trend room. */
 export function chartIdentityParams(row: Partial<ScreenRow> | null | undefined, tag: ScreenPatternTag | null | undefined): string {
   if (!tag) return '';
   const a = analysisOf(row, tag);
-  return `&pat=${encodeURIComponent(tag.id)}&atf=${a.tf}${a.at ? `&asof=${encodeURIComponent(a.at)}` : ''}${a.session ? `&session=${a.session}` : ''}`;
+  const w = geometryWindow(tag, a.at);
+  return `&pat=${encodeURIComponent(tag.id)}&atf=${a.tf}${a.at ? `&asof=${encodeURIComponent(a.at)}` : ''}${a.session ? `&session=${a.session}` : ''}${w ? `&pf=${w.from}&pt=${w.to}` : ''}`;
 }
 /** PS-02 — the timeframe-aware CSV columns (header and one row's values), shared so the export cannot drift from the table. */
 export const ANALYSIS_CSV_HEAD = ['Analysis timeframe', 'Analysis close', 'Analysis close date', 'Analysis session', 'Analysis scan status', 'Analysis scan version',
@@ -600,4 +624,146 @@ export function analysisCsvCells(row: Partial<ScreenRow>, tag: ScreenPatternTag 
   return [tag ? a.tf : '', a.close ?? (tag ? a.missing || '' : ''), a.at || '', tag ? sessionLabel(a) : '', a.status || '', a.v ?? '',
     ps.daily.close ?? '', ps.daily.at || '', ps.daily.session || '', ps.quote.px ?? '', ps.quote.src || '', ps.quote.at || '',
     latestConditions(row, tag).map((c) => c.label).join('; '), lengthDays(tag) ?? ''];
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// zzz1008 — PINE BUG SWEEP: rebuild states (a stale timeframe is "cannot be determined yet", never "0 match"), the selected
+// timeframe's own coverage warnings, and the auditable geometry of a pattern (its turning points, how the pivot is derived, the
+// measured rule evidence).
+// ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+/** One timeframe's re-read progress within the rows (a scope): `reread` = rows read by the CURRENT scan version (any status: a
+ *  pattern, none, too little history, bad data, an error) · `stale` = rows read by an older version, waiting for the re-read ·
+ *  state 'none' = nothing re-read yet while some are waiting (no match can be decided) · 'partial' = some re-read, some still
+ *  waiting (matches so far are real; more may come) · 'ok'. */
+export interface TfRebuild { tf: PatTf; total: number; reread: number; stale: number; state: 'ok' | 'partial' | 'none' }
+export function tfRebuild(rows: readonly Partial<ScreenRow>[], tf: PatTf, list?: ReadonlySet<string> | null): TfRebuild {
+  let total = 0, reread = 0, stale = 0, never = 0;
+  for (const r of rows) {
+    if (list && !list.has(String(r.t || '').toUpperCase())) continue;
+    total++;
+    const st = analysisOf(r, { tf }).status;
+    if (st === 'stale-version') stale++;
+    else if (st == null) never++;
+    else reread++;
+  }
+  const state: TfRebuild['state'] = !reread && (stale || never) ? 'none' : reread && stale ? 'partial' : 'ok';
+  return { tf, total, reread, stale, state };
+}
+/** Whether the pattern part of a query can be decided on these rows: 'none' = no selected timeframe (ANY) / one of them (ALL) has a
+ *  current reading yet → the count is unknown, not 0 · 'partial' = matches so far, more may come · 'ok'. `text` names the rebuild. */
+export interface QueryRebuild { state: 'ok' | 'partial' | 'none'; perTf: TfRebuild[]; text: string }
+export function queryRebuild(rows: readonly Partial<ScreenRow>[], q: Pick<PineQuery, 'tfs' | 'tfMode' | 'need' | 'ids'>, list?: ReadonlySet<string> | null): QueryRebuild {
+  const tfs = q.tfs.length ? q.tfs : (['D'] as PatTf[]);
+  const perTf = tfs.map((tf) => tfRebuild(rows, tf, list));
+  const needPattern = q.need !== 'any' || q.ids.length > 0;
+  let state: QueryRebuild['state'] = 'ok';
+  if (needPattern && rows.length) {
+    const none = perTf.filter((x) => x.state === 'none'), part = perTf.filter((x) => x.state !== 'ok');
+    if (q.tfMode === 'all' ? none.length > 0 : none.length === perTf.length) state = 'none';
+    else if (part.length) state = 'partial';
+  }
+  const busy = perTf.filter((x) => x.state !== 'ok');
+  const text = busy.map((x) => `${TF_WORD[x.tf]} scan rebuilding — ${x.state === 'none' ? 'matches cannot be determined yet' : 'matches so far; more can appear'} (${n0(x.reread)} of ${n0(x.total)} re-read with the current scan)`).join(' · ');
+  return { state, perTf, text };
+}
+/** Per setup card: its preset's rebuild state on these rows (the card shows "…" while 'none', "N+" while 'partial'). */
+export function setupRebuild(rows: readonly Partial<ScreenRow>[], list: ReadonlySet<string> | null): Record<string, QueryRebuild> {
+  const out: Record<string, QueryRebuild> = {};
+  for (const c of SETUP_CARDS) {
+    const q = cardQuery(c);
+    if (!q) continue;
+    out[c.id] = queryRebuild(rows, q, list);
+    if (c.alt) { const aq = BUILT_IN_PINE_SCREENS.find((s) => s.id === c.alt!.presetId)?.q; if (aq) out[`${c.id}:alt`] = queryRebuild(rows, aq, list); }
+  }
+  return out;
+}
+const UNIT_OF: Record<PatTf, [string, string]> = { D: ['session', 'sessions'], W: ['completed week', 'completed weeks'], M: ['completed month', 'completed months'] };
+/** zzz1008 (item 5) — the coverage warnings of the SELECTED timeframes, in their own words and counts (never the daily "fewer than 30
+ *  sessions" under a monthly choice). One line per timeframe and problem. */
+export function tfCoverageWarnings(perTf: readonly TfCoverage[]): string[] {
+  const out: string[] = [];
+  for (const c of perTf) {
+    const w = TF_WORD[c.tf], min = PATTERN_MIN_HISTORY[c.tf], [, units] = UNIT_OF[c.tf];
+    if (c.insufficient) out.push(`${w}: ${n0(c.insufficient)} ${c.insufficient === 1 ? 'company has' : 'companies have'} too little ${w.toLowerCase()} history for a pattern scan (fewer than ${min} usable ${units}) — not counted as scanned.`);
+    if (c.provisional) out.push(`${w}: ${n0(c.provisional)} ${c.provisional === 1 ? 'reading includes' : 'readings include'} an unfinished session — provisional until re-read.`);
+    if (c.invalid || c.errors) out.push(`${w}: ${n0(c.invalid + c.errors)} could not be scanned (${n0(c.invalid)} price data rejected, ${n0(c.errors)} scan failures).`);
+  }
+  return out;
+}
+
+// ── auditable geometry ────────────────────────────────────────────────────────────────────────────────────────────────────
+export interface GeoPoint { date: string; when: string; price: number; role: PointRole; word: string }
+/** The tag's turning points with words: daily "2026-07-29", weekly "week of 2026-07-27", monthly "month of 2026-09". */
+export function geometryPoints(t: Pick<ScreenPatternTag, 'pts' | 'tf'> | null | undefined): GeoPoint[] {
+  const tf = t?.tf === 'W' || t?.tf === 'M' ? t.tf : 'D';
+  return (t?.pts || []).filter((x) => Array.isArray(x) && typeof x[0] === 'string' && fin(x[1])).map(([date, price, role]) => ({
+    date, price, role, word: (POINT_ROLES as Record<string, string>)[role] || role,
+    when: tf === 'W' ? `week of ${date}` : tf === 'M' ? `month of ${date.slice(0, 7)}` : date,
+  }));
+}
+const ptOf = (g: GeoPoint[], ...roles: string[]) => g.find((x) => roles.includes(x.role));
+/** How the pivot (bearish: the breakdown level) was derived from the turning points, in words. */
+export function pivotDerivation(t: ScreenPatternTag, fmt: (n: number) => string = (n) => String(n)): string {
+  const g = geometryPoints(t);
+  const lvl = t.b === 'U' ? 'pivot' : 'breakdown level';
+  const at = (x: GeoPoint | undefined) => (x ? `${fmt(x.price)} (${x.when})` : '');
+  switch (t.id) {
+    case 'double_bottom': return `${lvl} = the middle peak's high ${at(ptOf(g, 'P'))}, the highest price between the two lows`;
+    case 'double_top': return `${lvl} = the middle trough's low ${at(ptOf(g, 'T'))}, the lowest price between the two highs`;
+    case 'triple_bottom': return `${lvl} = the higher of the two peaks between the lows (${at(ptOf(g, 'P1'))} / ${at(ptOf(g, 'P2'))})`;
+    case 'triple_top': return `${lvl} = the lower of the two troughs between the highs (${at(ptOf(g, 'T1'))} / ${at(ptOf(g, 'T2'))})`;
+    case 'inverse_hs': case 'head_shoulders': return `${lvl} = the neckline through ${at(ptOf(g, 'N1'))} and ${at(ptOf(g, 'N2'))}, extended to the analysis bar (${fin(t.p) ? fmt(t.p) : '—'})`;
+    case 'cup_handle': return `${lvl} = the handle's high, the right-side high ${at(ptOf(g, 'R'))}`;
+    case 'cup': case 'u_base': case 'flat_base': case 'ipo_base': case 'base_on_base': return `${lvl} = the left-side high (lip) ${at(ptOf(g, 'LIP'))}`;
+    case 'vcp': { const hs = g.filter((x) => x.role === 'CH'); return `${lvl} = the high of the last contraction ${at(hs[hs.length - 1])}`; }
+    case 'ascending_base': return `${lvl} = the third high ${at(ptOf(g, 'H3'))}`;
+    case 'high_tight_flag': return `${lvl} = the top of the pole ${at(ptOf(g, 'PT'))}`;
+    case 'bull_flag': case 'bull_pennant': return `${lvl} = the upper flag line projected to the analysis bar (${fin(t.p) ? fmt(t.p) : '—'})`;
+    case 'bear_flag': return `${lvl} = the lower flag line projected to the analysis bar (${fin(t.p) ? fmt(t.p) : '—'})`;
+    case 'ascending_triangle': return `${lvl} = the highest of the ceiling touches (${fin(t.p) ? fmt(t.p) : '—'})`;
+    case 'descending_triangle': return `${lvl} = the lowest of the floor touches (${fin(t.p) ? fmt(t.p) : '—'})`;
+    case 'falling_wedge': return `${lvl} = the upper wedge line projected to the analysis bar (${fin(t.p) ? fmt(t.p) : '—'})`;
+    case 'rising_wedge': return `${lvl} = the lower wedge line projected to the analysis bar (${fin(t.p) ? fmt(t.p) : '—'})`;
+    default: return '';
+  }
+}
+/** The measured rule evidence in words (only what the tag carries), with the rule it is checked against. */
+export function evidenceRows(t: Pick<ScreenPatternTag, 'id' | 'b' | 'ev' | 'tf'>): Array<{ label: string; value: string; rule: string }> {
+  const ev = t.ev || {};
+  const unit = t.tf === 'W' ? 'weeks' : t.tf === 'M' ? 'months' : 'sessions';
+  const bottom = t.b === 'U';
+  const rev = ['double_bottom', 'double_top', 'triple_bottom', 'triple_top'].includes(t.id);
+  const hs = t.id === 'inverse_hs' || t.id === 'head_shoulders';
+  const out: Array<{ label: string; value: string; rule: string }> = [];
+  const p = (v: number) => `${v}%`;
+  if (fin(ev.band)) out.push({ label: rev ? (bottom ? 'Difference between the lows' : 'Difference between the highs') : 'Spread of the touches', value: p(ev.band), rule: rev ? '≤ 5% (≤ 1.5% best)' : '≤ 3%' });
+  if (fin(ev.gap)) out.push({ label: hs ? 'Left to right shoulder' : 'Separation (first to last turning point)', value: `${ev.gap} ${unit}`, rule: t.tf === 'M' ? 'at least 6 monthly candles in all' : 'at least 10 sessions / 2 candles' });
+  if (fin(ev.rally)) out.push({ label: hs ? 'Neckline above the shoulders' : bottom ? 'Middle rally (peak above the higher low)' : 'Middle dip (trough below the lower high)', value: p(ev.rally), rule: hs ? '≥ 5%' : '≥ 10%' });
+  if (fin(ev.mid)) out.push({ label: bottom ? 'Dip from the middle peak to the lows' : 'Rise from the middle trough to the highs', value: p(ev.mid), rule: t.tf === 'M' ? '≤ 45%' : '≤ 40%' });
+  if (fin(ev.neck)) out.push({ label: 'Neckline change between its two points', value: p(ev.neck), rule: '≤ 15% (≤ 4% best)' });
+  if (fin(ev.sd)) out.push({ label: 'Shoulder difference', value: p(ev.sd), rule: '≤ 10%' });
+  if (fin(ev.sh)) out.push({ label: 'Shoulders\' distance from the neckline ÷ the head\'s', value: `${ev.sh}`, rule: '≥ 0.30 (≥ 0.55 best)' });
+  if (fin(ev.trend)) out.push({ label: rev || hs ? (bottom ? 'Prior fall into the first low' : 'Prior rise into the first high') : t.id.includes('flag') ? 'Pole' : 'Prior rise into the base', value: p(ev.trend), rule: rev || hs ? (bottom ? '≥ 15% (11.25% minimum)' : '≥ 20% (15% minimum)') : t.id.includes('flag') ? 'flags ≥ 15%, high tight flag ≥ 90%' : 'bases ≥ 20%' });
+  if (fin(ev.depth)) out.push({ label: 'Depth', value: p(ev.depth), rule: t.id === 'flat_base' ? '≤ 15%' : t.id === 'cup' || t.id === 'cup_handle' ? '12–33% (to 50% scored lower)' : '' });
+  if (fin(ev.rec)) out.push({ label: 'Right side as share of the lip', value: p(ev.rec), rule: '≥ 75% (cup with handle ≥ 85%)' });
+  if (fin(ev.round)) out.push({ label: 'Closes in the lower 30% of the cup (roundness)', value: p(ev.round), rule: '≥ 35% (a V spends ~30% there)' });
+  if (fin(ev.hd)) out.push({ label: 'Handle depth', value: p(ev.hd), rule: '2.5–15%' });
+  if (fin(ev.vr)) out.push({ label: rev || hs ? 'Volume at the last turning point ÷ the first (±2 bars)' : 'Volume in the last part ÷ its 50-bar average', value: `${ev.vr}×`, rule: rev || hs ? '< 1 = lighter on the right side (Bulkowski)' : '< 1 = drying up' });
+  if (fin(ev.hi1y)) out.push({ label: bottom ? 'Close as % of the 1-year high' : 'Close as % of the 1-year low', value: p(ev.hi1y), rule: bottom ? 'not reported when ≥ 95% and the high came after the pattern, > 5% past the pivot' : 'mirror for tops' });
+  return out;
+}
+/** The chart window of a tag's geometry (first turning point → analysis date), for the chart hand-off (pf / pt). */
+export function geometryWindow(t: Pick<ScreenPatternTag, 'pts'> | null | undefined, at: string | null): { from: string; to: string } | null {
+  const ds = (t?.pts || []).map((x) => x?.[0]).filter((x): x is string => typeof x === 'string').sort();
+  if (!ds.length) return null;
+  return { from: ds[0], to: at && at > ds[ds.length - 1] ? at : ds[ds.length - 1] };
+}
+
+/** zzz1008 (BVN) — the price-source conflict in words, with BOTH dates: "same day" only when the two dates are equal ('' when no
+ *  conflict). */
+export function conflictWords(r: Partial<Pick<ScreenRow, 'pxConflict' | 'pxAt' | 'scanAt' | 'pxGap'>>): string {
+  if (!r.pxConflict) return '';
+  const gap = fin(r.pxGap) ? `${Math.abs(r.pxGap).toFixed(2)}% apart` : 'more than 2% apart';
+  if (r.pxAt && r.scanAt && r.pxAt === r.scanAt) return `the quote and the daily technical close disagree on the same day (${r.scanAt}): ${gap}`;
+  return `the quote${r.pxAt ? ` (${r.pxAt})` : ' (its date is not known)'} and the daily technical close${r.scanAt ? ` (${r.scanAt})` : ''} are ${gap} — different sources; neither is certified as the exchange close`;
 }

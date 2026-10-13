@@ -5,7 +5,7 @@ import React from 'react';
 import { PATTERN_META } from '@/lib/chart-patterns';
 import { likelihoodWord, tagLengthText, type ScreenPatternTag } from '@/lib/screener/pine';
 import { fmtPrice } from '@/lib/screener/filters';
-import { stageWord, tfWord, type MaPosition } from '@/lib/screener/pine-view';
+import { isReturned, stageWord, tfWord, type MaPosition } from '@/lib/screener/pine-view';
 import type { ScreenMarket } from '@/lib/screener/types';
 
 export const C = {
@@ -15,7 +15,7 @@ export const C = {
 };
 export const pct = (v: number | null | undefined, digits = 1) => (v == null || !Number.isFinite(v) ? '—' : `${v > 0 ? '+' : ''}${v.toFixed(digits)}%`);
 export const signColor = (v: number | null | undefined) => (v == null || !Number.isFinite(v) ? C.dim : v >= 0 ? C.green : C.red);
-export const STAGE_GLYPH = (t: Pick<ScreenPatternTag, 's' | 'b'>) => (t.s === 'f' ? '◌' : t.s === 'b' ? (t.b === 'U' ? '▲' : '▼') : '✕');
+export const STAGE_GLYPH = (t: Pick<ScreenPatternTag, 's' | 'b'> & { d?: number | null }) => (t.s === 'f' ? '◌' : t.s === 'b' ? (isReturned(t) ? '↩' : t.b === 'U' ? '▲' : '▼') : '✕');
 
 /** The page's own scoped styles: layout grid, focus rings, hover, the mobile stack. Class names start with "pnx-". */
 export const PINE_CSS = `
@@ -111,7 +111,7 @@ export function PatternChip({ t, main = false, market, patAt, when, showStage = 
       border: `1px ${failed ? 'dashed' : 'solid'} ${col}`, background: main && !failed ? `color-mix(in srgb, ${col} 14%, transparent)` : 'transparent', color: col }}>
       <span aria-hidden>{STAGE_GLYPH(t)}</span>{m.label}
       <span style={{ fontSize: 10, fontWeight: 800, padding: '0 4px', borderRadius: 4, border: '1px solid currentColor', opacity: 0.85 }} aria-label={`${tfWord(tf)} timeframe`}>{tf}</span>
-      {showStage ? <span style={{ fontWeight: 600, color: C.dim }}>{stageWord(t)}</span> : null}
+      {showStage ? <span style={{ fontWeight: 600, color: isReturned(t) ? C.amber : C.dim }} data-stage={isReturned(t) ? 'returned' : t.s}>{stageWord(t)}</span> : null}
       {vq ? <span title="Volume not confirmed" aria-label="volume not confirmed" style={{ opacity: 0.85 }}>v?</span> : null}
     </span>
   );
@@ -146,8 +146,9 @@ export function ScoreBar({ c }: { c: number }) {
 
 /** "+3.1  −2.0  +12.4" — the close against its 21, 50 and 200-day averages (same daily bars). */
 export function MaCell({ ma, market }: { ma: MaPosition; market: ScreenMarket }) {
+  // zzz1008 (BVN) — one documented close: the DAILY TECHNICAL close (its own date and session), never the pattern's analysis close
   const tip = ma.close == null ? 'No close stored'
-    : `${ma.basis === 'scan' ? 'Scan close' : 'Latest quote (no scan close stored)'} ${fmtPrice(ma.close, market)}${ma.at ? ` on ${ma.at}` : ''} against its simple moving averages (worked out from the same daily bars):\n21-day ${pct(ma.d21)} · 50-day ${pct(ma.d50)} · 200-day ${pct(ma.d200)}`;
+    : `${ma.basis === 'scan' ? 'Daily technical close' : 'Latest quote (no daily technical close stored)'} ${fmtPrice(ma.close, market)}${ma.at ? ` · ${ma.at}` : ''}${ma.session === 'provisional' ? ' (session open — provisional, the unfinished bar)' : ma.basis === 'scan' ? ' (completed session)' : ''} against its 21 / 50 / 200-day simple moving averages, worked out from the same daily bars:\n21-day ${pct(ma.d21)} · 50-day ${pct(ma.d50)} · 200-day ${pct(ma.d200)}\n(The pattern's own analysis close is shown apart.)`;
   return (
     <span title={tip} style={{ display: 'inline-grid', gridTemplateColumns: 'repeat(3, 3.6em)', gap: 4, justifyItems: 'end', fontSize: 12.5 }}>
       {[ma.d21, ma.d50, ma.d200].map((d, i) => <span key={i} style={{ color: signColor(d) }}>{d == null ? '—' : `${d > 0 ? '+' : ''}${d.toFixed(1)}`}</span>)}

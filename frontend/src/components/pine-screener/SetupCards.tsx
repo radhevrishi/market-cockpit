@@ -2,7 +2,7 @@
 // zzz999 — the row of setup cards at the top of the Pine Screener: where to start. Each card is a built-in screen (or the portfolio
 // check) with its count on today's data, and a small line drawing of the shape against its pivot (dashed).
 import React from 'react';
-import { SETUP_CARDS, type SetupCard, type SetupGlyph } from '@/lib/screener/pine-view';
+import { SETUP_CARDS, type QueryRebuild, type SetupCard, type SetupGlyph } from '@/lib/screener/pine-view';
 import { C } from './pine-ui';
 
 /** Small drawings: the dashed line is the pivot (the buy point; for a breakdown, the support level). */
@@ -25,19 +25,25 @@ function Glyph({ g, tone }: { g: SetupGlyph; tone: SetupCard['tone'] }) {
   );
 }
 
-export function SetupCards({ active, counts, onPick, loading }: { active: string | null; counts: Record<string, number | null>; onPick: (c: SetupCard) => void; loading: boolean }) {
+/** zzz1008 — `rebuild`: per card, whether its timeframe is being re-read by the current scan ('none' → "…" and "rebuilding", never a 0;
+ *  'partial' → "N+": matches so far). */
+export function SetupCards({ active, counts, onPick, loading, rebuild = {} }: { active: string | null; counts: Record<string, number | null>; onPick: (c: SetupCard) => void; loading: boolean; rebuild?: Record<string, QueryRebuild> }) {
   return (
     <div className="pnx-cards" role="group" aria-label="Start from a setup">
       {SETUP_CARDS.map((c) => {
-        const n = counts[c.id];
+        const rb = rebuild[c.id], rbAlt = rebuild[`${c.id}:alt`];
+        const n = rb?.state === 'none' ? null : counts[c.id];
+        const more = rb?.state === 'partial' ? '+' : '';
+        const nAlt = rbAlt?.state === 'none' ? null : counts[`${c.id}:alt`];
         return (
-          <button key={c.id} type="button" className="pnx-card" aria-pressed={active === c.id} onClick={() => onPick(c)} data-card={c.id}
-            title={`${c.label}: ${c.sub}`}>
+          <button key={c.id} type="button" className="pnx-card" aria-pressed={active === c.id} onClick={() => onPick(c)} data-card={c.id} data-rebuild={rb && rb.state !== 'ok' ? rb.state : undefined}
+            title={`${c.label}: ${c.sub}${rb && rb.state !== 'ok' ? `\n${rb.text}` : ''}`}>
             <Glyph g={c.glyph} tone={c.tone} />
-            <span className="pnx-card-count" aria-busy={n == null && loading} style={{ color: n == null ? C.faint : C.text }}>{n == null ? '…' : n.toLocaleString('en-US')}</span>
+            <span className="pnx-card-count" aria-busy={n == null && (loading || rb?.state === 'none')} style={{ color: n == null ? C.faint : C.text }}>{n == null ? '…' : `${n.toLocaleString('en-US')}${more}`}</span>
             <span className="pnx-card-label">{c.label}</span>
             <span className="pnx-card-sub">{c.sub}</span>
-            {c.alt && counts[`${c.id}:alt`] != null ? <span className="pnx-card-sub" data-alt-count={c.alt.presetId} style={{ color: C.text1 }}>+ {counts[`${c.id}:alt`]!.toLocaleString('en-US')} {c.alt.label} (counted apart)</span> : null}
+            {rb && rb.state !== 'ok' ? <span className="pnx-card-sub" data-card-rebuild style={{ color: C.amber }}>{rb.state === 'none' ? 'scan rebuilding — not known yet' : 'rebuilding — so far'}</span> : null}
+            {c.alt && (nAlt != null || rbAlt?.state === 'none') ? <span className="pnx-card-sub" data-alt-count={c.alt.presetId} style={{ color: C.text1 }}>+ {nAlt == null ? '…' : `${nAlt.toLocaleString('en-US')}${rbAlt?.state === 'partial' ? '+' : ''}`} {c.alt.label} (counted apart)</span> : null}
           </button>
         );
       })}

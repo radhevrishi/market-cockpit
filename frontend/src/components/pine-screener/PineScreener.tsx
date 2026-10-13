@@ -19,7 +19,7 @@ import {
   DEFAULT_QUERY, LIKELIHOODS, OPTIONAL_COLS, PINE_GROUPS, PINE_SCREENS_KEY, STAGES, TIMEFRAMES, SHAPE_SCORE_LABEL, SHAPE_SCORE_TIP, cleanPineScreens, cleanQuery, dirDist,
   likelihoodWord, patternCounts, patternGroups, runPineFull, turnoverOf, onList, ruleCoverage, pineRuleFields, pineRuleMenu, tagLengthText,
   pineFilters, pineShownCols, r40Guarded, R40_LEVELS, R40_MAX_GROWTH, R40_MAX_ABS_FCFM,
-  type PerfKey, type PineHit, type PineQuery, type PineScreen, type PineStage,
+  type PerfKey, type PineHit, type PineQuery, type PineScreen, type PineStage, type ScreenPatternTag,
 } from '@/lib/screener/pine';
 import { BUILT_IN_PINE_SCREENS } from '@/lib/screener/pine-presets';
 import { fmtValue, fmtPrice, fmtMoney, fmtExact, filterLabel, fieldOf, patTagsOf, patMissingWhy, BUILT_IN_SCREENS, SCREENS_KEY, cleanScreens, type Filter, type NumKey, type PatTf, type Screen } from '@/lib/screener/filters';
@@ -30,6 +30,7 @@ import {
   SETUP_CARDS, setupCounts, scopeKind, stockScreenTickers, cleanHandoff, PINE_HANDOFF_KEY, maPosition, portfolioCheck, stageWord, tfWord,
   querySummary, presetLine, scopeCoverage, coverageLine, chipApplicability, unsupportedNotice, familyOf, latestConditions, lengthDays, lengthTip,
   analysisOf, sessionLabel, chartIdentityParams, ANALYSIS_CSV_HEAD, analysisCsvCells, listCoverageRows, withCarriedR40,
+  queryRebuild, setupRebuild, tfCoverageWarnings, technicalSession, conflictWords,
   type PineHandoff, type SetupCard, type PortfolioMode,
 } from '@/lib/screener/pine-view';
 import { loadHoldings, localIndiaHoldings } from '@/lib/screener/portfolio-scope';
@@ -100,14 +101,20 @@ function withHoisted(rows: Row[], j: { scanV?: number; engine?: string; scanBasi
   const fill = (m: any) => (m && m.v == null && m.st !== 'stale-version' ? { ...m, v: j.scanV, e: j.engine } : m);
   return rows.map((r: any) => ({ ...r, ...(r.scan ? { scan: fill(r.scan) } : {}), ...(r.scanW ? { scanW: fill(r.scanW) } : {}), ...(r.scanM ? { scanM: fill(r.scanM) } : {}), ...(!r.scanBasis && j.scanBasis && r.scanPx != null ? { scanBasis: j.scanBasis } : {}) }));
 }
-/** zzz994 (MC-01 display) — the latest quote differs from the close the patterns were read from (beyond rounding). */
-const pxDiffers = (r: Row) => typeof r.scanPx === 'number' && typeof r.px === 'number' && r.scanPx > 0 && Math.abs(r.px / r.scanPx - 1) * 100 >= 0.15;
-const scanTip = (r: Row, market: ScreenMarket) => [
-  `Scan close ${fmtPrice(r.scanPx, market)}${r.scanAt ? ` on ${r.scanAt}` : ''}${r.scanSrc ? ` (${r.scanSrc}${r.scanBasis ? `, ${r.scanBasis}` : ''})` : ''} — patterns, pivots, stages and "To pivot" use this close`,
-  `Latest quote ${fmtPrice(r.px, market)}${r.pxSrc ? ` (${r.pxSrc}${r.pxAt ? `, ${r.pxAt}` : ''})` : ''}${typeof r.pxGap === 'number' ? ` — ${r.pxGap > 0 ? '+' : ''}${r.pxGap}% vs the scan close` : ''}`,
-  typeof r.pxAlt === 'number' ? `Nasdaq's list still showed ${fmtPrice(r.pxAlt, market)} (the previous session's close), so the last daily bar's close is used` : '',
-  r.pxConflict ? '⚠ The two sources disagree on the same day; neither is certified as the exchange close' : '',
-].filter(Boolean).join('\n');
+/** zzz1008 (PROF) — the close the best pattern was READ on (its own timeframe: daily / completed week / completed month) differs from
+ *  the latest quote (beyond rounding). This column shows that analysis close, never the daily technical close under a W / M tag. */
+const anClose = (h: PineHit) => analysisOf(h.row, h.best || { tf: 'D' }).close;
+const pxDiffers = (h: PineHit) => { const c = anClose(h), px = h.row.px; return typeof c === 'number' && typeof px === 'number' && c > 0 && Math.abs(px / c - 1) * 100 >= 0.15; };
+const scanTip = (h: PineHit, market: ScreenMarket) => {
+  const r = h.row, an = analysisOf(r, h.best || { tf: 'D' });
+  return [
+    `${tfWord(an.tf).replace(/^./, (c) => c.toUpperCase())} analysis close ${an.close != null ? fmtPrice(an.close, market) : '(not stored)'} — ${sessionLabel(an)}: the pattern, its stage and "To pivot" were read on it`,
+    `Daily technical close ${fmtPrice(r.scanPx, market)}${r.scanAt ? ` on ${r.scanAt}` : ''}${technicalSession(r) === 'provisional' ? ' (session open — provisional)' : ''}${r.scanSrc ? ` (${r.scanSrc}${r.scanBasis ? `, ${r.scanBasis}` : ''})` : ''} — the 21 / 50 / 200-day averages use it`,
+    `Latest quote ${fmtPrice(r.px, market)}${r.pxSrc ? ` (${r.pxSrc}${r.pxAt ? `, ${r.pxAt}` : ''})` : ''}${typeof r.pxGap === 'number' ? ` — ${r.pxGap > 0 ? '+' : ''}${r.pxGap}% vs the daily technical close` : ''}`,
+    typeof r.pxAlt === 'number' ? `Nasdaq's list still showed ${fmtPrice(r.pxAlt, market)} (the previous session's close), so the last daily bar's close is used${r.pxLive ? ' — today\'s unfinished bar, provisional' : ''}` : '',
+    r.pxConflict ? `⚠ ${conflictWords(r)}` : '',
+  ].filter(Boolean).join('\n');
+};
 
 /** A disclosure section of the filter panel (its content stays in the page, hidden when closed). */
 function Section({ title, hint, open, onToggle, children, id }: { title: string; hint?: string; open: boolean; onToggle: () => void; children: React.ReactNode; id: string }) {
@@ -301,10 +308,15 @@ export default function PineScreener() {
   const summary = querySummary(q, kind === 'all' ? '' : scopeName);
   const scopeCov = useMemo(() => (snap ? scopeCoverage(rows, q.tfs, kind === 'all' ? null : listTickers) : null), [snap, rows, q.tfs, listTickers, kind]);
   const naNotice = useMemo(() => unsupportedNotice(q), [q]);
+  // zzz1008 (item 5) — coverage warnings of the SELECTED timeframes, in their own units (weekly / monthly history, not sessions)
+  const tfWarn = useMemo(() => (scopeCov ? tfCoverageWarnings(scopeCov.perTf) : []), [scopeCov]);
   const family = familyOf(screenId);
   const covList = !!snap && kind !== 'all' && !scopeWaiting && !!listTickers && listTickers.size > 0 && listTickers.size <= 300 ? listTickers : null;
   const listCov = useMemo(() => (covList ? listCoverageRows({ rows, q, market, list: covList, run }) : null), [covList, rows, q, market, run]);
   const counts = useMemo(() => patternCounts(listTickers ? rows.filter((r) => listTickers.has(r.t.toUpperCase())) : rows, q, market), [rows, q, market, listTickers]);
+  // zzz1008 (item 1b) — a selected timeframe being re-read by the current scan: "cannot be determined yet", never "0 match"
+  const qRebuild = useMemo(() => queryRebuild(rows, q, kind === 'all' ? null : listTickers), [rows, q, kind, listTickers]);
+  const cardRebuild = useMemo(() => (snap ? setupRebuild(rows, kind === 'all' || kind === 'portfolio' ? null : listTickers) : {}), [snap, rows, kind, listTickers]);
   const cardCounts = useMemo(() => (snap ? setupCounts(rows, market, kind === 'portfolio' ? null : listTickers, hold && (hold.status !== 'loading' || hold.tickers.length) ? hold.tickers : null, undefined, { r40Min: q.r40Min ?? null }) : {}), [snap, rows, market, listTickers, hold, kind, q.r40Min]);
   const pfItems = useMemo(() => (view === 'portfolio' && hold ? portfolioCheck(rows, hold.tickers) : []), [view, rows, hold]);
   // which analysis timeframes have been scanned at all in this market (W / M fill in once the weekly / monthly scan runs)
@@ -365,7 +377,7 @@ export default function PineScreener() {
   const actHits = scopeItems(scopeSets, scopeNow, keyOf);
   const actLabel = scopeLabel(scopeNow, sCounts, searching);
   const empty = snap ? emptyState({ dataRows: rows.length, filterMatches: sorted.length, searchMatches: narrowed.length, searching }) : null;
-  const showScanCol = useMemo(() => shown.some((h) => pxDiffers(h.row)), [shown]);
+  const showScanCol = useMemo(() => shown.some((h) => pxDiffers(h)), [shown]);
 
   // ── changing the query / screens ────────────────────────────────────────────────────────────────────────────────────
   const change = (patch: Partial<PineQuery>) => { setQ((p) => ({ ...p, ...patch })); setDirty(true); setShowAll(false); if (view !== 'setups') setView('setups'); };
@@ -408,7 +420,12 @@ export default function PineScreener() {
   };
   const setBias = (bias: PineQuery['bias']) => change({ bias, ids: q.ids.filter((id) => bias === 'both' || (PATTERN_META[id].bias === 'bullish') === (bias === 'U')) });
   const toggleId = (id: PatternId) => change({ ids: q.ids.includes(id) ? q.ids.filter((x) => x !== id) : [...q.ids, id] });
-  const toggleStage = (s: PineStage) => change({ stages: q.stages.includes(s) ? q.stages.filter((x) => x !== s) : [...q.stages, s] });
+  // zzz1008 (item 1a) — the stage buttons look like a segmented control: pressing the only selected stage again used to clear it
+  // ("No stage" → 0 matches everywhere). The last stage cannot be switched off from here; choose another one first.
+  const toggleStage = (s: PineStage) => {
+    if (q.stages.length === 1 && q.stages[0] === s) { flash(`At least one stage stays selected — pick another stage first, or "All stages"`); return; }
+    change({ stages: q.stages.includes(s) ? q.stages.filter((x) => x !== s) : [...q.stages, s] });
+  };
   const allStages = STAGES.every((s) => q.stages.includes(s.id));
   const toggleTf = (tf: PatTf) => { const next = q.tfs.includes(tf) ? q.tfs.filter((x) => x !== tf) : [...q.tfs, tf]; if (next.length) change({ tfs: next }); };
   const ofBias = PATTERN_IDS.filter((id) => q.bias === 'both' || (PATTERN_META[id].bias === 'bullish') === (q.bias === 'U'));
@@ -428,12 +445,12 @@ export default function PineScreener() {
   // ── actions on the result ───────────────────────────────────────────────────────────────────────────────────────────
   const exchOf = (r: Pick<Row, 'exch'>) => (market === 'IN' ? (r.exch?.[0] || 'NSE') : (r.exch?.[0] || 'US'));
   const chartUrl = (t: string, ex: string, tf: string) => `/charts?symbol=${encodeURIComponent(t)}&exchange=${encodeURIComponent(ex)}&t=${encodeURIComponent(t)}&m=${market}&tf=${tf}&review=screener`;
-  const openForReview = (r: Row, tf: string) => {
+  const openForReview = (r: Row, tf: string, tagOverride?: ScreenPatternTag | null) => {
     // the chart's Next / Previous step through the same companies the actions use (the searched result by default)
     const queue = actHits.some((h) => h.row.t === r.t) ? actHits : narrowed;
     writeReviewQueue(`Pine: ${name}${scopeNow !== 'results' ? ` · ${actLabel}` : ''}`, queue.map((h) => ({ symbol: h.row.t, exchange: exchOf(h.row), name: h.row.n })), '/pine-screener');
     const ex = market === 'IN' ? (r.exch?.[0] || 'NSE') : (r.exch?.[0] || '');
-    const best = actHits.find((h) => h.row.t === r.t)?.best || narrowed.find((h) => h.row.t === r.t)?.best || null;
+    const best = tagOverride || actHits.find((h) => h.row.t === r.t)?.best || narrowed.find((h) => h.row.t === r.t)?.best || null;
     // zzz1004 — the hand-off carries what the row was read on (pattern id, analysis timeframe, its as-of date and session)
     return `/charts?symbol=${encodeURIComponent(r.t)}&exchange=${encodeURIComponent(ex)}&t=${encodeURIComponent(r.t)}&m=${market}&tf=${tf}&review=screener${best && (best.tf || 'D') === tf ? chartIdentityParams(r, best) : ''}`;
   };
@@ -496,7 +513,8 @@ export default function PineScreener() {
   const builtAt = snap?.builtAt ? new Date(snap.builtAt) : null;
   const notScanned = !!snap && snap.total > 0 && snap.scanned === 0;
   const allOfBias = q.ids.length === 0;
-  const unscannedTfs = q.tfs.filter((tf) => !!snap && rows.length > 0 && !tfScanned[tf]);
+  // never scanned at all (no stale readings either); a timeframe being re-read is the rebuild banner's job
+  const unscannedTfs = q.tfs.filter((tf) => !!snap && rows.length > 0 && !tfScanned[tf] && !qRebuild.perTf.some((x) => x.tf === tf && x.stale > 0));
   const unsupported = coverage.filter((c) => c.status === 'unsupported-pine' || c.status === 'unsupported-market');
   const pending = coverage.filter((c) => c.status === 'pending');
   const companyFilterCount = [q.mcMin, q.mcMax, q.pxMin, q.turnMin, q.perfMin].filter((v) => v != null).length + (q.sectors.length ? 1 : 0);
@@ -528,7 +546,7 @@ export default function PineScreener() {
         </p>
       </header>
 
-      <SetupCards active={activeCard} counts={cardCounts} onPick={pickCard} loading={!snap} />
+      <SetupCards active={activeCard} counts={cardCounts} rebuild={cardRebuild} onPick={pickCard} loading={!snap} />
 
 
       <div className="pnx-layout" data-wide={view === 'portfolio'}>
@@ -594,6 +612,11 @@ export default function PineScreener() {
               {STAGES.map((s) => <button key={s.id} type="button" title={s.tip} aria-pressed={q.stages.includes(s.id)} onClick={() => toggleStage(s.id)}>{s.label}</button>)}
             </span>
             <button type="button" className="pnx-btn" aria-pressed={allStages} data-on={allStages} title="Forming, breakout and failed — every stage" style={{ justifySelf: 'start', padding: '3px 9px', fontSize: 12.5 }} onClick={() => change({ stages: allStages ? DEFAULT_QUERY.stages.slice() : STAGES.map((s) => s.id) })}>All stages</button>
+            {q.stages.includes('b') ? (
+              <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 12.5, cursor: 'pointer' }} title="A breakout whose analysis close is back below the pivot (bearish: a breakdown back above the level) is shown as “broke out · back below pivot”. Untick to count only breakouts holding beyond the pivot.">
+                <input type="checkbox" checked={q.returned !== false} onChange={(e) => change({ returned: e.target.checked })} aria-label="Include breakouts back below the pivot" /> Include breakouts back below the pivot
+              </label>
+            ) : null}
           </div>
           <label className="pnx-field" title={SHAPE_SCORE_TIP}>
             <span className="pnx-lab">Shape score</span>
@@ -669,14 +692,15 @@ export default function PineScreener() {
                   <span style={{ fontSize: 12, fontWeight: 700, color: g.bias === 'bullish' ? C.green : C.red }}>{g.group}{q.bias === 'both' ? (g.bias === 'bullish' ? ' ▲' : ' ▼') : ''}</span>
                   <div className="pnx-chips">
                     {ids.map((id) => {
-                      const on = q.ids.includes(id); const n = snap ? counts[id] || 0 : null;
+                      const on = q.ids.includes(id); const n = snap && qRebuild.state !== 'none' ? counts[id] || 0 : null;
+                      const more = qRebuild.state === 'partial' ? '+' : '';
                       // zzz1004 (PS-06) — a type the engine does not read on any selected timeframe: disabled with the reason (a
                       // ticked one stays clickable so it can be removed); its count is "n/a", never a zero
                       const ap = chipApplicability(id, q.tfs);
                       return (
-                        <button key={id} type="button" aria-pressed={on} disabled={ap.na && !on} onClick={() => toggleId(id)} title={ap.na ? ap.reason : `${PATTERN_META[id].short}${ap.reason ? `\n${ap.reason}` : ''}`}
+                        <button key={id} type="button" aria-pressed={on} disabled={ap.na && !on} onClick={() => toggleId(id)} title={ap.na ? ap.reason : `${PATTERN_META[id].short}${ap.reason ? `\n${ap.reason}` : ''}${qRebuild.state !== 'ok' ? `\n${qRebuild.text}` : ''}`}
                           className={`pnx-pat ${g.bias === 'bullish' ? 'pnx-up' : 'pnx-down'}`} data-zero={n === 0 && !ap.na} data-na={ap.na} data-pat={id}>
-                          {PATTERN_META[id].label}<span className="pnx-n" aria-busy={n == null}>{ap.na ? `n/a on ${q.tfs.join('/')}` : n == null ? '…' : n}</span>
+                          {PATTERN_META[id].label}<span className="pnx-n" aria-busy={n == null}>{ap.na ? `n/a on ${q.tfs.join('/')}` : n == null ? '…' : `${n}${more}`}</span>
                         </button>
                       );
                     })}
@@ -757,7 +781,7 @@ export default function PineScreener() {
                 {/* zzz1004 (PS-05) — the ACTIVE query, never a preset name that may contradict it; the preset name sits beside it, smaller */}
                 <h2 style={{ margin: 0, fontSize: 17, fontWeight: 750 }} data-testid="active-query">{summary}</h2>
                 <span className="pnx-note" data-testid="preset-line" style={{ fontSize: 12 }}>{presetLine(name, dirty)}</span>
-                <b style={{ fontSize: 15, color: C.text1 }} aria-busy={!snap && !err}>{snap ? `${hits.length} companies match` : err ? '' : 'Loading…'}</b>
+                <b style={{ fontSize: 15, color: C.text1 }} aria-busy={!snap && !err} data-testid="match-count">{!snap ? (err ? '' : 'Loading…') : qRebuild.state === 'none' ? 'Matches cannot be determined yet' : qRebuild.state === 'partial' ? `${hits.length} companies match so far` : `${hits.length} companies match`}</b>
                 {snap?.building ? <span style={{ color: C.amber, fontWeight: 700 }} title="A screener build for this market is running now">● building</span> : null}
               </div>
               {family ? (
@@ -772,6 +796,11 @@ export default function PineScreener() {
                 <div className="pnx-note" data-testid="coverage" style={{ display: 'grid', gap: 1 }}>
                   {scopeCov.perTf.map((c) => <div key={c.tf} data-tf={c.tf}>{coverageLine(c)}</div>)}
                   <div>{kind === 'all' ? `${scopeCov.inData.toLocaleString('en-US')} companies in the ${market === 'IN' ? 'Indian' : 'US'} data` : `${scopeName}: ${scopeCov.inData} in the data${scopeCov.notInData.length ? `, ${scopeCov.notInData.length} not in the data (${scopeCov.notInData.slice(0, 8).join(', ')}${scopeCov.notInData.length > 8 ? '…' : ''})` : ''}`}{builtAt ? ` · data built ${builtAt.toLocaleString()}` : ''}</div>
+                </div>
+              ) : null}
+              {snap && qRebuild.state !== 'ok' ? (
+                <div role="status" data-testid="rebuild-banner" style={{ fontSize: 13, color: C.amber, border: `1px solid ${C.amber}`, borderRadius: 8, padding: '6px 10px' }}>
+                  ⏳ {qRebuild.text}{qRebuild.state === 'none' ? '. The count is not “0 match”: no company of these timeframes has been re-read yet.' : '. Companies not yet re-read cannot match until they are.'}{snap.building ? ' A build is running.' : ''}
                 </div>
               ) : null}
               {naNotice.length ? (
@@ -819,7 +848,7 @@ export default function PineScreener() {
                 </div>
               ) : null}
               {watchlistSaveError ? <div role="alert" style={{ color: C.amber }}>{watchlistSaveError} <button type="button" className="pnx-btn" onClick={retryWatchlistSave}>Retry watchlist save</button></div> : null}
-              {notScanned || snap?.notes.length ? <div style={{ fontSize: 12.5, color: C.amber, display: 'grid', gap: 2 }}>{(snap?.notes.length ? snap.notes : ['Chart patterns are read during the screener build; the next build adds them.']).map((n, i) => <div key={i}>⏳ {n}</div>)}</div> : null}
+              {notScanned || snap?.notes.length || tfWarn.length ? <div data-testid="scan-notes" style={{ fontSize: 12.5, color: C.amber, display: 'grid', gap: 2 }}>{[...(snap?.notes.length ? snap.notes : notScanned ? ['Chart patterns are read during the screener build; the next build adds them.'] : []), ...tfWarn].map((n, i) => <div key={i}>⏳ {n}</div>)}</div> : null}
               {/* zzz994 (MC-07) — never "next build fills it" for a figure this page cannot receive */}
               {unsupported.length || pending.length || unscannedTfs.length || (notScanned && q.need !== 'any') ? (
                 <div role="status" style={{ fontSize: 12.5, color: C.amber, border: `1px solid ${C.amber}`, borderRadius: 8, padding: '6px 10px', display: 'grid', gap: 3 }}>
@@ -854,7 +883,7 @@ export default function PineScreener() {
                       <Th label="To pivot" k="dist" sort={sort} setSort={setSort} num title="From the scan close (the close the pattern was read from): − = not reached yet, + = beyond it" />
                       <Th label="Length" k="len" sort={sort} setSort={setSort} num />
                       <Th label="Price" k="px" sort={sort} setSort={setSort} num title="Latest quote" />
-                      {showScanCol ? <Th label="Scan close" k="scanPx" sort={sort} setSort={setSort} num title="The close the patterns, pivots and averages were read from — shown because it differs from the latest quote for some rows" /> : null}
+                      {showScanCol ? <Th label="Analysis close" k="scanPx" sort={sort} setSort={setSort} num title="The close the pattern was read on, on its own timeframe (daily session / completed week / completed month) — the stage and To pivot use it. Shown because it differs from the latest quote for some rows." /> : null}
                       <th className="pnx-num" title="The scan close against its 21, 50 and 200-day simple moving averages, % (same daily bars). Click to sort by the 50-day.">
                         <Th bare label={<span style={{ display: 'inline-grid', gridTemplateColumns: 'repeat(3, 3.6em)', gap: 4, justifyItems: 'end' }}><span>21d</span><span>50d</span><span>200d</span></span>} k="ma50" sort={sort} setSort={setSort} num />
                       </th>
@@ -916,10 +945,11 @@ export default function PineScreener() {
                                 <td className="pnx-num" title={[lengthTip(b), b.dp != null ? `${b.dp}% deep` : ''].filter(Boolean).join('\n')}>{tagLengthText(b) || '—'}</td>
                               </>
                             ) : <td colSpan={5} style={{ color: C.dim, fontSize: 12 }}>{noD ? patMissingWhy(r, 'D') : 'no matching chart pattern'}</td>}
-                            <td className="pnx-num" title={pxDiffers(r) ? scanTip(r, market) : `Exact: ${fmtExact(r.px)}${r.pxSrc ? ` (${r.pxSrc})` : ''}`}>
-                              {r.pxConflict ? <span style={{ color: C.amber }} aria-label="Price sources disagree">⚠ </span> : null}{fmtPrice(r.px, market)}
+                            <td className="pnx-num" title={pxDiffers(h) ? scanTip(h, market) : `Exact: ${fmtExact(r.px)}${r.pxSrc ? ` (${r.pxSrc})` : ''}`}>
+                              {r.pxConflict ? <span style={{ color: C.amber }} aria-label="Price sources disagree">⚠ </span> : null}
+                              {r.pxLive ? <span style={{ color: C.amber }} data-px-live aria-label="Live, unfinished session" title="Today's unfinished daily bar (Nasdaq's list was a session behind) — provisional, not a completed close">◷ </span> : null}{fmtPrice(r.px, market)}
                             </td>
-                            {showScanCol ? <td className="pnx-num" style={{ color: pxDiffers(r) ? C.text : C.dim }} title={pxDiffers(r) ? scanTip(r, market) : 'Same as the latest quote'}>{pxDiffers(r) ? fmtPrice(r.scanPx, market) : '='}</td> : null}
+                            {showScanCol ? <td className="pnx-num" data-analysis-close style={{ color: pxDiffers(h) ? C.text : C.dim }} title={pxDiffers(h) ? scanTip(h, market) : 'Same as the latest quote'}>{pxDiffers(h) ? `${fmtPrice(anClose(h), market)}${an.tf !== 'D' ? ` ${an.tf}` : ''}` : '='}</td> : null}
                             <td className="pnx-num"><MaCell ma={ma} market={market} /></td>
                             <td className="pnx-num">{typeof r.rsR === 'number' ? <b style={{ color: r.rsR >= 80 ? C.green : r.rsR < 30 ? C.red : C.text1 }}>{r.rsR}</b> : '—'}</td>
                             {shownCols.map((k) => {
@@ -939,7 +969,7 @@ export default function PineScreener() {
                           </tr>
                           {open ? (
                             <tr className="pnx-detail"><td colSpan={colCount}>
-                              <HitDetail hit={h} q={q} market={market} width={wrapW} onOpenChart={(tf) => window.location.assign(openForReview(r, tf))} />
+                              <HitDetail hit={h} q={q} market={market} width={wrapW} onOpenChart={(tf, tag) => window.location.assign(openForReview(r, tf, tag))} />
                             </td></tr>
                           ) : null}
                         </React.Fragment>
@@ -958,6 +988,7 @@ export default function PineScreener() {
                     {scopeWaiting ? `Loading ${scopeName}…`
                       : scope && listTickers && !listTickers.size ? `${scopeName} has no ${market === 'IN' ? 'Indian' : 'US'} companies — switch market or list.`
                       : q.need !== 'any' && !q.stages.length ? 'No stage selected — nothing can match. Choose a stage on the left.'
+                      : qRebuild.state === 'none' ? `${qRebuild.text}. The pattern part cannot be evaluated until the companies are re-read — this is not a “no match”.`
                       : `No company matches every choice.${provHits.length ? ` ${provHits.length} could not be fully evaluated (see Provisional below).` : ''} Widen the distance to pivot, lower the shape score, add a stage or untick pattern types — the number on each pattern type shows where the matches are.`}
                   </div>
                 ) : null}

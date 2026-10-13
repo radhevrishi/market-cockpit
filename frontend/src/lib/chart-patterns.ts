@@ -80,6 +80,17 @@
 //  Effect on 336 sampled histories (D + W + M): double / triple / H&S hits 755 → 155, all hits 1,304 → 488; score 100 from
 //  4.4% of hits to 1.4%; audited precision (correct / borderline / wrong) 27% / 30% / 43% (67 hits) → 49% / 47% / 3% (99).
 //  Regression fixtures from those real charts: __tests__/zzz1005-pattern-precision.test.ts.
+//
+// zzz1008 — auditable geometry + two more precision rules (owner / tester sweep 2026-10-13; fixtures in
+// __tests__/zzz1008-pine-bug-sweep.test.ts):
+//  • Every hit carries its turning points (`points`: time, price, role — POINT_ROLES, e.g. first low / middle peak / second low,
+//    left shoulder / head / right shoulder and the two neckline points, lip / base low / right-side high / handle low) and measured
+//    rule evidence (`evidence`: lows' difference, middle rally, prior trend, separation, volume at the last vs the first turning
+//    point, neckline change …); toTags stores them compactly (`pts` [date, price, role], `ev`).
+//  • A double / triple bottom or inverse H&S the price has run away from is not current: close within 5% of the 1-year high, that
+//    high made after the last low and more than 5% beyond the pivot (RUNAWAY_RULES; mirror for tops at the 1-year low).
+//  • Monthly readings span ≥ MONTHLY_MIN_SPAN (6) monthly candles (cups, U bases, VCPs, reversals) — a 4-candle "monthly cup" is a
+//    daily / weekly formation.
 
 import { aggregateBars } from './bar-aggregate';
 
@@ -103,7 +114,8 @@ export const PATTERN_META: Record<PatternId, PatternMeta> = {
   bull_flag: M('bull_flag', 'Bull flag', 'bullish', 'continuation', 'Flags & pennants', 'A sharp rise (the pole) then 1–4 weeks of tight, parallel drift down or sideways.'),
   bull_pennant: M('bull_pennant', 'Bull pennant', 'bullish', 'continuation', 'Flags & pennants', 'A sharp rise then 1–4 weeks of narrowing, converging range.'),
   ascending_triangle: M('ascending_triangle', 'Ascending triangle', 'bullish', 'continuation', 'Triangles & wedges', 'A flat ceiling touched two or more times with rising lows under it.'),
-  double_bottom: M('double_bottom', 'Double bottom (W)', 'bullish', 'reversal', 'Double/triple', 'Two lows at about the same price with a middle peak at least 10% higher, after a fall.'),
+  // zzz1008 — no '(W)' / '(M)' in labels: W and M are the weekly / monthly timeframe badges (the W-shape is in the description)
+  double_bottom: M('double_bottom', 'Double bottom', 'bullish', 'reversal', 'Double/triple', 'Two lows at about the same price (a W shape) with a middle peak at least 10% higher, after a fall.'),
   triple_bottom: M('triple_bottom', 'Triple bottom', 'bullish', 'reversal', 'Double/triple', 'Three lows at about the same price with peaks between them, after a fall.'),
   falling_wedge: M('falling_wedge', 'Falling wedge', 'bullish', 'reversal', 'Triangles & wedges', 'Highs and lows both falling, the highs faster, so the range narrows.'),
   high_tight_flag: M('high_tight_flag', 'High tight flag', 'bullish', 'continuation', 'Flags & pennants', 'A rise of 90% or more (full score at 100%) in 8 weeks (40 trading days) or less, then a 2–5 week (10–25 trading-day) pullback of no more than 25%.'),
@@ -118,6 +130,27 @@ export const PATTERN_META: Record<PatternId, PatternMeta> = {
 export const PATTERN_IDS: PatternId[] = Object.keys(PATTERN_META) as PatternId[];
 
 export interface PatternLine { kind: 'pivot' | 'support' | 'resistance' | 'neckline' | 'trend'; points: Array<[number, number]> }
+/** zzz1008 — a turning point of the detected structure (auditable geometry): bar time, price and its role (POINT_ROLES). On W / M
+ *  the time is the bar's time (the first session of that week / month). */
+export interface PatternPoint { t: number; p: number; role: PointRole }
+/** zzz1008 — the role codes of a pattern's turning points (kept short: they are stored on every screener tag). */
+export const POINT_ROLES = {
+  L1: 'first low', L2: 'second low', L3: 'third low', P: 'middle peak', P1: 'first peak', P2: 'second peak',
+  H1: 'first high', H2: 'second high', H3: 'third high', T: 'middle trough', T1: 'first trough', T2: 'second trough',
+  LS: 'left shoulder', HD: 'head', RS: 'right shoulder', N1: 'neckline, left', N2: 'neckline, right',
+  LIP: 'left-side high (lip)', LOW: 'base low', R: 'right-side high', HL: 'handle low',
+  PB: 'earlier base high', BO: 'breakout close', PS: 'pole start', PT: 'pole top', FL: 'flag low', FH: 'flag high',
+  CH: 'contraction high', CL: 'contraction low', TH: 'swing high (touch)', TL: 'swing low (touch)',
+} as const;
+export type PointRole = keyof typeof POINT_ROLES;
+/** zzz1008 — measured rule evidence on a hit (only the keys that apply; percentages as % numbers, 1 decimal):
+ *  band = difference between the lows (bottoms) / highs (tops), % · rally = middle peak above the higher low (tops: middle trough
+ *  below the lower high), % · mid = dip from the middle peak to the lows, % · trend = prior fall into the first low (tops / bases:
+ *  prior rise), % · gap = bars between the first and the last turning point · vr = volume around the last turning point ÷ around
+ *  the first (2 bars either side; < 1 = lighter) · neck = neckline change between its two points, % · sh = shoulders' distance
+ *  from the neckline ÷ the head's · sd = shoulder difference, % · depth = base depth, % · rec = right side as % of the lip ·
+ *  round = share of the cup's closes in its lower 30%, % · hd = handle depth, % · hi1y = close as % of the 1-year high. */
+export type PatternEvidence = Partial<Record<'band' | 'rally' | 'mid' | 'trend' | 'gap' | 'vr' | 'neck' | 'sh' | 'sd' | 'depth' | 'rec' | 'round' | 'hd' | 'hi1y', number>>;
 export interface PatternHit {
   id: PatternId; label: string; bias: PatternBias; family: PatternFamily;
   stage: PatternStage; confidence: number; likelihood: 'very likely' | 'likely' | 'possible';
@@ -129,13 +162,16 @@ export interface PatternHit {
   volumeOk?: boolean;
   /** zzz992 — the analysis timeframe the hit was found on (lengthBars counts bars of this timeframe) */
   timeframe?: PatternTimeframe;
+  /** zzz1008 — the detected structure's turning points (in time order) and the measured rule evidence */
+  points?: PatternPoint[];
+  evidence?: PatternEvidence;
 }
 export type PatternTimeframe = 'D' | 'W' | 'M';
 /** maxBars counts bars of the analysis timeframe. */
 export interface DetectOptions { firstTradeT?: number; maxBars?: number; timeframe?: PatternTimeframe }
 
 /** zzz992 — bump when any detection rule changes (stored screener tags carry it for provenance). */
-export const PATTERN_ENGINE_VERSION = 'cp-3.1-precision';
+export const PATTERN_ENGINE_VERSION = 'cp-3.2-geometry';
 
 interface TfProfile {
   tf: PatternTimeframe;
@@ -155,6 +191,11 @@ const TF_PROFILES: Record<PatternTimeframe, TfProfile> = {
   W: { tf: 'W', k: 5, minBody: 3, minHistory: 30, swingMul: 1.5, defaultMaxBars: 260 },
   M: { tf: 'M', k: 21, minBody: 3, minHistory: 24, swingMul: 2, defaultMaxBars: 120 },
 };
+/** zzz1008 — a pattern read on MONTHLY bars spans at least this many monthly candles (cups, U bases and VCPs: the base; double /
+ *  triple bottoms & tops and head & shoulders: from the first to the last turning point plus one). A shorter structure is a daily /
+ *  weekly formation seen through a few monthly candles — its roundness or its turning points cannot be judged on 4–5 candles (seen:
+ *  RVSB "monthly cup, 4 mo" = the 86-day daily cup with handle; HY "monthly double top" over 3 months). It is read on D / W. */
+export const MONTHLY_MIN_SPAN = 6;
 /** zzz992 — longest rounding (U) base read on monthly bars, in months. */
 export const LONG_BASE_MONTHS = 60;
 /** Minimum usable bars per timeframe (W: 30 weeks, M: 24 months). */
@@ -192,7 +233,13 @@ export const PATTERN_NA_REASON: Partial<Record<PatternId, string>> = {
   rising_wedge: 'a 4–26 week wedge is 1–6 monthly candles',
 };
 export const patternApplies = (id: PatternId, tf: PatternTimeframe) => PATTERN_TIMEFRAMES[id].includes(tf);
-export interface PatternTag { id: PatternId; b: 'U' | 'D'; s: 'f' | 'b' | 'x'; c: number; p: number | null; d: number | null }
+export interface PatternTag {
+  id: PatternId; b: 'U' | 'D'; s: 'f' | 'b' | 'x'; c: number; p: number | null; d: number | null;
+  /** zzz1008 — compact turning points: [date YYYY-MM-DD (W / M: the bar's first session), price (4 significant digits), role] */
+  pts?: Array<[string, number, PointRole]>;
+  /** zzz1008 — measured rule evidence (PatternEvidence) */
+  ev?: PatternEvidence;
+}
 
 // ───────────────────────────── helpers ─────────────────────────────
 
@@ -391,9 +438,22 @@ interface Raw {
   lineAt?: (i: number) => number;
   /** zzz990 (CP-05) — bar index past which a sloped line is no longer projected (apex / flag length); breaks after it do not count. */
   expiry?: number;
+  /** zzz1008 — turning points [bar index, price, role] and measured evidence */
+  pts?: Array<[number, number, PointRole]>;
+  ev?: PatternEvidence;
 }
 
 const LP = (kind: PatternLine['kind'], s: S, i0: number, p0: number, i1: number, p1: number): PatternLine => ({ kind, points: [[s.t[i0], p0], [s.t[i1], p1]] });
+/** zzz1008 — a fraction as a % number with 1 decimal (evidence values). */
+const pc1 = (x: number) => Math.round(x * 1000) / 10;
+/** zzz1008 — evidence object without non-finite values. */
+function evOf(o: PatternEvidence): PatternEvidence {
+  const out: PatternEvidence = {};
+  for (const [k, v] of Object.entries(o) as Array<[keyof PatternEvidence, number | undefined]>) if (typeof v === 'number' && Number.isFinite(v)) out[k] = Math.round(v * 100) / 100;
+  return out;
+}
+/** zzz1008 — volume around the last turning point ÷ around the first (2 bars either side); NaN when either side lacks volume. */
+const volAround = (s: S, first: number, last: number) => volRatio(avgVol(s, last - 2, last + 2), avgVol(s, first - 2, first + 2));
 
 // ───────────────────────────── detectors (one body end) ─────────────────────────────
 
@@ -455,6 +515,7 @@ function detectLipBases(s: S, e: number, recs: number[], out: Map<PatternId, Raw
   for (const sIdx of recs) {
     const len = e - sIdx + 1;
     if (len < L25 || len > LMAX) continue;
+    if (tf === 'M' && len < MONTHLY_MIN_SPAN) continue;   // zzz1008
     const lip = s.h[sIdx];
     // zzz1005 — the left-side high tops the advance into it: no higher high over a lead-in as long as the base (5 weeks to
     // 6 months) — a lower high on the way down from a bigger peak is not the lip of a base
@@ -476,7 +537,8 @@ function detectLipBases(s: S, e: number, recs: number[], out: Map<PatternId, Raw
         [2, ramp(volDry, 1.1, 0.75)], [2, ramp(tight3, 0.06, 0.025)], [1, trendOK(s, e)],
       ]);
       push(out, { id: 'flat_base', conf, start: sIdx, end: e, keyFrom: sIdx, pivot: lip, depth,
-        detail: '', lines: [LP('resistance', s, sIdx, lip, e, lip), LP('support', s, sIdx, low, e, low)] });
+        detail: '', lines: [LP('resistance', s, sIdx, lip, e, lip), LP('support', s, sIdx, low, e, low)],
+        pts: [[sIdx, lip, 'LIP'], [m, low, 'LOW']], ev: evOf({ depth: pc1(depth), trend: pc1(up), vr: volDry }) });
     }
 
     if (len < L35) continue;
@@ -508,21 +570,28 @@ function detectLipBases(s: S, e: number, recs: number[], out: Map<PatternId, Raw
       const volDry = volRatio(avgVol(s, r, e), vol50(s, r));
       const drift = closeSlope(s, r, e) <= 0.0005 * s.pf.k ? 1 : 0;
       const conf = wscore([...common, [2, ramp(recovery, 0.85, 0.97)], [2, ramp(hDepth, 0.15, 0.1)], [1, ramp(volDry, 1.15, 0.8)], [1, drift], [1, ramp(hLen, B(s, 4), Bg(s, 7, B(s, 4)))]]);
+      const hi = s.mnL.idx(r, e);
       push(out, { id: 'cup_handle', conf, start: sIdx, end: e, keyFrom: r, pivot: rightH, depth,
         detail: `handle ${Math.round(hDepth * 100)}% deep`,
-        lines: [LP('pivot', s, r, rightH, e, rightH), LP('resistance', s, sIdx, lip, r, lip), LP('support', s, m, low, m, low)] });
+        lines: [LP('pivot', s, r, rightH, e, rightH), LP('resistance', s, sIdx, lip, r, lip), LP('support', s, m, low, m, low)],
+        pts: [[sIdx, lip, 'LIP'], [m, low, 'LOW'], [r, rightH, 'R'], [hi, s.l[hi], 'HL']],
+        ev: evOf({ depth: pc1(depth), trend: pc1(up), rec: pc1(recovery), round: pc1(round), hd: pc1(hDepth), vr: volDry }) });
     } else if (classic && noHandle && posInRange >= 0.5) {
       // zzz1005 — a cup's right side is climbing back: the close is in the upper half of the cup
       const conf = wscore([...common, [2, ramp(recovery, 0.75, 0.95)], [1, ramp(posInRange, 0.5, 0.8)]]);
       push(out, { id: 'cup', conf, start: sIdx, end: e, keyFrom: sIdx, pivot: lip, depth,
         detail: `right side ${Math.round(recovery * 100)}% of the left high`,
-        lines: [LP('pivot', s, sIdx, lip, e, lip), LP('support', s, m, low, m, low)] });
+        lines: [LP('pivot', s, sIdx, lip, e, lip), LP('support', s, m, low, m, low)],
+        pts: [[sIdx, lip, 'LIP'], [m, low, 'LOW'], ...(r > m ? [[r, rightH, 'R'] as [number, number, PointRole]] : [])],
+        ev: evOf({ depth: pc1(depth), trend: pc1(up), rec: pc1(recovery), round: pc1(round) }) });
     } else if (!classic && (noHandle || handleValid) && depth >= 0.08 && depth <= 0.5 && round >= 0.35 && posInRange >= 0.5
       // zzz1005 — without a prior rise the lip must at least be the high of the prior ~6 months (not a bounce in a decline)
       && (up >= 0.1 || !(s.mxH.val(sIdx - L130, sIdx - 1) > lip * 1.01))) {
       const conf = wscore([[2, ramp(round, 0.35, 0.5)], [2, ramp(recovery, 0.75, 0.95)], [1, symScore], [1, ramp(len, L35, Bg(s, 50, L35))], [1, ramp(up, 0, 0.25)], [1, trendOK(s, e)]]);
       push(out, { id: 'u_base', conf, start: sIdx, end: e, keyFrom: sIdx, pivot: lip, depth, detail: len > L330 ? 'multi-year rounded base' : 'rounded bottom',
-        lines: [LP('pivot', s, sIdx, lip, e, lip), LP('support', s, m, low, m, low)] });
+        lines: [LP('pivot', s, sIdx, lip, e, lip), LP('support', s, m, low, m, low)],
+        pts: [[sIdx, lip, 'LIP'], [m, low, 'LOW'], ...(r > m ? [[r, rightH, 'R'] as [number, number, PointRole]] : [])],
+        ev: evOf({ depth: pc1(depth), trend: pc1(up), rec: pc1(recovery), round: pc1(round) }) });
     }
   }
 
@@ -554,9 +623,11 @@ function detectLipBases(s: S, e: number, recs: number[], out: Map<PatternId, Raw
       const adv = lip / prevMax - 1;
       if (priorDepth > 0.35 || priorDepth < 0.05 || adv < 0.05 || adv >= 0.2 || low < prevMax * 0.93) break;
       const conf = wscore([[2, adv <= 0.1 ? ramp(adv, 0.05, 0.08) : ramp(adv, 0.2, 0.12)], [2, ramp(low / prevMax, 0.93, 1.0)], [1, ramp(depth, 0.25, 0.12)], [1, ramp(len, L20, Bg(s, 30, L20))], [1, trendOK(s, e)], [1, ramp(priorUp(s, j), 0.1, 0.3)], [1, ramp(k - j, L25b, Bg(s, 35, L25b))]]);
+      const lowI = s.mnL.idx(sIdx, e);
       push(out, { id: 'base_on_base', conf, start: j, end: e, keyFrom: sIdx, pivot: lip, depth,
         detail: `earlier base pivot ${fmt(prevMax)}, gained only ${Math.round(adv * 100)}% before this base`,
-        lines: [LP('pivot', s, sIdx, lip, e, lip), LP('support', s, j, prevMax, k, prevMax)] });
+        lines: [LP('pivot', s, sIdx, lip, e, lip), LP('support', s, j, prevMax, k, prevMax)],
+        pts: [[j, prevMax, 'PB'], [k, s.c[k], 'BO'], [sIdx, lip, 'LIP'], [lowI, low, 'LOW']], ev: evOf({ depth: pc1(depth), trend: pc1(adv) }) });
       break;
     }
   }
@@ -587,7 +658,8 @@ function detectIpoBase(s: S, e: number, out: Map<PatternId, Raw>) {
   const conf = wscore([[2, ramp(len, L3, Bg(s, 15, L3))], [2, depthOk], [1, ramp(posInRange, 0.3, 0.75)], [1, ramp(730 - age, 0, 365)], [1, ramp(volRatio(avgVol(s, e - B(s, 10) + 1, e), avgVol(s, sIdx - B(s, 20), sIdx)), 1.2, 0.7)]]);
   push(out, { id: 'ipo_base', conf, start: sIdx, end: e, keyFrom: sIdx, pivot: lip, depth,
     detail: `${Math.round(age / 30.4)} months after listing`,
-    lines: [LP('pivot', s, sIdx, lip, e, lip), LP('support', s, m, s.l[m], e, s.l[m])] });
+    lines: [LP('pivot', s, sIdx, lip, e, lip), LP('support', s, m, s.l[m], e, s.l[m])],
+    pts: [[sIdx, lip, 'LIP'], [m, s.l[m], 'LOW']], ev: evOf({ depth: pc1(depth) }) });
 }
 
 /**
@@ -616,6 +688,7 @@ function detectVcp(s: S, e: number, recs: number[], zz: Pivot[], out: Map<Patter
   for (const sIdx of recs) {
     const len = e - sIdx + 1;
     if (len < L15 || len > L330) continue;
+    if (s.pf.tf === 'M' && len < MONTHLY_MIN_SPAN) continue;   // zzz1008
     const up = priorUp(s, sIdx);
     if (up < 0.15) continue;
     // zzz1005 — the base's high tops the advance into it (as for the lip bases)
@@ -652,7 +725,9 @@ function detectVcp(s: S, e: number, recs: number[], zz: Pivot[], out: Map<Patter
     const path = cs.slice(j).map((x) => `${Math.round(x.d * 100)}%`).join(' → ');
     push(out, { id: 'vcp', conf, start: firstC.hi.i, end: e, keyFrom: lastC.hi.i, pivot, depth: firstC.d,
       detail: `${count} contractions ${path}`,
-      lines: [LP('pivot', s, lastC.hi.i, pivot, e, pivot), ...cs.slice(j).map((x) => LP('trend', s, x.hi.i, x.hi.p, x.lo.i, x.lo.p))] });
+      lines: [LP('pivot', s, lastC.hi.i, pivot, e, pivot), ...cs.slice(j).map((x) => LP('trend', s, x.hi.i, x.hi.p, x.lo.i, x.lo.p))],
+      pts: cs.slice(j).flatMap((x) => [[x.hi.i, x.hi.p, 'CH'], [x.lo.i, x.lo.p, 'CL']] as Array<[number, number, PointRole]>),
+      ev: evOf({ depth: pc1(firstC.d), trend: pc1(up), vr: volDry }) });
   }
 }
 /** Average ratio between successive contraction depths (smaller = cleaner contraction). */
@@ -689,7 +764,9 @@ function detectAscendingBase(s: S, e: number, zz: Pivot[], out: Map<PatternId, R
   const conf = wscore([[2, ramp(up, 0.15, 0.4)], [3, ds.reduce((x, d) => x + (d >= 0.1 && d <= 0.2 ? 1 : 0.5), 0) / 3], [1, ramp(span, L40, Bg(s, 45, L40)) * ramp(span, L95, Math.min(L95, Math.max(L40, B(s, 80))))], [1, trendOK(s, e)]]);
   push(out, { id: 'ascending_base', conf, start: a.hi.i, end: e, keyFrom: c.hi.i, pivot, depth: Math.max(...ds),
     detail: `pullbacks ${ds.map((d) => Math.round(d * 100) + '%').join(', ')}`,
-    lines: [LP('pivot', s, c.hi.i, pivot, e, pivot), LP('trend', s, a.lo.i, a.lo.p, c.lo.i, c.lo.p)] });
+    lines: [LP('pivot', s, c.hi.i, pivot, e, pivot), LP('trend', s, a.lo.i, a.lo.p, c.lo.i, c.lo.p)],
+    pts: [[a.hi.i, a.hi.p, 'H1'], [a.lo.i, a.lo.p, 'T1'], [b.hi.i, b.hi.p, 'H2'], [b.lo.i, b.lo.p, 'T2'], [c.hi.i, c.hi.p, 'H3'], [c.lo.i, c.lo.p, 'LOW']],
+    ev: evOf({ depth: pc1(Math.max(...ds)), trend: pc1(up) }) });
 }
 
 /** High tight flag (O'Neil), strict profile HTF_RULES (zzz990 CP-08 — the gates are exactly what PATTERN_META says):
@@ -710,7 +787,8 @@ function detectHTF(s: S, e: number, recs: number[], out: Map<PatternId, Raw>) {
     const conf = wscore([[3, ramp(rise, R.minRise - 0.05, R.fullRise)], [2, ramp(depth, R.maxDepth, 0.15)], [1, ramp(len, R.minFlagBars, 15)], [1, ramp(volRatio(avgVol(s, sIdx, e), avgVol(s, p, sIdx)), 1.1, 0.7)]]);
     push(out, { id: 'high_tight_flag', conf, start: p, end: e, keyFrom: sIdx, pivot: s.h[sIdx], depth,
       detail: `pole +${Math.round(rise * 100)}% in ${sIdx - p} days, flag ${Math.round(depth * 100)}% deep`,
-      lines: [LP('pivot', s, sIdx, s.h[sIdx], e, s.h[sIdx]), LP('trend', s, p, s.l[p], sIdx, s.h[sIdx])] });
+      lines: [LP('pivot', s, sIdx, s.h[sIdx], e, s.h[sIdx]), LP('trend', s, p, s.l[p], sIdx, s.h[sIdx])],
+      pts: [[p, s.l[p], 'PS'], [sIdx, s.h[sIdx], 'PT'], [s.mnL.idx(sIdx, e), s.mnL.val(sIdx, e), 'FL']], ev: evOf({ trend: pc1(rise), depth: pc1(depth) }) });
   }
 }
 
@@ -764,14 +842,17 @@ function detectFlags(s: S, e: number, recs: number[], floors: number[], out: Map
     const apex = w0 > w1 && w1 > 0 ? sIdx + (w0 * (e - sIdx)) / (w0 - w1) : Infinity;
     const commonParts: Array<[number, number]> = [[3, ramp(rise, 0.15, 0.25)], [2, ramp(retr, 0.5, 0.33)], [1, ramp(sIdx - p, 25, 10)], [1, ramp(volRatio(avgVol(s, sIdx, e), avgVol(s, p, sIdx)), 1.1, 0.75)], [1, ramp(len, 4, 7)]];
     const lines = [LP('trend', s, sIdx, ch.U(sIdx), e, ch.U(e)), LP('trend', s, sIdx, ch.L(sIdx), e, ch.L(e)), LP('trend', s, p, base, sIdx, top)];
+    const loI = s.mnL.idx(sIdx, e);
+    const fpts: Array<[number, number, PointRole]> = [[p, base, 'PS'], [sIdx, top, 'PT'], [loI, lo, 'FL']];
+    const fev = evOf({ trend: pc1(rise), depth: pc1(1 - lo / top) });
     if (su <= 0.0015 && sl <= 0.0015 && wr >= 0.6 && wr <= 1.5) {
       const conf = wscore([...commonParts, [2, ramp(Math.abs(wr - 1), 0.5, 0.15)], [1, su <= 0 ? 1 : 0.5]]);
       push(out, { id: 'bull_flag', conf, start: p, end: e, keyFrom: sIdx + 1, pivot, depth: 1 - lo / top, lineAt: ch.U, expiry: flagExpiry,
-        detail: `pole +${Math.round(rise * 100)}% in ${sIdx - p} days, ${len}-day flag`, lines });
+        detail: `pole +${Math.round(rise * 100)}% in ${sIdx - p} days, ${len}-day flag`, lines, pts: fpts, ev: fev });
     } else if (su < 0 && sl >= -0.0005 && wr < 0.6) {
       const conf = wscore([...commonParts, [2, ramp(wr, 0.6, 0.3)]]);
       push(out, { id: 'bull_pennant', conf, start: p, end: e, keyFrom: sIdx + 1, pivot, depth: 1 - lo / top, lineAt: ch.U, expiry: Math.min(flagExpiry, Math.floor(apex)),
-        detail: `pole +${Math.round(rise * 100)}% in ${sIdx - p} days, ${len}-day pennant`, lines });
+        detail: `pole +${Math.round(rise * 100)}% in ${sIdx - p} days, ${len}-day pennant`, lines, pts: fpts, ev: fev });
     }
   }
   for (const sIdx of floors) {
@@ -794,7 +875,8 @@ function detectFlags(s: S, e: number, recs: number[], floors: number[], out: Map
     const conf = wscore([[3, ramp(drop, 0.15, 0.25)], [2, ramp(retr, 0.5, 0.33)], [1, ramp(sIdx - p, 25, 10)], [2, ramp(Math.abs(wr - 1), 0.6, 0.15)], [1, ramp(len, 4, 7)], [1, s.c[e] < sma(s, e, 50) ? 1 : 0]]);
     push(out, { id: 'bear_flag', conf, start: p, end: e, keyFrom: sIdx + 1, pivot: ch.L(e), depth: drop, lineAt: ch.L, expiry: e + len,
       detail: `pole −${Math.round(drop * 100)}% in ${sIdx - p} days, ${len}-day flag`,
-      lines: [LP('trend', s, sIdx, ch.U(sIdx), e, ch.U(e)), LP('trend', s, sIdx, ch.L(sIdx), e, ch.L(e)), LP('trend', s, p, top, sIdx, bot)] });
+      lines: [LP('trend', s, sIdx, ch.U(sIdx), e, ch.U(e)), LP('trend', s, sIdx, ch.L(sIdx), e, ch.L(e)), LP('trend', s, p, top, sIdx, bot)],
+      pts: [[p, top, 'PS'], [sIdx, bot, 'PT'], [s.mxH.idx(sIdx, e), hi, 'FH']], ev: evOf({ trend: pc1(drop) }) });
   }
 }
 
@@ -837,6 +919,7 @@ function detectTriWedge(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>) 
     const lastH = Hs[Hs.length - 1], lastL = Ls[Ls.length - 1];
     const wStart = (fh.a + fh.b * a) - (fl.a + fl.b * a), wEnd = (fh.a + fh.b * e) - (fl.a + fl.b * e);
     const lineSet = [LP('trend', s, a, fh.a + fh.b * a, e, fh.a + fh.b * e), LP('trend', s, a, fl.a + fl.b * a, e, fl.a + fl.b * e)];
+    const tpts = W.map((q) => [q.i, q.p, q.hi ? 'TH' : 'TL'] as [number, number, PointRole]);
     // share of closes in the window that stay between the two lines (±1%) — a random zig-zag fits its pivots but not its bars
     let inside = 0;
     for (let i = a; i <= e; i++) { const c = s.c[i]; if (c <= (fh.a + fh.b * i) * 1.01 && c >= (fl.a + fl.b * i) * 0.99) inside++; }
@@ -848,12 +931,12 @@ function detectTriWedge(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>) 
     if ((hMax - hMin) / hMax <= flatTol(Hs.length) && Math.abs(chH) <= 0.025 && risingLows && chL >= 0.04 && s.mxH.val(lastH.i + 1, e) <= hMax * 1.005 && lowerHeld) {
       const c = wscore([[2, ramp(touches, 3, 7)], [3, ramp(Hs.length, 2, 3)], [2, ramp(chL, 0.04, 0.1)], [1, ramp(fitQ, 0.04, 0.01)], [1, ramp(len, L15, L30)], [1, ramp(contain, 0.8, 0.97)], [1, ramp((hMax - hMin) / hMax, flatTol(Hs.length), 0.008)]]);
       push(out, { id: 'ascending_triangle', conf: c, start: a, end: e, keyFrom: a, pivot: hMax, depth: 1 - lMin / hMax,
-        detail: `${Hs.length} touches of ${fmt(hMax)}, lows rising`, lines: [LP('resistance', s, a, hMax, e, hMax), lineSet[1]] });
+        detail: `${Hs.length} touches of ${fmt(hMax)}, lows rising`, lines: [LP('resistance', s, a, hMax, e, hMax), lineSet[1]], pts: tpts, ev: evOf({ band: pc1((hMax - hMin) / hMax) }) });
     }
     if ((lMax - lMin) / lMax <= flatTol(Ls.length) && Math.abs(chL) <= 0.025 && fallingHighs && chH <= -0.04 && s.mnL.val(lastL.i + 1, e) >= lMin * 0.995 && upperHeld) {
       const c = wscore([[2, ramp(touches, 3, 7)], [3, ramp(Ls.length, 2, 3)], [2, ramp(-chH, 0.04, 0.1)], [1, ramp(fitQ, 0.04, 0.01)], [1, ramp(len, L15, L30)], [1, ramp(contain, 0.8, 0.97)], [1, ramp((lMax - lMin) / lMax, flatTol(Ls.length), 0.008)]]);
       push(out, { id: 'descending_triangle', conf: c, start: a, end: e, keyFrom: a, pivot: lMin, depth: 1 - lMin / hMax,
-        detail: `${Ls.length} touches of ${fmt(lMin)}, highs falling`, lines: [LP('support', s, a, lMin, e, lMin), lineSet[0]] });
+        detail: `${Ls.length} touches of ${fmt(lMin)}, highs falling`, lines: [LP('support', s, a, lMin, e, lMin), lineSet[0]], pts: tpts, ev: evOf({ band: pc1((lMax - lMin) / lMax) }) });
     }
     const converging = wStart > 0 && wEnd > 0 && wEnd < 0.75 * wStart;
     // where the two lines meet (the apex): a wedge's boundary is not projected past it
@@ -864,7 +947,7 @@ function detectTriWedge(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>) 
       {
         const c = wscore([[2, ramp(touches, 5, 7)], [2, ramp(wEnd / wStart, 0.75, 0.4)], [2, ramp(fitQ, 0.025, 0.01)], [2, ramp(contain, 0.9, 0.98)], [1, ramp(len, L15, L30)], [1, ramp(priorDown(s, a), 0.05, 0.2)]]);
         push(out, { id: 'falling_wedge', conf: c, start: a, end: e, keyFrom: lastH.i + 1, pivot: piv, depth: 1 - lMin / hMax, lineAt: (i) => fh.a + fh.b * i, expiry: apex,
-          detail: `${touches} touches, range narrowing`, lines: lineSet });
+          detail: `${touches} touches, range narrowing`, lines: lineSet, pts: tpts });
       }
     }
     if (wedgeOk && chL >= 0.04 && chH >= 0.015 && chL > chH && upperHeld) {
@@ -872,7 +955,7 @@ function detectTriWedge(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>) 
       {
         const c = wscore([[2, ramp(touches, 5, 7)], [2, ramp(wEnd / wStart, 0.75, 0.4)], [2, ramp(fitQ, 0.025, 0.01)], [2, ramp(contain, 0.9, 0.98)], [1, ramp(len, L15, L30)], [1, ramp(priorUp(s, a), 0.05, 0.2)]]);
         push(out, { id: 'rising_wedge', conf: c, start: a, end: e, keyFrom: lastL.i + 1, pivot: piv, depth: 1 - lMin / hMax, lineAt: (i) => fl.a + fl.b * i, expiry: apex,
-          detail: `${touches} touches, range narrowing`, lines: lineSet });
+          detail: `${touches} touches, range narrowing`, lines: lineSet, pts: tpts });
       }
     }
   }
@@ -914,6 +997,18 @@ function detectReversals(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>)
 
 /** zzz1005 — the shared turning-point rules of the reversal family (see detectReversals). */
 export const REVERSAL_RULES = { maxMidDepth: 0.4, maxMidDepthM: 0.45, ctxTol: 0.1, maxNeckChange: 0.15, minShoulderRatio: 0.3, maxHeadBeyond: 0.3, minRebound: 0.03, reboundOfHeight: 0.12 } as const;
+const REVERSAL_IDS = new Set<PatternId>(['double_bottom', 'triple_bottom', 'inverse_hs', 'double_top', 'triple_top', 'head_shoulders']);
+/** zzz1008 — a bottom is no longer reported once the price has run away from it: the close is within `near1y` (5%) of the 1-year
+ *  high, that high was made AFTER the pattern's last low, and it stands more than `past1y` (5%) beyond the pivot (seen: RVTY
+ *  "monthly double bottom" with the pivot 118.30 while the stock trades at its 1-year high near 155). A bottom whose 1-year high
+ *  came BEFORE it (the base of a pullback from that high — the prior decline the rules already require) or whose new high is just a
+ *  fresh breakout through the pivot (≤ 5% beyond it) is kept. Tops: the mirror at the 1-year low. */
+export const RUNAWAY_RULES = { near1y: 0.05, past1y: 0.05 } as const;
+export function ranAwayFrom1y(c: number, ext1y: number, ext1yAfterLast: boolean, pivot: number, bottom: boolean): boolean {
+  if (!ext1yAfterLast || !(ext1y > 0) || !(pivot > 0)) return false;
+  const R = RUNAWAY_RULES;
+  return bottom ? c >= ext1y * (1 - R.near1y) && ext1y > pivot * (1 + R.past1y) : c <= ext1y * (1 + R.near1y) && ext1y < pivot * (1 - R.past1y);
+}
 
 function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<PatternId, Raw>) {
   if (pts.length < 2) return;
@@ -964,6 +1059,7 @@ function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<P
     for (let b = a + 1; b < pts.length - 1; b++) {
       const P = [pts[a], pts[b], last];
       if (P[1].i - P[0].i < G10 || P[2].i - P[1].i < G10) continue;
+      if (s.pf.tf === 'M' && P[2].i - P[0].i + 1 < MONTHLY_MIN_SPAN) continue;   // zzz1008
       const ps = P.map((q) => q.p);
       const bandHi = Math.max(...ps), bandLo = Math.min(...ps);
       if (bandHi / bandLo - 1 > 0.05) continue;
@@ -989,7 +1085,9 @@ function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<P
       if (conf >= MIN_CONF) bestTripleLast = true;
       push(out, { id: idT, conf, start: P[0].i, end: e, keyFrom: P[2].i, pivot, depth: bottom ? 1 - bandLo / pivot : 1 - pivot / bandHi,
         detail: `three ${bottom ? 'lows' : 'highs'} near ${fmt(bottom ? bandLo : bandHi)}`,
-        lines: [LP(bottom ? 'pivot' : 'support', s, P[0].i, pivot, e, pivot), LP(bottom ? 'support' : 'resistance', s, P[0].i, bottom ? bandLo : bandHi, P[2].i, bottom ? bandLo : bandHi)] });
+        lines: [LP(bottom ? 'pivot' : 'support', s, P[0].i, pivot, e, pivot), LP(bottom ? 'support' : 'resistance', s, P[0].i, bottom ? bandLo : bandHi, P[2].i, bottom ? bandLo : bandHi)],
+        pts: [[P[0].i, P[0].p, bottom ? 'L1' : 'H1'], [m1, pivotOf(m1), bottom ? 'P1' : 'T1'], [P[1].i, P[1].p, bottom ? 'L2' : 'H2'], [m2, pivotOf(m2), bottom ? 'P2' : 'T2'], [P[2].i, P[2].p, bottom ? 'L3' : 'H3']],
+        ev: evOf({ band: pc1(bandHi / bandLo - 1), rally: pc1(Math.min(sep1, sep2)), mid: pc1(dd), trend: pc1(tr), gap: width, vr: volAround(s, P[0].i, P[2].i) }) });
     }
   }
 
@@ -1000,6 +1098,7 @@ function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<P
       const gap = last.i - A.i;
       if (gap < Gall) continue;
       if (gap > G325) break;
+      if (s.pf.tf === 'M' && gap + 1 < MONTHLY_MIN_SPAN) continue;   // zzz1008
       const band = Math.max(A.p, last.p) / Math.min(A.p, last.p) - 1;
       if (band > 0.05) continue;
       const lo = Math.min(A.p, last.p), hi = Math.max(A.p, last.p);
@@ -1021,7 +1120,9 @@ function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<P
       const conf = wscore([[2, ramp(band, 0.05, 0.015)], [2, ramp(sep, 0.1, 0.18)], [2, ramp(tr, trendMin * 0.75, trendMin + 0.15)], [1, ramp(gap, Gall, Bg(s, 30, Gall))], [1, ramp(sym, 0.2, 0.6)], [1, ramp(off, 0.03, 0.08)], [1, ramp(dd, maxMid, maxMid - 0.12)]]);
       push(out, { id: idB, conf, start: A.i, end: e, keyFrom: mi, pivot, depth: bottom ? 1 - lo / pivot : 1 - pivot / hi,
         detail: `${bottom ? 'lows' : 'highs'} ${fmt(A.p)} and ${fmt(last.p)}, middle ${lbl} ${fmt(pivot)}`,
-        lines: [LP(bottom ? 'pivot' : 'support', s, A.i, pivot, e, pivot), LP(bottom ? 'support' : 'resistance', s, A.i, A.p, last.i, last.p)] });
+        lines: [LP(bottom ? 'pivot' : 'support', s, A.i, pivot, e, pivot), LP(bottom ? 'support' : 'resistance', s, A.i, A.p, last.i, last.p)],
+        pts: [[A.i, A.p, bottom ? 'L1' : 'H1'], [mi, pivot, bottom ? 'P' : 'T'], [last.i, last.p, bottom ? 'L2' : 'H2']],
+        ev: evOf({ band: pc1(band), rally: pc1(sep), mid: pc1(dd), trend: pc1(tr), gap, vr: volAround(s, A.i, last.i) }) });
       break; // nearest qualifying first swing only
     }
   }
@@ -1036,6 +1137,7 @@ function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<P
     for (let l = h - 1; l >= 0 && l >= h - 4; l--) {
       const LS = pts[l];
       if (H.i - LS.i < G5 || RS.i - LS.i < Gall) continue;
+      if (s.pf.tf === 'M' && RS.i - LS.i + 1 < MONTHLY_MIN_SPAN) continue;   // zzz1008
       const lsOk = bottom ? LS.p / H.p - 1 : 1 - LS.p / H.p;
       if (lsOk < 0.04) continue;
       if (bottom ? s.mnL.val(LS.i, H.i) < H.p : s.mxH.val(LS.i, H.i) > H.p) continue;
@@ -1071,7 +1173,9 @@ function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<P
       const conf = wscore([[2, ramp(shoulderDiff, 0.1, 0.03)], [2, ramp(headDeeper, 0.04, 0.1)], [1, ramp(Math.min(tRatio, 1 / tRatio), 0.4, 0.75)], [2, ramp(tr, trendMin * 0.75, trendMin + 0.15)], [1, ramp(neckSep, 0.05, 0.12)], [1, ramp(off, 0.03, 0.06)], [1, ramp(neckChg, R.maxNeckChange, 0.04)], [1, ramp(shRatio, R.minShoulderRatio, 0.55)]]);
       push(out, { id: idH, conf, start: LS.i, end: e, keyFrom: RS.i, pivot, depth: bottom ? 1 - H.p / pivot : 1 - pivot / H.p, lineAt: neckAt,
         detail: `head ${fmt(H.p)}, shoulders ${fmt(LS.p)} / ${fmt(RS.p)}`,
-        lines: [LP('neckline', s, n1, p1, e, pivot), LP('trend', s, LS.i, LS.p, H.i, H.p), LP('trend', s, H.i, H.p, RS.i, RS.p)] });
+        lines: [LP('neckline', s, n1, p1, e, pivot), LP('trend', s, LS.i, LS.p, H.i, H.p), LP('trend', s, H.i, H.p, RS.i, RS.p)],
+        pts: [[LS.i, LS.p, 'LS'], [n1, p1, 'N1'], [H.i, H.p, 'HD'], [n2, p2, 'N2'], [RS.i, RS.p, 'RS']],
+        ev: evOf({ neck: pc1(neckChg), sh: Math.round(shRatio * 100) / 100, sd: pc1(shoulderDiff), rally: pc1(neckSep), trend: pc1(tr), gap: width, vr: volAround(s, LS.i, RS.i) }) });
       break;
     }
   }
@@ -1231,6 +1335,9 @@ export function analyzePatterns(bars: PBar[], opts?: DetectOptions): PatternAnal
   }
 
   const best = new Map<PatternId, { raw: Raw; st: { stage: PatternStage; f: number } }>();
+  // zzz1008 — the 1-year high and low at the last bar (ranAwayFrom1y); per side, chosen by the pattern's bias below
+  const yA = Math.max(0, last - B(s, 252) + 1);
+  const yHi = s.mxH.idx(yA, last), yLo = s.mnL.idx(yA, last);
   for (const e of [...ends].sort((a, b) => b - a)) {
     if (e < minE) continue;
     const raws = new Map<PatternId, Raw>();
@@ -1251,6 +1358,14 @@ export function analyzePatterns(bars: PBar[], opts?: DetectOptions): PatternAnal
       const bull = PATTERN_META[raw.id].bias === 'bullish';
       const st = stageOf(s, e, raw.keyFrom, raw.pivot, bull, raw.lineAt, raw.expiry, win);
       if (!st) continue;
+      // zzz1008 — a reversal the price has already run away from (at the 1-year high / low, made after the pattern) is not current
+      if (PATTERN_META[raw.id].family === 'reversal' && raw.pts?.length && REVERSAL_IDS.has(raw.id)) {
+        const lastTp = Math.max(...raw.pts.map((q) => q[0]));
+        const lvl = raw.lineAt ? raw.lineAt(capOf(last, raw.lineAt, raw.expiry)) : raw.pivot;
+        const yIdx1 = bull ? yHi : yLo, y1 = bull ? s.h[yHi] : s.l[yLo];
+        if (ranAwayFrom1y(s.c[last], y1, yIdx1 > lastTp, lvl, bull)) continue;
+        if (y1 > 0) raw.ev = { ...(raw.ev || {}), hi1y: pc1(s.c[last] / y1) };
+      }
       let conf = raw.conf;
       // breakout-volume bonus only with a real volume on the breakout day and a usable 50-day baseline
       if (st.stage === 'breakout' && st.f >= 0 && Number.isFinite(s.v[st.f]) && s.v[st.f] > 0) {
@@ -1282,7 +1397,9 @@ export function analyzePatterns(bars: PBar[], opts?: DetectOptions): PatternAnal
     const volumeOk = volCov >= 0.6 && Number.isFinite(avgVol(s, last - B(s, 10) + 1, last));
     const lengthBars = raw.end - raw.start + 1;
     const distWords = Math.abs(dist) < 0.5 ? 'close at the level' : `close ${Math.abs(dist).toFixed(0)}% ${dist < 0 ? 'below' : 'above'}`;
-    const stageWords = st.stage === 'breakout' ? `; ${bull ? 'broke out' : 'broke down'} ${unitAgo(last - st.f, tf)}`
+    // zzz1008 — a breakout whose close is back on the near side of the level keeps the event and says the current condition
+    const back = st.stage === 'breakout' && (bull ? dist < 0 : dist > 0);
+    const stageWords = st.stage === 'breakout' ? `; ${bull ? 'broke out' : 'broke down'} ${unitAgo(last - st.f, tf)}${back ? (bull ? ', back below the pivot' : ', back above the level') : ''}`
       : st.stage === 'failed' ? `; ${bull ? 'breakout' : 'breakdown'} failed` : '';
     const note = `${meta.label}${tf === 'W' ? ' (weekly)' : tf === 'M' ? ' (monthly)' : ''}, ${lenNote(lengthBars, tf)}${raw.depth != null ? `, ${Math.round(raw.depth * 100)}% deep` : ''}${raw.detail ? ` — ${raw.detail}` : ''}; ${bull ? 'pivot' : 'breakdown'} ${fmt(level)}, ${distWords}${stageWords}${volumeOk ? '' : '; volume not confirmed (no usable volume data)'}`;
     const lines = raw.lines.slice();
@@ -1300,6 +1417,8 @@ export function analyzePatterns(bars: PBar[], opts?: DetectOptions): PatternAnal
       depthPct: raw.depth != null ? Math.round(raw.depth * 1000) / 10 : null,
       pivot: Math.round(level * 10000) / 10000, distToPivotPct: Math.round(dist * 100) / 100,
       note, lines, volumeOk, timeframe: tf,
+      ...(raw.pts?.length ? { points: raw.pts.filter(([i]) => i >= 0 && i < s.n).sort((a, b) => a[0] - b[0]).map(([i, p, role]) => ({ t: s.t[i], p, role })) } : {}),
+      ...(raw.ev && Object.keys(raw.ev).length ? { evidence: raw.ev } : {}),
     });
   }
   const winA = Math.max(0, last - B(s, 60) + 1);
@@ -1386,7 +1505,8 @@ export function patternHeadline(hits: PatternHit[], fmtPrice?: (n: number) => st
   const fp = fmtPrice || fmt;
   const [top, ...rest] = hits;
   const bull = top.bias === 'bullish';
-  const verb = top.stage === 'forming' ? 'forming' : top.stage === 'breakout' ? (bull ? 'breaking out' : 'breaking down') : (bull ? 'failed breakout' : 'failed breakdown');
+  const back = top.stage === 'breakout' && top.distToPivotPct != null && (bull ? top.distToPivotPct < 0 : top.distToPivotPct > 0);   // zzz1008
+  const verb = top.stage === 'forming' ? 'forming' : top.stage === 'breakout' ? (back ? (bull ? 'broke out, back below the pivot' : 'broke down, back above the level') : bull ? 'breaking out' : 'breaking down') : (bull ? 'failed breakout' : 'failed breakdown');
   const lead = top.likelihood === 'possible' ? 'Possibly' : cap(top.likelihood);
   const parts: string[] = [top.bias, lenWords(top.lengthBars, top.timeframe)];
   if (top.pivot != null) parts.push(`${bull ? 'pivot' : 'breakdown'} ${fp(top.pivot)}`);
@@ -1410,5 +1530,8 @@ export function toTags(hits: PatternHit[]): PatternTag[] {
     c: Math.round(h.confidence * 100),
     p: h.pivot == null ? null : Number(h.pivot.toPrecision(6)),
     d: h.distToPivotPct == null ? null : Math.round(h.distToPivotPct * 10) / 10,
+    // zzz1008 — the auditable geometry (only when the hit carries it)
+    ...(h.points?.length ? { pts: h.points.map((q) => [new Date(q.t).toISOString().slice(0, 10), Number(q.p.toPrecision(4)), q.role] as [string, number, PointRole]) } : {}),
+    ...(h.evidence && Object.keys(h.evidence).length ? { ev: h.evidence } : {}),
   }));
 }

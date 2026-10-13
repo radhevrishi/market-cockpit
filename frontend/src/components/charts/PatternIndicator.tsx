@@ -13,7 +13,7 @@ import { cacheChart, freshChart, type CachedChart } from '@/lib/chart-refresh';
 import type { Bar } from '@/lib/chart-math';
 import {
   EMPTY_PATTERNS, FAILED_COLOR, PATTERN_GROUP, PATTERN_OVERLAY, PATTERN_TF_KEY, TF_WORD, analysisKey, bannerColors, bannerOf, barsRevision, distWords, fitPlan, hitColor, hitsFor, hitsToDraw, lengthWords,
-  overlayFit, parsePatternTfPref, patternDataPlan, patternKey, priceDecimals, serializePatternTfPref, shapeScoreWords, shownStatus, stageWords, togglePicked, type PatternState, type PatternTfPref,
+  overlayFit, parsePatternTfPref, patternDataPlan, patternKey, priceDecimals, serializePatternTfPref, shapeScoreWords, shownStatus, stageWords, togglePicked, handoffSpan, type PatternState, type PatternTfPref, type PatternHandoff,
 } from './pattern-view';
 
 interface ShownResponse {
@@ -45,12 +45,19 @@ export interface PatternIndicatorArgs {
   cur: string;
   /** zzz990 (CP-07) — the main chart's own load state, so a failed / empty load is reported instead of "looking…" forever */
   chart?: { loading: boolean; error: string | null };
+  /** zzz1008 — the Pine Screener's hand-off (?atf / pat / pf / pt): analysis timeframe for this visit, the pattern to select and fit */
+  handoff?: PatternHandoff | null;
 }
 
 export function usePatternIndicator(a: PatternIndicatorArgs) {
   const { on, ready, ticker, market, exchange, basis, live, bars, chartRef, cacheRef, cur, chart: chartLoad } = a;
   // zzz992 — the analysis timeframe (per viewer); hits are keyed by symbol + timeframe so a weekly result never shows as daily
-  const [pref, setPref] = useState<PatternTfPref>(() => { try { return parsePatternTfPref(localStorage.getItem(PATTERN_TF_KEY)); } catch { return parsePatternTfPref(null); } });
+  const handoff = a.handoff || null;
+  // zzz1008 — a hand-off's analysis timeframe wins for this visit (the remembered choice is not overwritten)
+  const [pref, setPref] = useState<PatternTfPref>(() => {
+    if (handoff) return { tf: handoff.atf, provisional: false };
+    try { return parsePatternTfPref(localStorage.getItem(PATTERN_TF_KEY)); } catch { return parsePatternTfPref(null); }
+  });
   const savePref = useCallback((next: PatternTfPref) => { setPref(next); try { localStorage.setItem(PATTERN_TF_KEY, serializePatternTfPref(next)); } catch { /* this visit only */ } }, []);
   const analysisTf = pref.tf, includeCurrent = pref.provisional;
   const key = analysisKey(patternKey(market, ticker, exchange, basis), analysisTf, includeCurrent);
@@ -188,6 +195,19 @@ export function usePatternIndicator(a: PatternIndicatorArgs) {
       if (!v.atEnd) chart.scrollToDataIndex(v.right);
     } catch { /* chart disposed */ }
   }, [chartRef, key]);
+
+  // zzz1008 — the handed-off pattern: selected (drawn) and fitted once, when its analysis on the hand-off timeframe is ready
+  const handoffDone = useRef(false);
+  useEffect(() => {
+    if (!handoff?.pat || handoffDone.current || !on || !ready || !bars.length || analysisTf !== handoff.atf) return;
+    const h = hits.find((x) => x.id === handoff.pat);
+    if (state.key !== key || state.status !== 'ready') return;
+    handoffDone.current = true;
+    if (!h) return;
+    const span = handoffSpan(h, handoff);
+    const timer = setTimeout(() => { setPicked({ key, ids: new Set([h.id]) }); fit({ ...h, ...span }); }, 60);
+    return () => clearTimeout(timer);
+  }, [handoff, on, ready, bars.length, analysisTf, hits, state.key, state.status, key, fit]);
 
   const setAnalysisTf = useCallback((tf: PatternTimeframe) => savePref({ tf, provisional: tf === 'D' ? false : pref.provisional }), [savePref, pref.provisional]);
   const setIncludeCurrent = useCallback((v: boolean) => savePref({ tf: pref.tf, provisional: pref.tf !== 'D' && v }), [savePref, pref.tf]);

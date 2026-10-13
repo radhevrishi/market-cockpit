@@ -224,7 +224,7 @@ export function assembleUsRows(universe: NasdaqRow[], ciks: Map<string, number>,
     const evDebt = f?.debt ?? (noDebtFiled ? 0 : null);
     const approx = [...(f?.approx || []), ...(noDebtFiled ? ['evRev'] : []), ...(f?.fcfmFY != null ? ['fcfmTTM', 'r40'] : [])];   // zzz984: FCF margin is the latest full year's
     rows.push({
-      t: r.t, n: r.n, sec: r.sec, ind: r.ind, px: rq.px, chg: rq.chg, ...(rq.pxAlt != null ? { pxAlt: rq.pxAlt } : {}), vol: r.vol, avgVol10: tf?.avgVol10 ?? null, mc,
+      t: r.t, n: r.n, sec: r.sec, ind: r.ind, px: rq.px, chg: rq.chg, ...(rq.pxAlt != null ? { pxAlt: rq.pxAlt } : {}), ...(rq.live ? { pxLive: 1 as const } : {}), vol: r.vol, avgVol10: tf?.avgVol10 ?? null, mc,
       sma50: tf?.sma50 ?? sma(c, 50), sma200: tf?.sma200 ?? sma(c, 200),
       revQYoY: f?.revQYoY ?? null, revAYoY: f?.revAYoY ?? null, gpQYoY: f?.gpQYoY ?? null, gmFY: f?.gmFY ?? null,
       ebitdaQoQ: f?.ebitdaQoQ ?? null, ebitdaAYoY: f?.ebitdaAYoY ?? null, epsQYoY: f?.epsQYoY ?? null, opmTTM: f?.opmTTM ?? null,

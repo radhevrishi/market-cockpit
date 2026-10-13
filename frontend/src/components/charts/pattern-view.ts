@@ -36,6 +36,23 @@ export function parsePatternTfPref(raw: string | null | undefined): PatternTfPre
   } catch { return DEFAULT_PATTERN_TF; }
 }
 export const serializePatternTfPref = (p: PatternTfPref) => JSON.stringify({ tf: p.tf, provisional: p.tf !== 'D' && p.provisional });
+/** zzz1008 — the Pine Screener's chart hand-off: ?atf=<D|W|M>&pat=<pattern id>&pf=<YYYY-MM-DD>&pt=<YYYY-MM-DD>. The chart opens the
+ *  pattern indicator on the analysis timeframe `atf` (for this visit — the viewer's saved choice is not changed), selects `pat` and
+ *  fits the window pf → pt (or the hit's own span) with room for the prior trend before it. null = no hand-off. */
+export interface PatternHandoff { atf: PatternTimeframe; pat: PatternId | null; from: number | null; to: number | null }
+export function parsePatternHandoff(get: (k: string) => string | null | undefined, ids: ReadonlyArray<string>): PatternHandoff | null {
+  const atfRaw = (get('atf') || '').toUpperCase();
+  const pat = get('pat') || '';
+  if (!atfRaw && !pat) return null;
+  const atf: PatternTimeframe = atfRaw === 'W' || atfRaw === 'M' ? atfRaw : 'D';
+  const day = (k: string) => { const v = get(k) || ''; if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return null; const t = Date.parse(`${v}T00:00:00Z`); return Number.isFinite(t) ? t : null; };
+  return { atf, pat: ids.includes(pat) ? pat as PatternId : null, from: day('pf'), to: day('pt') };
+}
+/** The span to fit for a handed-off pattern: its window (or the hit's span) plus 60% of its length before it (the prior trend). */
+export function handoffSpan(h: Pick<PatternHit, 'startT' | 'endT'>, ho: Pick<PatternHandoff, 'from' | 'to'> | null): { startT: number; endT: number } {
+  const a = ho?.from ?? h.startT, b = Math.max(ho?.to ?? h.endT, h.endT);
+  return { startT: a - Math.max(0, b - a) * 0.6, endT: b };
+}
 export const TF_WORD: Record<PatternTimeframe, string> = { D: 'daily', W: 'weekly', M: 'monthly' };
 /** The identity of one analysis: the symbol key plus timeframe (+ provisional) — hits of one never show under another. */
 export const analysisKey = (key: string, tf: PatternTimeframe, provisional: boolean) => (tf === 'D' ? key : `${key}|${tf}${provisional ? '+p' : ''}`);
@@ -165,7 +182,9 @@ function blend(color: string, page: string, a: number): string {
 // ── dropdown rows ───────────────────────────────────────────────────────────────
 export function stageWords(h: PatternHit): string {
   const bull = h.bias === 'bullish';
-  return h.stage === 'forming' ? 'forming' : h.stage === 'breakout' ? (bull ? 'breaking out' : 'breaking down') : (bull ? 'breakout failed' : 'breakdown failed');
+  // zzz1008 — a breakout back on the near side of its level says so (the event stays, the current condition is added)
+  const back = h.stage === 'breakout' && h.distToPivotPct != null && (bull ? h.distToPivotPct < 0 : h.distToPivotPct > 0);
+  return h.stage === 'forming' ? 'forming' : h.stage === 'breakout' ? (back ? (bull ? 'broke out · back below pivot' : 'broke down · back above level') : bull ? 'breaking out' : 'breaking down') : (bull ? 'breakout failed' : 'breakdown failed');
 }
 export function distWords(h: PatternHit): string {
   const d = h.distToPivotPct;

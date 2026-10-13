@@ -24,7 +24,8 @@ import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
 import { readableOn, textOnColor } from '@/lib/readable-color';
 import { addSet, activeSetOf, chooseSet, loadSets, removeSet, saveSets, setsOf, withSet, DRAWING_SETS_KEY, MAIN_SET, type SetsStore } from '@/lib/chart-drawing-sets';
 import { PatternBanner, usePatternIndicator } from './PatternIndicator';
-import { patternsOn, withPatterns } from './pattern-view';
+import { patternsOn, withPatterns, parsePatternHandoff } from './pattern-view';
+import { PATTERN_IDS } from '@/lib/chart-patterns';
 import { StageBanner, useStageIndicator } from './StageIndicator';
 import { stageOn, withStage } from './stage-view';
 import SymbolSearch from './SymbolSearch';
@@ -738,7 +739,16 @@ export default function ChartWorkspace() {
   const stats = live?.stats;
   const cur = live?.currency === 'INR' ? '₹' : live?.currency === 'USD' ? '$' : live?.currency ? `${live.currency} ` : (market === 'IN' ? '₹' : '$');
   // zzz982 — "Automate chart patterns": runs only while that indicator is in the working layout
-  const patterns = usePatternIndicator({ on: patternsOn(L.working), ready, ticker, market, exchange, basis, live, bars, chartRef, cacheRef, cur, chart: { loading, error } });
+  // zzz1008 — the Pine Screener's hand-off (?atf / pat / pf / pt): the pattern indicator opens on that analysis timeframe with the
+  // pattern selected and its window fitted; the indicator is switched on for it when it is off
+  const [patHandoff] = useState(() => parsePatternHandoff((k) => sp.get(k), PATTERN_IDS));
+  const patterns = usePatternIndicator({ on: patternsOn(L.working), ready, ticker, market, exchange, basis, live, bars, chartRef, cacheRef, cur, chart: { loading, error }, handoff: patHandoff });
+  const handoffOn = useRef(false);
+  useEffect(() => {
+    if (!patHandoff?.pat || handoffOn.current) return;
+    handoffOn.current = true;
+    if (!patternsOn(L.working)) L.setWorking((w) => withPatterns(w, true));
+  }, [patHandoff, L]);
   // zzz987 — "Stage Analysis (TheWrap method)": runs only while that indicator is in the working layout
   const stageInd = useStageIndicator({ on: stageOn(L.working), ready, ticker, market, exchange, basis, live, bars, chartRef, cacheRef, light: chartLight });
   const changeColor = (stats?.change ?? 0) >= 0 ? 'var(--mc-bullish, #059669)' : 'var(--mc-bearish, #DC2626)';

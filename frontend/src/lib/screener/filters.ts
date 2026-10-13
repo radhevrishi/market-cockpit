@@ -190,6 +190,9 @@ export interface PatternRule {
   minScore: number;
   /** distance to the pivot in the pattern's direction, % (− = not reached yet) */
   dist: { on: boolean; lo: number; hi: number };
+  /** zzz1008 — false: a breakout (breakdown) whose analysis close is back on the near side of its pivot does NOT count as stage
+   *  'breakout' (only breakouts holding beyond the pivot); true / absent: it counts (labelled "broke out · back below pivot"). */
+  returned?: boolean;
 }
 export const DEFAULT_PATTERN_RULE: PatternRule = { bias: 'U', ids: [], tfs: ['D'], tfMode: 'any', stages: ['f', 'b'], minScore: 55, dist: { on: true, lo: -15, hi: 5 } };
 /** Shape-score bands (a heuristic score of how closely the shape fits the definition — not a win probability). */
@@ -231,12 +234,13 @@ export function patMissingWhy(row: unknown, tf: PatTf): string {
   return `${name}: not scanned yet`;
 }
 /** Does one tag pass the pattern part (bias, type, stage, score, pivot window)? */
-export function tagPasses(t: RowTag, rule: Pick<PatternRule, 'bias' | 'ids' | 'stages' | 'minScore' | 'dist'>, idSet?: ReadonlySet<string> | null): boolean {
+export function tagPasses(t: RowTag, rule: Pick<PatternRule, 'bias' | 'ids' | 'stages' | 'minScore' | 'dist'> & { returned?: boolean }, idSet?: ReadonlySet<string> | null): boolean {
   if (!t || !PATTERN_META[t.id]) return false;
   if (rule.bias !== 'both' && t.b !== rule.bias) return false;
   const ids = idSet !== undefined ? idSet : rule.ids.length ? new Set<string>(rule.ids) : null;
   if (ids && !ids.has(t.id)) return false;
   if (!rule.stages.includes(t.s)) return false;   // empty stages = nothing (zzz994 MC-03)
+  if (rule.returned === false && t.s === 'b') { const dd = tagDirDist(t); if (dd != null && dd < 0) return false; }   // zzz1008
   if (!(t.c >= rule.minScore)) return false;
   if (rule.dist.on) {
     const d = tagDirDist(t);
@@ -253,7 +257,7 @@ export interface PatternEval {
   matchedTfs: PatTf[];
 }
 /** Evaluate a pattern rule on one row: ANY selected timeframe or ALL selected timeframes; an unscanned timeframe is "missing". */
-export function evalPattern(row: unknown, rule: Pick<PatternRule, 'bias' | 'ids' | 'stages' | 'minScore' | 'dist' | 'tfs' | 'tfMode'>): PatternEval {
+export function evalPattern(row: unknown, rule: Pick<PatternRule, 'bias' | 'ids' | 'stages' | 'minScore' | 'dist' | 'tfs' | 'tfMode'> & { returned?: boolean }): PatternEval {
   const tfs = rule.tfs?.length ? rule.tfs : (['D'] as PatTf[]);
   const idSet = rule.ids.length ? new Set<string>(rule.ids) : null;
   const tags: RowTag[] = [], missingTfs: PatTf[] = [], matchedTfs: PatTf[] = [];

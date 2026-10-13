@@ -273,7 +273,8 @@ test('zzz994 Pine page (JSDOM): counts kept apart, search-scoped copy, explicit 
     assert.match(text(), /3 shown · 3 filter matches/);
     assert.ok(Array.from(document.querySelectorAll('th')).some((th) => /Shape score/.test(th.textContent || '')));
     assert.ok(!Array.from(document.querySelectorAll('th')).some((th) => /Likelihood/.test(th.textContent || '')));
-    assert.ok(Array.from(document.querySelectorAll('th')).some((th) => /Scan close/.test(th.textContent || '')), 'scan close shown where it differs from the quote');
+    // zzz1008: the column shows the pattern's ANALYSIS close (its own timeframe), named so
+    assert.ok(Array.from(document.querySelectorAll('th')).some((th) => /Analysis close/.test(th.textContent || '')), 'analysis close shown where it differs from the quote');
     assert.ok(document.querySelector('[aria-label="Price sources disagree"]'));
     assert.ok(document.querySelector('[aria-label="daily timeframe"]'), 'timeframe on every chip');
     // search: one row shown; Copy acts on it, "all matches" only when chosen
@@ -298,11 +299,13 @@ test('zzz994 Pine page (JSDOM): counts kept apart, search-scoped copy, explicit 
     assert.match(csv, /Daily technical close \(USD\)/);   // zzz1004 (PS-02): analysis close and daily technical close kept apart
     assert.match(csv, /Analysis close \(USD\)/);
     assert.doesNotMatch(csv, /Likelihood/);
-    // unpress Forming and Breakout: no stage → 0 results + prompt (never "all stages")
+    // zzz1008 (item 1a): unpress Forming, then Breakout — the LAST stage cannot be switched off (it used to leave "No stage" and 0
+    // matches everywhere); the screen keeps Breakout and says why. An empty stage list (a saved query) still shows the prompt.
     await click((b) => b.textContent === 'Forming');
     await click((b) => b.textContent === 'Breakout');
-    assert.match(text(), /0 companies match/);
-    assert.match(text(), /No stage selected/);
+    assert.doesNotMatch(document.querySelector('[data-testid="active-query"]')!.textContent!, /No stage/);
+    assert.match(text(), /At least one stage stays selected/);
+    assert.match(text(), /1 companies match/);
     await click((b) => b.textContent === 'All stages');
     assert.match(text(), /3 companies match/);
     // weekly timeframe: not scanned yet → said so, nothing silently relabelled

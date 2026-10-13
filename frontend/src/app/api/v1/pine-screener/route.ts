@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { dbQuery, getPool } from '@/lib/db';
 import { ensureSchema } from '@/lib/db-migrate';
-import { leanRows, scanCoverage, PATTERN_SCAN_VERSION, PATTERN_SCAN_DAILY_COMPAT } from '@/lib/screener/pine';
+import { leanRows, rowGeometry, scanCoverage, PATTERN_SCAN_VERSION } from '@/lib/screener/pine';
 import type { ScreenRow } from '@/lib/screener/types';
 import { kickBuild, isBuilding } from '@/lib/screener/run';
 
@@ -12,9 +12,30 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const mem = new Map<string, { at: number; body: string }>();
+/** zzz1008 — the parsed snapshot per market (the row detail's geometry is read from it without another database read) */
+const snapMem = new Map<string, { at: number; builtAt: string; rows: ScreenRow[] }>();
 export async function GET(req: Request) {
   const sp = new URL(req.url).searchParams;
   const market = sp.get('market') === 'IN' ? 'IN' : 'US';
+  // zzz1008 — ?detail=<TICKER>: one company's pattern tags WITH their auditable geometry (turning points + rule evidence). The list
+  // payload carries the tags without it (leanRows strips pts / ev) so it stays small.
+  const detail = (sp.get('detail') || '').trim().toUpperCase().replace(/^(NSE|BSE|NASDAQ|NYSE|AMEX):/, '').replace(/\.(NS|BO)$/, '');
+  if (detail) {
+    if (!/^[A-Z0-9&.\-]{1,24}$/.test(detail)) return NextResponse.json({ ok: false, error: 'bad ticker' }, { status: 400 });
+    let snap = snapMem.get(market);
+    if (!snap || Date.now() - snap.at > 5 * 60_000) {
+      if (!getPool() || !(await ensureSchema())) return NextResponse.json({ ok: false, error: 'database not available' }, { status: 503 });
+      const f = await dbQuery<{ built_at: string; rows: unknown }>(`SELECT built_at, rows FROM screener_snapshot WHERE market = $1`, [market]).catch(() => []);
+      if (!f.length) return NextResponse.json({ ok: false, error: 'not built yet' }, { status: 404 });
+      let rr: unknown = f[0].rows;
+      if (typeof rr === 'string') { try { rr = JSON.parse(rr); } catch { rr = []; } }
+      snap = { at: Date.now(), builtAt: String(f[0].built_at), rows: Array.isArray(rr) ? (rr as ScreenRow[]) : [] };
+      snapMem.set(market, snap);
+    }
+    const row = snap.rows.find((r) => String(r.t).toUpperCase() === detail);
+    if (!row) return NextResponse.json({ ok: false, error: 'not in this market\'s data' }, { status: 404 });
+    return NextResponse.json({ ok: true, market, t: row.t, builtAt: snap.builtAt, geometry: rowGeometry(row) }, { headers: { 'Cache-Control': 'private, max-age=300' } });
+  }
   const b = sp.get('bias');
   const bias = b === 'bullish' || b === 'U' ? 'U' : b === 'bearish' || b === 'D' ? 'D' : null;
   const patternsOnly = sp.get('patterns') === '1';   // zzz984: default = every company (rules-only screens need them all)
@@ -31,6 +52,7 @@ export async function GET(req: Request) {
   let rows: unknown = found[0].rows;
   if (typeof rows === 'string') { try { rows = JSON.parse(rows); } catch { rows = []; } }
   const all = Array.isArray(rows) ? (rows as ScreenRow[]) : [];
+  snapMem.set(market, { at: Date.now(), builtAt: String(found[0].built_at), rows: all });
   const lean = leanRows(all, bias, patternsOnly);
   // zzz989 — a snapshot from before the newest figures (patterns / TradingView-script fields) starts a build now, instead of
   // waiting for the next scheduled one; at most once every 30 minutes (kickBuild), and it joins a running build.
@@ -45,13 +67,9 @@ export async function GET(req: Request) {
   const notes: string[] = lean.scanned ? [] : [building
     ? 'Chart patterns are being read now by a build that just started — the page fills them in when it finishes (about 10–15 minutes). Companies are listed meanwhile.'
     : 'Chart patterns are read during the screener build; the next build of this market adds them. Companies are listed meanwhile.'];
-  if (lean.stale) notes.push(`${lean.stale} companies were read by an older pattern-scan version — their patterns are withheld (not shown as current) until their prices are re-read${building ? ' (a build is running)' : ''}.`);
-  // zzz1003 (PS-01) — weekly / monthly readings of an older scan (no close of their own) are withheld until the company is re-read
-  { const sw = lean.coverage.W.stale, sm = lean.coverage.M.stale;
-    if (sw || sm) notes.push(`${sw} weekly and ${sm} monthly readings come from an older scan (version ${PATTERN_SCAN_DAILY_COMPAT.join('/')} or without their own week / month close) — those patterns are withheld and their analysis close shown as unavailable until the company is re-read with the current scan (version ${PATTERN_SCAN_VERSION})${building ? ' (a build is running)' : ''}. Daily patterns of those companies are shown.`); }
-  if (lean.coverage.D.provisional) notes.push(`${lean.coverage.D.provisional} companies' daily patterns were read during a trading session (they include that day's unfinished bar) — marked provisional until re-read.`);
-  if (lean.insufficient) notes.push(`${lean.insufficient} companies have too little price history for a pattern scan (fewer than 30 usable sessions) — not counted as scanned.`);
-  if (lean.invalid || lean.errors) notes.push(`${lean.invalid + lean.errors} companies could not be scanned (${lean.invalid} price data rejected, ${lean.errors} scan failures) — their price figures are kept.`);
+  // zzz1008 (item 5) — timeframe-specific coverage (stale / rebuilding, too little history, provisional, rejected data) is no longer a
+  // market-wide note: the page states it for the SELECTED timeframes within the current list, in that timeframe's own units
+  // (lean.coverage carries the counts per timeframe). Only market-wide facts stay here.
   if (lean.pxConflicts) notes.push(`${lean.pxConflicts} companies show a latest quote more than 2% from the close the patterns were read from (different price sources) — pattern distances use the scan close; the quote distance is shown apart.`);
   const body = JSON.stringify({ ok: true, market, builtAt: found[0].built_at, ...lean, building, notes });
   mem.set(key, { at: Date.now(), body });

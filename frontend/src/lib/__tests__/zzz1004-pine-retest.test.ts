@@ -86,7 +86,7 @@ test('zzz1004 OMFREIGHT is excluded by the default +5% window — and "Why not l
   assert.deepEqual(run.strict.map((h) => h.row.t).sort(), EX.map((e) => e.t).filter((t) => t !== 'OMFREIGHT').sort());
   const w = whyNotListed('nse:omfreight', { rows: ROWS, q, market: 'IN', list: null, run });
   assert.equal(w.verdict, 'excluded');
-  assert.match(w.headline, /OMFREIGHT: excluded — Double bottom \(W\) \[W\]: \+8\.0% to the pivot is outside the -15% to \+5% window/);
+  assert.match(w.headline, /OMFREIGHT: excluded — Double bottom \[W\]: \+8\.0% to the pivot is outside the -15% to \+5% window/);   // zzz1008: label without '(W)'
   assert.ok(w.steps.some((s) => s.label === 'Weekly scan' && s.ok && /completed weekly close 2026-10-09/.test(s.detail)));
   // with no pivot window it would be listed (nothing is relaxed by the checker itself)
   assert.equal(whyNotListed('OMFREIGHT', { rows: ROWS, q: { ...q, dist: { ...q.dist, on: false } }, market: 'IN', list: null }).verdict, 'listed');

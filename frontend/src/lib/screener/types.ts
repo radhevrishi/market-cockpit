@@ -103,6 +103,8 @@ export interface ScreenRow {
   pxAt?: string;             // date of px when known (India: the NSE file's date; US: unknown — the snapshot's builtAt)
   pxGap?: number;            // (px ÷ scanPx − 1) × 100, 0.01
   pxAlt?: number;            // zzz996 — Nasdaq's quote when it was a session behind and the last bar's close replaced it
+  pxLive?: 1;                // zzz1008 — px is the close of today's UNFINISHED daily bar (Nasdaq's list was a session behind during the
+                             // session): provisional, observed when the bars were read (scanLive.at) — not a completed close
   pxConflict?: 1;            // |pxGap| > 2 on the same (or an unknown) day: the two vendors disagree materially
   // ── zzz984: the owner's TradingView Pine Screener setups (lib/screener/tv-screens.ts), from the same daily bars ─────────────
   tt?: number | null;        // Minervini trend template: rules passed 0–6

@@ -48,7 +48,7 @@ export const BUILT_IN_PINE_SCREENS: readonly PineScreen[] = [
   }, "O'Neil's bases within 10% of the buy point (pivot), price above its 200-day average."),
   screen('minervini-vcp', 'Minervini VCP', { bias: 'U', ids: ['vcp'], dist: { on: true, lo: -8, hi: 5 }, filters: TREND_TEMPLATE, cols: ['tt', 'rsR'] },
     'Volatility contraction patterns in stocks that pass all six rules of your Minervini trend-template script.'),
-  screen('breakouts-today', 'Breakouts (last 5 sessions)', { bias: 'U', stages: ['b'], dist: { on: true, lo: 0, hi: 8 } },
+  screen('breakouts-today', 'Breakouts (last 5 sessions)', { bias: 'U', stages: ['b'], dist: { on: true, lo: 0, hi: 8 }, returned: false },
     'Bullish patterns whose first close above the pivot came in the last 5 sessions, still no more than 8% above it.'),
   screen('flags-pennants', 'Flags & pennants', { bias: 'U', ids: ['bull_flag', 'bull_pennant', 'high_tight_flag'], dist: { on: true, lo: -10, hi: 5 } },
     'Bull flags, pennants and high tight flags — short pauses after a sharp rise.'),
@@ -57,7 +57,7 @@ export const BUILT_IN_PINE_SCREENS: readonly PineScreen[] = [
     'Double / triple bottoms, inverse head & shoulders and falling wedges after a fall.'),
   screen('bearish-tops', 'Bearish tops', { bias: 'D', ids: ['double_top', 'triple_top', 'head_shoulders'] },
     'Double / triple tops and head & shoulders tops after a rise — names to avoid or trim.'),
-  screen('breakdowns', 'Breakdowns (last 5 sessions)', { bias: 'D', stages: ['b'], dist: { on: true, lo: 0, hi: 10 }, filters: BELOW_200 },
+  screen('breakdowns', 'Breakdowns (last 5 sessions)', { bias: 'D', stages: ['b'], dist: { on: true, lo: 0, hi: 10 }, filters: BELOW_200, returned: false },
     'Bearish patterns that closed through the breakdown level in the last 5 sessions, price below its 200-day average.'),
   screen('bear-continuation', 'Bear flags, descending triangles & rising wedges', { bias: 'D', ids: ['bear_flag', 'descending_triangle', 'rising_wedge'] }),
   // zzz994 — two clearly different "all patterns" sizes: a broad candidate list and a near-ready list
@@ -68,15 +68,15 @@ export const BUILT_IN_PINE_SCREENS: readonly PineScreen[] = [
   // zzz999 — the setup cards' own screens (the cards at the top of the page start from these)
   screen('bases-forming', 'Bases forming', { bias: 'U', ids: BASE_IDS, stages: ['f'], dist: { on: true, lo: -15, hi: 0 } },
     "Bullish bases (O'Neil bases and VCPs) still forming, likely or better, with the scan close up to 15% below the pivot."),
-  screen('weekly-bases', 'Weekly bases', { bias: 'U', ids: BASE_IDS, tfs: ['W'], stages: ['f', 'b'], dist: { on: true, lo: -20, hi: 5 } },
+  screen('weekly-bases', 'Weekly bases', { bias: 'U', ids: BASE_IDS, tfs: ['W'], stages: ['f', 'b'], dist: { on: true, lo: -20, hi: 5 }, returned: false },
     'Bullish bases read on completed weekly bars, forming or just broken out — longer, slower setups.'),
   // zzz1004 — Monthly Bases (completed calendar months only). Bases and reversal bases are kept apart (counted separately);
   // no pivot window by default (broad discovery) — the near-pivot variant is its own screen.
-  screen('monthly-bases', 'Monthly bases', { bias: 'U', ids: MONTHLY_BASE_IDS, tfs: ['M'], stages: ['f', 'b'], dist: { on: false, lo: -25, hi: 5 } },
+  screen('monthly-bases', 'Monthly bases', { bias: 'U', ids: MONTHLY_BASE_IDS, tfs: ['M'], stages: ['f', 'b'], dist: { on: false, lo: -25, hi: 5 }, returned: false },
     'U / rounding bases, cups and VCPs read on completed monthly bars, forming or broken out in the last completed month(s) — no pivot limit. A monthly reading needs at least 24 monthly bars; a long (up to 60-month) U base needs more history than that.'),
-  screen('monthly-reversal-bases', 'Monthly reversal bases', { bias: 'U', ids: MONTHLY_REVERSAL_IDS, tfs: ['M'], stages: ['f', 'b'], dist: { on: false, lo: -25, hi: 5 } },
+  screen('monthly-reversal-bases', 'Monthly reversal bases', { bias: 'U', ids: MONTHLY_REVERSAL_IDS, tfs: ['M'], stages: ['f', 'b'], dist: { on: false, lo: -25, hi: 5 }, returned: false },
     'Double / triple bottoms and inverse head & shoulders on completed monthly bars — reversals, counted apart from the bases. No pivot limit.'),
-  screen('monthly-near-pivot', 'Monthly bases near the pivot', { bias: 'U', ids: MONTHLY_BASE_IDS, tfs: ['M'], stages: ['f', 'b'], dist: { on: true, lo: -10, hi: 5 } },
+  screen('monthly-near-pivot', 'Monthly bases near the pivot', { bias: 'U', ids: MONTHLY_BASE_IDS, tfs: ['M'], stages: ['f', 'b'], dist: { on: true, lo: -10, hi: 5 }, returned: false },
     'The monthly bases whose last completed monthly close is from 10% below the pivot to 5% above it.'),
   screen('failed-breakouts', 'Failed breakouts', { bias: 'U', stages: ['x'], dist: { on: false, lo: -30, hi: 5 } },
     'Bullish patterns that broke out in the last 40 sessions and fell more than 7.5% back through the pivot — a warning sign.'),

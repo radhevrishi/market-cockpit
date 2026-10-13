@@ -22,7 +22,7 @@ import type { TechStored } from './tech-fetch';
 import { tvFigures, rsRatings, type TvFigures } from './tv-screens';
 
 /** Bump when the engine or the stored tag changes: every stored entry without it is re-read on the next build. */
-export const PATTERN_SCAN_VERSION = 7;   // 7 = zzz1005: chart-pattern precision audit (real turning points, cp-3.1-precision) — every stored reading is re-read; 2 = zzz984: + the owner's TradingView indicator fields (tv-screens.ts); 3 = zzz987: + Stage Analysis (TheWrap method); 4 = zzz990: chart-pattern audit (volume missingness, IPO first base + listing date, projected sloped boundaries, strict HTF); 5 = zzz993: scan status / quality (MC-02) + scan-close provenance (MC-01) + weekly / monthly patterns (patW / patM); 6 = zzz1003: W / M scans always carry their own close `px` (PS-01), the daily scan reads COMPLETED sessions only (+ an optional provisional live reading, PS-03), monthly scans read ~10 years (PS-07)
+export const PATTERN_SCAN_VERSION = 8;   // 8 = zzz1008: auditable geometry on every tag (pts / ev), the 1-year-high runaway rule for reversals and the 6-candle monthly minimum (cp-3.2-geometry) — every stored reading is re-read; 7 = zzz1005: chart-pattern precision audit (real turning points, cp-3.1-precision) — every stored reading is re-read; 2 = zzz984: + the owner's TradingView indicator fields (tv-screens.ts); 3 = zzz987: + Stage Analysis (TheWrap method); 4 = zzz990: chart-pattern audit (volume missingness, IPO first base + listing date, projected sloped boundaries, strict HTF); 5 = zzz993: scan status / quality (MC-02) + scan-close provenance (MC-01) + weekly / monthly patterns (patW / patM); 6 = zzz1003: W / M scans always carry their own close `px` (PS-01), the daily scan reads COMPLETED sessions only (+ an optional provisional live reading, PS-03), monthly scans read ~10 years (PS-07)
 /** zzz1003 (PS-01) — older scan versions whose DAILY reading is still shown during the changeover to the current version: their daily
  *  tags / fields are what the current version would show for a completed session (a v5 entry read during a session is labelled
  *  `session: 'provisional'`). Their WEEKLY / MONTHLY readings are NOT shown (v5 W / M scans may lack `px`, the close their `d` is
@@ -308,16 +308,20 @@ export function rowScanFields(tf: TechStored | undefined, quote: { px: number | 
  *   • the quote's change % (Nasdaq `chg`) equals the PREVIOUS session's change ((prevClose ÷ prev2Close − 1) × 100, within
  *     0.05 point) and not the last session's.
  *  Missing chg, missing prev2Close (entries read before zzz998) or any doubt → the Nasdaq quote is kept. */
-export interface ResolvedQuote { px: number | null; chg: number | null; src: string; at?: string | null; pxAlt?: number; mcScale: number }
+export interface ResolvedQuote { px: number | null; chg: number | null; src: string; at?: string | null; pxAlt?: number; mcScale: number; live?: boolean }
 export const QUOTE_CHG_TOL = 0.05;
 export function resolveUsQuote(
   q: { px: number | null; chg: number | null },
-  tf: { close?: number | null; prevClose?: number | null; prev2Close?: number | null; scanPx?: number | null; scanAt?: string | null; d?: string } | undefined,
+  tf: { close?: number | null; prevClose?: number | null; prev2Close?: number | null; scanPx?: number | null; scanAt?: string | null; d?: string; cc?: unknown; scanLive?: unknown } | undefined,
   now: Date = new Date(),
 ): ResolvedQuote {
   const keep: ResolvedQuote = { px: q.px, chg: q.chg, src: 'nasdaq', mcScale: 1 };
   if (!tf || !fin(q.px) || !(q.px > 0) || !fin(q.chg)) return keep;
-  if (usSessionOpen(now)) return keep;
+  // zzz1008 — the bars' last bar is today's UNFINISHED session (read during trading: `cc` / `scanLive`). Then Nasdaq's list showing
+  // yesterday's close (with yesterday's change) is a session behind even DURING the session (seen 13 Oct 2026: 1,466 US "price
+  // conflicts" — px = the 12 Oct close, scanPx = the 13 Oct live bar). The live bar's close is used, labelled provisional.
+  const liveBar = !!(tf.cc || tf.scanLive);
+  if (usSessionOpen(now) && !liveBar) return keep;
   const last = fin(tf.scanPx) ? tf.scanPx : fin(tf.close) ? tf.close : null;
   const prev = tf.prevClose, prev2 = tf.prev2Close;
   if (last == null || !(last > 0) || !fin(prev) || !(prev > 0) || !fin(prev2) || !(prev2 > 0)) return keep;
@@ -325,7 +329,7 @@ export function resolveUsQuote(
   if (!near(q.px, prev) || near(q.px, last)) return keep;
   const prevChg = (prev / prev2 - 1) * 100, lastChg = (last / prev - 1) * 100;
   if (Math.abs(q.chg - prevChg) > QUOTE_CHG_TOL || Math.abs(q.chg - lastChg) <= QUOTE_CHG_TOL) return keep;
-  return { px: last, chg: Math.round(lastChg * 100) / 100, src: 'yahoo (Nasdaq list a session behind)', at: tf.scanAt || tf.d || null, pxAlt: q.px, mcScale: last / q.px };
+  return { px: last, chg: Math.round(lastChg * 100) / 100, src: liveBar ? 'yahoo live bar (provisional; Nasdaq list a session behind)' : 'yahoo (Nasdaq list a session behind)', at: tf.scanAt || tf.d || null, pxAlt: q.px, mcScale: last / q.px, ...(liveBar ? { live: true } : {}) };
 }
 
 /** zzz993 (MC-01) — the build note on price sources: px and the averages / patterns come from different feeds in the US, so a
@@ -423,6 +427,9 @@ export interface PineQuery {
    *  any other rule (strict: a company without a usable Rule of 40 fails; provisional only while NO company has the figure) and
    *  combined AND-style with the pattern part, the company list, the timeframes and every other choice. Optional in saved data. */
   r40Min?: number | null;
+  /** zzz1008 — count breakouts (breakdowns) whose analysis close is back on the near side of the pivot as stage 'breakout' (true,
+   *  the default; labelled "broke out · back below pivot") or only those holding beyond it (false — the setup cards' screens). */
+  returned?: boolean;
 }
 /** zzz984 — the extra columns the owner can switch on (the TradingView-script fields first). */
 export const OPTIONAL_COLS: readonly NumKey[] = ['tt', 'rsR', 'stage', 'twSt', 'sata', 'mrs', 'twWk', 'r40', 'revQYoY', 'fcfmTTM', 'rsiMA', 'rsiX', 'gcD', 'dcD', 'emaXU', 'emaXD', 'ppD', 'rvol', 'adv$', 'adrP', 'ripB', 'ttOk', 'st12', 'perf1M', 'perf6M', 'perf1Y'];
@@ -430,7 +437,7 @@ export const OPTIONAL_COLS: readonly NumKey[] = ['tt', 'rsR', 'stage', 'twSt', '
 export const DEFAULT_QUERY: PineQuery = {
   qv: 2, bias: 'U', ids: [], stages: ['f', 'b'], minConf: 55, tfs: ['D'], tfMode: 'any', dist: { on: true, lo: -15, hi: 5 },
   mcMin: null, mcMax: null, pxMin: null, turnMin: null, perfKey: 'perf3M', perfMin: null, sectors: [], filters: [],
-  need: 'pattern', cols: [], r40Min: null,
+  need: 'pattern', cols: [], r40Min: null, returned: true,
 };
 
 // ── zzz1007: the Rule of 40 control ─────────────────────────────────────────────────────────────────────────────────────
@@ -466,8 +473,8 @@ const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinit
 /** Distance in the pattern's direction (bullish: close vs pivot; bearish: the mirror). */
 export const dirDist = (t: PatternTag): number | null => tagDirDist(t);
 
-type PatQ = Pick<PineQuery, 'bias' | 'ids' | 'stages' | 'minConf' | 'dist'> & Partial<Pick<PineQuery, 'tfs' | 'tfMode'>>;
-const ruleOf = (q: PatQ) => ({ bias: q.bias, ids: q.ids, stages: q.stages, minScore: q.minConf, dist: q.dist, tfs: q.tfs?.length ? q.tfs : (['D'] as PatTf[]), tfMode: q.tfMode === 'all' ? 'all' as const : 'any' as const });
+type PatQ = Pick<PineQuery, 'bias' | 'ids' | 'stages' | 'minConf' | 'dist'> & Partial<Pick<PineQuery, 'tfs' | 'tfMode' | 'returned'>>;
+const ruleOf = (q: PatQ) => ({ bias: q.bias, ids: q.ids, stages: q.stages, minScore: q.minConf, dist: q.dist, tfs: q.tfs?.length ? q.tfs : (['D'] as PatTf[]), tfMode: q.tfMode === 'all' ? 'all' as const : 'any' as const, returned: q.returned !== false });
 /** The pattern part on one row: pass / fail / missing (a selected timeframe cannot be read) and the matching tags (with tf). */
 export function evalRowPatterns(row: unknown, q: PatQ): PatternEval { return evalPattern(row, ruleOf(q)); }
 /** The row's pattern tags that pass the pattern part of the query (each carries its timeframe `tf`). */
@@ -607,7 +614,7 @@ export const LEAN_KEYS = [
   // zzz987 — Stage Analysis (TheWrap method)
   'twSt', 'sata', 'mrs', 'twWk',
   // zzz993 — scan status / quality (MC-02), scan-close vs latest-quote provenance (MC-01), weekly / monthly readings (when wired)
-  'scan', 'scanPx', 'scanAt', 'scanSrc', 'scanBasis', 'scanEx', 'pxSrc', 'pxAt', 'pxGap', 'pxConflict', 'pxAlt', 'patW', 'patM', 'scanW', 'scanM',
+  'scan', 'scanPx', 'scanAt', 'scanSrc', 'scanBasis', 'scanEx', 'pxSrc', 'pxAt', 'pxGap', 'pxConflict', 'pxAlt', 'pxLive', 'patW', 'patM', 'scanW', 'scanM',
   // zzz1003 (PS-03) — the provisional reading of today's unfinished session
   'patLive', 'scanLive',
   // zzz993 — fields the Pine rule editor offers (price figures, growth, valuation, quality)
@@ -631,9 +638,20 @@ export function leanRow(r: ScreenRow): Partial<ScreenRow> & { live?: 1 } {
 export function scanStatusOf(r: Pick<ScreenRow, 'scan' | 'patAt'>): ScanStatus | null {
   return r.scan?.st ?? (r.patAt ? 'stale-version' : null);
 }
+/** zzz1008 — a tag without its geometry (`pts` / `ev`): the list payload stays small; the row detail asks for one company's geometry
+ *  (/api/v1/pine-screener?detail=<T>, rowGeometry). */
+export const leanTag = <T extends ScreenPatternTag>(t: T): T => { if (!t || (t.pts == null && t.ev == null)) return t; const { pts: _p, ev: _e, ...rest } = t; return rest as T; };
 /** zzz993 (MC-01) — distance from the LATEST QUOTE to each tag's pivot (`dq`, %, 0.1), next to the scan-close distance `d`. */
 const withQuoteDist = (tags: ScreenPatternTag[], px: number | null | undefined): ScreenPatternTag[] =>
-  fin(px) && px > 0 ? tags.map((t) => (fin(t.p) && t.p > 0 ? { ...t, dq: Math.round((px / t.p - 1) * 1000) / 10 } : t)) : tags;
+  (fin(px) && px > 0 ? tags.map((t) => (fin(t.p) && t.p > 0 ? { ...t, dq: Math.round((px / t.p - 1) * 1000) / 10 } : t)) : tags).map(leanTag);
+/** zzz1008 — one company's pattern tags WITH their geometry, for the row detail: the same tags the list shows (current, ready scans
+ *  only — normalizeRowScans), keyed D / W / M / L (the provisional live-bar reading). */
+export interface RowGeometry { D: ScreenPatternTag[]; W: ScreenPatternTag[]; M: ScreenPatternTag[]; L: ScreenPatternTag[] }
+export function rowGeometry(r0: ScreenRow): RowGeometry {
+  const r: ScreenRow = { ...r0, ...normalizeRowScans(r0) };
+  const ok = (tags: ScreenPatternTag[] | undefined, sc: ScanMeta | undefined | null) => (sc?.st === 'ready' && Array.isArray(tags) ? tags.filter((t) => t && PATTERN_META[t.id]) : []);
+  return { D: ok(r.pat, r.scan), W: ok(r.patW, r.scanW), M: ok(r.patM, r.scanM), L: r.scanLive?.st === 'ready' && Array.isArray(r.patLive) ? r.patLive.filter((t) => t && PATTERN_META[t.id]) : [] };
+}
 /** zzz998 — the scan close that belongs to a tag's timeframe: daily → the close of the session the daily tags were read from;
  *  weekly / monthly → the close of the last completed week / month the reading used (scanW / scanM `px`, dated `asOf`). Its `d` is
  *  measured from this close, so show this one beside a W / M tag, never the daily close. px / at null when the row does not carry it.
@@ -855,6 +873,7 @@ export function cleanQuery(raw: unknown): PineQuery {
     filters,
     need: x.need === 'any' ? 'any' : 'pattern',
     r40Min: numOrNull(x.r40Min, -1000, 1000),
+    returned: x.returned !== false,
     cols: Array.isArray(x.cols) ? Array.from(new Set<NumKey>(x.cols.filter((k: unknown): k is NumKey => typeof k === 'string' && !!fieldOf(k)))).slice(0, 30) : [],
   };
 }
