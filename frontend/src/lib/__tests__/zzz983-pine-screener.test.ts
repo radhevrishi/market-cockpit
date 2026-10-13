@@ -245,7 +245,7 @@ test('zzz983 page renders the matches and switches bias / sub-pattern (JSDOM)', 
     assert.ok(urls.some((u) => u.includes('/api/v1/pine-screener?market=US')));
     assert.deepEqual(tickers(), ['CUP', 'FLAG', 'UBASE']);
     assert.match(text(), /3 companies/);
-    assert.match(text(), /patterns as of the 2026-10-09 close/);
+    assert.match(text(), /Daily — completed close 2026-10-09/);   // zzz1004 (PS-03): coverage per selected timeframe with its session state
     await click((b) => b.textContent === '▼ Bearish');
     assert.deepEqual(tickers(), ['HS', 'TOP']);
     await click((b) => b.textContent === '▲ Bullish');

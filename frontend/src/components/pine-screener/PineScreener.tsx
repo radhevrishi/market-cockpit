@@ -27,7 +27,9 @@ import { writeReviewQueue } from '@/lib/screener/workflow';
 import { scopeItems, scopeCounts, scopeLabel, countsLine, emptyState, confirmAddText, effectiveScope, type ActionScope } from '@/lib/screener/action-scope';
 import {
   SETUP_CARDS, setupCounts, scopeKind, stockScreenTickers, cleanHandoff, PINE_HANDOFF_KEY, maPosition, portfolioCheck, stageWord, tfWord,
-  type PineHandoff, type SetupCard,
+  querySummary, presetLine, scopeCoverage, coverageLine, chipApplicability, unsupportedNotice, familyOf, latestConditions, lengthDays, lengthTip,
+  analysisOf, sessionLabel, chartIdentityParams, ANALYSIS_CSV_HEAD, analysisCsvCells, listCoverageRows,
+  type PineHandoff, type SetupCard, type PortfolioMode,
 } from '@/lib/screener/pine-view';
 import { loadHoldings, localIndiaHoldings } from '@/lib/screener/portfolio-scope';
 import { pollWhenVisible } from '@/lib/client-fetch';
@@ -38,7 +40,8 @@ import { useWatchlistStore } from '@/components/charts/WatchlistPanel';
 import { activeList, updateList, addItem, removeItem, findItem, itemKey, listCount, type WlItem } from '@/lib/chart-watchlist';
 import { getConvictionTickers } from '@/lib/conviction-beats';
 import { toCsv } from '@/lib/csv';
-import { C, PINE_CSS, PatternChip, ScoreBar, MaCell, Th, pct, signColor } from './pine-ui';
+import { C, PINE_CSS, PatternChip, ScoreBar, MaCell, Th, ConditionBadges, pct, signColor } from './pine-ui';
+import { WhyNot, WhyResultView } from './WhyNot';
 import { SetupCards } from './SetupCards';
 import { PortfolioCheck } from './PortfolioCheck';
 import { HitDetail } from './HitDetail';
@@ -162,6 +165,8 @@ export default function PineScreener() {
   // zzz999 — the view (setup results or the portfolio check), the filter panel's sections, the optional columns
   const [view, setViewRaw] = useState<View>(() => { const u = urlParam('view'); if (u === 'portfolio' || u === 'setups') return u; try { return localStorage.getItem(VIEW_KEY) === 'portfolio' ? 'portfolio' : 'setups'; } catch { return 'setups'; } });
   const setView = (v: View) => { setViewRaw(v); try { localStorage.setItem(VIEW_KEY, v); } catch { /* a convenience */ } };
+  // zzz1004 (PS-04) — the portfolio check's All / Risks / Opportunities view
+  const [pfMode, setPfMode] = useState<PortfolioMode>(() => { const u = urlParam('pf'); return u === 'risks' || u === 'opps' ? u : 'all'; });
   // the detail panel stays within the visible width of the (horizontally scrolling) table
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [wrapW, setWrapW] = useState<number | null>(null);
@@ -284,6 +289,14 @@ export default function PineScreener() {
   const hits = useMemo(() => onList(run.strict, listTickers), [run, listTickers]);
   const provHits = useMemo(() => onList(run.provisional, listTickers), [run, listTickers]);
   const coverage = useMemo(() => ruleCoverage(rows, q.filters, market), [rows, q.filters, market]);
+  // zzz1004 (PS-02 / PS-05 / PS-06) — the active query in words, coverage of the SELECTED timeframes within the CURRENT list, types the
+  // selected timeframes do not read, and the list members that are not matches (coverage rows)
+  const summary = querySummary(q, kind === 'all' ? '' : scopeName);
+  const scopeCov = useMemo(() => (snap ? scopeCoverage(rows, q.tfs, kind === 'all' ? null : listTickers) : null), [snap, rows, q.tfs, listTickers, kind]);
+  const naNotice = useMemo(() => unsupportedNotice(q), [q]);
+  const family = familyOf(screenId);
+  const covList = !!snap && kind !== 'all' && !scopeWaiting && !!listTickers && listTickers.size > 0 && listTickers.size <= 300 ? listTickers : null;
+  const listCov = useMemo(() => (covList ? listCoverageRows({ rows, q, market, list: covList, run }) : null), [covList, rows, q, market, run]);
   const counts = useMemo(() => patternCounts(listTickers ? rows.filter((r) => listTickers.has(r.t.toUpperCase())) : rows, q, market), [rows, q, market, listTickers]);
   const cardCounts = useMemo(() => (snap ? setupCounts(rows, market, kind === 'portfolio' ? null : listTickers, hold && (hold.status !== 'loading' || hold.tickers.length) ? hold.tickers : null) : {}), [snap, rows, market, listTickers, hold, kind]);
   const pfItems = useMemo(() => (view === 'portfolio' && hold ? portfolioCheck(rows, hold.tickers) : []), [view, rows, hold]);
@@ -312,7 +325,7 @@ export default function PineScreener() {
       switch (sort.key) {
         case 'conf': return b ? b.c + (b.s === 'b' ? 0.5 : 0) : null;
         case 'dist': return b ? dirDist(b) : null;
-        case 'len': return b?.l != null ? b.l * (b.lu === 'm' || b.tf === 'M' ? 21 : b.lu === 'w' || b.tf === 'W' ? 5 : 1) : null;
+        case 'len': return lengthDays(b);   // zzz1004 — elapsed duration: days, weeks × 5, months × 21
         case 'pivot': return b?.p ?? null;
         case 'pattern': return b ? PATTERN_META[b.id].label : null;
         case 't': return r.t;
@@ -356,6 +369,8 @@ export default function PineScreener() {
     setScreenId(s.id); setName(s.name); setQ(cleanQuery(clone(s.q))); setDirty(false); setShowAll(false); setSelected(new Set()); setRuleEdit(null); setExpanded(null);
     setSec((x) => ({ ...x, patterns: x.patterns || s.q.ids.length > 0, rules: x.rules || s.q.filters.length > 0 }));
     if (s.market) setMarket(s.market);
+    // zzz1004 — the company list survives a screen change; only a screen saved WITH a list (e.g. the portfolio screens) sets it
+    if (s.scope !== undefined) setScope(s.scope);
     return true;
   }, [screens, dirty, name]);
   const pickCard = (c: SetupCard) => {
@@ -368,7 +383,8 @@ export default function PineScreener() {
     const id = asNew ? `my-${Date.now().toString(36)}` : screenId;
     const nm = asNew ? (window.prompt('Name for this Pine screen', `${name}${isBuiltIn ? '' : ' (copy)'}`) || '').trim() : name;
     if (!nm) return;
-    const s: PineScreen = { id, name: nm.slice(0, 80), q, ...(asNew ? { market } : screens.find((x) => x.id === id)?.market ? { market: screens.find((x) => x.id === id)!.market } : {}) };
+    const s: PineScreen = { id, name: nm.slice(0, 80), q, ...(asNew ? { market } : screens.find((x) => x.id === id)?.market ? { market: screens.find((x) => x.id === id)!.market } : {}),
+      ...(scope !== 'hand' ? { scope } : {}) };   // zzz1004 — the company list is saved with the query
     const list = [...readSaved().filter((x) => x.id !== id), s];
     if (!writeSaved(list)) { flash('Not saved: storage is full or blocked.'); return; }
     setSaved(list); setScreenId(id); setName(s.name); setDirty(false);
@@ -409,7 +425,9 @@ export default function PineScreener() {
     const queue = actHits.some((h) => h.row.t === r.t) ? actHits : narrowed;
     writeReviewQueue(`Pine: ${name}${scopeNow !== 'results' ? ` · ${actLabel}` : ''}`, queue.map((h) => ({ symbol: h.row.t, exchange: exchOf(h.row), name: h.row.n })), '/pine-screener');
     const ex = market === 'IN' ? (r.exch?.[0] || 'NSE') : (r.exch?.[0] || '');
-    return `/charts?symbol=${encodeURIComponent(r.t)}&exchange=${encodeURIComponent(ex)}&t=${encodeURIComponent(r.t)}&m=${market}&tf=${tf}&review=screener`;
+    const best = actHits.find((h) => h.row.t === r.t)?.best || narrowed.find((h) => h.row.t === r.t)?.best || null;
+    // zzz1004 — the hand-off carries what the row was read on (pattern id, analysis timeframe, its as-of date and session)
+    return `/charts?symbol=${encodeURIComponent(r.t)}&exchange=${encodeURIComponent(ex)}&t=${encodeURIComponent(r.t)}&m=${market}&tf=${tf}&review=screener${best && (best.tf || 'D') === tf ? chartIdentityParams(r, best) : ''}`;
   };
   const rowByT = useMemo(() => new Map(rows.map((r) => [r.t.toUpperCase(), r])), [rows]);
   const openPortfolioReview = (tickers: string[], t: string, tf: string) => {
@@ -427,20 +445,27 @@ export default function PineScreener() {
     // zzz994 (MC-05) — "Shape score (0–100)", never a percentage probability; timeframe, volume confirmation, scan status and
     // version on every row; prices unrounded; the scan close beside the latest quote (MC-01); the export scope.
     // zzz999 — + the close against its 21 / 50 / 200-day averages and the length with its unit (days / weeks / months)
+    // zzz1004 (PS-02 / PS-05) — the analysis timeframe's own close / date / session / scan status, the daily technical close and the
+    // latest quote are separate columns (a W / M row never exports the daily close as its analysis close); length in ≈ trading days;
+    // the active query and the preset name on every row.
+    const withCur = (h: string) => (h === 'Analysis close' || h === 'Daily technical close' || h === 'Latest quote' ? `${h} (${cur})` : h);
+    const covText = scopeCov ? scopeCov.perTf.map(coverageLine).join(' | ') : '';
     const head = ['Ticker', 'Market', 'Company', 'Sector', 'Pattern', 'Timeframe', 'Bias', 'Stage', SHAPE_SCORE_LABEL, 'Shape score band', 'Volume confirmed', `Pivot (${cur})`,
-      'To pivot from scan close (%)', 'To pivot from latest quote (%)', 'Length', 'Depth (%)', 'Other patterns',
-      `Latest quote (${cur})`, 'Quote source', `Scan close (${cur})`, 'Scan close date', 'Scan source', 'Quote vs scan close (%)', 'Price sources disagree',
+      'To pivot from analysis close (%)', 'To pivot from latest quote (%)', 'Length', 'Depth (%)', 'Other patterns',
+      ...ANALYSIS_CSV_HEAD.map(withCur), 'Daily bars source', 'Quote vs daily technical close (%)', 'Price sources disagree',
       'Change (%)', `Market cap (${money})`, `Avg daily value (${money})`, `Perf ${PERF_LABEL[q.perfKey]} (%)`, 'RSI 14', 'Close vs SMA 21 (%)', 'Close vs SMA 50 (%)', 'Close vs SMA 200 (%)', 'RS Rating',
       ...q.cols.map((k) => { const d = fieldOf(k); const u = d?.unit === '%' ? ' (%)' : d?.unit === 'money' ? ` (${money})` : d?.unit === 'price' ? ` (${cur})` : ''; return `${d?.label || k}${u}`; }),
-      'Approximate (≈) fields', 'Scan status', 'Scan engine version', 'Patterns as of', 'Not evaluated (provisional)', 'Snapshot built (UTC)', 'Export scope'];
-    const body = actHits.map(({ row: r, best: b, tags, missing }) => { const ma = maPosition(r); return [r.t, market === 'IN' ? 'NSE' : 'US', r.n, r.tvSec || r.sec || '', b ? PATTERN_META[b.id].label : '', b ? (b.tf || 'D') : '',
+      'Approximate (≈) fields', 'Daily scan status', 'Daily scan version', 'Scan engine version', 'Daily patterns as of', 'Not evaluated (provisional)', 'Snapshot built (UTC)', 'Export scope',
+      'Active query', 'Preset', 'Coverage (selected timeframes, this list)'];
+    const body = actHits.map(({ row: r, best: b, tags, missing }) => { const ma = maPosition(r); const an = analysisOf(r, b || { tf: 'D' }); return [r.t, market === 'IN' ? 'NSE' : 'US', r.n, r.tvSec || r.sec || '', b ? PATTERN_META[b.id].label : '', b ? (b.tf || 'D') : '',
       b ? (b.b === 'U' ? 'bullish' : 'bearish') : '', b ? stageWord(b) : '', b?.c ?? '', b ? likelihoodWord(b.c) : '', b ? ((b as any).vq === 0 ? 'no (too little volume data)' : 'not flagged') : '', b?.p ?? '',
       b ? dirDist(b) ?? '' : '', b && typeof (b as any).dq === 'number' ? (b.b === 'U' ? (b as any).dq : -(b as any).dq) : '', b ? tagLengthText(b) : '', b?.dp ?? '',
       tags.filter((t) => t !== b).map((t) => `${PATTERN_META[t.id].label} [${t.tf || 'D'}] (${t.c})`).join('; '),
-      r.px ?? '', r.pxSrc || '', r.scanPx ?? '', r.scanAt || '', r.scanSrc || '', r.pxGap ?? '', r.pxConflict ? 'yes' : '',
+      ...analysisCsvCells(r, b), r.scanSrc || '', r.pxGap ?? '', r.pxConflict ? 'yes' : '',
       r.chg ?? '', r.mc ?? '', turnoverOf(r, market) ?? '', r[q.perfKey] ?? '', r.rsi ?? '', ma.d21 ?? '', ma.d50 ?? '', ma.d200 ?? '', r.rsR ?? '',
       ...q.cols.map((k) => (r as any)[k] ?? ''), (r.approx || []).filter((k) => (q.cols as string[]).includes(k)).join('; '),
-      r.scan?.st || '', r.scan?.v ?? '', r.patAt || '', (missing || []).join('; '), snap?.builtAt || '', actLabel]; });
+      r.scan?.st || '', r.scan?.v ?? '', an.engine || r.scan?.e || '', r.patAt || '', (missing || []).join('; '), snap?.builtAt || '', actLabel,
+      summary, presetLine(name, dirty), covText]; });
     const blob = new Blob(['﻿' + toCsv([head, ...body])], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `pine_${name.replace(/[^\w-]+/g, '_')}_${market}.csv`; a.click(); URL.revokeObjectURL(a.href);
   };
@@ -626,9 +651,13 @@ export default function PineScreener() {
                   <div className="pnx-chips">
                     {ids.map((id) => {
                       const on = q.ids.includes(id); const n = snap ? counts[id] || 0 : null;
+                      // zzz1004 (PS-06) — a type the engine does not read on any selected timeframe: disabled with the reason (a
+                      // ticked one stays clickable so it can be removed); its count is "n/a", never a zero
+                      const ap = chipApplicability(id, q.tfs);
                       return (
-                        <button key={id} type="button" aria-pressed={on} onClick={() => toggleId(id)} title={PATTERN_META[id].short} className={`pnx-pat ${g.bias === 'bullish' ? 'pnx-up' : 'pnx-down'}`} data-zero={n === 0}>
-                          {PATTERN_META[id].label}<span className="pnx-n" aria-busy={n == null}>{n == null ? '…' : n}</span>
+                        <button key={id} type="button" aria-pressed={on} disabled={ap.na && !on} onClick={() => toggleId(id)} title={ap.na ? ap.reason : `${PATTERN_META[id].short}${ap.reason ? `\n${ap.reason}` : ''}`}
+                          className={`pnx-pat ${g.bias === 'bullish' ? 'pnx-up' : 'pnx-down'}`} data-zero={n === 0 && !ap.na} data-na={ap.na} data-pat={id}>
+                          {PATTERN_META[id].label}<span className="pnx-n" aria-busy={n == null}>{ap.na ? `n/a on ${q.tfs.join('/')}` : n == null ? '…' : n}</span>
                         </button>
                       );
                     })}
@@ -700,17 +729,37 @@ export default function PineScreener() {
                 <button type="button" className="pnx-btn" onClick={() => setView('setups')}>Back to setups</button>
               </div>
               <PortfolioCheck items={pfItems} market={market} status={!snap || !hold || (loading && !rows.length) ? 'loading' : hold.status} error={hold?.error || null} source={hold?.source || ''}
-                chartHref={(t, tf) => chartUrl(t, market === 'IN' ? 'NSE' : '', tf)} openReview={openPortfolioReview} />
+                chartHref={(t, tf) => chartUrl(t, market === 'IN' ? 'NSE' : '', tf)} openReview={openPortfolioReview}
+                mode={pfMode} onMode={setPfMode} onOpenScreen={(id) => { if (loadScreen(id)) setView('setups'); }} />
             </>
           ) : (
             <>
               <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
-                <h2 style={{ margin: 0, fontSize: 17, fontWeight: 750 }}>{name}{dirty ? <span style={{ color: C.dim, fontWeight: 500 }}> (changed)</span> : null}</h2>
+                {/* zzz1004 (PS-05) — the ACTIVE query, never a preset name that may contradict it; the preset name sits beside it, smaller */}
+                <h2 style={{ margin: 0, fontSize: 17, fontWeight: 750 }} data-testid="active-query">{summary}</h2>
+                <span className="pnx-note" data-testid="preset-line" style={{ fontSize: 12 }}>{presetLine(name, dirty)}</span>
                 <b style={{ fontSize: 15, color: C.text1 }} aria-busy={!snap && !err}>{snap ? `${hits.length} companies match` : err ? '' : 'Loading…'}</b>
                 {snap?.building ? <span style={{ color: C.amber, fontWeight: 700 }} title="A screener build for this market is running now">● building</span> : null}
               </div>
+              {family ? (
+                <span role="radiogroup" aria-label={`${family.label} variants`} className="pnx-seg pnx-seg-sm" style={{ width: 'auto', justifySelf: 'start' }}>
+                  {family.items.map((it) => <button key={it.presetId} type="button" role="radio" aria-checked={screenId === it.presetId && !dirty} onClick={() => loadScreen(it.presetId)}>{it.label}</button>)}
+                </span>
+              ) : null}
               {note && !dirty ? <div className="pnx-note" style={{ maxWidth: '90ch' }}>{note}</div> : null}
-              {snap ? <div className="pnx-note">{snap.withPattern} of {snap.total} companies show a pattern{snap.patAt ? ` · patterns as of the ${snap.patAt} close` : ''}{builtAt ? ` · data built ${builtAt.toLocaleString()}` : ''}{snap.scanned && snap.scanned < snap.total ? ` · ${snap.total - snap.scanned} without a current scan` : ''}</div> : null}
+              {/* zzz1004 (PS-02 / PS-03) — coverage of the SELECTED timeframes within the CURRENT list, each with its own as-of and
+                  session state (a provisional daily reading is never called a close) */}
+              {snap && scopeCov ? (
+                <div className="pnx-note" data-testid="coverage" style={{ display: 'grid', gap: 1 }}>
+                  {scopeCov.perTf.map((c) => <div key={c.tf} data-tf={c.tf}>{coverageLine(c)}</div>)}
+                  <div>{kind === 'all' ? `${scopeCov.inData.toLocaleString('en-US')} companies in the ${market === 'IN' ? 'Indian' : 'US'} data` : `${scopeName}: ${scopeCov.inData} in the data${scopeCov.notInData.length ? `, ${scopeCov.notInData.length} not in the data (${scopeCov.notInData.slice(0, 8).join(', ')}${scopeCov.notInData.length > 8 ? '…' : ''})` : ''}`}{builtAt ? ` · data built ${builtAt.toLocaleString()}` : ''}</div>
+                </div>
+              ) : null}
+              {naNotice.length ? (
+                <div role="status" data-testid="unsupported-notice" style={{ fontSize: 12.5, color: C.amber, border: `1px solid ${C.amber}`, borderRadius: 8, padding: '6px 10px', display: 'grid', gap: 3 }}>
+                  {naNotice.map((t, i) => <div key={i}>✕ {t}</div>)}
+                </div>
+              ) : null}
               {err ? <div role="alert" style={{ color: C.red, fontSize: 13 }}>{err}{snap ? ' — showing the last loaded data' : ''}</div> : null}
               {scope && listTickers ? (
                 <div className="pnx-note">Limited to <b style={{ color: C.text1 }}>{scopeName}</b> ({scopeWaiting ? 'loading…' : `${listTickers.size} ${market === 'IN' ? 'Indian' : 'US'} companies`}){kind === 'stock' && stockData[market]?.error ? <span style={{ color: C.red }}> — {stockData[market]!.error}</span> : null} · <button type="button" className="pnx-link" onClick={() => setScope('')}>show every company</button></div>
@@ -809,6 +858,8 @@ export default function PineScreener() {
                       const noD = patTagsOf(r, 'D') == null;
                       const open = expanded === r.t;
                       const ma = maPosition(r);
+                      const an = analysisOf(r, b || { tf: 'D' });
+                      const conds = latestConditions(r, b);
                       return (
                         <React.Fragment key={r.t}>
                           <tr className="pnx-row" data-sel={sel}>
@@ -822,7 +873,7 @@ export default function PineScreener() {
                                   <span style={{ color: C.faint, fontSize: 11, marginRight: 5 }}>{i + 1}</span>
                                   <Link data-ticker={r.t} href={`/charts?t=${encodeURIComponent(r.t)}&m=${market}&tf=${b?.tf || 'D'}`} onClick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); window.location.assign(openForReview(r, b?.tf || 'D')); }}
                                     style={{ color: C.accent, fontWeight: 700, textDecoration: 'none' }} title={`Open the ${tfWord(b?.tf)} chart — Next / Previous on the chart step through these results in this order`}>{r.t}</Link>
-                                  {(r as Row).live ? <span title="Read during a trading session: the latest bar was unfinished" style={{ color: C.amber, marginLeft: 4 }}>◷</span> : null}
+                                  {an.session === 'provisional' ? <span data-provisional title={`Read during a trading session: ${sessionLabel(an)} — the latest bar was unfinished, not a completed close`} style={{ color: C.amber, marginLeft: 4 }}>◷</span> : null}
                                   {density === 'compact' ? null : <div style={{ fontSize: 11.5, color: C.dim, maxWidth: 200, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.n}</div>}
                                 </span>
                               </span>
@@ -831,18 +882,19 @@ export default function PineScreener() {
                               <>
                                 <td>
                                   <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                                    <PatternChip t={b} main market={market} patAt={r.patAt} showStage />
+                                    <PatternChip t={b} main market={market} when={sessionLabel(an)} showStage />
+                                    <ConditionBadges items={conds} />
                                     {tags.length > 1 ? <span style={{ fontSize: 11.5, color: C.dim }} title={tags.filter((t) => t !== b).map((t) => `${PATTERN_META[t.id].label} [${t.tf || 'D'}] ${stageWord(t)}, ${t.c}`).join('\n')}>+{tags.length - 1} more</span> : null}
                                   </span>
                                 </td>
                                 <td className="pnx-num"><ScoreBar c={b.c} /></td>
                                 <td className="pnx-num" title={`Exact: ${fmtExact(b.p)}`}>{fmtPrice(b.p, market)}</td>
                                 <td className="pnx-num" style={{ color: dd == null ? C.dim : dd >= 0 ? (b.b === 'U' ? C.green : C.red) : C.text, fontWeight: 650 }}
-                                  title={[b.d == null ? '' : `Scan close ${Math.abs(b.d).toFixed(2)}% ${b.d < 0 ? 'below' : 'above'} the ${b.b === 'U' ? 'pivot' : 'breakdown level'}${r.scanAt ? ` (close of ${r.scanAt})` : ''}`,
+                                  title={[b.d == null ? '' : `${tfWord(an.tf)} analysis close ${an.close != null ? fmtPrice(an.close, market) : '(not stored)'} ${Math.abs(b.d).toFixed(2)}% ${b.d < 0 ? 'below' : 'above'} the ${b.b === 'U' ? 'pivot' : 'breakdown level'} — ${sessionLabel(an)}`,
                                     dq != null ? `From the latest quote: ${pct(dq, 2)}${r.pxSrc ? ` (${r.pxSrc})` : ''} — shown apart; the filter uses the scan close` : ''].filter(Boolean).join('\n')}>
                                   {pct(dd)}{dq != null && dd != null && Math.abs(dq - dd) >= 0.15 ? <span style={{ color: C.amber }}>†</span> : null}
                                 </td>
-                                <td className="pnx-num" title={b.dp != null ? `${b.dp}% deep` : ''}>{tagLengthText(b) || '—'}</td>
+                                <td className="pnx-num" title={[lengthTip(b), b.dp != null ? `${b.dp}% deep` : ''].filter(Boolean).join('\n')}>{tagLengthText(b) || '—'}</td>
                               </>
                             ) : <td colSpan={5} style={{ color: C.dim, fontSize: 12 }}>{noD ? patMissingWhy(r, 'D') : 'no matching chart pattern'}</td>}
                             <td className="pnx-num" title={pxDiffers(r) ? scanTip(r, market) : `Exact: ${fmtExact(r.px)}${r.pxSrc ? ` (${r.pxSrc})` : ''}`}>
@@ -897,6 +949,21 @@ export default function PineScreener() {
                   {provHits.length > 60 ? <div style={{ color: C.dim }}>… and {provHits.length - 60} more (download them with the Provisional scope).</div> : null}
                 </details>
               ) : null}
+              {/* zzz1004 (PS-04) — every list member that is not a match, with the reason (no pattern / not scanned / not in the data /
+                  which rule excluded it) — a portfolio screen shows every holding, matched or not */}
+              {listCov && listCov.length ? (
+                <details open={kind === 'portfolio'} data-testid="list-coverage" style={{ fontSize: 12.5, border: `1px solid ${C.border}`, borderRadius: 10, padding: '6px 10px' }}>
+                  <summary style={{ cursor: 'pointer', color: C.text2, fontWeight: 700 }}>{scopeName}: {listCov.length} of {listTickers?.size} not listed — coverage rows</summary>
+                  <ul style={{ listStyle: 'none', margin: '6px 0 0', paddingLeft: 0, display: 'grid', gap: 4 }}>
+                    {listCov.map((w) => (
+                      <li key={w.ticker} data-coverage-row={w.ticker}>
+                        <details><summary style={{ cursor: 'pointer' }}>{w.headline}</summary><div style={{ padding: '4px 0 6px 14px' }}><WhyResultView w={w} /></div></details>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
+              {snap ? <WhyNot rows={rows} q={q} market={market} list={kind === 'all' ? null : listTickers} listName={scopeName} run={run} /> : null}
             </>
           )}
         </section>

@@ -138,10 +138,12 @@ test('zzz993 MC-02: a 15-bar history is insufficient, not scanned / no-pattern',
 
 test('zzz993 MC-02: an older scan version is stale — its tags are never shown as current', () => {
   const e = techEntry(series(CUP_LEGS, () => 1_000_000), null, false);
-  const old = { ...e, patV: V - 1, scan: undefined } as TechStored;
+  // zzz1003 — the version right before the current one (v5) keeps its DAILY reading during the changeover (zzz1003 test); older is stale
+  const OLD = 4;
+  const old = { ...e, patV: OLD, scan: undefined } as TechStored;
   const f = rowPatternFields(old);
   assert.deepEqual(Object.keys(f).sort(), ['scan']);
-  assert.equal(f.scan!.st, 'stale-version'); assert.equal(f.scan!.v, V - 1); assert.equal(f.scan!.asOf, e.patAt);
+  assert.equal(f.scan!.st, 'stale-version'); assert.equal(f.scan!.v, OLD); assert.equal(f.scan!.asOf, e.patAt);
   const fixture = rowPatternFields({ ...e, patV: 1 } as TechStored);
   assert.equal(fixture.pat, undefined); assert.equal(fixture.scan!.st, 'stale-version');
   // a snapshot row from before zzz993 (patAt + tags, no scan) is stale too
@@ -175,10 +177,11 @@ test('zzz993 counts: scanned = ready + no-pattern only; weekly / monthly fields 
   assert.deepEqual([l.scanned, l.withPattern, l.insufficient, l.invalid, l.errors, l.stale, l.total], [2, 1, 0, 0, 0, 0, 3]);
   assert.equal(l.patAt, '2026-10-12');
   const wk: ScreenPatternTag = { id: 'flat_base', b: 'U', s: 'f', c: 60, p: 12, d: -5, tf: 'W' };
-  const e = { ...techEntry(series(CUP_LEGS, () => 1_000_000), null, false), patW: [wk], scanW: { st: 'ready' as const, v: V, tf: 'W' as const } };
+  // zzz1003 — a weekly reading carries its own close (px) and date (asOf), or it is withheld (zzz1003 test)
+  const e = { ...techEntry(series(CUP_LEGS, () => 1_000_000), null, false), patW: [wk], scanW: { st: 'ready' as const, v: V, tf: 'W' as const, px: 11.4, asOf: '2026-10-09' } };
   const f = rowPatternFields(e);
   assert.deepEqual(f.patW, [wk]); assert.equal(f.scanW!.tf, 'W');
-  assert.equal(rowPatternFields({ ...e, scanM: { st: 'no-pattern', v: V, tf: 'M' } }).patM, undefined, 'monthly tags only with a ready monthly scan');
+  assert.equal(rowPatternFields({ ...e, scanM: { st: 'no-pattern', v: V, tf: 'M', px: 11, asOf: '2026-09-30' } }).patM, undefined, 'monthly tags only with a ready monthly scan');
   const lw = leanRows([{ t: 'W', n: 'W', px: 12.6, ...f } as ScreenRow]).rows[0];
   assert.equal(lw.patW![0].dq, 5);
 });

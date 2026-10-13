@@ -42,6 +42,36 @@ export function usSessionOpen(now = new Date()): boolean {
   return m >= 570 && m < 960;
 }
 
+/** zzz1003 (PS-03) — is a daily bar dated `lastDate` today's UNFINISHED session at `now`? True when `lastDate` is the market's
+ *  local date of `now`, a weekday, and the regular session has not closed yet: US 16:00 New York time, India (NSE) 15:30 IST.
+ *  A bar for today seen before the open (pre-market) is unfinished as well. Holidays need no calendar (no bar exists for them).
+ *  Pure; client-safe. */
+export function liveSessionBar(lastDate: string | null | undefined, market: 'US' | 'IN', now = new Date()): boolean {
+  if (!lastDate) return false;
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: market === 'US' ? 'America/New_York' : 'Asia/Kolkata', weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(now).map((x) => [x.type, x.value]));
+  if (p.weekday === 'Sat' || p.weekday === 'Sun') return false;
+  if (`${p.year}-${p.month}-${p.day}` !== lastDate) return false;
+  const m = (Number(p.hour) % 24) * 60 + Number(p.minute);
+  return m < (market === 'US' ? 960 : 930);
+}
+
+/** zzz1003 (PS-07) — the history every price figure, the daily and the weekly pattern scans read: the last 5 years + 25 days (what
+ *  the build used to download). The download is now ~10 years for the monthly scan; these readings are unchanged. */
+export const TECH_FIGURE_DAYS = 5 * 365 + 25;
+/** zzz1003 — the bars dated within `days` calendar days of the LAST bar (oldest first; the same arrays when nothing is cut). */
+export function recentBars(b: DailyBars, days: number): DailyBars {
+  const n = b.d.length;
+  if (!n) return b;
+  const t = new Date(`${b.d[n - 1]}T00:00:00Z`);
+  t.setUTCDate(t.getUTCDate() - days);
+  const from = t.toISOString().slice(0, 10);
+  let i = 0;
+  while (i < n && b.d[i] < from) i++;
+  return i === 0 ? b : { d: b.d.slice(i), o: b.o.slice(i), h: b.h.slice(i), l: b.l.slice(i), c: b.c.slice(i), v: b.v.slice(i) };
+}
+
 const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const r2 = (v: number) => Math.round(v * 100) / 100;
 

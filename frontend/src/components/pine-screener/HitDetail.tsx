@@ -7,9 +7,9 @@ import { PATTERN_META } from '@/lib/chart-patterns';
 import { likelihoodWord, type PineHit, type PineQuery } from '@/lib/screener/pine';
 import { fmtPrice, type Filter } from '@/lib/screener/filters';
 import { explainRow } from '@/lib/screener/research';
-import { allPatterns, invalidation, maPosition, patternChecks, stageWord, tagLengthText, tagScanClose, tfWord } from '@/lib/screener/pine-view';
+import { allPatterns, analysisOf, invalidation, latestConditions, lengthTip, maPosition, patternChecks, priceSet, sessionLabel, stageWord, tagLengthText, tfWord } from '@/lib/screener/pine-view';
 import type { ScreenMarket } from '@/lib/screener/types';
-import { C, MaCell, PatternChip, pct } from './pine-ui';
+import { C, ConditionBadges, MaCell, PatternChip, SessionBadge, pct } from './pine-ui';
 
 export function HitDetail({ hit, q, market, onOpenChart, width }: { hit: PineHit; q: PineQuery; market: ScreenMarket; onOpenChart: (tf: string) => void; width?: number | null }) {
   const { row: r, best: b } = hit;
@@ -17,7 +17,10 @@ export function HitDetail({ hit, q, market, onOpenChart, width }: { hit: PineHit
   const checks = patternChecks(hit, q);
   const rules = explainRow(r, q.filters.filter((f: Filter) => !f.off), market);
   const inv = b ? invalidation(b) : null;
-  const sc = b ? tagScanClose(r, b) : tagScanClose(r, { tf: 'D' });
+  // zzz1004 (PS-02) — the analysis close of the tag's own timeframe, the daily technical close and the latest quote, kept apart
+  const ps = priceSet(r, b || { tf: 'D' });
+  const an = ps.analysis;
+  const conds = latestConditions(r, b);
   const dd = b?.d == null ? null : b.b === 'U' ? b.d : -b.d;
   const dq = b && typeof (b as any).dq === 'number' ? (b.b === 'U' ? (b as any).dq : -(b as any).dq) as number : null;
   const others = allPatterns(r);
@@ -32,8 +35,9 @@ export function HitDetail({ hit, q, market, onOpenChart, width }: { hit: PineHit
             <div style={{ color: C.text2 }}>{meta.short}</div>
             <ul>
               <li>Shape score <b>{b.c}</b>/100, {likelihoodWord(b.c)} (how closely the shape fits, not a probability)</li>
-              <li>{b.b === 'U' ? 'Pivot (buy point)' : 'Breakdown level'} <b>{fmtPrice(b.p, market)}</b>; scan close {dd == null ? 'distance unknown' : <b style={{ color: dd >= 0 ? (b.b === 'U' ? C.green : C.red) : C.text }}>{pct(dd)}</b>} {dd != null ? (dd < 0 ? 'short of it' : 'beyond it') : ''}</li>
-              {tagLengthText(b) ? <li>{tagLengthText(b)} long{b.dp != null ? `, ${b.dp}% deep` : ''}</li> : null}
+              <li>{b.b === 'U' ? 'Pivot (buy point)' : 'Breakdown level'} <b>{fmtPrice(b.p, market)}</b>; {tfWord(an.tf)} analysis close {dd == null ? 'distance unknown' : <b style={{ color: dd >= 0 ? (b.b === 'U' ? C.green : C.red) : C.text }}>{pct(dd)}</b>} {dd != null ? (dd < 0 ? 'short of it' : 'beyond it') : ''}{an.close == null && dd != null ? <span style={{ color: C.dim }}> (stored distance; the {tfWord(an.tf)} close it was measured from is not stored)</span> : null}</li>
+              {tagLengthText(b) ? <li title={lengthTip(b)}>{tagLengthText(b)} long{b.dp != null ? `, ${b.dp}% deep` : ''}</li> : null}
+              {conds.length ? <li>Latest condition: <ConditionBadges items={conds} /></li> : null}
               <li>Volume: {vq ? <span style={{ color: C.amber }}>not confirmed (too little usable volume data)</span> : 'enough data to read; nothing flagged'}</li>
               {inv ? <li>Stops being valid: {inv.text}{inv.level != null ? <> (about <b>{fmtPrice(inv.level, market)}</b>)</> : null}</li> : null}
             </ul>
@@ -49,9 +53,12 @@ export function HitDetail({ hit, q, market, onOpenChart, width }: { hit: PineHit
         </ul>
         <h4 style={{ marginTop: 12 }}>Prices</h4>
         <ul style={{ listStyle: 'none', paddingLeft: 0 }}>
-          <li>Scan close {fmtPrice(sc.px ?? r.scanPx, market)}{sc.at ? ` on ${sc.at}` : r.scanAt ? ` on ${r.scanAt}` : ''}{r.scanSrc ? ` (${r.scanSrc})` : ''} — the pattern{sc.tf !== 'D' ? ` (${tfWord(sc.tf)} close)` : ''}, pivot distance and averages use it</li>
-          <li>Latest quote {fmtPrice(r.px, market)}{r.pxSrc ? ` (${r.pxSrc}${r.pxAt ? `, ${r.pxAt}` : ''})` : ''}{dq != null ? `, ${pct(dq)} to the pivot` : ''}{r.pxConflict ? <span style={{ color: C.amber }}> — the two sources disagree on the same day</span> : null}</li>
-          <li>Against its 21 / 50 / 200-day averages: <MaCell ma={ma} market={market} /></li>
+          <li data-price="analysis">{b ? `${tfWord(an.tf).replace(/^./, (c) => c.toUpperCase())} analysis close` : 'Analysis close'}{' '}
+            {an.close != null ? <b>{fmtPrice(an.close, market)}</b> : <span style={{ color: C.amber }}>{an.missing}</span>}{an.at ? ` · ${an.tf === 'D' ? 'session' : an.tf === 'W' ? 'week to' : 'month to'} ${an.at}` : ''}
+            {' '}<SessionBadge text={sessionLabel(an)} provisional={an.session === 'provisional'} />
+            <div className="pnx-note">the pattern, its stage and the distance to the pivot are read on these {tfWord(an.tf)} bars{an.status ? ` · scan ${an.status}${an.v != null ? `, version ${an.v}` : ''}` : ''}{an.src ? ` · ${an.src}${an.basis ? `, ${an.basis}` : ''}` : ''}</div></li>
+          <li data-price="daily">Daily technical close {ps.daily.close != null ? fmtPrice(ps.daily.close, market) : '—'}{ps.daily.at ? ` on ${ps.daily.at}` : ''}{ps.daily.session === 'provisional' ? <span style={{ color: C.amber }}> (session open — provisional)</span> : null} — the 21 / 50 / 200-day averages, RSI and performance use it: <MaCell ma={ma} market={market} /></li>
+          <li data-price="quote">Latest quote {fmtPrice(ps.quote.px, market)}{ps.quote.src ? ` (${ps.quote.src}${ps.quote.at ? `, ${ps.quote.at}` : ''})` : ''}{dq != null ? `, ${pct(dq)} to the pivot` : ''}{r.pxConflict ? <span style={{ color: C.amber }}> — the quote and the daily close disagree on the same day</span> : null}</li>
         </ul>
       </section>
       <section>
@@ -61,7 +68,7 @@ export function HitDetail({ hit, q, market, onOpenChart, width }: { hit: PineHit
             <div key={p.tf} style={{ display: 'grid', gridTemplateColumns: '64px 1fr', gap: 6, alignItems: 'start' }}>
               <span style={{ color: C.dim, fontSize: 12.5 }}>{tfWord(p.tf)}</span>
               {p.tags == null ? <span className="pnx-note">not scanned yet</span> : p.tags.length
-                ? <div className="pnx-chips">{p.tags.map((t) => <PatternChip key={t.id} t={{ ...t, tf: t.tf || p.tf }} market={market} showStage main={!!b && t.id === b.id && (t.tf || p.tf) === (b.tf || 'D')} />)}</div>
+                ? <div className="pnx-chips">{p.tags.map((t) => <PatternChip key={t.id} t={{ ...t, tf: t.tf || p.tf }} market={market} when={sessionLabel(analysisOf(r, { tf: p.tf }))} showStage main={!!b && t.id === b.id && (t.tf || p.tf) === (b.tf || 'D')} />)}</div>
                 : <span className="pnx-note">none</span>}
             </div>
           ))}

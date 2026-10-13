@@ -14,6 +14,7 @@ function Glyph({ g, tone }: { g: SetupGlyph; tone: SetupCard['tone'] }) {
     base: <><line x1="2" y1="7" x2="70" y2="7" strokeDasharray="3 3" /><path d="M2 7 C 14 9, 18 22, 36 22 C 52 22, 58 11, 68 8" /></>,
     breakdown: <><line x1="2" y1="15" x2="70" y2="15" strokeDasharray="3 3" /><path d="M2 14 L10 6 L18 13 L28 5 L36 13 L46 7 L54 14 L62 20 L70 23" /></>,
     weekly: <><line x1="2" y1="7" x2="70" y2="7" strokeDasharray="3 3" />{[6, 14, 22, 30, 38, 46, 54, 62].map((x, i) => { const y = [9, 14, 18, 20, 19, 15, 11, 8][i]; return <line key={x} x1={x} y1={y - 3} x2={x} y2={y + 3} strokeWidth={3} />; })}</>,
+    monthly: <><line x1="2" y1="6" x2="70" y2="6" strokeDasharray="3 3" />{[8, 22, 36, 50, 64].map((x, i) => { const y = [9, 17, 21, 15, 8][i]; return <rect key={x} x={x - 4} y={y - 4} width={8} height={8} rx={1} strokeWidth={1.6} />; })}</>,
     portfolio: <><path d="M2 18 L14 15 L26 16 L38 11 L50 12 L62 7 L70 6" /><path d="M2 20 L70 12" strokeDasharray="2 3" opacity={0.7} /><path d="M2 23 L70 18" strokeDasharray="1 3" opacity={0.55} /></>,
   };
   return (
@@ -36,6 +37,7 @@ export function SetupCards({ active, counts, onPick, loading }: { active: string
             <span className="pnx-card-count" aria-busy={n == null && loading} style={{ color: n == null ? C.faint : C.text }}>{n == null ? '…' : n.toLocaleString('en-US')}</span>
             <span className="pnx-card-label">{c.label}</span>
             <span className="pnx-card-sub">{c.sub}</span>
+            {c.alt && counts[`${c.id}:alt`] != null ? <span className="pnx-card-sub" data-alt-count={c.alt.presetId} style={{ color: C.text1 }}>+ {counts[`${c.id}:alt`]!.toLocaleString('en-US')} {c.alt.label} (counted apart)</span> : null}
           </button>
         );
       })}

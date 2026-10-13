@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { dbQuery, getPool } from '@/lib/db';
 import { ensureSchema } from '@/lib/db-migrate';
-import { leanRows } from '@/lib/screener/pine';
+import { leanRows, scanCoverage, PATTERN_SCAN_VERSION, PATTERN_SCAN_DAILY_COMPAT } from '@/lib/screener/pine';
 import type { ScreenRow } from '@/lib/screener/types';
 import { kickBuild, isBuilding } from '@/lib/screener/run';
 
@@ -26,7 +26,7 @@ export async function GET(req: Request) {
   const found = await dbQuery<{ built_at: string; rows: unknown }>(`SELECT built_at, rows FROM screener_snapshot WHERE market = $1`, [market]).catch(() => []);
   if (!found.length) {
     kickBuild(market);
-    return NextResponse.json({ ok: true, market, builtAt: null, rows: [], total: 0, scanned: 0, withPattern: 0, patAt: null, insufficient: 0, invalid: 0, errors: 0, stale: 0, pxConflicts: 0, scannedW: 0, scannedM: 0, withPatternW: 0, withPatternM: 0, building: isBuilding(market), notes: ['This market has not been built yet — the first build has started; the page fills itself in when it finishes (about 10–15 minutes).'] });
+    return NextResponse.json({ ok: true, market, builtAt: null, rows: [], total: 0, scanned: 0, withPattern: 0, patAt: null, insufficient: 0, invalid: 0, errors: 0, stale: 0, pxConflicts: 0, scannedW: 0, scannedM: 0, withPatternW: 0, withPatternM: 0, scanV: PATTERN_SCAN_VERSION, coverage: { D: scanCoverage([], 'D'), W: scanCoverage([], 'W'), M: scanCoverage([], 'M') }, building: isBuilding(market), notes: ['This market has not been built yet — the first build has started; the page fills itself in when it finishes (about 10–15 minutes).'] });
   }
   let rows: unknown = found[0].rows;
   if (typeof rows === 'string') { try { rows = JSON.parse(rows); } catch { rows = []; } }
@@ -37,13 +37,19 @@ export async function GET(req: Request) {
   const builtMs = Date.parse(String(found[0].built_at));
   // zzz993 (MC-02) — coverage counts genuine readings plus companies whose history is genuinely too short (a re-read cannot help them)
   const covered = lean.scanned + lean.insufficient;
-  const behind = !lean.scanned || covered < lean.total * 0.8 || !all.some((r) => r.tt != null) || !(builtMs > Date.now() - 30 * 3600_000);
+  // zzz1003 — also while many weekly / monthly readings are from the older scan version (the v6 re-read is pending)
+  const behind = !lean.scanned || covered < lean.total * 0.8 || !all.some((r) => r.tt != null) || !(builtMs > Date.now() - 30 * 3600_000)
+    || lean.coverage.W.stale + lean.coverage.M.stale > lean.total * 0.2;
   if (behind) kickBuild(market);
   const building = isBuilding(market);
   const notes: string[] = lean.scanned ? [] : [building
     ? 'Chart patterns are being read now by a build that just started — the page fills them in when it finishes (about 10–15 minutes). Companies are listed meanwhile.'
     : 'Chart patterns are read during the screener build; the next build of this market adds them. Companies are listed meanwhile.'];
   if (lean.stale) notes.push(`${lean.stale} companies were read by an older pattern-scan version — their patterns are withheld (not shown as current) until their prices are re-read${building ? ' (a build is running)' : ''}.`);
+  // zzz1003 (PS-01) — weekly / monthly readings of an older scan (no close of their own) are withheld until the company is re-read
+  { const sw = lean.coverage.W.stale, sm = lean.coverage.M.stale;
+    if (sw || sm) notes.push(`${sw} weekly and ${sm} monthly readings come from an older scan (version ${PATTERN_SCAN_DAILY_COMPAT.join('/')} or without their own week / month close) — those patterns are withheld and their analysis close shown as unavailable until the company is re-read with the current scan (version ${PATTERN_SCAN_VERSION})${building ? ' (a build is running)' : ''}. Daily patterns of those companies are shown.`); }
+  if (lean.coverage.D.provisional) notes.push(`${lean.coverage.D.provisional} companies' daily patterns were read during a trading session (they include that day's unfinished bar) — marked provisional until re-read.`);
   if (lean.insufficient) notes.push(`${lean.insufficient} companies have too little price history for a pattern scan (fewer than 30 usable sessions) — not counted as scanned.`);
   if (lean.invalid || lean.errors) notes.push(`${lean.invalid + lean.errors} companies could not be scanned (${lean.invalid} price data rejected, ${lean.errors} scan failures) — their price figures are kept.`);
   if (lean.pxConflicts) notes.push(`${lean.pxConflicts} companies show a latest quote more than 2% from the close the patterns were read from (different price sources) — pattern distances use the scan close; the quote distance is shown apart.`);

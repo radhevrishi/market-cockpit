@@ -2,7 +2,7 @@
 // One row per company, built on the server from free sources (USA: Nasdaq list + SEC filings + Yahoo prices;
 // India: NSE + screener.in + Yahoo prices). The page downloads the whole snapshot once and filters in the browser, so changing a filter is instant.
 
-import type { ScreenPatternTag, ScanMeta } from './pine';
+import type { ScreenPatternTag, ScanMeta, LiveScanMeta } from './pine';
 
 export type ScreenMarket = 'US' | 'IN';
 
@@ -86,6 +86,11 @@ export interface ScreenRow {
   scan?: ScanMeta;           // daily scan; tags (pat) are present only when scan.st is 'ready' and the version is current
   patW?: ScreenPatternTag[]; patM?: ScreenPatternTag[];   // weekly / monthly patterns (tags carry tf 'W' / 'M') — filled once wired
   scanW?: ScanMeta; scanM?: ScanMeta;
+  // zzz1003 (PS-03): `pat` / `scan` are read from COMPLETED sessions (scan.session 'completed', scan.asOf / scan.px = the last completed
+  //    session and its close; scan.obsAt = when the bars were observed). When the build read during a session, the unfinished bar's
+  //    own reading is kept apart: patLive (daily tags with lv: 1, provisional) + scanLive { st, session: 'open', at, asOf, px }.
+  patLive?: ScreenPatternTag[];
+  scanLive?: LiveScanMeta;
   // ── zzz993 (MC-01): price provenance. Patterns, pivot distances (tag.d), stages AND the moving averages / RSI / performance
   //    figures are all worked out from ONE set of daily bars, whose last close is scanPx. `px` / `chg` are the latest quote and can
   //    come from another source (US: Nasdaq's list; India: NSE's daily price file). Neither is certified as the exchange close.

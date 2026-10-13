@@ -7,12 +7,12 @@
 import type { Filter, NumKey } from './filters';
 import { DEFAULT_QUERY, type PineGroup, type PineQuery, type PineScreen } from './pine';
 
-type Opts = { note?: string; market?: PineScreen['market']; group?: PineGroup };
+type Opts = { note?: string; market?: PineScreen['market']; group?: PineGroup; scope?: string };
 const screen = (id: string, name: string, q: Partial<PineQuery>, o: Opts | string = {}): PineScreen => {
   const opt: Opts = typeof o === 'string' ? { note: o } : o;
   return {
     id, name, q: { ...DEFAULT_QUERY, ...q, dist: { ...DEFAULT_QUERY.dist, ...(q.dist || {}) } }, builtIn: true, group: opt.group || 'patterns',
-    ...(opt.note ? { note: opt.note } : {}), ...(opt.market ? { market: opt.market } : {}),
+    ...(opt.note ? { note: opt.note } : {}), ...(opt.market ? { market: opt.market } : {}), ...(opt.scope !== undefined ? { scope: opt.scope } : {}),
   };
 };
 /** A screen decided by rules alone (no chart pattern needed); bullish and bearish patterns are still shown next to each company. */
@@ -29,6 +29,10 @@ const TW_COLS: NumKey[] = ['twSt', 'sata', 'mrs', 'twWk', 'rsR'];
 const TW_NOTE = 'Stage Analysis (TheWrap method) — our own version that follows the published rules (weekly 10/30/40-week averages, 13-week closing range, SATA score, Mansfield RS vs the index); not the original script.';
 /** zzz999 — the bullish base family (O'Neil bases + VCP) used by the setup cards. */
 const BASE_IDS: PineQuery['ids'] = ['flat_base', 'cup', 'cup_handle', 'u_base', 'ascending_base', 'base_on_base', 'ipo_base', 'vcp'];
+/** zzz1004 — the monthly families: bases read on M (U / rounding base, cup, VCP — the base types the engine reads on monthly bars) and
+ *  reversal bases (double / triple bottom, inverse H&S), counted apart. */
+export const MONTHLY_BASE_IDS: PineQuery['ids'] = ['u_base', 'cup', 'vcp'];
+export const MONTHLY_REVERSAL_IDS: PineQuery['ids'] = ['double_bottom', 'triple_bottom', 'inverse_hs'];
 const ABOVE_200: Filter[] = [{ kind: 'cmp', key: 'px', op: 'above', other: 'sma200' }];
 const BELOW_200: Filter[] = [{ kind: 'cmp', key: 'px', op: 'below', other: 'sma200' }];
 
@@ -63,8 +67,26 @@ export const BUILT_IN_PINE_SCREENS: readonly PineScreen[] = [
     "Bullish bases (O'Neil bases and VCPs) still forming, likely or better, with the scan close up to 15% below the pivot."),
   screen('weekly-bases', 'Weekly bases', { bias: 'U', ids: BASE_IDS, tfs: ['W'], stages: ['f', 'b'], dist: { on: true, lo: -20, hi: 5 } },
     'Bullish bases read on completed weekly bars, forming or just broken out — longer, slower setups.'),
+  // zzz1004 — Monthly Bases (completed calendar months only). Bases and reversal bases are kept apart (counted separately);
+  // no pivot window by default (broad discovery) — the near-pivot variant is its own screen.
+  screen('monthly-bases', 'Monthly bases', { bias: 'U', ids: MONTHLY_BASE_IDS, tfs: ['M'], stages: ['f', 'b'], dist: { on: false, lo: -25, hi: 5 } },
+    'U / rounding bases, cups and VCPs read on completed monthly bars, forming or broken out in the last completed month(s) — no pivot limit. A monthly reading needs at least 24 monthly bars; a long (up to 60-month) U base needs more history than that.'),
+  screen('monthly-reversal-bases', 'Monthly reversal bases', { bias: 'U', ids: MONTHLY_REVERSAL_IDS, tfs: ['M'], stages: ['f', 'b'], dist: { on: false, lo: -25, hi: 5 } },
+    'Double / triple bottoms and inverse head & shoulders on completed monthly bars — reversals, counted apart from the bases. No pivot limit.'),
+  screen('monthly-near-pivot', 'Monthly bases near the pivot', { bias: 'U', ids: MONTHLY_BASE_IDS, tfs: ['M'], stages: ['f', 'b'], dist: { on: true, lo: -10, hi: 5 } },
+    'The monthly bases whose last completed monthly close is from 10% below the pivot to 5% above it.'),
   screen('failed-breakouts', 'Failed breakouts', { bias: 'U', stages: ['x'], dist: { on: false, lo: -30, hi: 5 } },
     'Bullish patterns that broke out in the last 40 sessions and fell more than 7.5% back through the pivot — a warning sign.'),
+
+  // ── zzz1004: portfolio workflows (holdings only — the screen carries its company list). Risk review is about recall: every
+  // bearish pattern, forming or broken down, on D / W / M, possible or better, NO pivot window, size, liquidity or extra rule, so a
+  // support broken long ago is not hidden. Holdings without a match are listed beside the result as coverage rows. ────────
+  screen('pf-bearish-risks', 'Portfolio · bearish risks', { bias: 'D', tfs: ['D', 'W', 'M'], tfMode: 'any', stages: ['f', 'b'], minConf: 35, dist: { on: false, lo: -15, hi: 5 } },
+    { group: 'portfolio', scope: 'pf', note: 'Every bearish pattern on your holdings — forming or broken down, daily / weekly / monthly, shape score 35 or more (weaker ones are marked possible), no distance, size or liquidity limit. Holdings with no bearish pattern, no scan or no data are listed below the table.' }),
+  screen('pf-bullish-opps', 'Portfolio · bullish opportunities', { bias: 'U', tfs: ['D', 'W', 'M'], tfMode: 'any', stages: ['f', 'b'], minConf: 35, dist: { on: false, lo: -25, hi: 5 } },
+    { group: 'portfolio', scope: 'pf', note: 'Every bullish pattern on your holdings — forming or broken out, daily / weekly / monthly, shape score 35 or more, no distance limit (readiness is shown per row, not required).' }),
+  screen('pf-failed-bearish', 'Portfolio · recovering from failed bearish', { bias: 'D', tfs: ['D', 'W', 'M'], tfMode: 'any', stages: ['x'], minConf: 35, dist: { on: false, lo: -30, hi: 5 } },
+    { group: 'portfolio', scope: 'pf', note: 'Bearish patterns on your holdings that broke down and then rose more than 7.5% back through the breakdown level — a recovery view, kept apart from the active risks.' }),
 
   // ── zzz984: his own TradingView scripts / the indicators in his Pine Screener ───────────────────────────────────────
   rules('tv-trend-template', 'Minervini Trend Template (based on your TradingView script)', TREND_TEMPLATE, ['tt', 'rsR', 'stage'], 'tv',

@@ -14,15 +14,27 @@
 //
 // The rest of this file is pure: the filters the page applies (bias / sub-pattern / stage / likelihood / distance to the
 // pivot / liquidity), counts per pattern for the chips, and the cleaning of saved Pine screens.
-import { analyzePatterns, analyzeDailyAs, toTags, PATTERN_META, PATTERN_IDS, PATTERN_MIN_HISTORY, type PatternId, type PatternTag, type PatternAnalysis, type PBar } from '../chart-patterns';
-import { techFigures, closedFigures, usSessionOpen, type DailyBars } from './tech';
+import { analyzePatterns, analyzeDailyAs, toTags, PATTERN_META, PATTERN_IDS, PATTERN_MIN_HISTORY, LONG_BASE_MONTHS, type PatternId, type PatternTag, type PatternAnalysis, type PBar } from '../chart-patterns';
+import { techFigures, closedFigures, usSessionOpen, liveSessionBar, recentBars, TECH_FIGURE_DAYS, type DailyBars } from './tech';
 import { passes, cleanScreens, fieldOf, filterKeys, filterLabel, evalPattern, patMissingWhy, tagDirDist, shapeWord, PATTERN_TFS, FIELDS, type Filter, type NumKey, type PatTf, type PatternEval } from './filters';
 import type { ScreenMarket, ScreenRow } from './types';
 import type { TechStored } from './tech-fetch';
 import { tvFigures, rsRatings, type TvFigures } from './tv-screens';
 
 /** Bump when the engine or the stored tag changes: every stored entry without it is re-read on the next build. */
-export const PATTERN_SCAN_VERSION = 5;   // 2 = zzz984: + the owner's TradingView indicator fields (tv-screens.ts); 3 = zzz987: + Stage Analysis (TheWrap method); 4 = zzz990: chart-pattern audit (volume missingness, IPO first base + listing date, projected sloped boundaries, strict HTF); 5 = zzz993: scan status / quality (MC-02) + scan-close provenance (MC-01) + weekly / monthly patterns (patW / patM)
+export const PATTERN_SCAN_VERSION = 6;   // 2 = zzz984: + the owner's TradingView indicator fields (tv-screens.ts); 3 = zzz987: + Stage Analysis (TheWrap method); 4 = zzz990: chart-pattern audit (volume missingness, IPO first base + listing date, projected sloped boundaries, strict HTF); 5 = zzz993: scan status / quality (MC-02) + scan-close provenance (MC-01) + weekly / monthly patterns (patW / patM); 6 = zzz1003: W / M scans always carry their own close `px` (PS-01), the daily scan reads COMPLETED sessions only (+ an optional provisional live reading, PS-03), monthly scans read ~10 years (PS-07)
+/** zzz1003 (PS-01) — older scan versions whose DAILY reading is still shown during the changeover to the current version: their daily
+ *  tags / fields are what the current version would show for a completed session (a v5 entry read during a session is labelled
+ *  `session: 'provisional'`). Their WEEKLY / MONTHLY readings are NOT shown (v5 W / M scans may lack `px`, the close their `d` is
+ *  measured from): they read as 'stale-version' until the company is re-read. */
+export const PATTERN_SCAN_DAILY_COMPAT: readonly number[] = [5];
+/** zzz1003 (PS-07) — monthly bars a monthly scan asks for (10 years); the daily / weekly scans and every price figure keep reading the
+ *  last ~5 years (TECH_FIGURE_DAYS), exactly as before. */
+export const MONTHLY_HISTORY_REQ = 120;
+/** zzz1003 (PS-07) — monthly bars a pattern needs to be read in full on M: its longest formation + the prior-trend window (130 sessions
+ *  = 6 months) + the failed-breakout window (40 sessions = 2 months), never under the engine-wide 24. Only the rounding (U) base,
+ *  which may span LONG_BASE_MONTHS (60) months, needs more than 24; the others' longest monthly body is ~16 months (330 sessions). */
+export const MONTHLY_CONTEXT_BARS: Partial<Record<PatternId, number>> = { u_base: LONG_BASE_MONTHS + 6 + 2 };
 /** Only hits at least this likely are stored (the engine's own floor is 35 as well). */
 export const PATTERN_MIN_STORE = 35;
 /** zzz993 (MC-01) — latest quote and scan close further apart than this (%) on the same (or an unknown) date = vendors disagree. */
@@ -34,7 +46,9 @@ export const SCAN_BASIS = 'split-adjusted price';
  *  zzz993: `vq: 0` = the pattern's bars carry too little usable volume (engine volumeOk false — "volume not confirmed");
  *  `tf` = timeframe of the bars ('D' when absent; 'W' / 'M' for patW / patM); `dq` (only in the page's lean rows) = distance
  *  to the pivot from the LATEST QUOTE (px), %, same sign rule as `d` — `d` itself is always from the scan close. */
-export interface ScreenPatternTag extends PatternTag { l?: number; dp?: number | null; vq?: 0; tf?: 'D' | 'W' | 'M'; dq?: number; lu?: 'd' | 'w' | 'm' }
+export interface ScreenPatternTag extends PatternTag { l?: number; dp?: number | null; vq?: 0; tf?: 'D' | 'W' | 'M'; dq?: number; lu?: 'd' | 'w' | 'm'; lv?: 1 }
+//   zzz1003 (PS-03) — `lv: 1` = a PROVISIONAL daily tag read with today's unfinished session (row `patLive`, scanned at
+//   `scanLive.at`); its `d` is from the live bar's close (scanLive.px). Never part of `pat`.
 //   zzz998 — `lu` = the unit of `l`: 'w' (weeks) on weekly tags, 'm' (months) on monthly tags; absent on daily tags (= trading days).
 //   Use tagLengthText(tag) to show it.
 
@@ -56,10 +70,22 @@ export function tagLengthText(tag: Pick<ScreenPatternTag, 'l' | 'lu' | 'tf'> | n
 export type ScanStatus = 'ready' | 'no-pattern' | 'insufficient-history' | 'invalid-data' | 'error' | 'stale-version';
 /** `v` scan version (0 = unknown, snapshot rows from before zzz993) · `n` usable bars · `asOf` date of the last bar ·
  *  `vc` share 0–1 of the last 60 analysed bars with usable volume · `tf` timeframe ('D' when absent). n / asOf / vc: when known. */
-export interface ScanMeta { st: ScanStatus; v: number; n?: number; asOf?: string; vc?: number; tf?: 'D' | 'W' | 'M'; e?: string; px?: number; rep?: number; rej?: number }
+export interface ScanMeta {
+  st: ScanStatus; v: number; n?: number; asOf?: string; vc?: number; tf?: 'D' | 'W' | 'M'; e?: string; px?: number; rep?: number; rej?: number;
+  /** zzz1003 (PS-03, daily scan only) — 'completed': read from completed sessions (asOf = the last completed session, px its close);
+   *  'provisional': read with today's unfinished session (only v5 entries read during a session — v6 never stores that as `scan`). */
+  session?: 'completed' | 'provisional';
+  /** zzz1003 (PS-03, daily scan only) — when the bars were observed (ISO time of the read). */
+  obsAt?: string;
+  /** zzz1003 (PS-07, monthly scan only) — completed monthly bars available to the scan · monthly bars requested · first daily bar
+   *  date used · patterns whose full context needs more monthly bars than available (id → bars needed, MONTHLY_CONTEXT_BARS). */
+  hist?: number; req?: number; from?: string; need?: Partial<Record<PatternId, number>>;
+}
 //   `e` = the chart engine's rule-set version (PATTERN_ENGINE_VERSION) the reading was made with.
 //   zzz998 — `px` (weekly / monthly only) = the close of the last COMPLETED week / month the reading used (its date is `asOf`); the
-//   W / M tags' `d` is measured from it, so it is the close to show beside them (tagScanClose). `rep` / `rej` = DAILY bars repaired /
+//   W / M tags' `d` is measured from it, so it is the close to show beside them (tagScanClose). zzz1003 — mandatory on a scanned
+//   (ready / no-pattern) W / M reading of the current version (periodScanUsable), and also stored on the daily scan (v6: the close of
+//   the last completed session the daily tags were read from). `rep` / `rej` = DAILY bars repaired /
 //   rejected by validation (D) or aggregation (W / M) — present when above 0. More than SCAN_MAX_REJECT_SHARE of the supplied
 //   daily bars rejected → 'invalid-data' (no tags).
 /** zzz998 — more than this share of the supplied daily bars rejected = the data is bad: status 'invalid-data', no tags. */
@@ -79,7 +105,7 @@ function scanResult(a: PatternAnalysis, tf: 'D' | 'W' | 'M', asOf: string | unde
   const rep = q ? q.rep : a.repairedBars, rej = q ? q.rej : a.rejectedBars, daily = q ? q.daily : supplied;
   const meta: Omit<ScanMeta, 'st'> = {
     v: PATTERN_SCAN_VERSION, n: a.usableBars, ...(asOf ? { asOf } : {}), vc: a.volumeCoverage, ...(tf !== 'D' ? { tf } : {}), e: a.engineVersion,
-    ...(tf !== 'D' && q?.px != null && fin(q.px) && q.px > 0 ? { px: Number(q.px.toPrecision(6)) } : {}),
+    ...(q?.px != null && fin(q.px) && q.px > 0 ? { px: Number(q.px.toPrecision(6)) } : {}),
     ...(rep > 0 ? { rep } : {}), ...(rej > 0 ? { rej } : {}),
   };
   // zzz998 — too many daily bars thrown out: whatever is left is not a trustworthy chart
@@ -101,26 +127,44 @@ function scanResult(a: PatternAnalysis, tf: 'D' | 'W' | 'M', asOf: string | unde
 
 /** The chart patterns the latest bars are forming (or just broke out of / failed), as stored on a screener row, with the scan's
  *  status (MC-02). `patAt` is set only for a genuine reading (ready / no-pattern). Never throws. */
-export function patternsFromBars(b: DailyBars, ipoD: number | null | undefined): { pat: ScreenPatternTag[]; patAt: string | null; scan: ScanMeta } {
+export function patternsFromBars(b: DailyBars, ipoD: number | null | undefined, opts?: { session?: 'completed' | 'provisional'; obsAt?: string }): { pat: ScreenPatternTag[]; patAt: string | null; scan: ScanMeta } {
   const n = b.c.length;
   const v = PATTERN_SCAN_VERSION;
-  if (!n) return { pat: [], patAt: null, scan: { st: 'insufficient-history', v, n: 0 } };
+  // zzz1003 (PS-03) — the session basis and observation time travel with every outcome, not only with a ready scan
+  const prov = { ...(opts?.session ? { session: opts.session } : {}), ...(opts?.obsAt ? { obsAt: opts.obsAt } : {}) };
+  if (!n) return { pat: [], patAt: null, scan: { st: 'insufficient-history', v, n: 0, ...prov } };
   const asOf = b.d[n - 1];
   try {
     const a = analyzePatterns(toPBars(b), ipoD != null && Number.isFinite(ipoD) ? { firstTradeT: ipoD * DAY } : undefined);
-    const r = scanResult(a, 'D', asOf, n);
-    return { pat: r.pat, patAt: isScanned(r.scan.st) ? asOf : null, scan: r.scan };
+    // zzz1003 — the daily scan keeps its own close too (the last bar it read; tags' `d` is measured from it)
+    const r = scanResult(a, 'D', asOf, n, { rep: a.repairedBars, rej: a.rejectedBars, daily: n, px: b.c[n - 1] });
+    return { pat: r.pat, patAt: isScanned(r.scan.st) ? asOf : null, scan: { ...r.scan, ...prov } };
   } catch {
     // a pattern failure never costs the company its price figures — but it is reported as a failure, never as "no pattern"
-    return { pat: [], patAt: null, scan: { st: 'error', v, asOf } };
+    return { pat: [], patAt: null, scan: { st: 'error', v, asOf, ...prov } };
   }
 }
 
 /** zzz993 — the same daily bars read as COMPLETED weeks ('W', ISO weeks) or months ('M', calendar months) — the current, unfinished
  *  period is left out. Tags carry tf 'W' / 'M'; their `d` is the last completed period's close vs the pivot (scan.asOf = the date of
  *  the last daily bar in that period), so W / M readings are coherent on their own bars and can lag the daily scan close.
- *  Minimum history W 30 weeks / M 24 months; the build keeps ~5 years of daily bars, so monthly scans see ~60 bars (shapes
- *  longer than that cannot be read). Never throws; a failure is status 'error' and never costs the daily scan. */
+ *  Minimum history W 30 weeks / M 24 months. zzz1003 (PS-07): the build downloads ~10 years of daily bars; the monthly scan reads
+ *  all of them (up to MONTHLY_HISTORY_REQ = 120 months, the engine's monthly window), the weekly one the last ~5 years as before.
+ *  The monthly scan records `hist` / `req` / `from` / `need` (monthlyHistory). Never throws; a failure is status 'error' and never
+ *  costs the daily scan. */
+export function monthlyHistory(hist: number, from: string | undefined): Pick<ScanMeta, 'hist' | 'req' | 'from' | 'need'> {
+  const have = Math.min(hist, MONTHLY_HISTORY_REQ);
+  const need: Partial<Record<PatternId, number>> = {};
+  for (const [id, bars] of Object.entries(MONTHLY_CONTEXT_BARS) as Array<[PatternId, number]>) if (have < bars) need[id] = bars;
+  return { hist, req: MONTHLY_HISTORY_REQ, ...(from ? { from } : {}), ...(Object.keys(need).length ? { need } : {}) };
+}
+/** zzz1003 (PS-07) — the monthly-history note for a scanM in words ('' when nothing is short), e.g.
+ *  "59 monthly bars (from 2021-09-14); U base needs 68 to be read at its longest (60 months + prior trend)". */
+export function monthlyNeedText(sc: Pick<ScanMeta, 'hist' | 'from' | 'need'> | null | undefined): string {
+  if (!sc?.need) return '';
+  const parts = (Object.entries(sc.need) as Array<[PatternId, number]>).map(([id, n]) => `${PATTERN_META[id]?.label || id} needs ${n}`);
+  return parts.length ? `${sc.hist ?? '?'} monthly bars${sc.from ? ` (from ${sc.from})` : ''}; ${parts.join(', ')} to be read at its longest (formation + prior trend)` : '';
+}
 export function periodPatternsFromBars(b: DailyBars, tf: 'W' | 'M', ipoD: number | null | undefined, now?: Date): { pat: ScreenPatternTag[]; scan: ScanMeta } {
   const n = b.c.length;
   if (!n) return { pat: [], scan: { st: 'insufficient-history', v: PATTERN_SCAN_VERSION, n: 0, tf } };
@@ -128,7 +172,9 @@ export function periodPatternsFromBars(b: DailyBars, tf: 'W' | 'M', ipoD: number
     const a = analyzeDailyAs(toPBars(b), tf, { completedOnly: true, ...(now ? { now } : {}), ...(ipoD != null && Number.isFinite(ipoD) ? { firstTradeT: ipoD * DAY } : {}) });
     const asOf = a.periodEnd != null && Number.isFinite(a.periodEnd) ? new Date(a.periodEnd).toISOString().slice(0, 10) : undefined;
     const lastBar = a.bars.length ? a.bars[a.bars.length - 1] : null;
-    return scanResult(a, tf, asOf, a.bars.length, { rep: a.dailyRepaired, rej: a.dailyRejected, daily: a.dailySupplied, px: lastBar ? lastBar.c : null });
+    const r = scanResult(a, tf, asOf, a.bars.length, { rep: a.dailyRepaired, rej: a.dailyRejected, daily: a.dailySupplied, px: lastBar ? lastBar.c : null });
+    if (tf === 'M') r.scan = { ...r.scan, ...monthlyHistory(a.bars.length, b.d[0]) };   // zzz1003 (PS-07)
+    return r;
   } catch {
     return { pat: [], scan: { st: 'error', v: PATTERN_SCAN_VERSION, tf, asOf: b.d[n - 1] } };
   }
@@ -138,40 +184,95 @@ export function periodPatternsFromBars(b: DailyBars, tf: 'W' | 'M', ipoD: number
  *  `bench` (zzz987) = the market index's weekly closes by week key, for the Mansfield RS of the Stage Analysis.
  *  `src` (zzz993) = where the bars came from ('yahoo', or 'yahoo+nse-bhav' when NSE's own prices were laid over them) and the
  *  exchange Yahoo names for the symbol — stored with the scan close so every price-based figure has its provenance. */
-export function techEntry(bars: DailyBars, firstTradeSec: number | null, partial?: boolean, bench?: ReadonlyMap<string, number> | null, src?: { src?: string; ex?: string | null; now?: Date }): TechStored {
+/** zzz1003 (PS-03 / PS-07):
+ *  • `bars` may hold ~10 years. Every price figure, the TradingView-script fields, the daily and the weekly scans read only the last
+ *    TECH_FIGURE_DAYS (~5 years, as before — recentBars); the monthly scan reads all of it (≤ 120 months).
+ *  • The daily scan reads COMPLETED sessions: when the last bar is today's unfinished session (`partial` from Yahoo, or the
+ *    market clock — liveSessionBar with src.market), it is left out; `scan.session` = 'completed', `scan.asOf` / `scan.px` = the last
+ *    completed session and its close, `patAt` that session's date. The live bar is read separately as a PROVISIONAL scan:
+ *    `patLive` (tags with `lv: 1`, only when ready) + `scanLive` { st, session: 'open', at: observation time, asOf: the live bar's
+ *    date, px: its close } — about one more daily analysis (~5 ms a company), so it is always done when live.
+ *  • `cc` (the completed-session price figures) is now kept whenever the last bar is live by either test, consistent with the scan.
+ *  • scanPx / scanAt stay the LAST bar (live or not): the close the price figures (moving averages, RSI, performance) were worked
+ *    out from. The daily tags' own close is `scan.px` (tagScanClose / analysisContext). */
+export function techEntry(bars: DailyBars, firstTradeSec: number | null, partial?: boolean, bench?: ReadonlyMap<string, number> | null, src?: { src?: string; ex?: string | null; now?: Date; market?: ScreenMarket }): TechStored {
   const ipoD = firstTradeSec != null ? Math.floor((firstTradeSec * 1000) / DAY) : null;
-  const cc = partial ? closedFigures(bars) : null;
-  const p = patternsFromBars(bars, ipoD);
+  const now = src?.now ?? new Date();
+  const obsAt = now.toISOString();
+  const recent = recentBars(bars, TECH_FIGURE_DAYS);
+  const n = recent.c.length;
+  const live = n > 0 && (!!partial || (!!src?.market && liveSessionBar(recent.d[n - 1], src.market, now)));
+  const cc = live ? closedFigures(recent) : null;
+  const done: DailyBars = live ? { d: recent.d.slice(0, -1), o: recent.o.slice(0, -1), h: recent.h.slice(0, -1), l: recent.l.slice(0, -1), c: recent.c.slice(0, -1), v: recent.v.slice(0, -1) } : recent;
+  const p = patternsFromBars(done, ipoD, { session: 'completed', obsAt });
+  let lv: { pat: ScreenPatternTag[]; scan: LiveScanMeta } | null = null;
+  if (live) {
+    const q = patternsFromBars(recent, ipoD, { obsAt });
+    const { session: _s, obsAt: _o, ...rest } = q.scan;
+    lv = { pat: q.scan.st === 'ready' ? q.pat.map((t) => ({ ...t, lv: 1 as const })) : [], scan: { ...rest, at: obsAt, session: 'open' } };
+  }
   let tv: Partial<TvFigures> = {};
-  try { tv = tvFigures(bars, bench); } catch { /* never costs the price figures */ }
-  const n = bars.c.length;
-  // zzz993 (MC-01) — the close every price figure and pattern of this entry was worked out from, and its date / source
-  const scanPx = n && Number.isFinite(bars.c[n - 1]) ? Number(bars.c[n - 1].toPrecision(6)) : null;
-  // zzz993 — weekly / monthly patterns from the same daily bars (completed periods only)
-  const w = periodPatternsFromBars(bars, 'W', ipoD, src?.now), m = periodPatternsFromBars(bars, 'M', ipoD, src?.now);
+  try { tv = tvFigures(recent, bench); } catch { /* never costs the price figures */ }
+  // zzz993 (MC-01) — the close every price figure of this entry was worked out from, and its date / source
+  const scanPx = n && Number.isFinite(recent.c[n - 1]) ? Number(recent.c[n - 1].toPrecision(6)) : null;
+  // zzz993 — weekly / monthly patterns from the same daily bars (completed periods only); zzz1003 — monthly from the full ~10 years
+  const w = periodPatternsFromBars(recent, 'W', ipoD, now), m = periodPatternsFromBars(bars, 'M', ipoD, now);
   return {
-    ...techFigures(bars), ipoD, ...(cc ? { cc } : {}), pat: p.pat, patAt: p.patAt, patV: PATTERN_SCAN_VERSION, scan: p.scan, ...tv,
+    ...techFigures(recent), ipoD, ...(cc ? { cc } : {}), pat: p.pat, patAt: p.patAt, patV: PATTERN_SCAN_VERSION, scan: p.scan, ...tv,
     patW: w.pat, scanW: w.scan, patM: m.pat, scanM: m.scan,
-    ...(scanPx != null ? { scanPx, scanAt: bars.d[n - 1] } : {}), scanSrc: src?.src || 'yahoo', ...(src?.ex ? { scanEx: src.ex } : {}),
+    ...(lv ? { patLive: lv.pat, scanLive: lv.scan } : {}),
+    ...(scanPx != null ? { scanPx, scanAt: recent.d[n - 1] } : {}), scanSrc: src?.src || 'yahoo', ...(src?.ex ? { scanEx: src.ex } : {}),
   };
+}
+
+/** zzz1003 (PS-03) — the provisional reading of today's unfinished daily bar: `at` = when it was observed (ISO), `asOf` = the live
+ *  bar's date, `px` = its (live) close. Never a completed close. */
+export type LiveScanMeta = Omit<ScanMeta, 'session' | 'obsAt'> & { session: 'open'; at: string };
+
+/** zzz1003 (PS-01) — is a weekly / monthly reading trustworthy for its tags and its close? Current version (a lean row strips `v`
+ *  when current: absent = current) and, when scanned (ready / no-pattern), its own close `px` (> 0) and date `asOf` present.
+ *  Not-scanned statuses (insufficient / invalid / error) of the current version are usable as statuses. */
+export function periodScanUsable(sc: Pick<ScanMeta, 'st' | 'v' | 'px' | 'asOf'> | null | undefined, scanV: number = PATTERN_SCAN_VERSION): boolean {
+  if (!sc || sc.st === 'stale-version') return false;
+  if (sc.v != null && sc.v !== scanV) return false;
+  if (isScanned(sc.st)) return fin(sc.px) && sc.px > 0 && !!sc.asOf;
+  return true;
+}
+/** The 'stale-version' stand-in for a W / M reading that is not usable (kept: its version, n, asOf, tf — never its tags or px). */
+function staleScanOf(sc: ScanMeta, fallbackV: number): ScanMeta {
+  return { st: 'stale-version', v: sc.v ?? fallbackV, ...(sc.n != null ? { n: sc.n } : {}), ...(sc.asOf ? { asOf: sc.asOf } : {}), ...(sc.tf ? { tf: sc.tf } : {}) };
 }
 
 /** The pattern fields a screener row carries, from a stored entry: nothing when the entry predates the pattern scan; only
  *  `scan: { st: 'stale-version' }` (no tags, no patAt) when it was read by an older scan version (MC-02 — an old reading is
  *  never shown as current); otherwise the tags (ready only), patAt (ready / no-pattern) and the scan status. */
-export function rowPatternFields(tf: TechStored | undefined): Pick<ScreenRow, 'pat' | 'patAt' | 'scan' | 'patW' | 'patM' | 'scanW' | 'scanM'> {
+export type RowPatternKeys = 'pat' | 'patAt' | 'scan' | 'patW' | 'patM' | 'scanW' | 'scanM' | 'patLive' | 'scanLive';
+/** zzz1003 (PS-01) — changeover rule: an entry of a version in PATTERN_SCAN_DAILY_COMPAT (v5) keeps its DAILY reading (scan keeps
+ *  its own `v`; `session` = 'provisional' when it was read during a session — it then carries `cc` — else 'completed'), while its
+ *  weekly / monthly readings become 'stale-version' (no tags). A current entry's W / M reading that lacks its own close / date
+ *  (periodScanUsable) is withheld the same way. Older versions: 'stale-version' everywhere, as before. */
+export function rowPatternFields(tf: TechStored | undefined): Pick<ScreenRow, RowPatternKeys> {
   if (!tf || tf.patV == null) return {};
-  if (tf.patV !== PATTERN_SCAN_VERSION) {
+  const compat = PATTERN_SCAN_DAILY_COMPAT.includes(tf.patV);
+  if (tf.patV !== PATTERN_SCAN_VERSION && !compat) {
     const old = tf.scan;
     return { scan: { st: 'stale-version', v: tf.patV, ...(old?.n != null ? { n: old.n } : {}), ...(old?.asOf || tf.patAt ? { asOf: old?.asOf || tf.patAt || undefined } : {}), ...(old?.vc != null ? { vc: old.vc } : {}) } };
   }
-  const scan: ScanMeta = tf.scan || { st: tf.pat?.length ? 'ready' : 'no-pattern', v: tf.patV, ...(tf.patAt ? { asOf: tf.patAt } : {}) };
-  const out: Pick<ScreenRow, 'pat' | 'patAt' | 'scan' | 'patW' | 'patM' | 'scanW' | 'scanM'> = { scan };
+  let scan: ScanMeta = tf.scan || { st: tf.pat?.length ? 'ready' : 'no-pattern', v: tf.patV, ...(tf.patAt ? { asOf: tf.patAt } : {}) };
+  if (compat && !scan.session) scan = { ...scan, session: tf.cc ? 'provisional' : 'completed' };
+  const out: Pick<ScreenRow, RowPatternKeys> = { scan };
   if (scan.st === 'ready' && tf.pat?.length) out.pat = tf.pat;
   if (isScanned(scan.st) && tf.patAt) out.patAt = tf.patAt;
-  // weekly / monthly readings (filled once the higher-timeframe scan is wired in techEntry)
-  if (tf.scanW) { out.scanW = tf.scanW; if (tf.scanW.st === 'ready' && tf.patW?.length) out.patW = tf.patW; }
-  if (tf.scanM) { out.scanM = tf.scanM; if (tf.scanM.st === 'ready' && tf.patM?.length) out.patM = tf.patM; }
+  // weekly / monthly readings: only a current reading with its own close (never the daily close in their place)
+  for (const [sk, pk] of [['scanW', 'patW'], ['scanM', 'patM']] as const) {
+    const sc = tf[sk];
+    if (!sc) continue;
+    if (compat || !periodScanUsable(sc)) { out[sk] = staleScanOf(sc, tf.patV); continue; }
+    out[sk] = sc;
+    if (sc.st === 'ready' && tf[pk]?.length) out[pk] = tf[pk];
+  }
+  // the provisional reading of today's unfinished session (current version only)
+  if (!compat && tf.scanLive) { out.scanLive = tf.scanLive; if (tf.scanLive.st === 'ready' && tf.patLive?.length) out.patLive = tf.patLive; }
   return out;
 }
 
@@ -473,6 +574,8 @@ export const LEAN_KEYS = [
   'twSt', 'sata', 'mrs', 'twWk',
   // zzz993 — scan status / quality (MC-02), scan-close vs latest-quote provenance (MC-01), weekly / monthly readings (when wired)
   'scan', 'scanPx', 'scanAt', 'scanSrc', 'scanBasis', 'scanEx', 'pxSrc', 'pxAt', 'pxGap', 'pxConflict', 'pxAlt', 'patW', 'patM', 'scanW', 'scanM',
+  // zzz1003 (PS-03) — the provisional reading of today's unfinished session
+  'patLive', 'scanLive',
   // zzz993 — fields the Pine rule editor offers (price figures, growth, valuation, quality)
   'rsiW', 'rsiM', 'epsQYoY', 'revAYoY', 'ps', 'evRev', 'de', 'cash', 'roeTTM', 'roceTTM', 'gmFY', 'epsTTMYoY', 'revTTMYoY', 'gpQYoY', 'pe',
   'opmTTM', 'nmTTM', 'sma21', 'sma100', 'ema10', 'ema50', 'atrP', 'chg1W', 'perf5D', 'perf5Y', 'avgVol60', 'fs',
@@ -497,14 +600,114 @@ export function scanStatusOf(r: Pick<ScreenRow, 'scan' | 'patAt'>): ScanStatus |
 /** zzz993 (MC-01) — distance from the LATEST QUOTE to each tag's pivot (`dq`, %, 0.1), next to the scan-close distance `d`. */
 const withQuoteDist = (tags: ScreenPatternTag[], px: number | null | undefined): ScreenPatternTag[] =>
   fin(px) && px > 0 ? tags.map((t) => (fin(t.p) && t.p > 0 ? { ...t, dq: Math.round((px / t.p - 1) * 1000) / 10 } : t)) : tags;
-/** zzz998 — the scan close that belongs to a tag's timeframe: daily → the row's scan close (scanPx / scanAt); weekly / monthly →
- *  the close of the last completed week / month the reading used (scanW / scanM `px`, dated `asOf`). Its `d` is measured from this
- *  close, so show this one beside a W / M tag, never the daily close. px / at null when the row does not carry it (older entries). */
-export function tagScanClose(row: Partial<Pick<ScreenRow, 'scanPx' | 'scanAt' | 'scanW' | 'scanM'>> | null | undefined, tag: Pick<ScreenPatternTag, 'tf'> | null | undefined): { px: number | null; at: string | null; tf: 'D' | 'W' | 'M' } {
+/** zzz998 — the scan close that belongs to a tag's timeframe: daily → the close of the session the daily tags were read from;
+ *  weekly / monthly → the close of the last completed week / month the reading used (scanW / scanM `px`, dated `asOf`). Its `d` is
+ *  measured from this close, so show this one beside a W / M tag, never the daily close. px / at null when the row does not carry it.
+ *  zzz1003 (PS-01 / PS-03):
+ *   • D: `scan.px` / `scan.asOf` (v6: the last COMPLETED session); a row without them (v5 and older) → scanPx / scanAt, the bar
+ *     those older daily tags were read from.
+ *   • a provisional live tag (`lv: 1`, from patLive) → scanLive.px / scanLive.asOf (today's unfinished bar).
+ *   • W / M: px only when the reading is usable (periodScanUsable: current version, scanned with its own px + asOf); otherwise px
+ *     null ("weekly / monthly analysis close unavailable") — NEVER the daily close; `at` stays the reading's own period date. */
+export function tagScanClose(
+  row: Partial<Pick<ScreenRow, 'scanPx' | 'scanAt' | 'scan' | 'scanW' | 'scanM' | 'scanLive'>> | null | undefined,
+  tag: Pick<ScreenPatternTag, 'tf'> & { lv?: 1 } | null | undefined,
+  scanV: number = PATTERN_SCAN_VERSION,
+): { px: number | null; at: string | null; tf: 'D' | 'W' | 'M' } {
   const tf = tag?.tf === 'W' || tag?.tf === 'M' ? tag.tf : 'D';
-  if (tf === 'D') return { px: fin(row?.scanPx) ? row!.scanPx as number : null, at: row?.scanAt || null, tf };
+  if (tf === 'D') {
+    if (tag?.lv) { const lv = row?.scanLive; return { px: fin(lv?.px) && lv!.px > 0 ? lv!.px as number : null, at: lv?.asOf || null, tf }; }
+    const sc = row?.scan;
+    if (fin(sc?.px) && sc!.px > 0 && sc!.asOf) return { px: sc!.px as number, at: sc!.asOf, tf };
+    return { px: fin(row?.scanPx) ? row!.scanPx as number : null, at: row?.scanAt || null, tf };
+  }
   const sc = tf === 'W' ? row?.scanW : row?.scanM;
-  return { px: fin(sc?.px) ? sc!.px as number : null, at: sc?.asOf || null, tf };
+  return { px: periodScanUsable(sc, scanV) ? sc!.px as number : null, at: sc?.asOf || null, tf };
+}
+
+/** zzz1003 (PS-01) — a snapshot row's three scans as they may be shown (snapshots built before v6 still hold v5 W / M readings):
+ *  daily — a compat (v5) reading is kept and gets its `session` ('provisional' when the row was read during a session, i.e. has `cc`);
+ *  an older scanned reading becomes 'stale-version'. Weekly / monthly — compat or not usable (periodScanUsable) → 'stale-version'
+ *  (no px). Pure; works on full snapshot rows and on lean rows (a lean row without `v` is the current version). */
+export function normalizeRowScans(r: Partial<Pick<ScreenRow, 'scan' | 'scanW' | 'scanM' | 'cc'>>, scanV: number = PATTERN_SCAN_VERSION): Pick<ScreenRow, 'scan' | 'scanW' | 'scanM'> {
+  const out: Pick<ScreenRow, 'scan' | 'scanW' | 'scanM'> = {};
+  const d = r.scan;
+  if (d) {
+    const compat = d.v != null && PATTERN_SCAN_DAILY_COMPAT.includes(d.v);
+    if (d.v != null && d.v !== scanV && !compat && d.v !== 0 && d.st !== 'stale-version') out.scan = staleScanOf(d, d.v);
+    else out.scan = compat && !d.session ? { ...d, session: r.cc ? 'provisional' : 'completed' } : d;
+  }
+  for (const k of ['scanW', 'scanM'] as const) {
+    const sc = r[k];
+    if (!sc) continue;
+    const compat = sc.v != null && PATTERN_SCAN_DAILY_COMPAT.includes(sc.v);
+    out[k] = compat || !periodScanUsable(sc, scanV) ? (sc.st === 'stale-version' ? sc : staleScanOf(sc, sc.v ?? 0)) : sc;
+  }
+  return out;
+}
+/** zzz1003 — a row's scan status on one timeframe after normalizeRowScans (D also reads legacy rows: patAt without scan = stale). */
+export function tfScanStatus(r: Partial<Pick<ScreenRow, 'scan' | 'scanW' | 'scanM' | 'cc' | 'patAt'>>, tf: 'D' | 'W' | 'M', scanV: number = PATTERN_SCAN_VERSION): ScanStatus | null {
+  const n = normalizeRowScans(r, scanV);
+  if (tf === 'D') return n.scan?.st ?? (r.patAt ? 'stale-version' : null);
+  return (tf === 'W' ? n.scanW : n.scanM)?.st ?? null;
+}
+
+/** zzz1003 (PS-02) — the analysis context of one tag (or of one timeframe: pass { tf }), so a row / tooltip / CSV can say which close,
+ *  date, session and scan it was read on — by ITS OWN timeframe, never the daily one under a W / M label.
+ *   tf / unit · close + at: tagScanClose · session: 'completed' (D completed sessions, every usable W / M reading) | 'provisional'
+ *   (a live tag, or a v5 daily reading read during a session) | null (unknown / not usable) · status: the scan status on that
+ *   timeframe (tfScanStatus; a live tag: scanLive.st) · v: the scan version (null when not scanned) · obsAt: when the daily bars
+ *   were observed (D only; a live tag: scanLive.at). */
+export interface AnalysisContext {
+  tf: 'D' | 'W' | 'M'; unit: 'session' | 'week' | 'month';
+  close: number | null; at: string | null;
+  session: 'completed' | 'provisional' | null;
+  status: ScanStatus | null; v: number | null; obsAt: string | null;
+}
+export function analysisContext(
+  row: Partial<Pick<ScreenRow, 'scanPx' | 'scanAt' | 'scan' | 'scanW' | 'scanM' | 'scanLive' | 'cc' | 'patAt'>> | null | undefined,
+  tag: Pick<ScreenPatternTag, 'tf'> & { lv?: 1 } | null | undefined,
+  scanV: number = PATTERN_SCAN_VERSION,
+): AnalysisContext {
+  const r = row || {};
+  const { px, at, tf } = tagScanClose(r, tag, scanV);
+  const unit = tf === 'W' ? 'week' as const : tf === 'M' ? 'month' as const : 'session' as const;
+  if (tf === 'D' && tag?.lv) {
+    const lv = r.scanLive;
+    return { tf, unit, close: px, at, session: 'provisional', status: lv?.st ?? null, v: lv ? lv.v ?? scanV : null, obsAt: lv?.at || null };
+  }
+  const n = normalizeRowScans(r, scanV);
+  const sc = tf === 'D' ? n.scan : tf === 'W' ? n.scanW : n.scanM;
+  const status = tfScanStatus(r, tf, scanV);
+  const v = sc ? sc.v ?? scanV : null;
+  let session: AnalysisContext['session'] = null;
+  if (tf === 'D') session = sc?.session ?? null;
+  else if (periodScanUsable(sc, scanV)) session = 'completed';
+  return { tf, unit, close: px, at, session, status, v, obsAt: tf === 'D' ? sc?.obsAt || null : null };
+}
+
+/** zzz1003 (PS-02) — coverage of one timeframe's scan over rows (any scope: the API sends it for every company; the page can call
+ *  scanCoverage(scopeRows, tf) for a portfolio / list). ready / noPattern = genuine readings; insufficient = too little history;
+ *  invalid = price data rejected; error = the scan threw; stale = older version or missing mandatory metadata (re-read pending);
+ *  none = never scanned. D only: provisional = daily readings that include an unfinished session (v5 rows read live); live = rows
+ *  that also carry a provisional live-bar reading (scanLive). asOf = the most common reading date (D: scan.asOf / patAt; W / M:
+ *  asOf of usable readings). */
+export interface ScanCoverage { ready: number; noPattern: number; insufficient: number; invalid: number; error: number; stale: number; none: number; provisional: number; live: number; asOf: string | null }
+export function scanCoverage(rows: ReadonlyArray<Partial<ScreenRow>>, tf: 'D' | 'W' | 'M', scanV: number = PATTERN_SCAN_VERSION): ScanCoverage {
+  const c: ScanCoverage = { ready: 0, noPattern: 0, insufficient: 0, invalid: 0, error: 0, stale: 0, none: 0, provisional: 0, live: 0, asOf: null };
+  const dates = new Map<string, number>();
+  for (const r of rows) {
+    const n = normalizeRowScans(r, scanV);
+    const sc = tf === 'D' ? n.scan : tf === 'W' ? n.scanW : n.scanM;
+    const st = tf === 'D' ? sc?.st ?? (r.patAt ? 'stale-version' : null) : sc?.st ?? null;
+    if (st === 'ready') c.ready++; else if (st === 'no-pattern') c.noPattern++; else if (st === 'insufficient-history') c.insufficient++;
+    else if (st === 'invalid-data') c.invalid++; else if (st === 'error') c.error++; else if (st === 'stale-version') c.stale++; else c.none++;
+    if (tf === 'D') { if (sc?.session === 'provisional' && isScanned(st)) c.provisional++; if (r.scanLive) c.live++; }
+    const d = isScanned(st) ? (tf === 'D' ? sc?.asOf || r.patAt : sc?.asOf) : null;
+    if (d) dates.set(d, (dates.get(d) || 0) + 1);
+  }
+  c.asOf = Array.from(dates.entries()).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? 1 : -1))[0]?.[0] || null;
+  return c;
 }
 export interface LeanResult {
   rows: Array<Partial<ScreenRow>>; total: number;
@@ -519,6 +722,9 @@ export interface LeanResult {
   /** sent once instead of on every row: a row's scan / scanW / scanM WITHOUT `v` is the current version (scanV) and was read by
    *  the engine rule set `engine`; a row without `scanBasis` has this basis. Rows that differ keep their own value. */
   scanV: number; engine: string | null; scanBasis: string;
+  /** zzz1003 (PS-02) — per-timeframe coverage over every company of the market (scanCoverage); scope counts: the page calls
+   *  scanCoverage on its scope's rows. */
+  coverage: { D: ScanCoverage; W: ScanCoverage; M: ScanCoverage };
 }
 /** zzz984 — every company is sent (rules-only screens need them all); `patternsOnly` keeps the companies with a pattern.
  *  zzz993 — tags are sent only for a current, ready scan; `scan` is always sent (legacy rows get { st: 'stale-version', v: 0 }). */
@@ -530,7 +736,9 @@ export function leanRows(rows: readonly ScreenRow[], bias?: 'U' | 'D' | null, pa
   const out: Array<Partial<ScreenRow>> = [];
   const keep = (tags: ScreenPatternTag[] | undefined, sc: ScanMeta | undefined | null) =>
     sc?.st === 'ready' && Array.isArray(tags) ? tags.filter((t) => t && PATTERN_META[t.id] && (!bias || t.b === bias)) : [];
-  for (const r of rows) {
+  for (const r0 of rows) {
+    // zzz1003 (PS-01) — v5 W / M readings (and any without their own close) are withheld as 'stale-version'; v5 daily readings kept
+    const r: ScreenRow = { ...r0, ...normalizeRowScans(r0) };
     const st = scanStatusOf(r);
     if (isScanned(st)) { scanned++; if (r.patAt) dates.set(r.patAt, (dates.get(r.patAt) || 0) + 1); }
     else if (st === 'insufficient-history') insufficient++;
@@ -540,23 +748,26 @@ export function leanRows(rows: readonly ScreenRow[], bias?: 'U' | 'D' | null, pa
     if (r.pxConflict) pxConflicts++;
     const pat = keep(r.pat, st ? r.scan || { st, v: 0 } : null);
     const patW = keep(r.patW, r.scanW), patM = keep(r.patM, r.scanM);
+    const patLive = r.scanLive?.st === 'ready' && Array.isArray(r.patLive) ? r.patLive.filter((t) => t && PATTERN_META[t.id] && (!bias || t.b === bias)) : [];
     if (isScanned(r.scanW?.st)) scannedW++;
     if (isScanned(r.scanM?.st)) scannedM++;
     if (patW.length) withPatternW++;
     if (patM.length) withPatternM++;
     if (pat.length) withPattern++;
-    else if (patternsOnly && !patW.length && !patM.length) continue;
+    else if (patternsOnly && !patW.length && !patM.length && !patLive.length) continue;
     const lr = leanRow(r);
     // zzz991 — snapshots built before the guard: recompute so a tiny-base artefact never passes a Rule of 40 rule
     if (lr.r40 != null && !ruleOf40Usable(r.revQYoY, r.fcfmTTM)) lr.r40 = null;
     if (pat.length) lr.pat = withQuoteDist(pat, r.px); else delete lr.pat;
     if (patW.length) lr.patW = withQuoteDist(patW, r.px); else delete lr.patW;
     if (patM.length) lr.patM = withQuoteDist(patM, r.px); else delete lr.patM;
+    if (patLive.length) lr.patLive = withQuoteDist(patLive, r.px); else delete lr.patLive;
+    for (const k of ['scan', 'scanW', 'scanM'] as const) { if (r[k]) lr[k] = r[k]; else delete lr[k]; }
     if (st && !r.scan) lr.scan = { st, v: 0 };          // a pre-zzz993 snapshot row
     // payload: the version / engine / price basis repeated on every row are sent once (LeanResult.scanV / engine / scanBasis)
-    for (const k of ['scan', 'scanW', 'scanM'] as const) {
+    for (const k of ['scan', 'scanW', 'scanM', 'scanLive'] as const) {
       const sc = lr[k];
-      if (sc && sc.v === PATTERN_SCAN_VERSION) { const { v: _v, e, ...rest } = sc; if (e) engines.add(e); lr[k] = rest as ScanMeta; }
+      if (sc && sc.v === PATTERN_SCAN_VERSION) { const { v: _v, e, ...rest } = sc; if (e) engines.add(e); (lr as any)[k] = rest; }
     }
     if (lr.scanBasis === SCAN_BASIS) delete lr.scanBasis;
     if (!isScanned(st)) delete lr.patAt;                 // patAt only for a genuine reading
@@ -564,17 +775,24 @@ export function leanRows(rows: readonly ScreenRow[], bias?: 'U' | 'D' | null, pa
   }
   const patAt = Array.from(dates.entries()).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? 1 : -1))[0]?.[0] || null;
   return { rows: out, total: rows.length, scanned, withPattern, patAt, insufficient, invalid, errors, stale, pxConflicts, scannedW, scannedM, withPatternW, withPatternM,
-    scanV: PATTERN_SCAN_VERSION, engine: engines.size === 1 ? [...engines][0] : engines.size ? [...engines].sort().join(', ') : null, scanBasis: SCAN_BASIS };
+    scanV: PATTERN_SCAN_VERSION, engine: engines.size === 1 ? [...engines][0] : engines.size ? [...engines].sort().join(', ') : null, scanBasis: SCAN_BASIS,
+    coverage: { D: scanCoverage(rows, 'D'), W: scanCoverage(rows, 'W'), M: scanCoverage(rows, 'M') } };
 }
 
 // ── saved Pine screens ────────────────────────────────────────────────────────────────────────────────────────────────
 export const PINE_SCREENS_KEY = 'mc:pine-screens:v1';
 /** zzz984 — where a built-in screen is listed: the owner's own TradingView scripts, chart patterns, momentum & trend. */
-export type PineGroup = 'tv' | 'patterns' | 'momentum';
+export type PineGroup = 'tv' | 'patterns' | 'momentum' | 'portfolio';
 export const PINE_GROUPS: ReadonlyArray<{ id: PineGroup; label: string }> = [
+  { id: 'portfolio', label: 'My portfolio' },
   { id: 'tv', label: 'Your TradingView screens' }, { id: 'patterns', label: 'Chart patterns' }, { id: 'momentum', label: 'Momentum & trend' },
 ];
-export interface PineScreen { id: string; name: string; note?: string; market?: ScreenMarket; q: PineQuery; builtIn?: boolean; group?: PineGroup }
+/** zzz1004 — `scope` (optional): the company list saved WITH the screen ('pf' my portfolio, 'cb', 'wl:<id>', 'ss:<id>', '' every
+ *  company). Opening a screen that has one switches the list to it; a screen without one leaves the current list as it is. */
+export interface PineScreen { id: string; name: string; note?: string; market?: ScreenMarket; q: PineQuery; builtIn?: boolean; group?: PineGroup; scope?: string }
+/** zzz1004 — a company-list value that may be saved with a screen ('hand' — a one-off hand-off — never is). */
+export const cleanScopeValue = (v: unknown): string | undefined =>
+  typeof v === 'string' && (v === '' || v === 'pf' || v === 'cb' || /^(wl|ss):[\w.:\-]{1,80}$/.test(v)) ? v : undefined;
 
 const numOrNull = (v: unknown, lo = -1e15, hi = 1e15) => (fin(v) && v >= lo && v <= hi ? v : null);
 /** Pure clean-up of a stored / pasted query: anything unknown falls back to the default. */
@@ -612,7 +830,8 @@ export function cleanPineScreens(raw: unknown): PineScreen[] {
     if (!s || typeof s !== 'object') continue;
     const x = s as any;
     if (typeof x.id !== 'string' || typeof x.name !== 'string' || !x.name.trim()) continue;
-    out.push({ id: x.id.slice(0, 60), name: x.name.slice(0, 80), ...(x.market === 'US' || x.market === 'IN' ? { market: x.market } : {}), q: cleanQuery(x.q) });
+    const scope = cleanScopeValue(x.scope);
+    out.push({ id: x.id.slice(0, 60), name: x.name.slice(0, 80), ...(x.market === 'US' || x.market === 'IN' ? { market: x.market } : {}), q: cleanQuery(x.q), ...(scope !== undefined ? { scope } : {}) });
   }
   return out;
 }

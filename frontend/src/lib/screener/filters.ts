@@ -8,7 +8,7 @@
 // display only: every filter compares the unrounded figure.
 import type { ScreenRow, ScreenMarket } from './types';
 import { TV_SECTORS, allSectorsExcept, type TvSector } from './tv-sectors';
-import { PATTERN_META, PATTERN_IDS, type PatternId, type PatternTag } from '../chart-patterns';
+import { PATTERN_META, PATTERN_IDS, PATTERN_NA_REASON, patternApplies, type PatternId, type PatternTag } from '../chart-patterns';
 
 // Non-numeric row fields (and the zzz994 provenance / per-timeframe pattern fields, read defensively where present).
 type NonNum = 't' | 'n' | 'sec' | 'ind' | 'q' | 'approx' | 'tvSec' | 'exch' | 'nq' | 'cc' | 'pat' | 'patAt' | 'ccBasis'
@@ -277,6 +277,28 @@ export function patternRuleLabel(r: Pick<PatternRule, 'bias' | 'ids' | 'stages' 
   const st = !r.stages.length ? 'no stage selected' : r.stages.length === 3 ? 'all stages' : r.stages.map((s) => STAGE_WORD[s]).join('/');
   const dist = r.dist.on ? ` · ${r.dist.lo}…${r.dist.hi}% to pivot` : '';
   return `Pattern ${bias}: ${types} · ${tfs} · ${st} · score ≥ ${r.minScore}${dist}`;
+}
+/** zzz1004 (PS-06) — a ticked pattern type the engine does not read on a selected timeframe (PATTERN_TIMEFRAMES): which timeframes,
+ *  why (PATTERN_NA_REASON) and the nearest timeframe it is read on. `blocked` = it can never match under this choice (not applicable
+ *  on any selected timeframe, or on one of them when every timeframe must match) — a zero there means "not supported", not "none
+ *  found". The choice itself is never relaxed automatically. */
+export interface UnsupportedChoice { id: PatternId; label: string; tfs: PatTf[]; reason: string; suggest: PatTf | null; blocked: boolean }
+export function patternTfSuggest(id: PatternId, from: PatTf): PatTf | null {
+  const order: PatTf[] = from === 'M' ? ['W', 'D'] : from === 'W' ? ['D', 'M'] : ['W', 'M'];
+  return order.find((tf) => patternApplies(id, tf)) || null;
+}
+export function unsupportedChoices(ids: readonly PatternId[], tfs: readonly PatTf[], tfMode: 'any' | 'all' = 'any'): UnsupportedChoice[] {
+  const sel = tfs.length ? tfs : (['D'] as PatTf[]);
+  const out: UnsupportedChoice[] = [];
+  for (const id of ids) {
+    if (!PATTERN_META[id]) continue;
+    const na = sel.filter((tf) => !patternApplies(id, tf));
+    if (!na.length) continue;
+    const coarsest = na.includes('M') ? 'M' : na.includes('W') ? 'W' : 'D';
+    out.push({ id, label: PATTERN_META[id].label, tfs: na, reason: PATTERN_NA_REASON[id] || 'not read on this timeframe', suggest: patternTfSuggest(id, coarsest),
+      blocked: na.length === sel.length || tfMode === 'all' });
+  }
+  return out;
 }
 const cleanTfList = (v: unknown): PatTf[] => (Array.isArray(v) ? Array.from(new Set(v.filter((x): x is PatTf => x === 'D' || x === 'W' || x === 'M'))) : []);
 const cleanStageList = (v: unknown): PatStage[] => (Array.isArray(v) ? Array.from(new Set(v.filter((x): x is PatStage => x === 'f' || x === 'b' || x === 'x'))) : []);

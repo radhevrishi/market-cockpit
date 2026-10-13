@@ -7,10 +7,11 @@
 //                    Its question: "which charts are setting up now?"
 //   Stock Screener = fundamentals and the general rule editor. A Stock screen (built-in or saved) can be the Pine Screener's company
 //                    list, so the two combine without a second editor.
-import { PATTERN_META } from '../chart-patterns';
-import { runPineFull, bestTag, tagScanClose, tagLengthText, type PineHit, type PineQuery, type ScreenPatternTag } from './pine';
+import { PATTERN_META, type PatternId } from '../chart-patterns';
+import * as PINE from './pine';
+import { runPineFull, bestTag, tagScanClose, tagLengthText, turnoverOf, ruleState, matchTags, STAGES, type PineHit, type PineQuery, type PineRun, type ScreenPatternTag, type ScanStatus } from './pine';
 import { BUILT_IN_PINE_SCREENS } from './pine-presets';
-import { patTagsOf, runScreen, type PatTf, type Screen } from './filters';
+import { patTagsOf, patMissingWhy, runScreen, tagDirDist, filterLabel, unsupportedChoices, type PatTf, type Screen } from './filters';
 import { tvSectorOf } from './tv-sectors';
 import { normTicker } from './pine-handoff';
 import type { ScreenMarket, ScreenRow } from './types';
@@ -18,7 +19,7 @@ import type { ScreenMarket, ScreenRow } from './types';
 const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
 // ── setup cards ─────────────────────────────────────────────────────────────────────────────────────────────────────────
-export type SetupGlyph = 'breakout' | 'ready' | 'base' | 'breakdown' | 'weekly' | 'portfolio';
+export type SetupGlyph = 'breakout' | 'ready' | 'base' | 'breakdown' | 'weekly' | 'monthly' | 'portfolio';
 export interface SetupCard {
   id: string;
   /** the card's title and a one-line plain explanation */
@@ -27,6 +28,8 @@ export interface SetupCard {
   presetId: string | null;
   glyph: SetupGlyph;
   tone: 'up' | 'down' | 'neutral';
+  /** zzz1004 — a second screen counted apart on the same card (e.g. monthly reversal bases beside the monthly bases) */
+  alt?: { presetId: string; label: string };
 }
 export const SETUP_CARDS: readonly SetupCard[] = [
   { id: 'breakouts', label: 'Breakouts', sub: 'First close above the pivot in the last 5 sessions', presetId: 'breakouts-today', glyph: 'breakout', tone: 'up' },
@@ -34,6 +37,7 @@ export const SETUP_CARDS: readonly SetupCard[] = [
   { id: 'bases', label: 'Bases forming', sub: 'Flat bases, cups, VCPs up to 15% below the pivot', presetId: 'bases-forming', glyph: 'base', tone: 'up' },
   { id: 'breakdowns', label: 'Breakdowns', sub: 'Bearish patterns that closed through support', presetId: 'breakdowns', glyph: 'breakdown', tone: 'down' },
   { id: 'weekly', label: 'Weekly bases', sub: 'Bases read on completed weekly bars', presetId: 'weekly-bases', glyph: 'weekly', tone: 'up' },
+  { id: 'monthly', label: 'Monthly bases', sub: 'U-bases, cups, VCPs on completed monthly bars', presetId: 'monthly-bases', glyph: 'monthly', tone: 'up', alt: { presetId: 'monthly-reversal-bases', label: 'reversal bases' } },
   { id: 'portfolio', label: 'My portfolio check', sub: 'Every holding: patterns and the 21 / 50 / 200-day averages', presetId: null, glyph: 'portfolio', tone: 'neutral' },
 ];
 /** The query a setup card stands for (its preset's query), or null for the portfolio card. */
@@ -49,6 +53,7 @@ export function setupCounts(rows: readonly ScreenRow[], market: ScreenMarket, li
   for (const c of SETUP_CARDS) {
     const q = cardQuery(c);
     out[c.id] = q ? runPineFull(base, q, market, now).strict.length : holdings ? holdings.length : null;
+    if (c.alt) { const aq = BUILT_IN_PINE_SCREENS.find((s) => s.id === c.alt!.presetId)?.q; out[`${c.id}:alt`] = aq ? runPineFull(base, aq, market, now).strict.length : null; }
   }
   return out;
 }
@@ -219,4 +224,370 @@ export function patternChecks(h: PineHit, q: Pick<PineQuery, 'stages' | 'minConf
     { label: `Shape score ${b.c} (needs ${q.minConf} or more)`, pass: b.c >= q.minConf },
     ...(q.dist.on ? [{ label: `To pivot ${dd == null ? 'unknown' : `${dd > 0 ? '+' : ''}${dd}%`} (window ${q.dist.lo}% to ${q.dist.hi > 0 ? '+' : ''}${q.dist.hi}%)`, pass: dd != null && dd >= q.dist.lo && dd <= q.dist.hi }] : []),
   ];
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// zzz1004 — PINE RETEST (PS-02 / PS-03 / PS-04 / PS-05 / PS-06): one timeframe-aware result model shared by the table, the chips,
+// the row detail, the CSV and the chart hand-off. Three prices are never mixed:
+//   · the ANALYSIS close — the close of the bar the pattern was read on: daily → the daily scan close; weekly / monthly → the close
+//     of the last COMPLETED week / month (scanW / scanM px, dated asOf). A W / M reading without its own close shows "weekly /
+//     monthly analysis close unavailable" — never the daily close under a W / M date;
+//   · the DAILY TECHNICAL close — the daily bars the 21 / 50 / 200-day averages, RSI and performance come from;
+//   · the LATEST QUOTE — px with its own source / time.
+// ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+export type SessionState = 'completed' | 'provisional';
+export interface AnalysisCtx {
+  tf: PatTf;
+  /** the close the pattern's `d` is measured from (null = not stored for this reading) */
+  close: number | null;
+  /** its date: the session (D) or the last daily bar of the completed week / month (W / M) */
+  at: string | null;
+  /** D: completed session or a provisional live reading; W / M: always completed periods (null = unknown) */
+  session: SessionState | null;
+  /** when the bars were observed (ISO), when known */
+  obsAt: string | null;
+  status: ScanStatus | null; v: number | null; engine: string | null;
+  /** price basis and source of the bars */
+  basis: string | null; src: string | null;
+  /** why `close` is null, in words (null when it is known) */
+  missing: string | null;
+}
+const scanOfTf = (r: any, tf: PatTf) => (tf === 'W' ? r?.scanW : tf === 'M' ? r?.scanM : r?.scan);
+const tfOf = (t: { tf?: string | null } | null | undefined): PatTf => (t?.tf === 'W' || t?.tf === 'M' ? t.tf : 'D');
+/** The analysis context of a tag (its timeframe's own close / date / session / scan status). Uses pine.ts analysisContext() when the
+ *  build provides it, else tagScanClose(); either way a W / M reading never borrows the daily close. */
+export function analysisOf(row: Partial<ScreenRow> | null | undefined, tag: { tf?: string | null } | null | undefined): AnalysisCtx {
+  const r: any = row || {};
+  const tf = tfOf(tag);
+  const sc = scanOfTf(r, tf);
+  let close: number | null = null, at: string | null = null, session: SessionState | null = null, obsAt: string | null = null;
+  let status: ScanStatus | null = null, v: number | null = null;
+  const ext = (PINE as any).analysisContext;
+  let x: any = null;
+  if (typeof ext === 'function') { try { x = ext(r, { ...(tag || {}), tf }); } catch { x = null; } }
+  if (x && typeof x === 'object') {
+    close = fin(x.close) && x.close > 0 ? x.close : null;
+    at = typeof x.at === 'string' && x.at ? x.at : null;
+    session = x.session === 'provisional' || x.session === 'completed' ? x.session : null;
+    if (typeof x.obsAt === 'string') obsAt = x.obsAt;
+    if (typeof x.status === 'string') status = x.status as ScanStatus;
+    if (fin(x.v)) v = x.v;
+  } else {
+    const c = tagScanClose(r, { tf });
+    close = c.px != null && c.px > 0 ? c.px : null;
+    at = c.at;
+  }
+  // never the daily close under a W / M date (PS-01 / PS-02): a W / M reading without its own stored close has none
+  if (tf !== 'D' && !fin(sc?.px)) close = null;
+  if (!at) at = tf === 'D' ? (r.scanAt || sc?.asOf || r.patAt || null) : (sc?.asOf || null);
+  if (!session) session = sc?.session === 'provisional' || sc?.session === 'completed' ? sc.session : tf !== 'D' ? (sc ? 'completed' : null) : r.live ? 'provisional' : sc ? 'completed' : null;
+  if (!obsAt && typeof sc?.obsAt === 'string') obsAt = sc.obsAt;
+  if (!status) status = (sc?.st as ScanStatus) || (tf === 'D' && r.patAt ? 'stale-version' : null);
+  if (v == null && fin(sc?.v)) v = sc.v;
+  return {
+    tf, close, at, session, obsAt, status, v, engine: typeof sc?.e === 'string' ? sc.e : null,
+    basis: r.scanBasis || null, src: r.scanSrc || null,
+    missing: close != null ? null : tf === 'D' ? 'daily scan close unavailable' : `${tfWord(tf)} analysis close unavailable`,
+  };
+}
+/** "14:46 UTC" from an ISO time ('' when there is none). */
+export function obsTime(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const m = /T(\d{2}:\d{2})/.exec(iso);
+  return m ? `${m[1]} UTC` : /^\d{2}:\d{2}/.test(iso) ? iso.slice(0, 5) : '';
+}
+/** PS-03 — the badge text: "provisional (session open, observed 14:46 UTC)" or "completed close 2026-10-09" (W / M: "completed
+ *  weekly close …" / "completed monthly close …"). A provisional reading is never called a close. */
+export function sessionLabel(a: Pick<AnalysisCtx, 'tf' | 'session' | 'at' | 'obsAt'>): string {
+  if (a.session === 'provisional') { const t = obsTime(a.obsAt); return `provisional (session open${t ? `, observed ${t}` : ''})`; }
+  const kind = a.tf === 'W' ? 'weekly ' : a.tf === 'M' ? 'monthly ' : '';
+  if (a.session === 'completed') return a.at ? `completed ${kind}close ${a.at}` : `completed ${kind}close (date unknown)`;
+  return a.at ? `${kind}close ${a.at} (session state unknown)` : 'date unknown';
+}
+/** The daily technical close (the averages' own bars) and the latest quote, each with its own date / source. */
+export interface PriceSet {
+  analysis: AnalysisCtx;
+  daily: { close: number | null; at: string | null; session: SessionState | null; obsAt: string | null };
+  quote: { px: number | null; src: string | null; at: string | null };
+}
+export function priceSet(row: Partial<ScreenRow> | null | undefined, tag: { tf?: string | null } | null | undefined): PriceSet {
+  const r: any = row || {};
+  const d = analysisOf(r, { tf: 'D' });
+  return {
+    analysis: tfOf(tag) === 'D' ? d : analysisOf(r, tag),
+    daily: { close: fin(r.scanPx) && r.scanPx > 0 ? r.scanPx : null, at: r.scanAt || null, session: d.session, obsAt: d.obsAt },
+    quote: { px: fin(r.px) && r.px > 0 ? r.px : null, src: r.pxSrc || null, at: r.pxAt || null },
+  };
+}
+
+/** Weekly / monthly breakout versus the latest condition (shown as badges; never turns a past W / M signal into a current trigger). */
+export const MARGINAL_PCT = 0.5, ENTRY_WINDOW_PCT = 5;
+export type ConditionId = 'back-through' | 'marginal' | 'extended';
+export interface Condition { id: ConditionId; label: string; tip: string }
+export function latestConditions(row: Partial<ScreenRow> | null | undefined, tag: ScreenPatternTag | null | undefined): Condition[] {
+  if (!tag || tag.s !== 'b' || !fin(tag.p) || !(tag.p > 0)) return [];
+  const r: any = row || {};
+  const up = tag.b === 'U';
+  const dd = tagDirDist(tag);
+  const a = analysisOf(r, tag);
+  const lvl = up ? 'pivot' : 'breakdown level';
+  const out: Condition[] = [];
+  // the latest price: the quote, else the newest daily close
+  const lp = fin(r.px) && r.px > 0 ? r.px : fin(r.scanPx) && r.scanPx > 0 ? r.scanPx : null;
+  const lq = lp != null ? Math.round((up ? 1 : -1) * (lp / tag.p - 1) * 10000) / 100 : fin(tag.dq) ? (up ? tag.dq : -tag.dq) : null;
+  const signal = `${tfWord(tag.tf)} ${up ? 'breakout' : 'breakdown'}${a.at ? ` on the ${a.at} close` : ''}${a.close != null ? ` (${a.close})` : ''}`;
+  if (lq != null && lq < 0) {
+    out.push({ id: 'back-through', label: up ? 'latest quote back below pivot' : 'latest quote back above breakdown level',
+      tip: `${signal}; the latest price ${lp ?? ''} is ${Math.abs(lq).toFixed(2)}% ${up ? 'below' : 'above'} the ${lvl} ${tag.p}. The ${tfWord(tag.tf)} signal is a completed-bar observation, not a current trigger.` });
+  }
+  if (dd != null && dd >= 0 && dd < MARGINAL_PCT) {
+    const diff = Math.abs((a.close ?? tag.p * (1 + (up ? dd : -dd) / 100)) - tag.p);
+    out.push({ id: 'marginal', label: 'marginal clearance',
+      tip: `Only ${dd.toFixed(2)}% (about ${diff.toFixed(2)}) past the ${lvl} — a raw crossing; not confirmed by tick size, ATR or breakout volume.` });
+  }
+  if (dd != null && dd > ENTRY_WINDOW_PCT) {
+    out.push({ id: 'extended', label: 'extended beyond entry window', tip: `${dd.toFixed(1)}% past the ${lvl} — beyond the +${ENTRY_WINDOW_PCT}% entry window.` });
+  }
+  return out;
+}
+
+/** Length as trading days, so daily / weekly / monthly lengths sort together (W × 5, M × 21); null when unknown. */
+export const LEN_DAYS: Record<'d' | 'w' | 'm', number> = { d: 1, w: 5, m: 21 };
+export function lengthDays(tag: Pick<ScreenPatternTag, 'l' | 'lu' | 'tf'> | null | undefined): number | null {
+  const l = tag?.l;
+  if (!fin(l) || l < 0) return null;
+  const u = tag?.lu ?? (tag?.tf === 'W' ? 'w' : tag?.tf === 'M' ? 'm' : 'd');
+  return l * LEN_DAYS[u];
+}
+export function lengthTip(tag: Pick<ScreenPatternTag, 'l' | 'lu' | 'tf'> | null | undefined): string {
+  const txt = tagLengthText(tag), n = lengthDays(tag);
+  if (!txt || n == null) return '';
+  const raw = tag?.lu === 'w' || tag?.tf === 'W' ? `${tag!.l} weeks` : tag?.lu === 'm' || tag?.tf === 'M' ? `${tag!.l} months` : `${tag!.l} trading days`;
+  return `${raw} ≈ ${n} trading days (sorted by elapsed duration: weeks × 5, months × 21)`;
+}
+
+// ── PS-05: the active query in words ─────────────────────────────────────────────────────────────────────────────────────
+const TF_WORD: Record<PatTf, string> = { D: 'Daily', W: 'Weekly', M: 'Monthly' };
+/** "Bullish · Monthly · My portfolio · Forming + Breakout · No pivot limit · Shape ≥ 55" (+ types / limits when set). */
+export function querySummary(q: PineQuery, scopeName: string): string {
+  const bias = q.bias === 'U' ? 'Bullish' : q.bias === 'D' ? 'Bearish' : 'Bullish + bearish';
+  const tfs = (q.tfs.length ? q.tfs : ['D'] as PatTf[]).map((t) => TF_WORD[t]).join(' + ') + (q.tfs.length > 1 ? ` (${q.tfMode === 'all' ? 'all' : 'any'})` : '');
+  const stageName = (id: string) => (id === 'b' ? (q.bias === 'D' ? 'Breakdown' : q.bias === 'both' ? 'Breakout / breakdown' : 'Breakout') : STAGES.find((s) => s.id === id)?.label || id);
+  const stages = !q.stages.length ? 'No stage' : q.stages.map(stageName).join(' + ');
+  const dist = q.dist.on ? `Pivot ${q.dist.lo}% to ${q.dist.hi > 0 ? '+' : ''}${q.dist.hi}%` : 'No pivot limit';
+  const parts = [bias, tfs, scopeName || 'All companies', stages, dist];
+  if (q.ids.length) parts.push(q.ids.length <= 3 ? q.ids.map((id) => PATTERN_META[id]?.label || id).join(', ') : `${q.ids.length} pattern types`);
+  parts.push(`Shape ≥ ${q.minConf}`);
+  const lim = [q.mcMin, q.mcMax, q.pxMin, q.turnMin, q.perfMin].filter((v) => v != null).length + (q.sectors.length ? 1 : 0) + q.filters.filter((f) => !f.off).length;
+  if (lim) parts.push(`${lim} more limit${lim === 1 ? '' : 's'}`);
+  if (q.need === 'any' && !q.ids.length) parts.push('rules decide');
+  return parts.join(' · ');
+}
+/** The preset line beside it: "Preset: All bearish patterns (changed)". */
+export const presetLine = (name: string, dirty: boolean) => `Preset: ${name}${dirty ? ' (changed)' : ''}`;
+
+// ── PS-02: coverage of the selected timeframes within the current company list ─────────────────────────────────────────
+export interface TfCoverage {
+  tf: PatTf; total: number;
+  ready: number; noPattern: number; insufficient: number; invalid: number; errors: number; stale: number; unscanned: number;
+  provisional: number;
+  /** most common as-of date of the scanned readings and its session state */
+  at: string | null; session: SessionState | null; obsAt: string | null;
+}
+export interface ScopeCoverage {
+  /** companies of the list found in the data (all rows when no list) */
+  inData: number;
+  /** list members not in this market's data */
+  notInData: string[];
+  perTf: TfCoverage[];
+}
+export function scopeCoverage(rows: readonly ScreenRow[], tfs: readonly PatTf[], list: ReadonlySet<string> | null): ScopeCoverage {
+  const inScope = list ? rows.filter((r) => list.has(r.t.toUpperCase())) : rows;
+  const have = new Set(inScope.map((r) => r.t.toUpperCase()));
+  const notInData = list ? Array.from(list).filter((t) => !have.has(t.toUpperCase())).sort() : [];
+  const perTf = (tfs.length ? tfs : ['D'] as PatTf[]).map((tf): TfCoverage => {
+    const c: TfCoverage = { tf, total: inScope.length, ready: 0, noPattern: 0, insufficient: 0, invalid: 0, errors: 0, stale: 0, unscanned: 0, provisional: 0, at: null, session: null, obsAt: null };
+    const dates = new Map<string, number>();
+    let obs: string | null = null;
+    for (const r of inScope) {
+      const a = analysisOf(r, { tf });
+      const tags = patTagsOf(r, tf);
+      const st = a.status;
+      if (tags && (st === 'ready' || st === 'no-pattern' || st == null)) {
+        if (tags.length) c.ready++; else c.noPattern++;
+        if (a.at) dates.set(a.at, (dates.get(a.at) || 0) + 1);
+        if (a.session === 'provisional') { c.provisional++; if (a.obsAt && (!obs || a.obsAt > obs)) obs = a.obsAt; }
+      } else if (st === 'insufficient-history') c.insufficient++;
+      else if (st === 'invalid-data') c.invalid++;
+      else if (st === 'error') c.errors++;
+      else if (st === 'stale-version') c.stale++;
+      else c.unscanned++;
+    }
+    c.at = Array.from(dates.entries()).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? 1 : -1))[0]?.[0] || null;
+    c.session = c.provisional ? 'provisional' : c.ready + c.noPattern ? 'completed' : null;
+    c.obsAt = obs;
+    return c;
+  });
+  return { inData: inScope.length, notInData, perTf };
+}
+const n0 = (n: number) => n.toLocaleString('en-US');
+/** "Daily — completed close 2026-10-09: 3 of 3 scanned (3 with a pattern, 0 none) · 1 too little history" */
+export function coverageLine(c: TfCoverage): string {
+  const scanned = c.ready + c.noPattern;
+  const tail = [c.insufficient ? `${n0(c.insufficient)} too little history` : '', c.invalid ? `${n0(c.invalid)} data rejected` : '', c.stale ? `${n0(c.stale)} stale version` : '',
+    c.errors ? `${n0(c.errors)} scan errors` : '', c.unscanned ? `${n0(c.unscanned)} not scanned` : ''].filter(Boolean);
+  const when = scanned ? sessionLabel({ tf: c.tf, session: c.session, at: c.at, obsAt: c.obsAt }) : 'no reading';
+  const mixed = c.provisional && c.provisional < scanned ? ` (${n0(c.provisional)} provisional)` : '';
+  return `${TF_WORD[c.tf]} — ${when}${mixed}: ${n0(scanned)} of ${n0(c.total)} scanned (${n0(c.ready)} with a pattern, ${n0(c.noPattern)} none)${tail.length ? ` · ${tail.join(' · ')}` : ''}`;
+}
+
+// ── PS-06: pattern types not read on the selected timeframes ──────────────────────────────────────────────────────────────
+export { unsupportedChoices };
+/** A pattern chip's state on the selected timeframes: disabled (with the reason and a suggested timeframe) when the engine does not
+ *  read the type on ANY selected timeframe. */
+export function chipApplicability(id: PatternId, tfs: readonly PatTf[]): { na: boolean; reason: string; suggest: PatTf | null } {
+  const u = unsupportedChoices([id], tfs, 'any')[0];
+  if (!u || !u.blocked) return { na: false, reason: u ? `Not read on ${u.tfs.join(' / ')}: ${u.reason}` : '', suggest: null };
+  return { na: true, reason: `Not read on ${u.tfs.join(' / ')}: ${u.reason}${u.suggest ? ` — try ${TF_WORD[u.suggest].toLowerCase()} (${u.suggest})` : ''}`, suggest: u.suggest };
+}
+/** The notice for a (saved) query that ticks types the selected timeframes do not support — instead of a silent zero. */
+export function unsupportedNotice(q: Pick<PineQuery, 'ids' | 'tfs' | 'tfMode'>): string[] {
+  return unsupportedChoices(q.ids, q.tfs, q.tfMode).map((u) => `${u.label}: unsupported on ${u.tfs.join(' / ')} — ${u.reason}${u.blocked ? ' (it cannot match under this choice; the count is not a "none found")' : ' (it can match only on the other ticked timeframes)'}${u.suggest ? `. It is read on ${TF_WORD[u.suggest].toLowerCase()} bars (${u.suggest}).` : '.'}`);
+}
+
+// ── preset families (a segmented control instead of more cards) ───────────────────────────────────────────────────────────
+export interface PresetFamily { id: string; label: string; items: ReadonlyArray<{ presetId: string; label: string }> }
+export const PRESET_FAMILIES: readonly PresetFamily[] = [
+  { id: 'monthly', label: 'Monthly', items: [{ presetId: 'monthly-bases', label: 'Bases' }, { presetId: 'monthly-reversal-bases', label: 'Reversal bases' }, { presetId: 'monthly-near-pivot', label: 'Near pivot' }] },
+  { id: 'portfolio', label: 'Portfolio', items: [{ presetId: 'pf-bearish-risks', label: 'Risks' }, { presetId: 'pf-bullish-opps', label: 'Opportunities' }, { presetId: 'pf-failed-bearish', label: 'Recovering' }] },
+];
+export const familyOf = (presetId: string): PresetFamily | null => PRESET_FAMILIES.find((f) => f.items.some((i) => i.presetId === presetId)) || null;
+
+// ── PS-04: the portfolio check's All / Risks / Opportunities control ───────────────────────────────────────────────────────
+export type PortfolioMode = 'all' | 'risks' | 'opps';
+export const PORTFOLIO_MODE_PRESET: Record<Exclude<PortfolioMode, 'all'>, string> = { risks: 'pf-bearish-risks', opps: 'pf-bullish-opps' };
+export interface PortfolioFocusRow { item: PortfolioCheckRow; tags: ScreenPatternTag[]; matched: boolean; coverage: string }
+/** Risks / Opportunities: the tags of the matching portfolio preset on each holding; holdings without one stay listed as coverage
+ *  rows (no bearish / bullish pattern · not scanned · not in the data). Matched first (strongest first). */
+export function portfolioFocus(items: readonly PortfolioCheckRow[], mode: Exclude<PortfolioMode, 'all'>): PortfolioFocusRow[] {
+  const q = BUILT_IN_PINE_SCREENS.find((s) => s.id === PORTFOLIO_MODE_PRESET[mode])!.q;
+  const word = mode === 'risks' ? 'bearish' : 'bullish';
+  const out = items.map((item): PortfolioFocusRow => {
+    if (!item.row) return { item, tags: [], matched: false, coverage: 'not in the screener data' };
+    const tags = (matchTags(item.row, q) as ScreenPatternTag[]).slice().sort((a, b) => b.c - a.c);
+    if (tags.length) return { item, tags, matched: true, coverage: '' };
+    const missing = item.patterns.filter((p) => p.tags == null).map((p) => p.tf);
+    const cov = missing.length === 3 ? `not scanned (${patMissingWhy(item.row, 'D')})` : `no ${word} pattern on ${item.patterns.filter((p) => p.tags != null).map((p) => p.tf).join(' / ')}${missing.length ? `; ${missing.join(' / ')} not readable` : ''}`;
+    return { item, tags: [], matched: false, coverage: cov };
+  });
+  return out.sort((a, b) => Number(b.matched) - Number(a.matched) || (b.tags[0]?.c ?? 0) - (a.tags[0]?.c ?? 0) || a.item.ticker.localeCompare(b.item.ticker));
+}
+
+// ── "Why not listed?" ─────────────────────────────────────────────────────────────────────────────────────────────────────
+/** Why one tag does not pass the pattern part of the query ([] = it passes). Mirrors filters.tagPasses. */
+export function tagRejectReasons(t: ScreenPatternTag, q: Pick<PineQuery, 'bias' | 'ids' | 'stages' | 'minConf' | 'dist' | 'tfs'>): string[] {
+  const out: string[] = [];
+  const tf = tfOf(t);
+  if (!(q.tfs.length ? q.tfs : ['D']).includes(tf)) out.push(`timeframe ${tf} not selected`);
+  if (q.bias !== 'both' && t.b !== q.bias) out.push(`${t.b === 'U' ? 'bullish' : 'bearish'} pattern; the screen asks for ${q.bias === 'U' ? 'bullish' : 'bearish'}`);
+  if (q.ids.length && !q.ids.includes(t.id)) out.push('not one of the ticked pattern types');
+  if (!q.stages.includes(t.s)) out.push(`stage "${stageWord(t)}" not selected`);
+  if (!(t.c >= q.minConf)) out.push(`shape score ${t.c} below ${q.minConf}`);
+  if (q.dist.on) {
+    const d = tagDirDist(t);
+    const lo = Math.min(q.dist.lo, q.dist.hi), hi = Math.max(q.dist.lo, q.dist.hi);
+    if (d == null) out.push('distance to the pivot unknown');
+    else if (d < lo || d > hi) out.push(`${d > 0 ? '+' : ''}${d.toFixed(1)}% to the pivot is outside the ${lo}% to ${hi > 0 ? '+' : ''}${hi}% window`);
+  }
+  return out;
+}
+export interface WhyPattern { tf: PatTf; tag: ScreenPatternTag; reasons: string[] }
+export interface WhyResult {
+  ticker: string;
+  verdict: 'listed' | 'provisional' | 'excluded' | 'not-in-data' | 'out-of-scope';
+  headline: string;
+  steps: Array<{ label: string; ok: boolean | null; detail: string }>;
+  /** every stored pattern on D / W / M (also below the thresholds) with why it does or does not pass */
+  patterns: WhyPattern[];
+}
+/** "Why not listed?" — ticker → in the data? in the company list? scanned per selected timeframe? every stored pattern (also below
+ *  the thresholds) and which rule excludes it; the company limits; the final verdict. Never relaxes anything. */
+export function whyNotListed(input: string, o: { rows: readonly ScreenRow[]; q: PineQuery; market: ScreenMarket; list: ReadonlySet<string> | null; listName?: string; run?: PineRun; now?: Date }): WhyResult {
+  const t = normTicker(input);
+  const { q, market } = o;
+  const row = o.rows.find((r) => r.t.toUpperCase() === t) || null;
+  const steps: WhyResult['steps'] = [];
+  const listName = o.listName || 'the company list';
+  const inList = o.list ? o.list.has(t) : true;
+  if (!row) {
+    steps.push({ label: 'In the data', ok: false, detail: `${t} is not in this market's screener data (another market, a new listing or a changed symbol)` });
+    if (o.list) steps.push({ label: 'In the company list', ok: inList, detail: inList ? `on ${listName}` : `not on ${listName}` });
+    return { ticker: t, verdict: 'not-in-data', headline: `${t}: not in the ${market === 'IN' ? 'Indian' : 'US'} screener data`, steps, patterns: [] };
+  }
+  steps.push({ label: 'In the data', ok: true, detail: `${row.t}${row.n ? ` — ${row.n}` : ''}` });
+  steps.push({ label: 'In the company list', ok: inList, detail: o.list ? (inList ? `on ${listName}` : `not on ${listName} — switch Companies to "All listed companies" to include it`) : 'every company' });
+  const selTfs = q.tfs.length ? q.tfs : (['D'] as PatTf[]);
+  for (const tf of selTfs) {
+    const tags = patTagsOf(row, tf);
+    const a = analysisOf(row, { tf });
+    steps.push({ label: `${TF_WORD[tf]} scan`, ok: tags != null, detail: tags == null ? patMissingWhy(row, tf) : `${a.status || 'scanned'} · ${sessionLabel(a)} · ${tags.length} pattern${tags.length === 1 ? '' : 's'} stored` });
+  }
+  for (const u of unsupportedChoices(q.ids, q.tfs, q.tfMode)) steps.push({ label: `${u.label} on ${u.tfs.join(' / ')}`, ok: false, detail: `unsupported — ${u.reason}` });
+  const patterns: WhyPattern[] = [];
+  for (const p of allPatterns(row)) for (const tag of p.tags || []) { const tg = { ...tag, tf: tag.tf || p.tf } as ScreenPatternTag; patterns.push({ tf: p.tf, tag: tg, reasons: tagRejectReasons(tg, q) }); }
+  const passing = patterns.filter((x) => !x.reasons.length);
+  const needPattern = q.need !== 'any' || q.ids.length > 0;
+  if (needPattern) steps.push({ label: 'Pattern part', ok: passing.length > 0 && (q.tfMode !== 'all' || selTfs.every((tf) => passing.some((x) => x.tf === tf))),
+    detail: !patterns.length ? 'no pattern stored on D / W / M' : passing.length ? `${passing.length} pattern${passing.length === 1 ? '' : 's'} pass${q.tfMode === 'all' ? ` (needs one on every one of ${selTfs.join(' + ')})` : ''}` : 'every stored pattern is excluded — see the list' });
+  // company limits (a missing figure fails)
+  const lim: string[] = [];
+  if (q.mcMin != null && !(fin(row.mc) && row.mc >= q.mcMin)) lim.push(`market cap ${fin(row.mc) ? row.mc : 'unknown'} below ${q.mcMin}`);
+  if (q.mcMax != null && !(fin(row.mc) && row.mc <= q.mcMax)) lim.push(`market cap ${fin(row.mc) ? row.mc : 'unknown'} above ${q.mcMax}`);
+  if (q.pxMin != null && !(fin(row.px) && row.px >= q.pxMin)) lim.push(`price ${fin(row.px) ? row.px : 'unknown'} below ${q.pxMin}`);
+  if (q.turnMin != null) { const tv = turnoverOf(row, market); if (tv == null || tv < q.turnMin) lim.push(`daily value traded ${tv == null ? 'unknown' : tv.toFixed(2)} below ${q.turnMin}`); }
+  if (q.perfMin != null) { const pv = row[q.perfKey]; if (!fin(pv) || pv < q.perfMin) lim.push(`performance ${fin(pv) ? pv : 'unknown'}% below ${q.perfMin}%`); }
+  if (q.sectors.length && !(row.tvSec && q.sectors.includes(row.tvSec))) lim.push(`sector ${row.tvSec || 'unknown'} not selected`);
+  for (const f of q.filters) { if (f.off) continue; const st = ruleState(row, f, market, o.now); if (st !== 'pass') lim.push(`${filterLabel(f, market)} — ${st === 'fail' ? 'not met' : 'cannot be evaluated'}`); }
+  steps.push({ label: 'Size, liquidity and rules', ok: !lim.length, detail: lim.length ? lim.join('; ') : 'every limit passed (or none set)' });
+  const run = o.run || runPineFull(o.rows, q, market, o.now);
+  const strict = run.strict.some((h) => h.row.t.toUpperCase() === t), prov = run.provisional.some((h) => h.row.t.toUpperCase() === t);
+  let verdict: WhyResult['verdict'], headline: string;
+  if (!inList) { verdict = 'out-of-scope'; headline = `${t}: not on ${listName}${strict ? ' (it would match every chart choice)' : ''}`; }
+  else if (strict) { verdict = 'listed'; headline = `${t}: listed — every choice passed`; }
+  else if (prov) { verdict = 'provisional'; headline = `${t}: provisional — a rule could not be evaluated, so it is not counted`; }
+  else {
+    verdict = 'excluded';
+    const first = lim[0] || (needPattern ? (patterns.length ? patterns.map((x) => `${PATTERN_META[x.tag.id]?.label || x.tag.id} [${x.tf}]: ${x.reasons[0] || 'passes'}`).find((s) => !s.endsWith('passes')) || 'patterns on the other timeframes missing' : 'no stored pattern') : '') || 'not matched';
+    headline = `${t}: excluded — ${first}`;
+  }
+  return { ticker: t, verdict, headline, steps, patterns };
+}
+/** The list members not shown as matches (coverage rows): one line each, matched names left out. Bounded to `max` names. */
+export function listCoverageRows(o: { rows: readonly ScreenRow[]; q: PineQuery; market: ScreenMarket; list: ReadonlySet<string>; listName?: string; run: PineRun; max?: number }): WhyResult[] {
+  const matched = new Set(o.run.strict.map((h) => h.row.t.toUpperCase()));
+  const out: WhyResult[] = [];
+  for (const t of Array.from(o.list).sort()) {
+    if (matched.has(t.toUpperCase())) continue;
+    out.push(whyNotListed(t, { ...o, list: o.list }));
+    if (out.length >= (o.max ?? 300)) break;
+  }
+  return out;
+}
+
+// ── the chart hand-off identity ─────────────────────────────────────────────────────────────────────────────────────────
+/** Extra chart-link parameters that carry what the row was read on: pattern id, analysis timeframe, its as-of date and session. */
+export function chartIdentityParams(row: Partial<ScreenRow> | null | undefined, tag: ScreenPatternTag | null | undefined): string {
+  if (!tag) return '';
+  const a = analysisOf(row, tag);
+  return `&pat=${encodeURIComponent(tag.id)}&atf=${a.tf}${a.at ? `&asof=${encodeURIComponent(a.at)}` : ''}${a.session ? `&session=${a.session}` : ''}`;
+}
+/** PS-02 — the timeframe-aware CSV columns (header and one row's values), shared so the export cannot drift from the table. */
+export const ANALYSIS_CSV_HEAD = ['Analysis timeframe', 'Analysis close', 'Analysis close date', 'Analysis session', 'Analysis scan status', 'Analysis scan version',
+  'Daily technical close', 'Daily technical close date', 'Daily session', 'Latest quote', 'Latest quote source', 'Latest quote time', 'Latest condition', 'Length (≈ trading days)'] as const;
+export function analysisCsvCells(row: Partial<ScreenRow>, tag: ScreenPatternTag | null): Array<string | number> {
+  const ps = priceSet(row, tag || { tf: 'D' });
+  const a = ps.analysis;
+  return [tag ? a.tf : '', a.close ?? (tag ? a.missing || '' : ''), a.at || '', tag ? sessionLabel(a) : '', a.status || '', a.v ?? '',
+    ps.daily.close ?? '', ps.daily.at || '', ps.daily.session || '', ps.quote.px ?? '', ps.quote.src || '', ps.quote.at || '',
+    latestConditions(row, tag).map((c) => c.label).join('; '), lengthDays(tag) ?? ''];
 }

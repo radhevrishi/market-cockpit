@@ -293,7 +293,8 @@ test('zzz994 Pine page (JSDOM): counts kept apart, search-scoped copy, explicit 
     const csv = blobs.at(-1)!;
     assert.match(csv, /Shape score \(0–100\)/);
     assert.match(csv, /Volume confirmed/);
-    assert.match(csv, /Scan close \(USD\)/);
+    assert.match(csv, /Daily technical close \(USD\)/);   // zzz1004 (PS-02): analysis close and daily technical close kept apart
+    assert.match(csv, /Analysis close \(USD\)/);
     assert.doesNotMatch(csv, /Likelihood/);
     // unpress Forming and Breakout: no stage → 0 results + prompt (never "all stages")
     await click((b) => b.textContent === 'Forming');

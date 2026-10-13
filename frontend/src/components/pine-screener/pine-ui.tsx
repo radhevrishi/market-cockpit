@@ -25,8 +25,8 @@ export const PINE_CSS = `
 .pnx-layout[data-wide="true"] { grid-template-columns: minmax(0, 1fr); }
 .pnx-side { position: sticky; top: 8px; display: grid; gap: 14px; padding: 14px; border: 1px solid var(--mc-border-1); border-radius: 10px; background: var(--mc-bg-2, var(--mc-bg-1)); max-height: calc(100vh - 24px); overflow: auto; }
 .pnx-side-toggle { display: none; }
-.pnx-cards { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
-.pnx-card { all: unset; box-sizing: border-box; cursor: pointer; display: grid; grid-template-rows: auto auto auto 1fr; gap: 2px; padding: 10px 12px 11px; border-radius: 10px; border: 1px solid var(--mc-border-1); background: var(--mc-bg-0); min-width: 0; transition: border-color .12s ease, box-shadow .12s ease; }
+.pnx-cards { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; }
+.pnx-card { all: unset; box-sizing: border-box; cursor: pointer; display: grid; grid-template-rows: auto auto auto auto 1fr; gap: 2px; padding: 10px 12px 11px; border-radius: 10px; border: 1px solid var(--mc-border-1); background: var(--mc-bg-0); min-width: 0; transition: border-color .12s ease, box-shadow .12s ease; }
 .pnx-card:hover { border-color: var(--mc-border-2, var(--mc-border-1)); }
 .pnx-card[aria-pressed="true"] { border-color: var(--mc-accent); box-shadow: inset 0 0 0 1px var(--mc-accent); }
 .pnx-card-count { font-size: 28px; line-height: 1.05; font-weight: 750; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
@@ -66,12 +66,16 @@ export const PINE_CSS = `
 .pnx-pat[aria-pressed="true"].pnx-down { background: var(--mc-bearish, #DC2626); border-color: var(--mc-bearish, #DC2626); color: #fff; }
 .pnx-pat .pnx-n { opacity: .7; font-weight: 600; margin-left: 4px; }
 .pnx-pat[data-zero="true"] { color: var(--mc-text-4, #94a3b8); }
+.pnx-pat[data-na="true"] { color: var(--mc-text-4, #94a3b8); border-style: dashed; cursor: not-allowed; }
+.pnx-pat[data-na="true"][aria-pressed="true"] { cursor: pointer; text-decoration: line-through; }
+.pnx-badge { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 650; white-space: nowrap; border: 1px solid currentColor; line-height: 1.5; }
+.pnx-seg-sm > button { padding: 4px 10px; font-size: 12.5px; }
 .pnx-detail-grid { position: sticky; left: 0; box-sizing: border-box; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; padding: 14px 16px 16px; font-size: 13px; }
 .pnx-detail-grid h4 { margin: 0 0 6px; font-size: 12.5px; font-weight: 750; color: var(--mc-text-2, var(--mc-text-1)); }
 .pnx-detail-grid ul { margin: 0; padding-left: 16px; display: grid; gap: 3px; }
 .pnx-sum { cursor: pointer; font-size: 12.5px; font-weight: 700; color: var(--mc-text-2, var(--mc-text-1)); list-style: none; }
 .pnx-sum::-webkit-details-marker { display: none; }
-@media (max-width: 1180px) { .pnx-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 1280px) { .pnx-cards { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 @media (max-width: 899px) {
   .pnx-layout { grid-template-columns: minmax(0, 1fr); }
   .pnx-side { position: static; max-height: none; }
@@ -86,7 +90,9 @@ export const PINE_CSS = `
 `;
 
 /** A pattern chip: name, timeframe badge, stage glyph; bullish green, bearish red, failed grey (dashed). */
-export function PatternChip({ t, main = false, market, patAt, showStage = false }: { t: ScreenPatternTag; main?: boolean; market: ScreenMarket; patAt?: string; showStage?: boolean }) {
+/** zzz1004 (PS-02) — `when`: the tag's OWN timeframe as-of text (sessionLabel(analysisOf(row, tag)) — e.g. "completed monthly close
+ *  2026-09-30"); `patAt` (a daily date) is kept for older callers and used only on a daily tag. */
+export function PatternChip({ t, main = false, market, patAt, when, showStage = false }: { t: ScreenPatternTag; main?: boolean; market: ScreenMarket; patAt?: string; when?: string; showStage?: boolean }) {
   const m = PATTERN_META[t.id];
   if (!m) return null;
   const failed = t.s === 'x';
@@ -99,7 +105,7 @@ export function PatternChip({ t, main = false, market, patAt, showStage = false 
     typeof (t as any).dq === 'number' ? `From the latest quote: ${(t as any).dq > 0 ? '+' : ''}${(t as any).dq}%` : '',
     len ? `${len} long${t.dp != null ? `, ${t.dp}% deep` : ''}` : '',
     vq ? 'Volume not confirmed: too little usable volume data for this pattern' : '',
-    m.short, patAt ? `As of the ${patAt} close` : ''].filter(Boolean).join('\n');
+    m.short, when ? `As of: ${when}` : patAt && tf === 'D' ? `As of the ${patAt} close` : ''].filter(Boolean).join('\n');
   return (
     <span title={tip} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 8px', borderRadius: 999, fontSize: 12, fontWeight: main ? 750 : 600, whiteSpace: 'nowrap',
       border: `1px ${failed ? 'dashed' : 'solid'} ${col}`, background: main && !failed ? `color-mix(in srgb, ${col} 14%, transparent)` : 'transparent', color: col }}>
@@ -109,6 +115,20 @@ export function PatternChip({ t, main = false, market, patAt, showStage = false 
       {vq ? <span title="Volume not confirmed" aria-label="volume not confirmed" style={{ opacity: 0.85 }}>v?</span> : null}
     </span>
   );
+}
+
+/** zzz1004 — the latest-condition badges beside a W / M breakout ("latest quote back below pivot", "marginal clearance", "extended
+ *  beyond entry window") and the session badge ("provisional (session open, observed 14:46 UTC)" / "completed close 2026-10-09"). */
+export function ConditionBadges({ items }: { items: ReadonlyArray<{ id: string; label: string; tip: string }> }) {
+  if (!items.length) return null;
+  return (
+    <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+      {items.map((c) => <span key={c.id} className="pnx-badge" data-cond={c.id} title={c.tip} style={{ color: c.id === 'marginal' ? C.dim : C.amber }}>{c.id === 'back-through' ? '↩ ' : c.id === 'extended' ? '↗ ' : '≈ '}{c.label}</span>)}
+    </span>
+  );
+}
+export function SessionBadge({ text, provisional }: { text: string; provisional: boolean }) {
+  return <span className="pnx-badge" data-session={provisional ? 'provisional' : 'completed'} style={{ color: provisional ? C.amber : C.dim }} title={provisional ? 'Read with an unfinished session: the bar can still change; not a completed close' : 'Read from completed bars'}>{provisional ? '◷ ' : '✓ '}{text}</span>;
 }
 
 /** Shape score as a short bar + the number (0–100; possible ≥ 35, likely ≥ 55, very likely ≥ 75). */
