@@ -350,19 +350,34 @@ export interface PineRun {
 }
 export function runPineFull(rows: readonly ScreenRow[], q: PineQuery, market: ScreenMarket, now: Date = new Date()): PineRun {
   const strict: PineHit[] = [], provisional: PineHit[] = [];
+  // zzz997 — ticking pattern types means "show companies with one of these patterns": rows without one are not listed, even on a
+  // rules-only screen (seen: Flat base ticked, but hundreds of "no matching chart pattern" rows from the Rule of 40 rule).
+  const needPattern = q.need !== 'any' || (Array.isArray(q.ids) && q.ids.length > 0);
+  // zzz997 — "cannot be evaluated" (provisional) only when NO company has the figure yet (a build pending). A company missing a
+  // figure that others have simply does not meet the rule (e.g. no FCF margin → no Rule of 40): it fails, it is not provisional.
+  const anyHas = new Map<string, boolean>();
+  const someoneHas = (k: string) => { let v = anyHas.get(k); if (v === undefined) { v = rows.some((x) => fin((x as any)[k])); anyHas.set(k, v); } return v; };
+  const tfScanned = new Map<string, boolean>();
+  const someoneScanned = (tf: string) => { let v = tfScanned.get(tf); if (v === undefined) { const key = tf === 'W' ? 'patW' : tf === 'M' ? 'patM' : 'pat'; const sk = tf === 'W' ? 'scanW' : tf === 'M' ? 'scanM' : 'scan'; v = rows.some((x) => Array.isArray((x as any)[key]) || ((x as any)[sk] && ((x as any)[sk].st === 'ready' || (x as any)[sk].st === 'no-pattern'))); tfScanned.set(tf, v); } return v; };
   for (const r of rows) {
     const ev = evalRowPatterns(r, q);
     const missing: string[] = [];
-    if (q.need !== 'any') {
+    if (needPattern) {
       if (ev.status === 'fail') continue;
-      if (ev.status === 'missing') missing.push(`chart pattern — ${ev.missingTfs.map((tf) => patMissingWhy(r, tf)).join('; ')}`);
+      if (ev.status === 'missing') {
+        if (ev.missingTfs.some((tf) => someoneScanned(tf))) continue;   // this company was not scanned while others were: no match
+        missing.push(`chart pattern — ${ev.missingTfs.map((tf) => patMissingWhy(r, tf)).join('; ')}`);
+      }
     }
     if (!passesCompanyBasics(r, q, market)) continue;
     let failed = false;
     for (const f of q.filters) {
       const st = ruleState(r, f, market, now);
       if (st === 'fail') { failed = true; break; }
-      if (st === 'missing') missing.push(ruleName(f, market));
+      if (st === 'missing') {
+        if (f.kind !== 'pattern' && filterKeys(f).every((k) => fin((r as any)[k]) || someoneHas(k))) { failed = true; break; }
+        missing.push(ruleName(f, market));
+      }
     }
     if (failed) continue;
     const tags = (ev.tags as ScreenPatternTag[]).slice().sort((a, b) => b.c - a.c);

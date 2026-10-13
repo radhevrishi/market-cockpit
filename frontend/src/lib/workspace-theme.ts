@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from 'react';
 export const WORKSPACE_LIGHT_KEY = 'mc:workspace-light:v1';
 const LEGACY_CHART_KEY = 'mc:chart-light:v1';
 const EVENT = 'mc:workspace-theme';
+const SITE_THEME_KEY = 'mc:screen-theme:v1';   // must equal SCREEN_THEME_KEY in lib/theme.ts (checked by zzz997 test)
 
 // zzz957: the choice made in this visit, used when the browser refuses to store it (private mode, full or blocked storage) —
 // otherwise the switch flipped back at once, because the re-read found the old saved value.
@@ -16,6 +17,7 @@ export function readWorkspaceLight(storage: Pick<Storage, 'getItem'> | null): bo
   if (memChoice != null) return memChoice;
   try {
     const v = storage?.getItem(WORKSPACE_LIGHT_KEY) ?? storage?.getItem(LEGACY_CHART_KEY) ?? null;
+    if (v == null) return storage?.getItem(SITE_THEME_KEY) !== 'dark';   // zzz997: no own choice yet → follow the site's ☀/🌙
     return v !== '0';
   } catch { return true; }
 }
@@ -27,6 +29,14 @@ export function writeWorkspaceLight(storage: Pick<Storage, 'setItem' | 'getItem'
   } catch { /* blocked */ }
   memChoice = light;
   return false;
+}
+/** zzz997 — set the workspace choice from outside (the site header's ☀/🌙) and tell every open workspace page. */
+export function setWorkspaceLight(light: boolean): void {
+  if (typeof window === 'undefined') return;
+  let store: Storage | null = null;
+  try { store = window.localStorage; } catch { /* blocked */ }
+  writeWorkspaceLight(store, light);
+  window.dispatchEvent(new Event(EVENT));
 }
 /** Test helper. */
 export function _resetWorkspaceThemeMemory(): void { memChoice = null; }

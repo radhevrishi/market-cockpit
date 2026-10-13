@@ -1,6 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { setWorkspaceLight } from '@/lib/workspace-theme';
 import { THEMES, DEFAULT_THEME, THEME_STORAGE_KEY, SCREEN_THEME_KEY, type ThemeName, type ThemePalette } from '@/lib/theme';
 
 interface ThemeContextValue {
@@ -61,6 +62,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // ignore
     }
+    // zzz997 — the header's ☀/🌙 also switches Charts / Stock Screener / Pine Screener / Watchlists (they kept their own
+    // white choice before, so switching the site to dark left those pages white)
+    if (next === 'light' || next === 'dark') setWorkspaceLight(next === 'light');
   };
 
   const value = useMemo<ThemeContextValue>(() => ({

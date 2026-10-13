@@ -107,9 +107,12 @@ test('zzz994 MC-07 a rule that cannot be evaluated never certifies a pass; unsup
   const q = Q({ filters: [{ kind: 'num', key: 'revQYoY', op: 'gt', v: 20 }] });
   const r = runPineFull(rows, q, 'US');
   assert.deepEqual(r.strict.map((h) => h.row.t), ['HAS']);
-  assert.deepEqual(r.provisional.map((h) => h.row.t).sort(), ['MISS', 'NOSCAN']);
-  assert.match(r.provisional.find((h) => h.row.t === 'MISS')!.missing!.join(), /Revenue growth, quarterly YoY/);
-  assert.match(r.provisional.find((h) => h.row.t === 'NOSCAN')!.missing!.join(), /chart pattern — daily: not scanned yet/);
+  // zzz997: other companies have the figure / were scanned → a company without it simply does not match (not provisional)
+  assert.deepEqual(r.provisional.map((h) => h.row.t), []);
+  // provisional only while NO company has the figure (a build pending)
+  const pend = runPineFull(rows.map(({ revQYoY: _x, ...rr }: any) => rr), q, 'US');
+  assert.deepEqual(pend.provisional.map((h) => h.row.t).sort(), ['HAS', 'LOW', 'MISS']);
+  assert.match(pend.provisional[0].missing!.join(), /Revenue growth, quarterly YoY/);
   assert.deepEqual(runPine(rows, q, 'US').map((h) => h.row.t), ['HAS'], 'runPine is strict');
   // a SPARSE field's absence is the answer itself (no golden cross in 20 sessions) — a fail, not "missing"
   assert.equal(ruleState(rows[0], { kind: 'num', key: 'gcD', op: 'le', v: 19 }, 'US'), 'fail');
@@ -194,7 +197,9 @@ test('zzz994 D/W/M: matchTags reads pat / patW / patM, ANY vs ALL, unscanned tim
   assert.deepEqual(patTagsOf(both, 'M'), null);
   const run = runPineFull([both, dOnly], Q({ tfs: ['W'] }), 'US');
   assert.deepEqual(run.strict.map((h) => h.row.t), ['BOTH']);
-  assert.deepEqual(run.provisional.map((h) => h.row.t), ['DONLY'], 'a daily pattern is never relabelled as weekly');
+  // zzz997: another company was scanned weekly → DONLY simply has no weekly match (a daily pattern is never relabelled as weekly)
+  assert.deepEqual(run.provisional.map((h) => h.row.t), []);
+  assert.deepEqual(runPineFull([dOnly], Q({ tfs: ['W'] }), 'US').provisional.map((h) => h.row.t), ['DONLY'], 'nobody scanned weekly yet → provisional');
   assert.equal(run.strict[0].best?.tf, 'W');
   // ALL mode with a scanned timeframe that fails → fail
   const wNo = row('WNO', [T('cup', 'f', 70, -3)], { scanW: { st: 'no-pattern', v: 5 } } as any);

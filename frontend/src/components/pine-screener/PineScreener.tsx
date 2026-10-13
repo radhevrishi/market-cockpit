@@ -443,8 +443,8 @@ export default function PineScreener() {
           <input type="number" aria-label="Distance to pivot to %" value={q.dist.hi} disabled={!q.dist.on} onChange={(e) => change({ dist: { ...q.dist, hi: Number(e.target.value) } })} style={{ ...inp, width: 60 }} />
           <span style={{ color: C.dim }}>%</span>
         </span>
-        <label title="Off: the screen's rules alone decide (e.g. the trend-template rules) and any chart pattern is shown beside the company" style={{ display: 'inline-flex', gap: 5, alignItems: 'center', cursor: 'pointer' }}>
-          <input type="checkbox" checked={q.need !== 'any'} onChange={(e) => change({ need: e.target.checked ? 'pattern' : 'any' })} aria-label="Require a chart pattern" /> Require a chart pattern
+        <label title={q.ids.length ? 'Pattern types are ticked, so only companies showing one of them are listed — clear the ticked types to let the rules alone decide' : "Off: the screen's rules alone decide (e.g. the trend-template rules) and any chart pattern is shown beside the company"} style={{ display: 'inline-flex', gap: 5, alignItems: 'center', cursor: q.ids.length ? 'default' : 'pointer', opacity: q.ids.length ? 0.75 : 1 }}>
+          <input type="checkbox" checked={q.need !== 'any' || q.ids.length > 0} disabled={q.ids.length > 0} onChange={(e) => change({ need: e.target.checked ? 'pattern' : 'any' })} aria-label="Require a chart pattern" /> Require a chart pattern{q.ids.length ? ' (types ticked)' : ''}
         </label>
       </div>
 
