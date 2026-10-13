@@ -137,7 +137,7 @@ export default function UsPortfolioBookPage() {
         <div style={{ fontSize: 14, color: C.dim, marginTop: 4, lineHeight: 1.55, maxWidth: 900 }}>
           Your US shares and cash, in US dollars, kept apart from the India book. Profit and loss is against your average cost;{' '}
           <b style={{ color: C.text }}>none of this reaches the catalyst engine</b>, which reads SEC filings only.{' '}
-          <a href="/us-portfolio-catalysts" style={{ color: C.cyan }}>US Portfolio Catalysts →</a> · <a href="/portfolio" style={{ color: C.faint }}>India book →</a>
+          <a href="/us-portfolio-catalysts" style={{ color: C.cyan }}>US Portfolio Catalysts →</a> · <a href="/pine-screener?view=portfolio&market=US" style={{ color: C.cyan }} title="Every holding: chart patterns and how far the close is from the 21, 50 and 200-day averages">Chart check →</a> · <a href="/portfolio" style={{ color: C.faint }}>India book →</a>
         </div>
       </div>
       {err && <div style={{ color: C.red, fontSize: 14 }}>The US book could not be read: {err}. This is not an empty book — nothing was changed.</div>}

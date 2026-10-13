@@ -15,7 +15,7 @@
 // The rest of this file is pure: the filters the page applies (bias / sub-pattern / stage / likelihood / distance to the
 // pivot / liquidity), counts per pattern for the chips, and the cleaning of saved Pine screens.
 import { analyzePatterns, analyzeDailyAs, toTags, PATTERN_META, PATTERN_IDS, PATTERN_MIN_HISTORY, type PatternId, type PatternTag, type PatternAnalysis, type PBar } from '../chart-patterns';
-import { techFigures, closedFigures, type DailyBars } from './tech';
+import { techFigures, closedFigures, usSessionOpen, type DailyBars } from './tech';
 import { passes, cleanScreens, fieldOf, filterKeys, filterLabel, evalPattern, patMissingWhy, tagDirDist, shapeWord, PATTERN_TFS, FIELDS, type Filter, type NumKey, type PatTf, type PatternEval } from './filters';
 import type { ScreenMarket, ScreenRow } from './types';
 import type { TechStored } from './tech-fetch';
@@ -34,7 +34,20 @@ export const SCAN_BASIS = 'split-adjusted price';
  *  zzz993: `vq: 0` = the pattern's bars carry too little usable volume (engine volumeOk false — "volume not confirmed");
  *  `tf` = timeframe of the bars ('D' when absent; 'W' / 'M' for patW / patM); `dq` (only in the page's lean rows) = distance
  *  to the pivot from the LATEST QUOTE (px), %, same sign rule as `d` — `d` itself is always from the scan close. */
-export interface ScreenPatternTag extends PatternTag { l?: number; dp?: number | null; vq?: 0; tf?: 'D' | 'W' | 'M'; dq?: number }
+export interface ScreenPatternTag extends PatternTag { l?: number; dp?: number | null; vq?: 0; tf?: 'D' | 'W' | 'M'; dq?: number; lu?: 'd' | 'w' | 'm' }
+//   zzz998 — `lu` = the unit of `l`: 'w' (weeks) on weekly tags, 'm' (months) on monthly tags; absent on daily tags (= trading days).
+//   Use tagLengthText(tag) to show it.
+
+/** zzz998 — a tag's length in words with its unit: daily "9 d" (from 10 bars shown in weeks, "6 wk", 5 sessions a week),
+ *  weekly "6 wk", monthly "9 mo". Weekly / monthly tags stored before `lu` existed are read by their `tf`. '' when unknown. */
+export function tagLengthText(tag: Pick<ScreenPatternTag, 'l' | 'lu' | 'tf'> | null | undefined): string {
+  const l = tag?.l;
+  if (!fin(l) || l < 0) return '';
+  const unit = tag?.lu ?? (tag?.tf === 'W' ? 'w' : tag?.tf === 'M' ? 'm' : 'd');
+  if (unit === 'w') return `${l} wk`;
+  if (unit === 'm') return `${l} mo`;
+  return l >= 10 ? `${Math.max(1, Math.round(l / 5))} wk` : `${l} d`;
+}
 
 /** zzz993 (MC-02) — how a company's pattern scan went:
  *  ready = scanned, at least one pattern stored · no-pattern = scanned, nothing qualified · insufficient-history = fewer than
@@ -43,8 +56,14 @@ export interface ScreenPatternTag extends PatternTag { l?: number; dp?: number |
 export type ScanStatus = 'ready' | 'no-pattern' | 'insufficient-history' | 'invalid-data' | 'error' | 'stale-version';
 /** `v` scan version (0 = unknown, snapshot rows from before zzz993) · `n` usable bars · `asOf` date of the last bar ·
  *  `vc` share 0–1 of the last 60 analysed bars with usable volume · `tf` timeframe ('D' when absent). n / asOf / vc: when known. */
-export interface ScanMeta { st: ScanStatus; v: number; n?: number; asOf?: string; vc?: number; tf?: 'D' | 'W' | 'M'; e?: string }
+export interface ScanMeta { st: ScanStatus; v: number; n?: number; asOf?: string; vc?: number; tf?: 'D' | 'W' | 'M'; e?: string; px?: number; rep?: number; rej?: number }
 //   `e` = the chart engine's rule-set version (PATTERN_ENGINE_VERSION) the reading was made with.
+//   zzz998 — `px` (weekly / monthly only) = the close of the last COMPLETED week / month the reading used (its date is `asOf`); the
+//   W / M tags' `d` is measured from it, so it is the close to show beside them (tagScanClose). `rep` / `rej` = DAILY bars repaired /
+//   rejected by validation (D) or aggregation (W / M) — present when above 0. More than SCAN_MAX_REJECT_SHARE of the supplied
+//   daily bars rejected → 'invalid-data' (no tags).
+/** zzz998 — more than this share of the supplied daily bars rejected = the data is bad: status 'invalid-data', no tags. */
+export const SCAN_MAX_REJECT_SHARE = 0.05;
 /** Statuses that count as "scanned" (a genuine reading of the chart: patterns, or a real absence of them). */
 export const isScanned = (st: ScanStatus | undefined | null): boolean => st === 'ready' || st === 'no-pattern';
 
@@ -56,8 +75,15 @@ const toPBars = (b: DailyBars): PBar[] => {
   return bars;
 };
 /** One engine analysis → stored tags + scan status (shared by the daily and the weekly / monthly scans). */
-function scanResult(a: PatternAnalysis, tf: 'D' | 'W' | 'M', asOf: string | undefined, supplied: number): { pat: ScreenPatternTag[]; scan: ScanMeta } {
-  const meta: Omit<ScanMeta, 'st'> = { v: PATTERN_SCAN_VERSION, n: a.usableBars, ...(asOf ? { asOf } : {}), vc: a.volumeCoverage, ...(tf !== 'D' ? { tf } : {}), e: a.engineVersion };
+function scanResult(a: PatternAnalysis, tf: 'D' | 'W' | 'M', asOf: string | undefined, supplied: number, q?: { rep: number; rej: number; daily: number; px?: number | null }): { pat: ScreenPatternTag[]; scan: ScanMeta } {
+  const rep = q ? q.rep : a.repairedBars, rej = q ? q.rej : a.rejectedBars, daily = q ? q.daily : supplied;
+  const meta: Omit<ScanMeta, 'st'> = {
+    v: PATTERN_SCAN_VERSION, n: a.usableBars, ...(asOf ? { asOf } : {}), vc: a.volumeCoverage, ...(tf !== 'D' ? { tf } : {}), e: a.engineVersion,
+    ...(tf !== 'D' && q?.px != null && fin(q.px) && q.px > 0 ? { px: Number(q.px.toPrecision(6)) } : {}),
+    ...(rep > 0 ? { rep } : {}), ...(rej > 0 ? { rej } : {}),
+  };
+  // zzz998 — too many daily bars thrown out: whatever is left is not a trustworthy chart
+  if (daily > 0 && rej / daily > SCAN_MAX_REJECT_SHARE) return { pat: [], scan: { st: 'invalid-data', ...meta } };
   if (a.tooShort) {
     // enough bars supplied but validation threw too many out → the data is bad, not the history short
     const st: ScanStatus = a.rejectedBars > 0 && supplied >= PATTERN_MIN_HISTORY[tf] ? 'invalid-data' : 'insufficient-history';
@@ -68,7 +94,7 @@ function scanResult(a: PatternAnalysis, tf: 'D' | 'W' | 'M', asOf: string | unde
   a.hits.forEach((h, k) => {
     const t = tags[k];
     if (t.c < PATTERN_MIN_STORE) return;
-    pat.push({ ...t, l: h.lengthBars, dp: h.depthPct, ...(h.volumeOk === false ? { vq: 0 as const } : {}), ...(tf !== 'D' ? { tf } : {}) });
+    pat.push({ ...t, l: h.lengthBars, dp: h.depthPct, ...(h.volumeOk === false ? { vq: 0 as const } : {}), ...(tf !== 'D' ? { tf, lu: tf === 'W' ? 'w' as const : 'm' as const } : {}) });
   });
   return { pat, scan: { st: pat.length ? 'ready' : 'no-pattern', ...meta } };
 }
@@ -101,7 +127,8 @@ export function periodPatternsFromBars(b: DailyBars, tf: 'W' | 'M', ipoD: number
   try {
     const a = analyzeDailyAs(toPBars(b), tf, { completedOnly: true, ...(now ? { now } : {}), ...(ipoD != null && Number.isFinite(ipoD) ? { firstTradeT: ipoD * DAY } : {}) });
     const asOf = a.periodEnd != null && Number.isFinite(a.periodEnd) ? new Date(a.periodEnd).toISOString().slice(0, 10) : undefined;
-    return scanResult(a, tf, asOf, a.bars.length);
+    const lastBar = a.bars.length ? a.bars[a.bars.length - 1] : null;
+    return scanResult(a, tf, asOf, a.bars.length, { rep: a.dailyRepaired, rej: a.dailyRejected, daily: a.dailySupplied, px: lastBar ? lastBar.c : null });
   } catch {
     return { pat: [], scan: { st: 'error', v: PATTERN_SCAN_VERSION, tf, asOf: b.d[n - 1] } };
   }
@@ -172,18 +199,32 @@ export function rowScanFields(tf: TechStored | undefined, quote: { px: number | 
 }
 
 /** zzz996 — Nasdaq's list can lag a session (seen 13 Oct 2026: RPD 13.74, AVAV 137.11, AAPL 336.64 = their 9 Oct closes while
- *  the daily bars already had 12 Oct). When the quote equals the PREVIOUS bar's close and not the last one, the quote is a session
- *  behind: use the last bar's close (and its change) so price, averages and patterns agree; the stale quote is kept as `pxAlt`. */
+ *  the daily bars already had 12 Oct). When the quote is a session behind, use the last bar's close (and its change) so price,
+ *  averages and patterns agree; the stale quote is kept as `pxAlt`.
+ *  zzz998 — a price alone is weak evidence (a genuine quote can equal yesterday's close), so ALL of these are required:
+ *   • not during the US regular session (a live quote is never replaced);
+ *   • the quote equals the PREVIOUS bar's close and not the last one (within 0.15%);
+ *   • the quote's change % (Nasdaq `chg`) equals the PREVIOUS session's change ((prevClose ÷ prev2Close − 1) × 100, within
+ *     0.05 point) and not the last session's.
+ *  Missing chg, missing prev2Close (entries read before zzz998) or any doubt → the Nasdaq quote is kept. */
 export interface ResolvedQuote { px: number | null; chg: number | null; src: string; at?: string | null; pxAlt?: number; mcScale: number }
-export function resolveUsQuote(q: { px: number | null; chg: number | null }, tf: { close?: number | null; prevClose?: number | null; scanPx?: number | null; scanAt?: string | null; d?: string } | undefined): ResolvedQuote {
+export const QUOTE_CHG_TOL = 0.05;
+export function resolveUsQuote(
+  q: { px: number | null; chg: number | null },
+  tf: { close?: number | null; prevClose?: number | null; prev2Close?: number | null; scanPx?: number | null; scanAt?: string | null; d?: string } | undefined,
+  now: Date = new Date(),
+): ResolvedQuote {
   const keep: ResolvedQuote = { px: q.px, chg: q.chg, src: 'nasdaq', mcScale: 1 };
-  if (!tf || !fin(q.px) || !(q.px > 0)) return keep;
+  if (!tf || !fin(q.px) || !(q.px > 0) || !fin(q.chg)) return keep;
+  if (usSessionOpen(now)) return keep;
   const last = fin(tf.scanPx) ? tf.scanPx : fin(tf.close) ? tf.close : null;
-  const prev = tf.prevClose;
-  if (last == null || !fin(prev) || !(prev > 0) || !(last > 0)) return keep;
-  const near = (a: number, b: number) => Math.abs(a / b - 1) < 0.0015;
+  const prev = tf.prevClose, prev2 = tf.prev2Close;
+  if (last == null || !(last > 0) || !fin(prev) || !(prev > 0) || !fin(prev2) || !(prev2 > 0)) return keep;
+  const near = (x: number, y: number) => Math.abs(x / y - 1) < 0.0015;
   if (!near(q.px, prev) || near(q.px, last)) return keep;
-  return { px: last, chg: Math.round((last / prev - 1) * 10000) / 100, src: 'yahoo (Nasdaq list a session behind)', at: tf.scanAt || tf.d || null, pxAlt: q.px, mcScale: last / q.px };
+  const prevChg = (prev / prev2 - 1) * 100, lastChg = (last / prev - 1) * 100;
+  if (Math.abs(q.chg - prevChg) > QUOTE_CHG_TOL || Math.abs(q.chg - lastChg) <= QUOTE_CHG_TOL) return keep;
+  return { px: last, chg: Math.round(lastChg * 100) / 100, src: 'yahoo (Nasdaq list a session behind)', at: tf.scanAt || tf.d || null, pxAlt: q.px, mcScale: last / q.px };
 }
 
 /** zzz993 (MC-01) — the build note on price sources: px and the averages / patterns come from different feeds in the US, so a
@@ -456,6 +497,15 @@ export function scanStatusOf(r: Pick<ScreenRow, 'scan' | 'patAt'>): ScanStatus |
 /** zzz993 (MC-01) — distance from the LATEST QUOTE to each tag's pivot (`dq`, %, 0.1), next to the scan-close distance `d`. */
 const withQuoteDist = (tags: ScreenPatternTag[], px: number | null | undefined): ScreenPatternTag[] =>
   fin(px) && px > 0 ? tags.map((t) => (fin(t.p) && t.p > 0 ? { ...t, dq: Math.round((px / t.p - 1) * 1000) / 10 } : t)) : tags;
+/** zzz998 — the scan close that belongs to a tag's timeframe: daily → the row's scan close (scanPx / scanAt); weekly / monthly →
+ *  the close of the last completed week / month the reading used (scanW / scanM `px`, dated `asOf`). Its `d` is measured from this
+ *  close, so show this one beside a W / M tag, never the daily close. px / at null when the row does not carry it (older entries). */
+export function tagScanClose(row: Partial<Pick<ScreenRow, 'scanPx' | 'scanAt' | 'scanW' | 'scanM'>> | null | undefined, tag: Pick<ScreenPatternTag, 'tf'> | null | undefined): { px: number | null; at: string | null; tf: 'D' | 'W' | 'M' } {
+  const tf = tag?.tf === 'W' || tag?.tf === 'M' ? tag.tf : 'D';
+  if (tf === 'D') return { px: fin(row?.scanPx) ? row!.scanPx as number : null, at: row?.scanAt || null, tf };
+  const sc = tf === 'W' ? row?.scanW : row?.scanM;
+  return { px: fin(sc?.px) ? sc!.px as number : null, at: sc?.asOf || null, tf };
+}
 export interface LeanResult {
   rows: Array<Partial<ScreenRow>>; total: number;
   /** genuine readings only: scan ready or no-pattern (MC-02) */

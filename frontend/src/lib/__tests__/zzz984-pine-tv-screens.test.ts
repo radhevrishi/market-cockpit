@@ -8,7 +8,8 @@ import {
   tvFigures, trendTemplate, weinsteinStage, pocketPivotAge, rsRatings, barsSinceCross, rsiSeries, smaSeries, emaSeries,
 } from '../screener/tv-screens';
 import { techEntry, rowTvFields, applyRsRating, ruleOf40, runPine, cleanQuery, LEAN_KEYS, OPTIONAL_COLS, PINE_GROUPS, DEFAULT_QUERY, PATTERN_SCAN_VERSION } from '../screener/pine';
-import { BUILT_IN_PINE_SCREENS } from '../screener/pine-presets';
+import { BUILT_IN_PINE_SCREENS, MOVED_PINE_SCREENS } from '../screener/pine-presets';
+import { BUILT_IN_SCREENS } from '../screener/filters';
 import { FIELDS, fieldOf, filterKeys, passes } from '../screener/filters';
 import { inFiguresFromRaw } from '../screener/in-assemble';
 import { FORMULA_VERSION, FORMULA_CHANGES } from '../screener/research';
@@ -198,12 +199,17 @@ test('zzz984 built-in screens: well formed, grouped, and the owner\'s scripts ar
     for (const f of s.q.filters) for (const k of filterKeys(f)) assert.ok((LEAN_KEYS as readonly string[]).includes(k) && fieldOf(k), `${s.id}: ${k}`);
     for (const k of s.q.cols) assert.ok((LEAN_KEYS as readonly string[]).includes(k), `${s.id}: column ${k}`);
   }
-  for (const id of ['tv-trend-template', 'tv-rule-of-40', 'tv-rsi-cross', 'tv-rsi-50', 'tv-golden-cross', 'tv-death-cross', 'tv-ema-cross-up']) assert.equal(byId.get(id)?.group, 'tv', id);
+  for (const id of ['tv-trend-template', 'tv-rsi-cross', 'tv-rsi-50', 'tv-golden-cross', 'tv-death-cross', 'tv-ema-cross-up']) assert.equal(byId.get(id)?.group, 'tv', id);
   for (const id of ['rs-80', 'stage-2', 'stage-1-2', 'pocket-pivot', 'ripster-bull', 'tt-bullish-base', 'rs80-stage2-forming']) assert.equal(byId.get(id)?.group, 'momentum', id);
   assert.equal(byId.get('all-bullish')?.group, 'patterns');
   assert.equal(byId.get('tv-trend-template')!.name, 'Minervini Trend Template (based on your TradingView script)');
-  assert.equal(byId.get('tv-rule-of-40')!.name, 'Rule of 40 (based on your TradingView script)');
-  assert.deepEqual(byId.get('tv-rule-of-40')!.q.cols, ['r40', 'revQYoY', 'fcfmTTM']);
+  // zzz999 — Rule of 40 is about fundamentals only: it moved to the Stock Screener's built-ins (same id for the US copy)
+  assert.ok(!byId.has('tv-rule-of-40'), 'Rule of 40 is no longer a Pine screen');
+  assert.ok(MOVED_PINE_SCREENS['tv-rule-of-40']);
+  const r40s = BUILT_IN_SCREENS.find((s) => s.id === 'tv-rule-of-40')!;
+  assert.equal(r40s.name, 'Rule of 40 (based on your TradingView script)'); assert.equal(r40s.market, 'US');
+  assert.deepEqual(r40s.filters, [{ kind: 'num', key: 'r40', op: 'ge', v: 40 }]);
+  assert.equal(BUILT_IN_SCREENS.find((s) => s.id === 'tv-rule-of-40-in')?.market, 'IN');
   assert.ok(byId.get('minervini-vcp')!.q.filters.some((f) => f.kind === 'num' && f.key === 'ttOk'), 'Minervini VCP uses the trend-template script');
   assert.equal(byId.get('tt-bullish-base')!.q.need, 'pattern');
   // rules-only screens find companies without any pattern; pattern screens do not

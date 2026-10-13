@@ -44,7 +44,7 @@ test('zzz994 MC-03 no stage selected matches nothing; legacy empty stages migrat
   assert.equal(cleanQuery({}).qv, 2);
   // built-in screens and their ids survive unchanged
   for (const s of BUILT_IN_PINE_SCREENS) { assert.deepEqual(cleanQuery(s.q), s.q, s.id); assert.ok(s.q.stages.length, s.id); }
-  for (const id of ['all-bullish', 'all-bearish', 'tv-trend-template', 'tv-rule-of-40', 'failed-breakouts']) assert.ok(BUILT_IN_PINE_SCREENS.some((s) => s.id === id), id);
+  for (const id of ['all-bullish', 'all-bearish', 'tv-trend-template', 'failed-breakouts']) assert.ok(BUILT_IN_PINE_SCREENS.some((s) => s.id === id), id);   // zzz999: tv-rule-of-40 moved to the Stock Screener
   const ui = read('components/pine-screener/PineScreener.tsx');
   assert.match(ui, />All stages</);
   assert.match(ui, /No stage selected/);

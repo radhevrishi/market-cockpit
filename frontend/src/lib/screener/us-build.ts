@@ -11,6 +11,7 @@ import { ensureSchema } from '@/lib/db-migrate';
 import { yahooProfileStats } from '@/lib/us-prices';
 import { FRAME_PLAN, framePeriods, usFigures, type FrameData, type FrameEntry } from './sec-assemble';
 import { refreshTech, type TechStored } from './tech-fetch';
+import { usSessionOpen } from './tech';
 import { rowPatternFields, rowScanFields, resolveUsQuote, priceSourceNote, rowTvFields, applyRsRating, ruleOf40 } from './pine';
 import { tvSectorOf } from './tv-sectors';
 import { rowsJson, type ScreenRow, type ScreenSnapshot } from './types';
@@ -23,13 +24,8 @@ const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinit
 // ── 1. Nasdaq list ─────────────────────────────────────────────────────────────────────────────────────────────────────
 export interface NasdaqRow { t: string; n: string; px: number | null; chg: number | null; vol: number | null; mc: number | null; sec: string | null; ind: string | null; ex?: string; ipoYear?: number | null }
 const num = (s: unknown): number | null => { const v = parseFloat(String(s ?? '').replace(/[$,%\s]/g, '')); return Number.isFinite(v) ? v : null; };
-/** zzz969 — the US regular session (Mon–Fri 9:30–16:00 New York time; holidays not checked — a holiday build simply has no live price). */
-export function usSessionOpen(now = new Date()): boolean {
-  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(now).map((x) => [x.type, x.value]));
-  if (p.weekday === 'Sat' || p.weekday === 'Sun') return false;
-  const m = (Number(p.hour) % 24) * 60 + Number(p.minute);
-  return m >= 570 && m < 960;
-}
+/** zzz969 — the US regular session (now in tech.ts so the client-safe pine.ts can use it too; re-exported for older imports). */
+export { usSessionOpen };
 
 /** Not common stock: warrants, rights, units, preferred, notes, depositary receipts (TradingView's "Common stock" leaves these out). */
 const NOT_COMMON = /\b(warrants?|rights?|units?|preferred|pref\.?|depositary|depository|\bADRs?\b|\bADSs?\b|notes? due|debentures?|subordinated|\d+(\.\d+)?%\s)/i;

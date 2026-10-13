@@ -8,8 +8,9 @@ import Link from 'next/link';
 import type { ScreenRow, ScreenMarket } from '@/lib/screener/types';
 import {
   FIELDS, BUILT_IN_SCREENS, SCREENS_KEY, cleanScreens, fieldOf, filterCounts, filterKeys, filterLabel, fmtValue, fmtPrice, runScreen,
-  evalPattern, tagDirDist, shapeWord, DEFAULT_PATTERN_RULE, type Filter, type NumKey, type Screen, type FieldGroup, type RowTag,
+  evalPattern, tagDirDist, shapeWord, patTagsOf, DEFAULT_PATTERN_RULE, type Filter, type NumKey, type Screen, type FieldGroup, type RowTag,
 } from '@/lib/screener/filters';
+import { makeHandoff, PINE_HANDOFF_KEY } from '@/lib/screener/pine-handoff';
 import { tvSectorOf, tvSectorMapping } from '@/lib/screener/tv-sectors';
 import { writeReviewQueue, REVIEW_STATES, readReviewStates, writeReviewState, reviewKey, readViewState, writeViewState, findInResults, type ReviewState } from '@/lib/screener/workflow';
 import { pollWhenVisible } from '@/lib/client-fetch';
@@ -216,6 +217,20 @@ export default function StockScreener() {
     for (const f of patternFilters) for (const t of evalPattern(r, f).tags) { const k = `${t.tf || 'D'}:${t.id}`; const o = seen.get(k); if (!o || t.c > o.c) seen.set(k, t); }
     return Array.from(seen.values()).sort((a, b) => b.c - a.c);
   };
+  // zzz999 — the chart-pattern column is always there once the data has pattern scans: with a pattern rule it shows the matching
+  // patterns; without one, the strongest current pattern on any timeframe (failed readings left out) — the Pine Screener's view.
+  const hasPatternData = useMemo(() => rows.some((r) => patTagsOf(r, 'D') != null), [rows]);
+  const rowPatterns = (r: ScreenRow): RowTag[] => {
+    if (patternFilters.length) return patTagsFor(r);
+    const all: RowTag[] = [];
+    for (const tf of ['D', 'W', 'M'] as const) for (const t of patTagsOf(r, tf) || []) if (t.s !== 'x') all.push(t.tf ? t : { ...t, tf });
+    return all.sort((a, b) => b.c - a.c);
+  };
+  /** zzz999 — "Open in Pine Screener": the companies the actions apply to go to the Pine Screener as its company list. */
+  const openInPine = (e: React.MouseEvent) => {
+    const h = makeHandoff(market, name, actRows.map((r) => r.t));
+    try { if (!h) throw new Error('empty'); sessionStorage.setItem(PINE_HANDOFF_KEY, JSON.stringify(h)); } catch { e.preventDefault(); setMsg('Could not hand the list over: browser storage is blocked.'); }
+  };
   const pxVsMa = filters.some((f) => !f.off && (f.kind === 'cmp' || f.kind === 'near') && (f.key === 'px' || f.other === 'px'));
   const pxDiffCount = useMemo(() => (pxVsMa ? sorted.filter(pxDiffers).length : 0), [sorted, pxVsMa]);
   useEffect(() => { writeViewState(screenId, { find: findText }); }, [screenId, findText]);
@@ -388,6 +403,7 @@ export default function StockScreener() {
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <b style={{ fontSize: 18 }}>Stock Screener</b>
         <WorkspaceThemeToggle light={light} onToggle={toggleLight} />
+        <Link href="/pine-screener" style={{ color: C.accent, fontSize: 13, fontWeight: 600 }} title="Chart setups (patterns, stage, distance to the pivot) live in the Pine Screener">Chart setups: Pine Screener</Link>
         <select value={screenId} onChange={(e) => askSwitch(e.target.value)} style={{ ...btn(), fontSize: 14, maxWidth: 380 }} aria-label="Screens">
           <optgroup label="🇺🇸 USA — your TradingView screens">{screens.filter((s) => builtInIds.has(s.id) && s.market === 'US').map(opt)}</optgroup>
           <optgroup label="🇮🇳 India — your TradingView screens">{screens.filter((s) => builtInIds.has(s.id) && s.market === 'IN').map(opt)}</optgroup>
@@ -500,6 +516,7 @@ export default function StockScreener() {
         <button type="button" style={btn()} onClick={copyTickers} disabled={!actRows.length} title={`Copies ${actLabel}`}>Copy tickers</button>
         <button type="button" style={btn()} onClick={downloadCsv} disabled={!actRows.length} title={`Exports ${actLabel}`}>Download CSV</button>
         <button type="button" style={btn()} onClick={() => setAddingMatches((v) => !v)} disabled={!actRows.length || !watchlists}>Add matches to watchlist</button>
+        {actRows.length ? <a href={`/pine-screener?from=stock&market=${market}`} onClick={openInPine} style={{ ...btn(), textDecoration: 'none', display: 'inline-block' }} title={`See which of these charts are setting up: opens the Pine Screener limited to ${actLabel}`}>Open in Pine Screener</a> : null}
       </div>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12.5, color: C.dim }}>
         {snap ? <span data-testid="result-counts">{countsLine(sCounts, searching)}</span> : <span aria-busy="true">Loading counts…</span>}
@@ -599,7 +616,7 @@ export default function StockScreener() {
               <th style={{ ...th, ...pinnedCell(C.bg1), zIndex: 4 }}><Th bare label="Company" k="t" sort={sort} setSort={setSort} /></th>
               <th style={th} title="Your review progress for each company (kept in this browser, synced with your other devices)">Review</th>
               <Th label="Sector" k="tvSec" sort={sort} setSort={setSort} />
-              {patternFilters.length ? <th style={th} title="Patterns matching your pattern rule — timeframe in brackets, shape score 0–100 (not a probability)">Pattern</th> : null}
+              {patternFilters.length || hasPatternData ? <th style={th} title={patternFilters.length ? 'Patterns matching your pattern rule — timeframe in brackets, shape score 0–100 (not a probability)' : 'The strongest current chart pattern on daily / weekly / monthly bars — the Pine Screener has the full view'}>Chart pattern</th> : null}
               {cols.map((k) => <Th key={k} label={fieldOf(k)?.label || k} k={k} sort={sort} setSort={setSort} num />)}
               <Th label="Quarter" k="q" sort={sort} setSort={setSort} />
             </tr>
@@ -621,10 +638,10 @@ export default function StockScreener() {
                 {(() => { const m = tvSectorMapping(market, r.sec, r.ind, r.t); return (
                   <td style={{ ...td, padding: cellPad(density), fontSize: 12, color: C.dim, maxWidth: 160 }} title={`Source: ${[r.sec, r.ind].filter(Boolean).join(' · ') || 'none'}\nTradingView sector ${m.note}`}>{r.tvSec || r.sec || '—'}{m.basis === 'sector' ? ' ≈' : m.basis === 'checked' ? ' ✓' : ''}</td>
                 ); })()}
-                {patternFilters.length ? (
+                {patternFilters.length || hasPatternData ? (
                   <td style={{ ...td, padding: cellPad(density) }}>
                     <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', maxWidth: 300 }}>
-                      {patTagsFor(r).slice(0, 4).map((t) => { const col = t.b === 'U' ? C.green : C.red; const d = tagDirDist(t); return (
+                      {rowPatterns(r).slice(0, patternFilters.length ? 4 : 1).map((t) => { const col = t.b === 'U' ? C.green : C.red; const d = tagDirDist(t); return (
                         <span key={`${t.tf}-${t.id}`} title={`${PATTERN_META[t.id]?.label} — ${t.tf === 'W' ? 'weekly' : t.tf === 'M' ? 'monthly' : 'daily'} bars, ${t.s === 'f' ? 'forming' : t.s === 'b' ? 'breakout' : 'failed'}, shape score ${t.c}/100 (${shapeWord(t.c)})${d != null ? `, ${d > 0 ? '+' : ''}${Math.round(d * 10) / 10}% to pivot (from the scan close)` : ''}`}
                           style={{ padding: '1px 6px', borderRadius: 999, border: `1px solid ${col}`, color: col, fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' }}>{PATTERN_META[t.id]?.label} <span style={{ opacity: 0.75 }}>{t.tf || 'D'} · {t.c}</span></span>
                       ); })}

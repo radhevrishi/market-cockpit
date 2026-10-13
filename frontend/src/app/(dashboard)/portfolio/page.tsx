@@ -697,6 +697,9 @@ export default function PortfolioPage() {
               staleAfterMs={5 * 60_000}
               label="quotes"
             />
+            {/* zzz999 — every holding's chart patterns and distance to the 21 / 50 / 200-day averages (Pine Screener) */}
+            <a href="/pine-screener?view=portfolio&market=IN" title="Every holding: chart patterns (daily / weekly / monthly) and how far the close is from the 21, 50 and 200-day averages"
+              style={{ fontSize: 13, fontWeight: 600, color: 'var(--mc-accent)', textDecoration: 'underline', textUnderlineOffset: 2 }}>Chart check</a>
           </div>
           <p style={{ fontSize: '12px', color: 'var(--mc-text-3)', margin: '4px 0 0' }}>Active holdings · Capital deployed · P&L tracking</p>
         </div>

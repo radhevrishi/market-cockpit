@@ -415,6 +415,13 @@ function dual(id: string, name: string, f: (m: ScreenMarket) => Filter[], note?:
   return (['US', 'IN'] as const).map((m) => ({ id: `${m === 'US' ? 'us' : 'in'}-${id}`, name, market: m, builtIn: true, filters: f(m), ...(note?.[m] ? { note: note[m] } : {}) }));
 }
 
+/** zzz999 — moved here from the Pine Screener (it is about fundamentals only): his "Revenue Growth YoY + FCF Margin" script.
+ *  The US copy keeps the old Pine id 'tv-rule-of-40'; the Pine Screener can use either copy as its company list. */
+export const RULE_OF_40_NOTE = 'Your "Revenue Growth YoY + FCF Margin" script: latest quarter\'s revenue growth % + FCF margin % ≥ 40. FCF margin ≈ the latest full year (see the filter tip). Moved here from the Pine Screener; pick it there under Companies to see which of these charts are setting up.';
+function RULE_OF_40(m: ScreenMarket): Screen {
+  return { id: m === 'US' ? 'tv-rule-of-40' : 'tv-rule-of-40-in', name: 'Rule of 40 (based on your TradingView script)', market: m, builtIn: true, filters: [n('r40', 'ge', 40)], note: RULE_OF_40_NOTE };
+}
+
 const US_SCREENS: Screen[] = [
   { id: 'us-daily-gainers', name: 'Daily Gainers Stocks', market: 'US', builtIn: true, filters: [n('chg', 'gt', 4.7), cap('US', 300e6, 800e9)] },
   { id: 'us-zachs', name: 'ZACHS SCREENER', market: 'US', builtIn: true, filters: [
@@ -474,6 +481,7 @@ const US_SCREENS: Screen[] = [
     n('niFY', 'gt', 0), n('gmFY', 'gt', 20), n('roeTTM', 'gt', -15), n('de', 'lt', 3),
   ] },
   { id: 'us-ath', name: 'ATH Stocks', market: 'US', builtIn: true, filters: [cap('US', 750e6, null), n('epsTTMYoY', 'gt', 25), near('hi52', 'px', 0, 10)] },
+  RULE_OF_40('US'),
 ];
 
 const DUAL_SCREENS: Screen[] = [
@@ -549,6 +557,7 @@ const IN_SCREENS: Screen[] = [
     n('ebitdaQoQ', 'gt', 0), cap('IN', 1e9, 500e9), n('revQYoY', 'gt', 20), n('gmFY', 'gt', 25), n('revAYoY', 'gt', 10), n('opmFY', 'gt', 10),
     secEx('Energy Minerals', 'Non-Energy Minerals', 'Finance'), n('emp', 'gt', 100), n('roeTTM', 'gt', 5), n('de', 'lt', 3), n('gpQYoY', 'gt', 40),
   ] },
+  RULE_OF_40('IN'),
   { id: 'in-growth-stocks', name: 'India Growth Stocks', market: 'IN', builtIn: true, filters: [
     secEx('Communications', 'Finance'), btw('vol', 30_000, 5e10), btw('revQYoY', 20, 250), n('ptmTTM', 'gt', 0), n('gmFY', 'gt', 0), n('revTTMYoY', 'gt', 15), n('emp', 'gt', 100),
     n('opmTTM', 'gt', 10), n('gpQYoY', 'gt', 30), ex('NSE'),

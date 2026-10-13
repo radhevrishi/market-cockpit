@@ -1195,6 +1195,8 @@ export interface DailyAsAnalysis extends PatternAnalysis {
   droppedProvisional: boolean;
   /** the bars that were analysed (daily as given, or the weekly / monthly aggregate) */
   bars: PBar[];
+  /** zzz998 — DAILY bars supplied / rejected / repaired before the analysis (W / M: by the aggregation; D: by validation) */
+  dailySupplied: number; dailyRejected: number; dailyRepaired: number;
 }
 /**
  * zzz992 — analyse DAILY bars on a timeframe: 'D' is analyzePatterns as is; 'W' / 'M' aggregate the daily history first
@@ -1205,11 +1207,13 @@ export function analyzeDailyAs(daily: PBar[], tf: PatternTimeframe, opts?: Daily
   if (tf === 'D') {
     const r = analyzePatterns(daily, rest);
     const lastT = r.usableBars ? cleanBars(daily).bars.slice(-1)[0]?.t ?? null : null;
-    return { ...r, provisional: false, periodEnd: lastT, latestT: lastT, droppedProvisional: false, bars: daily };
+    return { ...r, provisional: false, periodEnd: lastT, latestT: lastT, droppedProvisional: false, bars: daily,
+      dailySupplied: (daily || []).length, dailyRejected: r.rejectedBars, dailyRepaired: r.repairedBars };
   }
   const ag = aggregateBars(daily, tf, { completedOnly, now });
   const r = analyzePatterns(ag.bars, { ...rest, timeframe: tf });
-  return { ...r, provisional: ag.provisional, periodEnd: ag.periodEnd, latestT: ag.latestT, droppedProvisional: ag.droppedProvisional, bars: ag.bars };
+  return { ...r, provisional: ag.provisional, periodEnd: ag.periodEnd, latestT: ag.latestT, droppedProvisional: ag.droppedProvisional, bars: ag.bars,
+    dailySupplied: ag.supplied, dailyRejected: ag.rejected, dailyRepaired: ag.repaired };
 }
 
 /** Shapes that describe the same structure: keep only the strongest of each group. */

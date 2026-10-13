@@ -14,8 +14,11 @@
 //  • The current period (one whose close boundary has not passed at `now`) is PROVISIONAL. A period closes at 00:00 UTC
 //    of the day after its last weekday (Mon–Fri): the Saturday 00:00 UTC after a week, the day after the month's last
 //    weekday for a month — after both the NSE and the US Friday close. With completedOnly (default) it is dropped.
-//  • Invalid daily bars (no bar, non-finite / non-positive close, non-finite time or a time not after the previous one)
-//    are skipped; missing / bad open / high / low fall back to the close.
+//  • Invalid daily bars (no bar, non-finite / non-positive close, non-finite time, a time not after the previous one, or an
+//    open / high / low that is a non-finite NUMBER — the same rule as chart-patterns cleanBars) are REJECTED and counted.
+//  • zzz998 — nothing is repaired silently: a missing / non-positive open / high / low (taken from the close) or a high / low
+//    that does not contain the open and close (widened to contain them) is REPAIRED and counted (`repaired`), so a caller can
+//    tell clean data from mended data (the screener marks a scan 'invalid-data' when too many bars were rejected).
 import type { PBar } from './chart-patterns';
 
 export type AggTf = 'W' | 'M';
@@ -35,8 +38,14 @@ export interface AggregateResult {
   latestT: number | null;
   /** an incomplete current period existed and was dropped (completedOnly) */
   droppedProvisional: boolean;
-  /** daily bars skipped as invalid */
+  /** daily bars skipped as invalid (same number as `rejected`, kept for older callers) */
   skipped: number;
+  /** zzz998 — daily bars dropped as invalid */
+  rejected: number;
+  /** zzz998 — daily bars kept but mended (open / high / low filled from the close, or high / low widened to contain open and close) */
+  repaired: number;
+  /** zzz998 — daily bars supplied (valid or not) */
+  supplied: number;
 }
 
 const DAY = 86_400_000;
@@ -67,7 +76,8 @@ export function aggregateBars(daily: PBar[], tf: AggTf, opts?: AggregateOptions)
   const now = (opts?.now ?? new Date()).getTime();
   const out: PBar[] = [];
   const ends: number[] = [];
-  let skipped = 0, lastT = -Infinity, latestT: number | null = null;
+  let skipped = 0, repaired = 0, supplied = 0, lastT = -Infinity, latestT: number | null = null;
+  const badNum = (x: unknown) => typeof x === 'number' && !Number.isFinite(x);
   let key: number | null = null;
   let cur: PBar | null = null, curEnd = 0, volOk = true;
   const flush = () => {
@@ -76,14 +86,18 @@ export function aggregateBars(daily: PBar[], tf: AggTf, opts?: AggregateOptions)
     ends.push(curEnd);
   };
   for (const b of daily || []) {
+    supplied++;
     const t = Number(b?.t), c = Number(b?.c);
-    if (!b || !Number.isFinite(t) || !Number.isFinite(c) || !(c > 0) || t <= lastT) { skipped++; continue; }
+    if (!b || !Number.isFinite(t) || !Number.isFinite(c) || !(c > 0) || t <= lastT || badNum(b.o) || badNum(b.h) || badNum(b.l)) { skipped++; continue; }
     lastT = t; latestT = t;
     let o = Number(b.o), h = Number(b.h), l = Number(b.l);
-    if (!(o > 0) || !Number.isFinite(o)) o = c;
-    if (!(h > 0) || !Number.isFinite(h)) h = Math.max(o, c);
-    if (!(l > 0) || !Number.isFinite(l)) l = Math.min(o, c);
+    let fixed = false;
+    if (!(o > 0)) { o = c; fixed = true; }
+    if (!(h > 0)) { h = Math.max(o, c); fixed = true; }
+    if (!(l > 0)) { l = Math.min(o, c); fixed = true; }
+    if (h < Math.max(o, c) || l > Math.min(o, c)) fixed = true;
     h = Math.max(h, o, c); l = Math.min(l, o, c);
+    if (fixed) repaired++;
     const v = Number(b.v);
     const vGood = Number.isFinite(v) && v > 0;
     const k = periodKey(t, tf);
@@ -105,5 +119,5 @@ export function aggregateBars(daily: PBar[], tf: AggTf, opts?: AggregateOptions)
       if (completedOnly) { out.pop(); ends.pop(); dropped = true; } else provisional = true;
     }
   }
-  return { bars: out, provisional, periodEnd: ends.length ? ends[ends.length - 1] : null, latestT, droppedProvisional: dropped, skipped };
+  return { bars: out, provisional, periodEnd: ends.length ? ends[ends.length - 1] : null, latestT, droppedProvisional: dropped, skipped, rejected: skipped, repaired, supplied };
 }
