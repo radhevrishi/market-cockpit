@@ -171,6 +171,21 @@ export function rowScanFields(tf: TechStored | undefined, quote: { px: number | 
   return out;
 }
 
+/** zzz996 — Nasdaq's list can lag a session (seen 13 Oct 2026: RPD 13.74, AVAV 137.11, AAPL 336.64 = their 9 Oct closes while
+ *  the daily bars already had 12 Oct). When the quote equals the PREVIOUS bar's close and not the last one, the quote is a session
+ *  behind: use the last bar's close (and its change) so price, averages and patterns agree; the stale quote is kept as `pxAlt`. */
+export interface ResolvedQuote { px: number | null; chg: number | null; src: string; at?: string | null; pxAlt?: number; mcScale: number }
+export function resolveUsQuote(q: { px: number | null; chg: number | null }, tf: { close?: number | null; prevClose?: number | null; scanPx?: number | null; scanAt?: string | null; d?: string } | undefined): ResolvedQuote {
+  const keep: ResolvedQuote = { px: q.px, chg: q.chg, src: 'nasdaq', mcScale: 1 };
+  if (!tf || !fin(q.px) || !(q.px > 0)) return keep;
+  const last = fin(tf.scanPx) ? tf.scanPx : fin(tf.close) ? tf.close : null;
+  const prev = tf.prevClose;
+  if (last == null || !fin(prev) || !(prev > 0) || !(last > 0)) return keep;
+  const near = (a: number, b: number) => Math.abs(a / b - 1) < 0.0015;
+  if (!near(q.px, prev) || near(q.px, last)) return keep;
+  return { px: last, chg: Math.round((last / prev - 1) * 10000) / 100, src: 'yahoo (Nasdaq list a session behind)', at: tf.scanAt || tf.d || null, pxAlt: q.px, mcScale: last / q.px };
+}
+
 /** zzz993 (MC-01) — the build note on price sources: px and the averages / patterns come from different feeds in the US, so a
  *  "price above SMA 50" rule compares a Nasdaq quote with a Yahoo-based average; scanPx is the close on the averages' own source. */
 export function priceSourceNote(rows: readonly ScreenRow[], market: ScreenMarket): string | null {
@@ -401,7 +416,7 @@ export const LEAN_KEYS = [
   // zzz987 — Stage Analysis (TheWrap method)
   'twSt', 'sata', 'mrs', 'twWk',
   // zzz993 — scan status / quality (MC-02), scan-close vs latest-quote provenance (MC-01), weekly / monthly readings (when wired)
-  'scan', 'scanPx', 'scanAt', 'scanSrc', 'scanBasis', 'scanEx', 'pxSrc', 'pxAt', 'pxGap', 'pxConflict', 'patW', 'patM', 'scanW', 'scanM',
+  'scan', 'scanPx', 'scanAt', 'scanSrc', 'scanBasis', 'scanEx', 'pxSrc', 'pxAt', 'pxGap', 'pxConflict', 'pxAlt', 'patW', 'patM', 'scanW', 'scanM',
   // zzz993 — fields the Pine rule editor offers (price figures, growth, valuation, quality)
   'rsiW', 'rsiM', 'epsQYoY', 'revAYoY', 'ps', 'evRev', 'de', 'cash', 'roeTTM', 'roceTTM', 'gmFY', 'epsTTMYoY', 'revTTMYoY', 'gpQYoY', 'pe',
   'opmTTM', 'nmTTM', 'sma21', 'sma100', 'ema10', 'ema50', 'atrP', 'chg1W', 'perf5D', 'perf5Y', 'avgVol60', 'fs',

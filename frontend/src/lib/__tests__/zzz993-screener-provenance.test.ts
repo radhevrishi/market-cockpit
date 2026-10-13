@@ -255,3 +255,15 @@ test('zzz993 lean rows: the rule-editor fields are sent, numbers rounded, repeat
   assert.equal(lr.scanSrc, 'yahoo');
   assert.ok(leanRows([{ t: 'E', n: 'E', px: 1, ...rowPatternFields(techEntry(LONG, null, false, null, { now: AFTER })) } as ScreenRow]).engine);
 });
+
+test('zzz996 a Nasdaq quote a session behind is replaced by the last bar close (RPD / AVAV / AAPL on 13 Oct 2026)', async () => {
+  const { resolveUsQuote } = await import('../screener/pine');
+  const rpd = resolveUsQuote({ px: 13.74, chg: 6.02 }, { close: 12.93, prevClose: 13.74, scanAt: '2026-10-12' });
+  assert.equal(rpd.px, 12.93); assert.equal(rpd.pxAlt, 13.74); assert.equal(rpd.chg, -5.9); assert.equal(rpd.at, '2026-10-12');
+  const aapl = resolveUsQuote({ px: 336.64, chg: -1.11 }, { close: 340.97, prevClose: 336.64 });
+  assert.equal(aapl.px, 340.97); assert.ok(Math.abs(aapl.mcScale - 340.97 / 336.64) < 1e-9);
+  // a current quote (live session, or equal to the last close) is kept
+  assert.equal(resolveUsQuote({ px: 341.5, chg: 0.2 }, { close: 340.97, prevClose: 336.64 }).src, 'nasdaq');
+  assert.equal(resolveUsQuote({ px: 340.97, chg: 1.3 }, { close: 340.97, prevClose: 336.64 }).px, 340.97);
+  assert.equal(resolveUsQuote({ px: 10, chg: 0 }, undefined).px, 10);
+});

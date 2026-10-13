@@ -26,6 +26,8 @@ export interface TechFigures {
   hi52: number | null;
   /** zzz969 — last bar's close; change over the last 5 trading sessions (not 7 calendar days) */
   close?: number | null; perf5D?: number | null;
+  /** zzz996 — the previous bar's close (to tell a quote that is a session behind) */
+  prevClose?: number | null;
 }
 
 const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -153,6 +155,7 @@ export function techFigures(b: DailyBars): TechFigures {
   for (let i = n - 1; i >= 0 && b.d[i] > from; i--) hi = Math.max(hi, b.h[i]);
   out.hi52 = Number.isFinite(hi) ? r2(hi) : null;
   out.close = r2(last);
+  out.prevClose = n > 1 ? r2(c[n - 2]) : null;
   out.perf5D = n > 5 ? pct(last, c[n - 6]) : null;
   return out;
 }

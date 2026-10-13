@@ -11,7 +11,7 @@ import { ensureSchema } from '@/lib/db-migrate';
 import { yahooProfileStats } from '@/lib/us-prices';
 import { FRAME_PLAN, framePeriods, usFigures, type FrameData, type FrameEntry } from './sec-assemble';
 import { refreshTech, type TechStored } from './tech-fetch';
-import { rowPatternFields, rowScanFields, priceSourceNote, rowTvFields, applyRsRating, ruleOf40 } from './pine';
+import { rowPatternFields, rowScanFields, resolveUsQuote, priceSourceNote, rowTvFields, applyRsRating, ruleOf40 } from './pine';
 import { tvSectorOf } from './tv-sectors';
 import { rowsJson, type ScreenRow, type ScreenSnapshot } from './types';
 
@@ -219,7 +219,8 @@ export function assembleUsRows(universe: NasdaqRow[], ciks: Map<string, number>,
     const tf = tech.get(r.t);
     const c = closes.get(key) || [];
     const revTTM = f?.revTTM ?? null;
-    const mc = r.mc;
+    const rq = resolveUsQuote({ px: r.px, chg: r.chg }, tf as any);   // zzz996 — a session-behind Nasdaq quote is replaced by the last bar
+    const mc = r.mc != null && rq.mcScale !== 1 ? Math.round(r.mc * rq.mcScale * 100) / 100 : r.mc;
     const ipoD = tf?.ipoD ?? (r.ipoYear ? Math.floor(Date.UTC(r.ipoYear, 0, 1) / DAY) : null);
     // zzz954: no debt or lease line filed at all (most such companies have no debt) → EV uses 0 debt, marked ≈ like debt / equity;
     // a company with no cash figure gets no EV / revenue (never a guessed 0)
@@ -227,7 +228,7 @@ export function assembleUsRows(universe: NasdaqRow[], ciks: Map<string, number>,
     const evDebt = f?.debt ?? (noDebtFiled ? 0 : null);
     const approx = [...(f?.approx || []), ...(noDebtFiled ? ['evRev'] : []), ...(f?.fcfmFY != null ? ['fcfmTTM', 'r40'] : [])];   // zzz984: FCF margin is the latest full year's
     rows.push({
-      t: r.t, n: r.n, sec: r.sec, ind: r.ind, px: r.px, chg: r.chg, vol: r.vol, avgVol10: tf?.avgVol10 ?? null, mc,
+      t: r.t, n: r.n, sec: r.sec, ind: r.ind, px: rq.px, chg: rq.chg, ...(rq.pxAlt != null ? { pxAlt: rq.pxAlt } : {}), vol: r.vol, avgVol10: tf?.avgVol10 ?? null, mc,
       sma50: tf?.sma50 ?? sma(c, 50), sma200: tf?.sma200 ?? sma(c, 200),
       revQYoY: f?.revQYoY ?? null, revAYoY: f?.revAYoY ?? null, gpQYoY: f?.gpQYoY ?? null, gmFY: f?.gmFY ?? null,
       ebitdaQoQ: f?.ebitdaQoQ ?? null, ebitdaAYoY: f?.ebitdaAYoY ?? null, epsQYoY: f?.epsQYoY ?? null, opmTTM: f?.opmTTM ?? null,
@@ -249,7 +250,7 @@ export function assembleUsRows(universe: NasdaqRow[], ciks: Map<string, number>,
       } : {}),
       ipoD,
       ...rowPatternFields(tf),   // zzz983 — chart patterns (Pine Screener)
-      ...rowScanFields(tf, { px: r.px, src: 'nasdaq' }),   // zzz993 (MC-01) — scan close (Yahoo bars) vs latest quote (Nasdaq)
+      ...rowScanFields(tf, { px: rq.px, src: rq.src, at: rq.at }),   // zzz993 (MC-01) — scan close (Yahoo bars) vs latest quote (Nasdaq)
       ...rowTvFields(tf, 'US'),   // zzz984 — the owner's TradingView script fields
       ...(f?.fcfmFY != null ? { fcfmTTM: f.fcfmFY, r40: ruleOf40(f.revQYoY, f.fcfmFY) } : {}),
       roeTTM: f?.roeTTM ?? null, roeFY: f?.roeFY ?? null, roceTTM: f?.roceTTM ?? null, roceFY: f?.roceFY ?? null, nmTTM: f?.nmTTM ?? null, ptmTTM: f?.ptmTTM ?? null,

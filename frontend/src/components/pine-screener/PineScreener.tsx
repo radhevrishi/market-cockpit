@@ -86,6 +86,7 @@ const pxDiffers = (r: Row) => typeof r.scanPx === 'number' && typeof r.px === 'n
 const scanTip = (r: Row, market: ScreenMarket) => [
   `Scan close ${fmtPrice(r.scanPx, market)}${r.scanAt ? ` on ${r.scanAt}` : ''}${r.scanSrc ? ` (${r.scanSrc}${r.scanBasis ? `, ${r.scanBasis}` : ''})` : ''} — patterns, pivots, stages and "To pivot" use this close`,
   `Latest quote ${fmtPrice(r.px, market)}${r.pxSrc ? ` (${r.pxSrc}${r.pxAt ? `, ${r.pxAt}` : ''})` : ''}${typeof r.pxGap === 'number' ? ` — ${r.pxGap > 0 ? '+' : ''}${r.pxGap}% vs the scan close` : ''}`,
+  typeof r.pxAlt === 'number' ? `Nasdaq's list still showed ${fmtPrice(r.pxAlt, market)} (the previous session's close), so the last daily bar's close is used` : '',
   r.pxConflict ? '⚠ The two sources disagree on the same day; neither is certified as the exchange close' : '',
 ].filter(Boolean).join('\n');
 
