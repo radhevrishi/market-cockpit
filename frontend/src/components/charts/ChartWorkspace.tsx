@@ -12,7 +12,8 @@ import {
 import { CHART_DRAWINGS_KEY, loadDrawings, loadDrawingsWithLegacy, saveDrawings } from '@/lib/chart-storage';
 import { EXTRA_INFO, legendRows, priceSeriesOf, seriesValues, toggleRow, type ChartLayout, type LegendRow } from '@/lib/chart-layouts';
 import WatchlistPanel, { AddToWatchlist, useWatchlistStore, type WatchlistNavOverride } from './WatchlistPanel';
-import { marketOfExchange, reviewFromUrl, reviewPosition, stepQueue, type ReviewQueue } from '@/lib/chart-review-queue';
+import { marketOfExchange, reviewFromUrl, reviewPosition, reviewWords, stepQueue, type ReviewQueue } from '@/lib/chart-review-queue';
+import { NO_BARS, barsForIdentity, chartIdentityKey, chartLoadError, type LoadedBars } from '@/lib/chart-loaded-identity';
 import { IndicatorLegend, IndicatorsPanel, LayoutPicker, useLayouts } from './LayoutControls';
 import { pollWhenVisible } from '@/lib/client-fetch';
 import { cacheChart, freshChart, type CachedChart } from '@/lib/chart-refresh';
@@ -180,7 +181,10 @@ export default function ChartWorkspace() {
   const [loadedVersion, setLoadedVersion] = useState(0);
   const L = useLayouts();
   const [showIndicators, setShowIndicators] = useState(false);
-  const [bars, setBars] = useState<Bar[]>([]);
+  // zzz1000 (CW-03) — bars carry the identity they were loaded for; the render path shows them only for that identity
+  const [loadedBars, setBars] = useState<LoadedBars<Bar>>(NO_BARS);
+  const loadedIdRef = useRef('');
+  const indicatorsBtnRef = useRef<HTMLButtonElement | null>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [syncedAt, setSyncedAt] = useState<number | null>(null);
@@ -447,9 +451,10 @@ export default function ChartWorkspace() {
     const shownEx = (shown.match(/&exchange=(NSE|BSE)/) || [])[1];
     if (shown.startsWith(`/api/v1/chart/${encodeURIComponent(ticker)}?market=${market}&`) && (market !== 'IN' || shownEx === exchange)) return;
     barsRef.current = [];
-    setBars([]);
+    setBars(NO_BARS);
     setHoverIdx(null);
     loadedUrlRef.current = '';
+    loadedIdRef.current = '';
     chart.resetData();
   }, [ready, ticker, market, exchange]);
 
@@ -459,6 +464,7 @@ export default function ChartWorkspace() {
     let ctrl: AbortController | null = null;
     let disposed = false;
     const ttl = tf === 'D' ? 300_000 : 1_800_000;
+    const id = chartIdentityKey({ ticker, market, exchange, tf, basis });
     const url = `/api/v1/chart/${encodeURIComponent(ticker)}?market=${market}&interval=${TF_TO_INTERVAL[tf]}&range=${dataRange}${market === 'IN' && exchange ? `&exchange=${exchange}` : ''}${basis === 'tr' ? '&basis=tr&adj=2' : ''}`;   // N-05: adj=2 — never reuse a browser-cached answer from the old dividend factor
     const show = (j: ChartResponse) => {
       const chart = chartRef.current;
@@ -467,7 +473,8 @@ export default function ChartWorkspace() {
       const prior = barsRef.current;
       const sameUrl = loadedUrlRef.current === url;
       barsRef.current = b.t.map((t, i) => ({ timestamp: t, open: b.o[i], high: b.h[i], low: b.l[i], close: b.c[i], volume: b.v[i] }));
-      setBars(b.t.map((t, i) => ({ t, o: b.o[i], h: b.h[i], l: b.l[i], c: b.c[i], v: b.v[i] })));
+      setBars({ id, bars: b.t.map((t, i) => ({ t, o: b.o[i], h: b.h[i], l: b.l[i], c: b.c[i], v: b.v[i] })) });
+      loadedIdRef.current = id;
       setHoverIdx(null);
       const last = b.c[b.c.length - 1] ?? 1;
       if (!sameUrl) {
@@ -503,7 +510,8 @@ export default function ChartWorkspace() {
         cacheChart(cacheRef.current, url, j);
         show(j);
       })
-      .catch((e) => { if (!disposed && !signal.aborted) setError(`${String(e?.message || e)} — refresh failed; any displayed data is the last successful load.`); })
+      // zzz1000 (improvement 6) — a first load of this symbol / view and a failed refresh say different things
+      .catch((e) => { if (!disposed && !signal.aborted) setError(chartLoadError(String(e?.message || e), loadedIdRef.current === id ? 'refresh' : 'first')); })
       .finally(() => { if (!disposed && !signal.aborted) setLoading(false); });
     };
     load();
@@ -654,7 +662,7 @@ export default function ChartWorkspace() {
   const pickFromList = useCallback((m: Market, t: string, x?: string) => {
     setExchange(m === 'IN' && (x === 'NSE' || x === 'BSE') ? x : undefined);
     setQuery(t); setQueryMarket(m); setMarket(m); setTicker(t); setError(null);
-  }, []);
+  }, [setError]);   // a state setter (stable); listed so the React Compiler keeps this memoization
 
   // ── screener review: position, previous / next, ↑ / ↓ keys ──────────────────
   const reviewPos = review ? reviewPosition(review, ticker, exchange, market) : null;
@@ -669,7 +677,8 @@ export default function ChartWorkspace() {
   }, [review, ticker, exchange, reviewIdx, market, pickFromList]);
   const reviewCanPrev = !!review && !!stepQueue(review, ticker, exchange, -1, reviewIdx, market);
   const reviewCanNext = !!review && !!stepQueue(review, ticker, exchange, 1, reviewIdx, market);
-  const reviewNav = useMemo<WatchlistNavOverride | null>(() => (review ? { label: 'screener result', canPrev: reviewCanPrev, canNext: reviewCanNext, go: reviewStep } : null), [review, reviewCanPrev, reviewCanNext, reviewStep]);
+  const words = reviewWords(review);
+  const reviewNav = useMemo<WatchlistNavOverride | null>(() => (review ? { label: reviewWords(review).noun, canPrev: reviewCanPrev, canNext: reviewCanNext, go: reviewStep } : null), [review, reviewCanPrev, reviewCanNext, reviewStep]);
   useEffect(() => {
     if (!review) return;
     const onKey = (e: KeyboardEvent) => {
@@ -721,6 +730,9 @@ export default function ChartWorkspace() {
     setExchange(s.m === 'IN' && s.x === 'BSE' ? 'BSE' : undefined);
   };
 
+  // zzz1000 (CW-03) — values only from bars loaded for THIS ticker / market / exchange / timeframe / basis (blank otherwise)
+  const viewId = chartIdentityKey({ ticker, market, exchange, tf, basis });
+  const bars = barsForIdentity(loadedBars, viewId);
   // zzz967 (CH-02) — header numbers only from a response for THIS ticker / market / exchange
   const live = sameChartIdentity(info, ticker, market, exchange) ? info : null;
   const stats = live?.stats;
@@ -778,9 +790,13 @@ export default function ChartWorkspace() {
           <button type="submit" style={btn(false)}>Open</button>
         </form>
         <span style={{ width: 1, height: 22, background: 'var(--mc-border-1)' }} />
-        {(['D', 'W', 'M'] as Timeframe[]).map((x) => (
-          <button key={x} type="button" title={x === 'D' ? 'Daily' : x === 'W' ? 'Weekly' : 'Monthly'} style={btn(tf === x)} onClick={() => pickTf(x)}>{x}</button>
-        ))}
+        {/* zzz1000 (improvement 4) — "Chart" period (the candles), distinct from the pattern banner's "Analysis" D / W / M */}
+        <span role="group" aria-label="Chart period" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--mc-text-3)' }}>Chart</span>
+          {(['D', 'W', 'M'] as Timeframe[]).map((x) => (
+            <button key={x} type="button" title={`Chart period: ${x === 'D' ? 'daily' : x === 'W' ? 'weekly' : 'monthly'} candles`} aria-label={`Chart period ${x === 'D' ? 'daily' : x === 'W' ? 'weekly' : 'monthly'}`} aria-pressed={tf === x} style={btn(tf === x)} onClick={() => pickTf(x)}>{x}</button>
+          ))}
+        </span>
         <span style={{ width: 1, height: 22, background: 'var(--mc-border-1)' }} />
         {RANGE_KEYS.map((r) => (
           <button key={r} type="button" style={btn(range === r)} onClick={() => setRange(r)}>{r}</button>
@@ -788,8 +804,8 @@ export default function ChartWorkspace() {
         <span style={{ flex: 1 }} />
         <LayoutPicker L={L} />
         <div style={{ position: 'relative' }}>
-          <button type="button" style={btn(showIndicators)} onClick={() => setShowIndicators((v) => !v)}>Indicators ▾</button>
-          {showIndicators && <IndicatorsPanel L={L} onClose={() => setShowIndicators(false)} />}
+          <button ref={indicatorsBtnRef} type="button" style={btn(showIndicators)} aria-expanded={showIndicators} aria-haspopup="dialog" aria-controls="mc-indicators-panel" onClick={() => setShowIndicators((v) => !v)}>Indicators ▾</button>
+          {showIndicators && <IndicatorsPanel L={L} onClose={() => setShowIndicators(false)} triggerRef={indicatorsBtnRef} />}
         </div>
         <WorkspaceThemeToggle light={chartLight} onToggle={toggleLight} style={btn(false)} />
         <button type="button" style={btn(panelOpen)} onClick={togglePanel} title="Show or hide the watchlist panel">Watchlist</button>
@@ -844,17 +860,17 @@ export default function ChartWorkspace() {
           {live.lastBarAt ? `Last candle ${new Date(`${live.lastBarAt}T00:00:00Z`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' })}${live.provenance?.lastBarFromQuote ? ' (from quote)' : ''} · ` : ''}loaded {new Date(live.asOf).toLocaleTimeString()}</span>}
         {wlSaveError && <span role="alert" style={{ color: 'var(--mc-warn, #D97706)' }}>{wlSaveError} <button type="button" onClick={retryWatchlistSave}>Retry save</button></span>}
         {note?.includes('not saved') && <button type="button" onClick={persist}>Retry drawing save</button>}
-        {error && <span style={{ color: 'var(--mc-bearish, #DC2626)' }}>{error}</span>}
+        {error && (bars.length > 0 || loading) && <span role="status" style={{ color: 'var(--mc-bearish, #DC2626)' }}>{error}</span>}
       </div>
 
       {review && reviewPos && (
-        <div role="region" aria-label="Screener review" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '4px 10px', borderRadius: 6, fontSize: 13, border: '1px solid var(--mc-accent)', background: 'var(--mc-bg-1)', color: 'var(--mc-text-1)' }}>
-          <span>Reviewing screener results: <b>{review.label}</b> · {reviewPos.position ?? '–'} / {reviewPos.total}</span>
-          <button type="button" style={btn(false)} disabled={!reviewCanPrev} onClick={() => reviewStep(-1)} title="Previous screener result (↑)">← Prev</button>
-          <button type="button" style={btn(false)} disabled={!reviewCanNext} onClick={() => reviewStep(1)} title="Next screener result (↓)">Next →</button>
-          <button type="button" style={btn(false)} onClick={() => router.push(review.returnUrl)}>Back to screen</button>
+        <div role="region" aria-label={words.heading} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '4px 10px', borderRadius: 6, fontSize: 13, border: '1px solid var(--mc-accent)', background: 'var(--mc-bg-1)', color: 'var(--mc-text-1)' }}>
+          <span>{words.heading}: <b>{review.label}</b> · <span style={{ fontVariantNumeric: 'tabular-nums' }}>{reviewPos.position ?? '–'} / {reviewPos.total}</span></span>
+          <button type="button" style={btn(false)} disabled={!reviewCanPrev} onClick={() => reviewStep(-1)} title={`Previous ${words.noun} (↑)`}>← Prev</button>
+          <button type="button" style={btn(false)} disabled={!reviewCanNext} onClick={() => reviewStep(1)} title={`Next ${words.noun} (↓)`}>Next →</button>
+          <button type="button" style={btn(false)} onClick={() => router.push(review.returnUrl)}>{words.back}</button>
           <span style={{ flex: 1 }} />
-          <button type="button" aria-label="Stop reviewing screener results" title="Stop reviewing: ↑ / ↓ step through the watchlist again" style={{ ...btn(false), padding: '2px 8px' }} onClick={() => setReview(null)}>×</button>
+          <button type="button" aria-label={`Stop ${words.heading.toLowerCase()}`} title="Stop reviewing: ↑ / ↓ step through the watchlist again" style={{ ...btn(false), padding: '2px 8px' }} onClick={() => setReview(null)}>×</button>
         </div>
       )}
       <div className="mc-charts-main">
@@ -890,6 +906,19 @@ export default function ChartWorkspace() {
           <IndicatorLegend rows={rows} valueOf={valueOf} onToggle={(id) => L.setWorking((w) => toggleRow(w, id))} decimals={pxDecimals} colorOf={(c) => (!chartLight && (luminance(c) ?? 1) < 0.18 ? '#B2B5BE' : c)} textOf={(c) => readableOn(c, chartLight ? '#FFFFFF' : '#0A0E1A')} />
           <PatternBanner p={patterns} cur={cur} light={chartLight} tf={tf} onTurnOff={() => L.setWorking((w) => withPatterns(w, false))} />
           <StageBanner s={stageInd} light={chartLight} shifted={patterns.on} onTurnOff={() => L.setWorking((w) => withStage(w, false))} />
+          {/* zzz1000 (improvement 6) — nothing loaded for this symbol / view: say so instead of an empty 0–10 price axis */}
+          {!loading && !bars.length && error && (
+            <div role="alert" data-testid="chart-empty-state" style={{ position: 'absolute', inset: 0, zIndex: 7, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, background: 'var(--mc-bg-0)' }}>
+              <div style={{ maxWidth: 420, display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center', textAlign: 'center', fontSize: 13, color: 'var(--mc-text-2)' }}>
+                <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--mc-text-0)' }}>No chart for {ticker}{market === 'IN' && exchange ? ` (${exchange})` : ''} · {tf === 'D' ? 'daily' : tf === 'W' ? 'weekly' : 'monthly'}</div>
+                <div>{error}</div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button type="button" style={btn(true)} onClick={() => { cacheRef.current.clear(); setError(null); setRefresh((v) => v + 1); }}>Retry</button>
+                  <button type="button" style={btn(false)} onClick={() => { const el = document.querySelector<HTMLInputElement>('input[aria-label="Ticker or company"]'); el?.focus(); el?.select(); }}>Open another ticker</button>
+                </div>
+              </div>
+            </div>
+          )}
           {(savedAt || syncedAt) && (
             <div title="Drawings are saved in this browser at once and copied to your account about once a minute, so they come back on your other devices"
               style={{ position: 'absolute', left: 8, bottom: 30, zIndex: 5, padding: '2px 8px', borderRadius: 6, fontSize: 11, background: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-1)', color: 'var(--mc-bullish, #059669)', pointerEvents: 'none' }}>
@@ -906,7 +935,7 @@ export default function ChartWorkspace() {
       {panelOpen && (<>
         <WatchlistResizeHandle width={panelWidth} onChange={resizePanel} />
         <div className="mc-charts-panel" style={{ '--mc-watchlist-width': `${panelWidth}px` } as React.CSSProperties}>
-          <WatchlistPanel store={wlStore} update={wlUpdate} currentKey={drawingKey(market, ticker, exchange)} onPick={pickFromList} navOverride={reviewNav} />
+          <WatchlistPanel store={wlStore} update={wlUpdate} currentKey={drawingKey(market, ticker, exchange)} onPick={pickFromList} navOverride={reviewNav} loading={loading} />
         </div>
       </>)}
       </div>

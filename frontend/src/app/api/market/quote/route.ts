@@ -111,8 +111,9 @@ export async function GET(request: Request) {
           price: lastPrice,
           change,
           changePercent,
-          dayHigh: pi.intraDayHighLow?.max || lastPrice,
-          dayLow: pi.intraDayHighLow?.min || lastPrice,
+          // zzz1000 (CW-01) — no high / low invented from the last price; null = not given
+          dayHigh: pi.intraDayHighLow?.max || null,
+          dayLow: pi.intraDayHighLow?.min || null,
           open: pi.open || 0,
           previousClose,
           weekHigh52: pi.weekHighLow?.max || 0,
@@ -154,8 +155,8 @@ export async function GET(request: Request) {
           price,
           change,
           changePercent,
-          dayHigh: q.regularMarketDayHigh || price,
-          dayLow: q.regularMarketDayLow || price,
+          dayHigh: q.regularMarketDayHigh || null,   // zzz1000 (CW-01) — not padded with the price
+          dayLow: q.regularMarketDayLow || null,
           open: q.regularMarketOpen || 0,
           previousClose: prevClose,
           weekHigh52: q.fiftyTwoWeekHigh || 0,

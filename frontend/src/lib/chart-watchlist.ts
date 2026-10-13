@@ -209,14 +209,16 @@ export function sortItems(items: WlItem[], sort: SortState, quotes: Record<strin
 export interface ViewRow { sectionId: string; item: WlItem }
 export interface WatchlistView { query?: string; market?: Market | 'ALL' }
 /** Rows in the order they are on screen: per section, sorted, collapsed sections skipped, optional flag filter. */
-export function viewRows(l: WlList, sort: SortState, quotes: Record<string, Quote | undefined>, flagFilter: Flag | null, view: WatchlistView = {}): { section: WlSection; rows: WlItem[] }[] {
+/** `rows` = what is drawn (empty while the section is collapsed, unless searching); `matches` = how many of the section's symbols
+ *  pass the filters whatever the collapse state (zzz1000: a filtered view hides sections with no matches). */
+export function viewRows(l: WlList, sort: SortState, quotes: Record<string, Quote | undefined>, flagFilter: Flag | null, view: WatchlistView = {}): { section: WlSection; rows: WlItem[]; matches: number }[] {
   const query = (view.query || '').trim().toLocaleLowerCase();
   return l.sections.map((s) => {
     const items = s.items.filter((it) => (!flagFilter || it.flag === flagFilter)
       && (!view.market || view.market === 'ALL' || it.m === view.market)
       && (!query || `${it.t} ${it.x || ''} ${quotes[itemKey(it)]?.name || ''}`.toLocaleLowerCase().includes(query)));
     // Search includes collapsed sections, without changing their stored state.
-    return { section: s, rows: s.collapsed && !query ? [] : sortItems(items, sort, quotes) };
+    return { section: s, rows: s.collapsed && !query ? [] : sortItems(items, sort, quotes), matches: items.length };
   });
 }
 export function flatRows(l: WlList, sort: SortState, quotes: Record<string, Quote | undefined>, flagFilter: Flag | null, view: WatchlistView = {}): ViewRow[] {
@@ -362,4 +364,10 @@ export function importTvBundle(s: WlStore, b: TvBundle): BundleResult {
   }
   if (!lists.some((l) => l.id === activeId)) activeId = lists[0]?.id || s.activeId;
   return { store: { lists, activeId }, lists: added, symbols, skipped, replaced, flagged };
+}
+
+/** zzz1000 — the sections a filtered view draws: with a search / flag / market filter on, sections without a match are hidden
+ *  (unless `showEmpty`); without a filter every section shows, as before. Stored collapse state is never changed. */
+export function visibleSections<G extends { matches: number }>(groups: G[], filtered: boolean, showEmpty: boolean): G[] {
+  return filtered && !showEmpty ? groups.filter((g) => g.matches > 0) : groups;
 }

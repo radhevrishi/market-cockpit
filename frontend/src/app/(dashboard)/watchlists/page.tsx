@@ -2,11 +2,12 @@
 
 import { resolveFyYear } from '@/lib/calendar-dates';   // zzz897 — two-digit FY → nearest century (was `yy < 50 ? 20yy : 19yy`, wrong from 2050)
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useSearchParams } from 'next/navigation'; // PATCH 0914 — read ?tab=conviction
-import { RefreshCw, Download, Award } from 'lucide-react';
+import { useRouter, useSearchParams } from 'next/navigation'; // PATCH 0914 — read ?tab=conviction
+import { RefreshCw, Award } from 'lucide-react';
 import toast from 'react-hot-toast';
 import TickerSearch, { type TickerSuggestion } from '@/components/TickerSearch';
 import { canonicalTicker } from '@/lib/ticker-normalize'; // PATCH 0721
+import { quoteNumbers } from '@/lib/watchlist-export';
 import { CHAT_ID, BOT_SECRET } from '@/lib/config';
 import { findInList, buildMembershipIndex, membershipsFor, isBulkQuery } from '@/lib/watchlist-find'; // zzz972
 import { CHART_WATCHLISTS_KEY } from '@/lib/chart-watchlist'; // zzz972 — read-only: which chart lists hold a company
@@ -25,7 +26,10 @@ import DecayWatch from '@/components/DecayWatch'; // zzz525 — 🪪 passport fr
 import DegradedBanner from '@/components/DegradedBanner';
 import { ConvictionBeatsPanel } from './ConvictionBeatsPanel';
 import { EIEliteTab } from './EIEliteTab';
-import { SummaryBar, WatchlistTable, EmptyState } from './components';
+import { SummaryBar, WatchlistTable, EmptyState, WatchlistExportControl } from './components';
+import { buildWatchlistExport, type ExportScope } from '@/lib/watchlist-export';
+import { writeReviewQueue } from '@/lib/screener/workflow';
+import { STANDALONE_WATCHLIST_ID, chartReviewUrl, watchlistReviewItems } from '@/lib/watchlist-chart-handoff';
 import { setStoredTickers, getStoredTickers, fetchStockQuotes, fetchIndividualQuotes } from './helpers';
 import { type StockQuote, type SortField, type SortOrder } from './types';
 import { useWorkspaceLight, workspaceThemeClass } from '@/lib/workspace-theme';
@@ -53,6 +57,7 @@ export default function WatchlistsPage() {
   // dropping users on the Main watchlist tab. User feedback: "even when
   // selecting conviction betas short cut its going to watchlist only why".
   const searchParams = useSearchParams();
+  const router = useRouter();
   const initialTab: 'main' | 'conviction' =
     searchParams?.get('tab') === 'conviction' ? 'conviction' : 'main';
   const [activeTab, setActiveTab] = useState<'main' | 'conviction' | 'fundamentals' | 'ei-elite' | 'portfolio-earnings'>(initialTab);
@@ -404,11 +409,9 @@ export default function WatchlistsPage() {
         ticker,
         company: quote?.company || (quote as any)?.name || ticker, // PATCH 0691
         sector: quote?.sector || '—', // PATCH 0691
-        price: quote?.price || 0,
-        change: quote?.change || 0,
-        changePercent: quote?.changePercent || 0,
-        dayHigh: quote?.dayHigh || 0,
-        dayLow: quote?.dayLow || 0,
+        // zzz1000 (CW-01) — unknown numbers stay null ('—' on screen, blank in the export); a real 0% change stays 0
+        ...quoteNumbers(quote),
+        market: quote?.market,
         flag: watchlistFlags[ticker] || null,
         // PATCH 0965 BUG #7 — forward optional columns from the quote so
         // the chooser actually surfaces them. Use `?? null` so a missing
@@ -584,8 +587,8 @@ export default function WatchlistsPage() {
       ticker: q.ticker,
       company: q.company || q.ticker,
       sector: q.sector || '—',
-      price: q.price || 0,
-      changePercent: q.changePercent || 0,
+      price: q.price ?? 0,
+      changePercent: q.changePercent ?? 0,
     }));
   }, [quotes]);
 
@@ -639,35 +642,34 @@ export default function WatchlistsPage() {
     }
   }, [sortField, sortOrder]);
 
-  // Handle export XLSX
-  const handleExportXLSX = useCallback(async () => {
-    if (sortedItems.length === 0) {
-      toast.error('No items to export');
+  // zzz1000 (CW-04) — Export says which rows it writes: the filtered rows on screen, or the whole list. With a search on,
+  // the default is the filtered rows; the whole list stays one explicit click away. A second sheet records the scope.
+  const handleExportXLSX = useCallback(async (scope: ExportScope) => {
+    const out = buildWatchlistExport(sortedItems, visibleItems, scope, { search: findActive ? findQuery : '', sortField, sortOrder, quotesAt: lastRefresh });
+    if (out.count === 0) {
+      toast.error('No rows to export');
       return;
     }
     const XLSX = await import('xlsx');
-
-    const data = sortedItems.map((item, i) => ({
-      '#': i + 1,
-      'Ticker': item.ticker,
-      'Company': item.company,
-      'Sector': item.sector,
-      'CMP (₹)': item.price,
-      'Change %': parseFloat(item.changePercent.toFixed(2)),
-      'Day High': item.dayHigh,
-      'Day Low': item.dayLow,
-    }));
-
-    const ws = XLSX.utils.json_to_sheet(data);
+    const ws = XLSX.utils.json_to_sheet(out.rows);   // null → empty cell (unknown is not zero)
     ws['!cols'] = [
       { wch: 4 }, { wch: 14 }, { wch: 28 }, { wch: 16 },
       { wch: 12 }, { wch: 10 }, { wch: 12 }, { wch: 12 },
     ];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Watchlist');
-    XLSX.writeFile(wb, `watchlist_${new Date().toISOString().slice(0, 10)}.xlsx`);
-    toast.success('Exported watchlist to XLSX');
-  }, [sortedItems]);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Field', 'Value'], ...out.info]), 'Export info');
+    XLSX.writeFile(wb, `watchlist_${scope === 'filtered' ? 'filtered_' : ''}${new Date().toISOString().slice(0, 10)}.xlsx`);
+    toast.success(scope === 'filtered' ? `Exported ${out.count} of ${out.total} rows (filtered)` : `Exported all ${out.total} rows`);
+  }, [sortedItems, visibleItems, findActive, findQuery, sortField, sortOrder, lastRefresh]);
+
+  // zzz1000 (improvement 2) — open the rows on screen (search applied, table order) as a chart review queue
+  const openInCharts = useCallback(() => {
+    const items = watchlistReviewItems(visibleItems);
+    if (!items.length) { toast.error('No rows to open'); return; }
+    writeReviewQueue(findActive ? `My Watchlist · matching “${findQuery.trim()}”` : 'My Watchlist', items, '/watchlists', { source: 'watchlist', listId: STANDALONE_WATCHLIST_ID });
+    router.push(chartReviewUrl(items[0]));
+  }, [visibleItems, findActive, findQuery, router]);
 
   return (
     <div className={workspaceThemeClass(wlLight, true)} style={{ padding: '24px', background: 'var(--mc-bg-0)', minHeight: '100%' }}>
@@ -709,31 +711,9 @@ export default function WatchlistsPage() {
             <RefreshCw style={{ width: '14px', height: '14px', transform: isRefreshing ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.6s linear' }} />
             Refresh
           </button>
-          <button
-            onClick={handleExportXLSX}
-            disabled={sortedItems.length === 0}
-            title="Export to XLSX"
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              backgroundColor: 'var(--mc-bg-2)',
-              border: '1px solid var(--mc-border-2)',
-              borderRadius: '10px',
-              padding: '10px 14px',
-              color: 'var(--mc-text-3)',
-              cursor: sortedItems.length === 0 ? 'not-allowed' : 'pointer',
-              fontSize: '13px',
-              fontWeight: '600',
-              transition: 'all 0.2s',
-              opacity: sortedItems.length === 0 ? 0.4 : 1,
-            }}
-            onMouseEnter={e => sortedItems.length > 0 && (e.currentTarget.style.backgroundColor = '#2A3B4C')}
-            onMouseLeave={e => (e.currentTarget.style.backgroundColor = '#1A2B3C')}
-          >
-            <Download style={{ width: '14px', height: '14px' }} />
-            Export
-          </button>
+          {activeTab === 'main' && (
+            <WatchlistExportControl filterActive={findActive} filteredCount={visibleItems.length} totalCount={sortedItems.length} onExport={handleExportXLSX} />
+          )}
         </div>
       </div>
 
@@ -876,6 +856,11 @@ export default function WatchlistsPage() {
                 : <>{sortedItems.length} stocks</>}
               {' '}· Last refreshed: {lastRefresh ? lastRefresh.toLocaleTimeString() : '—'}
             </p>
+            <button type="button" onClick={openInCharts} disabled={visibleItems.length === 0}
+              title={`Open ${findActive ? `the ${visibleItems.length} matching rows` : `all ${visibleItems.length} rows`} on Charts, in this table's order; ↑ / ↓ on the chart step through them`}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-2)', borderRadius: 8, padding: '6px 10px', color: 'var(--mc-info)', cursor: visibleItems.length ? 'pointer' : 'not-allowed', fontSize: 12, fontWeight: 600, opacity: visibleItems.length ? 1 : 0.5 }}>
+              Open {findActive ? `${visibleItems.length} shown` : 'this list'} in Charts ↗
+            </button>
           </div>
           {findActive && visibleItems.length === 0 && (
             <p style={{ fontSize: '13px', color: 'var(--mc-text-3)', margin: '0 0 12px' }}>

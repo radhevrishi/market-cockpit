@@ -146,7 +146,44 @@ export function LayoutPicker({ L }: { L: ReturnType<typeof useLayouts> }) {
 const input: React.CSSProperties = { width: 58, padding: '3px 5px', borderRadius: 4, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-0)', color: 'var(--mc-text-0)', fontSize: 13 };
 const linkBtn: React.CSSProperties = { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--mc-text-3)', fontSize: 12, padding: 0 };
 
-export function IndicatorsPanel({ L, onClose }: { L: ReturnType<typeof useLayouts>; onClose: () => void }) {
+/** zzz1000 (CW-05) — after an outside click closes a popover, the rest of that click is swallowed so it cannot place a point of
+ *  an unfinished drawing or toggle anything underneath. Installed on the document, it outlives the panel's unmount. */
+function swallowRestOfClick(doc: Document) {
+  const stop = (e: Event) => { e.stopPropagation(); e.preventDefault(); };
+  const types = ['mousedown', 'mouseup', 'click', 'touchend'] as const;
+  const done = () => { for (const t of types) doc.removeEventListener(t, stop, true); doc.removeEventListener('click', end, true); clearTimeout(timer); };
+  const end = () => setTimeout(done, 0);
+  for (const t of types) doc.addEventListener(t, stop, true);
+  doc.addEventListener('click', end, true);
+  const timer = setTimeout(done, 800);
+}
+
+/** A non-modal anchored dialog: Escape closes it and puts focus back on the Indicators button; an outside click closes it
+ *  without toggling anything. Closing never saves or discards the working layout (Save / Undo do that). */
+export function IndicatorsPanel({ L, onClose, triggerRef }: { L: ReturnType<typeof useLayouts>; onClose: () => void; triggerRef?: React.RefObject<HTMLElement | null> }) {
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const closeRef = useRef(onClose);
+  useEffect(() => { closeRef.current = onClose; }, [onClose]);
+  const closeAndReturn = useCallback(() => { closeRef.current(); const t = triggerRef?.current; if (t) setTimeout(() => t.focus(), 0); }, [triggerRef]);
+  useEffect(() => {
+    const doc = panelRef.current?.ownerDocument || document;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      // a native <select> list or colour picker open inside the panel handles its own Escape first
+      e.stopPropagation(); e.preventDefault();
+      closeAndReturn();
+    };
+    const onDown = (e: Event) => {
+      const t = e.target as Node | null;
+      if (!t || panelRef.current?.contains(t) || triggerRef?.current?.contains(t)) return;   // the trigger toggles by itself
+      e.stopPropagation(); e.preventDefault();
+      swallowRestOfClick(doc);
+      closeRef.current();
+    };
+    doc.addEventListener('keydown', onKey, true);
+    doc.addEventListener('pointerdown', onDown, true);
+    return () => { doc.removeEventListener('keydown', onKey, true); doc.removeEventListener('pointerdown', onDown, true); };
+  }, [closeAndReturn, triggerRef]);
   const w = L.working;
   const setW = (fn: (l: ChartLayout) => ChartLayout) => L.setWorking((cur) => cleanLayout(fn(cur)));
   const setLine = (id: string, patch: Partial<MaLine>) => setW((l) => ({ ...l, lines: l.lines.map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
@@ -158,10 +195,10 @@ export function IndicatorsPanel({ L, onClose }: { L: ReturnType<typeof useLayout
     setAdding('');
   };
   return (
-    <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 40, width: 340, maxHeight: '75vh', overflowY: 'auto', padding: 12, borderRadius: 8, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-1)', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', fontSize: 13, color: 'var(--mc-text-1)' }}>
+    <div ref={panelRef} id="mc-indicators-panel" role="dialog" aria-modal="false" aria-labelledby="mc-indicators-title" style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 40, width: 340, maxHeight: '75vh', overflowY: 'auto', padding: 12, borderRadius: 8, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-1)', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', fontSize: 13, color: 'var(--mc-text-1)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontWeight: 700, color: 'var(--mc-text-0)' }}>
-        <span>Indicators — {L.saved.name}{L.dirty ? ' ●' : ''}</span>
-        <button type="button" onClick={onClose} aria-label="Close indicators" style={{ ...linkBtn, fontSize: 16 }}>×</button>
+        <span id="mc-indicators-title">Indicators — {L.saved.name}{L.dirty ? ' ●' : ''}</span>
+        <button type="button" onClick={closeAndReturn} aria-label="Close indicators" title="Close (Esc). Unsaved changes stay until Save or Undo." style={{ ...linkBtn, fontSize: 16 }}>×</button>
       </div>
       <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-text-3)', margin: '4px 0' }}>MOVING AVERAGES</div>
       {w.lines.map((x) => (

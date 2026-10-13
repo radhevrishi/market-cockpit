@@ -5,6 +5,7 @@ import { type EarningsScanCard } from '@/components/EarningsScanCard';
 import { COL_PREFS_KEY, DEFAULT_TICKERS, STORAGE_KEY, RICH_LS_KEY, RICH_TTL_MS } from './constants';
 import { type OptionalCol, type StockQuote, type RichCache, type HubFilters } from './types';
 import { sharedFetchJson } from '@/lib/tab-shared-fetch';
+import { quoteNumbers } from '@/lib/watchlist-export';
 
 export function loadColPrefs(): Set<OptionalCol> {
   if (typeof window === 'undefined') return new Set();
@@ -61,12 +62,9 @@ export const fetchStockQuotes = async (market: string = 'india'): Promise<StockQ
       company: stock.company || stock.ticker,
       sector: stock.sector || '—',
       industry: stock.industry || '—',
-      price: stock.price || 0,
-      change: stock.change || 0,
-      changePercent: stock.changePercent || 0,
-      // zzz967 (WL-01) — never pad a missing high / low with the price; 0 shows as '—'
-      dayHigh: stock.dayHigh || 0,
-      dayLow: stock.dayLow || 0,
+      // zzz1000 (CW-01) — unknown stays null (was `|| 0`, which exported a missing high / low as 0)
+      ...quoteNumbers(stock),
+      market: market === 'us' ? 'US' as const : 'IN' as const,
       // PATCH 0445 — optional columns
       volume: stock.volume ?? null,
       marketCap: stock.marketCap ?? stock.mcap ?? null,
@@ -113,12 +111,9 @@ export const fetchIndividualQuotes = async (symbols: string[]): Promise<StockQuo
         company: stock.company || stock.ticker,
         sector: stock.sector || '—',
         industry: stock.industry || '—',
-        price: stock.price || 0,
-        change: stock.change || 0,
-        changePercent: stock.changePercent || 0,
-        // zzz967 (WL-01) — never pad a missing high / low with the price; 0 shows as '—'
-        dayHigh: stock.dayHigh || 0,
-        dayLow: stock.dayLow || 0,
+        // zzz1000 (CW-01) — unknown stays null; this endpoint is the NSE single-quote fallback
+        ...quoteNumbers(stock),
+        market: 'IN' as const,
         // PATCH 0445 — optional columns
         volume: stock.volume ?? null,
         marketCap: stock.marketCap ?? stock.mcap ?? null,

@@ -5,9 +5,9 @@ import { CHART_REVIEW_QUEUE_KEY } from '../chart-review-queue';
 export { CHART_REVIEW_QUEUE_KEY as CHART_REVIEW_KEY };
 
 /** The order the chart's Next / Previous step through when a company is opened from the screener (this tab only). */
-export function writeReviewQueue(label: string, items: Array<{ symbol: string; exchange: string; name?: string }>, returnUrl = '/stock-screener'): boolean {
+export function writeReviewQueue(label: string, items: Array<{ symbol: string; exchange: string; name?: string }>, returnUrl = '/stock-screener', from?: { source: 'screener' | 'watchlist'; listId?: string }): boolean {
   try {
-    sessionStorage.setItem(CHART_REVIEW_QUEUE_KEY, JSON.stringify({ origin: 'screener', label, returnUrl, at: Date.now(), items: items.slice(0, 5000) }));
+    sessionStorage.setItem(CHART_REVIEW_QUEUE_KEY, JSON.stringify({ origin: 'screener', label, returnUrl, at: Date.now(), items: items.slice(0, 5000), ...(from || {}) }));
     return true;
   } catch { return false; }   // the chart then steps the watchlist as before
 }

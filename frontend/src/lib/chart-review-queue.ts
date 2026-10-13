@@ -8,7 +8,10 @@ export const REVIEW_ORIGIN_SCREENER = 'screener';
 const MAX_ITEMS = 5000;
 
 export interface ReviewItem { symbol: string; exchange: string; name?: string }
-export interface ReviewQueue { origin: 'screener'; label: string; returnUrl: string; items: ReviewItem[]; at: number }
+/** `source` says who wrote the queue (the stock / Pine screener, or the standalone Watchlist page — zzz1000); `listId` names that
+ *  list. Older queues have neither and are screener queues. The URL flag stays `review=screener` for every source. */
+export type ReviewSource = 'screener' | 'watchlist';
+export interface ReviewQueue { origin: 'screener'; label: string; returnUrl: string; items: ReviewItem[]; at: number; source?: ReviewSource; listId?: string }
 /** What the chart needs to open one queue entry. */
 export interface ReviewTarget { market: Market; ticker: string; exchange?: 'NSE' | 'BSE'; name?: string }
 
@@ -41,6 +44,8 @@ export function parseQueue(raw: unknown): ReviewQueue | null {
     returnUrl: safeReturnUrl(v.returnUrl),
     items,
     at: Number.isFinite(Number(v.at)) ? Number(v.at) : 0,
+    ...(v.source === 'watchlist' || v.source === 'screener' ? { source: v.source as ReviewSource } : {}),
+    ...(typeof v.listId === 'string' && v.listId.trim() ? { listId: v.listId.trim().slice(0, 120) } : {}),
   };
 }
 
@@ -93,4 +98,11 @@ export function reviewFromUrl(flag: string | null | undefined, storage: Pick<Sto
   if (flag !== REVIEW_ORIGIN_SCREENER) return null;
   const q = readQueue(storage);
   return q && queueIndex(q, symbol, exchange, market) >= 0 ? q : null;
+}
+
+/** Words for the review strip: "screener result" / "watchlist row", and where "Back" goes. */
+export function reviewWords(queue: ReviewQueue | null): { noun: string; heading: string; back: string } {
+  return queue?.source === 'watchlist'
+    ? { noun: 'watchlist row', heading: 'Reviewing watchlist', back: 'Back to Watchlist' }
+    : { noun: 'screener result', heading: 'Reviewing screener results', back: 'Back to screen' };
 }

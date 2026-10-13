@@ -8,22 +8,25 @@ export interface StockQuote {
   company: string;
   sector: string;
   industry: string;
-  price: number;
-  change: number;
-  changePercent: number;
-  dayHigh: number;
-  dayLow: number;
+  // zzz1000 (CW-01) — null = not given by the quote source (never 0)
+  price: number | null;
+  change: number | null;
+  changePercent: number | null;
+  dayHigh: number | null;
+  dayLow: number | null;
+  market?: 'IN' | 'US';      // which quote feed it came from (US bulk list → US; everything else → India)
 }
 
 export interface WatchlistItem {
   ticker: string;
   company: string;
   sector: string;
-  price: number;
-  change: number;
-  changePercent: number;
-  dayHigh: number;
-  dayLow: number;
+  price: number | null;          // zzz1000 (CW-01) — null = unknown, shown as '—', exported blank
+  change: number | null;
+  changePercent: number | null;
+  dayHigh: number | null;
+  dayLow: number | null;
+  market?: 'IN' | 'US';
   marketCap?: number | null; // For weighted averages
   flag?: string | null;      // 🟢 🟠 🔴 or null
   // PATCH 0442 BUG-020 — extra columns

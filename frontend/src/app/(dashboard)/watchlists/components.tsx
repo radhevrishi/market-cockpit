@@ -1,7 +1,8 @@
 'use client';
 // Moved verbatim out of page.tsx (pure refactor, no behaviour change).
 import { useState } from 'react';
-import { Trash2, TrendingUp, TrendingDown, ArrowUpDown, AlertTriangle } from 'lucide-react';
+import { Trash2, TrendingUp, TrendingDown, ArrowUpDown, AlertTriangle, Download } from 'lucide-react';
+import { defaultExportScope, type ExportScope } from '@/lib/watchlist-export';
 import { isPriceSuspect } from '@/lib/nse';
 import { OPTIONAL_COLS } from './constants';
 import { loadColPrefs, saveColPrefs } from './helpers';
@@ -12,14 +13,15 @@ import { type WatchlistItem, type SortField, type SortOrder, type OptionalCol } 
 export function SummaryBar({ items }: { items: WatchlistItem[] }) {
   if (items.length === 0) return null;
 
-  const gainers = items.filter(item => item.changePercent > 0).length;
-  const losers = items.filter(item => item.changePercent < 0).length;
+  // zzz1000 (CW-01) — an unknown change (null) is neither a gainer, a loser nor flat
+  const gainers = items.filter(item => (item.changePercent ?? 0) > 0).length;
+  const losers = items.filter(item => (item.changePercent ?? 0) < 0).length;
   // AUDIT_100 #22 — exclude items with price=0 (fallback / pre-market /
   // missing quote) before averaging. Otherwise the headline "Avg Change"
   // is dragged toward 0 even when 5 of 6 real stocks are solidly up.
-  const valid = items.filter(item => (item.price ?? 0) > 0);
+  const valid = items.filter(item => (item.price ?? 0) > 0 && item.changePercent != null && Number.isFinite(item.changePercent));
   const avgChange = valid.length > 0
-    ? valid.reduce((sum, item) => sum + item.changePercent, 0) / valid.length
+    ? valid.reduce((sum, item) => sum + (item.changePercent as number), 0) / valid.length
     : 0;
 
   return (
@@ -229,7 +231,8 @@ export function WatchlistTable({
         </thead>
         <tbody>
           {items.map((item, idx) => {
-            const isPositive = item.changePercent >= 0;
+            const isPositive = (item.changePercent ?? 0) >= 0;
+            const price = item.price != null && item.price > 0 ? item.price : null;   // zzz1000 (CW-01)
             return (
               <tr key={item.ticker} data-watchlist-ticker={item.ticker} style={{ borderBottom: idx < items.length - 1 ? '1px solid var(--mc-bg-2)' : 'none', backgroundColor: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
                 <td style={{ padding: '8px 8px', textAlign: 'center', width: '40px' }}>
@@ -243,7 +246,7 @@ export function WatchlistTable({
                 </td>
                 {/* zzz967 (WL-02) — the ticker opens the same instrument on Charts (India list → NSE) */}
                 <td style={{ padding: '12px 16px', fontWeight: '700' }}>
-                  <a href={`/charts?m=IN&t=${encodeURIComponent(item.ticker)}`} title={`Open ${item.ticker} on Charts`} aria-label={`Open ${item.ticker} chart`}
+                  <a href={`/charts?m=${item.market === 'US' ? 'US' : 'IN'}&t=${encodeURIComponent(item.ticker)}`} title={`Open ${item.ticker} on Charts`} aria-label={`Open ${item.ticker} chart`}
                     style={{ color: 'var(--mc-info)', textDecoration: 'none' }}>{item.ticker} <span aria-hidden style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
                 </td>
                 <td style={{ padding: '12px 16px', color: 'var(--mc-text-0)', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -253,20 +256,20 @@ export function WatchlistTable({
                 <td style={{ padding: '12px 16px', textAlign: 'right', color: 'var(--mc-text-0)', fontVariantNumeric: 'tabular-nums' }}>
                   {/* PATCH 0559 — BUG-AUDIT-4: when quote came back null/0 render
                       a muted em-dash with a tooltip instead of ₹0.00. */}
-                  {!item.price || item.price === 0 ? (
+                  {price == null ? (
                     <span style={{ color: 'var(--mc-text-4)' }} title="Price unavailable — quote not returned by data source">—</span>
-                  ) : isPriceSuspect(item.ticker, item.price) ? (
+                  ) : isPriceSuspect(item.ticker, price) ? (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: 'var(--mc-warn)' }} title="Suspect price - may be incorrect or stale">
                       <AlertTriangle style={{ width: '12px', height: '12px' }} />
-                      ₹{item.price.toFixed(2)}
+                      ₹{price.toFixed(2)}
                     </span>
                   ) : (
-                    `₹${item.price.toFixed(2)}`
+                    `₹${price.toFixed(2)}`
                   )}
                 </td>
                 <td style={{ padding: '12px 16px', textAlign: 'right' }}>
                   {/* PATCH 0559 — also blank pct chip when no live price. */}
-                  {!item.price || item.price === 0 ? (
+                  {price == null || item.changePercent == null ? (
                     <span style={{ color: 'var(--mc-text-4)' }} title="Change unavailable">—</span>
                   ) : (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 8px', borderRadius: '6px', backgroundColor: isPositive ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)', color: isPositive ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: '600', fontVariantNumeric: 'tabular-nums', fontSize: '12px' }}>
@@ -276,10 +279,10 @@ export function WatchlistTable({
                   )}
                 </td>
                 <td style={{ padding: '12px 16px', textAlign: 'right', color: 'var(--mc-text-0)', fontVariantNumeric: 'tabular-nums', fontSize: '12px' }}>
-                  {item.dayHigh ? `₹${item.dayHigh.toFixed(2)}` : <span style={{ color: 'var(--mc-text-4)' }}>—</span>}
+                  {item.dayHigh != null && item.dayHigh > 0 ? `₹${item.dayHigh.toFixed(2)}` : <span style={{ color: 'var(--mc-text-4)' }} title="Day high not given by the quote source">—</span>}
                 </td>
                 <td style={{ padding: '12px 16px', textAlign: 'right', color: 'var(--mc-text-0)', fontVariantNumeric: 'tabular-nums', fontSize: '12px' }}>
-                  {item.dayLow ? `₹${item.dayLow.toFixed(2)}` : <span style={{ color: 'var(--mc-text-4)' }}>—</span>}
+                  {item.dayLow != null && item.dayLow > 0 ? `₹${item.dayLow.toFixed(2)}` : <span style={{ color: 'var(--mc-text-4)' }} title="Day low not given by the quote source">—</span>}
                 </td>
                 {/* PATCH 0442 BUG-020 — Optional column cells */}
                 {OPTIONAL_COLS.filter(c => activeCols.has(c.id)).map(c => {
@@ -314,5 +317,31 @@ export function WatchlistTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+// ── Export control (zzz1000 CW-04) ─────────────────────────────────────────────
+/** Export with an explicit population. With a search on: "Export filtered (n)" is the main button and "Export all (N)" the
+ *  second one; without a search a single "Export all (N)". The page decides nothing implicitly. */
+export function WatchlistExportControl({ filterActive, filteredCount, totalCount, onExport }: {
+  filterActive: boolean; filteredCount: number; totalCount: number; onExport: (scope: ExportScope) => void;
+}) {
+  const primary = defaultExportScope(filterActive);
+  const btn = (scope: ExportScope, main: boolean) => {
+    const n = scope === 'filtered' ? filteredCount : totalCount;
+    return (
+      <button key={scope} type="button" onClick={() => onExport(scope)} disabled={n === 0} data-export-scope={scope}
+        aria-label={scope === 'filtered' ? `Export the ${n} filtered rows to Excel` : `Export all ${n} rows to Excel`}
+        title={scope === 'filtered' ? `Export the ${n} rows matching the search (of ${totalCount})` : `Export the whole list (${totalCount} rows)${filterActive ? ', ignoring the search' : ''}`}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', backgroundColor: main ? 'var(--mc-bg-2)' : 'transparent', border: '1px solid var(--mc-border-2)', borderRadius: '10px', padding: '10px 14px', color: main ? 'var(--mc-text-1)' : 'var(--mc-text-3)', cursor: n === 0 ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: main ? 700 : 600, opacity: n === 0 ? 0.4 : 1, fontVariantNumeric: 'tabular-nums' }}>
+        {main && <Download style={{ width: '14px', height: '14px' }} />}
+        {scope === 'filtered' ? `Export filtered (${n})` : `Export all (${n})`}
+      </button>
+    );
+  };
+  return (
+    <span role="group" aria-label="Export to Excel" style={{ display: 'inline-flex', gap: 6 }}>
+      {filterActive ? [btn('filtered', primary === 'filtered'), btn('all', primary === 'all')] : btn('all', true)}
+    </span>
   );
 }

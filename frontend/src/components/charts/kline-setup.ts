@@ -5,6 +5,7 @@ import * as kc from 'klinecharts';
 import { atr, barsBetween, ema, fitPriceRange, fmtPrice, macd, measureLabel, rsi, type Bar } from '@/lib/chart-math';
 import { seriesValues, type PriceSeries } from '@/lib/chart-layouts';
 import { textOnColor } from '@/lib/readable-color';
+import { stackAxisLabels } from '@/lib/chart-axis-labels';
 
 const toBars = (list: kc.KLineData[]): Bar[] => list.map((d) => ({ t: d.timestamp, o: d.open, h: d.high, l: d.low, c: d.close, v: d.volume ?? 0 }));
 const rows = <T extends Record<string, number>>(n: number, cols: Record<string, (number | null)[]>): T[] => {
@@ -183,6 +184,9 @@ export function registerChartExtras(): typeof kc {
           });
         }
       }
+      // zzz1000 — stack tags that would overlap (12px text + 4px padding top and bottom = 20px), order kept, values exact
+      const ys = stackAxisLabels(out.map((f) => (f.attrs as any).y as number), 21, 10, Math.max(10, bounding.height - 10));
+      out.forEach((f, k) => { (f.attrs as any).y = ys[k]; });
       return out;
     },
   });
