@@ -113,7 +113,10 @@ export { tagLengthText, tagScanClose };
 export type VerdictTone = 'up' | 'down' | 'mixed' | 'none';
 export interface Verdict { word: string; tone: VerdictTone; why: string }
 export function maVerdict(ma: MaPosition, tags: readonly ScreenPatternTag[] = []): Verdict {
-  const live = tags.filter((t) => t.s === 'b');
+  // zzz1001 — "Breaking out / down" only from a DAILY pattern that broke in the last few sessions; an older weekly / monthly
+  // breakdown is shown as a chip but does not override where the price sits against its averages (seen: AARTIPHARM 'Breaking
+  // down' while 18% above its 200-day, from a monthly double top)
+  const live = tags.filter((t) => t.s === 'b' && (t.tf == null || t.tf === 'D'));
   const down = live.find((t) => t.b === 'D'), up = live.find((t) => t.b === 'U');
   if (down) return { word: 'Breaking down', tone: 'down', why: `${PATTERN_META[down.id]?.label || down.id} (${tfWord(down.tf)}) closed through its breakdown level` };
   if (ma.close == null) return { word: 'No price data', tone: 'none', why: 'No close is stored for this company yet' };

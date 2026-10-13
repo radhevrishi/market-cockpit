@@ -196,3 +196,10 @@ test('zzz999 Pine page (JSDOM): setup cards with counts, a card opens its screen
     dom.window.close();
   }
 });
+
+test('zzz1001 a weekly/monthly breakdown does not override the averages in the portfolio verdict', async () => {
+  const { maVerdict: mv } = await import('../screener/pine-view');
+  const ma = { close: 118, d21: 2, d50: 4, d200: 18, at: '2026-10-13', basis: 'scan' } as any;
+  assert.equal(mv(ma, [{ id: 'double_top', b: 'D', s: 'b', c: 70, tf: 'M' } as any]).word, 'Above all MAs');
+  assert.equal(mv(ma, [{ id: 'double_top', b: 'D', s: 'b', c: 70 } as any]).word, 'Breaking down');
+});

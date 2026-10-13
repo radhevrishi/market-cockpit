@@ -46,7 +46,7 @@ export function PortfolioCheck({ items, market, status, error, source, chartHref
     return t;
   }, [items]);
 
-  if (status === 'loading' && !items.length) return <div role="status" aria-busy="true" className="pnx-note" style={{ padding: 16 }}>Reading your holdings…</div>;
+  if (status === 'loading') return <div role="status" aria-busy="true" className="pnx-note" style={{ padding: 16 }}>Reading your holdings…</div>;
   if (!items.length) {
     return (
       <div role="status" style={{ padding: 16, border: `1px solid ${C.border}`, borderRadius: 10, fontSize: 13.5, display: 'grid', gap: 6 }}>

@@ -699,7 +699,7 @@ export default function PineScreener() {
                 <span style={{ flex: 1 }} />
                 <button type="button" className="pnx-btn" onClick={() => setView('setups')}>Back to setups</button>
               </div>
-              <PortfolioCheck items={pfItems} market={market} status={!snap || !hold ? 'loading' : hold.status} error={hold?.error || null} source={hold?.source || ''}
+              <PortfolioCheck items={pfItems} market={market} status={!snap || !hold || (loading && !rows.length) ? 'loading' : hold.status} error={hold?.error || null} source={hold?.source || ''}
                 chartHref={(t, tf) => chartUrl(t, market === 'IN' ? 'NSE' : '', tf)} openReview={openPortfolioReview} />
             </>
           ) : (
