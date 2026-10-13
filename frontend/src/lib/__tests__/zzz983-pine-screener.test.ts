@@ -80,7 +80,8 @@ test('zzz983 build path: rows assembled for both markets carry pat / patAt; an e
 test('zzz983 patterns: bearish double top is stored with bias D; junk bars do not throw', () => {
   const { pat } = patternsFromBars(DOUBLE_TOP, null);
   assert.ok(pat.some((t) => t.id === 'double_top' && t.b === 'D'), JSON.stringify(pat));
-  assert.deepEqual(patternsFromBars({ d: [], o: [], h: [], l: [], c: [], v: [] }, null), { pat: [], patAt: null });
+  // zzz993 (MC-02): an empty history is reported as insufficient, not as a scan that found nothing
+  assert.deepEqual(patternsFromBars({ d: [], o: [], h: [], l: [], c: [], v: [] }, null), { pat: [], patAt: null, scan: { st: 'insufficient-history', v: PATTERN_SCAN_VERSION, n: 0 } });
   const tiny: DailyBars = { d: ['2026-01-02'], o: [1], h: [1], l: [1], c: [1], v: [0] };
   assert.deepEqual(patternsFromBars(tiny, 1).pat, []);
 });
@@ -90,6 +91,8 @@ const T = (id: PatternId, s: 'f' | 'b' | 'x', c: number, d: number | null, extra
   ({ id, b: PATTERN_META[id].bias === 'bullish' ? 'U' : 'D', s, c, p: 100, d, ...extra });
 const row = (t: string, pat: ScreenPatternTag[], o: Partial<ScreenRow> = {}): ScreenRow => ({ t, n: t, px: 50, mc: 1000, avgVol30: 200_000, tvSec: 'Electronic Technology', perf3M: 20, pat, ...o } as ScreenRow);
 const Q = (o: Partial<PineQuery> = {}): PineQuery => ({ ...DEFAULT_QUERY, ...o, dist: { ...DEFAULT_QUERY.dist, ...(o.dist || {}) } });
+/** zzz993 — the scan status a current build gives a row */
+const CUR = (r: ScreenRow) => ({ st: r.pat?.length ? 'ready' as const : 'no-pattern' as const, v: PATTERN_SCAN_VERSION });
 const ROWS: ScreenRow[] = [
   row('CUP', [T('cup_handle', 'f', 80, -4), T('vcp', 'f', 50, -3)]),
   row('UBASE', [T('u_base', 'f', 60, -8)]),
@@ -149,11 +152,12 @@ test('zzz983 chip counts ignore the sub-pattern and bias choices but respect the
 });
 
 test('zzz983 lean rows for the page: only companies with a (matching-bias) pattern, scan coverage counted', () => {
-  const rows = [...ROWS, { t: 'OLD', n: 'Old', px: 1 } as ScreenRow].map((r) => (r.t === 'OLD' ? r : { ...r, patAt: '2026-10-09', sma200: 10, roeTTM: 5 }));
+  // zzz993: rows built by the current scan carry `scan` (a row with patAt but no scan is an older scan version → stale)
+  const rows = [...ROWS, { t: 'OLD', n: 'Old', px: 1 } as ScreenRow].map((r) => (r.t === 'OLD' ? r : { ...r, patAt: '2026-10-09', scan: CUR(r), sma200: 10, roeFY: 5 }));   // zzz993: roeTTM is now sent; roeFY is not
   const l = leanRows(rows, null, true);
   assert.equal(l.total, 9); assert.equal(l.scanned, 8); assert.equal(l.withPattern, 7); assert.equal(l.patAt, '2026-10-09');
   assert.equal(l.rows.length, 7);
-  assert.ok(l.rows.every((r) => !('roeTTM' in r)) && l.rows.every((r) => 'sma200' in r));
+  assert.ok(l.rows.every((r) => !('roeFY' in r)) && l.rows.every((r) => 'sma200' in r));
   assert.deepEqual(leanRows(rows, 'D', true).rows.map((r) => r.t).sort(), ['HS', 'TOP']);
   // zzz984: by default every company is sent (rules-only screens need them all); a company without a pattern carries no `pat`
   const all = leanRows(rows);
@@ -224,12 +228,12 @@ test('zzz983 page renders the matches and switches bias / sub-pattern (JSDOM)', 
   const urls: string[] = [];
   (globalThis as any).fetch = async (url: string) => {
     urls.push(url);
-    return { ok: true, json: async () => (url.includes('/api/v1/pine-screener') ? { ok: true, builtAt: '2026-10-09T23:00:00Z', ...leanRows(ROWS.map((r) => ({ ...r, patAt: '2026-10-09' }))), notes: [] } : { ok: true }) };
+    return { ok: true, json: async () => (url.includes('/api/v1/pine-screener') ? { ok: true, builtAt: '2026-10-09T23:00:00Z', ...leanRows(ROWS.map((r) => ({ ...r, patAt: '2026-10-09', scan: CUR(r) }))), notes: [] } : { ok: true }) };
   };
   const root = createRoot(document.getElementById('root')!);
   const settle = () => new Promise<void>((r) => setTimeout(r, 20));
   const text = () => document.body.textContent || '';
-  const tickers = () => Array.from(document.querySelectorAll('tbody tr td:nth-child(3) a')).map((a) => a.textContent).sort();
+  const tickers = () => Array.from(document.querySelectorAll('tbody tr a[data-ticker]')).map((a) => a.textContent).sort();
   const click = async (pred: (b: HTMLButtonElement) => boolean) => {
     const b = Array.from(document.querySelectorAll('button')).find(pred);
     assert.ok(b, 'button');

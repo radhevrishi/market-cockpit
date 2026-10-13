@@ -2,14 +2,18 @@
 // zzz982 — "Automate chart patterns" for /charts: the hook that runs lib/chart-patterns on the DAILY bars of the symbol on
 // screen (and draws the chosen pattern's lines), and the one-line status banner at the top of the chart with its dropdown.
 // Runs only while the indicator is in the working layout (Indicators ▾ → Automate chart patterns).
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+// zzz992 — Analysis D / W / M (separate from the candles on screen): weekly / monthly aggregate the daily history already
+// fetched (completed periods only unless "incl. current" is ticked — then the last candle is provisional). The choice is
+// remembered per viewer (PATTERN_TF_KEY), never in the saved drawings. "Fit" zooms the chart to a pattern; "Restore view"
+// goes back to the view before the first fit.
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { Chart } from 'klinecharts';
-import { analyzePatterns, PATTERN_META, type PatternHit, type PatternId } from '@/lib/chart-patterns';
+import { analyzeDailyAs, analyzePatterns, PATTERN_META, type PatternHit, type PatternId, type PatternTimeframe } from '@/lib/chart-patterns';
 import { cacheChart, freshChart, type CachedChart } from '@/lib/chart-refresh';
 import type { Bar } from '@/lib/chart-math';
 import {
-  EMPTY_PATTERNS, FAILED_COLOR, PATTERN_GROUP, PATTERN_OVERLAY, bannerColors, bannerOf, barsRevision, distWords, hitColor, hitsFor, hitsToDraw, lengthWords,
-  overlayFit, patternDataPlan, patternKey, priceDecimals, shapeScoreWords, shownStatus, stageWords, togglePicked, type PatternState,
+  EMPTY_PATTERNS, FAILED_COLOR, PATTERN_GROUP, PATTERN_OVERLAY, PATTERN_TF_KEY, TF_WORD, analysisKey, bannerColors, bannerOf, barsRevision, distWords, fitPlan, hitColor, hitsFor, hitsToDraw, lengthWords,
+  overlayFit, parsePatternTfPref, patternDataPlan, patternKey, priceDecimals, serializePatternTfPref, shapeScoreWords, shownStatus, stageWords, togglePicked, type PatternState, type PatternTfPref,
 } from './pattern-view';
 
 interface ShownResponse {
@@ -45,10 +49,14 @@ export interface PatternIndicatorArgs {
 
 export function usePatternIndicator(a: PatternIndicatorArgs) {
   const { on, ready, ticker, market, exchange, basis, live, bars, chartRef, cacheRef, cur, chart: chartLoad } = a;
-  const key = patternKey(market, ticker, exchange, basis);
+  // zzz992 — the analysis timeframe (per viewer); hits are keyed by symbol + timeframe so a weekly result never shows as daily
+  const [pref, setPref] = useState<PatternTfPref>(() => { try { return parsePatternTfPref(localStorage.getItem(PATTERN_TF_KEY)); } catch { return parsePatternTfPref(null); } });
+  const savePref = useCallback((next: PatternTfPref) => { setPref(next); try { localStorage.setItem(PATTERN_TF_KEY, serializePatternTfPref(next)); } catch { /* this visit only */ } }, []);
+  const analysisTf = pref.tf, includeCurrent = pref.provisional;
+  const key = analysisKey(patternKey(market, ticker, exchange, basis), analysisTf, includeCurrent);
   const [state, setState] = useState<PatternState>(EMPTY_PATTERNS);
   const [picked, setPicked] = useState<{ key: string; ids: Set<PatternId> } | null>(null);
-  const plan = patternDataPlan(live, ticker, market, exchange, basis);
+  const plan = patternDataPlan(live, ticker, market, exchange, basis, analysisTf);
   // zzz990 (CP-01) — every bar's OHLCV (not count + last close) and the response object itself are the data revision
   const barsRev = useMemo(() => barsRevision(bars), [bars]);
   const liveRev = responseRev(live);
@@ -64,9 +72,18 @@ export function usePatternIndicator(a: PatternIndicatorArgs) {
     const finish = (daily: Bar[], firstTradeT: number | null | undefined) => {
       if (cancelled) return;
       try {
-        const r = analyzePatterns(daily, firstTradeT != null && Number.isFinite(firstTradeT) ? { firstTradeT } : undefined);
-        if (r.tooShort) setState({ key, hits: [], at: Date.now(), status: 'short', error: `Too little history (${r.usableBars} usable bar${r.usableBars === 1 ? '' : 's'})` });
-        else setState({ key, hits: r.hits, at: Date.now(), status: 'ready' });
+        const ft = firstTradeT != null && Number.isFinite(firstTradeT) ? { firstTradeT } : undefined;
+        if (analysisTf === 'D') {
+          const r = analyzePatterns(daily, ft);
+          if (r.tooShort) setState({ key, hits: [], at: Date.now(), status: 'short', error: `Too little history (${r.usableBars} usable bar${r.usableBars === 1 ? '' : 's'})` });
+          else setState({ key, hits: r.hits, at: Date.now(), status: 'ready' });
+        } else {
+          // weekly / monthly: aggregated from the daily history (completed periods unless the current one is included)
+          const r = analyzeDailyAs(daily, analysisTf, { ...ft, completedOnly: !includeCurrent });
+          const w = TF_WORD[analysisTf];
+          if (r.tooShort) setState({ key, hits: [], at: Date.now(), status: 'short', error: `Too little history (${r.usableBars} ${w} bar${r.usableBars === 1 ? '' : 's'})` });
+          else setState({ key, hits: r.hits, at: Date.now(), status: 'ready', provisional: r.provisional, periodEnd: r.periodEnd });
+        }
       } catch (e) {
         // zzz990 (CP-10) — a detection failure is an error, never "No clear chart pattern"
         setState({ key, hits: [], at: Date.now(), status: 'error', error: `pattern detection failed (${String((e as Error)?.message || e)})` });
@@ -101,7 +118,7 @@ export function usePatternIndicator(a: PatternIndicatorArgs) {
     return () => { cancelled = true; clearTimeout(timer); ctrl.abort(); };
     // barsRev + liveRev stand for `bars` / `live` (new objects on every load); plan.url for ticker / market / exchange / basis
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [on, key, hasLive, useShown, plan.url, barsRev, liveRev, cacheRef, market, ticker, exchange, basis]);
+  }, [on, key, hasLive, useShown, plan.url, barsRev, liveRev, cacheRef, market, ticker, exchange, basis, analysisTf, includeCurrent]);
 
   const hits = useMemo(() => (on ? hitsFor(state, key) : []), [on, state, key]);
   const shown = on ? shownStatus(state, key, hasLive, chartLoad) : { status: 'idle' as const, error: undefined };
@@ -136,12 +153,61 @@ export function usePatternIndicator(a: PatternIndicatorArgs) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, on, drawn, shownTimesSig, cur, chartRef]);
 
-  return { on, hits, status: shown.status, error: shown.error, drawnIds: new Set(drawn.map((h) => h.id)), togglePick, omittedLines };
+  // ── "Fit pattern" / "Restore view" — the view before the first fit is kept until restored ──
+  // keyed by the analysis identity: a saved view belongs to the symbol / timeframe it was taken on
+  const savedView = useRef<{ key: string; space: number; right: number; atEnd: boolean } | null>(null);
+  const [fittedKey, setFittedKey] = useState<string | null>(null);
+  const fitted = fittedKey === key;
+  const fit = useCallback((h: PatternHit) => {
+    const chart = chartRef.current;
+    if (!chart || !bars.length) return;
+    try {
+      const width = chart.getSize('candle_pane', 'main')?.width || 800;
+      const times = bars.map((b) => b.t);
+      const plan2 = fitPlan(times, h.startT, h.endT, width);
+      if (!plan2) return;
+      if (!savedView.current || savedView.current.key !== key) {
+        const vr = chart.getVisibleRange();
+        const n = chart.getDataList().length;
+        savedView.current = { key, space: chart.getBarSpace().bar, right: Math.max(0, Math.min(n - 1, Math.ceil(vr.realTo) - 1)), atEnd: vr.realTo >= n };
+      }
+      chart.setBarSpace(plan2.space);
+      chart.scrollToRealTime();
+      if (plan2.rightIndex < times.length - 1) chart.scrollToDataIndex(plan2.rightIndex);
+      setFittedKey(key);
+    } catch { /* the chart is not ready: nothing to fit */ }
+  }, [chartRef, bars, key]);
+  const restoreView = useCallback(() => {
+    const chart = chartRef.current, v = savedView.current;
+    savedView.current = null;
+    setFittedKey(null);
+    if (!chart || !v || v.key !== key) return;
+    try {
+      chart.setBarSpace(v.space);
+      chart.scrollToRealTime();
+      if (!v.atEnd) chart.scrollToDataIndex(v.right);
+    } catch { /* chart disposed */ }
+  }, [chartRef, key]);
+
+  const setAnalysisTf = useCallback((tf: PatternTimeframe) => savePref({ tf, provisional: tf === 'D' ? false : pref.provisional }), [savePref, pref.provisional]);
+  const setIncludeCurrent = useCallback((v: boolean) => savePref({ tf: pref.tf, provisional: pref.tf !== 'D' && v }), [savePref, pref.tf]);
+  const provisional = on && state.key === key ? !!state.provisional : false;
+
+  return {
+    on, hits, status: shown.status, error: shown.error, drawnIds: new Set(drawn.map((h) => h.id)), togglePick, omittedLines,
+    analysisTf, includeCurrent, provisional, setAnalysisTf, setIncludeCurrent, fit, restoreView, fitted,
+  };
 }
 
 const fmtMoney = (n: number | null, cur: string) => (n == null ? '—' : `${cur}${n.toLocaleString('en-US', { minimumFractionDigits: priceDecimals(n), maximumFractionDigits: priceDecimals(n) })}`);
 
-export function PatternBanner({ p, cur, light, onTurnOff, tf }: { p: ReturnType<typeof usePatternIndicator>; cur: string; light: boolean; onTurnOff: () => void; /** timeframe on screen: a "Daily pattern" badge on W / M */ tf?: string }) {
+type PatternP = ReturnType<typeof usePatternIndicator>;
+type AnalysisFields = 'analysisTf' | 'includeCurrent' | 'provisional' | 'setAnalysisTf' | 'setIncludeCurrent' | 'fit' | 'restoreView' | 'fitted';
+/** The hook's result; the zzz992 analysis-timeframe fields are optional (absent = daily analysis, no controls). */
+export type PatternBannerP = Omit<PatternP, AnalysisFields> & Partial<Pick<PatternP, AnalysisFields>>;
+const TF_BADGE: Record<PatternTimeframe, string> = { D: 'Daily pattern', W: 'Weekly pattern', M: 'Monthly pattern' };
+
+export function PatternBanner({ p, cur, light, onTurnOff, tf }: { p: PatternBannerP; cur: string; light: boolean; onTurnOff: () => void; /** timeframe on screen: a "Daily pattern" badge on W / M */ tf?: string }) {
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
   const boxRef = useRef<HTMLDivElement | null>(null);
@@ -158,21 +224,49 @@ export function PatternBanner({ p, cur, light, onTurnOff, tf }: { p: ReturnType<
     return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('mousedown', onDown); document.removeEventListener('touchstart', onDown); };
   }, [show]);
   if (!p.on) return null;
-  const banner = bannerOf(p.hits, cur, p.status, p.error);
+  const atf: PatternTimeframe = p.analysisTf ?? 'D';
+  const banner = bannerOf(p.hits, cur, p.status, p.error, atf);
   const col = bannerColors(banner.tone, light);
-  const notDaily = !!tf && tf !== 'D';
+  // a badge whenever the analysis timeframe differs from the candles on screen (always on W / M analysis)
+  const notDaily = atf === 'D' && !!tf && tf !== 'D';
+  const tfBadge = atf !== 'D';
+  const tfBtn = (x: PatternTimeframe) => (
+    <button key={x} type="button" onClick={() => p.setAnalysisTf?.(x)} aria-pressed={atf === x} title={`Find patterns on ${TF_WORD[x]} bars`}
+      style={{ background: atf === x ? col.border : 'none', border: `1px solid ${col.border}`, borderRadius: 3, color: col.text, cursor: 'pointer', padding: '0 4px', fontSize: 10, fontWeight: 700, lineHeight: '14px' }}>{x}</button>
+  );
   return (
     <div ref={boxRef} onMouseLeave={() => { if (!pinned) setOpen(false); }}
       style={{ position: 'absolute', left: 8, top: 4, zIndex: 7, maxWidth: 'calc(100% - 100px)', fontSize: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, borderRadius: 6, border: `1px solid ${col.border}`, background: col.bg, color: col.text, lineHeight: '18px' }}>
+        {p.setAnalysisTf && (
+          <span role="group" aria-label="Pattern analysis timeframe" title="Analysis timeframe — separate from the candles on screen"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 2, marginLeft: 6, fontSize: 10, whiteSpace: 'nowrap' }}>
+            <span style={{ opacity: 0.8 }}>Analysis</span>{(['D', 'W', 'M'] as PatternTimeframe[]).map(tfBtn)}
+          </span>
+        )}
         {notDaily && (
           <span title="Patterns are found on the DAILY bars and drawn on the candles on screen" data-testid="daily-pattern-badge"
             style={{ marginLeft: 6, padding: '0 5px', borderRadius: 4, border: `1px solid ${col.border}`, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>Daily pattern</span>
         )}
+        {tfBadge && (
+          <span title={`Patterns are found on ${TF_WORD[atf]} bars aggregated from the daily history (${p.includeCurrent ? 'the current period included, provisional' : 'completed periods only'}) and drawn on the candles on screen`} data-testid="tf-pattern-badge"
+            style={{ marginLeft: 6, padding: '0 5px', borderRadius: 4, border: `1px solid ${col.border}`, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>{TF_BADGE[atf]}{p.provisional ? ' · provisional' : ''}</span>
+        )}
+        {tfBadge && p.setIncludeCurrent && (
+          <label title={`Include the current, unfinished ${atf === 'W' ? 'week' : 'month'} — its candle can still change (provisional)`}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 2, marginLeft: 4, fontSize: 10, whiteSpace: 'nowrap', cursor: 'pointer' }}>
+            <input type="checkbox" checked={!!p.includeCurrent} onChange={(e) => p.setIncludeCurrent?.(e.target.checked)} style={{ margin: 0, width: 11, height: 11 }} aria-label="Include the current period (provisional)" />
+            current
+          </label>
+        )}
+        {p.fitted && p.restoreView && (
+          <button type="button" onClick={() => p.restoreView?.()} title="Back to the view before Fit pattern"
+            style={{ marginLeft: 4, background: 'none', border: `1px solid ${col.border}`, borderRadius: 3, color: col.text, cursor: 'pointer', padding: '0 4px', fontSize: 10, whiteSpace: 'nowrap' }}>Restore view</button>
+        )}
         <button type="button" onMouseEnter={() => setOpen(true)} onClick={() => setPinned((v) => !v)} aria-expanded={show}
           onKeyDown={(e) => { if (e.key === 'Escape') { setPinned(false); setOpen(false); } }}
-          title={p.hits.length ? 'Chart patterns on the daily bars — click to keep the list open; tick a row to draw it. Esc closes the list.' : 'Automate chart patterns (daily bars)'}
-          style={{ background: 'none', border: 'none', color: col.text, cursor: p.hits.length ? 'pointer' : 'default', padding: notDaily ? '1px 4px 1px 2px' : '1px 4px 1px 8px', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, textAlign: 'left' }}>
+          title={p.hits.length ? `Chart patterns on the ${TF_WORD[atf]} bars — click to keep the list open; tick a row to draw it. Esc closes the list.` : `Automate chart patterns (${TF_WORD[atf]} bars)`}
+          style={{ background: 'none', border: 'none', color: col.text, cursor: p.hits.length ? 'pointer' : 'default', padding: notDaily || tfBadge || p.setAnalysisTf ? '1px 4px 1px 2px' : '1px 4px 1px 8px', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, textAlign: 'left' }}>
           {banner.text}{p.hits.length > 0 ? ' ▾' : ''}
         </button>
         <button type="button" onClick={onTurnOff} aria-label="Turn off Automate chart patterns" title="Turn off Automate chart patterns (Indicators ▾ turns it back on)"
@@ -181,7 +275,11 @@ export function PatternBanner({ p, cur, light, onTurnOff, tf }: { p: ReturnType<
       {show && (
         <div role="dialog" aria-label="Chart patterns found"
           style={{ marginTop: 4, width: 'min(560px, calc(100vw - 80px))', maxHeight: 360, overflowY: 'auto', padding: 8, borderRadius: 8, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-1)', color: 'var(--mc-text-1)', boxShadow: '0 8px 24px rgba(0,0,0,.18)' }}>
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
+            {p.fitted && p.restoreView && (
+              <button type="button" onClick={() => p.restoreView?.()}
+                style={{ background: 'none', border: '1px solid var(--mc-border-1)', borderRadius: 4, color: 'var(--mc-text-2)', cursor: 'pointer', fontSize: 11, padding: '0 6px' }}>Restore view</button>
+            )}
             <button type="button" onClick={() => { setPinned(false); setOpen(false); }} aria-label="Close the pattern list"
               style={{ background: 'none', border: '1px solid var(--mc-border-1)', borderRadius: 4, color: 'var(--mc-text-2)', cursor: 'pointer', fontSize: 11, padding: '0 6px' }}>Close list</button>
           </div>
@@ -197,9 +295,13 @@ export function PatternBanner({ p, cur, light, onTurnOff, tf }: { p: ReturnType<
                   <b style={{ color: 'var(--mc-text-0)' }}>{h.label}</b>
                   <span style={{ color: textC, fontWeight: 600 }}>{h.bias}{failed ? ' · failed' : ''}</span>
                   <span style={{ color: 'var(--mc-text-3)' }}>· {stageWords(h)} · {h.likelihood} · {shapeScoreWords(h)}</span>
+                  {p.fit && (
+                    <button type="button" onClick={(e) => { e.preventDefault(); p.fit?.(h); }} title={`Zoom the chart to this ${h.label.toLowerCase()}`}
+                      style={{ marginLeft: 'auto', background: 'none', border: '1px solid var(--mc-border-1)', borderRadius: 4, color: 'var(--mc-text-2)', cursor: 'pointer', fontSize: 11, padding: '0 6px', whiteSpace: 'nowrap' }}>Fit pattern</button>
+                  )}
                 </label>
                 <div style={{ paddingLeft: 22, marginTop: 2, color: 'var(--mc-text-2)', fontVariantNumeric: 'tabular-nums' }}>
-                  {h.bias === 'bullish' ? 'Pivot' : 'Breakdown'} {fmtMoney(h.pivot, cur)} · close {distWords(h)} · {lengthWords(h.lengthBars)}{h.depthPct != null ? ` · ${h.depthPct}% deep` : ''}{h.volumeOk === false ? ' · volume not confirmed' : ''}
+                  {h.bias === 'bullish' ? 'Pivot' : 'Breakdown'} {fmtMoney(h.pivot, cur)} · close {distWords(h)} · {lengthWords(h.lengthBars, h.timeframe)}{h.depthPct != null ? ` · ${h.depthPct}% deep` : ''}{h.volumeOk === false ? ' · volume not confirmed' : ''}
                 </div>
                 <div style={{ paddingLeft: 22, marginTop: 2, color: 'var(--mc-text-3)' }}>{h.note}</div>
                 <div style={{ paddingLeft: 22, marginTop: 2, color: 'var(--mc-text-3)', fontStyle: 'italic' }}>{PATTERN_META[h.id].short}</div>
@@ -212,7 +314,8 @@ export function PatternBanner({ p, cur, light, onTurnOff, tf }: { p: ReturnType<
             </div>
           )}
           <div style={{ paddingTop: 6, fontSize: 11, color: 'var(--mc-text-3)' }}>
-            Found on the daily bars (the last ~2.8 years), whatever timeframe is on screen. Active structures are listed before failed ones (amber). The shape score is how closely the bars fit the pattern&apos;s rules — a heuristic, not a probability. Ticked rows are drawn on the chart; they are not saved as drawings. A reading of the shape, not a signal — check it on the chart.
+            {atf === 'D' ? 'Found on the daily bars (the last ~2.8 years), whatever timeframe is on screen.'
+              : `Found on ${TF_WORD[atf]} bars built from the daily history (${atf === 'W' ? 'the last ~5 years' : 'up to 10 years'}; ${p.provisional ? 'the last candle is the current, unfinished period — provisional' : 'completed periods only'}), whatever timeframe is on screen. Short formations (flags, pennants${atf === 'M' ? ', flat bases, triangles, wedges' : ''}) cannot be read on ${TF_WORD[atf]} bars.`} Active structures are listed before failed ones (amber). The shape score is how closely the bars fit the pattern&apos;s rules — a heuristic, not a probability. Ticked rows are drawn on the chart; they are not saved as drawings. A reading of the shape, not a signal — check it on the chart.
           </div>
         </div>
       )}

@@ -3,7 +3,7 @@
 // Only the worked-out figures are kept (lib/screener/tech.ts); the bars themselves are not stored.
 import { dbQuery } from '@/lib/db';
 import { barsFromYahoo, overlayNse, type NseDay, type TechFigures } from './tech';
-import { techEntry, PATTERN_SCAN_VERSION, type ScreenPatternTag } from './pine';
+import { techEntry, PATTERN_SCAN_VERSION, isScanned, type ScreenPatternTag, type ScanMeta } from './pine';
 import type { TvFigures } from './tv-screens';
 import { benchWeekly } from '../stage-analysis';
 
@@ -14,7 +14,13 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** What is kept per company: the figures, the first trading day (days since 1970) and the date the figures were worked out. */
 /** zzz969 — `cc`: the same figures as of the last completed session, kept when the read happened during trading. */
 /** zzz983 — `pat` / `patAt` / `patV`: the chart patterns read from the same bars (lib/screener/pine.ts), kept with the figures. */
-export type TechStored = TechFigures & { ipoD: number | null; cc?: Record<string, number | null> | null; pat?: ScreenPatternTag[]; patAt?: string | null; patV?: number } & Partial<TvFigures>;
+/** zzz993 — `scan` (MC-02 status / quality), `scanPx` / `scanAt` / `scanSrc` / `scanEx` (MC-01: the close, date, source and Yahoo
+ *  exchange of the bars every figure and pattern here was worked out from); `patW` / `patM` / `scanW` / `scanM` for weekly / monthly. */
+export type TechStored = TechFigures & {
+  ipoD: number | null; cc?: Record<string, number | null> | null; pat?: ScreenPatternTag[]; patAt?: string | null; patV?: number;
+  scan?: ScanMeta; scanPx?: number; scanAt?: string; scanSrc?: string; scanEx?: string;
+  patW?: ScreenPatternTag[]; patM?: ScreenPatternTag[]; scanW?: ScanMeta; scanM?: ScanMeta;
+} & Partial<TvFigures>;
 
 let route = 0;
 let lastErr: string | null = null;
@@ -77,7 +83,7 @@ export async function refreshTech(opts: {
         const got = barsFromYahoo(r.j);
         if (got) {
           const bars = nseOf ? overlayNse(got.bars, nseOf(t)) : got.bars;
-          store.set(t, techEntry(bars, got.firstTrade, got.partial, bench));   // price figures + chart patterns from the same bars
+          store.set(t, techEntry(bars, got.firstTrade, got.partial, bench, { src: nseOf ? 'yahoo+nse-bhav' : 'yahoo', ex: got.exchange }));   // price figures + chart patterns from the same bars
           ok++;
         } else miss++;
       } else if (r.status === 404) miss++;
@@ -88,8 +94,19 @@ export async function refreshTech(opts: {
   if (ok) await dbQuery(`INSERT INTO sec_frame_cache (key, data, fetched_at) VALUES ($1, $2, now()) ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, fetched_at = now()`, [key, JSON.stringify(Object.fromEntries(store))]).catch(() => null);
   const left = Math.max(0, due.length - ok - miss - fails);
   opts.notes.push(`price figures (moving averages, RSI, ATR, performance…): ${ok} companies updated this run, ${store.size} known${left ? `, ${left} still to update (next run)` : ''}${miss ? `, ${miss} unknown to Yahoo` : ''}${fails ? ` · ${fails} reads refused${stopped ? ' — Yahoo paused the reads, the next run continues' : ''}${lastErr ? ` (${lastErr})` : ''}` : ''}`);
-  let scanned = 0, withPat = 0;
-  for (const v of store.values()) if (v.patV === PATTERN_SCAN_VERSION) { scanned++; if (v.pat?.length) withPat++; }
-  opts.notes.push(`chart patterns (Pine Screener, from the same daily bars): ${scanned} of ${store.size} companies scanned with the current pattern rules, ${withPat} show at least one pattern${scanned < store.size ? ` — the rest are scanned as their prices are re-read` : ''}`);
+  // zzz993 (MC-02) — genuine readings only; short histories, bad data, scan failures and older versions are counted apart
+  let scanned = 0, withPat = 0, short = 0, bad = 0, errs = 0, stale = 0, sw = 0, sm = 0, pw = 0, pm = 0;
+  for (const v of store.values()) {
+    if (v.patV !== PATTERN_SCAN_VERSION) { stale++; continue; }
+    if (isScanned(v.scanW?.st)) { sw++; if (v.patW?.length) pw++; }
+    if (isScanned(v.scanM?.st)) { sm++; if (v.patM?.length) pm++; }
+    const st = v.scan?.st;
+    if (isScanned(st)) { scanned++; if (st === 'ready' && v.pat?.length) withPat++; }
+    else if (st === 'insufficient-history') short++;
+    else if (st === 'invalid-data') bad++;
+    else if (st === 'error') errs++;
+  }
+  opts.notes.push(`chart patterns (Pine Screener, from the same daily bars): ${scanned} of ${store.size} companies scanned with the current pattern rules, ${withPat} show at least one pattern${short ? `, ${short} too little price history (< 30 sessions)` : ''}${bad ? `, ${bad} price data rejected` : ''}${errs ? `, ${errs} scans failed (price figures kept)` : ''}${stale ? ` — ${stale} read by an older scan version (patterns withheld until re-read with the prices)` : ''}`);
+  opts.notes.push(`weekly / monthly chart patterns (completed weeks / months of the same daily bars): ${sw} companies scanned weekly (${pw} with a pattern), ${sm} monthly (${pm} with a pattern) — about 5 years of daily history is kept, so a monthly scan sees at most ~60 bars and needs 24 completed months; younger listings show "too little history" there`);
   return store;
 }

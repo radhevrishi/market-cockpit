@@ -11,7 +11,7 @@ import { ensureSchema } from '@/lib/db-migrate';
 import { yahooProfileStats } from '@/lib/us-prices';
 import { FRAME_PLAN, framePeriods, usFigures, type FrameData, type FrameEntry } from './sec-assemble';
 import { refreshTech, type TechStored } from './tech-fetch';
-import { rowPatternFields, rowTvFields, applyRsRating, ruleOf40 } from './pine';
+import { rowPatternFields, rowScanFields, priceSourceNote, rowTvFields, applyRsRating, ruleOf40 } from './pine';
 import { tvSectorOf } from './tv-sectors';
 import { rowsJson, type ScreenRow, type ScreenSnapshot } from './types';
 
@@ -249,6 +249,7 @@ export function assembleUsRows(universe: NasdaqRow[], ciks: Map<string, number>,
       } : {}),
       ipoD,
       ...rowPatternFields(tf),   // zzz983 — chart patterns (Pine Screener)
+      ...rowScanFields(tf, { px: r.px, src: 'nasdaq' }),   // zzz993 (MC-01) — scan close (Yahoo bars) vs latest quote (Nasdaq)
       ...rowTvFields(tf, 'US'),   // zzz984 — the owner's TradingView script fields
       ...(f?.fcfmFY != null ? { fcfmTTM: f.fcfmFY, r40: ruleOf40(f.revQYoY, f.fcfmFY) } : {}),
       roeTTM: f?.roeTTM ?? null, roeFY: f?.roeFY ?? null, roceTTM: f?.roceTTM ?? null, roceFY: f?.roceFY ?? null, nmTTM: f?.nmTTM ?? null, ptmTTM: f?.ptmTTM ?? null,
@@ -300,6 +301,7 @@ export async function buildUsSnapshot(now = new Date()): Promise<{ ok: boolean; 
     await yieldToServer();
   }
   applyRsRating(rows, (t) => tech.get(t)?.rsRaw);   // zzz984 — RS Rating ranked over the whole US snapshot
+  { const n = priceSourceNote(rows, 'US'); if (n) notes.push(n); }   // zzz993 (MC-01)
   if (noSec) notes.push(`${noSec} listed companies have no quarterly SEC figures (foreign companies filing 20-F / 40-F, which file no quarterly figures in SEC's data; new listings) — their company-figure filters fail`);
   const snap: ScreenSnapshot = { market: 'US', builtAt: new Date().toISOString(), rows, notes, sources: ['Nasdaq stock list', 'SEC filings (XBRL frames)', 'Yahoo daily prices', 'Yahoo company profile'] };
   await dbQuery(`INSERT INTO screener_snapshot (market, built_at, rows, meta) VALUES ('US', now(), $1, $2) ON CONFLICT (market) DO UPDATE SET built_at = now(), rows = EXCLUDED.rows, meta = EXCLUDED.meta`,

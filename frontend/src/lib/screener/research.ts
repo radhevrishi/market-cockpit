@@ -7,7 +7,8 @@
 //   · shortlists — a saved result (tickers, filters, figures, snapshot time, formula version) and what changed since;
 //   · formula version — when a calculation changes, the page can say which saved screens moved and why.
 import type { ScreenRow, ScreenMarket } from './types';
-import { fieldOf, passes, filterKeys, filterLabel, type Filter, type NumKey } from './filters';
+import { fieldOf, passes, filterKeys, filterLabel, evalPattern, patMissingWhy, tagDirDist, type Filter, type NumKey, type PatternRule } from './filters';
+import { PATTERN_META } from '../chart-patterns';
 import { tvSectorMapping } from './tv-sectors';
 
 // ── formula version ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -79,6 +80,22 @@ export function exact(v: number | null | undefined): string {
   const a = Math.abs(v);
   return a >= 1e6 ? v.toLocaleString('en-US', { maximumFractionDigits: 0 }) : String(Math.round(v * 10_000) / 10_000);
 }
+/** zzz994 — a pattern rule on one company: the matching patterns (with timeframe, stage, score, distance) or why it fails /
+ *  cannot be evaluated (a timeframe not scanned, too little history, an outdated scan). */
+export function patternDetail(r: ScreenRow, f: PatternRule): string {
+  const e = evalPattern(r, f);
+  const miss = e.missingTfs.map((tf) => patMissingWhy(r, tf));
+  if (!f.stages.length) return 'no stage selected — this rule matches nothing until a stage is chosen';
+  if (e.status === 'pass') {
+    const tags = e.tags.slice().sort((a, b) => b.c - a.c).slice(0, 4).map((t) => {
+      const d = tagDirDist(t);
+      return `${PATTERN_META[t.id]?.label || t.id} [${t.tf || 'D'}] score ${t.c}${d != null ? `, ${d > 0 ? '+' : ''}${Math.round(d * 10) / 10}% to pivot` : ''}`;
+    });
+    return `matches: ${tags.join('; ')}${miss.length ? ` · not evaluated: ${miss.join('; ')}` : ''}`;
+  }
+  if (e.status === 'missing') return `cannot be evaluated — ${miss.join('; ')} (counted as not passing)`;
+  return `no pattern matches on ${(f.tfs?.length ? f.tfs : ['D']).join(f.tfMode === 'all' ? ' + ' : '/')}${miss.length ? ` · not evaluated: ${miss.join('; ')}` : ''}`;
+}
 /** Every filter on one company: passed or not, the unrounded value against the rule, and a note when the miss is only visible unrounded. */
 export function explainRow(r: ScreenRow, filters: readonly Filter[], market: ScreenMarket, now = new Date(), exactOnly = false): RuleCheck[] {
   return filters.map((f) => {
@@ -90,6 +107,7 @@ export function explainRow(r: ScreenRow, filters: readonly Filter[], market: Scr
       return { label, pass, detail: `sector: ${r.tvSec || r.sec || 'not known'} — ${m.note}; source: ${[r.sec, r.ind].filter(Boolean).join(' · ') || 'none'}`, nearMiss: false };
     }
     if (f.kind === 'exch') return { label, pass, detail: `exchange: ${(r.exch || []).join(' / ') || 'not known'}`, nearMiss: false };
+    if (f.kind === 'pattern') return { label, pass, detail: patternDetail(r, f), nearMiss: false };   // zzz994
     const keys = filterKeys(f);
     const na = keys.map((k) => naReason(r, k)).find(Boolean);
     if (na && keys.every((k) => typeof r[k as NumKey] !== 'number')) return { label, pass, detail: na, nearMiss: false };

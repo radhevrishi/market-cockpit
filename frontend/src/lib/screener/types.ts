@@ -2,7 +2,7 @@
 // One row per company, built on the server from free sources (USA: Nasdaq list + SEC filings + Yahoo prices;
 // India: NSE + screener.in + Yahoo prices). The page downloads the whole snapshot once and filters in the browser, so changing a filter is instant.
 
-import type { ScreenPatternTag } from './pine';
+import type { ScreenPatternTag, ScanMeta } from './pine';
 
 export type ScreenMarket = 'US' | 'IN';
 
@@ -82,6 +82,22 @@ export interface ScreenRow {
   // ── zzz983: chart patterns (Pine Screener) — read from the same daily bars as the price figures (lib/screener/pine.ts) ──
   pat?: ScreenPatternTag[];  // patterns the latest bars show, likelihood ≥ 35 (absent = none found, or not scanned yet)
   patAt?: string;            // date of the last bar the patterns were read from (absent = not scanned yet)
+  // ── zzz993 (MC-02): scan quality — status / version / usable bars / as-of / volume coverage (pine.ts ScanMeta) ───────────────
+  scan?: ScanMeta;           // daily scan; tags (pat) are present only when scan.st is 'ready' and the version is current
+  patW?: ScreenPatternTag[]; patM?: ScreenPatternTag[];   // weekly / monthly patterns (tags carry tf 'W' / 'M') — filled once wired
+  scanW?: ScanMeta; scanM?: ScanMeta;
+  // ── zzz993 (MC-01): price provenance. Patterns, pivot distances (tag.d), stages AND the moving averages / RSI / performance
+  //    figures are all worked out from ONE set of daily bars, whose last close is scanPx. `px` / `chg` are the latest quote and can
+  //    come from another source (US: Nasdaq's list; India: NSE's daily price file). Neither is certified as the exchange close.
+  scanPx?: number;           // close of the last bar the patterns and price figures were computed from
+  scanAt?: string;           // that bar's date (YYYY-MM-DD; a live, unfinished session when the row has `cc`)
+  scanSrc?: string;          // 'yahoo' | 'yahoo+nse-bhav' (Yahoo bars with NSE's own official prices laid over the last ~3 months)
+  scanBasis?: string;        // 'split-adjusted price' — Yahoo chart closes: adjusted for splits / bonuses, not for dividends
+  scanEx?: string;           // exchange Yahoo names for the symbol (US: consolidated listing, e.g. 'NasdaqGS'; India: 'NSE')
+  pxSrc?: string;            // source of px / chg: 'nasdaq' (US screener list, last sale) | 'nse-bhav' (NSE official close)
+  pxAt?: string;             // date of px when known (India: the NSE file's date; US: unknown — the snapshot's builtAt)
+  pxGap?: number;            // (px ÷ scanPx − 1) × 100, 0.01
+  pxConflict?: 1;            // |pxGap| > 2 on the same (or an unknown) day: the two vendors disagree materially
   // ── zzz984: the owner's TradingView Pine Screener setups (lib/screener/tv-screens.ts), from the same daily bars ─────────────
   tt?: number | null;        // Minervini trend template: rules passed 0–6
   ttOk?: number | null;      // 1 = all six rules pass, 0 = not

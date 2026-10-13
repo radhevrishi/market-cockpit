@@ -7,8 +7,10 @@
 //  • zzz990 — a data revision of the bars (any OHLCV change re-runs detection), truthful unavailable / too-short states,
 //    failed structures in amber after active ones, "opposing structure present", "volume not confirmed", and a sloped
 //    line that collapses into one candle on W / M is left out (never redrawn as a fake horizontal level)
+//  • zzz992 — the ANALYSIS timeframe D / W / M (separate from the candles on screen): the remembered choice, the daily
+//    history it needs, banner words / badge, and the "Fit pattern" zoom plan
 // The detection itself is lib/chart-patterns (detectPatterns / patternHeadline); nothing here re-implements it.
-import { patternHeadline, type PatternBias, type PatternHit, type PatternId, type PatternLine } from '@/lib/chart-patterns';
+import { patternHeadline, patternLengthWords, PATTERN_MIN_HISTORY, type PatternBias, type PatternHit, type PatternId, type PatternLine, type PatternTimeframe } from '@/lib/chart-patterns';
 import { newExtra, type ChartLayout } from '@/lib/chart-layouts';
 import { readableOn } from '@/lib/readable-color';
 
@@ -17,6 +19,26 @@ export const PATTERN_OVERLAY = 'mcPatternLine';
 /** Daily history fetched for detection when the chart on screen is not daily or too short (the engine reads ~700 bars). */
 export const PATTERN_DAILY_RANGE = '5y';
 const LONG_ENOUGH = new Set(['5y', '10y', 'max']);
+/** zzz992 — monthly analysis reads up to 60 monthly bars (multi-year bases): ten years of daily history. */
+export const PATTERN_MONTHLY_RANGE = '10y';
+const LONG_ENOUGH_M = new Set(['10y', 'max']);
+
+// ── analysis timeframe (per viewer, like the price basis; never part of the saved drawings) ─────────────────────
+export const PATTERN_TF_KEY = 'mc:chart-pattern-tf:v1';
+export interface PatternTfPref { tf: PatternTimeframe; provisional: boolean }
+export const DEFAULT_PATTERN_TF: PatternTfPref = { tf: 'D', provisional: false };
+/** The stored choice; anything unreadable → daily, completed periods only. */
+export function parsePatternTfPref(raw: string | null | undefined): PatternTfPref {
+  try {
+    const j = JSON.parse(String(raw ?? ''));
+    const tf: PatternTimeframe = j?.tf === 'W' || j?.tf === 'M' ? j.tf : 'D';
+    return { tf, provisional: tf !== 'D' && j?.provisional === true };
+  } catch { return DEFAULT_PATTERN_TF; }
+}
+export const serializePatternTfPref = (p: PatternTfPref) => JSON.stringify({ tf: p.tf, provisional: p.tf !== 'D' && p.provisional });
+export const TF_WORD: Record<PatternTimeframe, string> = { D: 'daily', W: 'weekly', M: 'monthly' };
+/** The identity of one analysis: the symbol key plus timeframe (+ provisional) — hits of one never show under another. */
+export const analysisKey = (key: string, tf: PatternTimeframe, provisional: boolean) => (tf === 'D' ? key : `${key}|${tf}${provisional ? '+p' : ''}`);
 
 // ── layout on / off ─────────────────────────────────────────────────────────────
 export function patternsOn(l: ChartLayout | null | undefined): boolean {
@@ -35,7 +57,11 @@ export function patternKey(market: string, ticker: string, exchange: string | un
 }
 /** 'unavailable' = the chart has no price data for this symbol; 'short' = too little history to analyse (error holds the
  *  words, e.g. "Too little history (21 bars)"); 'error' = loading the daily bars or the detection itself failed. */
-export interface PatternState { key: string; hits: PatternHit[]; at: number; status: 'idle' | 'loading' | 'ready' | 'error' | 'unavailable' | 'short'; error?: string }
+export interface PatternState {
+  key: string; hits: PatternHit[]; at: number; status: 'idle' | 'loading' | 'ready' | 'error' | 'unavailable' | 'short'; error?: string;
+  /** zzz992 — W / M: the last analysed candle is the current, unfinished period; and the last daily bar inside it */
+  provisional?: boolean; periodEnd?: number | null;
+}
 export const EMPTY_PATTERNS: PatternState = { key: '', hits: [], at: 0, status: 'idle' };
 /** Hits only when they were computed for the symbol now on screen; anything else (the previous symbol) gives none. */
 export function hitsFor(state: PatternState | null | undefined, key: string): PatternHit[] {
@@ -78,9 +104,11 @@ export function dailyUrl(ticker: string, market: string, exchange: string | unde
   return `/api/v1/chart/${encodeURIComponent(ticker)}?market=${market}&interval=1d&range=${range}${market === 'IN' && exchange ? `&exchange=${exchange}` : ''}${basis === 'tr' ? '&basis=tr&adj=2' : ''}`;
 }
 /** Use the bars already on screen when the loaded response is daily and covers ≥ 5 years; otherwise fetch `url`. */
-export function patternDataPlan(shown: { interval?: string; range?: string } | null, ticker: string, market: string, exchange: string | undefined, basis: 'price' | 'tr'): { useShown: boolean; url: string } {
-  const useShown = !!shown && shown.interval === '1d' && LONG_ENOUGH.has(String(shown.range || ''));
-  return { useShown, url: dailyUrl(ticker, market, exchange, basis) };
+export function patternDataPlan(shown: { interval?: string; range?: string } | null, ticker: string, market: string, exchange: string | undefined, basis: 'price' | 'tr', tf: PatternTimeframe = 'D'): { useShown: boolean; url: string } {
+  // zzz992 — monthly analysis wants 10 years of daily bars (weekly / monthly are aggregated from the daily history)
+  const enough = tf === 'M' ? LONG_ENOUGH_M : LONG_ENOUGH;
+  const useShown = !!shown && shown.interval === '1d' && enough.has(String(shown.range || ''));
+  return { useShown, url: dailyUrl(ticker, market, exchange, basis, tf === 'M' ? PATTERN_MONTHLY_RANGE : PATTERN_DAILY_RANGE) };
 }
 
 // ── banner ──────────────────────────────────────────────────────────────────────
@@ -100,12 +128,13 @@ export const opposingActive = (hits: PatternHit[]) => {
   const act = hits.filter((h) => h.stage !== 'failed');
   return act.some((h) => h.bias === 'bullish') && act.some((h) => h.bias === 'bearish');
 };
-export function bannerOf(hits: PatternHit[], cur: string, status: PatternState['status'] = 'ready', error?: string): Banner {
-  if (status === 'loading' || status === 'idle') return { text: '📐 Looking for chart patterns on the daily bars…', tone: 'none' };
+export function bannerOf(hits: PatternHit[], cur: string, status: PatternState['status'] = 'ready', error?: string, tf: PatternTimeframe = 'D'): Banner {
+  const w = TF_WORD[tf];
+  if (status === 'loading' || status === 'idle') return { text: `📐 Looking for chart patterns on the ${w} bars…`, tone: 'none' };
   if (status === 'unavailable') return { text: '📐 No price data — patterns unavailable', tone: 'none' };
-  if (status === 'short') return { text: `📐 ${error || 'Too little history'} — patterns need at least 30 daily bars`, tone: 'none' };
+  if (status === 'short') return { text: `📐 ${error || 'Too little history'} — patterns need at least ${PATTERN_MIN_HISTORY[tf]} ${w} bars`, tone: 'none' };
   if (status === 'error') return { text: `📐 Chart patterns: ${error || 'the daily bars could not be loaded'}`, tone: 'none' };
-  if (!hits.length) return { text: '📐 No clear chart pattern', tone: 'none' };
+  if (!hits.length) return { text: tf === 'D' ? '📐 No clear chart pattern' : `📐 No clear ${w} chart pattern`, tone: 'none' };
   let text = `📐 ${patternHeadline(hits, (n) => money(n, cur, priceDecimals(n)))}`;
   if (opposingActive(hits)) text += ' · opposing structure present';
   if (hits[0].volumeOk === false) text += ' · volume not confirmed';
@@ -143,7 +172,7 @@ export function distWords(h: PatternHit): string {
   if (d == null) return '—';
   return Math.abs(d) < 0.5 ? 'at the level' : `${Math.abs(d).toFixed(1)}% ${d < 0 ? 'below' : 'above'}`;
 }
-export const lengthWords = (bars: number) => (bars >= 10 ? `${Math.max(1, Math.round(bars / 5))} wk` : `${bars} days`);
+export const lengthWords = (bars: number, tf: PatternTimeframe = 'D') => patternLengthWords(bars, tf);
 
 // ── overlay points ──────────────────────────────────────────────────────────────
 export interface PatternOverlayLine {
@@ -206,4 +235,20 @@ export function togglePicked(hits: PatternHit[], picked: ReadonlySet<PatternId> 
   const next = new Set<PatternId>(hitsToDraw(hits, picked).map((h) => h.id));
   if (next.has(id)) next.delete(id); else next.add(id);
   return next;
+}
+
+// ── "Fit pattern" (zoom the chart to a pattern's span) ──────────────────────────
+/**
+ * zzz992 — how to show [startT, endT] on the candles on screen: the bar spacing so the span plus 15% each side (at least
+ * 3 candles) fills `width`, and the bar index to put at the right edge. null when the span is not on screen.
+ */
+export function fitPlan(times: number[], startT: number, endT: number, width: number, minSpace = 1, maxSpace = 50): { space: number; rightIndex: number } | null {
+  if (!times.length || !(width > 0) || !Number.isFinite(startT) || !Number.isFinite(endT)) return null;
+  const idx = (t: number) => { const s = snapTime(times, t); const i = times.indexOf(s); return i < 0 ? 0 : i; };
+  const i0 = idx(Math.min(startT, endT)), i1 = idx(Math.max(startT, endT));
+  const span = i1 - i0 + 1;
+  const pad = Math.max(3, Math.round(span * 0.15));
+  const left = Math.max(0, i0 - pad), right = Math.min(times.length - 1, i1 + pad);
+  const space = Math.min(maxSpace, Math.max(minSpace, width / (right - left + 1)));
+  return { space, rightIndex: right };
 }

@@ -32,7 +32,9 @@ test('zzz989 pattern requirement waits until the market is scanned; list scope n
 
 test('zzz989 the page links watchlists and says what is paused', () => {
   const src = readFileSync('src/components/pine-screener/PineScreener.tsx', 'utf8');
-  assert.match(src, /availableQuery/);
+  // zzz994 (MC-07): strict results + a separate provisional preview instead of a silently relaxed query
+  assert.match(src, /runPineFull/);
+  assert.match(src, /Provisional/);
   assert.match(src, /Conviction Beats/);
   assert.match(src, /toggleStar/);
   const route = readFileSync('src/app/api/v1/pine-screener/route.ts', 'utf8');

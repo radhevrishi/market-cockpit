@@ -3,10 +3,17 @@
 // figure (TradingView does the same), so a missing number never sneaks a company in.
 // zzz948 — every one of the owner's own TradingView screens (42, read 7 Oct 2026) is built in, under its TradingView name, with the
 // fields, comparisons ("≥ another field", "within 0–10% above"), exchange and date filters those screens use.
+// zzz994 — + a 'pattern' filter kind (chart patterns on D / W / M, shared with the Pine Screener's query), and price / market-cap
+// formatting kept apart (prices 2 decimals — the chart's precision; caps $ T/B/M and ₹ crore with Indian grouping). Formatting is
+// display only: every filter compares the unrounded figure.
 import type { ScreenRow, ScreenMarket } from './types';
 import { TV_SECTORS, allSectorsExcept, type TvSector } from './tv-sectors';
+import { PATTERN_META, PATTERN_IDS, type PatternId, type PatternTag } from '../chart-patterns';
 
-type NonNum = 't' | 'n' | 'sec' | 'ind' | 'q' | 'approx' | 'tvSec' | 'exch' | 'nq' | 'cc' | 'pat' | 'patAt';
+// Non-numeric row fields (and the zzz994 provenance / per-timeframe pattern fields, read defensively where present).
+type NonNum = 't' | 'n' | 'sec' | 'ind' | 'q' | 'approx' | 'tvSec' | 'exch' | 'nq' | 'cc' | 'pat' | 'patAt' | 'ccBasis'
+  | 'patW' | 'patM' | 'patWAt' | 'patMAt' | 'patV' | 'scan' | 'scanW' | 'scanM' | 'scanAt' | 'scanSrc' | 'scanBasis' | 'scanEx'
+  | 'pxSrc' | 'pxAt' | 'pxConflict' | 'live';
 export type NumKey = Exclude<keyof ScreenRow, NonNum>;
 export type FieldUnit = '%' | 'x' | 'money' | 'num' | 'price' | 'shares' | 'usd' | 'date';
 export type FieldGroup = 'Price & volume' | 'Moving averages' | 'Momentum' | 'Growth' | 'Margins & returns' | 'Valuation' | 'Balance sheet' | 'Company';
@@ -139,11 +146,13 @@ export const fieldOf = (k: string): FieldDef | undefined => FIELDS.find((f) => f
  *   near   — a field lies between lo % and hi % above another (Price within 0–10% above EMA 10 → key px, other ema10, 0, 10);
  *   sector — TradingView sectors (an empty list = all);
  *   exch   — the exchanges (NASDAQ / NYSE / AMEX, NSE / BSE);
- *   date   — a date field this calendar month, or within the last `v` years. */
+ *   date   — a date field this calendar month, or within the last `v` years;
+ *   pattern — (zzz994) a chart pattern on the daily / weekly / monthly scan: bias, pattern types, stage, shape score, pivot window. */
 export type CmpOp = 'above' | 'below' | 'ge' | 'le';
 export type NumOp = 'gt' | 'ge' | 'lt' | 'le' | 'between';
 /** zzz974 — `off`: the rule is paused (kept in the screen, not applied). */
 export type Filter = (
+  | ({ kind: 'pattern' } & PatternRule)
   | { kind: 'num'; key: NumKey; op: NumOp; v: number; v2?: number }
   | { kind: 'cmp'; key: NumKey; op: CmpOp; other: NumKey }
   | { kind: 'near'; key: NumKey; other: NumKey; lo: number; hi: number }
@@ -158,6 +167,133 @@ const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinit
 const TV_SET = new Set<string>(TV_SECTORS);
 const DAY = 86_400_000;
 
+// ── zzz994: chart-pattern rules (Stock Screener filter kind; the Pine Screener's query uses the same matcher) ─────────────
+/** Analysis timeframe of a pattern scan: daily, weekly, monthly bars. */
+export type PatTf = 'D' | 'W' | 'M';
+export const PATTERN_TFS: ReadonlyArray<{ id: PatTf; label: string; long: string }> = [
+  { id: 'D', label: 'D', long: 'daily' }, { id: 'W', label: 'W', long: 'weekly' }, { id: 'M', label: 'M', long: 'monthly' },
+];
+export type PatStage = 'f' | 'b' | 'x';
+export const ALL_STAGES: readonly PatStage[] = ['f', 'b', 'x'];
+/** A stored pattern tag as rows carry it: the engine's compact tag + optional length / depth / timeframe / quality fields.
+ *  `vq` = volume confirmed (1 / 0; absent = unknown), `dq` = distance from the latest quote (beside `d`, distance from the scan close). */
+export type RowTag = PatternTag & { l?: number; dp?: number | null; tf?: PatTf; vq?: boolean | 0 | 1 | null; dq?: number | null };
+export interface PatternRule {
+  bias: 'U' | 'D' | 'both';
+  /** pattern types (empty = every type of the bias) */
+  ids: PatternId[];
+  /** analysis timeframes; `tfMode` any = a match on one of them, all = a match on every one */
+  tfs: PatTf[]; tfMode: 'any' | 'all';
+  /** stages (empty = none: the rule matches nothing — never "all") */
+  stages: PatStage[];
+  /** shape score floor 0–100 (not a probability): possible ≥ 35, likely ≥ 55, very likely ≥ 75 */
+  minScore: number;
+  /** distance to the pivot in the pattern's direction, % (− = not reached yet) */
+  dist: { on: boolean; lo: number; hi: number };
+}
+export const DEFAULT_PATTERN_RULE: PatternRule = { bias: 'U', ids: [], tfs: ['D'], tfMode: 'any', stages: ['f', 'b'], minScore: 55, dist: { on: true, lo: -15, hi: 5 } };
+/** Shape-score bands (a heuristic score of how closely the shape fits the definition — not a win probability). */
+export const SHAPE_BANDS: ReadonlyArray<{ min: number; label: string }> = [
+  { min: 35, label: 'Possible or better (≥ 35)' }, { min: 55, label: 'Likely or better (≥ 55)' }, { min: 75, label: 'Very likely (≥ 75)' },
+];
+export const shapeWord = (c: number) => (c >= 75 ? 'very likely' : c >= 55 ? 'likely' : 'possible');
+/** Distance in the pattern's direction (bullish: close vs pivot; bearish: the mirror). */
+export const tagDirDist = (t: Pick<PatternTag, 'b' | 'd'>): number | null => (t.d == null || !fin(t.d) ? null : t.b === 'U' ? t.d : -t.d);
+const asTagList = (v: unknown): RowTag[] | null => (Array.isArray(v) ? (v as RowTag[]).filter((t) => t && typeof t === 'object' && !!PATTERN_META[t.id as PatternId]) : null);
+/** The row's tags for one timeframe, or null when that timeframe cannot be read for this company (not scanned yet, too little
+ *  history, an error or an outdated scan version — unknown ≠ no pattern). D: `pat` + `scan`; W / M: `patW` / `patM` + `scanW` /
+ *  `scanM`. A row without any scan status but with `patAt` (or tags) is an older snapshot row: read as scanned. */
+export function patTagsOf(row: unknown, tf: PatTf): RowTag[] | null {
+  const r = (row && typeof row === 'object' ? row : {}) as Record<string, any>;
+  const list = asTagList(r[tf === 'D' ? 'pat' : tf === 'W' ? 'patW' : 'patM']);
+  const st: string | undefined = r[tf === 'D' ? 'scan' : tf === 'W' ? 'scanW' : 'scanM']?.st;
+  if (st) {
+    if (st !== 'ready' && st !== 'no-pattern') return null;
+    return (list || []).filter((t) => !t.tf || t.tf === tf).map((t) => (t.tf ? t : { ...t, tf }));
+  }
+  if (tf === 'D') {
+    if (list) return list.filter((t) => !t.tf || t.tf === 'D');
+    return r.patAt ? [] : null;
+  }
+  if (list) return list.map((t) => (t.tf ? t : { ...t, tf }));
+  const inBase = asTagList(r.pat)?.filter((t) => t.tf === tf) || [];
+  return inBase.length ? inBase : null;
+}
+/** Why a timeframe cannot be read for a row (for "missing" explanations). */
+export function patMissingWhy(row: unknown, tf: PatTf): string {
+  const r = (row && typeof row === 'object' ? row : {}) as Record<string, any>;
+  const st: string | undefined = r[tf === 'D' ? 'scan' : tf === 'W' ? 'scanW' : 'scanM']?.st;
+  const name = PATTERN_TFS.find((x) => x.id === tf)?.long || tf;
+  if (st === 'insufficient-history') return `${name}: too little price history to read patterns`;
+  if (st === 'invalid-data') return `${name}: price data rejected by validation`;
+  if (st === 'error') return `${name}: the pattern scan failed`;
+  if (st === 'stale-version') return `${name}: read by an older scan version — waiting for a re-read`;
+  return `${name}: not scanned yet`;
+}
+/** Does one tag pass the pattern part (bias, type, stage, score, pivot window)? */
+export function tagPasses(t: RowTag, rule: Pick<PatternRule, 'bias' | 'ids' | 'stages' | 'minScore' | 'dist'>, idSet?: ReadonlySet<string> | null): boolean {
+  if (!t || !PATTERN_META[t.id]) return false;
+  if (rule.bias !== 'both' && t.b !== rule.bias) return false;
+  const ids = idSet !== undefined ? idSet : rule.ids.length ? new Set<string>(rule.ids) : null;
+  if (ids && !ids.has(t.id)) return false;
+  if (!rule.stages.includes(t.s)) return false;   // empty stages = nothing (zzz994 MC-03)
+  if (!(t.c >= rule.minScore)) return false;
+  if (rule.dist.on) {
+    const d = tagDirDist(t);
+    if (d == null || d < Math.min(rule.dist.lo, rule.dist.hi) || d > Math.max(rule.dist.lo, rule.dist.hi)) return false;
+  }
+  return true;
+}
+export interface PatternEval {
+  /** pass = matched; fail = scanned and not matched; missing = cannot be decided (a selected timeframe not scanned yet) */
+  status: 'pass' | 'fail' | 'missing';
+  /** matching tags, each with its timeframe */
+  tags: RowTag[];
+  missingTfs: PatTf[];
+  matchedTfs: PatTf[];
+}
+/** Evaluate a pattern rule on one row: ANY selected timeframe or ALL selected timeframes; an unscanned timeframe is "missing". */
+export function evalPattern(row: unknown, rule: Pick<PatternRule, 'bias' | 'ids' | 'stages' | 'minScore' | 'dist' | 'tfs' | 'tfMode'>): PatternEval {
+  const tfs = rule.tfs?.length ? rule.tfs : (['D'] as PatTf[]);
+  const idSet = rule.ids.length ? new Set<string>(rule.ids) : null;
+  const tags: RowTag[] = [], missingTfs: PatTf[] = [], matchedTfs: PatTf[] = [];
+  let failed = 0;
+  for (const tf of tfs) {
+    const list = patTagsOf(row, tf);
+    if (!list) { missingTfs.push(tf); continue; }
+    const hit = list.filter((t) => tagPasses(t, rule, idSet)).map((t) => (t.tf ? t : { ...t, tf }));
+    if (hit.length) { matchedTfs.push(tf); tags.push(...hit); } else failed++;
+  }
+  let status: PatternEval['status'];
+  if (rule.tfMode === 'all') status = failed ? 'fail' : missingTfs.length ? 'missing' : 'pass';
+  else status = matchedTfs.length ? 'pass' : missingTfs.length ? 'missing' : 'fail';
+  return { status, tags: status === 'pass' || rule.tfMode !== 'all' ? tags : [], missingTfs, matchedTfs };
+}
+const STAGE_WORD: Record<PatStage, string> = { f: 'forming', b: 'breakout', x: 'failed' };
+export function patternRuleLabel(r: Pick<PatternRule, 'bias' | 'ids' | 'stages' | 'minScore' | 'dist' | 'tfs' | 'tfMode'>): string {
+  const bias = r.bias === 'U' ? '▲ bullish' : r.bias === 'D' ? '▼ bearish' : 'bullish or bearish';
+  const types = !r.ids.length ? 'any type' : r.ids.length <= 2 ? r.ids.map((id) => PATTERN_META[id]?.label || id).join(' or ') : `${r.ids.length} types`;
+  const tfs = (r.tfs?.length ? r.tfs : ['D']).join(r.tfMode === 'all' ? ' + ' : '/');
+  const st = !r.stages.length ? 'no stage selected' : r.stages.length === 3 ? 'all stages' : r.stages.map((s) => STAGE_WORD[s]).join('/');
+  const dist = r.dist.on ? ` · ${r.dist.lo}…${r.dist.hi}% to pivot` : '';
+  return `Pattern ${bias}: ${types} · ${tfs} · ${st} · score ≥ ${r.minScore}${dist}`;
+}
+const cleanTfList = (v: unknown): PatTf[] => (Array.isArray(v) ? Array.from(new Set(v.filter((x): x is PatTf => x === 'D' || x === 'W' || x === 'M'))) : []);
+const cleanStageList = (v: unknown): PatStage[] => (Array.isArray(v) ? Array.from(new Set(v.filter((x): x is PatStage => x === 'f' || x === 'b' || x === 'x'))) : []);
+/** Pure clean-up of a stored pattern rule (unknown parts take the default; an empty stage list stays empty = matches nothing). */
+export function cleanPatternRule(x: any): PatternRule {
+  const d = DEFAULT_PATTERN_RULE;
+  const tfs = cleanTfList(x?.tfs);
+  return {
+    bias: x?.bias === 'D' || x?.bias === 'both' ? x.bias : x?.bias === 'U' ? 'U' : d.bias,
+    ids: Array.from(new Set<PatternId>((Array.isArray(x?.ids) ? x.ids : []).filter((i: unknown): i is PatternId => typeof i === 'string' && i in PATTERN_META))).slice(0, PATTERN_IDS.length),
+    tfs: tfs.length ? tfs : ['D'], tfMode: x?.tfMode === 'all' ? 'all' : 'any',
+    stages: Array.isArray(x?.stages) ? cleanStageList(x.stages) : d.stages.slice(),
+    minScore: fin(x?.minScore) ? Math.min(100, Math.max(35, x.minScore)) : d.minScore,
+    dist: x?.dist && typeof x.dist === 'object' && fin(x.dist.lo) && fin(x.dist.hi) ? { on: x.dist.on !== false, lo: x.dist.lo, hi: x.dist.hi } : { ...d.dist },
+  };
+}
+
 /** exactOnly (zzz957): a figure this company has only as an approximation (≈ on the row, e.g. EV / revenue with debt taken as 0
  *  because no debt line is filed) fails the filter instead of passing on an assumption. */
 export function passes(r: ScreenRow, f: Filter, now: Date = new Date(), exactOnly = false): boolean {
@@ -170,6 +306,7 @@ export function passes(r: ScreenRow, f: Filter, now: Date = new Date(), exactOnl
     return !!v && f.sectors.includes(v);
   }
   if (f.kind === 'exch') return !f.ex.length || (Array.isArray(r.exch) && r.exch.some((e) => f.ex.includes(e)));
+  if (f.kind === 'pattern') return evalPattern(r, f).status === 'pass';   // strict: an unscanned timeframe never passes
   if (exactOnly && Array.isArray(r.approx) && filterKeys(f).some((k) => r.approx!.includes(k))) return false;
   const a = r[f.key] as number | null | undefined;
   if (!fin(a)) return false;
@@ -206,24 +343,44 @@ export function filterKeys(f: Filter): NumKey[] {
 }
 
 // ── labels ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/** zzz994 (MC-08) — a share price at the chart's precision: 2 decimals below 10,000 (4 below 1 — US sub-dollar ticks), 1 above. */
+export function fmtPrice(v: number | null | undefined, market: ScreenMarket): string {
+  if (!fin(v)) return '—';
+  const a = Math.abs(v);
+  const dp = a < 1 ? 4 : a < 10_000 ? 2 : 1;
+  return `${v < 0 ? '−' : ''}${market === 'US' ? '$' : '₹'}${a.toLocaleString(market === 'US' ? 'en-US' : 'en-IN', { minimumFractionDigits: dp, maximumFractionDigits: dp })}`;
+}
+/** zzz994 (MC-08) — money in the snapshot's unit: USA $ million shown as $ T / B / M, India ₹ crore with Indian grouping. */
+export function fmtMoney(v: number | null | undefined, market: ScreenMarket): string {
+  if (!fin(v)) return '—';
+  const a = Math.abs(v), s = v < 0 ? '−' : '';
+  if (market === 'US') {
+    const f = (x: number, dp: number) => x.toLocaleString('en-US', { maximumFractionDigits: dp });
+    if (a >= 1e6) return `${s}$${f(a / 1e6, 2)}T`;
+    if (a >= 1000) return `${s}$${f(a / 1000, a >= 100_000 ? 0 : 1)}B`;
+    return `${s}$${f(a, a >= 10 ? 0 : 2)}M`;
+  }
+  return `${s}₹${a.toLocaleString('en-IN', { maximumFractionDigits: a >= 100 ? 0 : 2 })} Cr`;
+}
+/** The unrounded figure for a tooltip (what filters compare). */
+export function fmtExact(v: number | null | undefined): string {
+  return fin(v) ? String(v) : 'not known';
+}
 export function fmtValue(v: number | null | undefined, unit: FieldUnit, market: ScreenMarket): string {
   if (!fin(v)) return '—';
-  const loc = market === 'US' ? 'en-US' : 'en-IN';
   if (unit === '%') return `${Math.round(v * 10) / 10}%`;
   if (unit === 'x') return `${Math.round(v * 100) / 100}`;
   if (unit === 'date') return new Date(v * DAY).toISOString().slice(0, 10);
-  if (unit === 'money') {
-    if (market === 'US') { const a = Math.abs(v); const s = v < 0 ? '−' : ''; return a >= 1000 ? `${s}$${(a / 1000).toFixed(a >= 10_000 ? 0 : 1)}B` : `${s}$${Math.round(a)}M`; }
-    return `₹${Math.round(v).toLocaleString(loc)} Cr`;
-  }
+  if (unit === 'money') return fmtMoney(v, market);
   if (unit === 'usd') { const a = Math.abs(v); const s = v < 0 ? '−' : ''; return a >= 1e6 ? `${s}$${(a / 1e6).toFixed(1)}M` : a >= 1e3 ? `${s}$${(a / 1e3).toFixed(0)}K` : `${s}$${Math.round(a)}`; }
   if (unit === 'shares' || unit === 'num') return v >= 1e6 ? `${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `${(v / 1e3).toFixed(0)}K` : `${Math.round(v * 10) / 10}`;
-  return `${market === 'US' ? '$' : '₹'}${v.toLocaleString(loc, { maximumFractionDigits: v >= 100 ? 0 : 2 })}`;
+  return fmtPrice(v, market);
 }
 const OPS: Record<string, string> = { gt: '>', ge: '≥', lt: '<', le: '≤', above: '>', below: '<' };
 export function filterLabel(f: Filter, market: ScreenMarket): string {
   if (f.kind === 'sector') return `Sector (${f.sectors.length || 'all'})`;
   if (f.kind === 'exch') return `Exchange ${f.ex.join(' / ') || 'any'}`;
+  if (f.kind === 'pattern') return patternRuleLabel(f);
   const d = fieldOf(f.key); const name = d?.label || f.key;
   if (f.kind === 'date') return f.op === 'thisMonth' ? `${name}: this month` : `${name}: last ${f.v ?? 5} years`;
   if (f.kind === 'near') return `${name} ${f.lo}–${f.hi}% above ${fieldOf(f.other)?.label || f.other}`;
@@ -414,6 +571,7 @@ function cleanFilterShape(f: any): Filter | null {
   if (!f || typeof f !== 'object') return null;
   if (f.kind === 'sector') return Array.isArray(f.sectors) ? { kind: 'sector', sectors: f.sectors.filter((s: unknown) => typeof s === 'string').slice(0, 40) } : null;
   if (f.kind === 'exch') return Array.isArray(f.ex) ? { kind: 'exch', ex: f.ex.filter((s: unknown) => typeof s === 'string').slice(0, 10) } : null;
+  if (f.kind === 'pattern') return { kind: 'pattern', ...cleanPatternRule(f) };
   if (!fieldOf(f.key)) return null;
   if (f.kind === 'date') return f.op === 'thisMonth' || f.op === 'pastYears' ? { kind: 'date', key: f.key, op: f.op, ...(fin(f.v) ? { v: f.v } : {}) } : null;
   if (f.kind === 'cmp') return fieldOf(f.other) && ['above', 'below', 'ge', 'le'].includes(f.op) ? { kind: 'cmp', key: f.key, op: f.op, other: f.other } : null;

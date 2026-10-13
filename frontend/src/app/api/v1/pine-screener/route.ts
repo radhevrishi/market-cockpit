@@ -26,7 +26,7 @@ export async function GET(req: Request) {
   const found = await dbQuery<{ built_at: string; rows: unknown }>(`SELECT built_at, rows FROM screener_snapshot WHERE market = $1`, [market]).catch(() => []);
   if (!found.length) {
     kickBuild(market);
-    return NextResponse.json({ ok: true, market, builtAt: null, rows: [], total: 0, scanned: 0, withPattern: 0, patAt: null, building: isBuilding(market), notes: ['This market has not been built yet — the first build has started; the page fills itself in when it finishes (about 10–15 minutes).'] });
+    return NextResponse.json({ ok: true, market, builtAt: null, rows: [], total: 0, scanned: 0, withPattern: 0, patAt: null, insufficient: 0, invalid: 0, errors: 0, stale: 0, pxConflicts: 0, scannedW: 0, scannedM: 0, withPatternW: 0, withPatternM: 0, building: isBuilding(market), notes: ['This market has not been built yet — the first build has started; the page fills itself in when it finishes (about 10–15 minutes).'] });
   }
   let rows: unknown = found[0].rows;
   if (typeof rows === 'string') { try { rows = JSON.parse(rows); } catch { rows = []; } }
@@ -35,12 +35,18 @@ export async function GET(req: Request) {
   // zzz989 — a snapshot from before the newest figures (patterns / TradingView-script fields) starts a build now, instead of
   // waiting for the next scheduled one; at most once every 30 minutes (kickBuild), and it joins a running build.
   const builtMs = Date.parse(String(found[0].built_at));
-  const behind = !lean.scanned || lean.scanned < lean.total * 0.8 || !all.some((r) => r.tt != null) || !(builtMs > Date.now() - 30 * 3600_000);
+  // zzz993 (MC-02) — coverage counts genuine readings plus companies whose history is genuinely too short (a re-read cannot help them)
+  const covered = lean.scanned + lean.insufficient;
+  const behind = !lean.scanned || covered < lean.total * 0.8 || !all.some((r) => r.tt != null) || !(builtMs > Date.now() - 30 * 3600_000);
   if (behind) kickBuild(market);
   const building = isBuilding(market);
-  const notes = lean.scanned ? [] : [building
+  const notes: string[] = lean.scanned ? [] : [building
     ? 'Chart patterns are being read now by a build that just started — the page fills them in when it finishes (about 10–15 minutes). Companies are listed meanwhile.'
     : 'Chart patterns are read during the screener build; the next build of this market adds them. Companies are listed meanwhile.'];
+  if (lean.stale) notes.push(`${lean.stale} companies were read by an older pattern-scan version — their patterns are withheld (not shown as current) until their prices are re-read${building ? ' (a build is running)' : ''}.`);
+  if (lean.insufficient) notes.push(`${lean.insufficient} companies have too little price history for a pattern scan (fewer than 30 usable sessions) — not counted as scanned.`);
+  if (lean.invalid || lean.errors) notes.push(`${lean.invalid + lean.errors} companies could not be scanned (${lean.invalid} price data rejected, ${lean.errors} scan failures) — their price figures are kept.`);
+  if (lean.pxConflicts) notes.push(`${lean.pxConflicts} companies show a latest quote more than 2% from the close the patterns were read from (different price sources) — pattern distances use the scan close; the quote distance is shown apart.`);
   const body = JSON.stringify({ ok: true, market, builtAt: found[0].built_at, ...lean, building, notes });
   mem.set(key, { at: Date.now(), body });
   return new NextResponse(body, { headers });

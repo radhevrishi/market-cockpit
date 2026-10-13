@@ -7,10 +7,10 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link';
 import type { ScreenRow, ScreenMarket } from '@/lib/screener/types';
 import {
-  FIELDS, BUILT_IN_SCREENS, SCREENS_KEY, cleanScreens, fieldOf, filterCounts, filterKeys, filterLabel, fmtValue, runScreen,
-  type CmpOp, type Filter, type NumKey, type NumOp, type Screen, type FieldGroup,
+  FIELDS, BUILT_IN_SCREENS, SCREENS_KEY, cleanScreens, fieldOf, filterCounts, filterKeys, filterLabel, fmtValue, fmtPrice, runScreen,
+  evalPattern, tagDirDist, shapeWord, DEFAULT_PATTERN_RULE, type Filter, type NumKey, type Screen, type FieldGroup, type RowTag,
 } from '@/lib/screener/filters';
-import { TV_SECTORS, tvSectorOf, tvSectorMapping } from '@/lib/screener/tv-sectors';
+import { tvSectorOf, tvSectorMapping } from '@/lib/screener/tv-sectors';
 import { writeReviewQueue, REVIEW_STATES, readReviewStates, writeReviewState, reviewKey, readViewState, writeViewState, findInResults, type ReviewState } from '@/lib/screener/workflow';
 import { pollWhenVisible } from '@/lib/client-fetch';
 import { useWorkspaceLight, workspaceThemeClass } from '@/lib/workspace-theme';
@@ -18,6 +18,9 @@ import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
 import { useWatchlistStore } from '@/components/charts/WatchlistPanel';
 import { activeList, updateList, addItem, listCount, type WlItem } from '@/lib/chart-watchlist';
 import { toCsv } from '@/lib/csv';
+import { FilterEditor, readDensity, writeDensity, cellPad, pinnedCell, type Density } from './FilterEditor';
+import { scopeItems, scopeCounts, scopeLabel, countsLine, emptyState, confirmAddText, effectiveScope, type ActionScope } from '@/lib/screener/action-scope';
+import { PATTERN_META } from '@/lib/chart-patterns';
 import {
   explainRow, naReason, closeConfirmed, stableOrder, exact, makeShortlist, cleanShortlists, diffShortlist, formulaImpact, changesSince, membership,
   FORMULA_VERSION, SHORTLISTS_KEY, SCREEN_RUNS_KEY, type Shortlist, type ScreenRun,
@@ -45,6 +48,9 @@ function readDrafts(): Record<string, Draft> { try { return typeof window === 'u
 function writeDraft(id: string, d: Omit<Draft, 'at'> | null): void {
   try { const all = readDrafts(); if (d) all[id] = { ...d, at: new Date().toISOString() }; else delete all[id]; localStorage.setItem(DRAFTS_KEY, JSON.stringify(all)); } catch { /* drafts are a convenience */ }
 }
+const rowKey = (r: ScreenRow) => r.t;
+/** zzz994 (MC-01 display) — the latest quote differs from the scan close the averages / patterns were read from (beyond rounding). */
+const pxDiffers = (r: ScreenRow) => typeof r.scanPx === 'number' && typeof r.px === 'number' && r.scanPx > 0 && Math.abs(r.px / r.scanPx - 1) * 100 >= 0.15;
 const GROUPS: FieldGroup[] = ['Price & volume', 'Moving averages', 'Momentum', 'Growth', 'Margins & returns', 'Valuation', 'Balance sheet', 'Company'];
 function firstScreen(): Screen {
   let id: string | null = null;
@@ -88,6 +94,11 @@ export default function StockScreener() {
   const [shortlists, setShortlists] = useState<Shortlist[]>(() => { try { return cleanShortlists(JSON.parse(localStorage.getItem(SHORTLISTS_KEY) || '[]')); } catch { return []; } });
   const [openSl, setOpenSl] = useState<string | null>(null);
   const [pendingSwitch, setPendingSwitch] = useState<string | null>(null);
+  // zzz994 (MC-04) — which companies Copy / CSV / Add to watchlist / Save shortlist act on: the searched result (default) or
+  // explicitly every filter match; and the table density (shared with the Pine Screener)
+  const [actScope, setActScope] = useState<ActionScope>('results');
+  const [density, setDensityRaw] = useState<Density>(() => readDensity());
+  const setDensity = (d: Density) => { setDensityRaw(d); writeDensity(d); };
 
   // every screen the owner can pick: his saved ones win over a built-in with the same id
   const screens = useMemo(() => {
@@ -190,6 +201,23 @@ export default function StockScreener() {
   if (sorted.length && (!frozen || frozen.ctx !== ctx)) setFrozen({ ctx, keys: sorted.map((r) => r.t) });   // a new view: its own order
   const narrowed = useMemo(() => findInResults(ordered.rows, findText).filter((r) => reviewFilter === 'all' || (reviewStates[reviewKey(market, r.t)] || 'unreviewed') === reviewFilter), [ordered.rows, findText, reviewFilter, reviewStates, market]);
   const shown = showAll ? narrowed : narrowed.slice(0, 200);
+  // zzz994 (MC-04 / MC-06) — action scope + the counts kept apart (shown / search matches / filter matches)
+  const searching = !!findText.trim() || reviewFilter !== 'all';
+  const scopeSets = useMemo(() => ({ results: narrowed, all: ordered.rows }), [narrowed, ordered.rows]);
+  const sCounts = scopeCounts(scopeSets, shown.length, rowKey);
+  const scopeNow = effectiveScope(actScope === 'all' && !searching ? 'results' : actScope, sCounts);
+  const actRows = scopeItems(scopeSets, scopeNow, rowKey);
+  const actLabel = scopeLabel(scopeNow, sCounts, searching);
+  const empty = snap ? emptyState({ dataRows: rows.length, filterMatches: sorted.length, searchMatches: narrowed.length, searching }) : null;
+  const patternFilters = useMemo(() => filters.filter((f): f is Extract<Filter, { kind: 'pattern' }> => f.kind === 'pattern' && !f.off), [filters]);
+  // zzz994 (MC-01 display) — rows whose latest quote differs from the scan close the moving averages / patterns were read from
+  const patTagsFor = (r: ScreenRow): RowTag[] => {
+    const seen = new Map<string, RowTag>();
+    for (const f of patternFilters) for (const t of evalPattern(r, f).tags) { const k = `${t.tf || 'D'}:${t.id}`; const o = seen.get(k); if (!o || t.c > o.c) seen.set(k, t); }
+    return Array.from(seen.values()).sort((a, b) => b.c - a.c);
+  };
+  const pxVsMa = filters.some((f) => !f.off && (f.kind === 'cmp' || f.kind === 'near') && (f.key === 'px' || f.other === 'px'));
+  const pxDiffCount = useMemo(() => (pxVsMa ? sorted.filter(pxDiffers).length : 0), [sorted, pxVsMa]);
   useEffect(() => { writeViewState(screenId, { find: findText }); }, [screenId, findText]);
   // the place on the page: remembered on leaving, restored once when the rows are back
   const scrollRestored = useRef(false);
@@ -213,17 +241,17 @@ export default function StockScreener() {
     return `/charts?symbol=${encodeURIComponent(t)}&exchange=${encodeURIComponent(ex)}&t=${encodeURIComponent(t)}&m=${market}&tf=D&review=screener`;
   };
   const addMatches = () => {
-    if (!watchlists || !sorted.length) return;
+    if (!watchlists || !actRows.length) return;
     if (targetList && !watchlists.lists.some((l) => l.id === targetList)) { setMsg('Could not add: the selected watchlist no longer exists. Choose a destination.'); return; }
     const target = watchlists.lists.find((l) => l.id === targetList) || activeList(watchlists);
     let next = target;
-    for (const r of sorted) {
+    for (const r of actRows) {
       const item: WlItem = { m: market, t: r.t, ...(r.exch?.[0] ? { x: r.exch[0] } : {}) };
       next = addItem(next, null, item);
     }
     const added = listCount(next) - listCount(target);
     updateWatchlists((s) => updateList(s, target.id, () => next));
-    setMsg(`${added} symbols added to ${target.name}${sorted.length > added ? `; ${sorted.length - added} already present or beyond the list limit` : ''}.`);
+    setMsg(`${added} symbols added to ${target.name}${actRows.length > added ? `; ${actRows.length - added} already present or beyond the list limit` : ''}.`);
     setAddingMatches(false);
   };
 
@@ -250,10 +278,10 @@ export default function StockScreener() {
   // ── zzz969 — shortlists: a saved result that can be reopened exactly, and what changed since ────────────────────────
   const writeShortlists = (list: Shortlist[]) => { try { localStorage.setItem(SHORTLISTS_KEY, JSON.stringify(list)); setShortlists(list); return true; } catch { setMsg('Not saved: storage is full or blocked.'); return false; } };
   const saveShortlist = () => {
-    if (!sorted.length) return;
-    const nm = (window.prompt('Name for this shortlist', `${name} — ${new Date().toLocaleDateString()}`) || '').trim();
+    if (!actRows.length) return;
+    const nm = (window.prompt(`Name for this shortlist — ${actLabel}`, `${name} — ${new Date().toLocaleDateString()}${actRows.length !== sorted.length ? ` (${actRows.length} of ${sorted.length})` : ''}`) || '').trim();
     if (!nm) return;
-    const sl = makeShortlist({ name: nm.slice(0, 80), market, screenId, screenName: name, filters, exactOnly, closeOnly, snapshotBuiltAt: snap?.builtAt || null, sort }, sorted, cols as string[]);
+    const sl = makeShortlist({ name: nm.slice(0, 80), market, screenId, screenName: name, filters, exactOnly, closeOnly, snapshotBuiltAt: snap?.builtAt || null, sort }, actRows, cols as string[]);
     if (writeShortlists([...shortlists, sl].slice(-60))) { setMsg(`Shortlist "${sl.name}" saved (${sl.total} companies${(sl.total ?? 0) > sl.rows.length ? `; figures kept for the first ${sl.rows.length}` : ''})`); setTimeout(() => setMsg(null), 3000); }
   };
   const openShortlist = openSl ? shortlists.find((x) => x.id === openSl) || null : null;
@@ -302,8 +330,8 @@ export default function StockScreener() {
     loadScreen(isBuiltIn ? screenId : BUILT_IN_SCREENS[0].id, [...BUILT_IN_SCREENS, ...list]);
   };
   const copyTickers = () => {
-    const txt = sorted.map((r) => (market === 'IN' ? `NSE:${r.t}` : r.t)).join(',');
-    navigator.clipboard?.writeText(txt).then(() => { setMsg(`Copied ${sorted.length} tickers`); setTimeout(() => setMsg(null), 2500); }).catch(() => {});
+    const txt = actRows.map((r) => (market === 'IN' ? `NSE:${r.t}` : r.t)).join(',');
+    navigator.clipboard?.writeText(txt).then(() => { setMsg(`Copied ${actRows.length} tickers — ${actLabel}`); setTimeout(() => setMsg(null), 2500); }).catch(() => setMsg('Could not copy — the browser refused clipboard access'));
   };
   const downloadCsv = () => {
     // zzz967 (SC-01) — headers go through the same encoder as cells ("Revenue growth, quarterly YoY" used to split into two
@@ -313,11 +341,18 @@ export default function StockScreener() {
       return u === '%' ? '%' : u === 'x' ? '×' : u === 'money' ? (market === 'US' ? '$ million' : '₹ crore') : u === 'price' ? (market === 'US' ? 'USD' : 'INR') : u === 'usd' ? 'USD' : u === 'shares' ? 'shares' : u === 'date' ? 'date' : '';
     };
     // zzz974 — also the quarter the figures describe, the price basis (live / last close) and the export format version
-    const head = ['Ticker', 'Market', 'Company', 'Sector', 'Sector basis', ...cols.map((k) => { const l = fieldOf(k)?.label || k; const u = unitOf(k); return u ? `${l} (${u})` : l; }), 'Quarter', 'Approximate (≈) fields', 'Price basis', 'Snapshot built (UTC)', 'Formula version', 'Export format'];
+    // zzz994 — values unrounded; the scan close (what moving averages / patterns were read from) beside the latest quote; any
+    // pattern rule's matches with timeframe and shape score; the export scope on every row
+    const head = ['Ticker', 'Market', 'Company', 'Sector', 'Sector basis', ...cols.map((k) => { const l = fieldOf(k)?.label || k; const u = unitOf(k); return u ? `${l} (${u})` : l; }),
+      ...(patternFilters.length ? ['Matching patterns (timeframe · shape score 0–100)'] : []),
+      `Scan close (${market === 'US' ? 'USD' : 'INR'})`, 'Scan close date', 'Quote vs scan close (%)', 'Price sources disagree',
+      'Quarter', 'Approximate (≈) fields', 'Price basis', 'Snapshot built (UTC)', 'Formula version', 'Export scope', 'Export format'];
     const built = snap?.builtAt || '';
-    const body = sorted.map((r) => [r.t, market === 'IN' ? 'NSE' : 'US', r.n, r.tvSec || r.sec, tvSectorMapping(market, r.sec, r.ind, r.t).basis, ...cols.map((k) => r[k]), r.q || '',
+    const body = actRows.map((r) => [r.t, market === 'IN' ? 'NSE' : 'US', r.n, r.tvSec || r.sec, tvSectorMapping(market, r.sec, r.ind, r.t).basis, ...cols.map((k) => r[k]),
+      ...(patternFilters.length ? [patTagsFor(r).map((t) => `${PATTERN_META[t.id]?.label || t.id} [${t.tf || 'D'}] ${t.c}`).join('; ')] : []),
+      r.scanPx ?? '', r.scanAt || '', r.pxGap ?? '', r.pxConflict ? 'yes' : '', r.q || '',
       (r.approx || []).filter((k: string) => cols.includes(k as any)).map((k: string) => fieldOf(k as any)?.label || k).join('; '),
-      closeOnly && r.cc ? (r.ccBasis === 'unavailable' ? 'last completed session (valuations dropped: price gap too large)' : 'last completed session') : r.cc ? 'live (read during trading)' : 'last close', built, FORMULA_VERSION, 'mc-screener-csv/2']);
+      closeOnly && r.cc ? (r.ccBasis === 'unavailable' ? 'last completed session (valuations dropped: price gap too large)' : 'last completed session') : r.cc ? 'live (read during trading)' : 'last close', built, FORMULA_VERSION, actLabel, 'mc-screener-csv/3']);
     const blob = new Blob(['\uFEFF' + toCsv([head, ...body])], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${name.replace(/[^\w-]+/g, '_')}.csv`; a.click(); URL.revokeObjectURL(a.href);
   };
@@ -328,6 +363,7 @@ export default function StockScreener() {
     if (key === 'exch') return add({ kind: 'exch', ex: market === 'US' ? ['NASDAQ', 'NYSE'] : ['NSE'] });
     if (key === 'cmp') return add({ kind: 'cmp', key: 'sma50', op: 'ge', other: 'sma200' });
     if (key === 'near') return add({ kind: 'near', key: 'px', other: 'ema10', lo: 0, hi: 10 });
+    if (key === 'pattern') return add({ kind: 'pattern', ...DEFAULT_PATTERN_RULE, tfs: ['D'], stages: ['f', 'b'] });
     const d = fieldOf(key); if (!d) return;
     if (d.unit === 'date') return add({ kind: 'date', key: d.key, op: d.key === 'earnD' ? 'thisMonth' : 'pastYears', v: 5 });
     add({ kind: 'num', key: d.key, op: 'gt', v: 0 });
@@ -423,6 +459,7 @@ export default function StockScreener() {
             <option value="exch">Exchange</option>
             <option value="cmp">One figure against another (e.g. SMA 50 ≥ SMA 200)</option>
             <option value="near">Within a % range above another (e.g. price 0–10% above EMA 10)</option>
+            <option value="pattern">Chart pattern (bullish / bearish, daily / weekly / monthly, stage, shape score)</option>
           </optgroup>
           {GROUPS.map((g) => (
             <optgroup key={g} label={g}>
@@ -452,7 +489,7 @@ export default function StockScreener() {
           <input type="checkbox" checked={closeOnly} onChange={toggleClose} aria-label="Completed sessions only" /> Completed sessions only
         </label>
         {ordered.moved ? <button type="button" style={btn(true)} onClick={() => setResortTick((v) => v + 1)} title="New data arrived; rows were kept in place so you do not click the wrong one">Re-sort now</button> : null}
-        <button type="button" style={btn()} onClick={saveShortlist} disabled={!sorted.length} title="Keep this result: the companies, their figures, the filters and the snapshot time — reopen it later to see what changed">Save shortlist</button>
+        <button type="button" style={btn()} onClick={saveShortlist} disabled={!actRows.length} title={`Keep this result (${actLabel}): the companies, their figures, the filters and the snapshot time — reopen it later to see what changed`}>Save shortlist</button>
         {shortlists.length ? (
           <select value={openSl || ''} onChange={(e) => setOpenSl(e.target.value || null)} style={btn()} aria-label="Saved shortlists">
             <option value="">Shortlists ({shortlists.length})</option>
@@ -460,13 +497,27 @@ export default function StockScreener() {
           </select>
         ) : null}
         <button type="button" style={btn()} disabled={loading} onClick={() => setRefresh((v) => v + 1)}>{loading ? 'Refreshing…' : err ? 'Retry' : 'Refresh'}</button>
-        <button type="button" style={btn()} onClick={copyTickers} disabled={!sorted.length}>Copy tickers</button>
-        <button type="button" style={btn()} onClick={downloadCsv} disabled={!sorted.length}>Download CSV</button>
-        <button type="button" style={btn()} onClick={() => setAddingMatches((v) => !v)} disabled={!sorted.length || !watchlists}>Add matches to watchlist</button>
+        <button type="button" style={btn()} onClick={copyTickers} disabled={!actRows.length} title={`Copies ${actLabel}`}>Copy tickers</button>
+        <button type="button" style={btn()} onClick={downloadCsv} disabled={!actRows.length} title={`Exports ${actLabel}`}>Download CSV</button>
+        <button type="button" style={btn()} onClick={() => setAddingMatches((v) => !v)} disabled={!actRows.length || !watchlists}>Add matches to watchlist</button>
       </div>
-      {addingMatches && watchlists && <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, padding: 10, border: `1px solid ${C.border}`, borderRadius: 8 }}>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12.5, color: C.dim }}>
+        {snap ? <span data-testid="result-counts">{countsLine(sCounts, searching)}</span> : <span aria-busy="true">Loading counts…</span>}
+        <label style={{ display: 'inline-flex', gap: 5, alignItems: 'center' }} title="Which companies Copy tickers, Download CSV, Save shortlist and Add matches act on">Actions apply to
+          <select value={scopeNow} onChange={(e) => setActScope(e.target.value as ActionScope)} style={{ ...btn(), fontSize: 12.5, padding: '3px 6px' }} aria-label="Action scope">
+            <option value="results">{scopeLabel('results', sCounts, searching)}</option>
+            {searching ? <option value="all">{scopeLabel('all', sCounts, searching)}</option> : null}
+          </select>
+        </label>
+        {pxDiffCount ? <span style={{ color: C.amber }} title="Moving averages, RSI and patterns are worked out from the daily bars (scan close); the Price column is the latest quote, which can come from another source. Price-vs-average rules compare the quote.">† {pxDiffCount} matches: latest quote differs from the scan close the averages were read from</span> : null}
+        <span style={{ flex: 1 }} />
+        <span role="radiogroup" aria-label="Row density" style={{ display: 'inline-flex', gap: 4 }}>
+          {(['comfortable', 'compact'] as const).map((d) => <button key={d} type="button" role="radio" aria-checked={density === d} style={{ ...btn(density === d), padding: '3px 8px', fontSize: 12 }} onClick={() => setDensity(d)}>{d === 'comfortable' ? 'Comfortable' : 'Compact'}</button>)}
+        </span>
+      </div>
+      {addingMatches && watchlists && <div role="dialog" aria-label="Add to watchlist" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, padding: 10, border: `1px solid ${C.border}`, borderRadius: 8 }}>
         <label>Destination <select aria-label="Watchlist for screener matches" value={targetList || activeList(watchlists).id} onChange={(e) => setTargetList(e.target.value)} style={btn()}>{watchlists.lists.map((l) => <option key={l.id} value={l.id}>{l.name} ({listCount(l)})</option>)}</select></label>
-        <span style={{ fontSize: 12, color: C.dim }}>{sorted.length} matching symbols; duplicates are skipped; each list holds up to 1,000.</span>
+        <span style={{ fontSize: 12, color: C.dim }}>{confirmAddText(actRows.length, (watchlists.lists.find((l) => l.id === targetList) || activeList(watchlists)).name, actLabel)}</span>
         <button type="button" style={btn()} onClick={addMatches}>Add symbols</button>
         <button type="button" style={btn()} onClick={() => setAddingMatches(false)}>Cancel</button>
       </div>}
@@ -511,7 +562,7 @@ export default function StockScreener() {
         <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>Find in results
           <input value={findText} onChange={(e) => setFindText(e.target.value)} placeholder="ticker or name" aria-label="Find in results" style={{ ...btn(), width: 150, fontWeight: 400 }} />
         </label>
-        {findText ? <span style={{ color: C.dim }}>{narrowed.length} of {ordered.rows.length} shown <button type="button" style={btn()} onClick={() => setFindText('')}>Clear</button></span> : null}
+        {findText ? <span style={{ color: C.dim }}>{narrowed.length} of {ordered.rows.length} filter matches <button type="button" style={btn()} onClick={() => setFindText('')}>Clear search</button></span> : null}
         <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>Review
           <select value={reviewFilter} onChange={(e) => setReviewFilter(e.target.value as ReviewState | 'all')} style={btn()} aria-label="Show companies by review state">
             <option value="all">all</option>
@@ -534,14 +585,21 @@ export default function StockScreener() {
         </div>
       ) : null}
 
-      <div style={{ overflowX: 'auto', border: `1px solid ${C.border}`, borderRadius: 8 }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr style={{ background: C.bg1, position: 'sticky', top: 0, zIndex: 1 }}>
-              <th style={th}>#</th>
-              <Th label="Company" k="t" sort={sort} setSort={setSort} />
+      {empty === 'no-search-match' ? (
+        <div role="status" style={{ padding: 10, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13 }}>
+          No filter match contains “{findText}”{reviewFilter !== 'all' ? ` with review state “${REVIEW_STATES.find((x) => x.id === reviewFilter)?.label}”` : ''} — {sorted.length} companies pass the filters.{' '}
+          {findText ? <button type="button" style={btn()} onClick={() => setFindText('')}>Clear search</button> : null}{' '}
+          {reviewFilter !== 'all' ? <button type="button" style={btn()} onClick={() => setReviewFilter('all')}>Show every review state</button> : null}
+        </div>
+      ) : null}
+      <div style={{ overflow: 'auto', maxHeight: '78vh', border: `1px solid ${C.border}`, borderRadius: 8 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: density === 'compact' ? 12.5 : 13 }}>
+          <thead style={{ position: 'sticky', top: 0, zIndex: 3 }}>
+            <tr style={{ background: C.bg1 }}>
+              <th style={{ ...th, ...pinnedCell(C.bg1), zIndex: 4 }}><Th bare label="Company" k="t" sort={sort} setSort={setSort} /></th>
               <th style={th} title="Your review progress for each company (kept in this browser, synced with your other devices)">Review</th>
               <Th label="Sector" k="tvSec" sort={sort} setSort={setSort} />
+              {patternFilters.length ? <th style={th} title="Patterns matching your pattern rule — timeframe in brackets, shape score 0–100 (not a probability)">Pattern</th> : null}
               {cols.map((k) => <Th key={k} label={fieldOf(k)?.label || k} k={k} sort={sort} setSort={setSort} num />)}
               <Th label="Quarter" k="q" sort={sort} setSort={setSort} />
             </tr>
@@ -549,29 +607,41 @@ export default function StockScreener() {
           <tbody>
             {shown.map((r, i) => (
               <tr key={r.t} style={{ borderTop: `1px solid ${C.border}` }}>
-                <td style={{ ...td, color: C.dim }}><button type="button" onClick={() => setWhyTicker(r.t)} title="Show every filter for this company, with exact values" style={{ all: 'unset', cursor: 'pointer' }}>{i + 1}</button></td>
-                <td style={td}>
+                <td style={{ ...td, padding: cellPad(density), ...pinnedCell(C.bg) }}>
+                  <button type="button" onClick={() => setWhyTicker(r.t)} title="Show every filter for this company, with exact values" style={{ all: 'unset', cursor: 'pointer', color: C.dim, fontSize: 11.5, marginRight: 6, fontVariantNumeric: 'tabular-nums' }}>{i + 1}</button>
                   <Link href={`/charts?t=${encodeURIComponent(r.t)}&m=${market}&tf=D`} onClick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); window.location.assign(openForReview(r.t, r.exch?.[0])); }} style={{ color: C.accent, fontWeight: 700, textDecoration: 'none' }} title="Open the chart — Next / Previous on the chart step through these results in this order">{r.t}</Link>
-                  <div style={{ fontSize: 11.5, color: C.dim, maxWidth: 240, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.n}</div>
+                  {density === 'compact' ? null : <div style={{ fontSize: 11.5, color: C.dim, maxWidth: 240, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.n}</div>}
                 </td>
-                <td style={td}>
+                <td style={{ ...td, padding: cellPad(density) }}>
                   <select value={reviewStates[reviewKey(market, r.t)] || 'unreviewed'} onChange={(e) => setReview(r.t, e.target.value as ReviewState)} aria-label={`Review state for ${r.t}`}
                     style={{ fontSize: 11.5, padding: '2px 4px', borderRadius: 5, border: `1px solid ${C.border}`, background: C.bg, color: (reviewStates[reviewKey(market, r.t)] || 'unreviewed') === 'unreviewed' ? C.dim : C.text }}>
                     {REVIEW_STATES.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
                   </select>
                 </td>
                 {(() => { const m = tvSectorMapping(market, r.sec, r.ind, r.t); return (
-                  <td style={{ ...td, fontSize: 12, color: C.dim, maxWidth: 160 }} title={`Source: ${[r.sec, r.ind].filter(Boolean).join(' · ') || 'none'}\nTradingView sector ${m.note}`}>{r.tvSec || r.sec || '—'}{m.basis === 'sector' ? ' ≈' : m.basis === 'checked' ? ' ✓' : ''}</td>
+                  <td style={{ ...td, padding: cellPad(density), fontSize: 12, color: C.dim, maxWidth: 160 }} title={`Source: ${[r.sec, r.ind].filter(Boolean).join(' · ') || 'none'}\nTradingView sector ${m.note}`}>{r.tvSec || r.sec || '—'}{m.basis === 'sector' ? ' ≈' : m.basis === 'checked' ? ' ✓' : ''}</td>
                 ); })()}
+                {patternFilters.length ? (
+                  <td style={{ ...td, padding: cellPad(density) }}>
+                    <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', maxWidth: 300 }}>
+                      {patTagsFor(r).slice(0, 4).map((t) => { const col = t.b === 'U' ? C.green : C.red; const d = tagDirDist(t); return (
+                        <span key={`${t.tf}-${t.id}`} title={`${PATTERN_META[t.id]?.label} — ${t.tf === 'W' ? 'weekly' : t.tf === 'M' ? 'monthly' : 'daily'} bars, ${t.s === 'f' ? 'forming' : t.s === 'b' ? 'breakout' : 'failed'}, shape score ${t.c}/100 (${shapeWord(t.c)})${d != null ? `, ${d > 0 ? '+' : ''}${Math.round(d * 10) / 10}% to pivot (from the scan close)` : ''}`}
+                          style={{ padding: '1px 6px', borderRadius: 999, border: `1px solid ${col}`, color: col, fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' }}>{PATTERN_META[t.id]?.label} <span style={{ opacity: 0.75 }}>{t.tf || 'D'} · {t.c}</span></span>
+                      ); })}
+                    </div>
+                  </td>
+                ) : null}
                 {cols.map((k) => {
                   const d = fieldOf(k); const v = r[k] as number | null;
                   const ax = r.approx?.includes(k);
                   const col = k === 'chg' && typeof v === 'number' ? (v >= 0 ? C.green : C.red) : C.text;
                   const na = naReason(r, k);
                   const tip = [typeof v === 'number' ? `Exact value: ${exact(v)} (filters compare this, not the rounded figure)` : na ? `Not applicable: ${na}` : 'Not known', ax ? 'Approximate for this company' : '', na && typeof v === 'number' ? 'Not meaningful for financial companies' : ''].filter(Boolean).join('\n');
-                  return <td key={k} style={{ ...td, textAlign: 'right', color: col, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }} title={tip}>{ax ? '≈' : ''}{v == null && na ? <span style={{ color: C.dim, fontStyle: 'italic' }}>n/a</span> : fmtValue(v, d?.unit || 'num', market)}</td>;
+                  // zzz994 (MC-01 display) — the latest quote next to the scan close the averages / patterns were read from
+                  const scanNote = k === 'px' && pxDiffers(r) ? `\nScan close ${fmtPrice(r.scanPx, market)}${r.scanAt ? ` (${r.scanAt}` : ' ('}${r.scanSrc ? `, ${r.scanSrc}` : ''}) — moving averages, RSI and patterns use it; quote ${r.pxSrc ? `from ${r.pxSrc}` : ''}${typeof r.pxGap === 'number' ? `, ${r.pxGap > 0 ? '+' : ''}${r.pxGap}% vs scan close` : ''}${r.pxConflict ? '\n⚠ The two sources disagree on the same day — neither is certified as the exchange close' : ''}` : '';
+                  return <td key={k} style={{ ...td, padding: cellPad(density), textAlign: 'right', color: col, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }} title={tip + scanNote}>{k === 'px' && r.pxConflict ? <span style={{ color: C.amber }} aria-label="Price sources disagree">⚠ </span> : null}{ax ? '≈' : ''}{v == null && na ? <span style={{ color: C.dim, fontStyle: 'italic' }}>n/a</span> : fmtValue(v, d?.unit || 'num', market)}{scanNote ? <span style={{ color: C.amber }}>†</span> : null}{k === 'px' && scanNote && density !== 'compact' ? <div style={{ fontSize: 11, color: C.dim }}>scan {fmtPrice(r.scanPx, market)}</div> : null}</td>;
                 })}
-                <td style={{ ...td, fontSize: 12, color: C.dim, whiteSpace: 'nowrap' }}>{r.q || '—'}</td>
+                <td style={{ ...td, padding: cellPad(density), fontSize: 12, color: C.dim, whiteSpace: 'nowrap' }}>{r.q || '—'}</td>
               </tr>
             ))}
           </tbody>
@@ -579,7 +649,9 @@ export default function StockScreener() {
         {narrowed.length > 200 ? (
           <div style={{ padding: 8, textAlign: 'center' }}><button type="button" style={btn()} onClick={() => setShowAll((v) => !v)}>{showAll ? 'Show the first 200' : `Show all ${narrowed.length}`}</button></div>
         ) : null}
-        {snap && !sorted.length ? <div style={{ padding: 14, color: C.dim, fontSize: 13 }}>{rows.length ? 'No company passes every filter. The small number on each filter shows which one is the tight one.' : (snap.notes[0] || 'No data yet.')}</div> : null}
+        {empty === 'no-data' ? <div role="status" style={{ padding: 14, color: C.dim, fontSize: 13 }}>{snap?.notes[0] || 'No data yet — the first build of this market has not finished.'}</div> : null}
+        {empty === 'no-filter-match' ? <div role="status" style={{ padding: 14, color: C.dim, fontSize: 13 }}>No company passes every filter. The small number on each filter shows which one is the tight one.{patternFilters.length ? ' A pattern rule only passes companies whose selected timeframe has been scanned.' : ''}</div> : null}
+        {empty === 'no-search-match' ? <div style={{ padding: 14, color: C.dim, fontSize: 13 }}>No match for the search — see above.</div> : null}
       </div>
     </div>
   );
@@ -587,110 +659,12 @@ export default function StockScreener() {
 
 const th: React.CSSProperties = { textAlign: 'left', padding: '7px 8px', fontSize: 11.5, fontWeight: 800, color: 'var(--mc-text-3, #6b7280)', whiteSpace: 'nowrap' };
 const td: React.CSSProperties = { padding: '6px 8px', verticalAlign: 'top' };
-function Th({ label, k, sort, setSort, num }: { label: string; k: string; sort: { key: string; dir: 1 | -1 }; setSort: (s: { key: string; dir: 1 | -1 }) => void; num?: boolean }) {
+function Th({ label, k, sort, setSort, num, bare }: { label: string; k: string; sort: { key: string; dir: 1 | -1 }; setSort: (s: { key: string; dir: 1 | -1 }) => void; num?: boolean; bare?: boolean }) {
   const on = sort.key === k;
-  return (
-    <th style={{ ...th, textAlign: num ? 'right' : 'left' }}>
-      <button type="button" onClick={() => setSort({ key: k, dir: on ? (sort.dir === 1 ? -1 : 1) : num ? -1 : 1 })} style={{ all: 'unset', cursor: 'pointer', color: on ? 'var(--mc-accent)' : undefined }}>
-        {label} {on ? (sort.dir === -1 ? '▼' : '▲') : ''}
-      </button>
-    </th>
+  const b = (
+    <button type="button" onClick={() => setSort({ key: k, dir: on ? (sort.dir === 1 ? -1 : 1) : num ? -1 : 1 })} style={{ all: 'unset', cursor: 'pointer', color: on ? 'var(--mc-accent)' : undefined }}>
+      {label} {on ? (sort.dir === -1 ? '▼' : '▲') : ''}
+    </button>
   );
-}
-
-function FilterEditor({ f, market, tvSecCount, onChange, onClose }: { f: Filter; market: ScreenMarket; tvSecCount: Map<string, number>; onChange: (f: Filter) => void; onClose: () => void }) {
-  const box: React.CSSProperties = { border: `1px solid ${C.border}`, borderRadius: 8, padding: 10, background: C.bg1, display: 'grid', gap: 8, fontSize: 13 };
-  const inp: React.CSSProperties = { width: 110, padding: '4px 6px', borderRadius: 5, border: `1px solid ${C.border}`, background: C.bg, color: C.text };
-  const done = <>{f.off ? <span style={{ color: C.amber, fontSize: 12 }}>⏸ paused — not applied</span> : null}<button type="button" onClick={() => onChange({ ...f, off: !f.off } as Filter)} style={{ ...inp, width: 'auto', cursor: 'pointer' }}>{f.off ? 'Turn on' : 'Pause'}</button><button type="button" onClick={onClose} style={{ ...inp, width: 'auto', cursor: 'pointer' }}>Done</button></>;
-  const fieldSelect = (value: NumKey, set: (k: NumKey) => void, unit?: string) => (
-    <select value={value} onChange={(e) => set(e.target.value as NumKey)} style={{ ...inp, width: 'auto' }}>
-      {FIELDS.filter((x) => x.markets.includes(market) && (!unit || x.unit === unit)).map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}
-    </select>
-  );
-  if (f.kind === 'sector') {
-    const all = f.sectors.length === 0;
-    return (
-      <div style={box}>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><b>Sectors</b><span style={{ color: C.dim }}>{all ? 'none ticked = all sectors' : `${f.sectors.length} ticked`}</span><span style={{ flex: 1 }} /><button type="button" onClick={() => onChange({ kind: 'sector', sectors: [] })} style={{ ...inp, width: 'auto', cursor: 'pointer' }}>Clear</button>{done}</div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px' }}>
-          {TV_SECTORS.map((s) => (
-            <label key={s} style={{ display: 'inline-flex', gap: 5, alignItems: 'center', cursor: 'pointer' }}>
-              <input type="checkbox" checked={f.sectors.includes(s)} onChange={(e) => onChange({ kind: 'sector', sectors: e.target.checked ? [...f.sectors, s] : f.sectors.filter((x) => x !== s) })} />
-              {s} <span style={{ color: C.dim, fontSize: 11 }}>{tvSecCount.get(s) || 0}</span>
-            </label>
-          ))}
-        </div>
-        <div style={{ color: C.dim, fontSize: 12 }}>≈ TradingView&apos;s sectors, worked out from each company&apos;s industry — right for about 4 companies in 5.</div>
-      </div>
-    );
-  }
-  if (f.kind === 'exch') {
-    const all = market === 'US' ? ['NASDAQ', 'NYSE', 'AMEX'] : ['NSE', 'BSE'];
-    return (
-      <div style={{ ...box, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-        <b>Exchange</b>
-        {all.map((e) => (
-          <label key={e} style={{ display: 'inline-flex', gap: 5, alignItems: 'center', cursor: 'pointer' }}>
-            <input type="checkbox" checked={f.ex.includes(e)} onChange={(ev) => onChange({ kind: 'exch', ex: ev.target.checked ? [...f.ex, e] : f.ex.filter((x) => x !== e) })} />{e}
-          </label>
-        ))}
-        {market === 'IN' ? <span style={{ color: C.dim, fontSize: 12 }}>Every company here trades on NSE; BSE = also listed on BSE.</span> : null}
-        {done}
-      </div>
-    );
-  }
-  if (f.kind === 'date') {
-    return (
-      <div style={{ ...box, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <b>{fieldOf(f.key)?.label}</b>
-        <select value={f.op} onChange={(e) => onChange({ ...f, op: e.target.value as 'thisMonth' | 'pastYears' })} style={{ ...inp, width: 'auto' }}>
-          <option value="thisMonth">this calendar month</option><option value="pastYears">within the last … years</option>
-        </select>
-        {f.op === 'pastYears' ? <input type="number" value={f.v ?? 5} onChange={(e) => onChange({ ...f, v: Number(e.target.value) })} style={inp} /> : null}
-        {done}
-      </div>
-    );
-  }
-  if (f.kind === 'cmp') {
-    const unit = fieldOf(f.key)?.unit;
-    return (
-      <div style={{ ...box, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        {fieldSelect(f.key, (k) => onChange({ ...f, key: k, other: fieldOf(k)?.unit === fieldOf(f.other)?.unit ? f.other : k }))}
-        <select value={f.op} onChange={(e) => onChange({ ...f, op: e.target.value as CmpOp })} style={inp}>
-          <option value="above">above (&gt;)</option><option value="ge">at or above (≥)</option><option value="below">below (&lt;)</option><option value="le">at or below (≤)</option>
-        </select>
-        {fieldSelect(f.other, (k) => onChange({ ...f, other: k }), unit)}
-        {done}
-      </div>
-    );
-  }
-  if (f.kind === 'near') {
-    return (
-      <div style={{ ...box, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        {fieldSelect(f.key, (k) => onChange({ ...f, key: k }))}
-        <span>is</span>
-        <input type="number" value={f.lo} onChange={(e) => onChange({ ...f, lo: Number(e.target.value) })} style={{ ...inp, width: 70 }} />
-        <span>to</span>
-        <input type="number" value={f.hi} onChange={(e) => onChange({ ...f, hi: Number(e.target.value) })} style={{ ...inp, width: 70 }} />
-        <span>% above</span>
-        {fieldSelect(f.other, (k) => onChange({ ...f, other: k }), fieldOf(f.key)?.unit)}
-        {done}
-      </div>
-    );
-  }
-  const d = fieldOf(f.key);
-  const unitWord = d?.unit === '%' ? '%' : d?.unit === 'money' ? (market === 'US' ? '$ million' : '₹ crore') : d?.unit === 'x' ? '×' : d?.unit === 'usd' ? '$' : '';
-  return (
-    <div style={{ ...box, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-      <b>{d?.label}</b>
-      <select value={f.op} onChange={(e) => onChange({ ...f, op: e.target.value as NumOp, v2: e.target.value === 'between' ? (f.v2 ?? f.v) : undefined })} style={inp}>
-        <option value="gt">greater than</option><option value="ge">at least</option><option value="lt">less than</option><option value="le">at most</option><option value="between">between</option>
-      </select>
-      <input type="number" value={Number.isFinite(f.v) ? f.v : ''} onChange={(e) => onChange({ ...f, v: Number(e.target.value) })} style={inp} />
-      {f.op === 'between' ? <>and <input type="number" value={Number.isFinite(f.v2 as number) ? f.v2 : ''} onChange={(e) => onChange({ ...f, v2: Number(e.target.value) })} style={inp} /></> : null}
-      <span style={{ color: C.dim }}>{unitWord}</span>
-      {d?.approxNote?.[market] ? <span style={{ color: C.amber, fontSize: 12 }}>≈ {d.approxNote[market]}</span> : null}
-      {done}
-    </div>
-  );
+  return bare ? b : <th style={{ ...th, textAlign: num ? 'right' : 'left' }}>{b}</th>;
 }

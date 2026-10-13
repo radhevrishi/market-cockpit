@@ -1,4 +1,6 @@
-// zzz983 — built-in PINE SCREENS (data). Each one is a pattern set + stage + likelihood + pivot window + optional extra rules in
+// zzz983 — built-in PINE SCREENS (data). zzz994: screens named after the owner's TradingView scripts say "based on your TradingView
+// script" — our own implementation of the published rules, not a certified copy of the script; IDs never change.
+// Each one is a pattern set + stage + likelihood + pivot window + optional extra rules in
 // the Stock Screener's filter language. Add a screen by adding an entry here (e.g. the owner's own TradingView Pine screens):
 // an `id` (stable, used in saved choices), a `name`, an optional `note` (shown under the controls), an optional `market`
 // (opens that market) and a `q` — any field left out of `q` takes DEFAULT_QUERY's value (see screen()).
@@ -49,13 +51,18 @@ export const BUILT_IN_PINE_SCREENS: readonly PineScreen[] = [
   screen('breakdowns', 'Breakdowns (last 5 sessions)', { bias: 'D', stages: ['b'], dist: { on: true, lo: 0, hi: 10 }, filters: BELOW_200 },
     'Bearish patterns that closed through the breakdown level in the last 5 sessions, price below its 200-day average.'),
   screen('bear-continuation', 'Bear flags, descending triangles & rising wedges', { bias: 'D', ids: ['bear_flag', 'descending_triangle', 'rising_wedge'] }),
+  // zzz994 — two clearly different "all patterns" sizes: a broad candidate list and a near-ready list
+  screen('broad-candidates', 'Broad candidates (possible+, all bullish types)', { bias: 'U', minConf: 35, dist: { on: true, lo: -25, hi: 5 } },
+    'Every bullish pattern type with a shape score of 35 or more (possible or better), forming or just broken out, from 25% below the pivot to 5% above — a wide first pass.'),
+  screen('near-ready', 'Near-ready setups (likely+, within 5% of the pivot)', { bias: 'U', stages: ['f'], minConf: 55, dist: { on: true, lo: -5, hi: 0 } },
+    'Bullish patterns still forming, shape score likely or better (≥ 55), with the scan close 0–5% below the pivot.'),
   screen('failed-breakouts', 'Failed breakouts', { bias: 'U', stages: ['x'], dist: { on: false, lo: -30, hi: 5 } },
     'Bullish patterns that broke out in the last 40 sessions and fell more than 7.5% back through the pivot — a warning sign.'),
 
   // ── zzz984: his own TradingView scripts / the indicators in his Pine Screener ───────────────────────────────────────
-  rules('tv-trend-template', 'Minervini Trend Template (your script)', TREND_TEMPLATE, ['tt', 'rsR', 'stage'], 'tv',
+  rules('tv-trend-template', 'Minervini Trend Template (based on your TradingView script)', TREND_TEMPLATE, ['tt', 'rsR', 'stage'], 'tv',
     'Your "minervni script": close > SMA 50 > SMA 150 > SMA 200, SMA 200 rising on each of the last 20 sessions, close > 1.3 × the 250-session low and > 0.75 × the 250-session high — all six rules.'),
-  rules('tv-rule-of-40', 'Rule of 40 (your script)', [ge('r40', 40)], ['r40', 'revQYoY', 'fcfmTTM'], 'tv',
+  rules('tv-rule-of-40', 'Rule of 40 (based on your TradingView script)', [ge('r40', 40)], ['r40', 'revQYoY', 'fcfmTTM'], 'tv',
     'Your "Revenue Growth YoY + FCF Margin" script: latest quarter\'s revenue growth % + FCF margin % ≥ 40. FCF margin ≈ the latest full year (see the column tip).'),
   rules('tv-rsi-cross', 'RSI crossed above its average', [le('rsiX', 9)], ['rsiMA', 'rsiX'], 'tv',
     'Your RSI script: RSI 14 crossed above its 14-session average in the last 10 sessions.'),

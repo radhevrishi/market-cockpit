@@ -201,8 +201,8 @@ test('zzz984 built-in screens: well formed, grouped, and the owner\'s scripts ar
   for (const id of ['tv-trend-template', 'tv-rule-of-40', 'tv-rsi-cross', 'tv-rsi-50', 'tv-golden-cross', 'tv-death-cross', 'tv-ema-cross-up']) assert.equal(byId.get(id)?.group, 'tv', id);
   for (const id of ['rs-80', 'stage-2', 'stage-1-2', 'pocket-pivot', 'ripster-bull', 'tt-bullish-base', 'rs80-stage2-forming']) assert.equal(byId.get(id)?.group, 'momentum', id);
   assert.equal(byId.get('all-bullish')?.group, 'patterns');
-  assert.equal(byId.get('tv-trend-template')!.name, 'Minervini Trend Template (your script)');
-  assert.equal(byId.get('tv-rule-of-40')!.name, 'Rule of 40 (your script)');
+  assert.equal(byId.get('tv-trend-template')!.name, 'Minervini Trend Template (based on your TradingView script)');
+  assert.equal(byId.get('tv-rule-of-40')!.name, 'Rule of 40 (based on your TradingView script)');
   assert.deepEqual(byId.get('tv-rule-of-40')!.q.cols, ['r40', 'revQYoY', 'fcfmTTM']);
   assert.ok(byId.get('minervini-vcp')!.q.filters.some((f) => f.kind === 'num' && f.key === 'ttOk'), 'Minervini VCP uses the trend-template script');
   assert.equal(byId.get('tt-bullish-base')!.q.need, 'pattern');

@@ -37,6 +37,31 @@
 //    pattern's expiry (pennant / wedge apex, a flag's own length past its body); the displayed level and the distance to it
 //    use the same projection at the last bar. Horizontal pivots are unchanged.
 //  • Active structures (forming / breaking out) rank before failed ones.
+//
+// zzz992 — analysis timeframe D / W / M (a genuine weekly / monthly reading, not a relabelled daily one):
+//  • detectPatterns / analyzePatterns take the bars OF the chosen timeframe (`opts.timeframe`, default 'D'). Weekly /
+//    monthly bars come from lib/bar-aggregate (aggregateBars) — analyzeDailyAs() does both steps from daily bars.
+//  • Every rule written in trading days is converted to bars of the timeframe with k daily bars per bar (D 1, W 5,
+//    M 21): a window / lookback becomes round(days / k) bars (at least 1), and a pattern body's MINIMUM length becomes
+//    round(days / k) but never under 3 bars (`minBody`) — a formation must span at least 3 candles to be seen on that
+//    timeframe. Examples: flat base ≥ 25 days → ≥ 5 weeks; cup ≥ 35 days → ≥ 7 weeks / ≥ 3 months; prior-trend window
+//    130 days → 26 weeks / 6 months; the 50/200-day averages → 10/40 weeks / 2/10 months; breakout recency (≤ 4 bars
+//    after the first close beyond the pivot on D) → this or the previous candle on W / M; failed window 40 days → 8
+//    weeks / 2 months; per-bar slope limits × k. Percent rules (depths, rises, band widths) are unchanged.
+//  • Swing (zig-zag) thresholds scale with ATR of the timeframe's own bars, with clamps × 1.5 (W) / × 2 (M), because
+//    one weekly / monthly candle already contains the small swings a daily zig-zag would see.
+//  • A pattern is NOT APPLICABLE on a timeframe (PATTERN_TIMEFRAMES) when its defining body is a short formation whose
+//    whole valid range is under ~12 bars of that timeframe AND its minimum is under 3 bars: forcing it to ≥ 3 candles
+//    would describe a different, longer shape. E.g. flags / pennants (5–22 days) and the high tight flag (2–5 week
+//    flag) on W and M; a flat base (5–26 weeks) on M. Long-range patterns (cups, VCP, double / triple, head & shoulders)
+//    stay applicable with their minimum raised to 3 bars ("only the longer end of the range can be seen").
+//  • M only: a rounding (U) base may span up to LONG_BASE_MONTHS (60) monthly bars — a multi-year base that the 65-week
+//    cap excludes on D / W, and the main thing a monthly chart shows that the others cannot.
+//  • Minimum history: D 30 bars, W 30 weekly bars, M 24 monthly bars (PATTERN_MIN_HISTORY); fewer → tooShort.
+//  • Every hit carries `timeframe`; PATTERN_ENGINE_VERSION identifies the rule set for stored results.
+//  • timeframe 'D' runs exactly the daily rules above (k = 1 makes every conversion the identity).
+
+import { aggregateBars } from './bar-aggregate';
 
 export interface PBar { t: number; o: number; h: number; l: number; c: number; v: number }
 export type PatternId = 'flat_base' | 'u_base' | 'cup' | 'cup_handle' | 'ascending_base' | 'vcp' | 'base_on_base' | 'ipo_base' | 'bull_flag' | 'bull_pennant' | 'ascending_triangle' | 'double_bottom' | 'triple_bottom' | 'falling_wedge' | 'high_tight_flag' | 'inverse_hs' | 'double_top' | 'triple_top' | 'head_shoulders' | 'descending_triangle' | 'bear_flag' | 'rising_wedge';
@@ -82,8 +107,71 @@ export interface PatternHit {
   lines: PatternLine[];
   /** zzz990 — false when the bars of this pattern carry too little usable volume: volume rules got no credit ("volume not confirmed"). */
   volumeOk?: boolean;
+  /** zzz992 — the analysis timeframe the hit was found on (lengthBars counts bars of this timeframe) */
+  timeframe?: PatternTimeframe;
 }
-export interface DetectOptions { firstTradeT?: number; maxBars?: number }
+export type PatternTimeframe = 'D' | 'W' | 'M';
+/** maxBars counts bars of the analysis timeframe. */
+export interface DetectOptions { firstTradeT?: number; maxBars?: number; timeframe?: PatternTimeframe }
+
+/** zzz992 — bump when any detection rule changes (stored screener tags carry it for provenance). */
+export const PATTERN_ENGINE_VERSION = 'cp-3.0-tf';
+
+interface TfProfile {
+  tf: PatternTimeframe;
+  /** daily bars per bar */
+  k: number;
+  /** a pattern body's minimum length in bars on this timeframe (the identity on D) */
+  minBody: number;
+  /** fewer usable bars than this: nothing analysed */
+  minHistory: number;
+  /** zig-zag clamp multiplier */
+  swingMul: number;
+  /** default history analysed, in bars */
+  defaultMaxBars: number;
+}
+const TF_PROFILES: Record<PatternTimeframe, TfProfile> = {
+  D: { tf: 'D', k: 1, minBody: 1, minHistory: 30, swingMul: 1, defaultMaxBars: 700 },
+  W: { tf: 'W', k: 5, minBody: 3, minHistory: 30, swingMul: 1.5, defaultMaxBars: 260 },
+  M: { tf: 'M', k: 21, minBody: 3, minHistory: 24, swingMul: 2, defaultMaxBars: 120 },
+};
+/** zzz992 — longest rounding (U) base read on monthly bars, in months. */
+export const LONG_BASE_MONTHS = 60;
+/** Minimum usable bars per timeframe (W: 30 weeks, M: 24 months). */
+export const PATTERN_MIN_HISTORY: Record<PatternTimeframe, number> = { D: 30, W: 30, M: 24 };
+
+const ALL_TF: PatternTimeframe[] = ['D', 'W', 'M'];
+const DW: PatternTimeframe[] = ['D', 'W'];
+const D_ONLY: PatternTimeframe[] = ['D'];
+/**
+ * zzz992 — the timeframes each pattern can be read on. Not applicable (with the reason in PATTERN_NA_REASON):
+ *  W: bull flag, bull pennant, bear flag (5–22-day flag = 1–4 weeks), high tight flag (2–5-week flag).
+ *  M: the above, plus flat base (5–26 weeks), cup with handle (its 1–7-week handle), ascending base (8–19 weeks),
+ *     base on base (4–26 weeks), IPO base (within 2 years of listing — shorter than the 24-month minimum history),
+ *     ascending / descending triangle and falling / rising wedge (3–26 weeks).
+ */
+export const PATTERN_TIMEFRAMES: Record<PatternId, ReadonlyArray<PatternTimeframe>> = {
+  flat_base: DW, u_base: ALL_TF, cup: ALL_TF, cup_handle: DW, ascending_base: DW, vcp: ALL_TF, base_on_base: DW, ipo_base: DW,
+  bull_flag: D_ONLY, bull_pennant: D_ONLY, ascending_triangle: DW, double_bottom: ALL_TF, triple_bottom: ALL_TF, falling_wedge: DW,
+  high_tight_flag: D_ONLY, inverse_hs: ALL_TF, double_top: ALL_TF, triple_top: ALL_TF, head_shoulders: ALL_TF,
+  descending_triangle: DW, bear_flag: D_ONLY, rising_wedge: DW,
+};
+export const PATTERN_NA_REASON: Partial<Record<PatternId, string>> = {
+  flat_base: 'a 5–26 week base is 1–6 monthly candles',
+  cup_handle: 'the 1–7 week handle cannot be seen on monthly candles',
+  ascending_base: 'an 8–19 week base is 2–4 monthly candles',
+  base_on_base: 'a 4–26 week base is 1–6 monthly candles',
+  ipo_base: 'within 2 years of listing there is less than the 24-month minimum history',
+  bull_flag: 'a 1–4 week flag is shorter than 3 weekly candles at its usual length',
+  bull_pennant: 'a 1–4 week pennant is shorter than 3 weekly candles at its usual length',
+  bear_flag: 'a 1–4 week flag is shorter than 3 weekly candles at its usual length',
+  high_tight_flag: 'the 2–5 week flag is shorter than 3 weekly candles at its usual length',
+  ascending_triangle: 'a 3–26 week triangle is 1–6 monthly candles',
+  descending_triangle: 'a 3–26 week triangle is 1–6 monthly candles',
+  falling_wedge: 'a 4–26 week wedge is 1–6 monthly candles',
+  rising_wedge: 'a 4–26 week wedge is 1–6 monthly candles',
+};
+export const patternApplies = (id: PatternId, tf: PatternTimeframe) => PATTERN_TIMEFRAMES[id].includes(tf);
 export interface PatternTag { id: PatternId; b: 'U' | 'D'; s: 'f' | 'b' | 'x'; c: number; p: number | null; d: number | null }
 
 // ───────────────────────────── helpers ─────────────────────────────
@@ -204,9 +292,18 @@ interface S {
   mxH: Sparse; mnL: Sparse; pv: Float64Array; pc: Float64Array; atrPct: Float64Array; listT: number | null;
   /** prefix count of bars with usable volume (v is NaN where volume is missing) */
   pn: Float64Array;
+  /** zzz992 — the timeframe profile (k daily bars per bar) */
+  pf: TfProfile;
 }
 
-function build(bars: PBar[], listT: number | null): S {
+/** zzz992 — a window / lookback of `days` trading days in bars of this timeframe (identity on D; at least 1). */
+const B = (s: { pf: TfProfile }, days: number) => (s.pf.k === 1 ? days : Math.max(1, Math.round(days / s.pf.k)));
+/** zzz992 — a pattern body's minimum length of `days` trading days in bars (identity on D; at least minBody = 3 on W / M). */
+const Bm = (s: { pf: TfProfile }, days: number) => (s.pf.k === 1 ? days : Math.max(s.pf.minBody, Math.round(days / s.pf.k)));
+/** zzz992 — a "good" ramp end that never falls below its "bad" end after conversion. */
+const Bg = (s: { pf: TfProfile }, days: number, lo: number) => Math.max(lo, B(s, days));
+
+function build(bars: PBar[], listT: number | null, pf: TfProfile = TF_PROFILES.D): S {
   const n = bars.length;
   const t: number[] = new Array(n), o: number[] = new Array(n), h: number[] = new Array(n), l: number[] = new Array(n), c: number[] = new Array(n), v: number[] = new Array(n);
   for (let i = 0; i < n; i++) { const b = bars[i]; t[i] = b.t; o[i] = b.o; h[i] = b.h; l[i] = b.l; c[i] = b.c; v[i] = b.v; }
@@ -222,7 +319,7 @@ function build(bars: PBar[], listT: number | null): S {
     atr = i === 0 ? tr : i < 14 ? (atr * i + tr) / (i + 1) : (atr * 13 + tr) / 14;
     atrPct[i] = c[i] > 0 ? atr / c[i] : 0;
   }
-  return { n, t, o, h, l, c, v, mxH: new Sparse(h, true), mnL: new Sparse(l, false), pv, pc, pn, atrPct, listT };
+  return { n, t, o, h, l, c, v, mxH: new Sparse(h, true), mnL: new Sparse(l, false), pv, pc, pn, atrPct, listT, pf };
 }
 
 /** Average of the USABLE volumes in [a, b]; NaN (no evidence) unless ≥ 60% of the window (at least 3 bars, or all of a
@@ -234,16 +331,16 @@ function avgVol(s: S, a: number, b: number): number {
   if (k < Math.min(len, Math.max(3, Math.ceil(0.6 * len)))) return NaN;
   return (s.pv[b + 1] - s.pv[a]) / k;
 }
-const vol50 = (s: S, i: number) => avgVol(s, i - 49, i);
+const vol50 = (s: S, i: number) => avgVol(s, i - B(s, 50) + 1, i);
 /** Ratio of two volume averages; NaN (scores 0 through ramp) when either side is missing or the baseline is not usable. */
 const volRatio = (num: number, den: number) => (Number.isFinite(num) && Number.isFinite(den) && den > 0 && num >= 0 ? num / den : NaN);
 const sma = (s: S, i: number, p: number) => { const a = Math.max(0, i - p + 1); return (s.pc[i + 1] - s.pc[a]) / (i - a + 1); };
-/** Rise into index i: high[i] over the lowest low of the prior ~6 months. */
-const priorUp = (s: S, i: number) => s.h[i] / s.mnL.val(i - 130, i) - 1;
+/** Rise into index i: high[i] over the lowest low of the prior ~6 months (130 days → 26 weeks / 6 months). */
+const priorUp = (s: S, i: number) => s.h[i] / s.mnL.val(i - B(s, 130), i) - 1;
 /** Fall into index i: 1 − low[i] over the highest high of the prior ~6 months. */
-const priorDown = (s: S, i: number) => 1 - s.l[i] / s.mxH.val(i - 130, i);
-/** Stage-2 trend template points: close above the 50-day, 50-day above the 200-day. */
-const trendOK = (s: S, e: number) => (s.c[e] > sma(s, e, 50) ? 0.5 : 0) + (sma(s, e, 50) > sma(s, e, 200) ? 0.5 : 0);
+const priorDown = (s: S, i: number) => 1 - s.l[i] / s.mxH.val(i - B(s, 130), i);
+/** Stage-2 trend template points: close above the 50-day, 50-day above the 200-day (10 / 40 weeks, 2 / 10 months). */
+const trendOK = (s: S, e: number) => { const a = B(s, 50), b = B(s, 200); return (s.c[e] > sma(s, e, a) ? 0.5 : 0) + (sma(s, e, a) > sma(s, e, b) ? 0.5 : 0); };
 /** Spread of the last k weekly closes ending at e (fraction of the highest). */
 function weeklyTightness(s: S, e: number, k: number): number {
   const wk = (t: number) => Math.floor((t + 3 * DAY) / (7 * DAY)); // Monday-start calendar weeks
@@ -287,7 +384,7 @@ function highRecords(s: S, e: number, minLen: number, maxLen: number): number[] 
   let run = -Infinity;
   const stop = Math.max(0, e - maxLen);
   for (let i = e; i >= stop; i--) {
-    if (s.h[i] >= run) { if (e - i >= minLen && s.h[i] >= s.mxH.val(i - 5, i - 1)) out.push(i); run = s.h[i]; }
+    if (s.h[i] >= run) { if (e - i >= minLen && s.h[i] >= s.mxH.val(i - B(s, 5), i - 1)) out.push(i); run = s.h[i]; }
   }
   return out;
 }
@@ -296,7 +393,7 @@ function lowRecords(s: S, e: number, minLen: number, maxLen: number): number[] {
   let run = Infinity;
   const stop = Math.max(0, e - maxLen);
   for (let i = e; i >= stop; i--) {
-    if (s.l[i] <= run) { if (e - i >= minLen && !(s.l[i] > s.mnL.val(i - 5, i - 1))) out.push(i); run = s.l[i]; }
+    if (s.l[i] <= run) { if (e - i >= minLen && !(s.l[i] > s.mnL.val(i - B(s, 5), i - 1))) out.push(i); run = s.l[i]; }
   }
   return out;
 }
@@ -322,9 +419,16 @@ function push(out: Map<PatternId, Raw>, r: Raw | null) {
  *                       within 60 bars before the lip) and whose low holds above ~93% of that pivot.
  */
 function detectLipBases(s: S, e: number, recs: number[], out: Map<PatternId, Raw>) {
+  const tf = s.pf.tf;
+  const L25 = Bm(s, 25), L35 = Bm(s, 35), L130 = B(s, 130), L330 = B(s, 330);
+  // zzz992 — M only: a rounding (U) base may span up to LONG_BASE_MONTHS (a multi-year base the 65-week cup cap excludes
+  // on D / W); cups and cups with handle keep the 65-week (16-month) cap
+  const LMAX = tf === 'M' ? LONG_BASE_MONTHS : L330;
+  // a handle: ≥ 5 days on D; ≥ 2 candles on W (a 1-week dip is one candle, not a handle); not readable on M
+  const L5 = s.pf.k === 1 ? 5 : 2;
   for (const sIdx of recs) {
     const len = e - sIdx + 1;
-    if (len < 25 || len > 330) continue;
+    if (len < L25 || len > LMAX) continue;
     const lip = s.h[sIdx];
     const m = s.mnL.idx(sIdx, e);
     const low = s.l[m];
@@ -336,22 +440,22 @@ function detectLipBases(s: S, e: number, recs: number[], out: Map<PatternId, Raw
     const tight3 = weeklyTightness(s, e, 3);
 
     // Flat base
-    if (len <= 130 && depth <= 0.15 && depth >= 0.02 && up >= 0.2) {
-      const volDry = volRatio(avgVol(s, e - 9, e), vol50(s, sIdx));
+    if (patternApplies('flat_base', tf) && len <= L130 && depth <= 0.15 && depth >= 0.02 && up >= 0.2) {
+      const volDry = volRatio(avgVol(s, e - B(s, 10) + 1, e), vol50(s, sIdx));
       const conf = wscore([
-        [2, ramp(up, 0.2, 0.35)], [2, ramp(depth, 0.15, 0.1)], [1, ramp(len, 25, 35)], [1, ramp(posInRange, 0.3, 0.75)],
+        [2, ramp(up, 0.2, 0.35)], [2, ramp(depth, 0.15, 0.1)], [1, ramp(len, L25, Bg(s, 35, L25))], [1, ramp(posInRange, 0.3, 0.75)],
         [2, ramp(volDry, 1.1, 0.75)], [2, ramp(tight3, 0.06, 0.025)], [1, trendOK(s, e)],
       ]);
       push(out, { id: 'flat_base', conf, start: sIdx, end: e, keyFrom: sIdx, pivot: lip, depth,
         detail: '', lines: [LP('resistance', s, sIdx, lip, e, lip), LP('support', s, sIdx, low, e, low)] });
     }
 
-    if (len < 35) continue;
+    if (len < L35) continue;
     const r = m >= e ? e : s.mxH.idx(m + 1, e);
     const rightH = s.h[r];
     const recovery = rightH / lip;
     const cupLen = r - sIdx;
-    if (cupLen < 25 || recovery < 0.75) continue;
+    if (cupLen < L25 || recovery < 0.75) continue;
     const lowPos = (m - sIdx) / cupLen;
     // roundness: share of the cup's closes in the lower 30% of its range
     const zone = low + 0.3 * range;
@@ -362,18 +466,19 @@ function detectLipBases(s: S, e: number, recs: number[], out: Map<PatternId, Raw
     const hLen = e - r;
     const hLow = s.mnL.val(r, e);
     const hDepth = 1 - hLow / rightH;
-    const noHandle = hLen < 5 || hDepth < 0.025;
-    const handleValid = hLen >= 5 && hLen <= 35 && hDepth >= 0.025 && hDepth <= 0.15 && hLow > low + 0.5 * range && recovery >= 0.85;
-    const classic = depth >= 0.12 && depth <= 0.5 && up >= 0.2 && round >= 0.35;
+    // M: a handle (1–7 weeks) is not visible; a right-side dip of 1 monthly candle is noise there, not a handle
+    const noHandle = (tf === 'M' ? hLen < 2 : hLen < L5) || hDepth < 0.025;
+    const handleValid = patternApplies('cup_handle', tf) && hLen >= L5 && hLen <= B(s, 35) && hDepth >= 0.025 && hDepth <= 0.15 && hLow > low + 0.5 * range && recovery >= 0.85;
+    const classic = len <= L330 && depth >= 0.12 && depth <= 0.5 && up >= 0.2 && round >= 0.35;
     const depthScore = depth <= 0.33 ? 1 : ramp(depth, 0.5, 0.33);
     const symScore = 1 - Math.min(1, Math.abs(lowPos - 0.5) / 0.4);
     const common: Array<[number, number]> = [
-      [2, ramp(up, 0.2, 0.3)], [2, depthScore], [2, ramp(round, 0.33, 0.48)], [1, symScore], [1, ramp(len, 35, 45)], [1, trendOK(s, e)],
+      [2, ramp(up, 0.2, 0.3)], [2, depthScore], [2, ramp(round, 0.33, 0.48)], [1, symScore], [1, ramp(len, L35, Bg(s, 45, L35))], [1, trendOK(s, e)],
     ];
     if (classic && handleValid) {
       const volDry = volRatio(avgVol(s, r, e), vol50(s, r));
-      const drift = closeSlope(s, r, e) <= 0.0005 ? 1 : 0;
-      const conf = wscore([...common, [2, ramp(recovery, 0.85, 0.97)], [2, ramp(hDepth, 0.15, 0.1)], [1, ramp(volDry, 1.15, 0.8)], [1, drift], [1, ramp(hLen, 4, 7)]]);
+      const drift = closeSlope(s, r, e) <= 0.0005 * s.pf.k ? 1 : 0;
+      const conf = wscore([...common, [2, ramp(recovery, 0.85, 0.97)], [2, ramp(hDepth, 0.15, 0.1)], [1, ramp(volDry, 1.15, 0.8)], [1, drift], [1, ramp(hLen, B(s, 4), Bg(s, 7, B(s, 4)))]]);
       push(out, { id: 'cup_handle', conf, start: sIdx, end: e, keyFrom: r, pivot: rightH, depth,
         detail: `handle ${Math.round(hDepth * 100)}% deep`,
         lines: [LP('pivot', s, r, rightH, e, rightH), LP('resistance', s, sIdx, lip, r, lip), LP('support', s, m, low, m, low)] });
@@ -383,32 +488,34 @@ function detectLipBases(s: S, e: number, recs: number[], out: Map<PatternId, Raw
         detail: `right side ${Math.round(recovery * 100)}% of the left high`,
         lines: [LP('pivot', s, sIdx, lip, e, lip), LP('support', s, m, low, m, low)] });
     } else if (!classic && (noHandle || handleValid) && depth >= 0.08 && depth <= 0.5 && round >= 0.35) {
-      const conf = wscore([[2, ramp(round, 0.35, 0.5)], [2, ramp(recovery, 0.75, 0.95)], [1, symScore], [1, ramp(len, 35, 50)], [1, ramp(up, 0, 0.25)], [1, trendOK(s, e)]]);
-      push(out, { id: 'u_base', conf, start: sIdx, end: e, keyFrom: sIdx, pivot: lip, depth, detail: 'rounded bottom',
+      const conf = wscore([[2, ramp(round, 0.35, 0.5)], [2, ramp(recovery, 0.75, 0.95)], [1, symScore], [1, ramp(len, L35, Bg(s, 50, L35))], [1, ramp(up, 0, 0.25)], [1, trendOK(s, e)]]);
+      push(out, { id: 'u_base', conf, start: sIdx, end: e, keyFrom: sIdx, pivot: lip, depth, detail: len > L330 ? 'multi-year rounded base' : 'rounded bottom',
         lines: [LP('pivot', s, sIdx, lip, e, lip), LP('support', s, m, low, m, low)] });
     }
   }
 
   // Base on base
+  if (!patternApplies('base_on_base', tf)) return;
+  const L20 = Bm(s, 20), L40 = B(s, 40);
   for (const sIdx of recs) {
     const len = e - sIdx + 1;
-    if (len < 20 || len > 130) continue;
+    if (len < L20 || len > L130) continue;
     const lip = s.h[sIdx];
     const low = s.mnL.val(sIdx, e);
     const depth = 1 - low / lip;
     if (depth > 0.25 || depth < 0.03) continue;
-    for (let k = sIdx - 3; k >= Math.max(41, sIdx - 60); k--) {
-      const prevMax = s.mxH.val(k - 40, k - 1);
+    for (let k = sIdx - B(s, 3); k >= Math.max(L40 + 1, sIdx - B(s, 60)); k--) {
+      const prevMax = s.mxH.val(k - L40, k - 1);
       if (!(s.c[k] > prevMax)) continue;
-      if (k > 0 && s.c[k - 1] > s.mxH.val(k - 41, k - 2)) continue; // only the first day of a breakout burst
-      const priorLow = s.mnL.val(k - 40, k - 1);
+      if (k > 0 && s.c[k - 1] > s.mxH.val(k - L40 - 1, k - 2)) continue; // only the first day of a breakout burst
+      const priorLow = s.mnL.val(k - L40, k - 1);
       const priorDepth = 1 - priorLow / prevMax;
       const adv = lip / prevMax - 1;
       if (priorDepth > 0.35 || priorDepth < 0.04 || adv < 0.05 || adv >= 0.2 || low < prevMax * 0.93) break;
-      const conf = wscore([[2, adv <= 0.1 ? ramp(adv, 0.05, 0.08) : ramp(adv, 0.2, 0.12)], [2, ramp(low / prevMax, 0.93, 1.0)], [1, ramp(depth, 0.25, 0.12)], [1, ramp(len, 20, 30)], [1, trendOK(s, e)], [1, ramp(priorUp(s, k), 0.1, 0.3)]]);
-      push(out, { id: 'base_on_base', conf, start: Math.max(0, k - 40), end: e, keyFrom: sIdx, pivot: lip, depth,
+      const conf = wscore([[2, adv <= 0.1 ? ramp(adv, 0.05, 0.08) : ramp(adv, 0.2, 0.12)], [2, ramp(low / prevMax, 0.93, 1.0)], [1, ramp(depth, 0.25, 0.12)], [1, ramp(len, L20, Bg(s, 30, L20))], [1, trendOK(s, e)], [1, ramp(priorUp(s, k), 0.1, 0.3)]]);
+      push(out, { id: 'base_on_base', conf, start: Math.max(0, k - L40), end: e, keyFrom: sIdx, pivot: lip, depth,
         detail: `earlier base pivot ${fmt(prevMax)}, gained only ${Math.round(adv * 100)}% before this base`,
-        lines: [LP('pivot', s, sIdx, lip, e, lip), LP('support', s, k - 40, prevMax, k, prevMax)] });
+        lines: [LP('pivot', s, sIdx, lip, e, lip), LP('support', s, k - L40, prevMax, k, prevMax)] });
       break;
     }
   }
@@ -417,12 +524,13 @@ function detectLipBases(s: S, e: number, recs: number[], out: Map<PatternId, Raw
 /** IPO base (O'Neil): within ~2 years of listing; correction from the post-listing high, ≥ 3 bars, 8–50% deep
  *  (25–50% is classic for longer ones); pivot = post-listing high. Only the FIRST base after listing (zzz990 CP-02). */
 function detectIpoBase(s: S, e: number, out: Map<PatternId, Raw>) {
-  if (s.listT == null) return;
+  if (s.listT == null || !patternApplies('ipo_base', s.pf.tf)) return;
   const age = (s.t[e] - s.listT) / DAY;
   if (age > 730 || age < 7) return;
   let first = 0;
   while (first < e && s.t[first] < s.listT) first++;
-  const sIdx = s.mxH.idx(first, e - 3);
+  const L3 = Bm(s, 3);
+  const sIdx = s.mxH.idx(first, e - L3);
   if (sIdx < 0 || s.h[sIdx] < s.mxH.val(sIdx, e)) return;
   const earlier = firstBaseBreakout(s, first, sIdx);
   // an earlier post-listing base already broke out and the stock then advanced > 20% past its pivot: this is a later base
@@ -434,8 +542,8 @@ function detectIpoBase(s: S, e: number, out: Map<PatternId, Raw>) {
   if (depth < 0.08 || depth > 0.5) return;
   const posInRange = (s.c[e] - s.l[m]) / (lip - s.l[m]);
   if (posInRange < 0.25) return; // still falling — not a base yet
-  const depthOk = len <= 25 ? ramp(depth, 0.5, 0.3) : (depth >= 0.25 ? ramp(depth, 0.55, 0.45) : ramp(depth, 0.08, 0.2));
-  const conf = wscore([[2, ramp(len, 3, 15)], [2, depthOk], [1, ramp(posInRange, 0.3, 0.75)], [1, ramp(730 - age, 0, 365)], [1, ramp(volRatio(avgVol(s, e - 9, e), avgVol(s, sIdx - 20, sIdx)), 1.2, 0.7)]]);
+  const depthOk = len <= B(s, 25) ? ramp(depth, 0.5, 0.3) : (depth >= 0.25 ? ramp(depth, 0.55, 0.45) : ramp(depth, 0.08, 0.2));
+  const conf = wscore([[2, ramp(len, L3, Bg(s, 15, L3))], [2, depthOk], [1, ramp(posInRange, 0.3, 0.75)], [1, ramp(730 - age, 0, 365)], [1, ramp(volRatio(avgVol(s, e - B(s, 10) + 1, e), avgVol(s, sIdx - B(s, 20), sIdx)), 1.2, 0.7)]]);
   push(out, { id: 'ipo_base', conf, start: sIdx, end: e, keyFrom: sIdx, pivot: lip, depth,
     detail: `${Math.round(age / 30.4)} months after listing`,
     lines: [LP('pivot', s, sIdx, lip, e, lip), LP('support', s, m, s.l[m], e, s.l[m])] });
@@ -445,16 +553,16 @@ function detectIpoBase(s: S, e: number, out: Map<PatternId, Raw>) {
  * The pivot of the first post-listing base that broke out before bar `until`, or null. A base = a pullback of ≥ 8% from a
  * running post-listing high lasting ≥ 3 bars; its breakout = the first close above that high afterwards.
  */
-export function firstBaseBreakoutOf(H: ArrayLike<number>, L: ArrayLike<number>, C: ArrayLike<number>, from: number, until: number): number | null {
+export function firstBaseBreakoutOf(H: ArrayLike<number>, L: ArrayLike<number>, C: ArrayLike<number>, from: number, until: number, minBars = 3): number | null {
   if (from < 0 || from >= until) return null;
   let runHi = H[from], runHiI = from, minSince = Infinity;
   for (let i = from + 1; i < until; i++) {
-    if (C[i] > runHi && i - runHiI >= 3 && 1 - minSince / runHi >= 0.08) return runHi;
+    if (C[i] > runHi && i - runHiI >= minBars && 1 - minSince / runHi >= 0.08) return runHi;
     if (H[i] > runHi) { runHi = H[i]; runHiI = i; minSince = Infinity; } else if (L[i] < minSince) minSince = L[i];
   }
   return null;
 }
-const firstBaseBreakout = (s: S, from: number, until: number) => firstBaseBreakoutOf(s.h, s.l, s.c, from, until);
+const firstBaseBreakout = (s: S, from: number, until: number) => firstBaseBreakoutOf(s.h, s.l, s.c, from, until, B(s, 3));
 
 /**
  * VCP (Minervini): within a base (lip record 3–65 weeks back), 2–6 successive pullbacks each < 92% of the one before
@@ -462,9 +570,10 @@ const firstBaseBreakout = (s: S, from: number, until: number) => firstBaseBreako
  * last contraction below its 50-day average; pivot = high of the last contraction.
  */
 function detectVcp(s: S, e: number, recs: number[], zz: Pivot[], out: Map<PatternId, Raw>) {
+  const L15 = Bm(s, 15), L330 = B(s, 330);
   for (const sIdx of recs) {
     const len = e - sIdx + 1;
-    if (len < 15 || len > 330) continue;
+    if (len < L15 || len > L330) continue;
     const up = priorUp(s, sIdx);
     if (up < 0.15) continue;
     const seq: Pivot[] = [{ i: sIdx, p: s.h[sIdx], hi: true, confirmed: true }];
@@ -509,12 +618,14 @@ function tightRatio(cs: Array<{ d: number }>, j: number): number {
 /** Ascending base (O'Neil): 8–18 weeks (9–16 best), three pullbacks of 8–22% (10–20% best), each high and low above
  *  the previous; prior rise ≥ 20%; pivot = the third high. */
 function detectAscendingBase(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>) {
+  if (!patternApplies('ascending_base', s.pf.tf)) return;
+  const L40 = Bm(s, 40), L95 = B(s, 95);
   const pairs: Array<{ hi: Pivot; lo: Pivot }> = [];
-  for (let k = 0; k + 1 < zz.length; k++) if (zz[k].hi && !zz[k + 1].hi && zz[k].i >= e - 100) pairs.push({ hi: zz[k], lo: zz[k + 1] });
+  for (let k = 0; k + 1 < zz.length; k++) if (zz[k].hi && !zz[k + 1].hi && zz[k].i >= e - B(s, 100)) pairs.push({ hi: zz[k], lo: zz[k + 1] });
   if (pairs.length < 3) return;
   const [a, b, c] = pairs.slice(-3);
   const span = e - a.hi.i + 1;
-  if (span < 40 || span > 95) return;
+  if (span < L40 || span > L95) return;
   if (!(b.hi.p > a.hi.p * 1.01 && c.hi.p > b.hi.p * 1.01 && b.lo.p > a.lo.p && c.lo.p > b.lo.p)) return;
   const ds = [a, b, c].map((x) => 1 - x.lo.p / x.hi.p);
   if (ds.some((d) => d < 0.08 || d > 0.22)) return;
@@ -522,7 +633,7 @@ function detectAscendingBase(s: S, e: number, zz: Pivot[], out: Map<PatternId, R
   if (s.mxH.val(c.hi.i + 1, e) > pivot) return;
   const up = priorUp(s, a.hi.i);
   if (up < 0.15) return;
-  const conf = wscore([[2, ramp(up, 0.15, 0.3)], [3, ds.reduce((x, d) => x + (d >= 0.1 && d <= 0.2 ? 1 : 0.5), 0) / 3], [1, ramp(span, 40, 45) * ramp(span, 95, 80)], [1, trendOK(s, e)]]);
+  const conf = wscore([[2, ramp(up, 0.15, 0.3)], [3, ds.reduce((x, d) => x + (d >= 0.1 && d <= 0.2 ? 1 : 0.5), 0) / 3], [1, ramp(span, L40, Bg(s, 45, L40)) * ramp(span, L95, Math.min(L95, Math.max(L40, B(s, 80))))], [1, trendOK(s, e)]]);
   push(out, { id: 'ascending_base', conf, start: a.hi.i, end: e, keyFrom: c.hi.i, pivot, depth: Math.max(...ds),
     detail: `pullbacks ${ds.map((d) => Math.round(d * 100) + '%').join(', ')}`,
     lines: [LP('pivot', s, c.hi.i, pivot, e, pivot), LP('trend', s, a.lo.i, a.lo.p, c.lo.i, c.lo.p)] });
@@ -532,6 +643,7 @@ function detectAscendingBase(s: S, e: number, zz: Pivot[], out: Map<PatternId, R
  *  pole ≥ 90% (full score at 100%) in ≤ 8 weeks (40 bars), then a 10–25 bar (2–5 week) flag no more than 25% deep
  *  (≤ 15% best); pivot = flag high. 85–90% poles are NOT high tight flags (they can still read as a bull flag). */
 function detectHTF(s: S, e: number, recs: number[], out: Map<PatternId, Raw>) {
+  if (!patternApplies('high_tight_flag', s.pf.tf)) return;   // daily-only (see PATTERN_TIMEFRAMES)
   const R = HTF_RULES;
   for (const sIdx of recs) {
     const len = e - sIdx + 1;
@@ -577,6 +689,7 @@ function channel(s: S, a: number, b: number) {
  * Bear flag: the mirror after a ≥ 15% drop, drifting up/sideways; breakdown = lower line at the end.
  */
 function detectFlags(s: S, e: number, recs: number[], floors: number[], out: Map<PatternId, Raw>) {
+  if (!patternApplies('bull_flag', s.pf.tf)) return;   // flags / pennants are daily-only (see PATTERN_TIMEFRAMES)
   for (const sIdx of recs) {
     const len = e - sIdx + 1;
     if (len < 5 || len > 22) continue;
@@ -644,13 +757,15 @@ function detectFlags(s: S, e: number, recs: number[], floors: number[], out: Map
  *  Rising wedge: both rising (lower ≥ +4%, upper ≥ +1.5%), lower steeper, converging; breakdown = lower line at the end.
  */
 function detectTriWedge(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>) {
+  if (!patternApplies('ascending_triangle', s.pf.tf)) return;   // triangles / wedges: D and W only
+  const L15 = Bm(s, 15), L20 = Bm(s, 20), L30 = Bg(s, 30, L15), L130 = B(s, 130);
   // confirmed swings, plus the running one when price has already moved ≥ 2% away from it (a touch that is turning)
-  const conf = zz.filter((q) => q.i >= e - 130 && (q.confirmed || (q.i <= e - 2 && (q.hi ? 1 - s.c[e] / q.p : s.c[e] / q.p - 1) >= 0.02)));
+  const conf = zz.filter((q) => q.i >= e - L130 && (q.confirmed || (q.i <= e - B(s, 2) && (q.hi ? 1 - s.c[e] / q.p : s.c[e] / q.p - 1) >= 0.02)));
   for (let m = 4; m <= Math.min(8, conf.length); m++) {
     const W = conf.slice(-m);
     const a = W[0].i;
     const len = e - a + 1;
-    if (len < 15 || len > 130) continue;
+    if (len < L15 || len > L130) continue;
     const Hs = W.filter((q) => q.hi), Ls = W.filter((q) => !q.hi);
     if (Hs.length < 2 || Ls.length < 2) continue;
     const ref = s.c[e];
@@ -673,23 +788,23 @@ function detectTriWedge(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>) 
     const contain = inside / len;
     const flatTol = (k: number) => (k >= 3 ? 0.03 : 0.02);
     if ((hMax - hMin) / hMax <= flatTol(Hs.length) && Math.abs(chH) <= 0.025 && risingLows && chL >= 0.04 && s.mxH.val(lastH.i + 1, e) <= hMax * 1.005) {
-      const c = wscore([[2, ramp(touches, 3, 6)], [3, ramp(Hs.length, 2, 3)], [2, ramp(chL, 0.04, 0.1)], [1, ramp(fitQ, 0.04, 0.015)], [1, ramp(len, 15, 30)], [1, ramp(contain, 0.8, 0.95)]]);
+      const c = wscore([[2, ramp(touches, 3, 6)], [3, ramp(Hs.length, 2, 3)], [2, ramp(chL, 0.04, 0.1)], [1, ramp(fitQ, 0.04, 0.015)], [1, ramp(len, L15, L30)], [1, ramp(contain, 0.8, 0.95)]]);
       push(out, { id: 'ascending_triangle', conf: c, start: a, end: e, keyFrom: a, pivot: hMax, depth: 1 - lMin / hMax,
         detail: `${Hs.length} touches of ${fmt(hMax)}, lows rising`, lines: [LP('resistance', s, a, hMax, e, hMax), lineSet[1]] });
     }
     if ((lMax - lMin) / lMax <= flatTol(Ls.length) && Math.abs(chL) <= 0.025 && fallingHighs && chH <= -0.04 && s.mnL.val(lastL.i + 1, e) >= lMin * 0.995) {
-      const c = wscore([[2, ramp(touches, 3, 6)], [3, ramp(Ls.length, 2, 3)], [2, ramp(-chH, 0.04, 0.1)], [1, ramp(fitQ, 0.04, 0.015)], [1, ramp(len, 15, 30)], [1, ramp(contain, 0.8, 0.95)]]);
+      const c = wscore([[2, ramp(touches, 3, 6)], [3, ramp(Ls.length, 2, 3)], [2, ramp(-chH, 0.04, 0.1)], [1, ramp(fitQ, 0.04, 0.015)], [1, ramp(len, L15, L30)], [1, ramp(contain, 0.8, 0.95)]]);
       push(out, { id: 'descending_triangle', conf: c, start: a, end: e, keyFrom: a, pivot: lMin, depth: 1 - lMin / hMax,
         detail: `${Ls.length} touches of ${fmt(lMin)}, highs falling`, lines: [LP('support', s, a, lMin, e, lMin), lineSet[0]] });
     }
     const converging = wStart > 0 && wEnd > 0 && wEnd < 0.75 * wStart;
     // where the two lines meet (the apex): a wedge's boundary is not projected past it
     const apex = fh.b !== fl.b ? Math.floor((fl.a - fh.a) / (fh.b - fl.b)) : Infinity;
-    const wedgeOk = converging && touches >= 5 && len >= 20 && fitQ <= 0.025 && contain >= 0.9;
+    const wedgeOk = converging && touches >= 5 && len >= L20 && fitQ <= 0.025 && contain >= 0.9;
     if (wedgeOk && chH <= -0.04 && chL <= -0.015 && chH < chL) {
       const piv = fh.a + fh.b * e;
       {
-        const c = wscore([[2, ramp(touches, 5, 7)], [2, ramp(wEnd / wStart, 0.75, 0.4)], [2, ramp(fitQ, 0.025, 0.01)], [2, ramp(contain, 0.9, 0.98)], [1, ramp(len, 15, 30)], [1, ramp(priorDown(s, a), 0.05, 0.2)]]);
+        const c = wscore([[2, ramp(touches, 5, 7)], [2, ramp(wEnd / wStart, 0.75, 0.4)], [2, ramp(fitQ, 0.025, 0.01)], [2, ramp(contain, 0.9, 0.98)], [1, ramp(len, L15, L30)], [1, ramp(priorDown(s, a), 0.05, 0.2)]]);
         push(out, { id: 'falling_wedge', conf: c, start: a, end: e, keyFrom: lastH.i + 1, pivot: piv, depth: 1 - lMin / hMax, lineAt: (i) => fh.a + fh.b * i, expiry: apex,
           detail: `${touches} touches, range narrowing`, lines: lineSet });
       }
@@ -697,7 +812,7 @@ function detectTriWedge(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>) 
     if (wedgeOk && chL >= 0.04 && chH >= 0.015 && chL > chH) {
       const piv = fl.a + fl.b * e;
       {
-        const c = wscore([[2, ramp(touches, 5, 7)], [2, ramp(wEnd / wStart, 0.75, 0.4)], [2, ramp(fitQ, 0.025, 0.01)], [2, ramp(contain, 0.9, 0.98)], [1, ramp(len, 15, 30)], [1, ramp(priorUp(s, a), 0.05, 0.2)]]);
+        const c = wscore([[2, ramp(touches, 5, 7)], [2, ramp(wEnd / wStart, 0.75, 0.4)], [2, ramp(fitQ, 0.025, 0.01)], [2, ramp(contain, 0.9, 0.98)], [1, ramp(len, L15, L30)], [1, ramp(priorUp(s, a), 0.05, 0.2)]]);
         push(out, { id: 'rising_wedge', conf: c, start: a, end: e, keyFrom: lastL.i + 1, pivot: piv, depth: 1 - lMin / hMax, lineAt: (i) => fl.a + fl.b * i, expiry: apex,
           detail: `${touches} touches, range narrowing`, lines: lineSet });
       }
@@ -716,8 +831,8 @@ function detectTriWedge(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>) 
  *  Tops: the mirrors, after a ≥ 20% rise; breakdown = middle trough / lower trough / neckline.
  */
 function detectReversals(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>) {
-  const lows = zz.filter((q) => !q.hi && q.i >= e - 330);
-  const highs = zz.filter((q) => q.hi && q.i >= e - 330);
+  const lows = zz.filter((q) => !q.hi && q.i >= e - B(s, 330));
+  const highs = zz.filter((q) => q.hi && q.i >= e - B(s, 330));
   reversalSide(s, e, lows, true, out);
   reversalSide(s, e, highs, false, out);
 }
@@ -739,13 +854,16 @@ function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<P
   const idH: PatternId = bottom ? 'inverse_hs' : 'head_shoulders';
   const lbl = bottom ? 'peak' : 'trough';
   const pivotOf = (mi: number) => (bottom ? s.h[mi] : s.l[mi]);
+  // zzz992 — gaps in bars of the timeframe: a sub-gap (low → low) ≥ 10 days → ≥ 2 bars on W / M; the whole formation ≥ 3 bars
+  const G10 = s.pf.k === 1 ? 10 : Math.max(2, B(s, 10)), Gall = Bm(s, 10), G325 = B(s, 325);
+  const G5 = B(s, 5);
 
   let bestTripleLast = false;
   // Triple
   for (let a = pts.length - 3; a >= 0 && a >= pts.length - 10; a--) {
     for (let b = a + 1; b < pts.length - 1; b++) {
       const P = [pts[a], pts[b], last];
-      if (P[1].i - P[0].i < 10 || P[2].i - P[1].i < 10) continue;
+      if (P[1].i - P[0].i < G10 || P[2].i - P[1].i < G10) continue;
       const ps = P.map((q) => q.p);
       const bandHi = Math.max(...ps), bandLo = Math.min(...ps);
       if (bandHi / bandLo - 1 > 0.05) continue;
@@ -759,7 +877,7 @@ function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<P
       if (tr < trendMin * 0.75) continue;
       const mi = bottom ? (s.h[m1] >= s.h[m2] ? m1 : m2) : (s.l[m1] <= s.l[m2] ? m1 : m2);
       const pivot = pivotOf(mi);
-      const conf = wscore([[2, ramp(bandHi / bandLo - 1, 0.05, 0.02)], [2, ramp(Math.min(sep1, sep2), 0.1, 0.15)], [2, ramp(tr, trendMin * 0.75, trendMin + 0.1)], [1, ramp(P[2].i - P[0].i, 30, 60)], [1, ramp(off, 0.03, 0.08)]]);
+      const conf = wscore([[2, ramp(bandHi / bandLo - 1, 0.05, 0.02)], [2, ramp(Math.min(sep1, sep2), 0.1, 0.15)], [2, ramp(tr, trendMin * 0.75, trendMin + 0.1)], [1, ramp(P[2].i - P[0].i, B(s, 30), Bg(s, 60, B(s, 30)))], [1, ramp(off, 0.03, 0.08)]]);
       if (conf >= MIN_CONF) bestTripleLast = true;
       push(out, { id: idT, conf, start: P[0].i, end: e, keyFrom: P[2].i, pivot, depth: bottom ? 1 - bandLo / pivot : 1 - pivot / bandHi,
         detail: `three ${bottom ? 'lows' : 'highs'} near ${fmt(bottom ? bandLo : bandHi)}`,
@@ -772,8 +890,8 @@ function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<P
     for (let a = pts.length - 2; a >= 0; a--) {
       const A = pts[a];
       const gap = last.i - A.i;
-      if (gap < 10) continue;
-      if (gap > 325) break;
+      if (gap < Gall) continue;
+      if (gap > G325) break;
       const band = Math.max(A.p, last.p) / Math.min(A.p, last.p) - 1;
       if (band > 0.05) continue;
       const lo = Math.min(A.p, last.p), hi = Math.max(A.p, last.p);
@@ -786,7 +904,7 @@ function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<P
       if (tr < trendMin * 0.75) continue;
       const pivot = pivotOf(mi);
       const sym = Math.min(mi - A.i, last.i - mi) / Math.max(1, Math.max(mi - A.i, last.i - mi));
-      const conf = wscore([[2, ramp(band, 0.05, 0.02)], [2, ramp(sep, 0.1, 0.18)], [2, ramp(tr, trendMin * 0.75, trendMin + 0.1)], [1, ramp(gap, 10, 30)], [1, ramp(sym, 0.2, 0.6)], [1, ramp(off, 0.03, 0.08)]]);
+      const conf = wscore([[2, ramp(band, 0.05, 0.02)], [2, ramp(sep, 0.1, 0.18)], [2, ramp(tr, trendMin * 0.75, trendMin + 0.1)], [1, ramp(gap, Gall, Bg(s, 30, Gall))], [1, ramp(sym, 0.2, 0.6)], [1, ramp(off, 0.03, 0.08)]]);
       push(out, { id: idB, conf, start: A.i, end: e, keyFrom: mi, pivot, depth: bottom ? 1 - lo / pivot : 1 - pivot / hi,
         detail: `${bottom ? 'lows' : 'highs'} ${fmt(A.p)} and ${fmt(last.p)}, middle ${lbl} ${fmt(pivot)}`,
         lines: [LP(bottom ? 'pivot' : 'support', s, A.i, pivot, e, pivot), LP(bottom ? 'support' : 'resistance', s, A.i, A.p, last.i, last.p)] });
@@ -797,13 +915,13 @@ function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<P
   // Head & shoulders
   for (let h = pts.length - 2; h >= 1 && h >= pts.length - 8; h--) {
     const H = pts[h], RS = last;
-    if (RS.i - H.i < 5) continue;
+    if (RS.i - H.i < G5) continue;
     const headDeeper = bottom ? RS.p / H.p - 1 : 1 - RS.p / H.p;
     if (headDeeper < 0.04) continue;
     if (bottom ? s.mnL.val(H.i, RS.i) < H.p : s.mxH.val(H.i, RS.i) > H.p) continue;
     for (let l = h - 1; l >= 0 && l >= h - 4; l--) {
       const LS = pts[l];
-      if (H.i - LS.i < 5) continue;
+      if (H.i - LS.i < G5 || RS.i - LS.i < Gall) continue;
       const lsOk = bottom ? LS.p / H.p - 1 : 1 - LS.p / H.p;
       if (lsOk < 0.04) continue;
       if (bottom ? s.mnL.val(LS.i, H.i) < H.p : s.mxH.val(LS.i, H.i) > H.p) continue;
@@ -842,7 +960,25 @@ const capOf = (last: number, lineAt?: (i: number) => number, expiry?: number) =>
  * The "now" comparisons (failed / still holding the break) use the projected level at the last bar — the same level the
  * hit displays and measures its distance from.
  */
-export function stageOf(s: Pick<S, 'n' | 'c'>, e: number, from: number, pivot: number, bull: boolean, lineAt?: (i: number) => number, expiry?: number): { stage: PatternStage; f: number } | null {
+export interface StageWindows {
+  /** a break more than this many bars after a past body end belongs to a later body end */
+  lead: number;
+  /** 'breakout' while the first close beyond the pivot is at most this many bars before the last bar */
+  breakout: number;
+  /** 'failed' only within this many bars of that first close */
+  failed: number;
+}
+/** Daily windows: lead 3, breakout ≤ 4 bars ago (the last 5 sessions), failed within 40 sessions. */
+export const DAILY_STAGE_WINDOWS: StageWindows = { lead: 3, breakout: 4, failed: 40 };
+/** zzz992 — the stage windows of a timeframe: W / M → the breakout is this or the previous candle; failed within 8
+ *  weeks / 2 months; lead 1 candle. */
+export function stageWindowsFor(tf: PatternTimeframe): StageWindows {
+  if (tf === 'D') return DAILY_STAGE_WINDOWS;
+  const pf = TF_PROFILES[tf];
+  return { lead: Math.max(1, Math.round(3 / pf.k)), breakout: 1, failed: Math.max(2, Math.round(40 / pf.k)) };
+}
+
+export function stageOf(s: Pick<S, 'n' | 'c'>, e: number, from: number, pivot: number, bull: boolean, lineAt?: (i: number) => number, expiry?: number, win: StageWindows = DAILY_STAGE_WINDOWS): { stage: PatternStage; f: number } | null {
   const last = s.n - 1;
   const cap = capOf(last, lineAt, expiry);
   const lv = (i: number) => (lineAt ? lineAt(Math.min(i, cap)) : pivot);
@@ -850,10 +986,10 @@ export function stageOf(s: Pick<S, 'n' | 'c'>, e: number, from: number, pivot: n
   let f = -1;
   for (let i = Math.max(0, from); i <= searchEnd; i++) if (bull ? s.c[i] > lv(i) : s.c[i] < lv(i)) { f = i; break; }
   if (f < 0) return e === last && searchEnd === last ? { stage: 'forming', f } : null;
-  if (e < last && f > e + 3) return null;
+  if (e < last && f > e + win.lead) return null;
   const since = last - f, cl = s.c[last], level = lv(last);
-  if (bull ? cl < level * 0.925 : cl > level * 1.075) return since <= 40 ? { stage: 'failed', f } : null;
-  if (since <= 4) return (bull ? cl >= level * 0.97 : cl <= level * 1.03) ? { stage: 'breakout', f } : { stage: 'forming', f };
+  if (bull ? cl < level * 0.925 : cl > level * 1.075) return since <= win.failed ? { stage: 'failed', f } : null;
+  if (since <= win.breakout) return (bull ? cl >= level * 0.97 : cl <= level * 1.03) ? { stage: 'breakout', f } : { stage: 'forming', f };
   return null;
 }
 
@@ -862,8 +998,19 @@ function fmt(n: number): string {
   return n >= 1 ? n.toFixed(2) : n.toPrecision(3);
 }
 const likelihoodOf = (c: number): PatternHit['likelihood'] => (c >= 0.75 ? 'very likely' : c >= 0.55 ? 'likely' : 'possible');
-const lenWords = (bars: number) => (bars >= 10 ? `${Math.max(1, Math.round(bars / 5))} wk` : `${bars} days`);
-const lenNote = (bars: number) => (bars >= 10 ? `${Math.max(1, Math.round(bars / 5))} weeks` : `${bars} days`);
+/** zzz992 — a length in bars of the timeframe as words: D '7 wk' / '8 days', W '12 wk', M '9 mo'; long = 'weeks' / 'months'. */
+export function patternLengthWords(bars: number, tf: PatternTimeframe = 'D', long = false): string {
+  if (tf === 'W') return `${bars} ${long ? (bars === 1 ? 'week' : 'weeks') : 'wk'}`;
+  if (tf === 'M') return `${bars} ${long ? (bars === 1 ? 'month' : 'months') : 'mo'}`;
+  return bars >= 10 ? `${Math.max(1, Math.round(bars / 5))} ${long ? 'weeks' : 'wk'}` : `${bars} days`;
+}
+const lenWords = (bars: number, tf?: PatternTimeframe) => patternLengthWords(bars, tf || 'D');
+const lenNote = (bars: number, tf?: PatternTimeframe) => patternLengthWords(bars, tf || 'D', true);
+const unitAgo = (n: number, tf: PatternTimeframe) => {
+  const u = tf === 'W' ? 'week' : tf === 'M' ? 'month' : 'day';
+  if (n === 0) return tf === 'W' ? 'this week' : tf === 'M' ? 'this month' : 'today';
+  return `${n} ${u}${n === 1 ? '' : 's'} ago`;
+};
 
 export interface CleanedBars { bars: PBar[]; rejected: number; repaired: number }
 /**
@@ -907,45 +1054,62 @@ export interface PatternAnalysis {
   usableBars: number; rejectedBars: number; repairedBars: number;
   /** share (0..1) of the analysed bars that carry usable volume */
   volumeCoverage: number;
-  /** fewer than PATTERN_MIN_BARS usable bars: nothing was analysed — not the same as "no pattern" */
+  /** fewer than the timeframe's minimum history (PATTERN_MIN_HISTORY) usable bars: nothing was analysed — not "no pattern" */
   tooShort: boolean;
   /** whether the listing date was accepted for the IPO-base rule (given AND the history starts within a few days of it) */
   listingKnown: boolean;
+  /** zzz992 — the analysis timeframe, the bars it needs, and the patterns that cannot be read on it */
+  timeframe: PatternTimeframe;
+  minBars: number;
+  notApplicable: PatternId[];
+  engineVersion: string;
 }
 
 /** detectPatterns plus what the data allowed (validation counts, volume coverage, too-short history). */
 export function analyzePatterns(bars: PBar[], opts?: DetectOptions): PatternAnalysis {
+  const tf: PatternTimeframe = opts?.timeframe === 'W' || opts?.timeframe === 'M' ? opts.timeframe : 'D';
+  const pf = TF_PROFILES[tf];
   const cleaned = cleanBars(bars);
   const all = cleaned.bars;
-  const base = { usableBars: all.length, rejectedBars: cleaned.rejected, repairedBars: cleaned.repaired };
-  if (all.length < PATTERN_MIN_BARS) return { hits: [], ...base, volumeCoverage: 0, tooShort: true, listingKnown: false };
+  const minBars = PATTERN_MIN_HISTORY[tf];
+  const base = {
+    usableBars: all.length, rejectedBars: cleaned.rejected, repairedBars: cleaned.repaired,
+    timeframe: tf, minBars, notApplicable: PATTERN_IDS.filter((id) => !patternApplies(id, tf)), engineVersion: PATTERN_ENGINE_VERSION,
+  };
+  if (all.length < minBars) return { hits: [], ...base, volumeCoverage: 0, tooShort: true, listingKnown: false };
   // zzz990 (CP-03) — never infer the listing from the first bar; a given listing date counts only when the history covers it
   const ft = opts?.firstTradeT != null && Number.isFinite(Number(opts.firstTradeT)) ? Number(opts.firstTradeT) : null;
   const listT = ft != null && Math.abs(all[0].t - ft) <= LISTING_TOLERANCE_DAYS * DAY ? ft : null;
-  const maxBars = Math.max(60, Math.floor(opts?.maxBars ?? DEFAULT_MAX_BARS));
-  const s = build(all.length > maxBars ? all.slice(-maxBars) : all, listT);
+  const maxBars = tf === 'D' ? Math.max(60, Math.floor(opts?.maxBars ?? DEFAULT_MAX_BARS)) : Math.max(minBars, Math.floor(opts?.maxBars ?? pf.defaultMaxBars));
+  const s = build(all.length > maxBars ? all.slice(-maxBars) : all, listT, pf);
   const last = s.n - 1;
+  const win = stageWindowsFor(tf);
 
   // body ends: last 6 bars + the day before the first day of each recent breakout / breakdown burst
+  // (W / M: the last 2 candles; a burst = a close beyond the prior 10 days' range → 3 candles, looked for in the last
+  // 40 days → 8 weeks / 2 months; the earliest body end is at bar 25 days → 5 weeks / 3 months)
+  const nEnds = tf === 'D' ? 6 : 2;
+  const L10 = tf === 'D' ? 10 : Math.max(3, B(s, 10));
+  const minE = Bm(s, 25);
   const ends = new Set<number>();
-  for (let k = 0; k <= 5 && last - k >= 25; k++) ends.add(last - k);
-  const isUp = (i: number) => i >= 11 && s.c[i] > s.mxH.val(i - 10, i - 1);
-  const isDn = (i: number) => i >= 11 && s.c[i] < s.mnL.val(i - 10, i - 1);
+  for (let k = 0; k < nEnds && last - k >= minE; k++) ends.add(last - k);
+  const isUp = (i: number) => i >= L10 + 1 && s.c[i] > s.mxH.val(i - L10, i - 1);
+  const isDn = (i: number) => i >= L10 + 1 && s.c[i] < s.mnL.val(i - L10, i - 1);
   let nu = 0, nd = 0;
-  for (let f = last; f >= Math.max(12, last - 40); f--) {
-    if (nu < 3 && isUp(f) && !isUp(f - 1)) { let first = true; for (let j = f - 1; j >= f - 10; j--) if (isUp(j)) { first = false; break; } if (first) { ends.add(f - 1); nu++; } }
-    if (nd < 3 && isDn(f) && !isDn(f - 1)) { let first = true; for (let j = f - 1; j >= f - 10; j--) if (isDn(j)) { first = false; break; } if (first) { ends.add(f - 1); nd++; } }
+  for (let f = last; f >= Math.max(L10 + 2, last - Math.max(2, B(s, 40))); f--) {
+    if (nu < 3 && isUp(f) && !isUp(f - 1)) { let first = true; for (let j = f - 1; j >= f - L10; j--) if (isUp(j)) { first = false; break; } if (first) { ends.add(f - 1); nu++; } }
+    if (nd < 3 && isDn(f) && !isDn(f - 1)) { let first = true; for (let j = f - 1; j >= f - L10; j--) if (isDn(j)) { first = false; break; } if (first) { ends.add(f - 1); nd++; } }
   }
 
   const best = new Map<PatternId, { raw: Raw; st: { stage: PatternStage; f: number } }>();
   for (const e of [...ends].sort((a, b) => b - a)) {
-    if (e < 25) continue;
+    if (e < minE) continue;
     const raws = new Map<PatternId, Raw>();
-    const atr = s.atrPct[e];
-    const zzS = zigzag(s.h, s.l, e - 330, e, Math.min(0.05, Math.max(0.025, 1.2 * atr)));
-    const zzM = zigzag(s.h, s.l, e - 340, e, Math.min(0.08, Math.max(0.04, 2 * atr)));
-    const recs = highRecords(s, e, 3, 330);
-    const floors = lowRecords(s, e, 4, 30);
+    const atr = s.atrPct[e], sm = pf.swingMul;
+    const zzS = zigzag(s.h, s.l, e - B(s, 330), e, Math.min(0.05 * sm, Math.max(0.025 * sm, 1.2 * atr)));
+    const zzM = zigzag(s.h, s.l, e - B(s, 340), e, Math.min(0.08 * sm, Math.max(0.04 * sm, 2 * atr)));
+    const recs = highRecords(s, e, B(s, 3), tf === 'M' ? LONG_BASE_MONTHS : B(s, 330));
+    const floors = lowRecords(s, e, B(s, 4), B(s, 30));
     detectLipBases(s, e, recs, raws);
     detectIpoBase(s, e, raws);
     detectVcp(s, e, recs, zzS, raws);
@@ -956,7 +1120,7 @@ export function analyzePatterns(bars: PBar[], opts?: DetectOptions): PatternAnal
     detectReversals(s, e, zzM, raws);
     for (const raw of raws.values()) {
       const bull = PATTERN_META[raw.id].bias === 'bullish';
-      const st = stageOf(s, e, raw.keyFrom, raw.pivot, bull, raw.lineAt, raw.expiry);
+      const st = stageOf(s, e, raw.keyFrom, raw.pivot, bull, raw.lineAt, raw.expiry, win);
       if (!st) continue;
       let conf = raw.conf;
       // breakout-volume bonus only with a real volume on the breakout day and a usable 50-day baseline
@@ -986,12 +1150,12 @@ export function analyzePatterns(bars: PBar[], opts?: DetectOptions): PatternAnal
     // zzz990 (CP-04) — volume evidence over the pattern's span
     const spanA = Math.max(0, raw.start), spanLen = last - spanA + 1;
     const volCov = spanLen > 0 ? (s.pn[last + 1] - s.pn[spanA]) / spanLen : 0;
-    const volumeOk = volCov >= 0.6 && Number.isFinite(avgVol(s, last - 9, last));
+    const volumeOk = volCov >= 0.6 && Number.isFinite(avgVol(s, last - B(s, 10) + 1, last));
     const lengthBars = raw.end - raw.start + 1;
     const distWords = Math.abs(dist) < 0.5 ? 'close at the level' : `close ${Math.abs(dist).toFixed(0)}% ${dist < 0 ? 'below' : 'above'}`;
-    const stageWords = st.stage === 'breakout' ? `; ${bull ? 'broke out' : 'broke down'} ${last - st.f === 0 ? 'today' : `${last - st.f} day${last - st.f === 1 ? '' : 's'} ago`}`
+    const stageWords = st.stage === 'breakout' ? `; ${bull ? 'broke out' : 'broke down'} ${unitAgo(last - st.f, tf)}`
       : st.stage === 'failed' ? `; ${bull ? 'breakout' : 'breakdown'} failed` : '';
-    const note = `${meta.label}, ${lenNote(lengthBars)}${raw.depth != null ? `, ${Math.round(raw.depth * 100)}% deep` : ''}${raw.detail ? ` — ${raw.detail}` : ''}; ${bull ? 'pivot' : 'breakdown'} ${fmt(level)}, ${distWords}${stageWords}${volumeOk ? '' : '; volume not confirmed (no usable volume data)'}`;
+    const note = `${meta.label}${tf === 'W' ? ' (weekly)' : tf === 'M' ? ' (monthly)' : ''}, ${lenNote(lengthBars, tf)}${raw.depth != null ? `, ${Math.round(raw.depth * 100)}% deep` : ''}${raw.detail ? ` — ${raw.detail}` : ''}; ${bull ? 'pivot' : 'breakdown'} ${fmt(level)}, ${distWords}${stageWords}${volumeOk ? '' : '; volume not confirmed (no usable volume data)'}`;
     const lines = raw.lines.slice();
     if (!lines.some((x) => x.kind === 'pivot')) {
       if (raw.lineAt) {
@@ -1006,14 +1170,46 @@ export function analyzePatterns(bars: PBar[], opts?: DetectOptions): PatternAnal
       startT: s.t[raw.start], endT: s.t[raw.end], lengthBars,
       depthPct: raw.depth != null ? Math.round(raw.depth * 1000) / 10 : null,
       pivot: Math.round(level * 10000) / 10000, distToPivotPct: Math.round(dist * 100) / 100,
-      note, lines, volumeOk,
+      note, lines, volumeOk, timeframe: tf,
     });
   }
-  const winA = Math.max(0, last - 59);
+  const winA = Math.max(0, last - B(s, 60) + 1);
   return {
     hits: resolve(hits), ...base, tooShort: false, listingKnown: listT != null,
     volumeCoverage: Math.round(((s.pn[last + 1] - s.pn[winA]) / (last - winA + 1)) * 1000) / 1000,
   };
+}
+
+export interface DailyAsOptions extends Omit<DetectOptions, 'timeframe'> {
+  /** analyse completed weeks / months only (default true); false includes the current period, marked provisional */
+  completedOnly?: boolean;
+  now?: Date;
+}
+export interface DailyAsAnalysis extends PatternAnalysis {
+  /** the current, incomplete week / month is the last analysed bar (completedOnly = false) */
+  provisional: boolean;
+  /** time of the last daily bar inside the last analysed period, and of the latest daily bar supplied */
+  periodEnd: number | null;
+  latestT: number | null;
+  /** an incomplete current period was left out */
+  droppedProvisional: boolean;
+  /** the bars that were analysed (daily as given, or the weekly / monthly aggregate) */
+  bars: PBar[];
+}
+/**
+ * zzz992 — analyse DAILY bars on a timeframe: 'D' is analyzePatterns as is; 'W' / 'M' aggregate the daily history first
+ * (lib/bar-aggregate: ISO weeks / calendar months, completed periods only unless completedOnly = false).
+ */
+export function analyzeDailyAs(daily: PBar[], tf: PatternTimeframe, opts?: DailyAsOptions): DailyAsAnalysis {
+  const { completedOnly, now, ...rest } = opts || {};
+  if (tf === 'D') {
+    const r = analyzePatterns(daily, rest);
+    const lastT = r.usableBars ? cleanBars(daily).bars.slice(-1)[0]?.t ?? null : null;
+    return { ...r, provisional: false, periodEnd: lastT, latestT: lastT, droppedProvisional: false, bars: daily };
+  }
+  const ag = aggregateBars(daily, tf, { completedOnly, now });
+  const r = analyzePatterns(ag.bars, { ...rest, timeframe: tf });
+  return { ...r, provisional: ag.provisional, periodEnd: ag.periodEnd, latestT: ag.latestT, droppedProvisional: ag.droppedProvisional, bars: ag.bars };
 }
 
 /** Shapes that describe the same structure: keep only the strongest of each group. */
@@ -1059,7 +1255,7 @@ export function patternHeadline(hits: PatternHit[], fmtPrice?: (n: number) => st
   const bull = top.bias === 'bullish';
   const verb = top.stage === 'forming' ? 'forming' : top.stage === 'breakout' ? (bull ? 'breaking out' : 'breaking down') : (bull ? 'failed breakout' : 'failed breakdown');
   const lead = top.likelihood === 'possible' ? 'Possibly' : cap(top.likelihood);
-  const parts: string[] = [top.bias, lenWords(top.lengthBars)];
+  const parts: string[] = [top.bias, lenWords(top.lengthBars, top.timeframe)];
   if (top.pivot != null) parts.push(`${bull ? 'pivot' : 'breakdown'} ${fp(top.pivot)}`);
   if (top.distToPivotPct != null) {
     const d = top.distToPivotPct;
