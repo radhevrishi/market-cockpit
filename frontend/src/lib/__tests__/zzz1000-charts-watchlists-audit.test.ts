@@ -263,7 +263,7 @@ test('CW-03: legend values belong to the loaded identity — delayed response, r
   const startAt = source.indexOf('  useEffect(() => {', source.indexOf('// ── load data when ticker'));
   const end = source.indexOf('  }, [ready, ticker, market', startAt);
   const body = source.slice(startAt + '  useEffect(() => {'.length, end);
-  const names = ['ready', 'ticker', 'market', 'exchange', 'tf', 'dataRange', 'TF_TO_INTERVAL', 'chartRef', 'barsRef', 'setBars', 'setHoverIdx', 'TF_TO_PERIOD', 'setInfo', 'setError', 'restoreDrawings', 'drawingKey', 'setLoadedVersion', 'cacheRef', 'setLoading', 'fetch', 'loadedUrlRef', 'barUpdatesRef', 'keyRef', 'setSavedAt', 'setSyncedAt', 'freshChart', 'cacheChart', 'pollWhenVisible', 'toolRef', 'basis', 'chartIdentityKey', 'loadedIdRef', 'chartLoadError'];
+  const names = ['ready', 'ticker', 'market', 'exchange', 'tf', 'dataRange', 'TF_TO_INTERVAL', 'chartRef', 'barsRef', 'setBars', 'setHoverIdx', 'TF_TO_PERIOD', 'setInfo', 'setError', 'restoreDrawings', 'drawingKey', 'setLoadedVersion', 'cacheRef', 'setLoading', 'chartFetch', 'loadedUrlRef', 'barUpdatesRef', 'keyRef', 'setSavedAt', 'setSyncedAt', 'freshChart', 'cacheChart', 'pollWhenVisible', 'toolRef', 'basis', 'chartIdentityKey', 'loadedIdRef', 'chartLoadError'];
   const effect = new Function(`${transformSync(`function effect(${names.join(',')}) {${body}}`, { loader: 'ts', target: 'es2022' }).code};return effect;`)();
 
   await withDom(async ({ mount, settle }) => {

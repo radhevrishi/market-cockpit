@@ -13,6 +13,7 @@ import {
 import { pollWhenVisible } from '@/lib/client-fetch';
 import { refreshedQuotes } from '@/lib/chart-refresh';
 import { sharedFetchJson } from '@/lib/tab-shared-fetch';
+import { neighbourOrder } from '@/lib/chart-load-cache';
 import { PANEL_CSS } from './watchlist-panel-css';
 import WatchlistManageDrawer from './WatchlistManageDrawer';
 import { agoLabel, currencyOf, displaySectionName, exchangeLabel, quoteFreshness, usExtendedSession, WIDTH_PRESETS, WL_EXT_COLUMN_KEY } from '@/lib/watchlist-display';
@@ -246,11 +247,13 @@ function menuKeys(e: React.KeyboardEvent<HTMLDivElement>, close: () => void) {
   items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
 }
 
-export default function WatchlistPanel({ store, update, currentKey, onPick, navOverride, loading }: {
+export default function WatchlistPanel({ store, update, currentKey, onPick, navOverride, loading, prefetch }: {
   store: WlStore | null; update: (fn: (s: WlStore) => WlStore) => void; currentKey: string; onPick: (m: Market, t: string, exchange?: string) => void;
   navOverride?: WatchlistNavOverride | null;
   /** the chart is loading the selected ticker (announced to screen readers with the selection) */
   loading?: boolean;
+  /** zzz1010 — fetch these symbols' charts in the background (the rows next to the open one, most likely next first) */
+  prefetch?: (items: Array<{ m: Market; t: string; x?: string }>) => void;
 }) {
   const [sort, setSort] = useState<SortState>(null);
   const [flagFilter, setFlagFilter] = useState<Flag | null>(null);
@@ -295,6 +298,16 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
     const live = flatRows(list, sort, quotes, flagFilter, view);
     return live.some((r, i) => itemKey(r.item) !== itemKey(rows[i]?.item || r.item));
   }, [liveSort, list, sort, quotes, flagFilter, view, rows]);
+  // zzz1010 — the next / previous two rows are fetched ahead, so ↓ / a click on the next row draws from memory
+  useEffect(() => {
+    if (!prefetch || navOverride || !rows.length) return;
+    const timer = setTimeout(() => {
+      const near = neighbourOrder<string>((from, dir) => { const r = stepRow(rows, from ?? currentKey, dir); return r ? itemKey(r.item) : null; });
+      const byKey = new Map(rows.map((r) => [itemKey(r.item), r.item] as const));
+      prefetch(near.filter((k) => k !== currentKey).map((k) => byKey.get(k)!).filter(Boolean).map((it) => ({ m: it.m, t: it.t, x: it.x })));
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [prefetch, navOverride, rows, currentKey]);
   const setList = useCallback((fn: (l: WlList) => WlList) => update((s) => updateList(s, s.activeId, fn)), [update]);
   const say = (m: string) => { setMsg(m); setTimeout(() => setMsg((cur) => (cur === m ? null : cur)), 3500); };
   const closeMenus = () => { setMenu(false); setListMenu(false); setFilterMenu(false); setRowMenu(null); };

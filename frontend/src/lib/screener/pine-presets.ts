@@ -8,7 +8,10 @@ import type { Filter, NumKey } from './filters';
 import { DEFAULT_QUERY, type PineGroup, type PineQuery, type PineScreen } from './pine';
 
 type Opts = { note?: string; market?: PineScreen['market']; group?: PineGroup; scope?: string };
-const screen = (id: string, name: string, q: Partial<PineQuery>, o: Opts | string = {}): PineScreen => {
+/** zzz1011 — every pattern screen names its stages explicitly (`stages` is required here): a preset never inherits an empty or a
+ *  default stage choice, and "Restore preset stages" puts exactly these back. */
+type PresetQ = Partial<PineQuery> & Pick<PineQuery, 'stages'>;
+const screen = (id: string, name: string, q: PresetQ, o: Opts | string = {}): PineScreen => {
   const opt: Opts = typeof o === 'string' ? { note: o } : o;
   return {
     id, name, q: { ...DEFAULT_QUERY, ...q, dist: { ...DEFAULT_QUERY.dist, ...(q.dist || {}) } }, builtIn: true, group: opt.group || 'patterns',
@@ -41,27 +44,27 @@ const BELOW_200: Filter[] = [{ kind: 'cmp', key: 'px', op: 'below', other: 'sma2
 
 export const BUILT_IN_PINE_SCREENS: readonly PineScreen[] = [
   // ── chart patterns (zzz983) ─────────────────────────────────────────────────────────────────────────────────────────
-  screen('all-bullish', 'All bullish patterns', { bias: 'U' }, 'Every bullish pattern, forming or just broken out, likely or better, from 15% below the pivot to 5% above it.'),
-  screen('all-bearish', 'All bearish patterns', { bias: 'D' }, 'Every bearish pattern, forming or just broken down, likely or better, from 15% above the breakdown level to 5% below it.'),
+  screen('all-bullish', 'All bullish patterns', { stages: ['f', 'b'], bias: 'U' }, 'Every bullish pattern, forming or just broken out, likely or better, from 15% below the pivot to 5% above it.'),
+  screen('all-bearish', 'All bearish patterns', { stages: ['f', 'b'], bias: 'D' }, 'Every bearish pattern, forming or just broken down, likely or better, from 15% above the breakdown level to 5% below it.'),
   screen('oneil-bases', "Bullish bases (O'Neil)", {
-    bias: 'U', ids: ['flat_base', 'cup', 'cup_handle', 'u_base', 'ascending_base', 'base_on_base', 'ipo_base'], dist: { on: true, lo: -10, hi: 5 }, filters: ABOVE_200,
+    bias: 'U', stages: ['f', 'b'], ids: ['flat_base', 'cup', 'cup_handle', 'u_base', 'ascending_base', 'base_on_base', 'ipo_base'], dist: { on: true, lo: -10, hi: 5 }, filters: ABOVE_200,
   }, "O'Neil's bases within 10% of the buy point (pivot), price above its 200-day average."),
-  screen('minervini-vcp', 'Minervini VCP', { bias: 'U', ids: ['vcp'], dist: { on: true, lo: -8, hi: 5 }, filters: TREND_TEMPLATE, cols: ['tt', 'rsR'] },
+  screen('minervini-vcp', 'Minervini VCP', { stages: ['f', 'b'], bias: 'U', ids: ['vcp'], dist: { on: true, lo: -8, hi: 5 }, filters: TREND_TEMPLATE, cols: ['tt', 'rsR'] },
     'Volatility contraction patterns in stocks that pass all six rules of your Minervini trend-template script.'),
   screen('breakouts-today', 'Breakouts (last 5 sessions)', { bias: 'U', stages: ['b'], dist: { on: true, lo: 0, hi: 8 }, returned: false },
     'Bullish patterns whose first close above the pivot came in the last 5 sessions, still no more than 8% above it.'),
-  screen('flags-pennants', 'Flags & pennants', { bias: 'U', ids: ['bull_flag', 'bull_pennant', 'high_tight_flag'], dist: { on: true, lo: -10, hi: 5 } },
+  screen('flags-pennants', 'Flags & pennants', { stages: ['f', 'b'], bias: 'U', ids: ['bull_flag', 'bull_pennant', 'high_tight_flag'], dist: { on: true, lo: -10, hi: 5 } },
     'Bull flags, pennants and high tight flags — short pauses after a sharp rise.'),
-  screen('triangles-wedges', 'Ascending triangles & falling wedges', { bias: 'U', ids: ['ascending_triangle', 'falling_wedge'] }),
-  screen('bottoms', 'Reversal bottoms', { bias: 'U', ids: ['double_bottom', 'triple_bottom', 'inverse_hs', 'falling_wedge'], minConf: 55 },
+  screen('triangles-wedges', 'Ascending triangles & falling wedges', { stages: ['f', 'b'], bias: 'U', ids: ['ascending_triangle', 'falling_wedge'] }),
+  screen('bottoms', 'Reversal bottoms', { stages: ['f', 'b'], bias: 'U', ids: ['double_bottom', 'triple_bottom', 'inverse_hs', 'falling_wedge'], minConf: 55 },
     'Double / triple bottoms, inverse head & shoulders and falling wedges after a fall.'),
-  screen('bearish-tops', 'Bearish tops', { bias: 'D', ids: ['double_top', 'triple_top', 'head_shoulders'] },
+  screen('bearish-tops', 'Bearish tops', { stages: ['f', 'b'], bias: 'D', ids: ['double_top', 'triple_top', 'head_shoulders'] },
     'Double / triple tops and head & shoulders tops after a rise — names to avoid or trim.'),
   screen('breakdowns', 'Breakdowns (last 5 sessions)', { bias: 'D', stages: ['b'], dist: { on: true, lo: 0, hi: 10 }, filters: BELOW_200, returned: false },
     'Bearish patterns that closed through the breakdown level in the last 5 sessions, price below its 200-day average.'),
-  screen('bear-continuation', 'Bear flags, descending triangles & rising wedges', { bias: 'D', ids: ['bear_flag', 'descending_triangle', 'rising_wedge'] }),
+  screen('bear-continuation', 'Bear flags, descending triangles & rising wedges', { stages: ['f', 'b'], bias: 'D', ids: ['bear_flag', 'descending_triangle', 'rising_wedge'] }),
   // zzz994 — two clearly different "all patterns" sizes: a broad candidate list and a near-ready list
-  screen('broad-candidates', 'Broad candidates (possible+, all bullish types)', { bias: 'U', minConf: 35, dist: { on: true, lo: -25, hi: 5 } },
+  screen('broad-candidates', 'Broad candidates (possible+, all bullish types)', { stages: ['f', 'b'], bias: 'U', minConf: 35, dist: { on: true, lo: -25, hi: 5 } },
     'Every bullish pattern type with a shape score of 35 or more (possible or better), forming or just broken out, from 25% below the pivot to 5% above — a wide first pass.'),
   screen('near-ready', 'Near-ready setups (likely+, within 5% of the pivot)', { bias: 'U', stages: ['f'], minConf: 55, dist: { on: true, lo: -5, hi: 0 } },
     'Bullish patterns still forming, shape score likely or better (≥ 55), with the scan close 0–5% below the pivot.'),
@@ -78,6 +81,16 @@ export const BUILT_IN_PINE_SCREENS: readonly PineScreen[] = [
     'Double / triple bottoms and inverse head & shoulders on completed monthly bars — reversals, counted apart from the bases. No pivot limit.'),
   screen('monthly-near-pivot', 'Monthly bases near the pivot', { bias: 'U', ids: MONTHLY_BASE_IDS, tfs: ['M'], stages: ['f', 'b'], dist: { on: true, lo: -10, hi: 5 }, returned: false },
     'The monthly bases whose last completed monthly close is from 10% below the pivot to 5% above it.'),
+  // zzz1011 — the brief's one-click workflows that had no screen of their own: breakouts holding / back inside, and weekly + monthly
+  // alignment. The condition is the latest analysis close against the level; the historical breakout event is kept either way.
+  screen('breakouts-holding', 'Recent breakouts holding above the pivot', { bias: 'U', stages: ['b'], dist: { on: false, lo: 0, hi: 25 }, returned: false },
+    'Bullish patterns that broke out in the last 5 sessions and whose analysis close is still at or above the pivot — no distance limit.'),
+  screen('breakouts-back-below', 'Recent breakouts back below the pivot', { bias: 'U', stages: ['b'], dist: { on: false, lo: -15, hi: 0 }, returned: 'only' },
+    'Bullish patterns that broke out in the last 5 sessions but whose analysis close is back below the pivot (within the 7.5% before the breakout counts as failed). The breakout event stays on record; its condition is "back below pivot".'),
+  screen('mtf-aligned', 'Weekly + monthly aligned (both bullish)', { bias: 'U', tfs: ['W', 'M'], tfMode: 'all', stages: ['f', 'b'], minConf: 55, dist: { on: false, lo: -25, hi: 5 } },
+    'A bullish pattern on the completed weekly bars AND a bullish pattern on the completed monthly bars, forming or just broken out, likely or better. Score, stage and distance shown are those of the strongest of these readings.'),
+  screen('wl-forming-bases', 'Forming bases in a watchlist', { bias: 'U', ids: BASE_IDS, stages: ['f'], minConf: 55, dist: { on: false, lo: -25, hi: 0 } },
+    "O'Neil bases and VCPs still forming (no close above the pivot yet), likely or better, no distance limit — run on the watchlist chosen under Companies."),
   screen('failed-breakouts', 'Failed breakouts', { bias: 'U', stages: ['x'], dist: { on: false, lo: -30, hi: 5 } },
     'Bullish patterns that broke out in the last 40 sessions and fell more than 7.5% back through the pivot — a warning sign.'),
 
@@ -125,7 +138,7 @@ export const BUILT_IN_PINE_SCREENS: readonly PineScreen[] = [
   rules('ripster-bull', 'Ripster clouds bullish', [ge('ripB', 1)], ['ripB'], 'momentum', 'Ripster EMA clouds: close above EMA 34 / 50 with EMA 5 and 12 above both.'),
   rules('high-rvol', 'High relative volume (≥ 2×)', [ge('rvol', 2)], ['rvol', 'adv$'], 'momentum', 'Swing data: the last session traded at least twice its 50-session average volume.'),
   screen('tt-bullish-base', 'Trend Template + bullish base (likely+)', {
-    bias: 'U', ids: ['flat_base', 'cup', 'cup_handle', 'u_base', 'ascending_base', 'base_on_base', 'ipo_base', 'vcp'], minConf: 55, filters: TREND_TEMPLATE, cols: ['tt', 'rsR', 'stage'],
+    bias: 'U', stages: ['f', 'b'], ids: ['flat_base', 'cup', 'cup_handle', 'u_base', 'ascending_base', 'base_on_base', 'ipo_base', 'vcp'], minConf: 55, filters: TREND_TEMPLATE, cols: ['tt', 'rsR', 'stage'],
   }, { group: 'momentum', note: 'All six trend-template rules pass AND a bullish base (O\'Neil bases or VCP) is forming or just broke out, likely or better.' }),
   // ── zzz1007: Rule of 40 + chart setups (the Rule of 40 control — growth + FCF margin — combined with a pattern part) ─────────
   screen('r40-bullish', 'Rule of 40 · bullish patterns', { bias: 'U', tfs: ['D', 'W', 'M'], tfMode: 'any', stages: ['f', 'b'], minConf: 55, r40Min: 40, cols: R40_COLS.slice() },

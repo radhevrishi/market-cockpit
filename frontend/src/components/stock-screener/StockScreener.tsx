@@ -19,10 +19,10 @@ import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
 import { useWatchlistStore } from '@/components/charts/WatchlistPanel';
 import { activeList, updateList, addItem, listCount, type WlItem } from '@/lib/chart-watchlist';
 import { toCsv } from '@/lib/csv';
-import { FilterEditor, readDensity, writeDensity, cellPad, pinnedCell, type Density } from './FilterEditor';
+import { FilterEditor, readDensity, writeDensity, type Density } from './FilterEditor';
 import { scopeItems, scopeCounts, scopeLabel, countsLine, emptyState, confirmAddText, effectiveScope, type ActionScope } from '@/lib/screener/action-scope';
 import { PATTERN_META } from '@/lib/chart-patterns';
-import { COLUMN_VIEWS, cellText, readColumnView, viewColumns, writeColumnView, type ColumnView } from '@/lib/screener/column-views';
+import { COLUMN_VIEWS, cellText, readColumnView, viewColumns, writeColumnView, unitSuffix, columnMedians, breadth, compareRows, shortcutAction, type ColumnView } from '@/lib/screener/column-views';
 import { SCREENER_CSS, listKeys, usePopover } from './screener-ui';
 import ScreenPicker from './ScreenPicker';
 import AddFilterPanel from './AddFilterPanel';
@@ -33,9 +33,10 @@ import {
   FORMULA_VERSION, SHORTLISTS_KEY, SCREEN_RUNS_KEY, type Shortlist, type ScreenRun,
 } from '@/lib/screener/research';
 
+// zzz1012 — the screener's own tokens (screener-ui.tsx defines them for the white and the dark theme)
 const C = {
-  text: 'var(--mc-text-0)', text1: 'var(--mc-text-1)', dim: 'var(--mc-text-3, #6b7280)', border: 'var(--mc-border-1)',
-  bg: 'var(--mc-bg-0)', bg1: 'var(--mc-bg-1)', accent: 'var(--mc-accent)', green: 'var(--mc-bullish, #059669)', red: 'var(--mc-bearish, #DC2626)', amber: 'var(--mc-warn, #D97706)',
+  text: 'var(--ss-ink)', text1: 'var(--ss-ink-2)', dim: 'var(--ss-ink-3)', border: 'var(--ss-rule-2)',
+  bg: 'var(--ss-canvas)', bg1: 'var(--ss-raise)', accent: 'var(--ss-accent)', green: 'var(--ss-up)', red: 'var(--ss-down)', amber: 'var(--ss-warn)',
 };
 interface Snap { builtAt: string | null; rows: ScreenRow[]; notes: string[]; sources: string[] }
 const LAST_KEY = 'mc:stock-screener:last:v1';   // the screen open last time (this browser only)
@@ -205,13 +206,8 @@ export default function StockScreener() {
   }, [filters]);
   const sorted = useMemo(() => {
     const out = result.slice();
-    const k = sort.key as keyof ScreenRow;
-    out.sort((a, b) => {
-      const x = a[k] as any, y = b[k] as any;
-      if (typeof x === 'string' || typeof y === 'string') return String(x ?? '').localeCompare(String(y ?? '')) * sort.dir;
-      const fx = typeof x === 'number' ? x : -Infinity, fy = typeof y === 'number' ? y : -Infinity;
-      return (fx - fy) * sort.dir;
-    });
+    // zzz1012 — a missing figure sorts last in both directions (it used to come first when sorting ascending)
+    out.sort((a, b) => compareRows(a as unknown as Record<string, unknown>, b as unknown as Record<string, unknown>, sort.key, sort.dir));
     return out;
   }, [result, sort]);
   // zzz969 — rows keep their places when new data arrives (the snapshot reloads every few minutes); "Re-sort now" re-orders
@@ -438,38 +434,80 @@ export default function StockScreener() {
     ? `For companies read during today's trading session, price, change, moving averages, market cap and valuation ratios are worked out at the last CLOSE, not today's live price.${valuationDropped ? ` For ${valuationDropped} the close and live price are too far apart to be one share count (a split or a bad quote), so their valuation figures are left unknown.` : ''}`
     : 'Tick "Close only" to screen on the last completed session instead.';
 
+  // ── zzz1012 — keyboard cursor, shortcut card, the median row and breadth (display only) ─────────────────────────────────
+  const [curT, setCurT] = useState<string | null>(null);
+  const [showHelp, setShowHelp] = useState(false);
+  const findRef = useRef<HTMLInputElement | null>(null);
+  const tableRef = useRef<HTMLDivElement | null>(null);
+  const medians = useMemo(() => columnMedians(narrowed as unknown as Record<string, unknown>[], visibleCols), [narrowed, visibleCols]);
+  const brd = useMemo(() => breadth(narrowed), [narrowed]);
+  const sortLabel = sort.key === 't' ? 'Company' : sort.key === 'tvSec' ? 'Sector' : sort.key === 'q' ? 'Quarter' : fieldOf(sort.key as NumKey)?.label || sort.key;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      const a = shortcutAction(e);
+      if (!a) return;
+      if (showHelp) { if (a === 'help' || a === 'escape') { e.preventDefault(); setShowHelp(false); } return; }
+      if (document.querySelector('.mcss .mcss-pop')) return;   // a menu is open: it handles its own keys
+      if (a === 'escape') { if (document.activeElement === findRef.current) findRef.current?.blur(); else if (!detailT) setCurT(null); return; }
+      if (a === 'help') { e.preventDefault(); setShowHelp(true); return; }
+      if (a === 'find') { e.preventDefault(); findRef.current?.focus(); findRef.current?.select(); return; }
+      if (!shown.length) return;
+      const i = curT ? shown.findIndex((r) => r.t === curT) : -1;
+      if (a === 'down' || a === 'up') {
+        e.preventDefault();
+        const next = shown[Math.max(0, Math.min(shown.length - 1, i < 0 ? 0 : i + (a === 'down' ? 1 : -1)))];
+        setCurT(next.t);
+        if (detailT) setDetailT(next.t);
+        requestAnimationFrame(() => tableRef.current?.querySelector(`tr[data-row="${CSS.escape(next.t)}"]`)?.scrollIntoView({ block: 'nearest' }));
+        return;
+      }
+      const row = i >= 0 ? shown[i] : null;
+      if (!row) return;
+      e.preventDefault();
+      if (a === 'open') window.location.assign(openForReview(row.t, row.exch?.[0]));
+      else if (a === 'details') setDetailT(detailT === row.t ? null : row.t);
+      else if (a === 'select') toggleRow(row.t);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
+  const fresh = builtAt ? new Date().getTime() - builtAt.getTime() < 36 * 3600_000 : false;
+  const skeleton = !snap && !err;
   return (
-    <div className={`mcss ${workspaceThemeClass(light, true)}`} style={{ padding: '12px 16px', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 10, color: C.text, background: 'var(--mc-bg-0)', minHeight: '100%', alignContent: 'start' }}>
+    <div className={`mcss ${workspaceThemeClass(light, true)}`} style={{ padding: '16px 20px 28px', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 12, minHeight: '100%', alignContent: 'start' }}>
       <style>{SCREENER_CSS}</style>
       {/* ── top bar: title · market · screen · Save · ⋯ ─────────────────────────────────────────────────────────── */}
-      <div className="mcss-row" style={{ gap: 10 }}>
-        <h1 className="mcss-title" style={{ margin: 0 }}>Stock Screener</h1>
+      <div className="mcss-top">
+        <h1 className="mcss-title">Stock Screener</h1>
         <span className="mcss-seg" role="group" aria-label="Market">
           {(['US', 'IN'] as const).map((m) => <button key={m} type="button" aria-pressed={market === m} onClick={() => { if (m !== market) { setMarket(m); setDirty(true); } }}>{m === 'US' ? '🇺🇸 USA' : '🇮🇳 India'}</button>)}
         </span>
-        <ScreenPicker screens={screens} builtInIds={builtInIds} currentId={screenId} currentName={name} currentMarket={market} dirty={dirty} onPick={askSwitch} />
+        <span className="pick"><ScreenPicker screens={screens} builtInIds={builtInIds} currentId={screenId} currentName={name} currentMarket={market} dirty={dirty} onPick={askSwitch} /></span>
         <button type="button" className={`mcss-btn${dirty ? ' primary' : ''}`} onClick={() => save(false)} title={dirty ? 'Save the filter changes into this screen' : 'Save the filters into this screen'}>Save{dirty ? ' •' : ''}</button>
         <div ref={topRef} style={{ position: 'relative' }}>
-          <button type="button" className="mcss-btn" aria-label="More screen options" aria-haspopup="menu" aria-expanded={topOpen} onClick={() => setTopOpen((v) => !v)}>⋯</button>
+          <button type="button" className="mcss-btn" aria-label="More screen options" aria-haspopup="menu" aria-expanded={topOpen} onClick={() => setTopOpen((v) => !v)} style={{ padding: '0 10px' }}><Icon d={DOTS} size={14} /></button>
           {topOpen ? (
             <div className="mcss-pop" role="menu" aria-label="More screen options" style={{ minWidth: 260 }} onKeyDown={(e) => listKeys(e)}>
               <button type="button" role="menuitem" className="mcss-item" onClick={() => { setTopOpen(false); save(true); }}>Save as new…</button>
               <button type="button" role="menuitem" className="mcss-item" onClick={() => { setTopOpen(false); removeSaved(); }} title="Delete a screen you made, or put a built-in screen back to its TradingView setup">{isBuiltIn ? 'Reset to the TradingView setup' : 'Delete this screen'}</button>
               <div className="mcss-sep" />
               <button type="button" role="menuitem" className="mcss-item" onClick={() => { setTopOpen(false); setShowWhy(true); }}>Why is a company in or out?…</button>
+              <button type="button" role="menuitem" className="mcss-item" onClick={() => { setTopOpen(false); setShowHelp(true); }}>Keyboard shortcuts<span className="end"><kbd>?</kbd></span></button>
               <div className="mcss-sep" />
               <Link href="/pine-screener" role="menuitem" className="mcss-item" title="Chart setups (patterns, stage, distance to the pivot) live in the Pine Screener">Chart setups: Pine Screener</Link>
             </div>
           ) : null}
         </div>
-        {msg ? <span role="status" style={{ color: /^(Not saved|Could not)/.test(msg) ? C.red : C.text1, fontSize: 13, fontWeight: 650 }}>{msg}</span> : null}
-        <span style={{ flex: 1 }} />
-        <WorkspaceThemeToggle light={light} onToggle={toggleLight} />
+        {msg ? <span role="status" style={{ color: /^(Not saved|Could not)/.test(msg) ? C.red : C.text1, fontSize: 13, fontWeight: 600 }}>{msg}</span> : null}
+        <span className="sp" style={{ flex: 1 }} />
+        <span className="thm"><WorkspaceThemeToggle light={light} onToggle={toggleLight} /></span>
       </div>
-      {note && !dirty ? <div className="mcss-dim" style={{ fontSize: 12.5, marginTop: -4 }}>{note}</div> : null}
+      {note && !dirty ? <div className="mcss-dim" style={{ fontSize: 12.5, marginTop: -4, maxWidth: '90ch' }}>{note}</div> : null}
       {pendingSwitch ? (
-        <div role="dialog" aria-label="Unsaved filters" className="mcss-note mcss-row" style={{ borderColor: C.amber }}>
-          <b>&quot;{name}&quot; has unsaved filter changes.</b>
+        <div role="dialog" aria-label="Unsaved filters" className="mcss-note mcss-row" style={{ borderColor: C.amber, background: 'var(--ss-warn-tint)' }}>
+          <b style={{ color: C.text }}>&quot;{name}&quot; has unsaved filter changes.</b>
           <button type="button" className="mcss-btn primary sm" onClick={() => { save(false); switchTo(pendingSwitch); }}>Save and switch</button>
           <button type="button" className="mcss-btn sm" onClick={() => switchTo(pendingSwitch)} title="Your changes stay saved as a draft for this screen and come back when you open it again">Keep draft and switch</button>
           <button type="button" className="mcss-btn sm" onClick={() => { writeDraft(screenId, null); switchTo(pendingSwitch); }}>Discard and switch</button>
@@ -489,7 +527,7 @@ export default function StockScreener() {
       ) : null}
 
       {/* ── filter chips ───────────────────────────────────────────────────────────────────────────────────────────── */}
-      <div className="mcss-row" style={{ gap: 6 }} role="group" aria-label="Filters">
+      <div className="mcss-chips" role="group" aria-label="Filters">
         {filters.map((f, i) => {
           const keys = filterKeys(f);
           const approx = keys.map((k) => fieldOf(k)?.approxNote?.[market]).filter(Boolean).join(' · ');
@@ -499,14 +537,16 @@ export default function StockScreener() {
           const filling = rows.length > 0 && !wrongMarket && !sparse && have < rows.length * 0.5;
           const pass = counts[i] ?? 0;
           const tip = [f.off ? 'Paused — not applied. Click to change or turn back on.' : '', snap ? `${pass.toLocaleString('en-US')} of ${rows.length.toLocaleString('en-US')} companies pass this filter alone` : '', approx ? `Approximate — ${approx}` : '', sparse ? `${have} of ${rows.length} companies have this figure — ${sparse}` : '', wrongMarket ? 'Not available for this market' : '', filling ? `Data still filling: ${have} of ${rows.length} companies have this figure so far (the rest come in the next runs)` : '', 'Click to change'].filter(Boolean).join('\n');
+          const [fName, fCond] = chipParts(f, filterLabel(f, market));
           return (
-            <span key={i} className={`mcss-chip${editIdx === i ? ' editing' : ''}${f.off ? ' paused' : ''}`} data-pass={pass}>
+            <span key={i} className={`mcss-chip${editIdx === i ? ' editing' : ''}${f.off ? ' paused' : ''}${snap && !f.off && pass === 0 ? ' blocking' : ''}`} data-pass={pass}>
               <button type="button" onClick={() => setEditIdx(editIdx === i ? null : i)} title={tip} aria-expanded={editIdx === i}>
-                <span className="lab">{filterLabel(f, market)}{approx ? ' ≈' : ''}{wrongMarket ? ' (n/a)' : ''}</span>
+                <span className="lab"><span className="f">{fName}</span><span className="c">{fCond}</span>{approx ? ' ≈' : ''}{wrongMarket ? ' (n/a)' : ''}</span>
                 {f.off ? <span className="tag paused">Paused</span> : null}
                 {filling ? <span className="tag fill" aria-label="data still filling">⏳</span> : null}
                 {sparse ? <span className="tag" style={{ color: C.dim }}>few have it</span> : null}
                 {snap && !f.off && pass === 0 ? <span className="tag zero">0 pass</span> : null}
+                {snap && !f.off && pass > 0 ? <span className="pass" aria-hidden>{pass.toLocaleString('en-US')}</span> : null}
               </button>
               <button type="button" className="ic" aria-label={f.off ? 'Turn this filter back on' : 'Pause this filter'} title={f.off ? 'Turn back on' : 'Pause (keep it, but do not apply it)'} onClick={() => change(filters.map((x, k) => (k === i ? ({ ...x, off: !x.off } as Filter) : x)))}><Icon d={f.off ? PLAY : PAUSE} /></button>
               <button type="button" className="ic" aria-label="Remove filter" title="Remove this filter" onClick={() => { change(filters.filter((_, k) => k !== i)); setEditIdx(null); }}><Icon d={CROSS} /></button>
@@ -516,25 +556,27 @@ export default function StockScreener() {
         <AddFilterPanel market={market} onPick={pick} />
       </div>
       {editIdx != null && filters[editIdx] ? (
-        <FilterEditor f={filters[editIdx]} market={market} tvSecCount={tvSecCount} onChange={(nf) => change(filters.map((x, k) => (k === editIdx ? nf : x)))} onClose={() => setEditIdx(null)} />
+        <div className="mcss-editor">
+          <FilterEditor f={filters[editIdx]} market={market} tvSecCount={tvSecCount} onChange={(nf) => change(filters.map((x, k) => (k === editIdx ? nf : x)))} onClose={() => setEditIdx(null)} />
+        </div>
       ) : null}
 
       {/* ── data status: one line, details on request ──────────────────────────────────────────────────────────────── */}
       <div className="mcss-status">
-        {builtAt ? <span title={`Data built ${builtAt.toLocaleString()}`}>Updated {builtAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{builtAt.toDateString() !== new Date().toDateString() ? `, ${builtAt.toLocaleDateString([], { day: 'numeric', month: 'short' })}` : ''}</span> : <span aria-busy={!err}>{err ? 'No data' : 'Loading…'}</span>}
+        {builtAt ? <span className={`live${fresh ? '' : ' old'}`} title={`Data built ${builtAt.toLocaleString()}`}>Updated {builtAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{builtAt.toDateString() !== new Date().toDateString() ? `, ${builtAt.toLocaleDateString([], { day: 'numeric', month: 'short' })}` : ''}</span> : <span aria-busy={!err}>{err ? 'No data' : 'Loading…'}</span>}
         {snap ? <><span className="dot" /><span title={intradayRows ? `${intradayRows} companies were read during today's trading session` : 'Every price is a completed-session close'}>{intradayRows ? (closeOnly ? 'Closing prices' : 'Quotes during session') : 'Last close'}</span></> : null}
         {latestQ ? <><span className="dot" /><span>Figures to {latestQ}</span></> : null}
         {snap ? <><span className="dot" /><button type="button" className="mcss-link" aria-expanded={showCoverage} onClick={() => setShowCoverage((v) => !v)}>Coverage details {showCoverage ? '▴' : '▾'}</button></> : null}
         <span style={{ flex: 1 }} />
-        <label title="On: a figure worked out with an assumption (shown with ≈, e.g. EV / revenue with debt taken as 0 because the company files no debt line) does not count as passing a filter" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer', color: exactOnly ? C.accent : undefined }}>
+        <label className={`mcss-check${exactOnly ? ' on' : ''}`} title="On: a figure worked out with an assumption (shown with ≈, e.g. EV / revenue with debt taken as 0 because the company files no debt line) does not count as passing a filter">
           <input type="checkbox" checked={exactOnly} onChange={toggleExact} aria-label="Exact figures only" /> Exact figures only
         </label>
-        <label title="On: for companies read during today's trading session, price, change and moving averages are taken from the last completed session (a close-confirmed breakout), not the live price" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer', color: closeOnly ? C.accent : undefined }}>
+        <label className={`mcss-check${closeOnly ? ' on' : ''}`} title="On: for companies read during today's trading session, price, change and moving averages are taken from the last completed session (a close-confirmed breakout), not the live price">
           <input type="checkbox" checked={closeOnly} onChange={toggleClose} aria-label="Completed sessions only" /> Close only
         </label>
         <button type="button" className="mcss-btn sm" disabled={loading} onClick={() => setRefresh((v) => v + 1)}>{loading ? 'Refreshing…' : err ? 'Retry' : 'Refresh'}</button>
       </div>
-      {err ? <div role="alert" style={{ color: C.red, fontSize: 13 }}>{err}{snap ? ' — showing the last loaded snapshot' : ''}</div> : null}
+      {err ? <div role="alert" className="mcss-note" style={{ color: C.red, borderColor: 'color-mix(in srgb, var(--ss-down) 35%, transparent)', background: 'var(--ss-down-tint)' }}>{err}{snap ? ' — showing the last loaded snapshot' : ''}</div> : null}
       {intradayLine ? <div className="mcss-warn" style={{ color: closeOnly ? C.green : C.amber }} title={intradayTip}>{closeOnly ? '◉' : '◌'} {intradayLine}</div> : null}
       {fillingNote ? <div className="mcss-warn">⏳ marks a figure still being filled in (read a slice at a time) — fewer companies than TradingView can pass it until the reads finish. Hover a filter for how many have it.</div> : null}
       {pausedCount ? <div className="mcss-warn">{pausedCount} filter{pausedCount > 1 ? 's' : ''} paused — not applied to the result.</div> : null}
@@ -549,8 +591,8 @@ export default function StockScreener() {
       {showWhy ? (
         <div className="mcss-panel" style={{ fontSize: 13 }}>
           <div className="mcss-row">
-            <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>Why is a company in or out?
-              <input list="mc-screener-tickers" value={whyTicker} onChange={(e) => setWhyTicker(e.target.value)} placeholder="ticker" aria-label="Explain a company" className="mcss-input" style={{ width: 130 }} autoFocus />
+            <label style={{ display: 'inline-flex', gap: 8, alignItems: 'center', fontWeight: 600, color: C.text }}>Why is a company in or out?
+              <input list="mc-screener-tickers" value={whyTicker} onChange={(e) => setWhyTicker(e.target.value)} placeholder="Ticker" aria-label="Explain a company" className="mcss-input" style={{ width: 140, fontWeight: 400 }} autoFocus />
             </label>
             <datalist id="mc-screener-tickers">{rows.slice(0, 3000).map((r) => <option key={r.t} value={r.t}>{r.n}</option>)}</datalist>
             {whyTicker && !whyRow ? <span className="mcss-dim">not in this snapshot</span> : null}
@@ -558,10 +600,10 @@ export default function StockScreener() {
             <button type="button" className="mcss-btn sm" onClick={() => { setShowWhy(false); setWhyTicker(''); }}>Close</button>
           </div>
           {whyRow ? (
-            <div style={{ marginTop: 8 }}>
+            <div style={{ marginTop: 10 }}>
               <b>{whyRow.t}</b> <span style={{ color: C.dim }}>{whyRow.n}</span> — {whyChecks.every((c) => c.pass) ? <span style={{ color: C.green }}>passes every filter</span> : <span style={{ color: C.red }}>fails {whyChecks.filter((c) => !c.pass).length} of {whyChecks.length}</span>}
-              <ul style={{ margin: '6px 0 0 16px' }}>
-                {whyChecks.map((c, i) => <li key={i} style={{ color: c.pass ? C.text1 : C.red }}>{c.pass ? '✓' : '✗'} {c.label}: <span style={{ color: c.nearMiss ? C.amber : C.dim }}>{c.detail}</span></li>)}
+              <ul className="mcss-checks" style={{ marginTop: 8 }}>
+                {whyChecks.map((c, i) => <li key={i} style={{ color: c.pass ? C.text1 : C.red }}><span className={c.pass ? 'ok' : 'no'} aria-hidden>{c.pass ? '✓' : '✗'}</span><span>{c.label}: <span style={{ color: c.nearMiss ? C.amber : C.dim }}>{c.detail}</span></span></li>)}
               </ul>
             </div>
           ) : null}
@@ -569,7 +611,7 @@ export default function StockScreener() {
       ) : null}
 
       {addingMatches && watchlists && <div role="dialog" aria-label="Add to watchlist" className="mcss-panel mcss-row">
-        <label>Destination <select aria-label="Watchlist for screener matches" value={targetList || activeList(watchlists).id} onChange={(e) => setTargetList(e.target.value)} className="mcss-input">{watchlists.lists.map((l) => <option key={l.id} value={l.id}>{l.name} ({listCount(l)})</option>)}</select></label>
+        <label className="mcss-row" style={{ gap: 6 }}>Destination <select aria-label="Watchlist for screener matches" value={targetList || activeList(watchlists).id} onChange={(e) => setTargetList(e.target.value)} className="mcss-input">{watchlists.lists.map((l) => <option key={l.id} value={l.id}>{l.name} ({listCount(l)})</option>)}</select></label>
         <span style={{ fontSize: 12.5, color: C.dim }}>{confirmAddText(addFrom === 'selected' ? selRows.length : actRows.length, (watchlists.lists.find((l) => l.id === targetList) || activeList(watchlists)).name, addFrom === 'selected' ? selLabel : actLabel)}</span>
         <button type="button" className="mcss-btn primary sm" onClick={addMatches}>Add symbols</button>
         <button type="button" className="mcss-btn sm" onClick={() => setAddingMatches(false)}>Cancel</button>
@@ -604,21 +646,13 @@ export default function StockScreener() {
         </div>
       ) : null}
 
-      {empty === 'no-search-match' ? (
-        <div role="status" className="mcss-note">
-          No filter match contains “{findText}”{reviewFilter !== 'all' ? ` with review state “${REVIEW_STATES.find((x) => x.id === reviewFilter)?.label}”` : ''} — {sorted.length} companies pass the filters.{' '}
-          {findText ? <button type="button" className="mcss-btn sm" onClick={() => setFindText('')}>Clear search</button> : null}{' '}
-          {reviewFilter !== 'all' ? <button type="button" className="mcss-btn sm" onClick={() => setReviewFilter('all')}>Show every review state</button> : null}
-        </div>
-      ) : null}
-
-      {/* ── results ────────────────────────────────────────────────────────────────────────────────────────────────── */}
-      <div>
+      {/* ── results: toolbar · readout · selection · table ─────────────────────────────────────────────────────────── */}
+      <section className="mcss-frame" aria-label="Results">
         <div className="mcss-toolbar">
-          <span className="mcss-count">{snap ? `${result.length} of ${rows.length} companies match` : err ? 'No data' : 'Loading…'}</span>
+          <span className="mcss-count" aria-live="polite">{snap ? <><span className="n">{result.length}</span>{` of ${rows.length} companies match`}</> : err ? 'No data' : 'Loading…'}</span>
           {snap ? <span className="mcss-dim" style={{ fontSize: 12.5 }} data-testid="result-counts">{countsLine(sCounts, searching)}</span> : <span aria-busy="true" className="mcss-dim">Loading counts…</span>}
           {searching ? (
-            <label className="mcss-dim" style={{ display: 'inline-flex', gap: 5, alignItems: 'center', fontSize: 12.5 }} title="Which companies Copy tickers, Download CSV, Save shortlist and Add matches act on">Actions apply to
+            <label className="mcss-dim" style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 12.5 }} title="Which companies Copy tickers, Download CSV, Save shortlist and Add matches act on">Actions apply to
               <select value={scopeNow} onChange={(e) => setActScope(e.target.value as ActionScope)} className="mcss-input" style={{ height: 26, fontSize: 12.5 }} aria-label="Action scope">
                 <option value="results">{scopeLabel('results', sCounts, searching)}</option>
                 <option value="all">{scopeLabel('all', sCounts, searching)}</option>
@@ -627,7 +661,12 @@ export default function StockScreener() {
           ) : null}
           {ordered.moved ? <button type="button" className="mcss-btn primary sm" onClick={() => setResortTick((v) => v + 1)} title="New data arrived; rows were kept in place so you do not click the wrong one">Re-sort now</button> : null}
           <span style={{ flex: 1 }} />
-          <input type="search" value={findText} onChange={(e) => setFindText(e.target.value)} placeholder="Find ticker or name" aria-label="Find in results" className="mcss-input" style={{ width: 170 }} />
+          <span className="grow" aria-hidden />
+          <span className="mcss-search">
+            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.6"><circle cx="7" cy="7" r="4.6" /><path d="M10.5 10.5 14 14" strokeLinecap="round" /></svg>
+            <input ref={findRef} type="search" value={findText} onChange={(e) => setFindText(e.target.value)} placeholder="Find ticker or name" aria-label="Find in results" aria-keyshortcuts="/" className="mcss-input" />
+            {!findText ? <kbd aria-hidden>/</kbd> : null}
+          </span>
           {findText ? <button type="button" className="mcss-btn ghost sm" onClick={() => setFindText('')}>Clear search</button> : null}
           <select value={reviewFilter} onChange={(e) => setReviewFilter(e.target.value as ReviewState | 'all')} className="mcss-input mcss-hide-sm" aria-label="Show companies by review state" style={{ width: 'auto' }}>
             <option value="all">Review: all</option>
@@ -635,14 +674,14 @@ export default function StockScreener() {
           </select>
           <div ref={colRef} style={{ position: 'relative' }}>
             <button type="button" className="mcss-btn" aria-haspopup="menu" aria-expanded={colOpen} aria-label={`Columns: ${COLUMN_VIEWS.find((v) => v.id === colView)?.label}`} onClick={() => setColOpen((v) => !v)}>
-              Columns: {COLUMN_VIEWS.find((v) => v.id === colView)?.label} <span className="mcss-dim" aria-hidden>▾</span>
+              <Icon d={COLS} size={13} /> {COLUMN_VIEWS.find((v) => v.id === colView)?.label} <span className="mcss-dim" aria-hidden>▾</span>
             </button>
             {colOpen ? (
-              <div className="mcss-pop right" role="menu" aria-label="Column view" style={{ minWidth: 300 }} onKeyDown={(e) => listKeys(e)}>
+              <div className="mcss-pop right" role="menu" aria-label="Column view" style={{ minWidth: 320 }} onKeyDown={(e) => listKeys(e)}>
                 <div className="mcss-grp">Visible columns — the filters and the result stay the same</div>
                 {COLUMN_VIEWS.map((v) => (
                   <button key={v.id} type="button" role="menuitemradio" aria-checked={colView === v.id} className="mcss-item" title={v.hint} onClick={() => { setColView(v.id); setColOpen(false); }}>
-                    <span style={{ width: 14 }}>{colView === v.id ? '✓' : ''}</span>{v.label}<span className="end" style={{ maxWidth: 170, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.hint}</span>
+                    <span style={{ width: 14 }}>{colView === v.id ? '✓' : ''}</span>{v.label}<span className="end" style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.hint}</span>
                   </button>
                 ))}
                 <div className="mcss-sep" />
@@ -681,6 +720,25 @@ export default function StockScreener() {
             ) : null}
           </div>
         </div>
+        {/* readout: breadth of the listed companies, the sort, shortcuts */}
+        {snap && narrowed.length ? (
+          <div className="mcss-readout" data-testid="results-readout">
+            {brd.up + brd.down + brd.flat ? (
+              <span className="mcss-breadth" title={`Today's change across the ${narrowed.length} listed companies: ${brd.up} up, ${brd.down} down, ${brd.flat} unchanged`}>
+                <span className="bar" aria-hidden>
+                  <i style={{ width: `${(brd.up / (brd.up + brd.down + brd.flat)) * 100}%`, background: 'var(--ss-up)' }} />
+                  <i style={{ width: `${(brd.flat / (brd.up + brd.down + brd.flat)) * 100}%`, background: 'var(--ss-ink-4)' }} />
+                  <i style={{ width: `${(brd.down / (brd.up + brd.down + brd.flat)) * 100}%`, background: 'var(--ss-down)' }} />
+                </span>
+                <span><b style={{ color: 'var(--ss-up)' }}>{brd.up}</b> up · <b style={{ color: 'var(--ss-down)' }}>{brd.down}</b> down</span>
+              </span>
+            ) : null}
+            {typeof medians.mc?.med === 'number' ? <span>Median market cap <b>{fmtValue(medians.mc.med, 'money', market)}</b></span> : null}
+            <span>Sorted by <b>{sortLabel}</b> {sort.dir === -1 ? 'high to low' : 'low to high'}</span>
+            <span style={{ flex: 1 }} />
+            <button type="button" className="mcss-link mcss-hide-sm" style={{ color: 'var(--ss-ink-3)', fontWeight: 400 }} onClick={() => setShowHelp(true)}>Shortcuts <kbd>?</kbd></button>
+          </div>
+        ) : null}
         {selected.size ? (
           <div className="mcss-sel" role="toolbar" aria-label="Selected companies">
             <b>{selRows.length} selected</b>
@@ -693,34 +751,66 @@ export default function StockScreener() {
             <button type="button" className="mcss-btn ghost sm" onClick={() => setSelected(new Set())}>Clear selection</button>
           </div>
         ) : null}
-        <div className="mcss-tablewrap" style={selected.size ? { borderTopColor: 'var(--mc-accent)' } : undefined}>
-          <table className="mcss-table" style={{ fontSize: density === 'compact' ? 12.5 : 13 }}>
+        {empty === 'no-search-match' ? (
+          <div role="status" className="mcss-empty" style={{ borderTop: '1px solid var(--ss-rule)' }}>
+            <h3>No match for “{findText || REVIEW_STATES.find((x) => x.id === reviewFilter)?.label}”</h3>
+            <p>No filter match contains “{findText}”{reviewFilter !== 'all' ? ` with review state “${REVIEW_STATES.find((x) => x.id === reviewFilter)?.label}”` : ''} — {sorted.length} companies pass the filters.</p>
+            <div className="acts">
+              {findText ? <button type="button" className="mcss-btn sm" onClick={() => setFindText('')}>Clear search</button> : null}
+              {reviewFilter !== 'all' ? <button type="button" className="mcss-btn sm" onClick={() => setReviewFilter('all')}>Show every review state</button> : null}
+            </div>
+          </div>
+        ) : null}
+        <div ref={tableRef} className="mcss-tablewrap" style={selected.size ? { borderTopColor: 'var(--ss-accent)' } : undefined}>
+          <table className={`mcss-table${density === 'compact' ? ' compact' : ''}`} aria-busy={skeleton}>
             <thead>
               <tr>
                 <th className="pin">
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
                     <input type="checkbox" aria-label={allShownTicked ? 'Clear the selection' : `Select the ${shown.length} rows shown`} checked={allShownTicked} disabled={!shown.length}
                       onChange={() => setSelected(allShownTicked ? new Set() : new Set(shown.map((r) => r.t)))} />
                     <Th bare label="Company" k="t" sort={sort} setSort={setSort} />
                   </span>
                 </th>
-                <th title="Your review progress for each company (kept in this browser, synced with your other devices)">Review</th>
-                <Th label="Sector" k="tvSec" sort={sort} setSort={setSort} />
+                <th className="mcss-hide-sm" title="Your review progress for each company (kept in this browser, synced with your other devices)">Review</th>
+                <Th label="Sector" k="tvSec" sort={sort} setSort={setSort} cls="mcss-hide-sm" />
                 {showPatCol ? <th title={patternFilters.length ? 'Patterns matching your pattern rule — timeframe in brackets, shape score 0–100 (not a probability)' : 'The strongest current chart pattern on daily / weekly / monthly bars — the Pine Screener has the full view'}>Chart pattern</th> : null}
-                {visibleCols.map((k) => <Th key={k} label={fieldOf(k)?.label || k} k={k} sort={sort} setSort={setSort} num />)}
+                {visibleCols.map((k) => <Th key={k} label={fieldOf(k)?.label || k} unit={unitSuffix(fieldOf(k)?.unit, market)} k={k} sort={sort} setSort={setSort} num />)}
                 <Th label="Quarter" k="q" sort={sort} setSort={setSort} />
               </tr>
+              {snap && narrowed.length > 1 ? (
+                <tr className="med">
+                  <th className="pin" title="The middle value of each column across the listed companies (search and review filters applied); companies without the figure are left out">Median of {narrowed.length}</th>
+                  <th className="mcss-hide-sm" aria-hidden />
+                  <th className="mcss-hide-sm" aria-hidden />
+                  {showPatCol ? <th aria-hidden /> : null}
+                  {visibleCols.map((k) => { const m = medians[k]; const u = fieldOf(k)?.unit || 'num'; return (
+                    <th key={k} className="num" title={m?.n ? `Median of the ${m.n} companies with this figure` : 'No company has this figure'}>{m?.med != null && u !== 'date' ? cellText(m.med, u, market, k) : '—'}</th>
+                  ); })}
+                  <th aria-hidden />
+                </tr>
+              ) : null}
             </thead>
             <tbody>
+              {skeleton ? Array.from({ length: 12 }, (_, i) => (
+                <tr key={`sk${i}`} aria-hidden>
+                  <td className="pin"><span style={{ display: 'flex', gap: 10, alignItems: 'center' }}><span className="mcss-skel" style={{ width: 14, height: 14 }} /><span className="mcss-skel" style={{ width: 48 + ((i * 17) % 40) }} /><span className="mcss-skel" style={{ width: 90 + ((i * 29) % 70), opacity: 0.6 }} /></span></td>
+                  <td className="mcss-hide-sm"><span className="mcss-skel" style={{ width: 70 }} /></td>
+                  <td className="mcss-hide-sm"><span className="mcss-skel" style={{ width: 100 + ((i * 13) % 50) }} /></td>
+                  {showPatCol ? <td><span className="mcss-skel" style={{ width: 90 }} /></td> : null}
+                  {visibleCols.map((k) => <td key={k} className="num"><span className="mcss-skel" style={{ width: 44 + ((i * 7 + k.length * 5) % 24), marginLeft: 'auto' }} /></td>)}
+                  <td><span className="mcss-skel" style={{ width: 52 }} /></td>
+                </tr>
+              )) : null}
               {shown.map((r, i) => {
                 const rs = reviewStates[reviewKey(market, r.t)] || 'unreviewed';
                 const m = tvSectorMapping(market, r.sec, r.ind, r.t);
                 return (
-                  <tr key={r.t} className={`${selected.has(r.t) ? 'sel' : ''}${detailT === r.t ? ' open' : ''}`}>
-                    <td className="pin" style={{ padding: cellPad(density) }}>
-                      <div style={{ display: 'flex', alignItems: density === 'compact' ? 'center' : 'flex-start', gap: 8 }}>
+                  <tr key={r.t} data-row={r.t} className={`${selected.has(r.t) ? 'sel' : ''}${detailT === r.t ? ' open' : ''}${curT === r.t ? ' cur' : ''}`} onMouseDown={() => setCurT(r.t)}>
+                    <td className="pin">
+                      <div className="cell-co" style={{ display: 'flex', alignItems: density === 'compact' ? 'center' : 'flex-start', gap: 10 }}>
                         <input type="checkbox" aria-label={`Select ${r.t}`} checked={selected.has(r.t)} onChange={() => toggleRow(r.t)} style={{ marginTop: density === 'compact' ? 0 : 3 }} />
-                        <span className="mcss-dim" style={{ fontSize: 11.5, minWidth: 18, textAlign: 'right', paddingTop: density === 'compact' ? 0 : 2 }}>{i + 1}</span>
+                        <span className="rk" style={{ paddingTop: density === 'compact' ? 0 : 2 }}>{i + 1}</span>
                         <div style={{ minWidth: 0, whiteSpace: density === 'compact' ? 'nowrap' : undefined }}>
                           <Link href={chartHref(r)} onClick={chartClick(r)} className="co" title="Open the chart — Next / Previous on the chart step through these results in this order">{r.t}</Link>
                           <button type="button" data-detail={r.t} className={`mcss-name${density === 'compact' ? ' inline' : ''}`} onClick={() => setDetailT(detailT === r.t ? null : r.t)} aria-expanded={detailT === r.t}
@@ -728,14 +818,14 @@ export default function StockScreener() {
                         </div>
                       </div>
                     </td>
-                    <td style={{ padding: cellPad(density) }}><ReviewBadge ticker={r.t} state={rs} onChange={(st) => setReview(r.t, st)} /></td>
-                    <td style={{ padding: cellPad(density), fontSize: 12, color: C.dim, maxWidth: 170, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`Source: ${[r.sec, r.ind].filter(Boolean).join(' · ') || 'none'}\nTradingView sector ${m.note}`}>{r.tvSec || r.sec || '—'}{m.basis === 'sector' ? ' ≈' : m.basis === 'checked' ? ' ✓' : ''}</td>
+                    <td className="mcss-hide-sm"><ReviewBadge ticker={r.t} state={rs} onChange={(st) => setReview(r.t, st)} /></td>
+                    <td className="sec mcss-hide-sm" title={`Source: ${[r.sec, r.ind].filter(Boolean).join(' · ') || 'none'}\nTradingView sector ${m.note}`}>{r.tvSec || r.sec || '—'}{m.basis === 'sector' ? ' ≈' : m.basis === 'checked' ? ' ✓' : ''}</td>
                     {showPatCol ? (
-                      <td style={{ padding: cellPad(density) }}>
-                        <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', maxWidth: 300 }}>
-                          {rowPatterns(r).slice(0, patternFilters.length ? 4 : 1).map((t) => { const col = t.b === 'U' ? C.green : C.red; const d = tagDirDist(t); return (
-                            <span key={`${t.tf}-${t.id}`} title={`${PATTERN_META[t.id]?.label} — ${t.tf === 'W' ? 'weekly' : t.tf === 'M' ? 'monthly' : 'daily'} bars, ${t.s === 'f' ? 'forming' : t.s === 'b' ? 'breakout' : 'failed'}, shape score ${t.c}/100 (${shapeWord(t.c)})${d != null ? `, ${d > 0 ? '+' : ''}${Math.round(d * 10) / 10}% to pivot (from the scan close)` : ''}`}
-                              style={{ padding: '1px 6px', borderRadius: 999, border: `1px solid ${col}`, color: col, fontSize: 11, fontWeight: 650, whiteSpace: 'nowrap' }}>{t.b === 'U' ? '▲' : '▼'} {PATTERN_META[t.id]?.label} <span style={{ opacity: 0.75 }}>{t.tf || 'D'} · {t.c}</span></span>
+                      <td>
+                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', maxWidth: 300 }}>
+                          {rowPatterns(r).slice(0, patternFilters.length ? 4 : 1).map((t) => { const d = tagDirDist(t); return (
+                            <span key={`${t.tf}-${t.id}`} className={`mcss-pat ${t.b === 'U' ? 'u' : 'd'}`} title={`${PATTERN_META[t.id]?.label} — ${t.tf === 'W' ? 'weekly' : t.tf === 'M' ? 'monthly' : 'daily'} bars, ${t.s === 'f' ? 'forming' : t.s === 'b' ? 'breakout' : 'failed'}, shape score ${t.c}/100 (${shapeWord(t.c)})${d != null ? `, ${d > 0 ? '+' : ''}${Math.round(d * 10) / 10}% to pivot (from the scan close)` : ''}`}>
+                              {t.b === 'U' ? '▲' : '▼'} {PATTERN_META[t.id]?.label} <span className="s">{t.tf || 'D'} · {t.c}</span></span>
                           ); })}
                         </div>
                       </td>
@@ -743,46 +833,92 @@ export default function StockScreener() {
                     {visibleCols.map((k) => {
                       const d = fieldOf(k); const v = r[k] as number | null;
                       const ax = r.approx?.includes(k);
-                      const col = k === 'chg' && typeof v === 'number' ? (v >= 0 ? C.green : C.red) : C.text;
+                      const dirCls = k === 'chg' && typeof v === 'number' ? (v > 0 ? ' up' : v < 0 ? ' down' : '') : '';
                       const na = naReason(r, k);
                       const tip = [typeof v === 'number' ? `Exact value: ${exact(v)} (filters compare this, not the rounded figure)` : na ? `Not applicable: ${na}` : 'Not known', ax ? 'Approximate for this company' : '', na && typeof v === 'number' ? 'Not meaningful for financial companies' : ''].filter(Boolean).join('\n');
                       // zzz994 (MC-01 display) — the latest quote next to the scan close the averages / patterns were read from
                       const scanNote = k === 'px' && pxDiffers(r) ? `\nScan close ${fmtPrice(r.scanPx, market)}${r.scanAt ? ` (${r.scanAt}` : ' ('}${r.scanSrc ? `, ${r.scanSrc}` : ''}) — moving averages, RSI and patterns use it; quote ${r.pxSrc ? `from ${r.pxSrc}` : ''}${typeof r.pxGap === 'number' ? `, ${r.pxGap > 0 ? '+' : ''}${r.pxGap}% vs scan close` : ''}${r.pxConflict ? '\n⚠ The two sources disagree on the same day — neither is certified as the exchange close' : ''}` : '';
-                      return <td key={k} className="num" style={{ padding: cellPad(density), color: col, whiteSpace: 'nowrap' }} title={tip + scanNote}>{k === 'px' && r.pxConflict ? <span style={{ color: C.amber }} aria-label="Price sources disagree">⚠ </span> : null}{ax ? '≈' : ''}{v == null && na ? <span style={{ color: C.dim, fontStyle: 'italic' }}>n/a</span> : cellText(v, d?.unit || 'num', market, k)}{scanNote ? <span style={{ color: C.amber }}>†</span> : null}{k === 'px' && scanNote && density !== 'compact' ? <div style={{ fontSize: 11, color: C.dim }}>scan {fmtPrice(r.scanPx, market)}</div> : null}</td>;
+                      return <td key={k} className={`num${dirCls}`} style={{ whiteSpace: 'nowrap' }} title={tip + scanNote}>{k === 'px' && r.pxConflict ? <span style={{ color: C.amber }} aria-label="Price sources disagree">⚠ </span> : null}{ax ? <span className="mcss-dim">≈</span> : ''}{v == null && na ? <span className="na">n/a</span> : v == null ? <span className="nil">{cellText(v, d?.unit || 'num', market, k)}</span> : cellText(v, d?.unit || 'num', market, k)}{scanNote ? <span style={{ color: C.amber }}>†</span> : null}{k === 'px' && scanNote && density !== 'compact' ? <div style={{ fontSize: 11, color: C.dim }}>scan {fmtPrice(r.scanPx, market)}</div> : null}</td>;
                     })}
-                    <td style={{ padding: cellPad(density), fontSize: 12, color: C.dim, whiteSpace: 'nowrap' }}>{r.q || '—'}</td>
+                    <td className="qtr">{r.q || <span className="nil">—</span>}</td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
           {narrowed.length > 200 ? (
-            <div style={{ padding: 8, textAlign: 'center' }}><button type="button" className="mcss-btn sm" onClick={() => setShowAll((v) => !v)}>{showAll ? 'Show the first 200' : `Show all ${narrowed.length}`}</button></div>
+            <div className="mcss-more"><button type="button" className="mcss-btn sm" onClick={() => setShowAll((v) => !v)}>{showAll ? 'Show the first 200' : `Show all ${narrowed.length}`}</button></div>
           ) : null}
-          {empty === 'no-data' ? <div role="status" style={{ padding: 14, color: C.dim, fontSize: 13 }}>{snap?.notes[0] || 'No data yet — the first build of this market has not finished.'}</div> : null}
-          {empty === 'no-filter-match' ? <div role="status" style={{ padding: 14, color: C.dim, fontSize: 13 }}>No company passes every filter. A filter marked “0 pass” is the tight one; hover any filter for how many companies pass it alone.{patternFilters.length ? ' A pattern rule only passes companies whose selected timeframe has been scanned.' : ''}</div> : null}
-          {empty === 'no-search-match' ? <div style={{ padding: 14, color: C.dim, fontSize: 13 }}>No match for the search — see above.</div> : null}
+          {empty === 'no-data' ? (
+            <div role="status" className="mcss-empty">
+              <h3>No companies in this market yet</h3>
+              <p>{snap?.notes[0] || 'No data yet — the first build of this market has not finished.'}</p>
+              <div className="acts"><button type="button" className="mcss-btn sm" onClick={() => setRefresh((v) => v + 1)}>Check again</button></div>
+            </div>
+          ) : null}
+          {empty === 'no-filter-match' ? (
+            <div role="status" className="mcss-empty">
+              <h3>No company passes every filter</h3>
+              <p>No company passes every filter. A filter marked “0 pass” is the tight one; hover any filter for how many companies pass it alone.{patternFilters.length ? ' A pattern rule only passes companies whose selected timeframe has been scanned.' : ''}</p>
+              {(() => { const tight = filters.map((f, i) => ({ f, i, n: counts[i] ?? 0 })).filter((x) => !x.f.off).sort((a, b) => a.n - b.n).slice(0, 3); return tight.length ? (
+                <div className="acts">
+                  {tight.map((x) => <button key={x.i} type="button" className="mcss-btn sm" onClick={() => change(filters.map((y, k) => (k === x.i ? ({ ...y, off: true } as Filter) : y)))} title={`${x.n.toLocaleString('en-US')} companies pass this filter alone`}>Pause “{filterLabel(x.f, market)}”</button>)}
+                </div>
+              ) : null; })()}
+            </div>
+          ) : null}
         </div>
-        {pxDiffCount ? <div className="mcss-warn" style={{ marginTop: 6 }} title="Moving averages, RSI and patterns are worked out from the daily bars (scan close); the Price column is the latest quote, which can come from another source. Price-vs-average rules compare the quote.">† {pxDiffCount} matches: latest quote differs from the scan close the averages were read from</div> : null}
-      </div>
+      </section>
+      {pxDiffCount ? <div className="mcss-warn" title="Moving averages, RSI and patterns are worked out from the daily bars (scan close); the Price column is the latest quote, which can come from another source. Price-vs-average rules compare the quote.">† {pxDiffCount} matches: latest quote differs from the scan close the averages were read from</div> : null}
       {detailRow ? (
         <CompanyDetail row={detailRow} market={market} filters={filters} exactOnly={exactOnly} review={reviewStates[reviewKey(market, detailRow.t)] || 'unreviewed'} onReview={(st) => setReview(detailRow.t, st)}
           chartHref={chartHref(detailRow)} onChart={chartClick(detailRow)} onPine={(e) => openInPine(e, [detailRow], `${name}: ${detailRow.t}`)}
           onClose={() => { const t = detailRow.t; setDetailT(null); requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-detail="${CSS.escape(t)}"]`)?.focus({ preventScroll: true })); }}
           position={detailIdx >= 0 ? `${detailIdx + 1} of ${narrowed.length}` : 'not in the result'} />
       ) : null}
+      {showHelp ? (
+        <div className="mcss-help" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" onClick={(e) => { if (e.target === e.currentTarget) setShowHelp(false); }}>
+          <div className="card">
+            <div className="mcss-row" style={{ marginBottom: 4 }}><h2 style={{ margin: 0 }}>Keyboard shortcuts</h2><span style={{ flex: 1 }} /><button type="button" className="mcss-btn ghost sm" aria-label="Close shortcuts" autoFocus onClick={() => setShowHelp(false)}>✕</button></div>
+            <p className="mcss-dim" style={{ margin: '0 0 14px', fontSize: 12.5 }}>They work anywhere on the page except while you type in a field.</p>
+            <dl>
+              {SHORTCUTS.map(([keys, what]) => <React.Fragment key={what}><dt>{keys.map((k) => <kbd key={k}>{k}</kbd>)}</dt><dd>{what}</dd></React.Fragment>)}
+            </dl>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
 
+const SHORTCUTS: ReadonlyArray<[string[], string]> = [
+  [['/'], 'Find a ticker or name in the results'],
+  [['j'], 'Next row'],
+  [['k'], 'Previous row'],
+  [['Enter'], 'Open the chart (Next / Previous there step through these results)'],
+  [['o'], 'Show or hide the company details'],
+  [['x'], 'Tick or untick the row'],
+  [['Esc'], 'Close the panel, leave the search field'],
+  [['?'], 'Show this card'],
+];
+/** zzz1012 — a chip shows the figure's name quietly and the condition (operator + value with its unit) in weight; same text. */
+function chipParts(f: Filter, label: string): [string, string] {
+  const nm = f.kind === 'num' || f.kind === 'cmp' || f.kind === 'near' || f.kind === 'date' ? fieldOf(f.key)?.label : f.kind === 'sector' ? 'Sector' : f.kind === 'exch' ? 'Exchange' : null;
+  return nm && label.startsWith(nm) ? [nm, label.slice(nm.length)] : ['', label];
+}
 const PAUSE = 'M4 3h2.5v10H4zM9.5 3H12v10H9.5z', PLAY = 'M5 3l8 5-8 5z', CROSS = 'M4.2 3.1 8 6.9l3.8-3.8 1.1 1.1L9.1 8l3.8 3.8-1.1 1.1L8 9.1l-3.8 3.8-1.1-1.1L6.9 8 3.1 4.2z';
-function Icon({ d }: { d: string }) { return <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden fill="currentColor"><path d={d} /></svg>; }
-function Th({ label, k, sort, setSort, num, bare }: { label: string; k: string; sort: { key: string; dir: 1 | -1 }; setSort: (s: { key: string; dir: 1 | -1 }) => void; num?: boolean; bare?: boolean }) {
+const DOTS = 'M3 6.6a1.4 1.4 0 1 1 0 2.8 1.4 1.4 0 0 1 0-2.8zm5 0a1.4 1.4 0 1 1 0 2.8 1.4 1.4 0 0 1 0-2.8zm5 0a1.4 1.4 0 1 1 0 2.8 1.4 1.4 0 0 1 0-2.8z';
+const COLS = 'M2 3h12v10H2zm1.4 1.4v7.2h2.4V4.4zm3.8 0v7.2h1.6V4.4zm3 0v7.2h2.4V4.4z';
+function Icon({ d, size = 11 }: { d: string; size?: number }) { return <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden fill="currentColor" fillRule="evenodd"><path d={d} /></svg>; }
+function Th({ label, unit, k, sort, setSort, num, bare, cls }: { label: string; unit?: string; k: string; sort: { key: string; dir: 1 | -1 }; setSort: (s: { key: string; dir: 1 | -1 }) => void; num?: boolean; bare?: boolean; cls?: string }) {
   const on = sort.key === k;
+  const next = on ? (sort.dir === 1 ? -1 : 1) : num ? -1 : 1;
   const b = (
-    <button type="button" onClick={() => setSort({ key: k, dir: on ? (sort.dir === 1 ? -1 : 1) : num ? -1 : 1 })} style={{ all: 'unset', cursor: 'pointer', color: on ? 'var(--mc-accent)' : undefined }}>
-      {label}{on ? (sort.dir === -1 ? ' ▼' : ' ▲') : ''}
+    <button type="button" className={`mcss-th${num ? ' num' : ''}${on ? ' on' : ''}`} onClick={() => setSort({ key: k, dir: next })}
+      title={`Sort by ${label}${unit ? ` (${unit})` : ''}, ${next === -1 ? 'high to low' : 'low to high'} — companies without the figure stay at the bottom`}>
+      <span>{label}{unit ? <span className="u">{unit}</span> : null}</span>
+      <span className="ar" aria-hidden>{on ? (sort.dir === -1 ? '▼' : '▲') : num ? '▼' : '▲'}</span>
     </button>
   );
-  return bare ? b : <th className={num ? 'num' : undefined} aria-sort={on ? (sort.dir === -1 ? 'descending' : 'ascending') : undefined}>{b}</th>;
+  return bare ? b : <th className={[num ? 'num' : '', cls || ''].filter(Boolean).join(' ') || undefined} aria-sort={on ? (sort.dir === -1 ? 'descending' : 'ascending') : undefined}>{b}</th>;
 }

@@ -17,6 +17,7 @@ import { NO_BARS, barsForIdentity, chartIdentityKey, chartLoadError, type Loaded
 import { IndicatorLegend, IndicatorsPanel, LayoutPicker, useLayouts } from './LayoutControls';
 import { pollWhenVisible } from '@/lib/client-fetch';
 import { cacheChart, freshChart, type CachedChart } from '@/lib/chart-refresh';
+import { chartApiUrl, chartFetch, loadDataRange, neighbourOrder, prefetchCharts, sharedChartCache } from '@/lib/chart-load-cache';
 import WatchlistResizeHandle, { clampWatchlistWidth } from './WatchlistResizeHandle';
 import { useWorkspaceLight, workspaceThemeClass } from '@/lib/workspace-theme';
 import { fitBarSpace, loadView, saveView } from '@/lib/chart-view-prefs';
@@ -238,14 +239,17 @@ export default function ChartWorkspace() {
   const setsRef = useRef(setsStore);
   useEffect(() => { setsRef.current = setsStore; }, [setsStore]);
   const storeKeyOf = useCallback((base: string) => withSet(base, activeSetOf(setsRef.current, base)), []);
-  const cacheRef = useRef(new Map<string, CachedChart<ChartResponse>>());
+  // zzz1010 — one cache for the whole visit, shared with the indicators and the neighbour prefetches (lib/chart-load-cache)
+  const cacheRef = useRef(sharedChartCache() as Map<string, CachedChart<ChartResponse>>);
   const loadedUrlRef = useRef('');
   const barUpdatesRef = useRef<((data: KLineData) => void) | null>(null);
   const workingRef = useRef<ChartLayout>(L.working);
   useEffect(() => { workingRef.current = L.working; }, [L.working]);
   const toolRef = useRef<string>('cursor');
 
-  const dataRange = dataRangeFor(tf, range);
+  // zzz1010 — with chart patterns / stage analysis on, the daily load brings the 5 years they read: one request, not two
+  const needsLongDaily = patternsOn(L.working) || stageOn(L.working);
+  const dataRange = loadDataRange(dataRangeFor(tf, range), tf, needsLongDaily);
 
   // keep the URL linkable: /charts?t=QQQ&m=US&tf=W
   useEffect(() => {
@@ -502,8 +506,11 @@ export default function ChartWorkspace() {
       const signal = ctrl.signal;
       const cached = force ? null : freshChart(cacheRef.current, url, ttl);
       if (cached) { show(cached); setLoading(false); return; }
+      // zzz1010 — stale-while-revalidate: an older answer for THIS url (same identity) is drawn at once, the fresh one replaces it
+      const stale = force || loadedUrlRef.current === url ? null : freshChart(cacheRef.current, url, 6 * 3600_000);
+      if (stale) show(stale);
       setLoading(true);
-      fetch(url, { signal, cache: 'no-store' })
+      chartFetch(url, { signal, cache: 'no-store' })   // one shared request per URL (indicators / prefetch join it)
       .then(async (r) => {
         const j = (await r.json().catch(() => null)) as ChartResponse | null;
         if (!r.ok || !j?.ok) throw new Error(j?.error || `Could not load ${ticker} (HTTP ${r.status}).`);
@@ -679,6 +686,20 @@ export default function ChartWorkspace() {
   const reviewCanPrev = !!review && !!stepQueue(review, ticker, exchange, -1, reviewIdx, market);
   const reviewCanNext = !!review && !!stepQueue(review, ticker, exchange, 1, reviewIdx, market);
   const words = reviewWords(review);
+  // zzz1010 — neighbours are fetched in the background (same timeframe / history / price basis, so the URL is the one the load
+  // will ask for); lib/chart-load-cache holds them back until the open chart has its answer
+  const prefetchFor = useCallback((items: Array<{ m: Market; t: string; x?: string }>) => {
+    prefetchCharts(items.map((it) => chartApiUrl(it.t, it.m, it.m === 'IN' && (it.x === 'NSE' || it.x === 'BSE') ? it.x : undefined, tf, dataRange, basis)));
+  }, [tf, dataRange, basis]);
+  useEffect(() => {
+    if (!review || !ready) return;
+    type Cur = { index: number; t: string; m: Market; x?: string };
+    const near = neighbourOrder<Cur>((from, dir) => {
+      const r = stepQueue(review, from ? from.t : ticker, from ? (from.x ?? null) : exchange, dir, from ? from.index : reviewIdx, from ? from.m : market);
+      return r ? { index: r.index, t: r.target.ticker, m: r.target.market, x: r.target.exchange || undefined } : null;
+    });
+    prefetchFor(near.filter((c) => !(c.t === ticker && c.m === market)));
+  }, [review, ready, ticker, exchange, reviewIdx, market, prefetchFor]);
   const reviewNav = useMemo<WatchlistNavOverride | null>(() => (review ? { label: reviewWords(review).noun, canPrev: reviewCanPrev, canNext: reviewCanNext, go: reviewStep } : null), [review, reviewCanPrev, reviewCanNext, reviewStep]);
   useEffect(() => {
     if (!review) return;
@@ -945,7 +966,7 @@ export default function ChartWorkspace() {
       {panelOpen && (<>
         <WatchlistResizeHandle width={panelWidth} onChange={resizePanel} />
         <div className="mc-charts-panel" style={{ '--mc-watchlist-width': `${panelWidth}px` } as React.CSSProperties}>
-          <WatchlistPanel store={wlStore} update={wlUpdate} currentKey={drawingKey(market, ticker, exchange)} onPick={pickFromList} navOverride={reviewNav} loading={loading} />
+          <WatchlistPanel store={wlStore} update={wlUpdate} currentKey={drawingKey(market, ticker, exchange)} onPick={pickFromList} navOverride={reviewNav} loading={loading} prefetch={ready ? prefetchFor : undefined} />
         </div>
       </>)}
       </div>

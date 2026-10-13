@@ -47,3 +47,67 @@ export function cellText(v: number | null | undefined, unit: FieldUnit, market: 
   if (unit === 'x') return Math.abs(v) >= 1000 ? Math.round(v).toLocaleString('en-US') : v.toFixed(1);
   return fmtValue(v, unit, market);
 }
+
+// ── zzz1012 — table presentation helpers (display only: nothing here feeds a filter, the result set, Copy or the CSV) ───────────
+/** The unit shown after a column name in the header: "%", "×" (multiples, whose cells carry no sign), the currency for prices and
+ *  money columns (cells already scale with $ B / ₹ Cr), "shares" for volumes. */
+export function unitSuffix(unit: FieldUnit | undefined, market: ScreenMarket): string {
+  if (unit === '%') return '%';
+  if (unit === 'x') return '×';
+  if (unit === 'money' || unit === 'price') return market === 'US' ? 'USD' : 'INR';
+  if (unit === 'usd') return 'USD';
+  if (unit === 'shares') return 'shares';
+  return '';
+}
+/** Median of the finite numbers (null when there are none). */
+export function median(values: readonly unknown[]): number | null {
+  const v = values.filter((x): x is number => typeof x === 'number' && Number.isFinite(x)).sort((a, b) => a - b);
+  if (!v.length) return null;
+  const m = v.length >> 1;
+  return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
+}
+/** Per column: the median over the rows and how many rows have the figure. */
+export function columnMedians<R extends Record<string, unknown>>(rows: readonly R[], keys: readonly string[]): Record<string, { med: number | null; n: number }> {
+  const out: Record<string, { med: number | null; n: number }> = {};
+  for (const k of keys) { const vals = rows.map((r) => r[k]); out[k] = { med: median(vals), n: vals.filter((x) => typeof x === 'number' && Number.isFinite(x)).length }; }
+  return out;
+}
+/** Advancers / decliners / unchanged by today's change (rows without a change are not counted). */
+export function breadth(rows: ReadonlyArray<{ chg?: number | null }>): { up: number; down: number; flat: number } {
+  let up = 0, down = 0, flat = 0;
+  for (const r of rows) { const c = r.chg; if (typeof c !== 'number' || !Number.isFinite(c)) continue; if (c > 0) up++; else if (c < 0) down++; else flat++; }
+  return { up, down, flat };
+}
+/** Table sort: numbers by value, text alphabetically; a missing figure always sorts LAST whichever way the column is sorted. */
+export function compareRows(a: Record<string, unknown>, b: Record<string, unknown>, key: string, dir: 1 | -1): number {
+  const x = a[key], y = b[key];
+  if (typeof x === 'string' || typeof y === 'string') {
+    const sx = typeof x === 'string' ? x : '', sy = typeof y === 'string' ? y : '';
+    if (!sx || !sy) return sx === sy ? 0 : sx ? -1 : 1;
+    return sx.localeCompare(sy) * dir;
+  }
+  const nx = typeof x === 'number' && Number.isFinite(x), ny = typeof y === 'number' && Number.isFinite(y);
+  if (!nx || !ny) return nx === ny ? 0 : nx ? -1 : 1;
+  return ((x as number) - (y as number)) * dir;
+}
+export type ShortcutAction = 'find' | 'down' | 'up' | 'open' | 'details' | 'select' | 'help' | 'escape';
+/** Keyboard shortcuts on the results (/ find, j / k rows, Enter chart, o details, x select, ? help). Never while typing in
+ *  a field or with Ctrl / ⌘ / Alt held, so browser and system shortcuts keep working. */
+export function shortcutAction(e: { key: string; ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean; target?: unknown }): ShortcutAction | null {
+  if (e.ctrlKey || e.metaKey || e.altKey) return null;
+  const t = e.target as { tagName?: string; isContentEditable?: boolean; type?: string } | null | undefined;
+  const tag = (t?.tagName || '').toUpperCase();
+  const typing = tag === 'TEXTAREA' || tag === 'SELECT' || !!t?.isContentEditable || (tag === 'INPUT' && !['checkbox', 'radio', 'button'].includes(String(t?.type || 'text')));
+  if (typing) return e.key === 'Escape' ? 'escape' : null;
+  switch (e.key) {
+    case '/': return 'find';
+    case 'j': return 'down';
+    case 'k': return 'up';
+    case 'Enter': return tag === 'BUTTON' || tag === 'A' || tag === 'INPUT' ? null : 'open';
+    case 'o': return 'details';
+    case 'x': return 'select';
+    case '?': return 'help';
+    case 'Escape': return 'escape';
+    default: return null;
+  }
+}

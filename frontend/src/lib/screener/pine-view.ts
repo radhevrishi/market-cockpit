@@ -400,13 +400,15 @@ export function querySummary(q: PineQuery, scopeName: string): string {
   const bias = q.bias === 'U' ? 'Bullish' : q.bias === 'D' ? 'Bearish' : 'Bullish + bearish';
   const tfs = (q.tfs.length ? q.tfs : ['D'] as PatTf[]).map((t) => TF_WORD[t]).join(' + ') + (q.tfs.length > 1 ? ` (${q.tfMode === 'all' ? 'all' : 'any'})` : '');
   const stageName = (id: string) => (id === 'b' ? (q.bias === 'D' ? 'Breakdown' : q.bias === 'both' ? 'Breakout / breakdown' : 'Breakout') : STAGES.find((s) => s.id === id)?.label || id);
-  const stages = !q.stages.length ? 'No stage' : q.stages.map(stageName).join(' + ');
+  const stages = !q.stages.length ? 'No stage selected' : q.stages.map(stageName).join(' + ');
   const dist = q.dist.on ? `Pivot ${q.dist.lo}% to ${q.dist.hi > 0 ? '+' : ''}${q.dist.hi}%` : 'No pivot limit';
   const parts = [bias, tfs, scopeName || 'All companies', stages, dist];
   if (q.ids.length) parts.push(q.ids.length <= 3 ? q.ids.map((id) => PATTERN_META[id]?.label || id).join(', ') : `${q.ids.length} pattern types`);
+  else if (q.need !== 'any') parts.push('All applicable patterns');   // zzz1011 — "none ticked" said as what it means
   parts.push(`Shape ≥ ${q.minConf}`);
   const r40 = r40Text(q);   // zzz1007 — the Rule of 40 control is named, never folded into "N more limits"
   if (r40) parts.push(r40);
+  if (q.returned === 'only' && q.stages.includes('b')) parts.push(q.bias === 'D' ? 'Breakdowns back above the level only' : 'Breakouts back below the pivot only');
   if (q.returned === false && q.stages.includes('b')) parts.push(q.bias === 'D' ? 'Breakdowns holding below the level' : q.bias === 'both' ? 'Breaks holding beyond the level' : 'Breakouts holding above the pivot');   // zzz1008
   const lim = [q.mcMin, q.mcMax, q.pxMin, q.turnMin, q.perfMin].filter((v) => v != null).length + (q.sectors.length ? 1 : 0) + q.filters.filter((f) => !f.off).length;
   if (lim) parts.push(`${lim} more limit${lim === 1 ? '' : 's'}`);
@@ -515,13 +517,14 @@ export function portfolioFocus(items: readonly PortfolioCheckRow[], mode: Exclud
 
 // ── "Why not listed?" ─────────────────────────────────────────────────────────────────────────────────────────────────────
 /** Why one tag does not pass the pattern part of the query ([] = it passes). Mirrors filters.tagPasses. */
-export function tagRejectReasons(t: ScreenPatternTag, q: Pick<PineQuery, 'bias' | 'ids' | 'stages' | 'minConf' | 'dist' | 'tfs'> & { returned?: boolean }): string[] {
+export function tagRejectReasons(t: ScreenPatternTag, q: Pick<PineQuery, 'bias' | 'ids' | 'stages' | 'minConf' | 'dist' | 'tfs'> & { returned?: boolean | 'only' }): string[] {
   const out: string[] = [];
   const tf = tfOf(t);
   if (!(q.tfs.length ? q.tfs : ['D']).includes(tf)) out.push(`timeframe ${tf} not selected`);
   if (q.bias !== 'both' && t.b !== q.bias) out.push(`${t.b === 'U' ? 'bullish' : 'bearish'} pattern; the screen asks for ${q.bias === 'U' ? 'bullish' : 'bearish'}`);
   if (q.ids.length && !q.ids.includes(t.id)) out.push('not one of the ticked pattern types');
   if (!q.stages.includes(t.s)) out.push(`stage "${stageWord(t)}" not selected`);
+  else if (q.returned === 'only' && t.s === 'b' && !isReturned(t)) out.push(`${t.b === 'U' ? 'breakout still above the pivot' : 'breakdown still below the level'} — the screen lists only ${t.b === 'U' ? 'breakouts back below the pivot' : 'breakdowns back above the level'}`);   // zzz1011
   else if (q.returned === false && isReturned(t)) out.push(`${t.b === 'U' ? 'breakout back below the pivot' : 'breakdown back above the level'} — the screen counts only ${t.b === 'U' ? 'breakouts' : 'breakdowns'} holding beyond it`);   // zzz1008
   if (!(t.c >= q.minConf)) out.push(`shape score ${t.c} below ${q.minConf}`);
   if (q.dist.on) {
@@ -766,4 +769,129 @@ export function conflictWords(r: Partial<Pick<ScreenRow, 'pxConflict' | 'pxAt' |
   const gap = fin(r.pxGap) ? `${Math.abs(r.pxGap).toFixed(2)}% apart` : 'more than 2% apart';
   if (r.pxAt && r.scanAt && r.pxAt === r.scanAt) return `the quote and the daily technical close disagree on the same day (${r.scanAt}): ${gap}`;
   return `the quote${r.pxAt ? ` (${r.pxAt})` : ' (its date is not known)'} and the daily technical close${r.scanAt ? ` (${r.scanAt})` : ''} are ${gap} — different sources; neither is certified as the exchange close`;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// zzz1011 — PINE FINAL: the latest CONDITION of a reading kept apart from its historical EVENT, the one-click workflows, preset stages
+// and their restore, the eligible / evaluated / matched / unavailable funnel, and a 12-month price path from stored performance.
+// ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** The text when every stage is deselected: a choice to make, never evidence that the universe has no matching pattern. */
+export const NO_STAGE_TEXT = 'Select a stage to evaluate patterns.';
+/** What "no pattern types ticked" means, said the same way everywhere (filter panel, summary, CSV). */
+export const ALL_TYPES_TEXT = 'All applicable patterns';
+
+// ── condition vs event ────────────────────────────────────────────────────────────────────────────────────────────────────
+/** forming → no close beyond the level yet · crossed → at / just past it (< 0.5%) · holding → closed beyond it by 0.5% or more ·
+ *  retesting → beyond on the analysis close, the latest quote back within ±1.5% of the level · returned → the analysis close is back
+ *  inside the structure (event kept) · invalidated → failed (> 7.5% back through within 40 sessions) · expired → the observation is
+ *  older than its timeframe's window (D > 7 days, W > 21 days, M > 70 days after the analysis date), so it is not a current reading. */
+export type ConditionStateId = 'forming' | 'crossed' | 'holding' | 'retesting' | 'returned' | 'invalidated' | 'expired';
+export const CROSSED_PCT = 0.5, RETEST_PCT = 1.5;
+export const EXPIRE_DAYS: Record<PatTf, number> = { D: 7, W: 21, M: 70 };
+export interface ConditionState {
+  id: ConditionStateId; label: string; tip: string; tone: 'up' | 'down' | 'warn' | 'dim';
+  /** the historical event, apart from the condition: a breakout / breakdown in the last 5 sessions, a failed one, or none */
+  event: { id: 'breakout' | 'breakdown' | 'failed' | null; label: string };
+}
+const LABELS: Record<'U' | 'D', Record<ConditionStateId, string>> = {
+  U: { forming: 'Forming', crossed: 'Pivot crossed', holding: 'Holding above pivot', retesting: 'Retesting pivot', returned: 'Back below pivot', invalidated: 'Invalidated', expired: 'Expired reading' },
+  D: { forming: 'Forming', crossed: 'Level crossed', holding: 'Holding below level', retesting: 'Retesting level', returned: 'Back above level', invalidated: 'Invalidated', expired: 'Expired reading' },
+};
+const daysBetween = (a: string, now: Date) => { const t = Date.parse(`${a.slice(0, 10)}T00:00:00Z`); return Number.isFinite(t) ? (now.getTime() - t) / 86_400_000 : null; };
+export function conditionState(row: Partial<ScreenRow> | null | undefined, tag: ScreenPatternTag, now: Date = new Date()): ConditionState {
+  const up = tag.b === 'U', L = LABELS[up ? 'U' : 'D'];
+  const lvl = up ? 'pivot' : 'breakdown level';
+  const dd = tagDirDist(tag);
+  const a = analysisOf(row, tag);
+  const r: any = row || {};
+  const lp = fin(r.px) && r.px > 0 ? r.px : null;
+  const lq = lp != null && fin(tag.p) && tag.p > 0 ? Math.round((up ? 1 : -1) * (lp / tag.p - 1) * 10000) / 100 : null;
+  const event: ConditionState['event'] = tag.s === 'b' ? { id: up ? 'breakout' : 'breakdown', label: `${tfWord(tag.tf)} ${up ? 'breakout' : 'breakdown'} (first close beyond the ${lvl} in the last 5 sessions)` }
+    : tag.s === 'x' ? { id: 'failed', label: `${tfWord(tag.tf)} ${up ? 'breakout' : 'breakdown'} failed (more than 7.5% back through the ${lvl} within 40 sessions)` }
+    : { id: null, label: 'No breakout event yet' };
+  const at = a.at ? ` on the ${a.at} ${tfWord(a.tf)} analysis close` : '';
+  const ddTxt = dd == null ? 'distance unknown' : `${dd > 0 ? '+' : ''}${dd.toFixed(2)}% vs the ${lvl}`;
+  const mk = (id: ConditionStateId, tone: ConditionState['tone'], tip: string): ConditionState => ({ id, label: L[id], tip, tone, event });
+  if (tag.s === 'x') return mk('invalidated', 'dim', `${event.label}. The shape is no longer valid.`);
+  const age = a.at ? daysBetween(a.at, now) : null;
+  if (age != null && age > EXPIRE_DAYS[a.tf]) return mk('expired', 'dim', `The ${tfWord(a.tf)} analysis date ${a.at} is ${Math.round(age)} days old (window ${EXPIRE_DAYS[a.tf]} days) — a past observation, not a current condition.`);
+  if (tag.s === 'b') {
+    if (dd != null && dd < 0) return mk('returned', 'warn', `${event.label}; ${ddTxt}${at} — back inside the structure. The event stays on record.`);
+    if (dd != null && lq != null && lq >= -RETEST_PCT && lq <= RETEST_PCT && lq < dd - CROSSED_PCT) return mk('retesting', 'warn', `Beyond the ${lvl} on the analysis close (${ddTxt}); the latest quote ${lp} is ${lq > 0 ? '+' : ''}${lq}% from it — testing the level again.`);
+    if (dd != null && dd < CROSSED_PCT) return mk('crossed', up ? 'up' : 'down', `Just past the ${lvl} (${ddTxt}${at}) — a raw crossing, not yet a clearance of ${CROSSED_PCT}%.`);
+    return mk('holding', up ? 'up' : 'down', `${ddTxt}${at} — closed beyond the ${lvl} and still there.`);
+  }
+  if (dd != null && dd >= 0) return mk('crossed', up ? 'up' : 'down', `No breakout recorded yet, but the analysis close is at / past the ${lvl} (${ddTxt}).`);
+  return mk('forming', 'dim', `No close beyond the ${lvl} yet (${ddTxt}${at}).`);
+}
+
+// ── one-click workflows ───────────────────────────────────────────────────────────────────────────────────────────────────
+/** `scope`: the company list the workflow runs on — 'pf' my portfolio, 'wl' a watchlist (the one chosen under Companies, else the
+ *  active one), undefined = keep the current list. */
+export interface Workflow { id: string; label: string; presetId: string; scope?: 'pf' | 'wl'; tone: 'up' | 'down' | 'neutral' }
+export const WORKFLOWS: readonly Workflow[] = [
+  { id: 'pf-opps', label: 'Bullish opportunities in my portfolio', presetId: 'pf-bullish-opps', scope: 'pf', tone: 'up' },
+  { id: 'pf-risks', label: 'Bearish risks in my portfolio', presetId: 'pf-bearish-risks', scope: 'pf', tone: 'down' },
+  { id: 'wl-bases', label: 'Forming bases in a watchlist', presetId: 'wl-forming-bases', scope: 'wl', tone: 'up' },
+  { id: 'bo-holding', label: 'Recent breakouts holding', presetId: 'breakouts-holding', tone: 'up' },
+  { id: 'bo-back', label: 'Breakouts back below pivot', presetId: 'breakouts-back-below', tone: 'down' },
+  { id: 'm-bases', label: 'Monthly bases', presetId: 'monthly-bases', tone: 'up' },
+  { id: 'm-reversal', label: 'Monthly reversal candidates', presetId: 'monthly-reversal-bases', tone: 'up' },
+  { id: 'mtf', label: 'Weekly + monthly aligned', presetId: 'mtf-aligned', tone: 'up' },
+];
+/** The scope value a workflow opens with: 'pf', a watchlist ('wl:<id>' — the current one if a watchlist is chosen, else `activeWl`),
+ *  or the current scope. */
+export function workflowScope(w: Workflow, current: string, activeWl: string | null): string {
+  if (w.scope === 'pf') return 'pf';
+  if (w.scope === 'wl') return current.startsWith('wl:') ? current : activeWl ? `wl:${activeWl}` : current;
+  return current;
+}
+
+// ── preset stages ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+/** The stages a built-in screen sets (null for a screen that is not built in). */
+export function presetStages(screenId: string): PineQuery['stages'] | null {
+  const s = BUILT_IN_PINE_SCREENS.find((x) => x.id === screenId);
+  return s ? s.q.stages.slice() : null;
+}
+/** True when the stage choice differs from the preset's (order ignored) — "Restore preset stages" is offered then. */
+export function stagesDiffer(screenId: string, stages: readonly string[]): boolean {
+  const p = presetStages(screenId);
+  if (!p) return false;
+  return p.length !== stages.length || p.some((s) => !stages.includes(s));
+}
+
+// ── eligible / evaluated / matched / unavailable ──────────────────────────────────────────────────────────────────────────
+/** eligible = companies of the list in this market's data (every company without a list) · evaluated = eligible companies whose
+ *  selected timeframes could be read (ANY: at least one; ALL: every one — rules-only screens: all eligible) · matched = strict matches
+ *  in the list · unavailable = eligible − evaluated, plus list members not in the data. Counts respect the company list only; every
+ *  other choice decides "matched". */
+export interface Funnel { eligible: number; evaluated: number; matched: number; unavailable: number; notInData: number; provisional: number }
+export function screenFunnel(rows: readonly ScreenRow[], q: PineQuery, list: ReadonlySet<string> | null, run: PineRun): Funnel {
+  const inList = (t: string) => !list || list.has(t.toUpperCase());
+  const elig = list ? rows.filter((r) => list.has(r.t.toUpperCase())) : rows;
+  const have = new Set(elig.map((r) => r.t.toUpperCase()));
+  const notInData = list ? Array.from(list).filter((t) => !have.has(t.toUpperCase())).length : 0;
+  const tfs = q.tfs.length ? q.tfs : (['D'] as PatTf[]);
+  const needPattern = q.need !== 'any' || q.ids.length > 0;
+  let evaluated = 0;
+  for (const r of elig) {
+    if (!needPattern) { evaluated++; continue; }
+    const read = tfs.map((tf) => patTagsOf(r, tf) != null);
+    if (q.tfMode === 'all' ? read.every(Boolean) : read.some(Boolean)) evaluated++;
+  }
+  const matched = run.strict.filter((h) => inList(h.row.t)).length;
+  const provisional = run.provisional.filter((h) => inList(h.row.t)).length;
+  return { eligible: elig.length, evaluated, matched, unavailable: elig.length - evaluated + notInData, notInData, provisional };
+}
+
+// ── 12-month price path (from the stored performance figures; no extra fetch) ─────────────────────────────────────────────
+/** Relative price at −12M, −6M, −3M, −1M, −1W and now (now = 1), from perf1Y / perf6M / perf3M / perf1M / perf1W: the price then =
+ *  now ÷ (1 + perf). A missing figure leaves its point out; fewer than 3 points → null (nothing drawn). */
+export function perfPath(r: Partial<ScreenRow>): Array<{ at: string; v: number }> | null {
+  const pts: Array<{ at: string; v: number }> = [];
+  const add = (at: string, p: unknown) => { if (fin(p) && p > -99.9) pts.push({ at, v: 1 / (1 + p / 100) }); };
+  add('−12M', r.perf1Y); add('−6M', r.perf6M); add('−3M', r.perf3M); add('−1M', r.perf1M); add('−1W', r.perf1W);
+  pts.push({ at: 'now', v: 1 });
+  return pts.length >= 3 ? pts : null;
 }

@@ -18,7 +18,7 @@ function Glyph({ g, tone }: { g: SetupGlyph; tone: SetupCard['tone'] }) {
     portfolio: <><path d="M2 18 L14 15 L26 16 L38 11 L50 12 L62 7 L70 6" /><path d="M2 20 L70 12" strokeDasharray="2 3" opacity={0.7} /><path d="M2 23 L70 18" strokeDasharray="1 3" opacity={0.55} /></>,
   };
   return (
-    <svg width="72" height="26" viewBox="0 0 72 26" aria-hidden style={{ display: 'block', marginBottom: 4 }}
+    <svg width="60" height="22" viewBox="0 0 72 26" aria-hidden style={{ display: 'block', opacity: 0.9 }}
       fill="none" stroke={col} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
       {paths[g]}
     </svg>
@@ -38,8 +38,10 @@ export function SetupCards({ active, counts, onPick, loading, rebuild = {} }: { 
         return (
           <button key={c.id} type="button" className="pnx-card" aria-pressed={active === c.id} onClick={() => onPick(c)} data-card={c.id} data-rebuild={rb && rb.state !== 'ok' ? rb.state : undefined}
             title={`${c.label}: ${c.sub}${rb && rb.state !== 'ok' ? `\n${rb.text}` : ''}`}>
-            <Glyph g={c.glyph} tone={c.tone} />
-            <span className="pnx-card-count" aria-busy={n == null && (loading || rb?.state === 'none')} style={{ color: n == null ? C.faint : C.text }}>{n == null ? '…' : `${n.toLocaleString('en-US')}${more}`}</span>
+            <span className="pnx-card-top">
+              <span className="pnx-card-count" aria-busy={n == null && (loading || rb?.state === 'none')} style={{ color: n == null ? C.faint : C.text }}>{n == null ? '…' : `${n.toLocaleString('en-US')}${more}`}</span>
+              <Glyph g={c.glyph} tone={c.tone} />
+            </span>
             <span className="pnx-card-label">{c.label}</span>
             <span className="pnx-card-sub">{c.sub}</span>
             {rb && rb.state !== 'ok' ? <span className="pnx-card-sub" data-card-rebuild style={{ color: C.amber }}>{rb.state === 'none' ? 'scan rebuilding — not known yet' : 'rebuilding — so far'}</span> : null}

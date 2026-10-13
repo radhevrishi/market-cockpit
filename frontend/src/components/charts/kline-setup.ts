@@ -219,6 +219,30 @@ export function registerChartExtras(): typeof kc {
     },
   });
 
+  // zzz1009 — one turning point of a detected chart pattern (pattern-view pointMarks): a small ring with its role code
+  // (L1 / P / L2, LS / HD / RS …). Locked, ignores the mouse, same overlay group as the pattern lines, never saved.
+  kc.registerOverlay<{ color: string; role: string; below: boolean }>({
+    name: 'mcPatternPoint',
+    totalStep: 2,
+    lock: true,
+    needDefaultPointFigure: false,
+    needDefaultXAxisFigure: false,
+    needDefaultYAxisFigure: false,
+    createPointFigures: ({ coordinates, overlay }) => {
+      if (!coordinates.length) return [];
+      const d = overlay.extendData || { color: '#2962FF', role: '', below: false };
+      const c = coordinates[0];
+      return [
+        { type: 'circle', ignoreEvent: true, attrs: { x: c.x, y: c.y, r: 3.5 }, styles: { style: 'stroke_fill', color: '#FFFFFF', borderColor: d.color, borderSize: 1.5 } },
+        {
+          type: 'text', ignoreEvent: true,
+          attrs: { x: c.x, y: c.y + (d.below ? 7 : -7), text: d.role, align: 'center', baseline: d.below ? 'top' : 'bottom' },
+          styles: { color: textOnColor(d.color), backgroundColor: d.color, borderColor: d.color, borderRadius: 2, paddingLeft: 3, paddingRight: 3, paddingTop: 1, paddingBottom: 1, size: 10, weight: 600 },
+        },
+      ];
+    },
+  });
+
   // Horizontal support / resistance line, price label always shown on the right edge.
   kc.registerOverlay({
     name: 'mcHLine',

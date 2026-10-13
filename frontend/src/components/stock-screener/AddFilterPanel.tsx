@@ -2,7 +2,7 @@
 // zzz1006 — "+ Add filter": a searchable panel grouped Growth / Valuation / Quality / Technicals / Company, plus the list and
 // comparison rules. It offers exactly the fields the screener already has for the market; picking one adds the same default filter
 // as before (the page's pick()).
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { FIELDS, type FieldGroup } from '@/lib/screener/filters';
 import type { ScreenMarket } from '@/lib/screener/types';
 import { listKeys, usePopover } from './screener-ui';
@@ -34,13 +34,26 @@ export default function AddFilterPanel({ market, onPick }: { market: ScreenMarke
     .filter((g) => g.fields.length), [market, needle]);   // eslint-disable-line react-hooks/exhaustive-deps
   const rules = RULE_ITEMS.filter((r) => has(`${r.label} ${r.hint}`));
   const pick = (k: string) => { setOpen(false); setQ(''); onPick(k); };
+  // zzz1012 — keep the panel inside the window (the button can sit at the right end of the chip row): the offset is worked out on
+  // the click, before the panel renders, and the search box is focused without scrolling (autoFocus scrolled the page sideways)
+  const [shift, setShift] = useState(0);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const toggle = () => {
+    if (!open && typeof window !== 'undefined') {
+      const r = ref.current?.getBoundingClientRect();
+      const w = Math.min(560, window.innerWidth * 0.92);
+      setShift(r ? Math.min(0, window.innerWidth - 12 - (r.left + w)) : 0);
+    }
+    setOpen((v) => !v);
+  };
+  useEffect(() => { if (open) inputRef.current?.focus({ preventScroll: true }); }, [open]);
   return (
     <div ref={ref} style={{ position: 'relative' }}>
-      <button type="button" className="mcss-chip mcss-add" aria-label="Add a filter" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((v) => !v)}
+      <button type="button" className="mcss-chip mcss-add" aria-label="Add a filter" aria-haspopup="dialog" aria-expanded={open} onClick={toggle}
         style={{ padding: '0 10px', cursor: 'pointer', fontWeight: 650, alignItems: 'center', fontFamily: 'inherit' }}>+ Add filter</button>
       {open ? (
-        <div className="mcss-pop" role="dialog" aria-label="Add a filter" style={{ width: 'min(560px, 92vw)' }}>
-          <input autoFocus className="mcss-input" style={{ width: '100%', boxSizing: 'border-box' }} placeholder="Find a figure — e.g. “margin”, “EPS”, “SMA”" aria-label="Find a filter"
+        <div className="mcss-pop" role="dialog" aria-label="Add a filter" style={{ width: 'min(560px, 92vw)', left: shift }}>
+          <input ref={inputRef} className="mcss-input" style={{ width: '100%', boxSizing: 'border-box' }} placeholder="Find a figure — e.g. “margin”, “EPS”, “SMA”" aria-label="Find a filter"
             value={q} onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'ArrowDown') { e.preventDefault(); listRef.current?.querySelector<HTMLElement>('.mcss-item')?.focus(); }

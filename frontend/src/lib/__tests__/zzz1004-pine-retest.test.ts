@@ -137,7 +137,7 @@ test('zzz1004 PS-03: a provisional daily reading is labelled with its observatio
 
 test('zzz1004 PS-05: the heading is the ACTIVE query; the preset name is apart and marked changed', () => {
   const q = { ...screenQ('all-bearish'), bias: 'U' as const, tfs: ['M' as const], dist: { on: false, lo: -15, hi: 5 } };
-  assert.match(querySummary(q, 'My portfolio'), /^Bullish · Monthly · My portfolio · Forming \+ Breakout · No pivot limit · Shape ≥ 55$/);
+  assert.match(querySummary(q, 'My portfolio'), /^Bullish · Monthly · My portfolio · Forming \+ Breakout · No pivot limit · All applicable patterns · Shape ≥ 55$/);
   assert.equal(presetLine('All bearish patterns', true), 'Preset: All bearish patterns (changed)');
   assert.match(querySummary(screenQ('all-bearish'), ''), /^Bearish · Daily · All companies · Forming \+ Breakdown · Pivot -15% to \+5%/);
   assert.match(querySummary({ ...q, tfs: ['W', 'M'], tfMode: 'all' }, ''), /Weekly \+ Monthly \(all\)/);
@@ -299,7 +299,7 @@ test('zzz1004 Pine page (JSDOM): active-query heading, M disables unsupported ch
     const csv = blobs.at(-1)!;
     assert.match(csv, /Analysis close \(INR\),Analysis close date/);
     assert.match(csv, /AEQUS,NSE,.*,W,273\.5,2026-10-09,completed weekly close 2026-10-09,ready,\d+,265\.1,2026-10-13,completed,265\.1,nse-bhav,2026-10-13,latest quote back below pivot,55,/);
-    assert.match(csv, /Bullish · Weekly · All companies · Forming \+ Breakout · Pivot -15% to \+5% · Shape ≥ 55,Preset: All bullish patterns \(changed\)/);
+    assert.match(csv, /Bullish · Weekly · All companies · Forming \+ Breakout · Pivot -15% to \+5% · All applicable patterns · Shape ≥ 55,Preset: All bullish patterns \(changed\)/);
     // bearish: the heading follows the live direction (PS-05)
     await click((b) => b.textContent === '▼ Bearish');
     assert.match(h2(), /^Bearish · Weekly/);
@@ -315,7 +315,7 @@ test('zzz1004 Pine page (JSDOM): active-query heading, M disables unsupported ch
     assert.match(h2(), /^Bullish · Monthly · All companies · Forming \+ Breakout · No pivot limit · U \/ rounding base, Cup, VCP/);
     assert.ok(document.querySelector('[role="radiogroup"][aria-label="Monthly variants"]'));
     await choose('Pine screens', 'pf-bearish-risks');
-    assert.match(h2(), /^Bearish · Daily \+ Weekly \+ Monthly \(any\) · My portfolio · Forming \+ Breakdown · No pivot limit · Shape ≥ 35/);
+    assert.match(h2(), /^Bearish · Daily \+ Weekly \+ Monthly \(any\) · My portfolio · Forming \+ Breakdown · No pivot limit · All applicable patterns · Shape ≥ 35/);
     await choose('Pine screens', 'all-bullish');
     assert.match(h2(), / · My portfolio · /, 'the list set by the portfolio screen survives the next screen change');
   } finally {

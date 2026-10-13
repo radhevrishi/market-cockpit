@@ -16,17 +16,25 @@ const _resp = new Map<string, { at: number; body: unknown }>();
 // zzz944 — Float %: the stock screener's US snapshot already holds free float (% of shares, from Yahoo profiles). The whole
 // ticker → float map is read once an hour (small) instead of asking Yahoo per chart. India: not known yet (needs promoter holding).
 let _float: { at: number; map: Map<string, number> } | null = null;
+let _floatLoad: Promise<void> | null = null;   // zzz1010 — one database read at a time, shared by every chart request
+function loadFloat(): Promise<void> {
+  if (!_floatLoad) {
+    _floatLoad = (async () => {
+      const map = new Map<string, number>();
+      try {
+        const rows = await dbQuery<{ t: string; f: number }>(`SELECT r->>'t' AS t, (r->>'flt')::float AS f FROM screener_snapshot, jsonb_array_elements(rows) r WHERE market = 'US' AND jsonb_typeof(r->'flt') = 'number'`);
+        for (const r of rows) if (r.t && Number.isFinite(Number(r.f))) map.set(String(r.t).toUpperCase(), Number(r.f));
+      } catch { /* no snapshot yet */ }
+      _float = { at: Date.now(), map };
+    })().finally(() => { _floatLoad = null; });
+  }
+  return _floatLoad;
+}
 async function floatFor(market: Market, ticker: string): Promise<number | null> {
   if (market !== 'US' || !dbAvailable()) return null;
-  if (!_float || Date.now() - _float.at > 3600_000) {
-    const map = new Map<string, number>();
-    try {
-      const rows = await dbQuery<{ t: string; f: number }>(`SELECT r->>'t' AS t, (r->>'flt')::float AS f FROM screener_snapshot, jsonb_array_elements(rows) r WHERE market = 'US' AND jsonb_typeof(r->'flt') = 'number'`);
-      for (const r of rows) if (r.t && Number.isFinite(Number(r.f))) map.set(String(r.t).toUpperCase(), Number(r.f));
-    } catch { /* no snapshot yet */ }
-    _float = { at: Date.now(), map };
-  }
-  return floatPct({ pct: _float.map.get(ticker) ?? null });
+  if (!_float) await loadFloat();
+  else if (Date.now() - _float.at > 3600_000) void loadFloat();   // the hour-old map answers now; the new one is read behind it
+  return floatPct({ pct: _float?.map.get(ticker) ?? null });
 }
 
 function packBars(bars: Bar[]) {
@@ -58,6 +66,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ ticker: str
   const headers = { 'Cache-Control': `private, max-age=${Math.round(ttl / 1000)}` };
   if (hit && Date.now() - hit.at < ttl) return NextResponse.json(hit.body, { headers });
 
+  // zzz1010 — the float lookup (a database read once an hour) runs alongside the price history, never before it, and the
+  // chart never waits more than 1.5 s for it (float is a header extra; the candles are what the owner is waiting for)
+  let floatTimer: ReturnType<typeof setTimeout> | undefined;
+  const floatP = Promise.race([floatFor(market, ticker).catch(() => null), new Promise<null>((r) => { floatTimer = setTimeout(() => r(null), 1500); })]).finally(() => clearTimeout(floatTimer));
   const series = await getDailySeries(market, ticker, range, exchange);
   if (!series) return NextResponse.json({ ok: false, error: `No price history found for ${ticker} (${market === 'IN' ? 'NSE / BSE' : 'US'}).` }, { status: 404 });
   const divs = series.divs || [];
@@ -66,7 +78,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ ticker: str
   const body = {
     ok: true, ticker, market, interval, range, basis, dividends: divs.length, requestedExchange: market === 'IN' ? (exchange ?? null) : null,   // zzz967 (CH-02)
     symbol: series.symbol, name: series.name, currency: series.currency, exchange: series.exchange,
-    stats: { ...headerStats(series.bars), floatPct: await floatFor(market, ticker).catch(() => null) },
+    stats: { ...headerStats(series.bars), floatPct: await floatP },
     bars: packBars(bars),
     asOf: new Date().toISOString(),
     lastBarAt: series.bars.length ? new Date(series.bars[series.bars.length - 1].t).toISOString().slice(0, 10) : null,   // zzz957: date of the newest daily candle

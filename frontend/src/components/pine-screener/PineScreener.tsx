@@ -18,7 +18,7 @@ import { PATTERN_META, PATTERN_IDS, type PatternId } from '@/lib/chart-patterns'
 import {
   DEFAULT_QUERY, LIKELIHOODS, OPTIONAL_COLS, PINE_GROUPS, PINE_SCREENS_KEY, STAGES, TIMEFRAMES, SHAPE_SCORE_LABEL, SHAPE_SCORE_TIP, cleanPineScreens, cleanQuery, dirDist,
   likelihoodWord, patternCounts, patternGroups, runPineFull, turnoverOf, onList, ruleCoverage, pineRuleFields, pineRuleMenu, tagLengthText,
-  pineFilters, pineShownCols, r40Guarded, R40_LEVELS, R40_MAX_GROWTH, R40_MAX_ABS_FCFM,
+  pineFilters, pineShownCols, R40_LEVELS, R40_MAX_GROWTH, R40_MAX_ABS_FCFM, R40_FORMULA, R40_FIELDS, r40Explain,
   type PerfKey, type PineHit, type PineQuery, type PineScreen, type PineStage, type ScreenPatternTag,
 } from '@/lib/screener/pine';
 import { BUILT_IN_PINE_SCREENS } from '@/lib/screener/pine-presets';
@@ -31,7 +31,8 @@ import {
   querySummary, presetLine, scopeCoverage, coverageLine, chipApplicability, unsupportedNotice, familyOf, latestConditions, lengthDays, lengthTip,
   analysisOf, sessionLabel, chartIdentityParams, ANALYSIS_CSV_HEAD, analysisCsvCells, listCoverageRows, withCarriedR40,
   queryRebuild, setupRebuild, tfCoverageWarnings, technicalSession, conflictWords,
-  type PineHandoff, type SetupCard, type PortfolioMode,
+  NO_STAGE_TEXT, ALL_TYPES_TEXT, conditionState, WORKFLOWS, workflowScope, stagesDiffer, presetStages, screenFunnel, perfPath,
+  type PineHandoff, type Workflow, type SetupCard, type PortfolioMode,
 } from '@/lib/screener/pine-view';
 import { loadHoldings, localIndiaHoldings } from '@/lib/screener/portfolio-scope';
 import { pollWhenVisible } from '@/lib/client-fetch';
@@ -42,7 +43,7 @@ import { useWatchlistStore } from '@/components/charts/WatchlistPanel';
 import { activeList, updateList, addItem, removeItem, findItem, itemKey, listCount, type WlItem } from '@/lib/chart-watchlist';
 import { getConvictionTickers } from '@/lib/conviction-beats';
 import { toCsv } from '@/lib/csv';
-import { C, PINE_CSS, PatternChip, ScoreBar, MaCell, Th, ConditionBadges, pct, signColor } from './pine-ui';
+import { C, PINE_CSS, PatternChip, ScoreBar, MaCell, Th, ConditionBadges, ConditionChip, Sparkline, PivotGauge, Kbd, HelpOverlay, FunnelStrip, SkeletonRows, SearchBox, pct, signColor } from './pine-ui';
 import { WhyNot, WhyResultView } from './WhyNot';
 import { SetupCards } from './SetupCards';
 import { PortfolioCheck } from './PortfolioCheck';
@@ -84,6 +85,8 @@ const COL_SHORT: Partial<Record<NumKey, string>> = {
   rvol: 'RVol', 'adv$': 'Avg value', adrP: 'ADR %', ripB: 'Ripster', perf1M: 'Perf 1M', perf6M: 'Perf 6M', perf1Y: 'Perf 1Y',
   twSt: 'TW stage', sata: 'SATA', mrs: 'Mansfield RS', twWk: 'Weeks in stage',   // zzz987 — Stage Analysis (TheWrap method)
 };
+/** zzz1011 — the Condition column's sort order: the strongest current condition first. */
+const COND_ORDER = ['holding', 'crossed', 'retesting', 'forming', 'returned', 'expired', 'invalidated'] as const;
 const YES_NO = new Set<string>(['ttOk', 'st12', 'ripB']);
 function fmtCol(k: NumKey, v: number | null | undefined, market: ScreenMarket): string {
   if (v == null || !Number.isFinite(v)) return '—';
@@ -173,6 +176,10 @@ export default function PineScreener() {
   const [patFind, setPatFind] = useState('');
   const [ruleEdit, setRuleEdit] = useState<number | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  // zzz1011 — keyboard review: the row cursor (j / k), the shortcut sheet (?), the search box (/)
+  const [cursorAt, setCursorAt] = useState<{ key: string; i: number }>({ key: '', i: -1 });
+  const [help, setHelp] = useState(false);
+  const searchRef = useRef<HTMLInputElement | null>(null);
   // zzz999 — the view (setup results or the portfolio check), the filter panel's sections, the optional columns
   const [view, setViewRaw] = useState<View>(() => { const u = urlParam('view'); if (u === 'portfolio' || u === 'setups') return u; try { return localStorage.getItem(VIEW_KEY) === 'portfolio' ? 'portfolio' : 'setups'; } catch { return 'setups'; } });
   const setView = (v: View) => { setViewRaw(v); try { localStorage.setItem(VIEW_KEY, v); } catch { /* a convenience */ } };
@@ -275,6 +282,14 @@ export default function PineScreener() {
   const snap = snaps[market];
   const err = errors[market] || null;
   const rows = useMemo(() => snap?.rows || [], [snap]);
+  // zzz1011 — one watchlist's companies of this market (also used by the "Forming bases in a watchlist" workflow's count)
+  const wlSet = useCallback((sc: string): Set<string> | null => {
+    const l = watchlists?.lists.find((x) => `wl:${x.id}` === sc);
+    if (!l) return null;
+    const s = new Set<string>();
+    for (const sct of l.sections) for (const it of sct.items) if (it.m === market) s.add(it.t.toUpperCase());
+    return s;
+  }, [watchlists, market]);
   const listTickers = useMemo<Set<string> | null>(() => {
     void cbTick;
     switch (kind) {
@@ -283,15 +298,9 @@ export default function PineScreener() {
       case 'portfolio': return new Set((hold?.tickers || []).map((t) => t.toUpperCase()));
       case 'stock': return stockSet || new Set();
       case 'hand': return handoff && handoff.market === market ? new Set(handoff.tickers) : new Set();
-      default: {
-        const l = watchlists?.lists.find((x) => `wl:${x.id}` === scope);
-        if (!l) return null;
-        const s = new Set<string>();
-        for (const sct of l.sections) for (const it of sct.items) if (it.m === market) s.add(it.t.toUpperCase());
-        return s;
-      }
+      default: return wlSet(scope);
     }
-  }, [kind, scope, watchlists, market, cbTick, hold, stockSet, handoff]);
+  }, [kind, scope, market, cbTick, hold, stockSet, handoff, wlSet]);
   const scopeName = kind === 'cb' ? 'Conviction Beats' : kind === 'portfolio' ? 'My portfolio' : kind === 'stock' ? (stockScreen ? `Stock screen “${stockScreen.name}”` : 'a Stock screen')
     : kind === 'hand' ? `From the Stock Screener: ${handoff?.label || ''}` : watchlists?.lists.find((x) => `wl:${x.id}` === scope)?.name || '';
   const scopeWaiting = (kind === 'stock' && !stockSet && !stockData[market]?.error) || (kind === 'portfolio' && hold?.status === 'loading' && !hold.tickers.length);
@@ -318,6 +327,27 @@ export default function PineScreener() {
   const qRebuild = useMemo(() => queryRebuild(rows, q, kind === 'all' ? null : listTickers), [rows, q, kind, listTickers]);
   const cardRebuild = useMemo(() => (snap ? setupRebuild(rows, kind === 'all' || kind === 'portfolio' ? null : listTickers) : {}), [snap, rows, kind, listTickers]);
   const cardCounts = useMemo(() => (snap ? setupCounts(rows, market, kind === 'portfolio' ? null : listTickers, hold && (hold.status !== 'loading' || hold.tickers.length) ? hold.tickers : null, undefined, { r40Min: q.r40Min ?? null }) : {}), [snap, rows, market, listTickers, hold, kind, q.r40Min]);
+  // zzz1011 — the one-click workflows: each one's count on its own company list (portfolio / watchlist / the current list)
+  const activeWlId = watchlists ? activeList(watchlists).id : null;
+  const wfCounts = useMemo(() => {
+    const out: Record<string, number | null> = {};
+    if (!snap) return out;
+    for (const w of WORKFLOWS) {
+      const s = BUILT_IN_PINE_SCREENS.find((x) => x.id === w.presetId);
+      if (!s) continue;
+      const sc = workflowScope(w, scope, activeWlId);
+      let list: ReadonlySet<string> | null;
+      if (sc === 'pf') {
+        if (!hold || (hold.status === 'loading' && !hold.tickers.length)) { out[w.id] = null; continue; }
+        list = new Set(hold.tickers.map((t) => t.toUpperCase()));
+      } else if (sc.startsWith('wl:')) list = wlSet(sc);
+      else list = sc === scope ? listTickers : null;
+      const base = list ? rows.filter((r) => list!.has(r.t.toUpperCase())) : rows;
+      out[w.id] = queryRebuild(base, s.q, null).state === 'none' ? null : runPineFull(base, withCarriedR40(s.q, { r40Min: q.r40Min ?? null }), market).strict.length;
+    }
+    return out;
+  }, [snap, rows, scope, activeWlId, hold, wlSet, listTickers, market, q.r40Min]);
+  const funnel = useMemo(() => (snap ? screenFunnel(rows, q, kind === 'all' ? null : listTickers, run) : null), [snap, rows, q, kind, listTickers, run]);
   const pfItems = useMemo(() => (view === 'portfolio' && hold ? portfolioCheck(rows, hold.tickers) : []), [view, rows, hold]);
   // which analysis timeframes have been scanned at all in this market (W / M fill in once the weekly / monthly scan runs)
   const tfScanned = useMemo<Record<PatTf, boolean>>(() => ({
@@ -351,6 +381,8 @@ export default function PineScreener() {
         case 'tvSec': return r.tvSec || r.sec || '';
         case 'turn': return turnoverOf(r, market);
         case 'ma50': return maPosition(r).d50;
+        case 'cond': return b ? COND_ORDER.indexOf(conditionState(r, b).id) : null;   // zzz1011
+        case 'anClose': return analysisOf(r, b || { tf: 'D' }).close;
         default: { const v = (r as any)[sort.key]; return typeof v === 'number' ? v : null; }
       }
     };
@@ -377,7 +409,6 @@ export default function PineScreener() {
   const actHits = scopeItems(scopeSets, scopeNow, keyOf);
   const actLabel = scopeLabel(scopeNow, sCounts, searching);
   const empty = snap ? emptyState({ dataRows: rows.length, filterMatches: sorted.length, searchMatches: narrowed.length, searching }) : null;
-  const showScanCol = useMemo(() => shown.some((h) => pxDiffers(h)), [shown]);
 
   // ── changing the query / screens ────────────────────────────────────────────────────────────────────────────────────
   const change = (patch: Partial<PineQuery>) => { setQ((p) => ({ ...p, ...patch })); setDirty(true); setShowAll(false); if (view !== 'setups') setView('setups'); };
@@ -392,6 +423,10 @@ export default function PineScreener() {
     if (s.scope !== undefined) setScope(s.scope);
     return true;
   }, [screens, dirty, name, q]);
+  const pickWorkflow = (w: Workflow) => {
+    const sc = workflowScope(w, scope, activeWlId);
+    if (loadScreen(w.presetId)) { setScope(sc); setView('setups'); }
+  };
   const pickCard = (c: SetupCard) => {
     if (!c.presetId) { setView('portfolio'); return; }
     if (loadScreen(c.presetId)) setView('setups');
@@ -475,20 +510,21 @@ export default function PineScreener() {
     // the active query and the preset name on every row.
     const withCur = (h: string) => (h === 'Analysis close' || h === 'Daily technical close' || h === 'Latest quote' ? `${h} (${cur})` : h);
     const covText = scopeCov ? scopeCov.perTf.map(coverageLine).join(' | ') : '';
-    const head = ['Ticker', 'Market', 'Company', 'Sector', 'Pattern', 'Timeframe', 'Bias', 'Stage', SHAPE_SCORE_LABEL, 'Shape score band', 'Volume confirmed', `Pivot (${cur})`,
+    const head = ['Ticker', 'Market', 'Company', 'Sector', 'Pattern', 'Timeframe', 'Bias', 'Stage', 'Historical event', 'Condition (analysis close)', SHAPE_SCORE_LABEL, 'Shape score band', 'Volume confirmed', `Pivot (${cur})`,
       'To pivot from analysis close (%)', 'To pivot from latest quote (%)', 'Length', 'Depth (%)', 'Other patterns',
       ...ANALYSIS_CSV_HEAD.map(withCur), 'Daily bars source', 'Quote vs daily technical close (%)', 'Price sources disagree',
       'Change (%)', `Market cap (${money})`, `Avg daily value (${money})`, `Perf ${PERF_LABEL[q.perfKey]} (%)`, 'RSI 14', 'Close vs SMA 21 (%)', 'Close vs SMA 50 (%)', 'Close vs SMA 200 (%)', 'RS Rating',
       ...shownCols.map((k) => { const d = fieldOf(k); const u = d?.unit === '%' ? ' (%)' : d?.unit === 'money' ? ` (${money})` : d?.unit === 'price' ? ` (${cur})` : ''; return `${d?.label || k}${u}`; }),
+      ...(shownCols.includes('r40') ? ['Rule of 40 state (formula: revenue growth latest quarter YoY + FCF margin TTM)'] : []),
       'Approximate (≈) fields', 'Daily scan status', 'Daily scan version', 'Scan engine version', 'Daily patterns as of', 'Not evaluated (provisional)', 'Snapshot built (UTC)', 'Export scope',
       'Active query', 'Preset', 'Coverage (selected timeframes, this list)'];
     const body = actHits.map(({ row: r, best: b, tags, missing }) => { const ma = maPosition(r); const an = analysisOf(r, b || { tf: 'D' }); return [r.t, market === 'IN' ? 'NSE' : 'US', r.n, r.tvSec || r.sec || '', b ? PATTERN_META[b.id].label : '', b ? (b.tf || 'D') : '',
-      b ? (b.b === 'U' ? 'bullish' : 'bearish') : '', b ? stageWord(b) : '', b?.c ?? '', b ? likelihoodWord(b.c) : '', b ? ((b as any).vq === 0 ? 'no (too little volume data)' : 'not flagged') : '', b?.p ?? '',
+      b ? (b.b === 'U' ? 'bullish' : 'bearish') : '', b ? stageWord(b) : '', b ? conditionState(r, b).event.label : '', b ? conditionState(r, b).label : '', b?.c ?? '', b ? likelihoodWord(b.c) : '', b ? ((b as any).vq === 0 ? 'no (too little volume data)' : 'not flagged') : '', b?.p ?? '',
       b ? dirDist(b) ?? '' : '', b && typeof (b as any).dq === 'number' ? (b.b === 'U' ? (b as any).dq : -(b as any).dq) : '', b ? tagLengthText(b) : '', b?.dp ?? '',
       tags.filter((t) => t !== b).map((t) => `${PATTERN_META[t.id].label} [${t.tf || 'D'}] (${t.c})`).join('; '),
       ...analysisCsvCells(r, b), r.scanSrc || '', r.pxGap ?? '', r.pxConflict ? 'yes' : '',
       r.chg ?? '', r.mc ?? '', turnoverOf(r, market) ?? '', r[q.perfKey] ?? '', r.rsi ?? '', ma.d21 ?? '', ma.d50 ?? '', ma.d200 ?? '', r.rsR ?? '',
-      ...shownCols.map((k) => (r as any)[k] ?? ''), (r.approx || []).filter((k) => (shownCols as string[]).includes(k)).join('; '),
+      ...shownCols.map((k) => (r as any)[k] ?? ''), ...(shownCols.includes('r40') ? [r40Explain(r, q.r40Min).text] : []), (r.approx || []).filter((k) => (shownCols as string[]).includes(k)).join('; '),
       r.scan?.st || '', r.scan?.v ?? '', an.engine || r.scan?.e || '', r.patAt || '', (missing || []).join('; '), snap?.builtAt || '', actLabel,
       summary, presetLine(name, dirty), covText]; });
     const blob = new Blob(['﻿' + toCsv([head, ...body])], { type: 'text/csv;charset=utf-8' });
@@ -508,6 +544,42 @@ export default function PineScreener() {
   const toggleSel = (t: string) => setSelected((s) => { const n = new Set(s); if (n.has(t)) n.delete(t); else n.add(t); return n; });
   const allShownSel = shown.length > 0 && shown.every((h) => selected.has(h.row.t));
 
+  // zzz1011 — keyboard review. "/" search · j / k move · Enter opens the chart · o the row detail · x selects · ? the shortcut sheet ·
+  // Esc closes it / leaves the search box. Paused while typing in a box (except Esc), and on the portfolio view.
+  // the cursor belongs to one result: a new screen / market / list / search starts without one
+  const cursorKey = `${screenId}|${market}|${scope}|${findText}`;
+  const cursor = cursorAt.key === cursorKey ? cursorAt.i : -1;
+  const setCursor = (i: number) => setCursorAt({ key: cursorKey, i });
+  const onKey = (e: KeyboardEvent) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const el = e.target as HTMLElement | null;
+    const typing = !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
+    if (e.key === 'Escape') { if (help) { setHelp(false); e.preventDefault(); } else if (typing && el === searchRef.current) el.blur(); return; }
+    if (typing) return;
+    if (e.key === '?') { setHelp((v) => !v); e.preventDefault(); return; }
+    if (help || view !== 'setups') return;
+    if (e.key === '/') { searchRef.current?.focus(); searchRef.current?.select(); e.preventDefault(); return; }
+    if (!shown.length) return;
+    const at = Math.min(cursor, shown.length - 1);
+    if (e.key === 'j') { setCursor(Math.min(shown.length - 1, at + 1)); e.preventDefault(); return; }
+    if (e.key === 'k') { setCursor(Math.max(0, at < 0 ? 0 : at - 1)); e.preventDefault(); return; }
+    if (at < 0) return;
+    const h = shown[at];
+    if (e.key === 'Enter') { e.preventDefault(); window.location.assign(openForReview(h.row, h.best?.tf || 'D')); return; }
+    if (e.key === 'o') { setExpanded((x) => (x === h.row.t ? null : h.row.t)); e.preventDefault(); return; }
+    if (e.key === 'x') { toggleSel(h.row.t); e.preventDefault(); }
+  };
+  useEffect(() => {
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+  // the cursor row stays on screen
+  useEffect(() => {
+    if (cursor < 0) return;
+    const el = document.querySelector(`tr.pnx-row[data-idx="${cursor}"]`) as HTMLElement | null;
+    if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' });
+  }, [cursor]);
+
   const opt = (s: PineScreen) => <option key={s.id} value={s.id}>{s.market ? (s.market === 'IN' ? '🇮🇳 ' : '🇺🇸 ') : ''}{s.name}</option>;
   const mine = screens.filter((s) => !builtInIds.has(s.id));
   const builtAt = snap?.builtAt ? new Date(snap.builtAt) : null;
@@ -521,32 +593,51 @@ export default function PineScreener() {
   const numIn = (v: number | null, set: (v: number | null) => void, label: string) => (
     <input type="number" className="pnx-in" aria-label={label} value={v ?? ''} placeholder="any" onChange={(e) => set(e.target.value === '' ? null : Number(e.target.value))} />
   );
-  const colCount = 10 + (showScanCol ? 1 : 0) + shownCols.length + extras.length;
+  const colCount = 14 + shownCols.length + extras.length;
   const myStockScreens = stockScreens.filter((s) => s.market === market);
   const filtersOn = (q.ids.length ? 1 : 0) + q.filters.filter((f) => !f.off).length + companyFilterCount + (scope ? 1 : 0) + (q.r40Min != null ? 1 : 0);
   const r40Mode = q.r40Min == null ? 'off' : R40_LEVELS.includes(q.r40Min) ? String(q.r40Min) : 'custom';
 
   return (
-    <div className={`pnx ${workspaceThemeClass(light, true)}${density === 'compact' ? ' pnx-compact' : ''}`} style={{ padding: '14px 16px 28px', display: 'grid', gap: 14, background: 'var(--mc-bg-0)', minHeight: '100%', minWidth: 0 }}>
+    <div className={`pnx ${workspaceThemeClass(light, true)}${density === 'compact' ? ' pnx-compact' : ''}`} style={{ padding: '16px 18px 32px', display: 'grid', gap: 14, background: 'var(--mc-bg-0)', minHeight: '100%', minWidth: 0 }}>
       <style>{PINE_CSS}</style>
+      {help ? <HelpOverlay onClose={() => setHelp(false)} /> : null}
       {/* title, market, theme */}
-      <header style={{ display: 'grid', gap: 4 }}>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <h1 style={{ margin: 0, fontSize: 21, fontWeight: 750, letterSpacing: '-0.01em' }}>Pine Screener</h1>
+      <header style={{ display: 'grid', gap: 6 }}>
+        <div className="pnx-head">
+          <h1 className="pnx-title">Pine Screener</h1>
           <span role="radiogroup" aria-label="Market" className="pnx-seg" style={{ width: 'auto' }}>
-            {(['US', 'IN'] as const).map((m) => <button key={m} type="button" role="radio" aria-checked={market === m} style={{ padding: '5px 14px' }} onClick={() => { setMarket(m); setShowAll(false); setSelected(new Set()); setExpanded(null); }}>{m === 'US' ? '🇺🇸 USA' : '🇮🇳 India'}</button>)}
+            {(['US', 'IN'] as const).map((m) => <button key={m} type="button" role="radio" aria-checked={market === m} style={{ padding: '4px 14px' }} onClick={() => { setMarket(m); setShowAll(false); setSelected(new Set()); setExpanded(null); }}>{m === 'US' ? '🇺🇸 USA' : '🇮🇳 India'}</button>)}
           </span>
           <WorkspaceThemeToggle light={light} onToggle={toggleLight} />
-          {msg ? <span role="status" style={{ color: /^(Not saved|Could not)/.test(msg) ? C.red : C.text1, fontSize: 13, fontWeight: 700 }}>{msg}</span> : null}
+          {msg ? <span role="status" style={{ color: /^(Not saved|Could not)/.test(msg) ? C.red : C.text1, fontSize: 12.5, fontWeight: 650 }}>{msg}</span> : null}
           <span style={{ flex: 1 }} />
-          <Link href="/stock-screener" className="pnx-link" style={{ fontSize: 13 }}>Fundamentals: Stock Screener</Link>
+          <button type="button" className="pnx-btn pnx-btn-ic pnx-hide-sm" onClick={() => setHelp(true)} title="Keyboard shortcuts" aria-label="Keyboard shortcuts"><Kbd>?</Kbd> Shortcuts</button>
+          <Link href="/stock-screener" className="pnx-link" style={{ fontSize: 12.5 }}>Fundamentals: Stock Screener</Link>
         </div>
-        <p style={{ margin: 0, fontSize: 13.5, color: C.dim, maxWidth: '78ch' }} title="Market Cockpit's own TypeScript pattern engine and rules. It does not run or import TradingView Pine Script; screens named after your TradingView scripts follow their published rules and are not certified equivalents.">
+        <p className="pnx-lede" title="Market Cockpit's own TypeScript pattern engine and rules. It does not run or import TradingView Pine Script; screens named after your TradingView scripts follow their published rules and are not certified equivalents.">
           Which charts are setting up now. Patterns are read from daily, weekly and monthly bars by our own chart-pattern &amp; rule screener — it does not run Pine Script.
         </p>
       </header>
 
       <SetupCards active={activeCard} counts={cardCounts} rebuild={cardRebuild} onPick={pickCard} loading={!snap} />
+
+      {/* zzz1011 — one-click workflows (each opens its screen with its company list; the count is on that list) */}
+      <nav className="pnx-flows" aria-label="Workflows" data-testid="workflows">
+        <span className="pnx-lab" style={{ marginRight: 2 }}>Workflows</span>
+        {WORKFLOWS.map((w) => {
+          const n = wfCounts[w.id];
+          const on = view === 'setups' && !dirty && screenId === w.presetId && (w.scope !== 'pf' || scope === 'pf') && (w.scope !== 'wl' || scope.startsWith('wl:'));
+          return (
+            <button key={w.id} type="button" className="pnx-flow" aria-pressed={on} data-flow={w.id} onClick={() => pickWorkflow(w)}
+              title={`${screens.find((x) => x.id === w.presetId)?.note || w.label}${w.scope === 'wl' ? `\nRuns on ${scope.startsWith('wl:') ? 'the watchlist chosen under Companies' : 'your active watchlist'}.` : w.scope === 'pf' ? '\nRuns on your holdings.' : ''}`}>
+              <span className="pnx-flow-dot" aria-hidden style={{ background: w.tone === 'down' ? C.red : w.tone === 'up' ? C.green : C.accent }} />
+              {w.label}
+              <span className="pnx-flow-n" data-flow-count aria-busy={n == null}>{n == null ? '…' : n.toLocaleString('en-US')}</span>
+            </button>
+          );
+        })}
+      </nav>
 
 
       <div className="pnx-layout" data-wide={view === 'portfolio'}>
@@ -602,7 +693,7 @@ export default function PineScreener() {
             </span>
             {q.tfs.length > 1 ? (
               <select value={q.tfMode} onChange={(e) => change({ tfMode: e.target.value === 'all' ? 'all' : 'any' })} className="pnx-in" aria-label="Timeframes combine">
-                <option value="any">A pattern on ANY ticked timeframe</option><option value="all">A pattern on ALL ticked timeframes</option>
+                <option value="any">ANY — a pattern on one of them</option><option value="all">ALL — a pattern on every one</option>
               </select>
             ) : null}
           </div>
@@ -611,7 +702,12 @@ export default function PineScreener() {
             <span className="pnx-seg">
               {STAGES.map((s) => <button key={s.id} type="button" title={s.tip} aria-pressed={q.stages.includes(s.id)} onClick={() => toggleStage(s.id)}>{s.label}</button>)}
             </span>
-            <button type="button" className="pnx-btn" aria-pressed={allStages} data-on={allStages} title="Forming, breakout and failed — every stage" style={{ justifySelf: 'start', padding: '3px 9px', fontSize: 12.5 }} onClick={() => change({ stages: allStages ? DEFAULT_QUERY.stages.slice() : STAGES.map((s) => s.id) })}>All stages</button>
+            <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <button type="button" className="pnx-btn" aria-pressed={allStages} data-on={allStages} title="Forming, breakout and failed — every stage" style={{ padding: '3px 9px', fontSize: 12 }} onClick={() => change({ stages: allStages ? DEFAULT_QUERY.stages.slice() : STAGES.map((s) => s.id) })}>All stages</button>
+              {/* zzz1011 — the screen's own stages back in one click (a timeframe or preset change never clears them; a manual change can) */}
+              {stagesDiffer(screenId, q.stages) ? <button type="button" className="pnx-btn" data-testid="restore-stages" style={{ padding: '3px 9px', fontSize: 12 }} title={`Back to this screen's stages: ${(presetStages(screenId) || []).map((x) => STAGES.find((y) => y.id === x)?.label || x).join(' + ')}`} onClick={() => change({ stages: presetStages(screenId) || DEFAULT_QUERY.stages.slice() })}>Restore preset stages</button> : null}
+            </span>
+            {!q.stages.length ? <span className="pnx-note" style={{ color: C.amber }}>{NO_STAGE_TEXT}</span> : null}
             {q.stages.includes('b') ? (
               <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 12.5, cursor: 'pointer' }} title="A breakout whose analysis close is back below the pivot (bearish: a breakdown back above the level) is shown as “broke out · back below pivot”. Untick to count only breakouts holding beyond the pivot.">
                 <input type="checkbox" checked={q.returned !== false} onChange={(e) => change({ returned: e.target.checked })} aria-label="Include breakouts back below the pivot" /> Include breakouts back below the pivot
@@ -655,6 +751,15 @@ export default function PineScreener() {
               </span>
             ) : null}
             {q.r40Min != null ? <span className="pnx-note">Growth + FCF margin ≥ {q.r40Min}; combined with every other choice. Its columns are shown. {R40_GUARD_TIP}</span> : null}
+            {/* zzz1011 — the exact formula, periods and required fields; a missing input is unknown (never 0, never a pass) */}
+            <details className="pnx-note" data-testid="r40-formula">
+              <summary className="pnx-sum" style={{ fontSize: 11.5 }}>Formula, periods and fields</summary>
+              <div style={{ display: 'grid', gap: 3, marginTop: 4 }}>
+                <span>{R40_FORMULA}.</span>
+                {R40_FIELDS.map((f) => <span key={f.key}>· <b style={{ color: C.text1 }}>{f.label}</b> ({f.key}) — {f.period}</span>)}
+                <span>A company missing either field shows “unknown”: not 0 and never a pass. A chart-pattern condition is separate — this is a fundamental rule.</span>
+              </div>
+            </details>
           </div>
 
           <Section id="pnx-sec-size" title="Size & liquidity" hint={companyFilterCount ? `${companyFilterCount} on` : ''} open={sec.size} onToggle={() => toggleSec('size')}>
@@ -677,8 +782,8 @@ export default function PineScreener() {
             {companyFilterCount ? <button type="button" className="pnx-btn" style={{ justifySelf: 'start' }} onClick={() => change({ mcMin: null, mcMax: null, pxMin: null, turnMin: null, perfMin: null, sectors: [] })}>Clear size filters</button> : null}
           </Section>
 
-          <Section id="pnx-sec-patterns" title="Pattern types" hint={allOfBias ? 'all' : `${q.ids.length} ticked`} open={sec.patterns} onToggle={() => toggleSec('patterns')}>
-            <div className="pnx-note">{allOfBias ? `None ticked = every ${q.bias === 'U' ? 'bullish' : q.bias === 'D' ? 'bearish' : ''} pattern counts.` : 'Companies showing any ticked pattern.'} The number = companies with it under the other choices. Hover a pattern for what it means.</div>
+          <Section id="pnx-sec-patterns" title="Pattern types" hint={allOfBias ? ALL_TYPES_TEXT : `${q.ids.length} ticked`} open={sec.patterns} onToggle={() => toggleSec('patterns')}>
+            <div className="pnx-note">{allOfBias ? `${ALL_TYPES_TEXT}: none ticked, so every ${q.bias === 'U' ? 'bullish ' : q.bias === 'D' ? 'bearish ' : ''}pattern read on the selected timeframes counts (types marked n/a are not read there).` : 'Companies showing any ticked pattern.'} The number = companies with it under the other choices. Hover a pattern for what it means.</div>
             <span style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 6 }}>
               <input value={patFind} onChange={(e) => setPatFind(e.target.value)} placeholder="find a pattern" aria-label="Find a pattern type" className="pnx-in" />
               <button type="button" className="pnx-btn" onClick={() => change({ ids: Array.from(new Set([...q.ids, ...ofBias.filter(patMatchesFind)])) })}>All</button>
@@ -777,12 +882,17 @@ export default function PineScreener() {
             </>
           ) : (
             <>
-              <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
+              <div className="pnx-qhead">
+                <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                  <span className="pnx-note" data-testid="preset-line">{presetLine(name, dirty)}</span>
+                  {snap?.building ? <span style={{ color: C.amber, fontWeight: 650, fontSize: 12 }} title="A screener build for this market is running now">● building</span> : null}
+                  <span style={{ flex: 1 }} />
+                  <b style={{ fontSize: 13, color: C.text1 }} aria-busy={!snap && !err} data-testid="match-count">{!snap ? (err ? '' : 'Loading…') : qRebuild.state === 'none' ? 'Matches cannot be determined yet' : qRebuild.state === 'partial' ? `${hits.length} companies match so far` : `${hits.length} companies match`}</b>
+                </div>
                 {/* zzz1004 (PS-05) — the ACTIVE query, never a preset name that may contradict it; the preset name sits beside it, smaller */}
-                <h2 style={{ margin: 0, fontSize: 17, fontWeight: 750 }} data-testid="active-query">{summary}</h2>
-                <span className="pnx-note" data-testid="preset-line" style={{ fontSize: 12 }}>{presetLine(name, dirty)}</span>
-                <b style={{ fontSize: 15, color: C.text1 }} aria-busy={!snap && !err} data-testid="match-count">{!snap ? (err ? '' : 'Loading…') : qRebuild.state === 'none' ? 'Matches cannot be determined yet' : qRebuild.state === 'partial' ? `${hits.length} companies match so far` : `${hits.length} companies match`}</b>
-                {snap?.building ? <span style={{ color: C.amber, fontWeight: 700 }} title="A screener build for this market is running now">● building</span> : null}
+                <h2 className="pnx-query" data-testid="active-query">{summary}</h2>
+                {/* zzz1011 — eligible / evaluated / matched / unavailable for this screen on this list */}
+                {funnel ? <FunnelStrip f={funnel} rebuilding={qRebuild.state === 'none'} /> : <div className="pnx-funnel" aria-hidden>{[0, 1, 2, 3].map((k) => <div key={k}><span className="pnx-skel" style={{ width: 46, height: 16 }} /><span className="pnx-skel" style={{ width: 60, height: 8, marginTop: 4 }} /></div>)}</div>}
               </div>
               {family ? (
                 <span role="radiogroup" aria-label={`${family.label} variants`} className="pnx-seg pnx-seg-sm" style={{ width: 'auto', justifySelf: 'start' }}>
@@ -799,12 +909,19 @@ export default function PineScreener() {
                 </div>
               ) : null}
               {snap && qRebuild.state !== 'ok' ? (
-                <div role="status" data-testid="rebuild-banner" style={{ fontSize: 13, color: C.amber, border: `1px solid ${C.amber}`, borderRadius: 8, padding: '6px 10px' }}>
-                  ⏳ {qRebuild.text}{qRebuild.state === 'none' ? '. The count is not “0 match”: no company of these timeframes has been re-read yet.' : '. Companies not yet re-read cannot match until they are.'}{snap.building ? ' A build is running.' : ''}
+                <div role="status" data-testid="rebuild-banner" className="pnx-callout" data-tone="warn">
+                  <span>⏳ {qRebuild.text}{qRebuild.state === 'none' ? '. The count is not “0 match”: no company of these timeframes has been re-read yet.' : '. Companies not yet re-read cannot match until they are.'}{snap.building ? ' A build is running.' : ''}</span>
+                  {qRebuild.perTf.filter((x) => x.state !== 'ok').map((x) => (
+                    <span key={x.tf} style={{ display: 'grid', gridTemplateColumns: '64px 1fr auto', gap: 8, alignItems: 'center', fontSize: 11.5 }} data-rebuild-tf={x.tf}>
+                      <span>{tfWord(x.tf)}</span>
+                      <span className="pnx-prog" role="progressbar" aria-valuemin={0} aria-valuemax={x.total} aria-valuenow={x.reread} aria-label={`${tfWord(x.tf)} re-read`}><i style={{ width: `${x.total ? Math.round((100 * x.reread) / x.total) : 0}%` }} /></span>
+                      <span>{x.total ? Math.round((100 * x.reread) / x.total) : 0}%</span>
+                    </span>
+                  ))}
                 </div>
               ) : null}
               {naNotice.length ? (
-                <div role="status" data-testid="unsupported-notice" style={{ fontSize: 12.5, color: C.amber, border: `1px solid ${C.amber}`, borderRadius: 8, padding: '6px 10px', display: 'grid', gap: 3 }}>
+                <div role="status" data-testid="unsupported-notice" className="pnx-callout" data-tone="warn">
                   {naNotice.map((t, i) => <div key={i}>✕ {t}</div>)}
                 </div>
               ) : null}
@@ -814,8 +931,8 @@ export default function PineScreener() {
               ) : null}
 
               {/* toolbar */}
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                <input value={findText} onChange={(e) => setFindText(e.target.value)} placeholder="Find ticker or name" aria-label="Find in results" className="pnx-in" style={{ width: 180 }} />
+              <div className="pnx-tools">
+                <SearchBox value={findText} onChange={setFindText} inputRef={searchRef} placeholder="Find ticker or name" label="Find in results" />
                 {findText ? <button type="button" className="pnx-btn" onClick={() => setFindText('')}>Clear search</button> : null}
                 <span style={{ flex: 1 }} />
                 <button type="button" className="pnx-btn" onClick={copyTickers} disabled={!actHits.length} title={`${actLabel} — ${market === 'IN' ? 'NSE:TICKER, comma separated' : 'tickers, comma separated'}, to paste into a TradingView watchlist`}>Copy for TradingView</button>
@@ -823,7 +940,7 @@ export default function PineScreener() {
                 <button type="button" className="pnx-btn" onClick={() => setAdding((v) => !v)} disabled={!actHits.length || !watchlists}>Add to watchlist</button>
                 <button type="button" className="pnx-btn" disabled={loading} onClick={() => setRefresh((v) => v + 1)}>{loading ? 'Refreshing…' : err ? 'Retry' : 'Refresh'}</button>
               </div>
-              <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12.5, color: C.dim }}>
+              <div className="pnx-meta">
                 {snap ? <span data-testid="result-counts">{countsLine(sCounts, searching)}{sCounts.provisional ? ` · ${sCounts.provisional} provisional (not counted)` : ''}</span> : <span aria-busy="true">Loading counts…</span>}
                 <label style={{ display: 'inline-flex', gap: 5, alignItems: 'center' }} title="Which companies Copy, CSV, Add to watchlist and the chart review queue act on">Actions apply to
                   <select value={scopeNow} onChange={(e) => setActScope(e.target.value as ActionScope)} className="pnx-in" style={{ width: 'auto', padding: '3px 6px' }} aria-label="Action scope">
@@ -851,14 +968,14 @@ export default function PineScreener() {
               {notScanned || snap?.notes.length || tfWarn.length ? <div data-testid="scan-notes" style={{ fontSize: 12.5, color: C.amber, display: 'grid', gap: 2 }}>{[...(snap?.notes.length ? snap.notes : notScanned ? ['Chart patterns are read during the screener build; the next build adds them.'] : []), ...tfWarn].map((n, i) => <div key={i}>⏳ {n}</div>)}</div> : null}
               {/* zzz994 (MC-07) — never "next build fills it" for a figure this page cannot receive */}
               {unsupported.length || pending.length || unscannedTfs.length || (notScanned && q.need !== 'any') ? (
-                <div role="status" style={{ fontSize: 12.5, color: C.amber, border: `1px solid ${C.amber}`, borderRadius: 8, padding: '6px 10px', display: 'grid', gap: 3 }}>
+                <div role="status" className="pnx-callout" data-tone="warn">
                   {unsupported.map((c) => <div key={c.key}>✕ <b>{c.label}</b>: {c.status === 'unsupported-market' ? `not available for ${market === 'US' ? 'US' : 'Indian'} companies` : 'not delivered to the Pine Screener'} — this rule cannot be evaluated here, so no company passes it strictly. Use the Stock Screener for it, or remove the rule.</div>)}
                   {pending.map((c) => <div key={c.key}>⏳ <b>{c.label}</b>: no company has this figure yet{snap?.building ? ' (a build is running now)' : ' (it is filled by the screener build)'} — companies are held as provisional, not counted as matches.</div>)}
                   {unscannedTfs.map((tf) => <div key={tf}>⏳ <b>{tf === 'W' ? 'Weekly' : tf === 'M' ? 'Monthly' : 'Daily'} patterns</b>: not scanned yet — {q.tfMode === 'all' || q.tfs.length === 1 ? 'no company can pass until it is' : 'only the other selected timeframes can match meanwhile'}. Daily patterns are never relabelled as {tf === 'W' ? 'weekly' : tf === 'M' ? 'monthly' : 'other'}.</div>)}
                   {notScanned && q.need !== 'any' ? <div>⏳ Chart patterns have not been scanned for this market yet — the pattern requirement cannot be evaluated; every company is provisional.</div> : null}
                 </div>
               ) : null}
-              {snap && q.need !== 'any' && !q.stages.length ? <div role="status" style={{ fontSize: 13, color: C.amber }}>No stage selected — choose Forming, Breakout or Failed (or All stages) to see patterns.</div> : null}
+              {snap && q.need !== 'any' && !q.stages.length ? <div role="status" className="pnx-callout" data-tone="warn" data-testid="no-stage">No stage selected. {NO_STAGE_TEXT} The empty result is not evidence that no company has a pattern.{stagesDiffer(screenId, q.stages) ? <> <button type="button" className="pnx-btn" onClick={() => change({ stages: presetStages(screenId) || DEFAULT_QUERY.stages.slice() })}>Restore preset stages</button></> : null}</div> : null}
               {empty === 'no-search-match' ? (
                 <div role="status" style={{ padding: 10, border: `1px solid ${C.border}`, borderRadius: 10, fontSize: 13 }}>
                   No match contains “{findText}” — {sorted.length} companies pass the screen. <button type="button" className="pnx-btn" onClick={() => setFindText('')}>Clear search</button>
@@ -877,24 +994,26 @@ export default function PineScreener() {
                           <Th bare label="Company" k="t" sort={sort} setSort={setSort} />
                         </span>
                       </th>
-                      <Th label="Setup" k="pattern" sort={sort} setSort={setSort} title="The strongest matching pattern: timeframe (D / W / M) and stage" />
+                      <Th label="Setup" k="pattern" sort={sort} setSort={setSort} title="The strongest matching pattern, its analysis timeframe (D / W / M) and its historical event (breakout / breakdown / failed). Stage, score and distance all come from this one reading." />
+                      <Th label="Condition" k="cond" sort={sort} setSort={setSort} title="The latest condition on the analysis close, apart from the event: forming · crossed (< 0.5% past) · holding · retesting (quote back within ±1.5%) · back inside · invalidated · expired reading" />
                       <Th label="Shape score" k="conf" sort={sort} setSort={setSort} num title={SHAPE_SCORE_TIP} />
                       <Th label="Pivot" k="pivot" sort={sort} setSort={setSort} num title="The buy point (bearish: the breakdown level)" />
-                      <Th label="To pivot" k="dist" sort={sort} setSort={setSort} num title="From the scan close (the close the pattern was read from): − = not reached yet, + = beyond it" />
-                      <Th label="Length" k="len" sort={sort} setSort={setSort} num />
-                      <Th label="Price" k="px" sort={sort} setSort={setSort} num title="Latest quote" />
-                      {showScanCol ? <Th label="Analysis close" k="scanPx" sort={sort} setSort={setSort} num title="The close the pattern was read on, on its own timeframe (daily session / completed week / completed month) — the stage and To pivot use it. Shown because it differs from the latest quote for some rows." /> : null}
-                      <th className="pnx-num" title="The scan close against its 21, 50 and 200-day simple moving averages, % (same daily bars). Click to sort by the 50-day.">
+                      <Th label="To pivot" k="dist" sort={sort} setSort={setSort} num title="Pattern distance: the ANALYSIS close against the pivot, in the pattern's direction (− = not reached yet, + = beyond it). The gauge: filled dot = analysis close, ring = latest quote, shaded = the 0 to +5% entry window." />
+                      <Th label="Length" k="len" sort={sort} setSort={setSort} num className="pnx-hide-md" />
+                      <Th label="Analysis close" k="anClose" sort={sort} setSort={setSort} num title="The close the pattern was read on, on its own timeframe (daily session / completed week / completed month) — stage, condition and To pivot use it. Never the daily close under a W / M reading." />
+                      <Th label="Quote" k="px" sort={sort} setSort={setSort} num title="Latest quote, with its own source and time — a separate observation from the analysis close" />
+                      <th className="pnx-hide-sm" title="12-month price path from the stored performance figures (−12M, −6M, −3M, −1M, −1W, now)">12M</th>
+                      <th className="pnx-num" title="The daily technical close against its 21, 50 and 200-day simple moving averages, % (same daily bars). Click to sort by the 50-day.">
                         <Th bare label={<span style={{ display: 'inline-grid', gridTemplateColumns: 'repeat(3, 3.6em)', gap: 4, justifyItems: 'end' }}><span>21d</span><span>50d</span><span>200d</span></span>} k="ma50" sort={sort} setSort={setSort} num />
                       </th>
                       <Th label="RS" k="rsR" sort={sort} setSort={setSort} num title="RS Rating 1–99 (IBD-style), ranked against every company of this market" />
-                      {shownCols.map((k) => <Th key={k} label={COL_SHORT[k] || fieldOf(k)?.label || k} k={k} sort={sort} setSort={setSort} num title={[fieldOf(k)?.label, fieldOf(k)?.approxNote?.[market] ? `≈ ${fieldOf(k)!.approxNote![market]}` : '', k === 'r40' ? R40_GUARD_TIP : ''].filter(Boolean).join('\n')} />)}
+                      {shownCols.map((k) => <Th key={k} label={COL_SHORT[k] || fieldOf(k)?.label || k} k={k} sort={sort} setSort={setSort} num title={[fieldOf(k)?.label, fieldOf(k)?.approxNote?.[market] ? `≈ ${fieldOf(k)!.approxNote![market]}` : '', k === 'r40' ? `${R40_FORMULA}. ${R40_GUARD_TIP}` : ''].filter(Boolean).join('\n')} />)}
                       {has('chg') ? <Th label="Chg" k="chg" sort={sort} setSort={setSort} num title="Change today" /> : null}
                       {has('mc') ? <Th label="Mkt cap" k="mc" sort={sort} setSort={setSort} num /> : null}
                       {has('perf') ? <Th label={`Perf ${PERF_LABEL[q.perfKey]}`} k={q.perfKey} sort={sort} setSort={setSort} num /> : null}
                       {has('rsi') ? <Th label="RSI" k="rsi" sort={sort} setSort={setSort} num /> : null}
                       {has('turn') ? <Th label="Daily value" k="turn" sort={sort} setSort={setSort} num /> : null}
-                      <Th label="Sector" k="tvSec" sort={sort} setSort={setSort} className="pnx-hide-sm" />
+                      <Th label="Sector" k="tvSec" sort={sort} setSort={setSort} className="pnx-hide-lg" />
                     </tr>
                   </thead>
                   <tbody>
@@ -908,64 +1027,85 @@ export default function PineScreener() {
                       const ma = maPosition(r);
                       const an = analysisOf(r, b || { tf: 'D' });
                       const conds = latestConditions(r, b);
+                      const cs = b ? conditionState(r, b) : null;
+                      const ev = b ? (b.s === 'b' ? (b.b === 'U' ? 'broke out' : 'broke down') : b.s === 'x' ? 'failed' : '') : '';
                       return (
                         <React.Fragment key={r.t}>
-                          <tr className="pnx-row" data-sel={sel}>
+                          <tr className="pnx-row" data-sel={sel} data-idx={i} data-cursor={cursor === i} onClick={(e) => { if ((e.target as HTMLElement).closest('a, button, input, select, label')) return; setCursor(i); }}>
                             <td className="pnx-pin">
-                              <span style={{ display: 'inline-flex', gap: 6, alignItems: 'flex-start' }}>
-                                <button type="button" className="pnx-exp" aria-expanded={open} aria-label={`Details for ${r.t}`} title="Why this company is listed — pattern, checks, prices, other timeframes" onClick={() => setExpanded(open ? null : r.t)}>{open ? '▾' : '▸'}</button>
-                                <input type="checkbox" checked={sel} onChange={() => toggleSel(r.t)} aria-label={`Select ${r.t}`} style={{ marginTop: 3 }} />
+                              <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                                <button type="button" className="pnx-exp" aria-expanded={open} aria-label={`Details for ${r.t}`} title="Why this company is listed — pattern, checks, prices, other timeframes (o)" onClick={() => { setExpanded(open ? null : r.t); setCursor(i); }}>▸</button>
+                                <input type="checkbox" checked={sel} onChange={() => toggleSel(r.t)} aria-label={`Select ${r.t}`} />
                                 <button type="button" onClick={() => toggleStar(r)} disabled={!starList} aria-pressed={onStar(r)} aria-label={`${onStar(r) ? 'Remove' : 'Add'} ${r.t} ${onStar(r) ? 'from' : 'to'} ${starList?.name || 'watchlist'}`}
-                                  title={starList ? `${onStar(r) ? 'On' : 'Add to'} ${starList.name}` : ''} style={{ all: 'unset', cursor: starList ? 'pointer' : 'default', fontSize: 15, lineHeight: 1, color: onStar(r) ? C.amber : C.faint }}>{onStar(r) ? '★' : '☆'}</button>
+                                  title={starList ? `${onStar(r) ? 'On' : 'Add to'} ${starList.name}` : ''} style={{ all: 'unset', cursor: starList ? 'pointer' : 'default', fontSize: 14, lineHeight: 1, color: onStar(r) ? C.amber : C.faint }}>{onStar(r) ? '★' : '☆'}</button>
                                 <span style={{ minWidth: 0 }}>
-                                  <span style={{ color: C.faint, fontSize: 11, marginRight: 5 }}>{i + 1}</span>
-                                  <Link data-ticker={r.t} href={`/charts?t=${encodeURIComponent(r.t)}&m=${market}&tf=${b?.tf || 'D'}`} onClick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); window.location.assign(openForReview(r, b?.tf || 'D')); }}
-                                    style={{ color: C.accent, fontWeight: 700, textDecoration: 'none' }} title={`Open the ${tfWord(b?.tf)} chart — Next / Previous on the chart step through these results in this order`}>{r.t}</Link>
-                                  {an.session === 'provisional' ? <span data-provisional title={`Read during a trading session: ${sessionLabel(an)} — the latest bar was unfinished, not a completed close`} style={{ color: C.amber, marginLeft: 4 }}>◷</span> : null}
-                                  {density === 'compact' ? null : <div style={{ fontSize: 11.5, color: C.dim, maxWidth: 200, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.n}</div>}
+                                  <span style={{ display: 'flex', alignItems: 'baseline' }}>
+                                    <span className="pnx-rank">{i + 1}</span>
+                                    <Link data-ticker={r.t} className="pnx-tk" href={`/charts?t=${encodeURIComponent(r.t)}&m=${market}&tf=${b?.tf || 'D'}`} onClick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); window.location.assign(openForReview(r, b?.tf || 'D')); }}
+                                      title={`${r.n || r.t} — open the ${tfWord(b?.tf)} chart (Enter). Next / Previous on the chart step through these results in this order`}>{r.t}</Link>
+                                    {an.session === 'provisional' ? <span data-provisional title={`Read during a trading session: ${sessionLabel(an)} — the latest bar was unfinished, not a completed close`} style={{ color: C.amber, marginLeft: 4 }}>◷</span> : null}
+                                  </span>
+                                  {density === 'compact' ? null : <div className="pnx-co" style={{ paddingLeft: 'calc(1.8em + 6px)' }} title={r.n}>{r.n}</div>}
                                 </span>
                               </span>
                             </td>
                             {b ? (
                               <>
                                 <td>
-                                  <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                                    <PatternChip t={b} main market={market} when={sessionLabel(an)} showStage />
-                                    <ConditionBadges items={conds} />
-                                    {tags.length > 1 ? <span style={{ fontSize: 11.5, color: C.dim }} title={tags.filter((t) => t !== b).map((t) => `${PATTERN_META[t.id].label} [${t.tf || 'D'}] ${stageWord(t)}, ${t.c}`).join('\n')}>+{tags.length - 1} more</span> : null}
+                                  <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                                    <PatternChip t={b} main market={market} when={sessionLabel(an)} />
+                                    {ev ? <span className="pnx-note" data-event={b.s} title={cs?.event.label}>{ev}</span> : null}
+                                    {tags.length > 1 ? <span style={{ fontSize: 11, color: C.dim }} title={tags.filter((t) => t !== b).map((t) => `${PATTERN_META[t.id].label} [${t.tf || 'D'}] ${stageWord(t)}, ${t.c}`).join('\n')}>+{tags.length - 1}</span> : null}
+                                  </span>
+                                </td>
+                                <td>
+                                  <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+                                    {cs ? <ConditionChip c={cs} /> : null}
+                                    <ConditionBadges items={conds} compact />
                                   </span>
                                 </td>
                                 <td className="pnx-num"><ScoreBar c={b.c} /></td>
                                 <td className="pnx-num" title={`Exact: ${fmtExact(b.p)}`}>{fmtPrice(b.p, market)}</td>
                                 <td className="pnx-num" style={{ color: dd == null ? C.dim : dd >= 0 ? (b.b === 'U' ? C.green : C.red) : C.text, fontWeight: 650 }}
-                                  title={[b.d == null ? '' : `${tfWord(an.tf)} analysis close ${an.close != null ? fmtPrice(an.close, market) : '(not stored)'} ${Math.abs(b.d).toFixed(2)}% ${b.d < 0 ? 'below' : 'above'} the ${b.b === 'U' ? 'pivot' : 'breakdown level'} — ${sessionLabel(an)}`,
-                                    dq != null ? `From the latest quote: ${pct(dq, 2)}${r.pxSrc ? ` (${r.pxSrc})` : ''} — shown apart; the filter uses the scan close` : ''].filter(Boolean).join('\n')}>
-                                  {pct(dd)}{dq != null && dd != null && Math.abs(dq - dd) >= 0.15 ? <span style={{ color: C.amber }}>†</span> : null}
+                                  title={[b.d == null ? '' : `Pattern distance: ${tfWord(an.tf)} analysis close ${an.close != null ? fmtPrice(an.close, market) : '(not stored)'} is ${Math.abs(b.d).toFixed(2)}% ${b.d < 0 ? 'below' : 'above'} the ${b.b === 'U' ? 'pivot' : 'breakdown level'} — ${sessionLabel(an)}`,
+                                    dq != null ? `Latest quote distance: ${pct(dq, 2)}${r.pxSrc ? ` (${r.pxSrc}${r.pxAt ? `, ${r.pxAt}` : ''})` : ''} — a separate observation; the filter uses the analysis close` : ''].filter(Boolean).join('\n')}>
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, justifyContent: 'flex-end' }}>
+                                    <span className="pnx-hide-sm"><PivotGauge dd={dd} dq={dq} /></span>
+                                    <span style={{ minWidth: '3.6em' }}>{pct(dd)}{dq != null && dd != null && Math.abs(dq - dd) >= 0.15 ? <span style={{ color: C.amber }}>†</span> : null}</span>
+                                  </span>
                                 </td>
-                                <td className="pnx-num" title={[lengthTip(b), b.dp != null ? `${b.dp}% deep` : ''].filter(Boolean).join('\n')}>{tagLengthText(b) || '—'}</td>
+                                <td className="pnx-num pnx-hide-md" title={[lengthTip(b), b.dp != null ? `${b.dp}% deep` : ''].filter(Boolean).join('\n')}>{tagLengthText(b) || '—'}</td>
                               </>
-                            ) : <td colSpan={5} style={{ color: C.dim, fontSize: 12 }}>{noD ? patMissingWhy(r, 'D') : 'no matching chart pattern'}</td>}
-                            <td className="pnx-num" title={pxDiffers(h) ? scanTip(h, market) : `Exact: ${fmtExact(r.px)}${r.pxSrc ? ` (${r.pxSrc})` : ''}`}>
+                            ) : <td colSpan={6} style={{ color: C.dim, fontSize: 12 }}>{noD ? patMissingWhy(r, 'D') : 'no matching chart pattern'}</td>}
+                            <td className="pnx-num" data-analysis-close title={scanTip(h, market)}>
+                              {an.close != null ? <>{fmtPrice(an.close, market)}<span className="pnx-dim" style={{ fontSize: 10.5, marginLeft: 3 }}>{an.tf}</span></> : <span className="pnx-unknown">{b ? 'n/a' : '—'}</span>}
+                            </td>
+                            <td className="pnx-num" title={`Latest quote ${fmtExact(r.px)}${r.pxSrc ? ` (${r.pxSrc}${r.pxAt ? `, ${r.pxAt}` : ''})` : ''}\n\n${scanTip(h, market)}`} style={{ color: pxDiffers(h) ? C.text : C.text1 }}>
                               {r.pxConflict ? <span style={{ color: C.amber }} aria-label="Price sources disagree">⚠ </span> : null}
                               {r.pxLive ? <span style={{ color: C.amber }} data-px-live aria-label="Live, unfinished session" title="Today's unfinished daily bar (Nasdaq's list was a session behind) — provisional, not a completed close">◷ </span> : null}{fmtPrice(r.px, market)}
                             </td>
-                            {showScanCol ? <td className="pnx-num" data-analysis-close style={{ color: pxDiffers(h) ? C.text : C.dim }} title={pxDiffers(h) ? scanTip(h, market) : 'Same as the latest quote'}>{pxDiffers(h) ? `${fmtPrice(anClose(h), market)}${an.tf !== 'D' ? ` ${an.tf}` : ''}` : '='}</td> : null}
+                            <td className="pnx-hide-sm"><Sparkline pts={perfPath(r)} /></td>
                             <td className="pnx-num"><MaCell ma={ma} market={market} /></td>
-                            <td className="pnx-num">{typeof r.rsR === 'number' ? <b style={{ color: r.rsR >= 80 ? C.green : r.rsR < 30 ? C.red : C.text1 }}>{r.rsR}</b> : '—'}</td>
+                            <td className="pnx-num">{typeof r.rsR === 'number' ? <b style={{ color: r.rsR >= 80 ? C.green : r.rsR < 30 ? C.red : C.text1, fontWeight: 650 }}>{r.rsR}</b> : <span className="pnx-dim">—</span>}</td>
                             {shownCols.map((k) => {
                               const d = fieldOf(k); const ax = r.approx?.includes(k);
                               // zzz1007 — a guard-blanked Rule of 40 is shown blank with the reason (never the meaningless sum)
-                              const guarded = k === 'r40' && r40Guarded(r);
-                              const v = guarded ? null : (r as any)[k] as number | null | undefined;
-                              const blankWhy = k === 'r40' && v == null && typeof r.revQYoY === 'number' && typeof r.fcfmTTM === 'number' ? R40_GUARD_TIP : '';
-                              return <td key={k} className="pnx-num" data-col={k} title={[d?.label, typeof v === 'number' ? `Exact: ${fmtExact(v)}` : '', ax ? `Approximate — ${d?.approxNote?.[market] || ''}` : '', blankWhy].filter(Boolean).join('\n')}>{ax && v != null ? '≈' : ''}{fmtCol(k, v, market)}</td>;
+                              // zzz1011 — a Rule of 40 with a missing input says "unknown" (never 0, never a pass)
+                              if (k === 'r40') {
+                                const x = r40Explain(r, q.r40Min);
+                                return <td key={k} className="pnx-num" data-col={k} data-r40={x.state} title={`${R40_FORMULA}\n${x.text}${ax ? `\nApproximate — ${d?.approxNote?.[market] || ''}` : ''}`}>
+                                  {x.state === 'unknown' ? <span className="pnx-unknown">unknown</span> : x.state === 'guarded' ? <span className="pnx-unknown">n/m</span> : <>{ax ? '≈' : ''}{fmtCol(k, x.value, market)}</>}
+                                </td>;
+                              }
+                              const v = (r as any)[k] as number | null | undefined;
+                              return <td key={k} className="pnx-num" data-col={k} title={[d?.label, typeof v === 'number' ? `Exact: ${fmtExact(v)}` : '', ax ? `Approximate — ${d?.approxNote?.[market] || ''}` : ''].filter(Boolean).join('\n')}>{ax && v != null ? '≈' : ''}{fmtCol(k, v, market)}</td>;
                             })}
                             {has('chg') ? <td className="pnx-num" style={{ color: signColor(r.chg) }}>{pct(r.chg)}</td> : null}
                             {has('mc') ? <td className="pnx-num" title={`Exact: ${fmtExact(r.mc)} ${money}`}>{fmtMoney(r.mc, market)}</td> : null}
                             {has('perf') ? <td className="pnx-num" style={{ color: signColor(r[q.perfKey] as number | null | undefined) }}>{pct(r[q.perfKey] as number | null | undefined, 0)}</td> : null}
                             {has('rsi') ? <td className="pnx-num">{typeof r.rsi === 'number' ? Math.round(r.rsi) : '—'}</td> : null}
                             {has('turn') ? <td className="pnx-num" title={`price × 30-day average volume, ${money}`}>{fmtMoney(turnoverOf(r, market), market)}</td> : null}
-                            <td className="pnx-hide-sm" style={{ fontSize: 12, color: C.dim, maxWidth: 140, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.tvSec || r.sec || ''}>{r.tvSec || r.sec || '—'}</td>
+                            <td className="pnx-hide-lg" style={{ fontSize: 12, color: C.dim, maxWidth: 150, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.tvSec || r.sec || ''}>{r.tvSec || r.sec || '—'}</td>
                           </tr>
                           {open ? (
                             <tr className="pnx-detail"><td colSpan={colCount}>
@@ -975,9 +1115,7 @@ export default function PineScreener() {
                         </React.Fragment>
                       );
                     })}
-                    {!snap && !err ? [0, 1, 2].map((k) => (
-                      <tr key={`ph-${k}`} aria-hidden><td colSpan={colCount}><span style={{ display: 'inline-block', width: `${60 - k * 12}%`, height: 10, borderRadius: 4, background: C.bg2 }} /></td></tr>
-                    )) : null}
+                    {!snap && !err ? <SkeletonRows cols={colCount} /> : null}
                   </tbody>
                 </table>
                 {narrowed.length > 200 ? <div style={{ padding: 8, textAlign: 'center' }}><button type="button" className="pnx-btn" onClick={() => setShowAll((v) => !v)}>{showAll ? 'Show the first 200' : `Show all ${narrowed.length}`}</button></div> : null}
@@ -987,7 +1125,7 @@ export default function PineScreener() {
                   <div role="status" style={{ padding: 16, color: C.dim, fontSize: 13 }}>
                     {scopeWaiting ? `Loading ${scopeName}…`
                       : scope && listTickers && !listTickers.size ? `${scopeName} has no ${market === 'IN' ? 'Indian' : 'US'} companies — switch market or list.`
-                      : q.need !== 'any' && !q.stages.length ? 'No stage selected — nothing can match. Choose a stage on the left.'
+                      : q.need !== 'any' && !q.stages.length ? `No stage selected. ${NO_STAGE_TEXT}`
                       : qRebuild.state === 'none' ? `${qRebuild.text}. The pattern part cannot be evaluated until the companies are re-read — this is not a “no match”.`
                       : `No company matches every choice.${provHits.length ? ` ${provHits.length} could not be fully evaluated (see Provisional below).` : ''} Widen the distance to pivot, lower the shape score, add a stage or untick pattern types — the number on each pattern type shows where the matches are.`}
                   </div>

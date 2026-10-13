@@ -119,16 +119,52 @@ export function yahooSymbolsFor(market: Market, ticker: string, exchange?: strin
   return yahooCandidates(market, ticker, exchange);   // zzz943: index names (CNXSMALLCAP, NIFTY, SPX…) and renamed tickers (TATAMOTORS) mapped
 }
 
+const _inflight = new Map<string, Promise<DailySeries | null>>();
+const RANGE_YEARS: Record<Exclude<DataRange, 'max'>, number> = { '2y': 2, '5y': 5, '10y': 10 };
+
+/**
+ * zzz1010 — a shorter history cut from a longer one already in memory (5y → 2y …), so a chart that asked for 5 years does
+ * not send the 2-year view back to Yahoo. Bars and dividends from `now − N years` (the window Yahoo's range=Ny covers);
+ * everything else (quote time, synthetic last bar, listing date) is the longer answer's own.
+ */
+export function sliceSeries(s: DailySeries, range: DataRange, now = Date.now()): DailySeries {
+  if (range === 'max') return s;
+  const d = new Date(now);
+  const from = Date.UTC(d.getUTCFullYear() - RANGE_YEARS[range], d.getUTCMonth(), d.getUTCDate());
+  return { ...s, bars: s.bars.filter((b) => b.t >= from), divs: (s.divs || []).filter((x) => x.t >= from) };
+}
+
+/** A fresh longer series in memory for this ticker, cut to `range` (null when there is none). */
+function fromLonger(market: Market, ticker: string, range: DataRange, exchange: string | undefined, now: number): DailySeries | null {
+  if (range === 'max') return null;
+  for (const r of DATA_RANGES) {
+    if (DATA_RANGES.indexOf(r) <= DATA_RANGES.indexOf(range)) continue;   // only a LONGER history can be cut down
+    const hit = _cache.get(`${market}:${ticker}:${r}:${exchange || 'auto'}`);
+    if (hit?.data && now - hit.at < OK_TTL_MS && hit.data.bars.length) return sliceSeries(hit.data, range, now);
+  }
+  return null;
+}
+
 export async function getDailySeries(market: Market, ticker: string, range: DataRange, exchange?: string): Promise<DailySeries | null> {
   const key = `${market}:${ticker}:${range}:${exchange || 'auto'}`;
+  const now = Date.now();
   const hit = _cache.get(key);
-  if (hit && Date.now() - hit.at < (hit.data ? OK_TTL_MS : FAIL_TTL_MS)) return hit.data;
-  let data: DailySeries | null = null;
-  for (const sym of yahooSymbolsFor(market, ticker, exchange)) {
-    data = await fetchYahooDaily(sym, range);
-    if (data) break;
-  }
-  if (_cache.size >= MAX_ENTRIES) { const first = _cache.keys().next().value; if (first) _cache.delete(first); }
-  _cache.set(key, { at: Date.now(), data });
-  return data;
+  if (hit && now - hit.at < (hit.data ? OK_TTL_MS : FAIL_TTL_MS)) return hit.data;
+  const cut = fromLonger(market, ticker, range, exchange, now);
+  if (cut) return cut;
+  // zzz1010 — concurrent asks for the same series (daily + weekly view, chart + indicator, two tabs) share one Yahoo call
+  const flying = _inflight.get(key);
+  if (flying) return flying;
+  const p = (async () => {
+    let data: DailySeries | null = null;
+    for (const sym of yahooSymbolsFor(market, ticker, exchange)) {
+      data = await fetchYahooDaily(sym, range);
+      if (data) break;
+    }
+    if (_cache.size >= MAX_ENTRIES) { const first = _cache.keys().next().value; if (first) _cache.delete(first); }
+    _cache.set(key, { at: Date.now(), data });
+    return data;
+  })().finally(() => { _inflight.delete(key); });
+  _inflight.set(key, p);
+  return p;
 }

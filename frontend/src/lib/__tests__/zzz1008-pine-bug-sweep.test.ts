@@ -58,7 +58,7 @@ test('zzz1008 item 9: the disputed readings are no longer reported (each was rep
     const h = run(f).find((x) => x.id === f.id);
     assert.equal(h, undefined, `${f.name} must not be reported (${f.why}); got ${h?.id}:${h?.confidence}`);
   }
-  assert.equal(PATTERN_ENGINE_VERSION, 'cp-3.2-geometry');
+  assert.equal(PATTERN_ENGINE_VERSION, 'cp-3.3-indicator');   // zzz1009 bumped it (weekly reversal span, breakT / breakAgo)
 });
 
 // ───────── synthetic bars (zzz1005's generator) ─────────

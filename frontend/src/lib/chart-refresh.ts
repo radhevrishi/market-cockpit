@@ -5,7 +5,7 @@ export function freshChart<T>(cache: Map<string, CachedChart<T>>, key: string, t
   const hit = cache.get(key);
   return hit && now - hit.at >= 0 && now - hit.at < ttl ? hit.data : null;
 }
-export function cacheChart<T>(cache: Map<string, CachedChart<T>>, key: string, data: T, now = Date.now(), limit = 20): void {
+export function cacheChart<T>(cache: Map<string, CachedChart<T>>, key: string, data: T, now = Date.now(), limit = 60): void {   // zzz1010: 60 (one cache shared by the chart, its indicators and prefetches)
   cache.delete(key);
   while (cache.size >= limit) { const oldest = cache.keys().next().value; if (oldest == null) break; cache.delete(oldest); }
   cache.set(key, { at: now, data });

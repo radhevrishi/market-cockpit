@@ -4,13 +4,13 @@
 // a button to open the chart.
 import React, { useEffect, useState } from 'react';
 import { PATTERN_META } from '@/lib/chart-patterns';
-import { likelihoodWord, pineFilters, type PineHit, type PineQuery } from '@/lib/screener/pine';
+import { likelihoodWord, pineFilters, r40Explain, R40_FORMULA, type PineHit, type PineQuery } from '@/lib/screener/pine';
 import { fmtPrice, type Filter } from '@/lib/screener/filters';
 import { explainRow } from '@/lib/screener/research';
-import { allPatterns, analysisOf, conflictWords, evidenceRows, geometryPoints, invalidation, latestConditions, lengthTip, maPosition, patternChecks, pivotDerivation, priceSet, sessionLabel, stageWord, tagLengthText, tfWord } from '@/lib/screener/pine-view';
+import { allPatterns, analysisOf, conditionState, conflictWords, evidenceRows, geometryPoints, invalidation, latestConditions, lengthTip, maPosition, patternChecks, pivotDerivation, priceSet, sessionLabel, stageWord, tagLengthText, tfWord } from '@/lib/screener/pine-view';
 import type { ScreenPatternTag } from '@/lib/screener/pine';
 import type { ScreenMarket } from '@/lib/screener/types';
-import { C, ConditionBadges, MaCell, PatternChip, SessionBadge, pct } from './pine-ui';
+import { C, ConditionBadges, ConditionChip, MaCell, PatternChip, SessionBadge, pct } from './pine-ui';
 
 type GeoState = { status: 'loading' | 'ok' | 'error'; tags: Record<'D' | 'W' | 'M' | 'L', ScreenPatternTag[]> | null; error?: string };
 /** zzz1008 — one company's tags WITH their geometry (turning points + evidence), read when the detail opens. */
@@ -79,7 +79,10 @@ export function HitDetail({ hit, q, market, onOpenChart, width }: { hit: PineHit
               <li>Shape score <b>{b.c}</b>/100, {likelihoodWord(b.c)} (how closely the shape fits, not a probability)</li>
               <li>{b.b === 'U' ? 'Pivot (buy point)' : 'Breakdown level'} <b>{fmtPrice(b.p, market)}</b>; {tfWord(an.tf)} analysis close {dd == null ? 'distance unknown' : <b style={{ color: dd >= 0 ? (b.b === 'U' ? C.green : C.red) : C.text }}>{pct(dd)}</b>} {dd != null ? (dd < 0 ? 'short of it' : 'beyond it') : ''}{an.close == null && dd != null ? <span style={{ color: C.dim }}> (stored distance; the {tfWord(an.tf)} close it was measured from is not stored)</span> : null}</li>
               {tagLengthText(b) ? <li title={lengthTip(b)}>{tagLengthText(b)} long{b.dp != null ? `, ${b.dp}% deep` : ''}</li> : null}
-              {conds.length ? <li>Latest condition: <ConditionBadges items={conds} /></li> : null}
+              {/* zzz1011 — the historical event and the latest condition, kept apart */}
+              <li data-detail="event">Event: <b>{conditionState(r, b).event.label}</b></li>
+              <li data-detail="condition">Condition now: <ConditionChip c={conditionState(r, b)} /> <span style={{ color: C.dim }}>{conditionState(r, b).tip}</span></li>
+              {conds.length ? <li>Latest quote: <ConditionBadges items={conds} /></li> : null}
               <li>Volume: {vq ? <span style={{ color: C.amber }}>not confirmed (too little usable volume data)</span> : geoTag?.ev?.vr != null ? <>volume at the last turning point {geoTag.ev.vr}× the first (see the structure below)</> : 'enough data to read; nothing flagged'}</li>
               {inv ? <li>Stops being valid: {inv.text}{inv.level != null ? <> (about <b>{fmtPrice(inv.level, market)}</b>)</> : null}</li> : null}
             </ul>
@@ -92,6 +95,9 @@ export function HitDetail({ hit, q, market, onOpenChart, width }: { hit: PineHit
           {checks.map((c, i) => <li key={`p${i}`} style={{ color: c.pass ? C.text1 : C.red }}>{c.pass ? '✓' : '✗'} {c.label}</li>)}
           {rules.map((c, i) => <li key={`r${i}`} style={{ color: c.pass ? C.text1 : C.red }}>{c.pass ? '✓' : '✗'} {c.label} <span style={{ color: C.dim }}>{c.detail}</span></li>)}
           {!checks.length && !rules.length ? <li className="pnx-note">No extra rules on this screen.</li> : null}
+          {q.r40Min != null || r.revQYoY != null || r.fcfmTTM != null ? (() => { const x = r40Explain(r, q.r40Min); return (
+            <li data-detail="r40" title={R40_FORMULA} style={{ color: x.pass === false ? C.red : C.text1 }}>{x.pass == null ? '·' : x.pass ? '✓' : '✗'} Rule of 40 (fundamental, not a chart condition): <span style={{ color: x.state === 'known' ? C.text1 : C.dim }}>{x.text}</span></li>
+          ); })() : null}
         </ul>
         <h4 style={{ marginTop: 12 }}>Prices</h4>
         <ul style={{ listStyle: 'none', paddingLeft: 0 }}>

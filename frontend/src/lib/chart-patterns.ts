@@ -91,6 +91,16 @@
 //    high made after the last low and more than 5% beyond the pivot (RUNAWAY_RULES; mirror for tops at the 1-year low).
 //  • Monthly readings span ≥ MONTHLY_MIN_SPAN (6) monthly candles (cups, U bases, VCPs, reversals) — a 4-candle "monthly cup" is a
 //    daily / weekly formation.
+//
+// zzz1009 — chart-indicator audit (2026-10-13; 116 charts India + US on D / W / M as the CHART indicator shows them; fixtures in
+// __tests__/zzz1009-chart-pattern-indicator-audit.test.ts):
+//  • Weekly double / triple tops & bottoms and head & shoulders span ≥ WEEKLY_REVERSAL_MIN_SPAN (5) weekly candles (two tops 2–3
+//    weeks apart are a daily formation; seen: MTARTECH "weekly double top" on 4 candles).
+//  • Every hit carries the first close beyond its level (breakT, breakAgo bars before the last bar).
+//  • opts.weak (the chart indicator; never changes `hits`): `weak` = candidates with a shape score WEAK_CONF ≤ x < MIN_CONF; `expired`
+//    = qualifying shapes that are no longer current (completed breakouts, failures older than the failed window, sloped boundaries
+//    that ran out, reversals the price ran away from), also read at older breakout body ends (HISTORY_ENDS). The chart's headline
+//    order (current / expired / weaker) is components/charts/pattern-view patternView().
 
 import { aggregateBars } from './bar-aggregate';
 
@@ -165,13 +175,27 @@ export interface PatternHit {
   /** zzz1008 — the detected structure's turning points (in time order) and the measured rule evidence */
   points?: PatternPoint[];
   evidence?: PatternEvidence;
+  /** zzz1009 — the first close beyond the level (breakout / breakdown; failed: the break that failed): its bar time and how many
+   *  bars of the timeframe before the last analysed bar it was (absent while forming with no close beyond the level) */
+  breakT?: number;
+  breakAgo?: number;
+  /** zzz1009 — a sub-threshold candidate (shape score WEAK_CONF ≤ x < MIN_CONF), only in PatternAnalysis.weak */
+  weak?: boolean;
+  /** zzz1009 — only in PatternAnalysis.expired: why a qualifying shape is no longer current — 'completed' (broke out longer ago than the
+   *  breakout window and held), 'failed-old' (failed longer ago than the failed window), 'apex' (a sloped boundary ran out unbroken),
+   *  'ran-away' (a reversal the price has run away from, RUNAWAY_RULES) */
+  expired?: ExpiredWhy;
 }
+export type ExpiredWhy = 'completed' | 'failed-old' | 'apex' | 'ran-away';
 export type PatternTimeframe = 'D' | 'W' | 'M';
 /** maxBars counts bars of the analysis timeframe. */
-export interface DetectOptions { firstTradeT?: number; maxBars?: number; timeframe?: PatternTimeframe }
+export interface DetectOptions { firstTradeT?: number; maxBars?: number; timeframe?: PatternTimeframe;
+  /** zzz1009 — also return the weaker candidates (PatternAnalysis.weak): shape score WEAK_CONF ≤ x < MIN_CONF, current stage, not
+   *  the same structure as a qualifying hit. Never changes `hits`. */
+  weak?: boolean }
 
 /** zzz992 — bump when any detection rule changes (stored screener tags carry it for provenance). */
-export const PATTERN_ENGINE_VERSION = 'cp-3.2-geometry';
+export const PATTERN_ENGINE_VERSION = 'cp-3.3-indicator';
 
 interface TfProfile {
   tf: PatternTimeframe;
@@ -196,6 +220,10 @@ const TF_PROFILES: Record<PatternTimeframe, TfProfile> = {
  *  weekly formation seen through a few monthly candles — its roundness or its turning points cannot be judged on 4–5 candles (seen:
  *  RVSB "monthly cup, 4 mo" = the 86-day daily cup with handle; HY "monthly double top" over 3 months). It is read on D / W. */
 export const MONTHLY_MIN_SPAN = 6;
+/** zzz1009 — a double / triple top or bottom or head & shoulders read on WEEKLY bars spans at least this many weekly candles from its
+ *  first to its last turning point. Two tops 2–3 weeks apart are a daily formation: on 3–4 weekly candles the dip between them is one
+ *  candle and the shape cannot be judged (seen: MTARTECH "weekly double top" with the tops two candles apart). It is read on D. */
+export const WEEKLY_REVERSAL_MIN_SPAN = 5;
 /** zzz992 — longest rounding (U) base read on monthly bars, in months. */
 export const LONG_BASE_MONTHS = 60;
 /** Minimum usable bars per timeframe (W: 30 weeks, M: 24 months). */
@@ -245,6 +273,9 @@ export interface PatternTag {
 
 const DAY = 86_400_000;
 const MIN_CONF = 0.35;
+/** zzz1009 — shape score floor of a "weaker candidate" (shown only on request, separated from the qualifying hits). */
+export const WEAK_CONF = 0.25;
+export const QUALIFY_CONF = MIN_CONF;
 /** Default history used for detection: ~2.8 years (65-week base + a year of prior trend + margin). */
 const DEFAULT_MAX_BARS = 700;
 /** zzz990 (CP-03) — the supplied history must begin within this many days of the given listing date for an IPO base. */
@@ -479,7 +510,8 @@ function lowRecords(s: S, e: number, minLen: number, maxLen: number): number[] {
 }
 
 function push(out: Map<PatternId, Raw>, r: Raw | null) {
-  if (!r || !(r.conf >= MIN_CONF) || !(r.pivot > 0)) return;
+  // zzz1009 — candidates down to WEAK_CONF are kept (the weaker-candidate list); the qualifying hits still need MIN_CONF
+  if (!r || !(r.conf >= WEAK_CONF) || !(r.pivot > 0)) return;
   const prev = out.get(r.id);
   if (!prev || r.conf > prev.conf) out.set(r.id, r);
 }
@@ -1052,6 +1084,8 @@ function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<P
    *  has actually turned — not the bar a fresh low / high was just made) */
   const rebounded = (height: number) => (bottom ? s.c[e] - last.p : last.p - s.c[e]) >= Math.max(R.minRebound * last.p, R.reboundOfHeight * Math.abs(height));
   const third = (g: number) => Math.max(1, Math.floor(g / 3));
+  // zzz1008 / zzz1009 — the turning points span ≥ MONTHLY_MIN_SPAN monthly / WEEKLY_REVERSAL_MIN_SPAN weekly candles
+  const revSpan = s.pf.tf === 'M' ? MONTHLY_MIN_SPAN : s.pf.tf === 'W' ? WEEKLY_REVERSAL_MIN_SPAN : 0;
 
   let bestTripleLast = false;
   // Triple
@@ -1059,7 +1093,7 @@ function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<P
     for (let b = a + 1; b < pts.length - 1; b++) {
       const P = [pts[a], pts[b], last];
       if (P[1].i - P[0].i < G10 || P[2].i - P[1].i < G10) continue;
-      if (s.pf.tf === 'M' && P[2].i - P[0].i + 1 < MONTHLY_MIN_SPAN) continue;   // zzz1008
+      if (P[2].i - P[0].i + 1 < revSpan) continue;   // zzz1008 (M) / zzz1009 (W)
       const ps = P.map((q) => q.p);
       const bandHi = Math.max(...ps), bandLo = Math.min(...ps);
       if (bandHi / bandLo - 1 > 0.05) continue;
@@ -1098,7 +1132,7 @@ function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<P
       const gap = last.i - A.i;
       if (gap < Gall) continue;
       if (gap > G325) break;
-      if (s.pf.tf === 'M' && gap + 1 < MONTHLY_MIN_SPAN) continue;   // zzz1008
+      if (gap + 1 < revSpan) continue;   // zzz1008 (M) / zzz1009 (W)
       const band = Math.max(A.p, last.p) / Math.min(A.p, last.p) - 1;
       if (band > 0.05) continue;
       const lo = Math.min(A.p, last.p), hi = Math.max(A.p, last.p);
@@ -1137,7 +1171,7 @@ function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<P
     for (let l = h - 1; l >= 0 && l >= h - 4; l--) {
       const LS = pts[l];
       if (H.i - LS.i < G5 || RS.i - LS.i < Gall) continue;
-      if (s.pf.tf === 'M' && RS.i - LS.i + 1 < MONTHLY_MIN_SPAN) continue;   // zzz1008
+      if (RS.i - LS.i + 1 < revSpan) continue;   // zzz1008 (M) / zzz1009 (W)
       const lsOk = bottom ? LS.p / H.p - 1 : 1 - LS.p / H.p;
       if (lsOk < 0.04) continue;
       if (bottom ? s.mnL.val(LS.i, H.i) < H.p : s.mxH.val(LS.i, H.i) > H.p) continue;
@@ -1183,6 +1217,8 @@ function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<P
 
 // ───────────────────────────── stage + driver ─────────────────────────────
 
+/** zzz1009 — how far back (bars of the timeframe) opts.weak looks for older breakout body ends (expired list only): ~7 months D, a year W, 2 years M. */
+const HISTORY_ENDS: Record<PatternTimeframe, number> = { D: 150, W: 52, M: 24 };
 /** Bar index up to which a sloped boundary is projected (its expiry, at most the last bar). */
 const capOf = (last: number, lineAt?: (i: number) => number, expiry?: number) => (lineAt && expiry != null && Number.isFinite(expiry) ? Math.max(0, Math.min(last, Math.floor(expiry))) : last);
 
@@ -1296,6 +1332,11 @@ export interface PatternAnalysis {
   minBars: number;
   notApplicable: PatternId[];
   engineVersion: string;
+  /** zzz1009 — only with opts.weak: the weaker candidates (see DetectOptions.weak), strongest first */
+  weak?: PatternHit[];
+  /** zzz1009 — only with opts.weak: qualifying shapes at the analysed body ends that are no longer current (PatternHit.expired),
+   *  most recent break first; never the same structure as a hit */
+  expired?: PatternHit[];
 }
 
 /** detectPatterns plus what the data allowed (validation counts, volume coverage, too-short history). */
@@ -1334,12 +1375,31 @@ export function analyzePatterns(bars: PBar[], opts?: DetectOptions): PatternAnal
     if (nd < 3 && isDn(f) && !isDn(f - 1)) { let first = true; for (let j = f - 1; j >= f - L10; j--) if (isDn(j)) { first = false; break; } if (first) { ends.add(f - 1); nd++; } }
   }
 
-  const best = new Map<PatternId, { raw: Raw; st: { stage: PatternStage; f: number } }>();
+  // zzz1009 — `strong`: the raw shape score (before the breakout-volume bonus) reaches MIN_CONF; a strong candidate always beats a
+  // weak one, so the qualifying hits are exactly what they were before weaker candidates were kept
+  const best = new Map<PatternId, { raw: Raw; st: { stage: PatternStage; f: number }; strong: boolean }>();
+  // zzz1009 — qualifying shapes that are no longer current (opts.weak only): the strongest per id
+  const gone = new Map<PatternId, { raw: Raw; st: { stage: PatternStage; f: number }; why: ExpiredWhy }>();
+  const noteExpired = (raw: Raw, st: { stage: PatternStage; f: number }, why: ExpiredWhy) => {
+    const prev = gone.get(raw.id);
+    if (!prev || raw.conf > prev.raw.conf + 1e-9) gone.set(raw.id, { raw: { ...raw }, st, why });
+  };
   // zzz1008 — the 1-year high and low at the last bar (ranAwayFrom1y); per side, chosen by the pattern's bias below
   const yA = Math.max(0, last - B(s, 252) + 1);
   const yHi = s.mxH.idx(yA, last), yLo = s.mnL.idx(yA, last);
-  for (const e of [...ends].sort((a, b) => b - a)) {
+  // zzz1009 — opts.weak: also the body ends before older bursts (up to HISTORY_ENDS bars back), read ONLY for the expired list
+  // ("last pattern: … broke out N months ago") — they never add or change a qualifying hit
+  const hist = new Set<number>();
+  if (opts?.weak) {
+    let hu = 0, hd = 0;
+    for (let f = last - Math.max(2, B(s, 40)) - 1; f >= Math.max(L10 + 2, last - HISTORY_ENDS[tf]); f--) {
+      if (hu < 6 && isUp(f) && !isUp(f - 1)) { let first = true; for (let j = f - 1; j >= f - L10; j--) if (isUp(j)) { first = false; break; } if (first && !ends.has(f - 1)) { hist.add(f - 1); hu++; } }
+      if (hd < 6 && isDn(f) && !isDn(f - 1)) { let first = true; for (let j = f - 1; j >= f - L10; j--) if (isDn(j)) { first = false; break; } if (first && !ends.has(f - 1)) { hist.add(f - 1); hd++; } }
+    }
+  }
+  for (const e of [...ends, ...hist].sort((a, b) => b - a)) {
     if (e < minE) continue;
+    const histOnly = hist.has(e);
     const raws = new Map<PatternId, Raw>();
     const atr = s.atrPct[e], sm = pf.swingMul;
     const zzS = zigzag(s.h, s.l, e - B(s, 330), e, Math.min(0.05 * sm, Math.max(0.025 * sm, 1.2 * atr)));
@@ -1357,13 +1417,17 @@ export function analyzePatterns(bars: PBar[], opts?: DetectOptions): PatternAnal
     for (const raw of raws.values()) {
       const bull = PATTERN_META[raw.id].bias === 'bullish';
       const st = stageOf(s, e, raw.keyFrom, raw.pivot, bull, raw.lineAt, raw.expiry, win);
-      if (!st) continue;
+      if (!st) {
+        if (opts?.weak && raw.conf >= MIN_CONF) { const x = expiredWhy(s, e, raw, bull, win); if (x) noteExpired(raw, x.st, x.why); }
+        continue;
+      }
+      if (histOnly) continue;
       // zzz1008 — a reversal the price has already run away from (at the 1-year high / low, made after the pattern) is not current
       if (PATTERN_META[raw.id].family === 'reversal' && raw.pts?.length && REVERSAL_IDS.has(raw.id)) {
         const lastTp = Math.max(...raw.pts.map((q) => q[0]));
         const lvl = raw.lineAt ? raw.lineAt(capOf(last, raw.lineAt, raw.expiry)) : raw.pivot;
         const yIdx1 = bull ? yHi : yLo, y1 = bull ? s.h[yHi] : s.l[yLo];
-        if (ranAwayFrom1y(s.c[last], y1, yIdx1 > lastTp, lvl, bull)) continue;
+        if (ranAwayFrom1y(s.c[last], y1, yIdx1 > lastTp, lvl, bull)) { if (opts?.weak && raw.conf >= MIN_CONF) noteExpired(raw, st, 'ran-away'); continue; }
         if (y1 > 0) raw.ev = { ...(raw.ev || {}), hi1y: pc1(s.c[last] / y1) };
       }
       let conf = raw.conf;
@@ -1373,23 +1437,25 @@ export function analyzePatterns(bars: PBar[], opts?: DetectOptions): PatternAnal
         if (Number.isFinite(base50) && base50 > 0 && s.v[st.f] >= 1.4 * base50) conf = Math.min(1, conf + 0.05);
       }
       if (st.stage === 'failed') conf *= 0.9;
+      const strong = raw.conf >= MIN_CONF;
       const r2 = { ...raw, conf };
       const prev = best.get(raw.id);
-      if (!prev || r2.conf > prev.raw.conf + 1e-9) best.set(raw.id, { raw: r2, st });
+      if (!prev || (strong && !prev.strong) || (strong === prev.strong && r2.conf > prev.raw.conf + 1e-9)) best.set(raw.id, { raw: r2, st, strong });
     }
   }
 
   const close = s.c[last];
   const hits: PatternHit[] = [];
-  for (const { raw, st } of best.values()) {
-    if (raw.conf < MIN_CONF) continue;
+  const weakHits: PatternHit[] = [];
+  const goneHits: PatternHit[] = [];
+  const toHit = (raw: Raw, st: { stage: PatternStage; f: number }, extra: Partial<PatternHit>): PatternHit | null => {
     const meta = PATTERN_META[raw.id];
     const bull = meta.bias === 'bullish';
     const conf = Math.round(raw.conf * 1000) / 1000;
     // zzz990 (CP-05) — a sloped boundary's level now: projected to the last bar (capped at its expiry)
     const cap = capOf(last, raw.lineAt, raw.expiry);
     const level = raw.lineAt ? raw.lineAt(cap) : raw.pivot;
-    if (!(level > 0) || !Number.isFinite(level)) continue;
+    if (!(level > 0) || !Number.isFinite(level)) return null;
     const dist = (close / level - 1) * 100;
     // zzz990 (CP-04) — volume evidence over the pattern's span
     const spanA = Math.max(0, raw.start), spanLen = last - spanA + 1;
@@ -1410,7 +1476,7 @@ export function analyzePatterns(bars: PBar[], opts?: DetectOptions): PatternAnal
         lines.unshift({ kind: 'pivot', points: [[s.t[k0], raw.lineAt(k0)], [s.t[cap], level]] });
       } else lines.unshift({ kind: 'pivot', points: [[s.t[raw.start], raw.pivot], [s.t[last], raw.pivot]] });
     }
-    hits.push({
+    return {
       id: raw.id, label: meta.label, bias: meta.bias, family: meta.family,
       stage: st.stage, confidence: conf, likelihood: likelihoodOf(conf),
       startT: s.t[raw.start], endT: s.t[raw.end], lengthBars,
@@ -1419,11 +1485,26 @@ export function analyzePatterns(bars: PBar[], opts?: DetectOptions): PatternAnal
       note, lines, volumeOk, timeframe: tf,
       ...(raw.pts?.length ? { points: raw.pts.filter(([i]) => i >= 0 && i < s.n).sort((a, b) => a[0] - b[0]).map(([i, p, role]) => ({ t: s.t[i], p, role })) } : {}),
       ...(raw.ev && Object.keys(raw.ev).length ? { evidence: raw.ev } : {}),
-    });
+      ...(st.f >= 0 ? { breakT: s.t[st.f], breakAgo: last - st.f } : {}),
+      ...extra,
+    };
+  };
+  for (const { raw, st, strong } of best.values()) {
+    if (!strong && !opts?.weak) continue;
+    if (raw.conf < (strong ? MIN_CONF : WEAK_CONF)) continue;
+    const h = toHit(raw, st, strong ? {} : { weak: true });
+    if (h) (strong ? hits : weakHits).push(h);
+  }
+  for (const { raw, st, why } of gone.values()) {
+    if (best.get(raw.id)?.strong) continue;
+    const h = toHit(raw, st, { expired: why });
+    if (h) goneHits.push(h);
   }
   const winA = Math.max(0, last - B(s, 60) + 1);
+  const resolved = resolve(hits);
   return {
-    hits: resolve(hits), ...base, tooShort: false, listingKnown: listT != null,
+    hits: resolved, ...base, tooShort: false, listingKnown: listT != null,
+    ...(opts?.weak ? { weak: weakerOf(weakHits, resolved), expired: expiredOf(goneHits, resolved) } : {}),
     volumeCoverage: Math.round(((s.pn[last + 1] - s.pn[winA]) / (last - winA + 1)) * 1000) / 1000,
   };
 }
@@ -1469,6 +1550,49 @@ const EXCLUSIVE: PatternId[][] = [['bull_flag', 'bull_pennant'], ['cup', 'cup_ha
 /** A forming bullish and a forming bearish reading of the same bars (e.g. a cup with handle is also two highs with a
  *  dip): the weaker reading is damped ×0.75 so the headline leads with the stronger and the other drops a level. */
 const CONFLICT_DAMP = 0.75;
+
+/** zzz1009 — weaker candidates: none that is the same structure as a qualifying hit (same id or exclusive group), at most one per
+ *  exclusive group, strongest first. */
+function weakerOf(weak: PatternHit[], qualifying: PatternHit[]): PatternHit[] {
+  const grp = (id: PatternId) => EXCLUSIVE.find((g) => g.includes(id)) || [id];
+  const taken = new Set<PatternId>(qualifying.flatMap((h) => grp(h.id)));
+  const out: PatternHit[] = [];
+  for (const h of weak.slice().sort((a, b) => b.confidence - a.confidence)) {
+    if (taken.has(h.id)) continue;
+    for (const id of grp(h.id)) taken.add(id);
+    out.push(h);
+  }
+  return out;
+}
+
+/** zzz1009 — expired shapes: none that is the same structure as a qualifying hit; most recent break first (an unbroken apex last). */
+function expiredOf(gone: PatternHit[], qualifying: PatternHit[]): PatternHit[] {
+  const grp = (id: PatternId) => EXCLUSIVE.find((g) => g.includes(id)) || [id];
+  const taken = new Set<PatternId>(qualifying.flatMap((h) => grp(h.id)));
+  const out: PatternHit[] = [];
+  for (const h of gone.slice().sort((a, b) => (a.breakAgo ?? 1e9) - (b.breakAgo ?? 1e9) || b.confidence - a.confidence)) {
+    if (taken.has(h.id)) continue;
+    for (const id of grp(h.id)) taken.add(id);
+    out.push(h);
+  }
+  return out;
+}
+
+/** zzz1009 — why a shape that stageOf() rejects is no longer current, with the stage it last had (null: not this body end's to report). */
+function expiredWhy(s: S, e: number, raw: Raw, bull: boolean, win: StageWindows): { why: ExpiredWhy; st: { stage: PatternStage; f: number } } | null {
+  const last = s.n - 1;
+  const cap = capOf(last, raw.lineAt, raw.expiry);
+  const lv = (i: number) => (raw.lineAt ? raw.lineAt(Math.min(i, cap)) : raw.pivot);
+  const searchEnd = raw.lineAt ? cap : last;
+  let f = -1;
+  for (let i = Math.max(0, raw.keyFrom); i <= searchEnd; i++) if (bull ? s.c[i] > lv(i) : s.c[i] < lv(i)) { f = i; break; }
+  if (f < 0) return e === last && searchEnd < last ? { why: 'apex', st: { stage: 'forming', f } } : null;
+  if (e < last && f > e + win.lead) return null;
+  const cl = s.c[last], level = lv(last);
+  if (bull ? cl < level * 0.925 : cl > level * 1.075) return { why: 'failed-old', st: { stage: 'failed', f } };
+  if (last - f > win.breakout) return { why: 'completed', st: { stage: 'breakout', f } };
+  return null;
+}
 
 function resolve(hits: PatternHit[]): PatternHit[] {
   let out = hits.slice();

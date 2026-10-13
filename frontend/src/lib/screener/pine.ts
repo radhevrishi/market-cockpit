@@ -22,7 +22,7 @@ import type { TechStored } from './tech-fetch';
 import { tvFigures, rsRatings, type TvFigures } from './tv-screens';
 
 /** Bump when the engine or the stored tag changes: every stored entry without it is re-read on the next build. */
-export const PATTERN_SCAN_VERSION = 8;   // 8 = zzz1008: auditable geometry on every tag (pts / ev), the 1-year-high runaway rule for reversals and the 6-candle monthly minimum (cp-3.2-geometry) — every stored reading is re-read; 7 = zzz1005: chart-pattern precision audit (real turning points, cp-3.1-precision) — every stored reading is re-read; 2 = zzz984: + the owner's TradingView indicator fields (tv-screens.ts); 3 = zzz987: + Stage Analysis (TheWrap method); 4 = zzz990: chart-pattern audit (volume missingness, IPO first base + listing date, projected sloped boundaries, strict HTF); 5 = zzz993: scan status / quality (MC-02) + scan-close provenance (MC-01) + weekly / monthly patterns (patW / patM); 6 = zzz1003: W / M scans always carry their own close `px` (PS-01), the daily scan reads COMPLETED sessions only (+ an optional provisional live reading, PS-03), monthly scans read ~10 years (PS-07)
+export const PATTERN_SCAN_VERSION = 9;   // 9 = zzz1009: weekly double / triple / H&S span ≥ 5 weekly candles, hits carry breakT / breakAgo (cp-3.3-indicator) — every stored reading is re-read; 8 = zzz1008: auditable geometry on every tag (pts / ev), the 1-year-high runaway rule for reversals and the 6-candle monthly minimum (cp-3.2-geometry) — every stored reading is re-read; 7 = zzz1005: chart-pattern precision audit (real turning points, cp-3.1-precision) — every stored reading is re-read; 2 = zzz984: + the owner's TradingView indicator fields (tv-screens.ts); 3 = zzz987: + Stage Analysis (TheWrap method); 4 = zzz990: chart-pattern audit (volume missingness, IPO first base + listing date, projected sloped boundaries, strict HTF); 5 = zzz993: scan status / quality (MC-02) + scan-close provenance (MC-01) + weekly / monthly patterns (patW / patM); 6 = zzz1003: W / M scans always carry their own close `px` (PS-01), the daily scan reads COMPLETED sessions only (+ an optional provisional live reading, PS-03), monthly scans read ~10 years (PS-07)
 /** zzz1003 (PS-01) — older scan versions whose DAILY reading is still shown during the changeover to the current version: their daily
  *  tags / fields are what the current version would show for a completed session (a v5 entry read during a session is labelled
  *  `session: 'provisional'`). Their WEEKLY / MONTHLY readings are NOT shown (v5 W / M scans may lack `px`, the close their `d` is
@@ -429,7 +429,7 @@ export interface PineQuery {
   r40Min?: number | null;
   /** zzz1008 — count breakouts (breakdowns) whose analysis close is back on the near side of the pivot as stage 'breakout' (true,
    *  the default; labelled "broke out · back below pivot") or only those holding beyond it (false — the setup cards' screens). */
-  returned?: boolean;
+  returned?: boolean | 'only';
 }
 /** zzz984 — the extra columns the owner can switch on (the TradingView-script fields first). */
 export const OPTIONAL_COLS: readonly NumKey[] = ['tt', 'rsR', 'stage', 'twSt', 'sata', 'mrs', 'twWk', 'r40', 'revQYoY', 'fcfmTTM', 'rsiMA', 'rsiX', 'gcD', 'dcD', 'emaXU', 'emaXD', 'ppD', 'rvol', 'adv$', 'adrP', 'ripB', 'ttOk', 'st12', 'perf1M', 'perf6M', 'perf1Y'];
@@ -469,17 +469,48 @@ export function r40Text(q: Pick<PineQuery, 'r40Min'>): string {
   return q.r40Min != null && Number.isFinite(q.r40Min) ? `Rule of 40 ≥ ${q.r40Min}` : '';
 }
 
+/** zzz1011 — the Rule of 40 in full: the exact formula, the period of each input, the fields it needs, and this company's state.
+ *  A missing input is UNKNOWN (never 0, never a pass); an input outside the meaningful range blanks the figure ('guarded'). */
+export const R40_FORMULA = 'Rule of 40 = revenue growth (latest reported quarter vs the same quarter a year earlier, %) + free-cash-flow margin (trailing twelve months: free cash flow ÷ revenue, %)';
+export const R40_FIELDS: ReadonlyArray<{ key: 'revQYoY' | 'fcfmTTM'; label: string; period: string }> = [
+  { key: 'revQYoY', label: 'Revenue growth YoY', period: 'latest reported quarter vs the same quarter a year earlier' },
+  { key: 'fcfmTTM', label: 'FCF margin', period: 'trailing twelve months (last four reported quarters)' },
+];
+export interface R40Explain { value: number | null; state: 'known' | 'unknown' | 'guarded'; missing: string[]; text: string; pass: boolean | null }
+export function r40Explain(r: Partial<ScreenRow>, min?: number | null): R40Explain {
+  const missing = R40_FIELDS.filter((f) => !fin((r as any)[f.key])).map((f) => `${f.label} (${f.period})`);
+  if (missing.length) return { value: null, state: 'unknown', missing, pass: null, text: `Unknown — missing ${missing.join(' and ')}. Not counted as 0 and never a pass.` };
+  const g = r.revQYoY as number, m = r.fcfmTTM as number;
+  if (!ruleOf40Usable(g, m)) return { value: null, state: 'guarded', missing: [], pass: min == null ? null : false, text: `Not meaningful — growth ${g}% + FCF margin ${m}%: growth above +${R40_MAX_GROWTH}% or an FCF margin outside ±${R40_MAX_ABS_FCFM}% (a tiny sales base) — does not pass.` };
+  const v = ruleOf40(g, m) as number;
+  return { value: v, state: 'known', missing: [], pass: min == null ? null : v >= min, text: `${g > 0 ? '+' : ''}${g}% growth + ${m > 0 ? '+' : ''}${m}% FCF margin = ${v}${min != null ? ` (needs ≥ ${min})` : ''}` };
+}
+
 const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 /** Distance in the pattern's direction (bullish: close vs pivot; bearish: the mirror). */
 export const dirDist = (t: PatternTag): number | null => tagDirDist(t);
 
 type PatQ = Pick<PineQuery, 'bias' | 'ids' | 'stages' | 'minConf' | 'dist'> & Partial<Pick<PineQuery, 'tfs' | 'tfMode' | 'returned'>>;
 const ruleOf = (q: PatQ) => ({ bias: q.bias, ids: q.ids, stages: q.stages, minScore: q.minConf, dist: q.dist, tfs: q.tfs?.length ? q.tfs : (['D'] as PatTf[]), tfMode: q.tfMode === 'all' ? 'all' as const : 'any' as const, returned: q.returned !== false });
-/** The pattern part on one row: pass / fail / missing (a selected timeframe cannot be read) and the matching tags (with tf). */
-export function evalRowPatterns(row: unknown, q: PatQ): PatternEval { return evalPattern(row, ruleOf(q)); }
+/** zzz1011 — a breakout (bearish: breakdown) whose analysis close is back on the near side of its level — the historical event stays,
+ *  the current condition is "returned inside". Same rule as pine-view isReturned (kept here so the engine does not import the view). */
+export const tagReturned = (t: Pick<PatternTag, 's' | 'b' | 'd'>): boolean => t.s === 'b' && fin(t.d) && (t.b === 'U' ? t.d < 0 : t.d > 0);
+/** The pattern part on one row: pass / fail / missing (a selected timeframe cannot be read) and the matching tags (with tf).
+ *  zzz1011 — returned 'only': of the breakouts, keep only those back inside the structure (the "Recent breakouts back below the
+ *  pivot" workflow); forming / failed tags are kept when their stage is selected. ANY / ALL is decided again on the kept tags, so a
+ *  timeframe left with no tag fails ALL. */
+export function evalRowPatterns(row: unknown, q: PatQ): PatternEval {
+  const e = evalPattern(row, ruleOf(q));
+  if (q.returned !== 'only' || e.status !== 'pass') return e;
+  const tags = e.tags.filter((t) => t.s !== 'b' || tagReturned(t as PatternTag));
+  const tfs = q.tfs?.length ? q.tfs : (['D'] as PatTf[]);
+  const matchedTfs = tfs.filter((tf) => tags.some((t) => (t.tf || 'D') === tf));
+  const pass = q.tfMode === 'all' ? matchedTfs.length === tfs.length : matchedTfs.length > 0;
+  return { ...e, status: pass ? 'pass' : 'fail', tags: pass ? tags : [], matchedTfs };
+}
 /** The row's pattern tags that pass the pattern part of the query (each carries its timeframe `tf`). */
 export function matchTags(row: Pick<ScreenRow, 'pat'> | Record<string, unknown>, q: PatQ): ScreenPatternTag[] {
-  return evalPattern(row, ruleOf(q)).tags as ScreenPatternTag[];
+  return evalRowPatterns(row, q).tags as ScreenPatternTag[];
 }
 
 /** Average daily traded value in the market's money unit ($ million / ₹ crore), from price × 30-day (else 10-day) volume. */
@@ -873,7 +904,7 @@ export function cleanQuery(raw: unknown): PineQuery {
     filters,
     need: x.need === 'any' ? 'any' : 'pattern',
     r40Min: numOrNull(x.r40Min, -1000, 1000),
-    returned: x.returned !== false,
+    returned: x.returned === 'only' ? 'only' : x.returned !== false,
     cols: Array.isArray(x.cols) ? Array.from(new Set<NumKey>(x.cols.filter((k: unknown): k is NumKey => typeof k === 'string' && !!fieldOf(k)))).slice(0, 30) : [],
   };
 }

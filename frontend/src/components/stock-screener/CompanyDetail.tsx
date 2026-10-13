@@ -2,6 +2,7 @@
 // zzz1006 — company detail side panel (opened from the company name). It shows the snapshot's own figures for the row — the same
 // values, formats and ≈ marks as the table — how the open screen's filters judge it, the review choices, and links to the chart,
 // the Pine Screener and the Stock Sheet. The table underneath keeps its scroll position (the panel floats over the page).
+// zzz1012 — premium styling (screener tokens), check marks in their own column, j / k hint.
 import { useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { FIELDS, fieldOf, fmtValue, fmtPrice, type Filter, type NumKey } from '@/lib/screener/filters';
@@ -33,13 +34,13 @@ export default function CompanyDetail({ row, market, filters, exactOnly, review,
     <aside className="mcss-drawer" role="dialog" aria-label={`Company details: ${row.t}`} onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }}>
       <div className="hd">
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-          <span style={{ fontSize: 18, fontWeight: 750, color: 'var(--mc-text-0)' }}>{row.t}</span>
+          <span className="tk">{row.t}</span>
           <span className="mcss-mk" title="Exchange">{exch}</span>
           {position ? <span className="mcss-dim" style={{ fontSize: 12 }}>{position}</span> : null}
           <span style={{ flex: 1 }} />
           <button ref={closeRef} type="button" className="mcss-btn ghost sm" aria-label="Close company details" onClick={onClose}>✕</button>
         </div>
-        <div style={{ fontSize: 13, color: 'var(--mc-text-2)', marginTop: 2 }}>{row.n}</div>
+        <div style={{ fontSize: 13.5, color: 'var(--ss-ink)', marginTop: 4, fontWeight: 500 }}>{row.n}</div>
         <div className="mcss-dim" style={{ fontSize: 12, marginTop: 2 }} title={`Source: ${[row.sec, row.ind].filter(Boolean).join(' · ') || 'none'}\nTradingView sector ${map.note}`}>
           {row.tvSec || row.sec || 'Sector unknown'}{row.ind ? ` · ${row.ind}` : ''}
         </div>
@@ -52,7 +53,7 @@ export default function CompanyDetail({ row, market, filters, exactOnly, review,
       <div className="bd">
         <div className="mcss-facts">
           <div><div className="k">Price</div><div className="v">{fmtPrice(row.px, market)}</div></div>
-          <div><div className="k">Change today</div><div className="v" style={{ color: chg == null ? undefined : chg >= 0 ? 'var(--ss-up)' : 'var(--ss-down)' }}>{chg == null ? '—' : `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`}</div></div>
+          <div><div className="k">Change today</div><div className="v" style={{ color: chg == null || chg === 0 ? undefined : chg > 0 ? 'var(--ss-up)' : 'var(--ss-down)' }}>{chg == null ? '—' : `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`}</div></div>
           <div><div className="k">Market cap</div><div className="v">{fmtValue(row.mc, 'money', market)}</div></div>
         </div>
         <div className="mcss-h4">Review</div>
@@ -61,10 +62,10 @@ export default function CompanyDetail({ row, market, filters, exactOnly, review,
         </div>
         {checks.length ? (<>
           <div className="mcss-h4">This screen&apos;s filters · {checks.every((c) => c.pass) ? 'passes every one' : `fails ${checks.filter((c) => !c.pass).length} of ${checks.length}`}</div>
-          <ul style={{ margin: 0, paddingLeft: 0, listStyle: 'none', display: 'grid', gap: 3, fontSize: 12.5 }}>
+          <ul className="mcss-checks">
             {checks.map((c, i) => (
-              <li key={i} style={{ color: c.pass ? 'var(--mc-text-1)' : 'var(--ss-down)' }}>
-                <span aria-hidden style={{ display: 'inline-block', width: 16 }}>{c.pass ? '✓' : '✗'}</span>{c.label}: <span style={{ color: c.nearMiss ? 'var(--ss-warn)' : 'var(--mc-text-3)' }}>{c.detail}</span>
+              <li key={i} style={{ color: c.pass ? 'var(--ss-ink-2)' : 'var(--ss-down)' }}>
+                <span aria-hidden className={c.pass ? 'ok' : 'no'}>{c.pass ? '✓' : '✗'}</span><span>{c.label}: <span style={{ color: c.nearMiss ? 'var(--ss-warn)' : 'var(--ss-ink-3)' }}>{c.detail}</span></span>
               </li>
             ))}
           </ul>
@@ -81,7 +82,7 @@ export default function CompanyDetail({ row, market, filters, exactOnly, review,
             </section>
           );
         })}
-        <div className="mcss-dim" style={{ fontSize: 12, marginTop: 12 }}>Figures from the snapshot{row.q ? `, latest quarter ${row.q}` : ''}. ≈ = worked out in a rougher way; n/a = not meaningful for this company.</div>
+        <div className="mcss-dim" style={{ fontSize: 12, marginTop: 14, lineHeight: 1.5 }}>Press <kbd>j</kbd> / <kbd>k</kbd> for the next / previous company, <kbd>Esc</kbd> to close. Figures from the snapshot{row.q ? `, latest quarter ${row.q}` : ''}. ≈ = worked out in a rougher way; n/a = not meaningful for this company.</div>
       </div>
     </aside>
   );
