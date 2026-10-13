@@ -60,6 +60,26 @@
 //  • Minimum history: D 30 bars, W 30 weekly bars, M 24 monthly bars (PATTERN_MIN_HISTORY); fewer → tooShort.
 //  • Every hit carries `timeframe`; PATTERN_ENGINE_VERSION identifies the rule set for stored results.
 //  • timeframe 'D' runs exactly the daily rules above (k = 1 makes every conversion the identity).
+//
+// zzz1005 — precision audit (2026-10-13; ~150 real detections on D / W / M charted and judged against Bulkowski, O'Neil
+// and Minervini). The false positives were rarely a bad fit score; they were turning points that are not turning points.
+// Rules added (thresholds next to each detector; REVERSAL_RULES holds the reversal ones):
+//  • Double / triple bottoms & tops, head & shoulders: every low / high is the most extreme price around it (a third of the
+//    way to its neighbours; the first one over a lead-in as long as the formation) and the first low (H&S: the head) lies
+//    within 10% of the extreme of the prior ~6 months — no "first top" a few bars after a higher peak, no "first low" that
+//    is a higher low inside a rally. Middle peak / trough and neckline armpits strictly between the turning points. Middle
+//    dip ≤ 40% (M 45%). The last turning point is ≥ 3 days (W / M: 1 candle) old and price is back off it by ≥ 12% of the
+//    formation's height. H&S: neckline change ≤ 15%, shoulders ≥ 30% of the head's distance from the neckline, head ≤ 30%
+//    (M 40%) beyond the nearer shoulder.
+//  • Lip bases (flat, cup, handle, U) and VCP: the left-side high tops the advance into it (no higher high over a lead-in as
+//    long as the base). Cup / U without handle: close in the upper half. U base with < 10% prior rise: lip = 6-month high.
+//  • Base on base: the earlier base is a real base (its pivot = its left-side high, ≥ 5 weeks before the breakout).
+//  • Ascending base: each high ≤ 15% above the last, the third ≤ 25% above the first. VCP: first contraction from the
+//    top (≥ 95% of it), contractions span ≥ 3 weeks, last high ≥ 90% of the base high.
+//  • Triangles / wedges: void once the close is > 3% beyond the opposite line; scores ask more of touches, fit, flatness.
+//  Effect on 336 sampled histories (D + W + M): double / triple / H&S hits 755 → 155, all hits 1,304 → 488; score 100 from
+//  4.4% of hits to 1.4%; audited precision (correct / borderline / wrong) 27% / 30% / 43% (67 hits) → 49% / 47% / 3% (99).
+//  Regression fixtures from those real charts: __tests__/zzz1005-pattern-precision.test.ts.
 
 import { aggregateBars } from './bar-aggregate';
 
@@ -115,7 +135,7 @@ export type PatternTimeframe = 'D' | 'W' | 'M';
 export interface DetectOptions { firstTradeT?: number; maxBars?: number; timeframe?: PatternTimeframe }
 
 /** zzz992 — bump when any detection rule changes (stored screener tags carry it for provenance). */
-export const PATTERN_ENGINE_VERSION = 'cp-3.0-tf';
+export const PATTERN_ENGINE_VERSION = 'cp-3.1-precision';
 
 interface TfProfile {
   tf: PatternTimeframe;
@@ -410,13 +430,19 @@ function push(out: Map<PatternId, Raw>, r: Raw | null) {
  *  Cup         (O'Neil): 7–65 weeks, depth 12–33% (to 50% penalised), prior rise ≥ 20–30%, rounded: ≥ 35% of the
  *                       cup's closes in the lower 30% of its range (a straight-sided V spends ~30% there, a U ~50%),
  *                       low in the middle 15–85% of the cup, right side back within 25% (full credit within 5%) of the lip.
- *                       No handle yet (right-side pullback < 2.5% or < 5 bars) → pivot = lip high.
+ *                       No handle yet (right-side pullback < 2.5% or < 5 bars) → pivot = lip high. zzz1005: a cup / U base
+ *                       without a handle needs the close back in the upper half of its range (the right side is rising).
+ *  zzz1005: every lip base (flat, cup, handle, U) needs its left-side high to top the advance into it — no higher high
+ *                       (> 1%) over a lead-in as long as the base, at least 5 weeks and at most ~6 months.
  *  Handle      (O'Neil): 5–35 bars after the right-side high, 2.5–15% deep (≤ 10% best), its low in the upper half of the
  *                       cup, right-side high within 15% of the lip, lighter volume; pivot = handle high (no tick added — O'Neil adds 0.10;
  *                       the caller can).
- *  U base:              rounded like a cup but not a classic cup (too shallow 8–12%, too deep, or no prior rise).
- *  Base on base (O'Neil): a base ≤ 25% deep whose lip is 5–20% above the pivot of a prior base (≤ 35% deep, broke out
- *                       within 60 bars before the lip) and whose low holds above ~93% of that pivot.
+ *  U base:              rounded like a cup but not a classic cup (too shallow 8–12%, too deep, or no prior rise); zzz1005:
+ *                       with less than a 10% rise into it, its lip must be the high of the prior ~6 months.
+ *  Base on base (O'Neil): a base ≤ 25% deep whose lip is 5–20% above the pivot of a prior base (5–35% deep, broke out
+ *                       within 60 bars before the lip) and whose low holds above ~93% of that pivot. zzz1005: the prior base
+ *                       is a real base — its pivot is its LEFT-side high, the highest high from there to the day before the
+ *                       breakout, at least 5 weeks (25 days) before it; never the last bars of a straight rally or of a V.
  */
 function detectLipBases(s: S, e: number, recs: number[], out: Map<PatternId, Raw>) {
   const tf = s.pf.tf;
@@ -430,6 +456,9 @@ function detectLipBases(s: S, e: number, recs: number[], out: Map<PatternId, Raw
     const len = e - sIdx + 1;
     if (len < L25 || len > LMAX) continue;
     const lip = s.h[sIdx];
+    // zzz1005 — the left-side high tops the advance into it: no higher high over a lead-in as long as the base (5 weeks to
+    // 6 months) — a lower high on the way down from a bigger peak is not the lip of a base
+    if (s.mxH.val(sIdx - Math.min(Math.max(len, L25), L130), sIdx - 1) > lip * 1.01) continue;
     const m = s.mnL.idx(sIdx, e);
     const low = s.l[m];
     const depth = 1 - low / lip;
@@ -482,12 +511,15 @@ function detectLipBases(s: S, e: number, recs: number[], out: Map<PatternId, Raw
       push(out, { id: 'cup_handle', conf, start: sIdx, end: e, keyFrom: r, pivot: rightH, depth,
         detail: `handle ${Math.round(hDepth * 100)}% deep`,
         lines: [LP('pivot', s, r, rightH, e, rightH), LP('resistance', s, sIdx, lip, r, lip), LP('support', s, m, low, m, low)] });
-    } else if (classic && noHandle) {
-      const conf = wscore([...common, [2, ramp(recovery, 0.75, 0.95)]]);
+    } else if (classic && noHandle && posInRange >= 0.5) {
+      // zzz1005 — a cup's right side is climbing back: the close is in the upper half of the cup
+      const conf = wscore([...common, [2, ramp(recovery, 0.75, 0.95)], [1, ramp(posInRange, 0.5, 0.8)]]);
       push(out, { id: 'cup', conf, start: sIdx, end: e, keyFrom: sIdx, pivot: lip, depth,
         detail: `right side ${Math.round(recovery * 100)}% of the left high`,
         lines: [LP('pivot', s, sIdx, lip, e, lip), LP('support', s, m, low, m, low)] });
-    } else if (!classic && (noHandle || handleValid) && depth >= 0.08 && depth <= 0.5 && round >= 0.35) {
+    } else if (!classic && (noHandle || handleValid) && depth >= 0.08 && depth <= 0.5 && round >= 0.35 && posInRange >= 0.5
+      // zzz1005 — without a prior rise the lip must at least be the high of the prior ~6 months (not a bounce in a decline)
+      && (up >= 0.1 || !(s.mxH.val(sIdx - L130, sIdx - 1) > lip * 1.01))) {
       const conf = wscore([[2, ramp(round, 0.35, 0.5)], [2, ramp(recovery, 0.75, 0.95)], [1, symScore], [1, ramp(len, L35, Bg(s, 50, L35))], [1, ramp(up, 0, 0.25)], [1, trendOK(s, e)]]);
       push(out, { id: 'u_base', conf, start: sIdx, end: e, keyFrom: sIdx, pivot: lip, depth, detail: len > L330 ? 'multi-year rounded base' : 'rounded bottom',
         lines: [LP('pivot', s, sIdx, lip, e, lip), LP('support', s, m, low, m, low)] });
@@ -496,7 +528,7 @@ function detectLipBases(s: S, e: number, recs: number[], out: Map<PatternId, Raw
 
   // Base on base
   if (!patternApplies('base_on_base', tf)) return;
-  const L20 = Bm(s, 20), L40 = B(s, 40);
+  const L20 = Bm(s, 20);
   for (const sIdx of recs) {
     const len = e - sIdx + 1;
     if (len < L20 || len > L130) continue;
@@ -504,18 +536,27 @@ function detectLipBases(s: S, e: number, recs: number[], out: Map<PatternId, Raw
     const low = s.mnL.val(sIdx, e);
     const depth = 1 - low / lip;
     if (depth > 0.25 || depth < 0.03) continue;
-    for (let k = sIdx - B(s, 3); k >= Math.max(L40 + 1, sIdx - B(s, 60)); k--) {
-      const prevMax = s.mxH.val(k - L40, k - 1);
-      if (!(s.c[k] > prevMax)) continue;
-      if (k > 0 && s.c[k - 1] > s.mxH.val(k - L40 - 1, k - 2)) continue; // only the first day of a breakout burst
-      const priorLow = s.mnL.val(k - L40, k - 1);
+    const L25b = Bm(s, 25);
+    for (let k = sIdx - B(s, 3); k >= Math.max(L25b + 1, sIdx - B(s, 60)); k--) {
+      // zzz1005 — a breakout bar: a close above the prior 5 weeks' highs
+      const box = s.mxH.val(k - L25b, k - 1);
+      if (!(s.c[k] > box)) continue;
+      // the earlier base it broke out of: its left-side high j is the highest high of the ~6 months up to 5 weeks before the
+      // breakout, and no later high before the breakout tops it by more than 1% (a real base ≥ 5 weeks long — never the last
+      // bars of a straight rally or of a V)
+      const j = s.mxH.idx(k - L130, k - L25b);
+      if (j < 0 || s.mxH.val(j + 1, k - 1) > s.h[j] * 1.01) continue;
+      const prevMax = s.h[j];
+      // the FIRST close above the earlier base's lip
+      if (!(s.c[k] > prevMax) || s.c[k - 1] > prevMax) continue;
+      const priorLow = s.mnL.val(j, k - 1);
       const priorDepth = 1 - priorLow / prevMax;
       const adv = lip / prevMax - 1;
-      if (priorDepth > 0.35 || priorDepth < 0.04 || adv < 0.05 || adv >= 0.2 || low < prevMax * 0.93) break;
-      const conf = wscore([[2, adv <= 0.1 ? ramp(adv, 0.05, 0.08) : ramp(adv, 0.2, 0.12)], [2, ramp(low / prevMax, 0.93, 1.0)], [1, ramp(depth, 0.25, 0.12)], [1, ramp(len, L20, Bg(s, 30, L20))], [1, trendOK(s, e)], [1, ramp(priorUp(s, k), 0.1, 0.3)]]);
-      push(out, { id: 'base_on_base', conf, start: Math.max(0, k - L40), end: e, keyFrom: sIdx, pivot: lip, depth,
+      if (priorDepth > 0.35 || priorDepth < 0.05 || adv < 0.05 || adv >= 0.2 || low < prevMax * 0.93) break;
+      const conf = wscore([[2, adv <= 0.1 ? ramp(adv, 0.05, 0.08) : ramp(adv, 0.2, 0.12)], [2, ramp(low / prevMax, 0.93, 1.0)], [1, ramp(depth, 0.25, 0.12)], [1, ramp(len, L20, Bg(s, 30, L20))], [1, trendOK(s, e)], [1, ramp(priorUp(s, j), 0.1, 0.3)], [1, ramp(k - j, L25b, Bg(s, 35, L25b))]]);
+      push(out, { id: 'base_on_base', conf, start: j, end: e, keyFrom: sIdx, pivot: lip, depth,
         detail: `earlier base pivot ${fmt(prevMax)}, gained only ${Math.round(adv * 100)}% before this base`,
-        lines: [LP('pivot', s, sIdx, lip, e, lip), LP('support', s, k - L40, prevMax, k, prevMax)] });
+        lines: [LP('pivot', s, sIdx, lip, e, lip), LP('support', s, j, prevMax, k, prevMax)] });
       break;
     }
   }
@@ -566,7 +607,8 @@ const firstBaseBreakout = (s: S, from: number, until: number) => firstBaseBreako
 
 /**
  * VCP (Minervini): within a base (lip record 3–65 weeks back), 2–6 successive pullbacks each < 92% of the one before
- * (e.g. 25% → 12% → 6%), the first 8–50%, the last ≤ 12% (≤ 7% best), last contraction high within 12% of the base high, prior rise ≥ 20% (full at 35%), volume in the
+ * (e.g. 25% → 12% → 6%), the first 8–50%, the last ≤ 12% (≤ 7% best), last contraction high within 10% of the base high (zzz1005; was 12%), the first contraction starting within 5% of it and the
+ * contractions spanning ≥ 15 days (3 weeks) (zzz1005), prior rise ≥ 20% (full at 35%), volume in the
  * last contraction below its 50-day average; pivot = high of the last contraction.
  */
 function detectVcp(s: S, e: number, recs: number[], zz: Pivot[], out: Map<PatternId, Raw>) {
@@ -576,6 +618,8 @@ function detectVcp(s: S, e: number, recs: number[], zz: Pivot[], out: Map<Patter
     if (len < L15 || len > L330) continue;
     const up = priorUp(s, sIdx);
     if (up < 0.15) continue;
+    // zzz1005 — the base's high tops the advance into it (as for the lip bases)
+    if (s.mxH.val(sIdx - Math.min(Math.max(len, Bm(s, 25)), B(s, 130)), sIdx - 1) > s.h[sIdx] * 1.01) continue;
     const seq: Pivot[] = [{ i: sIdx, p: s.h[sIdx], hi: true, confirmed: true }];
     for (const q of zz) {
       if (q.i <= sIdx) continue;
@@ -593,7 +637,10 @@ function detectVcp(s: S, e: number, recs: number[], zz: Pivot[], out: Map<Patter
     const firstC = cs[j], lastC = cs[cs.length - 1];
     if (firstC.d < 0.08 || firstC.d > 0.5 || lastC.d > 0.12) continue;
     const pivot = lastC.hi.p;
-    if (pivot < s.h[sIdx] * 0.88) continue; // the contractions tighten near the top of the base
+    if (pivot < s.h[sIdx] * 0.9) continue; // the contractions tighten near the top of the base
+    // zzz1005 — the first contraction starts at the top of the base and the contractions span ≥ 3 weeks (a 1–2 week
+    // wiggle is a flag, not a VCP)
+    if (firstC.hi.p < s.h[sIdx] * 0.95 || e - firstC.hi.i + 1 < L15) continue;
     if (s.mxH.val(lastC.hi.i + 1, e) > pivot) continue;
     let lowsRise = 0;
     for (let k = j + 1; k < cs.length; k++) if (cs[k].lo.p >= cs[k - 1].lo.p * 0.99) lowsRise++;
@@ -616,7 +663,9 @@ function tightRatio(cs: Array<{ d: number }>, j: number): number {
 }
 
 /** Ascending base (O'Neil): 8–18 weeks (9–16 best), three pullbacks of 8–22% (10–20% best), each high and low above
- *  the previous; prior rise ≥ 20%; pivot = the third high. */
+ *  the previous; prior rise ≥ 20%; pivot = the third high. zzz1005: each high ≤ 15% above the one before and the third
+ *  ≤ 25% above the first (beyond that it is an advancing trend with pullbacks, not a base); the first high tops the advance
+ *  into the base (no higher high over a lead-in as long as the base). */
 function detectAscendingBase(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>) {
   if (!patternApplies('ascending_base', s.pf.tf)) return;
   const L40 = Bm(s, 40), L95 = B(s, 95);
@@ -627,13 +676,17 @@ function detectAscendingBase(s: S, e: number, zz: Pivot[], out: Map<PatternId, R
   const span = e - a.hi.i + 1;
   if (span < L40 || span > L95) return;
   if (!(b.hi.p > a.hi.p * 1.01 && c.hi.p > b.hi.p * 1.01 && b.lo.p > a.lo.p && c.lo.p > b.lo.p)) return;
+  // zzz1005 — a base, not an advance with pullbacks: each new high ≤ 15% above the previous one, the third ≤ 25% above the first
+  if (b.hi.p > a.hi.p * 1.15 || c.hi.p > b.hi.p * 1.15 || c.hi.p > a.hi.p * 1.25) return;
   const ds = [a, b, c].map((x) => 1 - x.lo.p / x.hi.p);
   if (ds.some((d) => d < 0.08 || d > 0.22)) return;
   const pivot = c.hi.p;
   if (s.mxH.val(c.hi.i + 1, e) > pivot) return;
   const up = priorUp(s, a.hi.i);
   if (up < 0.15) return;
-  const conf = wscore([[2, ramp(up, 0.15, 0.3)], [3, ds.reduce((x, d) => x + (d >= 0.1 && d <= 0.2 ? 1 : 0.5), 0) / 3], [1, ramp(span, L40, Bg(s, 45, L40)) * ramp(span, L95, Math.min(L95, Math.max(L40, B(s, 80))))], [1, trendOK(s, e)]]);
+  // zzz1005 — the first high tops the advance into the base (no higher high over a lead-in as long as the base)
+  if (s.mxH.val(a.hi.i - Math.min(span, B(s, 130)), a.hi.i - 1) > a.hi.p * 1.01) return;
+  const conf = wscore([[2, ramp(up, 0.15, 0.4)], [3, ds.reduce((x, d) => x + (d >= 0.1 && d <= 0.2 ? 1 : 0.5), 0) / 3], [1, ramp(span, L40, Bg(s, 45, L40)) * ramp(span, L95, Math.min(L95, Math.max(L40, B(s, 80))))], [1, trendOK(s, e)]]);
   push(out, { id: 'ascending_base', conf, start: a.hi.i, end: e, keyFrom: c.hi.i, pivot, depth: Math.max(...ds),
     detail: `pullbacks ${ds.map((d) => Math.round(d * 100) + '%').join(', ')}`,
     lines: [LP('pivot', s, c.hi.i, pivot, e, pivot), LP('trend', s, a.lo.i, a.lo.p, c.lo.i, c.lo.p)] });
@@ -755,6 +808,8 @@ function detectFlags(s: S, e: number, recs: number[], floors: number[], out: Map
  *  Falling wedge: both lines falling (upper ≤ −4%, lower ≤ −1.5%), upper steeper, width at the end < 75% of the start;
  *    pivot = upper line at the end.
  *  Rising wedge: both rising (lower ≥ +4%, upper ≥ +1.5%), lower steeper, converging; breakdown = lower line at the end.
+ *  zzz1005: none of them is reported while the close is > 3% beyond the OPPOSITE line (an ascending triangle / falling
+ *  wedge broken below its lower line, a descending triangle / rising wedge above its upper line) — the shape is void.
  */
 function detectTriWedge(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>) {
   if (!patternApplies('ascending_triangle', s.pf.tf)) return;   // triangles / wedges: D and W only
@@ -786,14 +841,17 @@ function detectTriWedge(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>) 
     let inside = 0;
     for (let i = a; i <= e; i++) { const c = s.c[i]; if (c <= (fh.a + fh.b * i) * 1.01 && c >= (fl.a + fl.b * i) * 0.99) inside++; }
     const contain = inside / len;
+    // zzz1005 — a structure whose OPPOSITE boundary the close has already broken by > 3% is no longer forming
+    // (an ascending triangle / falling wedge now below its lower line; a descending triangle / rising wedge above its upper)
+    const lowerHeld = s.c[e] >= (fl.a + fl.b * e) * 0.97, upperHeld = s.c[e] <= (fh.a + fh.b * e) * 1.03;
     const flatTol = (k: number) => (k >= 3 ? 0.03 : 0.02);
-    if ((hMax - hMin) / hMax <= flatTol(Hs.length) && Math.abs(chH) <= 0.025 && risingLows && chL >= 0.04 && s.mxH.val(lastH.i + 1, e) <= hMax * 1.005) {
-      const c = wscore([[2, ramp(touches, 3, 6)], [3, ramp(Hs.length, 2, 3)], [2, ramp(chL, 0.04, 0.1)], [1, ramp(fitQ, 0.04, 0.015)], [1, ramp(len, L15, L30)], [1, ramp(contain, 0.8, 0.95)]]);
+    if ((hMax - hMin) / hMax <= flatTol(Hs.length) && Math.abs(chH) <= 0.025 && risingLows && chL >= 0.04 && s.mxH.val(lastH.i + 1, e) <= hMax * 1.005 && lowerHeld) {
+      const c = wscore([[2, ramp(touches, 3, 7)], [3, ramp(Hs.length, 2, 3)], [2, ramp(chL, 0.04, 0.1)], [1, ramp(fitQ, 0.04, 0.01)], [1, ramp(len, L15, L30)], [1, ramp(contain, 0.8, 0.97)], [1, ramp((hMax - hMin) / hMax, flatTol(Hs.length), 0.008)]]);
       push(out, { id: 'ascending_triangle', conf: c, start: a, end: e, keyFrom: a, pivot: hMax, depth: 1 - lMin / hMax,
         detail: `${Hs.length} touches of ${fmt(hMax)}, lows rising`, lines: [LP('resistance', s, a, hMax, e, hMax), lineSet[1]] });
     }
-    if ((lMax - lMin) / lMax <= flatTol(Ls.length) && Math.abs(chL) <= 0.025 && fallingHighs && chH <= -0.04 && s.mnL.val(lastL.i + 1, e) >= lMin * 0.995) {
-      const c = wscore([[2, ramp(touches, 3, 6)], [3, ramp(Ls.length, 2, 3)], [2, ramp(-chH, 0.04, 0.1)], [1, ramp(fitQ, 0.04, 0.015)], [1, ramp(len, L15, L30)], [1, ramp(contain, 0.8, 0.95)]]);
+    if ((lMax - lMin) / lMax <= flatTol(Ls.length) && Math.abs(chL) <= 0.025 && fallingHighs && chH <= -0.04 && s.mnL.val(lastL.i + 1, e) >= lMin * 0.995 && upperHeld) {
+      const c = wscore([[2, ramp(touches, 3, 7)], [3, ramp(Ls.length, 2, 3)], [2, ramp(-chH, 0.04, 0.1)], [1, ramp(fitQ, 0.04, 0.01)], [1, ramp(len, L15, L30)], [1, ramp(contain, 0.8, 0.97)], [1, ramp((lMax - lMin) / lMax, flatTol(Ls.length), 0.008)]]);
       push(out, { id: 'descending_triangle', conf: c, start: a, end: e, keyFrom: a, pivot: lMin, depth: 1 - lMin / hMax,
         detail: `${Ls.length} touches of ${fmt(lMin)}, highs falling`, lines: [LP('support', s, a, lMin, e, lMin), lineSet[0]] });
     }
@@ -801,7 +859,7 @@ function detectTriWedge(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>) 
     // where the two lines meet (the apex): a wedge's boundary is not projected past it
     const apex = fh.b !== fl.b ? Math.floor((fl.a - fh.a) / (fh.b - fl.b)) : Infinity;
     const wedgeOk = converging && touches >= 5 && len >= L20 && fitQ <= 0.025 && contain >= 0.9;
-    if (wedgeOk && chH <= -0.04 && chL <= -0.015 && chH < chL) {
+    if (wedgeOk && chH <= -0.04 && chL <= -0.015 && chH < chL && lowerHeld) {
       const piv = fh.a + fh.b * e;
       {
         const c = wscore([[2, ramp(touches, 5, 7)], [2, ramp(wEnd / wStart, 0.75, 0.4)], [2, ramp(fitQ, 0.025, 0.01)], [2, ramp(contain, 0.9, 0.98)], [1, ramp(len, L15, L30)], [1, ramp(priorDown(s, a), 0.05, 0.2)]]);
@@ -809,7 +867,7 @@ function detectTriWedge(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>) 
           detail: `${touches} touches, range narrowing`, lines: lineSet });
       }
     }
-    if (wedgeOk && chL >= 0.04 && chH >= 0.015 && chL > chH) {
+    if (wedgeOk && chL >= 0.04 && chH >= 0.015 && chL > chH && upperHeld) {
       const piv = fl.a + fl.b * e;
       {
         const c = wscore([[2, ramp(touches, 5, 7)], [2, ramp(wEnd / wStart, 0.75, 0.4)], [2, ramp(fitQ, 0.025, 0.01)], [2, ramp(contain, 0.9, 0.98)], [1, ramp(len, L15, L30)], [1, ramp(priorUp(s, a), 0.05, 0.2)]]);
@@ -822,13 +880,30 @@ function detectTriWedge(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>) 
 
 /**
  * Double / triple bottoms and tops and head & shoulders from medium zig-zag swings over the last 65 weeks.
- *  Double bottom (Bulkowski / O'Neil W): two lows within 5% (≤ 3% best), 10–325 bars apart, nothing lower between, the
- *    middle peak ≥ 10% above the higher low, a ≥ 15% fall into the first low, price ≥ 3% off the second low;
- *    pivot = middle peak.
- *  Triple bottom: three lows within 5% band, both peaks ≥ 10% above, pivot = the higher of the two peaks.
+ *  Double bottom (Bulkowski / O'Neil W): two lows within 5% (≤ 2% best), 10–325 bars apart, nothing lower between, the
+ *    middle peak ≥ 10% above the higher low but the dip from it to the lows ≤ 40% (45% on M; ≤ 28% best), a ≥ 15% fall
+ *    into the first low, price ≥ 3% (and ≥ 12% of the pattern's height) off the second low, made ≥ 3 days (W / M: ≥ 1 candle)
+ *    before the body end; pivot = middle peak.
+ *  Triple bottom: three lows within 5% band, both peaks ≥ 10% above (same depth cap), pivot = the higher of the two peaks.
  *  Inverse H&S: head ≥ 4% below both shoulders, shoulders within 10% of each other, time ratio 0.4–2.5, neckline peaks
- *    ≥ 5% above the shoulders, ≥ 15% fall before; pivot = neckline extended to the last bar.
+ *    ≥ 5% above the shoulders, ≥ 15% fall before; neckline change between its two peaks ≤ 15% (≤ 4% best); each shoulder
+ *    stands off the neckline by ≥ 30% of the head's distance from it (≥ 55% best); pivot = neckline extended to the last bar.
  *  Tops: the mirrors, after a ≥ 20% rise; breakdown = middle trough / lower trough / neckline.
+ *
+ * zzz1005 (precision audit of real detections) — turning points must be REAL turning points:
+ *  • Each low (bottom) / high (top) is the most extreme price around it: over a third of the distance to the next turning
+ *    point on each side, and — for the first one — over a lead-in as long as the whole formation (at least 10 days):
+ *    a "first low" taken a few bars after a lower low (the swing on the way up from the real low), or a "first top" a
+ *    few bars after a higher high (a lower high on the way down from the real peak) is not a double / triple / H&S.
+ *  • The first low of a bottom (the head of an H&S) sits within 10% of the lowest low of the prior ~6 months or twice
+ *    the formation's width (the mirror for tops): a bottom forms after a fall, at the low — not as a higher low inside a
+ *    rally; a top forms at the high — not as a bounce inside a decline.
+ *  • The middle peak / trough and each neckline armpit lie strictly BETWEEN the turning points (a candle's own high is not
+ *    the rally after its own low — on W / M one candle carries both).
+ *  • Head & shoulders: the neckline may not change more than 15% between its two armpits (a steep "neckline" is a trend,
+ *    not a neckline), and shoulders must stand off it by ≥ 30% of the head (a lone spike with two small wiggles is not H&S);
+ *    the head lies ≤ 30% (M 40%) beyond the nearer shoulder (a far deeper "head" is a V / rounding bottom with two
+ *    points on its sides, not shoulders).
  */
 function detectReversals(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>) {
   const lows = zz.filter((q) => !q.hi && q.i >= e - B(s, 330));
@@ -837,16 +912,22 @@ function detectReversals(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>)
   reversalSide(s, e, highs, false, out);
 }
 
+/** zzz1005 — the shared turning-point rules of the reversal family (see detectReversals). */
+export const REVERSAL_RULES = { maxMidDepth: 0.4, maxMidDepthM: 0.45, ctxTol: 0.1, maxNeckChange: 0.15, minShoulderRatio: 0.3, maxHeadBeyond: 0.3, minRebound: 0.03, reboundOfHeight: 0.12 } as const;
+
 function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<PatternId, Raw>) {
   if (pts.length < 2) return;
+  const R = REVERSAL_RULES;
   const last = pts[pts.length - 1];
   // the latest swing must be the last extreme and price must have moved ≥ 3% away from it
   const off = bottom ? s.c[e] / last.p - 1 : 1 - s.c[e] / last.p;
-  if (off < 0.03) return;
+  if (off < R.minRebound) return;
   if (bottom ? s.mnL.val(last.i, e) < last.p : s.mxH.val(last.i, e) > last.p) return;
-  const ext = (a: number, b: number) => (bottom ? s.mxH.idx(a, b) : s.mnL.idx(a, b)); // middle peak (bottom) / trough (top)
+  // zzz1005 — the last turning point has bars after it (≥ 3 days; ≥ 1 candle on W / M): a low / high made by the bar now
+  // being read has not turned yet
+  if (e - last.i < Math.max(1, B(s, 3))) return;
+  const ext = (a: number, b: number) => (bottom ? s.mxH.idx(a, b) : s.mnL.idx(a, b)); // middle peak (bottom) / trough (top) in [a, b]
   const beyond = (a: number, b: number) => (bottom ? s.mnL.val(a, b) : s.mxH.val(a, b)); // the most extreme low (bottom) / high (top)
-  const sgn = bottom ? 1 : -1;
   const trend = (i: number) => (bottom ? priorDown(s, i) : priorUp(s, i));
   const trendMin = bottom ? 0.15 : 0.2;
   const idB: PatternId = bottom ? 'double_bottom' : 'double_top';
@@ -857,6 +938,25 @@ function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<P
   // zzz992 — gaps in bars of the timeframe: a sub-gap (low → low) ≥ 10 days → ≥ 2 bars on W / M; the whole formation ≥ 3 bars
   const G10 = s.pf.k === 1 ? 10 : Math.max(2, B(s, 10)), Gall = Bm(s, 10), G325 = B(s, 325);
   const G5 = B(s, 5);
+  // zzz1005 — turning-point rules
+  const maxMid = s.pf.tf === 'M' ? R.maxMidDepthM : R.maxMidDepth;
+  const leadMin = Math.max(2, B(s, 10)), ctxWin = B(s, 130);
+  /** P is the most extreme price over [P.i − left, P.i + right] (clipped to the body end) */
+  const dominant = (P: Pivot, left: number, right: number) => {
+    const v = beyond(Math.max(0, P.i - left), Math.min(e, P.i + right));
+    return bottom ? v >= P.p * 0.999 : v <= P.p * 1.001;
+  };
+  /** P lies within 10% of the extreme of the prior ~6 months (or twice the formation's width) */
+  const nearCtx = (P: Pivot, width: number) => {
+    const v = beyond(Math.max(0, P.i - Math.max(ctxWin, 2 * width)), P.i);
+    return bottom ? v >= P.p * (1 - R.ctxTol) : v <= P.p * (1 + R.ctxTol);
+  };
+  /** dip from the middle peak to the lows (bottom) / from the highs to the middle trough (top), as a fraction */
+  const midDepth = (mid: number, band: number) => (bottom ? 1 - band / mid : 1 - mid / band);
+  /** price has come back off the last turning point by ≥ 3% and ≥ 12% of the formation's height (a turning point that
+   *  has actually turned — not the bar a fresh low / high was just made) */
+  const rebounded = (height: number) => (bottom ? s.c[e] - last.p : last.p - s.c[e]) >= Math.max(R.minRebound * last.p, R.reboundOfHeight * Math.abs(height));
+  const third = (g: number) => Math.max(1, Math.floor(g / 3));
 
   let bestTripleLast = false;
   // Triple
@@ -869,15 +969,23 @@ function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<P
       if (bandHi / bandLo - 1 > 0.05) continue;
       const extreme = beyond(P[0].i, P[2].i);
       if (bottom ? extreme < bandLo * 0.999 : extreme > bandHi * 1.001) continue;
-      const m1 = ext(P[0].i, P[1].i), m2 = ext(P[1].i, P[2].i);
+      const m1 = ext(P[0].i + 1, P[1].i - 1), m2 = ext(P[1].i + 1, P[2].i - 1);
+      if (m1 < 0 || m2 < 0) continue;
       const sep1 = bottom ? s.h[m1] / bandHi - 1 : 1 - s.l[m1] / bandLo;
       const sep2 = bottom ? s.h[m2] / bandHi - 1 : 1 - s.l[m2] / bandLo;
       if (sep1 < 0.1 || sep2 < 0.1) continue;
-      const tr = trend(P[0].i);
-      if (tr < trendMin * 0.75) continue;
       const mi = bottom ? (s.h[m1] >= s.h[m2] ? m1 : m2) : (s.l[m1] <= s.l[m2] ? m1 : m2);
       const pivot = pivotOf(mi);
-      const conf = wscore([[2, ramp(bandHi / bandLo - 1, 0.05, 0.02)], [2, ramp(Math.min(sep1, sep2), 0.1, 0.15)], [2, ramp(tr, trendMin * 0.75, trendMin + 0.1)], [1, ramp(P[2].i - P[0].i, B(s, 30), Bg(s, 60, B(s, 30)))], [1, ramp(off, 0.03, 0.08)]]);
+      const dd = midDepth(pivot, bottom ? bandLo : bandHi);
+      if (dd > maxMid) continue;
+      const width = P[2].i - P[0].i;
+      const g1 = P[1].i - P[0].i, g2 = P[2].i - P[1].i;
+      if (!dominant(P[0], Math.max(leadMin, width), third(g1)) || !dominant(P[1], third(g1), third(g2)) || !dominant(P[2], third(g2), e - P[2].i)) continue;
+      if (!nearCtx(P[0], width)) continue;
+      if (!rebounded(pivot - last.p)) continue;
+      const tr = trend(P[0].i);
+      if (tr < trendMin * 0.75) continue;
+      const conf = wscore([[2, ramp(bandHi / bandLo - 1, 0.05, 0.015)], [2, ramp(Math.min(sep1, sep2), 0.1, 0.15)], [2, ramp(tr, trendMin * 0.75, trendMin + 0.15)], [1, ramp(width, B(s, 30), Bg(s, 60, B(s, 30)))], [1, ramp(off, 0.03, 0.08)], [1, ramp(dd, maxMid, maxMid - 0.12)]]);
       if (conf >= MIN_CONF) bestTripleLast = true;
       push(out, { id: idT, conf, start: P[0].i, end: e, keyFrom: P[2].i, pivot, depth: bottom ? 1 - bandLo / pivot : 1 - pivot / bandHi,
         detail: `three ${bottom ? 'lows' : 'highs'} near ${fmt(bottom ? bandLo : bandHi)}`,
@@ -897,14 +1005,20 @@ function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<P
       const lo = Math.min(A.p, last.p), hi = Math.max(A.p, last.p);
       const extreme = beyond(A.i + 1, last.i - 1);
       if (bottom ? extreme < lo : extreme > hi) continue;
-      const mi = ext(A.i, last.i);
+      const mi = ext(A.i + 1, last.i - 1);
+      if (mi < 0) continue;
       const sep = bottom ? s.h[mi] / hi - 1 : 1 - s.l[mi] / lo;
       if (sep < 0.1) continue;
+      const pivot = pivotOf(mi);
+      const dd = midDepth(pivot, bottom ? lo : hi);
+      if (dd > maxMid) continue;
+      if (!dominant(A, Math.max(leadMin, gap), third(mi - A.i)) || !dominant(last, third(last.i - mi), e - last.i)) continue;
+      if (!nearCtx(A, gap)) continue;
+      if (!rebounded(pivot - last.p)) continue;
       const tr = trend(A.i);
       if (tr < trendMin * 0.75) continue;
-      const pivot = pivotOf(mi);
       const sym = Math.min(mi - A.i, last.i - mi) / Math.max(1, Math.max(mi - A.i, last.i - mi));
-      const conf = wscore([[2, ramp(band, 0.05, 0.02)], [2, ramp(sep, 0.1, 0.18)], [2, ramp(tr, trendMin * 0.75, trendMin + 0.1)], [1, ramp(gap, Gall, Bg(s, 30, Gall))], [1, ramp(sym, 0.2, 0.6)], [1, ramp(off, 0.03, 0.08)]]);
+      const conf = wscore([[2, ramp(band, 0.05, 0.015)], [2, ramp(sep, 0.1, 0.18)], [2, ramp(tr, trendMin * 0.75, trendMin + 0.15)], [1, ramp(gap, Gall, Bg(s, 30, Gall))], [1, ramp(sym, 0.2, 0.6)], [1, ramp(off, 0.03, 0.08)], [1, ramp(dd, maxMid, maxMid - 0.12)]]);
       push(out, { id: idB, conf, start: A.i, end: e, keyFrom: mi, pivot, depth: bottom ? 1 - lo / pivot : 1 - pivot / hi,
         detail: `${bottom ? 'lows' : 'highs'} ${fmt(A.p)} and ${fmt(last.p)}, middle ${lbl} ${fmt(pivot)}`,
         lines: [LP(bottom ? 'pivot' : 'support', s, A.i, pivot, e, pivot), LP(bottom ? 'support' : 'resistance', s, A.i, A.p, last.i, last.p)] });
@@ -927,19 +1041,34 @@ function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<P
       if (bottom ? s.mnL.val(LS.i, H.i) < H.p : s.mxH.val(LS.i, H.i) > H.p) continue;
       const shoulderDiff = Math.abs(LS.p - RS.p) / Math.max(LS.p, RS.p);
       if (shoulderDiff > 0.1) continue;
+      // zzz1005 — the head is not a whole V / rounding bottom of its own: ≤ 30% (M 40%) beyond the nearer shoulder
+      const headBeyond = bottom ? 1 - H.p / Math.min(LS.p, RS.p) : 1 - Math.max(LS.p, RS.p) / H.p;
+      if (headBeyond > (s.pf.tf === 'M' ? 0.4 : R.maxHeadBeyond)) continue;
       const tRatio = (H.i - LS.i) / (RS.i - H.i);
       if (tRatio < 0.4 || tRatio > 2.5) continue;
-      const n1 = ext(LS.i, H.i), n2 = ext(H.i, RS.i);
+      const n1 = ext(LS.i + 1, H.i - 1), n2 = ext(H.i + 1, RS.i - 1);
+      if (n1 < 0 || n2 < 0) continue;
       const p1 = pivotOf(n1), p2 = pivotOf(n2);
       const neckSep = bottom ? Math.min(p1, p2) / Math.max(LS.p, RS.p) - 1 : 1 - Math.max(p1, p2) / Math.min(LS.p, RS.p);
       if (neckSep < 0.05) continue;
+      const neckChg = Math.abs(p2 / p1 - 1);
+      if (neckChg > R.maxNeckChange) continue;
       const slope = (p2 - p1) / Math.max(1, n2 - n1);
       const neckAt = (i: number) => p2 + slope * (i - n2);
       const pivot = neckAt(e);
       if (Math.abs(pivot / p2 - 1) > 0.15) continue;
+      // each shoulder's distance from the neckline vs the head's
+      const prom = (P: Pivot) => (bottom ? neckAt(P.i) - P.p : P.p - neckAt(P.i));
+      const headProm = prom(H);
+      const shRatio = headProm > 0 ? Math.min(prom(LS), prom(RS)) / headProm : 0;
+      if (shRatio < R.minShoulderRatio) continue;
+      const width = RS.i - LS.i;
+      if (!dominant(LS, Math.max(leadMin, H.i - LS.i), third(n1 - LS.i)) || !dominant(H, third(H.i - n1), third(n2 - H.i)) || !dominant(RS, third(RS.i - n2), e - RS.i)) continue;
+      if (!nearCtx(H, width)) continue;
+      if (!rebounded(prom(RS))) continue;
       const tr = trend(LS.i);
       if (tr < trendMin * 0.75) continue;
-      const conf = wscore([[2, ramp(shoulderDiff, 0.1, 0.03)], [2, ramp(headDeeper, 0.04, 0.1)], [1, ramp(Math.min(tRatio, 1 / tRatio), 0.4, 0.75)], [2, ramp(tr, trendMin * 0.75, trendMin + 0.1)], [1, ramp(neckSep, 0.05, 0.12)], [1, ramp(off, 0.03, 0.06)]]);
+      const conf = wscore([[2, ramp(shoulderDiff, 0.1, 0.03)], [2, ramp(headDeeper, 0.04, 0.1)], [1, ramp(Math.min(tRatio, 1 / tRatio), 0.4, 0.75)], [2, ramp(tr, trendMin * 0.75, trendMin + 0.15)], [1, ramp(neckSep, 0.05, 0.12)], [1, ramp(off, 0.03, 0.06)], [1, ramp(neckChg, R.maxNeckChange, 0.04)], [1, ramp(shRatio, R.minShoulderRatio, 0.55)]]);
       push(out, { id: idH, conf, start: LS.i, end: e, keyFrom: RS.i, pivot, depth: bottom ? 1 - H.p / pivot : 1 - pivot / H.p, lineAt: neckAt,
         detail: `head ${fmt(H.p)}, shoulders ${fmt(LS.p)} / ${fmt(RS.p)}`,
         lines: [LP('neckline', s, n1, p1, e, pivot), LP('trend', s, LS.i, LS.p, H.i, H.p), LP('trend', s, H.i, H.p, RS.i, RS.p)] });

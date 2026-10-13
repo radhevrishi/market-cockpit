@@ -51,7 +51,9 @@ test('workspace UI: failed saves, restore, refresh, market errors and quote reco
     assert.match(document.body.textContent!, /Saved "Local"/);
     localStorage.setItem(SCREENS_KEY, JSON.stringify([{ id: 'local-screen', name: 'Restored', market: 'US', filters: [] }, { id: 'remote-screen', name: 'Remote', market: 'US', filters: [] }]));
     await act(async () => window.dispatchEvent(new CustomEvent('mc:vault:restored', { detail: { keys: [SCREENS_KEY] } })));
-    assert.match(document.querySelector('select[aria-label="Screens"]')!.textContent!, /Remote/);
+    // zzz1006 — the screen picker is a searchable list (was a <select>)
+    await act(async () => { (document.querySelector('button[aria-label="Screens"]') as HTMLElement).click(); await settle(); });
+    assert.match(document.querySelector('[role="listbox"][aria-label="Screens"]')!.textContent!, /Remote/);
     assert.match(document.body.textContent!, /Restored/);
     version = 2;
     await click('Refresh');

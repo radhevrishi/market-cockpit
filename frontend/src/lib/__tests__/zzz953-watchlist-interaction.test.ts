@@ -65,6 +65,8 @@ test('watchlist UI search, market filter, keyboard, navigation, density and scre
     localStorage.setItem('mc:stock-screener:last:v1', 'audit');
     globalThis.fetch = (async () => ({ ok: true, json: async () => ({ ok: true, builtAt: '2026-10-07T12:00:00Z', rows: [{ t: 'AAPL', n: 'Apple', px: 200, mc: 1, exch: ['NASDAQ'] }, { t: 'NEWCO', n: 'New fixture', px: 10, mc: 2, exch: ['NYSE'] }], notes: [], sources: [] }) })) as any;
     await mount(React.createElement(Screener));
+    // zzz1006 — bulk actions live in the results toolbar's Actions menu
+    await act(async () => { Array.from(document.querySelectorAll('button')).find((b) => b.textContent!.startsWith('Actions'))!.click(); });
     const addMatches = Array.from(document.querySelectorAll('button')).find((b) => b.textContent === 'Add matches to watchlist')!;
     await act(async () => addMatches.click());
     const add = Array.from(document.querySelectorAll('button')).find((b) => b.textContent === 'Add symbols')!;

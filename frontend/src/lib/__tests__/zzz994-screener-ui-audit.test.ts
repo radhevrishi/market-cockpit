@@ -178,7 +178,9 @@ test('zzz994 pattern filter kind: pass / fail / missing, explanation, label, sav
   const saved = cleanScreens([{ id: 'p', name: 'Pat', market: 'US', filters: [{ kind: 'pattern', bias: 'D', ids: ['double_top', 'bogus'], tfs: ['W', 'Q'], tfMode: 'all', stages: [], minScore: 10, dist: { on: false, lo: -5, hi: 5 } }] }]);
   assert.deepEqual(saved[0].filters[0], { kind: 'pattern', bias: 'D', ids: ['double_top'], tfs: ['W'], tfMode: 'all', stages: [], minScore: 35, dist: { on: false, lo: -5, hi: 5 } });
   const stock = read('components/stock-screener/StockScreener.tsx');
-  assert.match(stock, /<option value="pattern">Chart pattern/);
+  // zzz1006 — the filter list is a searchable panel (AddFilterPanel), offering the same pattern rule
+  assert.match(read('components/stock-screener/AddFilterPanel.tsx'), /key: 'pattern', label: 'Chart pattern'/);
+  assert.match(stock, /<AddFilterPanel /);
   assert.match(read('components/stock-screener/FilterEditor.tsx'), /function PatternEditor/);
 });
 
@@ -323,15 +325,17 @@ test('zzz994 Stock page (JSDOM): one searched row → one copied ticker; all mat
     assert.match(text(), /₹11,00,000 Cr/, 'India market cap with Indian grouping');
     await setInput(act, document.querySelector('input[aria-label="Find in results"]') as HTMLInputElement, 'DEE Development', settle);
     assert.match(text(), /1 shown · 1 search match · 2 filter matches/);
-    await click((b) => b.textContent === 'Copy tickers');
+    const actions = () => click((b) => b.textContent!.startsWith('Actions'));   // zzz1006: Copy / CSV live in the Actions menu
+    await actions(); await click((b) => b.textContent === 'Copy tickers');
     assert.equal(clip.at(-1), 'NSE:DEEDEV');
     const scopeSel = document.querySelector('select[aria-label="Action scope"]') as HTMLSelectElement;
     await act(async () => { scopeSel.value = 'all'; scopeSel.dispatchEvent(new (window as any).Event('change', { bubbles: true })); await settle(); });
-    await click((b) => b.textContent === 'Copy tickers');
+    await actions(); await click((b) => b.textContent === 'Copy tickers');
     assert.equal(clip.at(-1), 'NSE:TCS,NSE:DEEDEV');
     await setInput(act, document.querySelector('input[aria-label="Find in results"]') as HTMLInputElement, 'nothing-like-this', settle);
     assert.match(text(), /No filter match contains “nothing-like-this”/);
     assert.ok(Array.from(document.querySelectorAll('button')).some((b) => b.textContent === 'Clear search'));
-    assert.ok(Array.from(document.querySelectorAll('select[aria-label="Add a filter"] option')).some((o) => o.getAttribute('value') === 'pattern'));
+    await click((b) => b.getAttribute('aria-label') === 'Add a filter');
+    assert.ok(document.querySelector('[role="dialog"][aria-label="Add a filter"] [data-filter-key="pattern"]'), 'the chart-pattern rule is offered');
   });
 });

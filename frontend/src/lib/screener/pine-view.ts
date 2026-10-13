@@ -9,7 +9,7 @@
 //                    list, so the two combine without a second editor.
 import { PATTERN_META, type PatternId } from '../chart-patterns';
 import * as PINE from './pine';
-import { runPineFull, bestTag, tagScanClose, tagLengthText, turnoverOf, ruleState, matchTags, STAGES, type PineHit, type PineQuery, type PineRun, type ScreenPatternTag, type ScanStatus } from './pine';
+import { runPineFull, pineFilters, r40Text, bestTag, tagScanClose, tagLengthText, turnoverOf, ruleState, matchTags, STAGES, type PineHit, type PineQuery, type PineRun, type ScreenPatternTag, type ScanStatus } from './pine';
 import { BUILT_IN_PINE_SCREENS } from './pine-presets';
 import { patTagsOf, patMissingWhy, runScreen, tagDirDist, filterLabel, unsupportedChoices, type PatTf, type Screen } from './filters';
 import { tvSectorOf } from './tv-sectors';
@@ -40,6 +40,11 @@ export const SETUP_CARDS: readonly SetupCard[] = [
   { id: 'monthly', label: 'Monthly bases', sub: 'U-bases, cups, VCPs on completed monthly bars', presetId: 'monthly-bases', glyph: 'monthly', tone: 'up', alt: { presetId: 'monthly-reversal-bases', label: 'reversal bases' } },
   { id: 'portfolio', label: 'My portfolio check', sub: 'Every holding: patterns and the 21 / 50 / 200-day averages', presetId: null, glyph: 'portfolio', tone: 'neutral' },
 ];
+/** zzz1007 — the Rule of 40 control survives a screen / card change (like the company list): a screen without its own Rule of 40
+ *  setting takes the one in use; a screen that sets one keeps it. */
+export function withCarriedR40(q: PineQuery, current: Pick<PineQuery, 'r40Min'> | null | undefined): PineQuery {
+  return q.r40Min == null && current?.r40Min != null ? { ...q, r40Min: current.r40Min } : q;
+}
 /** The query a setup card stands for (its preset's query), or null for the portfolio card. */
 export function cardQuery(card: SetupCard): PineQuery | null {
   if (!card.presetId) return null;
@@ -47,13 +52,16 @@ export function cardQuery(card: SetupCard): PineQuery | null {
 }
 /** How many companies each pattern card finds on these rows (strict matches only), within the company list when one is chosen.
  *  The portfolio card counts the holdings (all of them — with or without a pattern); null while the holdings are not known. */
-export function setupCounts(rows: readonly ScreenRow[], market: ScreenMarket, list: ReadonlySet<string> | null, holdings: readonly string[] | null, now: Date = new Date()): Record<string, number | null> {
+/** zzz1007 — `overlay`: the Rule of 40 control carried onto every card (a card whose preset sets its own keeps that), so the counts are
+ *  what clicking the card shows. */
+export function setupCounts(rows: readonly ScreenRow[], market: ScreenMarket, list: ReadonlySet<string> | null, holdings: readonly string[] | null, now: Date = new Date(), overlay?: Pick<PineQuery, 'r40Min'>): Record<string, number | null> {
   const base = list ? rows.filter((r) => list.has(r.t.toUpperCase())) : rows;
   const out: Record<string, number | null> = {};
+  const withOverlay = (q: PineQuery): PineQuery => withCarriedR40(q, overlay);
   for (const c of SETUP_CARDS) {
     const q = cardQuery(c);
-    out[c.id] = q ? runPineFull(base, q, market, now).strict.length : holdings ? holdings.length : null;
-    if (c.alt) { const aq = BUILT_IN_PINE_SCREENS.find((s) => s.id === c.alt!.presetId)?.q; out[`${c.id}:alt`] = aq ? runPineFull(base, aq, market, now).strict.length : null; }
+    out[c.id] = q ? runPineFull(base, withOverlay(q), market, now).strict.length : holdings ? holdings.length : null;
+    if (c.alt) { const aq = BUILT_IN_PINE_SCREENS.find((s) => s.id === c.alt!.presetId)?.q; out[`${c.id}:alt`] = aq ? runPineFull(base, withOverlay(aq), market, now).strict.length : null; }
   }
   return out;
 }
@@ -378,6 +386,8 @@ export function querySummary(q: PineQuery, scopeName: string): string {
   const parts = [bias, tfs, scopeName || 'All companies', stages, dist];
   if (q.ids.length) parts.push(q.ids.length <= 3 ? q.ids.map((id) => PATTERN_META[id]?.label || id).join(', ') : `${q.ids.length} pattern types`);
   parts.push(`Shape ≥ ${q.minConf}`);
+  const r40 = r40Text(q);   // zzz1007 — the Rule of 40 control is named, never folded into "N more limits"
+  if (r40) parts.push(r40);
   const lim = [q.mcMin, q.mcMax, q.pxMin, q.turnMin, q.perfMin].filter((v) => v != null).length + (q.sectors.length ? 1 : 0) + q.filters.filter((f) => !f.off).length;
   if (lim) parts.push(`${lim} more limit${lim === 1 ? '' : 's'}`);
   if (q.need === 'any' && !q.ids.length) parts.push('rules decide');
@@ -547,7 +557,7 @@ export function whyNotListed(input: string, o: { rows: readonly ScreenRow[]; q: 
   if (q.turnMin != null) { const tv = turnoverOf(row, market); if (tv == null || tv < q.turnMin) lim.push(`daily value traded ${tv == null ? 'unknown' : tv.toFixed(2)} below ${q.turnMin}`); }
   if (q.perfMin != null) { const pv = row[q.perfKey]; if (!fin(pv) || pv < q.perfMin) lim.push(`performance ${fin(pv) ? pv : 'unknown'}% below ${q.perfMin}%`); }
   if (q.sectors.length && !(row.tvSec && q.sectors.includes(row.tvSec))) lim.push(`sector ${row.tvSec || 'unknown'} not selected`);
-  for (const f of q.filters) { if (f.off) continue; const st = ruleState(row, f, market, o.now); if (st !== 'pass') lim.push(`${filterLabel(f, market)} — ${st === 'fail' ? 'not met' : 'cannot be evaluated'}`); }
+  for (const f of pineFilters(q)) { if (f.off) continue; const st = ruleState(row, f, market, o.now); if (st !== 'pass') lim.push(`${filterLabel(f, market)} — ${st === 'fail' ? 'not met' : 'cannot be evaluated'}`); }
   steps.push({ label: 'Size, liquidity and rules', ok: !lim.length, detail: lim.length ? lim.join('; ') : 'every limit passed (or none set)' });
   const run = o.run || runPineFull(o.rows, q, market, o.now);
   const strict = run.strict.some((h) => h.row.t.toUpperCase() === t), prov = run.provisional.some((h) => h.row.t.toUpperCase() === t);

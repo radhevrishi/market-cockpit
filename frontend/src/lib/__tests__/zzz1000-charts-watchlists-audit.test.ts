@@ -225,14 +225,15 @@ test('Improvement 1: a filtered view hides sections without matches, shows "n sh
     const { default: Watchlist } = await import('../../components/charts/WatchlistPanel');
     await mount(h(Watchlist, { store, update: () => {}, currentKey: 'US:NVDA', onPick: () => {} }));
     const headers = () => Array.from(document.querySelectorAll('.mcwl-sec')).map((e) => e.textContent!.replace(/rename.*$/, '').trim());
-    assert.deepEqual(headers(), ['▾Semis(2)', '▾India(2)', '▾Empty US(1)']);
+    // zzz1006 — readable label · count (was "Semis(2)"); filtered: "1 of 2" (was "1 shown / 2")
+    assert.deepEqual(headers(), ['▾Semis · 2', '▾India · 2', '▾Empty US · 1']);
     const input = document.querySelector<HTMLInputElement>('[aria-label="Search watchlist"]')!;
     const setValue = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
     await act(async () => { setValue.call(input, 'nvidia'); input.dispatchEvent(new Event('input', { bubbles: true })); await settle(); });
-    assert.deepEqual(headers(), ['▾Semis1 shown / 2']);
+    assert.deepEqual(headers(), ['▾Semis · 1 of 2']);
     assert.match(document.body.textContent!, /2 sections without matches hidden/);
     await act(async () => { Array.from(document.querySelectorAll('button')).find((b) => b.textContent === 'Show empty sections')!.click(); await settle(); });
-    assert.deepEqual(headers(), ['▾Semis1 shown / 2', '▾India0 shown / 2', '▾Empty US0 shown / 1']);
+    assert.deepEqual(headers(), ['▾Semis · 1 of 2', '▾India · 0 of 2', '▾Empty US · 0 of 1']);
     await act(async () => { Array.from(document.querySelectorAll('button')).find((b) => b.textContent === 'Hide empty sections')!.click(); await settle(); });
     // no match: feedback right under the filter controls (before the column headers and the list)
     await act(async () => { setValue.call(input, 'zzzz'); input.dispatchEvent(new Event('input', { bubbles: true })); await settle(); });
@@ -242,7 +243,7 @@ test('Improvement 1: a filtered view hides sections without matches, shows "n sh
     assert.ok(msg.compareDocumentPosition(grid) & window.Node.DOCUMENT_POSITION_FOLLOWING, 'message sits above the list');
     assert.equal((document.body.textContent!.match(/No matching symbols/g) || []).length, 1, 'one message, not two');
     await act(async () => { Array.from(document.querySelectorAll('button')).find((b) => b.textContent === 'Clear filters')!.click(); await settle(); });
-    assert.deepEqual(headers(), ['▾Semis(2)', '▾India(2)', '▾Empty US(1)'], 'grouping restored when filters clear');
+    assert.deepEqual(headers(), ['▾Semis · 2', '▾India · 2', '▾Empty US · 1'], 'grouping restored when filters clear');
   });
 });
 

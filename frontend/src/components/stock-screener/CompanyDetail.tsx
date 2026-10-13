@@ -1,0 +1,89 @@
+'use client';
+// zzz1006 — company detail side panel (opened from the company name). It shows the snapshot's own figures for the row — the same
+// values, formats and ≈ marks as the table — how the open screen's filters judge it, the review choices, and links to the chart,
+// the Pine Screener and the Stock Sheet. The table underneath keeps its scroll position (the panel floats over the page).
+import { useEffect, useRef } from 'react';
+import Link from 'next/link';
+import { FIELDS, fieldOf, fmtValue, fmtPrice, type Filter, type NumKey } from '@/lib/screener/filters';
+import type { ScreenMarket, ScreenRow } from '@/lib/screener/types';
+import { REVIEW_STATES, type ReviewState } from '@/lib/screener/workflow';
+import { explainRow, naReason } from '@/lib/screener/research';
+import { tvSectorMapping } from '@/lib/screener/tv-sectors';
+import { cellText } from '@/lib/screener/column-views';
+import { ADD_GROUPS } from './AddFilterPanel';
+
+export default function CompanyDetail({ row, market, filters, exactOnly, review, onReview, chartHref, onChart, onPine, onClose, position }: {
+  row: ScreenRow; market: ScreenMarket; filters: Filter[]; exactOnly: boolean; review: ReviewState; onReview: (s: ReviewState) => void;
+  chartHref: string; onChart: (e: React.MouseEvent) => void; onPine: (e: React.MouseEvent) => void; onClose: () => void;
+  /** "3 of 16" — the row's place in the result */
+  position?: string;
+}) {
+  const closeRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => { closeRef.current?.focus({ preventScroll: true }); }, [row.t]);
+  const checks = explainRow(row, filters, market, new Date(), exactOnly);
+  const map = tvSectorMapping(market, row.sec, row.ind, row.t);
+  const val = (k: NumKey) => {
+    const v = row[k] as number | null | undefined; const d = fieldOf(k);
+    if (v == null) { const na = naReason(row, k); return na ? 'n/a' : null; }
+    return `${row.approx?.includes(k) ? '≈' : ''}${cellText(v, d?.unit || 'num', market, k)}`;
+  };
+  const chg = typeof row.chg === 'number' ? row.chg : null;
+  const exch = row.exch?.length ? row.exch.join(' · ') : market === 'IN' ? 'NSE' : 'US';
+  return (
+    <aside className="mcss-drawer" role="dialog" aria-label={`Company details: ${row.t}`} onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }}>
+      <div className="hd">
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+          <span style={{ fontSize: 18, fontWeight: 750, color: 'var(--mc-text-0)' }}>{row.t}</span>
+          <span className="mcss-mk" title="Exchange">{exch}</span>
+          {position ? <span className="mcss-dim" style={{ fontSize: 12 }}>{position}</span> : null}
+          <span style={{ flex: 1 }} />
+          <button ref={closeRef} type="button" className="mcss-btn ghost sm" aria-label="Close company details" onClick={onClose}>✕</button>
+        </div>
+        <div style={{ fontSize: 13, color: 'var(--mc-text-2)', marginTop: 2 }}>{row.n}</div>
+        <div className="mcss-dim" style={{ fontSize: 12, marginTop: 2 }} title={`Source: ${[row.sec, row.ind].filter(Boolean).join(' · ') || 'none'}\nTradingView sector ${map.note}`}>
+          {row.tvSec || row.sec || 'Sector unknown'}{row.ind ? ` · ${row.ind}` : ''}
+        </div>
+        <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
+          <Link href={chartHref} className="mcss-btn primary sm" onClick={onChart}>Open chart</Link>
+          <a href={`/pine-screener?from=stock&market=${market}`} className="mcss-btn sm" onClick={onPine} title="Opens the Pine Screener limited to this company">Pine Screener</a>
+          <a href={`/stock-sheet?ticker=${encodeURIComponent(row.t)}&market=${market}`} className="mcss-btn sm" title="Fundamental analysis on the Stock Sheet">Stock Sheet</a>
+        </div>
+      </div>
+      <div className="bd">
+        <div className="mcss-facts">
+          <div><div className="k">Price</div><div className="v">{fmtPrice(row.px, market)}</div></div>
+          <div><div className="k">Change today</div><div className="v" style={{ color: chg == null ? undefined : chg >= 0 ? 'var(--ss-up)' : 'var(--ss-down)' }}>{chg == null ? '—' : `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`}</div></div>
+          <div><div className="k">Market cap</div><div className="v">{fmtValue(row.mc, 'money', market)}</div></div>
+        </div>
+        <div className="mcss-h4">Review</div>
+        <div className="mcss-seg sm" role="radiogroup" aria-label={`Review state for ${row.t}`}>
+          {REVIEW_STATES.map((x) => <button key={x.id} type="button" role="radio" aria-checked={x.id === review} onClick={() => onReview(x.id)}>{x.label}</button>)}
+        </div>
+        {checks.length ? (<>
+          <div className="mcss-h4">This screen&apos;s filters · {checks.every((c) => c.pass) ? 'passes every one' : `fails ${checks.filter((c) => !c.pass).length} of ${checks.length}`}</div>
+          <ul style={{ margin: 0, paddingLeft: 0, listStyle: 'none', display: 'grid', gap: 3, fontSize: 12.5 }}>
+            {checks.map((c, i) => (
+              <li key={i} style={{ color: c.pass ? 'var(--mc-text-1)' : 'var(--ss-down)' }}>
+                <span aria-hidden style={{ display: 'inline-block', width: 16 }}>{c.pass ? '✓' : '✗'}</span>{c.label}: <span style={{ color: c.nearMiss ? 'var(--ss-warn)' : 'var(--mc-text-3)' }}>{c.detail}</span>
+              </li>
+            ))}
+          </ul>
+        </>) : null}
+        {ADD_GROUPS.map((g) => {
+          const items = FIELDS.filter((f) => g.of.includes(f.group) && f.markets.includes(market) && f.key !== 'px' && f.key !== 'chg' && f.key !== 'mc').map((f) => ({ f, v: val(f.key) })).filter((x) => x.v != null);
+          if (!items.length) return null;
+          return (
+            <section key={g.label}>
+              <div className="mcss-h4">{g.label}</div>
+              <div className="mcss-kv">
+                {items.map(({ f, v }) => <FragmentKV key={f.key} k={f.label} v={v!} />)}
+              </div>
+            </section>
+          );
+        })}
+        <div className="mcss-dim" style={{ fontSize: 12, marginTop: 12 }}>Figures from the snapshot{row.q ? `, latest quarter ${row.q}` : ''}. ≈ = worked out in a rougher way; n/a = not meaningful for this company.</div>
+      </div>
+    </aside>
+  );
+}
+function FragmentKV({ k, v }: { k: string; v: string }) { return <><span>{k}</span><span className="v">{v}</span></>; }

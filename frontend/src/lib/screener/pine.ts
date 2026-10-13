@@ -22,7 +22,7 @@ import type { TechStored } from './tech-fetch';
 import { tvFigures, rsRatings, type TvFigures } from './tv-screens';
 
 /** Bump when the engine or the stored tag changes: every stored entry without it is re-read on the next build. */
-export const PATTERN_SCAN_VERSION = 6;   // 2 = zzz984: + the owner's TradingView indicator fields (tv-screens.ts); 3 = zzz987: + Stage Analysis (TheWrap method); 4 = zzz990: chart-pattern audit (volume missingness, IPO first base + listing date, projected sloped boundaries, strict HTF); 5 = zzz993: scan status / quality (MC-02) + scan-close provenance (MC-01) + weekly / monthly patterns (patW / patM); 6 = zzz1003: W / M scans always carry their own close `px` (PS-01), the daily scan reads COMPLETED sessions only (+ an optional provisional live reading, PS-03), monthly scans read ~10 years (PS-07)
+export const PATTERN_SCAN_VERSION = 7;   // 7 = zzz1005: chart-pattern precision audit (real turning points, cp-3.1-precision) — every stored reading is re-read; 2 = zzz984: + the owner's TradingView indicator fields (tv-screens.ts); 3 = zzz987: + Stage Analysis (TheWrap method); 4 = zzz990: chart-pattern audit (volume missingness, IPO first base + listing date, projected sloped boundaries, strict HTF); 5 = zzz993: scan status / quality (MC-02) + scan-close provenance (MC-01) + weekly / monthly patterns (patW / patM); 6 = zzz1003: W / M scans always carry their own close `px` (PS-01), the daily scan reads COMPLETED sessions only (+ an optional provisional live reading, PS-03), monthly scans read ~10 years (PS-07)
 /** zzz1003 (PS-01) — older scan versions whose DAILY reading is still shown during the changeover to the current version: their daily
  *  tags / fields are what the current version would show for a completed session (a v5 entry read during a session is labelled
  *  `session: 'provisional'`). Their WEEKLY / MONTHLY readings are NOT shown (v5 W / M scans may lack `px`, the close their `d` is
@@ -419,6 +419,10 @@ export interface PineQuery {
   need: 'pattern' | 'any';
   /** zzz984 — extra columns shown in the result table (Stock Screener field keys) */
   cols: NumKey[];
+  /** zzz1007 — the Rule of 40 control: revenue growth (latest quarter, YoY) + FCF margin at least this (%); null = off. Evaluated like
+   *  any other rule (strict: a company without a usable Rule of 40 fails; provisional only while NO company has the figure) and
+   *  combined AND-style with the pattern part, the company list, the timeframes and every other choice. Optional in saved data. */
+  r40Min?: number | null;
 }
 /** zzz984 — the extra columns the owner can switch on (the TradingView-script fields first). */
 export const OPTIONAL_COLS: readonly NumKey[] = ['tt', 'rsR', 'stage', 'twSt', 'sata', 'mrs', 'twWk', 'r40', 'revQYoY', 'fcfmTTM', 'rsiMA', 'rsiX', 'gcD', 'dcD', 'emaXU', 'emaXD', 'ppD', 'rvol', 'adv$', 'adrP', 'ripB', 'ttOk', 'st12', 'perf1M', 'perf6M', 'perf1Y'];
@@ -426,8 +430,37 @@ export const OPTIONAL_COLS: readonly NumKey[] = ['tt', 'rsR', 'stage', 'twSt', '
 export const DEFAULT_QUERY: PineQuery = {
   qv: 2, bias: 'U', ids: [], stages: ['f', 'b'], minConf: 55, tfs: ['D'], tfMode: 'any', dist: { on: true, lo: -15, hi: 5 },
   mcMin: null, mcMax: null, pxMin: null, turnMin: null, perfKey: 'perf3M', perfMin: null, sectors: [], filters: [],
-  need: 'pattern', cols: [],
+  need: 'pattern', cols: [], r40Min: null,
 };
+
+// ── zzz1007: the Rule of 40 control ─────────────────────────────────────────────────────────────────────────────────────
+/** The control's quick choices (off / ≥ 40 / ≥ 60; any other number is "custom"). */
+export const R40_LEVELS: readonly number[] = [40, 60];
+/** The columns shown (and exported) while the control is on: the Rule of 40 and its two inputs. */
+export const R40_COLS: readonly NumKey[] = ['r40', 'revQYoY', 'fcfmTTM'];
+/** The rule the control stands for, in the Stock Screener's filter language (null when off). */
+export function r40Rule(q: Pick<PineQuery, 'r40Min'>): Filter | null {
+  return q.r40Min != null && Number.isFinite(q.r40Min) ? { kind: 'num', key: 'r40', op: 'ge', v: q.r40Min } : null;
+}
+/** Every rule the Pine query applies: the extra rules plus the Rule of 40 control (when on). Evaluate THIS, never q.filters alone. */
+export function pineFilters(q: Pick<PineQuery, 'filters' | 'r40Min'>): Filter[] {
+  const r = r40Rule(q);
+  return r ? [...q.filters, r] : q.filters;
+}
+/** zzz1007 — a stored Rule of 40 whose inputs are outside the meaningful range (ruleOf40Usable: growth > 300% or |FCF margin| > 100%)
+ *  is not a figure: such a company never passes a Rule of 40 rule (lean rows already blank it; this also covers any other source). */
+export function r40Guarded(r: Partial<ScreenRow>): boolean {
+  return fin(r.r40) && fin(r.revQYoY) && fin(r.fcfmTTM) && !ruleOf40Usable(r.revQYoY, r.fcfmTTM);
+}
+const readsR40 = (f: Filter) => !f.off && (filterKeys(f) as string[]).includes('r40');
+/** zzz1007 — the result columns shown and exported to CSV: the chosen ones, plus the Rule of 40 and its two inputs while the control is on. */
+export function pineShownCols(q: Pick<PineQuery, 'cols' | 'r40Min'>): NumKey[] {
+  return q.r40Min != null ? Array.from(new Set<NumKey>([...R40_COLS, ...q.cols])) : q.cols;
+}
+/** zzz1007 — the Rule of 40 control in words, for the query summary / CSV ('' when off). */
+export function r40Text(q: Pick<PineQuery, 'r40Min'>): string {
+  return q.r40Min != null && Number.isFinite(q.r40Min) ? `Rule of 40 ≥ ${q.r40Min}` : '';
+}
 
 const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 /** Distance in the pattern's direction (bullish: close vs pivot; bearish: the mirror). */
@@ -451,7 +484,7 @@ export function turnoverOf(r: Pick<ScreenRow, 'px' | 'avgVol30' | 'avgVol10'>, m
 
 /** The company part of the query (liquidity, size, strength, sector, extra rules). */
 export function passesCompany(r: ScreenRow, q: PineQuery, market: ScreenMarket, now: Date = new Date()): boolean {
-  return passesCompanyBasics(r, q, market) && q.filters.every((f) => passes(r, f, now));
+  return passesCompanyBasics(r, q, market) && pineFilters(q).every((f) => passes(r, f, now) && !(readsR40(f) && r40Guarded(r)));
 }
 /** Size, price, liquidity, strength and sector (a missing figure fails). */
 function passesCompanyBasics(r: ScreenRow, q: PineQuery, market: ScreenMarket): boolean {
@@ -477,6 +510,7 @@ export function bestTag(tags: readonly ScreenPatternTag[]): ScreenPatternTag {
 export function ruleState(r: ScreenRow, f: Filter, market: ScreenMarket, now: Date = new Date()): 'pass' | 'fail' | 'missing' {
   if (f.off) return 'pass';
   if (f.kind === 'pattern') { const e = evalPattern(r, f); return e.status; }
+  if (readsR40(f) && r40Guarded(r)) return 'fail';   // zzz1007 — a guard-blanked Rule of 40 is not a figure
   if (f.kind === 'num' || f.kind === 'cmp' || f.kind === 'near' || f.kind === 'date') {
     const absent = filterKeys(f).filter((k) => !fin((r as any)[k]));
     if (absent.length && absent.some((k) => !fieldOf(k)?.sparse?.[market])) return 'missing';
@@ -513,7 +547,7 @@ export function runPineFull(rows: readonly ScreenRow[], q: PineQuery, market: Sc
     }
     if (!passesCompanyBasics(r, q, market)) continue;
     let failed = false;
-    for (const f of q.filters) {
+    for (const f of pineFilters(q)) {   // zzz1007 — the extra rules + the Rule of 40 control
       const st = ruleState(r, f, market, now);
       if (st === 'fail') { failed = true; break; }
       if (st === 'missing') {
@@ -782,10 +816,10 @@ export function leanRows(rows: readonly ScreenRow[], bias?: 'U' | 'D' | null, pa
 // ── saved Pine screens ────────────────────────────────────────────────────────────────────────────────────────────────
 export const PINE_SCREENS_KEY = 'mc:pine-screens:v1';
 /** zzz984 — where a built-in screen is listed: the owner's own TradingView scripts, chart patterns, momentum & trend. */
-export type PineGroup = 'tv' | 'patterns' | 'momentum' | 'portfolio';
+export type PineGroup = 'tv' | 'r40' | 'patterns' | 'momentum' | 'portfolio';
 export const PINE_GROUPS: ReadonlyArray<{ id: PineGroup; label: string }> = [
   { id: 'portfolio', label: 'My portfolio' },
-  { id: 'tv', label: 'Your TradingView screens' }, { id: 'patterns', label: 'Chart patterns' }, { id: 'momentum', label: 'Momentum & trend' },
+  { id: 'tv', label: 'Your TradingView screens' }, { id: 'r40', label: 'Rule of 40 + chart setups' }, { id: 'patterns', label: 'Chart patterns' }, { id: 'momentum', label: 'Momentum & trend' },
 ];
 /** zzz1004 — `scope` (optional): the company list saved WITH the screen ('pf' my portfolio, 'cb', 'wl:<id>', 'ss:<id>', '' every
  *  company). Opening a screen that has one switches the list to it; a screen without one leaves the current list as it is. */
@@ -820,6 +854,7 @@ export function cleanQuery(raw: unknown): PineQuery {
     sectors: Array.isArray(x.sectors) ? x.sectors.filter((s: unknown) => typeof s === 'string').slice(0, 40) : [],
     filters,
     need: x.need === 'any' ? 'any' : 'pattern',
+    r40Min: numOrNull(x.r40Min, -1000, 1000),
     cols: Array.isArray(x.cols) ? Array.from(new Set<NumKey>(x.cols.filter((k: unknown): k is NumKey => typeof k === 'string' && !!fieldOf(k)))).slice(0, 30) : [],
   };
 }
@@ -870,6 +905,28 @@ export interface RuleCoverage { key: NumKey; label: string; status: FieldCover; 
 export const pineFieldSupported = (k: string): boolean => (LEAN_KEYS as readonly string[]).includes(k);
 /** The Stock Screener fields a Pine rule may use for this market (only fields the page receives). */
 export function pineRuleFields(market: ScreenMarket) { return FIELDS.filter((f) => f.markets.includes(market) && pineFieldSupported(f.key)); }
+/** zzz1007 — the fundamental figures the Pine Screener receives (LEAN_KEYS) and offers again in "+ Add a rule" (zzz999 had limited it to
+ *  chart figures; the owner wants growth / quality / valuation rules to combine with any setup here too). */
+export const PINE_GROWTH_QUALITY_KEYS: readonly NumKey[] = ['r40', 'revQYoY', 'revAYoY', 'revTTMYoY', 'epsQYoY', 'epsTTMYoY', 'gpQYoY', 'fcfmTTM', 'gmFY', 'opmTTM', 'nmTTM', 'roeTTM', 'roceTTM', 'de', 'cash'];
+export const PINE_VALUATION_KEYS: readonly NumKey[] = ['ps', 'evRev', 'pe'];
+/** The groups of the rule editor, in order. */
+export const PINE_RULE_GROUPS = ['Price & volume', 'Averages', 'Momentum', 'Growth & quality', 'Valuation'] as const;
+export type PineRuleGroup = typeof PINE_RULE_GROUPS[number];
+/** The editor group of a field (null = not offered in the Pine rule editor). */
+export function pineRuleGroup(f: { key: string; group: string }): PineRuleGroup | null {
+  if ((PINE_GROWTH_QUALITY_KEYS as readonly string[]).includes(f.key)) return 'Growth & quality';
+  if ((PINE_VALUATION_KEYS as readonly string[]).includes(f.key)) return 'Valuation';
+  if (f.group === 'Price & volume') return 'Price & volume';
+  if (f.group === 'Moving averages') return 'Averages';
+  if (f.group === 'Momentum') return 'Momentum';
+  return null;
+}
+/** zzz1007 — the "+ Add a rule" menu: the fields this market receives, grouped (Price & volume / Averages / Momentum / Growth & quality
+ *  / Valuation). Only fields in LEAN_KEYS, so a rule added here can always be evaluated on this page. */
+export function pineRuleMenu(market: ScreenMarket): Array<{ group: PineRuleGroup; fields: ReturnType<typeof pineRuleFields> }> {
+  const all = pineRuleFields(market);
+  return PINE_RULE_GROUPS.map((group) => ({ group, fields: all.filter((f) => pineRuleGroup(f) === group) })).filter((g) => g.fields.length);
+}
 export function ruleCoverage(rows: readonly ScreenRow[], filters: readonly Filter[], market: ScreenMarket): RuleCoverage[] {
   const seen = new Set<string>();
   const out: RuleCoverage[] = [];

@@ -33,6 +33,9 @@ const BASE_IDS: PineQuery['ids'] = ['flat_base', 'cup', 'cup_handle', 'u_base', 
  *  reversal bases (double / triple bottom, inverse H&S), counted apart. */
 export const MONTHLY_BASE_IDS: PineQuery['ids'] = ['u_base', 'cup', 'vcp'];
 export const MONTHLY_REVERSAL_IDS: PineQuery['ids'] = ['double_bottom', 'triple_bottom', 'inverse_hs'];
+/** zzz1007 — the Rule of 40 columns and the sentence every Rule of 40 screen starts with. */
+const R40_COLS: NumKey[] = ['r40', 'revQYoY', 'fcfmTTM'];
+const R40_NOTE = 'Rule of 40 ≥ 40: latest quarter revenue growth YoY + FCF margin (your TradingView script). Left blank — so the company does not pass — when growth is above +300% or the FCF margin is outside −100% to +100% (a tiny sales base).';
 const ABOVE_200: Filter[] = [{ kind: 'cmp', key: 'px', op: 'above', other: 'sma200' }];
 const BELOW_200: Filter[] = [{ kind: 'cmp', key: 'px', op: 'below', other: 'sma200' }];
 
@@ -91,7 +94,9 @@ export const BUILT_IN_PINE_SCREENS: readonly PineScreen[] = [
   // ── zzz984: his own TradingView scripts / the indicators in his Pine Screener ───────────────────────────────────────
   rules('tv-trend-template', 'Minervini Trend Template (based on your TradingView script)', TREND_TEMPLATE, ['tt', 'rsR', 'stage'], 'tv',
     'Your "minervni script": close > SMA 50 > SMA 150 > SMA 200, SMA 200 rising on each of the last 20 sessions, close > 1.3 × the 250-session low and > 0.75 × the 250-session high — all six rules.'),
-  // zzz999 — 'tv-rule-of-40' (fundamentals only) moved to the Stock Screener's built-ins: see MOVED_PINE_SCREENS below.
+  // zzz1007 — the Rule of 40 is back on the Pine Screener (owner: "should work with different combinations"). The old id is kept, so a
+  // page that last had it open opens it again; the Stock Screener keeps its own copies ('tv-rule-of-40' / 'tv-rule-of-40-in').
+  rules('tv-rule-of-40', 'Rule of 40 (based on your TradingView script)', [], R40_COLS, 'tv', `${R40_NOTE} Rules only: any chart pattern is shown beside the company.`, { r40Min: 40 }),
   rules('tv-rsi-cross', 'RSI crossed above its average', [le('rsiX', 9)], ['rsiMA', 'rsiX'], 'tv',
     'Your RSI script: RSI 14 crossed above its 14-session average in the last 10 sessions.'),
   rules('tv-rsi-50', 'RSI > 50 and above its average', [{ kind: 'num', key: 'rsi', op: 'gt', v: 50 }, { kind: 'cmp', key: 'rsi', op: 'above', other: 'rsiMA' }], ['rsiMA', 'rsiX'], 'tv',
@@ -122,14 +127,14 @@ export const BUILT_IN_PINE_SCREENS: readonly PineScreen[] = [
   screen('tt-bullish-base', 'Trend Template + bullish base (likely+)', {
     bias: 'U', ids: ['flat_base', 'cup', 'cup_handle', 'u_base', 'ascending_base', 'base_on_base', 'ipo_base', 'vcp'], minConf: 55, filters: TREND_TEMPLATE, cols: ['tt', 'rsR', 'stage'],
   }, { group: 'momentum', note: 'All six trend-template rules pass AND a bullish base (O\'Neil bases or VCP) is forming or just broke out, likely or better.' }),
+  // ── zzz1007: Rule of 40 + chart setups (the Rule of 40 control — growth + FCF margin — combined with a pattern part) ─────────
+  screen('r40-bullish', 'Rule of 40 · bullish patterns', { bias: 'U', tfs: ['D', 'W', 'M'], tfMode: 'any', stages: ['f', 'b'], minConf: 55, r40Min: 40, cols: R40_COLS.slice() },
+    { group: 'r40', note: `${R40_NOTE} With a bullish pattern on the daily, weekly or monthly bars (any), forming or just broken out, likely or better, from 15% below the pivot to 5% above it.` }),
+  screen('r40-ready', 'Rule of 40 · ready to break out', { bias: 'U', stages: ['f'], minConf: 55, dist: { on: true, lo: -5, hi: 0 }, r40Min: 40, cols: R40_COLS.slice() },
+    { group: 'r40', note: `${R40_NOTE} With a bullish pattern still forming, likely or better, the scan close 0–5% below the pivot.` }),
+  screen('r40-weekly-bases', 'Rule of 40 · Weekly bases', { bias: 'U', ids: BASE_IDS, tfs: ['W'], stages: ['f', 'b'], dist: { on: true, lo: -20, hi: 5 }, r40Min: 40, cols: R40_COLS.slice() },
+    { group: 'r40', note: `${R40_NOTE} With a bullish base (O'Neil bases or VCP) on completed weekly bars, forming or just broken out.` }),
   screen('rs80-stage2-forming', 'RS ≥ 80 + Stage 2 + pattern forming', {
     bias: 'U', stages: ['f'], minConf: 55, filters: [ge('rsR', 80), eq('stage', 2)], cols: ['rsR', 'stage', 'tt'],
   }, { group: 'momentum', note: 'Leaders (RS Rating 80+) in a stage 2 uptrend with a bullish pattern still forming.' }),
 ];
-
-/** zzz999 — built-in Pine screens that were about fundamentals only and now live in the Stock Screener (same idea, same rules).
- *  The Pine Screener uses them as a company list ("Companies → a Stock Screener screen"), so they combine with any chart setup.
- *  The old id stays reserved here so a page that last had it open can say where it went. */
-export const MOVED_PINE_SCREENS: Readonly<Record<string, { name: string; stockIds: { US: string; IN: string } }>> = {
-  'tv-rule-of-40': { name: 'Rule of 40 (based on your TradingView script)', stockIds: { US: 'tv-rule-of-40', IN: 'tv-rule-of-40-in' } },
-};

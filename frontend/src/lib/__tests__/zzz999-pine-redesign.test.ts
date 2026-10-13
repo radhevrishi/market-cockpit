@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PATTERN_META, type PatternId } from '../chart-patterns';
 import { runPineFull, cleanQuery, cleanPineScreens, onList, type ScreenPatternTag } from '../screener/pine';
-import { BUILT_IN_PINE_SCREENS, MOVED_PINE_SCREENS } from '../screener/pine-presets';
+import { BUILT_IN_PINE_SCREENS } from '../screener/pine-presets';
 import { BUILT_IN_SCREENS, cleanScreens } from '../screener/filters';
 import {
   SETUP_CARDS, cardQuery, setupCounts, scopeKind, stockScreenTickers, maPosition, maVerdict, portfolioCheck, invalidation, patternChecks,
@@ -104,19 +104,20 @@ test('zzz999 company lists: portfolio / Stock screen / hand-off scopes narrow th
   assert.equal(normTicker('bse:TATA-EQ'), 'TATA');
 });
 
-test('zzz999 fundamental-only presets moved to the Stock Screener with stable ids; old saved Pine screens still load', () => {
-  assert.ok(!BUILT_IN_PINE_SCREENS.some((s) => s.id in MOVED_PINE_SCREENS), 'no moved id is still a Pine built-in');
-  for (const [id, m] of Object.entries(MOVED_PINE_SCREENS)) {
-    const us = BUILT_IN_SCREENS.find((s) => s.id === m.stockIds.US)!, ind = BUILT_IN_SCREENS.find((s) => s.id === m.stockIds.IN)!;
-    assert.equal(us.market, 'US'); assert.equal(ind.market, 'IN'); assert.equal(us.name, m.name);
-    assert.equal(m.stockIds.US, id, 'the US copy keeps the old id');
-    assert.deepEqual(cleanScreens([us])[0].filters, us.filters, 'the moved screen survives the Stock Screener clean-up');
+test('zzz999 fundamental-only presets have Stock Screener copies with stable ids; old saved Pine screens still load', () => {
+  // zzz1007 — the Rule of 40 is a Pine screen again (the MOVED notice is gone); the Stock Screener copies stay
+  for (const id of ['tv-rule-of-40', 'tv-rule-of-40-in']) {
+    const sc = BUILT_IN_SCREENS.find((s) => s.id === id)!;
+    assert.equal(sc.market, id.endsWith('-in') ? 'IN' : 'US'); assert.equal(sc.name, 'Rule of 40 (based on your TradingView script)');
+    assert.deepEqual(cleanScreens([sc])[0].filters, sc.filters, 'the Stock Screener copy survives its clean-up');
   }
+  assert.ok(BUILT_IN_PINE_SCREENS.some((s) => s.id === 'tv-rule-of-40'), 'the old Pine id opens a Pine screen again');
   // a Pine screen the owner saved from the old Rule of 40 preset keeps its rule as it was
   const saved = cleanPineScreens([{ id: 'my-r40', name: 'My Rule of 40', q: { qv: 2, bias: 'both', need: 'any', stages: ['f', 'b'], filters: [{ kind: 'num', key: 'r40', op: 'ge', v: 40 }], cols: ['r40'] } }]);
   assert.deepEqual(saved[0].q.filters, [{ kind: 'num', key: 'r40', op: 'ge', v: 40 }]);
   assert.equal(runPineFull([row('R', { r40: 50 } as any), row('S', { r40: 10 } as any)], saved[0].q, 'US').strict.length, 1);
-  // every Pine built-in is still a chart setup: a pattern requirement or chart / momentum rules only
+  // every Pine built-in is still a chart setup: a pattern requirement or chart / momentum rules only (zzz1007: the Rule of 40 is
+  // carried by its own control, q.r40Min — never as a hidden fundamental rule)
   const FUND = new Set(['r40', 'revQYoY', 'revAYoY', 'epsQYoY', 'fcfmTTM', 'gmFY', 'roeTTM', 'roceTTM', 'pe', 'ps', 'evRev', 'de', 'cash', 'opmTTM', 'nmTTM', 'fs']);
   for (const s of BUILT_IN_PINE_SCREENS) for (const f of s.q.filters) assert.ok(!('key' in f) || !FUND.has((f as any).key), `${s.id} uses fundamental figure ${(f as any).key}`);
 });

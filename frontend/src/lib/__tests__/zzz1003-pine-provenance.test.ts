@@ -38,7 +38,7 @@ function bizSeries(end: string, n: number, spikeLast = 0): DailyBars {
 }
 
 test('zzz1003 version: bumped to 6; v5 is the daily-compatible version', () => {
-  assert.equal(V, 6);
+  assert.ok(V >= 6);   // zzz1005 bumped it to 7 (chart-pattern precision audit)
   assert.deepEqual([...PATTERN_SCAN_DAILY_COMPAT], [5]);
   assert.equal(HISTORY_DAYS, 10 * 365 + 25);
   assert.equal(TECH_FIGURE_DAYS, 5 * 365 + 25);

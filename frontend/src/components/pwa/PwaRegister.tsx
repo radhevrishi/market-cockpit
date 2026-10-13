@@ -1,10 +1,19 @@
 'use client';
 // zzz796 — registers the service worker (production only) and offers the new
 // version after a deploy: "Update available — tap to reload".
+// zzz1006 — shown as a small chip in the site header's status area (beside the theme / PDF / search controls) instead of a
+// toast floating over the chart or table; pages without the header get a small corner chip. Same function: Reload / Later.
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { startInstallCapture, isStandalone } from './pwa-state';
 import s from './pwa.module.css';
 import { swUpdateDue, whenIdle } from '@/lib/shell-fetch';
+
+/** zzz1006 — the dashboard header's status area (its chips row), or null on pages without the header. */
+function headerSlot(): Element | null {
+  const cls = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(s.chips) : s.chips;
+  return cls ? document.querySelector(`header .${cls}`) : null;
+}
 
 export default function PwaRegister({ version }: { version: string }) {
   const [waiting, setWaiting] = useState<ServiceWorker | null>(null);
@@ -77,6 +86,14 @@ export default function PwaRegister({ version }: { version: string }) {
     };
   }, [version]);
 
+  // the header's status area (the chips row of the dashboard header): looked up again shortly if the shell is still mounting
+  const [, setRetry] = useState(0);
+  useEffect(() => {
+    if (!waiting || headerSlot()) return;
+    const t = window.setTimeout(() => setRetry((n) => n + 1), 1500);
+    return () => window.clearTimeout(t);
+  }, [waiting]);
+
   if (!waiting) return null;
   const apply = () => {
     userAsked.current = true;
@@ -84,11 +101,14 @@ export default function PwaRegister({ version }: { version: string }) {
     // Fallback in case controllerchange never arrives.
     setTimeout(() => { if (!reloading.current) { reloading.current = true; window.location.reload(); } }, 3000);
   };
-  return (
-    <div className={s.toast} role="status" aria-live="polite">
-      <span>Update available</span>
-      <button type="button" className={s.toastBtn} onClick={apply}>Tap to reload</button>
-      <button type="button" className={s.toastClose} aria-label="Later" onClick={() => setWaiting(null)}>✕</button>
+  const slot = headerSlot();
+  const chip = (
+    <div className={slot ? s.updateChip : s.updateDock} role="status" aria-live="polite">
+      <span className={s.updateDot} aria-hidden />
+      <span className={s.updateText}>Update available</span>
+      <button type="button" className={s.updateBtn} onClick={apply} title="Reload to use the new version">Reload</button>
+      <button type="button" className={s.updateClose} aria-label="Later" title="Later" onClick={() => setWaiting(null)}>✕</button>
     </div>
   );
+  return slot ? createPortal(chip, slot) : chip;
 }

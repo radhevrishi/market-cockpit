@@ -17,10 +17,11 @@ import type { ScreenMarket, ScreenRow } from '@/lib/screener/types';
 import { PATTERN_META, PATTERN_IDS, type PatternId } from '@/lib/chart-patterns';
 import {
   DEFAULT_QUERY, LIKELIHOODS, OPTIONAL_COLS, PINE_GROUPS, PINE_SCREENS_KEY, STAGES, TIMEFRAMES, SHAPE_SCORE_LABEL, SHAPE_SCORE_TIP, cleanPineScreens, cleanQuery, dirDist,
-  likelihoodWord, patternCounts, patternGroups, runPineFull, turnoverOf, onList, ruleCoverage, pineRuleFields, tagLengthText,
+  likelihoodWord, patternCounts, patternGroups, runPineFull, turnoverOf, onList, ruleCoverage, pineRuleFields, pineRuleMenu, tagLengthText,
+  pineFilters, pineShownCols, r40Guarded, R40_LEVELS, R40_MAX_GROWTH, R40_MAX_ABS_FCFM,
   type PerfKey, type PineHit, type PineQuery, type PineScreen, type PineStage,
 } from '@/lib/screener/pine';
-import { BUILT_IN_PINE_SCREENS, MOVED_PINE_SCREENS } from '@/lib/screener/pine-presets';
+import { BUILT_IN_PINE_SCREENS } from '@/lib/screener/pine-presets';
 import { fmtValue, fmtPrice, fmtMoney, fmtExact, filterLabel, fieldOf, patTagsOf, patMissingWhy, BUILT_IN_SCREENS, SCREENS_KEY, cleanScreens, type Filter, type NumKey, type PatTf, type Screen } from '@/lib/screener/filters';
 import { TV_SECTORS } from '@/lib/screener/tv-sectors';
 import { writeReviewQueue } from '@/lib/screener/workflow';
@@ -28,7 +29,7 @@ import { scopeItems, scopeCounts, scopeLabel, countsLine, emptyState, confirmAdd
 import {
   SETUP_CARDS, setupCounts, scopeKind, stockScreenTickers, cleanHandoff, PINE_HANDOFF_KEY, maPosition, portfolioCheck, stageWord, tfWord,
   querySummary, presetLine, scopeCoverage, coverageLine, chipApplicability, unsupportedNotice, familyOf, latestConditions, lengthDays, lengthTip,
-  analysisOf, sessionLabel, chartIdentityParams, ANALYSIS_CSV_HEAD, analysisCsvCells, listCoverageRows,
+  analysisOf, sessionLabel, chartIdentityParams, ANALYSIS_CSV_HEAD, analysisCsvCells, listCoverageRows, withCarriedR40,
   type PineHandoff, type SetupCard, type PortfolioMode,
 } from '@/lib/screener/pine-view';
 import { loadHoldings, localIndiaHoldings } from '@/lib/screener/portfolio-scope';
@@ -58,7 +59,8 @@ type Extra = 'chg' | 'mc' | 'perf' | 'rsi' | 'turn';
 const EXTRAS: ReadonlyArray<{ id: Extra; label: string }> = [
   { id: 'chg', label: 'Change today' }, { id: 'mc', label: 'Market cap' }, { id: 'perf', label: 'Performance' }, { id: 'rsi', label: 'RSI 14' }, { id: 'turn', label: 'Daily value traded' },
 ];
-const TECH_GROUPS = new Set(['Price & volume', 'Moving averages', 'Momentum']);
+/** zzz1007 — why a Rule of 40 cell is blank although both inputs are there. */
+const R40_GUARD_TIP = `Left blank when revenue growth is above +${R40_MAX_GROWTH}% or the FCF margin is outside −${R40_MAX_ABS_FCFM}% to +${R40_MAX_ABS_FCFM}% (growth from a tiny sales base) — such a company does not pass a Rule of 40 rule.`;
 
 function readSaved(): PineScreen[] { try { return cleanPineScreens(JSON.parse(localStorage.getItem(PINE_SCREENS_KEY) || '[]')); } catch { return []; } }
 function writeSaved(list: PineScreen[]): boolean { try { localStorage.setItem(PINE_SCREENS_KEY, JSON.stringify(list.map(({ builtIn: _b, ...s }) => s))); return true; } catch { return false; } }
@@ -136,14 +138,16 @@ export default function PineScreener() {
     const um = urlParam('market');
     const hand = urlParam('from') === 'stock' ? readHandoff() : null;   // "Open in Pine Screener": the hand-off's market
     const market: ScreenMarket = hand ? hand.market : um === 'IN' || um === 'US' ? um : last?.market || s.market || 'US';
-    return { s, market, q: last?.dirty && last.id === s.id ? last.q : cleanQuery(clone(s.q)), dirty: !!(last?.dirty && last.id === s.id), moved: last && MOVED_PINE_SCREENS[last.id] ? last.id : null };
+    // zzz1007 — 'tv-rule-of-40' is a Pine screen again (an old last-screen with that id simply opens it); the Rule of 40 control in
+    // use last time survives like the company list does
+    const q0 = last?.dirty && last.id === s.id ? last.q : withCarriedR40(cleanQuery(clone(s.q)), last?.q);
+    return { s, market, q: q0, dirty: !!(last?.dirty && last.id === s.id) };
   });
   const [screenId, setScreenId] = useState(first.s.id);
   const [name, setName] = useState(first.s.name);
   const [market, setMarket] = useState<ScreenMarket>(first.market);
   const [q, setQ] = useState<PineQuery>(first.q);
   const [dirty, setDirty] = useState(first.dirty);
-  const [moved, setMoved] = useState<string | null>(first.moved);
   const [snaps, setSnaps] = useState<Partial<Record<ScreenMarket, Snap>>>({});
   const [errors, setErrors] = useState<Partial<Record<ScreenMarket, string | null>>>({});
   const [loading, setLoading] = useState(false);
@@ -288,7 +292,10 @@ export default function PineScreener() {
   const run = useMemo(() => runPineFull(rows, q, market), [rows, q, market]);
   const hits = useMemo(() => onList(run.strict, listTickers), [run, listTickers]);
   const provHits = useMemo(() => onList(run.provisional, listTickers), [run, listTickers]);
-  const coverage = useMemo(() => ruleCoverage(rows, q.filters, market), [rows, q.filters, market]);
+  const activeRules = useMemo(() => pineFilters(q), [q]);   // zzz1007 — the extra rules + the Rule of 40 control
+  const coverage = useMemo(() => ruleCoverage(rows, activeRules, market), [rows, activeRules, market]);
+  // zzz1007 — the columns shown and exported: the chosen ones plus the Rule of 40 and its inputs while the control is on
+  const shownCols = useMemo<NumKey[]>(() => pineShownCols(q), [q]);
   // zzz1004 (PS-02 / PS-05 / PS-06) — the active query in words, coverage of the SELECTED timeframes within the CURRENT list, types the
   // selected timeframes do not read, and the list members that are not matches (coverage rows)
   const summary = querySummary(q, kind === 'all' ? '' : scopeName);
@@ -298,7 +305,7 @@ export default function PineScreener() {
   const covList = !!snap && kind !== 'all' && !scopeWaiting && !!listTickers && listTickers.size > 0 && listTickers.size <= 300 ? listTickers : null;
   const listCov = useMemo(() => (covList ? listCoverageRows({ rows, q, market, list: covList, run }) : null), [covList, rows, q, market, run]);
   const counts = useMemo(() => patternCounts(listTickers ? rows.filter((r) => listTickers.has(r.t.toUpperCase())) : rows, q, market), [rows, q, market, listTickers]);
-  const cardCounts = useMemo(() => (snap ? setupCounts(rows, market, kind === 'portfolio' ? null : listTickers, hold && (hold.status !== 'loading' || hold.tickers.length) ? hold.tickers : null) : {}), [snap, rows, market, listTickers, hold, kind]);
+  const cardCounts = useMemo(() => (snap ? setupCounts(rows, market, kind === 'portfolio' ? null : listTickers, hold && (hold.status !== 'loading' || hold.tickers.length) ? hold.tickers : null, undefined, { r40Min: q.r40Min ?? null }) : {}), [snap, rows, market, listTickers, hold, kind, q.r40Min]);
   const pfItems = useMemo(() => (view === 'portfolio' && hold ? portfolioCheck(rows, hold.tickers) : []), [view, rows, hold]);
   // which analysis timeframes have been scanned at all in this market (W / M fill in once the weekly / monthly scan runs)
   const tfScanned = useMemo<Record<PatTf, boolean>>(() => ({
@@ -366,13 +373,13 @@ export default function PineScreener() {
     const s = screens.find((x) => x.id === id);
     if (!s) return false;
     if (dirty && !window.confirm(`Discard the unsaved changes to "${name}"?`)) return false;
-    setScreenId(s.id); setName(s.name); setQ(cleanQuery(clone(s.q))); setDirty(false); setShowAll(false); setSelected(new Set()); setRuleEdit(null); setExpanded(null);
+    setScreenId(s.id); setName(s.name); setQ(withCarriedR40(cleanQuery(clone(s.q)), q)); setDirty(false); setShowAll(false); setSelected(new Set()); setRuleEdit(null); setExpanded(null);
     setSec((x) => ({ ...x, patterns: x.patterns || s.q.ids.length > 0, rules: x.rules || s.q.filters.length > 0 }));
     if (s.market) setMarket(s.market);
     // zzz1004 — the company list survives a screen change; only a screen saved WITH a list (e.g. the portfolio screens) sets it
     if (s.scope !== undefined) setScope(s.scope);
     return true;
-  }, [screens, dirty, name]);
+  }, [screens, dirty, name, q]);
   const pickCard = (c: SetupCard) => {
     if (!c.presetId) { setView('portfolio'); return; }
     if (loadScreen(c.presetId)) setView('setups');
@@ -406,13 +413,14 @@ export default function PineScreener() {
   const toggleTf = (tf: PatTf) => { const next = q.tfs.includes(tf) ? q.tfs.filter((x) => x !== tf) : [...q.tfs, tf]; if (next.length) change({ tfs: next }); };
   const ofBias = PATTERN_IDS.filter((id) => q.bias === 'both' || (PATTERN_META[id].bias === 'bullish') === (q.bias === 'U'));
   const patMatchesFind = (id: PatternId) => !patFind.trim() || PATTERN_META[id].label.toLowerCase().includes(patFind.trim().toLowerCase());
-  // zzz999 — the Pine page offers chart rules only (price, averages, momentum, volume); fundamentals are the Stock Screener's
+  // zzz1007 — "+ Add a rule" offers every figure this page receives, grouped: Price & volume / Averages / Momentum / Growth & quality /
+  // Valuation (zzz999 had limited it to chart figures). A company without the figure fails the rule (strict, zzz997).
   const ruleFields = useMemo(() => pineRuleFields(market), [market]);
-  const chartRuleFields = useMemo(() => ruleFields.filter((f) => TECH_GROUPS.has(f.group)), [ruleFields]);
+  const ruleMenu = useMemo(() => pineRuleMenu(market), [market]);
   const addRule = (v: string) => {
     let f: Filter | null = null;
     if (v === '__cmp') f = { kind: 'cmp', key: 'px', op: 'ge', other: 'sma50' };
-    else { const d = chartRuleFields.find((x) => x.key === v); if (d) f = d.unit === 'date' ? { kind: 'date', key: d.key, op: 'pastYears', v: 5 } : { kind: 'num', key: d.key, op: 'gt', v: 0 }; }
+    else { const d = ruleMenu.flatMap((g) => g.fields).find((x) => x.key === v); if (d) f = d.unit === 'date' ? { kind: 'date', key: d.key, op: 'pastYears', v: 5 } : { kind: 'num', key: d.key, op: 'gt', v: 0 }; }
     if (!f) return;
     change({ filters: [...q.filters, f] }); setRuleEdit(q.filters.length); setSec((s) => ({ ...s, rules: true }));
   };
@@ -454,7 +462,7 @@ export default function PineScreener() {
       'To pivot from analysis close (%)', 'To pivot from latest quote (%)', 'Length', 'Depth (%)', 'Other patterns',
       ...ANALYSIS_CSV_HEAD.map(withCur), 'Daily bars source', 'Quote vs daily technical close (%)', 'Price sources disagree',
       'Change (%)', `Market cap (${money})`, `Avg daily value (${money})`, `Perf ${PERF_LABEL[q.perfKey]} (%)`, 'RSI 14', 'Close vs SMA 21 (%)', 'Close vs SMA 50 (%)', 'Close vs SMA 200 (%)', 'RS Rating',
-      ...q.cols.map((k) => { const d = fieldOf(k); const u = d?.unit === '%' ? ' (%)' : d?.unit === 'money' ? ` (${money})` : d?.unit === 'price' ? ` (${cur})` : ''; return `${d?.label || k}${u}`; }),
+      ...shownCols.map((k) => { const d = fieldOf(k); const u = d?.unit === '%' ? ' (%)' : d?.unit === 'money' ? ` (${money})` : d?.unit === 'price' ? ` (${cur})` : ''; return `${d?.label || k}${u}`; }),
       'Approximate (≈) fields', 'Daily scan status', 'Daily scan version', 'Scan engine version', 'Daily patterns as of', 'Not evaluated (provisional)', 'Snapshot built (UTC)', 'Export scope',
       'Active query', 'Preset', 'Coverage (selected timeframes, this list)'];
     const body = actHits.map(({ row: r, best: b, tags, missing }) => { const ma = maPosition(r); const an = analysisOf(r, b || { tf: 'D' }); return [r.t, market === 'IN' ? 'NSE' : 'US', r.n, r.tvSec || r.sec || '', b ? PATTERN_META[b.id].label : '', b ? (b.tf || 'D') : '',
@@ -463,7 +471,7 @@ export default function PineScreener() {
       tags.filter((t) => t !== b).map((t) => `${PATTERN_META[t.id].label} [${t.tf || 'D'}] (${t.c})`).join('; '),
       ...analysisCsvCells(r, b), r.scanSrc || '', r.pxGap ?? '', r.pxConflict ? 'yes' : '',
       r.chg ?? '', r.mc ?? '', turnoverOf(r, market) ?? '', r[q.perfKey] ?? '', r.rsi ?? '', ma.d21 ?? '', ma.d50 ?? '', ma.d200 ?? '', r.rsR ?? '',
-      ...q.cols.map((k) => (r as any)[k] ?? ''), (r.approx || []).filter((k) => (q.cols as string[]).includes(k)).join('; '),
+      ...shownCols.map((k) => (r as any)[k] ?? ''), (r.approx || []).filter((k) => (shownCols as string[]).includes(k)).join('; '),
       r.scan?.st || '', r.scan?.v ?? '', an.engine || r.scan?.e || '', r.patAt || '', (missing || []).join('; '), snap?.builtAt || '', actLabel,
       summary, presetLine(name, dirty), covText]; });
     const blob = new Blob(['﻿' + toCsv([head, ...body])], { type: 'text/csv;charset=utf-8' });
@@ -495,10 +503,10 @@ export default function PineScreener() {
   const numIn = (v: number | null, set: (v: number | null) => void, label: string) => (
     <input type="number" className="pnx-in" aria-label={label} value={v ?? ''} placeholder="any" onChange={(e) => set(e.target.value === '' ? null : Number(e.target.value))} />
   );
-  const colCount = 10 + (showScanCol ? 1 : 0) + q.cols.length + extras.length;
-  const movedInfo = moved ? MOVED_PINE_SCREENS[moved] : null;
+  const colCount = 10 + (showScanCol ? 1 : 0) + shownCols.length + extras.length;
   const myStockScreens = stockScreens.filter((s) => s.market === market);
-  const filtersOn = (q.ids.length ? 1 : 0) + q.filters.filter((f) => !f.off).length + companyFilterCount + (scope ? 1 : 0);
+  const filtersOn = (q.ids.length ? 1 : 0) + q.filters.filter((f) => !f.off).length + companyFilterCount + (scope ? 1 : 0) + (q.r40Min != null ? 1 : 0);
+  const r40Mode = q.r40Min == null ? 'off' : R40_LEVELS.includes(q.r40Min) ? String(q.r40Min) : 'custom';
 
   return (
     <div className={`pnx ${workspaceThemeClass(light, true)}${density === 'compact' ? ' pnx-compact' : ''}`} style={{ padding: '14px 16px 28px', display: 'grid', gap: 14, background: 'var(--mc-bg-0)', minHeight: '100%', minWidth: 0 }}>
@@ -522,13 +530,6 @@ export default function PineScreener() {
 
       <SetupCards active={activeCard} counts={cardCounts} onPick={pickCard} loading={!snap} />
 
-      {movedInfo ? (
-        <div role="status" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 13, padding: '8px 12px', border: `1px solid ${C.border}`, borderRadius: 10 }}>
-          <span>“{movedInfo.name}” is about fundamentals only, so it now lives in the Stock Screener. Use it here as the company list to see which of those charts are setting up.</span>
-          <button type="button" className="pnx-btn" data-on="true" onClick={() => { setScope(`ss:${movedInfo.stockIds[market]}`); setMoved(null); }}>Use it as the company list</button>
-          <button type="button" className="pnx-btn" onClick={() => setMoved(null)}>Dismiss</button>
-        </div>
-      ) : null}
 
       <div className="pnx-layout" data-wide={view === 'portfolio'}>
         {/* ── filters ───────────────────────────────────────────────────────────────────────────────────────────── */}
@@ -615,6 +616,24 @@ export default function PineScreener() {
             <input type="checkbox" checked={q.need !== 'any' || q.ids.length > 0} disabled={q.ids.length > 0} onChange={(e) => change({ need: e.target.checked ? 'pattern' : 'any' })} aria-label="Require a chart pattern" /> Require a chart pattern{q.ids.length ? ' (types ticked)' : ''}
           </label>
 
+          {/* zzz1007 — the Rule of 40 control: combines AND-style with the setup, direction, timeframes, pattern types and company list */}
+          <div className="pnx-field" data-testid="r40-control" title="Rule of 40 = latest quarter revenue growth YoY + FCF margin (your TradingView script). A company without a usable figure does not pass.">
+            <span className="pnx-lab">Rule of 40</span>
+            <span role="radiogroup" aria-label="Rule of 40" className="pnx-seg">
+              {([['off', 'Off'], ['40', '≥ 40'], ['60', '≥ 60'], ['custom', 'Custom']] as const).map(([v, label]) => (
+                <button key={v} type="button" role="radio" aria-checked={r40Mode === v} onClick={() => change({ r40Min: v === 'off' ? null : v === 'custom' ? (r40Mode === 'custom' ? q.r40Min : 50) : Number(v) })}>{label}</button>
+              ))}
+            </span>
+            {r40Mode === 'custom' ? (
+              <span style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 6, alignItems: 'center', fontSize: 13 }}>
+                <span>at least</span>
+                <input type="number" className="pnx-in" aria-label="Rule of 40 at least" value={q.r40Min ?? ''} onChange={(e) => { const v = e.target.value === '' ? null : Number(e.target.value); change({ r40Min: v != null && Number.isFinite(v) ? v : null }); }} />
+                <span style={{ color: C.dim }}>%</span>
+              </span>
+            ) : null}
+            {q.r40Min != null ? <span className="pnx-note">Growth + FCF margin ≥ {q.r40Min}; combined with every other choice. Its columns are shown. {R40_GUARD_TIP}</span> : null}
+          </div>
+
           <Section id="pnx-sec-size" title="Size & liquidity" hint={companyFilterCount ? `${companyFilterCount} on` : ''} open={sec.size} onToggle={() => toggleSec('size')}>
             <div className="pnx-field"><span className="pnx-lab">Market cap ({money})</span>
               <span style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 6, alignItems: 'center' }}>{numIn(q.mcMin, (v) => change({ mcMin: v }), 'Minimum market cap')}<span>–</span>{numIn(q.mcMax, (v) => change({ mcMax: v }), 'Maximum market cap')}</span></div>
@@ -667,7 +686,7 @@ export default function PineScreener() {
             })}
           </Section>
 
-          <Section id="pnx-sec-rules" title="Chart rules" hint={q.filters.length ? `${q.filters.length}` : ''} open={sec.rules} onToggle={() => toggleSec('rules')}>
+          <Section id="pnx-sec-rules" title="Rules" hint={q.filters.length ? `${q.filters.length}` : ''} open={sec.rules} onToggle={() => toggleSec('rules')}>
             {q.filters.length ? (
               <div className="pnx-chips">
                 {q.filters.map((f, i) => (
@@ -679,16 +698,16 @@ export default function PineScreener() {
               </div>
             ) : <div className="pnx-note">No extra rules on this screen.</div>}
             <select value="" onChange={(e) => { if (e.target.value) addRule(e.target.value); }} className="pnx-in" style={{ fontWeight: 650 }} aria-label="Add a rule">
-              <option value="">+ Add a chart rule</option>
+              <option value="">+ Add a rule</option>
               <option value="__cmp">One figure against another (e.g. price ≥ SMA 50)</option>
-              {Array.from(new Set(chartRuleFields.map((f) => f.group))).map((g) => (
-                <optgroup key={g} label={g}>{chartRuleFields.filter((f) => f.group === g).map((f) => <option key={f.key} value={f.key}>{f.label}{f.approxNote?.[market] ? ' ≈' : ''}</option>)}</optgroup>
+              {ruleMenu.map((g) => (
+                <optgroup key={g.group} label={g.group}>{g.fields.map((f) => <option key={f.key} value={f.key}>{f.label}{f.approxNote?.[market] ? ' ≈' : ''}</option>)}</optgroup>
               ))}
             </select>
             {ruleEdit != null && q.filters[ruleEdit] ? (
               <FilterEditor f={q.filters[ruleEdit]} market={market} fields={ruleFields} onChange={(nf) => change({ filters: q.filters.map((x, k) => (k === ruleEdit ? nf : x)) })} onClose={() => setRuleEdit(null)} />
             ) : null}
-            <div className="pnx-note">Growth, margins and valuation rules live in the <Link href="/stock-screener" className="pnx-link">Stock Screener</Link>. To combine them with a chart setup, pick that screen under Companies.</div>
+            <div className="pnx-note">Growth, quality and valuation rules work here too (a company without the figure does not pass; ≈ = approximate figure). Figures this page does not receive are in the <Link href="/stock-screener" className="pnx-link">Stock Screener</Link> — pick one of its screens under Companies to combine it with a chart setup.</div>
           </Section>
 
           <Section id="pnx-sec-cols" title="Columns" hint={extras.length + q.cols.length ? `${extras.length + q.cols.length} extra` : ''} open={sec.cols} onToggle={() => toggleSec('cols')}>
@@ -840,7 +859,7 @@ export default function PineScreener() {
                         <Th bare label={<span style={{ display: 'inline-grid', gridTemplateColumns: 'repeat(3, 3.6em)', gap: 4, justifyItems: 'end' }}><span>21d</span><span>50d</span><span>200d</span></span>} k="ma50" sort={sort} setSort={setSort} num />
                       </th>
                       <Th label="RS" k="rsR" sort={sort} setSort={setSort} num title="RS Rating 1–99 (IBD-style), ranked against every company of this market" />
-                      {q.cols.map((k) => <Th key={k} label={COL_SHORT[k] || fieldOf(k)?.label || k} k={k} sort={sort} setSort={setSort} num title={fieldOf(k)?.label} />)}
+                      {shownCols.map((k) => <Th key={k} label={COL_SHORT[k] || fieldOf(k)?.label || k} k={k} sort={sort} setSort={setSort} num title={[fieldOf(k)?.label, fieldOf(k)?.approxNote?.[market] ? `≈ ${fieldOf(k)!.approxNote![market]}` : '', k === 'r40' ? R40_GUARD_TIP : ''].filter(Boolean).join('\n')} />)}
                       {has('chg') ? <Th label="Chg" k="chg" sort={sort} setSort={setSort} num title="Change today" /> : null}
                       {has('mc') ? <Th label="Mkt cap" k="mc" sort={sort} setSort={setSort} num /> : null}
                       {has('perf') ? <Th label={`Perf ${PERF_LABEL[q.perfKey]}`} k={q.perfKey} sort={sort} setSort={setSort} num /> : null}
@@ -903,9 +922,13 @@ export default function PineScreener() {
                             {showScanCol ? <td className="pnx-num" style={{ color: pxDiffers(r) ? C.text : C.dim }} title={pxDiffers(r) ? scanTip(r, market) : 'Same as the latest quote'}>{pxDiffers(r) ? fmtPrice(r.scanPx, market) : '='}</td> : null}
                             <td className="pnx-num"><MaCell ma={ma} market={market} /></td>
                             <td className="pnx-num">{typeof r.rsR === 'number' ? <b style={{ color: r.rsR >= 80 ? C.green : r.rsR < 30 ? C.red : C.text1 }}>{r.rsR}</b> : '—'}</td>
-                            {q.cols.map((k) => {
-                              const d = fieldOf(k); const v = (r as any)[k] as number | null | undefined; const ax = r.approx?.includes(k);
-                              return <td key={k} className="pnx-num" title={[d?.label, typeof v === 'number' ? `Exact: ${fmtExact(v)}` : '', ax ? `Approximate — ${d?.approxNote?.[market] || ''}` : ''].filter(Boolean).join('\n')}>{ax && v != null ? '≈' : ''}{fmtCol(k, v, market)}</td>;
+                            {shownCols.map((k) => {
+                              const d = fieldOf(k); const ax = r.approx?.includes(k);
+                              // zzz1007 — a guard-blanked Rule of 40 is shown blank with the reason (never the meaningless sum)
+                              const guarded = k === 'r40' && r40Guarded(r);
+                              const v = guarded ? null : (r as any)[k] as number | null | undefined;
+                              const blankWhy = k === 'r40' && v == null && typeof r.revQYoY === 'number' && typeof r.fcfmTTM === 'number' ? R40_GUARD_TIP : '';
+                              return <td key={k} className="pnx-num" data-col={k} title={[d?.label, typeof v === 'number' ? `Exact: ${fmtExact(v)}` : '', ax ? `Approximate — ${d?.approxNote?.[market] || ''}` : '', blankWhy].filter(Boolean).join('\n')}>{ax && v != null ? '≈' : ''}{fmtCol(k, v, market)}</td>;
                             })}
                             {has('chg') ? <td className="pnx-num" style={{ color: signColor(r.chg) }}>{pct(r.chg)}</td> : null}
                             {has('mc') ? <td className="pnx-num" title={`Exact: ${fmtExact(r.mc)} ${money}`}>{fmtMoney(r.mc, market)}</td> : null}

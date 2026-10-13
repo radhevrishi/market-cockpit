@@ -8,7 +8,7 @@ import {
   tvFigures, trendTemplate, weinsteinStage, pocketPivotAge, rsRatings, barsSinceCross, rsiSeries, smaSeries, emaSeries,
 } from '../screener/tv-screens';
 import { techEntry, rowTvFields, applyRsRating, ruleOf40, runPine, cleanQuery, LEAN_KEYS, OPTIONAL_COLS, PINE_GROUPS, DEFAULT_QUERY, PATTERN_SCAN_VERSION } from '../screener/pine';
-import { BUILT_IN_PINE_SCREENS, MOVED_PINE_SCREENS } from '../screener/pine-presets';
+import { BUILT_IN_PINE_SCREENS } from '../screener/pine-presets';
 import { BUILT_IN_SCREENS } from '../screener/filters';
 import { FIELDS, fieldOf, filterKeys, passes } from '../screener/filters';
 import { inFiguresFromRaw } from '../screener/in-assemble';
@@ -203,9 +203,8 @@ test('zzz984 built-in screens: well formed, grouped, and the owner\'s scripts ar
   for (const id of ['rs-80', 'stage-2', 'stage-1-2', 'pocket-pivot', 'ripster-bull', 'tt-bullish-base', 'rs80-stage2-forming']) assert.equal(byId.get(id)?.group, 'momentum', id);
   assert.equal(byId.get('all-bullish')?.group, 'patterns');
   assert.equal(byId.get('tv-trend-template')!.name, 'Minervini Trend Template (based on your TradingView script)');
-  // zzz999 — Rule of 40 is about fundamentals only: it moved to the Stock Screener's built-ins (same id for the US copy)
-  assert.ok(!byId.has('tv-rule-of-40'), 'Rule of 40 is no longer a Pine screen');
-  assert.ok(MOVED_PINE_SCREENS['tv-rule-of-40']);
+  // zzz999 — Rule of 40 got a Stock Screener copy (same id for the US copy); zzz1007 — it is a Pine screen again too (Rule of 40 control)
+  assert.equal(byId.get('tv-rule-of-40')?.q.r40Min, 40, 'Rule of 40 is a Pine screen again (zzz1007)');
   const r40s = BUILT_IN_SCREENS.find((s) => s.id === 'tv-rule-of-40')!;
   assert.equal(r40s.name, 'Rule of 40 (based on your TradingView script)'); assert.equal(r40s.market, 'US');
   assert.deepEqual(r40s.filters, [{ kind: 'num', key: 'r40', op: 'ge', v: 40 }]);

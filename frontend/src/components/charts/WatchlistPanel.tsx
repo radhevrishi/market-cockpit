@@ -13,6 +13,9 @@ import {
 import { pollWhenVisible } from '@/lib/client-fetch';
 import { refreshedQuotes } from '@/lib/chart-refresh';
 import { sharedFetchJson } from '@/lib/tab-shared-fetch';
+import { PANEL_CSS } from './watchlist-panel-css';
+import WatchlistManageDrawer from './WatchlistManageDrawer';
+import { agoLabel, currencyOf, displaySectionName, exchangeLabel, quoteFreshness, usExtendedSession, WIDTH_PRESETS, WL_EXT_COLUMN_KEY } from '@/lib/watchlist-display';
 
 // ── storage hook ──────────────────────────────────────────────────────────────
 function readJson(key: string): unknown {
@@ -94,35 +97,7 @@ function useQuotes(keys: string[]): Record<string, Quote> {
 }
 
 // ── small pieces ──────────────────────────────────────────────────────────────
-const PANEL_CSS = `
-.mcwl-row { position: relative; display: grid; grid-template-columns: 18px minmax(0,1fr) 68px 64px 46px 22px; align-items: center; gap: 4px;
-  padding: 7px 6px 7px 4px; font-size: 13px; line-height: 18px; cursor: pointer; border-left: 3px solid transparent; border-bottom: 1px solid var(--mc-border-3); user-select: none;
-  font-variant-numeric: tabular-nums; }
-.mcwl-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.mcwl-row:hover { background: var(--mc-bg-2); }
-.mcwl-row.active { background: color-mix(in srgb, var(--mc-accent) 8%, transparent); border-left-color: var(--mc-accent); }
-.mcwl-row:focus-visible, .mcwl-ib:focus-visible { outline: 2px solid var(--mc-accent); outline-offset: -2px; }
-.mcwl-company { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; font-weight: 400; color: var(--mc-text-3); margin-top: 3px; }
-.mcwl-compact .mcwl-row { padding-top: 4px; padding-bottom: 4px; }
-.mcwl-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
-.mcwl-compact .mcwl-company { display: none; }
-.mcwl-actions { position: relative; opacity: 0; display: flex; gap: 4px; align-items: center; justify-content: flex-end; }
-.mcwl-actions select { position: absolute; right: 23px; z-index: 2; }
-.mcwl-row:hover .mcwl-actions, .mcwl-row:focus-within .mcwl-actions { opacity: 1; }
-.mcwl-sec { display: flex; align-items: center; gap: 6px; padding: 4px 8px; font-size: 12px; font-weight: 700; line-height: 16px;
-  color: var(--mc-text-2); background: var(--mc-bg-1); border-top: 1px solid var(--mc-border-3); cursor: pointer; }
-.mcwl-sec > [role="gridcell"] { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
-.mcwl-sec .mcwl-secact { display: none; margin-left: auto; gap: 6px; }
-.mcwl-sec:hover .mcwl-secact, .mcwl-sec:focus-within .mcwl-secact { display: flex; }
-.mcwl-ib { background: none; border: none; cursor: pointer; color: var(--mc-text-3); font-size: 12px; padding: 0 2px; }
-.mcwl-ib:hover { color: var(--mc-text-0); }
-.mcwl-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 40; min-width: 210px; padding: 4px; border-radius: 8px;
-  border: 1px solid var(--mc-border-1); background: var(--mc-bg-1); box-shadow: 0 8px 24px rgba(0,0,0,.15); }
-.mcwl-menu button { display: block; width: 100%; text-align: left; padding: 6px 10px; border: none; background: none; color: var(--mc-text-1);
-  font-size: 13px; border-radius: 4px; cursor: pointer; }
-.mcwl-menu button:hover { background: var(--mc-bg-2); }
-@media (hover: none) { .mcwl-actions { opacity: 1; } .mcwl-sec .mcwl-secact { display: flex; } }
-`;
+// zzz1006 — styles live in a sibling module (shared with "+ Watchlist" on the chart header)
 
 const inputStyle: React.CSSProperties = { padding: '4px 6px', borderRadius: 4, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-0)', color: 'var(--mc-text-0)', fontSize: 13, minWidth: 0 };
 const smallBtn: React.CSSProperties = { padding: '3px 8px', borderRadius: 4, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-1)', color: 'var(--mc-text-1)', fontSize: 12, cursor: 'pointer' };
@@ -251,6 +226,26 @@ export function AddToWatchlist({ store, update, market, ticker, exchange }: { st
  *  panel leaves the ↑ / ↓ keys to the chart page (which steps the same list). */
 export interface WatchlistNavOverride { label: string; canPrev: boolean; canNext: boolean; go: (dir: 1 | -1) => void }
 
+const readFlag = (key: string): boolean => { try { return localStorage.getItem(key) === '1'; } catch { return false; } };
+const writeFlag = (key: string, on: boolean) => { try { localStorage.setItem(key, on ? '1' : '0'); } catch { /* display preference only */ } };
+/** The chart page's divider (role=separator) right before the panel's column, when the panel sits on the chart page. */
+function dividerOf(panel: HTMLElement | null): HTMLElement | null {
+  const col = panel?.closest('.mc-charts-panel');
+  const sep = col?.previousElementSibling as HTMLElement | null | undefined;
+  return sep && sep.getAttribute('role') === 'separator' ? sep : null;
+}
+type RowMenu = { key: string; top?: number; bottom?: number; right: number } | null;
+
+/** zzz1006 — keyboard inside a small menu: ↑ / ↓ move between its items, Escape closes it (the list's arrow keys never fire here). */
+function menuKeys(e: React.KeyboardEvent<HTMLDivElement>, close: () => void) {
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); return; }
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  e.preventDefault(); e.stopPropagation();
+  const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"],[role="menuitemcheckbox"],[role="menuitemradio"]')).filter((x) => !(x as HTMLButtonElement).disabled);
+  const i = items.indexOf(document.activeElement as HTMLElement);
+  items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+}
+
 export default function WatchlistPanel({ store, update, currentKey, onPick, navOverride, loading }: {
   store: WlStore | null; update: (fn: (s: WlStore) => WlStore) => void; currentKey: string; onPick: (m: Market, t: string, exchange?: string) => void;
   navOverride?: WatchlistNavOverride | null;
@@ -261,9 +256,13 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
   const [flagFilter, setFlagFilter] = useState<Flag | null>(null);
   const [search, setSearch] = useState('');
   const [marketFilter, setMarketFilter] = useState<Market | 'ALL'>('ALL');
-  const [compact, setCompact] = useState(() => { try { return localStorage.getItem('mc:watchlist-compact') === '1'; } catch { return false; } });
+  const [compact, setCompact] = useState(() => readFlag('mc:watchlist-compact'));
+  const [showExt, setShowExt] = useState(() => readFlag(WL_EXT_COLUMN_KEY));   // zzz1006: Extended hours is optional, hidden by default
   const [menu, setMenu] = useState(false);
   const [listMenu, setListMenu] = useState(false);
+  const [filterMenu, setFilterMenu] = useState(false);
+  const [rowMenu, setRowMenu] = useState<RowMenu>(null);
+  const [managing, setManaging] = useState(false);
   const [adding, setAdding] = useState(false);
   const [addText, setAddText] = useState('');
   const [addMarket, setAddMarket] = useState<Market>('IN');
@@ -271,6 +270,8 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
   const [importing, setImporting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [showEmpty, setShowEmpty] = useState(false);   // zzz1000: a filtered view hides sections with no matches unless asked
+  const [canResize, setCanResize] = useState(false);
+  const [width, setWidth] = useState<number | null>(null);
   const dragKey = useRef<string | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -296,12 +297,52 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
   }, [liveSort, list, sort, quotes, flagFilter, view, rows]);
   const setList = useCallback((fn: (l: WlList) => WlList) => update((s) => updateList(s, s.activeId, fn)), [update]);
   const say = (m: string) => { setMsg(m); setTimeout(() => setMsg((cur) => (cur === m ? null : cur)), 3500); };
+  const closeMenus = () => { setMenu(false); setListMenu(false); setFilterMenu(false); setRowMenu(null); };
   useEffect(() => {
-    const dismiss = (e: PointerEvent) => { if (!panelRef.current?.contains(e.target as Node)) { setMenu(false); setListMenu(false); } };
-    const escape = (e: KeyboardEvent) => { if (e.key === 'Escape') { setMenu(false); setListMenu(false); setAdding(false); } };
+    const dismiss = (e: PointerEvent) => {
+      const t = e.target as Element | null;
+      if (!panelRef.current?.contains(t as Node)) { setMenu(false); setListMenu(false); setFilterMenu(false); }
+      if (!t?.closest?.('[data-wl-popup]')) setRowMenu(null);
+    };
+    const escape = (e: KeyboardEvent) => { if (e.key === 'Escape') { setMenu(false); setListMenu(false); setFilterMenu(false); setRowMenu(null); setAdding(false); } };
     document.addEventListener('pointerdown', dismiss); window.addEventListener('keydown', escape);
     return () => { document.removeEventListener('pointerdown', dismiss); window.removeEventListener('keydown', escape); };
   }, []);
+  // a row menu is placed against the window: close it when the list scrolls or the window changes size
+  useEffect(() => {
+    if (!rowMenu) return undefined;
+    const close = () => setRowMenu(null);
+    const body = bodyRef.current;
+    body?.addEventListener('scroll', close, { passive: true }); window.addEventListener('resize', close);
+    return () => { body?.removeEventListener('scroll', close); window.removeEventListener('resize', close); };
+  }, [rowMenu]);
+  // the chart page's divider: read its width so Narrow / Standard / Wide can show the current choice
+  useEffect(() => {
+    const sep = dividerOf(panelRef.current);
+    setCanResize(!!sep);
+    if (!sep) return undefined;
+    const read = () => setWidth(Number(sep.getAttribute('aria-valuenow')) || null);
+    read();
+    const mo = typeof MutationObserver === 'undefined' ? null : new MutationObserver(read);
+    mo?.observe(sep, { attributes: true, attributeFilter: ['aria-valuenow'] });
+    return () => mo?.disconnect();
+  }, [store]);
+  /** zzz1006 — width presets go through the divider's own controls (double-click = standard, ← / → = 20 px), so its limits and the
+   *  saved width ('mc:watchlist-width') work exactly as when the divider is dragged. */
+  const applyWidth = async (px: number) => {
+    const sep = dividerOf(panelRef.current);
+    if (!sep) return;
+    const wait = () => new Promise<void>((r) => setTimeout(r, 24));
+    sep.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    await wait();
+    for (let i = 0; i < 20; i++) {
+      const cur = Number(sep.getAttribute('aria-valuenow')); const max = Number(sep.getAttribute('aria-valuemax')) || 620;
+      const diff = Math.min(px, max) - cur;
+      if (Math.abs(diff) < 10) break;
+      sep.dispatchEvent(new KeyboardEvent('keydown', { key: diff > 0 ? 'ArrowLeft' : 'ArrowRight', bubbles: true, cancelable: true }));
+      await wait();
+    }
+  };
 
   // ↑ / ↓ flips through the list and loads each chart (not while typing in a box)
   useEffect(() => {
@@ -375,7 +416,7 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
   const unknown = rows.filter(({ item }) => quotes[itemKey(item)]?.chgPct == null).length;
   const flat = rows.filter(({ item }) => quotes[itemKey(item)]?.chgPct === 0).length;
   const filtered = Boolean(search.trim() || flagFilter || marketFilter !== 'ALL');
-  // zzz1000 (improvement 1) — a filtered view shows only sections with matches ("1 shown / 13"); the stored grouping and
+  // zzz1000 (improvement 1) — a filtered view shows only sections with matches ("1 of 13"); the stored grouping and
   // collapse choices are untouched and come back when the filters clear
   const shownGroups = visibleSections(groups, filtered, showEmpty);
   const totalMatches = groups.reduce((n, g) => n + g.matches, 0);
@@ -397,90 +438,128 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
     else if (next) rowEl(itemKey(next.item))?.focus({ preventScroll: true });
   };
   const curRow = rows.find((r) => itemKey(r.item) === currentKey)?.item;
+  // zzz1006 — one quote status for the whole panel; stale or missing quotes are still marked on their own rows
+  const fresh = quoteFreshness(keys, quotes);
+  const extSession = showExt ? usExtendedSession() : null;
+  const openRowMenu = (k: string, btn: HTMLElement) => {
+    if (rowMenu?.key === k) { setRowMenu(null); return; }
+    const r = btn.getBoundingClientRect();
+    const right = Math.max(8, window.innerWidth - r.right);
+    setRowMenu(r.bottom + 240 > window.innerHeight ? { key: k, bottom: window.innerHeight - r.top + 2, right } : { key: k, top: r.bottom + 2, right });
+    setMenu(false); setListMenu(false); setFilterMenu(false);
+  };
+  const menuRow = rowMenu ? findItem(list, rowMenu.key) : null;
+  const activePreset = width == null ? null : WIDTH_PRESETS.reduce((a, b) => (Math.abs(b.px - width) < Math.abs(a.px - width) ? b : a)).id;
+  const toggleExt = () => setShowExt((v) => { writeFlag(WL_EXT_COLUMN_KEY, !v); return !v; });
 
   return (
-    <div ref={panelRef} className={compact ? 'mcwl-compact' : undefined} style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, border: '1px solid var(--mc-border-1)', borderRadius: 8, background: 'var(--mc-bg-0)', color: 'var(--mc-text-1)' }}>
+    <div ref={panelRef} className={`mcwl${compact ? ' mcwl-compact' : ''}${showExt ? ' mcwl-ext' : ''}`}>
       <style>{PANEL_CSS}</style>
-      {/* header: list name + switcher, add, menu */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 8px 6px', borderBottom: '1px solid var(--mc-border-3)', position: 'relative' }}>
+      {/* row 1 — list picker, add, menu */}
+      <div className="mcwl-bar" style={{ paddingTop: 8, paddingBottom: 4, position: 'relative' }}>
         <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
-          <button type="button" onClick={() => { setListMenu((v) => !v); setMenu(false); }} aria-label="Switch list"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--mc-text-0)', fontWeight: 700, fontSize: 14, padding: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {list.name} <span style={{ color: 'var(--mc-text-3)', fontWeight: 400 }}>({listCount(list)}) ▾</span>
+          <button type="button" onClick={() => { setListMenu((v) => !v); setMenu(false); setFilterMenu(false); }} aria-label="Switch list" aria-haspopup="menu" aria-expanded={listMenu}
+            className="mcwl-ib" style={{ color: 'var(--mc-text-0)', fontWeight: 700, fontSize: 14, padding: '2px 4px', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {list.name} <span style={{ color: 'var(--mc-text-3)', fontWeight: 400, fontVariantNumeric: 'tabular-nums' }}>{listCount(list)} ▾</span>
           </button>
           {listMenu && (
-            <div className="mcwl-menu" style={{ left: 0, right: 'auto' }}>
+            <div className="mcwl-menu" role="menu" aria-label="Lists" style={{ left: 0, right: 'auto' }} onKeyDown={(e) => menuKeys(e, () => setListMenu(false))}>
               {store.lists.map((l) => (
-                <button key={l.id} type="button" onClick={() => { update((s) => ({ ...s, activeId: l.id })); setListMenu(false); }}
-                  style={{ fontWeight: l.id === list.id ? 700 : 400 }}>{l.name} <span style={{ color: 'var(--mc-text-3)' }}>({listCount(l)})</span></button>
+                <button key={l.id} type="button" role="menuitemradio" aria-checked={l.id === list.id} onClick={() => { update((s) => ({ ...s, activeId: l.id })); setListMenu(false); }}
+                  style={{ fontWeight: l.id === list.id ? 700 : 400 }}><span className="chk">{l.id === list.id ? '✓' : ''}</span>{l.name} <span style={{ color: 'var(--mc-text-3)', marginLeft: 'auto' }}>{listCount(l)}</span></button>
               ))}
             </div>
           )}
         </div>
-        <button type="button" style={smallBtn} title="Add a symbol" aria-label="Add a symbol" onClick={() => { setAdding((v) => !v); setMenu(false); setListMenu(false); }}>+</button>
+        <button type="button" className="mcwl-btn" title="Add a symbol" aria-label="Add a symbol" aria-expanded={adding} onClick={() => { setAdding((v) => !v); closeMenus(); }}>+ Add</button>
         <div style={{ position: 'relative' }}>
-          <button type="button" style={smallBtn} aria-label="List menu" onClick={() => { setMenu((v) => !v); setListMenu(false); }}>•••</button>
+          <button type="button" className="mcwl-btn" aria-label="List menu" aria-haspopup="menu" aria-expanded={menu} onClick={() => { setMenu((v) => !v); setListMenu(false); setFilterMenu(false); }}>⋯</button>
           {menu && (
-            <div className="mcwl-menu" onClick={() => setMenu(false)}>
-              <button type="button" onClick={() => { const n = window.prompt('Name for the new list:', 'New list'); if (n && n.trim()) update((s) => addList(s, n)); }}>New list</button>
-              <button type="button" onClick={() => { const n = window.prompt('New name for this list:', list.name); if (n && n.trim()) setList((l) => renameList(l, n)); }}>Rename list</button>
-              <button type="button" onClick={() => { const n = window.prompt('Name for the new section:', 'New section'); if (n && n.trim()) setList((l) => addSection(l, n)); }}>Add a section</button>
-              <button type="button" onClick={() => setImporting(true)}>Import (TradingView list)…</button>
-              <button type="button" onClick={() => download(list.name, serializeTradingView(list))}>Export as .txt</button>
-              <button type="button" onClick={() => {
-                const text = serializeTradingView(list);
-                navigator.clipboard?.writeText(text).then(() => say('Copied — paste it into TradingView’s “Import list”.'), () => say('Copy did not work in this browser — use Export instead.'));
-              }}>Copy as TradingView list</button>
-              <button type="button" style={{ color: 'var(--mc-bearish, #DC2626)' }}
-                onClick={() => { if (window.confirm(`Delete the list “${list.name}” (${listCount(list)} symbols)?`)) update((s) => removeList(s, list.id)); }}>Delete list</button>
+            <div className="mcwl-menu" role="menu" aria-label="List menu" onKeyDown={(e) => menuKeys(e, () => setMenu(false))}>
+              <button type="button" role="menuitem" onClick={() => { setManaging(true); setMenu(false); }}>Manage list…</button>
+              <button type="button" role="menuitem" onClick={() => { setMenu(false); const n = window.prompt('Name for the new list:', 'New list'); if (n && n.trim()) update((s) => addList(s, n)); }}>New list</button>
+              <button type="button" role="menuitem" onClick={() => { setMenu(false); setImporting(true); }}>Import (TradingView list)…</button>
+              <div className="sep" role="separator" />
+              <button type="button" role="menuitemcheckbox" aria-checked={showExt} onClick={toggleExt} title="Pre-market / after-hours change (US only, while that session is open)"><span className="chk">{showExt ? '✓' : ''}</span>Extended-hours column</button>
+              {canResize ? (<>
+                <div className="sep" role="separator" />
+                <div className="hd">Panel width</div>
+                {WIDTH_PRESETS.map((p) => (
+                  <button key={p.id} type="button" role="menuitemradio" aria-checked={activePreset === p.id} onClick={() => { setMenu(false); void applyWidth(p.px); }}>
+                    <span className="chk">{activePreset === p.id ? '✓' : ''}</span>{p.label}<span style={{ marginLeft: 'auto', color: 'var(--mc-text-3)', fontSize: 11.5 }}>{p.px}px</span></button>
+                ))}
+              </>) : null}
             </div>
           )}
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 5, padding: '8px 8px 5px' }}>
-        <input type="search" aria-label="Search watchlist" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search symbol or company" style={{ ...inputStyle, flex: 1 }} />
-        <button type="button" style={smallBtn} aria-label="Compact rows" aria-pressed={compact} title="Toggle compact rows" onClick={() => setCompact((v) => { try { localStorage.setItem('mc:watchlist-compact', v ? '0' : '1'); } catch { /* display preference only */ } return !v; })}>{compact ? 'Roomy' : 'Compact'}</button>
+      {/* row 2 — search */}
+      <div className="mcwl-bar" style={{ paddingBottom: 6 }}>
+        <input type="search" className="mcwl-input" aria-label="Search watchlist" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search symbol or company" style={{ flex: 1 }} />
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '3px 8px 7px', fontSize: 11 }}>
-        {(['ALL', 'IN', 'US'] as const).map((m) => <button key={m} type="button" aria-label={`Show ${m === 'ALL' ? 'all markets' : m === 'IN' ? 'India' : 'USA'}`} aria-pressed={marketFilter === m} onClick={() => setMarketFilter(m)} style={{ ...smallBtn, padding: '2px 7px', borderColor: marketFilter === m ? 'var(--mc-accent)' : 'var(--mc-border-1)', color: marketFilter === m ? 'var(--mc-accent)' : 'var(--mc-text-3)' }}>{m === 'ALL' ? 'All' : m === 'IN' ? 'India' : 'USA'}</button>)}
-        {/* zzz1000 (improvement 3) — the flag filter shares this row (was a row of its own) */}
-        <span aria-hidden style={{ width: 1, height: 16, background: 'var(--mc-border-2)', margin: '0 2px' }} />
-        <span role="group" aria-label="Flag filter" style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-          <button type="button" className="mcwl-ib" aria-label="Show all flags" aria-pressed={!flagFilter} style={{ fontSize: 11, fontWeight: flagFilter ? 400 : 700, color: flagFilter ? undefined : 'var(--mc-text-0)' }} onClick={() => setFlagFilter(null)}>Flags</button>
-          {FLAGS.map((f) => (
-            <button key={f} type="button" aria-label={`Show only ${f} flags`} aria-pressed={flagFilter === f} title={`Show only ${f} flags`} onClick={() => setFlagFilter((cur) => (cur === f ? null : f))}
-              style={{ border: flagFilter === f ? '2px solid var(--mc-text-0)' : '2px solid transparent', borderRadius: 4, padding: 1, background: 'none', cursor: 'pointer', lineHeight: 0 }}>
-              <FlagDot flag={f} size={10} />
-            </button>
-          ))}
+
+      {/* row 3 — market, filter, density, step */}
+      <div className="mcwl-bar" style={{ paddingBottom: 7 }}>
+        <span className="mcwl-seg" role="group" aria-label="Market">
+          {(['ALL', 'IN', 'US'] as const).map((m) => <button key={m} type="button" aria-label={`Show ${m === 'ALL' ? 'all markets' : m === 'IN' ? 'India' : 'USA'}`} aria-pressed={marketFilter === m} onClick={() => setMarketFilter(m)}>{m === 'ALL' ? 'All' : m === 'IN' ? 'India' : 'USA'}</button>)}
+        </span>
+        <span style={{ position: 'relative' }}>
+          {/* zzz1006 — the flag filter lives in a popover (was a row of coloured squares) */}
+          <button type="button" className={`mcwl-btn${flagFilter ? ' on' : ''}`} aria-haspopup="dialog" aria-expanded={filterMenu} aria-label={flagFilter ? `Filter: ${flagFilter} flags` : 'Filter by flag'}
+            onClick={() => { setFilterMenu((v) => !v); setMenu(false); setListMenu(false); }}>
+            {flagFilter ? <FlagDot flag={flagFilter} size={8} /> : null}Filter{flagFilter ? ' · 1' : ''}
+          </button>
+          {filterMenu && (
+            <div className="mcwl-menu" role="dialog" aria-label="Filter by flag" style={{ left: 0, right: 'auto', minWidth: 190 }}>
+              <div className="hd">Flag</div>
+              <div role="group" aria-label="Flag filter">
+                <button type="button" aria-label="Show all flags" aria-pressed={!flagFilter} onClick={() => { setFlagFilter(null); setFilterMenu(false); }}><span className="chk">{!flagFilter ? '✓' : ''}</span>Any flag</button>
+                {FLAGS.map((f) => (
+                  <button key={f} type="button" aria-label={`Show only ${f} flags`} aria-pressed={flagFilter === f} onClick={() => { setFlagFilter((cur) => (cur === f ? null : f)); setFilterMenu(false); }}>
+                    <span className="chk">{flagFilter === f ? '✓' : ''}</span><FlagDot flag={f} size={10} />{f[0].toUpperCase() + f.slice(1)}
+                    <span style={{ marginLeft: 'auto', color: 'var(--mc-text-3)', fontSize: 11.5, fontVariantNumeric: 'tabular-nums' }}>{list.sections.reduce((n, s) => n + s.items.filter((it) => it.flag === f).length, 0)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </span>
         <span style={{ flex: 1 }} />
+        <button type="button" className="mcwl-btn" aria-label="Compact rows" aria-pressed={compact} title="Toggle compact rows" onClick={() => setCompact((v) => { writeFlag('mc:watchlist-compact', !v); return !v; })}>{compact ? 'Compact' : 'Roomy'}</button>
         {navOverride ? (<>
-          <button type="button" aria-label={`Previous ${navOverride.label}`} title={`Previous ${navOverride.label} (↑)`} disabled={!navOverride.canPrev} onClick={() => navOverride.go(-1)} style={smallBtn}>↑</button>
-          <button type="button" aria-label={`Next ${navOverride.label}`} title={`Next ${navOverride.label} (↓)`} disabled={!navOverride.canNext} onClick={() => navOverride.go(1)} style={smallBtn}>↓</button>
+          <button type="button" className="mcwl-btn" aria-label={`Previous ${navOverride.label}`} title={`Previous ${navOverride.label} (↑)`} disabled={!navOverride.canPrev} onClick={() => navOverride.go(-1)}>↑</button>
+          <button type="button" className="mcwl-btn" aria-label={`Next ${navOverride.label}`} title={`Next ${navOverride.label} (↓)`} disabled={!navOverride.canNext} onClick={() => navOverride.go(1)}>↓</button>
         </>) : (<>
-        <button type="button" aria-label="Previous watchlist symbol" disabled={!stepRow(rows, currentKey, -1)} onClick={() => navigate(-1)} style={smallBtn}>↑</button>
-        <button type="button" aria-label="Next watchlist symbol" disabled={!stepRow(rows, currentKey, 1)} onClick={() => navigate(1)} style={smallBtn}>↓</button>
+          <button type="button" className="mcwl-btn" aria-label="Previous watchlist symbol" title="Previous symbol (↑)" disabled={!stepRow(rows, currentKey, -1)} onClick={() => navigate(-1)}>↑</button>
+          <button type="button" className="mcwl-btn" aria-label="Next watchlist symbol" title="Next symbol (↓)" disabled={!stepRow(rows, currentKey, 1)} onClick={() => navigate(1)}>↓</button>
         </>)}
       </div>
-      <div title="Counts for visible rows, using the last received daily-change figures. Unknown quotes are excluded from up/down counts." style={{ display: 'flex', gap: 8, padding: '4px 8px', fontSize: 11, background: 'var(--mc-bg-1)', borderBlock: '1px solid var(--mc-border-3)', fontVariantNumeric: 'tabular-nums' }}>
-        <span>{rows.length}/{listCount(list)} shown</span><span style={{ color: 'var(--mc-bullish, #059669)' }}>↑ {up}</span><span style={{ color: 'var(--mc-bearish, #DC2626)' }}>↓ {down}</span>{flat > 0 && <span>{flat} flat</span>}{unknown > 0 && <span>{unknown} unknown</span>}
-        {filtered && <button type="button" className="mcwl-ib" onClick={() => { setSearch(''); setFlagFilter(null); setMarketFilter('ALL'); }}>Clear filters</button>}
+
+      {/* status — counts and one panel-level quote state */}
+      <div className="mcwl-status" title="Counts for visible rows, using the last received daily-change figures. Unknown quotes are excluded from up/down counts.">
+        <span>{rows.length}/{listCount(list)} shown</span>
+        <span style={{ color: 'var(--wl-up)' }}>↑ {up}</span><span style={{ color: 'var(--wl-down)' }}>↓ {down}</span>{flat > 0 && <span>{flat} flat</span>}{unknown > 0 && <span>{unknown} unknown</span>}
+        {filtered && <button type="button" className="mcwl-ib" style={{ color: 'var(--mc-accent)' }} onClick={() => { setSearch(''); setFlagFilter(null); setMarketFilter('ALL'); }}>Clear filters</button>}
+        <span style={{ flex: 1 }} />
+        {fresh.stale > 0
+          ? <span className="mcwl-stale" title="The last refresh failed for these symbols; their rows are marked ⚠ and show the last value received.">⚠ {fresh.stale} stale · last known quotes</span>
+          : fresh.newest != null ? <span title={`Newest quote received ${new Date(fresh.newest).toLocaleString()}. Quotes refresh every minute while this page is visible.`}>Quotes {agoLabel(fresh.newest)}</span>
+          : keys.length ? <span>Loading quotes…</span> : null}
       </div>
 
       {adding && (
-        <form onSubmit={submitAdd} style={{ display: 'flex', gap: 4, padding: 8, borderBottom: '1px solid var(--mc-border-3)', flexWrap: 'wrap' }}>
-          <select aria-label="Market for new symbol" value={addMarket} onChange={(e) => setAddMarket(e.target.value as Market)} style={inputStyle}>
+        <form onSubmit={submitAdd} className="mcwl-bar" style={{ padding: 8, borderBottom: '1px solid var(--mc-border-3)', flexWrap: 'wrap' }}>
+          <select aria-label="Market for new symbol" value={addMarket} onChange={(e) => setAddMarket(e.target.value as Market)} className="mcwl-input">
             <option value="IN">India</option><option value="US">US</option>
           </select>
-          <input aria-label="Symbol to add" autoFocus value={addText} onChange={(e) => setAddText(e.target.value.toUpperCase())} placeholder="Symbol" style={{ ...inputStyle, flex: 1, width: 80 }} />
+          <input aria-label="Symbol to add" autoFocus value={addText} onChange={(e) => setAddText(e.target.value.toUpperCase())} placeholder="Symbol" className="mcwl-input" style={{ flex: 1, width: 80 }} />
           {list.sections.length > 1 && (
-            <select aria-label="Section for new symbol" value={addSec || list.sections[list.sections.length - 1].id} onChange={(e) => setAddSec(e.target.value)} style={{ ...inputStyle, maxWidth: 110 }}>
-              {list.sections.map((s) => <option key={s.id} value={s.id}>{s.name || '(no name)'}</option>)}
+            <select aria-label="Section for new symbol" value={addSec || list.sections[list.sections.length - 1].id} onChange={(e) => setAddSec(e.target.value)} className="mcwl-input" style={{ maxWidth: 130 }}>
+              {list.sections.map((s) => <option key={s.id} value={s.id}>{s.name ? displaySectionName(s.name) : '(no name)'}</option>)}
             </select>
           )}
-          <button type="submit" style={smallBtn}>Add</button>
+          <button type="submit" className="mcwl-btn on">Add</button>
         </form>
       )}
 
@@ -494,12 +573,12 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
       )}
 
       {/* column headers (click to sort) */}
-      <div style={{ display: 'grid', gridTemplateColumns: '18px minmax(0,1fr) 68px 64px 46px 22px', gap: 4, padding: '5px 6px 5px 7px', fontSize: 11, fontWeight: 700, color: 'var(--mc-text-3)', borderBottom: '1px solid var(--mc-border-3)' }}>
+      <div className="mcwl-grid mcwl-colhead">
         <span />
-        <button type="button" className="mcwl-ib" style={{ textAlign: 'left', fontWeight: 700, fontSize: 11 }} onClick={() => setSort((s) => nextSort(s, 'symbol'))}>Symbol{sortArrow('symbol')}</button>
-        <button type="button" className="mcwl-ib" style={{ textAlign: 'right', fontWeight: 700, fontSize: 11 }} onClick={() => setSort((s) => nextSort(s, 'last'))}>Last{sortArrow('last')}</button>
-        <button type="button" className="mcwl-ib" style={{ textAlign: 'right', fontWeight: 700, fontSize: 11 }} onClick={() => setSort((s) => nextSort(s, 'chg'))}>Chg%{sortArrow('chg')}</button>
-        <span style={{ textAlign: 'right' }} title="Pre-market / after-hours change (US only, while that session is open)">Ext</span>
+        <button type="button" className="mcwl-ib" style={{ textAlign: 'left', fontWeight: 650, fontSize: 11, padding: 0 }} onClick={() => setSort((s) => nextSort(s, 'symbol'))}>Symbol{sortArrow('symbol')}</button>
+        <button type="button" className="mcwl-ib" style={{ textAlign: 'right', fontWeight: 650, fontSize: 11, padding: 0 }} onClick={() => setSort((s) => nextSort(s, 'last'))}>Last{sortArrow('last')}</button>
+        <button type="button" className="mcwl-ib" style={{ textAlign: 'right', fontWeight: 650, fontSize: 11, padding: 0 }} onClick={() => setSort((s) => nextSort(s, 'chg'))}>Chg%{sortArrow('chg')}</button>
+        {showExt && <span style={{ textAlign: 'right' }} title="Pre-market / after-hours change (US only, while that session is open) — separate from the regular-session Chg%">{extSession === 'pre' ? 'Pre-mkt' : extSession === 'post' ? 'After-hrs' : 'Ext hrs'}</span>}
         {orderStale ? <button type="button" className="mcwl-ib" onClick={() => setResort((v) => v + 1)} aria-label="Re-sort with the latest prices" title="Prices moved; rows were kept in place so a click does not land on the wrong ticker. Click to re-sort." style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-accent)', padding: 0 }}>↻</button> : <span />}
       </div>
 
@@ -507,7 +586,7 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
         onFocus={(e) => { const k = (e.target as HTMLElement).closest?.('[data-key]')?.getAttribute('data-key'); listFocusRef.current = true; if (k) focusedKeyRef.current = k; }}
         onBlur={(e) => { const to = e.relatedTarget as Node | null; if (to && !bodyRef.current?.contains(to)) listFocusRef.current = false; }}>
         <div className="mcwl-sr" aria-live="polite" aria-atomic="true">{curRow ? `${curRow.t} selected${loading ? ', loading chart' : ''}` : ''}</div>
-        <div role="grid" aria-label={`Symbols in ${list.name}`} aria-rowcount={rows.length}>
+        <div role="grid" aria-label={`Symbols in ${list.name}`} aria-rowcount={rows.length} title="↑ / ↓ flips through the list (Home / End in the list) · drag rows to reorder">
         {shownGroups.map(({ section, rows: secRows, matches }) => (
           <div key={section.id} role="rowgroup">
             {section.name && (
@@ -516,14 +595,9 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
                 onDrop={(e) => { e.preventDefault(); const k = dragKey.current; if (k) setList((l) => moveItem(l, k, section.id, 0)); dragKey.current = null; }}>
                 <span role="gridcell">
                 <button type="button" className="mcwl-ib" aria-label={`Toggle section ${section.name}`} aria-expanded={!section.collapsed || Boolean(search.trim())} onClick={(e) => { e.stopPropagation(); setList((l) => patchSection(l, section.id, { collapsed: !section.collapsed })); }}>{section.collapsed && !search.trim() ? '▸' : '▾'}</button>
-                <span title={section.name} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{section.name}</span>
-                <span data-testid="section-count" style={{ fontWeight: 400, color: 'var(--mc-text-3)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{filtered ? `${matches} shown / ${section.items.length}` : `(${section.items.length})`}</span>
-                <span className="mcwl-secact" onClick={(e) => e.stopPropagation()}>
-                  <button type="button" className="mcwl-ib" onClick={() => { const n = window.prompt('Section name:', section.name); if (n != null && n.trim()) setList((l) => patchSection(l, section.id, { name: n })); }}>rename</button>
-                  {list.sections.length > 1 && (
-                    <button type="button" className="mcwl-ib" onClick={() => { if (window.confirm(`Remove the section “${section.name}”? Its symbols move to the section next to it.`)) setList((l) => removeSection(l, section.id)); }}>remove</button>
-                  )}
-                </span>
+                {/* zzz1006 — a readable label (display only: the saved name, membership and order are unchanged) */}
+                <span className="lbl" title={displaySectionName(section.name) !== section.name ? `${displaySectionName(section.name)} (saved as “${section.name}”)` : section.name}>{displaySectionName(section.name)}</span>
+                <span className="cnt" data-testid="section-count">{filtered ? ` · ${matches} of ${section.items.length}` : ` · ${section.items.length}`}</span>
                 </span>
               </div>
             )}
@@ -532,10 +606,11 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
               const q = quotes[k];
               const chg = q?.chgPct;
               const active = k === currentKey;
+              const ex = exchangeLabel(it), cur = currencyOf(it);
               return (
-                <div key={k} data-key={k} className={`mcwl-row${active ? ' active' : ''}`} role="row" tabIndex={k === tabKey ? 0 : -1} aria-selected={active}
+                <div key={k} data-key={k} className={`mcwl-row mcwl-grid${active ? ' active' : ''}`} role="row" tabIndex={k === tabKey ? 0 : -1} aria-selected={active}
                   aria-label={`${it.t} on ${it.x || (it.m === 'IN' ? 'NSE' : 'US')}${q?.name ? `, ${q.name}` : ''}; Enter opens chart`} aria-current={active ? 'true' : undefined}
-                  title={`${q?.name || it.t}${it.m === 'IN' && /^\d{6}$/.test(it.t) ? ' — BSE code: price and chart may not load' : ''}`}
+                  title={`${q?.name || it.t} · ${ex} · prices in ${cur}${it.m === 'IN' && /^\d{6}$/.test(it.t) ? ' — BSE code: price and chart may not load' : ''}`}
                   onClick={() => onPick(it.m, it.t, it.x)}
                   onKeyDown={(e) => rowKeyDown(e, it)}
                   draggable={canDrag}
@@ -549,33 +624,27 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
                     const down = from && from.section.id === section.id && from.index < idx;
                     setList((l) => moveItem(l, dk, section.id, down ? idx + 1 : idx));
                   }}>
-                  <span role="gridcell" style={{ lineHeight: 0 }}><button type="button" aria-label={`Flag ${it.t}`} title="Click to change the flag colour" tabIndex={k === tabKey ? 0 : -1}
-                    onClick={(e) => { e.stopPropagation(); setList((l) => patchItem(l, k, { flag: nextFlag(it.flag) })); }}
-                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', lineHeight: 0 }}><FlagDot flag={it.flag} /></button></span>
-                  <span role="gridcell" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600, color: 'var(--mc-text-0)' }}>
-                    {it.t}
-                    {/* small dot like TradingView's: green = up today, red = down, grey = no price */}
-                    <span title={chg == null ? 'No price yet' : chg === 0 ? 'Unchanged today' : chg > 0 ? 'Up today' : 'Down today'} style={{ display: 'inline-block', width: 5, height: 5, borderRadius: 5, margin: '0 4px 2px 3px', verticalAlign: 'middle', background: chg == null || chg === 0 ? 'var(--mc-border-2)' : chg > 0 ? 'var(--mc-bullish, #059669)' : 'var(--mc-bearish, #DC2626)' }} />
-                    <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--mc-text-4)' }}>{it.m === 'US' ? 'US' : it.x === 'BSE' ? 'BSE' : 'NSE'}</span>
+                  <span role="gridcell" style={{ lineHeight: 0 }}><button type="button" className={`mcwl-flagbtn${it.flag ? ' on' : ''}`} aria-label={`Flag ${it.t}`} title="Click to change the flag colour" tabIndex={k === tabKey ? 0 : -1}
+                    onClick={(e) => { e.stopPropagation(); setList((l) => patchItem(l, k, { flag: nextFlag(it.flag) })); }}><FlagDot flag={it.flag} size={8} /></button></span>
+                  <span role="gridcell" className="mcwl-sym">
+                    <span className="mcwl-tk">{it.t}</span>
+                    <span className={`mcwl-exb${it.m === 'US' ? ' us' : ''}`} title={`${ex} · prices in ${cur}`}>{ex}</span>
                     {q?.name && <span className="mcwl-company" title={q.name}>{q.name}</span>}
                   </span>
-                  <span role="gridcell" className="mcwl-num" title={q ? `${q.stale ? 'Refresh failed — last known value. ' : ''}${q.marketTime ? `Market quote: ${new Date(q.marketTime).toLocaleString()}. ` : ''}${q.at ? `Received: ${new Date(q.at).toLocaleString()}` : ''}` : 'No quote received'} >{q?.last != null ? fmtPrice(q.last, Math.abs(q.last) < 1 ? 4 : 2) : '—'}{q?.stale && <span aria-label={`Stale quote for ${it.t}`} style={{ color: 'var(--mc-warn, #D97706)' }}> ⚠</span>}</span>
-                  <span role="gridcell" className="mcwl-num" style={{ padding: '2px 4px', borderRadius: 4, background: chg == null || chg === 0 ? 'transparent' : `color-mix(in srgb, ${chg > 0 ? 'var(--mc-bullish, #059669)' : 'var(--mc-bearish, #DC2626)'} 10%, transparent)`, color: chg == null || chg === 0 ? 'var(--mc-text-3)' : chg > 0 ? 'var(--mc-bullish, #059669)' : 'var(--mc-bearish, #DC2626)' }}>
+                  <span role="gridcell" className="mcwl-num" title={q ? `${cur} ${q.stale ? '— refresh failed, last known value. ' : ''}${q.marketTime ? `Market quote: ${new Date(q.marketTime).toLocaleString()}. ` : ''}${q.at ? `Received: ${new Date(q.at).toLocaleString()}` : ''}` : 'No quote received'}
+                    style={{ color: 'var(--mc-text-0)' }}>{q?.stale && <span aria-label={`Stale quote for ${it.t}`} className="mcwl-stale">⚠ </span>}{q?.last != null ? fmtPrice(q.last, Math.abs(q.last) < 1 ? 4 : 2) : '—'}</span>
+                  <span role="gridcell" className={`mcwl-num mcwl-chg ${chg == null || chg === 0 ? 'flat' : chg > 0 ? 'up' : 'down'}`}>
                     {chg != null ? `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%` : '—'}
                   </span>
-                  <span role="gridcell" className="mcwl-num" title="Pre-market / after-hours change (US only, while that session is open)" style={{ fontSize: 12, color: q?.ext == null ? 'var(--mc-text-4)' : q.ext >= 0 ? 'var(--mc-bullish, #059669)' : 'var(--mc-bearish, #DC2626)' }}>
-                    {q?.ext != null ? `${q.ext >= 0 ? '+' : ''}${q.ext.toFixed(2)}%` : ''}
-                  </span>
-                  <span role="gridcell" className="mcwl-actions" onClick={(e) => e.stopPropagation()}>
-                    {sectionsForMove && (
-                      <select aria-label={`Move ${it.t} to section`} tabIndex={k === tabKey ? 0 : -1} value="" onChange={(e) => { const to = e.target.value; if (to) setList((l) => moveItem(l, k, to)); }}
-                        title={`Move ${it.t} to another section`} style={{ ...inputStyle, fontSize: 11, padding: '1px 2px', width: 22, appearance: 'none' }}>
-                        <option value="">↔</option>
-                        {list.sections.filter((s) => s.id !== section.id).map((s) => <option key={s.id} value={s.id}>{s.name || '(no name)'}</option>)}
-                      </select>
-                    )}
-                    <button type="button" className="mcwl-ib" aria-label={`Remove ${it.t}`} tabIndex={k === tabKey ? 0 : -1} title="Remove from this list"
-                      onClick={() => setList((l) => removeItem(l, k))}>🗑</button>
+                  {showExt && (
+                    <span role="gridcell" className="mcwl-num mcwl-extc" title={it.m === 'US' ? 'Pre-market / after-hours change, separate from the regular-session Chg% (shown while that session is open)' : 'No extended session for Indian listings'}
+                      style={{ color: q?.ext == null ? undefined : q.ext >= 0 ? 'var(--wl-up)' : 'var(--wl-down)' }}>
+                      {q?.ext != null ? <><span className="ses">{extSession === 'pre' ? 'pre' : extSession === 'post' ? 'post' : 'ext'}</span>{`${q.ext >= 0 ? '+' : ''}${q.ext.toFixed(2)}%`}</> : ''}
+                    </span>
+                  )}
+                  <span role="gridcell" className={`mcwl-act${rowMenu?.key === k ? ' open' : ''}`} onClick={(e) => e.stopPropagation()}>
+                    <button type="button" className="mcwl-ib mcwl-dots" data-wl-popup aria-label={`Actions for ${it.t}`} aria-haspopup="menu" aria-expanded={rowMenu?.key === k} tabIndex={k === tabKey ? 0 : -1}
+                      title="Open chart, move, flag or remove" onClick={(e) => openRowMenu(k, e.currentTarget)}>⋯</button>
                   </span>
                 </div>
               );
@@ -585,16 +654,44 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
         </div>
         {!listCount(list) && (
           <div style={{ padding: 14, fontSize: 13, color: 'var(--mc-text-3)' }}>
-            This list is empty. Use + to add a symbol, “+ Watchlist” above the chart, or ••• → Import to bring in a TradingView list.
+            This list is empty. Use + Add to add a symbol, “+ Watchlist” above the chart, or ⋯ → Import to bring in a TradingView list.
           </div>
         )}
         {listCount(list) > 0 && !rows.length && (!filtered || totalMatches > 0) && (
           <div style={{ padding: 14, fontSize: 13, color: 'var(--mc-text-3)' }}>Expand a section to see its symbols.</div>
         )}
       </div>
-      <div style={{ padding: '5px 8px', fontSize: 11, color: 'var(--mc-text-3)', borderTop: '1px solid var(--mc-border-3)' }}>
-        {msg || (Object.values(quotes).some((q) => q.stale) ? '⚠ Refresh failed for some symbols — showing their last known quotes.' : '↑ / ↓ flips through the list (Home / End in the list) · click a flag to change its colour · drag rows to reorder')}
-      </div>
+      {msg ? <div className="mcwl-foot" role="status">{msg}</div> : null}
+
+      {rowMenu && menuRow && (() => {
+        const it = menuRow.item; const k = rowMenu.key;
+        const close = () => setRowMenu(null);
+        return (
+          <div className="mcwl-menu" data-wl-popup role="menu" aria-label={`Actions for ${it.t}`} onKeyDown={(e) => menuKeys(e, close)}
+            ref={(el) => { if (el && !el.contains(document.activeElement)) el.querySelector<HTMLElement>('[role="menuitem"]')?.focus({ preventScroll: true }); }}
+            style={{ position: 'fixed', top: rowMenu.top, bottom: rowMenu.bottom, right: rowMenu.right, left: 'auto', minWidth: 200, zIndex: 70 }}>
+            <button type="button" role="menuitem" onClick={() => { close(); onPick(it.m, it.t, it.x); }}>Open chart</button>
+            {sectionsForMove ? (<>
+              <div className="sep" role="separator" /><div className="hd">Move to section</div>
+              {list.sections.filter((s) => s.id !== menuRow.section.id).map((s) => (
+                <button key={s.id} type="button" role="menuitem" onClick={() => { close(); setList((l) => moveItem(l, k, s.id)); }}>{s.name ? displaySectionName(s.name) : '(no name)'}</button>
+              ))}
+            </>) : null}
+            <div className="sep" role="separator" /><div className="hd">Flag</div>
+            <div style={{ display: 'flex', gap: 2, padding: '2px 6px' }}>
+              {FLAGS.map((f) => (
+                <button key={f} type="button" role="menuitemradio" aria-checked={it.flag === f} aria-label={`Flag ${f}`} title={f} style={{ width: 28, justifyContent: 'center', padding: 6, outline: it.flag === f ? '2px solid var(--mc-text-0)' : undefined }}
+                  onClick={() => { close(); setList((l) => patchItem(l, k, { flag: f })); }}><FlagDot flag={f} size={11} /></button>
+              ))}
+              <button type="button" role="menuitemradio" aria-checked={!it.flag} aria-label="No flag" title="No flag" style={{ width: 28, justifyContent: 'center', padding: 6 }}
+                onClick={() => { close(); setList((l) => patchItem(l, k, { flag: undefined })); }}><FlagDot size={11} /></button>
+            </div>
+            <div className="sep" role="separator" />
+            <button type="button" role="menuitem" className="danger" aria-label={`Remove ${it.t}`} onClick={() => { close(); setList((l) => removeItem(l, k)); say(`${it.t} removed from ${list.name}.`); }}>Remove from list</button>
+          </div>
+        );
+      })()}
+      {managing && <WatchlistManageDrawer key={list.id} store={store} list={list} update={update} onClose={() => setManaging(false)} onImport={() => setImporting(true)} onExport={() => download(list.name, serializeTradingView(list))} say={say} />}
       {importing && <ImportDialog store={store} update={update} onClose={() => setImporting(false)} />}
     </div>
   );

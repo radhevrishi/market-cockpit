@@ -4,7 +4,7 @@
 // a button to open the chart.
 import React from 'react';
 import { PATTERN_META } from '@/lib/chart-patterns';
-import { likelihoodWord, type PineHit, type PineQuery } from '@/lib/screener/pine';
+import { likelihoodWord, pineFilters, type PineHit, type PineQuery } from '@/lib/screener/pine';
 import { fmtPrice, type Filter } from '@/lib/screener/filters';
 import { explainRow } from '@/lib/screener/research';
 import { allPatterns, analysisOf, invalidation, latestConditions, lengthTip, maPosition, patternChecks, priceSet, sessionLabel, stageWord, tagLengthText, tfWord } from '@/lib/screener/pine-view';
@@ -15,7 +15,7 @@ export function HitDetail({ hit, q, market, onOpenChart, width }: { hit: PineHit
   const { row: r, best: b } = hit;
   const meta = b ? PATTERN_META[b.id] : null;
   const checks = patternChecks(hit, q);
-  const rules = explainRow(r, q.filters.filter((f: Filter) => !f.off), market);
+  const rules = explainRow(r, pineFilters(q).filter((f: Filter) => !f.off), market);   // zzz1007 — + the Rule of 40 control
   const inv = b ? invalidation(b) : null;
   // zzz1004 (PS-02) — the analysis close of the tag's own timeframe, the daily technical close and the latest quote, kept apart
   const ps = priceSet(r, b || { tf: 'D' });
