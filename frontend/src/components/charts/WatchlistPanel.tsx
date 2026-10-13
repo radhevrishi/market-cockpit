@@ -97,6 +97,9 @@ function useQuotes(keys: string[]): Record<string, Quote> {
   return quotes;
 }
 
+/** zzz1013 — the newest quote is over 3 minutes old (refreshes run every minute while the page is visible). */
+const quotesOld = (at: number) => Date.now() - at > 180_000;
+
 // ── small pieces ──────────────────────────────────────────────────────────────
 // zzz1006 — styles live in a sibling module (shared with "+ Watchlist" on the chart header)
 
@@ -193,8 +196,8 @@ export function AddToWatchlist({ store, update, market, ticker, exchange }: { st
   return (
     <span style={{ position: 'relative' }}>
       <style>{PANEL_CSS}</style>
-      <button type="button" style={smallBtn} onClick={() => { setOpen((v) => !v); setDone(null); setListId(store.activeId); setSectionId(''); }}
-        title="Add this ticker to one of your watchlists">{inLists.length ? '✓ In watchlist' : '+ Watchlist'}</button>
+      <button type="button" className={`mcwl-btn${inLists.length ? ' on' : ''}`} aria-expanded={open} onClick={() => { setOpen((v) => !v); setDone(null); setListId(store.activeId); setSectionId(''); }}
+        title={inLists.length ? `In ${inLists.join(', ')} — add to another list` : 'Add this ticker to one of your watchlists'}>{inLists.length ? '✓ In watchlist' : '+ Watchlist'}</button>
       {open && (
         <div className="mcwl-menu" style={{ left: 0, right: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 6, minWidth: 240 }}>
           <label style={{ fontSize: 12, color: 'var(--mc-text-3)' }}>List
@@ -276,6 +279,8 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
   const [canResize, setCanResize] = useState(false);
   const [width, setWidth] = useState<number | null>(null);
   const dragKey = useRef<string | null>(null);
+  // zzz1013 — drag feedback only (the drop itself still goes through moveItem exactly as before)
+  const [drag, setDrag] = useState<{ from: string; over: string | null; after: boolean } | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
 
@@ -472,7 +477,7 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
       <div className="mcwl-bar" style={{ paddingTop: 8, paddingBottom: 4, position: 'relative' }}>
         <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
           <button type="button" onClick={() => { setListMenu((v) => !v); setMenu(false); setFilterMenu(false); }} aria-label="Switch list" aria-haspopup="menu" aria-expanded={listMenu}
-            className="mcwl-ib" style={{ color: 'var(--mc-text-0)', fontWeight: 700, fontSize: 14, padding: '2px 4px', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            className="mcwl-ib" style={{ color: 'var(--mc-text-0)', fontWeight: 720, fontSize: 15, letterSpacing: '-0.01em', padding: '2px 4px', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {list.name} <span style={{ color: 'var(--mc-text-3)', fontWeight: 400, fontVariantNumeric: 'tabular-nums' }}>{listCount(list)} ▾</span>
           </button>
           {listMenu && (
@@ -557,8 +562,8 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
         <span style={{ flex: 1 }} />
         {fresh.stale > 0
           ? <span className="mcwl-stale" title="The last refresh failed for these symbols; their rows are marked ⚠ and show the last value received.">⚠ {fresh.stale} stale · last known quotes</span>
-          : fresh.newest != null ? <span title={`Newest quote received ${new Date(fresh.newest).toLocaleString()}. Quotes refresh every minute while this page is visible.`}>Quotes {agoLabel(fresh.newest)}</span>
-          : keys.length ? <span>Loading quotes…</span> : null}
+          : fresh.newest != null ? <span title={`Newest quote received ${new Date(fresh.newest).toLocaleString()}. Quotes refresh every minute while this page is visible.`}><span className={`mcwl-dot${quotesOld(fresh.newest) ? ' warn' : ''}`} aria-hidden />Quotes {agoLabel(fresh.newest)}</span>
+          : keys.length ? <span><span className="mcwl-dot wait" aria-hidden />Loading quotes…</span> : null}
       </div>
 
       {adding && (
@@ -603,9 +608,9 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
         {shownGroups.map(({ section, rows: secRows, matches }) => (
           <div key={section.id} role="rowgroup">
             {section.name && (
-              <div className="mcwl-sec" role="row" onClick={() => setList((l) => patchSection(l, section.id, { collapsed: !section.collapsed }))}
-                onDragOver={(e) => { if (canDrag) e.preventDefault(); }}
-                onDrop={(e) => { e.preventDefault(); const k = dragKey.current; if (k) setList((l) => moveItem(l, k, section.id, 0)); dragKey.current = null; }}>
+              <div className={`mcwl-sec${drag && drag.over === `sec:${section.id}` ? ' drop-into' : ''}`} role="row" onClick={() => setList((l) => patchSection(l, section.id, { collapsed: !section.collapsed }))}
+                onDragOver={(e) => { if (canDrag) { e.preventDefault(); const dk = dragKey.current; if (dk && drag?.over !== `sec:${section.id}`) setDrag({ from: dk, over: `sec:${section.id}`, after: false }); } }}
+                onDrop={(e) => { e.preventDefault(); const k = dragKey.current; if (k) setList((l) => moveItem(l, k, section.id, 0)); dragKey.current = null; setDrag(null); }}>
                 <span role="gridcell">
                 <button type="button" className="mcwl-ib" aria-label={`Toggle section ${section.name}`} aria-expanded={!section.collapsed || Boolean(search.trim())} onClick={(e) => { e.stopPropagation(); setList((l) => patchSection(l, section.id, { collapsed: !section.collapsed })); }}>{section.collapsed && !search.trim() ? '▸' : '▾'}</button>
                 {/* zzz1006 — a readable label (display only: the saved name, membership and order are unchanged) */}
@@ -621,16 +626,24 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
               const active = k === currentKey;
               const ex = exchangeLabel(it), cur = currencyOf(it);
               return (
-                <div key={k} data-key={k} className={`mcwl-row mcwl-grid${active ? ' active' : ''}`} role="row" tabIndex={k === tabKey ? 0 : -1} aria-selected={active}
+                <div key={k} data-key={k} className={`mcwl-row mcwl-grid${active ? ' active' : ''}${drag?.from === k ? ' dragging' : ''}${drag && drag.over === k && drag.from !== k ? (drag.after ? ' drop-after' : ' drop-before') : ''}`} role="row" tabIndex={k === tabKey ? 0 : -1} aria-selected={active}
                   aria-label={`${it.t} on ${it.x || (it.m === 'IN' ? 'NSE' : 'US')}${q?.name ? `, ${q.name}` : ''}; Enter opens chart`} aria-current={active ? 'true' : undefined}
                   title={`${q?.name || it.t} · ${ex} · prices in ${cur}${it.m === 'IN' && /^\d{6}$/.test(it.t) ? ' — BSE code: price and chart may not load' : ''}`}
                   onClick={() => onPick(it.m, it.t, it.x)}
                   onKeyDown={(e) => rowKeyDown(e, it)}
                   draggable={canDrag}
-                  onDragStart={() => { dragKey.current = k; }}
-                  onDragOver={(e) => { if (canDrag) e.preventDefault(); }}
+                  onDragStart={() => { dragKey.current = k; setDrag({ from: k, over: null, after: false }); }}
+                  onDragEnd={() => { dragKey.current = null; setDrag(null); }}
+                  onDragOver={(e) => {
+                    if (!canDrag) return;
+                    e.preventDefault();
+                    const dk = dragKey.current; if (!dk) return;
+                    const from = findItem(list, dk);
+                    const after = !!(from && from.section.id === section.id && from.index < idx);
+                    if (drag?.over !== k || drag.after !== after) setDrag({ from: dk, over: k, after });
+                  }}
                   onDrop={(e) => {
-                    e.preventDefault(); const dk = dragKey.current; dragKey.current = null;
+                    e.preventDefault(); const dk = dragKey.current; dragKey.current = null; setDrag(null);
                     if (!dk || dk === k) return;
                     // dropping a row onto one below it puts it after that row; onto one above it, before it
                     const from = findItem(list, dk);
@@ -666,12 +679,17 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
         ))}
         </div>
         {!listCount(list) && (
-          <div style={{ padding: 14, fontSize: 13, color: 'var(--mc-text-3)' }}>
-            This list is empty. Use + Add to add a symbol, “+ Watchlist” above the chart, or ⋯ → Import to bring in a TradingView list.
+          <div className="mcwl-empty" data-testid="watchlist-empty">
+            <b>{list.name} has no symbols yet</b>
+            <span>This list is empty. Use + Add to add a symbol, “+ Watchlist” above the chart, or ⋯ → Import to bring in a TradingView list.</span>
+            <span className="acts">
+              <button type="button" className="mcwl-btn on" onClick={() => { setAdding(true); closeMenus(); }}>Add a symbol</button>
+              <button type="button" className="mcwl-btn" onClick={() => setImporting(true)}>Import a TradingView list</button>
+            </span>
           </div>
         )}
         {listCount(list) > 0 && !rows.length && (!filtered || totalMatches > 0) && (
-          <div style={{ padding: 14, fontSize: 13, color: 'var(--mc-text-3)' }}>Expand a section to see its symbols.</div>
+          <div className="mcwl-empty" style={{ justifyItems: 'start' }}>Expand a section to see its symbols.</div>
         )}
       </div>
       {msg ? <div className="mcwl-foot" role="status">{msg}</div> : null}

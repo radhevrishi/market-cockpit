@@ -117,8 +117,9 @@ export function StageBanner({ s, light, shifted, onTurnOff }: { s: ReturnType<ty
   return (
     <div title={`${STAGE_TOOLTIP} Mansfield RS here is measured against the ${s.benchName}.`}
       style={{ position: 'absolute', top: 4, zIndex: 7, maxWidth: shifted ? '45%' : 'calc(100% - 100px)', fontSize: 12, ...(shifted ? { right: 70 } : { left: 8 }) }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, borderRadius: 6, lineHeight: '18px',
-        border: `1px solid ${rgb ? `rgba(${rgb},${light ? 0.45 : 0.55})` : 'var(--mc-border-1)'}`, background: rgb ? `rgba(${rgb},${light ? 0.1 : 0.18})` : 'var(--mc-bg-1)', color: text }}>
+      {/* zzz1013 — same pill as the pattern banner: opaque on the page colour, tone as a tint, soft lift */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, minHeight: 24, borderRadius: 8, lineHeight: '18px', boxShadow: '0 1px 0 rgba(18,23,34,.04), 0 6px 16px -10px rgba(18,23,34,.35)',
+        border: `1px solid ${rgb ? `rgba(${rgb},${light ? 0.45 : 0.55})` : 'var(--mc-border-1)'}`, background: rgb ? `linear-gradient(rgba(${rgb},${light ? 0.1 : 0.18}), rgba(${rgb},${light ? 0.1 : 0.18})), var(--mc-bg-0)` : 'var(--mc-bg-1)', color: text }}>
         <span style={{ padding: '1px 4px 1px 8px', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{s.banner.text}</span>
         <button type="button" onClick={onTurnOff} aria-label="Turn off Stage Analysis" title="Turn off Stage Analysis (Indicators ▾ turns it back on)"
           style={{ background: 'none', border: 'none', color: text, cursor: 'pointer', padding: '0 6px', fontSize: 13, lineHeight: 1 }}>×</button>

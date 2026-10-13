@@ -34,6 +34,7 @@ import { setStoredTickers, getStoredTickers, fetchStockQuotes, fetchIndividualQu
 import { type StockQuote, type SortField, type SortOrder } from './types';
 import { useWorkspaceLight, workspaceThemeClass } from '@/lib/workspace-theme';
 import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
+import { WLP_CSS } from './watchlists-css';
 
 // ── Main Page ──────────────────────────────────────────────────────────────────
 
@@ -671,44 +672,32 @@ export default function WatchlistsPage() {
     router.push(chartReviewUrl(items[0]));
   }, [visibleItems, findActive, findQuery, router]);
 
+  // zzz1013 — one tab list, one accent: the active tab is ink with an accent underline (each tab used its own colour before)
+  const tabs: Array<{ id: typeof activeTab; label: string; icon?: React.ReactNode; count?: number; hot?: boolean }> = [
+    { id: 'main', label: 'My Watchlist', count: tickers.length },
+    { id: 'fundamentals', label: 'Fundamentals' },
+    { id: 'conviction', label: 'Conviction Beats', icon: <Award style={{ width: 13, height: 13 }} />, count: convictionCount, hot: convictionCount > 0 },
+    { id: 'ei-elite', label: 'EI Elite' },
+    { id: 'portfolio-earnings', label: 'Portfolio Earnings' },
+  ];
   return (
-    <div className={workspaceThemeClass(wlLight, true)} style={{ padding: '24px', background: 'var(--mc-bg-0)', minHeight: '100%' }}>
+    <div className={`wlp wlp-pad ${workspaceThemeClass(wlLight, true)}`} style={{ padding: '22px 24px', background: 'var(--mc-bg-0)', minHeight: '100%' }}>
+    <style>{WLP_CSS}</style>
     <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
       {/* PATCH 0557 — backend-degraded banner. */}
       <DegradedBanner />
       {/* ── Header ────────────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+      <div className="wlp-head">
         <div>
           {activeTab !== 'conviction' && (<>
-            <h1 style={{ fontSize: '24px', fontWeight: '700', color: 'var(--mc-text-0)', margin: '0 0 4px' }}>Watchlist</h1>
-            <p style={{ fontSize: '12px', color: 'var(--mc-text-3)', margin: 0 }}>Tracking universe · Observation only · No P&L</p>
+            <h1 className="wlp-title">Watchlist</h1>
+            <p className="wlp-lede">Tracking universe, observation only, no P&amp;L</p>
           </>)}
         </div>
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <WorkspaceThemeToggle light={wlLight} onToggle={toggleWlLight} style={{ borderRadius: 10, padding: '10px 14px', fontWeight: 600 }} />
-          <button
-            onClick={() => fetchData()}
-            disabled={isRefreshing}
-            title="Refresh data"
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              backgroundColor: 'var(--mc-bg-2)',
-              border: '1px solid var(--mc-border-2)',
-              borderRadius: '10px',
-              padding: '10px 14px',
-              color: 'var(--mc-text-3)',
-              cursor: isRefreshing ? 'not-allowed' : 'pointer',
-              fontSize: '13px',
-              fontWeight: '600',
-              transition: 'all 0.2s',
-              opacity: isRefreshing ? 0.6 : 1,
-            }}
-            onMouseEnter={e => !isRefreshing && (e.currentTarget.style.backgroundColor = '#2A3B4C')}
-            onMouseLeave={e => (e.currentTarget.style.backgroundColor = '#1A2B3C')}
-          >
-            <RefreshCw style={{ width: '14px', height: '14px', transform: isRefreshing ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.6s linear' }} />
+        <div className="wlp-actions">
+          <WorkspaceThemeToggle light={wlLight} onToggle={toggleWlLight} className="wlp-btn" />
+          <button type="button" className="wlp-btn" onClick={() => fetchData()} disabled={isRefreshing} title="Refresh data">
+            <RefreshCw className={isRefreshing ? 'wlp-spin' : undefined} style={{ width: '14px', height: '14px' }} />
             Refresh
           </button>
           {activeTab === 'main' && (
@@ -718,58 +707,13 @@ export default function WatchlistsPage() {
       </div>
 
       {/* ── Tab switcher (PATCH 0186) ──────────────────────────────────────── */}
-      <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--mc-border-2)', marginBottom: '20px' }}>
-        <button onClick={() => setActiveTab('main')}
-          style={{
-            padding: '10px 16px', background: 'none',
-            border: 'none', borderBottom: `2px solid ${activeTab === 'main' ? 'var(--mc-cyan)' : 'transparent'}`,
-            color: activeTab === 'main' ? 'var(--mc-cyan)' : 'var(--mc-text-3)',
-            fontSize: 13, fontWeight: 700, cursor: 'pointer',
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-          }}>
-          📋 My Watchlist
-          <span style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>{tickers.length}</span>
-        </button>
-        <button onClick={() => setActiveTab('fundamentals')} style={{ padding: '10px 16px', background: 'none', border: 'none', borderBottom: '2px solid ' + (activeTab === 'fundamentals' ? '#39d0d8' : 'transparent'), color: activeTab === 'fundamentals' ? '#39d0d8' : 'var(--mc-text-3)', fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>📈 Fundamentals</button>
-            <button onClick={() => setActiveTab('conviction')}
-          style={{
-            padding: '10px 16px', background: 'none',
-            border: 'none', borderBottom: `2px solid ${activeTab === 'conviction' ? 'var(--mc-warn)' : 'transparent'}`,
-            color: activeTab === 'conviction' ? 'var(--mc-warn)' : 'var(--mc-text-3)',
-            fontSize: 13, fontWeight: 700, cursor: 'pointer',
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-          }}>
-          <Award style={{ width: 13, height: 13 }} />
-          Conviction Beats
-          <span style={{
-            fontSize: 10, fontWeight: 800,
-            padding: '1px 6px', borderRadius: 8,
-            backgroundColor: convictionCount > 0 ? 'color-mix(in srgb, var(--mc-warn) 13%, transparent)' : 'var(--mc-bg-2)',
-            color: convictionCount > 0 ? 'var(--mc-warn)' : 'var(--mc-text-4)',
-          }}>{convictionCount}</span>
-        </button>
-        {/* zzz261 — EI Elite tab: EXCELLENT+STRONG from Earnings Intelligence, auto-synced */}
-        <button onClick={() => setActiveTab('ei-elite')}
-          style={{
-            padding: '10px 16px', background: 'none',
-            border: 'none', borderBottom: `2px solid ${activeTab === 'ei-elite' ? '#8B5CF6' : 'transparent'}`,
-            color: activeTab === 'ei-elite' ? '#8B5CF6' : 'var(--mc-text-3)',
-            fontSize: 13, fontWeight: 700, cursor: 'pointer',
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-          }}>
-          🎖️ EI Elite
-        </button>
-        {/* zzz283 — Portfolio Earnings tab */}
-        <button onClick={() => setActiveTab('portfolio-earnings')}
-          style={{
-            padding: '10px 16px', background: 'none',
-            border: 'none', borderBottom: `2px solid ${activeTab === 'portfolio-earnings' ? '#22C55E' : 'transparent'}`,
-            color: activeTab === 'portfolio-earnings' ? '#22C55E' : 'var(--mc-text-3)',
-            fontSize: 13, fontWeight: 700, cursor: 'pointer',
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-          }}>
-          💼 Portfolio Earnings
-        </button>
+      <div className="wlp-tabs" role="tablist" aria-label="Watchlist views">
+        {tabs.map((t) => (
+          <button key={t.id} type="button" role="tab" aria-selected={activeTab === t.id} className="wlp-tab" onClick={() => setActiveTab(t.id)}>
+            {t.icon}{t.label}
+            {t.count != null && <span className={`wlp-count${t.hot && activeTab !== t.id ? ' hot' : ''}`}>{t.count}</span>}
+          </button>
+        ))}
       </div>
 
       {activeTab === 'portfolio-earnings' ? <PortfolioEarningsTab /> : activeTab === 'ei-elite' ? <EIEliteTab /> : activeTab === 'fundamentals' ? <FundamentalsAnalyzerPage scope="watchlist" /> : activeTab === 'conviction' ? (
@@ -830,27 +774,16 @@ export default function WatchlistsPage() {
 
       {/* ── Loading State ─────────────────────────────────────────────────── */}
       {loading && tickers.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {[1, 2, 3, 4, 5].map(i => (
-            <div
-              key={i}
-              style={{
-                height: '48px',
-                backgroundColor: 'var(--mc-bg-2)',
-                border: '1px solid var(--mc-border-2)',
-                borderRadius: '10px',
-                animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-              }}
-            />
-          ))}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }} aria-busy="true" aria-label="Loading quotes">
+          {[1, 2, 3, 4, 5].map(i => <div key={i} className="wlp-skel" />)}
         </div>
       )}
 
       {/* ── Table ─────────────────────────────────────────────────────────── */}
       {!loading && tickers.length > 0 && (
         <div>
-          <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <p style={{ fontSize: '12px', color: 'var(--mc-text-3)', margin: 0 }}>
+          <div className="wlp-meta">
+            <p style={{ margin: 0 }}>
               {findActive
                 ? <><strong style={{ color: 'var(--mc-text-1)' }}>In this list ({visibleItems.length})</strong> matching “{findQuery.trim()}” · {sortedItems.length} stocks in all</>
                 : <>{sortedItems.length} stocks</>}
@@ -858,7 +791,7 @@ export default function WatchlistsPage() {
             </p>
             <button type="button" onClick={openInCharts} disabled={visibleItems.length === 0}
               title={`Open ${findActive ? `the ${visibleItems.length} matching rows` : `all ${visibleItems.length} rows`} on Charts, in this table's order; ↑ / ↓ on the chart step through them`}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-2)', borderRadius: 8, padding: '6px 10px', color: 'var(--mc-info)', cursor: visibleItems.length ? 'pointer' : 'not-allowed', fontSize: 12, fontWeight: 600, opacity: visibleItems.length ? 1 : 0.5 }}>
+              className="wlp-btn accent">
               Open {findActive ? `${visibleItems.length} shown` : 'this list'} in Charts ↗
             </button>
           </div>
@@ -883,22 +816,13 @@ export default function WatchlistsPage() {
 
       {/* ── Telegram Sync Info ────────────────────────────────────────────── */}
       {tickers.length > 0 && (
-        <div style={{ marginTop: '24px', padding: '16px', backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-2)', borderRadius: '10px', textAlign: 'center' }}>
-          <p style={{ fontSize: '12px', color: 'var(--mc-text-3)', margin: 0 }}>
-            💬 Your watchlist syncs with <span style={{ fontWeight: '600', color: 'var(--mc-info)' }}>@mc_watchlist_pulse_bot</span>
-          </p>
+        <div className="wlp-note">
+          Your watchlist syncs with <span style={{ fontWeight: 650, color: 'var(--mc-text-1)' }}>@mc_watchlist_pulse_bot</span> on Telegram.
         </div>
       )}
       </>
       )}
 
-      {/* ── CSS Animation ─────────────────────────────────────────────────── */}
-      <style>{`
-        @keyframes pulse {
-          0%, 100% { opacity: 0.5; }
-          50% { opacity: 1; }
-        }
-      `}</style>
     </div>
     </div>
   );

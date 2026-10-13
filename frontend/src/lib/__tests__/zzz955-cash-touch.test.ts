@@ -24,5 +24,6 @@ test('zzz955: the chart legend never blocks taps or clicks on the chart (only it
   const src = readFileSync(join(__dirname, '..', '..', 'components', 'charts', 'LayoutControls.tsx'), 'utf8');
   const row = src.slice(src.indexOf('className="mc-legend-row"'), src.indexOf('className="mc-legend-row"') + 200);
   assert.match(row, /pointerEvents: 'none'/);
-  assert.match(src, /lineHeight: 1, pointerEvents: 'auto' \}\}>\{r\.on \? '👁'/);
+  // zzz1013 — the eye is a line icon now; the button itself still takes the click
+  assert.match(src, /lineHeight: 1, pointerEvents: 'auto' \}\}>\s*<svg[^>]*aria-hidden>\s*\{r\.on \?/);
 });

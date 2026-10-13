@@ -24,27 +24,14 @@ export function SummaryBar({ items }: { items: WatchlistItem[] }) {
     ? valid.reduce((sum, item) => sum + (item.changePercent as number), 0) / valid.length
     : 0;
 
+  // zzz1013 — one figures strip (was four cards); unknown changes stay out of every count, as before
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '20px' }}>
-      <div style={{ backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-2)', borderRadius: '12px', padding: '16px' }}>
-        <div style={{ fontSize: '11px', color: 'var(--mc-text-3)', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.5px' }}>TOTAL STOCKS</div>
-        <div style={{ fontSize: '24px', fontWeight: '700', color: 'var(--mc-text-0)' }}>{items.length}</div>
-      </div>
-      <div style={{ backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-2)', borderRadius: '12px', padding: '16px' }}>
-        <div style={{ fontSize: '11px', color: 'var(--mc-text-3)', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.5px' }}>AVG. CHANGE</div>
-        <div style={{ fontSize: '24px', fontWeight: '700', color: avgChange >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>
-          {avgChange >= 0 ? '+' : ''}{avgChange.toFixed(2)}%
-        </div>
-      </div>
-      <div style={{ backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-2)', borderRadius: '12px', padding: '16px' }}>
-        <div style={{ fontSize: '11px', color: 'var(--mc-text-3)', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.5px' }}>GAINERS</div>
-        <div style={{ fontSize: '24px', fontWeight: '700', color: 'var(--mc-bullish)' }}>{gainers}</div>
-      </div>
-      <div style={{ backgroundColor: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-2)', borderRadius: '12px', padding: '16px' }}>
-        <div style={{ fontSize: '11px', color: 'var(--mc-text-3)', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.5px' }}>LOSERS</div>
-        <div style={{ fontSize: '24px', fontWeight: '700', color: 'var(--mc-bearish)' }}>{losers}</div>
-      </div>
-    </div>
+    <dl className="wlp-figs" aria-label="Watchlist figures">
+      <div><dt>Stocks</dt><dd>{items.length}</dd></div>
+      <div><dt>Average change</dt><dd style={{ color: valid.length === 0 ? 'var(--mc-text-4)' : avgChange >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{valid.length === 0 ? '—' : `${avgChange >= 0 ? '+' : ''}${avgChange.toFixed(2)}%`}</dd></div>
+      <div><dt>Gainers</dt><dd style={{ color: 'var(--mc-bullish)' }}>{gainers}</dd></div>
+      <div><dt>Losers</dt><dd style={{ color: 'var(--mc-bearish)' }}>{losers}</dd></div>
+    </dl>
   );
 }
 
@@ -52,37 +39,16 @@ export function SummaryBar({ items }: { items: WatchlistItem[] }) {
 
 export function EmptyState() {
   return (
-    <div style={{ textAlign: 'center', padding: '60px 20px' }}>
-      <div style={{ fontSize: '48px', marginBottom: '16px' }}>📊</div>
-      <h2 style={{ fontSize: '18px', fontWeight: '700', color: 'var(--mc-text-0)', margin: '0 0 8px' }}>Your watchlist is empty</h2>
-      <p style={{ fontSize: '14px', color: 'var(--mc-text-3)', margin: '0 0 24px' }}>Add stock tickers to start tracking them. Popular tickers: RELIANCE, TCS, HDFCBANK, INFY, ICICIBANK</p>
+    <div className="wlp-empty">
+      <h2>Your watchlist is empty</h2>
+      <p>Add stock tickers with the search box above to start tracking them. Popular tickers: RELIANCE, TCS, HDFCBANK, INFY, ICICIBANK</p>
       {/* PATCH 0303 — Cross-link the institutional channels users can populate
           the watchlist from, so the empty state never feels like a dead end. */}
-      <div style={{ display: 'flex', justifyContent: 'center', gap: 14, flexWrap: 'wrap', marginBottom: 14 }}>
-        <a
-          href="/earnings-opportunities"
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            padding: '6px 12px', borderRadius: 8,
-            border: '1px solid rgba(245,158,11,0.4)',
-            backgroundColor: 'rgba(245,158,11,0.10)',
-            color: 'var(--mc-warn)', fontSize: 12, fontWeight: 700,
-            textDecoration: 'none',
-          }}
-        >🏆 Auto-populate from Conviction Beats →</a>
-        <a
-          href="/screener"
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            padding: '6px 12px', borderRadius: 8,
-            border: '1px solid rgba(15,122,191,0.4)',
-            backgroundColor: 'rgba(15,122,191,0.10)',
-            color: 'var(--mc-accent)', fontSize: 12, fontWeight: 700,
-            textDecoration: 'none',
-          }}
-        >🔍 Find tickers in Screener →</a>
+      <div style={{ display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+        <a href="/earnings-opportunities" className="wlp-btn">Auto-populate from Conviction Beats</a>
+        <a href="/screener" className="wlp-btn accent">Find tickers in Screener</a>
       </div>
-      <p style={{ fontSize: '12px', color: 'var(--mc-text-4)', margin: 0 }}>💬 Your watchlist syncs with @mc_watchlist_pulse_bot</p>
+      <p style={{ fontSize: 12, color: 'var(--mc-text-4)' }}>Your watchlist syncs with @mc_watchlist_pulse_bot</p>
     </div>
   );
 }
@@ -142,87 +108,46 @@ export function WatchlistTable({
     return <EmptyState />;
   }
 
+  // zzz1013 — a dense terminal table: sticky header, aria-sort on sortable columns (Enter / Space sorts), zebra + hover rows
+  const ariaSort = (f: SortField): 'ascending' | 'descending' | 'none' => (sortField === f ? (sortOrder === 'asc' ? 'ascending' : 'descending') : 'none');
+  // a plain function (not a component), so a header keeps keyboard focus across the re-render a sort causes
+  const th = ({ field, label, num = false, width }: { field: SortField; label: string; num?: boolean; width?: number }) => (
+    <th key={field} className={num ? 'num' : undefined} aria-sort={ariaSort(field)} tabIndex={0} style={width ? { width } : undefined}
+      onClick={() => onSort(field)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSort(field); } }}>
+      <span className="wlp-th">{label} <SortIcon field={field} /></span>
+    </th>
+  );
   return (
-    <div style={{ overflowX: 'auto', border: '1px solid var(--mc-border-2)', borderRadius: '12px' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+    <div className="wlp-tablewrap">
+      <table className="wlp-table">
         <thead>
-          <tr style={{ borderBottom: '1px solid var(--mc-border-2)', backgroundColor: 'var(--mc-bg-1)' }}>
-            <th style={{ padding: '12px 8px', textAlign: 'center', fontSize: '10px', fontWeight: '700', color: 'var(--mc-text-3)', letterSpacing: '0.5px', cursor: 'pointer', width: '40px' }} onClick={() => onSort('flag')}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center' }}>
-                Flag <SortIcon field="flag" />
-              </div>
-            </th>
-            <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '10px', fontWeight: '700', color: 'var(--mc-text-3)', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort('ticker')}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                Ticker <SortIcon field="ticker" />
-              </div>
-            </th>
-            <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '10px', fontWeight: '700', color: 'var(--mc-text-3)', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort('company')}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                Company <SortIcon field="company" />
-              </div>
-            </th>
-            <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '10px', fontWeight: '700', color: 'var(--mc-text-3)', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort('sector')}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                Sector <SortIcon field="sector" />
-              </div>
-            </th>
-            <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '10px', fontWeight: '700', color: 'var(--mc-text-3)', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort('price')}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }}>
-                CMP (₹) <SortIcon field="price" />
-              </div>
-            </th>
-            <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '10px', fontWeight: '700', color: 'var(--mc-text-3)', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort('changePercent')}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }}>
-                Change% <SortIcon field="changePercent" />
-              </div>
-            </th>
-            <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '10px', fontWeight: '700', color: 'var(--mc-text-3)', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort('dayHigh')}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }}>
-                Day High <SortIcon field="dayHigh" />
-              </div>
-            </th>
-            <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '10px', fontWeight: '700', color: 'var(--mc-text-3)', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort('dayLow')}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }}>
-                Day Low <SortIcon field="dayLow" />
-              </div>
-            </th>
+          <tr>
+            {th({ field: 'flag', label: 'Flag', width: 56 })}
+            {th({ field: 'ticker', label: 'Ticker' })}
+            {th({ field: 'company', label: 'Company' })}
+            {th({ field: 'sector', label: 'Sector' })}
+            {th({ field: 'price', label: 'CMP (₹)', num: true })}
+            {th({ field: 'changePercent', label: 'Change%', num: true })}
+            {th({ field: 'dayHigh', label: 'Day High', num: true })}
+            {th({ field: 'dayLow', label: 'Day Low', num: true })}
             {/* PATCH 0442 BUG-020 — Optional columns rendered based on chooser state */}
-            {OPTIONAL_COLS.filter(c => activeCols.has(c.id)).map(c => (
-              <th key={c.id} style={{ padding: '12px 16px', textAlign: 'right', fontSize: '10px', fontWeight: '700', color: 'var(--mc-text-3)', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort(c.id as SortField)}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }}>
-                  {c.label} <SortIcon field={c.id as SortField} />
-                </div>
-              </th>
-            ))}
-            <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '10px', fontWeight: '700', color: 'var(--mc-text-3)', letterSpacing: '0.5px', position: 'relative' }}>
+            {OPTIONAL_COLS.filter(c => activeCols.has(c.id)).map(c => th({ field: c.id as SortField, label: c.label, num: true }))}
+            <th className="num" style={{ position: 'relative' }}>
               {/* PATCH 0442 BUG-027 — Working column chooser. Click to toggle
                   popover; select Volume / 52W / Mcap / PE / Avg Vol columns. */}
-              <button
-                onClick={() => setChooserOpen(o => !o)}
-                title="Configure columns"
-                style={{
-                  background: chooserOpen ? 'color-mix(in srgb, var(--mc-accent) 19%, transparent)' : 'transparent',
-                  border: `1px solid ${chooserOpen ? 'var(--mc-cyan)' : 'var(--mc-border-2)'}`,
-                  borderRadius: 6, color: chooserOpen ? 'var(--mc-cyan)' : 'var(--mc-text-3)',
-                  cursor: 'pointer', padding: '4px 9px', fontSize: '10px', fontWeight: 700,
-                }}
-              >⚙ Columns ({activeCols.size})</button>
+              <button type="button" className="wlp-btn" style={{ height: 26, padding: '0 9px', fontSize: 11.5 }} aria-expanded={chooserOpen} aria-haspopup="dialog"
+                onClick={() => setChooserOpen(o => !o)} title="Configure columns">Columns ({activeCols.size})</button>
               {chooserOpen && (
-                <div style={{
-                  position: 'absolute', top: '100%', right: 8, marginTop: 4, zIndex: 50,
-                  minWidth: 200, padding: 8, background: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-2)',
-                  borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
-                }}>
-                  <div style={{ fontSize: 10, color: 'var(--mc-text-3)', marginBottom: 6, letterSpacing: '0.4px' }}>SHOW COLUMNS</div>
+                <div className="wlp-pop" role="dialog" aria-label="Show columns">
+                  <div style={{ fontSize: 11.5, fontWeight: 650, color: 'var(--mc-text-3)', padding: '2px 6px 4px' }}>Show columns</div>
                   {OPTIONAL_COLS.map(c => (
-                    <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 4px', cursor: 'pointer', borderRadius: 4 }}>
+                    <label key={c.id}>
                       <input type="checkbox" checked={activeCols.has(c.id)} onChange={() => toggleCol(c.id)} />
-                      <span style={{ fontSize: 11, color: 'var(--mc-text-0)' }}>{c.label}</span>
+                      {c.label}
                     </label>
                   ))}
-                  <div style={{ fontSize: 9, color: 'var(--mc-text-4)', marginTop: 6, fontStyle: 'italic' }}>
-                    Data may be — when source doesn&apos;t return the field
+                  <div style={{ fontSize: 11, color: 'var(--mc-text-4)', padding: '6px 6px 2px', fontWeight: 500, whiteSpace: 'normal' }}>
+                    A column shows — when the source doesn&apos;t return that field.
                   </div>
                 </div>
               )}
@@ -230,34 +155,29 @@ export function WatchlistTable({
           </tr>
         </thead>
         <tbody>
-          {items.map((item, idx) => {
+          {items.map((item) => {
             const isPositive = (item.changePercent ?? 0) >= 0;
             const price = item.price != null && item.price > 0 ? item.price : null;   // zzz1000 (CW-01)
             return (
-              <tr key={item.ticker} data-watchlist-ticker={item.ticker} style={{ borderBottom: idx < items.length - 1 ? '1px solid var(--mc-bg-2)' : 'none', backgroundColor: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
-                <td style={{ padding: '8px 8px', textAlign: 'center', width: '40px' }}>
-                  <button
-                    onClick={() => onToggleFlag?.(item.ticker)}
-                    title={`Flag: ${item.flag || 'None'} (click to cycle)`}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', padding: '2px 4px', borderRadius: '4px', lineHeight: 1 }}
-                  >
+              <tr key={item.ticker} data-watchlist-ticker={item.ticker}>
+                <td style={{ textAlign: 'center', width: 56 }}>
+                  <button type="button" className="wlp-flag" onClick={() => onToggleFlag?.(item.ticker)} title={`Flag: ${item.flag || 'None'} (click to cycle)`} aria-label={`Flag for ${item.ticker}: ${item.flag || 'none'}`}>
                     {item.flag || '⚪'}
                   </button>
                 </td>
                 {/* zzz967 (WL-02) — the ticker opens the same instrument on Charts (India list → NSE) */}
-                <td style={{ padding: '12px 16px', fontWeight: '700' }}>
-                  <a href={`/charts?m=${item.market === 'US' ? 'US' : 'IN'}&t=${encodeURIComponent(item.ticker)}`} title={`Open ${item.ticker} on Charts`} aria-label={`Open ${item.ticker} chart`}
-                    style={{ color: 'var(--mc-info)', textDecoration: 'none' }}>{item.ticker} <span aria-hidden style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
+                <td>
+                  <a className="wlp-tk" href={`/charts?m=${item.market === 'US' ? 'US' : 'IN'}&t=${encodeURIComponent(item.ticker)}`} title={`Open ${item.ticker} on Charts`} aria-label={`Open ${item.ticker} chart`}>{item.ticker}<span aria-hidden className="go">↗</span></a>
                 </td>
-                <td style={{ padding: '12px 16px', color: 'var(--mc-text-0)', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <td style={{ maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', color: 'var(--mc-text-1)' }} title={item.company}>
                   {item.company}
                 </td>
-                <td style={{ padding: '12px 16px', color: 'var(--mc-text-3)', fontSize: '12px' }}>{item.sector}</td>
-                <td style={{ padding: '12px 16px', textAlign: 'right', color: 'var(--mc-text-0)', fontVariantNumeric: 'tabular-nums' }}>
+                <td style={{ color: 'var(--mc-text-3)', fontSize: '12px' }}>{item.sector}</td>
+                <td className="num" style={{ fontWeight: 600 }}>
                   {/* PATCH 0559 — BUG-AUDIT-4: when quote came back null/0 render
                       a muted em-dash with a tooltip instead of ₹0.00. */}
                   {price == null ? (
-                    <span style={{ color: 'var(--mc-text-4)' }} title="Price unavailable — quote not returned by data source">—</span>
+                    <span className="wlp-dim" title="Price unavailable — quote not returned by data source">—</span>
                   ) : isPriceSuspect(item.ticker, price) ? (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: 'var(--mc-warn)' }} title="Suspect price - may be incorrect or stale">
                       <AlertTriangle style={{ width: '12px', height: '12px' }} />
@@ -267,22 +187,22 @@ export function WatchlistTable({
                     `₹${price.toFixed(2)}`
                   )}
                 </td>
-                <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                <td className="num">
                   {/* PATCH 0559 — also blank pct chip when no live price. */}
                   {price == null || item.changePercent == null ? (
-                    <span style={{ color: 'var(--mc-text-4)' }} title="Change unavailable">—</span>
+                    <span className="wlp-dim" title="Change unavailable">—</span>
                   ) : (
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 8px', borderRadius: '6px', backgroundColor: isPositive ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)', color: isPositive ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: '600', fontVariantNumeric: 'tabular-nums', fontSize: '12px' }}>
+                    <span className={`wlp-chg ${isPositive ? 'up' : 'down'}`}>
                       {isPositive ? <TrendingUp style={{ width: '11px', height: '11px' }} /> : <TrendingDown style={{ width: '11px', height: '11px' }} />}
                       {isPositive ? '+' : ''}{item.changePercent.toFixed(2)}%
                     </span>
                   )}
                 </td>
-                <td style={{ padding: '12px 16px', textAlign: 'right', color: 'var(--mc-text-0)', fontVariantNumeric: 'tabular-nums', fontSize: '12px' }}>
-                  {item.dayHigh != null && item.dayHigh > 0 ? `₹${item.dayHigh.toFixed(2)}` : <span style={{ color: 'var(--mc-text-4)' }} title="Day high not given by the quote source">—</span>}
+                <td className="num" style={{ fontSize: '12.5px' }}>
+                  {item.dayHigh != null && item.dayHigh > 0 ? `₹${item.dayHigh.toFixed(2)}` : <span className="wlp-dim" title="Day high not given by the quote source">—</span>}
                 </td>
-                <td style={{ padding: '12px 16px', textAlign: 'right', color: 'var(--mc-text-0)', fontVariantNumeric: 'tabular-nums', fontSize: '12px' }}>
-                  {item.dayLow != null && item.dayLow > 0 ? `₹${item.dayLow.toFixed(2)}` : <span style={{ color: 'var(--mc-text-4)' }} title="Day low not given by the quote source">—</span>}
+                <td className="num" style={{ fontSize: '12.5px' }}>
+                  {item.dayLow != null && item.dayLow > 0 ? `₹${item.dayLow.toFixed(2)}` : <span className="wlp-dim" title="Day low not given by the quote source">—</span>}
                 </td>
                 {/* PATCH 0442 BUG-020 — Optional column cells */}
                 {OPTIONAL_COLS.filter(c => activeCols.has(c.id)).map(c => {
@@ -295,19 +215,13 @@ export function WatchlistTable({
                     else txt = `₹${val.toFixed(2)}`;
                   }
                   return (
-                    <td key={c.id} style={{ padding: '12px 16px', textAlign: 'right', color: txt === '—' ? 'var(--mc-text-4)' : 'var(--mc-text-0)', fontVariantNumeric: 'tabular-nums', fontSize: '12px' }}>
+                    <td key={c.id} className={`num${txt === '—' ? ' wlp-dim' : ''}`} style={{ fontSize: '12.5px' }}>
                       {txt}
                     </td>
                   );
                 })}
-                <td style={{ padding: '12px 16px', textAlign: 'right' }}>
-                  <button
-                    onClick={() => onRemove(item.ticker)}
-                    title="Remove from watchlist"
-                    style={{ background: 'none', border: 'none', color: 'var(--mc-text-4)', cursor: 'pointer', padding: '4px 8px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: '6px', transition: 'all 0.2s' }}
-                    onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.1)'; e.currentTarget.style.color = '#EF4444'; }}
-                    onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = '#4A5B6C'; }}
-                  >
+                <td className="num">
+                  <button type="button" className="wlp-x" onClick={() => onRemove(item.ticker)} title="Remove from watchlist" aria-label={`Remove ${item.ticker} from the watchlist`}>
                     <Trash2 style={{ width: '14px', height: '14px' }} />
                   </button>
                 </td>
@@ -333,7 +247,7 @@ export function WatchlistExportControl({ filterActive, filteredCount, totalCount
       <button key={scope} type="button" onClick={() => onExport(scope)} disabled={n === 0} data-export-scope={scope}
         aria-label={scope === 'filtered' ? `Export the ${n} filtered rows to Excel` : `Export all ${n} rows to Excel`}
         title={scope === 'filtered' ? `Export the ${n} rows matching the search (of ${totalCount})` : `Export the whole list (${totalCount} rows)${filterActive ? ', ignoring the search' : ''}`}
-        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', backgroundColor: main ? 'var(--mc-bg-2)' : 'transparent', border: '1px solid var(--mc-border-2)', borderRadius: '10px', padding: '10px 14px', color: main ? 'var(--mc-text-1)' : 'var(--mc-text-3)', cursor: n === 0 ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: main ? 700 : 600, opacity: n === 0 ? 0.4 : 1, fontVariantNumeric: 'tabular-nums' }}>
+        className="wlp-btn" style={{ color: main ? 'var(--mc-text-1)' : 'var(--mc-text-3)', fontWeight: main ? 680 : 600, fontVariantNumeric: 'tabular-nums' }}>
         {main && <Download style={{ width: '14px', height: '14px' }} />}
         {scope === 'filtered' ? `Export filtered (${n})` : `Export all (${n})`}
       </button>

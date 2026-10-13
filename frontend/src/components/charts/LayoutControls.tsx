@@ -96,8 +96,10 @@ const smallBtn = (active = false): React.CSSProperties => ({
   border: `1px solid ${active ? 'var(--mc-accent)' : 'var(--mc-border-1)'}`,
   background: active ? 'var(--mc-accent)' : 'var(--mc-bg-1)', color: active ? '#ffffff' : 'var(--mc-text-1)',
 });
-const menuStyle: React.CSSProperties = { position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 40, minWidth: 230, padding: 4, borderRadius: 8, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-1)', boxShadow: '0 8px 24px rgba(0,0,0,.15)' };
-const menuItem: React.CSSProperties = { display: 'block', width: '100%', textAlign: 'left', padding: '6px 10px', border: 'none', background: 'none', color: 'var(--mc-text-1)', fontSize: 13, borderRadius: 4, cursor: 'pointer' };
+// zzz1013 — popovers in the chart page's terminal style (radius 10, layered shadow from --ct-shadow, hover via .ct-menu rules)
+const menuStyle: React.CSSProperties = { position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 40, minWidth: 230, padding: 4, borderRadius: 10, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-0)', boxShadow: 'var(--ct-shadow, 0 8px 24px rgba(0,0,0,.15))' };
+const menuItem: React.CSSProperties = { display: 'block', width: '100%', textAlign: 'left', padding: '7px 10px', border: 'none', background: 'none', color: 'var(--mc-text-1)', fontSize: 13, borderRadius: 6, cursor: 'pointer' };
+const groupHead: React.CSSProperties = { fontSize: 11.5, fontWeight: 650, color: 'var(--mc-text-3)', margin: '4px 0 6px' };
 
 // ── layout picker: [Manual Support Resistance ● ▾] [Save] ─────────────────────
 export function LayoutPicker({ L }: { L: ReturnType<typeof useLayouts> }) {
@@ -115,16 +117,16 @@ export function LayoutPicker({ L }: { L: ReturnType<typeof useLayouts> }) {
     L.switchTo(id); setOpen(false);
   };
   return (
-    <div style={{ position: 'relative', display: 'flex', alignItems: 'center', border: '1px solid var(--mc-border-1)', borderRadius: 6, overflow: 'visible' }}>
-      <button type="button" aria-label="Chart layout" title="Chart layouts (indicator sets)" onClick={() => setOpen((v) => !v)}
-        style={{ ...smallBtn(), border: 'none', borderRadius: '6px 0 0 6px', maxWidth: 230, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {L.saved.name}{L.dirty ? <span title="Unsaved changes" style={{ color: 'var(--mc-accent)', marginLeft: 4 }}>●</span> : null} ▾
+    <div className="ct-layout" style={{ position: 'relative', display: 'flex', alignItems: 'center', height: 32, boxSizing: 'border-box', border: '1px solid var(--mc-border-1)', borderRadius: 8, background: 'var(--mc-bg-0)', overflow: 'visible' }}>
+      <button type="button" aria-label="Chart layout" title="Chart layouts (indicator sets)" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)}
+        style={{ ...smallBtn(), height: 30, background: 'transparent', border: 'none', borderRadius: '8px 0 0 8px', fontSize: 12.5, maxWidth: 230, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span className="ct-layout-label" style={{ color: 'var(--mc-text-4)', fontWeight: 600, marginRight: 6 }}>Layout</span>{L.saved.name}{L.dirty ? <span title="Unsaved changes" style={{ color: 'var(--mc-accent)', marginLeft: 4 }}>●</span> : null} ▾
       </button>
       <button type="button" disabled={!L.dirty} onClick={L.save} title={L.dirty ? `Save these indicators into “${L.saved.name}”` : 'Nothing to save'}
-        style={{ ...smallBtn(L.dirty), border: 'none', borderLeft: '1px solid var(--mc-border-1)', borderRadius: '0 6px 6px 0', opacity: L.dirty ? 1 : 0.55, cursor: L.dirty ? 'pointer' : 'default' }}>Save</button>
+        style={{ ...smallBtn(false), height: 30, border: 'none', borderLeft: '1px solid var(--mc-border-1)', borderRadius: '0 8px 8px 0', fontSize: 12.5, background: L.dirty ? 'var(--mc-accent)' : 'transparent', color: L.dirty ? 'var(--ct-on-accent, #fff)' : 'var(--mc-text-4)', cursor: L.dirty ? 'pointer' : 'default' }}>Save</button>
       {open && (
-        <div style={menuStyle} onMouseLeave={() => setOpen(false)}>
-          <div style={{ padding: '4px 10px', fontSize: 11, color: 'var(--mc-text-3)', fontWeight: 700 }}>LAYOUTS</div>
+        <div className="ct-menu" style={menuStyle} onMouseLeave={() => setOpen(false)}>
+          <div style={{ padding: '4px 10px', fontSize: 11.5, color: 'var(--mc-text-3)', fontWeight: 650 }}>Layouts</div>
           {L.store.layouts.map((l) => (
             <button key={l.id} type="button" style={{ ...menuItem, fontWeight: l.id === L.store.activeId ? 700 : 400 }} onClick={() => pick(l.id)}>
               {l.id === L.store.activeId ? '✓ ' : ''}{l.name}
@@ -143,7 +145,7 @@ export function LayoutPicker({ L }: { L: ReturnType<typeof useLayouts> }) {
 }
 
 // ── Indicators panel ──────────────────────────────────────────────────────────
-const input: React.CSSProperties = { width: 58, padding: '3px 5px', borderRadius: 4, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-0)', color: 'var(--mc-text-0)', fontSize: 13 };
+const input: React.CSSProperties = { width: 58, padding: '4px 6px', borderRadius: 6, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-0)', color: 'var(--mc-text-0)', fontSize: 13 };
 const linkBtn: React.CSSProperties = { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--mc-text-3)', fontSize: 12, padding: 0 };
 
 /** zzz1000 (CW-05) — after an outside click closes a popover, the rest of that click is swallowed so it cannot place a point of
@@ -195,12 +197,12 @@ export function IndicatorsPanel({ L, onClose, triggerRef }: { L: ReturnType<type
     setAdding('');
   };
   return (
-    <div ref={panelRef} id="mc-indicators-panel" role="dialog" aria-modal="false" aria-labelledby="mc-indicators-title" style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 40, width: 340, maxHeight: '75vh', overflowY: 'auto', padding: 12, borderRadius: 8, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-1)', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', fontSize: 13, color: 'var(--mc-text-1)' }}>
+    <div ref={panelRef} id="mc-indicators-panel" role="dialog" aria-modal="false" aria-labelledby="mc-indicators-title" style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 40, width: 'min(340px, calc(100vw - 24px))', maxHeight: '75vh', overflowY: 'auto', padding: 14, borderRadius: 12, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-0)', boxShadow: 'var(--ct-shadow, 0 8px 24px rgba(0,0,0,0.15))', fontSize: 13, color: 'var(--mc-text-1)', boxSizing: 'border-box' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontWeight: 700, color: 'var(--mc-text-0)' }}>
         <span id="mc-indicators-title">Indicators — {L.saved.name}{L.dirty ? ' ●' : ''}</span>
         <button type="button" onClick={closeAndReturn} aria-label="Close indicators" title="Close (Esc). Unsaved changes stay until Save or Undo." style={{ ...linkBtn, fontSize: 16 }}>×</button>
       </div>
-      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-text-3)', margin: '4px 0' }}>MOVING AVERAGES</div>
+      <div style={groupHead}>Moving averages</div>
       {w.lines.map((x) => (
         <div key={x.id} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
           <input type="checkbox" checked={x.on} onChange={(e) => setLine(x.id, { on: e.target.checked })} aria-label={`Show ${x.kind} ${x.period}`} />
@@ -238,7 +240,7 @@ export function IndicatorsPanel({ L, onClose, triggerRef }: { L: ReturnType<type
           Weekly stages 1–4 as coloured bands (blue basing, green advancing, blue topping, red declining), the SATA score out of 10 and a Mansfield RS pane against the S&amp;P 500 / Nifty 50. Our own version that follows the published rules — not the original script.
         </div>
       </div>
-      {w.extras.some((x) => !SPECIAL_EXTRAS.has(x.type)) && <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-text-3)', margin: '8px 0 4px', paddingTop: 8, borderTop: '1px solid var(--mc-border-3)' }}>OTHER INDICATORS</div>}
+      {w.extras.some((x) => !SPECIAL_EXTRAS.has(x.type)) && <div style={{ ...groupHead, margin: '8px 0 4px', paddingTop: 8, borderTop: '1px solid var(--mc-border-3)' }}>Other indicators</div>}
       {w.extras.filter((x) => !SPECIAL_EXTRAS.has(x.type)).map((x) => {
         const info = EXTRA_INFO[x.type];
         return (
@@ -283,12 +285,12 @@ export function IndicatorLegend({ rows, valueOf, onToggle, decimals, colorOf = (
 }) {
   if (!rows.length) return null;
   return (
-    <div style={{ position: 'absolute', left: 8, top: 28, zIndex: 5, display: 'flex', flexDirection: 'column', gap: 1, fontSize: 12, pointerEvents: 'none' }}>
+    <div className="mc-legend" style={{ position: 'absolute', left: 8, top: 28, zIndex: 5, display: 'flex', flexDirection: 'column', gap: 1, fontSize: 12, pointerEvents: 'none' }}>
       {rows.map((r) => {
         const vals = r.on ? valueOf(r) : [];
         return (
           <div key={r.id} className="mc-legend-row" style={{ display: 'flex', alignItems: 'center', gap: 6, pointerEvents: 'none', color: r.on ? 'var(--mc-text-1)' : 'var(--mc-text-4)', lineHeight: '18px' }}>
-            <span style={{ fontWeight: 600 }}>{r.label}</span>
+            <span style={{ fontWeight: 650, color: r.on ? 'var(--mc-text-0)' : undefined }}>{r.label}</span>
             {r.pane && r.on && <span style={{ color: 'var(--mc-text-3)' }}>(lower pane)</span>}
             {!r.pane && r.on && <span style={{ color: 'var(--mc-text-3)' }}>close</span>}
             {!r.on && <span>(hidden)</span>}
@@ -302,7 +304,10 @@ export function IndicatorLegend({ rows, valueOf, onToggle, decimals, colorOf = (
               );
             })}
             <button type="button" onClick={() => onToggle(r.id)} aria-label={`${r.on ? 'Hide' : 'Show'} ${r.label}`} title={r.on ? 'Hide this line' : 'Show this line'}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', fontSize: 12, color: 'var(--mc-text-3)', lineHeight: 1, pointerEvents: 'auto' }}>{r.on ? '👁' : '◌'}</button>
+              style={{ display: 'inline-grid', placeItems: 'center', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', color: 'var(--mc-text-3)', lineHeight: 1, pointerEvents: 'auto' }}>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.35} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                {r.on ? <path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8zM8 10a2 2 0 100-4 2 2 0 000 4z" /> : <path d="M2 2l12 12M6.6 3.7A6.5 6.5 0 018 3.5c4 0 6.5 4.5 6.5 4.5a11 11 0 01-1.9 2.4M4 5.2A11 11 0 001.5 8S4 12.5 8 12.5a6.4 6.4 0 002.7-.6" />}
+              </svg></button>
           </div>
         );
       })}

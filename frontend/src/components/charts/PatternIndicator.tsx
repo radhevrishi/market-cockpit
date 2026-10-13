@@ -287,9 +287,9 @@ export function PatternBanner({ p, cur, light, onTurnOff, tf }: { p: PatternBann
   const na = PATTERN_IDS.filter((id) => !patternApplies(id, atf));
   const tfBtn = (x: PatternTimeframe) => (
     <button key={x} type="button" onClick={() => p.setAnalysisTf?.(x)} aria-pressed={atf === x} title={`Find patterns on ${TF_WORD[x]} bars`}
-      style={{ background: atf === x ? col.border : 'none', border: `1px solid ${col.border}`, borderRadius: 3, color: col.text, cursor: 'pointer', padding: '0 4px', fontSize: 10, fontWeight: 700, lineHeight: '14px' }}>{x}</button>
+      style={{ background: atf === x ? col.border : 'none', border: `1px solid ${col.border}`, borderRadius: 4, color: col.text, cursor: 'pointer', padding: '0 5px', fontSize: 10.5, fontWeight: 700, lineHeight: '15px' }}>{x}</button>
   );
-  const small = { background: 'none', border: '1px solid var(--mc-border-1)', borderRadius: 4, color: 'var(--mc-text-2)', cursor: 'pointer', fontSize: 11, padding: '0 6px', whiteSpace: 'nowrap' as const };
+  const small = { background: 'var(--mc-bg-0)', border: '1px solid var(--mc-border-1)', borderRadius: 6, color: 'var(--mc-text-2)', cursor: 'pointer', fontSize: 11.5, fontWeight: 600, padding: '1px 8px', whiteSpace: 'nowrap' as const };
   const row = (h: PatternHit, kind: 'current' | 'expired' | 'weaker', why?: string, lead?: boolean) => {
     const c = kind === 'current' ? hitColor(h) : NONE_ROW;
     const failed = h.stage === 'failed';
@@ -332,11 +332,12 @@ export function PatternBanner({ p, cur, light, onTurnOff, tf }: { p: PatternBann
       </div>
     );
   };
-  const heading = (t: string) => <div style={{ marginTop: 8, fontSize: 11, fontWeight: 700, color: 'var(--mc-text-2)', textTransform: 'uppercase', letterSpacing: 0.3 }}>{t}</div>;
+  const heading = (t: string) => <div style={{ marginTop: 10, marginBottom: 2, fontSize: 11.5, fontWeight: 650, color: 'var(--mc-text-3)' }}>{t}</div>;
   return (
     <div ref={boxRef} onMouseLeave={() => { if (!pinned) setOpen(false); }}
       style={{ position: 'absolute', left: 8, top: 4, zIndex: 7, maxWidth: 'calc(100% - 100px)', fontSize: 12 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, borderRadius: 6, border: `1px solid ${col.border}`, background: col.bg, color: col.text, lineHeight: '18px' }}>
+      {/* zzz1013 — the Pine look: an 8 px pill on the page colour with the tone as a tint and a hairline, a soft lift off the candles */}
+      <div data-testid="pattern-banner" style={{ display: 'flex', alignItems: 'center', gap: 4, minHeight: 24, borderRadius: 8, border: `1px solid ${col.border}`, background: `linear-gradient(${col.bg}, ${col.bg}), var(--mc-bg-0)`, color: col.text, lineHeight: '18px', boxShadow: '0 1px 0 rgba(18,23,34,.04), 0 6px 16px -10px rgba(18,23,34,.35)' }}>
         {p.setAnalysisTf && (
           <span role="group" aria-label="Pattern analysis timeframe" title="Analysis timeframe — separate from the candles on screen"
             style={{ display: 'inline-flex', alignItems: 'center', gap: 2, marginLeft: 6, fontSize: 10, whiteSpace: 'nowrap' }}>
@@ -373,7 +374,7 @@ export function PatternBanner({ p, cur, light, onTurnOff, tf }: { p: PatternBann
       </div>
       {show && (
         <div role="dialog" aria-label="Chart patterns found"
-          style={{ marginTop: 4, width: 'min(560px, calc(100vw - 80px))', maxHeight: 380, overflowY: 'auto', padding: 8, borderRadius: 8, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-1)', color: 'var(--mc-text-1)', boxShadow: '0 8px 24px rgba(0,0,0,.18)' }}>
+          style={{ marginTop: 6, width: 'min(560px, calc(100vw - 80px))', maxHeight: 380, overflowY: 'auto', padding: '8px 10px 10px', borderRadius: 12, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-0)', color: 'var(--mc-text-1)', boxShadow: 'var(--ct-shadow, 0 8px 24px rgba(0,0,0,.18))' }}>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
             {p.fitted && p.restoreView && <button type="button" onClick={() => p.restoreView?.()} style={small}>Restore view</button>}
             <button type="button" onClick={() => { setPinned(false); setOpen(false); }} aria-label="Close the pattern list" style={small}>Close list</button>

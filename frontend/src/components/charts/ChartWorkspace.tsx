@@ -30,6 +30,8 @@ import { PATTERN_IDS } from '@/lib/chart-patterns';
 import { StageBanner, useStageIndicator } from './StageIndicator';
 import { stageOn, withStage } from './stage-view';
 import SymbolSearch from './SymbolSearch';
+import { CHART_CSS } from './chart-workspace-css';
+import { Icon, SessionBadge, ShortcutsOverlay, useMedia } from './chart-chrome';
 import type { SymbolItem } from '@/lib/symbol-search';
 
 type KC = typeof import('klinecharts');
@@ -56,27 +58,25 @@ const DRAW_GROUP = 'mc-draw';
 const MEASURE_GROUP = 'mc-measure';
 const VOL_PANE = 'mc_vol_pane';
 const LAST_VALUES_GROUP = 'mc-lastvals';   // N-06: our own last-value axis tags (readable text colour per tag)
-const TOOLS: { id: Tool; label: string; icon: string; hint: string }[] = [
-  { id: 'cursor', label: 'Cursor', icon: '↖', hint: 'Move and select (Esc)' },
-  { id: 'mcHLine', label: 'Horizontal line', icon: '━', hint: 'Support / resistance line: click once' },
-  { id: 'segment', label: 'Trend line', icon: '╱', hint: 'Trend line: click start, then end' },
-  { id: 'rayLine', label: 'Ray', icon: '↗', hint: 'Ray: click start, then direction' },
-  { id: 'mcRect', label: 'Rectangle', icon: '▭', hint: 'Rectangle: click two corners' },
-  { id: 'parallelStraightLine', label: 'Channel', icon: '⫽', hint: 'Parallel channel: three clicks' },
-  { id: 'fibonacciLine', label: 'Fibonacci', icon: 'ℱ', hint: 'Fibonacci levels: click two points' },
-  { id: 'mcText', label: 'Text', icon: 'T', hint: 'Text note: click where it goes' },
-  { id: 'mcMeasure', label: 'Measure', icon: '⇲', hint: 'Measure: click A, then B' },
+// zzz1013 — line icons (chart-chrome) and rail groups: select · lines · shapes & notes · measure
+const TOOLS: { id: Tool; label: string; icon: string; hint: string; group: number }[] = [
+  { id: 'cursor', label: 'Cursor', icon: 'cursor', hint: 'Move and select (Esc)', group: 0 },
+  { id: 'mcHLine', label: 'Horizontal line', icon: 'hline', hint: 'Support / resistance line: click once', group: 1 },
+  { id: 'segment', label: 'Trend line', icon: 'trend', hint: 'Trend line: click start, then end', group: 1 },
+  { id: 'rayLine', label: 'Ray', icon: 'ray', hint: 'Ray: click start, then direction', group: 1 },
+  { id: 'parallelStraightLine', label: 'Channel', icon: 'channel', hint: 'Parallel channel: three clicks', group: 1 },
+  { id: 'mcRect', label: 'Rectangle', icon: 'rect', hint: 'Rectangle: click two corners', group: 2 },
+  { id: 'fibonacciLine', label: 'Fibonacci', icon: 'fib', hint: 'Fibonacci levels: click two points', group: 2 },
+  { id: 'mcText', label: 'Text', icon: 'text', hint: 'Text note: click where it goes', group: 2 },
+  { id: 'mcMeasure', label: 'Measure', icon: 'measure', hint: 'Measure: click A, then B', group: 3 },
 ];
 const PANEL_OPEN_KEY = 'mc:chart-panel-open';   // per-browser convenience only
 const FOCUS_KEY = 'mc:chart-focus:v1';           // zzz946 — focus mode on/off, this browser only
 const LAYOUT_CSS = `
-.mc-charts-root { height: calc(100vh - 72px); min-height: 520px; }
+.mc-charts-root { height: calc(100vh - 72px); min-height: 520px; box-sizing: border-box; }
 /* zzz946 — focus mode: the site's top bar and left menu are hidden so the chart + watchlist fill the window */
 html.mc-chart-focus .desktop-sidebar, html.mc-chart-focus header { display: none !important; }
 html.mc-chart-focus .mc-charts-root { height: 100vh; padding-top: 8px !important; }
-.mc-scale-btn { min-width: 34px; height: 22px; padding: 0 6px; font-size: 12px; font-weight: 600; border-radius: 4px; cursor: pointer;
-  border: 1px solid var(--mc-border-1); background: var(--mc-bg-1); color: var(--mc-text-3); }
-.mc-scale-btn.on { background: var(--mc-accent); border-color: var(--mc-accent); color: #fff; }
 .mc-charts-main { display: flex; flex: 1; min-height: 0; gap: 8px; }
 .mc-charts-left { display: flex; flex: 1; min-width: 0; min-height: 0; gap: 8px; }
 .mc-charts-panel { width: var(--mc-watchlist-width, 400px); max-width: 55%; flex-shrink: 0; min-height: 0; }
@@ -84,12 +84,9 @@ html.mc-chart-focus .mc-charts-root { height: 100vh; padding-top: 8px !important
 .mc-watchlist-resize:hover, .mc-watchlist-resize:focus-visible { background: var(--mc-accent); outline: none; }
 @media (max-width: 900px) {
   .mc-charts-root { height: auto; }
-  .mc-charts-main { flex-direction: column; }
-  .mc-charts-left { height: 62vh; flex: none; }
-  .mc-charts-panel { width: 100%; max-width: none; height: 70vh; }
   .mc-watchlist-resize { display: none; }
 }
-`;
+${CHART_CSS}`;
 const TF_TO_INTERVAL: Record<Timeframe, string> = { D: '1d', W: '1wk', M: '1mo' };
 const TF_TO_PERIOD = { D: { type: 'day', span: 1 }, W: { type: 'week', span: 1 }, M: { type: 'month', span: 1 } } as const;
 
@@ -126,6 +123,12 @@ function themeStyles(): DeepPartial<Styles> {
   const up = '#089981', down = '#F23645';
   const legend = { color: text, size: 12 };
   void grid;
+  // zzz1013 — crosshair: a hairline in the axis colour with ink-on-paper labels (dark label on white, light label on dark), so the
+  // price / date under the cursor reads like a terminal tag instead of the library's grey box
+  const ink = cssVar('--mc-text-0', '#121722');
+  const paper = cssVar('--mc-bg-0', '#ffffff');
+  const hair = cssVar('--mc-border-2', '#C3C9D2');
+  const crossText = { show: true, color: paper, backgroundColor: ink, borderColor: ink, borderRadius: 4, size: 11.5, weight: 600, paddingLeft: 6, paddingRight: 6, paddingTop: 3, paddingBottom: 3 };
   return {
     grid: { show: false },
     candle: {
@@ -137,9 +140,12 @@ function themeStyles(): DeepPartial<Styles> {
     // N-06: the library's indicator last-value tags use one white text for every line (yellow EMA = 1.41:1); they are drawn by
     // the 'mcLastValues' overlay instead (kline-setup), with black or white text per tag
     indicator: { tooltip: { title: { color: text }, legend }, lastValueMark: { show: false } },
-    xAxis: { axisLine: { show: false }, tickLine: { show: false }, tickText: { color: text } },
+    xAxis: { axisLine: { show: false }, tickLine: { show: false }, tickText: { color: text, size: 11.5 } },
     yAxis: { axisLine: { show: false }, tickLine: { show: false }, tickText: { color: text, size: 12 } },
-    crosshair: { horizontal: { line: { style: 'dashed' } }, vertical: { line: { style: 'dashed' } } },
+    crosshair: {
+      horizontal: { line: { style: 'dashed', color: hair, dashedValue: [4, 3] }, text: crossText },
+      vertical: { line: { style: 'dashed', color: hair, dashedValue: [4, 3] }, text: crossText },
+    } as DeepPartial<Styles['crosshair']>,
     separator: { color: axis },
   };
 }
@@ -224,6 +230,14 @@ export default function ChartWorkspace() {
   const rangeRef = useRef(range);
   useEffect(() => { rangeRef.current = range; }, [range]);
   const togglePanel = () => setPanelOpen((v) => { try { localStorage.setItem(PANEL_OPEN_KEY, v ? '0' : '1'); } catch { /* storage blocked */ } return !v; });
+  // zzz1013 — narrow screens (≤ 900 px): the watchlist is a drawer over the chart (not saved; the desktop show / hide choice is kept)
+  const narrow = useMedia('(max-width: 900px)');
+  const [drawer, setDrawer] = useState(false);
+  const [help, setHelp] = useState(false);
+  const drawerRef = useRef(false);
+  useEffect(() => { drawerRef.current = drawer && narrow; }, [drawer, narrow]);
+  const closeHelp = useCallback(() => setHelp(false), []);
+  const toggleWatchlist = () => { if (narrow) setDrawer((v) => !v); else togglePanel(); };
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<Chart | null>(null);
@@ -659,6 +673,10 @@ export default function ChartWorkspace() {
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       if (e.altKey && (e.code === 'KeyR' || e.key === 'r' || e.key === 'R')) { e.preventDefault(); resetChart(); return; }
       if (e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'F' || e.code === 'KeyF')) { e.preventDefault(); setFocus((v) => !v); return; }
+      // zzz1013 — "?" opens the shortcuts list, "/" jumps to the ticker box (never while typing; the list closes itself on ? / Esc)
+      if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); setHelp((v) => !v); return; }
+      if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) { const el = document.querySelector<HTMLInputElement>('input[aria-label="Ticker or company"]'); if (el) { e.preventDefault(); el.focus(); el.select(); } return; }
+      if (e.key === 'Escape' && drawerRef.current) { setDrawer(false); return; }
       if (e.key === 'Escape') { if (toolRef.current !== 'cursor') cancelDrawing(); else if (focusRef.current) setFocus(false); }
       else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) { e.preventDefault(); deleteSelected(); }
     };
@@ -798,134 +816,150 @@ export default function ChartWorkspace() {
   const pxDecimals = bars.length && Math.abs(bars[bars.length - 1].c) < 1 ? 4 : 2;
   const hhmm = (t: number) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-  const btn = (active: boolean): React.CSSProperties => ({
-    padding: '4px 10px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer',
-    border: `1px solid ${active ? 'var(--mc-accent)' : 'var(--mc-border-1)'}`,
-    background: active ? 'var(--mc-accent)' : 'var(--mc-bg-1)', color: active ? '#ffffff' : 'var(--mc-text-1)',
-  });
+  const tfWord = (x: Timeframe) => (x === 'D' ? 'daily' : x === 'W' ? 'weekly' : 'monthly');
+  const showPanel = narrow || panelOpen;
+  const pickAndClose = useCallback((m: Market, t: string, x?: string) => { pickFromList(m, t, x); setDrawer(false); }, [pickFromList, setDrawer]);
+  const freshTitle = live?.asOf ? `Last candle = the newest trading day in the chart data; loaded = when this page fetched it.${live.provenance ? `\nSource: ${live.provenance.source} · ${live.provenance.priceBasis} · history from ${live.provenance.firstBarAt ?? '?'}${live.provenance.quoteAt ? ` · quote ${new Date(live.provenance.quoteAt).toLocaleString()}` : ''}${live.provenance.lastBarFromQuote ? `\nNewest candle built from the live quote${live.provenance.lastBarOpenInferred ? ' (open not given — previous close used)' : ''}` : ''}` : ''}` : '';
 
   return (
-    <div className={`mc-charts-root ${workspaceThemeClass(chartLight)}`} style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 16px', color: 'var(--mc-text-1)' }}>
+    <div className={`mc-charts-root ${workspaceThemeClass(chartLight)}`} style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 14px 12px', color: 'var(--mc-text-1)' }}>
       <style>{LAYOUT_CSS}</style>
-      {/* search + timeframe + range */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
-        <form onSubmit={submitSearch} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <select aria-label="Market" value={queryMarket} onChange={(e) => setQueryMarket(e.target.value as Market)}
-            style={{ ...btn(false), padding: '4px 6px' }}>
+      {/* zzz1013 — one toolbar: symbol · chart period · range | layout · indicators | view controls */}
+      <div className="ct-bar">
+        <form onSubmit={submitSearch} className="ct-search" role="search" aria-label="Open a chart">
+          <select aria-label="Market" value={queryMarket} onChange={(e) => setQueryMarket(e.target.value as Market)}>
             <option value="US">US</option>
             <option value="IN">India</option>
           </select>
+          <span className="ct-glass" aria-hidden><Icon name="search" size={14} /></span>
           <SymbolSearch value={query} onChange={setQuery} market={queryMarket} onPick={pickSymbol}
-            onSubmitTyped={() => submitSearch()} isTypedTicker={(v) => validTicker(queryMarket, cleanTicker(v))}
-            inputStyle={{ width: 190, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-0)', color: 'var(--mc-text-0)', fontSize: 13 }} />
-          <button type="submit" style={btn(false)}>Open</button>
+            onSubmitTyped={() => submitSearch()} isTypedTicker={(v) => validTicker(queryMarket, cleanTicker(v))} />
+          <button type="submit" className="ct-go" data-tip="Open the typed ticker" data-kbd="Enter">Open</button>
         </form>
-        <span style={{ width: 1, height: 22, background: 'var(--mc-border-1)' }} />
         {/* zzz1000 (improvement 4) — "Chart" period (the candles), distinct from the pattern banner's "Analysis" D / W / M */}
-        <span role="group" aria-label="Chart period" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--mc-text-3)' }}>Chart</span>
+        <span role="group" aria-label="Chart period" className="ct-seg">
+          <span className="ct-seg-label">Chart</span>
           {(['D', 'W', 'M'] as Timeframe[]).map((x) => (
-            <button key={x} type="button" title={`Chart period: ${x === 'D' ? 'daily' : x === 'W' ? 'weekly' : 'monthly'} candles`} aria-label={`Chart period ${x === 'D' ? 'daily' : x === 'W' ? 'weekly' : 'monthly'}`} aria-pressed={tf === x} style={btn(tf === x)} onClick={() => pickTf(x)}>{x}</button>
+            <button key={x} type="button" title={`Chart period: ${tfWord(x)} candles`} aria-label={`Chart period ${tfWord(x)}`} aria-pressed={tf === x} onClick={() => pickTf(x)}>{x}</button>
           ))}
         </span>
-        <span style={{ width: 1, height: 22, background: 'var(--mc-border-1)' }} />
-        {RANGE_KEYS.map((r) => (
-          <button key={r} type="button" style={btn(range === r)} onClick={() => setRange(r)}>{r}</button>
-        ))}
-        <span style={{ flex: 1 }} />
+        <span role="group" aria-label="Visible range" className="ct-seg">
+          {RANGE_KEYS.map((r) => (
+            <button key={r} type="button" aria-pressed={range === r} title={`Show ${r === 'All' ? 'all history' : r === 'YTD' ? 'the year to date' : `the last ${r}`}`} onClick={() => setRange(r)}>{r}</button>
+          ))}
+        </span>
+        <span className="ct-spacer" />
         <LayoutPicker L={L} />
         <div style={{ position: 'relative' }}>
-          <button ref={indicatorsBtnRef} type="button" style={btn(showIndicators)} aria-expanded={showIndicators} aria-haspopup="dialog" aria-controls="mc-indicators-panel" onClick={() => setShowIndicators((v) => !v)}>Indicators ▾</button>
+          <button ref={indicatorsBtnRef} type="button" className="ct-btn" aria-expanded={showIndicators} aria-haspopup="dialog" aria-controls="mc-indicators-panel" onClick={() => setShowIndicators((v) => !v)}>
+            <Icon name="fx" size={15} />Indicators<Icon name="chevron" size={12} /></button>
           {showIndicators && <IndicatorsPanel L={L} onClose={() => setShowIndicators(false)} triggerRef={indicatorsBtnRef} />}
         </div>
-        <WorkspaceThemeToggle light={chartLight} onToggle={toggleLight} style={btn(false)} />
-        <button type="button" style={btn(panelOpen)} onClick={togglePanel} title="Show or hide the watchlist panel">Watchlist</button>
-        <div style={{ position: 'relative', display: 'flex' }}>
-          <button type="button" style={{ ...btn(focus), borderRadius: '6px 0 0 6px' }} onClick={() => setFocus((v) => !v)}
-            title={focus ? 'Show the site menu and top bar again (Esc or Shift+F)' : 'Focus: hide the site menu and top bar (Shift+F)'}>{focus ? '⤡ Exit focus' : '⛶ Focus'}</button>
-          <button type="button" aria-label="Full screen options" style={{ ...btn(false), borderRadius: '0 6px 6px 0', borderLeft: 'none', padding: '4px 6px' }} onClick={() => setFocusMenu((v) => !v)}>▾</button>
-          {focusMenu && (
-            <div onMouseLeave={() => setFocusMenu(false)} style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 40, minWidth: 220, padding: 4, borderRadius: 8, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-1)', boxShadow: '0 8px 24px rgba(0,0,0,.15)' }}>
-              <button type="button" style={menuItemStyle} onClick={() => { setFocus((v) => !v); setFocusMenu(false); }}>{focus ? 'Leave focus mode' : 'Focus mode'} <span style={{ color: 'var(--mc-text-3)' }}>Shift+F</span></button>
-              <button type="button" style={menuItemStyle} onClick={browserFullScreen}>Browser full screen <span style={{ color: 'var(--mc-text-3)' }}>(Esc leaves)</span></button>
-              <button type="button" style={menuItemStyle} onClick={() => { resetChart(); setFocusMenu(false); }}>Reset chart <span style={{ color: 'var(--mc-text-3)' }}>Alt+R</span></button>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* header numbers */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '4px 16px', fontSize: 13 }}>
-        <span style={{ fontSize: 18, fontWeight: 700, color: 'var(--mc-text-0)' }}>{ticker}</span>
-        <AddToWatchlist store={wlStore} update={wlUpdate} market={market} ticker={ticker} exchange={exchange} />
-        {(() => {
-          const base = drawingKey(market, ticker, exchange);
-          const cur = activeSetOf(setsStore, base);
-          return (
-            <select aria-label="Drawing set" title="Separate drawing sets for this chart — each keeps its own lines and notes" value={cur} onChange={(e) => pickSet(e.target.value)}
-              style={{ fontSize: 12, padding: '2px 6px', borderRadius: 6, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-1)', color: 'var(--mc-text-1)' }}>
-              {setsOf(setsStore, base).map((x) => <option key={x.id} value={x.id}>✎ {x.name}</option>)}
-              <option value="__new">+ New drawing set…</option>
-              {cur !== MAIN_SET ? <option value="__del">Remove this set from the list</option> : null}
-            </select>
-          );
-        })()}
-        <span style={{ color: 'var(--mc-text-3)' }}>{live ? `${live.name || ''}${live.exchange ? ` · ${live.exchange}` : ''}` : (loading ? `Loading ${ticker}…` : '')}</span>
-        {stats?.last != null && (
-          <span style={{ fontWeight: 700, color: 'var(--mc-text-0)', fontVariantNumeric: 'tabular-nums' }}>
-            {cur}{fmtPrice(stats.last, Math.abs(stats.last) < 1 ? 4 : 2)}{' '}
-            {stats.change != null && stats.changePct != null && (
-              <span style={{ color: changeColor }}>{stats.change >= 0 ? '+' : ''}{fmtPrice(stats.change, 2)} ({stats.changePct >= 0 ? '+' : ''}{stats.changePct.toFixed(2)}%)</span>
+        <span className="ct-div" aria-hidden />
+        <span className="ct-icons">
+          <WorkspaceThemeToggle light={chartLight} onToggle={toggleLight} className="ct-icon" icon={<Icon name={chartLight ? 'moon' : 'sun'} />} />
+          <button type="button" className="ct-icon" aria-pressed={narrow ? drawer : panelOpen} aria-label={narrow ? 'Watchlist' : 'Show or hide the watchlist'} onClick={toggleWatchlist}
+            data-tip={narrow ? 'Watchlist' : panelOpen ? 'Hide the watchlist' : 'Show the watchlist'}><Icon name="list" /></button>
+          <span className="ct-split">
+            <button type="button" className="ct-icon" aria-pressed={focus} aria-label={focus ? 'Exit focus' : 'Focus'} onClick={() => setFocus((v) => !v)}
+              data-tip={focus ? 'Show the site menu and top bar' : 'Focus: hide the site menu and top bar'} data-kbd="Shift+F"><Icon name={focus ? 'unfocus' : 'focus'} /></button>
+            <button type="button" className="ct-icon ct-caret" aria-label="Full screen options" aria-haspopup="menu" aria-expanded={focusMenu} onClick={() => setFocusMenu((v) => !v)}><Icon name="chevron" size={11} /></button>
+            {focusMenu && (
+              <div className="ct-menu" role="menu" onMouseLeave={() => setFocusMenu(false)} onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setFocusMenu(false); } }}>
+                <button type="button" role="menuitem" onClick={() => { setFocus((v) => !v); setFocusMenu(false); }}>{focus ? 'Leave focus mode' : 'Focus mode'} <kbd>Shift+F</kbd></button>
+                <button type="button" role="menuitem" onClick={browserFullScreen}>Browser full screen <span style={{ color: 'var(--mc-text-3)', fontSize: 12 }}>Esc leaves</span></button>
+                <button type="button" role="menuitem" onClick={() => { resetChart(); setFocusMenu(false); }}>Reset chart <kbd>Alt+R</kbd></button>
+              </div>
             )}
           </span>
+          <button type="button" className="ct-icon ct-tip-left" aria-label="Keyboard shortcuts" aria-haspopup="dialog" aria-expanded={help} onClick={() => setHelp((v) => !v)} data-tip="Keyboard shortcuts" data-kbd="?"><Icon name="help" /></button>
+        </span>
+      </div>
+
+      {/* instrument strip: the symbol, its price, its numbers, its drawings and the data's freshness */}
+      <div className="ct-inst">
+        <div className="ct-id">
+          <span className="ct-tk" title={live?.name || undefined}>{ticker}</span>
+          {live ? <>{live.name && <span className="ct-name" title={live.name}>{live.name}</span>}{live.exchange && <span className="ct-ex">{live.exchange}</span>}</>
+            : <span className="ct-name">{loading ? `Loading ${ticker}…` : ''}</span>}
+          <SessionBadge market={market} />
+        </div>
+        {stats?.last != null && (
+          <div className="ct-px" aria-live="polite">
+            <span className="ct-last">{cur}{fmtPrice(stats.last, Math.abs(stats.last) < 1 ? 4 : 2)}</span>
+            {stats.change != null && stats.changePct != null && (
+              <span className={`ct-chg ${stats.change >= 0 ? 'up' : 'down'}`} style={{ color: changeColor }}>{stats.change >= 0 ? '+' : ''}{fmtPrice(stats.change, 2)} ({stats.changePct >= 0 ? '+' : ''}{stats.changePct.toFixed(2)}%)</span>
+            )}
+          </div>
         )}
-        <Stat label="ADR%" value={stats?.adrPct != null ? `${stats.adrPct.toFixed(2)}%` : '—'} title="Average daily range over the last 20 days: average of (high ÷ low − 1)" />
-        <Stat label="RVol" value={stats?.rvol != null ? `${stats.rvol.toFixed(2)}×` : '—'} title="Today's volume ÷ the average volume of the 20 days before it" />
-        <Stat label="PVol" value={stats?.pvol != null ? `${stats.pvol.toFixed(0)}%` : '—'} title="Today's volume as a % of the highest daily volume of the 50 days before it" />
-        <Stat label="Float %" value={stats?.floatPct != null ? `${stats.floatPct.toFixed(1)}%` : '—'} title={market === 'US' ? 'Shares that trade freely, as a % of all shares (from the stock screener data)' : 'Not available for India yet (needs the promoter holding)'} />
-        <Stat label={market === 'IN' ? 'Avg ₹ Vol' : 'Avg $ Vol'} value={fmtMoney(stats?.avgValue ?? null, market)} title="Average traded value (close × volume) over the last 20 days" />
-        {loading && <span style={{ color: 'var(--mc-text-3)' }}>Loading…</span>}
-        <button type="button" disabled={loading} style={btn(false)} onClick={() => { cacheRef.current.clear(); setRefresh((v) => v + 1); }}>Refresh</button>
-        {live?.asOf && <span style={{ fontSize: 11, color: 'var(--mc-text-3)' }}
-          title={`Last candle = the newest trading day in the chart data; loaded = when this page fetched it.${live.provenance ? `\nSource: ${live.provenance.source} · ${live.provenance.priceBasis} · history from ${live.provenance.firstBarAt ?? '?'}${live.provenance.quoteAt ? ` · quote ${new Date(live.provenance.quoteAt).toLocaleString()}` : ''}${live.provenance.lastBarFromQuote ? `\nNewest candle built from the live quote${live.provenance.lastBarOpenInferred ? ' (open not given — previous close used)' : ''}` : ''}` : ''}`}>
-          {live.lastBarAt ? `Last candle ${new Date(`${live.lastBarAt}T00:00:00Z`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' })}${live.provenance?.lastBarFromQuote ? ' (from quote)' : ''} · ` : ''}loaded {new Date(live.asOf).toLocaleTimeString()}</span>}
-        {wlSaveError && <span role="alert" style={{ color: 'var(--mc-warn, #D97706)' }}>{wlSaveError} <button type="button" onClick={retryWatchlistSave}>Retry save</button></span>}
-        {note?.includes('not saved') && <button type="button" onClick={persist}>Retry drawing save</button>}
+        <dl className="ct-stats" aria-label="Trading figures">
+          <Stat label="ADR%" value={stats?.adrPct != null ? `${stats.adrPct.toFixed(2)}%` : '—'} title="Average daily range over the last 20 days: average of (high ÷ low − 1)" />
+          <Stat label="RVol" value={stats?.rvol != null ? `${stats.rvol.toFixed(2)}×` : '—'} title="Today's volume ÷ the average volume of the 20 days before it" />
+          <Stat label="PVol" value={stats?.pvol != null ? `${stats.pvol.toFixed(0)}%` : '—'} title="Today's volume as a % of the highest daily volume of the 50 days before it" />
+          <Stat label="Float %" value={stats?.floatPct != null ? `${stats.floatPct.toFixed(1)}%` : '—'} title={market === 'US' ? 'Shares that trade freely, as a % of all shares (from the stock screener data)' : 'Not available for India yet (needs the promoter holding)'} />
+          <Stat label={market === 'IN' ? 'Avg ₹ Vol' : 'Avg $ Vol'} value={fmtMoney(stats?.avgValue ?? null, market)} title="Average traded value (close × volume) over the last 20 days" />
+        </dl>
+        <div className="ct-inst-end">
+          {/* zzz1013 — on narrow screens the watchlist is a drawer: one obvious button to open it */}
+          {narrow && <button type="button" className="ct-btn ct-narrow-only" aria-expanded={drawer} onClick={() => setDrawer(true)}><Icon name="list" size={15} />Watchlist</button>}
+          <AddToWatchlist store={wlStore} update={wlUpdate} market={market} ticker={ticker} exchange={exchange} />
+          {(() => {
+            const base = drawingKey(market, ticker, exchange);
+            const cur = activeSetOf(setsStore, base);
+            return (
+              <select aria-label="Drawing set" title="Separate drawing sets for this chart — each keeps its own lines and notes" value={cur} onChange={(e) => pickSet(e.target.value)}>
+                {setsOf(setsStore, base).map((x) => <option key={x.id} value={x.id}>✎ {x.name}</option>)}
+                <option value="__new">+ New drawing set…</option>
+                {cur !== MAIN_SET ? <option value="__del">Remove this set from the list</option> : null}
+              </select>
+            );
+          })()}
+          <button type="button" className="ct-icon ct-tip-left" disabled={loading} aria-label="Refresh" data-tip={live?.lastBarAt ? `Reload the chart data (last candle ${live.lastBarAt})` : 'Reload the chart data'} onClick={() => { cacheRef.current.clear(); setRefresh((v) => v + 1); }}>
+            {loading ? <span className="ct-spin" role="status" aria-label="Loading" /> : <Icon name="refresh" />}</button>
+          {live?.asOf && <span className="ct-fresh" title={freshTitle}>
+            {live.lastBarAt ? <span>Last candle <b>{new Date(`${live.lastBarAt}T00:00:00Z`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' })}</b>{live.provenance?.lastBarFromQuote ? ' (from quote)' : ''}</span> : null}
+            <span>loaded {new Date(live.asOf).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></span>}
+        </div>
+      </div>
+      <div className="ct-status">
+        {wlSaveError && <span role="alert" style={{ color: 'var(--mc-warn, #D97706)' }}>{wlSaveError} <button type="button" className="ct-btn" style={{ height: 26 }} onClick={retryWatchlistSave}>Retry save</button></span>}
+        {note?.includes('not saved') && <button type="button" className="ct-btn" style={{ height: 26 }} onClick={persist}>Retry drawing save</button>}
         {error && (bars.length > 0 || loading) && <span role="status" style={{ color: 'var(--mc-bearish, #DC2626)' }}>{error}</span>}
       </div>
 
       {review && reviewPos && (
-        <div role="region" aria-label={words.heading} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '4px 10px', borderRadius: 6, fontSize: 13, border: '1px solid var(--mc-accent)', background: 'var(--mc-bg-1)', color: 'var(--mc-text-1)' }}>
-          <span>{words.heading}: <b>{review.label}</b> · <span style={{ fontVariantNumeric: 'tabular-nums' }}>{reviewPos.position ?? '–'} / {reviewPos.total}</span></span>
-          <button type="button" style={btn(false)} disabled={!reviewCanPrev} onClick={() => reviewStep(-1)} title={`Previous ${words.noun} (↑)`}>← Prev</button>
-          <button type="button" style={btn(false)} disabled={!reviewCanNext} onClick={() => reviewStep(1)} title={`Next ${words.noun} (↓)`}>Next →</button>
-          <button type="button" style={btn(false)} onClick={() => router.push(review.returnUrl)}>{words.back}</button>
+        <div role="region" aria-label={words.heading} className="ct-review">
+          <span>{words.heading}: <b>{review.label}</b> <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--mc-text-3)' }}>{reviewPos.position ?? '–'} of {reviewPos.total}</span></span>
+          <button type="button" className="ct-btn" disabled={!reviewCanPrev} onClick={() => reviewStep(-1)} title={`Previous ${words.noun} (↑)`}>← Prev</button>
+          <button type="button" className="ct-btn" disabled={!reviewCanNext} onClick={() => reviewStep(1)} title={`Next ${words.noun} (↓)`}>Next →</button>
+          <button type="button" className="ct-btn" onClick={() => router.push(review.returnUrl)}>{words.back}</button>
           <span style={{ flex: 1 }} />
-          <button type="button" aria-label={`Stop ${words.heading.toLowerCase()}`} title="Stop reviewing: ↑ / ↓ step through the watchlist again" style={{ ...btn(false), padding: '2px 8px' }} onClick={() => setReview(null)}>×</button>
+          <button type="button" className="ct-icon" aria-label={`Stop ${words.heading.toLowerCase()}`} title="Stop reviewing: ↑ / ↓ step through the watchlist again" onClick={() => setReview(null)}><Icon name="close" size={14} /></button>
         </div>
       )}
       <div className="mc-charts-main">
       <div className="mc-charts-left">
-        {/* drawing toolbar */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 40, flexShrink: 0 }}>
-          {TOOLS.map((t) => (
-            <button key={t.id} type="button" title={t.label} aria-label={t.label} onClick={() => pickTool(t.id)}
-              style={{ ...btn(tool === t.id), width: 40, height: 34, padding: 0, fontSize: 16 }}>{t.icon}</button>
-          ))}
-          <label title="Colour for new drawings" style={{ ...btn(false), width: 40, height: 34, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <input type="color" value={drawColor} onChange={(e) => setDrawColor(e.target.value)} aria-label="Drawing colour"
-              style={{ width: 24, height: 24, border: 'none', padding: 0, background: 'transparent', cursor: 'pointer' }} />
+        {/* drawing rail */}
+        <div className="ct-rail" role="group" aria-label="Drawing tools">
+          {TOOLS.map((t, i) => (<span key={t.id} style={{ display: 'contents' }}>
+            {i > 0 && TOOLS[i - 1].group !== t.group && <span className="ct-sep" aria-hidden />}
+            <button type="button" className="ct-icon" aria-label={t.label} aria-pressed={tool === t.id} onClick={() => pickTool(t.id)}
+              data-tip={t.label} data-kbd={t.id === 'cursor' ? 'Esc' : undefined}><Icon name={t.icon} /></button>
+          </span>))}
+          <span className="ct-sep" aria-hidden />
+          <label className="ct-swatch" data-tip="Colour for new drawings">
+            <span style={{ background: drawColor }} />
+            <input type="color" value={drawColor} onChange={(e) => setDrawColor(e.target.value)} aria-label="Drawing colour" />
           </label>
-          <button type="button" title="Delete the selected drawing (or press Delete)" aria-label="Delete one" onClick={deleteSelected}
-            style={{ ...btn(false), width: 40, height: 34, padding: 0, fontSize: 15, opacity: selectedId ? 1 : 0.6 }}>⌫</button>
-          <button type="button" title="Remove all drawings on this ticker" aria-label="Clear all" onClick={clearAll}
-            style={{ ...btn(false), width: 40, height: 34, padding: 0, fontSize: 15 }}>🗑</button>
-          <button type="button" title="Reset chart: back to the chosen range, latest bar, price axis refitted (Alt+R)" aria-label="Reset chart" onClick={resetChart}
-            style={{ ...btn(false), width: 40, height: 34, padding: 0, fontSize: 16 }}>⟲</button>
+          <button type="button" className="ct-icon" aria-label="Delete one" onClick={deleteSelected} style={{ opacity: selectedId ? 1 : 0.55 }}
+            data-tip="Delete the selected drawing" data-kbd="Delete"><Icon name="erase" /></button>
+          <button type="button" className="ct-icon" aria-label="Clear all" onClick={clearAll} data-tip="Remove all drawings on this ticker"><Icon name="trash" /></button>
+          <span className="ct-sep" aria-hidden />
+          <button type="button" className="ct-icon" aria-label="Reset chart" onClick={resetChart} data-tip="Reset chart" data-kbd="Alt+R"><Icon name="reset" /></button>
         </div>
-        <div style={{ position: 'relative', flex: 1, minWidth: 0, border: '1px solid var(--mc-border-1)', borderRadius: 8, background: 'var(--mc-bg-0)', overflow: 'hidden' }}>
+        <div className="ct-canvas">
           <div ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
-          <div style={{ position: 'absolute', right: 4, bottom: 4, zIndex: 6, display: 'flex', gap: 3 }}>
+          <div style={{ position: 'absolute', right: 6, bottom: 5, zIndex: 6, display: 'flex', gap: 3 }}>
             <button type="button" className={`mc-scale-btn${autoOn ? ' on' : ''}`} aria-label="Auto-fit price scale" aria-pressed={autoOn} onClick={toggleAuto}
               title={autoOn ? 'Auto-fit (on, the default): the price axis fits the candles on screen, like TradingView\'s "auto". Click to turn it off.' : 'Auto-fit (off): click to fit the price axis to the candles on screen again (or double-click the price axis)'}>auto</button>
             <button type="button" className={`mc-scale-btn${L.working.scale.log ? ' on' : ''}`} aria-label="Log price scale" aria-pressed={L.working.scale.log}
@@ -934,52 +968,54 @@ export default function ChartWorkspace() {
             <button type="button" className={`mc-scale-btn${basis === 'tr' ? ' on' : ''}`} aria-label="Total return" aria-pressed={basis === 'tr'} onClick={toggleBasis}
               title={basis === 'tr' ? `${TOTAL_RETURN_LABEL}. On: history adjusted for ${live?.dividends ?? 0} cash dividends; the latest price is unchanged. Drawings are one set for both views and stay at the price values they were drawn on. Click for prices as printed.` : `Show: ${TOTAL_RETURN_LABEL}`}>TR</button>
           </div>
-          <IndicatorLegend rows={rows} valueOf={valueOf} onToggle={(id) => L.setWorking((w) => toggleRow(w, id))} decimals={pxDecimals} colorOf={(c) => (!chartLight && (luminance(c) ?? 1) < 0.18 ? '#B2B5BE' : c)} textOf={(c) => readableOn(c, chartLight ? '#FFFFFF' : '#0A0E1A')} />
+          <IndicatorLegend rows={rows} valueOf={valueOf} onToggle={(id) => L.setWorking((w) => toggleRow(w, id))} decimals={pxDecimals} colorOf={(c) => (!chartLight && (luminance(c) ?? 1) < 0.18 ? '#B2B5BE' : c)} textOf={(c) => readableOn(c, chartLight ? '#FFFFFF' : '#0C1018')} />
           <PatternBanner p={patterns} cur={cur} light={chartLight} tf={tf} onTurnOff={() => L.setWorking((w) => withPatterns(w, false))} />
           <StageBanner s={stageInd} light={chartLight} shifted={patterns.on} onTurnOff={() => L.setWorking((w) => withStage(w, false))} />
           {/* zzz1000 (improvement 6) — nothing loaded for this symbol / view: say so instead of an empty 0–10 price axis */}
           {!loading && !bars.length && error && (
-            <div role="alert" data-testid="chart-empty-state" style={{ position: 'absolute', inset: 0, zIndex: 7, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, background: 'var(--mc-bg-0)' }}>
-              <div style={{ maxWidth: 420, display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center', textAlign: 'center', fontSize: 13, color: 'var(--mc-text-2)' }}>
-                <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--mc-text-0)' }}>No chart for {ticker}{market === 'IN' && exchange ? ` (${exchange})` : ''} · {tf === 'D' ? 'daily' : tf === 'W' ? 'weekly' : 'monthly'}</div>
+            <div role="alert" data-testid="chart-empty-state" className="ct-empty">
+              <div>
+                <div className="ct-empty-title">No chart for {ticker}{market === 'IN' && exchange ? ` (${exchange})` : ''} · {tfWord(tf)}</div>
                 <div>{error}</div>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button type="button" style={btn(true)} onClick={() => { cacheRef.current.clear(); setError(null); setRefresh((v) => v + 1); }}>Retry</button>
-                  <button type="button" style={btn(false)} onClick={() => { const el = document.querySelector<HTMLInputElement>('input[aria-label="Ticker or company"]'); el?.focus(); el?.select(); }}>Open another ticker</button>
+                  <button type="button" className="ct-btn primary" onClick={() => { cacheRef.current.clear(); setError(null); setRefresh((v) => v + 1); }}>Retry</button>
+                  <button type="button" className="ct-btn" onClick={() => { const el = document.querySelector<HTMLInputElement>('input[aria-label="Ticker or company"]'); el?.focus(); el?.select(); }}>Open another ticker</button>
                 </div>
               </div>
             </div>
           )}
           {(savedAt || syncedAt) && (
-            <div title="Drawings are saved in this browser at once and copied to your account about once a minute, so they come back on your other devices"
-              style={{ position: 'absolute', left: 8, bottom: 30, zIndex: 5, padding: '2px 8px', borderRadius: 6, fontSize: 11, background: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-1)', color: 'var(--mc-bullish, #059669)', pointerEvents: 'none' }}>
+            <div className="ct-float ok" title="Drawings are saved in this browser at once and copied to your account about once a minute, so they come back on your other devices"
+              style={{ left: 8, bottom: 30 }}>
               {savedAt ? `✓ drawings saved ${hhmm(savedAt)}` : '✓ drawings'}{syncedAt ? ` · on your account ${hhmm(syncedAt)}` : ''}
             </div>
           )}
           {(tool !== 'cursor' || note) && (
-            <div style={{ position: 'absolute', right: 80, top: 8, padding: '3px 8px', borderRadius: 6, fontSize: 12, background: 'var(--mc-bg-2)', border: '1px solid var(--mc-border-1)', color: 'var(--mc-text-2)', pointerEvents: 'none' }}>
-              {note || `${activeHint} · Esc to cancel`}
+            <div className="ct-float" style={{ right: 80, top: 8 }}>
+              {note || <>{activeHint} <span style={{ color: 'var(--mc-text-4)' }}>· Esc to cancel</span></>}
             </div>
           )}
         </div>
       </div>
-      {panelOpen && (<>
-        <WatchlistResizeHandle width={panelWidth} onChange={resizePanel} />
-        <div className="mc-charts-panel" style={{ '--mc-watchlist-width': `${panelWidth}px` } as React.CSSProperties}>
-          <WatchlistPanel store={wlStore} update={wlUpdate} currentKey={drawingKey(market, ticker, exchange)} onPick={pickFromList} navOverride={reviewNav} loading={loading} prefetch={ready ? prefetchFor : undefined} />
+      {showPanel && (<>
+        {!narrow && <WatchlistResizeHandle width={panelWidth} onChange={resizePanel} />}
+        {narrow && <button type="button" aria-label="Close the watchlist" tabIndex={-1} className={`ct-backdrop${drawer ? ' open' : ''}`} onClick={() => setDrawer(false)} />}
+        <div className={`mc-charts-panel${narrow && drawer ? ' open' : ''}`} style={{ '--mc-watchlist-width': `${panelWidth}px` } as React.CSSProperties}
+          {...(narrow ? { role: 'dialog', 'aria-label': 'Watchlist', inert: !drawer } : {})}>
+          <WatchlistPanel store={wlStore} update={wlUpdate} currentKey={drawingKey(market, ticker, exchange)} onPick={narrow ? pickAndClose : pickFromList} navOverride={reviewNav} loading={loading} prefetch={ready ? prefetchFor : undefined} />
         </div>
       </>)}
       </div>
+      {help && <ShortcutsOverlay onClose={closeHelp} />}
     </div>
   );
 }
 
-const menuItemStyle: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', gap: 12, width: '100%', textAlign: 'left', padding: '6px 10px', border: 'none', background: 'none', color: 'var(--mc-text-1)', fontSize: 13, borderRadius: 4, cursor: 'pointer' };
-
 function Stat({ label, value, title }: { label: string; value: string; title: string }) {
   return (
-    <span title={title} style={{ color: 'var(--mc-text-3)' }}>
-      {label} <b style={{ color: 'var(--mc-text-0)', fontVariantNumeric: 'tabular-nums' }}>{value}</b>
-    </span>
+    <div title={title}>
+      <dt>{label}</dt>
+      <dd>{value}</dd>
+    </div>
   );
 }

@@ -97,8 +97,9 @@ test('CW-01: the table shows — for unknown values and the summary leaves unkno
     assert.deepEqual(cells('FLAT').slice(4, 8), ['₹50.00', '+0.00%', '₹51.00', '₹49.00']);
     assert.deepEqual(cells('NVDA').slice(4, 8), ['—', '—', '—', '—']);
     assert.match(row('NVDA').querySelector('a')!.getAttribute('href')!, /m=US/, 'US rows open on the US chart');
-    assert.match(document.body.textContent!, /AVG\. CHANGE\+0\.61%/, 'average over the two known changes only');
-    assert.match(document.body.textContent!, /GAINERS1/); assert.match(document.body.textContent!, /LOSERS0/);
+    // zzz1013 — one figures strip with sentence-case labels (was four cards in capitals)
+    assert.match(document.body.textContent!, /Average change\+0\.61%/, 'average over the two known changes only');
+    assert.match(document.body.textContent!, /Gainers1/); assert.match(document.body.textContent!, /Losers0/);
   });
 });
 
