@@ -23,6 +23,7 @@ import { useWorkspaceLight, workspaceThemeClass } from '@/lib/workspace-theme';
 import { fitBarSpace, loadView, saveView } from '@/lib/chart-view-prefs';
 import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
 import { readableOn, textOnColor } from '@/lib/readable-color';
+import { drawingAutoColor, isAutoDrawingColor } from '@/lib/chart-drawing-color';
 import { addSet, activeSetOf, chooseSet, loadSets, removeSet, saveSets, setsOf, withSet, DRAWING_SETS_KEY, MAIN_SET, type SetsStore } from '@/lib/chart-drawing-sets';
 import { PatternBanner, usePatternIndicator } from './PatternIndicator';
 import { patternsOn, withPatterns, parsePatternHandoff } from './pattern-view';
@@ -197,7 +198,9 @@ export default function ChartWorkspace() {
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [syncedAt, setSyncedAt] = useState<number | null>(null);
   const [tool, setTool] = useState<Tool>('cursor');
-  const [drawColor, setDrawColor] = useState('#2962FF');
+  // zzz1018 — new drawings default to the theme colour (white on dark, blue on white) until a colour is picked
+  const [pickedColor, setPickedColor] = useState<string | null>(null);
+  const autoIdsRef = useRef<Set<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [wlStore, wlUpdate, wlSaveError, retryWatchlistSave] = useWatchlistStore();
@@ -209,6 +212,10 @@ export default function ChartWorkspace() {
   // zzz943: white chart page (TradingView's white view) by default, whatever the site theme; one click to dark
   // zzz954: one white / dark choice shared with Watchlists and the Stock Screener (white when nothing is saved)
   const [chartLight, toggleLight] = useWorkspaceLight();
+  const autoDrawColor = drawingAutoColor(chartLight);
+  const drawColor = pickedColor ?? autoDrawColor;
+  const autoDrawColorRef = useRef(autoDrawColor);
+  useEffect(() => { autoDrawColorRef.current = autoDrawColor; }, [autoDrawColor]);
   // zzz946 — focus mode (remembered in this browser only) and the browser's own full screen
   const [focus, setFocus] = useState(() => { try { return localStorage.getItem(FOCUS_KEY) === '1'; } catch { return false; } });
   const focusRef = useRef(focus);
@@ -281,7 +288,7 @@ export default function ChartWorkspace() {
         name: o.name as DrawingName,
         points: o.points.filter((p) => typeof p.timestamp === 'number' && typeof p.value === 'number').map((p) => ({ t: p.timestamp as number, p: p.value as number })),
         ...(typeof o.extendData === 'string' ? { text: o.extendData } : {}),
-        ...((o.styles as any)?.line?.color ? { color: String((o.styles as any).line.color) } : {}),
+        ...(!autoIdsRef.current.has(o.id) && (o.styles as any)?.line?.color ? { color: String((o.styles as any).line.color) } : {}),
       }));
     const sk = storeKeyOf(keyRef.current);
     const at = saveDrawings(sk, list);
@@ -311,11 +318,14 @@ export default function ChartWorkspace() {
     chart.removeOverlay({ groupId: DRAW_GROUP });
     chart.removeOverlay({ groupId: MEASURE_GROUP });
     keyRef.current = key;
+    autoIdsRef.current = new Set();
     for (const d of loadDrawingsWithLegacy(storeKeyOf(key))) {
-      chart.createOverlay(overlaySpec(d.name, d.color || '#2962FF', {
+      const auto = isAutoDrawingColor(d.color);
+      const id = chart.createOverlay(overlaySpec(d.name, auto ? autoDrawColorRef.current : d.color!, {
         points: d.points.map((p) => ({ timestamp: p.t, value: p.p })),
         ...(d.text ? { extendData: d.text } : {}),
       }));
+      if (auto && typeof id === 'string') autoIdsRef.current.add(id);
     }
     setSelectedId(null);
     setTool('cursor');
@@ -572,13 +582,23 @@ export default function ChartWorkspace() {
     if (t === 'mcText') {
       const text = typeof window !== 'undefined' ? window.prompt('Text for the note:') : null;
       if (!text || !text.trim()) { finishDrawing(); return; }
-      chart.createOverlay(overlaySpec('mcText', drawColor, { extendData: text.trim().slice(0, 200) }));
+      const id = chart.createOverlay(overlaySpec('mcText', drawColor, { extendData: text.trim().slice(0, 200) }));
+      if (pickedColor == null && typeof id === 'string') autoIdsRef.current.add(id);
       setTool(t);
       return;
     }
-    chart.createOverlay(overlaySpec(t, drawColor));
+    const id = chart.createOverlay(overlaySpec(t, drawColor));
+    if (pickedColor == null && typeof id === 'string') autoIdsRef.current.add(id);
     setTool(t);
-  }, [overlaySpec, drawColor, finishDrawing]);
+  }, [overlaySpec, drawColor, pickedColor, finishDrawing]);
+  // zzz1018 — theme switched: drawings in the default colour follow it (white on dark, blue on white)
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !ready) return;
+    for (const id of autoIdsRef.current) {
+      try { chart.overrideOverlay({ id, styles: { line: { color: autoDrawColor }, text: { color: textOnColor(autoDrawColor), backgroundColor: autoDrawColor, borderColor: autoDrawColor } } }); } catch { /* removed */ }
+    }
+  }, [autoDrawColor, ready]);
 
   const deleteSelected = useCallback(() => {
     const chart = chartRef.current;
@@ -961,9 +981,10 @@ export default function ChartWorkspace() {
               data-tip={t.label} data-kbd={t.id === 'cursor' ? 'Esc' : undefined}><Icon name={t.icon} /></button>
           </span>))}
           <span className="ct-sep" aria-hidden />
-          <label className="ct-swatch" data-tip="Colour for new drawings">
-            <span style={{ background: drawColor }} />
-            <input type="color" value={drawColor} onChange={(e) => setDrawColor(e.target.value)} aria-label="Drawing colour" />
+          <label className="ct-swatch" data-tip={pickedColor ? 'Colour for new drawings (double-click: back to the default — white on dark, blue on white)' : 'Colour for new drawings (default: white on dark, blue on white)'}
+            onDoubleClick={(e) => { e.preventDefault(); setPickedColor(null); }}>
+            <span style={{ background: drawColor, boxShadow: 'inset 0 0 0 1px var(--mc-border-2)' }} />
+            <input type="color" value={drawColor} onChange={(e) => setPickedColor(e.target.value)} aria-label="Drawing colour" />
           </label>
           <button type="button" className="ct-icon" aria-label="Delete one" onClick={deleteSelected} style={{ opacity: selectedId ? 1 : 0.55 }}
             data-tip="Delete the selected drawing" data-kbd="Delete"><Icon name="erase" /></button>
