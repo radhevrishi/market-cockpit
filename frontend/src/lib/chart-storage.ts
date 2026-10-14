@@ -3,7 +3,7 @@
 // never wipe them. Every read / write is guarded (private mode, full storage).
 import { DEFAULT_SETTINGS, sanitizeSettings, type ChartSettings, type SavedDrawing } from './chart-math';
 import { CHART_DRAWINGS_KEY, drawingsFor, readDrawingStore, rescueFromBackup, setDrawings, type DrawingStoreV2 } from './chart-sync';
-import { CHART_LAYOUTS_KEY, cleanLayout, sanitizeLayoutStore, seedLayoutStore, type LayoutStore } from './chart-layouts';
+import { CHART_LAYOUTS_KEY, cleanLayout, migrateAutoLines, sanitizeLayoutStore, seedLayoutStore, withAutoLinesExtra, type LayoutStore } from './chart-layouts';
 
 export { CHART_DRAWINGS_KEY, CHART_LAYOUTS_KEY };
 export const CHART_SETTINGS_KEY = 'mc:chart-settings:v1';   // zzz937 settings — read once to carry them into a layout
@@ -58,7 +58,12 @@ export function saveDrawings(key: string, list: SavedDrawing[], now = Date.now()
  *  defaults, they are kept as a third layout "My earlier settings". */
 export function loadLayoutStore(): LayoutStore {
   const raw = readJson(CHART_LAYOUTS_KEY);
-  if (raw) return sanitizeLayoutStore(raw);
+  if (raw) {
+    const s = sanitizeLayoutStore(raw);
+    const m = migrateAutoLines(s);
+    if (m !== s) { writeJson(CHART_LAYOUTS_KEY, m); migrateDraftAutoLines(); }
+    return m;
+  }
   const seeded = seedLayoutStore();
   const old = readJson(CHART_SETTINGS_KEY);
   if (old) {
@@ -71,7 +76,15 @@ export function loadLayoutStore(): LayoutStore {
       }));
     }
   }
-  writeJson(CHART_LAYOUTS_KEY, seeded);
-  return seeded;
+  const out = migrateAutoLines(seeded);
+  writeJson(CHART_LAYOUTS_KEY, out);
+  return out;
+}
+/** zzz1025 — an unsaved indicator draft (LayoutControls 'mc:chart-layout-draft:v1') gets "Auto trendlines & levels" too, once. */
+const LAYOUT_DRAFT_KEY = 'mc:chart-layout-draft:v1';
+function migrateDraftAutoLines(): void {
+  const d = readJson(LAYOUT_DRAFT_KEY) as { working?: unknown } | null;
+  if (!d || typeof d !== 'object' || !d.working || typeof d.working !== 'object') return;
+  writeJson(LAYOUT_DRAFT_KEY, { ...d, working: withAutoLinesExtra(cleanLayout(d.working)) });
 }
 export function saveLayoutStore(s: LayoutStore): boolean { return writeJson(CHART_LAYOUTS_KEY, s); }

@@ -23,6 +23,8 @@ export interface ChartMenuState {
   cur: string; decimals: number;
   auto: boolean; log: boolean; tr: boolean;
   patterns: boolean; stage: boolean; setups: boolean; volume: boolean;
+  /** zzz1025 — Auto trendlines & levels */
+  autoLines?: boolean;
   selected: boolean; light: boolean;
 }
 /** The menu: chart view and price scale first (as in TradingView), then the price under the mouse, indicators, drawings, theme.
@@ -47,6 +49,7 @@ export function chartMenuItems(s: ChartMenuState): ChartMenuItem[] {
     { id: 'patterns', label: 'Automate chart patterns', checked: s.patterns, sepBefore: true },
     { id: 'stage', label: 'Stage Analysis', checked: s.stage },
     { id: 'setups', label: 'Trader setups', checked: s.setups },
+    { id: 'alines', label: 'Auto trendlines & levels', checked: !!s.autoLines },
     { id: 'volume', label: 'Volume', checked: s.volume },
     { id: 'del1', label: 'Remove selected drawing', kbd: 'Delete', disabled: !s.selected, sepBefore: true },
     { id: 'delall', label: 'Remove all drawings…', danger: true },

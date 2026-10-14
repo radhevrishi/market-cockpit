@@ -32,6 +32,8 @@ import { StageBanner, useStageIndicator } from './StageIndicator';
 import { stageOn, withStage } from './stage-view';
 import { SetupBanner, useSetupIndicator } from './SetupIndicator';
 import { setupsOn, withSetups } from './setup-view';
+import { AutoLinesBanner, useAutoLines } from './AutoLinesIndicator';
+import { autoLinesOn, withAutoLines } from './auto-lines-view';
 import SymbolSearch from './SymbolSearch';
 import { CHART_CSS } from './chart-workspace-css';
 import { Icon, SessionBadge, ShortcutsOverlay, useMedia } from './chart-chrome';
@@ -834,9 +836,13 @@ export default function ChartWorkspace() {
   // zzz1022 — "Trader setups": read on the candles on screen (D / W / M), only while that indicator is in the working layout
   const setupsInd = useSetupIndicator({ on: setupsOn(L.working), ready, market, bars, tf, chartRef, light: chartLight });
   // status lines on the left, one under the other: pattern (or stage when patterns are off), then setups; the legend under them
+  // zzz1025 — "Auto trendlines & levels" (on by default): lines / levels with 3+ touches on the candles on screen
+  const alines = useAutoLines({ on: autoLinesOn(L.working), ready, market, bars, tf, log: L.working.scale.log, chartRef, light: chartLight });
   const leftBanners = (patterns.on || stageInd.on ? 1 : 0);
   const setupTop = 4 + 30 * leftBanners;
-  const legendTop = 28 + (setupsInd.on && leftBanners ? 30 : 0);
+  const alnTop = 4 + 30 * (leftBanners + (setupsInd.on ? 1 : 0));
+  const nBanners = leftBanners + (setupsInd.on ? 1 : 0) + (alines.on ? 1 : 0);
+  const legendTop = 28 + 30 * Math.max(0, nBanners - 1);
 
   // zzz1022b — right-click menu (as in TradingView): on the chart and on the price axis
   const [ctx, setCtx] = useState<{ x: number; y: number; price: number | null; axis: boolean } | null>(null);
@@ -869,7 +875,7 @@ export default function ChartWorkspace() {
   const ctxItems = useMemo<ChartMenuItem[]>(() => (ctx ? chartMenuItems({
     axis: ctx.axis, price: ctx.price, cur, decimals: bars.length && Math.abs(bars[bars.length - 1].c) < 1 ? 4 : 2,
     auto: autoOn, log: L.working.scale.log, tr: basis === 'tr', patterns: patternsOn(L.working), stage: stageOn(L.working),
-    setups: setupsOn(L.working), volume: L.working.volume.on, selected: !!selectedId, light: chartLight,
+    setups: setupsOn(L.working), autoLines: autoLinesOn(L.working), volume: L.working.volume.on, selected: !!selectedId, light: chartLight,
   }) : []), [ctx, cur, bars, autoOn, L.working, basis, selectedId, chartLight]);
   const onCtxSelect = (id: string) => {
     const p = ctx?.price;
@@ -884,6 +890,7 @@ export default function ChartWorkspace() {
       case 'patterns': L.setWorking((w) => withPatterns(w, !patternsOn(w))); break;
       case 'stage': L.setWorking((w) => withStage(w, !stageOn(w))); break;
       case 'setups': L.setWorking((w) => withSetups(w, !setupsOn(w))); break;
+      case 'alines': L.setWorking((w) => withAutoLines(w, !autoLinesOn(w))); break;
       case 'volume': L.setWorking((w) => ({ ...w, volume: { ...w.volume, on: !w.volume.on } })); break;
       case 'del1': deleteSelected(); break;
       case 'delall': clearAll(); break;
@@ -1076,6 +1083,7 @@ export default function ChartWorkspace() {
           <PatternBanner p={patterns} cur={cur} light={chartLight} tf={tf} onTurnOff={() => L.setWorking((w) => withPatterns(w, false))} />
           <StageBanner s={stageInd} light={chartLight} shifted={patterns.on} onTurnOff={() => L.setWorking((w) => withStage(w, false))} />
           <SetupBanner s={setupsInd} light={chartLight} top={setupTop} onTurnOff={() => L.setWorking((w) => withSetups(w, false))} />
+          <AutoLinesBanner s={alines} light={chartLight} top={alnTop} onTurnOff={() => L.setWorking((w) => withAutoLines(w, false))} />
           {/* zzz1000 (improvement 6) — nothing loaded for this symbol / view: say so instead of an empty 0–10 price axis */}
           {!loading && !bars.length && error && (
             <div role="alert" data-testid="chart-empty-state" className="ct-empty">

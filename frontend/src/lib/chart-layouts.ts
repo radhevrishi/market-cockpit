@@ -9,12 +9,16 @@ export const CHART_LAYOUTS_KEY = 'mc:chart-layouts:v1';
 
 export type LineKind = 'EMA' | 'SMA';
 export interface MaLine { id: string; kind: LineKind; period: number; color: string; on: boolean }
-export type ExtraType = 'BOLL' | 'RSI' | 'MACD' | 'ATR' | 'ST' | 'PAT' | 'STG' | 'SET';
+export type ExtraType = 'BOLL' | 'RSI' | 'MACD' | 'ATR' | 'ST' | 'PAT' | 'STG' | 'SET' | 'ALN';
 export interface Extra { id: string; type: ExtraType; params: number[]; color: string; on: boolean }
 export interface ChartLayout { id: string; name: string; updatedAt: number; lines: MaLine[]; volume: { on: boolean; avg: number }; extras: Extra[]; scale: LayoutScale }
 /** zzz946 — price scale: `auto` fits the visible candles (TradingView "A"); `log` = logarithmic (TradingView "L"). */
 export interface LayoutScale { auto: boolean; log: boolean }
-export interface LayoutStore { v: 1; layouts: ChartLayout[]; deleted: Record<string, number>; activeId: string }
+export interface LayoutStore {
+  v: 1; layouts: ChartLayout[]; deleted: Record<string, number>; activeId: string;
+  /** zzz1025 — set once "Auto trendlines & levels" has been switched on in every layout (default on); a later turn-off stays off */
+  aln?: 1;
+}
 
 export const MAX_LAYOUTS = 40, MAX_LINES = 12, MAX_EXTRAS = 8;
 
@@ -34,9 +38,12 @@ export const EXTRA_INFO: Record<ExtraType, { label: string; pane: boolean; defau
   // zzz1022 — "Trader setups": well-known traders' setups (lib/setups — our own version of the published rules) as tags on the
   // candles + Darvas boxes, a status line, an optional squeeze pane (components/charts/setup-view, SetupIndicator). Off unless added.
   SET: { label: 'Trader setups', pane: false, defaults: [], names: [], min: [], max: [], color: '#F59E0B' },
+  // zzz1025 — "Auto trendlines & levels": trendlines and horizontal levels with 3 or more touches (lib/auto-lines), drawn on the
+  // candles on screen, a status line (components/charts/auto-lines-view, AutoLinesIndicator). ON by default (migrateAutoLines).
+  ALN: { label: 'Auto trendlines & levels', pane: false, defaults: [], names: [], min: [], max: [], color: '#26A69A' },
 };
 /** zzz987 — extras with their own on/off row in the Indicators panel (not listed under "other indicators"). */
-export const SPECIAL_EXTRAS: ReadonlySet<ExtraType> = new Set<ExtraType>(['PAT', 'STG', 'SET']);
+export const SPECIAL_EXTRAS: ReadonlySet<ExtraType> = new Set<ExtraType>(['PAT', 'STG', 'SET', 'ALN']);
 export const EXTRA_TYPES = Object.keys(EXTRA_INFO) as ExtraType[];
 
 let _seq = 0;
@@ -130,7 +137,20 @@ export function sanitizeLayoutStore(raw: unknown): LayoutStore {
   const deleted: Record<string, number> = {};
   if (r.deleted && typeof r.deleted === 'object') for (const [k, v] of Object.entries(r.deleted).slice(0, 200)) if (Number.isFinite(Number(v)) && !seen.has(k)) deleted[k.slice(0, 40)] = Number(v);
   if (!layouts.length) return { ...seedLayoutStore(), deleted };
-  return { v: 1, layouts, deleted, activeId: layouts.some((l) => l.id === r.activeId) ? r.activeId : layouts[0].id };
+  return { v: 1, layouts, deleted, activeId: layouts.some((l) => l.id === r.activeId) ? r.activeId : layouts[0].id, ...(r.aln === 1 ? { aln: 1 as const } : {}) };
+}
+
+/** zzz1025 — one time per store: "Auto trendlines & levels" is added to every layout (it is on by default). The flag is kept with
+ *  the store (and synced), so a layout where it is later turned off keeps it off. Save times are not changed, so a newer copy from
+ *  another device still wins a merge. */
+export function migrateAutoLines(s: LayoutStore): LayoutStore {
+  if (s.aln === 1) return s;
+  return { ...s, aln: 1, layouts: s.layouts.map((l) => withAutoLinesExtra(l)) };
+}
+/** The layout with the 'ALN' extra added when it is missing (and there is room). */
+export function withAutoLinesExtra(l: ChartLayout): ChartLayout {
+  if (l.extras.some((x) => x.type === 'ALN') || l.extras.length >= MAX_EXTRAS) return l;
+  return { ...l, extras: [...l.extras, newExtra('ALN')] };
 }
 
 export const activeLayout = (s: LayoutStore): ChartLayout => s.layouts.find((l) => l.id === s.activeId) || s.layouts[0];
@@ -177,7 +197,7 @@ export function mergeLayoutStores(aRaw: unknown, bRaw: unknown): LayoutStore {
   const order = [...a.layouts.map((l) => l.id), ...b.layouts.map((l) => l.id)].filter((id, i, arr) => arr.indexOf(id) === i);
   const layouts = order.map((id) => byId.get(id)!).filter((l) => !(deleted[l.id] && deleted[l.id] >= l.updatedAt));
   for (const l of layouts) delete deleted[l.id];
-  const out: LayoutStore = { v: 1, layouts: layouts.length ? layouts : seedLayoutStore().layouts, deleted, activeId: a.activeId };
+  const out: LayoutStore = { v: 1, layouts: layouts.length ? layouts : seedLayoutStore().layouts, deleted, activeId: a.activeId, ...(a.aln === 1 || b.aln === 1 ? { aln: 1 as const } : {}) };
   if (!out.layouts.some((l) => l.id === out.activeId)) out.activeId = out.layouts[0].id;
   return out;
 }
@@ -216,7 +236,7 @@ export interface LegendRow { id: string; source: 'line' | 'extra' | 'volume'; la
 export function legendRows(l: ChartLayout): LegendRow[] {
   const rows: LegendRow[] = l.lines.map((x) => ({ id: x.id, source: 'line', label: lineLabel(x), color: x.color, on: x.on, pane: false, series: [{ spec: { kind: x.kind, a: x.period }, color: x.color }] }));
   for (const e of l.extras) {
-    if (e.type === 'PAT' || e.type === 'STG' || e.type === 'SET') continue;   // zzz982 / zzz987 / zzz1022 — shown as their own status line at the top of the chart, not a legend row
+    if (e.type === 'PAT' || e.type === 'STG' || e.type === 'SET' || e.type === 'ALN') continue;   // zzz982 / zzz987 / zzz1022 / zzz1025 — shown as their own status line at the top of the chart, not a legend row
     const info = EXTRA_INFO[e.type];
     const series: LegendRow['series'] = e.type === 'BOLL'
       ? [{ spec: { kind: 'BBU', a: e.params[0], b: e.params[1] }, color: e.color }, { spec: { kind: 'BBM', a: e.params[0], b: e.params[1] }, color: BB_MID_COLOR }, { spec: { kind: 'BBL', a: e.params[0], b: e.params[1] }, color: e.color }]

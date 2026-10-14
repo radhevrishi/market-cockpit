@@ -12,6 +12,7 @@ import { fmtPrice } from '@/lib/chart-math';
 import { patternsOn, withPatterns } from './pattern-view';
 import { stageOn, withStage } from './stage-view';
 import { setupsOn, withSetups } from './setup-view';
+import { autoLinesOn, withAutoLines } from './auto-lines-view';
 import { STAGE_TOOLTIP } from '@/lib/stage-analysis';
 
 // ── store hook ────────────────────────────────────────────────────────────────
@@ -249,6 +250,16 @@ export function IndicatorsPanel({ L, onClose, triggerRef }: { L: ReturnType<type
         </label>
         <div style={{ paddingLeft: 22, marginTop: 2, fontSize: 12, color: 'var(--mc-text-3)' }}>
           Tags on the candles where a well-known trader&apos;s setup fired (3 weeks tight, Darvas box, Donchian breakouts, TTM squeeze, episodic pivot, gap-ups, momentum burst, wedge pop, Holy Grail, spring …), the latest Darvas boxes and a status line; a squeeze pane on request. Read on the candles on screen (D / W / M). Our own version of the published rules.
+        </div>
+      </div>
+      {/* zzz1025 — Auto trendlines & levels: lines with 3 or more touches (lib/auto-lines), on by default */}
+      <div style={{ margin: '8px 0', paddingTop: 8, borderTop: '1px solid var(--mc-border-3)' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+          <input type="checkbox" checked={autoLinesOn(w)} onChange={(e) => setW((l) => withAutoLines(l, e.target.checked))} aria-label="Auto trendlines & levels" />
+          <b style={{ fontWeight: 600 }}>Auto trendlines &amp; levels</b>
+        </label>
+        <div style={{ paddingLeft: 22, marginTop: 2, fontSize: 12, color: 'var(--mc-text-3)' }}>
+          Draws trendlines and horizontal support / resistance where price turned 3 or more times (2 touches are never shown), with a ring on every touch and the touch count on the right edge. Found separately on the daily, weekly and monthly candles on screen; broken lines turn grey.
         </div>
       </div>
       {w.extras.some((x) => !SPECIAL_EXTRAS.has(x.type)) && <div style={{ ...groupHead, margin: '8px 0 4px', paddingTop: 8, borderTop: '1px solid var(--mc-border-3)' }}>Other indicators</div>}
