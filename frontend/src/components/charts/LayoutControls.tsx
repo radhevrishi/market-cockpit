@@ -11,6 +11,7 @@ import { loadLayoutStore, saveLayoutStore } from '@/lib/chart-storage';
 import { fmtPrice } from '@/lib/chart-math';
 import { patternsOn, withPatterns } from './pattern-view';
 import { stageOn, withStage } from './stage-view';
+import { setupsOn, withSetups } from './setup-view';
 import { STAGE_TOOLTIP } from '@/lib/stage-analysis';
 
 // ── store hook ────────────────────────────────────────────────────────────────
@@ -240,6 +241,16 @@ export function IndicatorsPanel({ L, onClose, triggerRef }: { L: ReturnType<type
           Weekly stages 1–4 as coloured bands (blue basing, green advancing, blue topping, red declining), the SATA score out of 10 and a Mansfield RS pane against the S&amp;P 500 / Nifty 50. Our own version that follows the published rules — not the original script.
         </div>
       </div>
+      {/* zzz1022 — Trader setups: our own version of the published rules (lib/setups) */}
+      <div style={{ margin: '8px 0', paddingTop: 8, borderTop: '1px solid var(--mc-border-3)' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+          <input type="checkbox" checked={setupsOn(w)} onChange={(e) => setW((l) => withSetups(l, e.target.checked))} aria-label="Trader setups" />
+          <b style={{ fontWeight: 600 }}>Trader setups</b>
+        </label>
+        <div style={{ paddingLeft: 22, marginTop: 2, fontSize: 12, color: 'var(--mc-text-3)' }}>
+          Tags on the candles where a well-known trader&apos;s setup fired (3 weeks tight, Darvas box, Donchian breakouts, TTM squeeze, episodic pivot, gap-ups, momentum burst, wedge pop, Holy Grail, spring …), the latest Darvas boxes and a status line; a squeeze pane on request. Read on the candles on screen (D / W / M). Our own version of the published rules.
+        </div>
+      </div>
       {w.extras.some((x) => !SPECIAL_EXTRAS.has(x.type)) && <div style={{ ...groupHead, margin: '8px 0 4px', paddingTop: 8, borderTop: '1px solid var(--mc-border-3)' }}>Other indicators</div>}
       {w.extras.filter((x) => !SPECIAL_EXTRAS.has(x.type)).map((x) => {
         const info = EXTRA_INFO[x.type];
@@ -278,7 +289,9 @@ export function IndicatorsPanel({ L, onClose, triggerRef }: { L: ReturnType<type
 }
 
 // ── legend at the top-left of the chart ───────────────────────────────────────
-export function IndicatorLegend({ rows, valueOf, onToggle, onRemove, decimals, colorOf = (c: string) => c, textOf = (c: string) => c }: {
+export function IndicatorLegend({ rows, valueOf, onToggle, onRemove, decimals, colorOf = (c: string) => c, textOf = (c: string) => c, top = 28 }: {
+  /** zzz1022 — px from the top of the chart (lower when a second status line sits above it) */
+  top?: number;
   rows: LegendRow[]; valueOf: (row: LegendRow) => (number | null)[]; onToggle: (id: string) => void; decimals: number; colorOf?: (c: string) => string;
   /** zzz1019 — the × on a row: remove the line / indicator from the chart (as TradingView's legend "Remove") */
   onRemove?: (id: string) => void;
@@ -287,7 +300,7 @@ export function IndicatorLegend({ rows, valueOf, onToggle, onRemove, decimals, c
 }) {
   if (!rows.length) return null;
   return (
-    <div className="mc-legend" style={{ position: 'absolute', left: 8, top: 28, zIndex: 5, display: 'flex', flexDirection: 'column', gap: 1, fontSize: 12, pointerEvents: 'none' }}>
+    <div className="mc-legend" style={{ position: 'absolute', left: 8, top, zIndex: 5, display: 'flex', flexDirection: 'column', gap: 1, fontSize: 12, pointerEvents: 'none' }}>
       {rows.map((r) => {
         const vals = r.on ? valueOf(r) : [];
         return (

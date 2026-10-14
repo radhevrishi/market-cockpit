@@ -127,8 +127,13 @@ kbd, .ct-kbd { display: inline-grid; place-items: center; min-width: 18px; heigh
 .ct-float { position: absolute; z-index: 5; padding: 3px 9px; border-radius: 7px; font-size: 11.5px; font-weight: 600; background: color-mix(in srgb, var(--mc-bg-0) 92%, transparent);
   border: 1px solid var(--mc-border-1); color: var(--mc-text-2); pointer-events: none; box-shadow: var(--ct-shadow); backdrop-filter: blur(4px); }
 .ct-float.ok { color: var(--ct-up); }
-.mc-scale-btn { min-width: 34px; height: 22px; padding: 0 7px; font-size: 11.5px; font-weight: 650; border-radius: 6px; cursor: pointer;
-  border: 1px solid var(--mc-border-1); background: color-mix(in srgb, var(--mc-bg-0) 90%, transparent); color: var(--mc-text-3); }
+.mc-scale-btn { min-width: 38px; height: 24px; padding: 0 8px; font-size: 12px; font-weight: 700; border-radius: 6px; cursor: pointer; letter-spacing: .01em;
+  border: 1px solid var(--mc-border-2); background: color-mix(in srgb, var(--mc-bg-0) 94%, transparent); color: var(--mc-text-1); box-shadow: var(--ct-shadow); }
+.ct-ctx { min-width: 290px; }
+.ct-ctx-title { padding: 6px 10px 4px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--mc-text-3); }
+.ct-ctx-sep { height: 1px; margin: 4px 6px; background: var(--mc-border-1); }
+.ct-ctx button.danger { color: var(--ct-down, #F23645); }
+.ct-ctx button:disabled { opacity: .45; cursor: default; }
 .mc-scale-btn:hover { color: var(--mc-text-0); border-color: var(--mc-border-2); }
 .mc-scale-btn.on { background: var(--ct-press); border-color: color-mix(in srgb, var(--mc-accent) 45%, transparent); color: var(--mc-accent); }
 .ct-empty { position: absolute; inset: 0; z-index: 7; display: flex; align-items: center; justify-content: center; padding: 16px; background: var(--mc-bg-0); }

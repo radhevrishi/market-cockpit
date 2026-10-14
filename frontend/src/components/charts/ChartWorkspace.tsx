@@ -30,9 +30,12 @@ import { patternsOn, withPatterns, parsePatternHandoff } from './pattern-view';
 import { PATTERN_IDS } from '@/lib/chart-patterns';
 import { StageBanner, useStageIndicator } from './StageIndicator';
 import { stageOn, withStage } from './stage-view';
+import { SetupBanner, useSetupIndicator } from './SetupIndicator';
+import { setupsOn, withSetups } from './setup-view';
 import SymbolSearch from './SymbolSearch';
 import { CHART_CSS } from './chart-workspace-css';
 import { Icon, SessionBadge, ShortcutsOverlay, useMedia } from './chart-chrome';
+import { ChartContextMenu, chartMenuItems, type ChartMenuItem } from './ChartContextMenu';
 import type { SymbolItem } from '@/lib/symbol-search';
 
 type KC = typeof import('klinecharts');
@@ -275,7 +278,11 @@ export default function ChartWorkspace() {
   // keep the URL linkable: /charts?t=QQQ&m=US&tf=W
   useEffect(() => {
     const q = `?t=${encodeURIComponent(ticker)}&m=${market}&tf=${tf}${market === 'IN' && exchange ? `&x=${exchange}` : ''}${review ? '&review=screener' : ''}`;
-    if (typeof window !== 'undefined' && window.location.search !== q) router.replace(`/charts${q}`, { scroll: false });
+    // zzz1022c — the URL is updated in place (history.replaceState: no server round-trip per symbol, which queued up and
+    // froze the page when the watchlist was clicked through quickly), shortly after the last switch
+    if (typeof window === 'undefined' || window.location.search === q) return;
+    const timer = setTimeout(() => { try { window.history.replaceState(window.history.state, '', `/charts${q}`); } catch { /* keep the old URL */ } }, 250);
+    return () => clearTimeout(timer);
   }, [ticker, market, tf, exchange, router, review]);
 
   // ── drawings ────────────────────────────────────────────────────────────────
@@ -824,6 +831,65 @@ export default function ChartWorkspace() {
   }, [patHandoff, L]);
   // zzz987 — "Stage Analysis (TheWrap method)": runs only while that indicator is in the working layout
   const stageInd = useStageIndicator({ on: stageOn(L.working), ready, ticker, market, exchange, basis, live, bars, chartRef, cacheRef, light: chartLight });
+  // zzz1022 — "Trader setups": read on the candles on screen (D / W / M), only while that indicator is in the working layout
+  const setupsInd = useSetupIndicator({ on: setupsOn(L.working), ready, market, bars, tf, chartRef, light: chartLight });
+  // status lines on the left, one under the other: pattern (or stage when patterns are off), then setups; the legend under them
+  const leftBanners = (patterns.on || stageInd.on ? 1 : 0);
+  const setupTop = 4 + 30 * leftBanners;
+  const legendTop = 28 + (setupsInd.on && leftBanners ? 30 : 0);
+
+  // zzz1022b — right-click menu (as in TradingView): on the chart and on the price axis
+  const [ctx, setCtx] = useState<{ x: number; y: number; price: number | null; axis: boolean } | null>(null);
+  const closeCtx = useCallback(() => setCtx(null), []);
+  const onChartContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const chart = chartRef.current, el = containerRef.current;
+    if (!chart || !el) return;
+    e.preventDefault();
+    if (tool !== 'cursor') { cancelDrawing(); return; }   // right-click while drawing: stop drawing (as in TradingView)
+    const r = el.getBoundingClientRect();
+    const x = e.clientX - r.left, y = e.clientY - r.top;
+    let price: number | null = null;
+    try {
+      const p = chart.convertFromPixel([{ x, y }], { paneId: 'candle_pane' });
+      const v = (Array.isArray(p) ? p[0] : p)?.value;
+      const main = chart.getSize('candle_pane', 'main');
+      if (typeof v === 'number' && Number.isFinite(v) && main && y >= main.top && y <= main.top + main.height) price = v;
+    } catch { /* outside the price pane */ }
+    const ax = chart.getSize('candle_pane', 'yAxis');
+    const axis = !!ax && x >= ax.left && x <= ax.left + ax.width;
+    setCtx({ x, y, price, axis });
+  }, [tool, cancelDrawing]);
+  const addPriceLine = useCallback((price: number) => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const id = chart.createOverlay(overlaySpec('mcHLine', drawColor, { points: [{ timestamp: bars.length ? bars[bars.length - 1].t : Date.now(), value: price }] }));
+    if (pickedColor == null && typeof id === 'string') autoIdsRef.current.add(id);
+    persistSoon();
+  }, [overlaySpec, drawColor, pickedColor, bars, persistSoon]);
+  const ctxItems = useMemo<ChartMenuItem[]>(() => (ctx ? chartMenuItems({
+    axis: ctx.axis, price: ctx.price, cur, decimals: bars.length && Math.abs(bars[bars.length - 1].c) < 1 ? 4 : 2,
+    auto: autoOn, log: L.working.scale.log, tr: basis === 'tr', patterns: patternsOn(L.working), stage: stageOn(L.working),
+    setups: setupsOn(L.working), volume: L.working.volume.on, selected: !!selectedId, light: chartLight,
+  }) : []), [ctx, cur, bars, autoOn, L.working, basis, selectedId, chartLight]);
+  const onCtxSelect = (id: string) => {
+    const p = ctx?.price;
+    switch (id) {
+      case 'reset': resetChart(); break;
+      case 'fit': fitAll(); break;
+      case 'auto': toggleAuto(); break;
+      case 'log': L.setWorking((w) => ({ ...w, scale: { ...w.scale, log: !w.scale.log } })); break;
+      case 'tr': toggleBasis(); break;
+      case 'hline': if (p != null) addPriceLine(p); break;
+      case 'copy': if (p != null) { try { void navigator.clipboard?.writeText(fmtPrice(p, Math.abs(p) < 1 ? 4 : 2)); } catch { /* no clipboard */ } } break;
+      case 'patterns': L.setWorking((w) => withPatterns(w, !patternsOn(w))); break;
+      case 'stage': L.setWorking((w) => withStage(w, !stageOn(w))); break;
+      case 'setups': L.setWorking((w) => withSetups(w, !setupsOn(w))); break;
+      case 'volume': L.setWorking((w) => ({ ...w, volume: { ...w.volume, on: !w.volume.on } })); break;
+      case 'del1': deleteSelected(); break;
+      case 'delall': clearAll(); break;
+      case 'theme': toggleLight(); break;
+    }
+  };
   const changeColor = (stats?.change ?? 0) >= 0 ? 'var(--mc-bullish, #059669)' : 'var(--mc-bearish, #DC2626)';
   const activeHint = useMemo(() => TOOLS.find((t) => t.id === tool)?.hint, [tool]);
   useEffect(() => { toolRef.current = tool; }, [tool]);
@@ -992,22 +1058,24 @@ export default function ChartWorkspace() {
           <span className="ct-sep" aria-hidden />
           <button type="button" className="ct-icon" aria-label="Reset chart" onClick={resetChart} data-tip="Reset chart" data-kbd="Alt+R"><Icon name="reset" /></button>
         </div>
-        <div className="ct-canvas">
+        <div className="ct-canvas" onContextMenu={onChartContextMenu}>
           <div ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
+          {ctx && <ChartContextMenu x={ctx.x} y={ctx.y} items={ctxItems} onSelect={onCtxSelect} onClose={closeCtx} title={ctx.axis ? 'Price scale' : undefined} />}
           <div style={{ position: 'absolute', right: 6, bottom: 5, zIndex: 6, display: 'flex', gap: 3 }}>
             <button type="button" className={`mc-scale-btn${autoOn ? ' on' : ''}`} aria-label="Auto-fit price scale" aria-pressed={autoOn} onClick={toggleAuto}
-              title={autoOn ? 'Auto-fit (on, the default): the price axis fits the candles on screen, like TradingView\'s "auto". Click to turn it off.' : 'Auto-fit (off): click to fit the price axis to the candles on screen again (or double-click the price axis)'}>auto</button>
+              title={autoOn ? 'Auto-fit (on, the default): the price axis fits the candles on screen, like TradingView\'s "auto". Click to turn it off.' : 'Auto-fit (off): click to fit the price axis to the candles on screen again (or double-click the price axis)'}>Auto</button>
             <button type="button" className="mc-scale-btn" aria-label="Fit the whole chart" onClick={fitAll}
-              title="Fit: show every loaded bar on screen and fit the price axis to them (Alt+R goes back to the chosen range)">fit</button>
+              title="Fit: show every loaded bar on screen and fit the price axis to them (Alt+R goes back to the chosen range)">Fit</button>
             <button type="button" className={`mc-scale-btn${L.working.scale.log ? ' on' : ''}`} aria-label="Log price scale" aria-pressed={L.working.scale.log}
               onClick={() => L.setWorking((w) => ({ ...w, scale: { ...w.scale, log: !w.scale.log } }))}
-              title={L.working.scale.log ? 'Log scale (on): equal % moves look equal. Click for a normal scale.' : 'Log scale: equal % moves look equal'}>log</button>
+              title={L.working.scale.log ? 'Log scale (on): equal % moves look equal. Click for a normal scale.' : 'Log scale: equal % moves look equal'}>Log</button>
             <button type="button" className={`mc-scale-btn${basis === 'tr' ? ' on' : ''}`} aria-label="Total return" aria-pressed={basis === 'tr'} onClick={toggleBasis}
               title={basis === 'tr' ? `${TOTAL_RETURN_LABEL}. On: history adjusted for ${live?.dividends ?? 0} cash dividends; the latest price is unchanged. Drawings are one set for both views and stay at the price values they were drawn on. Click for prices as printed.` : `Show: ${TOTAL_RETURN_LABEL}`}>TR</button>
           </div>
-          <IndicatorLegend rows={rows} valueOf={valueOf} onToggle={(id) => L.setWorking((w) => toggleRow(w, id))} onRemove={(id) => L.setWorking((w) => removeRow(w, id))} decimals={pxDecimals} colorOf={(c) => (!chartLight && (luminance(c) ?? 1) < 0.18 ? '#B2B5BE' : c)} textOf={(c) => readableOn(c, chartLight ? '#FFFFFF' : '#0C1018')} />
+          <IndicatorLegend top={legendTop} rows={rows} valueOf={valueOf} onToggle={(id) => L.setWorking((w) => toggleRow(w, id))} onRemove={(id) => L.setWorking((w) => removeRow(w, id))} decimals={pxDecimals} colorOf={(c) => (!chartLight && (luminance(c) ?? 1) < 0.18 ? '#B2B5BE' : c)} textOf={(c) => readableOn(c, chartLight ? '#FFFFFF' : '#0C1018')} />
           <PatternBanner p={patterns} cur={cur} light={chartLight} tf={tf} onTurnOff={() => L.setWorking((w) => withPatterns(w, false))} />
           <StageBanner s={stageInd} light={chartLight} shifted={patterns.on} onTurnOff={() => L.setWorking((w) => withStage(w, false))} />
+          <SetupBanner s={setupsInd} light={chartLight} top={setupTop} onTurnOff={() => L.setWorking((w) => withSetups(w, false))} />
           {/* zzz1000 (improvement 6) — nothing loaded for this symbol / view: say so instead of an empty 0–10 price axis */}
           {!loading && !bars.length && error && (
             <div role="alert" data-testid="chart-empty-state" className="ct-empty">

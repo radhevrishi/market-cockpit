@@ -238,3 +238,14 @@ test('zzz1020 up/down volume, ATR extension, TD count', () => {
   assert.equal(setupFigures(bars([...flat(10, 100), ...rising(10, 101, 0.01)])).td9, 1, 'starts over after 9');
   assert.equal(setupFigures(bars([...flat(10, 100), ...rising(3, 99, -0.01)])).td9, -3);
 });
+
+test('zzz1022d — the "52-week high" look-back is one year on weekly candles (52 bars), not 252 bars', async () => {
+  const { setupSeries } = await import('../setups');
+  const WEEK = 7 * 86_400_000;
+  // 80 weekly bars: flat at 100, then a close above every earlier high on the last bar
+  const bars = Array.from({ length: 80 }, (_, i) => { const c = i === 79 ? 110 : 100 + (i % 3); return { t: i * WEEK, o: c, h: c + 1, l: c - 1, c, v: 1000 }; });
+  const daily = setupSeries(bars).events.filter((e) => e.code === 'NH');
+  const weekly = setupSeries(bars, { yearBars: 52 }).events.filter((e) => e.code === 'NH');
+  assert.equal(daily.length, 0, '252 bars are not there yet');
+  assert.ok(weekly.some((e) => e.i === 79), 'a new 52-week high on weekly candles');
+});

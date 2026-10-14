@@ -20,5 +20,5 @@ test('zzz956 look: TradingView colours by previous close, no grid, no high/low l
   assert.match(s, /high: \{ show: false \}, low: \{ show: false \}/);
   assert.match(s, /tooltip: \{ showRule: 'none', title: \{ show: false \}/);
   assert.match(s, /gap: \{ top: 0\.1, bottom: 0\.1 \}/);
-  assert.match(s, />auto<\/button>/);
+  assert.match(s, />Auto<\/button>/);
 });

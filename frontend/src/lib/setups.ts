@@ -18,7 +18,11 @@ import { aggregateBars, type Bar } from './chart-math';
 /** One bar: `t` = time in ms (UTC; a daily bar's date at 00:00 UTC), open / high / low / close / volume. Same shape as chart-math's Bar. */
 export type SetupBar = Bar;
 export type SetupCode = 'WT3' | 'DVX' | 'DC20' | 'DC55' | 'SQZ' | 'SQZF' | 'EP' | 'GV' | 'MB' | 'WP' | 'ECB' | 'NH' | 'ATH' | 'NR7' | 'IB' | 'HG' | 'SPR';
-export interface SetupOpts { market?: 'US' | 'IN' }
+export interface SetupOpts {
+  market?: 'US' | 'IN';
+  /** bars in a year for the "52-week high" rules (new high, Darvas box start): 252 daily (default), 52 weekly, 12 monthly */
+  yearBars?: number;
+}
 /** A setup firing on bar `i`. `level` = the price the setup is about (pivot, box edge, gap-day low, support …); `note` = short words. */
 export interface SetupEvent { i: number; code: SetupCode; dir: 1 | -1; level?: number; note?: string }
 /** A Darvas box from its top bar (`from`) to its last bar (`to`: the break bar, or the last bar while price is still inside). */
@@ -66,7 +70,7 @@ export const SETUP_FIGURE_KEYS: ReadonlyArray<keyof SetupFigures> = [
 /** Plain-words description of every setup: `label` (short name), `method` (whose published rules), `rule` (exactly what we test). */
 export const SETUP_META: Record<SetupCode, { label: string; method: string; rule: string }> = {
   WT3: { label: '3 weeks tight', method: "William O'Neil (IBD)", rule: 'Three or more weekly closes in a row, each within 1.5% of the week before, with price above its 50-day average. The pivot is the highest weekly high of those weeks.' },
-  DVX: { label: 'Darvas box', method: 'Nicolas Darvas', rule: 'A box starts at a 52-week (252-bar) high. The top is confirmed when the next 3 bars stay below it; the bottom is the lowest low after the top, confirmed by 3 bars that do not go under it. A close above the top is a breakout, a close under the bottom a breakdown.' },
+  DVX: { label: 'Darvas box', method: 'Nicolas Darvas', rule: 'A box starts at a 52-week high. The top is confirmed when the next 3 bars stay below it; the bottom is the lowest low after the top, confirmed by 3 bars that do not go under it. A close above the top is a breakout, a close under the bottom a breakdown.' },
   DC20: { label: 'Donchian 20-bar breakout', method: 'Turtle traders (Dennis / Eckhardt)', rule: 'A close above the highest high of the 20 bars before it (downward: below the lowest low of those 20 bars).' },
   DC55: { label: 'Donchian 55-bar breakout', method: 'Turtle traders (Dennis / Eckhardt)', rule: 'A close above the highest high of the 55 bars before it (downward: below the lowest low of those 55 bars).' },
   SQZ: { label: 'Squeeze on', method: 'John Carter (TTM Squeeze)', rule: 'Bollinger Bands (20, 2) inside the Keltner Channel (EMA 20 ± 1.5 × ATR 20) for 5 bars in a row — volatility is very low.' },
@@ -76,7 +80,7 @@ export const SETUP_META: Record<SetupCode, { label: string; method: string; rule
   MB: { label: 'Momentum burst', method: 'Pradeep Bonde (Stockbee)', rule: 'A close at least 4% above the previous close on higher volume than the bar before, when the previous bar was not a burst itself.' },
   WP: { label: 'Wedge pop', method: 'Oliver Kell', rule: 'A close above both EMA 10 and EMA 20 after at least 5 closes below both, on volume at or above the 50-bar average.' },
   ECB: { label: 'EMA crossback', method: 'Oliver Kell', rule: 'In an uptrend (EMA 10 above a rising EMA 20) the low dips to within 0.5% of EMA 20 (or below it) and the bar closes back above EMA 10.' },
-  NH: { label: 'New 52-week high', method: "William O'Neil / Mark Minervini", rule: 'A close above the highest high of the 252 bars before it.' },
+  NH: { label: 'New 52-week high', method: "William O'Neil / Mark Minervini", rule: 'A close above the highest high of the year before it (252 daily, 52 weekly or 12 monthly bars).' },
   ATH: { label: 'All-time high', method: "William O'Neil / Mark Minervini", rule: 'A close above every earlier high in the price history we have (at least 20 bars of it).' },
   NR7: { label: 'Narrow range 7', method: 'Toby Crabel', rule: 'The bar’s high-to-low range is the narrowest of the last 7 bars (NR4: of the last 4) — a quiet bar that often comes before a bigger move.' },
   IB: { label: 'Inside bar', method: 'Toby Crabel', rule: 'The bar’s high and low stay inside the previous bar’s high and low.' },
@@ -199,13 +203,14 @@ interface Core {
 const TIGHT = 0.015;
 
 function core(bars: readonly SetupBar[], opts?: SetupOpts): Core {
+  const Y = Math.max(10, Math.round(opts?.yearBars ?? 252));
   const n = bars.length;
   const o = bars.map((b) => b.o), h = bars.map((b) => b.h), l = bars.map((b) => b.l), c = bars.map((b) => b.c), v = bars.map((b) => (fin(b.v) ? b.v : 0));
   const sma20 = smaS(c, 20), sma50 = smaS(c, 50), ema10 = emaS(c, 10), ema20 = emaS(c, 20);
   const atr14 = atrS(h, l, c, 14), atr20 = atrS(h, l, c, 20), atr40 = atrS(h, l, c, 40);
   const av50 = nanArr(n);
   { let s = 0; for (let i = 0; i < n; i++) { if (i >= 50) { av50[i] = s / 50; s -= v[i - 50]; } s += v[i]; } }
-  const hi20 = priorExtreme(h, 20, true), lo20 = priorExtreme(l, 20, false), hi55 = priorExtreme(h, 55, true), lo55 = priorExtreme(l, 55, false), hi252 = priorExtreme(h, 252, true);
+  const hi20 = priorExtreme(h, 20, true), lo20 = priorExtreme(l, 20, false), hi55 = priorExtreme(h, 55, true), lo55 = priorExtreme(l, 55, false), hi252 = priorExtreme(h, Y, true);
   const { adx, pdi, mdi } = dmiS(h, l, c, 14);
   // squeeze: BB(20, 2) inside KC(EMA 20 ± 1.5 × ATR 20); momentum = linreg(close − avg(avg(highest 20, lowest 20), SMA 20), 20)
   const sd20 = stdevS(c, 20);
@@ -313,8 +318,8 @@ function core(bars: readonly SetupBar[], opts?: SetupOpts): Core {
   type St = 'seek' | 'top' | 'bot' | 'inside';
   let st: St = 'seek', top = NaN, topI = -1, bot = NaN, botI = -1, cnt = 0;
   /** bar i's high is the highest of the 252 bars ending at i */
-  const hi251 = priorExtreme(h, 251, true);
-  const isHigh252 = (i: number) => i >= 251 && h[i] >= hi251[i];
+  const hi251 = priorExtreme(h, Y - 1, true);
+  const isHigh252 = (i: number) => i >= Y - 1 && h[i] >= hi251[i];
   for (let i = 0; i < n; i++) {
     if (st === 'inside') {
       const box = darvas[darvas.length - 1];

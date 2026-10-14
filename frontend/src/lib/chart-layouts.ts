@@ -9,7 +9,7 @@ export const CHART_LAYOUTS_KEY = 'mc:chart-layouts:v1';
 
 export type LineKind = 'EMA' | 'SMA';
 export interface MaLine { id: string; kind: LineKind; period: number; color: string; on: boolean }
-export type ExtraType = 'BOLL' | 'RSI' | 'MACD' | 'ATR' | 'ST' | 'PAT' | 'STG';
+export type ExtraType = 'BOLL' | 'RSI' | 'MACD' | 'ATR' | 'ST' | 'PAT' | 'STG' | 'SET';
 export interface Extra { id: string; type: ExtraType; params: number[]; color: string; on: boolean }
 export interface ChartLayout { id: string; name: string; updatedAt: number; lines: MaLine[]; volume: { on: boolean; avg: number }; extras: Extra[]; scale: LayoutScale }
 /** zzz946 — price scale: `auto` fits the visible candles (TradingView "A"); `log` = logarithmic (TradingView "L"). */
@@ -31,9 +31,12 @@ export const EXTRA_INFO: Record<ExtraType, { label: string; pane: boolean; defau
   // zzz987 — "Stage Analysis (TheWrap method)": stage background bands + a status line + its own Mansfield RS pane
   // (components/charts/stage-view, StageIndicator). Off unless added to the layout.
   STG: { label: 'Stage Analysis (TheWrap method)', pane: false, defaults: [], names: [], min: [], max: [], color: '#089981' },
+  // zzz1022 — "Trader setups": well-known traders' setups (lib/setups — our own version of the published rules) as tags on the
+  // candles + Darvas boxes, a status line, an optional squeeze pane (components/charts/setup-view, SetupIndicator). Off unless added.
+  SET: { label: 'Trader setups', pane: false, defaults: [], names: [], min: [], max: [], color: '#F59E0B' },
 };
 /** zzz987 — extras with their own on/off row in the Indicators panel (not listed under "other indicators"). */
-export const SPECIAL_EXTRAS: ReadonlySet<ExtraType> = new Set<ExtraType>(['PAT', 'STG']);
+export const SPECIAL_EXTRAS: ReadonlySet<ExtraType> = new Set<ExtraType>(['PAT', 'STG', 'SET']);
 export const EXTRA_TYPES = Object.keys(EXTRA_INFO) as ExtraType[];
 
 let _seq = 0;
@@ -213,7 +216,7 @@ export interface LegendRow { id: string; source: 'line' | 'extra' | 'volume'; la
 export function legendRows(l: ChartLayout): LegendRow[] {
   const rows: LegendRow[] = l.lines.map((x) => ({ id: x.id, source: 'line', label: lineLabel(x), color: x.color, on: x.on, pane: false, series: [{ spec: { kind: x.kind, a: x.period }, color: x.color }] }));
   for (const e of l.extras) {
-    if (e.type === 'PAT' || e.type === 'STG') continue;   // zzz982 / zzz987 — shown as their own status line at the top of the chart, not a legend row
+    if (e.type === 'PAT' || e.type === 'STG' || e.type === 'SET') continue;   // zzz982 / zzz987 / zzz1022 — shown as their own status line at the top of the chart, not a legend row
     const info = EXTRA_INFO[e.type];
     const series: LegendRow['series'] = e.type === 'BOLL'
       ? [{ spec: { kind: 'BBU', a: e.params[0], b: e.params[1] }, color: e.color }, { spec: { kind: 'BBM', a: e.params[0], b: e.params[1] }, color: BB_MID_COLOR }, { spec: { kind: 'BBL', a: e.params[0], b: e.params[1] }, color: e.color }]
