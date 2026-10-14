@@ -591,6 +591,9 @@ export interface MultiBanner extends Banner {
   headTf: PatternTimeframe;
   /** nothing current anywhere but weaker candidates exist: offer "show weaker" in one click */
   weakerHint: number;
+  /** zzz1024 — explicit timeframe with nothing current: the other timeframe's current structure the banner LEADS with, drawn by default
+   *  (a weekly / monthly hit is drawn on daily candles through overlayFit's clip + carried pivot; a daily one on W / M candles snaps) */
+  leadHit?: PatternHit;
 }
 export interface MultiBannerOpts {
   displayTf?: string | null;
@@ -599,23 +602,50 @@ export interface MultiBannerOpts {
 }
 /** The time of a listed structure's break (or its end), for "the most recent" across timeframes. */
 const lastT = (h: PatternHit) => h.breakT ?? h.endT;
+/** zzz1024 — an expired structure whose break is at most this many bars old (~4 weeks D, 4 weeks W, 2 months M) leads the banner as
+ *  "Last: …" when nothing is current anywhere (a fresh completed breakout / breakdown is what the owner wants to see first). */
+export const LAST_RECENT_BARS: Record<PatternTimeframe, number> = { D: 20, W: 4, M: 2 };
+/** zzz1024 — "Weekly: Descending triangle · broke down this week · breakdown $138.31, 1% below · shape 64/100" */
+export function leadWords(h: PatternHit, tf: PatternTimeframe, cur: string): string {
+  return `${TF_TITLE[tf]}: ${h.label} · ${conditionWords(h, cur)} · shape ${Math.round(h.confidence * 100)}/100`;
+}
+/** zzz1024 — the most recent recently-expired structure among the timeframes read (null when none is recent). */
+function recentLast(views: TfViews, tfs: ReadonlyArray<PatternTimeframe>): { row: PatternViewRow; tf: PatternTimeframe } | null {
+  const c = tfs.flatMap((t) => (views[t]?.expired || []).filter((x) => x.hit.breakAgo != null && x.hit.breakAgo <= LAST_RECENT_BARS[t]).map((row) => ({ row, tf: t })));
+  c.sort((a, b) => lastT(b.row.hit) - lastT(a.row.hit));
+  return c[0] ?? null;
+}
 /**
- * zzz1015 — the banner over all analysed timeframes.
- *  • explicit D / W / M: that timeframe's banner (zzz1009 words); when it has no current structure and another timeframe has one:
- *    "No monthly pattern · Daily: Falling wedge broke out 7 days ago (shape 62)" — never a bare "no pattern".
- *  • Auto: the headline of the most relevant timeframe (pickHeadlineTf), "+N more" counting every timeframe; with nothing current
- *    anywhere: "No textbook pattern on D/W/M · last: … · N weaker candidates".
+ * zzz1015 / zzz1024 — the banner over all analysed timeframes.
+ *  • explicit D / W / M: that timeframe's banner (zzz1009 words). zzz1024: when it has no current structure and another timeframe has
+ *    one, the banner LEADS with that structure — "Weekly: Descending triangle · broke down this week · breakdown $138.31, 1% below ·
+ *    shape 64/100 · nothing current on daily" — and it is drawn (leadHit); never "No daily pattern" first.
+ *  • Auto: the headline of the most relevant timeframe (pickHeadlineTf), "+N more" counting every timeframe.
+ *  • nothing current anywhere: zzz1024 — a structure that completed / failed recently (LAST_RECENT_BARS) leads: "Last: Bear flag ·
+ *    Daily · broke down 12 days ago — completed · nothing current on D/W/M"; otherwise "No textbook pattern on D/W/M · last: … ·
+ *    N weaker candidates" (explicit: the zzz1009 "No qualifying … pattern" words).
  */
 export function multiBanner(views: TfViews, mode: PatternAnalysisTf, cur: string, o: MultiBannerOpts = {}): MultiBanner {
   const at = o.analysisT || {}, er = o.errors || {};
+  const readTfs = (tfs: ReadonlyArray<PatternTimeframe>) => tfs.filter((t) => views[t] && views[t]!.state !== 'insufficient' && views[t]!.state !== 'error' && views[t]!.state !== 'missing' && views[t]!.state !== 'pending');
+  const lastBanner = (x: { row: PatternViewRow; tf: PatternTimeframe }, nothingOn: string, weaker: number): MultiBanner => {
+    let text = `📐 Last: ${x.row.hit.label} · ${TF_TITLE[x.tf]} · ${x.row.why} · nothing current on ${nothingOn}`;
+    if (weaker) text += ` · ${weaker} weaker candidate${weaker === 1 ? '' : 's'}`;
+    return { text, tone: 'none', headTf: mode === 'A' ? 'D' : mode, weakerHint: weaker };
+  };
   if (mode !== 'A') {
     const v = views[mode] ?? patternView({ hits: [], status: 'loading' });
     const base = viewBanner(v, cur, mode, { error: er[mode], analysisT: at[mode] });
     const nothing = v.state === 'none' || v.state === 'weaker-only' || v.state === 'expired-only' || v.state === 'insufficient';
     const other = nothing ? pickHeadlineTf(views, o.displayTf, ANALYSIS_TFS.filter((t) => t !== mode)) : null;
     if (other) {
-      const head = v.state === 'insufficient' ? base.text : `📐 No ${TF_WORD[mode]} pattern`;
-      return { text: `${head} · ${crossTfWords(views[other]!, other, cur)}`, tone: 'none', headTf: mode, weakerHint: 0 };
+      const top = views[other]!.active[0];
+      const tail = v.state === 'insufficient' ? `${TF_WORD[mode]}: ${er[mode] || 'Too little history'} — patterns need at least ${PATTERN_MIN_HISTORY[mode]} ${TF_WORD[mode]} bars` : `nothing current on ${TF_WORD[mode]}`;
+      return { text: `📐 ${leadWords(top, other, cur)} · ${tail}`, tone: top.stage === 'failed' ? 'failed' : top.bias, headTf: mode, weakerHint: 0, leadHit: top };
+    }
+    if (nothing && v.state !== 'insufficient') {
+      const x = recentLast(views, readTfs([mode, ...ANALYSIS_TFS.filter((t) => t !== mode)]));
+      if (x) return lastBanner(x, TF_WORD[mode], v.weaker.length);
     }
     return { ...base, headTf: mode, weakerHint: v.state === 'weaker-only' ? v.weaker.length : 0 };
   }
@@ -629,10 +659,12 @@ export function multiBanner(views: TfViews, mode: PatternAnalysisTf, cur: string
   }
   const pending = ANALYSIS_TFS.find((t) => !views[t] || views[t]!.state === 'pending');
   if (pending) return { text: `📐 Looking for chart patterns on the ${TF_WORD[pending]} bars…`, tone: 'none', headTf: 'D', weakerHint: 0 };
-  const read = ANALYSIS_TFS.filter((t) => views[t] && views[t]!.state !== 'insufficient' && views[t]!.state !== 'error' && views[t]!.state !== 'missing');
+  const read = readTfs(ANALYSIS_TFS);
   if (!read.length) return { ...viewBanner(d, cur, 'D', { error: er.D }), headTf: 'D', weakerHint: 0 };
   const asOf = shortDate(at.D ?? null);
   const weaker = read.reduce((n, t) => n + views[t]!.weaker.length, 0);
+  const recent = recentLast(views, read);
+  if (recent) return lastBanner(recent, read.join('/'), weaker);
   const exp = read.flatMap((t) => views[t]!.expired.map((x) => ({ ...x, tf: t }))).sort((a, b) => lastT(b.hit) - lastT(a.hit))[0];
   let text = `📐 No textbook pattern on ${read.join('/')}${asOf ? ` · ${asOf}` : ''}`;
   if (exp) text += ` · last: ${exp.hit.label} (${TF_TITLE[exp.tf]}), ${exp.why}`;

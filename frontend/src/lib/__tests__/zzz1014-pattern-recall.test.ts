@@ -103,7 +103,7 @@ test('zzz1014 monthly: reversals over up to 4 years, triangles / wedges still no
   assert.ok((tops[1].t - tops[0].t) / 86_400_000 > 480, 'tops more than 16 months apart');
 });
 
-test('zzz1014 version bumps', () => {
-  assert.equal(PATTERN_ENGINE_VERSION, 'cp-3.4-recall');
-  assert.equal(PATTERN_SCAN_VERSION, 10);
+test('zzz1014 version bumps (zzz1024 bumped them again: cp-3.5-triangles, scan 11)', () => {
+  assert.equal(PATTERN_ENGINE_VERSION, 'cp-3.5-triangles');
+  assert.equal(PATTERN_SCAN_VERSION, 11);
 });

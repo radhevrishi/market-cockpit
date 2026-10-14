@@ -41,14 +41,17 @@ test('zzz1009 PENG (daily): a 7-week-old failed bear flag 27% away is expired, n
   assert.ok(bf.breakAgo! > FAILED_RECENT_BARS.D && Math.abs(bf.distToPivotPct!) > FAILED_MAX_AWAY_PCT, `${bf.breakAgo} ${bf.distToPivotPct}`);
   // … the chart's headline view does not lead with it
   const v = viewOf(r, 'D');
-  assert.equal(v.state, 'expired-only');
-  assert.equal(v.active.length, 0);
+  assert.ok(!v.active.some((h) => h.id === 'bear_flag'));
   assert.ok(v.expired.some((x) => x.hit.id === 'bear_flag' && /break was 7 wk ago/.test(x.why || '')));
+  // zzz1024 — the double bottom 43.61 (Jul 29) / 45.62 (Sep 3) after the 89.9 → 43.6 fall is now read (REVERSAL_RULES.ctxFall) and leads
+  assert.equal(v.state, 'qualifying');
+  assert.equal(v.active[0].id, 'double_bottom');
   const text = viewBanner(v, '$', 'D', { analysisT: b[b.length - 1].t }).text;
-  assert.match(text, /^📐 No qualifying daily pattern · 13 Oct 2026 · last: Bear flag, breakdown failed — the break was 7 wk ago$/);
-  assert.doesNotMatch(text, /failed breakdown: Bear flag/);
+  assert.match(text, /^📐 Double bottom · Daily · broke out 4 days ago · pivot \$65\.75, 19% above · shape \d+\/100 · 13 Oct 2026$/);
+  assert.doesNotMatch(text, /Bear flag/);
   // the old headline (bannerOf, engine order) is what the owner reported
-  assert.match(bannerOf(r.hits, '$').text, /Possibly failed breakdown: Bear flag .*27% above/);
+  // (zzz1024: engine order now leads with the double bottom; the failed bear flag the owner saw in the headline is still among the hits)
+  assert.match(bannerOf(r.hits, '$').text, /also possible: Bear flag/);
 });
 
 test('zzz1009 BHEL (daily): a flat-base breakout 5 sessions ago, back below the pivot, is current (not "No clear pattern")', () => {
@@ -59,7 +62,7 @@ test('zzz1009 BHEL (daily): a flat-base breakout 5 sessions ago, back below the 
   const v = viewOf(r, 'D');
   assert.equal(v.state, 'qualifying');
   assert.equal(v.active[0].id, 'flat_base'); assert.equal(v.active[0].stage, 'breakout');
-  assert.match(viewBanner(v, '₹', 'D').text, /^📐 Flat base · Daily · broke out 5 days ago, back below the pivot · pivot ₹446\.50, 1% below · shape 89\/100$/);
+  assert.match(viewBanner(v, '₹', 'D').text, /^📐 Flat base · Daily · broke out 5 days ago, back below the pivot · pivot ₹446\.50, 1% below · shape 89\/100( · \+1 more)?$/);
   assert.ok(!v.expired.some((x) => x.hit.id === 'flat_base'), 'promoted, not also listed as expired');
 });
 
@@ -255,25 +258,25 @@ test('zzz1009 mounted: PENG on D shows the expired state (not a failed headline)
     localStorage.setItem('mc:chart-pattern-tf:v1', JSON.stringify({ v: 2, tf: 'D', provisional: false }));   // zzz1015 — an explicit D choice (the default is Auto)
     await act(async () => { root.render(React.createElement(Probe, props)); }); await act(async () => { await settle(260); });
     assert.equal(out.status, 'ready');
-    assert.equal(out.view.state, 'expired-only');
+    // zzz1024 — the double bottom breakout now leads (see the PENG test above); the failed bear flag stays an expired row
+    assert.equal(out.view.state, 'qualifying');
     assert.ok(out.hits.some((h: PatternHit) => h.id === 'bear_flag'), 'the engine hit is still there');
-    assert.equal(out.drawnIds.size, 0, 'nothing current → nothing drawn by default');
+    assert.equal(out.drawnIds.size, 1, 'the headline (only) is drawn');
     const head = () => Array.from(document.querySelectorAll('button')).find((x) => (x.textContent || '').startsWith('📐'))!;
-    assert.match(head().textContent || '', /^📐 No qualifying daily pattern · 13 Oct 2026 · last: Bear flag, breakdown failed — the break was 7 wk ago ▾$/);
+    assert.match(head().textContent || '', /^📐 Double bottom · Daily · broke out 4 days ago · /);
     await act(async () => { head().click(); await settle(); });
     const dlg = () => document.querySelector('[role="dialog"]')!.textContent || '';
-    assert.match(dlg(), /No qualifying daily pattern on the latest bars/);
     assert.match(dlg(), /EXPIRED \/ INVALIDATED|Expired \/ invalidated/i);
     assert.ok(document.querySelector('[data-testid="pattern-row-expired"]'));
     assert.match(dlg(), /not a probability/);
     // ticking an expired row draws it
     const cb = document.querySelector('[data-testid="pattern-row-expired"] input[type="checkbox"]') as HTMLInputElement;
     await act(async () => { cb.click(); await settle(); });
-    assert.equal(out.drawnIds.size, 1);
+    assert.equal(out.drawnIds.size, 2, 'the headline and the ticked expired row');
     // measured rules expand
     const rulesBtn = Array.from(document.querySelectorAll('button')).find((x) => /Measured rules/.test(x.textContent || ''))!;
     await act(async () => { rulesBtn.click(); await settle(); });
-    assert.match(document.querySelector('[data-testid="pattern-rules"]')!.textContent || '', /Turning points: pole start/);
+    assert.match(document.querySelector('[data-testid="pattern-rules"]')!.textContent || '', /Turning points: (pole start|first low)/);
     // weekly analysis of the same daily bars: a real reading, never an error
     await act(async () => { out.setAnalysisTf('W'); }); await act(async () => { await settle(260); });
     assert.equal(out.analysisTf, 'W'); assert.equal(out.status, 'ready');

@@ -84,11 +84,14 @@ test('zzz1015 banner: explicit timeframe with nothing names the other timeframe;
   const views: TfViews = { D: v([H()], 'D'), W: v([], 'W'), M: v([], 'M') };
   assert.equal(crossTfWords(views.D!, 'D', '₹'), 'Daily: Falling wedge broke out 7 days ago (shape 62)');
   const m = multiBanner(views, 'M', '₹', { displayTf: 'D' });
-  assert.equal(m.text, '📐 No monthly pattern · Daily: Falling wedge broke out 7 days ago (shape 62)');
+  // zzz1024 — the other timeframe's structure LEADS (and is drawn: leadHit); the chosen timeframe's state comes last
+  assert.equal(m.text, '📐 Daily: Falling wedge · broke out 7 days ago · pivot ₹100.00, 4% above · shape 62/100 · nothing current on monthly');
   assert.equal(m.headTf, 'M');
-  // too little monthly history: said as such, plus the pointer
+  assert.equal(m.leadHit, views.D!.active[0]);
+  assert.equal(m.tone, 'bullish');
+  // too little monthly history: the pointer leads, the history state is said at the end
   const ms = multiBanner({ ...views, M: v([], 'M', { status: 'short' }) }, 'M', '₹', { errors: { M: 'Too little history (9 monthly bars)' } });
-  assert.match(ms.text, /^📐 Too little history \(9 monthly bars\) — patterns need at least 24 monthly bars · Daily: Falling wedge/);
+  assert.match(ms.text, /^📐 Daily: Falling wedge · .* · monthly: Too little history \(9 monthly bars\) — patterns need at least 24 monthly bars$/);
   // the explicit timeframe has its own current structure: the zzz1009 banner, unchanged
   assert.match(multiBanner(views, 'D', '₹').text, /^📐 Falling wedge · Daily · broke out 7 days ago · pivot ₹100\.00, 4% above · shape 62\/100$/);
   // Auto: the headline, "+N more" over every timeframe
@@ -214,12 +217,13 @@ test('zzz1015 mounted: explicit D — the 10-year request only when D / W have n
     assert.equal(JSON.parse(localStorage.getItem('mc:chart-pattern-tf:v1')!).tf, 'M');
     const other = pickHeadlineTf(want, 'D', ['D', 'W']);
     if (want.M!.state !== 'qualifying' && other) {
-      assert.match(head().textContent || '', /^📐 No monthly pattern · (Daily|Weekly): .+ \(shape \d+\)/, 'never a bare "no pattern"');
-      assert.equal(box.out.drawnIds.size, 0, 'nothing drawn by default for another timeframe');
-      // ticking the other timeframe's row draws it (rows keyed by timeframe)
+      // zzz1024 — the other timeframe's structure leads the banner and is drawn by default (rows keyed by timeframe)
+      assert.match(head().textContent || '', /^📐 (Daily|Weekly): .+ · shape \d+\/100 · nothing current on monthly/, 'never a bare "no pattern"');
       const rk = rowKeyOf(want[other]!.active[0]);
+      assert.deepEqual([...box.out.drawnIds], [rk], 'the structure the banner leads with is drawn');
+      // unticking it removes it
       await h.act(async () => { box.out.togglePick(rk); await h.settle(); });
-      assert.deepEqual([...box.out.drawnIds], [rk]);
+      assert.deepEqual([...box.out.drawnIds], []);
     }
   });
   await withDom(async (h) => {

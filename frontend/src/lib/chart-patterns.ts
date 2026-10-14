@@ -121,6 +121,25 @@
 //  D 38% → 69%, W 48% → 71%, M 8% → 83% (multi-year monthly ranges, which have no pattern id, 11% → 32%); re-judged precision of the
 //  current headlines ≥ 94% correct or borderline.
 
+// zzz1024 — watchlist recall audit (2026-10-14; the owner's 143-name watchlist on D / W / M; 70 names had nothing current on DAILY and ~68
+// of them were charted and read by eye — owner: "YOU, AVAV and many charts show no chart patterns"). Most misses were one shape: a flat
+// floor (ceiling) touched again and again under falling highs (over rising lows) in a volatile stock, read by the weekly chart but never
+// by the daily one. Changes (fixtures __tests__/zzz1024-pattern-recall-watchlist.test.ts):
+//  • detectLineTriangles(): ascending / descending triangles drawn as a chartist draws them — a flat line through the extreme swings
+//    with a VOLATILITY-AWARE tolerance (flatLineTol: 0.8 × ATR %, 2.5–5%, W to 6%; the fixed 2–3% band was less than one day's range of
+//    a 5%-ATR stock) and a sloped envelope line from the triangle's first extreme through its later swings; minor inner swings no longer
+//    break it and the window is not limited to the last 8 swings (AVAV floor 134–140 touched 7× May–Oct, broke down Oct 12; ADEA, MOD,
+//    VSAT, ONDS, WULF, MITK, AMSC, KOPN floors; AAPL, TSLA, FROG, FSLY ceilings). Guards: touches spread over the triangle, a real swing
+//    between them, the flat side ≤ 35% of the sloped side's change, the sloped line re-tested in the second half, its later swings
+//    trending, a short first leg, converging but not at the apex (≥ 15% of the first height left), ≥ 85% of closes inside.
+//  • a triangle read at an earlier body end is void once a later close is > 3% beyond its sloped (opposite) line (Raw.voidAt).
+//  • double / triple bottoms and inverse H&S: the first low may also end a ≥ 30% fall from the window's high as the lowest low since it
+//    (REVERSAL_RULES.ctxFall; COCO 85.8 → 50.6 / 50.5, PENG 89.9 → 43.6 / 45.6 then a breakout above 65.75) — tops unchanged.
+//  • the expired list keeps the MOST RECENT break per pattern (then the stronger shape): a recent completed breakout is what the chart
+//    promotes to current (RECENT_BREAK_BARS); an older, stronger failure used to hide it.
+//  Effect, the chart's current structures (pattern-view): watchlist D 73 → 95 of 143, W 55 → 64, M 10 → 10, any timeframe 93 → 112;
+//  116-chart audit set D 77 → 85, W 59 → 62, M 18, any 87 → 94.
+
 import { aggregateBars } from './bar-aggregate';
 
 export interface PBar { t: number; o: number; h: number; l: number; c: number; v: number }
@@ -214,7 +233,7 @@ export interface DetectOptions { firstTradeT?: number; maxBars?: number; timefra
   weak?: boolean }
 
 /** zzz992 — bump when any detection rule changes (stored screener tags carry it for provenance). */
-export const PATTERN_ENGINE_VERSION = 'cp-3.4-recall';
+export const PATTERN_ENGINE_VERSION = 'cp-3.5-triangles';
 
 interface TfProfile {
   tf: PatternTimeframe;
@@ -497,6 +516,8 @@ interface Raw {
   /** zzz1008 — turning points [bar index, price, role] and measured evidence */
   pts?: Array<[number, number, PointRole]>;
   ev?: PatternEvidence;
+  /** zzz1024 — a triangle's OPPOSITE (sloped) line at bar i: a later close > 3% beyond it voids a triangle read at an earlier body end */
+  voidAt?: (i: number) => number;
 }
 
 const LP = (kind: PatternLine['kind'], s: S, i0: number, p0: number, i1: number, p1: number): PatternLine => ({ kind, points: [[s.t[i0], p0], [s.t[i1], p1]] });
@@ -1030,12 +1051,12 @@ function detectTriWedge(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>) 
     const flatTol = (k: number) => (k >= 3 ? 0.03 : 0.02);
     if ((hMax - hMin) / hMax <= flatTol(Hs.length) && Math.abs(chH) <= 0.025 && risingLows && chL >= 0.04 && s.mxH.val(lastH.i + 1, e) <= hMax * 1.005 && lowerHeld) {
       const c = wscore([[2, ramp(touches, 3, 7)], [3, ramp(Hs.length, 2, 3)], [2, ramp(chL, 0.04, 0.1)], [1, ramp(fitQ, 0.04, 0.01)], [1, ramp(len, L15, L30)], [1, ramp(contain, 0.8, 0.97)], [1, ramp((hMax - hMin) / hMax, flatTol(Hs.length), 0.008)]]);
-      push(out, { id: 'ascending_triangle', conf: c, start: a, end: e, keyFrom: a, pivot: hMax, depth: 1 - lMin / hMax,
+      push(out, { id: 'ascending_triangle', conf: c, start: a, end: e, keyFrom: a, pivot: hMax, depth: 1 - lMin / hMax, voidAt: (i) => fl.a + fl.b * i,
         detail: `${Hs.length} touches of ${fmt(hMax)}, lows rising`, lines: [LP('resistance', s, a, hMax, e, hMax), lineSet[1]], pts: tpts, ev: evOf({ band: pc1((hMax - hMin) / hMax) }) });
     }
     if ((lMax - lMin) / lMax <= flatTol(Ls.length) && Math.abs(chL) <= 0.025 && fallingHighs && chH <= -0.04 && s.mnL.val(lastL.i + 1, e) >= lMin * 0.995 && upperHeld) {
       const c = wscore([[2, ramp(touches, 3, 7)], [3, ramp(Ls.length, 2, 3)], [2, ramp(-chH, 0.04, 0.1)], [1, ramp(fitQ, 0.04, 0.01)], [1, ramp(len, L15, L30)], [1, ramp(contain, 0.8, 0.97)], [1, ramp((lMax - lMin) / lMax, flatTol(Ls.length), 0.008)]]);
-      push(out, { id: 'descending_triangle', conf: c, start: a, end: e, keyFrom: a, pivot: lMin, depth: 1 - lMin / hMax,
+      push(out, { id: 'descending_triangle', conf: c, start: a, end: e, keyFrom: a, pivot: lMin, depth: 1 - lMin / hMax, voidAt: (i) => fh.a + fh.b * i,
         detail: `${Ls.length} touches of ${fmt(lMin)}, highs falling`, lines: [LP('support', s, a, lMin, e, lMin), lineSet[0]], pts: tpts, ev: evOf({ band: pc1((lMax - lMin) / lMax) }) });
     }
     const converging = wStart > 0 && wEnd > 0 && wEnd < 0.75 * wStart;
@@ -1057,6 +1078,133 @@ function detectTriWedge(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>) 
         push(out, { id: 'rising_wedge', conf: c, start: a, end: e, keyFrom: lastL.i + 1, pivot: piv, depth: 1 - lMin / hMax, lineAt: (i) => fl.a + fl.b * i, expiry: apex,
           detail: `${touches} touches, range narrowing`, lines: lineSet, pts: tpts });
       }
+    }
+  }
+}
+
+/** zzz1024 — the volatility-aware tolerance of a horizontal line: TRI_RULES.atrMul × the mean ATR(14) % over [a, b], at least `base`,
+ *  at most TRI_RULES.cap (W: capW). A fixed 2–3% band is less than one day's range of a stock that moves 5% a day (seen: AVAV). */
+export const TRI_RULES = { atrMul: 0.8, base: 0.025, cap: 0.05, capW: 0.06, minSlope: 0.04, minTouchSep: 0.05, flatDrift: 0.35, minContain: 0.85, firstLeg: 0.7, minEndWidth: 0.15 } as const;
+export function flatLineTol(atr: number, tf: PatternTimeframe = 'D'): number {
+  const R = TRI_RULES;
+  return Math.min(tf === 'D' ? R.cap : R.capW, Math.max(R.base, R.atrMul * (Number.isFinite(atr) ? atr : 0)));
+}
+
+/**
+ * zzz1024 — ascending / descending triangles drawn as a chartist draws them: a FLAT line through the extreme swing lows (descending) /
+ * highs (ascending) touched at least twice, and a SLOPED line from the triangle's first, most extreme opposite swing through the later
+ * ones so that every one of them is on or inside it (the envelope). detectTriWedge needs EVERY swing in a window of 4–8 swings to be a
+ * touch — a smaller bounce inside the triangle (a minor higher low under a falling top, a minor lower high under a flat ceiling) or a
+ * window longer than 8 swings hid the shape (seen: AVAV daily May–Oct 2026, floor 134–140 touched 6×, highs 216 / 196 / 168 falling,
+ * broke down Oct 12; ADEA, MOD, VSAT, VSH, WULF, ONDS floors; FROG / FSLY / HNGE ceilings with rising lows).
+ *  • flat line: the swings within flatLineTol (0.8 × ATR %, 2.5–5%; W to 6%) of the extreme are touches; ≥ 2, the first in the first
+ *    60% of the triangle and the last in its second half, with a swing between them ≥ max(5%, 2 × tol) away from the line; the touches
+ *    themselves drift ≤ 60% of the tolerance across the triangle (a falling channel is not a flat floor).
+ *  • sloped line: starts at the window's extreme opposite swing (the triangle's first high / low; nothing beyond it since), slopes
+ *    toward the flat line by ≥ 4% of price over the triangle, its later touch ≥ max(4%, 1.5 × tol) inside the first, every bar's
+ *    high (low) inside it + tol / 2, and it has not met the flat line by the body end (the apex is ahead).
+ *  • ≥ 85% of the closes between the lines; 15–130 days (3–26 weeks); the close not > 3% beyond the sloped line.
+ * The pivot (the level whose close beyond it is the breakout / breakdown) is the flat line's extreme, as in detectTriWedge.
+ */
+function detectLineTriangles(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>) {
+  if (!patternApplies('ascending_triangle', s.pf.tf)) return;
+  const R = TRI_RULES;
+  const L15 = Bm(s, 15), L30 = Bg(s, 30, L15), L130 = B(s, 130);
+  const sw = zz.filter((q) => q.i >= e - L130 && q.i < e && (q.confirmed || (q.i <= e - B(s, 2) && (q.hi ? 1 - s.c[e] / q.p : s.c[e] / q.p - 1) >= 0.02)));
+  if (sw.length < 4) return;
+  // ATR % prefix over the window (mean ATR of any [A, e] in O(1))
+  const w0 = Math.max(0, e - L130), atrP = new Float64Array(e - w0 + 2);
+  for (let i = w0; i <= e; i++) atrP[i - w0 + 1] = atrP[i - w0] + (Number.isFinite(s.atrPct[i]) ? s.atrPct[i] : 0);
+  for (const bear of [true, false]) {
+    const id: PatternId = bear ? 'descending_triangle' : 'ascending_triangle';
+    const anchors = sw.filter((q) => q.hi === bear);   // the sloped side: highs (descending) / lows (ascending)
+    const flatAll = sw.filter((q) => q.hi !== bear);    // the flat side: lows (descending) / highs (ascending)
+    // suffix extreme of the flat side: the flat line of a triangle starting before flatAll[k]
+    const suf = new Float64Array(flatAll.length + 1).fill(bear ? Infinity : -Infinity);
+    for (let k = flatAll.length - 1; k >= 0; k--) suf[k] = bear ? Math.min(suf[k + 1], flatAll[k].p) : Math.max(suf[k + 1], flatAll[k].p);
+    for (let ai = 0; ai < anchors.length; ai++) {
+      const A = anchors[ai];
+      const len = e - A.i + 1;
+      if (len < L15 || len > L130) continue;
+      // the triangle's first sloped-side touch is the extreme of the whole window
+      if (bear ? s.mxH.val(A.i, e) > A.p : s.mnL.val(A.i, e) < A.p) continue;
+      let k0 = 0;
+      while (k0 < flatAll.length && flatAll[k0].i <= A.i) k0++;
+      if (flatAll.length - k0 < 2) continue;
+      const flats = flatAll.slice(k0);
+      const lvl = suf[k0];
+      const tol = flatLineTol((atrP[e - w0 + 1] - atrP[A.i - w0]) / len, s.pf.tf);
+      // no bar more than half the tolerance beyond the flat line (the running part after the last swing included): a wick through the
+      // floor the day before the breakdown is still the triangle (seen: WULF Oct 7 2026, low 14.07 under the 14.24 floor, close 14.40)
+      if (bear ? s.mnL.val(A.i, e) < lvl * (1 - tol / 2) : s.mxH.val(A.i, e) > lvl * (1 + tol / 2)) continue;
+      const touches = flats.filter((q) => (bear ? q.p <= lvl * (1 + tol) : q.p >= lvl * (1 - tol)));
+      if (touches.length < 2) continue;
+      const T0 = touches[0], T1 = touches[touches.length - 1];
+      if (T0.i > A.i + 0.6 * len || T1.i < A.i + 0.5 * len) continue;
+      // the first leg (from the first sloped touch to the first flat touch) is short next to the span of the flat touches (a long climb /
+      // slide with its own pullbacks before the line is first reached is a trend into a range, not the first leg of a triangle — QLYS)
+      if (T0.i - A.i > R.firstLeg * (T1.i - T0.i)) continue;
+      // a real swing away from the line between the first and the last touch
+      const away = bear ? s.mxH.val(T0.i, T1.i) / lvl - 1 : 1 - s.mnL.val(T0.i, T1.i) / lvl;
+      if (!(away >= Math.max(R.minTouchSep, 2 * tol))) continue;
+      // the touches are flat: their regression drifts no more than the tolerance over the triangle
+      const ft = fitLine(touches.map((q) => q.i), touches.map((q) => q.p));
+      const drift = Math.abs((ft.b * len) / lvl);
+      if (drift > tol) continue;
+      // sloped line: from A through the later same-side swing that keeps every one of them inside (the envelope)
+      const later = anchors.slice(ai + 1);
+      if (!later.length) continue;
+      let b = (later[0].p - A.p) / (later[0].i - A.i);
+      for (const q of later) { const sl = (q.p - A.p) / (q.i - A.i); if (bear ? sl > b : sl < b) b = sl; }
+      const line = (i: number) => A.p + b * (i - A.i);
+      const chg = (b * len) / s.c[e];
+      if (bear ? !(chg <= -R.minSlope) : !(chg >= R.minSlope)) continue;
+      // one side flat, the other sloped: the touches drift ≤ TRI_RULES.flatDrift of the sloped line's change (else a channel / wedge)
+      if (drift > R.flatDrift * Math.abs(chg)) continue;
+      // converging: the gap between the lines at the body end ≤ 85% of the gap at the first touch…
+      const gapEnd = Math.abs(line(e) - lvl), gap0 = Math.abs(A.p - lvl);
+      if (!(gapEnd <= 0.85 * gap0)) continue;
+      // …but not run into the apex: at the body end the triangle is still ≥ 15% of its first height wide (a slide that has already
+      // converged onto the floor is a flag / pennant after a drop, not a triangle — seen: LINC Aug–Sep 2026, 44.5 → 23.8), and the sloped
+      // line is still beyond the flat one by half the tolerance
+      if (!(gapEnd >= R.minEndWidth * gap0)) continue;
+      if (bear ? !(line(e) > lvl * (1 + tol / 2)) : !(line(e) < lvl * (1 - tol / 2))) continue;
+      // the shape is void once the close is > 3% beyond the sloped line (zzz1005, as in detectTriWedge)
+      if (bear ? s.c[e] > line(e) * 1.03 : s.c[e] < line(e) * 0.97) continue;
+      const sTouch = later.filter((q) => Math.abs(q.p / line(q.i) - 1) <= tol);
+      // the sloped line is tested in the second half too (else the price simply fell / rose away from its early swings: a decline into a
+      // W, not a triangle — seen: COCO Aug–Oct 2026)
+      if (!sTouch.some((q) => q.i >= A.i + 0.5 * len)) continue;
+      // the sloped side's later swings themselves fall (descending) / rise (ascending): a flat run of lows under a flat ceiling with one
+      // early low far below is a rectangle, not an ascending triangle (seen: CGNX May–Oct 2026, lows 58 / 57.5 / 58.5 / 57.8 from a 52 launch)
+      if (later.length >= 2) {
+        const fs = fitLine(later.map((q) => q.i), later.map((q) => q.p));
+        if (bear ? !((fs.b * len) / s.c[e] <= -R.minSlope / 2) : !((fs.b * len) / s.c[e] >= R.minSlope / 2)) continue;
+      }
+      // every bar inside the sloped line (+ tol / 2), no close beyond the flat line by > 1% (it would have broken already), and most
+      // closes between the lines
+      let bad = false, inside = 0;
+      for (let i = A.i; i <= e; i++) {
+        const ln = line(i), c = s.c[i];
+        if (bear ? s.h[i] > ln * (1 + tol / 2) || c < lvl * 0.99 : s.l[i] < ln * (1 - tol / 2) || c > lvl * 1.01) { bad = true; break; }
+        if (bear ? c <= ln * 1.01 : c >= ln * 0.99) inside++;
+      }
+      if (bad) continue;
+      const contain = inside / len;
+      if (contain < R.minContain) continue;
+      const band = bear ? Math.max(...touches.map((q) => q.p)) / lvl - 1 : 1 - Math.min(...touches.map((q) => q.p)) / lvl;
+      // share of the triangle's swings that touch one of its lines (a triangle's swings run from line to line)
+      const inner = sw.length - sw.findIndex((q) => q.i > A.i);
+      const touchShare = inner > 0 ? (touches.length + sTouch.length) / inner : 0;
+      const c = wscore([[2, ramp(touches.length, 2, 4)], [2, ramp(1 + sTouch.length, 2, 3)], [2, ramp(Math.abs(chg), R.minSlope, 0.12)], [1, ramp(contain, R.minContain, 0.97)],
+        [1, ramp(len, L15, L30)], [1, ramp(band, tol, tol * 0.3)], [1, ramp(away, Math.max(R.minTouchSep, 2 * tol), 0.15)], [2, ramp(touchShare, 0.3, 0.6)]]);
+      const far = bear ? Math.max(...later.map((q) => q.p), A.p) : Math.min(...later.map((q) => q.p), A.p);
+      // the touches of both lines (the swings that define it), in time order
+      const pts = [A, ...touches, ...sTouch].sort((x, y) => x.i - y.i).map((q) => [q.i, q.p, q.hi ? 'TH' : 'TL'] as [number, number, PointRole]);
+      push(out, { id, conf: c, start: A.i, end: e, keyFrom: A.i, pivot: lvl, depth: bear ? 1 - lvl / far : 1 - far / lvl, voidAt: line,
+        detail: `${touches.length} touches of ${fmt(lvl)}, ${bear ? 'highs falling' : 'lows rising'}`,
+        lines: [LP(bear ? 'support' : 'resistance', s, A.i, lvl, e, lvl), LP('trend', s, A.i, A.p, e, line(e))], pts,
+        ev: evOf({ band: pc1(band), rally: pc1(away), gap: len }) });
     }
   }
 }
@@ -1099,7 +1247,7 @@ function detectReversals(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>)
 }
 
 /** zzz1005 — the shared turning-point rules of the reversal family (see detectReversals). */
-export const REVERSAL_RULES = { maxMidDepth: 0.4, maxMidDepthM: 0.45, ctxTol: 0.1, maxNeckChange: 0.15, minShoulderRatio: 0.3, maxHeadBeyond: 0.3, minRebound: 0.03, reboundOfHeight: 0.12 } as const;
+export const REVERSAL_RULES = { maxMidDepth: 0.4, maxMidDepthM: 0.45, ctxTol: 0.1, maxNeckChange: 0.15, minShoulderRatio: 0.3, maxHeadBeyond: 0.3, minRebound: 0.03, reboundOfHeight: 0.12, ctxFall: 0.3 } as const;
 const REVERSAL_IDS = new Set<PatternId>(['double_bottom', 'triple_bottom', 'inverse_hs', 'double_top', 'triple_top', 'head_shoulders']);
 /** zzz1008 — a bottom is no longer reported once the price has run away from it: the close is within `near1y` (5%) of the 1-year
  *  high, that high was made AFTER the pattern's last low, and it stands more than `past1y` (5%) beyond the pivot (seen: RVTY
@@ -1166,8 +1314,15 @@ function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<P
   };
   /** P lies within 10% of the extreme of the prior ~6 months (or twice the formation's width) */
   const nearCtx = (P: Pivot, width: number) => {
-    const v = beyond(Math.max(0, P.i - Math.max(ctxWin, 2 * width)), P.i);
-    return bottom ? v >= P.p * (1 - R.ctxTol) : v <= P.p * (1 + R.ctxTol);
+    const a = Math.max(0, P.i - Math.max(ctxWin, 2 * width));
+    const v = beyond(a, P.i);
+    if (bottom ? v >= P.p * (1 - R.ctxTol) : v <= P.p * (1 + R.ctxTol)) return true;
+    // zzz1024 — bottoms only: …or P ends a fall of ≥ REVERSAL_RULES.ctxFall from the highest high of that window and is the lowest low
+    // since that high (a bottom after a real decline, even when an older low further back is lower — seen: COCO 85.8 → 50.6, 41% fall,
+    // the April low 45.6 was 10.9% lower; PENG 89.9 → 43.6 after a 17 → 90 run)
+    if (!bottom) return false;
+    const pk = s.mxH.idx(a, P.i);
+    return pk >= 0 && pk < P.i && 1 - P.p / s.h[pk] >= R.ctxFall && s.mnL.val(pk, P.i) >= P.p * 0.999;
   };
   /** dip from the middle peak to the lows (bottom) / from the highs to the middle trough (top), as a fraction */
   const midDepth = (mid: number, band: number) => (bottom ? 1 - band / mid : 1 - mid / band);
@@ -1379,6 +1534,9 @@ function laterStage(s: S, raw: Raw, bull: boolean, e: number, win: StageWindows)
   if (!ps.length) return null;
   const floor = bull ? Math.min(...ps) : Math.max(...ps);
   const inside = (c: number) => (bull ? c >= floor : c <= floor);
+  // zzz1024 — a triangle whose opposite (sloped) line a later close has gone > 3% beyond is void, not still forming (seen: TENB daily
+  // ascending triangle Jul–Sep 2026 read as forming after the price fell to 30, below its rising line)
+  if (raw.voidAt) for (let i = e + 1; i <= last; i++) { const v = raw.voidAt(i); if (bull ? s.c[i] < v * 0.97 : s.c[i] > v * 1.03) return null; }
   let f = -1;
   for (let i = Math.max(0, raw.keyFrom); i <= last; i++) if (bull ? s.c[i] > raw.pivot : s.c[i] < raw.pivot) { f = i; break; }
   if (f < 0) {
@@ -1525,7 +1683,11 @@ export function analyzePatterns(bars: PBar[], opts?: DetectOptions): PatternAnal
   const gone = new Map<PatternId, { raw: Raw; st: { stage: PatternStage; f: number }; why: ExpiredWhy }>();
   const noteExpired = (raw: Raw, st: { stage: PatternStage; f: number }, why: ExpiredWhy) => {
     const prev = gone.get(raw.id);
-    if (!prev || raw.conf > prev.raw.conf + 1e-9) gone.set(raw.id, { raw: { ...raw }, st, why });
+    // zzz1024 — the most recent break wins (then the stronger shape): the expired list answers "what was the last pattern", and a recent
+    // completed breakout is promoted to current by the chart (pattern-view RECENT_BREAK_BARS) — a stronger shape that failed months ago
+    // used to hide it (seen: TLN daily double bottom 288.58 / 279.77, broke out above 330.63 on Oct 6 2026, hidden by a Mar–Jun double bottom)
+    const fNew = st.f, fOld = prev?.st.f ?? -1;
+    if (!prev || fNew > fOld || (fNew === fOld && raw.conf > prev.raw.conf + 1e-9)) gone.set(raw.id, { raw: { ...raw }, st, why });
   };
   // zzz1008 — the 1-year high and low at the last bar (ranAwayFrom1y); per side, chosen by the pattern's bias below
   const yA = Math.max(0, last - B(s, 252) + 1);
@@ -1557,6 +1719,7 @@ export function analyzePatterns(bars: PBar[], opts?: DetectOptions): PatternAnal
     detectHTF(s, e, recs, raws);
     detectFlags(s, e, recs, floors, raws);
     detectTriWedge(s, e, zzS, raws);
+    detectLineTriangles(s, e, zzS, raws);
     detectReversals(s, e, zzM, raws);
     for (const raw of raws.values()) {
       const bull = PATTERN_META[raw.id].bias === 'bullish';

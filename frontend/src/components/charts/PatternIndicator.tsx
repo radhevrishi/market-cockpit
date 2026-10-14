@@ -230,8 +230,9 @@ export function usePatternIndicator(a: PatternIndicatorArgs) {
   // every row the list can draw, by timeframe then in list order (a promoted recent breakout is drawn as its current reading)
   const rows = useMemo(() => uniqueByRow(ANALYSIS_TFS.flatMap((tf) => { const v = views[tf]; return v ? [...v.active, ...v.expired.map((x) => x.hit), ...v.weaker.map((x) => x.hit)] : []; })), [views]);
   const pickedIds = picked && picked.key === key ? picked.ids : null;
-  // nothing picked yet → the headline structure (never an expired or weaker one, nor another timeframe's, by default)
-  const lead = useMemo(() => (views[headTf]?.state === 'qualifying' && (analysisTf === 'A' || headTf === analysisTf) ? views[headTf]!.active.slice(0, 1) : []), [views, headTf, analysisTf]);
+  // nothing picked yet → the headline structure (never an expired or weaker one by default). zzz1024 — an explicit timeframe with nothing
+  // current: the other timeframe's structure the banner leads with (banner.leadHit) is drawn
+  const lead = useMemo(() => (banner.leadHit ? [banner.leadHit] : views[headTf]?.state === 'qualifying' && (analysisTf === 'A' || headTf === analysisTf) ? views[headTf]!.active.slice(0, 1) : []), [banner.leadHit, views, headTf, analysisTf]);
   const drawn = useMemo(() => (pickedIds ? rows.filter((h) => pickedIds.has(rowKeyOf(h))) : lead), [rows, lead, pickedIds]);
   const togglePick = (rk: string) => {
     const next = new Set<string>(drawn.map(rowKeyOf));
