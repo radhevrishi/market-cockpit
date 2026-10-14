@@ -43,6 +43,13 @@ export function parsePatternTfPref(raw: string | null | undefined): PatternTfPre
     return { tf, provisional: tf !== 'D' && j?.provisional === true };
   } catch { return DEFAULT_PATTERN_TF; }
 }
+/** zzz1019 — the analysis timeframe for the candles on screen: D / W / M chart → the same timeframe (the remembered "include the
+ *  current week / month" kept, never on daily); anything else (no chart timeframe known) → the choice as it was. */
+export function analysisForChartTf(displayTf: string | null | undefined, p: PatternTfPref): PatternTfPref {
+  const tf = displayTf === 'D' || displayTf === 'W' || displayTf === 'M' ? displayTf : null;
+  if (!tf) return p;
+  return { tf, provisional: tf !== 'D' && p.provisional };
+}
 export const serializePatternTfPref = (p: PatternTfPref) => JSON.stringify({ v: PATTERN_TF_PREF_VERSION, tf: p.tf, provisional: p.tf !== 'D' && p.provisional });
 /** zzz1008 — the Pine Screener's chart hand-off: ?atf=<D|W|M>&pat=<pattern id>&pf=<YYYY-MM-DD>&pt=<YYYY-MM-DD>. The chart opens the
  *  pattern indicator on the analysis timeframe `atf` (for this visit — the viewer's saved choice is not changed), selects `pat` and

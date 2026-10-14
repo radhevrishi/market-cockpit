@@ -209,7 +209,7 @@ export function seriesValues(spec: PriceSeries, bars: Bar[]): (number | null)[] 
 export const BB_MID_COLOR = '#FF6D00', ST_UP_COLOR = '#089981', ST_DOWN_COLOR = '#F23645';
 
 /** One row of the top-left legend: an EMA/SMA line, Bollinger Bands, Supertrend, or a lower-pane indicator. */
-export interface LegendRow { id: string; source: 'line' | 'extra'; label: string; color: string; on: boolean; series: { spec: PriceSeries; color: string }[]; pane: boolean }
+export interface LegendRow { id: string; source: 'line' | 'extra' | 'volume'; label: string; color: string; on: boolean; series: { spec: PriceSeries; color: string }[]; pane: boolean }
 export function legendRows(l: ChartLayout): LegendRow[] {
   const rows: LegendRow[] = l.lines.map((x) => ({ id: x.id, source: 'line', label: lineLabel(x), color: x.color, on: x.on, pane: false, series: [{ spec: { kind: x.kind, a: x.period }, color: x.color }] }));
   for (const e of l.extras) {
@@ -228,8 +228,22 @@ export function legendRows(l: ChartLayout): LegendRow[] {
 export function priceSeriesOf(l: ChartLayout): { spec: PriceSeries; color: string }[] {
   return legendRows(l).filter((r) => r.on && !r.pane).flatMap((r) => r.series);
 }
+/** zzz1019 — the id of the volume row in the chart legend (volume is a layout setting, not a line or extra). */
+export const VOLUME_ROW_ID = '__vol';
+/** zzz1019 — the legend rows plus Volume (lower pane) when it is on, so it can be hidden / removed from the legend too. */
+export function legendRowsWithVolume(l: ChartLayout): LegendRow[] {
+  const rows = legendRows(l);
+  if (l.volume.on) rows.push({ id: VOLUME_ROW_ID, source: 'volume', label: `Volume ${l.volume.avg}`, color: '#F59E0B', on: true, pane: true, series: [] });
+  return rows;
+}
+/** zzz1019 — the × on a legend row: the line / indicator leaves the layout (Volume is switched off; Indicators ▾ adds it back). */
+export function removeRow(l: ChartLayout, id: string): ChartLayout {
+  if (id === VOLUME_ROW_ID) return { ...l, volume: { ...l.volume, on: false } };
+  return { ...l, lines: l.lines.filter((x) => x.id !== id), extras: l.extras.filter((x) => x.id !== id) };
+}
 /** Eye toggle on a legend row. */
 export function toggleRow(l: ChartLayout, id: string): ChartLayout {
+  if (id === VOLUME_ROW_ID) return { ...l, volume: { ...l.volume, on: !l.volume.on } };
   return {
     ...l,
     lines: l.lines.map((x) => (x.id === id ? { ...x, on: !x.on } : x)),

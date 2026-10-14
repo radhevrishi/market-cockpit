@@ -278,8 +278,10 @@ export function IndicatorsPanel({ L, onClose, triggerRef }: { L: ReturnType<type
 }
 
 // ── legend at the top-left of the chart ───────────────────────────────────────
-export function IndicatorLegend({ rows, valueOf, onToggle, decimals, colorOf = (c: string) => c, textOf = (c: string) => c }: {
+export function IndicatorLegend({ rows, valueOf, onToggle, onRemove, decimals, colorOf = (c: string) => c, textOf = (c: string) => c }: {
   rows: LegendRow[]; valueOf: (row: LegendRow) => (number | null)[]; onToggle: (id: string) => void; decimals: number; colorOf?: (c: string) => string;
+  /** zzz1019 — the × on a row: remove the line / indicator from the chart (as TradingView's legend "Remove") */
+  onRemove?: (id: string) => void;
   /** zzz967 (UI-01) — readable text colour for a line colour (the swatch keeps the line colour itself) */
   textOf?: (c: string) => string;
 }) {
@@ -303,11 +305,17 @@ export function IndicatorLegend({ rows, valueOf, onToggle, decimals, colorOf = (
                 </span>
               );
             })}
-            <button type="button" onClick={() => onToggle(r.id)} aria-label={`${r.on ? 'Hide' : 'Show'} ${r.label}`} title={r.on ? 'Hide this line' : 'Show this line'}
+            {r.source !== 'volume' && <button type="button" onClick={() => onToggle(r.id)} aria-label={`${r.on ? 'Hide' : 'Show'} ${r.label}`} title={r.on ? 'Hide this line' : 'Show this line'}
               style={{ display: 'inline-grid', placeItems: 'center', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', color: 'var(--mc-text-3)', lineHeight: 1, pointerEvents: 'auto' }}>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.35} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                 {r.on ? <path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8zM8 10a2 2 0 100-4 2 2 0 000 4z" /> : <path d="M2 2l12 12M6.6 3.7A6.5 6.5 0 018 3.5c4 0 6.5 4.5 6.5 4.5a11 11 0 01-1.9 2.4M4 5.2A11 11 0 001.5 8S4 12.5 8 12.5a6.4 6.4 0 002.7-.6" />}
-              </svg></button>
+              </svg></button>}
+            {onRemove && (
+              <button type="button" className="mc-legend-x" onClick={() => onRemove(r.id)} aria-label={`Remove ${r.label}`} title={`Remove ${r.label} from the chart (Indicators ▾ adds it back; Save keeps the change in the layout)`}
+                style={{ display: 'inline-grid', placeItems: 'center', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', color: 'var(--mc-text-3)', lineHeight: 1, pointerEvents: 'auto' }}>
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" aria-hidden><path d="M4 4l8 8M12 4l-8 8" /></svg>
+              </button>
+            )}
           </div>
         );
       })}

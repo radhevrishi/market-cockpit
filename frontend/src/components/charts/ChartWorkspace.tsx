@@ -10,7 +10,7 @@ import {
   type Bar, type DrawingName, type HeaderStats, type Market, type RangeKey, type SavedDrawing, type Timeframe,
 } from '@/lib/chart-math';
 import { CHART_DRAWINGS_KEY, loadDrawings, loadDrawingsWithLegacy, saveDrawings } from '@/lib/chart-storage';
-import { EXTRA_INFO, legendRows, priceSeriesOf, seriesValues, toggleRow, type ChartLayout, type LegendRow } from '@/lib/chart-layouts';
+import { EXTRA_INFO, legendRowsWithVolume, priceSeriesOf, removeRow, seriesValues, toggleRow, type ChartLayout, type LegendRow } from '@/lib/chart-layouts';
 import WatchlistPanel, { AddToWatchlist, useWatchlistStore, type WatchlistNavOverride } from './WatchlistPanel';
 import { marketOfExchange, reviewFromUrl, reviewPosition, reviewWords, stepQueue, type ReviewQueue } from '@/lib/chart-review-queue';
 import { NO_BARS, barsForIdentity, chartIdentityKey, chartLoadError, type LoadedBars } from '@/lib/chart-loaded-identity';
@@ -661,6 +661,19 @@ export default function ChartWorkspace() {
     return () => { el.removeEventListener('mousedown', md, true); window.removeEventListener('mousemove', mm, true); window.removeEventListener('mouseup', mu, true); el.removeEventListener('dblclick', dbl, true); };
   }, [ready, L, applyScale]);
 
+  // zzz1019 — Fit: every loaded bar across the screen (zoomed out to the whole history loaded) with the price axis on auto-fit
+  const fitAll = useCallback(() => {
+    const chart = chartRef.current;
+    const bars = barsRef.current;
+    if (!chart || !bars.length) return;
+    const width = chart.getSize('candle_pane', 'main')?.width || (containerRef.current?.clientWidth || 800) - 70;
+    const space = Math.max(1, Math.min(15, (width - 24) / bars.length));
+    chart.setBarSpace(space);
+    chart.setOffsetRightDistance(Math.min(60, space * 3));
+    chart.scrollToRealTime();
+    if (!workingRef.current.scale.auto) L.setWorking((w) => ({ ...w, scale: { ...w.scale, auto: true } }));
+    else applyScale(workingRef.current);
+  }, [L, applyScale]);
   // Reset chart (Alt+R, like TradingView): back to the chosen range, scrolled to the latest bar, price axis refitted
   const resetChart = useCallback(() => {
     applyRange(rangeRef.current);
@@ -796,7 +809,7 @@ export default function ChartWorkspace() {
   useEffect(() => { toolRef.current = tool; }, [tool]);
 
   // legend rows + their values (same maths as the lines on the chart)
-  const rows = useMemo(() => legendRows(L.working), [L.working]);
+  const rows = useMemo(() => legendRowsWithVolume(L.working), [L.working]);
   const rowValues = useMemo(() => {
     const out = new Map<string, (number | null)[][]>();
     if (!bars.length) return out;
@@ -963,13 +976,15 @@ export default function ChartWorkspace() {
           <div style={{ position: 'absolute', right: 6, bottom: 5, zIndex: 6, display: 'flex', gap: 3 }}>
             <button type="button" className={`mc-scale-btn${autoOn ? ' on' : ''}`} aria-label="Auto-fit price scale" aria-pressed={autoOn} onClick={toggleAuto}
               title={autoOn ? 'Auto-fit (on, the default): the price axis fits the candles on screen, like TradingView\'s "auto". Click to turn it off.' : 'Auto-fit (off): click to fit the price axis to the candles on screen again (or double-click the price axis)'}>auto</button>
+            <button type="button" className="mc-scale-btn" aria-label="Fit the whole chart" onClick={fitAll}
+              title="Fit: show every loaded bar on screen and fit the price axis to them (Alt+R goes back to the chosen range)">fit</button>
             <button type="button" className={`mc-scale-btn${L.working.scale.log ? ' on' : ''}`} aria-label="Log price scale" aria-pressed={L.working.scale.log}
               onClick={() => L.setWorking((w) => ({ ...w, scale: { ...w.scale, log: !w.scale.log } }))}
               title={L.working.scale.log ? 'Log scale (on): equal % moves look equal. Click for a normal scale.' : 'Log scale: equal % moves look equal'}>log</button>
             <button type="button" className={`mc-scale-btn${basis === 'tr' ? ' on' : ''}`} aria-label="Total return" aria-pressed={basis === 'tr'} onClick={toggleBasis}
               title={basis === 'tr' ? `${TOTAL_RETURN_LABEL}. On: history adjusted for ${live?.dividends ?? 0} cash dividends; the latest price is unchanged. Drawings are one set for both views and stay at the price values they were drawn on. Click for prices as printed.` : `Show: ${TOTAL_RETURN_LABEL}`}>TR</button>
           </div>
-          <IndicatorLegend rows={rows} valueOf={valueOf} onToggle={(id) => L.setWorking((w) => toggleRow(w, id))} decimals={pxDecimals} colorOf={(c) => (!chartLight && (luminance(c) ?? 1) < 0.18 ? '#B2B5BE' : c)} textOf={(c) => readableOn(c, chartLight ? '#FFFFFF' : '#0C1018')} />
+          <IndicatorLegend rows={rows} valueOf={valueOf} onToggle={(id) => L.setWorking((w) => toggleRow(w, id))} onRemove={(id) => L.setWorking((w) => removeRow(w, id))} decimals={pxDecimals} colorOf={(c) => (!chartLight && (luminance(c) ?? 1) < 0.18 ? '#B2B5BE' : c)} textOf={(c) => readableOn(c, chartLight ? '#FFFFFF' : '#0C1018')} />
           <PatternBanner p={patterns} cur={cur} light={chartLight} tf={tf} onTurnOff={() => L.setWorking((w) => withPatterns(w, false))} />
           <StageBanner s={stageInd} light={chartLight} shifted={patterns.on} onTurnOff={() => L.setWorking((w) => withStage(w, false))} />
           {/* zzz1000 (improvement 6) — nothing loaded for this symbol / view: say so instead of an empty 0–10 price axis */}

@@ -164,7 +164,8 @@ test('zzz1015 mounted: an old stored M reads as Auto; D / W from the 5 years on 
     const b = gen(LEGS_C, { history: 300 });
     const want = directViews(b, b);
     const live = { ok: true, ticker: 'CCC', market: 'US', interval: '1d', range: '5y', basis: 'price', bars: pack(b) };
-    const box = await mount(h, { on: true, ready: false, ticker: 'CCC', market: 'US', exchange: undefined, basis: 'price', chartRef: { current: null }, cacheRef: { current: new Map() }, cur: '$', chart: { loading: false, error: null }, live, bars: b, displayTf: 'D' });
+    const box = await mount(h, { on: true, ready: false, ticker: 'CCC', market: 'US', exchange: undefined, basis: 'price', chartRef: { current: null }, cacheRef: { current: new Map() }, cur: '$', chart: { loading: false, error: null }, live, bars: b, displayTf: undefined });
+    // zzz1019 — with a chart timeframe the analysis follows it; without one (here) the stored choice applies
     assert.equal(box.out.analysisTf, 'A', 'the old monthly choice no longer applies to every chart');
     assert.equal(f.calls.length, 1, 'one request: the 10-year daily history for monthly');
     assert.match(f.calls[0], /\/api\/v1\/chart\/CCC\?market=US&interval=1d&range=10y$/);
@@ -173,10 +174,10 @@ test('zzz1015 mounted: an old stored M reads as Auto; D / W from the 5 years on 
     assert.equal(sig(box.out.views.W), sig(want.W));
     await h.act(async () => { f.answer(f.calls[0], live); await h.settle(30); });
     assert.equal(sig(box.out.views.M), sig(want.M));
-    const ht = pickHeadlineTf(want, 'D');
+    const ht = pickHeadlineTf(want, undefined);
     assert.equal(box.out.banner.headTf, ht ?? 'D');
     const strip = (t: string) => t.replace(/ · \d{1,2} \w+ \d{4}/g, '');   // the analysis date
-    assert.equal(strip(box.out.banner.text), strip(multiBanner(want, 'A', '$', { displayTf: 'D' }).text), 'the banner = the pure Auto banner of the engine views')
+    assert.equal(strip(box.out.banner.text), strip(multiBanner(want, 'A', '$', { displayTf: undefined }).text), 'the banner = the pure Auto banner of the engine views')
     assert.match(head().textContent || '', ht ? new RegExp(`^📐 .* · ${ht === 'D' ? 'Daily' : ht === 'W' ? 'Weekly' : 'Monthly'} · `) : /^📐 (No textbook pattern|Too little history)/);
     assert.equal(box.out.drawnIds.size, ht ? 1 : 0, 'the headline (only) is drawn');
     if (ht) assert.ok(box.out.drawnIds.has(`${ht}:${want[ht]!.active[0].id}`));
@@ -226,7 +227,7 @@ test('zzz1015 mounted: explicit D — the 10-year request only when D / W have n
     // a flat line: nothing current on any timeframe — the weaker count with a one-click "show weaker" when there are weaker ones
     const b = gen([[700, 100]], { history: 300 });
     const live = { ok: true, ticker: 'FLAT', market: 'US', interval: '1d', range: '10y', basis: 'price', bars: pack(b) };
-    const box = await mount(h, { on: true, ready: false, ticker: 'FLAT', market: 'US', exchange: undefined, basis: 'price', chartRef: { current: null }, cacheRef: { current: new Map() }, cur: '$', chart: { loading: false, error: null }, live, bars: b, displayTf: 'D' });
+    const box = await mount(h, { on: true, ready: false, ticker: 'FLAT', market: 'US', exchange: undefined, basis: 'price', chartRef: { current: null }, cacheRef: { current: new Map() }, cur: '$', chart: { loading: false, error: null }, live, bars: b, displayTf: undefined });
     assert.equal(f.calls.length, 0, '10 years on screen: no request');
     assert.equal(box.out.analysisTf, 'A');
     const want = directViews(b, b);
@@ -247,4 +248,25 @@ test('zzz1015 wiring: shared chart request, per-hit timeframe mapping, the chart
   assert.match(ind, /overlayFit\(h, times, fmt, fitOptsOf\(h\)\)/);
   assert.match(ind, /x === 'A' \? 'Auto' : x/);
   assert.match(ws, /displayTf: tf \}\)/);
+});
+
+test('zzz1019 mounted: the analysis follows the chart timeframe (open on W → weekly; switch to M → monthly; back to D → daily)', async () => {
+  await withDom(async (h) => {
+    const f = hold(); _resetChartLoadCache(f.fetcher as any);
+    localStorage.setItem('mc:chart-pattern-tf:v1', serializePatternTfPref({ tf: 'A', provisional: false }));
+    const b = gen(LEGS_B, { history: 300 });
+    const live = { ok: true, ticker: 'BBB', market: 'US', interval: '1d', range: '10y', basis: 'price', bars: pack(b) };
+    const props = { on: true, ready: false, ticker: 'BBB', market: 'US', exchange: undefined, basis: 'price', chartRef: { current: null }, cacheRef: { current: new Map() }, cur: '$', chart: { loading: false, error: null }, live, bars: b };
+    const { usePatternIndicator } = await import('../../components/charts/PatternIndicator');
+    const box: { out: any } = { out: null };
+    const Probe = (pr: any) => { const p = usePatternIndicator(pr); h.React.useEffect(() => { box.out = p; }); return null; };
+    await h.act(async () => { h.root.render(h.React.createElement(Probe, { ...props, displayTf: 'W' })); });
+    assert.equal(box.out.analysisTf, 'W');
+    await h.act(async () => { h.root.render(h.React.createElement(Probe, { ...props, displayTf: 'M' })); });
+    assert.equal(box.out.analysisTf, 'M');
+    await h.act(async () => { box.out.setAnalysisTf('A'); });
+    assert.equal(box.out.analysisTf, 'A', 'a pick in the banner applies until the chart timeframe changes');
+    await h.act(async () => { h.root.render(h.React.createElement(Probe, { ...props, displayTf: 'D' })); });
+    assert.equal(box.out.analysisTf, 'D');
+  });
 });

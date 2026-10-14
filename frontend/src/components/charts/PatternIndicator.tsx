@@ -17,7 +17,7 @@ import { chartFetch } from '@/lib/chart-load-cache';
 import type { Bar } from '@/lib/chart-math';
 import {
   FAILED_COLOR, PATTERN_GROUP, PATTERN_OVERLAY, PATTERN_TF_KEY, TF_WORD, TF_TITLE, ANALYSIS_TFS, analysisKey, bannerColors, barsRevision, distWords, fitPlan, hitColor, lengthWords,
-  overlayFit, parsePatternTfPref, patternDataPlan, patternKey, priceDecimals, serializePatternTfPref, shapeScoreWords, shownStatus, stageWords, handoffSpan, type PatternState, type PatternTfPref, type PatternHandoff,
+  overlayFit, parsePatternTfPref, analysisForChartTf, patternDataPlan, patternKey, priceDecimals, serializePatternTfPref, shapeScoreWords, shownStatus, stageWords, handoffSpan, type PatternState, type PatternTfPref, type PatternHandoff,
   patternView, viewBanner, multiBanner, rowKeyOf, conditionWords, evidenceWords, pointWords, pointMarks, pointPath, structureRange, PATTERN_POINT, type PatternView, type PatternViewRow, type PatternAnalysisTf, type TfViews,
 } from './pattern-view';
 
@@ -89,10 +89,21 @@ export function usePatternIndicator(a: PatternIndicatorArgs) {
   const handoff = a.handoff || null;
   // zzz1008 — a hand-off's analysis timeframe wins for this visit (the remembered choice is not overwritten)
   // zzz1015 — default Auto; a choice stored before Auto existed reads as Auto (parsePatternTfPref)
+  // zzz1019 — the analysis follows the candles on screen: opening the chart, or switching it to D / W / M, reads patterns on that
+  // timeframe (as TradingView's indicator does). Auto / another timeframe can still be picked for a look, until the chart's
+  // timeframe changes again. Only "include the current week / month" is remembered.
   const [pref, setPref] = useState<PatternTfPref>(() => {
     if (handoff) return { tf: handoff.atf, provisional: false };
-    try { return parsePatternTfPref(localStorage.getItem(PATTERN_TF_KEY)); } catch { return parsePatternTfPref(null); }
+    let stored: PatternTfPref;
+    try { stored = parsePatternTfPref(localStorage.getItem(PATTERN_TF_KEY)); } catch { stored = parsePatternTfPref(null); }
+    return analysisForChartTf(displayTf, stored);
   });
+  const lastDisplayTf = useRef(displayTf);
+  useEffect(() => {
+    if (lastDisplayTf.current === displayTf) return;
+    lastDisplayTf.current = displayTf;
+    setPref((p) => analysisForChartTf(displayTf, p));
+  }, [displayTf]);
   const savePref = useCallback((next: PatternTfPref) => { setPref(next); try { localStorage.setItem(PATTERN_TF_KEY, serializePatternTfPref(next)); } catch { /* this visit only */ } }, []);
   const analysisTf: PatternAnalysisTf = pref.tf, includeCurrent = pref.provisional;
   const base = patternKey(market, ticker, exchange, basis);
@@ -461,7 +472,7 @@ export function PatternBanner({ p, cur, light, onTurnOff, tf }: { p: PatternBann
       {/* zzz1013 — the Pine look: an 8 px pill on the page colour with the tone as a tint and a hairline, a soft lift off the candles */}
       <div data-testid="pattern-banner" style={{ display: 'flex', alignItems: 'center', gap: 4, minHeight: 24, borderRadius: 8, border: `1px solid ${col.border}`, background: `linear-gradient(${col.bg}, ${col.bg}), var(--mc-bg-0)`, color: col.text, lineHeight: '18px', boxShadow: '0 1px 0 rgba(18,23,34,.04), 0 6px 16px -10px rgba(18,23,34,.35)' }}>
         {p.setAnalysisTf && (
-          <span role="group" aria-label="Pattern analysis timeframe" title="Analysis timeframe — separate from the candles on screen. Auto reads daily, weekly and monthly."
+          <span role="group" aria-label="Pattern analysis timeframe" title="Analysis timeframe — follows the candles on screen (switch the chart to D, W or M and the patterns are read on that timeframe). Auto reads daily, weekly and monthly together; a pick here lasts until the chart timeframe changes."
             style={{ display: 'inline-flex', alignItems: 'center', gap: 2, marginLeft: 6, fontSize: 10, whiteSpace: 'nowrap' }}>
             <span style={{ opacity: 0.8 }}>Analysis</span>{(['A', 'D', 'W', 'M'] as PatternAnalysisTf[]).map(tfBtn)}
           </span>
