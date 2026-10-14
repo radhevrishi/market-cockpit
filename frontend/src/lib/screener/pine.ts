@@ -20,6 +20,7 @@ import { passes, cleanScreens, fieldOf, filterKeys, filterLabel, evalPattern, pa
 import type { ScreenMarket, ScreenRow } from './types';
 import type { TechStored } from './tech-fetch';
 import { tvFigures, rsRatings, type TvFigures } from './tv-screens';
+import { setupFigures, SETUP_FIGURE_KEYS, type SetupBar, type SetupFigures } from '../setups';
 
 /** Bump when the engine or the stored tag changes: every stored entry without it is re-read on the next build. */
 export const PATTERN_SCAN_VERSION = 10;   // 10 = zzz1014: chart-pattern recall audit (flat bases to 20% / near-record lips, base breakouts read where they happen, wicks above a lip, deep-cup roundness, monthly reversals over 4 years, last-turn candidates, H&S search window; cp-3.4-recall) — every stored reading is re-read; 9 = zzz1009: weekly double / triple / H&S span ≥ 5 weekly candles, hits carry breakT / breakAgo (cp-3.3-indicator) — every stored reading is re-read; 8 = zzz1008: auditable geometry on every tag (pts / ev), the 1-year-high runaway rule for reversals and the 6-candle monthly minimum (cp-3.2-geometry) — every stored reading is re-read; 7 = zzz1005: chart-pattern precision audit (real turning points, cp-3.1-precision) — every stored reading is re-read; 2 = zzz984: + the owner's TradingView indicator fields (tv-screens.ts); 3 = zzz987: + Stage Analysis (TheWrap method); 4 = zzz990: chart-pattern audit (volume missingness, IPO first base + listing date, projected sloped boundaries, strict HTF); 5 = zzz993: scan status / quality (MC-02) + scan-close provenance (MC-01) + weekly / monthly patterns (patW / patM); 6 = zzz1003: W / M scans always carry their own close `px` (PS-01), the daily scan reads COMPLETED sessions only (+ an optional provisional live reading, PS-03), monthly scans read ~10 years (PS-07)
@@ -213,12 +214,14 @@ export function techEntry(bars: DailyBars, firstTradeSec: number | null, partial
   }
   let tv: Partial<TvFigures> = {};
   try { tv = tvFigures(recent, bench); } catch { /* never costs the price figures */ }
+  // zzz1020 — trader setups (lib/setups.ts) from the COMPLETED sessions only (same bars as the daily pattern scan)
+  const st = setupEntry(done, src?.market);
   // zzz993 (MC-01) — the close every price figure of this entry was worked out from, and its date / source
   const scanPx = n && Number.isFinite(recent.c[n - 1]) ? Number(recent.c[n - 1].toPrecision(6)) : null;
   // zzz993 — weekly / monthly patterns from the same daily bars (completed periods only); zzz1003 — monthly from the full ~10 years
   const w = periodPatternsFromBars(recent, 'W', ipoD, now), m = periodPatternsFromBars(bars, 'M', ipoD, now);
   return {
-    ...techFigures(recent), ipoD, ...(cc ? { cc } : {}), pat: p.pat, patAt: p.patAt, patV: PATTERN_SCAN_VERSION, scan: p.scan, ...tv,
+    ...techFigures(recent), ipoD, ...(cc ? { cc } : {}), pat: p.pat, patAt: p.patAt, patV: PATTERN_SCAN_VERSION, scan: p.scan, ...tv, ...st,
     patW: w.pat, scanW: w.scan, patM: m.pat, scanM: m.scan,
     ...(lv ? { patLive: lv.pat, scanLive: lv.scan } : {}),
     ...(scanPx != null ? { scanPx, scanAt: recent.d[n - 1] } : {}), scanSrc: src?.src || 'yahoo', ...(src?.ex ? { scanEx: src.ex } : {}),
@@ -356,9 +359,66 @@ export function rowTvFields(tf: TechStored | undefined, market: ScreenMarket): P
   if (!tf || !(typeof tf.patV === 'number' && tf.patV >= 2)) return {};
   const o: Partial<ScreenRow> = {};
   for (const k of TV_ROW_KEYS) { const v = (tf as any)[k]; if (v != null) (o as any)[k] = v; }
+  // zzz1020 — trader setups only from a current setup reading (an older / missing one = blank, never a stale value)
+  if (setupsCurrent(tf)) for (const k of SETUP_ROW_KEYS) { const v = (tf as any)[k]; if (v != null) (o as any)[k] = v; }
   if (typeof tf.adv === 'number') o['adv$'] = Math.round((tf.adv / (market === 'US' ? 1e6 : 1e7)) * 100) / 100;
   return o;
 }
+// ── zzz1020: trader setups (lib/setups.ts) ──────────────────────────────────────────────────────────────────────────────
+/** Bump when lib/setups.ts's rules change: every stored entry with another `setV` is re-read (after the companies whose prices or
+ *  patterns are due), and its setup fields are withheld from the rows until then. Independent of PATTERN_SCAN_VERSION. */
+export const SETUP_VERSION = 1;
+/** The setup figures a row carries (epT, the gap day, stays on the stored entry — it feeds epE). */
+export const SETUP_ROW_KEYS = [
+  'wt3', 'wt3P', 'udv', 'x10A', 'x50A', 'dvx', 'dvT', 'dvB', 'dc20D', 'dc55D', 'dc20W', 'sqzN', 'sqzF', 'sqzM', 'nr7', 'ib',
+  'epD', 'epG', 'gvD', 'mbD', 'antD', 'wpD', 'ecbD', 'nhD', 'athD', 'hgD', 'sprD', 'td9',
+] as const satisfies ReadonlyArray<keyof ScreenRow & keyof SetupFigures>;
+/** Daily bars (ISO dates) → setup bars (t = the date at 00:00 UTC, ms). */
+export function setupBarsOf(b: DailyBars): SetupBar[] {
+  const out: SetupBar[] = [];
+  for (let i = 0; i < b.c.length; i++) out.push({ t: Date.parse(`${b.d[i]}T00:00:00Z`), o: b.o[i], h: b.h[i], l: b.l[i], c: b.c[i], v: b.v[i] });
+  return out;
+}
+/** What a stored entry keeps from the setups: the known figures (nulls left out, to keep the stored row small) and `setV`. A failure
+ *  stores no figures but still the version, so a company is not re-read on every run because of it. */
+export function setupEntry(done: DailyBars, market?: ScreenMarket): Partial<SetupFigures> & { setV: number } {
+  const out: Partial<SetupFigures> & { setV: number } = { setV: SETUP_VERSION };
+  try {
+    const f = setupFigures(setupBarsOf(done), { market });
+    for (const k of SETUP_FIGURE_KEYS) { const v = f[k]; if (v != null) (out as any)[k] = v; }
+  } catch { /* never costs the price figures */ }
+  return out;
+}
+/** Is a stored entry's setup reading current? */
+export const setupsCurrent = (tf: { setV?: number } | undefined | null): boolean => !!tf && tf.setV === SETUP_VERSION;
+/** CANSLIM points 0–5 from a row: C quarterly EPS growth ≥ 25%, A TTM EPS growth ≥ 25%, N price ≥ 85% of the 52-week high,
+ *  S up/down volume ≥ 1.2, L RS Rating ≥ 80. M (the market's own trend) is not counted. A missing figure is a point not earned. */
+export function canslimPoints(r: Partial<ScreenRow>): number {
+  let p = 0;
+  if (fin(r.epsQYoY) && r.epsQYoY >= 25) p++;
+  if (fin(r.epsTTMYoY) && r.epsTTMYoY >= 25) p++;
+  if (fin(r.px) && fin(r.hi52) && r.hi52 > 0 && r.px >= 0.85 * r.hi52) p++;
+  if (fin(r.udv) && r.udv >= 1.2) p++;
+  if (fin(r.rsR) && r.rsR >= 80) p++;
+  return p;
+}
+/** zzz1020 — run after applyRsRating: CANSLIM points (`csl`, only for companies whose setups were read with the current version) and
+ *  `epE` (1 = the episodic-pivot gap came within 3 days of the results date, 0 = not; only when both dates are known). */
+export function applyTraderSetups(rows: ScreenRow[], entryOf: (t: string) => { setV?: number; epT?: number | null } | undefined): void {
+  for (const r of rows) {
+    const e = entryOf(r.t);
+    if (!setupsCurrent(e)) continue;
+    r.csl = canslimPoints(r);
+    if (fin(r.epD) && fin(e?.epT) && fin(r.earnD)) r.epE = Math.abs(r.earnD - (e!.epT as number)) <= 3 ? 1 : 0;
+  }
+}
+/** The build note on how many companies have the current setup reading. */
+export function setupCoverageNote(store: ReadonlyMap<string, { setV?: number }>): string {
+  let cur = 0;
+  for (const v of store.values()) if (setupsCurrent(v)) cur++;
+  return `trader setups (our own version of the published rules — 3 weeks tight, Darvas, Donchian, squeeze, episodic pivot …): ${cur} of ${store.size} companies read with setup version ${SETUP_VERSION}${cur < store.size ? ` — ${store.size - cur} wait for their next price read (setup figures blank until then)` : ''}`;
+}
+
 /** zzz984 — RS Rating 1–99 for every row of one market's snapshot, from the stored weighted performance (`rsRaw`). */
 export function applyRsRating(rows: ScreenRow[], rawOf: (t: string) => number | null | undefined): void {
   const rank = rsRatings(rows.map((r) => ({ t: r.t, v: rawOf(r.t) })));
@@ -432,7 +492,9 @@ export interface PineQuery {
   returned?: boolean | 'only';
 }
 /** zzz984 — the extra columns the owner can switch on (the TradingView-script fields first). */
-export const OPTIONAL_COLS: readonly NumKey[] = ['tt', 'rsR', 'stage', 'twSt', 'sata', 'mrs', 'twWk', 'r40', 'revQYoY', 'fcfmTTM', 'rsiMA', 'rsiX', 'gcD', 'dcD', 'emaXU', 'emaXD', 'ppD', 'rvol', 'adv$', 'adrP', 'ripB', 'ttOk', 'st12', 'perf1M', 'perf6M', 'perf1Y'];
+export const OPTIONAL_COLS: readonly NumKey[] = ['tt', 'rsR', 'stage', 'twSt', 'sata', 'mrs', 'twWk', 'r40', 'revQYoY', 'fcfmTTM', 'rsiMA', 'rsiX', 'gcD', 'dcD', 'emaXU', 'emaXD', 'ppD', 'rvol', 'adv$', 'adrP', 'ripB', 'ttOk', 'st12', 'perf1M', 'perf6M', 'perf1Y',
+  // zzz1020 — trader setups
+  'csl', 'udv', 'x50A', 'wt3', 'dvx', 'dc20D', 'dc55D', 'sqzN', 'sqzF', 'epD', 'epG', 'mbD', 'wpD', 'ecbD', 'nhD', 'hgD', 'sprD', 'td9'];
 
 export const DEFAULT_QUERY: PineQuery = {
   qv: 2, bias: 'U', ids: [], stages: ['f', 'b'], minConf: 55, tfs: ['D'], tfMode: 'any', dist: { on: true, lo: -15, hi: 5 },
@@ -651,6 +713,8 @@ export const LEAN_KEYS = [
   // zzz993 — fields the Pine rule editor offers (price figures, growth, valuation, quality)
   'rsiW', 'rsiM', 'epsQYoY', 'revAYoY', 'ps', 'evRev', 'de', 'cash', 'roeTTM', 'roceTTM', 'gmFY', 'epsTTMYoY', 'revTTMYoY', 'gpQYoY', 'pe',
   'opmTTM', 'nmTTM', 'sma21', 'sma100', 'ema10', 'ema50', 'atrP', 'chg1W', 'perf5D', 'perf5Y', 'avgVol60', 'fs',
+  // zzz1020 — trader setups (lib/setups.ts) + CANSLIM points and the episodic pivot on results
+  ...SETUP_ROW_KEYS, 'csl', 'epE',
 ] as const satisfies ReadonlyArray<keyof ScreenRow>;
 /** zzz993 — numbers sent to the page are rounded: 2 decimals from 1 up, 4 significant digits below 1 (penny prices keep their
  *  meaning); whole numbers unchanged. Pattern tags and scan objects are left as stored. */
@@ -865,10 +929,11 @@ export function leanRows(rows: readonly ScreenRow[], bias?: 'U' | 'D' | null, pa
 // ── saved Pine screens ────────────────────────────────────────────────────────────────────────────────────────────────
 export const PINE_SCREENS_KEY = 'mc:pine-screens:v1';
 /** zzz984 — where a built-in screen is listed: the owner's own TradingView scripts, chart patterns, momentum & trend. */
-export type PineGroup = 'tv' | 'r40' | 'patterns' | 'momentum' | 'portfolio';
+export type PineGroup = 'tv' | 'r40' | 'patterns' | 'momentum' | 'setups' | 'portfolio';
 export const PINE_GROUPS: ReadonlyArray<{ id: PineGroup; label: string }> = [
   { id: 'portfolio', label: 'My portfolio' },
   { id: 'tv', label: 'Your TradingView screens' }, { id: 'r40', label: 'Rule of 40 + chart setups' }, { id: 'patterns', label: 'Chart patterns' }, { id: 'momentum', label: 'Momentum & trend' },
+  { id: 'setups', label: 'Trader setups' },   // zzz1020
 ];
 /** zzz1004 — `scope` (optional): the company list saved WITH the screen ('pf' my portfolio, 'cb', 'wl:<id>', 'ss:<id>', '' every
  *  company). Opening a screen that has one switches the list to it; a screen without one leaves the current list as it is. */
@@ -960,7 +1025,7 @@ export function pineRuleFields(market: ScreenMarket) { return FIELDS.filter((f) 
 export const PINE_GROWTH_QUALITY_KEYS: readonly NumKey[] = ['r40', 'revQYoY', 'revAYoY', 'revTTMYoY', 'epsQYoY', 'epsTTMYoY', 'gpQYoY', 'fcfmTTM', 'gmFY', 'opmTTM', 'nmTTM', 'roeTTM', 'roceTTM', 'de', 'cash'];
 export const PINE_VALUATION_KEYS: readonly NumKey[] = ['ps', 'evRev', 'pe'];
 /** The groups of the rule editor, in order. */
-export const PINE_RULE_GROUPS = ['Price & volume', 'Averages', 'Momentum', 'Growth & quality', 'Valuation'] as const;
+export const PINE_RULE_GROUPS = ['Price & volume', 'Averages', 'Momentum', 'Trader setups', 'Growth & quality', 'Valuation'] as const;
 export type PineRuleGroup = typeof PINE_RULE_GROUPS[number];
 /** The editor group of a field (null = not offered in the Pine rule editor). */
 export function pineRuleGroup(f: { key: string; group: string }): PineRuleGroup | null {
@@ -969,6 +1034,7 @@ export function pineRuleGroup(f: { key: string; group: string }): PineRuleGroup 
   if (f.group === 'Price & volume') return 'Price & volume';
   if (f.group === 'Moving averages') return 'Averages';
   if (f.group === 'Momentum') return 'Momentum';
+  if (f.group === 'Trader setups') return 'Trader setups';   // zzz1020
   return null;
 }
 /** zzz1007 — the "+ Add a rule" menu: the fields this market receives, grouped (Price & volume / Averages / Momentum / Growth & quality

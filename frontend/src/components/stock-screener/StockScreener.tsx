@@ -60,7 +60,7 @@ function writeDraft(id: string, d: Omit<Draft, 'at'> | null): void {
 const rowKey = (r: ScreenRow) => r.t;
 /** zzz994 (MC-01 display) — the latest quote differs from the scan close the averages / patterns were read from (beyond rounding). */
 const pxDiffers = (r: ScreenRow) => typeof r.scanPx === 'number' && typeof r.px === 'number' && r.scanPx > 0 && Math.abs(r.px / r.scanPx - 1) * 100 >= 0.15;
-const GROUPS: FieldGroup[] = ['Price & volume', 'Moving averages', 'Momentum', 'Growth', 'Margins & returns', 'Valuation', 'Balance sheet', 'Company'];
+const GROUPS: FieldGroup[] = ['Price & volume', 'Moving averages', 'Momentum', 'Trader setups', 'Growth', 'Margins & returns', 'Valuation', 'Balance sheet', 'Company'];
 function firstScreen(): Screen {
   let id: string | null = null;
   try { id = typeof window === 'undefined' ? null : localStorage.getItem(LAST_KEY); } catch { /* blocked */ }

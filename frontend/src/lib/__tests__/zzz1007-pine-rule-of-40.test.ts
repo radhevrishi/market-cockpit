@@ -166,7 +166,7 @@ test('zzz1007 built-in Rule of 40 screens (stable ids) and the legacy id', () =>
 });
 
 test('zzz1007 rule editor: growth / quality / valuation figures the page receives, grouped', () => {
-  assert.deepEqual([...PINE_RULE_GROUPS], ['Price & volume', 'Averages', 'Momentum', 'Growth & quality', 'Valuation']);
+  assert.deepEqual([...PINE_RULE_GROUPS], ['Price & volume', 'Averages', 'Momentum', 'Trader setups', 'Growth & quality', 'Valuation']);   // zzz1020 + Trader setups
   for (const m of ['US', 'IN'] as const) {
     const menu = pineRuleMenu(m);
     const keys = new Map(menu.flatMap((g) => g.fields.map((f) => [f.key, g.group] as const)));

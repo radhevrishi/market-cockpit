@@ -17,7 +17,7 @@ import { yieldToServer } from './yield';
 import { inFiguresFromRaw, rawFromHtml, type InFigures, type InRaw } from './in-assemble';
 import { loadProfiles, type Prof } from './us-build';
 import { refreshTech, type TechStored } from './tech-fetch';
-import { rowPatternFields, rowScanFields, priceSourceNote, rowTvFields, applyRsRating, ruleOf40 } from './pine';
+import { rowPatternFields, rowScanFields, priceSourceNote, rowTvFields, applyRsRating, applyTraderSetups, ruleOf40 } from './pine';
 import type { NseDay } from './tech';
 import { tvSectorOf } from './tv-sectors';
 import { rowsJson, type ScreenRow } from './types';
@@ -264,6 +264,7 @@ export async function buildInSnapshot(opts: { fundBudgetMs?: number } = {}): Pro
     await yieldToServer();
   }
   applyRsRating(rows, (t) => tech.get(t)?.rsRaw);   // zzz984 — RS Rating ranked over the whole India snapshot
+  applyTraderSetups(rows, (t) => tech.get(t));   // zzz1020 — CANSLIM points + episodic pivot near the results date
   { const n = priceSourceNote(rows, 'IN'); if (n) notes.push(n); }   // zzz993 (MC-01)
   const sources = ['NSE company list', 'NSE daily price files', 'screener.in company pages', 'Yahoo daily prices', 'Yahoo company profile'];
   await dbQuery(`INSERT INTO screener_snapshot (market, built_at, rows, meta) VALUES ('IN', now(), $1, $2) ON CONFLICT (market) DO UPDATE SET built_at = now(), rows = EXCLUDED.rows, meta = EXCLUDED.meta`,

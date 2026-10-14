@@ -12,7 +12,7 @@ import { yahooProfileStats } from '@/lib/us-prices';
 import { FRAME_PLAN, framePeriods, usFigures, type FrameData, type FrameEntry } from './sec-assemble';
 import { refreshTech, type TechStored } from './tech-fetch';
 import { usSessionOpen } from './tech';
-import { rowPatternFields, rowScanFields, resolveUsQuote, priceSourceNote, rowTvFields, applyRsRating, ruleOf40 } from './pine';
+import { rowPatternFields, rowScanFields, resolveUsQuote, priceSourceNote, rowTvFields, applyRsRating, applyTraderSetups, ruleOf40 } from './pine';
 import { tvSectorOf } from './tv-sectors';
 import { rowsJson, type ScreenRow, type ScreenSnapshot } from './types';
 
@@ -298,6 +298,7 @@ export async function buildUsSnapshot(now = new Date()): Promise<{ ok: boolean; 
     await yieldToServer();
   }
   applyRsRating(rows, (t) => tech.get(t)?.rsRaw);   // zzz984 — RS Rating ranked over the whole US snapshot
+  applyTraderSetups(rows, (t) => tech.get(t));   // zzz1020 — CANSLIM points + episodic pivot near the results date
   { const n = priceSourceNote(rows, 'US'); if (n) notes.push(n); }   // zzz993 (MC-01)
   if (noSec) notes.push(`${noSec} listed companies have no quarterly SEC figures (foreign companies filing 20-F / 40-F, which file no quarterly figures in SEC's data; new listings) — their company-figure filters fail`);
   const snap: ScreenSnapshot = { market: 'US', builtAt: new Date().toISOString(), rows, notes, sources: ['Nasdaq stock list', 'SEC filings (XBRL frames)', 'Yahoo daily prices', 'Yahoo company profile'] };

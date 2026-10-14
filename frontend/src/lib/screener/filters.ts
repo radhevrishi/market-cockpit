@@ -16,7 +16,7 @@ type NonNum = 't' | 'n' | 'sec' | 'ind' | 'q' | 'approx' | 'tvSec' | 'exch' | 'n
   | 'pxSrc' | 'pxAt' | 'pxConflict' | 'live';
 export type NumKey = Exclude<keyof ScreenRow, NonNum>;
 export type FieldUnit = '%' | 'x' | 'money' | 'num' | 'price' | 'shares' | 'usd' | 'date';
-export type FieldGroup = 'Price & volume' | 'Moving averages' | 'Momentum' | 'Growth' | 'Margins & returns' | 'Valuation' | 'Balance sheet' | 'Company';
+export type FieldGroup = 'Price & volume' | 'Moving averages' | 'Momentum' | 'Trader setups' | 'Growth' | 'Margins & returns' | 'Valuation' | 'Balance sheet' | 'Company';
 /** approxNote = worked out differently from TradingView (shown with ≈); sparse = most companies never have this figure (not "still filling") */
 export interface FieldDef { key: NumKey; label: string; unit: FieldUnit; markets: ScreenMarket[]; group: FieldGroup; approxNote?: Partial<Record<ScreenMarket, string>>; sparse?: Partial<Record<ScreenMarket, string>> }
 
@@ -28,6 +28,12 @@ const FCFM_US = 'USA: FCF margin of the latest full year — (operating cash flo
 const R40_BLANK = '. Rule of 40 is left blank when revenue growth is above +300% or the FCF margin is outside −100%…+100% (a tiny sales base — the sum would mean nothing)';
 const FCFM_IN = 'India: latest full year, (cash from operations + cash from investing) ÷ sales — screener.in prints no capex line; filled as company pages are re-read';
 const TW_NOTE = 'Our own version that follows the published rules of TheWrap Stage Analysis (weekly 10 / 30 / 40-week averages, 13-week closing range, 10-point SATA score) — not the original script; readings can differ from TradingView';
+/** zzz1020 — a trader-setup field: both markets, group 'Trader setups', the rule as its approx note, optional sparse note. */
+const SETUP_NOTE = 'our own version of the published rules';
+function setupField(key: NumKey, label: string, unit: FieldUnit, rule: string, sparse?: string): FieldDef[] {
+  const note = `${rule} — ${SETUP_NOTE}`;
+  return [{ key, label, unit, markets: BOTH, group: 'Trader setups', approxNote: { US: note, IN: note }, ...(sparse ? { sparse: { US: sparse, IN: sparse } } : {}) }];
+}
 export const FIELDS: readonly FieldDef[] = [
   // price & volume
   { key: 'px', label: 'Price', unit: 'price', markets: BOTH, group: 'Price & volume' },
@@ -87,6 +93,37 @@ export const FIELDS: readonly FieldDef[] = [
   { key: 'sata', label: 'Stage Analysis (TheWrap method): SATA score 0–10', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: TW_NOTE, IN: TW_NOTE } },
   { key: 'mrs', label: 'Mansfield RS (weekly, vs index)', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: '((close ÷ S&P 500) ÷ its 52-week average − 1) × 100, weekly closes', IN: '((close ÷ Nifty 50) ÷ its 52-week average − 1) × 100, weekly closes' } },
   { key: 'twWk', label: 'Stage Analysis (TheWrap method): weeks in stage', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: TW_NOTE, IN: TW_NOTE } },
+  // zzz1020 — trader setups (lib/setups.ts): our own version of the published rules, from the completed daily sessions
+  ...setupField('wt3', '3 weeks tight: tight weekly closes (≥ 3)', 'num', 'O\'Neil: weekly closes in a row each within 1.5% of the week before, price above SMA 50', 'only companies with 3 or more tight weekly closes ending this week'),
+  ...setupField('wt3P', '3 weeks tight: pivot', 'price', 'the highest weekly high of the tight weeks', 'only companies with 3 weeks tight'),
+  ...setupField('udv', 'Up / down volume ratio (50 sessions)', 'x', 'volume on up days ÷ volume on down days over the last 50 sessions — above 1 means more volume on up days (accumulation)'),
+  ...setupField('x10A', 'Distance from EMA 10, in ATRs', 'num', '(close − EMA 10) ÷ ATR 14'),
+  ...setupField('x50A', 'Distance from SMA 50, in ATRs', 'num', '(close − SMA 50) ÷ ATR 14 — 7 or more is very extended'),
+  ...setupField('dvx', 'Darvas box: 1 inside · 2 broke out · 3 broke down', 'num', 'Darvas: a box from a 52-week high, top and bottom each confirmed by 3 bars; 2 / 3 = a close beyond the top / bottom in the last 5 sessions', 'only companies inside a confirmed box or just out of one'),
+  ...setupField('dvT', 'Darvas box top', 'price', 'the box top (a 52-week high confirmed by 3 lower highs)', 'only companies with a current Darvas box'),
+  ...setupField('dvB', 'Darvas box bottom', 'price', 'the lowest low after the top, confirmed by 3 bars that did not go under it', 'only companies with a current Darvas box'),
+  ...setupField('dc20D', 'Sessions since Donchian 20 breakout', 'num', 'Turtle traders: a close above the highest high of the 20 sessions before it', 'only breakouts in the last 10 sessions'),
+  ...setupField('dc55D', 'Sessions since Donchian 55 breakout', 'num', 'Turtle traders: a close above the highest high of the 55 sessions before it', 'only breakouts in the last 10 sessions'),
+  ...setupField('dc20W', 'Weeks since weekly Donchian 20 breakout', 'num', 'a weekly close above the highest high of the 20 weeks before it', 'only breakouts in the last 10 weeks'),
+  ...setupField('sqzN', 'Squeeze: bars in a row (0 = none)', 'num', 'John Carter (TTM Squeeze): Bollinger Bands (20, 2) inside the Keltner Channel (EMA 20 ± 1.5 × ATR 20)'),
+  ...setupField('sqzF', 'Sessions since the squeeze fired', 'num', 'the bands moved back outside the channel after a squeeze of at least 5 bars', 'only squeezes that fired in the last 10 sessions'),
+  ...setupField('sqzM', 'Squeeze momentum (1 up · −1 down)', 'num', 'sign of the squeeze momentum: 20-bar linear regression of close minus the midline (average of the 20-bar high-low middle and SMA 20)'),
+  ...setupField('nr7', 'Narrow range: 7 = NR7 · 4 = NR4 · 0', 'num', 'Toby Crabel: the last session\'s high-low range is the narrowest of the last 7 (or 4) sessions'),
+  ...setupField('ib', 'Inside bar (1 = yes)', 'num', 'the last session\'s high and low stay inside the session before'),
+  ...setupField('epD', 'Sessions since episodic pivot', 'num', 'Kullamägi / Bonde: gap up 10%+ (India 8%+, at most 60%) on 3× the 50-session average volume after a quiet stretch (≤ +30% over 60 sessions), close still at or above the gap-day low', 'only episodic pivots in the last 10 sessions'),
+  ...setupField('epG', 'Episodic pivot: gap %', 'num', 'the opening gap of that episodic pivot, %', 'only companies with an episodic pivot in the last 10 sessions'),
+  ...setupField('epE', 'Episodic pivot on results (1 = yes)', 'num', 'the episodic-pivot gap came within 3 days of the latest results date', 'only when both the gap and the results date are known (results dates: India)'),
+  ...setupField('gvD', 'Sessions since gap-up with volume', 'num', 'Oliver Kell: open at least 0.75 × ATR 40 above the previous close on 1.5× the 50-session average volume, close still at or above the gap-day low', 'only gaps in the last 10 sessions'),
+  ...setupField('mbD', 'Sessions since momentum burst', 'num', 'Pradeep Bonde: a close 4%+ above the previous close on higher volume, the session before not a burst', 'only bursts in the last 5 sessions'),
+  ...setupField('antD', 'Quiet day (anticipation, 1 = yes)', 'num', 'Pradeep Bonde: the last session is NR7 or its range is under half the 20-session average range', 'only companies whose last session was quiet'),
+  ...setupField('wpD', 'Sessions since wedge pop', 'num', 'Oliver Kell: a close above EMA 10 and EMA 20 after at least 5 closes below both, volume at or above the 50-session average', 'only wedge pops in the last 5 sessions'),
+  ...setupField('ecbD', 'Sessions since EMA crossback', 'num', 'Oliver Kell: EMA 10 above a rising EMA 20, the low dips to within 0.5% of EMA 20, close back above EMA 10', 'only crossbacks in the last 5 sessions'),
+  ...setupField('nhD', 'Sessions since new 52-week high close', 'num', 'a close above the highest high of the 252 sessions before it', 'only new highs in the last 10 sessions'),
+  ...setupField('athD', 'Sessions since all-time high close', 'num', 'a close above every earlier high in the price history we read (about 5 years)', 'only new highs in the last 10 sessions'),
+  ...setupField('hgD', 'Sessions since Holy Grail', 'num', 'Linda Raschke: ADX 14 ≥ 30 and rising with +DI above −DI (the session before the touch), the low touches EMA 20, the next session trades above that session\'s high', 'only signals in the last 5 sessions'),
+  ...setupField('sprD', 'Sessions since Wyckoff spring', 'num', 'Wyckoff: a dip of up to 5% under a support that held 20+ sessions (lowest low of 60), a close back above within 3 sessions on average-or-better volume', 'only springs in the last 10 sessions'),
+  ...setupField('td9', 'TD setup count (−9 … +9)', 'num', 'Tom DeMark: closes in a row above (+) or below (−) the close 4 sessions earlier, starting over after 9'),
+  ...setupField('csl', 'CANSLIM points (0–5)', 'num', 'O\'Neil: C quarterly EPS growth ≥ 25%, A TTM EPS growth ≥ 25%, N price ≥ 85% of the 52-week high, S up/down volume ≥ 1.2, L RS Rating ≥ 80 — M (the market\'s trend) is not counted'),
   // growth
   { key: 'r40', label: 'Revenue growth YoY + FCF margin (Rule of 40)', unit: '%', markets: BOTH, group: 'Growth', approxNote: { US: FCFM_US + R40_BLANK, IN: FCFM_IN + R40_BLANK } },
   { key: 'revQYoY', label: 'Revenue growth, quarterly YoY', unit: '%', markets: BOTH, group: 'Growth' },

@@ -39,6 +39,8 @@ export const MONTHLY_REVERSAL_IDS: PineQuery['ids'] = ['double_bottom', 'triple_
 /** zzz1007 — the Rule of 40 columns and the sentence every Rule of 40 screen starts with. */
 const R40_COLS: NumKey[] = ['r40', 'revQYoY', 'fcfmTTM'];
 const R40_NOTE = 'Rule of 40 ≥ 40: latest quarter revenue growth YoY + FCF margin (your TradingView script). Left blank — so the company does not pass — when growth is above +300% or the FCF margin is outside −100% to +100% (a tiny sales base).';
+/** zzz1020 — the sentence every trader-setup screen starts with. */
+const TS = 'Trader setup — our own version of the published rules, read from the completed daily sessions.';
 const ABOVE_200: Filter[] = [{ kind: 'cmp', key: 'px', op: 'above', other: 'sma200' }];
 const BELOW_200: Filter[] = [{ kind: 'cmp', key: 'px', op: 'below', other: 'sma200' }];
 
@@ -150,4 +152,41 @@ export const BUILT_IN_PINE_SCREENS: readonly PineScreen[] = [
   screen('rs80-stage2-forming', 'RS ≥ 80 + Stage 2 + pattern forming', {
     bias: 'U', stages: ['f'], minConf: 55, filters: [ge('rsR', 80), eq('stage', 2)], cols: ['rsR', 'stage', 'tt'],
   }, { group: 'momentum', note: 'Leaders (RS Rating 80+) in a stage 2 uptrend with a bullish pattern still forming.' }),
+
+  // ── zzz1020: trader setups (lib/setups.ts) — our own version of each trader's published rules, from the completed daily sessions.
+  //    Rules only: any chart pattern is still shown beside the company. ──────────────────────────────────────────────────
+  rules('ts-3wt-stage2', '3 weeks tight in Stage 2', [ge('wt3', 3), eq('stage', 2)], ['wt3', 'wt3P', 'stage', 'rsR'], 'setups',
+    `${TS} William O'Neil: 3 or more weekly closes in a row, each within 1.5% of the week before, price above SMA 50, in a Weinstein stage 2 uptrend. The pivot is the highest weekly high of the tight weeks.`),
+  rules('ts-darvas-breakout', 'Darvas box breakout', [eq('dvx', 2)], ['dvx', 'dvT', 'dvB', 'rvol'], 'setups',
+    `${TS} Nicolas Darvas: a box from a 52-week high (top confirmed by 3 lower highs, bottom by 3 bars that held), and a close above the top in the last 5 sessions.`),
+  rules('ts-donchian-20', 'Donchian 20-day breakout', [le('dc20D', 4)], ['dc20D', 'dc55D', 'rvol'], 'setups',
+    `${TS} Turtle traders: a close above the highest high of the 20 sessions before it, in the last 5 sessions.`),
+  rules('ts-donchian-55', 'Donchian 55-day breakout', [le('dc55D', 4)], ['dc55D', 'dc20D', 'rvol'], 'setups',
+    `${TS} Turtle traders: a close above the highest high of the 55 sessions before it, in the last 5 sessions.`),
+  rules('ts-squeeze-on', 'Squeeze on', [ge('sqzN', 5)], ['sqzN', 'sqzM'], 'setups',
+    `${TS} John Carter (TTM Squeeze): Bollinger Bands (20, 2) inside the Keltner Channel (EMA 20 ± 1.5 × ATR 20) for 5 sessions or more — very low volatility, a move often follows.`),
+  rules('ts-squeeze-fired-up', 'Squeeze fired up', [le('sqzF', 4), eq('sqzM', 1)], ['sqzF', 'sqzM'], 'setups',
+    `${TS} John Carter (TTM Squeeze): a squeeze of at least 5 sessions ended in the last 5 sessions and the squeeze momentum is up.`),
+  rules('ts-episodic-pivot', 'Episodic pivot', [le('epD', 9)], ['epD', 'epG', 'epE', 'rvol'], 'setups',
+    `${TS} Kristjan Kullamägi / Pradeep Bonde: in the last 10 sessions a gap up of 10% or more (India 8%, at most 60%) on at least 3× the 50-session average volume, after a quiet stretch (no more than +30% over the 60 sessions before); the close is still at or above the gap-day low.`),
+  rules('ts-gap-volume', 'Gap-up with volume', [le('gvD', 9)], ['gvD', 'rvol'], 'setups',
+    `${TS} Oliver Kell: in the last 10 sessions an open at least 0.75 × ATR 40 above the previous close on 1.5× the 50-session average volume; the close is still at or above the gap-day low.`),
+  rules('ts-burst-tt', 'Momentum burst + trend template', [le('mbD', 4), ...TREND_TEMPLATE], ['mbD', 'tt', 'rsR'], 'setups',
+    `${TS} Pradeep Bonde: a close 4%+ above the previous close on higher volume in the last 5 sessions (the session before not a burst), in a stock that passes all six trend-template rules.`),
+  rules('ts-wedge-pop', 'Wedge pop', [le('wpD', 4)], ['wpD', 'x10A', 'rvol'], 'setups',
+    `${TS} Oliver Kell: in the last 5 sessions a close above EMA 10 and EMA 20 after at least 5 closes below both, on volume at or above the 50-session average.`),
+  rules('ts-ema-crossback', 'EMA crossback in an uptrend', [le('ecbD', 4), { kind: 'cmp', key: 'px', op: 'above', other: 'sma50' }], ['ecbD', 'x10A', 'stage'], 'setups',
+    `${TS} Oliver Kell: EMA 10 above a rising EMA 20, the low dips to within 0.5% of EMA 20 and the close is back above EMA 10 (in the last 5 sessions), price above SMA 50.`),
+  rules('ts-new-high-rs80', 'New 52-week high + RS ≥ 80', [le('nhD', 4), ge('rsR', 80)], ['nhD', 'rsR', 'x50A'], 'setups',
+    `${TS} O'Neil / Minervini: a close above the highest high of the 252 sessions before it in the last 5 sessions, RS Rating 80 or more.`),
+  rules('ts-canslim-5', 'CANSLIM ≥ 5 points', [ge('csl', 5)], ['csl', 'rsR', 'udv'], 'setups',
+    `${TS} William O'Neil: C quarterly EPS growth ≥ 25%, A TTM EPS growth ≥ 25%, N price within 15% of the 52-week high, S up/down volume ≥ 1.2, L RS Rating ≥ 80 — all 5 points. M (the market's trend) is not counted; check the index yourself.`),
+  rules('ts-accumulation-rs80', 'Accumulation (up/down volume ≥ 1.3) + RS ≥ 80', [ge('udv', 1.3), ge('rsR', 80)], ['udv', 'rsR', 'stage'], 'setups',
+    `${TS} O'Neil: volume on up days at least 1.3 times the volume on down days over the last 50 sessions, RS Rating 80 or more.`),
+  rules('ts-holy-grail', 'Holy Grail', [le('hgD', 4)], ['hgD', 'x10A'], 'setups',
+    `${TS} Linda Raschke: in a strong uptrend (ADX 14 at least 30 and rising, +DI above −DI, on the session before the touch) a session's low touches EMA 20 and the next session trades above that session's high — in the last 5 sessions.`),
+  rules('ts-spring', 'Wyckoff spring', [le('sprD', 9)], ['sprD', 'rvol'], 'setups',
+    `${TS} Richard Wyckoff: in the last 10 sessions the low dipped up to 5% under a support that had held for 20+ sessions (the lowest low of 60) and a close came back above it within 3 sessions, on average-or-better volume.`),
+  rules('ts-extended', 'Extended from SMA 50 (≥ 7 ATRs) — take care', [ge('x50A', 7)], ['x50A', 'x10A', 'rsR'], 'setups',
+    'Our own version of the published rules, read from the completed daily sessions: the close is 7 or more ATR 14s above SMA 50 — very extended; a pullback or a pause is common from here. A list to watch, not an entry setup.'),
 ];

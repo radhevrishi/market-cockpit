@@ -127,6 +127,25 @@ export interface ScreenRow {
   sata?: number | null;      // SATA score 0–10
   mrs?: number | null;       // Mansfield RS vs S&P 500 (US) / Nifty 50 (India)
   twWk?: number | null;      // weeks in the current stage
+  // ── zzz1020: trader setups (lib/setups.ts — our own version of the published rules), from the completed daily sessions. Present
+  //    only when the company's setups were read with the current SETUP_VERSION (pine.ts); windowed fields are null when nothing fired.
+  wt3?: number | null;       // 3 weeks tight: weekly closes in the tight run (≥ 3, price above SMA 50)
+  wt3P?: number | null;      // its pivot (highest weekly high of the run)
+  udv?: number | null;       // up / down volume ratio, 50 sessions
+  x10A?: number | null; x50A?: number | null;   // (close − EMA 10) / (close − SMA 50), in ATR 14s
+  dvx?: number | null;       // Darvas: 1 inside a box, 2 top broken (≤ 5 sessions), 3 bottom broken (≤ 5 sessions)
+  dvT?: number | null; dvB?: number | null;     // Darvas box top / bottom
+  dc20D?: number | null; dc55D?: number | null; // sessions since a close above the prior 20 / 55-session high (within 10)
+  dc20W?: number | null;     // weeks since a weekly close above the prior 20-week high (within 10)
+  sqzN?: number | null; sqzF?: number | null; sqzM?: number | null;   // squeeze bars / sessions since it fired / momentum sign
+  nr7?: number | null;       // 7 / 4 / 0 — narrowest range of 7 / 4 sessions
+  ib?: number | null;        // 1 = inside bar
+  epD?: number | null; epG?: number | null;     // episodic pivot: sessions since (within 10), gap %
+  epE?: number | null;       // 1 = that gap came within 3 days of the results date (India; when both dates are known)
+  gvD?: number | null; mbD?: number | null; antD?: number | null; wpD?: number | null; ecbD?: number | null;
+  nhD?: number | null; athD?: number | null; hgD?: number | null; sprD?: number | null;
+  td9?: number | null;       // TD setup count −9 … +9
+  csl?: number | null;       // CANSLIM points 0–5 (C, A, N, S, L; M not counted)
 }
 
 export interface ScreenSnapshot {
