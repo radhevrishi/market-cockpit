@@ -520,8 +520,8 @@ export default function AiGainersPage() {
       {data && !sweeping && missing === 0 && researched && (
         <button type="button" onClick={() => sweep(market, data.scanned || [], genRef.current, true)}
           title="Re-researches today's names from scratch with the current rules. Filings already model-read come from the cache; a filing the current rules newly choose may be model-read (within the daily ceiling). Stored findings under older rules are already re-scored automatically, without AI, when the page opens."
-          style={{ fontSize: 12, fontWeight: 700, padding: '4px 11px', borderRadius: 999, border: `1px solid ${C.border}`, background: 'transparent', color: C.dim, cursor: 'pointer' }}>
-          ↻ Re-score today with current rules
+          style={{ fontSize: 12, fontWeight: 800, padding: '4px 12px', borderRadius: 999, border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan, cursor: 'pointer' }}>
+          🤖 Research again with AI · {covShown?.total ?? bcov?.total ?? ''} names (uses AI)
         </button>
       )}
       {sweeping && (
@@ -964,7 +964,7 @@ function ResearchLevel({ research, sweeping, market, onResume, onRescore, onRetr
         {research.date && <span style={{ color: C.faint }}> · session {research.date}</span>}
         {sweeping ? <span style={{ color: C.cyan }}> · researching…</span>
           : pendingOnBoard > 0 ? <button onClick={onResume} title="Reads the filings around each move with the AI model. Runs only when you click." style={{ marginLeft: 8, fontSize: 12, fontWeight: 700, padding: '2px 9px', borderRadius: 999, border: `1px solid ${C.cyan}`, background: 'transparent', color: C.cyan, cursor: 'pointer' }}>▶ Research · {pendingOnBoard} not yet researched (uses AI)</button>
-            : onRescore && cov.total > 0 ? <button onClick={onRescore} title="Re-researches today's names from scratch with the current rules. Filings already model-read come from the cache; a filing the current rules newly choose may be model-read (within the daily ceiling). Stored findings under older rules are already re-scored automatically, without AI, when the page opens." style={{ marginLeft: 8, fontSize: 12, fontWeight: 700, padding: '2px 9px', borderRadius: 999, border: `1px solid ${C.border}`, background: 'transparent', color: C.dim, cursor: 'pointer' }}>↻ Re-score today with current rules</button> : null}
+            : onRescore && cov.total > 0 ? <button onClick={onRescore} title="Re-researches today's names from scratch with the current rules. Filings already model-read come from the cache; a filing the current rules newly choose may be model-read (within the daily ceiling). Stored findings under older rules are already re-scored automatically, without AI, when the page opens." style={{ marginLeft: 8, fontSize: 12, fontWeight: 700, padding: '2px 9px', borderRadius: 999, border: `1px solid ${C.border}`, background: 'transparent', color: C.dim, cursor: 'pointer' }}>🤖 Research again with AI (uses AI)</button> : null}
         {/* The partition: every processed name in exactly one group. */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', alignItems: 'baseline', marginTop: 6, padding: '8px 10px', border: `1px solid ${C.border}`, borderRadius: 8, background: C.bg }}>
           <Tier n={processed} label={`of ${all.length} processed →`} />
