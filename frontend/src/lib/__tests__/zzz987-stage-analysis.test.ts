@@ -15,16 +15,16 @@ import type { ScreenRow } from '../screener/types';
 const MON0 = Date.UTC(2020, 0, 6);   // a Monday
 const wkIso = (i: number) => new Date(MON0 + i * 7 * 86_400_000).toISOString().slice(0, 10);
 
-/** base 60 wks → advance 30 → chop 20 → dip 3 → decline 25 → base 12 → lift 4 */
+/** base 60 wks → advance 30 → chop 40 (the top) → dip 3 → decline 25 → base 30 (zzz1023: Weinstein's rules need a top and a
+ *  base long enough for the 30-week average to flatten) */
 function cyclePath(): number[] {
   const path: number[] = [];
   for (let i = 0; i < 60; i++) path.push(i % 2 ? 101 : 99);
   let p = 100; for (let i = 0; i < 30; i++) { p *= 1.02; path.push(p); }
-  for (let i = 0; i < 20; i++) path.push(i % 2 ? 182 : 168);
+  for (let i = 0; i < 40; i++) path.push(i % 2 ? 182 : 168);
   for (let i = 0; i < 3; i++) path.push(171);
   p = 171; for (let i = 0; i < 25; i++) { p *= 0.96; path.push(p); }
-  for (let i = 0; i < 12; i++) path.push(i % 2 ? 66 : 64);
-  for (let i = 0; i < 4; i++) path.push(72 + i);
+  for (let i = 0; i < 30; i++) path.push(i % 2 ? 66 : 64);
   return path;
 }
 const toWeeks = (path: number[]): WeekBar[] => path.map((c, i) => ({ wk: wkIso(i), o: c, h: c * 1.01, l: c * 0.99, c, v: i > 0 && c > path[i - 1] ? 2e6 : 1e6 }));
@@ -54,41 +54,39 @@ test('zzz987 weekly resample: ISO weeks, first open / extremes / last close / su
   assert.deepEqual(t, [{ wk: '2026-10-12', o: 1, h: 3, l: 1, c: 3, v: 10 }]);
 });
 
-test('zzz987 state machine: unknown → Stage 2 → Stage 3 → Stage 4 → Stage 1, each holding until the next fires', () => {
+test('zzz987 / zzz1023 state machine: base (1) → Stage 2 → Stage 3 → Stage 4 → Stage 1, each holding until a confirmed change', () => {
   const path = cyclePath();
   const r = stageAnalysis(toWeeks(path), flatBench(path.length));
   const st = r.weeks.map((w) => w.stage);
-  // no reading before the 40-week average exists; no stage during the flat base (no breakout yet)
-  assert.equal(r.weeks[38].sata, null);
-  assert.ok(st.slice(0, 60).every((s) => s == null));
-  // the first close above the base: Stage 2 with SATA ≥ 6
+  // zzz1023 — the stage needs the 30-week average and its 5-week slope (34 weeks); SATA still needs the 40-week average
+  assert.equal(st[32], null); assert.equal(r.weeks[38].sata, null);
+  assert.ok(st.slice(34, 60).every((s) => s === 1), 'the flat base reads Stage 1');
+  // the first close above the base: Stage 2 (confirmed by the next close, dated to the breakout week)
   assert.equal(st[60], 2); assert.ok(r.weeks[60].sata! >= 6); assert.equal(r.weeks[60].weeks, 1);
-  assert.ok(st.slice(60, 106).every((s) => s === 2), 'Stage 2 persists through the advance and the chop');
+  assert.equal(r.weeks[60].level, 101, 'the base high broken');
+  assert.ok(st.slice(60, 106).every((s) => s === 2), 'Stage 2 persists through the advance and the start of the chop');
   assert.equal(r.weeks[89].weeks, 30);
-  // topping: below the 30-week but above a rising 40-week, inside the range
+  // topping: the 30-week average stops rising and price swings around it
   const s3 = st.indexOf(3);
-  assert.ok(s3 > 89 && s3 < 115, `stage 3 at ${s3}`);
-  const w3 = r.weeks[s3];
-  assert.ok(w3.c < w3.ma30! && w3.c > w3.ma40! && w3.c >= w3.lo13! && w3.c <= w3.hi13!);
-  // breakdown: Stage 4 with SATA ≤ 3
+  assert.ok(s3 > 106 && s3 < 133, `stage 3 at ${s3}`);
+  assert.notEqual(r.weeks[s3].slope, 'rising');
+  // breakdown: Stage 4 below the range and the average
   const s4 = st.indexOf(4);
-  assert.ok(s4 > s3); assert.ok(r.weeks[s4].sata! <= 3); assert.ok(r.weeks[s4].c < r.weeks[s4].lo13!);
-  // the lift out of the post-decline base: Stage 1 (40-week still falling)
-  const s1 = st.indexOf(1);
-  assert.ok(s1 > s4, `stage 1 at ${s1}`);
-  const w1 = r.weeks[s1];
-  assert.ok(w1.c > w1.ma30! && w1.c < w1.ma40!);
+  assert.ok(s4 > s3); assert.ok(r.weeks[s4].c < r.weeks[s4].lo13!); assert.ok(r.weeks[s4].c < r.weeks[s4].ma30!);
+  // the post-decline base: Stage 1 again
+  const s1 = st.lastIndexOf(4) + 1;
+  assert.equal(st[s1], 1); assert.ok(s1 > 160, `stage 1 at ${s1}`);
   assert.equal(r.last!.stage, 1); assert.equal(r.last!.weeks, path.length - s1);
+  assert.deepEqual(r.changes!.map((c) => c.to), [1, 2, 3, 4, 1]);
   // SATA is the count of its ten parts
   for (const w of r.weeks) if (w.sata != null) assert.equal(w.sata, w.comps.filter(Boolean).length);
   assert.equal(SATA_LABELS.length, 10);
 });
 
-test('zzz987 Stage 1 needs a Stage 4 first; Stage 3 needs a Stage 2 first', () => {
-  // flat for 60 weeks then a gentle drift up that never breaks the range high with conviction → no Stage 1 out of nowhere
+test('zzz987 / zzz1023 a flat series is a base (Stage 1) and never reads Stage 3 without a Stage 2 first', () => {
   const path = Array.from({ length: 70 }, (_, i) => (i % 2 ? 101 : 99));
   const r = stageAnalysis(toWeeks(path), flatBench(70));
-  assert.ok(r.weeks.every((w) => w.stage == null || w.stage === 2 || w.stage === 4));
+  assert.ok(r.weeks.every((w) => w.stage == null || w.stage === 1));
 });
 
 test('zzz987 Stage 4 directly from a top (no Stage 3 needed)', () => {
@@ -130,8 +128,8 @@ test('zzz987 from daily bars: resample + reading; benchmark weekly closes', () =
   const last = stageFromDaily(daily, bench)!;
   assert.equal(last.stage, 1);
   assert.equal(stageAnalysis(weeklyBars(daily), bench).weeks.length, path.length);
-  assert.match(stageHeadline(last), /^Stage 1 · SATA \d+\/10 · Mansfield RS [+-]?\d+\.\d · \d+ weeks?$/);
-  assert.equal(stageHeadline({ ...last, stage: 2, sata: 7, mrs: 12.44, weeks: 6 }), 'Stage 2 · SATA 7/10 · Mansfield RS +12.4 · 6 weeks');
+  assert.match(stageHeadline(last), /^Stage 1 · Basing · since \d+ \w{3} \d{4} \(\d+ weeks?\) · 30-wk MA (rising|flat|falling) · RS [+−]?\d+ · price /);
+  assert.equal(stageHeadline({ ...last, stage: 2, sub: 'A', since: '2026-08-10', slope: 'rising', sata: 7, mrs: 12.44, vsMa: 8.2, weeks: 9, pending: null }), 'Stage 2 · Advancing · since 10 Aug 2026 (9 weeks) · 30-wk MA rising · RS +12 · price 8% above MA');
   assert.match(stageHeadline(null), /not enough weekly history/);
   assert.match(STAGE_TOOLTIP, /TheWrap/); assert.match(STAGE_TOOLTIP, /Not the original script/);
 });
@@ -199,8 +197,9 @@ test('zzz987 chart indicator: on/off in the layout, index per market, per-candle
   assert.equal(pts[60 * 5][1], 2, 'the breakout week is green on every day of it');
   assert.equal(stageFromCharts(timed, null).last!.mrs, null);
   const b = stageBanner('ready', r.last, true);
-  assert.match(b.text, /^Stage 1 · SATA/); assert.equal(b.color, STAGE_COLOR[1]);
-  assert.match(stageBanner('ready', r.last, false).text, /no Mansfield RS/);
+  assert.match(b.text, /^Stage 1 · Basing/); assert.equal(b.color, STAGE_COLOR[1]);
+  assert.match(stageBanner('ready', r.last, false).text, /index not loaded \(no RS\)/);
   assert.match(stageBanner('loading', null, false).text, /reading/);
-  assert.equal(STAGE_COLOR[2], '#089981'); assert.equal(STAGE_COLOR[4], '#F23645'); assert.equal(STAGE_COLOR[1], STAGE_COLOR[3]);
+  // zzz1023 — four calm, distinct stage colours (1 blue-grey, 2 green, 3 amber, 4 red)
+  assert.equal(new Set([1, 2, 3, 4].map((k) => STAGE_COLOR[k as 1])).size, 4);
 });

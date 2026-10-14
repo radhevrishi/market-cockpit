@@ -29,7 +29,7 @@ const SETUPS = BUILT_IN_PINE_SCREENS.filter((s) => s.group === 'setups');
 
 test('zzz1021 versions: PATTERN_SCAN_VERSION stays 10, SETUP_VERSION 1; row keys are setup figure keys (epT kept on the entry)', () => {
   assert.equal(PATTERN_SCAN_VERSION, 10);
-  assert.equal(SETUP_VERSION, 1);
+  assert.equal(SETUP_VERSION, 2);
   for (const k of SETUP_ROW_KEYS) assert.ok((SETUP_FIGURE_KEYS as readonly string[]).includes(k), k);
   assert.deepEqual(SETUP_FIGURE_KEYS.filter((k) => !(SETUP_ROW_KEYS as readonly string[]).includes(k)), ['epT']);
 });
