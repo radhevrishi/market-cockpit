@@ -27,17 +27,23 @@ const LONG_ENOUGH_M = new Set(['10y', 'max']);
 
 // ── analysis timeframe (per viewer, like the price basis; never part of the saved drawings) ─────────────────────
 export const PATTERN_TF_KEY = 'mc:chart-pattern-tf:v1';
-export interface PatternTfPref { tf: PatternTimeframe; provisional: boolean }
-export const DEFAULT_PATTERN_TF: PatternTfPref = { tf: 'D', provisional: false };
-/** The stored choice; anything unreadable → daily, completed periods only. */
+/** zzz1015 — 'A' = Auto: daily, weekly and monthly are all read and the most relevant current structure leads. */
+export type PatternAnalysisTf = PatternTimeframe | 'A';
+export interface PatternTfPref { tf: PatternAnalysisTf; provisional: boolean }
+/** zzz1015 — the version written with every choice; a stored choice without it (written before Auto existed) becomes Auto,
+ *  so an old 'M' / 'W' set once no longer makes every chart analyse monthly / weekly. */
+export const PATTERN_TF_PREF_VERSION = 2;
+export const DEFAULT_PATTERN_TF: PatternTfPref = { tf: 'A', provisional: false };
+/** The stored choice; anything unreadable, or written before zzz1015 → Auto, completed periods only. */
 export function parsePatternTfPref(raw: string | null | undefined): PatternTfPref {
   try {
     const j = JSON.parse(String(raw ?? ''));
-    const tf: PatternTimeframe = j?.tf === 'W' || j?.tf === 'M' ? j.tf : 'D';
+    if (j?.v !== PATTERN_TF_PREF_VERSION) return DEFAULT_PATTERN_TF;
+    const tf: PatternAnalysisTf = j?.tf === 'D' || j?.tf === 'W' || j?.tf === 'M' ? j.tf : 'A';
     return { tf, provisional: tf !== 'D' && j?.provisional === true };
   } catch { return DEFAULT_PATTERN_TF; }
 }
-export const serializePatternTfPref = (p: PatternTfPref) => JSON.stringify({ tf: p.tf, provisional: p.tf !== 'D' && p.provisional });
+export const serializePatternTfPref = (p: PatternTfPref) => JSON.stringify({ v: PATTERN_TF_PREF_VERSION, tf: p.tf, provisional: p.tf !== 'D' && p.provisional });
 /** zzz1008 — the Pine Screener's chart hand-off: ?atf=<D|W|M>&pat=<pattern id>&pf=<YYYY-MM-DD>&pt=<YYYY-MM-DD>. The chart opens the
  *  pattern indicator on the analysis timeframe `atf` (for this visit — the viewer's saved choice is not changed), selects `pat` and
  *  fits the window pf → pt (or the hit's own span) with room for the prior trend before it. null = no hand-off. */
@@ -435,7 +441,7 @@ const shortDate = (t: number | null | undefined) => {
   if (t == null || !Number.isFinite(t)) return '';
   return new Date(t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 };
-const TF_TITLE: Record<PatternTimeframe, string> = { D: 'Daily', W: 'Weekly', M: 'Monthly' };
+export const TF_TITLE: Record<PatternTimeframe, string> = { D: 'Daily', W: 'Weekly', M: 'Monthly' };
 /** The condition words of one hit, e.g. "forming · pivot ₹512.40, 3% below" / "broke out 2 days ago, back below the pivot". */
 export function conditionWords(h: PatternHit, cur: string): string {
   const bull = h.bias === 'bullish';
@@ -453,7 +459,7 @@ export function conditionWords(h: PatternHit, cur: string): string {
  * zzz1009 — the banner of the view: "Pattern · Timeframe · condition · shape score · analysis date", or the state in words
  * (pending / no data / too little history / error / no qualifying pattern — with the weaker or expired count).
  */
-export function viewBanner(v: PatternView, cur: string, tf: PatternTimeframe = 'D', opts: { error?: string; analysisT?: number | null } = {}): Banner {
+export function viewBanner(v: PatternView, cur: string, tf: PatternTimeframe = 'D', opts: { error?: string; analysisT?: number | null; /** zzz1015 — further current structures to count (all timeframes in Auto) */ more?: number } = {}): Banner {
   const w = TF_WORD[tf];
   if (v.state === 'pending') return { text: `📐 Looking for chart patterns on the ${w} bars…`, tone: 'none' };
   if (v.state === 'missing') return { text: '📐 No price data — patterns unavailable', tone: 'none' };
@@ -470,7 +476,8 @@ export function viewBanner(v: PatternView, cur: string, tf: PatternTimeframe = '
   const parts = [top.label, TF_TITLE[top.timeframe ?? tf], conditionWords(top, cur), `shape ${Math.round(top.confidence * 100)}/100`];
   if (asOf) parts.push(asOf);
   let text = `📐 ${parts.join(' · ')}`;
-  if (v.active.length > 1) text += ` · +${v.active.length - 1} more`;
+  const more = opts.more ?? v.active.length - 1;
+  if (more > 0) text += ` · +${more} more`;
   if (opposingActive(v.active)) text += ' · opposing structure present';
   if (top.volumeOk === false) text += ' · volume not confirmed';
   return { text, tone: top.stage === 'failed' ? 'failed' : top.bias };
@@ -530,3 +537,100 @@ export function pointPath(marks: PatternPointMark[], color: string): PatternOver
   }
   return out;
 }
+
+// ── zzz1015 — Auto: daily, weekly and monthly read together; the headline is the most relevant current structure ──
+// The owner's complaint: an analysis choice of 'M' set once made EVERY chart analyse monthly bars, where patterns are rare, so most
+// charts said "No qualifying monthly pattern" while the daily bars showed e.g. "Falling wedge · Daily · broke out 7 days ago".
+// Auto (the default) reads all three; an explicit D / W / M still leads with its own timeframe, but never says a bare "no pattern"
+// while another timeframe has a current one.
+export const ANALYSIS_TFS: PatternTimeframe[] = ['D', 'W', 'M'];
+/** Two headline candidates whose ranks differ by less than this are a tie: the timeframe on screen wins, then D, W, M. */
+export const TF_TIE_EPS = 0.05;
+/** The tier of a CURRENT structure in patternView's order: 1 near the level / breakout holding, 2 forming further away,
+ *  3 breakout back on the near side, 4 a recent failure. */
+export function currentTier(h: PatternHit): 1 | 2 | 3 | 4 {
+  if (h.stage === 'failed') return 4;
+  if (h.stage === 'breakout') return backThrough(h) ? 3 : 1;
+  return nearLevel(h) ? 1 : 2;
+}
+/** How relevant a timeframe's headline is: lower group first (tiers 1–2 together, then 3, then 4), then the higher rank. */
+export function viewRelevance(v: PatternView | null | undefined): { group: number; rank: number } | null {
+  if (!v || v.state !== 'qualifying' || !v.active.length) return null;
+  const top = v.active[0], t = currentTier(top);
+  return { group: t <= 2 ? 0 : t, rank: top.confidence + (t === 1 ? ACTIVE_NEAR_BONUS : 0) };
+}
+export type TfViews = Partial<Record<PatternTimeframe, PatternView>>;
+/** The timeframe whose headline leads: current structure first (by tier group, then rank); within TF_TIE_EPS of the best, the
+ *  timeframe on screen, then D, W, M. null when no timeframe has a current structure. */
+export function pickHeadlineTf(views: TfViews, displayTf?: string | null, among: ReadonlyArray<PatternTimeframe> = ANALYSIS_TFS): PatternTimeframe | null {
+  const c = among.map((tf) => ({ tf, r: viewRelevance(views[tf]) })).filter((x): x is { tf: PatternTimeframe; r: { group: number; rank: number } } => !!x.r);
+  if (!c.length) return null;
+  const g = Math.min(...c.map((x) => x.r.group));
+  const inG = c.filter((x) => x.r.group === g);
+  const best = Math.max(...inG.map((x) => x.r.rank));
+  const tied = inG.filter((x) => x.r.rank >= best - TF_TIE_EPS).map((x) => x.tf);
+  const pref = [...(displayTf && (ANALYSIS_TFS as string[]).includes(displayTf) ? [displayTf as PatternTimeframe] : []), ...ANALYSIS_TFS];
+  return pref.find((tf) => tied.includes(tf)) ?? tied[0];
+}
+/** The first words of a hit's condition, e.g. "broke out 7 days ago" / "forming". */
+const condHead = (h: PatternHit, cur: string) => conditionWords(h, cur).split(' · ')[0];
+/** A one-line pointer to another timeframe's current headline: "Daily: Falling wedge broke out 7 days ago (shape 62)". */
+export function crossTfWords(v: PatternView, tf: PatternTimeframe, cur: string): string {
+  const top = v.active[0];
+  return `${TF_TITLE[tf]}: ${top.label} ${condHead(top, cur)} (shape ${Math.round(top.confidence * 100)})`;
+}
+export interface MultiBanner extends Banner {
+  /** the timeframe whose structure the banner leads with (Auto: the most relevant; explicit: the chosen one) */
+  headTf: PatternTimeframe;
+  /** nothing current anywhere but weaker candidates exist: offer "show weaker" in one click */
+  weakerHint: number;
+}
+export interface MultiBannerOpts {
+  displayTf?: string | null;
+  analysisT?: Partial<Record<PatternTimeframe, number | null>>;
+  errors?: Partial<Record<PatternTimeframe, string | undefined>>;
+}
+/** The time of a listed structure's break (or its end), for "the most recent" across timeframes. */
+const lastT = (h: PatternHit) => h.breakT ?? h.endT;
+/**
+ * zzz1015 — the banner over all analysed timeframes.
+ *  • explicit D / W / M: that timeframe's banner (zzz1009 words); when it has no current structure and another timeframe has one:
+ *    "No monthly pattern · Daily: Falling wedge broke out 7 days ago (shape 62)" — never a bare "no pattern".
+ *  • Auto: the headline of the most relevant timeframe (pickHeadlineTf), "+N more" counting every timeframe; with nothing current
+ *    anywhere: "No textbook pattern on D/W/M · last: … · N weaker candidates".
+ */
+export function multiBanner(views: TfViews, mode: PatternAnalysisTf, cur: string, o: MultiBannerOpts = {}): MultiBanner {
+  const at = o.analysisT || {}, er = o.errors || {};
+  if (mode !== 'A') {
+    const v = views[mode] ?? patternView({ hits: [], status: 'loading' });
+    const base = viewBanner(v, cur, mode, { error: er[mode], analysisT: at[mode] });
+    const nothing = v.state === 'none' || v.state === 'weaker-only' || v.state === 'expired-only' || v.state === 'insufficient';
+    const other = nothing ? pickHeadlineTf(views, o.displayTf, ANALYSIS_TFS.filter((t) => t !== mode)) : null;
+    if (other) {
+      const head = v.state === 'insufficient' ? base.text : `📐 No ${TF_WORD[mode]} pattern`;
+      return { text: `${head} · ${crossTfWords(views[other]!, other, cur)}`, tone: 'none', headTf: mode, weakerHint: 0 };
+    }
+    return { ...base, headTf: mode, weakerHint: v.state === 'weaker-only' ? v.weaker.length : 0 };
+  }
+  const d = views.D;
+  if (!d || d.state === 'pending') return { text: '📐 Looking for chart patterns on the daily, weekly and monthly bars…', tone: 'none', headTf: 'D', weakerHint: 0 };
+  if (d.state === 'missing' || d.state === 'error') return { ...viewBanner(d, cur, 'D', { error: er.D }), headTf: 'D', weakerHint: 0 };
+  const h = pickHeadlineTf(views, o.displayTf);
+  if (h) {
+    const more = ANALYSIS_TFS.reduce((n, t) => n + (views[t]?.active.length ?? 0), 0) - 1;
+    return { ...viewBanner(views[h]!, cur, h, { analysisT: at[h], more }), headTf: h, weakerHint: 0 };
+  }
+  const pending = ANALYSIS_TFS.find((t) => !views[t] || views[t]!.state === 'pending');
+  if (pending) return { text: `📐 Looking for chart patterns on the ${TF_WORD[pending]} bars…`, tone: 'none', headTf: 'D', weakerHint: 0 };
+  const read = ANALYSIS_TFS.filter((t) => views[t] && views[t]!.state !== 'insufficient' && views[t]!.state !== 'error' && views[t]!.state !== 'missing');
+  if (!read.length) return { ...viewBanner(d, cur, 'D', { error: er.D }), headTf: 'D', weakerHint: 0 };
+  const asOf = shortDate(at.D ?? null);
+  const weaker = read.reduce((n, t) => n + views[t]!.weaker.length, 0);
+  const exp = read.flatMap((t) => views[t]!.expired.map((x) => ({ ...x, tf: t }))).sort((a, b) => lastT(b.hit) - lastT(a.hit))[0];
+  let text = `📐 No textbook pattern on ${read.join('/')}${asOf ? ` · ${asOf}` : ''}`;
+  if (exp) text += ` · last: ${exp.hit.label} (${TF_TITLE[exp.tf]}), ${exp.why}`;
+  if (weaker) text += ` · ${weaker} weaker candidate${weaker === 1 ? '' : 's'}`;
+  return { text, tone: 'none', headTf: 'D', weakerHint: weaker };
+}
+/** The row identity of a hit in the grouped list (the same pattern can be found on several timeframes). */
+export const rowKeyOf = (h: Pick<PatternHit, 'id' | 'timeframe'>) => `${h.timeframe ?? 'D'}:${h.id}`;

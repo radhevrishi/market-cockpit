@@ -234,8 +234,10 @@ test('zzz992 stage windows on W / M: breakout = this or the previous candle; fai
 
 // ───────── chart view pieces ─────────
 test('zzz992 chart: analysis choice stored per viewer, keyed results, longer history for monthly, banner words, fit plan', () => {
-  assert.deepEqual(parsePatternTfPref(null), { tf: 'D', provisional: false });
-  assert.deepEqual(parsePatternTfPref('garbage'), { tf: 'D', provisional: false });
+  // zzz1015 — the default is Auto (D / W / M together); a choice stored before Auto existed reads as Auto
+  assert.deepEqual(parsePatternTfPref(null), { tf: 'A', provisional: false });
+  assert.deepEqual(parsePatternTfPref('garbage'), { tf: 'A', provisional: false });
+  assert.deepEqual(parsePatternTfPref(JSON.stringify({ tf: 'M', provisional: false })), { tf: 'A', provisional: false });
   assert.deepEqual(parsePatternTfPref(serializePatternTfPref({ tf: 'W', provisional: true })), { tf: 'W', provisional: true });
   assert.deepEqual(parsePatternTfPref(serializePatternTfPref({ tf: 'D', provisional: true })), { tf: 'D', provisional: false });
   assert.equal(analysisKey('US::ABC:price', 'D', false), 'US::ABC:price', 'daily keeps the old identity');
@@ -276,7 +278,7 @@ test('zzz992 mounted hook: weekly analysis from the 5y daily bars on screen; swi
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   const root = createRoot(document.getElementById('root')!);
   try {
-    localStorage.setItem('mc:chart-pattern-tf:v1', JSON.stringify({ tf: 'W', provisional: false }));
+    localStorage.setItem('mc:chart-pattern-tf:v1', serializePatternTfPref({ tf: 'W', provisional: false }));   // zzz1015 — an explicit choice made now
     const { usePatternIndicator } = await import('../../components/charts/PatternIndicator');
     let out: any = null;
     const Probe = (props: any) => { const p = usePatternIndicator(props); React.useEffect(() => { out = p; }); return null; };

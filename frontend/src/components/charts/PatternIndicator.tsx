@@ -6,15 +6,19 @@
 // fetched (completed periods only unless "incl. current" is ticked — then the last candle is provisional). The choice is
 // remembered per viewer (PATTERN_TF_KEY), never in the saved drawings. "Fit" zooms the chart to a pattern; "Restore view"
 // goes back to the view before the first fit.
+// zzz1015 — Auto (the default): daily, weekly and monthly are read together and the most relevant current structure leads; an
+// explicit D / W / M still leads with its own timeframe but points to another timeframe's current structure instead of a bare
+// "no pattern". The list is grouped by timeframe; the 10-year history for monthly is one shared request (lib/chart-load-cache).
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { Chart } from 'klinecharts';
-import { analyzeDailyAs, analyzePatterns, PATTERN_META, PATTERN_IDS, patternApplies, type PatternHit, type PatternId, type PatternTimeframe } from '@/lib/chart-patterns';
+import { analyzeDailyAs, analyzePatterns, PATTERN_META, PATTERN_IDS, PATTERN_MIN_HISTORY, patternApplies, type PatternHit, type PatternTimeframe } from '@/lib/chart-patterns';
 import { cacheChart, freshChart, type CachedChart } from '@/lib/chart-refresh';
+import { chartFetch } from '@/lib/chart-load-cache';
 import type { Bar } from '@/lib/chart-math';
 import {
-  EMPTY_PATTERNS, FAILED_COLOR, PATTERN_GROUP, PATTERN_OVERLAY, PATTERN_TF_KEY, TF_WORD, analysisKey, bannerColors, bannerOf, barsRevision, distWords, fitPlan, hitColor, hitsFor, hitsToDraw, lengthWords,
-  overlayFit, parsePatternTfPref, patternDataPlan, patternKey, priceDecimals, serializePatternTfPref, shapeScoreWords, shownStatus, stageWords, togglePicked, handoffSpan, type PatternState, type PatternTfPref, type PatternHandoff,
-  patternView, viewBanner, conditionWords, evidenceWords, pointWords, pointMarks, pointPath, structureRange, PATTERN_POINT, type PatternView, type PatternViewRow,
+  FAILED_COLOR, PATTERN_GROUP, PATTERN_OVERLAY, PATTERN_TF_KEY, TF_WORD, TF_TITLE, ANALYSIS_TFS, analysisKey, bannerColors, barsRevision, distWords, fitPlan, hitColor, lengthWords,
+  overlayFit, parsePatternTfPref, patternDataPlan, patternKey, priceDecimals, serializePatternTfPref, shapeScoreWords, shownStatus, stageWords, handoffSpan, type PatternState, type PatternTfPref, type PatternHandoff,
+  patternView, viewBanner, multiBanner, rowKeyOf, conditionWords, evidenceWords, pointWords, pointMarks, pointPath, structureRange, PATTERN_POINT, type PatternView, type PatternViewRow, type PatternAnalysisTf, type TfViews,
 } from './pattern-view';
 
 interface ShownResponse {
@@ -48,113 +52,193 @@ export interface PatternIndicatorArgs {
   chart?: { loading: boolean; error: string | null };
   /** zzz1008 — the Pine Screener's hand-off (?atf / pat / pf / pt): analysis timeframe for this visit, the pattern to select and fit */
   handoff?: PatternHandoff | null;
+  /** zzz1015 — the candles on screen (D / W / M): wins a tie between timeframes in Auto */
+  displayTf?: string;
+}
+
+/** zzz1015 — the per-timeframe results of one symbol (each keyed by analysisKey, so a weekly result never shows as daily). */
+interface PatternStates { base: string; byKey: Record<string, PatternState> }
+const NO_STATES: PatternStates = { base: '', byKey: {} };
+const fromResponse = (j: ShownResponse): Bar[] => { const b = j.bars!; return b.t.map((t, i) => ({ t, o: b.o[i], h: b.h[i], l: b.l[i], c: b.c[i], v: b.v[i] })); };
+
+/** zzz1015 — one analysis of DAILY bars on a timeframe, as an indicator state (zzz992 / zzz1009 rules unchanged). */
+function analyseAs(key: string, daily: Bar[], analysisTf: PatternTimeframe, includeCurrent: boolean, firstTradeT: number | null | undefined): PatternState {
+  try {
+    const ft = firstTradeT != null && Number.isFinite(firstTradeT) ? { firstTradeT } : undefined;
+    // zzz1009 — `weak: true` also returns the weaker candidates and the expired structures (the qualifying hits are unchanged)
+    if (analysisTf === 'D') {
+      const r = analyzePatterns(daily, { ...ft, weak: true });
+      const lastT = daily.length ? daily[daily.length - 1].t : null;
+      if (r.tooShort) return { key, hits: [], at: Date.now(), status: 'short', error: `Too little history (${r.usableBars} usable bar${r.usableBars === 1 ? '' : 's'})` };
+      return { key, hits: r.hits, weak: r.weak, expired: r.expired, at: Date.now(), status: 'ready', periodEnd: lastT };
+    }
+    // weekly / monthly: aggregated from the daily history (completed periods unless the current one is included)
+    const r = analyzeDailyAs(daily, analysisTf, { ...ft, completedOnly: !includeCurrent, weak: true });
+    const w = TF_WORD[analysisTf];
+    if (r.tooShort) return { key, hits: [], at: Date.now(), status: 'short', error: `Too little history (${r.usableBars} ${w} bar${r.usableBars === 1 ? '' : 's'})` };
+    return { key, hits: r.hits, weak: r.weak, expired: r.expired, at: Date.now(), status: 'ready', provisional: r.provisional, periodEnd: r.periodEnd };
+  } catch (e) {
+    // zzz990 (CP-10) — a detection failure is an error, never "No clear chart pattern"
+    return { key, hits: [], at: Date.now(), status: 'error', error: `pattern detection failed (${String((e as Error)?.message || e)})` };
+  }
 }
 
 export function usePatternIndicator(a: PatternIndicatorArgs) {
-  const { on, ready, ticker, market, exchange, basis, live, bars, chartRef, cacheRef, cur, chart: chartLoad } = a;
+  const { on, ready, ticker, market, exchange, basis, live, bars, chartRef, cacheRef, cur, chart: chartLoad, displayTf } = a;
   // zzz992 — the analysis timeframe (per viewer); hits are keyed by symbol + timeframe so a weekly result never shows as daily
   const handoff = a.handoff || null;
   // zzz1008 — a hand-off's analysis timeframe wins for this visit (the remembered choice is not overwritten)
+  // zzz1015 — default Auto; a choice stored before Auto existed reads as Auto (parsePatternTfPref)
   const [pref, setPref] = useState<PatternTfPref>(() => {
     if (handoff) return { tf: handoff.atf, provisional: false };
     try { return parsePatternTfPref(localStorage.getItem(PATTERN_TF_KEY)); } catch { return parsePatternTfPref(null); }
   });
   const savePref = useCallback((next: PatternTfPref) => { setPref(next); try { localStorage.setItem(PATTERN_TF_KEY, serializePatternTfPref(next)); } catch { /* this visit only */ } }, []);
-  const analysisTf = pref.tf, includeCurrent = pref.provisional;
-  const key = analysisKey(patternKey(market, ticker, exchange, basis), analysisTf, includeCurrent);
-  const [state, setState] = useState<PatternState>(EMPTY_PATTERNS);
-  const [picked, setPicked] = useState<{ key: string; ids: Set<PatternId> } | null>(null);
-  const plan = patternDataPlan(live, ticker, market, exchange, basis, analysisTf);
+  const analysisTf: PatternAnalysisTf = pref.tf, includeCurrent = pref.provisional;
+  const base = patternKey(market, ticker, exchange, basis);
+  const keyOf = useCallback((tf: PatternTimeframe) => analysisKey(base, tf, includeCurrent), [base, includeCurrent]);
+  /** the identity of what is on screen (symbol + mode): picks / fitted views belong to it */
+  const key = analysisTf === 'A' ? `${base}|A${includeCurrent ? '+p' : ''}` : keyOf(analysisTf);
+  const [states, setStates] = useState<PatternStates>(NO_STATES);
+  const [picked, setPicked] = useState<{ key: string; ids: Set<string> } | null>(null);
+  // the history each timeframe reads: daily / weekly 5 years, monthly 10 years (the bars on screen when they are long enough)
+  const plan5 = patternDataPlan(live, ticker, market, exchange, basis, 'D');
+  const plan10 = patternDataPlan(live, ticker, market, exchange, basis, 'M');
   // zzz990 (CP-01) — every bar's OHLCV (not count + last close) and the response object itself are the data revision
   const barsRev = useMemo(() => barsRevision(bars), [bars]);
   const liveRev = responseRev(live);
-  const useShown = plan.useShown && bars.length > 0;
+  const use5 = plan5.useShown && bars.length > 0, use10 = plan10.useShown && bars.length > 0;
   const hasLive = !!live;
   const liveFirstTrade = live?.firstTradeT ?? null;
 
   // ── detection: debounced, re-run when the symbol or ANY of its data change ──────────
+  // zzz1015 — daily, weekly AND monthly are read (Auto picks the most relevant; an explicit choice still names other timeframes'
+  // current structures). D / W come from the 5-year history (the chart's own answer when daily); M needs 10 years: one more
+  // shared request (lib/chart-load-cache) only when M is wanted — Auto / M, or D / W found nothing current.
   useEffect(() => {
     if (!on) return;   // nothing runs while the indicator is off (hits are hidden by `on` below)
     let cancelled = false;
     const ctrl = new AbortController();
-    const finish = (daily: Bar[], firstTradeT: number | null | undefined) => {
+    const put = (list: PatternState[]) => {
       if (cancelled) return;
-      try {
-        const ft = firstTradeT != null && Number.isFinite(firstTradeT) ? { firstTradeT } : undefined;
-        // zzz1009 — `weak: true` also returns the weaker candidates and the expired structures (the qualifying hits are unchanged)
-        if (analysisTf === 'D') {
-          const r = analyzePatterns(daily, { ...ft, weak: true });
-          const lastT = daily.length ? daily[daily.length - 1].t : null;
-          if (r.tooShort) setState({ key, hits: [], at: Date.now(), status: 'short', error: `Too little history (${r.usableBars} usable bar${r.usableBars === 1 ? '' : 's'})` });
-          else setState({ key, hits: r.hits, weak: r.weak, expired: r.expired, at: Date.now(), status: 'ready', periodEnd: lastT });
-        } else {
-          // weekly / monthly: aggregated from the daily history (completed periods unless the current one is included)
-          const r = analyzeDailyAs(daily, analysisTf, { ...ft, completedOnly: !includeCurrent, weak: true });
-          const w = TF_WORD[analysisTf];
-          if (r.tooShort) setState({ key, hits: [], at: Date.now(), status: 'short', error: `Too little history (${r.usableBars} ${w} bar${r.usableBars === 1 ? '' : 's'})` });
-          else setState({ key, hits: r.hits, weak: r.weak, expired: r.expired, at: Date.now(), status: 'ready', provisional: r.provisional, periodEnd: r.periodEnd });
-        }
-      } catch (e) {
-        // zzz990 (CP-10) — a detection failure is an error, never "No clear chart pattern"
-        setState({ key, hits: [], at: Date.now(), status: 'error', error: `pattern detection failed (${String((e as Error)?.message || e)})` });
-      }
+      setStates((prev) => {
+        const byKey = prev.base === base ? { ...prev.byKey } : {};
+        for (const st of list) byKey[st.key] = st;
+        return { base, byKey };
+      });
+    };
+    const load = (url: string, useShownBars: boolean): Promise<{ daily: Bar[]; firstTradeT: number | null | undefined }> => {
+      if (useShownBars) return Promise.resolve({ daily: bars, firstTradeT: liveFirstTrade });
+      const cached = freshChart(cacheRef.current, url, DAILY_TTL) as ShownResponse | null;
+      if (cached?.bars) return Promise.resolve({ daily: fromResponse(cached), firstTradeT: cached.firstTradeT ?? liveFirstTrade });
+      // zzz1015 — one shared request per URL (the chart, the stage indicator and prefetches join it)
+      return chartFetch(url, { signal: ctrl.signal, cache: 'no-store' }).then(async (r) => {
+        const j = (await r.json().catch(() => null)) as (ShownResponse & { ok?: boolean; error?: string }) | null;
+        if (r.status === 404) { const err = new Error(j?.error || 'no price history'); (err as any).unavailable = true; throw err; }
+        if (!r.ok || !j?.ok || !j.bars) throw new Error(j?.error || `daily bars unavailable (HTTP ${r.status})`);
+        // never mix symbols: the answer must be for the ticker / market / exchange / price basis this effect was started for
+        if (String(j.ticker || '').toUpperCase() !== ticker.toUpperCase() || (j.market && j.market !== market)) throw new Error('daily bars were for another symbol');
+        if (j.basis && j.basis !== basis) throw new Error('daily bars were for another price basis');
+        if (market === 'IN' && j.requestedExchange !== undefined && (j.requestedExchange || undefined) !== (exchange || undefined)) throw new Error('daily bars were for another exchange');
+        cacheChart(cacheRef.current, url, j as any);
+        return { daily: fromResponse(j), firstTradeT: j.firstTradeT ?? liveFirstTrade };
+      });
+    };
+    const failed = (tfs: PatternTimeframe[], e: any) => {
+      if (cancelled || ctrl.signal.aborted) return;   // a late answer for an older symbol / data revision never lands
+      put(tfs.map((tf) => ({ key: keyOf(tf), hits: [], at: Date.now(), status: e?.unavailable ? 'unavailable' as const : 'error' as const, error: String(e?.message || e) })));
     };
     // a new symbol shows "looking…" at once: statusFor() reports 'loading' until a state for this key is set
     // the chart is still loading this symbol: wait for it (its daily answer may be the very data we need)
     if (!hasLive) return () => { cancelled = true; };
+    const wantM = analysisTf === 'A' || analysisTf === 'M';
     const timer = setTimeout(() => {
-      if (useShown) { finish(bars, liveFirstTrade); return; }
-      const cached = freshChart(cacheRef.current, plan.url, DAILY_TTL) as ShownResponse | null;
-      const fromResponse = (j: ShownResponse): Bar[] => { const b = j.bars!; return b.t.map((t, i) => ({ t, o: b.o[i], h: b.h[i], l: b.l[i], c: b.c[i], v: b.v[i] })); };
-      if (cached?.bars) { finish(fromResponse(cached), cached.firstTradeT ?? liveFirstTrade); return; }
-      fetch(plan.url, { signal: ctrl.signal, cache: 'no-store' })
-        .then(async (r) => {
-          const j = (await r.json().catch(() => null)) as (ShownResponse & { ok?: boolean; error?: string }) | null;
-          if (r.status === 404) { const err = new Error(j?.error || 'no price history'); (err as any).unavailable = true; throw err; }
-          if (!r.ok || !j?.ok || !j.bars) throw new Error(j?.error || `daily bars unavailable (HTTP ${r.status})`);
-          // never mix symbols: the answer must be for the ticker / market / exchange / price basis this effect was started for
-          if (String(j.ticker || '').toUpperCase() !== ticker.toUpperCase() || (j.market && j.market !== market)) throw new Error('daily bars were for another symbol');
-          if (j.basis && j.basis !== basis) throw new Error('daily bars were for another price basis');
-          if (market === 'IN' && j.requestedExchange !== undefined && (j.requestedExchange || undefined) !== (exchange || undefined)) throw new Error('daily bars were for another exchange');
+      const readM = (src: Promise<{ daily: Bar[]; firstTradeT: number | null | undefined }>) => src
+        .then(({ daily, firstTradeT }) => { if (!cancelled) put([analyseAs(keyOf('M'), daily, 'M', includeCurrent, firstTradeT)]); })
+        .catch((e) => failed(['M'], e));
+      // 10 years already on screen, or M wanted and the 5 years are not: one history for all three timeframes
+      if (use10 || (wantM && !use5)) {
+        load(plan10.url, use10).then(({ daily, firstTradeT }) => {
           if (cancelled) return;
-          cacheChart(cacheRef.current, plan.url, j as any);
-          finish(fromResponse(j), j.firstTradeT ?? liveFirstTrade);
-        })
-        .catch((e) => {
-          if (cancelled || ctrl.signal.aborted) return;   // a late answer for an older symbol / data revision never lands
-          setState({ key, hits: [], at: Date.now(), status: e?.unavailable ? 'unavailable' : 'error', error: String(e?.message || e) });
-        });
+          put((['D', 'W', 'M'] as PatternTimeframe[]).map((tf) => analyseAs(keyOf(tf), daily, tf, includeCurrent, firstTradeT)));
+        }).catch((e) => failed(['D', 'W', 'M'], e));
+        return;
+      }
+      load(plan5.url, use5).then(({ daily, firstTradeT }) => {
+        if (cancelled) return;
+        const dw = (['D', 'W'] as PatternTimeframe[]).map((tf) => analyseAs(keyOf(tf), daily, tf, includeCurrent, firstTradeT));
+        put(dw);
+        // D / W explicit: the monthly read is only a pointer when neither has a current structure
+        const anyCurrent = dw.some((st) => st.status === 'ready' && patternView({ hits: st.hits, weak: st.weak, expired: st.expired, tf: st.key === keyOf('W') ? 'W' : 'D' }).state === 'qualifying');
+        if (wantM || !anyCurrent) readM(load(plan10.url, false));
+      }).catch((e) => failed(wantM ? ['D', 'W', 'M'] : ['D', 'W'], e));
     }, 150);
     return () => { cancelled = true; clearTimeout(timer); ctrl.abort(); };
-    // barsRev + liveRev stand for `bars` / `live` (new objects on every load); plan.url for ticker / market / exchange / basis
+    // barsRev + liveRev stand for `bars` / `live` (new objects on every load); the plan URLs for ticker / market / exchange / basis
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [on, key, hasLive, useShown, plan.url, barsRev, liveRev, cacheRef, market, ticker, exchange, basis, analysisTf, includeCurrent]);
+  }, [on, base, hasLive, use5, use10, plan5.url, plan10.url, barsRev, liveRev, cacheRef, market, ticker, exchange, basis, analysisTf, includeCurrent, keyOf]);
 
-  const hits = useMemo(() => (on ? hitsFor(state, key) : []), [on, state, key]);
-  const shown = on ? shownStatus(state, key, hasLive, chartLoad) : { status: 'idle' as const, error: undefined };
-  const own = on && state.key === key;
-  const weak = useMemo(() => (own ? state.weak || [] : []), [own, state]);
-  const expired = useMemo(() => (own ? state.expired || [] : []), [own, state]);
-  // zzz1009 — the headline view: current structures (headline first), expired / invalidated, weaker candidates
-  const view = useMemo(() => patternView({ hits, weak, expired, status: shown.status, tf: analysisTf }), [hits, weak, expired, shown.status, analysisTf]);
-  const analysisT = own ? state.periodEnd ?? null : null;
-  // every row the list can draw, in list order (a promoted recent breakout is drawn as its current reading)
-  const rows = useMemo(() => uniqueById([...view.active, ...view.expired.map((x) => x.hit), ...view.weaker.map((x) => x.hit)]), [view]);
+  // ── per-timeframe views (zzz1009 headline rules on each) and the timeframe that leads ──
+  const own = on && states.base === base;
+  const stateOf = useCallback((tf: PatternTimeframe): PatternState | null => (own ? states.byKey[keyOf(tf)] ?? null : null), [own, states, keyOf]);
+  const views = useMemo(() => {
+    const out: TfViews = {};
+    if (!on) return out;
+    // D / W explicit with a current structure: monthly is not read (no 10-year request just for a pointer)
+    const mSkipped = (analysisTf === 'D' || analysisTf === 'W') && !stateOf('M') && (['D', 'W'] as PatternTimeframe[]).some((t) => {
+      const st = stateOf(t);
+      return !!st && st.status === 'ready' && patternView({ hits: st.hits, weak: st.weak, expired: st.expired, tf: t }).state === 'qualifying';
+    });
+    for (const tf of ANALYSIS_TFS) {
+      const st = stateOf(tf);
+      if (tf === 'M' && mSkipped) continue;
+      // the main chart's own load state stands for the timeframe that leads (D in Auto); the others are pending until read
+      const status = st ? st.status : tf === (analysisTf === 'A' ? 'D' : analysisTf) ? shownStatus(null, '', hasLive, chartLoad).status : 'loading';
+      out[tf] = patternView({ hits: st?.hits || [], weak: st?.weak || [], expired: st?.expired || [], status: status === 'idle' ? 'loading' : status, tf });
+    }
+    return out;
+  }, [on, stateOf, analysisTf, hasLive, chartLoad]);
+  const errors = useMemo(() => {
+    const e: Partial<Record<PatternTimeframe, string | undefined>> = {};
+    for (const tf of ANALYSIS_TFS) { const st = stateOf(tf); e[tf] = st ? st.error : !hasLive && chartLoad && !chartLoad.loading && chartLoad.error ? chartLoad.error : undefined; }
+    return e;
+  }, [stateOf, hasLive, chartLoad]);
+  const analysisTs = useMemo(() => {
+    const t: Partial<Record<PatternTimeframe, number | null>> = {};
+    for (const tf of ANALYSIS_TFS) t[tf] = stateOf(tf)?.periodEnd ?? null;
+    return t;
+  }, [stateOf]);
+  const banner = useMemo(() => multiBanner(views, analysisTf, cur, { displayTf, analysisT: analysisTs, errors }), [views, analysisTf, cur, displayTf, analysisTs, errors]);
+  const headTf: PatternTimeframe = analysisTf === 'A' ? banner.headTf : analysisTf;
+  const headState = stateOf(headTf);
+  const hits = useMemo(() => (on && headState ? headState.hits : []), [on, headState]);
+  const status: PatternState['status'] = !on ? 'idle' : headState ? headState.status : shownStatus(null, '', hasLive, chartLoad).status;
+  const error = !on ? undefined : headState ? headState.error : errors[headTf];
+  const view = views[headTf] ?? patternView({ hits: [], status: 'idle' });
+  const analysisT = analysisTs[headTf] ?? null;
+  // every row the list can draw, by timeframe then in list order (a promoted recent breakout is drawn as its current reading)
+  const rows = useMemo(() => uniqueByRow(ANALYSIS_TFS.flatMap((tf) => { const v = views[tf]; return v ? [...v.active, ...v.expired.map((x) => x.hit), ...v.weaker.map((x) => x.hit)] : []; })), [views]);
   const pickedIds = picked && picked.key === key ? picked.ids : null;
-  // nothing picked yet → the headline structure (never an expired or weaker one by default)
-  const drawn = useMemo(() => (pickedIds ? rows.filter((h) => pickedIds.has(h.id)) : hitsToDraw(view.active, null)), [rows, view.active, pickedIds]);
-  const togglePick = (id: PatternId) => setPicked({ key, ids: togglePicked(view.active, pickedIds, id) });
+  // nothing picked yet → the headline structure (never an expired or weaker one, nor another timeframe's, by default)
+  const lead = useMemo(() => (views[headTf]?.state === 'qualifying' && (analysisTf === 'A' || headTf === analysisTf) ? views[headTf]!.active.slice(0, 1) : []), [views, headTf, analysisTf]);
+  const drawn = useMemo(() => (pickedIds ? rows.filter((h) => pickedIds.has(rowKeyOf(h))) : lead), [rows, lead, pickedIds]);
+  const togglePick = (rk: string) => {
+    const next = new Set<string>(drawn.map(rowKeyOf));
+    if (next.has(rk)) next.delete(rk); else next.add(rk);
+    setPicked({ key, ids: next });
+  };
   // zzz990 (CP-06) — lines of the drawn hits too short to draw on this timeframe (left out, not flattened); zzz1009 — and lines /
   // turning points older than the first candle on screen (a weekly / monthly pattern on a shorter chart)
-  const fitOpts = useMemo(() => ({ clip: true, extendPivotTo: analysisTf !== 'D' && bars.length ? bars[bars.length - 1].t : null }), [analysisTf, bars]);
+  const lastBarT = bars.length ? bars[bars.length - 1].t : null;
+  const fitOptsOf = useCallback((h: PatternHit) => ({ clip: true, extendPivotTo: (h.timeframe ?? 'D') !== 'D' ? lastBarT : null }), [lastBarT]);
   const { omittedLines, offLeft } = useMemo(() => {
     if (!on || !drawn.length || !bars.length) return { omittedLines: 0, offLeft: 0 };
     const times = bars.map((b) => b.t);
     let om = 0, off = 0;
-    for (const h of drawn) { const f = overlayFit(h, times, undefined, fitOpts); om += f.omitted; off += f.offLeft + pointMarks(h, bars).offLeft; }
+    for (const h of drawn) { const f = overlayFit(h, times, undefined, fitOptsOf(h)); om += f.omitted; off += f.offLeft + pointMarks(h, bars).offLeft; }
     return { omittedLines: om, offLeft: off };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [on, drawn, barsRev, fitOpts]);
+  }, [on, drawn, barsRev, fitOptsOf]);
 
   // ── draw the chosen pattern(s); its own overlay group, removed on symbol change / indicator off ──
   const shownTimesSig = barsRev;
@@ -170,7 +254,8 @@ export function usePatternIndicator(a: PatternIndicatorArgs) {
       const { marks } = pointMarks(h, bars);
       const r = structureRange(h);
       const mid = r ? (r.lo + r.hi) / 2 : 0;
-      const lines = [...overlayFit(h, times, fmt, fitOpts).lines, ...pointPath(marks, hitColor(h))];
+      // zzz1015 — each hit is mapped by ITS timeframe (a weekly / monthly pattern on daily candles: overlayFit clips + carries the pivot)
+      const lines = [...overlayFit(h, times, fmt, fitOptsOf(h)).lines, ...pointPath(marks, hitColor(h))];
       for (const ln of lines) {
         try {
           chart.createOverlay({ name: PATTERN_OVERLAY, groupId: PATTERN_GROUP, lock: true, points: ln.points, extendData: { color: ln.color, dashed: ln.dashed, size: ln.size, label: ln.label } });
@@ -185,7 +270,7 @@ export function usePatternIndicator(a: PatternIndicatorArgs) {
     }
     return () => { try { chart.removeOverlay({ groupId: PATTERN_GROUP }); } catch { /* chart already disposed */ } };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, on, drawn, shownTimesSig, cur, chartRef, fitOpts]);
+  }, [ready, on, drawn, shownTimesSig, cur, chartRef, fitOptsOf]);
 
   // ── "Fit pattern" / "Restore view" — the view before the first fit is kept until restored ──
   // keyed by the analysis identity: a saved view belongs to the symbol / timeframe it was taken on
@@ -227,34 +312,39 @@ export function usePatternIndicator(a: PatternIndicatorArgs) {
   const handoffDone = useRef(false);
   useEffect(() => {
     if (!handoff?.pat || handoffDone.current || !on || !ready || !bars.length || analysisTf !== handoff.atf) return;
-    const h = hits.find((x) => x.id === handoff.pat) || rows.find((x) => x.id === handoff.pat);
-    if (state.key !== key || state.status !== 'ready') return;
+    const st = stateOf(handoff.atf);
+    if (!st || st.status !== 'ready') return;
+    const h = st.hits.find((x) => x.id === handoff.pat) || rows.find((x) => x.id === handoff.pat && (x.timeframe ?? 'D') === handoff.atf);
     handoffDone.current = true;
     if (!h) return;
     const span = handoffSpan(h, handoff);
-    const timer = setTimeout(() => { setPicked({ key, ids: new Set([h.id]) }); fit({ ...h, ...span }); }, 60);
+    const timer = setTimeout(() => { setPicked({ key, ids: new Set([rowKeyOf(h)]) }); fit({ ...h, ...span }); }, 60);
     return () => clearTimeout(timer);
-  }, [handoff, on, ready, bars.length, analysisTf, hits, rows, state.key, state.status, key, fit]);
+  }, [handoff, on, ready, bars.length, analysisTf, rows, stateOf, key, fit]);
 
-  const setAnalysisTf = useCallback((tf: PatternTimeframe) => savePref({ tf, provisional: tf === 'D' ? false : pref.provisional }), [savePref, pref.provisional]);
+  const setAnalysisTf = useCallback((tf: PatternAnalysisTf) => savePref({ tf, provisional: tf === 'D' ? false : pref.provisional }), [savePref, pref.provisional]);
   const setIncludeCurrent = useCallback((v: boolean) => savePref({ tf: pref.tf, provisional: pref.tf !== 'D' && v }), [savePref, pref.tf]);
-  const provisional = on && state.key === key ? !!state.provisional : false;
+  const provisional = on && headState ? !!headState.provisional : false;
 
   return {
-    on, hits, status: shown.status, error: shown.error, drawnIds: new Set(drawn.map((h) => h.id)), togglePick, omittedLines,
+    on, hits, status, error, drawnIds: new Set(drawn.map(rowKeyOf)), togglePick, omittedLines,
     analysisTf, includeCurrent, provisional, setAnalysisTf, setIncludeCurrent, fit, restoreView, fitted,
-    view, analysisT, offLeft,
+    view, analysisT, offLeft, views, headTf, banner,
   };
 }
-const uniqueById = (hs: PatternHit[]) => { const seen = new Set<PatternId>(); return hs.filter((h) => (seen.has(h.id) ? false : (seen.add(h.id), true))); };
+const uniqueByRow = (hs: PatternHit[]) => { const seen = new Set<string>(); return hs.filter((h) => { const k = rowKeyOf(h); return seen.has(k) ? false : (seen.add(k), true); }); };
 
 const fmtMoney = (n: number | null, cur: string) => (n == null ? '—' : `${cur}${n.toLocaleString('en-US', { minimumFractionDigits: priceDecimals(n), maximumFractionDigits: priceDecimals(n) })}`);
 
 type PatternP = ReturnType<typeof usePatternIndicator>;
-type AnalysisFields = 'analysisTf' | 'includeCurrent' | 'provisional' | 'setAnalysisTf' | 'setIncludeCurrent' | 'fit' | 'restoreView' | 'fitted' | 'view' | 'analysisT' | 'offLeft';
+type AnalysisFields = 'analysisTf' | 'includeCurrent' | 'provisional' | 'setAnalysisTf' | 'setIncludeCurrent' | 'fit' | 'restoreView' | 'fitted' | 'view' | 'analysisT' | 'offLeft' | 'views' | 'headTf' | 'banner';
 /** The hook's result; the zzz992 analysis-timeframe fields are optional (absent = daily analysis, no controls). */
-export type PatternBannerP = Omit<PatternP, AnalysisFields> & Partial<Pick<PatternP, AnalysisFields>>;
+export type PatternBannerP = Omit<PatternP, AnalysisFields | 'drawnIds' | 'togglePick'> & Partial<Pick<PatternP, AnalysisFields>> & {
+  /** row keys (rowKeyOf: "<tf>:<pattern id>") of the drawn structures; a bare pattern id stands for its daily row */
+  drawnIds: ReadonlySet<string>; togglePick: (rowKey: string) => void;
+};
 const TF_BADGE: Record<PatternTimeframe, string> = { D: 'Daily pattern', W: 'Weekly pattern', M: 'Monthly pattern' };
+const MODE_TITLE: Record<PatternAnalysisTf, string> = { A: 'Auto — daily, weekly and monthly; the most relevant current structure leads', D: 'Find patterns on daily bars', W: 'Find patterns on weekly bars', M: 'Find patterns on monthly bars' };
 
 export function PatternBanner({ p, cur, light, onTurnOff, tf }: { p: PatternBannerP; cur: string; light: boolean; onTurnOff: () => void; /** timeframe on screen: a "Daily pattern" badge on W / M */ tf?: string }) {
   const [open, setOpen] = useState(false);
@@ -262,10 +352,17 @@ export function PatternBanner({ p, cur, light, onTurnOff, tf }: { p: PatternBann
   const [showWeak, setShowWeak] = useState(false);
   const [rulesOf, setRulesOf] = useState<string | null>(null);
   const boxRef = useRef<HTMLDivElement | null>(null);
-  const atf: PatternTimeframe = p.analysisTf ?? 'D';
+  const mode: PatternAnalysisTf = p.analysisTf ?? 'D';
+  // zzz1015 — the timeframe the banner leads with (Auto: the most relevant one)
+  const atf: PatternTimeframe = p.headTf ?? (mode === 'A' ? 'D' : mode);
   // zzz1009 — the headline view (current / expired / weaker); computed here when the caller passes only the hits
   const view: PatternView = p.view ?? patternView({ hits: p.hits, status: p.status, tf: atf });
-  const listed = view.active.length + view.expired.length + view.weaker.length;
+  // zzz1015 — the list grouped by timeframe (D / W / M); a caller with one view gets one group
+  const views: TfViews = p.views ?? { [atf]: view };
+  const groups = ANALYSIS_TFS.filter((t) => views[t]);
+  const countOf = (v: PatternView) => v.active.length + v.expired.length + v.weaker.length;
+  const listed = groups.reduce((n, t) => n + countOf(views[t]!), 0);
+  const weakTotal = groups.reduce((n, t) => n + views[t]!.weaker.length, 0);
   const show = p.on && (open || pinned) && listed > 0;
   // zzz990 (CP-09) — Escape and a click outside dismiss the list (pinned or not)
   useEffect(() => {
@@ -279,28 +376,31 @@ export function PatternBanner({ p, cur, light, onTurnOff, tf }: { p: PatternBann
     return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('mousedown', onDown); document.removeEventListener('touchstart', onDown); };
   }, [show]);
   if (!p.on) return null;
-  const banner = viewBanner(view, cur, atf, { error: p.error, analysisT: p.analysisT });
+  const banner = p.banner ?? { ...viewBanner(view, cur, atf, { error: p.error, analysisT: p.analysisT }), weakerHint: view.state === 'weaker-only' ? view.weaker.length : 0 };
   const col = bannerColors(banner.tone, light);
   // a badge whenever the analysis timeframe differs from the candles on screen (always on W / M analysis)
   const notDaily = atf === 'D' && !!tf && tf !== 'D';
   const tfBadge = atf !== 'D';
-  const na = PATTERN_IDS.filter((id) => !patternApplies(id, atf));
-  const tfBtn = (x: PatternTimeframe) => (
-    <button key={x} type="button" onClick={() => p.setAnalysisTf?.(x)} aria-pressed={atf === x} title={`Find patterns on ${TF_WORD[x]} bars`}
-      style={{ background: atf === x ? col.border : 'none', border: `1px solid ${col.border}`, borderRadius: 4, color: col.text, cursor: 'pointer', padding: '0 5px', fontSize: 10.5, fontWeight: 700, lineHeight: '15px' }}>{x}</button>
+  const na = mode === 'A' ? [] : PATTERN_IDS.filter((id) => !patternApplies(id, atf));
+  const tfBtn = (x: PatternAnalysisTf) => (
+    <button key={x} type="button" onClick={() => p.setAnalysisTf?.(x)} aria-pressed={mode === x} title={MODE_TITLE[x]} data-testid={`pattern-tf-${x}`}
+      style={{ background: mode === x ? col.border : 'none', border: `1px solid ${col.border}`, borderRadius: 4, color: col.text, cursor: 'pointer', padding: '0 5px', fontSize: 10.5, fontWeight: 700, lineHeight: '15px' }}>{x === 'A' ? 'Auto' : x}</button>
   );
   const small = { background: 'var(--mc-bg-0)', border: '1px solid var(--mc-border-1)', borderRadius: 6, color: 'var(--mc-text-2)', cursor: 'pointer', fontSize: 11.5, fontWeight: 600, padding: '1px 8px', whiteSpace: 'nowrap' as const };
+  const headKey = views[atf]?.state === 'qualifying' ? rowKeyOf(views[atf]!.active[0]) : null;
   const row = (h: PatternHit, kind: 'current' | 'expired' | 'weaker', why?: string, lead?: boolean) => {
     const c = kind === 'current' ? hitColor(h) : NONE_ROW;
     const failed = h.stage === 'failed';
     const textC = kind !== 'current' ? 'var(--mc-text-2)' : failed ? (light ? '#9A5B00' : FAILED_COLOR) : light ? (h.bias === 'bullish' ? '#05705E' : '#C8102E') : (h.bias === 'bullish' ? '#22C3A6' : '#FF6B78');
-    const rk = `${kind}:${h.id}`;
+    const hk = rowKeyOf(h);
+    const rk = `${kind}:${hk}`;
     const rules = rulesOf === rk;
     const ev = evidenceWords(h), pw = pointWords(h, cur);
+    const drawnNow = p.drawnIds.has(hk) || ((h.timeframe ?? 'D') === 'D' && p.drawnIds.has(h.id));
     return (
       <div key={rk} data-testid={`pattern-row-${kind}`} style={{ padding: '6px 4px', borderBottom: '1px solid var(--mc-border-3)', opacity: kind === 'current' ? 1 : 0.85 }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flexWrap: 'wrap' }}>
-          <input type="checkbox" checked={p.drawnIds.has(h.id)} onChange={() => p.togglePick(h.id)} aria-label={`Draw ${h.label} on the chart`} />
+          <input type="checkbox" checked={drawnNow} onChange={() => p.togglePick(hk)} aria-label={`Draw ${h.label} (${TF_WORD[h.timeframe ?? 'D']}) on the chart`} />
           <span aria-hidden style={{ width: 8, height: 8, borderRadius: 2, background: c, display: 'inline-block' }} />
           <b style={{ color: 'var(--mc-text-0)' }}>{h.label}</b>
           {lead && <span style={{ fontSize: 10, fontWeight: 700, padding: '0 4px', borderRadius: 3, border: '1px solid var(--mc-border-1)', color: 'var(--mc-text-2)' }}>headline</span>}
@@ -333,27 +433,49 @@ export function PatternBanner({ p, cur, light, onTurnOff, tf }: { p: PatternBann
     );
   };
   const heading = (t: string) => <div style={{ marginTop: 10, marginBottom: 2, fontSize: 11.5, fontWeight: 650, color: 'var(--mc-text-3)' }}>{t}</div>;
+  const stateWords = (t: PatternTimeframe, v: PatternView) => v.state === 'pending' ? `Reading the ${TF_WORD[t]} bars…`
+    : v.state === 'insufficient' ? `Too little history for ${TF_WORD[t]} patterns (at least ${PATTERN_MIN_HISTORY[t]} ${TF_WORD[t]} bars).`
+      : v.state === 'missing' ? 'No price data.' : v.state === 'error' ? `Could not be read.` : `No qualifying ${TF_WORD[t]} pattern on the latest bars.`;
+  const group = (t: PatternTimeframe) => {
+    const v = views[t]!;
+    const counts = [`${v.active.length} current`, ...(v.expired.length ? [`${v.expired.length} expired`] : []), ...(v.weaker.length ? [`${v.weaker.length} weaker`] : [])].join(' · ');
+    return (
+      <div key={t} data-testid={`pattern-group-${t}`} style={{ marginTop: 6 }}>
+        <div style={{ marginTop: 8, padding: '3px 6px', borderRadius: 6, background: 'var(--mc-bg-2, rgba(120,123,134,.08))', fontSize: 12, fontWeight: 700, color: 'var(--mc-text-1)', display: 'flex', gap: 8 }}>
+          <span>{TF_TITLE[t]}</span><span style={{ fontWeight: 500, color: 'var(--mc-text-3)' }}>{counts}</span>
+        </div>
+        {v.active.length > 0 ? (
+          <>{heading('Current')}{v.active.map((h) => row(h, 'current', undefined, rowKeyOf(h) === headKey))}</>
+        ) : (
+          <div style={{ marginTop: 4, color: 'var(--mc-text-2)' }}>{stateWords(t, v)}</div>
+        )}
+        {v.expired.length > 0 && <>{heading('Expired / invalidated')}{v.expired.map((x: PatternViewRow) => row(x.hit, 'expired', x.why))}</>}
+        {showWeak && v.weaker.length > 0 && <>{heading('Weaker candidates — not qualifying')}{v.weaker.map((x: PatternViewRow) => row(x.hit, 'weaker', x.why))}</>}
+      </div>
+    );
+  };
+  const openWeaker = () => { setShowWeak(true); setPinned(true); };
   return (
     <div ref={boxRef} onMouseLeave={() => { if (!pinned) setOpen(false); }}
       style={{ position: 'absolute', left: 8, top: 4, zIndex: 7, maxWidth: 'calc(100% - 100px)', fontSize: 12 }}>
       {/* zzz1013 — the Pine look: an 8 px pill on the page colour with the tone as a tint and a hairline, a soft lift off the candles */}
       <div data-testid="pattern-banner" style={{ display: 'flex', alignItems: 'center', gap: 4, minHeight: 24, borderRadius: 8, border: `1px solid ${col.border}`, background: `linear-gradient(${col.bg}, ${col.bg}), var(--mc-bg-0)`, color: col.text, lineHeight: '18px', boxShadow: '0 1px 0 rgba(18,23,34,.04), 0 6px 16px -10px rgba(18,23,34,.35)' }}>
         {p.setAnalysisTf && (
-          <span role="group" aria-label="Pattern analysis timeframe" title="Analysis timeframe — separate from the candles on screen"
+          <span role="group" aria-label="Pattern analysis timeframe" title="Analysis timeframe — separate from the candles on screen. Auto reads daily, weekly and monthly."
             style={{ display: 'inline-flex', alignItems: 'center', gap: 2, marginLeft: 6, fontSize: 10, whiteSpace: 'nowrap' }}>
-            <span style={{ opacity: 0.8 }}>Analysis</span>{(['D', 'W', 'M'] as PatternTimeframe[]).map(tfBtn)}
+            <span style={{ opacity: 0.8 }}>Analysis</span>{(['A', 'D', 'W', 'M'] as PatternAnalysisTf[]).map(tfBtn)}
           </span>
         )}
         {notDaily && (
-          <span title="Patterns are found on the DAILY bars and drawn on the candles on screen" data-testid="daily-pattern-badge"
+          <span title="This pattern is found on the DAILY bars and drawn on the candles on screen" data-testid="daily-pattern-badge"
             style={{ marginLeft: 6, padding: '0 5px', borderRadius: 4, border: `1px solid ${col.border}`, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>Daily pattern</span>
         )}
         {tfBadge && (
-          <span title={`Patterns are found on ${TF_WORD[atf]} bars aggregated from the daily history (${p.includeCurrent ? 'the current period included, provisional' : 'completed periods only'}) and drawn on the candles on screen`} data-testid="tf-pattern-badge"
-            style={{ marginLeft: 6, padding: '0 5px', borderRadius: 4, border: `1px solid ${col.border}`, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>{TF_BADGE[atf]}{p.provisional ? ' · provisional' : ''}</span>
+          <span title={`This pattern is found on ${TF_WORD[atf]} bars aggregated from the daily history (${p.includeCurrent ? 'the current period included, provisional' : 'completed periods only'}) and drawn on the candles on screen`} data-testid="tf-pattern-badge"
+            style={{ marginLeft: 6, padding: '0 5px', borderRadius: 4, border: `1px solid ${col.border}`, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>{views[atf]?.state === 'qualifying' ? TF_BADGE[atf] : `${TF_TITLE[atf]} analysis`}{p.provisional ? ' · provisional' : ''}</span>
         )}
-        {tfBadge && p.setIncludeCurrent && (
-          <label title={`Include the current, unfinished ${atf === 'W' ? 'week' : 'month'} — its candle can still change (provisional)`}
+        {(tfBadge || mode === 'A') && p.setIncludeCurrent && (
+          <label title={mode === 'A' ? 'Weekly / monthly reads: include the current, unfinished week / month — its candle can still change (provisional)' : `Include the current, unfinished ${atf === 'W' ? 'week' : 'month'} — its candle can still change (provisional)`}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 2, marginLeft: 4, fontSize: 10, whiteSpace: 'nowrap', cursor: 'pointer' }}>
             <input type="checkbox" checked={!!p.includeCurrent} onChange={(e) => p.setIncludeCurrent?.(e.target.checked)} style={{ margin: 0, width: 11, height: 11 }} aria-label="Include the current period (provisional)" />
             current
@@ -365,34 +487,30 @@ export function PatternBanner({ p, cur, light, onTurnOff, tf }: { p: PatternBann
         )}
         <button type="button" onMouseEnter={() => setOpen(true)} onClick={() => setPinned((v) => !v)} aria-expanded={show} data-state={view.state}
           onKeyDown={(e) => { if (e.key === 'Escape') { setPinned(false); setOpen(false); } }}
-          title={listed ? `Chart patterns on the ${TF_WORD[atf]} bars — click to keep the list open; tick a row to draw it. Esc closes the list.` : `Automate chart patterns (${TF_WORD[atf]} bars)`}
+          title={`${banner.text.replace(/^📐 /, '')}\n\n` + (listed ? `Chart patterns${mode === 'A' ? ' on daily, weekly and monthly bars' : ` on the ${TF_WORD[atf]} bars`} — click to keep the list open; tick a row to draw it. Esc closes the list.` : `Automate chart patterns (${mode === 'A' ? 'Auto' : `${TF_WORD[atf]} bars`})`)}
           style={{ background: 'none', border: 'none', color: col.text, cursor: listed ? 'pointer' : 'default', padding: notDaily || tfBadge || p.setAnalysisTf ? '1px 4px 1px 2px' : '1px 4px 1px 8px', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, textAlign: 'left' }}>
           {banner.text}{listed > 0 ? ' ▾' : ''}
         </button>
+        {banner.weakerHint > 0 && (
+          <button type="button" onClick={openWeaker} data-testid="pattern-show-weaker" title="Open the list with the weaker (sub-threshold) candidates shown"
+            style={{ background: 'none', border: `1px solid ${col.border}`, borderRadius: 4, color: col.text, cursor: 'pointer', padding: '0 5px', fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' }}>show weaker</button>
+        )}
         <button type="button" onClick={onTurnOff} aria-label="Turn off Automate chart patterns" title="Turn off Automate chart patterns (Indicators ▾ turns it back on)"
           style={{ background: 'none', border: 'none', color: col.text, cursor: 'pointer', padding: '0 6px', fontSize: 13, lineHeight: 1 }}>×</button>
       </div>
       {show && (
         <div role="dialog" aria-label="Chart patterns found"
-          style={{ marginTop: 6, width: 'min(560px, calc(100vw - 80px))', maxHeight: 380, overflowY: 'auto', padding: '8px 10px 10px', borderRadius: 12, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-0)', color: 'var(--mc-text-1)', boxShadow: 'var(--ct-shadow, 0 8px 24px rgba(0,0,0,.18))' }}>
+          style={{ marginTop: 6, width: 'min(560px, calc(100vw - 80px))', maxHeight: 420, overflowY: 'auto', padding: '8px 10px 10px', borderRadius: 12, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-0)', color: 'var(--mc-text-1)', boxShadow: 'var(--ct-shadow, 0 8px 24px rgba(0,0,0,.18))' }}>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
+            {weakTotal > 0 && (
+              <button type="button" onClick={() => setShowWeak((v) => !v)} aria-expanded={showWeak} style={small}>
+                {showWeak ? 'Hide weaker candidates' : `Show weaker candidates (${weakTotal})`}
+              </button>
+            )}
             {p.fitted && p.restoreView && <button type="button" onClick={() => p.restoreView?.()} style={small}>Restore view</button>}
             <button type="button" onClick={() => { setPinned(false); setOpen(false); }} aria-label="Close the pattern list" style={small}>Close list</button>
           </div>
-          {view.active.length > 0 ? (
-            <>{heading('Current')}{view.active.map((h, k) => row(h, 'current', undefined, k === 0))}</>
-          ) : (
-            <div style={{ marginTop: 4, color: 'var(--mc-text-2)' }}>No qualifying {TF_WORD[atf]} pattern on the latest bars.</div>
-          )}
-          {view.expired.length > 0 && <>{heading('Expired / invalidated')}{view.expired.map((x: PatternViewRow) => row(x.hit, 'expired', x.why))}</>}
-          {view.weaker.length > 0 && (
-            <div style={{ marginTop: 8 }}>
-              <button type="button" onClick={() => setShowWeak((v) => !v)} aria-expanded={showWeak} style={small}>
-                {showWeak ? 'Hide weaker candidates' : `Show weaker candidates (${view.weaker.length})`}
-              </button>
-              {showWeak && <>{heading('Weaker candidates — not qualifying')}{view.weaker.map((x: PatternViewRow) => row(x.hit, 'weaker', x.why))}</>}
-            </div>
-          )}
+          {groups.map(group)}
           {p.omittedLines > 0 && (
             <div style={{ paddingTop: 6, fontSize: 11, color: 'var(--mc-warn, #D97706)' }}>
               {p.omittedLines} sloping line{p.omittedLines === 1 ? ' is' : 's are'} shorter than one candle on this timeframe and {p.omittedLines === 1 ? 'is' : 'are'} not drawn — switch to D to see the lines.
@@ -404,8 +522,10 @@ export function PatternBanner({ p, cur, light, onTurnOff, tf }: { p: PatternBann
             </div>
           )}
           <div style={{ paddingTop: 6, fontSize: 11, color: 'var(--mc-text-3)' }}>
-            {atf === 'D' ? 'Found on the daily bars (the last ~2.8 years), whatever timeframe is on screen.'
-              : `Found on ${TF_WORD[atf]} bars built from the daily history (${atf === 'W' ? 'the last ~5 years' : 'up to 10 years'}; ${p.provisional ? 'the last candle is the current, unfinished period — provisional' : 'completed periods only'}), whatever timeframe is on screen.`}
+            {mode === 'A' ? `Auto: read on daily bars (the last ~2.8 years), weekly bars (~5 years) and monthly bars (up to 10 years${p.includeCurrent ? ', the current week / month included — provisional' : ', completed periods only'}); the headline is the most relevant current structure across them, the timeframe on screen winning a tie.`
+              : atf === 'D' ? 'Found on the daily bars (the last ~2.8 years), whatever timeframe is on screen.'
+                : `Found on ${TF_WORD[atf]} bars built from the daily history (${atf === 'W' ? 'the last ~5 years' : 'up to 10 years'}; ${p.provisional ? 'the last candle is the current, unfinished period — provisional' : 'completed periods only'}), whatever timeframe is on screen.`}
+            {mode !== 'A' && groups.length > 1 && ` Other timeframes are listed for reference; Auto lets the most relevant one lead.`}
             {na.length > 0 && ` Not read on ${TF_WORD[atf]} bars (too short to be seen on these candles): ${na.map((id) => PATTERN_META[id].label.toLowerCase()).join(', ')}.`}
             {' '}The headline is the strongest current structure: forming near its level or a recent breakout holding first, then breakouts back below the level; a failed structure only while its break is recent and the price is still near the level. Expired ones (older failures, completed breakouts) and weaker candidates are listed apart. The shape score is how closely the bars fit the pattern&apos;s rules — a heuristic, not a probability. Ticked rows are drawn on the chart with their turning points; they are not saved as drawings. A reading of the shape, not a signal — check it on the chart.
           </div>

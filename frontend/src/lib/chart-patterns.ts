@@ -102,6 +102,25 @@
 //    that ran out, reversals the price ran away from), also read at older breakout body ends (HISTORY_ENDS). The chart's headline
 //    order (current / expired / weaker) is components/charts/pattern-view patternView().
 
+// zzz1014 — recall audit (2026-10-14; 136 charts India + US labelled by eye on D / W / M before looking at the engine, then compared; the
+// owner: "most daily / weekly / monthly charts show no qualifying pattern"). Each miss was traced to the rule that rejected it; fixtures in
+// __tests__/zzz1014-pattern-recall.test.ts. Changes (every zzz1005 / zzz1008 / zzz1009 fixture unchanged):
+//  • Body ends also at the bar before the first close above the highest high (below the lowest low) of the prior 5 weeks / 3 months — a
+//    base's breakout often comes several bars after the first 10-day closing high, or inside a run of them; W reads its last 4 candles and
+//    M its last 3 (were 2) as body ends.
+//  • laterStage(): a flat-topped base / triangle read at an earlier body end is still forming when only an intrabar high (low) went beyond
+//    its level since (close in the upper half of it), and its breakout is read at the bar it happened when that came > `lead` bars later.
+//  • Flat base 15–20% deep (FLAT_MAX_DEPTH) while sideways or with the close in its upper half, scored lower; a flat base's left-side high
+//    may be topped by ≤ 3% inside the base (NEAR_LIP; the pivot is then the base's top) as long as no close went > 1% above the lip.
+//  • Deep cups (≥ 25%) need ≥ 31% of their closes in the lower 30% (a straight V has 30%); on M a candle's position is the midpoint of its
+//    low and close.
+//  • Reversals: the last turning point may be any of the last LAST_TURN_CANDIDATES swings the price has not gone beyond since (a lower
+//    high after the final top used to hide the top); H&S head up to 16 swings back and left shoulder up to 8 before it; on M, turning
+//    points over MONTHLY_REVERSAL_MAX (48) months with a 5-year zig-zag, and a double is read even when a weaker triple exists.
+//  Effect (136 charts, the chart indicator's current structures): D 77 → 93 charts, W 48 → 68, M 7 → 22; recall of the hand labels
+//  D 38% → 69%, W 48% → 71%, M 8% → 83% (multi-year monthly ranges, which have no pattern id, 11% → 32%); re-judged precision of the
+//  current headlines ≥ 94% correct or borderline.
+
 import { aggregateBars } from './bar-aggregate';
 
 export interface PBar { t: number; o: number; h: number; l: number; c: number; v: number }
@@ -113,7 +132,7 @@ export interface PatternMeta { id: PatternId; label: string; bias: PatternBias; 
 
 const M = (id: PatternId, label: string, bias: PatternBias, family: PatternFamily, group: string, short: string): PatternMeta => ({ id, label, bias, family, group, short });
 export const PATTERN_META: Record<PatternId, PatternMeta> = {
-  flat_base: M('flat_base', 'Flat base', 'bullish', 'base', 'Flat & ascending bases', 'At least 5 weeks moving sideways, no more than 15% deep, after a rise.'),
+  flat_base: M('flat_base', 'Flat base', 'bullish', 'base', 'Flat & ascending bases', 'At least 5 weeks moving sideways, no more than 15% deep (to 20% scored lower), after a rise.'),
   u_base: M('u_base', 'U / rounding base', 'bullish', 'base', 'Cup & U', 'A rounded, saucer-shaped base without the classic cup proportions.'),
   cup: M('cup', 'Cup', 'bullish', 'base', 'Cup & U', 'A rounded U-shaped base 7–65 weeks long and 12–33% deep (deeper, to 50%, scores lower), right side back near the left high; no handle yet.'),
   cup_handle: M('cup_handle', 'Cup with handle', 'bullish', 'base', 'Cup & U', 'A cup followed by a short, shallow pullback (handle) in its upper half on lighter volume.'),
@@ -195,7 +214,7 @@ export interface DetectOptions { firstTradeT?: number; maxBars?: number; timefra
   weak?: boolean }
 
 /** zzz992 — bump when any detection rule changes (stored screener tags carry it for provenance). */
-export const PATTERN_ENGINE_VERSION = 'cp-3.3-indicator';
+export const PATTERN_ENGINE_VERSION = 'cp-3.4-recall';
 
 interface TfProfile {
   tf: PatternTimeframe;
@@ -226,6 +245,12 @@ export const MONTHLY_MIN_SPAN = 6;
 export const WEEKLY_REVERSAL_MIN_SPAN = 5;
 /** zzz992 — longest rounding (U) base read on monthly bars, in months. */
 export const LONG_BASE_MONTHS = 60;
+/** zzz1014 — longest double / triple top or bottom / head & shoulders read on monthly bars, in months (first to last turning point). */
+export const MONTHLY_REVERSAL_MAX = 48;
+/** zzz1014 — a flat base's left-side high may be topped by a later high inside the base by at most this much (the base's top is then its pivot). */
+export const NEAR_LIP = 0.03;
+/** zzz1014 — deepest flat base (15–20% scores lower than ≤ 15%). */
+export const FLAT_MAX_DEPTH = 0.2;
 /** Minimum usable bars per timeframe (W: 30 weeks, M: 24 months). */
 export const PATTERN_MIN_HISTORY: Record<PatternTimeframe, number> = { D: 30, W: 30, M: 24 };
 
@@ -518,7 +543,8 @@ function push(out: Map<PatternId, Raw>, r: Raw | null) {
 
 /**
  * Bases with a left-side high (lip): flat base, cup, cup with handle, U base, base on base, IPO base.
- *  Flat base   (O'Neil): ≥ 5 weeks (25 bars; up to 26 weeks), depth ≤ 15% (≤ 10% scores best), prior rise ≥ 20% (full at 30%).
+ *  Flat base   (O'Neil): ≥ 5 weeks (25 bars; up to 26 weeks), depth ≤ 15% (≤ 10% scores best; zzz1014: 15–20% accepted with a lower
+ *                       score while sideways or with the close in the upper half), prior rise ≥ 20% (full at 30%).
  *  Cup         (O'Neil): 7–65 weeks, depth 12–33% (to 50% penalised), prior rise ≥ 20–30%, rounded: ≥ 35% of the
  *                       cup's closes in the lower 30% of its range (a straight-sided V spends ~30% there, a U ~50%),
  *                       low in the middle 15–85% of the cup, right side back within 25% (full credit within 5%) of the lip.
@@ -562,12 +588,16 @@ function detectLipBases(s: S, e: number, recs: number[], out: Map<PatternId, Raw
     const tight3 = weeklyTightness(s, e, 3);
 
     // Flat base
-    if (patternApplies('flat_base', tf) && len <= L130 && depth <= 0.15 && depth >= 0.02 && up >= 0.2) {
+    // zzz1014 — 15–20% deep is still read as a flat base (scored lower: the depth rule gives 0 and the score × 0.9) while the close is
+    // in the upper half of it or the closes move sideways (regression drift over the base ≤ 8%); a hard 15% cut dropped sideways bases
+    // of 15.6–17% that any chartist calls flat (seen: SKYGOLD, FCX, CGPOWER). A 15–20% steady decline with the close in its lower half
+    // is a pullback, not a base (fixture: KRC daily).
+    if (patternApplies('flat_base', tf) && len <= L130 && depth <= FLAT_MAX_DEPTH && depth >= 0.02 && up >= 0.2 && (depth <= 0.15 || posInRange >= 0.5 || Math.abs(closeSlope(s, sIdx, e) * len) <= 0.08)) {
       const volDry = volRatio(avgVol(s, e - B(s, 10) + 1, e), vol50(s, sIdx));
       const conf = wscore([
         [2, ramp(up, 0.2, 0.35)], [2, ramp(depth, 0.15, 0.1)], [1, ramp(len, L25, Bg(s, 35, L25))], [1, ramp(posInRange, 0.3, 0.75)],
         [2, ramp(volDry, 1.1, 0.75)], [2, ramp(tight3, 0.06, 0.025)], [1, trendOK(s, e)],
-      ]);
+      ]) * (depth > 0.15 ? 0.9 : 1);
       push(out, { id: 'flat_base', conf, start: sIdx, end: e, keyFrom: sIdx, pivot: lip, depth,
         detail: '', lines: [LP('resistance', s, sIdx, lip, e, lip), LP('support', s, sIdx, low, e, low)],
         pts: [[sIdx, lip, 'LIP'], [m, low, 'LOW']], ev: evOf({ depth: pc1(depth), trend: pc1(up), vr: volDry }) });
@@ -583,7 +613,9 @@ function detectLipBases(s: S, e: number, recs: number[], out: Map<PatternId, Raw
     // roundness: share of the cup's closes in the lower 30% of its range
     const zone = low + 0.3 * range;
     let inZone = 0;
-    for (let i = sIdx; i <= r; i++) if (s.c[i] <= zone) inZone++;
+    // zzz1014 — M: a monthly candle's position is the midpoint of its low and close (a 10–15 candle cup has too few closes to show
+    // a U: one month that closed off its low hides a whole month spent at the bottom — seen: PLTR Nov 2025 – Sep 2026, 18% → 36%)
+    for (let i = sIdx; i <= r; i++) if ((tf === 'M' ? (s.l[i] + s.c[i]) / 2 : s.c[i]) <= zone) inZone++;
     const round = inZone / (cupLen + 1);
     if (round < 0.3 || lowPos < 0.15 || lowPos > 0.85) continue;
     const hLen = e - r;
@@ -592,7 +624,10 @@ function detectLipBases(s: S, e: number, recs: number[], out: Map<PatternId, Raw
     // M: a handle (1–7 weeks) is not visible; a right-side dip of 1 monthly candle is noise there, not a handle
     const noHandle = (tf === 'M' ? hLen < 2 : hLen < L5) || hDepth < 0.025;
     const handleValid = patternApplies('cup_handle', tf) && hLen >= L5 && hLen <= B(s, 35) && hDepth >= 0.025 && hDepth <= 0.15 && hLow > low + 0.5 * range && recovery >= 0.85;
-    const classic = len <= L330 && depth >= 0.12 && depth <= 0.5 && up >= 0.2 && round >= 0.35;
+    // zzz1014 — a deep cup (≥ 25%) needs ≥ 31% of its closes in the lower 30% of its range (was 35% for every cup): the lower 30% of a
+    // 45% cup is a narrow price band, so a genuine U spends less time in it (seen: PLTR Nov 2025 – Oct 2026 cup, 33%). A straight V
+    // spends 30% there, so it stays out.
+    const classic = len <= L330 && depth >= 0.12 && depth <= 0.5 && up >= 0.2 && round >= (depth >= 0.25 ? 0.31 : 0.35);
     const depthScore = depth <= 0.33 ? 1 : ramp(depth, 0.5, 0.33);
     const symScore = 1 - Math.min(1, Math.abs(lowPos - 0.5) / 0.4);
     const common: Array<[number, number]> = [
@@ -624,6 +659,39 @@ function detectLipBases(s: S, e: number, recs: number[], out: Map<PatternId, Raw
         lines: [LP('pivot', s, sIdx, lip, e, lip), LP('support', s, m, low, m, low)],
         pts: [[sIdx, lip, 'LIP'], [m, low, 'LOW'], ...(r > m ? [[r, rightH, 'R'] as [number, number, PointRole]] : [])],
         ev: evOf({ depth: pc1(depth), trend: pc1(up), rec: pc1(recovery), round: pc1(round) }) });
+    }
+  }
+
+  // zzz1014 — flat bases whose left-side high is NOT a staircase record: a later high inside the base topped it by ≤ 3% (a wick or
+  // a slightly higher second test of the ceiling), so the lip stopped being a record and the base was read only from that later high
+  // — too short to be a base (seen: TDPOWERSYS weekly Aug–Oct 2026, highs 799 / 813 / 818 / 813 then a 856 wick). The pivot is the
+  // base's top (its highest high), the depth is measured from it; every other flat-base rule is the same.
+  if (patternApplies('flat_base', tf)) {
+    const inRecs = new Set(recs);
+    for (let sIdx = Math.max(0, e - L130 + 1); sIdx <= e - L25 + 1; sIdx++) {
+      if (inRecs.has(sIdx)) continue;
+      const top = s.mxH.val(sIdx + 1, e), lip = s.h[sIdx];
+      if (!(top > lip) || top > lip * (1 + NEAR_LIP)) continue;
+      // …but no close went more than 1% above the lip: that was a breakout of the lip's base, read as such (fixture zzz1009 BHEL daily)
+      let closedAbove = false;
+      for (let i = sIdx + 1; i <= e; i++) if (s.c[i] > lip * 1.01) { closedAbove = true; break; }
+      if (closedAbove) continue;
+      if (lip < s.mxH.val(sIdx - B(s, 5), sIdx - 1)) continue;   // a real peak, not the shoulder of one
+      const len = e - sIdx + 1;
+      if (s.mxH.val(sIdx - Math.min(Math.max(len, L25), L130), sIdx - 1) > lip * 1.01) continue;
+      const m = s.mnL.idx(sIdx, e), low = s.l[m], depth = 1 - low / top, up = priorUp(s, sIdx), range = top - low;
+      if (!(range > 0) || depth > FLAT_MAX_DEPTH || depth < 0.02 || up < 0.2) continue;
+      const posInRange = (s.c[e] - low) / range;
+      if (!(depth <= 0.15 || posInRange >= 0.5 || Math.abs(closeSlope(s, sIdx, e) * len) <= 0.08)) continue;
+      const ti = s.mxH.idx(sIdx + 1, e);
+      const volDry = volRatio(avgVol(s, e - B(s, 10) + 1, e), vol50(s, sIdx));
+      const conf = wscore([
+        [2, ramp(up, 0.2, 0.35)], [2, ramp(depth, 0.15, 0.1)], [1, ramp(len, L25, Bg(s, 35, L25))], [1, ramp(posInRange, 0.3, 0.75)],
+        [2, ramp(volDry, 1.1, 0.75)], [2, ramp(weeklyTightness(s, e, 3), 0.06, 0.025)], [1, trendOK(s, e)],
+      ]) * (depth > 0.15 ? 0.9 : 1) * 0.95;
+      push(out, { id: 'flat_base', conf, start: sIdx, end: e, keyFrom: sIdx, pivot: top, depth,
+        detail: '', lines: [LP('resistance', s, sIdx, top, e, top), LP('support', s, sIdx, low, e, low)],
+        pts: [[sIdx, lip, 'LIP'], [ti, top, 'R'], [m, low, 'LOW']], ev: evOf({ depth: pc1(depth), trend: pc1(up), vr: volDry }) });
     }
   }
 
@@ -1021,10 +1089,13 @@ function detectTriWedge(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>) 
  *    points on its sides, not shoulders).
  */
 function detectReversals(s: S, e: number, zz: Pivot[], out: Map<PatternId, Raw>) {
-  const lows = zz.filter((q) => !q.hi && q.i >= e - B(s, 330));
-  const highs = zz.filter((q) => q.hi && q.i >= e - B(s, 330));
-  reversalSide(s, e, lows, true, out);
-  reversalSide(s, e, highs, false, out);
+  // zzz1014 — M: turning points over the last MONTHLY_REVERSAL_MAX months (was 330 days = 16 months, so a double top whose tops are
+  // 18 months apart was never seen on the monthly chart — seen: RELIANCE Jul 2024 / Jan 2026)
+  const win = s.pf.tf === 'M' ? MONTHLY_REVERSAL_MAX : B(s, 330);
+  const lows = zz.filter((q) => !q.hi && q.i >= e - win);
+  const highs = zz.filter((q) => q.hi && q.i >= e - win);
+  for (const k of lastTurnCandidates(s, e, lows, true)) reversalSide(s, e, lows.slice(0, k + 1), true, out);
+  for (const k of lastTurnCandidates(s, e, highs, false)) reversalSide(s, e, highs.slice(0, k + 1), false, out);
 }
 
 /** zzz1005 — the shared turning-point rules of the reversal family (see detectReversals). */
@@ -1040,6 +1111,26 @@ export function ranAwayFrom1y(c: number, ext1y: number, ext1yAfterLast: boolean,
   if (!ext1yAfterLast || !(ext1y > 0) || !(pivot > 0)) return false;
   const R = RUNAWAY_RULES;
   return bottom ? c >= ext1y * (1 - R.near1y) && ext1y > pivot * (1 + R.past1y) : c <= ext1y * (1 + R.near1y) && ext1y < pivot * (1 - R.past1y);
+}
+
+/**
+ * zzz1014 — the candidates for a reversal's LAST turning point: the latest swing low (high), plus up to two earlier ones that the price
+ * has not gone beyond since (every later low is higher / high is lower). A smaller bounce after the final top (a lower high above the
+ * neckline) or after the final bottom (a higher low) used to become the "last" swing, so the double / triple top or bottom it follows
+ * was never read (seen: DATAPATTNS weekly triple top 4,955 / 5,000 / 5,000 with a 4,640 lower high after it; SBIN, RELIANCE).
+ */
+const LAST_TURN_CANDIDATES = 6;
+function lastTurnCandidates(s: S, e: number, pts: Pivot[], bottom: boolean): number[] {
+  const out: number[] = [];
+  if (!pts.length) return out;
+  out.push(pts.length - 1);
+  for (let k = pts.length - 2; k >= 0 && out.length < LAST_TURN_CANDIDATES; k--) {
+    const P = pts[k];
+    const beyond = bottom ? s.mnL.val(P.i + 1, e) < P.p : s.mxH.val(P.i + 1, e) > P.p;
+    if (beyond) break;   // an earlier turning point the price has since gone beyond cannot be the last one (nor can any before it)
+    out.push(k);
+  }
+  return out;
 }
 
 function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<PatternId, Raw>) {
@@ -1063,7 +1154,7 @@ function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<P
   const lbl = bottom ? 'peak' : 'trough';
   const pivotOf = (mi: number) => (bottom ? s.h[mi] : s.l[mi]);
   // zzz992 — gaps in bars of the timeframe: a sub-gap (low → low) ≥ 10 days → ≥ 2 bars on W / M; the whole formation ≥ 3 bars
-  const G10 = s.pf.k === 1 ? 10 : Math.max(2, B(s, 10)), Gall = Bm(s, 10), G325 = B(s, 325);
+  const G10 = s.pf.k === 1 ? 10 : Math.max(2, B(s, 10)), Gall = Bm(s, 10), G325 = s.pf.tf === 'M' ? MONTHLY_REVERSAL_MAX : B(s, 325);
   const G5 = B(s, 5);
   // zzz1005 — turning-point rules
   const maxMid = s.pf.tf === 'M' ? R.maxMidDepthM : R.maxMidDepth;
@@ -1126,7 +1217,9 @@ function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<P
   }
 
   // Double (skip when the same last swing already makes a triple)
-  if (!bestTripleLast) {
+  // zzz1014 — M: the double is read too and the stronger of the two is kept (resolve): with 4 years of monthly swings an older third
+  // top can make a weak triple that used to hide a clean double (seen: FWONA monthly double top, 100 → hidden by a triple of 69)
+  if (!bestTripleLast || s.pf.tf === 'M') {
     for (let a = pts.length - 2; a >= 0; a--) {
       const A = pts[a];
       const gap = last.i - A.i;
@@ -1162,13 +1255,17 @@ function reversalSide(s: S, e: number, pts: Pivot[], bottom: boolean, out: Map<P
   }
 
   // Head & shoulders
-  for (let h = pts.length - 2; h >= 1 && h >= pts.length - 8; h--) {
+  // zzz1014 — the head may be up to 16 swing points back (was 8; same reason as the left shoulder below)
+  for (let h = pts.length - 2; h >= 1 && h >= pts.length - 16; h--) {
     const H = pts[h], RS = last;
     if (RS.i - H.i < G5) continue;
     const headDeeper = bottom ? RS.p / H.p - 1 : 1 - RS.p / H.p;
     if (headDeeper < 0.04) continue;
     if (bottom ? s.mnL.val(H.i, RS.i) < H.p : s.mxH.val(H.i, RS.i) > H.p) continue;
-    for (let l = h - 1; l >= 0 && l >= h - 4; l--) {
+    // zzz1014 — the left shoulder may be up to 8 swing points before the head (was 4: on a daily zig-zag a 3–7 month side has more
+    // swings than that, so the head and the shoulder that mirrors the right one were never tried — seen: DEEPAKNTR inverse H&S
+    // Dec 2025 – Oct 2026); every shoulder / neckline rule below is unchanged
+    for (let l = h - 1; l >= 0 && l >= h - 8; l--) {
       const LS = pts[l];
       if (H.i - LS.i < G5 || RS.i - LS.i < Gall) continue;
       if (RS.i - LS.i + 1 < revSpan) continue;   // zzz1008 (M) / zzz1009 (W)
@@ -1260,6 +1357,41 @@ export function stageOf(s: Pick<S, 'n' | 'c'>, e: number, from: number, pivot: n
   if (bull ? cl < level * 0.925 : cl > level * 1.075) return since <= win.failed ? { stage: 'failed', f } : null;
   if (since <= win.breakout) return (bull ? cl >= level * 0.97 : cl <= level * 1.03) ? { stage: 'breakout', f } : { stage: 'forming', f };
   return null;
+}
+
+/**
+ * zzz1014 — the stage of a flat-topped base / triangle read at an EARLIER body end whose level the price reached only later
+ * (STILL_FORMING_IDS only — not VCPs, whose contractions are re-read at every body end; anything else keeps stageOf's answer):
+ *  • no close beyond the level since its key point, but an intrabar high (low) after the body end went beyond it → still forming, when
+ *    the last close is in the upper (bearish: lower) half of the structure (a wick above a base's lip is not a breakout — the lip then stops being a record, so the
+ *    base was no longer read at the last bar; seen: BHEL, AZAD weekly flat bases);
+ *  • the first close beyond the level came more than `lead` bars after the body end, with every close in between inside the structure
+ *    → the base simply lasted longer: its stage is read as if its body ended the bar before that close (seen: AZAD daily flat base
+ *    Aug–Oct, broken out 8 sessions after the last burst body end).
+ */
+const STILL_FORMING_IDS = new Set<PatternId>(['flat_base', 'base_on_base', 'ipo_base', 'ascending_triangle', 'descending_triangle', 'cup', 'cup_handle', 'u_base']);
+/** …of which a later CLOSE beyond the level is read as this shape's breakout (a cup's later pullback is a handle — read as cup with handle) */
+const LATER_BREAK_IDS = new Set<PatternId>(['flat_base', 'base_on_base', 'ipo_base', 'ascending_triangle', 'descending_triangle']);
+function laterStage(s: S, raw: Raw, bull: boolean, e: number, win: StageWindows): { st: { stage: PatternStage; f: number } | null; e: number } | null {
+  const last = s.n - 1;
+  if (raw.lineAt || !STILL_FORMING_IDS.has(raw.id) || e >= last) return null;
+  const ps = (raw.pts || []).map((q) => q[1]).filter((p) => p > 0);
+  if (!ps.length) return null;
+  const floor = bull ? Math.min(...ps) : Math.max(...ps);
+  const inside = (c: number) => (bull ? c >= floor : c <= floor);
+  let f = -1;
+  for (let i = Math.max(0, raw.keyFrom); i <= last; i++) if (bull ? s.c[i] > raw.pivot : s.c[i] < raw.pivot) { f = i; break; }
+  if (f < 0) {
+    if (bull ? !(s.mxH.val(e + 1, last) > raw.pivot) : !(s.mnL.val(e + 1, last) < raw.pivot)) return null;
+    // and the close is still in the upper half of the structure (lower half for a bearish one): a base whose price has fallen back
+    // through it after the wick is no longer the base it was (seen: DIOD daily cup, right side 105 → close 89)
+    const mid = (raw.pivot + floor) / 2;
+    return inside(s.c[last]) && (bull ? s.c[last] >= mid : s.c[last] <= mid) ? { st: { stage: 'forming', f: -1 }, e } : null;
+  }
+  if (f <= e + win.lead || !LATER_BREAK_IDS.has(raw.id)) return null;
+  for (let i = e + 1; i < f; i++) if (!inside(s.c[i])) return null;
+  // the body end moves to the bar before that close (also for the expired list: a later breakout that has since completed)
+  return { st: stageOf(s, f - 1, raw.keyFrom, raw.pivot, bull, undefined, undefined, win), e: f - 1 };
 }
 
 function fmt(n: number): string {
@@ -1362,7 +1494,9 @@ export function analyzePatterns(bars: PBar[], opts?: DetectOptions): PatternAnal
   // body ends: last 6 bars + the day before the first day of each recent breakout / breakdown burst
   // (W / M: the last 2 candles; a burst = a close beyond the prior 10 days' range → 3 candles, looked for in the last
   // 40 days → 8 weeks / 2 months; the earliest body end is at bar 25 days → 5 weeks / 3 months)
-  const nEnds = tf === 'D' ? 6 : 2;
+  // zzz1014 — W 4 / M 3 candles (was 2): one weekly / monthly wick above a base's lip made the lip stop being a record, so a base
+  // still closing inside its range was no longer read (seen: AZAD, BHEL weekly flat bases)
+  const nEnds = tf === 'D' ? 6 : tf === 'W' ? 4 : 3;
   const L10 = tf === 'D' ? 10 : Math.max(3, B(s, 10));
   const minE = Bm(s, 25);
   const ends = new Set<number>();
@@ -1373,6 +1507,15 @@ export function analyzePatterns(bars: PBar[], opts?: DetectOptions): PatternAnal
   for (let f = last; f >= Math.max(L10 + 2, last - Math.max(2, B(s, 40))); f--) {
     if (nu < 3 && isUp(f) && !isUp(f - 1)) { let first = true; for (let j = f - 1; j >= f - L10; j--) if (isUp(j)) { first = false; break; } if (first) { ends.add(f - 1); nu++; } }
     if (nd < 3 && isDn(f) && !isDn(f - 1)) { let first = true; for (let j = f - 1; j >= f - L10; j--) if (isDn(j)) { first = false; break; } if (first) { ends.add(f - 1); nd++; } }
+  }
+  // zzz1014 — base breakouts / breakdowns: the first close above the highest high (below the lowest low) of the prior minE bars
+  // (≥ 5 weeks D / W, 3 months M). A base's pivot is its left-side high, so its breakout is such a close — which often comes several
+  // bars after the first 10-day closing high, or inside a run of them (no "first" burst), and was then never read (seen: AZAD, SKYGOLD
+  // "flat base breakout" lost once the new high replaced the lip; GE "double top breakdown").
+  let bu = 0, bd = 0;
+  for (let f = last; f >= Math.max(minE + 1, last - Math.max(2, B(s, 40))); f--) {
+    if (bu < 3 && s.c[f] > s.mxH.val(f - minE, f - 1) && !(s.c[f - 1] > s.mxH.val(f - 1 - minE, f - 2))) { ends.add(f - 1); bu++; }
+    if (bd < 3 && s.c[f] < s.mnL.val(f - minE, f - 1) && !(s.c[f - 1] < s.mnL.val(f - 1 - minE, f - 2))) { ends.add(f - 1); bd++; }
   }
 
   // zzz1009 — `strong`: the raw shape score (before the breakout-volume bonus) reaches MIN_CONF; a strong candidate always beats a
@@ -1402,8 +1545,9 @@ export function analyzePatterns(bars: PBar[], opts?: DetectOptions): PatternAnal
     const histOnly = hist.has(e);
     const raws = new Map<PatternId, Raw>();
     const atr = s.atrPct[e], sm = pf.swingMul;
-    const zzS = zigzag(s.h, s.l, e - B(s, 330), e, Math.min(0.05 * sm, Math.max(0.025 * sm, 1.2 * atr)));
-    const zzM = zigzag(s.h, s.l, e - B(s, 340), e, Math.min(0.08 * sm, Math.max(0.04 * sm, 2 * atr)));
+    const zzBack = tf === 'M' ? LONG_BASE_MONTHS : 0;   // zzz1014 — M: swings over 5 years (was 16 months)
+    const zzS = zigzag(s.h, s.l, e - Math.max(zzBack, B(s, 330)), e, Math.min(0.05 * sm, Math.max(0.025 * sm, 1.2 * atr)));
+    const zzM = zigzag(s.h, s.l, e - Math.max(zzBack, B(s, 340)), e, Math.min(0.08 * sm, Math.max(0.04 * sm, 2 * atr)));
     const recs = highRecords(s, e, B(s, 3), tf === 'M' ? LONG_BASE_MONTHS : B(s, 330));
     const floors = lowRecords(s, e, B(s, 4), B(s, 30));
     detectLipBases(s, e, recs, raws);
@@ -1416,9 +1560,11 @@ export function analyzePatterns(bars: PBar[], opts?: DetectOptions): PatternAnal
     detectReversals(s, e, zzM, raws);
     for (const raw of raws.values()) {
       const bull = PATTERN_META[raw.id].bias === 'bullish';
-      const st = stageOf(s, e, raw.keyFrom, raw.pivot, bull, raw.lineAt, raw.expiry, win);
+      let st = stageOf(s, e, raw.keyFrom, raw.pivot, bull, raw.lineAt, raw.expiry, win);
+      let eSt = e;
+      if (!st && !histOnly) { const ls = laterStage(s, raw, bull, e, win); if (ls) { st = ls.st; eSt = ls.e; } }
       if (!st) {
-        if (opts?.weak && raw.conf >= MIN_CONF) { const x = expiredWhy(s, e, raw, bull, win); if (x) noteExpired(raw, x.st, x.why); }
+        if (opts?.weak && raw.conf >= MIN_CONF) { const x = expiredWhy(s, eSt, raw, bull, win); if (x) noteExpired(raw, x.st, x.why); }
         continue;
       }
       if (histOnly) continue;

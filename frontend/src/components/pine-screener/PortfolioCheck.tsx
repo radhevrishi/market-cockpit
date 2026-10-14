@@ -27,7 +27,12 @@ export function PortfolioCheck({ items, market, status, error, source, chartHref
   const hiddenTotal = useMemo(() => items.reduce((n, x) => n + (x.hidden || 0), 0), [items]);
   const focus = useMemo(() => (mode === 'all' ? null : portfolioFocus(items, mode)), [items, mode]);
   const focusBy = useMemo(() => new Map((focus || []).map((f) => [f.item.ticker, f])), [focus]);
+  // zzz1016 (QA) — the column is the TheWrap stage; a row without it shows the Weinstein stage (30-week average) SAYING so, never under the
+  // TheWrap label (the two methods can disagree: e.g. Weinstein 3 topping vs TheWrap 4 declining)
   const stageOf = (r: PortfolioCheckRow['row']) => (r ? (r.twSt ?? r.stage ?? null) : null);
+  const stageTip = (r: PortfolioCheckRow['row']) => (!r || stageOf(r) == null ? 'Not known (under a year of weekly history)'
+    : r.twSt != null ? `Stage ${r.twSt} (TheWrap method: weekly 10/30/40-week averages and the 13-week range)${r.twWk != null ? ` · ${r.twWk} weeks in this stage` : ''}${r.sata != null ? ` · SATA ${r.sata}/10` : ''}`
+    : `Weinstein stage ${r.stage} (price against a rising / falling 30-week average) — the TheWrap stage is not known for this company`);
   const sorted = useMemo(() => {
     if (focus && sort.key === 'verdict') { const l = focus.map((f) => f.item); return sort.dir === 1 ? l : l.slice().reverse(); }
     if (sort.key === 'verdict') return sort.dir === 1 ? items : items.slice().reverse();
@@ -100,12 +105,12 @@ export function PortfolioCheck({ items, market, status, error, source, chartHref
               <th className="pnx-pin"><Th bare label="Company" k="t" sort={sort} setSort={setSort} /></th>
               <Th label="Verdict" k="verdict" sort={sort} setSort={setSort} title="Worked out from the numbers on this row only — not advice" />
               <Th label="Chart patterns (D / W / M)" k="pat" sort={sort} setSort={setSort} num={false} title="Every pattern on daily, weekly and monthly bars: green bullish, red bearish, grey failed" />
-              <Th label="Stage" k="stage" sort={sort} setSort={setSort} num title="Stage (TheWrap method — 13-week range and 10/30/40-week averages): 1 basing, 2 advancing, 3 topping, 4 declining" />
+              <Th label="Stage" k="stage" sort={sort} setSort={setSort} num title="Stage (TheWrap method — 13-week range and 10/30/40-week averages): 1 basing, 2 advancing, 3 topping, 4 declining. A number marked W is the Weinstein stage (30-week average), shown when the TheWrap stage is not known." />
               <Th label="21d" k="ma21" sort={sort} setSort={setSort} num title="% the close is above (+) or below (−) its 21-day simple moving average (same daily bars)" />
               <Th label="50d" k="ma50" sort={sort} setSort={setSort} num title="% the close is above (+) or below (−) its 50-day simple moving average" />
               <Th label="200d" k="ma200" sort={sort} setSort={setSort} num title="% the close is above (+) or below (−) its 200-day simple moving average" />
               <Th label="RSI" k="rsi" sort={sort} setSort={setSort} num title="RSI 14, daily" />
-              <th className="pnx-num">Close</th>
+              <th className="pnx-num" title="The daily technical close the 21 / 50 / 200-day distances use (◷ = today's unfinished session, provisional)">Close</th>
             </tr>
           </thead>
           <tbody>
@@ -139,10 +144,10 @@ export function PortfolioCheck({ items, market, status, error, source, chartHref
                       ) : null}
                     </div>}
                   </td>
-                  <td className="pnx-num" title={stageOf(r) ? `Stage ${stageOf(r)} (TheWrap method: weekly 10/30/40-week averages and the 13-week range)${r?.twWk != null ? ` · ${r.twWk} weeks in this stage` : ''}${r?.sata != null ? ` · SATA ${r.sata}/10` : ''}` : 'Not known (under a year of weekly history)'}>{stageOf(r) ? <span>{STAGE_NAME[stageOf(r) as number] || stageOf(r)} <span style={{ color: C.dim }}>{stageOf(r)}</span></span> : '—'}</td>
+                  <td className="pnx-num" data-stage-method={r?.twSt != null ? 'thewrap' : r?.stage != null ? 'weinstein' : undefined} title={stageTip(r)}>{stageOf(r) ? <span>{STAGE_NAME[stageOf(r) as number] || stageOf(r)} <span style={{ color: C.dim }}>{stageOf(r)}{r?.twSt == null ? ' W' : ''}</span></span> : '—'}</td>
                   {[x.ma.d21, x.ma.d50, x.ma.d200].map((d, i) => <td key={i} className="pnx-num" style={{ color: d == null ? C.dim : d >= 0 ? C.green : C.red }} title={x.ma.close == null ? 'No close stored' : `${x.ma.basis === 'scan' ? 'Scan close' : 'Latest quote (no scan close stored)'}${x.ma.at ? ` of ${x.ma.at}` : ''}`}>{d == null ? '—' : `${d > 0 ? '+' : ''}${d.toFixed(1)}%`}</td>)}
                   <td className="pnx-num">{typeof r?.rsi === 'number' ? Math.round(r.rsi) : '—'}</td>
-                  <td className="pnx-num" title={x.ma.at ? `${x.ma.basis === 'scan' ? 'Scan close' : 'Latest quote'} of ${x.ma.at}` : ''}>{fmtPrice(x.ma.close, market)}</td>
+                  <td className="pnx-num" data-close-session={x.ma.session || undefined} title={x.ma.at ? `${x.ma.basis === 'scan' ? (x.ma.session === 'provisional' ? 'Daily technical close of today\'s unfinished session (provisional — not a completed close)' : 'Daily technical close') : 'Latest quote'} of ${x.ma.at} — the 21 / 50 / 200-day distances use it` : ''}>{x.ma.session === 'provisional' ? <span style={{ color: C.amber }} aria-label="Session open — provisional">◷ </span> : null}{fmtPrice(x.ma.close, market)}</td>
                 </tr>
               );
             })}

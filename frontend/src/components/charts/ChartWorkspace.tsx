@@ -780,8 +780,9 @@ export default function ChartWorkspace() {
   // zzz982 — "Automate chart patterns": runs only while that indicator is in the working layout
   // zzz1008 — the Pine Screener's hand-off (?atf / pat / pf / pt): the pattern indicator opens on that analysis timeframe with the
   // pattern selected and its window fitted; the indicator is switched on for it when it is off
+  // zzz1015 — the candles on screen (displayTf) win a tie between timeframes in the indicator's Auto analysis
   const [patHandoff] = useState(() => parsePatternHandoff((k) => sp.get(k), PATTERN_IDS));
-  const patterns = usePatternIndicator({ on: patternsOn(L.working), ready, ticker, market, exchange, basis, live, bars, chartRef, cacheRef, cur, chart: { loading, error }, handoff: patHandoff });
+  const patterns = usePatternIndicator({ on: patternsOn(L.working), ready, ticker, market, exchange, basis, live, bars, chartRef, cacheRef, cur, chart: { loading, error }, handoff: patHandoff, displayTf: tf });
   const handoffOn = useRef(false);
   useEffect(() => {
     if (!patHandoff?.pat || handoffOn.current) return;

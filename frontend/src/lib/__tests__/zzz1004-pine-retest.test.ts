@@ -310,14 +310,15 @@ test('zzz1004 Pine page (JSDOM): active-query heading, M disables unsupported ch
     const fb = document.querySelector('button[data-pat="flat_base"]') as HTMLButtonElement;
     assert.equal(fb.disabled, true); assert.match(fb.title, /Not read on M/); assert.match(fb.textContent!, /n\/a on M/);
     assert.equal((document.querySelector('button[data-pat="cup"]') as HTMLButtonElement).disabled, false);
-    // screens: the company list survives a screen change; a screen saved with a list (the portfolio ones) sets it
+    // screens: a company list picked by hand survives a screen change; a screen saved with a list (the portfolio ones) sets it.
+    // zzz1016 (coordinator) — a list SET BY A SCREEN is not carried: the next screen without one goes back to the list picked by hand
     await choose('Pine screens', 'monthly-bases');
     assert.match(h2(), /^Bullish · Monthly · All companies · Forming \+ Breakout · No pivot limit · U \/ rounding base, Cup, VCP/);
     assert.ok(document.querySelector('[role="radiogroup"][aria-label="Monthly variants"]'));
     await choose('Pine screens', 'pf-bearish-risks');
     assert.match(h2(), /^Bearish · Daily \+ Weekly \+ Monthly \(any\) · My portfolio · Forming \+ Breakdown · No pivot limit · All applicable patterns · Shape ≥ 35/);
     await choose('Pine screens', 'all-bullish');
-    assert.match(h2(), / · My portfolio · /, 'the list set by the portfolio screen survives the next screen change');
+    assert.match(h2(), /^Bullish · Daily · All companies · /, 'the list set by the portfolio screen is not carried to the next screen (zzz1016)');
   } finally {
     await act(async () => { root.unmount(); });
     await new Promise<void>((r) => setTimeout(r, 50));

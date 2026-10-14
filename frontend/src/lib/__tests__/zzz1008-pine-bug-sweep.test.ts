@@ -58,7 +58,7 @@ test('zzz1008 item 9: the disputed readings are no longer reported (each was rep
     const h = run(f).find((x) => x.id === f.id);
     assert.equal(h, undefined, `${f.name} must not be reported (${f.why}); got ${h?.id}:${h?.confidence}`);
   }
-  assert.equal(PATTERN_ENGINE_VERSION, 'cp-3.3-indicator');   // zzz1009 bumped it (weekly reversal span, breakT / breakAgo)
+  assert.equal(PATTERN_ENGINE_VERSION, 'cp-3.4-recall');   // zzz1009 bumped it (weekly reversal span, breakT / breakAgo); zzz1014 again (recall audit)
 });
 
 // ───────── synthetic bars (zzz1005's generator) ─────────
@@ -147,7 +147,7 @@ test('zzz1008 item 7: every hit carries its turning points and evidence; tags st
   // the chart page honours atf / pat (indicator switched on, pattern selected, window fitted)
   const cw = read('components/charts/ChartWorkspace.tsx'), pi = read('components/charts/PatternIndicator.tsx');
   assert.match(cw, /parsePatternHandoff\(/); assert.match(cw, /withPatterns\(w, true\)/); assert.match(cw, /handoff: patHandoff/);
-  assert.match(pi, /handoff\.atf/); assert.match(pi, /setPicked\(\{ key, ids: new Set\(\[h\.id\]\) \}\)/); assert.match(pi, /fit\(\{ \.\.\.h, \.\.\.span \}\)/);
+  assert.match(pi, /handoff\.atf/); assert.match(pi, /setPicked\(\{ key, ids: new Set\(\[rowKeyOf\(h\)\]\) \}\)/);   // zzz1015 — rows are keyed by timeframe + pattern id assert.match(pi, /fit\(\{ \.\.\.h, \.\.\.span \}\)/);
 });
 
 // ───────── item 6: labels ─────────

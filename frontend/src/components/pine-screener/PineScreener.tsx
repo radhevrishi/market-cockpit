@@ -29,7 +29,7 @@ import { scopeItems, scopeCounts, scopeLabel, countsLine, emptyState, confirmAdd
 import {
   SETUP_CARDS, setupCounts, scopeKind, stockScreenTickers, cleanHandoff, PINE_HANDOFF_KEY, maPosition, portfolioCheck, stageWord, tfWord,
   querySummary, presetLine, scopeCoverage, coverageLine, chipApplicability, unsupportedNotice, familyOf, latestConditions, lengthDays, lengthTip,
-  analysisOf, sessionLabel, chartIdentityParams, ANALYSIS_CSV_HEAD, analysisCsvCells, listCoverageRows, withCarriedR40,
+  analysisOf, sessionLabel, chartIdentityParams, ANALYSIS_CSV_HEAD, analysisCsvCells, listCoverageRows, withCarriedR40, scopeAfterScreen, scopePicked, r40AfterScreen, r40WasUser, type ScopeState,
   queryRebuild, setupRebuild, tfCoverageWarnings, technicalSession, conflictWords,
   NO_STAGE_TEXT, ALL_TYPES_TEXT, conditionState, WORKFLOWS, workflowScope, stagesDiffer, presetStages, screenFunnel, perfPath,
   type PineHandoff, type Workflow, type SetupCard, type PortfolioMode,
@@ -52,6 +52,7 @@ import { HitDetail } from './HitDetail';
 type Row = ScreenRow & { live?: 1 };
 interface Snap { builtAt: string | null; rows: Row[]; total: number; scanned: number; withPattern: number; patAt: string | null; notes: string[]; building: boolean; stale: number; insufficient: number; pxConflicts: number }
 const SCOPE_KEY = 'mc:pine-screener:scope:v1';   // zzz989 — which list the results are limited to (this browser only)
+const SCOPE_ORIGIN_KEY = 'mc:pine-screener:scope-origin:v1';   // zzz1016 — whether that list was picked by hand or set by a screen, + the last list picked by hand
 const LAST_KEY = 'mc:pine-screener:last:v1';   // the screen + unsaved choices open last time (this browser only)
 const VIEW_KEY = 'mc:pine-screener:view:v1';   // zzz999 — setups or the portfolio check (this browser only)
 const EXTRA_KEY = 'mc:pine-screener:cols:v1';  // zzz999 — the optional fixed columns switched on (this browser only)
@@ -150,14 +151,20 @@ export default function PineScreener() {
     const market: ScreenMarket = hand ? hand.market : um === 'IN' || um === 'US' ? um : last?.market || s.market || 'US';
     // zzz1007 — 'tv-rule-of-40' is a Pine screen again (an old last-screen with that id simply opens it); the Rule of 40 control in
     // use last time survives like the company list does
-    const q0 = last?.dirty && last.id === s.id ? last.q : withCarriedR40(cleanQuery(clone(s.q)), last?.q);
-    return { s, market, q: q0, dirty: !!(last?.dirty && last.id === s.id) };
+    // zzz1016 — only a value the owner set himself travels (a Rule of 40 screen's own ≥ 40 does not)
+    const same = !!(last?.dirty && last.id === s.id);
+    const lastUser = !!last && r40WasUser(last.id, last.q);
+    const q0 = same ? last!.q : withCarriedR40(cleanQuery(clone(s.q)), last ? r40AfterScreen(last.q, lastUser) : null);
+    const r40User = same ? lastUser : lastUser && s.q.r40Min == null && q0.r40Min != null;
+    return { s, market, q: q0, dirty: same, r40User };
   });
   const [screenId, setScreenId] = useState(first.s.id);
   const [name, setName] = useState(first.s.name);
   const [market, setMarket] = useState<ScreenMarket>(first.market);
   const [q, setQ] = useState<PineQuery>(first.q);
   const [dirty, setDirty] = useState(first.dirty);
+  // zzz1016 — the Rule of 40 value in use was set by the owner in the control (carries to the next screen) — not by a screen itself
+  const [r40User, setR40User] = useState<boolean>(first.r40User);
   const [snaps, setSnaps] = useState<Partial<Record<ScreenMarket, Snap>>>({});
   const [errors, setErrors] = useState<Partial<Record<ScreenMarket, string | null>>>({});
   const [loading, setLoading] = useState(false);
@@ -204,11 +211,26 @@ export default function PineScreener() {
   // zzz989 / zzz999 — the company list: '' every company · 'wl:<id>' a watchlist · 'cb' Conviction Beats · 'pf' my portfolio ·
   // 'ss:<id>' a Stock Screener screen · 'hand' companies sent over from the Stock Screener
   const [handoff] = useState<PineHandoff | null>(() => readHandoff());
-  const [scope, setScope] = useState<string>(() => {
-    if (urlParam('from') === 'stock' && readHandoff()) return 'hand';
-    try { return localStorage.getItem(SCOPE_KEY) || ''; } catch { return ''; }
+  // zzz1016 — the list, where it came from (picked by hand / set by a screen) and the last list picked by hand (scopeAfterScreen)
+  const [scopeSt, setScopeSt] = useState<ScopeState>(() => {
+    if (urlParam('from') === 'stock' && readHandoff()) return scopePicked('hand');
+    let sc = '';
+    try { sc = localStorage.getItem(SCOPE_KEY) || ''; } catch { /* a convenience */ }
+    try {
+      const o = JSON.parse(localStorage.getItem(SCOPE_ORIGIN_KEY) || 'null');
+      if (o && o.origin === 'preset' && typeof o.user === 'string') return { scope: sc, origin: 'preset', user: o.user };
+    } catch { /* a convenience */ }
+    return scopePicked(sc);
   });
-  useEffect(() => { try { localStorage.setItem(SCOPE_KEY, scope === 'hand' ? '' : scope); } catch { /* a convenience */ } }, [scope]);
+  const scope = scopeSt.scope;
+  /** a list picked by hand (Companies control, "show every company") */
+  const setScope = (v: string) => setScopeSt(scopePicked(v));
+  useEffect(() => {
+    try {
+      localStorage.setItem(SCOPE_KEY, scope === 'hand' ? '' : scope);
+      localStorage.setItem(SCOPE_ORIGIN_KEY, JSON.stringify({ origin: scopeSt.origin, user: scopeSt.user === 'hand' ? '' : scopeSt.user }));
+    } catch { /* a convenience */ }
+  }, [scope, scopeSt]);
   const [cbTick, setCbTick] = useState(0);
   useEffect(() => {
     const bump = () => setCbTick((v) => v + 1);
@@ -290,17 +312,33 @@ export default function PineScreener() {
     for (const sct of l.sections) for (const it of sct.items) if (it.m === market) s.add(it.t.toUpperCase());
     return s;
   }, [watchlists, market]);
-  const listTickers = useMemo<Set<string> | null>(() => {
+  // zzz1016 — any list's companies: the cards / workflows count on the list a click WILL show, which can be the list last picked by
+  // hand (when the current one was set by a screen) — that one may be a Stock screen too
+  const userStock = useMemo(() => {
+    const sc = scopeSt.user, sr = stockData[market]?.rows;
+    if (sc === scope || scopeKind(sc) !== 'stock' || !sr) return null;
+    const ss = stockScreens.find((x) => `ss:${x.id}` === sc);
+    return ss ? { sc, set: stockScreenTickers(sr, ss, market) } : null;
+  }, [scopeSt.user, scope, stockScreens, stockData, market]);
+  const tickersFor = useCallback((sc: string): Set<string> | null => {
     void cbTick;
-    switch (kind) {
+    switch (scopeKind(sc)) {
       case 'all': return null;
       case 'cb': try { return new Set(Array.from(getConvictionTickers()).map((t) => String(t).toUpperCase())); } catch { return new Set(); }
       case 'portfolio': return new Set((hold?.tickers || []).map((t) => t.toUpperCase()));
-      case 'stock': return stockSet || new Set();
+      case 'stock': return sc === scope ? stockSet || new Set() : userStock && userStock.sc === sc ? userStock.set : new Set();
       case 'hand': return handoff && handoff.market === market ? new Set(handoff.tickers) : new Set();
-      default: return wlSet(scope);
+      default: return wlSet(sc);
     }
-  }, [kind, scope, market, cbTick, hold, stockSet, handoff, wlSet]);
+  }, [scope, market, cbTick, hold, stockSet, userStock, handoff, wlSet]);
+  /** the list is still being read (counts on it are not known yet) */
+  const waitingFor = useCallback((sc: string): boolean => {
+    const k = scopeKind(sc);
+    if (k === 'portfolio') return !hold || (hold.status === 'loading' && !hold.tickers.length);
+    if (k === 'stock') return sc === scope ? !stockSet && !stockData[market]?.error : !userStock && !stockData[market]?.error;
+    return false;
+  }, [hold, scope, stockSet, userStock, stockData, market]);
+  const listTickers = useMemo<Set<string> | null>(() => tickersFor(scope), [tickersFor, scope]);
   const scopeName = kind === 'cb' ? 'Conviction Beats' : kind === 'portfolio' ? 'My portfolio' : kind === 'stock' ? (stockScreen ? `Stock screen “${stockScreen.name}”` : 'a Stock screen')
     : kind === 'hand' ? `From the Stock Screener: ${handoff?.label || ''}` : watchlists?.lists.find((x) => `wl:${x.id}` === scope)?.name || '';
   const scopeWaiting = (kind === 'stock' && !stockSet && !stockData[market]?.error) || (kind === 'portfolio' && hold?.status === 'loading' && !hold.tickers.length);
@@ -325,8 +363,21 @@ export default function PineScreener() {
   const counts = useMemo(() => patternCounts(listTickers ? rows.filter((r) => listTickers.has(r.t.toUpperCase())) : rows, q, market), [rows, q, market, listTickers]);
   // zzz1008 (item 1b) — a selected timeframe being re-read by the current scan: "cannot be determined yet", never "0 match"
   const qRebuild = useMemo(() => queryRebuild(rows, q, kind === 'all' ? null : listTickers), [rows, q, kind, listTickers]);
-  const cardRebuild = useMemo(() => (snap ? setupRebuild(rows, kind === 'all' || kind === 'portfolio' ? null : listTickers) : {}), [snap, rows, kind, listTickers]);
-  const cardCounts = useMemo(() => (snap ? setupCounts(rows, market, kind === 'portfolio' ? null : listTickers, hold && (hold.status !== 'loading' || hold.tickers.length) ? hold.tickers : null, undefined, { r40Min: q.r40Min ?? null }) : {}), [snap, rows, market, listTickers, hold, kind, q.r40Min]);
+  // zzz1016 (QA) — the cards count on the CURRENT company list (My portfolio included: a card's number is what clicking it lists) and show
+  // "…" while that list is still loading
+  // (the setup cards' presets set no list of their own: a click keeps the list — or, when a screen had set it, goes back to the one picked
+  // by hand; the Rule of 40 travels only when the owner set it — zzz1016)
+  const cardScope = scopeAfterScreen(scopeSt, undefined).scope;
+  const cardList = useMemo(() => tickersFor(cardScope), [tickersFor, cardScope]);
+  const cardWaiting = waitingFor(cardScope);
+  const r40Carry = r40AfterScreen(q, r40User).r40Min;
+  const cardRebuild = useMemo(() => (snap ? setupRebuild(rows, cardList) : {}), [snap, rows, cardList]);
+  const cardCounts = useMemo(() => {
+    if (!snap) return {};
+    const c = setupCounts(rows, market, cardList, hold && (hold.status !== 'loading' || hold.tickers.length) ? hold.tickers : null, undefined, { r40Min: r40Carry });
+    if (cardWaiting) for (const k of Object.keys(c)) if (k !== 'portfolio') c[k] = null;
+    return c;
+  }, [snap, rows, market, cardList, hold, r40Carry, cardWaiting]);
   // zzz1011 — the one-click workflows: each one's count on its own company list (portfolio / watchlist / the current list)
   const activeWlId = watchlists ? activeList(watchlists).id : null;
   const wfCounts = useMemo(() => {
@@ -335,18 +386,15 @@ export default function PineScreener() {
     for (const w of WORKFLOWS) {
       const s = BUILT_IN_PINE_SCREENS.find((x) => x.id === w.presetId);
       if (!s) continue;
-      const sc = workflowScope(w, scope, activeWlId);
-      let list: ReadonlySet<string> | null;
-      if (sc === 'pf') {
-        if (!hold || (hold.status === 'loading' && !hold.tickers.length)) { out[w.id] = null; continue; }
-        list = new Set(hold.tickers.map((t) => t.toUpperCase()));
-      } else if (sc.startsWith('wl:')) list = wlSet(sc);
-      else list = sc === scope ? listTickers : null;
+      // zzz1016 — the list the click will show: the workflow's own, its screen's, else the list kept / picked by hand
+      const sc = scopeAfterScreen(scopeSt, w.scope ? workflowScope(w, scope, activeWlId) : s.scope).scope;
+      if (waitingFor(sc)) { out[w.id] = null; continue; }
+      const list = tickersFor(sc);
       const base = list ? rows.filter((r) => list!.has(r.t.toUpperCase())) : rows;
-      out[w.id] = queryRebuild(base, s.q, null).state === 'none' ? null : runPineFull(base, withCarriedR40(s.q, { r40Min: q.r40Min ?? null }), market).strict.length;
+      out[w.id] = queryRebuild(base, s.q, null).state === 'none' ? null : runPineFull(base, withCarriedR40(s.q, { r40Min: r40Carry }), market).strict.length;
     }
     return out;
-  }, [snap, rows, scope, activeWlId, hold, wlSet, listTickers, market, q.r40Min]);
+  }, [snap, rows, scope, scopeSt, activeWlId, tickersFor, waitingFor, market, r40Carry]);
   const funnel = useMemo(() => (snap ? screenFunnel(rows, q, kind === 'all' ? null : listTickers, run) : null), [snap, rows, q, kind, listTickers, run]);
   const pfItems = useMemo(() => (view === 'portfolio' && hold ? portfolioCheck(rows, hold.tickers) : []), [view, rows, hold]);
   // which analysis timeframes have been scanned at all in this market (W / M fill in once the weekly / monthly scan runs)
@@ -387,8 +435,10 @@ export default function PineScreener() {
       }
     };
     return list.slice().sort((a, b) => {
-      const x = val(a), y = val(b);
-      if (typeof x === 'string' || typeof y === 'string') return String(x ?? '').localeCompare(String(y ?? '')) * sort.dir;
+      const x0 = val(a), y0 = val(b);
+      // zzz1016 (QA) — an empty text (no pattern, no sector) is missing like a missing number: last, whichever way the column is sorted
+      const x = x0 === '' ? null : x0, y = y0 === '' ? null : y0;
+      if ((typeof x === 'string' && y != null) || (typeof y === 'string' && x != null)) return String(x).localeCompare(String(y)) * sort.dir || a.row.t.localeCompare(b.row.t);
       if (x == null && y == null) return a.row.t.localeCompare(b.row.t);
       if (x == null) return 1;   // missing figures last, whichever way the column is sorted
       if (y == null) return -1;
@@ -412,20 +462,24 @@ export default function PineScreener() {
 
   // ── changing the query / screens ────────────────────────────────────────────────────────────────────────────────────
   const change = (patch: Partial<PineQuery>) => { setQ((p) => ({ ...p, ...patch })); setDirty(true); setShowAll(false); if (view !== 'setups') setView('setups'); };
-  const loadScreen = useCallback((id: string): boolean => {
+  const loadScreen = useCallback((id: string, scopeOverride?: string): boolean => {
     const s = screens.find((x) => x.id === id);
     if (!s) return false;
     if (dirty && !window.confirm(`Discard the unsaved changes to "${name}"?`)) return false;
-    setScreenId(s.id); setName(s.name); setQ(withCarriedR40(cleanQuery(clone(s.q)), q)); setDirty(false); setShowAll(false); setSelected(new Set()); setRuleEdit(null); setExpanded(null);
+    // zzz1016 — the Rule of 40 travels only when the owner set it in the control; a screen with its own value makes it the screen's
+    const nq = withCarriedR40(cleanQuery(clone(s.q)), r40AfterScreen(q, r40User));
+    setR40User(r40User && s.q.r40Min == null && nq.r40Min != null);
+    setScreenId(s.id); setName(s.name); setQ(nq); setDirty(false); setShowAll(false); setSelected(new Set()); setRuleEdit(null); setExpanded(null);
     setSec((x) => ({ ...x, patterns: x.patterns || s.q.ids.length > 0, rules: x.rules || s.q.filters.length > 0 }));
     if (s.market) setMarket(s.market);
-    // zzz1004 — the company list survives a screen change; only a screen saved WITH a list (e.g. the portfolio screens) sets it
-    if (s.scope !== undefined) setScope(s.scope);
+    // zzz1004 — a list picked by hand survives a screen change; a screen saved WITH a list (e.g. the portfolio screens) sets it.
+    // zzz1016 — a list a screen / workflow set is not carried: the next screen without one goes back to the list last picked by hand
+    setScopeSt((st) => scopeAfterScreen(st, scopeOverride !== undefined ? scopeOverride : s.scope));
     return true;
-  }, [screens, dirty, name, q]);
+  }, [screens, dirty, name, q, r40User]);
   const pickWorkflow = (w: Workflow) => {
     const sc = workflowScope(w, scope, activeWlId);
-    if (loadScreen(w.presetId)) { setScope(sc); setView('setups'); }
+    if (loadScreen(w.presetId, w.scope ? sc : undefined)) setView('setups');
   };
   const pickCard = (c: SetupCard) => {
     if (!c.presetId) { setView('portfolio'); return; }
@@ -451,7 +505,7 @@ export default function PineScreener() {
     if (!writeSaved(list)) { flash('Could not save: storage is full or blocked.'); return; }
     setSaved(list);
     const s = isBuiltIn ? BUILT_IN_PINE_SCREENS.find((x) => x.id === screenId)! : BUILT_IN_PINE_SCREENS[0];
-    setScreenId(s.id); setName(s.name); setQ(cleanQuery(clone(s.q))); setDirty(false);
+    setScreenId(s.id); setName(s.name); setQ(cleanQuery(clone(s.q))); setR40User(false); setDirty(false);
   };
   const setBias = (bias: PineQuery['bias']) => change({ bias, ids: q.ids.filter((id) => bias === 'both' || (PATTERN_META[id].bias === 'bullish') === (bias === 'U')) });
   const toggleId = (id: PatternId) => change({ ids: q.ids.includes(id) ? q.ids.filter((x) => x !== id) : [...q.ids, id] });
@@ -593,7 +647,9 @@ export default function PineScreener() {
   const numIn = (v: number | null, set: (v: number | null) => void, label: string) => (
     <input type="number" className="pnx-in" aria-label={label} value={v ?? ''} placeholder="any" onChange={(e) => set(e.target.value === '' ? null : Number(e.target.value))} />
   );
-  const colCount = 14 + shownCols.length + extras.length;
+  // zzz1016 (QA) — 13 fixed columns (company, setup, condition, score, pivot, to pivot, length, analysis close, quote, 12M, averages, RS,
+  // sector): the detail row / skeleton spanned one column too many
+  const colCount = 13 + shownCols.length + extras.length;
   const myStockScreens = stockScreens.filter((s) => s.market === market);
   const filtersOn = (q.ids.length ? 1 : 0) + q.filters.filter((f) => !f.off).length + companyFilterCount + (scope ? 1 : 0) + (q.r40Min != null ? 1 : 0);
   const r40Mode = q.r40Min == null ? 'off' : R40_LEVELS.includes(q.r40Min) ? String(q.r40Min) : 'custom';
@@ -740,13 +796,13 @@ export default function PineScreener() {
             <span className="pnx-lab">Rule of 40</span>
             <span role="radiogroup" aria-label="Rule of 40" className="pnx-seg">
               {([['off', 'Off'], ['40', '≥ 40'], ['60', '≥ 60'], ['custom', 'Custom']] as const).map(([v, label]) => (
-                <button key={v} type="button" role="radio" aria-checked={r40Mode === v} onClick={() => change({ r40Min: v === 'off' ? null : v === 'custom' ? (r40Mode === 'custom' ? q.r40Min : 50) : Number(v) })}>{label}</button>
+                <button key={v} type="button" role="radio" aria-checked={r40Mode === v} onClick={() => { setR40User(v !== 'off'); change({ r40Min: v === 'off' ? null : v === 'custom' ? (r40Mode === 'custom' ? q.r40Min : 50) : Number(v) }); }}>{label}</button>
               ))}
             </span>
             {r40Mode === 'custom' ? (
               <span style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 6, alignItems: 'center', fontSize: 13 }}>
                 <span>at least</span>
-                <input type="number" className="pnx-in" aria-label="Rule of 40 at least" value={q.r40Min ?? ''} onChange={(e) => { const v = e.target.value === '' ? null : Number(e.target.value); change({ r40Min: v != null && Number.isFinite(v) ? v : null }); }} />
+                <input type="number" className="pnx-in" aria-label="Rule of 40 at least" value={q.r40Min ?? ''} onChange={(e) => { const v = e.target.value === '' ? null : Number(e.target.value); const nv = v != null && Number.isFinite(v) ? v : null; setR40User(nv != null); change({ r40Min: nv }); }} />
                 <span style={{ color: C.dim }}>%</span>
               </span>
             ) : null}
@@ -863,7 +919,7 @@ export default function PineScreener() {
               <div><b>Strict results</b>: a company is listed only when every rule could be evaluated and passed; the rest are kept apart as provisional. Not advice: a pattern is a starting point for a chart review.</div>
             </div>
           </Section>
-          <button type="button" className="pnx-link" style={{ fontSize: 12.5, justifySelf: 'start' }} onClick={() => { setQ(clone({ ...DEFAULT_QUERY, bias: q.bias })); setDirty(true); }}>Reset every choice</button>
+          <button type="button" className="pnx-link" style={{ fontSize: 12.5, justifySelf: 'start' }} onClick={() => { setQ(clone({ ...DEFAULT_QUERY, bias: q.bias })); setR40User(false); setDirty(true); }}>Reset every choice</button>
         </aside>}
 
         {/* ── results ───────────────────────────────────────────────────────────────────────────────────────────── */}
@@ -927,7 +983,7 @@ export default function PineScreener() {
               ) : null}
               {err ? <div role="alert" style={{ color: C.red, fontSize: 13 }}>{err}{snap ? ' — showing the last loaded data' : ''}</div> : null}
               {scope && listTickers ? (
-                <div className="pnx-note">Limited to <b style={{ color: C.text1 }}>{scopeName}</b> ({scopeWaiting ? 'loading…' : `${listTickers.size} ${market === 'IN' ? 'Indian' : 'US'} companies`}){kind === 'stock' && stockData[market]?.error ? <span style={{ color: C.red }}> — {stockData[market]!.error}</span> : null} · <button type="button" className="pnx-link" onClick={() => setScope('')}>show every company</button></div>
+                <div className="pnx-note">Limited to <b style={{ color: C.text1 }}>{scopeName}</b> ({scopeWaiting ? 'loading…' : kind === 'cb' ? `${listTickers.size} names on the bench, any market — ${scopeCov?.inData ?? 0} in the ${market === 'IN' ? 'Indian' : 'US'} data` : `${listTickers.size} ${market === 'IN' ? 'Indian' : 'US'} ${listTickers.size === 1 ? 'company' : 'companies'}`}){kind === 'stock' && stockData[market]?.error ? <span style={{ color: C.red }}> — {stockData[market]!.error}</span> : null} · <button type="button" className="pnx-link" onClick={() => setScope('')}>show every company</button></div>
               ) : null}
 
               {/* toolbar */}

@@ -297,7 +297,7 @@ export function Th({ label, k, sort, setSort, num, title, bare, className }: { l
 /** The latest CONDITION of a reading (forming / crossed / holding / retesting / back inside / invalidated / expired), with the
  *  historical event in its tooltip — the two are never merged into one word. */
 export function ConditionChip({ c }: { c: ConditionState }) {
-  return <span className="pnx-cond" data-tone={c.tone} data-state={c.id} title={`${c.label}: ${c.tip}\nEvent: ${c.event.label}`}>{c.label}</span>;
+  return <span className="pnx-cond" data-tone={c.tone} data-state={c.id} data-quote-back={c.quoteBack ? true : undefined} title={`${c.label}: ${c.tip}\nEvent: ${c.event.label}`}>{c.label}</span>;
 }
 
 /** 12-month price path drawn from the stored performance figures (−12M, −6M, −3M, −1M, −1W, now) — no extra download. */

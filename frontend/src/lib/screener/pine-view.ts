@@ -45,12 +45,34 @@ export const SETUP_CARDS: readonly SetupCard[] = [
 export function withCarriedR40(q: PineQuery, current: Pick<PineQuery, 'r40Min'> | null | undefined): PineQuery {
   return q.r40Min == null && current?.r40Min != null ? { ...q, r40Min: current.r40Min } : q;
 }
+/** zzz1016 (coordinator) — carry-over applies only to what the OWNER chose.
+ *  Company list: `origin` 'user' = picked in the Companies control (or a hand-off) — it carries over to the next screen as before;
+ *  'preset' = set by a screen / workflow itself (e.g. the portfolio screens set "My portfolio") — the next screen without its own list
+ *  goes back to `user`, the list last picked by hand (default every company). */
+export interface ScopeState { scope: string; origin: 'user' | 'preset'; user: string }
+export function scopeAfterScreen(st: ScopeState, target: string | undefined): ScopeState {
+  if (target !== undefined) return { scope: target, origin: 'preset', user: st.user };
+  return st.origin === 'preset' ? { scope: st.user, origin: 'user', user: st.user } : st;
+}
+export const scopePicked = (v: string): ScopeState => ({ scope: v, origin: 'user', user: v });
+/** Rule of 40: a value set in the control by the owner (`r40User`) carries over; one a Rule of 40 screen set itself does not. */
+export function r40AfterScreen(q: Pick<PineQuery, 'r40Min'>, r40User: boolean): Pick<PineQuery, 'r40Min'> {
+  return { r40Min: r40User ? q.r40Min ?? null : null };
+}
+/** Whether a stored (last-session) Rule of 40 value was the owner's: anything but the opened built-in screen's own value. */
+export function r40WasUser(screenId: string, q: Pick<PineQuery, 'r40Min'> | null | undefined): boolean {
+  const v = q?.r40Min ?? null;
+  if (v == null) return false;
+  const p = BUILT_IN_PINE_SCREENS.find((s) => s.id === screenId);
+  return !(p && p.q.r40Min != null && p.q.r40Min === v);
+}
 /** The query a setup card stands for (its preset's query), or null for the portfolio card. */
 export function cardQuery(card: SetupCard): PineQuery | null {
   if (!card.presetId) return null;
   return BUILT_IN_PINE_SCREENS.find((s) => s.id === card.presetId)?.q || null;
 }
-/** How many companies each pattern card finds on these rows (strict matches only), within the company list when one is chosen.
+/** How many companies each pattern card finds on these rows (strict matches only), within the company list when one is chosen
+ *  (zzz1016: including "My portfolio" — a card's number is what clicking it lists, so the page passes the CURRENT list here).
  *  The portfolio card counts the holdings (all of them — with or without a pattern); null while the holdings are not known. */
 /** zzz1007 — `overlay`: the Rule of 40 control carried onto every card (a card whose preset sets its own keeps that), so the counts are
  *  what clicking the card shows. */
@@ -747,7 +769,7 @@ export function evidenceRows(t: Pick<ScreenPatternTag, 'id' | 'b' | 'ev' | 'tf'>
   if (fin(ev.sd)) out.push({ label: 'Shoulder difference', value: p(ev.sd), rule: '≤ 10%' });
   if (fin(ev.sh)) out.push({ label: 'Shoulders\' distance from the neckline ÷ the head\'s', value: `${ev.sh}`, rule: '≥ 0.30 (≥ 0.55 best)' });
   if (fin(ev.trend)) out.push({ label: rev || hs ? (bottom ? 'Prior fall into the first low' : 'Prior rise into the first high') : t.id.includes('flag') ? 'Pole' : 'Prior rise into the base', value: p(ev.trend), rule: rev || hs ? (bottom ? '≥ 15% (11.25% minimum)' : '≥ 20% (15% minimum)') : t.id.includes('flag') ? 'flags ≥ 15%, high tight flag ≥ 90%' : 'bases ≥ 20%' });
-  if (fin(ev.depth)) out.push({ label: 'Depth', value: p(ev.depth), rule: t.id === 'flat_base' ? '≤ 15%' : t.id === 'cup' || t.id === 'cup_handle' ? '12–33% (to 50% scored lower)' : '' });
+  if (fin(ev.depth)) out.push({ label: 'Depth', value: p(ev.depth), rule: t.id === 'flat_base' ? '≤ 15% (to 20% scored lower)' : t.id === 'cup' || t.id === 'cup_handle' ? '12–33% (to 50% scored lower)' : '' });
   if (fin(ev.rec)) out.push({ label: 'Right side as share of the lip', value: p(ev.rec), rule: '≥ 75% (cup with handle ≥ 85%)' });
   if (fin(ev.round)) out.push({ label: 'Closes in the lower 30% of the cup (roundness)', value: p(ev.round), rule: '≥ 35% (a V spends ~30% there)' });
   if (fin(ev.hd)) out.push({ label: 'Handle depth', value: p(ev.hd), rule: '2.5–15%' });
@@ -791,6 +813,9 @@ export const CROSSED_PCT = 0.5, RETEST_PCT = 1.5;
 export const EXPIRE_DAYS: Record<PatTf, number> = { D: 7, W: 21, M: 70 };
 export interface ConditionState {
   id: ConditionStateId; label: string; tip: string; tone: 'up' | 'down' | 'warn' | 'dim';
+  /** zzz1016 — the condition is read on the analysis close, but the latest quote is already back through the level (e.g. a monthly
+   *  breakout holding on the 30 Sep close while today's quote is below the pivot): the label says both */
+  quoteBack?: true;
   /** the historical event, apart from the condition: a breakout / breakdown in the last 5 sessions, a failed one, or none */
   event: { id: 'breakout' | 'breakdown' | 'failed' | null; label: string };
 }
@@ -798,6 +823,9 @@ const LABELS: Record<'U' | 'D', Record<ConditionStateId, string>> = {
   U: { forming: 'Forming', crossed: 'Pivot crossed', holding: 'Holding above pivot', retesting: 'Retesting pivot', returned: 'Back below pivot', invalidated: 'Invalidated', expired: 'Expired reading' },
   D: { forming: 'Forming', crossed: 'Level crossed', holding: 'Holding below level', retesting: 'Retesting level', returned: 'Back above level', invalidated: 'Invalidated', expired: 'Expired reading' },
 };
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** '2026-09-30' → '30 Sep' */
+export const shortDay = (iso: string): string => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso); return m ? `${Number(m[3])} ${MON[Number(m[2]) - 1] || m[2]}` : iso; };
 const daysBetween = (a: string, now: Date) => { const t = Date.parse(`${a.slice(0, 10)}T00:00:00Z`); return Number.isFinite(t) ? (now.getTime() - t) / 86_400_000 : null; };
 export function conditionState(row: Partial<ScreenRow> | null | undefined, tag: ScreenPatternTag, now: Date = new Date()): ConditionState {
   const up = tag.b === 'U', L = LABELS[up ? 'U' : 'D'];
@@ -819,8 +847,15 @@ export function conditionState(row: Partial<ScreenRow> | null | undefined, tag: 
   if (tag.s === 'b') {
     if (dd != null && dd < 0) return mk('returned', 'warn', `${event.label}; ${ddTxt}${at} — back inside the structure. The event stays on record.`);
     if (dd != null && lq != null && lq >= -RETEST_PCT && lq <= RETEST_PCT && lq < dd - CROSSED_PCT) return mk('retesting', 'warn', `Beyond the ${lvl} on the analysis close (${ddTxt}); the latest quote ${lp} is ${lq > 0 ? '+' : ''}${lq}% from it — testing the level again.`);
-    if (dd != null && dd < CROSSED_PCT) return mk('crossed', up ? 'up' : 'down', `Just past the ${lvl} (${ddTxt}${at}) — a raw crossing, not yet a clearance of ${CROSSED_PCT}%.`);
-    return mk('holding', up ? 'up' : 'down', `${ddTxt}${at} — closed beyond the ${lvl} and still there.`);
+    const c = dd != null && dd < CROSSED_PCT
+      ? mk('crossed', up ? 'up' : 'down', `Just past the ${lvl} (${ddTxt}${at}) — a raw crossing, not yet a clearance of ${CROSSED_PCT}%.`)
+      : mk('holding', up ? 'up' : 'down', `${ddTxt}${at} — closed beyond the ${lvl} and still there.`);
+    // zzz1016 (QA, MEDICAMEQ) — the latest quote contradicts it: said in the label, never read as the current state
+    if (lq != null && lq < 0) {
+      return { ...c, label: `${c.label}${a.at ? ` (close ${shortDay(a.at)})` : ''} · quote back ${up ? 'below' : 'above'}`, tone: 'warn', quoteBack: true,
+        tip: `${c.tip} The latest quote ${lp}${r.pxAt ? ` (${r.pxAt})` : ''} is ${Math.abs(lq).toFixed(2)}% back ${up ? 'below' : 'above'} the ${lvl}: the ${tfWord(a.tf)} condition is a completed-bar observation, the quote is the newer one.` };
+    }
+    return c;
   }
   if (dd != null && dd >= 0) return mk('crossed', up ? 'up' : 'down', `No breakout recorded yet, but the analysis close is at / past the ${lvl} (${ddTxt}).`);
   return mk('forming', 'dim', `No close beyond the ${lvl} yet (${ddTxt}${at}).`);

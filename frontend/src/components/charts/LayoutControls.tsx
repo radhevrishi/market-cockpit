@@ -220,14 +220,14 @@ export function IndicatorsPanel({ L, onClose, triggerRef }: { L: ReturnType<type
         <input type="number" min={1} max={200} value={w.volume.avg} onChange={(e) => setW((l) => ({ ...l, volume: { ...l.volume, avg: Number(e.target.value) || l.volume.avg } }))} style={{ ...input, width: 50 }} aria-label="Volume average length" />
         <span>bars</span>
       </div>
-      {/* zzz982 — chart-pattern detection on the daily bars, one line at the top of the chart */}
+      {/* zzz982 — chart-pattern detection, one line at the top of the chart (zzz1015: Auto = D / W / M together) */}
       <div style={{ margin: '8px 0', paddingTop: 8, borderTop: '1px solid var(--mc-border-3)' }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
           <input type="checkbox" checked={patternsOn(w)} onChange={(e) => setW((l) => withPatterns(l, e.target.checked))} aria-label="Automate chart patterns" />
           <b style={{ fontWeight: 600 }}>📐 Automate chart patterns</b>
         </label>
         <div style={{ paddingLeft: 22, marginTop: 2, fontSize: 12, color: 'var(--mc-text-3)' }}>
-          Names the pattern the daily chart is forming (flat base, cup with handle, VCP, flags, double bottom, head &amp; shoulders …) in one line at the top of the chart, with its pivot, and draws it.
+          Names the pattern the chart is forming (flat base, cup with handle, VCP, flags, double bottom, head &amp; shoulders …) in one line at the top of the chart, with its pivot, and draws it. Analysis Auto reads daily, weekly and monthly bars and leads with the most relevant current structure; D / W / M pick one.
         </div>
       </div>
       {/* zzz987 — Stage Analysis (TheWrap method): our own version from the published rules */}

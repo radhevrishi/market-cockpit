@@ -252,7 +252,7 @@ test('zzz1009 mounted: PENG on D shows the expired state (not a failed headline)
     };
     const props = { on: true, ready: false, ticker: 'PENG', market: 'US', exchange: undefined, basis: 'price', chartRef: { current: null }, cacheRef: { current: new Map() }, cur: '$', chart: { loading: false, error: null },
       live: { ok: true, ticker: 'PENG', market: 'US', interval: '1d', range: '10y', basis: 'price', bars: pack }, bars: b };
-    localStorage.setItem('mc:chart-pattern-tf:v1', JSON.stringify({ tf: 'D', provisional: false }));
+    localStorage.setItem('mc:chart-pattern-tf:v1', JSON.stringify({ v: 2, tf: 'D', provisional: false }));   // zzz1015 — an explicit D choice (the default is Auto)
     await act(async () => { root.render(React.createElement(Probe, props)); }); await act(async () => { await settle(260); });
     assert.equal(out.status, 'ready');
     assert.equal(out.view.state, 'expired-only');

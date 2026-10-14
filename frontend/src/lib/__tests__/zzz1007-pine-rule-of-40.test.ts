@@ -14,7 +14,7 @@ import {
 } from '../screener/pine';
 import { BUILT_IN_PINE_SCREENS } from '../screener/pine-presets';
 import { BUILT_IN_SCREENS, fieldOf, filterKeys } from '../screener/filters';
-import { querySummary, setupCounts, cardQuery, SETUP_CARDS, withCarriedR40, whyNotListed } from '../screener/pine-view';
+import { querySummary, setupCounts, cardQuery, SETUP_CARDS, withCarriedR40, r40AfterScreen, whyNotListed } from '../screener/pine-view';
 import type { ScreenRow } from '../screener/types';
 
 const SRC = join(__dirname, '..', '..');
@@ -133,8 +133,11 @@ test('zzz1007 saved queries keep the control; legacy queries without it load wit
   assert.equal(cleanQuery({ r40Min: 1e9 }).r40Min, null);
   const saved = cleanPineScreens([{ id: 'my-1', name: 'Mine', q: { qv: 2, bias: 'U', stages: ['f'], r40Min: 45 } }]);
   assert.equal(saved[0].q.r40Min, 45);
-  // carried across a screen change like the company list; a screen with its own setting keeps it
+  // carried across a screen change like the company list; a screen with its own setting keeps it.
+  // zzz1016 — only a value the OWNER set in the control is carried (r40AfterScreen); a Rule of 40 screen's own ≥ 40 is not
   assert.equal(withCarriedR40(Q({}), { r40Min: 40 }).r40Min, 40);
+  assert.equal(withCarriedR40(Q({}), r40AfterScreen({ r40Min: 40 }, true)).r40Min, 40, 'set by the owner: carried');
+  assert.equal(withCarriedR40(Q({}), r40AfterScreen({ r40Min: 40 }, false)).r40Min, null, 'set by a Rule of 40 screen: not carried');
   assert.equal(withCarriedR40({ ...Q({}), r40Min: 60 }, { r40Min: 40 }).r40Min, 60);
   assert.equal(withCarriedR40(Q({}), { r40Min: null }).r40Min, null);
   assert.deepEqual(pineFilters(Q({})), []);
