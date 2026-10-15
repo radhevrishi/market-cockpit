@@ -4348,6 +4348,9 @@ const FAVS: Array<{ href: string; label: string; color: string; ext?: boolean }>
   { href: '/charts', label: '📈 Charts + Watchlist', color: '#22D3EE' },
   { href: '/stock-screener', label: '🧮 Stock Screener', color: '#8B5CF6' },
   { href: '/pine-screener', label: '🧩 Pine Screener', color: '#8B5CF6' },   // zzz983 — chart patterns across every company
+  // zzz1047e — two Pine screens pinned straight to the screen
+  { href: '/pine-screener?screen=mtf-aligned', label: '🧩 Weekly + Monthly aligned', color: '#8B5CF6' },
+  { href: '/pine-screener?screen=mtf-eo-strong', label: '🧩 W+M + Strong result', color: '#8B5CF6' },
   { href: '/cockpit', label: '🛩️ Action Cockpit', color: '#F59E0B' },
   { href: '/cheat-entry', label: '🥷 Cheat Entry', color: '#10B981' },
   { href: '/bounce-desk', label: '🌊 Bounce Desk', color: '#A78BFA' },

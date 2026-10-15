@@ -33,7 +33,7 @@ const ROWS: ScreenRow[] = [
 ];
 
 test('zzz999 setup cards: each opens a built-in screen and counts its strict matches; the portfolio card counts every holding', () => {
-  assert.deepEqual(SETUP_CARDS.map((c) => c.id), ['breakouts', 'ready', 'bases', 'breakdowns', 'weekly', 'monthly', 'accumulation', 'portfolio']);   // zzz1004: + Monthly bases; zzz1046a: + Institutional accumulation
+  assert.deepEqual(SETUP_CARDS.map((c) => c.id), ['breakouts', 'ready', 'bases', 'breakdowns', 'weekly', 'monthly', 'accumulation', 'mtf-result', 'portfolio']);   // zzz1004: + Monthly bases; zzz1046a: + Institutional accumulation; zzz1047e: + weekly+monthly+result
   for (const c of SETUP_CARDS) if (c.presetId) assert.ok(BUILT_IN_PINE_SCREENS.some((s) => s.id === c.presetId), c.presetId);
   const n = setupCounts(ROWS, 'US', null, ['NONE', 'BRK', 'GONE']);
   for (const c of SETUP_CARDS) if (c.presetId) assert.equal(n[c.id], runPineFull(ROWS, cardQuery(c)!, 'US').strict.length, c.id);

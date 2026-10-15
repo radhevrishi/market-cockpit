@@ -46,6 +46,8 @@ export const SETUP_CARDS: readonly SetupCard[] = [
   { id: 'monthly', label: 'Monthly bases', sub: 'U-bases, cups, VCPs on completed monthly bars', presetId: 'monthly-bases', glyph: 'monthly', tone: 'up', alt: { presetId: 'monthly-reversal-bases', label: 'reversal bases' } },
   // zzz1046a — volume & accumulation (rules only: grade A or B)
   { id: 'accumulation', label: 'Institutional accumulation', sub: 'Grade A or B, confirmed: volume days, money flow, above the 50-day, liquid', presetId: 'acc-ab', glyph: 'accumulation', tone: 'up', needs: ['accR'] },
+  // zzz1047e — the owner's favourite mix: weekly + monthly structure with a STRONG/BLOCKBUSTER latest result
+  { id: 'mtf-result', label: 'Weekly + monthly + strong result', sub: 'Bullish weekly AND monthly pattern, latest result STRONG or BLOCKBUSTER (90 days)', presetId: 'mtf-eo-strong', glyph: 'monthly', tone: 'up' },
   { id: 'portfolio', label: 'My portfolio check', sub: 'Every holding: patterns and the 21 / 50 / 200-day averages', presetId: null, glyph: 'portfolio', tone: 'neutral' },
 ];
 /** zzz1007 — the Rule of 40 control survives a screen / card change (like the company list): a screen without its own Rule of 40

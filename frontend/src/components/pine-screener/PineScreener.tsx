@@ -197,14 +197,17 @@ export default function PineScreener() {
   const [first] = useState(() => {
     const last = readLast();
     const all = [...BUILT_IN_PINE_SCREENS, ...readSaved()];
-    const s = all.find((x) => x.id === last?.id) || BUILT_IN_PINE_SCREENS[0];
+    // zzz1047e — ?screen=<id> (home favourites) opens that screen directly, unchanged
+    const asked = urlParam('screen');
+    const byUrl = asked ? all.find((x) => x.id === asked) : undefined;
+    const s = byUrl || all.find((x) => x.id === last?.id) || BUILT_IN_PINE_SCREENS[0];
     const um = urlParam('market');
     const hand = urlParam('from') === 'stock' ? readHandoff() : null;   // "Open in Pine Screener": the hand-off's market
     const market: ScreenMarket = hand ? hand.market : um === 'IN' || um === 'US' ? um : last?.market || s.market || 'US';
     // zzz1007 — 'tv-rule-of-40' is a Pine screen again (an old last-screen with that id simply opens it); the Rule of 40 control in
     // use last time survives like the company list does
     // zzz1016 — only a value the owner set himself travels (a Rule of 40 screen's own ≥ 40 does not)
-    const same = !!(last?.dirty && last.id === s.id);
+    const same = !byUrl && !!(last?.dirty && last.id === s.id);
     const lastUser = !!last && r40WasUser(last.id, last.q);
     const q0 = same ? last!.q : withCarriedR40(cleanQuery(clone(s.q)), last ? r40AfterScreen(last.q, lastUser) : null);
     const r40User = same ? lastUser : lastUser && s.q.r40Min == null && q0.r40Min != null;
