@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { stageAnalysis, stageHeadline, stageDetails, dayWords, type WeekBar } from '../stage-analysis';
+import { stageAnalysis, stageHeadline, stageDetails, dayWords, sessionWords, stageDatesText, weekEnd, type WeekBar } from '../stage-analysis';
 import { stagePointsFor, stageMarksFor, stageBanner } from '../../components/charts/stage-view';
 
 const read = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
@@ -22,6 +22,8 @@ function basePlusAdvance(up: number): number[] {
   return p;
 }
 const K = 60;   // the breakout week
+/** zzz1030 — hand-made weekly bars carry no sessions: a week ends on its Friday */
+const fri = (i: number) => weekEnd({ wk: wkIso(i) });
 
 test('zzz1027 1 → 2: began = week k, confirmed = week k+1; week k still reads the old stage with the change pending', () => {
   const r = stageAnalysis(toWeeks(basePlusAdvance(12)), flatBench(72));
@@ -46,19 +48,20 @@ test('zzz1027 banner and details say both dates in plain words', () => {
   const r = stageAnalysis(toWeeks(basePlusAdvance(12)), flatBench(72));
   const w = { ...r.last!, mrs: 5, vsMa: 10, sub: 'A' as const };
   const head = stageHeadline(w);
-  assert.equal(head, `Stage 2 · Advancing · began ${dayWords(wkIso(K))} · confirmed ${dayWords(wkIso(K + 1))} (11 weeks) · 30-wk MA rising · RS +5 · price 10% above MA`);
-  assert.ok(stageHeadline({ ...w, began: '2026-08-03', since: '2026-08-03', confirmed: '2026-08-10', weeks: 10 })
-    .startsWith('Stage 2 · Advancing · began 3 Aug 2026 · confirmed 10 Aug 2026 (10 weeks) · '));
+  assert.equal(head, `Stage 2 · Advancing · ${stageDatesText(fri(K), fri(K + 1), { short: true, now: fri(71) })} (11 weeks) · 30-wk MA rising · RS +5 · price 10% above MA`);
+  // zzz1030 — dates name each week's last session (here: their Fridays), not the Mondays
+  assert.ok(stageHeadline({ ...w, began: '2026-08-03', since: '2026-08-03', confirmed: '2026-08-10', beganEnd: '2026-08-07', confirmedEnd: '2026-08-14', end: '2026-10-09', weeks: 10 })
+    .startsWith('Stage 2 · Advancing · began wk to 7 Aug · confirmed 14 Aug close (10 weeks) · '));
   const d = stageDetails(w);
   const get = (s: string) => d.find((x) => x.label.startsWith(s));
-  assert.equal(get('Structure began: first week that met the rule')!.value, dayWords(wkIso(K)));
-  assert.equal(get('Confirmed: the second weekly close — the stage was only known then')!.value, dayWords(wkIso(K + 1)));
+  assert.equal(get('Structure began: first week that met the rule')!.value, `week ending ${sessionWords(fri(K))}`);
+  assert.equal(get('Confirmed: the second weekly close — the stage was only known then')!.value, `at the close of ${sessionWords(fri(K + 1))}`);
   assert.equal(get('Weeks in this stage (counted from the confirmed week)')!.value, '11');
   assert.match(stageBanner('ready', w, true).text, /began .* · confirmed .* \(11 weeks\)/);
   // the first reading (no change seen yet) has no confirmation step: one date
   const first = stageAnalysis(toWeeks(basePlusAdvance(0)), flatBench(60)).last!;
   assert.equal(first.began, first.confirmed);
-  assert.match(stageHeadline(first), /^Stage 1 · Basing · since \d+ \w{3} \d{4} \(\d+ weeks\)/);
+  assert.match(stageHeadline(first), /^Stage 1 · Basing · since wk to \d+ \w{3}( \d{4})? \(\d+ weeks\)/);
   assert.ok(stageDetails(first).some((x) => x.label.startsWith('First reading')));
 });
 
@@ -69,7 +72,7 @@ test('zzz1027 chart: pill at the confirmed week, faint "began" tick; daily candl
   const wT = path.map((_, i) => MON0 + i * 7 * DAY);
   const wm = stageMarksFor(wT, r).find((m) => m.stage === 2)!;
   assert.equal(wm.t, wT[K + 1]); assert.equal(wm.beganT, wT[K]);
-  assert.equal(wm.label, `S2 · Advancing · ${dayWords(wkIso(K + 1), true)}`);
+  assert.equal(wm.label, `S2 · Advancing · ${dayWords(fri(K + 1), true)} close`);
   const wp = stagePointsFor(wT, r);
   assert.equal(wp[K][1], 1, 'the began week candle keeps the old colour'); assert.equal(wp[K + 1][1], 2);
   // daily candles (Mon–Fri)

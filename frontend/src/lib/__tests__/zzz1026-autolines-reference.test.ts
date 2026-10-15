@@ -48,13 +48,13 @@ test('reference: forming month through support → provisional breach, both dist
   const sup = rows.find((x) => x.kind === 'support')!;
   assert.equal(sup.prov, true);
   assert.equal(sup.title, 'Support level 131.03 (provisional breach)');
-  assert.match(sup.detail, /Sep close 8\.4% above · latest \$120\.60 is 8\.0% below — provisional breach \(month not closed\)/);
-  assert.match(sup.tip, /^Support 131\.03 · Sep close 8\.4% above · latest \$120\.60 is 8\.0% below — provisional breach \(month not closed\)/);
+  assert.match(sup.detail, /Sep close \$142\.10 is 8\.4% above · latest \$120\.60 is 8\.0% below — provisional breach \(month not closed\)/);
+  assert.match(sup.tip, /^Support 131\.03 · Sep close \$142\.10 is 8\.4% above · latest \$120\.60 is 8\.0% below — provisional breach \(month not closed\)/);
   assert.ok(!/\bholding\b/i.test(sup.tip + sup.detail + sup.title));
   // the resistance: Sep close 3.5% below it, latest further below — not a breach, still says both prices
   const rs = rows.find((x) => x.kind === 'resistance')!;
   assert.equal(rs.prov, false);
-  assert.match(rs.detail, /Sep close 3\.5% below · latest \$120\.60 is 18\.1% below \(month not closed\)/);
+  assert.match(rs.detail, /Sep close \$142\.10 is 3\.5% below · latest \$120\.60 is 18\.1% below \(month not closed\)/);
   // status line counts it; list header names both prices
   assert.match(autoLinesHeadline(r, 'M', 'ready', DEFAULT_ALN_PREFS, 1), /· 1 provisional breach \(month not closed\)$/);
   assert.equal(alnRefText(ref, 'M', 2, '$'), 'Distances from the Sep close $142.10 (last completed month) and the latest $120.60 (month not closed).');
@@ -98,13 +98,13 @@ test('reference: a trendline already broken on completed bars stays "broken"; an
   const row = autoLinesRows(done, r, 'D', 2, ref, '$').find((x) => x.id.startsWith('t:support'))!;
   assert.equal(row.prov, true);
   assert.match(row.title, /\(provisional breach\)$/);
-  assert.match(row.detail, /close \d+\.\d% above · latest \$\d+\.\d\d is \d+\.\d% below — provisional breach \(day not closed\)/);
+  assert.match(row.detail, /line at the \d+ \w{3} close: \$\d+\.\d\d \(\d+ \w{3} close \$\d+\.\d\d is \d+\.\d% above\) · line now \(projected to the latest bar\): \$\d+\.\d\d \(latest \$\d+\.\d\d is \d+\.\d% below\) — provisional breach \(day not closed\)/);
   assert.match(row.tip, /Intact on completed days; the latest price is through it — provisional breach until the day closes/);
   // forming bar back above the line: intact, two distances, no breach words
   const ok = autoLinesRows(done, r, 'D', 2, alnRef(done, [...done, { ...formingBelow, c: lineAt(130) + 4 }]), '$').find((x) => x.id.startsWith('t:support'))!;
   assert.equal(ok.prov, false);
   assert.ok(!/breach/.test(ok.detail + ok.title));
-  assert.match(ok.detail, /latest \$\d+\.\d\d is \d+\.\d% above \(day not closed\)/);
+  assert.match(ok.detail, /\(latest \$\d+\.\d\d is \d+\.\d% above\) \(day not closed\)/);
   // broken on completed bars: stays broken even when the forming bar is back above
   const brokenDone = mk(135, (i) => (i >= 121 ? lineAt(i) - 4 : null));
   const rb = autoLines(brokenDone, { tf: 'D' });

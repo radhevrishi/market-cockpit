@@ -5,7 +5,7 @@
 //  • the stage colours, the stage line (30-wk / 150-day average), the labels and levels where stages began, and the banner
 // The method itself is lib/stage-analysis.ts — our own version from the published rules, not the original script.
 import { newExtra, type ChartLayout } from '@/lib/chart-layouts';
-import { readingsForBars, stageAnalysis, weeklyFromTimed, stageHeadline, stageDetails, dayWords, STAGE_MEANING, STAGE_WORDS, SUB_WORDS, type Stage, type StageDetail, type StageResult, type StageWeek } from '@/lib/stage-analysis';
+import { readingsForBars, stageAnalysis, weeklyFromTimed, stageHeadline, stageDetails, stageDatesLong, stageChangeText, sessionWords, weekEnd, dayWords, STAGE_MEANING, STAGE_WORDS, SUB_WORDS, type Stage, type StageChange, type StageDetail, type StageResult, type StageWeek } from '@/lib/stage-analysis';
 import { readableOn } from '@/lib/readable-color';
 import { dailyUrl } from './pattern-view';
 
@@ -80,7 +80,11 @@ export function stagePointsFor(shownTimes: readonly number[], r: StageResult, ma
  *  week — what was knowable; `beganT` is the candle of the first qualifying week (a faint "began" tick), null when it is the same
  *  candle or off screen. On a daily chart both map to that week's close (its last session on screen); on weekly / monthly
  *  candles to the candle holding the week. Times are the candle timestamps. */
-export interface StageMark { t: number; stage: Stage; label: string; level: number | null; levelFrom: number | null; levelTo: number | null; kind: 'breakout' | 'breakdown' | null; beganT: number | null; began: string; confirmed: string }
+export interface StageMark { t: number; stage: Stage; label: string; level: number | null; levelFrom: number | null; levelTo: number | null; kind: 'breakout' | 'breakdown' | null; beganT: number | null; began: string; confirmed: string;
+  /** zzz1030 — the last trading session of the began / confirmed week, and the dates in words for hover text */
+  beganEnd: string; confirmedEnd: string; title: string;
+  /** zzz1030 — the faint tick's text: "began wk to 7 Aug" */
+  beganLabel: string }
 export function stageMarksFor(shownTimes: readonly number[], r: StageResult): StageMark[] {
   if (!shownTimes.length) return [];
   const out: StageMark[] = [];
@@ -102,15 +106,18 @@ export function stageMarksFor(shownTimes: readonly number[], r: StageResult): St
   };
   for (const ch of r.changes || []) {
     const conf = ch.confirmed ?? ch.wk, began = ch.began ?? ch.wk;
+    const confEnd = ch.confirmedEnd || weekEnd({ wk: conf }), beganEnd = ch.beganEnd || weekEnd({ wk: began });
     const ws = Date.parse(`${conf}T00:00:00Z`), bs = Date.parse(`${began}T00:00:00Z`);
     const k = candleOf(ws);
     if (k == null) continue;
     const kb = began !== conf ? candleOf(bs) : null;
     const kind = ch.level != null ? (ch.to === 2 ? 'breakout' : ch.to === 4 ? 'breakdown' : null) : null;
     out.push({
-      t: shownTimes[k], stage: ch.to, label: `S${ch.to} · ${STAGE_WORDS[ch.to]} · ${dayWords(conf, true)}`,
+      // zzz1030 — the pill names the confirming CLOSE (the week's last session), not the week's Monday
+      t: shownTimes[k], stage: ch.to, label: `S${ch.to} · ${STAGE_WORDS[ch.to]} · ${dayWords(confEnd, true)} close`,
       level: kind ? ch.level : null, levelFrom: kind ? Math.max(shownTimes[0], bs - 13 * 7 * DAY) : null, levelTo: kind ? ws + 4 * 7 * DAY : null, kind,
-      beganT: kb != null && kb !== k ? shownTimes[kb] : null, began, confirmed: conf,
+      beganT: kb != null && kb !== k ? shownTimes[kb] : null, began, confirmed: conf, beganEnd, confirmedEnd: confEnd,
+      title: stageChangeText({ ...ch, beganEnd, confirmedEnd: confEnd }), beganLabel: `began wk to ${sessionWords(beganEnd, { weekday: false, year: false })}`,
     });
   }
   return out;
@@ -138,8 +145,16 @@ export interface StageBannerModel {
   text: string; color: string | null;
   /** zzz1023 — the details list: each rule with its value, the plain-words meaning of the stage */
   details?: StageDetail[]; meaning?: string; sub?: string | null; stage?: Stage | null;
+  /** zzz1030 — the current stage's dates in full ("began week ending Fri 7 Aug 2026 · confirmed at the close of Fri 14 Aug 2026") */
+  long?: string;
+  /** zzz1030 — the latest stage changes, newest first, each with its began week and confirming close */
+  changes?: string[];
 }
-export function stageBanner(status: 'loading' | 'ready' | 'error' | 'idle', last: StageWeek | null, benchOk: boolean, error?: string, light = true): StageBannerModel {
+/** zzz1030 — the changes list in the details: the latest `max` changes, newest first. */
+export function stageChangesList(changes: readonly StageChange[] | null | undefined, max = 6): string[] {
+  return (changes || []).slice(-max).reverse().map((ch) => stageChangeText(ch));
+}
+export function stageBanner(status: 'loading' | 'ready' | 'error' | 'idle', last: StageWeek | null, benchOk: boolean, error?: string, light = true, changes?: readonly StageChange[] | null): StageBannerModel {
   if (status === 'loading' || status === 'idle') return { text: 'Stage Analysis: reading the weekly bars…', color: null };
   if (status === 'error') return { text: `Stage Analysis: ${error || 'the daily bars could not be loaded'}`, color: null };
   const base = stageHeadline(last);
@@ -148,6 +163,7 @@ export function stageBanner(status: 'loading' | 'ready' | 'error' | 'idle', last
     text: benchOk || !last || st == null ? base : `${base} · index not loaded (no RS)`,
     color: st ? stageColor(st, light) : null,
     details: stageDetails(last), meaning: st ? STAGE_MEANING[st] : undefined, stage: st,
+    long: stageDatesLong(last) || undefined, changes: changes?.length ? stageChangesList(changes) : undefined,
     sub: st && last?.sub ? `${st}${last.sub} · ${SUB_WORDS[st][last.sub]}` : null,
   };
 }

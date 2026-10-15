@@ -9,7 +9,7 @@
 // Width / dash by strength; the hovered line drawn a little heavier.
 import type * as KC from 'klinecharts';
 import { CLEAN_MAX_EDGE_TAGS, levelPriorities, mergeLevelTags, placeEdgeTags, type ChartDisplay, type LevelTag } from '@/lib/chart-display';
-import { alnColors, alnLinePrice, fmtAlnPrice, type AlnPayload } from './auto-lines-view';
+import { alnColors, alnLinePrice, dedupeAlnTags, fmtAlnPrice, type AlnPayload } from './auto-lines-view';
 
 // zzz1029 — display preset (Clean merges nearby tags and caps them; Research shows every tag) and prices whose right-edge tags are
 // drawn by others (a picked pattern's pivot): the tags here keep clear of those and of the last-price tag
@@ -119,7 +119,8 @@ export function registerAutoLinesIndicator(kc: typeof KC): void {
       // ── right-edge tags: merged when close (Clean), the nearest support / resistance first, clear of the last-price tag and a
       // picked pattern's pivot tag (zzz1029), stacked ─────────────────────────────
       const mode: ChartDisplay = ext.display === 'research' ? 'research' : 'clean';
-      const inside = tags.filter((t) => t.y > -8 && t.y < bounding.height + 8);
+      // zzz1030 — one level = one tag (a level that reached the list twice was drawn as two identical stacked tags)
+      const inside = dedupeAlnTags(tags, ext.decimals).filter((t) => t.y > -8 && t.y < bounding.height + 8);
       const lastClose = data[data.length - 1]?.close;
       const pri = levelPriorities(inside, typeof lastClose === 'number' ? lastClose : null);
       const reqs = mergeLevelTags(inside.map((t) => ({ ...t, priority: pri.get(t.id) ?? 0 })), { mode, fmt: (n) => fmtAlnPrice(n, ext.decimals) });

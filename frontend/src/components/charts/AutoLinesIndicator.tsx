@@ -92,6 +92,9 @@ export function useAutoLines(a: AutoLinesArgs) {
       if (!alive) return;
       const { registerAutoLinesIndicator } = await import('./auto-lines-kline');
       registerAutoLinesIndicator(kc);
+      // zzz1030 — never two copies of the layer: remove any left by an earlier run (a slow import resolving after a newer one)
+      // right before creating, so each line and level is drawn — and tagged — once
+      clear();
       try { chart.createIndicator({ name: ALN_INDICATOR, paneId: 'candle_pane', extendData: { ...payload, hover: null } }, true); drawn.current = true; } catch { /* an extra: never break the chart */ }
     }).catch(() => { /* chart engine not loaded */ });
     return () => { alive = false; clear(); };

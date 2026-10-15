@@ -48,10 +48,10 @@ test('zzz987 weekly resample: ISO weeks, first open / extremes / last close / su
   assert.equal(weekKey('2026-10-18'), '2026-10-12');   // Sunday → same week
   const w = weeklyBars({ d: ['2026-10-12', '2026-10-13', '2026-10-16', '2026-10-19'], o: [10, 11, 12, 13], h: [11, 14, 13, 14], l: [9, 10, 8, 12], c: [10.5, 12, 11, 13.5], v: [1, 2, 3, 4] });
   assert.equal(w.length, 2);
-  assert.deepEqual(w[0], { wk: '2026-10-12', o: 10, h: 14, l: 8, c: 11, v: 6 });
+  assert.deepEqual(w[0], { wk: '2026-10-12', o: 10, h: 14, l: 8, c: 11, v: 6, last: '2026-10-16' });
   assert.equal(w[1].c, 13.5);
   const t = weeklyFromTimed([{ t: Date.parse('2026-10-12T00:00:00Z'), o: 1, h: 2, l: 1, c: 2, v: 5 }, { t: Date.parse('2026-10-14T00:00:00Z'), o: 2, h: 3, l: 2, c: 3, v: 5 }]);
-  assert.deepEqual(t, [{ wk: '2026-10-12', o: 1, h: 3, l: 1, c: 3, v: 10 }]);
+  assert.deepEqual(t, [{ wk: '2026-10-12', o: 1, h: 3, l: 1, c: 3, v: 10, last: '2026-10-14' }]);
 });
 
 test('zzz987 / zzz1023 state machine: base (1) → Stage 2 → Stage 3 → Stage 4 → Stage 1, each holding until a confirmed change', () => {
@@ -130,8 +130,8 @@ test('zzz987 from daily bars: resample + reading; benchmark weekly closes', () =
   const last = stageFromDaily(daily, bench)!;
   assert.equal(last.stage, 1);
   assert.equal(stageAnalysis(weeklyBars(daily), bench).weeks.length, path.length);
-  assert.match(stageHeadline(last), /^Stage 1 · Basing · began \d+ \w{3} \d{4} · confirmed \d+ \w{3} \d{4} \(\d+ weeks?\) · 30-wk MA (rising|flat|falling) · RS [+−]?\d+ · price /);
-  assert.equal(stageHeadline({ ...last, stage: 2, sub: 'A', began: '2026-08-03', since: '2026-08-03', confirmed: '2026-08-10', slope: 'rising', sata: 7, mrs: 12.44, vsMa: 8.2, weeks: 9, pending: null }), 'Stage 2 · Advancing · began 3 Aug 2026 · confirmed 10 Aug 2026 (9 weeks) · 30-wk MA rising · RS +12 · price 8% above MA');
+  assert.match(stageHeadline(last), /^Stage 1 · Basing · began wk to \d+ \w{3}( \d{4})? · confirmed \d+ \w{3}( \d{4})? close \(\d+ weeks?\) · 30-wk MA (rising|flat|falling) · RS [+−]?\d+ · price /);
+  assert.equal(stageHeadline({ ...last, stage: 2, sub: 'A', began: '2026-08-03', since: '2026-08-03', confirmed: '2026-08-10', beganEnd: null, confirmedEnd: null, end: '2026-10-09', slope: 'rising', sata: 7, mrs: 12.44, vsMa: 8.2, weeks: 9, pending: null }), 'Stage 2 · Advancing · began wk to 7 Aug · confirmed 14 Aug close (9 weeks) · 30-wk MA rising · RS +12 · price 8% above MA');
   assert.match(stageHeadline(null), /not enough weekly history/);
   assert.match(STAGE_TOOLTIP, /TheWrap/); assert.match(STAGE_TOOLTIP, /Not the original script/);
 });

@@ -96,6 +96,7 @@ export function useStageIndicator(a: StageIndicatorArgs) {
       const times = bars.map((b) => b.t);
       const points = stagePointsFor(times, result, ma150);
       const marks = stageMarksForDisplay(stageMarksFor(times, result), display);
+      clear();   // zzz1030 — never two copies of the layers (a slow import resolving after a newer run)
       try {
         // zzz1023 — the tint sits behind the candles; the stage line, strip, labels and levels in front of them
         chart.createIndicator({ name: STAGE_INDICATOR, paneId: 'candle_pane', zLevel: -1, extendData: { points, light } }, true);
@@ -110,7 +111,7 @@ export function useStageIndicator(a: StageIndicatorArgs) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, on, result, ma150, barsSig, light, chartRef, display]);
 
-  const banner = useMemo(() => stageBanner(!on ? 'idle' : mine ? mine.status : 'loading', result?.last ?? null, !!mine?.benchOk, mine?.error, light),
+  const banner = useMemo(() => stageBanner(!on ? 'idle' : mine ? mine.status : 'loading', result?.last ?? null, !!mine?.benchOk, mine?.error, light, result?.changes ?? null),
     [on, mine, result, light]);
   return { on, banner, benchName: benchmarkOf(market).name, display };
 }
@@ -141,14 +142,14 @@ export function StageBanner({ s, light, shifted, onTurnOff, dock }: { s: ReturnT
   const okColor = (ok: boolean | null) => (ok == null ? 'var(--mc-text-3)' : ok ? (light ? '#0B7A5E' : '#2BB58A') : (light ? '#B4232A' : '#EF6461'));
   const R = STAGE_RULES;
   return (
-    <div ref={boxRef} title={show ? undefined : `${STAGE_TOOLTIP} Mansfield RS here is measured against the ${s.benchName}.`}
+    <div ref={boxRef} title={show ? undefined : `${b.long ? `${b.long}.\n\n` : ''}${STAGE_TOOLTIP} Mansfield RS here is measured against the ${s.benchName}.`}
       style={dock ? DOCK_BOX : { position: 'absolute', top: 4, zIndex: 7, maxWidth: shifted ? '45%' : 'calc(100% - 100px)', fontSize: 12, ...(shifted ? { right: 70 } : { left: 8 }) }}>
       {/* zzz1013 / zzz1023 — the pattern banner's pill: opaque on the page colour, the stage colour as a tint, a soft lift */}
       <div data-testid="stage-banner" style={{ ...(dock ? DOCK_PILL : null), display: 'flex', alignItems: 'center', gap: 4, minHeight: 24, borderRadius: 8, lineHeight: '18px', boxShadow: '0 1px 0 rgba(18,23,34,.04), 0 6px 16px -10px rgba(18,23,34,.35)',
         border: `1px solid ${col.border}`, background: b.color ? `linear-gradient(${col.bg}, ${col.bg}), var(--mc-bg-0)` : 'var(--mc-bg-1)', color: col.text }}>
         {b.color && <span aria-hidden style={{ width: 8, height: 8, borderRadius: 2, background: b.color, marginLeft: 8, flex: '0 0 auto' }} />}
         <button type="button" onClick={() => hasDetails && setOpen((v) => !v)} aria-expanded={show} disabled={!hasDetails}
-          title={hasDetails ? (dock ? `${b.text}\n\nShow how this stage was read` : 'Show how this stage was read') : dock ? b.text : undefined}
+          title={hasDetails ? (dock ? `${b.text}${b.long ? `\n${b.long}` : ''}\n\nShow how this stage was read` : `${b.long ? `${b.long}\n\n` : ''}Show how this stage was read`) : dock ? b.text : undefined}
           style={{ background: 'none', border: 'none', color: col.text, cursor: hasDetails ? 'pointer' : 'default', padding: b.color ? '1px 4px 1px 2px' : '1px 4px 1px 8px', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, textAlign: 'left', fontVariantNumeric: 'tabular-nums' }}>
           {dock ? overlayChipText('stage', b.text) : b.text}{hasDetails ? (show ? ' ▴' : ' ▾') : ''}
         </button>
@@ -176,13 +177,21 @@ export function StageBanner({ s, light, shifted, onTurnOff, dock }: { s: ReturnT
               </div>
             ))}
           </div>
+          {!!b.changes?.length && (
+            <>
+              <div style={{ marginTop: 10, fontSize: 11.5, fontWeight: 650, color: 'var(--mc-text-3)' }}>Stage changes (newest first)</div>
+              <ul data-testid="stage-changes" style={{ margin: '4px 0 0', paddingLeft: 16, color: 'var(--mc-text-2)', fontSize: 11.5, lineHeight: '16px', fontVariantNumeric: 'tabular-nums' }}>
+                {b.changes.map((c) => <li key={c}>{c}</li>)}
+              </ul>
+            </>
+          )}
           <div style={{ marginTop: 10, fontSize: 11.5, fontWeight: 650, color: 'var(--mc-text-3)' }}>How the stages are read (weekly bars)</div>
           <ul style={{ margin: '4px 0 0', paddingLeft: 16, color: 'var(--mc-text-2)', fontSize: 11.5, lineHeight: '16px' }}>
             <li>The stage line is the 30-week average (on a daily chart, the 150-day average). Its slope over {R.slopeWeeks} weeks reads rising above +{R.flatPct}%, falling below −{R.flatPct}%, flat in between.</li>
             <li>Stage 2 starts with a weekly close above the 13-week closing range, above the average, with the average not falling (SATA {R.sataMin}+).</li>
             <li>Stage 4 starts with a weekly close below the 13-week range, below the average, with the average not rising.</li>
             <li>Stage 3 follows Stage 2 when the average stops rising and price closes under it or crosses it twice in 10 weeks; Stage 1 follows Stage 4 when price closes back over the average.</li>
-            <li>A change needs {R.confirmWeeks} weekly closes in a row, so one week&apos;s dip or jump does not flip the stage. &ldquo;Began&rdquo; is the first of those weeks (where the structure started); &ldquo;confirmed&rdquo; is the second close, when the stage was first known. The chart colour, the label and the week count start at the confirmed week; the first week keeps the old stage and shows the change as waiting.</li>
+            <li>A change needs {R.confirmWeeks} weekly closes in a row, so one week&apos;s dip or jump does not flip the stage. &ldquo;Began&rdquo; is the first of those weeks (where the structure started); &ldquo;confirmed&rdquo; is the second close, when the stage was first known. Dates name the last trading session of each week (its weekly close; a holiday week can end on a Thursday), not its Monday. The chart colour, the label and the week count start at the confirmed week; the first week keeps the old stage and shows the change as waiting.</li>
             <li>A Stage 2 under {R.youngWeeks} weeks old that falls back under a flat average is a failed breakout and returns to the stage before it.</li>
           </ul>
           <div style={{ marginTop: 8, fontSize: 11, color: 'var(--mc-text-3)' }}>

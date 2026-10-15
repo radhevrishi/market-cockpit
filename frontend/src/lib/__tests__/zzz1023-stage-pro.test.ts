@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { stageAnalysis, stageHeadline, stageDetails, dayWords, STAGE_MEANING, STAGE_RULES, STAGE_WORDS, SUB_WORDS, STAGE_TOOLTIP, type WeekBar, type Stage } from '../stage-analysis';
+import { stageAnalysis, stageHeadline, stageDetails, dayWords, stageDatesText, weekEnd, STAGE_MEANING, STAGE_RULES, STAGE_WORDS, SUB_WORDS, STAGE_TOOLTIP, type WeekBar, type Stage } from '../stage-analysis';
 import {
   STAGE_PALETTE, SLOPE_FLAT, CHART_BG, stageColor, stageFill, stageStrip, slopeColor, stageBanner, stageBannerColors, stagePointsFor,
   stageMarksFor, dailyMa150, barSpacingDays,
@@ -115,7 +115,7 @@ test('zzz1023 banner: one tidy line, details with measured values, meaning per s
   assert.equal(dayWords('2026-08-10'), '10 Aug 2026'); assert.equal(dayWords('2026-08-10', true), '10 Aug 26');
   const r = run(cycle());
   const w2 = r.weeks[75];
-  assert.equal(stageHeadline({ ...w2, sub: 'A', mrs: 12.4, vsMa: 8.2 }), `Stage 2 · Advancing · began ${dayWords(wkIso(60))} · confirmed ${dayWords(wkIso(61))} (15 weeks) · 30-wk MA rising · RS +12 · price 8% above MA`);
+  assert.equal(stageHeadline({ ...w2, sub: 'A', mrs: 12.4, vsMa: 8.2 }), `Stage 2 · Advancing · ${stageDatesText(weekEnd({ wk: wkIso(60) }), weekEnd({ wk: wkIso(61) }), { short: true, now: weekEnd({ wk: wkIso(75) }) })} (15 weeks) · 30-wk MA rising · RS +12 · price 8% above MA`);
   assert.match(stageHeadline({ ...w2, mrs: -3.6, vsMa: -0.2, sub: 'B' }), /^Stage 2 · Advancing \(extended\) · .* · RS −4 · price at the MA$/);
   const d = stageDetails(w2);
   const labels = d.map((x) => x.label).join(' | ');
@@ -178,7 +178,7 @@ test('zzz1023 chart points: the 150-day average on a daily chart, the 30-week av
   assert.deepEqual(marks.map((m) => m.stage), [1, 2, 3, 4, 1]);
   assert.equal(marks[1].kind, 'breakout'); assert.equal(marks[1].level, 101); assert.equal(marks[1].t, wTimes[61], 'pill at the confirmed week');
   assert.equal(marks[1].beganT, wTimes[60], 'faint "began" tick at the first qualifying week');
-  assert.match(marks[1].label, /^S2 · Advancing · \d+ \w{3} \d{2}$/);
+  assert.match(marks[1].label, /^S2 · Advancing · \d+ \w{3} \d{2} close$/);
   assert.ok(marks[1].levelFrom! < marks[1].t && marks[1].levelTo! > marks[1].t);
   assert.equal(marks[3].kind, 'breakdown'); assert.equal(marks[2].kind, null); assert.equal(marks[2].level, null);
   // zzz1027 — on daily candles the mark sits on the confirming week's close (its last session), the tick on the began week's close

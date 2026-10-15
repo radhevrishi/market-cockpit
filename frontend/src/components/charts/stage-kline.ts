@@ -3,7 +3,8 @@
 //  • MC_STAGE_LINE price pane, in front: the stage line (30-week average; the 150-day average on a daily chart) coloured by its
 //                  slope (rising green / flat grey / falling red), a thin stage strip along the bottom edge, a small label pill
 //                  where each stage was CONFIRMED ("S2 · Advancing · 10 Aug 26", the second weekly close — what was knowable)
-//                  placed clear of the candles, a faint "began" tick at the first qualifying week (zzz1027), and the dashed
+//                  placed clear of the candles (zzz1030: dated by the confirming week's last session, "… · 14 Aug 26 close"),
+//                  a faint "began wk to …" tick at the first qualifying week (zzz1027), and the dashed
 //                  base-high / support level with a ▲ / ▼ marker at the confirmed breakout / breakdown.
 //  • MC_MRS        its own pane: Mansfield RS as a histogram + line, green above zero and red below, with a zero line.
 // All read [timestamp, …] points from extendData (stage-view stagePointsFor / stageMarksFor), matched by timestamp, so a reload
@@ -168,7 +169,10 @@ export function registerStageIndicators(kc: typeof KC): void {
         ctx.globalAlpha = 0.45; ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.setLineDash([2, 2]);
         ctx.beginPath(); ctx.moveTo(x, H - STRIP_H); ctx.lineTo(x, H - STRIP_H - 14); ctx.stroke();
         ctx.setLineDash([]); ctx.globalAlpha = 0.7; ctx.fillStyle = readableOn(col, CHART_BG(light));
-        ctx.fillText('began', x - ctx.measureText('began').width / 2, H - STRIP_H - 15);
+        // zzz1030 — names the began week by its last session ("began wk to 7 Aug"), not its Monday
+        const txt = m.beganLabel || 'began';
+        const tw = ctx.measureText(txt).width;
+        ctx.fillText(txt, Math.min(Math.max(2, x - tw / 2), W - tw - 2), H - STRIP_H - 15);
       }
       ctx.restore();
 
