@@ -201,7 +201,7 @@ async function sendExternal(inserted: AlertEvent[], alerts: Map<string, PriceAle
 }
 
 /** "Test" button: one event for the alert's first ticker with its live quote, sent on the alert's channels. */
-export async function testFire(a: PriceAlert): Promise<{ event: AlertEvent | null; notified: { telegram: string; email: string } | null; error?: string }> {
+export async function testFire(a: PriceAlert): Promise<{ event: AlertEvent | null; notified: { telegram: string; email: string } | null; report?: string[]; error?: string }> {
   const { expandAll, fetchLiveQuotes } = await import('./sources');
   const store = await import('./store');
   const { renderMessage, exchangeOf } = await import('./trigger');
@@ -220,6 +220,48 @@ export async function testFire(a: PriceAlert): Promise<{ event: AlertEvent | nul
     message: `TEST · ${renderMessage(a.message, { ticker: p.ticker, name: q?.name, price: q?.price ?? null, change, condition, list, time: now, interval: a.interval, exchange: exchangeOf(mid), market: p.market })}`,
   }]);
   if (!ev) return { event: null, notified: null, error: 'not saved' };
-  const notified = await sendExternal([ev], new Map([[a.id, a]]));
-  return { event: ev, notified };
+  // zzz1062 — a test checks DELIVERY: it goes to every channel that is set up on the server, ticked on this alert or not,
+  // and says plainly which channel was not ticked (real alerts still use only the ticked channels).
+  const { notifyOwnerVia, notifyDiagnosis } = await import('@/lib/owner-notify');
+  const diag = notifyDiagnosis('ALERTS');
+  const via = { telegram: diag.telegram.ready, email: diag.email.ready };
+  const r = via.telegram || via.email ? await notifyOwnerVia({ ...externalMessage([ev])!, topic: 'ALERTS' }, via) : { telegram: 'skipped', email: 'skipped', errors: [] as string[] };
+  return {
+    event: ev,
+    notified: { telegram: r.telegram, email: r.email },
+    report: testReport(r, diag, a.notify),
+  };
+}
+
+/** zzz1062 — plain-English lines for the Test result. Exported for tests. */
+export function testReport(
+  r: { telegram: string; email: string; errors: string[] },
+  diag: { telegram: { ready: boolean; missing: string[] }; email: { ready: boolean; missing: string[]; toMasked: string | null } },
+  ticked: { telegram: boolean; email: boolean },
+): string[] {
+  const err = (prefix: string) => r.errors.find((e) => e.startsWith(prefix)) || '';
+  const line = (label: string, state: string, ready: boolean, missing: string[], isTicked: boolean, errText: string, sentTo: string) => {
+    if (!ready) return `${label}: not set up on the server — Railway is missing ${missing.join(' and ')}.`;
+    const tickNote = isTicked ? '' : ` Note: ${label} is NOT ticked on this alert, so real alerts won't use it — press Edit and tick ${label}.`;
+    if (state === 'sent') return `${label}: sent${sentTo}.${tickNote}`;
+    return `${label}: failed — ${errText.replace(/^(telegram|email|smtp)\s*/i, '') || 'no reason given'}.${tickNote}${hintFor(label, errText)}`;
+  };
+  return [
+    line('Email', r.email, diag.email.ready, diag.email.missing, ticked.email, err('email') || err('smtp'), diag.email.toMasked ? ` to ${diag.email.toMasked} (check Spam too)` : ''),
+    line('Telegram', r.telegram, diag.telegram.ready, diag.telegram.missing, ticked.telegram, err('telegram'), ''),
+  ];
+}
+
+function hintFor(label: string, e: string): string {
+  const s = e.toLowerCase();
+  if (label === 'Telegram') {
+    if (s.includes('chat not found')) return ' Fix: open your bot in Telegram and press Start, then put your own chat id in TELEGRAM_CHAT_ID.';
+    if (s.includes('401') || s.includes('unauthorized')) return ' Fix: TELEGRAM_BOT_TOKEN is wrong — copy it again from @BotFather.';
+    if (s.includes('blocked')) return ' Fix: you blocked the bot — unblock it in Telegram.';
+    return '';
+  }
+  if (s.includes('own email') || s.includes('testing emails')) return ' Fix: with the free Resend sender, NOTIFY_EMAIL_TO must be the same address you signed up to Resend with.';
+  if (s.includes('401') || s.includes('api key')) return ' Fix: RESEND_API_KEY is wrong — create a new key in Resend and paste it again.';
+  if (s.includes('domain')) return ' Fix: remove NOTIFY_EMAIL_FROM (or verify that domain in Resend).';
+  return '';
 }

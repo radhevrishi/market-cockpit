@@ -105,6 +105,16 @@ export async function POST(req: NextRequest) {
         const r = await testFire(a);
         return json({ ok: !!r.event, ...r }, r.event ? 200 : 422);
       }
+      case 'test-channels': {
+        // zzz1062 — "Send test message": checks Telegram + email delivery without any alert.
+        const [{ notifyOwnerVia, notifyDiagnosis }, { testReport }] = await Promise.all([import('@/lib/owner-notify'), import('@/lib/alerts/engine')]);
+        const diag = notifyDiagnosis('ALERTS');
+        const via = { telegram: diag.telegram.ready, email: diag.email.ready };
+        const r = via.telegram || via.email
+          ? await notifyOwnerVia({ subject: '🔔 Market Cockpit test message', text: `If you can read this, price alerts can reach you here.\nSent ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC.`, topic: 'ALERTS' }, via)
+          : { telegram: 'skipped' as const, email: 'skipped' as const, errors: [] as string[] };
+        return json({ ok: true, notified: { telegram: r.telegram, email: r.email }, report: testReport(r, diag, { telegram: true, email: true }) });
+      }
       case 'read': {
         const ids = body.ids === 'all' ? 'all' : Array.isArray(body.ids) ? body.ids.map(Number).filter(Number.isSafeInteger) : [];
         return json({ ok: true, marked: await markRead(ids) });

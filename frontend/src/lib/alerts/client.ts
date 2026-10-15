@@ -52,10 +52,15 @@ export const createAlertApi = async (alert: AlertInput) => saveResult(await call
 export const updateAlertApi = async (id: string, version: number, alert: AlertInput) => saveResult(await call({ action: 'update', id, version, alert }));
 export const pauseAlertApi = async (id: string, version: number, pause: boolean) => saveResult(await call({ action: pause ? 'pause' : 'resume', id, version }));
 export const deleteAlertApi = async (id: string) => saveResult(await call({ action: 'delete', id }));
-export async function testAlertApi(id: string): Promise<{ ok: boolean; error?: string; notified?: any }> {
+export async function testAlertApi(id: string): Promise<{ ok: boolean; error?: string; notified?: any; report?: string[] }> {
   const r = await call({ action: 'test', id });
   if (r.json?.ok) announce();
-  return { ok: !!r.json?.ok, error: r.json?.error, notified: r.json?.notified };
+  return { ok: !!r.json?.ok, error: r.json?.error, notified: r.json?.notified, report: Array.isArray(r.json?.report) ? r.json.report : undefined };
+}
+/** zzz1062 — "Send test message" (no alert needed). */
+export async function testChannelsApi(): Promise<{ ok: boolean; error?: string; report?: string[] }> {
+  const r = await call({ action: 'test-channels' });
+  return { ok: !!r.json?.ok, error: r.json?.error, report: Array.isArray(r.json?.report) ? r.json.report : undefined };
 }
 export async function markReadApi(ids: number[] | 'all'): Promise<boolean> {
   const r = await call({ action: 'read', ids });

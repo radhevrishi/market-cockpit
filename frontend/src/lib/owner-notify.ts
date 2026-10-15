@@ -47,13 +47,24 @@ async function post(url: string, body: unknown, headers: Record<string, string> 
   finally { clearTimeout(id); }
 }
 
+/** zzz1062 — the provider's own reason for a refusal (Telegram "description", Resend "message"), with any secret removed. */
+export async function providerReason(r: Response, secrets: string[] = []): Promise<string> {
+  let s = '';
+  try {
+    const t = await r.text();
+    try { const j = JSON.parse(t); s = String(j?.description ?? j?.message ?? j?.error?.message ?? j?.error ?? t); } catch { s = t; }
+  } catch { /* body unreadable */ }
+  for (const x of secrets) if (x) s = s.split(x).join('***');
+  return s.replace(/\s+/g, ' ').trim().slice(0, 200);
+}
+
 async function sendTelegram(m: NotifyMessage): Promise<[ChannelState, string?]> {
   const { token, chat } = tgCreds(m.topic);
   if (!token || !chat) return ['skipped'];
   try {
     for (const part of splitForTelegram(`${m.subject}\n\n${m.text}`)) {
       const r = await post(`https://api.telegram.org/bot${token}/sendMessage`, { chat_id: chat, text: part, disable_web_page_preview: true });
-      if (!r.ok) return ['error', `telegram HTTP ${r.status}`];
+      if (!r.ok) { const why = await providerReason(r, [token]); return ['error', `telegram HTTP ${r.status}${why ? ` — ${why}` : ''}`]; }
     }
     return ['sent'];
   } catch (e: any) { return ['error', `telegram ${e?.name === 'AbortError' ? 'timeout' : 'failed'}`]; }
@@ -70,7 +81,9 @@ async function sendEmail(m: NotifyMessage): Promise<[ChannelState, string?]> {
   if (resend && to) {
     try {
       const r = await post('https://api.resend.com/emails', { from: env('NOTIFY_EMAIL_FROM') || 'Market Cockpit <onboarding@resend.dev>', to: to.split(',').map((s) => s.trim()).filter(Boolean), subject: m.subject.slice(0, 180), text: m.text, html: htmlOf(m) }, { Authorization: `Bearer ${resend}` });
-      return r.ok ? ['sent'] : ['error', `email HTTP ${r.status}`];
+      if (r.ok) return ['sent'];
+      const why = await providerReason(r, [resend]);
+      return ['error', `email HTTP ${r.status}${why ? ` — ${why}` : ''}`];
     } catch (e: any) { return ['error', `email ${e?.name === 'AbortError' ? 'timeout' : 'failed'}`]; }
   }
   const host = env('SMTP_HOST'), user = env('SMTP_USER'), pass = env('SMTP_PASS'), from = env('SMTP_FROM') || user;
@@ -81,7 +94,7 @@ async function sendEmail(m: NotifyMessage): Promise<[ChannelState, string?]> {
     const tx = (nodemailer.default || nodemailer).createTransport({ host, port, secure: port === 465, auth: { user, pass }, connectionTimeout: TIMEOUT_MS, greetingTimeout: TIMEOUT_MS, socketTimeout: TIMEOUT_MS });
     await tx.sendMail({ from, to, subject: m.subject.slice(0, 180), text: m.text, html: htmlOf(m) });
     return ['sent'];
-  } catch { return ['error', 'smtp send failed']; }
+  } catch (e: any) { return ['error', `smtp send failed${e?.code ? ` (${String(e.code).slice(0, 40)})` : ''}`]; }
 }
 
 /** Which channels are set up (names only — never values). */
@@ -89,6 +102,22 @@ export function notifyChannels(topic?: NotifyTopic): { telegram: boolean; email:
   const { token, chat } = tgCreds(topic);
   const emailTo = env('NOTIFY_EMAIL_TO') || env('SMTP_TO');
   return { telegram: !!(token && chat), email: !!emailTo && (!!env('RESEND_API_KEY') || !!(env('SMTP_HOST') && env('SMTP_USER') && env('SMTP_PASS'))) };
+}
+
+/** zzz1062 — which settings are present / missing, by NAME only (never values), so the page can say exactly what to fix. */
+export function notifyDiagnosis(topic?: NotifyTopic): { telegram: { ready: boolean; missing: string[] }; email: { ready: boolean; via: 'resend' | 'smtp' | null; missing: string[]; toMasked: string | null } } {
+  const { token, chat } = tgCreds(topic);
+  const tgMissing = [!token ? 'TELEGRAM_BOT_TOKEN' : '', !chat ? 'TELEGRAM_CHAT_ID' : ''].filter(Boolean);
+  const to = env('NOTIFY_EMAIL_TO') || env('SMTP_TO');
+  const resend = !!env('RESEND_API_KEY');
+  const smtp = !!(env('SMTP_HOST') && env('SMTP_USER') && env('SMTP_PASS'));
+  const emMissing = [!to ? 'NOTIFY_EMAIL_TO' : '', !resend && !smtp ? 'RESEND_API_KEY' : ''].filter(Boolean);
+  const first = to.split(',')[0]?.trim() || '';
+  const toMasked = first ? first.replace(/^(.)(.*)(@.*)$/, (_m, a, b, c) => `${a}${'•'.repeat(Math.min(6, b.length))}${c}`) : null;
+  return {
+    telegram: { ready: tgMissing.length === 0, missing: tgMissing },
+    email: { ready: emMissing.length === 0, via: !to ? null : resend ? 'resend' : smtp ? 'smtp' : null, missing: emMissing, toMasked },
+  };
 }
 
 /** Sends on every configured channel. Never throws. */

@@ -2,7 +2,7 @@
 // zzz1054 — /price-alerts: every price alert (India + USA) with its state, and the log of what fired.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
-import { loadAlerts, loadEvents, pauseAlertApi, deleteAlertApi, testAlertApi, markReadApi, checkNowApi, ALERTS_CHANGED_EVENT, type AlertRow, type AlertsPayload } from '@/lib/alerts/client';
+import { loadAlerts, loadEvents, pauseAlertApi, deleteAlertApi, testAlertApi, testChannelsApi, markReadApi, checkNowApi, ALERTS_CHANGED_EVENT, type AlertRow, type AlertsPayload } from '@/lib/alerts/client';
 import { condLabel, targetKindLabel, triggerLabel, type AlertEvent, type PriceAlert } from '@/lib/alerts/types';
 import { chartListOptions } from '@/lib/alerts/chart-lists';
 
@@ -82,7 +82,7 @@ export default function PriceAlertsPage() {
       const r = await deleteAlertApi(a.id); if (!r.ok) setNote(`Not deleted: ${r.error}`);
     } else if (kind === 'test') {
       const r = await testAlertApi(a.id);
-      setNote(r.ok ? `Test sent${r.notified ? ` (Telegram: ${r.notified.telegram}, email: ${r.notified.email})` : ''}.` : `Test failed: ${r.error}`);
+      setNote(r.ok ? ['Test alert saved to the log.', ...(r.report || [])].join('\n') : `Test failed: ${r.error}`);
     } else {
       const r = await pauseAlertApi(a.id, a.version, kind === 'pause');
       if (!r.ok) setNote(r.conflict ? 'Changed in another tab — reloaded.' : `Not saved: ${r.error}`);
@@ -105,11 +105,12 @@ export default function PriceAlertsPage() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button type="button" className="pa-btn" disabled={busy === 'channels'} title="Sends one test message to Telegram and email (whichever are set up) and says exactly what went wrong if it fails" onClick={async () => { setBusy('channels'); setNote(null); const r = await testChannelsApi(); setBusy(null); setNote(r.ok ? (r.report || []).join('\n') : `Test failed: ${r.error}`); }}>Send test message</button>
           <button type="button" className="pa-btn" disabled={busy === 'check'} onClick={async () => { setBusy('check'); const r = await checkNowApi(); setBusy(null); setNote(r?.ok ? `Checked: ${r.tickers ?? 0} tickers in open sessions, ${r.fired ?? 0} fired.` : `Check failed: ${r?.error || 'error'}`); void refresh(); }}>Check now</button>
           <button type="button" className="pa-btn pri" onClick={() => setDialog({ editing: null })}>+ Create alert</button>
         </div>
       </div>
-      {note && <div className="pa-card" role="status" style={{ padding: '8px 12px' }}>{note}</div>}
+      {note && <div className="pa-card" role="status" style={{ padding: '8px 12px', whiteSpace: 'pre-line' }}>{note}</div>}
       {data && !data.ok && <div className="pa-card pa-err" role="alert">Alerts could not be loaded: {data.error}</div>}
 
       <div className="pa-card">

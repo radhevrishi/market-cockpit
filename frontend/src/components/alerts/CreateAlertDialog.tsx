@@ -100,7 +100,13 @@ export default function CreateAlertDialog({ onClose, onSaved, initialTarget, cha
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  useEffect(() => { void loadChannels().then(setChannels); }, []);
+  // zzz1062 — a NEW alert ticks Telegram / email by default when that channel is set up on the server (edits keep their choice).
+  useEffect(() => {
+    void loadChannels().then((c) => {
+      setChannels(c);
+      if (c && !editing) setNotify((n) => ({ ...n, telegram: n.telegram || c.telegram, email: n.email || c.email }));
+    });
+  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', k);
