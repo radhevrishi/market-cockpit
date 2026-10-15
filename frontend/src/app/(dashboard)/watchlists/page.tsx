@@ -8,7 +8,7 @@ import toast from 'react-hot-toast';
 import TickerSearch, { type TickerSuggestion } from '@/components/TickerSearch';
 import { canonicalTicker } from '@/lib/ticker-normalize'; // PATCH 0721
 import { quoteNumbers } from '@/lib/watchlist-export';
-import { CHAT_ID, BOT_SECRET } from '@/lib/config';
+import { CHAT_ID } from '@/lib/config';
 import { findInList, buildMembershipIndex, membershipsFor, isBulkQuery } from '@/lib/watchlist-find'; // zzz972
 import { CHART_WATCHLISTS_KEY } from '@/lib/chart-watchlist'; // zzz972 — read-only: which chart lists hold a company
 import { getConvictionTickers, getConvictionList, removeConviction, syncFromEarningsOps, getBenchSince, setBenchSince, clearConvictionBeats, replaceConvictionFields, readConvictionBeats, type ConvictionEntry } from '@/lib/conviction-beats';
@@ -26,7 +26,7 @@ import DecayWatch from '@/components/DecayWatch'; // zzz525 — 🪪 passport fr
 import DegradedBanner from '@/components/DegradedBanner';
 import { ConvictionBeatsPanel } from './ConvictionBeatsPanel';
 import { EIEliteTab } from './EIEliteTab';
-import { SummaryBar, WatchlistTable, EmptyState, WatchlistExportControl } from './components';
+import { SummaryBar, WatchlistTable, EmptyState, WatchlistExportControl, SaveStatusStrip } from './components';
 import { buildWatchlistExport, type ExportScope } from '@/lib/watchlist-export';
 import { writeReviewQueue } from '@/lib/screener/workflow';
 import { STANDALONE_WATCHLIST_ID, chartReviewUrl, watchlistReviewItems } from '@/lib/watchlist-chart-handoff';
@@ -35,12 +35,22 @@ import { type StockQuote, type SortField, type SortOrder } from './types';
 import { useWorkspaceLight, workspaceThemeClass } from '@/lib/workspace-theme';
 import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
 import { WLP_CSS } from './watchlists-css';
+// zzz1044c — save logic for this list (F08 empty list is the truth, F09 checked flag saves, F10 one write at a time).
+import { decideInitialWatchlist, WatchlistMutationQueue, FlagSync, flagView, EMPTY_LIST_SNAPSHOT, type ListSyncSnapshot, type FlagState, type WatchlistReadResult } from '@/lib/watchlist-sync';
+import { postWatchlistList, postWatchlistFlag, describeListOp } from './watchlist-save';
 
 // ── Main Page ──────────────────────────────────────────────────────────────────
 
 export default function WatchlistsPage() {
   const [wlLight, toggleWlLight] = useWorkspaceLight(true);   // zzz954: shared white / dark choice (white by default)
-  const [tickers, setTickers] = useState<string[]>([]);
+  // zzz1044c (F10) — the list lives in one save queue: what you see = last saved list + changes still saving.
+  const [listSync, setListSync] = useState<ListSyncSnapshot>(EMPTY_LIST_SNAPSHOT);
+  const [listQueue] = useState(() => new WatchlistMutationQueue({
+    send: postWatchlistList,
+    onChange: (snap) => { setListSync(snap); setStoredTickers(snap.tickers); },
+    onFailed: (ops, error) => toast.error(`${ops.map(describeListOp).join(', ')} — not saved (${error}), undone`),
+  }));
+  const tickers = listSync.tickers;
   const [quotes, setQuotes] = useState<StockQuote[]>([]);
   const [loading, setLoading] = useState(true);
   const [tickerInput, setTickerInput] = useState('');
@@ -49,7 +59,13 @@ export default function WatchlistsPage() {
   const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [watchlistFlags, setWatchlistFlags] = useState<Record<string, string>>({});
+  // zzz1044c (F09) — flags: next value worked out outside React's updater, the server's answer checked.
+  const [flagState, setFlagState] = useState<FlagState>({});
+  const [flagSync] = useState(() => new FlagSync({
+    send: postWatchlistFlag,
+    onChange: setFlagState,
+    onFailed: (t) => toast.error(`${t} flag not saved — click ⚠ to retry`),
+  }));
 
   // PATCH 0186 — Tab switcher: 'main' (existing user watchlist) vs 'conviction'
   // (auto-populated from Earnings Ops BLOCKBUSTER + STRONG cards).
@@ -261,65 +277,40 @@ export default function WatchlistsPage() {
   })();  // zzz426 — count includes server-bench members
 
   // Flag cycle: ⚪ → 🟢 → 🟠 → 🔴 → ⚪
-  // PATCH 0297 — Functional setState so rapid double-clicks always read the
-  // latest flag state. The previous closure read `watchlistFlags[ticker]`
-  // captured at render time, which could race when two clicks fired
-  // back-to-back before re-render.
-  const handleToggleFlag = useCallback(async (ticker: string) => {
-    const cycle = ['', '🟢', '🟠', '🔴'];
-    let nextFlag = '';
-    setWatchlistFlags(prev => {
-      const current = prev[ticker] || '';
-      const idx = cycle.indexOf(current);
-      nextFlag = cycle[(idx + 1) % cycle.length];
-      return { ...prev, [ticker]: nextFlag };
-    });
-    // Persist to API — fire after state update; reads `nextFlag` from the
-    // closure populated inside the setState callback above.
-    try {
-      await fetch('/api/watchlist', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chatId: CHAT_ID, action: 'set-flag', symbol: ticker, flag: nextFlag }),
-      });
-    } catch {}
-  }, []);
+  // zzz1044c (F09) — was: next flag written to a variable inside a setState updater (React does not promise it ran
+  // before the request was built), response.ok ignored, errors swallowed. Now FlagSync works the next flag out from
+  // the visible one, saves one at a time per company, and on failure puts the last saved flag back and marks the row.
+  const handleToggleFlag = useCallback((ticker: string) => { flagSync.click(ticker); }, [flagSync]);
+  const handleRetryFlag = useCallback((ticker: string) => { flagSync.retry(ticker); }, [flagSync]);
 
   // Initialize tickers from API first, fallback to localStorage
+  // zzz1044c (F08) — a successful empty list is the truth (a deliberate clear stays cleared). This browser's copy is
+  // used only when the read failed (network / HTTP error / unreadable / wrong shape) or the server has no record.
   useEffect(() => {
     const initTickers = async () => {
-      // Try to sync with shared watchlist (remote is source of truth)
-      // PATCH 0716 — 8s timeout + safe JSON parse + array shape guard.
+      let read: WatchlistReadResult;
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 25_000); // PATCH 1037
       try {
-        const _syncCtl = new AbortController();
-        const _syncTimer = setTimeout(() => _syncCtl.abort(), 25_000); // PATCH 1037
-        let syncData: any = {};
-        try {
-          const syncRes = await fetch(`/api/watchlist?chatId=${CHAT_ID}`, { signal: _syncCtl.signal });
-          clearTimeout(_syncTimer);
-          if (syncRes.ok) {
-            try { syncData = await syncRes.json(); } catch { syncData = {}; }
-          }
-        } finally { clearTimeout(_syncTimer); }
-        if (syncData && Array.isArray(syncData.watchlist) && syncData.watchlist.length > 0) {
-          // Remote wins: use it as the authoritative source
-          setTickers(syncData.watchlist);
-          setStoredTickers(syncData.watchlist);
-          // Load flags from API
-          if (syncData.flags) setWatchlistFlags(syncData.flags);
-          return;
-        }
-      } catch (e) {
-        console.error('Failed to sync watchlist:', e);
+        const res = await fetch(`/api/watchlist?chatId=${CHAT_ID}`, { signal: ctl.signal, cache: 'no-store' });
+        let body: unknown = undefined; let parseFailed = false;
+        try { body = await res.json(); } catch { parseFailed = true; }
+        read = { kind: 'response', ok: res.ok, status: res.status, body, parseFailed };
+      } catch (error) {
+        read = { kind: 'error', error };
+      } finally { clearTimeout(timer); }
+      const decision = decideInitialWatchlist(read);
+      if (decision.use === 'remote') {
+        listQueue.reset(decision.tickers);
+        flagSync.loadServer(decision.flags);
+        return;
       }
-
-      // Fallback to localStorage if remote fetch failed or returned empty
-      const stored = getStoredTickers();
-      setTickers(stored);
+      if (decision.reason !== 'no-record') console.warn(`[Watchlist] shared list not read (${decision.reason}) — showing this browser's copy`);
+      listQueue.reset(getStoredTickers());
     };
 
     initTickers();
-  }, []);
+  }, [listQueue, flagSync]);
 
   // Fetch quotes — bulk first, then individual for missing tickers
   const fetchData = useCallback(async () => {
@@ -413,7 +404,9 @@ export default function WatchlistsPage() {
         // zzz1000 (CW-01) — unknown numbers stay null ('—' on screen, blank in the export); a real 0% change stays 0
         ...quoteNumbers(quote),
         market: quote?.market,
-        flag: watchlistFlags[ticker] || null,
+        flag: flagView(flagState, ticker).flag || null,
+        flagStatus: flagView(flagState, ticker).status,   // zzz1044c (F09) — saving / not saved
+        flagFailed: flagView(flagState, ticker).failedFlag,
         // PATCH 0965 BUG #7 — forward optional columns from the quote so
         // the chooser actually surfaces them. Use `?? null` so a missing
         // value falls through to the "—" renderer rather than crashing.
@@ -426,7 +419,7 @@ export default function WatchlistsPage() {
       };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tickers, quotes, watchlistFlags]);
+  }, [tickers, quotes, flagState]);
 
   // Sort items
   const sortedItems = useMemo(() => {
@@ -494,36 +487,18 @@ export default function WatchlistsPage() {
       return;
     }
 
-    const prevTickers = [...tickers]; // snapshot for rollback
-    const newTickers = [...tickers, ...toAdd];
-    setTickers(newTickers);
-    setStoredTickers(newTickers);
+    // zzz1044c (F10) — one queued change; a failed save undoes only this change (later ones stay).
+    const total = tickers.length + toAdd.length;
+    listQueue.enqueue('add', toAdd);
     setTickerInput('');
 
     const msg = skipped.length > 0
-      ? `Added ${toAdd.length}, skipped ${skipped.length} (already in list). Total: ${newTickers.length}`
-      : `${toAdd.length} ticker${toAdd.length > 1 ? 's' : ''} added. Total: ${newTickers.length}`;
+      ? `Added ${toAdd.length}, skipped ${skipped.length} (already in list). Total: ${total}`
+      : `${toAdd.length} ticker${toAdd.length > 1 ? 's' : ''} added. Total: ${total}`;
     toast.success(msg);
 
-    // Sync FULL list to shared API — roll back on failure
-    fetch('/api/watchlist', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chatId: CHAT_ID, watchlist: newTickers, secret: BOT_SECRET }),
-    })
-      .then(res => {
-        if (!res.ok) {
-          setTickers(prevTickers); setStoredTickers(prevTickers);
-          toast.error('Failed to save — changes reverted');
-        }
-      })
-      .catch(() => {
-        setTickers(prevTickers); setStoredTickers(prevTickers);
-        toast.error('Network error — changes reverted');
-      });
-
     setTimeout(() => fetchData(), 500);
-  }, [tickerInput, tickers, fetchData]);
+  }, [tickerInput, tickers, fetchData, listQueue]);
 
   // Handle ticker search selection (single ticker from autocomplete)
   const handleSearchSelect = useCallback((rawTicker: string, suggestion?: TickerSuggestion) => {
@@ -535,17 +510,12 @@ export default function WatchlistsPage() {
         const parsed = rawTicker.toUpperCase().split(/[\s,;\n\r]+/)
           .map(t => t.replace(/^(NSE|BSE|BOM|MCX):/, '').trim())
           .filter(t => t.length > 0 && t.length < 30 && /^[A-Z0-9&-]+$/.test(t));
-        const existing = new Set(tickers);
-        const toAdd = parsed.filter(t => !existing.has(t));
+        const current = listQueue.snapshot().tickers;   // zzz1044c — the latest list, not this render's copy
+        const existing = new Set(current);
+        const toAdd = [...new Set(parsed.filter(t => !existing.has(t)))];
         if (toAdd.length === 0) { toast.error('All tickers already in watchlist'); return; }
-        const newTickers = [...tickers, ...toAdd];
-        setTickers(newTickers);
-        setStoredTickers(newTickers);
-        toast.success(`${toAdd.length} ticker${toAdd.length > 1 ? 's' : ''} added. Total: ${newTickers.length}`);
-        fetch('/api/watchlist', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chatId: CHAT_ID, watchlist: newTickers, secret: BOT_SECRET }),
-        }).catch(console.error);
+        listQueue.enqueue('add', toAdd);   // zzz1044c (F10) — was fire-and-forget with no rollback
+        toast.success(`${toAdd.length} ticker${toAdd.length > 1 ? 's' : ''} added. Total: ${current.length + toAdd.length}`);
         setTimeout(() => fetchData(), 500);
       }, 0);
       return;
@@ -556,11 +526,8 @@ export default function WatchlistsPage() {
     if (!symbol || !/^[A-Z0-9&-]+$/.test(symbol)) { toast.error('Invalid ticker'); return; }
     if (tickers.includes(symbol)) { toast.error(`${symbol} already in watchlist`); return; }
 
-    const prevTickers = [...tickers];
-    const newTickers = [...tickers, symbol];
-    setTickers(newTickers);
-    setStoredTickers(newTickers);
-    toast.success(`${symbol} added to watchlist. Total: ${newTickers.length}`);
+    listQueue.enqueue('add', [symbol]);   // zzz1044c (F10)
+    toast.success(`${symbol} added to watchlist. Total: ${tickers.length + 1}`);
     // AUDIT_100 #27 — scroll the new row into view. With 60+ stocks the user
     // has to manually search for what they just added; data-ticker attribute
     // on each row lets us find + scroll the freshly-inserted one.
@@ -571,16 +538,8 @@ export default function WatchlistsPage() {
       } catch {}
     }, 600);
 
-    fetch('/api/watchlist', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chatId: CHAT_ID, watchlist: newTickers, secret: BOT_SECRET }),
-    })
-      .then(res => {
-        if (!res.ok) { setTickers(prevTickers); setStoredTickers(prevTickers); toast.error(`${symbol} — save failed, reverted`); }
-      })
-      .catch(() => { setTickers(prevTickers); setStoredTickers(prevTickers); toast.error('Network error — reverted'); });
     setTimeout(() => fetchData(), 500);
-  }, [tickers, fetchData]);
+  }, [tickers, fetchData, listQueue]);
 
   // Build suggestions from quotes for autocomplete
   const searchSuggestions = useMemo((): TickerSuggestion[] => {
@@ -615,23 +574,11 @@ export default function WatchlistsPage() {
   const membershipFor = useCallback((t: string) => membershipsFor(membershipIndex, t), [membershipIndex]);
 
   // Handle remove ticker — with rollback on failure
+  // zzz1044c (F10) — queued; a failed save puts back only this company, later changes stay.
   const handleRemoveTicker = useCallback((ticker: string) => {
-    const prevTickers = [...tickers];
-    const newTickers = tickers.filter(t => t !== ticker);
-    setTickers(newTickers);
-    setStoredTickers(newTickers);
+    listQueue.enqueue('remove', [ticker]);
     toast.success(`${ticker} removed from watchlist`);
-
-    fetch('/api/watchlist', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chatId: CHAT_ID, watchlist: newTickers, secret: BOT_SECRET }),
-    })
-      .then(res => {
-        if (!res.ok) { setTickers(prevTickers); setStoredTickers(prevTickers); toast.error(`${ticker} — remove failed, reverted`); }
-      })
-      .catch(() => { setTickers(prevTickers); setStoredTickers(prevTickers); toast.error('Network error — reverted'); });
-  }, [tickers]);
+  }, [listQueue]);
 
   // Handle sort
   const handleSort = useCallback((field: SortField) => {
@@ -769,6 +716,9 @@ export default function WatchlistsPage() {
         </div>
       </div>
 
+      {/* zzz1044c (F10) — changes not yet saved / not saved */}
+      <SaveStatusStrip pending={listSync.pending} failed={listSync.failed} onRetry={(id) => listQueue.retry(id)} onDismiss={(id) => listQueue.dismiss(id)} />
+
       {/* ── Summary ───────────────────────────────────────────────────────── */}
       {tickers.length > 0 && <SummaryBar items={sortedItems} />}
 
@@ -807,6 +757,7 @@ export default function WatchlistsPage() {
             onSort={handleSort}
             onRemove={handleRemoveTicker}
             onToggleFlag={handleToggleFlag}
+            onRetryFlag={handleRetryFlag}
           />
         </div>
       )}

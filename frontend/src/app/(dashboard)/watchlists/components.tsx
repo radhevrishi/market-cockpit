@@ -7,6 +7,31 @@ import { isPriceSuspect } from '@/lib/nse';
 import { OPTIONAL_COLS } from './constants';
 import { loadColPrefs, saveColPrefs } from './helpers';
 import { type WatchlistItem, type SortField, type SortOrder, type OptionalCol } from './types';
+import { type ListOp, type FailedListOp } from '@/lib/watchlist-sync';
+import { describeListOp } from './watchlist-save';
+
+// ── zzz1044c (F10) — changes still saving / not saved ─────────────────────────
+
+export function SaveStatusStrip({ pending, failed, onRetry, onDismiss }: {
+  pending: ListOp[];
+  failed: FailedListOp[];
+  onRetry: (id: string) => void;
+  onDismiss: (id: string) => void;
+}) {
+  if (pending.length === 0 && failed.length === 0) return null;
+  return (
+    <div className="wlp-save" role="status" aria-live="polite">
+      {pending.length > 0 && <span>Saving {pending.length} change{pending.length > 1 ? 's' : ''}…</span>}
+      {failed.map((f) => (
+        <span key={f.id} className="err">
+          Not saved: {describeListOp(f)} ({f.error}) — undone.
+          <button type="button" onClick={() => onRetry(f.id)}>Retry</button>
+          <button type="button" onClick={() => onDismiss(f.id)} aria-label={`Dismiss: ${describeListOp(f)}`}>Dismiss</button>
+        </span>
+      ))}
+    </div>
+  );
+}
 
 // ── Summary Component ──────────────────────────────────────────────────────────
 
@@ -62,6 +87,7 @@ export function WatchlistTable({
   onSort,
   onRemove,
   onToggleFlag,
+  onRetryFlag,
 }: {
   items: WatchlistItem[];
   sortField: SortField;
@@ -69,6 +95,7 @@ export function WatchlistTable({
   onSort: (field: SortField) => void;
   onRemove: (ticker: string) => void;
   onToggleFlag?: (ticker: string) => void;
+  onRetryFlag?: (ticker: string) => void;
 }) {
   // PATCH 0442 BUG-020/027 — column chooser
   const [activeCols, setActiveCols] = useState<Set<OptionalCol>>(() => loadColPrefs());
@@ -161,9 +188,16 @@ export function WatchlistTable({
             return (
               <tr key={item.ticker} data-watchlist-ticker={item.ticker}>
                 <td style={{ textAlign: 'center', width: 56 }}>
-                  <button type="button" className="wlp-flag" onClick={() => onToggleFlag?.(item.ticker)} title={`Flag: ${item.flag || 'None'} (click to cycle)`} aria-label={`Flag for ${item.ticker}: ${item.flag || 'none'}`}>
+                  <button type="button" className={`wlp-flag${item.flagStatus === 'saving' ? ' saving' : ''}`} onClick={() => onToggleFlag?.(item.ticker)}
+                    title={item.flagStatus === 'saving' ? `Flag: ${item.flag || 'None'} — saving…` : `Flag: ${item.flag || 'None'} (click to cycle)`}
+                    aria-label={`Flag for ${item.ticker}: ${item.flag || 'none'}${item.flagStatus === 'saving' ? ', saving' : ''}`} aria-busy={item.flagStatus === 'saving'}>
                     {item.flag || '⚪'}
                   </button>
+                  {/* zzz1044c (F09) — a failed save is shown as not saved: the saved flag stays, ⚠ retries the failed one */}
+                  {item.flagStatus === 'error' && (
+                    <button type="button" className="wlp-flagerr" onClick={() => onRetryFlag?.(item.ticker)}
+                      title={`${item.flagFailed || 'No flag'} was not saved — click to retry`} aria-label={`Flag for ${item.ticker} not saved, retry`}>⚠</button>
+                  )}
                 </td>
                 {/* zzz967 (WL-02) — the ticker opens the same instrument on Charts (India list → NSE) */}
                 <td>

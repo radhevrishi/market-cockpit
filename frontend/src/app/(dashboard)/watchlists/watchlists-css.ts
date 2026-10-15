@@ -74,6 +74,11 @@ export const WLP_CSS = `
 .wlp-x:hover { color: var(--mc-bearish); background: var(--wlp-down-bg); }
 .wlp-flag { background: none; border: none; cursor: pointer; font-size: 15px; padding: 2px 4px; border-radius: 6px; line-height: 1; }
 .wlp-flag:hover { background: var(--mc-bg-2); }
+.wlp-flag.saving { opacity: .5; }
+.wlp-flagerr { background: none; border: none; cursor: pointer; padding: 0 2px; font-size: 11px; line-height: 1; color: var(--mc-bearish); vertical-align: super; }
+.wlp-save { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0 0 12px; font-size: 12.5px; color: var(--mc-text-3); }
+.wlp-save .err { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 7px; color: var(--mc-bearish); background: var(--wlp-down-bg); }
+.wlp-save button { background: none; border: none; padding: 0 2px; cursor: pointer; font: inherit; font-weight: 650; color: inherit; text-decoration: underline; }
 .wlp-pop { position: absolute; top: 100%; right: 8px; margin-top: 4px; z-index: 50; min-width: 210px; padding: 6px; border-radius: 10px; border: 1px solid var(--mc-border-1);
   background: var(--mc-bg-0); box-shadow: var(--wlp-shadow); text-align: left; }
 .wlp-pop label { display: flex; align-items: center; gap: 8px; padding: 6px 6px; border-radius: 6px; cursor: pointer; font-size: 12.5px; font-weight: 500; color: var(--mc-text-0); }

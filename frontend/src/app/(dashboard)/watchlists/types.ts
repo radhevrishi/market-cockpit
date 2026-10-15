@@ -29,6 +29,8 @@ export interface WatchlistItem {
   market?: 'IN' | 'US';
   marketCap?: number | null; // For weighted averages
   flag?: string | null;      // 🟢 🟠 🔴 or null
+  flagStatus?: 'saved' | 'saving' | 'error';   // zzz1044c (F09) — 'error' = last change not saved; flag shown is the saved one
+  flagFailed?: string | null;                  // zzz1044c — the flag whose save failed (offered on retry)
   // PATCH 0442 BUG-020 — extra columns
   volume?: number | null;
   week52High?: number | null;
