@@ -439,7 +439,7 @@ export const APP_JOBS: readonly AppJob[] = [
   // zzz1055 — FII / DII flows: NSE provisional every 15 min 13:00–15:30 UTC until today's row is in (no NSE call after that),
   // NSDL confirmed figure + new fortnight sector report at 15:30 / 17:45 / 04:20 UTC, history backfill in small chunks.
   // Crons = lib/fii-dii/schedule FII_DII_CRONS (a test keeps them equal). By hand: POST /api/v1/fii-dii?run=1 (service key).
-  { name: 'fii-dii', crons: ['0,15,30,45 13-14 * * 1-5', '0,15,30 15 * * 1-5', '45 17 * * 1-5', '20 4 * * 1-5'], timeoutMs: 4 * MIN, workflow: BRIDGE, does: 'in-process: lib/fii-dii/job fiiDiiJob (NSE fiidiiTradeReact → fii_dii_daily; NSDL daily + fortnight sector reports)', run: async (ctx) => (await import('./fii-dii/job')).fiiDiiJob(ctx) },
+  { name: 'fii-dii', crons: ['0,15,30,45 13-14 * * 1-5', '0,15,30 15 * * 1-5', '45 17 * * 1-5', '20 4 * * 1-5', '55 0-11,16-23 * * *', '55 12-15 * * 0,6'], timeoutMs: 4 * MIN, workflow: BRIDGE, does: 'in-process: lib/fii-dii/job fiiDiiJob (NSE fiidiiTradeReact → fii_dii_daily; NSDL daily + fortnight sector reports; NSE participant OI; Nifty closes; hourly :55 backfill slots until history is complete)', run: async (ctx) => (await import('./fii-dii/job')).fiiDiiJob(ctx) },
   // zzz914 — owner briefs moved in from Claude scheduled tasks (they needed the owner's Mac awake; the book is on the server now).
   // Morning conviction brief: 04:29 UTC Mon–Fri (≈06:30 Berlin). Thesis watch: 02:15 UTC Mon–Fri (≈07:45 IST). The route sends
   // once per day; a run that composed but could not deliver (no channel set up) reports ok=false so the heartbeat shows it.

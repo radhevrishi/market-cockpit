@@ -197,3 +197,106 @@ export function parseSectorReport(html: string): SectorReport | null {
   if (!sectors.length) return null;
   return { reportDate, fortnight, sectors, total };
 }
+
+// ── zzz1060: NSE participant-wise open interest (daily archive CSV) ──────────────
+//   https://nsearchives.nseindia.com/content/nsccl/fao_participant_oi_<DDMMYYYY>.csv — contracts held at the day's close by
+//   Client / DII / FII / Pro. Line 1: '"Participant wise Open Interest ... as on Oct 14, 2026"'; line 2 the column names.
+
+export interface OiPosition {
+  futIdxLong: number; futIdxShort: number; futStkLong: number; futStkShort: number;
+  optIdxCallLong: number; optIdxPutLong: number; optIdxCallShort: number; optIdxPutShort: number;
+}
+export interface ParticipantOiDay { date: string; byParticipant: Record<string, OiPosition> }
+
+const OI_COLS: Array<[keyof OiPosition, RegExp]> = [
+  ['futIdxLong', /^future\s*index\s*long$/i], ['futIdxShort', /^future\s*index\s*short$/i],
+  ['futStkLong', /^future\s*stock\s*long$/i], ['futStkShort', /^future\s*stock\s*short$/i],
+  ['optIdxCallLong', /^option\s*index\s*call\s*long$/i], ['optIdxPutLong', /^option\s*index\s*put\s*long$/i],
+  ['optIdxCallShort', /^option\s*index\s*call\s*short$/i], ['optIdxPutShort', /^option\s*index\s*put\s*short$/i],
+];
+
+/** 'DDMMYYYY' for the archive file name. */
+export const oiFileDate = (iso: string) => `${iso.slice(8, 10)}${iso.slice(5, 7)}${iso.slice(0, 4)}`;
+export const participantOiUrl = (iso: string) => `https://nsearchives.nseindia.com/content/nsccl/fao_participant_oi_${oiFileDate(iso)}.csv`;
+
+/** Participant OI CSV → the day's positions per participant (Client / DII / FII / Pro). null when the layout is not recognised. */
+export function parseParticipantOi(csv: string): ParticipantOiDay | null {
+  const lines = String(csv || '').replace(/^﻿/, '').split(/\r?\n/).filter((l) => l.trim());
+  if (lines.length < 3) return null;
+  const date = monthDayYearToIso(lines[0]);
+  if (!date) return null;
+  const head = lines[1].split(',').map((h) => h.replace(/"/g, '').trim());
+  const idx: Partial<Record<keyof OiPosition, number>> = {};
+  for (const [k, re] of OI_COLS) {
+    const i = head.findIndex((h) => re.test(h));
+    if (i < 0) return null;
+    idx[k] = i;
+  }
+  const by: Record<string, OiPosition> = {};
+  for (const l of lines.slice(2)) {
+    const c = l.split(',').map((x) => x.replace(/"/g, '').trim());
+    const who = String(c[0] || '').toUpperCase();
+    if (!/^(CLIENT|DII|FII|PRO)$/.test(who)) continue;
+    const pos = {} as OiPosition;
+    let bad = false;
+    for (const [k] of OI_COLS) {
+      const v = parseInNumber(c[idx[k]!]);
+      if (v == null) { bad = true; break; }
+      pos[k] = v;
+    }
+    if (!bad) by[who === 'CLIENT' ? 'Client' : who === 'PRO' ? 'Pro' : who] = pos;
+  }
+  if (!by.FII) return null;
+  return { date, byParticipant: by };
+}
+
+// ── zzz1060: NSDL FPI asset-class split (equity / debt / hybrid) per reporting date ──────────────────────────────────────
+// The daily trends page (Latest and Archive) lists, per reporting date, Equity, Debt-General Limit, Debt-VRR, Debt-FAR,
+// Hybrid, Mutual Funds and AIFs, each with a 'Stock Exchange' row, a 'Primary market & others' row and a 'Sub-total'. Older
+// pages may have no sub-total — then the route rows are added up. The derivatives table further down is ignored.
+
+export interface AssetMixRow { reportDate: string; equityNet: number | null; debtNet: number | null; hybridNet: number | null }
+
+const bucketOf = (label: string): 'equity' | 'debt' | 'hybrid' | 'other' | null => {
+  if (/^equity$/i.test(label)) return 'equity';
+  if (/^debt(\s*-.*)?$/i.test(label)) return 'debt';   // 'Debt', 'Debt-General Limit', 'Debt-VRR' — not MF 'Debt schemes'
+  if (/^hybrid$/i.test(label)) return 'hybrid';
+  if (/^(mutual funds|aifs?)$/i.test(label)) return 'other';
+  return null;
+};
+
+export function parseNsdlAssetMix(html: string): AssetMixRow[] {
+  const per = new Map<string, Map<string, { bucket: string; routes: number; sub: number | null }>>();   // date → label → sums
+  let date: string | null = null, label: string | null = null;
+  for (const c0 of htmlRows(html)) {
+    if (!c0.length) continue;
+    let cells = c0;
+    const d = ddMonYyyyToIso(c0[0]);
+    if (d) { date = d; label = null; cells = c0.slice(1); }
+    else if (/^total/i.test(c0[0])) { if (/^total for/i.test(c0[0])) date = null; label = null; continue; }
+    if (!date || !cells.length) continue;
+    const b = bucketOf(cells[0]);
+    let net: number | null;
+    let kind: 'route' | 'sub';
+    if (b) { label = cells[0]; net = parseInNumber(cells[4]); kind = 'route'; }
+    else if (/^sub-?\s*total$/i.test(cells[0])) { net = parseInNumber(cells[3]); kind = 'sub'; }
+    else if (/primary|stock\s*exchange/i.test(cells[0])) { net = parseInNumber(cells[3]); kind = 'route'; }
+    else continue;
+    if (!label || net == null) continue;
+    if (!per.has(date)) per.set(date, new Map());
+    const m = per.get(date)!;
+    if (!m.has(label)) m.set(label, { bucket: bucketOf(label)!, routes: 0, sub: null });
+    const a = m.get(label)!;
+    if (kind === 'sub') a.sub = net; else a.routes += net;
+  }
+  const out: AssetMixRow[] = [];
+  for (const [d, m] of per) {
+    const sum = (bk: string) => {
+      const xs = [...m.values()].filter((x) => x.bucket === bk);
+      return xs.length ? round2(xs.reduce((s, x) => s + (x.sub ?? x.routes), 0)) : null;
+    };
+    const row: AssetMixRow = { reportDate: d, equityNet: sum('equity'), debtNet: sum('debt'), hybridNet: sum('hybrid') };
+    if (row.equityNet != null || row.debtNet != null) out.push(row);
+  }
+  return out.sort((a, b) => a.reportDate.localeCompare(b.reportDate));
+}

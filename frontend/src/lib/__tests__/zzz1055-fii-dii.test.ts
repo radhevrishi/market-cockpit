@@ -167,9 +167,13 @@ test('job: weekdays every 15 min 13:00–15:30 UTC + 17:45 and 04:20 UTC; app-sc
   // Thursday 15 Oct 2026: first slot 13:00, last evening slot 15:30, then 17:45
   assert.equal(nextSlot(job.crons, at('2026-10-15T12:59:00Z'))!.toISOString(), '2026-10-15T13:00:00.000Z');
   assert.equal(nextSlot(job.crons, at('2026-10-15T15:20:00Z'))!.toISOString(), '2026-10-15T15:30:00.000Z');
-  assert.equal(nextSlot(job.crons, at('2026-10-15T15:31:00Z'))!.toISOString(), '2026-10-15T17:45:00.000Z');
+  // zzz1060: hourly ':55' backfill slots outside the evening window (16:55 comes before 17:45)
+  assert.equal(nextSlot(job.crons, at('2026-10-15T15:31:00Z'))!.toISOString(), '2026-10-15T16:55:00.000Z');
+  assert.equal(nextSlot(job.crons, at('2026-10-15T17:00:00Z'))!.toISOString(), '2026-10-15T17:45:00.000Z');
   // Friday evening → Monday morning (no weekend slots)
-  assert.equal(nextSlot(job.crons, at('2026-10-16T17:46:00Z'))!.toISOString(), '2026-10-19T04:20:00.000Z');
+  // zzz1060: the weekend now has hourly backfill slots (no NSE call in them)
+  assert.equal(nextSlot(job.crons, at('2026-10-16T17:46:00Z'))!.toISOString(), '2026-10-16T17:55:00.000Z');
+  assert.equal(nextSlot(job.crons, at('2026-10-17T12:00:00Z'))!.toISOString(), '2026-10-17T12:55:00.000Z');
   let s = prevSlot(job.crons, at('2026-10-15T00:00:00Z'))!;
   for (let k = 0; k < 100; k++) { assert.ok(slotWindowMs(job, s) > lockTtlSec(job) * 1000, s.toISOString()); s = nextSlot(job.crons, s)!; }
   assert.ok(isFinalSlot(at('2026-10-15T15:30:00Z')) && isFinalSlot(at('2026-10-15T17:45:00Z')) && isFinalSlot(at('2026-10-16T04:20:00Z')));
@@ -184,7 +188,7 @@ test('job gating: NSE only until today’s row is in; holidays and before-public
   assert.equal(expectedNseDate(at('2026-10-20T14:00:00Z'), hol), '2026-10-19');     // holiday evening → last trading day
   const base = { needFinal: null, dailyBackfillDone: true, sectorBackfillDone: true };
   const waiting = planFiiDiiRun({ ...base, slot: at('2026-10-15T13:15:00Z'), missingNse: '2026-10-15' });
-  assert.deepEqual(waiting, { nse: true, nsdlLatest: false, sectors: false, backfillDaily: false, backfillSectors: false });
+  assert.deepEqual(waiting, { nse: true, nsdlLatest: false, sectors: false, backfillDaily: false, backfillSectors: false, oi: false, backfillOi: false, nifty: false });
   const haveIt = planFiiDiiRun({ ...base, slot: at('2026-10-15T13:30:00Z'), missingNse: null });
   assert.equal(haveIt.nse, false, 'no NSE call once the row is stored');
   const late = planFiiDiiRun({ ...base, slot: at('2026-10-15T17:45:00Z'), missingNse: null, needFinal: '2026-10-15' });

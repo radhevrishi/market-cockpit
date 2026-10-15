@@ -9,6 +9,7 @@ on:
   schedule:
     - cron: '50 14 * * 1-5'   # 20:20 IST — after NSE publishes (~18:00–19:00 IST) and the app's first tries
     - cron: '35 16 * * 1-5'   # 22:05 IST — last try of the day
+    - cron: '40 0 * * *'      # 06:10 IST daily (zzz1060) — moves any unfinished history backfill on (NSDL archive, participant OI)
   workflow_dispatch:
 
 concurrency:
@@ -18,7 +19,7 @@ concurrency:
 jobs:
   scrape:
     runs-on: ubuntu-24.04
-    timeout-minutes: 8
+    timeout-minutes: 12
     steps:
       - name: Checkout repo
         uses: actions/checkout@v5

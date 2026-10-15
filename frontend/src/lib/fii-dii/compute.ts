@@ -10,6 +10,8 @@ export interface DailyRow {
   fetchedAt: string | null;
   fpiFinalNet: number | null;   // NSDL-confirmed FPI equity net for the same trading day (when it has arrived)
   finalAt: string | null;
+  // zzz1060 — NSDL FPI asset-class split for the trading day (equity incl. primary market, debt, hybrid), when stored
+  fpiEqTotal?: number | null; fpiDebt?: number | null; fpiHybrid?: number | null;
 }
 
 export type Dir = 'buy' | 'sell';

@@ -3676,6 +3676,11 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   `lib/server-memo.ts`, `lib/server-timing.ts`, ETag/304 + pre-compressed screener bodies, `lib/boot-warm.ts`.
 - zzz1054 — Price alerts: `lib/alerts/*`, `/price-alerts`, header bell, migration 5, every-minute LIGHT_JOBS 'price-alerts' (no Redis).
 - zzz1055 — FII / DII flows `/fii-dii`, `lib/fii-dii/*`, migration 6, job `fii-dii`, fallback collector scrape-fii-dii.yml.
+  zzz1060 — page is graphics (`fii-dii/{charts,sectors,panels}.tsx`); insights in `lib/fii-dii/insights.ts` (pure): NSE
+  participant-OI positioning, DII absorption, streak history, sector grid/heatmap/rotation, monthly, FII vs Nifty, FPI
+  shares-vs-bonds, rule-written summary. Migration 7 (`fii_participant_oi`, `fii_index_close`, fpi_*_net columns). Job has
+  hourly ':55' slots (never call NSE live) that move every backfill on until done; GET returns `status` (cursors) and the
+  collector posts NSDL archive months / OI files that continue those cursors (`acceptArchiveMonths`).
 - zzz1056 — US Top Movers on home (`lib/us-movers*.ts`, `/api/v1/us-movers`). zzz1057 — Special Situations audit (`lib/special-sit-audit.ts`).
 - zzz1059 — US movers WHY at India parity: on-demand results grade for a 2.02 8-K the day's grade lacks (`lib/us-movers-results.ts`,
   same engine/PRELIM rules; else the EX-99.1 headline — never "not graded yet"); industry clusters over the whole scanner universe

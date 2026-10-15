@@ -223,6 +223,36 @@ export const MIGRATIONS: readonly Migration[] = [
         updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
       );`,
   },
+  {
+    // zzz1060 — FII / DII extra insights: NSE participant-wise open interest (FII / DII / Client / Pro positions in index and
+    // stock derivatives, contracts), the NSDL FPI asset-class split per trading day (equity incl. primary market, debt, hybrid)
+    // and Nifty 50 daily closes for the "FII flow vs market" overlay.
+    id: 7, name: 'fii_dii_insights',
+    sql: `
+      ALTER TABLE fii_dii_daily ADD COLUMN IF NOT EXISTS fpi_eq_total_net NUMERIC(14,2);
+      ALTER TABLE fii_dii_daily ADD COLUMN IF NOT EXISTS fpi_debt_net     NUMERIC(14,2);
+      ALTER TABLE fii_dii_daily ADD COLUMN IF NOT EXISTS fpi_hybrid_net   NUMERIC(14,2);
+      CREATE TABLE IF NOT EXISTS fii_participant_oi (
+        date                DATE NOT NULL,
+        participant         TEXT NOT NULL,
+        fut_idx_long        BIGINT NOT NULL,
+        fut_idx_short       BIGINT NOT NULL,
+        fut_stk_long        BIGINT NOT NULL,
+        fut_stk_short       BIGINT NOT NULL,
+        opt_idx_call_long   BIGINT NOT NULL,
+        opt_idx_put_long    BIGINT NOT NULL,
+        opt_idx_call_short  BIGINT NOT NULL,
+        opt_idx_put_short   BIGINT NOT NULL,
+        fetched_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (date, participant)
+      );
+      CREATE TABLE IF NOT EXISTS fii_index_close (
+        symbol  TEXT NOT NULL,
+        date    DATE NOT NULL,
+        close   NUMERIC(12,2) NOT NULL,
+        PRIMARY KEY (symbol, date)
+      );`,
+  },
 ] as const;
 
 const LOCK_ID = 88_301_883;   // advisory-lock id for migrations

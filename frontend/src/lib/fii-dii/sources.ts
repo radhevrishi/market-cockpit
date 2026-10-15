@@ -5,7 +5,8 @@
 // host, .github/workflows/scrape-fii-dii.yml collects the same pages from GitHub and POSTs them to /api/v1/fii-dii.
 import { nseApiFetch } from '@/lib/nse';
 import { proxiedFetch } from '@/lib/proxy-fetch';
-import { parseNseFiiDii, type NseFiiDiiDay } from './parse';
+import { parseNseFiiDii, participantOiUrl, type NseFiiDiiDay } from './parse';
+import { fetchChart } from '@/lib/yahoo';
 
 export const NSE_FII_DII_PATH = '/api/fiidiiTradeReact';
 export const NSE_FII_DII_URL = `https://www.nseindia.com${NSE_FII_DII_PATH}`;
@@ -81,4 +82,37 @@ export async function fetchSectorReport(url: string): Promise<{ html: string | n
   if (!/^https:\/\/www\.fpi\.nsdl\.co\.in\/web\/StaticReports\/Fortnightly_Sector_wise_FII_Investment_Data\/[\w.-]+\.html?$/.test(url)) return { html: null, error: 'not an NSDL sector report URL' };
   const r = await getText(url);
   return r.ok ? { html: r.text } : { html: null, error: `NSDL report HTTP ${r.status}` };
+}
+
+// ── zzz1060: NSE participant-wise OI (static archive file, no cookies needed) and Nifty 50 closes (Yahoo) ──────────────
+
+/** The day's participant-OI CSV. `missing` = NSE answered 404 (holiday / not published yet), which is not an error. */
+export async function fetchParticipantOi(dateIso: string): Promise<{ csv: string | null; missing?: boolean; error?: string }> {
+  const url = participantOiUrl(dateIso);
+  const tryOnce = async (viaRelay: boolean) => {
+    const init = { headers: { 'User-Agent': UA, Accept: 'text/csv,*/*', Referer: 'https://www.nseindia.com/' }, signal: AbortSignal.timeout(15_000) };
+    const r = viaRelay ? await proxiedFetch(url, init) : await fetch(url, init);
+    if (r.status === 404) return { csv: null, missing: true };
+    if (!r.ok) return { csv: null, error: `HTTP ${r.status}` };
+    const t = await r.text();
+    return /participant/i.test(t.slice(0, 200)) ? { csv: t } : { csv: null, error: 'not a participant OI file' };
+  };
+  try {
+    const a = await tryOnce(false);
+    if (a.csv || a.missing) return a;
+  } catch { /* relay next */ }
+  try { return await tryOnce(true); } catch (e: any) { return { csv: null, error: e?.message || 'network' }; }
+}
+
+/** Nifty 50 daily closes, IST trading dates. `range` = Yahoo range ('5y' for the first fill, '1mo' after). */
+export async function fetchNiftyCloses(range: '5y' | '1mo' = '1mo'): Promise<Array<{ date: string; close: number }>> {
+  const c: any = await fetchChart('^NSEI', range, '1d');
+  const ts: number[] = c?.timestamps || [], cl: Array<number | null> = c?.closes || [];
+  const out: Array<{ date: string; close: number }> = [];
+  for (let i = 0; i < ts.length; i++) {
+    const v = cl[i];
+    if (v == null || !(v > 0)) continue;
+    out.push({ date: new Date((ts[i] + 330 * 60) * 1000).toISOString().slice(0, 10), close: Math.round(v * 100) / 100 });
+  }
+  return out;
 }
