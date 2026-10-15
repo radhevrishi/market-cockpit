@@ -4,7 +4,8 @@
 //  • trendlines from their first touch to the right edge (intact) or a few bars past the break (broken, grey, dashed)
 //  • small rings on every touch
 //  • horizontal levels from their first touch to the right edge
-//  • right-edge tags "×N" (trendlines) and "×N 123.45" (levels), stacked so they never overlap
+//  • right-edge tags "×N" (trendlines) and "×N 123.45" (levels), stacked so they never overlap; "· provisional" added when the
+//    latest price (a candle still forming) is through the line before the period closes
 // Width / dash by strength; the hovered line drawn a little heavier.
 import type * as KC from 'klinecharts';
 import { stackAxisLabels } from '@/lib/chart-axis-labels';
@@ -70,7 +71,7 @@ export function registerAutoLinesIndicator(kc: typeof KC): void {
           if (k < vr.from - 1 || k > vr.to + 1) continue;
           ring(xAxis.convertToPixel(k), yAxis.convertToPixel(p), c, hov ? 1 : 0.8);
         }
-        tags.push({ y, text: `×${lv.n}  ${fmtAlnPrice(lv.price, ext.decimals)}`, color: c });
+        tags.push({ y, text: `×${lv.n}  ${fmtAlnPrice(lv.price, ext.decimals)}${lv.prov ? ' · provisional' : ''}`, color: c });
       }
 
       // ── trendlines ────────────────────────────────────────────────────────────
@@ -104,7 +105,7 @@ export function registerAutoLinesIndicator(kc: typeof KC): void {
           ring(xAxis.convertToPixel(k), yAxis.convertToPixel(p), c, hov ? 1 : 0.9);
         }
         const endX = xAxis.convertToPixel(to), endY = yAxis.convertToPixel(alnLinePrice(ln, to, kA));
-        if (ln.tEnd == null) tags.push({ y: endY, text: `×${ln.n}`, color: c });
+        if (ln.tEnd == null) tags.push({ y: endY, text: `×${ln.n}${ln.prov ? ' · provisional' : ''}`, color: c });
         else if (endX > 0 && endX < bounding.width - 30 && endY > 0 && endY < bounding.height) {
           ctx.font = `600 ${fontSize}px ${FONT}`;
           ctx.textAlign = 'left'; ctx.textBaseline = 'middle';

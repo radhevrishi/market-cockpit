@@ -10,7 +10,7 @@ import { autoLines, linePriceAt, type AutoLinesTf } from '@/lib/auto-lines';
 import { bannerColors, barsRevision } from './pattern-view';
 import { completedBars } from './setup-view';
 import {
-  ALN_INDICATOR, ALN_PREFS_KEY, alnColorOf, alnPayload, autoLinesHeadline, autoLinesRows, levelId, lineId, parseAutoLinesPrefs, serializeAutoLinesPrefs,
+  ALN_INDICATOR, ALN_PREFS_KEY, alnColorOf, alnPayload, alnRef, alnRefText, autoLinesHeadline, autoLinesRows, levelId, lineId, parseAutoLinesPrefs, serializeAutoLinesPrefs,
   type AlnStatus, type AutoLinesPrefs,
 } from './auto-lines-view';
 
@@ -56,10 +56,18 @@ export function useAutoLines(a: AutoLinesArgs) {
   }, [on, barsRev, tf, mkt, log]);
 
   const decimals = bars.length && Math.abs(bars[bars.length - 1].c) < 1 ? 4 : 2;
+  const cur = mkt === 'IN' ? '₹' : '$';
   const status: AlnStatus = !on ? 'idle' : !bars.length ? 'loading' : !comp || comp.done.length < MIN_BARS ? 'short' : 'ready';
-  const headline = useMemo(() => autoLinesHeadline(comp?.res ?? null, tf, status, prefs), [comp, tf, status, prefs]);
-  const rows = useMemo(() => (comp ? autoLinesRows(comp.done, comp.res, tf, decimals) : []), [comp, tf, decimals]);
-  const payload = useMemo(() => (comp ? alnPayload(comp.done, comp.res, prefs, light, decimals) : null), [comp, prefs, light, decimals]);
+  // which prices the distances use: the last completed close (what the lines were found on) and the latest candle (may be forming)
+  const ref = useMemo(() => (comp ? alnRef(comp.done, bars) : null),
+    // barsRev stands for `bars`
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [comp, barsRev]);
+  const rows = useMemo(() => (comp ? autoLinesRows(comp.done, comp.res, tf, decimals, ref, cur) : []), [comp, tf, decimals, ref, cur]);
+  const nProv = useMemo(() => rows.filter((r) => r.prov && (r.id.startsWith('t:') ? prefs.trend : prefs.levels)).length, [rows, prefs]);
+  const headline = useMemo(() => autoLinesHeadline(comp?.res ?? null, tf, status, prefs, nProv), [comp, tf, status, prefs, nProv]);
+  const refText = useMemo(() => alnRefText(ref, tf, decimals, cur), [ref, tf, decimals, cur]);
+  const payload = useMemo(() => (comp ? alnPayload(comp.done, comp.res, prefs, light, decimals, ref) : null), [comp, prefs, light, decimals, ref]);
 
   // ── paint ─────────────────────────────────────────────────────────────────────
   const [hover, setHover] = useState<{ id: string; x: number; y: number } | null>(null);
@@ -124,11 +132,12 @@ export function useAutoLines(a: AutoLinesArgs) {
   const hoverRow = hover ? rows.find((r) => r.id === hover.id) ?? null : null;
   const toggleTrend = useCallback(() => setPrefs((p) => ({ ...p, trend: !p.trend })), [setPrefs]);
   const toggleLevels = useCallback(() => setPrefs((p) => ({ ...p, levels: !p.levels })), [setPrefs]);
-  return { on, status, headline, rows, prefs, tf, dropped: !!comp?.dropped, log: !!comp?.res?.log, hover, hoverRow, toggleTrend, toggleLevels };
+  return { on, status, headline, refText, rows, prefs, tf, dropped: !!comp?.dropped, log: !!comp?.res?.log, hover, hoverRow, toggleTrend, toggleLevels };
 }
 
 export type AutoLinesP = ReturnType<typeof useAutoLines>;
 const TF_BAR: Record<AutoLinesTf, string> = { D: 'daily', W: 'weekly', M: 'monthly' };
+const TF_UNIT: Record<AutoLinesTf, string> = { D: 'day', W: 'week', M: 'month' };
 
 export function AutoLinesBanner({ s, light, top = 4, onTurnOff }: { s: AutoLinesP; light: boolean; top?: number; onTurnOff: () => void }) {
   const [open, setOpen] = useState(false);
@@ -172,7 +181,7 @@ export function AutoLinesBanner({ s, light, top = 4, onTurnOff }: { s: AutoLines
             <span style={{ width: 8, height: 2, background: alnColorOf('resistance', false, light), borderRadius: 1, transform: 'rotate(25deg)' }} />
           </span>
           <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-haspopup="dialog"
-            title={`${s.headline}\n\nTrendlines and horizontal levels where price turned 3 or more times, found on the ${TF_BAR[s.tf]} candles on screen. A line with only 2 touches is never shown. Click for the list; hover a line on the chart for its touches.${s.dropped ? '\nThe last candle is still forming and is not read.' : ''}`}
+            title={`${s.headline}\n\nTrendlines and horizontal levels where price turned 3 or more times, found on the ${TF_BAR[s.tf]} candles on screen. A line with only 2 touches is never shown. Click for the list; hover a line on the chart for its touches.${s.dropped ? '\nThe last candle is still forming and is not read.' : ''}${s.refText ? `\n${s.refText}` : ''}`}
             style={{ background: 'none', border: 'none', color: col.text, cursor: 'pointer', padding: '1px 4px 1px 4px', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, textAlign: 'left' }}>
             {s.headline} ▾
           </button>
@@ -192,12 +201,13 @@ export function AutoLinesBanner({ s, light, top = 4, onTurnOff }: { s: AutoLines
               <span style={{ flex: 1 }} />
               <button type="button" onClick={() => setOpen(false)} aria-label="Close the list" style={small}>Close list</button>
             </div>
+            {s.refText && <div data-testid="aln-ref" style={{ marginTop: 6, fontSize: 11.5, color: 'var(--mc-text-2)', lineHeight: 1.4 }}>{s.refText}</div>}
             <div style={{ marginTop: 10, marginBottom: 2, fontSize: 11.5, fontWeight: 650, color: 'var(--mc-text-3)' }}>Trendlines · {nTrend}</div>
             {nTrend ? trendRows.map((r) => row(r, false)) : <div style={{ color: 'var(--mc-text-2)', padding: '2px 0' }}>{s.status === 'ready' ? 'No trendline with 3 or more touches near price.' : s.headline}</div>}
             <div style={{ marginTop: 10, marginBottom: 2, fontSize: 11.5, fontWeight: 650, color: 'var(--mc-text-3)' }}>Levels (highest first) · {nLevels}</div>
             {nLevels ? levelRows.map((r) => row(r, true)) : <div style={{ color: 'var(--mc-text-2)', padding: '2px 0' }}>{s.status === 'ready' ? 'No level with 3 or more touches near price.' : s.headline}</div>}
             <div style={{ paddingTop: 8, fontSize: 11, color: 'var(--mc-text-3)', lineHeight: 1.45 }}>
-              Found on the {TF_BAR[s.tf]} candles loaded{s.dropped ? ' (the last candle is still forming and is not read)' : ''}. A line needs 3 or more separate touches and no close through it between the first and last touch; a few wicks through it are allowed. Grey dashed = broken (a close beyond it after the last touch). Thicker = stronger; dashed = weaker. {s.log ? 'Lines are found in % terms (log scale).' : 'Lines are found on the normal price scale.'} A reading of the bars, not a signal to act on — check it on the chart.
+              Found on the {TF_BAR[s.tf]} candles loaded{s.dropped ? ' (the last candle is still forming and is not read)' : ''}. A line needs 3 or more separate touches and no close through it between the first and last touch; a few wicks through it are allowed. Grey dashed = broken (a close beyond it after the last touch). Provisional breach = the latest price is through the line but the {TF_UNIT[s.tf]} has not closed; it counts only on a completed close. Thicker = stronger; dashed = weaker. {s.log ? 'Lines are found in % terms (log scale).' : 'Lines are found on the normal price scale.'} A reading of the bars, not a signal to act on — check it on the chart.
             </div>
           </div>
         )}
