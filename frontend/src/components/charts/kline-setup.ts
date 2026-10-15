@@ -221,7 +221,8 @@ export function registerChartExtras(): typeof kc {
 
   // zzz1009 — one turning point of a detected chart pattern (pattern-view pointMarks): a small ring with its role code
   // (L1 / P / L2, LS / HD / RS …). Locked, ignores the mouse, same overlay group as the pattern lines, never saved.
-  kc.registerOverlay<{ color: string; role: string; below: boolean }>({
+  // zzz1029 — hideLabel (Clean view): the ring only; the code shows while the pattern is picked / hovered
+  kc.registerOverlay<{ color: string; role: string; below: boolean; hideLabel?: boolean }>({
     name: 'mcPatternPoint',
     totalStep: 2,
     lock: true,
@@ -232,8 +233,10 @@ export function registerChartExtras(): typeof kc {
       if (!coordinates.length) return [];
       const d = overlay.extendData || { color: '#2962FF', role: '', below: false };
       const c = coordinates[0];
+      const ring: kc.OverlayFigure = { type: 'circle', ignoreEvent: true, attrs: { x: c.x, y: c.y, r: 3.5 }, styles: { style: 'stroke_fill', color: '#FFFFFF', borderColor: d.color, borderSize: 1.5 } };
+      if (d.hideLabel || !d.role) return [ring];
       return [
-        { type: 'circle', ignoreEvent: true, attrs: { x: c.x, y: c.y, r: 3.5 }, styles: { style: 'stroke_fill', color: '#FFFFFF', borderColor: d.color, borderSize: 1.5 } },
+        ring,
         {
           type: 'text', ignoreEvent: true,
           attrs: { x: c.x, y: c.y + (d.below ? 7 : -7), text: d.role, align: 'center', baseline: d.below ? 'top' : 'bottom' },

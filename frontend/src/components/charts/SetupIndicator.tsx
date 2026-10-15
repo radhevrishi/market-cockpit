@@ -9,6 +9,8 @@ import type { Chart } from 'klinecharts';
 import type { Bar } from '@/lib/chart-math';
 import { SETUP_META, setupSeries, type SetupCode } from '@/lib/setups';
 import { bannerColors, barsRevision } from './pattern-view';
+import { overlayChipText, recentSetupPoints, CLEAN_SETUP_BARS, type ChartDisplay } from '@/lib/chart-display';
+import { DOCK_BOX, DOCK_PANEL, DOCK_PILL, type OverlayDock } from './overlay-dock';
 import {
   SETUP_CODES, SETUP_INDICATOR, SETUP_PREFS_KEY, SQZ_INDICATOR, SQZ_PANE, completedBars, countsInRange, donchianPointsFor, parseSetupPrefs, serializeSetupPrefs,
   setupBannerRows, setupBoxesFor, setupColor, setupHeadline, setupName, setupPointsFor, squeezePointsFor, tagOf, type SetupChartTf, type SetupPrefs,
@@ -22,6 +24,8 @@ export interface SetupIndicatorArgs {
   tf: SetupChartTf;
   chartRef: RefObject<Chart | null>;
   light: boolean;
+  /** zzz1029 — Clean (default): tags on the last ~20 bars only; Research: every tag. The setups found are the same. */
+  display?: ChartDisplay;
 }
 
 function readPrefs(): SetupPrefs {
@@ -30,6 +34,7 @@ function readPrefs(): SetupPrefs {
 
 export function useSetupIndicator(a: SetupIndicatorArgs) {
   const { on, ready, market, bars, tf, chartRef, light } = a;
+  const display: ChartDisplay = a.display === 'research' ? 'research' : 'clean';
   const [prefs, setPrefsState] = useState<SetupPrefs>(readPrefs);
   const setPrefs = useCallback((fn: (p: SetupPrefs) => SetupPrefs) => {
     setPrefsState((p) => {
@@ -87,7 +92,7 @@ export function useSetupIndicator(a: SetupIndicatorArgs) {
       try {
         chart.createIndicator({
           name: SETUP_INDICATOR, paneId: 'candle_pane',
-          extendData: { points: setupPointsFor(done, series, shown), boxes: prefs.shown.DVX !== false ? setupBoxesFor(done, series) : [], dc: prefs.donchian ? donchianPointsFor(done, series) : null, light },
+          extendData: { points: recentSetupPoints(setupPointsFor(done, series, shown), done.map((x) => x.t), display), boxes: prefs.shown.DVX !== false ? setupBoxesFor(done, series) : [], dc: prefs.donchian ? donchianPointsFor(done, series) : null, light },
         }, true);
         if (prefs.sqzPane) {
           chart.createIndicator({
@@ -99,21 +104,26 @@ export function useSetupIndicator(a: SetupIndicatorArgs) {
       } catch { /* the setups are extras: never break the chart */ }
     }).catch(() => { /* chart engine not loaded */ });
     return () => { alive = false; clear(); };
-  }, [ready, on, comp, prefs, shown, light, chartRef]);
+  }, [ready, on, comp, prefs, shown, light, chartRef, display]);
 
   const toggleType = useCallback((c: SetupCode) => setPrefs((p) => ({ ...p, shown: { ...p.shown, [c]: p.shown[c] === false } })), [setPrefs]);
   const setAll = useCallback((v: boolean) => setPrefs((p) => ({ ...p, shown: Object.fromEntries(SETUP_CODES.map((c) => [c, v])) as SetupPrefs['shown'] })), [setPrefs]);
   const toggleSqzPane = useCallback(() => setPrefs((p) => ({ ...p, sqzPane: !p.sqzPane })), [setPrefs]);
   const toggleDonchian = useCallback(() => setPrefs((p) => ({ ...p, donchian: !p.donchian })), [setPrefs]);
-  return { on, status, banner, rows, prefs, counts, dropped: !!comp?.dropped, tf, toggleType, setAll, toggleSqzPane, toggleDonchian };
+  return { on, status, banner, rows, prefs, counts, dropped: !!comp?.dropped, tf, toggleType, setAll, toggleSqzPane, toggleDonchian, display };
 }
 
 export type SetupP = ReturnType<typeof useSetupIndicator>;
 const TF_BAR: Record<SetupChartTf, string> = { D: 'daily', W: 'weekly', M: 'monthly' };
 const TONE = { up: 'bullish', down: 'bearish', none: 'none' } as const;
 
-export function SetupBanner({ s, light, top = 4, onTurnOff }: { s: SetupP; light: boolean; top?: number; onTurnOff: () => void }) {
-  const [open, setOpen] = useState(false);
+export function SetupBanner({ s, light, top = 4, onTurnOff, dock }: { s: SetupP; light: boolean; top?: number; onTurnOff: () => void; /** zzz1029 — a chip in the overlay summary row */ dock?: OverlayDock }) {
+  const [openOwn, setOpenOwn] = useState(false);
+  const open = dock ? dock.open : openOwn;
+  const setOpen = useCallback((v: boolean | ((x: boolean) => boolean)) => {
+    const next = typeof v === 'function' ? v(dock ? dock.open : openOwn) : v;
+    if (dock) dock.setOpen(next); else setOpenOwn(next);
+  }, [dock, openOwn]);
   const boxRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!open) return;
@@ -123,26 +133,26 @@ export function SetupBanner({ s, light, top = 4, onTurnOff }: { s: SetupP; light
     document.addEventListener('mousedown', onDown);
     document.addEventListener('touchstart', onDown);
     return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('mousedown', onDown); document.removeEventListener('touchstart', onDown); };
-  }, [open]);
+  }, [open, setOpen]);
   if (!s.on) return null;
   const col = bannerColors(TONE[s.banner.tone], light);
   const small = { background: 'var(--mc-bg-0)', border: '1px solid var(--mc-border-1)', borderRadius: 6, color: 'var(--mc-text-2)', cursor: 'pointer', fontSize: 11.5, fontWeight: 600, padding: '1px 8px', whiteSpace: 'nowrap' as const };
   const allOn = SETUP_CODES.every((c) => s.prefs.shown[c] !== false);
   return (
-    <div ref={boxRef} data-testid="setup-banner-box" style={{ position: 'absolute', left: 8, top, zIndex: 6, maxWidth: 'calc(100% - 100px)', fontSize: 12 }}>
-      <div data-testid="setup-banner" style={{ display: 'flex', alignItems: 'center', gap: 4, minHeight: 24, borderRadius: 8, border: `1px solid ${col.border}`, background: `linear-gradient(${col.bg}, ${col.bg}), var(--mc-bg-0)`, color: col.text, lineHeight: '18px', boxShadow: '0 1px 0 rgba(18,23,34,.04), 0 6px 16px -10px rgba(18,23,34,.35)' }}>
+    <div ref={boxRef} data-testid="setup-banner-box" style={dock ? DOCK_BOX : { position: 'absolute', left: 8, top, zIndex: 6, maxWidth: 'calc(100% - 100px)', fontSize: 12 }}>
+      <div data-testid="setup-banner" style={{ ...(dock ? DOCK_PILL : null), display: 'flex', alignItems: 'center', gap: 4, minHeight: 24, borderRadius: 8, border: `1px solid ${col.border}`, background: `linear-gradient(${col.bg}, ${col.bg}), var(--mc-bg-0)`, color: col.text, lineHeight: '18px', boxShadow: '0 1px 0 rgba(18,23,34,.04), 0 6px 16px -10px rgba(18,23,34,.35)' }}>
         <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-haspopup="dialog"
           onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }}
           title={`${s.banner.text}\n\nWell-known traders' setups on the ${TF_BAR[s.tf]} candles on screen — our own version of the published rules, not the traders' own code. Click for the list; tick a type to show its tags. Esc closes the list.${s.dropped ? `\nThe last candle is still forming and is not read.` : ''}`}
           style={{ background: 'none', border: 'none', color: col.text, cursor: 'pointer', padding: '1px 4px 1px 8px', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, textAlign: 'left' }}>
-          {s.banner.text} ▾
+          {dock ? overlayChipText('setups', s.banner.text) : s.banner.text} ▾
         </button>
         <button type="button" onClick={onTurnOff} aria-label="Turn off Trader setups" title="Turn off Trader setups (Indicators ▾ turns it back on)"
           style={{ background: 'none', border: 'none', color: col.text, cursor: 'pointer', padding: '0 6px', fontSize: 13, lineHeight: 1 }}>×</button>
       </div>
       {open && (
         <div role="dialog" aria-label="Trader setups"
-          style={{ marginTop: 6, width: 'min(520px, calc(100vw - 80px))', maxHeight: 440, overflowY: 'auto', padding: '8px 10px 10px', borderRadius: 12, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-0)', color: 'var(--mc-text-1)', boxShadow: 'var(--ct-shadow, 0 8px 24px rgba(0,0,0,.18))' }}>
+          style={{ marginTop: 6, width: 'min(520px, calc(100vw - 80px))', maxHeight: 440, ...(dock ? DOCK_PANEL : null), overflowY: 'auto', padding: '8px 10px 10px', borderRadius: 12, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-0)', color: 'var(--mc-text-1)', boxShadow: 'var(--ct-shadow, 0 8px 24px rgba(0,0,0,.18))' }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: 11.5 }}>
               <input type="checkbox" checked={s.prefs.sqzPane} onChange={s.toggleSqzPane} aria-label="Squeeze pane" /> Squeeze pane
@@ -154,6 +164,7 @@ export function SetupBanner({ s, light, top = 4, onTurnOff }: { s: SetupP; light
             <button type="button" onClick={() => s.setAll(!allOn)} style={small}>{allOn ? 'Hide all' : 'Show all'}</button>
             <button type="button" onClick={() => setOpen(false)} aria-label="Close the setup list" style={small}>Close list</button>
           </div>
+          {dock && <div data-testid="setup-headline" style={{ marginTop: 6, fontWeight: 650, color: 'var(--mc-text-1)' }}>{s.banner.text}</div>}
           <div style={{ marginTop: 8, marginBottom: 2, fontSize: 11.5, fontWeight: 650, color: 'var(--mc-text-3)' }}>Active on the last bars</div>
           {s.rows.length ? s.rows.map((r) => (
             <div key={`${r.code}:${r.dir}:${r.state}`} data-testid="setup-active-row" style={{ display: 'flex', gap: 6, alignItems: 'baseline', padding: '2px 0', fontVariantNumeric: 'tabular-nums' }}>
@@ -177,7 +188,7 @@ export function SetupBanner({ s, light, top = 4, onTurnOff }: { s: SetupP; light
             );
           })}
           <div style={{ paddingTop: 6, fontSize: 11, color: 'var(--mc-text-3)' }}>
-            Read on the {TF_BAR[s.tf]} candles on screen{s.dropped ? ' — the last candle is still forming and is not read' : ', completed candles only'}. Tags above a candle point up, below point down; grey ones are quiet-bar or squeeze notes. Boxes are the latest Darvas boxes. Hover a type for its rule. Our own version of the published rules — a reading of the bars, not a signal to act on; check it on the chart.
+            Read on the {TF_BAR[s.tf]} candles on screen{s.dropped ? ' — the last candle is still forming and is not read' : ', completed candles only'}. Tags above a candle point up, below point down; grey ones are quiet-bar or squeeze notes. Boxes are the latest Darvas boxes. Hover a type for its rule.{s.display === 'clean' ? ` Clean view: tags are drawn on the last ${CLEAN_SETUP_BARS} bars only (Research shows them all); the counts here are for every candle in view.` : ''} Our own version of the published rules — a reading of the bars, not a signal to act on; check it on the chart.
           </div>
         </div>
       )}

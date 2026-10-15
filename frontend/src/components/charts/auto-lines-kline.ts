@@ -8,10 +8,12 @@
 //    latest price (a candle still forming) is through the line before the period closes
 // Width / dash by strength; the hovered line drawn a little heavier.
 import type * as KC from 'klinecharts';
-import { stackAxisLabels } from '@/lib/chart-axis-labels';
+import { CLEAN_MAX_EDGE_TAGS, levelPriorities, mergeLevelTags, placeEdgeTags, type ChartDisplay, type LevelTag } from '@/lib/chart-display';
 import { alnColors, alnLinePrice, fmtAlnPrice, type AlnPayload } from './auto-lines-view';
 
-type Ext = AlnPayload & { hover?: string | null };
+// zzz1029 — display preset (Clean merges nearby tags and caps them; Research shows every tag) and prices whose right-edge tags are
+// drawn by others (a picked pattern's pivot): the tags here keep clear of those and of the last-price tag
+type Ext = AlnPayload & { hover?: string | null; display?: ChartDisplay; avoid?: number[] };
 let registered = false;
 
 function indexAtOrAfter(list: ReadonlyArray<{ timestamp: number }>, t: number): number {
@@ -40,7 +42,7 @@ export function registerAutoLinesIndicator(kc: typeof KC): void {
       const rightIdx = xAxis.convertFromPixel(bounding.width);
       const barSpace = chart.getBarSpace().bar;
       const dotR = barSpace >= 5 ? 3 : 2.5;
-      const tags: Array<{ y: number; text: string; color: string }> = [];
+      const tags: Array<Omit<LevelTag, 'priority'>> = [];
       const fontSize = 10.5;
       ctx.save();
       ctx.lineCap = 'round';
@@ -71,7 +73,7 @@ export function registerAutoLinesIndicator(kc: typeof KC): void {
           if (k < vr.from - 1 || k > vr.to + 1) continue;
           ring(xAxis.convertToPixel(k), yAxis.convertToPixel(p), c, hov ? 1 : 0.8);
         }
-        tags.push({ y, text: `×${lv.n}  ${fmtAlnPrice(lv.price, ext.decimals)}${lv.prov ? ' · provisional' : ''}`, color: c });
+        tags.push({ id: lv.id, y, price: lv.price, n: lv.n, kind: lv.kind, prov: !!lv.prov, text: `×${lv.n}  ${fmtAlnPrice(lv.price, ext.decimals)}${lv.prov ? ' · provisional' : ''}`, color: c });
       }
 
       // ── trendlines ────────────────────────────────────────────────────────────
@@ -105,7 +107,7 @@ export function registerAutoLinesIndicator(kc: typeof KC): void {
           ring(xAxis.convertToPixel(k), yAxis.convertToPixel(p), c, hov ? 1 : 0.9);
         }
         const endX = xAxis.convertToPixel(to), endY = yAxis.convertToPixel(alnLinePrice(ln, to, kA));
-        if (ln.tEnd == null) tags.push({ y: endY, text: `×${ln.n}${ln.prov ? ' · provisional' : ''}`, color: c });
+        if (ln.tEnd == null) tags.push({ id: ln.id, y: endY, price: alnLinePrice(ln, to, kA), n: ln.n, kind: ln.kind, prov: !!ln.prov, text: `×${ln.n}${ln.prov ? ' · provisional' : ''}`, color: c });
         else if (endX > 0 && endX < bounding.width - 30 && endY > 0 && endY < bounding.height) {
           ctx.font = `600 ${fontSize}px ${FONT}`;
           ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
@@ -114,14 +116,20 @@ export function registerAutoLinesIndicator(kc: typeof KC): void {
         }
       }
 
-      // ── right-edge tags, stacked ──────────────────────────────────────────────
+      // ── right-edge tags: merged when close (Clean), the nearest support / resistance first, clear of the last-price tag and a
+      // picked pattern's pivot tag (zzz1029), stacked ─────────────────────────────
+      const mode: ChartDisplay = ext.display === 'research' ? 'research' : 'clean';
       const inside = tags.filter((t) => t.y > -8 && t.y < bounding.height + 8);
-      if (inside.length) {
+      const lastClose = data[data.length - 1]?.close;
+      const pri = levelPriorities(inside, typeof lastClose === 'number' ? lastClose : null);
+      const reqs = mergeLevelTags(inside.map((t) => ({ ...t, priority: pri.get(t.id) ?? 0 })), { mode, fmt: (n) => fmtAlnPrice(n, ext.decimals) });
+      const reserved = [lastClose, ...(ext.avoid || [])].filter((p): p is number => typeof p === 'number' && Number.isFinite(p)).map((p) => yAxis.convertToPixel(p));
+      const { placed } = placeEdgeTags(reqs, { mode, gap: fontSize + 6, min: 8, max: Math.max(8, bounding.height - 8), reserved, maxTags: CLEAN_MAX_EDGE_TAGS, maxShift: 3 * (fontSize + 6) });
+      if (placed.length) {
         ctx.font = `600 ${fontSize}px ${FONT}`;
         ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-        const ys = stackAxisLabels(inside.map((t) => t.y), fontSize + 6, 8, Math.max(8, bounding.height - 8));
-        inside.forEach((t, i) => {
-          const y = ys[i];
+        placed.forEach((t) => {
+          const y = t.yPlaced;
           const w = ctx.measureText(t.text).width + 10, h = fontSize + 5;
           const x1 = bounding.width - 4, x0 = x1 - w;
           ctx.fillStyle = rgba(t.color, 0.9);

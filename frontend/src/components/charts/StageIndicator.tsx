@@ -3,12 +3,14 @@
 // (S&P 500 / Nifty 50), works out the weekly stages (lib/stage-analysis — our own version from the published rules, not the
 // original script), paints the stage bands + the Mansfield RS pane, and the one-line status banner. Runs only while the indicator
 // is in the working layout (Indicators ▾ → Stage Analysis).
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { Chart } from 'klinecharts';
 import { cacheChart, freshChart, type CachedChart } from '@/lib/chart-refresh';
 import type { Bar } from '@/lib/chart-math';
 import { STAGE_RULES, STAGE_TOOLTIP, type StageResult } from '@/lib/stage-analysis';
 import { patternDataPlan, patternKey } from './pattern-view';
+import { overlayChipText, stageMarksForDisplay, type ChartDisplay } from '@/lib/chart-display';
+import { DOCK_BOX, DOCK_PANEL, DOCK_PILL, type OverlayDock } from './overlay-dock';
 import { MRS_INDICATOR, MRS_PANE, STAGE_INDICATOR, STAGE_LINE_INDICATOR, benchmarkOf, benchmarkUrl, dailyMa150, stageBanner, stageBannerColors, stageFromCharts, stageMarksFor, stagePointsFor } from './stage-view';
 
 interface DailyResponse { ok?: boolean; error?: string; ticker?: string; market?: string; interval?: string; range?: string; bars?: { t: number[]; o: number[]; h: number[]; l: number[]; c: number[]; v: number[] } }
@@ -23,12 +25,16 @@ export interface StageIndicatorArgs {
   chartRef: RefObject<Chart | null>;
   cacheRef: RefObject<Map<string, CachedChart<any>>>;
   light: boolean;
+  /** zzz1029 — Clean (default): stage pills / levels for the current stage and the change before it; Research: every change.
+   *  The stages are the same. */
+  display?: ChartDisplay;
 }
 
 const barsOf = (j: DailyResponse): Bar[] => { const b = j.bars!; return b.t.map((t, i) => ({ t, o: b.o[i], h: b.h[i], l: b.l[i], c: b.c[i], v: b.v[i] })); };
 
 export function useStageIndicator(a: StageIndicatorArgs) {
   const { on, ready, ticker, market, exchange, basis, live, bars, chartRef, cacheRef, light } = a;
+  const display: ChartDisplay = a.display === 'research' ? 'research' : 'clean';
   const key = `stage:${patternKey(market, ticker, exchange, basis)}`;
   const [state, setState] = useState<StageState | null>(null);
   const plan = patternDataPlan(live, ticker, market, exchange, basis);
@@ -89,7 +95,7 @@ export function useStageIndicator(a: StageIndicatorArgs) {
       registerStageIndicators(kc);
       const times = bars.map((b) => b.t);
       const points = stagePointsFor(times, result, ma150);
-      const marks = stageMarksFor(times, result);
+      const marks = stageMarksForDisplay(stageMarksFor(times, result), display);
       try {
         // zzz1023 — the tint sits behind the candles; the stage line, strip, labels and levels in front of them
         chart.createIndicator({ name: STAGE_INDICATOR, paneId: 'candle_pane', zLevel: -1, extendData: { points, light } }, true);
@@ -102,15 +108,20 @@ export function useStageIndicator(a: StageIndicatorArgs) {
     }).catch(() => { /* chart engine not loaded */ });
     return () => { alive = false; clear(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, on, result, ma150, barsSig, light, chartRef]);
+  }, [ready, on, result, ma150, barsSig, light, chartRef, display]);
 
   const banner = useMemo(() => stageBanner(!on ? 'idle' : mine ? mine.status : 'loading', result?.last ?? null, !!mine?.benchOk, mine?.error, light),
     [on, mine, result, light]);
-  return { on, banner, benchName: benchmarkOf(market).name };
+  return { on, banner, benchName: benchmarkOf(market).name, display };
 }
 
-export function StageBanner({ s, light, shifted, onTurnOff }: { s: ReturnType<typeof useStageIndicator>; light: boolean; shifted: boolean; onTurnOff: () => void }) {
-  const [open, setOpen] = useState(false);
+export function StageBanner({ s, light, shifted, onTurnOff, dock }: { s: ReturnType<typeof useStageIndicator>; light: boolean; shifted: boolean; onTurnOff: () => void; /** zzz1029 — a chip in the overlay summary row */ dock?: OverlayDock }) {
+  const [openOwn, setOpenOwn] = useState(false);
+  const open = dock ? dock.open : openOwn;
+  const setOpen = useCallback((v: boolean | ((x: boolean) => boolean)) => {
+    const next = typeof v === 'function' ? v(dock ? dock.open : openOwn) : v;
+    if (dock) dock.setOpen(next); else setOpenOwn(next);
+  }, [dock, openOwn]);
   const boxRef = useRef<HTMLDivElement | null>(null);
   const b = s.banner;
   const hasDetails = !!b.details?.length;
@@ -124,29 +135,29 @@ export function StageBanner({ s, light, shifted, onTurnOff }: { s: ReturnType<ty
     document.addEventListener('mousedown', onDown);
     document.addEventListener('touchstart', onDown);
     return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('mousedown', onDown); document.removeEventListener('touchstart', onDown); };
-  }, [show]);
+  }, [show, setOpen]);
   if (!s.on) return null;
   const col = stageBannerColors(b.color, light);
   const okColor = (ok: boolean | null) => (ok == null ? 'var(--mc-text-3)' : ok ? (light ? '#0B7A5E' : '#2BB58A') : (light ? '#B4232A' : '#EF6461'));
   const R = STAGE_RULES;
   return (
     <div ref={boxRef} title={show ? undefined : `${STAGE_TOOLTIP} Mansfield RS here is measured against the ${s.benchName}.`}
-      style={{ position: 'absolute', top: 4, zIndex: 7, maxWidth: shifted ? '45%' : 'calc(100% - 100px)', fontSize: 12, ...(shifted ? { right: 70 } : { left: 8 }) }}>
+      style={dock ? DOCK_BOX : { position: 'absolute', top: 4, zIndex: 7, maxWidth: shifted ? '45%' : 'calc(100% - 100px)', fontSize: 12, ...(shifted ? { right: 70 } : { left: 8 }) }}>
       {/* zzz1013 / zzz1023 — the pattern banner's pill: opaque on the page colour, the stage colour as a tint, a soft lift */}
-      <div data-testid="stage-banner" style={{ display: 'flex', alignItems: 'center', gap: 4, minHeight: 24, borderRadius: 8, lineHeight: '18px', boxShadow: '0 1px 0 rgba(18,23,34,.04), 0 6px 16px -10px rgba(18,23,34,.35)',
+      <div data-testid="stage-banner" style={{ ...(dock ? DOCK_PILL : null), display: 'flex', alignItems: 'center', gap: 4, minHeight: 24, borderRadius: 8, lineHeight: '18px', boxShadow: '0 1px 0 rgba(18,23,34,.04), 0 6px 16px -10px rgba(18,23,34,.35)',
         border: `1px solid ${col.border}`, background: b.color ? `linear-gradient(${col.bg}, ${col.bg}), var(--mc-bg-0)` : 'var(--mc-bg-1)', color: col.text }}>
         {b.color && <span aria-hidden style={{ width: 8, height: 8, borderRadius: 2, background: b.color, marginLeft: 8, flex: '0 0 auto' }} />}
         <button type="button" onClick={() => hasDetails && setOpen((v) => !v)} aria-expanded={show} disabled={!hasDetails}
-          title={hasDetails ? 'Show how this stage was read' : undefined}
+          title={hasDetails ? (dock ? `${b.text}\n\nShow how this stage was read` : 'Show how this stage was read') : dock ? b.text : undefined}
           style={{ background: 'none', border: 'none', color: col.text, cursor: hasDetails ? 'pointer' : 'default', padding: b.color ? '1px 4px 1px 2px' : '1px 4px 1px 8px', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, textAlign: 'left', fontVariantNumeric: 'tabular-nums' }}>
-          {b.text}{hasDetails ? (show ? ' ▴' : ' ▾') : ''}
+          {dock ? overlayChipText('stage', b.text) : b.text}{hasDetails ? (show ? ' ▴' : ' ▾') : ''}
         </button>
         <button type="button" onClick={onTurnOff} aria-label="Turn off Stage Analysis" title="Turn off Stage Analysis (Indicators ▾ turns it back on)"
           style={{ background: 'none', border: 'none', color: col.text, cursor: 'pointer', padding: '0 6px', fontSize: 13, lineHeight: 1 }}>×</button>
       </div>
       {show && (
         <div role="dialog" aria-label="Stage Analysis details" data-testid="stage-details"
-          style={{ marginTop: 6, width: 'min(520px, calc(100vw - 80px))', maxHeight: 420, overflowY: 'auto', padding: '10px 12px', borderRadius: 12, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-0)', color: 'var(--mc-text-1)', boxShadow: 'var(--ct-shadow, 0 8px 24px rgba(0,0,0,.18))' }}>
+          style={{ marginTop: 6, width: 'min(520px, calc(100vw - 80px))', maxHeight: 420, overflowY: 'auto', padding: '10px 12px', ...(dock ? DOCK_PANEL : null), borderRadius: 12, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-0)', color: 'var(--mc-text-1)', boxShadow: 'var(--ct-shadow, 0 8px 24px rgba(0,0,0,.18))' }}>
           {b.meaning && (
             <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', paddingBottom: 8, borderBottom: '1px solid var(--mc-border-3)' }}>
               <span aria-hidden style={{ width: 4, alignSelf: 'stretch', borderRadius: 2, background: b.color || 'var(--mc-border-1)' }} />
@@ -175,7 +186,7 @@ export function StageBanner({ s, light, shifted, onTurnOff }: { s: ReturnType<ty
             <li>A Stage 2 under {R.youngWeeks} weeks old that falls back under a flat average is a failed breakout and returns to the stage before it.</li>
           </ul>
           <div style={{ marginTop: 8, fontSize: 11, color: 'var(--mc-text-3)' }}>
-            Chart: a light tint and a strip along the bottom show the stage; the stage line is green while rising, grey when flat, red when falling; a label marks the confirmed week of each stage, with a faint &ldquo;began&rdquo; tick at the first qualifying week; dashed lines mark the base high broken (Stage 2) or the support broken (Stage 4). On a daily chart a change shows from the last session of its confirming week (the weekly close). Mansfield RS is measured against the {s.benchName}. Our own version, not the original script.
+            Chart: a light tint and a strip along the bottom show the stage; the stage line is green while rising, grey when flat, red when falling; a label marks the confirmed week of each stage, with a faint &ldquo;began&rdquo; tick at the first qualifying week; dashed lines mark the base high broken (Stage 2) or the support broken (Stage 4). On a daily chart a change shows from the last session of its confirming week (the weekly close). Mansfield RS is measured against the {s.benchName}.{s.display === 'clean' ? ' Clean view: labels and levels are drawn for the current stage and the change before it (Research shows every change); the tint and strip show all stages.' : ''} Our own version, not the original script.
           </div>
         </div>
       )}

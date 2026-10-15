@@ -8,6 +8,8 @@ import type { Chart } from 'klinecharts';
 import type { Bar } from '@/lib/chart-math';
 import { autoLines, linePriceAt, type AutoLinesTf } from '@/lib/auto-lines';
 import { bannerColors, barsRevision } from './pattern-view';
+import { overlayChipText, type ChartDisplay } from '@/lib/chart-display';
+import { DOCK_BOX, DOCK_PANEL, DOCK_PILL, type OverlayDock } from './overlay-dock';
 import { completedBars } from './setup-view';
 import {
   ALN_INDICATOR, ALN_PREFS_KEY, alnColorOf, alnPayload, alnRef, alnRefText, autoLinesHeadline, autoLinesRows, levelId, lineId, parseAutoLinesPrefs, serializeAutoLinesPrefs,
@@ -24,6 +26,10 @@ export interface AutoLinesArgs {
   log: boolean;
   chartRef: RefObject<Chart | null>;
   light: boolean;
+  /** zzz1029 — Clean (default) merges nearby right-edge tags and caps them; Research shows every tag. Lines are the same. */
+  display?: ChartDisplay;
+  /** zzz1029 — prices whose right-edge tags are drawn by others (a picked pattern's pivot): the tags here keep clear of them */
+  avoid?: number[];
 }
 
 function readPrefs(): AutoLinesPrefs {
@@ -33,6 +39,8 @@ const MIN_BARS = 30;
 
 export function useAutoLines(a: AutoLinesArgs) {
   const { on, ready, market, bars, tf, log, chartRef, light } = a;
+  const display: ChartDisplay = a.display === 'research' ? 'research' : 'clean';
+  const avoidSig = (a.avoid || []).filter((x) => Number.isFinite(x)).join(',');
   const [prefs, setPrefsState] = useState<AutoLinesPrefs>(readPrefs);
   const setPrefs = useCallback((fn: (p: AutoLinesPrefs) => AutoLinesPrefs) => {
     setPrefsState((p) => {
@@ -67,7 +75,7 @@ export function useAutoLines(a: AutoLinesArgs) {
   const nProv = useMemo(() => rows.filter((r) => r.prov && (r.id.startsWith('t:') ? prefs.trend : prefs.levels)).length, [rows, prefs]);
   const headline = useMemo(() => autoLinesHeadline(comp?.res ?? null, tf, status, prefs, nProv), [comp, tf, status, prefs, nProv]);
   const refText = useMemo(() => alnRefText(ref, tf, decimals, cur), [ref, tf, decimals, cur]);
-  const payload = useMemo(() => (comp ? alnPayload(comp.done, comp.res, prefs, light, decimals, ref) : null), [comp, prefs, light, decimals, ref]);
+  const payload = useMemo(() => (comp ? { ...alnPayload(comp.done, comp.res, prefs, light, decimals, ref), display, avoid: avoidSig ? avoidSig.split(',').map(Number) : [] } : null), [comp, prefs, light, decimals, ref, display, avoidSig]);
 
   // ── paint ─────────────────────────────────────────────────────────────────────
   const [hover, setHover] = useState<{ id: string; x: number; y: number } | null>(null);
@@ -132,15 +140,20 @@ export function useAutoLines(a: AutoLinesArgs) {
   const hoverRow = hover ? rows.find((r) => r.id === hover.id) ?? null : null;
   const toggleTrend = useCallback(() => setPrefs((p) => ({ ...p, trend: !p.trend })), [setPrefs]);
   const toggleLevels = useCallback(() => setPrefs((p) => ({ ...p, levels: !p.levels })), [setPrefs]);
-  return { on, status, headline, refText, rows, prefs, tf, dropped: !!comp?.dropped, log: !!comp?.res?.log, hover, hoverRow, toggleTrend, toggleLevels };
+  return { on, status, headline, refText, rows, prefs, tf, dropped: !!comp?.dropped, log: !!comp?.res?.log, hover, hoverRow, toggleTrend, toggleLevels, display };
 }
 
 export type AutoLinesP = ReturnType<typeof useAutoLines>;
 const TF_BAR: Record<AutoLinesTf, string> = { D: 'daily', W: 'weekly', M: 'monthly' };
 const TF_UNIT: Record<AutoLinesTf, string> = { D: 'day', W: 'week', M: 'month' };
 
-export function AutoLinesBanner({ s, light, top = 4, onTurnOff }: { s: AutoLinesP; light: boolean; top?: number; onTurnOff: () => void }) {
-  const [open, setOpen] = useState(false);
+export function AutoLinesBanner({ s, light, top = 4, onTurnOff, dock }: { s: AutoLinesP; light: boolean; top?: number; onTurnOff: () => void; /** zzz1029 — a chip in the overlay summary row */ dock?: OverlayDock }) {
+  const [openOwn, setOpenOwn] = useState(false);
+  const open = dock ? dock.open : openOwn;
+  const setOpen = useCallback((v: boolean | ((x: boolean) => boolean)) => {
+    const next = typeof v === 'function' ? v(dock ? dock.open : openOwn) : v;
+    if (dock) dock.setOpen(next); else setOpenOwn(next);
+  }, [dock, openOwn]);
   const boxRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!open) return;
@@ -150,7 +163,7 @@ export function AutoLinesBanner({ s, light, top = 4, onTurnOff }: { s: AutoLines
     document.addEventListener('mousedown', onDown);
     document.addEventListener('touchstart', onDown);
     return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('mousedown', onDown); document.removeEventListener('touchstart', onDown); };
-  }, [open]);
+  }, [open, setOpen]);
   if (!s.on) return null;
   const col = bannerColors('none', light);
   const small = { background: 'var(--mc-bg-0)', border: '1px solid var(--mc-border-1)', borderRadius: 6, color: 'var(--mc-text-2)', cursor: 'pointer', fontSize: 11.5, fontWeight: 600, padding: '1px 8px', whiteSpace: 'nowrap' as const };
@@ -174,8 +187,8 @@ export function AutoLinesBanner({ s, light, top = 4, onTurnOff }: { s: AutoLines
   );
   return (
     <>
-      <div ref={boxRef} data-testid="aln-banner-box" style={{ position: 'absolute', left: 8, top, zIndex: 6, maxWidth: 'calc(100% - 100px)', fontSize: 12 }}>
-        <div data-testid="aln-banner" style={{ display: 'flex', alignItems: 'center', gap: 4, minHeight: 24, borderRadius: 8, border: `1px solid ${col.border}`, background: `linear-gradient(${col.bg}, ${col.bg}), var(--mc-bg-0)`, color: col.text, lineHeight: '18px', boxShadow: '0 1px 0 rgba(18,23,34,.04), 0 6px 16px -10px rgba(18,23,34,.35)' }}>
+      <div ref={boxRef} data-testid="aln-banner-box" style={dock ? DOCK_BOX : { position: 'absolute', left: 8, top, zIndex: 6, maxWidth: 'calc(100% - 100px)', fontSize: 12 }}>
+        <div data-testid="aln-banner" style={{ ...(dock ? DOCK_PILL : null), display: 'flex', alignItems: 'center', gap: 4, minHeight: 24, borderRadius: 8, border: `1px solid ${col.border}`, background: `linear-gradient(${col.bg}, ${col.bg}), var(--mc-bg-0)`, color: col.text, lineHeight: '18px', boxShadow: '0 1px 0 rgba(18,23,34,.04), 0 6px 16px -10px rgba(18,23,34,.35)' }}>
           <span aria-hidden style={{ display: 'inline-flex', gap: 2, paddingLeft: 8 }}>
             <span style={{ width: 8, height: 2, background: alnColorOf('support', false, light), borderRadius: 1, transform: 'rotate(-25deg)' }} />
             <span style={{ width: 8, height: 2, background: alnColorOf('resistance', false, light), borderRadius: 1, transform: 'rotate(25deg)' }} />
@@ -183,14 +196,14 @@ export function AutoLinesBanner({ s, light, top = 4, onTurnOff }: { s: AutoLines
           <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-haspopup="dialog"
             title={`${s.headline}\n\nTrendlines and horizontal levels where price turned 3 or more times, found on the ${TF_BAR[s.tf]} candles on screen. A line with only 2 touches is never shown. Click for the list; hover a line on the chart for its touches.${s.dropped ? '\nThe last candle is still forming and is not read.' : ''}${s.refText ? `\n${s.refText}` : ''}`}
             style={{ background: 'none', border: 'none', color: col.text, cursor: 'pointer', padding: '1px 4px 1px 4px', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, textAlign: 'left' }}>
-            {s.headline} ▾
+            {dock ? overlayChipText('alines', s.headline) : s.headline} ▾
           </button>
           <button type="button" onClick={onTurnOff} aria-label="Turn off Auto trendlines & levels" title="Turn off Auto trendlines & levels (Indicators ▾ or the right-click menu turns it back on)"
             style={{ background: 'none', border: 'none', color: col.text, cursor: 'pointer', padding: '0 6px', fontSize: 13, lineHeight: 1 }}>×</button>
         </div>
         {open && (
           <div role="dialog" aria-label="Auto trendlines & levels"
-            style={{ marginTop: 6, width: 'min(460px, calc(100vw - 80px))', maxHeight: 440, overflowY: 'auto', padding: '8px 10px 10px', borderRadius: 12, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-0)', color: 'var(--mc-text-1)', boxShadow: 'var(--ct-shadow, 0 8px 24px rgba(0,0,0,.18))' }}>
+            style={{ marginTop: 6, width: 'min(460px, calc(100vw - 80px))', maxHeight: 440, ...(dock ? DOCK_PANEL : null), overflowY: 'auto', padding: '8px 10px 10px', borderRadius: 12, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-0)', color: 'var(--mc-text-1)', boxShadow: 'var(--ct-shadow, 0 8px 24px rgba(0,0,0,.18))' }}>
             <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: 12 }}>
                 <input type="checkbox" checked={s.prefs.trend} onChange={s.toggleTrend} aria-label="Show trendlines" /> Trendlines
@@ -201,13 +214,14 @@ export function AutoLinesBanner({ s, light, top = 4, onTurnOff }: { s: AutoLines
               <span style={{ flex: 1 }} />
               <button type="button" onClick={() => setOpen(false)} aria-label="Close the list" style={small}>Close list</button>
             </div>
+            {dock && <div data-testid="aln-headline" style={{ marginTop: 6, fontWeight: 650, color: 'var(--mc-text-1)' }}>{s.headline}</div>}
             {s.refText && <div data-testid="aln-ref" style={{ marginTop: 6, fontSize: 11.5, color: 'var(--mc-text-2)', lineHeight: 1.4 }}>{s.refText}</div>}
             <div style={{ marginTop: 10, marginBottom: 2, fontSize: 11.5, fontWeight: 650, color: 'var(--mc-text-3)' }}>Trendlines · {nTrend}</div>
             {nTrend ? trendRows.map((r) => row(r, false)) : <div style={{ color: 'var(--mc-text-2)', padding: '2px 0' }}>{s.status === 'ready' ? 'No trendline with 3 or more touches near price.' : s.headline}</div>}
             <div style={{ marginTop: 10, marginBottom: 2, fontSize: 11.5, fontWeight: 650, color: 'var(--mc-text-3)' }}>Levels (highest first) · {nLevels}</div>
             {nLevels ? levelRows.map((r) => row(r, true)) : <div style={{ color: 'var(--mc-text-2)', padding: '2px 0' }}>{s.status === 'ready' ? 'No level with 3 or more touches near price.' : s.headline}</div>}
             <div style={{ paddingTop: 8, fontSize: 11, color: 'var(--mc-text-3)', lineHeight: 1.45 }}>
-              Found on the {TF_BAR[s.tf]} candles loaded{s.dropped ? ' (the last candle is still forming and is not read)' : ''}. A line needs 3 or more separate touches and no close through it between the first and last touch; a few wicks through it are allowed. Grey dashed = broken (a close beyond it after the last touch). Provisional breach = the latest price is through the line but the {TF_UNIT[s.tf]} has not closed; it counts only on a completed close. Thicker = stronger; dashed = weaker. {s.log ? 'Lines are found in % terms (log scale).' : 'Lines are found on the normal price scale.'} A reading of the bars, not a signal to act on — check it on the chart.
+              Found on the {TF_BAR[s.tf]} candles loaded{s.dropped ? ' (the last candle is still forming and is not read)' : ''}. A line needs 3 or more separate touches and no close through it between the first and last touch; a few wicks through it are allowed. Grey dashed = broken (a close beyond it after the last touch). Provisional breach = the latest price is through the line but the {TF_UNIT[s.tf]} has not closed; it counts only on a completed close. Thicker = stronger; dashed = weaker. {s.log ? 'Lines are found in % terms (log scale).' : 'Lines are found on the normal price scale.'}{s.display === 'clean' ? ' Clean view: tags of lines within about 1.2% of each other are merged into one tag at the right edge and only the nearest ones are shown — the exact price of every line is in this list.' : ''} A reading of the bars, not a signal to act on — check it on the chart.
             </div>
           </div>
         )}

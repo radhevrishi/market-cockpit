@@ -2,6 +2,7 @@
 // zzz1022b — right-click menu on the chart, as in TradingView: reset / fit / auto-scale / log / total return, a price line or a
 // copy of the price under the mouse, drawings and indicators. Closes on Escape, a click outside, scrolling or a window resize.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type { ChartDisplay } from '@/lib/chart-display';
 
 export interface ChartMenuItem {
   id: string;
@@ -26,6 +27,8 @@ export interface ChartMenuState {
   /** zzz1025 — Auto trendlines & levels */
   autoLines?: boolean;
   selected: boolean; light: boolean;
+  /** zzz1029 — Clean / Research labels (shown when given) */
+  display?: ChartDisplay;
 }
 /** The menu: chart view and price scale first (as in TradingView), then the price under the mouse, indicators, drawings, theme.
  *  On the price axis only the scale items. */
@@ -51,6 +54,14 @@ export function chartMenuItems(s: ChartMenuState): ChartMenuItem[] {
     { id: 'setups', label: 'Trader setups', checked: s.setups },
     { id: 'alines', label: 'Auto trendlines & levels', checked: !!s.autoLines },
     { id: 'volume', label: 'Volume', checked: s.volume },
+  );
+  if (s.display) {
+    items.push(
+      { id: 'view-clean', label: 'Clean labels (fewer on the chart)', checked: s.display === 'clean', sepBefore: true },
+      { id: 'view-research', label: 'Research labels (every label)', checked: s.display === 'research' },
+    );
+  }
+  items.push(
     { id: 'del1', label: 'Remove selected drawing', kbd: 'Delete', disabled: !s.selected, sepBefore: true },
     { id: 'delall', label: 'Remove all drawings…', danger: true },
     { id: 'theme', label: s.light ? 'Dark chart' : 'White chart', sepBefore: true },

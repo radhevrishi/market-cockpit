@@ -25,14 +25,16 @@ import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
 import { readableOn, textOnColor } from '@/lib/readable-color';
 import { drawingAutoColor, isAutoDrawingColor } from '@/lib/chart-drawing-color';
 import { addSet, activeSetOf, chooseSet, loadSets, removeSet, saveSets, setsOf, withSet, DRAWING_SETS_KEY, MAIN_SET, type SetsStore } from '@/lib/chart-drawing-sets';
-import { PatternBanner, usePatternIndicator } from './PatternIndicator';
+import { usePatternIndicator } from './PatternIndicator';
 import { patternsOn, withPatterns, parsePatternHandoff } from './pattern-view';
 import { PATTERN_IDS } from '@/lib/chart-patterns';
-import { StageBanner, useStageIndicator } from './StageIndicator';
+import { useStageIndicator } from './StageIndicator';
 import { stageOn, withStage } from './stage-view';
-import { SetupBanner, useSetupIndicator } from './SetupIndicator';
+import { useSetupIndicator } from './SetupIndicator';
 import { setupsOn, withSetups } from './setup-view';
-import { AutoLinesBanner, useAutoLines } from './AutoLinesIndicator';
+import { useAutoLines } from './AutoLinesIndicator';
+import { OverlaySummary, useChartDisplay } from './OverlaySummary';
+import type { OverlayId } from '@/lib/chart-display';
 import { autoLinesOn, withAutoLines } from './auto-lines-view';
 import SymbolSearch from './SymbolSearch';
 import { CHART_CSS } from './chart-workspace-css';
@@ -824,7 +826,9 @@ export default function ChartWorkspace() {
   // pattern selected and its window fitted; the indicator is switched on for it when it is off
   // zzz1015 — the candles on screen (displayTf) win a tie between timeframes in the indicator's Auto analysis
   const [patHandoff] = useState(() => parsePatternHandoff((k) => sp.get(k), PATTERN_IDS));
-  const patterns = usePatternIndicator({ on: patternsOn(L.working), ready, ticker, market, exchange, basis, live, bars, chartRef, cacheRef, cur, chart: { loading, error }, handoff: patHandoff, displayTf: tf });
+  // zzz1029 — Clean (default) / Research: how many labels the overlays draw; the calculations are the same (lib/chart-display)
+  const [display, setDisplay] = useChartDisplay();
+  const patterns = usePatternIndicator({ on: patternsOn(L.working), ready, ticker, market, exchange, basis, live, bars, chartRef, cacheRef, cur, chart: { loading, error }, handoff: patHandoff, displayTf: tf, display });
   const handoffOn = useRef(false);
   useEffect(() => {
     if (!patHandoff?.pat || handoffOn.current) return;
@@ -832,17 +836,21 @@ export default function ChartWorkspace() {
     if (!patternsOn(L.working)) L.setWorking((w) => withPatterns(w, true));
   }, [patHandoff, L]);
   // zzz987 — "Stage Analysis (TheWrap method)": runs only while that indicator is in the working layout
-  const stageInd = useStageIndicator({ on: stageOn(L.working), ready, ticker, market, exchange, basis, live, bars, chartRef, cacheRef, light: chartLight });
+  const stageInd = useStageIndicator({ on: stageOn(L.working), ready, ticker, market, exchange, basis, live, bars, chartRef, cacheRef, light: chartLight, display });
   // zzz1022 — "Trader setups": read on the candles on screen (D / W / M), only while that indicator is in the working layout
-  const setupsInd = useSetupIndicator({ on: setupsOn(L.working), ready, market, bars, tf, chartRef, light: chartLight });
-  // status lines on the left, one under the other: pattern (or stage when patterns are off), then setups; the legend under them
+  const setupsInd = useSetupIndicator({ on: setupsOn(L.working), ready, market, bars, tf, chartRef, light: chartLight, display });
+  // zzz1029 — the status lines are chips in one overlay summary row at the top-left (OverlaySummary); the legend under that row
   // zzz1025 — "Auto trendlines & levels" (on by default): lines / levels with 3+ touches on the candles on screen
-  const alines = useAutoLines({ on: autoLinesOn(L.working), ready, market, bars, tf, log: L.working.scale.log, chartRef, light: chartLight });
-  const leftBanners = (patterns.on || stageInd.on ? 1 : 0);
-  const setupTop = 4 + 30 * leftBanners;
-  const alnTop = 4 + 30 * (leftBanners + (setupsInd.on ? 1 : 0));
-  const nBanners = leftBanners + (setupsInd.on ? 1 : 0) + (alines.on ? 1 : 0);
-  const legendTop = 28 + 30 * Math.max(0, nBanners - 1);
+  // its right-edge tags keep clear of the last-price tag and the drawn pattern's pivot tag
+  const alines = useAutoLines({ on: autoLinesOn(L.working), ready, market, bars, tf, log: L.working.scale.log, chartRef, light: chartLight, display, avoid: patterns.pivots });
+  const nOverlays = [patterns.on, stageInd.on, setupsInd.on, alines.on].filter(Boolean).length;
+  const legendTop = nOverlays ? 34 : 28;
+  const turnOffOverlay = useCallback((id: OverlayId) => {
+    if (id === 'patterns') L.setWorking((w) => withPatterns(w, false));
+    else if (id === 'stage') L.setWorking((w) => withStage(w, false));
+    else if (id === 'setups') L.setWorking((w) => withSetups(w, false));
+    else L.setWorking((w) => withAutoLines(w, false));
+  }, [L]);
 
   // zzz1022b — right-click menu (as in TradingView): on the chart and on the price axis
   const [ctx, setCtx] = useState<{ x: number; y: number; price: number | null; axis: boolean } | null>(null);
@@ -875,8 +883,8 @@ export default function ChartWorkspace() {
   const ctxItems = useMemo<ChartMenuItem[]>(() => (ctx ? chartMenuItems({
     axis: ctx.axis, price: ctx.price, cur, decimals: bars.length && Math.abs(bars[bars.length - 1].c) < 1 ? 4 : 2,
     auto: autoOn, log: L.working.scale.log, tr: basis === 'tr', patterns: patternsOn(L.working), stage: stageOn(L.working),
-    setups: setupsOn(L.working), autoLines: autoLinesOn(L.working), volume: L.working.volume.on, selected: !!selectedId, light: chartLight,
-  }) : []), [ctx, cur, bars, autoOn, L.working, basis, selectedId, chartLight]);
+    setups: setupsOn(L.working), autoLines: autoLinesOn(L.working), volume: L.working.volume.on, selected: !!selectedId, light: chartLight, display,
+  }) : []), [ctx, cur, bars, autoOn, L.working, basis, selectedId, chartLight, display]);
   const onCtxSelect = (id: string) => {
     const p = ctx?.price;
     switch (id) {
@@ -892,6 +900,8 @@ export default function ChartWorkspace() {
       case 'setups': L.setWorking((w) => withSetups(w, !setupsOn(w))); break;
       case 'alines': L.setWorking((w) => withAutoLines(w, !autoLinesOn(w))); break;
       case 'volume': L.setWorking((w) => ({ ...w, volume: { ...w.volume, on: !w.volume.on } })); break;
+      case 'view-clean': setDisplay('clean'); break;
+      case 'view-research': setDisplay('research'); break;
       case 'del1': deleteSelected(); break;
       case 'delall': clearAll(); break;
       case 'theme': toggleLight(); break;
@@ -1080,10 +1090,7 @@ export default function ChartWorkspace() {
               title={basis === 'tr' ? `${TOTAL_RETURN_LABEL}. On: history adjusted for ${live?.dividends ?? 0} cash dividends; the latest price is unchanged. Drawings are one set for both views and stay at the price values they were drawn on. Click for prices as printed.` : `Show: ${TOTAL_RETURN_LABEL}`}>TR</button>
           </div>
           <IndicatorLegend top={legendTop} rows={rows} valueOf={valueOf} onToggle={(id) => L.setWorking((w) => toggleRow(w, id))} onRemove={(id) => L.setWorking((w) => removeRow(w, id))} decimals={pxDecimals} colorOf={(c) => (!chartLight && (luminance(c) ?? 1) < 0.18 ? '#B2B5BE' : c)} textOf={(c) => readableOn(c, chartLight ? '#FFFFFF' : '#0C1018')} />
-          <PatternBanner p={patterns} cur={cur} light={chartLight} tf={tf} onTurnOff={() => L.setWorking((w) => withPatterns(w, false))} />
-          <StageBanner s={stageInd} light={chartLight} shifted={patterns.on} onTurnOff={() => L.setWorking((w) => withStage(w, false))} />
-          <SetupBanner s={setupsInd} light={chartLight} top={setupTop} onTurnOff={() => L.setWorking((w) => withSetups(w, false))} />
-          <AutoLinesBanner s={alines} light={chartLight} top={alnTop} onTurnOff={() => L.setWorking((w) => withAutoLines(w, false))} />
+          <OverlaySummary patterns={patterns} stage={stageInd} setups={setupsInd} alines={alines} cur={cur} tf={tf} light={chartLight} display={display} onDisplay={setDisplay} onTurnOff={turnOffOverlay} />
           {/* zzz1000 (improvement 6) — nothing loaded for this symbol / view: say so instead of an empty 0–10 price axis */}
           {!loading && !bars.length && error && (
             <div role="alert" data-testid="chart-empty-state" className="ct-empty">

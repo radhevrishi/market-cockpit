@@ -259,7 +259,7 @@ test('zzz1015 wiring: shared chart request, per-hit timeframe mapping, the chart
   assert.ok(!/\bfetch\(plan/.test(ind), 'no private fetch');
   assert.match(ind, /overlayFit\(h, times, fmt, fitOptsOf\(h\)\)/);
   assert.match(ind, /x === 'A' \? 'Auto' : x/);
-  assert.match(ws, /displayTf: tf \}\)/);
+  assert.match(ws, /displayTf: tf(, display)? \}\)/);
 });
 
 test('zzz1019 mounted: the analysis follows the chart timeframe (open on W → weekly; switch to M → monthly; back to D → daily)', async () => {

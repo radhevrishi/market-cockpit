@@ -217,8 +217,9 @@ test('right-click menu and Indicators panel offer it; the page stacks its status
   assert.ok(it && it.checked === true && it.label === 'Auto trendlines & levels');
   const ws = read('../../components/charts/ChartWorkspace.tsx');
   assert.ok(ws.includes("case 'alines': L.setWorking((w) => withAutoLines(w, !autoLinesOn(w)))"));
-  assert.ok(ws.includes('<AutoLinesBanner s={alines}'));
-  assert.ok(ws.includes('const legendTop = 28 + 30 * Math.max(0, nBanners - 1);'));
+  // zzz1029 — one overlay summary row; the legend under it
+  assert.ok(read('../../components/charts/OverlaySummary.tsx').includes('<AutoLinesBanner s={alines}'));
+  assert.ok(ws.includes('const legendTop = nOverlays ? 34 : 28;'));
   assert.ok(read('../../components/charts/LayoutControls.tsx').includes('withAutoLines(l, e.target.checked)'));
 });
 

@@ -197,9 +197,11 @@ test('wiring: Indicators panel, workspace hook + banner stacked under the other 
   assert.match(lc, /checked=\{setupsOn\(w\)\} onChange=\{\(e\) => setW\(\(l\) => withSetups\(l, e\.target\.checked\)\)\}/);
   assert.match(lc, /position: 'absolute', left: 8, top, zIndex: 5/);
   const ws = read('../../components/charts/ChartWorkspace.tsx');
-  assert.match(ws, /useSetupIndicator\(\{ on: setupsOn\(L\.working\), ready, market, bars, tf, chartRef, light: chartLight \}\)/);
-  assert.match(ws, /const setupTop = 4 \+ 30 \* leftBanners;/);
-  assert.match(ws, /<SetupBanner s=\{setupsInd\} light=\{chartLight\} top=\{setupTop\} onTurnOff=\{\(\) => L\.setWorking\(\(w\) => withSetups\(w, false\)\)\} \/>/);
+  assert.match(ws, /useSetupIndicator\(\{ on: setupsOn\(L\.working\), ready, market, bars, tf, chartRef, light: chartLight(, display)? \}\)/);
+  // zzz1029 — the status lines are chips in one overlay summary row (OverlaySummary), not stacked banners
+  assert.match(ws, /<OverlaySummary patterns=\{patterns\} stage=\{stageInd\} setups=\{setupsInd\} alines=\{alines\}/);
+  assert.match(ws, /else if \(id === 'setups'\) L\.setWorking\(\(w\) => withSetups\(w, false\)\);/);
+  assert.match(read('../../components/charts/OverlaySummary.tsx'), /<SetupBanner s=\{setups\} light=\{light\} onTurnOff=\{\(\) => onTurnOff\('setups'\)\} dock=\{docks\.setups\} \/>/);
   assert.match(ws, /<IndicatorLegend top=\{legendTop\}/);
   const si = read('../../components/charts/SetupIndicator.tsx');
   assert.match(si, /await import\('\.\/setup-kline'\)/);

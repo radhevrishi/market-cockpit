@@ -20,6 +20,8 @@ import {
   overlayFit, parsePatternTfPref, analysisForChartTf, patternDataPlan, patternKey, priceDecimals, serializePatternTfPref, shapeScoreWords, shownStatus, stageWords, handoffSpan, type PatternState, type PatternTfPref, type PatternHandoff,
   patternView, viewBanner, multiBanner, OTHER_TF_SEP, type MultiBanner, rowKeyOf, conditionWords, evidenceWords, pointWords, pointMarks, pointPath, structureRange, PATTERN_POINT, type PatternView, type PatternViewRow, type PatternAnalysisTf, type TfViews,
 } from './pattern-view';
+import { CLEAN_MIN_SPAN_CANDLES, drawOtherTfStructure, overlayChipText, patternLabelsShown, type ChartDisplay } from '@/lib/chart-display';
+import { DOCK_BOX, DOCK_PANEL, DOCK_PILL, type OverlayDock } from './overlay-dock';
 
 interface ShownResponse {
   ticker?: string; market?: string; interval?: string; range?: string; basis?: string; requestedExchange?: string | null;
@@ -54,6 +56,9 @@ export interface PatternIndicatorArgs {
   handoff?: PatternHandoff | null;
   /** zzz1015 — the candles on screen (D / W / M): wins a tie between timeframes in Auto */
   displayTf?: string;
+  /** zzz1029 — Clean (default): turning-point codes (TH / TL / LIP …) only while a pattern is picked in the list, its row is hovered
+   *  or the mouse is on its lines; Research: always. The patterns found are the same. */
+  display?: ChartDisplay;
 }
 
 /** zzz1015 — the per-timeframe results of one symbol (each keyed by analysisKey, so a weekly result never shows as daily). */
@@ -85,6 +90,7 @@ function analyseAs(key: string, daily: Bar[], analysisTf: PatternTimeframe, incl
 
 export function usePatternIndicator(a: PatternIndicatorArgs) {
   const { on, ready, ticker, market, exchange, basis, live, bars, chartRef, cacheRef, cur, chart: chartLoad, displayTf } = a;
+  const display: ChartDisplay = a.display === 'research' ? 'research' : 'clean';
   // zzz992 — the analysis timeframe (per viewer); hits are keyed by symbol + timeframe so a weekly result never shows as daily
   const handoff = a.handoff || null;
   // zzz1008 — a hand-off's analysis timeframe wins for this visit (the remembered choice is not overwritten)
@@ -233,9 +239,19 @@ export function usePatternIndicator(a: PatternIndicatorArgs) {
   // nothing picked yet → the headline structure (never an expired or weaker one by default). zzz1024 — an explicit timeframe with nothing
   // current: the other timeframe's structure the banner leads with (banner.leadHit) is drawn
   const lead = useMemo(() => (banner.leadHit ? [banner.leadHit] : views[headTf]?.state === 'qualifying' && (analysisTf === 'A' || headTf === analysisTf) ? views[headTf]!.active.slice(0, 1) : []), [banner.leadHit, views, headTf, analysisTf]);
-  const drawn = useMemo(() => (pickedIds ? rows.filter((h) => pickedIds.has(rowKeyOf(h))) : lead), [rows, lead, pickedIds]);
+  const chosen = useMemo(() => (pickedIds ? rows.filter((h) => pickedIds.has(rowKeyOf(h))) : lead), [rows, lead, pickedIds]);
+  // zzz1029b (QA, AVAV monthly) — Clean: another timeframe's structure that would cover fewer than ~6 candles on screen is not drawn
+  // (it stays ticked in the list and named in the chip with "Switch to …"); Research draws it
+  const drawn = useMemo(() => {
+    const times = bars.map((b) => b.t);
+    const shown = displayTf === 'W' || displayTf === 'M' ? displayTf : 'D';
+    return chosen.filter((h) => drawOtherTfStructure({ display, hitTf: h.timeframe ?? 'D', shownTf: shown, startT: h.startT, endT: h.endT, times }));
+    // barsRev stands for `bars`
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chosen, display, displayTf, barsRev]);
+  const squeezed = useMemo(() => chosen.filter((h) => !drawn.includes(h)), [chosen, drawn]);
   const togglePick = (rk: string) => {
-    const next = new Set<string>(drawn.map(rowKeyOf));
+    const next = new Set<string>(chosen.map(rowKeyOf));
     if (next.has(rk)) next.delete(rk); else next.add(rk);
     setPicked({ key, ids: next });
   };
@@ -252,6 +268,48 @@ export function usePatternIndicator(a: PatternIndicatorArgs) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [on, drawn, barsRev, fitOptsOf]);
 
+  // ── zzz1029 — Clean view: turning-point codes when a row is picked / hovered in the list or the mouse is on the drawn lines ──
+  const [hoverRow, setHoverRow] = useState<string | null>(null);
+  const [chartHover, setChartHover] = useState(false);
+  const labelKeys = useMemo(() => drawn.filter((h) => patternLabelsShown({ display, picked: !!pickedIds, hoverRow, rowKey: rowKeyOf(h), chartHover })).map(rowKeyOf).join(','),
+    [drawn, display, pickedIds, hoverRow, chartHover]);
+  const watchHover = on && ready && display === 'clean' && !pickedIds && drawn.length > 0 && bars.length > 0;
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!watchHover || !chart) { setChartHover(false); return; }
+    const times = bars.map((b) => b.t);
+    const idxOf = (t: number) => { let lo = 0, hi = times.length - 1, ans = -1; while (lo <= hi) { const m = (lo + hi) >> 1; if (times[m] <= t) { ans = m; lo = m + 1; } else hi = m - 1; } return ans; };
+    const paths = drawn.map((h) => pointMarks(h, bars).marks.slice().sort((x, y) => x.timestamp - y.timestamp));
+    let raf = 0;
+    const onMove = (d: any) => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        if (typeof d?.x !== 'number' || typeof d?.y !== 'number' || d?.paneId !== 'candle_pane') { setChartHover(false); return; }
+        let near = false;
+        for (const marks of paths) {
+          const pts: Array<{ x: number; y: number }> = [];
+          for (const m of marks) {
+            const k = idxOf(m.timestamp);
+            if (k < 0) continue;
+            try { const p = chart.convertToPixel({ dataIndex: k, value: m.value }, { paneId: 'candle_pane' }) as { x?: number; y?: number }; if (typeof p?.x === 'number' && typeof p?.y === 'number') pts.push({ x: p.x, y: p.y }); } catch { /* outside */ }
+          }
+          for (let i = 0; i < pts.length && !near; i++) {
+            const a2 = pts[i], b2 = pts[i + 1] ?? pts[i];
+            const dx = b2.x - a2.x, dy = b2.y - a2.y, len = dx * dx + dy * dy;
+            const tt = len ? Math.max(0, Math.min(1, ((d.x - a2.x) * dx + (d.y - a2.y) * dy) / len)) : 0;
+            if (Math.hypot(d.x - (a2.x + tt * dx), d.y - (a2.y + tt * dy)) <= 10) near = true;
+          }
+          if (near) break;
+        }
+        setChartHover((v) => (v === near ? v : near));
+      });
+    };
+    try { chart.subscribeAction('onCrosshairChange', onMove); } catch { /* no hover */ }
+    return () => { cancelAnimationFrame(raf); try { chart.unsubscribeAction('onCrosshairChange', onMove); } catch { /* disposed */ } };
+    // barsRev stands for `bars`
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchHover, chartRef, drawn, barsRev]);
+
   // ── draw the chosen pattern(s); its own overlay group, removed on symbol change / indicator off ──
   const shownTimesSig = barsRev;
   useEffect(() => {
@@ -261,7 +319,9 @@ export function usePatternIndicator(a: PatternIndicatorArgs) {
     if (!on || !drawn.length || !bars.length) return;
     const times = bars.map((b) => b.t);
     const fmt = (n: number) => `${cur}${n.toLocaleString('en-US', { minimumFractionDigits: priceDecimals(n), maximumFractionDigits: priceDecimals(n) })}`;
+    const withLabels = new Set(labelKeys ? labelKeys.split(',') : []);
     for (const h of drawn) {
+      const showCodes = withLabels.has(rowKeyOf(h));
       // zzz1009 — the actual turning points (moved to the real candle of the low / high on finer candles) and the path through them
       const { marks } = pointMarks(h, bars);
       const r = structureRange(h);
@@ -279,13 +339,13 @@ export function usePatternIndicator(a: PatternIndicatorArgs) {
       for (const m of marks) {
         const below = m.value <= mid;   // a low's label goes under it, a high's above
         try {
-          chart.createOverlay({ name: PATTERN_POINT, groupId: PATTERN_GROUP, lock: true, points: [{ timestamp: m.timestamp, value: m.value }], extendData: { color: m.color, role: m.role, below } });
+          chart.createOverlay({ name: PATTERN_POINT, groupId: PATTERN_GROUP, lock: true, points: [{ timestamp: m.timestamp, value: m.value }], extendData: { color: m.color, role: m.role, below, hideLabel: !showCodes } });
         } catch { /* a point that cannot be placed is skipped */ }
       }
     }
     return () => { try { chart.removeOverlay({ groupId: PATTERN_GROUP }); } catch { /* chart already disposed */ } };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, on, drawn, shownTimesSig, cur, chartRef, fitOptsOf, displayTf, analysisTf]);
+  }, [ready, on, drawn, shownTimesSig, cur, chartRef, fitOptsOf, displayTf, analysisTf, labelKeys]);
 
   // ── "Fit pattern" / "Restore view" — the view before the first fit is kept until restored ──
   // keyed by the analysis identity: a saved view belongs to the symbol / timeframe it was taken on
@@ -342,9 +402,12 @@ export function usePatternIndicator(a: PatternIndicatorArgs) {
   const provisional = on && headState ? !!headState.provisional : false;
 
   return {
-    on, hits, status, error, drawnIds: new Set(drawn.map(rowKeyOf)), togglePick, omittedLines,
+    on, hits, status, error, drawnIds: new Set(chosen.map(rowKeyOf)), togglePick, omittedLines,
     analysisTf, includeCurrent, provisional, setAnalysisTf, setIncludeCurrent, fit, restoreView, fitted,
     view, analysisT, offLeft, views, headTf, banner,
+    // zzz1029 — the row hovered in the list (Clean shows its turning-point codes); pivots of the drawn structures (other right-edge
+    // tags keep clear of their labels); the display preset
+    squeezed: squeezed.map((h) => ({ label: h.label, tf: (h.timeframe ?? 'D') as PatternTimeframe })), setHoverRow, display, pivots: on ? drawn.map((h) => h.pivot).filter((x): x is number => typeof x === 'number' && Number.isFinite(x)) : [],
   };
 }
 const uniqueByRow = (hs: PatternHit[]) => { const seen = new Set<string>(); return hs.filter((h) => { const k = rowKeyOf(h); return seen.has(k) ? false : (seen.add(k), true); }); };
@@ -352,7 +415,7 @@ const uniqueByRow = (hs: PatternHit[]) => { const seen = new Set<string>(); retu
 const fmtMoney = (n: number | null, cur: string) => (n == null ? '—' : `${cur}${n.toLocaleString('en-US', { minimumFractionDigits: priceDecimals(n), maximumFractionDigits: priceDecimals(n) })}`);
 
 type PatternP = ReturnType<typeof usePatternIndicator>;
-type AnalysisFields = 'analysisTf' | 'includeCurrent' | 'provisional' | 'setAnalysisTf' | 'setIncludeCurrent' | 'fit' | 'restoreView' | 'fitted' | 'view' | 'analysisT' | 'offLeft' | 'views' | 'headTf' | 'banner';
+type AnalysisFields = 'analysisTf' | 'includeCurrent' | 'provisional' | 'setAnalysisTf' | 'setIncludeCurrent' | 'fit' | 'restoreView' | 'fitted' | 'view' | 'analysisT' | 'offLeft' | 'views' | 'headTf' | 'banner' | 'setHoverRow' | 'display' | 'pivots' | 'squeezed';
 /** The hook's result; the zzz992 analysis-timeframe fields are optional (absent = daily analysis, no controls). */
 export type PatternBannerP = Omit<PatternP, AnalysisFields | 'drawnIds' | 'togglePick'> & Partial<Pick<PatternP, AnalysisFields>> & {
   /** row keys (rowKeyOf: "<tf>:<pattern id>") of the drawn structures; a bare pattern id stands for its daily row */
@@ -361,7 +424,7 @@ export type PatternBannerP = Omit<PatternP, AnalysisFields | 'drawnIds' | 'toggl
 const TF_BADGE: Record<PatternTimeframe, string> = { D: 'Daily pattern', W: 'Weekly pattern', M: 'Monthly pattern' };
 const MODE_TITLE: Record<PatternAnalysisTf, string> = { A: 'Auto — daily, weekly and monthly; the most relevant current structure leads', D: 'Find patterns on daily bars', W: 'Find patterns on weekly bars', M: 'Find patterns on monthly bars' };
 
-export function PatternBanner({ p, cur, light, onTurnOff, tf }: { p: PatternBannerP; cur: string; light: boolean; onTurnOff: () => void; /** timeframe on screen: a "Daily pattern" badge on W / M */ tf?: string }) {
+export function PatternBanner({ p, cur, light, onTurnOff, tf, dock }: { p: PatternBannerP; cur: string; light: boolean; onTurnOff: () => void; /** timeframe on screen: a "Daily pattern" badge on W / M */ tf?: string; /** zzz1029 — a chip in the overlay summary row: the controls move into its details */ dock?: OverlayDock }) {
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
   const [showWeak, setShowWeak] = useState(false);
@@ -378,18 +441,20 @@ export function PatternBanner({ p, cur, light, onTurnOff, tf }: { p: PatternBann
   const countOf = (v: PatternView) => v.active.length + v.expired.length + v.weaker.length;
   const listed = groups.reduce((n, t) => n + countOf(views[t]!), 0);
   const weakTotal = groups.reduce((n, t) => n + views[t]!.weaker.length, 0);
-  const show = p.on && (open || pinned) && listed > 0;
+  const show = dock ? p.on && dock.open : p.on && (open || pinned) && listed > 0;
   // zzz990 (CP-09) — Escape and a click outside dismiss the list (pinned or not)
   useEffect(() => {
     if (!show) return;
-    const close = () => { setPinned(false); setOpen(false); };
+    const close = () => { setPinned(false); setOpen(false); dock?.setOpen(false); p.setHoverRow?.(null); };
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
     const onDown = (e: MouseEvent | TouchEvent) => { const t = e.target as Node | null; if (boxRef.current && t && !boxRef.current.contains(t)) close(); };
     document.addEventListener('keydown', onKey);
     document.addEventListener('mousedown', onDown);
     document.addEventListener('touchstart', onDown);
     return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('mousedown', onDown); document.removeEventListener('touchstart', onDown); };
-  }, [show]);
+    // p.setHoverRow is a stable state setter; `dock` changes only when the open chip changes (memoized by the summary row)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [show, dock]);
   if (!p.on) return null;
   const banner: Pick<MultiBanner, 'text' | 'tone' | 'weakerHint' | 'own' | 'other'> = p.banner ?? { ...viewBanner(view, cur, atf, { error: p.error, analysisT: p.analysisT }), weakerHint: view.state === 'weaker-only' ? view.weaker.length : 0 };
   const col = bannerColors(banner.tone, light);
@@ -413,7 +478,7 @@ export function PatternBanner({ p, cur, light, onTurnOff, tf }: { p: PatternBann
     const ev = evidenceWords(h), pw = pointWords(h, cur);
     const drawnNow = p.drawnIds.has(hk) || ((h.timeframe ?? 'D') === 'D' && p.drawnIds.has(h.id));
     return (
-      <div key={rk} data-testid={`pattern-row-${kind}`} style={{ padding: '6px 4px', borderBottom: '1px solid var(--mc-border-3)', opacity: kind === 'current' ? 1 : 0.85 }}>
+      <div key={rk} data-testid={`pattern-row-${kind}`} onMouseEnter={() => p.setHoverRow?.(hk)} onMouseLeave={() => p.setHoverRow?.(null)} style={{ padding: '6px 4px', borderBottom: '1px solid var(--mc-border-3)', opacity: kind === 'current' ? 1 : 0.85 }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flexWrap: 'wrap' }}>
           <input type="checkbox" checked={drawnNow} onChange={() => p.togglePick(hk)} aria-label={`Draw ${h.label} (${TF_WORD[h.timeframe ?? 'D']}) on the chart`} />
           <span aria-hidden style={{ width: 8, height: 8, borderRadius: 2, background: c, display: 'inline-block' }} />
@@ -469,62 +534,87 @@ export function PatternBanner({ p, cur, light, onTurnOff, tf }: { p: PatternBann
       </div>
     );
   };
-  const openWeaker = () => { setShowWeak(true); setPinned(true); };
+  const openWeaker = () => { setShowWeak(true); if (dock) dock.setOpen(true); else setPinned(true); };
+  const closeList = () => { setPinned(false); setOpen(false); dock?.setOpen(false); p.setHoverRow?.(null); };
+  // zzz1029 — docked in the overlay summary row: the pill is the chip (status + ×); its controls open with the list
+  const controls = (
+    <>
+      {p.setAnalysisTf && (
+        <span role="group" aria-label="Pattern analysis timeframe" title="Analysis timeframe — follows the candles on screen (switch the chart to D, W or M and the patterns are read on that timeframe). Auto reads daily, weekly and monthly together; a pick here lasts until the chart timeframe changes."
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 2, marginLeft: 6, fontSize: 10, whiteSpace: 'nowrap' }}>
+          <span style={{ opacity: 0.8 }}>Analysis</span>{(['A', 'D', 'W', 'M'] as PatternAnalysisTf[]).map(tfBtn)}
+        </span>
+      )}
+      {notDaily && (
+        <span title="This pattern is found on the DAILY bars and drawn on the candles on screen" data-testid="daily-pattern-badge"
+          style={{ marginLeft: 6, padding: '0 5px', borderRadius: 4, border: `1px solid ${col.border}`, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>Daily pattern</span>
+      )}
+      {tfBadge && (
+        <span title={`This pattern is found on ${TF_WORD[atf]} bars aggregated from the daily history (${p.includeCurrent ? 'the current period included, provisional' : 'completed periods only'}) and drawn on the candles on screen`} data-testid="tf-pattern-badge"
+          style={{ marginLeft: 6, padding: '0 5px', borderRadius: 4, border: `1px solid ${col.border}`, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>{views[atf]?.state === 'qualifying' ? TF_BADGE[atf] : `${TF_TITLE[atf]} analysis`}{p.provisional ? ' · provisional' : ''}</span>
+      )}
+      {(tfBadge || mode === 'A') && p.setIncludeCurrent && (
+        <label title={mode === 'A' ? 'Weekly / monthly reads: include the current, unfinished week / month — its candle can still change (provisional)' : `Include the current, unfinished ${atf === 'W' ? 'week' : 'month'} — its candle can still change (provisional)`}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 2, marginLeft: 4, fontSize: 10, whiteSpace: 'nowrap', cursor: 'pointer' }}>
+          <input type="checkbox" checked={!!p.includeCurrent} onChange={(e) => p.setIncludeCurrent?.(e.target.checked)} style={{ margin: 0, width: 11, height: 11 }} aria-label="Include the current period (provisional)" />
+          current
+        </label>
+      )}
+      {p.fitted && p.restoreView && (
+        <button type="button" onClick={() => p.restoreView?.()} title="Back to the view before Fit pattern"
+          style={{ marginLeft: 4, background: 'none', border: `1px solid ${col.border}`, borderRadius: 3, color: col.text, cursor: 'pointer', padding: '0 4px', fontSize: 10, whiteSpace: 'nowrap' }}>Restore view</button>
+      )}
+    </>
+  );
+  const switchBtn = (
+    <>
+      {banner.other && p.setAnalysisTf && (
+        <button type="button" onClick={() => p.setAnalysisTf?.(banner.other!.tf)} data-testid="pattern-switch-tf" title={`Read the patterns on ${TF_WORD[banner.other.tf]} bars (or pick Auto to let the most relevant timeframe lead)`}
+          style={{ background: 'none', border: `1px solid ${col.border}`, borderRadius: 4, color: col.text, cursor: 'pointer', padding: '0 5px', fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' }}>Switch to {TF_WORD[banner.other.tf]}</button>
+      )}
+    </>
+  );
+  const afterMain = (
+    <>
+      {switchBtn}
+      {banner.weakerHint > 0 && (
+        <button type="button" onClick={openWeaker} data-testid="pattern-show-weaker" title="Open the list with the weaker (sub-threshold) candidates shown"
+          style={{ background: 'none', border: `1px solid ${col.border}`, borderRadius: 4, color: col.text, cursor: 'pointer', padding: '0 5px', fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' }}>show weaker</button>
+      )}
+    </>
+  );
   return (
-    <div ref={boxRef} onMouseLeave={() => { if (!pinned) setOpen(false); }}
-      style={{ position: 'absolute', left: 8, top: 4, zIndex: 7, maxWidth: 'calc(100% - 100px)', fontSize: 12 }}>
+    <div ref={boxRef} onMouseLeave={() => { if (!pinned && !dock) setOpen(false); }}
+      style={dock ? DOCK_BOX : { position: 'absolute', left: 8, top: 4, zIndex: 7, maxWidth: 'calc(100% - 100px)', fontSize: 12 }}>
       {/* zzz1013 — the Pine look: an 8 px pill on the page colour with the tone as a tint and a hairline, a soft lift off the candles */}
-      <div data-testid="pattern-banner" style={{ display: 'flex', alignItems: 'center', gap: 4, minHeight: 24, borderRadius: 8, border: `1px solid ${col.border}`, background: `linear-gradient(${col.bg}, ${col.bg}), var(--mc-bg-0)`, color: col.text, lineHeight: '18px', boxShadow: '0 1px 0 rgba(18,23,34,.04), 0 6px 16px -10px rgba(18,23,34,.35)' }}>
-        {p.setAnalysisTf && (
-          <span role="group" aria-label="Pattern analysis timeframe" title="Analysis timeframe — follows the candles on screen (switch the chart to D, W or M and the patterns are read on that timeframe). Auto reads daily, weekly and monthly together; a pick here lasts until the chart timeframe changes."
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 2, marginLeft: 6, fontSize: 10, whiteSpace: 'nowrap' }}>
-            <span style={{ opacity: 0.8 }}>Analysis</span>{(['A', 'D', 'W', 'M'] as PatternAnalysisTf[]).map(tfBtn)}
-          </span>
-        )}
-        {notDaily && (
-          <span title="This pattern is found on the DAILY bars and drawn on the candles on screen" data-testid="daily-pattern-badge"
-            style={{ marginLeft: 6, padding: '0 5px', borderRadius: 4, border: `1px solid ${col.border}`, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>Daily pattern</span>
-        )}
-        {tfBadge && (
-          <span title={`This pattern is found on ${TF_WORD[atf]} bars aggregated from the daily history (${p.includeCurrent ? 'the current period included, provisional' : 'completed periods only'}) and drawn on the candles on screen`} data-testid="tf-pattern-badge"
-            style={{ marginLeft: 6, padding: '0 5px', borderRadius: 4, border: `1px solid ${col.border}`, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>{views[atf]?.state === 'qualifying' ? TF_BADGE[atf] : `${TF_TITLE[atf]} analysis`}{p.provisional ? ' · provisional' : ''}</span>
-        )}
-        {(tfBadge || mode === 'A') && p.setIncludeCurrent && (
-          <label title={mode === 'A' ? 'Weekly / monthly reads: include the current, unfinished week / month — its candle can still change (provisional)' : `Include the current, unfinished ${atf === 'W' ? 'week' : 'month'} — its candle can still change (provisional)`}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 2, marginLeft: 4, fontSize: 10, whiteSpace: 'nowrap', cursor: 'pointer' }}>
-            <input type="checkbox" checked={!!p.includeCurrent} onChange={(e) => p.setIncludeCurrent?.(e.target.checked)} style={{ margin: 0, width: 11, height: 11 }} aria-label="Include the current period (provisional)" />
-            current
-          </label>
-        )}
-        {p.fitted && p.restoreView && (
-          <button type="button" onClick={() => p.restoreView?.()} title="Back to the view before Fit pattern"
-            style={{ marginLeft: 4, background: 'none', border: `1px solid ${col.border}`, borderRadius: 3, color: col.text, cursor: 'pointer', padding: '0 4px', fontSize: 10, whiteSpace: 'nowrap' }}>Restore view</button>
-        )}
-        <button type="button" onMouseEnter={() => setOpen(true)} onClick={() => setPinned((v) => !v)} aria-expanded={show} data-state={view.state}
-          onKeyDown={(e) => { if (e.key === 'Escape') { setPinned(false); setOpen(false); } }}
+      <div data-testid="pattern-banner" style={{ ...(dock ? DOCK_PILL : null), display: 'flex', alignItems: 'center', gap: 4, minHeight: 24, borderRadius: 8, border: `1px solid ${col.border}`, background: `linear-gradient(${col.bg}, ${col.bg}), var(--mc-bg-0)`, color: col.text, lineHeight: '18px', boxShadow: '0 1px 0 rgba(18,23,34,.04), 0 6px 16px -10px rgba(18,23,34,.35)' }}>
+        {!dock && controls}
+        <button type="button" onMouseEnter={dock ? undefined : () => setOpen(true)} onClick={() => (dock ? dock.setOpen(!dock.open) : setPinned((v) => !v))} aria-expanded={show} data-state={view.state}
+          onKeyDown={(e) => { if (e.key === 'Escape') closeList(); }}
           title={`${banner.text.replace(/^📐 /, '')}\n\n` + (listed ? `Chart patterns${mode === 'A' ? ' on daily, weekly and monthly bars' : ` on the ${TF_WORD[atf]} bars`} — click to keep the list open; tick a row to draw it. Esc closes the list.` : `Automate chart patterns (${mode === 'A' ? 'Auto' : `${TF_WORD[atf]} bars`})`)}
-          style={{ background: 'none', border: 'none', color: col.text, cursor: listed ? 'pointer' : 'default', padding: notDaily || tfBadge || p.setAnalysisTf ? '1px 4px 1px 2px' : '1px 4px 1px 8px', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, textAlign: 'left' }}>
-          {banner.other && banner.own ? (
+          style={{ background: 'none', border: 'none', color: col.text, cursor: listed || dock ? 'pointer' : 'default', padding: !dock && (notDaily || tfBadge || p.setAnalysisTf) ? '1px 4px 1px 2px' : '1px 4px 1px 8px', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, textAlign: 'left' }}>
+          {dock ? overlayChipText('patterns', banner.text) : banner.other && banner.own ? (
             // zzz1028 (QA, AVAV) — the chosen timeframe's state, then the OTHER timeframe's structure with its timeframe as a chip
             <>📐 {banner.own}{OTHER_TF_SEP}<span data-testid="pattern-other-tf" data-tf={banner.other.tf} title={`Found on ${TF_WORD[banner.other.tf]} bars, not on the ${TF_WORD[atf]} analysis you chose`}
               style={{ padding: '0 4px', borderRadius: 3, border: `1px dashed ${col.border}`, fontSize: 10.5, fontWeight: 700 }}>{TF_TITLE[banner.other.tf]}</span>
               <span style={{ fontWeight: 500, opacity: 0.85 }}>: {banner.other.words}</span></>
-          ) : banner.text}{listed > 0 ? ' ▾' : ''}
+          ) : banner.text}{listed > 0 || dock ? (show ? ' ▴' : ' ▾') : ''}
         </button>
-        {banner.other && p.setAnalysisTf && (
-          <button type="button" onClick={() => p.setAnalysisTf?.(banner.other!.tf)} data-testid="pattern-switch-tf" title={`Read the patterns on ${TF_WORD[banner.other.tf]} bars (or pick Auto to let the most relevant timeframe lead)`}
-            style={{ background: 'none', border: `1px solid ${col.border}`, borderRadius: 4, color: col.text, cursor: 'pointer', padding: '0 5px', fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' }}>Switch to {TF_WORD[banner.other.tf]}</button>
-        )}
-        {banner.weakerHint > 0 && (
-          <button type="button" onClick={openWeaker} data-testid="pattern-show-weaker" title="Open the list with the weaker (sub-threshold) candidates shown"
-            style={{ background: 'none', border: `1px solid ${col.border}`, borderRadius: 4, color: col.text, cursor: 'pointer', padding: '0 5px', fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' }}>show weaker</button>
-        )}
+        {!dock && afterMain}
+        {/* zzz1029b — docked: another timeframe's structure keeps its "Switch to …" on the chip */}
+        {dock && !show && switchBtn}
         <button type="button" onClick={onTurnOff} aria-label="Turn off Automate chart patterns" title="Turn off Automate chart patterns (Indicators ▾ turns it back on)"
           style={{ background: 'none', border: 'none', color: col.text, cursor: 'pointer', padding: '0 6px', fontSize: 13, lineHeight: 1 }}>×</button>
       </div>
       {show && (
         <div role="dialog" aria-label="Chart patterns found"
-          style={{ marginTop: 6, width: 'min(560px, calc(100vw - 80px))', maxHeight: 420, overflowY: 'auto', padding: '8px 10px 10px', borderRadius: 12, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-0)', color: 'var(--mc-text-1)', boxShadow: 'var(--ct-shadow, 0 8px 24px rgba(0,0,0,.18))' }}>
+          style={{ marginTop: 6, width: 'min(560px, calc(100vw - 80px))', maxHeight: 420, overflowY: 'auto', padding: '8px 10px 10px', borderRadius: 12, border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-0)', color: 'var(--mc-text-1)', boxShadow: 'var(--ct-shadow, 0 8px 24px rgba(0,0,0,.18))', ...(dock ? DOCK_PANEL : null) }}>
+          {dock && (
+            <div data-testid="pattern-controls" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4, padding: '4px 6px', marginBottom: 6, borderRadius: 8, border: `1px solid ${col.border}`, background: `linear-gradient(${col.bg}, ${col.bg}), var(--mc-bg-0)`, color: col.text, fontSize: 12 }}>
+              <span data-testid="pattern-headline" style={{ flex: '1 1 100%', fontWeight: 600, padding: '0 2px 2px' }}>{banner.text}</span>
+              {controls}{afterMain}
+            </div>
+          )}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
             {weakTotal > 0 && (
               <button type="button" onClick={() => setShowWeak((v) => !v)} aria-expanded={showWeak} style={small}>
@@ -532,12 +622,17 @@ export function PatternBanner({ p, cur, light, onTurnOff, tf }: { p: PatternBann
               </button>
             )}
             {p.fitted && p.restoreView && <button type="button" onClick={() => p.restoreView?.()} style={small}>Restore view</button>}
-            <button type="button" onClick={() => { setPinned(false); setOpen(false); }} aria-label="Close the pattern list" style={small}>Close list</button>
+            <button type="button" onClick={closeList} aria-label="Close the pattern list" style={small}>Close list</button>
           </div>
           {groups.map(group)}
           {p.omittedLines > 0 && (
             <div style={{ paddingTop: 6, fontSize: 11, color: 'var(--mc-warn, #D97706)' }}>
               {p.omittedLines} sloping line{p.omittedLines === 1 ? ' is' : 's are'} shorter than one candle on this timeframe and {p.omittedLines === 1 ? 'is' : 'are'} not drawn — switch to D to see the lines.
+            </div>
+          )}
+          {(p.squeezed?.length ?? 0) > 0 && (
+            <div data-testid="pattern-squeezed" style={{ paddingTop: 6, fontSize: 11, color: 'var(--mc-warn, #D97706)' }}>
+              Not drawn in Clean view: {p.squeezed!.map((x) => `${x.label} (${TF_WORD[x.tf]})`).join(', ')} would cover fewer than {CLEAN_MIN_SPAN_CANDLES} candles on this chart — switch the chart to {TF_WORD[p.squeezed![0].tf]} or pick Research to see it drawn.
             </div>
           )}
           {(p.offLeft ?? 0) > 0 && (
