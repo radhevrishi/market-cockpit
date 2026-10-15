@@ -134,7 +134,7 @@ test('zzz1011 condition states — forming, crossed, holding, retesting, back in
   const back = st(T('cup', 'b', 70, -1.2), 98.8);
   assert.equal(back.id, 'returned'); assert.equal(back.label, 'Back below pivot');
   assert.equal(back.event.id, 'breakout', 'the historical event is kept');
-  assert.match(back.event.label, /daily breakout \(first close beyond the pivot in the last 5 sessions\)/);
+  assert.match(back.event.label, /daily breakout \(first daily close beyond the pivot in the last 5 sessions\)/);
   assert.equal(st(T('cup', 'x', 70, -9)).id, 'invalidated');
   assert.equal(st(T('cup', 'x', 70, -9)).event.id, 'failed');
   assert.equal(st(T('cup', 'f', 70, -4)).event.id, null);

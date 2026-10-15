@@ -31,7 +31,7 @@ import {
   querySummary, presetLine, scopeCoverage, coverageLine, chipApplicability, unsupportedNotice, familyOf, latestConditions, lengthDays, lengthTip,
   analysisOf, sessionLabel, chartIdentityParams, ANALYSIS_CSV_HEAD, analysisCsvCells, listCoverageRows, withCarriedR40, scopeAfterScreen, scopePicked, r40AfterScreen, r40WasUser, type ScopeState,
   queryRebuild, setupRebuild, tfCoverageWarnings, technicalSession, conflictWords,
-  NO_STAGE_TEXT, ALL_TYPES_TEXT, conditionState, WORKFLOWS, workflowScope, stagesDiffer, presetStages, screenFunnel, perfPath,
+  NO_STAGE_TEXT, ALL_TYPES_TEXT, conditionState, WORKFLOWS, workflowScope, stagesDiffer, presetStages, screenFunnel, perfPath, stageTip, stageWindowText,
   type PineHandoff, type Workflow, type SetupCard, type PortfolioMode,
 } from '@/lib/screener/pine-view';
 import { loadHoldings, localIndiaHoldings } from '@/lib/screener/portfolio-scope';
@@ -756,7 +756,7 @@ export default function PineScreener() {
           <div className="pnx-field">
             <span className="pnx-lab">Stage</span>
             <span className="pnx-seg">
-              {STAGES.map((s) => <button key={s.id} type="button" title={s.tip} aria-pressed={q.stages.includes(s.id)} onClick={() => toggleStage(s.id)}>{s.label}</button>)}
+              {STAGES.map((s) => <button key={s.id} type="button" title={stageTip(s.id, q.tfs)} aria-pressed={q.stages.includes(s.id)} onClick={() => toggleStage(s.id)}>{s.label}</button>)}
             </span>
             <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               <button type="button" className="pnx-btn" aria-pressed={allStages} data-on={allStages} title="Forming, breakout and failed — every stage" style={{ padding: '3px 9px', fontSize: 12 }} onClick={() => change({ stages: allStages ? DEFAULT_QUERY.stages.slice() : STAGES.map((s) => s.id) })}>All stages</button>
@@ -914,7 +914,7 @@ export default function PineScreener() {
           <Section id="pnx-sec-how" title="How the patterns are found" open={sec.how} onToggle={() => toggleSec('how')}>
             <div style={{ display: 'grid', gap: 6, fontSize: 12.5, color: C.dim }}>
               <div>Each company&apos;s daily history (about 5 years) is read by the screener build as daily candles and, aggregated, as completed weekly and monthly candles, with the same pattern engine as the chart&apos;s pattern line. Definitions follow O&apos;Neil, Minervini and Bulkowski; each rule passed adds to the <b>shape score</b> (0–100: possible ≥ 35, likely ≥ 55, very likely ≥ 75). It measures how closely the shape fits, not a probability of the pattern working.</div>
-              <div><b>Stage</b>: forming = no close beyond the pivot yet; breakout = first close beyond it within the last 5 sessions; failed = broke out in the last 40 sessions and is now more than 7.5% back through it.</div>
+              <div><b>Stage</b>: forming = no close beyond the pivot yet; breakout = first close beyond it {stageWindowText(q.tfs, 'breakout')}; failed = a close more than 7.5% back through it {stageWindowText(q.tfs, 'failed')} of the break. Each timeframe uses its own candles: a monthly breakout is a monthly close.</div>
               <div><b>To pivot</b>: the scan close against the pivot (the buy point; for bearish patterns the breakdown level) in the pattern&apos;s direction. −5% means 5% short of it.</div>
               <div><b>Strict results</b>: a company is listed only when every rule could be evaluated and passed; the rest are kept apart as provisional. Not advice: a pattern is a starting point for a chart review.</div>
             </div>

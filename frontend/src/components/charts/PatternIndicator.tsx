@@ -18,7 +18,7 @@ import type { Bar } from '@/lib/chart-math';
 import {
   FAILED_COLOR, PATTERN_GROUP, PATTERN_OVERLAY, PATTERN_TF_KEY, TF_WORD, TF_TITLE, ANALYSIS_TFS, analysisKey, bannerColors, barsRevision, distWords, fitPlan, hitColor, lengthWords,
   overlayFit, parsePatternTfPref, analysisForChartTf, patternDataPlan, patternKey, priceDecimals, serializePatternTfPref, shapeScoreWords, shownStatus, stageWords, handoffSpan, type PatternState, type PatternTfPref, type PatternHandoff,
-  patternView, viewBanner, multiBanner, rowKeyOf, conditionWords, evidenceWords, pointWords, pointMarks, pointPath, structureRange, PATTERN_POINT, type PatternView, type PatternViewRow, type PatternAnalysisTf, type TfViews,
+  patternView, viewBanner, multiBanner, OTHER_TF_SEP, type MultiBanner, rowKeyOf, conditionWords, evidenceWords, pointWords, pointMarks, pointPath, structureRange, PATTERN_POINT, type PatternView, type PatternViewRow, type PatternAnalysisTf, type TfViews,
 } from './pattern-view';
 
 interface ShownResponse {
@@ -267,7 +267,10 @@ export function usePatternIndicator(a: PatternIndicatorArgs) {
       const r = structureRange(h);
       const mid = r ? (r.lo + r.hi) / 2 : 0;
       // zzz1015 — each hit is mapped by ITS timeframe (a weekly / monthly pattern on daily candles: overlayFit clips + carries the pivot)
-      const lines = [...overlayFit(h, times, fmt, fitOptsOf(h)).lines, ...pointPath(marks, hitColor(h))];
+      // zzz1028 (QA, AVAV) — a structure from another timeframe than the analysis / candles on screen says its timeframe on its labels
+      const htf = h.timeframe ?? 'D', shownTf = displayTf === 'W' || displayTf === 'M' ? displayTf : 'D';
+      const tfTag = htf !== shownTf || (analysisTf !== 'A' && htf !== analysisTf) ? `${TF_TITLE[htf]} · ` : '';
+      const lines = [...overlayFit(h, times, fmt, fitOptsOf(h)).lines.map((ln) => (tfTag && ln.label ? { ...ln, label: `${tfTag}${ln.label}` } : ln)), ...pointPath(marks, hitColor(h))];
       for (const ln of lines) {
         try {
           chart.createOverlay({ name: PATTERN_OVERLAY, groupId: PATTERN_GROUP, lock: true, points: ln.points, extendData: { color: ln.color, dashed: ln.dashed, size: ln.size, label: ln.label } });
@@ -282,7 +285,7 @@ export function usePatternIndicator(a: PatternIndicatorArgs) {
     }
     return () => { try { chart.removeOverlay({ groupId: PATTERN_GROUP }); } catch { /* chart already disposed */ } };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, on, drawn, shownTimesSig, cur, chartRef, fitOptsOf]);
+  }, [ready, on, drawn, shownTimesSig, cur, chartRef, fitOptsOf, displayTf, analysisTf]);
 
   // ── "Fit pattern" / "Restore view" — the view before the first fit is kept until restored ──
   // keyed by the analysis identity: a saved view belongs to the symbol / timeframe it was taken on
@@ -388,7 +391,7 @@ export function PatternBanner({ p, cur, light, onTurnOff, tf }: { p: PatternBann
     return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('mousedown', onDown); document.removeEventListener('touchstart', onDown); };
   }, [show]);
   if (!p.on) return null;
-  const banner = p.banner ?? { ...viewBanner(view, cur, atf, { error: p.error, analysisT: p.analysisT }), weakerHint: view.state === 'weaker-only' ? view.weaker.length : 0 };
+  const banner: Pick<MultiBanner, 'text' | 'tone' | 'weakerHint' | 'own' | 'other'> = p.banner ?? { ...viewBanner(view, cur, atf, { error: p.error, analysisT: p.analysisT }), weakerHint: view.state === 'weaker-only' ? view.weaker.length : 0 };
   const col = bannerColors(banner.tone, light);
   // a badge whenever the analysis timeframe differs from the candles on screen (always on W / M analysis)
   const notDaily = atf === 'D' && !!tf && tf !== 'D';
@@ -501,8 +504,17 @@ export function PatternBanner({ p, cur, light, onTurnOff, tf }: { p: PatternBann
           onKeyDown={(e) => { if (e.key === 'Escape') { setPinned(false); setOpen(false); } }}
           title={`${banner.text.replace(/^📐 /, '')}\n\n` + (listed ? `Chart patterns${mode === 'A' ? ' on daily, weekly and monthly bars' : ` on the ${TF_WORD[atf]} bars`} — click to keep the list open; tick a row to draw it. Esc closes the list.` : `Automate chart patterns (${mode === 'A' ? 'Auto' : `${TF_WORD[atf]} bars`})`)}
           style={{ background: 'none', border: 'none', color: col.text, cursor: listed ? 'pointer' : 'default', padding: notDaily || tfBadge || p.setAnalysisTf ? '1px 4px 1px 2px' : '1px 4px 1px 8px', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, textAlign: 'left' }}>
-          {banner.text}{listed > 0 ? ' ▾' : ''}
+          {banner.other && banner.own ? (
+            // zzz1028 (QA, AVAV) — the chosen timeframe's state, then the OTHER timeframe's structure with its timeframe as a chip
+            <>📐 {banner.own}{OTHER_TF_SEP}<span data-testid="pattern-other-tf" data-tf={banner.other.tf} title={`Found on ${TF_WORD[banner.other.tf]} bars, not on the ${TF_WORD[atf]} analysis you chose`}
+              style={{ padding: '0 4px', borderRadius: 3, border: `1px dashed ${col.border}`, fontSize: 10.5, fontWeight: 700 }}>{TF_TITLE[banner.other.tf]}</span>
+              <span style={{ fontWeight: 500, opacity: 0.85 }}>: {banner.other.words}</span></>
+          ) : banner.text}{listed > 0 ? ' ▾' : ''}
         </button>
+        {banner.other && p.setAnalysisTf && (
+          <button type="button" onClick={() => p.setAnalysisTf?.(banner.other!.tf)} data-testid="pattern-switch-tf" title={`Read the patterns on ${TF_WORD[banner.other.tf]} bars (or pick Auto to let the most relevant timeframe lead)`}
+            style={{ background: 'none', border: `1px solid ${col.border}`, borderRadius: 4, color: col.text, cursor: 'pointer', padding: '0 5px', fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' }}>Switch to {TF_WORD[banner.other.tf]}</button>
+        )}
         {banner.weakerHint > 0 && (
           <button type="button" onClick={openWeaker} data-testid="pattern-show-weaker" title="Open the list with the weaker (sub-threshold) candidates shown"
             style={{ background: 'none', border: `1px solid ${col.border}`, borderRadius: 4, color: col.text, cursor: 'pointer', padding: '0 5px', fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' }}>show weaker</button>

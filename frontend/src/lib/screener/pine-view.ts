@@ -7,7 +7,7 @@
 //                    Its question: "which charts are setting up now?"
 //   Stock Screener = fundamentals and the general rule editor. A Stock screen (built-in or saved) can be the Pine Screener's company
 //                    list, so the two combine without a second editor.
-import { PATTERN_META, POINT_ROLES, PATTERN_MIN_HISTORY, type PatternId, type PointRole } from '../chart-patterns';
+import { PATTERN_META, POINT_ROLES, PATTERN_MIN_HISTORY, patternEvidenceRules, stageWindowsFor, type PatternId, type PointRole } from '../chart-patterns';
 import * as PINE from './pine';
 import { runPineFull, pineFilters, r40Text, bestTag, tagScanClose, tagLengthText, turnoverOf, ruleState, matchTags, STAGES, type PineHit, type PineQuery, type PineRun, type ScreenPatternTag, type ScanStatus } from './pine';
 import { BUILT_IN_PINE_SCREENS } from './pine-presets';
@@ -32,7 +32,8 @@ export interface SetupCard {
   alt?: { presetId: string; label: string };
 }
 export const SETUP_CARDS: readonly SetupCard[] = [
-  { id: 'breakouts', label: 'Breakouts', sub: 'First close above the pivot in the last 5 sessions', presetId: 'breakouts-today', glyph: 'breakout', tone: 'up' },
+  // zzz1028 — the Breakouts screen reads DAILY patterns (DEFAULT_QUERY tfs ['D']): its window is the daily one, said as such
+  { id: 'breakouts', label: 'Breakouts', sub: 'First daily close above the pivot in the last 5 sessions', presetId: 'breakouts-today', glyph: 'breakout', tone: 'up' },
   { id: 'ready', label: 'Ready to break out', sub: 'Still forming, within 5% below the pivot', presetId: 'near-ready', glyph: 'ready', tone: 'up' },
   { id: 'bases', label: 'Bases forming', sub: 'Flat bases, cups, VCPs up to 15% below the pivot', presetId: 'bases-forming', glyph: 'base', tone: 'up' },
   { id: 'breakdowns', label: 'Breakdowns', sub: 'Bearish patterns that closed through support', presetId: 'breakdowns', glyph: 'breakdown', tone: 'down' },
@@ -752,30 +753,10 @@ export function pivotDerivation(t: ScreenPatternTag, fmt: (n: number) => string 
     default: return '';
   }
 }
-/** The measured rule evidence in words (only what the tag carries), with the rule it is checked against. */
-export function evidenceRows(t: Pick<ScreenPatternTag, 'id' | 'b' | 'ev' | 'tf'>): Array<{ label: string; value: string; rule: string }> {
-  const ev = t.ev || {};
-  const unit = t.tf === 'W' ? 'weeks' : t.tf === 'M' ? 'months' : 'sessions';
-  const bottom = t.b === 'U';
-  const rev = ['double_bottom', 'double_top', 'triple_bottom', 'triple_top'].includes(t.id);
-  const hs = t.id === 'inverse_hs' || t.id === 'head_shoulders';
-  const out: Array<{ label: string; value: string; rule: string }> = [];
-  const p = (v: number) => `${v}%`;
-  if (fin(ev.band)) out.push({ label: rev ? (bottom ? 'Difference between the lows' : 'Difference between the highs') : 'Spread of the touches', value: p(ev.band), rule: rev ? '≤ 5% (≤ 1.5% best)' : '≤ 3%' });
-  if (fin(ev.gap)) out.push({ label: hs ? 'Left to right shoulder' : 'Separation (first to last turning point)', value: `${ev.gap} ${unit}`, rule: t.tf === 'M' ? 'at least 6 monthly candles in all' : 'at least 10 sessions / 2 candles' });
-  if (fin(ev.rally)) out.push({ label: hs ? 'Neckline above the shoulders' : bottom ? 'Middle rally (peak above the higher low)' : 'Middle dip (trough below the lower high)', value: p(ev.rally), rule: hs ? '≥ 5%' : '≥ 10%' });
-  if (fin(ev.mid)) out.push({ label: bottom ? 'Dip from the middle peak to the lows' : 'Rise from the middle trough to the highs', value: p(ev.mid), rule: t.tf === 'M' ? '≤ 45%' : '≤ 40%' });
-  if (fin(ev.neck)) out.push({ label: 'Neckline change between its two points', value: p(ev.neck), rule: '≤ 15% (≤ 4% best)' });
-  if (fin(ev.sd)) out.push({ label: 'Shoulder difference', value: p(ev.sd), rule: '≤ 10%' });
-  if (fin(ev.sh)) out.push({ label: 'Shoulders\' distance from the neckline ÷ the head\'s', value: `${ev.sh}`, rule: '≥ 0.30 (≥ 0.55 best)' });
-  if (fin(ev.trend)) out.push({ label: rev || hs ? (bottom ? 'Prior fall into the first low' : 'Prior rise into the first high') : t.id.includes('flag') ? 'Pole' : 'Prior rise into the base', value: p(ev.trend), rule: rev || hs ? (bottom ? '≥ 15% (11.25% minimum)' : '≥ 20% (15% minimum)') : t.id.includes('flag') ? 'flags ≥ 15%, high tight flag ≥ 90%' : 'bases ≥ 20%' });
-  if (fin(ev.depth)) out.push({ label: 'Depth', value: p(ev.depth), rule: t.id === 'flat_base' ? '≤ 15% (to 20% scored lower)' : t.id === 'cup' || t.id === 'cup_handle' ? '12–33% (to 50% scored lower)' : '' });
-  if (fin(ev.rec)) out.push({ label: 'Right side as share of the lip', value: p(ev.rec), rule: '≥ 75% (cup with handle ≥ 85%)' });
-  if (fin(ev.round)) out.push({ label: 'Closes in the lower 30% of the cup (roundness)', value: p(ev.round), rule: '≥ 35% (a V spends ~30% there)' });
-  if (fin(ev.hd)) out.push({ label: 'Handle depth', value: p(ev.hd), rule: '2.5–15%' });
-  if (fin(ev.vr)) out.push({ label: rev || hs ? 'Volume at the last turning point ÷ the first (±2 bars)' : 'Volume in the last part ÷ its 50-bar average', value: `${ev.vr}×`, rule: rev || hs ? '< 1 = lighter on the right side (Bulkowski)' : '< 1 = drying up' });
-  if (fin(ev.hi1y)) out.push({ label: bottom ? 'Close as % of the 1-year high' : 'Close as % of the 1-year low', value: p(ev.hi1y), rule: bottom ? 'not reported when ≥ 95% and the high came after the pattern, > 5% past the pivot' : 'mirror for tops' });
-  return out;
+/** The measured rule evidence in words (only what the tag carries), with the EXACT rule the detector checked it against and whether it
+ *  passed (zzz1028: one source with the chart — patternEvidenceRules; `pass` null = scored only, not a rule the shape had to pass). */
+export function evidenceRows(t: Pick<ScreenPatternTag, 'id' | 'b' | 'ev' | 'tf'>): Array<{ label: string; value: string; rule: string; pass: boolean | null }> {
+  return patternEvidenceRules({ id: t.id, bullish: t.b === 'U', ev: t.ev, tf: t.tf }).map((r) => ({ label: r.label, value: r.value, rule: r.rule, pass: r.pass }));
 }
 /** The chart window of a tag's geometry (first turning point → analysis date), for the chart hand-off (pf / pt). */
 export function geometryWindow(t: Pick<ScreenPatternTag, 'pts'> | null | undefined, at: string | null): { from: string; to: string } | null {
@@ -816,8 +797,34 @@ export interface ConditionState {
   /** zzz1016 — the condition is read on the analysis close, but the latest quote is already back through the level (e.g. a monthly
    *  breakout holding on the 30 Sep close while today's quote is below the pivot): the label says both */
   quoteBack?: true;
-  /** the historical event, apart from the condition: a breakout / breakdown in the last 5 sessions, a failed one, or none */
+  /** the historical event, apart from the condition: a breakout / breakdown inside its timeframe's window (D: the last 5 sessions, W: the
+   *  last 2 weeks, M: the last 2 months — eventWindowWords), a failed one, or none */
   event: { id: 'breakout' | 'breakdown' | 'failed' | null; label: string };
+}
+/** zzz1028 — a timeframe's event windows in words, from the engine's own stage windows (stageWindowsFor): the breakout window counts
+ *  the bar of the break and the bars after it (D: breakout ≤ 4 bars ago = the last 5 sessions; W / M: this or the previous candle =
+ *  the last 2 weeks / months); failed = a close more than 7.5% back through the level within D 40 sessions, W 8 weeks, M 2 months. */
+export function eventWindowWords(tf?: string | null): { breakout: string; failed: string; breakoutBars: number; failedBars: number; unit: string } {
+  const t: PatTf = tf === 'W' || tf === 'M' ? tf : 'D';
+  const w = stageWindowsFor(t);
+  const n = w.breakout + 1;
+  const u = (k: number) => (t === 'W' ? (k === 1 ? 'week' : 'weeks') : t === 'M' ? (k === 1 ? 'month' : 'months') : (k === 1 ? 'session' : 'sessions'));
+  return { breakout: `in the last ${n} ${u(n)}`, failed: `within ${w.failed} ${u(w.failed)}`, breakoutBars: n, failedBars: w.failed, unit: u(2) };
+}
+/** zzz1028 — the stage words for the timeframes in use: one timeframe → its own window; several → each named
+ *  ("daily: in the last 5 sessions · monthly: in the last 2 months"). */
+export function stageWindowText(tfs: ReadonlyArray<string> | null | undefined, which: 'breakout' | 'failed'): string {
+  const list = (tfs && tfs.length ? Array.from(new Set(tfs)) : ['D']).filter((x) => x === 'D' || x === 'W' || x === 'M');
+  const ts = list.length ? list : ['D'];
+  if (ts.length === 1) return eventWindowWords(ts[0])[which];
+  return ts.map((x) => `${tfWord(x)}: ${eventWindowWords(x)[which]}`).join(' · ');
+}
+/** zzz1028 — the stage chip tips for the timeframes in use (the STAGES list in pine.ts says the daily windows). */
+export function stageTip(id: string, tfs?: ReadonlyArray<string> | null): string {
+  const one = tfs && tfs.length === 1 ? `${tfWord(tfs[0])} ` : '';
+  if (id === 'b') return `First ${one}close beyond the pivot ${stageWindowText(tfs, 'breakout')} (bearish: breakdown)`;
+  if (id === 'x') return `Broke out and a ${one}close is now more than 7.5% back through the pivot, ${stageWindowText(tfs, 'failed')} of the break`;
+  return 'No close beyond the pivot yet';
 }
 const LABELS: Record<'U' | 'D', Record<ConditionStateId, string>> = {
   U: { forming: 'Forming', crossed: 'Pivot crossed', holding: 'Holding above pivot', retesting: 'Retesting pivot', returned: 'Back below pivot', invalidated: 'Invalidated', expired: 'Expired reading' },
@@ -835,8 +842,10 @@ export function conditionState(row: Partial<ScreenRow> | null | undefined, tag: 
   const r: any = row || {};
   const lp = fin(r.px) && r.px > 0 ? r.px : null;
   const lq = lp != null && fin(tag.p) && tag.p > 0 ? Math.round((up ? 1 : -1) * (lp / tag.p - 1) * 10000) / 100 : null;
-  const event: ConditionState['event'] = tag.s === 'b' ? { id: up ? 'breakout' : 'breakdown', label: `${tfWord(tag.tf)} ${up ? 'breakout' : 'breakdown'} (first close beyond the ${lvl} in the last 5 sessions)` }
-    : tag.s === 'x' ? { id: 'failed', label: `${tfWord(tag.tf)} ${up ? 'breakout' : 'breakdown'} failed (more than 7.5% back through the ${lvl} within 40 sessions)` }
+  // zzz1028 (QA, SHAHALLOYS monthly) — the event is said in the analysis timeframe and ITS window, never the daily 5 sessions
+  const ew = eventWindowWords(tag.tf);
+  const event: ConditionState['event'] = tag.s === 'b' ? { id: up ? 'breakout' : 'breakdown', label: `${tfWord(tag.tf)} ${up ? 'breakout' : 'breakdown'} (first ${tfWord(tag.tf)} close beyond the ${lvl} ${ew.breakout})` }
+    : tag.s === 'x' ? { id: 'failed', label: `${tfWord(tag.tf)} ${up ? 'breakout' : 'breakdown'} failed (a ${tfWord(tag.tf)} close more than 7.5% back through the ${lvl} ${ew.failed} of the break)` }
     : { id: null, label: 'No breakout event yet' };
   const at = a.at ? ` on the ${a.at} ${tfWord(a.tf)} analysis close` : '';
   const ddTxt = dd == null ? 'distance unknown' : `${dd > 0 ? '+' : ''}${dd.toFixed(2)}% vs the ${lvl}`;

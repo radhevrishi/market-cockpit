@@ -43,7 +43,9 @@ export function GeometryView({ tag, market }: { tag: ScreenPatternTag; market: S
       <div data-derivation><b>{tag.b === 'U' ? 'Pivot' : 'Breakdown level'}:</b> {pivotDerivation(tag, fp)}</div>
       {ev.length ? (
         <ul style={{ listStyle: 'none', paddingLeft: 0 }} data-evidence>
-          {ev.map((x) => <li key={x.label}>{x.label}: <b>{x.value}</b>{x.rule ? <span style={{ color: C.dim }}> — rule {x.rule}</span> : null}</li>)}
+          {/* zzz1028 — ✓ / ✗ = the measured value against the detector's own rule; · = measured and scored, not a rule the shape had to pass */}
+          {ev.map((x) => <li key={x.label} data-pass={x.pass == null ? 'info' : x.pass ? 'yes' : 'no'} style={{ color: x.pass === false ? C.red : undefined }}>
+            <span aria-label={x.pass == null ? 'scored, not required' : x.pass ? 'passed' : 'failed'}>{x.pass == null ? '·' : x.pass ? '✓' : '✗'}</span> {x.label}: <b>{x.value}</b>{x.rule ? <span style={{ color: C.dim }}> — {x.pass == null ? '' : 'rule '}{x.rule}</span> : null}</li>)}
         </ul>
       ) : null}
     </div>

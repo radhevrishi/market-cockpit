@@ -103,9 +103,11 @@ test('zzz1024 banner: nothing current on the chart timeframe → LEAD with the o
   const w = H();
   const views: TfViews = { D: v([], 'D'), W: v([w], 'W'), M: v([], 'M') };
   const b = multiBanner(views, 'D', '$', { displayTf: 'D' });
-  assert.equal(b.text, '📐 Weekly: Descending triangle · broke down this week · breakdown $138.31, 1% below · shape 64/100 · nothing current on daily');
+  // zzz1028 — the chart timeframe's state first, the other timeframe's structure marked apart
+  assert.equal(b.text, '📐 Daily: no qualifying pattern · Other timeframe → Weekly: Descending triangle · broke down this week · breakdown $138.31, 1% below · shape 64/100');
+  assert.deepEqual(b.other, { tf: 'W', words: 'Descending triangle · broke down this week · breakdown $138.31, 1% below · shape 64/100' });
   assert.equal(leadWords(w, 'W', '$'), 'Weekly: Descending triangle · broke down this week · breakdown $138.31, 1% below · shape 64/100');
-  assert.doesNotMatch(b.text, /^📐 No /, 'never starts with "No daily pattern"');
+  assert.doesNotMatch(b.text, /^📐 No /, 'never a bare "No daily pattern"');
   assert.equal(b.leadHit, views.W!.active[0], 'drawn by default (PatternIndicator lead)');
   assert.equal(b.tone, 'bearish');
   assert.equal(b.headTf, 'D', 'the list stays on the chart timeframe');
@@ -123,7 +125,8 @@ test('zzz1024 banner: nothing current anywhere but a recent completed / failed s
   assert.equal(multiBanner(views, 'A', '$').text, '📐 Last: Bear flag · Daily · broke down 8 days ago — completed · nothing current on D/W/M');
   // a weekly one, 3 weeks ago, read from the daily chart
   const wk = H({ expired: 'completed', breakAgo: 3, breakT: 60 * DAY, distToPivotPct: -15 });
-  assert.match(multiBanner({ D: v([], 'D'), W: v([], 'W', { expired: [wk] }), M: v([], 'M') }, 'D', '$').text, /^📐 Last: Descending triangle · Weekly · broke down 3 wk ago — completed · nothing current on daily$/);
+  // zzz1028 — from another timeframe than the chosen one: the chosen timeframe's state first, the weekly one marked apart
+  assert.match(multiBanner({ D: v([], 'D'), W: v([], 'W', { expired: [wk] }), M: v([], 'M') }, 'D', '$').text, /^📐 Daily: nothing current · Other timeframe → Weekly: last: Descending triangle · broke down 3 wk ago — completed$/);
   // older than LAST_RECENT_BARS: the previous words
   const old = { ...recent, breakAgo: LAST_RECENT_BARS.D + 15 };
   assert.match(multiBanner({ D: v([], 'D', { expired: [old] }), W: v([], 'W'), M: v([], 'M') }, 'A', '$').text, /^📐 No textbook pattern on D\/W\/M · last: Bear flag \(Daily\), broke down 7 wk ago — completed$/);

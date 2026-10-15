@@ -10,7 +10,7 @@
 //  • zzz992 — the ANALYSIS timeframe D / W / M (separate from the candles on screen): the remembered choice, the daily
 //    history it needs, banner words / badge, and the "Fit pattern" zoom plan
 // The detection itself is lib/chart-patterns (detectPatterns / patternHeadline); nothing here re-implements it.
-import { patternHeadline, patternLengthWords, PATTERN_MIN_HISTORY, POINT_ROLES, type PatternBias, type PatternHit, type PatternId, type PatternLine, type PatternTimeframe, type PointRole } from '@/lib/chart-patterns';
+import { patternHeadline, patternEvidenceRules, patternLengthWords, PATTERN_MIN_HISTORY, POINT_ROLES, type PatternBias, type PatternHit, type PatternId, type PatternLine, type PatternTimeframe, type PointRole } from '@/lib/chart-patterns';
 import { newExtra, type ChartLayout } from '@/lib/chart-layouts';
 import { readableOn } from '@/lib/readable-color';
 
@@ -490,16 +490,13 @@ export function viewBanner(v: PatternView, cur: string, tf: PatternTimeframe = '
   return { text, tone: top.stage === 'failed' ? 'failed' : top.bias };
 }
 
-/** zzz1009 — the measured rules of a hit in words (from its evidence), for the expandable explanation. */
-const EV_WORDS: Record<string, (v: number) => string> = {
-  band: (v) => `turning points within ${v}% of each other`, rally: (v) => `middle swing ${v}% off the turning points`, mid: (v) => `middle dip ${v}%`,
-  trend: (v) => `prior trend ${v}%`, gap: (v) => `${v} bars between the first and last turning point`, vr: (v) => `volume at the last turning point ${v}× the first`,
-  neck: (v) => `neckline change ${v}%`, sh: (v) => `shoulders ${v}× the head's distance from the neckline`, sd: (v) => `shoulders differ ${v}%`,
-  depth: (v) => `depth ${v}%`, rec: (v) => `right side ${v}% of the left high`, round: (v) => `${v}% of closes in the lower third (roundness)`,
-  hd: (v) => `handle ${v}% deep`, hi1y: (v) => `close ${v}% of the 1-year high`,
-};
-export function evidenceWords(h: Pick<PatternHit, 'evidence'>): string[] {
-  return Object.entries(h.evidence || {}).filter(([, v]) => typeof v === 'number' && Number.isFinite(v)).map(([k, v]) => (EV_WORDS[k] ? EV_WORDS[k](v as number) : `${k} ${v}`));
+/** zzz1009 — the measured rules of a hit in words (from its evidence), for the expandable explanation. zzz1028 — each measurement with
+ *  the EXACT rule the detector checked (patternEvidenceRules, shared with the Pine detail): "Depth 20% (rule 12–50% (over 33% scores
+ *  lower)) ✓"; a scored-only measurement has no ✓ / ✗. */
+export function evidenceWords(h: Pick<PatternHit, 'evidence' | 'id' | 'bias' | 'timeframe'>): string[] {
+  if (!h.evidence || !h.id) return [];
+  return patternEvidenceRules({ id: h.id, bullish: h.bias === 'bullish', ev: h.evidence, tf: h.timeframe })
+    .map((r) => `${r.label} ${r.value}${r.rule ? ` (${r.pass == null ? '' : 'rule '}${r.rule})` : ''}${r.pass == null ? '' : r.pass ? ' ✓' : ' ✗'}`);
 }
 export function pointWords(h: Pick<PatternHit, 'points'>, cur: string): string[] {
   return (h.points || []).map((q) => `${POINT_ROLES[q.role] || q.role} ${money(q.p, cur, priceDecimals(q.p))} (${shortDate(q.t)})`);
@@ -594,7 +591,14 @@ export interface MultiBanner extends Banner {
   /** zzz1024 — explicit timeframe with nothing current: the other timeframe's current structure the banner LEADS with, drawn by default
    *  (a weekly / monthly hit is drawn on daily candles through overlayFit's clip + carried pivot; a daily one on W / M candles snaps) */
   leadHit?: PatternHit;
+  /** zzz1028 (QA, AVAV monthly) — explicit timeframe with nothing current, the banner's parts kept apart so the page can show WHICH
+   *  timeframe each part is: `own` = the chosen timeframe's state ("Monthly: no qualifying pattern"), `other` = the structure from
+   *  another timeframe (its timeframe as a chip, then the words). `text` = `📐 ${own} · Other timeframe → ${TF_TITLE[other.tf]}: ${other.words}`. */
+  own?: string;
+  other?: { tf: PatternTimeframe; words: string };
 }
+/** zzz1028 — the separator before the other timeframe's part of a banner. */
+export const OTHER_TF_SEP = ' · Other timeframe → ';
 export interface MultiBannerOpts {
   displayTf?: string | null;
   analysisT?: Partial<Record<PatternTimeframe, number | null>>;
@@ -619,7 +623,9 @@ function recentLast(views: TfViews, tfs: ReadonlyArray<PatternTimeframe>): { row
  * zzz1015 / zzz1024 — the banner over all analysed timeframes.
  *  • explicit D / W / M: that timeframe's banner (zzz1009 words). zzz1024: when it has no current structure and another timeframe has
  *    one, the banner LEADS with that structure — "Weekly: Descending triangle · broke down this week · breakdown $138.31, 1% below ·
- *    shape 64/100 · nothing current on daily" — and it is drawn (leadHit); never "No daily pattern" first.
+ *    shape 64/100 · nothing current on daily" — and it is drawn (leadHit). zzz1028 (QA, AVAV): the chosen timeframe's state now comes
+ *    FIRST and the other timeframe's part is marked apart — "Monthly: no qualifying pattern · Other timeframe → Daily: Descending
+ *    triangle · broke down …" (`own` / `other` let the page show the other timeframe as a chip with a one-click switch).
  *  • Auto: the headline of the most relevant timeframe (pickHeadlineTf), "+N more" counting every timeframe.
  *  • nothing current anywhere: zzz1024 — a structure that completed / failed recently (LAST_RECENT_BARS) leads: "Last: Bear flag ·
  *    Daily · broke down 12 days ago — completed · nothing current on D/W/M"; otherwise "No textbook pattern on D/W/M · last: … ·
@@ -628,9 +634,15 @@ function recentLast(views: TfViews, tfs: ReadonlyArray<PatternTimeframe>): { row
 export function multiBanner(views: TfViews, mode: PatternAnalysisTf, cur: string, o: MultiBannerOpts = {}): MultiBanner {
   const at = o.analysisT || {}, er = o.errors || {};
   const readTfs = (tfs: ReadonlyArray<PatternTimeframe>) => tfs.filter((t) => views[t] && views[t]!.state !== 'insufficient' && views[t]!.state !== 'error' && views[t]!.state !== 'missing' && views[t]!.state !== 'pending');
+  const weakerWords = (weaker: number) => (weaker ? ` · ${weaker} weaker candidate${weaker === 1 ? '' : 's'}` : '');
   const lastBanner = (x: { row: PatternViewRow; tf: PatternTimeframe }, nothingOn: string, weaker: number): MultiBanner => {
-    let text = `📐 Last: ${x.row.hit.label} · ${TF_TITLE[x.tf]} · ${x.row.why} · nothing current on ${nothingOn}`;
-    if (weaker) text += ` · ${weaker} weaker candidate${weaker === 1 ? '' : 's'}`;
+    // zzz1028 — explicit timeframe, the last structure is from ANOTHER timeframe: the chosen timeframe's state first, the other apart
+    if (mode !== 'A' && x.tf !== mode) {
+      const own = `${TF_TITLE[mode]}: nothing current${weakerWords(weaker)}`;
+      const words = `last: ${x.row.hit.label} · ${x.row.why}`;
+      return { text: `📐 ${own}${OTHER_TF_SEP}${TF_TITLE[x.tf]}: ${words}`, tone: 'none', headTf: mode, weakerHint: weaker, own, other: { tf: x.tf, words } };
+    }
+    const text = `📐 Last: ${x.row.hit.label} · ${TF_TITLE[x.tf]} · ${x.row.why} · nothing current on ${nothingOn}${weakerWords(weaker)}`;
     return { text, tone: 'none', headTf: mode === 'A' ? 'D' : mode, weakerHint: weaker };
   };
   if (mode !== 'A') {
@@ -639,9 +651,12 @@ export function multiBanner(views: TfViews, mode: PatternAnalysisTf, cur: string
     const nothing = v.state === 'none' || v.state === 'weaker-only' || v.state === 'expired-only' || v.state === 'insufficient';
     const other = nothing ? pickHeadlineTf(views, o.displayTf, ANALYSIS_TFS.filter((t) => t !== mode)) : null;
     if (other) {
+      // zzz1028 (QA, AVAV) — the CHOSEN timeframe's state leads ("Monthly: no qualifying pattern"); the other timeframe's structure
+      // follows, marked as such (drawn by default, as zzz1024 — the drawing carries its timeframe too)
       const top = views[other]!.active[0];
-      const tail = v.state === 'insufficient' ? `${TF_WORD[mode]}: ${er[mode] || 'Too little history'} — patterns need at least ${PATTERN_MIN_HISTORY[mode]} ${TF_WORD[mode]} bars` : `nothing current on ${TF_WORD[mode]}`;
-      return { text: `📐 ${leadWords(top, other, cur)} · ${tail}`, tone: top.stage === 'failed' ? 'failed' : top.bias, headTf: mode, weakerHint: 0, leadHit: top };
+      const own = v.state === 'insufficient' ? `${TF_TITLE[mode]}: ${er[mode] || 'Too little history'} — patterns need at least ${PATTERN_MIN_HISTORY[mode]} ${TF_WORD[mode]} bars` : `${TF_TITLE[mode]}: no qualifying pattern`;
+      const words = leadWords(top, other, cur).slice(TF_TITLE[other].length + 2);
+      return { text: `📐 ${own}${OTHER_TF_SEP}${TF_TITLE[other]}: ${words}`, tone: top.stage === 'failed' ? 'failed' : top.bias, headTf: mode, weakerHint: 0, leadHit: top, own, other: { tf: other, words } };
     }
     if (nothing && v.state !== 'insufficient') {
       const x = recentLast(views, readTfs([mode, ...ANALYSIS_TFS.filter((t) => t !== mode)]));

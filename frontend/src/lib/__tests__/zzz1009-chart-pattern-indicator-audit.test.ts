@@ -177,7 +177,8 @@ test('zzz1009 view: banner = Pattern · Timeframe · condition · shape score ·
   const b = viewBanner(patternView({ hits: [h] }), '₹', 'D', { analysisT: Date.UTC(2026, 9, 13) });
   assert.equal(b.text, '📐 Cup with handle · Daily · forming · pivot ₹100.00, 3% below · shape 70/100 · 13 Oct 2026');
   assert.equal(b.tone, 'bullish');
-  assert.deepEqual(evidenceWords(h), ['depth 20%', 'right side 97.5% of the left high', 'handle 8% deep']);
+  // zzz1028 — each measurement with the detector's own rule and whether it passed
+  assert.deepEqual(evidenceWords(h), ['Depth 20% (rule 12–50% (over 33% scores lower)) ✓', 'Right side as share of the lip 97.5% (rule ≥ 85% (the right-side high within 15% of the lip)) ✓', 'Handle depth 8% (rule 2.5–15% (≤ 10% scores higher)) ✓']);
 });
 
 // ───────── drawing ─────────

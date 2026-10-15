@@ -197,8 +197,10 @@ export type PointRole = keyof typeof POINT_ROLES;
  *  prior rise), % · gap = bars between the first and the last turning point · vr = volume around the last turning point ÷ around
  *  the first (2 bars either side; < 1 = lighter) · neck = neckline change between its two points, % · sh = shoulders' distance
  *  from the neckline ÷ the head's · sd = shoulder difference, % · depth = base depth, % · rec = right side as % of the lip ·
- *  round = share of the cup's closes in its lower 30%, % · hd = handle depth, % · hi1y = close as % of the 1-year high. */
-export type PatternEvidence = Partial<Record<'band' | 'rally' | 'mid' | 'trend' | 'gap' | 'vr' | 'neck' | 'sh' | 'sd' | 'depth' | 'rec' | 'round' | 'hd' | 'hi1y', number>>;
+ *  round = share of the cup's closes in its lower 30%, % · hd = handle depth, % · hi1y = close as % of the 1-year high.
+ *  zzz1028 — `trend` on a base on base is the gain from the EARLIER base's pivot to this base's lip (5–20%), not the prior rise;
+ *  tol (line-drawn triangles) = the flat line's tolerance, % (band ≤ tol, rally ≥ max(5%, 2 × tol)). */
+export type PatternEvidence = Partial<Record<'band' | 'rally' | 'mid' | 'trend' | 'gap' | 'vr' | 'neck' | 'sh' | 'sd' | 'depth' | 'rec' | 'round' | 'hd' | 'hi1y' | 'tol', number>>;
 export interface PatternHit {
   id: PatternId; label: string; bias: PatternBias; family: PatternFamily;
   stage: PatternStage; confidence: number; likelihood: 'very likely' | 'likely' | 'possible';
@@ -1204,7 +1206,8 @@ function detectLineTriangles(s: S, e: number, zz: Pivot[], out: Map<PatternId, R
       push(out, { id, conf: c, start: A.i, end: e, keyFrom: A.i, pivot: lvl, depth: bear ? 1 - lvl / far : 1 - far / lvl, voidAt: line,
         detail: `${touches.length} touches of ${fmt(lvl)}, ${bear ? 'highs falling' : 'lows rising'}`,
         lines: [LP(bear ? 'support' : 'resistance', s, A.i, lvl, e, lvl), LP('trend', s, A.i, A.p, e, line(e))], pts,
-        ev: evOf({ band: pc1(band), rally: pc1(away), gap: len }) });
+        // zzz1028 — `tol`: the flat line's own tolerance, the limit `band` was checked against (and 2 × tol for `rally`)
+        ev: evOf({ band: pc1(band), rally: pc1(away), gap: len, tol: pc1(tol) }) });
     }
   }
 }
@@ -1967,4 +1970,126 @@ export function toTags(hits: PatternHit[]): PatternTag[] {
     ...(h.points?.length ? { pts: h.points.map((q) => [new Date(q.t).toISOString().slice(0, 10), Number(q.p.toPrecision(4)), q.role] as [string, number, PointRole]) } : {}),
     ...(h.evidence && Object.keys(h.evidence).length ? { ev: h.evidence } : {}),
   }));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// zzz1028 — the measured evidence of a hit next to the EXACT rule the detector checked it against (one source for the Pine detail and
+// the chart's "Measured rules"). Each row: the measured value, the rule in words and, when the rule is a hard gate of the detector, the
+// bounds in the value's own unit (`lo` / `hi`) and `pass` = the value against them. Score-only measurements (volume dry-up, the 1-year
+// high) carry no bounds and `pass: null` — shown as information, never as a passed rule. The bounds below copy the detector conditions
+// (detectLipBases, detectVcp, detectAscendingBase, detectHTF, detectFlags, detectTriWedge / detectLineTriangles, reversalSide); the
+// zzz1028 test walks real detector output and asserts every hit passes every hard row, so a label can no longer drift from the code.
+//  Seen (HAL weekly base on base): the gain from the EARLIER base's pivot (6.5%) was labelled "Prior rise into the base — rule ≥ 20%";
+//  the detector requires that gain to be 5–20% (O'Neil: the earlier breakout stalled), so the value was right and the rule text wrong.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+export interface EvidenceRuleRow {
+  key: keyof PatternEvidence | 'retr';
+  label: string;
+  /** the measured value in words ("6.5%", "12 weeks", "0.8×") */
+  value: string;
+  /** the measured number the bounds apply to (same unit as `lo` / `hi`) */
+  num: number;
+  /** the rule in plain words */
+  rule: string;
+  /** hard bounds of the detector (inclusive), in the value's unit; absent = no bound on that side */
+  lo?: number; hi?: number;
+  /** true / false when the rule is a hard gate (value vs lo / hi, within the display rounding); null when it only adds to the score */
+  pass: boolean | null;
+}
+/** display rounding of the evidence values (1 decimal of a %) — a value at the bound is never shown as a fail because of it */
+const EV_EPS = 0.051;
+export function evidenceRulePass(num: number, lo: number | undefined, hi: number | undefined, eps = EV_EPS): boolean | null {
+  if (lo == null && hi == null) return null;
+  if (!Number.isFinite(num)) return false;
+  return (lo == null || num >= lo - eps) && (hi == null || num <= hi + eps);
+}
+export function patternEvidenceRules(t: { id: PatternId; bullish: boolean; ev?: PatternEvidence | null; tf?: PatternTimeframe | null }): EvidenceRuleRow[] {
+  const ev = t.ev || {};
+  const tf: PatternTimeframe = t.tf === 'W' || t.tf === 'M' ? t.tf : 'D';
+  const id = t.id, bottom = t.bullish;
+  const unit = tf === 'W' ? 'weeks' : tf === 'M' ? 'months' : 'sessions';
+  const rev = id === 'double_bottom' || id === 'double_top' || id === 'triple_bottom' || id === 'triple_top';
+  const triple = id === 'triple_bottom' || id === 'triple_top';
+  const dbl = id === 'double_bottom' || id === 'double_top';
+  const hs = id === 'inverse_hs' || id === 'head_shoulders';
+  const tri = id === 'ascending_triangle' || id === 'descending_triangle';
+  const flag = id === 'bull_flag' || id === 'bull_pennant';
+  const cupLike = id === 'cup' || id === 'cup_handle';
+  const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+  const pct = (v: number) => `${v}%`;
+  const out: EvidenceRuleRow[] = [];
+  const add = (key: EvidenceRuleRow['key'], label: string, num: number, value: string, rule: string, lo?: number, hi?: number, eps?: number) =>
+    out.push({ key, label, value, num, rule, ...(lo != null ? { lo } : {}), ...(hi != null ? { hi } : {}), pass: evidenceRulePass(num, lo, hi, eps) });
+  const fr = (lo?: number, hi?: number, u = '%') => (lo != null && hi != null ? `${lo}–${hi}${u}` : lo != null ? `≥ ${lo}${u}` : hi != null ? `≤ ${hi}${u}` : '');
+  const triCap = (tf === 'D' ? TRI_RULES.cap : TRI_RULES.capW) * 100;
+  const tol = fin(ev.tol) ? ev.tol : null;
+
+  if (fin(ev.band)) {
+    if (rev) add('band', bottom ? 'Difference between the lows' : 'Difference between the highs', ev.band, pct(ev.band), '≤ 5% (≤ 1.5% scores higher)', undefined, 5);
+    else if (tri && tol != null) add('band', 'Spread of the flat-line touches', ev.band, pct(ev.band), `≤ ${tol}% — the flat line's tolerance (0.8 × the average daily range, 2.5–${triCap}%)`, undefined, tol);
+    else if (tri) add('band', 'Spread of the flat-line touches', ev.band, pct(ev.band), `≤ 3% (2% with two touches); drawn as lines: ≤ 0.8 × the average daily range, at most ${triCap}%`, undefined, triCap);
+    else add('band', 'Spread of the touches', ev.band, pct(ev.band), '');
+  }
+  if (fin(ev.gap)) {
+    if (tri) {
+      const lo = tf === 'D' ? 15 : 3, hi = tf === 'D' ? 130 : 26;
+      add('gap', 'Length (first touch to the analysis bar)', ev.gap, `${ev.gap} ${unit}`, `${lo}–${hi} ${unit}`, lo, hi, 0);
+    } else {
+      // D: double / H&S ≥ 10 sessions (triple: ≥ 10 between each low, so ≥ 20); W ≥ 4 weeks (spans ≥ 5 weekly candles); M ≥ 5 months
+      // (spans ≥ 6 monthly candles); a double's two turning points at most 325 days apart (M: 48 months)
+      const lo = tf === 'D' ? (triple ? 20 : 10) : tf === 'W' ? WEEKLY_REVERSAL_MIN_SPAN - 1 : MONTHLY_MIN_SPAN - 1;
+      const hi = dbl ? (tf === 'D' ? 325 : tf === 'W' ? 65 : MONTHLY_REVERSAL_MAX) : undefined;
+      const span = tf === 'D' ? (triple ? ' (≥ 10 between each)' : '') : ` (spans ≥ ${lo + 1} ${tf === 'W' ? 'weekly' : 'monthly'} candles)`;
+      add('gap', hs ? 'Left to right shoulder' : 'Separation (first to last turning point)', ev.gap, `${ev.gap} ${unit}`, `${fr(lo, hi, ` ${unit}`)}${span}`, lo, hi, 0);
+    }
+  }
+  if (fin(ev.rally)) {
+    if (hs) add('rally', bottom ? 'Neckline above the shoulders' : 'Neckline below the shoulders', ev.rally, pct(ev.rally), '≥ 5%', 5);
+    else if (tri) {
+      const lo = tol != null ? Math.max(TRI_RULES.minTouchSep * 100, 2 * tol) : TRI_RULES.minTouchSep * 100;
+      add('rally', 'Swing away from the flat line between its first and last touch', ev.rally, pct(ev.rally), tol != null ? `≥ ${Math.round(lo * 10) / 10}% (≥ 5% and ≥ 2 × the ${tol}% tolerance)` : '≥ 5% and ≥ 2 × the flat line\'s tolerance', lo);
+    } else add('rally', bottom ? 'Middle rally (peak above the higher low)' : 'Middle dip (trough below the lower high)', ev.rally, pct(ev.rally), '≥ 10%', 10);
+  }
+  if (fin(ev.mid)) { const hi = (tf === 'M' ? REVERSAL_RULES.maxMidDepthM : REVERSAL_RULES.maxMidDepth) * 100; add('mid', bottom ? 'Dip from the middle peak to the lows' : 'Rise from the middle trough to the highs', ev.mid, pct(ev.mid), `≤ ${hi}%`, undefined, hi); }
+  if (fin(ev.neck)) add('neck', 'Neckline change between its two points', ev.neck, pct(ev.neck), '≤ 15% (≤ 4% scores higher)', undefined, REVERSAL_RULES.maxNeckChange * 100);
+  if (fin(ev.sd)) add('sd', 'Shoulder difference', ev.sd, pct(ev.sd), '≤ 10%', undefined, 10);
+  if (fin(ev.sh)) add('sh', 'Shoulders\' distance from the neckline ÷ the head\'s', ev.sh, `${ev.sh}`, '≥ 0.30 (≥ 0.55 scores higher)', REVERSAL_RULES.minShoulderRatio, undefined, 0.0051);
+  if (fin(ev.trend)) {
+    const v = ev.trend, val = pct(v);
+    if (rev || hs) add('trend', bottom ? 'Prior fall into the first low' : 'Prior rise into the first high', v, val, bottom ? '≥ 15% (11.25% minimum)' : '≥ 20% (15% minimum)', bottom ? 11.25 : 15);
+    else if (id === 'base_on_base') add('trend', 'Gain from the earlier base\'s pivot to this base\'s lip', v, val, '5–20%: under 20% — the earlier base\'s breakout stalled and this base sits on top of it (the 20% prior rise rule applies to the first base, not to this one)', 5, 20);
+    else if (id === 'high_tight_flag') add('trend', 'Pole', v, val, `≥ ${HTF_RULES.minRise * 100}% in ≤ 8 weeks`, HTF_RULES.minRise * 100);
+    else if (flag) add('trend', 'Pole', v, val, `15–${HTF_RULES.minRise * 100}% in ≤ 20 sessions (${HTF_RULES.minRise * 100}% or more is a high tight flag)`, 15, HTF_RULES.minRise * 100);
+    else if (id === 'bear_flag') add('trend', 'Pole (drop)', v, val, '≥ 15% in ≤ 20 sessions', 15);
+    else if (id === 'flat_base' || cupLike) add('trend', 'Prior rise into the base', v, val, `≥ 20% (full score at ${id === 'flat_base' ? 35 : 30}%)`, 20);
+    else if (id === 'vcp') add('trend', 'Prior rise into the base', v, val, '≥ 15% (full score at 35%)', 15);
+    else if (id === 'ascending_base') add('trend', 'Prior rise into the base', v, val, '≥ 15% (full score at 40%)', 15);
+    else if (id === 'u_base') add('trend', 'Prior rise into the base', v, val, 'no minimum — under 10% the lip must be the high of the prior ~6 months; scores higher toward 25%');
+    else add('trend', 'Prior trend', v, val, '');
+  }
+  if (fin(ev.depth)) {
+    const d = ev.depth, val = pct(d);
+    if (id === 'flat_base') add('depth', 'Depth', d, val, `2–${FLAT_MAX_DEPTH * 100}% (over 15% scores lower)`, 2, FLAT_MAX_DEPTH * 100);
+    else if (cupLike) add('depth', 'Depth', d, val, '12–50% (over 33% scores lower)', 12, 50);
+    else if (id === 'u_base' || id === 'ipo_base') add('depth', 'Depth', d, val, '8–50%', 8, 50);
+    else if (id === 'vcp') add('depth', 'First contraction depth', d, val, '8–50%', 8, 50);
+    else if (id === 'ascending_base') add('depth', 'Deepest of the three pullbacks', d, val, '8–22% each', 8, 22);
+    else if (id === 'base_on_base') add('depth', 'Depth', d, val, '3–25%', 3, 25);
+    else if (id === 'high_tight_flag') add('depth', 'Flag depth', d, val, `≤ ${HTF_RULES.maxDepth * 100}% (≤ 15% scores higher)`, undefined, HTF_RULES.maxDepth * 100);
+    else if (flag) {
+      add('depth', 'Pullback from the pole top', d, val, '');
+      // the detector's gate is the pullback as a share of the POLE (≤ 50%): (top − low) ÷ (top − pole start) = depth × (1 + pole) ÷ pole
+      if (fin(ev.trend) && ev.trend > 0) { const r = Math.round((d * (100 + ev.trend)) / ev.trend * 10) / 10; add('retr', 'Pullback as a share of the pole', r, pct(r), '≤ 50% (≤ 33% scores higher)', undefined, 50, 0.6); }
+    } else add('depth', 'Depth', d, val, '');
+  }
+  if (fin(ev.rec)) { const lo = id === 'cup_handle' ? 85 : 75; add('rec', 'Right side as share of the lip', ev.rec, pct(ev.rec), id === 'cup_handle' ? '≥ 85% (the right-side high within 15% of the lip)' : '≥ 75%', lo); }
+  if (fin(ev.round)) {
+    const lo = cupLike && (!fin(ev.depth) || ev.depth >= 25) ? 31 : 35;
+    add('round', 'Closes in the lower 30% of the range (roundness)', ev.round, pct(ev.round), cupLike ? (lo === 31 ? '≥ 31% for a cup 25% deep or more (≥ 35% when shallower; a V spends ~30% there)' : '≥ 35% (≥ 31% for a cup 25% deep or more; a V spends ~30% there)') : '≥ 35% (a V spends ~30% there)', lo);
+  }
+  if (fin(ev.hd)) add('hd', 'Handle depth', ev.hd, pct(ev.hd), '2.5–15% (≤ 10% scores higher)', 2.5, 15);
+  if (fin(ev.tol)) add('tol', 'Flat-line tolerance', ev.tol, pct(ev.tol), `0.8 × the average daily range, 2.5–${triCap}% (sets the limits above)`, TRI_RULES.base * 100, triCap);
+  if (fin(ev.vr)) add('vr', rev || hs ? 'Volume at the last turning point ÷ the first (±2 bars)' : 'Volume in the last part ÷ its 50-bar average', ev.vr, `${ev.vr}×`, rev || hs ? 'under 1 = lighter on the right side (Bulkowski) — scored, not required' : 'under 1 = drying up — scored, not required');
+  if (fin(ev.hi1y)) add('hi1y', bottom ? 'Close as % of the 1-year high' : 'Close as % of the 1-year low', ev.hi1y, pct(ev.hi1y), bottom ? 'not reported when ≥ 95% and the high came after the pattern, > 5% past the pivot' : 'mirror for tops');
+  return out;
 }
