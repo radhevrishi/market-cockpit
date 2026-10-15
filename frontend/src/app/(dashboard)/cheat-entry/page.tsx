@@ -33,6 +33,7 @@ import { getConvictionList } from '@/lib/conviction-beats';
 import { openPassport } from '@/lib/engines';     // zzz524 — click a ticker → Stock Passport
 import { logSignals } from '@/lib/signal-log';    // zzz524 — feed the Signal Scoreboard
 import Sparkline from '@/components/Sparkline';    // zzz536 — inline price trend
+import { cheatSetup, type CheatSetupKind, type CheatStopMa } from '@/lib/cheat-entry-setup';   // zzz1061
 
 const MONO = 'ui-monospace, "SF Mono", Menlo, monospace';
 const C = {
@@ -45,8 +46,8 @@ const C = {
 const EXCLUDE = new Set(['SPY', 'QQQ', 'QQQM', 'IWM', 'DIA', 'VOO', 'VTI', 'VT', 'SPX', 'NDX', 'RUT', 'NIFTY', 'NIFTYBEES', 'BANKBEES', 'GOLDBEES', 'JUNIORBEES', 'SETFNIF50']);
 
 type Market = 'IND' | 'USA';
-type SetupKind = 'AT_200' | 'AT_50' | 'DRIFT' | 'EXTENDED';
-type StopMa = '200DMA' | '50DMA';
+type SetupKind = CheatSetupKind;
+type StopMa = CheatStopMa;
 
 interface Candidate {
   symbol: string; market: Market;
@@ -129,53 +130,11 @@ function assemble(live: Map<string, LiveQuote>): { cands: Candidate[]; skipped: 
     const livePrice = lq?.price ?? t.price ?? null;
     if (livePrice == null || livePrice <= 0) continue;
 
-    const d200 = (livePrice - t.sma200) / t.sma200 * 100;
-    const d50 = (livePrice - t.sma50) / t.sma50 * 100;
+    // zzz1061 — the setup rules live in lib/cheat-entry-setup.ts (the price alerts use the same rules)
+    const cs = cheatSetup(livePrice, t.sma50, t.sma200);
+    if (!cs) continue; // clearly below the 200DMA = broken chart, not a dip
+    const { d50, d200, setup, setupScore, stopMa, riskPct, testingSupport, atSupportNow } = cs;
     const d21 = t.ema21 != null && t.ema21 > 0 ? (livePrice - t.ema21) / t.ema21 * 100 : null;
-    if (d200 < -3) continue; // clearly below the 200DMA = broken chart, not a dip
-
-    // ── setup: nearest qualifying pivot, mild preference for deeper MAs ──────
-    type Pivot = { kind: SetupKind; stop: StopMa; d: number; base: number; ma: number; pref: number };
-    const pivots: Pivot[] = [];
-    if (d200 >= -3 && d200 <= 5) pivots.push({ kind: 'AT_200', stop: '200DMA', d: d200, base: 60, ma: t.sma200, pref: 1.2 });
-    if (d50 >= -3 && d50 <= 5) pivots.push({ kind: 'AT_50', stop: '50DMA', d: d50, base: 52, ma: t.sma50, pref: 0.6 });
-    // zzz546 — 21EMA setup removed: board focuses on the 50DMA & 200DMA cheats only.
-
-    let setup: SetupKind; let setupScore: number;
-    let stopMa: StopMa | null = null; let riskPct: number | null = null;
-    let pivotD: number | null = null; let testingSupport = false;
-
-    const nearestBelowStop = (): { stop: StopMa; ma: number } | null => {
-      const below: Array<{ stop: StopMa; ma: number }> = [];
-      if (t.sma50! < livePrice) below.push({ stop: '50DMA', ma: t.sma50! });
-      if (t.sma200! < livePrice) below.push({ stop: '200DMA', ma: t.sma200! });
-      if (!below.length) return null;
-      below.sort((a, bb) => bb.ma - a.ma);
-      return below[0];
-    };
-
-    if (d50 > 15) {
-      setup = 'EXTENDED'; setupScore = 3;
-      const nb = nearestBelowStop();
-      if (nb) { stopMa = nb.stop; riskPct = Math.max(0.3, (livePrice - nb.ma * 0.98) / livePrice * 100); }
-    } else if (pivots.length) {
-      pivots.sort((a, bb) => (Math.abs(a.d - 1) - a.pref) - (Math.abs(bb.d - 1) - bb.pref));
-      const p = pivots[0];
-      setup = p.kind; pivotD = p.d;
-      setupScore = Math.max(20, p.base - Math.abs(p.d - 1) * 4);
-      if (p.d < -1) { setupScore -= 3; testingSupport = true; } // testing, not holding
-      stopMa = p.stop;
-      riskPct = Math.max(0.3, (livePrice - p.ma * 0.98) / livePrice * 100); // stop = 2% under YOUR pivot
-    } else {
-      setup = 'DRIFT';
-      const nearest = Math.min(Math.abs(d50), Math.abs(d200));
-      setupScore = Math.max(0, 22 - nearest * 1.5);
-      const nb = nearestBelowStop();
-      if (nb) { stopMa = nb.stop; riskPct = Math.max(0.3, (livePrice - nb.ma * 0.98) / livePrice * 100); }
-    }
-    if (t.sma50 > t.sma200) setupScore += 4;      // golden structure
-    if (d200 > 50) setupScore -= 4;                // very late-stage — give a little back
-    setupScore = Math.max(0, Math.min(60, setupScore));
 
     // ── quality (0-40) ───────────────────────────────────────────────────────
     const sources: string[] = [`Tech ${t.market === 'IND' ? '🇮🇳' : '🇺🇸'}`];
@@ -188,8 +147,6 @@ function assemble(live: Map<string, LiveQuote>): { cands: Candidate[]; skipped: 
     const engineCount = 1 + (f && f.score != null ? 1 : 0) + (b ? 1 : 0);
     if (engineCount >= 2) quality += engineCount >= 3 ? 8 : 5;
     quality = Math.min(40, quality);
-
-    const atSupportNow = pivotD != null && Math.abs(pivotD) <= 1 && setup !== 'EXTENDED';
 
     cands.push({
       symbol: sym, market: t.market,

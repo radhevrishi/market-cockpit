@@ -16,12 +16,33 @@ export type CondType =
   | 'gap_up' | 'gap_down'                                   // today's open vs the previous close ≥ X%
   | 'rel_volume'                                            // today's volume ≥ X × its 50-day average
   | 'rsi_cross_up' | 'rsi_cross_down'                       // daily RSI(14) crossing a level
-  | 'near_52w_high';                                        // within X% of the 52-week high
+  | 'near_52w_high'                                         // within X% of the 52-week high
+  // zzz1061 — the app's OWN signals (lib/alerts/signals.ts). STATE-CHANGE conditions: they fire when the state becomes true
+  // compared with the previous reading of its source (screener build, graded results, guidance archive) — never on the first.
+  | 'stage_2' | 'stage_to' | 'stage2_weak' | 'stage_1_to_2' | 'sata_cross_up' | 'sata_cross_down' | 'mrs_cross_up'
+  | 'cheat_any' | 'cheat_50' | 'cheat_200' | 'cheat_support'
+  | 'pattern_breakout' | 'pattern_near_pivot' | 'tight_3w' | 'darvas_breakout' | 'donchian_20' | 'donchian_55' | 'squeeze_up'
+  | 'episodic_pivot' | 'pocket_pivot' | 'trend_template' | 'rs_rating'
+  | 'acc_ab' | 'dist_warn' | 'vol_breakout'
+  | 'result_strong' | 'result_blockbuster' | 'guidance_raised';
+
+/** zzz1061 — the signal (state-change) condition types, in dialog order. */
+export const SIGNAL_COND_TYPES: readonly CondType[] = [
+  'stage_2', 'stage_to', 'stage2_weak', 'stage_1_to_2', 'sata_cross_up', 'sata_cross_down', 'mrs_cross_up',
+  'cheat_any', 'cheat_50', 'cheat_200', 'cheat_support',
+  'pattern_breakout', 'pattern_near_pivot', 'tight_3w', 'darvas_breakout', 'donchian_20', 'donchian_55', 'squeeze_up',
+  'episodic_pivot', 'pocket_pivot', 'trend_template', 'rs_rating',
+  'acc_ab', 'dist_warn', 'vol_breakout',
+  'result_strong', 'result_blockbuster', 'guidance_raised',
+];
+export const isSignalCond = (c: Pick<AlertCondition, 'type'>): boolean => SIGNAL_COND_TYPES.includes(c.type);
+export type PatternTf = 'D' | 'W' | 'M';
 
 export const COND_TYPES: readonly CondType[] = [
   'price_cross', 'price_cross_up', 'price_cross_down', 'price_above', 'price_below', 'move_up_pct', 'move_down_pct',
   'ma_cross', 'ma_cross_up', 'ma_cross_down', 'high_52w', 'low_52w', 'gap_up', 'gap_down', 'rel_volume',
   'rsi_cross_up', 'rsi_cross_down', 'near_52w_high',
+  ...SIGNAL_COND_TYPES,
 ];
 
 export type MaKind = 'SMA' | 'EMA';
@@ -36,6 +57,8 @@ export interface AlertCondition {
   bars?: number;
   ma?: MaKind;
   len?: MaLen;
+  /** zzz1061 — pattern conditions: daily / weekly / monthly patterns */
+  tf?: PatternTf;
 }
 
 export type TargetKind = 'ticker' | 'chart-list' | 'watchlist' | 'book-in' | 'book-us' | 'cb-in' | 'cb-us';
@@ -168,6 +191,10 @@ export function valueRange(t: CondType): [number, number] | null {
     case 'rel_volume': return [0.1, 100];
     case 'rsi_cross_up': case 'rsi_cross_down': return [1, 99];
     case 'near_52w_high': return [0, 100];
+    case 'stage_to': return [1, 4];
+    case 'sata_cross_up': case 'sata_cross_down': return [0, 10];
+    case 'pattern_near_pivot': return [0.1, 50];
+    case 'rs_rating': return [1, 99];
     default: return null;
   }
 }
@@ -193,6 +220,12 @@ export function sanitizeCondition(raw: unknown): { ok: true; c: AlertCondition }
     const len = Number(r.len ?? 50);
     if (!ma || !(MA_LENGTHS as readonly number[]).includes(len)) return { ok: false, error: 'moving average must be SMA or EMA 20, 50, 150 or 200' };
     c.ma = ma; c.len = len as MaLen;
+  }
+  if (type === 'stage_to' && !Number.isInteger(c.value)) return { ok: false, error: 'stage must be 1, 2, 3 or 4' };
+  if (type === 'pattern_breakout' || type === 'pattern_near_pivot') {
+    const tf = r.tf == null ? 'D' : r.tf;
+    if (tf !== 'D' && tf !== 'W' && tf !== 'M') return { ok: false, error: 'pattern timeframe must be daily, weekly or monthly' };
+    c.tf = tf;
   }
   return { ok: true, c };
 }
@@ -276,8 +309,39 @@ export function condLabel(c: AlertCondition, interval: AlertInterval = 'D'): str
     case 'rsi_cross_up': return `RSI(14) crossing up ${v}`;
     case 'rsi_cross_down': return `RSI(14) crossing down ${v}`;
     case 'near_52w_high': return `Within ${v}% of the 52-week high`;
+    // zzz1061 — the app's own signals
+    case 'stage_2': return 'Stage changes to 2 (confirmed)';
+    case 'stage_to': return `Stage changes to ${v}${STAGE_WORD[Number(c.value)] ? ` (${STAGE_WORD[Number(c.value)]})` : ''}`;
+    case 'stage2_weak': return 'Stage 2 weakening (topping risk)';
+    case 'stage_1_to_2': return 'Stage 1 → 2 transition';
+    case 'sata_cross_up': return `SATA score crosses above ${v}`;
+    case 'sata_cross_down': return `SATA score crosses below ${v}`;
+    case 'mrs_cross_up': return 'Mansfield RS crosses above 0';
+    case 'cheat_any': return 'Cheat entry trigger (onto the 50 or 200-day average)';
+    case 'cheat_50': return 'Cheat entry: 50-day average pullback';
+    case 'cheat_200': return 'Cheat entry: 200-day average retest';
+    case 'cheat_support': return 'Cheat entry: at support now (within 1% of the average)';
+    case 'pattern_breakout': return `Breaks out of a pattern (${TF_WORD[c.tf ?? 'D']})`;
+    case 'pattern_near_pivot': return `Pattern forming within ${v}% of pivot (${TF_WORD[c.tf ?? 'D']})`;
+    case 'tight_3w': return '3 weeks tight';
+    case 'darvas_breakout': return 'Darvas breakout';
+    case 'donchian_20': return 'Donchian 20 breakout';
+    case 'donchian_55': return 'Donchian 55 breakout';
+    case 'squeeze_up': return 'Squeeze fired up';
+    case 'episodic_pivot': return 'Episodic pivot / gap on volume';
+    case 'pocket_pivot': return 'Pocket pivot';
+    case 'trend_template': return 'Minervini trend template passes (all 6)';
+    case 'rs_rating': return `RS Rating ≥ ${v}`;
+    case 'acc_ab': return 'Accumulation grade becomes A or B';
+    case 'dist_warn': return 'Distribution warning appears';
+    case 'vol_breakout': return 'Volume breakout (≥1.5× on a new 50-day closing high)';
+    case 'result_strong': return 'New result filed graded STRONG or BLOCKBUSTER';
+    case 'result_blockbuster': return 'New result filed graded BLOCKBUSTER';
+    case 'guidance_raised': return 'Guidance raised';
   }
 }
+const STAGE_WORD: Record<number, string> = { 1: 'basing', 2: 'advancing', 3: 'topping', 4: 'declining' };
+const TF_WORD: Record<PatternTf, string> = { D: 'daily', W: 'weekly', M: 'monthly' };
 export function targetKindLabel(k: TargetKind): string {
   return ({ ticker: 'Ticker', 'chart-list': 'Chart watchlist', watchlist: 'My Watchlist (/watchlists)', 'book-in': 'India book', 'book-us': 'US book', 'cb-in': 'Conviction Beats India', 'cb-us': 'Conviction Beats US' } as const)[k];
 }

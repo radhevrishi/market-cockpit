@@ -253,6 +253,25 @@ export const MIGRATIONS: readonly Migration[] = [
         PRIMARY KEY (symbol, date)
       );`,
   },
+  {
+    // zzz1061 — price alerts on the app's own signals (lib/alerts/signals.ts): the last known state of each state-change condition
+    // per alert + market-qualified ticker + condition, the source reading it came from (screener builtAt / content stamp), and an
+    // unused edge (the bar it was found in). Written only when the state or the edge changes. Rows of deleted alerts are removed
+    // by the checker's hourly housekeeping.
+    id: 8, name: 'price_alert_signals',
+    sql: `
+      CREATE TABLE IF NOT EXISTS price_alert_signal (
+        alert_id       TEXT NOT NULL,
+        mid            TEXT NOT NULL,
+        cond_idx       SMALLINT NOT NULL,
+        alert_version  INTEGER NOT NULL,
+        state          DOUBLE PRECISION,
+        src            TEXT NOT NULL,
+        edge           TEXT,
+        updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (alert_id, mid, cond_idx)
+      );`,
+  },
 ] as const;
 
 const LOCK_ID = 88_301_883;   // advisory-lock id for migrations

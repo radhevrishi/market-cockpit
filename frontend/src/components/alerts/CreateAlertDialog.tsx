@@ -4,11 +4,12 @@
 // Saving waits for the server's answer: the dialog closes only when the alert is really saved.
 import { useEffect, useMemo, useState } from 'react';
 import {
-  COND_TYPES, MA_LENGTHS, DEFAULT_MESSAGE, DEFAULT_EXPIRY_DAYS, condLabel, valueRange, targetKindLabel, toMid, parseMid,
-  type AlertCondition, type AlertTarget, type CondType, type PriceAlert, type TargetKind, type AlertInput,
+  COND_TYPES, MA_LENGTHS, DEFAULT_MESSAGE, DEFAULT_EXPIRY_DAYS, condLabel, valueRange, targetKindLabel, toMid, parseMid, isSignalCond,
+  type AlertCondition, type AlertTarget, type CondType, type PriceAlert, type TargetKind, type AlertInput, type PatternTf,
 } from '@/lib/alerts/types';
 import { renderMessage } from '@/lib/alerts/trigger';
 import { createAlertApi, updateAlertApi, loadChannels } from '@/lib/alerts/client';
+import { COND_GROUPS, condName, condHelp, ALERT_TEMPLATES } from '@/lib/alerts/dialog-meta';
 
 export interface ChartListOption { id: string; name: string; count: number }
 export interface CreateAlertDialogProps {
@@ -24,28 +25,21 @@ export interface CreateAlertDialogProps {
   editing?: PriceAlert | null;
 }
 
-const TYPE_GROUPS: Array<{ label: string; types: CondType[] }> = [
-  { label: 'Price', types: ['price_cross', 'price_cross_up', 'price_cross_down', 'price_above', 'price_below'] },
-  { label: 'Move', types: ['move_up_pct', 'move_down_pct', 'gap_up', 'gap_down'] },
-  { label: 'Trend', types: ['ma_cross', 'ma_cross_up', 'ma_cross_down', 'high_52w', 'low_52w', 'near_52w_high'] },
-  { label: 'Volume / momentum', types: ['rel_volume', 'rsi_cross_up', 'rsi_cross_down'] },
-];
-const TYPE_NAME: Record<CondType, string> = {
-  price_cross: 'Price — crossing', price_cross_up: 'Price — crossing up', price_cross_down: 'Price — crossing down',
-  price_above: 'Price — greater than', price_below: 'Price — less than',
-  move_up_pct: 'Moving up %', move_down_pct: 'Moving down %', gap_up: 'Gap up % at the open', gap_down: 'Gap down % at the open',
-  ma_cross: 'Price crossing a moving average', ma_cross_up: 'Price crossing up a moving average', ma_cross_down: 'Price crossing down a moving average',
-  high_52w: 'New 52-week high', low_52w: 'New 52-week low', near_52w_high: 'Within % of the 52-week high',
-  rel_volume: 'Volume ≥ × 50-day average', rsi_cross_up: 'RSI(14) crossing up', rsi_cross_down: 'RSI(14) crossing down',
+// zzz1061 — conditions grouped as the owner asked; the app's own signals (Stage Analysis, Cheat Entry, setups, accumulation,
+// results) sit next to the price conditions. The groups, names, help lines and templates live in lib/alerts/dialog-meta.ts.
+const TYPE_GROUPS = COND_GROUPS;
+const DEFAULT_VALUE: Partial<Record<CondType, number>> = {
+  move_up_pct: 1, move_down_pct: 1, gap_up: 3, gap_down: 3, rel_volume: 2, rsi_cross_up: 70, rsi_cross_down: 30, near_52w_high: 5,
+  stage_to: 2, sata_cross_up: 7, sata_cross_down: 4, pattern_near_pivot: 5, rs_rating: 80,
 };
-const DEFAULT_VALUE: Partial<Record<CondType, number>> = { move_up_pct: 1, move_down_pct: 1, gap_up: 3, gap_down: 3, rel_volume: 2, rsi_cross_up: 70, rsi_cross_down: 30, near_52w_high: 5 };
-const UNIT: Partial<Record<CondType, string>> = { move_up_pct: '%', move_down_pct: '%', gap_up: '%', gap_down: '%', rel_volume: '×', near_52w_high: '%' };
+const UNIT: Partial<Record<CondType, string>> = { move_up_pct: '%', move_down_pct: '%', gap_up: '%', gap_down: '%', rel_volume: '×', near_52w_high: '%', pattern_near_pivot: '% under the pivot' };
 
 function defaultCond(type: CondType): AlertCondition {
   const c: AlertCondition = { type };
   if (valueRange(type)) c.value = DEFAULT_VALUE[type];
   if (type === 'move_up_pct' || type === 'move_down_pct') c.bars = 1;
   if (type.startsWith('ma_')) { c.ma = 'SMA'; c.len = 50; }
+  if (type === 'pattern_breakout' || type === 'pattern_near_pivot') c.tf = 'D';
   return c;
 }
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
@@ -77,6 +71,11 @@ const CSS = `
 .mcpa-btn.pri{background:#2563eb;border-color:#2563eb;color:#fff}
 .mcpa-btn:disabled{opacity:.6;cursor:default}
 .mcpa-err{color:#b91c1c;font-size:13px;margin-right:auto}
+.mcpa-desc{flex-basis:100%;color:#4b5563;font-size:12px;line-height:1.4}
+.mcpa-desc i{color:#6b7280}
+.mcpa-tpl{display:flex;flex-wrap:wrap;gap:6px;padding-bottom:10px;border-bottom:1px solid #f3f4f6}
+.mcpa-chip{border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;border-radius:999px;padding:5px 10px;cursor:pointer;font-size:12px;font-weight:600}
+.mcpa-chip:hover{background:#dbeafe}
 .mcpa-prev{background:#f3f4f6;border-radius:6px;padding:6px 8px;font-size:12px;color:#374151}
 @media (max-width:520px){.mcpa-row{grid-template-columns:1fr}.mcpa-row>label{padding-top:0}}
 `;
@@ -129,6 +128,17 @@ export default function CreateAlertDialog({ onClose, onSaved, initialTarget, cha
   };
   const patch = (i: number, p: Partial<AlertCondition>) => setConds((cs) => cs.map((c, k) => (k === i ? { ...c, ...p } : c)));
 
+  const applyTemplate = (id: string) => {
+    const t = ALERT_TEMPLATES.find((x) => x.id === id);
+    if (!t) return;
+    setConds(t.conditions.map((c) => ({ ...c })));
+    setTrigger('per_bar');
+    setInterval_('D');
+    setName('');
+    // "on my list": leave a chosen list as it is; from a blank one-ticker start, switch to the first chart watchlist
+    if (target.kind === 'ticker' && !tickerText && chartLists[0]) setTarget({ kind: 'chart-list', id: chartLists[0].id, label: chartLists[0].name });
+  };
+
   async function save() {
     setErr(null);
     if (!effectiveTarget) { setErr('Enter a valid ticker (India: NSE symbol or BSE code; USA: symbol).'); return; }
@@ -161,6 +171,14 @@ export default function CreateAlertDialog({ onClose, onSaved, initialTarget, cha
           <button type="button" className="mcpa-x" aria-label="Close" onClick={onClose}>✕</button>
         </div>
         <div className="mcpa-body">
+          {!editing && (
+            <div className="mcpa-tpl" role="group" aria-label="Quick templates">
+              <span className="mcpa-hint" style={{ width: '100%' }}>Quick start — sets the condition; then pick your list under &ldquo;Create alert on&rdquo;:</span>
+              {ALERT_TEMPLATES.map((t) => (
+                <button key={t.id} type="button" className="mcpa-chip" title={t.help} onClick={() => applyTemplate(t.id)}>{t.label}</button>
+              ))}
+            </div>
+          )}
           <div className="mcpa-row">
             <label htmlFor="mcpa-target">Create alert on</label>
             <div style={{ display: 'grid', gap: 6 }}>
@@ -190,8 +208,13 @@ export default function CreateAlertDialog({ onClose, onSaved, initialTarget, cha
                 return (
                   <div className="mcpa-cond" key={i}>
                     <select aria-label={`Condition ${i + 1}`} value={c.type} onChange={(e) => setConds((cs) => cs.map((x, k) => (k === i ? defaultCond(e.target.value as CondType) : x)))}>
-                      {TYPE_GROUPS.map((g) => <optgroup key={g.label} label={g.label}>{g.types.filter((t) => COND_TYPES.includes(t)).map((t) => <option key={t} value={t}>{TYPE_NAME[t]}</option>)}</optgroup>)}
+                      {TYPE_GROUPS.map((g) => <optgroup key={g.label} label={g.label}>{g.types.filter((t) => COND_TYPES.includes(t)).map((t) => <option key={t} value={t}>{condName(t)}</option>)}</optgroup>)}
                     </select>
+                    {(c.type === 'pattern_breakout' || c.type === 'pattern_near_pivot') && (
+                      <select aria-label="Pattern timeframe" value={c.tf ?? 'D'} onChange={(e) => patch(i, { tf: e.target.value as PatternTf })}>
+                        <option value="D">daily</option><option value="W">weekly</option><option value="M">monthly</option>
+                      </select>
+                    )}
                     {c.type.startsWith('ma_') && (<>
                       <select aria-label="Average type" value={c.ma} onChange={(e) => patch(i, { ma: e.target.value as 'SMA' | 'EMA' })}><option>SMA</option><option>EMA</option></select>
                       <select aria-label="Average length" value={c.len} onChange={(e) => patch(i, { len: Number(e.target.value) as AlertCondition['len'] })}>{MA_LENGTHS.map((n) => <option key={n} value={n}>{n}</option>)}</select>
@@ -204,11 +227,15 @@ export default function CreateAlertDialog({ onClose, onSaved, initialTarget, cha
                       in <input className="mcpa-num" style={{ width: 60 }} type="number" min={1} max={50} step={1} aria-label="Bars" value={c.bars ?? 1} onChange={(e) => patch(i, { bars: Math.max(1, Math.round(Number(e.target.value) || 1)) })} /> {interval === 'W' ? 'week(s)' : 'bar(s)'}
                     </span>)}
                     {conds.length > 1 && <button type="button" className="mcpa-x" aria-label={`Remove condition ${i + 1}`} onClick={() => setConds((cs) => cs.filter((_, k) => k !== i))}>✕</button>}
+                    <span className="mcpa-desc">{condHelp(c.type).desc} <i>{condHelp(c.type).updates}</i></span>
                   </div>
                 );
               })}
               {conds.length < 5 && <button type="button" className="mcpa-link" onClick={() => setConds((cs) => [...cs, defaultCond('price_above')])}>+ Add condition</button>}
               <span className="mcpa-hint">{condText}. Moving averages, RSI, 52-week and volume use daily bars with today&apos;s live price as the current bar. &ldquo;1 bar&rdquo; on 1 day = since the previous close.</span>
+              {conds.some(isSignalCond) && (
+                <span className="mcpa-hint">Stage, setup, accumulation and results conditions fire when the signal <b>appears</b> (false → true since the previous reading) — never just because it was already true when you created the alert. Each change fires once; any other conditions must hold in the same {interval === 'W' ? 'week' : 'day'}. Checked while the market is open.</span>
+              )}
             </div>
           </div>
 

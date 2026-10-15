@@ -9,7 +9,7 @@
 // first sighting only records the value — a crossing that happened before the alert was watching never fires.
 // Missing data never fires: the condition is "unknown" and the alert waits.
 import { smaOf, emaOf, rsiOf } from '@/lib/screener/tech';
-import type { AlertCondition, AlertInterval } from './types';
+import { isSignalCond, type AlertCondition, type AlertInterval } from './types';
 
 export interface LiveQuote {
   price: number;
@@ -153,6 +153,7 @@ export function evalCondition(cond: AlertCondition, q: LiveQuote, f: DailyFigs |
 
 /** Does a condition need the daily figures? (price-level and 1-bar moves work from the live quote alone) */
 export function needsDaily(c: AlertCondition, interval: AlertInterval): boolean {
+  if (isSignalCond(c)) return false;   // zzz1061 — signals come from the screener snapshot / results / guidance (signals.ts)
   if (c.type === 'price_cross' || c.type === 'price_cross_up' || c.type === 'price_cross_down' || c.type === 'price_above' || c.type === 'price_below') return false;
   if ((c.type === 'move_up_pct' || c.type === 'move_down_pct') && interval === 'D' && (c.bars ?? 1) === 1) return false;
   return true;
@@ -160,11 +161,14 @@ export function needsDaily(c: AlertCondition, interval: AlertInterval): boolean 
 export const needsOpen = (c: AlertCondition) => c.type === 'gap_up' || c.type === 'gap_down';
 
 export interface AlertEval { met: boolean; known: boolean; states: Array<number | undefined>; observed: Array<number | undefined> }
-/** All conditions (AND). States are returned for every condition so the next check can see crossings. */
+/** All conditions (AND). States are returned for every condition so the next check can see crossings.
+ *  zzz1061 — signal (state-change) conditions are NOT checked here: they count as met in this AND, and evaluate.ts adds their own
+ *  verdict from lib/alerts/signals.ts (their state lives there, not in this array). */
 export function evalAll(conds: readonly AlertCondition[], q: LiveQuote, f: DailyFigs | null, prev: ReadonlyArray<number | undefined>, interval: AlertInterval, today: string): AlertEval {
   let met = true, known = true;
   const states: Array<number | undefined> = [], observed: Array<number | undefined> = [];
   conds.forEach((c, i) => {
+    if (isSignalCond(c)) { states.push(undefined); observed.push(undefined); return; }
     const r = evalCondition(c, q, f, prev[i], interval, today);
     states.push(r.state); observed.push(r.observed);
     if (!r.known) known = false;

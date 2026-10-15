@@ -7,6 +7,10 @@
 //               at most every 10 minutes and only when an alert targets it. The scheduler's heartbeat is posted every 15 min.
 //   Yahoo     — one spark request per 20 tickers whose session is open; daily bars once per ticker per market day
 //               (≤ 60 tickers a minute, the ones with gap alerts first).
+//   zzz1061 signals (only when an active alert has a Stage / Cheat Entry / setup / accumulation / results / guidance condition):
+//               the screener snapshot from the shared in-memory copy (a tiny built_at read a minute at most), signal states loaded
+//               once per process per alert and written only when a state or edge changes; results ≤ 2 Redis reads per market
+//               every 30 min, guidance 1 Postgres query every 30 min (signal-sources.ts).
 // Two server copies (during a deploy) never check the same minute: claimMinute() is an atomic compare-and-set in Postgres,
 // and every event row is unique per (alert, ticker, bar / minute), so nothing is ever sent twice.
 import { dbAvailable } from '@/lib/db';
@@ -14,7 +18,8 @@ import { anySessionOpen, sessionOpen, marketDate, regularStarted } from './sessi
 import { needsDaily, needsOpen, type DailyFigs } from './conditions';
 import { evaluateAlerts, firedKey, type EvalCtx } from './evaluate';
 import { statusAfterFire, isLive } from './trigger';
-import { parseMid, type PriceAlert, type AlertEvent } from './types';
+import { parseMid, type PriceAlert, type AlertEvent, type AlertMarket } from './types';
+import { sourcesFor, type SignalSource, type SignalState } from './signals';
 import type { Expanded } from './targets';
 
 export const MAX_TICKERS_PER_RUN = 2500;
@@ -30,6 +35,9 @@ interface Mem {
   lastHousekeeping: number;
   lastRun: RunReport | null;
   holidaysWarmed?: boolean;
+  /** zzz1061 — signal condition states (signals.ts), the alerts whose stored states were loaded, keys to write */
+  sigStates?: Map<string, SignalState>;
+  sigLoaded?: Set<string>;
 }
 const g = globalThis as any;
 const mem: Mem = g.__MC_PRICE_ALERTS__ || (g.__MC_PRICE_ALERTS__ = {
@@ -39,6 +47,8 @@ const mem: Mem = g.__MC_PRICE_ALERTS__ || (g.__MC_PRICE_ALERTS__ = {
 export interface RunReport {
   ok: boolean; at: string; skipped?: string; error?: string;
   alerts?: number; tickers?: number; quotes?: number; dailyFetched?: number; checked?: number; waiting?: number; fired?: number;
+  /** zzz1061 — signal sources read this run (e.g. 'IN:screen') and signal states written */
+  signalSources?: string[]; signalWrites?: number;
   notified?: { telegram: string; email: string } | null; listErrors?: string[]; capped?: boolean; ms?: number;
 }
 export function lastRunReport(): RunReport | null { return mem.lastRun; }
@@ -88,8 +98,10 @@ export async function runPriceAlerts(opts: { now?: Date; force?: boolean } = {})
       mem.lastHousekeeping = Date.now();
       await store.expireDue().catch(() => 0);
       await store.pruneEvents().catch(() => 0);
+      await store.pruneSignalStates().catch(() => 0);
       if (mem.firedKeys.size > 200_000) mem.firedKeys.clear();
       if (mem.prev.size > 200_000) mem.prev.clear();
+      if ((mem.sigStates?.size ?? 0) > 300_000) { mem.sigStates!.clear(); mem.sigLoaded?.clear(); }
     }
     const alerts = (await store.activeAlerts()).filter((a) => isLive(a, now));
     if (!alerts.length) return done({ ok: true, alerts: 0, tickers: 0, fired: 0 });
@@ -103,13 +115,18 @@ export async function runPriceAlerts(opts: { now?: Date; force?: boolean } = {})
 
     // tickers whose session (per the alert's setting) is open; single-ticker alerts first when over the cap
     const want = new Map<string, { daily: boolean; open: boolean; prio: number }>();
+    const sigNeeds = new Map<AlertMarket, Set<SignalSource>>();   // zzz1061
+    const sigAlerts: string[] = [];
     for (const a of alerts) {
       const ex = expansions.get(a.id)!;
       const daily = a.conditions.some((c) => needsDaily(c, a.interval));
       const open = a.conditions.some(needsOpen);
+      const srcs = sourcesFor(a.conditions);
+      if (srcs.size) sigAlerts.push(a.id);
       for (const mid of ex.mids) {
         const p = parseMid(mid);
         if (!p || !sessionOpen(p.market, a.session, now)) continue;
+        if (srcs.size) { const s = sigNeeds.get(p.market) || new Set<SignalSource>(); for (const x of srcs) s.add(x); sigNeeds.set(p.market, s); }
         const w = want.get(mid) || { daily: false, open: false, prio: 9 };
         w.daily ||= daily; w.open ||= open; w.prio = Math.min(w.prio, a.target.kind === 'ticker' ? 0 : 1);
         want.set(mid, w);
@@ -149,13 +166,35 @@ export async function runPriceAlerts(opts: { now?: Date; force?: boolean } = {})
       if (d) daily.set(m, d.figs);
     }
     const ctx: EvalCtx = { now, quotes, daily, prev: mem.prev, firedKeys: mem.firedKeys, expansions };
+
+    // zzz1061 — the app's own signals: states (Postgres, once per process per alert) + the data views the alerts need
+    let signalSources: string[] | undefined;
+    if (sigNeeds.size) {
+      const states = mem.sigStates || (mem.sigStates = new Map());
+      const loaded = mem.sigLoaded || (mem.sigLoaded = new Set());
+      const unseenAlerts = sigAlerts.filter((id) => !loaded.has(id));
+      if (unseenAlerts.length) {
+        const got = await store.loadSignalStates(unseenAlerts).catch(() => null);
+        if (got) { for (const id of unseenAlerts) loaded.add(id); for (const [k, v] of got) if (!states.has(k)) states.set(k, v); }
+      }
+      const { readSignalFeeds } = await import('./signal-sources');
+      const feeds = await readSignalFeeds(sigNeeds, now);
+      ctx.signals = { states, dirty: new Set(), feeds };
+      signalSources = [...sigNeeds].flatMap(([m, s]) => [...s].map((x) => `${m}:${x}${(feeds.get(m) as any)?.[x] ? '' : ' (unavailable)'}`));
+    }
     const rep = evaluateAlerts(alerts, ctx);
     let inserted: AlertEvent[];
     try { inserted = await store.insertEvents(rep.events); }
     catch (e) {
-      // not written → forget the "already sent" marks so the next minute tries again
+      // not written → forget the "already sent" marks so the next minute tries again, and put used signal edges back
       for (const ev of rep.events) mem.firedKeys.delete(firedKey(ev.alertId, ev.mid, ev.dedupeKey));
+      if (ctx.signals) for (const [k, st] of rep.consumed || []) ctx.signals.states.set(k, st);
       throw e;
+    }
+    let signalWrites = 0;
+    if (ctx.signals?.dirty.size) {
+      const rows = [...ctx.signals.dirty].flatMap((k) => { const st = ctx.signals!.states.get(k); return st ? [[k, st] as [string, SignalState]] : []; });
+      await store.saveSignalStates(rows).then(() => { signalWrites = rows.length; }).catch((e) => console.warn('[price-alerts] signal state save failed', e?.message || e));
     }
 
     const byAlert = new Map<string, { count: number; status: 'active' | 'triggered' }>();
@@ -167,7 +206,7 @@ export async function runPriceAlerts(opts: { now?: Date; force?: boolean } = {})
     }
     await store.recordFires(byAlert);
     const notified = await sendExternal(inserted, alertById);
-    return done({ ok: true, alerts: alerts.length, tickers: mids.length, quotes: quotes.size, dailyFetched: fresh.length, checked: rep.checked, waiting: rep.waiting, fired: inserted.length, notified, listErrors: listErrors.slice(0, 10), capped });
+    return done({ ok: true, alerts: alerts.length, tickers: mids.length, quotes: quotes.size, dailyFetched: fresh.length, checked: rep.checked, waiting: rep.waiting, fired: inserted.length, notified, listErrors: listErrors.slice(0, 10), capped, signalSources, signalWrites });
   } catch (e: any) {
     console.warn('[price-alerts] run failed', e?.message || e);
     return done({ ok: false, error: String(e?.message || e).slice(0, 300) });

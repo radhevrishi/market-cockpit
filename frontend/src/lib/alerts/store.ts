@@ -6,6 +6,7 @@ import { getPool, dbAvailable } from '@/lib/db';
 import { ensureSchema } from '@/lib/db-migrate';
 import { EVENT_CAP, EVENT_RETENTION_DAYS, MAX_ALERTS, type AlertEvent, type AlertInput, type AlertStatus, type PriceAlert } from './types';
 import type { DailyFigs } from './conditions';
+import type { SignalState } from './signals';
 
 export class AlertStoreUnavailable extends Error { constructor(msg = 'database not available — nothing was saved') { super(msg); } }
 export class AlertConflict extends Error { constructor(public current: PriceAlert | null) { super('This alert was changed elsewhere; reload and try again'); } }
@@ -207,4 +208,45 @@ export async function claimMinute(minuteIso: string): Promise<boolean> {
   const p = await pool();
   const r = await p.query(`UPDATE price_alert_meta SET v = $1 WHERE k = 'last_minute' AND v < $1 RETURNING k`, [minuteIso]);
   return (r.rowCount || 0) > 0;
+}
+
+// ── zzz1061: signal (state-change) condition states ─────────────────────────
+
+/** States of these alerts' signal conditions, keyed `${alertId}|${mid}|${condIdx}` (lib/alerts/signals signalKey). */
+export async function loadSignalStates(alertIds: string[]): Promise<Map<string, SignalState>> {
+  const out = new Map<string, SignalState>();
+  if (!alertIds.length) return out;
+  const p = await pool();
+  const rows = (await p.query('SELECT alert_id, mid, cond_idx, alert_version, state, src, edge FROM price_alert_signal WHERE alert_id = ANY($1::text[])', [alertIds])).rows;
+  for (const r of rows) {
+    out.set(`${r.alert_id}|${r.mid}|${Number(r.cond_idx)}`, { v: r.state == null ? null : Number(r.state), src: String(r.src), edge: r.edge ?? null, ver: Number(r.alert_version) });
+  }
+  return out;
+}
+/** Upserts changed states (batches of 200). */
+export async function saveSignalStates(rows: Array<[string, SignalState]>): Promise<void> {
+  if (!rows.length) return;
+  const p = await pool();
+  for (let i = 0; i < rows.length; i += 200) {
+    const part = rows.slice(i, i + 200);
+    const args: any[] = [];
+    const vals: string[] = [];
+    for (const [key, s] of part) {
+      const m = /^(.+?)\|(.+)\|(\d+)$/.exec(key);
+      if (!m) continue;
+      args.push(m[1], m[2], Number(m[3]), s.ver, s.v, s.src, s.edge);
+      const b = args.length - 7;
+      vals.push(`($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7}, now())`);
+    }
+    if (!vals.length) continue;
+    await p.query(`INSERT INTO price_alert_signal (alert_id, mid, cond_idx, alert_version, state, src, edge, updated_at) VALUES ${vals.join(',')}
+      ON CONFLICT (alert_id, mid, cond_idx) DO UPDATE SET alert_version = EXCLUDED.alert_version, state = EXCLUDED.state, src = EXCLUDED.src,
+        edge = EXCLUDED.edge, updated_at = now()`, args);
+  }
+}
+/** Housekeeping: states of deleted alerts (an edited alert's rows are overwritten in place: same key, new alert_version). */
+export async function pruneSignalStates(): Promise<number> {
+  const p = await pool();
+  const r = await p.query(`DELETE FROM price_alert_signal WHERE alert_id NOT IN (SELECT id FROM price_alert)`);
+  return r.rowCount || 0;
 }
