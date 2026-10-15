@@ -99,7 +99,7 @@ export function buildBookPayload(): { chatId: string; tickers: BookTickerPayload
     const decisions = readDecisions() as Record<string, any>;
     for (const sym of Object.keys(decisions || {})) {
       const d = decisions[sym];
-      const key = canon(sym);
+      const key = canon(String(d?.symbol || sym).replace(/^US:/, ''));   // zzz1041 — US decisions are keyed "US:SYMBOL"
       if (!key) continue;
       const e = upsert(key);
       if (d?.company && !e.company) e.company = String(d.company).slice(0, 120);

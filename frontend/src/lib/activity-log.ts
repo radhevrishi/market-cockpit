@@ -57,12 +57,13 @@ export function collectActivity(): ActivityItem[] {
 
   // ── Decisions (mc:decisions:v1) ───────────────────────────────────────
   const decisions = tryParse<Record<string, any>>('mc:decisions:v1', {});
-  for (const [ticker, d] of Object.entries(decisions)) {
+  for (const [key, d] of Object.entries(decisions)) {
     if (!d) continue;
+    const ticker = String(d.symbol || key).replace(/^US:/, '');   // zzz1041 — US decisions are keyed "US:SYMBOL"
     const ts = typeof d.date === 'string' ? new Date(d.date).getTime() : (typeof d.date === 'number' ? d.date : Date.now());
     if (!Number.isFinite(ts)) continue;
     out.push({
-      id: `dec-${ticker}-${ts}`,
+      id: `dec-${key}-${ts}`,
       kind: 'DECISION',
       ...KIND_META.DECISION,
       ts,

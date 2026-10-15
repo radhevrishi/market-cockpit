@@ -298,7 +298,7 @@ export function swingTile(pct: number | null | undefined, swing: SwingKind, fall
  * as optional slots and everything else on the card stays identical on both
  * tabs by construction.
  */
-export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, topRight }: {
+export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, topRight, footer }: {
   r: UsGradedRow; open: boolean; onToggle: () => void; panelId: string;
   /** Chips prepended to the chip row — the bench's tier, verdict, drift state
    *  and tradeability. They go in the CHIP ROW and not below the narrative on
@@ -306,6 +306,8 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
   extraChips?: React.ReactNode;
   /** Absolutely positioned in the card's top-right — the bench's remove ×. */
   topRight?: React.ReactNode;
+  /** zzz1041 — one line above the expand strip: the bench's Bought · Watchlist · Rejected mark. */
+  footer?: React.ReactNode;
 }) {
   const meta = TIER_META[r.tier];
   // zzz696 — badge chips are opt-in; the tier, PRELIM and the numbers are not.
@@ -622,6 +624,7 @@ export function UsEarningsCard({ r, open, onToggle, panelId: pid, extraChips, to
           are simply gone; the chips and the PRELIM note had no copy there and were
           moved into the panel's METHODOLOGY & CAVEATS section. ─────────────── */}
 
+      {footer && <div style={{ marginTop: 8, paddingTop: 6, borderTop: '1px dashed var(--mc-bg-4)' }}>{footer}</div>}
       {/* ── the expand strip · every card gets one, however sparse the row ── */}
       <button type="button" onClick={onToggle} aria-expanded={open} aria-controls={pid} style={moreStrip(open)}>
         {open

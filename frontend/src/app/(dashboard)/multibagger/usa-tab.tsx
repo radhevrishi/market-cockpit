@@ -421,7 +421,7 @@ export function USACompare() {
   // PATCH 0347 — decision filter for USA
   if (usDecisionFilter !== 'ALL') {
     filtered = filtered.filter(r => {
-      const d = getDecision(r.symbol);
+      const d = getDecision(r.symbol, 'US');
       if (usDecisionFilter === 'WITH') return !!d;
       if (usDecisionFilter === 'NONE') return !d;
       return d?.status === usDecisionFilter;
@@ -468,7 +468,7 @@ export function USACompare() {
       {/* zzz214 — score movers since the previous upload/refresh */}
       <ScoreMoversStrip rows={rows} prevKey="mb_usa_prev_scores_v1" />
       {/* THESIS DRIFT — current re-score vs Decision Logbook (REOPEN / BREAK) */}
-      <ThesisDriftStrip rows={rows} />
+      <ThesisDriftStrip rows={rows} market="US" />
       {/* Header */}
       <div style={{marginBottom:20,padding:'18px 20px',backgroundColor:CARD_BG,border:`1px solid ${BORDER}`,borderRadius:12}}>
         <div style={{fontSize:F.lg,fontWeight:800,color:'#38bdf8',marginBottom:8}}>🇺🇸 USA Multibagger — TradingView Export</div>
@@ -654,7 +654,7 @@ export function USACompare() {
               ]).map(({k,label,col})=>(
                 <button key={k} onClick={()=>setUsDecisionFilter(p=>p===k?'ALL':k)} style={{fontSize:F.xs,fontWeight:700,padding:'4px 9px',borderRadius:6,
                   border:`1px solid ${usDecisionFilter===k?col+'60':BORDER}`,background:usDecisionFilter===k?col+'18':'transparent',color:usDecisionFilter===k?col:MUTED,cursor:'pointer'}}>
-                  {label} {k!=='ALL' && `(${rows.filter(r=>getDecision(r.symbol)?.status===k).length})`}
+                  {label} {k!=='ALL' && `(${rows.filter(r=>getDecision(r.symbol, 'US')?.status===k).length})`}
                 </button>
               ))}
 

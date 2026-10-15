@@ -2,7 +2,7 @@
 import { scoreExcelRow as mbScoreIndia, type ExcelRow as MbIndiaRow, applyForcedRanking as mbApplyRanking } from '@/lib/multibagger-india-scoring';
 import { getConvictionTickers, getConvictionList } from '@/lib/conviction-beats';
 import { canonicalTicker } from '@/lib/ticker-normalize';
-import { readDecisions } from '@/lib/decisions';
+import { readDecisions, decisionLookup } from '@/lib/decisions';
 import { istToday as _istToday } from '@/lib/market-hours';
 import { type FetchJsonResult, fetchJson, readJsonMemo } from '@/lib/client-fetch';
 import type { PortfolioHolding, TierAction, ChangedRow, HomeState } from './types';
@@ -188,7 +188,7 @@ export function buildSyncState(indiaOverride?: any[]): Pick<HomeState, 'tier1' |
     // as a badge on the card (BUY / WATCH / REJECTED). With the new decision-
     // exclusion-removed filter, Tier 1 includes logged stocks; the badge tells
     // the user "you already logged this" instead of hiding the row.
-    const decisionEntry = decisions[(r.symbol || '').toUpperCase()];
+    const decisionEntry = decisionLookup(decisions, r.symbol || '', r._market === 'US' ? 'US' : 'IN');   // zzz1041 — per market
     const decisionStatus = decisionEntry?.status as string | undefined;
     return {
       symbol: r.symbol, company: r.company || r.companyName,
@@ -225,7 +225,7 @@ export function buildSyncState(indiaOverride?: any[]): Pick<HomeState, 'tier1' |
     const strict = rows
       .filter((r: any) => (r.grade === 'A+' || r.grade === 'A')
                        && cbSet.has(symKey(r.symbol))
-                       && !decisions[(r.symbol || '').toUpperCase()])
+                       && !decisionLookup(decisions, r.symbol || '', mkt))
       .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
       .map((r: any) => buildTier(r, true));
     let list = strict.slice(0, TIER1_PER_MARKET);
@@ -265,7 +265,7 @@ export function buildSyncState(indiaOverride?: any[]): Pick<HomeState, 'tier1' |
   try {
     if (typeof window !== 'undefined') {
       const indiaAgrade = indiaRows.filter((r: any) => r.grade === 'A+' || r.grade === 'A').length;
-      const indiaInDecisions = indiaRows.filter((r: any) => decisions[(r.symbol || '').toUpperCase()]).length;
+      const indiaInDecisions = indiaRows.filter((r: any) => decisionLookup(decisions, r.symbol || '', 'IN')).length;
       const indiaInCB = indiaRows.filter((r: any) => cbSet.has(symKey(r.symbol))).length;
       const decisionCount = Object.keys(decisions).length;
       console.log(`[home] Tier 1 India build: ${indiaRows.length} rows · ${indiaAgrade} A-grade · ${indiaInCB} on CB · ${indiaInDecisions} in decisions (log size: ${decisionCount}) → ${tier1India.length} on Tier 1`);

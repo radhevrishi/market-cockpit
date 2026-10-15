@@ -649,7 +649,7 @@ export default function DecisionsPage() {
                 {rows.map((d, i) => {
                   const meta = DECISION_META[d.status];
                   return (
-                    <tr key={d.symbol} style={{ borderBottom: i < rows.length - 1 ? `1px solid ${BORDER}` : 'none', background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
+                    <tr key={`${d.market}:${d.symbol}`} style={{ borderBottom: i < rows.length - 1 ? `1px solid ${BORDER}` : 'none', background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
                       <td style={td}>
                         <span style={{
                           display: 'inline-flex', alignItems: 'center', gap: 4,
@@ -752,7 +752,7 @@ export default function DecisionsPage() {
                             toast((t) => (
                               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                                 <span>Remove decision for <strong>{d.symbol}</strong>?</span>
-                                <button onClick={() => { clearDecision(d.symbol); toast.dismiss(t.id); toast.success(`${d.symbol} removed`); }}
+                                <button onClick={() => { clearDecision(d.symbol, d.market); toast.dismiss(t.id); toast.success(`${d.symbol} removed`); }}
                                   style={{ padding: '4px 10px', background: 'var(--mc-bearish)', color: '#fff', borderRadius: 4, border: 0, cursor: 'pointer', fontSize: 12 }}>Delete</button>
                                 <button onClick={() => toast.dismiss(t.id)}
                                   style={{ padding: '4px 10px', background: 'transparent', color: 'var(--mc-text-3)', borderRadius: 4, border: '1px solid var(--mc-border-2)', cursor: 'pointer', fontSize: 12 }}>Cancel</button>

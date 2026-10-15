@@ -60,31 +60,89 @@ function writeDecisions(map: Record<string, Decision>) {
   } catch {}
 }
 
-/** Get a single decision (or undefined) */
-export function getDecision(symbol: string): Decision | undefined {
+// zzz1041 — decisions are per symbol AND market. India keeps the plain
+// symbol as its key (every existing India entry is already stored that way);
+// US entries live under "US:SYMBOL" so a US name and an NSE name with the same
+// letters (INFY, TTM …) never overwrite each other. A legacy US entry stored
+// under the plain symbol is still found for US and is moved to "US:" on its
+// next write.
+export function normalizeDecisionSymbol(symbol: string): string {
+  return String(symbol || '').toUpperCase().trim()
+    .split('@')[0]
+    .replace(/^(NSE|BSE|NASDAQ|NYSE|AMEX|NYSEARCA|OTC):/, '')
+    .replace(/\.(NS|BO)$/, '');
+}
+
+/** The storage key for a symbol in a market. */
+export function decisionKey(symbol: string, market: DecisionMarket): string {
+  const s = normalizeDecisionSymbol(symbol);
+  return market === 'US' ? `US:${s}` : s;
+}
+
+/** Find the decision for a symbol in one market inside a decisions map (pure). */
+export function decisionLookup(map: Record<string, Decision> | null | undefined, symbol: string, market: DecisionMarket): Decision | undefined {
+  if (!map || !symbol) return undefined;
+  const s = normalizeDecisionSymbol(symbol);
+  if (!s) return undefined;
+  if (market === 'US') {
+    const q = map[`US:${s}`];
+    if (q) return q;
+    const plain = map[s];
+    return plain && plain.market === 'US' ? plain : undefined;
+  }
+  const plain = map[s];
+  return plain && plain.market !== 'US' ? plain : undefined;
+}
+
+/** Get a single decision (or undefined). With `market`, the lookup is
+ *  market-aware (see decisionKey); without it, the plain symbol key (legacy). */
+export function getDecision(symbol: string, market?: DecisionMarket): Decision | undefined {
   if (!symbol) return undefined;
   const map = readDecisions();
+  if (market) return decisionLookup(map, symbol, market);
   return map[symbol.toUpperCase().trim()];
 }
 
-/** Upsert a decision */
+/** Upsert a decision (stored under its market's key — see decisionKey). */
 export function setDecision(d: Omit<Decision, 'date'> & { date?: string }): Decision {
   const map = readDecisions();
-  const key = d.symbol.toUpperCase().trim();
+  const market: DecisionMarket = d.market === 'US' ? 'US' : 'IN';
+  const sym = normalizeDecisionSymbol(d.symbol);
+  const key = decisionKey(sym, market);
   const entry: Decision = {
     ...d,
-    symbol: key,
+    symbol: sym,
+    market,
     date: d.date ?? new Date().toISOString(),
   };
+  const plain = map[sym];
+  if (market === 'US') {
+    // a legacy US entry under the plain symbol is replaced by this one
+    if (plain && plain.market === 'US') delete map[sym];
+  } else if (plain && plain.market === 'US' && !map[`US:${sym}`]) {
+    // an India write must not overwrite a legacy US entry: move it to its US key first
+    map[`US:${sym}`] = plain;
+  }
   map[key] = entry;
   writeDecisions(map);
   return entry;
 }
 
-/** Remove a decision (set to no-decision) */
-export function clearDecision(symbol: string) {
+/** Remove a decision (set to no-decision). With `market`, only that market's
+ *  entry is removed; without it, the plain symbol key (legacy). */
+export function clearDecision(symbol: string, market?: DecisionMarket) {
   const map = readDecisions();
-  delete map[symbol.toUpperCase().trim()];
+  if (market) {
+    const s = normalizeDecisionSymbol(symbol);
+    if (market === 'US') {
+      delete map[`US:${s}`];
+      if (map[s]?.market === 'US') delete map[s];
+    } else if (map[s] && map[s].market !== 'US') {
+      delete map[s];
+    }
+  } else {
+    delete map[symbol.toUpperCase().trim()];
+  }
   writeDecisions(map);
 }
 

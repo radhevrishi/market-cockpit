@@ -89,9 +89,13 @@ export function DriftPath({ entry, width = 130, height = 26, showLabels = true }
 
 // zzz247 — Institutional table view. Sortable columns for analysts who want to
 // scan 42+ rows in 3 seconds. Same filter set, denser layout.
-export function ConvictionTable({ entries, onRemove, sort, setSort }: {
+export function ConvictionTable({ entries, onRemove, sort, setSort, renderMark, dimOf }: {
   entries: ConvictionEntry[]; onRemove: (t: string) => void;
   sort: { col: string; dir: 'asc'|'desc' }; setSort: (s: { col: string; dir: 'asc'|'desc' }) => void;
+  /** zzz1041 — the Bought · Watchlist · Rejected control for a row (its own column). */
+  renderMark?: (e: ConvictionEntry) => React.ReactNode;
+  /** zzz1041 — rows shown greyed (marked Rejected). */
+  dimOf?: (e: ConvictionEntry) => boolean;
 }) {
   const cols: Array<{ key: string; label: string; align?: string; get: (e: any) => any }> = [
     { key: 'tier',      label: 'Tier',    get: (e) => e.tier === 'BLOCKBUSTER' ? 1 : 0 },
@@ -141,6 +145,7 @@ export function ConvictionTable({ entries, onRemove, sort, setSort }: {
                 {c.label}{arrow(c.key)}
               </th>
             ))}
+            {renderMark && <th style={{ ...th, cursor: 'default' }}>Your mark</th>}
             <th style={{ ...th, textAlign: 'center' }}>·</th>
           </tr>
         </thead>
@@ -149,7 +154,7 @@ export function ConvictionTable({ entries, onRemove, sort, setSort }: {
             const tierColor = e.tier === 'BLOCKBUSTER' ? '#F59E0B' : '#10B981';
             const tierLbl = e.tier === 'BLOCKBUSTER' ? '⭐' : '🟢';
             return (
-              <tr key={e.ticker + (e.filing_date || '')} style={{ transition: 'background 0.1s', ...(cbIsRemoved(e) ? { opacity: 0.45 } : {}) }}
+              <tr key={e.ticker + (e.filing_date || '')} style={{ transition: 'background 0.1s', ...(cbIsRemoved(e) ? { opacity: 0.45 } : {}), ...(dimOf?.(e) ? { opacity: 0.45, filter: 'grayscale(0.85)' } : {}) }}
                 onMouseEnter={(ev) => { (ev.currentTarget as HTMLElement).style.background = 'var(--mc-bg-2)'; }}
                 onMouseLeave={(ev) => { (ev.currentTarget as HTMLElement).style.background = 'transparent'; }}>
                 <td style={{ ...td, color: tierColor, fontWeight: 800 }}>{tierLbl}</td>
@@ -176,6 +181,7 @@ export function ConvictionTable({ entries, onRemove, sort, setSort }: {
                 <td style={{ ...td, textAlign: 'right', color: 'var(--mc-text-2)' }}>{fmtNum((e as any).pe) === '—' ? '—' : fmtNum((e as any).pe) + 'x'}</td>
                 <td style={{ ...td, textAlign: 'right', color: pctColor((e as any).d1_pct) }}>{fmtPct((e as any).d1_pct)}</td>
                 <td style={{ ...td, textAlign: 'right', color: pctColor((e as any).move_pct), fontWeight: 700 }}>{fmtPct((e as any).move_pct)}</td>
+                {renderMark && <td style={{ ...td, padding: '3px 8px' }}>{renderMark(e)}</td>}
                 <td style={{ ...td, textAlign: 'center' }}>
                   <button onClick={() => onRemove(e.ticker)} title="Remove"
                     style={{ background: 'none', border: 'none', color: 'var(--mc-text-4)', cursor: 'pointer', padding: 0, fontSize: 13 }}>×</button>
@@ -189,7 +195,9 @@ export function ConvictionTable({ entries, onRemove, sort, setSort }: {
   );
 }
 
-export function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }: { entry: ConvictionEntry; onRemove: (t: string) => void; density?: 'comfy'|'compact'|'ultra'; radarEntry?: any }) {
+export function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry, markSlot, markBadge, dimmed }: { entry: ConvictionEntry; onRemove: (t: string) => void; density?: 'comfy'|'compact'|'ultra'; radarEntry?: any;
+  /** zzz1041 — Bought · Watchlist · Rejected control (bottom of the card), its badge (top-right) and the greyed look for Rejected. */
+  markSlot?: React.ReactNode; markBadge?: React.ReactNode; dimmed?: boolean }) {
   const tierColor = entry.tier === 'BLOCKBUSTER' ? '#F59E0B' : '#10B981';
   // zzz827 — growth the EO way: '>500% (low base)' instead of '+2810%'.
   const pct = (v: number | null) => cbGrowthText(v);
@@ -211,6 +219,7 @@ export function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }
         transition: 'transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease',
         willChange: 'transform',
         ...(cbIsRemoved(entry) ? { opacity: 0.45, filter: 'grayscale(0.8)' } : {}),   // zzz879
+        ...(dimmed ? { opacity: 0.45, filter: 'grayscale(0.85)' } : {}),   // zzz1041 — marked Rejected, shown
       }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -257,6 +266,7 @@ export function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }
         {/* zzz254 — right-side stack: TierPill + Composite bar + PEAD bar + × */}
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {markBadge}
             <TierPill tier={entry.tier} />
             <button onClick={() => onRemove(entry.ticker)} title="Remove from Conviction Beats"
               style={{ background: 'none', border: 'none', color: 'var(--mc-text-4)', cursor: 'pointer', padding: '2px 6px', fontSize: 15, lineHeight: 1, marginLeft: 2 }}>×</button>
@@ -1141,6 +1151,9 @@ export function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry }
       })()}
       {/* zzz245 — Filing link moved to ticker; bottom-of-card link removed for
           institutional cleanliness. */}
+      {markSlot && (
+        <div style={{ borderTop: '1px dashed var(--mc-bg-4)', paddingTop: density === 'ultra' ? 3 : 5, marginTop: 1 }}>{markSlot}</div>
+      )}
     </div>
   );
 }

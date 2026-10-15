@@ -55,6 +55,8 @@ import { DeskHeader, deskNumerals } from '@/components/desk-chrome';
 import { usEasternDate } from '@/lib/us-earnings-dates';
 import { decodeHTMLEntities } from '@/lib/html-decode';
 import { US_ENGINE_VERSION } from '@/lib/us-engine-version';
+import { CbMarkControl, CbMarkBadge, CbMarkFilterRow, CbRejectedToggle, CB_REJECTED_DIM, useDecisionsMap } from '@/components/CbMarkControl';
+import { applyCbMarks, cbMarkReader, type CbMarkFilter } from '@/lib/cb-decisions';
 
 const OPT_OUT_KEY = US_CB_OPTOUT_KEY; // zzz811 — shared with US Portfolio Catalysts
 const SWEEP_KEY = 'mc:us-cb:lastsweep:v1';
@@ -777,7 +779,12 @@ export default function UsConvictionBeatsPage() {
     return m;
   }, [entries, filters, newWindow]);
   const usNotChecked = useMemo(() => entries.filter((e) => usCheckOf.get(e)?.state === 'unknown'), [entries, usCheckOf]);
-  const filtered = useMemo(() => {
+  // zzz1041 — Bought · Watchlist · Rejected marks (decision logbook, US key "US:TICKER").
+  const decisionsMap = useDecisionsMap();
+  const markReader = useMemo(() => cbMarkReader(decisionsMap, 'US'), [decisionsMap]);
+  const [markFilter, setMarkFilter] = useState<CbMarkFilter>('all');
+  const [showRejected, setShowRejected] = useState(false);
+  const filteredPre = useMemo(() => {
     let rows = entries.filter((e) => usCheckOf.get(e)?.state !== 'fail');
     // The funnel and the bucket chips are filters like any other — clicking a
     // stage shows exactly what survived it, which is the only way to check the
@@ -827,6 +834,16 @@ export default function UsConvictionBeatsPage() {
       return (b.composite_score ?? 0) - (a.composite_score ?? 0);
     });
   }, [entries, filters, sort, sortDir, newWindow, bucketFilter, funnelStop, funnel, confFilter, confOf, patternOnly, usCheckOf]);
+  // zzz1041 — the mark layer on top of every other filter. The preset counts as
+  // ON whenever its gates are live (the chip's own "ON · customised" rule):
+  // Rejected names are then hidden (or shown greyed on "show") and never exported.
+  const presetForMarks = isUsPresetActive(filters) || (['sales', 'eps', 'pead', 'opmDelta', 'cfoPatMin', 'mktCapMin'] as const).some((k) => (filters as any)[k] != null);
+  const markRes = useMemo(() => applyCbMarks(filteredPre, {
+    markOf: (e) => markReader(e.ticker).mark, presetOn: presetForMarks, showRejected, filter: markFilter,
+  }), [filteredPre, markReader, presetForMarks, showRejected, markFilter]);
+  const filtered = markRes.visible;
+  /** What the exports carry: the list shown, minus Rejected while the preset is on. */
+  const exportRows = markRes.exportRows;
 
   // ═══ WHY NAMES ARE HIDDEN  (zzz828) ════════════════════════════════════
   // Per criterion, how many names it hides, each with its failing figure
@@ -851,13 +868,13 @@ export default function UsConvictionBeatsPage() {
   const hiddenBySize = useMemo(() => {
     if (!filters.cap || filters.cap === 'all') return [] as UsConvictionEntry[];
     const anyCap = { ...filters, cap: 'all' };
-    const shown = new Set(filtered.map((e) => `${e.ticker}|${e.filing_date}`));
+    const shown = new Set(filteredPre.map((e) => `${e.ticker}|${e.filing_date}`));
     return entries
       .filter((e) => (e.tier === 'BLOCKBUSTER' || e.tier === 'STRONG')
         && usCbCriteriaCheck(e, anyCap as UsConvFilters, newWindow).state !== 'fail'
         && !shown.has(`${e.ticker}|${e.filing_date}`))
       .sort((a, b) => (b.composite_score ?? 0) - (a.composite_score ?? 0));
-  }, [entries, filters, filtered, newWindow]);
+  }, [entries, filters, filteredPre, newWindow]);
 
   /** How many names a single filter change would leave — the "(N)" on chips. */
   const countWith = useCallback((patch: Partial<UsConvFilters>) => {
@@ -969,7 +986,7 @@ export default function UsConvictionBeatsPage() {
     const head = ['Ticker', 'Company', 'Tier', 'Now under current rules', 'Quadrant', 'Quality', 'Inflection', 'Quality read', 'Engine rank', 'Quarter', 'Filed', 'Rev YoY %', 'NI YoY %', 'EPS YoY %',
       'OPM %', 'OPM prev %', 'CFO/NI', 'CFO/NI period', 'Rule of 40', 'R40 basis', 'ROCE %', 'Post-results drift', 'Relative strength', 'Stage', '% from 52w high', 'ADDV $M', 'Mkt cap $M', 'Price', 'P/E',
       'D1 %', 'Since %', 'Sector', 'Caveats', 'SEC'];
-    const body = filtered.map((e) => { const cr = usCashRatio(e); return [e.ticker, decodeHTMLEntities(e.company), e.tier, e.now_tier ?? '',
+    const body = exportRows.map((e) => { const cr = usCashRatio(e); return [e.ticker, decodeHTMLEntities(e.company), e.tier, e.now_tier ?? '',
       e.quadrant ?? '', e.quality_score != null ? usScoreWord(e.quality_score) : '', e.inflection_score != null ? usScoreWord(e.inflection_score) : '',
       usVerdictWord(usVerdict(e).verdictLabel), usScoreWord(e.composite_score), e.quarter, e.filing_date,
       e.sales_yoy_pct?.toFixed(1), e.net_profit_yoy_pct?.toFixed(1), e.eps_yoy_pct?.toFixed(1),
@@ -998,8 +1015,8 @@ export default function UsConvictionBeatsPage() {
    * discard. See lib/us-tradingview.ts.
    */
   const exportTv = useCallback(async (mode: 'copy' | 'download') => {
-    if (!filtered.length) { toast.error('Nothing passes the current filters'); return; }
-    const tickers = filtered.map((e) => e.ticker);
+    if (!exportRows.length) { toast.error('Nothing passes the current filters'); return; }
+    const tickers = exportRows.map((e) => e.ticker);
     // Paint from whatever is already cached, then top up over the network. A
     // failed fetch degrades to bare tickers, never to a wrong prefix.
     let venues: Record<string, string | null> = knownExchanges(tickers);
@@ -1029,12 +1046,12 @@ export default function UsConvictionBeatsPage() {
       const d = usFilingAgeDays(e.filing_date);
       return d != null && d <= _newDays;
     };
-    const _fresh = filtered.filter(_isFresh);
+    const _fresh = exportRows.filter(_isFresh);
     const out = buildTvExport([
       { label: `NEW ${_newDays}D`, rows: rowsOf(_fresh) },
-      { label: 'ELITE', rows: rowsOf(filtered.filter((e) => e.is_elite)) },
-      { label: 'BLOCKBUSTER', rows: rowsOf(filtered.filter((e) => e.tier === 'BLOCKBUSTER')) },
-      { label: 'STRONG', rows: rowsOf(filtered.filter((e) => e.tier === 'STRONG')) },
+      { label: 'ELITE', rows: rowsOf(exportRows.filter((e) => e.is_elite)) },
+      { label: 'BLOCKBUSTER', rows: rowsOf(exportRows.filter((e) => e.tier === 'BLOCKBUSTER')) },
+      { label: 'STRONG', rows: rowsOf(exportRows.filter((e) => e.tier === 'STRONG')) },
     ]);
     if (!out.count) { toast.error('Nothing to copy'); return; }
     const tail = out.unresolved.length
@@ -1050,9 +1067,10 @@ export default function UsConvictionBeatsPage() {
     // vanished (or, if TradingView still holds an older paste, to have
     // appeared from nowhere). Stating the count against the whole bench makes
     // the two impossible to confuse.
-    const held = entries.length - filtered.length;
+    const held = entries.length - exportRows.length;
+    const rej = filtered.length - exportRows.length + markRes.rejectedHidden.length;
     const scope = held > 0
-      ? ` · ${filtered.length} of ${entries.length} on the bench — ${held} excluded by the current filters`
+      ? ` · ${exportRows.length} of ${entries.length} on the bench — ${held} excluded by the current filters${rej > 0 ? ` (incl. ${rej} you marked Rejected)` : ''}`
       : ` · the whole bench (${entries.length})`;
 
     if (mode === 'download') {
@@ -1071,7 +1089,7 @@ export default function UsConvictionBeatsPage() {
       download(`us-conviction-beats-${etToday()}-tradingview.txt`, out.text, 'text/plain');
       toast.error('Clipboard blocked — downloaded the list as a file instead');
     }
-  }, [filtered, newWindow, entries.length]);
+  }, [exportRows, filtered.length, markRes.rejectedHidden.length, newWindow, entries.length]);
 
   return (
     <div style={{ padding: 20, maxWidth: 1500, margin: '0 auto', ...deskNumerals }}>
@@ -1606,11 +1624,18 @@ export default function UsConvictionBeatsPage() {
         <span><b style={{ color: '#F59E0B' }}>{tierCounts.BLOCKBUSTER}</b> blockbuster</span>
         <span><b style={{ color: '#10B981' }}>{tierCounts.STRONG}</b> strong</span>
         <span><b style={{ color: 'var(--mc-text-0)' }}>{filtered.length}</b> passing filters</span>
+        {markFilter === 'all' && (markRes.rejectedHidden.length > 0 || (showRejected && presetForMarks && markRes.rejectedTotal > 0)) && (
+          <CbRejectedToggle count={showRejected ? markRes.rejectedTotal : markRes.rejectedHidden.length} showing={showRejected} onToggle={() => setShowRejected((v) => !v)} />
+        )}
         <span data-testid="us-cb-names" title="Unique names — an archived quarter of a name already shown is not a second name. US Portfolio Catalysts' 🏆 Conviction Beats view shows these same names."><b style={{ color: 'var(--mc-text-0)' }}>{filteredNames}</b> names</span>
         <span style={{ flex: 1 }} />
         <span style={{ color: 'var(--mc-text-3)' }}>
           {sweeping ? 'reloading…' : `window ${WINDOWS.find(([, n]) => n === benchWindow)?.[0] ?? `${benchWindow} sessions`}`}
         </span>
+      </div>
+      {/* zzz1041 — YOUR MARK chips (AND with every other filter) */}
+      <div style={{ marginBottom: 12 }}>
+        <CbMarkFilterRow value={markFilter} onChange={setMarkFilter} counts={markRes.counts} presetOn={presetForMarks} />
       </div>
       {/* ── THE ANSWER WHEN A SEARCH FINDS NOTHING ───────────────────── */}
       {filters.q.trim() && filtered.length === 0 && lookup.state === 'idle' && (
@@ -1777,14 +1802,14 @@ export default function UsConvictionBeatsPage() {
           {filtered.map((e) => {
             const k = cardKey(e);
             return (
-              <BenchCard key={k} e={e} conf={confOf(e)}
+              <BenchCard key={k} e={e} conf={confOf(e)} mark={markReader(e.ticker)}
                 open={openCards.has(k)} onToggle={() => toggleCard(k)}
                 onRemove={() => { removeUsConviction(e.bench_key || e.ticker); reload(); }} />
             );
           })}
         </div>
       ) : (
-        <BenchTable rows={filtered} sort={sort} dir={sortDir} onSort={setSortKey} onRemove={(t) => { removeUsConviction(t); reload(); }} />
+        <BenchTable rows={filtered} sort={sort} dir={sortDir} onSort={setSortKey} onRemove={(t) => { removeUsConviction(t); reload(); }} markOf={markReader} />
       )}
 
       <style>{'@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}'}</style>
@@ -1849,8 +1874,10 @@ function ChipRow<T extends number>({ label, value, opts, fmt, onSet, count }: {
  *   • the two tag arrays, which the card reads `.length` off.
  * Nothing else is touched, and nothing is invented.
  */
-function BenchCard({ e, open, onToggle, onRemove, conf }: {
+function BenchCard({ e, open, onToggle, onRemove, conf, mark }: {
   e: UsConvictionEntry; open: boolean; onToggle: () => void; onRemove: () => void;
+  /** zzz1041 — the owner's Bought · Watchlist · Rejected mark for this ticker. */
+  mark?: ReturnType<ReturnType<typeof cbMarkReader>>;
   /** zzz651 — what the rotation board says about this name's neighbourhood.
    *  Passed down rather than recomputed so the card and the strip at the top
    *  of the page can never disagree. */
@@ -1873,7 +1900,7 @@ function BenchCard({ e, open, onToggle, onRemove, conf }: {
 
   return (
     // zzz879 — older than 60 days: greyed out, still on the bench.
-    <div style={aged ? { opacity: 0.45, filter: 'grayscale(0.7)' } : undefined}
+    <div style={mark?.mark === 'rejected' ? CB_REJECTED_DIM : aged ? { opacity: 0.45, filter: 'grayscale(0.7)' } : undefined}
       title={aged ? `Filed ${age} days ago — older than ${US_BENCH_AGED_DAYS} days, greyed out. Still on the bench for its history.` : undefined}>
     <UsEarningsCard
       r={row as any}
@@ -1881,11 +1908,18 @@ function BenchCard({ e, open, onToggle, onRemove, conf }: {
       onToggle={onToggle}
       panelId={`us-cb-panel-${String(e.bench_key || e.ticker).replace(/[^A-Za-z0-9_-]/g, '-')}`}
       topRight={
-        <button onClick={onRemove} title="Remove from bench"
-          style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--mc-text-4)', padding: 2, lineHeight: 0 }}>
-          <X className="w-3 h-3" />
-        </button>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          {mark && <CbMarkBadge mark={mark.mark} />}
+          <button onClick={onRemove} title="Remove from bench"
+            style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--mc-text-4)', padding: 2, lineHeight: 0 }}>
+            <X className="w-3 h-3" />
+          </button>
+        </span>
       }
+      footer={mark ? (
+        <CbMarkControl ticker={e.ticker} market="US" mark={mark.mark} decision={mark.decision}
+          company={decodeHTMLEntities(e.company)} price={e.price ?? null} score={e.composite_score ?? null} grade={e.tier} />
+      ) : undefined}
       extraChips={
         <>
           {/* AN EARLIER QUARTER IS NOT A DUPLICATE CARD.
@@ -1946,7 +1980,9 @@ function BenchCard({ e, open, onToggle, onRemove, conf }: {
   );
 }
 
-function BenchTable({ rows, sort, dir, onSort, onRemove }: { rows: UsConvictionEntry[]; sort: SortKey; dir: 'asc' | 'desc'; onSort: (k: SortKey) => void; onRemove: (t: string) => void }) {
+function BenchTable({ rows, sort, dir, onSort, onRemove, markOf }: { rows: UsConvictionEntry[]; sort: SortKey; dir: 'asc' | 'desc'; onSort: (k: SortKey) => void; onRemove: (t: string) => void;
+  /** zzz1041 — the owner's mark per ticker (its own column; Rejected rows greyed). */
+  markOf?: ReturnType<typeof cbMarkReader> }) {
   const th = (label: string, k?: SortKey, left = false): React.CSSProperties & { children?: any } => ({
     textAlign: left ? 'left' : 'right', padding: '8px 10px', fontSize: 10, fontWeight: 800, whiteSpace: 'nowrap',
     color: k && sort === k ? 'var(--mc-cyan)' : 'var(--mc-text-3)', borderBottom: '1px solid var(--mc-bg-4)',
@@ -1971,7 +2007,7 @@ function BenchTable({ rows, sort, dir, onSort, onRemove }: { rows: UsConvictionE
             <th style={th('ROCE')} title="TTM operating income ÷ (total assets − current liabilities). Blank for a filer with no classified balance sheet.">ROCE</th>
             <H label="PEAD" k="pead" /><th style={th('RS')}>RS</th><th style={th('Stg')}>Stg</th>
             <H label="$Vol/d" k="addv" /><H label="Mkt cap" k="mcap" /><H label="P/E" k="pe" /><th style={th('D1')}>D1</th>
-            <H label="Since" k="drift" /><H label="Filed" k="fresh" left /><th style={th('')} />
+            <H label="Since" k="drift" /><H label="Filed" k="fresh" left />{markOf && <th style={th('Your mark', undefined, true)}>Your mark</th>}<th style={th('')} />
           </tr>
         </thead>
         <tbody>
@@ -1985,7 +2021,7 @@ function BenchTable({ rows, sort, dir, onSort, onRemove }: { rows: UsConvictionE
             const roce = usRoce(e);
             const qm = e.quadrant ? QUADRANT_META[e.quadrant] : null;
             return (
-              <tr key={`${e.ticker}-${e.filing_date}`} style={{ borderBottom: '1px solid var(--mc-bg-3)', ...(isUsBenchAged(e) ? { opacity: 0.45 } : {}) }} title={isUsBenchAged(e) ? `Filed more than ${US_BENCH_AGED_DAYS} days ago — greyed out` : undefined}>
+              <tr key={`${e.ticker}-${e.filing_date}`} style={{ borderBottom: '1px solid var(--mc-bg-3)', ...(isUsBenchAged(e) ? { opacity: 0.45 } : {}), ...(markOf?.(e.ticker).mark === 'rejected' ? CB_REJECTED_DIM : {}) }} title={isUsBenchAged(e) ? `Filed more than ${US_BENCH_AGED_DAYS} days ago — greyed out` : undefined}>
                 <td style={{ ...td, textAlign: 'left', fontWeight: 800, color: 'var(--mc-text-0)' }}>
                   {e.source_url ? <a href={e.source_url} target="_blank" rel="noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>{e.ticker}</a> : e.ticker}
                 </td>
@@ -2034,6 +2070,10 @@ function BenchTable({ rows, sort, dir, onSort, onRemove }: { rows: UsConvictionE
                 <td style={{ ...td, color: (e.d1_pct ?? 0) >= 0 ? '#10B981' : '#EF4444' }}>{fmtPct(e.d1_pct, 1)}</td>
                 <td style={{ ...td, color: ds === 'DRIFTING' ? '#EF4444' : ds === 'FADING' ? '#F59E0B' : (e.move_pct ?? 0) >= 0 ? '#10B981' : 'var(--mc-text-2)', fontWeight: ds === 'DRIFTING' ? 800 : undefined }}>{fmtPct(e.move_pct, 1)}</td>
                 <td style={{ ...td, textAlign: 'left', color: 'var(--mc-text-3)' }}>{e.filing_date}</td>
+                {markOf && (() => { const m = markOf(e.ticker); return (
+                  <td style={{ ...td, textAlign: 'left', padding: '4px 10px' }}>
+                    <CbMarkControl ticker={e.ticker} market="US" mark={m.mark} decision={m.decision} company={decodeHTMLEntities(e.company)} price={e.price ?? null} score={e.composite_score ?? null} grade={e.tier} variant="row" />
+                  </td>); })()}
                 <td style={td}><button onClick={() => onRemove(e.ticker)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--mc-text-4)' }}><X className="w-3 h-3" /></button></td>
               </tr>
             );

@@ -85,15 +85,15 @@ export function DecisionBar({ symbol, company, market, score, grade, currentPric
   currentPrice?: number;  // PATCH 0852 — snapshotted at decision time for buy-the-dip helper
   bump: () => void;
 }) {
-  const existing = getDecision(symbol);
+  const existing = getDecision(symbol, market);
   const [reason, setReason] = React.useState(existing?.reason ?? '');
   const [status, setStatus] = React.useState<DecisionStatus | undefined>(existing?.status);
   React.useEffect(() => {
     // Re-sync when symbol changes
-    const e = getDecision(symbol);
+    const e = getDecision(symbol, market);
     setReason(e?.reason ?? '');
     setStatus(e?.status);
-  }, [symbol]);
+  }, [symbol, market]);
 
   const apply = (newStatus: DecisionStatus) => {
     setStatus(newStatus);
@@ -114,7 +114,7 @@ export function DecisionBar({ symbol, company, market, score, grade, currentPric
     bump();
   };
   const onClear = () => {
-    clearDecision(symbol);
+    clearDecision(symbol, market);
     setStatus(undefined);
     setReason('');
     bump();
@@ -423,11 +423,11 @@ export function ScoreMoversStrip({ rows, prevKey }: { rows: any[]; prevKey: stri
   );
 }
 
-function computeThesisDrift(rows: any[]): DriftItem[] {
+function computeThesisDrift(rows: any[], market?: 'IN' | 'US'): DriftItem[] {
   const out: DriftItem[] = [];
   for (const r of rows || []) {
     if (!r || typeof r.symbol !== 'string') continue;
-    const d = getDecision(r.symbol);
+    const d = getDecision(r.symbol, market);
     if (!d) continue; // only rows with a logged decision, never the whole universe
     const ticker = r.symbol.toUpperCase();
     const grade = String(r.grade ?? '');
@@ -464,8 +464,8 @@ function computeThesisDrift(rows: any[]): DriftItem[] {
   }
   return out;
 }
-export function ThesisDriftStrip({ rows }: { rows: any[] }) {
-  const drift = React.useMemo(() => computeThesisDrift(rows), [rows]);
+export function ThesisDriftStrip({ rows, market }: { rows: any[]; market?: 'IN' | 'US' }) {
+  const drift = React.useMemo(() => computeThesisDrift(rows, market), [rows, market]);
   // Arm Book Watch flags for each drift. Guarded + self-deduping, so re-running
   // on every scored-rows change is safe. Only rows with a logged decision that
   // meet the criteria reach here — never the whole universe.

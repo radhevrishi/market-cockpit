@@ -15,6 +15,8 @@ import { resolveIndiaBook, type BookName } from '@/lib/thesis/book-membership';
 import { loadIndiaBookInput, readLocalBookInput } from '@/lib/thesis/book-sources';
 import { notCheckedText, type CriteriaCheck } from '@/lib/criteria-check';
 import TickerExportToolbar from '@/components/TickerExportToolbar';
+import { CbMarkControl, CbMarkBadge, CbMarkFilterRow, CbRejectedToggle, useDecisionsMap } from '@/components/CbMarkControl';
+import { applyCbMarks, cbMarkReader, type CbMarkFilter } from '@/lib/cb-decisions';
 import { EarningsCardComponent, CoverageStatsBar, type EarningsScanCard } from '@/components/EarningsScanCard';
 import { ConvictionTable, ConvictionRow } from './ConvictionTable';
 import { HubFilterRail } from './HubFilterRail';
@@ -754,7 +756,7 @@ export function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild,
   };
   const handleExportFullExcel = async () => {
     if (typeof window === 'undefined') return;
-    const list = filteredEntries;
+    const list = exportEntries;   // zzz1041 — Rejected names are left out while the Quality Preset is on
     if (list.length === 0) { alert('No entries to export. Adjust filters.'); return; }
     const XLSX = await import('xlsx');
     const now = new Date();
@@ -823,6 +825,11 @@ export function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild,
   };
   // PATCH 0539 — Hub-Scan-style filter rail (rich view only)
   const [hubFilters, setHubFilters] = useState<HubFilters>(HUB_FILTER_DEFAULT);
+  // zzz1041 — Bought · Watchlist · Rejected marks (decision logbook, per market).
+  const decisionsMap = useDecisionsMap();
+  const markReader = useMemo(() => cbMarkReader(decisionsMap, 'IN'), [decisionsMap]);
+  const [markFilter, setMarkFilter] = useState<CbMarkFilter>('all');
+  const [showRejected, setShowRejected] = useState(false);
 
   // PATCH 0539 — read watchlist + portfolio tickers for audience tagging.
   const [watchlistSet] = useState<Set<string>>(() => {
@@ -872,11 +879,18 @@ export function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild,
     : entries.filter((e) => typeof (e as any).market_cap_cr === 'number' && (e as any).market_cap_cr < (filters.mktCapMin as number)).length), [entries, filters.mktCapMin]);
   // zzz827 — what this tab lists under its criteria, for Portfolio
   // Catalysts' name-for-name reconciliation (same browser).
+  // zzz1041 — with the Quality Preset on the tab hides names marked Rejected,
+  // so the snapshot leaves them out too and lists them separately; Portfolio
+  // Catalysts' reconciliation then names the reason instead of a mismatch.
   useEffect(() => {
     if (!entries.length) return;
-    const tickers = Array.from(new Set(entries.filter((e) => cbCheckOf.get(e)?.state !== 'fail').map((e) => String(e.ticker || '').toUpperCase()))).sort();
-    writeCbTabSnapshot({ tickers, savedCriteria: filtersMatchSaved(filters, readCbPresetOptOut()), at: new Date().toISOString() });
-  }, [entries, filters, cbCheckOf]);
+    const shown = entries.filter((e) => cbCheckOf.get(e)?.state !== 'fail');
+    const presetOn = isIndiaPresetActive(filters);
+    const isRej = (e: ConvictionEntry) => presetOn && markReader(e.ticker).mark === 'rejected';
+    const tickers = Array.from(new Set(shown.filter((e) => !isRej(e)).map((e) => String(e.ticker || '').toUpperCase()))).sort();
+    const rejected = Array.from(new Set(shown.filter(isRej).map((e) => String(e.ticker || '').toUpperCase()))).sort();
+    writeCbTabSnapshot({ tickers, savedCriteria: filtersMatchSaved(filters, readCbPresetOptOut()), rejected, at: new Date().toISOString() });
+  }, [entries, filters, cbCheckOf, markReader]);
   // The same selection Portfolio Catalysts makes from this list.
   const pcSame = useMemo(() => {
     if (!savedBook) return null;
@@ -919,9 +933,24 @@ export function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild,
       .filter((e) => { const p = cbPeOf(e); return p > 0 && p <= 35; })
       .sort((a, b) => cbPeOf(a) - cbPeOf(b));
   }
+  // zzz1041 — the mark layer, on top of every other filter: Rejected hidden
+  // while the Quality Preset is on (shown greyed when it is off, or on "show"),
+  // and the All · Bought · Watchlist · Rejected · Unmarked chip.
+  const presetOnForMarks = isIndiaPresetActive(filters);
+  const markRes = applyCbMarks(filteredEntries, { markOf: (e) => markReader(e.ticker).mark, presetOn: presetOnForMarks, showRejected, filter: markFilter });
+  filteredEntries = markRes.visible;
+  const exportEntries = markRes.exportRows;
+  const isDimmed = (e: ConvictionEntry) => markReader(e.ticker).mark === 'rejected';
+  const markSlotFor = (e: ConvictionEntry, variant: 'card' | 'row' = 'card') => {
+    const r = markReader(e.ticker);
+    return <CbMarkControl ticker={e.ticker} market="IN" mark={r.mark} decision={r.decision} company={cbCompany(e)} score={e.composite_score} grade={e.tier} variant={variant} />;
+  };
   const blockbusters = filteredEntries.filter((e) => e.tier === 'BLOCKBUSTER');
   const strongs = filteredEntries.filter((e) => e.tier === 'STRONG');
-  const allTickers = filteredEntries.map((e) => e.ticker);
+  // Exports (TradingView / CSV / .txt / Excel) carry exportEntries: what is shown, minus Rejected while the preset is on.
+  const exportBlockbusters = exportEntries.filter((e) => e.tier === 'BLOCKBUSTER');
+  const exportStrongs = exportEntries.filter((e) => e.tier === 'STRONG');
+  const allTickers = exportEntries.map((e) => e.ticker);
 
   // PATCH 0539 — fetch enriched cards for the bench (cached 24h).
   // PATCH 0549 — rich view dead-coded, so always pass [] to skip the fetch.
@@ -1121,6 +1150,9 @@ export function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild,
                 style={{ fontSize: 10.5, fontWeight: 800, padding: '1px 8px', borderRadius: 10, cursor: 'pointer', border: '1px solid var(--mc-bg-4)', background: 'transparent', color: 'var(--mc-text-2)' }}>
                 {showHidden ? '▾' : '▸'} Why {hiddenCount} name{hiddenCount === 1 ? ' is' : 's are'} hidden
               </button>
+            )}
+            {(markRes.rejectedHidden.length > 0 || (showRejected && presetOnForMarks && markRes.rejectedTotal > 0)) && markFilter === 'all' && (
+              <CbRejectedToggle count={showRejected ? markRes.rejectedTotal : markRes.rejectedHidden.length} showing={showRejected} onToggle={() => setShowRejected((v) => !v)} />
             )}
             {pcSame && (
               <span data-testid="cb-same-as-pc" style={{ color: 'var(--mc-text-3)', fontWeight: 700 }}
@@ -1366,6 +1398,8 @@ export function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild,
             )}
           </div>
         )}
+        {/* zzz1041 — YOUR MARK chips (AND with every other filter) */}
+        <CbMarkFilterRow value={markFilter} onChange={setMarkFilter} counts={markRes.counts} presetOn={presetOnForMarks} />
         {/* zzz226 — ⚡ QUALITY PRESET: one click applies PAT≥30 · EPS≥40 ·
             OPM Δ≥0 · Composite≥65 · D1≥0. Click again to clear. Detail chips
             below stay collapsed unless expanded. */}
@@ -1974,20 +2008,20 @@ export function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild,
           // heading, and the label says which window it actually used.
           {
             label: `NEW ${__NEW_WIN.days}D`, emoji: '🆕', color: '#38BDF8',
-            tickers: [...blockbusters, ...strongs]
+            tickers: [...exportBlockbusters, ...exportStrongs]
               .filter((e: any) => { const d = filingAgeDays(e?.filing_date); return d !== null && d <= __NEW_WIN.days; })
               .map((e) => e.ticker),
           },
           // zzz224 — ELITE leads the standing book: elite names land under
           // ###ELITE and are deduped out of the tier sections below.
-          { label: 'ELITE', emoji: '🏆', tickers: [...blockbusters, ...strongs].filter((e: any) => e.is_elite).map((e) => e.ticker), color: '#22D3EE' },
-          { label: 'BLOCKBUSTER', emoji: '⭐', tickers: blockbusters.map((e) => e.ticker), color: '#F59E0B' },
-          { label: 'STRONG', emoji: '🟢', tickers: strongs.map((e) => e.ticker), color: '#10B981' },
+          { label: 'ELITE', emoji: '🏆', tickers: [...exportBlockbusters, ...exportStrongs].filter((e: any) => e.is_elite).map((e) => e.ticker), color: '#22D3EE' },
+          { label: 'BLOCKBUSTER', emoji: '⭐', tickers: exportBlockbusters.map((e) => e.ticker), color: '#F59E0B' },
+          { label: 'STRONG', emoji: '🟢', tickers: exportStrongs.map((e) => e.ticker), color: '#10B981' },
         ]}
         exchange="NSE"
         filenameHint="conviction-beats"
         tickerCompanyMap={
-          [...blockbusters, ...strongs].reduce<Record<string, string>>((acc, e) => {
+          [...exportBlockbusters, ...exportStrongs].reduce<Record<string, string>>((acc, e) => {
             if (e.ticker && e.company) acc[e.ticker.toUpperCase()] = cbCompany(e); // zzz827 — "&amp;" decoded
             return acc;
           }, {})
@@ -2094,7 +2128,8 @@ export function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild,
       ) : (
         // ── COMPACT (legacy rows) OR TABLE view ─────────────────────────
         tableMode ? (
-          <ConvictionTable entries={[...blockbusters, ...strongs]} onRemove={onRemove} sort={tableSort} setSort={setTableSort} />
+          <ConvictionTable entries={[...blockbusters, ...strongs]} onRemove={onRemove} sort={tableSort} setSort={setTableSort}
+            renderMark={(e) => markSlotFor(e, 'row')} dimOf={isDimmed} />
         ) : (
 <>
           {/* zzz254 — Side-by-side split when both tiers have entries. On narrow
@@ -2117,8 +2152,8 @@ export function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild,
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${density === 'ultra' ? 300 : density === 'compact' ? 340 : 380}px, 1fr))`, gap: density === 'ultra' ? 6 : 10 }}>
                   {blockbusters.map((e) => { const ck = cbCheckOf.get(e); return ck?.state === 'unknown'
-                    ? <div key={e.ticker}><div data-testid="cb-row-not-checked" style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-text-3)', padding: '0 4px 2px' }}>◌ {notCheckedText(ck.missing)} — shown, not failed</div><ConvictionRow entry={e} onRemove={onRemove} density={density} radarEntry={radarMap.get(String(e.ticker || '').toUpperCase())} /></div>
-                    : <ConvictionRow key={e.ticker} entry={e} onRemove={onRemove} density={density} radarEntry={radarMap.get(String(e.ticker || '').toUpperCase())} />; })}
+                    ? <div key={e.ticker}><div data-testid="cb-row-not-checked" style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-text-3)', padding: '0 4px 2px' }}>◌ {notCheckedText(ck.missing)} — shown, not failed</div><ConvictionRow entry={e} onRemove={onRemove} density={density} radarEntry={radarMap.get(String(e.ticker || '').toUpperCase())} markSlot={markSlotFor(e)} markBadge={<CbMarkBadge mark={markReader(e.ticker).mark} />} dimmed={isDimmed(e)} /></div>
+                    : <ConvictionRow key={e.ticker} entry={e} onRemove={onRemove} density={density} radarEntry={radarMap.get(String(e.ticker || '').toUpperCase())} markSlot={markSlotFor(e)} markBadge={<CbMarkBadge mark={markReader(e.ticker).mark} />} dimmed={isDimmed(e)} />; })}
                 </div>
               </div>
             )}
@@ -2133,8 +2168,8 @@ export function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild,
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${density === 'ultra' ? 300 : density === 'compact' ? 340 : 380}px, 1fr))`, gap: density === 'ultra' ? 6 : 10 }}>
                   {strongs.map((e) => { const ck = cbCheckOf.get(e); return ck?.state === 'unknown'
-                    ? <div key={e.ticker}><div data-testid="cb-row-not-checked" style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-text-3)', padding: '0 4px 2px' }}>◌ {notCheckedText(ck.missing)} — shown, not failed</div><ConvictionRow entry={e} onRemove={onRemove} density={density} radarEntry={radarMap.get(String(e.ticker || '').toUpperCase())} /></div>
-                    : <ConvictionRow key={e.ticker} entry={e} onRemove={onRemove} density={density} radarEntry={radarMap.get(String(e.ticker || '').toUpperCase())} />; })}
+                    ? <div key={e.ticker}><div data-testid="cb-row-not-checked" style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-text-3)', padding: '0 4px 2px' }}>◌ {notCheckedText(ck.missing)} — shown, not failed</div><ConvictionRow entry={e} onRemove={onRemove} density={density} radarEntry={radarMap.get(String(e.ticker || '').toUpperCase())} markSlot={markSlotFor(e)} markBadge={<CbMarkBadge mark={markReader(e.ticker).mark} />} dimmed={isDimmed(e)} /></div>
+                    : <ConvictionRow key={e.ticker} entry={e} onRemove={onRemove} density={density} radarEntry={radarMap.get(String(e.ticker || '').toUpperCase())} markSlot={markSlotFor(e)} markBadge={<CbMarkBadge mark={markReader(e.ticker).mark} />} dimmed={isDimmed(e)} />; })}
                 </div>
               </div>
             )}

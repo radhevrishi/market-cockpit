@@ -276,6 +276,8 @@ export const CB_TAB_SNAPSHOT_KEY = 'mc:cb:tab-list:v1';
 export interface CbTabSnapshot {
   /** Tickers the tab lists under its criteria (pass + not checked). */
   tickers: string[];
+  /** zzz1041 — names that pass but the tab hides because the owner marked them Rejected (Quality Preset on). */
+  rejected?: string[];
   /** True when the tab's chips were the owner's saved criteria at the time. */
   savedCriteria: boolean;
   at: string;
@@ -293,6 +295,8 @@ const key = (t: unknown) => String(t ?? '').toUpperCase().trim()
 export interface CbReconciliation {
   onlyTab: Array<{ ticker: string; reason: string }>;
   onlyPc: Array<{ ticker: string; reason: string }>;
+  /** zzz1041 — on this page, hidden on the tab because the owner marked them Rejected (not a mismatch). */
+  markedRejected?: string[];
   line: string;
 }
 
@@ -319,15 +323,21 @@ export function reconcileCbLists(tab: CbTabSnapshot | null, pcTickers: string[],
       : `not on this page's list (the tab listed it at ${when}; this page reads the list fresh — reopen the tab to refresh its copy)`;
     onlyTab.push({ ticker: t, reason });
   }
+  const markedRejected: string[] = [];
+  const rejSet = new Set((tab.rejected || []).map((t) => key(t)));
   for (const [k, t] of pcSet) {
     if (tabSet.has(k)) continue;
+    if (rejSet.has(k)) { markedRejected.push(t); continue; }
     onlyPc.push({ ticker: t, reason: !tab.savedCriteria ? 'the tab was showing your own chips, not your saved criteria' : `not listed when the tab was last opened (${when}) — reopen the tab to refresh its copy` });
   }
+  const rejNote = markedRejected.length
+    ? ` ${markedRejected.length} you marked Rejected ${markedRejected.length === 1 ? 'is' : 'are'} listed here but hidden on the tab while the Quality Preset is on: ${markedRejected.join(', ')}.`
+    : '';
   const line = !onlyTab.length && !onlyPc.length
-    ? `Matches the Conviction Beats tab name for name: ${pcSet.size} names (tab list saved ${when}).`
+    ? `Matches the Conviction Beats tab name for name: ${pcSet.size - markedRejected.length} names (tab list saved ${when}).${rejNote}`
     : `⚠ Differs from the Conviction Beats tab (saved ${when}): ${onlyTab.length} only on the tab, ${onlyPc.length} only here — `
-      + [...onlyTab.map((x) => `${x.ticker} (only on the tab: ${x.reason})`), ...onlyPc.map((x) => `${x.ticker} (only here: ${x.reason})`)].join('; ');
-  return { onlyTab, onlyPc, line };
+      + [...onlyTab.map((x) => `${x.ticker} (only on the tab: ${x.reason})`), ...onlyPc.map((x) => `${x.ticker} (only here: ${x.reason})`)].join('; ') + rejNote;
+  return { onlyTab, onlyPc, ...(markedRejected.length ? { markedRejected } : {}), line };
 }
 
 export function writeCbTabSnapshot(s: CbTabSnapshot): void {
@@ -338,7 +348,7 @@ export function readCbTabSnapshot(): CbTabSnapshot | null {
   if (typeof window === 'undefined') return null;
   try {
     const j = JSON.parse(window.localStorage.getItem(CB_TAB_SNAPSHOT_KEY) || 'null');
-    return j && Array.isArray(j.tickers) ? { tickers: j.tickers.map(String), savedCriteria: !!j.savedCriteria, at: String(j.at || '') } : null;
+    return j && Array.isArray(j.tickers) ? { tickers: j.tickers.map(String), ...(Array.isArray(j.rejected) ? { rejected: j.rejected.map(String) } : {}), savedCriteria: !!j.savedCriteria, at: String(j.at || '') } : null;
   } catch { return null; }
 }
 

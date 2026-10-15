@@ -116,7 +116,7 @@ export function USAAnalytics() {
     // Decision overlay
     const decisionCounts = { BUY: 0, WATCH: 0, REJECTED: 0, NONE: 0 };
     rows.forEach(r => {
-      const d = getDecision(r.symbol);
+      const d = getDecision(r.symbol, 'US');
       if (!d) decisionCounts.NONE++;
       else if (d.status === 'BUY') decisionCounts.BUY++;
       else if (d.status === 'WATCH') decisionCounts.WATCH++;
@@ -229,7 +229,7 @@ export function USAAnalytics() {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {stats.topBuys.map(r => {
-                const d = getDecision(r.symbol);
+                const d = getDecision(r.symbol, 'US');
                 const inCb = convictionSet.has(r.symbol.toUpperCase());
                 return (
                   <div key={r.symbol} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: '#0a0a0f', borderRadius: 6 }}>
@@ -263,7 +263,7 @@ export function USAAnalytics() {
                 if (r.fcfOpDivergence) flags.push({ label: 'FCF≠OP', color: RED });
                 if (r.postRunStretched) flags.push({ label: 'STRETCHED', color: ORANGE });
                 if ((r.earningsProximityDays ?? 999) <= 7) flags.push({ label: `ER ${r.earningsProximityDays}d`, color: YELLOW });
-                const d = getDecision(r.symbol);
+                const d = getDecision(r.symbol, 'US');
                 return (
                   <div key={r.symbol} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: '#0a0a0f', borderRadius: 6 }}>
                     <div style={{ width: 70, fontSize: 12, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace,monospace' }}>{r.symbol}</div>
@@ -466,7 +466,7 @@ export function USAAnalytics() {
             </thead>
             <tbody>
               {stats.top10.map((r, i) => {
-                const d = getDecision(r.symbol);
+                const d = getDecision(r.symbol, 'US');
                 const inCb = convictionSet.has(r.symbol.toUpperCase());
                 return (
                   <tr key={r.symbol} style={{ color: TEXT }}>
