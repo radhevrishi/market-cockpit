@@ -19,6 +19,8 @@ import { PANEL_CSS } from './watchlist-panel-css';
 import WatchlistManageDrawer from './WatchlistManageDrawer';
 import { ChartContextMenu } from './ChartContextMenu';
 import { applyRowMenu, applySectionMenu, chartHref, newsHref, watchlistRowMenu, watchlistSectionMenu } from './watchlist-context-menu';
+import { useBookWatchlistSync, readBook } from './useBookWatchlistSync';
+import { BOOK_LABEL, BOOK_SECTION_NAME, bookSectionMenu, createLinkedSection, linkSection, linkTooltip, linkedSection, previewLinkRemovals, unlinkSection } from '@/lib/watchlist-book-sync';
 import { agoLabel, currencyOf, displaySectionName, exchangeLabel, quoteFreshness, usExtendedSession, WIDTH_PRESETS, WL_EXT_COLUMN_KEY } from '@/lib/watchlist-display';
 
 // ── storage hook ──────────────────────────────────────────────────────────────
@@ -326,7 +328,9 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
     return () => clearTimeout(timer);
   }, [prefetch, navOverride, rows, currentKey]);
   const setList = useCallback((fn: (l: WlList) => WlList) => update((s) => updateList(s, s.activeId, fn)), [update]);
-  const say = (m: string) => { setMsg(m); setTimeout(() => setMsg((cur) => (cur === m ? null : cur)), 3500); };
+  const say = (m: string) => { setMsg(m); setTimeout(() => setMsg((cur) => (cur === m ? null : cur)), m.length > 90 ? 9000 : 3500); };
+  // zzz1042 — sections linked to My Book (India / USA) follow the book: added when held, out of that section when no longer held
+  const bookSync = useBookWatchlistSync(store, update, say);
   const closeMenus = () => { setMenu(false); setListMenu(false); setFilterMenu(false); setRowMenu(null); };
   useEffect(() => {
     const dismiss = (e: PointerEvent) => {
@@ -551,6 +555,16 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
     if (k !== currentKey && !drawerMode()) onPick(it.m, it.t, it.x);
     openCtx({ kind: 'row', key: k, x: press.current.x, y: press.current.y });
   });
+  /** Link a section to a book. When the link would take names out of the section, ask first (they are listed). */
+  const linkWithConfirm = async (listId: string, sectionId: string, book: 'IN' | 'US') => {
+    const read = await readBook(book);
+    if (!read.ok) { say(`${BOOK_LABEL[book]}: ${read.reason}. The section was not linked.`); return; }
+    const secName = displaySectionName(store.lists.find((l) => l.id === listId)?.sections.find((x) => x.id === sectionId)?.name || '') || 'this section';
+    const out = previewLinkRemovals(store, listId, sectionId, book, read);
+    if (out.length && !window.confirm(`Keep “${secName}” in sync with ${BOOK_LABEL[book]}?\n\n${out.length} name${out.length === 1 ? ' is' : 's are'} not in the book and will be taken out of this section: ${out.slice(0, 20).join(', ')}${out.length > 20 ? ` +${out.length - 20} more` : ''}.\n\nOther sections and lists are not changed.`)) return;
+    update((s) => linkSection(s, listId, sectionId, book));
+    setTimeout(() => { void bookSync.syncNow(book); }, 50);
+  };
   const onCtxSelect = (id: string) => {
     if (!ctx) return;
     const listId = list.id;
@@ -581,6 +595,14 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
     }
     const sec = list.sections.find((s) => s.id === ctx.id);
     if (!sec) return;
+    if (id === 'book-sync' && sec.book) { void bookSync.syncNow(sec.book); return; }
+    if (id === 'book-unlink' && sec.book) {
+      const b = sec.book;
+      update((s) => unlinkSection(s, listId, sec.id));
+      say(`“${displaySectionName(sec.name)}” is no longer linked to ${BOOK_LABEL[b]}. Its symbols stay.`);
+      return;
+    }
+    if (id === 'book-link:IN' || id === 'book-link:US') { void linkWithConfirm(listId, sec.id, id === 'book-link:IN' ? 'IN' : 'US'); return; }
     if (id === 'sec-remove') {
       const label = displaySectionName(sec.name);
       if (!window.confirm(`Remove the section “${label}”? Its ${sec.items.length} symbol${sec.items.length === 1 ? '' : 's'} stay in the list, without a section.`)) return;
@@ -595,7 +617,7 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
       if (sec.collapsed) setList((l) => patchSection(l, sec.id, { collapsed: false }));
     }
   };
-  const ctxItems = !ctx ? [] : ctx.kind === 'row' ? watchlistRowMenu(store, list, ctx.key, quotes[ctx.key]?.name) : watchlistSectionMenu(list, ctx.id);
+  const ctxItems = !ctx ? [] : ctx.kind === 'row' ? watchlistRowMenu(store, list, ctx.key, quotes[ctx.key]?.name) : [...watchlistSectionMenu(list, ctx.id), ...(() => { const sec = list.sections.find((x) => x.id === ctx.id); return sec ? bookSectionMenu(store, sec) : []; })()];
   const ctxTitle = !ctx ? '' : ctx.kind === 'row' ? (findItem(list, ctx.key)?.item.t || '') : displaySectionName(list.sections.find((s) => s.id === ctx.id)?.name || '');
 
   return (
@@ -625,6 +647,23 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
               <button type="button" role="menuitem" onClick={() => { setManaging(true); setMenu(false); }}>Manage list…</button>
               <button type="button" role="menuitem" onClick={() => { setMenu(false); const n = window.prompt('Name for the new list:', 'New list'); if (n && n.trim()) update((s) => addList(s, n)); }}>New list</button>
               <button type="button" role="menuitem" onClick={() => { setMenu(false); setImporting(true); }}>Import (TradingView list)…</button>
+              {/* zzz1042 — My Book → watchlist */}
+              <div className="sep" role="separator" />
+              <div className="hd">My Book</div>
+              {(linkedSection(store, 'IN') || linkedSection(store, 'US')) && (
+                <button type="button" role="menuitem" disabled={bookSync.busy} onClick={() => { setMenu(false); void bookSync.syncNow(); }}
+                  title={(['IN', 'US'] as const).filter((b) => linkedSection(store, b)).map((b) => `“${displaySectionName(linkedSection(store, b)!.section.name)}” in ${linkedSection(store, b)!.list.name} ← ${BOOK_LABEL[b]}`).join('\n')}>
+                  {bookSync.busy ? 'Syncing with My Book…' : 'Sync with My Book now'}</button>
+              )}
+              {(['IN', 'US'] as const).filter((b) => !linkedSection(store, b)).map((b) => (
+                <button key={b} type="button" role="menuitem" onClick={() => {
+                  setMenu(false);
+                  const has = list.sections.find((x) => x.name.toLowerCase().replace(/[^a-z0-9]/g, '') === BOOK_SECTION_NAME[b].toLowerCase().replace(/[^a-z0-9]/g, ''));
+                  if (has) { void linkWithConfirm(list.id, has.id, b); return; }
+                  update((s) => createLinkedSection(s, b));
+                  setTimeout(() => { void bookSync.syncNow(b); }, 50);
+                }}>Keep “{BOOK_SECTION_NAME[b]}” in sync with {BOOK_LABEL[b]}</button>
+              ))}
               <div className="sep" role="separator" />
               <button type="button" role="menuitemcheckbox" aria-checked={showExt} onClick={toggleExt} title="Pre-market / after-hours change (US only, while that session is open)"><span className="chk">{showExt ? '✓' : ''}</span>Extended-hours column</button>
               {canResize ? (<>
@@ -746,6 +785,10 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
                 <button type="button" className="mcwl-ib" aria-label={`Toggle section ${section.name}`} aria-expanded={!section.collapsed || Boolean(search.trim())} onClick={(e) => { e.stopPropagation(); setList((l) => patchSection(l, section.id, { collapsed: !section.collapsed })); }}>{section.collapsed && !search.trim() ? '▸' : '▾'}</button>
                 {/* zzz1006 — a readable label (display only: the saved name, membership and order are unchanged) */}
                 <span className="lbl" title={displaySectionName(section.name) !== section.name ? `${displaySectionName(section.name)} (saved as “${section.name}”)` : section.name}>{displaySectionName(section.name)}</span>
+                {section.book && (
+                  <span data-testid="section-book-link" role="img" aria-label={`Linked to ${BOOK_LABEL[section.book]}`} title={linkTooltip(section.book, bookSync.lastAt[section.book], bookSync.note[section.book])}
+                    style={{ marginLeft: 4, fontSize: 11, opacity: bookSync.note[section.book] ? 0.5 : 0.85, cursor: 'help' }}>🔗</span>
+                )}
                 <span className="cnt" data-testid="section-count">{filtered ? ` · ${matches} of ${section.items.length}` : ` · ${section.items.length}`}</span>
                 </span>
               </div>

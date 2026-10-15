@@ -10,9 +10,12 @@ export type Flag = (typeof FLAGS)[number];
 export const FLAG_COLORS: Record<Flag, string> = { red: '#E53935', blue: '#1E66F5', green: '#2E7D32', orange: '#F57C00', purple: '#8E24AA' };
 
 export interface WlItem { m: Market; t: string; flag?: Flag; x?: string }   // x = exchange as TradingView writes it (for export)
-export interface WlSection { id: string; name: string; collapsed: boolean; items: WlItem[] }
+/** zzz1042 — `book`: this section is kept in sync with My Book (India 'IN' / USA 'US'), see lib/watchlist-book-sync.ts */
+export type BookMarket = 'IN' | 'US';
+export interface WlSection { id: string; name: string; collapsed: boolean; items: WlItem[]; book?: BookMarket }
 export interface WlList { id: string; name: string; sections: WlSection[] }
-export interface WlStore { lists: WlList[]; activeId: string }
+/** `bookAuto`: the books whose section link was already set once (so the first-run link never comes back after an unlink) */
+export interface WlStore { lists: WlList[]; activeId: string; bookAuto?: BookMarket[] }
 
 export const MAX_LISTS = 50, MAX_SECTIONS = 60, MAX_ITEMS = 1000;
 
@@ -44,6 +47,7 @@ export function sanitizeStore(raw: unknown): WlStore {
   const r: any = raw && typeof raw === 'object' ? raw : {};
   const lists: WlList[] = [];
   const seenList = new Set<string>();
+  const seenBook = new Set<BookMarket>();
   for (const l of Array.isArray(r.lists) ? r.lists.slice(0, MAX_LISTS) : []) {
     if (!l || typeof l !== 'object') continue;
     let id = typeof l.id === 'string' && l.id ? l.id.slice(0, 40) : newId('l');
@@ -71,14 +75,18 @@ export function sanitizeStore(raw: unknown): WlStore {
         if (typeof it.x === 'string' && /^[A-Z]{2,10}$/.test(it.x)) out.x = it.x;
         items.push(out);
       }
-      sections.push({ id: sid, name: typeof s.name === 'string' ? s.name.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 60) : '', collapsed: s.collapsed === true, items });
+      const sec: WlSection = { id: sid, name: typeof s.name === 'string' ? s.name.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 60) : '', collapsed: s.collapsed === true, items };
+      // zzz1042 — one section per book in the whole store (the first one wins)
+      if ((s.book === 'IN' || s.book === 'US') && !seenBook.has(s.book)) { seenBook.add(s.book); sec.book = s.book; }
+      sections.push(sec);
     }
     if (!sections.length) sections.push({ id: newId('s'), name: '', collapsed: false, items: [] });
     lists.push({ id, name: cleanName(l.name, 'Watchlist'), sections });
   }
   if (!lists.length) lists.push(emptyList('My Watchlist'));
   const activeId = lists.some((l) => l.id === r.activeId) ? String(r.activeId) : lists[0].id;
-  return { lists, activeId };
+  const bookAuto = (['IN', 'US'] as const).filter((b) => Array.isArray(r.bookAuto) && r.bookAuto.includes(b));
+  return bookAuto.length ? { lists, activeId, bookAuto } : { lists, activeId };
 }
 
 export function emptyList(name: string): WlList {
@@ -113,12 +121,12 @@ export function updateList(s: WlStore, id: string, fn: (l: WlList) => WlList): W
 export function addList(s: WlStore, name: string): WlStore {
   if (s.lists.length >= MAX_LISTS) return s;
   const l = emptyList(name);
-  return { lists: [...s.lists, l], activeId: l.id };
+  return { ...s, lists: [...s.lists, l], activeId: l.id };
 }
 export function removeList(s: WlStore, id: string): WlStore {
   const lists = s.lists.filter((l) => l.id !== id);
   if (!lists.length) lists.push(emptyList('My Watchlist'));
-  return { lists, activeId: lists.some((l) => l.id === s.activeId) ? s.activeId : lists[0].id };
+  return { ...s, lists, activeId: lists.some((l) => l.id === s.activeId) ? s.activeId : lists[0].id };
 }
 export const renameList = (l: WlList, name: string): WlList => ({ ...l, name: cleanName(name, l.name) });
 export const listCount = (l: WlList) => l.sections.reduce((n, s) => n + s.items.length, 0);
@@ -228,7 +236,7 @@ export function dissolveSection(l: WlList, id: string): WlList {
   if (i < 0 || !l.sections[i].name) return l;
   const sec = l.sections[i];
   const loose = l.sections.findIndex((s, k) => k !== i && !s.name);
-  if (loose < 0) return { ...l, sections: [{ ...sec, name: '', collapsed: false }, ...l.sections.filter((_, k) => k !== i)] };
+  if (loose < 0) { const { book: _book, ...rest } = sec; return { ...l, sections: [{ ...rest, name: '', collapsed: false }, ...l.sections.filter((_, k) => k !== i)] }; }
   return { ...l, sections: l.sections.map((s, k) => (k === loose ? { ...s, items: [...s.items, ...sec.items] } : s)).filter((_, k) => k !== i) };
 }
 /** Copy-symbol text: NSE:TICKER (BSE:CODE for BSE rows) for India, the bare ticker for the US. */
@@ -371,7 +379,7 @@ export function importParsed(s: WlStore, parsed: ParseResult, opts: { mode: 'new
     const secs = parsed.sections.length ? parsed.sections : [{ name: '', items: [] }];
     const raw = { id: newId('l'), name: opts.name, sections: secs.map((p) => ({ id: newId('s'), name: p.name, collapsed: false, items: p.items })) };
     const l = sanitizeStore({ lists: [raw], activeId: raw.id }).lists[0];
-    return { lists: [...s.lists, l], activeId: l.id };
+    return { ...s, lists: [...s.lists, l], activeId: l.id };
   }
   return updateList(s, opts.listId, (l) => {
     let out = l;
@@ -416,7 +424,15 @@ export function importTvBundle(s: WlStore, b: TvBundle): BundleResult {
     }));
     const one = sanitizeStore({ lists: [{ id: newId('l'), name, sections: secs }] }).lists[0];
     const at = lists.findIndex((l) => l.name.toLowerCase() === name.toLowerCase());
-    if (at >= 0) { one.id = lists[at].id; lists[at] = one; replaced++; }
+    if (at >= 0) {
+      // zzz1042 — a replaced list keeps its My Book links on the sections with the same name
+      for (const old of lists[at].sections) {
+        if (!old.book) continue;
+        const twin = one.sections.find((x) => x.name.toLowerCase() === old.name.toLowerCase());
+        if (twin) twin.book = old.book;
+      }
+      one.id = lists[at].id; lists[at] = one; replaced++;
+    }
     else if (lists.length < MAX_LISTS) lists.push(one);
     else continue;
     added++;
@@ -424,7 +440,7 @@ export function importTvBundle(s: WlStore, b: TvBundle): BundleResult {
     if (b.active && b.active.toLowerCase() === name.toLowerCase()) activeId = one.id;
   }
   if (!lists.some((l) => l.id === activeId)) activeId = lists[0]?.id || s.activeId;
-  return { store: { lists, activeId }, lists: added, symbols, skipped, replaced, flagged };
+  return { store: { ...s, lists, activeId }, lists: added, symbols, skipped, replaced, flagged };
 }
 
 /** zzz1000 — the sections a filtered view draws: with a search / flag / market filter on, sections without a match are hidden
