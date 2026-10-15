@@ -84,7 +84,7 @@ describe('prefetch policy', () => {
     const others = nav.filter((b) => !/^\s*href="\/"/.test(b));
     assert.ok(others.length >= 4, `${others.length} links`);
     for (const b of others) assert.match(b, /prefetch=/, b.slice(0, 80));
-    assert.equal(home.length, 1, 'the MC home badge keeps the default prefetch');
+    assert.equal(home.length, 2, 'the MC home badge and the MARKET COCKPIT name (zzz1033) link home');
     const mob = blocks(read('components/pwa/MobileNav.tsx')).filter((b) => !/^\s*href="\/"/.test(b));
     assert.ok(mob.length >= 4);
     for (const b of mob) assert.match(b, /prefetch=/, b.slice(0, 80));

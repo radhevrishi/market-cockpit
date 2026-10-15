@@ -8,7 +8,7 @@ const read = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
 test('left rail: shown on the home page only; MARKET COCKPIT links home', () => {
   const d = read('../../app/(dashboard)/DashboardClient.tsx');
   assert.match(d, /\$\{pathname === '\/' \? '' : ' rail-hidden'\}/);
-  assert.match(d, /<Link href="\/" title="Home — all pages"/);
+  assert.match(d, /<Link href="\/" prefetch=\{false\} title="Home — all pages"/);
   const css = read('../../app/globals.css');
   assert.match(css, /\.desktop-sidebar\.rail-hidden \{ display: none !important; \}/);
 });
