@@ -69,7 +69,7 @@ export function nameInText(name: string, text: string): boolean {
 
 // ── event kind → what a matching document is about ─────────────────────────
 
-type KindFamily = 'MA' | 'TENDER' | 'SPIN' | 'CAPITAL' | 'NCLT' | 'CAPEX' | 'OTHER';
+type KindFamily = 'MA' | 'TENDER' | 'SPIN' | 'CAPITAL' | 'NCLT' | 'CAPEX' | 'CONCALL' | 'OTHER';
 export function kindFamily(eventType: string | null | undefined): KindFamily {
   const t = String(eventType || '').toUpperCase();
   if (/TENDER|BUYBACK/.test(t)) return 'TENDER';
@@ -78,6 +78,7 @@ export function kindFamily(eventType: string | null | undefined): KindFamily {
   if (/RIGHTS|QIP|PIPE|BONUS|SPLIT|DIVIDEND|BACKSTOP|CAPITAL|WARRANT/.test(t)) return 'CAPITAL';
   if (/NCLT|IBC|TURNAROUND|INSOLV/.test(t)) return 'NCLT';
   if (/CAPEX|CAPACITY|ORDER/.test(t)) return 'CAPEX';
+  if (/CONCALL|PRESENTATION|ANALYST_MEET/.test(t)) return 'CONCALL';   // zzz1057
   return 'OTHER';
 }
 
@@ -88,6 +89,7 @@ const KIND_SUBJECT: Record<KindFamily, RegExp> = {
   CAPITAL: /preferential|rights issue|qualified institution|\bqip\b|warrant|allotment|fund[\s-]?rais|\bncds?\b|debenture|bonus|split|sub[\s-]?division|dividend|record date/i,
   NCLT: /nclt|insolvency|\bibc\b|resolution plan|\bcirp\b|one[\s-]?time settlement|restructur|financial results|results/i,
   CAPEX: /capacity|commission|plant|expansion|\border\b|contract|award|letter of (?:intent|award)|\bloi\b|capex|new (?:unit|facility)/i,
+  CONCALL: /investor presentation|con\.? ?call|conference call|earnings call|analysts?\/?institutional|investor meet|transcript/i,
   OTHER: /acqui|merger|amalgamat|demerg|scheme of arrangement|buy[\s-]?back|open offer|preferential|rights issue|qip|bonus|split|dividend|nclt|insolvency|order|contract|capacity|stake/i,
 };
 const GENERIC_SUBJECT = /regulation 30|reg\.? 30|press release|media release|outcome of (?:the )?board|board meeting|disclosure|intimation|general updates?|updates?$/i;
@@ -96,7 +98,10 @@ const IRRELEVANT_SUBJECT = /trading window|share certificate|duplicate|reg(?:ula
 /** 0 = not about this event; 1 = a generic Regulation 30 / press release / board outcome; 3 = names this kind of event. */
 export function subjectScore(subject: string, eventType: string | null | undefined): number {
   const s = String(subject || '');
-  if (!s.trim() || IRRELEVANT_SUBJECT.test(s)) return 0;
+  if (!s.trim()) return 0;
+  // zzz1057: for a first concall / presentation the call itself IS the document (otherwise those subjects are irrelevant)
+  if (kindFamily(eventType) === 'CONCALL' && KIND_SUBJECT.CONCALL.test(s)) return 3;
+  if (IRRELEVANT_SUBJECT.test(s)) return 0;
   if (KIND_SUBJECT[kindFamily(eventType)].test(s)) return 3;
   if (GENERIC_SUBJECT.test(s)) return 1;
   return 0;
@@ -202,6 +207,7 @@ const FORMS_BY_KIND: Record<KindFamily, string[]> = {
   CAPITAL: ['8-K', '6-K', 'S-3', 'S-1', '424B5', 'SC TO-I'],
   NCLT: ['8-K', '6-K'],
   CAPEX: ['8-K', '6-K'],
+  CONCALL: ['8-K', '6-K'],
   OTHER: ['8-K', '6-K', 'SC TO-T', 'SC TO-I', '425', 'DEFM14A', '10-12B'],
 };
 /** 8-K items that carry deal / corporate-action text (material agreement, acquisition completed, Reg FD release, other events, securities, charter). */
@@ -243,6 +249,39 @@ export function locateUsFromSubmissions(claim: VerifyClaim, co: EdgarCompany, ti
     detail: `SEC ${r.form}${r.items?.length ? ` (items ${r.items.join(', ')})` : ''} filed ${r.filingDate} by ${co.name || ticker} (CIK ${co.cik}, ticker ${ticker} named by the event), within ${LOCATE_WINDOW_DAYS} days of the event.` };
 }
 
+// ── zzz1057: US / global news with NO ticker: EDGAR full-text search by the company name ─────────
+// 69 + 50 of the first 300 "No company document" rows were US / global stories that name a company but no ticker ("The event
+// names no US ticker, so EDGAR could not be searched by CIK"). EDGAR's own full-text search finds that company's filings by
+// name within the date window; a hit is used ONLY when the FILER's name is the same company as a name the event itself carries.
+
+export interface EdgarNameHit { cik: number; company: string; form: string; filingDate: string; accession: string; items?: string[] }
+
+/** Names worth a full-text search: carried by the event text, at least one distinctive (non-group, non-sector) word. */
+export function searchableNames(h: NonNullable<VerifyClaim['locateHints']>): string[] {
+  return Array.from(new Set(h.names.map((n) => String(n || '').trim()).filter((n) => n.length >= 3 && nameInText(n, h.text) && nameTokens(n).some((t) => !GENERIC_WORDS.has(t) && t.length >= 3)))).slice(0, 2);
+}
+
+/** The company's own filing among full-text hits: same company as the event's name, a fitting form, within the window. */
+export function locateUsByName(claim: VerifyClaim, name: string, hits: ReadonlyArray<EdgarNameHit>, now: Date): LocatedDoc {
+  const h = claim.locateHints!;
+  const base = { claimId: claim.claimId, checkedAt: now.toISOString() };
+  const evMs = parseMs(claim.eventDate);
+  if (evMs == null) return { ...base, found: false, url: null, how: null, matchedName: null, filingDate: null, text: null, kindMatch: false, detail: 'The event has no date, so its EDGAR filing cannot be matched by date.' };
+  let best: { r: EdgarNameHit; score: number; dist: number } | null = null;
+  for (const r of hits) {
+    if (!sameCompany(name, r.company)) continue;                         // the filer itself, never a company that merely mentions it
+    const t = parseMs(r.filingDate ? `${r.filingDate.slice(0, 10)}T12:00:00Z` : ''); if (t == null) continue;
+    const dist = Math.abs(t - evMs); if (dist > (LOCATE_WINDOW_DAYS + 0.5) * DAY_MS) continue;
+    const score = edgarFormScore(r.form, r.items, h.eventType); if (score <= 0) continue;
+    if (!secIndexUrl(r.cik, r.accession)) continue;
+    if (!best || score > best.score || (score === best.score && dist < best.dist)) best = { r, score, dist };
+  }
+  if (!best) return { ...base, found: false, url: null, how: null, matchedName: null, filingDate: null, text: null, kindMatch: false, detail: `EDGAR full-text search for "${name}": no filing by that company of a fitting form within ${LOCATE_WINDOW_DAYS} days of ${isoDay(evMs)}.` };
+  const r = best.r;
+  return { ...base, found: true, url: secIndexUrl(r.cik, r.accession), how: 'edgar_by_name', matchedName: r.company, filingDate: r.filingDate, text: null, kindMatch: best.score >= 2,
+    detail: `SEC ${r.form}${r.items?.length ? ` (items ${r.items.join(', ')})` : ''} filed ${r.filingDate.slice(0, 10)} by ${r.company} (CIK ${r.cik}), found by an EDGAR full-text search for the name the event gives, within ${LOCATE_WINDOW_DAYS} days of the event.` };
+}
+
 // ── real wiring (lazy imports; tests inject their own locate) ──────────────
 
 export interface LocateIo {
@@ -252,6 +291,8 @@ export interface LocateIo {
   cikForTicker(t: string): Promise<number | null>;
   /** EDGAR submissions (null = could not be read) */
   submissions(cik: number): Promise<EdgarCompany | null>;
+  /** zzz1057: EDGAR full-text search for a name in a date range (null = could not be read: unknown, search again next run) */
+  searchByName?(name: string, fromIso: string, toIso: string, forms: string[]): Promise<EdgarNameHit[] | null>;
   now?: () => Date;
 }
 
@@ -275,7 +316,25 @@ export async function locateDocs(claims: ReadonlyArray<VerifyClaim>, io: LocateI
     if (Date.now() > o.deadline || usDone >= maxUs) break;
     const h = c.locateHints!;
     const tickers = Array.from(new Set(h.tickers.map((t) => String(t).trim().toUpperCase()).filter((t) => /^[A-Z][A-Z0-9.-]{0,6}$/.test(t)))).slice(0, 3);
-    if (!tickers.length) { out.set(c.claimId, { ...base(c), found: false, detail: 'The event names no US ticker, so EDGAR could not be searched by CIK.' }); continue; }
+    if (!tickers.length) {
+      // zzz1057: no ticker → search EDGAR by the company name the event gives (when the I/O supports it)
+      const names = io.searchByName ? searchableNames(h) : [];
+      const evMs = parseMs(c.eventDate);
+      if (!names.length || evMs == null) { out.set(c.claimId, { ...base(c), found: false, detail: names.length ? 'The event has no date, so its EDGAR filing cannot be matched by date.' : 'The event names no US ticker and no distinctive company name, so EDGAR could not be searched.' }); continue; }
+      usDone++;
+      const from = isoDay(evMs - (LOCATE_WINDOW_DAYS + 1) * DAY_MS); const to = isoDay(evMs + (LOCATE_WINDOW_DAYS + 1) * DAY_MS);
+      const forms = FORMS_BY_KIND[kindFamily(h.eventType)];
+      let res: LocatedDoc | null = null; let unknownN = false;
+      for (const n of names) {
+        const hits = await io.searchByName!(n, from, to, forms).catch(() => null);
+        if (!hits) { unknownN = true; continue; }
+        const r = locateUsByName(c, n, hits, now);
+        if (r.found) { res = r; break; }
+        if (!res) res = r;
+      }
+      if (res?.found || (res && !unknownN)) out.set(c.claimId, res!);
+      continue;   // unknown (EDGAR not readable): search again next run
+    }
     usDone++;
     let result: LocatedDoc | null = null; let unknown = false; const tried: string[] = [];
     for (const t of tickers) {
@@ -324,6 +383,7 @@ export function realLocateIo(): LocateIo {
       return rows;
     },
     cikForTicker: async (t) => { const m = await import('./us-edgar'); return (await m.cikForTicker(t)).cik; },
+    searchByName: async (name, fromIso, toIso, forms) => { const m = await import('./us-edgar'); return m.edgarNameSearch(name, fromIso, toIso, forms); },
     submissions: async (cik) => {
       const m = await import('./us-edgar');
       const s = await m.submissions(cik);

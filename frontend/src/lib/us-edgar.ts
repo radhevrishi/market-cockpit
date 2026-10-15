@@ -563,6 +563,33 @@ function parseDisplayName(dn: string): { company: string; ticker: string | null;
   return { company: normalizeCompanyName(m[1]), ticker: tickers[0] ? tickers[0].toUpperCase() : null, cik: m[3] };
 }
 
+/**
+ * zzz1057 — EDGAR full-text search for a company NAME (exact phrase) in a date range, one page (100 hits), de-duplicated per
+ * filing (a non-empty query returns one hit per document). Used by the Special Situations document locator for stories that
+ * name a company but no ticker. Null = EDGAR could not be read (the caller retries later), never "no filing".
+ */
+export async function edgarNameSearch(name: string, fromIso: string, toIso: string, forms: string[]): Promise<Array<{ cik: number; company: string; form: string; filingDate: string; accession: string; items: string[] }> | null> {
+  const q = String(name || '').replace(/["\\]/g, '').trim();
+  if (q.length < 3) return [];
+  const qs = new URLSearchParams({ q: `"${q}"`, startdt: fromIso.slice(0, 10), enddt: toIso.slice(0, 10) });
+  if (forms.length) qs.set('forms', forms.join(','));
+  const j = await secJson(`${EFTS}?${qs.toString()}`, 2);
+  if (!j || !j.hits) return null;
+  const out: Array<{ cik: number; company: string; form: string; filingDate: string; accession: string; items: string[] }> = [];
+  const seen = new Set<string>();
+  for (const h of (Array.isArray(j.hits.hits) ? j.hits.hits : [])) {
+    const s = h?._source; if (!s) continue;
+    const acc = String(s.adsh || ''); if (!acc || seen.has(acc)) continue;
+    seen.add(acc);
+    const dn = Array.isArray(s.display_names) ? String(s.display_names[0] || '') : '';
+    const p = parseDisplayName(dn);
+    const cik = Number(p.cik || (Array.isArray(s.ciks) ? s.ciks[0] : NaN));
+    if (!Number.isFinite(cik)) continue;
+    out.push({ cik, company: p.company || dn, form: String(s.form || ''), filingDate: String(s.file_date || ''), accession: acc, items: Array.isArray(s.items) ? s.items.map(String) : [] });
+  }
+  return out;
+}
+
 /** Every filing of the given forms on one date. Paginates efts by 100. */
 export async function edgarFilingsOn(date: string, forms: string[]): Promise<EdgarFiling[]> {
   const out: EdgarFiling[] = [];

@@ -54,7 +54,9 @@ export type FeedHoldBackReason =
   | 'ISSUER_TENDER_TERMS_NOT_READ'   // operating-company SC TO-I with nothing saying it is an equity buyback
   | 'EXCLUDED_FROM_EQUITY_RADAR'     // regulator / court / unlisted / unidentified entity (route QA exclusion)
   | 'AWAITING_VERIFICATION'          // not primary-verified and not AI-confirmed yet (verification gate)
-  | 'AI_CONTRADICTED';               // the AI verifier read the primary document and it contradicts the event
+  | 'AI_CONTRADICTED'                // the AI verifier read the primary document and it contradicts the event
+  | 'COURT_CASE_REPORT'              // zzz1057: law-feed case report / digest (no listed company as a party)
+  | 'VERIFICATION_EXPIRED';          // zzz1057: no company document confirmed it within VERIFY_EXPIRE_DAYS (end state, counted apart)
 
 /** SEC form -> event subtype. 'AMENDMENT' is never a subtype: an /A keeps its base form's subtype and sets isAmendment. */
 export type SecEventSubtype =

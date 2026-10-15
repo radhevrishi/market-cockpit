@@ -483,6 +483,9 @@ export const FEED_QUARANTINE_LABEL: Record<FeedQuarantineReason, string> = {
   EXCLUDED_FROM_EQUITY_RADAR: 'Not an equity special situation (regulator, court, unlisted or unidentified entity)',
   AWAITING_VERIFICATION: 'Awaiting verification: not confirmed from the primary document yet',
   AI_CONTRADICTED: 'Removed: the primary document contradicts the headline',
+  // zzz1057
+  COURT_CASE_REPORT: 'Court / tribunal case report or law-feed digest: the parties are individuals, banks, private (Pvt.) or unlisted companies — not a listed-equity event',
+  VERIFICATION_EXPIRED: 'Closed unverified: no company document confirmed it within 14 days of the event (no filing found, or the filing does not carry the claim)',
 };
 /** BDC / private-credit vehicle names: a name ENDING in Capital / Lending / Credit / Income (+ corporate suffix, optional series). Only meaningful with an SEC tender form. */
 export const BDC_STYLE_NAME_RE = /\b(?:capital|lending|credit|income)(?:\s+(?:corp(?:oration)?|co|company|fund|trust))?\.?(?:\s*,?\s*(?:inc|llc|l\.?p)\.?)?(?:\s+(?:i{1,3}|iv|v|vi|\d))?\s*$/i;

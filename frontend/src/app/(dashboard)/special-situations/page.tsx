@@ -26,7 +26,7 @@ import MultibaggerRadar from '@/components/special-situations/MultibaggerRadar';
 import { ShowMoreBar } from '@/components/guidance-upgrades/GuMore';
 import { PendingContext, pendingMapOf, NotCheckedChip } from '@/components/special-situations/pending-context';
 import { SsCountPanel, SsVerifyBanner, ShowUnverifiedToggle, UnverifiedSection, useShowUnverified, type SsCountFeed } from '@/components/special-situations/SsCountPanel';
-import { headerFromModel } from '@/components/special-situations/ss-counts';
+import { headerFromModel, splitZeroBoxes } from '@/components/special-situations/ss-counts';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ExternalLink, AlertTriangle } from 'lucide-react';
 import api from '@/lib/api';
@@ -198,7 +198,8 @@ function saveRejections(map: RejectionMap) {
 
 // PATCH 0532 — Added CAPEX (Capacity Expansion / New Ventures) and CONCALL
 // (First Presentation / Concall) categories. Mirrors backend.
-type Category = 'SPIN' | 'MA' | 'TURN' | 'CAP' | 'CAPEX' | 'CONCALL';
+// zzz1057: DISTRESS (NCLT / IBC / OTS) split from TURN (operating turnaround). Mirrors backend.
+type Category = 'SPIN' | 'MA' | 'TURN' | 'DISTRESS' | 'CAP' | 'CAPEX' | 'CONCALL';
 
 interface LiveFeedItem {
   id: string;
@@ -368,7 +369,8 @@ function scoreEvent(it: LiveFeedItem): { score: number; tier: Tier; freshness: S
 const CAT_META: Record<Category, { label: string; color: string; icon: string }> = {
   SPIN:    { label: 'Spin-off / Demerger',                color: '#22D3EE', icon: '🔀' },
   MA:      { label: 'M&A / Open Offer / Acquisition',     color: '#FBBF24', icon: '🤝' },
-  TURN:    { label: 'Turnaround',                         color: '#10B981', icon: '↩️' },
+  TURN:    { label: 'Operating Turnaround',               color: '#10B981', icon: '↩️' },
+  DISTRESS:{ label: 'Insolvency / Distressed (NCLT · IBC)', color: '#F87171', icon: '⚖' },
   CAP:     { label: 'Capital Allocation / Fund Raising',  color: '#A78BFA', icon: '💰' },
   // PATCH 0532 — new categories
   CAPEX:   { label: 'Capacity Expansion / New Venture',   color: '#F97316', icon: '🏭' },
@@ -410,7 +412,7 @@ export default function SpecialSituationsPage() {
   const [region, setRegion] = useState<'ALL' | 'IN' | 'US' | 'GLOBAL'>('ALL');
   // PATCH 0252 — Clickable tier/category filters. Clicking a Stat box toggles
   // the filter; multiple categories may be selected (OR semantics).
-  const [tierFilter, setTierFilter] = useState<'ALL' | 'TIER_1' | 'TIER_2' | 'WATCHLIST'>('ALL');
+  const [tierFilter, setTierFilter] = useState<'ALL' | 'TIER_1' | 'TIER_2' | 'WATCHLIST' | 'NOISE'>('ALL');
   // AUDIT_100 #32 — show-only-monitored toggle so users can review what they
   // previously flagged-for-monitor without restoring each one. Pure UI filter,
   // reads from the same REJECTED_LS_KEY localStorage map the card uses.
@@ -498,12 +500,15 @@ export default function SpecialSituationsPage() {
     if (['RIGHTS_ISSUE','RIGHTS_ISSUE_DEEP','CONVERTIBLE_PIPE','PROMOTER_BACKSTOP','QIP_PLACEMENT'].includes(et)) return 'Rights / Warrants / PIPE';
     if (['BUYBACK_TENDER','BUYBACK_OPEN_MARKET','DIVIDEND_HIKE'].includes(et)) return 'Buybacks / Capital Return';
     if (['ASSET_SALE_MONETIZATION','STAKE_SALE'].includes(et)) return 'Asset Sales / Monetization';
-    if (['NCLT_IBC_ADMISSION','NCLT_IBC_RESOLUTION','TURNAROUND_OPERATING'].includes(et)) return 'NCLT / IBC / Distressed';
+    if (['NCLT_IBC_ADMISSION','NCLT_IBC_RESOLUTION'].includes(et)) return 'NCLT / IBC / Distressed';
+    if (['TURNAROUND_OPERATING','TURNAROUND_NARRATIVE'].includes(et)) return 'Operating Turnaround';
+    if (et === 'CAPEX_EXPANSION') return 'Capacity / New Ventures';
+    if (et === 'FIRST_CONCALL') return 'First Concall / Presentation';
     if (['INDEX_INCLUSION','INDEX_EXCLUSION'].includes(et)) return 'Index Arbitrage';
     if (['HOLDCO_ARB_TRIGGER','STUB_TRADE_TRIGGER'].includes(et)) return 'HoldCo / Stub Trades';
     if (['GOVERNANCE_CRISIS','SEBI_REGULATORY_ACTION','AUDITOR_QUALIFIED','PROMOTER_PLEDGE_UNWIND'].includes(et)) return 'Governance / Regulatory';
     if (['BONUS_ISSUE','STOCK_SPLIT'].includes(et)) return 'Bonus / Split / Other';
-    return '';
+    return 'Other';
   };
 
   // PATCH 0252/0433 — Apply user-selected tier + category + coverage-bucket
@@ -528,10 +533,12 @@ export default function SpecialSituationsPage() {
   }, [canonicalEvents, tierFilter, catFilterSet, coverageFilterSet, monitoredOnly, monitoredMap]);
 
   // zzz855: memoised so the All tab (and its risk/reward board) is not rebuilt on every unrelated render
-  const { tier1Canonical, tier2Canonical, watchlistCanonical } = useMemo(() => ({
+  const { tier1Canonical, tier2Canonical, watchlistCanonical, lowSignalCanonical } = useMemo(() => ({
     tier1Canonical: filteredCanonicalEvents.filter((e) => e.tier === 'TIER_1'),
     tier2Canonical: filteredCanonicalEvents.filter((e) => e.tier === 'TIER_2'),
     watchlistCanonical: filteredCanonicalEvents.filter((e) => e.tier === 'WATCHLIST'),
+    // zzz1057: shown events in the NOISE tier were counted in the header but rendered nowhere. Listed (collapsed) as Low signal.
+    lowSignalCanonical: filteredCanonicalEvents.filter((e) => e.tier === 'NOISE'),
   }), [filteredCanonicalEvents]);
   // NOISE tier hidden from primary view (fund housekeeping, rumors, unclassified)
 
@@ -559,7 +566,7 @@ export default function SpecialSituationsPage() {
   // Aggregate stats per Category for the header
   // PATCH 0109 — BUG-03 fix: badges read from canonical events when populated
   // (otherwise the top counters showed 0 while the list rendered items below).
-  const catCounts: Record<Category, number> = { SPIN: 0, MA: 0, TURN: 0, CAP: 0, CAPEX: 0, CONCALL: 0 };
+  const catCounts: Record<Category, number> = { SPIN: 0, MA: 0, TURN: 0, DISTRESS: 0, CAP: 0, CAPEX: 0, CONCALL: 0 };
   // PATCH 0550 — guard against a runtime payload whose `e.category` isn't in
   // the Category union (e.g. a stale cache predating Patch 0532). Previously
   // `catCounts[unknown]++` produced NaN which then rendered as the string
@@ -582,6 +589,13 @@ export default function SpecialSituationsPage() {
   const tier1Count = fromModel ? fromModel.tiers.TIER_1 : canonicalEvents.length > 0 ? tier1Canonical.length : tier1.length;
   const tier2Count = fromModel ? fromModel.tiers.TIER_2 : canonicalEvents.length > 0 ? tier2Canonical.length : tier2.length;
   const tier3Count = fromModel ? fromModel.tiers.WATCHLIST : canonicalEvents.length > 0 ? watchlistCanonical.length : archive.length;
+  // zzz1057 — the tier boxes add up to the shown count: the remainder (NOISE tier) gets a "Low signal" box when there is any.
+  const lowSignalCount = fromModel ? fromModel.lowSignal : canonicalEvents.filter((e) => e.tier === 'NOISE').length;
+  // zzz1057 — category boxes: zero boxes are not drawn (named once in one line); a category with no box of its own
+  // (e.g. UNCATEGORISED) gets an "Other" box so the boxes add up to the shown count.
+  const otherCatCount = fromModel ? Object.entries(fromModel.categories).filter(([k]) => !(k in CAT_META)).reduce((a, [, n]) => a + (Number(n) || 0), 0) : 0;
+  const catBoxes = splitZeroBoxes((Object.keys(CAT_META) as Category[]).map((c) => ({ key: c, count: catCounts[c] })), (r) => CAT_META[r.key].label);
+  const coverageBoxes = splitZeroBoxes(((feed as any)?.coverage_diagnostic || []) as Array<{ bucket: string; emoji: string; count: number; note: string }>, (b) => b.bucket);
   // zzz854 — the radar reads the route's events as sent (the adapter merges duplicates itself), so its sections reconcile with the count model.
   // zzz855: memoised — a new array here made the radar rebuild every card's analysis on each page re-render.
   const radarEvents: CanonicalEvent[] = useMemo(() => (feed?.events || []).filter((e) => region === 'ALL' || e.region === region), [feed, region]);
@@ -641,12 +655,25 @@ export default function SpecialSituationsPage() {
               ? 'Watchlist: events older than the tradable window or without a confirmed ticker yet.'
               : 'Archive: events older than 30 days, kept for pattern reference.'}
             onClick={() => setTierFilter(tierFilter === 'WATCHLIST' ? 'ALL' : 'WATCHLIST')} />
+          {lowSignalCount > 0 && (
+            <Stat label="Low signal" value={lowSignalCount} color="#6B7A8D" loading={isLoading}
+              active={tierFilter === 'NOISE'}
+              tooltip="Shown events the tiering scores as low signal (amendment-only filings, rumours, non-catalyst items). Counted so the tier boxes add up to the shown events."
+              onClick={() => setTierFilter(tierFilter === 'NOISE' ? 'ALL' : 'NOISE')} />
+          )}
           <span style={{ width: 1, backgroundColor: 'var(--mc-bg-4)', margin: '4px 4px' }} />
-          {(Object.keys(CAT_META) as Category[]).map((c) => (
+          {(isLoading ? (Object.keys(CAT_META) as Category[]).map((c) => ({ key: c, count: 0 })) : catBoxes.shown).map(({ key: c }) => (
             <Stat key={c} label={CAT_META[c].label} value={catCounts[c]} color={CAT_META[c].color} icon={CAT_META[c].icon} loading={isLoading}
               active={catFilterSet.has(c)}
               onClick={() => toggleCat(c)} />
           ))}
+          {!isLoading && otherCatCount > 0 && (
+            <Stat label="Other (no category)" value={otherCatCount} color="#94A3B8" loading={false}
+              tooltip="Shown events whose type fits none of the category boxes (financing, guidance plans and the like)." />
+          )}
+          {!isLoading && catBoxes.emptyLine && (
+            <span data-ss-empty-cats style={{ alignSelf: 'center', fontSize: 11, color: 'var(--mc-text-4)' }}>{catBoxes.emptyLine}</span>
+          )}
           {anyFilterActive && (
             <button onClick={clearFilters} style={{ marginLeft: 6, alignSelf: 'center', backgroundColor: 'transparent', border: '1px solid var(--mc-bg-4)', color: 'var(--mc-text-3)', borderRadius: 5, padding: '4px 10px', fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>Clear filters ×</button>
           )}
@@ -685,7 +712,7 @@ export default function SpecialSituationsPage() {
         <SsVerifyBanner feed={feed} />
         {awaitingEventCount > 0 && <ShowUnverifiedToggle on={showUnverified} onChange={setShowUnverified} count={awaitingEventCount} />}
         {/* zzz854 — how the counts add up, what was held back, and the AI verification state (never silent) */}
-        <SsCountPanel feed={feed} knownCategories={Object.keys(CAT_META)} regionNote={feed?.count_model && region !== 'ALL' ? `Region filter ${region}: the boxes count this region only; the line above is for all regions.` : null} />
+        <SsCountPanel feed={feed} knownCategories={[...Object.keys(CAT_META), 'UNCATEGORISED', 'HELD_BACK']} regionNote={feed?.count_model && region !== 'ALL' ? `Region filter ${region}: the boxes count this region only; the line above is for all regions.` : null} />
 
         {/* PATCH 0431 — INSTITUTIONAL COVERAGE DIAGNOSTIC.
             User asked: "if something is missing reupdate logic — 3 months
@@ -697,7 +724,7 @@ export default function SpecialSituationsPage() {
           <div style={{ marginTop: 8, marginBottom: 8, padding: 10, background: 'linear-gradient(135deg, color-mix(in srgb, var(--mc-accent) 8%, transparent), color-mix(in srgb, var(--mc-warn) 6%, transparent))', border: '1px solid #38A9E840', borderRadius: 8 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
               <span style={{ fontSize: 11, fontWeight: 800, color: '#38A9E8', letterSpacing: '0.4px' }}>
-                📋 INSTITUTIONAL COVERAGE — 9 alpha categories{feed?.count_model ? ' · shown events after checks' : ''}
+                📋 INSTITUTIONAL COVERAGE — {coverageBoxes.shown.length} with events today{feed?.count_model ? ' · shown events after checks' : ''}
                 {coverageFilterSet.size > 0 && (
                   <span style={{ marginLeft: 8, color: 'var(--mc-bullish)', fontSize: 10 }}>
                     · filtering on {coverageFilterSet.size} bucket{coverageFilterSet.size === 1 ? '' : 's'}
@@ -705,11 +732,11 @@ export default function SpecialSituationsPage() {
                 )}
               </span>
               <span style={{ fontSize: 9, color: 'var(--mc-text-4)', fontStyle: 'italic' }}>
-                click bucket to filter list · empty = no events in window OR detector gap
+                click bucket to filter list
               </span>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 6 }}>
-              {((feed as any).coverage_diagnostic as Array<{ bucket: string; emoji: string; count: number; note: string }>).map((b, i) => {
+              {coverageBoxes.shown.map((b, i) => {
                 const has = b.count > 0;
                 const isActive = coverageFilterSet.has(b.bucket);
                 const baseColor = has ? '#10B981' : '#6B7A8D';
@@ -745,6 +772,7 @@ export default function SpecialSituationsPage() {
                 );
               })}
             </div>
+            {coverageBoxes.emptyLine && <div data-ss-empty-coverage style={{ marginTop: 6, fontSize: 10, color: 'var(--mc-text-4)' }}>{coverageBoxes.emptyLine}</div>}
           </div>
         )}
 
@@ -773,7 +801,7 @@ export default function SpecialSituationsPage() {
         )}
         {active === 'all' && (
           canonicalEvents.length > 0
-            ? <AllSituationsCanonical isLoading={isLoading} error={error} tier1={tier1Canonical} tier2={tier2Canonical} watchlist={watchlistCanonical} />
+            ? <AllSituationsCanonical isLoading={isLoading} error={error} tier1={tier1Canonical} tier2={tier2Canonical} watchlist={watchlistCanonical} lowSignal={lowSignalCanonical} />
             : <AllSituations isLoading={isLoading} error={error} tier1={tier1} tier2={tier2} archive={archive} />
         )}
         {/* PATCH 0584 — Analytics view: unified merger-arb + deal-probability
@@ -1173,7 +1201,7 @@ function BestRiskRewardBoard({ events }: { events: CanonicalEvent[] }) {
   );
 }
 
-function AllSituationsCanonical({ isLoading, error, tier1, tier2, watchlist }: { isLoading: boolean; error: any; tier1: CanonicalEvent[]; tier2: CanonicalEvent[]; watchlist: CanonicalEvent[] }) {
+function AllSituationsCanonical({ isLoading, error, tier1, tier2, watchlist, lowSignal = [] }: { isLoading: boolean; error: any; tier1: CanonicalEvent[]; tier2: CanonicalEvent[]; watchlist: CanonicalEvent[]; lowSignal?: CanonicalEvent[] }) {
   // PATCH 0109 — BUG-04: 10-second timeout state.  If still loading after
   // 10s, surface a hint so user knows fetch is slow rather than broken.
   const [slow, setSlow] = useState(false);
@@ -1220,6 +1248,7 @@ function AllSituationsCanonical({ isLoading, error, tier1, tier2, watchlist }: {
       {tier1.length > 0 && <CanonicalSection meta={TIER_LABEL.TIER_1} color={TIER_COLOR.TIER_1} events={tier1} defaultExpanded />}
       {tier2.length > 0 && <CanonicalSection meta={TIER_LABEL.TIER_2} color={TIER_COLOR.TIER_2} events={tier2} defaultExpanded />}
       {watchlist.length > 0 && <CanonicalSection meta={TIER_LABEL.WATCHLIST} color={TIER_COLOR.WATCHLIST} events={watchlist} defaultExpanded={false} />}
+      {lowSignal.length > 0 && <CanonicalSection meta={{ label: 'Low signal', tagline: 'Shown but scored low signal: amendment-only filings, rumours, non-catalyst items' }} color={TIER_COLOR.NOISE} events={lowSignal} defaultExpanded={false} />}
     </>
   );
 }
@@ -2137,7 +2166,7 @@ function DiscoverScanner({ feed, isLoading, error, refetch, isFetching, region, 
 
       {/* PATCH 0532 — include CAPEX (Capacity Expansion / New Ventures) and
           CONCALL (First Presentation / Concall) so those event types show up. */}
-      {(['SPIN','MA','TURN','CAP','CAPEX','CONCALL'] as Category[]).map((cat) => {
+      {(['SPIN','MA','TURN','DISTRESS','CAP','CAPEX','CONCALL'] as Category[]).map((cat) => {
         const items = filterReg(feed.by_category[cat] || []);
         const meta = CAT_META[cat];
         return (

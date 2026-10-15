@@ -590,6 +590,8 @@ export async function readLocated(ids: string[], kv: KvIo, opts: { memo?: boolea
 export function locatedTtlFor(d: LocatedDoc, eventDate?: string | null, now = Date.now()): number {
   if (d.found) return TTL_LOCATED_S;
   const t = eventDate ? Date.parse(eventDate) : NaN;
+  // zzz1057: past the 14-day verification expiry the item is closed on the page; look again every 12 days (still sooner than a found document's 14)
+  if (Number.isFinite(t) && now - t > 14 * DAY_S * 1000) return 12 * DAY_S;
   return Number.isFinite(t) && now - t > 7 * DAY_S * 1000 ? 7 * DAY_S : TTL_LOCATE_NONE_S;
 }
 export async function writeLocated(d: LocatedDoc, kv: KvIo, eventDate?: string | null): Promise<void> {

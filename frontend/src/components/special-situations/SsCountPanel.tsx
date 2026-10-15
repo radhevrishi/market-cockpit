@@ -6,7 +6,7 @@ import React, { useEffect, useState } from 'react';
 import type { AwaitingRow, RemovedRow, VerificationSummary } from '@/lib/ai-verify-types';
 import { R, tint } from './radar-tokens';
 import {
-  otherCategories, auditRowLine, coverageRawFallback, nothingVerifiedBanner, unverifiedCards, verificationProgressLine, type UnverifiedEventIn, awaitingReasonCounts, awaitingRowLine, beforeVerificationLine, countModelSummary, coverageRawRows, equationRows, heldBackRows, verificationLine, type CountModelIn,
+  otherCategories, expiredLine, auditRowLine, coverageRawFallback, nothingVerifiedBanner, unverifiedCards, verificationProgressLine, type UnverifiedEventIn, awaitingReasonCounts, awaitingRowLine, beforeVerificationLine, countModelSummary, coverageRawRows, equationRows, heldBackRows, verificationLine, type CountModelIn,
 } from './ss-counts';
 
 export interface SsCountFeed {
@@ -53,6 +53,7 @@ export function SsCountPanel({ feed, regionNote, knownCategories }: { feed: SsCo
   const raw = coverageRawRows(cm);
   const rawOnly = raw.length ? [] : coverageRawFallback(feed.coverage_diagnostic_raw);
   const progress = verificationProgressLine(feed.verification as any, feed.awaitingVerificationCount);
+  const expired = expiredLine(feed.verification as any);
   const reasons = awaitingReasonCounts(awaiting, feed.verification?.awaitingByReason as Record<string, number> | undefined);
   if (!summary && !ver && !held.length && !awaiting.length) return null;
   const bad = eqs.filter((e) => !e.holds);
@@ -86,6 +87,7 @@ export function SsCountPanel({ feed, regionNote, knownCategories }: { feed: SsCo
         </div>
       )}
       {progress && <div data-ss-progress style={{ color: R.text }}>{progress}</div>}
+      {expired && <div data-ss-expired style={{ color: R.dim }}>{expired}</div>}
       {before && <div style={{ color: R.dim }}>{before}. {(feed.verification as any)?.shownNotChecked > 0 ? `The boxes above show events that passed the check plus ${(feed.verification as any).shownNotChecked} not checked yet (each marked ⏳).` : 'The boxes above show only events that passed the check.'}</div>}
       {(awaitingN > 0 || awaiting.length > 0) && (
         <Fold data-ss-awaiting="" summary={<><b>Awaiting verification ({awaitingN})</b> <span style={{ color: R.dim }}>— hidden from the lists until the company document confirms them{reasons.length ? `: ${reasons.map((r) => `${r.label} ${r.count}`).join(' · ')}` : ''}</span></>}>

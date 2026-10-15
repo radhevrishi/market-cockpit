@@ -44,7 +44,11 @@ const hhmm = (iso: string | null | undefined): string | null => { const t = iso 
 /** One line on the AI verification state. Unavailable is said plainly, never left silent. Null only when the payload has no verification block (older cache). */
 export function verificationLine(v: Partial<VerificationSummary> | null | undefined): VerificationLine | null {
   if (!v || typeof v !== 'object') return null;
-  if (v.available === false) return { text: `${AI_UNAVAILABLE_TEXT}${v.unavailableReason ? ` ${String(v.unavailableReason).trim()}` : ''}`, available: false };
+  // zzz1057: a missing key is said as "not configured" (the check never ran), distinct from a cap or a slow status read
+  if (v.available === false) {
+    const why = v.unavailableReason ? String(v.unavailableReason).trim() : '';
+    return { text: `${AI_UNAVAILABLE_TEXT}${why ? ` ${/\bis configured\b|\bkey configured\b|no [a-z_]*api[_ ]key/i.test(why) ? 'Not configured: ' : ''}${why}` : ''}`, available: false };
+  }
   const who = [v.provider && v.provider !== 'unknown' ? v.provider : null, v.model || null].filter(Boolean).join(' ');
   const last = hhmm(v.lastRunAt);
   // zzz880: two different things, said separately — "606 confirmed by the filing itself · 0 checked · 0 confirmed" read as a contradiction.
@@ -78,10 +82,30 @@ export function auditRowLine(r: Partial<RemovedRow>): string {
 }
 
 /** Header numbers from the count model (verified, shown set). Null when the caller must count itself (older payload or a region filter). */
-export function headerFromModel(cm: CountModelIn, region: string): { tiers: { TIER_1: number; TIER_2: number; WATCHLIST: number }; categories: Record<string, number> } | null {
+export function headerFromModel(cm: CountModelIn, region: string): { tiers: { TIER_1: number; TIER_2: number; WATCHLIST: number }; categories: Record<string, number>; lowSignal: number } | null {
   if (!cm || region !== 'ALL' || !cm.shown_by_tier || !cm.shown_by_category) return null;
   const t = cm.shown_by_tier;
-  return { tiers: { TIER_1: n0(t.TIER_1), TIER_2: n0(t.TIER_2), WATCHLIST: n0(t.WATCHLIST) }, categories: { ...cm.shown_by_category } };
+  const tiers = { TIER_1: n0(t.TIER_1), TIER_2: n0(t.TIER_2), WATCHLIST: n0(t.WATCHLIST) };
+  // zzz1057: the remainder (NOISE / any other tier) gets its own box, so the tier boxes always add up to the shown count
+  const lowSignal = Math.max(0, (num(cm.shown) ? (cm.shown as number) : sum(t)) - tiers.TIER_1 - tiers.TIER_2 - tiers.WATCHLIST);
+  return { tiers, categories: { ...cm.shown_by_category }, lowSignal };
+}
+
+/**
+ * zzz1057 — boxes with a count of zero are not drawn; the empty ones are named once in a single line instead
+ * ("Nothing today in: Index Arbitrage, HoldCo / Stub Trades"). Order of the non-zero boxes is kept.
+ */
+export function splitZeroBoxes<T extends { count: number }>(rows: ReadonlyArray<T>, labelOf: (r: T) => string): { shown: T[]; emptyLine: string | null } {
+  const shown = rows.filter((r) => n0(r.count) > 0);
+  const empty = rows.filter((r) => n0(r.count) <= 0).map(labelOf).filter(Boolean);
+  return { shown, emptyLine: empty.length ? `Nothing today in: ${empty.join(', ')}.` : null };
+}
+
+/** zzz1057 — '6 closed unverified after 14 days (no company document 5 · not in the document 1)'. Null when none expired. */
+export function expiredLine(v: { expired?: number; expiredByReason?: Record<string, number>; expireAfterDays?: number } | null | undefined): string | null {
+  if (!v || !num(v.expired) || v.expired <= 0) return null;
+  const parts = Object.entries(v.expiredByReason || {}).filter(([, n]) => n0(n) > 0).map(([r, n]) => `${awaitingReasonWord(r)} ${n}`);
+  return `${v.expired} closed unverified after ${num(v.expireAfterDays) ? v.expireAfterDays : 14} days${parts.length ? ` (${parts.join(' · ')})` : ''} — no longer waiting, counted apart in Held back.`;
 }
 
 /** 'Before the AI check: Tier 1 16 · Tier 2 281 · Watchlist 245'. Null when absent. */

@@ -36,8 +36,9 @@ import {
 
 import {
   classifyForm10, contentHints, createEventClusterer, decodeHtmlEntities, extractSubjectTickers, identifySubject, isNonEventContent, countCanonicalEventTypes,
-  parseSecFilingTitle, summariseHeldBack, type FeedQuarantineReason,
+  parseSecFilingTitle, summariseHeldBack, subjectFromHeadline, type FeedQuarantineReason,
 } from '@/lib/special-sit-feed-quality';
+import { capexOrConcallEventType, isFundSubject, refineDistressType, splitExpiredAwaiting, VERIFY_EXPIRE_DAYS } from '@/lib/special-sit-audit';
 import { assembleGatedFeed, dedupeFeedEvents, splitRadarInputs } from '@/lib/multibagger-radar-adapter';
 import { buildRadarQa } from '@/lib/special-sit-qa';
 import { createSecLookupLoader } from '@/lib/special-sit-entity';
@@ -131,7 +132,8 @@ const SOURCES: ReadonlyArray<FeedSource> = [
 // facility, capex commitment, fresh foray into a market/business) and
 // first-time investor presentations / concalls. Previously these slipped
 // through the SPIN/MA/TURN/CAP cracks and never appeared.
-type Category = 'SPIN' | 'MA' | 'TURN' | 'CAP' | 'CAPEX' | 'CONCALL';
+// zzz1057: DISTRESS (NCLT / IBC / insolvency / OTS) split from TURN (operating turnaround).
+type Category = 'SPIN' | 'MA' | 'TURN' | 'DISTRESS' | 'CAP' | 'CAPEX' | 'CONCALL';
 
 interface CategorySpec {
   id: Category;
@@ -160,13 +162,19 @@ const CATEGORIES: ReadonlyArray<CategorySpec> = [
     reject: /\b(rumou?r(?:ed|s)?|may consider|reportedly weighing|in talks (?:to|with)|exploring|denied|reject(?:ed)?\s+(?:the\s+)?offer|terminated|called off|withdr(?:ew|awn)|antitrust block|deal collapse)\b/i,
   },
   {
+    // zzz1057: insolvency / tribunal / settlement items are distress, not an operating turnaround.
+    id: 'DISTRESS',
+    label: 'Insolvency / Distressed (NCLT · IBC · OTS)',
+    pattern: /\b(nclt|nclat|ibc[\s_-]?(?:admission|resolution|proceedings)|insolvency|cirp|corporate insolvency|resolution plan|resolution professional|liquidation|one[\s-]?time settlement|ots[\s-]?(?:approved|settlement)|npa\s+recovery|drt|drat|sarfaesi|bankruptcy|chapter 11)\b/i,
+  },
+  {
     id: 'TURN',
     label: 'Turnarounds',
     // PATCH 0447 BUG-054 — Broadened regex. Added NCLT/IBC + asset-sale-for-
     // debt-repair + improvement-after-stress phrasings the user reported
     // missing. Catches India-style 'one-time settlement', 'OTS', NPA
     // recovery, fresh capital infusion when paired with deleverage.
-    pattern: /\b(turnaround|turn.?around|back to profit|back in (?:the )?black|swung to profit|swing to profit|loss to profit|profit revival|first profit (?:after|since)|exits losses|debt restructur|balance sheet repair|debt reduction|debt prepay|deleverag|recapitalis|operational restructur|cost cutting yields|return to profit|profit after years|profit after \w+ losses|narrowed (?:loss|losses)|narrowing loss(?:es)?|first profitable (?:quarter|year)|ebitda positive|operating profit (?:after|first)|black (?:after|since)|profitable (?:after|since) \w+ (?:years|quarters)|recovers? from loss|emerges? from (?:bankruptcy|restructur|losses)|debt resolution|cdr exit|sdr exit|insolvency exit|nclt|ibc[\s_-]?(?:admission|resolution|proceedings)|insolvency (?:proceedings|petition|admitted)|one[\s-]?time settlement|\bots[\s-]?(?:approved|settlement)|npa\s+recovery|asset\s+monetisation|debt[\s-]?for[\s-]?equity\s+swap|promoter\s+infus(?:e|ion)|fresh\s+capital\s+infusion|stake\s+sale\s+for\s+debt|debt\s+repayment|cleanup\s+(?:balance sheet|finances)|recoveries?\s+from\s+npa)\b/i,
+    pattern: /\b(turnaround|turn.?around|back to profit|back in (?:the )?black|swung to profit|swing to profit|loss to profit|profit revival|first profit (?:after|since)|exits losses|debt restructur|balance sheet repair|debt reduction|debt prepay|deleverag|recapitalis|operational restructur|cost cutting yields|return to profit|profit after years|profit after \w+ losses|narrowed (?:loss|losses)|narrowing loss(?:es)?|first profitable (?:quarter|year)|ebitda positive|operating profit (?:after|first)|black (?:after|since)|profitable (?:after|since) \w+ (?:years|quarters)|recovers? from loss|emerges? from (?:bankruptcy|restructur|losses)|debt resolution|cdr exit|sdr exit|insolvency exit|asset\s+monetisation|debt[\s-]?for[\s-]?equity\s+swap|promoter\s+infus(?:e|ion)|fresh\s+capital\s+infusion|stake\s+sale\s+for\s+debt|debt\s+repayment|cleanup\s+(?:balance sheet|finances)|recoveries?\s+from\s+npa)\b/i,
     reject: /\b(failed turnaround|turnaround unlikely|fall(?:s|ing|en)?\s+back into loss|swung to loss|return to loss|loss widens|widening loss|loss expands)\b/i,
   },
   {
@@ -603,7 +611,7 @@ async function buildFeed(): Promise<{
   });
 
   // PATCH 0532 — CAPEX + CONCALL buckets added
-  const by_category: Record<Category, FeedItem[]> = { SPIN: [], MA: [], TURN: [], CAP: [], CAPEX: [], CONCALL: [] };
+  const by_category: Record<Category, FeedItem[]> = { SPIN: [], MA: [], TURN: [], DISTRESS: [], CAP: [], CAPEX: [], CONCALL: [] };
   for (const it of deduped) by_category[it.category].push(it);
 
   // ── PATCH 0105: EVENT INTELLIGENCE PIPELINE ──
@@ -630,7 +638,9 @@ async function buildFeed(): Promise<{
   // the new buckets; everything else falls back to existing.
   const eventTypeToCategory = (eventType: string, fallback: Category): Category => {
     const et = (eventType || '').toUpperCase();
-    if (['NCLT_IBC_ADMISSION', 'NCLT_IBC_RESOLUTION', 'TURNAROUND_OPERATING', 'TURNAROUND_NARRATIVE'].includes(et)) return 'TURN';
+    // zzz1057: insolvency is DISTRESS; TURN is an operating turnaround only
+    if (['NCLT_IBC_ADMISSION', 'NCLT_IBC_RESOLUTION'].includes(et)) return 'DISTRESS';
+    if (['TURNAROUND_OPERATING', 'TURNAROUND_NARRATIVE'].includes(et)) return 'TURN';
     if (['TENDER_OFFER', 'MERGER_DEFINITIVE', 'MERGER_RECOMMENDATION', 'GOING_PRIVATE', 'OPEN_OFFER', 'ACQUISITION_PUBLIC', 'STAKE_SALE', 'ASSET_SALE_MONETIZATION'].includes(et)) return 'MA';
     if (et === 'FORM10_REGISTRATION') return 'CAP';
     if (['SPIN_OFF', 'DEMERGER_INDIA', 'IPO_SUBSIDIARY', 'HOLDCO_ARB_TRIGGER', 'STUB_TRADE_TRIGGER'].includes(et)) return 'SPIN';
@@ -675,6 +685,10 @@ async function buildFeed(): Promise<{
     const f10 = classifyForm10(it.title, it.description);
     if (f10 === 'REGISTRATION') sig.event_type = 'FORM10_REGISTRATION' as any;
     else if (f10 === 'SPIN') sig.event_type = 'SPIN_OFF';
+    // zzz1057: CAPEX / CONCALL items had no event-type producer and were dropped as UNCLASSIFIED (both boxes always 0).
+    if (sig.event_type === 'UNCLASSIFIED') { const ce = capexOrConcallEventType(it.category, fullText); if (ce) sig.event_type = ce as any; }
+    // zzz1057: a turnaround must be what the headline is about, and insolvency / tribunal wording is distress, not a turnaround
+    sig.event_type = refineDistressType(sig.event_type, fullText, it.title) as any;
     itemSignals.set(it.id, sig);
 
     // Skip UNCLASSIFIED noise from canonical event grouping (still in by_category for backwards compat)
@@ -728,8 +742,10 @@ async function buildFeed(): Promise<{
     const region = primary.region;
 
     // Detect fund-only events (e.g. "Bow River Capital Evergreen Fund" tender)
-    const allText = sorted.map((it) => `${it.title} ${it.description || ''}`).join(' ');
-    const isFund = /\b(fund|trust|capital evergreen|infrastructure income|private markets fund|closed-end|etf)\b/i.test(allText);
+    // zzz1057: the SUBJECT must be a pooled vehicle. "pledges stake to fund a rights issue" / "raise ₹130 crore from RevX fund"
+    // matched the old any-word test and sent real company events to NOISE as "fund housekeeping".
+    const subjectForFund = parseSecFilingTitle(primary.title)?.company || primarySig.target_name || subjectFromHeadline(primary.title) || '';
+    const isFund = isFundSubject(subjectForFund);
 
     // Primary-source check
     const hasPrimarySource = sorted.some((it) => SEC_PRIMARY_RE.test(it.link) || PR_RE.test(it.link));
@@ -970,21 +986,26 @@ async function applyVerificationGate(data: any): Promise<any> {
   const notKept = candidates.filter((e) => !keptIds.has(String(e?.event_id)));
   const rawCoverage: Record<string, number> = {};
   for (const b of (Array.isArray(data?.coverage_diagnostic) ? data.coverage_diagnostic : [])) if (b?.bucket) rawCoverage[b.bucket] = Number(b.count) || 0;
+  // zzz1057: an awaiting item that can never be checked (no company document found / the document does not carry the claim) is
+  // closed after VERIFY_EXPIRE_DAYS instead of sitting in an ever-growing "awaiting" pile. Counted apart (VERIFICATION_EXPIRED).
+  const expiry = splitExpiredAwaiting(notKept.filter((e) => !removedRefs.has(String(e?.event_id))), g?.awaiting ?? [], Date.now());
+  const expiredIds = new Set(expiry.expired.map((e: any) => String(e?.event_id)));
   let gated: ReturnType<typeof assembleGatedFeed> | null = null;
   try {
     gated = assembleGatedFeed({
-      kept, held: all.filter(held), awaiting: notKept.filter((e) => !removedRefs.has(String(e?.event_id))), contradicted: notKept.filter((e) => removedRefs.has(String(e?.event_id))),
+      kept, held: all.filter(held), awaiting: expiry.live, contradicted: notKept.filter((e) => removedRefs.has(String(e?.event_id))), expired: expiry.expired,
       rawItemCount: Number(data?.total) || undefined, rawCoverage, coverageBucketOf, entityDeps: { usLookup: await safeSecLookup() },
     });
   } catch { gated = null; }
   const byTier: Record<string, number> = gated ? { ...gated.byTier } : { TIER_1: 0, TIER_2: 0, WATCHLIST: 0, NOISE: 0 };
   if (!gated) for (const e of kept) if (e?.tier && e.tier in byTier) byTier[e.tier] += 1;
-  const coverageShown = gated ? COVERAGE_DEFS.map((b) => ({ ...b, count: gated!.countModel.shown_by_coverage[b.bucket] || 0 })) : data?.coverage_diagnostic;
+  // zzz1057: the coverage boxes add up to the shown count: events in no named bucket get an 'Other' row (only when there are some)
+  const coverageShown = gated ? withOtherCoverage(COVERAGE_DEFS.map((b) => ({ ...b, count: gated!.countModel.shown_by_coverage[b.bucket] || 0 })), gated.countModel.shown_by_coverage) : data?.coverage_diagnostic;
   const verification0 = g?.verification ?? { provider: 'unknown', model: null, available: false, unavailableReason: 'The verification gate could not run; only primary-verified events are shown.', mode: 'enforce',
     primaryVerified: kept.length, checked: 0, confirmed: 0, contradicted: 0, awaiting: candidates.length - kept.length, awaitingByReason: {}, lastRunAt: null,
     nextRunEta: null, schedule: null, queueSize: null, primaryDocument: undefined };
-  const verification = withShownPending(verification0, shownPending.byReason);
-  const hiddenAwaiting = (g?.awaiting ?? []).filter((r: any) => !shownPending.ids.has(String(r?.refId)));
+  const verification = withExpired(withShownPending(verification0, shownPending.byReason), expiry.expiredByReason);
+  const hiddenAwaiting = (g?.awaiting ?? []).filter((r: any) => !shownPending.ids.has(String(r?.refId)) && !expiredIds.has(String(r?.refId)));
   return {
     ...data,
     // held-back events stay in `events` WITH their quarantine / exclusion flags (the Radar turns them into its "N held back" line and
@@ -1001,7 +1022,7 @@ async function applyVerificationGate(data: any): Promise<any> {
     awaitingVerification: hiddenAwaiting.slice(0, 300),
     awaitingVerificationCount: verification.awaiting,
     verificationAudit: (g?.removed ?? []).slice(0, 200),
-    verification_held_back: { events_awaiting: verification.awaiting, events_contradicted: verification.contradicted, events_already_held_back: heldOut, category_items_hidden: categoryHeld },
+    verification_held_back: { events_awaiting: verification.awaiting, events_contradicted: verification.contradicted, events_expired: verification.expired || 0, events_already_held_back: heldOut, category_items_hidden: categoryHeld },
   };
 }
 
@@ -1022,6 +1043,19 @@ function pendingToShow(g: any, candidates: any[], kept: any[]): { events: any[];
     out.events.push({ ...e, verification_pending: { reason: r.reason, reasonText: r.reasonText || 'Not checked yet against the company document.' } });
   }
   return out;
+}
+// zzz1057: expired items leave the awaiting count (and its per-reason split) and are reported as their own number.
+function withExpired(v: any, byReason: Record<string, number>): any {
+  const n = Object.values(byReason).reduce((a, b) => a + b, 0);
+  if (!n) return { ...v, expired: 0, expireAfterDays: VERIFY_EXPIRE_DAYS };
+  const ab: Record<string, number> = { ...(v?.awaitingByReason || {}) };
+  for (const [k, c] of Object.entries(byReason)) { ab[k] = Math.max(0, (ab[k] || 0) - c); if (!ab[k]) delete ab[k]; }
+  return { ...v, awaiting: Math.max(0, (Number(v?.awaiting) || 0) - n), awaitingByReason: ab, expired: n, expiredByReason: byReason, expireAfterDays: VERIFY_EXPIRE_DAYS };
+}
+function withOtherCoverage<B extends { bucket: string; count: number }>(defs: B[], shown: Record<string, number>): Array<B | { bucket: string; emoji: string; event_types: string[]; count: number; note: string }> {
+  const named = new Set(defs.map((b) => b.bucket));
+  const other = Object.entries(shown || {}).filter(([k]) => !named.has(k)).reduce((a, [, n]) => a + (Number(n) || 0), 0);
+  return other > 0 ? [...defs, { bucket: 'Other', emoji: '·', event_types: [], count: other, note: 'Shown events whose type is in no named bucket' }] : defs;
 }
 function withShownPending(v: any, byReason: Record<string, number>): any {
   const n = Object.values(byReason).reduce((a, b) => a + b, 0);
@@ -1066,7 +1100,7 @@ export async function GET(req: Request) {
       // PATCH 0550 — fallback shape must match the live Category set (Patch
       // 0532 added CAPEX + CONCALL). Otherwise the page renders the empty
       // catch payload and the new chip groups silently disappear.
-      by_category: { SPIN: [], MA: [], TURN: [], CAP: [], CAPEX: [], CONCALL: [] },
+      by_category: { SPIN: [], MA: [], TURN: [], DISTRESS: [], CAP: [], CAPEX: [], CONCALL: [] },
       // PATCH zzz65 — full success-shape parity so clients reading events/
       // by_tier/event_type_counts/event_priors/source_status/coverage_diagnostic
       // don't crash (mismatched-shape bug).

@@ -182,16 +182,21 @@ describe('zzz841 rendered tab', () => {
   const render = (events: RadarFeedEvent[], props: Record<string, unknown> = {}) =>
     renderToStaticMarkup(React.createElement(MultibaggerRadar as any, { events, holdings: [], region: 'ALL', ...props }));
 
-  test('every bucket is its own section, in order, with a plain meaning and a count', () => {
+  // zzz1057: a bucket with events is its own section (in order); an empty bucket gets no section and is named once in the
+  // "Nothing today in" line. The Thesis ledger tab appears once it has entries (none in this render).
+  test('every non-empty bucket is its own section, in order, with a plain meaning and a count; empty ones are named once', () => {
     const h = render(EVENTS);
-    const pos = BUCKET_ORDER.map((b) => { const i = h.indexOf(`data-radar-bucket="${b}"`); assert.ok(i >= 0, b); return i; });
+    const present = BUCKET_ORDER.filter((b) => h.includes(`data-radar-bucket="${b}"`));
+    assert.ok(present.length > 0);
+    const pos = present.map((b) => h.indexOf(`data-radar-bucket="${b}"`));
     assert.deepEqual([...pos].sort((a, b) => a - b), pos);
     const t = strip(h);
     for (const b of BUCKET_ORDER) assert.ok(t.toUpperCase().includes(BUCKET_LABEL[b].toUpperCase()), b);
+    const empty = BUCKET_ORDER.filter((b) => !present.includes(b));
+    if (empty.length) assert.match(t, /Nothing today in:/);
     assert.match(t, /Ranked by research value - price never used/);
     assert.match(t, /Not investment advice/);
     assert.match(t, /Built from filings and headlines in the feed/);
-    assert.match(t, /Thesis ledger/);
     assert.match(t, /catalyst monitor/);
   });
   test('cards show the spec fields', () => {

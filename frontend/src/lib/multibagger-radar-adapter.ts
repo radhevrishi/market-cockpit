@@ -93,6 +93,8 @@ const HOLDBACK_EXCLUSION: Record<FeedHoldBackReason, string> = {
   EXCLUDED_FROM_EQUITY_RADAR: 'NO_COMPANY_MECHANISM',
   AWAITING_VERIFICATION: 'AWAITING_VERIFICATION',
   AI_CONTRADICTED: 'AI_CONTRADICTED',
+  COURT_CASE_REPORT: 'COURT',
+  VERIFICATION_EXPIRED: 'VERIFICATION_EXPIRED',
 };
 const ACQ_WORDS_RE = /\b(acquir\w*|acquisition|buy(?:s|ing)? (?:a |the |an )?(?:\d+(?:\.\d+)?\s?% )?(?:stake|majority|controlling)|stake (?:buy|purchase|increase)|buyout|takeover|remaining stake)\b/i;
 const RANGE_PCT_RE = /\b\d{1,3}(?:\.\d+)?\s?[–—-]\s?\d{1,3}(?:\.\d+)?\s?%/g;
@@ -444,6 +446,8 @@ export interface GatedFeedArgs<E extends RadarFeedEvent = RadarFeedEvent> {
   /** not verified yet / AI-contradicted (verification gate) */
   awaiting: ReadonlyArray<E>;
   contradicted?: ReadonlyArray<E>;
+  /** zzz1057: waited longer than VERIFY_EXPIRE_DAYS with no company document (or the document lacks the claim): closed, counted apart */
+  expired?: ReadonlyArray<E>;
   rawItemCount?: number;
   rawCoverage?: Record<string, number>;
   coverageBucketOf?: (eventType: string, category?: string) => string | null;
@@ -475,7 +479,8 @@ export function assembleGatedFeed<E extends RadarFeedEvent>(a: GatedFeedArgs<E>)
   const held = a.held.filter((e) => !dupes.includes(e)).map((e) => holdFlag(e, null));
   const awaiting = a.awaiting.map((e) => holdFlag(e, 'AWAITING_VERIFICATION'));
   const contradicted = (a.contradicted || []).map((e) => holdFlag(e, 'AI_CONTRADICTED'));
-  const events = [...a.kept, ...held, ...awaiting, ...contradicted] as E[];
+  const expired = (a.expired || []).map((e) => holdFlag(e, 'VERIFICATION_EXPIRED'));
+  const events = [...a.kept, ...held, ...awaiting, ...contradicted, ...expired] as E[];
   const split = splitRadarInputs(events, { entityDeps: a.entityDeps });
   const countModel = buildFeedCountModel({
     rawItemCount: a.rawItemCount, canonicalEvents: split.canonicalEvents + dupes.length, mergedDuplicates: split.mergedDuplicates + dupes.length,

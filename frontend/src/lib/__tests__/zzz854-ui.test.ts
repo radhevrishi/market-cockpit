@@ -328,7 +328,7 @@ describe('events: header partition, review queue, verification lists, coverage',
   test('verification block: unavailable is said plainly; awaiting and removed lists', () => {
     const items: any[] = [{ id: 'q2', ticker: 'AAAA', company: 'Alpha', market: 'US', announcement_date: '2026-09-29', status: 'awaiting_numbers', reason: 'old and new numbers not read', taxonomy: 'first_guidance', primarySourceState: 'found_not_read', primarySourceUrl: null, figures: [], sources: [], aiVerification: { status: 'AWAITING', reasonText: 'AI check unavailable' } }];
     const t = html(React.createElement(GuVerificationBlock, { data: { verification: { available: false, unavailableReason: 'No API key configured.' }, awaitingVerificationCount: 1, reviewQueue: items } }));
-    assert.match(t, /AI check unavailable — items stay hidden until checked\. No API key configured\./);
+    assert.match(t, /AI check unavailable — items stay hidden until checked\. (?:Not configured: )?No API key configured\./);   // zzz1057: a missing key reads "Not configured"
     assert.match(t, /AWAITING VERIFICATION \(1\)/);
     assert.match(t, /Alpha \(AAAA\) 2026-09-29 — old and new numbers not read — AI check unavailable/);
     assert.equal(renderToStaticMarkup(React.createElement(GuVerificationBlock, { data: {} })), '');

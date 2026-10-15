@@ -47,7 +47,8 @@ export interface VerifyClaim {
   locateHints?: LocateHints | null;
 }
 
-export type PrimaryHow = 'feed_link' | 'sec_accession' | 'exchange_announcement' | 'edgar_by_cik';
+/** zzz1057: 'edgar_by_name' = the company's own EDGAR filing found by an EDGAR full-text search for the name the event gives (no ticker). */
+export type PrimaryHow = 'feed_link' | 'sec_accession' | 'exchange_announcement' | 'edgar_by_cik' | 'edgar_by_name';
 
 export interface LocateHints {
   /** NSE symbols / US tickers named by the event */

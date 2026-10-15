@@ -5,7 +5,9 @@ import type { FeedHoldBackReason, RadarFeedEvent, RadarFeedHints } from './multi
 
 export type ExclusionReason = 'FUND_REPURCHASE' | 'UNLISTED' | 'REGULATOR' | 'COURT' | 'NON_EQUITY_SECURITY' | 'DUPLICATE' | 'INSUFFICIENT_ENTITY_RESOLUTION' | 'NO_COMPANY_MECHANISM'
   // zzz854: issuer-tender hold-backs
-  | 'PARTNERSHIP_UNITS' | 'DEBT_SECURITY' | 'ROUTINE_TENDER' | 'TERMS_NOT_READ' | 'AWAITING_VERIFICATION' | 'AI_CONTRADICTED';
+  | 'PARTNERSHIP_UNITS' | 'DEBT_SECURITY' | 'ROUTINE_TENDER' | 'TERMS_NOT_READ' | 'AWAITING_VERIFICATION' | 'AI_CONTRADICTED'
+  // zzz1057
+  | 'VERIFICATION_EXPIRED';
 
 export interface QaInput { id?: string; company?: string; title?: string; eventType?: string; primarySource?: boolean; independentSources?: number; evidenceStatus?: string }
 export type QaRadarInput = QaInput & RadarFeedHints;
@@ -34,6 +36,7 @@ const HOLDBACK_TO_EXCLUSION: Record<FeedHoldBackReason, ExclusionReason> = {
   FUND_REPURCHASE_OFFER: 'FUND_REPURCHASE', PARTNERSHIP_UNIT_REPURCHASE: 'PARTNERSHIP_UNITS', DEBT_TENDER: 'DEBT_SECURITY',
   ROUTINE_ISSUER_TENDER: 'ROUTINE_TENDER', ISSUER_TENDER_TERMS_NOT_READ: 'TERMS_NOT_READ',
   EXCLUDED_FROM_EQUITY_RADAR: 'NO_COMPANY_MECHANISM', AWAITING_VERIFICATION: 'AWAITING_VERIFICATION', AI_CONTRADICTED: 'AI_CONTRADICTED',
+  COURT_CASE_REPORT: 'COURT', VERIFICATION_EXPIRED: 'VERIFICATION_EXPIRED',
 };
 export function exclusionReasonFor(i: QaRadarInput): ExclusionReason | null {
   if (i.feedQuarantineReason && i.feedQuarantineReason !== 'FUND_REPURCHASE_OFFER' && HOLDBACK_TO_EXCLUSION[i.feedQuarantineReason]) return HOLDBACK_TO_EXCLUSION[i.feedQuarantineReason];

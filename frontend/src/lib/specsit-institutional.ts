@@ -36,6 +36,8 @@ export type ExtendedEventType =
   | 'QIP_PLACEMENT' | 'DEMERGER_INDIA' | 'IPO_SUBSIDIARY'
   | 'TURNAROUND_OPERATING' | 'TURNAROUND_NARRATIVE' | 'STAKE_SALE'
   | 'ACQUISITION_PUBLIC' | 'NEWS_RUMOR' | 'UNCLASSIFIED'
+  // zzz1057 — capacity expansion and a company's first investor call (were matched by the feed regex but never typed)
+  | 'CAPEX_EXPANSION' | 'FIRST_CONCALL'
   // PATCH 0431 — new institutional classes
   | 'RIGHTS_ISSUE_DEEP'          // deeply-discounted rights with detachable warrants
   | 'CONVERTIBLE_PIPE'           // PIPE financing / convertible notes
@@ -112,6 +114,9 @@ export const EVENT_PRIORS: Record<ExtendedEventType, {
   TURNAROUND_NARRATIVE:     { completion_prob: 0.25, median_days_to_close: 180, payoff_certainty: 'OPTIONAL', description: 'Soft commentary; mostly noise' },
   NEWS_RUMOR:               { completion_prob: 0.20, median_days_to_close: 60,  payoff_certainty: 'OPTIONAL', description: 'Unconfirmed; high reversal rate' },
   UNCLASSIFIED:             { completion_prob: 0.15, median_days_to_close: 90,  payoff_certainty: 'OPTIONAL', description: 'Pattern did not match' },
+  // zzz1057
+  CAPEX_EXPANSION:          { completion_prob: 0.60, median_days_to_close: 540, payoff_certainty: 'OPTIONAL', description: 'Capacity / plant step; earnings effect only once it runs' },
+  FIRST_CONCALL:            { completion_prob: 0.90, median_days_to_close: 30,  payoff_certainty: 'OPTIONAL', description: 'First formal management disclosure; information event' },
 };
 
 // ─── Extended classification patterns (added to existing taxonomy) ─────────
@@ -291,11 +296,34 @@ export function computeCoverageDiagnostic(eventTypeCounts: Record<string, number
       note: 'Hidden NAV unlock / deleveraging rerating',
     },
     {
+      // zzz1057: insolvency only. An operating turnaround is its own bucket (it was counted here too, so the NCLT box
+      // and the Turnaround box showed the same court case reports twice).
       bucket: 'NCLT / IBC / Distressed',
       emoji: '⚖',
-      event_types: ['NCLT_IBC_ADMISSION', 'NCLT_IBC_RESOLUTION', 'TURNAROUND_OPERATING'],
-      count: sumOf(['NCLT_IBC_ADMISSION', 'NCLT_IBC_RESOLUTION', 'TURNAROUND_OPERATING']),
+      event_types: ['NCLT_IBC_ADMISSION', 'NCLT_IBC_RESOLUTION'],
+      count: sumOf(['NCLT_IBC_ADMISSION', 'NCLT_IBC_RESOLUTION']),
       note: 'Resolution-plan / lender-haircut / liquidation gap',
+    },
+    {
+      bucket: 'Operating Turnaround',
+      emoji: '↗',
+      event_types: ['TURNAROUND_OPERATING', 'TURNAROUND_NARRATIVE'],
+      count: sumOf(['TURNAROUND_OPERATING', 'TURNAROUND_NARRATIVE']),
+      note: 'Back to profit / deleveraging — operating, not insolvency',
+    },
+    {
+      bucket: 'Capacity / New Ventures',
+      emoji: '🏭',
+      event_types: ['CAPEX_EXPANSION'],
+      count: sumOf(['CAPEX_EXPANSION']),
+      note: 'New plant / capacity / greenfield step by the company',
+    },
+    {
+      bucket: 'First Concall / Presentation',
+      emoji: '🎙',
+      event_types: ['FIRST_CONCALL'],
+      count: sumOf(['FIRST_CONCALL']),
+      note: 'First formal management disclosure (post-IPO / maiden call)',
     },
     {
       bucket: 'Index Arbitrage',

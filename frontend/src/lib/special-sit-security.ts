@@ -12,6 +12,7 @@ import {
 } from './special-sit-feed-quality';
 import { resolveCompanyToTicker } from './nse-ticker-names';
 import { normName } from './special-sit-numbers';
+import { courtCaseHoldDetail } from './special-sit-audit';
 
 const sq = (s: unknown): string => (typeof s === 'string' ? decodeHtmlEntities(s).replace(/\s+/g, ' ').trim() : '');
 
@@ -151,6 +152,8 @@ export function classifyFeedHoldBack(a: {
   title: string; description?: string | null; source?: string; link?: string; company?: string | null; eventType?: string;
   /** other titles / descriptions in the same event (party listings, amendments, articles) */
   relatedText?: string; listed?: boolean; secForm?: string | null;
+  /** zzz1057: company name → NSE symbol, for the listed-party check on NCLT case reports (default: the NSE name map) */
+  courtLookup?: (name: string) => string | undefined;
 }): HoldBackDecision | null {
   const title = sq(a.title);
   const desc = sq(a.description);
@@ -164,6 +167,8 @@ export function classifyFeedHoldBack(a: {
   const tenderish = secTender || TENDERISH_TEXT_RE.test(`${title} ${desc}`) || /\b(repurchase|tender)/i.test(a.eventType || '');
   const mk = (reason: FeedHoldBackReason, detail: string): HoldBackDecision => ({ reason, label: FEED_QUARANTINE_LABEL[reason], detail });
 
+  // zzz1057: a law-feed case report ("A Vs. B – NCLT, Mumbai Bench") or digest is not a company event, unless a listed company is a party in an NCLT / NCLAT matter
+  if (!sec) { const court = courtCaseHoldDetail(title, a.courtLookup, a.source); if (court) return mk('COURT_CASE_REPORT', court); }
   if (isFundRepurchaseOffer({ title, description: `${desc} ${related}`, source: a.source, company: name, eventType: a.eventType })) return mk('FUND_REPURCHASE_OFFER', `pooled investment vehicle: ${name || 'name not stated'}`);
   if (secTender && base !== 'SC 14D9' && isPooledVehicleName(name, { listed: a.listed })) return mk('FUND_REPURCHASE_OFFER', `pooled investment vehicle (${base}): ${name}`);
   if (!tenderish) return null;

@@ -68,7 +68,10 @@ export type EventType =
   | 'STUB_TRADE_TRIGGER'
   | 'SEBI_REGULATORY_ACTION'
   | 'AUDITOR_QUALIFIED'
-  | 'PROMOTER_PLEDGE_UNWIND';
+  | 'PROMOTER_PLEDGE_UNWIND'
+  // zzz1057 — typed from the feed's CAPEX / CONCALL buckets (strict detectors in lib/special-sit-audit)
+  | 'CAPEX_EXPANSION'
+  | 'FIRST_CONCALL';
 
 export type LifecycleStage = 'rumor' | 'announced' | 'amended' | 'approved' | 'closed' | 'unknown';
 

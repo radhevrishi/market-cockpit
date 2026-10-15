@@ -46,7 +46,7 @@ export const RADAR_ENGINE_VERSION = 'zzz854-radar-v4';
 
 // ─────────────────────────── input types ───────────────────────────
 
-export type RadarCategory = 'SPIN' | 'MA' | 'TURN' | 'CAP' | 'CAPEX' | 'CONCALL';
+export type RadarCategory = 'SPIN' | 'MA' | 'TURN' | 'DISTRESS' | 'CAP' | 'CAPEX' | 'CONCALL';
 
 export interface RadarEarnings {
   revenueYoY?: number | null; revenuePrevYoY?: number | null;
@@ -278,7 +278,7 @@ function eventTypeSs(eventType: string | undefined, category: RadarCategory | un
   }
   if (category === 'SPIN') return 'SPIN';
   if (category === 'MA') return 'MA';
-  if (category === 'TURN') return 'RESTRUCTURING';
+  if (category === 'TURN' || category === 'DISTRESS') return 'RESTRUCTURING';
   return null;
 }
 

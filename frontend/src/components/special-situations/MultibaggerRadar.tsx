@@ -20,7 +20,7 @@ import {
 import { normSymbol } from '@/lib/portfolio-symbols';
 import { readLocalBookInput, fetchSavedHoldings } from '@/lib/thesis/book-sources';
 import { BUCKET_MEANING, EVIDENCE_ORDER, KIND_LEGEND, PRIORITY_RANK, QUARANTINE_HEADER, R, box, isOneLine, isQuarantined, type RadarCardHints } from './radar-tokens';
-import { radarReconcile, type CountModelIn } from './ss-counts';
+import { radarReconcile, splitZeroBoxes, type CountModelIn } from './ss-counts';
 import { Chip, btn, input } from './RadarBits';
 import { RadarCard, RadarRow } from './RadarCard';
 import { LedgerPanel } from './LedgerPanel';
@@ -135,6 +135,7 @@ export default function MultibaggerRadar({ events, holdings: holdingsProp, regio
     return <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{banner}<div style={{ fontSize: 13, color: R.red }}>The radar could not be built from this feed ({built.failed || 'unknown error'}).</div>{footer}</div>;
   }
   const radar = built.radar;
+  const zeroSplit = splitZeroBoxes(BUCKET_ORDER.map((b) => ({ key: b, count: (radar.byBucket[b] || []).length })), (r) => BUCKET_LABEL[r.key]);
 
   const onSave = (e: LedgerEntry) => { saveEntry(e); refresh(); };
   const onStatus = (id: string, to: ThesisStatus, reason: string, extra?: { postMortem?: { detectionFailureWhy?: string; failurePoint?: string } }) => { const r = updateStatus(id, to, reason, new Date(), undefined, extra || {}); refresh(); return r.error; };
@@ -152,19 +153,22 @@ export default function MultibaggerRadar({ events, holdings: holdingsProp, regio
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         {subBtn('radar', `Radar (${radar.items.length})`)}
         {subBtn('holdings', 'Your holdings - catalyst monitor')}
-        {subBtn('ledger', `Thesis ledger (${entries.length})`)}
+        {/* zzz1057: an empty ledger is not a tab of its own (entries are saved from the radar cards); it appears once it has entries */}
+        {(entries.length > 0 || view === 'ledger') && subBtn('ledger', `Thesis ledger (${entries.length})`)}
       </div>
 
       {view === 'radar' && (
         <>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} aria-label="Counts per bucket">
-            {BUCKET_ORDER.map((b) => (
+            {/* zzz1057: zero buckets are not drawn; they are named once in the line below */}
+            {zeroSplit.shown.map(({ key: b }) => (
               <button key={b} type="button" onClick={() => setBucketF(bucketF === b ? 'ALL' : b)} aria-pressed={bucketF === b}
                 style={{ ...btn(bucketF === b ? R.cyan : R.dim, bucketF === b), fontSize: 11 }}>
                 {BUCKET_LABEL[b]} <b>{(radar.byBucket[b] || []).length}</b>
               </button>
             ))}
           </div>
+          {zeroSplit.emptyLine && <div data-radar-empty-buckets style={{ fontSize: 11, color: R.dim }}>{zeroSplit.emptyLine}</div>}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <select aria-label="Minimum research priority" value={minPri} onChange={(e) => setMinPri(e.target.value as any)} style={{ ...input, width: 'auto' }}>
               <option value="ALL">Any priority</option>
@@ -201,7 +205,8 @@ export default function MultibaggerRadar({ events, holdings: holdingsProp, regio
             </div>
           )}
 
-          {radar.items.length > 0 && BUCKET_ORDER.filter((b) => bucketF === 'ALL' || bucketF === b).map((b) => {
+          {/* zzz1057: with no bucket filter, empty buckets get no section (they are named in the "Nothing today in" line) */}
+          {radar.items.length > 0 && BUCKET_ORDER.filter((b) => (bucketF === 'ALL' ? (radar.byBucket[b] || []).length > 0 : bucketF === b)).map((b) => {
             const all = radar.byBucket[b] || [];
             const list = all.filter(passes);
             const limit = printing ? list.length : (limits[b] ?? CARD_CAP);
