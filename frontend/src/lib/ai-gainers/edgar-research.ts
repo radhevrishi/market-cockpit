@@ -29,7 +29,7 @@ import { kvGet, kvSet } from '@/lib/kv';
 import { classifyAnnouncement, type AnnouncementLite, type ClassifiedAnnouncement, type SweepInput } from './catalyst-research';
 import {
   announcementsFromSubmissions, secTickerCandidates, extractUsPressRelease, usPlainSubject, usFormOf, usItemsOf,
-  submissionsFromAtom, submissionsFromFullText, STRATEGIC_STAKE_MARKER,
+  submissionsFromAtom, submissionsFromFullText, STRATEGIC_STAKE_MARKER, insiderFilingsFromSubmissions, type InsiderFilingLite,
 } from './us-gainers';
 import { isKnownCatalyst } from './events';
 import type { SourceRef, StructuredFacts } from './structured-facts';
@@ -132,6 +132,8 @@ export interface EdgarResearch {
    *  submissions list) — how an 8-K/A finds the 8-K it amends, and what the
    *  "latest SEC filing" is on a press-only card. */
   recentFilings?: UsRecentFiling[];
+  /** zzz1059: insider Forms 4 / 144 in the window (counted in `insiderForms`, not listed as announcements). */
+  insiderFilings?: InsiderFilingLite[];
 }
 export interface UsRecentFiling { form: string; date: string; items: string[]; url: string }
 
@@ -191,6 +193,7 @@ export async function fetchEdgarResearch(ticker: string, windowDays: number, now
   const stats = { insiderForms: 0, inWindow: 0 };
   out.announcements = announcementsFromSubmissions(sub, cik, windowDays, now, stats);
   out.recentFilings = recentFilingsOf(sub, cik, now);
+  out.insiderFilings = insiderFilingsFromSubmissions(sub, cik, windowDays, now);
   out.filingsInWindow = stats.inWindow;
   out.insiderForms = stats.insiderForms;
   const refs = out.announcements.map((a) => sourceRefFromAnnouncement(ticker, a));

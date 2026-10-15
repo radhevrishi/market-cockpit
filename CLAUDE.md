@@ -3677,3 +3677,9 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
 - zzz1054 — Price alerts: `lib/alerts/*`, `/price-alerts`, header bell, migration 5, every-minute LIGHT_JOBS 'price-alerts' (no Redis).
 - zzz1055 — FII / DII flows `/fii-dii`, `lib/fii-dii/*`, migration 6, job `fii-dii`, fallback collector scrape-fii-dii.yml.
 - zzz1056 — US Top Movers on home (`lib/us-movers*.ts`, `/api/v1/us-movers`). zzz1057 — Special Situations audit (`lib/special-sit-audit.ts`).
+- zzz1059 — US movers WHY at India parity: on-demand results grade for a 2.02 8-K the day's grade lacks (`lib/us-movers-results.ts`,
+  same engine/PRELIM rules; else the EX-99.1 headline — never "not graded yet"); industry clusters over the whole scanner universe
+  (`lib/us-movers-catalysts.ts`, scanner `industry` column; India's 0.35× magnitude gate; never when the industry median points the
+  other way); headlines direction-checked, previews/transcripts rejected, most causal wins, analyst actions labelled; what an 8-K
+  announced (EX-99.1 headline → body "press release announcing …" → 1.01 counterparty); Form 4 open-market trades; "earnings due"
+  context. Light job `us-movers-prewarm` (16:05 / 16:20 ET + 09:45 ET, `PREWARM_BUDGET`, memory only, no Redis).

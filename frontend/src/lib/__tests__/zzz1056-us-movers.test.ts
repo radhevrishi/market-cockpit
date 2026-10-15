@@ -97,8 +97,12 @@ test('WHY: earnings first, then SEC filing, then news, then sector, then an hone
   const e = attributeUsMover({ ...base, earnings: earn, filings: [fil8k], news: [news], sector: 'Electronic Technology', sectorMovePct: 2 }, classify);
   assert.equal(e.kind, 'EARNINGS'); assert.equal(e.confidence, 'HIGH');
   assert.equal(e.text, 'rose on Q3 FY26 earnings · revenue +25% · EPS +40% · STRONG');
-  const f = attributeUsMover({ ...base, filings: [fil8k], news: [news], sector: 'Electronic Technology', sectorMovePct: 2 }, classify);
+  // zzz1059: an 8-K whose content was not read only names its item — a real headline beats it; read, it leads
+  const f = attributeUsMover({ ...base, filings: [fil8k], news: [], sector: 'Electronic Technology', sectorMovePct: 2 }, classify);
   assert.equal(f.kind, 'FILING'); assert.match(f.text, /8-K filed/);
+  assert.equal(attributeUsMover({ ...base, filings: [fil8k], news: [news] }, classify).kind, 'NEWS');
+  const fr = attributeUsMover({ ...base, filings: [{ ...fil8k, announced: 'entered into a supply agreement with the U.S. Navy' }], news: [news] }, classify);
+  assert.equal(fr.kind, 'FILING'); assert.match(fr.text, /^8-K: entered into a supply agreement with the U\.S\. Navy$/);
   const n = attributeUsMover({ ...base, filings: [], news: [news], sector: 'Electronic Technology', sectorMovePct: 2 }, classify);
   assert.equal(n.kind, 'NEWS'); assert.equal(n.text, news.title);
   const s = attributeUsMover({ ...base, filings: [], news: [], sector: 'Electronic Technology', sectorMovePct: 2 }, classify);

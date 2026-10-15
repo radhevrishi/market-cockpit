@@ -477,6 +477,19 @@ export const LIGHT_JOBS: readonly LightJob[] = [
       if (r.fired || r.error) console.log('[price-alerts]', JSON.stringify(r));
       return r.ok ? { ok: true, status: 200, error: r.skipped || null } : { ok: false, status: 503, error: r.error || 'failed' };
     } },
+  // zzz1059 — US Top Movers prewarm (lib/us-movers-server prewarmUsMovers): builds the home panel's answer in this process's
+  // memory 5 + 20 min after the NYSE close and at 09:45 ET, so the owner never waits for a ~35 s cold build. The crons cover
+  // EDT and EST and early closes; usMoversPrewarmDue decides on the ET clock and every other minute returns at once (no I/O).
+  // No Redis: the result lives in memory; the heartbeat is posted at most every 30 min.
+  // crons = lib/us-movers US_MOVERS_PREWARM_CRONS (a test keeps them equal; no static import here)
+  { name: 'us-movers-prewarm', crons: ['5,20 17,18,20,21 * * 1-5', '45 13,14 * * 1-5'], heartbeatEveryMin: 30,
+    does: 'in-process: lib/us-movers-server prewarmUsMovers (US scanner + SEC + news + on-demand results grades → memory cache, both modes)',
+    run: async () => {
+      if (!(await import('./us-movers')).usMoversPrewarmDue(new Date())) return { ok: true, status: 200, error: 'not a prewarm minute' };
+      const r = await (await import('./us-movers-server')).prewarmUsMovers();
+      console.log('[us-movers-prewarm]', JSON.stringify(r));
+      return r.ok ? { ok: true, status: 200 } : { ok: false, status: 503, error: r.error || 'build failed' };
+    } },
 ];
 
 /** Workflows that keep their GitHub schedule, and why (shown by /api/v1/cron/schedule and docs/SCHEDULING.md). */

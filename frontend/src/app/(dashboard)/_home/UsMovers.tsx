@@ -12,10 +12,12 @@ const TEXT = 'var(--mc-text-1)';
 const DIM = 'var(--mc-text-3)';
 const Q_COLOR: Record<string, string> = { EXCELLENT: 'var(--mc-bullish)', GOOD: 'var(--mc-cyan)', WEAK: 'var(--mc-warn)', POOR: 'var(--mc-bearish)' };
 const KIND_COLOR: Record<string, string> = {
-  EARNINGS: 'var(--mc-bullish)', FILING: 'var(--mc-cyan)', DILUTION: 'var(--mc-bearish)', NEWS: '#8B5CF6', SECTOR: 'var(--mc-warn)', NONE: 'var(--mc-text-4)',
+  EARNINGS: 'var(--mc-bullish)', FILING: 'var(--mc-cyan)', DILUTION: 'var(--mc-bearish)', NEWS: '#8B5CF6', ANALYST: '#8B5CF6', INSIDER: '#EC4899',
+  INDUSTRY: 'var(--mc-warn)', SECTOR: 'var(--mc-text-3)', NONE: 'var(--mc-text-4)',
 };
 const KIND_LABEL: Record<string, string> = {
-  EARNINGS: 'earnings', FILING: 'SEC filing', DILUTION: 'dilution', NEWS: 'news', SECTOR: 'sector move', NONE: 'no confirmed catalyst',
+  EARNINGS: 'earnings', FILING: 'SEC filing', DILUTION: 'dilution', NEWS: 'news', ANALYST: 'analyst action', INSIDER: 'insider / holder trade',
+  INDUSTRY: 'industry move (peers moved together)', SECTOR: 'broad sector move only', NONE: 'no confirmed catalyst',
 };
 
 const chip = (color: string): React.CSSProperties => ({
@@ -38,7 +40,9 @@ function Row({ m, watch }: { m: UsMoverRow; watch: Set<string> }) {
     `${m.ticker} — ${m.company}${m.sector ? ` · ${m.sector}` : ''}`,
     `${up ? '+' : ''}${m.chg.toFixed(2)}% · $${m.price?.toFixed(2) ?? '—'} · cap $${m.mcapM != null ? (m.mcapM >= 1000 ? `${(m.mcapM / 1000).toFixed(1)}B` : `${m.mcapM}M`) : '—'} · avg traded $${m.avgDollarVolM ?? '—'}M/day${m.relVol != null ? ` · vol ${m.relVol}× avg` : ''}`,
     `WHY (${KIND_LABEL[m.why.kind]}, confidence ${m.why.confidence}${m.why.source ? `, ${m.why.source}` : ''}${m.why.date ? `, ${m.why.date}` : ''}): ${m.why.text}`,
+    ...(m.why.context || []).map((c) => `· ${c}`),
     `checked: ${m.why.checked.join(', ') || '—'}`,
+    m.industry ? `industry: ${m.industry}` : '',
     `── Move Quality ${q.q}/100 (${q.label}) · rel-vol ${Math.round(q.parts.relVol)} · company ${Math.round(q.parts.fundamentals)} · structure ${Math.round(q.parts.structure)} · sector ${Math.round(q.parts.sector)} · trigger ${Math.round(q.parts.trigger)}`,
     q.vsSma50Pct != null ? `${q.trend === 'up' ? '↑ above' : '↓ below'} its 50-day average (${q.vsSma50Pct >= 0 ? '+' : ''}${q.vsSma50Pct}%)` : '',
   ].filter(Boolean).join('\n');
@@ -54,6 +58,7 @@ function Row({ m, watch }: { m: UsMoverRow; watch: Set<string> }) {
         <span style={{ flex: 1, minWidth: 0, fontSize: 10, color: m.why.kind === 'NONE' ? DIM : TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontStyle: m.why.kind === 'NONE' ? 'italic' : 'normal' }}>{m.why.text}</span>
       )}
       {m.earningsTier && <span style={chip('var(--mc-bullish)')} title={`Graded results: ${m.earningsTier}`}>📊</span>}
+      {(m.why.context || []).some((c) => /^earnings due/.test(c)) && <span style={chip('var(--mc-warn)')} title={(m.why.context || []).find((c) => /^earnings due/.test(c))}>ER</span>}
       {m.why.kind === 'DILUTION' && <span style={chip('var(--mc-bearish)')} title="Offering / dilution filed">DIL</span>}
       {(m.accG === 'A' || m.accG === 'B') && <span style={chip('#8B5CF6')} title={`Accumulation grade ${m.accG} (Stock Screener)`}>ACC {m.accG}</span>}
       <span style={chip(Q_COLOR[q.label])}>Q{q.q}</span>
@@ -120,7 +125,8 @@ export function UsMovers() {
   const cov = useMemo(() => {
     if (!data) return null;
     const n = data.gainers.length + data.losers.length;
-    const explained = n - (data.coverage?.NONE || 0);
+    // a broad-sector line is a context, not a reason: only stock-specific / industry answers count as found
+    const explained = n - (data.coverage?.NONE || 0) - (data.coverage?.SECTOR || 0);
     return { n, explained };
   }, [data]);
 

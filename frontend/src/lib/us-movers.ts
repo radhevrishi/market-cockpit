@@ -25,6 +25,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { etParts, isNyseTradingDay, prevNyseSession, closeMinutes, lastCompletedNyseSession, usPhaseAt, type UsPhase } from './ai-gainers/us-gainers';
+import { pickHeadline, analystWhyText, PREVIEW_OR_TRANSCRIPT, type IndustryCluster } from './us-movers-catalysts';
 
 // ── 1. UNIVERSE ────────────────────────────────────────────────────────────
 
@@ -49,6 +50,8 @@ export interface UsQuoteRow {
   avgVol: number | null;      // 30-day (or 10-day) average shares
   relVol: number | null;      // today ÷ average
   sector: string | null;
+  /** zzz1059 — TradingView's industry ("Marine Shipping", "Semiconductors"): the peer-cluster rule's grouping */
+  industry?: string | null;
   hi52: number | null;
   perf1M: number | null;
   sma50: number | null;
@@ -118,9 +121,24 @@ const isWeekendYmd = (ymd: string) => { const d = new Date(`${ymd}T12:00:00Z`).g
 /** How long the server keeps one answer: 3 min while the session is live, 15 min otherwise. */
 export const usMoversTtlMs = (phase: UsPhase): number => (phase === 'regular' ? 3 * 60_000 : 15 * 60_000);
 
+/** zzz1059 — the app scheduler's prewarm minutes (UTC crons that cover both EDT and EST; this decides on the ET clock):
+ *  5 and 20 minutes after the NYSE close (16:05 / 16:20 ET, 13:05 / 13:20 on early-close days) — the completed session
+ *  with the after-close results 8-Ks — and 09:45 ET, fifteen minutes into the live session. Null on any other minute and
+ *  on non-trading days. */
+export const US_MOVERS_PREWARM_CRONS = ['5,20 17,18,20,21 * * 1-5', '45 13,14 * * 1-5'] as const;
+export function usMoversPrewarmDue(now: Date = new Date()): 'close' | 'open' | null {
+  const e = etParts(now);
+  if (!isNyseTradingDay(e.ymd)) return null;
+  const mins = e.minutes;
+  const close = closeMinutes(e.ymd);
+  if (mins === close + 5 || mins === close + 20) return 'close';
+  if (mins === 9 * 60 + 45) return 'open';
+  return null;
+}
+
 // ── 3. THE WHY ─────────────────────────────────────────────────────────────
 
-export type UsWhyKind = 'EARNINGS' | 'FILING' | 'DILUTION' | 'NEWS' | 'SECTOR' | 'NONE';
+export type UsWhyKind = 'EARNINGS' | 'FILING' | 'DILUTION' | 'NEWS' | 'ANALYST' | 'INSIDER' | 'INDUSTRY' | 'SECTOR' | 'NONE';
 export type UsWhyConfidence = 'HIGH' | 'MEDIUM' | 'LOW';
 
 export interface UsWhy {
@@ -132,6 +150,8 @@ export interface UsWhy {
   date: string | null;        // YYYY-MM-DD (ET)
   /** what was looked at for this name — so "no confirmed catalyst" says what was checked */
   checked: string[];
+  /** zzz1059 — weak context lines shown beside the WHY ("earnings due Tue Oct 20", "also: industry move …") */
+  context?: string[];
 }
 
 /** A graded earnings row, as much of it as the WHY needs (graded-us UsGradedRow). */
@@ -144,9 +164,29 @@ export interface UsEarningsLite {
   eps_swing?: string | null;
   net_profit_yoy_pct?: number | null;
   tier: string | null;
+  // ── zzz1059 (all optional) ──
+  /** GAAP diluted EPS growth and the company's adjusted EPS growth, kept apart as the US earnings pages do */
+  eps_gaap_yoy_pct?: number | null;
+  eps_adj_yoy_pct?: number | null;
+  eps_adj_swing?: string | null;
+  /** RAISED / LOWERED / MAINTAINED / PROVIDED / WITHDRAWN, from the release */
+  guidance?: string | null;
+  /** graded here, on demand, from the press release before the 10-Q posted (the full grade follows) */
+  prelim?: boolean;
+  /** no figures could be validated: the release headline stands in ("FMC lowers full-year outlook") */
+  headline?: string | null;
+  /** where the row came from: 'graded results' (the day's grade) | 'on-demand grade' | 'press release' */
+  via?: string | null;
+  url?: string | null;
+  /** the results 8-K also carried other items (an agreement, other events) — the headline may be about those */
+  other_items?: boolean;
 }
 
-export interface UsFilingLite { subject: string; url: string | null; dateIso: string | null }
+export interface UsFilingLite {
+  subject: string; url: string | null; dateIso: string | null;
+  /** zzz1059 — what the 8-K announced, read from its EX-99.1 headline / body (null = read, nothing stated; undefined = not read) */
+  announced?: string | null;
+}
 export interface UsNewsLite { title: string; url: string; date: string; source: string | null }
 
 export interface UsWhyInput {
@@ -162,6 +202,14 @@ export interface UsWhyInput {
   news?: UsNewsLite[] | null;
   sector?: string | null;
   sectorMovePct?: number | null;
+  // ── zzz1059 ──
+  /** the industry-cluster WHY (us-movers-catalysts industryCluster), precomputed over the whole universe */
+  industry?: IndustryCluster | null;
+  /** material insider trade in the window (insiderWhyText) — null/undefined = none found or not checked */
+  insider?: { text: string; side: 'buy' | 'sell'; valueUsd: number; date?: string | null; url?: string | null } | null;
+  mcapM?: number | null;
+  /** "earnings due Tue Oct 20 (after the close)" when the company reports in the next 3 sessions */
+  earningsDue?: string | null;
 }
 
 const pctTxt = (v: number | null | undefined) => (typeof v === 'number' && Number.isFinite(v) ? `${v >= 0 ? '+' : ''}${Math.round(v)}%` : null);
@@ -169,15 +217,30 @@ const SWING_TXT: Record<string, string> = {
   'loss-to-profit': 'turned profitable', 'profit-to-loss': 'swung to a loss', 'loss-narrowed': 'loss narrowed', 'loss-widened': 'loss widened',
 };
 
-/** "rose on Q3 FY26 earnings · revenue +25% · EPS +40% · STRONG" */
+/** "rose on Q3 FY26 earnings · revenue +25% · EPS (GAAP) +40% · adj. EPS +31% · guidance raised · STRONG" — GAAP and the
+ *  company's adjusted EPS are never mixed; a row with no validated figures says what the release headline states. */
 export function earningsWhyText(e: UsEarningsLite, chg: number): string {
   const verb = chg > 0 ? 'rose on' : chg < 0 ? 'fell on' : 'reported';
   const rev = pctTxt(e.sales_yoy_pct);
-  const eps = pctTxt(e.eps_yoy_pct) || (e.eps_swing ? SWING_TXT[e.eps_swing] || null : null);
+  const hasSplit = e.eps_gaap_yoy_pct !== undefined || e.eps_adj_yoy_pct !== undefined;
+  const gaap = hasSplit ? (pctTxt(e.eps_gaap_yoy_pct) || (e.eps_swing ? SWING_TXT[e.eps_swing] || null : null)) : null;
+  const adj = hasSplit ? (pctTxt(e.eps_adj_yoy_pct) || (e.eps_adj_swing ? SWING_TXT[e.eps_adj_swing] || null : null)) : null;
+  const eps = hasSplit ? null : (pctTxt(e.eps_yoy_pct) || (e.eps_swing ? SWING_TXT[e.eps_swing] || null : null));
+  const figures = !!(rev || eps || gaap || adj);
+  const guide = e.guidance && /^(RAISED|LOWERED|WITHDRAWN)$/i.test(e.guidance) ? `guidance ${e.guidance.toLowerCase()}` : null;
+  if (!figures && e.headline) {
+    // no validated figure: what the release itself says, never "not graded yet"
+    const what = e.other_items ? 'results + other events (8-K)' : 'results (8-K 2.02)';
+    return [`${verb} ${e.quarter ? `${e.quarter} ` : ''}${what} — ${e.headline}`, guide, e.tier ? String(e.tier).toUpperCase() : 'full grade queued for the next refresh'].filter(Boolean).join(' · ');
+  }
   const parts = [`${verb} ${e.quarter ? `${e.quarter} ` : ''}earnings`];
   if (rev) parts.push(`revenue ${rev}`);
   if (eps) parts.push(`EPS ${eps}`);
-  if (e.tier) parts.push(String(e.tier).toUpperCase());
+  if (gaap) parts.push(`EPS (GAAP) ${gaap}`);
+  if (adj) parts.push(`adj. EPS ${adj}`);
+  if (guide) parts.push(guide);
+  if (e.tier) parts.push(`${String(e.tier).toUpperCase()}${e.prelim ? ' (prelim)' : ''}`);
+  else if (!figures) parts.push('grade queued for the next refresh');
   return parts.join(' · ');
 }
 
@@ -229,25 +292,33 @@ export function filingWhy(filings: UsFilingLite[], chg: number, classify: (f: { 
   if (c.category === 'dilution') {
     return { ...base, kind: 'DILUTION', confidence: 'HIGH', text: `⚠ offering / dilution filed (${form}) — ${(c.routineReason || 'new share supply').replace(/^[^—]+—\s*/, '')}` };
   }
-  if (c.kind === 'negative') return { ...base, kind: 'FILING', confidence: 'HIGH', text: `${form}: ${(c.routineReason || filingLead(f.subject)).replace(/^[^—]+—\s*/, '')}` };
-  if (c.category === 'quarterly_result') return { ...base, kind: 'EARNINGS', confidence: 'MEDIUM', text: `${chg > 0 ? 'rose on' : chg < 0 ? 'fell on' : 'reported'} results (${form}) · figures not graded yet` };
+  const said = f.announced ? ` — ${f.announced}` : '';
+  if (c.kind === 'negative') return { ...base, kind: 'FILING', confidence: 'HIGH', text: `${form}: ${(c.routineReason || filingLead(f.subject)).replace(/^[^—]+—\s*/, '')}${said}` };
+  // zzz1059: never "not graded yet" when the release can be read — its headline is shown, and the grade is queued
+  if (c.category === 'quarterly_result') return { ...base, kind: 'EARNINGS', confidence: f.announced ? 'HIGH' : 'MEDIUM', text: `${chg > 0 ? 'rose on' : chg < 0 ? 'fell on' : 'reported'} results (${form})${said || ' · release not readable yet'} · grade queued for the next refresh` };
   const what: Record<string, string> = {
     acquisition: 'merger / acquisition filing', open_offer: 'tender offer filed', buyback: 'issuer tender offer (buyback)', strategic_investor: '13D — an active stake was filed',
   };
-  if (c.kind === 'catalyst') return { ...base, kind: 'FILING', confidence: c.category === 'strategic_investor' ? 'MEDIUM' : 'HIGH', text: `${what[c.category || ''] || 'SEC filing'} (${form}) · ${filingLead(f.subject)}` };
-  // unclassified: an 8-K 1.01 / 7.01 / 8.01 press release whose content is not read here
-  return { ...base, kind: 'FILING', confidence: 'MEDIUM', text: `${form} filed: ${filingLead(f.subject)}` };
+  if (c.kind === 'catalyst') return { ...base, kind: 'FILING', confidence: c.category === 'strategic_investor' ? 'MEDIUM' : 'HIGH', text: `${what[c.category || ''] || 'SEC filing'} (${form}) · ${f.announced || filingLead(f.subject)}` };
+  // unclassified: an 8-K 1.01 / 7.01 / 8.01 — what it announced, read from its press release / body (zzz1059)
+  if (f.announced) return { ...base, kind: 'FILING', confidence: 'MEDIUM', text: `${form}: ${f.announced}` };
+  return { ...base, kind: 'FILING', confidence: 'LOW', text: `${form} filed: ${filingLead(f.subject)} (content not read)` };
 }
+
+/** A filing WHY that only names the item ("8-K filed: Regulation FD disclosure") — a headline beats it. */
+const weakFiling = (w: Omit<UsWhy, 'checked'>): boolean => w.kind === 'FILING' && w.confidence === 'LOW';
 
 const PRICE_TALK = /\b(?:stock|shares?)\s+(?:is\s+|are\s+)?(?:up|down|soar\w*|surg\w*|jump\w*|plung\w*|tumbl\w*|sink\w*|slid\w*|rall\w*|climb\w*|drop\w*|fall\w*|gain\w*)\b|\bwhy\b.*\b(?:stock|shares?)\b|\b(?:top|biggest)\s+(?:gainers?|losers?|movers?)\b|\bmid-?day movers\b|\bpremarket movers\b|\bunusual (?:options|volume)\b/i;
 // Headlines that are about the stock's ownership, a quote page, a schedule or a 52-week mark — never the reason it moved.
 const NON_REASON = new RegExp([
   /^form (?:3|4|5|144)\b/.source,                                                     // insider filing digests
+  /\b\d{1,2}[- ](?:year|month) (?:high|low)s?\b|\b(?:all[- ]time|record) (?:high|low)s?\b/.source,   // zzz1059: a 1-year high is a price mark
   /stock price,? news,? quote/.source,                                                // quote pages
   /\bnew (?:12|52)[- ](?:month|week) (?:high|low)\b|\b(?:12|52)[- ](?:month|week) (?:high|low)\b/.source,
   /\b(?:trims|boosts|lifts|raises|cuts|reduces|increases|decreases|sells|buys|acquires new|takes new|initiates)\b.{0,60}\b(?:stake|position|holdings?|shares)\b/.source,   // 13F digests
   /\bto (?:present|participate|host|ring|report|release|announce)\b.{0,80}\b(?:conference|summit|webcast|results on|earnings on|call on|date)\b/.source,                        // schedules
   /\b(?:short interest|options? (?:volume|activity|chain))\b/.source,
+  /\bstocks? trade (?:up|down|higher|lower)\b|\bhere'?s what (?:you (?:should|need to) know|happened)\b|\bwhat you need to know\b|\banalysts? (?:predict|see|expect) (?:a |an )?[\d.]+%|\b(?:upside|downside) (?:in|for)\b|\bstill a (?:buy|sell)\b|\btime to (?:buy|sell)\b|\bwhat'?s next\b/.source,   // zzz1059: digest / clickbait
   /\b(?:stock|share) price (?:up|down|rises|falls)\b|\b(?:shares |stock )?gap(?:s|ped)? (?:up|down)\b|\bstock forecasts?\b|\bhistorical data\b|\bworth (?:examining|watching|buying)\b|\brated "?(?:hold|buy|sell|strong buy)"? by\b|\bconsensus (?:rating|recommendation)\b|\b(?:is|should you) (?:it )?(?:time to )?(?:buy|sell)\b/.source,   // quote-page / digest headlines
   /\bwithheld\b.{0,40}\bshares\b|\bvoting power\b|\bnot a market sale\b|\bmarket notice\b|\bbeneficial owner|\bvesting\b/.source,   // ownership paperwork
   /\b(?:rall(?:y|ies|ied)|soar(?:s|ed)?|surg(?:es|ed|e)|jump(?:s|ed)?|plung(?:es|ed|e)|tumbl(?:es|ed|e)|sink(?:s)?|sank|slid(?:es|e)?|climb(?:s|ed)?|drop(?:s|ped)?|fall(?:s)?|fell|gain(?:s|ed)?|spik(?:es|ed|e)|skyrocket(?:s|ed)?|slump(?:s|ed)?)\s+(?:by\s+)?\d+(?:\.\d+)?\s?%/.source,   // "rallies 11%"
@@ -266,45 +337,85 @@ export function namesOtherTicker(title: string, ticker: string): boolean {
 export const isPriceTalk = (title: string): boolean => PRICE_TALK.test(String(title || '')) || NON_REASON.test(String(title || '').trim());
 
 /**
- * The WHY, best evidence first: graded earnings → SEC filing → news → sector → honest none.
- * Never invents: each branch quotes what the source states, and the last branch says what was checked.
+ * The WHY, best evidence first: graded earnings → SEC filing (with what it announced) → the most causal headline (direction
+ * checked; analyst actions labelled) → a big insider trade → the industry cluster → a smaller insider trade → the broad
+ * sector → honest none. Never invents: each branch quotes what the source states, and the last branch says what was checked.
+ * zzz1059: "earnings due <date>" rides along as a context line on any branch.
  */
 export function attributeUsMover(i: UsWhyInput, classify: (f: { subject: string }) => FilingClass | null): UsWhy {
   const checked: string[] = [];
+  const context: string[] = [];
+  if (i.earningsDue) context.push(i.earningsDue);
+  const done = (w: Omit<UsWhy, 'checked'>): UsWhy => {
+    const ctx = [...context];
+    if (i.industry && w.kind !== 'INDUSTRY') ctx.push(`also: ${i.industry.text}`);
+    // an offering filed in the window that is not itself the answer (RXRX +11% with a 424B5 the same morning)
+    if (w.kind !== 'DILUTION' && i.filings) {
+      const off = i.filings.find((f) => inMoveWindow(f.dateIso, i.session, i.prevSession, i.closeEt) && classify(f)?.category === 'dilution');
+      if (off) ctx.push(`also: offering / dilution filed (${(off.subject.split(/:| · /)[0] || '').trim()})`);
+    }
+    // a weak answer carries the earnings date in its own line, so it is seen without the tooltip
+    const text = i.earningsDue && (w.kind === 'NONE' || w.kind === 'SECTOR' || w.kind === 'INDUSTRY') ? `${w.text} · ${i.earningsDue}` : w.text;
+    return { ...w, text, checked, ...(ctx.length ? { context: ctx } : {}) };
+  };
   const win = { session: i.session, prevSession: i.prevSession, closeEt: i.closeEt };
-  // (a) graded earnings filed in the window
+  // (a) earnings filed in the window (the day's grade, an on-demand grade, or the release headline)
   checked.push('graded results');
   const e = i.earnings;
   if (e && (e.filing_date === i.session || e.filing_date === i.prevSession || (e.filing_date > i.prevSession && e.filing_date <= i.session))) {
-    return { kind: 'EARNINGS', confidence: 'HIGH', text: earningsWhyText(e, i.chg), source: 'graded results (SEC 8-K 2.02 + XBRL)', url: `/us-earnings-opportunities?date=${e.filing_date}`, date: e.filing_date, checked };
+    return done({ kind: 'EARNINGS', confidence: e.tier || e.headline ? 'HIGH' : 'MEDIUM', text: earningsWhyText(e, i.chg),
+      source: e.via || 'graded results (SEC 8-K 2.02 + XBRL)', url: e.url || `/us-earnings-opportunities?date=${e.filing_date}`, date: e.filing_date });
   }
-  // (b) an SEC filing in the move window
+  // (b) an SEC filing in the move window — one that only names its item waits behind a headline
+  let weak: Omit<UsWhy, 'checked'> | null = null;
   if (i.filings) {
     checked.push('SEC filings');
     const f = filingWhy(i.filings, i.chg, classify, win);
-    if (f) return { ...f, checked };
+    if (f && !weakFiling(f)) return done(f);
+    if (f) weak = f;
   }
-  // (c) a dated headline about the company (not price commentary)
+  // (c) the most causal dated headline about the company (not price commentary, not pointing the other way)
   if (i.news) {
     checked.push('news');
-    const n = i.news
-      .filter((x) => x && x.title && (x.date === i.session || x.date === i.prevSession || (x.date > i.prevSession && x.date <= i.session)))
-      .find((x) => !isPriceTalk(x.title) && x.title.trim().split(/\s+/).length >= 5 && !namesOtherTicker(x.title, i.ticker));   // a bare company name is not a headline
-    if (n) return { kind: 'NEWS', confidence: 'MEDIUM', text: n.title.length > 140 ? `${n.title.slice(0, n.title.lastIndexOf(' ', 138) > 80 ? n.title.lastIndexOf(' ', 138) : 138)}…` : n.title, source: n.source || 'news', url: n.url, date: n.date, checked };
+    const inWin = (x: UsNewsLite) => x.date === i.session || x.date === i.prevSession || (x.date > i.prevSession && x.date <= i.session);
+    const { pick: n, rank } = pickHeadline(i.news, i.chg, (x) => inWin(x) && !isPriceTalk(x.title) && !PREVIEW_OR_TRANSCRIPT.test(x.title) && x.title.trim().split(/\s+/).length >= 5 && !namesOtherTicker(x.title, i.ticker));   // a bare company name is not a headline
+    if (n) {
+      const title = n.title.length > 140 ? `${n.title.slice(0, n.title.lastIndexOf(' ', 138) > 80 ? n.title.lastIndexOf(' ', 138) : 138)}…` : n.title;
+      const an = analystWhyText(title);
+      // a headline with nothing causal in it (an interview, a feature) does not outrank a confirmed industry move
+      if (rank >= 9 && !an && i.industry) context.push(`news: ${title}`);
+      else if (rank === 3 && /\b(?:sells?|sold|buys?|bought)\b/i.test(title)) {
+        // "TDR Capital sells $202M of Target Hospitality stock": a holder / insider trade, said as such
+        return done({ kind: 'INSIDER', confidence: 'MEDIUM', text: `holder / insider ${/\b(?:sells?|sold)\b/i.test(title) ? 'sale' : 'purchase'} — ${title}`, source: n.source || 'news', url: n.url, date: n.date });
+      } else return done({ kind: an ? 'ANALYST' : 'NEWS', confidence: 'MEDIUM', text: an || title, source: n.source || 'news', url: n.url, date: n.date });
+    }
   }
-  // (d) the sector moving the same way
+  if (weak) return done(weak);
+  // (d) insider trades (Form 4) on the same side as the move — a big one leads the industry rule, a smaller one follows it
+  const ins = i.insider && (i.insider.side === 'sell') === (i.chg < 0) ? i.insider : null;
+  const bigInsider = !!ins && (ins.valueUsd >= 10e6 || (typeof i.mcapM === 'number' && i.mcapM > 0 && ins.valueUsd >= i.mcapM * 1e6 * 0.005));
+  const insiderWhy = (): Omit<UsWhy, 'checked'> => ({ kind: 'INSIDER', confidence: bigInsider ? 'MEDIUM' : 'LOW', text: ins!.text, source: 'SEC Form 4', url: ins!.url || null, date: ins!.date || null });
+  if (i.insider !== undefined) checked.push('insider filings');
+  if (ins && bigInsider) return done(insiderWhy());
+  // (e) the industry moving together (≥ 2 top movers or ≥ 3 universe names, same way, ≥ 3%)
+  if (i.industry) {
+    checked.push('industry peers');
+    return done({ kind: 'INDUSTRY', confidence: i.industry.confidence, text: i.industry.text, source: 'industry peers (US scanner)', url: null, date: i.session });
+  }
+  if (ins) return done(insiderWhy());
+  // (f) the broad sector moving the same way — the weakest explanation, said plainly
   const sm = i.sectorMovePct;
   if (i.sector && typeof sm === 'number' && Number.isFinite(sm) && Math.abs(sm) >= 1 && Math.sign(sm) === Math.sign(i.chg)) {
     checked.push('sector');
-    return { kind: 'SECTOR', confidence: 'LOW', text: `sector rotation — ${i.sector} ${sm >= 0 ? '+' : ''}${sm.toFixed(1)}% (no stock-specific trigger found)`, source: 'sector', url: null, date: i.session, checked };
+    return done({ kind: 'SECTOR', confidence: 'LOW', text: `sector rotation — ${i.sector} ${sm >= 0 ? '+' : ''}${sm.toFixed(1)}% on average (broad sector only: no stock-specific or industry trigger found)`, source: 'sector', url: null, date: i.session });
   }
-  // (e) honest none
+  // (g) honest none
   const notChecked = [i.filings == null ? 'SEC filings' : null, i.news == null ? 'news' : null].filter(Boolean) as string[];
   const big = Math.abs(i.chg) >= 7;
   const text = notChecked.length
     ? `no confirmed catalyst in ${checked.join(' / ')} · ${notChecked.join(' + ')} not checked for this name`
     : `${big ? 'momentum only · ' : ''}no confirmed catalyst (checked ${checked.join(', ')})${big ? ' — verify before chasing' : ''}`;
-  return { kind: 'NONE', confidence: 'LOW', text, source: null, url: null, date: null, checked };
+  return done({ kind: 'NONE', confidence: 'LOW', text, source: null, url: null, date: null });
 }
 
 // ── 4. QUALITY SCORE Q ─────────────────────────────────────────────────────
@@ -453,6 +564,7 @@ export interface UsMoverRow {
   ticker: string; company: string; exchange: string;
   chg: number; price: number | null; mcapM: number | null; avgDollarVolM: number | null; relVol: number | null;
   sector: string | null;
+  industry?: string | null;
   why: UsWhy;
   quality: UsQuality;
   accG: string | null;
@@ -474,10 +586,12 @@ export interface UsMoversPayload {
   breadth: UsBreadth;
   coverage: Record<UsWhyKind, number>;
   notes: string[];
+  /** zzz1059 — how long the build took (ms) */
+  buildMs?: number;
 }
 
 export function whyCoverage(rows: UsMoverRow[]): Record<UsWhyKind, number> {
-  const c: Record<UsWhyKind, number> = { EARNINGS: 0, FILING: 0, DILUTION: 0, NEWS: 0, SECTOR: 0, NONE: 0 };
+  const c: Record<UsWhyKind, number> = { EARNINGS: 0, FILING: 0, DILUTION: 0, NEWS: 0, ANALYST: 0, INSIDER: 0, INDUSTRY: 0, SECTOR: 0, NONE: 0 };
   for (const r of rows) c[r.why.kind]++;
   return c;
 }

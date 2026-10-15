@@ -473,6 +473,31 @@ export function announcementsFromSubmissions(sub: any, cik: string, windowDays: 
   return out;
 }
 
+/** zzz1059 — the insider ownership reports (Form 4 / 4/A / 144) inside `windowDays`, newest first, with the session they
+ *  landed in (acceptance time, ET). They are not events (classifyUsFiling calls them routine) but the US movers panel opens
+ *  the Form 4s to see whether an insider bought or sold size on the open market. Pure. */
+export interface InsiderFilingLite { form: string; dateIso: string; url: string }
+export function insiderFilingsFromSubmissions(sub: any, cik: string, windowDays: number, now: Date, max = 12): InsiderFilingLite[] {
+  const rec = sub?.filings?.recent || {};
+  const n = Array.isArray(rec.form) ? rec.form.length : 0;
+  const out: InsiderFilingLite[] = [];
+  const cikNum = String(parseInt(cik, 10));
+  for (let i = 0; i < n && out.length < max; i++) {
+    const form = String(rec.form[i] || '').trim().toUpperCase();
+    if (!/^(4|4\/A|144)$/.test(form)) continue;
+    const date = String(rec.filingDate?.[i] || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    const age = Math.floor((now.getTime() - Date.parse(`${date}T00:00:00Z`)) / 86_400_000);
+    if (!Number.isFinite(age) || age > windowDays) continue;
+    const acc = String(rec.accessionNumber?.[i] || '');
+    const doc = String(rec.primaryDocument?.[i] || '');
+    if (!acc || !doc) continue;
+    const accepted = Date.parse(String(rec.acceptanceDateTime?.[i] || ''));
+    out.push({ form, dateIso: Number.isFinite(accepted) ? toEtIso(new Date(accepted)) : `${date}T00:00:00Z`, url: edgarFilingUrl(cikNum, acc, doc) });
+  }
+  return out;
+}
+
 // ── 5. CLASSIFY A US FILING BY FORM AND 8-K ITEM ───────────────────────────
 //
 // The SEC's own taxonomy is better than any regex over a subject line, and
