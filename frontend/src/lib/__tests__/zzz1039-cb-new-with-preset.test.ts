@@ -2,7 +2,7 @@
 // NEW · 10d was a bypass (it ignored the Quality Preset). It is now a recency filter that combines with every other choice.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { FILTER_DEFAULT, indiaPresetFilters, passesConvictionFilter, cbFailReasons, type ConvFilters } from '../conviction-filter-india';
+import { FILTER_DEFAULT, indiaPresetFilters, passesConvictionFilter, cbFailReasons, filingAgeDays, type ConvFilters } from '../conviction-filter-india';
 
 const day = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
 const good: any = { ticker: 'GOODCO', tier: 'STRONG', composite_score: 80, filing_date: day(3), sales_yoy_pct: 40, net_profit_yoy_pct: 60, eps_yoy_pct: 55,
@@ -32,7 +32,10 @@ test('all four combinations', () => {
 
 test('the reason list names the NEW window', () => {
   const r = cbFailReasons(old, { ...FILTER_DEFAULT, newOnly: true });
-  assert.ok(r.some((x) => /filed 40 days ago \(NEW shows the last \d+ days\)/.test(x)), r.join(' | '));
+  // the age is counted from 09:30 IST and rounded, so a date 40 calendar days back reads 40 or 41 depending on the hour
+  const age = filingAgeDays(old.filing_date);
+  assert.ok(age === 40 || age === 41, String(age));
+  assert.ok(r.some((x) => x.includes(`filed ${age} days ago (NEW shows the last `)), r.join(' | '));
 });
 
 test('zzz1040 — new results come first by default on both pages', async () => {
