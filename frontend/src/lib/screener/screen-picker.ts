@@ -9,6 +9,15 @@ export function readFavScreens(): string[] {
   try { const v = JSON.parse(localStorage.getItem(FAV_SCREENS_KEY) || '[]'); return Array.isArray(v) ? v.filter((x) => typeof x === 'string').slice(0, 200) : []; } catch { return []; }
 }
 export function writeFavScreens(ids: readonly string[]): void { try { localStorage.setItem(FAV_SCREENS_KEY, JSON.stringify(ids.slice(0, 200))); } catch { /* display preference only */ } }
+/** zzz1043 — built-in screens the owner removed from his list (a built-in cannot be deleted from the code, so it is hidden; it can be
+ *  brought back from "Hidden screens"). Synced like the saved screens. */
+export const HIDDEN_SCREENS_KEY = 'mc:stock-screens-hidden:v1';
+export function readHiddenScreens(): string[] {
+  try { const v = JSON.parse(localStorage.getItem(HIDDEN_SCREENS_KEY) || '[]'); return Array.isArray(v) ? v.filter((x) => typeof x === 'string').slice(0, 500) : []; } catch { return []; }
+}
+export function writeHiddenScreens(ids: readonly string[]): boolean {
+  try { localStorage.setItem(HIDDEN_SCREENS_KEY, JSON.stringify(Array.from(new Set(ids)).slice(0, 500))); return true; } catch { return false; }
+}
 export function toggleFav(ids: readonly string[], id: string): string[] { return ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]; }
 
 const norm = (s: string) => s.toLocaleLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '');
@@ -20,8 +29,9 @@ export function matchesScreen(s: Screen, q: string): boolean {
   return words.every((w) => hay.includes(w));
 }
 /** Favourites first (any market), then the owner's own screens, then the built-in ones per market — each in its stored order. */
-export function pickerGroups(screens: readonly Screen[], builtInIds: ReadonlySet<string>, favs: readonly string[], q = ''): PickerGroup[] {
-  const hit = screens.filter((s) => matchesScreen(s, q));
+export function pickerGroups(screens: readonly Screen[], builtInIds: ReadonlySet<string>, favs: readonly string[], q = '', hidden: readonly string[] = []): PickerGroup[] {
+  const off = new Set(hidden);
+  const hit = screens.filter((s) => !off.has(s.id) && matchesScreen(s, q));
   const fav = new Set(favs);
   const groups: PickerGroup[] = [
     { id: 'fav', label: 'Favourites', screens: hit.filter((s) => fav.has(s.id)) },

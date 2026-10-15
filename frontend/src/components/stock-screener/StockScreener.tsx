@@ -6,6 +6,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { ScreenRow, ScreenMarket } from '@/lib/screener/types';
+import { HIDDEN_SCREENS_KEY, readHiddenScreens, writeHiddenScreens } from '@/lib/screener/screen-picker';
 import {
   FIELDS, BUILT_IN_SCREENS, SCREENS_KEY, cleanScreens, fieldOf, filterCounts, filterKeys, filterLabel, fmtValue, fmtPrice, runScreen,
   evalPattern, tagDirDist, shapeWord, patTagsOf, DEFAULT_PATTERN_RULE, type Filter, type NumKey, type Screen, type FieldGroup, type RowTag,
@@ -130,6 +131,8 @@ export default function StockScreener() {
     return Array.from(m.values());
   }, [saved]);
   const builtInIds = useMemo(() => new Set(BUILT_IN_SCREENS.map((s) => s.id)), []);
+  // zzz1043 — built-in screens the owner removed from his list
+  const [hiddenScreens, setHiddenScreens] = useState<string[]>(() => (typeof window === 'undefined' ? [] : readHiddenScreens()));
   const loadScreen = useCallback((id: string, list = screens) => {
     const s = list.find((x) => x.id === id);
     if (!s) return;
@@ -148,8 +151,8 @@ export default function StockScreener() {
       for (const s of next) list.set(s.id, s);
       loadScreen(list.has(screenId) ? screenId : BUILT_IN_SCREENS[0].id, Array.from(list.values()));
     };
-    const storage = (e: StorageEvent) => { if (e.key === SCREENS_KEY || e.key === null) reload(); };
-    const restored = (e: Event) => { const keys = (e as CustomEvent).detail?.keys; if (!Array.isArray(keys) || keys.includes(SCREENS_KEY)) reload(); };
+    const storage = (e: StorageEvent) => { if (e.key === HIDDEN_SCREENS_KEY || e.key === null) setHiddenScreens(readHiddenScreens()); if (e.key === SCREENS_KEY || e.key === null) reload(); };
+    const restored = (e: Event) => { const keys = (e as CustomEvent).detail?.keys; if (!Array.isArray(keys) || keys.includes(HIDDEN_SCREENS_KEY)) setHiddenScreens(readHiddenScreens()); if (!Array.isArray(keys) || keys.includes(SCREENS_KEY)) reload(); };
     window.addEventListener('storage', storage); window.addEventListener('mc:vault:restored', restored);
     return () => { window.removeEventListener('storage', storage); window.removeEventListener('mc:vault:restored', restored); };
   }, [dirty, screenId, loadScreen]);
@@ -181,6 +184,15 @@ export default function StockScreener() {
   // zzz974 (N-01) — sectors are worked out again here so a corrected mapping applies before the next snapshot build
   const rawRows = useMemo(() => (snap?.rows || []).map((r) => { const tv = tvSectorOf(market, r.sec, r.ind, r.t); return tv && tv !== r.tvSec ? { ...r, tvSec: tv } : r; }), [snap, market]);
   const intradayRows = useMemo(() => rawRows.filter((r) => r.cc).length, [rawRows]);
+  // zzz1043 — the session most prices are from, so "Last close" says which day ("Last close 15 Oct")
+  const closeDay = useMemo(() => {
+    const n = new Map<string, number>();
+    for (const r of rawRows) if (typeof r.pxAt === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.pxAt)) n.set(r.pxAt, (n.get(r.pxAt) || 0) + 1);
+    let best: string | null = null, c = 0;
+    for (const [d, k] of n) if (k > c) { best = d; c = k; }
+    return best;
+  }, [rawRows]);
+  const closeDayText = closeDay ? new Date(`${closeDay}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' }) : '';
   const rows = useMemo(() => (closeOnly ? rawRows.map(closeConfirmed) : rawRows), [rawRows, closeOnly]);
   const valuationDropped = useMemo(() => (closeOnly ? rows.filter((r) => r.ccBasis === 'unavailable').length : 0), [rows, closeOnly]);
   const setSort = (s2: { key: string; dir: 1 | -1 }) => { setSortRaw(s2); writeViewState(screenId, { sort: s2 }); };
@@ -366,6 +378,30 @@ export default function StockScreener() {
     setSaved(list);
     loadScreen(isBuiltIn ? screenId : BUILT_IN_SCREENS[0].id, [...BUILT_IN_SCREENS, ...list]);
   };
+  /** zzz1043 — delete a screen the owner made, or take a built-in one off the list (it stays restorable), from the screen picker. */
+  const removeScreen = (id: string) => {
+    const s = screens.find((x) => x.id === id);
+    if (!s) return;
+    const isBi = builtInIds.has(id);
+    if (!window.confirm(isBi ? `Remove “${s.name}” from your list? (A built-in screen — you can bring it back from “Hidden screens”.)` : `Delete “${s.name}”? This cannot be undone.`)) return;
+    const list = readSaved().filter((x) => x.id !== id);
+    if (!writeSaved(list)) { setMsg('Could not delete: storage is full or blocked. Please retry.'); return; }
+    writeDraft(id, null);
+    let hid = hiddenScreens;
+    if (isBi) { hid = [...hiddenScreens.filter((x) => x !== id), id]; if (!writeHiddenScreens(hid)) { setMsg('Could not hide: storage is full or blocked. Please retry.'); return; } setHiddenScreens(hid); }
+    setSaved(list);
+    if (id === screenId) {
+      const all = [...BUILT_IN_SCREENS, ...list.filter((x) => !builtInIds.has(x.id))];
+      const next = [...list, ...BUILT_IN_SCREENS].find((x) => x.id !== id && !hid.includes(x.id) && x.market === market) || all.find((x) => x.id !== id && !hid.includes(x.id));
+      if (next) loadScreen(next.id, [...BUILT_IN_SCREENS, ...list]);
+    }
+    setMsg(isBi ? `Removed “${s.name}” from the list` : `Deleted “${s.name}”`); setTimeout(() => setMsg(null), 2500);
+  };
+  const restoreScreen = (id: string) => {
+    const hid = hiddenScreens.filter((x) => x !== id);
+    if (!writeHiddenScreens(hid)) { setMsg('Could not restore: storage is full or blocked. Please retry.'); return; }
+    setHiddenScreens(hid);
+  };
   const copyTickers = (list: readonly ScreenRow[] = actRows, label = actLabel) => {
     const txt = list.map((r) => (market === 'IN' ? `NSE:${r.t}` : r.t)).join(',');
     navigator.clipboard?.writeText(txt).then(() => { setMsg(`Copied ${list.length} tickers — ${label}`); setTimeout(() => setMsg(null), 2500); }).catch(() => setMsg('Could not copy — the browser refused clipboard access'));
@@ -484,7 +520,7 @@ export default function StockScreener() {
         <span className="mcss-seg" role="group" aria-label="Market">
           {(['US', 'IN'] as const).map((m) => <button key={m} type="button" aria-pressed={market === m} onClick={() => { if (m !== market) { setMarket(m); setDirty(true); } }}>{m === 'US' ? '🇺🇸 USA' : '🇮🇳 India'}</button>)}
         </span>
-        <span className="pick"><ScreenPicker screens={screens} builtInIds={builtInIds} currentId={screenId} currentName={name} currentMarket={market} dirty={dirty} onPick={askSwitch} /></span>
+        <span className="pick"><ScreenPicker screens={screens} builtInIds={builtInIds} currentId={screenId} currentName={name} currentMarket={market} dirty={dirty} onPick={askSwitch} hidden={hiddenScreens} onRemove={removeScreen} onRestore={restoreScreen} /></span>
         <button type="button" className={`mcss-btn${dirty ? ' primary' : ''}`} onClick={() => save(false)} title={dirty ? 'Save the filter changes into this screen' : 'Save the filters into this screen'}>Save{dirty ? ' •' : ''}</button>
         <div ref={topRef} style={{ position: 'relative' }}>
           <button type="button" className="mcss-btn" aria-label="More screen options" aria-haspopup="menu" aria-expanded={topOpen} onClick={() => setTopOpen((v) => !v)} style={{ padding: '0 10px' }}><Icon d={DOTS} size={14} /></button>
@@ -564,7 +600,7 @@ export default function StockScreener() {
       {/* ── data status: one line, details on request ──────────────────────────────────────────────────────────────── */}
       <div className="mcss-status">
         {builtAt ? <span className={`live${fresh ? '' : ' old'}`} title={`Data built ${builtAt.toLocaleString()}`}>Updated {builtAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{builtAt.toDateString() !== new Date().toDateString() ? `, ${builtAt.toLocaleDateString([], { day: 'numeric', month: 'short' })}` : ''}</span> : <span aria-busy={!err}>{err ? 'No data' : 'Loading…'}</span>}
-        {snap ? <><span className="dot" /><span title={intradayRows ? `${intradayRows} companies were read during today's trading session` : 'Every price is a completed-session close'}>{intradayRows ? (closeOnly ? 'Closing prices' : 'Quotes during session') : 'Last close'}</span></> : null}
+        {snap ? <><span className="dot" /><span title={intradayRows ? `${intradayRows} companies were read during today's trading session` : `Every price is a completed-session close${closeDay ? ` (most from ${closeDay})` : ''}`}>{intradayRows ? (closeOnly ? 'Closing prices' : 'Quotes during session') : `Last close${closeDayText ? ` ${closeDayText}` : ''}`}</span></> : null}
         {latestQ ? <><span className="dot" /><span>Figures to {latestQ}</span></> : null}
         {snap ? <><span className="dot" /><button type="button" className="mcss-link" aria-expanded={showCoverage} onClick={() => setShowCoverage((v) => !v)}>Coverage details {showCoverage ? '▴' : '▾'}</button></> : null}
         <span style={{ flex: 1 }} />

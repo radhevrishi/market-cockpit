@@ -128,7 +128,7 @@ const scanTip = (h: PineHit, market: ScreenMarket) => {
     `${tfWord(an.tf).replace(/^./, (c) => c.toUpperCase())} analysis close ${an.close != null ? fmtPrice(an.close, market) : '(not stored)'} — ${sessionLabel(an)}: the pattern, its stage and "To pivot" were read on it`,
     `Daily technical close ${fmtPrice(r.scanPx, market)}${r.scanAt ? ` on ${r.scanAt}` : ''}${technicalSession(r) === 'provisional' ? ' (session open — provisional)' : ''}${r.scanSrc ? ` (${r.scanSrc}${r.scanBasis ? `, ${r.scanBasis}` : ''})` : ''} — the 21 / 50 / 200-day averages use it`,
     `Latest quote ${fmtPrice(r.px, market)}${r.pxSrc ? ` (${r.pxSrc}${r.pxAt ? `, ${r.pxAt}` : ''})` : ''}${typeof r.pxGap === 'number' ? ` — ${r.pxGap > 0 ? '+' : ''}${r.pxGap}% vs the daily technical close` : ''}`,
-    typeof r.pxAlt === 'number' ? `Nasdaq's list still showed ${fmtPrice(r.pxAlt, market)} (the previous session's close), so the last daily bar's close is used${r.pxLive ? ' — today\'s unfinished bar, provisional' : ''}` : '',
+    typeof r.pxAlt === 'number' ? (market === 'IN' ? `NSE's price file for ${r.pxAt || 'the latest session'} is not out yet (it comes out in the evening): the completed close from the daily bars is shown; NSE's previous close was ${fmtPrice(r.pxAlt, market)}` : `Nasdaq's list still showed ${fmtPrice(r.pxAlt, market)} (the previous session's close), so the last daily bar's close is used${r.pxLive ? ' — today\'s unfinished bar, provisional' : ''}`) : '',
     r.pxConflict ? `⚠ ${conflictWords(r)}` : '',
   ].filter(Boolean).join('\n');
 };
@@ -626,7 +626,7 @@ export default function PineScreener() {
       r.chg ?? '', r.mc ?? '', turnoverOf(r, market) ?? '', r[q.perfKey] ?? '', r.rsi ?? '', ma.d21 ?? '', ma.d50 ?? '', ma.d200 ?? '', r.rsR ?? '',
       ...shownCols.map((k) => (r as any)[k] ?? ''), ...(shownCols.includes('r40') ? [r40Explain(r, q.r40Min).text] : []), (r.approx || []).filter((k) => (shownCols as string[]).includes(k)).join('; '),
       r.scan?.st || '', r.scan?.v ?? '', an.engine || r.scan?.e || '', r.patAt || '', (missing || []).join('; '), snap?.builtAt || '', actLabel,
-      summary, presetLine(name, dirty), covText, ...resultCsvCells((r as any).lr, resToday)]; });
+      summary, presetLine(name, dirty), covText, ...resultCsvCells((r as any).lr, resToday, market)]; });
     const blob = new Blob(['﻿' + toCsv([head, ...body])], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `pine_${name.replace(/[^\w-]+/g, '_')}_${market}.csv`; a.click(); URL.revokeObjectURL(a.href);
   };

@@ -202,12 +202,43 @@ export function daysSince(d: string | undefined, today: string): number | null {
   if (!d || !ISO.test(d) || !ISO.test(today)) return null;
   return Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${d}T00:00:00Z`)) / 86_400_000);
 }
+/** zzz1043 — India: does the stored quarter label fit the filing date? (seen 15 Oct 2026: PETRONET filed 14 Oct labelled
+ *  'Q1 FY27' — 106 days after that quarter ended, in the Q2 results season; ENERGYDEV filed 10 Aug 2026 labelled 'Q1 FY28', a
+ *  quarter that had not even begun.) A label for a quarter that had not ended on the filing date is replaced by the quarter the
+ *  filing date points to; a label more than LATE_RESULT_DAYS after its quarter's end is kept but flagged (a late filing, or a
+ *  source still showing the earlier quarter's figures). US fiscal years vary by company, so US labels are shown as filed. */
+export const LATE_RESULT_DAYS = 100;
+export function quarterCheckIn(q: string | undefined, d: string): { q?: string; late?: number; fixedFrom?: string } {
+  if (!q || !ISO.test(d)) return { q };
+  const m = q.match(/^Q([1-4])\s*FY\s*'?(\d{2}|\d{4})$/i);
+  if (!m) return { q };
+  const n = Number(m[1]), fy = 2000 + (Number(m[2]) % 100);
+  const end = n === 1 ? `${fy - 1}-06-30` : n === 2 ? `${fy - 1}-09-30` : n === 3 ? `${fy - 1}-12-31` : `${fy}-03-31`;
+  const lag = Math.round((Date.parse(`${d}T00:00:00Z`) - Date.parse(`${end}T00:00:00Z`)) / 86_400_000);
+  if (lag < 0) {
+    const y = Number(d.slice(0, 4)), mo = Number(d.slice(5, 7)), yy = (v: number) => String(v % 100).padStart(2, '0');
+    const fixed = mo <= 3 ? `Q3 FY${yy(y)}` : mo <= 6 ? `Q4 FY${yy(y)}` : mo <= 9 ? `Q1 FY${yy(y + 1)}` : `Q2 FY${yy(y + 1)}`;
+    return { q: fixed, fixedFrom: q };
+  }
+  return lag > LATE_RESULT_DAYS ? { q, late: lag } : { q };
+}
+/** US: fiscal years differ by company, so only an impossible year is caught — a label whose fiscal year is more than one year
+ *  from the filing year (seen: FSTR filed Aug 2026 as 'Q2 FY17', BOOM Jul 2026 as 'Q2 FY24') keeps its quarter number only. */
+export function quarterCheckUs(q: string | undefined, d: string): { q?: string; late?: number; fixedFrom?: string } {
+  if (!q || !ISO.test(d)) return { q };
+  const m = q.match(/^Q([1-4])\s*FY\s*'?(\d{2}|\d{4})$/i);
+  if (!m) return { q };
+  const fy = 2000 + (Number(m[2]) % 100), y = Number(d.slice(0, 4));
+  return fy < y - 1 || fy > y + 1 ? { q: `Q${m[1]}`, fixedFrom: q } : { q };
+}
+export const shownQuarter = (lr: LatestResult, market: 'US' | 'IN') => (market === 'IN' ? quarterCheckIn(lr.q, lr.d) : quarterCheckUs(lr.q, lr.d));
 export const profitWord = (market: 'US' | 'IN') => (market === 'US' ? 'Net income' : 'PAT');
 const sg = (v: number) => `${v > 0 ? '+' : ''}${Math.abs(v) >= 100 ? Math.round(v) : v.toFixed(0)}%`;
 /** The compact cell text: 'Q2 FY27 · 12 Oct · STRONG · Sales +24% · PAT +41%' ('' when there is no result). */
 export function resultText(lr: LatestResult | null | undefined, market: 'US' | 'IN', today: string): string {
   if (!lr || !lr.d) return lr?.cb ? '🏆 CB · result not on file' : '';
-  const parts = [lr.q, shortDate(lr.d, today), lr.g].filter(Boolean) as string[];
+  const qc = shownQuarter(lr, market);
+  const parts = [qc.q ? `${qc.q}${qc.late ? ' ⚠' : ''}` : '', shortDate(lr.d, today), lr.g].filter(Boolean) as string[];
   if (lr.s !== undefined) parts.push(`Sales ${sg(lr.s)}`);
   if (lr.p !== undefined) parts.push(`${profitWord(market)} ${sg(lr.p)}`);
   return `${lr.cb ? '🏆 ' : ''}${parts.join(' · ')}`;
@@ -221,9 +252,12 @@ export function resultLines(lr: LatestResult | null | undefined, market: 'US' | 
   if (!lr.d) return ['On the Conviction Beats bench — its result is not in the graded data on file.'];
   const ago = daysSince(lr.d, today);
   const fy = `${shortDate(lr.d)} ${lr.d.slice(0, 4)}`;
+  const qc = shownQuarter(lr, market);
   const figs = [lr.s !== undefined ? `Sales ${sg(lr.s)}` : '', lr.p !== undefined ? `${profitWord(market)} ${sg(lr.p)}` : '', lr.e !== undefined ? `EPS ${sg(lr.e)}` : ''].filter(Boolean);
   return [
-    `Result filed ${fy}${ago != null ? ` (${ago === 0 ? 'today' : ago === 1 ? '1 day ago' : `${ago} days ago`})` : ''}${lr.q ? ` — ${lr.q}` : ''}`,
+    `Result filed ${fy}${ago != null ? ` (${ago === 0 ? 'today' : ago === 1 ? '1 day ago' : `${ago} days ago`})` : ''}${qc.q ? ` — ${qc.q}` : ''}`,
+    qc.fixedFrom ? (market === 'IN' ? `Quarter worked out from the filing date (the source said ${qc.fixedFrom}, a quarter that had not ended then)` : `Fiscal year not shown: the source said ${qc.fixedFrom}, which cannot be right for a ${lr.d.slice(0, 4)} filing`) : '',
+    qc.late ? `⚠ Filed ${qc.late} days after ${qc.q} ended (results are due within 45 days, 60 for the year's last quarter): a late filing, or the source still shows the earlier quarter's figures — check the filing` : '',
     lr.g ? `Grade: ${lr.g}${lr.sc !== undefined ? ` (composite ${lr.sc})` : ''}` : '',
     figs.length ? `${figs.join(' · ')} (year on year)` : 'Year-on-year figures not on file',
     `Source: ${SOURCE_WORDS[lr.src]}${lr.gd && lr.gd !== lr.d ? ` (graded ${shortDate(lr.gd)})` : ''}${lr.cb && lr.src === 'EO' ? ' · on the Conviction Beats bench' : ''}`,
@@ -259,9 +293,10 @@ export function resultSortTier(lr: LatestResult | null | undefined): number | nu
 }
 /** CSV columns for the latest result. */
 export const RESULT_CSV_HEAD = ['Latest result date', 'Latest result quarter', 'Latest result grade', 'Days since result', 'Sales YoY (%)', 'Profit YoY (%) (India PAT / US net income)', 'EPS YoY (%)', 'Result source', 'Conviction Beats'];
-export function resultCsvCells(lr: LatestResult | null | undefined, today: string): Array<string | number> {
+export function resultCsvCells(lr: LatestResult | null | undefined, today: string, market?: 'US' | 'IN'): Array<string | number> {
   if (!lr) return ['', '', '', '', '', '', '', '', ''];
-  return [lr.d || '', lr.q || '', lr.g || '', daysSince(lr.d, today) ?? '', lr.s ?? '', lr.p ?? '', lr.e ?? '', lr.d ? SOURCE_WORDS[lr.src] : '', lr.cb ? 'yes' : ''];
+  const qc = market ? shownQuarter(lr, market) : { q: lr.q, late: undefined };
+  return [lr.d || '', qc.q ? `${qc.q}${qc.late ? ` (filed ${qc.late} days after quarter end)` : ''}` : '', lr.g || '', daysSince(lr.d, today) ?? '', lr.s ?? '', lr.p ?? '', lr.e ?? '', lr.d ? SOURCE_WORDS[lr.src] : '', lr.cb ? 'yes' : ''];
 }
 /** Today's date (YYYY-MM-DD) in the market's own time zone. */
 export function marketToday(market: 'US' | 'IN', now: Date = new Date()): string {

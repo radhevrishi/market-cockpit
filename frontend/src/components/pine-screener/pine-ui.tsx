@@ -245,7 +245,7 @@ export function PatternChip({ t, main = false, market, patAt, when, showStage = 
       <span aria-hidden style={{ fontSize: 10 }}>{STAGE_GLYPH(t)}</span><span style={{ color: main ? 'var(--mc-text-0)' : undefined }}>{m.label}</span>
       <span style={{ fontSize: 10, fontWeight: 760, padding: '0 4px', borderRadius: 4, background: `color-mix(in srgb, ${col} 16%, transparent)`, lineHeight: '15px' }} aria-label={`${tfWord(tf)} timeframe`}>{tf}</span>
       {showStage ? <span style={{ fontWeight: 600, color: isReturned(t) ? C.amber : C.dim }} data-stage={isReturned(t) ? 'returned' : t.s}>{stageWord(t)}</span> : null}
-      {vq ? <span title="Volume not confirmed" aria-label="volume not confirmed" style={{ opacity: 0.85 }}>v?</span> : null}
+      {vq ? <span title="Volume not confirmed: too little usable volume data for this pattern" aria-label="volume not confirmed" data-vq style={{ opacity: 0.8, fontSize: 10, fontWeight: 600 }}>no vol</span> : null}
     </span>
   );
 }

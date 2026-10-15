@@ -6,13 +6,17 @@ import type { Screen } from '@/lib/screener/filters';
 import { pickerGroups, readFavScreens, toggleFav, writeFavScreens } from '@/lib/screener/screen-picker';
 import { listKeys, usePopover } from './screener-ui';
 
-export default function ScreenPicker({ screens, builtInIds, currentId, currentName, currentMarket, dirty, onPick }: {
+export default function ScreenPicker({ screens, builtInIds, currentId, currentName, currentMarket, dirty, onPick, hidden = [], onRemove, onRestore }: {
   screens: readonly Screen[]; builtInIds: ReadonlySet<string>; currentId: string; currentName: string; currentMarket: 'US' | 'IN'; dirty: boolean; onPick: (id: string) => void;
+  /** zzz1043 — built-in screens taken off the list; `onRemove` deletes a screen the owner made / hides a built-in one; `onRestore` brings a hidden one back */
+  hidden?: readonly string[]; onRemove?: (id: string) => void; onRestore?: (id: string) => void;
 }) {
   const { open, setOpen, ref } = usePopover();
   const [q, setQ] = useState('');
   const [favs, setFavs] = useState<string[]>(() => (typeof window === 'undefined' ? [] : readFavScreens()));
-  const groups = useMemo(() => pickerGroups(screens, builtInIds, favs, q), [screens, builtInIds, favs, q]);
+  const groups = useMemo(() => pickerGroups(screens, builtInIds, favs, q, hidden), [screens, builtInIds, favs, q, hidden]);
+  const [showHidden, setShowHidden] = useState(false);
+  const hiddenScreens = useMemo(() => screens.filter((s) => hidden.includes(s.id)), [screens, hidden]);
   const listRef = useRef<HTMLDivElement | null>(null);
   const star = (id: string) => setFavs((cur) => { const next = toggleFav(cur, id); writeFavScreens(next); return next; });
   const pick = (id: string) => { setOpen(false); setQ(''); onPick(id); };
@@ -48,11 +52,32 @@ export default function ScreenPicker({ screens, builtInIds, currentId, currentNa
                     <button type="button" className="mcss-btn ghost sm" aria-pressed={favs.includes(s.id)} aria-label={`${favs.includes(s.id) ? 'Remove' : 'Add'} “${s.name}” ${favs.includes(s.id) ? 'from' : 'to'} favourites`}
                       title={favs.includes(s.id) ? 'Remove from favourites' : 'Add to favourites'} onClick={() => star(s.id)}
                       style={{ color: favs.includes(s.id) ? 'var(--ss-warn)' : 'var(--mc-text-4)', padding: '0 6px' }}>{favs.includes(s.id) ? '★' : '☆'}</button>
+                    {onRemove ? (
+                      <button type="button" className="mcss-btn ghost sm" data-remove={s.id} aria-label={`${builtInIds.has(s.id) ? 'Hide' : 'Delete'} “${s.name}”`}
+                        title={builtInIds.has(s.id) ? 'Remove this built-in screen from the list (bring it back from “Hidden screens” below)' : 'Delete this screen'}
+                        onClick={() => onRemove(s.id)} style={{ color: 'var(--mc-text-4)', padding: '0 6px' }}>🗑</button>
+                    ) : null}
                   </div>
                 ))}
               </div>
             ))}
             {!total ? <div className="mcss-dim" style={{ padding: 10 }}>No screen matches “{q}”.</div> : null}
+            {hiddenScreens.length && onRestore ? (
+              <div role="group" aria-label="Hidden screens" style={{ borderTop: '1px solid var(--mc-border, rgba(127,127,127,.25))', marginTop: 4, paddingTop: 4 }}>
+                <button type="button" className="mcss-item" aria-expanded={showHidden} data-hidden-toggle onClick={() => setShowHidden((v) => !v)}>
+                  <span className="mcss-dim">{showHidden ? '▾' : '▸'} Hidden screens · {hiddenScreens.length}</span>
+                </button>
+                {showHidden ? hiddenScreens.map((s) => (
+                  <div key={s.id} style={{ display: 'flex', alignItems: 'center' }}>
+                    <span className="mcss-item" style={{ opacity: 0.6, cursor: 'default' }}>
+                      <span className="mcss-mk">{s.market === 'US' ? 'US' : 'IN'}</span>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
+                    </span>
+                    <button type="button" className="mcss-btn ghost sm" data-restore={s.id} onClick={() => onRestore(s.id)} title="Put this screen back in the list" style={{ padding: '0 8px' }}>Restore</button>
+                  </div>
+                )) : null}
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}

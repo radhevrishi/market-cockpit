@@ -17,7 +17,7 @@ import { yieldToServer } from './yield';
 import { inFiguresFromRaw, rawFromHtml, type InFigures, type InRaw } from './in-assemble';
 import { loadProfiles, type Prof } from './us-build';
 import { refreshTech, type TechStored } from './tech-fetch';
-import { rowPatternFields, rowScanFields, priceSourceNote, rowTvFields, applyRsRating, applyTraderSetups, ruleOf40 } from './pine';
+import { rowPatternFields, rowScanFields, resolveInQuote, priceSourceNote, rowTvFields, applyRsRating, applyTraderSetups, ruleOf40 } from './pine';
 import type { NseDay } from './tech';
 import { tvSectorOf } from './tv-sectors';
 import { rowsJson, type ScreenRow } from './types';
@@ -183,14 +183,18 @@ async function refreshFunds(universe: string[], budgetMs: number, notes: string[
 
 /** Pure: one screener row from the pieces the build read (used by the build and by the cross-check). */
 export function assembleInRow(t: string, name: string, latest: BhavDay, bhav: BhavDay[], store: FundStore | undefined, tf: TechStored | undefined, p: Prof | undefined): ScreenRow {
-  const [close, prev, vol] = latest.px[t];
+  const [fileClose, prev, vol] = latest.px[t];
+  // zzz1043 — after the close, before NSE's file for the day is out: the completed Yahoo session close (change from NSE's close)
+  const rq = resolveInQuote({ px: fileClose, at: latest.date }, tf);
+  const close = rq.px as number;
+  const chg = rq.pxAlt != null ? rq.chg : prev > 0 ? Math.round(((close / prev) - 1) * 1000) / 10 : null;
   const f = figuresOf(store);
   const mc = f?.shares != null ? Math.round(f.shares * close * 10) / 10 : null;
   const vols = bhav.slice(0, 10).map((b) => b.px[t]?.[2]).filter(fin);
   const sales = f?.salesTTM ?? null;
   const earnIso = f?.earnD ?? store?.qSeen?.at ?? null;
   return {
-    t, n: name, sec: f?.sector ?? null, ind: f?.industry ?? null, px: close, chg: prev > 0 ? Math.round(((close / prev) - 1) * 1000) / 10 : null,
+    t, n: name, sec: f?.sector ?? null, ind: f?.industry ?? null, px: close, chg, ...(rq.pxAlt != null ? { pxAlt: rq.pxAlt } : {}),
     vol, avgVol10: tf?.avgVol10 ?? (vols.length >= 5 ? Math.round(vols.reduce((a, b) => a + b, 0) / vols.length) : null), mc,
     sma50: tf?.sma50 ?? null, sma200: tf?.sma200 ?? null,
     revQYoY: f?.revQYoY ?? null, revAYoY: f?.revAYoY ?? null, gpQYoY: f?.gpQYoY ?? null, gmFY: f?.gmFY ?? null,
@@ -209,7 +213,7 @@ export function assembleInRow(t: string, name: string, latest: BhavDay, bhav: Bh
       ...(tf.cc ? { cc: Object.fromEntries(Object.entries(tf.cc).filter(([k]) => k !== 'px' && k !== 'chg' && k !== 'vol')) } : {}),
     } : {}),
     ...rowPatternFields(tf),   // zzz983 — chart patterns (Pine Screener)
-    ...rowScanFields(tf, { px: close, src: 'nse-bhav', at: latest.date }),   // zzz993 (MC-01) — scan close vs NSE's close
+    ...rowScanFields(tf, { px: close, src: rq.src, at: rq.at ?? latest.date }),   // zzz993 (MC-01) — scan close vs NSE's close
     ...rowTvFields(tf, 'IN'),   // zzz984 — the owner's TradingView script fields
     ...(f?.fcfmFY != null ? { fcfmTTM: f.fcfmFY, r40: ruleOf40(f.revQYoY, f.fcfmFY) } : {}),
     earnD: earnIso ? Math.floor(Date.parse(`${earnIso.slice(0, 10)}T00:00:00Z`) / DAY) : null,
@@ -266,6 +270,7 @@ export async function buildInSnapshot(opts: { fundBudgetMs?: number } = {}): Pro
   applyRsRating(rows, (t) => tech.get(t)?.rsRaw);   // zzz984 — RS Rating ranked over the whole India snapshot
   applyTraderSetups(rows, (t) => tech.get(t));   // zzz1020 — CANSLIM points + episodic pivot near the results date
   { const n = priceSourceNote(rows, 'IN'); if (n) notes.push(n); }   // zzz993 (MC-01)
+  { const n = rows.filter((r) => r.pxAlt != null).length; if (n) notes.push(`${n} companies show the completed ${rows.find((r) => r.pxAlt != null)?.pxAt} close from the daily bars: NSE's price file for that day is not out yet (it usually comes out in the evening); change today is measured from NSE's ${latest.date} close`); }   // zzz1043
   const sources = ['NSE company list', 'NSE daily price files', 'screener.in company pages', 'Yahoo daily prices', 'Yahoo company profile'];
   await dbQuery(`INSERT INTO screener_snapshot (market, built_at, rows, meta) VALUES ('IN', now(), $1, $2) ON CONFLICT (market) DO UPDATE SET built_at = now(), rows = EXCLUDED.rows, meta = EXCLUDED.meta`,
     [rowsJson(rows), JSON.stringify({ notes, sources })]);

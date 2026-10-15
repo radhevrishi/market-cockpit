@@ -336,6 +336,31 @@ export function resolveUsQuote(
   return { px: last, chg: Math.round(lastChg * 100) / 100, src: liveBar ? 'yahoo live bar (provisional; Nasdaq list a session behind)' : 'yahoo (Nasdaq list a session behind)', at: tf.scanAt || tf.d || null, pxAlt: q.px, mcScale: last / q.px, ...(liveBar ? { live: true } : {}) };
 }
 
+/** zzz1043 — India: NSE's daily price file for a session comes out in the evening (often 18:00–20:00 IST), so between the 15:30
+ *  close and then the build only has YESTERDAY's file (seen 15 Oct 2026, 16:15 IST: every price / "change today" was the 14 Oct
+ *  close while the Yahoo bars already had the completed 15 Oct session). When the bars hold a COMPLETED session newer than the
+ *  price file, that close is used — change measured from NSE's official close of the file's day — until the file arrives.
+ *  Required: the bars' last session is newer than the file, is not today's unfinished session, was not read during trading (`cc`
+ *  / `scanLive`), and the bars' previous close agrees with NSE's close of the file's day within 1.5% (same day, no unadjusted
+ *  split / bad tick). Any doubt → NSE's file is kept. Pure; client-safe. */
+export const IN_BAR_AGREE_PCT = 1.5;
+export function resolveInQuote(
+  file: { px: number; at: string },
+  tf: { close?: number | null; prevClose?: number | null; scanPx?: number | null; scanAt?: string | null; d?: string | null; cc?: unknown; scanLive?: unknown } | undefined,
+  now: Date = new Date(),
+): ResolvedQuote {
+  const keep: ResolvedQuote = { px: file.px, chg: null, src: 'nse-bhav', at: file.at, mcScale: 1 };
+  if (!tf || !fin(file.px) || !(file.px > 0) || !file.at) return keep;
+  if (tf.cc || tf.scanLive) return keep;
+  const at = tf.scanAt || tf.d || null;
+  if (!at || !(at > file.at) || liveSessionBar(at, 'IN', now)) return keep;
+  const last = fin(tf.scanPx) ? tf.scanPx : fin(tf.close) ? tf.close : null;
+  const prev = tf.prevClose;
+  if (last == null || !(last > 0) || !fin(prev) || !(prev > 0)) return keep;
+  if (Math.abs(prev / file.px - 1) * 100 > IN_BAR_AGREE_PCT) return keep;
+  return { px: last, chg: Math.round((last / file.px - 1) * 1000) / 10, src: 'yahoo (completed close; NSE price file for this day not out yet)', at, pxAlt: file.px, mcScale: last / file.px };
+}
+
 /** zzz993 (MC-01) — the build note on price sources: px and the averages / patterns come from different feeds in the US, so a
  *  "price above SMA 50" rule compares a Nasdaq quote with a Yahoo-based average; scanPx is the close on the averages' own source. */
 export function priceSourceNote(rows: readonly ScreenRow[], market: ScreenMarket): string | null {
