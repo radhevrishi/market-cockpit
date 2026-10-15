@@ -82,6 +82,7 @@ import { BUCKET_MQ_SHORT, HOME_QUOTES_INDIA_URL, HOME_NEWS_FIELDS, HOME_FILING_F
 import { homeGet, buildSyncState, navChip, timeAgo } from './_home/helpers';
 import { DecisionTierBlock, HomeValuationQuickCheck, DailySignalInbox } from './_home/components';
 import { PipelineHealth } from './_home/PipelineHealth';
+import { UsMovers } from './_home/UsMovers';
 
 export default function HomeDashboard() {
   // PATCH 0606 — synchronous initial state from localStorage so the page
@@ -3712,6 +3713,7 @@ export default function HomeDashboard() {
             })()}
           </div>
 
+          <UsMovers />{/* zzz1056 — US mirror of the India movers panel, beside it */}
           {/* SIGNALS — high-importance corporate news (PATCH 0865 — institutional font sizing) */}
           <div style={{ ...cardStyle, borderLeft: '3px solid var(--mc-cyan)', display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
