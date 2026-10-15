@@ -15,6 +15,10 @@ export interface StockQuote {
   dayHigh: number | null;
   dayLow: number | null;
   market?: 'IN' | 'US';      // which quote feed it came from (US bulk list → US; everything else → India)
+  // zzz1045d — when the price is from (null = the source did not say), and whether it is the last NSE close
+  quoteTime?: string | null;
+  priceSource?: string | null;
+  staleEOD?: boolean | null;
 }
 
 export interface WatchlistItem {
@@ -37,15 +41,21 @@ export interface WatchlistItem {
   week52Low?: number | null;
   peRatio?: number | null;
   avgVolume?: number | null;
+  // zzz1045d — quote time per row + traded value (price × volume of the same quote)
+  quoteTime?: string | null;
+  priceSource?: string | null;
+  staleEOD?: boolean | null;
+  tradedValue?: number | null;
+  reviewPct?: number | null;   // change since "Mark reviewed" (only when it passes the chosen %)
 }
 
-export type SortField = 'ticker' | 'company' | 'sector' | 'price' | 'changePercent' | 'dayHigh' | 'dayLow' | 'flag' | 'volume' | 'week52High' | 'week52Low' | 'marketCap' | 'peRatio';
+export type SortField = 'ticker' | 'company' | 'sector' | 'price' | 'changePercent' | 'dayHigh' | 'dayLow' | 'flag' | 'volume' | 'week52High' | 'week52Low' | 'marketCap' | 'peRatio' | 'avgVolume' | 'tradedValue';
 
 export type SortOrder = 'asc' | 'desc';
 
 // PATCH 0442 BUG-020/027 — Optional columns the user can toggle on. Persisted
 // to localStorage so the choice survives reloads.
-export type OptionalCol = 'volume' | 'week52High' | 'week52Low' | 'marketCap' | 'peRatio' | 'avgVolume';
+export type OptionalCol = 'volume' | 'week52High' | 'week52Low' | 'marketCap' | 'peRatio' | 'avgVolume' | 'tradedValue';
 
  // 24h
 

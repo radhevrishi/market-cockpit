@@ -99,4 +99,9 @@ export const PANEL_CSS = `
   border: 1px solid var(--mc-border-1); background: var(--mc-bg-0) radial-gradient(circle, var(--mc-text-4) 0.9px, transparent 1.3px) 1px 2px / 6px 5px; }
 .mc-charts-main .mc-watchlist-resize[role="separator"]:hover::before, .mc-charts-main .mc-watchlist-resize[role="separator"]:focus-visible::before { background: var(--mc-accent); }
 .mc-charts-main .mc-watchlist-resize[role="separator"]:hover::after, .mc-charts-main .mc-watchlist-resize[role="separator"]:focus-visible::after { border-color: var(--mc-accent); }
+/* zzz1045d — where a list comes from (chart list / linked to My Book / not the Telegram list) */
+.mcwl-src { font-size: 11px; font-weight: 500; color: var(--mc-text-3); padding: 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: 0; }
+.mcwl-menu .mcwl-src { padding: 0; }
+.mcwl-src[data-source="book"] { color: var(--mc-accent); }
+.mcwl-src[data-source="telegram-name"] { color: var(--mc-warn, #B45309); }
 `;

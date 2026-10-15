@@ -31,13 +31,18 @@ import { buildWatchlistExport, type ExportScope } from '@/lib/watchlist-export';
 import { writeReviewQueue } from '@/lib/screener/workflow';
 import { STANDALONE_WATCHLIST_ID, chartReviewUrl, watchlistReviewItems } from '@/lib/watchlist-chart-handoff';
 import { setStoredTickers, getStoredTickers, fetchStockQuotes, fetchIndividualQuotes } from './helpers';
-import { type StockQuote, type SortField, type SortOrder } from './types';
+import { type StockQuote, type SortField, type SortOrder, type WatchlistItem } from './types';
 import { useWorkspaceLight, workspaceThemeClass } from '@/lib/workspace-theme';
 import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
 import { WLP_CSS } from './watchlists-css';
 // zzz1044c — save logic for this list (F08 empty list is the truth, F09 checked flag saves, F10 one write at a time).
 import { decideInitialWatchlist, WatchlistMutationQueue, FlagSync, flagView, EMPTY_LIST_SNAPSHOT, type ListSyncSnapshot, type FlagState, type WatchlistReadResult } from '@/lib/watchlist-sync';
 import { postWatchlistList, postWatchlistFlag, describeListOp } from './watchlist-save';
+// zzz1045d — list source + compare with chart lists, quote time vs last refreshed, no-quote names, changes since review
+import { standaloneSource } from '@/lib/watchlist-compare';
+import { quoteTimeOf, quoteTimeSummary, unresolvedSymbols, tradedValue, buildReview, changesSinceReview, loadReview, saveReview, DEFAULT_REVIEW_THRESHOLD, type ReviewSnapshot } from '@/lib/watchlist-review';
+import { ComparePanel } from './ComparePanel';
+import { fmtClock } from './components';
 
 // ── Main Page ──────────────────────────────────────────────────────────────────
 
@@ -51,6 +56,16 @@ export default function WatchlistsPage() {
     onFailed: (ops, error) => toast.error(`${ops.map(describeListOp).join(', ')} — not saved (${error}), undone`),
   }));
   const tickers = listSync.tickers;
+  // zzz1045d — where the list on screen was read from (server, or this browser's copy when the read failed) and when
+  const [listOrigin, setListOrigin] = useState<{ readFrom: 'server' | 'browser-copy' | null; reason: string | null; readAt: number | null }>({ readFrom: null, reason: null, readAt: null });
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [review, setReview] = useState<ReviewSnapshot | null>(null);
+  const [reviewOnly, setReviewOnly] = useState(false);
+  const [reviewPct, setReviewPct] = useState<number>(DEFAULT_REVIEW_THRESHOLD);
+  useEffect(() => {   // browser storage is read after mount (no SSR mismatch)
+    const t = setTimeout(() => { const r = loadReview(); if (r) setReview(r); }, 0);
+    return () => clearTimeout(t);
+  }, []);
   const [quotes, setQuotes] = useState<StockQuote[]>([]);
   const [loading, setLoading] = useState(true);
   const [tickerInput, setTickerInput] = useState('');
@@ -303,10 +318,12 @@ export default function WatchlistsPage() {
       if (decision.use === 'remote') {
         listQueue.reset(decision.tickers);
         flagSync.loadServer(decision.flags);
+        setListOrigin({ readFrom: 'server', reason: null, readAt: Date.now() });
         return;
       }
       if (decision.reason !== 'no-record') console.warn(`[Watchlist] shared list not read (${decision.reason}) — showing this browser's copy`);
       listQueue.reset(getStoredTickers());
+      setListOrigin({ readFrom: 'browser-copy', reason: decision.reason, readAt: Date.now() });
     };
 
     initTickers();
@@ -416,14 +433,38 @@ export default function WatchlistsPage() {
         week52Low: (quote as any)?.week52Low ?? null,
         peRatio: (quote as any)?.peRatio ?? null,
         avgVolume: (quote as any)?.avgVolume ?? null,
+        // zzz1045d — when the price is from; traded value = price × volume of the same quote
+        quoteTime: quote?.quoteTime ?? null,
+        priceSource: quote?.priceSource ?? null,
+        staleEOD: quote?.staleEOD ?? null,
+        tradedValue: tradedValue(quoteNumbers(quote).price, (quote as any)?.volume ?? null),
       };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tickers, quotes, flagState]);
 
+  // zzz1045d — "changes since last review": rows that moved by at least reviewPct % since "Mark reviewed"
+  const reviewDiff = useMemo(() => changesSinceReview(watchlistItems, review, reviewPct), [watchlistItems, review, reviewPct]);
+  const reviewedItems = useMemo(() => watchlistItems.map((it): WatchlistItem => {
+    const c = reviewDiff.changed[it.ticker];
+    return c ? { ...it, reviewPct: c.pct } : it;
+  }), [watchlistItems, reviewDiff]);
+  const reviewCount = Object.keys(reviewDiff.changed).length;
+  const markReviewed = useCallback(() => {
+    const snap = buildReview(watchlistItems, Date.now());
+    setReview(snap);
+    setReviewOnly(false);
+    if (saveReview(snap)) toast.success(`Marked ${Object.keys(snap.prices).length} prices as reviewed`);
+    else toast.error('Reviewed for this visit only — this browser did not let the page save it');
+  }, [watchlistItems]);
+  const unresolved = useMemo(() => (quotes.length ? unresolvedSymbols(watchlistItems) : []), [quotes.length, watchlistItems]);
+  const quoteSummary = useMemo(() => quoteTimeSummary(watchlistItems.map((i) => quoteTimeOf({ price: i.price, quoteTime: i.quoteTime, priceSource: i.priceSource, staleEOD: i.staleEOD }, fmtClock)), fmtClock), [watchlistItems]);
+  const marketOf = useCallback((t: string) => watchlistItems.find((i) => i.ticker === t)?.market, [watchlistItems]);
+  const sourceLine = standaloneSource({ ...listOrigin, savedAt: listSync.savedAt ?? null }, fmtClock);
+
   // Sort items
   const sortedItems = useMemo(() => {
-    const sorted = [...watchlistItems];
+    const sorted = [...reviewedItems];
     sorted.sort((a, b) => {
       let aVal: any = (a as any)[sortField];
       let bVal: any = (b as any)[sortField];
@@ -446,7 +487,7 @@ export default function WatchlistsPage() {
     });
 
     return sorted;
-  }, [watchlistItems, sortField, sortOrder]);
+  }, [reviewedItems, sortField, sortOrder]);
 
   // Handle add ticker — supports comma/space separated, strips exchange prefixes, bulk paste
   const handleAddTicker = useCallback(() => {
@@ -554,7 +595,10 @@ export default function WatchlistsPage() {
 
   // zzz972 — rows matching the search box (ticker or company); empty box = all rows.
   const findActive = findQuery.trim().length > 0 && !isBulkQuery(findQuery);
-  const visibleItems = useMemo(() => findInList(sortedItems, findQuery), [sortedItems, findQuery]);
+  const visibleItems = useMemo(() => {
+    const found = findInList(sortedItems, findQuery);
+    return reviewOnly ? found.filter((i) => i.reviewPct != null) : found;   // zzz1045d
+  }, [sortedItems, findQuery, reviewOnly]);
 
   // zzz972 — which lists already hold a suggested company. Read-only, re-read from this browser while typing.
   const membershipIndex = useMemo(() => {
@@ -639,6 +683,11 @@ export default function WatchlistsPage() {
           {activeTab !== 'conviction' && (<>
             <h1 className="wlp-title">Watchlist</h1>
             <p className="wlp-lede">Tracking universe, observation only, no P&amp;L</p>
+            {activeTab === 'main' && (
+              <p className="wlp-src" data-testid="watchlist-source" data-source={sourceLine.kind} title={sourceLine.detail}>
+                <b>My Watchlist</b> · {sourceLine.label}
+              </p>
+            )}
           </>)}
         </div>
         <div className="wlp-actions">
@@ -648,7 +697,7 @@ export default function WatchlistsPage() {
             Refresh
           </button>
           {activeTab === 'main' && (
-            <WatchlistExportControl filterActive={findActive} filteredCount={visibleItems.length} totalCount={sortedItems.length} onExport={handleExportXLSX} />
+            <WatchlistExportControl filterActive={findActive || reviewOnly} filteredCount={visibleItems.length} totalCount={sortedItems.length} onExport={handleExportXLSX} />
           )}
         </div>
       </div>
@@ -722,6 +771,16 @@ export default function WatchlistsPage() {
       {/* ── Summary ───────────────────────────────────────────────────────── */}
       {tickers.length > 0 && <SummaryBar items={sortedItems} />}
 
+      {/* zzz1045d — compare with the chart lists (preview; copies only on click) */}
+      {compareOpen && (
+        <ComparePanel tickers={tickers} marketOf={marketOf} onClose={() => setCompareOpen(false)}
+          onAddToStandalone={(add) => {
+            const have = new Set(listQueue.snapshot().tickers);
+            const toAdd = add.filter((t) => !have.has(t));
+            if (toAdd.length) { listQueue.enqueue('add', toAdd); setTimeout(() => fetchData(), 500); }
+          }} />
+      )}
+
       {/* ── Loading State ─────────────────────────────────────────────────── */}
       {loading && tickers.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }} aria-busy="true" aria-label="Loading quotes">
@@ -737,20 +796,47 @@ export default function WatchlistsPage() {
               {findActive
                 ? <><strong style={{ color: 'var(--mc-text-1)' }}>In this list ({visibleItems.length})</strong> matching “{findQuery.trim()}” · {sortedItems.length} stocks in all</>
                 : <>{sortedItems.length} stocks</>}
-              {' '}· Last refreshed: {lastRefresh ? lastRefresh.toLocaleTimeString() : '—'}
+              {' '}· <span title="When this page last read the quotes">Last refreshed: {lastRefresh ? lastRefresh.toLocaleTimeString() : '—'}</span>
+              {' '}· <span title="When the quote source says the prices are from (can be older than the refresh)">{quoteSummary}</span>
             </p>
+            <button type="button" className="wlp-btn" onClick={() => setCompareOpen((v) => !v)} aria-expanded={compareOpen}
+              title="See which names are only here, only in a chart list, or in both. Nothing is copied until you click.">
+              Compare with chart lists…
+            </button>
             <button type="button" onClick={openInCharts} disabled={visibleItems.length === 0}
               title={`Open ${findActive ? `the ${visibleItems.length} matching rows` : `all ${visibleItems.length} rows`} on Charts, in this table's order; ↑ / ↓ on the chart step through them`}
               className="wlp-btn accent">
               Open {findActive ? `${visibleItems.length} shown` : 'this list'} in Charts ↗
             </button>
           </div>
+          {/* zzz1045d — changes since last review */}
+          <div className="wlp-review" role="group" aria-label="Changes since last review">
+            <button type="button" className="wlp-btn" onClick={markReviewed} title="Save today's price of every row; later you can see which ones moved since">Mark reviewed</button>
+            {review ? <span>Reviewed {fmtClock(review.at)}</span> : <span>Not reviewed yet</span>}
+            <label>
+              <input type="checkbox" checked={reviewOnly} disabled={!review} onChange={(e) => setReviewOnly(e.target.checked)} />
+              Only rows that moved ≥
+            </label>
+            <input type="number" min={0.5} max={100} step={0.5} value={reviewPct} aria-label="Move in percent since the review"
+              onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v > 0) setReviewPct(v); }} />
+            <span>% since review{review ? ` (${reviewCount})` : ''}</span>
+            {review && reviewDiff.notReviewed.length > 0 && <span title={reviewDiff.notReviewed.join(', ')}>· {reviewDiff.notReviewed.length} added since the review</span>}
+          </div>
+          {/* zzz1045d — names with no quote: listed for a manual check (old or demerged symbol?); never remapped */}
+          {unresolved.length > 0 && (
+            <p className="wlp-unres" role="note" data-testid="watchlist-unresolved">
+              No quote for {unresolved.length} symbol{unresolved.length === 1 ? '' : 's'}: <b>{unresolved.join(', ')}</b>. Check each one by hand (an old or demerged symbol?). They are kept as typed and never swapped for another symbol.
+            </p>
+          )}
           {findActive && visibleItems.length === 0 && (
             <p style={{ fontSize: '13px', color: 'var(--mc-text-3)', margin: '0 0 12px' }}>
               Not in this list. Pick it from “Add to list” to add it.
             </p>
           )}
-          <WatchlistTable
+          {reviewOnly && visibleItems.length === 0 && (
+            <p style={{ fontSize: '13px', color: 'var(--mc-text-3)', margin: '0 0 12px' }}>No row moved {reviewPct}% or more since the review.</p>
+          )}
+          {(visibleItems.length > 0 || !(findActive || reviewOnly)) && <WatchlistTable
             items={visibleItems}
             sortField={sortField}
             sortOrder={sortOrder}
@@ -758,7 +844,7 @@ export default function WatchlistsPage() {
             onRemove={handleRemoveTicker}
             onToggleFlag={handleToggleFlag}
             onRetryFlag={handleRetryFlag}
-          />
+          />}
         </div>
       )}
 

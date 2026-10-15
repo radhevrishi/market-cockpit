@@ -29,6 +29,9 @@ export const OPTIONAL_COLS: Array<{ id: OptionalCol; label: string }> = [
   { id: 'marketCap',   label: 'Market Cap' },
   { id: 'peRatio',     label: 'P/E (TTM)' },
   { id: 'avgVolume',   label: 'Avg Vol (20D)' },
+  // zzz1045d — price × volume of the same quote. (% from the 50-day / 200-day average is not offered: the quote feed
+  // this page reads does not return those averages.)
+  { id: 'tradedValue', label: 'Traded value (price × volume)' },
 ];
 
 export const COL_PREFS_KEY = 'mc:watchlist:cols:v1';

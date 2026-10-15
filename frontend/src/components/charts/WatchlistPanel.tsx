@@ -22,6 +22,7 @@ import { applyRowMenu, applySectionMenu, chartHref, newsHref, watchlistRowMenu, 
 import { useBookWatchlistSync, readBook } from './useBookWatchlistSync';
 import { BOOK_LABEL, BOOK_SECTION_NAME, bookSectionMenu, createLinkedSection, linkSection, linkTooltip, linkedSection, previewLinkRemovals, unlinkSection } from '@/lib/watchlist-book-sync';
 import { agoLabel, currencyOf, displaySectionName, exchangeLabel, quoteFreshness, usExtendedSession, WIDTH_PRESETS, WL_EXT_COLUMN_KEY } from '@/lib/watchlist-display';
+import { chartListSource } from '@/lib/watchlist-compare';   // zzz1045d — each list says where it comes from
 
 // ── storage hook ──────────────────────────────────────────────────────────────
 function readJson(key: string): unknown {
@@ -299,6 +300,14 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
   const panelRef = useRef<HTMLDivElement | null>(null);
 
   const list: WlList | null = store ? activeList(store) : null;
+  // zzz1045d — is the store on screen the one in this browser's storage? Checked just after the save runs (the store hook saves
+  // in an effect of the parent, which runs after this component's effects).
+  const [savedHere, setSavedHere] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!store) return undefined;
+    const t = setTimeout(() => { let ok = false; try { ok = localStorage.getItem(CHART_WATCHLISTS_KEY) === JSON.stringify(store); } catch { ok = false; } setSavedHere(ok); }, 60);
+    return () => clearTimeout(t);
+  }, [store]);
   const keys = useMemo(() => (list ? list.sections.flatMap((s) => s.items.map(itemKey)) : []), [list]);
   const quotes = useQuotes(keys);
   const view = useMemo(() => ({ query: search, market: marketFilter }), [search, marketFilter]);
@@ -630,11 +639,19 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
             className="mcwl-ib" style={{ color: 'var(--mc-text-0)', fontWeight: 720, fontSize: 15, letterSpacing: '-0.01em', padding: '2px 4px', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {list.name} <span style={{ color: 'var(--mc-text-3)', fontWeight: 400, fontVariantNumeric: 'tabular-nums' }}>{listCount(list)} ▾</span>
           </button>
+          {/* zzz1045d — list identity + source: a chart list (this browser, copied to your account), linked to My Book, or
+              named "Telegram" but not the Telegram bot's list (that one is on the Watchlists page) */}
+          <div className="mcwl-src" data-testid="watchlist-source" data-source={chartListSource(list).kind} title={chartListSource(list).detail}>
+            {chartListSource(list).label} · {savedHere === false ? <span style={{ color: 'var(--mc-bearish, #DC2626)' }}>not saved in this browser</span> : 'saved in this browser'}
+          </div>
           {listMenu && (
             <div className="mcwl-menu" role="menu" aria-label="Lists" style={{ left: 0, right: 'auto' }} onKeyDown={(e) => menuKeys(e, () => setListMenu(false))}>
               {store.lists.map((l) => (
                 <button key={l.id} type="button" role="menuitemradio" aria-checked={l.id === list.id} onClick={() => { update((s) => ({ ...s, activeId: l.id })); setListMenu(false); }}
-                  style={{ fontWeight: l.id === list.id ? 700 : 400 }}><span className="chk">{l.id === list.id ? '✓' : ''}</span>{l.name} <span style={{ color: 'var(--mc-text-3)', marginLeft: 'auto' }}>{listCount(l)}</span></button>
+                  title={chartListSource(l).detail}
+                  style={{ fontWeight: l.id === list.id ? 700 : 400 }}><span className="chk">{l.id === list.id ? '✓' : ''}</span>
+                  <span style={{ display: 'grid', minWidth: 0 }}>{l.name}<span className="mcwl-src" data-source={chartListSource(l).kind}>{chartListSource(l).label}</span></span>
+                  <span style={{ color: 'var(--mc-text-3)', marginLeft: 'auto' }}>{listCount(l)}</span></button>
               ))}
             </div>
           )}

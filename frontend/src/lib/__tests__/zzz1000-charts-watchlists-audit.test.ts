@@ -95,7 +95,7 @@ test('CW-01: the table shows — for unknown values and the summary leaves unkno
     const cells = (t: string) => Array.from(row(t).querySelectorAll('td')).map((td) => td.textContent!.trim());
     assert.deepEqual(cells('AXISBANK').slice(4, 8), ['₹1268.40', '+1.23%', '—', '—']);
     assert.deepEqual(cells('FLAT').slice(4, 8), ['₹50.00', '+0.00%', '₹51.00', '₹49.00']);
-    assert.deepEqual(cells('NVDA').slice(4, 8), ['—', '—', '—', '—']);
+    assert.deepEqual(cells('NVDA').slice(4, 8), ['no quote', '—', '—', '—'], 'zzz1045d: a missing quote reads "no quote" (never 0)');
     assert.match(row('NVDA').querySelector('a')!.getAttribute('href')!, /m=US/, 'US rows open on the US chart');
     // zzz1013 — one figures strip with sentence-case labels (was four cards in capitals)
     assert.match(document.body.textContent!, /Average change\+0\.61%/, 'average over the two known changes only');

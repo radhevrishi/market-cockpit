@@ -190,6 +190,7 @@ export interface ListSyncSnapshot {
   confirmed: string[];        // last list the server confirmed
   pending: ListOp[];          // changes not yet confirmed (in flight + waiting)
   failed: FailedListOp[];     // changes undone because their save failed
+  savedAt?: number | null;    // zzz1045d — when the server last confirmed a write (null = nothing saved in this visit)
 }
 
 export function applyOps(base: string[], ops: ListOp[]): string[] {
@@ -203,7 +204,7 @@ export function applyOps(base: string[], ops: ListOp[]): string[] {
 
 const sameList = (a: string[], b: string[]) => a.length === b.length && a.every((t, i) => t === b[i]);
 
-export const EMPTY_LIST_SNAPSHOT: ListSyncSnapshot = { tickers: [], confirmed: [], pending: [], failed: [] };
+export const EMPTY_LIST_SNAPSHOT: ListSyncSnapshot = { tickers: [], confirmed: [], pending: [], failed: [], savedAt: null };
 
 export class WatchlistMutationQueue {
   private confirmed: string[] = [];
@@ -214,11 +215,13 @@ export class WatchlistMutationQueue {
   private seq = 0;
   private lastTickers: string[] = [];
   private snap: ListSyncSnapshot = EMPTY_LIST_SNAPSHOT;
+  private savedAt: number | null = null;
 
   constructor(private readonly opts: {
     send: (list: string[]) => Promise<WriteResult>;
     onChange?: (s: ListSyncSnapshot) => void;
     onFailed?: (ops: ListOp[], error: string) => void;
+    now?: () => number;
   }) {}
 
   snapshot(): ListSyncSnapshot { return this.snap; }
@@ -252,7 +255,7 @@ export class WatchlistMutationQueue {
   private emit() {
     const tickers = applyOps(this.confirmed, this.pending);
     if (!sameList(tickers, this.lastTickers)) this.lastTickers = tickers;   // keep the same array when nothing changed
-    this.snap = { tickers: this.lastTickers, confirmed: [...this.confirmed], pending: [...this.pending], failed: [...this.failed] };
+    this.snap = { tickers: this.lastTickers, confirmed: [...this.confirmed], pending: [...this.pending], failed: [...this.failed], savedAt: this.savedAt };
     this.opts.onChange?.(this.snap);
   }
 
@@ -270,6 +273,7 @@ export class WatchlistMutationQueue {
           this.pending = this.pending.filter((o) => !ids.has(o.id));
           if (r.ok) {
             this.confirmed = r.list ?? list;
+            this.savedAt = (this.opts.now ?? Date.now)();
           } else {
             // Undo only what this write carried; changes made since stay waiting and go in the next write.
             this.failed.push(...batch.map((o) => ({ ...o, error: r.ok ? '' : r.error })));

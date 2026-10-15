@@ -65,6 +65,10 @@ export const fetchStockQuotes = async (market: string = 'india'): Promise<StockQ
       // zzz1000 (CW-01) — unknown stays null (was `|| 0`, which exported a missing high / low as 0)
       ...quoteNumbers(stock),
       market: market === 'us' ? 'US' as const : 'IN' as const,
+      // zzz1045d — when the price is from (Yahoo time, or the last NSE close); null when the source did not say
+      quoteTime: typeof stock.quoteTime === 'string' ? stock.quoteTime : null,
+      priceSource: typeof stock.priceSource === 'string' ? stock.priceSource : null,
+      staleEOD: stock.staleEOD === true,
       // PATCH 0445 — optional columns
       volume: stock.volume ?? null,
       marketCap: stock.marketCap ?? stock.mcap ?? null,

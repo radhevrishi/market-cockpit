@@ -89,6 +89,30 @@ export const WLP_CSS = `
 .wlp-skel { height: 40px; border-radius: 8px; background: linear-gradient(90deg, var(--mc-bg-2) 0%, var(--mc-bg-1) 40%, var(--mc-bg-2) 80%); background-size: 240% 100%; animation: wlp-shimmer 1.3s ease-in-out infinite; }
 @keyframes wlp-shimmer { from { background-position: 100% 0; } to { background-position: -40% 0; } }
 .wlp-note { margin-top: 20px; padding: 12px 16px; border: 1px solid var(--mc-border-3); border-radius: 10px; background: var(--mc-bg-1); font-size: 12.5px; color: var(--mc-text-3); }
+/* zzz1045d — hover, keyboard focus, flag and "moved since review" look different from each other:
+   hover = soft background; focus inside a row = accent outline; flag = coloured left edge; moved = small coloured tag. */
+.wlp-table tbody tr:focus-within td { background: var(--wlp-press); }
+.wlp-table tbody tr:focus-within { outline: 2px solid var(--mc-accent); outline-offset: -2px; }
+.wlp-table tbody tr[data-flag] td:first-child { box-shadow: inset 3px 0 0 var(--wlp-flag, var(--mc-text-3)); }
+.wlp-table tbody tr[data-flag="green"] { --wlp-flag: #16a34a; } .wlp-table tbody tr[data-flag="orange"] { --wlp-flag: #ea8a0c; } .wlp-table tbody tr[data-flag="red"] { --wlp-flag: #dc2626; }
+.wlp-flag[aria-busy="true"] { outline: 1px dashed var(--mc-text-4); }
+.wlp-rv { margin-left: 8px; padding: 1px 6px; border-radius: 5px; font-size: 11px; font-weight: 650; border: 1px solid currentColor; }
+.wlp-rv.up { color: var(--mc-bullish); } .wlp-rv.down { color: var(--mc-bearish); }
+.wlp-noq { font-size: 11.5px; font-weight: 600; color: var(--mc-warn); }
+.wlp-src { margin: 3px 0 0; font-size: 12px; color: var(--mc-text-3); }
+.wlp-src b { color: var(--mc-text-1); font-weight: 650; }
+.wlp-unres { margin: 0 0 12px; padding: 8px 12px; border: 1px solid var(--mc-border-1); border-left: 3px solid var(--mc-warn); border-radius: 8px; background: var(--mc-bg-1); font-size: 12.5px; color: var(--mc-text-2); }
+.wlp-review { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 12.5px; color: var(--mc-text-3); }
+.wlp-review input[type="number"] { width: 56px; height: 28px; padding: 0 6px; border: 1px solid var(--mc-border-1); border-radius: 6px; background: var(--mc-bg-0); color: var(--mc-text-0); font: inherit; }
+.wlp-review label { display: inline-flex; align-items: center; gap: 6px; color: var(--mc-text-1); font-weight: 600; cursor: pointer; }
+.wlp-cmp { margin: 0 0 16px; padding: 14px 16px; border: 1px solid var(--mc-border-1); border-radius: 12px; background: var(--mc-bg-1); font-size: 12.5px; color: var(--mc-text-2); }
+.wlp-cmp h3 { margin: 0 0 4px; font-size: 14px; font-weight: 720; color: var(--mc-text-0); }
+.wlp-cmp-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 10px 0; }
+.wlp-cmp-cols > div { padding: 10px 12px; border: 1px solid var(--mc-border-3); border-radius: 8px; background: var(--mc-bg-0); min-width: 0; }
+.wlp-cmp-cols h4 { margin: 0 0 6px; font-size: 12px; font-weight: 700; color: var(--mc-text-1); }
+.wlp-cmp-cols ul { margin: 0 0 8px; padding: 0; list-style: none; max-height: 180px; overflow: auto; font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--mc-text-0); }
+.wlp-cmp-cols li.off { color: var(--mc-text-4); }
+.wlp-cmp select { height: 28px; border: 1px solid var(--mc-border-1); border-radius: 6px; background: var(--mc-bg-0); color: var(--mc-text-0); font: inherit; }
 @media (max-width: 640px) {
   .wlp-pad { padding: 14px 12px !important; }
   .wlp-figs > div { flex-basis: 45%; border-left: none; border-top: 1px solid var(--mc-border-3); padding: 8px 12px; }

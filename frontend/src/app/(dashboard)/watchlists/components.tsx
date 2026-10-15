@@ -9,6 +9,15 @@ import { loadColPrefs, saveColPrefs } from './helpers';
 import { type WatchlistItem, type SortField, type SortOrder, type OptionalCol } from './types';
 import { type ListOp, type FailedListOp } from '@/lib/watchlist-sync';
 import { describeListOp } from './watchlist-save';
+import { quoteTimeOf, formatTradedValue } from '@/lib/watchlist-review';
+
+/** zzz1045d — a quote time as HH:MM today, or "15 Oct HH:MM" on another day (the viewer's own clock). */
+export function fmtClock(ms: number): string {
+  const d = new Date(ms);
+  const hm = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return d.toDateString() === new Date().toDateString() ? hm : `${d.toLocaleDateString([], { day: 'numeric', month: 'short' })} ${hm}`;
+}
+const FLAG_NAME: Record<string, string> = { '🟢': 'green', '🟠': 'orange', '🔴': 'red' };
 
 // ── zzz1044c (F10) — changes still saving / not saved ─────────────────────────
 
@@ -161,6 +170,8 @@ export function WatchlistTable({
             {th({ field: 'changePercent', label: 'Change%', num: true })}
             {showHigh ? th({ field: 'dayHigh', label: 'Day High', num: true }) : null}
             {showLow ? th({ field: 'dayLow', label: 'Day Low', num: true }) : null}
+            {/* zzz1045d — when the price is from (separate from "Last refreshed", when this page read it) */}
+            <th className="num" title="When the quote source says the price is from. “last close” = the last NSE closing price; “time not given” = the source gave no time.">Quote time</th>
             {/* PATCH 0442 BUG-020 — Optional columns rendered based on chooser state */}
             {OPTIONAL_COLS.filter(c => activeCols.has(c.id)).map(c => th({ field: c.id as SortField, label: c.label, num: true }))}
             <th className="num" style={{ position: 'relative' }}>
@@ -178,7 +189,7 @@ export function WatchlistTable({
                     </label>
                   ))}
                   <div style={{ fontSize: 11, color: 'var(--mc-text-4)', padding: '6px 6px 2px', fontWeight: 500, whiteSpace: 'normal' }}>
-                    A column shows — when the source doesn&apos;t return that field.
+                    A column shows — when the source doesn&apos;t return that field. % from the 50-day / 200-day average is not offered: the quote feed does not return those averages.
                   </div>
                 </div>
               )}
@@ -189,8 +200,10 @@ export function WatchlistTable({
           {items.map((item) => {
             const isPositive = (item.changePercent ?? 0) >= 0;
             const price = item.price != null && item.price > 0 ? item.price : null;   // zzz1000 (CW-01)
+            const qt = quoteTimeOf({ price, quoteTime: item.quoteTime, priceSource: item.priceSource, staleEOD: item.staleEOD }, fmtClock);
             return (
-              <tr key={item.ticker} data-watchlist-ticker={item.ticker}>
+              <tr key={item.ticker} data-watchlist-ticker={item.ticker} data-flag={item.flag ? FLAG_NAME[item.flag] || 'on' : undefined}
+                data-review={item.reviewPct != null ? (item.reviewPct >= 0 ? 'up' : 'down') : undefined}>
                 <td style={{ textAlign: 'center', width: 56 }}>
                   <button type="button" className={`wlp-flag${item.flagStatus === 'saving' ? ' saving' : ''}`} onClick={() => onToggleFlag?.(item.ticker)}
                     title={item.flagStatus === 'saving' ? `Flag: ${item.flag || 'None'} — saving…` : `Flag: ${item.flag || 'None'} (click to cycle)`}
@@ -206,6 +219,11 @@ export function WatchlistTable({
                 {/* zzz967 (WL-02) — the ticker opens the same instrument on Charts (India list → NSE) */}
                 <td>
                   <a className="wlp-tk" href={`/charts?m=${item.market === 'US' ? 'US' : 'IN'}&t=${encodeURIComponent(item.ticker)}`} title={`Open ${item.ticker} on Charts`} aria-label={`Open ${item.ticker} chart`}>{item.ticker}<span aria-hidden className="go">↗</span></a>
+                  {item.reviewPct != null && (
+                    <span className={`wlp-rv ${item.reviewPct >= 0 ? 'up' : 'down'}`} title="Price change since you last pressed “Mark reviewed”">
+                      {item.reviewPct >= 0 ? '+' : ''}{item.reviewPct.toFixed(1)}% since review
+                    </span>
+                  )}
                 </td>
                 <td style={{ maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', color: 'var(--mc-text-1)' }} title={item.company}>
                   {item.company}
@@ -215,7 +233,7 @@ export function WatchlistTable({
                   {/* PATCH 0559 — BUG-AUDIT-4: when quote came back null/0 render
                       a muted em-dash with a tooltip instead of ₹0.00. */}
                   {price == null ? (
-                    <span className="wlp-dim" title="Price unavailable — quote not returned by data source">—</span>
+                    <span className="wlp-noq" title="No quote — the data source returned no price for this symbol. Check the symbol (old or demerged?)">no quote</span>
                   ) : isPriceSuspect(item.ticker, price) ? (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: 'var(--mc-warn)' }} title="Suspect price - may be incorrect or stale">
                       <AlertTriangle style={{ width: '12px', height: '12px' }} />
@@ -242,6 +260,9 @@ export function WatchlistTable({
                 {showLow ? <td className="num" style={{ fontSize: '12.5px' }}>
                   {item.dayLow != null && item.dayLow > 0 ? `₹${item.dayLow.toFixed(2)}` : <span className="wlp-dim" title="Day low not given by the quote source">—</span>}
                 </td> : null}
+                <td className="num" style={{ fontSize: '12px' }}>
+                  <span className={qt.kind === 'time' ? undefined : 'wlp-dim'} title={qt.title}>{qt.kind === 'none' ? '—' : qt.label}</span>
+                </td>
                 {/* PATCH 0442 BUG-020 — Optional column cells */}
                 {OPTIONAL_COLS.filter(c => activeCols.has(c.id)).map(c => {
                   const val = (item as any)[c.id] as number | null | undefined;
@@ -250,6 +271,7 @@ export function WatchlistTable({
                     if (c.id === 'volume' || c.id === 'avgVolume') txt = formatVolume(val);
                     else if (c.id === 'marketCap') txt = formatMcap(val);
                     else if (c.id === 'peRatio') txt = val.toFixed(1) + 'x';
+                    else if (c.id === 'tradedValue') txt = formatTradedValue(val, item.market);
                     else txt = `₹${val.toFixed(2)}`;
                   }
                   return (
