@@ -37,6 +37,8 @@ export const CASH = ['CashAndCashEquivalentsAtCarryingValue'];
 /** zzz955 — used only when the line above is not filed: many filers (CSX, Copart, Biogen…) report cash only with restricted cash
  *  included, banks report "cash and due from banks", a few report plain "Cash". Without these their EV and cash filters were blank. */
 export const CASH_ALT = ['CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents', 'CashAndDueFromBanks', 'Cash'];
+import { fcfTtm, type CfQuarter } from './fcf-ttm';
+
 // zzz948 — more figures for the owner's full set of screens
 // net income: the first one filed, in this order (Broadcom / Caterpillar file only the second or third)
 export const NI = ['NetIncomeLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic', 'ProfitLoss'];
@@ -187,6 +189,11 @@ export interface UsFigures {
    *  flows only as year-to-date totals, so a true last-4-quarters figure cannot be read from them) */
   fcfmFY?: number | null;
   fcfmAt?: string | null;
+  /** zzz1045e — TRUE trailing-12-month FCF margin: (Σ last 4 quarters of operating cash flow − Σ the same 4 quarters of capex) ÷ the
+   *  same 4 quarters' revenue × 100 (lib/screener/fcf-ttm.ts). Only when the cash-flow quarters end on the latest quarter with
+   *  revenue; null otherwise. fcfmTAt = that last quarter's end date. */
+  fcfmT?: number | null;
+  fcfmTAt?: string | null;
 }
 const M = 1e6;
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -221,15 +228,19 @@ function cashAt(fd: FrameData, cik: number, I: string): number | null {
 }
 const instantShift = (I: string, k: number): string => { const m = /^CY(\d{4})Q(\d)I$/.exec(I)!; return `${qLabel(qShift({ y: Number(m[1]), q: Number(m[2]) }, k))}I`; };
 
-/** All screener figures for one SEC company. */
-export function usFigures(fd: FrameData, cik: number, periods: { quarters: string[]; years: string[]; instants: string[] }): UsFigures {
+/** The newest calendar-quarter label (CY2026Q2) with revenue for one company, filed or worked out; null when none. */
+export function latestRevenueQuarter(fd: FrameData, cik: number, quarters: string[]): string | null {
+  for (const p of quarters) if (REV.some((c) => quarterSeries(fd, c, cik, quarters).has(p))) return p;
+  return null;
+}
+
+/** All screener figures for one SEC company. `cf` (zzz1045e): the company's fiscal cash-flow quarters (operating cash flow and capex,
+ *  read from SEC's company-concept files) — gives the trailing-12-month FCF margin; without it fcfmT stays unset. */
+export function usFigures(fd: FrameData, cik: number, periods: { quarters: string[]; years: string[]; instants: string[] }, cf?: { cfo: CfQuarter[]; cx: CfQuarter[] } | null): UsFigures {
   const { quarters, years, instants } = periods;
   const approx: string[] = [];
   // latest quarter = newest quarter with revenue (filed or worked out)
-  let L: string | null = null;
-  for (const p of quarters) {
-    if (REV.some((c) => quarterSeries(fd, c, cik, quarters).has(p))) { L = p; break; }
-  }
+  const L: string | null = latestRevenueQuarter(fd, cik, quarters);
   const prevYear = (p: string) => { const m = /^CY(\d{4})Q(\d)$/.exec(p)!; return `CY${Number(m[1]) - 1}Q${m[2]}`; };
   const prevQ = (p: string) => { const m = /^CY(\d{4})Q(\d)$/.exec(p)!; return qLabel(qShift({ y: Number(m[1]), q: Number(m[2]) }, -1)); };
   // latest full year with revenue
@@ -292,6 +303,14 @@ export function usFigures(fd: FrameData, cik: number, periods: { quarters: strin
       if (ptTTM != null) out.ptmTTM = r1((ptTTM / revTTMraw) * 100);
     }
     if (niTTMraw != null) out.niTTM = mil(niTTMraw);
+    // zzz1045e — trailing-12-month FCF margin: the cash-flow quarters must end on the latest revenue quarter (L), so revenue and cash
+    // flow cover the same four quarters; else unknown (the build reads the company again once SEC has the new quarter)
+    if (cf) {
+      out.fcfmT = null; out.fcfmTAt = null;
+      const endL = (cf.cfo || []).map((q) => q.e).filter((e) => quarterLabelForEnd(e) === L).sort().pop() || null;
+      const t = endL ? fcfTtm(cf.cfo || [], cf.cx || [], endL) : null;
+      if (t && quarterLabelForEnd(t.e) === L && revTTMraw != null && revTTMraw > 0) { out.fcfmT = r1((t.fcf / revTTMraw) * 100); out.fcfmTAt = t.e; }
+    }
     // a year earlier: the four quarters before these four
     const L4 = shiftQ(L, 4);
     ebTTM = ebitdaTTM(L);

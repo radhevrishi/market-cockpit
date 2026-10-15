@@ -13,7 +13,7 @@ import { PATTERN_META, PATTERN_IDS, PATTERN_NA_REASON, patternApplies, type Patt
 // Non-numeric row fields (and the zzz994 provenance / per-timeframe pattern fields, read defensively where present).
 type NonNum = 't' | 'n' | 'sec' | 'ind' | 'q' | 'approx' | 'tvSec' | 'exch' | 'nq' | 'cc' | 'pat' | 'patAt' | 'ccBasis'
   | 'patW' | 'patM' | 'patWAt' | 'patMAt' | 'patV' | 'scan' | 'scanW' | 'scanM' | 'scanAt' | 'scanSrc' | 'scanBasis' | 'scanEx'
-  | 'pxSrc' | 'pxAt' | 'pxConflict' | 'live' | 'fcfmAt';
+  | 'pxSrc' | 'pxAt' | 'pxConflict' | 'live' | 'fcfmAt' | 'fcfmTAt';
 export type NumKey = Exclude<keyof ScreenRow, NonNum>;
 export type FieldUnit = '%' | 'x' | 'money' | 'num' | 'price' | 'shares' | 'usd' | 'date';
 export type FieldGroup = 'Price & volume' | 'Moving averages' | 'Momentum' | 'Trader setups' | 'Growth' | 'Margins & returns' | 'Valuation' | 'Balance sheet' | 'Company';
@@ -31,6 +31,8 @@ export function fcfmSourceText(r: Partial<ScreenRow>, market: ScreenMarket): str
   const yr = at ? `fiscal year to ${at}` : 'latest full fiscal year';
   return market === 'IN' ? `${yr} · cash-flow proxy: (cash from operations + cash from investing) ÷ sales` : `${yr} · (operating cash flow − capex) ÷ revenue, SEC filings`;
 }
+/** zzz1045e — the trailing-12-month FCF margin (USA only). */
+const FCFM_T_US = 'USA: trailing 12 months — (operating cash flow − capex) over the last four fiscal quarters ÷ revenue of the same four quarters. Quarters are worked out from the year-to-date cash-flow totals in each 10-Q (Q2 = first half − Q1, …, Q4 = full year − 9 months), latest amendment first; all four quarters of both lines must be filed, else unknown. Filled in over several daily builds (largest companies first). India has no trailing figure: screener.in prints no quarterly cash flow, so India keeps the full-year cash-flow proxy (FCF margin, latest full year)';
 const R40_BLANK = '. Rule of 40 is left blank when revenue growth is above +300% or the FCF margin is outside −100%…+100% (a tiny sales base — the sum would mean nothing)';
 const FCFM_IN = 'India: a cash-flow proxy for the latest full fiscal year — (cash from operations + ALL cash from investing) ÷ sales. screener.in prints no capex line, and investing cash can include buying / selling investments or acquisitions; "Exact figures only" leaves these out';
 const TW_NOTE = 'Our own version that follows the published rules of TheWrap Stage Analysis (weekly 10 / 30 / 40-week averages, 13-week closing range, 10-point SATA score) — not the original script; readings can differ from TradingView';
@@ -132,6 +134,7 @@ export const FIELDS: readonly FieldDef[] = [
   ...setupField('csl', 'CANSLIM points (0–5)', 'num', 'O\'Neil: C quarterly EPS growth ≥ 25%, A TTM EPS growth ≥ 25%, N price ≥ 85% of the 52-week high, S up/down volume ≥ 1.2, L RS Rating ≥ 80 — M (the market\'s trend) is not counted'),
   // growth
   { key: 'r40', label: 'Revenue growth YoY + FCF margin (Rule of 40)', unit: '%', markets: BOTH, group: 'Growth', approxNote: { US: FCFM_US + R40_BLANK, IN: FCFM_IN + R40_BLANK } },
+  { key: 'r40T', label: 'Revenue growth YoY + FCF margin, trailing 12 months (Rule of 40, USA)', unit: '%', markets: ['US'], group: 'Growth', approxNote: { US: FCFM_T_US + R40_BLANK } },
   { key: 'revQYoY', label: 'Revenue growth, quarterly YoY', unit: '%', markets: BOTH, group: 'Growth' },
   { key: 'revAYoY', label: 'Revenue growth, annual YoY', unit: '%', markets: BOTH, group: 'Growth' },
   { key: 'revTTMYoY', label: 'Revenue growth, TTM YoY', unit: '%', markets: BOTH, group: 'Growth' },
@@ -145,6 +148,7 @@ export const FIELDS: readonly FieldDef[] = [
   { key: 'ebitdaAYoY', label: 'EBITDA growth, annual YoY', unit: '%', markets: BOTH, group: 'Growth', approxNote: { US: 'USA: operating profit + depreciation where filed, else operating profit' } },
   // margins & returns
   { key: 'fcfmTTM', label: 'FCF margin (latest full year)', unit: '%', markets: BOTH, group: 'Margins & returns', approxNote: { US: FCFM_US, IN: FCFM_IN } },
+  { key: 'fcfmT', label: 'FCF margin, trailing 12 months (USA)', unit: '%', markets: ['US'], group: 'Margins & returns', approxNote: { US: FCFM_T_US } },
   { key: 'gmFY', label: 'Gross margin, FY', unit: '%', markets: BOTH, group: 'Margins & returns', approxNote: { IN: GP_IN } },
   { key: 'opmTTM', label: 'Operating margin, TTM', unit: '%', markets: BOTH, group: 'Margins & returns', approxNote: { IN: 'India: operating profit after depreciation (before other income)' } },
   { key: 'opmFY', label: 'Operating margin, FY', unit: '%', markets: BOTH, group: 'Margins & returns', approxNote: { IN: 'India: operating profit after depreciation (before other income)' } },

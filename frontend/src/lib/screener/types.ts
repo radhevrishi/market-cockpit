@@ -123,6 +123,10 @@ export interface ScreenRow {
   fcfmTTM?: number | null;   // free-cash-flow margin % (≈ latest full year — see FIELDS)
   fcfmAt?: string;            // zzz1044 (F03) — the fiscal year the FCF margin is for (US: year-end date; India: 'Mar 2026')
   r40?: number | null;       // revenue growth quarterly YoY + FCF margin (the owner's custom Rule of 40)
+  // zzz1045e — USA only: TRUE trailing-12-month FCF margin (last four fiscal quarters, from year-to-date cash-flow totals; fcf-ttm.ts)
+  fcfmT?: number | null;     // (Σ 4 quarters operating cash flow − Σ 4 quarters capex) ÷ the same 4 quarters' revenue, %
+  fcfmTAt?: string;          // end date of the last of those four quarters
+  r40T?: number | null;      // revenue growth quarterly YoY + fcfmT (Rule of 40 on the trailing figure)
   // ── zzz987: Stage Analysis (TheWrap method — our own version from the published rules, lib/stage-analysis.ts) ──────────
   twSt?: number | null;      // stage 1–4 on weekly bars (state machine)
   sata?: number | null;      // SATA score 0–10

@@ -9,7 +9,8 @@ import { yieldToServer } from './yield';
 import { dbQuery, getPool } from '@/lib/db';
 import { ensureSchema } from '@/lib/db-migrate';
 import { yahooProfileStats } from '@/lib/us-prices';
-import { FRAME_PLAN, framePeriods, usFigures, type FrameData, type FrameEntry } from './sec-assemble';
+import { FRAME_PLAN, framePeriods, usFigures, latestRevenueQuarter, quarterLabelForEnd, type FrameData, type FrameEntry } from './sec-assemble';
+import { CFO_TTM_TAGS, CAPEX_TTM_TAGS, FCF_TTM_VERSION, cfDue, fcfTtm, parseCompanyConcept, quartersFromFacts, ttmSum, r40TtmDiff, r40TtmDiffNote, trimQuarters, type CfQuarter, type CfStored } from './fcf-ttm';
 import { refreshTech, type TechStored } from './tech-fetch';
 import { usSessionOpen } from './tech';
 import { rowPatternFields, rowScanFields, resolveUsQuote, priceSourceNote, rowTvFields, applyRsRating, applyTraderSetups, ruleOf40 } from './pine';
@@ -135,6 +136,61 @@ async function loadFrames(periods: ReturnType<typeof framePeriods>, notes: strin
   return fd;
 }
 
+// ── 2b. zzz1045e — fiscal cash-flow quarters per company (for the trailing-12-month FCF margin) ──────────────────────────────
+/** One company's facts for one concept from SEC's company-concept file; [] when not filed (404), null when it could not be read. */
+async function fetchConcept(cik: number, concept: string): Promise<CfQuarter[] | null> {
+  const url = `https://data.sec.gov/api/xbrl/companyconcept/CIK${String(cik).padStart(10, '0')}/us-gaap/${concept}.json`;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(url, { headers: { 'User-Agent': SEC_UA, 'Accept-Encoding': 'gzip, deflate' }, cache: 'no-store', signal: AbortSignal.timeout(20_000) });
+      if (res.status === 404) return [];
+      if (!res.ok) { await sleep(1500); continue; }
+      return quartersFromFacts(parseCompanyConcept(await res.json()));
+    } catch { await sleep(1500); }
+  }
+  return null;
+}
+/** The first tag (in order) whose quarters give a trailing-12-month sum; else the first tag with any quarters. Counts requests. */
+async function readTags(cik: number, tags: readonly string[], ok: (qs: CfQuarter[]) => boolean, count: () => void): Promise<{ qs: CfQuarter[]; tag: string | null } | null> {
+  let fallback: { qs: CfQuarter[]; tag: string | null } | null = null;
+  for (const tag of tags) {
+    const qs = await fetchConcept(cik, tag);
+    count();
+    await sleep(250);   // SEC: at most 10 requests a second (3 workers × ~3.5/s)
+    if (qs == null) return fallback;   // could not be read: keep what we have, try again next run
+    if (qs.length && ok(qs)) return { qs, tag };
+    if (qs.length && !fallback) fallback = { qs, tag };
+  }
+  return fallback ?? { qs: [], tag: null };
+}
+/** Reads (a slice per build, largest companies first) the operating-cash-flow and capex quarters of every company SEC has filed a new
+ *  quarter for since the last read; kept in screener_store (kind 'cfq'). Returns what is known (old and new). */
+export async function loadCashFlowQuarters(cos: Array<{ t: string; cik: number; mc: number | null }>, fd: FrameData, periods: ReturnType<typeof framePeriods>, notes: string[], budgetMs: number): Promise<Map<string, CfStored>> {
+  const out = new Map<string, CfStored>();
+  try {
+    const rows = await dbQuery<{ ticker: string; payload: CfStored }>(`SELECT ticker, payload FROM screener_store WHERE market = 'US' AND kind = 'cfq'`, []);
+    for (const r of rows) if (r.payload && Array.isArray(r.payload.cfo)) out.set(r.ticker, r.payload);
+  } catch { /* none yet */ }
+  const due = cos.filter((c) => cfDue(out.get(c.t), latestRevenueQuarter(fd, c.cik, periods.quarters), quarterLabelForEnd)).sort((a, b) => (b.mc ?? 0) - (a.mc ?? 0));
+  const t0 = Date.now();
+  let i = 0, done = 0, reqs = 0, failed = 0;
+  const worker = async () => {
+    while (i < due.length && Date.now() - t0 < budgetMs) {
+      const c = due[i++];
+      const cfo = await readTags(c.cik, CFO_TTM_TAGS, (qs) => ttmSum(qs) != null, () => reqs++);
+      if (!cfo) { failed++; continue; }
+      const cx = await readTags(c.cik, CAPEX_TTM_TAGS, (qs) => !!fcfTtm(cfo.qs, qs), () => reqs++);
+      if (!cx) { failed++; continue; }
+      const v: CfStored = { ver: FCF_TTM_VERSION, read: new Date().toISOString(), cfo: trimQuarters(cfo.qs), cx: trimQuarters(cx.qs), cfoTag: cfo.tag, cxTag: cx.tag };
+      out.set(c.t, v); done++;
+      await dbQuery(`INSERT INTO screener_store (market, ticker, kind, payload, updated_at) VALUES ('US', $1, 'cfq', $2, now()) ON CONFLICT (market, ticker, kind) DO UPDATE SET payload = EXCLUDED.payload, updated_at = now()`, [c.t, JSON.stringify(v)]).catch(() => null);
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  notes.push(`cash-flow quarters for the trailing-12-month FCF margin (SEC company files): ${done} companies read this run (${reqs} files${failed ? `, ${failed} could not be read` : ''}), ${out.size} known, ${Math.max(0, due.length - done - failed)} still to read`);
+  return out;
+}
+
 // ── 3. Yahoo daily closes → SMA ───────────────────────────────────────────────────────────────────────────────────────
 export function sma(closes: readonly number[], n: number): number | null {
   if (closes.length < n) return null;
@@ -202,14 +258,15 @@ export async function loadProfiles(market: 'US' | 'IN', tickers: string[], notes
 
 /** Pure: one screener row per listed company from the pieces the build read (used by the build and by the cross-check). */
 export function assembleUsRows(universe: NasdaqRow[], ciks: Map<string, number>, fd: FrameData, periods: ReturnType<typeof framePeriods>,
-  tech: Map<string, TechStored>, closes: Map<string, number[]>, profiles: Map<string, Prof>): { rows: ScreenRow[]; noSec: number } {
+  tech: Map<string, TechStored>, closes: Map<string, number[]>, profiles: Map<string, Prof>, cfq: Map<string, CfStored> = new Map()): { rows: ScreenRow[]; noSec: number } {
   const ysym = (t: string) => t.replace(/[./]/g, '-');
   const rows: ScreenRow[] = [];
   let noSec = 0;
   for (const r of universe) {
     const key = ysym(r.t);
     const cik = ciks.get(key);
-    const f = cik ? usFigures(fd, cik, periods) : null;
+    const cf = cfq.get(r.t);
+    const f = cik ? usFigures(fd, cik, periods, cf ? { cfo: cf.cfo, cx: cf.cx } : null) : null;
     if (!f?.q) noSec++;
     const p = profiles.get(r.t);
     const tf = tech.get(r.t);
@@ -249,6 +306,8 @@ export function assembleUsRows(universe: NasdaqRow[], ciks: Map<string, number>,
       ...rowScanFields(tf, { px: rq.px, src: rq.src, at: rq.at }),   // zzz993 (MC-01) — scan close (Yahoo bars) vs latest quote (Nasdaq)
       ...rowTvFields(tf, 'US'),   // zzz984 — the owner's TradingView script fields
       ...(f?.fcfmFY != null ? { fcfmTTM: f.fcfmFY, r40: ruleOf40(f.revQYoY, f.fcfmFY), ...(f.fcfmAt ? { fcfmAt: f.fcfmAt } : {}) } : {}),
+      // zzz1045e — the true trailing-12-month FCF margin and its Rule of 40 (new fields; fcfmTTM / r40 above keep their meaning)
+      ...(f?.fcfmT != null ? { fcfmT: f.fcfmT, r40T: ruleOf40(f.revQYoY, f.fcfmT), ...(f.fcfmTAt ? { fcfmTAt: f.fcfmTAt } : {}) } : {}),
       roeTTM: f?.roeTTM ?? null, roeFY: f?.roeFY ?? null, roceTTM: f?.roceTTM ?? null, roceFY: f?.roceFY ?? null, nmTTM: f?.nmTTM ?? null, ptmTTM: f?.ptmTTM ?? null,
       opmFY: f?.opmFY ?? null, pe: mc != null && f?.niTTM != null && f.niTTM > 0 ? r2(mc / f.niTTM) : null,
       pcf: mc != null && f?.cash != null && f.cash > 0 ? r2(mc / f.cash) : null, netDebt: f?.netDebt ?? null, niFY: f?.niFY ?? null,
@@ -287,19 +346,23 @@ export async function buildUsSnapshot(now = new Date()): Promise<{ ok: boolean; 
     for (let k = 0; k < noTech.length && Date.now() < deadline - 2 * 60_000; k += 20) { const m = await sparkCloses(noTech.slice(k, k + 20)); m.forEach((v, s) => closes.set(s, v)); await sleep(150); }
     notes.push(`${noTech.length} companies have no price figures yet${closes.size ? ` — SMA 50 / 200 for ${closes.size} of them from Yahoo's daily closes` : ''}${sparkLastError && !closes.size ? ` (last Yahoo refusal: ${sparkLastError})` : ''}`);
   }
+  // zzz1045e — cash-flow quarters: at most 2.5 minutes a run (largest companies first; afterwards only companies with a new quarter)
+  const cfq = await loadCashFlowQuarters(universe.flatMap((r) => { const cik = ciks.get(ysym(r.t)); return cik ? [{ t: r.t, cik, mc: r.mc }] : []; }), fd, periods, notes,
+    Math.max(0, Math.min(2.5 * 60_000, deadline - Date.now() - 2.5 * 60_000)));
   const profiles = await loadProfiles('US', universe.filter((r) => (r.mc ?? 0) >= 100).map((r) => r.t), notes, Math.max(30_000, deadline - Date.now() - 30_000));
 
   // zzz957: in slices, letting other requests in between (the build runs inside the web server)
   const rows: ScreenRow[] = [];
   let noSec = 0;
   for (let k = 0; k < universe.length; k += 200) {
-    const part = assembleUsRows(universe.slice(k, k + 200), ciks, fd, periods, tech, closes, profiles);
+    const part = assembleUsRows(universe.slice(k, k + 200), ciks, fd, periods, tech, closes, profiles, cfq);
     rows.push(...part.rows); noSec += part.noSec;
     await yieldToServer();
   }
   applyRsRating(rows, (t) => tech.get(t)?.rsRaw);   // zzz984 — RS Rating ranked over the whole US snapshot
   applyTraderSetups(rows, (t) => tech.get(t));   // zzz1020 — CANSLIM points + episodic pivot near the results date
   { const n = priceSourceNote(rows, 'US'); if (n) notes.push(n); }   // zzz993 (MC-01)
+  notes.push(r40TtmDiffNote(r40TtmDiff(rows)));   // zzz1045e — who would join / leave a Rule of 40 ≥ 40 screen on the TTM figure
   if (noSec) notes.push(`${noSec} listed companies have no quarterly SEC figures (foreign companies filing 20-F / 40-F, which file no quarterly figures in SEC's data; new listings) — their company-figure filters fail`);
   const snap: ScreenSnapshot = { market: 'US', builtAt: new Date().toISOString(), rows, notes, sources: ['Nasdaq stock list', 'SEC filings (XBRL frames)', 'Yahoo daily prices', 'Yahoo company profile'] };
   await dbQuery(`INSERT INTO screener_snapshot (market, built_at, rows, meta) VALUES ('US', now(), $1, $2) ON CONFLICT (market) DO UPDATE SET built_at = now(), rows = EXCLUDED.rows, meta = EXCLUDED.meta`,

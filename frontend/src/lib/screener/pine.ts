@@ -582,7 +582,9 @@ export function r40Explain(r: Partial<ScreenRow>, min?: number | null): R40Expla
   if (!ruleOf40Usable(g, m)) return { value: null, state: 'guarded', missing: [], pass: min == null ? null : false, text: `Not meaningful — growth ${g}% + FCF margin ${m}%: growth above +${R40_MAX_GROWTH}% or an FCF margin outside ±${R40_MAX_ABS_FCFM}% (a tiny sales base) — does not pass.` };
   const v = ruleOf40(g, m) as number;
   const at = typeof r.fcfmAt === 'string' && r.fcfmAt ? ` (FY to ${r.fcfmAt})` : ' (latest full year)';
-  return { value: v, state: 'known', missing: [], pass: min == null ? null : v >= min, text: `${g > 0 ? '+' : ''}${g}% growth + ${m > 0 ? '+' : ''}${m}% FCF margin${at} = ${v}${min != null ? ` (needs ≥ ${min})` : ''}` };
+  // zzz1045e — the trailing-12-month version (USA) is shown for comparison only; this rule keeps the full-year figure
+  const tt = fin(r.r40T) && fin(r.fcfmT) ? ` · on trailing-12-month FCF (${r.fcfmT}%${typeof r.fcfmTAt === 'string' && r.fcfmTAt ? ` to ${r.fcfmTAt}` : ''}) it would be ${r.r40T} — a separate field, not used by this rule` : '';
+  return { value: v, state: 'known', missing: [], pass: min == null ? null : v >= min, text: `${g > 0 ? '+' : ''}${g}% growth + ${m > 0 ? '+' : ''}${m}% FCF margin${at} = ${v}${min != null ? ` (needs ≥ ${min})` : ''}${tt}` };
 }
 
 const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -749,6 +751,8 @@ export const LEAN_KEYS = [
   'rsi', 'adrP', 'perf1W', 'perf1M', 'perf3M', 'perf6M', 'perfYTD', 'perf1Y', 'q', 'ipoD', 'earnD', 'pat', 'patAt',
   // zzz984 — the TradingView-script fields and the Rule of 40 parts
   'tt', 'ttOk', 'rsR', 'rsiMA', 'rsiX', 'gcD', 'dcD', 'emaXU', 'emaXD', 'stage', 'st12', 'ppD', 'rvol', 'adv$', 'ripB', 'revQYoY', 'fcfmTTM', 'fcfmAt', 'r40', 'approx',
+  // zzz1045e — the trailing-12-month FCF margin and its Rule of 40 (USA)
+  'fcfmT', 'fcfmTAt', 'r40T',
   // zzz987 — Stage Analysis (TheWrap method)
   'twSt', 'sata', 'mrs', 'twWk',
   // zzz993 — scan status / quality (MC-02), scan-close vs latest-quote provenance (MC-01), weekly / monthly readings (when wired)
