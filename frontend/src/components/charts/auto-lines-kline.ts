@@ -72,9 +72,17 @@ export function registerAutoLinesIndicator(kc: typeof KC): void {
         const lastTouchT = lv.touches.length ? lv.touches[lv.touches.length - 1][0] : lv.tA;
         const kL = clean ? Math.max(kA, indexAtOrAfter(data, lastTouchT)) : kA;
         const x0 = Math.max(0, xAxis.convertToPixel(kL < 0 ? kA : kL));
+        // zzz1036 — Clean: a level is a soft zone (the band its touches span, at least ±0.25% and at most ±1% of the level) with a
+        // thin centre line — the way support / resistance is read in practice; Research keeps the plain line
+        if (clean) {
+          const z = levelZone(lv.price, lv.touches.map((t) => t[1]));
+          const yTop = yAxis.convertToPixel(z.hi), yBot = yAxis.convertToPixel(z.lo);
+          ctx.fillStyle = rgba(c, hov ? 0.22 : 0.12);
+          ctx.fillRect(x0, Math.min(yTop, yBot), bounding.width - x0, Math.max(2, Math.abs(yBot - yTop)));
+        }
         ctx.setLineDash(lv.strength >= 55 ? [] : [5, 4]);
-        ctx.lineWidth = hov ? 2 : lv.strength >= 70 ? 1.4 : 1;
-        ctx.strokeStyle = rgba(c, hov ? 1 : 0.72);
+        ctx.lineWidth = hov ? 2 : clean ? 1 : lv.strength >= 70 ? 1.4 : 1;
+        ctx.strokeStyle = rgba(c, hov ? 1 : clean ? 0.6 : 0.72);
         ctx.beginPath(); ctx.moveTo(x0, Math.round(y) + 0.5); ctx.lineTo(bounding.width, Math.round(y) + 0.5); ctx.stroke();
         ctx.setLineDash([]);
         if (!clean || hov) for (const [t, p] of lv.touches) {
@@ -186,4 +194,14 @@ export function cleanLines<T extends { kind: 'support' | 'resistance'; broken: b
     if (top) out.push(top);
   }
   return out;
+}
+
+/** zzz1036 — the zone of a level: the span of its touch prices, kept between ±0.25% and ±1% of the level. */
+export function levelZone(price: number, touches: readonly number[]): { lo: number; hi: number } {
+  const ok = touches.filter((t) => Number.isFinite(t));
+  const lo0 = ok.length ? Math.min(...ok) : price, hi0 = ok.length ? Math.max(...ok) : price;
+  const minH = price * 0.0025, maxH = price * 0.01;
+  const lo = Math.max(price - maxH, Math.min(price - minH, lo0));
+  const hi = Math.min(price + maxH, Math.max(price + minH, hi0));
+  return { lo, hi };
 }

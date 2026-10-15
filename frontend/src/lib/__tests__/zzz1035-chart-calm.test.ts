@@ -33,3 +33,13 @@ test('wiring: Clean branch in the drawing, folded hidden legend rows, note in th
   const ai = readFileSync(new URL('../../components/charts/AutoLinesIndicator.tsx', import.meta.url), 'utf8');
   assert.match(ai, /data-testid="aln-clean-note"/);
 });
+
+test('zzz1036 — Clean levels are soft zones: the touch span kept between ±0.25% and ±1% of the level', async () => {
+  const { levelZone } = await import('../../components/charts/auto-lines-kline');
+  const z = levelZone(100, [99.8, 100.1, 100.3]);
+  assert.ok(Math.abs(z.lo - 99.75) < 1e-9 && Math.abs(z.hi - 100.3) < 1e-9);
+  const w = levelZone(100, [95, 105]);
+  assert.ok(Math.abs(w.lo - 99) < 1e-9 && Math.abs(w.hi - 101) < 1e-9);
+  const { readFileSync } = await import('node:fs');
+  assert.match(readFileSync(new URL('../../components/charts/auto-lines-kline.ts', import.meta.url), 'utf8'), /ctx\.fillStyle = rgba\(c, hov \? 0\.22 : 0\.12\)/);
+});
