@@ -92,7 +92,7 @@ export const FIELDS: readonly FieldDef[] = [
   { key: 'twSt', label: 'Stage Analysis (TheWrap method): stage 1–4', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: TW_NOTE, IN: TW_NOTE } },
   { key: 'sata', label: 'Stage Analysis (TheWrap method): SATA score 0–10', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: TW_NOTE, IN: TW_NOTE } },
   { key: 'mrs', label: 'Mansfield RS (weekly, vs index)', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: '((close ÷ S&P 500) ÷ its 52-week average − 1) × 100, weekly closes', IN: '((close ÷ Nifty 50) ÷ its 52-week average − 1) × 100, weekly closes' } },
-  { key: 'twWk', label: 'Stage Analysis (TheWrap method): weeks in stage', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: TW_NOTE, IN: TW_NOTE } },
+  { key: 'twWk', label: 'Stage Analysis (TheWrap method): weeks in stage (from the confirmed week)', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: TW_NOTE, IN: TW_NOTE } },
   // zzz1020 — trader setups (lib/setups.ts): our own version of the published rules, from the completed daily sessions
   ...setupField('wt3', '3 weeks tight: tight weekly closes (≥ 3)', 'num', 'O\'Neil: weekly closes in a row each within 1.5% of the week before, price above SMA 50', 'only companies with 3 or more tight weekly closes ending this week'),
   ...setupField('wt3P', '3 weeks tight: pivot', 'price', 'the highest weekly high of the tight weeks', 'only companies with 3 weeks tight'),

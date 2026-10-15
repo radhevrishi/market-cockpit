@@ -2,8 +2,9 @@
 //  • MC_STAGE      price pane, BEHIND the candles (zLevel −1): a very light background tint per stage (sub-stage B lighter).
 //  • MC_STAGE_LINE price pane, in front: the stage line (30-week average; the 150-day average on a daily chart) coloured by its
 //                  slope (rising green / flat grey / falling red), a thin stage strip along the bottom edge, a small label pill
-//                  where each stage began ("S2 · Advancing · 3 Aug 26") placed clear of the candles, and the dashed base-high /
-//                  support level with a ▲ / ▼ marker where a breakout / breakdown started.
+//                  where each stage was CONFIRMED ("S2 · Advancing · 10 Aug 26", the second weekly close — what was knowable)
+//                  placed clear of the candles, a faint "began" tick at the first qualifying week (zzz1027), and the dashed
+//                  base-high / support level with a ▲ / ▼ marker at the confirmed breakout / breakdown.
 //  • MC_MRS        its own pane: Mansfield RS as a histogram + line, green above zero and red below, with a zero line.
 // All read [timestamp, …] points from extendData (stage-view stagePointsFor / stageMarksFor), matched by timestamp, so a reload
 // of the candles never shows another symbol's stages.
@@ -154,7 +155,24 @@ export function registerStageIndicators(kc: typeof KC): void {
         ctx.closePath(); ctx.fill();
       }
 
-      // 4 · label pills where each stage began: just above the strip when the candles leave room there, else at the top
+      // 4 · zzz1027 — a faint "began" tick at the first qualifying week (the stage was not known yet; the pill comes at the confirmed week)
+      ctx.save();
+      ctx.font = '500 9px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      ctx.textBaseline = 'bottom';
+      for (const m of marks) {
+        if (m.beganT == null) continue;
+        const kb = indexAt(list, m.beganT);
+        if (kb >= list.length || kb < from || kb >= to || list[kb].timestamp !== m.beganT) continue;
+        const col = stageColor(m.stage, light);
+        const x = Math.round(X(kb)) + 0.5;
+        ctx.globalAlpha = 0.45; ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.setLineDash([2, 2]);
+        ctx.beginPath(); ctx.moveTo(x, H - STRIP_H); ctx.lineTo(x, H - STRIP_H - 14); ctx.stroke();
+        ctx.setLineDash([]); ctx.globalAlpha = 0.7; ctx.fillStyle = readableOn(col, CHART_BG(light));
+        ctx.fillText('began', x - ctx.measureText('began').width / 2, H - STRIP_H - 15);
+      }
+      ctx.restore();
+
+      // 5 · label pills where each stage was confirmed: just above the strip when the candles leave room there, else at the top
       const page = CHART_BG(light);
       ctx.font = '600 10.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
       ctx.textBaseline = 'middle';

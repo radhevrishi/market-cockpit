@@ -42,9 +42,11 @@
 //                       OR three crossings with it still falling (price has stopped trending and swings around the average)
 //   failed moves        a Stage 2 under 13 weeks old that closes back under a flat / falling ma30 returns to the stage before it
 //                       (1, or 3); a Stage 4 under 13 weeks old (that came from 2 / 3) closing back over a flat / rising ma30 → 3
-// A change counts only after TWO weekly closes in a row ask for one (a one-week dip or pop does not flip the stage); it is then
-// dated to the first of those weeks, and `weeks` counts from there. While one week is waiting, `pending` names the stage asked
-// for. The first reading (34 weeks: the 30-week average and its 5-week slope) starts from a plain read of price vs a rising /
+// A change counts only after TWO weekly closes in a row ask for one (a one-week dip or pop does not flip the stage). zzz1027 —
+// each change keeps two dates: `began` = the first week that met the rule (where the structure began) and `confirmed` = the
+// second weekly close (the stage was only known then). The weekly history never shows the new stage before it was confirmed:
+// the first week keeps the old stage with `pending` naming the stage asked for, the new stage shows from the confirmed week,
+// and `weeks` counts from the confirmed week (that week = 1). The first reading (34 weeks: the 30-week average and its 5-week slope) starts from a plain read of price vs a rising /
 // flat / falling average. The current, unfinished week counts as a week, as TradingView paints its live bar.
 // Sub-stages (A / B): 1A ma30 still falling, 1B ma30 flat or turning up · 2A within 20 % of ma30, 2B more than 20 % above it
 // (extended) · 3A close above ma30, 3B below it · 4A ma30 falling fast (< −2 %), 4B the fall slowing.
@@ -67,7 +69,12 @@ export interface StageWeek {
   slopePct?: number | null;
   slope?: Slope | null;
   sub?: SubStage | null;
-  /** first week of the current stage (YYYY-MM-DD, the Monday) */
+  /** zzz1027 — first week that met the rule for the current stage (YYYY-MM-DD, the Monday): where the structure began */
+  began?: string | null;
+  /** zzz1027 — the week whose close confirmed the current stage (the second qualifying close; the stage was only known then).
+   *  Equals `began` for the first reading, which needs no confirmation. `weeks` counts from this week. */
+  confirmed?: string | null;
+  /** same as `began` (kept for older callers) */
   since?: string | null;
   /** a change asked for by this week's close, waiting for a second close (null = none) */
   pending?: Stage | null;
@@ -78,7 +85,8 @@ export interface StageWeek {
   /** volume of the week that started the current stage ÷ the average of the 10 weeks before it */
   volX?: number | null;
 }
-export interface StageChange { i: number; wk: string; from: Stage | null; to: Stage; level: number | null; volX: number | null }
+/** zzz1027 — `i` / `wk` = the CONFIRMED week (when the change was known); `beganI` / `began` = the first week that met the rule. */
+export interface StageChange { i: number; wk: string; beganI: number; began: string; confirmed: string; from: Stage | null; to: Stage; level: number | null; volX: number | null }
 export interface StageResult { weeks: StageWeek[]; last: StageWeek | null; changes?: StageChange[] }
 
 export const SATA_LABELS: readonly string[] = [
@@ -213,7 +221,7 @@ export function stageAnalysis(weeks: readonly WeekBar[], bench?: ReadonlyMap<str
   const R = STAGE_RULES;
   const out: StageWeek[] = [];
   const changes: StageChange[] = [];
-  let stage: Stage | null = null, prevStage: Stage | null = null, start = -1, level: number | null = null, volX: number | null = null;
+  let stage: Stage | null = null, prevStage: Stage | null = null, start = -1, conf = -1, level: number | null = null, volX: number | null = null;
   let pend: Stage | null = null, pendStart = -1, pendLevel: number | null = null, pendVolX: number | null = null, pendFrom: Stage | null = null;
   for (let i = 0; i < n; i++) {
     const close = c[i];
@@ -255,8 +263,8 @@ export function stageAnalysis(weeks: readonly WeekBar[], bench?: ReadonlyMap<str
     if (fin(m30) && slope != null && fin(hi13) && fin(lo13)) {
       if (stage == null) {
         const m30long = i >= 26 ? ma30[i - 26] : null;
-        stage = firstStage(close, m30, slope, fin(m30long) ? m30long : null); start = i; level = null; volX = null;
-        changes.push({ i, wk: weeks[i].wk, from: null, to: stage, level: null, volX: null });
+        stage = firstStage(close, m30, slope, fin(m30long) ? m30long : null); start = i; conf = i; level = null; volX = null;
+        changes.push({ i, wk: weeks[i].wk, beganI: i, began: weeks[i].wk, confirmed: weeks[i].wk, from: null, to: stage, level: null, volX: null });
       } else {
         let crosses = 0;
         for (let k = Math.max(1, start + 1, i - R.crossWeeks + 1); k <= i; k++) {
@@ -273,14 +281,10 @@ export function stageAnalysis(weeks: readonly WeekBar[], bench?: ReadonlyMap<str
           pend = ask;
           const run = i - pendStart + 1;
           if (run >= R.confirmWeeks) {
-            // confirmed: the new stage is dated to the first week that asked for it
-            prevStage = stage; stage = pend; start = pendStart; level = stage === 2 || stage === 4 ? pendLevel : null; volX = stage === 2 || stage === 4 ? pendVolX : null;
-            changes.push({ i: pendStart, wk: weeks[pendStart].wk, from: pendFrom, to: stage, level, volX });
-            for (let k = pendStart; k < i; k++) {
-              const w = out[k];
-              w.stage = stage; w.weeks = k - pendStart + 1; w.since = weeks[pendStart].wk; w.pending = null; w.level = level; w.volX = volX;
-              w.sub = fin(w.ma30) && w.slopePct != null ? subOf(stage, w.c, w.ma30, w.slopePct) : null;
-            }
+            // confirmed at this close: the new stage shows from THIS week (the earlier weeks keep the old stage + pending — the
+            // history never shows a stage before it was known); the first qualifying week is kept as `began`
+            prevStage = stage; stage = pend; start = pendStart; conf = i; level = stage === 2 || stage === 4 ? pendLevel : null; volX = stage === 2 || stage === 4 ? pendVolX : null;
+            changes.push({ i, wk: weeks[i].wk, beganI: pendStart, began: weeks[pendStart].wk, confirmed: weeks[i].wk, from: pendFrom, to: stage, level, volX });
             pend = null;
           } else pendingOut = pend;
         }
@@ -288,9 +292,10 @@ export function stageAnalysis(weeks: readonly WeekBar[], bench?: ReadonlyMap<str
     }
     out.push({
       wk: weeks[i].wk, c: close, ma10: m10, ma30: m30, ma40: m40, hi13, lo13, mrs: mrsNow, comps, sata,
-      stage, weeks: stage != null ? i - start + 1 : null,
+      stage, weeks: stage != null ? i - conf + 1 : null,
       slopePct: slopePct == null ? null : Math.round(slopePct * 100) / 100, slope,
       sub: stage != null && fin(m30) && slopePct != null ? subOf(stage, close, m30, slopePct) : null,
+      began: stage != null ? weeks[start].wk : null, confirmed: stage != null ? weeks[conf].wk : null,
       since: stage != null ? weeks[start].wk : null, pending: pendingOut,
       vsMa: fin(m30) && m30 > 0 ? r1((close / m30 - 1) * 100) : null,
       level: stage != null ? level : null, volX: stage != null ? volX : null,
@@ -313,11 +318,15 @@ export function dayWords(iso: string | null | undefined, short = false): string 
 }
 const signed = (v: number, dp = 0) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(dp)}`;
 
-/** The one-line summary, e.g. "Stage 2 · Advancing · since 10 Aug 2026 (9 weeks) · 30-wk MA rising · RS +12 · price 8% above MA". */
+/** The one-line summary, e.g. "Stage 2 · Advancing · began 3 Aug 2026 · confirmed 10 Aug 2026 (9 weeks) · 30-wk MA rising · RS +12 ·
+ *  price 8% above MA". The weeks count from the confirmed week. The first reading (no change seen yet) says "since …". */
 export function stageHeadline(w: StageWeek | null | undefined): string {
   if (!w || w.stage == null) return 'Stage Analysis: not enough weekly history (needs about 34 weeks)';
   const parts = [`Stage ${w.stage} · ${STAGE_WORDS[w.stage]}${w.sub === 'B' && w.stage === 2 ? ' (extended)' : ''}`];
-  if (w.since) parts.push(`since ${dayWords(w.since)}${w.weeks != null ? ` (${w.weeks} week${w.weeks === 1 ? '' : 's'})` : ''}`);
+  const nW = w.weeks != null ? ` (${w.weeks} week${w.weeks === 1 ? '' : 's'})` : '';
+  const began = w.began ?? w.since ?? null, conf = w.confirmed ?? null;
+  if (began && conf && conf !== began) parts.push(`began ${dayWords(began)} · confirmed ${dayWords(conf)}${nW}`);
+  else if (began || conf) parts.push(`since ${dayWords(conf ?? began)}${nW}`);
   if (w.slope) parts.push(`30-wk MA ${w.slope}`);
   if (w.mrs != null) parts.push(`RS ${signed(w.mrs)}`);
   if (w.vsMa != null) parts.push(Math.abs(w.vsMa) < 0.5 ? 'price at the MA' : `price ${Math.abs(Math.round(w.vsMa))}% ${w.vsMa > 0 ? 'above' : 'below'} MA`);
@@ -335,7 +344,12 @@ export function stageDetails(w: StageWeek | null | undefined): StageDetail[] {
   out.push({ label: `30-week average slope (${R.slopeWeeks} weeks; flat within ±${R.flatPct}%)`, value: w.slopePct == null ? '—' : `${f2(w.slopePct, 1)}% · ${w.slope}`, ok: w.slope == null ? null : w.slope === 'rising' });
   out.push({ label: 'Close vs the 30-week average', value: w.vsMa == null ? '—' : `${f2(w.vsMa, 1)}%`, ok: w.vsMa == null ? null : w.vsMa > 0 });
   out.push({ label: '13-week closing range (base low – high)', value: w.lo13 != null && w.hi13 != null ? `${fmtLevel(w.lo13)} – ${fmtLevel(w.hi13)}` : '—', ok: null });
-  out.push({ label: 'Weeks in this stage', value: w.weeks == null ? '—' : `${w.weeks}${w.since ? ` (since ${dayWords(w.since)})` : ''}`, ok: null });
+  const began = w.began ?? w.since ?? null, conf = w.confirmed ?? null;
+  if (began && conf && conf !== began) {
+    out.push({ label: 'Structure began: first week that met the rule', value: dayWords(began), ok: null });
+    out.push({ label: 'Confirmed: the second weekly close — the stage was only known then', value: dayWords(conf), ok: null });
+  } else if (began || conf) out.push({ label: 'First reading (no change seen before it)', value: dayWords(conf ?? began), ok: null });
+  out.push({ label: 'Weeks in this stage (counted from the confirmed week)', value: w.weeks == null ? '—' : String(w.weeks), ok: null });
   if (w.level != null) out.push({ label: w.stage === 2 ? 'Base high broken at the start' : 'Support broken at the start', value: fmtLevel(w.level), ok: null });
   if (w.volX != null && (w.stage === 2 || w.stage === 4)) out.push({ label: `Volume in the ${w.stage === 2 ? 'breakout' : 'breakdown'} week vs the 10 weeks before`, value: `${w.volX.toFixed(1)}×`, ok: w.stage === 2 ? w.volX >= 1.5 : null });
   out.push({ label: 'Mansfield RS (vs the index)', value: w.mrs == null ? 'no index' : f2(w.mrs, 1), ok: w.mrs == null ? null : w.mrs > 0 });

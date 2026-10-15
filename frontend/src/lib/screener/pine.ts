@@ -367,7 +367,7 @@ export function rowTvFields(tf: TechStored | undefined, market: ScreenMarket): P
 // ── zzz1020: trader setups (lib/setups.ts) ──────────────────────────────────────────────────────────────────────────────
 /** Bump when lib/setups.ts's rules change: every stored entry with another `setV` is re-read (after the companies whose prices or
  *  patterns are due), and its setup fields are withheld from the rows until then. Independent of PATTERN_SCAN_VERSION. */
-export const SETUP_VERSION = 2;   // zzz1023 — 2: re-read every company so the reworked Stage Analysis (twSt / twWk) is stored too
+export const SETUP_VERSION = 3;   // zzz1027 — 3: stage weeks counted from the confirmed week; 2 (zzz1023): re-read so the reworked Stage Analysis (twSt / twWk) is stored too
 /** The setup figures a row carries (epT, the gap day, stays on the stored entry — it feeds epE). */
 export const SETUP_ROW_KEYS = [
   'wt3', 'wt3P', 'udv', 'x10A', 'x50A', 'dvx', 'dvT', 'dvB', 'dc20D', 'dc55D', 'dc20W', 'sqzN', 'sqzF', 'sqzM', 'nr7', 'ib',

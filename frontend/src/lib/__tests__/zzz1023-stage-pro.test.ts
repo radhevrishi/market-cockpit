@@ -35,19 +35,23 @@ function cycle(): number[] {
   return p;
 }
 
-test('zzz1023 the full cycle 1 → 2 → 3 → 4 → 1 on Weinstein rules, each change confirmed and dated to its first week', () => {
+test('zzz1023 the full cycle 1 → 2 → 3 → 4 → 1 on Weinstein rules, each change confirmed (zzz1027: shown from the confirming week)', () => {
   const r = run(cycle());
   assert.deepEqual(r.changes!.map((c) => c.to), [1, 2, 3, 4, 1]);
   const ch = r.changes!;
-  assert.equal(ch[1].i, 60, 'Stage 2 dated to the breakout week');
+  assert.equal(ch[1].beganI, 60, 'Stage 2 began in the breakout week'); assert.equal(ch[1].i, 61, '… and was confirmed by the next close');
+  assert.equal(ch[1].began, wkIso(60)); assert.equal(ch[1].confirmed, wkIso(61)); assert.equal(ch[1].wk, wkIso(61));
   assert.equal(ch[1].level, 101); assert.equal(ch[1].from, 1);
   assert.equal(ch[1].volX, 1.3, 'breakout week volume ÷ the average of the 10 weeks before (2M vs 1.5M)');
   assert.equal(ch[3].level, 168, 'Stage 4 level = the support broken (13-week closing low)');
-  // the stage before the change never shows the new stage (no peeking) except through the dating of the confirmed change
-  for (const c of ch.slice(1)) { assert.equal(r.weeks[c.i].stage, c.to); assert.notEqual(r.weeks[c.i - 1].stage, c.to); }
+  // zzz1027 — no peeking: the new stage shows from the confirmed week; the weeks before keep the old stage (the began week pending)
+  for (const c of ch.slice(1)) {
+    assert.equal(r.weeks[c.i].stage, c.to); assert.notEqual(r.weeks[c.i - 1].stage, c.to);
+    assert.equal(r.weeks[c.beganI].stage, c.from); assert.ok(c.i > c.beganI);
+  }
   // every stage reading carries its slope, sub-stage, start and price vs the average
   const w = r.weeks[75];
-  assert.equal(w.stage, 2); assert.equal(w.slope, 'rising'); assert.equal(w.since, wkIso(60)); assert.equal(w.weeks, 16);
+  assert.equal(w.stage, 2); assert.equal(w.slope, 'rising'); assert.equal(w.since, wkIso(60)); assert.equal(w.began, wkIso(60)); assert.equal(w.confirmed, wkIso(61)); assert.equal(w.weeks, 15);
   assert.ok(w.sub === 'A' || w.sub === 'B'); assert.ok(w.vsMa! > 0);
   assert.equal(STAGE_RULES.confirmWeeks, 2); assert.equal(STAGE_RULES.slopeWeeks, 5); assert.equal(STAGE_RULES.flatPct, 1);
 });
@@ -80,9 +84,10 @@ test('zzz1023 hysteresis: a single-week dip or pop does not flip the stage; the 
   const live = run(dn.slice(0, popAt + 1)).last!;
   assert.equal(live.stage, 4); assert.equal(live.pending, 1);
   assert.match(stageHeadline(live), /Stage 1 needs one more weekly close$/);
-  // a second close over the average confirms it, dated to the first
+  // a second close over the average confirms it: shown from the confirming week, the pop week stays Stage 4 (pending)
   const two = run([...dn.slice(0, popAt + 1), dn[popAt] * 1.02]);
-  assert.equal(two.last!.stage, 1); assert.equal(two.last!.weeks, 2); assert.equal(two.weeks[popAt].stage, 1);
+  assert.equal(two.last!.stage, 1); assert.equal(two.last!.weeks, 1); assert.equal(two.weeks[popAt].stage, 4); assert.equal(two.weeks[popAt].pending, 1);
+  assert.equal(two.last!.began, wkIso(popAt)); assert.equal(two.last!.confirmed, wkIso(popAt + 1));
 });
 
 test('zzz1023 a breakout that falls straight back under a flat average is a failed move (back to Stage 1), not a top', () => {
@@ -110,11 +115,11 @@ test('zzz1023 banner: one tidy line, details with measured values, meaning per s
   assert.equal(dayWords('2026-08-10'), '10 Aug 2026'); assert.equal(dayWords('2026-08-10', true), '10 Aug 26');
   const r = run(cycle());
   const w2 = r.weeks[75];
-  assert.equal(stageHeadline({ ...w2, sub: 'A', mrs: 12.4, vsMa: 8.2 }), `Stage 2 · Advancing · since ${dayWords(wkIso(60))} (16 weeks) · 30-wk MA rising · RS +12 · price 8% above MA`);
+  assert.equal(stageHeadline({ ...w2, sub: 'A', mrs: 12.4, vsMa: 8.2 }), `Stage 2 · Advancing · began ${dayWords(wkIso(60))} · confirmed ${dayWords(wkIso(61))} (15 weeks) · 30-wk MA rising · RS +12 · price 8% above MA`);
   assert.match(stageHeadline({ ...w2, mrs: -3.6, vsMa: -0.2, sub: 'B' }), /^Stage 2 · Advancing \(extended\) · .* · RS −4 · price at the MA$/);
   const d = stageDetails(w2);
   const labels = d.map((x) => x.label).join(' | ');
-  for (const k of ['slope', 'Close vs the 30-week average', '13-week closing range', 'Weeks in this stage', 'Base high broken', 'Volume in the breakout week', 'Mansfield RS', 'SATA']) assert.ok(labels.includes(k), k);
+  for (const k of ['slope', 'Close vs the 30-week average', '13-week closing range', 'Structure began', 'Confirmed', 'Weeks in this stage', 'Base high broken', 'Volume in the breakout week', 'Mansfield RS', 'SATA']) assert.ok(labels.includes(k), k);
   assert.equal(d.find((x) => x.label.startsWith('Volume'))!.value, '1.3×');
   const b = stageBanner('ready', w2, true, undefined, true);
   assert.equal(b.color, stageColor(2, true)); assert.equal(b.stage, 2); assert.equal(b.meaning, STAGE_MEANING[2]);
@@ -171,12 +176,14 @@ test('zzz1023 chart points: the 150-day average on a daily chart, the 30-week av
   // marks: a pill per change, levels only on breakouts / breakdowns
   const marks = stageMarksFor(wTimes, r);
   assert.deepEqual(marks.map((m) => m.stage), [1, 2, 3, 4, 1]);
-  assert.equal(marks[1].kind, 'breakout'); assert.equal(marks[1].level, 101); assert.equal(marks[1].t, wTimes[60]);
+  assert.equal(marks[1].kind, 'breakout'); assert.equal(marks[1].level, 101); assert.equal(marks[1].t, wTimes[61], 'pill at the confirmed week');
+  assert.equal(marks[1].beganT, wTimes[60], 'faint "began" tick at the first qualifying week');
   assert.match(marks[1].label, /^S2 · Advancing · \d+ \w{3} \d{2}$/);
   assert.ok(marks[1].levelFrom! < marks[1].t && marks[1].levelTo! > marks[1].t);
   assert.equal(marks[3].kind, 'breakdown'); assert.equal(marks[2].kind, null); assert.equal(marks[2].level, null);
-  // on daily candles the mark sits on the first day of its week
-  assert.equal(stageMarksFor(times, r)[1].t, MON0 + 60 * 7 * DAY);
+  // zzz1027 — on daily candles the mark sits on the confirming week's close (its last session), the tick on the began week's close
+  assert.equal(stageMarksFor(times, r)[1].t, MON0 + (61 * 7 + 4) * DAY);
+  assert.equal(stageMarksFor(times, r)[1].beganT, MON0 + (60 * 7 + 4) * DAY);
   // only the changes on screen: a chart starting at week 100 shows the Stage 3 / 4 / 1 starts, nothing piled on its first candle
   const later = stageMarksFor(wTimes.slice(100), r);
   assert.deepEqual(later.map((m) => m.stage), [3, 4, 1]);

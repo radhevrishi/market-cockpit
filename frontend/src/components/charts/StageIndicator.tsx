@@ -171,11 +171,11 @@ export function StageBanner({ s, light, shifted, onTurnOff }: { s: ReturnType<ty
             <li>Stage 2 starts with a weekly close above the 13-week closing range, above the average, with the average not falling (SATA {R.sataMin}+).</li>
             <li>Stage 4 starts with a weekly close below the 13-week range, below the average, with the average not rising.</li>
             <li>Stage 3 follows Stage 2 when the average stops rising and price closes under it or crosses it twice in 10 weeks; Stage 1 follows Stage 4 when price closes back over the average.</li>
-            <li>A change needs {R.confirmWeeks} weekly closes in a row, so one week&apos;s dip or jump does not flip the stage. The change is dated to the first of those weeks.</li>
+            <li>A change needs {R.confirmWeeks} weekly closes in a row, so one week&apos;s dip or jump does not flip the stage. &ldquo;Began&rdquo; is the first of those weeks (where the structure started); &ldquo;confirmed&rdquo; is the second close, when the stage was first known. The chart colour, the label and the week count start at the confirmed week; the first week keeps the old stage and shows the change as waiting.</li>
             <li>A Stage 2 under {R.youngWeeks} weeks old that falls back under a flat average is a failed breakout and returns to the stage before it.</li>
           </ul>
           <div style={{ marginTop: 8, fontSize: 11, color: 'var(--mc-text-3)' }}>
-            Chart: a light tint and a strip along the bottom show the stage; the stage line is green while rising, grey when flat, red when falling; dashed lines mark the base high broken (Stage 2) or the support broken (Stage 4). Mansfield RS is measured against the {s.benchName}. Our own version, not the original script.
+            Chart: a light tint and a strip along the bottom show the stage; the stage line is green while rising, grey when flat, red when falling; a label marks the confirmed week of each stage, with a faint &ldquo;began&rdquo; tick at the first qualifying week; dashed lines mark the base high broken (Stage 2) or the support broken (Stage 4). On a daily chart a change shows from the last session of its confirming week (the weekly close). Mansfield RS is measured against the {s.benchName}. Our own version, not the original script.
           </div>
         </div>
       )}

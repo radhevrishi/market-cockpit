@@ -60,6 +60,8 @@ export function barSpacingDays(times: readonly number[]): number {
   d.sort((a, b) => a - b);
   return d[Math.floor(d.length / 2)];
 }
+/** zzz1027 — on a daily (or intraday) chart a weekly stage change is only known at that week's CLOSE, so the days before the
+ *  week's last session keep the stage of the week before (no bar shows a stage earlier than it was known). */
 export function stagePointsFor(shownTimes: readonly number[], r: StageResult, ma150?: ReadonlyMap<string, number> | null): StagePoint[] {
   const idx = readingsForBars(shownTimes, r.weeks, (k) => k);
   const daily = barSpacingDays(shownTimes) < 4;
@@ -68,28 +70,47 @@ export function stagePointsFor(shownTimes: readonly number[], r: StageResult, ma
     const w = k != null ? r.weeks[k] : null;
     const ma = daily && ma150 ? (ma150.get(isoDay(t)) ?? null) : (w?.ma30 ?? null);
     const sl = w?.slope === 'rising' ? 1 : w?.slope === 'falling' ? -1 : w?.slope === 'flat' ? 0 : null;
-    return [t, w?.stage ?? 0, w?.mrs ?? null, ma, ma != null ? sl : null, w?.sub === 'B' ? 1 : 0];
+    let sw = w;
+    if (daily && k != null && k > 0 && w && r.weeks[k - 1].stage !== w.stage && i + 1 < shownTimes.length && idx[i + 1] === k) sw = r.weeks[k - 1];
+    return [t, sw?.stage ?? 0, w?.mrs ?? null, ma, ma != null ? sl : null, sw?.sub === 'B' ? 1 : 0];
   });
 }
 
-/** zzz1023 — where a stage began, for the label pills and the breakout / breakdown levels. Times are the candle timestamps. */
-export interface StageMark { t: number; stage: Stage; label: string; level: number | null; levelFrom: number | null; levelTo: number | null; kind: 'breakout' | 'breakdown' | null }
+/** zzz1023 / zzz1027 — the label pills and the breakout / breakdown levels. The pill (and the colour change) sit at the CONFIRMED
+ *  week — what was knowable; `beganT` is the candle of the first qualifying week (a faint "began" tick), null when it is the same
+ *  candle or off screen. On a daily chart both map to that week's close (its last session on screen); on weekly / monthly
+ *  candles to the candle holding the week. Times are the candle timestamps. */
+export interface StageMark { t: number; stage: Stage; label: string; level: number | null; levelFrom: number | null; levelTo: number | null; kind: 'breakout' | 'breakdown' | null; beganT: number | null; began: string; confirmed: string }
 export function stageMarksFor(shownTimes: readonly number[], r: StageResult): StageMark[] {
   if (!shownTimes.length) return [];
   const out: StageMark[] = [];
   const firstAtOrAfter = (ms: number) => { let lo = 0, hi = shownTimes.length; while (lo < hi) { const m = (lo + hi) >> 1; if (shownTimes[m] < ms) lo = m + 1; else hi = m; } return lo; };
+  const daily = barSpacingDays(shownTimes) < 4;
   const span = Math.max(7, barSpacingDays(shownTimes)) * DAY;
-  for (const ch of r.changes || []) {
-    const ws = Date.parse(`${ch.wk}T00:00:00Z`);
-    if (shownTimes[0] - ws >= span) continue;   // began before the first candle on screen
+  /** the candle for the week starting `ws` (null = not on screen) */
+  const candleOf = (ws: number): number | null => {
+    if (shownTimes[0] - ws >= span) return null;   // before the first candle on screen
     const j = firstAtOrAfter(ws);
-    if (j >= shownTimes.length) continue;
+    if (daily) {
+      // the week's close: its last session on screen
+      const e = firstAtOrAfter(ws + 7 * DAY) - 1;
+      return e >= 0 && e >= j && shownTimes[e] >= ws ? e : null;
+    }
+    if (j >= shownTimes.length) return null;
     // the candle holding that week's start (a weekly / monthly candle may begin before it)
-    const k = j > 0 && shownTimes[j] - ws > 7 * DAY ? j - 1 : j;
+    return j > 0 && shownTimes[j] - ws > 7 * DAY ? j - 1 : j;
+  };
+  for (const ch of r.changes || []) {
+    const conf = ch.confirmed ?? ch.wk, began = ch.began ?? ch.wk;
+    const ws = Date.parse(`${conf}T00:00:00Z`), bs = Date.parse(`${began}T00:00:00Z`);
+    const k = candleOf(ws);
+    if (k == null) continue;
+    const kb = began !== conf ? candleOf(bs) : null;
     const kind = ch.level != null ? (ch.to === 2 ? 'breakout' : ch.to === 4 ? 'breakdown' : null) : null;
     out.push({
-      t: shownTimes[k], stage: ch.to, label: `S${ch.to} · ${STAGE_WORDS[ch.to]} · ${dayWords(ch.wk, true)}`,
-      level: kind ? ch.level : null, levelFrom: kind ? Math.max(shownTimes[0], ws - 13 * 7 * DAY) : null, levelTo: kind ? ws + 4 * 7 * DAY : null, kind,
+      t: shownTimes[k], stage: ch.to, label: `S${ch.to} · ${STAGE_WORDS[ch.to]} · ${dayWords(conf, true)}`,
+      level: kind ? ch.level : null, levelFrom: kind ? Math.max(shownTimes[0], bs - 13 * 7 * DAY) : null, levelTo: kind ? ws + 4 * 7 * DAY : null, kind,
+      beganT: kb != null && kb !== k ? shownTimes[kb] : null, began, confirmed: conf,
     });
   }
   return out;

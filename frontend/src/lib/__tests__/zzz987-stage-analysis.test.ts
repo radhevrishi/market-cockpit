@@ -61,11 +61,13 @@ test('zzz987 / zzz1023 state machine: base (1) → Stage 2 → Stage 3 → Stage
   // zzz1023 — the stage needs the 30-week average and its 5-week slope (34 weeks); SATA still needs the 40-week average
   assert.equal(st[32], null); assert.equal(r.weeks[38].sata, null);
   assert.ok(st.slice(34, 60).every((s) => s === 1), 'the flat base reads Stage 1');
-  // the first close above the base: Stage 2 (confirmed by the next close, dated to the breakout week)
-  assert.equal(st[60], 2); assert.ok(r.weeks[60].sata! >= 6); assert.equal(r.weeks[60].weeks, 1);
-  assert.equal(r.weeks[60].level, 101, 'the base high broken');
-  assert.ok(st.slice(60, 106).every((s) => s === 2), 'Stage 2 persists through the advance and the start of the chop');
-  assert.equal(r.weeks[89].weeks, 30);
+  // the first close above the base asks for Stage 2 (still Stage 1, pending); the next close confirms it (zzz1027: the history
+  // never shows Stage 2 before it was known)
+  assert.equal(st[60], 1); assert.equal(r.weeks[60].pending, 2); assert.ok(r.weeks[60].sata! >= 6);
+  assert.equal(st[61], 2); assert.equal(r.weeks[61].weeks, 1); assert.equal(r.weeks[61].began, r.weeks[60].wk); assert.equal(r.weeks[61].confirmed, r.weeks[61].wk);
+  assert.equal(r.weeks[61].level, 101, 'the base high broken');
+  assert.ok(st.slice(61, 106).every((s) => s === 2), 'Stage 2 persists through the advance and the start of the chop');
+  assert.equal(r.weeks[89].weeks, 29);
   // topping: the 30-week average stops rising and price swings around it
   const s3 = st.indexOf(3);
   assert.ok(s3 > 106 && s3 < 133, `stage 3 at ${s3}`);
@@ -76,7 +78,7 @@ test('zzz987 / zzz1023 state machine: base (1) → Stage 2 → Stage 3 → Stage
   // the post-decline base: Stage 1 again
   const s1 = st.lastIndexOf(4) + 1;
   assert.equal(st[s1], 1); assert.ok(s1 > 160, `stage 1 at ${s1}`);
-  assert.equal(r.last!.stage, 1); assert.equal(r.last!.weeks, path.length - s1);
+  assert.equal(r.last!.stage, 1); assert.equal(r.last!.weeks, path.length - s1, 'weeks count from the confirmed week');
   assert.deepEqual(r.changes!.map((c) => c.to), [1, 2, 3, 4, 1]);
   // SATA is the count of its ten parts
   for (const w of r.weeks) if (w.sata != null) assert.equal(w.sata, w.comps.filter(Boolean).length);
@@ -128,8 +130,8 @@ test('zzz987 from daily bars: resample + reading; benchmark weekly closes', () =
   const last = stageFromDaily(daily, bench)!;
   assert.equal(last.stage, 1);
   assert.equal(stageAnalysis(weeklyBars(daily), bench).weeks.length, path.length);
-  assert.match(stageHeadline(last), /^Stage 1 · Basing · since \d+ \w{3} \d{4} \(\d+ weeks?\) · 30-wk MA (rising|flat|falling) · RS [+−]?\d+ · price /);
-  assert.equal(stageHeadline({ ...last, stage: 2, sub: 'A', since: '2026-08-10', slope: 'rising', sata: 7, mrs: 12.44, vsMa: 8.2, weeks: 9, pending: null }), 'Stage 2 · Advancing · since 10 Aug 2026 (9 weeks) · 30-wk MA rising · RS +12 · price 8% above MA');
+  assert.match(stageHeadline(last), /^Stage 1 · Basing · began \d+ \w{3} \d{4} · confirmed \d+ \w{3} \d{4} \(\d+ weeks?\) · 30-wk MA (rising|flat|falling) · RS [+−]?\d+ · price /);
+  assert.equal(stageHeadline({ ...last, stage: 2, sub: 'A', began: '2026-08-03', since: '2026-08-03', confirmed: '2026-08-10', slope: 'rising', sata: 7, mrs: 12.44, vsMa: 8.2, weeks: 9, pending: null }), 'Stage 2 · Advancing · began 3 Aug 2026 · confirmed 10 Aug 2026 (9 weeks) · 30-wk MA rising · RS +12 · price 8% above MA');
   assert.match(stageHeadline(null), /not enough weekly history/);
   assert.match(STAGE_TOOLTIP, /TheWrap/); assert.match(STAGE_TOOLTIP, /Not the original script/);
 });
@@ -194,7 +196,12 @@ test('zzz987 chart indicator: on/off in the layout, index per market, per-candle
   assert.equal(pts.length, timed.length);
   assert.equal(pts[0][1], 0, 'no stage before the first reading');
   assert.equal(pts[pts.length - 1][1], 1); assert.equal(typeof pts[pts.length - 1][2], 'number');
-  assert.equal(pts[60 * 5][1], 2, 'the breakout week is green on every day of it');
+  // zzz1027 — the breakout week (60) is only the first qualifying close: its days stay Stage 1; the confirming week (61) turns
+  // green on its last session (the weekly close), its earlier days still Stage 1
+  for (let d = 0; d < 5; d++) assert.equal(pts[60 * 5 + d][1], 1, `breakout week day ${d}`);
+  for (let d = 0; d < 4; d++) assert.equal(pts[61 * 5 + d][1], 1, `confirming week day ${d}`);
+  assert.equal(pts[61 * 5 + 4][1], 2, 'confirming week close');
+  assert.equal(pts[62 * 5][1], 2);
   assert.equal(stageFromCharts(timed, null).last!.mrs, null);
   const b = stageBanner('ready', r.last, true);
   assert.match(b.text, /^Stage 1 · Basing/); assert.equal(b.color, STAGE_COLOR[1]);
