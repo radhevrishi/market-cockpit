@@ -52,7 +52,7 @@ function sourceOf(k: string, market: ScreenMarket, row?: Partial<ScreenRow>): st
     return 'NSE daily price file';
   };
   if (QUOTE.has(k)) return k === 'vol' ? (market === 'US' ? 'Nasdaq stock list' : 'NSE daily price file') : quoteSrc();
-  if (k === 'mc') return market === 'US' ? 'Nasdaq stock list' : 'NSE price × share count from screener.in';
+  if (k === 'mc') return market === 'US' ? 'Nasdaq stock list' : 'latest close (NSE price file, or the completed Yahoo close before NSE publishes) × share count from screener.in';
   if (PROFILE.has(k)) return 'Yahoo company profile';
   if (k === 'earnD') return 'screener.in';
   if (k === 'ipoD') return 'Yahoo price history';
