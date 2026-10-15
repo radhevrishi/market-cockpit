@@ -219,7 +219,7 @@ test('right-click menu and Indicators panel offer it; the page stacks its status
   assert.ok(ws.includes("case 'alines': L.setWorking((w) => withAutoLines(w, !autoLinesOn(w)))"));
   // zzz1029 — one overlay summary row; the legend under it
   assert.ok(read('../../components/charts/OverlaySummary.tsx').includes('<AutoLinesBanner s={alines}'));
-  assert.ok(ws.includes('const legendTop = nOverlays ? 34 : 28;'));
+  assert.ok(ws.includes('const legendTop = nOverlays ? 4 + overlayRowH + 4 : 28;'));   // zzz1031 — under the (possibly wrapped) overlay row
   assert.ok(read('../../components/charts/LayoutControls.tsx').includes('withAutoLines(l, e.target.checked)'));
 });
 
