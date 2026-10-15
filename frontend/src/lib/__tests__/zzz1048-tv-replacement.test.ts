@@ -187,7 +187,8 @@ describe('the TradingView sync is gone and every reader uses the replacement', (
     assert.ok(!existsSync(join(ROOT, '.github/scripts/tradingview-sync.mjs')));
     for (const f of readdirSync(join(ROOT, '.github/workflows'))) assert.doesNotMatch(readFileSync(join(ROOT, '.github/workflows', f), 'utf8'), /tradingview-sync|TRADINGVIEW_SESSIONID/i, f);
     assert.ok(!GITHUB_SCHEDULED.some((g) => /^tradingview-sync|, tradingview-sync/.test(g.workflow)));
-    assert.doesNotMatch(read('docs/SCHEDULING.md'), /\| screener-sync\.yml, tradingview-sync\.yml/);
+    // docs/ is not copied into the Docker build (Railway runs the tests there) — check it only when present
+    if (existsSync(join(ROOT, 'docs/SCHEDULING.md'))) assert.doesNotMatch(read('docs/SCHEDULING.md'), /\| screener-sync\.yml, tradingview-sync\.yml/);
   });
   test('no page reads /data/tradingview directly any more', () => {
     for (const p of ['frontend/src/lib/screener-data-loader.ts', 'frontend/src/app/(dashboard)/multibagger/technicals-tab.tsx', 'frontend/src/app/(dashboard)/page.tsx',
