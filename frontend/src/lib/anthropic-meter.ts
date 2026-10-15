@@ -287,13 +287,21 @@ export const answeredWithTool = (answer: any, name: string): boolean => Array.is
 function track(feature: string, run: MeterOpts['run'], model: string | null, startedAt: Date, usage: Usage | null, usd: number, outcome: AiRunOutcome, error?: string): void {
   if (run === false || feature === 'health-probe') return;
   const ctx = run || {};
-  void import('./ai-runs').then((m) => m.trackRun(m.buildRunRecord({
-    job: feature, model, startedAt: startedAt.toISOString(), finishedAt: new Date().toISOString(),
-    inputTokens: Number(usage?.input_tokens || 0) + Number(usage?.cache_read_input_tokens || 0) + Number(usage?.cache_creation_input_tokens || 0),
-    outputTokens: Number(usage?.output_tokens || 0), costUsd: usd, outcome, error: error || null,
-    promptVersion: ctx.promptVersion ?? null, docId: ctx.docId ?? null, ticker: ctx.ticker ?? null, batchId: ctx.batchId ?? null,
-  }))).catch(() => undefined);
+  if (!runRecorder) return;   // registered by the server at start (instrumentation.ts); never in a browser bundle
+  try {
+    runRecorder({
+      job: feature, model, startedAt: startedAt.toISOString(), finishedAt: new Date().toISOString(),
+      inputTokens: Number(usage?.input_tokens || 0) + Number(usage?.cache_read_input_tokens || 0) + Number(usage?.cache_creation_input_tokens || 0),
+      outputTokens: Number(usage?.output_tokens || 0), costUsd: usd, outcome, error: error || null,
+      promptVersion: ctx.promptVersion ?? null, docId: ctx.docId ?? null, ticker: ctx.ticker ?? null, batchId: ctx.batchId ?? null,
+    });
+  } catch { /* best-effort */ }
 }
+/** zzz1050 — the run-record writer, registered by the server (instrumentation.ts → lib/ai-runs). The meter does not import
+ *  lib/ai-runs itself: that module reaches Postgres (pg), and the meter is also bundled into client pages. */
+type RunRecorderInput = { job: string; model: string | null; startedAt: string; finishedAt: string; inputTokens: number; outputTokens: number; costUsd: number; outcome: AiRunOutcome; error: string | null; promptVersion: string | null; docId: string | null; ticker: string | null; batchId: string | null };
+let runRecorder: ((r: RunRecorderInput) => void) | null = null;
+export function setRunRecorder(f: ((r: RunRecorderInput) => void) | null): void { runRecorder = f; }
 
 export interface GateResult { allowed: boolean; spent: number; cap: number; message?: string }
 

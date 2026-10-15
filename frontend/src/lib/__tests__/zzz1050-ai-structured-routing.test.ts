@@ -463,3 +463,10 @@ describe('run records', () => {
     assert.ok(read('lib/ai-guidance-extract.ts').includes('run: false'));
   });
 });
+
+test('zzz1050 build: the meter never imports lib/ai-runs or lib/db (it is bundled into client pages); the server registers the writer', async () => {
+  const { readFileSync } = await import('node:fs'); const { join } = await import('node:path');
+  const meter = readFileSync(join(__dirname, '..', 'anthropic-meter.ts'), 'utf8');
+  assert.ok(!/import\(\s*'\.\/ai-runs'\s*\)|from '\.\/db'|import\(\s*'\.\/db'\s*\)/.test(meter));
+  assert.match(readFileSync(join(__dirname, '..', '..', 'instrumentation.ts'), 'utf8'), /setRunRecorder\(/);
+});

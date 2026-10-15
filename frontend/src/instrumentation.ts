@@ -9,6 +9,8 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME !== 'nodejs') return;
   // zzz907: the app runs its own scheduled jobs (was a backstop for GitHub's cron, zzz885) — see lib/app-scheduler.ts
+  // zzz1050 — AI run records: the meter calls this writer (it cannot import lib/ai-runs itself — that module reaches Postgres)
+  try { const [m, runs] = await Promise.all([import('./lib/anthropic-meter'), import('./lib/ai-runs')]); m.setRunRecorder((r) => { try { void runs.trackRun(runs.buildRunRecord(r as any)); } catch { /* best-effort */ } }); } catch (e) { console.warn('[ai-runs] recorder not set', e); }
   try { (await import('./lib/app-scheduler')).startAppScheduler(); } catch (e) { console.warn('[app-scheduler] not started', e); }
   // zzz905: register the KV reader so every server path's holiday check uses the collected NSE calendar (refreshes 12-hourly)
   try { void (await import('./lib/nse-holidays-server')).warmNseHolidays(); } catch (e) { console.warn('[nse-holidays] warm skipped', e); }
