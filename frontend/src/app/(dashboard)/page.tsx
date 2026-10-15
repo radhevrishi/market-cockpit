@@ -4371,6 +4371,8 @@ const FAVS: Array<{ href: string; label: string; color: string; ext?: boolean }>
   { href: '/pine-screener?screen=mtf-aligned', label: '🧩 Weekly + Monthly aligned', color: '#8B5CF6' },
   { href: '/pine-screener?screen=mtf-eo-strong', label: '🧩 W+M + Strong result', color: '#8B5CF6' },
   { href: '/fii-dii', label: '🏦 FII / DII Flows', color: '#22D3EE' },
+  { href: '/price-alerts', label: '🔔 Price Alerts', color: '#F59E0B' },   // zzz1054
+  { href: '/search-docs', label: '🔎 Document Search', color: '#A78BFA' },   // zzz1051
   { href: '/cockpit', label: '🛩️ Action Cockpit', color: '#F59E0B' },
   { href: '/cheat-entry', label: '🥷 Cheat Entry', color: '#10B981' },
   { href: '/bounce-desk', label: '🌊 Bounce Desk', color: '#A78BFA' },
