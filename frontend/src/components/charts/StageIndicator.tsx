@@ -168,6 +168,12 @@ export function StageBanner({ s, light, shifted, onTurnOff, dock }: { s: ReturnT
               </div>
             </div>
           )}
+          {b.health && (
+            <div data-testid="stage-health" style={{ marginTop: 8, padding: '6px 8px', borderRadius: 8, border: `1px solid ${b.health.level === 'weak' ? 'rgba(220,38,38,.45)' : 'rgba(217,119,6,.45)'}`, background: b.health.level === 'weak' ? 'rgba(220,38,38,.08)' : 'rgba(217,119,6,.08)' }}>
+              <div style={{ fontWeight: 700, color: b.health.level === 'weak' ? '#DC2626' : '#D97706' }}>⚠ {b.health.text}</div>
+              <div style={{ marginTop: 2, fontSize: 11, color: 'var(--mc-text-3)', lineHeight: '15px' }}>{b.health.note}</div>
+            </div>
+          )}
           <div style={{ marginTop: 8, fontSize: 11.5, fontWeight: 650, color: 'var(--mc-text-3)' }}>Measured this week</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', columnGap: 12, rowGap: 3, marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>
             {b.details!.map((d) => (

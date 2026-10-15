@@ -71,3 +71,17 @@ export function refreshExplain(market: ScreenMarket, builtAt: Date | null, now: 
     next ? `Next scheduled rebuild: about ${next.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} your time (${hhmmUtc(next)} UTC); a rebuild takes a few minutes.` : '',
   ].filter(Boolean).join('\n');
 }
+
+/** zzz1047 — when a figure that no company has yet will arrive: "next USA build about 20:45 your time (18:45 UTC); a build reads
+ *  as many companies as it can in a few minutes, the rest at the build after". */
+export function nextFillText(market: ScreenMarket, now: Date = new Date()): string {
+  const next = nextRebuild(market, now);
+  const m = market === 'US' ? 'USA' : 'India';
+  if (!next) return `filled by the next ${m} screener build`;
+  return `filled by the next ${m} screener build, about ${next.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} your time (${hhmmUtc(next)} UTC); a build reads as many companies as it can in a few minutes, the rest at the build after`;
+}
+/** Short form for a card: "next build ~20:45". */
+export function nextFillShort(market: ScreenMarket, now: Date = new Date()): string {
+  const next = nextRebuild(market, now);
+  return next ? `not built yet · next build ~${next.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'not built yet';
+}

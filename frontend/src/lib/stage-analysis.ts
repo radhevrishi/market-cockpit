@@ -94,6 +94,8 @@ export interface StageWeek {
   level?: number | null;
   /** volume of the week that started the current stage ÷ the average of the 10 weeks before it */
   volX?: number | null;
+  /** zzz1047 — close vs the highest weekly close since the current stage began, in % (0 at a new high, −20 = 20% below it) */
+  ddPct?: number | null;
 }
 /** zzz1027 — `i` / `wk` = the CONFIRMED week (when the change was known); `beganI` / `began` = the first week that met the rule. */
 export interface StageChange { i: number; wk: string; beganI: number; began: string; confirmed: string; from: Stage | null; to: Stage; level: number | null; volX: number | null;
@@ -248,6 +250,7 @@ export function stageAnalysis(weeks: readonly WeekBar[], bench?: ReadonlyMap<str
   const changes: StageChange[] = [];
   const ends = weeks.map(weekEnd);
   let stage: Stage | null = null, prevStage: Stage | null = null, start = -1, conf = -1, level: number | null = null, volX: number | null = null;
+  let stHi = -Infinity, stHiStart = -1;   // zzz1047 — highest close since the stage began
   let pend: Stage | null = null, pendStart = -1, pendLevel: number | null = null, pendVolX: number | null = null, pendFrom: Stage | null = null;
   for (let i = 0; i < n; i++) {
     const close = c[i];
@@ -316,6 +319,10 @@ export function stageAnalysis(weeks: readonly WeekBar[], bench?: ReadonlyMap<str
         }
       }
     }
+    if (stage != null) {
+      if (start !== stHiStart) { stHi = -Infinity; for (let k = start; k <= i; k++) if (c[k] > stHi) stHi = c[k]; stHiStart = start; }
+      else if (close > stHi) stHi = close;
+    }
     out.push({
       wk: weeks[i].wk, c: close, ma10: m10, ma30: m30, ma40: m40, hi13, lo13, mrs: mrsNow, comps, sata,
       stage, weeks: stage != null ? i - conf + 1 : null,
@@ -326,6 +333,7 @@ export function stageAnalysis(weeks: readonly WeekBar[], bench?: ReadonlyMap<str
       since: stage != null ? weeks[start].wk : null, pending: pendingOut,
       vsMa: fin(m30) && m30 > 0 ? r1((close / m30 - 1) * 100) : null,
       level: stage != null ? level : null, volX: stage != null ? volX : null,
+      ddPct: stage != null && stHi > 0 ? r1((close / stHi - 1) * 100) : null,
     });
   }
   return { weeks: out, last: out.length ? out[out.length - 1] : null, changes };
@@ -398,7 +406,8 @@ const signed = (v: number, dp = 0) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math
  *  (no change seen yet) says "since wk to …". */
 export function stageHeadline(w: StageWeek | null | undefined): string {
   if (!w || w.stage == null) return 'Stage Analysis: not enough weekly history (needs about 34 weeks)';
-  const parts = [`Stage ${w.stage} · ${STAGE_WORDS[w.stage]}${w.sub === 'B' && w.stage === 2 ? ' (extended)' : ''}`];
+  const h = stageHealth(w);
+  const parts = [`Stage ${w.stage} · ${STAGE_WORDS[w.stage]}${w.sub === 'B' && w.stage === 2 ? ' (extended)' : ''}${h && h.level !== 'ok' ? ` — ⚠ ${h.word}` : ''}`];
   const nW = w.weeks != null ? ` (${w.weeks} week${w.weeks === 1 ? '' : 's'})` : '';
   const dates = stageDatesText(...weekDates(w), { short: true, now: endOr(w.end, w.wk) });
   if (dates) parts.push(`${dates}${nW}`);
@@ -407,6 +416,39 @@ export function stageHeadline(w: StageWeek | null | undefined): string {
   if (w.vsMa != null) parts.push(Math.abs(w.vsMa) < 0.5 ? 'price at the MA' : `price ${Math.abs(Math.round(w.vsMa))}% ${w.vsMa > 0 ? 'above' : 'below'} MA`);
   if (w.pending != null) parts.push(`Stage ${w.pending} needs one more weekly close`);
   return parts.join(' · ');
+}
+
+/** zzz1047 — health of a confirmed Stage 2. The stage rules change a stage only after the 30-week average stops rising and two
+ *  weekly closes agree, so a Stage 2 can stay "confirmed" for weeks while the stock is already breaking down (price under its
+ *  averages, SATA near 0, RS negative, far off its high). This reading does NOT change the stage; it says how the advance looks now.
+ *  Warnings (each strong): SATA ≤ 3 · close more than 2% below the 30-week average · ≥ 25% below the highest close of the stage.
+ *  Cautions (each mild): SATA 4 · close 0–2% below the 30-week average · close below the 10-week average · Mansfield RS below 0 · 30-week average no longer rising ·
+ *  15–25% below the stage high.
+ *  weak = 2+ warnings, or 1 warning + 2 cautions · caution = 1 warning, or 2+ cautions · ok = otherwise. Null outside Stage 2. */
+export type StageHealthLevel = 'ok' | 'caution' | 'weak';
+export interface StageHealth { level: StageHealthLevel; warnings: string[]; cautions: string[]; word: string; code: 0 | 1 | 2 }
+export const STAGE_HEALTH_RULES = { sataWeak: 3, sataCaution: 4, ddWeak: -25, ddCaution: -15, maBreakPct: 2 } as const;
+export const STAGE_HEALTH_WORDS: Record<StageHealthLevel, string> = { ok: 'healthy', caution: 'losing momentum', weak: 'weakening — topping risk' };
+export const STAGE_HEALTH_NOTE = 'Stage 2 health (our own reading, does not change the stage): weakening = two or more of SATA ≤ 3, close more than 2% below the 30-week average, 25%+ below the stage\'s highest close (or one of them with two cautions); losing momentum = one of them, or two cautions (SATA 4, close just under the 30-week average, close below the 10-week average, Mansfield RS below 0, 30-week average no longer rising, 15–25% off the high). The stage itself changes only when the 30-week average stops rising and two weekly closes agree.';
+export function stageHealth(w: StageWeek | null | undefined): StageHealth | null {
+  if (!w || w.stage !== 2) return null;
+  const H = STAGE_HEALTH_RULES, warnings: string[] = [], cautions: string[] = [];
+  if (w.sata != null) { if (w.sata <= H.sataWeak) warnings.push(`SATA ${w.sata}/10`); else if (w.sata === H.sataCaution) cautions.push(`SATA ${w.sata}/10`); }
+  // a close just under the average (within 2%) is a caution, not a break
+  if (w.vsMa != null && w.vsMa < -H.maBreakPct) warnings.push(`close ${Math.abs(Math.round(w.vsMa))}% below the 30-wk MA`);
+  else if (w.vsMa != null && w.vsMa < 0) cautions.push('close just below the 30-wk MA');
+  if (w.ddPct != null) { if (w.ddPct <= H.ddWeak) warnings.push(`${Math.abs(Math.round(w.ddPct))}% off the stage high`); else if (w.ddPct <= H.ddCaution) cautions.push(`${Math.abs(Math.round(w.ddPct))}% off the stage high`); }
+  if (w.ma10 != null && w.c < w.ma10) cautions.push('close below the 10-wk MA');
+  if (w.mrs != null && w.mrs < 0) cautions.push(`RS ${signed(w.mrs)}`);
+  if (w.slope != null && w.slope !== 'rising') cautions.push(`30-wk MA ${w.slope}`);
+  const level: StageHealthLevel = warnings.length >= 2 || (warnings.length === 1 && cautions.length >= 2) ? 'weak' : warnings.length >= 1 || cautions.length >= 2 ? 'caution' : 'ok';
+  return { level, warnings, cautions, word: STAGE_HEALTH_WORDS[level], code: level === 'weak' ? 0 : level === 'caution' ? 1 : 2 };
+}
+/** zzz1047 — one line, e.g. "Stage 2 weakening — topping risk: SATA 1/10 · close 22% below the 30-wk MA · 57% off the stage high". */
+export function stageHealthText(h: StageHealth | null | undefined): string {
+  if (!h || h.level === 'ok') return '';
+  const why = [...h.warnings, ...h.cautions].slice(0, 4).join(' · ');
+  return `Stage 2 ${h.word}${why ? `: ${why}` : ''}`;
 }
 
 /** zzz1030 — [began, confirmed] as the weeks' last sessions (older readings without them: their Fridays). Same when unconfirmed. */
@@ -440,6 +482,9 @@ export function stageDetails(w: StageWeek | null | undefined): StageDetail[] {
   if (w.volX != null && (w.stage === 2 || w.stage === 4)) out.push({ label: `Volume in the ${w.stage === 2 ? 'breakout' : 'breakdown'} week vs the 10 weeks before`, value: `${w.volX.toFixed(1)}×`, ok: w.stage === 2 ? w.volX >= 1.5 : null });
   out.push({ label: 'Mansfield RS (vs the index)', value: w.mrs == null ? 'no index' : f2(w.mrs, 1), ok: w.mrs == null ? null : w.mrs > 0 });
   out.push({ label: 'SATA score (TheWrap, 10 points)', value: w.sata == null ? '—' : `${w.sata}/10`, ok: w.sata == null ? null : w.sata >= 6 });
+  if (w.ddPct != null) out.push({ label: 'Close vs the highest close since the stage began', value: `${f2(w.ddPct, 1)}%`, ok: w.stage === 2 ? w.ddPct > STAGE_HEALTH_RULES.ddCaution : null });
+  const hh = stageHealth(w);
+  if (hh) out.push({ label: 'Stage 2 health (does not change the stage)', value: hh.level === 'ok' ? 'healthy' : `${hh.word} — ${[...hh.warnings, ...hh.cautions].join(' · ')}`, ok: hh.level === 'ok' ? true : hh.level === 'weak' ? false : null });
   if (w.pending != null) out.push({ label: 'Change waiting for a second weekly close', value: `to Stage ${w.pending} · ${STAGE_WORDS[w.pending]}`, ok: null });
   return out;
 }

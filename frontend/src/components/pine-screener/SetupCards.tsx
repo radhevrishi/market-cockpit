@@ -29,7 +29,7 @@ function Glyph({ g, tone }: { g: SetupGlyph; tone: SetupCard['tone'] }) {
 
 /** zzz1008 — `rebuild`: per card, whether its timeframe is being re-read by the current scan ('none' → "…" and "rebuilding", never a 0;
  *  'partial' → "N+": matches so far). */
-export function SetupCards({ active, counts, onPick, loading, rebuild = {} }: { active: string | null; counts: Record<string, number | null>; onPick: (c: SetupCard) => void; loading: boolean; rebuild?: Record<string, QueryRebuild> }) {
+export function SetupCards({ active, counts, onPick, loading, rebuild = {}, noneText = 'scan rebuilding — not known yet' }: { active: string | null; counts: Record<string, number | null>; onPick: (c: SetupCard) => void; loading: boolean; rebuild?: Record<string, QueryRebuild>; noneText?: string }) {
   return (
     <div className="pnx-cards" role="group" aria-label="Start from a setup">
       {SETUP_CARDS.map((c) => {
@@ -46,7 +46,7 @@ export function SetupCards({ active, counts, onPick, loading, rebuild = {} }: { 
             </span>
             <span className="pnx-card-label">{c.label}</span>
             <span className="pnx-card-sub">{c.sub}</span>
-            {rb && rb.state !== 'ok' ? <span className="pnx-card-sub" data-card-rebuild style={{ color: C.amber }}>{rb.state === 'none' ? 'scan rebuilding — not known yet' : 'rebuilding — so far'}</span> : null}
+            {rb && rb.state !== 'ok' ? <span className="pnx-card-sub" data-card-rebuild style={{ color: C.amber }}>{rb.state === 'none' ? noneText : 'rebuilding — so far'}</span> : null}
             {c.alt && (nAlt != null || rbAlt?.state === 'none') ? <span className="pnx-card-sub" data-alt-count={c.alt.presetId} style={{ color: C.text1 }}>+ {nAlt == null ? '…' : `${nAlt.toLocaleString('en-US')}${rbAlt?.state === 'partial' ? '+' : ''}`} {c.alt.label} (counted apart)</span> : null}
           </button>
         );

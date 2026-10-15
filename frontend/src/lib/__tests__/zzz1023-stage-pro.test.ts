@@ -116,7 +116,7 @@ test('zzz1023 banner: one tidy line, details with measured values, meaning per s
   const r = run(cycle());
   const w2 = r.weeks[75];
   assert.equal(stageHeadline({ ...w2, sub: 'A', mrs: 12.4, vsMa: 8.2 }), `Stage 2 · Advancing · ${stageDatesText(weekEnd({ wk: wkIso(60) }), weekEnd({ wk: wkIso(61) }), { short: true, now: weekEnd({ wk: wkIso(75) }) })} (15 weeks) · 30-wk MA rising · RS +12 · price 8% above MA`);
-  assert.match(stageHeadline({ ...w2, mrs: -3.6, vsMa: -0.2, sub: 'B' }), /^Stage 2 · Advancing \(extended\) · .* · RS −4 · price at the MA$/);
+  assert.match(stageHeadline({ ...w2, mrs: -3.6, vsMa: -0.2, sub: 'B' }), /^Stage 2 · Advancing \(extended\)( — ⚠ losing momentum)? · .* · RS −4 · price at the MA$/);
   const d = stageDetails(w2);
   const labels = d.map((x) => x.label).join(' | ');
   for (const k of ['slope', 'Close vs the 30-week average', '13-week closing range', 'Structure began', 'Confirmed', 'Weeks in this stage', 'Base high broken', 'Volume in the breakout week', 'Mansfield RS', 'SATA']) assert.ok(labels.includes(k), k);

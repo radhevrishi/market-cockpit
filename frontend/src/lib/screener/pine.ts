@@ -391,7 +391,7 @@ export function priceSourceNote(rows: readonly ScreenRow[], market: ScreenMarket
 
 /** zzz984 — the TradingView-script fields a row carries (entries read before scan version 2 carry none). `adv$` = average daily
  *  traded value in the market's money unit ($ million / ₹ crore). The RS Rating is ranked later, over the whole snapshot. */
-export const TV_ROW_KEYS = ['tt', 'ttOk', 'rsiMA', 'rsiX', 'gcD', 'dcD', 'emaXU', 'emaXD', 'stage', 'st12', 'ppD', 'rvol', 'ripB', 'twSt', 'sata', 'mrs', 'twWk'] as const;
+export const TV_ROW_KEYS = ['tt', 'ttOk', 'rsiMA', 'rsiX', 'gcD', 'dcD', 'emaXU', 'emaXD', 'stage', 'st12', 'ppD', 'rvol', 'ripB', 'twSt', 'sata', 'mrs', 'twWk', 'twH', 'twDd'] as const;
 export function rowTvFields(tf: TechStored | undefined, market: ScreenMarket): Partial<ScreenRow> {
   if (!tf || !(typeof tf.patV === 'number' && tf.patV >= 2)) return {};
   const o: Partial<ScreenRow> = {};
@@ -406,7 +406,7 @@ export function rowTvFields(tf: TechStored | undefined, market: ScreenMarket): P
 // ── zzz1020: trader setups (lib/setups.ts) ──────────────────────────────────────────────────────────────────────────────
 /** Bump when lib/setups.ts's rules change: every stored entry with another `setV` is re-read (after the companies whose prices or
  *  patterns are due), and its setup fields are withheld from the rows until then. Independent of PATTERN_SCAN_VERSION. */
-export const SETUP_VERSION = 4;   // zzz1044a — 4: weekly setups (wt3 / wt3P / dc20W) and the Stage Analysis (twSt / twWk / sata / mrs) from COMPLETED exchange weeks only; zzz1027 — 3: stage weeks counted from the confirmed week; 2 (zzz1023): re-read so the reworked Stage Analysis (twSt / twWk) is stored too
+export const SETUP_VERSION = 5;   // zzz1047 — 5: Stage 2 health (twH) and the stage drawdown (twDd) stored with the Stage Analysis; zzz1044a — 4: weekly setups (wt3 / wt3P / dc20W) and the Stage Analysis (twSt / twWk / sata / mrs) from COMPLETED exchange weeks only; zzz1027 — 3: stage weeks counted from the confirmed week; 2 (zzz1023): re-read so the reworked Stage Analysis (twSt / twWk) is stored too
 /** The setup figures a row carries (epT, the gap day, stays on the stored entry — it feeds epE). */
 export const SETUP_ROW_KEYS = [
   'wt3', 'wt3P', 'udv', 'x10A', 'x50A', 'dvx', 'dvT', 'dvB', 'dc20D', 'dc55D', 'dc20W', 'sqzN', 'sqzF', 'sqzM', 'nr7', 'ib',
@@ -536,7 +536,7 @@ export interface PineQuery {
   resCb?: boolean;
 }
 /** zzz984 — the extra columns the owner can switch on (the TradingView-script fields first). */
-export const OPTIONAL_COLS: readonly NumKey[] = ['tt', 'rsR', 'stage', 'twSt', 'sata', 'mrs', 'twWk', 'r40', 'revQYoY', 'fcfmTTM', 'rsiMA', 'rsiX', 'gcD', 'dcD', 'emaXU', 'emaXD', 'ppD', 'rvol', 'adv$', 'adrP', 'ripB', 'ttOk', 'st12', 'perf1M', 'perf6M', 'perf1Y',
+export const OPTIONAL_COLS: readonly NumKey[] = ['tt', 'rsR', 'stage', 'twSt', 'twH', 'twDd', 'sata', 'mrs', 'twWk', 'r40', 'revQYoY', 'fcfmTTM', 'rsiMA', 'rsiX', 'gcD', 'dcD', 'emaXU', 'emaXD', 'ppD', 'rvol', 'adv$', 'adrP', 'ripB', 'ttOk', 'st12', 'perf1M', 'perf6M', 'perf1Y',
   // zzz1020 — trader setups
   'csl', 'udv', 'x50A', 'wt3', 'dvx', 'dc20D', 'dc55D', 'sqzN', 'sqzF', 'epD', 'epG', 'mbD', 'wpD', 'ecbD', 'nhD', 'hgD', 'sprD', 'td9',
   // zzz1046a — volume & accumulation
@@ -768,7 +768,7 @@ export const LEAN_KEYS = [
   // zzz1045e — the trailing-12-month FCF margin and its Rule of 40 (USA)
   'fcfmT', 'fcfmTAt', 'r40T',
   // zzz987 — Stage Analysis (TheWrap method)
-  'twSt', 'sata', 'mrs', 'twWk',
+  'twSt', 'sata', 'mrs', 'twWk', 'twH', 'twDd',
   // zzz993 — scan status / quality (MC-02), scan-close vs latest-quote provenance (MC-01), weekly / monthly readings (when wired)
   'scan', 'scanPx', 'scanAt', 'scanSrc', 'scanBasis', 'scanEx', 'pxSrc', 'pxAt', 'pxGap', 'pxConflict', 'pxAlt', 'pxLive', 'patW', 'patM', 'scanW', 'scanM',
   // zzz1003 (PS-03) — the provisional reading of today's unfinished session

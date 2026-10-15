@@ -183,11 +183,11 @@ test('F02: weekly breakout age (dc20W) advances only on completed weeks; a Monda
 });
 
 test('screener entry: Stage + weekly setups agree on the same completed close; version bumped', () => {
-  assert.equal(SETUP_VERSION, 4);
+  assert.ok(SETUP_VERSION >= 4);   // zzz1047 bumped it to 5
   const e = techEntry(repro(), null, false, null, { market: 'US', now: MON_EVENING_US });
   assert.equal((e as any).twSt, 1);
   assert.notEqual((e as any).twWk, 1);
-  assert.equal((e as any).setV, 4);
+  assert.equal((e as any).setV, SETUP_VERSION);
   const f = techEntry(repro('2026-10-16'), null, false, null, { market: 'US', now: at('2026-10-16T20:30:00Z') });
   assert.equal((f as any).twSt, 2); assert.equal((f as any).twWk, 1);
 });

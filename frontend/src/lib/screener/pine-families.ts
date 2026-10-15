@@ -83,7 +83,7 @@ export function pineFamilyGroups(screens: readonly PineScreen[], builtInIds: Rea
 export type RuleTf = 'D' | 'W' | 'M' | 'company';
 /** Figures read from weekly bars (weekly RSI, this week's change / volume, 3 weeks tight, weekly Donchian, Weinstein stage — 30-week
  *  average —, the TheWrap Stage Analysis) and from monthly bars (monthly RSI). Every other price / average / momentum / setup figure is daily. */
-const WEEKLY_KEYS = new Set(['rsiW', 'chg1W', 'vol1W', 'wt3', 'wt3P', 'dc20W', 'stage', 'st12', 'twSt', 'twWk', 'sata', 'mrs', 'bigUpW', 'bigDnW']);
+const WEEKLY_KEYS = new Set(['rsiW', 'chg1W', 'vol1W', 'wt3', 'wt3P', 'dc20W', 'stage', 'st12', 'twSt', 'twWk', 'sata', 'mrs', 'twH', 'twDd', 'bigUpW', 'bigDnW']);
 const MONTHLY_KEYS = new Set(['rsiM']);
 const DAILY_GROUPS = new Set(['Price & volume', 'Moving averages', 'Momentum', 'Trader setups', 'Volume & accumulation']);
 export function ruleKeyTf(key: string): RuleTf {

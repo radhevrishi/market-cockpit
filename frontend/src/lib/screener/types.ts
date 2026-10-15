@@ -132,6 +132,8 @@ export interface ScreenRow {
   sata?: number | null;      // SATA score 0–10
   mrs?: number | null;       // Mansfield RS vs S&P 500 (US) / Nifty 50 (India)
   twWk?: number | null;      // weeks in the current stage
+  twH?: number | null;       // zzz1047 — Stage 2 health: 2 healthy · 1 losing momentum · 0 weakening (topping risk); null outside Stage 2
+  twDd?: number | null;      // zzz1047 — % below the highest weekly close since the current stage began (0 = at the high)
   // ── zzz1020: trader setups (lib/setups.ts — our own version of the published rules), from the completed daily sessions. Present
   //    only when the company's setups were read with the current SETUP_VERSION (pine.ts); windowed fields are null when nothing fired.
   wt3?: number | null;       // 3 weeks tight: weekly closes in the tight run (≥ 3, price above SMA 50)

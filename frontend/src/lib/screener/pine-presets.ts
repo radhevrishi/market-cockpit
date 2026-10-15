@@ -28,7 +28,7 @@ const eq = (key: NumKey, v: number): Filter => ({ kind: 'num', key, op: 'between
 /** zzz984 — his own "minervni script" (Minervini trend template, all six rules) — computed field ttOk (tv-screens.ts). */
 const TREND_TEMPLATE: Filter[] = [ge('ttOk', 1)];
 /** zzz987 — Stage Analysis (TheWrap method) columns and the note every one of its screens starts with. */
-const TW_COLS: NumKey[] = ['twSt', 'sata', 'mrs', 'twWk', 'rsR'];
+const TW_COLS: NumKey[] = ['twSt', 'twH', 'sata', 'mrs', 'twWk', 'twDd', 'rsR'];
 const TW_NOTE = 'Stage Analysis (TheWrap method) — our own version that follows the published rules (weekly 10/30/40-week averages, 13-week closing range, SATA score, Mansfield RS vs the index); not the original script.';
 /** zzz999 — the bullish base family (O'Neil bases + VCP) used by the setup cards. */
 const BASE_IDS: PineQuery['ids'] = ['flat_base', 'cup', 'cup_handle', 'u_base', 'ascending_base', 'base_on_base', 'ipo_base', 'vcp'];
@@ -208,4 +208,9 @@ export const BUILT_IN_PINE_SCREENS: readonly PineScreen[] = [
     `${ACC} Distribution is piling up: 5 or more heavy-volume down or stalling sessions in the last 25, or a price high that On-Balance Volume does not confirm while money flow is negative. A list to review, not a signal on its own.`),
   screen('dlv-rising', 'Delivery % rising (India)', { bias: 'both', need: 'any', stages: ['f', 'b'], minConf: 55, dist: { on: false, lo: -15, hi: 5 }, filters: [ge('dlvChg', 5), ge('dlv10', 40)], cols: ['dlv10', 'dlvChg', 'accS'] },
     { group: 'volume', market: 'IN', note: 'India only, from NSE\'s daily price files: the share of traded shares taken into delivery averaged 40% or more over the last 10 sessions and rose 5 points or more against the 40 sessions before — more shares are being kept, not day-traded.' }),
+  // zzz1047 — Stage 2 health: a confirmed Stage 2 that is breaking down before the stage rules can change it (STRL, Oct 2026)
+  rules('tw-stage2-healthy', 'Healthy Stage 2 (TheWrap method)', [eq('twSt', 2), eq('twH', 2)], TW_COLS, 'tv',
+    `${TW_NOTE} Confirmed Stage 2 with none of the weakening signs: SATA 5 or more, close above the 30-week and 10-week averages, Mansfield RS above 0, the 30-week average still rising and less than 15% below the stage's highest close.`),
+  rules('tw-stage2-weak', 'Stage 2 weakening — topping risk (TheWrap method)', [eq('twSt', 2), eq('twH', 0)], TW_COLS, 'tv',
+    `${TW_NOTE} Still a confirmed Stage 2 by the stage rules, but breaking down: two or more of SATA ≤ 3, close below the 30-week average, 25%+ below the stage's highest close (or one of them with two smaller signs). The stage changes only after the 30-week average stops rising and two weekly closes agree — this list sees it earlier. A list to review, not a signal on its own.`),
 ];

@@ -35,6 +35,7 @@ export function fcfmSourceText(r: Partial<ScreenRow>, market: ScreenMarket): str
 const FCFM_T_US = 'USA: trailing 12 months — (operating cash flow − capex) over the last four fiscal quarters ÷ revenue of the same four quarters. Quarters are worked out from the year-to-date cash-flow totals in each 10-Q (Q2 = first half − Q1, …, Q4 = full year − 9 months), latest amendment first; all four quarters of both lines must be filed, else unknown. Filled in over several daily builds (largest companies first). India has no trailing figure: screener.in prints no quarterly cash flow, so India keeps the full-year cash-flow proxy (FCF margin, latest full year)';
 const R40_BLANK = '. Rule of 40 is left blank when revenue growth is above +300% or the FCF margin is outside −100%…+100% (a tiny sales base — the sum would mean nothing)';
 const FCFM_IN = 'India: a cash-flow proxy for the latest full fiscal year — (cash from operations + ALL cash from investing) ÷ sales. screener.in prints no capex line, and investing cash can include buying / selling investments or acquisitions; "Exact figures only" leaves these out';
+import { STAGE_HEALTH_NOTE } from '../stage-analysis';
 const TW_NOTE = 'Our own version that follows the published rules of TheWrap Stage Analysis (weekly 10 / 30 / 40-week averages, 13-week closing range, 10-point SATA score) — not the original script; readings can differ from TradingView';
 /** zzz1020 — a trader-setup field: both markets, group 'Trader setups', the rule as its approx note, optional sparse note. */
 const SETUP_NOTE = 'our own version of the published rules';
@@ -107,6 +108,9 @@ export const FIELDS: readonly FieldDef[] = [
   { key: 'sata', label: 'Stage Analysis (TheWrap method): SATA score 0–10', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: TW_NOTE, IN: TW_NOTE } },
   { key: 'mrs', label: 'Mansfield RS (weekly, vs index)', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: '((close ÷ S&P 500) ÷ its 52-week average − 1) × 100, weekly closes', IN: '((close ÷ Nifty 50) ÷ its 52-week average − 1) × 100, weekly closes' } },
   { key: 'twWk', label: 'Stage Analysis (TheWrap method): weeks in stage (from the confirmed week)', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { US: TW_NOTE, IN: TW_NOTE } },
+  // zzz1047 — how a confirmed Stage 2 looks now (does not change the stage; lib/stage-analysis.ts stageHealth)
+  { key: 'twH', label: 'Stage 2 health (2 = healthy, 1 = losing momentum, 0 = weakening / topping risk)', unit: 'num', markets: BOTH, group: 'Momentum', sparse: { US: 'only companies in a confirmed Stage 2', IN: 'only companies in a confirmed Stage 2' }, approxNote: { US: STAGE_HEALTH_NOTE, IN: STAGE_HEALTH_NOTE } },
+  { key: 'twDd', label: 'Stage Analysis: % below the highest weekly close of the current stage', unit: '%', markets: BOTH, group: 'Momentum', approxNote: { US: TW_NOTE, IN: TW_NOTE } },
   // zzz1020 — trader setups (lib/setups.ts): our own version of the published rules, from the completed daily sessions
   ...setupField('wt3', '3 weeks tight: tight weekly closes (≥ 3)', 'num', 'O\'Neil: weekly closes in a row each within 1.5% of the week before, price above SMA 50', 'only companies with 3 or more tight weekly closes ending this week'),
   ...setupField('wt3P', '3 weeks tight: pivot', 'price', 'the highest weekly high of the tight weeks', 'only companies with 3 weeks tight'),

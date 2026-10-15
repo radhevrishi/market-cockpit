@@ -5,7 +5,7 @@
 //  • the stage colours, the stage line (30-wk / 150-day average), the labels and levels where stages began, and the banner
 // The method itself is lib/stage-analysis.ts — our own version from the published rules, not the original script.
 import { newExtra, type ChartLayout } from '@/lib/chart-layouts';
-import { readingsForBars, stageCompleted, weeklyFromTimed, stageHeadline, stageDetails, stageDatesLong, stageChangeText, sessionWords, weekEnd, weekKey, dayWords, STAGE_MEANING, STAGE_WORDS, SUB_WORDS, type Stage, type StageChange, type StageDetail, type StageResult, type StageWeek } from '@/lib/stage-analysis';
+import { readingsForBars, stageCompleted, weeklyFromTimed, stageHeadline, stageDetails, stageHealth, stageHealthText, STAGE_HEALTH_NOTE, stageDatesLong, stageChangeText, sessionWords, weekEnd, weekKey, dayWords, STAGE_MEANING, STAGE_WORDS, SUB_WORDS, type Stage, type StageChange, type StageDetail, type StageResult, type StageWeek } from '@/lib/stage-analysis';
 import { readableOn } from '@/lib/readable-color';
 import { dailyUrl } from './pattern-view';
 
@@ -158,6 +158,8 @@ export interface StageBannerModel {
   long?: string;
   /** zzz1030 — the latest stage changes, newest first, each with its began week and confirming close */
   changes?: string[];
+  /** zzz1047 — a confirmed Stage 2 that is breaking down: the warning line, its level and the rule text */
+  health?: { level: 'caution' | 'weak'; text: string; note: string } | null;
 }
 /** zzz1030 — the changes list in the details: the latest `max` changes, newest first. */
 export function stageChangesList(changes: readonly StageChange[] | null | undefined, max = 6): string[] {
@@ -177,9 +179,12 @@ export function stageBanner(status: 'loading' | 'ready' | 'error' | 'idle', last
   const prov = provisionalText(last, provisional);
   const base = prov ? `${stageHeadline(last)} · ${prov}` : stageHeadline(last);
   const st = last?.stage ?? null;
+  const h = stageHealth(last);
+  const health = h && h.level !== 'ok' ? { level: h.level, text: stageHealthText(h), note: STAGE_HEALTH_NOTE } : null;
   return {
     text: benchOk || !last || st == null ? base : `${base} · index not loaded (no RS)`,
-    color: st ? stageColor(st, light) : null,
+    // zzz1047 — a weakening Stage 2 is not painted in the advancing colour: it takes the topping (Stage 3) colour
+    color: st ? stageColor(health?.level === 'weak' ? 3 : st, light) : null, health,
     details: stageDetails(last), meaning: st ? STAGE_MEANING[st] : undefined, stage: st,
     long: stageDatesLong(last) || undefined, changes: changes?.length ? stageChangesList(changes) : undefined,
     sub: st && last?.sub ? `${st}${last.sub} · ${SUB_WORDS[st][last.sub]}` : null,

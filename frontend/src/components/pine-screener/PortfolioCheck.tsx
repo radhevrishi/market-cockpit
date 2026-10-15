@@ -31,7 +31,7 @@ export function PortfolioCheck({ items, market, status, error, source, chartHref
   // TheWrap label (the two methods can disagree: e.g. Weinstein 3 topping vs TheWrap 4 declining)
   const stageOf = (r: PortfolioCheckRow['row']) => (r ? (r.twSt ?? r.stage ?? null) : null);
   const stageTip = (r: PortfolioCheckRow['row']) => (!r || stageOf(r) == null ? 'Not known (under a year of weekly history)'
-    : r.twSt != null ? `Stage ${r.twSt} (TheWrap method: weekly 10/30/40-week averages and the 13-week range)${r.twWk != null ? ` · ${r.twWk} weeks in this stage` : ''}${r.sata != null ? ` · SATA ${r.sata}/10` : ''}`
+    : r.twSt != null ? `Stage ${r.twSt} (TheWrap method: weekly 10/30/40-week averages and the 13-week range)${r.twWk != null ? ` · ${r.twWk} weeks in this stage` : ''}${r.sata != null ? ` · SATA ${r.sata}/10` : ''}${r.twH === 0 ? ' · ⚠ Stage 2 weakening — topping risk' : r.twH === 1 ? ' · Stage 2 losing momentum' : ''}`
     : `Weinstein stage ${r.stage} (price against a rising / falling 30-week average) — the TheWrap stage is not known for this company`);
   const sorted = useMemo(() => {
     if (focus && sort.key === 'verdict') { const l = focus.map((f) => f.item); return sort.dir === 1 ? l : l.slice().reverse(); }
@@ -144,7 +144,7 @@ export function PortfolioCheck({ items, market, status, error, source, chartHref
                       ) : null}
                     </div>}
                   </td>
-                  <td className="pnx-num" data-stage-method={r?.twSt != null ? 'thewrap' : r?.stage != null ? 'weinstein' : undefined} title={stageTip(r)}>{stageOf(r) ? <span>{STAGE_NAME[stageOf(r) as number] || stageOf(r)} <span style={{ color: C.dim }}>{stageOf(r)}{r?.twSt == null ? ' W' : ''}</span></span> : '—'}</td>
+                  <td className="pnx-num" data-stage-method={r?.twSt != null ? 'thewrap' : r?.stage != null ? 'weinstein' : undefined} title={stageTip(r)}>{stageOf(r) ? <span>{STAGE_NAME[stageOf(r) as number] || stageOf(r)} <span style={{ color: C.dim }}>{stageOf(r)}{r?.twSt == null ? ' W' : ''}</span>{r?.twSt === 2 && r?.twH === 0 ? <span style={{ color: C.red, fontWeight: 700 }}> ⚠ weakening</span> : null}</span> : '—'}</td>
                   {[x.ma.d21, x.ma.d50, x.ma.d200].map((d, i) => <td key={i} className="pnx-num" style={{ color: d == null ? C.dim : d >= 0 ? C.green : C.red }} title={x.ma.close == null ? 'No close stored' : `${x.ma.basis === 'scan' ? 'Scan close' : 'Latest quote (no scan close stored)'}${x.ma.at ? ` of ${x.ma.at}` : ''}`}>{d == null ? '—' : `${d > 0 ? '+' : ''}${d.toFixed(1)}%`}</td>)}
                   <td className="pnx-num">{typeof r?.rsi === 'number' ? Math.round(r.rsi) : '—'}</td>
                   <td className="pnx-num" data-close-session={x.ma.session || undefined} title={x.ma.at ? `${x.ma.basis === 'scan' ? (x.ma.session === 'provisional' ? 'Daily technical close of today\'s unfinished session (provisional — not a completed close)' : 'Daily technical close') : 'Latest quote'} of ${x.ma.at} — the 21 / 50 / 200-day distances use it` : ''}>{x.ma.session === 'provisional' ? <span style={{ color: C.amber }} aria-label="Session open — provisional">◷ </span> : null}{fmtPrice(x.ma.close, market)}</td>

@@ -29,7 +29,7 @@
 //    and EMA50, else 0.
 import type { DailyBars } from './tech';
 import { periodCloses } from './tech';
-import { stageFromDaily, type StageClock } from '../stage-analysis';
+import { stageFromDaily, stageHealth, type StageClock } from '../stage-analysis';
 
 export interface TvFigures {
   tt: number | null; ttOk: number | null;
@@ -42,6 +42,8 @@ export interface TvFigures {
   ripB: number | null;
   /** zzz987 — Stage Analysis (TheWrap method) */
   twSt?: number | null; sata?: number | null; mrs?: number | null; twWk?: number | null;
+  /** zzz1047 — Stage 2 health (2 healthy · 1 losing momentum · 0 weakening, null outside Stage 2) and % off the stage's highest close */
+  twH?: number | null; twDd?: number | null;
 }
 
 const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -155,7 +157,7 @@ export function pocketPivotAge(b: DailyBars, within = 10): number | null {
 /** `bench` = the market index's weekly closes by week (Monday) key, for Mansfield RS; without it `mrs` stays null. `clock`
  *  (zzz1044a) = the market and the observation time for the completed-week rule of the Stage Analysis (default: now). */
 export function tvFigures(b: DailyBars, bench?: ReadonlyMap<string, number> | null, clock?: StageClock): TvFigures {
-  const out: TvFigures = { tt: null, ttOk: null, rsiMA: null, rsiX: null, gcD: null, dcD: null, emaXU: null, emaXD: null, rsRaw: null, stage: null, st12: null, ppD: null, rvol: null, adv: null, ripB: null, twSt: null, sata: null, mrs: null, twWk: null };
+  const out: TvFigures = { tt: null, ttOk: null, rsiMA: null, rsiX: null, gcD: null, dcD: null, emaXU: null, emaXD: null, rsRaw: null, stage: null, st12: null, ppD: null, rvol: null, adv: null, ripB: null, twSt: null, sata: null, mrs: null, twWk: null, twH: null, twDd: null };
   const c = b.c, n = c.length;
   if (n < 30) return out;
   const L = n - 1;
@@ -195,7 +197,7 @@ export function tvFigures(b: DailyBars, bench?: ReadonlyMap<string, number> | nu
   // zzz987 — Stage Analysis (TheWrap method)
   try {
     const w = stageFromDaily(b, bench, clock);
-    if (w && w.sata != null) { out.sata = w.sata; out.twSt = w.stage; out.twWk = w.weeks; out.mrs = w.mrs; }
+    if (w && w.sata != null) { out.sata = w.sata; out.twSt = w.stage; out.twWk = w.weeks; out.mrs = w.mrs; out.twDd = w.ddPct ?? null; const h = stageHealth(w); out.twH = h ? h.code : null; }
   } catch { /* never costs the other figures */ }
   return out;
 }

@@ -49,6 +49,7 @@ import { toCsv } from '@/lib/csv';
 import { C, PINE_CSS, AccChip, PatternChip, ScoreBar, MaCell, Th, ConditionBadges, ConditionChip, Sparkline, PivotGauge, Kbd, HelpOverlay, FunnelStrip, SkeletonRows, SearchBox, pct, signColor } from './pine-ui';
 import { WhyNot, WhyResultView } from './WhyNot';
 import { SetupCards } from './SetupCards';
+import { nextFillText, nextFillShort } from '@/lib/screener/rebuild-schedule';
 import { PortfolioCheck } from './PortfolioCheck';
 import { HitDetail } from './HitDetail';
 import { ScreenFamilyPicker } from './ScreenFamilyPicker';
@@ -100,7 +101,7 @@ const COL_SHORT: Partial<Record<NumKey, string>> = {
   tt: 'TT rules', ttOk: 'TT all 6', rsR: 'RS Rating', stage: 'Stage', st12: 'Stage 1→2', r40: 'Rule of 40', revQYoY: 'Rev Q YoY', fcfmTTM: 'FCF margin FY',
   rsiMA: 'RSI avg', rsiX: 'RSI × avg (d)', gcD: 'Golden × (d)', dcD: 'Death × (d)', emaXU: 'EMA10×21 up (d)', emaXD: 'EMA10×21 dn (d)', ppD: 'Pocket pivot (d)',
   rvol: 'RVol', 'adv$': 'Avg value', adrP: 'ADR %', ripB: 'Ripster', perf1M: 'Perf 1M', perf6M: 'Perf 6M', perf1Y: 'Perf 1Y',
-  twSt: 'TW stage', sata: 'SATA', mrs: 'Mansfield RS', twWk: 'Weeks in stage',   // zzz987 — Stage Analysis (TheWrap method)
+  twSt: 'TW stage', sata: 'SATA', mrs: 'Mansfield RS', twWk: 'Weeks in stage', twH: 'Stage 2 health', twDd: 'Off stage high',   // zzz987 — Stage Analysis (TheWrap method)
   // zzz1046a — volume & accumulation
   accS: 'Acc score', accR: 'Acc grade', accD: 'Acc days', disD: 'Dist days', chD: 'Stall days', cmf21: 'CMF 21', cmf65: 'CMF 13w', obvSlope: 'OBV trend', obvLead: 'OBV leads',
   bigUpW: 'Big up wks', bigDnW: 'Big down wks', vdu: 'Quiet pullback', vboD: 'Vol breakout (d)', vboX: 'Vol breakout ×', distWarn: 'Dist warning', dlv10: 'Delivery %', dlvChg: 'Delivery Δ',
@@ -113,6 +114,7 @@ function fmtCol(k: NumKey, v: number | null | undefined, market: ScreenMarket): 
   if (YES_NO.has(k)) return v >= 1 ? 'yes' : 'no';
   if (k === 'tt') return `${v}/6`;
   if (k === 'sata') return `${v}/10`;
+  if (k === 'twH') return v >= 2 ? 'healthy' : v >= 1 ? 'losing momentum' : '⚠ weakening';
   if (k === 'mrs') return `${v > 0 ? '+' : ''}${v.toFixed(1)}`;
   if (k === 'rvol') return `${v.toFixed(2)}×`;
   const d = fieldOf(k);
@@ -747,7 +749,7 @@ export default function PineScreener() {
         {/* zzz1033 — the lede line removed at the owner's request (the 'How the patterns are found' panel explains the engine) */}
       </header>
 
-      <SetupCards active={activeCard} counts={cardCounts} rebuild={cardRebuild} onPick={pickCard} loading={!snap} />
+      <SetupCards active={activeCard} counts={cardCounts} rebuild={cardRebuild} onPick={pickCard} loading={!snap} noneText={snap?.building ? 'a build is running now' : nextFillShort(market)} />
 
       {/* zzz1011 — one-click workflows (each opens its screen with its company list; the count is on that list) */}
       <nav className="pnx-flows" aria-label="Workflows" data-testid="workflows">
@@ -1134,7 +1136,7 @@ export default function PineScreener() {
               {unsupported.length || pending.length || unscannedTfs.length || (notScanned && q.need !== 'any') ? (
                 <div role="status" className="pnx-callout" data-tone="warn">
                   {unsupported.map((c) => <div key={c.key}>✕ <b>{c.label}</b>: {c.status === 'unsupported-market' ? `not available for ${market === 'US' ? 'US' : 'Indian'} companies` : 'not delivered to the Pine Screener'} — this rule cannot be evaluated here, so no company passes it strictly. Use the Stock Screener for it, or remove the rule.</div>)}
-                  {pending.map((c) => <div key={c.key}>⏳ <b>{c.label}</b>: no company has this figure yet{snap?.building ? ' (a build is running now)' : ' (it is filled by the screener build)'} — companies are held as provisional, not counted as matches.</div>)}
+                  {pending.map((c) => <div key={c.key}>⏳ <b>{c.label}</b>: no company has this figure yet{snap?.building ? ' (a build is running now)' : ` — new figure, ${nextFillText(market)}`}. Companies are held as provisional, not counted as matches — nothing is wrong with the screen.</div>)}
                   {unscannedTfs.map((tf) => <div key={tf}>⏳ <b>{tf === 'W' ? 'Weekly' : tf === 'M' ? 'Monthly' : 'Daily'} patterns</b>: not scanned yet — {q.tfMode === 'all' || q.tfs.length === 1 ? 'no company can pass until it is' : 'only the other selected timeframes can match meanwhile'}. Daily patterns are never relabelled as {tf === 'W' ? 'weekly' : tf === 'M' ? 'monthly' : 'other'}.</div>)}
                   {notScanned && q.need !== 'any' ? <div>⏳ Chart patterns have not been scanned for this market yet — the pattern requirement cannot be evaluated; every company is provisional.</div> : null}
                 </div>
