@@ -26,6 +26,7 @@ const NAMED: Readonly<Record<string, PineFamilyId>> = {
   'bases-forming': 'bases', 'weekly-bases': 'bases', 'monthly-bases': 'bases', 'monthly-reversal-bases': 'bases', 'monthly-near-pivot': 'bases',
   'mtf-aligned': 'bases', 'wl-forming-bases': 'bases',
   'breakouts-today': 'breakouts', 'breakouts-holding': 'breakouts', 'breakouts-back-below': 'breakouts', 'failed-breakouts': 'breakouts', breakdowns: 'breakouts',
+  'mtf-eo-strong': 'bases',   // zzz1047d
   'tv-rule-of-40': 'r40',
   'tv-trend-template': 'trend', 'rs-80': 'trend', 'stage-2': 'trend', 'stage-1-2': 'trend', 'tt-bullish-base': 'trend', 'rs80-stage2-forming': 'trend',
   'tv-golden-cross': 'trend', 'tv-death-cross': 'trend', 'tv-ema-cross-up': 'trend', 'pocket-pivot': 'trend', 'ripster-bull': 'trend', 'high-rvol': 'trend',

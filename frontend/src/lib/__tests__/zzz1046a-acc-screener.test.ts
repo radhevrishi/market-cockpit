@@ -144,7 +144,7 @@ test('zzz1046a Pine: lean rows carry the fields; rule editor and optional column
 const R = (t: string, o: Partial<ScreenRow>): ScreenRow => ({ t, n: t, px: 10, ...o } as ScreenRow);
 
 test('zzz1046a Pine presets: the volume family, stable ids, each in exactly one family', () => {
-  const ids = ['acc-ab', 'acc-base', 'acc-vbo', 'acc-stealth', 'acc-quiet', 'dist-warn', 'dlv-rising', 'acc-mtf', 'acc-weekly-base'];   // zzz1047c
+  const ids = ['acc-ab', 'acc-base', 'acc-vbo', 'acc-stealth', 'acc-quiet', 'dist-warn', 'dlv-rising', 'acc-mtf', 'acc-weekly-base', 'acc-mtf-eo'];   // zzz1047c, zzz1047d
   for (const id of ids) {
     const s = BUILT_IN_PINE_SCREENS.find((x) => x.id === id);
     assert.ok(s, id);

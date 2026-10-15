@@ -32,10 +32,12 @@ const IDS = ['all-bullish', 'all-bearish', 'oneil-bases', 'minervini-vcp', 'brea
   // zzz1047 — Stage 2 health (added at the end)
   'tw-stage2-healthy', 'tw-stage2-weak',
   // zzz1047c — weekly / monthly + accumulation
-  'acc-mtf', 'acc-weekly-base'];
+  'acc-mtf', 'acc-weekly-base',
+  // zzz1047d — weekly / monthly + latest result grade
+  'mtf-eo-strong', 'acc-mtf-eo'];
 
 test('zzz1045a the 65 built-in screen IDs are unchanged (same IDs, same order, none removed or renamed)', () => {
-  assert.equal(BUILT_IN_PINE_SCREENS.length, 76);   // zzz1047: + 2 Stage 2 health screens   // zzz1046a: + 7 volume & accumulation screens
+  assert.equal(BUILT_IN_PINE_SCREENS.length, 78);   // zzz1047: + 2 Stage 2 health screens   // zzz1046a: + 7 volume & accumulation screens
   assert.deepEqual(BUILT_IN_PINE_SCREENS.map((s) => s.id), IDS);
 });
 
@@ -44,22 +46,22 @@ test('zzz1045a every built-in screen belongs to exactly one family, as the brief
   const seen = new Map<string, number>();
   for (const g of groups) for (const s of g.screens) seen.set(s.id, (seen.get(s.id) || 0) + 1);
   for (const id of IDS) assert.equal(seen.get(id), 1, `${id} listed once`);
-  assert.equal(groups.reduce((n, g) => n + g.screens.length, 0), 76);
+  assert.equal(groups.reduce((n, g) => n + g.screens.length, 0), 78);
   assert.deepEqual(groups.map((g) => g.id), ['discovery', 'bases', 'breakouts', 'portfolio', 'trend', 'r40', 'setups', 'volume']);
   const fam = (id: string) => pineFamilyOf(BUILT_IN_PINE_SCREENS.find((s) => s.id === id)!);
   const expect: Record<PineFamilyId, string[]> = {
     discovery: ['all-bullish', 'all-bearish', 'broad-candidates', 'near-ready', 'oneil-bases', 'minervini-vcp', 'flags-pennants', 'triangles-wedges', 'bottoms', 'bearish-tops', 'bear-continuation'],
-    bases: ['bases-forming', 'weekly-bases', 'monthly-bases', 'monthly-reversal-bases', 'monthly-near-pivot', 'mtf-aligned', 'wl-forming-bases'],
+    bases: ['bases-forming', 'weekly-bases', 'monthly-bases', 'monthly-reversal-bases', 'monthly-near-pivot', 'mtf-aligned', 'wl-forming-bases', 'mtf-eo-strong'],
     breakouts: ['breakouts-today', 'breakouts-holding', 'breakouts-back-below', 'failed-breakouts', 'breakdowns'],
     portfolio: ['pf-bearish-risks', 'pf-bullish-opps', 'pf-failed-bearish'],
     trend: ['tv-trend-template', 'rs-80', 'stage-2', 'stage-1-2', 'tt-bullish-base', 'rs80-stage2-forming', 'tw-stage2-sata6', 'tw-fresh-stage2', 'tw-stage4-sata3',
       'tw-stage1-bases', 'tv-golden-cross', 'tv-death-cross', 'tv-rsi-cross', 'tv-rsi-50', 'tv-ema-cross-up', 'pocket-pivot', 'ripster-bull', 'high-rvol', 'tw-stage2-healthy', 'tw-stage2-weak'],
     r40: ['tv-rule-of-40', 'r40-bullish', 'r40-ready', 'r40-weekly-bases'],
     setups: IDS.filter((x) => x.startsWith('ts-')),
-    volume: ['acc-ab', 'acc-base', 'acc-vbo', 'acc-stealth', 'acc-quiet', 'dist-warn', 'dlv-rising', 'acc-mtf', 'acc-weekly-base'],   // zzz1046a, zzz1047c
+    volume: ['acc-ab', 'acc-base', 'acc-vbo', 'acc-stealth', 'acc-quiet', 'dist-warn', 'dlv-rising', 'acc-mtf', 'acc-weekly-base', 'acc-mtf-eo'],   // zzz1046a, zzz1047c, zzz1047d
   };
   for (const [f, ids] of Object.entries(expect)) for (const id of ids) assert.equal(fam(id), f, `${id} → ${f}`);
-  assert.equal(Object.values(expect).flat().length, 76);
+  assert.equal(Object.values(expect).flat().length, 78);
   assert.equal(PINE_FAMILIES.length, 8);
   for (const f of PINE_FAMILIES) assert.doesNotMatch(`${f.label} ${f.hint}`, /\bbest\b|\bbuy\b|\bsell\b/i, 'plain wording, no buy / sell');
 });
@@ -83,7 +85,7 @@ test('zzz1045a search: every word in the name or the family name', () => {
   const ids = (q: string) => pineFamilyGroups(BUILT_IN_PINE_SCREENS, BUILT, [], q).flatMap((g) => g.screens.map((s) => s.id));
   assert.deepEqual(ids('donchian'), ['ts-donchian-20', 'ts-donchian-55']);
   assert.deepEqual(ids('portfolio'), ['pf-bearish-risks', 'pf-bullish-opps', 'pf-failed-bearish']);
-  assert.ok(ids('base builder').length === 7, 'family name matches');
+  assert.ok(ids('base builder').length === 8, 'family name matches');   // zzz1047d: + mtf-eo-strong
   assert.deepEqual(ids('monthly near'), ['monthly-near-pivot']);
   assert.deepEqual(ids('zzzz-nothing'), []);
   assert.ok(matchesPineScreen({ id: 'x', name: 'Whatever' }, '', false));

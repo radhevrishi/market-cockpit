@@ -76,3 +76,12 @@ test('zzz1047c Pine page: query summary and note sit in a footer after the resul
   assert.deepEqual(mtf.q.tfs, ['W', 'M']); assert.equal(mtf.q.tfMode, 'all');
   assert.deepEqual(mtf.q.filters.map((f: any) => [f.key, f.v]), [['accR', 4]]);
 });
+
+test('zzz1047d weekly + monthly + STRONG/BLOCKBUSTER result screens (90 days), with and without accumulation', async () => {
+  const { BUILT_IN_PINE_SCREENS } = await import('../screener/pine-presets');
+  const { WORKFLOWS } = await import('../screener/pine-view');
+  const a = BUILT_IN_PINE_SCREENS.find((s) => s.id === 'mtf-eo-strong')!, b = BUILT_IN_PINE_SCREENS.find((s) => s.id === 'acc-mtf-eo')!;
+  for (const s of [a, b]) { assert.deepEqual(s.q.tfs, ['W', 'M']); assert.equal(s.q.tfMode, 'all'); assert.equal(s.q.resTier, 'STRONG'); assert.equal(s.q.resDays, 90); }
+  assert.deepEqual(b.q.filters.map((f: any) => [f.key, f.v]), [['accR', 4]]);
+  assert.deepEqual(WORKFLOWS.filter((w) => w.id === 'mtf-eo' || w.id === 'mtf-acc-eo').map((w) => w.presetId), ['mtf-eo-strong', 'acc-mtf-eo']);
+});

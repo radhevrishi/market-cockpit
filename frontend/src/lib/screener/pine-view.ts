@@ -907,6 +907,9 @@ export const WORKFLOWS: readonly Workflow[] = [
   // zzz1047 — a holding still called Stage 2 that is breaking down
   // zzz1047c — weekly + monthly structure with volume accumulation
   { id: 'mtf-acc', label: 'Weekly + monthly + accumulation', presetId: 'acc-mtf', tone: 'up' },
+  // zzz1047d — weekly + monthly with the latest result grade (Earnings Opportunities)
+  { id: 'mtf-eo', label: 'Weekly + monthly + STRONG/BLOCKBUSTER result', presetId: 'mtf-eo-strong', tone: 'up' },
+  { id: 'mtf-acc-eo', label: 'Weekly + monthly + accumulation + strong result', presetId: 'acc-mtf-eo', tone: 'up' },
   { id: 'pf-st2-weak', label: 'Stage 2 weakening in my portfolio', presetId: 'tw-stage2-weak', scope: 'pf', tone: 'down' },
 ];
 /** The scope value a workflow opens with: 'pf', a watchlist ('wl:<id>' — the current one if a watchlist is chosen, else `activeWl`),
