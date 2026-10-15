@@ -815,7 +815,12 @@ export default function UsConvictionBeatsPage() {
     // zzz703 — pattern filter, applied before the sort so the count the
     // toolbar prints and the list the user sees are the same set.
     if (patternOnly) rows = rows.filter((r: any) => classifyGradedRow(r)?.pattern === patternOnly);
+    // zzz1040 — owner: "always show NEW by default at top": results filed inside the NEW window come first, then the chosen sort
+    const nw = newWindow?.days ?? 10;
+    const isNew = (e: any) => { const d = usFilingAgeDays(e.filing_date); return d !== null && d >= 0 && d <= nw; };
     return rows.slice().sort((a, b) => {
+      const na = isNew(a) ? 0 : 1, nb = isNew(b) ? 0 : 1;
+      if (na !== nb) return na - nb;
       const va = k(a), vb = k(b);
       const c = typeof va === 'string' ? String(va).localeCompare(String(vb)) : (va as number) - (vb as number);
       if (c !== 0) return c * dir;

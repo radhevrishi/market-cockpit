@@ -34,3 +34,11 @@ test('the reason list names the NEW window', () => {
   const r = cbFailReasons(old, { ...FILTER_DEFAULT, newOnly: true });
   assert.ok(r.some((x) => /filed 40 days ago \(NEW shows the last \d+ days\)/.test(x)), r.join(' | '));
 });
+
+test('zzz1040 — new results come first by default on both pages', async () => {
+  const { readFileSync } = await import('node:fs');
+  const ind = readFileSync(new URL('../../app/(dashboard)/watchlists/ConvictionBeatsPanel.tsx', import.meta.url), 'utf8');
+  assert.match(ind, /filteredEntries = \[\.\.\.filteredEntries\.filter\(isNew\), \.\.\.filteredEntries\.filter\(\(e\) => !isNew\(e\)\)\];/);
+  const us = readFileSync(new URL('../../app/(dashboard)/us-conviction-beats/page.tsx', import.meta.url), 'utf8');
+  assert.match(us, /if \(na !== nb\) return na - nb;/);
+});

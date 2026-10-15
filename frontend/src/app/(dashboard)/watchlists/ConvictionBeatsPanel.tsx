@@ -896,6 +896,12 @@ export function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild,
     const ni = new Map(filteredEntries.map((e) => [e, newInfoScore(e as any).score] as const));
     filteredEntries = [...filteredEntries].sort((a, b) => (ni.get(b) ?? 0) - (ni.get(a) ?? 0));
   }
+  // zzz1040 — owner: "always show NEW by default at top". Names whose result was filed inside the NEW window come first (in the
+  // order above), the rest follow; applies to every sort.
+  {
+    const isNew = (e: any) => { const d = filingAgeDays(e?.filing_date); return d !== null && d >= 0 && d <= __NEW_WIN.days; };
+    filteredEntries = [...filteredEntries.filter(isNew), ...filteredEntries.filter((e) => !isNew(e))];
+  }
   // ── ADDITIVE zzzUP1 — "On Radar" narrows to transformation-screener names.
   if (onRadarOnly) {
     filteredEntries = filteredEntries.filter((e) => radarMap.has(String(e.ticker || '').toUpperCase()));
