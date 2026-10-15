@@ -21,6 +21,7 @@ import type { ScreenMarket, ScreenRow } from './types';
 import type { TechStored } from './tech-fetch';
 import { tvFigures, rsRatings, type TvFigures } from './tv-screens';
 import { setupFigures, SETUP_FIGURE_KEYS, type SetupBar, type SetupFigures } from '../setups';
+import { passesResult, resultRuleOn, resultRuleText, marketToday } from './latest-result';
 
 /** Bump when the engine or the stored tag changes: every stored entry without it is re-read on the next build. */
 export const PATTERN_SCAN_VERSION = 11;   // 11 = zzz1024: watchlist recall audit (line triangles with volatility-aware flat lines, bottoms after a ≥ 30% fall, triangles voided by a close beyond the sloped line; cp-3.5-triangles) — every stored reading is re-read; 10 = zzz1014: chart-pattern recall audit (flat bases to 20% / near-record lips, base breakouts read where they happen, wicks above a lip, deep-cup roundness, monthly reversals over 4 years, last-turn candidates, H&S search window; cp-3.4-recall) — every stored reading is re-read; 9 = zzz1009: weekly double / triple / H&S span ≥ 5 weekly candles, hits carry breakT / breakAgo (cp-3.3-indicator) — every stored reading is re-read; 8 = zzz1008: auditable geometry on every tag (pts / ev), the 1-year-high runaway rule for reversals and the 6-candle monthly minimum (cp-3.2-geometry) — every stored reading is re-read; 7 = zzz1005: chart-pattern precision audit (real turning points, cp-3.1-precision) — every stored reading is re-read; 2 = zzz984: + the owner's TradingView indicator fields (tv-screens.ts); 3 = zzz987: + Stage Analysis (TheWrap method); 4 = zzz990: chart-pattern audit (volume missingness, IPO first base + listing date, projected sloped boundaries, strict HTF); 5 = zzz993: scan status / quality (MC-02) + scan-close provenance (MC-01) + weekly / monthly patterns (patW / patM); 6 = zzz1003: W / M scans always carry their own close `px` (PS-01), the daily scan reads COMPLETED sessions only (+ an optional provisional live reading, PS-03), monthly scans read ~10 years (PS-07)
@@ -490,6 +491,11 @@ export interface PineQuery {
   /** zzz1008 — count breakouts (breakdowns) whose analysis close is back on the near side of the pivot as stage 'breakout' (true,
    *  the default; labelled "broke out · back below pivot") or only those holding beyond it (false — the setup cards' screens). */
   returned?: boolean | 'only';
+  /** zzz1032 — the latest earnings result (rows carry it as `lr`, attached in the page from /api/v1/pine-screener?results=1): result
+   *  filed in the last N days / grade at least / on the Conviction Beats bench. Optional in saved data; off when absent. */
+  resDays?: number | null;
+  resTier?: 'STRONG' | 'BLOCKBUSTER' | null;
+  resCb?: boolean;
 }
 /** zzz984 — the extra columns the owner can switch on (the TradingView-script fields first). */
 export const OPTIONAL_COLS: readonly NumKey[] = ['tt', 'rsR', 'stage', 'twSt', 'sata', 'mrs', 'twWk', 'r40', 'revQYoY', 'fcfmTTM', 'rsiMA', 'rsiX', 'gcD', 'dcD', 'emaXU', 'emaXD', 'ppD', 'rvol', 'adv$', 'adrP', 'ripB', 'ttOk', 'st12', 'perf1M', 'perf6M', 'perf1Y',
@@ -584,7 +590,8 @@ export function turnoverOf(r: Pick<ScreenRow, 'px' | 'avgVol30' | 'avgVol10'>, m
 
 /** The company part of the query (liquidity, size, strength, sector, extra rules). */
 export function passesCompany(r: ScreenRow, q: PineQuery, market: ScreenMarket, now: Date = new Date()): boolean {
-  return passesCompanyBasics(r, q, market) && pineFilters(q).every((f) => passes(r, f, now) && !(readsR40(f) && r40Guarded(r)));
+  return passesCompanyBasics(r, q, market) && passesResult((r as any).lr, q, marketToday(market, now))
+    && pineFilters(q).every((f) => passes(r, f, now) && !(readsR40(f) && r40Guarded(r)));
 }
 /** Size, price, liquidity, strength and sector (a missing figure fails). */
 function passesCompanyBasics(r: ScreenRow, q: PineQuery, market: ScreenMarket): boolean {
@@ -635,9 +642,16 @@ export function runPineFull(rows: readonly ScreenRow[], q: PineQuery, market: Sc
   const someoneHas = (k: string) => { let v = anyHas.get(k); if (v === undefined) { v = rows.some((x) => fin((x as any)[k])); anyHas.set(k, v); } return v; };
   const tfScanned = new Map<string, boolean>();
   const someoneScanned = (tf: string) => { let v = tfScanned.get(tf); if (v === undefined) { const key = tf === 'W' ? 'patW' : tf === 'M' ? 'patM' : 'pat'; const sk = tf === 'W' ? 'scanW' : tf === 'M' ? 'scanM' : 'scan'; v = rows.some((x) => Array.isArray((x as any)[key]) || ((x as any)[sk] && ((x as any)[sk].st === 'ready' || (x as any)[sk].st === 'no-pattern'))); tfScanned.set(tf, v); } return v; };
+  // zzz1032 — the latest-result rules: provisional only while NO company carries a result yet (the results are still loading)
+  const resOn = resultRuleOn(q), resToday = marketToday(market, now);
+  const resLoaded = resOn && rows.some((x) => (x as any).lr);
   for (const r of rows) {
     const ev = evalRowPatterns(r, q);
     const missing: string[] = [];
+    if (resOn) {
+      if (resLoaded) { if (!passesResult((r as any).lr, q, resToday)) continue; }
+      else missing.push(`latest result (${resultRuleText(q)}) — results not loaded yet`);
+    }
     if (needPattern) {
       if (ev.status === 'fail') continue;
       if (ev.status === 'missing') {
@@ -969,6 +983,9 @@ export function cleanQuery(raw: unknown): PineQuery {
     filters,
     need: x.need === 'any' ? 'any' : 'pattern',
     r40Min: numOrNull(x.r40Min, -1000, 1000),
+    ...(fin(x.resDays) && x.resDays >= 1 && x.resDays <= 400 ? { resDays: Math.round(x.resDays) } : {}),
+    ...(x.resTier === 'STRONG' || x.resTier === 'BLOCKBUSTER' ? { resTier: x.resTier } : {}),
+    ...(x.resCb === true ? { resCb: true } : {}),
     returned: x.returned === 'only' ? 'only' : x.returned !== false,
     cols: Array.isArray(x.cols) ? Array.from(new Set<NumKey>(x.cols.filter((k: unknown): k is NumKey => typeof k === 'string' && !!fieldOf(k)))).slice(0, 30) : [],
   };

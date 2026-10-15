@@ -41,7 +41,9 @@ import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
 import { FilterEditor, readDensity, writeDensity, type Density } from '@/components/stock-screener/FilterEditor';
 import { useWatchlistStore } from '@/components/charts/WatchlistPanel';
 import { activeList, updateList, addItem, removeItem, findItem, itemKey, listCount, type WlItem } from '@/lib/chart-watchlist';
-import { getConvictionTickers } from '@/lib/conviction-beats';
+import { getConvictionTickers, getConvictionList } from '@/lib/conviction-beats';
+import { attachLatestResults, withBrowserBench, marketToday, resultKey, resultSortDate, resultSortTier, RESULT_CSV_HEAD, resultCsvCells, RES_DAY_CHOICES, resultRuleOn, type LatestResultIndex } from '@/lib/screener/latest-result';
+import { LatestResultCell } from './LatestResult';
 import { toCsv } from '@/lib/csv';
 import { C, PINE_CSS, PatternChip, ScoreBar, MaCell, Th, ConditionBadges, ConditionChip, Sparkline, PivotGauge, Kbd, HelpOverlay, FunnelStrip, SkeletonRows, SearchBox, pct, signColor } from './pine-ui';
 import { WhyNot, WhyResultView } from './WhyNot';
@@ -56,6 +58,17 @@ const SCOPE_ORIGIN_KEY = 'mc:pine-screener:scope-origin:v1';   // zzz1016 — wh
 const LAST_KEY = 'mc:pine-screener:last:v1';   // the screen + unsaved choices open last time (this browser only)
 const VIEW_KEY = 'mc:pine-screener:view:v1';   // zzz999 — setups or the portfolio check (this browser only)
 const EXTRA_KEY = 'mc:pine-screener:cols:v1';  // zzz999 — the optional fixed columns switched on (this browser only)
+const RES_COL_KEY = 'mc:pine-screener:res-col:v1';   // zzz1032 — the Latest result column on / off (on by default; this browser only)
+const US_CB_KEY = 'mc:conviction-beats-us:v1';       // the US Conviction Beats bench of this browser (read directly: a light read)
+/** zzz1032 — this browser's Conviction Beats bench for a market (India: the bench module; US: its stored map). */
+function browserBench(market: ScreenMarket): any[] {
+  try {
+    if (market === 'IN') return getConvictionList();
+    const o = JSON.parse(localStorage.getItem(US_CB_KEY) || '{}');
+    return o && typeof o === 'object' && !Array.isArray(o) ? Object.values(o) : [];
+  } catch { return []; }
+}
+type ResState = { status: 'loading' | 'ok' | 'error'; index: LatestResultIndex | null; error: string | null; info: string };
 type Last = { id: string; market: ScreenMarket; q: PineQuery; dirty: boolean };
 type View = 'setups' | 'portfolio';
 type Extra = 'chg' | 'mc' | 'perf' | 'rsi' | 'turn';
@@ -203,7 +216,7 @@ export default function PineScreener() {
     return () => ro.disconnect();
   }, [view, expanded]);
   const [filtersOpen, setFiltersOpen] = useState<boolean>(() => { try { return !window.matchMedia?.('(max-width: 899px)').matches; } catch { return true; } });
-  const [sec, setSec] = useState<Record<string, boolean>>(() => ({ patterns: first.q.ids.length > 0, rules: first.q.filters.length > 0, size: false, cols: false, how: false }));
+  const [sec, setSec] = useState<Record<string, boolean>>(() => ({ patterns: first.q.ids.length > 0, rules: first.q.filters.length > 0, size: false, res: resultRuleOn(first.q), cols: false, how: false }));
   const toggleSec = (k: string) => setSec((s) => ({ ...s, [k]: !s[k] }));
   const [extras, setExtrasRaw] = useState<Extra[]>(() => { try { const v = JSON.parse(localStorage.getItem(EXTRA_KEY) || '[]'); return Array.isArray(v) ? v.filter((x: unknown): x is Extra => EXTRAS.some((e) => e.id === x)) : []; } catch { return []; } });
   const setExtras = (v: Extra[]) => { setExtrasRaw(v); try { localStorage.setItem(EXTRA_KEY, JSON.stringify(v)); } catch { /* a convenience */ } };
@@ -234,8 +247,8 @@ export default function PineScreener() {
   const [cbTick, setCbTick] = useState(0);
   useEffect(() => {
     const bump = () => setCbTick((v) => v + 1);
-    window.addEventListener('conviction-beats:updated', bump); window.addEventListener('storage', bump);
-    return () => { window.removeEventListener('conviction-beats:updated', bump); window.removeEventListener('storage', bump); };
+    window.addEventListener('conviction-beats:updated', bump); window.addEventListener('conviction-beats-us:updated', bump); window.addEventListener('storage', bump);
+    return () => { window.removeEventListener('conviction-beats:updated', bump); window.removeEventListener('conviction-beats-us:updated', bump); window.removeEventListener('storage', bump); };
   }, []);
   const note = screens.find((s) => s.id === screenId)?.note;
   const flash = (m: string) => { setMsg(m); setTimeout(() => setMsg(null), 2800); };
@@ -285,6 +298,23 @@ export default function PineScreener() {
   }, [market, refresh]);
   const hold = holdings[market];   // undefined = not read yet for this market (shown as loading)
 
+  // zzz1032 — each company's latest earnings result (Earnings Opportunities + Conviction Beats), read once per market
+  const [resData, setResData] = useState<Partial<Record<ScreenMarket, ResState>>>({});
+  const [showRes, setShowResRaw] = useState<boolean>(() => { try { return localStorage.getItem(RES_COL_KEY) !== '0'; } catch { return true; } });
+  const setShowRes = (v: boolean) => { setShowResRaw(v); try { localStorage.setItem(RES_COL_KEY, v ? '1' : '0'); } catch { /* a convenience */ } };
+  useEffect(() => {
+    const ctrl = new AbortController();
+    fetch(`/api/v1/pine-screener?market=${market}&results=1`, { cache: 'no-store', signal: ctrl.signal })
+      .then(async (r) => { const j = await r.json().catch(() => null); if (!r.ok || !j?.ok || !j.results || typeof j.results !== 'object' || Array.isArray(j.results)) throw new Error(j?.error || `HTTP ${r.status}`); return j; })
+      .then((j) => setResData((p) => ({ ...p, [market]: { status: 'ok', index: j.results as LatestResultIndex, error: null,
+        info: `${j.count ?? Object.keys(j.results).length} companies with a graded result · Earnings Opportunities, last ${j.days ?? 100} days (${j.graded ?? '?'} graded days) + Conviction Beats bench${j.partial ? ' · partial read' : ''}` } })))
+      .catch((e) => { if (!ctrl.signal.aborted) setResData((p) => ({ ...p, [market]: { status: 'error', index: null, error: String(e?.message || e), info: '' } })); });
+    return () => ctrl.abort();
+  }, [market, refresh]);
+  const res = resData[market];
+  const resStatus: 'loading' | 'ok' | 'error' = res?.status || 'loading';
+  const resToday = marketToday(market);
+
   // zzz999 — a Stock Screener screen as the company list: its filters run on the Stock Screener's own (full) data
   const stockScreens = useMemo(() => [...BUILT_IN_SCREENS, ...readStockScreens().filter((s) => !BUILT_IN_SCREENS.some((b) => b.id === s.id))], [scope]);   // eslint-disable-line react-hooks/exhaustive-deps
   const kind = scopeKind(scope);
@@ -303,7 +333,15 @@ export default function PineScreener() {
 
   const snap = snaps[market];
   const err = errors[market] || null;
-  const rows = useMemo(() => snap?.rows || [], [snap]);
+  // zzz1032 — the latest result rides on each row as `lr` (server index + this browser's Conviction Beats bench); attached only once
+  // the server index is read, so a result rule never runs on half the data
+  const rows = useMemo<Row[]>(() => {
+    const base = snap?.rows || [];
+    if (!res?.index) return base;
+    void cbTick;
+    const universe = new Set(base.map((r) => resultKey(r.t)));
+    return attachLatestResults(base, withBrowserBench(res.index, browserBench(market), resToday, universe));
+  }, [snap, res, market, resToday, cbTick]);
   // zzz1011 — one watchlist's companies of this market (also used by the "Forming bases in a watchlist" workflow's count)
   const wlSet = useCallback((sc: string): Set<string> | null => {
     const l = watchlists?.lists.find((x) => `wl:${x.id}` === sc);
@@ -431,6 +469,8 @@ export default function PineScreener() {
         case 'ma50': return maPosition(r).d50;
         case 'cond': return b ? COND_ORDER.indexOf(conditionState(r, b).id) : null;   // zzz1011
         case 'anClose': return analysisOf(r, b || { tf: 'D' }).close;
+        case 'resD': return resultSortDate((r as any).lr);   // zzz1032 — latest result: by its filing date
+        case 'resG': return resultSortTier((r as any).lr);   // … or by its grade (then date)
         default: { const v = (r as any)[sort.key]; return typeof v === 'number' ? v : null; }
       }
     };
@@ -571,7 +611,7 @@ export default function PineScreener() {
       ...shownCols.map((k) => { const d = fieldOf(k); const u = d?.unit === '%' ? ' (%)' : d?.unit === 'money' ? ` (${money})` : d?.unit === 'price' ? ` (${cur})` : ''; return `${d?.label || k}${u}`; }),
       ...(shownCols.includes('r40') ? ['Rule of 40 state (formula: revenue growth latest quarter YoY + FCF margin TTM)'] : []),
       'Approximate (≈) fields', 'Daily scan status', 'Daily scan version', 'Scan engine version', 'Daily patterns as of', 'Not evaluated (provisional)', 'Snapshot built (UTC)', 'Export scope',
-      'Active query', 'Preset', 'Coverage (selected timeframes, this list)'];
+      'Active query', 'Preset', 'Coverage (selected timeframes, this list)', ...RESULT_CSV_HEAD];
     const body = actHits.map(({ row: r, best: b, tags, missing }) => { const ma = maPosition(r); const an = analysisOf(r, b || { tf: 'D' }); return [r.t, market === 'IN' ? 'NSE' : 'US', r.n, r.tvSec || r.sec || '', b ? PATTERN_META[b.id].label : '', b ? (b.tf || 'D') : '',
       b ? (b.b === 'U' ? 'bullish' : 'bearish') : '', b ? stageWord(b) : '', b ? conditionState(r, b).event.label : '', b ? conditionState(r, b).label : '', b?.c ?? '', b ? likelihoodWord(b.c) : '', b ? ((b as any).vq === 0 ? 'no (too little volume data)' : 'not flagged') : '', b?.p ?? '',
       b ? dirDist(b) ?? '' : '', b && typeof (b as any).dq === 'number' ? (b.b === 'U' ? (b as any).dq : -(b as any).dq) : '', b ? tagLengthText(b) : '', b?.dp ?? '',
@@ -580,7 +620,7 @@ export default function PineScreener() {
       r.chg ?? '', r.mc ?? '', turnoverOf(r, market) ?? '', r[q.perfKey] ?? '', r.rsi ?? '', ma.d21 ?? '', ma.d50 ?? '', ma.d200 ?? '', r.rsR ?? '',
       ...shownCols.map((k) => (r as any)[k] ?? ''), ...(shownCols.includes('r40') ? [r40Explain(r, q.r40Min).text] : []), (r.approx || []).filter((k) => (shownCols as string[]).includes(k)).join('; '),
       r.scan?.st || '', r.scan?.v ?? '', an.engine || r.scan?.e || '', r.patAt || '', (missing || []).join('; '), snap?.builtAt || '', actLabel,
-      summary, presetLine(name, dirty), covText]; });
+      summary, presetLine(name, dirty), covText, ...resultCsvCells((r as any).lr, resToday)]; });
     const blob = new Blob(['﻿' + toCsv([head, ...body])], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `pine_${name.replace(/[^\w-]+/g, '_')}_${market}.csv`; a.click(); URL.revokeObjectURL(a.href);
   };
@@ -649,9 +689,10 @@ export default function PineScreener() {
   );
   // zzz1016 (QA) — 13 fixed columns (company, setup, condition, score, pivot, to pivot, length, analysis close, quote, 12M, averages, RS,
   // sector): the detail row / skeleton spanned one column too many
-  const colCount = 13 + shownCols.length + extras.length;
+  const colCount = 13 + shownCols.length + extras.length + (showRes ? 1 : 0);
   const myStockScreens = stockScreens.filter((s) => s.market === market);
-  const filtersOn = (q.ids.length ? 1 : 0) + q.filters.filter((f) => !f.off).length + companyFilterCount + (scope ? 1 : 0) + (q.r40Min != null ? 1 : 0);
+  const resCount = (q.resDays != null ? 1 : 0) + (q.resTier ? 1 : 0) + (q.resCb ? 1 : 0);
+  const filtersOn = (q.ids.length ? 1 : 0) + q.filters.filter((f) => !f.off).length + companyFilterCount + (scope ? 1 : 0) + (q.r40Min != null ? 1 : 0) + resCount;
   const r40Mode = q.r40Min == null ? 'off' : R40_LEVELS.includes(q.r40Min) ? String(q.r40Min) : 'custom';
 
   return (
@@ -838,6 +879,28 @@ export default function PineScreener() {
             {companyFilterCount ? <button type="button" className="pnx-btn" style={{ justifySelf: 'start' }} onClick={() => change({ mcMin: null, mcMax: null, pxMin: null, turnMin: null, perfMin: null, sectors: [] })}>Clear size filters</button> : null}
           </Section>
 
+          {/* zzz1032 — the latest earnings result rules (Earnings Opportunities + Conviction Beats); combined AND-style with every other choice */}
+          <Section id="pnx-sec-res" title="Latest result" hint={resCount ? `${resCount} on` : ''} open={!!sec.res} onToggle={() => toggleSec('res')}>
+            <label className="pnx-field" title="The company's latest graded result was filed within this many days (a company with no graded result on file does not pass)"><span className="pnx-lab">Result filed in the last</span>
+              <select className="pnx-in" aria-label="Result filed in the last" value={q.resDays ?? ''} onChange={(e) => change({ resDays: e.target.value ? Number(e.target.value) : null })}>
+                <option value="">any time (off)</option>
+                {RES_DAY_CHOICES.map((d) => <option key={d} value={d}>{d} days</option>)}
+              </select>
+            </label>
+            <label className="pnx-field" title="The grade Earnings Opportunities gave the latest result (from the reported figures only)"><span className="pnx-lab">Grade at least</span>
+              <select className="pnx-in" aria-label="Result grade at least" value={q.resTier ?? ''} onChange={(e) => change({ resTier: e.target.value === 'STRONG' || e.target.value === 'BLOCKBUSTER' ? e.target.value : null })}>
+                <option value="">any grade (off)</option>
+                <option value="STRONG">STRONG or BLOCKBUSTER</option>
+                <option value="BLOCKBUSTER">BLOCKBUSTER</option>
+              </select>
+            </label>
+            <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 13, cursor: 'pointer' }} title="Only companies on the Conviction Beats bench (the server's list and this browser's)">
+              <input type="checkbox" checked={!!q.resCb} onChange={(e) => change({ resCb: e.target.checked })} aria-label="Conviction Beats only" /> 🏆 Conviction Beats only
+            </label>
+            <div className="pnx-note" data-testid="result-source">{resStatus === 'ok' ? res?.info : resStatus === 'loading' ? 'Reading the latest results…' : `The latest results could not be read (${res?.error || 'error'}) — these rules wait for them (companies are shown as provisional).`}</div>
+            {resCount ? <button type="button" className="pnx-btn" style={{ justifySelf: 'start' }} onClick={() => change({ resDays: null, resTier: null, resCb: false })}>Clear result rules</button> : null}
+          </Section>
+
           <Section id="pnx-sec-patterns" title="Pattern types" hint={allOfBias ? ALL_TYPES_TEXT : `${q.ids.length} ticked`} open={sec.patterns} onToggle={() => toggleSec('patterns')}>
             <div className="pnx-note">{allOfBias ? `${ALL_TYPES_TEXT}: none ticked, so every ${q.bias === 'U' ? 'bullish ' : q.bias === 'D' ? 'bearish ' : ''}pattern read on the selected timeframes counts (types marked n/a are not read there).` : 'Companies showing any ticked pattern.'} The number = companies with it under the other choices. Hover a pattern for what it means.</div>
             <span style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 6 }}>
@@ -897,6 +960,9 @@ export default function PineScreener() {
 
           <Section id="pnx-sec-cols" title="Columns" hint={extras.length + q.cols.length ? `${extras.length + q.cols.length} extra` : ''} open={sec.cols} onToggle={() => toggleSec('cols')}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 10px', fontSize: 12.5 }}>
+              <label style={{ display: 'inline-flex', gap: 5, alignItems: 'center', cursor: 'pointer' }} title="The latest earnings result (Earnings Opportunities / Conviction Beats)">
+                <input type="checkbox" checked={showRes} onChange={(e) => setShowRes(e.target.checked)} />Latest result
+              </label>
               {EXTRAS.map((e) => (
                 <label key={e.id} style={{ display: 'inline-flex', gap: 5, alignItems: 'center', cursor: 'pointer' }}>
                   <input type="checkbox" checked={has(e.id)} onChange={(ev) => setExtras(ev.target.checked ? [...extras, e.id] : extras.filter((x) => x !== e.id))} />{e.label}
@@ -1063,6 +1129,14 @@ export default function PineScreener() {
                         <Th bare label={<span style={{ display: 'inline-grid', gridTemplateColumns: 'repeat(3, 3.6em)', gap: 4, justifyItems: 'end' }}><span>21d</span><span>50d</span><span>200d</span></span>} k="ma50" sort={sort} setSort={setSort} num />
                       </th>
                       <Th label="RS" k="rsR" sort={sort} setSort={setSort} num title="RS Rating 1–99 (IBD-style), ranked against every company of this market" />
+                      {showRes ? (
+                        <th data-col="result" title="The latest earnings result: quarter · filing date · days since · grade (Earnings Opportunities) · sales and profit year on year. 🏆 = on the Conviction Beats bench. Sort by date or by grade.">
+                          <span style={{ display: 'inline-flex', gap: 8, alignItems: 'baseline' }}>
+                            <Th bare label="Latest result" k="resD" sort={sort} setSort={setSort} num title="Sort by the result's filing date" />
+                            <Th bare label="grade" k="resG" sort={sort} setSort={setSort} num title="Sort by the result's grade (then date)" />
+                          </span>
+                        </th>
+                      ) : null}
                       {shownCols.map((k) => <Th key={k} label={COL_SHORT[k] || fieldOf(k)?.label || k} k={k} sort={sort} setSort={setSort} num title={[fieldOf(k)?.label, fieldOf(k)?.approxNote?.[market] ? `≈ ${fieldOf(k)!.approxNote![market]}` : '', k === 'r40' ? `${R40_FORMULA}. ${R40_GUARD_TIP}` : ''].filter(Boolean).join('\n')} />)}
                       {has('chg') ? <Th label="Chg" k="chg" sort={sort} setSort={setSort} num title="Change today" /> : null}
                       {has('mc') ? <Th label="Mkt cap" k="mc" sort={sort} setSort={setSort} num /> : null}
@@ -1143,6 +1217,8 @@ export default function PineScreener() {
                             <td className="pnx-hide-sm"><Sparkline pts={perfPath(r)} /></td>
                             <td className="pnx-num"><MaCell ma={ma} market={market} /></td>
                             <td className="pnx-num">{typeof r.rsR === 'number' ? <b style={{ color: r.rsR >= 80 ? C.green : r.rsR < 30 ? C.red : C.text1, fontWeight: 650 }}>{r.rsR}</b> : <span className="pnx-dim">—</span>}</td>
+                            {showRes ? (resStatus === 'error' ? <td data-col="result" className="pnx-dim" title={`The latest results could not be read (${res?.error || 'error'})`}>n/a</td>
+                              : <LatestResultCell lr={(r as any).lr} market={market} today={resToday} loading={resStatus === 'loading'} />) : null}
                             {shownCols.map((k) => {
                               const d = fieldOf(k); const ax = r.approx?.includes(k);
                               // zzz1007 — a guard-blanked Rule of 40 is shown blank with the reason (never the meaningless sum)
@@ -1165,7 +1241,7 @@ export default function PineScreener() {
                           </tr>
                           {open ? (
                             <tr className="pnx-detail"><td colSpan={colCount}>
-                              <HitDetail hit={h} q={q} market={market} width={wrapW} onOpenChart={(tf, tag) => window.location.assign(openForReview(r, tf, tag))} />
+                              <HitDetail hit={h} q={q} market={market} width={wrapW} results={resStatus} onOpenChart={(tf, tag) => window.location.assign(openForReview(r, tf, tag))} />
                             </td></tr>
                           ) : null}
                         </React.Fragment>

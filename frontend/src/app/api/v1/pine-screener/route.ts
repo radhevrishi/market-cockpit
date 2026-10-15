@@ -7,6 +7,7 @@ import { ensureSchema } from '@/lib/db-migrate';
 import { leanRows, rowGeometry, scanCoverage, PATTERN_SCAN_VERSION } from '@/lib/screener/pine';
 import type { ScreenRow } from '@/lib/screener/types';
 import { kickBuild, isBuilding } from '@/lib/screener/run';
+import { getResultPayload } from '@/lib/screener/latest-result-server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -35,6 +36,30 @@ export async function GET(req: Request) {
     const row = snap.rows.find((r) => String(r.t).toUpperCase() === detail);
     if (!row) return NextResponse.json({ ok: false, error: 'not in this market\'s data' }, { status: 404 });
     return NextResponse.json({ ok: true, market, t: row.t, builtAt: snap.builtAt, geometry: rowGeometry(row) }, { headers: { 'Cache-Control': 'private, max-age=300' } });
+  }
+  // zzz1032 — ?results=1: each company's latest earnings result (Earnings Opportunities graded days of the last ~100 days + the
+  // Conviction Beats bench), keyed by this market's tickers. A separate small request the page makes once; built at most every
+  // 30 minutes (lib/screener/latest-result-server.ts), never on the list request itself.
+  if (sp.get('results') === '1') {
+    const universe = async () => {
+      let snap = snapMem.get(market);
+      if (!snap) {
+        if (!getPool() || !(await ensureSchema())) return null;
+        const f = await dbQuery<{ built_at: string; rows: unknown }>(`SELECT built_at, rows FROM screener_snapshot WHERE market = $1`, [market]).catch(() => []);
+        if (!f.length) return null;
+        let rr: unknown = f[0].rows;
+        if (typeof rr === 'string') { try { rr = JSON.parse(rr); } catch { rr = []; } }
+        snap = { at: Date.now(), builtAt: String(f[0].built_at), rows: Array.isArray(rr) ? (rr as ScreenRow[]) : [] };
+        snapMem.set(market, snap);
+      }
+      return snap.rows.length ? snap.rows.map((r) => ({ t: r.t, n: r.n })) : null;
+    };
+    try {
+      const p = await getResultPayload(market, universe);
+      return NextResponse.json({ ok: true, ...p }, { headers: { 'Cache-Control': 'private, max-age=300' } });
+    } catch (e: any) {
+      return NextResponse.json({ ok: false, error: `latest results could not be read: ${String(e?.message || e).slice(0, 160)}` }, { status: 503 });
+    }
   }
   const b = sp.get('bias');
   const bias = b === 'bullish' || b === 'U' ? 'U' : b === 'bearish' || b === 'D' ? 'D' : null;

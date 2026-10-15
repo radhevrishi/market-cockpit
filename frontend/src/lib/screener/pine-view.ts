@@ -15,6 +15,7 @@ import { patTagsOf, patMissingWhy, runScreen, tagDirDist, filterLabel, unsupport
 import { tvSectorOf } from './tv-sectors';
 import { normTicker } from './pine-handoff';
 import type { ScreenMarket, ScreenRow } from './types';
+import { resultRuleText, resultRuleOn, passesResult, marketToday } from './latest-result';
 
 const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
@@ -431,6 +432,8 @@ export function querySummary(q: PineQuery, scopeName: string): string {
   parts.push(`Shape ≥ ${q.minConf}`);
   const r40 = r40Text(q);   // zzz1007 — the Rule of 40 control is named, never folded into "N more limits"
   if (r40) parts.push(r40);
+  const res = resultRuleText(q);   // zzz1032 — the latest-result rules are named too
+  if (res) parts.push(res);
   if (q.returned === 'only' && q.stages.includes('b')) parts.push(q.bias === 'D' ? 'Breakdowns back above the level only' : 'Breakouts back below the pivot only');
   if (q.returned === false && q.stages.includes('b')) parts.push(q.bias === 'D' ? 'Breakdowns holding below the level' : q.bias === 'both' ? 'Breaks holding beyond the level' : 'Breakouts holding above the pivot');   // zzz1008
   const lim = [q.mcMin, q.mcMax, q.pxMin, q.turnMin, q.perfMin].filter((v) => v != null).length + (q.sectors.length ? 1 : 0) + q.filters.filter((f) => !f.off).length;
@@ -605,6 +608,9 @@ export function whyNotListed(input: string, o: { rows: readonly ScreenRow[]; q: 
   if (q.perfMin != null) { const pv = row[q.perfKey]; if (!fin(pv) || pv < q.perfMin) lim.push(`performance ${fin(pv) ? pv : 'unknown'}% below ${q.perfMin}%`); }
   if (q.sectors.length && !(row.tvSec && q.sectors.includes(row.tvSec))) lim.push(`sector ${row.tvSec || 'unknown'} not selected`);
   for (const f of pineFilters(q)) { if (f.off) continue; const st = ruleState(row, f, market, o.now); if (st !== 'pass') lim.push(`${filterLabel(f, market)} — ${st === 'fail' ? 'not met' : 'cannot be evaluated'}`); }
+  // zzz1032 — the latest-result rules
+  if (resultRuleOn(q) && o.rows.some((x) => (x as any).lr) && !passesResult((row as any).lr, q, marketToday(market, o.now)))
+    lim.push(`${resultRuleText(q)} — not met (${(row as any).lr?.d ? `latest result ${(row as any).lr.d}${(row as any).lr.g ? `, ${(row as any).lr.g}` : ''}` : 'no graded result on file'})`);
   steps.push({ label: 'Size, liquidity and rules', ok: !lim.length, detail: lim.length ? lim.join('; ') : 'every limit passed (or none set)' });
   const run = o.run || runPineFull(o.rows, q, market, o.now);
   const strict = run.strict.some((h) => h.row.t.toUpperCase() === t), prov = run.provisional.some((h) => h.row.t.toUpperCase() === t);

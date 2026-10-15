@@ -10,6 +10,8 @@ import { explainRow } from '@/lib/screener/research';
 import { allPatterns, analysisOf, conditionState, conflictWords, evidenceRows, geometryPoints, invalidation, latestConditions, lengthTip, maPosition, patternChecks, pivotDerivation, priceSet, sessionLabel, stageWord, tagLengthText, tfWord } from '@/lib/screener/pine-view';
 import type { ScreenPatternTag } from '@/lib/screener/pine';
 import type { ScreenMarket } from '@/lib/screener/types';
+import { LatestResultDetail } from './LatestResult';
+import { marketToday } from '@/lib/screener/latest-result';
 import { C, ConditionBadges, ConditionChip, MaCell, PatternChip, SessionBadge, pct } from './pine-ui';
 
 type GeoState = { status: 'loading' | 'ok' | 'error'; tags: Record<'D' | 'W' | 'M' | 'L', ScreenPatternTag[]> | null; error?: string };
@@ -52,7 +54,7 @@ export function GeometryView({ tag, market }: { tag: ScreenPatternTag; market: S
   );
 }
 
-export function HitDetail({ hit, q, market, onOpenChart, width }: { hit: PineHit; q: PineQuery; market: ScreenMarket; onOpenChart: (tf: string, tag?: ScreenPatternTag | null) => void; width?: number | null }) {
+export function HitDetail({ hit, q, market, onOpenChart, width, results }: { hit: PineHit; q: PineQuery; market: ScreenMarket; onOpenChart: (tf: string, tag?: ScreenPatternTag | null) => void; width?: number | null; results?: 'loading' | 'ok' | 'error' }) {
   const { row: r, best: b } = hit;
   const geo = useGeometry(market, r.t);
   const geoKey = b ? ((b as any).lv ? 'L' : (b.tf || 'D')) as 'D' | 'W' | 'M' | 'L' : null;
@@ -101,6 +103,9 @@ export function HitDetail({ hit, q, market, onOpenChart, width }: { hit: PineHit
             <li data-detail="r40" title={R40_FORMULA} style={{ color: x.pass === false ? C.red : C.text1 }}>{x.pass == null ? '·' : x.pass ? '✓' : '✗'} Rule of 40 (fundamental, not a chart condition): <span style={{ color: x.state === 'known' ? C.text1 : C.dim }}>{x.text}</span></li>
           ); })() : null}
         </ul>
+        {/* zzz1032 — the latest earnings result (Earnings Opportunities / Conviction Beats) */}
+        {results === 'ok' ? <LatestResultDetail lr={(r as any).lr} market={market} today={marketToday(market)} />
+          : results ? <div data-detail="result"><h4 style={{ marginTop: 12 }}>Latest result</h4><div className="pnx-note">{results === 'loading' ? 'Reading the latest results…' : 'The latest results could not be read.'}</div></div> : null}
         <h4 style={{ marginTop: 12 }}>Prices</h4>
         <ul style={{ listStyle: 'none', paddingLeft: 0 }}>
           <li data-price="analysis">{b ? `${tfWord(an.tf).replace(/^./, (c) => c.toUpperCase())} analysis close` : 'Analysis close'}{' '}
