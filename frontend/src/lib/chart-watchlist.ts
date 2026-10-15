@@ -176,6 +176,67 @@ export function removeSection(l: WlList, id: string): WlList {
   return { ...l, sections: l.sections.map((s, k) => (k === target ? { ...s, items: k < i ? [...s.items, ...moved] : [...moved, ...s.items] } : s)).filter((_, k) => k !== i) };
 }
 
+// ── zzz1038 — right-click menu helpers (pure; every one keeps all symbols) ──
+/** Move a row to the top or the bottom of its own section. */
+export function moveItemToEdge(l: WlList, key: string, edge: 'top' | 'bottom'): WlList {
+  const f = findItem(l, key);
+  if (!f) return l;
+  return moveItem(l, key, f.section.id, edge === 'top' ? 0 : undefined);
+}
+/** Move a row into a new section (added at the end of the list) named `name`. Same list when sections are at their limit. */
+export function moveItemToNewSection(l: WlList, key: string, name: string): WlList {
+  if (!findItem(l, key) || l.sections.length >= MAX_SECTIONS) return l;
+  const withSec = addSection(l, name);
+  return moveItem(withSec, key, withSec.sections[withSec.sections.length - 1].id);
+}
+/** Where a removed row was, so "Undo" can put it back in the same place. */
+export interface RemovedItem { sectionId: string; index: number; item: WlItem }
+export function removedFrom(l: WlList, key: string): RemovedItem | null {
+  const f = findItem(l, key);
+  return f ? { sectionId: f.section.id, index: f.index, item: f.item } : null;
+}
+/** Undo a removal: the row goes back to its section and position (last section when that one is gone). No change when it is
+ *  already in the list again. */
+export function restoreItem(l: WlList, r: RemovedItem): WlList {
+  const k = itemKey(r.item);
+  if (findItem(l, k)) return l;
+  const sid = l.sections.some((s) => s.id === r.sectionId) ? r.sectionId : null;
+  const added = addItem(l, sid, r.item);
+  if (added === l || !sid) return added;
+  return moveItem(added, k, sid, r.index);
+}
+/** Copy a row (with its flag) into another list's last section; the open list stays the open list. */
+export function copyItemToList(s: WlStore, listId: string, item: WlItem): WlStore {
+  return updateList(s, listId, (l) => addItem(l, null, { ...item }));
+}
+/** A new list holding this one row; the open list stays the open list. */
+export function copyItemToNewList(s: WlStore, name: string, item: WlItem): WlStore {
+  if (s.lists.length >= MAX_LISTS) return s;
+  const l = emptyList(name);
+  l.sections[0].items = validItem(item.m, item.t) ? [{ ...item }] : [];
+  return { ...s, lists: [...s.lists, l] };
+}
+/** Sort the stored order of one section: by symbol A→Z, or by today's change % high→low (rows without a quote last). */
+export function sortSection(l: WlList, id: string, by: 'symbol' | 'chg', quotes: Record<string, Quote | undefined>): WlList {
+  const sort: SortState = by === 'symbol' ? { key: 'symbol', dir: 'asc' } : { key: 'chg', dir: 'desc' };
+  return { ...l, sections: l.sections.map((s) => (s.id === id ? { ...s, items: sortItems(s.items, sort, quotes) } : s)) };
+}
+/** Remove a section header but keep its symbols: they join the unnamed (no section) group at the end of it. When the list has
+ *  no unnamed group, this section simply loses its name and moves to the top (so its rows show above every named section). */
+export function dissolveSection(l: WlList, id: string): WlList {
+  const i = l.sections.findIndex((s) => s.id === id);
+  if (i < 0 || !l.sections[i].name) return l;
+  const sec = l.sections[i];
+  const loose = l.sections.findIndex((s, k) => k !== i && !s.name);
+  if (loose < 0) return { ...l, sections: [{ ...sec, name: '', collapsed: false }, ...l.sections.filter((_, k) => k !== i)] };
+  return { ...l, sections: l.sections.map((s, k) => (k === loose ? { ...s, items: [...s.items, ...sec.items] } : s)).filter((_, k) => k !== i) };
+}
+/** Copy-symbol text: NSE:TICKER (BSE:CODE for BSE rows) for India, the bare ticker for the US. */
+export function copySymbolText(it: { m: Market; t: string; x?: string }): string {
+  if (it.m === 'US') return it.t;
+  return `${it.x === 'BSE' || (!it.x && /^\d{6}$/.test(it.t)) ? 'BSE' : 'NSE'}:${it.t}`;
+}
+
 // ── sorting + screen order ──────────────────────────────────────────────────
 export type SortKey = 'symbol' | 'last' | 'chg';
 export type SortState = { key: SortKey; dir: 'asc' | 'desc' } | null;

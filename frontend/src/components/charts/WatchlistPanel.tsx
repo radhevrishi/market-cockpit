@@ -8,6 +8,7 @@ import {
   CHART_WATCHLISTS_KEY, FLAGS, FLAG_COLORS, activeList, addItem, addList, addSection, findItem, flatRows, importParsed, importTvBundle, parseTvBundle, itemKey,
   listCount, moveItem, nextFlag, nextSort, parseTradingView, patchItem, patchSection, removeItem, removeList, removeSection,
   renameList, sanitizeStore, seedStore, serializeTradingView, stepRow, updateList, viewRows, visibleSections,
+  copyItemToNewList, copySymbolText, moveItemToNewSection, removedFrom, restoreItem, type RemovedItem,
   type Flag, type Quote, type SortState, type WlItem, type WlList, type WlStore,
 } from '@/lib/chart-watchlist';
 import { pollWhenVisible } from '@/lib/client-fetch';
@@ -16,6 +17,8 @@ import { sharedFetchJson } from '@/lib/tab-shared-fetch';
 import { neighbourOrder } from '@/lib/chart-load-cache';
 import { PANEL_CSS } from './watchlist-panel-css';
 import WatchlistManageDrawer from './WatchlistManageDrawer';
+import { ChartContextMenu } from './ChartContextMenu';
+import { applyRowMenu, applySectionMenu, chartHref, newsHref, watchlistRowMenu, watchlistSectionMenu } from './watchlist-context-menu';
 import { agoLabel, currencyOf, displaySectionName, exchangeLabel, quoteFreshness, usExtendedSession, WIDTH_PRESETS, WL_EXT_COLUMN_KEY } from '@/lib/watchlist-display';
 
 // ── storage hook ──────────────────────────────────────────────────────────────
@@ -239,6 +242,10 @@ function dividerOf(panel: HTMLElement | null): HTMLElement | null {
   return sep && sep.getAttribute('role') === 'separator' ? sep : null;
 }
 type RowMenu = { key: string; top?: number; bottom?: number; right: number } | null;
+/** zzz1038 — the right-click (or long-press) menu: on a row or on a section header, at the pointer */
+type CtxMenu = { kind: 'row'; key: string; x: number; y: number } | { kind: 'section'; id: string; x: number; y: number } | null;
+/** zzz1038 — touch: holding a row or a section header this long opens the same menu */
+export const LONG_PRESS_MS = 500;
 
 /** zzz1006 — keyboard inside a small menu: ↑ / ↓ move between its items, Escape closes it (the list's arrow keys never fire here). */
 function menuKeys(e: React.KeyboardEvent<HTMLDivElement>, close: () => void) {
@@ -268,6 +275,11 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
   const [listMenu, setListMenu] = useState(false);
   const [filterMenu, setFilterMenu] = useState(false);
   const [rowMenu, setRowMenu] = useState<RowMenu>(null);
+  const [ctx, setCtx] = useState<CtxMenu>(null);
+  const closeCtx = useCallback(() => setCtx(null), []);
+  // zzz1038 — "Undo" after a removal (8 s): puts the row back where it was
+  const [undo, setUndo] = useState<{ text: string; listId: string; removed: RemovedItem } | null>(null);
+  const press = useRef<{ timer: ReturnType<typeof setTimeout> | null; x: number; y: number; fired: boolean }>({ timer: null, x: 0, y: 0, fired: false });
   const [managing, setManaging] = useState(false);
   const [adding, setAdding] = useState(false);
   const [addText, setAddText] = useState('');
@@ -334,6 +346,18 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
     body?.addEventListener('scroll', close, { passive: true }); window.addEventListener('resize', close);
     return () => { body?.removeEventListener('scroll', close); window.removeEventListener('resize', close); };
   }, [rowMenu]);
+  useEffect(() => {
+    if (!ctx) return undefined;
+    const body = bodyRef.current;
+    body?.addEventListener('scroll', closeCtx, { passive: true });
+    return () => body?.removeEventListener('scroll', closeCtx);
+  }, [ctx, closeCtx]);
+  useEffect(() => {
+    if (!undo) return undefined;
+    const t = setTimeout(() => setUndo((u) => (u === undo ? null : u)), 8000);
+    return () => clearTimeout(t);
+  }, [undo]);
+  useEffect(() => () => { if (press.current.timer) clearTimeout(press.current.timer); }, []);
   // the chart page's divider: read its width so Narrow / Standard / Wide can show the current choice
   useEffect(() => {
     const sep = dividerOf(panelRef.current);
@@ -469,6 +493,110 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
   const menuRow = rowMenu ? findItem(list, rowMenu.key) : null;
   const activePreset = width == null ? null : WIDTH_PRESETS.reduce((a, b) => (Math.abs(b.px - width) < Math.abs(a.px - width) ? b : a)).id;
   const toggleExt = () => setShowExt((v) => { writeFlag(WL_EXT_COLUMN_KEY, !v); return !v; });
+
+  // ── zzz1038 — right-click / long-press menu ──
+  /** Remove a row, with "Undo" in the footer for 8 s (puts it back in the same section and place). */
+  const removeRow = (k: string) => {
+    const removed = removedFrom(list, k);
+    if (!removed) return;
+    const listId = list.id;
+    update((s) => updateList(s, listId, (l) => removeItem(l, k)));
+    setMsg(null);
+    setUndo({ text: `${removed.item.t} removed from ${list.name}.`, listId, removed });
+  };
+  const runUndo = () => {
+    if (!undo) return;
+    const { listId, removed } = undo;
+    update((s) => updateList(s, listId, (l) => restoreItem(l, removed)));
+    setUndo(null);
+    say(`${removed.item.t} is back in the list.`);
+  };
+  const copyText = (text: string) => {
+    const done = () => say(`Copied ${text}`);
+    try {
+      const p = navigator.clipboard?.writeText(text);
+      if (p) p.then(done, () => say(`Could not copy. Text: ${text}`)); else say(`Could not copy. Text: ${text}`);
+    } catch { say(`Could not copy. Text: ${text}`); }
+  };
+  const openTab = (href: string) => { try { window.open(href, '_blank', 'noopener'); } catch { /* blocked pop-up */ } };
+  const openCtx = (menu: NonNullable<CtxMenu>) => { closeMenus(); setCtx(menu); };
+  /** On a phone-width page the list is a drawer that closes when a chart is picked, so there the menu opens without picking. */
+  const drawerMode = () => { try { return window.matchMedia?.('(max-width: 900px)').matches === true; } catch { return false; } };
+  /** Right-click on a row: the row is selected first (its chart opens), then the menu. */
+  const rowContext = (e: React.MouseEvent, it: WlItem) => {
+    e.preventDefault();
+    const k = itemKey(it);
+    if (k !== currentKey && !drawerMode()) onPick(it.m, it.t, it.x);
+    // the keyboard's menu key / Shift+F10 gives no pointer position: open under the row
+    const r = !e.clientX && !e.clientY ? (e.currentTarget as HTMLElement).getBoundingClientRect() : null;
+    openCtx({ kind: 'row', key: k, x: r ? r.left + 24 : e.clientX, y: r ? r.bottom : e.clientY });
+  };
+  /** Touch: hold ~500 ms to open the menu; moving the finger or lifting it early cancels. The tap after a long press is ignored. */
+  const pressStart = (e: React.PointerEvent, open: () => void) => {
+    if (e.pointerType !== 'touch') return;
+    const p = press.current;
+    if (p.timer) clearTimeout(p.timer);
+    p.x = e.clientX; p.y = e.clientY; p.fired = false;
+    p.timer = setTimeout(() => { p.timer = null; p.fired = true; open(); }, LONG_PRESS_MS);
+  };
+  const pressMove = (e: React.PointerEvent) => {
+    const p = press.current;
+    if (p.timer && Math.hypot(e.clientX - p.x, e.clientY - p.y) > 10) { clearTimeout(p.timer); p.timer = null; }
+  };
+  const pressEnd = () => { const p = press.current; if (p.timer) { clearTimeout(p.timer); p.timer = null; } };
+  /** true once for the click that ends a long press (so it does not also open the chart / toggle the section) */
+  const swallowLongPressClick = () => { if (!press.current.fired) return false; press.current.fired = false; return true; };
+  const longPressRow = (e: React.PointerEvent, it: WlItem) => pressStart(e, () => {
+    const k = itemKey(it);
+    if (k !== currentKey && !drawerMode()) onPick(it.m, it.t, it.x);
+    openCtx({ kind: 'row', key: k, x: press.current.x, y: press.current.y });
+  });
+  const onCtxSelect = (id: string) => {
+    if (!ctx) return;
+    const listId = list.id;
+    if (ctx.kind === 'row') {
+      const f = findItem(list, ctx.key);
+      if (!f) return;
+      const it = f.item, k = ctx.key;
+      const next = applyRowMenu(store, listId, k, id);
+      if (next) {
+        update(() => next);
+        if (id.startsWith('copy-to:')) say(`${it.t} added to ${store.lists.find((l) => l.id === id.slice(8))?.name || 'the list'}.`);
+        return;
+      }
+      if (id === 'open') onPick(it.m, it.t, it.x);
+      else if (id === 'open-tab') openTab(chartHref(it));
+      else if (id === 'copy-sym') copyText(copySymbolText(it));
+      else if (id === 'copy-name') { const n = quotes[k]?.name; if (n) copyText(n); }
+      else if (id === 'news') openTab(newsHref(it.t));
+      else if (id === 'remove') removeRow(k);
+      else if (id === 'move:new') {
+        const n = window.prompt('Name for the new section:', 'New section');
+        if (n && n.trim()) update((s) => updateList(s, listId, (l) => moveItemToNewSection(l, k, n)));
+      } else if (id === 'copy-to:new') {
+        const n = window.prompt(`Name for the new list (${it.t} goes in it):`, 'New list');
+        if (n && n.trim()) { update((s) => copyItemToNewList(s, n, it)); say(`${it.t} added to a new list “${n.trim()}”.`); }
+      }
+      return;
+    }
+    const sec = list.sections.find((s) => s.id === ctx.id);
+    if (!sec) return;
+    if (id === 'sec-remove') {
+      const label = displaySectionName(sec.name);
+      if (!window.confirm(`Remove the section “${label}”? Its ${sec.items.length} symbol${sec.items.length === 1 ? '' : 's'} stay in the list, without a section.`)) return;
+    }
+    const next = applySectionMenu(store, listId, sec.id, id, quotes);
+    if (next) { update(() => next); if (id === 'sec-remove') say(`Section “${displaySectionName(sec.name)}” removed; its symbols are kept.`); return; }
+    if (id === 'sec-rename') {
+      const n = window.prompt('Section name:', sec.name);
+      if (n && n.trim() && n.trim() !== sec.name) setList((l) => patchSection(l, sec.id, { name: n }));
+    } else if (id === 'sec-add') {
+      setAddSec(sec.id); setAdding(true); setAddText('');
+      if (sec.collapsed) setList((l) => patchSection(l, sec.id, { collapsed: false }));
+    }
+  };
+  const ctxItems = !ctx ? [] : ctx.kind === 'row' ? watchlistRowMenu(store, list, ctx.key, quotes[ctx.key]?.name) : watchlistSectionMenu(list, ctx.id);
+  const ctxTitle = !ctx ? '' : ctx.kind === 'row' ? (findItem(list, ctx.key)?.item.t || '') : displaySectionName(list.sections.find((s) => s.id === ctx.id)?.name || '');
 
   return (
     <div ref={panelRef} className={`mcwl${compact ? ' mcwl-compact' : ''}${showExt ? ' mcwl-ext' : ''}`}>
@@ -608,7 +736,10 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
         {shownGroups.map(({ section, rows: secRows, matches }) => (
           <div key={section.id} role="rowgroup">
             {section.name && (
-              <div className={`mcwl-sec${drag && drag.over === `sec:${section.id}` ? ' drop-into' : ''}`} role="row" onClick={() => setList((l) => patchSection(l, section.id, { collapsed: !section.collapsed }))}
+              <div className={`mcwl-sec${drag && drag.over === `sec:${section.id}` ? ' drop-into' : ''}`} role="row" data-sec={section.id} onClick={() => { if (swallowLongPressClick()) return; setList((l) => patchSection(l, section.id, { collapsed: !section.collapsed })); }}
+                onContextMenu={(e) => { e.preventDefault(); openCtx({ kind: 'section', id: section.id, x: e.clientX, y: e.clientY }); }}
+                onPointerDown={(e) => pressStart(e, () => openCtx({ kind: 'section', id: section.id, x: press.current.x, y: press.current.y }))}
+                onPointerMove={pressMove} onPointerUp={pressEnd} onPointerCancel={pressEnd}
                 onDragOver={(e) => { if (canDrag) { e.preventDefault(); const dk = dragKey.current; if (dk && drag?.over !== `sec:${section.id}`) setDrag({ from: dk, over: `sec:${section.id}`, after: false }); } }}
                 onDrop={(e) => { e.preventDefault(); const k = dragKey.current; if (k) setList((l) => moveItem(l, k, section.id, 0)); dragKey.current = null; setDrag(null); }}>
                 <span role="gridcell">
@@ -629,7 +760,9 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
                 <div key={k} data-key={k} className={`mcwl-row mcwl-grid${active ? ' active' : ''}${drag?.from === k ? ' dragging' : ''}${drag && drag.over === k && drag.from !== k ? (drag.after ? ' drop-after' : ' drop-before') : ''}`} role="row" tabIndex={k === tabKey ? 0 : -1} aria-selected={active}
                   aria-label={`${it.t} on ${it.x || (it.m === 'IN' ? 'NSE' : 'US')}${q?.name ? `, ${q.name}` : ''}; Enter opens chart`} aria-current={active ? 'true' : undefined}
                   title={`${q?.name || it.t} · ${ex} · prices in ${cur}${it.m === 'IN' && /^\d{6}$/.test(it.t) ? ' — BSE code: price and chart may not load' : ''}`}
-                  onClick={() => onPick(it.m, it.t, it.x)}
+                  onClick={() => { if (swallowLongPressClick()) return; onPick(it.m, it.t, it.x); }}
+                  onContextMenu={(e) => rowContext(e, it)}
+                  onPointerDown={(e) => longPressRow(e, it)} onPointerMove={pressMove} onPointerUp={pressEnd} onPointerCancel={pressEnd}
                   onKeyDown={(e) => rowKeyDown(e, it)}
                   draggable={canDrag}
                   onDragStart={() => { dragKey.current = k; setDrag({ from: k, over: null, after: false }); }}
@@ -670,7 +803,7 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
                   )}
                   <span role="gridcell" className={`mcwl-act${rowMenu?.key === k ? ' open' : ''}`} onClick={(e) => e.stopPropagation()}>
                     <button type="button" className="mcwl-ib mcwl-dots" data-wl-popup aria-label={`Actions for ${it.t}`} aria-haspopup="menu" aria-expanded={rowMenu?.key === k} tabIndex={k === tabKey ? 0 : -1}
-                      title="Open chart, move, flag or remove" onClick={(e) => openRowMenu(k, e.currentTarget)}>⋯</button>
+                      title="Open chart, move, flag or remove (right-click a row for every action)" onClick={(e) => openRowMenu(k, e.currentTarget)}>⋯</button>
                   </span>
                 </div>
               );
@@ -693,6 +826,16 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
         )}
       </div>
       {msg ? <div className="mcwl-foot" role="status">{msg}</div> : null}
+      {undo && !msg ? (
+        <div className="mcwl-foot" role="status" data-testid="watchlist-undo" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ flex: 1, minWidth: 0 }}>{undo.text}</span>
+          <button type="button" className="mcwl-btn on" onClick={runUndo}>Undo</button>
+        </div>
+      ) : null}
+      {ctx && ctxItems.length > 0 && (
+        <ChartContextMenu fixed x={ctx.x} y={ctx.y} items={ctxItems} onSelect={onCtxSelect} onClose={closeCtx} title={ctxTitle}
+          testId={ctx.kind === 'row' ? 'watchlist-row-menu' : 'watchlist-section-menu'} />
+      )}
 
       {rowMenu && menuRow && (() => {
         const it = menuRow.item; const k = rowMenu.key;
@@ -718,7 +861,7 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
                 onClick={() => { close(); setList((l) => patchItem(l, k, { flag: undefined })); }}><FlagDot size={11} /></button>
             </div>
             <div className="sep" role="separator" />
-            <button type="button" role="menuitem" className="danger" aria-label={`Remove ${it.t}`} onClick={() => { close(); setList((l) => removeItem(l, k)); say(`${it.t} removed from ${list.name}.`); }}>Remove from list</button>
+            <button type="button" role="menuitem" className="danger" aria-label={`Remove ${it.t}`} onClick={() => { close(); removeRow(k); }}>Remove from list</button>
           </div>
         );
       })()}
