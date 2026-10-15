@@ -3654,3 +3654,10 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   `lib/screener/fcf-ttm.ts`, store kind 'cfq', ~500 companies a run). Existing screens still use the full-year figure; the build notes carry
   a before/after Rule of 40 diff for the owner to review before any screen moves. Pattern benchmark harness: `lib/pattern-benchmark.ts` +
   `scripts/pattern-benchmark.mjs` (seed set is SYNTHETIC — real labelled examples still needed from the owner).
+- zzz1046a/b — volume & accumulation (`lib/accumulation.ts`, ACC_VERSION; screener `acc-row.ts`, chart `acc-view.ts` / ACC overlay).
+  zzz1047b: grade A/B needs ALL `ACC_GATES` (≥3 acc sessions and +2 over distribution, CMF65 ≥ 0.10, up/down vol ≥ 1.3, OBV rising,
+  no distribution warning, close > 50-session average, ≥ $5M / ₹3 Cr a day); a high score that misses one = C, reason in `accM`.
+  Before the gates 30% of India was A/B; with them ~3%. Do not loosen without checking the live distribution.
+- zzz1047 — Stage 2 health (`stageHealth` in lib/stage-analysis.ts): flags a confirmed Stage 2 that is breaking down (SATA ≤ 3, close
+  > 2% under the 30-wk MA, ≥ 25% off the stage high …) WITHOUT changing the stage. Row fields `twH` (2/1/0) + `twDd`; SETUP_VERSION 5;
+  screens `tw-stage2-healthy` / `tw-stage2-weak`; workflow "Stage 2 weakening in my portfolio"; chart banner turns topping colour.
