@@ -502,7 +502,7 @@ const US_SCREENS: Screen[] = [
     n('revQYoY', 'gt', 9), n('epsQYoY', 'gt', 10), n('vol', 'ge', 10_000), cap('US', 100e6, 5e9), cmp('sma50', 'ge', 'sma200'), sec(...TV_SECTORS),
     n('gpQYoY', 'gt', 10), btw('ps', 0, 7), n('roceTTM', 'gt', -10),
   ] },
-  { id: 'us-overall', name: 'Overall Screener', market: 'US', builtIn: true, filters: [], note: 'This TradingView screen has no active filters — it lists every stock.' },
+  { id: 'us-overall', name: 'Overall Screener — all companies (start a screen)', market: 'US', builtIn: true, filters: [], note: 'No filters: every listed company. A starting point — add rules, then "Save as new…". (Your TradingView "Overall Screener".)' },
   { id: 'us-future-nvda', name: 'Future NVDIA ALAB APP PLTR(USA)', market: 'US', builtIn: true, filters: [
     sec(...S15), n('ebitdaQoQ', 'gt', 0), n('revQYoY', 'gt', 25), n('revAYoY', 'gt', 10), n('emp', 'gt', 100), n('gmFY', 'gt', 25),
     n('de', 'lt', 1), btw('ps', 3, 333), n('gpQYoY', 'gt', 50), n('opmTTM', 'gt', -15), n('bb', 'gt', -25),
@@ -600,7 +600,7 @@ const IN_SCREENS: Screen[] = [
   { id: 'in-daily-gainers', name: 'Daily Gainers Stocks India', market: 'IN', builtIn: true, filters: [
     n('epsQYoY', 'gt', 0), n('chg', 'gt', 4.7), cap('IN', 300e6, 30e9), n('revQYoY', 'gt', 20), n('vol', 'gt', 100_000),
   ] },
-  { id: 'in-reject', name: 'Reject Stocks  Scanner', market: 'IN', builtIn: true, filters: [], note: 'This TradingView screen has no active filters — it lists every stock.' },
+  { id: 'in-reject', name: 'Reject Stocks Scanner — all companies (no filters)', market: 'IN', builtIn: true, filters: [], note: 'No filters: every listed company (your TradingView "Reject Stocks Scanner" had none active). A starting point — add rules, then "Save as new…".' },
   { id: 'in-breakout', name: 'Breakout Scanner', market: 'IN', builtIn: true, filters: [
     n('px', 'ge', 5), cmp('px', 'ge', 'sma21'), cmp('px', 'ge', 'sma50'), n('avgVol10', 'gt', 100_000), cap('IN', 500e6, null), n('revQYoY', 'gt', 15), n('perf1W', 'gt', 7),
     n('perf1M', 'gt', 0), cmp('sma21', 'ge', 'sma50'), n('chgOpen', 'gt', 0), near('px', 'ema10', 0, 10), n('atrP', 'gt', 3),

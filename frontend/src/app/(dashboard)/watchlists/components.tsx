@@ -135,6 +135,10 @@ export function WatchlistTable({
     return <EmptyState />;
   }
 
+  // zzz1044 — Day High / Day Low only when the quote source gave them for at least one row (an audit found both blank on every row);
+  // a missing value is never shown as 0
+  const showHigh = items.some((i) => i.dayHigh != null && i.dayHigh > 0);
+  const showLow = items.some((i) => i.dayLow != null && i.dayLow > 0);
   // zzz1013 — a dense terminal table: sticky header, aria-sort on sortable columns (Enter / Space sorts), zebra + hover rows
   const ariaSort = (f: SortField): 'ascending' | 'descending' | 'none' => (sortField === f ? (sortOrder === 'asc' ? 'ascending' : 'descending') : 'none');
   // a plain function (not a component), so a header keeps keyboard focus across the re-render a sort causes
@@ -155,8 +159,8 @@ export function WatchlistTable({
             {th({ field: 'sector', label: 'Sector' })}
             {th({ field: 'price', label: 'CMP (₹)', num: true })}
             {th({ field: 'changePercent', label: 'Change%', num: true })}
-            {th({ field: 'dayHigh', label: 'Day High', num: true })}
-            {th({ field: 'dayLow', label: 'Day Low', num: true })}
+            {showHigh ? th({ field: 'dayHigh', label: 'Day High', num: true }) : null}
+            {showLow ? th({ field: 'dayLow', label: 'Day Low', num: true }) : null}
             {/* PATCH 0442 BUG-020 — Optional columns rendered based on chooser state */}
             {OPTIONAL_COLS.filter(c => activeCols.has(c.id)).map(c => th({ field: c.id as SortField, label: c.label, num: true }))}
             <th className="num" style={{ position: 'relative' }}>
@@ -232,12 +236,12 @@ export function WatchlistTable({
                     </span>
                   )}
                 </td>
-                <td className="num" style={{ fontSize: '12.5px' }}>
+                {showHigh ? <td className="num" style={{ fontSize: '12.5px' }}>
                   {item.dayHigh != null && item.dayHigh > 0 ? `₹${item.dayHigh.toFixed(2)}` : <span className="wlp-dim" title="Day high not given by the quote source">—</span>}
-                </td>
-                <td className="num" style={{ fontSize: '12.5px' }}>
+                </td> : null}
+                {showLow ? <td className="num" style={{ fontSize: '12.5px' }}>
                   {item.dayLow != null && item.dayLow > 0 ? `₹${item.dayLow.toFixed(2)}` : <span className="wlp-dim" title="Day low not given by the quote source">—</span>}
-                </td>
+                </td> : null}
                 {/* PATCH 0442 BUG-020 — Optional column cells */}
                 {OPTIONAL_COLS.filter(c => activeCols.has(c.id)).map(c => {
                   const val = (item as any)[c.id] as number | null | undefined;
