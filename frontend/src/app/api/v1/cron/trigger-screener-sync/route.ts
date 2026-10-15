@@ -77,8 +77,9 @@ async function dispatch() {
         ok: true,
         dispatched: true,
         note:
-          'A fresh screener.in sync has been requested. It usually takes 1-2 minutes to fetch and commit, ' +
-          'and a further minute or so for the deployment to serve the new file — so reload this page in a few minutes.',
+          'A fresh screener.in sync has been requested. Fetching and saving the files takes about 2 minutes; the site then ' +
+          'rebuilds with them (tests + build, about 10–12 minutes), so the new figures show roughly 15 minutes from now. ' +
+          'Progress: github.com/radhevrishi/market-cockpit/actions/workflows/screener-sync.yml',
       });
     }
     const body = await r.text();
