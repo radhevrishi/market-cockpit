@@ -164,6 +164,13 @@ export async function fetchChart(symbol: string, range = '1d', interval = '1d') 
       changeKnown: _changeKnown,
       volume: meta.regularMarketVolume || 0,
       marketCap: 0, // not available in chart API
+      // zzz1045 — the quote's own time and session range (Yahoo chart meta carries them; the /watchlists Quote time + Day High / Low
+      // columns were blank because the quote fallback dropped them). 0 / null = not given.
+      regularMarketTime: Number(meta.regularMarketTime) > 0 ? Number(meta.regularMarketTime) : null,
+      dayHigh: Number(meta.regularMarketDayHigh) > 0 ? Number(meta.regularMarketDayHigh) : 0,
+      dayLow: Number(meta.regularMarketDayLow) > 0 ? Number(meta.regularMarketDayLow) : 0,
+      fiftyTwoWeekHigh: Number(meta.fiftyTwoWeekHigh) > 0 ? Number(meta.fiftyTwoWeekHigh) : 0,
+      fiftyTwoWeekLow: Number(meta.fiftyTwoWeekLow) > 0 ? Number(meta.fiftyTwoWeekLow) : 0,
       timestamps: result.timestamp || [],
       closes: _closes,
       // zzz795 — the per-bar volume series, aligned with `closes`. Additive:
@@ -304,6 +311,11 @@ export async function fetchQuotesWithFallback(symbols: string[]): Promise<any[]>
         regularMarketVolume: chart.volume,
         regularMarketPreviousClose: chart.previousClose,
         marketCap: 0,
+        regularMarketTime: (chart as any).regularMarketTime ?? null,   // zzz1045
+        regularMarketDayHigh: (chart as any).dayHigh || 0,
+        regularMarketDayLow: (chart as any).dayLow || 0,
+        fiftyTwoWeekHigh: (chart as any).fiftyTwoWeekHigh || 0,
+        fiftyTwoWeekLow: (chart as any).fiftyTwoWeekLow || 0,
       });
     }
     if (i + CONC < symbols.length) await new Promise((r) => setTimeout(r, GAP_MS));
