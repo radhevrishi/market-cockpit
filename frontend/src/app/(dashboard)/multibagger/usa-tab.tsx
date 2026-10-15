@@ -35,7 +35,7 @@ export function USACompare() {
     try {
       const rawFiles = await fetchTradingviewCsvsAsFiles(SYNC_ROUTING.multibaggerUsa);
       if (rawFiles.length === 0) {
-        setParseError('Auto-sync failed: no CSVs in /data/tradingview/. Run the GitHub Action first.');
+        setParseError('Auto-sync failed: our own screener returned no files (snapshot not built yet?). Open the Stock Screener page, then try again.');
         return;
       }
       // zzz163 — Filter each CSV to USA-exchange rows only.
@@ -504,14 +504,14 @@ export function USACompare() {
         </div>
       </div>
 
-      {/* zzz162 — Auto-sync from TradingView (daily GitHub Action).
-          Pulls 4 CSVs from /data/tradingview/. Similar pattern to India tab. */}
+      {/* zzz162 — Auto-sync of the USA Multibagger screens.
+          zzz1048 — built by our own Stock Screener (/api/v1/tv-data), no TradingView login. */}
       <div style={{marginBottom:14,padding:'12px 16px',background:CARD2,border:`1px solid ${BORDER}`,borderRadius:10,display:'flex',flexWrap:'wrap',alignItems:'center',gap:12}}>
         <span style={{fontSize:F.md,color:'#22D3EE',fontWeight:800}}>📡 Server Auto-Sync</span>
         <span style={{fontSize:F.sm,color:MUTED}}>
           {usaSyncStatus?.hasManifest
-            ? <>Last daily sync: <b style={{color:'#e6edf3'}}>{usaSyncStatus.lastSync?.toLocaleString()}</b> ({usaSyncStatus.hoursOld != null ? Math.round(usaSyncStatus.hoursOld) : '?'}h ago) · {usaSyncStatus.okCount} screens ready</>
-            : <>No server sync yet — click below to pull the daily-cached TradingView Multibagger CSVs.</>}
+            ? <>Own screener snapshot: <b style={{color:'#e6edf3'}}>{usaSyncStatus.lastSync?.toLocaleString()}</b> ({usaSyncStatus.hoursOld != null ? Math.round(usaSyncStatus.hoursOld) : '?'}h ago) · {usaSyncStatus.okCount} screens ready{usaSyncStatus.oldDataFiles?.length ? <b style={{color:'#F59E0B'}}> · OLD TradingView data for: {usaSyncStatus.oldDataFiles.join(', ')} (our snapshot was not available)</b> : null}</>
+            : <>No screener snapshot yet — click below to pull the USA Multibagger screens from our own Stock Screener.</>}
         </span>
         <button
           onClick={()=>runUsaAutoSync(true)}

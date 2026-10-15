@@ -51,7 +51,7 @@ CI also shows "npm audit found high/critical advisories" as a warning — worth 
    Pinned here: scrape-corp-filings, scrape-guidance-docs, scrape-india-news,
    scrape-india-technicals, scrape-mover-reasons, scrape-nse-holidays, scrape-nse-index-history,
    scrape-nse-indices, scrape-nse-results, scrape-rolling-stats, scrape-screener-fundamentals,
-   edgar-guidance-backfill, screener-sync, tradingview-sync, results-pdf,
+   edgar-guidance-backfill, screener-sync, results-pdf (tradingview-sync was removed in zzz1048),
    daily-research, daily-summary, score-ai-ledger, ai-eval, deploy-workers, ci,
    and the new actions-watchdog.
 
@@ -93,9 +93,10 @@ CI also shows "npm audit found high/critical advisories" as a warning — worth 
    The biggest users are the multi-hour jobs (scrape-guidance-docs manual runs, edgar-guidance-backfill
    full backfills, ai-guidance-backlog).
 5. **Railway → service → Settings → "Wait for CI"** (from the zzz883 audit) so a red CI blocks a deploy.
-6. **Session cookies expire.** `SCREENER_SESSIONID` and `TRADINGVIEW_SESSIONID` are personal login cookies;
-   when they expire, screener-sync / tradingview-sync fail red (that is intended — it is a real problem).
-   Refresh the secret from a logged-in browser when the watchdog reports it.
+6. **Session cookies expire.** `SCREENER_SESSIONID` is a personal login cookie; when it expires, screener-sync
+   fails red (that is intended — it is a real problem). Refresh the secret from a logged-in browser when the
+   watchdog reports it. (zzz1048: the TradingView sync is gone — its files are built by our own Stock Screener —
+   so the `TRADINGVIEW_SESSIONID` repository secret is no longer used and can be deleted.)
 
 ## How to read a run now
 

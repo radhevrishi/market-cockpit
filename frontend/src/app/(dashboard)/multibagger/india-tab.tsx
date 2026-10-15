@@ -614,7 +614,7 @@ export function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(
         return;
       }
       // zzz479 — also pull the India Multibagger screeners that live on TradingView
-      // (they sync to /data/tradingview/ like USA Multibagger does) and MERGE them
+      // (zzz1048: now built by our own Stock Screener, /api/v1/tv-data) and MERGE them
       // into the same India pool. Best-effort + additive: if they haven't synced yet
       // the screener.in pool still loads exactly as before, and handleFiles never
       // replaces an existing screener.in row — it only adds new tickers.

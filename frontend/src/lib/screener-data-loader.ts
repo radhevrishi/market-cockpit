@@ -19,7 +19,7 @@ export type SyncManifest = {
   fail: number;
   // PATCH 1101rrr — displayName is screener.in's actual name for the
   // watchlist/screen (from page <title>) so the UI labels stay friendly.
-  files: { name: string; size: number; displayName?: string }[];
+  files: { name: string; size: number; displayName?: string; ok?: boolean; source?: string; note?: string }[];
 };
 
 // Per-target file routing. Add/remove entries here when screen list changes.
@@ -61,9 +61,9 @@ export const SYNC_ROUTING = {
     'watchlist-8105148.csv',
   ],
   // zzz162 — USA Multibagger auto-sync from TradingView screener exports.
-  // These CSVs land in /data/tradingview/ (not /data/screener/) via
-  // .github/workflows/tradingview-sync.yml. Callers should use
-  // fetchTradingviewCsvsAsFiles() to load them.
+  // zzz1048 — these files are now made by our own Stock Screener (same names,
+  // same CSV columns) at /api/v1/tv-data — no TradingView login any more.
+  // Callers should use fetchTradingviewCsvsAsFiles() to load them.
   // zzz165 — User cleaned the Bonde TradingView screener to USA-only stocks,
   // so restoring it to USA Multibagger routing. (zzz163 exchange filter stays
   // as a defensive backstop in case any drift back in future.)
@@ -76,8 +76,8 @@ export const SYNC_ROUTING = {
     // mis-routed into India). USA-exchange filter keeps it clean regardless.
     'usa-multibagger-tv-1.csv',
   ],
-  // zzz479 — India Multibagger screeners that live on TradingView (not
-  // screener.in). These CSVs land in /data/tradingview/ (like multibaggerUsa),
+  // zzz479 — India Multibagger screeners that lived on TradingView (not
+  // screener.in). Served by /api/v1/tv-data (like multibaggerUsa),
   // so they must be loaded with fetchTradingviewCsvsAsFiles() and are MERGED into
   // the India fundamental pool alongside the screener.in screens (handleFiles is
   // additive — it never replaces an existing screener.in row for the same ticker).
@@ -92,8 +92,11 @@ export const SYNC_ROUTING = {
 const MANIFEST_URL = '/data/screener/manifest.json';
 const FILE_URL_BASE = '/data/screener/';
 // zzz162 — TradingView CSVs live in a separate folder + manifest.
-const TV_MANIFEST_URL = '/data/tradingview/manifest.json';
-const TV_FILE_URL_BASE = '/data/tradingview/';
+// zzz1048 — no longer a committed folder: our own Stock Screener builds the same
+// files on request (lib/screener/tv-replacement.ts). When a snapshot is missing the
+// route serves the old committed export, and the manifest labels it as old data.
+export const TV_MANIFEST_URL = '/api/v1/tv-data';
+export const tvFileUrl = (filename: string) => `/api/v1/tv-data?file=${encodeURIComponent(filename)}`;
 
 export async function fetchManifest(): Promise<SyncManifest | null> {
   try {
@@ -162,6 +165,8 @@ export type SyncStatus = {
   missedRuns: number;
   /** zzz687 — at least one scheduled run is genuinely late, not merely due. */
   overdue: boolean;
+  /** zzz1048 — files served from the old TradingView export because our own screener snapshot was missing. */
+  oldDataFiles?: string[];
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -274,8 +279,9 @@ export function resetAutoLoadFlag(scope: string): void {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // zzz162 — TradingView CSV helpers (parallel to Screener.in ones above).
-// TradingView CSVs live in /data/tradingview/ and are populated by the
-// tradingview-sync.yml GitHub Action. Same shape as Screener.in manifest.
+// zzz1048 — the files are built from our own Stock Screener snapshots by
+// /api/v1/tv-data (the TradingView sync workflow is gone). Same manifest shape;
+// `source` per file says 'own-screener' or 'old-tradingview-export' (fallback).
 // ═══════════════════════════════════════════════════════════════════════════
 
 export async function fetchTradingviewManifest(): Promise<SyncManifest | null> {
@@ -290,7 +296,7 @@ export async function fetchTradingviewManifest(): Promise<SyncManifest | null> {
 
 export async function fetchTradingviewCsvText(filename: string): Promise<string | null> {
   try {
-    const r = await fetch(TV_FILE_URL_BASE + filename, { cache: 'no-store' });
+    const r = await fetch(tvFileUrl(filename), { cache: 'no-store' });
     if (!r.ok) return null;
     return await r.text();
   } catch {
@@ -327,9 +333,9 @@ export async function getTradingviewSyncStatus(): Promise<SyncStatus> {
     hasManifest: true,
     lastSync,
     hoursOld,
-    // The TradingView sync runs on its own cadence, so no schedule check here —
-    // the fields exist to satisfy one shared type, and claiming a missed run
-    // against a schedule this loader does not know would be a guess.
+    // lastSync is the newest screener snapshot the files were built from (USA
+    // weekdays, India hourly), so no schedule check here — the fields exist to
+    // satisfy one shared type, and claiming a missed run would be a guess.
     isStale: hoursOld > 36 || syncBroken,
     syncBroken,
     missedRuns: 0,
@@ -337,5 +343,6 @@ export async function getTradingviewSyncStatus(): Promise<SyncStatus> {
     okCount: m.ok,
     failCount: m.fail,
     files: m.files.map(f => f.name),
+    oldDataFiles: m.files.filter(f => f.source === 'old-tradingview-export').map(f => f.displayName || f.name),
   };
 }

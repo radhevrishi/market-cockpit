@@ -448,7 +448,7 @@ export const GITHUB_SCHEDULED: ReadonlyArray<{ workflow: string; why: string }> 
   { workflow: 'daily-research.yml (gainers-in only)', why: 'pre-fetches screener.in pages from GitHub’s network into KV; screener.in does not answer the app host' },
   { workflow: 'scrape-*.yml (13 workflows)', why: 'fetch NSE / BSE / Screener / Yahoo / Trendlyne / news sites from GitHub IPs — those sources block Railway' },
   { workflow: 'edgar-guidance-backfill.yml', why: 'repo script reading SEC EDGAR at a fair-access rate and writing KV directly' },
-  { workflow: 'screener-sync.yml, tradingview-sync.yml', why: 'log in to Screener / TradingView, download CSVs and commit them to git' },
+  { workflow: 'screener-sync.yml', why: 'logs in to screener.in, downloads CSVs and commits them to git (zzz1048: tradingview-sync.yml removed — those files are built by our own Stock Screener)' },
   { workflow: 'backup-user-data.yml', why: 'the backup must live OFF the app (encrypted GitHub artifact, 90 days)' },
   { workflow: 'ci.yml, deploy-workers.yml', why: 'run on push (tests / build / Cloudflare deploy), not on a clock' },
   { workflow: 'ai-guidance-backlog.yml, refresh-movers-live.yml', why: 'manual only (no schedule)' },

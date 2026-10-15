@@ -271,9 +271,10 @@ export interface UsExportAsOf {
 }
 
 /**
- * What the export's prices ARE. The TradingView sync runs on an IST schedule,
- * so a US read is usually taken before the US open (it then reflects the
- * PREVIOUS close) and occasionally mid-session (an intraday snapshot). Saying
+ * What the export's prices ARE. (zzz1048: the export is now our own Stock
+ * Screener snapshot — the US one is built after the close — and the old
+ * TradingView sync, which ran on an IST schedule, is gone.) A read taken before
+ * the US open reflects the PREVIOUS close; a mid-session one is intraday. Saying
  * "today's gainers" in either case would be wrong; this says which.
  */
 export function describeUsExportAsOf(syncIso: string, now: Date = new Date()): UsExportAsOf | null {

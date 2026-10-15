@@ -57,6 +57,7 @@ import {
 // PATCH 0820 — pull BUCKET_COLOR + BUCKET_GLYPH for the new 9-bucket primary chip
 import { computeMoveQuality, QUALITY_COLOR, CONTINUATION_COLOR, BUCKET_COLOR as BUCKET_MQ_COLOR, getHistoricalOutcome } from '@/lib/move-quality';
 import { getConvictionTickers } from '@/lib/conviction-beats';
+import { TV_MANIFEST_URL, tvFileUrl } from '@/lib/screener-data-loader';   // zzz1048 — own-screener replacement of the TradingView CSVs
 import { canonicalTicker } from '@/lib/ticker-normalize'; // PATCH 0721
 // PATCH 0715 — centralized IST helpers.
 import { istToday as _istToday, istLastNWeekdays as _istLastNWeekdays, isIndianMarketOpen as _isIndianMarketOpen } from '@/lib/market-hours';
@@ -1737,7 +1738,7 @@ export default function HomeDashboard() {
   // PATCH 0897 — Turnaround tier lensing
   const lensedTurnaround = useMemo(() => applyLens((data as any).turnaroundTier1 || [], true), [(data as any).turnaroundTier1, activeLens]);
 
-  // zzz168 — Home-page Technicals tiers. Fetches /data/tradingview/*.csv
+  // zzz168 — Home-page Technicals tiers. Fetches the TradingView-shaped CSVs (zzz1048: built by our own Stock Screener, /api/v1/tv-data)
   // directly instead of reading localStorage (which is empty until user
   // visits the Technicals tab). Parses inline, groups by exchange,
   // scores by momentum + trend proximity, returns top 10 per market.
@@ -1774,12 +1775,12 @@ export default function HomeDashboard() {
       try {
         if (cancelled) return;
         // Fetch manifest to know which CSVs are available today.
-        const m = await fetch('/data/tradingview/manifest.json', { cache: 'no-cache' });
+        const m = await fetch(TV_MANIFEST_URL, { cache: 'no-cache' });
         if (!m.ok) return;
         const manifest = await m.json();
         const files: string[] = (manifest.files || []).filter((f: any) => f.ok).map((f: any) => f.name);
         const texts = await mapWithLimit(files, FANOUT_CONCURRENCY, async (fname) => {
-          const r = await fetch(`/data/tradingview/${fname}`, { cache: 'no-cache' });
+          const r = await fetch(tvFileUrl(fname), { cache: 'no-cache' });
           return r.ok ? await r.text() : null;
         });
         if (cancelled) return;

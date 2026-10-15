@@ -3,6 +3,7 @@
 // Moved verbatim out of page.tsx (pure refactor, no behaviour change).
 import { useState, useCallback, useEffect } from 'react';
 import { getJson } from '@/lib/client-fetch';
+import { TV_MANIFEST_URL } from '@/lib/screener-data-loader';
 import type { FeedHealth } from './types';
 import { TTL_NEWS, TEXT, DIM } from './constants';
 
@@ -27,7 +28,7 @@ export function PipelineHealth() {
       j('/api/v1/concall-intel/movers'),
       j('/api/v1/concall-intel/warrant-feed?days=7'),
       j('/api/v1/concall-intel/keyword-watch?days=14'),
-      j('/data/tradingview/manifest.json'),
+      j(TV_MANIFEST_URL),   // zzz1048 — the TradingView-shaped files, now built by our own Stock Screener
       j('/api/v1/news?fields=published_at'), // only the newest published_at is read
     ]);
 
@@ -47,7 +48,7 @@ export function PipelineHealth() {
       { key: 'movers',  label: '📈 Concall Movers',    ts: parse(movers?.generated_at), note: movers?.reference_date ? `vs ${movers.reference_date}` : 'no reference snapshot', freshH: 24, ageH: 48 },
       { key: 'warrant', label: '🎯 Warrant Feed',      ts: parse(warrant?.generated_at), note: warrant ? `${warrant.count_passing ?? '?'} passing` : 'no response', freshH: 12, ageH: 48 },
       { key: 'keyword', label: '🔑 Keyword Watch',     ts: parse(keyword?.generated_at), note: keyword ? 'ok' : 'no response', freshH: 24, ageH: 72 },
-      { key: 'tv',      label: '📉 TradingView Sync',  ts: parse(tv?.lastSync), note: tv?.lastSync ? 'manifest ok' : 'manifest missing', freshH: 24, ageH: 36 },
+      { key: 'tv',      label: '📉 Screener files (was TradingView)', ts: parse(tv?.lastSync), note: tv?.lastSync ? `${tv.ok ?? '?'} files from our own screener${(tv.files || []).some((f: any) => f?.source === 'old-tradingview-export') ? ' · some OLD TradingView data' : ''}` : 'no snapshot', freshH: 30, ageH: 80 },
       { key: 'news',    label: '📰 News Feed',         ts: newsTs, note: newsTs ? 'latest article' : 'no dated items', freshH: 6, ageH: 24 },
     ];
 

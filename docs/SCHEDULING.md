@@ -71,7 +71,7 @@ You can see the live schedule (last success, next run, and the state of the curr
 | daily-research.yml (gainers-in only, `50 10 * * 1-5`) | It downloads screener.in pages from GitHub's network into KV. screener.in does not answer the app's host. |
 | scrape-*.yml (13 workflows) | They fetch from NSE, BSE, Screener, Yahoo, Trendlyne and news sites using GitHub's IPs. Those sources block Railway. |
 | edgar-guidance-backfill.yml | A repo script reads SEC EDGAR at the fair-access rate and writes to KV directly. |
-| screener-sync.yml, tradingview-sync.yml | They log in, download CSVs and commit them to git. |
+| screener-sync.yml | It logs in to screener.in, downloads CSVs and commits them to git. (tradingview-sync.yml was removed in zzz1048: the same files are now built by our own Stock Screener at `/api/v1/tv-data`.) |
 | backup-user-data.yml | The backup has to be stored outside the app, as an encrypted GitHub artifact kept for 90 days. |
 | ci.yml, deploy-workers.yml | They run on push, not on a schedule. |
 | ai-guidance-backlog.yml, refresh-movers-live.yml | Manual only. |

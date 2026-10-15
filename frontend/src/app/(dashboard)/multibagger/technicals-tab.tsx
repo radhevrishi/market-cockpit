@@ -8,7 +8,7 @@ import { getConvictionTickers, readConvictionBeats } from '@/lib/conviction-beat
 import { getDecision } from '@/lib/decisions';
 import { armBookFlag } from '@/lib/book-flags-client';
 import { extensionCheck } from '@/lib/tech-extension';
-import { getTradingviewSyncStatus } from '@/lib/screener-data-loader';
+import { getTradingviewSyncStatus, TV_MANIFEST_URL, tvFileUrl } from '@/lib/screener-data-loader';
 import { CHECKLIST } from '@/lib/multibagger-india-scoring';
 import { F, MUTED } from './constants';
 import { STAGE_META, classifyStage } from './helpers';
@@ -425,6 +425,7 @@ export function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
   };
 
   // zzz155 — Pull latest TradingView screener CSVs from the daily-synced repo folder.
+  // zzz1048 — the same files are now built by our own Stock Screener at /api/v1/tv-data (TV_MANIFEST_URL / tvFileUrl).
   // Rewrite of zzz154 fixing:
   //   (a) Per-file row counts for BOTH tabs (was: aggregate total shown per file)
   //   (b) Cross-tab rehydration — dispatches 'mb-tech-updated' so a stale India tab
@@ -435,7 +436,7 @@ export function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
     setTechLoading(true);
     setTechUploadMsg('⏳ Fetching latest from server…');
     try {
-      const manifestResp = await fetch('/data/tradingview/manifest.json', { cache: 'no-store' });
+      const manifestResp = await fetch(TV_MANIFEST_URL, { cache: 'no-store' });
       if (!manifestResp.ok) throw new Error(`manifest ${manifestResp.status}`);
       const manifest = await manifestResp.json();
       // zzz172 — race guard: if another TechnicalsTab (other market) is already
@@ -461,11 +462,11 @@ export function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       const usaSourcesPerFile: TechSource[] = [];
       const indSourcesPerFile: TechSource[] = [];
       // zzz883 speed: all CSV files are requested at once (they were fetched one after another)
-      const csvFetches = new Map<string, Promise<Response>>(files.map((f: any) => [f.name, fetch(`/data/tradingview/${f.name}`, { cache: 'no-store' })]));
+      const csvFetches = new Map<string, Promise<Response>>(files.map((f: any) => [f.name, fetch(tvFileUrl(f.name), { cache: 'no-store' })]));
       for (const f of files) {
         try {
           const csvResp = await csvFetches.get(f.name)!;
-          const label = `📡 ${f.displayName || f.name}`;
+          const label = `📡 ${f.displayName || f.name}${f.source === 'old-tradingview-export' ? ' (OLD TradingView data)' : ''}`;
           if (!csvResp.ok) {
             const w = `HTTP ${csvResp.status}`;
             usaSourcesPerFile.push({ name: label, rowCount: 0, cols: 0, warning: w });
@@ -592,7 +593,7 @@ export function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
     let cancelled = false;
     (async () => {
       try {
-        const resp = await fetch('/data/tradingview/manifest.json', { cache: 'no-store' });
+        const resp = await fetch(TV_MANIFEST_URL, { cache: 'no-store' });
         if (!resp.ok) return;
         const manifest = await resp.json();
         if (cancelled) return;
@@ -2007,7 +2008,7 @@ export function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
       })()}
 
       {/* ADDITIVE (audit R2) — AUTO-SYNC freshness banner. Data auto-pulls on mount
-          from the daily GitHub-Action TradingView sync (see zzz156 auto-pull effect),
+          from our own Stock Screener snapshots (zzz1048; see zzz156 auto-pull effect),
           so no manual upload is needed. This surfaces that state clearly + gives a
           one-click re-pull. Falls back to a "no server rows for this market" note. */}
       {(() => {
@@ -2023,7 +2024,7 @@ export function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
               {broken
                 ? '⚠️ Auto-sync degraded — server files may be stale'
                 : n > 0
-                  ? `🔄 Auto-synced from TradingView · last sync ${agoLabel(techSyncStatus?.lastSync)} · ${n} ${market} stocks scored`
+                  ? `🔄 Auto-synced from our own screener · snapshot ${agoLabel(techSyncStatus?.lastSync)} · ${n} ${market} stocks scored${techSyncStatus?.oldDataFiles?.length ? ` · OLD TradingView data for ${techSyncStatus.oldDataFiles.length} screen${techSyncStatus.oldDataFiles.length === 1 ? '' : 's'}` : ''}`
                   : hasServerRows
                     ? `🔄 Auto-synced · last sync ${agoLabel(techSyncStatus?.lastSync)} · no ${market} rows in this snapshot`
                     : `⏳ No server rows for ${market} yet — upload a TradingView CSV below, or ↻ re-pull`}
@@ -2032,7 +2033,7 @@ export function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
               <span style={{ fontSize: 11.5, color: MUTED }}>{techSyncStatus.okCount} file{techSyncStatus.okCount !== 1 ? 's' : ''} on server{techSyncStatus.failCount ? ` · ${techSyncStatus.failCount} failed` : ''}</span>
             )}
             <button onClick={() => { handlePullFromServer(); setTimeout(refreshSyncStatus, 1500); }} disabled={techLoading}
-              title="Re-pull the latest daily-synced TradingView exports now"
+              title="Re-pull the latest screens from our own Stock Screener now"
               style={{ marginLeft: 'auto', background: 'transparent', color: col, border: `1px solid ${bd}`, padding: '5px 12px', borderRadius: 6, fontSize: 12, fontWeight: 800, cursor: techLoading ? 'wait' : 'pointer' }}>
               {techLoading ? '⏳ Syncing…' : '↻ Re-pull now'}
             </button>
@@ -2061,9 +2062,9 @@ export function TechnicalsTab({ market = 'USA' }: { market?: 'USA' | 'IND' }) {
             style={{ background: CYAN, color: '#0B1220', border: 'none', padding: '8px 14px', borderRadius: 6, fontSize: 12.5, fontWeight: 800, cursor: techLoading ? 'wait' : 'pointer' }}>
             {techLoading ? '⏳ Parsing…' : '📂 Choose CSV files (multi-select OK)'}
           </button>
-          {/* zzz154 — Pull latest from server (daily TradingView sync via GitHub Actions) */}
+          {/* zzz154 — Pull latest from server (zzz1048: built by our own Stock Screener) */}
           <button onClick={handlePullFromServer} disabled={techLoading}
-            title="Fetch the latest daily-synced TradingView screener exports from the server"
+            title="Fetch the latest screens from our own Stock Screener (same columns as the TradingView exports)"
             style={{ background: '#8B5CF6', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: 6, fontSize: 12.5, fontWeight: 800, cursor: techLoading ? 'wait' : 'pointer' }}>
             🔄 Pull latest from server
           </button>

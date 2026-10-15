@@ -28,8 +28,6 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextRequest, NextResponse } from 'next/server';
-import { promises as fs } from 'fs';
-import path from 'path';
 import { kvGet, kvSet } from '@/lib/kv';
 import { warmNseHolidays } from '@/lib/nse-holidays-server';
 import { fetchIndiaGainers, INDIA_GAINERS_URL, indiaSession, partitionByCap, LARGE_CAP_MIN_CR, describeIndiaCriteria } from '@/lib/ai-gainers/screener-gainers';
@@ -44,6 +42,7 @@ import {
   type UsExclusion, type UsExportAsOf,
 } from '@/lib/ai-gainers/us-gainers';
 import { fetchUsLiveGainers } from '@/lib/ai-gainers/us-live-gainers';
+import { buildTvFile } from '@/lib/screener/tv-replacement-server';   // zzz1048
 import { loadUsScanCriteria } from '@/lib/ai-gainers/us-scan-criteria-store';
 import { criteriaHash, describeCriteria, isDefaultCriteria, screenOptionsFor, type UsScanCriteria } from '@/lib/ai-gainers/us-scan-criteria';
 import {
@@ -55,7 +54,6 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const TV_DIR = path.join(process.cwd(), 'public', 'data', 'tradingview');
 const US_GAINERS_FILE = 'weekly-gainer-usa.csv';
 
 // ── HOW OLD A FILING MAY BE, AND WHAT IT MEANS AT EACH AGE.       (zzz716)
@@ -134,40 +132,29 @@ async function readUsGainers(criteria: UsScanCriteria): Promise<UsGainersRead> {
 }
 
 async function readUsGainersCsv(): Promise<UsGainersRead> {
-  const full = path.join(TV_DIR, US_GAINERS_FILE);
-  // ── WHEN WAS TRADINGVIEW ACTUALLY READ?                        (zzz766)
-  // The file's mtime is the moment the container was BUILT, not the moment
-  // the sync read TradingView — the live page printed a deploy time as the
-  // sync time. The sync workflow writes that moment into manifest.json.
-  let syncedAt: string | null = null;
-  let syncNote: string | null = null;
-  try {
-    const man = JSON.parse(await fs.readFile(path.join(TV_DIR, 'manifest.json'), 'utf8'));
-    const entry = (man?.files || []).find((f: any) => f?.name === US_GAINERS_FILE);
-    if (entry && entry.ok === false) syncNote = `The last TradingView sync FAILED for this screen${entry.error ? ` (${entry.error})` : ''}; the rows below are from an earlier sync of unknown date.`;
-    else if (typeof man?.lastSync === 'string') syncedAt = man.lastSync;
-  } catch { /* fall back to the file's own time, labelled as such */ }
-  if (!syncedAt && !syncNote) {
-    try { syncedAt = (await fs.stat(full)).mtime.toISOString(); syncNote = 'Sync time unknown — the time shown is when the file was written on this server.'; } catch { syncedAt = null; }
-  }
+  // ── zzz1048 — FROM OUR OWN SCREENER, NOT A TRADINGVIEW LOGIN.
+  // The weekly gainers list used to be a TradingView export committed by a sync workflow. It is now the same screen
+  // ("Weekly Gainer Stocks USA", lib/screener/filters.ts) run over our own Stock Screener snapshot, written in the same CSV
+  // columns (lib/screener/tv-replacement.ts). `syncedAt` is when that snapshot was built. When no snapshot exists the old
+  // committed export is served and labelled as old data (tv-replacement-server.ts) — never presented as current.
+  const got = await buildTvFile(US_GAINERS_FILE).catch(() => null);
+  const syncedAt: string | null = got?.builtAt ?? null;
+  let syncNote: string | null = got?.source === 'old-tradingview-export' ? (got.note || 'Old TradingView export — no longer refreshed.') : null;
+  if (!got || !got.text) syncNote = got?.error || 'The weekly gainers screen could not be built (no screener snapshot).';
   const asOf = syncedAt && !syncNote ? describeUsExportAsOf(syncedAt) : null;
-  try {
-    const raw = await fs.readFile(full, 'utf8');
-    // ── A US LIST OF US SMALL/MID CAPS.                            (zzz766)
-    // The TradingView screen is multi-market: on 22 Sep it held 15 NSE/BSE
-    // rows and 17 large/mega caps (META, AMD, INTC…) among its 52. Each is
-    // dropped with its reason, and the reasons travel with the response.
-    const all = parseCsv(raw).map(usRowFromRecord).filter((x) => x.ticker);
-    const { kept, excluded } = screenUsGainers(all);
-    const rows: GainerRow[] = kept.map((r) => ({
-      ticker: r.ticker, company: r.company, movePct: r.movePct, relVol: r.relVol, gapPct: r.gapPct,
-      volume: r.volume, price: r.price, marketCap: r.marketCap, perf: r.perf,
-      capTier: r.capTier, flags: r.flags, exchange: r.exchange,
-    }));
-    return { rows, file: US_GAINERS_FILE, syncedAt, rawRows: all.length, excluded, asOf, syncNote, moveWindow: '1W', live: false };
-  } catch {
-    return { rows: [], file: US_GAINERS_FILE, syncedAt, rawRows: 0, excluded: [], asOf, syncNote, moveWindow: '1W', live: false };
-  }
+  const file = got?.source === 'own-screener' ? `${US_GAINERS_FILE} (our Stock Screener: Weekly Gainer Stocks USA)` : US_GAINERS_FILE;
+  if (!got || !got.text) return { rows: [], file, syncedAt, rawRows: 0, excluded: [], asOf, syncNote, moveWindow: '1W', live: false };
+  // ── A US LIST OF US SMALL/MID CAPS.                            (zzz766)
+  // The screen is multi-market (USA + India copies, as on TradingView): Indian rows and large/mega caps are dropped with
+  // their reason, and the reasons travel with the response.
+  const all = parseCsv(got.text).map(usRowFromRecord).filter((x) => x.ticker);
+  const { kept, excluded } = screenUsGainers(all);
+  const rows: GainerRow[] = kept.map((r) => ({
+    ticker: r.ticker, company: r.company, movePct: r.movePct, relVol: r.relVol, gapPct: r.gapPct,
+    volume: r.volume, price: r.price, marketCap: r.marketCap, perf: r.perf,
+    capTier: r.capTier, flags: r.flags, exchange: r.exchange,
+  }));
+  return { rows, file, syncedAt, rawRows: all.length, excluded, asOf, syncNote, moveWindow: '1W', live: false };
 }
 
 /** The last N calendar days in US Eastern, newest first — the same day keys
