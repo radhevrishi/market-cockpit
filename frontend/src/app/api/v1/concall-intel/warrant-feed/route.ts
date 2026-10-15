@@ -13,6 +13,8 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
+import { cachedRoute } from '@/lib/server-memo';   // zzz1053
+import { serverTiming } from '@/lib/server-timing';
 import { fetchNSEAnnouncements, fetchBSEAnnouncements, type FilingRecord } from '@/lib/nse-bse-feed';
 import { isUsableSubwindow } from '@/lib/concall-feed';
 import { extractFirstPdf } from '@/lib/pdf-text-extractor';
@@ -134,7 +136,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-export async function GET(req: NextRequest) {
+async function warrantGET(req: NextRequest) {
   try {
     return await handleWarrantFeed(req);
   } catch (err) {
@@ -524,4 +526,15 @@ function applyWarrantFilters(payload: WarrantFeedPayload, opts: { passingOnly: b
   // month' even when no filing crosses the strict gate.
   if (opts.topN > 0) filings = filings.slice(0, opts.topN);
   return { ...payload, filings, ranked_all };
+}
+
+// zzz1053 — when the 30-minute KV copy lapsed, the next page load rebuilt the feed in-line (NSE + BSE sub-windows, 1.7 s+). The
+// answer per query is now kept in memory 5 minutes and served while ONE rebuild runs behind it for up to 6 hours (its generated_at
+// says how old it is). force=1 always rebuilds; the "temporarily unavailable" answer is never kept.
+export async function GET(req: NextRequest) {
+  const sp = new URLSearchParams(req.nextUrl.searchParams);
+  if (sp.get('force') === '1') return warrantGET(req);
+  const key = `warrant-feed|${[...sp.entries()].sort().map(([k, v]) => `${k}=${v}`).join('&')}`;
+  return cachedRoute(req, { key, freshMs: 5 * 60_000, staleMs: 6 * 3_600_000, handler: () => warrantGET(req), timing: serverTiming(),
+    cacheable: (a) => a.status === 200 && !a.text.includes('warrant-feed temporarily unavailable') });
 }

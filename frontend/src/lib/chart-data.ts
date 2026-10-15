@@ -2,6 +2,7 @@
 import { yahooCandidates } from './yahoo-symbol';
 // Kept in memory only (a few minutes) — chart series are large and must not go to Redis.
 import type { Bar, Market } from './chart-math';
+import { isIndianMarketOpen, isUSMarketOpen } from './market-hours';
 
 // The same User-Agent (and no other header) as lib/us-prices.ts — Yahoo refuses other agents from the deploy host.
 const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
@@ -25,7 +26,75 @@ export interface DailySeries {
 const _cache = new Map<string, { at: number; data: DailySeries | null }>();
 const OK_TTL_MS = 5 * 60_000;
 const FAIL_TTL_MS = 60_000;
-const MAX_ENTRIES = 200;
+// zzz1053: was 200 — a watchlist sweep of a few hundred symbols pushed earlier charts out and every revisit went back to Yahoo
+const MAX_ENTRIES = 600;
+
+// ── zzz1053: stale-while-revalidate + a copy that survives a restart ──────────────────────────────────────────────────────────
+// A daily series older than OK_TTL_MS is still SERVED at once (and refreshed behind it, one Yahoo call per key) when it is
+//   • younger than STALE_SERVE_MS (a few minutes of a live session), or
+//   • the market was closed both when it was fetched and now, and it is younger than CLOSED_STALE_MS — a full session (US 6.5 h,
+//     India 6.25 h) cannot have happened in between, so the bars are the same.
+// The last good 2y / 5y series is also written to Postgres (sec_frame_cache, key chart-series:v1:…) at most every 5 minutes per
+// key, so the first chart after a restart / deploy is read from the database (tens of ms) instead of Yahoo (1–2 s) — under the
+// same staleness rule, and refreshed behind it.
+export const STALE_SERVE_MS = 10 * 60_000;
+export const CLOSED_STALE_MS = 6 * 3_600_000;
+const PERSIST_RANGES: ReadonlySet<DataRange> = new Set<DataRange>(['2y', '5y']);
+const PERSIST_EVERY_MS = 5 * 60_000;
+const PERSIST_READ_WAIT_MS = 800;
+
+/** Pure: may a series fetched at `at` be served now (while a fresh one is fetched)? */
+export function seriesServableStale(at: number, now: number, marketOpen: (d: Date) => boolean): boolean {
+  const age = now - at;
+  if (!(age >= 0)) return false;
+  if (age < STALE_SERVE_MS) return true;
+  return age < CLOSED_STALE_MS && !marketOpen(new Date(at)) && !marketOpen(new Date(now));
+}
+let _marketOpen: (m: Market, d: Date) => boolean = (m, d) => (m === 'IN' ? isIndianMarketOpen(d) : isUSMarketOpen(d));
+
+export interface ChartSeriesStore {
+  read(key: string): Promise<{ at: number; data: DailySeries } | null>;
+  write(key: string, data: DailySeries, at: number): Promise<void>;
+}
+const pgChartStore: ChartSeriesStore = {
+  async read(key) {
+    const db = await import('./db');
+    if (!db.getPool()) return null;
+    const { ensureSchema } = await import('./db-migrate');
+    if (!(await ensureSchema())) return null;
+    const r = await db.dbQuery<{ data: any; fetched_at: string | Date }>(`SELECT data, fetched_at FROM sec_frame_cache WHERE key = $1`, [`chart-series:v1:${key}`]);
+    if (!r.length) return null;
+    const unpacked = unpackSeries(r[0].data);
+    return unpacked ? { at: new Date(r[0].fetched_at).getTime(), data: unpacked } : null;
+  },
+  async write(key, data, at) {
+    const db = await import('./db');
+    if (!db.getPool()) return;
+    const { ensureSchema } = await import('./db-migrate');
+    if (!(await ensureSchema())) return;
+    await db.dbQuery(`INSERT INTO sec_frame_cache (key, data, fetched_at) VALUES ($1, $2, $3) ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, fetched_at = EXCLUDED.fetched_at`,
+      [`chart-series:v1:${key}`, JSON.stringify(packSeries(data)), new Date(at).toISOString()]);
+  },
+};
+let _store: ChartSeriesStore | null = pgChartStore;
+const _persistedAt = new Map<string, number>();
+/** test hooks */
+export function _setChartSeriesStore(s: ChartSeriesStore | null): void { _store = s; }
+export function _setMarketOpenForTests(fn: ((m: Market, d: Date) => boolean) | null): void { if (fn) _marketOpen = fn; }
+export function _resetChartDataForTests(): void { _cache.clear(); _inflight.clear(); _persistedAt.clear(); }
+
+/** Compact column form for the database copy. */
+export function packSeries(s: DailySeries): any {
+  return { ...s, bars: undefined, b: { t: s.bars.map((b) => b.t), o: s.bars.map((b) => b.o), h: s.bars.map((b) => b.h), l: s.bars.map((b) => b.l), c: s.bars.map((b) => b.c), v: s.bars.map((b) => b.v) } };
+}
+export function unpackSeries(x: any): DailySeries | null {
+  const b = x?.b;
+  if (!b || !Array.isArray(b.t) || !b.t.length) return null;
+  const bars: Bar[] = b.t.map((t: number, i: number) => ({ t, o: b.o[i], h: b.h[i], l: b.l[i], c: b.c[i], v: b.v[i] }));
+  if (bars.some((r) => !Number.isFinite(r.t) || !Number.isFinite(r.c))) return null;
+  const { b: _b, bars: _bars, ...rest } = x;
+  return { ...rest, bars } as DailySeries;
+}
 
 /** Parse one Yahoo v8 chart response into daily bars stamped at UTC midnight of the exchange's local date. */
 export function parseYahooChart(j: any): DailySeries | null {
@@ -145,14 +214,15 @@ function fromLonger(market: Market, ticker: string, range: DataRange, exchange: 
   return null;
 }
 
-export async function getDailySeries(market: Market, ticker: string, range: DataRange, exchange?: string): Promise<DailySeries | null> {
-  const key = `${market}:${ticker}:${range}:${exchange || 'auto'}`;
-  const now = Date.now();
-  const hit = _cache.get(key);
-  if (hit && now - hit.at < (hit.data ? OK_TTL_MS : FAIL_TTL_MS)) return hit.data;
-  const cut = fromLonger(market, ticker, range, exchange, now);
-  if (cut) return cut;
-  // zzz1010 — concurrent asks for the same series (daily + weekly view, chart + indicator, two tabs) share one Yahoo call
+function lruTouch(key: string, e: { at: number; data: DailySeries | null }) { _cache.delete(key); _cache.set(key, e); }
+function lruSet(key: string, e: { at: number; data: DailySeries | null }) {
+  _cache.delete(key);
+  _cache.set(key, e);
+  while (_cache.size > MAX_ENTRIES) { const first = _cache.keys().next().value; if (first === undefined) break; _cache.delete(first); }
+}
+
+/** One Yahoo fetch per key at a time; a good answer replaces the kept one (and is persisted), a failed one never replaces data. */
+function fetchShared(market: Market, ticker: string, range: DataRange, exchange: string | undefined, key: string): Promise<DailySeries | null> {
   const flying = _inflight.get(key);
   if (flying) return flying;
   const p = (async () => {
@@ -161,10 +231,61 @@ export async function getDailySeries(market: Market, ticker: string, range: Data
       data = await fetchYahooDaily(sym, range);
       if (data) break;
     }
-    if (_cache.size >= MAX_ENTRIES) { const first = _cache.keys().next().value; if (first) _cache.delete(first); }
-    _cache.set(key, { at: Date.now(), data });
-    return data;
+    const at = Date.now();
+    const prev = _cache.get(key);
+    if (data || !prev?.data) lruSet(key, { at, data });
+    if (data && _store && PERSIST_RANGES.has(range) && at - (_persistedAt.get(key) ?? 0) > PERSIST_EVERY_MS) {
+      _persistedAt.set(key, at);
+      if (_persistedAt.size > 5000) _persistedAt.clear();
+      void _store.write(key, data, at).catch(() => { /* the memory copy is enough */ });
+    }
+    return data ?? prev?.data ?? null;
   })().finally(() => { _inflight.delete(key); });
   _inflight.set(key, p);
   return p;
+}
+
+async function readPersisted(key: string): Promise<{ at: number; data: DailySeries } | null> {
+  if (!_store) return null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([_store.read(key).catch(() => null), new Promise<null>((r) => { timer = setTimeout(() => r(null), PERSIST_READ_WAIT_MS); })]);
+  } finally { clearTimeout(timer); }
+}
+
+/** zzz1053 — age (ms) of the series this process holds for the key (0 when none): a route that keeps its own answer for a while
+ *  dates it by the series, so a stale-served series is not kept as if it were fresh. */
+export function seriesAgeMs(market: Market, ticker: string, range: DataRange, exchange?: string): number {
+  const hit = _cache.get(`${market}:${ticker}:${range}:${exchange || 'auto'}`);
+  return hit?.data ? Math.max(0, Date.now() - hit.at) : 0;
+}
+
+export async function getDailySeries(market: Market, ticker: string, range: DataRange, exchange?: string): Promise<DailySeries | null> {
+  const key = `${market}:${ticker}:${range}:${exchange || 'auto'}`;
+  const now = Date.now();
+  const hit = _cache.get(key);
+  if (hit && now - hit.at < (hit.data ? OK_TTL_MS : FAIL_TTL_MS)) { lruTouch(key, hit); return hit.data; }
+  const cut = fromLonger(market, ticker, range, exchange, now);
+  if (cut) return cut;
+  const open = (d: Date) => _marketOpen(market, d);
+  // zzz1053 — a recent-enough copy answers now; the fresh one is fetched behind it (one call per key)
+  if (hit?.data && seriesServableStale(hit.at, now, open)) {
+    lruTouch(key, hit);
+    void fetchShared(market, ticker, range, exchange, key).catch(() => null);
+    return hit.data;
+  }
+  // zzz1010 — concurrent asks for the same series (daily + weekly view, chart + indicator, two tabs) share one Yahoo call
+  const flying = _inflight.get(key);
+  if (flying) return flying;
+  // zzz1053 — not in memory (restart / deploy / evicted): the database copy, when recent enough
+  if (!hit && PERSIST_RANGES.has(range)) {
+    const saved = await readPersisted(key);
+    if (saved && seriesServableStale(saved.at, Date.now(), open)) {
+      if (!_cache.has(key)) lruSet(key, { at: saved.at, data: saved.data });
+      _persistedAt.set(key, saved.at);
+      if (Date.now() - saved.at >= OK_TTL_MS) void fetchShared(market, ticker, range, exchange, key).catch(() => null);
+      return saved.data;
+    }
+  }
+  return fetchShared(market, ticker, range, exchange, key);
 }

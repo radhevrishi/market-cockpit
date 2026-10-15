@@ -24,6 +24,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
+import { cachedRoute } from '@/lib/server-memo';   // zzz1053
+import { serverTiming } from '@/lib/server-timing';
 import { kvGet } from '@/lib/kv';
 
 export const runtime = 'nodejs';
@@ -304,7 +306,7 @@ async function computeBroadBreadth(): Promise<BroadResult> {
   };
 }
 
-export async function GET(request: Request) {
+async function breadthGET(request: Request) {
  try {
   const t0 = Date.now();
   const { searchParams } = new URL(request.url);
@@ -566,4 +568,14 @@ export async function GET(request: Request) {
     error: 'breadth temporarily unavailable',
   }, { status: 200, headers: { 'Cache-Control': 's-maxage=60' } });
  }
+}
+
+// zzz1053 — no memory cache existed (s-maxage only helps a CDN, and there is none in front of Railway): every load re-walked the
+// breadth inputs (1.7 s). The answer per mode / region is now kept 5 minutes and served while ONE rebuild runs behind it for up to
+// 30 minutes — the same window its Cache-Control (s-maxage=300, stale-while-revalidate=900) already promised. A no-store answer
+// (an error / fallback) is never kept.
+export async function GET(request: Request) {
+  const sp = new URL(request.url).searchParams;
+  const key = `breadth|${(sp.get('mode') || '').toLowerCase()}|${(sp.get('region') || '').toLowerCase()}`;
+  return cachedRoute(request, { key, freshMs: 5 * 60_000, staleMs: 30 * 60_000, handler: () => breadthGET(request), timing: serverTiming() });
 }

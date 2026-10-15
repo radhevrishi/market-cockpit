@@ -135,3 +135,13 @@ export const GRADED_CACHE_LEGACY: readonly string[] = ['v25', 'v24', 'v23', 'v22
 export function gradedKeyCandidates(date: string): string[] {
   return [gradedKey(date), ...GRADED_CACHE_LEGACY.map((v) => `graded:${v}:${date}`)];
 }
+
+/**
+ * zzz1053 — how long the SERVED graded answer for a date is kept in the route's memory (api/v1/earnings/graded): a past date is
+ * immutable (rule 13.3) — 5 minutes fresh, then served while ONE rebuild runs behind it for up to 30 minutes; today 30 s / 5 min.
+ * Null = never kept (bad or future date).
+ */
+export function gradedMemoTtl(date: string, todayIso: string): { freshMs: number; staleMs: number } | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > todayIso) return null;
+  return date < todayIso ? { freshMs: 5 * 60_000, staleMs: 30 * 60_000 } : { freshMs: 30_000, staleMs: 5 * 60_000 };
+}

@@ -156,7 +156,9 @@ test('zzz975 wiring: graded + graded-window serve the overlay; the page refetche
   const src = (p: string) => readFileSync(join(__dirname, '../../', p), 'utf8');
   const graded = src('app/api/v1/earnings/graded/route.ts');
   assert.match(graded, /overlayInGuideLines\(body\)/);
-  assert.match(graded, /export async function GET\(req: Request\) \{\n  const res = await gradedSwrGET\(req\);/);
+  // zzz1053: the overlay runs in gradedOverlayGET; GET serves it (kept in memory per date for plain ?date= reads)
+  assert.match(graded, /async function gradedOverlayGET\(req: Request\): Promise<Response> \{\n  const res = await gradedSwrGET\(req\);/);
+  assert.match(graded, /export async function GET\(req: Request\) \{[\s\S]*?gradedOverlayGET\(req\)/);
   assert.match(src('app/api/v1/earnings/graded-window/route.ts'), /stripGradeInput\(await overlayInGuideLines\(f\.payload\)\)/);
   const page = src('app/(dashboard)/earnings-opportunities/page.tsx');
   assert.match(page, /in_overlay_v !== IN_OVERLAY_VERSION\) return undefined/);

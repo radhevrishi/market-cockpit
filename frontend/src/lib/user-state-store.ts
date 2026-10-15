@@ -45,12 +45,34 @@ export class UserStateConflict extends Error {
 }
 
 async function pgOk(): Promise<boolean> { return getPool() ? ensureSchema() : false; }
+/** zzz1053 — hash of each stored value, by its (version, updated_at): lets ?list=1 skip re-reading unchanged values. Hashes only. */
+const _listHash = new Map<string, { sig: string; hash: string }>();
 
 export async function listUserState(): Promise<{ store: 'postgres' | 'redis'; keys: UserStateMeta[] }> {
   if (await pgOk()) {
-    const rows = (await getPool()!.query('SELECT key, value, version, bytes, updated_at FROM user_state ORDER BY key')).rows;
-    // the hash is recomputed from the stored value (canonical JSON), so it always describes exactly what is stored
-    return { store: 'postgres', keys: rows.map((r: any) => ({ key: r.key, hash: hashOf(r.value), version: Number(r.version), bytes: Number(r.bytes), updatedAt: new Date(r.updated_at).toISOString() })) };
+    // zzz1053 — READ path only. This used to fetch EVERY stored value (all personal data, MBs) on each list just to hash it.
+    // Now: the cheap metadata first; a value is fetched and hashed only when its (version, updated_at) is not one already hashed
+    // in this process. Every save bumps version + updated_at, so a changed value is always re-read; the hash is still computed
+    // from the stored value (canonical JSON). Only hashes are kept in memory, never the data. Writes are untouched.
+    const pool = getPool()!;
+    const meta = (await pool.query('SELECT key, version, bytes, updated_at FROM user_state ORDER BY key')).rows;
+    const sig = (r: any) => `${Number(r.version)}|${new Date(r.updated_at).getTime()}`;
+    const stale = meta.filter((r: any) => _listHash.get(r.key)?.sig !== sig(r)).map((r: any) => r.key);
+    const fresh = new Map<string, any>();
+    if (stale.length) {
+      for (const r of (await pool.query('SELECT key, value, version, bytes, updated_at FROM user_state WHERE key = ANY($1)', [stale])).rows) {
+        _listHash.set(r.key, { sig: sig(r), hash: hashOf(r.value) });
+        fresh.set(r.key, r);   // this key's own consistent row (it may have been saved between the two reads)
+      }
+    }
+    const keys: UserStateMeta[] = [];
+    for (const m of meta) {
+      const r = fresh.get(m.key) || m;
+      const h = _listHash.get(r.key);
+      if (!h || h.sig !== sig(r)) continue;   // deleted between the two reads
+      keys.push({ key: r.key, hash: h.hash, version: Number(r.version), bytes: Number(r.bytes), updatedAt: new Date(r.updated_at).toISOString() });
+    }
+    return { store: 'postgres', keys };
   }
   const out: UserStateMeta[] = [];
   for (const k of USER_STATE_KEYS) {

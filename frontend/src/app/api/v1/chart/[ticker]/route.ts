@@ -3,8 +3,10 @@
 // Public market data (Yahoo). Cached in memory only: 5 min for daily, 30 min for weekly / monthly. Nothing written to Redis.
 import { NextRequest, NextResponse } from 'next/server';
 import { TOTAL_RETURN_LABEL, aggregateBars, backAdjustDividendsDetailed, cleanTicker, floatPct, headerStats, validTicker, type Bar, type Market, type Timeframe } from '@/lib/chart-math';
-import { dbAvailable, dbQuery } from '@/lib/db';
-import { DATA_RANGES, getDailySeries, type DataRange } from '@/lib/chart-data';
+import { dbAvailable } from '@/lib/db';
+import { getSnapshot } from '@/lib/screener/snapshot-cache';
+import { DATA_RANGES, getDailySeries, seriesAgeMs, type DataRange } from '@/lib/chart-data';
+import { serverTiming, withServerTiming } from '@/lib/server-timing';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -22,8 +24,9 @@ function loadFloat(): Promise<void> {
     _floatLoad = (async () => {
       const map = new Map<string, number>();
       try {
-        const rows = await dbQuery<{ t: string; f: number }>(`SELECT r->>'t' AS t, (r->>'flt')::float AS f FROM screener_snapshot, jsonb_array_elements(rows) r WHERE market = 'US' AND jsonb_typeof(r->'flt') = 'number'`);
-        for (const r of rows) if (r.t && Number.isFinite(Number(r.f))) map.set(String(r.t).toUpperCase(), Number(r.f));
+        // zzz1053 — from the shared in-memory snapshot (lib/screener/snapshot-cache.ts) instead of unpacking it again in Postgres
+        const snap = await getSnapshot('US');
+        for (const r of (snap?.rows || []) as any[]) if (r?.t && typeof r.flt === 'number' && Number.isFinite(r.flt)) map.set(String(r.t).toUpperCase(), r.flt);
       } catch { /* no snapshot yet */ }
       _float = { at: Date.now(), map };
     })().finally(() => { _floatLoad = null; });
@@ -64,13 +67,20 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ ticker: str
   const ck = `${market}:${ticker}:${interval}:${range}:${exchange || 'auto'}:${basis === 'tr' ? 'tr2' : basis}`;
   const hit = _resp.get(ck);
   const headers = { 'Cache-Control': `private, max-age=${Math.round(ttl / 1000)}` };
-  if (hit && Date.now() - hit.at < ttl) return NextResponse.json(hit.body, { headers });
+  const t = serverTiming();
+  if (hit && Date.now() - hit.at < ttl) {
+    _resp.delete(ck); _resp.set(ck, hit);   // zzz1053: least-recently-used order
+    t.note('memo', 'hit');
+    return withServerTiming(NextResponse.json(hit.body, { headers }), t);
+  }
 
   // zzz1010 — the float lookup (a database read once an hour) runs alongside the price history, never before it, and the
   // chart never waits more than 1.5 s for it (float is a header extra; the candles are what the owner is waiting for)
   let floatTimer: ReturnType<typeof setTimeout> | undefined;
   const floatP = Promise.race([floatFor(market, ticker).catch(() => null), new Promise<null>((r) => { floatTimer = setTimeout(() => r(null), 1500); })]).finally(() => clearTimeout(floatTimer));
+  const s0 = t.elapsed();
   const series = await getDailySeries(market, ticker, range, exchange);
+  t.add('series', t.elapsed() - s0, 'daily bars (memory / database / Yahoo)');
   if (!series) return NextResponse.json({ ok: false, error: `No price history found for ${ticker} (${market === 'IN' ? 'NSE / BSE' : 'US'}).` }, { status: 404 });
   const divs = series.divs || [];
   const adj = basis === 'tr' ? backAdjustDividendsDetailed(series.bars, divs) : null;
@@ -96,7 +106,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ ticker: str
       highLowRepaired: 'high/low widened to include open and close when the provider row is inconsistent',
     },
   };
-  if (_resp.size >= 300) { const first = _resp.keys().next().value; if (first) _resp.delete(first); }
-  _resp.set(ck, { at: Date.now(), body });
-  return NextResponse.json(body, { headers });
+  if (_resp.size >= 600) { const first = _resp.keys().next().value; if (first) _resp.delete(first); }
+  // zzz1053 — dated by the series' own age: a series served stale (refreshing behind) is not kept here as if fresh
+  _resp.set(ck, { at: Date.now() - Math.min(seriesAgeMs(market, ticker, range, exchange), ttl), body });
+  return withServerTiming(NextResponse.json(body, { headers }), t);
 }

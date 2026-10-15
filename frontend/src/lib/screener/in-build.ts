@@ -21,6 +21,7 @@ import { rowPatternFields, rowScanFields, resolveInQuote, priceSourceNote, rowTv
 import type { NseDay } from './tech';
 import { deliveryFigures } from '../accumulation';
 import { tvSectorOf } from './tv-sectors';
+import { noteSnapshotWritten } from './snapshot-cache';   // zzz1053
 import { rowsJson, type ScreenRow } from './types';
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
@@ -311,5 +312,6 @@ export async function buildInSnapshot(opts: { fundBudgetMs?: number } = {}): Pro
   const sources = ['NSE company list', 'NSE daily price files', 'screener.in company pages', 'Yahoo daily prices', 'Yahoo company profile'];
   await dbQuery(`INSERT INTO screener_snapshot (market, built_at, rows, meta) VALUES ('IN', now(), $1, $2) ON CONFLICT (market) DO UPDATE SET built_at = now(), rows = EXCLUDED.rows, meta = EXCLUDED.meta`,
     [rowsJson(rows), JSON.stringify({ notes, sources })]);
+  noteSnapshotWritten('IN');   // zzz1053: the shared snapshot cache re-reads it on the next request
   return { ok: true, rows: rows.length, notes, ms: Date.now() - t0 };
 }

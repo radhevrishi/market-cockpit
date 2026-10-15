@@ -24,13 +24,17 @@
 
 import { quarterEndDate as _quarterEndDateZ897 } from '@/lib/earnings/quarter-window';   // zzz897
 import { NextResponse } from 'next/server';
-import { gradedKey, gradedKeyCandidates, GRADED_CACHE_VERSION } from '@/lib/graded-cache-key';
+import { gradedKey, gradedKeyCandidates, gradedMemoTtl, GRADED_CACHE_VERSION } from '@/lib/graded-cache-key';
 import { regradeIndiaDayPayload, versionOfGradedKey } from '@/lib/india-regrade';
 // zzz669 — the grader and its two date helpers now live in ONE place, shared
 // with the Earnings Opportunities page. See lib/india-grade.ts for why.
 import { gradeIndiaRow as gradeRow, gradeIndiaRowExplained, deriveQuarterLabel } from '@/lib/india-grade';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
-import { overlayInGuideLines } from '@/lib/in-guide-check';   // zzz975
+import { overlayInGuideLines, prewarmInGuideIndex } from '@/lib/in-guide-check';   // zzz975
+import { cachedRoute, defaultCacheable, forgetCachedRoute } from '@/lib/server-memo';   // zzz1053
+import { serverTiming } from '@/lib/server-timing';
+// zzz1053 — the guidance documents index is read when this route is first loaded, not inside the first request (it waited up to 4 s)
+if (process.env.NEXT_PHASE !== 'phase-production-build') void prewarmInGuideIndex();
 import { swrGet, swrHeaders, privateCache, SwrUnusableError } from '@/lib/swr-cache';
 import { checkQuarterLabel, refetchTickers } from '@/lib/india-eo-card-data';  // zzz820 · zzz826
 import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta, decideTier, marketReactionDelta, typicalDailyMovePct, thinFloatGate, quadrantForIndiaRow } from '@/lib/earnings-grade-shared';
@@ -1577,7 +1581,7 @@ async function gradedSwrGET(req: Request) {
 // from the stored grader input is unchanged and a concall read later updates the line on the next read. Each row gets `guide_line`;
 // a BLOCKBUSTER / STRONG row whose guidance was lowered (or a profit line guided below last year) is shown as MIXED.
 // `in_overlay_v` lets the browser refetch a day it saved before this existed.
-export async function GET(req: Request) {
+async function gradedOverlayGET(req: Request): Promise<Response> {
   const res = await gradedSwrGET(req);
   try {
     if (res.status !== 200 || !/json/i.test(res.headers.get('content-type') || '')) return res;
@@ -1588,4 +1592,31 @@ export async function GET(req: Request) {
     headers.delete('content-length');
     return NextResponse.json(out, { status: res.status, headers });
   } catch { return res; }
+}
+
+// ─── zzz1053: the SERVED answer per date, kept in memory ─────────────────────
+// A plain `?date=` read paid the swr lookup + a JSON clone/parse + the guidance overlay (KV reads) + two serialisations on EVERY
+// request (2.4–3.5 s for past dates on the home page, which loads five days). The final answer (overlay applied) is now kept per
+// date: 5 minutes for a past date (immutable, rule 13.3), 30 seconds for today, rebuilt behind the served copy (stale-while-
+// revalidate, one rebuild at a time) for up to 30 minutes / 5 minutes (lib/graded-cache-key.ts gradedMemoTtl). Only 200 answers that are not no-store are kept (a hub
+// failure, an empty or pending day passes straight through). force / refreshMissing / cache_only / wipe / refetch, and any other
+// parameter, bypass it. The ETag lets an unchanged revisit be a 304. Server-Timing shows memo state and time.
+export async function GET(req: Request) {
+  const sp = new URL(req.url).searchParams;
+  const date = sp.get('date') || '';
+  const plain = [...sp.keys()].every((k) => k === 'date');
+  const ttl = plain ? gradedMemoTtl(date, new Date().toISOString().slice(0, 10)) : null;
+  if (!ttl) {
+    // a force / refreshMissing rebuild replaces the day: plain readers must see it at once, not the kept answer
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date) && (sp.get('force') === '1' || sp.get('refreshMissing') === '1')) {
+      const res = await gradedOverlayGET(req);
+      forgetCachedRoute(`graded|${gradedKey(date)}`);
+      return res;
+    }
+    return gradedOverlayGET(req);
+  }
+  const t = serverTiming();
+  // kept only when it came from the swr layer (x-mc-cache): a usable graded day, never a pass-through empty / pending / failed one
+  return cachedRoute(req, { key: `graded|${gradedKey(date)}`, ...ttl, handler: () => gradedOverlayGET(req), timing: t,
+    cacheable: (a) => defaultCacheable(a) && a.headers.some(([k]) => k === 'x-mc-cache') });
 }

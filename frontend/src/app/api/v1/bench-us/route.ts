@@ -24,6 +24,8 @@ import { gunzipSync } from 'zlib';
 import { kvGet, kvSet } from '@/lib/kv';
 import { US_ENGINE_VERSION } from '@/lib/us-engine-version';
 import { compactUsBench, rebuildUsBench, usBenchSessions } from '@/lib/us-thesis/us-bench';
+import { cachedRoute } from '@/lib/server-memo';   // zzz1053
+import { serverTiming } from '@/lib/server-timing';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -69,7 +71,7 @@ async function rebuild(): Promise<any | null> {
   return _rebuilding;
 }
 
-export async function GET(req: Request) {
+async function benchGET(req: Request) {
   const view = new URL(req.url).searchParams.get('view');
   let payload: any = null;
   let readError: string | null = null;
@@ -107,4 +109,13 @@ export async function GET(req: Request) {
 
   return NextResponse.json({ ...payload, source, ...(note ? { note } : {}), current_engine_version: US_ENGINE_VERSION },
     { headers: { 'Cache-Control': 'no-store' } });
+}
+
+// zzz1053 — the answer per view kept in memory: 60 s fresh, then served while ONE rebuild runs behind it (up to 10 minutes). The
+// list changes once a night (cron), and a rebuild here read a multi-MB KV blob and re-compacted it on every page load (1.2-1.8 s).
+// An empty answer is never kept. The browser still gets no-store (as before).
+export async function GET(req: Request) {
+  const view = new URL(req.url).searchParams.get('view') || '';
+  return cachedRoute(req, { key: `bench-us|${view}`, freshMs: 60_000, staleMs: 10 * 60_000, handler: () => benchGET(req), timing: serverTiming(),
+    cacheable: (a) => a.status === 200 && !a.text.includes('"source":"empty"') });
 }

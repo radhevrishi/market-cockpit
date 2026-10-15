@@ -14,6 +14,8 @@ export async function register() {
   try { (await import('./lib/app-scheduler')).startAppScheduler(); } catch (e) { console.warn('[app-scheduler] not started', e); }
   // zzz905: register the KV reader so every server path's holiday check uses the collected NSE calendar (refreshes 12-hourly)
   try { void (await import('./lib/nse-holidays-server')).warmNseHolidays(); } catch (e) { console.warn('[nse-holidays] warm skipped', e); }
+  // zzz1053: database connection, screener snapshots and the guidance index read before the first page load needs them
+  try { (await import('./lib/boot-warm')).warmOnBoot(); } catch (e) { console.warn('[boot-warm] not started', e); }
   const { isProtectedApi, serviceKeys } = await import('./lib/site-auth');
   const key = serviceKeys()[0];
   if (!key) return;

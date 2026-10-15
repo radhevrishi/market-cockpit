@@ -19,8 +19,13 @@ export function getPool(): PgPool | null {
   try {
     const pool: PgPool = new Pool({
       connectionString: url,
-      max: 5,
-      idleTimeoutMillis: 30_000,
+      // zzz1053 — one long-lived server: keep connections open between page loads (they were closed after 30 s idle, so most
+      // visits paid a fresh connect + auth before the first query), TCP keep-alive so idle sockets are not dropped silently,
+      // and a little more room (the home page fires several database-backed requests at once; the screener builds use some).
+      max: 10,
+      idleTimeoutMillis: 10 * 60_000,
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 30_000,
       connectionTimeoutMillis: 8_000,
       // Railway internal PG doesn't require TLS; public proxy does. Be permissive.
       ssl: /sslmode=require|proxy\.rlwy\.net/.test(url) ? { rejectUnauthorized: false } : undefined,
@@ -28,6 +33,8 @@ export function getPool(): PgPool | null {
     pool.on('error', (e: any) => console.error('[DB] pool error:', e?.message || e));
     g.__MC_PG_POOL__ = pool;
     console.log('[DB] PostgreSQL pool created');
+    // zzz1053 — open the first connection now, not inside the first request that needs it
+    void pool.query('SELECT 1').catch(() => { /* the request that needs it will report the failure */ });
     return pool;
   } catch (e) {
     console.error('[DB] failed to init pool:', e);

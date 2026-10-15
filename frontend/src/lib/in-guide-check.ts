@@ -67,6 +67,15 @@ async function docsIndex(): Promise<Map<string, IndexRow[]> | null> {
   return _idx?.byTicker ?? null;
 }
 
+/**
+ * zzz1053 — read the documents index (and the intimations) ahead of the first served day: called at boot and when the graded route
+ * loads, so the first home-page load after a restart does not wait up to COLD_INDEX_WAIT_MS for it. Never throws.
+ */
+export function prewarmInGuideIndex(): Promise<void> {
+  if (_idx && Date.now() - _idx.at < INDEX_FRESH_MS) return Promise.resolve();
+  return Promise.all([refreshIndex(), intimations()]).then(() => undefined, () => undefined);
+}
+
 // zzz977 — exchange intimations ("call on 15 Oct", "transcript available at …") whose document is not out yet, by ticker
 type Intim = { kind?: string; filedAt?: string; url?: string };
 let _intim: { at: number; byTicker: Map<string, Intim[]> } | null = null;

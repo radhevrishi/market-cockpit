@@ -3,6 +3,7 @@
 // India tries .NS first, then .BO for the ones still missing. In-memory cache 45 s. Public market data. Max 300 symbols.
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchYahooSparkBatch } from '@/lib/yahoo';
+import { singleFlight } from '@/lib/server-memo';
 import { yahooCandidates } from '@/lib/yahoo-symbol';
 import { IN_TICKER_RE, US_TICKER_RE } from '@/lib/chart-math';
 
@@ -15,23 +16,8 @@ const _cache = new Map<string, { at: number; q: Q | null }>();
 const TTL_MS = 45_000;
 const MAX = 300;
 
-export async function GET(req: NextRequest) {
-  const raw = String(req.nextUrl.searchParams.get('s') || '');
-  const keys: string[] = [];
-  const seen = new Set<string>();
-  for (const part of raw.split(',')) {
-    const parts = part.trim().toUpperCase().split(':');
-    const [m] = parts;
-    const ex = parts.length === 3 && parts[1] === 'BSE' ? 'BSE' : undefined;
-    const t = ex ? parts[2] : parts[1];
-    if (parts.length !== (ex ? 3 : 2)) continue;
-    if (!t || (m !== 'IN' && m !== 'US')) continue;
-    if (!(m === 'IN' ? IN_TICKER_RE : US_TICKER_RE).test(t)) continue;
-    const k = ex ? `${m}:BSE:${t}` : `${m}:${t}`;
-    if (seen.has(k)) continue;
-    seen.add(k); keys.push(k);
-    if (keys.length >= MAX) break;
-  }
+const _flight = new Map<string, Promise<{ out: Record<string, Q>; now: number }>>();
+async function quotesFor(keys: string[]): Promise<{ out: Record<string, Q>; now: number }> {
   const now = Date.now();
   const out: Record<string, Q> = {};
   const needIn: string[] = [], needUs: string[] = [];
@@ -63,5 +49,27 @@ export async function GET(req: NextRequest) {
     for (const [ysym, k] of second) if (!put(k, bo.get(ysym))) _cache.set(k, { at: now, q: null });
   }
   if (_cache.size > 3000) { for (const [k, v] of _cache) if (now - v.at > TTL_MS) _cache.delete(k); }
+  return { out, now };
+}
+
+export async function GET(req: NextRequest) {
+  const raw = String(req.nextUrl.searchParams.get('s') || '');
+  const keys: string[] = [];
+  const seen = new Set<string>();
+  for (const part of raw.split(',')) {
+    const parts = part.trim().toUpperCase().split(':');
+    const [m] = parts;
+    const ex = parts.length === 3 && parts[1] === 'BSE' ? 'BSE' : undefined;
+    const t = ex ? parts[2] : parts[1];
+    if (parts.length !== (ex ? 3 : 2)) continue;
+    if (!t || (m !== 'IN' && m !== 'US')) continue;
+    if (!(m === 'IN' ? IN_TICKER_RE : US_TICKER_RE).test(t)) continue;
+    const k = ex ? `${m}:BSE:${t}` : `${m}:${t}`;
+    if (seen.has(k)) continue;
+    seen.add(k); keys.push(k);
+    if (keys.length >= MAX) break;
+  }
+  // zzz1053 — the same list asked twice at once (the watchlist panel + a refresh, two tabs) shares one Yahoo round
+  const { out, now } = await singleFlight(_flight, keys.join(','), () => quotesFor(keys));
   return NextResponse.json({ ok: true, quotes: out, asOf: new Date(now).toISOString() }, { headers: { 'Cache-Control': 'private, max-age=30' } });
 }

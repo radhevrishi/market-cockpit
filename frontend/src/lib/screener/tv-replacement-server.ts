@@ -7,8 +7,8 @@
 
 import { promises as fs } from 'fs';
 import path from 'path';
-import { dbQuery, getPool } from '@/lib/db';
-import { ensureSchema } from '@/lib/db-migrate';
+import { getSnapshot, r40GuardedRows } from './snapshot-cache';
+import { MemoLru, singleFlight } from '@/lib/server-memo';
 import { ruleOf40Usable } from './pine';
 import type { ScreenMarket, ScreenRow } from './types';
 import {
@@ -19,31 +19,17 @@ import {
 export const OLD_TV_DIR = path.join(process.cwd(), 'public', 'data', 'tradingview');
 
 interface Snap { rows: ScreenRow[]; builtAt: string }
-const mem = new Map<ScreenMarket, { at: number; snap: Snap | null }>();
-const TTL_MS = 5 * 60_000;
 
-/** The market's snapshot, or null when there is none (no database, nothing built yet, unreadable). */
+/**
+ * The market's snapshot, or null when there is none (no database, nothing built yet, unreadable).
+ * zzz1053: read through the ONE shared snapshot cache (lib/screener/snapshot-cache.ts — single flight, re-read only when a newer
+ * snapshot exists) instead of a private 5-minute copy that re-read the whole snapshot from Postgres with no sharing.
+ */
 export async function loadSnapshot(m: ScreenMarket): Promise<Snap | null> {
-  const hit = mem.get(m);
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.snap;
-  let snap: Snap | null = null;
-  try {
-    if (getPool() && (await ensureSchema())) {
-      const got = await dbQuery<{ built_at: string | Date; rows: unknown }>(`SELECT built_at, rows FROM screener_snapshot WHERE market = $1`, [m]);
-      if (got.length) {
-        let rows: unknown = got[0].rows;
-        if (typeof rows === 'string') { try { rows = JSON.parse(rows); } catch { rows = null; } }
-        if (Array.isArray(rows) && rows.length) {
-          // the same guard the stock-screener API applies to snapshots built before it (zzz991)
-          for (const r of rows as any[]) if (r && r.r40 != null && !ruleOf40Usable(r.revQYoY, r.fcfmTTM)) r.r40 = null;
-          const b = got[0].built_at;
-          snap = { rows: rows as ScreenRow[], builtAt: b instanceof Date ? b.toISOString() : String(b) };
-        }
-      }
-    }
-  } catch { snap = null; }
-  mem.set(m, { at: Date.now(), snap });
-  return snap;
+  const s = await getSnapshot(m);
+  if (!s || !s.rows.length) return null;
+  // the same guard the stock-screener API applies to snapshots built before it (zzz991) — a view, the shared rows are not changed
+  return { rows: r40GuardedRows(s, ruleOf40Usable), builtAt: s.builtAt };
 }
 
 /** The old committed TradingView manifest (for the fallback's date). */
@@ -73,20 +59,30 @@ export interface TvFileResult {
   source: TvManifestFile['source']; builtAt: string | null; error: string | null; note?: string; screens: string[];
 }
 
-// a page reads the manifest and then each file: the same screen results are kept 60 s (public screens only, never the US book)
-const fileMemo = new Map<string, { at: number; res: TvFileResult }>();
-const FILE_TTL_MS = 60_000;
+// a page reads the manifest and then each file (all at once): every public file is built ONCE per snapshot pair + day and kept until
+// a newer snapshot exists (zzz1053; was rebuilt every 60 s, with parallel requests each building their own copy). Never the US book.
+const fileMemo = new MemoLru<TvFileResult>({ maxEntries: 64 });
+const fileInflight = new Map<string, Promise<TvFileResult>>();
+/** Pure: the memo key of a public file — the snapshots it reads (their builtAt) and the UTC day (date rules such as "this month"). */
+export function tvFileMemoKey(name: string, builtAts: ReadonlyArray<string | null>, now: Date = new Date()): string {
+  return `${name}|${builtAts.map((b) => b ?? 'none').join('|')}|${now.toISOString().slice(0, 10)}`;
+}
 
 /** Build one file. `withPersonal` = false leaves the US-book watchlist out (its rows are the owner's holdings). */
 export async function buildTvFile(name: string, opts: { withPersonal?: boolean; now?: Date } = {}): Promise<TvFileResult | null> {
   const f = tvFileOf(name);
   if (!f) return null;
   if (f.list === 'us-book' || opts.now) return buildTvFileNow(f, opts);
-  const hit = fileMemo.get(f.name);
-  if (hit && Date.now() - hit.at < FILE_TTL_MS) return hit.res;
-  const res = await buildTvFileNow(f, opts);
-  fileMemo.set(f.name, { at: Date.now(), res });
-  return res;
+  const snaps = await Promise.all(marketsOf(f).map((m) => loadSnapshot(m)));
+  const key = tvFileMemoKey(f.name, snaps.map((s) => s?.builtAt ?? null));
+  const hit = fileMemo.get(key);
+  if (hit) return hit.value;
+  return singleFlight(fileInflight, key, async () => {
+    const res = await buildTvFileNow(f, opts);
+    // an old-export fallback (snapshot missing) is never kept: the next request tries the snapshot again
+    if (res.source === 'own-screener') fileMemo.set(key, res);
+    return res;
+  });
 }
 
 async function buildTvFileNow(f: TvReplacementFile, opts: { withPersonal?: boolean; now?: Date }): Promise<TvFileResult> {
