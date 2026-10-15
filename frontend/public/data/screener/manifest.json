@@ -1,5 +1,5 @@
 {
-  "lastSync": "2026-10-15T09:12:30Z",
+  "lastSync": "2026-10-15T17:04:10Z",
   "ok": 19,
   "fail": 0,
   "files": [
@@ -10,12 +10,12 @@
     },
     {
       "name": "capex.csv",
-      "size": 9056,
+      "size": 9477,
       "displayName": "CAPEX"
     },
     {
       "name": "debt-reduction.csv",
-      "size": 10092,
+      "size": 10093,
       "displayName": "Debt Reduction"
     },
     {
@@ -35,17 +35,17 @@
     },
     {
       "name": "ipobases.csv",
-      "size": 4555,
+      "size": 4175,
       "displayName": "IPOBASES"
     },
     {
       "name": "lowequitycapital.csv",
-      "size": 4446,
+      "size": 4867,
       "displayName": "Lowequitycapital"
     },
     {
       "name": "monthly-volume-pockets.csv",
-      "size": 8620,
+      "size": 6848,
       "displayName": "Monthly Volume Pockets"
     },
     {
@@ -55,7 +55,7 @@
     },
     {
       "name": "multibagger2-ignoring-trend.csv",
-      "size": 3698,
+      "size": 3699,
       "displayName": "Multibagger2 Ignoring trend"
     },
     {
@@ -65,7 +65,7 @@
     },
     {
       "name": "rajeev-thakkar-ppfas-screener.csv",
-      "size": 1564,
+      "size": 1565,
       "displayName": "Rajeev Thakkar PPFAS Screener"
     },
     {
@@ -80,22 +80,22 @@
     },
     {
       "name": "watchlist-10432429.csv",
-      "size": 23037,
+      "size": 23027,
       "displayName": "Latest Portfolio"
     },
     {
       "name": "watchlist-10432585.csv",
-      "size": 63325,
+      "size": 63323,
       "displayName": "TAR EARNINGS WATCHLIST"
     },
     {
       "name": "watchlist-8105148.csv",
-      "size": 65577,
+      "size": 65583,
       "displayName": "Working watchlist"
     },
     {
       "name": "weekly-volume-pockets.csv",
-      "size": 4749,
+      "size": 4288,
       "displayName": "Weekly Volume Pockets"
     }
   ]
