@@ -218,7 +218,8 @@ export function AutoLinesBanner({ s, light, top = 4, onTurnOff, dock }: { s: Aut
               <button type="button" onClick={() => setOpen(false)} aria-label="Close the list" style={small}>Close list</button>
             </div>
             {dock && <div data-testid="aln-headline" style={{ marginTop: 6, fontWeight: 650, color: 'var(--mc-text-1)' }}>{s.headline}</div>}
-            {s.refText && <div data-testid="aln-ref" style={{ marginTop: 6, fontSize: 11.5, color: 'var(--mc-text-2)', lineHeight: 1.4 }}>{s.refText}</div>}
+            {s.display !== 'research' && <div data-testid="aln-clean-note" style={{ marginTop: 6, fontSize: 11.5, color: 'var(--mc-text-3)', lineHeight: 1.4 }}>Clean view draws the 2 nearest levels above and below the price (from their last touch) and the strongest rising and falling trendline; broken lines are hidden. Switch to Research to draw all of them. Every line is listed below.</div>}
+                        {s.refText && <div data-testid="aln-ref" style={{ marginTop: 6, fontSize: 11.5, color: 'var(--mc-text-2)', lineHeight: 1.4 }}>{s.refText}</div>}
             <div style={{ marginTop: 10, marginBottom: 2, fontSize: 11.5, fontWeight: 650, color: 'var(--mc-text-3)' }}>Trendlines · {nTrend}</div>
             {nTrend ? trendRows.map((r) => row(r, false)) : <div style={{ color: 'var(--mc-text-2)', padding: '2px 0' }}>{s.status === 'ready' ? 'No trendline with 3 or more touches near price.' : s.headline}</div>}
             <div style={{ marginTop: 10, marginBottom: 2, fontSize: 11.5, fontWeight: 650, color: 'var(--mc-text-3)' }}>Levels (highest first) · {nLevels}</div>

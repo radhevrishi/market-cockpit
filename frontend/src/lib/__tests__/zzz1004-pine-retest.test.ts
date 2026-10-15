@@ -275,6 +275,7 @@ test('zzz1004 Pine page (JSDOM): active-query heading, M disables unsupported ch
     await act(async () => { el.value = value; el.dispatchEvent(new (window as any).Event('change', { bubbles: true })); await settle(); });
   };
   try {
+    try { localStorage.setItem('mc:pine-details:v1', '1'); } catch { /* no DOM */ }   // zzz1033 — coverage / count lines behind ⓘ Details
     const { default: PineScreener } = await import('../../components/pine-screener/PineScreener');
     await act(async () => { root.render(React.createElement(PineScreener)); await settle(); await settle(); });
     const h2 = () => document.querySelector('[data-testid="active-query"]')!.textContent!;

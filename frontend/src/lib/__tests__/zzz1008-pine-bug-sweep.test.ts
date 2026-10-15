@@ -287,6 +287,7 @@ async function withPage<T>(rows: unknown[], fn: (h: { act: any; click: (pred: (b
   const click = async (pred: (b: HTMLButtonElement) => boolean) => { const b = Array.from(document.querySelectorAll('button')).find(pred); assert.ok(b, 'button'); await act(async () => { b!.click(); await settle(); }); };
   const choose = async (label: string, value: string) => { const el = document.querySelector(`select[aria-label="${label}"]`) as HTMLSelectElement; await act(async () => { el.value = value; el.dispatchEvent(new (window as any).Event('change', { bubbles: true })); await settle(); }); };
   try {
+    try { localStorage.setItem('mc:pine-details:v1', '1'); } catch { /* no DOM */ }   // zzz1033 — coverage / count lines behind ⓘ Details
     const { default: PineScreener } = await import('../../components/pine-screener/PineScreener');
     await act(async () => { root.render(React.createElement(PineScreener)); await settle(); await settle(); });
     return await fn({ act, click, text, settle, choose });

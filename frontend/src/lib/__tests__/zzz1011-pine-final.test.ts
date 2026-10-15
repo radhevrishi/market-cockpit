@@ -272,6 +272,7 @@ async function withPage<T>(rows: unknown[], fn: (h: { act: any; click: (pred: (b
   const click = async (pred: (b: HTMLButtonElement) => boolean) => { const b = Array.from(document.querySelectorAll('button')).find(pred); assert.ok(b, 'button'); await act(async () => { b!.click(); await settle(); }); };
   const key = async (k: string) => { await act(async () => { window.dispatchEvent(new (window as any).KeyboardEvent('keydown', { key: k, bubbles: true })); await settle(); }); };
   try {
+    try { localStorage.setItem('mc:pine-details:v1', '1'); } catch { /* no DOM */ }   // zzz1033 — coverage / count lines behind ⓘ Details
     const { default: PineScreener } = await import('../../components/pine-screener/PineScreener');
     await act(async () => { root.render(React.createElement(PineScreener)); await settle(); await settle(); });
     return await fn({ act, click, text, settle, key });

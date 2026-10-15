@@ -309,10 +309,14 @@ export function IndicatorLegend({ rows, valueOf, onToggle, onRemove, decimals, c
   /** zzz967 (UI-01) — readable text colour for a line colour (the swatch keeps the line colour itself) */
   textOf?: (c: string) => string;
 }) {
+  // zzz1035 — hidden lines fold into one "+N hidden" row (owner: messy chart); click it to list them with their eye / ×
+  const [showHidden, setShowHidden] = useState(false);
   if (!rows.length) return null;
+  const hiddenN = rows.filter((r) => !r.on).length;
+  const shownRows = showHidden ? rows : rows.filter((r) => r.on);
   return (
     <div className="mc-legend" style={{ position: 'absolute', left: 8, top, zIndex: 5, display: 'flex', flexDirection: 'column', gap: 1, fontSize: 12, pointerEvents: 'none' }}>
-      {rows.map((r) => {
+      {shownRows.map((r) => {
         const vals = r.on ? valueOf(r) : [];
         return (
           <div key={r.id} className="mc-legend-row" style={{ display: 'flex', alignItems: 'center', gap: 6, pointerEvents: 'none', color: r.on ? 'var(--mc-text-1)' : 'var(--mc-text-4)', lineHeight: '18px' }}>
@@ -343,6 +347,13 @@ export function IndicatorLegend({ rows, valueOf, onToggle, onRemove, decimals, c
           </div>
         );
       })}
+      {hiddenN ? (
+        <button type="button" data-testid="legend-hidden-toggle" onClick={() => setShowHidden((v) => !v)} aria-expanded={showHidden}
+          title={showHidden ? 'Fold the hidden lines away' : 'Show the hidden lines (to turn one back on or remove it)'}
+          style={{ alignSelf: 'flex-start', background: 'none', border: 'none', padding: '0 0', cursor: 'pointer', color: 'var(--mc-text-3)', fontSize: 11.5, lineHeight: '18px', pointerEvents: 'auto' }}>
+          {showHidden ? '− fold hidden' : `+${hiddenN} hidden`}
+        </button>
+      ) : null}
     </div>
   );
 }

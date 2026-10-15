@@ -240,6 +240,7 @@ test('zzz983 page renders the matches and switches bias / sub-pattern (JSDOM)', 
     await act(async () => { b!.click(); await settle(); });
   };
   try {
+    try { localStorage.setItem('mc:pine-details:v1', '1'); } catch { /* no DOM */ }   // zzz1033 — coverage / count lines behind ⓘ Details
     const { default: PineScreener } = await import('../../components/pine-screener/PineScreener');
     await act(async () => { root.render(React.createElement(PineScreener)); await settle(); });
     assert.ok(urls.some((u) => u.includes('/api/v1/pine-screener?market=US')));

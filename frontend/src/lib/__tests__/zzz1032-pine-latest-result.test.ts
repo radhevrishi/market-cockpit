@@ -222,6 +222,7 @@ test('zzz1032 page (JSDOM): the Latest result column with chip and figures, sort
   };
   const listed = () => Array.from(document.querySelectorAll('tbody tr a[data-ticker]')).map((a) => a.textContent);
   try {
+    try { localStorage.setItem('mc:pine-details:v1', '1'); } catch { /* no DOM */ }   // zzz1033 — coverage / count lines behind ⓘ Details
     const { default: PineScreener } = await import('../../components/pine-screener/PineScreener');
     await act(async () => { root.render(React.createElement(PineScreener)); await settle(); await settle(); });
     assert.ok(document.querySelector('th[data-col="result"]'), 'column on by default');

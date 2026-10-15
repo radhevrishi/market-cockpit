@@ -110,6 +110,7 @@ async function withPage(fn: (h: { click: (el: Element | null | undefined) => Pro
     await act(async () => { Object.getOwnPropertyDescriptor((dom.window as any).HTMLSelectElement.prototype, 'value')!.set!.call(el, v); el.dispatchEvent(new (dom.window as any).Event('change', { bubbles: true })); await settle(); });
   };
   try {
+    try { localStorage.setItem('mc:pine-details:v1', '1'); } catch { /* no DOM */ }   // zzz1033 — coverage / count lines behind ⓘ Details
     const { default: PineScreener } = await import('../../components/pine-screener/PineScreener');
     await act(async () => { root.render(React.createElement(PineScreener)); await settle(); await settle(); });
     await fn({ click, select, text: () => document.body.textContent || '', settle });

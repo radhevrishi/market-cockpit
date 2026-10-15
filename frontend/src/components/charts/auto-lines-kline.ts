@@ -54,21 +54,30 @@ export function registerAutoLinesIndicator(kc: typeof KC): void {
         ctx.lineWidth = 1.5; ctx.strokeStyle = rgba(c, alpha); ctx.stroke();
       };
 
+      // zzz1035 — Clean: fewer, shorter lines (owner: "so many lines and look messy"). Levels: the 2 nearest above and 2 nearest below
+      // the last close, each drawn from its LAST touch to the right edge (not across the whole history), touch rings on hover only.
+      // Trendlines: no broken ones, the strongest rising and the strongest falling line only. Research draws everything as before.
+      const clean = ext.display !== 'research';
+      const lastC = data[data.length - 1]?.close;
+      const levelsShown = clean ? cleanLevels(ext.levels || [], typeof lastC === 'number' ? lastC : null) : (ext.levels || []);
+      const linesShown = clean ? cleanLines(ext.lines || []) : (ext.lines || []);
       // ── horizontal levels (under the trendlines) ──────────────────────────────
-      for (const lv of ext.levels || []) {
+      for (const lv of levelsShown) {
         const kA = indexAtOrAfter(data, lv.tA);
         if (kA < 0) continue;
         const c = col.level;   // zzz1034 — every level one colour (yellow on dark, deep amber on white)
         const hov = ext.hover === lv.id;
         const y = yAxis.convertToPixel(lv.price);
         if (y < -2 || y > bounding.height + 2) continue;
-        const x0 = Math.max(0, xAxis.convertToPixel(kA));
+        const lastTouchT = lv.touches.length ? lv.touches[lv.touches.length - 1][0] : lv.tA;
+        const kL = clean ? Math.max(kA, indexAtOrAfter(data, lastTouchT)) : kA;
+        const x0 = Math.max(0, xAxis.convertToPixel(kL < 0 ? kA : kL));
         ctx.setLineDash(lv.strength >= 55 ? [] : [5, 4]);
         ctx.lineWidth = hov ? 2 : lv.strength >= 70 ? 1.4 : 1;
         ctx.strokeStyle = rgba(c, hov ? 1 : 0.72);
         ctx.beginPath(); ctx.moveTo(x0, Math.round(y) + 0.5); ctx.lineTo(bounding.width, Math.round(y) + 0.5); ctx.stroke();
         ctx.setLineDash([]);
-        for (const [t, p] of lv.touches) {
+        if (!clean || hov) for (const [t, p] of lv.touches) {
           const k = indexAtOrAfter(data, t);
           if (k < vr.from - 1 || k > vr.to + 1) continue;
           ring(xAxis.convertToPixel(k), yAxis.convertToPixel(p), c, hov ? 1 : 0.8);
@@ -77,7 +86,7 @@ export function registerAutoLinesIndicator(kc: typeof KC): void {
       }
 
       // ── trendlines ────────────────────────────────────────────────────────────
-      for (const ln of ext.lines || []) {
+      for (const ln of linesShown) {
         const kA = indexAtOrAfter(data, ln.tA);
         if (kA < 0) continue;
         const c = ln.broken ? col.broken : col.trend;   // zzz1034 — every trendline one colour (white on dark, charcoal on white)
@@ -149,4 +158,32 @@ export function registerAutoLinesIndicator(kc: typeof KC): void {
       return false;
     },
   });
+}
+
+/** zzz1035 — Clean: the 2 nearest levels above and the 2 nearest below the last close (all levels when the close is unknown).
+ *  Levels within 1.2% of an already chosen one share its slot (their right-edge tags merge into one). */
+export function cleanLevels<T extends { price: number }>(levels: readonly T[], close: number | null, perSide = 2): T[] {
+  if (close == null || !Number.isFinite(close)) return levels.slice(0, perSide * 2);
+  const pick = (side: T[]) => {
+    const out: T[] = [];
+    let slots = 0, last: number | null = null;
+    for (const l of side) {
+      const near = last != null && Math.abs(l.price - last) / last <= 0.012;
+      if (!near) { if (slots >= perSide) break; slots++; last = l.price; }
+      out.push(l);
+    }
+    return out;
+  };
+  const above = pick(levels.filter((l) => l.price >= close).sort((a, b) => a.price - b.price));
+  const below = pick(levels.filter((l) => l.price < close).sort((a, b) => b.price - a.price));
+  return [...above, ...below];
+}
+/** zzz1035 — Clean: no broken trendlines; the strongest rising (support) and the strongest falling (resistance) line only. */
+export function cleanLines<T extends { kind: 'support' | 'resistance'; broken: boolean; strength: number }>(lines: readonly T[]): T[] {
+  const out: T[] = [];
+  for (const kind of ['support', 'resistance'] as const) {
+    const top = lines.filter((l) => l.kind === kind && !l.broken).sort((a, b) => b.strength - a.strength)[0];
+    if (top) out.push(top);
+  }
+  return out;
 }

@@ -197,7 +197,8 @@ test('auto-line tags on the chart: Clean merges / caps and keeps clear of the la
   const n = 120;
   const data = Array.from({ length: n }, (_, i) => ({ timestamp: Date.UTC(2026, 0, 1) + i * DAY, open: 100, high: 101, low: 99, close: 100 }));
   const lv = (price: number, nTouch: number, kind: 'support' | 'resistance') => ({ id: `l:${kind}:${price}`, kind, strength: 60, n: nTouch, price, tA: data[5].timestamp, touches: [], prov: false });
-  const payload = { lines: [], levels: [lv(130, 3, 'resistance'), lv(130.8, 5, 'resistance'), lv(131.4, 4, 'resistance'), lv(112, 3, 'resistance'), lv(100.4, 6, 'resistance'), lv(95, 3, 'support'), lv(80, 3, 'support'), lv(70, 4, 'support'), lv(60, 3, 'support')], light: true, decimals: 2 };
+  // zzz1035 — Clean draws the 2 nearest levels each side (a near cluster shares one slot): no level between the price and the cluster here
+  const payload = { lines: [], levels: [lv(130, 3, 'resistance'), lv(130.8, 5, 'resistance'), lv(131.4, 4, 'resistance'), lv(100.4, 6, 'resistance'), lv(95, 3, 'support'), lv(80, 3, 'support'), lv(70, 4, 'support'), lv(60, 3, 'support')], light: true, decimals: 2 };
   const H = 600, W = 800;
   const chart = { getDataList: () => data, getVisibleRange: () => ({ from: 0, to: n, realFrom: 0, realTo: n }), getBarSpace: () => ({ bar: 6 }) };
   const xAxis = { convertToPixel: (k: number) => k * 6, convertFromPixel: (px: number) => px / 6 };

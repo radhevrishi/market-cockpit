@@ -172,6 +172,7 @@ test('zzz999 Pine page (JSDOM): setup cards with counts, a card opens its screen
   const settle = () => new Promise<void>((r) => setTimeout(r, 30));
   const text = () => document.body.textContent || '';
   try {
+    try { localStorage.setItem('mc:pine-details:v1', '1'); } catch { /* no DOM */ }   // zzz1033 — coverage / count lines behind ⓘ Details
     const { default: PineScreener } = await import('../../components/pine-screener/PineScreener');
     await act(async () => { root.render(React.createElement(PineScreener)); await settle(); await settle(); });
     const card = (id: string) => document.querySelector(`[data-card="${id}"]`) as HTMLButtonElement;
