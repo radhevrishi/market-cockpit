@@ -96,7 +96,10 @@ test('forming last candle: daily before / after the close, weekly / monthly by p
   assert.equal(lastBarForming(t, 'D', 'IN', Date.UTC(2026, 9, 14, 11)), false);
   assert.equal(lastBarForming(t, 'D', 'US', Date.UTC(2026, 9, 15, 3)), false, 'next day');
   const wk = Date.UTC(2026, 9, 12);   // Monday
-  assert.equal(lastBarForming(wk, 'W', 'US', Date.UTC(2026, 9, 16, 22)), true, 'Friday evening: the week closes at Saturday 00:00 UTC');
+  // zzz1044a — a week closes at its Friday session close (US 16:00 New York = 20:00 UTC in summer time; India 10:00 UTC)
+  assert.equal(lastBarForming(wk, 'W', 'US', Date.UTC(2026, 9, 16, 19, 30)), true, 'Friday before the New York close');
+  assert.equal(lastBarForming(wk, 'W', 'US', Date.UTC(2026, 9, 16, 22)), false, 'Friday evening after the close');
+  assert.equal(lastBarForming(wk, 'W', 'IN', Date.UTC(2026, 9, 16, 11)), false, 'India: after 15:30 IST');
   assert.equal(lastBarForming(wk, 'W', 'US', Date.UTC(2026, 9, 17, 1)), false);
   assert.equal(lastBarForming(Date.UTC(2026, 9, 1), 'M', 'US', Date.UTC(2026, 9, 20)), true);
   assert.equal(lastBarForming(Date.UTC(2026, 8, 1), 'M', 'US', Date.UTC(2026, 9, 20)), false);

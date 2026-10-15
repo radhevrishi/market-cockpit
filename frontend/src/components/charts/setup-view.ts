@@ -7,6 +7,7 @@
 // The rules themselves are lib/setups.ts — our own version of the published rules, not the traders' own code.
 import { newExtra, type ChartLayout } from '@/lib/chart-layouts';
 import { periodCloseT } from '@/lib/bar-aggregate';
+import { sessionCloseMs, weekComplete } from '@/lib/completed-weeks';
 import { SETUP_META, setupSeries, type SetupBar, type SetupCode, type SetupEvent, type SetupSeriesResult } from '@/lib/setups';
 
 export const SETUP_INDICATOR = 'MC_SETUPS';
@@ -64,22 +65,15 @@ export function parseSetupPrefs(raw: string | null | undefined): SetupPrefs {
 export const serializeSetupPrefs = (p: SetupPrefs) => JSON.stringify({ v: 1, shown: p.shown, sqzPane: p.sqzPane, donchian: p.donchian });
 
 // ── which bars are read ─────────────────────────────────────────────────────────
-const DAY = 86_400_000;
-/** New York daylight saving time on a UTC day (second Sunday of March to the first Sunday of November). */
-function usSummerTime(dayStart: number): boolean {
-  const d = new Date(dayStart), y = d.getUTCFullYear();
-  const nthSunday = (month: number, n: number) => { const first = new Date(Date.UTC(y, month, 1)).getUTCDay(); return Date.UTC(y, month, 1 + ((7 - first) % 7) + 7 * (n - 1)); };
-  return dayStart >= nthSunday(2, 2) && dayStart < nthSunday(10, 1);
-}
 /** Is the last candle still forming at `now`? Daily: the bar's date is today and the market has not closed yet (US 16:00 New
- *  York = 20:00 UTC in summer time, 21:00 UTC in winter; India 15:30 IST = 10:00 UTC). Weekly / monthly: the week / month has
- *  not ended (lib/bar-aggregate periodCloseT — 00:00 UTC after its last weekday). */
+ *  York = 20:00 UTC in summer time, 21:00 UTC in winter; India 15:30 IST = 10:00 UTC). Weekly (zzz1044a): the week's Friday
+ *  close has not passed (lib/completed-weeks — the same rule as the weekly Stage Analysis and the screener's weekly setups).
+ *  Monthly: the month has not ended (lib/bar-aggregate periodCloseT — 00:00 UTC after its last weekday). */
 export function lastBarForming(lastT: number | null | undefined, tf: SetupChartTf, market: string, now: number = Date.now()): boolean {
   if (lastT == null || !Number.isFinite(lastT)) return false;
-  if (tf === 'W' || tf === 'M') return now < periodCloseT(lastT, tf);
-  const dayStart = Math.floor(lastT / DAY) * DAY;
-  const closeUtc = market === 'IN' ? 10 * 3_600_000 : (usSummerTime(dayStart) ? 20 : 21) * 3_600_000;
-  return now < dayStart + closeUtc;
+  if (tf === 'W') return !weekComplete(lastT, market, now);
+  if (tf === 'M') return now < periodCloseT(lastT, tf);
+  return now < sessionCloseMs(lastT, market);
 }
 /** The completed candles of the chart (a prefix of `bars`, so indexes match) and whether a forming last candle was left out. */
 export function completedBars<T extends { t: number }>(bars: readonly T[], tf: SetupChartTf, market: string, now: number = Date.now()): { bars: T[]; dropped: boolean } {

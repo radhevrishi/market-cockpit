@@ -5,7 +5,7 @@
 //  • the stage colours, the stage line (30-wk / 150-day average), the labels and levels where stages began, and the banner
 // The method itself is lib/stage-analysis.ts — our own version from the published rules, not the original script.
 import { newExtra, type ChartLayout } from '@/lib/chart-layouts';
-import { readingsForBars, stageAnalysis, weeklyFromTimed, stageHeadline, stageDetails, stageDatesLong, stageChangeText, sessionWords, weekEnd, dayWords, STAGE_MEANING, STAGE_WORDS, SUB_WORDS, type Stage, type StageChange, type StageDetail, type StageResult, type StageWeek } from '@/lib/stage-analysis';
+import { readingsForBars, stageCompleted, weeklyFromTimed, stageHeadline, stageDetails, stageDatesLong, stageChangeText, sessionWords, weekEnd, weekKey, dayWords, STAGE_MEANING, STAGE_WORDS, SUB_WORDS, type Stage, type StageChange, type StageDetail, type StageResult, type StageWeek } from '@/lib/stage-analysis';
 import { readableOn } from '@/lib/readable-color';
 import { dailyUrl } from './pattern-view';
 
@@ -29,10 +29,13 @@ export function benchmarkOf(market: string): { ticker: string; name: string } {
 export const benchmarkUrl = (market: string) => dailyUrl(benchmarkOf(market).ticker, market === 'IN' ? 'IN' : 'US', undefined, 'price');
 
 type TBar = { t: number; o: number; h: number; l: number; c: number; v: number };
-/** Weekly reading from the stock's daily bars + the index's daily bars (null index → no Mansfield RS). */
-export function stageFromCharts(daily: readonly TBar[], benchDaily: readonly TBar[] | null): StageResult {
+/** Weekly reading from the stock's daily bars + the index's daily bars (null index → no Mansfield RS). zzz1044a — the confirmed
+ *  stage (tint, line, marks, stage age, banner) is read from COMPLETED exchange weeks only (lib/completed-weeks: after the Friday
+ *  close of `market` — US 16:00 New York, India 15:30 IST — or once a later week has a bar), for the stock and the index alike;
+ *  the still-open week is read separately into `provisional` ("provisional (week not closed)" in the banner). */
+export function stageFromCharts(daily: readonly TBar[], benchDaily: readonly TBar[] | null, market?: string | null, now: Date | number = Date.now()): StageResult {
   const bench = benchDaily && benchDaily.length ? new Map(weeklyFromTimed(benchDaily).map((w) => [w.wk, w.c] as [string, number])) : null;
-  return stageAnalysis(weeklyFromTimed(daily), bench);
+  return stageCompleted(weeklyFromTimed(daily), bench, { market, now, provisional: true });
 }
 /** zzz1023 — per candle on screen: [timestamp, stage (0 = none), Mansfield RS, stage line (30-wk MA; the 150-day average on a
  *  daily or intraday chart), its slope (1 rising / 0 flat / −1 falling), sub-stage (1 = B)] — what the chart indicators read. */
@@ -71,7 +74,13 @@ export function stagePointsFor(shownTimes: readonly number[], r: StageResult, ma
     const ma = daily && ma150 ? (ma150.get(isoDay(t)) ?? null) : (w?.ma30 ?? null);
     const sl = w?.slope === 'rising' ? 1 : w?.slope === 'falling' ? -1 : w?.slope === 'flat' ? 0 : null;
     let sw = w;
-    if (daily && k != null && k > 0 && w && r.weeks[k - 1].stage !== w.stage && i + 1 < shownTimes.length && idx[i + 1] === k) sw = r.weeks[k - 1];
+    // zzz1044a — only a candle BEFORE week k's close keeps the week before's stage: one of week k itself followed by another of
+    // week k, or one of an earlier week mapped to k (a Friday before a Monday holiday). A candle of the still-open week after the
+    // last completed week k (read with week k) is past that close and keeps week k's stage.
+    const own = weekKey(isoDay(t));
+    const inWeekBeforeClose = w != null && i + 1 < shownTimes.length && idx[i + 1] === k
+      && (own < w.wk || (own === w.wk && weekKey(isoDay(shownTimes[i + 1])) === w.wk));
+    if (daily && k != null && k > 0 && w && r.weeks[k - 1].stage !== w.stage && inWeekBeforeClose) sw = r.weeks[k - 1];
     return [t, sw?.stage ?? 0, w?.mrs ?? null, ma, ma != null ? sl : null, sw?.sub === 'B' ? 1 : 0];
   });
 }
@@ -154,10 +163,19 @@ export interface StageBannerModel {
 export function stageChangesList(changes: readonly StageChange[] | null | undefined, max = 6): string[] {
   return (changes || []).slice(-max).reverse().map((ch) => stageChangeText(ch));
 }
-export function stageBanner(status: 'loading' | 'ready' | 'error' | 'idle', last: StageWeek | null, benchOk: boolean, error?: string, light = true, changes?: readonly StageChange[] | null): StageBannerModel {
+/** zzz1044a — the open week's provisional reading in words, or '' when it says nothing the confirmed reading does not:
+ *  "this week: Stage 2 · provisional (week not closed)" / "this week asks for Stage 2 · provisional (week not closed)". */
+export function provisionalText(last: StageWeek | null | undefined, prov: StageWeek | null | undefined): string {
+  if (!prov || prov.stage == null) return '';
+  if (last?.stage !== prov.stage) return `this week: Stage ${prov.stage} · ${STAGE_WORDS[prov.stage]} · provisional (week not closed)`;
+  if (prov.pending != null && prov.pending !== last?.pending) return `this week asks for Stage ${prov.pending} · provisional (week not closed)`;
+  return '';
+}
+export function stageBanner(status: 'loading' | 'ready' | 'error' | 'idle', last: StageWeek | null, benchOk: boolean, error?: string, light = true, changes?: readonly StageChange[] | null, provisional?: StageWeek | null): StageBannerModel {
   if (status === 'loading' || status === 'idle') return { text: 'Stage Analysis: reading the weekly bars…', color: null };
   if (status === 'error') return { text: `Stage Analysis: ${error || 'the daily bars could not be loaded'}`, color: null };
-  const base = stageHeadline(last);
+  const prov = provisionalText(last, provisional);
+  const base = prov ? `${stageHeadline(last)} · ${prov}` : stageHeadline(last);
   const st = last?.stage ?? null;
   return {
     text: benchOk || !last || st == null ? base : `${base} · index not loaded (no RS)`,

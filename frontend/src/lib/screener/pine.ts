@@ -214,9 +214,10 @@ export function techEntry(bars: DailyBars, firstTradeSec: number | null, partial
     lv = { pat: q.scan.st === 'ready' ? q.pat.map((t) => ({ ...t, lv: 1 as const })) : [], scan: { ...rest, at: obsAt, session: 'open' } };
   }
   let tv: Partial<TvFigures> = {};
-  try { tv = tvFigures(recent, bench); } catch { /* never costs the price figures */ }
+  // zzz1044a — Stage Analysis from completed exchange weeks (the open week left out, at the observation time `now`)
+  try { tv = tvFigures(recent, bench, { market: src?.market, now }); } catch { /* never costs the price figures */ }
   // zzz1020 — trader setups (lib/setups.ts) from the COMPLETED sessions only (same bars as the daily pattern scan)
-  const st = setupEntry(done, src?.market);
+  const st = setupEntry(done, src?.market, now);
   // zzz993 (MC-01) — the close every price figure of this entry was worked out from, and its date / source
   const scanPx = n && Number.isFinite(recent.c[n - 1]) ? Number(recent.c[n - 1].toPrecision(6)) : null;
   // zzz993 — weekly / monthly patterns from the same daily bars (completed periods only); zzz1003 — monthly from the full ~10 years
@@ -393,7 +394,7 @@ export function rowTvFields(tf: TechStored | undefined, market: ScreenMarket): P
 // ── zzz1020: trader setups (lib/setups.ts) ──────────────────────────────────────────────────────────────────────────────
 /** Bump when lib/setups.ts's rules change: every stored entry with another `setV` is re-read (after the companies whose prices or
  *  patterns are due), and its setup fields are withheld from the rows until then. Independent of PATTERN_SCAN_VERSION. */
-export const SETUP_VERSION = 3;   // zzz1027 — 3: stage weeks counted from the confirmed week; 2 (zzz1023): re-read so the reworked Stage Analysis (twSt / twWk) is stored too
+export const SETUP_VERSION = 4;   // zzz1044a — 4: weekly setups (wt3 / wt3P / dc20W) and the Stage Analysis (twSt / twWk / sata / mrs) from COMPLETED exchange weeks only; zzz1027 — 3: stage weeks counted from the confirmed week; 2 (zzz1023): re-read so the reworked Stage Analysis (twSt / twWk) is stored too
 /** The setup figures a row carries (epT, the gap day, stays on the stored entry — it feeds epE). */
 export const SETUP_ROW_KEYS = [
   'wt3', 'wt3P', 'udv', 'x10A', 'x50A', 'dvx', 'dvT', 'dvB', 'dc20D', 'dc55D', 'dc20W', 'sqzN', 'sqzF', 'sqzM', 'nr7', 'ib',
@@ -407,10 +408,10 @@ export function setupBarsOf(b: DailyBars): SetupBar[] {
 }
 /** What a stored entry keeps from the setups: the known figures (nulls left out, to keep the stored row small) and `setV`. A failure
  *  stores no figures but still the version, so a company is not re-read on every run because of it. */
-export function setupEntry(done: DailyBars, market?: ScreenMarket): Partial<SetupFigures> & { setV: number } {
+export function setupEntry(done: DailyBars, market?: ScreenMarket, now?: Date): Partial<SetupFigures> & { setV: number } {
   const out: Partial<SetupFigures> & { setV: number } = { setV: SETUP_VERSION };
   try {
-    const f = setupFigures(setupBarsOf(done), { market });
+    const f = setupFigures(setupBarsOf(done), { market, now });
     for (const k of SETUP_FIGURE_KEYS) { const v = f[k]; if (v != null) (out as any)[k] = v; }
   } catch { /* never costs the price figures */ }
   return out;

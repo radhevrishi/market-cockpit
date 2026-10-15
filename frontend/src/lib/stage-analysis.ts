@@ -5,7 +5,10 @@
 //
 // ── inputs ───────────────────────────────────────────────────────────────────────────────────────────────────────────
 // Daily bars are resampled to WEEKLY bars (ISO weeks, Monday key): open = first open, high / low = extremes, close = last close,
-// volume = sum. The current (unfinished) week is included, as TradingView paints its real-time bar.
+// volume = sum. zzz1044a — the CONFIRMED reading uses COMPLETED exchange weeks only (lib/completed-weeks: a week is complete
+// after its Friday close — US 16:00 New York, India 15:30 IST — or once a bar of a later week exists); the unfinished current
+// week is left out of the stage, SATA, Mansfield RS, the stage age and the began / confirmed dates (stageCompleted). A separate
+// PROVISIONAL reading that includes the open week can be asked for (charts: "provisional (week not closed)").
 // Benchmark for Mansfield RS: S&P 500 (^GSPC) for US stocks, Nifty 50 (^NSEI) for India — weekly closes matched by week;
 // a week the benchmark has no bar for takes its previous weekly close.
 //
@@ -47,9 +50,12 @@
 // second weekly close (the stage was only known then). The weekly history never shows the new stage before it was confirmed:
 // the first week keeps the old stage with `pending` naming the stage asked for, the new stage shows from the confirmed week,
 // and `weeks` counts from the confirmed week (that week = 1). The first reading (34 weeks: the 30-week average and its 5-week slope) starts from a plain read of price vs a rising /
-// flat / falling average. The current, unfinished week counts as a week, as TradingView paints its live bar.
+// flat / falling average. zzz1044a — only completed weeks are read (see inputs), so a Monday–Friday bar of an unfinished week can
+// never confirm a change.
 // Sub-stages (A / B): 1A ma30 still falling, 1B ma30 flat or turning up · 2A within 20 % of ma30, 2B more than 20 % above it
 // (extended) · 3A close above ma30, 3B below it · 4A ma30 falling fast (< −2 %), 4B the fall slowing.
+
+import { completedWeekCount, completedWeekMap, type WeekMarket } from './completed-weeks';
 
 export type Stage = 1 | 2 | 3 | 4;
 export type SubStage = 'A' | 'B';
@@ -93,7 +99,12 @@ export interface StageWeek {
 export interface StageChange { i: number; wk: string; beganI: number; began: string; confirmed: string; from: Stage | null; to: Stage; level: number | null; volX: number | null;
   /** zzz1030 — the last trading session of the began week and of the confirmed week (YYYY-MM-DD): the confirming close */
   beganEnd: string; confirmedEnd: string }
-export interface StageResult { weeks: StageWeek[]; last: StageWeek | null; changes?: StageChange[] }
+export interface StageResult { weeks: StageWeek[]; last: StageWeek | null; changes?: StageChange[];
+  /** zzz1044a — the reading WITH the still-open current week (stageCompleted with `provisional: true`, only when a week was left
+   *  out): never a confirmed stage — shown as "provisional (week not closed)". */
+  provisional?: StageWeek | null;
+  /** zzz1044a — Monday key of the open week left out of the confirmed reading (null = every week supplied was complete) */
+  openWeek?: string | null }
 
 export const SATA_LABELS: readonly string[] = [
   'Breakout above the 13-week range', 'Close above the 10-week average', 'Close above the 30-week average', 'Close above the 40-week average',
@@ -320,9 +331,23 @@ export function stageAnalysis(weeks: readonly WeekBar[], bench?: ReadonlyMap<str
   return { weeks: out, last: out.length ? out[out.length - 1] : null, changes };
 }
 
-/** Convenience: daily bars (YYYY-MM-DD dates) + optional benchmark weekly closes → the latest reading. */
-export function stageFromDaily(b: { d: readonly string[]; o?: readonly number[]; h?: readonly number[]; l?: readonly number[]; c: readonly number[]; v?: readonly number[] }, bench?: ReadonlyMap<string, number> | null): StageWeek | null {
-  return stageAnalysis(weeklyBars(b), bench).last;
+/** zzz1044a — when the reading is observed and on which exchange (the week-close clock). `now` defaults to the current time;
+ *  an unknown market uses the US close (the later one). `provisional` also reads the open week, separately. */
+export interface StageClock { market?: WeekMarket | string | null; now?: Date | number; provisional?: boolean }
+/** zzz1044a — the CONFIRMED stage reading from completed exchange weeks only (stock and benchmark alike); the open current week
+ *  (if any) is left out and, with `provisional`, read separately into `provisional`. Earlier weeks read exactly as before, so the
+ *  historical stages, began / confirmed dates and every historical prefix are unchanged. */
+export function stageCompleted(weeks: readonly WeekBar[], bench: ReadonlyMap<string, number> | null | undefined, clock: StageClock = {}): StageResult {
+  const k = completedWeekCount(weeks, (w) => w.wk, clock.market, clock.now);
+  const r = stageAnalysis(k === weeks.length ? weeks : weeks.slice(0, k), completedWeekMap(bench ?? null, clock.market, clock.now));
+  r.openWeek = k < weeks.length ? weeks[k].wk : null;
+  if (clock.provisional && k < weeks.length) r.provisional = stageAnalysis(weeks, bench).last;
+  return r;
+}
+/** Convenience: daily bars (YYYY-MM-DD dates) + optional benchmark weekly closes → the latest CONFIRMED reading (completed weeks
+ *  only, zzz1044a — pass the market and the observation time). */
+export function stageFromDaily(b: { d: readonly string[]; o?: readonly number[]; h?: readonly number[]; l?: readonly number[]; c: readonly number[]; v?: readonly number[] }, bench?: ReadonlyMap<string, number> | null, clock: StageClock = {}): StageWeek | null {
+  return stageCompleted(weeklyBars(b), bench, { market: clock.market, now: clock.now }).last;
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];

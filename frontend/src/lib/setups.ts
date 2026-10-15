@@ -5,8 +5,9 @@
 // changes the readings):
 //   • setupSeries(bars, opts)  — timeframe-agnostic (daily, weekly or monthly bars): every setup event on every bar, the Darvas
 //                                boxes, the TTM squeeze dots + momentum histogram and the 20-bar Donchian channel. For charts.
-//   • setupFigures(daily, opts) — the last bar's figures from DAILY bars (some read the weekly bars built from them). For the
-//                                screener: one number per setup, null when the history is too short or nothing fired.
+//   • setupFigures(daily, opts) — the last bar's figures from DAILY bars (some read the weekly bars built from them — zzz1044a:
+//                                completed exchange weeks only, at opts.now). For the screener: one number per setup, null when
+//                                the history is too short or nothing fired.
 // SETUP_META names every code in plain words (label, method, exact rule). Indicators are computed once per call:
 // EMA 10 / 20, SMA 20 / 50, ATR 14 / 20 / 40 (Wilder), Bollinger (20, 2), Keltner (EMA 20 ± 1.5 × ATR 20), ADX 14, the
 // 50-bar average volume of the bars BEFORE each bar.
@@ -14,6 +15,7 @@
 // Conventions: "sessions since" = 0 on the last bar; a window of N means 0 … N−1. Prices are rounded (2 dp from 1 up, 4
 // significant digits below 1). Events: `i` = bar index in the array passed in, `dir` 1 = upward / bullish, −1 = downward.
 import { aggregateBars, type Bar } from './chart-math';
+import { completedWeekCount } from './completed-weeks';
 
 /** One bar: `t` = time in ms (UTC; a daily bar's date at 00:00 UTC), open / high / low / close / volume. Same shape as chart-math's Bar. */
 export type SetupBar = Bar;
@@ -22,6 +24,8 @@ export interface SetupOpts {
   market?: 'US' | 'IN';
   /** bars in a year for the "52-week high" rules (new high, Darvas box start): 252 daily (default), 52 weekly, 12 monthly */
   yearBars?: number;
+  /** zzz1044a — setupFigures only: the observation time for the completed-week rule of its weekly figures (default: now) */
+  now?: Date | number;
 }
 /** A setup firing on bar `i`. `level` = the price the setup is about (pivot, box edge, gap-day low, support …); `note` = short words. */
 export interface SetupEvent { i: number; code: SetupCode; dir: 1 | -1; level?: number; note?: string }
@@ -37,7 +41,7 @@ export interface SetupSeriesResult {
 }
 /** The last bar's figures (setupFigures). null = too little history, or the setup did not fire within its window. */
 export interface SetupFigures {
-  /** 3 weeks tight: weekly closes in the tight run ending this week (≥ 3, only with price above SMA 50) */ wt3: number | null;
+  /** 3 weeks tight: weekly closes in the tight run ending the last COMPLETED week (≥ 3, only with price above SMA 50; zzz1044a) */ wt3: number | null;
   /** the tight run's pivot: highest weekly high of those weeks */ wt3P: number | null;
   /** up/down volume ratio, 50 sessions */ udv: number | null;
   /** (close − EMA 10) ÷ ATR 14 */ x10A: number | null;
@@ -45,7 +49,7 @@ export interface SetupFigures {
   /** Darvas: 1 inside a confirmed box, 2 top broken (close) in the last 5 sessions, 3 bottom broken in the last 5 sessions */ dvx: number | null;
   dvT: number | null; dvB: number | null;
   /** sessions since a close above the prior 20 / 55-session high (window 10) */ dc20D: number | null; dc55D: number | null;
-  /** weeks since a weekly close above the prior 20-week high (window 10) */ dc20W: number | null;
+  /** completed weeks since a weekly close above the prior 20-week high (window 10; zzz1044a — the open week left out) */ dc20W: number | null;
   /** bars in the current squeeze (0 = no squeeze) */ sqzN: number | null;
   /** sessions since a squeeze of ≥ 5 bars fired (window 10) */ sqzF: number | null;
   /** squeeze momentum sign −1 / 0 / 1 */ sqzM: number | null;
@@ -383,8 +387,10 @@ export function setupFigures(daily: SetupBar[], opts?: SetupOpts): SetupFigures 
   if (n < 2) return out;
   const k = core(bars, opts);
   const L = n - 1, { c, h, l, v } = k;
-  // weekly bars: 3 weeks tight + the weekly Donchian
-  const wk = aggregateBars(bars, 'W');
+  // weekly bars: 3 weeks tight + the weekly Donchian — zzz1044a: COMPLETED exchange weeks only (lib/completed-weeks: after the
+  // Friday close, US 16:00 New York / India 15:30 IST, or once a later week has a bar); the current, unfinished week is left out
+  const wkAll = aggregateBars(bars, 'W');
+  const wk = wkAll.slice(0, completedWeekCount(wkAll, (b) => b.t, opts?.market, opts?.now));
   if (wk.length >= 3 && fin(k.sma50[L]) && c[L] > k.sma50[L]) {
     let run = 1, hi = wk[wk.length - 1].h;
     for (let j = wk.length - 1; j >= 1; j--) {

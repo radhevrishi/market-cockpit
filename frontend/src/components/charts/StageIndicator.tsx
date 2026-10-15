@@ -65,7 +65,7 @@ export function useStageIndicator(a: StageIndicatorArgs) {
           const benchP = get(benchmarkUrl(market), () => true).catch(() => null);   // no index → stages still shown, no Mansfield RS
           const [daily, bench] = await Promise.all([stockP, benchP]);
           if (cancelled) return;
-          const result = stageFromCharts(daily, bench);
+          const result = stageFromCharts(daily, bench, market, Date.now());   // zzz1044a — completed weeks at this moment
           setState({ key, result, ma150: dailyMa150(daily), benchOk: !!bench?.length, status: 'ready' });
         } catch (e: any) {
           if (!cancelled && !ctrl.signal.aborted) setState({ key, result: null, ma150: null, benchOk: false, status: 'error', error: String(e?.message || e) });
@@ -111,7 +111,7 @@ export function useStageIndicator(a: StageIndicatorArgs) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, on, result, ma150, barsSig, light, chartRef, display]);
 
-  const banner = useMemo(() => stageBanner(!on ? 'idle' : mine ? mine.status : 'loading', result?.last ?? null, !!mine?.benchOk, mine?.error, light, result?.changes ?? null),
+  const banner = useMemo(() => stageBanner(!on ? 'idle' : mine ? mine.status : 'loading', result?.last ?? null, !!mine?.benchOk, mine?.error, light, result?.changes ?? null, result?.provisional ?? null),
     [on, mine, result, light]);
   return { on, banner, benchName: benchmarkOf(market).name, display };
 }
