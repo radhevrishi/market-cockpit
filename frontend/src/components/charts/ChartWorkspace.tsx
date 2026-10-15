@@ -4,7 +4,7 @@
 // zzz944 — named layouts (indicator sets) with Save / Save as, more indicators, a TradingView-style legend, "✓ saved" note.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import type { Chart, DeepPartial, KLineData, OverlayCreate, Styles } from 'klinecharts';
+import type { Chart, DeepPartial, KLineData, OverlayCreate, PaneOptions, Styles } from 'klinecharts';
 import {
   RANGE_KEYS, TOTAL_RETURN_LABEL, atr, barIndexAt, cleanTicker, dataRangeFor, drawingKey, fmtMoney, fmtPrice, macd, rangeStart, rsi, validTicker,
   type Bar, type DrawingName, type HeaderStats, type Market, type RangeKey, type SavedDrawing, type Timeframe,
@@ -34,7 +34,11 @@ import { useSetupIndicator } from './SetupIndicator';
 import { setupsOn, withSetups } from './setup-view';
 import { useAutoLines } from './AutoLinesIndicator';
 import { OverlaySummary, useChartDisplay } from './OverlaySummary';
-import type { OverlayId } from '@/lib/chart-display';
+import { readLegendPref, saveLegendPref, type OverlayId } from '@/lib/chart-display';
+import {
+  COLLAPSED_PANE_PX, analysisStale, barsNeeded, fitPaneHeights, isPaneCollapsed, legendCompact, paneBarsNeeded, readPaneCollapse, savePaneCollapse,
+  togglePaneCollapsed, transitionLabel, type LegendPref, type PaneCollapseStore,
+} from '@/lib/chart-readability';
 import { autoLinesOn, withAutoLines } from './auto-lines-view';
 import SymbolSearch from './SymbolSearch';
 import { CHART_CSS } from './chart-workspace-css';
@@ -95,6 +99,10 @@ html.mc-chart-focus .mc-charts-root { height: 100vh; padding-top: 8px !important
   .mc-watchlist-resize { display: none; }
 }
 ${CHART_CSS}`;
+/** zzz1045c — a lower pane's collapse / expand button: where it sits on the chart and what it is called */
+interface PaneHandle { id: string; label: string; top: number; right: number; collapsed: boolean }
+const PANE_WORDS: Record<string, string> = { VOL: 'Volume', MRS: 'Mansfield RS', RS: 'Mansfield RS', SQZ: 'Squeeze' };
+const paneWord = (short: string) => PANE_WORDS[short.toUpperCase()] || short || 'Lower pane';
 const TF_TO_INTERVAL: Record<Timeframe, string> = { D: '1d', W: '1wk', M: '1mo' };
 const TF_TO_PERIOD = { D: { type: 'day', span: 1 }, W: { type: 'week', span: 1 }, M: { type: 'month', span: 1 } } as const;
 
@@ -353,6 +361,68 @@ export default function ChartWorkspace() {
     setManualScale(false);
   }, []);
 
+  // ── lower panes (zzz1045c): the price pane keeps ≥ ~45% of the chart; each lower pane can be collapsed (per layout) ─────
+  const [paneStore, setPaneStore] = useState<PaneCollapseStore>(() => readPaneCollapse());
+  const paneStoreRef = useRef(paneStore);
+  const paneWantRef = useRef(new Map<string, number>());   // the height each pane asked for (its creator's setPaneOptions / a drag)
+  const paneSetRef = useRef(new Map<string, number>());    // the height this page last gave it
+  const [paneHandles, setPaneHandles] = useState<PaneHandle[]>([]);
+  const placeHandles = useCallback(() => {
+    const chart = chartRef.current, el = containerRef.current;
+    if (!chart || !el) return;
+    const raw = chart.getPaneOptions();
+    const list = (Array.isArray(raw) ? raw : raw ? [raw] : []) as PaneOptions[];
+    const W = el.clientWidth;
+    const next: PaneHandle[] = [];
+    for (const p of list) {
+      if (p.id === 'candle_pane' || p.id === 'x_axis_pane') continue;
+      const b = chart.getSize(p.id), m = chart.getSize(p.id, 'main');
+      if (!b || !m || !(b.height > 0)) continue;
+      const ind = chart.getIndicators({ paneId: p.id })[0];
+      next.push({ id: p.id, label: paneWord(String(ind?.shortName || ind?.name || '')), top: Math.round(b.top + 2), right: Math.max(0, Math.round(W - (m.left + m.width))) + 4,
+        collapsed: isPaneCollapsed(paneStoreRef.current, workingRef.current.id, p.id) });
+    }
+    setPaneHandles((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+  }, []);
+  const fitPanes = useCallback(() => {
+    const chart = chartRef.current, el = containerRef.current;
+    if (!chart || !el) return;
+    const raw = chart.getPaneOptions();
+    const list = (Array.isArray(raw) ? raw : raw ? [raw] : []) as PaneOptions[];
+    const lower = list.filter((p) => p.id !== 'candle_pane' && p.id !== 'x_axis_pane');
+    const wants = paneWantRef.current, given = paneSetRef.current;
+    for (const k of [...wants.keys()]) if (!lower.some((p) => p.id === k)) { wants.delete(k); given.delete(k); }
+    const layoutId = workingRef.current.id;
+    const reqs = lower.map((p) => {
+      // a height this page did not give (a new pane, or its creator set it again) is the pane's wanted height
+      if (!wants.has(p.id) || (given.get(p.id) !== p.height && p.height > 0)) wants.set(p.id, p.height > 0 ? p.height : 100);
+      return { id: p.id, want: wants.get(p.id) as number, collapsed: isPaneCollapsed(paneStoreRef.current, layoutId, p.id) };
+    });
+    if (reqs.length) {
+      const axis = chart.getSize('x_axis_pane')?.height ?? 28;
+      const fit = fitPaneHeights(el.clientHeight, reqs, { axis });
+      for (const r of reqs) {
+        const h = fit[r.id];
+        if (h == null) continue;
+        if (given.get(r.id) !== h || chart.getSize(r.id)?.height !== h) {
+          try { chart.setPaneOptions({ id: r.id, height: h, minHeight: r.collapsed ? COLLAPSED_PANE_PX - 2 : 30 }); } catch { /* pane gone */ }
+        }
+        given.set(r.id, h);
+      }
+    }
+    requestAnimationFrame(placeHandles);   // the library lays the panes out in a microtask; read their places after it
+  }, [placeHandles]);
+  const fitPanesRef = useRef(fitPanes);
+  useEffect(() => { fitPanesRef.current = fitPanes; }, [fitPanes]);
+  const togglePane = useCallback((paneId: string) => {
+    const next = togglePaneCollapsed(paneStoreRef.current, workingRef.current.id, paneId);
+    paneStoreRef.current = next;
+    setPaneStore(next);
+    savePaneCollapse(next);
+  }, []);
+  // collapsed panes are per layout: switching layouts (or collapsing one) refits
+  useEffect(() => { paneStoreRef.current = paneStore; fitPanesRef.current(); }, [paneStore, L.working.id]);
+
   // ── indicators (zzz944: from the working layout) ─────────────────────────────
   const applyIndicators = useCallback((lay: ChartLayout) => {
     const chart = chartRef.current;
@@ -397,6 +467,7 @@ export default function ChartWorkspace() {
       try { chart.createOverlay({ name: 'mcLastValues', groupId: LAST_VALUES_GROUP, paneId, lock: true, extendData: page, points: [{ timestamp: 0, value: 0 }] }); } catch { /* tags only */ }
     }
     applyScale(lay);
+    fitPanesRef.current();   // zzz1045c — the new panes never squeeze the price pane below its minimum
   }, [applyScale]);
 
   // zzz943: re-colour the chart when the page switches between white and dark (the class is on the page, not on <html>)
@@ -433,6 +504,7 @@ export default function ChartWorkspace() {
     let disposed = false;
     let ro: ResizeObserver | null = null;
     let mo: MutationObserver | null = null;
+    let paneMo: MutationObserver | null = null;
     const el = containerRef.current;
     (async () => {
       const mod = await import('./kline-setup');
@@ -459,8 +531,25 @@ export default function ChartWorkspace() {
         cancelAnimationFrame(raf);
         raf = requestAnimationFrame(() => setHoverIdx(typeof d?.dataIndex === 'number' && d?.kLineData ? d.dataIndex : null));
       });
-      ro = new ResizeObserver(() => chart.resize());
+      // zzz1045c — refit the lower panes when the chart is resized, when a pane is added / removed (the Stage and Setup panes are
+      // made by their own hooks: their DOM appearing is the signal) and after a separator is dragged (the drag sets the wanted heights)
+      let fitRaf = 0;
+      const fitSoon = () => { cancelAnimationFrame(fitRaf); fitRaf = requestAnimationFrame(() => fitPanesRef.current()); };
+      ro = new ResizeObserver(() => { chart.resize(); fitSoon(); });
       ro.observe(el);
+      paneMo = new MutationObserver(fitSoon);
+      paneMo.observe(el, { childList: true, subtree: true });
+      chart.subscribeAction('onPaneDrag', () => {
+        requestAnimationFrame(() => {
+          const raw = chart.getPaneOptions();
+          for (const p of (Array.isArray(raw) ? raw : raw ? [raw] : []) as PaneOptions[]) {
+            if (p.id === 'candle_pane' || p.id === 'x_axis_pane') continue;
+            const h = chart.getSize(p.id)?.height;
+            if (h && h > COLLAPSED_PANE_PX + 4) { paneWantRef.current.set(p.id, h); paneSetRef.current.set(p.id, p.height); }
+          }
+          fitSoon();
+        });
+      });
       // The page's <html> class changes for many reasons; only re-style when the colours really changed — re-creating the
       // indicators mid-drawing would cancel a half-drawn line.
       let sig = themeSignature();
@@ -476,7 +565,7 @@ export default function ChartWorkspace() {
     })().catch(() => setError('The chart library failed to load.'));
     return () => {
       disposed = true;
-      ro?.disconnect(); mo?.disconnect();
+      ro?.disconnect(); mo?.disconnect(); paneMo?.disconnect();
       if (el && kcRef.current) kcRef.current.dispose(el);
       chartRef.current = null;
     };
@@ -828,6 +917,14 @@ export default function ChartWorkspace() {
   const [patHandoff] = useState(() => parsePatternHandoff((k) => sp.get(k), PATTERN_IDS));
   // zzz1029 — Clean (default) / Research: how many labels the overlays draw; the calculations are the same (lib/chart-display)
   const [display, setDisplay] = useChartDisplay();
+  // zzz1045c — the legend is one strip by default in Clean (full list in Research); the viewer's own choice is remembered
+  // ('mc:chart-display:v1' → legend)
+  const [legendPref, setLegendPref] = useState<LegendPref>(() => readLegendPref());
+  const compactLegend = legendCompact(display, legendPref);
+  const setLegendCompact = useCallback((c: boolean) => { const p: LegendPref = c ? 'compact' : 'full'; setLegendPref(p); saveLegendPref(p); }, []);
+  // zzz1045c — a new symbol / timeframe is loading: the analysis on screen is from the chart before (dimmed, with a badge)
+  const analysisOld = analysisStale({ ready, loadedId: loadedBars.id, viewId, loading, error });
+  const loadingWords = transitionLabel(ticker, tf, market === 'IN' ? exchange : null);
   const patterns = usePatternIndicator({ on: patternsOn(L.working), ready, ticker, market, exchange, basis, live, bars, chartRef, cacheRef, cur, chart: { loading, error }, handoff: patHandoff, displayTf: tf, display });
   const handoffOn = useRef(false);
   useEffect(() => {
@@ -931,6 +1028,12 @@ export default function ChartWorkspace() {
   }, [rows, bars, L.working.extras]);
   const idx = hoverIdx != null && hoverIdx >= 0 && hoverIdx < bars.length ? hoverIdx : bars.length - 1;
   const valueOf = useCallback((r: LegendRow) => (rowValues.get(r.id) || []).map((arr) => (idx >= 0 ? arr[idx] ?? null : null)), [rowValues, idx]);
+  // zzz1045c — bars each legend value needs, so an empty one says "— (needs 200 bars, has 120)"
+  const neededOf = useCallback((r: LegendRow): (number | null)[] => {
+    if (!r.pane) return r.series.map((x) => barsNeeded(x.spec));
+    const ex = L.working.extras.find((e) => e.id === r.id);
+    return ex ? paneBarsNeeded(ex.type, ex.params) : [];
+  }, [L.working.extras]);
   const pxDecimals = bars.length && Math.abs(bars[bars.length - 1].c) < 1 ? 4 : 2;
   const hhmm = (t: number) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
@@ -1090,8 +1193,23 @@ export default function ChartWorkspace() {
             <button type="button" className={`mc-scale-btn${basis === 'tr' ? ' on' : ''}`} aria-label="Total return" aria-pressed={basis === 'tr'} onClick={toggleBasis}
               title={basis === 'tr' ? `${TOTAL_RETURN_LABEL}. On: history adjusted for ${live?.dividends ?? 0} cash dividends; the latest price is unchanged. Drawings are one set for both views and stay at the price values they were drawn on. Click for prices as printed.` : `Show: ${TOTAL_RETURN_LABEL}`}>TR</button>
           </div>
-          <IndicatorLegend top={legendTop} rows={rows} valueOf={valueOf} onToggle={(id) => L.setWorking((w) => toggleRow(w, id))} onRemove={(id) => L.setWorking((w) => removeRow(w, id))} decimals={pxDecimals} colorOf={(c) => (!chartLight && (luminance(c) ?? 1) < 0.18 ? '#B2B5BE' : c)} textOf={(c) => readableOn(c, chartLight ? '#FFFFFF' : '#0C1018')} />
-          <OverlaySummary patterns={patterns} stage={stageInd} setups={setupsInd} alines={alines} cur={cur} tf={tf} light={chartLight} display={display} onDisplay={setDisplay} onTurnOff={turnOffOverlay} onHeight={setOverlayRowH} />
+          <IndicatorLegend top={legendTop} rows={rows} valueOf={valueOf} onToggle={(id) => L.setWorking((w) => toggleRow(w, id))} onRemove={(id) => L.setWorking((w) => removeRow(w, id))} decimals={pxDecimals} colorOf={(c) => (!chartLight && (luminance(c) ?? 1) < 0.18 ? '#B2B5BE' : c)} textOf={(c) => readableOn(c, chartLight ? '#FFFFFF' : '#0C1018')}
+            compact={compactLegend} onCompact={setLegendCompact} neededOf={neededOf} has={bars.length ? idx + 1 : undefined} stale={analysisOld} />
+          <OverlaySummary patterns={patterns} stage={stageInd} setups={setupsInd} alines={alines} cur={cur} tf={tf} light={chartLight} display={display} onDisplay={setDisplay} onTurnOff={turnOffOverlay} onHeight={setOverlayRowH} stale={analysisOld} />
+          {/* zzz1045c — switching symbol / timeframe: say what is loading; the analysis above is from the chart before (dimmed) */}
+          {analysisOld && (
+            <div className="ct-float ct-loading-badge" role="status" aria-live="polite" data-testid="chart-loading-badge" title={loadingWords.title}>
+              <span className="ct-spin" aria-hidden />{loadingWords.text}
+            </div>
+          )}
+          {/* zzz1045c — collapse / expand each lower pane (remembered per layout); the price pane always keeps its minimum height */}
+          {paneHandles.map((h) => (
+            <button key={h.id} type="button" className="ct-pane-btn" data-testid="pane-collapse" style={{ top: h.top, right: h.right }}
+              aria-expanded={!h.collapsed} aria-label={`${h.collapsed ? 'Expand' : 'Collapse'} the ${h.label} pane`}
+              title={h.collapsed ? `Expand the ${h.label} pane` : `Collapse the ${h.label} pane to a thin strip (remembered for this layout)`} onClick={() => togglePane(h.id)}>
+              {h.collapsed ? `▸ ${h.label}` : '▾'}
+            </button>
+          ))}
           {/* zzz1000 (improvement 6) — nothing loaded for this symbol / view: say so instead of an empty 0–10 price axis */}
           {!loading && !bars.length && error && (
             <div role="alert" data-testid="chart-empty-state" className="ct-empty">

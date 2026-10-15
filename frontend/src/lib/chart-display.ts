@@ -21,13 +21,30 @@ export function parseChartDisplay(raw: string | null | undefined): ChartDisplay 
     return raw === 'research' ? 'research' : 'clean';
   }
 }
-export const serializeChartDisplay = (d: ChartDisplay): string => JSON.stringify({ mode: d });
+/** zzz1045c — the same record also keeps the legend choice ('compact' | 'full'; absent = follow the preset). */
+export const serializeChartDisplay = (d: ChartDisplay, legend?: 'compact' | 'full' | null): string => JSON.stringify(legend ? { mode: d, legend } : { mode: d });
+
+/** zzz1045c — the viewer's legend choice from the stored record (null = follow the preset: Clean → one strip, Research → full). */
+export function parseLegendPref(raw: string | null | undefined): 'compact' | 'full' | null {
+  if (!raw) return null;
+  try {
+    const j = JSON.parse(raw);
+    const v = j && typeof j === 'object' ? (j as { legend?: unknown }).legend : null;
+    return v === 'compact' || v === 'full' ? v : null;
+  } catch { return null; }
+}
 
 export function readChartDisplay(): ChartDisplay {
   try { return parseChartDisplay(localStorage.getItem(CHART_DISPLAY_KEY)); } catch { return DEFAULT_CHART_DISPLAY; }
 }
+export function readLegendPref(): 'compact' | 'full' | null {
+  try { return parseLegendPref(localStorage.getItem(CHART_DISPLAY_KEY)); } catch { return null; }
+}
 export function saveChartDisplay(d: ChartDisplay): void {
-  try { localStorage.setItem(CHART_DISPLAY_KEY, serializeChartDisplay(d)); } catch { /* this visit only */ }
+  try { localStorage.setItem(CHART_DISPLAY_KEY, serializeChartDisplay(d, parseLegendPref(localStorage.getItem(CHART_DISPLAY_KEY)))); } catch { /* this visit only */ }
+}
+export function saveLegendPref(legend: 'compact' | 'full' | null): void {
+  try { const raw = localStorage.getItem(CHART_DISPLAY_KEY); localStorage.setItem(CHART_DISPLAY_KEY, serializeChartDisplay(parseChartDisplay(raw), legend)); } catch { /* this visit only */ }
 }
 
 export const DISPLAY_WORDS: Record<ChartDisplay, { label: string; tip: string }> = {

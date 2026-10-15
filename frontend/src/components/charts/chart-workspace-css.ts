@@ -127,6 +127,15 @@ kbd, .ct-kbd { display: inline-grid; place-items: center; min-width: 18px; heigh
 .ct-float { position: absolute; z-index: 5; padding: 3px 9px; border-radius: 7px; font-size: 11.5px; font-weight: 600; background: color-mix(in srgb, var(--mc-bg-0) 92%, transparent);
   border: 1px solid var(--mc-border-1); color: var(--mc-text-2); pointer-events: none; box-shadow: var(--ct-shadow); backdrop-filter: blur(4px); }
 .ct-float.ok { color: var(--ct-up); }
+/* zzz1045c — a new symbol / timeframe is loading: the overlay chips (from the chart shown before) are dimmed, never removed */
+.mc-overlay-row[data-stale] > :not([data-testid="display-toggle"]) { opacity: .35; transition: opacity .12s; }
+.ct-loading-badge { left: 50%; top: 6px; transform: translateX(-50%); z-index: 9; display: inline-flex; align-items: center; gap: 6px; color: var(--mc-text-1); white-space: nowrap; }
+.ct-loading-badge .ct-spin { width: 10px; height: 10px; }
+/* zzz1045c — collapse / expand a lower pane (top-right of the pane, left of its price axis) */
+.ct-pane-btn { position: absolute; z-index: 6; height: 18px; min-width: 18px; padding: 0 5px; display: inline-flex; align-items: center; gap: 3px; border-radius: 5px;
+  font-size: 11px; font-weight: 650; line-height: 1; cursor: pointer; border: 1px solid var(--mc-border-2); color: var(--mc-text-2);
+  background: color-mix(in srgb, var(--mc-bg-0) 92%, transparent); }
+.ct-pane-btn:hover, .ct-pane-btn:focus-visible { color: var(--mc-text-0); border-color: var(--mc-accent); outline: none; }
 .mc-scale-btn { min-width: 38px; height: 24px; padding: 0 8px; font-size: 12px; font-weight: 700; border-radius: 6px; cursor: pointer; letter-spacing: .01em;
   border: 1px solid var(--mc-border-2); background: color-mix(in srgb, var(--mc-bg-0) 94%, transparent); color: var(--mc-text-1); box-shadow: var(--ct-shadow); }
 .ct-ctx { min-width: 290px; }

@@ -1,7 +1,8 @@
 'use client';
 // zzz944 — chart LAYOUTS for /charts: the store hook, the layout picker (name ▾ ● Save), the Indicators panel and the
 // TradingView-style legend at the top-left of the chart with an eye toggle per line.
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { missingValueText, stripFit } from '@/lib/chart-readability';
 import {
   CHART_LAYOUTS_KEY, EXTRA_INFO, EXTRA_TYPES, SPECIAL_EXTRAS, MAX_EXTRAS, MAX_LINES, activeLayout, addExtraBlockedReason, cleanLayout, clearDropped, deleteLayout, droppedNote, mergeLayoutStores, regularExtraCount,
   newExtra, newLayoutId, renameLayout, saveLayout, saveLayoutAs, sameSettings, toggleRow,
@@ -321,7 +322,10 @@ export function IndicatorsPanel({ L, onClose, triggerRef }: { L: ReturnType<type
 }
 
 // ── legend at the top-left of the chart ───────────────────────────────────────
-export function IndicatorLegend({ rows, valueOf, onToggle, onRemove, decimals, colorOf = (c: string) => c, textOf = (c: string) => c, top = 28 }: {
+const SR_ONLY: React.CSSProperties = { position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0 };
+const LEGEND_BTN: React.CSSProperties = { display: 'inline-grid', placeItems: 'center', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', color: 'var(--mc-text-3)', lineHeight: 1, pointerEvents: 'auto' };
+
+export function IndicatorLegend({ rows, valueOf, onToggle, onRemove, decimals, colorOf = (c: string) => c, textOf = (c: string) => c, top = 28, compact = false, onCompact, neededOf, has, stale = false }: {
   /** zzz1022 — px from the top of the chart (lower when a second status line sits above it) */
   top?: number;
   rows: LegendRow[]; valueOf: (row: LegendRow) => (number | null)[]; onToggle: (id: string) => void; decimals: number; colorOf?: (c: string) => string;
@@ -329,14 +333,91 @@ export function IndicatorLegend({ rows, valueOf, onToggle, onRemove, decimals, c
   onRemove?: (id: string) => void;
   /** zzz967 (UI-01) — readable text colour for a line colour (the swatch keeps the line colour itself) */
   textOf?: (c: string) => string;
+  /** zzz1045c — one strip (names + latest values on one line, the rest behind "+N"); the full list stays for screen readers */
+  compact?: boolean;
+  /** zzz1045c — the viewer switched between the strip and the full legend (remembered by the page) */
+  onCompact?: (compact: boolean) => void;
+  /** zzz1045c — bars each value needs; with `has` (bars up to the bar shown) an empty value reads "— (needs 200 bars, has 120)" */
+  neededOf?: (row: LegendRow) => (number | null)[];
+  has?: number;
+  /** zzz1045c — the values are from the chart shown before (a new symbol / timeframe is loading): dimmed */
+  stale?: boolean;
 }) {
   // zzz1035 — hidden lines fold into one "+N hidden" row (owner: messy chart); click it to list them with their eye / ×
   const [showHidden, setShowHidden] = useState(false);
-  if (!rows.length) return null;
+  // zzz1045c — the strip: every visible row is measured in an invisible copy, then as many as fit on one line are shown
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const measureRef = useRef<HTMLDivElement | null>(null);
+  const [fit, setFit] = useState<{ shown: number; more: number }>({ shown: 99, more: 0 });
+  const [tick, setTick] = useState(0);
   const hiddenN = rows.filter((r) => !r.on).length;
+  // what the strip shows (names and the values on screen): measured again whenever it changes or the chart is resized
+  const stripSig = compact ? rows.filter((r) => r.on).map((r) => `${r.label}=${valueOf(r).join(',')}`).join('|') : '';
+  useLayoutEffect(() => {
+    if (!compact) return;
+    const box = boxRef.current, meas = measureRef.current;
+    if (!box || !meas) return;
+    const kids = Array.from(meas.children) as HTMLElement[];
+    const moreEl = kids.pop();
+    const next = stripFit(kids.map((k) => k.offsetWidth), Math.max(0, box.clientWidth - 26), moreEl?.offsetWidth || 34, 10, hiddenN);
+    if (next.shown !== fit.shown || next.more !== fit.more) setFit(next);
+  }, [compact, hiddenN, stripSig, tick, fit.shown, fit.more]);
+  useEffect(() => {
+    const box = boxRef.current;
+    if (!compact || !box || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => setTick((t) => t + 1));
+    ro.observe(box);
+    return () => ro.disconnect();
+  }, [compact]);
+  if (!rows.length) return null;
   const shownRows = showHidden ? rows : rows.filter((r) => r.on);
+  const textOfValue = (r: LegendRow, v: number | null, i: number) => (v != null ? fmtPrice(v, decimals) : missingValueText(neededOf?.(r)?.[i] ?? null, has ?? Number.POSITIVE_INFINITY));
+  const valueChips = (r: LegendRow, vals: (number | null)[]) => vals.map((v, i) => {
+    const lineC = colorOf(r.series[i]?.color || (r.label.startsWith('MACD') && i === 1 ? '#FF6D00' : r.color));
+    return (
+      <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: textOf(lineC), fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+        <span aria-hidden style={{ width: 8, height: 8, borderRadius: 2, background: lineC, display: 'inline-block' }} />
+        {v != null ? fmtPrice(v, decimals) : <span style={{ fontWeight: 500, color: 'var(--mc-text-3)' }}>{textOfValue(r, v, i)}</span>}
+      </span>
+    );
+  });
+  const dim: React.CSSProperties = stale ? { opacity: 0.35, filter: 'grayscale(1)', transition: 'opacity .12s' } : {};
+  if (compact) {
+    const visible = rows.filter((r) => r.on);
+    const n = Math.min(fit.shown, visible.length);
+    const folded = visible.slice(n).map((r) => r.label).concat(hiddenN ? [`${hiddenN} hidden`] : []);
+    const item = (r: LegendRow, k?: string) => (
+      <span key={k ?? r.id} className="mc-legend-item" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flex: '0 0 auto', whiteSpace: 'nowrap' }}>
+        <span style={{ fontWeight: 650, color: 'var(--mc-text-0)' }}>{r.label}</span>
+        {valueChips(r, valueOf(r))}
+      </span>
+    );
+    return (
+      <div ref={boxRef} className="mc-legend mc-legend-strip" data-testid="legend-strip" aria-busy={stale || undefined}
+        style={{ position: 'absolute', left: 8, right: 92, top, zIndex: 5, display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, lineHeight: '18px', whiteSpace: 'nowrap', overflow: 'hidden', pointerEvents: 'none', color: 'var(--mc-text-1)', ...dim }}>
+        {/* an invisible copy of every item, to measure what fits on one line */}
+        <div ref={measureRef} aria-hidden style={{ position: 'absolute', visibility: 'hidden', left: 0, top: 0, display: 'flex', gap: 10, whiteSpace: 'nowrap' }}>
+          {visible.map((r) => item(r, `m-${r.id}`))}
+          <span style={{ fontSize: 11.5, padding: '0 4px' }}>+{visible.length + hiddenN}</span>
+        </div>
+        <div aria-hidden style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, overflow: 'hidden' }}>{visible.slice(0, n).map((r) => item(r))}</div>
+        {fit.more > 0 && (
+          <button type="button" data-testid="legend-strip-more" onClick={() => onCompact?.(false)} aria-label={`Show the full legend (${fit.more} more)`}
+            title={`Show the full legend: ${folded.join(', ')}`} style={{ ...LEGEND_BTN, fontSize: 11.5, fontWeight: 650, padding: '0 4px', flex: '0 0 auto' }}>+{fit.more}</button>
+        )}
+        <button type="button" data-testid="legend-expand" onClick={() => onCompact?.(false)} aria-expanded={false} aria-label="Show the full legend" title="Show the full legend (one line per indicator, with its eye and ×)"
+          style={{ ...LEGEND_BTN, flex: '0 0 auto' }}>
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M4 6l4 4 4-4" /></svg>
+        </button>
+        {/* the full list for screen readers: every line with its value, hidden lines included */}
+        <ul aria-label="Indicators on the chart" data-testid="legend-sr-list" style={SR_ONLY}>
+          {rows.map((r) => <li key={`sr-${r.id}`}>{r.label}: {r.on ? valueOf(r).map((v, i) => textOfValue(r, v, i)).join(', ') || 'shown' : 'hidden'}</li>)}
+        </ul>
+      </div>
+    );
+  }
   return (
-    <div className="mc-legend" style={{ position: 'absolute', left: 8, top, zIndex: 5, display: 'flex', flexDirection: 'column', gap: 1, fontSize: 12, pointerEvents: 'none' }}>
+    <div className="mc-legend" data-testid="legend-full" aria-busy={stale || undefined} style={{ position: 'absolute', left: 8, top, zIndex: 5, display: 'flex', flexDirection: 'column', gap: 1, fontSize: 12, pointerEvents: 'none', ...dim }}>
       {shownRows.map((r) => {
         const vals = r.on ? valueOf(r) : [];
         return (
@@ -345,15 +426,7 @@ export function IndicatorLegend({ rows, valueOf, onToggle, onRemove, decimals, c
             {r.pane && r.on && <span style={{ color: 'var(--mc-text-3)' }}>(lower pane)</span>}
             {!r.pane && r.on && <span style={{ color: 'var(--mc-text-3)' }}>close</span>}
             {!r.on && <span>(hidden)</span>}
-            {vals.map((v, i) => {
-              const lineC = colorOf(r.series[i]?.color || (r.label.startsWith('MACD') && i === 1 ? '#FF6D00' : r.color));
-              return (
-                <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: textOf(lineC), fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
-                  <span aria-hidden style={{ width: 8, height: 8, borderRadius: 2, background: lineC, display: 'inline-block' }} />
-                  {v != null ? fmtPrice(v, decimals) : '—'}
-                </span>
-              );
-            })}
+            {valueChips(r, vals)}
             {r.source !== 'volume' && <button type="button" onClick={() => onToggle(r.id)} aria-label={`${r.on ? 'Hide' : 'Show'} ${r.label}`} title={r.on ? 'Hide this line' : 'Show this line'}
               style={{ display: 'inline-grid', placeItems: 'center', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', color: 'var(--mc-text-3)', lineHeight: 1, pointerEvents: 'auto' }}>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.35} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -361,20 +434,26 @@ export function IndicatorLegend({ rows, valueOf, onToggle, onRemove, decimals, c
               </svg></button>}
             {onRemove && (
               <button type="button" className="mc-legend-x" onClick={() => onRemove(r.id)} aria-label={`Remove ${r.label}`} title={`Remove ${r.label} from the chart (Indicators ▾ adds it back; Save keeps the change in the layout)`}
-                style={{ display: 'inline-grid', placeItems: 'center', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', color: 'var(--mc-text-3)', lineHeight: 1, pointerEvents: 'auto' }}>
+                style={LEGEND_BTN}>
                 <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" aria-hidden><path d="M4 4l8 8M12 4l-8 8" /></svg>
               </button>
             )}
           </div>
         );
       })}
-      {hiddenN ? (
-        <button type="button" data-testid="legend-hidden-toggle" onClick={() => setShowHidden((v) => !v)} aria-expanded={showHidden}
-          title={showHidden ? 'Fold the hidden lines away' : 'Show the hidden lines (to turn one back on or remove it)'}
-          style={{ alignSelf: 'flex-start', background: 'none', border: 'none', padding: '0 0', cursor: 'pointer', color: 'var(--mc-text-3)', fontSize: 11.5, lineHeight: '18px', pointerEvents: 'auto' }}>
-          {showHidden ? '− fold hidden' : `+${hiddenN} hidden`}
-        </button>
-      ) : null}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        {hiddenN ? (
+          <button type="button" data-testid="legend-hidden-toggle" onClick={() => setShowHidden((v) => !v)} aria-expanded={showHidden}
+            title={showHidden ? 'Fold the hidden lines away' : 'Show the hidden lines (to turn one back on or remove it)'}
+            style={{ alignSelf: 'flex-start', background: 'none', border: 'none', padding: '0 0', cursor: 'pointer', color: 'var(--mc-text-3)', fontSize: 11.5, lineHeight: '18px', pointerEvents: 'auto' }}>
+            {showHidden ? '− fold hidden' : `+${hiddenN} hidden`}
+          </button>
+        ) : null}
+        {onCompact && (
+          <button type="button" data-testid="legend-collapse" onClick={() => onCompact(true)} aria-expanded aria-label="Fold the legend into one line" title="Fold the legend into one line (names and latest values)"
+            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--mc-text-3)', fontSize: 11.5, lineHeight: '18px', pointerEvents: 'auto' }}>▴ one line</button>
+        )}
+      </div>
     </div>
   );
 }

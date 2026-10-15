@@ -34,10 +34,13 @@ export interface OverlaySummaryProps {
   onTurnOff: (id: OverlayId) => void;
   /** zzz1031 — the row's height in px (1 or 2 lines), so the legend sits under it */
   onHeight?: (px: number) => void;
+  /** zzz1045c — a new symbol / timeframe is loading: the chips still describe the chart shown before, so they are dimmed (kept
+   *  in place, controls included — the pattern timeframe chip is never hidden) and marked busy until the new data arrives */
+  stale?: boolean;
 }
 
 export function OverlaySummary(pr: OverlaySummaryProps) {
-  const { patterns, stage, setups, alines, cur, tf, light, display, onDisplay, onTurnOff, onHeight } = pr;
+  const { patterns, stage, setups, alines, cur, tf, light, display, onDisplay, onTurnOff, onHeight, stale = false } = pr;
   const rowRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = rowRef.current;
@@ -64,8 +67,11 @@ export function OverlaySummary(pr: OverlaySummaryProps) {
         background: display === d ? 'var(--ct-press, rgba(36,83,196,.1))' : 'transparent', color: display === d ? 'var(--mc-accent)' : 'var(--mc-text-3)' }}>{DISPLAY_WORDS[d].label}</button>
   );
   return (
-    <div ref={rowRef} data-testid="overlay-summary" role="toolbar" aria-label={`Overlays on the chart (${n})`}
+    <div ref={rowRef} className="mc-overlay-row" data-testid="overlay-summary" role="toolbar" aria-label={`Overlays on the chart (${n})${stale ? ' — from the chart shown before, updating' : ''}`} aria-busy={stale || undefined}
+      data-stale={stale ? '1' : undefined}
       style={{ position: 'absolute', left: 8, right: 92, top: 4, zIndex: 7, display: 'flex', alignItems: 'flex-start', gap: 6, rowGap: 4, flexWrap: 'wrap', minWidth: 0, pointerEvents: 'none' }}>
+      {/* while stale, every chip is dimmed by the .mc-overlay-row[data-stale] rule (chart-workspace-css) — opacity only, so the
+          details panels keep the row as their positioned parent */}
       <PatternBanner p={patterns} cur={cur} light={light} tf={tf} onTurnOff={() => onTurnOff('patterns')} dock={docks.patterns} />
       <StageBanner s={stage} light={light} shifted={false} onTurnOff={() => onTurnOff('stage')} dock={docks.stage} />
       <SetupBanner s={setups} light={light} onTurnOff={() => onTurnOff('setups')} dock={docks.setups} />
