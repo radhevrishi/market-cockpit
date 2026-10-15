@@ -13,7 +13,7 @@
 //   cron-heartbeat:row:<name>    → HeartbeatRow
 
 import { NextResponse } from 'next/server';
-import { kvGet, kvSet } from '@/lib/kv';
+import { kvGet, kvSet, kvMGet } from '@/lib/kv';
 import { warmNseHolidays } from '@/lib/nse-holidays-server';
 import { staleAfterHoursFor } from '@/lib/app-scheduler';
 
@@ -76,8 +76,8 @@ interface HeartbeatRow {
 // zzz882 security: the POST is open (≈20 workflows call it without a key), so it is bounded: a plain job name, at most 120 names, GitHub run links only
 const NAME_RE = /^[a-z0-9][a-z0-9:._-]{0,59}$/i;
 const MAX_NAMES = 120;
-async function addToNamesIndex(name: string) {
-  const cur = (await kvGet<string[]>(NAMES_KEY)) || [];
+async function addToNamesIndex(name: string, known?: string[]) {
+  const cur = known || (await kvGet<string[]>(NAMES_KEY)) || [];
   if (!cur.includes(name) && cur.length < MAX_NAMES) {
     cur.push(name);
     await kvSet(NAMES_KEY, cur, NAMES_TTL);
@@ -96,7 +96,10 @@ export async function POST(req: Request) {
   const name = String(body?.name || '').slice(0, 80);
   if (!name) return NextResponse.json({ ok: false, error: 'name required' }, { status: 400 });
   if (!NAME_RE.test(name)) return NextResponse.json({ ok: false, error: 'bad name' }, { status: 400 });
-  { const cur = (await kvGet<string[]>(NAMES_KEY)) || []; if (!cur.includes(name) && cur.length >= MAX_NAMES) return NextResponse.json({ ok: false, error: 'too many job names' }, { status: 429 }); }
+  // zzz1049: the names index and this job's row in ONE command (was three GETs per heartbeat)
+  const [namesNow, existingRow] = await kvMGet<any>([NAMES_KEY, ROW_KEY(name)]);
+  const knownNames: string[] = Array.isArray(namesNow) ? namesNow : [];
+  if (!knownNames.includes(name) && knownNames.length >= MAX_NAMES) return NextResponse.json({ ok: false, error: 'too many job names' }, { status: 429 });
 
   const phase = body?.phase === 'start' ? 'start' : 'end';
   const ok = !!body?.ok;
@@ -105,7 +108,7 @@ export async function POST(req: Request) {
   const run_url = body?.run_url && /^https:\/\/github\.com\//.test(String(body.run_url)) ? String(body.run_url).slice(0, 500) : null;
   const now = new Date().toISOString();
 
-  const existing = (await kvGet<HeartbeatRow>(ROW_KEY(name))) || {
+  const existing: HeartbeatRow = (existingRow && typeof existingRow === 'object' ? existingRow as HeartbeatRow : null) || {
     name,
     last_started_at: null,
     last_ok_at: null,
@@ -129,7 +132,7 @@ export async function POST(req: Request) {
   existing.updated_at = now;
 
   await kvSet(ROW_KEY(name), existing, ROW_TTL);
-  await addToNamesIndex(name);
+  await addToNamesIndex(name, knownNames);
 
   return NextResponse.json({ ok: true, phase, stored: existing });
 }
@@ -168,9 +171,14 @@ export async function GET(req: Request) {
     });
   }
 
+  // zzz1049: every row (and alias row) in ONE MGET instead of one GET per job
+  const aliasNames = [...new Set(names.flatMap((n) => ALIASES[n] || []))];
+  const allRowNames = [...new Set([...names, ...aliasNames])];
+  const rowVals = await kvMGet<HeartbeatRow>(allRowNames.map((n) => ROW_KEY(n))).catch(() => allRowNames.map(() => null));
+  const rowByName = new Map<string, HeartbeatRow | null>(allRowNames.map((n, i) => [n, rowVals[i] ?? null]));
   const rows = await Promise.all(
     names.map(async (name) => {
-      const r = await kvGet<HeartbeatRow>(ROW_KEY(name));
+      const r = rowByName.get(name) ?? null;
       if (!r) return null;
       const lastOkMs = r.last_ok_at ? Date.parse(r.last_ok_at) : 0;
       const hoursSinceOk = lastOkMs ? Math.round(((Date.now() - lastOkMs) / 3600000) * 100) / 100 : null;
@@ -178,7 +186,7 @@ export async function GET(req: Request) {
       // PATCH 1101xxx already excluded test rows from the COUNT, but the
       // per-row flag still rendered red, contradicting "stale_count: 0".
       let freshest = lastOkMs;
-      for (const a of ALIASES[name] || []) { const ar = await kvGet<HeartbeatRow>(ROW_KEY(a)); const t = ar?.last_ok_at ? Date.parse(ar.last_ok_at) : 0; if (t > freshest) freshest = t; }
+      for (const a of ALIASES[name] || []) { const ar = rowByName.get(a) ?? null; const t = ar?.last_ok_at ? Date.parse(ar.last_ok_at) : 0; if (t > freshest) freshest = t; }
       // zzz907: jobs the app schedules itself get their threshold from their schedule (longest normal gap between slots
       // + 6 h, never stricter than the global one) — a weekly job is not stale after 25 h. Others keep SLOW_JOB_HOURS.
       const fromSchedule = staleAfterHoursFor(name, staleHours, now);

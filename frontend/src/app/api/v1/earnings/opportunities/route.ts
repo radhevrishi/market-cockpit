@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { Redis } from '@upstash/redis';
+import { kvGet, kvSet } from '@/lib/kv';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -377,7 +378,7 @@ export async function GET(req: Request) {
   // Try cache
   if (redis && !force) {
     try {
-      const hit = await redis.get(cacheKey(date));
+      const hit = await kvGet(cacheKey(date));   // zzz1049: through lib/kv (memory cache + command counter)
       if (hit) return NextResponse.json(hit);
     } catch {}
   }
@@ -466,7 +467,7 @@ export async function GET(req: Request) {
   // (now 10min). We only cache when at least one feed succeeded AND we got
   // at least one candidate — otherwise let the next caller retry upstream.
   if (redis && !allFeedsFailed && candidates.length > 0) {
-    try { await redis.set(cacheKey(date), payload, { ex: CACHE_TTL_S }); } catch {}
+    try { await kvSet(cacheKey(date), payload, CACHE_TTL_S); } catch {}
   }
 
   // If everything upstream failed, return 503 so client retry logic and

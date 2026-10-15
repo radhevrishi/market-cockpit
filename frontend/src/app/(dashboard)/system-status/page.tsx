@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import { PanelFreshness } from '@/components/PanelFreshness';
+import { visibleInterval } from '@/lib/shell-fetch';
 
 interface ProbeResult {
   name: string;
@@ -41,8 +42,9 @@ export default function SystemStatusPage() {
 
   useEffect(() => {
     fetchStatus();
-    const id = setInterval(fetchStatus, 30_000);
-    return () => clearInterval(id);
+    // zzz1049: every status check fires eleven probe requests (each reading KV); a tab left open polled them every 30 s
+    // all day. Now every 2 minutes, and only while the tab is visible (one catch-up check when it becomes visible again).
+    return visibleInterval(fetchStatus, 120_000);
   }, []);
 
   if (!data) {

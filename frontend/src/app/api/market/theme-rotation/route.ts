@@ -24,7 +24,7 @@
 
 import { NextResponse } from 'next/server';
 import { fetchChart } from '@/lib/yahoo';
-import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
+import { kvGet, kvSet, kvMGet, isRedisAvailable } from '@/lib/kv';
 import {
   themesForRegion, benchmarkForRegion, leadersFor, subThemesFor, drillSymbolsFor,
   type ThemeRegion, type ThemeDef,
@@ -1225,7 +1225,9 @@ async function writeBaseSnapshot(region: ThemeRegion, payload: any) {
 async function readHistory(region: ThemeRegion, weeks: number): Promise<WeeklySnapshot[]> {
   if (!isRedisAvailable()) return [];
   const keys = recentWeeks(new Date(), Math.max(1, Math.min(26, weeks)));
-  const got = await Promise.all(keys.map(async (w) => { try { return await kvGet<WeeklySnapshot>(snapKey(region, w)); } catch { return null; } }));
+  // zzz1049: up to 26 weekly snapshots in ONE MGET (was one GET each — two for a missing week)
+  let got: Array<WeeklySnapshot | null>;
+  try { got = await kvMGet<WeeklySnapshot>(keys.map((w) => snapKey(region, w))); } catch { got = []; }
   return (got.filter(Boolean) as WeeklySnapshot[]).sort((a, b) => a.week.localeCompare(b.week));
 }
 

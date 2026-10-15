@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { fetchNifty50, fetchNiftyNext50, fetchNifty500, fetchNifty200, fetchNiftyMidcap50, fetchNiftyMidcap100, fetchNiftyMidcap250, fetchNiftySmallcap50, fetchNiftySmallcap100, fetchNiftySmallcap250, fetchNiftyMicrocap250, fetchNiftyTotalMarket, fetchGainers, fetchLosers, buildDynamicSectorMap, normalizeSector, NIFTY50_SECTORS } from '@/lib/nse';
 import { fetchQuotesWithFallback, US_TOP } from '@/lib/yahoo';
 // PATCH 0782 — KV blob primary source (populated by GH Actions scraper).
-import { kvGet } from '@/lib/kv';
+import { kvGet, kvCountExternal } from '@/lib/kv';
 import { swrMemo, swrHeaders, privateCache, SwrUnusableError } from '@/lib/swr-cache';
 import { parseQuotesListOptions, shapeQuotesPayload } from '@/lib/lean-view';
 
@@ -586,6 +586,7 @@ async function fetchIndianDataWithCache() {
           const _u = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || '';
           const _tok = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || '';
           if (_u && _tok) {
+            kvCountExternal('get(rest)', 'nse-ticker-universe:v1:latest');
             const _resp = await fetch(`${_u.replace(/\/+$/, '')}/get/nse-ticker-universe:v1:latest`, {
               headers: { Authorization: `Bearer ${_tok}` }, cache: 'no-store',
             });
@@ -705,6 +706,7 @@ async function fetchIndianDataWithCache() {
           const _lt = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || "";
           if (_lu && _lt) {
             const _lbase = _lu.charAt(_lu.length - 1) === "/" ? _lu.slice(0, -1) : _lu;
+            kvCountExternal('get(rest)', 'nse-movers-live:v1:latest');
             const _lr = await fetch(_lbase + "/get/nse-movers-live:v1:latest", { headers: { Authorization: "Bearer " + _lt }, cache: "no-store" });
             const _lj: any = await _lr.json();
             let _lraw: any = _lj && _lj.result;

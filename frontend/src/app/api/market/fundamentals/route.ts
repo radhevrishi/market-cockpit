@@ -11,7 +11,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
-import { kvGet } from '@/lib/kv';
+import { kvMGet } from '@/lib/kv';
 import { rateLimitResponse } from '@/lib/rateLimit';
 
 // PATCH 0819: removed force-dynamic so Cache-Control headers aren't overridden by Next.js. Query params still force dynamic at runtime.
@@ -42,17 +42,10 @@ export async function GET(request: Request) {
     return NextResponse.json(cached.data);
   }
 
-  // Parallel KV reads (Upstash REST handles ~10-20 parallel fine)
-  const results = await Promise.all(
-    tickers.map(async (ticker) => {
-      try {
-        const data = await kvGet<any>(`fundamentals:v1:${ticker}`);
-        return [ticker, data] as const;
-      } catch {
-        return [ticker, null] as const;
-      }
-    })
-  );
+  // zzz1049 — one MGET for all tickers (was one GET each, two for a missing ticker: up to 100 billed commands per call)
+  let vals: any[];
+  try { vals = await kvMGet<any>(tickers.map((t) => `fundamentals:v1:${t}`)); } catch { vals = tickers.map(() => null); }
+  const results = tickers.map((ticker, i) => [ticker, vals[i] ?? null] as const);
 
   const fundamentals: Record<string, any> = {};
   let hit = 0;

@@ -714,6 +714,7 @@ export function realDocsKv(timeoutMs = 5_000): DocsKv {
       const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
       const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
       if (!url || !token) { const m = await import('./kv'); return m.kvGet<T>(k); }   // in-memory mode: nothing can fail remotely
+      (await import('./kv')).kvCountExternal('get(strict)', k);   // zzz1049: counted (never cached — the index must be read fresh)
       const res = await fetch(`${url.replace(/\/+$/, '')}/get/${encodeURIComponent(k)}`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store', signal: AbortSignal.timeout(Math.max(timeoutMs, 15_000)) });
       if (!res.ok) throw new Error(`KV HTTP ${res.status}`);
       const j: any = await res.json();

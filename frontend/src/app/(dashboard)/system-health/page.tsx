@@ -18,6 +18,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { visibleInterval } from '@/lib/shell-fetch';
 
 type ItemStatus = 'ok' | 'warn' | 'fail';
 type SectionStatus = 'healthy' | 'degraded' | 'critical';
@@ -110,8 +111,8 @@ export default function SystemHealthPage() {
 
   useEffect(() => {
     fetchHealth();
-    const id = setInterval(fetchHealth, 60_000);
-    return () => clearInterval(id);
+    // zzz1049: every 5 minutes and only while the tab is visible (was every minute, hidden tabs included)
+    return visibleInterval(fetchHealth, 300_000);
   }, [fetchHealth]);
 
   // Initial expand: any non-healthy section auto-opens so problems are visible.

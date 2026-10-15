@@ -7,6 +7,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import { NextResponse } from 'next/server';
 import { internalBase } from '@/lib/internal-base';
+import { kvUsageSnapshot } from '@/lib/kv';
 
 export const runtime = 'nodejs';
 export const maxDuration = 15;
@@ -72,7 +73,9 @@ async function probe(p: Probe, origin: string): Promise<any> {
 // eleven self-requests at once and slow the very pages they measure. ?fresh=1 always measures again.
 let _memo: { at: number; body: any } | null = null;
 let _inflight: Promise<any> | null = null;
-const MEMO_MS = 30_000;
+const MEMO_MS = 90_000;   // zzz1049: 30 s → 90 s (each build fires eleven probe requests that read KV)
+// zzz1049 — Upstash commands sent by this process, per hour and per key family (memory counter; always live, never memoised)
+const withKv = (body: any) => ({ ...body, kvUsage: kvUsageSnapshot() });
 /** Optional extras must never hold the status answer up: give each at most `ms`. */
 function capped<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   return Promise.race([p, new Promise<T>((r) => setTimeout(() => r(fallback), ms))]);
@@ -80,14 +83,14 @@ function capped<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
 
 export async function GET(request: Request) {
   const fresh = new URL(request.url).searchParams.get('fresh') === '1';
-  if (!fresh && _memo && Date.now() - _memo.at < MEMO_MS) return NextResponse.json({ ..._memo.body, cached_for_s: Math.round((Date.now() - _memo.at) / 1000) }, { headers: { 'Cache-Control': 'no-store' } });
-  if (!fresh && _inflight) return NextResponse.json(await _inflight, { headers: { 'Cache-Control': 'no-store' } });
+  if (!fresh && _memo && Date.now() - _memo.at < MEMO_MS) return NextResponse.json(withKv({ ..._memo.body, cached_for_s: Math.round((Date.now() - _memo.at) / 1000) }), { headers: { 'Cache-Control': 'no-store' } });
+  if (!fresh && _inflight) return NextResponse.json(withKv(await _inflight), { headers: { 'Cache-Control': 'no-store' } });
   const run = buildStatus(request);
   if (!fresh) _inflight = run;
   try {
     const body = await run;
     _memo = { at: Date.now(), body };
-    return NextResponse.json(body, { headers: { 'Cache-Control': 'no-store' } });
+    return NextResponse.json(withKv(body), { headers: { 'Cache-Control': 'no-store' } });
   } finally { if (_inflight === run) _inflight = null; }
 }
 
