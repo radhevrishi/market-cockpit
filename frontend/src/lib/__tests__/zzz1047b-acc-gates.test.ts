@@ -22,7 +22,7 @@ const done = () => true;
 const steady = (base: number, vol: number) => make(160, (i) => (i % 3 === 0 ? [-0.6, 0.6, -0.2] : [1.2, 1.6, 0.7]), base, vol);
 
 test('version 2 and the published conditions', () => {
-  assert.equal(ACC_VERSION, 2);
+  assert.equal(ACC_VERSION, 3);
   assert.deepEqual(ACC_GATES.minTurnover, { US: 5e6, IN: 3e7 });
 });
 

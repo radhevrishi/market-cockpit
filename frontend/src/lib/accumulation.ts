@@ -32,7 +32,7 @@
 //   vboD / vboX           bars since the latest volume breakout in the last 10 (null = none) and its volume ÷ V
 //   accS / accG           score 0–100 and grade A–E (see accScore) · distWarn = 1 when distribution is piling up
 //   dlv10 / dlvChg        India: average delivery % of the last 10 sessions, and minus the 40 before (percentage points)
-export const ACC_VERSION = 2;   // zzz1047 — 2: grade A / B needs confirmed evidence (ACC_GATES), not just a high score
+export const ACC_VERSION = 3;   // zzz1047c — 3: session condition 2 (was 3); zzz1047 — 2: grade A / B needs confirmed evidence (ACC_GATES), not just a high score
 /** zzz1047 — what a grade A or B needs besides the score. The score alone let 30% of India reach A/B (names with no accumulation
  *  day, negative money flow, price under its 50-session average or ₹0.2 Cr a day traded). A / B now needs ALL of:
  *  ≥ 2 accumulation sessions in the last 25 and at least 2 more than the distribution sessions (3 was too strict: MRNA, 2 / 0 with strong money flow, read C) · 13-week money flow ≥ +0.10 ·
