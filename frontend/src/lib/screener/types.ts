@@ -49,7 +49,7 @@ export interface ScreenRow {
   exch?: string[] | null;    // exchanges the stock trades on: NASDAQ / NYSE / AMEX, or NSE / BSE
   // ── price-based (daily bars) ─────────────────────────────────────────────────────────────────────────────────────────
   sma21?: number | null; sma100?: number | null; sma150?: number | null;
-  ema10?: number | null; ema21?: number | null; ema50?: number | null;
+  ema10?: number | null; ema21?: number | null; ema50?: number | null; ema200?: number | null;
   rsi?: number | null; rsiW?: number | null; rsiM?: number | null;   // RSI 14 on daily / weekly / monthly closes
   atrP?: number | null;      // ATR 14 as % of price
   adrP?: number | null;      // average day range %, 20 days

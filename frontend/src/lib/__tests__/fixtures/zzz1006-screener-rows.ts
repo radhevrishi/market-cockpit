@@ -31,7 +31,7 @@ export function fixtureRows(market: ScreenMarket, n = 1500): ScreenRow[] {
       if (f.group === 'Trader setups') continue;   // zzz1020 — added after the golden file: left out so the random stream is unchanged
       if (f.key === 'fcfmT' || f.key === 'r40T') continue;   // zzz1045e — added after the golden file (same reason)
       if (f.group === 'Volume & accumulation') continue;   // zzz1046a — added after the golden file (same reason)
-      if (f.key === 'twH' || f.key === 'twDd') continue;   // zzz1047 — added after the golden file (same reason)
+      if (f.key === 'twH' || f.key === 'twDd' || f.key === 'ema200') continue;   // zzz1047, zzz1048b — added after the golden file (same reason)
       if (r() < 0.08) { row[f.key] = null; continue; }
       const u = f.unit;
       let v: number;

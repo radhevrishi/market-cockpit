@@ -72,6 +72,7 @@ export const FIELDS: readonly FieldDef[] = [
   { key: 'ema10', label: 'EMA 10', unit: 'price', markets: BOTH, group: 'Moving averages', approxNote: { IN: PRICE_IN } },
   { key: 'ema21', label: 'EMA 21', unit: 'price', markets: BOTH, group: 'Moving averages', approxNote: { IN: PRICE_IN } },
   { key: 'ema50', label: 'EMA 50', unit: 'price', markets: BOTH, group: 'Moving averages', approxNote: { IN: PRICE_IN } },
+  { key: 'ema200', label: 'EMA 200', unit: 'price', markets: BOTH, group: 'Moving averages', approxNote: { IN: PRICE_IN } },   // zzz1048b
   // momentum
   { key: 'rsi', label: 'RSI 14, daily', unit: 'num', markets: BOTH, group: 'Momentum', approxNote: { IN: PRICE_IN } },
   { key: 'rsiW', label: 'RSI 14, weekly', unit: 'num', markets: BOTH, group: 'Momentum' },

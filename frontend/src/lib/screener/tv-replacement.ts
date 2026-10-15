@@ -153,6 +153,7 @@ export const TV_COLUMN_SOURCES: Readonly<Record<string, { get: Getter; from: str
   'ebitda_yoy_growth_fy': { get: num('ebitdaAYoY'), from: 'ebitdaAYoY' },
   'Exponential moving average, 21, 1 day': { get: num('ema21'), from: 'ema21' },
   'Exponential moving average, 50, 1 day': { get: num('ema50'), from: 'ema50' },
+  'Exponential moving average, 200, 1 day': { get: num('ema200'), from: 'ema200' },   // zzz1048b
   'Simple moving average, 50, 1 day': { get: num('sma50'), from: 'sma50' },
   'Simple moving average, 150, 1 day': { get: num('sma150'), from: 'sma150' },
   'Simple moving average, 200, 1 day': { get: num('sma200'), from: 'sma200' },

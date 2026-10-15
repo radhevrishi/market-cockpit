@@ -108,7 +108,9 @@ describe('CSV shape and units', () => {
     }
     for (const c of Object.keys(TV_COLUMN_SOURCES)) assert.ok(TV_COLUMNS.includes(c), c);
     assert.ok(TV_BLANK_COLUMNS.includes('Forward non-GAAP price to earnings, Annual'));
-    assert.ok(TV_BLANK_COLUMNS.includes('Exponential moving average, 200, 1 day'), 'no EMA 200 in the snapshot — left empty, never SMA 200');
+    // zzz1048b — EMA 200 is now a real snapshot figure (lib/screener/tech.ts, true EMA — never SMA 200)
+    assert.ok(!TV_BLANK_COLUMNS.includes('Exponential moving average, 200, 1 day'));
+    assert.equal(TV_COLUMN_SOURCES['Exponential moving average, 200, 1 day']?.from, 'ema200');
   });
   test('money: $ million → dollars, ₹ crore → rupees; a missing figure stays empty', () => {
     assert.equal(rawMoney(2_500, 'US'), 2.5e9);

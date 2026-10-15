@@ -21,6 +21,8 @@ export interface TechFigures {
   d: string | null;                 // date of the last bar
   sma21: number | null; sma50: number | null; sma100: number | null; sma150: number | null; sma200: number | null;
   ema10: number | null; ema21: number | null; ema50: number | null;
+  /** zzz1048b — EMA 200 (the TradingView files carried it; USA Multibagger / Fundamentals read it) */
+  ema200?: number | null;
   rsi: number | null; rsiW: number | null; rsiM: number | null;
   atrP: number | null; adrP: number | null; chgOpen: number | null;
   chg1W: number | null; perf1W: number | null; perf1M: number | null; perf3M: number | null; perf6M: number | null;
@@ -159,7 +161,7 @@ const pct = (a: number, b: number | null | undefined) => (fin(b) && b > 0 ? r2((
 export function techFigures(b: DailyBars): TechFigures {
   const n = b.c.length;
   const out: TechFigures = {
-    d: n ? b.d[n - 1] : null, sma21: null, sma50: null, sma100: null, sma150: null, sma200: null, ema10: null, ema21: null, ema50: null,
+    d: n ? b.d[n - 1] : null, sma21: null, sma50: null, sma100: null, sma150: null, sma200: null, ema10: null, ema21: null, ema50: null, ema200: null,
     rsi: null, rsiW: null, rsiM: null, atrP: null, adrP: null, chgOpen: null, chg1W: null, perf1W: null, perf1M: null, perf3M: null, perf6M: null,
     perfYTD: null, perf1Y: null, perf5Y: null, perfAll: null, avgVol10: null, avgVol30: null, avgVol60: null, vol1W: null, hi52: null,
     close: null, perf5D: null,
@@ -168,7 +170,7 @@ export function techFigures(b: DailyBars): TechFigures {
   const c = b.c, last = c[n - 1], today = b.d[n - 1];
   const rr = (v: number | null) => (v == null ? null : r2(v));
   out.sma21 = rr(smaOf(c, 21)); out.sma50 = rr(smaOf(c, 50)); out.sma100 = rr(smaOf(c, 100)); out.sma150 = rr(smaOf(c, 150)); out.sma200 = rr(smaOf(c, 200));
-  out.ema10 = rr(emaOf(c, 10)); out.ema21 = rr(emaOf(c, 21)); out.ema50 = rr(emaOf(c, 50));
+  out.ema10 = rr(emaOf(c, 10)); out.ema21 = rr(emaOf(c, 21)); out.ema50 = rr(emaOf(c, 50)); out.ema200 = c.length >= 200 ? rr(emaOf(c, 200)) : null;
   out.rsi = rr(rsiOf(c)); out.rsiW = rr(rsiOf(periodCloses(b.d, c, 'W'))); out.rsiM = rr(rsiOf(periodCloses(b.d, c, 'M')));
   out.atrP = rr(atrPctOf(b.h, b.l, c)); out.adrP = rr(adrPctOf(b.h, b.l));
   out.chgOpen = b.o[n - 1] > 0 ? r2((last / b.o[n - 1] - 1) * 100) : null;
@@ -211,7 +213,7 @@ export function closedFigures(b: DailyBars): Record<string, number | null> | nul
   const cut: DailyBars = { d: b.d.slice(0, -1), o: b.o.slice(0, -1), h: b.h.slice(0, -1), l: b.l.slice(0, -1), c: b.c.slice(0, -1), v: b.v.slice(0, -1) };
   const f = techFigures(cut);
   const out: Record<string, number | null> = {};
-  for (const k of ['sma21', 'sma50', 'sma100', 'sma150', 'sma200', 'ema10', 'ema21', 'ema50', 'rsi', 'atrP', 'adrP', 'chgOpen', 'chg1W', 'perf1W', 'perf1M', 'perf3M', 'perf6M', 'perfYTD', 'perf1Y', 'perf5D', 'avgVol10', 'avgVol30', 'avgVol60', 'hi52'] as const) out[k] = (f as any)[k] ?? null;
+  for (const k of ['sma21', 'sma50', 'sma100', 'sma150', 'sma200', 'ema10', 'ema21', 'ema50', 'ema200', 'rsi', 'atrP', 'adrP', 'chgOpen', 'chg1W', 'perf1W', 'perf1M', 'perf3M', 'perf6M', 'perfYTD', 'perf1Y', 'perf5D', 'avgVol10', 'avgVol30', 'avgVol60', 'hi52'] as const) out[k] = (f as any)[k] ?? null;
   out.px = f.close ?? null;
   out.chg = cut.c.length > 1 ? r2((cut.c[cut.c.length - 1] / cut.c[cut.c.length - 2] - 1) * 100) : null;
   out.vol = cut.v[cut.v.length - 1] ?? null;
