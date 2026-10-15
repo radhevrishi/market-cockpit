@@ -9,7 +9,7 @@ export const CHART_LAYOUTS_KEY = 'mc:chart-layouts:v1';
 
 export type LineKind = 'EMA' | 'SMA';
 export interface MaLine { id: string; kind: LineKind; period: number; color: string; on: boolean }
-export type ExtraType = 'BOLL' | 'RSI' | 'MACD' | 'ATR' | 'ST' | 'PAT' | 'STG' | 'SET' | 'ALN';
+export type ExtraType = 'BOLL' | 'RSI' | 'MACD' | 'ATR' | 'OBV' | 'ST' | 'PAT' | 'STG' | 'SET' | 'ALN' | 'ACC';
 export interface Extra { id: string; type: ExtraType; params: number[]; color: string; on: boolean }
 export interface ChartLayout {
   id: string; name: string; updatedAt: number; lines: MaLine[]; volume: { on: boolean; avg: number }; extras: Extra[]; scale: LayoutScale;
@@ -25,8 +25,8 @@ export interface LayoutStore {
   aln?: 1;
 }
 
-/** zzz1044b (F06) — MAX_EXTRAS caps the REGULAR extra indicators (Bollinger, Supertrend, RSI, MACD, ATR — repeats allowed). The
- *  four analysis overlays in SPECIAL_EXTRAS (patterns, stages, setups, auto lines) have their own on/off rows, at most one each,
+/** zzz1044b (F06) — MAX_EXTRAS caps the REGULAR extra indicators (Bollinger, Supertrend, RSI, MACD, ATR, OBV — repeats allowed). The
+ *  analysis overlays in SPECIAL_EXTRAS (patterns, stages, setups, auto lines, zzz1046b accumulation) have their own on/off rows, at most one each,
  *  and never count toward it — before, they shared the 8 slots, so 4 overlays + 4 indicators hid ATR from "Add an indicator"
  *  and a ninth item (often ALN) was cut off silently on the next clean-up. */
 export const MAX_LAYOUTS = 40, MAX_LINES = 12, MAX_EXTRAS = 8;
@@ -40,6 +40,8 @@ export const EXTRA_INFO: Record<ExtraType, { label: string; pane: boolean; defau
   RSI: { label: 'RSI', pane: true, defaults: [14], names: ['Length'], min: [2], max: [200], color: '#7E57C2' },
   MACD: { label: 'MACD', pane: true, defaults: [12, 26, 9], names: ['Fast', 'Slow', 'Signal'], min: [1, 2, 1], max: [200, 400, 200], color: '#2962FF' },
   ATR: { label: 'ATR', pane: true, defaults: [14], names: ['Length'], min: [1], max: [200], color: '#E91E63' },
+  // zzz1046b — On-Balance Volume (running total: + volume on an up close, − on a down close), its own pane; a regular indicator
+  OBV: { label: 'On-Balance Volume (OBV)', pane: true, defaults: [], names: [], min: [], max: [], color: '#26A69A' },
   // zzz982 — "Automate chart patterns": no line of its own; a status line at the top of the chart + the lead pattern drawn
   // (components/charts/pattern-view). Off unless added to the layout.
   PAT: { label: 'Automate chart patterns', pane: false, defaults: [], names: [], min: [], max: [], color: '#2962FF' },
@@ -52,9 +54,13 @@ export const EXTRA_INFO: Record<ExtraType, { label: string; pane: boolean; defau
   // zzz1025 — "Auto trendlines & levels": trendlines and horizontal levels with 3 or more touches (lib/auto-lines), drawn on the
   // candles on screen, a status line (components/charts/auto-lines-view, AutoLinesIndicator). ON by default (migrateAutoLines).
   ALN: { label: 'Auto trendlines & levels', pane: false, defaults: [], names: [], min: [], max: [], color: '#26A69A' },
+  // zzz1046b — "Volume & accumulation (institutional footprint)": accumulation / distribution / stalling / volume-breakout marks on
+  // the volume bars (lib/accumulation), a money-flow (CMF 21) pane and a status chip (components/charts/acc-view, AccIndicator).
+  // An analysis overlay (own on/off row, not counted toward MAX_EXTRAS). Off unless added to the layout.
+  ACC: { label: 'Volume & accumulation (institutional footprint)', pane: false, defaults: [], names: [], min: [], max: [], color: '#089981' },
 };
 /** zzz987 — extras with their own on/off row in the Indicators panel (not listed under "other indicators"). */
-export const SPECIAL_EXTRAS: ReadonlySet<ExtraType> = new Set<ExtraType>(['PAT', 'STG', 'SET', 'ALN']);
+export const SPECIAL_EXTRAS: ReadonlySet<ExtraType> = new Set<ExtraType>(['PAT', 'STG', 'SET', 'ALN', 'ACC']);
 export const EXTRA_TYPES = Object.keys(EXTRA_INFO) as ExtraType[];
 
 let _seq = 0;
@@ -142,7 +148,7 @@ export function addExtraBlockedReason(l: ChartLayout, type: ExtraType): string |
 export function droppedNote(l: ChartLayout): string | null {
   if (!l.dropped?.length) return null;
   const names = l.dropped.map((t) => EXTRA_INFO[t].label).join(', ');
-  return `${l.dropped.length} indicator${l.dropped.length === 1 ? ' was' : 's were'} not loaded — the limit is ${MAX_EXTRAS} (the 4 analysis overlays do not count): ${names}`;
+  return `${l.dropped.length} indicator${l.dropped.length === 1 ? ' was' : 's were'} not loaded — the limit is ${MAX_EXTRAS} (the ${SPECIAL_EXTRAS.size} analysis overlays do not count): ${names}`;
 }
 /** zzz1044b — the layout without its dropped-indicator note (the owner has seen it). */
 export function clearDropped(l: ChartLayout): ChartLayout {
@@ -289,7 +295,7 @@ export interface LegendRow { id: string; source: 'line' | 'extra' | 'volume'; la
 export function legendRows(l: ChartLayout): LegendRow[] {
   const rows: LegendRow[] = l.lines.map((x) => ({ id: x.id, source: 'line', label: lineLabel(x), color: x.color, on: x.on, pane: false, series: [{ spec: { kind: x.kind, a: x.period }, color: x.color }] }));
   for (const e of l.extras) {
-    if (e.type === 'PAT' || e.type === 'STG' || e.type === 'SET' || e.type === 'ALN') continue;   // zzz982 / zzz987 / zzz1022 / zzz1025 — shown as their own status line at the top of the chart, not a legend row
+    if (SPECIAL_EXTRAS.has(e.type)) continue;   // zzz982 / zzz987 / zzz1022 / zzz1025 / zzz1046b — the analysis overlays are shown as their own status line at the top of the chart, not a legend row
     const info = EXTRA_INFO[e.type];
     const series: LegendRow['series'] = e.type === 'BOLL'
       ? [{ spec: { kind: 'BBU', a: e.params[0], b: e.params[1] }, color: e.color }, { spec: { kind: 'BBM', a: e.params[0], b: e.params[1] }, color: BB_MID_COLOR }, { spec: { kind: 'BBL', a: e.params[0], b: e.params[1] }, color: e.color }]

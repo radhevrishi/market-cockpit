@@ -16,6 +16,7 @@ import {
 import { withPatterns } from '../../components/charts/pattern-view';
 import { withStage } from '../../components/charts/stage-view';
 import { withSetups } from '../../components/charts/setup-view';
+import { withAcc } from '../../components/charts/acc-view';
 import { withAutoLines, autoLinesOn } from '../../components/charts/auto-lines-view';
 
 const read = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
@@ -146,12 +147,12 @@ test('F05: one implementation — chart, screener and setups all call lib/atr', 
 const base = (): ChartLayout => cleanLayout(seedLayoutStore(1).layouts[0]);
 const regular = EXTRA_TYPES.filter((t) => !SPECIAL_EXTRAS.has(t));
 
-test('F06: all nine extras survive — 4 overlays + 5 regular indicators, in any add order', () => {
-  assert.equal(EXTRA_TYPES.length, 9);
+test('F06: all eleven extras survive — 5 overlays + 6 regular indicators, in any add order (zzz1046b: + ACC overlay, + OBV)', () => {
+  assert.equal(EXTRA_TYPES.length, 11);
   const orders: ExtraType[][] = [
-    ['PAT', 'STG', 'SET', 'ALN', 'BOLL', 'ST', 'RSI', 'MACD', 'ATR'],
-    ['BOLL', 'ST', 'RSI', 'MACD', 'ATR', 'PAT', 'STG', 'SET', 'ALN'],
-    ['RSI', 'ALN', 'BOLL', 'SET', 'ATR', 'PAT', 'MACD', 'STG', 'ST'],
+    ['PAT', 'STG', 'SET', 'ALN', 'ACC', 'BOLL', 'ST', 'RSI', 'MACD', 'ATR', 'OBV'],
+    ['BOLL', 'ST', 'RSI', 'MACD', 'ATR', 'OBV', 'PAT', 'STG', 'SET', 'ALN', 'ACC'],
+    ['RSI', 'ALN', 'BOLL', 'ACC', 'SET', 'ATR', 'OBV', 'PAT', 'MACD', 'STG', 'ST'],
   ];
   for (const ord of orders) {
     let l = base();
@@ -161,11 +162,11 @@ test('F06: all nine extras survive — 4 overlays + 5 regular indicators, in any
     // and through the toggle helpers (overlays appended last)
     let m = base();
     for (const t of regular) m = cleanLayout({ ...m, extras: [...m.extras, newExtra(t)] });
-    m = cleanLayout(withPatterns(m, true)); m = cleanLayout(withStage(m, true)); m = cleanLayout(withSetups(m, true)); m = cleanLayout(withAutoLines(m, true));
-    assert.equal(m.extras.length, 9);
+    m = cleanLayout(withPatterns(m, true)); m = cleanLayout(withStage(m, true)); m = cleanLayout(withSetups(m, true)); m = cleanLayout(withAutoLines(m, true)); m = cleanLayout(withAcc(m, true));
+    assert.equal(m.extras.length, 11);
     // save + reload
     const re = sanitizeLayoutStore(JSON.parse(JSON.stringify({ v: 1, layouts: [m], deleted: {}, activeId: m.id })));
-    assert.equal(re.layouts[0].extras.length, 9);
+    assert.equal(re.layouts[0].extras.length, 11);
     assert.equal(sameSettings(re.layouts[0], m), true);
   }
 });
@@ -178,7 +179,7 @@ test('F06: the audit case — 4 overlays + Bollinger, Supertrend, RSI, MACD: ATR
 });
 
 test('F06: overlays are never dropped, even next to 8 regular indicators', () => {
-  const extras = [...Array.from({ length: 8 }, () => newExtra('RSI')), newExtra('PAT'), newExtra('STG'), newExtra('SET'), newExtra('ALN')];
+  const extras = [...Array.from({ length: 8 }, () => newExtra('RSI')), newExtra('PAT'), newExtra('STG'), newExtra('SET'), newExtra('ALN'), newExtra('ACC')];
   const l = cleanLayout({ ...base(), extras });
   for (const t of SPECIAL_EXTRAS) assert.ok(l.extras.some((x) => x.type === t), t);
   assert.equal(regularExtraCount(l), 8);

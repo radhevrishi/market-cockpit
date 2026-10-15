@@ -195,7 +195,7 @@ export const CLEAN_MAX_EDGE_TAGS = 6;
 
 // ── overlay summary chips ─────────────────────────────────────────────────────────
 
-export type OverlayId = 'patterns' | 'stage' | 'setups' | 'alines';
+export type OverlayId = 'patterns' | 'stage' | 'setups' | 'alines' | 'acc';
 
 /** The short text of a chip in the overlay summary row (the full status line stays in its hover text and its details). */
 export function overlayChipText(id: OverlayId, full: string): string {
@@ -213,6 +213,7 @@ export function overlayChipText(id: OverlayId, full: string): string {
   }
   if (id === 'setups') return s.replace(/^Trader setups · (Daily|Weekly|Monthly) · /, 'Setups: ');
   if (id === 'alines') return s.replace(/^Auto lines · (Daily|Weekly|Monthly) · /, 'Lines: ');
+  if (id === 'acc') return s;   // zzz1046b — already short (components/charts/acc-view accChipText; Clean = the compact form)
   // zzz1031 — stage: keep the stage, its name and the confirmation ("Stage 2 · Advancing · confirmed 14 Aug close (10 weeks)")
   const st = s.replace(/^Stage Analysis: /, '');
   const parts = st.split(' · ');

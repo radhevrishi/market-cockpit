@@ -5,6 +5,7 @@ import * as kc from 'klinecharts';
 import { atr, barsBetween, ema, fitPriceRange, fmtPrice, macd, measureLabel, rsi, type Bar } from '@/lib/chart-math';
 import { seriesValues, type PriceSeries } from '@/lib/chart-layouts';
 import { textOnColor } from '@/lib/readable-color';
+import { obvValues } from './acc-view';
 import { stackAxisLabels } from '@/lib/chart-axis-labels';
 
 const toBars = (list: kc.KLineData[]): Bar[] => list.map((d) => ({ t: d.timestamp, o: d.open, h: d.high, l: d.low, c: d.close, v: d.volume ?? 0 }));
@@ -107,6 +108,13 @@ export function registerChartExtras(): typeof kc {
     name: 'MC_ATR', shortName: 'ATR', series: 'normal', precision: 2, calcParams: [14],
     figures: [{ key: 'atr', title: 'ATR: ', type: 'line' }],
     calc: (dataList, indicator) => rows(dataList.length, { atr: atr(toBars(dataList), Number(indicator.calcParams[0]) || 14) }),
+  });
+  // zzz1046b — On-Balance Volume (running total: + volume on an up close, − on a down close; the same running total as
+  // lib/accumulation, via acc-view obvValues), its own pane
+  kc.registerIndicator<Record<string, number>, number>({
+    name: 'MC_OBV', shortName: 'OBV', series: 'normal', precision: 0, calcParams: [],
+    figures: [{ key: 'obv', title: 'OBV: ', type: 'line' }],
+    calc: (dataList) => rows(dataList.length, { obv: obvValues(toBars(dataList)) }),
   });
 
   // zzz946 — price axes that fit the candles on screen only (TradingView "A"), in normal and log scale. When the candles

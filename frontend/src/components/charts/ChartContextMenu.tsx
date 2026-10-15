@@ -28,6 +28,8 @@ export interface ChartMenuState {
   patterns: boolean; stage: boolean; setups: boolean; volume: boolean;
   /** zzz1025 — Auto trendlines & levels */
   autoLines?: boolean;
+  /** zzz1046b — Volume & accumulation (institutional footprint) */
+  acc?: boolean;
   selected: boolean; light: boolean;
   /** zzz1029 — Clean / Research labels (shown when given) */
   display?: ChartDisplay;
@@ -55,6 +57,7 @@ export function chartMenuItems(s: ChartMenuState): ChartMenuItem[] {
     { id: 'stage', label: 'Stage Analysis', checked: s.stage },
     { id: 'setups', label: 'Trader setups', checked: s.setups },
     { id: 'alines', label: 'Auto trendlines & levels', checked: !!s.autoLines },
+    { id: 'acc', label: 'Volume & accumulation', checked: !!s.acc },
     { id: 'volume', label: 'Volume', checked: s.volume },
   );
   if (s.display) {

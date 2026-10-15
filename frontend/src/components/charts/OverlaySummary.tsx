@@ -10,6 +10,7 @@ import { PatternBanner, type PatternBannerP } from './PatternIndicator';
 import { StageBanner, type useStageIndicator } from './StageIndicator';
 import { SetupBanner, type SetupP } from './SetupIndicator';
 import { AutoLinesBanner, type AutoLinesP } from './AutoLinesIndicator';
+import { AccBanner, type AccP } from './AccIndicator';
 
 /** The display preset, remembered per viewer ('mc:chart-display:v1'; Clean when storage is not readable). */
 export function useChartDisplay(): [ChartDisplay, (d: ChartDisplay) => void] {
@@ -18,13 +19,15 @@ export function useChartDisplay(): [ChartDisplay, (d: ChartDisplay) => void] {
   return [d, set];
 }
 
-export const OVERLAY_ORDER: OverlayId[] = ['patterns', 'stage', 'setups', 'alines'];
+export const OVERLAY_ORDER: OverlayId[] = ['patterns', 'stage', 'setups', 'alines', 'acc'];
 
 export interface OverlaySummaryProps {
   patterns: PatternBannerP;
   stage: ReturnType<typeof useStageIndicator>;
   setups: SetupP;
   alines: AutoLinesP;
+  /** zzz1046b — Volume & accumulation (optional so older callers keep working) */
+  acc?: AccP;
   cur: string;
   /** candles on screen (D / W / M) */
   tf?: string;
@@ -40,7 +43,7 @@ export interface OverlaySummaryProps {
 }
 
 export function OverlaySummary(pr: OverlaySummaryProps) {
-  const { patterns, stage, setups, alines, cur, tf, light, display, onDisplay, onTurnOff, onHeight, stale = false } = pr;
+  const { patterns, stage, setups, alines, acc, cur, tf, light, display, onDisplay, onTurnOff, onHeight, stale = false } = pr;
   const rowRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = rowRef.current;
@@ -58,7 +61,7 @@ export function OverlaySummary(pr: OverlaySummaryProps) {
     for (const id of OVERLAY_ORDER) out[id] = { open: openId === id, setOpen: (v: boolean) => setOpenId((cur2) => (v ? id : cur2 === id ? null : cur2)) };
     return out;
   }, [openId]);
-  const on: Record<OverlayId, boolean> = { patterns: !!patterns.on, stage: !!stage.on, setups: !!setups.on, alines: !!alines.on };
+  const on: Record<OverlayId, boolean> = { patterns: !!patterns.on, stage: !!stage.on, setups: !!setups.on, alines: !!alines.on, acc: !!acc?.on };
   const n = OVERLAY_ORDER.filter((id) => on[id]).length;
   if (!n) return null;
   const seg = (d: ChartDisplay) => (
@@ -76,6 +79,7 @@ export function OverlaySummary(pr: OverlaySummaryProps) {
       <StageBanner s={stage} light={light} shifted={false} onTurnOff={() => onTurnOff('stage')} dock={docks.stage} />
       <SetupBanner s={setups} light={light} onTurnOff={() => onTurnOff('setups')} dock={docks.setups} />
       <AutoLinesBanner s={alines} light={light} onTurnOff={() => onTurnOff('alines')} dock={docks.alines} />
+      {acc && <AccBanner s={acc} light={light} onTurnOff={() => onTurnOff('acc')} dock={docks.acc} />}
       <span role="group" aria-label="Chart labels" data-testid="display-toggle"
         style={{ flex: '0 0 auto', marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 1, padding: 2, height: 26, boxSizing: 'border-box', borderRadius: 8,
           border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-0)', pointerEvents: 'auto', boxShadow: '0 1px 0 rgba(18,23,34,.04), 0 6px 16px -10px rgba(18,23,34,.35)' }}>

@@ -32,6 +32,8 @@ import { useStageIndicator } from './StageIndicator';
 import { stageOn, withStage } from './stage-view';
 import { useSetupIndicator } from './SetupIndicator';
 import { setupsOn, withSetups } from './setup-view';
+import { useAccIndicator } from './AccIndicator';
+import { accOn, obvValues, withAcc } from './acc-view';
 import { useAutoLines } from './AutoLinesIndicator';
 import { OverlaySummary, useChartDisplay } from './OverlaySummary';
 import { readLegendPref, saveLegendPref, type OverlayId } from '@/lib/chart-display';
@@ -101,7 +103,7 @@ html.mc-chart-focus .mc-charts-root { height: 100vh; padding-top: 8px !important
 ${CHART_CSS}`;
 /** zzz1045c — a lower pane's collapse / expand button: where it sits on the chart and what it is called */
 interface PaneHandle { id: string; label: string; top: number; right: number; collapsed: boolean }
-const PANE_WORDS: Record<string, string> = { VOL: 'Volume', MRS: 'Mansfield RS', RS: 'Mansfield RS', SQZ: 'Squeeze' };
+const PANE_WORDS: Record<string, string> = { VOL: 'Volume', MRS: 'Mansfield RS', RS: 'Mansfield RS', SQZ: 'Squeeze', CMF: 'Money flow', OBV: 'On-Balance Volume' };
 const paneWord = (short: string) => PANE_WORDS[short.toUpperCase()] || short || 'Lower pane';
 const TF_TO_INTERVAL: Record<Timeframe, string> = { D: '1d', W: '1wk', M: '1mo' };
 const TF_TO_PERIOD = { D: { type: 'day', span: 1 }, W: { type: 'week', span: 1 }, M: { type: 'month', span: 1 } } as const;
@@ -427,7 +429,7 @@ export default function ChartWorkspace() {
   const applyIndicators = useCallback((lay: ChartLayout) => {
     const chart = chartRef.current;
     if (!chart) return;
-    for (const n of ['MC_EMA', 'MC_LINES', 'VOL', 'MC_RSI', 'MC_MACD', 'MC_ATR']) chart.removeIndicator({ name: n });
+    for (const n of ['MC_EMA', 'MC_LINES', 'VOL', 'MC_RSI', 'MC_MACD', 'MC_ATR', 'MC_OBV']) chart.removeIndicator({ name: n });
     const series = priceSeriesOf(lay);
     const tagPanes: string[] = [];
     if (series.length) {
@@ -450,7 +452,7 @@ export default function ChartWorkspace() {
     for (const x of lay.extras) {
       if (!x.on || !EXTRA_INFO[x.type].pane) continue;
       const paneId = `mc_${x.type.toLowerCase()}_${x.id}`.replace(/[^a-z0-9_]/gi, '_');
-      const name = x.type === 'RSI' ? 'MC_RSI' : x.type === 'MACD' ? 'MC_MACD' : 'MC_ATR';
+      const name = x.type === 'RSI' ? 'MC_RSI' : x.type === 'MACD' ? 'MC_MACD' : x.type === 'OBV' ? 'MC_OBV' : 'MC_ATR';
       const lines = x.type === 'RSI'
         ? [{ color: x.color, size: 1.5, style: 'solid' }, { color: guide, size: 1, style: 'dashed' }, { color: guide, size: 1, style: 'dashed', dashedValue: [1, 3] }, { color: guide, size: 1, style: 'dashed' }]
         : x.type === 'MACD'
@@ -940,13 +942,16 @@ export default function ChartWorkspace() {
   // zzz1025 — "Auto trendlines & levels" (on by default): lines / levels with 3+ touches on the candles on screen
   // its right-edge tags keep clear of the last-price tag and the drawn pattern's pivot tag
   const alines = useAutoLines({ on: autoLinesOn(L.working), ready, market, bars, tf, log: L.working.scale.log, chartRef, light: chartLight, display, avoid: patterns.pivots });
-  const nOverlays = [patterns.on, stageInd.on, setupsInd.on, alines.on].filter(Boolean).length;
+  // zzz1046b — "Volume & accumulation": marks on the volume bars + a money-flow pane, read on the completed candles on screen
+  const accInd = useAccIndicator({ on: accOn(L.working), ready, market, bars, tf, chartRef, light: chartLight, display, volumeOn: L.working.volume.on, volPane: VOL_PANE, layoutRev: L.working });
+  const nOverlays = [patterns.on, stageInd.on, setupsInd.on, alines.on, accInd.on].filter(Boolean).length;
   const [overlayRowH, setOverlayRowH] = useState(26);
   const legendTop = nOverlays ? 4 + overlayRowH + 4 : 28;   // zzz1031 — under the overlay row, also when it wraps onto two lines
   const turnOffOverlay = useCallback((id: OverlayId) => {
     if (id === 'patterns') L.setWorking((w) => withPatterns(w, false));
     else if (id === 'stage') L.setWorking((w) => withStage(w, false));
     else if (id === 'setups') L.setWorking((w) => withSetups(w, false));
+    else if (id === 'acc') L.setWorking((w) => withAcc(w, false));
     else L.setWorking((w) => withAutoLines(w, false));
   }, [L]);
 
@@ -981,7 +986,7 @@ export default function ChartWorkspace() {
   const ctxItems = useMemo<ChartMenuItem[]>(() => (ctx ? chartMenuItems({
     axis: ctx.axis, price: ctx.price, cur, decimals: bars.length && Math.abs(bars[bars.length - 1].c) < 1 ? 4 : 2,
     auto: autoOn, log: L.working.scale.log, tr: basis === 'tr', patterns: patternsOn(L.working), stage: stageOn(L.working),
-    setups: setupsOn(L.working), autoLines: autoLinesOn(L.working), volume: L.working.volume.on, selected: !!selectedId, light: chartLight, display,
+    setups: setupsOn(L.working), autoLines: autoLinesOn(L.working), acc: accOn(L.working), volume: L.working.volume.on, selected: !!selectedId, light: chartLight, display,
   }) : []), [ctx, cur, bars, autoOn, L.working, basis, selectedId, chartLight, display]);
   const onCtxSelect = (id: string) => {
     const p = ctx?.price;
@@ -997,6 +1002,7 @@ export default function ChartWorkspace() {
       case 'stage': L.setWorking((w) => withStage(w, !stageOn(w))); break;
       case 'setups': L.setWorking((w) => withSetups(w, !setupsOn(w))); break;
       case 'alines': L.setWorking((w) => withAutoLines(w, !autoLinesOn(w))); break;
+      case 'acc': L.setWorking((w) => withAcc(w, !accOn(w))); break;
       case 'volume': L.setWorking((w) => ({ ...w, volume: { ...w.volume, on: !w.volume.on } })); break;
       case 'view-clean': setDisplay('clean'); break;
       case 'view-research': setDisplay('research'); break;
@@ -1023,6 +1029,7 @@ export default function ChartWorkspace() {
       if (ex.type === 'RSI') out.set(r.id, [rsi(closes, ex.params[0])]);
       else if (ex.type === 'MACD') { const m = macd(closes, ex.params[0], ex.params[1], ex.params[2]); out.set(r.id, [m.macd, m.signal]); }
       else if (ex.type === 'ATR') out.set(r.id, [atr(bars, ex.params[0])]);
+      else if (ex.type === 'OBV') out.set(r.id, [obvValues(bars)]);
     }
     return out;
   }, [rows, bars, L.working.extras]);
@@ -1195,7 +1202,7 @@ export default function ChartWorkspace() {
           </div>
           <IndicatorLegend top={legendTop} rows={rows} valueOf={valueOf} onToggle={(id) => L.setWorking((w) => toggleRow(w, id))} onRemove={(id) => L.setWorking((w) => removeRow(w, id))} decimals={pxDecimals} colorOf={(c) => (!chartLight && (luminance(c) ?? 1) < 0.18 ? '#B2B5BE' : c)} textOf={(c) => readableOn(c, chartLight ? '#FFFFFF' : '#0C1018')}
             compact={compactLegend} onCompact={setLegendCompact} neededOf={neededOf} has={bars.length ? idx + 1 : undefined} stale={analysisOld} />
-          <OverlaySummary patterns={patterns} stage={stageInd} setups={setupsInd} alines={alines} cur={cur} tf={tf} light={chartLight} display={display} onDisplay={setDisplay} onTurnOff={turnOffOverlay} onHeight={setOverlayRowH} stale={analysisOld} />
+          <OverlaySummary patterns={patterns} stage={stageInd} setups={setupsInd} alines={alines} acc={accInd} cur={cur} tf={tf} light={chartLight} display={display} onDisplay={setDisplay} onTurnOff={turnOffOverlay} onHeight={setOverlayRowH} stale={analysisOld} />
           {/* zzz1045c — switching symbol / timeframe: say what is loading; the analysis above is from the chart before (dimmed) */}
           {analysisOld && (
             <div className="ct-float ct-loading-badge" role="status" aria-live="polite" data-testid="chart-loading-badge" title={loadingWords.title}>

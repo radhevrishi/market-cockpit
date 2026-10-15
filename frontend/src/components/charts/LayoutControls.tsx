@@ -13,6 +13,7 @@ import { fmtPrice } from '@/lib/chart-math';
 import { patternsOn, withPatterns } from './pattern-view';
 import { stageOn, withStage } from './stage-view';
 import { setupsOn, withSetups } from './setup-view';
+import { accOn, withAcc } from './acc-view';
 import { autoLinesOn, withAutoLines } from './auto-lines-view';
 import { STAGE_TOOLTIP } from '@/lib/stage-analysis';
 
@@ -269,6 +270,16 @@ export function IndicatorsPanel({ L, onClose, triggerRef }: { L: ReturnType<type
           Draws trendlines and horizontal support / resistance where price turned 3 or more times (2 touches are never shown), with a ring on every touch and the touch count on the right edge. Found separately on the daily, weekly and monthly candles on screen; broken lines turn grey.
         </div>
       </div>
+      {/* zzz1046b — Volume & accumulation: the big players' footprint in price and volume (lib/accumulation), off by default */}
+      <div style={{ margin: '8px 0', paddingTop: 8, borderTop: '1px solid var(--mc-border-3)' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+          <input type="checkbox" checked={accOn(w)} onChange={(e) => setW((l) => withAcc(l, e.target.checked))} aria-label="Volume & accumulation (institutional footprint)" />
+          <b style={{ fontWeight: 600 }}>Volume &amp; accumulation (institutional footprint)</b>
+        </label>
+        <div style={{ paddingLeft: 22, marginTop: 2, fontSize: 12, color: 'var(--mc-text-3)' }}>
+          Small marks on the volume bars where big volume pushed price up and closed near the high (green ▲, a volume breakout ◆), pushed it down (red ▼) or stalled (amber ●), a money-flow pane (Chaikin Money Flow 21) and an A–E grade in a status chip. Read on the completed candles on screen (D / W / M). It shows heavy buying or selling, not who did it — our own version of the published O&apos;Neil / Wyckoff rules.
+        </div>
+      </div>
       {w.extras.some((x) => !SPECIAL_EXTRAS.has(x.type)) && <div style={{ ...groupHead, margin: '8px 0 4px', paddingTop: 8, borderTop: '1px solid var(--mc-border-3)' }}>Other indicators</div>}
       {w.extras.filter((x) => !SPECIAL_EXTRAS.has(x.type)).map((x) => {
         const info = EXTRA_INFO[x.type];
@@ -305,7 +316,7 @@ export function IndicatorsPanel({ L, onClose, triggerRef }: { L: ReturnType<type
       </div>
       {regularExtraCount(w) >= MAX_EXTRAS && (
         <div role="note" style={{ marginTop: 6, fontSize: 12, color: 'var(--mc-text-3)' }}>
-          Limit {MAX_EXTRAS} indicators reached — remove one to add another. The four analysis overlays above do not count toward it.
+          Limit {MAX_EXTRAS} indicators reached — remove one to add another. The {SPECIAL_EXTRAS.size} analysis overlays above do not count toward it.
         </div>
       )}
       {droppedNote(w) && (
