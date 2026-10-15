@@ -29,6 +29,9 @@ import ScreenPicker from './ScreenPicker';
 import AddFilterPanel from './AddFilterPanel';
 import ReviewBadge from './ReviewBadge';
 import CompanyDetail from './CompanyDetail';
+import ScreenCompare from './ScreenCompare';
+import { nextRebuild, refreshExplain } from '@/lib/screener/rebuild-schedule';
+import { cellRuleLines } from '@/lib/screener/cell-rules';
 import {
   explainRow, naReason, closeConfirmed, stableOrder, exact, makeShortlist, cleanShortlists, diffShortlist, formulaImpact, changesSince, membership,
   FORMULA_VERSION, SHORTLISTS_KEY, SCREEN_RUNS_KEY, type Shortlist, type ScreenRun,
@@ -125,6 +128,7 @@ export default function StockScreener() {
   const [addFrom, setAddFrom] = useState<'scope' | 'selected'>('scope');
   const [showCoverage, setShowCoverage] = useState(false);
   const [showWhy, setShowWhy] = useState(false);
+  const [showCompare, setShowCompare] = useState(false);   // zzz1045b
   const { open: topOpen, setOpen: setTopOpen, ref: topRef } = usePopover();
   const { open: actOpen, setOpen: setActOpen, ref: actRef } = usePopover();
   const { open: colOpen, setOpen: setColOpen, ref: colRef } = usePopover();
@@ -386,6 +390,12 @@ export default function StockScreener() {
 
   const whyRow = useMemo(() => { const t = whyTicker.trim().toUpperCase(); return t ? rows.find((r) => r.t === t) || null : null; }, [whyTicker, rows]);
   const whyChecks = useMemo(() => (whyRow ? explainRow(whyRow, filters, market, new Date(), exactOnly) : []), [whyRow, filters, market, exactOnly]);
+  // zzz1045b — compare panel input (the open screen as it is now) and the exact rule check in a cell's tooltip
+  const compareCurrent = useMemo(() => ({ name, market, filters }), [name, market, filters]);
+  const ruleLinesFor = (r: ScreenRow, k: NumKey): string[] => {
+    const lines = cellRuleLines(r, k, filters, market, new Date(), exactOnly);
+    return lines.length ? ['Active rule' + (lines.length > 1 ? 's' : '') + ' on this figure:', ...lines.map((l) => `  ${l.text}`)] : [];
+  };
   const save = (asNew: boolean) => {
     const id = asNew ? newId() : screenId;
     const nm = asNew ? (window.prompt('Name for this screen', `${name} (copy)`) || '').trim() : name;
@@ -538,6 +548,9 @@ export default function StockScreener() {
   });
 
   const fresh = builtAt ? new Date().getTime() - builtAt.getTime() < 36 * 3600_000 : false;
+  // zzz1045b — "Refresh" only reloads the stored snapshot; the data itself is rebuilt on the server's schedule
+  const nextBuild = nextRebuild(market);
+  const refreshText = refreshExplain(market, builtAt);
   const skeleton = !snap && !err;
   return (
     <div className={`mcss ${workspaceThemeClass(light, true)}`} style={{ padding: '16px 20px 28px', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 12, minHeight: '100%', alignContent: 'start' }}>
@@ -559,6 +572,7 @@ export default function StockScreener() {
               <button type="button" role="menuitem" className="mcss-item" onClick={() => { setTopOpen(false); removeSaved(); }} title="Delete a screen you made, or put a built-in screen back to its TradingView setup">{isBuiltIn ? 'Reset to the TradingView setup' : 'Delete this screen'}</button>
               <div className="mcss-sep" />
               <button type="button" role="menuitem" className="mcss-item" onClick={() => { setTopOpen(false); setShowWhy(true); }}>Why is a company in or out?…</button>
+              <button type="button" role="menuitem" className="mcss-item" data-compare onClick={() => { setTopOpen(false); setShowCompare(true); }} title="See which rules this screen shares with another, how many companies each keeps and which companies differ (neither screen is changed)">Compare with another screen…</button>
               <button type="button" role="menuitem" className="mcss-item" onClick={() => { setTopOpen(false); setShowHelp(true); }}>Keyboard shortcuts<span className="end"><kbd>?</kbd></span></button>
               <div className="mcss-sep" />
               <Link href="/pine-screener" role="menuitem" className="mcss-item" title="Chart setups (patterns, stage, distance to the pivot) live in the Pine Screener">Chart setups: Pine Screener</Link>
@@ -628,7 +642,8 @@ export default function StockScreener() {
 
       {/* ── data status: one line, details on request ──────────────────────────────────────────────────────────────── */}
       <div className="mcss-status">
-        {builtAt ? <span className={`live${fresh ? '' : ' old'}`} title={`Data built ${builtAt.toLocaleString()}`}>Updated {builtAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{builtAt.toDateString() !== new Date().toDateString() ? `, ${builtAt.toLocaleDateString([], { day: 'numeric', month: 'short' })}` : ''}</span> : <span aria-busy={!err}>{err ? 'No data' : 'Loading…'}</span>}
+        {builtAt ? <span className={`live${fresh ? '' : ' old'}`} title={refreshText}>Data built {builtAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{builtAt.toDateString() !== new Date().toDateString() ? `, ${builtAt.toLocaleDateString([], { day: 'numeric', month: 'short' })}` : ''}</span> : <span aria-busy={!err}>{err ? 'No data' : 'Loading…'}</span>}
+        {nextBuild ? <><span className="dot" /><span title={refreshText} data-next-rebuild>Next rebuild ~{nextBuild.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></> : null}
         {snap ? <><span className="dot" /><span title={intradayRows ? `${intradayRows} companies were read during today's trading session` : `Every price is a completed-session close${closeDay ? ` (most from ${closeDay})` : ''}`}>{intradayRows ? (closeOnly ? 'Closing prices' : 'Quotes during session') : `Last close${closeDayText ? ` ${closeDayText}` : ''}`}</span></> : null}
         {latestQ ? <><span className="dot" /><span>Figures to {latestQ}</span></> : null}
         {snap ? <><span className="dot" /><button type="button" className="mcss-link" aria-expanded={showCoverage} onClick={() => setShowCoverage((v) => !v)}>Coverage details {showCoverage ? '▴' : '▾'}</button></> : null}
@@ -639,7 +654,7 @@ export default function StockScreener() {
         <label className={`mcss-check${closeOnly ? ' on' : ''}`} title="On: for companies read during today's trading session, price, change and moving averages are taken from the last completed session (a close-confirmed breakout), not the live price">
           <input type="checkbox" checked={closeOnly} onChange={toggleClose} aria-label="Completed sessions only" /> Close only
         </label>
-        <button type="button" className="mcss-btn sm" disabled={loading} onClick={() => setRefresh((v) => v + 1)}>{loading ? 'Refreshing…' : err ? 'Retry' : 'Refresh'}</button>
+        <button type="button" className="mcss-btn sm" disabled={loading} onClick={() => setRefresh((v) => v + 1)} title={refreshText} aria-label={err ? 'Retry loading the stored snapshot' : 'Reload the stored snapshot (does not rebuild the data)'}>{loading ? 'Refreshing…' : err ? 'Retry' : 'Refresh'}</button>
       </div>
       {err ? <div role="alert" className="mcss-note" style={{ color: C.red, borderColor: 'color-mix(in srgb, var(--ss-down) 35%, transparent)', background: 'var(--ss-down-tint)' }}>{err}{snap ? ' — showing the last loaded snapshot' : ''}</div> : null}
       {intradayLine ? <div className="mcss-warn" style={{ color: closeOnly ? C.green : C.amber }} title={intradayTip}>{closeOnly ? '◉' : '◌'} {intradayLine}</div> : null}
@@ -652,6 +667,10 @@ export default function StockScreener() {
           {snap.sources.length ? <div className="mcss-dim">Sources: {snap.sources.join(' · ')}.</div> : null}
           {snap.notes.length ? <details><summary style={{ cursor: 'pointer' }}>What could not be read ({snap.notes.length})</summary><ul style={{ margin: '4px 0 0 16px' }}>{snap.notes.map((n, i) => <li key={i}>{n}</li>)}</ul></details> : null}
         </div>
+      ) : null}
+      {showCompare ? (
+        <ScreenCompare screens={screens} current={compareCurrent} currentId={screenId} rows={rows} otherRows={snaps[market === 'US' ? 'IN' : 'US']?.rows || null}
+          exactOnly={exactOnly} hidden={hiddenScreens} onClose={() => setShowCompare(false)} />
       ) : null}
       {showWhy ? (
         <div className="mcss-panel" style={{ fontSize: 13 }}>
@@ -900,7 +919,7 @@ export default function StockScreener() {
                       const ax = r.approx?.includes(k);
                       const dirCls = k === 'chg' && typeof v === 'number' ? (v > 0 ? ' up' : v < 0 ? ' down' : '') : '';
                       const na = naReason(r, k);
-                      const tip = [typeof v === 'number' ? `Exact value: ${exact(v)} (filters compare this, not the rounded figure)` : na ? `Not applicable: ${na}` : 'Not known', ax ? 'Approximate for this company' : '', na && typeof v === 'number' ? 'Not meaningful for financial companies' : '', (k === 'fcfmTTM' || k === 'r40') && typeof r.fcfmTTM === 'number' ? `FCF margin: ${fcfmSourceText(r, market)}` : ''].filter(Boolean).join('\n');
+                      const tip = [typeof v === 'number' ? `Exact value: ${exact(v)} (filters compare this, not the rounded figure)` : na ? `Not applicable: ${na}` : 'Not known', ax ? 'Approximate for this company' : '', na && typeof v === 'number' ? 'Not meaningful for financial companies' : '', (k === 'fcfmTTM' || k === 'r40') && typeof r.fcfmTTM === 'number' ? `FCF margin: ${fcfmSourceText(r, market)}` : '', ...ruleLinesFor(r, k)].filter(Boolean).join('\n');
                       // zzz994 (MC-01 display) — the latest quote next to the scan close the averages / patterns were read from
                       const scanNote = k === 'px' && pxDiffers(r) ? `\nScan close ${fmtPrice(r.scanPx, market)}${r.scanAt ? ` (${r.scanAt}` : ' ('}${r.scanSrc ? `, ${r.scanSrc}` : ''}) — moving averages, RSI and patterns use it; quote ${r.pxSrc ? `from ${r.pxSrc}` : ''}${typeof r.pxGap === 'number' ? `, ${r.pxGap > 0 ? '+' : ''}${r.pxGap}% vs scan close` : ''}${r.pxConflict ? '\n⚠ The two sources disagree on the same day — neither is certified as the exchange close' : ''}` : '';
                       return <td key={k} className={`num${dirCls}`} style={{ whiteSpace: 'nowrap' }} title={tip + scanNote}>{k === 'px' && r.pxConflict ? <span style={{ color: C.amber }} aria-label="Price sources disagree">⚠ </span> : null}{ax ? <span className="mcss-dim">≈</span> : ''}{v == null && na ? <span className="na">n/a</span> : v == null ? <span className="nil">{cellText(v, d?.unit || 'num', market, k)}</span> : cellText(v, d?.unit || 'num', market, k)}{scanNote ? <span style={{ color: C.amber }}>†</span> : null}{k === 'px' && scanNote && density !== 'compact' ? <div style={{ fontSize: 11, color: C.dim }}>scan {fmtPrice(r.scanPx, market)}</div> : null}</td>;

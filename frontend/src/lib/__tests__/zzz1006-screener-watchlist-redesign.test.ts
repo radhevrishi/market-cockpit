@@ -290,7 +290,7 @@ test('zzz1006 screener: one-row top bar, picker switch, chip pass counts in tool
     assert.match(chips[0].querySelector('button')!.getAttribute('title')!, /2 of 3 companies pass this filter alone/);
     assert.ok(chips[1].classList.contains('paused')); assert.match(chips[1].textContent!, /Paused/);
     // status line: compact, coverage details on request
-    assert.match(document.querySelector('.mcss-status')!.textContent!, /Updated .*Coverage details/);
+    assert.match(document.querySelector('.mcss-status')!.textContent!, /Data built .*Coverage details/);
     assert.doesNotMatch(text(), /company figures for/);
     await act(async () => { btn((b) => /^Coverage details/.test(b.textContent || ''))!.click(); await settle(); });
     assert.match(text(), /company figures for 2 of 3/);

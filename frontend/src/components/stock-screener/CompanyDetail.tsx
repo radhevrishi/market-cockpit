@@ -12,6 +12,7 @@ import { explainRow, naReason } from '@/lib/screener/research';
 import { tvSectorMapping } from '@/lib/screener/tv-sectors';
 import { cellText } from '@/lib/screener/column-views';
 import { ADD_GROUPS } from './AddFilterPanel';
+import { fieldMeta } from '@/lib/screener/field-meta';
 
 export default function CompanyDetail({ row, market, filters, exactOnly, review, onReview, chartHref, onChart, onPine, onClose, position }: {
   row: ScreenRow; market: ScreenMarket; filters: Filter[]; exactOnly: boolean; review: ReviewState; onReview: (s: ReviewState) => void;
@@ -52,9 +53,9 @@ export default function CompanyDetail({ row, market, filters, exactOnly, review,
       </div>
       <div className="bd">
         <div className="mcss-facts">
-          <div><div className="k">Price</div><div className="v">{fmtPrice(row.px, market)}</div></div>
+          <div title={`${fieldMeta('px', market, row).period} · ${fieldMeta('px', market, row).source}`}><div className="k">Price</div><div className="v">{fmtPrice(row.px, market)}</div></div>
           <div><div className="k">Change today</div><div className="v" style={{ color: chg == null || chg === 0 ? undefined : chg > 0 ? 'var(--ss-up)' : 'var(--ss-down)' }}>{chg == null ? '—' : `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`}</div></div>
-          <div><div className="k">Market cap</div><div className="v">{fmtValue(row.mc, 'money', market)}</div></div>
+          <div title={`${fieldMeta('mc', market, row).period} · ${fieldMeta('mc', market, row).source}`}><div className="k">Market cap</div><div className="v">{fmtValue(row.mc, 'money', market)}</div></div>
         </div>
         <div className="mcss-h4">Review</div>
         <div className="mcss-seg sm" role="radiogroup" aria-label={`Review state for ${row.t}`}>
@@ -77,14 +78,17 @@ export default function CompanyDetail({ row, market, filters, exactOnly, review,
             <section key={g.label}>
               <div className="mcss-h4">{g.label}</div>
               <div className="mcss-kv">
-                {items.map(({ f, v }) => <FragmentKV key={f.key} k={f.label} v={v!} />)}
+                {items.map(({ f, v }) => { const m = fieldMeta(f.key, market, row); const ax = !!row.approx?.includes(f.key); return <FragmentKV key={f.key} k={f.label} v={v!} sub={`${m.period} · ${m.source}`} tip={[`Period: ${m.period}`, `Source: ${m.source}`, m.approx ? `${ax ? '≈ for this company — ' : 'How it is worked out: '}${m.approx}` : ax ? '≈ worked out in a rougher way for this company' : ''].filter(Boolean).join('\n')} />; })}
               </div>
             </section>
           );
         })}
-        <div className="mcss-dim" style={{ fontSize: 12, marginTop: 14, lineHeight: 1.5 }}>Press <kbd>j</kbd> / <kbd>k</kbd> for the next / previous company, <kbd>Esc</kbd> to close. Figures from the snapshot{row.q ? `, latest quarter ${row.q}` : ''}. ≈ = worked out in a rougher way; n/a = not meaningful for this company.</div>
+        <div className="mcss-dim" style={{ fontSize: 12, marginTop: 14, lineHeight: 1.5 }}>Press <kbd>j</kbd> / <kbd>k</kbd> for the next / previous company, <kbd>Esc</kbd> to close. Figures from the snapshot{row.q ? `, latest quarter ${row.q}` : ''}; under each figure: its period and source (hover for how it is worked out). ≈ = worked out in a rougher way; n/a = not meaningful for this company.</div>
       </div>
     </aside>
   );
 }
-function FragmentKV({ k, v }: { k: string; v: string }) { return <><span>{k}</span><span className="v">{v}</span></>; }
+/** zzz1045b — a figure with its period and source under the name (full text, with the ≈ reason, on hover). */
+function FragmentKV({ k, v, sub, tip }: { k: string; v: string; sub?: string; tip?: string }) {
+  return <><span title={tip}>{k}{sub ? <span className="mcss-dim" data-field-meta style={{ display: 'block', fontSize: 11, lineHeight: 1.35 }}>{sub}</span> : null}</span><span className="v" title={tip}>{v}</span></>;
+}
