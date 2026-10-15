@@ -53,7 +53,7 @@ test('Clean: stage marks = the last two (current stage + the change before it); 
 });
 
 const tag = (id: string, y: number, price: number, n: number, kind: LevelTag['kind'] = 'support', priority = TAG_PRIORITY.other): LevelTag =>
-  ({ id, y, price, n, kind, color: kind === 'support' ? '#089981' : '#F23645', priority, text: `×${n}  ${price.toFixed(2)}` });
+  ({ id, y, price, n, kind, color: kind === 'support' ? '#089981' : '#F23645', priority, text: `${kind === 'support' ? 'S' : 'R'} ${price.toFixed(2)} · ${n} touches` });
 
 test('merge: auto-line tags within 1.2% (or 14 px) become one tag "×5 · ×3  131.00–132.60", exact prices kept; Research one each', () => {
   const fmt = (n: number) => n.toFixed(2);
@@ -61,7 +61,7 @@ test('merge: auto-line tags within 1.2% (or 14 px) become one tag "×5 · ×3  1
   const m = mergeLevelTags(tags, { mode: 'clean', fmt });
   assert.equal(m.length, 2);
   const g = m.find((x) => x.id.includes('|'))!;
-  assert.equal(g.text, '×5 · ×3  131.00–132.60');
+  assert.equal(g.text, 'S 131.00–132.60 · 5/3 touches');   // zzz1037 wording
   assert.deepEqual(g.prices, [131, 132.6], 'exact values kept');
   assert.equal(g.y, 195);
   // 1.5% apart and 40 px apart: two tags
@@ -214,20 +214,20 @@ test('auto-line tags on the chart: Clean merges / caps and keeps clear of the la
       set: () => true,
     });
     tpl.draw({ ctx, chart, indicator: { extendData: { ...payload, display, avoid } }, bounding: { width: W, height: H }, xAxis, yAxis });
-    return texts.filter((x) => x.t.startsWith('×'));
+    return texts.filter((x) => /^[SR] /.test(x.t));
   };
   const research = run('research');
   assert.equal(research.length, payload.levels.length, 'Research: one tag per level');
   const clean = run('clean', [112]);
   assert.ok(clean.length < research.length, 'Clean: fewer tags');
   assert.ok(clean.length <= CLEAN_MAX_EDGE_TAGS - 2, 'Clean: capped (last price + pivot reserved)');
-  assert.ok(clean.some((x) => /^×5 · ×4 · ×3 {2}130\.00–131\.40$/.test(x.t)), `merged tag: ${clean.map((x) => x.t).join(' | ')}`);
+  assert.ok(clean.some((x) => /^R 130\.00–131\.40 · 5\/4\/3 touches$/.test(x.t)), `merged tag: ${clean.map((x) => x.t).join(' | ')}`);
   const lastY = yAxis.convertToPixel(100), pivotY = yAxis.convertToPixel(112);
   for (const x of [...clean, ...research]) {
     assert.ok(Math.abs(x.y - lastY) >= 16 - 1e-9, `clear of the last-price tag: ${x.t}`);
   }
   for (const x of clean) assert.ok(Math.abs(x.y - pivotY) >= 16 - 1e-9, `clear of the pattern pivot tag: ${x.t}`);
-  assert.ok(clean.some((x) => x.t.startsWith('×6')), 'the line next to the price (nearest) is kept');
+  assert.ok(clean.some((x) => x.t.includes('· 6 touches')), 'the line next to the price (nearest) is kept');
 });
 
 // ───────── mounted summary row (JSDOM) ─────────

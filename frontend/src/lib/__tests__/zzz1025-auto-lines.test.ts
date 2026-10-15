@@ -257,7 +257,7 @@ test('chart drawing: lines, touch rings and stacked right-edge tags are drawn wi
   const yAxis = { convertToPixel: (v: number) => H - (v - 90) * 6 };
   tpl.draw({ ctx, chart, indicator: { extendData: { ...payload, hover: payload.lines[0]?.id ?? null } }, bounding: { width: W, height: H, left: 0, top: 0, right: 0, bottom: 0 }, xAxis, yAxis });
   assert.ok(calls.includes('stroke') && calls.includes('arc'), 'lines and rings');
-  const tags = texts.filter((x) => x.t.startsWith('×'));
+  const tags = texts.filter((x) => /^[SR] /.test(x.t));   // zzz1037 — 'R 76.22 · 4 touches' / 'S line · 3 touches'
   assert.ok(tags.length >= 2);
   const ys = tags.map((x) => x.y).sort((a, c) => a - c);
   for (let k = 1; k < ys.length; k++) assert.ok(ys[k] - ys[k - 1] >= 15, 'tags never overlap');

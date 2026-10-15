@@ -217,7 +217,7 @@ test('zzz1030 auto lines: a horizontal level shows one value and names both pric
   assert.doesNotMatch(row.detail, /line now|projected/);
   // Clean-mode right-edge tags: short (touch count; a level its price)
   const k = read('../../components/charts/auto-lines-kline.ts');
-  assert.ok(k.includes('text: `×${ln.n}${ln.prov ? \' · provisional\' : \'\'}`'));
+  assert.ok(k.includes('text: lineTagText(ln.kind, ln.n, !!ln.prov)'));   // zzz1037 — 'S line · 3 touches'
 });
 
 test('zzz1030 wording: plain words, no "best", no buy / sell words', () => {

@@ -61,7 +61,7 @@ test('reference: forming month through support → provisional breach, both dist
   // chart tags carry the mark
   const p = alnPayload(done, r, DEFAULT_ALN_PREFS, false, 2, ref);
   assert.deepEqual(p.levels.map((x) => [x.kind, !!x.prov]).sort(), [['resistance', false], ['support', true]]);
-  assert.ok(read('../../components/charts/auto-lines-kline.ts').includes("lv.prov ? ' · provisional' : ''"));
+  assert.ok(read('../../components/charts/auto-lines-kline.ts').includes('levelTagText(') && read('../../components/charts/auto-lines-kline.ts').includes("${prov ? ' · provisional' : ''}"));
 });
 
 test('reference: completed close equals the latest (daily after the close) → one distance, no "latest", no breach', () => {

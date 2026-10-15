@@ -90,7 +90,7 @@ export function registerAutoLinesIndicator(kc: typeof KC): void {
           if (k < vr.from - 1 || k > vr.to + 1) continue;
           ring(xAxis.convertToPixel(k), yAxis.convertToPixel(p), c, hov ? 1 : 0.8);
         }
-        tags.push({ id: lv.id, y, price: lv.price, n: lv.n, kind: lv.kind, prov: !!lv.prov, text: `×${lv.n}  ${fmtAlnPrice(lv.price, ext.decimals)}${lv.prov ? ' · provisional' : ''}`, color: c });
+        tags.push({ id: lv.id, y, price: lv.price, n: lv.n, kind: lv.kind, prov: !!lv.prov, text: levelTagText(lv.price < (typeof lastC === 'number' ? lastC : lv.price) ? 'S' : 'R', fmtAlnPrice(lv.price, ext.decimals), lv.n, !!lv.prov), color: c });
       }
 
       // ── trendlines ────────────────────────────────────────────────────────────
@@ -124,12 +124,13 @@ export function registerAutoLinesIndicator(kc: typeof KC): void {
           ring(xAxis.convertToPixel(k), yAxis.convertToPixel(p), c, hov ? 1 : 0.9);
         }
         const endX = xAxis.convertToPixel(to), endY = yAxis.convertToPixel(alnLinePrice(ln, to, kA));
-        if (ln.tEnd == null) tags.push({ id: ln.id, y: endY, price: alnLinePrice(ln, to, kA), n: ln.n, kind: ln.kind, prov: !!ln.prov, text: `×${ln.n}${ln.prov ? ' · provisional' : ''}`, color: c });
+        if (ln.tEnd == null) tags.push({ id: ln.id, y: endY, price: alnLinePrice(ln, to, kA), n: ln.n, kind: ln.kind, prov: !!ln.prov, text: lineTagText(ln.kind, ln.n, !!ln.prov), color: c });
         else if (endX > 0 && endX < bounding.width - 30 && endY > 0 && endY < bounding.height) {
           ctx.font = `600 ${fontSize}px ${FONT}`;
           ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-          ctx.lineWidth = 3; ctx.strokeStyle = col.halo; ctx.strokeText(`×${ln.n} broken`, endX + 4, endY);
-          ctx.fillStyle = c; ctx.fillText(`×${ln.n} broken`, endX + 4, endY);
+          const bt = `${ln.kind === 'support' ? 'S' : 'R'} line broken · ${ln.n} touches`;
+          ctx.lineWidth = 3; ctx.strokeStyle = col.halo; ctx.strokeText(bt, endX + 4, endY);
+          ctx.fillStyle = c; ctx.fillText(bt, endX + 4, endY);
         }
       }
 
@@ -205,3 +206,8 @@ export function levelZone(price: number, touches: readonly number[]): { lo: numb
   const hi = Math.min(price + maxH, Math.max(price + minH, hi0));
   return { lo, hi };
 }
+
+/** zzz1037 — self-explaining tags (owner: "what is ×4 76.22"): R / S = resistance above / support below the price, then the price and
+ *  how many times price turned there. */
+export const levelTagText = (side: 'S' | 'R', price: string, n: number, prov: boolean) => `${side} ${price} · ${n} touches${prov ? ' · provisional' : ''}`;
+export const lineTagText = (kind: 'support' | 'resistance', n: number, prov: boolean) => `${kind === 'support' ? 'S' : 'R'} line · ${n} touches${prov ? ' · provisional' : ''}`;

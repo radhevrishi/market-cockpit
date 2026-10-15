@@ -147,12 +147,13 @@ export function mergeLevelTags(tags: readonly LevelTag[], o: { mode: ChartDispla
     const lead = [...g].sort((a, b) => b.priority - a.priority)[0];
     const ps = g.map((t) => t.price);
     const lo = Math.min(...ps), hi = Math.max(...ps);
-    const counts = [...g].sort((a, b) => b.n - a.n).map((t) => `×${t.n}`).join(' · ');
+    const counts = [...g].sort((a, b) => b.n - a.n).map((t) => String(t.n)).join('/');
+    const side = /^S /.test(g[0].text) ? 'S' : /^R /.test(g[0].text) ? 'R' : '';
     return {
       id: g.map((t) => t.id).join('|'),
       y: g.reduce((s, t) => s + t.y, 0) / g.length,
       priority: lead.priority,
-      text: `${counts}  ${o.fmt(lo)}–${o.fmt(hi)}${g.some((t) => t.prov) ? ' · provisional' : ''}`,
+      text: `${side ? `${side} ` : ''}${o.fmt(lo)}–${o.fmt(hi)} · ${counts} touches${g.some((t) => t.prov) ? ' · provisional' : ''}`,
       color: lead.color,
       prices: ps.slice().sort((a, b) => a - b),
     };
