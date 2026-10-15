@@ -3,7 +3,7 @@
 // TradingView-style legend at the top-left of the chart with an eye toggle per line.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  CHART_LAYOUTS_KEY, EXTRA_INFO, EXTRA_TYPES, SPECIAL_EXTRAS, MAX_EXTRAS, MAX_LINES, activeLayout, cleanLayout, deleteLayout, mergeLayoutStores,
+  CHART_LAYOUTS_KEY, EXTRA_INFO, EXTRA_TYPES, SPECIAL_EXTRAS, MAX_EXTRAS, MAX_LINES, activeLayout, addExtraBlockedReason, cleanLayout, clearDropped, deleteLayout, droppedNote, mergeLayoutStores, regularExtraCount,
   newExtra, newLayoutId, renameLayout, saveLayout, saveLayoutAs, sameSettings, toggleRow,
   type ChartLayout, type Extra, type ExtraType, type LayoutStore, type LegendRow, type MaLine,
 } from '@/lib/chart-layouts';
@@ -90,7 +90,13 @@ export function useLayouts() {
     storeRef.current = n; setStore(n); setWorking(cleanLayout(activeLayout(n)));
   }, []);
   const revert = useCallback(() => setWorking(cleanLayout(activeLayout(storeRef.current))), []);
-  return { store, working, setWorking, saved, dirty, switchTo, save, saveAs, rename, remove, revert };
+  // zzz1044b (F06) — the owner has read the "indicators were not loaded" note: clear it on screen and in the stored layout
+  // (save time unchanged, so it never wins a merge over a newer copy from another device)
+  const dismissDropped = useCallback(() => {
+    setWorking((w) => clearDropped(w));
+    setStore((s) => ({ ...s, layouts: s.layouts.map((l) => (l.id === s.activeId ? clearDropped(l) : l)) }));
+  }, []);
+  return { store, working, setWorking, saved, dirty, switchTo, save, saveAs, rename, remove, revert, dismissDropped };
 }
 
 const smallBtn = (active = false): React.CSSProperties => ({
@@ -195,7 +201,7 @@ export function IndicatorsPanel({ L, onClose, triggerRef }: { L: ReturnType<type
   const [adding, setAdding] = useState('');
   const add = (what: string) => {
     if (what === 'EMA' || what === 'SMA') setW((l) => ({ ...l, lines: [...l.lines, { id: newLayoutId('m'), kind: what, period: 200, color: '#607D8B', on: true }] }));
-    else if (what) setW((l) => ({ ...l, extras: [...l.extras, newExtra(what as ExtraType)] }));
+    else if (what) setW((l) => (addExtraBlockedReason(l, what as ExtraType) ? l : { ...l, extras: [...l.extras, newExtra(what as ExtraType)] }));
     setAdding('');
   };
   return (
@@ -289,9 +295,24 @@ export function IndicatorsPanel({ L, onClose, triggerRef }: { L: ReturnType<type
           <option value="">+ Add an indicator…</option>
           {w.lines.length < MAX_LINES && <option value="EMA">EMA line</option>}
           {w.lines.length < MAX_LINES && <option value="SMA">SMA line</option>}
-          {w.extras.length < MAX_EXTRAS && EXTRA_TYPES.filter((t) => !SPECIAL_EXTRAS.has(t)).map((t) => <option key={t} value={t}>{EXTRA_INFO[t].label}</option>)}
+          {/* zzz1044b (F06) — at the limit the indicators stay listed, greyed out with the reason (they used to vanish) */}
+          {EXTRA_TYPES.filter((t) => !SPECIAL_EXTRAS.has(t)).map((t) => {
+            const why = addExtraBlockedReason(w, t);
+            return <option key={t} value={t} disabled={!!why} title={why || undefined}>{why ? `${EXTRA_INFO[t].label} — ${why}` : EXTRA_INFO[t].label}</option>;
+          })}
         </select>
       </div>
+      {regularExtraCount(w) >= MAX_EXTRAS && (
+        <div role="note" style={{ marginTop: 6, fontSize: 12, color: 'var(--mc-text-3)' }}>
+          Limit {MAX_EXTRAS} indicators reached — remove one to add another. The four analysis overlays above do not count toward it.
+        </div>
+      )}
+      {droppedNote(w) && (
+        <div role="status" style={{ marginTop: 6, padding: '6px 8px', borderRadius: 6, fontSize: 12, border: '1px solid var(--mc-warning, #F59E0B)', color: 'var(--mc-text-1)', display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+          <span style={{ flex: 1 }}>{droppedNote(w)}</span>
+          <button type="button" style={linkBtn} onClick={L.dismissDropped} aria-label="Dismiss the not-loaded note">ok</button>
+        </div>
+      )}
       <div style={{ marginTop: 8, color: 'var(--mc-text-3)', fontSize: 12 }}>
         Changes show at once; press <b>Save</b> next to the layout name to keep them in “{L.saved.name}”. VWAP is not offered — it needs bars inside the day, and these charts are daily or longer.
       </div>

@@ -11,7 +11,12 @@ export type LineKind = 'EMA' | 'SMA';
 export interface MaLine { id: string; kind: LineKind; period: number; color: string; on: boolean }
 export type ExtraType = 'BOLL' | 'RSI' | 'MACD' | 'ATR' | 'ST' | 'PAT' | 'STG' | 'SET' | 'ALN';
 export interface Extra { id: string; type: ExtraType; params: number[]; color: string; on: boolean }
-export interface ChartLayout { id: string; name: string; updatedAt: number; lines: MaLine[]; volume: { on: boolean; avg: number }; extras: Extra[]; scale: LayoutScale }
+export interface ChartLayout {
+  id: string; name: string; updatedAt: number; lines: MaLine[]; volume: { on: boolean; avg: number }; extras: Extra[]; scale: LayoutScale;
+  /** zzz1044b (F06) — regular indicators that did not fit under MAX_EXTRAS when an imported / synced / older layout was loaded,
+   *  kept (in their order) so the Indicators panel can say so instead of dropping them silently. Absent when nothing was dropped. */
+  dropped?: ExtraType[];
+}
 /** zzz946 — price scale: `auto` fits the visible candles (TradingView "A"); `log` = logarithmic (TradingView "L"). */
 export interface LayoutScale { auto: boolean; log: boolean }
 export interface LayoutStore {
@@ -20,7 +25,13 @@ export interface LayoutStore {
   aln?: 1;
 }
 
+/** zzz1044b (F06) — MAX_EXTRAS caps the REGULAR extra indicators (Bollinger, Supertrend, RSI, MACD, ATR — repeats allowed). The
+ *  four analysis overlays in SPECIAL_EXTRAS (patterns, stages, setups, auto lines) have their own on/off rows, at most one each,
+ *  and never count toward it — before, they shared the 8 slots, so 4 overlays + 4 indicators hid ATR from "Add an indicator"
+ *  and a ninth item (often ALN) was cut off silently on the next clean-up. */
 export const MAX_LAYOUTS = 40, MAX_LINES = 12, MAX_EXTRAS = 8;
+/** zzz1044b — how many raw extras a stored layout is read for at most (a guard against a huge or hostile import) */
+const MAX_RAW_EXTRAS = 64;
 
 /** What each extra indicator is, its default numbers and their names (shown in the settings). */
 export const EXTRA_INFO: Record<ExtraType, { label: string; pane: boolean; defaults: number[]; names: string[]; min: number[]; max: number[]; color: string }> = {
@@ -85,10 +96,26 @@ export function cleanExtra(raw: any): Extra | null {
     on: raw?.on !== false,
   };
 }
-export function cleanLayout(raw: any, fallbackName = 'Layout'): ChartLayout {
+/** zzz1044b (F06) — clean a layout and report the regular indicators that did not fit. Specials (one of each) are always kept;
+ *  regular extras keep the first MAX_EXTRAS in their order, the rest are returned in `dropped` (and also recorded on the layout,
+ *  together with any earlier unacknowledged drops, so the UI can tell the owner). */
+export function cleanLayoutReport(raw: any, fallbackName = 'Layout'): { layout: ChartLayout; dropped: ExtraType[] } {
   const lines = (Array.isArray(raw?.lines) ? raw.lines : []).slice(0, MAX_LINES).map(cleanLine);
-  const extras = (Array.isArray(raw?.extras) ? raw.extras : []).slice(0, MAX_EXTRAS).map(cleanExtra).filter((x: Extra | null): x is Extra => !!x);
-  return {
+  const all = (Array.isArray(raw?.extras) ? raw.extras : []).slice(0, MAX_RAW_EXTRAS).map(cleanExtra).filter((x: Extra | null): x is Extra => !!x);
+  const extras: Extra[] = [];
+  const dropped: ExtraType[] = [];
+  const specialSeen = new Set<ExtraType>();
+  let regular = 0;
+  for (const x of all as Extra[]) {
+    if (SPECIAL_EXTRAS.has(x.type)) {
+      if (specialSeen.has(x.type)) continue;   // a second copy of an overlay draws nothing new — not a lost indicator
+      specialSeen.add(x.type); extras.push(x);
+    } else if (regular < MAX_EXTRAS) { regular++; extras.push(x); }
+    else dropped.push(x.type);
+  }
+  const prior = (Array.isArray(raw?.dropped) ? raw.dropped : []).filter((t: unknown): t is ExtraType => typeof t === 'string' && t in EXTRA_INFO && !SPECIAL_EXTRAS.has(t as ExtraType));
+  const recorded = [...prior, ...dropped].slice(0, MAX_RAW_EXTRAS);
+  const layout: ChartLayout = {
     id: typeof raw?.id === 'string' && raw.id ? raw.id.slice(0, 40) : newLayoutId(),
     name: cleanName(raw?.name, fallbackName),
     updatedAt: Number.isFinite(Number(raw?.updatedAt)) ? Number(raw.updatedAt) : 0,
@@ -96,7 +123,33 @@ export function cleanLayout(raw: any, fallbackName = 'Layout'): ChartLayout {
     volume: { on: raw?.volume?.on !== false, avg: clampNum(raw?.volume?.avg, 1, 200, 20, true) },
     scale: { auto: raw?.scale?.auto !== false, log: raw?.scale?.log === true },
     extras,
+    ...(recorded.length ? { dropped: recorded } : {}),
   };
+  return { layout, dropped };
+}
+export function cleanLayout(raw: any, fallbackName = 'Layout'): ChartLayout {
+  return cleanLayoutReport(raw, fallbackName).layout;
+}
+/** zzz1044b — the regular (non-overlay) extras counted against MAX_EXTRAS. */
+export const regularExtraCount = (l: ChartLayout): number => l.extras.filter((x) => !SPECIAL_EXTRAS.has(x.type)).length;
+/** zzz1044b — why an indicator cannot be added right now (null = it can). Overlays always fit. */
+export function addExtraBlockedReason(l: ChartLayout, type: ExtraType): string | null {
+  if (SPECIAL_EXTRAS.has(type)) return null;
+  if (regularExtraCount(l) < MAX_EXTRAS) return null;
+  return `Limit ${MAX_EXTRAS} indicators — remove one to add ${EXTRA_INFO[type].label}`;
+}
+/** zzz1044b — the "N indicators were not loaded" note for a layout (null when nothing was dropped). */
+export function droppedNote(l: ChartLayout): string | null {
+  if (!l.dropped?.length) return null;
+  const names = l.dropped.map((t) => EXTRA_INFO[t].label).join(', ');
+  return `${l.dropped.length} indicator${l.dropped.length === 1 ? ' was' : 's were'} not loaded — the limit is ${MAX_EXTRAS} (the 4 analysis overlays do not count): ${names}`;
+}
+/** zzz1044b — the layout without its dropped-indicator note (the owner has seen it). */
+export function clearDropped(l: ChartLayout): ChartLayout {
+  if (!l.dropped) return l;
+  const rest: ChartLayout = { ...l };
+  delete rest.dropped;
+  return rest;
 }
 
 /** His TradingView legend, top to bottom: EMA 100 / 150 (hidden) / 50 / 55 (hidden) / 89 / 21. */
@@ -149,7 +202,7 @@ export function migrateAutoLines(s: LayoutStore): LayoutStore {
 }
 /** The layout with the 'ALN' extra added when it is missing (and there is room). */
 export function withAutoLinesExtra(l: ChartLayout): ChartLayout {
-  if (l.extras.some((x) => x.type === 'ALN') || l.extras.length >= MAX_EXTRAS) return l;
+  if (l.extras.some((x) => x.type === 'ALN')) return l;   // zzz1044b: overlays do not count toward MAX_EXTRAS — always room
   return { ...l, extras: [...l.extras, newExtra('ALN')] };
 }
 

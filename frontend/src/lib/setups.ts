@@ -16,6 +16,7 @@
 // significant digits below 1). Events: `i` = bar index in the array passed in, `dir` 1 = upward / bullish, −1 = downward.
 import { aggregateBars, type Bar } from './chart-math';
 import { completedWeekCount } from './completed-weeks';
+import { atrSeries } from './atr';
 
 /** One bar: `t` = time in ms (UTC; a daily bar's date at 00:00 UTC), open / high / low / close / volume. Same shape as chart-math's Bar. */
 export type SetupBar = Bar;
@@ -165,10 +166,9 @@ function linregS(x: readonly number[], n: number): number[] {
   }
   return out;
 }
-/** Wilder ATR (TradingView's ta.atr): true range, first bar = high − low. */
+/** Wilder ATR (TradingView's ta.atr): true range, first bar = high − low. zzz1044b: the shared lib/atr.ts implementation. */
 function atrS(h: readonly number[], l: readonly number[], c: readonly number[], n: number): number[] {
-  const tr = h.map((hi, i) => (i === 0 ? hi - l[i] : Math.max(hi - l[i], Math.abs(hi - c[i - 1]), Math.abs(l[i] - c[i - 1]))));
-  return rmaS(tr, n);
+  return atrSeries(h, l, c, n);
 }
 /** ADX / +DI / −DI (TradingView's ta.dmi(n, n)). */
 function dmiS(h: readonly number[], l: readonly number[], c: readonly number[], n: number): { adx: number[]; pdi: number[]; mdi: number[] } {

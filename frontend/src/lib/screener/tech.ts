@@ -4,13 +4,16 @@
 // The formulas follow TradingView's, checked against its screener on NVDA / RELIANCE (7 Oct 2026):
 //   • RSI 14 = Wilder's RSI (averages started with a plain mean of the first 14 moves, then smoothed 13/14 + 1/14);
 //     weekly / monthly RSI use one close per week / month (the current, unfinished week / month counts with today's close);
-//   • ATR % 14 = Wilder-smoothed true range ÷ today's close × 100;
+//   • ATR % 14 = Wilder-smoothed true range ÷ today's close × 100 (zzz1044b: lib/atr.ts, TradingView's ta.atr — first bar's
+//     true range = high − low, the same ATR the chart and the trader setups use);
 //   • average day range % = mean over 20 days of (high ÷ low − 1) × 100;
 //   • EMA = exponential average started from a plain mean of the first n closes;
 //   • performance = today's close against the OPEN of the last session on or before 7 / 30 / 90 / 180 / 365 / 1825 days ago;
 //     YTD against the open of this year's first session; All against the first open in the data (5 years at most here);
 //   • change 1W = against the close of the last day of the previous calendar week (Mon–Sun week);
 //   • average volume n days = mean of the last n daily volumes (today included); volume 1W = this calendar week's volume so far.
+
+import { atrLast } from '../atr';
 
 export interface DailyBars { d: string[]; o: number[]; h: number[]; l: number[]; c: number[]; v: number[] }
 
@@ -104,17 +107,14 @@ export function rsiOf(c: readonly number[], n = 14): number | null {
   if (dn === 0) return up === 0 ? 50 : 100;
   return 100 - 100 / (1 + up / dn);
 }
-/** Wilder-smoothed true range as % of the last close. */
+/** Wilder-smoothed true range (TradingView's ta.atr, first bar = high − low) as % of the last close.
+ *  zzz1044b (F05): the shared lib/atr.ts implementation — the same ATR the chart and the trader setups show. */
 export function atrPctOf(h: readonly number[], l: readonly number[], c: readonly number[], n = 14): number | null {
   const len = c.length;
-  if (len < n + 1) return null;
-  const tr = (i: number) => Math.max(h[i] - l[i], Math.abs(h[i] - c[i - 1]), Math.abs(l[i] - c[i - 1]));
-  let atr = 0;
-  for (let i = 1; i <= n; i++) atr += tr(i);
-  atr /= n;
-  for (let i = n + 1; i < len; i++) atr = (atr * (n - 1) + tr(i)) / n;
+  if (len < n) return null;
+  const atr = atrLast(h, l, c, n);
   const last = c[len - 1];
-  return last > 0 ? (atr / last) * 100 : null;
+  return Number.isFinite(atr) && last > 0 ? (atr / last) * 100 : null;
 }
 export function adrPctOf(h: readonly number[], l: readonly number[], n = 20): number | null {
   if (h.length < n) return null;

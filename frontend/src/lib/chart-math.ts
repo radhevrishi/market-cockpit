@@ -2,6 +2,7 @@
 // traded value), weekly / monthly bars built from daily bars, the measure-tool label, range windows, and the saved
 // drawings / settings shapes (stored in the browser and synced to the owner's database through user-vault-keys).
 
+import { atrSeries } from './atr';
 export interface Bar { t: number; o: number; h: number; l: number; c: number; v: number }
 export type Market = 'IN' | 'US';
 
@@ -185,17 +186,11 @@ export function macd(closes: number[], fast = 12, slow = 26, signal = 9): { macd
 export function trueRange(bars: Bar[]): number[] {
   return bars.map((b, i) => (i === 0 ? b.h - b.l : Math.max(b.h - b.l, Math.abs(b.h - bars[i - 1].c), Math.abs(b.l - bars[i - 1].c))));
 }
-/** ATR with Wilder's smoothing (RMA), seeded with the simple average of the first `period` true ranges. */
+/** ATR with Wilder's smoothing (RMA), seeded with the simple average of the first `period` true ranges — TradingView's ta.atr.
+ *  zzz1044b (F05): the one shared implementation (lib/atr.ts), also used by the Stock Screener's ATR % and the trader setups. */
 export function atr(bars: Bar[], period = 14): (number | null)[] {
-  const tr = trueRange(bars);
-  const out: (number | null)[] = new Array(bars.length).fill(null);
-  if (!(period >= 1) || bars.length < period) return out;
-  let prev = 0;
-  for (let i = 0; i < period; i++) prev += tr[i];
-  prev /= period;
-  out[period - 1] = prev;
-  for (let i = period; i < bars.length; i++) { prev = (prev * (period - 1) + tr[i]) / period; out[i] = prev; }
-  return out;
+  const s = atrSeries(bars.map((b) => b.h), bars.map((b) => b.l), bars.map((b) => b.c), period);
+  return s.map((v) => (Number.isFinite(v) ? v : null));
 }
 
 /** Supertrend, following TradingView's ta.supertrend: bands at (high + low) / 2 ± mult × ATR that only tighten while the
