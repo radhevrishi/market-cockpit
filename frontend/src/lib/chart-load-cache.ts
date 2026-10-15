@@ -69,13 +69,33 @@ export function chartFetch(url: string, init?: { signal?: AbortSignal; cache?: R
     if (a.ok && a.body?.ok) cacheChart(_cache, url, a.body, Date.now(), CHART_CACHE_LIMIT);
     return { ok: a.ok, status: a.status, json: async () => a.body };
   });
-  const done = () => { _primary = Math.max(0, _primary - 1); pump(); };
+  const done = () => { _primary = Math.max(0, _primary - 1); pump(); if (_primary === 0) releaseWaiters(); };
   p.then(done, done);
   if (!signal) return p;
   return new Promise((resolve, reject) => {
     const onAbort = () => reject(new DOMException('Aborted', 'AbortError'));
     signal.addEventListener('abort', onAbort, { once: true });
     p.then((v) => { signal.removeEventListener('abort', onAbort); resolve(v); }, (e) => { signal.removeEventListener('abort', onAbort); reject(e); });
+  });
+}
+
+// ── wait for the chart the owner is looking at ─────────────────────────────────
+// zzz1052 — side requests on the chart page (the watchlist's quotes for every row) start after the open chart's bars
+// arrived, so the bars are not competing with them for the connection and the server. Never waits longer than
+// `maxWaitMs`; resolves at once on pages with no chart load (Pine / Stock Screener use the same watchlist panel).
+const _waiters: Array<() => void> = [];
+function releaseWaiters(): void { while (_waiters.length) { try { _waiters.shift()!(); } catch { /* ignore */ } } }
+export function afterChartLoads(maxWaitMs = 4_000): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    // A microtask, not a timer: React runs the passive effects of one commit together (the panel's, then the chart
+    // page's, which starts the bars request), so by the time this runs the chart's request is already counted.
+    Promise.resolve().then(() => {
+      if (_primary === 0) { finish(); return; }
+      _waiters.push(finish);
+      setTimeout(finish, maxWaitMs);
+    });
   });
 }
 
@@ -120,7 +140,7 @@ export function prefetchCharts(urls: string[], freshMs = 300_000): string[] {
 
 /** Tests only. */
 export function _resetChartLoadCache(fetcher?: Fetcher): void {
-  _cache.clear(); _inflight.clear(); _queue.length = 0; _primary = 0; _prefetching = 0;
+  _cache.clear(); _inflight.clear(); _queue.length = 0; _primary = 0; _prefetching = 0; releaseWaiters();
   _fetcher = fetcher || ((url, init) => fetch(url, init));
 }
 export function _chartLoadState() { return { cached: _cache.size, inflight: _inflight.size, queued: _queue.length, primary: _primary, prefetching: _prefetching }; }

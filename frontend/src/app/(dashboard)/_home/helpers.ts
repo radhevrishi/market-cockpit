@@ -492,25 +492,3 @@ export function readTransform(e: any): { verdict: string; isBuy: boolean; headli
   const note = `BUY-SIDE RADAR — surfaces early-inflection longs, never a sell. ${e.company_name || e.symbol}: verdict ${verdict}. ${e.velocity || '—'} transformation across ${e.pattern_count || 0} vectors. What's changing: ${patAll}. Proof reached (evidence ladder ${evRaw}/11, ${breadth} rung${breadth === 1 ? '' : 's'} fired): ${proof}.${quote ? ` Quoted from the concall: "${quote}"` : ''}${cautionFlags.length ? ` ⚠️ CAUTION in the concall: ${cautionFlags.join(', ')} — this downgrades the read.` : ''}${subjectOnly ? ' ⚠️ Scored from the filing TITLE only (no transcript) — unverified.' : ''} Confirmation: ${conf}${sweet ? ' · stage-3–7 sweet spot' : ''}. Read: ${read}. Verify against the transcript before acting — a deterministic keyword read, not a recommendation.`;
   return { verdict, isBuy, headline, detail, hColor, soft, note, quote };
 }
-
-// The preset the user runs on Conviction Beats. Core gates are hard; the
-// secondary gates (OPM Δ / CFO-PAT / pledge) only exclude when the datum
-// exists, so missing enrichment doesn't wipe the list.
-// STRICT — every gate must be present AND pass, so the panel shows only names
-// that genuinely clear the full preset (no lenient null-passes that let
-// off-preset names slip in). Mirrors the ⚡ QUALITY PRESET on Conviction Beats.
-export function passesQualityPreset(b: any): boolean {
-  if (!(b.tier === 'BLOCKBUSTER' || b.tier === 'STRONG')) return false;      // Verdict: STRONG BUY / BUY / WATCH
-  if (!(typeof b.sales_yoy_pct === 'number' && b.sales_yoy_pct >= 20)) return false;
-  if (!(typeof b.eps_yoy_pct === 'number' && b.eps_yoy_pct >= 25)) return false;
-  // zzz659 — 60 -> 40, mirroring the US preset. PEAD is a drift proxy, not a
-  // quality score: 35% of it is the one-day reaction, so a gate at 60 quietly
-  // excluded every good quarter the market sold on the day. See US_PRESET.
-  if (!(typeof b.pead_score === 'number' && b.pead_score >= 40)) return false;              // PEAD ≥ 40
-  if (!(typeof b.market_cap_cr === 'number' && b.market_cap_cr >= 3000)) return false;
-  if (!(typeof b.opm_pct === 'number' && typeof b.opm_prev_pct === 'number' && (b.opm_pct - b.opm_prev_pct) >= 0)) return false; // OPM Δ ≥ 0
-  const cfo = typeof b.cfo_to_pat_ratio === 'number' ? b.cfo_to_pat_ratio : (Array.isArray(b.annual_cfo_pat) && b.annual_cfo_pat.length ? b.annual_cfo_pat[b.annual_cfo_pat.length - 1] : null);
-  if (!(typeof cfo === 'number' && cfo >= 0.5)) return false;                                // CFO/PAT ≥ 0.5 (n/m fails)
-  if (typeof b.pledged_pct === 'number' && b.pledged_pct > 0) return false;                  // Pledge 0%
-  return true;
-}

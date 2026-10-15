@@ -4,7 +4,7 @@
 // zzz948 — all of the owner's own TradingView screens are built in (grouped USA / India, under their TradingView names), with
 // "≥ another field", "within 0–10% above", exchange and date filters, and a note on a filter whose data is still being filled.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Link from 'next/link';
+import NavLink from '@/components/NavLink';   // zzz1052 — prefetch on hover / focus / press, not on scroll-into-view
 import type { ScreenRow, ScreenMarket } from '@/lib/screener/types';
 import { HIDDEN_SCREENS_KEY, readHiddenScreens, writeHiddenScreens } from '@/lib/screener/screen-picker';
 import { fcfmSourceText, 
@@ -575,7 +575,7 @@ export default function StockScreener() {
               <button type="button" role="menuitem" className="mcss-item" data-compare onClick={() => { setTopOpen(false); setShowCompare(true); }} title="See which rules this screen shares with another, how many companies each keeps and which companies differ (neither screen is changed)">Compare with another screen…</button>
               <button type="button" role="menuitem" className="mcss-item" onClick={() => { setTopOpen(false); setShowHelp(true); }}>Keyboard shortcuts<span className="end"><kbd>?</kbd></span></button>
               <div className="mcss-sep" />
-              <Link href="/pine-screener" role="menuitem" className="mcss-item" title="Chart setups (patterns, stage, distance to the pivot) live in the Pine Screener">Chart setups: Pine Screener</Link>
+              <NavLink href="/pine-screener" role="menuitem" className="mcss-item" title="Chart setups (patterns, stage, distance to the pivot) live in the Pine Screener">Chart setups: Pine Screener</NavLink>
             </div>
           ) : null}
         </div>
@@ -896,7 +896,7 @@ export default function StockScreener() {
                         <input type="checkbox" aria-label={`Select ${r.t}`} checked={selected.has(r.t)} onChange={() => toggleRow(r.t)} style={{ marginTop: density === 'compact' ? 0 : 3 }} />
                         <span className="rk" style={{ paddingTop: density === 'compact' ? 0 : 2 }}>{i + 1}</span>
                         <div style={{ minWidth: 0, whiteSpace: density === 'compact' ? 'nowrap' : undefined }}>
-                          <Link href={chartHref(r)} onClick={chartClick(r)} className="co" title="Open the chart — Next / Previous on the chart step through these results in this order">{r.t}</Link>
+                          <NavLink href={chartHref(r)} onClick={chartClick(r)} className="co" title="Open the chart — Next / Previous on the chart step through these results in this order">{r.t}</NavLink>
                           <button type="button" data-detail={r.t} className={`mcss-name${density === 'compact' ? ' inline' : ''}`} onClick={() => setDetailT(detailT === r.t ? null : r.t)} aria-expanded={detailT === r.t}
                             title="Show this company's figures, the filter checks and links">{r.n || 'Details'}</button>
                         </div>

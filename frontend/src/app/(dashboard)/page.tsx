@@ -28,7 +28,7 @@
 
 import { istMonth, addMonthsYm } from '@/lib/calendar-dates';   // zzz897
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 // PATCH 1101p — Re-score restored multibagger rows on home page. The /multibagger
 // page re-scores on every load (initializer line 5024) so its display reflects
 // the latest scoring formula. The home page was reading the raw localStorage
@@ -83,6 +83,11 @@ import { homeGet, buildSyncState, navChip, timeAgo } from './_home/helpers';
 import { DecisionTierBlock, HomeValuationQuickCheck, DailySignalInbox } from './_home/components';
 import { PipelineHealth } from './_home/PipelineHealth';
 import { UsMovers } from './_home/UsMovers';
+import NavLink from '@/components/NavLink';            // zzz1052 — no viewport prefetch; prefetch on hover / focus / press
+import LazyPanel, { useNearViewport } from '@/components/LazyPanel';   // zzz1052 — below-the-fold panels mount when near
+import { sessionMemo, peekSessionMemo } from '@/lib/session-memo';
+
+const HOME_TECH_TIERS_KEY = 'home:tech-tiers:v1';
 
 export default function HomeDashboard() {
   // PATCH 0606 — synchronous initial state from localStorage so the page
@@ -1743,9 +1748,14 @@ export default function HomeDashboard() {
   // directly instead of reading localStorage (which is empty until user
   // visits the Technicals tab). Parses inline, groups by exchange,
   // scores by momentum + trend proximity, returns top 10 per market.
-  const [techTier2India, setTechTier2India] = useState<TierAction[]>([]);
-  const [techTier3Usa, setTechTier3Usa] = useState<TierAction[]>([]);
+  // zzz1052 — remembered for the page session (back to Home = instant, no CSV downloads, no parse task), and only
+  // started once the Technicals blocks come near the screen (they sit far below the fold).
+  const [techTier2India, setTechTier2India] = useState<TierAction[]>(() => peekSessionMemo<{ ind: TierAction[]; usa: TierAction[] }>(HOME_TECH_TIERS_KEY)?.ind ?? []);
+  const [techTier3Usa, setTechTier3Usa] = useState<TierAction[]>(() => peekSessionMemo<{ ind: TierAction[]; usa: TierAction[] }>(HOME_TECH_TIERS_KEY)?.usa ?? []);
+  const techSentinelRef = useRef<HTMLDivElement | null>(null);
+  const techNear = useNearViewport(techSentinelRef, '900px');
   useEffect(() => {
+    if (!techNear) return;
     let cancelled = false;
     const USA_EXCHANGES = new Set(['NYSE','NASDAQ','NMS','ARCA','AMEX','BATS','OTC','NYSE ARCA','NYSEARCA']);
     const IND_EXCHANGES = new Set(['NSE','BSE']);
@@ -1773,18 +1783,22 @@ export default function HomeDashboard() {
     // processed in manifest order, so the first-file-wins dedup is unchanged.
     const cancelIdle = onIdle(() => { void run(); }, 3_000);
     const run = async () => {
+      const tiers = await sessionMemo(HOME_TECH_TIERS_KEY, compute, 10 * 60_000);
+      if (cancelled || !tiers) return;
+      setTechTier2India(tiers.ind);
+      setTechTier3Usa(tiers.usa);
+    };
+    const compute = async (): Promise<{ ind: TierAction[]; usa: TierAction[] } | null> => {
       try {
-        if (cancelled) return;
         // Fetch manifest to know which CSVs are available today.
         const m = await fetch(TV_MANIFEST_URL, { cache: 'no-cache' });
-        if (!m.ok) return;
+        if (!m.ok) return null;
         const manifest = await m.json();
         const files: string[] = (manifest.files || []).filter((f: any) => f.ok).map((f: any) => f.name);
         const texts = await mapWithLimit(files, FANOUT_CONCURRENCY, async (fname) => {
           const r = await fetch(tvFileUrl(fname), { cache: 'no-cache' });
           return r.ok ? await r.text() : null;
         });
-        if (cancelled) return;
         // Fetch + concat all CSVs; dedup by ticker.
         const seen = new Map<string, { row: Record<string, string>; ex: string }>();
         for (const text of texts) {
@@ -1805,7 +1819,6 @@ export default function HomeDashboard() {
             seen.set(sym, { row, ex });
           }
         }
-        if (cancelled) return;
         const groups: Record<'ind' | 'usa', typeof seen extends Map<string, infer V> ? V[] : never> = { ind: [], usa: [] };
         for (const v of seen.values()) {
           if (USA_EXCHANGES.has(v.ex)) groups.usa.push(v);
@@ -1857,12 +1870,11 @@ export default function HomeDashboard() {
             };
           });
         };
-        setTechTier2India(buildTier('ind'));
-        setTechTier3Usa(buildTier('usa'));
-      } catch { /* silent — empty state UI handles it */ }
+        return { ind: buildTier('ind'), usa: buildTier('usa') };
+      } catch { return null; /* silent — empty state UI handles it */ }
     };
     return () => { cancelled = true; cancelIdle(); };
-  }, []);
+  }, [techNear]);
 
   // PATCH 1086 — NEW LENS button. Previous implementation chained two
   // window.prompt() calls which on some browsers (Safari with popups blocked,
@@ -1945,7 +1957,7 @@ export default function HomeDashboard() {
               <span>{now ? now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST' : '—:—'}</span>
               {/* PATCH 0622 — Stale-data nudge */}
               {typeof data.staleDataAgeDays === 'number' && data.staleDataAgeDays >= 14 && (
-                <Link href="/multibagger" style={{
+                <NavLink href="/multibagger" style={{
                   fontSize: 10, padding: '2px 8px', borderRadius: 4,
                   background: data.staleDataAgeDays >= 30 ? 'color-mix(in srgb, var(--mc-bearish) 13%, transparent)' : 'color-mix(in srgb, var(--mc-warn) 13%, transparent)',
                   border: `1px solid ${data.staleDataAgeDays >= 30 ? 'var(--mc-bearish)' : 'var(--mc-warn)'}60`,
@@ -1953,11 +1965,11 @@ export default function HomeDashboard() {
                   fontWeight: 800, textDecoration: 'none',
                 }}>
                   ⚠ Multibagger upload {data.staleDataAgeDays}d ago — re-upload to refresh scoring
-                </Link>
+                </NavLink>
               )}
               {/* PATCH 0622 — Portfolio P&L line */}
               {data.portfolioPnl && (
-                <Link href="/portfolio" style={{
+                <NavLink href="/portfolio" style={{
                   fontSize: 10, padding: '2px 8px', borderRadius: 4,
                   background: data.portfolioPnl.totalPct >= 0 ? 'color-mix(in srgb, var(--mc-bullish) 13%, transparent)' : 'color-mix(in srgb, var(--mc-bearish) 13%, transparent)',
                   border: `1px solid ${data.portfolioPnl.totalPct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)'}60`,
@@ -1972,13 +1984,13 @@ export default function HomeDashboard() {
                     {data.portfolioPnl.positions >= 2 && data.portfolioPnl.bestMover && ` · best ${data.portfolioPnl.bestMover.ticker} ${data.portfolioPnl.bestMover.pct >= 0 ? '+' : ''}${data.portfolioPnl.bestMover.pct.toFixed(1)}%`}
                     {data.portfolioPnl.positions >= 2 && data.portfolioPnl.worstMover && ` · worst ${data.portfolioPnl.worstMover.ticker} ${data.portfolioPnl.worstMover.pct >= 0 ? '+' : ''}${data.portfolioPnl.worstMover.pct.toFixed(1)}%`}
                   </>) : (<>💼 P&L — · add live prices in Portfolio</>)}
-                </Link>
+                </NavLink>
               )}
               {/* PATCH 1061 — Playbook state-machine quick-reference chip.
                   Reads localStorage from /playbook tab and surfaces HOLD/WATCH/EXIT
                   counts so the user knows portfolio discipline state at a glance. */}
               {playbookCounts && (playbookCounts.H + playbookCounts.W + playbookCounts.E) > 0 && (
-                <Link href="/playbook" style={{
+                <NavLink href="/playbook" style={{
                   fontSize: 10, padding: '2px 8px', borderRadius: 4,
                   background: playbookCounts.E > 0 ? 'color-mix(in srgb, var(--mc-bearish) 13%, transparent)' : (playbookCounts.W > 0 ? 'color-mix(in srgb, var(--mc-warn) 13%, transparent)' : 'color-mix(in srgb, var(--mc-bullish) 13%, transparent)'),
                   border: `1px solid ${playbookCounts.E > 0 ? 'var(--mc-bearish)' : (playbookCounts.W > 0 ? 'var(--mc-warn)' : 'var(--mc-bullish)')}60`,
@@ -1986,26 +1998,26 @@ export default function HomeDashboard() {
                   fontWeight: 800, textDecoration: 'none', letterSpacing: 0.3,
                 }} title="Playbook state machine — click for state-machine, decision engine, exit rules">
                   📖 PLAYBOOK · HOLD {playbookCounts.H} · WATCH {playbookCounts.W} · EXIT {playbookCounts.E}
-                </Link>
+                </NavLink>
               )}
               {!playbookCounts && (
-                <Link href="/playbook" style={{
+                <NavLink href="/playbook" style={{
                   fontSize: 10, padding: '2px 8px', borderRadius: 4,
                   background: 'color-mix(in srgb, var(--mc-state-persistent) 13%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-state-persistent) 38%, transparent)', color: 'var(--mc-state-persistent)',
                   fontWeight: 800, textDecoration: 'none', letterSpacing: 0.3,
                 }} title="Open Playbook → set up portfolio state machine (HOLD/WATCH/EXIT) and exit rules">
                   📖 PLAYBOOK — set up state machine
-                </Link>
+                </NavLink>
               )}
               {/* PATCH 0622 — Sector rotation one-liner */}
               {data.sectorRotation?.topSector && data.sectorRotation?.bottomSector && (
-                <Link href="/movers" style={{
+                <NavLink href="/movers" style={{
                   fontSize: 10, padding: '2px 8px', borderRadius: 4,
                   background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', color: 'var(--mc-cyan)',
                   fontWeight: 700, textDecoration: 'none',
                 }}>
                   🔄 {data.sectorRotation.topSector.sector} {data.sectorRotation.topSector.pct >= 0 ? '+' : ''}{data.sectorRotation.topSector.pct.toFixed(1)}% leading · {data.sectorRotation.bottomSector.sector} {data.sectorRotation.bottomSector.pct.toFixed(1)}% lagging
-                </Link>
+                </NavLink>
               )}
               {/* PATCH 0622 — Alpha feedback v0 (engine consistency) */}
               {data.alphaFeedback && (
@@ -2179,7 +2191,8 @@ export default function HomeDashboard() {
           <div style={{ marginBottom: 10 }}><NextBestActions /></div>
 
           {/* PATCH 1104 — Daily Signal Inbox (⭐): today's actionable signals across feeds */}
-          <DailySignalInbox />
+          {/* zzz1052 — mounts (and fetches its feeds) when it comes near the screen */}
+          <LazyPanel minHeight={220} rootMargin="300px" label="Daily Signal Inbox"><DailySignalInbox /></LazyPanel>
 
           {/* PATCH 1105 — Pipeline Health: freshness of every data feed at a glance */}
           <PipelineHealth />
@@ -2187,14 +2200,16 @@ export default function HomeDashboard() {
           {/* zzz524 — local-data freshness: YOUR synced uploads (technicals,
               multibagger, screener, bench) — the complement of PipelineHealth,
               which watches the server feeds. */}
-          <div style={{ marginBottom: 10 }}><FreshnessStrip /></div>
+          <LazyPanel minHeight={40} label="Data freshness"><div style={{ marginBottom: 10 }}><FreshnessStrip /></div></LazyPanel>
 
           {/* zzz524 — the measurement layer: does the portal make money, and
               what should fire a notification. */}
+          <LazyPanel minHeight={200} label="Signal scoreboard and alerts">
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-start', marginBottom: 10 }}>
             <div style={{ flex: '1.2 1 340px', minWidth: 0 }}><SignalScoreboard /></div>
             <div style={{ flex: '1 1 300px', minWidth: 0 }}><AlertCenter /></div>
           </div>
+          </LazyPanel>
 
           {/* PATCH 0619/0635 — institutional chip strip. All in one row group,
               uniform pill style, left-aligned, even row gap. */}
@@ -2204,62 +2219,62 @@ export default function HomeDashboard() {
                 /multibagger?tab=technicals-ind|usa. */}
             {/* zzz239 — heading for the A-Z all-tools chip strip */}
             <div style={{ width: '100%', fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 800, letterSpacing: '0.6px', textTransform: 'uppercase', marginBottom: 4 }}>📚 All tools · A–Z</div>
-            <Link href="/playbook#about-me"      style={navChip('#fb7185')}>🌿 About Me</Link>
-            <Link href="/activity-log"           style={navChip('#A78BFA')}>📜 Activity</Link>
-            <Link href="/auto-valuation"         style={navChip('#10B981')}>🤖 Auto-Valuation</Link>
-            <Link href="/gautam-baid"            style={navChip('#e3b341')}>📖 Baid Playbook</Link>
-            <Link href="/bottom-picking"         style={navChip('#FBBF24')}>🎯 Bottom Picking</Link>
-            <Link href="/breadth"                style={navChip('#10B981')}>📊 Breadth</Link>
-            <Link href="/buy-strategy"           style={navChip('#FFD700')}>🛒 Buy Strategy</Link>
-            <Link href="/playbook#cadence"       style={navChip('#22D3EE')}>🗓 Cadence</Link>
-            <Link href="/capex-tracker"          style={navChip('#F0883E')}>🏗 Capex Tracker</Link>
-            <Link href="/charts"                 style={navChip('#22D3EE')}>📈 Charts + Watchlist</Link>
-            <Link href="/earnings-hub?tab=concall" style={navChip('#A78BFA')}>🧠 Concall AI</Link>
-            <Link href="/concall-intel"          style={navChip('#A78BFA')}>🎙 Concall Intel</Link>
+            <NavLink href="/playbook#about-me"      style={navChip('#fb7185')}>🌿 About Me</NavLink>
+            <NavLink href="/activity-log"           style={navChip('#A78BFA')}>📜 Activity</NavLink>
+            <NavLink href="/auto-valuation"         style={navChip('#10B981')}>🤖 Auto-Valuation</NavLink>
+            <NavLink href="/gautam-baid"            style={navChip('#e3b341')}>📖 Baid Playbook</NavLink>
+            <NavLink href="/bottom-picking"         style={navChip('#FBBF24')}>🎯 Bottom Picking</NavLink>
+            <NavLink href="/breadth"                style={navChip('#10B981')}>📊 Breadth</NavLink>
+            <NavLink href="/buy-strategy"           style={navChip('#FFD700')}>🛒 Buy Strategy</NavLink>
+            <NavLink href="/playbook#cadence"       style={navChip('#22D3EE')}>🗓 Cadence</NavLink>
+            <NavLink href="/capex-tracker"          style={navChip('#F0883E')}>🏗 Capex Tracker</NavLink>
+            <NavLink href="/charts"                 style={navChip('#22D3EE')}>📈 Charts + Watchlist</NavLink>
+            <NavLink href="/earnings-hub?tab=concall" style={navChip('#A78BFA')}>🧠 Concall AI</NavLink>
+            <NavLink href="/concall-intel"          style={navChip('#A78BFA')}>🎙 Concall Intel</NavLink>
             {/* zzz239 — 🏆 Conviction Beats moved to Favourites row above */}
-            <Link href="/coffee-can"             style={navChip('#FBBF24')}>🫙 Coffee Can</Link>
-            <Link href="/decisions"              style={navChip('#22D3EE')}>📒 Decision Log</Link>
-            <Link href="/double-bottom"          style={navChip('#22C55E')}>📉 Double Bottom</Link>
-            <Link href="/earnings-mastery"       style={navChip('#F59E0B')}>📊 Earnings Mastery</Link>
+            <NavLink href="/coffee-can"             style={navChip('#FBBF24')}>🫙 Coffee Can</NavLink>
+            <NavLink href="/decisions"              style={navChip('#22D3EE')}>📒 Decision Log</NavLink>
+            <NavLink href="/double-bottom"          style={navChip('#22C55E')}>📉 Double Bottom</NavLink>
+            <NavLink href="/earnings-mastery"       style={navChip('#F59E0B')}>📊 Earnings Mastery</NavLink>
             {/* zzz239 — 📅 Earnings Ops moved to Favourites row above */}
-            <Link href="/earnings"               style={navChip('#F59E0B')}>📊 Earnings Scan</Link>
-            <Link href="/earnings-trigger"       style={navChip('#f0883e')}>⚡ Earnings Trigger</Link>
-            <Link href="/fan-principle"          style={navChip('#06B6D4')}>🪭 Fan Principle</Link>
-            <Link href="/guidance-extractor"     style={navChip('#A78BFA')}>📋 Guidance</Link>
-            <Link href="/heatmap"                style={navChip('#22D3EE')}>🗺 Heatmap</Link>
+            <NavLink href="/earnings"               style={navChip('#F59E0B')}>📊 Earnings Scan</NavLink>
+            <NavLink href="/earnings-trigger"       style={navChip('#f0883e')}>⚡ Earnings Trigger</NavLink>
+            <NavLink href="/fan-principle"          style={navChip('#06B6D4')}>🪭 Fan Principle</NavLink>
+            <NavLink href="/guidance-extractor"     style={navChip('#A78BFA')}>📋 Guidance</NavLink>
+            <NavLink href="/heatmap"                style={navChip('#22D3EE')}>🗺 Heatmap</NavLink>
             {/* zzz239 — 🇮🇳 IBEF and 📈 India Technicals moved to Favourites row above */}
-            <Link href="/investing-os"           style={navChip('#2dd4bf')}>🧠 Investing OS</Link>
-            <Link href="/playbook#life-sat"      style={navChip('#fbbf24')}>🌅 Life Sat</Link>
-            <Link href="/in-play"                style={navChip('#22D3EE')}>📰 Live In Play</Link>
+            <NavLink href="/investing-os"           style={navChip('#2dd4bf')}>🧠 Investing OS</NavLink>
+            <NavLink href="/playbook#life-sat"      style={navChip('#fbbf24')}>🌅 Life Sat</NavLink>
+            <NavLink href="/in-play"                style={navChip('#22D3EE')}>📰 Live In Play</NavLink>
             {/* zzz242 — 🎢 Market Cycles moved to Favourites row above */}
             {/* zzz239 — 📈 Movers, 🚀 Multibagger, 💼 My Book, 📰 News Feed moved to Favourites row above */}
             {/* zzz242 — 📰 News Triage moved to Favourites row above */}
-            <Link href="/monte-carlo"            style={navChip('#06B6D4')}>🎲 Monte Carlo</Link>
-            <Link href="/playbook#mastery"       style={navChip('#84cc16')}>🏏 Peak Performance</Link>
-            <Link href="/pead-tracker"           style={navChip('#10B981')}>📊 PEAD Tracker</Link>
-            <Link href="/pine-screener"          style={navChip('#8B5CF6')}>🧩 Pine Screener</Link>
-            <Link href="/playbook"               style={navChip('#F59E0B')}>📚 Playbook</Link>
+            <NavLink href="/monte-carlo"            style={navChip('#06B6D4')}>🎲 Monte Carlo</NavLink>
+            <NavLink href="/playbook#mastery"       style={navChip('#84cc16')}>🏏 Peak Performance</NavLink>
+            <NavLink href="/pead-tracker"           style={navChip('#10B981')}>📊 PEAD Tracker</NavLink>
+            <NavLink href="/pine-screener"          style={navChip('#8B5CF6')}>🧩 Pine Screener</NavLink>
+            <NavLink href="/playbook"               style={navChip('#F59E0B')}>📚 Playbook</NavLink>
             {/* zzz239 — 🔬 Portfolio Fundamentals moved to Favourites row above */}
-            <Link href="/position-sizing"        style={navChip('#22D3EE')}>📐 Position Sizing</Link>
-            <Link href="/portfolio-simulator"     style={navChip('#A78BFA')}>🎲 Portfolio Simulator</Link>
-            <Link href="/stock-screener"         style={navChip('#8B5CF6')}>🧮 Stock Screener</Link>
-            <Link href="/winning-playbook"      style={navChip('#F59E0B')}>🏆 Winning Playbook</Link>
-            <Link href="/playbook#relationships" style={navChip('#2dd4bf')}>🤝 Relationships</Link>
-            <Link href="/risk"                   style={navChip('#EF4444')}>🛡️ Risk Desk</Link>
-            <Link href="/orders"                 style={navChip('#22D3EE')}>📡 Signals</Link>
-            <Link href="/special-situations"     style={navChip('#EF4444')}>🎯 Special Sit</Link>
-            <Link href="/strategic-visibility"   style={navChip('#A78BFA')}>⭐ Strategic Vis</Link>
-            <Link href="/playbook#stress"        style={navChip('#38bdf8')}>🧘 Stress</Link>
-            <Link href="/tax-planner"            style={navChip('#F59E0B')}>🧾 Tax Planner</Link>
-            <Link href="/thesis"                 style={navChip('#A78BFA')}>📓 Thesis Tracker</Link>
-            <Link href="/valuation-bands"        style={navChip('#22D3EE')}>📊 Valuation Bands</Link>
+            <NavLink href="/position-sizing"        style={navChip('#22D3EE')}>📐 Position Sizing</NavLink>
+            <NavLink href="/portfolio-simulator"     style={navChip('#A78BFA')}>🎲 Portfolio Simulator</NavLink>
+            <NavLink href="/stock-screener"         style={navChip('#8B5CF6')}>🧮 Stock Screener</NavLink>
+            <NavLink href="/winning-playbook"      style={navChip('#F59E0B')}>🏆 Winning Playbook</NavLink>
+            <NavLink href="/playbook#relationships" style={navChip('#2dd4bf')}>🤝 Relationships</NavLink>
+            <NavLink href="/risk"                   style={navChip('#EF4444')}>🛡️ Risk Desk</NavLink>
+            <NavLink href="/orders"                 style={navChip('#22D3EE')}>📡 Signals</NavLink>
+            <NavLink href="/special-situations"     style={navChip('#EF4444')}>🎯 Special Sit</NavLink>
+            <NavLink href="/strategic-visibility"   style={navChip('#A78BFA')}>⭐ Strategic Vis</NavLink>
+            <NavLink href="/playbook#stress"        style={navChip('#38bdf8')}>🧘 Stress</NavLink>
+            <NavLink href="/tax-planner"            style={navChip('#F59E0B')}>🧾 Tax Planner</NavLink>
+            <NavLink href="/thesis"                 style={navChip('#A78BFA')}>📓 Thesis Tracker</NavLink>
+            <NavLink href="/valuation-bands"        style={navChip('#22D3EE')}>📊 Valuation Bands</NavLink>
             {/* zzz239 — duplicate IBEF removed (also moved to Favourites row above) */}
             {/* PATCH 1101eee — Screener.in sync via browser bookmarklet.
                 Server-side fetch is blocked by Cloudflare's data-center IP filter.
                 The /screener-sync page guides the user through a one-time
                 bookmarklet setup; the bookmark runs in the browser (allowed by
                 Cloudflare) and downloads all 15 files. */}
-            <Link
+            <NavLink
               href="/screener-sync"
               // PATCH 1101zzz45 — force cursor:pointer. With the `title`
               // attribute below, some browsers/extensions render this chip
@@ -2267,7 +2282,7 @@ export default function HomeDashboard() {
               // so the inconsistency stood out. Belt-and-suspenders: also
               // remove the title since the chip text is self-explanatory.
               style={{ ...navChip('#8B5CF6'), border: '1px solid color-mix(in srgb, #8B5CF6 40%, transparent)', cursor: 'pointer' }}
-            >📥 Sync Screener.in</Link>
+            >📥 Sync Screener.in</NavLink>
             {/* PATCH 1101fff — old in-place sync button removed entirely.
                 Previously kept with hidden attribute as dead code for reference
                 but it still rendered visibly in some styling contexts (user
@@ -2386,14 +2401,14 @@ export default function HomeDashboard() {
                 to the block above. Duplicates of About Me / Life Sat / Cadence /
                 Relationships / Peak Performance / Stress / Signals / Special Sit /
                 Strategic Vis / Super Investors were removed here. */}
-            <Link href="/system-health"          style={navChip('#10B981')}>🩺 System Health</Link>
+            <NavLink href="/system-health"          style={navChip('#10B981')}>🩺 System Health</NavLink>
             {/* zzz307 — 🚀 The Journey moved to Favourites row above */}
-            <Link href="/critical-themes"        style={navChip('#EF4444')}>🔥 Themes</Link>
+            <NavLink href="/critical-themes"        style={navChip('#EF4444')}>🔥 Themes</NavLink>
             {/* zzz239 — 📈 USA Technicals and 🧮 Valuation Calc moved to Favourites row above */}
-            <Link href="/capex-tracker?tab=verdict" style={navChip('#A78BFA')}>🧭 Verdict</Link>
-            <Link href="/volume-rules"           style={navChip('#22D3EE')}>🎯 Volume Rules</Link>
-            <Link href="/watchlists"             style={navChip('#22D3EE')}>👁 Watchlist</Link>
-            <Link href="/fundamentals?scope=watchlist" style={navChip('#2dd4bf')}>🔬 Watchlist Fundamentals</Link>
+            <NavLink href="/capex-tracker?tab=verdict" style={navChip('#A78BFA')}>🧭 Verdict</NavLink>
+            <NavLink href="/volume-rules"           style={navChip('#22D3EE')}>🎯 Volume Rules</NavLink>
+            <NavLink href="/watchlists"             style={navChip('#22D3EE')}>👁 Watchlist</NavLink>
+            <NavLink href="/fundamentals?scope=watchlist" style={navChip('#2dd4bf')}>🔬 Watchlist Fundamentals</NavLink>
           </div>
         </div>
 
@@ -2421,31 +2436,31 @@ export default function HomeDashboard() {
             const sp = data.sectorPulse;
             if (!sp) {
               return (
-                <Link href="/heatmap" style={{
+                <NavLink href="/heatmap" style={{
                   fontSize: 12, padding: '4px 10px', borderRadius: 4,
                   background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)',
                   fontWeight: 800, textDecoration: 'none',
-                }}>🗺 HEATMAP · loading sectors…</Link>
+                }}>🗺 HEATMAP · loading sectors…</NavLink>
               );
             }
             if (sp.length === 0) {
               return (
-                <Link href="/heatmap" style={{
+                <NavLink href="/heatmap" style={{
                   fontSize: 12, padding: '4px 10px', borderRadius: 4,
                   background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)',
                   fontWeight: 800, textDecoration: 'none',
-                }}>🗺 HEATMAP · no sector data · Open →</Link>
+                }}>🗺 HEATMAP · no sector data · Open →</NavLink>
               );
             }
             const top3 = sp.slice().sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct)).slice(0, 3);
             return (
-              <Link href="/heatmap" style={{
+              <NavLink href="/heatmap" style={{
                 fontSize: 12, padding: '4px 10px', borderRadius: 4,
                 background: 'color-mix(in srgb, var(--mc-cyan) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)',
                 fontWeight: 800, textDecoration: 'none',
               }} title="Open full Sector Heatmap →">
                 🗺 HEATMAP · {top3.map(s => `${s.sector} ${s.pct >= 0 ? '+' : ''}${s.pct.toFixed(1)}%`).join(' · ')}
-              </Link>
+              </NavLink>
             );
           })()}
 
@@ -2455,22 +2470,22 @@ export default function HomeDashboard() {
             const l = (data.losers || []).slice(0, 1);
             if (!g.length && !l.length) {
               return (
-                <Link href="/movers" style={{
+                <NavLink href="/movers" style={{
                   fontSize: 12, padding: '4px 10px', borderRadius: 4,
                   background: '#00E68A15', border: '1px solid #00E68A60', color: '#00E68A',
                   fontWeight: 800, textDecoration: 'none',
-                }}>📈 MOVERS · loading…</Link>
+                }}>📈 MOVERS · loading…</NavLink>
               );
             }
             const fmt = (m: { ticker: string; changePercent?: number }) => `${m.ticker} ${Number(m.changePercent || 0) >= 0 ? '+' : ''}${Number(m.changePercent || 0).toFixed(1)}%`;
             return (
-              <Link href="/movers" style={{
+              <NavLink href="/movers" style={{
                 fontSize: 12, padding: '4px 10px', borderRadius: 4,
                 background: '#00E68A15', border: '1px solid #00E68A60', color: '#00E68A',
                 fontWeight: 800, textDecoration: 'none',
               }} title="Open full Movers board →">
                 📈 MOVERS · {[...g.map(fmt), ...l.map(fmt)].join(' · ')}
-              </Link>
+              </NavLink>
             );
           })()}
 
@@ -2479,43 +2494,43 @@ export default function HomeDashboard() {
             const cb = data.convictionLive;
             if (!cb) {
               return (
-                <Link href="/watchlists?tab=conviction" style={{
+                <NavLink href="/watchlists?tab=conviction" style={{
                   fontSize: 12, padding: '4px 10px', borderRadius: 4,
                   background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', color: 'var(--mc-warn)',
                   fontWeight: 800, textDecoration: 'none',
-                }}>🏆 BEATS · loading bench…</Link>
+                }}>🏆 BEATS · loading bench…</NavLink>
               );
             }
             if (cb.length === 0) {
               return (
-                <Link href="/earnings-opportunities" style={{
+                <NavLink href="/earnings-opportunities" style={{
                   fontSize: 12, padding: '4px 10px', borderRadius: 4,
                   background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', color: 'var(--mc-warn)',
                   fontWeight: 800, textDecoration: 'none',
-                }}>🏆 BEATS · empty bench · populate from EO →</Link>
+                }}>🏆 BEATS · empty bench · populate from EO →</NavLink>
               );
             }
             const withQuotes = cb.filter(c => typeof c.changePercent === 'number');
             if (withQuotes.length === 0) {
               return (
-                <Link href="/watchlists?tab=conviction" style={{
+                <NavLink href="/watchlists?tab=conviction" style={{
                   fontSize: 12, padding: '4px 10px', borderRadius: 4,
                   background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', color: 'var(--mc-warn)',
                   fontWeight: 800, textDecoration: 'none',
                 }} title={`${cb.length} names on bench · no live quotes (NSE closed?)`}>
                   🏆 BEATS ({cb.length}) · no live quotes · {cb.slice(0, 4).map(c => c.ticker).join(' · ')}
-                </Link>
+                </NavLink>
               );
             }
             const top4 = withQuotes.slice(0, 4);
             return (
-              <Link href="/watchlists?tab=conviction" style={{
+              <NavLink href="/watchlists?tab=conviction" style={{
                 fontSize: 12, padding: '4px 10px', borderRadius: 4,
                 background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 38%, transparent)', color: 'var(--mc-warn)',
                 fontWeight: 800, textDecoration: 'none',
               }} title={`${cb.length} names on bench · sorted by today's abs move`}>
                 🏆 BEATS ({cb.length}) · {top4.map(c => `${c.ticker} ${(c.changePercent as number) >= 0 ? '+' : ''}${(c.changePercent as number).toFixed(1)}%`).join(' · ')}
-              </Link>
+              </NavLink>
             );
           })()}
         </div>
@@ -2704,7 +2719,7 @@ export default function HomeDashboard() {
           }}>
             {showInPlay ? '▾' : '▸'} 🔥 IN-PLAY NEWS — top {data.inPlay.length} <span style={{ fontSize: 9, fontWeight: 600, color: DIM, marginLeft: 4 }}>· active &lt;36h</span>
             <span style={{ marginLeft: 'auto', fontSize: 10, color: DIM, fontWeight: 500 }}>
-              <Link href="/news" style={{ color: 'var(--mc-cyan)', textDecoration: 'none' }} onClick={(e) => e.stopPropagation()}>Full feed →</Link>
+              <NavLink href="/news" style={{ color: 'var(--mc-cyan)', textDecoration: 'none' }} onClick={(e) => e.stopPropagation()}>Full feed →</NavLink>
             </span>
           </button>
           {netLoading.inPlay && !showInPlay && (
@@ -2901,7 +2916,7 @@ export default function HomeDashboard() {
                       No India scored data in this browser. Upload your India Multibagger CSV to populate this block.
                     </div>
                     <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
-                      <Link href="/multibagger" style={navChip('#10B981')}>📊 Upload India CSV</Link>
+                      <NavLink href="/multibagger" style={navChip('#10B981')}>📊 Upload India CSV</NavLink>
                     </div>
                   </div>
                 )}
@@ -2927,12 +2942,14 @@ export default function HomeDashboard() {
               Earnings Opportunities.
             </div>
             <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
-              <Link href="/multibagger" style={navChip('#10B981')}>📊 Open Multibagger</Link>
-              <Link href="/earnings-opportunities" style={navChip('#F59E0B')}>📅 Earnings Ops</Link>
+              <NavLink href="/multibagger" style={navChip('#10B981')}>📊 Open Multibagger</NavLink>
+              <NavLink href="/earnings-opportunities" style={navChip('#F59E0B')}>📅 Earnings Ops</NavLink>
             </div>
           </div>
         )}
 
+        {/* zzz1052 — the Technicals tiers start loading when this point comes near the screen */}
+        <div ref={techSentinelRef} aria-hidden="true" style={{ height: 0 }} />
         {/* ═══════════════ zzz167 — TIER 2 · INDIA TECHNICALS ═════════════
             Top 10 by momentum + trend composite from India Technicals localStorage. */}
         {techTier2India.length > 0 ? (
@@ -2953,10 +2970,10 @@ export default function HomeDashboard() {
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
               <span style={{ fontSize: 14, fontWeight: 900, color: '#22D3EE', letterSpacing: '0.4px' }}>📈 TIER 2 — INDIA TECHNICALS · TOP 10 (0)</span>
               <span style={{ fontSize: 10, color: '#22D3EE', background: 'color-mix(in srgb, #22D3EE 13%, transparent)', padding: '2px 7px', borderRadius: 3, fontWeight: 700 }}>ACTION NOW</span>
-              <Link href="/multibagger?tab=technicals-ind" style={{ fontSize: 11, color: '#22D3EE', textDecoration: 'none', marginLeft: 'auto' }}>Open →</Link>
+              <NavLink href="/multibagger?tab=technicals-ind" style={{ fontSize: 11, color: '#22D3EE', textDecoration: 'none', marginLeft: 'auto' }}>Open →</NavLink>
             </div>
             <div style={{ fontSize: 12, color: TEXT, padding: '10px 12px', background: 'color-mix(in srgb, #22D3EE 6%, transparent)', borderRadius: 6 }}>
-              No India Technicals data yet. Open the <Link href="/multibagger?tab=technicals-ind" style={{ color: '#22D3EE' }}>India Technicals tab</Link> — it auto-syncs from the daily TradingView cron.
+              No India Technicals data yet. Open the <NavLink href="/multibagger?tab=technicals-ind" style={{ color: '#22D3EE' }}>India Technicals tab</NavLink> — it auto-syncs from the daily TradingView cron.
             </div>
           </div>
         )}
@@ -2980,10 +2997,10 @@ export default function HomeDashboard() {
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
               <span style={{ fontSize: 14, fontWeight: 900, color: '#F87171', letterSpacing: '0.4px' }}>📈 TIER 3 — USA TECHNICALS · TOP 10 (0)</span>
               <span style={{ fontSize: 10, color: '#F87171', background: 'color-mix(in srgb, #F87171 13%, transparent)', padding: '2px 7px', borderRadius: 3, fontWeight: 700 }}>ACTION NOW</span>
-              <Link href="/multibagger?tab=technicals-usa" style={{ fontSize: 11, color: '#F87171', textDecoration: 'none', marginLeft: 'auto' }}>Open →</Link>
+              <NavLink href="/multibagger?tab=technicals-usa" style={{ fontSize: 11, color: '#F87171', textDecoration: 'none', marginLeft: 'auto' }}>Open →</NavLink>
             </div>
             <div style={{ fontSize: 12, color: TEXT, padding: '10px 12px', background: 'color-mix(in srgb, #F87171 6%, transparent)', borderRadius: 6 }}>
-              No USA Technicals data yet. Open the <Link href="/multibagger?tab=technicals-usa" style={{ color: '#F87171' }}>USA Technicals tab</Link> — it auto-syncs from the daily TradingView cron.
+              No USA Technicals data yet. Open the <NavLink href="/multibagger?tab=technicals-usa" style={{ color: '#F87171' }}>USA Technicals tab</NavLink> — it auto-syncs from the daily TradingView cron.
             </div>
           </div>
         )}
@@ -3019,7 +3036,7 @@ export default function HomeDashboard() {
               <span style={{ fontSize: 10, color: 'var(--mc-warn)', background: 'color-mix(in srgb, var(--mc-warn) 13%, transparent)', padding: '2px 7px', borderRadius: 3, fontWeight: 700 }}>
                 ACTION NOW
               </span>
-              <Link href="/multibagger?tab=turnaround" style={{ fontSize: 11, color: 'var(--mc-warn)', textDecoration: 'none', marginLeft: 'auto' }}>Open →</Link>
+              <NavLink href="/multibagger?tab=turnaround" style={{ fontSize: 11, color: 'var(--mc-warn)', textDecoration: 'none', marginLeft: 'auto' }}>Open →</NavLink>
             </div>
             <div style={{ fontSize: 11, color: 'var(--mc-text-3)', marginBottom: 10, lineHeight: 1.45 }}>
               Top turnaround setups from your /multibagger Turnarounds upload (top 5 by total score). Different playbook than the IMMEDIATE ACTION list above — these are INFLECTION setups, not sustained-quality compounders.
@@ -3036,7 +3053,7 @@ export default function HomeDashboard() {
               <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6, color: 'var(--mc-warn)' }}>📭 No turnaround candidates uploaded yet</div>
               <div style={{ color: DIM }}>
                 Upload a turnaround Screener CSV on the{' '}
-                <Link href="/multibagger?tab=turnaround" style={{ color: 'var(--mc-warn)', textDecoration: 'underline' }}>🔄 Turnarounds tab</Link>{' '}
+                <NavLink href="/multibagger?tab=turnaround" style={{ color: 'var(--mc-warn)', textDecoration: 'underline' }}>🔄 Turnarounds tab</NavLink>{' '}
                 of the Multibagger page. The engine scores 7 dimensions (earnings reversal · operational reset · balance-sheet repair · concall quality · sector tailwind · governance · valuation set-up) and ranks the top 5 here in the same Tier 1 card layout.
               </div>
             </div>
@@ -3052,7 +3069,7 @@ export default function HomeDashboard() {
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 6 }}>
               {data.changedToday.map((c, i) => (
-                <Link key={c.symbol + i} href={`/stock-sheet?ticker=${encodeURIComponent((c.symbol || '').replace(/\.(NS|BO)$/i, ''))}`}
+                <NavLink key={c.symbol + i} href={`/stock-sheet?ticker=${encodeURIComponent((c.symbol || '').replace(/\.(NS|BO)$/i, ''))}`}
                   style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', borderRadius: 4,
                     border: `1px solid ${c.color}30`, background: `${c.color}08`, textDecoration: 'none' }}>
                   <span style={{ fontSize: 11, color: c.color, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
@@ -3062,7 +3079,7 @@ export default function HomeDashboard() {
                     <div style={{ fontSize: 11, color: TEXT, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.company || c.symbol}</div>
                     <div style={{ fontSize: 9, color: DIM }}>{c.fromState} → {c.toState}</div>
                   </div>
-                </Link>
+                </NavLink>
               ))}
             </div>
           </div>
@@ -3091,13 +3108,13 @@ export default function HomeDashboard() {
           <div style={cardStyle}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
               <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-bearish)', letterSpacing: '0.4px' }}>📡 BOTTLENECK PULSE</span>
-              <Link href="/bottleneck-workbench" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open Workbench →</Link>
+              <NavLink href="/bottleneck-workbench" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open Workbench →</NavLink>
             </div>
             {netLoading.bottleneck ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Scanning active bottlenecks…</div>
             ) : data.bottleneck.length === 0 ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>
-                No active bottlenecks today. <Link href="/news?lifecycle=PERSISTENT" style={{ color: 'var(--mc-cyan)' }}>Browse structural feed →</Link>
+                No active bottlenecks today. <NavLink href="/news?lifecycle=PERSISTENT" style={{ color: 'var(--mc-cyan)' }}>Browse structural feed →</NavLink>
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -3111,7 +3128,7 @@ export default function HomeDashboard() {
                   const tix = (b.key_tickers || b.tickers || []).slice(0, 4);
                   const themeName = b.theme || b.label || b.name || 'Untitled bucket';
                   return (
-                    <Link
+                    <NavLink
                       key={themeName}
                       href={`/bottleneck-workbench?theme=${encodeURIComponent(themeName)}`}
                       style={{ textDecoration: 'none', color: 'inherit' }}
@@ -3147,7 +3164,7 @@ export default function HomeDashboard() {
                           </div>
                         )}
                       </div>
-                    </Link>
+                    </NavLink>
                   );
                 })}
               </div>
@@ -3160,14 +3177,14 @@ export default function HomeDashboard() {
               <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-warn)', letterSpacing: '0.4px' }}>
                 📅 EARNINGS {data.earningsLabel.toUpperCase()} ({data.earningsToday.length})
               </span>
-              <Link href="/earnings-opportunities" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>View all →</Link>
+              <NavLink href="/earnings-opportunities" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>View all →</NavLink>
             </div>
             {netLoading.earnings ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading earnings…</div>
             ) : data.earningsToday.length === 0 ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic', lineHeight: 1.5 }}>
                 No BLOCKBUSTER/STRONG filings in last 3 trading days.
-                <Link href="/earnings-opportunities" style={{ color: 'var(--mc-cyan)' }}> Open Earnings Ops →</Link>
+                <NavLink href="/earnings-opportunities" style={{ color: 'var(--mc-cyan)' }}> Open Earnings Ops →</NavLink>
                 {(() => {
                   // PATCH 0750 — weekend honest hint + Backfill nudge for cold KV.
                   const d = new Date();
@@ -3200,7 +3217,7 @@ export default function HomeDashboard() {
                     const tierColor = c.tier === 'BLOCKBUSTER' ? '#10B981' : c.tier === 'STRONG' ? '#22D3EE' : c.tier === 'MIXED' ? '#F59E0B' : '#EF4444';
                     const date = c._date as string | undefined;
                     return (
-                      <Link key={c.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(c.ticker)}`}
+                      <NavLink key={c.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(c.ticker)}`}
                         style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid var(--mc-bg-4)' }}>
                         <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.company || c.ticker}</span>
                         {multiDay && date && (
@@ -3209,7 +3226,7 @@ export default function HomeDashboard() {
                         <span style={{ fontSize: 9, fontWeight: 800, color: tierColor, padding: '1px 5px', borderRadius: 3, background: `${tierColor}22` }}>
                           {c.tier} {c.composite_score}
                         </span>
-                      </Link>
+                      </NavLink>
                     );
                   })}
                 </div>
@@ -3225,7 +3242,7 @@ export default function HomeDashboard() {
               <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-state-persistent)', letterSpacing: '0.4px' }}>
                 🎙 CONCALL INTELLIGENCE — last 14d ({data.concallHits.length})
               </span>
-              <Link href="/concall-intel" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Full Intel →</Link>
+              <NavLink href="/concall-intel" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Full Intel →</NavLink>
             </div>
             <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
               Most-recent management commentary catalysts — earnings calls + analyst meets surfaced via the live feed
@@ -3238,7 +3255,7 @@ export default function HomeDashboard() {
                   : /MIXED|NEUTRAL/i.test(h.tier) ? '#F59E0B' : '#94A3B8';
                 const cleanTier = (h.tier || '').replace(/_/g, ' ').slice(0, 18);
                 return (
-                  <Link key={(h.ticker || '') + i} href={`/stock-sheet?ticker=${encodeURIComponent((h.ticker || '').replace(/\.(NS|BO)$/i, ''))}`}
+                  <NavLink key={(h.ticker || '') + i} href={`/stock-sheet?ticker=${encodeURIComponent((h.ticker || '').replace(/\.(NS|BO)$/i, ''))}`}
                     style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid var(--mc-bg-4)' }}>
                     <span style={{ fontSize: 10, color: 'var(--mc-state-persistent)', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 60 }}>
                       {(h.ticker || '').replace(/\.(NS|BO)$/i, '').slice(0, 8)}
@@ -3251,7 +3268,7 @@ export default function HomeDashboard() {
                         {cleanTier}
                       </span>
                     )}
-                  </Link>
+                  </NavLink>
                 );
               })}
             </div>
@@ -3267,7 +3284,7 @@ export default function HomeDashboard() {
               <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-warn)', letterSpacing: '0.4px' }}>
                 ⭐ STRATEGIC VISIBILITY ({data.stratVis?.length || 0})
               </span>
-              <Link href="/strategic-visibility" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open →</Link>
+              <NavLink href="/strategic-visibility" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open →</NavLink>
             </div>
             <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
               Transformational catalysts — multi-quarter visibility events
@@ -3317,7 +3334,7 @@ export default function HomeDashboard() {
                 📈 TOP MOVERS · TOP LOSERS
               </span>
               <button onClick={async () => { try { await Promise.all([fetch('/api/market/quotes?market=india&refresh=1&fields=ticker', { cache: 'no-store' }), fetch('/api/market/quotes?market=us&refresh=1&fields=ticker', { cache: 'no-store' })]); } catch {} if (typeof window !== 'undefined') window.location.reload(); }} title="Force-refresh movers from the latest NSE close" style={{ fontSize: 10, color: 'var(--mc-warn)', background: 'transparent', border: '1px solid var(--mc-warn)', borderRadius: 4, padding: '1px 6px', cursor: 'pointer', marginRight: 8 }}>🔄 Refresh</button>
-              <Link href="/movers" title="Home shows YOUR universe (Watchlist + Portfolio + CB) first, then fills with broad-market top movers. The /movers page shows the full NSE universe by raw % move." style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open →</Link>
+              <NavLink href="/movers" title="Home shows YOUR universe (Watchlist + Portfolio + CB) first, then fills with broad-market top movers. The /movers page shows the full NSE universe by raw % move." style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open →</NavLink>
             </div>
             {/* PATCH 0795 — module-level feed-gap banner (replaces per-row repetition) */}
             {(() => {
@@ -3392,7 +3409,7 @@ export default function HomeDashboard() {
                  Movers page deeplink, but don't pre-emptively hide the list
                  just because market is closed (P0735's behaviour). */
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic', padding: '8px 6px', lineHeight: 1.5 }}>
-                No movers data available right now. <Link href="/movers" style={{ color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open full Movers page →</Link>
+                No movers data available right now. <NavLink href="/movers" style={{ color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open full Movers page →</NavLink>
               </div>
             ) : (() => {
               // PATCH 0796 — tiered movers display:
@@ -3564,7 +3581,7 @@ export default function HomeDashboard() {
                 // PATCH 0821 — smart-money signal as 2nd line under the row
                 const smartLine = (mq?.smartMoney || [])[0];
                 return (
-                  <Link key={tk} href={`/stock-sheet?ticker=${encodeURIComponent(m.ticker)}`}
+                  <NavLink key={tk} href={`/stock-sheet?ticker=${encodeURIComponent(m.ticker)}`}
                     title={tooltip}
                     style={{ display: 'flex', alignItems: 'baseline', gap: 6, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid var(--mc-bg-4)' }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
@@ -3633,7 +3650,7 @@ export default function HomeDashboard() {
                   {/* PATCH 0860 — Smart-money signal MOVED into tooltip; no 2nd line.
                       User said: 'should be in same line for one company'. The signal
                       stays accessible via hover tooltip but doesn't take vertical space. */}
-                  </Link>
+                  </NavLink>
                 );
               };
 
@@ -3720,7 +3737,7 @@ export default function HomeDashboard() {
               <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.4px' }}>
                 📡 SIGNALS ({data.signals?.length || 0})
               </span>
-              <Link href="/orders" style={{ fontSize: 12, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open →</Link>
+              <NavLink href="/orders" style={{ fontSize: 12, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open →</NavLink>
             </div>
             <div style={{ fontSize: 11.5, color: DIM, marginBottom: 8 }}>
               High-importance corporate actions and re-rating triggers · 👁 = in your universe
@@ -3761,9 +3778,9 @@ export default function HomeDashboard() {
                     </a>
                   ))}
                   {data.signals.length > SHOWN && (
-                    <Link href="/orders" style={{ fontSize: 12, color: 'var(--mc-cyan)', textAlign: 'center', padding: '8px 0', textDecoration: 'none', fontWeight: 700, marginTop: 6 }}>
+                    <NavLink href="/orders" style={{ fontSize: 12, color: 'var(--mc-cyan)', textAlign: 'center', padding: '8px 0', textDecoration: 'none', fontWeight: 700, marginTop: 6 }}>
                       + {data.signals.length - SHOWN} more · Open Signals page →
-                    </Link>
+                    </NavLink>
                   )}
                 </div>
               );
@@ -3777,16 +3794,16 @@ export default function HomeDashboard() {
             <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-bearish)', letterSpacing: '0.4px' }}>
               🎯 SPECIAL SITUATIONS ({(data as any).specialSituations?.length || 0})
             </span>
-            <Link href="/special-situations" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open →</Link>
+            <NavLink href="/special-situations" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open →</NavLink>
           </div>
           <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
-            OFS · buybacks · open offers · mergers · demergers · rights · preferential — equity-linked only · law precedents pushed to <Link href="/special-situations" style={{ color: 'var(--mc-cyan)' }}>full page</Link>
+            OFS · buybacks · open offers · mergers · demergers · rights · preferential — equity-linked only · law precedents pushed to <NavLink href="/special-situations" style={{ color: 'var(--mc-cyan)' }}>full page</NavLink>
           </div>
           {!(data as any).specialSituations ? (
             <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
           ) : (data as any).specialSituations.length === 0 ? (
             <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>
-              No active situations in feed. <Link href="/special-situations" style={{ color: 'var(--mc-cyan)' }}>Browse all →</Link>
+              No active situations in feed. <NavLink href="/special-situations" style={{ color: 'var(--mc-cyan)' }}>Browse all →</NavLink>
             </div>
           ) : (() => {
             // PATCH 0902 — institutional event-type taxonomy with full
@@ -3878,7 +3895,7 @@ export default function HomeDashboard() {
                   const market = inferMarket(ev.ticker || '');
                   const dealValue = extractDealValue(headline);
                   return (
-                    <Link key={(ev.ticker || '') + i}
+                    <NavLink key={(ev.ticker || '') + i}
                       href={`/stock-sheet?ticker=${encodeURIComponent(ev.ticker)}`}
                       title={[
                         `${ev.ticker} (${market}) · ${evLabel}${ev.sub_category ? ' · ' + ev.sub_category : ''}`,
@@ -3936,7 +3953,7 @@ export default function HomeDashboard() {
                       <span style={{ fontSize: 10, color: DIM, whiteSpace: 'nowrap', flexShrink: 0 }}>
                         {daysSince}{nextCatalyst && <> · <span style={{ color: 'var(--mc-warn)' }}>{nextCatalyst}</span></>}
                       </span>
-                    </Link>
+                    </NavLink>
                   );
                 })}
               </div>
@@ -3952,7 +3969,7 @@ export default function HomeDashboard() {
               <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.4px' }}>
                 👁 WATCHLIST PULSE ({data.watchlistPulse?.length || 0})
               </span>
-              <Link href="/watchlists" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open →</Link>
+              <NavLink href="/watchlists" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open →</NavLink>
             </div>
             <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
               {_isIndianMarketOpen()
@@ -3987,7 +4004,7 @@ export default function HomeDashboard() {
                   }) : null;
                   const smartLineW = (mqW?.smartMoney || [])[0];
                   return (
-                    <Link key={w.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(w.ticker)}`}
+                    <NavLink key={w.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(w.ticker)}`}
                       style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid var(--mc-bg-4)' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <span style={{ fontSize: 10, color: 'var(--mc-cyan)', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 70 }}>{w.ticker}</span>
@@ -4019,7 +4036,7 @@ export default function HomeDashboard() {
                           {smartLineW}
                         </div>
                       )}
-                    </Link>
+                    </NavLink>
                   );
                 })}
               </div>
@@ -4032,7 +4049,7 @@ export default function HomeDashboard() {
               <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-warn)', letterSpacing: '0.4px' }}>
                 ⏭ UPCOMING EARNINGS — next 7d ({data.upcomingEarnings?.length || 0})
               </span>
-              <Link href="/calendars" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Calendar →</Link>
+              <NavLink href="/calendars" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Calendar →</NavLink>
             </div>
             <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
               Conviction Beats (★) + Watchlist (👁) names reporting first
@@ -4051,8 +4068,8 @@ export default function HomeDashboard() {
                 </div>
                 <div style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>
                   Could be a real quiet week, or the calendar refresh cron is degraded.
-                  Check the <Link href="/calendars" style={{ color: 'var(--mc-cyan)', textDecoration: 'none' }}>full Calendar →</Link>
-                  {' '}or <Link href="/earnings-opportunities" style={{ color: 'var(--mc-warn)', textDecoration: 'none' }}>EO page →</Link>
+                  Check the <NavLink href="/calendars" style={{ color: 'var(--mc-cyan)', textDecoration: 'none' }}>full Calendar →</NavLink>
+                  {' '}or <NavLink href="/earnings-opportunities" style={{ color: 'var(--mc-warn)', textDecoration: 'none' }}>EO page →</NavLink>
                   {' '}to verify which days have filings.
                 </div>
                 {/* PATCH 0904 — surgical retry. Re-invokes the component-scope
@@ -4067,7 +4084,7 @@ export default function HomeDashboard() {
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 {data.upcomingEarnings.slice(0, 6).map((e) => (
-                  <Link key={e.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(e.ticker)}`}
+                  <NavLink key={e.ticker} href={`/stock-sheet?ticker=${encodeURIComponent(e.ticker)}`}
                     style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid var(--mc-bg-4)' }}>
                     <span style={{ fontSize: 9, color: DIM, fontFamily: 'ui-monospace, monospace', minWidth: 50 }}>
                       {e.daysAhead === 0 ? 'today' : e.daysAhead === 1 ? 'tomorrow' : `+${e.daysAhead}d`}
@@ -4077,7 +4094,7 @@ export default function HomeDashboard() {
                     </span>
                     {e.onCb && <span style={{ fontSize: 10, color: 'var(--mc-warn)' }}>★</span>}
                     {e.onWatchlist && <span style={{ fontSize: 10, color: 'var(--mc-cyan)' }}>👁</span>}
-                  </Link>
+                  </NavLink>
                 ))}
               </div>
             )}
@@ -4092,7 +4109,7 @@ export default function HomeDashboard() {
             (see /rating-actions and /order-book routes). */}
 
         {/* ═══════════════ PATCH 0631 — VALUATION QUICK-CHECK ═════════════ */}
-        <HomeValuationQuickCheck />
+        <LazyPanel minHeight={160} label="Valuation quick-check"><HomeValuationQuickCheck /></LazyPanel>
 
         {/* ═══════════════ PATCH 0627 — CRITICAL THEMES PANEL ═════════════ */}
         {(() => {
@@ -4103,7 +4120,7 @@ export default function HomeDashboard() {
                 <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-bearish)', letterSpacing: '0.4px' }}>
                   🔥 CRITICAL THEMES — top {tt.india.length + tt.us.length} ({tt.india.length} IN · {tt.us.length} US)
                 </span>
-                <Link href="/critical-themes" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open all →</Link>
+                <NavLink href="/critical-themes" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open all →</NavLink>
               </div>
               <div style={{ fontSize: 10, color: DIM, marginBottom: 8 }}>
                 Choke-point themes for 10+ year horizon · monopoly · policy-backed · governance-filtered
@@ -4113,7 +4130,7 @@ export default function HomeDashboard() {
                   <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--mc-cyan)', marginBottom: 6, letterSpacing: '0.5px' }}>🇮🇳 INDIA</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {tt.india.map((t) => (
-                      <Link key={t.id} href={`/critical-themes`} style={{ textDecoration: 'none', color: 'inherit' }}>
+                      <NavLink key={t.id} href={`/critical-themes`} style={{ textDecoration: 'none', color: 'inherit' }}>
                         <div style={{ background: 'var(--mc-bg-4)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 19%, transparent)', borderRadius: 5, padding: '7px 9px' }}>
                           <div style={{ fontSize: 12, fontWeight: 700, color: TEXT, marginBottom: 3 }}>{t.emoji} {t.name}</div>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
@@ -4122,7 +4139,7 @@ export default function HomeDashboard() {
                             ))}
                           </div>
                         </div>
-                      </Link>
+                      </NavLink>
                     ))}
                   </div>
                 </div>
@@ -4130,7 +4147,7 @@ export default function HomeDashboard() {
                   <div style={{ fontSize: 11, fontWeight: 800, color: '#F87171', marginBottom: 6, letterSpacing: '0.5px' }}>🇺🇸 USA</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {tt.us.map((t) => (
-                      <Link key={t.id} href={`/critical-themes`} style={{ textDecoration: 'none', color: 'inherit' }}>
+                      <NavLink key={t.id} href={`/critical-themes`} style={{ textDecoration: 'none', color: 'inherit' }}>
                         <div style={{ background: 'var(--mc-bg-4)', border: '1px solid #F8717130', borderRadius: 5, padding: '7px 9px' }}>
                           <div style={{ fontSize: 12, fontWeight: 700, color: TEXT, marginBottom: 3 }}>{t.emoji} {t.name}</div>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
@@ -4139,7 +4156,7 @@ export default function HomeDashboard() {
                             ))}
                           </div>
                         </div>
-                      </Link>
+                      </NavLink>
                     ))}
                   </div>
                 </div>
@@ -4152,7 +4169,7 @@ export default function HomeDashboard() {
         <div style={{ ...cardStyle, borderLeft: '3px solid var(--mc-state-persistent)' }}>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
             <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-state-persistent)', letterSpacing: '0.4px' }}>🏗 AI INFRASTRUCTURE TRANSMISSION</span>
-            <Link href="/bottleneck-intel" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Full Intel →</Link>
+            <NavLink href="/bottleneck-intel" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Full Intel →</NavLink>
           </div>
           <div style={{ fontSize: 10, color: DIM, marginBottom: 8 }}>
             Bottleneck cascade — click any link to open Workbench with India-listed proxies + counter-thesis
@@ -4169,10 +4186,10 @@ export default function HomeDashboard() {
               { label: 'Nuclear', theme: 'NUCLEAR_SMR', color: '#A78BFA' },
             ].map((n, i, arr) => (
               <span key={n.label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <Link href={`/bottleneck-workbench?theme=${n.theme}`} style={{
+                <NavLink href={`/bottleneck-workbench?theme=${n.theme}`} style={{
                   fontSize: 11, fontWeight: 800, color: n.color, padding: '5px 10px', borderRadius: 5,
                   border: `1px solid ${n.color}40`, background: `${n.color}10`, textDecoration: 'none',
-                }}>{n.label}</Link>
+                }}>{n.label}</NavLink>
                 {i < arr.length - 1 && <span style={{ color: 'var(--mc-text-4)', fontSize: 14 }}>→</span>}
               </span>
             ))}
@@ -4202,7 +4219,7 @@ export default function HomeDashboard() {
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 6 }}>
                   {lensedTier3.map((a, i) => (
-                    <Link key={a.symbol + i} href={a.href} style={{
+                    <NavLink key={a.symbol + i} href={a.href} style={{
                       display: 'flex', alignItems: 'flex-start', gap: 6, padding: '6px 8px', borderRadius: 4,
                       border: '1px solid color-mix(in srgb, var(--mc-text-3) 19%, transparent)', background: 'color-mix(in srgb, var(--mc-text-3) 3%, transparent)', textDecoration: 'none',
                     }}>
@@ -4218,7 +4235,7 @@ export default function HomeDashboard() {
                         )}
                       </div>
                       <span style={{ fontSize: 10, color: 'var(--mc-text-3)', fontWeight: 700, flexShrink: 0 }}>{a.score}{a.grade}</span>
-                    </Link>
+                    </NavLink>
                   ))}
                 </div>
               </div>
@@ -4231,11 +4248,11 @@ export default function HomeDashboard() {
           <div style={cardStyle}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
               <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-bearish)', letterSpacing: '0.4px' }}>📰 NEWS ALERTS ({activeAlerts.length} active)</span>
-              <Link href="/news-alerts" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Manage →</Link>
+              <NavLink href="/news-alerts" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Manage →</NavLink>
             </div>
             {activeAlerts.length === 0 ? (
               <div style={{ fontSize: 11, color: DIM, lineHeight: 1.5 }}>
-                No alert rules configured. <Link href="/news-alerts" style={{ color: 'var(--mc-cyan)' }}>Set up alerts →</Link>
+                No alert rules configured. <NavLink href="/news-alerts" style={{ color: 'var(--mc-cyan)' }}>Set up alerts →</NavLink>
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -4252,7 +4269,7 @@ export default function HomeDashboard() {
           <div style={cardStyle}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
               <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-state-persistent)', letterSpacing: '0.4px' }}>🏗 BOTTLENECK THEMES — FULL LIST</span>
-              <Link href="/bottleneck-intel" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open Intel →</Link>
+              <NavLink href="/bottleneck-intel" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open Intel →</NavLink>
             </div>
             {netLoading.bottleneck ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading bottleneck themes…</div>
@@ -4263,13 +4280,13 @@ export default function HomeDashboard() {
                 {data.bottleneck.map((b) => {
                   const color = b.severity_color || ((b.severity_label || '').toLowerCase() === 'high' ? '#EF4444' : '#F59E0B');
                   return (
-                    <Link key={b.bucket_id} href={`/bottleneck-workbench?theme=${encodeURIComponent(b.bucket_id)}`}
+                    <NavLink key={b.bucket_id} href={`/bottleneck-workbench?theme=${encodeURIComponent(b.bucket_id)}`}
                       style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px', textDecoration: 'none', borderBottom: '1px solid var(--mc-bg-4)' }}>
                       <span style={{ fontSize: 14 }}>{b.severity_icon || '⚡'}</span>
                       <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: TEXT, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.label}</span>
                       <span style={{ fontSize: 9, color, fontWeight: 700, padding: '1px 5px', borderRadius: 3, background: `${color}22` }}>{b.severity_label || 'WATCH'}</span>
                       <span style={{ fontSize: 10, color: DIM, minWidth: 36, textAlign: 'right' }}>{b.article_count || 0}</span>
-                    </Link>
+                    </NavLink>
                   );
                 })}
               </div>
@@ -4313,11 +4330,11 @@ export default function HomeDashboard() {
                 { href: '/ai-desk', label: '🤖 AI Desk' },
                 { href: '/status', label: '🛠 System Status' },
               ].map((l) => (
-                <Link key={l.href} href={l.href} style={{
+                <NavLink key={l.href} href={l.href} style={{
                   display: 'block', padding: '6px 10px', borderRadius: 4,
                   background: 'var(--mc-bg-0)', border: `1px solid ${BORDER}`,
                   color: TEXT, fontSize: 11, fontWeight: 600, textDecoration: 'none',
-                }}>{l.label}</Link>
+                }}>{l.label}</NavLink>
               ))}
             </div>
           )}
@@ -4419,9 +4436,21 @@ const FAVS: Array<{ href: string; label: string; color: string; ext?: boolean }>
 ];
 const FAV_ORDER_KEY = 'mc:favs:order:v1';
 
+/** zzz1052 — a drag that ended within 10 px of where it started was a click with a slightly moving hand. */
+function isTinyDrag(start: { x: number; y: number } | null, x: number, y: number): boolean {
+  if (!start) return false;
+  // Firefox reports 0,0 for dragend coordinates — unknown, so not treated as a click.
+  if (x === 0 && y === 0) return false;
+  return Math.hypot(x - start.x, y - start.y) < 10;
+}
+
 function FavouritesGrid() {
   const [order, setOrder] = useState<string[]>(() => FAVS.map((f) => f.href));
   const [dragFrom, setDragFrom] = useState<number | null>(null);
+  // zzz1052 — chips are draggable (reorder), and a press that moves even a few pixels starts a drag instead of a click,
+  // so the link did not open ("click 4 times"). A "drag" that ends where it started (< 10 px) now opens the page.
+  const router = useRouter();
+  const dragStartAt = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     try {
@@ -4463,18 +4492,23 @@ function FavouritesGrid() {
     <div className="mc-fav-grid" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-start', rowGap: 8, alignItems: 'center' }}
       title="Drag any chip to reorder — the order is remembered on this browser">
       {items.map((f, i) => {
-        const st: React.CSSProperties = { ...navChip(f.color), opacity: dragFrom === i ? 0.4 : 1, cursor: 'grab' };
+        const st: React.CSSProperties = { ...navChip(f.color), opacity: dragFrom === i ? 0.4 : 1, cursor: 'pointer' };
         const dragProps = {
           draggable: true,
-          onDragStart: () => setDragFrom(i),
+          onDragStart: (e: React.DragEvent) => { dragStartAt.current = { x: e.clientX, y: e.clientY }; setDragFrom(i); },
           onDragOver: (e: React.DragEvent) => e.preventDefault(),
           onDrop: (e: React.DragEvent) => { e.preventDefault(); onDrop(i); },
-          onDragEnd: () => setDragFrom(null),
+          onDragEnd: (e: React.DragEvent) => {
+            const s0 = dragStartAt.current;
+            dragStartAt.current = null;
+            setDragFrom(null);
+            if (!f.ext && isTinyDrag(s0, e.clientX, e.clientY)) router.push(f.href);
+          },
         };
         return f.ext ? (
-          <a key={f.href} className="mc-lift" href={f.href} target="_blank" rel="noopener noreferrer" style={st} {...dragProps}>{f.label}</a>
+          <a key={f.href} className="mc-chip-hover" href={f.href} target="_blank" rel="noopener noreferrer" style={st} {...dragProps}>{f.label}</a>
         ) : (
-          <Link key={f.href} className="mc-lift" href={f.href} style={st} {...dragProps}>{f.label}</Link>
+          <NavLink key={f.href} className="mc-chip-hover" href={f.href} style={st} {...dragProps}>{f.label}</NavLink>
         );
       })}
     </div>

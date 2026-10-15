@@ -1,7 +1,7 @@
 'use client';
 
 import { ReactNode, useEffect, useState, useMemo } from 'react';
-import Link from 'next/link';
+import NavLink from '@/components/NavLink';   // zzz1052 — prefetch on hover / focus / press, not on scroll-into-view
 import dynamic from 'next/dynamic';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { getFavourites, toggleFavourite, subscribeFavourites } from '@/lib/nav-favourites';
@@ -635,7 +635,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
               {favGroup.items.map((item, fi) => {
                 const active = isActive(item.href);
                 return (
-                  <Link key={`fav-${item.href}`} href={item.href} prefetch={navPrefetch(item.href, fi)} title={`Favourite › ${item.label}`}
+                  <NavLink key={`fav-${item.href}`} href={item.href} prefetch={navPrefetch(item.href, fi)} title={`Favourite › ${item.label}`}
                     style={{
                       display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px',
                       padding: '10px 4px', margin: '2px 6px', borderRadius: '10px',
@@ -652,7 +652,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
                         <span key={i} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis' }}>{w}</span>
                       ))}
                     </span>
-                  </Link>
+                  </NavLink>
                 );
               })}
             </div>
@@ -689,7 +689,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
                       background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
                       fontSize: 10, color: starred ? '#FCD34D' : 'var(--mc-bg-4)',
                     }}>{starred ? '★' : '☆'}</button>
-                  <Link href={item.href} prefetch={navPrefetch(item.href, null)}
+                  <NavLink href={item.href} prefetch={navPrefetch(item.href, null)}
                     title={`${group.label} › ${item.label}`}
                     style={{
                       display: 'flex',
@@ -730,7 +730,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
                         </div>
                       ))}
                     </span>
-                  </Link>
+                  </NavLink>
                   </div>
                 );
               })}
@@ -758,10 +758,10 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
           <div className={pwa.headerRow}>
             <div className={pwa.brand}>
               {/* zzz796 — on phones the long name collapses to the MC badge so the chips fit. */}
-              <Link href="/" className={pwa.brandBadge} aria-label="Market Cockpit home">MC</Link>
-              <Link href="/" prefetch={false} title="Home — all pages" className={pwa.brandText} style={{ fontSize: '15px', fontWeight: '700', textDecoration: 'none', background: 'linear-gradient(90deg, var(--mc-accent), #06B6D4)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+              <NavLink href="/" className={pwa.brandBadge} aria-label="Market Cockpit home">MC</NavLink>
+              <NavLink href="/" prefetch={false} title="Home — all pages" className={pwa.brandText} style={{ fontSize: '15px', fontWeight: '700', textDecoration: 'none', background: 'linear-gradient(90deg, var(--mc-accent), #06B6D4)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
                 MARKET COCKPIT
-              </Link>
+              </NavLink>
               <span className="desktop-header-subtitle" style={{ fontSize: '11px', color: 'var(--mc-text-4)' }}>Bloomberg-lite · India + US</span>
             </div>
 
@@ -778,7 +778,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
                   visible across every dashboard route so the bench size is
                   never more than one glance away. */}
               {convictionCount > 0 && (
-                <Link
+                <NavLink
                   href="/earnings-opportunities"
                   prefetch={false}
                   title={`${benchSinceHeader ? `India counts only results filed from ${benchSinceHeader} (the start date set on Conviction Beats — press "Show all" there to see every name). ` : ''}CB ${convictionCount + (usBenchCount || 0)} = India ${convictionCount} + US ${usBenchCount ?? '…'}: names meeting your Conviction Beats criteria in each market, added together (the Portfolio Catalysts pages show the India split as held + bench). Conviction Beats bench — India ${convictionTitle || `${convictionCount} tickers`}${usBenchCount != null ? `; US ${usBenchCount} on the server list` : '; US list not read yet'}. Open Earnings Opportunities to view the India bench.`}
@@ -791,7 +791,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
                     letterSpacing: '0.4px', textDecoration: 'none',
                     fontVariantNumeric: 'tabular-nums',
                   }}
-                >🏆 CB {convictionCount + (usBenchCount || 0)}<span style={{ fontWeight: 600, opacity: 0.85 }}> · India {convictionCount}{benchSinceHeader ? ` (from ${benchSinceHeader.slice(5)})` : ''}{usBenchCount != null ? ` · US ${usBenchCount}` : ' · US …'}</span></Link>
+                >🏆 CB {convictionCount + (usBenchCount || 0)}<span style={{ fontWeight: 600, opacity: 0.85 }}> · India {convictionCount}{benchSinceHeader ? ` (from ${benchSinceHeader.slice(5)})` : ''}{usBenchCount != null ? ` · US ${usBenchCount}` : ' · US …'}</span></NavLink>
               )}
 
               {/* PATCH 0074: theme cycler + PDF export — visible on every tab */}
@@ -840,7 +840,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
                       <p style={{ fontSize: '11px', color: 'var(--mc-text-4)', margin: 0 }}>Active Investor</p>
                     </div>
                     <div style={{ padding: '6px 0' }}>
-                      <Link href="/settings" prefetch={false} style={{ display: 'block', padding: '8px 16px', fontSize: '13px', color: 'var(--mc-text-2)', textDecoration: 'none' }}>⚙️ Settings</Link>
+                      <NavLink href="/settings" prefetch={false} style={{ display: 'block', padding: '8px 16px', fontSize: '13px', color: 'var(--mc-text-2)', textDecoration: 'none' }}>⚙️ Settings</NavLink>
                       <button onClick={handleSignOut} style={{ width: '100%', textAlign: 'left', padding: '8px 16px', fontSize: '13px', color: 'var(--mc-bearish)', background: 'none', border: 'none', cursor: 'pointer', borderTop: '1px solid var(--mc-bg-4)' }}>
                         🚪 Sign Out
                       </button>
@@ -881,7 +881,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
       {userMenu && (
         // PATCH 1035 — overlay zIndex was 90, sat ABOVE sidebar (z=40), so first sidebar
         // click was consumed by overlay (just closed menu). Drop to z=30 so overlay stays
-        // BELOW sidebar — first click reaches the <Link> and navigates.
+        // BELOW sidebar — first click reaches the <NavLink> and navigates.
         <div onClick={() => setUserMenu(false)}
           style={{ position: 'fixed', inset: 0, zIndex: 30, background: 'transparent' }} />
       )}

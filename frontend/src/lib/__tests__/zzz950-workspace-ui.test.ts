@@ -76,11 +76,14 @@ test('workspace UI: failed saves, restore, refresh, market errors and quote reco
     assert.deepEqual(picked, { m: 'IN', t: 'RELIANCE', x: 'BSE' });
     assert.match(document.body.textContent!, /\+3.00%/);
     assert.equal(response, 1);
-    await act(async () => { [...polls.values()][0](); await settle(); });
+    // zzz1052 — the quote poll now starts after the open chart's bars (afterChartLoads), so it is no longer the first
+    // ≥ 60 s timer registered (the book-sync poll is); run the panel's pollers — only the quote one reads chart-quotes.
+    const runPolls = () => { for (const f of [...polls.values()]) f(); };
+    await act(async () => { runPolls(); await settle(); });
     assert.equal(response, 2);
     assert.ok(document.querySelector('[aria-label="Stale quote for AAPL"]'));
     assert.match(document.body.textContent!, /last known quotes/);
-    await act(async () => { [...polls.values()][0](); await settle(); });
+    await act(async () => { runPolls(); await settle(); });
     assert.equal(document.querySelector('[aria-label="Stale quote for AAPL"]'), null);
     await mount(null);
 

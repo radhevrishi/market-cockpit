@@ -12,7 +12,7 @@
 //   · setup cards to start from (with today's counts), a compact filter panel on the left (on top on a phone), a ranked table with
 //     fewer default columns and an expandable detail per company, and a "My portfolio" check of every holding.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Link from 'next/link';
+import NavLink from '@/components/NavLink';   // zzz1052 — prefetch on hover / focus / press, not on scroll-into-view
 import type { ScreenMarket, ScreenRow } from '@/lib/screener/types';
 import { PATTERN_META, PATTERN_IDS, type PatternId } from '@/lib/chart-patterns';
 import {
@@ -775,7 +775,7 @@ export default function PineScreener() {
           {msg ? <span role="status" style={{ color: /^(Not saved|Could not)/.test(msg) ? C.red : C.text1, fontSize: 12.5, fontWeight: 650 }}>{msg}</span> : null}
           <span style={{ flex: 1 }} />
           <button type="button" className="pnx-btn pnx-btn-ic pnx-hide-sm" onClick={() => setHelp(true)} title="Keyboard shortcuts" aria-label="Keyboard shortcuts"><Kbd>?</Kbd> Shortcuts</button>
-          <Link href="/stock-screener" className="pnx-link" style={{ fontSize: 12.5 }}>Fundamentals: Stock Screener</Link>
+          <NavLink href="/stock-screener" className="pnx-link" style={{ fontSize: 12.5 }}>Fundamentals: Stock Screener</NavLink>
         </div>
         {/* zzz1033 — the lede line removed at the owner's request (the 'How the patterns are found' panel explains the engine) */}
       </header>
@@ -1027,7 +1027,7 @@ export default function PineScreener() {
             {ruleEdit != null && q.filters[ruleEdit] ? (
               <FilterEditor f={q.filters[ruleEdit]} market={market} fields={ruleFields} onChange={(nf) => change({ filters: q.filters.map((x, k) => (k === ruleEdit ? nf : x)) })} onClose={() => setRuleEdit(null)} />
             ) : null}
-            <div className="pnx-note">Growth, quality and valuation rules work here too (a company without the figure does not pass; ≈ = approximate figure). Figures this page does not receive are in the <Link href="/stock-screener" className="pnx-link">Stock Screener</Link> — pick one of its screens under Companies to combine it with a chart setup.</div>
+            <div className="pnx-note">Growth, quality and valuation rules work here too (a company without the figure does not pass; ≈ = approximate figure). Figures this page does not receive are in the <NavLink href="/stock-screener" className="pnx-link">Stock Screener</NavLink> — pick one of its screens under Companies to combine it with a chart setup.</div>
           </Section>
 
           <Section id="pnx-sec-cols" title="Columns" hint={extras.length + q.cols.length ? `${extras.length + q.cols.length} extra` : ''} open={sec.cols} onToggle={() => toggleSec('cols')}>
@@ -1244,8 +1244,8 @@ export default function PineScreener() {
                                 <span style={{ minWidth: 0 }}>
                                   <span style={{ display: 'flex', alignItems: 'baseline' }}>
                                     <span className="pnx-rank">{i + 1}</span>
-                                    <Link data-ticker={r.t} className="pnx-tk" href={`/charts?t=${encodeURIComponent(r.t)}&m=${market}&tf=${b?.tf || 'D'}`} onClick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); window.location.assign(openForReview(r, b?.tf || 'D')); }}
-                                      title={`${r.n || r.t} — open the ${tfWord(b?.tf)} chart (Enter). Next / Previous on the chart step through these results in this order`}>{r.t}</Link>
+                                    <NavLink data-ticker={r.t} className="pnx-tk" href={`/charts?t=${encodeURIComponent(r.t)}&m=${market}&tf=${b?.tf || 'D'}`} onClick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); window.location.assign(openForReview(r, b?.tf || 'D')); }}
+                                      title={`${r.n || r.t} — open the ${tfWord(b?.tf)} chart (Enter). Next / Previous on the chart step through these results in this order`}>{r.t}</NavLink>
                                     {an.session === 'provisional' ? <span data-provisional title={`Read during a trading session: ${sessionLabel(an)} — the latest bar was unfinished, not a completed close`} style={{ color: C.amber, marginLeft: 4 }}>◷</span> : null}
                                   </span>
                                   {density === 'compact' ? null : <div className="pnx-co" style={{ paddingLeft: 'calc(1.8em + 6px)' }} title={r.n}>{r.n}</div>}

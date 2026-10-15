@@ -10,7 +10,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
+import NavLink from '@/components/NavLink';   // zzz1052 — prefetch on hover / focus / press, not on scroll-into-view
 import { collectActivity, activityTimeAgo, type ActivityItem, type ActivityKind } from '@/lib/activity-log';
 
 const BG = '#0A0E1A';
@@ -143,15 +143,15 @@ export default function ActivityLogPage() {
                 No activity yet. Start by saving a valuation, adding a theme, or logging a decision &mdash; it will appear here automatically.
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center', marginTop: 4 }}>
-                <Link href="/valuation-calc" style={{ fontSize: 11, color: 'var(--mc-cyan)', textDecoration: 'none', padding: '5px 11px', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', borderRadius: 4, fontWeight: 700 }}>Save a valuation</Link>
-                <Link href="/critical-themes" style={{ fontSize: 11, color: 'var(--mc-cyan)', textDecoration: 'none', padding: '5px 11px', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', borderRadius: 4, fontWeight: 700 }}>Add a theme</Link>
-                <Link href="/multibagger" style={{ fontSize: 11, color: 'var(--mc-cyan)', textDecoration: 'none', padding: '5px 11px', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', borderRadius: 4, fontWeight: 700 }}>Log a decision</Link>
+                <NavLink href="/valuation-calc" style={{ fontSize: 11, color: 'var(--mc-cyan)', textDecoration: 'none', padding: '5px 11px', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', borderRadius: 4, fontWeight: 700 }}>Save a valuation</NavLink>
+                <NavLink href="/critical-themes" style={{ fontSize: 11, color: 'var(--mc-cyan)', textDecoration: 'none', padding: '5px 11px', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', borderRadius: 4, fontWeight: 700 }}>Add a theme</NavLink>
+                <NavLink href="/multibagger" style={{ fontSize: 11, color: 'var(--mc-cyan)', textDecoration: 'none', padding: '5px 11px', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)', borderRadius: 4, fontWeight: 700 }}>Log a decision</NavLink>
               </div>
             </div>
           ) : (
             <div style={{ background: CARD, border: `1px dashed ${BORDER}`, borderRadius: 8, padding: '24px 26px', textAlign: 'center' }}>
               <div style={{ fontSize: 13, color: DIM, fontStyle: 'italic' }}>
-                No activity matches your filter. Try logging a decision in <Link href="/multibagger" style={{ color: 'var(--mc-cyan)' }}>Multibagger</Link>, saving a valuation in <Link href="/valuation-calc" style={{ color: 'var(--mc-cyan)' }}>Valuation Calc</Link>, or adding a theme in <Link href="/critical-themes" style={{ color: 'var(--mc-cyan)' }}>Critical Themes</Link>.
+                No activity matches your filter. Try logging a decision in <NavLink href="/multibagger" style={{ color: 'var(--mc-cyan)' }}>Multibagger</NavLink>, saving a valuation in <NavLink href="/valuation-calc" style={{ color: 'var(--mc-cyan)' }}>Valuation Calc</NavLink>, or adding a theme in <NavLink href="/critical-themes" style={{ color: 'var(--mc-cyan)' }}>Critical Themes</NavLink>.
               </div>
             </div>
           )
@@ -162,7 +162,7 @@ export default function ActivityLogPage() {
                 <div style={{ fontSize: 11, color: DIM, fontWeight: 800, letterSpacing: '0.5px', marginBottom: 6, textTransform: 'uppercase' }}>{day}</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                   {dayItems.map(it => (
-                    <Link key={it.id} href={it.href || '#'} style={{ textDecoration: 'none' }}>
+                    <NavLink key={it.id} href={it.href || '#'} style={{ textDecoration: 'none' }}>
                       <div style={{
                         background: CARD, border: `1px solid ${BORDER}`, borderLeft: `3px solid ${it.color}`,
                         borderRadius: 6, padding: '8px 12px',
@@ -178,7 +178,7 @@ export default function ActivityLogPage() {
                           {activityTimeAgo(it.ts)}
                         </span>
                       </div>
-                    </Link>
+                    </NavLink>
                   ))}
                 </div>
               </div>

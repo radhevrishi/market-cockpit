@@ -14,7 +14,7 @@ import {
 import { pollWhenVisible } from '@/lib/client-fetch';
 import { refreshedQuotes } from '@/lib/chart-refresh';
 import { sharedFetchJson } from '@/lib/tab-shared-fetch';
-import { neighbourOrder } from '@/lib/chart-load-cache';
+import { afterChartLoads, neighbourOrder } from '@/lib/chart-load-cache';
 import { PANEL_CSS } from './watchlist-panel-css';
 import WatchlistManageDrawer from './WatchlistManageDrawer';
 import { ChartContextMenu } from './ChartContextMenu';
@@ -97,8 +97,14 @@ function useQuotes(keys: string[]): Record<string, Quote> {
           setQuotes((prev) => refreshedQuotes(prev, next, all));
         });
     };
-    const stop = pollWhenVisible(load, 60_000, { runImmediately: true });
-    return () => { stop(); ctrl?.abort(); };
+    // zzz1052 — the first quote read waits until the open chart's bars have arrived (≤ 4 s), then every minute as before
+    let stopped = false;
+    let stop: () => void = () => {};
+    afterChartLoads().then(() => {
+      if (stopped) return;
+      stop = pollWhenVisible(load, 60_000, { runImmediately: true });
+    });
+    return () => { stopped = true; stop(); ctrl?.abort(); };
   }, [sig]);
   return quotes;
 }

@@ -1,17 +1,14 @@
 'use client';
 
 // Moved verbatim out of page.tsx (pure refactor, no behaviour change).
-import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
-import Link from 'next/link';
+import { useState, useMemo, useCallback, useEffect } from 'react';
+import NavLink from '@/components/NavLink';   // zzz1052 — prefetch on hover / focus / press, not on scroll-into-view
 import { getConvictionList } from '@/lib/conviction-beats';
-import { logSignals } from '@/lib/signal-log';
-import { openPassport } from '@/lib/engines';
-import Sparkline from '@/components/Sparkline';
 import { fetchQuoteAutofill, calculatePE } from '@/lib/valuation-calculators';
 import { getJson } from '@/lib/client-fetch';
-import type { TierAction, InboxSignal, LaneKey, InboxPullback } from './types';
+import type { TierAction, InboxSignal, LaneKey } from './types';
 import { HOME_QUOTES_INDIA_URL, TTL_QUOTES, TTL_FEED, TEXT, DIM, cardStyle } from './constants';
-import { readTransform, passesQualityPreset } from './helpers';
+import { readTransform } from './helpers';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Sub-components
@@ -48,7 +45,7 @@ export function DecisionTierBlock({
       {expanded && (
         <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${condensed ? 260 : 320}px, 1fr))`, gap: 10 }}>
           {items.map((a, i) => (
-            <Link key={a.symbol + i} href={a.href}
+            <NavLink key={a.symbol + i} href={a.href}
               title={a.scoreBreakdown ? Object.entries(a.scoreBreakdown).map(([k, v]) => `${k}: +${v}`).join('  ·  ') : ''}
               style={{
                 display: 'flex', flexDirection: 'column', gap: 5, padding: condensed ? '8px 10px' : '12px 14px', borderRadius: 6,
@@ -113,7 +110,7 @@ export function DecisionTierBlock({
                   )}
                 </>
               )}
-            </Link>
+            </NavLink>
           ))}
         </div>
       )}
@@ -160,7 +157,7 @@ export function HomeValuationQuickCheck() {
         <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.4px' }}>
           🧮 VALUATION QUICK-CHECK
         </span>
-        <Link href="/valuation-calc" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Full calculator →</Link>
+        <NavLink href="/valuation-calc" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Full calculator →</NavLink>
       </div>
       <div style={{ fontSize: 10, color: DIM, marginBottom: 10 }}>
         Quick P/E-based target. Enter ticker + forward PAT + target P/E. Auto-fills current price + market cap from /api/market/quotes.
@@ -234,9 +231,6 @@ export function HomeValuationQuickCheck() {
 
 export function DailySignalInbox() {
   const [signals, setSignals] = useState<InboxSignal[]>([]);
-  const [pullbacks, setPullbacks] = useState<InboxPullback[]>([]);
-  const [pbSparks, setPbSparks] = useState<Map<string, number[]>>(new Map()); // zzz527
-  const pbPhaseRef = useRef(0); // zzz530 — highest pullback phase that has written (1.5=1, 1.6=2)
   const [loading, setLoading] = useState(true);
   const [collapsed, setCollapsed] = useState(false);
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
@@ -261,7 +255,8 @@ export function DailySignalInbox() {
       setLaneStatus((prev) => ({ ...prev, [key]: rows.length > 0 || prev[key] }));
     };
 
-    // ══ PHASE 1 · INSTANT (localStorage only) — bench + pullbacks show at once ══
+    // ══ PHASE 1 · INSTANT (localStorage only) — the bench lane shows at once ══
+    // zzz1052 — the "Quality pullbacks" lane (and its live-quote / 52-week-high passes) was removed at the owner's request.
     try {
       const todayStr = new Date().toISOString().slice(0, 10);
       const benchRows: InboxSignal[] = [];
@@ -279,130 +274,8 @@ export function DailySignalInbox() {
       setSignals(benchRows);
       setLaneStatus({ momentum: false, warrant: false, transform: false, bench: benchRows.length > 0 });
 
-      const pb: InboxPullback[] = getConvictionList()
-        .filter(passesQualityPreset)
-        .map((b: any) => {
-          const has52 = typeof b.dist_52w_pct_yahoo === 'number';
-          const correction = has52 ? -b.dist_52w_pct_yahoo : (typeof b.move_pct === 'number' ? -b.move_pct : NaN);
-          return { symbol: b.ticker, company: b.company || '', tier: b.tier,
-            correction, basis: (has52 ? '52w high' : 'since filing') as InboxPullback['basis'],
-            sales: b.sales_yoy_pct, pat: b.net_profit_yoy_pct, pead: b.pead_score, mcap: b.market_cap_cr };
-        })
-        .filter((p) => Number.isFinite(p.correction) && p.correction <= 60)
-        .sort((a, b) => b.correction - a.correction)
-        .slice(0, 10);
-      setPullbacks(pb);
-    } catch { setPullbacks([]); }
+    } catch { /* bench lane stays empty */ }
     setLoading(false);   // instant content is up — stop the "scanning feeds…" spinner
-
-    // ══ PHASE 1.5 · LIVE PULLBACK REFRESH ═══════════════════════════════════
-    // zzz521 — the Phase-1 pullback % came straight off the bench snapshot
-    // (dist_52w_pct_yahoo, which is usually null, so it fell back to move_pct —
-    // a since-filing move captured ONCE at enrichment). That froze the numbers:
-    // they read the same for days because nothing recomputed them against the
-    // current price. Fix: pull the live india quote map (current price + live
-    // 52-week high) and recompute each preset name's correction from TODAY's
-    // price, so the panel actually moves. Snapshot stays as the instant
-    // fallback for any name the live feed doesn't cover.
-    (async () => {
-      // zzz855 — the page-wide shared India quotes request (same URL as the
-      // Movers panel) instead of a separate projected call; it carries
-      // ticker/price/week52High/changePercent among its fields.
-      const q = await j(HOME_QUOTES_INDIA_URL, 60_000, TTL_QUOTES);
-      const stocks: any[] = q && Array.isArray(q.stocks) ? q.stocks : [];
-      if (!stocks.length) return;
-      const live = new Map<string, { price: number; high: number | null; chg: number | null }>();
-      for (const s of stocks) {
-        const t = String(s?.ticker || '').toUpperCase().trim();
-        if (!t) continue;
-        const price = Number(s?.price);
-        const high = Number(s?.week52High);
-        live.set(t, {
-          price: Number.isFinite(price) ? price : NaN,
-          high: Number.isFinite(high) && high > 0 ? high : null,
-          chg: Number.isFinite(Number(s?.changePercent)) ? Number(s.changePercent) : null,
-        });
-      }
-      try {
-        const fresh: InboxPullback[] = getConvictionList()
-          .filter(passesQualityPreset)
-          .map((b: any) => {
-            const sym = String(b.ticker || '').toUpperCase().trim();
-            const lq = live.get(sym);
-            // Live correction from the CURRENT price vs the live 52-week high.
-            let correction: number;
-            let basis: InboxPullback['basis'];
-            if (lq && Number.isFinite(lq.price) && lq.high) {
-              correction = (lq.high - lq.price) / lq.high * 100; // % below 52w high, live
-              basis = '52w high';
-            } else if (typeof b.dist_52w_pct_yahoo === 'number') {
-              correction = -b.dist_52w_pct_yahoo; basis = '52w high';
-            } else if (typeof b.move_pct === 'number') {
-              correction = -b.move_pct; basis = 'since filing';
-            } else {
-              correction = NaN; basis = 'since filing';
-            }
-            return { symbol: b.ticker, company: b.company || '', tier: b.tier,
-              correction, basis, sales: b.sales_yoy_pct, pat: b.net_profit_yoy_pct,
-              pead: b.pead_score, mcap: b.market_cap_cr };
-          })
-          .filter((p) => Number.isFinite(p.correction) && p.correction <= 60)
-          .sort((a, b) => b.correction - a.correction)
-          .slice(0, 10);
-        // zzz530 — only write if the authoritative spark pass (1.6) hasn't
-        // already landed; and DON'T log here (1.6 logs the final set), so the
-        // slower quote pass can never re-freeze the board to "since filing".
-        if (fresh.length && pbPhaseRef.current < 1) { pbPhaseRef.current = 1; setPullbacks(fresh); }
-      } catch { /* keep the Phase-1 snapshot */ }
-    })();
-
-    // ══ PHASE 1.6 · TRUE 52-WEEK HIGHS (zzz527) ═════════════════════════════
-    // The bulk NSE quote feed has no yearHigh for most names, so Phase 1.5's
-    // "live" pass silently fell back to the frozen since-filing move — the
-    // board LOOKED live but wasn't. This pass asks /api/market/spark (Yahoo
-    // daily bars, server-cached) for each preset name's real 52w high + last
-    // close, recomputes every correction from TODAY's price, flips the basis
-    // to '52w high', and brings back a 3-month sparkline per name.
-    (async () => {
-      try {
-        const preset = getConvictionList().filter(passesQualityPreset);
-        if (!preset.length) return;
-        const syms = Array.from(new Set(preset.map((b: any) => String(b.ticker || '').toUpperCase().trim()).filter(Boolean))).slice(0, 24);
-        const j = await getJson<any>(`/api/market/spark?symbols=${encodeURIComponent(syms.join(','))}`, { timeoutMs: 20_000, ttlMs: TTL_FEED, force: bypass || force });
-        if (!j) return;
-        const bySym = new Map<string, any>();
-        for (const row of (j?.rows || [])) if (row?.symbol) bySym.set(String(row.symbol), row);
-        if (!bySym.size) return;
-        const sparkMap = new Map<string, number[]>();
-        const upgraded: InboxPullback[] = preset.map((b: any) => {
-          const sym = String(b.ticker || '').toUpperCase().trim();
-          const row = bySym.get(sym);
-          if (row && Number.isFinite(row.ddPct)) {
-            if (Array.isArray(row.spark)) sparkMap.set(sym, row.spark);
-            return { symbol: b.ticker, company: b.company || '', tier: b.tier,
-              correction: -row.ddPct, basis: '52w high' as InboxPullback['basis'],
-              sales: b.sales_yoy_pct, pat: b.net_profit_yoy_pct, pead: b.pead_score, mcap: b.market_cap_cr };
-          }
-          // no bar data — keep the best stale estimate, honestly labeled
-          const corr = typeof b.dist_52w_pct_yahoo === 'number' ? -b.dist_52w_pct_yahoo
-            : (typeof b.move_pct === 'number' ? -b.move_pct : NaN);
-          return { symbol: b.ticker, company: b.company || '', tier: b.tier,
-            correction: corr, basis: (typeof b.dist_52w_pct_yahoo === 'number' ? '52w high' : 'since filing') as InboxPullback['basis'],
-            sales: b.sales_yoy_pct, pat: b.net_profit_yoy_pct, pead: b.pead_score, mcap: b.market_cap_cr };
-        })
-          .filter((pp) => Number.isFinite(pp.correction) && pp.correction <= 60)
-          .sort((a, bb) => bb.correction - a.correction)
-          .slice(0, 10);
-        if (upgraded.length) { pbPhaseRef.current = 2; setPullbacks(upgraded); setPbSparks(sparkMap); }
-        try {
-          logSignals('pullback', upgraded.slice(0, 10).map((pp) => ({
-            ticker: pp.symbol,
-            note: `pullback ${pp.correction >= 0 ? '-' : '+'}${Math.abs(pp.correction).toFixed(0)}% off ${pp.basis}`,
-            priceAt: bySym.get(String(pp.symbol || '').toUpperCase().trim())?.last ?? null,
-          })));
-        } catch { /* never load-bearing */ }
-      } catch { /* keep prior pullbacks */ }
-    })();
 
     // ══ PHASE 2 · NETWORK — each lane fills in independently as it returns ══
     // MOMENTUM = concall score-movers + today's price leaders (needs both).
@@ -543,7 +416,7 @@ export function DailySignalInbox() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 12, fontWeight: 900, color: '#60A5FA', letterSpacing: '0.5px' }}>⭐ DAILY SIGNAL INBOX</span>
-          <span style={{ fontSize: 11, color: DIM }}>{loading ? 'scanning feeds…' : `${pullbacks.length ? `${pullbacks.length} quality pullback${pullbacks.length === 1 ? '' : 's'} · ` : ''}${total} signal${total === 1 ? '' : 's'} across ${activeLaneCount} lane${activeLaneCount === 1 ? '' : 's'}`}</span>
+          <span style={{ fontSize: 11, color: DIM }}>{loading ? 'scanning feeds…' : `${total} signal${total === 1 ? '' : 's'} across ${activeLaneCount} lane${activeLaneCount === 1 ? '' : 's'}`}</span>
           {!loading && (
             <span style={{ fontSize: 9.5, color: DIM }}>
               {(['momentum', 'warrant', 'transform', 'bench'] as const).map((k) => (
@@ -559,75 +432,22 @@ export function DailySignalInbox() {
         </div>
       </div>
 
-      {!collapsed && !loading && total === 0 && pullbacks.length === 0 && (
+      {!collapsed && !loading && total === 0 && (
         <div style={{ fontSize: 11.5, color: DIM, marginTop: 10, lineHeight: 1.6 }}>
-          No signals surfaced right now — the concall feeds may be mid-refresh and your Conviction Bench is empty. This inbox fills from movers, warrant setups, the transformation radar, your bench, and quality pullbacks. Try Refresh, or open <Link href="/concall-intel" style={{ color: '#60A5FA' }}>Concall Intel</Link> / <Link href="/watchlists?tab=conviction" style={{ color: '#F59E0B' }}>Conviction Beats</Link>.
+          No signals surfaced right now — the concall feeds may be mid-refresh and your Conviction Bench is empty. This inbox fills from movers, warrant setups, the transformation radar and your bench. Try Refresh, or open <NavLink href="/concall-intel" style={{ color: '#60A5FA' }}>Concall Intel</NavLink> / <NavLink href="/watchlists?tab=conviction" style={{ color: '#F59E0B' }}>Conviction Beats</NavLink>.
         </div>
       )}
 
-      {!collapsed && (total > 0 || pullbacks.length > 0) && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 12, alignItems: 'flex-start' }}>
-
-          {/* ── LEFT · the hero: Quality Pullbacks (great earnings on sale) ── */}
-          <div style={{ flex: '1.5 1 330px', minWidth: 0, background: 'linear-gradient(135deg, rgba(239,68,68,0.07), rgba(245,158,11,0.03) 60%, transparent)', border: '1px solid rgba(245,158,11,0.28)', borderRadius: 12, padding: '13px 15px' }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 13, fontWeight: 900, color: '#F59E0B', letterSpacing: '0.4px' }}>💎 QUALITY PULLBACKS</span>
-              <span style={{ fontSize: 9.5, color: DIM }}>{pullbacks.length ? `top ${pullbacks.length}` : ''}</span>
-            </div>
-            <div style={{ fontSize: 10, color: DIM, marginTop: 3, lineHeight: 1.5 }}>
-              Your full preset — <span style={{ color: 'var(--mc-text-3)' }}>Sales≥20 · EPS≥25 · PEAD≥40 · OPM Δ≥0 · CFO/PAT≥0.5 · ₹3k Cr+ · 0 pledge · BB/STRONG</span> — every gate strict, ranked by pullback, biggest dip first. Red = on sale; green = still near its high. Buy great earnings on the dip.
-            </div>
-            {pullbacks.length === 0 ? (
-              <div style={{ fontSize: 10.5, color: DIM, marginTop: 12, lineHeight: 1.55 }}>
-                No preset winner is in a meaningful pullback right now — your quality names are near their highs, or the bench needs enriching (52-week distance comes from the enrich pass). This lights up the moment a great-earnings name sells off. <Link href="/watchlists?tab=conviction" style={{ color: '#F59E0B' }}>Open the bench →</Link>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 11 }}>
-                {pullbacks.map((p, i) => {
-                  const down = p.correction > 0.5;                 // actually pulled back
-                  const col = !down ? '#10B981' : p.correction >= 20 ? '#EF4444' : p.correction >= 10 ? '#F59E0B' : '#FBBF24';
-                  const depth = Math.max(3, Math.min(100, Math.abs(p.correction) * 3));
-                  return (
-                    <Link key={p.symbol} href="/watchlists?tab=conviction" style={{ textDecoration: 'none', display: 'block', background: 'rgba(255,255,255,0.02)', border: `1px solid ${down ? `${col}33` : 'rgba(255,255,255,0.07)'}`, borderRadius: 9, padding: '8px 11px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-                        <span style={{ fontSize: 11, fontWeight: 900, color: DIM, fontFamily: 'ui-monospace, monospace', width: 20, flexShrink: 0 }}>{i + 1}</span>
-                        <div style={{ minWidth: 0, flex: 1 }}>
-                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                            <span onClick={(e) => { e.preventDefault(); e.stopPropagation(); openPassport(p.symbol); }} title="Open Stock Passport" style={{ fontSize: 13.5, fontWeight: 900, color: TEXT, cursor: 'pointer' }}>{p.symbol}</span>
-                            <span style={{ fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 3, background: p.tier === 'BLOCKBUSTER' ? 'rgba(245,158,11,0.18)' : 'rgba(16,185,129,0.18)', color: p.tier === 'BLOCKBUSTER' ? '#F59E0B' : '#10B981' }}>{p.tier === 'BLOCKBUSTER' ? 'BB' : 'STRONG'}</span>
-                            <span style={{ fontSize: 9, color: DIM, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.company}</span>
-                          </div>
-                        </div>
-                        {pbSparks.get(String(p.symbol || '').toUpperCase().trim()) && (
-                          <Sparkline data={pbSparks.get(String(p.symbol || '').toUpperCase().trim())} width={62} height={17} />
-                        )}
-                        <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                          <div style={{ fontSize: 16, fontWeight: 900, color: col, fontFamily: 'ui-monospace, monospace', lineHeight: 1 }}>{down ? '−' : '+'}{Math.abs(p.correction).toFixed(0)}%</div>
-                          <div style={{ fontSize: 8, color: DIM }}>{down ? `off ${p.basis}` : 'near high'}</div>
-                        </div>
-                      </div>
-                      <div style={{ height: 3, background: 'rgba(255,255,255,0.06)', borderRadius: 2, marginTop: 7, overflow: 'hidden' }}>
-                        <div style={{ width: `${depth}%`, height: '100%', background: col, opacity: down ? 1 : 0.5 }} />
-                      </div>
-                      <div style={{ fontSize: 9, color: DIM, marginTop: 5, fontFamily: 'ui-monospace, monospace' }}>
-                        {p.sales != null && `sales +${Math.round(p.sales)}%`}{p.pat != null && ` · PAT ${p.pat >= 0 ? '+' : ''}${Math.round(p.pat)}%`}{p.pead != null && ` · PEAD ${Math.round(p.pead)}`}{p.mcap != null && ` · ₹${Math.round(p.mcap).toLocaleString('en-IN')} Cr`}
-                      </div>
-                    </Link>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* ── RIGHT · the live signal lanes, balanced 2-column masonry so short
-                 lanes (e.g. Warrant) don't leave big empty gaps under tall ones ── */}
-          <div style={{ flex: '1.15 1 320px', minWidth: 0, columns: '150px', columnGap: 9 }}>
+      {!collapsed && total > 0 && (
+        // zzz1052 — the four lanes side by side (one row on a wide screen, 2 × 2 on a laptop, stacked on a phone);
+        // each lane uses the width the old Quality-pullbacks column took.
+        <div data-testid="inbox-lanes" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 10, marginTop: 12, alignItems: 'start' }}>
             {lanes.map((lane) => {
               const laneSignals = signals.filter((s) => s.lane === lane).sort((a, b) => b.score - a.score);
               const meta = LANE_META[lane];
               const laneCount = laneSignals.length;
               return (
-                <div key={lane} style={{ background: '#0D1623', border: `1px solid ${meta.c}33`, borderLeft: `3px solid ${meta.c}`, borderRadius: 9, padding: '9px 11px', breakInside: 'avoid', marginBottom: 9, display: 'flex', flexDirection: 'column' }}>
+                <div key={lane} data-lane={lane} style={{ background: '#0D1623', border: `1px solid ${meta.c}33`, borderLeft: `3px solid ${meta.c}`, borderRadius: 9, padding: '10px 12px', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
                     <span style={{ fontSize: 10.5, fontWeight: 800, color: meta.c, letterSpacing: '0.4px' }}>{meta.emoji} {meta.label}</span>
                     <span style={{ fontSize: 9, fontWeight: 800, color: laneCount ? meta.c : DIM, fontFamily: 'ui-monospace, monospace', background: laneCount ? `${meta.c}1f` : 'transparent', borderRadius: 20, padding: laneCount ? '1px 7px' : 0, minWidth: 16, textAlign: 'center' }}>{laneCount}</span>
@@ -650,7 +470,7 @@ export function DailySignalInbox() {
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                       {laneSignals.slice(0, 10).map((s, i) => (
-                        <Link key={`${s.symbol}-${i}`} href={s.href} title={s.note || undefined} style={{ textDecoration: 'none', display: 'block', padding: '5px 7px', borderRadius: 6, background: 'rgba(255,255,255,0.02)', border: `1px solid ${s.soft ? 'rgba(255,255,255,0.05)' : `${(s.hColor || meta.c)}22`}`, opacity: s.soft ? 0.82 : 1 }}>
+                        <NavLink key={`${s.symbol}-${i}`} href={s.href} title={s.note || undefined} style={{ textDecoration: 'none', display: 'block', padding: '5px 7px', borderRadius: 6, background: 'rgba(255,255,255,0.02)', border: `1px solid ${s.soft ? 'rgba(255,255,255,0.05)' : `${(s.hColor || meta.c)}22`}`, opacity: s.soft ? 0.82 : 1 }}>
                           <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                             <span style={{ fontSize: 12, fontWeight: 900, color: TEXT }}>{s.symbol}</span>
                             <span style={{ fontSize: 9, color: DIM, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.company}</span>
@@ -659,20 +479,19 @@ export function DailySignalInbox() {
                           <div style={{ fontSize: 10, fontWeight: 700, color: s.hColor || meta.c, marginTop: 1 }}>{s.headline}</div>
                           <div style={{ fontSize: 9, color: DIM, marginTop: 1, lineHeight: 1.35 }}>{s.detail}</div>
                           {s.quote ? <div style={{ fontSize: 8.5, color: 'var(--mc-text-3)', marginTop: 3, lineHeight: 1.35, fontStyle: 'italic', borderLeft: `2px solid ${s.hColor || meta.c}`, paddingLeft: 5 }}>“{s.quote.length > 120 ? s.quote.slice(0, 120) + '…' : s.quote}”</div> : null}
-                        </Link>
+                        </NavLink>
                       ))}
                     </div>
                   )}
                 </div>
               );
             })}
-          </div>
         </div>
       )}
 
-      {!collapsed && (total > 0 || pullbacks.length > 0) && (
+      {!collapsed && total > 0 && (
         <div style={{ fontSize: 9, color: DIM, marginTop: 10, fontStyle: 'italic', lineHeight: 1.5 }}>
-          💎 Pullbacks are your quality-preset winners ranked by drop from the 52-week high (buy-the-dip). Lanes aggregate concall Movers + today&rsquo;s price leaders, Warrant setups, the Transformation Radar{transformWindowDays ? ` (${transformWindowDays}-day window)` : ''}, and your Conviction Bench{generatedAt ? ` · radar ${new Date(generatedAt).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })}` : ''}. <b>watch</b> = best available when no hard event fired. Deterministic reads, not recommendations.
+          Lanes aggregate concall Movers + today&rsquo;s price leaders, Warrant setups, the Transformation Radar{transformWindowDays ? ` (${transformWindowDays}-day window)` : ''}, and your Conviction Bench{generatedAt ? ` · radar ${new Date(generatedAt).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })}` : ''}. <b>watch</b> = best available when no hard event fired. Deterministic reads, not recommendations.
         </div>
       )}
     </div>

@@ -591,12 +591,17 @@ export default function ChartWorkspace() {
 
   // ── load data when ticker / timeframe / needed history changes ────────────
   useEffect(() => {
-    if (!ready) return;
     let ctrl: AbortController | null = null;
     let disposed = false;
     const ttl = tf === 'D' ? 300_000 : 1_800_000;
     const id = chartIdentityKey({ ticker, market, exchange, tf, basis });
     const url = `/api/v1/chart/${encodeURIComponent(ticker)}?market=${market}&interval=${TF_TO_INTERVAL[tf]}&range=${dataRange}${market === 'IN' && exchange ? `&exchange=${exchange}` : ''}${basis === 'tr' ? '&basis=tr&adj=2' : ''}`;   // N-05: adj=2 — never reuse a browser-cached answer from the old dividend factor
+    // zzz1052 — the bars download starts while the chart engine (KLineChart chunk) is still loading, instead of after it:
+    // the shared request is joined (or its cached answer used) by load() below once the chart is ready.
+    if (!ready) {
+      if (!freshChart(cacheRef.current, url, ttl)) chartFetch(url).catch(() => { /* load() reports errors */ });
+      return;
+    }
     const show = (j: ChartResponse) => {
       const chart = chartRef.current;
       if (!chart) return;

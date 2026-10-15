@@ -110,18 +110,6 @@ export interface InboxSignal {
 
 export type LaneKey = 'momentum' | 'warrant' | 'transform' | 'bench';
 
-// zzz445 — QUALITY PULLBACKS. Great-earnings names (the institutional quality
-// preset) that are now DOWN the most from their 52-week high — i.e. the rule
-// "buy great earnings picks on the pullback." Everything is read from the
-// Conviction Bench, which already carries every preset field + the 52w-high
-// distance, so this is a pure client-side derivation, no new fetch.
-export interface InboxPullback {
-  symbol: string; company: string; tier: string;
-  correction: number;               // % below its 52-week high (positive number)
-  basis: '52w high' | 'since filing';
-  sales?: number | null; pat?: number | null; pead?: number | null; mcap?: number | null;
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // PATCH 1105 — PIPELINE HEALTH
 //

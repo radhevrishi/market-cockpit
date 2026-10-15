@@ -306,6 +306,11 @@
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.38);
   border-color: var(--mc-border-2);
 }
+/* zzz1052 — hover for small clickable chips (home Favourites): no movement. A chip that jumps 2px up on hover slides out
+   from under a pointer resting on its lower edge, flickers, and the press and release land on different elements, so
+   the click is lost ("I need to click 4 times"). Same glow, fixed position. */
+.mc-chip-hover { transition: box-shadow var(--mc-dur-base) ease, filter var(--mc-dur-fast) ease; }
+.mc-chip-hover:hover { box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32); filter: brightness(1.12); }
 /* subtle top accent hairline that colours a card by state */
 .mc-accent-top { position: relative; }
 .mc-accent-top::before {

@@ -8,7 +8,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
+import NavLink from '@/components/NavLink';   // zzz1052 — prefetch on hover / focus / press, not on scroll-into-view
 import { getEngineView, PASSPORT_EVENT } from '@/lib/engines';
 import type { EngineView } from '@/lib/engines';
 import { computeVerdict, VERDICT_COLOR } from '@/lib/verdict';
@@ -361,11 +361,11 @@ export default function StockPassport() {
 
         {/* ── Footer links ── */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 14, paddingTop: 11, borderTop: '1px solid var(--mc-border-1)' }}>
-          <Link href="/cheat-entry" style={linkChipStyle}>🥷 Cheat Entry</Link>
-          <Link href="/multibagger" style={linkChipStyle}>🚀 Multibagger</Link>
-          <Link href="/watchlists?tab=conviction" style={linkChipStyle}>🏆 Bench</Link>
-          <Link href="/position-sizing" style={linkChipStyle}>📐 Sizing</Link>
-          <Link href="/valuation-calc" style={linkChipStyle}>🧮 Valuation</Link>
+          <NavLink href="/cheat-entry" style={linkChipStyle}>🥷 Cheat Entry</NavLink>
+          <NavLink href="/multibagger" style={linkChipStyle}>🚀 Multibagger</NavLink>
+          <NavLink href="/watchlists?tab=conviction" style={linkChipStyle}>🏆 Bench</NavLink>
+          <NavLink href="/position-sizing" style={linkChipStyle}>📐 Sizing</NavLink>
+          <NavLink href="/valuation-calc" style={linkChipStyle}>🧮 Valuation</NavLink>
         </div>
       </div>
     </div>

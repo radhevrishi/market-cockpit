@@ -68,17 +68,16 @@ describe('timers that sleep while the tab is hidden', () => {
 });
 
 describe('prefetch policy', () => {
-  test('only Home and the first few favourites prefetch', () => {
-    assert.equal(navPrefetch('/', null), undefined);
+  test('no rail / menu link prefetches on view (zzz1052: NavLink prefetches on hover / focus / press instead)', () => {
+    assert.equal(navPrefetch('/', null), false);
     assert.equal(navPrefetch('/news', null), false);
-    assert.equal(navPrefetch('/news', 0), undefined);
-    assert.equal(navPrefetch('/news', PREFETCH_FAVOURITES - 1), undefined);
-    assert.equal(navPrefetch('/news', PREFETCH_FAVOURITES), false);
-    assert.ok(PREFETCH_FAVOURITES <= 3);
+    assert.equal(navPrefetch('/news', 0), false);
+    assert.equal(PREFETCH_FAVOURITES, 0);
   });
   test('every sidebar, menu and chip link in the shell sets a prefetch policy', () => {
     // every <Link ...>...</Link> block (attributes span several lines)
-    const blocks = (src: string) => src.split(/<Link\s/).slice(1).map((b) => b.slice(0, b.indexOf('</Link>')));
+    // zzz1052 — the shell renders <NavLink> (no viewport prefetch by default); the explicit prefetch policy stays on each link
+    const blocks = (src: string) => src.split(/<NavLink\s/).slice(1).map((b) => b.slice(0, b.indexOf('</NavLink>')));
     const nav = blocks(read('app/(dashboard)/DashboardClient.tsx'));
     const home = nav.filter((b) => /^\s*href="\/"/.test(b));
     const others = nav.filter((b) => !/^\s*href="\/"/.test(b));

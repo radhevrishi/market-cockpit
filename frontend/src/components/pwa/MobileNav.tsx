@@ -4,7 +4,7 @@
 // full sidebar as a drawer (with the ★ toggles, Settings, Install and Sign out).
 // The desktop sidebar is hidden on phones; this replaces it there.
 import React, { ReactNode, useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
+import NavLink from '@/components/NavLink';   // zzz1052 — prefetch on hover / focus / press, not on scroll-into-view
 import { Home, Star, Search, Menu as MenuIcon, Settings, LogOut, Smartphone } from 'lucide-react';
 import { useInstallState } from './pwa-state';
 import s from './pwa.module.css';
@@ -62,10 +62,10 @@ export default function MobileNav({ groups, favs, pathname, isActive, onToggleFa
   return (
     <>
       <nav className={s.tabBar} aria-label="App navigation">
-        <Link href="/" className={`${s.tab} ${homeActive && !open ? s.tabActive : ''}`} aria-current={homeActive ? 'page' : undefined}>
+        <NavLink href="/" className={`${s.tab} ${homeActive && !open ? s.tabActive : ''}`} aria-current={homeActive ? 'page' : undefined}>
           <Home size={22} aria-hidden />
           <span>Home</span>
-        </Link>
+        </NavLink>
         <button type="button" className={`${s.tab} ${open === 'favs' ? s.tabActive : ''}`} aria-haspopup="dialog" aria-expanded={open === 'favs'}
           onClick={() => setOpen((o) => (o === 'favs' ? null : 'favs'))}>
           <Star size={22} aria-hidden className={s.tabStar} fill={open === 'favs' ? 'currentColor' : 'none'} />
@@ -99,10 +99,10 @@ export default function MobileNav({ groups, favs, pathname, isActive, onToggleFa
             ) : (
               <div className={s.favGrid}>
                 {favList.map((f, fi) => (
-                  <Link key={f.href} href={f.href} prefetch={navPrefetch(f.href, fi)} className={`${s.favItem} ${isActive(f.href.split('?')[0]) && !f.href.includes('?') ? s.favItemActive : ''}`}>
+                  <NavLink key={f.href} href={f.href} prefetch={navPrefetch(f.href, fi)} className={`${s.favItem} ${isActive(f.href.split('?')[0]) && !f.href.includes('?') ? s.favItemActive : ''}`}>
                     <span className={s.favIcon} aria-hidden>{f.icon ?? <Star size={16} />}</span>
                     <span>{f.label}</span>
-                  </Link>
+                  </NavLink>
                 ))}
               </div>
             )}
@@ -125,10 +125,10 @@ export default function MobileNav({ groups, favs, pathname, isActive, onToggleFa
                   const active = !it.href.includes('?') && isActive(it.href);
                   return (
                     <div key={`${g.id}-${it.href}`} className={s.menuRow}>
-                      <Link href={it.href} prefetch={navPrefetch(it.href, null)} className={`${s.menuLink} ${active ? s.menuLinkActive : ''}`} aria-current={active ? 'page' : undefined}>
+                      <NavLink href={it.href} prefetch={navPrefetch(it.href, null)} className={`${s.menuLink} ${active ? s.menuLinkActive : ''}`} aria-current={active ? 'page' : undefined}>
                         <span aria-hidden>{it.icon}</span>
                         <span className={s.menuLabel}>{it.label}</span>
-                      </Link>
+                      </NavLink>
                       <button type="button" className={`${s.starBtn} ${starred ? s.starOn : ''}`} aria-pressed={starred}
                         aria-label={starred ? `Remove ${it.label} from favourites` : `Add ${it.label} to favourites`}
                         onClick={() => onToggleFav(it.href)}>{starred ? '★' : '☆'}</button>
@@ -139,9 +139,9 @@ export default function MobileNav({ groups, favs, pathname, isActive, onToggleFa
             ))}
           </div>
           <div className={s.menuFooter}>
-            <Link href="/settings" prefetch={false} className={s.menuLink}><Settings size={18} aria-hidden /> Settings</Link>
+            <NavLink href="/settings" prefetch={false} className={s.menuLink}><Settings size={18} aria-hidden /> Settings</NavLink>
             {!install.standalone && (
-              <Link href="/settings#install-app" prefetch={false} className={s.menuLink}><Smartphone size={18} aria-hidden /> Install app</Link>
+              <NavLink href="/settings#install-app" prefetch={false} className={s.menuLink}><Smartphone size={18} aria-hidden /> Install app</NavLink>
             )}
             <button type="button" className={s.signOut} onClick={onSignOut}><LogOut size={18} aria-hidden /> Sign out</button>
           </div>

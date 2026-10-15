@@ -15,7 +15,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import Link from 'next/link';
+import NavLink from '@/components/NavLink';   // zzz1052 — prefetch on hover / focus / press, not on scroll-into-view
 import { getPortfolioMap } from '@/lib/portfolio-overlay';
 import { getTechBuyZone } from '@/lib/tech-entries';
 import { diffNew, markSeen, getDismissed, dismiss, clearDismissed } from '@/lib/seen-store';
@@ -498,7 +498,7 @@ export default function CockpitPage() {
             <div style={{ fontSize: 34 }}>🛩️</div>
             <div style={{ fontSize: 16, fontWeight: 700, color: C.text0, marginTop: 8 }}>Clear skies — nothing needs a decision</div>
             <div style={{ fontSize: 13, color: C.muted, marginTop: 6, maxWidth: '52ch', margin: '6px auto 0' }}>
-              No breached theses, no fresh prints on your names, no rotation flips against you. Add holdings in <Link href="/portfolio" style={{ color: C.accent }}>My Book</Link> and theses in <Link href="/thesis" style={{ color: C.accent }}>Thesis Tracker</Link> to feed the cockpit.
+              No breached theses, no fresh prints on your names, no rotation flips against you. Add holdings in <NavLink href="/portfolio" style={{ color: C.accent }}>My Book</NavLink> and theses in <NavLink href="/thesis" style={{ color: C.accent }}>Thesis Tracker</NavLink> to feed the cockpit.
             </div>
           </div>
         )}
@@ -515,7 +515,7 @@ export default function CockpitPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {grouped[b].map(s => (
                 <div key={s.id} style={{ display: 'flex', gap: 8, alignItems: 'stretch', background: C.card, border: `1px solid ${newIds.has(s.id) ? `color-mix(in srgb, ${C.accent} 45%, ${C.border})` : C.border}`, borderLeft: `3px solid ${SEV_META[s.sev].color}`, borderRadius: 10 }}>
-                  <Link href={s.href} style={{ textDecoration: 'none', flex: 1, minWidth: 0 }}>
+                  <NavLink href={s.href} style={{ textDecoration: 'none', flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', padding: '12px 4px 12px 14px' }}>
                       <div style={{ fontSize: 18, lineHeight: 1.2, marginTop: 1 }}>{s.icon}</div>
                       <div style={{ flex: 1, minWidth: 0 }}>
@@ -529,7 +529,7 @@ export default function CockpitPage() {
                       </div>
                       <div style={{ ...MONO, fontSize: 15, color: C.dim, alignSelf: 'center' }}>›</div>
                     </div>
-                  </Link>
+                  </NavLink>
                   <button
                     onClick={() => { try { dismiss('cockpit', s.id); build(); } catch {} }}
                     title="Dismiss — I've handled this"

@@ -90,12 +90,13 @@ export function swUpdateDue(lastCheckAt: number | null, now: number, gapMs = SW_
 
 /**
  * Sidebar prefetch policy. Next.js prefetches every <Link> that scrolls into
- * view (one server request each). The rail and the phone menu hold ~75 links,
- * so only Home and the first few favourites keep prefetching.
+ * view — with Next 16's segment cache that is TWO server renders per link
+ * (route tree + page). zzz1052: no rail / menu link prefetches on view any
+ * more, not even Home or the first favourites; the shell renders them with
+ * <NavLink>, which prefetches the moment the pointer rests on a link, it gets
+ * keyboard focus or it is pressed — before the click completes.
  */
-export const PREFETCH_FAVOURITES = 3;
-export function navPrefetch(href: string, favouriteIndex: number | null): false | undefined {
-  if (href === '/') return undefined;
-  if (favouriteIndex != null && favouriteIndex >= 0 && favouriteIndex < PREFETCH_FAVOURITES) return undefined;
+export const PREFETCH_FAVOURITES = 0;
+export function navPrefetch(_href: string, _favouriteIndex: number | null): false {
   return false;
 }

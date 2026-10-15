@@ -2,7 +2,7 @@
 // zzz1032 — the "Latest result" cell and detail block: the company's latest graded earnings result (Earnings Opportunities and / or
 // Conviction Beats), compact in the table, in full in the row detail. Data: lib/screener/latest-result.ts (no fetch here).
 import React from 'react';
-import Link from 'next/link';
+import NavLink from '@/components/NavLink';   // zzz1052 — prefetch on hover / focus / press, not on scroll-into-view
 import { daysSince, profitWord, resultLines, resultLink, shortDate, shownQuarter, type LatestResult, type ResultTier } from '@/lib/screener/latest-result';
 import type { ScreenMarket } from '@/lib/screener/types';
 import { C } from './pine-ui';
@@ -33,9 +33,9 @@ export function LatestResultCell({ lr, market, today, loading }: { lr: LatestRes
     <td data-col="result" data-result-date={lr.d} title={tip} style={{ whiteSpace: 'nowrap', fontSize: 12 }}>
       <span style={{ display: 'inline-flex', gap: 5, alignItems: 'center' }}>
         {lr.cb ? <span aria-label="On the Conviction Beats bench" title="On the Conviction Beats bench">🏆</span> : null}
-        <Link href={resultLink(market)} className="pnx-link" style={{ color: C.text1 }} title={`${tip}\n\nOpen ${market === 'US' ? 'US ' : ''}Earnings Opportunities`}>
+        <NavLink href={resultLink(market)} className="pnx-link" style={{ color: C.text1 }} title={`${tip}\n\nOpen ${market === 'US' ? 'US ' : ''}Earnings Opportunities`}>
           {qc.q ? <span>{qc.q}{qc.late ? <span style={{ color: C.amber }} data-late-quarter aria-label={`filed ${qc.late} days after the quarter ended`}> ⚠</span> : null} · </span> : null}<span>{shortDate(lr.d, today)}</span>
-        </Link>
+        </NavLink>
         {ago != null ? <span className="pnx-dim" style={{ fontSize: 10.5 }}>{ago}d</span> : null}
         {lr.g ? <TierChip g={lr.g} /> : null}
         <Fig label="Sales" v={lr.s} />
@@ -53,7 +53,7 @@ export function LatestResultDetail({ lr, market, today }: { lr: LatestResult | u
       <h4 style={{ marginTop: 12 }}>Latest result {lr?.g ? <TierChip g={lr.g} /> : null} {lr?.cb ? <span title="On the Conviction Beats bench">🏆</span> : null}</h4>
       <ul style={{ listStyle: 'none', paddingLeft: 0 }}>
         {lines.map((l) => <li key={l}>{l}</li>)}
-        <li><Link href={resultLink(market)} className="pnx-link">Open {market === 'US' ? 'US ' : ''}Earnings Opportunities</Link></li>
+        <li><NavLink href={resultLink(market)} className="pnx-link">Open {market === 'US' ? 'US ' : ''}Earnings Opportunities</NavLink></li>
       </ul>
     </div>
   );

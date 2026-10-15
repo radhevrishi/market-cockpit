@@ -4,7 +4,7 @@
 // the Pine Screener and the Stock Sheet. The table underneath keeps its scroll position (the panel floats over the page).
 // zzz1012 — premium styling (screener tokens), check marks in their own column, j / k hint.
 import { useEffect, useRef } from 'react';
-import Link from 'next/link';
+import NavLink from '@/components/NavLink';   // zzz1052 — prefetch on hover / focus / press, not on scroll-into-view
 import { FIELDS, fieldOf, fmtValue, fmtPrice, type Filter, type NumKey } from '@/lib/screener/filters';
 import type { ScreenMarket, ScreenRow } from '@/lib/screener/types';
 import { REVIEW_STATES, type ReviewState } from '@/lib/screener/workflow';
@@ -46,7 +46,7 @@ export default function CompanyDetail({ row, market, filters, exactOnly, review,
           {row.tvSec || row.sec || 'Sector unknown'}{row.ind ? ` · ${row.ind}` : ''}
         </div>
         <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
-          <Link href={chartHref} className="mcss-btn primary sm" onClick={onChart}>Open chart</Link>
+          <NavLink href={chartHref} className="mcss-btn primary sm" onClick={onChart}>Open chart</NavLink>
           <a href={`/pine-screener?from=stock&market=${market}`} className="mcss-btn sm" onClick={onPine} title="Opens the Pine Screener limited to this company">Pine Screener</a>
           <a href={`/stock-sheet?ticker=${encodeURIComponent(row.t)}&market=${market}`} className="mcss-btn sm" title="Fundamental analysis on the Stock Sheet">Stock Sheet</a>
         </div>
