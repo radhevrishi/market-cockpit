@@ -254,10 +254,12 @@ import {
 import { selectIndiaCb, selectUsCb, cbCriteriaLine } from '../thesis/pc-bench';
 import { usTickerKey } from '../us-thesis/sanitize';
 
-// Synthetic India Conviction Beats entries with a spread of outcomes.
+// Synthetic India Conviction Beats entries with a spread of outcomes. zzz1036 — filed 12 days before today: the post-results drift
+// reading fades with age, so a fixed date made this test fail once the calendar moved past it.
+const RECENT_FILING = new Date(Date.now() - 12 * 86_400_000).toISOString().slice(0, 10);
 function cbEntry(i: number, over: any = {}): any {
   return {
-    ticker: sym(i), company: `Synthetic Co ${i}`, tier: i % 2 ? 'STRONG' : 'BLOCKBUSTER', composite_score: 70, filing_date: '2026-08-12',
+    ticker: sym(i), company: `Synthetic Co ${i}`, tier: i % 2 ? 'STRONG' : 'BLOCKBUSTER', composite_score: 70, filing_date: RECENT_FILING,
     sales_yoy_pct: 34, net_profit_yoy_pct: 44, eps_yoy_pct: 41, opm_pct: 18, opm_prev_pct: 15, cfo_to_pat_ratio: 1.1,
     market_cap_cr: 6000 + i, pe: 20, roce: 24, move_pct: 3, pead_score: 70, ...over,
   };

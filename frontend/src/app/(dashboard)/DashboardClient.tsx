@@ -753,7 +753,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
             <div className={pwa.brand}>
               {/* zzz796 — on phones the long name collapses to the MC badge so the chips fit. */}
               <Link href="/" className={pwa.brandBadge} aria-label="Market Cockpit home">MC</Link>
-              <Link href="/" title="Home — all pages" className={pwa.brandText} style={{ fontSize: '15px', fontWeight: '700', textDecoration: 'none', background: 'linear-gradient(90deg, var(--mc-accent), #06B6D4)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+              <Link href="/" prefetch={false} title="Home — all pages" className={pwa.brandText} style={{ fontSize: '15px', fontWeight: '700', textDecoration: 'none', background: 'linear-gradient(90deg, var(--mc-accent), #06B6D4)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
                 MARKET COCKPIT
               </Link>
               <span className="desktop-header-subtitle" style={{ fontSize: '11px', color: 'var(--mc-text-4)' }}>Bloomberg-lite · India + US</span>
