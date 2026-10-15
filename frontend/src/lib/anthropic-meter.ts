@@ -84,6 +84,8 @@ export const PRICING: Record<string, { input: number; output: number; cacheRead:
   'gpt-4.1-mini':      { input: 0.40, output: 1.60, cacheRead: 0.10,  cacheWrite: 0.40 },
   'gpt-4.1':           { input: 2,    output: 8,    cacheRead: 0.50,  cacheWrite: 2 },
   'gpt-4o-mini':       { input: 0.15, output: 0.60, cacheRead: 0.075, cacheWrite: 0.15 },
+  // zzz1051 — document search embeddings (input only)
+  'text-embedding-3-small': { input: 0.02, output: 0, cacheRead: 0, cacheWrite: 0 },
 };
 
 export interface Usage {
@@ -520,4 +522,46 @@ export async function webResearch(feature: string, system: string, prompt: strin
     await record(feature, 0, null, false, { status: 0, message: String(e?.message || e) });
     return { ok: false, text: '', urls: [], usd: 0, error: String(e?.message || e) };
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// zzz1051 — EMBEDDINGS (document search). OpenAI only (text-embedding-3-small); same monthly gate and ledger as every
+// other call. The caller (lib/doc-search) keeps its own small DAILY ceiling on top. Never logs the key or the text.
+// ═══════════════════════════════════════════════════════════════════════════
+export interface EmbeddingsResult { ok: boolean; vectors: number[][]; tokens: number; usd: number; status: number; error?: string }
+export const embeddingsConfigured = () => !!process.env.OPENAI_API_KEY;
+export async function openaiEmbeddings(feature: string, inputs: string[], opts: { model?: string; dimensions?: number; signal?: AbortSignal } = {}): Promise<EmbeddingsResult> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return { ok: false, vectors: [], tokens: 0, usd: 0, status: 401, error: 'no OPENAI_API_KEY' };
+  if (!inputs.length) return { ok: true, vectors: [], tokens: 0, usd: 0, status: 200 };
+  const gate = await spendGate();
+  if (!gate.allowed) { await record(feature, 0, null, true); return { ok: false, vectors: [], tokens: 0, usd: 0, status: 402, error: gate.message }; }
+  const model = opts.model || 'text-embedding-3-small';
+  let resp: Response;
+  try {
+    resp = await fetch('https://api.openai.com/v1/embeddings', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ model, input: inputs, ...(opts.dimensions ? { dimensions: opts.dimensions } : {}), encoding_format: 'float' }),
+      signal: opts.signal,
+    });
+  } catch (e: any) {
+    await record(feature, 0, null, false, { status: 0, message: String(e?.message || e) });
+    return { ok: false, vectors: [], tokens: 0, usd: 0, status: 0, error: String(e?.message || e).slice(0, 200) };
+  }
+  if (!resp.ok) {
+    let message = '';
+    try { const t = await resp.text(); const je = JSON.parse(t); message = String(je?.error?.message || t); } catch { message = `HTTP ${resp.status}`; }
+    await record(feature, 0, null, false, { status: resp.status, message });
+    return { ok: false, vectors: [], tokens: 0, usd: 0, status: resp.status, error: message.slice(0, 200) };
+  }
+  const j: any = await resp.json().catch(() => null);
+  const data: any[] = Array.isArray(j?.data) ? j.data.slice().sort((a: any, b: any) => Number(a?.index) - Number(b?.index)) : [];
+  const tokens = Number(j?.usage?.prompt_tokens ?? j?.usage?.total_tokens) || 0;
+  const usage: Usage = { input_tokens: tokens, output_tokens: 0 };
+  const usd = costOf(model, usage);
+  await record(feature, usd, usage, false);
+  const vectors = data.map((d) => (Array.isArray(d?.embedding) ? d.embedding.map(Number) : []));
+  if (vectors.length !== inputs.length || vectors.some((v) => !v.length)) return { ok: false, vectors: [], tokens, usd, status: 502, error: 'embeddings answer did not match the inputs' };
+  return { ok: true, vectors, tokens, usd, status: 200 };
 }

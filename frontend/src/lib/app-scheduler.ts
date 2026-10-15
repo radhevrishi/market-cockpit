@@ -440,6 +440,13 @@ export const APP_JOBS: readonly AppJob[] = [
   // Morning conviction brief: 04:29 UTC Mon–Fri (≈06:30 Berlin). Thesis watch: 02:15 UTC Mon–Fri (≈07:45 IST). The route sends
   // once per day; a run that composed but could not deliver (no channel set up) reports ok=false so the heartbeat shows it.
   { name: 'conviction-catalyst-brief', crons: ['29 4 * * 1-5'], timeoutMs: 4 * MIN, workflow: 'owner-briefs.yml', does: 'POST /api/v1/cron/conviction-catalyst-brief (rules + stored research; AI only for new names, ≤ $0.05 a run)', run: async (ctx) => (await import('./owner-briefs/job')).ownerBriefJob(ctx, '/api/v1/cron/conviction-catalyst-brief', false) },
+  // zzz1051 — document search: index new company documents (Postgres full text) and add meaning vectors within SEARCH_EMBED_DAILY_USD
+  // (default $0.10 a UTC day). In-process; paid calls are never retried by the scheduler.
+  { name: 'doc-search-index', crons: ['33 * * * *'], timeoutMs: 12 * MIN, workflow: BRIDGE, does: 'in-process: lib/doc-search/store runIndexJob (new documents → passages; embeddings within the daily ceiling); by hand: POST /api/v1/search?index=1', run: async () => {
+    const r = await (await import('./doc-search/store')).runIndexJob({ budgetMs: 9 * MIN });
+    console.log('[doc-search-index]', JSON.stringify({ ...r, byLevel: r.byLevel }));
+    return r.ok ? { ok: true, status: 200 } : { ok: false, status: 503, error: r.error || r.why };
+  } },
   { name: 'portfolio-thesis-watch', crons: ['15 2 * * 1-5'], timeoutMs: 4 * MIN, workflow: 'owner-briefs.yml', does: 'POST /api/v1/cron/portfolio-thesis-watch (stored research only, no AI, no price)', run: async (ctx) => (await import('./owner-briefs/job')).ownerBriefJob(ctx, '/api/v1/cron/portfolio-thesis-watch', true) },
 ];
 

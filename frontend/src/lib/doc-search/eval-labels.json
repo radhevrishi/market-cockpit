@@ -1,0 +1,23 @@
+{
+  "_about": "zzz1051 document-search evaluation queries. DRAFT: written without seeing the stored documents, so relevance is judged by PHRASES (regex, case-insensitive) that an answering passage must contain - this works on any data but favours keyword search a little. Add `tickers` once you know which companies truly answer a query. Run: GET /api/v1/search?eval=1 (add &rerank=1 to price the reranker).",
+  "labels": [
+    { "q": "who guided margin expansion this quarter", "phrases": ["margin (?:expansion|improvement)", "expand(?:ing)? (?:our |the )?(?:ebitda |gross |operating )?margins?", "margins? (?:to|will) (?:improve|expand|go up)", "improve(?:ment in)? (?:our |the )?(?:ebitda |gross |operating )?margins?"] },
+    { "q": "companies talking about capacity utilisation above 80%", "phrases": ["(?:capacity )?utili[sz]ation[^.]{0,60}\\b(?:8\\d|9\\d|100)\\s?%", "\\b(?:8\\d|9\\d)\\s?%[^.]{0,40}utili[sz]"] },
+    { "q": "order book growth defence", "phrases": ["order (?:book|backlog)[^.]{0,120}(?:defen[cs]e|army|navy|air force|DRDO|HAL|BEL|MoD)", "(?:defen[cs]e|DRDO|MoD)[^.]{0,120}order (?:book|backlog|inflow)"] },
+    { "q": "order inflow guidance for the full year", "phrases": ["order inflows?[^.]{0,80}(?:guid|expect|target|FY ?\\d{2})", "(?:guid|expect|target)[^.]{0,60}order inflows?"] },
+    { "q": "new capacity coming on stream next year", "phrases": ["(?:capacity|plant|line|facility)[^.]{0,80}(?:commission|come on stream|operational|start production|go live)", "commercial production"] },
+    { "q": "revenue growth guidance of 20% or more", "phrases": ["(?:revenue|top[- ]line|sales)[^.]{0,80}(?:2\\d|[3-9]\\d)\\s?%[^.]{0,40}(?:growth|grow)", "grow[^.]{0,40}(?:2\\d|[3-9]\\d)\\s?%"] },
+    { "q": "raised full year guidance", "phrases": ["rais(?:e|ed|ing) (?:our |the )?(?:full[- ]year |annual |FY ?\\d{2} )?(?:guidance|outlook)", "(?:guidance|outlook)[^.]{0,40}(?:raised|increased|revised upward)"] },
+    { "q": "lowered guidance or cut outlook", "phrases": ["(?:lower|cut|reduc|revis)(?:e|ed|ing)[^.]{0,30}(?:guidance|outlook)[^.]{0,30}(?:down|lower)?", "(?:guidance|outlook)[^.]{0,40}(?:lowered|reduced|cut|revised down)"] },
+    { "q": "working capital days improvement", "phrases": ["working capital[^.]{0,80}(?:days|cycle)[^.]{0,60}(?:improv|reduc|come down|lower)", "(?:debtor|receivable|inventory) days[^.]{0,60}(?:improv|reduc|come down)"] },
+    { "q": "debt free by next year", "phrases": ["debt[- ]free", "net[- ]cash (?:positive|company)", "repay[^.]{0,60}(?:all|entire|full)[^.]{0,30}debt"] },
+    { "q": "export growth and new geographies", "phrases": ["export[^.]{0,80}(?:grow|growth|increase|new market|new geograph)", "new geograph"] },
+    { "q": "data centre demand for transformers and cables", "phrases": ["data cent(?:re|er)[^.]{0,120}(?:transformer|cable|switchgear|power|demand)", "(?:transformer|cable)[^.]{0,120}data cent(?:re|er)"] },
+    { "q": "price increase passed on to customers", "phrases": ["price (?:increase|hike)[^.]{0,80}(?:pass|customer)", "pass(?:ed|ing)? on[^.]{0,40}(?:price|cost)"] },
+    { "q": "PLI incentive benefit", "phrases": ["\\bPLI\\b", "production[- ]linked incentive"] },
+    { "q": "US tariff impact on business", "phrases": ["tariff[^.]{0,120}(?:impact|effect|headwind|pass)", "(?:impact|effect)[^.]{0,60}tariff"] },
+    { "q": "EBITDA margin target for next year", "phrases": ["EBITDA margins?[^.]{0,80}(?:target|guid|expect|aspir)[^.]{0,60}\\d", "(?:target|guid|expect)[^.]{0,60}EBITDA margins?[^.]{0,60}\\d"] },
+    { "q": "gross margin pressure from raw material costs", "phrases": ["(?:raw material|input|commodity) (?:cost|price)s?[^.]{0,120}(?:margin|pressure|impact)", "gross margins?[^.]{0,80}(?:pressure|declin|impact|compress)"] },
+    { "q": "backlog conversion over the next 12 to 18 months", "phrases": ["(?:backlog|order book)[^.]{0,120}(?:execut|convert|conversion)[^.]{0,80}(?:months|years|quarters)", "execut(?:e|ion|able)[^.]{0,40}(?:over|in|within) (?:the next )?(?:12|18|24|two|three)"] }
+  ]
+}

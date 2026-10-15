@@ -86,6 +86,12 @@ export async function POST(req: NextRequest) {
   try {
     // zzz916: a longer read timeout (the index is large) — a read that still fails makes ingest refuse (503), never overwrite
     const r = await ingestDocs(v.body, realDocsKv(15_000));
+    // zzz1051: the document search index takes the FULL text the collector sent (KV keeps only excerpts). Runs after the
+    // answer, never fails the ingest; the hourly doc-search job catches up on anything missed.
+    if (v.body.docs.length) {
+      const rawDocs = (raw as any)?.docs;
+      void import('@/lib/doc-search/store').then((m) => m.indexFromIngest(v.body.docs, rawDocs)).catch(() => {});
+    }
     return NextResponse.json({ ok: true, ...r, rejected: v.rejected }, { headers: NO_STORE });
   } catch (e: any) {
     if (e instanceof DocsIndexUnreadableError) return NextResponse.json({ ok: false, error: 'index busy or unreadable; retry' }, { status: 503, headers: NO_STORE });
