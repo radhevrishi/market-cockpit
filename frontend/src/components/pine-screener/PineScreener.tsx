@@ -22,8 +22,9 @@ import {
   type PerfKey, type PineHit, type PineQuery, type PineScreen, type PineStage, type ScreenPatternTag,
 } from '@/lib/screener/pine';
 import { BUILT_IN_PINE_SCREENS } from '@/lib/screener/pine-presets';
-import { fmtValue, fmtPrice, fmtMoney, fmtExact, filterLabel, fieldOf, patTagsOf, patMissingWhy, BUILT_IN_SCREENS, SCREENS_KEY, cleanScreens, type Filter, type NumKey, type PatTf, type Screen } from '@/lib/screener/filters';
+import { fmtValue, fmtPrice, fmtMoney, fmtExact, filterLabel, filterKeys, fieldOf, patTagsOf, patMissingWhy, BUILT_IN_SCREENS, SCREENS_KEY, cleanScreens, type Filter, type NumKey, type PatTf, type Screen } from '@/lib/screener/filters';
 import { TV_SECTORS } from '@/lib/screener/tv-sectors';
+import { ACC_HONESTY } from '@/lib/accumulation';
 import { writeReviewQueue } from '@/lib/screener/workflow';
 import { scopeItems, scopeCounts, scopeLabel, countsLine, emptyState, confirmAddText, effectiveScope, type ActionScope } from '@/lib/screener/action-scope';
 import {
@@ -45,7 +46,7 @@ import { getConvictionTickers, getConvictionList } from '@/lib/conviction-beats'
 import { attachLatestResults, withBrowserBench, marketToday, resultKey, resultSortDate, resultSortTier, RESULT_CSV_HEAD, resultCsvCells, RES_DAY_CHOICES, resultRuleOn, type LatestResultIndex } from '@/lib/screener/latest-result';
 import { LatestResultCell } from './LatestResult';
 import { toCsv } from '@/lib/csv';
-import { C, PINE_CSS, PatternChip, ScoreBar, MaCell, Th, ConditionBadges, ConditionChip, Sparkline, PivotGauge, Kbd, HelpOverlay, FunnelStrip, SkeletonRows, SearchBox, pct, signColor } from './pine-ui';
+import { C, PINE_CSS, AccChip, PatternChip, ScoreBar, MaCell, Th, ConditionBadges, ConditionChip, Sparkline, PivotGauge, Kbd, HelpOverlay, FunnelStrip, SkeletonRows, SearchBox, pct, signColor } from './pine-ui';
 import { WhyNot, WhyResultView } from './WhyNot';
 import { SetupCards } from './SetupCards';
 import { PortfolioCheck } from './PortfolioCheck';
@@ -100,10 +101,13 @@ const COL_SHORT: Partial<Record<NumKey, string>> = {
   rsiMA: 'RSI avg', rsiX: 'RSI × avg (d)', gcD: 'Golden × (d)', dcD: 'Death × (d)', emaXU: 'EMA10×21 up (d)', emaXD: 'EMA10×21 dn (d)', ppD: 'Pocket pivot (d)',
   rvol: 'RVol', 'adv$': 'Avg value', adrP: 'ADR %', ripB: 'Ripster', perf1M: 'Perf 1M', perf6M: 'Perf 6M', perf1Y: 'Perf 1Y',
   twSt: 'TW stage', sata: 'SATA', mrs: 'Mansfield RS', twWk: 'Weeks in stage',   // zzz987 — Stage Analysis (TheWrap method)
+  // zzz1046a — volume & accumulation
+  accS: 'Acc score', accR: 'Acc grade', accD: 'Acc days', disD: 'Dist days', chD: 'Stall days', cmf21: 'CMF 21', cmf65: 'CMF 13w', obvSlope: 'OBV trend', obvLead: 'OBV leads',
+  bigUpW: 'Big up wks', bigDnW: 'Big down wks', vdu: 'Quiet pullback', vboD: 'Vol breakout (d)', vboX: 'Vol breakout ×', distWarn: 'Dist warning', dlv10: 'Delivery %', dlvChg: 'Delivery Δ',
 };
 /** zzz1011 — the Condition column's sort order: the strongest current condition first. */
 const COND_ORDER = ['holding', 'crossed', 'retesting', 'forming', 'returned', 'expired', 'invalidated'] as const;
-const YES_NO = new Set<string>(['ttOk', 'st12', 'ripB']);
+const YES_NO = new Set<string>(['ttOk', 'st12', 'ripB', 'distWarn', 'vdu']);
 function fmtCol(k: NumKey, v: number | null | undefined, market: ScreenMarket): string {
   if (v == null || !Number.isFinite(v)) return '—';
   if (YES_NO.has(k)) return v >= 1 ? 'yes' : 'no';
@@ -440,7 +444,9 @@ export default function PineScreener() {
       if (waitingFor(sc)) { out[w.id] = null; continue; }
       const list = tickersFor(sc);
       const base = list ? rows.filter((r) => list!.has(r.t.toUpperCase())) : rows;
-      out[w.id] = queryRebuild(base, s.q, null).state === 'none' ? null : runPineFull(base, withCarriedR40(s.q, { r40Min: r40Carry }), market).strict.length;
+      // zzz1046a — a rule whose figures no company carries yet (a build not run): not known yet ("…"), never 0
+      const unread = s.q.filters.some((f) => !f.off && filterKeys(f).length > 0 && filterKeys(f).every((k) => !rows.some((x) => typeof (x as any)[k] === 'number')));
+      out[w.id] = unread || queryRebuild(base, s.q, null).state === 'none' ? null : runPineFull(base, withCarriedR40(s.q, { r40Min: r40Carry }), market).strict.length;
     }
     return out;
   }, [snap, rows, scope, scopeSt, activeWlId, tickersFor, waitingFor, market, r40Carry]);
@@ -630,7 +636,7 @@ export default function PineScreener() {
     const head = ['Ticker', 'Market', 'Company', 'Sector', 'Pattern', 'Timeframe', 'Bias', 'Stage', 'Historical event', 'Condition (analysis close)', SHAPE_SCORE_LABEL, 'Shape score band', 'Volume confirmed', `Pivot (${cur})`,
       'To pivot from analysis close (%)', 'To pivot from latest quote (%)', 'Length', 'Depth (%)', 'Other patterns',
       ...ANALYSIS_CSV_HEAD.map(withCur), 'Daily bars source', 'Quote vs daily technical close (%)', 'Price sources disagree',
-      'Change (%)', `Market cap (${money})`, `Avg daily value (${money})`, `Perf ${PERF_LABEL[q.perfKey]} (%)`, 'RSI 14', 'Close vs SMA 21 (%)', 'Close vs SMA 50 (%)', 'Close vs SMA 200 (%)', 'RS Rating',
+      'Change (%)', `Market cap (${money})`, `Avg daily value (${money})`, `Perf ${PERF_LABEL[q.perfKey]} (%)`, 'RSI 14', 'Close vs SMA 21 (%)', 'Close vs SMA 50 (%)', 'Close vs SMA 200 (%)', 'RS Rating', 'Accumulation grade', 'Accumulation score (0–100)', 'Distribution warning',
       ...shownCols.map((k) => { const d = fieldOf(k); const u = d?.unit === '%' ? ' (%)' : d?.unit === 'money' ? ` (${money})` : d?.unit === 'price' ? ` (${cur})` : ''; return `${d?.label || k}${u}`; }),
       ...(shownCols.includes('r40') ? ['Rule of 40 state (formula: revenue growth latest quarter YoY + FCF margin latest full fiscal year; India FCF = cash-flow proxy)'] : []),
       'Approximate (≈) fields', 'Daily scan status', 'Daily scan version', 'Scan engine version', 'Daily patterns as of', 'Not evaluated (provisional)', 'Snapshot built (UTC)', 'Export scope',
@@ -640,7 +646,7 @@ export default function PineScreener() {
       b ? dirDist(b) ?? '' : '', b && typeof (b as any).dq === 'number' ? (b.b === 'U' ? (b as any).dq : -(b as any).dq) : '', b ? tagLengthText(b) : '', b?.dp ?? '',
       tags.filter((t) => t !== b).map((t) => `${PATTERN_META[t.id].label} [${t.tf || 'D'}] (${t.c})`).join('; '),
       ...analysisCsvCells(r, b), r.scanSrc || '', r.pxGap ?? '', r.pxConflict ? 'yes' : '',
-      r.chg ?? '', r.mc ?? '', turnoverOf(r, market) ?? '', r[q.perfKey] ?? '', r.rsi ?? '', ma.d21 ?? '', ma.d50 ?? '', ma.d200 ?? '', r.rsR ?? '',
+      r.chg ?? '', r.mc ?? '', turnoverOf(r, market) ?? '', r[q.perfKey] ?? '', r.rsi ?? '', ma.d21 ?? '', ma.d50 ?? '', ma.d200 ?? '', r.rsR ?? '', r.accS != null ? r.accG ?? '' : '', r.accS ?? '', r.distWarn === 1 ? 'yes' : r.distWarn === 0 ? 'no' : '',
       ...shownCols.map((k) => (r as any)[k] ?? ''), ...(shownCols.includes('r40') ? [r40Explain(r, q.r40Min).text] : []), (r.approx || []).filter((k) => (shownCols as string[]).includes(k)).join('; '),
       r.scan?.st || '', r.scan?.v ?? '', an.engine || r.scan?.e || '', r.patAt || '', (missing || []).join('; '), snap?.builtAt || '', actLabel,
       summary, presetLine(name, dirty), covText, ...resultCsvCells((r as any).lr, resToday, market)]; });
@@ -715,7 +721,7 @@ export default function PineScreener() {
   );
   // zzz1016 (QA) — 13 fixed columns (company, setup, condition, score, pivot, to pivot, length, analysis close, quote, 12M, averages, RS,
   // sector): the detail row / skeleton spanned one column too many
-  const colCount = 13 + shownCols.length + extras.length + (showRes ? 1 : 0);
+  const colCount = 14 + shownCols.length + extras.length + (showRes ? 1 : 0);
   const myStockScreens = stockScreens.filter((s) => s.market === market);
   const resCount = (q.resDays != null ? 1 : 0) + (q.resTier ? 1 : 0) + (q.resCb ? 1 : 0);
   const filtersOn = (q.ids.length ? 1 : 0) + q.filters.filter((f) => !f.off).length + companyFilterCount + (scope ? 1 : 0) + (q.r40Min != null ? 1 : 0) + resCount;
@@ -1165,6 +1171,7 @@ export default function PineScreener() {
                         <Th bare label={<span style={{ display: 'inline-grid', gridTemplateColumns: 'repeat(3, 3.6em)', gap: 4, justifyItems: 'end' }}><span>21d</span><span>50d</span><span>200d</span></span>} k="ma50" sort={sort} setSort={setSort} num />
                       </th>
                       <Th label="RS" k="rsR" sort={sort} setSort={setSort} num title="RS Rating 1–99 (IBD-style), ranked against every company of this market" />
+                      <Th label="Acc" k="accS" sort={sort} setSort={setSort} num title={`Accumulation grade A–E and score 0–100 from price and volume on the completed sessions (A / B green, C grey, D / E red; ⚠ = distribution piling up). Hover a chip for the reasons. ${ACC_HONESTY}`} />
                       {showRes ? (
                         <th data-col="result" title="The latest earnings result: quarter · filing date · days since · grade (Earnings Opportunities) · sales and profit year on year. 🏆 = on the Conviction Beats bench. Sort by date or by grade.">
                           <span style={{ display: 'inline-flex', gap: 8, alignItems: 'baseline' }}>
@@ -1253,6 +1260,7 @@ export default function PineScreener() {
                             <td className="pnx-hide-sm"><Sparkline pts={perfPath(r)} /></td>
                             <td className="pnx-num"><MaCell ma={ma} market={market} /></td>
                             <td className="pnx-num">{typeof r.rsR === 'number' ? <b style={{ color: r.rsR >= 80 ? C.green : r.rsR < 30 ? C.red : C.text1, fontWeight: 650 }}>{r.rsR}</b> : <span className="pnx-dim">—</span>}</td>
+                            <td className="pnx-num" data-col="acc"><AccChip row={r} market={market} /></td>
                             {showRes ? (resStatus === 'error' ? <td data-col="result" className="pnx-dim" title={`The latest results could not be read (${res?.error || 'error'})`}>n/a</td>
                               : <LatestResultCell lr={(r as any).lr} market={market} today={resToday} loading={resStatus === 'loading'} />) : null}
                             {shownCols.map((k) => {

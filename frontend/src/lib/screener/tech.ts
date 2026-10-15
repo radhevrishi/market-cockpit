@@ -218,9 +218,11 @@ export function closedFigures(b: DailyBars): Record<string, number | null> | nul
   return out;
 }
 
-/** One NSE daily price file for one company: [close, previous close, volume, open, high, low] (open/high/low may be missing in
- *  files saved before zzz948). */
-export type NseDay = [number, number, number, number?, number?, number?];
+/** One NSE daily price file for one company: [close, previous close, volume, open, high, low, delivery %] (open/high/low may be
+ *  missing in files saved before zzz948). zzz1046a — delivery % (DELIV_PER) is appended at index 6 so nothing before it moves; when
+ *  the file has a delivery % but no open / high / low, those three are null (positions kept). Files saved before zzz1046a have no
+ *  index 6. */
+export type NseDay = [number, number, number, (number | null)?, (number | null)?, (number | null)?, (number | null)?];
 /** India: Yahoo's history with NSE's own figures laid over it for the days we hold NSE's daily price files. NSE's close is the
  *  official closing price (an average of the last half hour) — what TradingView uses — while Yahoo keeps the last trade; volumes
  *  differ too. A day whose NSE close is more than 3% from Yahoo's is left alone (Yahoo has adjusted it for a later split or bonus). */

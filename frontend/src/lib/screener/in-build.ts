@@ -19,6 +19,7 @@ import { loadProfiles, type Prof } from './us-build';
 import { refreshTech, type TechStored } from './tech-fetch';
 import { rowPatternFields, rowScanFields, resolveInQuote, priceSourceNote, rowTvFields, applyRsRating, applyTraderSetups, ruleOf40 } from './pine';
 import type { NseDay } from './tech';
+import { deliveryFigures } from '../accumulation';
 import { tvSectorOf } from './tv-sectors';
 import { rowsJson, type ScreenRow } from './types';
 
@@ -41,16 +42,22 @@ export function parseEquityList(text: string): Map<string, string> {
   for (const r of parseCsv(text)) if ((r.SERIES === 'EQ' || r.SERIES === 'BE') && r.SYMBOL) m.set(r.SYMBOL.toUpperCase(), r['NAME OF COMPANY'] || r.SYMBOL);
   return m;
 }
-/** Pure: one NSE daily price file → { symbol: [close, previous close, volume, open, high, low] } for the EQ / BE series. */
+/** Pure: one NSE daily price file → { symbol: [close, previous close, volume, open, high, low, delivery %] } for the EQ / BE series.
+ *  zzz1046a — delivery % (DELIV_PER) at index 6, only when the file has it for the company; open / high / low are then null when
+ *  missing, so index 6 is always the delivery %. A file without the column keeps the old 6- (or 3-) element days. */
 export function parseBhav(text: string): Record<string, NseDay> {
   const out: Record<string, NseDay> = {};
   const num = (s: string | undefined) => { const v = parseFloat(String(s ?? '')); return Number.isFinite(v) ? v : NaN; };
   for (const r of parseCsv(text)) {
     if (r.SERIES !== 'EQ' && r.SERIES !== 'BE') continue;
     const c = num(r.CLOSE_PRICE), p = num(r.PREV_CLOSE), v = num(r.TTL_TRD_QNTY), o = num(r.OPEN_PRICE), h = num(r.HIGH_PRICE), l = num(r.LOW_PRICE);
+    const dv = num(r.DELIV_PER);
     if (!r.SYMBOL || !Number.isFinite(c)) continue;
     const day: NseDay = [c, Number.isFinite(p) ? p : c, Number.isFinite(v) ? v : 0];
-    if (Number.isFinite(o) && Number.isFinite(h) && Number.isFinite(l)) day.push(o, h, l);
+    const ohl = Number.isFinite(o) && Number.isFinite(h) && Number.isFinite(l);
+    const dlv = Number.isFinite(dv) && dv >= 0 && dv <= 100 ? dv : null;
+    if (ohl) day.push(o, h, l);
+    if (dlv != null) { if (!ohl) day.push(null, null, null); day.push(dlv); }
     out[r.SYMBOL.toUpperCase()] = day;
   }
   return out;
@@ -75,9 +82,28 @@ const ddmmyyyy = (d: Date) => `${String(d.getUTCDate()).padStart(2, '0')}${Strin
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 
 export type BhavDay = { date: string; px: Record<string, NseDay> };
+/** zzz1046a — does a stored day carry delivery % (index 6)? Looks at up to 40 companies (one may lack it for that day). */
+export function bhavHasDelivery(px: Record<string, unknown> | null | undefined): boolean {
+  if (!px) return false;
+  let k = 0;
+  for (const d of Object.values(px)) { if (Array.isArray(d) && d.length >= 7) return true; if (++k >= 40) break; }
+  return false;
+}
+/** zzz1046a — India delivery figures for one company from the loaded price files (newest first): the engine's dlv10 / dlvChg. */
+export function deliveryOf(bhav: readonly BhavDay[], t: string): { dlv10: number | null; dlvChg: number | null } {
+  return deliveryFigures(bhav.slice(0, 50).map((b) => b.px[t]?.[6]).reverse());
+}
+/** zzz1046a — the build note: how many of the loaded sessions carry delivery %. */
+export function deliveryNote(bhav: readonly BhavDay[]): string {
+  const days = bhav.slice(0, 50);
+  const known = days.filter((b) => bhavHasDelivery(b.px)).length;
+  return `delivery % (NSE price files): ${known} of ${days.length} sessions known${known < days.length ? ' — older files are read again a few per run to add it; the 10-session figure needs 8 known sessions, the change needs 20 more' : ''}`;
+}
 /** The last `n` trading days' price files, newest first (old days come from the database; a holiday is remembered as empty).
- *  A day saved before zzz948 has no open / high / low; it is read again once (while NSE still serves it). */
-export async function loadBhav(n: number, notes: string[], maxNew = 70): Promise<BhavDay[]> {
+ *  A day saved before zzz948 has no open / high / low; it is read again once (while NSE still serves it).
+ *  zzz1046a — `dlvRefetch`: at most this many stored days WITHOUT delivery % (saved before zzz1046a) are read again this run, newest
+ *  first, apart from `maxNew` (so the delivery history fills in a few days per run without slowing the build). */
+export async function loadBhav(n: number, notes: string[], maxNew = 70, dlvRefetch = 0): Promise<BhavDay[]> {
   const out: BhavDay[] = [];
   const today = new Date();
   const keys: string[] = [];
@@ -85,16 +111,17 @@ export async function loadBhav(n: number, notes: string[], maxNew = 70): Promise
   const have = new Map<string, any>();
   const rows = await dbQuery<{ key: string; data: any }>(`SELECT key, data FROM sec_frame_cache WHERE key = ANY($1)`, [keys.map((d) => `nse-bhav:${d}`)]).catch(() => []);
   for (const r of rows) have.set(r.key.slice(9), r.data);
-  let fetched = 0;
+  let fetched = 0, dlvLeft = dlvRefetch;
   for (let k = 0; k < keys.length && out.length < n; k++) {
     const date = keys[k];
     const hit = have.get(date);
     const old = hit && Object.keys(hit).length && (Object.values(hit)[0] as unknown[]).length < 6;
-    if (hit && !old) { if (Object.keys(hit).length) out.push({ date, px: hit }); continue; }
-    if (fetched >= maxNew) { if (hit && Object.keys(hit).length) out.push({ date, px: hit }); continue; }
+    const wantDlv = !!hit && !old && dlvLeft > 0 && Object.keys(hit).length > 0 && !bhavHasDelivery(hit);   // zzz1046a
+    if (hit && !old && !wantDlv) { if (Object.keys(hit).length) out.push({ date, px: hit }); continue; }
+    if (!wantDlv && fetched >= maxNew) { if (hit && Object.keys(hit).length) out.push({ date, px: hit }); continue; }
     const d = new Date(`${date}T00:00:00Z`);
     const r = await getText(`https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_${ddmmyyyy(d)}.csv`);
-    fetched++;
+    if (wantDlv) dlvLeft--; else fetched++;
     if (r.text) {
       const px = parseBhav(r.text);
       if (Object.keys(px).length > 500) {
@@ -215,6 +242,7 @@ export function assembleInRow(t: string, name: string, latest: BhavDay, bhav: Bh
     ...rowPatternFields(tf),   // zzz983 — chart patterns (Pine Screener)
     ...rowScanFields(tf, { px: close, src: rq.src, at: rq.at ?? latest.date }),   // zzz993 (MC-01) — scan close vs NSE's close
     ...rowTvFields(tf, 'IN'),   // zzz984 — the owner's TradingView script fields
+    ...deliveryFields(bhav, t),   // zzz1046a — delivery % from NSE's price files
     ...(f?.fcfmFY != null ? { fcfmTTM: f.fcfmFY, r40: ruleOf40(f.revQYoY, f.fcfmFY), ...(f.fcfmAt ? { fcfmAt: f.fcfmAt } : {}) } : {}),
     earnD: earnIso ? Math.floor(Date.parse(`${earnIso.slice(0, 10)}T00:00:00Z`) / DAY) : null,
     roeTTM: f?.roeTTM ?? null, roeFY: f?.roeFY ?? null, roceTTM: f?.roceTTM ?? null, roceFY: f?.roceFY ?? null, nmTTM: f?.nmTTM ?? null, ptmTTM: f?.ptmTTM ?? null,
@@ -224,6 +252,12 @@ export function assembleInRow(t: string, name: string, latest: BhavDay, bhav: Bh
     deFY: f?.deFY ?? null, debtEbitdaQ: f?.debtEbitdaQ ?? null, debtEbitdaA: f?.debtEbitdaA ?? null, liabQ: f?.liabQ ?? null, liabA: f?.liabA ?? null,
     debtAssetsQ: f?.debtAssetsQ ?? null, debtAssetsA: f?.debtAssetsA ?? null, debtCapQ: f?.debtCapQ ?? null, debtCapA: f?.debtCapA ?? null,
   };
+}
+
+/** zzz1046a — the row's delivery fields (nulls left out). */
+function deliveryFields(bhav: readonly BhavDay[], t: string): { dlv10?: number; dlvChg?: number } {
+  const d = deliveryOf(bhav, t);
+  return { ...(d.dlv10 != null ? { dlv10: d.dlv10 } : {}), ...(d.dlvChg != null ? { dlvChg: d.dlvChg } : {}) };
 }
 
 // ── build ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -241,7 +275,9 @@ export async function buildInSnapshot(opts: { fundBudgetMs?: number } = {}): Pro
     if (hit.length) { names = new Map(Object.entries(hit[0].data)); notes.push('NSE company list not reachable — the last saved copy was used'); }
   }
   if (names.size < 1000) return { ok: false, rows: 0, notes: [...notes, 'NSE company list could not be read'], ms: Date.now() - t0 };
-  const bhav = await loadBhav(11, notes, 3);
+  // zzz1046a — 50 sessions (delivery %: 10 + the 40 before); old days come from the database, at most 3 new files and 3 re-reads of
+  // older files that lack delivery % per run
+  const bhav = await loadBhav(50, notes, 3, 3);
   if (!bhav.length) return { ok: false, rows: 0, notes: [...notes, 'no NSE daily price file could be read'], ms: Date.now() - t0 };
   const latest = bhav[0];
   // the universe: listed EQ / BE companies that traded on the latest day
@@ -270,6 +306,7 @@ export async function buildInSnapshot(opts: { fundBudgetMs?: number } = {}): Pro
   applyRsRating(rows, (t) => tech.get(t)?.rsRaw);   // zzz984 — RS Rating ranked over the whole India snapshot
   applyTraderSetups(rows, (t) => tech.get(t));   // zzz1020 — CANSLIM points + episodic pivot near the results date
   { const n = priceSourceNote(rows, 'IN'); if (n) notes.push(n); }   // zzz993 (MC-01)
+  notes.push(deliveryNote(bhav));   // zzz1046a
   { const n = rows.filter((r) => r.pxAlt != null).length; if (n) notes.push(`${n} companies show the completed ${rows.find((r) => r.pxAlt != null)?.pxAt} close from the daily bars: NSE's price file for that day is not out yet (it usually comes out in the evening); change today is measured from NSE's ${latest.date} close`); }   // zzz1043
   const sources = ['NSE company list', 'NSE daily price files', 'screener.in company pages', 'Yahoo daily prices', 'Yahoo company profile'];
   await dbQuery(`INSERT INTO screener_snapshot (market, built_at, rows, meta) VALUES ('IN', now(), $1, $2) ON CONFLICT (market) DO UPDATE SET built_at = now(), rows = EXCLUDED.rows, meta = EXCLUDED.meta`,

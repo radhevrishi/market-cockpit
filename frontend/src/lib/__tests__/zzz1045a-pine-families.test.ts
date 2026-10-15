@@ -26,10 +26,12 @@ const IDS = ['all-bullish', 'all-bearish', 'oneil-bases', 'minervini-vcp', 'brea
   'tw-stage2-sata6', 'tw-fresh-stage2', 'tw-stage4-sata3', 'tw-stage1-bases', 'tv-ema-cross-up', 'rs-80', 'stage-2', 'stage-1-2', 'pocket-pivot',
   'ripster-bull', 'high-rvol', 'tt-bullish-base', 'r40-bullish', 'r40-ready', 'r40-weekly-bases', 'rs80-stage2-forming', 'ts-3wt-stage2',
   'ts-darvas-breakout', 'ts-donchian-20', 'ts-donchian-55', 'ts-squeeze-on', 'ts-squeeze-fired-up', 'ts-episodic-pivot', 'ts-gap-volume', 'ts-burst-tt',
-  'ts-wedge-pop', 'ts-ema-crossback', 'ts-new-high-rs80', 'ts-canslim-5', 'ts-accumulation-rs80', 'ts-holy-grail', 'ts-spring', 'ts-extended'];
+  'ts-wedge-pop', 'ts-ema-crossback', 'ts-new-high-rs80', 'ts-canslim-5', 'ts-accumulation-rs80', 'ts-holy-grail', 'ts-spring', 'ts-extended',
+  // zzz1046a — volume & accumulation (added at the end; earlier ids unchanged)
+  'acc-ab', 'acc-base', 'acc-vbo', 'acc-stealth', 'acc-quiet', 'dist-warn', 'dlv-rising'];
 
 test('zzz1045a the 65 built-in screen IDs are unchanged (same IDs, same order, none removed or renamed)', () => {
-  assert.equal(BUILT_IN_PINE_SCREENS.length, 65);
+  assert.equal(BUILT_IN_PINE_SCREENS.length, 72);   // zzz1046a: + 7 volume & accumulation screens
   assert.deepEqual(BUILT_IN_PINE_SCREENS.map((s) => s.id), IDS);
 });
 
@@ -38,8 +40,8 @@ test('zzz1045a every built-in screen belongs to exactly one family, as the brief
   const seen = new Map<string, number>();
   for (const g of groups) for (const s of g.screens) seen.set(s.id, (seen.get(s.id) || 0) + 1);
   for (const id of IDS) assert.equal(seen.get(id), 1, `${id} listed once`);
-  assert.equal(groups.reduce((n, g) => n + g.screens.length, 0), 65);
-  assert.deepEqual(groups.map((g) => g.id), ['discovery', 'bases', 'breakouts', 'portfolio', 'trend', 'r40', 'setups']);
+  assert.equal(groups.reduce((n, g) => n + g.screens.length, 0), 72);
+  assert.deepEqual(groups.map((g) => g.id), ['discovery', 'bases', 'breakouts', 'portfolio', 'trend', 'r40', 'setups', 'volume']);
   const fam = (id: string) => pineFamilyOf(BUILT_IN_PINE_SCREENS.find((s) => s.id === id)!);
   const expect: Record<PineFamilyId, string[]> = {
     discovery: ['all-bullish', 'all-bearish', 'broad-candidates', 'near-ready', 'oneil-bases', 'minervini-vcp', 'flags-pennants', 'triangles-wedges', 'bottoms', 'bearish-tops', 'bear-continuation'],
@@ -50,10 +52,11 @@ test('zzz1045a every built-in screen belongs to exactly one family, as the brief
       'tw-stage1-bases', 'tv-golden-cross', 'tv-death-cross', 'tv-rsi-cross', 'tv-rsi-50', 'tv-ema-cross-up', 'pocket-pivot', 'ripster-bull', 'high-rvol'],
     r40: ['tv-rule-of-40', 'r40-bullish', 'r40-ready', 'r40-weekly-bases'],
     setups: IDS.filter((x) => x.startsWith('ts-')),
+    volume: ['acc-ab', 'acc-base', 'acc-vbo', 'acc-stealth', 'acc-quiet', 'dist-warn', 'dlv-rising'],   // zzz1046a
   };
   for (const [f, ids] of Object.entries(expect)) for (const id of ids) assert.equal(fam(id), f, `${id} → ${f}`);
-  assert.equal(Object.values(expect).flat().length, 65);
-  assert.equal(PINE_FAMILIES.length, 7);
+  assert.equal(Object.values(expect).flat().length, 72);
+  assert.equal(PINE_FAMILIES.length, 8);
   for (const f of PINE_FAMILIES) assert.doesNotMatch(`${f.label} ${f.hint}`, /\bbest\b|\bbuy\b|\bsell\b/i, 'plain wording, no buy / sell');
 });
 

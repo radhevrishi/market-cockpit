@@ -21,6 +21,9 @@ const YEAR: ReadonlySet<string> = new Set(['revAYoY', 'gpAYoY', 'ebitdaAYoY', 'g
 /** the latest quote (not worked out from the daily bars) */
 const QUOTE: ReadonlySet<string> = new Set(['px', 'chg', 'vol']);
 const PROFILE: ReadonlySet<string> = new Set(['emp', 'flt']);
+/** zzz1046a — volume & accumulation: read on the completed sessions (delivery %: NSE's price files) */
+const DELIVERY: ReadonlySet<string> = new Set(['dlv10', 'dlvChg']);
+const isAcc = (k: string) => fieldOf(k)?.group === 'Volume & accumulation';
 
 /** India: ROCE TTM is screener.in's ROCE of the latest year (see its approx note). */
 function periodOf(k: string, market: ScreenMarket, row?: Partial<ScreenRow>): { kind: PeriodKind; period: string } {
@@ -37,6 +40,8 @@ function periodOf(k: string, market: ScreenMarket, row?: Partial<ScreenRow>): { 
   if (k === 'mc') return { kind: 'session', period: "today's price × shares" };
   if (PROFILE.has(k)) return { kind: 'latest', period: 'latest company profile' };
   if (k === 'ipoD' || k === 'earnD') return { kind: 'date', period: 'a date' };
+  if (DELIVERY.has(k)) return { kind: 'session', period: `completed sessions (10 latest${k === 'dlvChg' ? ' vs the 40 before' : ''})${row?.pxAt ? ` to ${row.pxAt}` : ''}` };
+  if (isAcc(k)) return { kind: 'session', period: `completed sessions${sess ? ` to ${sess}` : ''}${k === 'bigUpW' || k === 'bigDnW' ? ' (completed weeks)' : ''}` };
   if (k === 'hi52') return { kind: 'session', period: `last 52 weeks${sess ? ` to ${sess}` : ''}` };
   if (k === 'chg') return { kind: 'session', period: `today vs the session before${row?.pxAt ? ` (${row.pxAt})` : ''}` };
   if (QUOTE.has(k)) return { kind: 'session', period: `latest session${row?.pxAt ? ` (${row.pxAt})` : ''}` };
@@ -54,6 +59,8 @@ function sourceOf(k: string, market: ScreenMarket, row?: Partial<ScreenRow>): st
   if (QUOTE.has(k)) return k === 'vol' ? (market === 'US' ? 'Nasdaq stock list' : 'NSE daily price file') : quoteSrc();
   if (k === 'mc') return market === 'US' ? 'Nasdaq stock list' : 'latest close (NSE price file, or the completed Yahoo close before NSE publishes) × share count from screener.in';
   if (PROFILE.has(k)) return 'Yahoo company profile';
+  if (DELIVERY.has(k)) return 'NSE price file (delivery %)';
+  if (isAcc(k)) return market === 'US' ? 'Yahoo daily bars' : 'Yahoo daily bars + NSE price file';
   if (k === 'earnD') return 'screener.in';
   if (k === 'ipoD') return 'Yahoo price history';
   if (k === 'rsR') return `${bars}, ranked against this snapshot`;

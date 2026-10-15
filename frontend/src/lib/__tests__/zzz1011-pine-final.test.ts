@@ -162,7 +162,8 @@ test('zzz1011 condition states — forming, crossed, holding, retesting, back in
 test('zzz1011 the eight one-click workflows exist, each on a built-in screen with its company list', () => {
   assert.deepEqual(WORKFLOWS.map((w) => w.label), [
     'Bullish opportunities in my portfolio', 'Bearish risks in my portfolio', 'Forming bases in a watchlist', 'Recent breakouts holding',
-    'Breakouts back below pivot', 'Monthly bases', 'Monthly reversal candidates', 'Weekly + monthly aligned']);
+    'Breakouts back below pivot', 'Monthly bases', 'Monthly reversal candidates', 'Weekly + monthly aligned',
+    'Accumulation in my portfolio', 'Distribution warning in my portfolio']);   // zzz1046a
   for (const w of WORKFLOWS) assert.ok(BUILT_IN_PINE_SCREENS.some((s) => s.id === w.presetId), w.presetId);
   assert.equal(workflowScope(WORKFLOWS[0], 'cb', 'L1'), 'pf');
   assert.equal(workflowScope(WORKFLOWS[2], 'wl:MINE', 'L1'), 'wl:MINE', 'the chosen watchlist');
@@ -310,7 +311,7 @@ test('zzz1011 page (JSDOM): Breakouts → W → W+M keeps the stage; Restore pre
     assert.equal(Array.from(document.querySelectorAll('button')).some((b) => b.textContent === 'Restore preset stages'), false, 'gone once they match');
     // workflows: one click each, with their counts
     const flow = (id: string) => document.querySelector(`[data-flow="${id}"]`) as HTMLButtonElement;
-    assert.equal(document.querySelectorAll('[data-flow]').length, 8);
+    assert.equal(document.querySelectorAll('[data-flow]').length, 10);   // zzz1046a: + accumulation / distribution in my portfolio
     assert.equal(flow('bo-back').querySelector('[data-flow-count]')!.textContent, '1');
     await click((b) => b.getAttribute('data-flow') === 'bo-back');
     assert.deepEqual(listed(), ['NOW']);

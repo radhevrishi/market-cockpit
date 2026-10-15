@@ -14,6 +14,8 @@ import type { TvFigures } from './tv-screens';
 import { SETUP_VERSION, setupCoverageNote } from './pine';
 import type { SetupFigures } from '../setups';
 import { benchWeekly } from '../stage-analysis';
+import { ACC_VERSION } from '../accumulation';
+import { accCoverageNote, type AccStored } from './acc-row';
 
 // the same browser string the rest of the app uses for Yahoo (lib/us-prices.ts explains why it must be exactly this)
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
@@ -32,7 +34,7 @@ export type TechStored = TechFigures & {
   patLive?: ScreenPatternTag[]; scanLive?: LiveScanMeta;
   /** zzz1020 — the trader-setup version the setup figures were read with (pine.ts SETUP_VERSION) */
   setV?: number;
-} & Partial<TvFigures> & Partial<SetupFigures>;
+} & Partial<TvFigures> & Partial<SetupFigures> & Partial<AccStored>;
 
 let route = 0;
 let lastErr: string | null = null;
@@ -75,9 +77,10 @@ export async function refreshTech(opts: {
   if (hit.length && hit[0].data) for (const [t, v] of Object.entries(hit[0].data)) store.set(t, v);
   // zzz983: an entry read before the pattern scan (or with an older scan version) is also due, so every company gets patterns
   // zzz1020: an entry whose trader setups were read with another SETUP_VERSION is due too — after the price / pattern-due ones
+  // zzz1046a: the same for an entry without the current volume & accumulation reading (ACC_VERSION)
   const firstDue = (s: TechStored | undefined) => opts.due(s) || (!!s && s.patV !== PATTERN_SCAN_VERSION);
   const rank = (t: string) => (firstDue(store.get(t)) ? 0 : 1);
-  const due = opts.tickers.filter((t) => { const s = store.get(t); return firstDue(s) || (!!s && s.setV !== SETUP_VERSION); })
+  const due = opts.tickers.filter((t) => { const s = store.get(t); return firstDue(s) || (!!s && (s.setV !== SETUP_VERSION || s.accV !== ACC_VERSION)); })
     .sort((a, b) => rank(a) - rank(b) || (store.get(a)?.d || '').localeCompare(store.get(b)?.d || ''));
   if (!due.length) return store;
   const nseOf = opts.nse ? await opts.nse() : null;
@@ -133,5 +136,6 @@ export async function refreshTech(opts: {
   opts.notes.push(`chart patterns (Pine Screener, from the same daily bars): ${scanned} of ${store.size} companies scanned with the current pattern rules, ${withPat} show at least one pattern${short ? `, ${short} too little price history (< 30 sessions)` : ''}${bad ? `, ${bad} price data rejected` : ''}${errs ? `, ${errs} scans failed (price figures kept)` : ''}${stale ? ` — ${stale} read by an older scan version (patterns withheld until re-read with the prices)` : ''}${compat ? ` — ${compat} of the scanned were read by scan version ${PATTERN_SCAN_DAILY_COMPAT.join('/')}: their daily patterns are shown, their weekly / monthly patterns wait for the re-read` : ''}`);
   opts.notes.push(`weekly / monthly chart patterns (completed weeks / months of the same daily bars): ${sw} companies scanned weekly (${pw} with a pattern), ${sm} monthly (${pm} with a pattern) — about 10 years of daily history is read for the monthly scan (up to ${MONTHLY_HISTORY_REQ} monthly bars; at least 24 completed months needed — younger listings show "too little history" there, and a U base is read at its full 60-month length only with ~68 months of history); weekly scans read the last ~5 years`);
   opts.notes.push(setupCoverageNote(store));   // zzz1020
+  opts.notes.push(accCoverageNote(store));   // zzz1046a
   return store;
 }

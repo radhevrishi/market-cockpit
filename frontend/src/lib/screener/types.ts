@@ -151,6 +151,23 @@ export interface ScreenRow {
   nhD?: number | null; athD?: number | null; hgD?: number | null; sprD?: number | null;
   td9?: number | null;       // TD setup count −9 … +9
   csl?: number | null;       // CANSLIM points 0–5 (C, A, N, S, L; M not counted)
+  // ── zzz1046a: volume & accumulation (lib/accumulation.ts via acc-row.ts — our own version of the published O'Neil / Wyckoff rules),
+  //    from the completed daily sessions. Present only when the company was read with the current ACC_VERSION. The 50-session up /
+  //    down volume is `udv` above (the same figure).
+  accS?: number | null;      // accumulation score 0–100
+  accR?: number | null;      // grade as a number: A 5 · B 4 · C 3 · D 2 · E 1
+  accG?: string;             // grade letter A–E
+  accP?: number[];           // the score's parts [money flow /25, days /20, up-down volume /15, OBV /15, weeks /15, pullback /10]
+  accD?: number | null; disD?: number | null; chD?: number | null;   // accumulation / distribution (incl. stalling) / stalling sessions, last 25
+  cmf21?: number | null; cmf65?: number | null;                       // Chaikin money flow, 21 / 65 sessions
+  obvSlope?: number | null;  // On-Balance Volume trend over 50 sessions, in average sessions of volume
+  obvLead?: number | null;   // 1 OBV at its 120-session high while price is not · −1 price at its high, OBV well below · 0
+  bigUpW?: number | null; bigDnW?: number | null;                     // big-volume up / down weeks among the last 10 completed weeks
+  vdu?: number | null;       // 1 quiet (light-volume) pullback · 0 pullback on heavy volume · absent = not pulling back
+  vboD?: number | null; vboX?: number | null;                         // sessions since a volume breakout (last 10) and its volume ÷ average
+  distWarn?: number | null;  // 1 = distribution piling up
+  dlv10?: number | null;     // India: delivery % of traded shares, 10-session average (NSE price files)
+  dlvChg?: number | null;    // India: dlv10 minus the 40 sessions before, percentage points
 }
 
 export interface ScreenSnapshot {

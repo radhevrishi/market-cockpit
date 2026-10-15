@@ -22,6 +22,7 @@ export const ADD_GROUPS: ReadonlyArray<{ label: string; of: FieldGroup[] }> = [
   { label: 'Quality', of: ['Margins & returns', 'Balance sheet'] },
   { label: 'Technicals', of: ['Price & volume', 'Moving averages', 'Momentum'] },
   { label: 'Trader setups', of: ['Trader setups'] },   // zzz1020
+  { label: 'Volume & accumulation', of: ['Volume & accumulation'] },   // zzz1046a
   { label: 'Company', of: ['Company'] },
 ];
 

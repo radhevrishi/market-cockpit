@@ -6,7 +6,7 @@
 import { fieldOf, type Filter } from './filters';
 import type { PineQuery, PineScreen } from './pine';
 
-export type PineFamilyId = 'discovery' | 'bases' | 'breakouts' | 'portfolio' | 'trend' | 'r40' | 'setups';
+export type PineFamilyId = 'discovery' | 'bases' | 'breakouts' | 'portfolio' | 'trend' | 'r40' | 'setups' | 'volume';
 export const PINE_FAMILIES: ReadonlyArray<{ id: PineFamilyId; label: string; hint: string }> = [
   { id: 'discovery', label: 'Pattern discovery', hint: 'Chart patterns of every kind — bullish and bearish' },
   { id: 'bases', label: 'Base builder', hint: 'Bases forming on daily, weekly and monthly bars' },
@@ -15,6 +15,7 @@ export const PINE_FAMILIES: ReadonlyArray<{ id: PineFamilyId; label: string; hin
   { id: 'trend', label: 'Trend & leadership', hint: 'Trend template, RS, stages, averages and RSI' },
   { id: 'r40', label: 'Rule of 40', hint: 'Growth + FCF margin, alone or with a chart setup' },
   { id: 'setups', label: 'Trader setups', hint: 'Published traders’ setups, read from daily sessions' },
+  { id: 'volume', label: 'Volume & accumulation', hint: 'Heavy buying or selling read from price and volume (completed sessions)' },   // zzz1046a
 ];
 
 /** The screens named one by one; the rest go by their id prefix (pf-, ts-, r40-, tw-) or, failing that, their old group. */
@@ -36,11 +37,13 @@ export function pineFamilyOf(s: Pick<PineScreen, 'id' | 'group'>): PineFamilyId 
   if (NAMED[id]) return NAMED[id];
   if (id.startsWith('pf-')) return 'portfolio';
   if (id.startsWith('ts-')) return 'setups';
+  if (id.startsWith('acc-') || id.startsWith('dist-') || id.startsWith('dlv-')) return 'volume';   // zzz1046a
   if (id.startsWith('r40-')) return 'r40';
   if (id.startsWith('tw-') || id.startsWith('tv-rsi-')) return 'trend';
   switch (s.group) {
     case 'portfolio': return 'portfolio';
     case 'setups': return 'setups';
+    case 'volume': return 'volume';
     case 'r40': return 'r40';
     case 'tv': case 'momentum': return 'trend';
     default: return 'discovery';
@@ -80,9 +83,9 @@ export function pineFamilyGroups(screens: readonly PineScreen[], builtInIds: Rea
 export type RuleTf = 'D' | 'W' | 'M' | 'company';
 /** Figures read from weekly bars (weekly RSI, this week's change / volume, 3 weeks tight, weekly Donchian, Weinstein stage — 30-week
  *  average —, the TheWrap Stage Analysis) and from monthly bars (monthly RSI). Every other price / average / momentum / setup figure is daily. */
-const WEEKLY_KEYS = new Set(['rsiW', 'chg1W', 'vol1W', 'wt3', 'wt3P', 'dc20W', 'stage', 'st12', 'twSt', 'twWk', 'sata', 'mrs']);
+const WEEKLY_KEYS = new Set(['rsiW', 'chg1W', 'vol1W', 'wt3', 'wt3P', 'dc20W', 'stage', 'st12', 'twSt', 'twWk', 'sata', 'mrs', 'bigUpW', 'bigDnW']);
 const MONTHLY_KEYS = new Set(['rsiM']);
-const DAILY_GROUPS = new Set(['Price & volume', 'Moving averages', 'Momentum', 'Trader setups']);
+const DAILY_GROUPS = new Set(['Price & volume', 'Moving averages', 'Momentum', 'Trader setups', 'Volume & accumulation']);
 export function ruleKeyTf(key: string): RuleTf {
   if (WEEKLY_KEYS.has(key)) return 'W';
   if (MONTHLY_KEYS.has(key)) return 'M';

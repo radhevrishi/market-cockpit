@@ -6,7 +6,9 @@ import { PATTERN_META } from '@/lib/chart-patterns';
 import { likelihoodWord, tagLengthText, type ScreenPatternTag } from '@/lib/screener/pine';
 import { fmtPrice } from '@/lib/screener/filters';
 import { isReturned, stageWord, tfWord, type ConditionState, type Funnel, type MaPosition } from '@/lib/screener/pine-view';
-import type { ScreenMarket } from '@/lib/screener/types';
+import type { ScreenMarket, ScreenRow } from '@/lib/screener/types';
+import { accExplain } from '@/lib/accumulation';
+import { accFiguresOfRow, breakoutVolText } from '@/lib/screener/acc-row';
 
 export const C = {
   text: 'var(--mc-text-0)', text1: 'var(--mc-text-1)', text2: 'var(--mc-text-2, var(--mc-text-1))', dim: 'var(--mc-text-3, #6b7280)', faint: 'var(--mc-text-4, #94a3b8)',
@@ -237,6 +239,7 @@ export function PatternChip({ t, main = false, market, patAt, when, showStage = 
     typeof (t as any).dq === 'number' ? `From the latest quote: ${(t as any).dq > 0 ? '+' : ''}${(t as any).dq}%` : '',
     len ? `${len} long${t.dp != null ? `, ${t.dp}% deep` : ''}` : '',
     vq ? 'Volume not confirmed: too little usable volume data for this pattern' : '',
+    t.s === 'b' && breakoutVolText(t.bx) ? `${t.b === 'U' ? 'Broke out' : 'Broke down'} ${breakoutVolText(t.bx)}` : '',   // zzz1046a
     m.short, when ? `As of: ${when}` : patAt && tf === 'D' ? `As of the ${patAt} close` : ''].filter(Boolean).join('\n');
   const bg = failed ? 'transparent' : t.b === 'U' ? 'var(--pnx-chip-up)' : 'var(--pnx-chip-down)';
   return (
@@ -246,6 +249,23 @@ export function PatternChip({ t, main = false, market, patAt, when, showStage = 
       <span style={{ fontSize: 10, fontWeight: 760, padding: '0 4px', borderRadius: 4, background: `color-mix(in srgb, ${col} 16%, transparent)`, lineHeight: '15px' }} aria-label={`${tfWord(tf)} timeframe`}>{tf}</span>
       {showStage ? <span style={{ fontWeight: 600, color: isReturned(t) ? C.amber : C.dim }} data-stage={isReturned(t) ? 'returned' : t.s}>{stageWord(t)}</span> : null}
       {vq ? <span title="Volume not confirmed: too little usable volume data for this pattern" aria-label="volume not confirmed" data-vq style={{ opacity: 0.8, fontSize: 10, fontWeight: 600 }}>no vol</span> : null}
+    </span>
+  );
+}
+
+/** zzz1046a — the "Acc" chip in the result table: the accumulation grade (A / B green, C grey, D / E red) with ⚠ when distribution is
+ *  piling up; the tooltip is the plain explanation (accExplain). "—" when the company's volume reading is not there yet. */
+export function AccChip({ row, market }: { row: Partial<ScreenRow>; market: ScreenMarket }) {
+  const f = accFiguresOfRow(row);
+  const warn = f.distWarn === 1;
+  if (f.accS == null || !f.accG) return <span className="pnx-dim" data-acc="none" title="Volume & accumulation not read yet for this company (it fills in with the next price read)">—{warn ? ' ⚠' : ''}</span>;
+  const g = f.accG;
+  const col = g === 'A' || g === 'B' ? C.green : g === 'C' ? C.dim : C.red;
+  const bg = g === 'A' || g === 'B' ? 'var(--pnx-chip-up)' : g === 'C' ? 'var(--pnx-chip-dim)' : 'var(--pnx-chip-down)';
+  return (
+    <span data-acc={g} data-dist-warn={warn ? '1' : undefined} title={accExplain(f, 'session', market).join('\n')}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 3, padding: '1px 6px', borderRadius: 5, fontSize: 11.5, fontWeight: 720, color: col, background: bg, whiteSpace: 'nowrap' }}>
+      {g}<span style={{ fontWeight: 500, fontSize: 10.5, opacity: 0.85 }}>{f.accS}</span>{warn ? <span aria-label="distribution warning" style={{ color: C.amber }}>⚠</span> : null}
     </span>
   );
 }

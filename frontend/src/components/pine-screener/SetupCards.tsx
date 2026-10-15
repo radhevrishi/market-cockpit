@@ -15,6 +15,8 @@ function Glyph({ g, tone }: { g: SetupGlyph; tone: SetupCard['tone'] }) {
     breakdown: <><line x1="2" y1="15" x2="70" y2="15" strokeDasharray="3 3" /><path d="M2 14 L10 6 L18 13 L28 5 L36 13 L46 7 L54 14 L62 20 L70 23" /></>,
     weekly: <><line x1="2" y1="7" x2="70" y2="7" strokeDasharray="3 3" />{[6, 14, 22, 30, 38, 46, 54, 62].map((x, i) => { const y = [9, 14, 18, 20, 19, 15, 11, 8][i]; return <line key={x} x1={x} y1={y - 3} x2={x} y2={y + 3} strokeWidth={3} />; })}</>,
     monthly: <><line x1="2" y1="6" x2="70" y2="6" strokeDasharray="3 3" />{[8, 22, 36, 50, 64].map((x, i) => { const y = [9, 17, 21, 15, 8][i]; return <rect key={x} x={x - 4} y={y - 4} width={8} height={8} rx={1} strokeWidth={1.6} />; })}</>,
+    // zzz1046a — rising price over volume bars that grow on the up days
+    accumulation: <><path d="M2 12 L14 10 L24 11 L36 7 L48 8 L60 4 L70 3" />{[6, 16, 26, 36, 46, 56, 66].map((x, i) => { const h = [3, 4, 3, 6, 4, 7, 8][i]; return <line key={x} x1={x} y1={24} x2={x} y2={24 - h} strokeWidth={3} opacity={0.75} />; })}</>,
     portfolio: <><path d="M2 18 L14 15 L26 16 L38 11 L50 12 L62 7 L70 6" /><path d="M2 20 L70 12" strokeDasharray="2 3" opacity={0.7} /><path d="M2 23 L70 18" strokeDasharray="1 3" opacity={0.55} /></>,
   };
   return (

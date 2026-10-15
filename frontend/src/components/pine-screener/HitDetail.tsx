@@ -11,6 +11,7 @@ import { allPatterns, analysisOf, conditionState, conflictWords, evidenceRows, g
 import type { ScreenPatternTag } from '@/lib/screener/pine';
 import type { ScreenMarket } from '@/lib/screener/types';
 import { LatestResultDetail } from './LatestResult';
+import { accExplainRow, breakoutVolText } from '@/lib/screener/acc-row';
 import { marketToday } from '@/lib/screener/latest-result';
 import { C, ConditionBadges, ConditionChip, MaCell, PatternChip, SessionBadge, pct } from './pine-ui';
 
@@ -88,6 +89,7 @@ export function HitDetail({ hit, q, market, onOpenChart, width, results }: { hit
               <li data-detail="condition">Condition now: <ConditionChip c={conditionState(r, b)} /> <span style={{ color: C.dim }}>{conditionState(r, b).tip}</span></li>
               {conds.length ? <li>Latest quote: <ConditionBadges items={conds} /></li> : null}
               <li>Volume: {vq ? <span style={{ color: C.amber }}>not confirmed (too little usable volume data)</span> : geoTag?.ev?.vr != null ? <>volume at the last turning point {geoTag.ev.vr}× the first (see the structure below)</> : 'enough data to read; nothing flagged'}</li>
+              {b.s === 'b' && breakoutVolText(b.bx) ? <li data-detail="breakout-volume">{b.b === 'U' ? 'Broke out' : 'Broke down'} <b>{breakoutVolText(b.bx)}</b>{typeof b.bx === 'number' && b.bx < 1 ? <span style={{ color: C.amber }}> — volume did not confirm the move</span> : null}</li> : null}
               {inv ? <li>Stops being valid: {inv.text}{inv.level != null ? <> (about <b>{fmtPrice(inv.level, market)}</b>)</> : null}</li> : null}
             </ul>
           </div>
@@ -114,6 +116,13 @@ export function HitDetail({ hit, q, market, onOpenChart, width, results }: { hit
             <div className="pnx-note">the pattern, its stage and the distance to the pivot are read on these {tfWord(an.tf)} bars{an.status ? ` · scan ${an.status}${an.v != null ? `, version ${an.v}` : ''}` : ''}{an.src ? ` · ${an.src}${an.basis ? `, ${an.basis}` : ''}` : ''}</div></li>
           <li data-price="daily">Daily technical close {ma.close != null && ma.basis === 'scan' ? fmtPrice(ma.close, market) : ps.daily.close != null ? fmtPrice(ps.daily.close, market) : '—'}{ma.at ? ` on ${ma.at}` : ps.daily.at ? ` on ${ps.daily.at}` : ''}{ma.session === 'provisional' ? <span style={{ color: C.amber }}> (session open — provisional, the unfinished bar)</span> : ' (completed session)'} — the 21 / 50 / 200-day distances below, RSI and performance are measured from THIS close and the averages of the same daily bars: <MaCell ma={ma} market={market} /></li>
           <li data-price="quote">Latest quote {fmtPrice(ps.quote.px, market)}{ps.quote.src ? ` (${ps.quote.src}${ps.quote.at ? `, ${ps.quote.at}` : ''})` : ''}{dq != null ? `, ${pct(dq)} to the pivot` : ''}{r.pxConflict ? <span style={{ color: C.amber }}> — {conflictWords(r)}</span> : null}</li>
+        </ul>
+      </section>
+      {/* zzz1046a — volume & accumulation: the plain reasons behind the grade (completed sessions) */}
+      <section data-detail="accumulation">
+        <h4>Volume &amp; accumulation</h4>
+        <ul style={{ listStyle: 'none', paddingLeft: 0 }}>
+          {accExplainRow(r, market).map((line, i, all) => <li key={i} style={i === all.length - 1 ? { color: C.dim, fontSize: 12 } : i === 0 ? { fontWeight: 650 } : undefined}>{line}</li>)}
         </ul>
       </section>
       <section>

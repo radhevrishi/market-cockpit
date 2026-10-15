@@ -13,10 +13,10 @@ import { PATTERN_META, PATTERN_IDS, PATTERN_NA_REASON, patternApplies, type Patt
 // Non-numeric row fields (and the zzz994 provenance / per-timeframe pattern fields, read defensively where present).
 type NonNum = 't' | 'n' | 'sec' | 'ind' | 'q' | 'approx' | 'tvSec' | 'exch' | 'nq' | 'cc' | 'pat' | 'patAt' | 'ccBasis'
   | 'patW' | 'patM' | 'patWAt' | 'patMAt' | 'patV' | 'scan' | 'scanW' | 'scanM' | 'scanAt' | 'scanSrc' | 'scanBasis' | 'scanEx'
-  | 'pxSrc' | 'pxAt' | 'pxConflict' | 'live' | 'fcfmAt' | 'fcfmTAt';
+  | 'pxSrc' | 'pxAt' | 'pxConflict' | 'live' | 'fcfmAt' | 'fcfmTAt' | 'accG' | 'accP';
 export type NumKey = Exclude<keyof ScreenRow, NonNum>;
 export type FieldUnit = '%' | 'x' | 'money' | 'num' | 'price' | 'shares' | 'usd' | 'date';
-export type FieldGroup = 'Price & volume' | 'Moving averages' | 'Momentum' | 'Trader setups' | 'Growth' | 'Margins & returns' | 'Valuation' | 'Balance sheet' | 'Company';
+export type FieldGroup = 'Price & volume' | 'Moving averages' | 'Momentum' | 'Trader setups' | 'Volume & accumulation' | 'Growth' | 'Margins & returns' | 'Valuation' | 'Balance sheet' | 'Company';
 /** approxNote = worked out differently from TradingView (shown with ≈); sparse = most companies never have this figure (not "still filling") */
 export interface FieldDef { key: NumKey; label: string; unit: FieldUnit; markets: ScreenMarket[]; group: FieldGroup; approxNote?: Partial<Record<ScreenMarket, string>>; sparse?: Partial<Record<ScreenMarket, string>> }
 
@@ -41,6 +41,12 @@ const SETUP_NOTE = 'our own version of the published rules';
 function setupField(key: NumKey, label: string, unit: FieldUnit, rule: string, sparse?: string): FieldDef[] {
   const note = `${rule} — ${SETUP_NOTE}`;
   return [{ key, label, unit, markets: BOTH, group: 'Trader setups', approxNote: { US: note, IN: note }, ...(sparse ? { sparse: { US: sparse, IN: sparse } } : {}) }];
+}
+/** zzz1046a — a volume & accumulation field: both markets, the rule as its approx note (read on completed sessions). */
+const ACC_NOTE = 'our own version of the published O\'Neil / Wyckoff rules, read on completed sessions; it shows heavy buying or selling, not who did it';
+function accField(key: NumKey, label: string, unit: FieldUnit, rule: string, sparse?: string): FieldDef[] {
+  const note = `${rule} — ${ACC_NOTE}`;
+  return [{ key, label, unit, markets: BOTH, group: 'Volume & accumulation', approxNote: { US: note, IN: note }, ...(sparse ? { sparse: { US: sparse, IN: sparse } } : {}) }];
 }
 export const FIELDS: readonly FieldDef[] = [
   // price & volume
@@ -132,6 +138,24 @@ export const FIELDS: readonly FieldDef[] = [
   ...setupField('sprD', 'Sessions since Wyckoff spring', 'num', 'Wyckoff: a dip of up to 5% under a support that held 20+ sessions (lowest low of 60), a close back above within 3 sessions on average-or-better volume', 'only springs in the last 10 sessions'),
   ...setupField('td9', 'TD setup count (−9 … +9)', 'num', 'Tom DeMark: closes in a row above (+) or below (−) the close 4 sessions earlier, starting over after 9'),
   ...setupField('csl', 'CANSLIM points (0–5)', 'num', 'O\'Neil: C quarterly EPS growth ≥ 25%, A TTM EPS growth ≥ 25%, N price ≥ 85% of the 52-week high, S up/down volume ≥ 1.2, L RS Rating ≥ 80 — M (the market\'s trend) is not counted'),
+  // zzz1046a — volume & accumulation (lib/accumulation.ts): our own version of the published O'Neil / Wyckoff rules, completed sessions
+  ...accField('accS', 'Accumulation score (0–100)', 'num', 'money flow 13 weeks /25 + accumulation − distribution days /20 + up/down volume /15 + On-Balance Volume /15 + big-volume weeks /15 + pullback volume /10; a part with no figure counts half'),
+  ...accField('accR', 'Accumulation grade (5 = A … 1 = E)', 'num', 'A score ≥ 80 heavy accumulation · B ≥ 65 · C ≥ 45 neutral · D ≥ 30 · E < 30 heavy distribution'),
+  ...accField('accD', 'Accumulation days (last 25 sessions)', 'num', 'up ≥ 1% on at least 1.25× the 50-session average volume, closing in the upper half of the day\'s range (volume breakouts count too)'),
+  ...accField('disD', 'Distribution days (last 25 sessions)', 'num', 'down ≥ 1% on at least 1.25× the 50-session average volume, closing in the lower half — stalling days included'),
+  ...accField('chD', 'Stalling days (last 25 sessions)', 'num', 'price almost unchanged (under 0.5%) on at least 1.5× average volume, closing near the low — heavy selling into strength'),
+  ...accField('cmf21', 'Money flow, 21 sessions (Chaikin)', 'num', 'Chaikin Money Flow: Σ(close location × volume) ÷ Σ volume over 21 sessions, −1 … +1 — positive = closes near the high on volume'),
+  ...accField('cmf65', 'Money flow, 13 weeks (Chaikin)', 'num', 'Chaikin Money Flow over 65 sessions (the A/D-rating window), −1 … +1'),
+  ...accField('obvSlope', 'On-Balance Volume trend (50 sessions)', 'num', 'least-squares slope of On-Balance Volume over 50 sessions, in average sessions of volume per session (about −1 … +1)'),
+  ...accField('obvLead', 'Volume leads price (1 · 0 · −1)', 'num', '1 = On-Balance Volume at its 120-session high while price is not (stealth accumulation) · −1 = price near its high while On-Balance Volume is well below its own (high not confirmed) · 0 = neither'),
+  ...accField('bigUpW', 'Big-volume up weeks (last 10 completed)', 'num', 'completed weeks with volume ≥ 1.5× the 10 weeks before, closing up in the upper half of the week\'s range'),
+  ...accField('bigDnW', 'Big-volume down weeks (last 10 completed)', 'num', 'completed weeks with volume ≥ 1.5× the 10 weeks before, closing down in the lower half of the week\'s range'),
+  ...accField('vdu', 'Quiet pullback (1 = light volume · 0 = heavy)', 'num', 'price below its 50-session closing high but within 15% of it; 1 = the down sessions of the last 10 averaged under 0.75× normal volume (sellers absent)', 'only companies pulling back from a 50-session high'),
+  ...accField('vboD', 'Sessions since volume breakout', 'num', 'an up session closing above every close of the 50 before it, on at least 1.5× average volume, in the upper part of its range', 'only volume breakouts in the last 10 sessions'),
+  ...accField('vboX', 'Volume breakout: volume ÷ 50-session average', 'x', 'the volume of that breakout session ÷ the average volume of the 50 sessions before it', 'only volume breakouts in the last 10 sessions'),
+  ...accField('distWarn', 'Distribution warning (1 = yes)', 'num', '5 or more distribution days in the last 25 sessions, or a price high that On-Balance Volume does not confirm while 21-session money flow is negative'),
+  { key: 'dlv10', label: 'Delivery % (10-session average)', unit: '%', markets: ['IN'], group: 'Volume & accumulation', approxNote: { IN: 'NSE price files: shares taken into delivery ÷ shares traded, average of the last 10 sessions (needs 8 known) — higher = more shares kept, not day-traded' } },
+  { key: 'dlvChg', label: 'Delivery % change vs the 40 sessions before (points)', unit: 'num', markets: ['IN'], group: 'Volume & accumulation', approxNote: { IN: 'the 10-session delivery % minus the average of the 40 sessions before (needs 20 known), percentage points — NSE price files' } },
   // growth
   { key: 'r40', label: 'Revenue growth YoY + FCF margin (Rule of 40)', unit: '%', markets: BOTH, group: 'Growth', approxNote: { US: FCFM_US + R40_BLANK, IN: FCFM_IN + R40_BLANK } },
   { key: 'r40T', label: 'Revenue growth YoY + FCF margin, trailing 12 months (Rule of 40, USA)', unit: '%', markets: ['US'], group: 'Growth', approxNote: { US: FCFM_T_US + R40_BLANK } },

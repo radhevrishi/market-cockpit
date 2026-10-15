@@ -21,7 +21,7 @@ import { resultRuleText, resultRuleOn, passesResult, marketToday } from './lates
 const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
 // ── setup cards ─────────────────────────────────────────────────────────────────────────────────────────────────────────
-export type SetupGlyph = 'breakout' | 'ready' | 'base' | 'breakdown' | 'weekly' | 'monthly' | 'portfolio';
+export type SetupGlyph = 'breakout' | 'ready' | 'base' | 'breakdown' | 'weekly' | 'monthly' | 'portfolio' | 'accumulation';
 export interface SetupCard {
   id: string;
   /** the card's title and a one-line plain explanation */
@@ -32,6 +32,9 @@ export interface SetupCard {
   tone: 'up' | 'down' | 'neutral';
   /** zzz1004 — a second screen counted apart on the same card (e.g. monthly reversal bases beside the monthly bases) */
   alt?: { presetId: string; label: string };
+  /** zzz1046a — figures the card's screen reads: while NO company carries any of them yet (a build not run), the card shows "…"
+   *  (setupRebuild state 'none'), never a 0 */
+  needs?: readonly string[];
 }
 export const SETUP_CARDS: readonly SetupCard[] = [
   // zzz1028 — the Breakouts screen reads DAILY patterns (DEFAULT_QUERY tfs ['D']): its window is the daily one, said as such
@@ -41,6 +44,8 @@ export const SETUP_CARDS: readonly SetupCard[] = [
   { id: 'breakdowns', label: 'Breakdowns', sub: 'Bearish patterns that closed through support', presetId: 'breakdowns', glyph: 'breakdown', tone: 'down' },
   { id: 'weekly', label: 'Weekly bases', sub: 'Bases read on completed weekly bars', presetId: 'weekly-bases', glyph: 'weekly', tone: 'up' },
   { id: 'monthly', label: 'Monthly bases', sub: 'U-bases, cups, VCPs on completed monthly bars', presetId: 'monthly-bases', glyph: 'monthly', tone: 'up', alt: { presetId: 'monthly-reversal-bases', label: 'reversal bases' } },
+  // zzz1046a — volume & accumulation (rules only: grade A or B)
+  { id: 'accumulation', label: 'Institutional accumulation', sub: 'Accumulation grade A or B from price and volume', presetId: 'acc-ab', glyph: 'accumulation', tone: 'up', needs: ['accR'] },
   { id: 'portfolio', label: 'My portfolio check', sub: 'Every holding: patterns and the 21 / 50 / 200-day averages', presetId: null, glyph: 'portfolio', tone: 'neutral' },
 ];
 /** zzz1007 — the Rule of 40 control survives a screen / card change (like the company list): a screen without its own Rule of 40
@@ -708,6 +713,10 @@ export function setupRebuild(rows: readonly Partial<ScreenRow>[], list: Readonly
     const q = cardQuery(c);
     if (!q) continue;
     out[c.id] = queryRebuild(rows, q, list);
+    // zzz1046a — a card whose figures no company carries yet cannot be counted (the build has not read them): "…", not 0
+    if (c.needs?.length && rows.length && !rows.some((r) => c.needs!.some((k) => fin((r as any)[k])))) {
+      out[c.id] = { ...out[c.id], state: 'none', text: 'These figures have not been read yet — they fill in as each company\'s prices are read again' };
+    }
     if (c.alt) { const aq = BUILT_IN_PINE_SCREENS.find((s) => s.id === c.alt!.presetId)?.q; if (aq) out[`${c.id}:alt`] = queryRebuild(rows, aq, list); }
   }
   return out;
@@ -892,6 +901,9 @@ export const WORKFLOWS: readonly Workflow[] = [
   { id: 'm-bases', label: 'Monthly bases', presetId: 'monthly-bases', tone: 'up' },
   { id: 'm-reversal', label: 'Monthly reversal candidates', presetId: 'monthly-reversal-bases', tone: 'up' },
   { id: 'mtf', label: 'Weekly + monthly aligned', presetId: 'mtf-aligned', tone: 'up' },
+  // zzz1046a — volume & accumulation on the holdings
+  { id: 'pf-acc', label: 'Accumulation in my portfolio', presetId: 'acc-ab', scope: 'pf', tone: 'up' },
+  { id: 'pf-dist', label: 'Distribution warning in my portfolio', presetId: 'dist-warn', scope: 'pf', tone: 'down' },
 ];
 /** The scope value a workflow opens with: 'pf', a watchlist ('wl:<id>' — the current one if a watchlist is chosen, else `activeWl`),
  *  or the current scope. */

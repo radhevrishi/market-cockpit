@@ -22,6 +22,7 @@ import type { TechStored } from './tech-fetch';
 import { tvFigures, rsRatings, type TvFigures } from './tv-screens';
 import { setupFigures, SETUP_FIGURE_KEYS, type SetupBar, type SetupFigures } from '../setups';
 import { passesResult, resultRuleOn, resultRuleText, marketToday } from './latest-result';
+import { accEntry, accRowFields, barVolX, ACC_ROW_KEYS, DLV_ROW_KEYS } from './acc-row';
 
 /** Bump when the engine or the stored tag changes: every stored entry without it is re-read on the next build. */
 export const PATTERN_SCAN_VERSION = 11;   // 11 = zzz1024: watchlist recall audit (line triangles with volatility-aware flat lines, bottoms after a ≥ 30% fall, triangles voided by a close beyond the sloped line; cp-3.5-triangles) — every stored reading is re-read; 10 = zzz1014: chart-pattern recall audit (flat bases to 20% / near-record lips, base breakouts read where they happen, wicks above a lip, deep-cup roundness, monthly reversals over 4 years, last-turn candidates, H&S search window; cp-3.4-recall) — every stored reading is re-read; 9 = zzz1009: weekly double / triple / H&S span ≥ 5 weekly candles, hits carry breakT / breakAgo (cp-3.3-indicator) — every stored reading is re-read; 8 = zzz1008: auditable geometry on every tag (pts / ev), the 1-year-high runaway rule for reversals and the 6-candle monthly minimum (cp-3.2-geometry) — every stored reading is re-read; 7 = zzz1005: chart-pattern precision audit (real turning points, cp-3.1-precision) — every stored reading is re-read; 2 = zzz984: + the owner's TradingView indicator fields (tv-screens.ts); 3 = zzz987: + Stage Analysis (TheWrap method); 4 = zzz990: chart-pattern audit (volume missingness, IPO first base + listing date, projected sloped boundaries, strict HTF); 5 = zzz993: scan status / quality (MC-02) + scan-close provenance (MC-01) + weekly / monthly patterns (patW / patM); 6 = zzz1003: W / M scans always carry their own close `px` (PS-01), the daily scan reads COMPLETED sessions only (+ an optional provisional live reading, PS-03), monthly scans read ~10 years (PS-07)
@@ -48,7 +49,9 @@ export const SCAN_BASIS = 'split-adjusted price';
  *  zzz993: `vq: 0` = the pattern's bars carry too little usable volume (engine volumeOk false — "volume not confirmed");
  *  `tf` = timeframe of the bars ('D' when absent; 'W' / 'M' for patW / patM); `dq` (only in the page's lean rows) = distance
  *  to the pivot from the LATEST QUOTE (px), %, same sign rule as `d` — `d` itself is always from the scan close. */
-export interface ScreenPatternTag extends PatternTag { l?: number; dp?: number | null; vq?: 0; tf?: 'D' | 'W' | 'M'; dq?: number; lu?: 'd' | 'w' | 'm'; lv?: 1 }
+export interface ScreenPatternTag extends PatternTag { l?: number; dp?: number | null; vq?: 0; tf?: 'D' | 'W' | 'M'; dq?: number; lu?: 'd' | 'w' | 'm'; lv?: 1; bx?: number }
+//   zzz1046a — `bx` (daily breakout tags only, s 'b') = the volume of the first close beyond the pivot ÷ the average volume of the 50
+//   sessions before it (acc-row.ts barVolX); absent when that session or its volume is unknown (tags read before zzz1046a too).
 //   zzz1003 (PS-03) — `lv: 1` = a PROVISIONAL daily tag read with today's unfinished session (row `patLive`, scanned at
 //   `scanLive.at`); its `d` is from the live bar's close (scanLive.px). Never part of `pat`.
 //   zzz998 — `lu` = the unit of `l`: 'w' (weeks) on weekly tags, 'm' (months) on monthly tags; absent on daily tags (= trading days).
@@ -103,7 +106,7 @@ const toPBars = (b: DailyBars): PBar[] => {
   return bars;
 };
 /** One engine analysis → stored tags + scan status (shared by the daily and the weekly / monthly scans). */
-function scanResult(a: PatternAnalysis, tf: 'D' | 'W' | 'M', asOf: string | undefined, supplied: number, q?: { rep: number; rej: number; daily: number; px?: number | null }): { pat: ScreenPatternTag[]; scan: ScanMeta } {
+function scanResult(a: PatternAnalysis, tf: 'D' | 'W' | 'M', asOf: string | undefined, supplied: number, q?: { rep: number; rej: number; daily: number; px?: number | null }, bxOf?: (breakT: number) => number | null): { pat: ScreenPatternTag[]; scan: ScanMeta } {
   const rep = q ? q.rep : a.repairedBars, rej = q ? q.rej : a.rejectedBars, daily = q ? q.daily : supplied;
   const meta: Omit<ScanMeta, 'st'> = {
     v: PATTERN_SCAN_VERSION, n: a.usableBars, ...(asOf ? { asOf } : {}), vc: a.volumeCoverage, ...(tf !== 'D' ? { tf } : {}), e: a.engineVersion,
@@ -122,7 +125,8 @@ function scanResult(a: PatternAnalysis, tf: 'D' | 'W' | 'M', asOf: string | unde
   a.hits.forEach((h, k) => {
     const t = tags[k];
     if (t.c < PATTERN_MIN_STORE) return;
-    pat.push({ ...t, l: h.lengthBars, dp: h.depthPct, ...(h.volumeOk === false ? { vq: 0 as const } : {}), ...(tf !== 'D' ? { tf, lu: tf === 'W' ? 'w' as const : 'm' as const } : {}) });
+    const bx = bxOf && t.s === 'b' && h.breakT != null && Number.isFinite(h.breakT) ? bxOf(h.breakT) : null;   // zzz1046a
+    pat.push({ ...t, l: h.lengthBars, dp: h.depthPct, ...(h.volumeOk === false ? { vq: 0 as const } : {}), ...(tf !== 'D' ? { tf, lu: tf === 'W' ? 'w' as const : 'm' as const } : {}), ...(bx != null ? { bx } : {}) });
   });
   return { pat, scan: { st: pat.length ? 'ready' : 'no-pattern', ...meta } };
 }
@@ -137,9 +141,13 @@ export function patternsFromBars(b: DailyBars, ipoD: number | null | undefined, 
   if (!n) return { pat: [], patAt: null, scan: { st: 'insufficient-history', v, n: 0, ...prov } };
   const asOf = b.d[n - 1];
   try {
-    const a = analyzePatterns(toPBars(b), ipoD != null && Number.isFinite(ipoD) ? { firstTradeT: ipoD * DAY } : undefined);
+    const bars = toPBars(b);
+    const a = analyzePatterns(bars, ipoD != null && Number.isFinite(ipoD) ? { firstTradeT: ipoD * DAY } : undefined);
+    // zzz1046a — a breakout tag's session volume ÷ the 50 sessions before it (the breakout session found by its date)
+    let idx: Map<number, number> | null = null;
+    const bxOf = (t: number) => { if (!idx) { idx = new Map(); bars.forEach((x, i) => idx!.set(x.t, i)); } const i = idx.get(t); return i == null ? null : barVolX(b.v, i); };
     // zzz1003 — the daily scan keeps its own close too (the last bar it read; tags' `d` is measured from it)
-    const r = scanResult(a, 'D', asOf, n, { rep: a.repairedBars, rej: a.rejectedBars, daily: n, px: b.c[n - 1] });
+    const r = scanResult(a, 'D', asOf, n, { rep: a.repairedBars, rej: a.rejectedBars, daily: n, px: b.c[n - 1] }, bxOf);
     return { pat: r.pat, patAt: isScanned(r.scan.st) ? asOf : null, scan: { ...r.scan, ...prov } };
   } catch {
     // a pattern failure never costs the company its price figures — but it is reported as a failure, never as "no pattern"
@@ -218,12 +226,14 @@ export function techEntry(bars: DailyBars, firstTradeSec: number | null, partial
   try { tv = tvFigures(recent, bench, { market: src?.market, now }); } catch { /* never costs the price figures */ }
   // zzz1020 — trader setups (lib/setups.ts) from the COMPLETED sessions only (same bars as the daily pattern scan)
   const st = setupEntry(done, src?.market, now);
+  // zzz1046a — volume & accumulation from the same COMPLETED sessions (big-volume weeks: completed exchange weeks only)
+  const acc = accEntry(done, src?.market, now);
   // zzz993 (MC-01) — the close every price figure of this entry was worked out from, and its date / source
   const scanPx = n && Number.isFinite(recent.c[n - 1]) ? Number(recent.c[n - 1].toPrecision(6)) : null;
   // zzz993 — weekly / monthly patterns from the same daily bars (completed periods only); zzz1003 — monthly from the full ~10 years
   const w = periodPatternsFromBars(recent, 'W', ipoD, now), m = periodPatternsFromBars(bars, 'M', ipoD, now);
   return {
-    ...techFigures(recent), ipoD, ...(cc ? { cc } : {}), pat: p.pat, patAt: p.patAt, patV: PATTERN_SCAN_VERSION, scan: p.scan, ...tv, ...st,
+    ...techFigures(recent), ipoD, ...(cc ? { cc } : {}), pat: p.pat, patAt: p.patAt, patV: PATTERN_SCAN_VERSION, scan: p.scan, ...tv, ...st, ...acc,
     patW: w.pat, scanW: w.scan, patM: m.pat, scanM: m.scan,
     ...(lv ? { patLive: lv.pat, scanLive: lv.scan } : {}),
     ...(scanPx != null ? { scanPx, scanAt: recent.d[n - 1] } : {}), scanSrc: src?.src || 'yahoo', ...(src?.ex ? { scanEx: src.ex } : {}),
@@ -388,6 +398,8 @@ export function rowTvFields(tf: TechStored | undefined, market: ScreenMarket): P
   for (const k of TV_ROW_KEYS) { const v = (tf as any)[k]; if (v != null) (o as any)[k] = v; }
   // zzz1020 — trader setups only from a current setup reading (an older / missing one = blank, never a stale value)
   if (setupsCurrent(tf)) for (const k of SETUP_ROW_KEYS) { const v = (tf as any)[k]; if (v != null) (o as any)[k] = v; }
+  // zzz1046a — volume & accumulation only from a current reading (accV; an older / missing one = blank, never a stale value)
+  Object.assign(o, accRowFields(tf as any));
   if (typeof tf.adv === 'number') o['adv$'] = Math.round((tf.adv / (market === 'US' ? 1e6 : 1e7)) * 100) / 100;
   return o;
 }
@@ -526,7 +538,9 @@ export interface PineQuery {
 /** zzz984 — the extra columns the owner can switch on (the TradingView-script fields first). */
 export const OPTIONAL_COLS: readonly NumKey[] = ['tt', 'rsR', 'stage', 'twSt', 'sata', 'mrs', 'twWk', 'r40', 'revQYoY', 'fcfmTTM', 'rsiMA', 'rsiX', 'gcD', 'dcD', 'emaXU', 'emaXD', 'ppD', 'rvol', 'adv$', 'adrP', 'ripB', 'ttOk', 'st12', 'perf1M', 'perf6M', 'perf1Y',
   // zzz1020 — trader setups
-  'csl', 'udv', 'x50A', 'wt3', 'dvx', 'dc20D', 'dc55D', 'sqzN', 'sqzF', 'epD', 'epG', 'mbD', 'wpD', 'ecbD', 'nhD', 'hgD', 'sprD', 'td9'];
+  'csl', 'udv', 'x50A', 'wt3', 'dvx', 'dc20D', 'dc55D', 'sqzN', 'sqzF', 'epD', 'epG', 'mbD', 'wpD', 'ecbD', 'nhD', 'hgD', 'sprD', 'td9',
+  // zzz1046a — volume & accumulation
+  'accS', 'accR', 'accD', 'disD', 'cmf21', 'cmf65', 'obvLead', 'bigUpW', 'vboD', 'vboX', 'distWarn', 'dlv10', 'dlvChg'];
 
 export const DEFAULT_QUERY: PineQuery = {
   qv: 2, bias: 'U', ids: [], stages: ['f', 'b'], minConf: 55, tfs: ['D'], tfMode: 'any', dist: { on: true, lo: -15, hi: 5 },
@@ -764,6 +778,8 @@ export const LEAN_KEYS = [
   'opmTTM', 'nmTTM', 'sma21', 'sma100', 'ema10', 'ema50', 'atrP', 'chg1W', 'perf5D', 'perf5Y', 'avgVol60', 'fs',
   // zzz1020 — trader setups (lib/setups.ts) + CANSLIM points and the episodic pivot on results
   ...SETUP_ROW_KEYS, 'csl', 'epE',
+  // zzz1046a — volume & accumulation (+ India's delivery %)
+  ...ACC_ROW_KEYS, ...DLV_ROW_KEYS,
 ] as const satisfies ReadonlyArray<keyof ScreenRow>;
 /** zzz993 — numbers sent to the page are rounded: 2 decimals from 1 up, 4 significant digits below 1 (penny prices keep their
  *  meaning); whole numbers unchanged. Pattern tags and scan objects are left as stored. */
@@ -978,11 +994,12 @@ export function leanRows(rows: readonly ScreenRow[], bias?: 'U' | 'D' | null, pa
 // ── saved Pine screens ────────────────────────────────────────────────────────────────────────────────────────────────
 export const PINE_SCREENS_KEY = 'mc:pine-screens:v1';
 /** zzz984 — where a built-in screen is listed: the owner's own TradingView scripts, chart patterns, momentum & trend. */
-export type PineGroup = 'tv' | 'r40' | 'patterns' | 'momentum' | 'setups' | 'portfolio';
+export type PineGroup = 'tv' | 'r40' | 'patterns' | 'momentum' | 'setups' | 'portfolio' | 'volume';
 export const PINE_GROUPS: ReadonlyArray<{ id: PineGroup; label: string }> = [
   { id: 'portfolio', label: 'My portfolio' },
   { id: 'tv', label: 'Your TradingView screens' }, { id: 'r40', label: 'Rule of 40 + chart setups' }, { id: 'patterns', label: 'Chart patterns' }, { id: 'momentum', label: 'Momentum & trend' },
   { id: 'setups', label: 'Trader setups' },   // zzz1020
+  { id: 'volume', label: 'Volume & accumulation' },   // zzz1046a
 ];
 /** zzz1004 — `scope` (optional): the company list saved WITH the screen ('pf' my portfolio, 'cb', 'wl:<id>', 'ss:<id>', '' every
  *  company). Opening a screen that has one switches the list to it; a screen without one leaves the current list as it is. */
@@ -1077,7 +1094,7 @@ export function pineRuleFields(market: ScreenMarket) { return FIELDS.filter((f) 
 export const PINE_GROWTH_QUALITY_KEYS: readonly NumKey[] = ['r40', 'revQYoY', 'revAYoY', 'revTTMYoY', 'epsQYoY', 'epsTTMYoY', 'gpQYoY', 'fcfmTTM', 'gmFY', 'opmTTM', 'nmTTM', 'roeTTM', 'roceTTM', 'de', 'cash'];
 export const PINE_VALUATION_KEYS: readonly NumKey[] = ['ps', 'evRev', 'pe'];
 /** The groups of the rule editor, in order. */
-export const PINE_RULE_GROUPS = ['Price & volume', 'Averages', 'Momentum', 'Trader setups', 'Growth & quality', 'Valuation'] as const;
+export const PINE_RULE_GROUPS = ['Price & volume', 'Averages', 'Momentum', 'Trader setups', 'Volume & accumulation', 'Growth & quality', 'Valuation'] as const;
 export type PineRuleGroup = typeof PINE_RULE_GROUPS[number];
 /** The editor group of a field (null = not offered in the Pine rule editor). */
 export function pineRuleGroup(f: { key: string; group: string }): PineRuleGroup | null {
@@ -1087,6 +1104,7 @@ export function pineRuleGroup(f: { key: string; group: string }): PineRuleGroup 
   if (f.group === 'Moving averages') return 'Averages';
   if (f.group === 'Momentum') return 'Momentum';
   if (f.group === 'Trader setups') return 'Trader setups';   // zzz1020
+  if (f.group === 'Volume & accumulation') return 'Volume & accumulation';   // zzz1046a
   return null;
 }
 /** zzz1007 — the "+ Add a rule" menu: the fields this market receives, grouped (Price & volume / Averages / Momentum / Growth & quality

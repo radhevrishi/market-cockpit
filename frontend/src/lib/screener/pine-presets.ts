@@ -41,6 +41,8 @@ const R40_COLS: NumKey[] = ['r40', 'revQYoY', 'fcfmTTM'];
 const R40_NOTE = 'Rule of 40 ≥ 40: latest quarter revenue growth YoY + FCF margin (your TradingView script). Left blank — so the company does not pass — when growth is above +300% or the FCF margin is outside −100% to +100% (a tiny sales base).';
 /** zzz1020 — the sentence every trader-setup screen starts with. */
 const TS = 'Trader setup — our own version of the published rules, read from the completed daily sessions.';
+/** zzz1046a — the sentence every volume & accumulation screen starts with. */
+const ACC = 'Volume & accumulation — our own version of the published O\'Neil / Wyckoff rules, read from the completed daily sessions; it shows heavy buying or selling, not who did it.';
 const ABOVE_200: Filter[] = [{ kind: 'cmp', key: 'px', op: 'above', other: 'sma200' }];
 const BELOW_200: Filter[] = [{ kind: 'cmp', key: 'px', op: 'below', other: 'sma200' }];
 
@@ -189,4 +191,21 @@ export const BUILT_IN_PINE_SCREENS: readonly PineScreen[] = [
     `${TS} Richard Wyckoff: in the last 10 sessions the low dipped up to 5% under a support that had held for 20+ sessions (the lowest low of 60) and a close came back above it within 3 sessions, on average-or-better volume.`),
   rules('ts-extended', 'Extended from SMA 50 (≥ 7 ATRs) — take care', [ge('x50A', 7)], ['x50A', 'x10A', 'rsR'], 'setups',
     'Our own version of the published rules, read from the completed daily sessions: the close is 7 or more ATR 14s above SMA 50 — very extended; a pullback or a pause is common from here. A list to watch, not an entry setup.'),
+
+  // ── zzz1046a: volume & accumulation (lib/accumulation.ts) — heavy buying or selling read from price and volume on the completed
+  //    sessions. Rules only (any chart pattern is still shown beside the company), except the base screen. ──────────────────────
+  rules('acc-ab', 'Institutional accumulation (grade A or B)', [ge('accR', 4)], ['accS', 'accR', 'accD', 'disD', 'cmf65', 'udv'], 'volume',
+    `${ACC} Accumulation grade A or B: a score of 65 or more out of 100 from money flow, accumulation vs distribution days, up / down volume, On-Balance Volume, big-volume weeks and pullback volume.`),
+  screen('acc-base', 'Bullish base forming + accumulation A/B', { bias: 'U', ids: BASE_IDS, stages: ['f'], minConf: 55, dist: { on: true, lo: -15, hi: 0 }, filters: [ge('accR', 4)], cols: ['accS', 'accR', 'udv', 'vdu'] },
+    { group: 'volume', note: `${ACC} O'Neil bases or a VCP still forming (likely or better, up to 15% below the pivot) while volume shows accumulation grade A or B — accumulation inside the base.` }),
+  rules('acc-vbo', 'Volume breakout (last 5 sessions)', [le('vboD', 4)], ['vboD', 'vboX', 'accS', 'rvol'], 'volume',
+    `${ACC} In the last 5 sessions an up session closed above every close of the 50 before it, on at least 1.5× the 50-session average volume, in the upper part of its range.`),
+  rules('acc-stealth', 'Stealth accumulation (volume leads price)', [eq('obvLead', 1)], ['obvLead', 'obvSlope', 'accS', 'cmf21'], 'volume',
+    `${ACC} On-Balance Volume is at its 120-session high while price is not at its own high yet — volume is moving ahead of price.`),
+  rules('acc-quiet', 'Quiet pullback in an uptrend', [eq('vdu', 1), eq('stage', 2)], ['vdu', 'accS', 'stage', 'udv'], 'volume',
+    `${ACC} A Weinstein stage 2 uptrend pulling back up to 15% from its 50-session closing high, with the down sessions of the last 10 on light volume (under 0.75× normal) — sellers are not pressing.`),
+  rules('dist-warn', 'Distribution warning', [eq('distWarn', 1)], ['disD', 'chD', 'cmf21', 'obvLead', 'accS'], 'volume',
+    `${ACC} Distribution is piling up: 5 or more heavy-volume down or stalling sessions in the last 25, or a price high that On-Balance Volume does not confirm while money flow is negative. A list to review, not a signal on its own.`),
+  screen('dlv-rising', 'Delivery % rising (India)', { bias: 'both', need: 'any', stages: ['f', 'b'], minConf: 55, dist: { on: false, lo: -15, hi: 5 }, filters: [ge('dlvChg', 5), ge('dlv10', 40)], cols: ['dlv10', 'dlvChg', 'accS'] },
+    { group: 'volume', market: 'IN', note: 'India only, from NSE\'s daily price files: the share of traded shares taken into delivery averaged 40% or more over the last 10 sessions and rose 5 points or more against the 40 sessions before — more shares are being kept, not day-traded.' }),
 ];
