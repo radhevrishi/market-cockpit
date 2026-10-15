@@ -272,6 +272,7 @@ export function WatchlistTable({
                     else if (c.id === 'marketCap') txt = formatMcap(val);
                     else if (c.id === 'peRatio') txt = val.toFixed(1) + 'x';
                     else if (c.id === 'tradedValue') txt = formatTradedValue(val, item.market);
+                    else if (c.id === 'pct50' || c.id === 'pct200') txt = `${val > 0 ? '+' : ''}${val.toFixed(1)}%`;
                     else txt = `₹${val.toFixed(2)}`;
                   }
                   return (

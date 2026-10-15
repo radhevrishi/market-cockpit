@@ -40,6 +40,7 @@ import { decideInitialWatchlist, WatchlistMutationQueue, FlagSync, flagView, EMP
 import { postWatchlistList, postWatchlistFlag, describeListOp } from './watchlist-save';
 // zzz1045d — list source + compare with chart lists, quote time vs last refreshed, no-quote names, changes since review
 import { standaloneSource } from '@/lib/watchlist-compare';
+import { indexAverages, pctFrom, screenerKey, type AvgRow } from '@/lib/watchlist-averages';
 import { quoteTimeOf, quoteTimeSummary, unresolvedSymbols, tradedValue, buildReview, changesSinceReview, loadReview, saveReview, DEFAULT_REVIEW_THRESHOLD, type ReviewSnapshot } from '@/lib/watchlist-review';
 import { ComparePanel } from './ComparePanel';
 import { fmtClock } from './components';
@@ -410,6 +411,23 @@ export default function WatchlistsPage() {
    * of how many times the user toggled the chooser. Fix: forward every
    * field the WatchlistItem type already declares.
    */
+  // zzz1045 — the daily 50 / 200-day averages of the listed names (stock screener snapshot, a few KB per market)
+  const [avgs, setAvgs] = useState<Record<string, AvgRow>>({});
+  const avgKey = tickers.map(screenerKey).sort().join(',');
+  useEffect(() => {
+    if (!avgKey) return;
+    const ctrl = new AbortController();
+    const list = avgKey.split(',').slice(0, 400).join(',');
+    Promise.all((['IN', 'US'] as const).map((m) => fetch(`/api/v1/stock-screener?market=${m}&tickers=${encodeURIComponent(list)}`, { signal: ctrl.signal })
+      .then((r) => (r.ok ? r.json() : null)).then((j) => (j && Array.isArray(j.rows) ? { m, rows: j.rows as AvgRow[] } : null)).catch(() => null)))
+      .then((res) => {
+        if (ctrl.signal.aborted) return;
+        const next: Record<string, AvgRow> = {};
+        for (const x of res) if (x) for (const [k, v] of Object.entries(indexAverages(x.rows))) next[`${x.m}:${k}`] = v;
+        setAvgs(next);
+      });
+    return () => ctrl.abort();
+  }, [avgKey]);
   const watchlistItems = useMemo(() => {
     return tickers.map(ticker => {
       const norm = normalize(ticker);
@@ -438,10 +456,15 @@ export default function WatchlistsPage() {
         priceSource: quote?.priceSource ?? null,
         staleEOD: quote?.staleEOD ?? null,
         tradedValue: tradedValue(quoteNumbers(quote).price, (quote as any)?.volume ?? null),
+        ...(() => {
+          const a = avgs[`${quote?.market === 'US' ? 'US' : 'IN'}:${screenerKey(ticker)}`];
+          const p = quoteNumbers(quote).price;
+          return { pct50: pctFrom(p, a?.sma50), pct200: pctFrom(p, a?.sma200) };
+        })(),
       };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tickers, quotes, flagState]);
+  }, [tickers, quotes, flagState, avgs]);
 
   // zzz1045d — "changes since last review": rows that moved by at least reviewPct % since "Mark reviewed"
   const reviewDiff = useMemo(() => changesSinceReview(watchlistItems, review, reviewPct), [watchlistItems, review, reviewPct]);

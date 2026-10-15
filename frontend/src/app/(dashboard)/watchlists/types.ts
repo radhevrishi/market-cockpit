@@ -46,16 +46,18 @@ export interface WatchlistItem {
   priceSource?: string | null;
   staleEOD?: boolean | null;
   tradedValue?: number | null;
+  pct50?: number | null;    // zzz1045 — % above (+) / below (−) the daily 50-day average
+  pct200?: number | null;
   reviewPct?: number | null;   // change since "Mark reviewed" (only when it passes the chosen %)
 }
 
-export type SortField = 'ticker' | 'company' | 'sector' | 'price' | 'changePercent' | 'dayHigh' | 'dayLow' | 'flag' | 'volume' | 'week52High' | 'week52Low' | 'marketCap' | 'peRatio' | 'avgVolume' | 'tradedValue';
+export type SortField = 'ticker' | 'company' | 'sector' | 'price' | 'changePercent' | 'dayHigh' | 'dayLow' | 'flag' | 'volume' | 'week52High' | 'week52Low' | 'marketCap' | 'peRatio' | 'avgVolume' | 'tradedValue' | 'pct50' | 'pct200';
 
 export type SortOrder = 'asc' | 'desc';
 
 // PATCH 0442 BUG-020/027 — Optional columns the user can toggle on. Persisted
 // to localStorage so the choice survives reloads.
-export type OptionalCol = 'volume' | 'week52High' | 'week52Low' | 'marketCap' | 'peRatio' | 'avgVolume' | 'tradedValue';
+export type OptionalCol = 'volume' | 'week52High' | 'week52Low' | 'marketCap' | 'peRatio' | 'avgVolume' | 'tradedValue' | 'pct50' | 'pct200';
 
  // 24h
 
