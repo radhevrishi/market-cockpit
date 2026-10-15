@@ -13,7 +13,7 @@ import { PATTERN_META, PATTERN_IDS, PATTERN_NA_REASON, patternApplies, type Patt
 // Non-numeric row fields (and the zzz994 provenance / per-timeframe pattern fields, read defensively where present).
 type NonNum = 't' | 'n' | 'sec' | 'ind' | 'q' | 'approx' | 'tvSec' | 'exch' | 'nq' | 'cc' | 'pat' | 'patAt' | 'ccBasis'
   | 'patW' | 'patM' | 'patWAt' | 'patMAt' | 'patV' | 'scan' | 'scanW' | 'scanM' | 'scanAt' | 'scanSrc' | 'scanBasis' | 'scanEx'
-  | 'pxSrc' | 'pxAt' | 'pxConflict' | 'live' | 'fcfmAt' | 'fcfmTAt' | 'accG' | 'accP';
+  | 'pxSrc' | 'pxAt' | 'pxConflict' | 'live' | 'fcfmAt' | 'fcfmTAt' | 'accG' | 'accP' | 'accM';
 export type NumKey = Exclude<keyof ScreenRow, NonNum>;
 export type FieldUnit = '%' | 'x' | 'money' | 'num' | 'price' | 'shares' | 'usd' | 'date';
 export type FieldGroup = 'Price & volume' | 'Moving averages' | 'Momentum' | 'Trader setups' | 'Volume & accumulation' | 'Growth' | 'Margins & returns' | 'Valuation' | 'Balance sheet' | 'Company';

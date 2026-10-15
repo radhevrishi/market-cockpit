@@ -195,7 +195,7 @@ export const BUILT_IN_PINE_SCREENS: readonly PineScreen[] = [
   // ── zzz1046a: volume & accumulation (lib/accumulation.ts) — heavy buying or selling read from price and volume on the completed
   //    sessions. Rules only (any chart pattern is still shown beside the company), except the base screen. ──────────────────────
   rules('acc-ab', 'Institutional accumulation (grade A or B)', [ge('accR', 4)], ['accS', 'accR', 'accD', 'disD', 'cmf65', 'udv'], 'volume',
-    `${ACC} Accumulation grade A or B: a score of 65 or more out of 100 from money flow, accumulation vs distribution days, up / down volume, On-Balance Volume, big-volume weeks and pullback volume.`),
+    `${ACC} Accumulation grade A or B: a score of 72 or more out of 100 (A: 85) from money flow, accumulation vs distribution days, up / down volume, On-Balance Volume, big-volume weeks and pullback volume — AND confirmed by every one of: 3+ accumulation sessions in the last 25 (2 more than distribution), 13-week money flow ≥ +0.10, up / down volume ≥ 1.3, On-Balance Volume rising, no distribution warning, close above its 50-session average and $5 million / ₹3 crore a day traded. A high score that misses one is graded C, with the reason shown.`),
   screen('acc-base', 'Bullish base forming + accumulation A/B', { bias: 'U', ids: BASE_IDS, stages: ['f'], minConf: 55, dist: { on: true, lo: -15, hi: 0 }, filters: [ge('accR', 4)], cols: ['accS', 'accR', 'udv', 'vdu'] },
     { group: 'volume', note: `${ACC} O'Neil bases or a VCP still forming (likely or better, up to 15% below the pivot) while volume shows accumulation grade A or B — accumulation inside the base.` }),
   rules('acc-vbo', 'Volume breakout (last 5 sessions)', [le('vboD', 4)], ['vboD', 'vboX', 'accS', 'rvol'], 'volume',

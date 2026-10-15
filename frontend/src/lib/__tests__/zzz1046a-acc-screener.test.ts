@@ -68,7 +68,7 @@ test('zzz1046a accEntry: short history stores only the version (blank figures, n
   const e = accEntry(make(40, () => [0.5, 1, 0.5]), 'US', NOW);
   assert.deepEqual(e, { accV: ACC_VERSION });
   const note = accCoverageNote(new Map<string, any>([['AAA', { accV: ACC_VERSION, accS: 70 }], ['BBB', { accV: ACC_VERSION }], ['CCC', {}]]));
-  assert.match(note, /2 of 3 companies read with version 1, 1 with enough history for a grade — 1 wait for their next price read/);
+  assert.match(note, /2 of 3 companies read with version \d+, 1 with enough history for a grade — 1 wait for their next price read/);
 });
 
 test('zzz1046a the build re-reads companies without the current accumulation version', () => {

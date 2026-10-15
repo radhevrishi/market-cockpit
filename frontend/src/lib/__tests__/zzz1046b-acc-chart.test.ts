@@ -202,7 +202,7 @@ test('source wiring: hook, chip, panes, OBV, menu, layout controls', () => {
   assert.match(hook, /compact: display === 'clean'/);
   const view = read('../../components/charts/acc-view.ts');
   assert.match(view, /completedBars\(bars, tf, market, now\)/);
-  assert.match(view, /daily \? \{ daily: true, weekDone: \(mon\) => weekComplete\(mon, market, now\) \} : \{ daily: false \}/);
+  assert.match(view, /daily \? \{ daily: true, market: .*weekDone: \(mon\) => weekComplete\(mon, market, now\) \} : \{ daily: false \}/);
   const kl = read('../../components/charts/acc-kline.ts');
   assert.match(kl, /name: 'MC_ACC'/); assert.match(kl, /name: 'MC_CMF'/);
   assert.match(read('../../components/charts/kline-setup.ts'), /name: 'MC_OBV'/);

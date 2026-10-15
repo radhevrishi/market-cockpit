@@ -17,7 +17,7 @@ export const gradeOfRank = (r: unknown): AccGrade | null => (r === 5 ? 'A' : r =
 /** The numeric figures stored per company and carried on a row (nulls left out). */
 export const ACC_NUM_KEYS = ['accS', 'accR', 'accD', 'disD', 'chD', 'cmf21', 'cmf65', 'obvSlope', 'obvLead', 'bigUpW', 'bigDnW', 'vdu', 'vboD', 'vboX', 'distWarn'] as const;
 /** Every accumulation field on a row: the numbers, the grade letter (`accG`) and the score's parts (`accP`, for the explanation). */
-export const ACC_ROW_KEYS = [...ACC_NUM_KEYS, 'accG', 'accP'] as const satisfies ReadonlyArray<keyof ScreenRow>;
+export const ACC_ROW_KEYS = [...ACC_NUM_KEYS, 'accG', 'accP', 'accM'] as const satisfies ReadonlyArray<keyof ScreenRow>;
 /** India's delivery fields (from NSE's price files). */
 export const DLV_ROW_KEYS = ['dlv10', 'dlvChg'] as const satisfies ReadonlyArray<keyof ScreenRow>;
 
@@ -28,12 +28,13 @@ const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinit
 export function accEntry(done: DailyBars, market?: ScreenMarket, now?: Date): AccStored {
   const out: AccStored = { accV: ACC_VERSION };
   try {
-    const f = accumulationFigures(done, { daily: true, weekDone: (mon) => weekComplete(mon, market, now) });
+    const f = accumulationFigures(done, { daily: true, market: market === 'IN' ? 'IN' : market === 'US' ? 'US' : undefined, weekDone: (mon) => weekComplete(mon, market, now) });
     for (const k of ACC_NUM_KEYS) {
       const v = k === 'accR' ? (f.accG ? ACC_RANK[f.accG] : null) : (f as any)[k];
       if (fin(v)) (out as any)[k] = v;
     }
     if (f.accG) out.accG = f.accG;
+    if (f.accG === 'C' && fin(f.accS) && f.accS >= 65 && f.accMiss?.length) out.accM = f.accMiss.join(' · ');   // zzz1047
     if (f.parts) { const p = f.parts; out.accP = [p.ad, p.days, p.udv, p.obv, p.weeks, p.pull]; }
   } catch { /* never costs the price figures */ }
   return out;
@@ -58,6 +59,7 @@ export function accFiguresOfRow(r: Partial<ScreenRow>): AccFigures {
     accD: n('accD'), disD: n('disD'), chD: n('chD'), cmf21: n('cmf21'), cmf65: n('cmf65'), udv50: n('udv'),
     obvSlope: n('obvSlope'), obvLead: (n('obvLead') as -1 | 0 | 1 | null), bigUpW: n('bigUpW'), bigDnW: n('bigDnW'),
     vdu: n('vdu') === 1 ? 1 : n('vdu') === 0 ? 0 : null, vboD: n('vboD'), vboX: n('vboX'), dlv10: n('dlv10'), dlvChg: n('dlvChg'),
+    accMiss: typeof r.accM === 'string' && r.accM ? r.accM.split(' · ') : [],
     ...(p ? { parts: { ad: p[0], days: p[1], udv: p[2], obv: p[3], weeks: p[4], pull: p[5] } } : {}),
   };
 }

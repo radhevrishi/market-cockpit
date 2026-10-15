@@ -69,7 +69,7 @@ export function accReading<T extends AccBar>(bars: readonly T[], tf: AccChartTf,
   const vb = toVolBars(done);
   const series = accumulationSeries(vb);
   const daily = tf === 'D';
-  const figures = accumulationFigures(vb, daily ? { daily: true, weekDone: (mon) => weekComplete(mon, market, now) } : { daily: false });
+  const figures = accumulationFigures(vb, daily ? { daily: true, market: market === 'IN' ? 'IN' : market === 'US' ? 'US' : undefined, weekDone: (mon) => weekComplete(mon, market, now) } : { daily: false });
   return { done, dropped, series, figures };
 }
 

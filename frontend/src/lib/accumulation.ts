@@ -32,7 +32,15 @@
 //   vboD / vboX           bars since the latest volume breakout in the last 10 (null = none) and its volume ÷ V
 //   accS / accG           score 0–100 and grade A–E (see accScore) · distWarn = 1 when distribution is piling up
 //   dlv10 / dlvChg        India: average delivery % of the last 10 sessions, and minus the 40 before (percentage points)
-export const ACC_VERSION = 1;
+export const ACC_VERSION = 2;   // zzz1047 — 2: grade A / B needs confirmed evidence (ACC_GATES), not just a high score
+/** zzz1047 — what a grade A or B needs besides the score. The score alone let 30% of India reach A/B (names with no accumulation
+ *  day, negative money flow, price under its 50-session average or ₹0.2 Cr a day traded). A / B now needs ALL of:
+ *  ≥ 3 accumulation sessions in the last 25 and at least 2 more than the distribution sessions · 13-week money flow ≥ +0.10 ·
+ *  up / down volume (50 sessions) ≥ 1.3 · On-Balance Volume trend rising · no distribution warning · close above its 50-session
+ *  average · daily traded value (20 sessions) ≥ $5 million (USA) / ₹3 crore (India) — institutions cannot build a position in less.
+ *  A also needs: score ≥ 85, ≥ 4 accumulation sessions, money flow ≥ +0.15 and a close within 15% of the 250-session closing high.
+ *  B needs a score ≥ 72. A company that misses a condition is graded C at most; the unmet conditions are listed. */
+export const ACC_GATES = { accD: 3, net: 2, cmf65: 0.10, udv50: 1.3, scoreB: 72, scoreA: 85, accDA: 4, cmf65A: 0.15, nearHiA: 0.85, minTurnover: { US: 5e6, IN: 3e7 } } as const;
 export const ACC_RULES = { avgN: 50, window: 25, accChg: 0.01, accVol: 1.25, churnChg: 0.005, churnVol: 1.5, churnClv: -0.3, vboVol: 1.5, vboClv: 0.25, minBars: 70 } as const;
 
 export interface VolBars { d?: readonly string[]; o?: readonly number[]; h: readonly number[]; l: readonly number[]; c: readonly number[]; v: readonly number[]; dlv?: ReadonlyArray<number | null | undefined> }
@@ -42,6 +50,8 @@ export type AccGrade = 'A' | 'B' | 'C' | 'D' | 'E';
 export interface AccFigures {
   accV: number;
   accS: number | null; accG: AccGrade | null; distWarn: 0 | 1 | null;
+  /** zzz1047 — the A / B conditions not met (empty = all met); null when not graded */
+  accMiss?: string[] | null;
   accD: number | null; disD: number | null; chD: number | null;
   cmf21: number | null; cmf65: number | null; udv50: number | null;
   obvSlope: number | null; obvLead: -1 | 0 | 1 | null;
@@ -156,7 +166,7 @@ export function accScore(f: Pick<AccFigures, 'cmf65' | 'accD' | 'disD' | 'udv50'
 }
 
 /** Figures on the last bar. `weekDone(mondayKey)` says whether a week has closed (pass completed-weeks; omit on non-daily bars). */
-export function accumulationFigures(b: VolBars, opts: { weekDone?: (mon: string) => boolean; daily?: boolean } = {}): AccFigures {
+export function accumulationFigures(b: VolBars, opts: { weekDone?: (mon: string) => boolean; daily?: boolean; market?: 'US' | 'IN' } = {}): AccFigures {
   const n = b.c.length;
   const blank: AccFigures = { accV: ACC_VERSION, accS: null, accG: null, distWarn: null, accD: null, disD: null, chD: null, cmf21: null, cmf65: null, udv50: null, obvSlope: null, obvLead: null, bigUpW: null, bigDnW: null, vdu: null, vboD: null, vboX: null, dlv10: null, dlvChg: null };
   // volume must be real: a series without volume (an index, a bad feed) says nothing
@@ -202,8 +212,31 @@ export function accumulationFigures(b: VolBars, opts: { weekDone?: (mon: string)
   // latest volume breakout in the last 10 bars
   for (let i = L; i >= n - 10; i--) if (s.kind[i] === 'vbo') { out.vboD = L - i; out.vboX = s.volX[i]; break; }
   const sc = accScore(out);
-  out.accS = sc.score; out.accG = accGrade(sc.score); out.parts = sc.parts;
   out.distWarn = disD >= 5 || (out.obvLead === -1 && fin(out.cmf21) && out.cmf21 < -0.05) ? 1 : 0;
+  out.accS = sc.score; out.parts = sc.parts;
+  // zzz1047 — grade A / B only with confirmed evidence
+  const G = ACC_GATES, miss: string[] = [];
+  if (accD < G.accD || accD < disD + G.net) miss.push(`${accD} accumulation vs ${disD} distribution sessions (needs ≥ ${G.accD} and ${G.net} more than distribution)`);
+  if (!fin(out.cmf65) || out.cmf65 < G.cmf65) miss.push(`13-week money flow ${fin(out.cmf65) ? out.cmf65 : '—'} (needs ≥ +${G.cmf65})`);
+  if (!fin(out.udv50) || out.udv50 < G.udv50) miss.push(`up / down volume ${fin(out.udv50) ? out.udv50 : '—'} (needs ≥ ${G.udv50})`);
+  if (!fin(out.obvSlope) || out.obvSlope <= 0) miss.push('On-Balance Volume not rising');
+  if (out.distWarn === 1) miss.push('distribution warning');
+  let s50 = 0; for (let i = n - 50; i < n; i++) s50 += b.c[i];
+  if (!(b.c[L] > s50 / 50)) miss.push('close below its 50-session average');
+  if (opts.daily !== false && opts.market) {
+    let tv = 0, k = 0; for (let i = Math.max(0, n - 20); i < n; i++) if (fin(b.v[i]) && fin(b.c[i])) { tv += b.c[i] * b.v[i]; k++; }
+    const adv = k ? tv / k : 0, minT = G.minTurnover[opts.market];
+    if (adv < minT) miss.push(`traded value ${opts.market === 'US' ? `$${(adv / 1e6).toFixed(1)} million` : `₹${(adv / 1e7).toFixed(1)} crore`} a day (needs ≥ ${opts.market === 'US' ? '$5 million' : '₹3 crore'})`);
+  }
+  let hi250 = -Infinity; for (let i = Math.max(0, n - 250); i < n; i++) if (b.c[i] > hi250) hi250 = b.c[i];
+  const raw = accGrade(sc.score)!;
+  let g: AccGrade;
+  if (raw === 'A' || raw === 'B') {
+    if (miss.length) g = 'C';
+    else if (sc.score >= G.scoreA && accD >= G.accDA && (out.cmf65 as number) >= G.cmf65A && b.c[L] >= G.nearHiA * hi250) g = 'A';
+    else g = sc.score >= G.scoreB ? 'B' : 'C';
+  } else g = raw;
+  out.accG = g; out.accMiss = miss;
   return out;
 }
 
@@ -230,6 +263,7 @@ export function accExplain(f: AccFigures, bar = 'session', market?: 'US' | 'IN')
   const sg = (x: number) => `${x > 0 ? '+' : ''}${x}`;
   const lines = [
     `Accumulation ${f.accG} (${ACC_GRADE_WORD[f.accG!]}) — score ${f.accS}/100`,
+    f.accG === 'C' && f.accS >= 65 && f.accMiss?.length ? `Score is high but not graded A / B — not confirmed: ${f.accMiss.join(' · ')}` : '',
     `Last 25 ${bar}s: ${f.accD} accumulation ${bar}s (up ≥ 1% on ≥ 1.25× average volume) vs ${f.disD} distribution${f.chD ? ` (incl. ${f.chD} stalling)` : ''}${p ? ` · ${p.days}/20` : ''}`,
     f.cmf65 != null ? `Money flow 13 weeks ${sg(f.cmf65)}, 21 ${bar}s ${f.cmf21 != null ? sg(f.cmf21) : '—'} (closes near the high on volume = positive)${p ? ` · ${p.ad}/25` : ''}` : '',
     f.udv50 != null ? `Up-${bar} volume ÷ down-${bar} volume, 50 ${bar}s: ${f.udv50}${p ? ` · ${p.udv}/15` : ''}` : '',

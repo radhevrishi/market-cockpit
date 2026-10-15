@@ -159,6 +159,7 @@ export interface ScreenRow {
   accS?: number | null;      // accumulation score 0–100
   accR?: number | null;      // grade as a number: A 5 · B 4 · C 3 · D 2 · E 1
   accG?: string;             // grade letter A–E
+  accM?: string;             // zzz1047 — a high score not graded A / B: the unmet conditions
   accP?: number[];           // the score's parts [money flow /25, days /20, up-down volume /15, OBV /15, weeks /15, pullback /10]
   accD?: number | null; disD?: number | null; chD?: number | null;   // accumulation / distribution (incl. stalling) / stalling sessions, last 25
   cmf21?: number | null; cmf65?: number | null;                       // Chaikin money flow, 21 / 65 sessions
