@@ -436,6 +436,10 @@ export const APP_JOBS: readonly AppJob[] = [
   // zzz913 — Daily Gainers Brief (was a Claude scheduled task). Logic in lib/gainers-brief.ts (loaded lazily: no import edit here).
   { name: 'gainers-in-backup', crons: ['41 11 * * 1-5'], timeoutMs: 40 * MIN, workflow: 'daily-research.yml', does: 'GET /api/v1/ai-gainers/research?market=IN; only when GitHub’s gainers-in sweep is missing or stalled: GET /api/v1/ai-gainers?market=IN, POST /api/v1/ai-gainers/research rounds (no re-process)', run: async (ctx) => (await import('./gainers-brief')).gainersInBackupJob(ctx) },
   { name: 'gainers-brief-in', crons: ['57 11 * * 1-5', '37 12 * * 1-5', '31 13 * * 1-5'], timeoutMs: 4 * MIN, workflow: 'gainers-brief.yml', does: 'POST /api/v1/cron/gainers-brief?final=0 (sends when the sweep is complete); the 13:31 slot sends with final=1 (PARTIAL when incomplete)', run: async (ctx) => (await import('./gainers-brief')).gainersBriefJob(ctx) },
+  // zzz1055 — FII / DII flows: NSE provisional every 15 min 13:00–15:30 UTC until today's row is in (no NSE call after that),
+  // NSDL confirmed figure + new fortnight sector report at 15:30 / 17:45 / 04:20 UTC, history backfill in small chunks.
+  // Crons = lib/fii-dii/schedule FII_DII_CRONS (a test keeps them equal). By hand: POST /api/v1/fii-dii?run=1 (service key).
+  { name: 'fii-dii', crons: ['0,15,30,45 13-14 * * 1-5', '0,15,30 15 * * 1-5', '45 17 * * 1-5', '20 4 * * 1-5'], timeoutMs: 4 * MIN, workflow: BRIDGE, does: 'in-process: lib/fii-dii/job fiiDiiJob (NSE fiidiiTradeReact → fii_dii_daily; NSDL daily + fortnight sector reports)', run: async (ctx) => (await import('./fii-dii/job')).fiiDiiJob(ctx) },
   // zzz914 — owner briefs moved in from Claude scheduled tasks (they needed the owner's Mac awake; the book is on the server now).
   // Morning conviction brief: 04:29 UTC Mon–Fri (≈06:30 Berlin). Thesis watch: 02:15 UTC Mon–Fri (≈07:45 IST). The route sends
   // once per day; a run that composed but could not deliver (no channel set up) reports ok=false so the heartbeat shows it.

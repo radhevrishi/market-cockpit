@@ -1,0 +1,61 @@
+name: Scrape FII / DII flows (fallback)
+
+# zzz1055 — the app's own scheduler job `fii-dii` (frontend/src/lib/fii-dii/job.ts, see lib/app-scheduler) fetches NSE's
+# provisional FII/DII figures, NSDL's confirmed FPI figures and NSDL's fortnightly sector reports. This collector is the
+# fallback for when NSE / NSDL refuse the app host: it asks the app what it already has, fetches only what is missing from
+# GitHub's network and POSTs the raw pages to /api/v1/fii-dii (service key). Two short runs per weekday, after the app's slots.
+
+on:
+  schedule:
+    - cron: '50 14 * * 1-5'   # 20:20 IST — after NSE publishes (~18:00–19:00 IST) and the app's first tries
+    - cron: '35 16 * * 1-5'   # 22:05 IST — last try of the day
+  workflow_dispatch:
+
+concurrency:
+  group: scrape-fii-dii
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v5
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Collect FII / DII
+        id: main
+        env:
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+          CRON_SECRET:   ${{ secrets.CRON_SECRET }}
+          PROXY_URL:     ${{ secrets.PROXY_URL }}
+          PROXY_SECRET:  ${{ secrets.PROXY_SECRET }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then echo "::error title=Missing secret::Add CRON_SECRET in Settings → Secrets and variables → Actions."; exit 1; fi
+          rc=0; node .github/scripts/scrape-fii-dii.mjs || rc=$?
+          # zzz908: exit 75 = upstream down / not published yet → green run + warning + "deferred" heartbeat note
+          if [ "$rc" -eq 75 ]; then echo "deferred=1" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if [ "$rc" -ne 0 ]; then exit "$rc"; fi
+
+      - name: Upstream deferred (data not updated this run)
+        if: steps.main.outputs.deferred == '1'
+        run: echo "::notice title=Deferred::NSE or NSDL was down or had not published yet. The app's own job and the next run retry."
+
+      - name: Heartbeat (always run)
+        if: always()
+        env:
+          CRON_BASE_URL: ${{ secrets.CRON_BASE_URL }}
+        run: |
+          BASE="${CRON_BASE_URL:-https://market-cockpit-production.up.railway.app}"
+          OK="true"
+          if [[ "${{ job.status }}" != "success" ]]; then OK="false"; fi
+          NOTE=''; if [[ "${{ steps.main.outputs.deferred }}" == "1" ]]; then NOTE=',"error":"deferred: upstream not available, data kept as it was"'; fi
+          curl -s --max-time 15 -X POST "$BASE/api/v1/cron/heartbeat" \
+            -H 'Content-Type: application/json' \
+            -d "{\"name\":\"scrape-fii-dii\",\"phase\":\"end\",\"ok\":$OK$NOTE,\"run_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -o /dev/null -w "heartbeat %{http_code}\n" || true

@@ -187,6 +187,7 @@ const NAV_GROUPS: NavGroup[] = [
     icon: <Rocket className="w-5 h-5" />,
     items: [
       { href: '/smart-money',     label: 'Smart Money',     icon: <Briefcase className="w-4 h-4" /> },
+      { href: '/fii-dii',         label: 'FII / DII Flows', icon: <BarChart3 className="w-4 h-4" /> },   // zzz1055
       { href: '/ipos',            label: 'IPOs',            icon: <Rocket className="w-4 h-4" /> },
     ],
   },

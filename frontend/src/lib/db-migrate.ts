@@ -185,6 +185,44 @@ export const MIGRATIONS: readonly Migration[] = [
       );
       INSERT INTO price_alert_meta (k, v) VALUES ('last_minute', '') ON CONFLICT (k) DO NOTHING;`,
   },
+  {
+    // zzz1055 — FII / DII flows (lib/fii-dii/store.ts): one row per trading day (NSE provisional FII + DII, or NSDL-confirmed
+    // FPI only for history before NSE rows exist) and NSDL's fortnightly sector-wise FPI equity figures (₹ crore).
+    id: 6, name: 'fii_dii',
+    sql: `
+      CREATE TABLE IF NOT EXISTS fii_dii_daily (
+        date             DATE PRIMARY KEY,
+        fii_buy          NUMERIC(14,2),
+        fii_sell         NUMERIC(14,2),
+        fii_net          NUMERIC(14,2),
+        dii_buy          NUMERIC(14,2),
+        dii_sell         NUMERIC(14,2),
+        dii_net          NUMERIC(14,2),
+        provisional      BOOLEAN NOT NULL DEFAULT true,
+        source           TEXT NOT NULL,
+        fetched_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+        fpi_final_buy    NUMERIC(14,2),
+        fpi_final_sell   NUMERIC(14,2),
+        fpi_final_net    NUMERIC(14,2),
+        nsdl_report_date DATE,
+        final_at         TIMESTAMPTZ
+      );
+      CREATE TABLE IF NOT EXISTS fii_sector_fortnight (
+        report_date  DATE NOT NULL,
+        sector       TEXT NOT NULL,
+        auc_cr       NUMERIC(16,2) NOT NULL,
+        net_cr       NUMERIC(14,2) NOT NULL,
+        net_prev_cr  NUMERIC(14,2),
+        fortnight    TEXT,
+        fetched_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (report_date, sector)
+      );
+      CREATE TABLE IF NOT EXISTS fii_dii_meta (
+        key         TEXT PRIMARY KEY,
+        value       JSONB NOT NULL,
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+      );`,
+  },
 ] as const;
 
 const LOCK_ID = 88_301_883;   // advisory-lock id for migrations
