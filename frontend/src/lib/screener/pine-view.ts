@@ -13,6 +13,7 @@ import { runPineFull, pineFilters, r40Text, bestTag, tagScanClose, tagLengthText
 import { BUILT_IN_PINE_SCREENS } from './pine-presets';
 import { patTagsOf, patMissingWhy, runScreen, tagDirDist, filterLabel, unsupportedChoices, type PatTf, type Screen } from './filters';
 import { tvSectorOf } from './tv-sectors';
+import { ruleTimeframeSummary } from './pine-families';
 import { normTicker } from './pine-handoff';
 import type { ScreenMarket, ScreenRow } from './types';
 import { resultRuleText, resultRuleOn, passesResult, marketToday } from './latest-result';
@@ -438,6 +439,8 @@ export function querySummary(q: PineQuery, scopeName: string): string {
   if (q.returned === false && q.stages.includes('b')) parts.push(q.bias === 'D' ? 'Breakdowns holding below the level' : q.bias === 'both' ? 'Breaks holding beyond the level' : 'Breakouts holding above the pivot');   // zzz1008
   const lim = [q.mcMin, q.mcMax, q.pxMin, q.turnMin, q.perfMin].filter((v) => v != null).length + (q.sectors.length ? 1 : 0) + q.filters.filter((f) => !f.off).length;
   if (lim) parts.push(`${lim} more limit${lim === 1 ? '' : 's'}`);
+  const rtf = ruleTimeframeSummary(q);   // zzz1045a — W / M patterns, but a rule read from daily figures
+  if (rtf) parts.push(rtf);
   if (q.need === 'any' && !q.ids.length) parts.push('rules decide');
   return parts.join(' · ');
 }

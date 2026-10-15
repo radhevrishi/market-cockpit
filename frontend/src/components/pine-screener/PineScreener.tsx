@@ -16,7 +16,7 @@ import Link from 'next/link';
 import type { ScreenMarket, ScreenRow } from '@/lib/screener/types';
 import { PATTERN_META, PATTERN_IDS, type PatternId } from '@/lib/chart-patterns';
 import {
-  DEFAULT_QUERY, LIKELIHOODS, OPTIONAL_COLS, PINE_GROUPS, PINE_SCREENS_KEY, STAGES, TIMEFRAMES, SHAPE_SCORE_LABEL, SHAPE_SCORE_TIP, cleanPineScreens, cleanQuery, dirDist,
+  DEFAULT_QUERY, LIKELIHOODS, OPTIONAL_COLS, PINE_SCREENS_KEY, STAGES, TIMEFRAMES, SHAPE_SCORE_LABEL, SHAPE_SCORE_TIP, cleanPineScreens, cleanQuery, dirDist,
   likelihoodWord, patternCounts, patternGroups, runPineFull, turnoverOf, onList, ruleCoverage, pineRuleFields, pineRuleMenu, tagLengthText,
   pineFilters, pineShownCols, R40_LEVELS, R40_MAX_GROWTH, R40_MAX_ABS_FCFM, R40_FORMULA, R40_FIELDS, r40Explain,
   type PerfKey, type PineHit, type PineQuery, type PineScreen, type PineStage, type ScreenPatternTag,
@@ -50,6 +50,8 @@ import { WhyNot, WhyResultView } from './WhyNot';
 import { SetupCards } from './SetupCards';
 import { PortfolioCheck } from './PortfolioCheck';
 import { HitDetail } from './HitDetail';
+import { ScreenFamilyPicker } from './ScreenFamilyPicker';
+import { PINE_FAMILIES, pineFamilyOf, readPineFavs, writePineFavs, togglePineFav, ruleTimeframeNote } from '@/lib/screener/pine-families';
 
 type Row = ScreenRow & { live?: 1 };
 interface Snap { builtAt: string | null; rows: Row[]; total: number; scanned: number; withPattern: number; patAt: string | null; notes: string[]; building: boolean; stale: number; insufficient: number; pxConflicts: number }
@@ -155,6 +157,9 @@ export default function PineScreener() {
     return Array.from(m.values());
   }, [saved]);
   const builtInIds = useMemo(() => new Set(BUILT_IN_PINE_SCREENS.map((s) => s.id)), []);
+  // zzz1045a — ☆ favourite screens (a display preference in this browser; shown first in the screen list and the family picker)
+  const [pineFavs, setPineFavs] = useState<string[]>(() => (typeof window === 'undefined' ? [] : readPineFavs()));
+  const toggleFavScreen = useCallback((id: string) => setPineFavs((cur) => { const next = togglePineFav(cur, id); writePineFavs(next); return next; }), []);
   const [first] = useState(() => {
     const last = readLast();
     const all = [...BUILT_IN_PINE_SCREENS, ...readSaved()];
@@ -694,6 +699,9 @@ export default function PineScreener() {
 
   const opt = (s: PineScreen) => <option key={s.id} value={s.id}>{s.market ? (s.market === 'IN' ? '🇮🇳 ' : '🇺🇸 ') : ''}{s.name}</option>;
   const mine = screens.filter((s) => !builtInIds.has(s.id));
+  const favScreens = screens.filter((s) => pineFavs.includes(s.id));
+  const mineNotFav = mine.filter((s) => !pineFavs.includes(s.id));
+  const tfRuleNote = ruleTimeframeNote(q);
   const builtAt = snap?.builtAt ? new Date(snap.builtAt) : null;
   const notScanned = !!snap && snap.total > 0 && snap.scanned === 0;
   const allOfBias = q.ids.length === 0;
@@ -764,20 +772,7 @@ export default function PineScreener() {
               title={filtersHidden ? 'Show the filter panel' : 'Hide the filter panel — the table uses the full width (your filters stay on)'}>{filtersHidden ? 'Show ▸' : '◂ Hide'}</button>
             <button type="button" className="pnx-btn pnx-side-toggle" aria-expanded={filtersOpen} onClick={() => setFiltersOpen(!filtersOpen)}>{filtersOpen ? 'Hide' : 'Show'}</button>
           </div>
-          <div className="pnx-field">
-            <span className="pnx-lab">Screen</span>
-            <select value={screenId} onChange={(e) => { if (loadScreen(e.target.value)) setView('setups'); }} className="pnx-in" aria-label="Pine screens">
-              {PINE_GROUPS.map((g) => <optgroup key={g.id} label={g.label}>{screens.filter((s) => builtInIds.has(s.id) && (s.group || 'patterns') === g.id).map(opt)}</optgroup>)}
-              {mine.length ? <optgroup label="Made here">{mine.map(opt)}</optgroup> : null}
-            </select>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              <button type="button" className="pnx-btn" data-on={dirty} onClick={() => (builtInIds.has(screenId) ? save(true) : save(false))} title={builtInIds.has(screenId) ? 'Built-in screens are kept as they are: this saves your choices as a new screen' : 'Save the choices into this screen'}>Save{dirty ? ' •' : ''}</button>
-              <button type="button" className="pnx-btn" onClick={() => save(true)}>Save as new…</button>
-              {builtInIds.has(screenId)
-                ? (dirty ? <button type="button" className="pnx-btn" onClick={() => loadScreen(screenId)} title="Back to this screen's built-in choices">Reset</button> : null)
-                : <button type="button" className="pnx-btn" onClick={removeSaved}>Delete</button>}
-            </div>
-          </div>
+          {/* zzz1045a — control order: Companies → Screen → Direction → Timeframe → Stage */}
           <label className="pnx-field" title="Limit the results to one of your lists, your holdings, or the companies a Stock Screener screen passes (same market)">
             <span className="pnx-lab">Companies</span>
             <select value={scope} onChange={(e) => { setScope(e.target.value); setShowAll(false); }} className="pnx-in" aria-label="Limit to a list">
@@ -789,6 +784,24 @@ export default function PineScreener() {
               <optgroup label="Stock Screener screens (fundamentals)">{myStockScreens.map((s) => <option key={s.id} value={`ss:${s.id}`}>{s.name}</option>)}</optgroup>
             </select>
           </label>
+          <div className="pnx-field">
+            <span className="pnx-lab">Screen</span>
+            <select value={screenId} onChange={(e) => { if (loadScreen(e.target.value)) setView('setups'); }} className="pnx-in" aria-label="Pine screens">
+              {/* zzz1045a — favourites first, then the screen families (IDs unchanged), then the screens made here */}
+              {favScreens.length ? <optgroup label="★ Favourites">{favScreens.map(opt)}</optgroup> : null}
+              {PINE_FAMILIES.map((g) => <optgroup key={g.id} label={g.label}>{screens.filter((s) => builtInIds.has(s.id) && !pineFavs.includes(s.id) && pineFamilyOf(s) === g.id).map(opt)}</optgroup>)}
+              {mineNotFav.length ? <optgroup label="Made here">{mineNotFav.map(opt)}</optgroup> : null}
+            </select>
+            <ScreenFamilyPicker screens={screens} builtInIds={builtInIds} currentId={screenId} favs={pineFavs} onToggleFav={toggleFavScreen}
+              onPick={(id) => { const ok = loadScreen(id); if (ok) setView('setups'); return ok; }} />
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <button type="button" className="pnx-btn" data-on={dirty} onClick={() => (builtInIds.has(screenId) ? save(true) : save(false))} title={builtInIds.has(screenId) ? 'Built-in screens are kept as they are: this saves your choices as a new screen' : 'Save the choices into this screen'}>Save{dirty ? ' •' : ''}</button>
+              <button type="button" className="pnx-btn" onClick={() => save(true)}>Save as new…</button>
+              {builtInIds.has(screenId)
+                ? (dirty ? <button type="button" className="pnx-btn" onClick={() => loadScreen(screenId)} title="Back to this screen's built-in choices">Reset</button> : null)
+                : <button type="button" className="pnx-btn" onClick={removeSaved}>Delete</button>}
+            </div>
+          </div>
           <div className="pnx-field">
             <span className="pnx-lab">Direction</span>
             <span role="radiogroup" aria-label="Bias" className="pnx-seg">
@@ -952,6 +965,8 @@ export default function PineScreener() {
             })}
           </Section>
 
+          {/* zzz1045a — with W / M patterns the extra rules are still daily figures (unless the figure says weekly / monthly) */}
+          {tfRuleNote ? <div className="pnx-note" data-testid="rule-tf-note" style={{ color: C.amber }}>{tfRuleNote}</div> : null}
           <Section id="pnx-sec-rules" title="Rules" hint={q.filters.length ? `${q.filters.length}` : ''} open={sec.rules} onToggle={() => toggleSec('rules')}>
             {q.filters.length ? (
               <div className="pnx-chips">
