@@ -2292,7 +2292,8 @@ export function passesUsConvictionFilter(e: UsConvictionEntry, f: UsConvFilters,
   if (f.newOnly) {
     const d = usFilingAgeDays(e.filing_date);
     const w = win?.days ?? 10;
-    return d !== null && d >= 0 && d <= w;
+    if (!(d !== null && d >= 0 && d <= w)) return false;
+    // zzz1039 — NEW combines with the quality gates below (preset on → new AND passing; preset off → every new name)
   }
 
   // ── quality gates ───────────────────────────────────────────────────────

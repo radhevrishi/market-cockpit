@@ -1203,8 +1203,8 @@ export function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild,
             {/* zzz540 — new-in-last-10-days filter; the sectioned TradingView copy below then exports ONLY these, grouped by tier */}
             <button onClick={() => setFilters((f) => ({ ...f, newOnly: !f.newOnly }))}
               title={__NEW_WIN.widened
-                ? `No results filed in the last 10 days (between earnings seasons), so this is showing the freshest cohort available: results filed within ${__NEW_WIN.days} days (${__NEW_WIN.count} names). Copy → TradingView copies just these, grouped ###ELITE / ###BLOCKBUSTER / ###STRONG. Bypasses the quality preset.`
-                : `Companies whose latest RESULT (filing) date is within the last 10 days — the just-reported cohort. Copy → TradingView copies just these, grouped ###ELITE / ###BLOCKBUSTER / ###STRONG. Bypasses the quality preset.`}
+                ? `No results filed in the last 10 days (between earnings seasons), so this is showing the freshest cohort available: results filed within ${__NEW_WIN.days} days (${__NEW_WIN.count} names). Copy → TradingView copies just these, grouped ###ELITE / ###BLOCKBUSTER / ###STRONG. Works with your other choices: with the Quality Preset on, only new names that also pass it; with the preset off, every new name.`
+                : `Companies whose latest RESULT (filing) date is within the last 10 days — the just-reported cohort. Copy → TradingView copies just these, grouped ###ELITE / ###BLOCKBUSTER / ###STRONG. Works with your other choices: with the Quality Preset on, only new names that also pass it; with the preset off, every new name.`}
               style={filters.newOnly ? chipActive('#34D399') : chipBase}>
               {/* zzz544 — label reflects the ACTUAL window used: "10d" normally, "10d→Nd" when auto-widened off-season */}
               🆕 NEW · {__NEW_WIN.widened ? `10d→${__NEW_WIN.days}d` : '10d'} {filters.newOnly ? '✓' : ''}

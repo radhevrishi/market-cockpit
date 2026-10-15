@@ -711,7 +711,10 @@ export function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): bool
     // zzz543/zzz544 — shared badge formula + ADAPTIVE window (see computeNewWindow).
     // Target 10d; auto-widen to the freshest cohort only when 10d is empty.
     const d = filingAgeDays((e as any).filing_date);
-    return d !== null && d >= 0 && d <= __NEW_WIN.days;
+    if (!(d !== null && d >= 0 && d <= __NEW_WIN.days)) return false;
+    // zzz1039 — owner: "preset on with NEW 10d should work, NEW 10d alone should work, preset alone should work — all combinations".
+    // NEW is now a recency filter that COMBINES with everything else: with the Quality Preset on, a new name must also pass the
+    // preset; with the preset off, every new name shows (the old NEW-only view). No more silent bypass.
   }
   const sales = e.sales_yoy_pct ?? 0;
   const pat = e.net_profit_yoy_pct ?? 0;
@@ -1015,6 +1018,7 @@ export function cbFailReasons(e: ConvictionEntry, f: ConvFilters): string[] {
     guidance: () => `guidance is not ${f.guidance}`,
     d1Bucket: () => 'day-one move outside your chip', d2Bucket: () => 'two-day move outside your chip', driftBucket: () => 'move since results outside your chip',
     cap: () => 'market-cap band outside your chip',
+    newOnly: () => { const d = filingAgeDays((e as any).filing_date); return d == null ? 'filing date not known (NEW window)' : `filed ${d} days ago (NEW shows the last ${__NEW_WIN.days} days)`; },
   };
   const out: string[] = [];
   const base: ConvFilters = { ...FILTER_DEFAULT };
