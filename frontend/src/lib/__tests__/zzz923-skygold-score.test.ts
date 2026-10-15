@@ -104,7 +104,7 @@ test('focus rows carry the guided metrics, cohort and a verified cut for the sco
 test('UI: score column in both focus tables, plain number and band word, no "/100", score kept out of lib/thesis', () => {
   const ui = readFileSync(join(__dirname, '..', '..', 'components', 'guidance-upgrades', 'GuFocusList.tsx'), 'utf8');
   const cell = readFileSync(join(__dirname, '..', '..', 'components', 'guidance-upgrades', 'GuSkyGold.tsx'), 'utf8');
-  assert.equal((ui.match(/<ScoreHead /g) || []).length, 2); assert.equal((ui.match(/\{skyCell\(r\)\}/g) || []).length, 2);
+  assert.equal((ui.match(/<ScoreHead /g) || []).length, 2); assert.equal((ui.match(/\{skyCell\(r\)\}/g) || []).length, 1); assert.equal((ui.match(/\{figuresCells\(r\)\}/g) || []).length, 2);   // zzz1047f
   assert.match(cell, /not enough data/); assert.ok(!/\/100/.test(ui + cell));
   assert.match(cell, /\/api\/v1\/guidance-upgrades\/skygold\?in=/, 'one batched call for the listed names');
   const thesisDir = join(__dirname, '..', 'thesis');

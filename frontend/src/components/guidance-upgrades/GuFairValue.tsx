@@ -20,8 +20,7 @@ export function FvCells({ fv, waiting, td }: { fv: FvResult | null; waiting: boo
     return (
       <>
         <td style={{ ...td, whiteSpace: 'nowrap' }} title={fv.price != null ? `Price read from the company page / quote feed.` : tip}>{fmtPrice(fv.price, fv.currency)}</td>
-        <td style={dim} title={tip}>—<div style={{ fontSize: 10.5, maxWidth: 150, whiteSpace: 'normal', lineHeight: 1.25 }}>{shortReason(fv.reason)}</div></td>
-        <td style={dim} title={tip}>—</td>
+        <td colSpan={2} style={{ ...dim, whiteSpace: 'normal', fontSize: 11.5, fontStyle: 'italic' }} title={tip}>No fair value: {shortReason(fv.reason)}</td>
       </>
     );
   }

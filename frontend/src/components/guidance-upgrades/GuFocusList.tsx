@@ -188,6 +188,21 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
   const oppCell = (r: FocusRow) => <OppCells o={opps.get(r.key) ?? null} waiting={skyLoading || (!skyFailed && !!skyKey(r))} open={openOpp === r.key} onToggle={() => setOpenOpp((v) => (v === r.key ? null : r.key))} td={td} />;
   const oppOpen = (r: FocusRow, cols: number) => { const o = openOpp === r.key ? opps.get(r.key) : null; return o ? <OppBreakdownRow key={`${r.key}-opp`} o={o} cols={cols} /> : null; };
   const skyCell = (r: FocusRow) => <SkyScoreCell s={scores.get(r.key) ?? null} waiting={skyLoading || (!skyFailed && !!skyKey(r))} open={openSky === r.key} onToggle={() => setOpenSky((v) => (v === r.key ? null : r.key))} td={td} />;
+  // zzz1047f — no rows of dashes: while a company's figures are being read, or when none could be read, the price / fair value /
+  // EPS / opportunity / score columns become ONE quiet cell saying so (the owner: "don't show blanks")
+  const figuresCells = (r: FocusRow) => {
+    const k = skyKey(r);
+    const waiting = !!k && !(k in facts) && !skyFailed;
+    const none = !k || (k in facts && facts[k] == null) || (skyFailed && !(k in facts));
+    if (waiting || none) {
+      return (
+        <td colSpan={FV_COLS + OPP_COLS + 1} data-figures={waiting ? 'reading' : 'none'} style={{ ...td, color: R.dim, fontSize: 12, fontStyle: 'italic' }}>
+          {waiting ? 'Reading company figures…' : r.market === 'IN' ? 'Company figures not on screener.in yet — the guidance above still counts' : 'Company figures not in the SEC filings yet — the guidance above still counts'}
+        </td>
+      );
+    }
+    return <>{fvCell(r)}{oppCell(r)}{skyCell(r)}</>;
+  };
   const skyOpen = (r: FocusRow, cols: number) => {
     const s = openSky === r.key ? scores.get(r.key) : null;
     const k = skyKey(r);
@@ -255,9 +270,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
                 </button>
               </td>
               <td style={{ ...td, whiteSpace: 'nowrap' }} data-reported>{reportedLabel(r.raiseDate)}</td>
-              {fvCell(r)}
-              {oppCell(r)}
-              {skyCell(r)}
+              {figuresCells(r)}
               <VerdictCell r={r} td={td} fv={fvs.get(r.key) ?? null} />
             </tr>
             {skyOpen(r, 5 + 1 + FV_COLS + OPP_COLS)}
@@ -279,9 +292,7 @@ export function GuFocusList({ events, window, onOpen, caps }: { events: readonly
                 <div style={{ fontSize: 11.5, color: R.dim }}>{r.raised ? `small raise ${r.raiseDate}` : ''}</div>
               </td>
               <td style={{ ...td, whiteSpace: 'nowrap' }} data-reported>{reportedLabel(r.growthDate)}</td>
-              {fvCell(r)}
-              {oppCell(r)}
-              {skyCell(r)}
+              {figuresCells(r)}
               <VerdictCell r={r} td={td} fv={fvs.get(r.key) ?? null} />
             </tr>
             {skyOpen(r, 6 + 1 + FV_COLS + OPP_COLS)}

@@ -257,7 +257,7 @@ describe('facts and wiring', () => {
     const s = read('components/guidance-upgrades/GuFocusList.tsx');
     assert.equal((s.match(/<OppHead /g) || []).length, 2);
     assert.equal((s.match(/'EPS estimate \(fixed shares\)'/g) || []).length, 2);
-    assert.equal((s.match(/\{oppCell\(r\)\}/g) || []).length, 2);
+    assert.equal((s.match(/\{oppCell\(r\)\}/g) || []).length, 1); assert.equal((s.match(/\{figuresCells\(r\)\}/g) || []).length, 2);   // zzz1047f: both tables go through figuresCells
     assert.match(s, /useState<SortBy>\('rank'\)|useState<SortBy>\('rank'\)/);
     assert.match(s, /byOpp\(raisedAll, opps\)/); assert.match(s, /byOpp\(growthAll, opps\)/);
   });

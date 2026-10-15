@@ -34,7 +34,9 @@ const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (
 
 /** zzz925: the screener.in page slug of a company whose symbol page does not exist, from the screener.in search (by company name). KV cached. */
 async function screenerSlug(t: string, company: string | null): Promise<string | null> {
-  const hit = await kvGet<string>(slugKey(t)).catch(() => null);
+  // zzz1047f — a BSE-code slug ("542669") comes back from the store as a NUMBER (JSON-parsed): always treat it as text
+  const raw = await kvGet<unknown>(slugKey(t)).catch(() => null);
+  const hit = raw == null ? null : String(raw);
   if (hit === '-') return null;
   if (hit) return hit;
   const url = `https://www.screener.in/api/company/search/?q=${encodeURIComponent(company || t)}`;
@@ -46,7 +48,8 @@ async function screenerSlug(t: string, company: string | null): Promise<string |
       const j: any = await res.json().catch(() => null);
       const list = Array.isArray(j) ? j : Array.isArray(j?.companies) ? j.companies : null;
       if (!list) continue;
-      const slug = pickScreenerSlug(list, t, company);
+      const picked = pickScreenerSlug(list, t, company);
+      const slug = picked == null ? null : String(picked);
       await kvSet(slugKey(t), slug || '-', slug ? 30 * 86400 : 86400).catch(() => null);
       return slug;
     } catch { /* next hop */ }
