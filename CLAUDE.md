@@ -3661,3 +3661,19 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
 - zzz1047 — Stage 2 health (`stageHealth` in lib/stage-analysis.ts): flags a confirmed Stage 2 that is breaking down (SATA ≤ 3, close
   > 2% under the 30-wk MA, ≥ 25% off the stage high …) WITHOUT changing the stage. Row fields `twH` (2/1/0) + `twDd`; SETUP_VERSION 5;
   screens `tw-stage2-healthy` / `tw-stage2-weak`; workflow "Stage 2 weakening in my portfolio"; chart banner turns topping colour.
+- zzz1048 — TradingView sync REMOVED: the old TradingView CSV shapes are built from our own screener snapshots at `/api/v1/tv-data`
+  (`lib/screener/tv-replacement*.ts`, mapping table in the commit). EMA 200 is a real tech figure (`ema200`). docs/ is NOT in the
+  Docker build — tests must not require repo-root files outside frontend/.github/workers.
+- zzz1049 — Redis cost: `lib/kv-read-cache.ts` (60 s read cache, personal/lock keys never cached, `KV_READ_CACHE=0` off);
+  command counter in `/api/v1/system-status` → `kvUsage`.
+- zzz1050 — AI: provider-enforced schemas (`lib/ai-schemas.ts`), guidance router (`lib/ai-guidance-router.ts`, stronger model ≤ 30% of
+  the daily cap), run records `ai_run` (migration 4) → `/ai-runs`. The meter must NOT import lib/ai-runs or lib/db (client bundles):
+  the writer is registered in instrumentation.ts (`setRunRecorder`).
+- zzz1051 — Document search `/search-docs`, `lib/doc-search/*`, job `doc-search-index`, own tables (not in db-migrate), embeddings cap
+  `SEARCH_EMBED_DAILY_USD` 0.10.
+- zzz1052 — client speed: use `components/NavLink.tsx` (no viewport prefetch; hover/focus/press) for link lists, `LazyPanel` for
+  below-the-fold home panels, `lib/session-memo.ts`. zzz1053 — server speed: `lib/screener/snapshot-cache.ts` (one snapshot per market),
+  `lib/server-memo.ts`, `lib/server-timing.ts`, ETag/304 + pre-compressed screener bodies, `lib/boot-warm.ts`.
+- zzz1054 — Price alerts: `lib/alerts/*`, `/price-alerts`, header bell, migration 5, every-minute LIGHT_JOBS 'price-alerts' (no Redis).
+- zzz1055 — FII / DII flows `/fii-dii`, `lib/fii-dii/*`, migration 6, job `fii-dii`, fallback collector scrape-fii-dii.yml.
+- zzz1056 — US Top Movers on home (`lib/us-movers*.ts`, `/api/v1/us-movers`). zzz1057 — Special Situations audit (`lib/special-sit-audit.ts`).
