@@ -182,7 +182,11 @@ export type OverlayId = 'patterns' | 'stage' | 'setups' | 'alines';
 /** The short text of a chip in the overlay summary row (the full status line stays in its hover text and its details). */
 export function overlayChipText(id: OverlayId, full: string): string {
   const s = full.trim();
+  const short = (x: string) => x.replace(/(\d+) days? ago/, '$1d').replace(/(\d+) (?:wk|weeks?) ago/, '$1w').replace(/(\d+) months? ago/, '$1mo');
   if (id === 'patterns') {
+    // zzz1031 — "Monthly: no qualifying pattern · Other timeframe → Daily: Descending triangle · broke down 2 days ago · …"
+    const o = /^📐\s*(Daily|Weekly|Monthly): (?:no qualifying pattern|nothing current)[^→]*→\s*(?:\S+\s+)?(Daily|Weekly|Monthly):\s*(?:last:\s*)?(.+?) · ([^·]+)/.exec(s);
+    if (o) return `📐 ${o[1]}: none · ${o[2]}: ${o[3]} ${short(o[4].trim())}`;
     const m = /^📐\s*(.+?) · (Daily|Weekly|Monthly) · (.+)$/.exec(s);
     if (!m) return s;
     const rest = m[3].split(' · ')[0]
@@ -191,6 +195,11 @@ export function overlayChipText(id: OverlayId, full: string): string {
   }
   if (id === 'setups') return s.replace(/^Trader setups · (Daily|Weekly|Monthly) · /, 'Setups: ');
   if (id === 'alines') return s.replace(/^Auto lines · (Daily|Weekly|Monthly) · /, 'Lines: ');
+  // zzz1031 — stage: keep the stage, its name and the confirmation ("Stage 2 · Advancing · confirmed 14 Aug close (10 weeks)")
+  const st = s.replace(/^Stage Analysis: /, '');
+  const parts = st.split(' · ');
+  const conf = parts.find((x) => /^confirmed /.test(x)) || parts.find((x) => /^since /.test(x));
+  if (/^Stage \d/.test(parts[0] || '') && parts.length > 2) return [parts[0], parts[1], ...(conf ? [conf] : [])].join(' · ');
   return s.replace(/^Stage Analysis: /, 'Stage: ');
 }
 

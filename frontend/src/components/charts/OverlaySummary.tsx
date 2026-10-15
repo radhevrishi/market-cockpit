@@ -3,7 +3,7 @@
 // bars). One chip per overlay that is on — its status in a few words (the full line on hover) and its × — and a click opens that
 // overlay's own details under the row; one open at a time, Esc or a click outside closes it. The legend sits under the row. The
 // Clean / Research toggle at the end sets how many labels the overlays draw on the chart; the numbers are the same in both.
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DISPLAY_WORDS, DEFAULT_CHART_DISPLAY, readChartDisplay, saveChartDisplay, type ChartDisplay, type OverlayId } from '@/lib/chart-display';
 import type { OverlayDock } from './overlay-dock';
 import { PatternBanner, type PatternBannerP } from './PatternIndicator';
@@ -32,10 +32,23 @@ export interface OverlaySummaryProps {
   display: ChartDisplay;
   onDisplay: (d: ChartDisplay) => void;
   onTurnOff: (id: OverlayId) => void;
+  /** zzz1031 — the row's height in px (1 or 2 lines), so the legend sits under it */
+  onHeight?: (px: number) => void;
 }
 
 export function OverlaySummary(pr: OverlaySummaryProps) {
-  const { patterns, stage, setups, alines, cur, tf, light, display, onDisplay, onTurnOff } = pr;
+  const { patterns, stage, setups, alines, cur, tf, light, display, onDisplay, onTurnOff, onHeight } = pr;
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = rowRef.current;
+    if (!el || !onHeight) return;
+    const report = () => onHeight(Math.round(el.getBoundingClientRect().height));
+    report();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(report);
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
   const [openId, setOpenId] = useState<OverlayId | null>(null);
   const docks = useMemo(() => {
     const out = {} as Record<OverlayId, OverlayDock>;
@@ -51,8 +64,8 @@ export function OverlaySummary(pr: OverlaySummaryProps) {
         background: display === d ? 'var(--ct-press, rgba(36,83,196,.1))' : 'transparent', color: display === d ? 'var(--mc-accent)' : 'var(--mc-text-3)' }}>{DISPLAY_WORDS[d].label}</button>
   );
   return (
-    <div data-testid="overlay-summary" role="toolbar" aria-label={`Overlays on the chart (${n})`}
-      style={{ position: 'absolute', left: 8, right: 92, top: 4, zIndex: 7, display: 'flex', alignItems: 'flex-start', gap: 6, flexWrap: 'nowrap', minWidth: 0, pointerEvents: 'none' }}>
+    <div ref={rowRef} data-testid="overlay-summary" role="toolbar" aria-label={`Overlays on the chart (${n})`}
+      style={{ position: 'absolute', left: 8, right: 92, top: 4, zIndex: 7, display: 'flex', alignItems: 'flex-start', gap: 6, rowGap: 4, flexWrap: 'wrap', minWidth: 0, pointerEvents: 'none' }}>
       <PatternBanner p={patterns} cur={cur} light={light} tf={tf} onTurnOff={() => onTurnOff('patterns')} dock={docks.patterns} />
       <StageBanner s={stage} light={light} shifted={false} onTurnOff={() => onTurnOff('stage')} dock={docks.stage} />
       <SetupBanner s={setups} light={light} onTurnOff={() => onTurnOff('setups')} dock={docks.setups} />

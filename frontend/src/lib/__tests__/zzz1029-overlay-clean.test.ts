@@ -260,7 +260,7 @@ test('mounted: one chip per overlay; one details panel at a time; Esc and a clic
     for (const id of ['pattern-banner', 'stage-banner', 'setup-banner', 'aln-banner']) assert.ok(row.querySelector(`[data-testid="${id}"]`), id);
     assert.equal(row.querySelectorAll('[data-testid$="-banner"]').length, 4, 'one chip per overlay');
     assert.equal(row.style.position, 'absolute');
-    assert.equal(row.style.flexWrap, 'nowrap', 'one line');
+    assert.equal(row.style.flexWrap, 'wrap', 'zzz1031: wraps onto a second line instead of cutting chips');
     for (const box of ['setup-banner-box', 'aln-banner-box']) assert.notEqual((row.querySelector(`[data-testid="${box}"]`) as HTMLElement).style.position, 'absolute', `${box}: in the row, not stacked`);
     // chips: short words on the chip, the full line on hover
     const chipBtn = (id: string) => row.querySelector(`[data-testid="${id}"] button`) as HTMLButtonElement;

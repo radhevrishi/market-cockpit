@@ -844,7 +844,8 @@ export default function ChartWorkspace() {
   // its right-edge tags keep clear of the last-price tag and the drawn pattern's pivot tag
   const alines = useAutoLines({ on: autoLinesOn(L.working), ready, market, bars, tf, log: L.working.scale.log, chartRef, light: chartLight, display, avoid: patterns.pivots });
   const nOverlays = [patterns.on, stageInd.on, setupsInd.on, alines.on].filter(Boolean).length;
-  const legendTop = nOverlays ? 34 : 28;
+  const [overlayRowH, setOverlayRowH] = useState(26);
+  const legendTop = nOverlays ? 4 + overlayRowH + 4 : 28;   // zzz1031 — under the overlay row, also when it wraps onto two lines
   const turnOffOverlay = useCallback((id: OverlayId) => {
     if (id === 'patterns') L.setWorking((w) => withPatterns(w, false));
     else if (id === 'stage') L.setWorking((w) => withStage(w, false));
@@ -1090,7 +1091,7 @@ export default function ChartWorkspace() {
               title={basis === 'tr' ? `${TOTAL_RETURN_LABEL}. On: history adjusted for ${live?.dividends ?? 0} cash dividends; the latest price is unchanged. Drawings are one set for both views and stay at the price values they were drawn on. Click for prices as printed.` : `Show: ${TOTAL_RETURN_LABEL}`}>TR</button>
           </div>
           <IndicatorLegend top={legendTop} rows={rows} valueOf={valueOf} onToggle={(id) => L.setWorking((w) => toggleRow(w, id))} onRemove={(id) => L.setWorking((w) => removeRow(w, id))} decimals={pxDecimals} colorOf={(c) => (!chartLight && (luminance(c) ?? 1) < 0.18 ? '#B2B5BE' : c)} textOf={(c) => readableOn(c, chartLight ? '#FFFFFF' : '#0C1018')} />
-          <OverlaySummary patterns={patterns} stage={stageInd} setups={setupsInd} alines={alines} cur={cur} tf={tf} light={chartLight} display={display} onDisplay={setDisplay} onTurnOff={turnOffOverlay} />
+          <OverlaySummary patterns={patterns} stage={stageInd} setups={setupsInd} alines={alines} cur={cur} tf={tf} light={chartLight} display={display} onDisplay={setDisplay} onTurnOff={turnOffOverlay} onHeight={setOverlayRowH} />
           {/* zzz1000 (improvement 6) — nothing loaded for this symbol / view: say so instead of an empty 0–10 price axis */}
           {!loading && !bars.length && error && (
             <div role="alert" data-testid="chart-empty-state" className="ct-empty">
