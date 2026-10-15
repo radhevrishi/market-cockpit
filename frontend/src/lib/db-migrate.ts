@@ -104,6 +104,34 @@ export const MIGRATIONS: readonly Migration[] = [
         fetched_at  TIMESTAMPTZ NOT NULL DEFAULT now()
       );`,
   },
+  {
+    // zzz1050 — one record per AI model call (lib/ai-runs.ts), kept 90 days; read by /ai-runs
+    id: 4, name: 'ai_run',
+    sql: `
+      CREATE TABLE IF NOT EXISTS ai_run (
+        run_id             TEXT PRIMARY KEY,
+        batch_id           TEXT,
+        job                TEXT NOT NULL,
+        model              TEXT,
+        prompt_version     TEXT,
+        doc_id             TEXT,
+        ticker             TEXT,
+        started_at         TIMESTAMPTZ NOT NULL,
+        finished_at        TIMESTAMPTZ,
+        duration_ms        INTEGER NOT NULL DEFAULT 0,
+        input_tokens       INTEGER NOT NULL DEFAULT 0,
+        output_tokens      INTEGER NOT NULL DEFAULT 0,
+        cost_usd           NUMERIC(12,6) NOT NULL DEFAULT 0,
+        outcome            TEXT NOT NULL,
+        error              TEXT,
+        rows_kept          INTEGER,
+        rows_rejected      INTEGER,
+        escalation_reason  TEXT
+      );
+      CREATE INDEX IF NOT EXISTS ai_run_started_idx ON ai_run (started_at DESC);
+      CREATE INDEX IF NOT EXISTS ai_run_job_idx ON ai_run (job, started_at DESC);
+      CREATE INDEX IF NOT EXISTS ai_run_outcome_idx ON ai_run (outcome, started_at DESC);`,
+  },
 ] as const;
 
 const LOCK_ID = 88_301_883;   // advisory-lock id for migrations

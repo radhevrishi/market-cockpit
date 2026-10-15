@@ -37,7 +37,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { kvGet, kvSet } from './kv';
-import { anthropicMessages, modelConfigured, modelKeyName } from '@/lib/anthropic-meter';
+import { anthropicMessages, modelConfigured, modelKeyName, noteSchemaFailure } from '@/lib/anthropic-meter';
+import { ANALYST_TOOL } from './ai-schemas';
 
 export const AI_ANALYST_VERSION = 'ai-analyst-v1';
 const MODEL = 'claude-haiku-4-5-20251001';
@@ -160,7 +161,7 @@ SCORING DISCIPLINE
 - confidence: lower it when the material is thin, when cash flow is missing, when the release is preliminary, or when the quarterly series is short.
 
 OUTPUT
-Return ONE JSON object and nothing else — no prose, no markdown, no code fence. Keys exactly:
+Answer by calling the tool file_assessment (or, if tools are unavailable, return ONE JSON object and nothing else — no prose, no markdown, no code fence). Keys exactly:
 {"change_level":0-5,"change_type":"NOISE|CYCLICAL|STRUCTURAL","structural_score":0-100,"structural_drivers":["..."],"temporary_factors":["..."],"why_now_score":0-100,"why_now":["..."],"bear_case":"...","bear_severity":0-100,"key_risks":["..."],"invalidation":["..."],"thesis":"...","confidence":0-100,"not_established":["..."]}
 Lists: 0-5 short, specific items each. thesis: 2 sentences maximum. bear_case: 2-3 sentences, with a figure.`;
 
@@ -231,20 +232,24 @@ export async function assessCompany(inp: AnalystInput, opts: { force?: boolean }
   if (!modelConfigured()) return { assessment: null, error: `No ${modelKeyName()} is configured, so nothing was interpreted. The deterministic grade above is unaffected.` };
 
   let text = '';
+  let toolInput: unknown = null;
   try {
+    // zzz1050: a forced tool with a strict schema (lib/ai-schemas ANALYST_TOOL) — the provider enforces the shape; validateAssessment still decides
     const resp = await anthropicMessages('ai-desk', {
       model: MODEL,
       max_tokens: 1600,
       temperature: 0,          // a ranking must not move because the dice moved
       system: SYSTEM,
       messages: [{ role: 'user', content: buildUserMessage(inp) }],
-    }, { signal: AbortSignal.timeout(60_000) });
+      tools: [ANALYST_TOOL], tool_choice: { type: 'tool', name: ANALYST_TOOL.name },
+    }, { signal: AbortSignal.timeout(60_000), run: { ticker: inp.ticker, docId: inp.accession, promptVersion: AI_ANALYST_VERSION } });
     if (!resp.ok) {
       let detail = '';
       try { const t = await resp.text(); const je = JSON.parse(t); detail = String(je?.error?.message || je?.message || t).slice(0, 300); } catch { /* status alone */ }
       return { assessment: null, error: `The analyst service returned HTTP ${resp.status}${detail ? `: ${detail}` : '.'}` };
     }
     const j: any = await resp.json();
+    toolInput = (j?.content || []).find((c: any) => c?.type === 'tool_use' && c?.name === ANALYST_TOOL.name)?.input ?? null;
     text = (j?.content || []).filter((c: any) => c?.type === 'text').map((c: any) => c.text).join('').trim();
   } catch (e: any) {
     return { assessment: null, error: `The analyst service did not answer (${String(e?.message || e)}).` };
@@ -253,11 +258,14 @@ export async function assessCompany(inp: AnalystInput, opts: { force?: boolean }
   // The model was told to return bare JSON; a fenced or prefaced answer is
   // still recoverable, and refusing it would throw away a good assessment over
   // punctuation. Anything that is not an object after this is discarded.
-  const m = text.match(/\{[\s\S]*\}/);
-  let parsed: any = null;
-  try { parsed = m ? JSON.parse(m[0]) : null; } catch { parsed = null; }
+  let parsed: any = toolInput && typeof toolInput === 'object' ? toolInput : null;
+  if (!parsed) {
+    const m = text.match(/\{[\s\S]*\}/);
+    try { parsed = m ? JSON.parse(m[0]) : null; } catch { parsed = null; }
+  }
   const ok = validateAssessment(parsed, inp.ticker, inp.accession);
-  if (!ok) return { assessment: null, error: 'The assessment came back in an unusable shape and was discarded rather than shown.' };
+  // a missing tool call is already counted by the meter; a tool answer our validation refuses is counted here
+  if (!ok) { if (toolInput) void noteSchemaFailure('ai-desk').catch(() => undefined); return { assessment: null, error: 'The assessment came back in an unusable shape and was discarded rather than shown.' }; }
 
   void kvSet(key, ok, TTL_S).catch(() => {});
   return { assessment: ok, cached: false };

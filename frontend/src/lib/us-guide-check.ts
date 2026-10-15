@@ -26,6 +26,7 @@
 import { gunzipSync } from 'node:zlib';
 import { kvGet, kvSet, kvMGet, kvIncrByFloat } from './kv';
 import { webResearch, modelConfigured } from './anthropic-meter';
+import { US_GUIDE_CHECK_SCHEMA } from './ai-schemas';
 import { filingExhibits, htmlToText, secGet } from './us-guidance';
 import { composeUsNarrative, applySetupGates, US_TIER_ORDER, type EarningsTier } from './us-earnings-core';
 import { releaseAttributesCashToWorkingCapital } from './us-pr-financials';
@@ -156,7 +157,8 @@ export async function aiGuideCheck(row: { ticker: string; company?: string; quar
   const prompt = `Company: ${row.company || row.ticker} (ticker ${row.ticker}, US-listed).
 Earnings report filed: ${row.filing_date}${row.quarter ? ` (${row.quarter}${row.period_end ? `, period ended ${row.period_end}` : ''})` : ''}.
 Question: in this earnings report, its slides, its call or the news of the following days, did management raise, keep or lower its guidance or outlook (company-wide, a segment, a product line or a key customer programme) versus its own prior guidance?`;
-  const r = await webResearch('us-guide-check', SYSTEM, prompt, { maxSearches: 3, signal: AbortSignal.timeout(90_000) });
+  // zzz1050: OpenAI returns strict JSON against US_GUIDE_CHECK_SCHEMA (the search still runs); parseAnswer + the checks below still decide
+  const r = await webResearch('us-guide-check', SYSTEM, prompt, { maxSearches: 3, signal: AbortSignal.timeout(90_000), schema: { name: 'guide_direction', schema: US_GUIDE_CHECK_SCHEMA } });
   if (r.usd > 0) await kvIncrByFloat(dailyKey(day), r.usd, 3 * 24 * 3600).catch(() => null);
   if (!r.ok) return null;
   const a = parseAnswer(r.text);

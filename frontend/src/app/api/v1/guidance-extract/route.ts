@@ -31,16 +31,15 @@ import {
 } from '@/lib/ai-guidance-extract';
 import { nextCronRun } from '@/lib/ai-verify';
 import { kvGet, kvSet, kvIncrByFloat } from '@/lib/kv';
+import { guidanceDailyCapUsd, guidanceDayKey, escalationDayKey, escalationDayLeft, strongModel, escalateShare } from '@/lib/ai-guidance-router';
 import { ALLOWANCE_KEY, allowanceSpendKey, allowanceState, buildAllowance, runCapUsd, splitSpend, MAX_EXTRA_USD, MAX_HOURS, type ExtractAllowance } from '@/lib/guidance-extract-allowance';
 
 // zzz915 — a DAILY spend ceiling for scheduled reading (owner, 6 Oct: the hourly runs cleared a backlog at ~$1/hour, which
 // is far above the ~$10/month the site should cost). Default $0.25 a day (≈ $7.50/month at most; zzz918 lowered it from $0.40 after the owner's spend check).
 // Set GUIDANCE_EXTRACT_DAILY_USD in Railway to change it. A single-document re-read (?docId=) is never blocked by it.
-function dailyCapUsd(): number {
-  const v = Number(process.env.GUIDANCE_EXTRACT_DAILY_USD);
-  return Number.isFinite(v) && v >= 0 ? Math.min(v, 20) : 0.25;
-}
-const dayKey = (d = new Date()) => `guidance-extract:day-usd:v1:${d.toISOString().slice(0, 10)}`;
+// zzz1050: the ceiling and the day key moved to lib/ai-guidance-router (same values), so /ai-runs shows the same figures.
+const dailyCapUsd = () => guidanceDailyCapUsd();
+const dayKey = guidanceDayKey;
 
 /** zzz928: the one-off extra allowance (lib/guidance-extract-allowance.ts) and what it has spent. Fails closed: no record = no extra. */
 async function readAllowance(now = new Date()) {
@@ -60,6 +59,18 @@ async function syncMarketLists(maxIds: number): Promise<{ done: boolean; pos: nu
     if (!st) { step.catch(() => undefined); return { error: 'still running (finishes in the background)' }; }
     return { done: st.done, pos: st.pos, total: st.total, IN: st.counts.IN, US: st.counts.US };
   } catch (e: any) { return { error: redact(e?.message || 'market index sync failed', 120) }; }
+}
+
+/** zzz1050: the router's model and what escalations may still spend today (0 when routing is off or the sub-cap is used up). */
+async function escalationBudget(dayCap: number, runCap: number): Promise<{ model: string | null; budgetUsd: number; spentToday: number; capUsd: number }> {
+  const capUsd = Math.round(dayCap * escalateShare() * 1e6) / 1e6;
+  try {
+    const m = await import('@/lib/anthropic-meter');
+    const model = strongModel(m.provider(), m.activeModel('claude-haiku-4-5-20251001'));
+    const spentToday = Number(await kvGet<number | string>(escalationDayKey()).catch(() => 0)) || 0;
+    if (!model) return { model: null, budgetUsd: 0, spentToday, capUsd };
+    return { model, budgetUsd: Math.max(0, Math.min(escalationDayLeft(dayCap, spentToday), runCap)), spentToday, capUsd };
+  } catch { return { model: null, budgetUsd: 0, spentToday: 0, capUsd }; }
 }
 
 export const runtime = 'nodejs';
@@ -101,6 +112,7 @@ export async function GET(req: NextRequest) {
     lastRun: status.lastRun,
     runDefaults: { docs: runMaxDocs(), maxUsd: runMaxUsd(), budgetMs: runBudgetMs(), concurrency: runConcurrency(), sinceDays: runSinceDays(), usMode: usMode() },
     dailyCapUsd: dailyCapUsd(),
+    escalation: await escalationBudget(dailyCapUsd(), Infinity),
     allowance: (await readAllowance()).state,
     results: { documents: index.length, newest: index.slice(0, 20) },
     ...(docId ? { result } : {}),
@@ -145,7 +157,11 @@ export async function POST(req: NextRequest) {
   try {
     const cap = docId ? maxUsd : runCapUsd(maxUsd, dayLeft, allow!);
     const concurrency = allow?.active && allow.concurrency ? allow.concurrency : runConcurrency();
-    const run = await runExtraction(await realDeps(), { limit, maxUsd: cap, budgetMs, concurrency, docIds: docId ? [docId] : undefined });
+    // zzz1050: the stronger model for hard documents — inside this run's cap AND a sub-cap of the day's ceiling (escalateShare, ≤ 30%)
+    const route = await escalationBudget(dayCap, cap);
+    const run = await runExtraction(await realDeps(), { limit, maxUsd: cap, budgetMs, concurrency, docIds: docId ? [docId] : undefined, strongModel: route.model, escalationBudgetUsd: route.budgetUsd });
+    const escUsd = Number(run?.escalations?.usd) || 0;
+    if (escUsd > 0) await kvIncrByFloat(escalationDayKey(), escUsd, 3 * 86_400).catch(() => null);
     const spent = Number((run as any)?.spentUsd) || 0;
     if (spent > 0) {
       // zzz928: the day budget is charged first, the rest to the allowance's own counter (so tomorrow's normal $0.25 is untouched)

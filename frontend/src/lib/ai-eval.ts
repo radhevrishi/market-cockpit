@@ -105,15 +105,18 @@ export function summarise(cases: CaseScore[], meta: { promptVersion: string | nu
 export async function runGuidanceEval(): Promise<EvalScore> {
   const x = await import('./ai-guidance-extract');
   const out: CaseScore[] = []; let model: string | null = null;
+  const runs: any[] = [];   // zzz1050: the eval's model calls, recorded as job 'ai-eval' (best-effort)
   const deps = { callModel: x.realCallModel, availability: x.realAvailability, now: () => new Date(), nonce: () => Math.random().toString(36).slice(2, 10), selectPassages: (t: string) => t } as any;
   for (const c of GUIDANCE_GOLDEN) {
     const doc: GuidanceDoc = { docId: `eval-${c.id}`, market: c.market, ticker: null, company: c.company, kind: 'TRANSCRIPT' as any, title: `${c.company} — evaluation passage`, url: 'https://eval.invalid/', sourceHost: 'eval', filedAt: '2026-08-15', collectedAt: '2026-08-15T00:00:00Z', collector: 'ai-eval', textChars: c.text.length, text: c.text };
     const t0 = Date.now();
     const r = await x.extractDoc(doc, deps, { timeoutMs: 45_000 }).catch((e: any) => ({ status: 'error', rows: [], costUsd: 0, note: String(e?.message || e) } as any));
     model = r.model || model;
+    if (Array.isArray(r.runs)) runs.push(...r.runs.map((x: any) => ({ ...x, job: 'ai-eval' })));
     const sc = scoreCase(c, r.rows || []);
     out.push({ ...sc, costUsd: Number(r.costUsd || 0), ms: Date.now() - t0, status: r.status, ...(sc.falsePos || sc.falseNeg ? { filed: (r.rows || []).map((x: ExtractedGuidance) => ({ metric: x.metric, period: x.period, low: x.low, high: x.high, unit: x.unit, growthLow: x.growthPctLow ?? null })) } : {}) });
     if (r.stop === 'cap' || r.stop === 'unavailable') break;
   }
+  if (runs.length) await (await import('./ai-runs')).writeRunRecords(runs).catch(() => 0);
   return summarise(out, { promptVersion: x.EXTRACT_PROMPT_VERSION, model, at: new Date().toISOString() });
 }

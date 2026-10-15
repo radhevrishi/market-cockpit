@@ -20,7 +20,8 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 import { kvGet, kvSet, isRedisAvailable } from './kv';
-import { anthropicMessages, modelConfigured } from './anthropic-meter';
+import { anthropicMessages, modelConfigured, noteSchemaFailure } from './anthropic-meter';
+import { CLASSIFIER_TOOL, classifierEntities } from './ai-schemas';
 import { createHash } from 'crypto';
 
 const HAIKU_MODEL = 'claude-haiku-4-5-20251001';
@@ -183,7 +184,7 @@ Categories (use the exact label):
 
 Confidence: HIGH if the catalyst is unambiguous, MEDIUM if interpretation needed, LOW if speculative.
 
-Output JSON ONLY (no markdown, no commentary). Schema:
+Answer by calling the tool classify_headline (if tools are unavailable: output JSON ONLY, no markdown, no commentary). Schema:
 {
   "catalyst_type": "M&A|EARNINGS|GUIDANCE|ORDER_WIN|CAPEX|LITIGATION|MANAGEMENT|DIVIDEND|BUYBACK|RATING|STRUCTURAL|BLOCK_DEAL|OTHER",
   "confidence": "HIGH|MEDIUM|LOW",
@@ -196,47 +197,54 @@ Output JSON ONLY (no markdown, no commentary). Schema:
   }
 }
 
-If a field doesn't apply, OMIT it (don't use null). Keep entities object minimal.`;
+If an entities field doesn't apply, give null. Keep entities object minimal.`;
 
   const userPrompt = ticker
     ? `Ticker: ${ticker}\nHeadline: ${headline}`
     : `Headline: ${headline}`;
 
+  // zzz1050: a forced tool with a strict schema (lib/ai-schemas CLASSIFIER_TOOL); the checks below still decide
   const resp = await anthropicMessages('headline-classifier', {
     model: HAIKU_MODEL,
     max_tokens: 200,
     system: systemPrompt,
     messages: [{ role: 'user', content: userPrompt }],
-  }, { signal: AbortSignal.timeout(8_000) });   // 8s: Haiku usually answers in <2s
+    tools: [CLASSIFIER_TOOL], tool_choice: { type: 'tool', name: CLASSIFIER_TOOL.name },
+  }, { signal: AbortSignal.timeout(8_000), run: { ticker: ticker || null } });   // 8s: Haiku usually answers in <2s
 
   if (!resp.ok) {
     const txt = await resp.text().catch(() => '');
     throw new Error(`HTTP ${resp.status}: ${txt.slice(0, 200)}`);
   }
   const data = await resp.json();
-  const text = (data?.content || []).map((b: any) => b?.text || '').join('').trim();
-  if (!text) return null;
-  // Parse JSON. Haiku occasionally wraps in markdown fences — strip if present.
-  const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
-  let parsed: any;
-  try { parsed = JSON.parse(cleaned); }
-  catch {
-    console.warn('[haiku-cls] non-JSON response:', cleaned.slice(0, 200));
-    return null;
+  const toolInput = (data?.content || []).find((b: any) => b?.type === 'tool_use' && b?.name === CLASSIFIER_TOOL.name)?.input;
+  let parsed: any = toolInput && typeof toolInput === 'object' ? toolInput : null;
+  if (!parsed) {
+    const text = (data?.content || []).map((b: any) => b?.text || '').join('').trim();
+    if (!text) return null;
+    // Parse JSON. Haiku occasionally wraps in markdown fences — strip if present.
+    const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+    try { parsed = JSON.parse(cleaned); }
+    catch {
+      console.warn('[haiku-cls] non-JSON response:', cleaned.slice(0, 200));
+      return null;
+    }
   }
+  const refuse = () => { if (toolInput) void noteSchemaFailure('headline-classifier').catch(() => undefined); return null; };
   // Validate
   const validTypes: CatalystType[] = ['M&A','EARNINGS','GUIDANCE','ORDER_WIN','CAPEX','LITIGATION','MANAGEMENT','DIVIDEND','BUYBACK','RATING','STRUCTURAL','BLOCK_DEAL','OTHER'];
   if (!validTypes.includes(parsed.catalyst_type)) {
-    return null;
+    return refuse();
   }
   if (!['HIGH','MEDIUM','LOW'].includes(parsed.confidence)) {
-    return null;
+    return refuse();
   }
   return {
     catalyst_type: parsed.catalyst_type,
     confidence: parsed.confidence,
     one_line: String(parsed.one_line || '').slice(0, 160),
-    entities: parsed.entities && typeof parsed.entities === 'object' ? parsed.entities : undefined,
+    // zzz1050: the strict schema answers null for a field that does not apply; nulls are left out as before
+    entities: classifierEntities(parsed.entities),
     source: 'haiku',
   };
 }

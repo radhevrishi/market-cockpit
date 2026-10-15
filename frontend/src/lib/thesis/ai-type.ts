@@ -228,10 +228,11 @@ export const AI_TYPE_TOOL = {
       justification: { type: 'array', items: { type: 'string' }, description: '2 or 3 figures or quotes taken from the input.' },
       not_applicable: {
         type: 'array',
-        items: { type: 'object', properties: { check: { type: 'string' }, why: { type: 'string' }, instead: { type: 'string' } }, required: ['check', 'why'] },
+        // zzz1050: every field listed (instead may be null; an empty list when all checks apply) so OpenAI can enforce it in strict mode
+        items: { type: 'object', properties: { check: { type: 'string' }, why: { type: 'string' }, instead: { type: ['string', 'null'] } }, required: ['check', 'why', 'instead'] },
       },
     },
-    required: ['type', 'reason', 'justification'],
+    required: ['type', 'reason', 'justification', 'not_applicable'],
   },
 } as const;
 

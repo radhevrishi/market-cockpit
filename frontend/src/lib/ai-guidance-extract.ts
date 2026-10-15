@@ -36,6 +36,12 @@ import type {
 } from './guidance-docs-types';
 import { horizonOf, isLowBoundOnly, multipleOf, isIntimationLetter, spokenNumbersIn } from './guidance-horizon';
 import { INDIA_LARGE_CAPS } from './india-large-caps';
+import {
+  GUIDANCE_METRICS, GUIDANCE_STATUSES, GUIDANCE_BASES, GUIDANCE_PERIOD_KINDS, GUIDANCE_QUOTE_MAX, GUIDANCE_MAX_ROWS, GUIDANCE_ROW_SCHEMA,
+  GUIDANCE_TOOL as SCHEMA_GUIDANCE_TOOL, STRUCTURED_OUTPUT_MODE, fingerprint,
+} from './ai-schemas';
+import { buildRunRecord, newRunId, type AiRunRecord, type AiRunOutcome } from './ai-runs';
+import { decideEscalation, estimateStrongUsd, guidanceWordHits, pickBetter, escalateMaxPerRun, EscalationGate, type EscalationReason } from './ai-guidance-router';
 
 export const EXTRACT_VERSION = 'v1';
 export const RESULT_PREFIX = `guidance-extract:${EXTRACT_VERSION}:`;
@@ -52,8 +58,8 @@ export const FEATURE = 'guidance-extract';
 const DAY_S = 86_400;
 export const TTL_RESULT_S = 270 * DAY_S;        // the document does not change; outlives the document (210 d)
 export const INDEX_MAX = 5_000;
-export const QUOTE_MAX = 300;
-export const MAX_ROWS = 40;
+export const QUOTE_MAX = GUIDANCE_QUOTE_MAX;
+export const MAX_ROWS = GUIDANCE_MAX_ROWS;
 const FAIL_BACKOFF_BASE_S = 2 * 3600;            // error: retry in 2h, 4h, 8h; after 3 attempts the error is stored as final
 const FAIL_MAX_ATTEMPTS = 3;
 
@@ -252,11 +258,11 @@ export function selectPassages(text: string, kind: GuidanceDocKind, max = maxExc
 
 // ── prompt (prompt-injection hardened) ──────────────────────────────────────
 
-export const METRICS: GuidanceMetricX[] = ['REVENUE', 'REVENUE_GROWTH', 'EBITDA', 'EBITDA_MARGIN', 'PAT', 'EPS', 'ADJ_EPS', 'FCF', 'ORDER_INFLOW', 'VOLUME', 'OTHER'];
-const STATUSES: ExtractedGuidance['status'][] = ['NEW', 'RAISED', 'REITERATED', 'LOWERED', 'NARROWED', 'WITHDRAWN', 'UNCLEAR'];
-const BASES: GuidanceBasisX[] = ['GAAP', 'ADJUSTED', 'REPORTED', 'UNSTATED'];
-const PERIOD_KINDS: ExtractedGuidance['periodKind'][] = ['ANNUAL', 'QUARTER', 'MULTI_YEAR'];
-const UNITS = ['crore', 'lakh', 'thousand', 'million', 'billion', '%', 'per_share', 'units', 'tonnes', 'MW', 'GW'];
+// zzz1050: the answer schema lives in lib/ai-schemas.ts (one place for every call site's schema); re-exported here unchanged
+export const METRICS: GuidanceMetricX[] = [...GUIDANCE_METRICS] as GuidanceMetricX[];
+const STATUSES: ExtractedGuidance['status'][] = [...GUIDANCE_STATUSES];
+const BASES: GuidanceBasisX[] = [...GUIDANCE_BASES];
+const PERIOD_KINDS: ExtractedGuidance['periodKind'][] = [...GUIDANCE_PERIOD_KINDS];
 
 export const SYSTEM_PROMPT = [
   'You are a data clerk for a financial research tool. You read ONE company document and list the forward-looking GUIDANCE the company itself gives.',
@@ -278,45 +284,8 @@ export const SYSTEM_PROMPT = [
   'confidence: 0 to 1. If the document has no guidance, file rows = []. If the text is garbled or empty, set unreadable = true.',
 ].join('\n');
 
-const rowSchema = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['metric', 'metric_label', 'period', 'period_kind', 'basis', 'currency', 'unit', 'low', 'high', 'growth_pct_low', 'growth_pct_high', 'status', 'prior_low', 'prior_high', 'prior_stated_in', 'prior_actual_period', 'prior_actual_value', 'prior_actual_quote', 'quote', 'speaker', 'confidence'],
-  properties: {
-    metric: { type: 'string', enum: METRICS },
-    metric_label: { type: 'string', maxLength: 80 },
-    period: { type: 'string', maxLength: 24 },
-    period_kind: { type: 'string', enum: PERIOD_KINDS },
-    basis: { type: 'string', enum: BASES },
-    currency: { type: ['string', 'null'], maxLength: 8 },
-    unit: { type: ['string', 'null'], maxLength: 16 },
-    low: { type: ['number', 'null'] },
-    high: { type: ['number', 'null'] },
-    growth_pct_low: { type: ['number', 'null'] },
-    growth_pct_high: { type: ['number', 'null'] },
-    status: { type: 'string', enum: STATUSES },
-    prior_low: { type: ['number', 'null'] },
-    prior_high: { type: ['number', 'null'] },
-    prior_stated_in: { type: ['string', 'null'], maxLength: 60 },
-    prior_actual_period: { type: ['string', 'null'], maxLength: 24 },
-    prior_actual_value: { type: ['number', 'null'] },
-    prior_actual_quote: { type: ['string', 'null'], maxLength: QUOTE_MAX },
-    quote: { type: 'string', maxLength: QUOTE_MAX },
-    speaker: { type: ['string', 'null'], maxLength: 80 },
-    confidence: { type: 'number', minimum: 0, maximum: 1 },
-  },
-};
-
-export const GUIDANCE_TOOL = {
-  name: 'file_guidance',
-  description: 'File the forward-looking guidance rows the company states in the document.',
-  input_schema: {
-    type: 'object',
-    additionalProperties: false,
-    required: ['unreadable', 'rows'],
-    properties: { unreadable: { type: 'boolean' }, rows: { type: 'array', maxItems: MAX_ROWS, items: rowSchema } },
-  },
-};
+const rowSchema = GUIDANCE_ROW_SCHEMA;
+export const GUIDANCE_TOOL = SCHEMA_GUIDANCE_TOOL;
 
 export function buildUserPrompt(doc: Pick<GuidanceDoc, 'company' | 'ticker' | 'market' | 'kind' | 'title' | 'filedAt' | 'periodHint'>, excerpt: string, nonce: string): string {
   const fence = `DOC-${nonce}`;
@@ -616,8 +585,14 @@ export interface GuidanceDocStore {
   markExtracted(docId: string): Promise<void | boolean>;
 }
 export type ModelCallResult =
-  | { ok: true; raw: unknown; costUsd: number; model: string }
-  | { ok: false; kind: 'no_key' | 'spend_cap' | 'error'; status: number; message: string };
+  | { ok: true; raw: unknown; costUsd: number; model: string; /** zzz1050: tokens of the call, for the run record */ usage?: { input: number; output: number } }
+  | { ok: false; kind: 'no_key' | 'spend_cap' | 'error'; status: number; message: string;
+      /** zzz1050: the call was answered but without a usable shape (no tool call, cut off) — billed, a schema failure */ schema?: boolean; costUsd?: number; model?: string; usage?: { input: number; output: number } };
+export interface ModelCallRequest {
+  system: string; user: string; maxTokens: number; timeoutMs?: number;
+  /** zzz1050: the stronger model of the router (absent = the normal model) */
+  model?: string;
+}
 export interface KvIo {
   get<T = any>(k: string): Promise<T | null>;
   set(k: string, v: any, ttlS?: number): Promise<void>;
@@ -628,7 +603,7 @@ export interface KvIo {
 export interface Availability { available: boolean; reason: string | null; provider: string; model: string | null }
 export interface ExtractDeps {
   store: GuidanceDocStore;
-  callModel(req: { system: string; user: string; maxTokens: number; timeoutMs?: number }): Promise<ModelCallResult>;
+  callModel(req: ModelCallRequest): Promise<ModelCallResult>;
   kv: KvIo;
   availability(): Promise<Availability>;
   now?: () => Date;
@@ -638,11 +613,28 @@ export interface ExtractDeps {
   selectPassages?: (text: string, kind: GuidanceDocKind) => string;
   /** US cost priority inputs (events-queue hand-offs, regex-graded documents, verified ledger events). Absent → every US doc is "unknown" (last). */
   priority?: PriorityIo;
+  /** zzz1050: writes the run's AI call records (lib/ai-runs writeRunRecords). Absent = not recorded. Best-effort: a failure never fails the run. */
+  recordRuns?: (recs: AiRunRecord[]) => Promise<unknown>;
 }
 
 // ── one document ────────────────────────────────────────────────────────────
 
-export type DocOutcome = GuidanceExtractResult & { costUsd: number; reasons?: Record<string, number>; adjusted?: Record<string, number>; stop?: 'cap' | 'unavailable' };
+export interface EscalationInfo {
+  reason: EscalationReason;
+  /** the stronger model asked, or null when the call was not sent */
+  model: string | null;
+  /** which answer was kept */
+  used: 'cheap' | 'strong';
+  /** why the stronger call was not sent (off / sub_cap / run_cap / run_limit / unpriced) */
+  refused?: string;
+}
+export type DocOutcome = GuidanceExtractResult & {
+  costUsd: number; reasons?: Record<string, number>; adjusted?: Record<string, number>; stop?: 'cap' | 'unavailable';
+  /** zzz1050: one record per model call made for this document */
+  runs?: AiRunRecord[];
+  /** zzz1050: what the stronger pass cost (part of costUsd) */
+  escalatedUsd?: number;
+};
 
 const MIN_TEXT = 200;
 
@@ -663,14 +655,47 @@ export function hasForwardNumber(text: string): boolean {
   return false;
 }
 
-/** zzz883: prompt + schema fingerprint stored on every record, so a result can always be traced to the exact instructions it came from. */
-export const EXTRACT_PROMPT_VERSION = (() => {
-  const src = JSON.stringify([SYSTEM_PROMPT, GUIDANCE_TOOL]);
-  let h = 0x811c9dc5; for (let i = 0; i < src.length; i++) { h ^= src.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
-  return `gx-${h.toString(16)}`;
-})();
+/**
+ * zzz883: prompt + schema fingerprint stored on every record, so a result can always be traced to the exact instructions it came from.
+ * zzz1050: + the structured-output mode, so moving to provider-enforced schemas re-reads old results (oldest-model results are queued
+ * after every new document, under the normal daily ceiling — see refreshCandidates).
+ */
+export const EXTRACT_PROMPT_VERSION = fingerprint('gx', [SYSTEM_PROMPT, GUIDANCE_TOOL, STRUCTURED_OUTPUT_MODE]);
 
-export async function extractDoc(doc: GuidanceDoc, deps: Pick<ExtractDeps, 'callModel' | 'availability' | 'now' | 'nonce' | 'selectPassages'>, opts: { timeoutMs?: number; av?: Availability } = {}): Promise<DocOutcome> {
+const QUOTE_DROP_REASONS = ['quote_not_in_document', 'number_not_in_quote'];
+
+interface ReadAttempt {
+  res: ModelCallResult;
+  startedAt: string; finishedAt: string;
+  /** the answer had no usable shape (no tool call, cut off, or refused by validateAnswer) */
+  schemaFail: boolean;
+  schemaError: string | null;
+  answer: { unreadable: boolean; rows: unknown[] } | null;
+  chk: Checked | null;
+  costUsd: number;
+  model: string | null;
+}
+
+/** Pure: the run-record outcome of one read. */
+function readOutcome(r: ReadAttempt): AiRunOutcome {
+  if (!r.res.ok && !r.res.schema) return r.res.kind === 'spend_cap' ? 'cap_reached' : 'failed';
+  if (r.schemaFail) return 'schema_fail';
+  if (r.chk && r.answer && r.answer.rows.length) {
+    const q = QUOTE_DROP_REASONS.reduce((a, k) => a + (r.chk!.reasons[k] || 0), 0);
+    if (r.chk.rows.length === 0 && q > 0 && q * 2 >= r.answer.rows.length) return 'quote_rejected';
+  }
+  return 'ok';
+}
+
+export interface ExtractDocOpts {
+  timeoutMs?: number; av?: Availability;
+  /** zzz1050: the run's escalation budget (lib/ai-guidance-router). Absent = no stronger pass. */
+  gate?: EscalationGate | null;
+  /** zzz1050: the extraction run this document belongs to (run records) */
+  batchId?: string | null;
+}
+
+export async function extractDoc(doc: GuidanceDoc, deps: Pick<ExtractDeps, 'callModel' | 'availability' | 'now' | 'nonce' | 'selectPassages'>, opts: ExtractDocOpts = {}): Promise<DocOutcome> {
   const now = (deps.now || (() => new Date()))();
   const base = (status: GuidanceExtractResult['status'], extra: Partial<DocOutcome> = {}): DocOutcome => ({
     docId: doc.docId, market: doc.market, ticker: doc.ticker, company: doc.company, docUrl: doc.url, docKind: doc.kind, filedAt: doc.filedAt,
@@ -689,23 +714,87 @@ export async function extractDoc(doc: GuidanceDoc, deps: Pick<ExtractDeps, 'call
   try { excerpt = deps.selectPassages ? deps.selectPassages(text, doc.kind) : selectPassages(text, doc.kind); } catch { excerpt = selectPassages(text, doc.kind); }
   if (!excerpt || excerpt.length < MIN_TEXT) excerpt = selectPassages(text, doc.kind);
   const nonce = (deps.nonce || (() => Math.random().toString(36).slice(2, 10)))();
-  const res = await deps.callModel({ system: SYSTEM_PROMPT, user: buildUserPrompt(doc, excerpt, nonce), maxTokens: 3_000, timeoutMs: opts.timeoutMs });
-  if (!res.ok) {
-    if (res.kind === 'spend_cap') return base('unavailable', { note: redact(res.message || 'monthly AI cap reached', 300), stop: 'cap' });
-    if (res.kind === 'no_key') return base('unavailable', { note: redact(res.message || 'no API key configured', 300), stop: 'unavailable' });
-    return base('error', { note: redact(`model call failed (HTTP ${res.status}): ${res.message}`, 300) });
-  }
-  const a = validateAnswer(res.raw);
-  if (!a.ok) return base('error', { model: res.model, costUsd: res.costUsd, note: redact(`invalid model answer: ${a.error}`, 300) });
-  if (a.unreadable && !a.rows.length) return base('unreadable', { model: res.model, costUsd: res.costUsd, note: 'the model reported the text as unreadable' });
-  // quotes are checked against the text the model saw (a subset of the document, so also in the document)
-  const chk = checkRows(a.rows, { kind: doc.kind, text, market: doc.market, filedAt: doc.filedAt }, excerpt);
-  const status: GuidanceExtractResult['status'] = chk.rows.length ? 'ok' : 'no_guidance';
-  const parts = Object.entries(chk.reasons).map(([k, n]) => `${k}=${n}`);
-  return base(status, {
-    model: res.model, costUsd: res.costUsd, rows: chk.rows, dropped: chk.dropped, reasons: chk.reasons, adjusted: chk.adjusted, dropSamples: chk.samples.length ? chk.samples : undefined,
-    note: parts.length ? `dropped: ${parts.join(', ')}` : undefined,
+  const user = buildUserPrompt(doc, excerpt, nonce);
+
+  // one read by one model: the call, the shape check and our row checks (identical for the cheap and the stronger model)
+  const read = async (model?: string): Promise<ReadAttempt> => {
+    const startedAt = new Date().toISOString();
+    const res = await deps.callModel({ system: SYSTEM_PROMPT, user, maxTokens: 3_000, timeoutMs: opts.timeoutMs, ...(model ? { model } : {}) });
+    const finishedAt = new Date().toISOString();
+    const costUsd = res.ok ? res.costUsd : Number(res.costUsd) || 0;
+    const usedModel = res.ok ? res.model : res.model || model || null;
+    if (!res.ok) return { res, startedAt, finishedAt, schemaFail: !!res.schema, schemaError: res.schema ? res.message : null, answer: null, chk: null, costUsd, model: usedModel };
+    const a = validateAnswer(res.raw);
+    if (!a.ok) return { res, startedAt, finishedAt, schemaFail: true, schemaError: `invalid model answer: ${a.error}`, answer: null, chk: null, costUsd, model: usedModel };
+    // quotes are checked against the text the model saw (a subset of the document, so also in the document)
+    const chk = a.unreadable && !a.rows.length ? null : checkRows(a.rows, { kind: doc.kind, text, market: doc.market, filedAt: doc.filedAt }, excerpt);
+    return { res, startedAt, finishedAt, schemaFail: false, schemaError: null, answer: { unreadable: a.unreadable, rows: a.rows }, chk, costUsd, model: usedModel };
+  };
+  const record = (r: ReadAttempt, outcome: AiRunOutcome, escalationReason: string | null): AiRunRecord => buildRunRecord({
+    job: FEATURE, batchId: opts.batchId ?? null, model: r.model, promptVersion: EXTRACT_PROMPT_VERSION, docId: doc.docId, ticker: doc.ticker,
+    startedAt: r.startedAt, finishedAt: r.finishedAt, inputTokens: r.res.usage?.input, outputTokens: r.res.usage?.output, costUsd: r.costUsd, outcome,
+    error: !r.res.ok ? `HTTP ${r.res.status}: ${r.res.message}` : r.schemaError, rowsKept: r.chk ? r.chk.rows.length : null, rowsRejected: r.chk ? r.chk.dropped : null,
+    escalationReason,
   });
+  // an outcome from one read, exactly as before zzz1050 for the cheap read alone
+  const outcomeOf = (r: ReadAttempt, extra: Partial<DocOutcome>): DocOutcome => {
+    const res = r.res;
+    if (!res.ok && !res.schema) {
+      if (res.kind === 'spend_cap') return base('unavailable', { note: redact(res.message || 'monthly AI cap reached', 300), stop: 'cap', ...extra });
+      if (res.kind === 'no_key') return base('unavailable', { note: redact(res.message || 'no API key configured', 300), stop: 'unavailable', ...extra });
+      return base('error', { note: redact(`model call failed (HTTP ${res.status}): ${res.message}`, 300), ...extra });
+    }
+    if (!res.ok) return base('error', { model: r.model, note: redact(`model call failed (HTTP ${res.status}): ${res.message}`, 300), ...extra });
+    if (r.schemaFail || !r.answer) return base('error', { model: r.model, note: redact(r.schemaError || 'invalid model answer', 300), ...extra });
+    if (!r.chk) return base('unreadable', { model: r.model, note: 'the model reported the text as unreadable', ...extra });
+    const chk = r.chk;
+    const status: GuidanceExtractResult['status'] = chk.rows.length ? 'ok' : 'no_guidance';
+    const parts = Object.entries(chk.reasons).map(([k, n]) => `${k}=${n}`);
+    return base(status, {
+      model: r.model, rows: chk.rows, dropped: chk.dropped, reasons: chk.reasons, adjusted: chk.adjusted, dropSamples: chk.samples.length ? chk.samples : undefined,
+      note: parts.length ? `dropped: ${parts.join(', ')}` : undefined, ...extra,
+    });
+  };
+
+  const cheap = await read();
+  // a transport error, a provider refusal or the cap is never a reason to pay for a second model
+  const hardFail = !cheap.res.ok && !cheap.res.schema;
+  const gate = opts.gate || null;
+  let escalation: EscalationInfo | undefined;
+  let strong: ReadAttempt | null = null;
+  if (!hardFail && gate && !(cheap.answer?.unreadable && !cheap.answer.rows.length)) {
+    const kept = cheap.chk?.rows || [];
+    const d = decideEscalation({
+      schemaFail: cheap.schemaFail, rawRows: cheap.answer?.rows.length || 0, kept: kept.length, dropReasons: cheap.chk?.reasons || {},
+      meanConfidence: kept.length ? kept.reduce((a, r) => a + (Number(r.confidence) || 0), 0) / kept.length : null,
+      textChars: text.length, excerptChars: excerpt.length, guidanceHits: guidanceWordHits(text),
+    });
+    if (d.escalate && d.reason) {
+      const est = gate.model ? estimateStrongUsd(gate.model, SYSTEM_PROMPT.length + user.length) : Infinity;
+      const before = { ...gate.refused };
+      if (gate.tryReserve(est, cheap.costUsd)) {
+        strong = await read(gate.model!);
+        gate.settle(est, strong.costUsd);
+        // a stronger call that itself failed (transport, cap) leaves the cheap answer in place
+        const strongHard = !strong.res.ok && !strong.res.schema;
+        const pick = strongHard ? 'cheap' : pickBetter({ schemaFail: cheap.schemaFail, kept: kept.length }, { schemaFail: strong.schemaFail, kept: strong.chk?.rows.length || 0 });
+        escalation = { reason: d.reason, model: gate.model, used: pick };
+      } else {
+        const why = Object.keys(gate.refused).find((k) => (gate.refused[k] || 0) > (before[k] || 0)) || 'refused';
+        escalation = { reason: d.reason, model: null, used: 'cheap', refused: why };
+      }
+    }
+  }
+  const runs: AiRunRecord[] = [record(cheap, strong ? 'escalated' : readOutcome(cheap), escalation ? (strong ? escalation.reason : `${escalation.reason} (not sent: ${escalation.refused})`) : null)];
+  if (strong) runs.push(record(strong, readOutcome(strong), escalation!.reason));
+  const chosen = strong && escalation?.used === 'strong' ? strong : cheap;
+  const costUsd = cheap.costUsd + (strong?.costUsd || 0);
+  const extra: Partial<DocOutcome> = { costUsd, runs, ...(strong ? { escalatedUsd: strong.costUsd } : {}) };
+  if (escalation) {
+    extra.escalation = escalation;
+    extra.models = [cheap.model, strong?.model].filter((m): m is string => !!m);
+  }
+  return outcomeOf(chosen, extra);
 }
 
 // ── queue order ─────────────────────────────────────────────────────────────
@@ -851,9 +940,64 @@ export interface ExtractRunStat {
   usMode?: UsMode; plan?: QueuePlan['counts'];
   /** zzz978: the first error's message (redacted), so a failing provider can be seen without reading server logs */
   errorSample?: string;
+  /** zzz1050: the stronger-model pass of this run — how many documents went, what it cost, why, why others were not sent, how often its answer was kept */
+  escalations?: { model: string | null; budgetUsd: number; count: number; usd: number; keptStrong: number; reasons: Record<string, number>; refused: Record<string, number> };
+  /** zzz1050: documents re-read because their result came from an older prompt / schema version */
+  refreshed?: number;
+  /** zzz1050: schema failures of the cheap pass (no usable answer shape) */
+  schemaFailures?: number;
+  /** zzz1050: id shared by this run's AI call records (/ai-runs) */
+  batchId?: string;
 }
 export interface ExtractStatus { lastRunAt: string | null; lastRun: ExtractRunStat | null }
-export interface ExtractRunOpts { limit?: number; maxUsd?: number; budgetMs?: number; concurrency?: number; sinceDays?: number; docIds?: string[]; usMode?: UsMode }
+export interface ExtractRunOpts {
+  limit?: number; maxUsd?: number; budgetMs?: number; concurrency?: number; sinceDays?: number; docIds?: string[]; usMode?: UsMode;
+  /** zzz1050: the stronger model for hard documents (lib/ai-guidance-router strongModel); null / absent = no escalation */
+  strongModel?: string | null;
+  /** zzz1050: what escalations may spend in this run (the day's escalation sub-cap left); absent / 0 = no escalation */
+  escalationBudgetUsd?: number;
+  /** zzz1050: re-read up to N results of an older prompt version when the new-document queue is short (default refreshMax()) */
+  refreshMax?: number;
+}
+
+// ── zzz1050: re-reading results of an older prompt / schema version ────────
+// A changed prompt or schema changes EXTRACT_PROMPT_VERSION. Results with rows made under an older version are re-read — AFTER every new
+// document (only when this run's new-document queue is shorter than its limit), under the same per-run and daily caps. A re-read that finds
+// rows replaces the old result; one that finds none (or fails for good) keeps the old result, marked refreshedUnder so it is not re-read again.
+export const REFRESH_CURSOR_KEY = `guidance-extract:${EXTRACT_VERSION}:refresh-cursor`;
+export const refreshMax = () => { const raw = process.env.GUIDANCE_EXTRACT_REFRESH_MAX; const v = Number(raw); return raw == null || raw === '' || !Number.isFinite(v) ? 5 : Math.max(0, Math.min(20, Math.round(v))); };
+const REFRESH_SCAN_MAX = 1_000;
+interface RefreshCursor { v: string; pos: number; done: boolean }
+
+/** Up to `want` stored 'ok' results made under an older prompt version (newest first, filed within sinceDays). Bounded: ≤ 1,000 results read a run. */
+export async function refreshCandidates(kv: KvIo, want: number, sinceDays: number, now: Date, version = EXTRACT_PROMPT_VERSION): Promise<GuidanceExtractResult[]> {
+  if (want <= 0) return [];
+  const cur = await kv.get<RefreshCursor>(REFRESH_CURSOR_KEY).catch(() => null);
+  if (cur && cur.v === version && cur.done) return [];
+  let pos = cur && cur.v === version ? Math.max(0, Number(cur.pos) || 0) : 0;
+  const ids = await kv.get<string[]>(OK_INDEX_KEY).catch(() => null);
+  if (!Array.isArray(ids)) return [];
+  const since = new Date(now.getTime() - sinceDays * 86_400_000).toISOString().slice(0, 10);
+  const out: GuidanceExtractResult[] = []; let firstAt = -1; let scanned = 0;
+  while (pos < ids.length && out.length < want && scanned < REFRESH_SCAN_MAX) {
+    const chunk = ids.slice(pos, pos + 100);
+    const got = await kv.mget<GuidanceExtractResult>(chunk.map(resultKey)).catch(() => null);
+    if (!got) break;
+    let j = 0;
+    for (; j < chunk.length && out.length < want; j++) {
+      const r = got[j];
+      if (r && r.docId === chunk[j] && r.status === 'ok' && r.promptVersion !== version && r.refreshedUnder !== version && String(r.filedAt || '').slice(0, 10) >= since) {
+        if (firstAt < 0) firstAt = pos + j;
+        out.push(r);
+      }
+    }
+    pos += j; scanned += j;
+  }
+  // the cursor stops at the first candidate (it is re-found next run if this run does not reach it); done when the list was walked with none left
+  const next = firstAt >= 0 ? firstAt : pos;
+  await kv.set(REFRESH_CURSOR_KEY, { v: version, pos: next, done: firstAt < 0 && pos >= ids.length } satisfies RefreshCursor, 30 * DAY_S).catch(() => undefined);
+  return out;
+}
 
 interface FailRec { attempts: number; retryAfter: string }
 
@@ -873,7 +1017,21 @@ export async function runExtraction(deps: ExtractDeps, o: ExtractRunOpts = {}): 
     queued: 0, attempted: 0, ok: 0, noGuidance: 0, unreadable: 0, errors: 0, skippedBackoff: 0, alreadyDone: 0, missingDoc: 0,
     rowsKept: 0, rowsDropped: 0, dropReasons: {}, spentUsd: 0, stoppedBy: 'done', elapsedMs: 0,
   };
-  const finish = async () => { stat.spentUsd = Math.round(stat.spentUsd * 10_000) / 10_000; stat.elapsedMs = Date.now() - t0; await writeStatus(deps.kv, stat); return stat; };
+  // zzz1050: one id for this run's AI call records; the escalation gate holds the run's stronger-model budget (shared by the workers)
+  const batchId = newRunId('guidance-extract');
+  stat.batchId = batchId;
+  const escBudget = Math.max(0, Math.min(Number(o.escalationBudgetUsd) || 0, maxUsd));
+  const gate = o.strongModel && escBudget > 0 ? new EscalationGate(o.strongModel, escBudget, escalateMaxPerRun(), () => stat.spentUsd, maxUsd) : null;
+  if (o.strongModel) stat.escalations = { model: o.strongModel, budgetUsd: Math.round(escBudget * 10_000) / 10_000, count: 0, usd: 0, keptStrong: 0, reasons: {}, refused: {} };
+  const runRecords: AiRunRecord[] = [];
+  const finish = async () => {
+    stat.spentUsd = Math.round(stat.spentUsd * 10_000) / 10_000; stat.elapsedMs = Date.now() - t0;
+    if (stat.escalations) { stat.escalations.usd = Math.round(stat.escalations.usd * 1e6) / 1e6; if (gate) stat.escalations.refused = { ...gate.refused }; }
+    await writeStatus(deps.kv, stat);
+    // best-effort: a failed write of the call records never fails the run
+    if (deps.recordRuns && runRecords.length) await Promise.resolve(deps.recordRuns(runRecords.splice(0))).catch(() => undefined);
+    return stat;
+  };
   if (deps.kv.setNX) {
     const got = await deps.kv.setNX(LOCK_KEY, { at: stat.at }, Math.ceil(budgetMs / 1000) + 90).catch(() => true);
     if (!got) { stat.stoppedBy = 'locked'; return stat; }
@@ -881,6 +1039,7 @@ export async function runExtraction(deps: ExtractDeps, o: ExtractRunOpts = {}): 
   try {
     // ── queue: both markets, unextracted, newest first, priority kinds first, interleaved ──
     let rows: GuidanceDocIndexRow[] = [];
+    const refreshOld = new Map<string, GuidanceExtractResult>();
     if (o.docIds?.length) {
       rows = o.docIds.slice(0, 100).map((id) => ({ docId: id, market: 'IN', ticker: null, company: '', kind: 'TRANSCRIPT', filedAt: '', url: '', textChars: 0 }));
     } else {
@@ -899,6 +1058,16 @@ export async function runExtraction(deps: ExtractDeps, o: ExtractRunOpts = {}): 
       const readIndia = (Array.isArray(allIn) ? allIn : []).filter((r) => r && r.market === 'IN' && !queuedIds.has(r.docId));
       const plan = await buildPlan(got.flatMap((g) => (g.status === 'fulfilled' && Array.isArray(g.value) ? g.value : [])), deps.priority, mode, readIndia);
       rows = plan.rows; stat.usMode = mode; stat.plan = plan.counts;
+      // zzz1050: when the new-document queue is short, results of an older prompt version are re-read after it
+      const want = Math.min(o.refreshMax ?? refreshMax(), limit - rows.length);
+      if (want > 0 && av.available) {
+        const old = await refreshCandidates(deps.kv, want, since, nowFn()).catch(() => [] as GuidanceExtractResult[]);
+        const have = new Set(rows.map((r) => r.docId));
+        for (const r of old) if (!have.has(r.docId)) {
+          refreshOld.set(r.docId, r);
+          rows.push({ docId: r.docId, market: r.market, ticker: r.ticker, company: r.company, kind: r.docKind, filedAt: r.filedAt, url: r.docUrl, textChars: 0 });
+        }
+      }
     }
     stat.queued = rows.length;
     if (!av.available) { stat.stoppedBy = 'unavailable'; return await finish(); }
@@ -923,7 +1092,8 @@ export async function runExtraction(deps: ExtractDeps, o: ExtractRunOpts = {}): 
         const row = rows[i];
         await ensure(i);
         const nowIso = nowFn().toISOString();
-        if (have.has(row.docId)) { stat.alreadyDone++; await Promise.resolve(deps.store.markExtracted(row.docId)).catch(() => undefined); continue; }
+        const isRefresh = refreshOld.has(row.docId);
+        if (have.has(row.docId) && !isRefresh) { stat.alreadyDone++; await Promise.resolve(deps.store.markExtracted(row.docId)).catch(() => undefined); continue; }
         const fr = fails.get(row.docId);
         if (fr && fr.retryAfter > nowIso && !o.docIds?.length) { stat.skippedBackoff++; continue; }
         if (started >= limit) { stop = stop || 'limit'; return; }
@@ -932,14 +1102,28 @@ export async function runExtraction(deps: ExtractDeps, o: ExtractRunOpts = {}): 
         if (remaining < minStartMs) { stop = stop || 'time'; return; }
         started++;
         const doc = await deps.store.getDoc(row.docId).catch(() => null);
-        if (!doc) { stat.missingDoc++; continue; }
+        if (!doc) {
+          stat.missingDoc++;
+          // zzz1050: an old result whose document is gone is kept as it is, and not looked for again under this version
+          if (isRefresh) { started--; await deps.kv.set(resultKey(row.docId), { ...refreshOld.get(row.docId)!, refreshedUnder: EXTRACT_PROMPT_VERSION }, TTL_RESULT_S).catch(() => undefined); }
+          continue;
+        }
         stat.attempted++;
-        const r = await extractDoc(doc, deps, { av, timeoutMs: Math.max(3_000, Math.min(45_000, remaining - 1_500)) });
+        const r = await extractDoc(doc, deps, { av, timeoutMs: Math.max(3_000, Math.min(45_000, remaining - 1_500)), gate, batchId });
         stat.spentUsd += r.costUsd || 0;
+        // zzz1050: call records, escalation and schema-failure counts (before any stop, so a capped call is recorded too)
+        if (r.runs?.length) runRecords.push(...r.runs);
+        if (r.runs?.[0]?.outcome === 'schema_fail' || (r.runs?.[0]?.outcome === 'escalated' && r.escalation?.reason === 'schema_fail')) stat.schemaFailures = (stat.schemaFailures || 0) + 1;
+        if (r.escalation && stat.escalations) {
+          const e = stat.escalations;
+          e.reasons[r.escalation.reason] = (e.reasons[r.escalation.reason] || 0) + 1;
+          if (r.escalation.model) { e.count++; e.usd += r.escalatedUsd || 0; if (r.escalation.used === 'strong') e.keptStrong++; }
+        }
         // zzz870: a document the free screen removed used no AI, so it does not use up this run's document allowance
         if (r.model === 'screen') { started--; stat.attempted--; stat.screened = (stat.screened || 0) + 1; }
         if (r.stop) { stop = r.stop; stat.available = false; stat.unavailableReason = r.note || null; stat.attempted--; return; }
-        const { costUsd: _c, reasons, adjusted: _a, stop: _s, ...result } = r;
+        const { costUsd: _c, reasons, adjusted: _a, stop: _s, runs: _r, escalatedUsd: _e, ...result } = r;
+        if (isRefresh) stat.refreshed = (stat.refreshed || 0) + 1;
         if (reasons) for (const [k, n] of Object.entries(reasons)) stat.dropReasons[k] = (stat.dropReasons[k] || 0) + n;
         stat.rowsKept += result.rows.length; stat.rowsDropped += result.dropped;
         if (result.status === 'error') {
@@ -952,7 +1136,15 @@ export async function runExtraction(deps: ExtractDeps, o: ExtractRunOpts = {}): 
             continue;   // stays unextracted; retried after the backoff
           }
           result.note = `${result.note || 'error'} (gave up after ${attempts} attempts)`;
-        } else if (result.status === 'ok') { stat.ok++; if (result.rows.length) okIds.push(row.docId); }
+        }
+        // zzz1050: a re-read that found nothing (or failed for good) keeps the old result — marked so it is not re-read for this version again
+        if (isRefresh && !(result.status === 'ok' && result.rows.length)) {
+          if (result.status === 'no_guidance') stat.noGuidance++; else if (result.status === 'unreadable') stat.unreadable++;
+          await deps.kv.set(resultKey(row.docId), { ...refreshOld.get(row.docId)!, refreshedUnder: EXTRACT_PROMPT_VERSION }, TTL_RESULT_S).catch(() => undefined);
+          continue;
+        }
+        if (result.status === 'error') { /* final error, counted above */ }
+        else if (result.status === 'ok') { stat.ok++; if (result.rows.length) okIds.push(row.docId); }
         else if (result.status === 'no_guidance') stat.noGuidance++;
         else if (result.status === 'unreadable') stat.unreadable++;
         await deps.kv.set(resultKey(row.docId), result, TTL_RESULT_S).catch(() => undefined);
@@ -970,7 +1162,8 @@ export async function runExtraction(deps: ExtractDeps, o: ExtractRunOpts = {}): 
     await updateOkIndex(deps.kv, okIds).catch(() => undefined);
     await finish();
     const reasonTxt = Object.entries(stat.dropReasons).map(([k, n]) => `${k}:${n}`).join(',');
-    log(`[guidance-extract] run: queued=${stat.queued} attempted=${stat.attempted} ok=${stat.ok} none=${stat.noGuidance} unreadable=${stat.unreadable} errors=${stat.errors}${stat.errorSample ? ` [first error: ${stat.errorSample}]` : ''} rows=${stat.rowsKept} dropped=${stat.rowsDropped}${reasonTxt ? ` (${reasonTxt})` : ''} spent=$${stat.spentUsd} stop=${stat.stoppedBy} ms=${stat.elapsedMs}`);
+    const escTxt = stat.escalations ? ` escalated=${stat.escalations.count} ($${stat.escalations.usd.toFixed(4)}, kept ${stat.escalations.keptStrong})` : '';
+    log(`[guidance-extract] run: queued=${stat.queued} attempted=${stat.attempted} ok=${stat.ok} none=${stat.noGuidance} unreadable=${stat.unreadable} errors=${stat.errors}${stat.errorSample ? ` [first error: ${stat.errorSample}]` : ''} rows=${stat.rowsKept} dropped=${stat.rowsDropped}${reasonTxt ? ` (${reasonTxt})` : ''}${escTxt}${stat.refreshed ? ` refreshed=${stat.refreshed}` : ''} spent=$${stat.spentUsd} stop=${stat.stoppedBy} ms=${stat.elapsedMs}`);
     return stat;
   } finally {
     if (deps.kv.del) await deps.kv.del(LOCK_KEY).catch(() => undefined);
@@ -1071,37 +1264,46 @@ export function modelErrorKind(status: number, type: string, message: string): '
   return type === 'no_key' ? 'no_key' : 'error';
 }
 
-export async function realCallModel(req: { system: string; user: string; maxTokens: number; timeoutMs?: number }): Promise<ModelCallResult> {
+export async function realCallModel(req: ModelCallRequest): Promise<ModelCallResult> {
   const m = await import('./anthropic-meter');
-  const requested = 'claude-haiku-4-5-20251001';
+  const prov = m.provider();
+  // zzz1050: the router's stronger model — OpenAI answers through the meter's model override (priced or refused), Anthropic by its own id
+  const strong = req.model || null;
+  const requested = strong && prov === 'anthropic' ? strong : 'claude-haiku-4-5-20251001';
   const body = {
     model: requested, max_tokens: req.maxTokens, temperature: 0, system: req.system,
     messages: [{ role: 'user' as const, content: req.user }],
     tools: [GUIDANCE_TOOL], tool_choice: { type: 'tool', name: GUIDANCE_TOOL.name },
   };
+  let effort: string | undefined;
+  if (strong && prov === 'openai') effort = (await import('./ai-guidance-router')).strongEffort();
+  const model = strong && prov === 'openai' ? strong : m.activeModel(requested);
   let resp: Response;
-  try { resp = await m.anthropicMessages(FEATURE, body, { signal: AbortSignal.timeout(Math.max(3_000, Math.min(45_000, req.timeoutMs ?? 45_000))) }); }
-  catch (e: any) { return { ok: false, kind: 'error', status: 0, message: redact(e?.name === 'TimeoutError' ? 'model call timed out' : e?.message || 'model call failed') }; }
+  // run: false — the extractor writes a richer record (rows kept / rejected, escalation) for this call itself
+  try { resp = await m.anthropicMessages(FEATURE, body, { signal: AbortSignal.timeout(Math.max(3_000, Math.min(45_000, req.timeoutMs ?? 45_000))), run: false, ...(strong && prov === 'openai' ? { openaiModel: strong, reasoningEffort: effort } : {}) }); }
+  catch (e: any) { return { ok: false, kind: 'error', status: 0, message: redact(e?.name === 'TimeoutError' ? 'model call timed out' : e?.message || 'model call failed'), model }; }
   if (!resp.ok) {
     let type = ''; let message = `HTTP ${resp.status}`;
     try { const j: any = await resp.json(); type = String(j?.error?.type || ''); message = String(j?.error?.message || message); } catch { /* keep status */ }
     const kind = modelErrorKind(resp.status, type, message);
     // zzz978b: a rejected key says what the server's key looks like (length, prefix) — never the key itself
-    const hint = kind === 'no_key' && m.provider() === 'anthropic' ? ` (the server's key: ${m.anthropicKeyShape()})` : '';
-    return { ok: false, kind, status: resp.status, message: redact(message + hint) };
+    const hint = kind === 'no_key' && prov === 'anthropic' ? ` (the server's key: ${m.anthropicKeyShape()})` : '';
+    return { ok: false, kind, status: resp.status, message: redact(message + hint), model };
   }
   let j: any;
-  try { j = await resp.json(); } catch { return { ok: false, kind: 'error', status: 502, message: 'answer was not JSON' }; }
-  const model = m.activeModel(requested);
+  try { j = await resp.json(); } catch { return { ok: false, kind: 'error', status: 502, message: 'answer was not JSON', schema: true, model }; }
   const costUsd = m.costOf(model, j?.usage);
+  const u = j?.usage || {};
+  const usage = { input: Number(u.input_tokens || 0) + Number(u.cache_read_input_tokens || 0) + Number(u.cache_creation_input_tokens || 0), output: Number(u.output_tokens || 0) };
   const blocks: any[] = Array.isArray(j?.content) ? j.content : [];
   const tool = blocks.find((b) => b?.type === 'tool_use' && b?.name === GUIDANCE_TOOL.name);
-  if (tool) return { ok: true, raw: tool.input, costUsd, model };
-  if (j?.stop_reason === 'max_tokens') return { ok: false, kind: 'error', status: 502, message: 'answer cut off at the token limit' };
+  if (tool) return { ok: true, raw: tool.input, costUsd, model, usage };
+  // zzz1050: billed but without a usable shape — a schema failure (the router may send it to the stronger model)
+  if (j?.stop_reason === 'max_tokens') return { ok: false, kind: 'error', status: 502, message: 'answer cut off at the token limit', schema: true, costUsd, model, usage };
   const text = blocks.filter((b) => b?.type === 'text').map((b) => String(b.text || '')).join('').trim();
   let raw: unknown = null;
   try { raw = JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, '')); } catch { raw = null; }
-  return { ok: true, raw, costUsd, model };
+  return { ok: true, raw, costUsd, model, usage };
 }
 
 /**
@@ -1162,5 +1364,9 @@ export async function realDeps(): Promise<ExtractDeps> {
   let store: GuidanceDocStore;
   try { store = await realStore(); }
   catch { store = { listDocs: async () => { throw new Error('guidance document store not available'); }, getDoc: async () => null, markExtracted: async () => undefined }; }
-  return { store, callModel: realCallModel, kv: realKv(), availability: realAvailability, log: (msg) => console.log(redact(msg, 500)), selectPassages: await realSelector(), priority: realPriority() };
+  return {
+    store, callModel: realCallModel, kv: realKv(), availability: realAvailability, log: (msg) => console.log(redact(msg, 500)), selectPassages: await realSelector(), priority: realPriority(),
+    // zzz1050: the run's call records → Postgres ai_run (best-effort, bounded wait)
+    recordRuns: async (recs) => (await import('./ai-runs')).writeRunRecords(recs, 6_000),
+  };
 }

@@ -48,6 +48,8 @@
 
 import { withUntrustedRule } from './ai-fence';
 import { kvGet, kvSet, isRedisAvailable, kvIncrByFloat } from '@/lib/kv';
+import { toStrictSchema } from './ai-schemas';
+import type { AiRunOutcome } from './ai-runs';
 
 // zzz978b — a key pasted with a space, a line break or quote marks around it is rejected by the provider as invalid.
 // Clean both keys once, before anything reads them. The value itself is never logged.
@@ -125,6 +127,8 @@ export interface FeatureSpend {
   usd: number;
   last_at: string | null;
   last_error: { at: string; status: number; message: string } | null;
+  /** zzz1050: answers that came back without the forced tool / schema the call asked for (counted, never hidden). Absent on older ledgers. */
+  schema_failures?: number;
 }
 
 export interface SpendLedger {
@@ -138,6 +142,8 @@ export interface SpendLedger {
   updated_at: string | null;
   /** The most recent refusal from the API, whatever the feature. */
   last_error: { at: string; status: number; message: string; feature: string } | null;
+  /** zzz1050: answers without the forced tool / schema, all features. Absent on older ledgers. */
+  schema_failures?: number;
 }
 
 export const SHARDS = 8;
@@ -172,17 +178,28 @@ export function applyCall(l: SpendLedger, feature: string, usd: number, u: Usage
   return l;
 }
 
+/** Pure: count one answer that came back without the schema it was asked for (zzz1050). */
+export function applySchemaFailure(l: SpendLedger, feature: string, at: string): SpendLedger {
+  const f = l.by_feature[feature] || emptyFeature();
+  f.schema_failures = (f.schema_failures || 0) + 1;
+  l.schema_failures = (l.schema_failures || 0) + 1;
+  l.by_feature[feature] = f; l.updated_at = at;
+  return l;
+}
+
 /** Pure: sum shards into one ledger. */
 export function mergeLedgers(month: string, parts: Array<SpendLedger | null>): SpendLedger {
   const out = emptyLedger(month);
   for (const p of parts) {
     if (!p) continue;
     out.total_usd += p.total_usd; out.calls += p.calls; out.blocked += p.blocked; out.failed += p.failed || 0; out.unrecorded += p.unrecorded;
+    if (p.schema_failures) out.schema_failures = (out.schema_failures || 0) + p.schema_failures;
     if (p.updated_at && (!out.updated_at || p.updated_at > out.updated_at)) out.updated_at = p.updated_at;
     if (p.last_error && (!out.last_error || p.last_error.at > out.last_error.at)) out.last_error = p.last_error;
     for (const [k, f] of Object.entries(p.by_feature)) {
       const o = out.by_feature[k] || emptyFeature();
       o.calls += f.calls; o.blocked += f.blocked; o.failed += f.failed || 0; o.input_tokens += f.input_tokens; o.output_tokens += f.output_tokens; o.usd += f.usd;
+      if (f.schema_failures) o.schema_failures = (o.schema_failures || 0) + f.schema_failures;
       if (f.last_at && (!o.last_at || f.last_at > o.last_at)) o.last_at = f.last_at;
       if (f.last_error && (!o.last_error || f.last_error.at > o.last_error.at)) o.last_error = f.last_error;
       out.by_feature[k] = o;
@@ -237,6 +254,45 @@ async function record(feature: string, usd: number, u: Usage | null, blocked: bo
       await kvSet(key, cur, SHARD_TTL_S);
     } catch { /* KV is down; the call itself already went through */ }
   }
+}
+
+/** zzz1050: count an answer that came back without the schema it was asked for — by this meter (forced tool missing) or by a
+ *  caller whose own validation refused the answer's shape. Best-effort, like every ledger write. */
+export async function noteSchemaFailure(feature: string): Promise<void> {
+  if (!isRedisAvailable()) return;
+  const key = shardKey(monthOf(), Math.floor(Math.random() * SHARDS));
+  try {
+    const cur = (await kvGet<SpendLedger>(key)) || emptyLedger(monthOf());
+    await kvSet(key, applySchemaFailure(cur, feature, new Date().toISOString()), SHARD_TTL_S);
+  } catch { /* KV down: the run record still says schema_fail */ }
+}
+
+/** zzz1050: what a call's run record should say about the document it read. `false` = the caller writes its own record. */
+export interface RunContext { promptVersion?: string | null; docId?: string | null; ticker?: string | null; batchId?: string | null }
+export interface MeterOpts {
+  signal?: AbortSignal; apiKey?: string; anthropicOnly?: boolean;
+  /** zzz1050: answer with this OpenAI model instead of OPENAI_MODEL (the guidance router's stronger pass). Must be priced. */
+  openaiModel?: string;
+  /** zzz1050: reasoning effort for this call (default OPENAI_REASONING_EFFORT / minimal) */
+  reasoningEffort?: string;
+  /** zzz1050: run record context; false = do not write a record here (the caller writes a richer one) */
+  run?: RunContext | false;
+}
+
+/** Pure: the forced tool's name when the request forces one. */
+export const forcedToolName = (body: Pick<MessagesBody, 'tool_choice'>): string | null => (body.tool_choice?.type === 'tool' && body.tool_choice.name ? String(body.tool_choice.name) : null);
+/** Pure: true when an Anthropic-shaped answer carries a tool_use block for that tool. */
+export const answeredWithTool = (answer: any, name: string): boolean => Array.isArray(answer?.content) && answer.content.some((b: any) => b?.type === 'tool_use' && b?.name === name && b?.input && typeof b.input === 'object');
+
+function track(feature: string, run: MeterOpts['run'], model: string | null, startedAt: Date, usage: Usage | null, usd: number, outcome: AiRunOutcome, error?: string): void {
+  if (run === false || feature === 'health-probe') return;
+  const ctx = run || {};
+  void import('./ai-runs').then((m) => m.trackRun(m.buildRunRecord({
+    job: feature, model, startedAt: startedAt.toISOString(), finishedAt: new Date().toISOString(),
+    inputTokens: Number(usage?.input_tokens || 0) + Number(usage?.cache_read_input_tokens || 0) + Number(usage?.cache_creation_input_tokens || 0),
+    outputTokens: Number(usage?.output_tokens || 0), costUsd: usd, outcome, error: error || null,
+    promptVersion: ctx.promptVersion ?? null, docId: ctx.docId ?? null, ticker: ctx.ticker ?? null, batchId: ctx.batchId ?? null,
+  }))).catch(() => undefined);
 }
 
 export interface GateResult { allowed: boolean; spent: number; cap: number; message?: string }
@@ -315,7 +371,15 @@ export function toOpenAIRequest(body: MessagesBody, model: string, reasoningEffo
   if (reasoning) out.reasoning_effort = reasoningEffort;
   else if (typeof body.temperature === 'number') out.temperature = body.temperature;
   if (body.tools?.length) {
-    out.tools = body.tools.map((t: any) => ({ type: 'function', function: { name: t.name, description: t.description || '', parameters: t.input_schema || { type: 'object', properties: {} } } }));
+    // zzz1050: Structured Outputs — a tool whose schema is strict-valid (every property required, objects closed) is sent with
+    // strict: true, so OpenAI guarantees the arguments parse and match it. Other schemas go as before.
+    let anyStrict = false;
+    out.tools = body.tools.map((t: any) => {
+      const strict = t.input_schema ? toStrictSchema(t.input_schema) : null;
+      if (strict) anyStrict = true;
+      return { type: 'function', function: { name: t.name, description: t.description || '', parameters: strict || t.input_schema || { type: 'object', properties: {} }, ...(strict ? { strict: true } : {}) } };
+    });
+    if (anyStrict) out.parallel_tool_calls = false;   // strict mode is not guaranteed for parallel calls
     const tc = body.tool_choice;
     if (tc?.type === 'tool' && tc.name) out.tool_choice = { type: 'function', function: { name: tc.name } };
     else if (tc?.type === 'any') out.tool_choice = 'required';
@@ -357,7 +421,7 @@ export function fromOpenAIResponse(j: any): Record<string, any> {
  * keeps its own status / body handling. A capped call returns a synthetic
  * 402 with `{ error: { type: 'spend_cap', message } }`.
  */
-export async function anthropicMessages(feature: string, body: MessagesBody, opts: { signal?: AbortSignal; apiKey?: string; anthropicOnly?: boolean } = {}): Promise<Response> {
+export async function anthropicMessages(feature: string, body: MessagesBody, opts: MeterOpts = {}): Promise<Response> {
   // zzz883: every model call carries the untrusted-data rule in its system prompt
   if (feature !== 'health-probe') body = { ...body, system: withUntrustedRule((body as any).system) as any };
   const prov = provider();
@@ -371,9 +435,11 @@ export async function anthropicMessages(feature: string, body: MessagesBody, opt
   if (!apiKey) {
     return new Response(JSON.stringify({ error: { type: 'no_key', message: 'No ANTHROPIC_API_KEY is configured' } }), { status: 401, headers: { 'content-type': 'application/json' } });
   }
+  const startedAt = new Date();
   const gate = await spendGate();
   if (!gate.allowed) {
     await record(feature, 0, null, true);
+    track(feature, opts.run, body.model, startedAt, null, 0, 'cap_reached', gate.message);
     return new Response(JSON.stringify({ error: { type: 'spend_cap', message: gate.message } }), { status: 402, headers: { 'content-type': 'application/json' } });
   }
   let resp: Response;
@@ -388,34 +454,48 @@ export async function anthropicMessages(feature: string, body: MessagesBody, opt
     // No answer at all (timeout, DNS, reset). Recorded as a failure so the
     // data watch can tell "nobody asked" from "everybody asked and was refused".
     await record(feature, 0, null, false, { status: 0, message: String(e?.message || e) });
+    track(feature, opts.run, body.model, startedAt, null, 0, 'failed', String(e?.message || e));
     throw e;
   }
   if (resp.ok) {
     // The clone is read for accounting; the caller reads the original.
-    let usage: Usage | null = null;
-    try { const j: any = await resp.clone().json(); usage = j?.usage || null; } catch { usage = null; }
-    await record(feature, costOf(body.model, usage), usage, false);
+    let usage: Usage | null = null; let answer: any = null;
+    try { answer = await resp.clone().json(); usage = answer?.usage || null; } catch { usage = null; }
+    const usd = costOf(body.model, usage);
+    await record(feature, usd, usage, false);
+    // zzz1050: a forced tool that did not come back is a schema failure (counted; the caller reports it as before)
+    const tool = forcedToolName(body);
+    const schemaFail = !!tool && !answeredWithTool(answer, tool);
+    if (schemaFail) await noteSchemaFailure(feature);
+    track(feature, opts.run, body.model, startedAt, usage, usd, schemaFail ? 'schema_fail' : 'ok', schemaFail ? `answer did not call ${tool}${answer?.stop_reason === 'max_tokens' ? ' (cut off at the token limit)' : ''}` : undefined);
   } else {
     let message = '';
     try { const t = await resp.clone().text(); const je = JSON.parse(t); message = String(je?.error?.message || je?.message || t); } catch { message = `HTTP ${resp.status}`; }
     await record(feature, 0, null, false, { status: resp.status, message });
+    track(feature, opts.run, body.model, startedAt, null, 0, 'failed', `HTTP ${resp.status}: ${message}`);
   }
   return resp;
 }
 
 /** OpenAI behind the Anthropic shape. Same gate, same ledger, same failure accounting. */
-async function openaiMessages(feature: string, body: MessagesBody, opts: { signal?: AbortSignal } = {}): Promise<Response> {
+async function openaiMessages(feature: string, body: MessagesBody, opts: MeterOpts = {}): Promise<Response> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     return new Response(JSON.stringify({ error: { type: 'no_key', message: 'AI_PROVIDER is openai but no OPENAI_API_KEY is configured' } }), { status: 401, headers: { 'content-type': 'application/json' } });
   }
+  // zzz1050: a model override must be priced, or its cost could not be counted against the caps — refused, never sent unmetered
+  const model = opts.openaiModel || openaiModel();
+  if (opts.openaiModel && !pricingFor(opts.openaiModel)) {
+    return new Response(JSON.stringify({ error: { type: 'unpriced_model', message: `model ${opts.openaiModel} has no price in the meter, so it is not used` } }), { status: 400, headers: { 'content-type': 'application/json' } });
+  }
+  const startedAt = new Date();
   const gate = await spendGate();
   if (!gate.allowed) {
     await record(feature, 0, null, true);
+    track(feature, opts.run, model, startedAt, null, 0, 'cap_reached', gate.message);
     return new Response(JSON.stringify({ error: { type: 'spend_cap', message: gate.message } }), { status: 402, headers: { 'content-type': 'application/json' } });
   }
-  const model = openaiModel();
-  const req = toOpenAIRequest(body, model, process.env.OPENAI_REASONING_EFFORT || 'minimal');
+  const req = toOpenAIRequest(body, model, opts.reasoningEffort || process.env.OPENAI_REASONING_EFFORT || 'minimal');
   let resp: Response;
   try {
     resp = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -426,6 +506,7 @@ async function openaiMessages(feature: string, body: MessagesBody, opts: { signa
     });
   } catch (e: any) {
     await record(feature, 0, null, false, { status: 0, message: String(e?.message || e) });
+    track(feature, opts.run, model, startedAt, null, 0, 'failed', String(e?.message || e));
     throw e;
   }
   if (!resp.ok) {
@@ -434,15 +515,22 @@ async function openaiMessages(feature: string, body: MessagesBody, opts: { signa
     let message = '';
     try { const t = await resp.clone().text(); const je = JSON.parse(t); message = String(je?.error?.message || je?.message || t); } catch { message = `HTTP ${resp.status}`; }
     await record(feature, 0, null, false, { status: resp.status, message });
+    track(feature, opts.run, model, startedAt, null, 0, 'failed', `HTTP ${resp.status}: ${message}`);
     return resp;
   }
   let translated: Record<string, any>;
   try { translated = fromOpenAIResponse(await resp.json()); }
   catch (e: any) {
     await record(feature, 0, null, false, { status: 502, message: `unreadable OpenAI answer: ${String(e?.message || e)}` });
+    track(feature, opts.run, model, startedAt, null, 0, 'failed', 'OpenAI answered with something that was not JSON');
     return new Response(JSON.stringify({ error: { type: 'bad_answer', message: 'OpenAI answered with something that was not JSON' } }), { status: 502, headers: { 'content-type': 'application/json' } });
   }
-  await record(feature, costOf(model, translated.usage), translated.usage, false);
+  const usd = costOf(model, translated.usage);
+  await record(feature, usd, translated.usage, false);
+  const tool = forcedToolName(body);
+  const schemaFail = !!tool && !answeredWithTool(translated, tool);
+  if (schemaFail) await noteSchemaFailure(feature);
+  track(feature, opts.run, model, startedAt, translated.usage, usd, schemaFail ? 'schema_fail' : 'ok', schemaFail ? `answer did not call ${tool}${translated.stop_reason === 'max_tokens' ? ' (cut off at the token limit)' : ''}` : undefined);
   return new Response(JSON.stringify(translated), { status: 200, headers: { 'content-type': 'application/json' } });
 }
 
@@ -459,9 +547,12 @@ async function openaiMessages(feature: string, body: MessagesBody, opts: { signa
 export const WEB_SEARCH_USD = 0.01;
 export interface WebResearchResult { ok: boolean; text: string; urls: string[]; usd: number; error?: string }
 
-export async function webResearch(feature: string, system: string, prompt: string, opts: { maxSearches?: number; signal?: AbortSignal } = {}): Promise<WebResearchResult> {
+/** zzz1050: `schema` asks OpenAI for a strict JSON answer (Responses text.format json_schema) — the search still runs. Anthropic answers in
+ *  text as before (a forced tool would stop the search); the caller parses and validates either way. */
+export async function webResearch(feature: string, system: string, prompt: string, opts: { maxSearches?: number; signal?: AbortSignal; schema?: { name: string; schema: Record<string, any> } } = {}): Promise<WebResearchResult> {
+  const startedAt = new Date();
   const gate = await spendGate();
-  if (!gate.allowed) { await record(feature, 0, null, true); return { ok: false, text: '', urls: [], usd: 0, error: gate.message || 'spend cap' }; }
+  if (!gate.allowed) { await record(feature, 0, null, true); track(feature, undefined, null, startedAt, null, 0, 'cap_reached', gate.message); return { ok: false, text: '', urls: [], usd: 0, error: gate.message || 'spend cap' }; }
   const sys = withUntrustedRule(system) as string;
   const prov = provider();
   try {
@@ -469,15 +560,18 @@ export async function webResearch(feature: string, system: string, prompt: strin
       const apiKey = process.env.OPENAI_API_KEY;
       if (!apiKey) return { ok: false, text: '', urls: [], usd: 0, error: 'no OPENAI_API_KEY' };
       const model = openaiModel();
+      const strictFormat = opts.schema ? toStrictSchema(opts.schema.schema) : null;
       const resp = await fetch('https://api.openai.com/v1/responses', {
         method: 'POST',
         headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ model, instructions: sys, input: prompt, tools: [{ type: 'web_search' }], reasoning: { effort: 'low' }, max_output_tokens: 4000 }),
+        body: JSON.stringify({ model, instructions: sys, input: prompt, tools: [{ type: 'web_search' }], reasoning: { effort: 'low' }, max_output_tokens: 4000,
+          ...(strictFormat ? { text: { format: { type: 'json_schema', name: opts.schema!.name, strict: true, schema: strictFormat } } } : {}) }),
         signal: opts.signal,
       });
       if (!resp.ok) {
         const t = await resp.text().catch(() => '');
         await record(feature, 0, null, false, { status: resp.status, message: t.slice(0, 300) });
+        track(feature, undefined, model, startedAt, null, 0, 'failed', `HTTP ${resp.status}`);
         return { ok: false, text: '', urls: [], usd: 0, error: `HTTP ${resp.status}` };
       }
       const j: any = await resp.json();
@@ -492,6 +586,7 @@ export async function webResearch(feature: string, system: string, prompt: strin
       const usage: Usage = { input_tokens: Math.max(0, (Number(u.input_tokens) || 0) - cached), output_tokens: Number(u.output_tokens) || 0, cache_read_input_tokens: cached };
       const usd = costOf(model, usage) + searches * WEB_SEARCH_USD;
       await record(feature, usd, usage, false);
+      track(feature, undefined, model, startedAt, usage, usd, 'ok');
       return { ok: true, text, urls: Array.from(new Set(urls)), usd };
     }
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -507,6 +602,7 @@ export async function webResearch(feature: string, system: string, prompt: strin
     if (!resp.ok) {
       const t = await resp.text().catch(() => '');
       await record(feature, 0, null, false, { status: resp.status, message: t.slice(0, 300) });
+      track(feature, undefined, model, startedAt, null, 0, 'failed', `HTTP ${resp.status}`);
       return { ok: false, text: '', urls: [], usd: 0, error: `HTTP ${resp.status}` };
     }
     const j: any = await resp.json();
@@ -517,9 +613,11 @@ export async function webResearch(feature: string, system: string, prompt: strin
     const searches = Number(j?.usage?.server_tool_use?.web_search_requests) || 0;
     const usd = costOf(model, j?.usage) + searches * WEB_SEARCH_USD;
     await record(feature, usd, j?.usage || null, false);
+    track(feature, undefined, model, startedAt, j?.usage || null, usd, 'ok');
     return { ok: true, text, urls: Array.from(new Set(urls)), usd };
   } catch (e: any) {
     await record(feature, 0, null, false, { status: 0, message: String(e?.message || e) });
+    track(feature, undefined, null, startedAt, null, 0, 'failed', String(e?.message || e));
     return { ok: false, text: '', urls: [], usd: 0, error: String(e?.message || e) };
   }
 }

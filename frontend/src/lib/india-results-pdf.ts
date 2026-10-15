@@ -136,7 +136,8 @@ export const RESULTS_TOOL = {
       net_profit_line: { type: ['string', 'null'], description: 'the net-profit ROW copied character for character, or null when net profit is null' },
       eps_line: { type: ['string', 'null'], description: 'the basic-EPS ROW copied character for character, or null when EPS is null' },
     },
-    required: ['is_results_statement', 'period_end', 'basis', 'unit', 'revenue_current', 'revenue_line'],
+    // zzz1050: every field listed (the nullable ones answer null) so OpenAI can enforce the schema in strict mode
+    required: ['is_results_statement', 'period_end', 'basis', 'unit', 'revenue_current', 'revenue_year_ago', 'net_profit_current', 'net_profit_year_ago', 'eps_current', 'eps_year_ago', 'revenue_line', 'net_profit_line', 'eps_line'],
   },
 } as const;
 

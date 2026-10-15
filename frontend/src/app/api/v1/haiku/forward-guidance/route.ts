@@ -19,6 +19,7 @@ import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { HAIKU_FG_PROMPT_VERSION, HAIKU_FG_PARSER_VERSION, haikuFgKey } from '@/lib/haiku-fg-key';   // zzz975
 import { extractFirstPdf } from '@/lib/pdf-text-extractor';
 import { anthropicMessages, modelConfigured, modelKeyName } from '@/lib/anthropic-meter';
+import { FORWARD_GUIDANCE_TOOL } from '@/lib/ai-schemas';   // zzz1050: provider-enforced answer shape
 
 export const runtime = 'nodejs';
 export const maxDuration = 55;
@@ -707,12 +708,15 @@ If "numbers" array would be empty, omit hard numbers in the rationale too — sa
   for (let attempt = 0; attempt < 2; attempt++) {
     let resp: Response | null = null;
     try {
+      // zzz1050: the answer comes through a forced tool with a strict schema (same fields as the JSON the prompt describes, so
+      // PROMPT_VERSION and every cached reading stay valid); the text-JSON path below stays as the fallback.
       resp = await anthropicMessages('forward-guidance', {
         model: HAIKU_MODEL,
         max_tokens: 1400,
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }],
-      }, { signal: AbortSignal.timeout(25_000) });
+        tools: [FORWARD_GUIDANCE_TOOL], tool_choice: { type: 'tool', name: FORWARD_GUIDANCE_TOOL.name },
+      }, { signal: AbortSignal.timeout(25_000), run: { ticker, promptVersion: PROMPT_VERSION } });
     } catch (e) {
       // Network / abort error — transient, retry once.
       if (attempt === 0) {
@@ -740,6 +744,8 @@ If "numbers" array would be empty, omit hard numbers in the rationale too — sa
     }
     const data = await resp.json();
     stopReason = data?.stop_reason;
+    const toolIn = (data?.content || []).find((b: any) => b?.type === 'tool_use' && b?.name === FORWARD_GUIDANCE_TOOL.name)?.input;
+    if (toolIn && typeof toolIn === 'object') { parsed = toolIn; break; }
     const raw = (data?.content || []).map((b: any) => b?.text || '').join('').trim();
     // PATCH 0962 ISSUE #7 — if stop_reason === 'max_tokens', the model hit
     // its 1400-token cap mid-JSON. Retrying with the same max_tokens would

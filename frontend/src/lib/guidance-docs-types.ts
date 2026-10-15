@@ -109,4 +109,10 @@ export interface GuidanceExtractResult {
   /** zzz920: the first few dropped rows (reason + quote ≤ 220 chars) — diagnostics only */
   dropSamples?: Array<{ reason: string; quote: string }>;
   note?: string;
+  /** zzz1050: every model that read the document, in order (cheap first). Absent when only `model` read it. */
+  models?: string[];
+  /** zzz1050: why the document was sent to the stronger model, which model, which answer was kept — or why it was not sent */
+  escalation?: { reason: string; model: string | null; used: 'cheap' | 'strong'; refused?: string };
+  /** zzz1050: re-read under this prompt version and the old result kept (the re-read found less) — not re-read again for it */
+  refreshedUnder?: string;
 }

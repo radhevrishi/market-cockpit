@@ -233,6 +233,8 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/themes',           label: 'Themes',           icon: <BarChart3 className="w-4 h-4" /> },
       { href: '/news-alerts',  label: 'News Alerts',   icon: <Bell className="w-4 h-4" /> },
       { href: '/status',       label: 'System Status', icon: <Bell className="w-4 h-4" /> },
+      // zzz1050 — AI runs: every model call, its cost against the cap, failures and model mix
+      { href: '/ai-runs',      label: 'AI runs',       icon: <BarChart3 className="w-4 h-4" /> },
       // PATCH zzz67 — System Health checkup (workers + cron + freshness)
       { href: '/system-health', label: 'System Health', icon: <Shield className="w-4 h-4" /> },
       // zzz848 — regression table for the guidance universe (System & Tools only; not linked from Guidance Upgrades)
@@ -317,6 +319,8 @@ const _LEGACY_NAV: NavItem[] = [
   { href: '/news-alerts',   label: 'News Alerts',        icon: <Bell className="w-5 h-5" /> },
   // PATCH 0219: System Status — per-pipeline heartbeats for institutional trust.
   { href: '/status',        label: 'System Status',      icon: <Bell className="w-5 h-5" /> },
+  // zzz1050: AI runs (model calls, cost vs cap, failures)
+  { href: '/ai-runs',       label: 'AI runs',            icon: <BarChart3 className="w-5 h-5" /> },
   // PATCH 0089: macro-maps removed — header ticker covers global indices/currencies/commodities
   // PATCH 0091: standalone /calendars also merged into Earnings Hub above
 ];

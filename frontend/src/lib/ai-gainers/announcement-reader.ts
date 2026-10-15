@@ -154,6 +154,8 @@ const TOOL = {
           value: { type: 'string' }, counterparty: { type: 'string' }, execution_period: { type: 'string' }, revenue_start: { type: 'string' },
           funding: { type: 'string' }, price_terms: { type: 'string' }, capacity: { type: 'string' }, conditions: { type: 'string' }, margin: { type: 'string' },
         },
+        // zzz1050: every key listed ("not stated" when absent) so OpenAI can enforce the schema in strict mode
+        required: ['value', 'counterparty', 'execution_period', 'revenue_start', 'funding', 'price_terms', 'capacity', 'conditions', 'margin'],
       },
       structural_duration: {
         type: 'string',
@@ -162,9 +164,11 @@ const TOOL = {
       },
     },
     required: ['catalyst', 'is_administrative', 'headline', 'evidence_quote',
-      'size_vs_company', 'impact_from', 'materiality', 'structural_duration'],
+      'size_vs_company', 'impact_from', 'materiality', 'facts', 'structural_duration'],
   },
 };
+/** zzz1050: the tool, for the strict-schema test. */
+export { TOOL as ANNOUNCEMENT_TOOL };
 
 const SYSTEM = `You read ONE exchange announcement from an Indian or US listed company and record what it says. Nothing else.
 

@@ -55,6 +55,7 @@ export const PROTECTED_API_PREFIXES = [
   '/api/v1/ai-eval',             // zzz883 — AI golden-set evaluation (paid AI)
   '/api/v1/guidance-diagnose',   // zzz909 — per-company guidance pipeline trace (workflow sends x-cron-secret)
   '/api/v1/search',              // zzz1051 — document search (paid embeddings / rerank within small daily ceilings)
+  '/api/v1/ai-runs',             // zzz1050 — AI call records (models, costs, outcomes, document ids)
 ] as const;
 
 /** Never gated: the login flow itself, and machine endpoints with their own auth. */
