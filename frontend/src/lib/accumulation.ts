@@ -35,12 +35,12 @@
 export const ACC_VERSION = 2;   // zzz1047 — 2: grade A / B needs confirmed evidence (ACC_GATES), not just a high score
 /** zzz1047 — what a grade A or B needs besides the score. The score alone let 30% of India reach A/B (names with no accumulation
  *  day, negative money flow, price under its 50-session average or ₹0.2 Cr a day traded). A / B now needs ALL of:
- *  ≥ 3 accumulation sessions in the last 25 and at least 2 more than the distribution sessions · 13-week money flow ≥ +0.10 ·
+ *  ≥ 2 accumulation sessions in the last 25 and at least 2 more than the distribution sessions (3 was too strict: MRNA, 2 / 0 with strong money flow, read C) · 13-week money flow ≥ +0.10 ·
  *  up / down volume (50 sessions) ≥ 1.3 · On-Balance Volume trend rising · no distribution warning · close above its 50-session
  *  average · daily traded value (20 sessions) ≥ $5 million (USA) / ₹3 crore (India) — institutions cannot build a position in less.
  *  A also needs: score ≥ 85, ≥ 4 accumulation sessions, money flow ≥ +0.15 and a close within 15% of the 250-session closing high.
  *  B needs a score ≥ 72. A company that misses a condition is graded C at most; the unmet conditions are listed. */
-export const ACC_GATES = { accD: 3, net: 2, cmf65: 0.10, udv50: 1.3, scoreB: 72, scoreA: 85, accDA: 4, cmf65A: 0.15, nearHiA: 0.85, minTurnover: { US: 5e6, IN: 3e7 } } as const;
+export const ACC_GATES = { accD: 2, net: 2, cmf65: 0.10, udv50: 1.3, scoreB: 72, scoreA: 85, accDA: 4, cmf65A: 0.15, nearHiA: 0.85, minTurnover: { US: 5e6, IN: 3e7 } } as const;
 export const ACC_RULES = { avgN: 50, window: 25, accChg: 0.01, accVol: 1.25, churnChg: 0.005, churnVol: 1.5, churnClv: -0.3, vboVol: 1.5, vboClv: 0.25, minBars: 70 } as const;
 
 export interface VolBars { d?: readonly string[]; o?: readonly number[]; h: readonly number[]; l: readonly number[]; c: readonly number[]; v: readonly number[]; dlv?: ReadonlyArray<number | null | undefined> }
@@ -277,3 +277,26 @@ export function accExplain(f: AccFigures, bar = 'session', market?: 'US' | 'IN')
   ];
   return lines.filter(Boolean);
 }
+
+/** zzz1047c — a colour tone for each explanation line (shared by the chart panel and the Pine detail):
+ *  up = supports accumulation, down = selling / a warning, warn = not confirmed, head = the grade line, dim = the method note. */
+export type AccTone = 'up' | 'down' | 'warn' | 'dim' | 'plain';
+export function accLineTone(line: string, i: number, all: readonly string[]): AccTone {
+  if (i === all.length - 1 && line === ACC_HONESTY) return 'dim';
+  if (i === 0) { const g = /^Accumulation ([A-E])/.exec(line)?.[1]; return g === 'A' || g === 'B' ? 'up' : g === 'D' || g === 'E' ? 'down' : 'warn'; }
+  if (/^Score is high but not graded/.test(line)) return 'warn';
+  if (/⚠|not confirmed by volume|heavy down volume|does not confirm/.test(line)) return 'down';
+  if (/stealth|light volume|^Volume breakout/.test(line)) return 'up';
+  let m = /^Last 25 \w+s: (\d+) accumulation .* vs (\d+) distribution/.exec(line);
+  if (m) return +m[1] > +m[2] ? 'up' : +m[1] < +m[2] ? 'down' : 'plain';
+  m = /^Money flow 13 weeks ([+−-]?[\d.]+)/.exec(line);
+  if (m) { const v = parseFloat(m[1].replace('−', '-')); return v >= 0.05 ? 'up' : v <= -0.05 ? 'down' : 'plain'; }
+  m = /volume, 50 \w+s: ([\d.]+)/.exec(line);
+  if (m) { const v = parseFloat(m[1]); return v >= 1.2 ? 'up' : v < 0.9 ? 'down' : 'plain'; }
+  m = /^On-Balance Volume trend ([+−-]?[\d.]+)/.exec(line);
+  if (m) { const v = parseFloat(m[1].replace('−', '-')); return v > 0.05 ? 'up' : v < -0.05 ? 'down' : 'plain'; }
+  m = /(\d+) big-volume up weeks, (\d+) big-volume down weeks/.exec(line);
+  if (m) return +m[1] > +m[2] ? 'up' : +m[1] < +m[2] ? 'down' : 'plain';
+  return 'plain';
+}
+export const ACC_TONE_COLOR: Record<AccTone, string | undefined> = { up: '#16a34a', down: '#dc2626', warn: '#d97706', dim: undefined, plain: undefined };

@@ -4,6 +4,7 @@
 // rules), draws the marks on the volume bars (or under the candles when Volume is off) and the money-flow pane, and the chip in the
 // overlay summary row with its details (every line of the explanation). Runs only while the overlay is in the working layout
 // (Indicators ▾ → Volume & accumulation).
+import { accLineTone, ACC_TONE_COLOR } from '@/lib/accumulation';
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { Chart } from 'klinecharts';
 import type { Bar } from '@/lib/chart-math';
@@ -177,7 +178,7 @@ export function AccBanner({ s, light, top = 4, onTurnOff, dock }: { s: AccP; lig
           <div data-testid="acc-headline" style={{ marginTop: 6, fontWeight: 650, color: 'var(--mc-text-1)' }}>{accHeadline(s.tf)} · {s.full.text}</div>
           <div style={{ marginTop: 6 }}>
             {s.lines.length ? s.lines.map((t, i) => (
-              <div key={i} data-testid="acc-line" style={{ padding: '2px 0', fontVariantNumeric: 'tabular-nums', color: i === s.lines.length - 1 ? 'var(--mc-text-3)' : undefined, fontSize: i === s.lines.length - 1 ? 11 : undefined }}>{t}</div>
+              <div key={i} data-testid="acc-line" data-tone={accLineTone(t, i, s.lines)} style={{ padding: '2px 0 2px 8px', fontVariantNumeric: 'tabular-nums', borderLeft: `3px solid ${ACC_TONE_COLOR[accLineTone(t, i, s.lines)] || 'transparent'}`, color: i === s.lines.length - 1 ? 'var(--mc-text-3)' : ACC_TONE_COLOR[accLineTone(t, i, s.lines)], fontWeight: i === 0 ? 700 : undefined, fontSize: i === s.lines.length - 1 ? 11 : undefined }}>{t}</div>
             )) : <div style={{ color: 'var(--mc-text-2)' }}>{s.full.text}</div>}
           </div>
           <div style={{ marginTop: 10, marginBottom: 2, fontSize: 11.5, fontWeight: 650, color: 'var(--mc-text-3)' }}>Marks on the chart · in view</div>

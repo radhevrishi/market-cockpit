@@ -2,6 +2,7 @@
 // zzz999 — the expandable detail under a result row: why the pattern is listed (the screen's checks), where it stops being valid,
 // volume, the scan close against the latest quote (with dates and sources), every other pattern on this company (D / W / M), and
 // a button to open the chart.
+import { accLineTone, ACC_TONE_COLOR } from '@/lib/accumulation';
 import React, { useEffect, useState } from 'react';
 import { PATTERN_META } from '@/lib/chart-patterns';
 import { fcfmSourceText, likelihoodWord, pineFilters, r40Explain, R40_FORMULA, type PineHit, type PineQuery } from '@/lib/screener/pine';
@@ -122,7 +123,7 @@ export function HitDetail({ hit, q, market, onOpenChart, width, results }: { hit
       <section data-detail="accumulation">
         <h4>Volume &amp; accumulation</h4>
         <ul style={{ listStyle: 'none', paddingLeft: 0 }}>
-          {accExplainRow(r, market).map((line, i, all) => <li key={i} style={i === all.length - 1 ? { color: C.dim, fontSize: 12 } : i === 0 ? { fontWeight: 650 } : undefined}>{line}</li>)}
+          {accExplainRow(r, market).map((line, i, all) => { const tone = accLineTone(line, i, all); return <li key={i} data-tone={tone} style={i === all.length - 1 && tone === 'dim' ? { color: C.dim, fontSize: 12 } : { color: ACC_TONE_COLOR[tone], fontWeight: i === 0 ? 700 : tone === 'warn' ? 600 : undefined }}>{line}</li>; })}
         </ul>
       </section>
       <section>

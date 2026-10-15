@@ -109,6 +109,34 @@ const COL_SHORT: Partial<Record<NumKey, string>> = {
 /** zzz1011 — the Condition column's sort order: the strongest current condition first. */
 const COND_ORDER = ['holding', 'crossed', 'retesting', 'forming', 'returned', 'expired', 'invalidated'] as const;
 const YES_NO = new Set<string>(['ttOk', 'st12', 'ripB', 'distWarn', 'vdu']);
+/** zzz1047c — the screen footer: the active query as coloured chips (text reads the same as before, " · " between parts) and the
+ *  screen's note clamped to two lines with "more". */
+const FOOT_TONES = ['#2563eb', '#0891b2', '#7c3aed', '#059669', '#d97706', '#db2777', '#475569'];
+function ScreenFooter({ summary, note, name }: { summary: string; note: string | null; name: string }) {
+  const [open, setOpen] = useState(false);
+  const parts = summary.split(' · ');
+  const m = note ? /^(.*?—[^.]*?\.)\s*(.*)$/.exec(note) : null;   // a "Volume & accumulation — …" style lead sentence, then the rule
+  const lead = m && m[2] ? m[1] : null, body = m && m[2] ? m[2] : note;
+  return (
+    <div data-testid="screen-footer" style={{ marginTop: 14, padding: '10px 12px', borderRadius: 10, border: '1px solid var(--pnx-border, #e3e7ee)', borderLeft: '4px solid #2563eb', background: 'linear-gradient(90deg, rgba(37,99,235,.06), transparent 60%)' }}>
+      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.04em', textTransform: 'uppercase', color: C.dim, marginBottom: 4 }}>About this screen · <span style={{ textTransform: 'none', fontWeight: 600 }}>{name}</span></div>
+      <h2 className="pnx-query" data-testid="active-query" style={{ margin: 0, display: 'flex', flexWrap: 'wrap', gap: '4px 0', fontSize: 12.5 }}>
+        {parts.map((p, i) => (
+          <React.Fragment key={i}>
+            {i ? <span style={{ color: C.faint, padding: '0 4px' }}> · </span> : null}
+            <span style={{ color: FOOT_TONES[i % FOOT_TONES.length], background: `${FOOT_TONES[i % FOOT_TONES.length]}14`, borderRadius: 6, padding: '1px 6px', fontWeight: 600 }}>{p}</span>
+          </React.Fragment>
+        ))}
+      </h2>
+      {body ? (
+        <div className="pnx-note" data-testid="screen-note" style={{ marginTop: 6, maxWidth: '110ch', lineHeight: '17px', ...(open ? {} : { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const, overflow: 'hidden' }) }}>
+          {lead ? <b style={{ color: C.text1 }}>{lead} </b> : null}{body}
+        </div>
+      ) : null}
+      {body && body.length > 160 ? <button type="button" className="pnx-link" onClick={() => setOpen((v) => !v)} style={{ marginTop: 2, fontSize: 11.5, background: 'none', border: 'none', color: '#2563eb', cursor: 'pointer', padding: 0 }}>{open ? 'less' : 'more'}</button> : null}
+    </div>
+  );
+}
 function fmtCol(k: NumKey, v: number | null | undefined, market: ScreenMarket): string {
   if (v == null || !Number.isFinite(v)) return '—';
   if (YES_NO.has(k)) return v >= 1 ? 'yes' : 'no';
@@ -1053,8 +1081,6 @@ export default function PineScreener() {
                   <span style={{ flex: 1 }} />
                   <b style={{ fontSize: 13, color: C.text1 }} aria-busy={!snap && !err} data-testid="match-count" data-batch={batchId} data-rows={shown.length}>{!snap ? (err ? '' : 'Loading…') : qRebuild.state === 'none' ? 'Matches cannot be determined yet' : qRebuild.state === 'partial' ? `${hits.length} companies match so far` : `${hits.length} companies match`}</b>
                 </div>
-                {/* zzz1004 (PS-05) — the ACTIVE query, never a preset name that may contradict it; the preset name sits beside it, smaller */}
-                <h2 className="pnx-query" data-testid="active-query">{summary}</h2>
                 {/* zzz1011 — eligible / evaluated / matched / unavailable for this screen on this list */}
                 {funnel ? <FunnelStrip f={funnel} rebuilding={qRebuild.state === 'none'} /> : <div className="pnx-funnel" aria-hidden>{[0, 1, 2, 3].map((k) => <div key={k}><span className="pnx-skel" style={{ width: 46, height: 16 }} /><span className="pnx-skel" style={{ width: 60, height: 8, marginTop: 4 }} /></div>)}</div>}
               </div>
@@ -1063,7 +1089,6 @@ export default function PineScreener() {
                   {family.items.map((it) => <button key={it.presetId} type="button" role="radio" aria-checked={screenId === it.presetId && !dirty} onClick={() => loadScreen(it.presetId)}>{it.label}</button>)}
                 </span>
               ) : null}
-              {note && !dirty ? <div className="pnx-note" style={{ maxWidth: '90ch' }}>{note}</div> : null}
               {/* zzz1004 (PS-02 / PS-03) — coverage of the SELECTED timeframes within the CURRENT list, each with its own as-of and
                   session state (a provisional daily reading is never called a close) */}
               {showDetails && snap && scopeCov ? (
@@ -1334,6 +1359,9 @@ export default function PineScreener() {
                 </details>
               ) : null}
               {snap ? <WhyNot rows={rows} q={q} market={market} list={kind === 'all' ? null : listTickers} listName={scopeName} run={run} /> : null}
+              {/* zzz1047c — the active query and the screen's note sit at the END, as a short coloured footer (the owner's request): the
+                  results come first. zzz1004 (PS-05) still holds — the summary is the ACTIVE query, never only a preset name. */}
+              <ScreenFooter summary={summary} note={note && !dirty ? note : null} name={presetLine(name, dirty)} />
             </>
           )}
         </section>

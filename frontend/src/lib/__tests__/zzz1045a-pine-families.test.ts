@@ -30,10 +30,12 @@ const IDS = ['all-bullish', 'all-bearish', 'oneil-bases', 'minervini-vcp', 'brea
   // zzz1046a — volume & accumulation (added at the end; earlier ids unchanged)
   'acc-ab', 'acc-base', 'acc-vbo', 'acc-stealth', 'acc-quiet', 'dist-warn', 'dlv-rising',
   // zzz1047 — Stage 2 health (added at the end)
-  'tw-stage2-healthy', 'tw-stage2-weak'];
+  'tw-stage2-healthy', 'tw-stage2-weak',
+  // zzz1047c — weekly / monthly + accumulation
+  'acc-mtf', 'acc-weekly-base'];
 
 test('zzz1045a the 65 built-in screen IDs are unchanged (same IDs, same order, none removed or renamed)', () => {
-  assert.equal(BUILT_IN_PINE_SCREENS.length, 74);   // zzz1047: + 2 Stage 2 health screens   // zzz1046a: + 7 volume & accumulation screens
+  assert.equal(BUILT_IN_PINE_SCREENS.length, 76);   // zzz1047: + 2 Stage 2 health screens   // zzz1046a: + 7 volume & accumulation screens
   assert.deepEqual(BUILT_IN_PINE_SCREENS.map((s) => s.id), IDS);
 });
 
@@ -42,7 +44,7 @@ test('zzz1045a every built-in screen belongs to exactly one family, as the brief
   const seen = new Map<string, number>();
   for (const g of groups) for (const s of g.screens) seen.set(s.id, (seen.get(s.id) || 0) + 1);
   for (const id of IDS) assert.equal(seen.get(id), 1, `${id} listed once`);
-  assert.equal(groups.reduce((n, g) => n + g.screens.length, 0), 74);
+  assert.equal(groups.reduce((n, g) => n + g.screens.length, 0), 76);
   assert.deepEqual(groups.map((g) => g.id), ['discovery', 'bases', 'breakouts', 'portfolio', 'trend', 'r40', 'setups', 'volume']);
   const fam = (id: string) => pineFamilyOf(BUILT_IN_PINE_SCREENS.find((s) => s.id === id)!);
   const expect: Record<PineFamilyId, string[]> = {
@@ -54,10 +56,10 @@ test('zzz1045a every built-in screen belongs to exactly one family, as the brief
       'tw-stage1-bases', 'tv-golden-cross', 'tv-death-cross', 'tv-rsi-cross', 'tv-rsi-50', 'tv-ema-cross-up', 'pocket-pivot', 'ripster-bull', 'high-rvol', 'tw-stage2-healthy', 'tw-stage2-weak'],
     r40: ['tv-rule-of-40', 'r40-bullish', 'r40-ready', 'r40-weekly-bases'],
     setups: IDS.filter((x) => x.startsWith('ts-')),
-    volume: ['acc-ab', 'acc-base', 'acc-vbo', 'acc-stealth', 'acc-quiet', 'dist-warn', 'dlv-rising'],   // zzz1046a
+    volume: ['acc-ab', 'acc-base', 'acc-vbo', 'acc-stealth', 'acc-quiet', 'dist-warn', 'dlv-rising', 'acc-mtf', 'acc-weekly-base'],   // zzz1046a, zzz1047c
   };
   for (const [f, ids] of Object.entries(expect)) for (const id of ids) assert.equal(fam(id), f, `${id} → ${f}`);
-  assert.equal(Object.values(expect).flat().length, 74);
+  assert.equal(Object.values(expect).flat().length, 76);
   assert.equal(PINE_FAMILIES.length, 8);
   for (const f of PINE_FAMILIES) assert.doesNotMatch(`${f.label} ${f.hint}`, /\bbest\b|\bbuy\b|\bsell\b/i, 'plain wording, no buy / sell');
 });

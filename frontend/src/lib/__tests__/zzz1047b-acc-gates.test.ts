@@ -54,3 +54,25 @@ test('below the 50-session average: never A / B', () => {
   const f = accumulationFigures(b, { weekDone: done, market: 'US' });
   assert.ok(!['A', 'B'].includes(f.accG!), f.accG!);
 });
+
+test('zzz1047c MRNA-like: 2 accumulation / 0 distribution with strong money flow passes the session condition', () => {
+  assert.equal(ACC_GATES.accD, 2);
+});
+
+test('zzz1047c explanation tones: grade, unconfirmed, money flow, honesty note', async () => {
+  const { accLineTone } = await import('../accumulation');
+  const all = ['Accumulation C (neutral) — score 77/100', 'Score is high but not graded A / B — not confirmed: x', 'Money flow 13 weeks +0.24, 21 sessions +0.27', 'Up-session volume ÷ down-session volume, 50 sessions: 0.7', 'Read from price and volume only: it shows heavy buying or selling, not who did it. Our own version of the published O\'Neil / Wyckoff rules, on completed bars.'];
+  assert.deepEqual(all.map((l, i) => accLineTone(l, i, all)), ['warn', 'warn', 'up', 'down', 'dim']);
+  assert.equal(accLineTone('Accumulation A (heavy accumulation) — score 90/100', 0, ['x', 'y']), 'up');
+});
+
+test('zzz1047c Pine page: query summary and note sit in a footer after the results; mixed timeframe + volume screens exist', async () => {
+  const { readFileSync } = await import('node:fs'); const { join } = await import('node:path');
+  const src = readFileSync(join(__dirname, '..', '..', 'components/pine-screener/PineScreener.tsx'), 'utf8');
+  assert.ok(src.indexOf('<ScreenFooter') > src.indexOf('<WhyNot rows='), 'footer after the results');
+  assert.match(src, /WebkitLineClamp: 2/);
+  const { BUILT_IN_PINE_SCREENS } = await import('../screener/pine-presets');
+  const mtf = BUILT_IN_PINE_SCREENS.find((s) => s.id === 'acc-mtf')!;
+  assert.deepEqual(mtf.q.tfs, ['W', 'M']); assert.equal(mtf.q.tfMode, 'all');
+  assert.deepEqual(mtf.q.filters.map((f: any) => [f.key, f.v]), [['accR', 4]]);
+});
