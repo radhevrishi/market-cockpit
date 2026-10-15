@@ -174,7 +174,7 @@ export function AutoLinesBanner({ s, light, top = 4, onTurnOff, dock }: { s: Aut
   const levelRows = s.rows.filter((r) => r.id.startsWith('l:'));
   const nTrend = trendRows.length, nLevels = levelRows.length;
   const sw = (kind: 'support' | 'resistance', broken: boolean, level: boolean) => (
-    <span aria-hidden style={{ display: 'inline-block', width: 16, height: 0, borderTop: `2px ${broken || level ? 'dashed' : 'solid'} ${alnColorOf(kind, broken, light)}`, transform: level ? 'none' : kind === 'support' ? 'rotate(-18deg)' : 'rotate(18deg)', flex: '0 0 auto', marginTop: 2 }} />
+    <span aria-hidden style={{ display: 'inline-block', width: 16, height: 0, borderTop: `2px ${broken || level ? 'dashed' : 'solid'} ${alnColorOf(kind, broken, light, level)}`, transform: level ? 'none' : kind === 'support' ? 'rotate(-18deg)' : 'rotate(18deg)', flex: '0 0 auto', marginTop: 2 }} />
   );
   const row = (r: AutoLinesP['rows'][number], level: boolean) => (
     <div key={r.id} data-testid="aln-row" title={r.tip}
@@ -194,7 +194,7 @@ export function AutoLinesBanner({ s, light, top = 4, onTurnOff, dock }: { s: Aut
         <div data-testid="aln-banner" style={{ ...(dock ? DOCK_PILL : null), display: 'flex', alignItems: 'center', gap: 4, minHeight: 24, borderRadius: 8, border: `1px solid ${col.border}`, background: `linear-gradient(${col.bg}, ${col.bg}), var(--mc-bg-0)`, color: col.text, lineHeight: '18px', boxShadow: '0 1px 0 rgba(18,23,34,.04), 0 6px 16px -10px rgba(18,23,34,.35)' }}>
           <span aria-hidden style={{ display: 'inline-flex', gap: 2, paddingLeft: 8 }}>
             <span style={{ width: 8, height: 2, background: alnColorOf('support', false, light), borderRadius: 1, transform: 'rotate(-25deg)' }} />
-            <span style={{ width: 8, height: 2, background: alnColorOf('resistance', false, light), borderRadius: 1, transform: 'rotate(25deg)' }} />
+            <span style={{ width: 8, height: 2, background: alnColorOf('support', false, light, true), borderRadius: 1 }} />
           </span>
           <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-haspopup="dialog"
             title={`${s.headline}\n\nTrendlines and horizontal levels where price turned 3 or more times, found on the ${TF_BAR[s.tf]} candles on screen. A line with only 2 touches is never shown. Click for the list; hover a line on the chart for its touches.${s.dropped ? '\nThe last candle is still forming and is not read.' : ''}${s.refText ? `\n${s.refText}` : ''}`}

@@ -107,6 +107,8 @@ body {
   .desktop-sidebar { display: flex !important; }
   .mobile-bottom-nav { display: none !important; }
 }
+/* zzz1033 — the left rail only on the home page */
+.desktop-sidebar.rail-hidden { display: none !important; }
 
 /* Touch-friendly tap targets */
 @media (max-width: 767px) {

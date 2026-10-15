@@ -32,15 +32,20 @@ export function parseAutoLinesPrefs(raw: string | null | undefined): AutoLinesPr
 export const serializeAutoLinesPrefs = (p: AutoLinesPrefs) => JSON.stringify({ v: 1, trend: p.trend, levels: p.levels });
 
 // ── colours ─────────────────────────────────────────────────────────────────────
-export interface AlnColors { support: string; resistance: string; broken: string; halo: string; tagText: string }
+export interface AlnColors { support: string; resistance: string; broken: string; halo: string; tagText: string; trend: string; level: string }
+/** zzz1034 — owner: one colour for every auto trendline and one for every support / resistance level, chosen per theme:
+ *  dark chart → trendlines white, levels yellow; white chart → trendlines charcoal, levels deep amber (the same pair, readable on white).
+ *  `support` / `resistance` stay for the list's wording only. Broken lines stay grey. */
 export function alnColors(light: boolean): AlnColors {
   return light
-    ? { support: '#0B8A73', resistance: '#D63B49', broken: '#8A8E99', halo: '#FFFFFF', tagText: '#FFFFFF' }
-    : { support: '#26A69A', resistance: '#F7525F', broken: '#8E929C', halo: '#0C1018', tagText: '#0C1018' };
+    ? { support: '#0B8A73', resistance: '#D63B49', broken: '#8A8E99', halo: '#FFFFFF', tagText: '#FFFFFF', trend: '#1E293B', level: '#A16207' }
+    : { support: '#26A69A', resistance: '#F7525F', broken: '#8E929C', halo: '#0C1018', tagText: '#0C1018', trend: '#FFFFFF', level: '#FFD54F' };
 }
-export function alnColorOf(kind: 'support' | 'resistance', broken: boolean, light: boolean): string {
+/** The colour a line or level is drawn in (level = horizontal support / resistance). */
+export function alnColorOf(kind: 'support' | 'resistance', broken: boolean, light: boolean, level = false): string {
   const c = alnColors(light);
-  return broken ? c.broken : kind === 'support' ? c.support : c.resistance;
+  void kind;
+  return broken ? c.broken : level ? c.level : c.trend;
 }
 
 // ── chart payload ───────────────────────────────────────────────────────────────

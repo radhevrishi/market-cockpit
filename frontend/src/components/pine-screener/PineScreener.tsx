@@ -216,6 +216,12 @@ export default function PineScreener() {
     return () => ro.disconnect();
   }, [view, expanded]);
   const [filtersOpen, setFiltersOpen] = useState<boolean>(() => { try { return !window.matchMedia?.('(max-width: 899px)').matches; } catch { return true; } });
+  // zzz1033 — owner: an option to hide the filter panel on wide screens too (shown by default; the choice is remembered)
+  const [filtersHidden, setFiltersHidden] = useState<boolean>(() => { try { return localStorage.getItem('mc:pine-filters-hidden:v1') === '1'; } catch { return false; } });
+  // zzz1033 — owner: coverage / scope / counts lines hidden by default behind "ⓘ Details" (warnings stay visible)
+  const [showDetails, setShowDetails] = useState<boolean>(() => { try { return localStorage.getItem('mc:pine-details:v1') === '1'; } catch { return false; } });
+  const toggleDetails = () => setShowDetails((v) => { const n = !v; try { localStorage.setItem('mc:pine-details:v1', n ? '1' : '0'); } catch { /* this visit */ } return n; });
+  const toggleFiltersHidden = () => setFiltersHidden((v) => { const n = !v; try { localStorage.setItem('mc:pine-filters-hidden:v1', n ? '1' : '0'); } catch { /* this visit */ } return n; });
   const [sec, setSec] = useState<Record<string, boolean>>(() => ({ patterns: first.q.ids.length > 0, rules: first.q.filters.length > 0, size: false, res: resultRuleOn(first.q), cols: false, how: false }));
   const toggleSec = (k: string) => setSec((s) => ({ ...s, [k]: !s[k] }));
   const [extras, setExtrasRaw] = useState<Extra[]>(() => { try { const v = JSON.parse(localStorage.getItem(EXTRA_KEY) || '[]'); return Array.isArray(v) ? v.filter((x: unknown): x is Extra => EXTRAS.some((e) => e.id === x)) : []; } catch { return []; } });
@@ -712,9 +718,7 @@ export default function PineScreener() {
           <button type="button" className="pnx-btn pnx-btn-ic pnx-hide-sm" onClick={() => setHelp(true)} title="Keyboard shortcuts" aria-label="Keyboard shortcuts"><Kbd>?</Kbd> Shortcuts</button>
           <Link href="/stock-screener" className="pnx-link" style={{ fontSize: 12.5 }}>Fundamentals: Stock Screener</Link>
         </div>
-        <p className="pnx-lede" title="Market Cockpit's own TypeScript pattern engine and rules. It does not run or import TradingView Pine Script; screens named after your TradingView scripts follow their published rules and are not certified equivalents.">
-          Which charts are setting up now. Patterns are read from daily, weekly and monthly bars by our own chart-pattern &amp; rule screener — it does not run Pine Script.
-        </p>
+        {/* zzz1033 — the lede line removed at the owner's request (the 'How the patterns are found' panel explains the engine) */}
       </header>
 
       <SetupCards active={activeCard} counts={cardCounts} rebuild={cardRebuild} onPick={pickCard} loading={!snap} />
@@ -737,13 +741,15 @@ export default function PineScreener() {
       </nav>
 
 
-      <div className="pnx-layout" data-wide={view === 'portfolio'}>
+      <div className="pnx-layout" data-wide={view === 'portfolio'} data-filters-hidden={filtersHidden}>
         {/* ── filters ───────────────────────────────────────────────────────────────────────────────────────────── */}
-        {view === 'portfolio' ? null : <aside className="pnx-side" data-open={filtersOpen} aria-label="Filters">
+        {view === 'portfolio' ? null : <aside className="pnx-side" data-open={filtersOpen} data-hidden={filtersHidden} aria-label="Filters">
           <div className="pnx-side-head" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <b style={{ fontSize: 14 }}>Filters</b>
             <span className="pnx-note">{filtersOn ? `${filtersOn} on` : ''}</span>
             <span style={{ flex: 1 }} />
+            <button type="button" className="pnx-btn pnx-side-collapse" aria-expanded={!filtersHidden} data-testid="pine-filters-collapse" onClick={toggleFiltersHidden}
+              title={filtersHidden ? 'Show the filter panel' : 'Hide the filter panel — the table uses the full width (your filters stay on)'}>{filtersHidden ? 'Show ▸' : '◂ Hide'}</button>
             <button type="button" className="pnx-btn pnx-side-toggle" aria-expanded={filtersOpen} onClick={() => setFiltersOpen(!filtersOpen)}>{filtersOpen ? 'Hide' : 'Show'}</button>
           </div>
           <div className="pnx-field">
@@ -979,6 +985,7 @@ export default function PineScreener() {
 
           <Section id="pnx-sec-how" title="How the patterns are found" open={sec.how} onToggle={() => toggleSec('how')}>
             <div style={{ display: 'grid', gap: 6, fontSize: 12.5, color: C.dim }}>
+              <div>Our own chart-pattern &amp; rule screener — it does not run Pine Script; screens named after your TradingView scripts follow their published rules and are not certified equivalents.</div>
               <div>Each company&apos;s daily history (about 5 years) is read by the screener build as daily candles and, aggregated, as completed weekly and monthly candles, with the same pattern engine as the chart&apos;s pattern line. Definitions follow O&apos;Neil, Minervini and Bulkowski; each rule passed adds to the <b>shape score</b> (0–100: possible ≥ 35, likely ≥ 55, very likely ≥ 75). It measures how closely the shape fits, not a probability of the pattern working.</div>
               <div><b>Stage</b>: forming = no close beyond the pivot yet; breakout = first close beyond it {stageWindowText(q.tfs, 'breakout')}; failed = a close more than 7.5% back through it {stageWindowText(q.tfs, 'failed')} of the break. Each timeframe uses its own candles: a monthly breakout is a monthly close.</div>
               <div><b>To pivot</b>: the scan close against the pivot (the buy point; for bearish patterns the breakdown level) in the pattern&apos;s direction. −5% means 5% short of it.</div>
@@ -1024,7 +1031,7 @@ export default function PineScreener() {
               {note && !dirty ? <div className="pnx-note" style={{ maxWidth: '90ch' }}>{note}</div> : null}
               {/* zzz1004 (PS-02 / PS-03) — coverage of the SELECTED timeframes within the CURRENT list, each with its own as-of and
                   session state (a provisional daily reading is never called a close) */}
-              {snap && scopeCov ? (
+              {showDetails && snap && scopeCov ? (
                 <div className="pnx-note" data-testid="coverage" style={{ display: 'grid', gap: 1 }}>
                   {scopeCov.perTf.map((c) => <div key={c.tf} data-tf={c.tf}>{coverageLine(c)}</div>)}
                   <div>{kind === 'all' ? `${scopeCov.inData.toLocaleString('en-US')} companies in the ${market === 'IN' ? 'Indian' : 'US'} data` : `${scopeName}: ${scopeCov.inData} in the data${scopeCov.notInData.length ? `, ${scopeCov.notInData.length} not in the data (${scopeCov.notInData.slice(0, 8).join(', ')}${scopeCov.notInData.length > 8 ? '…' : ''})` : ''}`}{builtAt ? ` · data built ${builtAt.toLocaleString()}` : ''}</div>
@@ -1048,7 +1055,7 @@ export default function PineScreener() {
                 </div>
               ) : null}
               {err ? <div role="alert" style={{ color: C.red, fontSize: 13 }}>{err}{snap ? ' — showing the last loaded data' : ''}</div> : null}
-              {scope && listTickers ? (
+              {showDetails && scope && listTickers ? (
                 <div className="pnx-note">Limited to <b style={{ color: C.text1 }}>{scopeName}</b> ({scopeWaiting ? 'loading…' : kind === 'cb' ? `${listTickers.size} names on the bench, any market — ${scopeCov?.inData ?? 0} in the ${market === 'IN' ? 'Indian' : 'US'} data` : `${listTickers.size} ${market === 'IN' ? 'Indian' : 'US'} ${listTickers.size === 1 ? 'company' : 'companies'}`}){kind === 'stock' && stockData[market]?.error ? <span style={{ color: C.red }}> — {stockData[market]!.error}</span> : null} · <button type="button" className="pnx-link" onClick={() => setScope('')}>show every company</button></div>
               ) : null}
 
@@ -1063,15 +1070,17 @@ export default function PineScreener() {
                 <button type="button" className="pnx-btn" disabled={loading} onClick={() => setRefresh((v) => v + 1)}>{loading ? 'Refreshing…' : err ? 'Retry' : 'Refresh'}</button>
               </div>
               <div className="pnx-meta">
-                {snap ? <span data-testid="result-counts">{countsLine(sCounts, searching)}{sCounts.provisional ? ` · ${sCounts.provisional} provisional (not counted)` : ''}</span> : <span aria-busy="true">Loading counts…</span>}
-                <label style={{ display: 'inline-flex', gap: 5, alignItems: 'center' }} title="Which companies Copy, CSV, Add to watchlist and the chart review queue act on">Actions apply to
+                <button type="button" className="pnx-link" data-testid="pine-details-toggle" aria-expanded={showDetails} onClick={toggleDetails}
+                  title={showDetails ? 'Hide the coverage, list and count lines' : 'Show coverage (scanned / not in the data / data built), the company list in use, result counts and what the actions apply to'}>{showDetails ? 'ⓘ Hide details' : 'ⓘ Details'}</button>
+                {showDetails ? (snap ? <span data-testid="result-counts">{countsLine(sCounts, searching)}{sCounts.provisional ? ` · ${sCounts.provisional} provisional (not counted)` : ''}</span> : <span aria-busy="true">Loading counts…</span>) : null}
+                {showDetails || selected.size || searching ? <label style={{ display: 'inline-flex', gap: 5, alignItems: 'center' }} title="Which companies Copy, CSV, Add to watchlist and the chart review queue act on">Actions apply to
                   <select value={scopeNow} onChange={(e) => setActScope(e.target.value as ActionScope)} className="pnx-in" style={{ width: 'auto', padding: '3px 6px' }} aria-label="Action scope">
                     <option value="results">{scopeLabel('results', sCounts, searching)}</option>
                     {searching ? <option value="all">{scopeLabel('all', sCounts, searching)}</option> : null}
                     {sCounts.selected ? <option value="selected">{scopeLabel('selected', sCounts, searching)}</option> : null}
                     {sCounts.provisional ? <option value="provisional">{scopeLabel('provisional', sCounts, searching)}</option> : null}
                   </select>
-                </label>
+                </label> : null}
                 {selected.size ? <button type="button" className="pnx-btn" style={{ padding: '3px 8px' }} onClick={() => setSelected(new Set())}>Clear selection ({sCounts.selected})</button> : null}
                 <span style={{ flex: 1 }} />
                 <span role="radiogroup" aria-label="Row density" className="pnx-seg" style={{ width: 'auto' }}>

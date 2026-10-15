@@ -589,7 +589,9 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
        * clean "Intellig…" with the existing title-attr tooltip showing
        * the full label on hover.
        */}
-      <aside className={`desktop-sidebar ${pwa.sidebar}`} style={{
+      {/* zzz1033 — owner: the left rail shows on the home page only; every other page uses the full width (home via the
+          MARKET COCKPIT name / MC badge in the header, pages via search or the home page) */}
+      <aside className={`desktop-sidebar ${pwa.sidebar}${pathname === '/' ? '' : ' rail-hidden'}`} data-testid="desktop-rail" style={{
         width: '96px',
         flexShrink: 0,
         backgroundColor: 'var(--mc-bg-1)',
@@ -751,9 +753,9 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
             <div className={pwa.brand}>
               {/* zzz796 — on phones the long name collapses to the MC badge so the chips fit. */}
               <Link href="/" className={pwa.brandBadge} aria-label="Market Cockpit home">MC</Link>
-              <span className={pwa.brandText} style={{ fontSize: '15px', fontWeight: '700', background: 'linear-gradient(90deg, var(--mc-accent), #06B6D4)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+              <Link href="/" title="Home — all pages" className={pwa.brandText} style={{ fontSize: '15px', fontWeight: '700', textDecoration: 'none', background: 'linear-gradient(90deg, var(--mc-accent), #06B6D4)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
                 MARKET COCKPIT
-              </span>
+              </Link>
               <span className="desktop-header-subtitle" style={{ fontSize: '11px', color: 'var(--mc-text-4)' }}>Bloomberg-lite · India + US</span>
             </div>
 

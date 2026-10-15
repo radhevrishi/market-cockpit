@@ -58,7 +58,7 @@ export function registerAutoLinesIndicator(kc: typeof KC): void {
       for (const lv of ext.levels || []) {
         const kA = indexAtOrAfter(data, lv.tA);
         if (kA < 0) continue;
-        const c = lv.kind === 'support' ? col.support : col.resistance;
+        const c = col.level;   // zzz1034 — every level one colour (yellow on dark, deep amber on white)
         const hov = ext.hover === lv.id;
         const y = yAxis.convertToPixel(lv.price);
         if (y < -2 || y > bounding.height + 2) continue;
@@ -80,7 +80,7 @@ export function registerAutoLinesIndicator(kc: typeof KC): void {
       for (const ln of ext.lines || []) {
         const kA = indexAtOrAfter(data, ln.tA);
         if (kA < 0) continue;
-        const c = ln.broken ? col.broken : ln.kind === 'support' ? col.support : col.resistance;
+        const c = ln.broken ? col.broken : col.trend;   // zzz1034 — every trendline one colour (white on dark, charcoal on white)
         const hov = ext.hover === ln.id;
         let kEnd = rightIdx;
         if (ln.tEnd != null) { const kb = indexAtOrAfter(data, ln.tEnd); kEnd = kb < 0 ? rightIdx : Math.min(rightIdx, kb + 3); }

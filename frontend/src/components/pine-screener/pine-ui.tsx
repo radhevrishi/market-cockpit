@@ -62,6 +62,13 @@ export const PINE_CSS = `
 .pnx-layout[data-wide="true"] { grid-template-columns: minmax(0, 1fr); }
 .pnx-side { position: sticky; top: 8px; display: grid; gap: 14px; padding: 14px 14px 16px; border: 1px solid var(--mc-border-1); border-radius: 12px; background: var(--mc-bg-1); max-height: calc(100vh - 24px); overflow: auto; overscroll-behavior: contain; }
 .pnx-side-toggle { display: none; }
+/* zzz1033 — filter panel hidden on wide screens: a slim strip with "Filters · N on · Show ▸", the table takes the width */
+.pnx-layout[data-filters-hidden="true"] { grid-template-columns: auto minmax(0, 1fr); }
+.pnx-side[data-hidden="true"] { width: auto; padding: 10px 8px; }
+.pnx-side[data-hidden="true"] > :not(.pnx-side-head) { display: none !important; }
+.pnx-side[data-hidden="true"] .pnx-side-head { flex-direction: column; align-items: center !important; gap: 6px !important; }
+.pnx-side[data-hidden="true"] .pnx-side-head > span[style] { display: none; }
+.pnx-side[data-hidden="true"] .pnx-side-toggle { display: none !important; }
 
 /* setup cards */
 .pnx-cards { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
@@ -200,6 +207,7 @@ export const PINE_CSS = `
   .pnx-side { position: static; max-height: none; }
   .pnx-side[data-open="false"] > :not(.pnx-side-head) { display: none !important; }
   .pnx-side-toggle { display: inline-flex; }
+  .pnx-side-collapse { display: none !important; }
   .pnx-card { flex: 0 0 156px; }
   .pnx-flows { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; }
   .pnx-flows > .pnx-lab { flex: none; }

@@ -130,3 +130,17 @@ test('reference: labels per timeframe and plain wording (no "holding", "best", b
     assert.ok(!/\b(buy|sell|buying|selling)\b/i.test(src), `${f}: buy / sell`);
   }
 });
+
+test('zzz1034 — one colour per kind: trendlines white / levels yellow on dark; charcoal / deep amber on white; broken grey', async () => {
+  const { alnColors, alnColorOf } = await import('../../components/charts/auto-lines-view');
+  assert.equal(alnColorOf('support', false, false), '#FFFFFF');
+  assert.equal(alnColorOf('resistance', false, false), '#FFFFFF');
+  assert.equal(alnColorOf('support', false, false, true), '#FFD54F');
+  assert.equal(alnColorOf('resistance', false, true), '#1E293B');
+  assert.equal(alnColorOf('resistance', false, true, true), '#A16207');
+  assert.equal(alnColorOf('support', true, false), alnColors(false).broken);
+  const { readFileSync } = await import('node:fs');
+  const k = readFileSync(new URL('../../components/charts/auto-lines-kline.ts', import.meta.url), 'utf8');
+  assert.match(k, /const c = col\.level;/);
+  assert.match(k, /ln\.broken \? col\.broken : col\.trend/);
+});

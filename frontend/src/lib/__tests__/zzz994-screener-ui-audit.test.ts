@@ -91,7 +91,7 @@ test('zzz994 MC-05 shape score wording in table, filters and CSV; engine version
   assert.match(pine, /SHAPE_SCORE_LABEL, 'Shape score band', 'Volume confirmed'/);
   assert.match(pine, /'Scan engine version'/);
   assert.match(pine, /r\.scan\?\.v/);
-  assert.match(pine, /our own chart-pattern &amp; rule screener — it does not run Pine Script/);
+  assert.match(pine, /Our own chart-pattern &amp; rule screener — it does not run Pine Script/);   // zzz1033 — moved into 'How the patterns are found'
   for (const s of BUILT_IN_PINE_SCREENS) assert.doesNotMatch(s.name, /\(your script\)/, s.id);
   assert.match(BUILT_IN_PINE_SCREENS.find((s) => s.id === 'tv-trend-template')!.name, /based on your TradingView script/);
 });
@@ -267,6 +267,7 @@ test('zzz994 Pine page (JSDOM): counts kept apart, search-scoped copy, explicit 
   ];
   await withDom('http://localhost/pine-screener', async ({ React, act, root, settle, text, click, clip, blobs }) => {
     (globalThis as any).fetch = async (url: string) => ({ ok: true, json: async () => (url.includes('/api/v1/pine-screener') ? { ok: true, builtAt: '2026-10-12T23:00:00Z', ...leanRows(PROWS), notes: [] } : { ok: true }) });
+    localStorage.setItem('mc:pine-details:v1', '1');   // zzz1033 — counts / scope lines sit behind "ⓘ Details" (hidden by default)
     const { default: PineScreener } = await import('../../components/pine-screener/PineScreener');
     await act(async () => { root.render(React.createElement(PineScreener)); await settle(); });
     assert.match(text(), /3 companies match/);
