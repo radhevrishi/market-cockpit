@@ -220,11 +220,11 @@ test('zzz1011 eligible / evaluated / matched / unavailable per screen', () => {
 
 // ── §8: Rule of 40 — the exact formula, periods, fields; missing = unknown ────────────────────────────────────────────────
 test('zzz1011 Rule of 40: formula, periods and fields shown; a missing input is unknown, never 0 or a pass', () => {
-  assert.match(R40_FORMULA, /revenue growth \(latest reported quarter vs the same quarter a year earlier, %\) \+ free-cash-flow margin \(trailing twelve months/);
+  assert.match(R40_FORMULA, /revenue growth \(latest reported quarter vs the same quarter a year earlier, %\) \+ free-cash-flow margin \(latest full fiscal year/);
   assert.deepEqual(R40_FIELDS.map((f) => f.key), ['revQYoY', 'fcfmTTM']);
   const miss = r40Explain({ revQYoY: 50 }, 40);
   assert.equal(miss.state, 'unknown'); assert.equal(miss.value, null); assert.equal(miss.pass, null);
-  assert.match(miss.text, /Unknown — missing FCF margin \(trailing twelve months/);
+  assert.match(miss.text, /Unknown — missing FCF margin \(latest full fiscal year/);
   assert.match(miss.text, /Not counted as 0 and never a pass/);
   const both = r40Explain({}, null);
   assert.equal(both.missing.length, 2);
