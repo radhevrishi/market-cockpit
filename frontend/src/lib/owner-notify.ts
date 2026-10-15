@@ -97,6 +97,15 @@ export async function notifyOwner(m: NotifyMessage): Promise<NotifyResult> {
   return { telegram, email, errors: [e1, e2].filter((x): x is string => !!x) };
 }
 
+/** zzz1054 — send on the chosen channels only (price alerts let the owner pick Telegram and / or email). Never throws. */
+export async function notifyOwnerVia(m: NotifyMessage, via: { telegram: boolean; email: boolean }): Promise<NotifyResult> {
+  const [[telegram, e1], [email, e2]] = await Promise.all([
+    via.telegram ? sendTelegram(m) : Promise.resolve<[ChannelState, string?]>(['skipped']),
+    via.email ? sendEmail(m) : Promise.resolve<[ChannelState, string?]>(['skipped']),
+  ]);
+  return { telegram, email, errors: [e1, e2].filter((x): x is string => !!x) };
+}
+
 const ONCE_PREFIX = 'owner-notify:sent:v1';
 /**
  * Sends only the first time this key is seen (kept 120 days). If no channel delivered, the key is released so the next run

@@ -132,6 +132,59 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX IF NOT EXISTS ai_run_job_idx ON ai_run (job, started_at DESC);
       CREATE INDEX IF NOT EXISTS ai_run_outcome_idx ON ai_run (outcome, started_at DESC);`,
   },
+  {
+    // zzz1054 — price alerts (lib/alerts): the owner's alerts, what fired (kept 180 days, capped), daily figures per ticker
+    // (so a restart does not re-download bars) and the one-run-per-minute claim (two server copies never check the same minute).
+    // The UNIQUE (alert_id, mid, dedupe_key) index is the trigger dedupe: a second insert for the same bar / minute is refused.
+    id: 5, name: 'price_alerts',
+    sql: `
+      CREATE TABLE IF NOT EXISTS price_alert (
+        id             TEXT PRIMARY KEY,
+        name           TEXT NOT NULL,
+        spec           JSONB NOT NULL,
+        status         TEXT NOT NULL DEFAULT 'active',
+        expires_at     TIMESTAMPTZ,
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+        version        INTEGER NOT NULL DEFAULT 1,
+        last_fired_at  TIMESTAMPTZ,
+        fire_count     INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS price_alert_status_idx ON price_alert (status);
+      CREATE TABLE IF NOT EXISTS price_alert_event (
+        id          BIGSERIAL PRIMARY KEY,
+        alert_id    TEXT NOT NULL,
+        alert_name  TEXT NOT NULL,
+        mid         TEXT NOT NULL,
+        market      TEXT NOT NULL,
+        ticker      TEXT NOT NULL,
+        name        TEXT,
+        price       DOUBLE PRECISION,
+        change_pct  DOUBLE PRECISION,
+        condition   TEXT NOT NULL,
+        list        TEXT,
+        message     TEXT NOT NULL,
+        dedupe_key  TEXT NOT NULL,
+        toast       BOOLEAN NOT NULL DEFAULT true,
+        browser     BOOLEAN NOT NULL DEFAULT false,
+        fired_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+        read_at     TIMESTAMPTZ
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS price_alert_event_dedupe_idx ON price_alert_event (alert_id, mid, dedupe_key);
+      CREATE INDEX IF NOT EXISTS price_alert_event_fired_idx ON price_alert_event (fired_at DESC);
+      CREATE INDEX IF NOT EXISTS price_alert_event_unread_idx ON price_alert_event (fired_at DESC) WHERE read_at IS NULL;
+      CREATE TABLE IF NOT EXISTS price_alert_daily (
+        mid          TEXT PRIMARY KEY,
+        fetched_day  TEXT NOT NULL,
+        figs         JSONB NOT NULL,
+        updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE TABLE IF NOT EXISTS price_alert_meta (
+        k  TEXT PRIMARY KEY,
+        v  TEXT NOT NULL
+      );
+      INSERT INTO price_alert_meta (k, v) VALUES ('last_minute', '') ON CONFLICT (k) DO NOTHING;`,
+  },
 ] as const;
 
 const LOCK_ID = 88_301_883;   // advisory-lock id for migrations

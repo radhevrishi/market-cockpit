@@ -3,7 +3,7 @@
 // the heartbeat's last success and the next slot. Public: no secrets, nothing changes.
 
 import { NextResponse } from 'next/server';
-import { APP_JOBS, GITHUB_SCHEDULED, prevSlot, nextSlot, slotWindowMs, lockKeyFor, staleAfterHoursFor, MAX_CONCURRENT } from '@/lib/app-scheduler';
+import { APP_JOBS, LIGHT_JOBS, GITHUB_SCHEDULED, prevSlot, nextSlot, slotWindowMs, lockKeyFor, staleAfterHoursFor, MAX_CONCURRENT } from '@/lib/app-scheduler';
 import { kvMGet, isRedisAvailable } from '@/lib/kv';
 
 export const runtime = 'nodejs';
@@ -50,6 +50,8 @@ export async function GET() {
     now: now.toISOString(),
     scheduler: { enabled: process.env.APP_SCHEDULER !== '0' && process.env.BACKSTOP_SCHEDULER !== '0', has_secret: !!process.env.CRON_SECRET, redis, max_concurrent: MAX_CONCURRENT, retry: 'one retry after 45 s on 5xx / network error (not for paid-AI calls)' },
     jobs,
+    // zzz1054 — every-minute in-process jobs (no Redis lock; heartbeat every few minutes)
+    light_jobs: LIGHT_JOBS.map((j) => ({ name: j.name, crons_utc: j.crons, does: j.does, heartbeat_every_min: j.heartbeatEveryMin, stale_after_hours: staleAfterHoursFor(j.name, 25, now) })),
     stays_on_github: GITHUB_SCHEDULED,
   }, { headers: { 'cache-control': 'no-store' } });
 }

@@ -30,6 +30,7 @@ import MobileNav from '@/components/pwa/MobileNav';
 import { InstallBanner, InstallAppCard } from '@/components/pwa/InstallApp';
 import pwa from '@/components/pwa/pwa.module.css';
 import { navPrefetch, shellFetchJson, whenIdle } from '@/lib/shell-fetch';
+const AlertBell = dynamic(() => import('@/components/alerts/AlertBell'), { ssr: false });   // zzz1054
 
 interface NavItem { href: string; label: string; icon: ReactNode; }
 
@@ -210,6 +211,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/coffee-can',    label: 'Coffee Can',       icon: <Star className="w-4 h-4" /> },
       { href: '/tax-planner',   label: 'Tax Planner',      icon: <Filter className="w-4 h-4" /> },
       { href: '/watchlists',    label: 'Watchlist',        icon: <BookMarked className="w-4 h-4" /> },
+      { href: '/price-alerts',  label: 'Price alerts',     icon: <Bell className="w-4 h-4" /> },   // zzz1054
       { href: '/decisions',     label: 'Decision Logbook', icon: <BookMarked className="w-4 h-4" /> },
       { href: '/activity-log',  label: 'Activity Log',     icon: <BookMarked className="w-4 h-4" /> },
       { href: '/orders',     label: 'Signals',          icon: <Shield className="w-4 h-4" /> },
@@ -797,6 +799,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
               {/* PATCH 0074: theme cycler + PDF export — visible on every tab */}
               {/* ThemeSwitcher removed — light/pro themes were never wired to page styles */}
               {/* zzz825: ☀/🌙 — light (white, ink-friendly) screens via the --mc-* variable set */}
+              <AlertBell />{/* zzz1054 — price alerts: unread count, toasts */}
               <ScreenThemeToggle />
               <PdfExportButton />
 

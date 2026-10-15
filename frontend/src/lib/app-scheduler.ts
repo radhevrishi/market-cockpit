@@ -450,6 +450,31 @@ export const APP_JOBS: readonly AppJob[] = [
   { name: 'portfolio-thesis-watch', crons: ['15 2 * * 1-5'], timeoutMs: 4 * MIN, workflow: 'owner-briefs.yml', does: 'POST /api/v1/cron/portfolio-thesis-watch (stored research only, no AI, no price)', run: async (ctx) => (await import('./owner-briefs/job')).ownerBriefJob(ctx, '/api/v1/cron/portfolio-thesis-watch', true) },
 ];
 
+/**
+ * zzz1054 — LIGHT jobs: in-process work that runs every minute (or nearly) and must not cost Redis commands each time.
+ * They take no Redis slot lock (the job claims its own minute in Postgres, so two server copies never both run it), do not
+ * count toward MAX_CONCURRENT, and post their heartbeat at most every `heartbeatEveryMin` minutes (or at once when ok flips).
+ * They are not in APP_JOBS (whose lock / window rules are for slot jobs) but are shown by /api/v1/cron/schedule.
+ */
+export interface LightJob {
+  name: string;
+  crons: readonly string[];
+  heartbeatEveryMin: number;
+  does: string;
+  run: () => Promise<JobOutcome>;
+}
+export const LIGHT_JOBS: readonly LightJob[] = [
+  // price alerts (lib/alerts/engine): every minute Mon–Fri UTC + Saturday 00:00–01:59 UTC (US Friday after-hours); the job
+  // returns at once (a clock test, no I/O) when neither NSE nor the US extended session is open.
+  { name: 'price-alerts', crons: ['* * * * 1-5', '* 0-1 * * 6'], heartbeatEveryMin: 15,
+    does: 'in-process: lib/alerts/engine runPriceAlerts (active alerts × live quotes; Postgres only, no Redis in the loop)',
+    run: async () => {
+      const r = await (await import('./alerts/engine')).runPriceAlerts();
+      if (r.fired || r.error) console.log('[price-alerts]', JSON.stringify(r));
+      return r.ok ? { ok: true, status: 200, error: r.skipped || null } : { ok: false, status: 503, error: r.error || 'failed' };
+    } },
+];
+
 /** Workflows that keep their GitHub schedule, and why (shown by /api/v1/cron/schedule and docs/SCHEDULING.md). */
 export const GITHUB_SCHEDULED: ReadonlyArray<{ workflow: string; why: string }> = [
   { workflow: 'daily-research.yml (gainers-in only)', why: 'pre-fetches screener.in pages from GitHub’s network into KV; screener.in does not answer the app host' },
@@ -522,7 +547,7 @@ export function maxGapHours(crons: readonly string[], from: Date, days = 15): nu
  * hourly job keeps the old 25 h alarm. null when the name is not an app job.
  */
 const gapMemo = new Map<string, number>();
-export function staleAfterHoursFor(name: string, baseHours: number, now: Date, jobs: readonly AppJob[] = APP_JOBS): number | null {
+export function staleAfterHoursFor(name: string, baseHours: number, now: Date, jobs: ReadonlyArray<Pick<AppJob, 'name' | 'crons'>> = [...APP_JOBS, ...LIGHT_JOBS]): number | null {
   const job = jobs.find((j) => j.name === name);
   if (!job) return null;
   const memoKey = `${job.crons.join('|')}@${now.toISOString().slice(0, 13)}`;
@@ -597,11 +622,37 @@ async function runOne(d: DueSlot, base: string, secret: string): Promise<void> {
   settled.set(job.name, slotIso);
 }
 
+const lightHb = new Map<string, { at: number; ok: boolean }>();
+/** Pure: post a light job's heartbeat now? (first run, ok flipped, or the interval passed) */
+export function lightHeartbeatDue(last: { at: number; ok: boolean } | undefined, ok: boolean, nowMs: number, everyMin: number): boolean {
+  return !last || last.ok !== ok || nowMs - last.at >= everyMin * MIN;
+}
+async function runLight(job: LightJob, slotIso: string, base: string): Promise<void> {
+  let out: JobOutcome;
+  try { out = await job.run(); } catch (e: any) { out = { ok: false, status: 0, error: `job threw: ${String(e?.message || e).slice(0, 200)}` }; }
+  if (lightHeartbeatDue(lightHb.get(job.name), out.ok, Date.now(), job.heartbeatEveryMin)) {
+    lightHb.set(job.name, { at: Date.now(), ok: out.ok });
+    await postHeartbeat(base, job.name, out);
+  }
+  settled.set(job.name, slotIso);
+}
+
 /** One scheduler pass (timer only; never on a request path). */
 async function tick(base: string, secret: string): Promise<void> {
+  const now = new Date();
+  // zzz1054 — light jobs first: no Redis at all (their own Postgres claim prevents double runs)
+  for (const lj of LIGHT_JOBS) {
+    if (running.has(lj.name)) continue;
+    const s = prevSlot(lj.crons, now);
+    if (!s || now.getTime() - s.getTime() >= MIN) continue;
+    const slotIso = s.toISOString().slice(0, 16);
+    if (settled.get(lj.name) === slotIso) continue;
+    settled.set(lj.name, slotIso);
+    running.add(lj.name);
+    void runLight(lj, slotIso, base).catch((e) => console.warn('[app-scheduler] light run failed', e)).finally(() => running.delete(lj.name));
+  }
   const { kvMGet, kvSetNX, kvGet, isRedisAvailable } = await import('./kv');
   if (!isRedisAvailable()) return;   // no lock store → never run (fail closed)
-  const now = new Date();
   // candidates: jobs with a slot inside its window that this process has not settled yet (no Redis call otherwise)
   const cands = APP_JOBS.filter((j) => {
     if (running.has(j.name)) return false;
@@ -615,7 +666,7 @@ async function tick(base: string, secret: string): Promise<void> {
     const job = cands[i];
     const d = dueSlot(job, now, rows[i]?.last_ok_at || null);
     if (!d) { const s = prevSlot(job.crons, now); if (s) settled.set(job.name, s.toISOString().slice(0, 16)); continue; }
-    if (running.size >= MAX_CONCURRENT) return;   // the rest waits for a later tick (still inside its window)
+    if ([...running].filter((n) => !LIGHT_JOBS.some((l) => l.name === n)).length >= MAX_CONCURRENT) return;   // the rest waits for a later tick (still inside its window); light jobs do not count
     const got = await kvSetNX(d.lockKey, { state: 'running', at: new Date().toISOString(), pid: process.pid }, lockTtlSec(job));
     if (!got) {
       // taken: by another copy that is running it (wait), by a finished run (settle), or Redis failed (skip, retry next tick)
@@ -644,5 +695,5 @@ export function startAppScheduler(): void {
   };
   // first pass 90 s after start (let the server warm up), then every minute
   setTimeout(() => { void safeTick(); setInterval(() => { void safeTick(); }, MIN).unref?.(); }, 90_000).unref?.();
-  console.log(`[app-scheduler] started: ${APP_JOBS.length} jobs`);
+  console.log(`[app-scheduler] started: ${APP_JOBS.length} jobs + ${LIGHT_JOBS.length} light (every-minute) jobs`);
 }

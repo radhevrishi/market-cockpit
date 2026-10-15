@@ -237,8 +237,9 @@ export async function fetchQuotes(symbols: string[]): Promise<any[]> {
 // returns 401 (crumb-gated). Returns price + chartPreviousClose + longName per symbol.
 // Use this as the price-fallback when the v7/quote batch comes back empty.
 // Shape: Map<base-symbol-without-.NS-suffix, { lastPrice, prevClose, pChange, companyName }>
-export async function fetchYahooSparkBatch(symbolsWithSuffix: string[], preserveExchange = false): Promise<Map<string, { lastPrice: number | null; prevClose: number | null; pChange: number | null; companyName: string | null; extPct?: number | null; marketTime?: number | null }>> {
-  const out = new Map<string, { lastPrice: number | null; prevClose: number | null; pChange: number | null; companyName: string | null; extPct?: number | null }>();
+export interface SparkQuote { lastPrice: number | null; prevClose: number | null; pChange: number | null; companyName: string | null; extPct?: number | null; marketTime?: number | null; volume?: number | null; dayHigh?: number | null; dayLow?: number | null }
+export async function fetchYahooSparkBatch(symbolsWithSuffix: string[], preserveExchange = false): Promise<Map<string, SparkQuote>> {
+  const out = new Map<string, SparkQuote>();
   if (symbolsWithSuffix.length === 0) return out;
   const BATCH = 20;
   const CONC = 4;
@@ -271,7 +272,9 @@ export async function fetchYahooSparkBatch(symbolsWithSuffix: string[], preserve
         if (!sym) continue;
         // Index by base (no .NS / .BO suffix) for easy multibagger lookup
         const baseSym = sym.replace(/\.(NS|BO)$/i, '');
-        const quote = { lastPrice: price, prevClose, pChange, companyName, extPct: extendedHoursPct(meta, Date.now()), marketTime: typeof meta.regularMarketTime === 'number' ? meta.regularMarketTime * 1000 : null };
+        const pos = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null);
+        // zzz1054 — volume so far and the day's range (price alerts: relative volume, new 52-week high / low); null when not sent
+        const quote: SparkQuote = { lastPrice: price, prevClose, pChange, companyName, extPct: extendedHoursPct(meta, Date.now()), marketTime: typeof meta.regularMarketTime === 'number' ? meta.regularMarketTime * 1000 : null, volume: pos(meta.regularMarketVolume), dayHigh: pos(meta.regularMarketDayHigh), dayLow: pos(meta.regularMarketDayLow) };
         out.set(baseSym, quote);
         if (preserveExchange) out.set(sym, quote);   // opt in: existing consumers retain their base-symbol map
       }

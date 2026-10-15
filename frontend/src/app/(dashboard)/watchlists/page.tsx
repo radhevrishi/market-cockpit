@@ -44,6 +44,10 @@ import { indexAverages, pctFrom, screenerKey, type AvgRow } from '@/lib/watchlis
 import { quoteTimeOf, quoteTimeSummary, unresolvedSymbols, tradedValue, buildReview, changesSinceReview, loadReview, saveReview, DEFAULT_REVIEW_THRESHOLD, type ReviewSnapshot } from '@/lib/watchlist-review';
 import { ComparePanel } from './ComparePanel';
 import { fmtClock } from './components';
+import nextDynamic from 'next/dynamic';
+import { chartListOptions } from '@/lib/alerts/chart-lists';
+// zzz1054 — "Create alert on My Watchlist" (dialog loaded only when opened)
+const CreateAlertDialog = nextDynamic(() => import('@/components/alerts/CreateAlertDialog'), { ssr: false });
 
 // ── Main Page ──────────────────────────────────────────────────────────────────
 
@@ -60,6 +64,7 @@ export default function WatchlistsPage() {
   // zzz1045d — where the list on screen was read from (server, or this browser's copy when the read failed) and when
   const [listOrigin, setListOrigin] = useState<{ readFrom: 'server' | 'browser-copy' | null; reason: string | null; readAt: number | null }>({ readFrom: null, reason: null, readAt: null });
   const [compareOpen, setCompareOpen] = useState(false);
+  const [alertOpen, setAlertOpen] = useState(false);   // zzz1054
   const [review, setReview] = useState<ReviewSnapshot | null>(null);
   const [reviewOnly, setReviewOnly] = useState(false);
   const [reviewPct, setReviewPct] = useState<number>(DEFAULT_REVIEW_THRESHOLD);
@@ -700,6 +705,7 @@ export default function WatchlistsPage() {
     <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
       {/* PATCH 0557 — backend-degraded banner. */}
       <DegradedBanner />
+      {alertOpen && <CreateAlertDialog onClose={() => setAlertOpen(false)} initialTarget={{ kind: activeTab === 'conviction' ? 'cb-in' : 'watchlist' }} chartLists={chartListOptions()} />}
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <div className="wlp-head">
         <div>
@@ -715,6 +721,7 @@ export default function WatchlistsPage() {
         </div>
         <div className="wlp-actions">
           <WorkspaceThemeToggle light={wlLight} onToggle={toggleWlLight} className="wlp-btn" />
+          <button type="button" className="wlp-btn" data-testid="watchlists-create-alert" onClick={() => setAlertOpen(true)} title="Price alert on My Watchlist (or another list / one ticker)">🔔 Create alert</button>
           <button type="button" className="wlp-btn" onClick={() => fetchData()} disabled={isRefreshing} title="Refresh data">
             <RefreshCw className={isRefreshing ? 'wlp-spin' : undefined} style={{ width: '14px', height: '14px' }} />
             Refresh

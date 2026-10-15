@@ -23,6 +23,10 @@ import { useBookWatchlistSync, readBook } from './useBookWatchlistSync';
 import { BOOK_LABEL, BOOK_SECTION_NAME, bookSectionMenu, createLinkedSection, linkSection, linkTooltip, linkedSection, previewLinkRemovals, unlinkSection } from '@/lib/watchlist-book-sync';
 import { agoLabel, currencyOf, displaySectionName, exchangeLabel, quoteFreshness, usExtendedSession, WIDTH_PRESETS, WL_EXT_COLUMN_KEY } from '@/lib/watchlist-display';
 import { chartListSource } from '@/lib/watchlist-compare';   // zzz1045d — each list says where it comes from
+import dynamic from 'next/dynamic';
+import { parseMid } from '@/lib/alerts/types';
+// zzz1054 — "Create alert on <this watchlist>" (loaded only when opened)
+const CreateAlertDialog = dynamic(() => import('@/components/alerts/CreateAlertDialog'), { ssr: false });
 
 // ── storage hook ──────────────────────────────────────────────────────────────
 function readJson(key: string): unknown {
@@ -290,6 +294,7 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
   const [undo, setUndo] = useState<{ text: string; listId: string; removed: RemovedItem } | null>(null);
   const press = useRef<{ timer: ReturnType<typeof setTimeout> | null; x: number; y: number; fired: boolean }>({ timer: null, x: 0, y: 0, fired: false });
   const [managing, setManaging] = useState(false);
+  const [alerting, setAlerting] = useState(false);   // zzz1054
   const [adding, setAdding] = useState(false);
   const [addText, setAddText] = useState('');
   const [addMarket, setAddMarket] = useState<Market>('IN');
@@ -663,6 +668,7 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
           )}
         </div>
         <button type="button" className="mcwl-btn" title="Add a symbol" aria-label="Add a symbol" aria-expanded={adding} onClick={() => { setAdding((v) => !v); closeMenus(); }}>+ Add</button>
+        <button type="button" className="mcwl-btn" data-testid="watchlist-create-alert" title="Create a price alert on this whole list, or on the ticker on the chart" aria-label="Create alert" onClick={() => { setAlerting(true); closeMenus(); }}>🔔</button>
         <div style={{ position: 'relative' }}>
           <button type="button" className="mcwl-btn" aria-label="List menu" aria-haspopup="menu" aria-expanded={menu} onClick={() => { setMenu((v) => !v); setListMenu(false); setFilterMenu(false); }}>⋯</button>
           {menu && (
@@ -930,6 +936,12 @@ export default function WatchlistPanel({ store, update, currentKey, onPick, navO
             <button type="button" role="menuitem" className="danger" aria-label={`Remove ${it.t}`} onClick={() => { close(); removeRow(k); }}>Remove from list</button>
           </div>
         );
+      })()}
+      {alerting && (() => {
+        const cur = parseMid(currentKey);
+        return <CreateAlertDialog onClose={() => setAlerting(false)} initialTarget={{ kind: 'chart-list', id: list.id, label: list.name }}
+          chartLists={store.lists.map((l) => ({ id: l.id, name: l.name, count: listCount(l) }))}
+          currentTicker={cur ? { m: cur.market, t: cur.ticker, ...(cur.bse ? { x: 'BSE' } : {}) } : null} />;
       })()}
       {managing && <WatchlistManageDrawer key={list.id} store={store} list={list} update={update} onClose={() => setManaging(false)} onImport={() => setImporting(true)} onExport={() => download(list.name, serializeTradingView(list))} say={say} />}
       {importing && <ImportDialog store={store} update={update} onClose={() => setImporting(false)} />}
