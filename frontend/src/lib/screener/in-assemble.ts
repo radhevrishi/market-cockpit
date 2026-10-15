@@ -47,6 +47,8 @@ export interface InFigures {
   /** zzz984 — free-cash-flow margin of the latest full year, ≈ (cash from operations + cash from investing) ÷ sales; screener.in's
    *  page prints no capex line, and pages read before zzz984 kept no investing line (blank until re-read) */
   fcfmFY?: number | null;
+  /** zzz1044 (F03) — the year of that margin ('Mar 2026') */
+  fcfmAt?: string | null;
 }
 
 const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -259,6 +261,7 @@ export function inFiguresFromRaw(raw: InRaw): InFigures {
         const h = CF.headers[i], ai = A.headers.indexOf(h);
         if (monthIndex(h) == null || ai < 0 || !fin(cfo[i]) || !fin(cfi[i]) || !fin(sales[ai]) || !((sales[ai] as number) > 0)) continue;
         out.fcfmFY = r1((((cfo[i] as number) + (cfi[i] as number)) / (sales[ai] as number)) * 100);
+        out.fcfmAt = h;
         approx.push('fcfmTTM', 'r40');
         break;
       }

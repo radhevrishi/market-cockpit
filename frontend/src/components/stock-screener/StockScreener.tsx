@@ -7,7 +7,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link';
 import type { ScreenRow, ScreenMarket } from '@/lib/screener/types';
 import { HIDDEN_SCREENS_KEY, readHiddenScreens, writeHiddenScreens } from '@/lib/screener/screen-picker';
-import {
+import { fcfmSourceText, 
   FIELDS, BUILT_IN_SCREENS, SCREENS_KEY, cleanScreens, fieldOf, filterCounts, filterKeys, filterLabel, fmtValue, fmtPrice, runScreen,
   evalPattern, tagDirDist, shapeWord, patTagsOf, DEFAULT_PATTERN_RULE, type Filter, type NumKey, type Screen, type FieldGroup, type RowTag,
 } from '@/lib/screener/filters';
@@ -41,6 +41,12 @@ const C = {
 };
 interface Snap { builtAt: string | null; rows: ScreenRow[]; notes: string[]; sources: string[] }
 const LAST_KEY = 'mc:stock-screener:last:v1';   // the screen open last time (this browser only)
+// zzz1044 (F11) — the screen open last time IN EACH MARKET, so the market buttons open that market's own screen instead of carrying a
+// USA screen's numbers into India ($ million ↔ ₹ crore). This browser only.
+const LAST_BY_MARKET_KEY = 'mc:stock-screener:last-by-market:v1';
+function readLastByMarket(): Partial<Record<'US' | 'IN', string>> {
+  try { const v = JSON.parse(localStorage.getItem(LAST_BY_MARKET_KEY) || '{}'); return v && typeof v === 'object' ? v : {}; } catch { return {}; }
+}
 const PATCOL_KEY = 'mc:screener-patcol:v1';   // zzz1006: show the chart-pattern column on fundamental views (display preference)
 
 function readSaved(): Screen[] {
@@ -138,7 +144,7 @@ export default function StockScreener() {
     if (!s) return;
     setScreenId(s.id); setMarket(s.market); setFilters(JSON.parse(JSON.stringify(s.filters))); setName(s.name); setDirty(false); setEditIdx(null); setShowAll(false);
     const vs = readViewState(s.id); setSortRaw(vs?.sort || { key: 'mc', dir: -1 }); setFindText(vs?.find || '');
-    try { localStorage.setItem(LAST_KEY, s.id); } catch { /* blocked */ }
+    try { localStorage.setItem(LAST_KEY, s.id); localStorage.setItem(LAST_BY_MARKET_KEY, JSON.stringify({ ...readLastByMarket(), [s.market]: s.id })); } catch { /* blocked */ }
   }, [screens]);
   const note = BUILT_IN_SCREENS.find((s) => s.id === screenId)?.note;
 
@@ -315,6 +321,28 @@ export default function StockScreener() {
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty]);
+  /** zzz1044 (F11) — the market buttons: open the last screen used in that market (else its first built-in one, never a hidden one). */
+  const screenForMarket = (m: ScreenMarket): string | null => {
+    const last = readLastByMarket()[m];
+    const ok = (x: Screen) => x.market === m && !hiddenScreens.includes(x.id);
+    return screens.find((x) => x.id === last && ok(x))?.id || screens.find(ok)?.id || null;
+  };
+  const switchMarket = (m: ScreenMarket) => { if (m === market) return; const id = screenForMarket(m); if (id) askSwitch(id); };
+  /** zzz1044 (F11) — "carry these rules to the other market": a NEW unsaved screen; money thresholds keep their numbers but change unit
+   *  ($ million ↔ ₹ crore — no currency conversion, the size universe cannot be guessed), so they are named for review; fields the
+   *  other market does not have are left out. The original screen is never changed. */
+  const copyRulesToMarket = (m: ScreenMarket) => {
+    const keep = filters.filter((f) => {
+      if (f.kind === 'exch') return false;   // exchanges belong to one market
+      const ks = [(f as any).key, (f as any).other].filter(Boolean) as NumKey[];
+      return ks.every((k) => { const d = fieldOf(k); return !d || d.markets.includes(m); });
+    });
+    const dropped = filters.length - keep.length;
+    const money = keep.filter((f) => { const d = (f as any).key ? fieldOf((f as any).key) : null; return d?.unit === 'money'; }).map((f) => fieldOf((f as any).key)?.label).filter(Boolean);
+    const id = newId();
+    setScreenId(id); setMarket(m); setFilters(JSON.parse(JSON.stringify(keep))); setName(`${name} (${m === 'IN' ? 'India' : 'USA'} copy)`); setDirty(true); setEditIdx(null);
+    setDraftNote(`New ${m === 'IN' ? 'India' : 'USA'} screen copied from "${name}" — not saved yet.${money.length ? ` Check the money limits (${Array.from(new Set(money)).join(', ')}): the numbers were kept but are now ${m === 'IN' ? '₹ crore' : '$ million'}, not converted.` : ''}${dropped ? ` ${dropped} rule${dropped === 1 ? '' : 's'} left out (not available in this market).` : ''}`);
+  };
   const askSwitch = (id: string) => { if (id === screenId) return; if (dirty) setPendingSwitch(id); else switchTo(id); };
   const switchTo = (id: string) => {
     setPendingSwitch(null); setDraftNote(null);
@@ -518,7 +546,7 @@ export default function StockScreener() {
       <div className="mcss-top">
         <h1 className="mcss-title">Stock Screener</h1>
         <span className="mcss-seg" role="group" aria-label="Market">
-          {(['US', 'IN'] as const).map((m) => <button key={m} type="button" aria-pressed={market === m} onClick={() => { if (m !== market) { setMarket(m); setDirty(true); } }}>{m === 'US' ? '🇺🇸 USA' : '🇮🇳 India'}</button>)}
+          {(['US', 'IN'] as const).map((m) => <button key={m} type="button" aria-pressed={market === m} title={m === market ? undefined : `Open your last ${m === 'US' ? 'USA' : 'India'} screen (use ⋯ → "Copy these rules to ${m === 'US' ? 'USA' : 'India'}" to carry this screen over)`} onClick={() => switchMarket(m)}>{m === 'US' ? '🇺🇸 USA' : '🇮🇳 India'}</button>)}
         </span>
         <span className="pick"><ScreenPicker screens={screens} builtInIds={builtInIds} currentId={screenId} currentName={name} currentMarket={market} dirty={dirty} onPick={askSwitch} hidden={hiddenScreens} onRemove={removeScreen} onRestore={restoreScreen} /></span>
         <button type="button" className={`mcss-btn${dirty ? ' primary' : ''}`} onClick={() => save(false)} title={dirty ? 'Save the filter changes into this screen' : 'Save the filters into this screen'}>Save{dirty ? ' •' : ''}</button>
@@ -527,6 +555,7 @@ export default function StockScreener() {
           {topOpen ? (
             <div className="mcss-pop" role="menu" aria-label="More screen options" style={{ minWidth: 260 }} onKeyDown={(e) => listKeys(e)}>
               <button type="button" role="menuitem" className="mcss-item" onClick={() => { setTopOpen(false); save(true); }}>Save as new…</button>
+              <button type="button" role="menuitem" className="mcss-item" data-copy-market onClick={() => { setTopOpen(false); copyRulesToMarket(market === 'US' ? 'IN' : 'US'); }} title="Make a new screen for the other market with these rules (money limits keep their numbers but change unit — review them)">Copy these rules to {market === 'US' ? 'India' : 'USA'}…</button>
               <button type="button" role="menuitem" className="mcss-item" onClick={() => { setTopOpen(false); removeSaved(); }} title="Delete a screen you made, or put a built-in screen back to its TradingView setup">{isBuiltIn ? 'Reset to the TradingView setup' : 'Delete this screen'}</button>
               <div className="mcss-sep" />
               <button type="button" role="menuitem" className="mcss-item" onClick={() => { setTopOpen(false); setShowWhy(true); }}>Why is a company in or out?…</button>
@@ -871,7 +900,7 @@ export default function StockScreener() {
                       const ax = r.approx?.includes(k);
                       const dirCls = k === 'chg' && typeof v === 'number' ? (v > 0 ? ' up' : v < 0 ? ' down' : '') : '';
                       const na = naReason(r, k);
-                      const tip = [typeof v === 'number' ? `Exact value: ${exact(v)} (filters compare this, not the rounded figure)` : na ? `Not applicable: ${na}` : 'Not known', ax ? 'Approximate for this company' : '', na && typeof v === 'number' ? 'Not meaningful for financial companies' : ''].filter(Boolean).join('\n');
+                      const tip = [typeof v === 'number' ? `Exact value: ${exact(v)} (filters compare this, not the rounded figure)` : na ? `Not applicable: ${na}` : 'Not known', ax ? 'Approximate for this company' : '', na && typeof v === 'number' ? 'Not meaningful for financial companies' : '', (k === 'fcfmTTM' || k === 'r40') && typeof r.fcfmTTM === 'number' ? `FCF margin: ${fcfmSourceText(r, market)}` : ''].filter(Boolean).join('\n');
                       // zzz994 (MC-01 display) — the latest quote next to the scan close the averages / patterns were read from
                       const scanNote = k === 'px' && pxDiffers(r) ? `\nScan close ${fmtPrice(r.scanPx, market)}${r.scanAt ? ` (${r.scanAt}` : ' ('}${r.scanSrc ? `, ${r.scanSrc}` : ''}) — moving averages, RSI and patterns use it; quote ${r.pxSrc ? `from ${r.pxSrc}` : ''}${typeof r.pxGap === 'number' ? `, ${r.pxGap > 0 ? '+' : ''}${r.pxGap}% vs scan close` : ''}${r.pxConflict ? '\n⚠ The two sources disagree on the same day — neither is certified as the exchange close' : ''}` : '';
                       return <td key={k} className={`num${dirCls}`} style={{ whiteSpace: 'nowrap' }} title={tip + scanNote}>{k === 'px' && r.pxConflict ? <span style={{ color: C.amber }} aria-label="Price sources disagree">⚠ </span> : null}{ax ? <span className="mcss-dim">≈</span> : ''}{v == null && na ? <span className="na">n/a</span> : v == null ? <span className="nil">{cellText(v, d?.unit || 'num', market, k)}</span> : cellText(v, d?.unit || 'num', market, k)}{scanNote ? <span style={{ color: C.amber }}>†</span> : null}{k === 'px' && scanNote && density !== 'compact' ? <div style={{ fontSize: 11, color: C.dim }}>scan {fmtPrice(r.scanPx, market)}</div> : null}</td>;

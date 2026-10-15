@@ -186,6 +186,7 @@ export interface UsFigures {
   /** zzz984 — FCF margin of the latest full year: (operating cash flow − capex) ÷ revenue × 100 (SEC frames hold quarterly cash
    *  flows only as year-to-date totals, so a true last-4-quarters figure cannot be read from them) */
   fcfmFY?: number | null;
+  fcfmAt?: string | null;
 }
 const M = 1e6;
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -329,11 +330,12 @@ export function usFigures(fd: FrameData, cik: number, periods: { quarters: strin
     niA = firstAt(fd, NI, cik, A);
     if (niA != null) out.niFY = mil(niA);
     const cfo = valueAt(fd, CFO, cik, A), cx = valueAt(fd, CAPEX, cik, A);
-    if (cfo != null) out.fcfFY = Math.round(cfo - Math.abs(cx ?? 0));
-    if (cfo != null && revA != null && revA > 0) out.fcfmFY = r1(((cfo - Math.abs(cx ?? 0)) / revA) * 100);   // zzz984
     // the fiscal year-end balance sheets (this year's and last year's)
     const endOf = (y: string) => { for (const c of REV) { const e = fd[c]?.[y]?.[cik]?.e; if (e) return e; } return null; };
     const e1 = endOf(A);
+    // zzz1044 (F03) — free cash flow needs BOTH lines: a year with no capex filed is unknown (was: capex taken as 0, FCF = all of CFO)
+    if (cfo != null && cx != null) out.fcfFY = Math.round(cfo - Math.abs(cx));
+    if (cfo != null && cx != null && revA != null && revA > 0) { out.fcfmFY = r1(((cfo - Math.abs(cx)) / revA) * 100); if (e1) out.fcfmAt = e1; }   // zzz984
     const lab = e1 ? quarterLabelForEnd(e1) : null;
     if (lab) { IA = `${lab}I`; IAprev = instantShift(IA, -4); }
   }

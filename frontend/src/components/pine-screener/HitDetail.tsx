@@ -4,7 +4,7 @@
 // a button to open the chart.
 import React, { useEffect, useState } from 'react';
 import { PATTERN_META } from '@/lib/chart-patterns';
-import { likelihoodWord, pineFilters, r40Explain, R40_FORMULA, type PineHit, type PineQuery } from '@/lib/screener/pine';
+import { fcfmSourceText, likelihoodWord, pineFilters, r40Explain, R40_FORMULA, type PineHit, type PineQuery } from '@/lib/screener/pine';
 import { fmtPrice, type Filter } from '@/lib/screener/filters';
 import { explainRow } from '@/lib/screener/research';
 import { allPatterns, analysisOf, conditionState, conflictWords, evidenceRows, geometryPoints, invalidation, latestConditions, lengthTip, maPosition, patternChecks, pivotDerivation, priceSet, sessionLabel, stageWord, tagLengthText, tfWord } from '@/lib/screener/pine-view';
@@ -100,7 +100,7 @@ export function HitDetail({ hit, q, market, onOpenChart, width, results }: { hit
           {rules.map((c, i) => <li key={`r${i}`} style={{ color: c.pass ? C.text1 : C.red }}>{c.pass ? '✓' : '✗'} {c.label} <span style={{ color: C.dim }}>{c.detail}</span></li>)}
           {!checks.length && !rules.length ? <li className="pnx-note">No extra rules on this screen.</li> : null}
           {q.r40Min != null || r.revQYoY != null || r.fcfmTTM != null ? (() => { const x = r40Explain(r, q.r40Min); return (
-            <li data-detail="r40" title={R40_FORMULA} style={{ color: x.pass === false ? C.red : C.text1 }}>{x.pass == null ? '·' : x.pass ? '✓' : '✗'} Rule of 40 (fundamental, not a chart condition): <span style={{ color: x.state === 'known' ? C.text1 : C.dim }}>{x.text}</span></li>
+            <li data-detail="r40" title={R40_FORMULA} style={{ color: x.pass === false ? C.red : C.text1 }}>{x.pass == null ? '·' : x.pass ? '✓' : '✗'} Rule of 40 (fundamental, not a chart condition): <span style={{ color: x.state === 'known' ? C.text1 : C.dim }}>{x.text}</span>{r.fcfmTTM != null ? <div className="pnx-note" data-detail="fcfm-source" style={{ marginLeft: 14 }}>FCF margin: {fcfmSourceText(r, market)}</div> : null}</li>
           ); })() : null}
         </ul>
         {/* zzz1032 — the latest earnings result (Earnings Opportunities / Conviction Beats) */}

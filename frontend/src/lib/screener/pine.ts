@@ -16,7 +16,7 @@
 // pivot / liquidity), counts per pattern for the chips, and the cleaning of saved Pine screens.
 import { analyzePatterns, analyzeDailyAs, toTags, PATTERN_META, PATTERN_IDS, PATTERN_MIN_HISTORY, LONG_BASE_MONTHS, type PatternId, type PatternTag, type PatternAnalysis, type PBar } from '../chart-patterns';
 import { techFigures, closedFigures, usSessionOpen, liveSessionBar, recentBars, TECH_FIGURE_DAYS, type DailyBars } from './tech';
-import { passes, cleanScreens, fieldOf, filterKeys, filterLabel, evalPattern, patMissingWhy, tagDirDist, shapeWord, PATTERN_TFS, FIELDS, type Filter, type NumKey, type PatTf, type PatternEval } from './filters';
+import { fcfmSourceText, passes, cleanScreens, fieldOf, filterKeys, filterLabel, evalPattern, patMissingWhy, tagDirDist, shapeWord, PATTERN_TFS, FIELDS, type Filter, type NumKey, type PatTf, type PatternEval } from './filters';
 import type { ScreenMarket, ScreenRow } from './types';
 import type { TechStored } from './tech-fetch';
 import { tvFigures, rsRatings, type TvFigures } from './tv-screens';
@@ -564,10 +564,14 @@ export function r40Text(q: Pick<PineQuery, 'r40Min'>): string {
 
 /** zzz1011 — the Rule of 40 in full: the exact formula, the period of each input, the fields it needs, and this company's state.
  *  A missing input is UNKNOWN (never 0, never a pass); an input outside the meaningful range blanks the figure ('guarded'). */
-export const R40_FORMULA = 'Rule of 40 = revenue growth (latest reported quarter vs the same quarter a year earlier, %) + free-cash-flow margin (trailing twelve months: free cash flow ÷ revenue, %)';
+// zzz1044 (F03) — the FCF margin is the LATEST FULL FISCAL YEAR's (not trailing twelve months): USA (operating cash flow − capex) ÷
+// revenue from SEC filings (unknown when no capex is filed); India a cash-flow PROXY, (cash from operations + ALL cash from investing)
+// ÷ sales — screener.in prints no capex line, and investing cash can include buying / selling investments or acquisitions.
+export const R40_FORMULA = 'Rule of 40 = revenue growth (latest reported quarter vs the same quarter a year earlier, %) + free-cash-flow margin (latest full fiscal year: free cash flow ÷ revenue, %). India: FCF margin is a cash-flow proxy — (cash from operations + cash from investing) ÷ sales';
+export { fcfmSourceText };
 export const R40_FIELDS: ReadonlyArray<{ key: 'revQYoY' | 'fcfmTTM'; label: string; period: string }> = [
   { key: 'revQYoY', label: 'Revenue growth YoY', period: 'latest reported quarter vs the same quarter a year earlier' },
-  { key: 'fcfmTTM', label: 'FCF margin', period: 'trailing twelve months (last four reported quarters)' },
+  { key: 'fcfmTTM', label: 'FCF margin', period: 'latest full fiscal year' },
 ];
 export interface R40Explain { value: number | null; state: 'known' | 'unknown' | 'guarded'; missing: string[]; text: string; pass: boolean | null }
 export function r40Explain(r: Partial<ScreenRow>, min?: number | null): R40Explain {
@@ -576,7 +580,8 @@ export function r40Explain(r: Partial<ScreenRow>, min?: number | null): R40Expla
   const g = r.revQYoY as number, m = r.fcfmTTM as number;
   if (!ruleOf40Usable(g, m)) return { value: null, state: 'guarded', missing: [], pass: min == null ? null : false, text: `Not meaningful — growth ${g}% + FCF margin ${m}%: growth above +${R40_MAX_GROWTH}% or an FCF margin outside ±${R40_MAX_ABS_FCFM}% (a tiny sales base) — does not pass.` };
   const v = ruleOf40(g, m) as number;
-  return { value: v, state: 'known', missing: [], pass: min == null ? null : v >= min, text: `${g > 0 ? '+' : ''}${g}% growth + ${m > 0 ? '+' : ''}${m}% FCF margin = ${v}${min != null ? ` (needs ≥ ${min})` : ''}` };
+  const at = typeof r.fcfmAt === 'string' && r.fcfmAt ? ` (FY to ${r.fcfmAt})` : ' (latest full year)';
+  return { value: v, state: 'known', missing: [], pass: min == null ? null : v >= min, text: `${g > 0 ? '+' : ''}${g}% growth + ${m > 0 ? '+' : ''}${m}% FCF margin${at} = ${v}${min != null ? ` (needs ≥ ${min})` : ''}` };
 }
 
 const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -742,7 +747,7 @@ export const LEAN_KEYS = [
   't', 'n', 'sec', 'ind', 'tvSec', 'exch', 'px', 'chg', 'mc', 'vol', 'avgVol10', 'avgVol30', 'sma50', 'sma150', 'sma200', 'ema21', 'hi52',
   'rsi', 'adrP', 'perf1W', 'perf1M', 'perf3M', 'perf6M', 'perfYTD', 'perf1Y', 'q', 'ipoD', 'earnD', 'pat', 'patAt',
   // zzz984 — the TradingView-script fields and the Rule of 40 parts
-  'tt', 'ttOk', 'rsR', 'rsiMA', 'rsiX', 'gcD', 'dcD', 'emaXU', 'emaXD', 'stage', 'st12', 'ppD', 'rvol', 'adv$', 'ripB', 'revQYoY', 'fcfmTTM', 'r40', 'approx',
+  'tt', 'ttOk', 'rsR', 'rsiMA', 'rsiX', 'gcD', 'dcD', 'emaXU', 'emaXD', 'stage', 'st12', 'ppD', 'rvol', 'adv$', 'ripB', 'revQYoY', 'fcfmTTM', 'fcfmAt', 'r40', 'approx',
   // zzz987 — Stage Analysis (TheWrap method)
   'twSt', 'sata', 'mrs', 'twWk',
   // zzz993 — scan status / quality (MC-02), scan-close vs latest-quote provenance (MC-01), weekly / monthly readings (when wired)

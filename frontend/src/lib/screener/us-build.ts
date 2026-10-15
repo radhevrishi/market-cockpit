@@ -248,7 +248,7 @@ export function assembleUsRows(universe: NasdaqRow[], ciks: Map<string, number>,
       ...rowPatternFields(tf),   // zzz983 — chart patterns (Pine Screener)
       ...rowScanFields(tf, { px: rq.px, src: rq.src, at: rq.at }),   // zzz993 (MC-01) — scan close (Yahoo bars) vs latest quote (Nasdaq)
       ...rowTvFields(tf, 'US'),   // zzz984 — the owner's TradingView script fields
-      ...(f?.fcfmFY != null ? { fcfmTTM: f.fcfmFY, r40: ruleOf40(f.revQYoY, f.fcfmFY) } : {}),
+      ...(f?.fcfmFY != null ? { fcfmTTM: f.fcfmFY, r40: ruleOf40(f.revQYoY, f.fcfmFY), ...(f.fcfmAt ? { fcfmAt: f.fcfmAt } : {}) } : {}),
       roeTTM: f?.roeTTM ?? null, roeFY: f?.roeFY ?? null, roceTTM: f?.roceTTM ?? null, roceFY: f?.roceFY ?? null, nmTTM: f?.nmTTM ?? null, ptmTTM: f?.ptmTTM ?? null,
       opmFY: f?.opmFY ?? null, pe: mc != null && f?.niTTM != null && f.niTTM > 0 ? r2(mc / f.niTTM) : null,
       pcf: mc != null && f?.cash != null && f.cash > 0 ? r2(mc / f.cash) : null, netDebt: f?.netDebt ?? null, niFY: f?.niFY ?? null,

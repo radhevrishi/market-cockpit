@@ -94,7 +94,7 @@ const keyOf = (h: PineHit) => h.row.t;
 const PERF_LABEL: Record<PerfKey, string> = { perf1M: '1M', perf3M: '3M', perf6M: '6M', perf1Y: '1Y' };
 /** zzz984 — short headers for the optional columns (the full label is the header's tooltip). */
 const COL_SHORT: Partial<Record<NumKey, string>> = {
-  tt: 'TT rules', ttOk: 'TT all 6', rsR: 'RS Rating', stage: 'Stage', st12: 'Stage 1→2', r40: 'Rule of 40', revQYoY: 'Rev Q YoY', fcfmTTM: 'FCF margin',
+  tt: 'TT rules', ttOk: 'TT all 6', rsR: 'RS Rating', stage: 'Stage', st12: 'Stage 1→2', r40: 'Rule of 40', revQYoY: 'Rev Q YoY', fcfmTTM: 'FCF margin FY',
   rsiMA: 'RSI avg', rsiX: 'RSI × avg (d)', gcD: 'Golden × (d)', dcD: 'Death × (d)', emaXU: 'EMA10×21 up (d)', emaXD: 'EMA10×21 dn (d)', ppD: 'Pocket pivot (d)',
   rvol: 'RVol', 'adv$': 'Avg value', adrP: 'ADR %', ripB: 'Ripster', perf1M: 'Perf 1M', perf6M: 'Perf 6M', perf1Y: 'Perf 1Y',
   twSt: 'TW stage', sata: 'SATA', mrs: 'Mansfield RS', twWk: 'Weeks in stage',   // zzz987 — Stage Analysis (TheWrap method)
@@ -497,6 +497,18 @@ export default function PineScreener() {
     return s ? sorted.filter((h) => h.row.t.toUpperCase().includes(s) || String(h.row.n || '').toUpperCase().includes(s)) : sorted;
   }, [sorted, findText]);
   const shown = showAll ? narrowed : narrowed.slice(0, 200);
+  // zzz1044 (F04) — ONE identity for the committed result batch (market, snapshot, query, list, search, sort). The count, the table and
+  // the table carry it (data-batch), and the table is keyed by it, so a changed screen REPLACES the rows instead of patching them (seen
+  // in an audit: the count said 54 while 155 rows of the previous screen stayed on screen). Sorting only reorders the same batch. An
+  // open row detail belongs to one batch and is closed when it changes. Copy / CSV / watchlist / chart review use actHits, derived in
+  // this same render from the same batch.
+  const batchId = useMemo(() => {
+    const raw = JSON.stringify([market, snap?.builtAt || '', q, scope, listTickers ? listTickers.size : -1, findText.trim()]);
+    let h = 5381; for (let i = 0; i < raw.length; i++) h = ((h << 5) + h + raw.charCodeAt(i)) | 0;
+    return (h >>> 0).toString(36);
+  }, [market, snap?.builtAt, q, scope, listTickers, findText]);
+  const [batchSeen, setBatchSeen] = useState(batchId);
+  if (batchSeen !== batchId) { setBatchSeen(batchId); setExpanded(null); }   // (the cursor is already keyed to the result list)
   const searching = !!findText.trim();
   // zzz994 (MC-04 / MC-06) — one action scope for Copy / CSV / watchlist / chart review, with every count kept apart
   const scopeSets = useMemo(() => ({ results: narrowed, all: sorted, selected, provisional: sortHits(provHits) }), [narrowed, sorted, selected, provHits, sortHits]);
@@ -615,7 +627,7 @@ export default function PineScreener() {
       ...ANALYSIS_CSV_HEAD.map(withCur), 'Daily bars source', 'Quote vs daily technical close (%)', 'Price sources disagree',
       'Change (%)', `Market cap (${money})`, `Avg daily value (${money})`, `Perf ${PERF_LABEL[q.perfKey]} (%)`, 'RSI 14', 'Close vs SMA 21 (%)', 'Close vs SMA 50 (%)', 'Close vs SMA 200 (%)', 'RS Rating',
       ...shownCols.map((k) => { const d = fieldOf(k); const u = d?.unit === '%' ? ' (%)' : d?.unit === 'money' ? ` (${money})` : d?.unit === 'price' ? ` (${cur})` : ''; return `${d?.label || k}${u}`; }),
-      ...(shownCols.includes('r40') ? ['Rule of 40 state (formula: revenue growth latest quarter YoY + FCF margin TTM)'] : []),
+      ...(shownCols.includes('r40') ? ['Rule of 40 state (formula: revenue growth latest quarter YoY + FCF margin latest full fiscal year; India FCF = cash-flow proxy)'] : []),
       'Approximate (≈) fields', 'Daily scan status', 'Daily scan version', 'Scan engine version', 'Daily patterns as of', 'Not evaluated (provisional)', 'Snapshot built (UTC)', 'Export scope',
       'Active query', 'Preset', 'Coverage (selected timeframes, this list)', ...RESULT_CSV_HEAD];
     const body = actHits.map(({ row: r, best: b, tags, missing }) => { const ma = maPosition(r); const an = analysisOf(r, b || { tf: 'D' }); return [r.t, market === 'IN' ? 'NSE' : 'US', r.n, r.tvSec || r.sec || '', b ? PATTERN_META[b.id].label : '', b ? (b.tf || 'D') : '',
@@ -1016,7 +1028,7 @@ export default function PineScreener() {
                   <span className="pnx-note" data-testid="preset-line">{presetLine(name, dirty)}</span>
                   {snap?.building ? <span style={{ color: C.amber, fontWeight: 650, fontSize: 12 }} title="A screener build for this market is running now">● building</span> : null}
                   <span style={{ flex: 1 }} />
-                  <b style={{ fontSize: 13, color: C.text1 }} aria-busy={!snap && !err} data-testid="match-count">{!snap ? (err ? '' : 'Loading…') : qRebuild.state === 'none' ? 'Matches cannot be determined yet' : qRebuild.state === 'partial' ? `${hits.length} companies match so far` : `${hits.length} companies match`}</b>
+                  <b style={{ fontSize: 13, color: C.text1 }} aria-busy={!snap && !err} data-testid="match-count" data-batch={batchId} data-rows={shown.length}>{!snap ? (err ? '' : 'Loading…') : qRebuild.state === 'none' ? 'Matches cannot be determined yet' : qRebuild.state === 'partial' ? `${hits.length} companies match so far` : `${hits.length} companies match`}</b>
                 </div>
                 {/* zzz1004 (PS-05) — the ACTIVE query, never a preset name that may contradict it; the preset name sits beside it, smaller */}
                 <h2 className="pnx-query" data-testid="active-query">{summary}</h2>
@@ -1114,7 +1126,7 @@ export default function PineScreener() {
               ) : null}
 
               <div className="pnx-wrap" ref={wrapRef}>
-                <table className="pnx-table" style={{ fontSize: density === 'compact' ? 12.5 : 13 }}>
+                <table key={batchId} data-batch={batchId} className="pnx-table" style={{ fontSize: density === 'compact' ? 12.5 : 13 }}>
                   <thead>
                     <tr>
                       <th className="pnx-pin">

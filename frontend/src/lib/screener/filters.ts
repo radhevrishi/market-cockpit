@@ -13,7 +13,7 @@ import { PATTERN_META, PATTERN_IDS, PATTERN_NA_REASON, patternApplies, type Patt
 // Non-numeric row fields (and the zzz994 provenance / per-timeframe pattern fields, read defensively where present).
 type NonNum = 't' | 'n' | 'sec' | 'ind' | 'q' | 'approx' | 'tvSec' | 'exch' | 'nq' | 'cc' | 'pat' | 'patAt' | 'ccBasis'
   | 'patW' | 'patM' | 'patWAt' | 'patMAt' | 'patV' | 'scan' | 'scanW' | 'scanM' | 'scanAt' | 'scanSrc' | 'scanBasis' | 'scanEx'
-  | 'pxSrc' | 'pxAt' | 'pxConflict' | 'live';
+  | 'pxSrc' | 'pxAt' | 'pxConflict' | 'live' | 'fcfmAt';
 export type NumKey = Exclude<keyof ScreenRow, NonNum>;
 export type FieldUnit = '%' | 'x' | 'money' | 'num' | 'price' | 'shares' | 'usd' | 'date';
 export type FieldGroup = 'Price & volume' | 'Moving averages' | 'Momentum' | 'Trader setups' | 'Growth' | 'Margins & returns' | 'Valuation' | 'Balance sheet' | 'Company';
@@ -24,9 +24,15 @@ const BOTH: ScreenMarket[] = ['US', 'IN'];
 const GP_IN = 'India: sales − (material + manufacturing + employee cost) − depreciation, from screener.in\'s expense split (Indian results print no gross profit; this matches TradingView\'s figure within about 1 point for most companies)';
 const FQ_IN = 'India: only companies that published a balance sheet for their latest quarter have this (most publish one twice a year) — the same on TradingView';
 const PRICE_IN = 'India: Yahoo daily prices, with NSE\'s own official prices for the last 3 months';
-const FCFM_US = 'USA: FCF margin of the latest full year — (operating cash flow − capex) ÷ revenue; SEC data holds quarterly cash flows only as year-to-date totals';
+const FCFM_US = 'USA: FCF margin of the latest full fiscal year (not trailing twelve months) — (operating cash flow − capex) ÷ revenue; unknown when the company files no capex line; SEC data holds quarterly cash flows only as year-to-date totals';
+/** zzz1044 (F03) — where a row's FCF margin comes from, in words ('FY to Mar 2026 · cash-flow proxy'). */
+export function fcfmSourceText(r: Partial<ScreenRow>, market: ScreenMarket): string {
+  const at = typeof r.fcfmAt === 'string' && r.fcfmAt ? r.fcfmAt : '';
+  const yr = at ? `fiscal year to ${at}` : 'latest full fiscal year';
+  return market === 'IN' ? `${yr} · cash-flow proxy: (cash from operations + cash from investing) ÷ sales` : `${yr} · (operating cash flow − capex) ÷ revenue, SEC filings`;
+}
 const R40_BLANK = '. Rule of 40 is left blank when revenue growth is above +300% or the FCF margin is outside −100%…+100% (a tiny sales base — the sum would mean nothing)';
-const FCFM_IN = 'India: latest full year, (cash from operations + cash from investing) ÷ sales — screener.in prints no capex line; filled as company pages are re-read';
+const FCFM_IN = 'India: a cash-flow proxy for the latest full fiscal year — (cash from operations + ALL cash from investing) ÷ sales. screener.in prints no capex line, and investing cash can include buying / selling investments or acquisitions; "Exact figures only" leaves these out';
 const TW_NOTE = 'Our own version that follows the published rules of TheWrap Stage Analysis (weekly 10 / 30 / 40-week averages, 13-week closing range, 10-point SATA score) — not the original script; readings can differ from TradingView';
 /** zzz1020 — a trader-setup field: both markets, group 'Trader setups', the rule as its approx note, optional sparse note. */
 const SETUP_NOTE = 'our own version of the published rules';
@@ -138,7 +144,7 @@ export const FIELDS: readonly FieldDef[] = [
   { key: 'ebitdaTTMYoY', label: 'EBITDA growth, TTM YoY', unit: '%', markets: BOTH, group: 'Growth', approxNote: { US: 'USA: operating profit + depreciation where filed, else operating profit' } },
   { key: 'ebitdaAYoY', label: 'EBITDA growth, annual YoY', unit: '%', markets: BOTH, group: 'Growth', approxNote: { US: 'USA: operating profit + depreciation where filed, else operating profit' } },
   // margins & returns
-  { key: 'fcfmTTM', label: 'FCF margin', unit: '%', markets: BOTH, group: 'Margins & returns', approxNote: { US: FCFM_US, IN: FCFM_IN } },
+  { key: 'fcfmTTM', label: 'FCF margin (latest full year)', unit: '%', markets: BOTH, group: 'Margins & returns', approxNote: { US: FCFM_US, IN: FCFM_IN } },
   { key: 'gmFY', label: 'Gross margin, FY', unit: '%', markets: BOTH, group: 'Margins & returns', approxNote: { IN: GP_IN } },
   { key: 'opmTTM', label: 'Operating margin, TTM', unit: '%', markets: BOTH, group: 'Margins & returns', approxNote: { IN: 'India: operating profit after depreciation (before other income)' } },
   { key: 'opmFY', label: 'Operating margin, FY', unit: '%', markets: BOTH, group: 'Margins & returns', approxNote: { IN: 'India: operating profit after depreciation (before other income)' } },
@@ -480,7 +486,7 @@ function dual(id: string, name: string, f: (m: ScreenMarket) => Filter[], note?:
 
 /** zzz999 — moved here from the Pine Screener (it is about fundamentals only): his "Revenue Growth YoY + FCF Margin" script.
  *  The US copy keeps the old Pine id 'tv-rule-of-40'; the Pine Screener can use either copy as its company list. */
-export const RULE_OF_40_NOTE = 'Your "Revenue Growth YoY + FCF Margin" script: latest quarter\'s revenue growth % + FCF margin % ≥ 40. FCF margin ≈ the latest full year (see the filter tip). Moved here from the Pine Screener; pick it there under Companies to see which of these charts are setting up.';
+export const RULE_OF_40_NOTE = 'Your "Revenue Growth YoY + FCF Margin" script: latest quarter\'s revenue growth % + FCF margin % ≥ 40. The FCF margin is the latest full fiscal year (not trailing twelve months); in India it is a cash-flow proxy (see the filter tip). Moved here from the Pine Screener; pick it there under Companies to see which of these charts are setting up.';
 function RULE_OF_40(m: ScreenMarket): Screen {
   return { id: m === 'US' ? 'tv-rule-of-40' : 'tv-rule-of-40-in', name: 'Rule of 40 (based on your TradingView script)', market: m, builtIn: true, filters: [n('r40', 'ge', 40)], note: RULE_OF_40_NOTE };
 }

@@ -123,11 +123,11 @@ export const BUILT_IN_PINE_SCREENS: readonly PineScreen[] = [
   rules('tw-stage2-sata6', 'Stage 2 · SATA ≥ 6 (TheWrap method)', [eq('twSt', 2), ge('sata', 6)], TW_COLS, 'tv',
     `${TW_NOTE} Stage 2 (advancing) with a SATA score of 6 or more out of 10.`),
   rules('tw-fresh-stage2', 'Fresh Stage 2 (≤ 4 weeks, TheWrap method)', [eq('twSt', 2), le('twWk', 4)], TW_COLS, 'tv',
-    `${TW_NOTE} Stage 2 that began in the last 4 weeks: a close above the 13-week range high and the 40-week average with SATA ≥ 6.`),
+    `${TW_NOTE} Stage 2 confirmed in the last 4 weeks (stage age ≤ 4 weeks, counted from the confirming weekly close). The change to Stage 2 needs two weekly closes in a row above the 13-week closing high and above a 30-week average that is not falling, with SATA ≥ 5 at the change. This screen does NOT require a SATA score now — pick "Stage 2 · SATA ≥ 6" for that.`),
   rules('tw-stage4-sata3', 'Stage 4 · SATA ≤ 3 (TheWrap method)', [eq('twSt', 4), le('sata', 3)], TW_COLS, 'tv',
     `${TW_NOTE} Stage 4 (declining) with a SATA score of 3 or less — names to avoid or short.`),
   rules('tw-stage1-bases', 'Stage 1 bases (TheWrap method)', [eq('twSt', 1)], TW_COLS, 'tv',
-    `${TW_NOTE} Stage 1 (basing): after Stage 4, price back above its 30-week average while the 40-week average is still falling.`),
+    `${TW_NOTE} Stage 1 (basing), usually after Stage 4: confirmed by two weekly closes back above the 30-week average, or by price swinging around that average (two crossings in 10 weeks with it no longer falling, or three while it still falls). 1A = the 30-week average still falling, 1B = flat or turning up.`),
   rules('tv-ema-cross-up', 'EMA 10/21 cross up (last 5 days)', [le('emaXU', 4)], ['emaXU'], 'tv', 'MA Cross: EMA 10 crossed above EMA 21 in the last 5 sessions.'),
 
   // ── zzz984: momentum & trend (his favourite indicators) ───────────────────────────────────────────────────────────────
