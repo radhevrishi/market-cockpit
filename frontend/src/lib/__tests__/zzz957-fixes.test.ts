@@ -35,5 +35,5 @@ test('zzz957: "exact figures only" makes approximate (≈) figures fail the filt
 test('zzz957: the status check reads the graded cache only (never starts a grading build) and shares one result for 30 s', () => {
   const s = readFileSync(join(__dirname, '..', '..', 'app', 'api', 'v1', 'system-status', 'route.ts'), 'utf8');
   assert.match(s, /graded\?date=\$\{istToday\(\)\}&cache_only=1/);
-  assert.match(s, /const MEMO_MS = 30_000/);
+  assert.match(s, /const MEMO_MS = (30_000|90_000)/);   // zzz1049: 90 s (fewer Redis reads)
 });
