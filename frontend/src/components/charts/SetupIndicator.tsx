@@ -11,7 +11,7 @@ import { SETUP_META, setupSeries, type SetupCode } from '@/lib/setups';
 import { bannerColors, barsRevision } from './pattern-view';
 import { overlayChipText, recentSetupPoints, CLEAN_SETUP_BARS, type ChartDisplay } from '@/lib/chart-display';
 import { DOCK_BOX, DOCK_PANEL, DOCK_PILL, type OverlayDock } from './overlay-dock';
-import {
+import { setupRuleText,
   SETUP_CODES, SETUP_INDICATOR, SETUP_PREFS_KEY, SQZ_INDICATOR, SQZ_PANE, completedBars, countsInRange, donchianPointsFor, parseSetupPrefs, serializeSetupPrefs,
   setupBannerRows, setupBoxesFor, setupColor, setupHeadline, setupName, setupPointsFor, squeezePointsFor, tagOf, type SetupChartTf, type SetupPrefs,
 } from './setup-view';
@@ -177,7 +177,7 @@ export function SetupBanner({ s, light, top = 4, onTurnOff, dock }: { s: SetupP;
             const m = SETUP_META[c];
             const on = s.prefs.shown[c] !== false;
             return (
-              <label key={c} data-testid={`setup-type-${c}`} title={`${m.method}: ${m.rule}`}
+              <label key={c} data-testid={`setup-type-${c}`} title={`${m.method}: ${setupRuleText(c, s.tf)}`}
                 style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 2px', borderBottom: '1px solid var(--mc-border-3)', cursor: 'pointer' }}>
                 <input type="checkbox" checked={on} onChange={() => s.toggleType(c)} aria-label={`Show ${m.label}`} />
                 <span style={{ color: setupColor(c, 1, light), fontWeight: 700, minWidth: 36, fontSize: 11 }}>{tagOf(c, 1)}</span>

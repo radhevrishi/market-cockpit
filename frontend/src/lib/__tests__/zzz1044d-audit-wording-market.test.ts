@@ -70,3 +70,14 @@ test('F11: market buttons open that market\'s own screen; copying rules is expli
   assert.match(src, /the numbers were kept but are now/);
   assert.match(src, /if \(f\.kind === 'exch'\) return false;/);
 });
+
+test('F12: the chart says how it reads 3 tight on each timeframe, and how Pine differs', async () => {
+  const { setupRuleText } = await import('../../components/charts/setup-view');
+  const w = setupRuleText('WT3', 'W');
+  assert.match(w, /On these weekly candles/);
+  assert.match(w, /50-week average/);
+  assert.match(w, /Pine Screener's "3 weeks tight" is a different reading: completed weekly closes with price above the 50-DAY average/);
+  assert.match(setupRuleText('WT3', 'D'), /50-day average/);
+  assert.match(setupRuleText('WT3', 'M'), /50-month average/);
+  assert.match(read('components/charts/SetupIndicator.tsx'), /setupRuleText\(c, s\.tf\)/);
+});

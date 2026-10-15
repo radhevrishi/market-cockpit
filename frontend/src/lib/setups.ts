@@ -73,7 +73,7 @@ export const SETUP_FIGURE_KEYS: ReadonlyArray<keyof SetupFigures> = [
 
 /** Plain-words description of every setup: `label` (short name), `method` (whose published rules), `rule` (exactly what we test). */
 export const SETUP_META: Record<SetupCode, { label: string; method: string; rule: string }> = {
-  WT3: { label: '3 weeks tight', method: "William O'Neil (IBD)", rule: 'Three or more weekly closes in a row, each within 1.5% of the week before, with price above its 50-day average. The pivot is the highest weekly high of those weeks.' },
+  WT3: { label: '3 weeks tight', method: "William O'Neil (IBD)", rule: 'Three or more completed weekly closes in a row, each within 1.5% of the week before, with price above its 50-day (daily) average. The pivot is the highest weekly high of those weeks.' },
   DVX: { label: 'Darvas box', method: 'Nicolas Darvas', rule: 'A box starts at a 52-week high. The top is confirmed when the next 3 bars stay below it; the bottom is the lowest low after the top, confirmed by 3 bars that do not go under it. A close above the top is a breakout, a close under the bottom a breakdown.' },
   DC20: { label: 'Donchian 20-bar breakout', method: 'Turtle traders (Dennis / Eckhardt)', rule: 'A close above the highest high of the 20 bars before it (downward: below the lowest low of those 20 bars).' },
   DC55: { label: 'Donchian 55-bar breakout', method: 'Turtle traders (Dennis / Eckhardt)', rule: 'A close above the highest high of the 55 bars before it (downward: below the lowest low of those 55 bars).' },

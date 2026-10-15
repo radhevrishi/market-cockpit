@@ -132,6 +132,17 @@ export function fmtSetupPrice(n: number): string {
 }
 export const ageWords = (n: number) => (n <= 0 ? 'on the last bar' : n === 1 ? '1 bar ago' : `${n} bars ago`);
 const distWords = (d: number | null) => (d == null ? '' : Math.abs(d) < 0.05 ? 'at it' : `${Math.abs(d).toFixed(1)}% ${d < 0 ? 'below' : 'above'}`);
+/** zzz1044 (F12) — a setup's rule as the CHART reads it: the chart reads the candles on screen, so on weekly candles "3 tight" and its
+ *  50-bar average are weekly (50 weeks), not the Pine Screener's weekly closes with the DAILY 50-day average. Said, not hidden. */
+export function setupRuleText(code: SetupCode, tf: SetupChartTf = 'D'): string {
+  const m = SETUP_META[code];
+  if (code === 'WT3') {
+    const bar = BAR_WORD[tf].replace(/s$/, '');
+    return `On these ${tf === 'D' ? 'daily' : tf === 'W' ? 'weekly' : 'monthly'} candles: three or more closes in a row, each within 1.5% of the ${bar} before, with price above its 50-${bar} average (SMA 50 of the candles on screen); the pivot is the highest high of those ${BAR_WORD[tf]}. ` +
+      `The Pine Screener's "3 weeks tight" is a different reading: completed weekly closes with price above the 50-DAY average.`;
+  }
+  return m.rule;
+}
 export function setupName(code: SetupCode, dir: 1 | -1, tf: SetupChartTf = 'D'): string {
   switch (code) {
     case 'WT3': return tf === 'W' ? '3 weeks tight' : `3 tight ${BAR_WORD[tf]}`;
