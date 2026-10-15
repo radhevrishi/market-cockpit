@@ -3626,3 +3626,31 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   "Latest quarter" balance-sheet figures exist only when screener.in has a balance sheet for that quarter (TradingView is the same).
   Old stored companies (f only) are re-read first after deploy: ~19 India runs (~9–10 h) until every company has the new figures.
 - Snapshot rows leave nulls out (`rowsJson`); the page treats a missing figure as null.
+
+
+## 29 · 15 Oct 2026 — screener / chart / watchlist audit (zzz1043 → zzz1045)
+
+- zzz1043 — India price after the close: `resolveInQuote` (pine.ts) uses the completed Yahoo bar until NSE's evening price file is out
+  (change from NSE's close; needs bars' prevClose within 1.5% of NSE's close). Latest-result quarter labels checked against the filing
+  date (`quarterCheckIn` / `quarterCheckUs`). Stock Screener picker can delete own / hide built-in screens (`mc:stock-screens-hidden:v1`, synced).
+- zzz1044a — weekly Stage + weekly setups use COMPLETED exchange weeks only (`lib/completed-weeks.ts`; week closes at the Friday close,
+  US 16:00 NY / India 15:30 IST, or when a later week's bar exists). `SETUP_VERSION` 4. Provisional open-week reading shown apart.
+- zzz1044b — one ATR (`lib/atr.ts`, TradingView ta.atr: first-bar TR = high−low, RMA seeded with SMA). Chart analysis overlays
+  (PAT/STG/SET/ALN) don't count toward MAX_EXTRAS = 8; over-limit indicators are reported (`dropped`), never silently cut.
+- zzz1044c — /watchlists saves: successful empty list is authoritative; flag saves checked (⚠ retry); one list write at a time with
+  per-operation rollback (`lib/watchlist-sync.ts`).
+- zzz1044d — Rule of 40 FCF margin = latest FULL FISCAL YEAR (never call it TTM); India = cash-flow proxy (CFO + all CFI); US year without
+  a filed capex line = unknown. Row field `fcfmAt`. Pine count + table share a result-batch id (table keyed by it). Stock Screener market
+  buttons open that market's last screen (`mc:stock-screener:last-by-market:v1`); "Copy these rules to India/USA" is explicit.
+- zzz1045a — Pine screens in 7 families + favourites (`lib/screener/pine-families.ts`, `mc:pine-fav-screens:v1`); W/M note says rules stay daily.
+- zzz1045b — Stock Screener: compare two screens (`screen-compare.ts`), rebuild schedule shown (`rebuild-schedule.ts` mirrors app-scheduler
+  crons — a test fails if they drift), per-figure period/source (`field-meta.ts`), exact rule on hover (`cell-rules.ts`).
+- zzz1045c — charts: one-line legend in Clean, price pane ≥ 45% (lower panes clamp/collapse, `mc:chart-panes:v1`), "— (needs N bars, has M)",
+  loading badge + dimmed stale overlays while switching (`lib/chart-readability.ts`).
+- zzz1045d / zzz1045 — /watchlists: list source + saved time, compare-with-chart-lists preview (never automatic), quote time column,
+  "no quote" list (never remapped), traded value, % from 50/200-day average (stock-screener `?tickers=` slim mode), changes since review
+  (`mc:watchlist-review:v1`). Yahoo chart fallback now keeps regularMarketTime / day high-low / 52w (lib/yahoo.ts).
+- zzz1045e — US trailing-12-month FCF as NEW fields `fcfmT` / `fcfmTAt` / `r40T` (SEC company-concept files, YTD → quarters,
+  `lib/screener/fcf-ttm.ts`, store kind 'cfq', ~500 companies a run). Existing screens still use the full-year figure; the build notes carry
+  a before/after Rule of 40 diff for the owner to review before any screen moves. Pattern benchmark harness: `lib/pattern-benchmark.ts` +
+  `scripts/pattern-benchmark.mjs` (seed set is SYNTHETIC — real labelled examples still needed from the owner).
