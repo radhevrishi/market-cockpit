@@ -343,9 +343,12 @@ export function secChainKey(ev: RadarFeedEvent): string | null {
 }
 
 /** Merges the same event shown on several cards. Returns the kept events and the number merged away. */
-export function dedupeFeedEvents(events: ReadonlyArray<RadarFeedEvent>): { events: RadarFeedEvent[]; merged: number } {
+export function dedupeFeedEvents(events: ReadonlyArray<RadarFeedEvent>): { events: RadarFeedEvent[]; merged: number; mergedInto: Map<string, string> } {
   const kept: RadarFeedEvent[] = [];
   let merged = 0;
+  // zzz1066: which event each merged copy went into (loser id -> the kept event's id), so the route can flag merged copies
+  // in the raw list instead of letting a view show them as separate events.
+  const absorbed = new Map<RadarFeedEvent, RadarFeedEvent[]>();
   const extra = new Map<RadarFeedEvent, RadarFeedItem[]>();
   for (const ev of events) {
     const t = clean(ev.primary_filing?.title);
@@ -375,7 +378,12 @@ export function dedupeFeedEvents(events: ReadonlyArray<RadarFeedEvent>): { event
     if (winner !== hit) kept[kept.indexOf(hit)] = winner;
     extra.delete(hit);
     extra.set(winner, pool);
+    const gone = [...(absorbed.get(hit) || []), ...(absorbed.get(ev) || []), loser];
+    absorbed.delete(hit); absorbed.delete(ev);
+    absorbed.set(winner, gone);
   }
+  const mergedInto = new Map<string, string>();
+  for (const [w, list] of absorbed) for (const l of list) if (l.event_id && l.event_id !== w.event_id) mergedInto.set(l.event_id, w.event_id);
   const out = kept.map((k) => {
     const more = extra.get(k);
     if (!more || !more.length) return k;
@@ -389,7 +397,7 @@ export function dedupeFeedEvents(events: ReadonlyArray<RadarFeedEvent>): { event
     }
     return { ...k, filings: all, primary_source: k.primary_source || more.some((f) => /sec|bse|nse/i.test(f.source || '')) } as RadarFeedEvent;
   });
-  return { events: out, merged };
+  return { events: out, merged, mergedInto };
 }
 
 /** Same as before, minus held-back items. Pass `{ includeHeldBack: true }` to keep fund repurchase offers (flagged, never in a thesis bucket). */
@@ -399,7 +407,7 @@ export function eventsToRadarInputs(events: ReadonlyArray<RadarFeedEvent> | null
 }
 
 /** Maps every event (dropping exact duplicate ids, headline-less events and same-event duplicates), split into the main list and the held-back list. */
-export function splitRadarInputs(events: ReadonlyArray<RadarFeedEvent> | null | undefined, opts?: AdapterOptions): { inputs: RadarInputWithHints[]; heldBackInputs: RadarInputWithHints[]; heldBack: HeldBackSummary; mergedDuplicates: number; canonicalEvents: number } {
+export function splitRadarInputs(events: ReadonlyArray<RadarFeedEvent> | null | undefined, opts?: AdapterOptions): { inputs: RadarInputWithHints[]; heldBackInputs: RadarInputWithHints[]; heldBack: HeldBackSummary; mergedDuplicates: number; canonicalEvents: number; dedupedEvents: RadarFeedEvent[]; mergedInto: Map<string, string> } {
   const seen = new Set<string>();
   const uniq: RadarFeedEvent[] = [];
   for (const ev of events || []) {
@@ -414,7 +422,7 @@ export function splitRadarInputs(events: ReadonlyArray<RadarFeedEvent> | null | 
   const heldBackInputs: RadarInputWithHints[] = [];
   for (const i of mapped) (i.feedQuarantineReason ? heldBackInputs : inputs).push(i);
   const heldBack = summariseHeldBack(heldBackInputs.map((i) => ({ reason: i.feedQuarantineReason as FeedQuarantineReason, name: i.company })));
-  return { inputs, heldBackInputs, heldBack, mergedDuplicates: deduped.merged, canonicalEvents: uniq.length };
+  return { inputs, heldBackInputs, heldBack, mergedDuplicates: deduped.merged, canonicalEvents: uniq.length, dedupedEvents: deduped.events, mergedInto: deduped.mergedInto };
 }
 
 /**
@@ -460,6 +468,13 @@ export interface GatedFeed<E> {
   heldBack: HeldBackSummary;
   /** header tiers of the SHOWN set (same set as the chips, coverage and radar) */
   byTier: Record<'TIER_1' | 'TIER_2' | 'WATCHLIST' | 'NOISE', number>;
+  /** zzz1066: THE final set = the shown events after the merge (merged copies' filings folded in), in list order. Its ids are the
+   *  ids the Radar shows, the count model counts and All Situations / home list. */
+  finalEvents: E[];
+  /** the adapter's input for each final event (same order): entity, roles, deal terms */
+  finalInputs: RadarInputWithHints[];
+  /** merged copy id -> the final event it was folded into */
+  mergedInto: Map<string, string>;
 }
 
 const holdFlag = <E extends RadarFeedEvent>(e: E, reason: FeedHoldBackReason | null): E => {
@@ -492,5 +507,11 @@ export function assembleGatedFeed<E extends RadarFeedEvent>(a: GatedFeedArgs<E>)
   // page never renders a card the counts call held back.
   const idx = new Map(events.map((e, i) => [e.event_id, i]));
   for (const h of split.heldBackInputs) { const i = idx.get(h.id); if (i != null && !events[i].quarantine_reason && h.feedQuarantineReason) events[i] = holdFlag(events[i], h.feedQuarantineReason); }
-  return { events, countModel, heldBack: split.heldBack, byTier };
+  // zzz1066: merged copies stay in the raw list (the Radar merges them again itself) but carry where they went, so no view
+  // can show a copy as a separate event.
+  for (const [loser, winner] of split.mergedInto) { const i = idx.get(loser); if (i != null) events[i] = { ...events[i], merged_into: winner } as E; }
+  const dedupedById = new Map(split.dedupedEvents.map((e) => [e.event_id, e as E]));
+  const finalInputs = split.inputs.filter((i) => dedupedById.has(i.id));
+  const finalEvents = finalInputs.map((i) => dedupedById.get(i.id)!);
+  return { events, countModel, heldBack: split.heldBack, byTier, finalEvents, finalInputs, mergedInto: split.mergedInto };
 }

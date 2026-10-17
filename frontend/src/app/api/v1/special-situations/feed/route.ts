@@ -42,9 +42,11 @@ import { capexOrConcallEventType, isFundSubject, refineDistressType, splitExpire
 import { assembleGatedFeed, dedupeFeedEvents, splitRadarInputs } from '@/lib/multibagger-radar-adapter';
 import { buildRadarQa } from '@/lib/special-sit-qa';
 import { createSecLookupLoader } from '@/lib/special-sit-entity';
-import { classifyFeedHoldBack, dealRolesFor, secFilingInfoFor, secRowsFromCikTickerMap } from '@/lib/special-sit-security';
+import { classifyFeedHoldBack, dealRolesFor, secFilingInfoFor, secRowsFromCikTickerMap, secFormOfItem, secChainFamily, cikFromTitle } from '@/lib/special-sit-security';
+import { specSitCanonicalId, stableHash, earliestItem, buildFinalMeta, buildSecurityLookups, finalCountsOf, FINAL_CONTRACT_VERSION, type SecurityLookups } from '@/lib/special-sit-final';
 import { gateSpecialSituations, aiVerificationOf } from '@/lib/ai-verify';
 import { isSpecSitPrimaryVerified } from '@/lib/ai-verify-gate';
+import { loadCatalog } from '@/lib/symbolMaster';
 
 // zzz852: read-only SEC ticker map from an existing KV cache (6h memory cache). zzz854: when no KV key holds the map, fall back
 // to the shared us-edgar CIK -> ticker map (one SEC download per day, shared with every caller), capped at 8s so the feed never
@@ -55,9 +57,34 @@ const loadSecLookup = createSecLookupLoader((k) => kvGet(k), undefined, undefine
   return secRowsFromCikTickerMap(map);
 });
 const safeSecLookup = () => loadSecLookup().catch(() => null);
+// zzz1066: security lists for issuer identity — NSE symbol master (KV, 3 s cap) + the SEC ticker map already loaded above.
+// Kept 6 h in memory; a missing list is said in the identity basis, never guessed around.
+let lookupMemo: { at: number; usRef: unknown; v: SecurityLookups } | null = null;
+async function specSitLookups(usLookup: Awaited<ReturnType<typeof safeSecLookup>>): Promise<SecurityLookups> {
+  if (lookupMemo && Date.now() - lookupMemo.at < 6 * 3600_000 && lookupMemo.usRef === usLookup) return lookupMemo.v;
+  const cat = await Promise.race([loadCatalog().catch(() => null), new Promise<null>((res) => setTimeout(() => res(null), 3_000))]);
+  const nseRows = cat?.entries ? Object.values(cat.entries).map((e) => ({ symbol: e.symbol, name: e.companyName })) : null;
+  const usRows = usLookup?.allNames ? usLookup.allNames().flatMap((x) => x.rows.map((r) => ({ ticker: r.ticker, name: r.name }))) : null;
+  const v = buildSecurityLookups({ nseRows, usRows });
+  if (nseRows?.length || usRows?.length) lookupMemo = { at: Date.now(), usRef: usLookup, v };
+  return v;
+}
 // Coverage bucket for an event type, from the institutional coverage definitions (one source of truth for both raw and shown).
 const COVERAGE_DEFS = computeCoverageDiagnostic({});
 const coverageBucketOf = (et: string): string => COVERAGE_DEFS.find((b) => (b.event_types as string[]).includes(et))?.bucket || 'Other';
+
+// zzz1066 (audit S04): canonical id of one feed item. SEC subject / issuer rows key on their filing chain (form family + CIK or
+// company), so an original filing and its /A amendments are one event; everything else keys on type + issuer + day + link.
+function itemCanonicalId(it: { title: string; link: string; pub_date: string; source: string; tickers: string[] }, eventType: string, subjectCompany: string | null): string {
+  const sec = secFormOfItem({ title: it.title, source: it.source, link: it.link });
+  const fam = sec ? secChainFamily(sec.form) : null;
+  if (sec && fam && sec.role !== 'filed by') {
+    const who = cikFromTitle(it.title) || (sec.company || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    if (who) return specSitCanonicalId({ eventType, secChain: `${fam}|${who}` });
+  }
+  const issuer = it.tickers[0] || (subjectCompany && subjectCompany !== 'Not identified' ? subjectCompany : '');
+  return specSitCanonicalId({ eventType, issuerKey: issuer, pubDate: it.pub_date, link: it.link, title: it.title });
+}
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -479,6 +506,8 @@ async function saveRolling(items: FeedItem[]): Promise<void> {
 // PATCH 0105: canonical event object (collapses amendments under one event)
 interface CanonicalEvent {
   event_id: string;
+  /** zzz1066: the id this event had before the canonical-id change (MONITOR notes are keyed on it) */
+  legacy_event_id?: string;
   event_type: EventType;
   category: Category;                           // back-compat with old by_category
   target_name?: string;
@@ -697,11 +726,11 @@ async function buildFeed(): Promise<{
     // zzz847: tickerless events key on the headline subject (not 'unknown'), and the same deal reported with
     // different subjects (acquirer vs target) collapses onto the first card via the clusterer.
     const subj = identifySubject({ title: it.title, feedTicker: it.tickers[0] || null, isSec: /sec\.gov/i.test(it.link) });
-    const baseId = canonicalEventId({
-      event_type: sig.event_type,
-      target_name: sig.target_name || (subj.company !== 'Not identified' ? subj.company : it.title.slice(0, 60)),
-      tickers: it.tickers,
-    });
+    // zzz1066 (audit S04): the item's own id = event type + issuer + real publication day + document link (or its SEC filing
+    // chain). The old key was hash(event type + first ticker), which put every CEAT acquisition story of 90 days into one
+    // bucket. Only the clusterer merges items now (syndicated copies of one story); a blank / unresolved issuer never merges
+    // by key. The event's final id is taken from its EARLIEST item below, so it is stable across rebuilds.
+    const baseId = itemCanonicalId(it, sig.event_type, subj.company);
     const eid = sig.event_type === 'FORM10_REGISTRATION' ? baseId : clusterer.assign(baseId, it.title, it.region, sig.event_type, { link: it.link, pubDate: it.pub_date });
     const bucket = eventBuckets.get(eid) || [];
     bucket.push(it);
@@ -714,7 +743,14 @@ async function buildFeed(): Promise<{
 
   // Build CanonicalEvent objects
   const events: CanonicalEvent[] = [];
-  for (const [eventId, bucketItems] of eventBuckets.entries()) {
+  const usedEventIds = new Set<string>();
+  for (const [clusterId, bucketItems] of eventBuckets.entries()) {
+    // zzz1066: stable id = the SEC filing chain when the group has a subject / issuer row, else the earliest item's id
+    const idOf = (x: FeedItem) => itemCanonicalId(x, itemSignals.get(x.id)?.event_type || 'UNCLASSIFIED', identifySubject({ title: x.title, feedTicker: x.tickers[0] || null, isSec: /sec\.gov/i.test(x.link) }).company);
+    const chainId = bucketItems.map(idOf).filter((x) => x.startsWith('SS_SEC_')).sort()[0];
+    let eventId = chainId || idOf(earliestItem(bucketItems) || bucketItems[0]) || clusterId;
+    if (usedEventIds.has(eventId)) eventId = `${eventId}_${stableHash(clusterId)}`;   // never two events under one id
+    usedEventIds.add(eventId);
     // Sort: primary filings first (non-amendment), then amendments, then media
     const sorted = [...bucketItems].sort((a, b) => {
       const sigA = itemSignals.get(a.id)!;
@@ -851,8 +887,11 @@ async function buildFeed(): Promise<{
       what_matters: `Playbook (typical for this event type, not from the source): ${whyTpl.what_matters}`,
     };
 
+    // the pre-zzz1066 id (hash of event type + first ticker / target), kept so MONITOR notes saved against it still show
+    const legacyId = canonicalEventId({ event_type: eventType, target_name: primarySig.target_name || (() => { const s0 = identifySubject({ title: primary.title, feedTicker: primary.tickers[0] || null, isSec: SEC_PRIMARY_RE.test(primary.link) }); return s0.company !== 'Not identified' ? s0.company : primary.title.slice(0, 60); })(), tickers: primary.tickers });
     events.push({
       event_id: eventId,
+      legacy_event_id: legacyId,
       event_type: eventType,
       category: eventTypeToCategory(eventType, primary.category),
       target_name: primarySig.target_name,
@@ -991,12 +1030,26 @@ async function applyVerificationGate(data: any): Promise<any> {
   const expiry = splitExpiredAwaiting(notKept.filter((e) => !removedRefs.has(String(e?.event_id))), g?.awaiting ?? [], Date.now());
   const expiredIds = new Set(expiry.expired.map((e: any) => String(e?.event_id)));
   let gated: ReturnType<typeof assembleGatedFeed> | null = null;
+  const usLookup = await safeSecLookup();
   try {
     gated = assembleGatedFeed({
       kept, held: all.filter(held), awaiting: expiry.live, contradicted: notKept.filter((e) => removedRefs.has(String(e?.event_id))), expired: expiry.expired,
-      rawItemCount: Number(data?.total) || undefined, rawCoverage, coverageBucketOf, entityDeps: { usLookup: await safeSecLookup() },
+      rawItemCount: Number(data?.total) || undefined, rawCoverage, coverageBucketOf, entityDeps: { usLookup },
     });
   } catch { gated = null; }
+  // zzz1066 (audit S01 / S02): THE final set. Header, coverage and the Radar count it (count_model.shown = its size); All
+  // Situations, Analytics and the home summary list it. Each event carries its issuer identity (confirmed in a security list
+  // or UNRESOLVED), evidence state (CONFIRMED / PENDING), provenance (FILED only from a filing document), roles, sourced terms,
+  // missing fields and last-checked time. Held back / contradicted / expired / merged copies are never in it.
+  let finalEvents: any[] = [];
+  let finalCounts: ReturnType<typeof finalCountsOf> | null = null;
+  if (gated) {
+    try {
+      const lookups = await specSitLookups(usLookup);
+      finalEvents = gated.finalEvents.map((e: any, i: number) => ({ ...e, final: buildFinalMeta({ ev: e, input: gated!.finalInputs[i] as any, primaryVerified: isSpecSitPrimaryVerified(e), checkedAt: data?.last_updated || null }, lookups) }));
+      finalCounts = finalCountsOf(finalEvents, gated.events.filter((e: any) => e?.quarantine_reason));
+    } catch { finalEvents = []; finalCounts = null; }
+  }
   const byTier: Record<string, number> = gated ? { ...gated.byTier } : { TIER_1: 0, TIER_2: 0, WATCHLIST: 0, NOISE: 0 };
   if (!gated) for (const e of kept) if (e?.tier && e.tier in byTier) byTier[e.tier] += 1;
   // zzz1057: the coverage boxes add up to the shown count: events in no named bucket get an 'Other' row (only when there are some)
@@ -1014,6 +1067,11 @@ async function applyVerificationGate(data: any): Promise<any> {
     by_tier_before_verification: data?.by_tier ?? null,
     // zzz854: one count model; chips = count_model.shown_by_category, coverage = shown coverage (raw kept separately)
     count_model: gated ? gated.countModel : null,
+    // zzz1066: the one final set (ids identical to the Radar's shown set and to count_model.shown)
+    final_contract: FINAL_CONTRACT_VERSION,
+    final_events: finalEvents,
+    final_event_ids: finalEvents.map((e) => String(e.event_id)),
+    final_counts: finalCounts,
     category_counts: gated ? gated.countModel.shown_by_category : null,
     held_back: gated ? gated.heldBack : data?.held_back,
     coverage_diagnostic: coverageShown,

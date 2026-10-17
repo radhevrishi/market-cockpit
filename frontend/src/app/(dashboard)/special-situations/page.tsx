@@ -41,47 +41,13 @@ import { computeDealProbability } from '@/lib/deal-probability';
 import type { FilingTier } from '@/lib/deal-probability';
 // PATCH 0254 — Source-tier classifier (PRIMARY / SPECIALIST / SECONDARY / AGGREGATOR)
 import { classifySource, TIER_VISUAL } from '@/lib/source-tiers';
+// zzz1066 — one final event set (S01/S04), issuer identity + provenance (S02), separated deal maths (S03)
+import { type SpecSitFinalMeta, type FinalCounts } from '@/lib/special-sit-final';
+import { computeDealAnalytics, milestoneFor, rankEstablished, effectiveEventType, type DealAnalytics } from '@/lib/special-sit-analytics';
+import { FEED_QUARANTINE_LABEL } from '@/lib/special-sit-feed-quality';
+import { finalListOf, archivedListOf, evidenceFilterCounts, applyEvidenceFilter, type EvidenceFilter } from '@/components/special-situations/final-set';
 
-/** PATCH 0258 — Next-catalyst inference. If the payload has an explicit
- *  next_catalyst field, use it. Otherwise fall back to event-type-specific
- *  conventions (open offer opens 30d after announcement, etc.).
- *  Returns null when nothing reasonable can be inferred. */
-function nextCatalystFor(ev: any): { label: string; daysOut: number | null } | null {
-  if (ev.next_catalyst_date) {
-    try {
-      const dt = new Date(ev.next_catalyst_date);
-      const days = Math.round((dt.getTime() - Date.now()) / 86400_000);
-      const dateStr = dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
-      if (days < 0) {
-        // Date already passed — say so instead of showing a stale countdown.
-        const verb = /open/i.test(ev.next_catalyst_label || '') ? 'opened' : 'passed';
-        return { label: `${ev.next_catalyst_label || 'Next catalyst'}: ${verb} ${dateStr}`, daysOut: null };
-      }
-      return { label: `${ev.next_catalyst_label || 'Next catalyst'}: ${dateStr}`, daysOut: days };
-    } catch {}
-  }
-  // Event-type heuristic from typical Indian/US conventions
-  const map: Record<string, { label: string; days: number }> = {
-    OPEN_OFFER:          { label: 'Open offer typically opens',   days: 30 },
-    TENDER_OFFER:        { label: 'Tender expected to close',      days: 35 },
-    BUYBACK_TENDER:      { label: 'Buyback record date typical',   days: 21 },
-    BUYBACK:             { label: 'Record date typically',         days: 30 },
-    GOING_PRIVATE:       { label: 'Delisting offer typical',       days: 90 },
-    MERGER_DEFINITIVE:   { label: 'Regulatory review ~',           days: 180 },
-    ACQUISITION_PUBLIC:  { label: 'Close target',                   days: 180 },
-    SPIN_OFF:            { label: 'Record date typical',           days: 120 },
-    DEMERGER_INDIA:      { label: 'NCLT + record date',            days: 120 },
-    IPO_SUBSIDIARY:      { label: 'IPO typical window',            days: 90 },
-    NCLT_RESOLUTION:     { label: 'NCLT decision typical',         days: 45 },
-    INDEX_INCLUSION:     { label: 'Effective date',                days: 30 },
-  };
-  const m = map[ev.event_type];
-  if (m) {
-    const dt = new Date(Date.now() + m.days * 86400_000);
-    return { label: `${m.label} ${dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })} (~${m.days}d est.)`, daysOut: m.days };
-  }
-  return null;
-}
+// zzz1066: next-milestone estimates moved to lib/special-sit-analytics.ts (milestoneFor), anchored to the event date.
 
 /** PATCH 0259 — Decay color for the age chip based on event-specific
  *  half-life. Tender offers decay fastest, mergers slowest. */
@@ -236,6 +202,11 @@ interface CanonicalEvent {
   is_fund: boolean;
   primary_source: boolean;
   age_hours: number;
+  /** zzz1066: present on final events (identity, evidence, provenance, roles, sourced terms, missing fields, last checked) */
+  final?: SpecSitFinalMeta;
+  legacy_event_id?: string;
+  quarantine_reason?: string | null;
+  merged_into?: string | null;
 }
 
 interface LiveFeedResp {
@@ -266,6 +237,11 @@ interface LiveFeedResp {
   verificationAudit?: SsCountFeed['verificationAudit'];
   by_tier_before_verification?: Record<string, number> | null;
   coverage_diagnostic_raw?: SsCountFeed['coverage_diagnostic_raw'];
+  // zzz1066 — the one final set (S01)
+  final_contract?: string;
+  final_events?: CanonicalEvent[];
+  final_event_ids?: string[];
+  final_counts?: FinalCounts | null;
 }
 
 // PATCH 0437 BUG-029 — localStorage cache prime so the page doesn't flash
@@ -443,7 +419,7 @@ export default function SpecialSituationsPage() {
     if (next.has(bucket)) next.delete(bucket); else next.add(bucket);
     return next;
   });
-  const clearFilters = () => { setTierFilter('ALL'); setCatFilterSet(new Set()); setCoverageFilterSet(new Set()); };
+  const clearFilters = () => { setTierFilter('ALL'); setCatFilterSet(new Set()); setCoverageFilterSet(new Set()); setEvidenceFilter('ALL'); };
   const anyFilterActive = tierFilter !== 'ALL' || catFilterSet.size > 0 || coverageFilterSet.size > 0;
 
   useEffect(() => {
@@ -459,38 +435,10 @@ export default function SpecialSituationsPage() {
   // PATCH 0105: PRIMARY data source is now feed.events (canonical events with
   // catalyst scoring, tradability filter, why_tradable blocks).  Old by_category
   // FeedItems are still produced for back-compat + the Discover tab.
-  const canonicalEvents: CanonicalEvent[] = useMemo(() => {
-    if (!feed?.events) return [];
-    // PATCH 0257 — Client-side duplicate collapse. Same canonical event
-    // reported by Yahoo + Reuters + Bloomberg syndicates produces N duplicate
-    // rows. Group by (target_name + event_type + 7d date bucket) and keep
-    // the highest-confidence row; stamp a `__source_count` on it so the
-    // renderer can show '×N sources'.
-    const filtered = feed.events.filter((e) => region === 'ALL' || e.region === region);
-    const groups = new Map<string, CanonicalEvent[]>();
-    for (const ev of filtered) {
-      const pf = ev.primary_filing as any;
-      const publishedAt = pf?.published_at || pf?.date || pf?.timestamp || null;
-      const dateBucket = publishedAt
-        ? Math.floor(new Date(publishedAt).getTime() / (7 * 86400_000))
-        : 0;
-      const target = (ev.target_name || ev.tickers[0] || '').trim().toLowerCase();
-      const key = `${target}|${ev.event_type}|${dateBucket}`;
-      const bucket = groups.get(key);
-      if (bucket) bucket.push(ev);
-      else groups.set(key, [ev]);
-    }
-    const deduped: CanonicalEvent[] = [];
-    for (const bucket of groups.values()) {
-      // Keep highest-score event in each bucket
-      bucket.sort((a, b) => (b.catalyst_score?.decay_score ?? 0) - (a.catalyst_score?.decay_score ?? 0));
-      const head = bucket[0];
-      (head as any).__source_count = bucket.length;
-      (head as any).__source_list = bucket.map(e => e.primary_filing?.source).filter(Boolean);
-      deduped.push(head);
-    }
-    return deduped;
-  }, [feed, region]);
+  // zzz1066 (audit S01 / S04): the list is the server's ONE final set (`final_events`). No client-side regrouping: the old
+  // grouping keyed on (name | type | a date field the feed never had), so every CEAT story of 90 days became "×381 sources".
+  // Older cached payloads without final_events fall back to the events that are neither held back nor merged copies.
+  const canonicalEvents: CanonicalEvent[] = useMemo(() => finalListOf(feed as any, region) as CanonicalEvent[], [feed, region]);
 
   // PATCH 0433 — Map each event_type to its institutional coverage bucket
   // (mirrors lib/specsit-institutional.ts computeCoverageDiagnostic).
@@ -515,8 +463,14 @@ export default function SpecialSituationsPage() {
   // filters before deriving tier1/tier2/watchlist lists. Counts stay computed
   // on `canonicalEvents` so the Stat boxes always show the total available;
   // only the rendered list shrinks.
+  // zzz1066 — default research view: Confirmed / Pending / Archived chips (counts are for the whole final set of this region)
+  const [evidenceFilter, setEvidenceFilter] = useState<EvidenceFilter>('ALL');
+  const focusEventId = searchParams?.get('event') || null;
+  const archivedEvents: CanonicalEvent[] = useMemo(() => archivedListOf(feed as any, region) as CanonicalEvent[], [feed, region]);
+  const evidenceCounts = useMemo(() => evidenceFilterCounts(canonicalEvents as any, archivedEvents as any), [canonicalEvents, archivedEvents]);
   const filteredCanonicalEvents: CanonicalEvent[] = useMemo(() => {
-    return canonicalEvents.filter((e) => {
+    return applyEvidenceFilter(canonicalEvents as any, evidenceFilter).filter((e: any) => {
+      if (focusEventId && e.event_id !== focusEventId) return false;
       if (tierFilter !== 'ALL' && e.tier !== tierFilter) return false;
       if (catFilterSet.size > 0 && !catFilterSet.has(e.category as Category)) return false;
       if (coverageFilterSet.size > 0) {
@@ -526,11 +480,11 @@ export default function SpecialSituationsPage() {
       // AUDIT_100 #32 — when toggled, render ONLY events the user previously
       // moved to MONITOR. Event id matches the localStorage key used by the card.
       if (monitoredOnly) {
-        if (!monitoredMap[e.event_id]) return false;
+        if (!monitoredMap[e.event_id] && !(e.final?.legacy_ids || []).some((x: string) => monitoredMap[x])) return false;
       }
       return true;
     });
-  }, [canonicalEvents, tierFilter, catFilterSet, coverageFilterSet, monitoredOnly, monitoredMap]);
+  }, [canonicalEvents, evidenceFilter, focusEventId, tierFilter, catFilterSet, coverageFilterSet, monitoredOnly, monitoredMap]) as CanonicalEvent[];
 
   // zzz855: memoised so the All tab (and its risk/reward board) is not rebuilt on every unrelated render
   const { tier1Canonical, tier2Canonical, watchlistCanonical, lowSignalCanonical } = useMemo(() => ({
@@ -800,9 +754,17 @@ export default function SpecialSituationsPage() {
           <MultibaggerRadar events={radarEvents} region={region} onRegionChange={setRegion} isLoading={isLoading} error={error} countModel={feed?.count_model} />
         )}
         {active === 'all' && (
-          canonicalEvents.length > 0
-            ? <AllSituationsCanonical isLoading={isLoading} error={error} tier1={tier1Canonical} tier2={tier2Canonical} watchlist={watchlistCanonical} lowSignal={lowSignalCanonical} />
-            : <AllSituations isLoading={isLoading} error={error} tier1={tier1} tier2={tier2} archive={archive} />
+          <EvidenceFilterBar value={evidenceFilter} onChange={setEvidenceFilter} counts={evidenceCounts}
+            shown={evidenceFilter === 'ARCHIVED' ? archivedEvents.length : filteredCanonicalEvents.length}
+            total={evidenceFilter === 'ARCHIVED' ? archivedEvents.length : canonicalEvents.length}
+            filtersOn={anyFilterActive || monitoredOnly} region={region} focusEventId={focusEventId} />
+        )}
+        {active === 'all' && (
+          evidenceFilter === 'ARCHIVED'
+            ? <ArchivedList events={archivedEvents} />
+            : canonicalEvents.length > 0 || Array.isArray(feed?.final_events)
+              ? <AllSituationsCanonical isLoading={isLoading} error={error} tier1={tier1Canonical} tier2={tier2Canonical} watchlist={watchlistCanonical} lowSignal={lowSignalCanonical} />
+              : <AllSituations isLoading={isLoading} error={error} tier1={tier1} tier2={tier2} archive={archive} />
         )}
         {/* PATCH 0584 — Analytics view: unified merger-arb + deal-probability
             + playbook + lifecycle dashboard. Mirrors the Multibagger Analytics
@@ -868,192 +830,8 @@ function Stat({ label, value, color, icon, onClick, active, loading, tooltip }: 
     : <div title={tooltip} style={baseStyle}>{inner}</div>;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// PATCH 0353 — INSTITUTIONAL ANALYTICS HELPERS (Phase 1)
-//
-// Single source of truth for every per-event derived metric:
-//   - filing tier (drives deal-probability)
-//   - lifecycle stage (where the event is in its journey)
-//   - playbook prior (typical spread + close days + success rate)
-//   - synthetic spread / IRR / probability / EV (when no live quote)
-//   - rankable EV score for the Best Risk/Reward leaderboard
-// ═══════════════════════════════════════════════════════════════════════════
-
-/** Maps event_type → FilingTier for the deal-probability engine. */
-function inferFilingTier(eventType: string): FilingTier {
-  switch (eventType) {
-    case 'MERGER_DEFINITIVE':
-    case 'OPEN_OFFER':
-    case 'TENDER_OFFER':
-    case 'BUYBACK_TENDER':
-    case 'GOING_PRIVATE':
-    case 'ACQUISITION_PUBLIC':
-      return 'BINDING_AGREEMENT';
-    case 'MERGER_RECOMMENDATION':
-    case 'SPIN_OFF':
-    case 'DEMERGER_INDIA':
-    case 'BUYBACK_OPEN_MARKET':
-    case 'IPO_SUBSIDIARY':
-      return 'BOARD_APPROVED';
-    case 'STAKE_SALE':
-    case 'QIP_PLACEMENT':
-    case 'RIGHTS_ISSUE':
-      return 'PRELIMINARY_OFFER';
-    case 'NEWS_RUMOR':
-      return 'RUMOR';
-    default:
-      return 'EXPLORATORY';
-  }
-}
-
-/** Heuristic: infer lifecycle state from event_type + age. The pipeline
- *  doesn't carry an explicit lifecycle column yet (Patch 0320 lib exists,
- *  but Postgres-backed lifecycle records still pending). This gets us 80%
- *  of the institutional read in the meantime. */
-function inferLifecycleState(eventType: string, ageDays: number, amendmentCount: number): LifecycleState {
-  switch (eventType) {
-    case 'OPEN_OFFER':
-    case 'TENDER_OFFER':
-      return ageDays > 21 ? 'OPEN' : 'BINDING';
-    case 'BUYBACK_TENDER':
-      return ageDays > 14 ? 'TENDER' : 'BINDING';
-    case 'MERGER_DEFINITIVE':
-    case 'ACQUISITION_PUBLIC':
-      return 'REGULATORY';
-    case 'GOING_PRIVATE':
-      return ageDays > 30 ? 'REGULATORY' : 'BINDING';
-    case 'SPIN_OFF':
-    case 'DEMERGER_INDIA':
-      // Amendment count suggests record-date approaching → VOTE
-      return amendmentCount > 0 ? 'VOTE' : 'REGULATORY';
-    case 'IPO_SUBSIDIARY':
-      return 'REGULATORY';
-    case 'NEWS_RUMOR':
-      return 'RUMOR';
-    case 'MERGER_RECOMMENDATION':
-      return 'BOARD_APPROVED';
-    default:
-      return 'BINDING';
-  }
-}
-
-/** Map event_type → expected close days (best estimate when no playbook). */
-function defaultCloseDays(eventType: string): number {
-  switch (eventType) {
-    case 'TENDER_OFFER':
-    case 'BUYBACK_TENDER':
-      return 35;
-    case 'OPEN_OFFER':
-    case 'GOING_PRIVATE':
-      return 90;
-    case 'MERGER_DEFINITIVE':
-    case 'ACQUISITION_PUBLIC':
-      return 180;
-    case 'SPIN_OFF':
-    case 'DEMERGER_INDIA':
-    case 'IPO_SUBSIDIARY':
-      return 120;
-    default:
-      return 60;
-  }
-}
-
-interface EventAnalytics {
-  filingTier: FilingTier;
-  lifecycleState: LifecycleState;
-  lifecycleLabel: string;
-  lifecycleColor: string;
-  /** Spread % — live if cmp+offer provided, else playbook prior. */
-  spreadPct: number | null;
-  /** Expected days to close. */
-  daysToClose: number;
-  /** Probability of completion (0-100) from deal-probability engine. */
-  probability: number;
-  probabilityLabel: string;
-  probabilityColor: string;
-  /** Annualized IRR (%) — null when spread is null. */
-  annIRR: number | null;
-  /** Probability-weighted annualized IRR (%) — null when annIRR is null. */
-  expectedIRR: number | null;
-  /** Single rankable scalar for the leaderboard. Combines expectedIRR
-   *  (preferred) with catalyst_score fallback for non-arb events. Always
-   *  finite — higher = better. */
-  evScore: number;
-  /** True when this event is arb-style (has spread/IRR meaning). */
-  isArbEvent: boolean;
-  /** True when at least one playbook prior was used (vs raw event_type heuristic). */
-  hasPlaybook: boolean;
-}
-
-/** Compute the institutional analytics bundle for one event. */
-function computeEventAnalytics(
-  ev: { event_type: string; primary_filing?: { title?: string }; tier?: string; region?: string; amendment_count?: number; catalyst_score?: { decay_score?: number } },
-  opts: { cmp?: number | null; offer?: number | null; ageDays?: number } = {},
-): EventAnalytics {
-  const playbook = getPlaybook(ev.event_type as any);
-  const filingTier = inferFilingTier(ev.event_type);
-  const ageDays = opts.ageDays ?? 0;
-  const lifecycleState = inferLifecycleState(ev.event_type, ageDays, ev.amendment_count ?? 0);
-  const lcCfg = LIFECYCLE_CONFIG[lifecycleState];
-
-  // Spread: live (cmp + offer) if available, else playbook prior, else null.
-  let spreadPct: number | null = null;
-  if (opts.cmp != null && opts.offer != null && opts.cmp > 0) {
-    spreadPct = ((opts.offer - opts.cmp) / opts.cmp) * 100;
-  } else if (playbook) {
-    spreadPct = playbook.typical_spread_pct;
-  }
-
-  const daysToClose = playbook ? playbook.avg_close_days : defaultCloseDays(ev.event_type);
-
-  // Probability via deal-probability engine.
-  const hurdles: any = {};
-  if (ev.region === 'IN') {
-    if (['MERGER_DEFINITIVE','ACQUISITION_PUBLIC','GOING_PRIVATE','OPEN_OFFER'].includes(ev.event_type)) {
-      hurdles.cci = true; hurdles.sebi = true;
-    }
-    if (['SPIN_OFF','DEMERGER_INDIA'].includes(ev.event_type)) hurdles.nclt = true;
-  }
-  const probR = computeDealProbability({
-    filingTier,
-    spreadPct: spreadPct ?? undefined,
-    daysSinceAnnounced: ageDays,
-    expectedCloseDays: daysToClose,
-    hurdles: Object.keys(hurdles).length ? hurdles : undefined,
-  });
-
-  const annIRR = (spreadPct != null && daysToClose > 0)
-    ? spreadPct * (365 / daysToClose)
-    : null;
-  const expectedIRR = (annIRR != null) ? annIRR * (probR.score / 100) : null;
-
-  // EV scalar for leaderboard ranking:
-  //   - Arb-style events with computable expectedIRR: use it (typically 1-50).
-  //   - Otherwise fall back to catalyst_score.decay_score / 2 so it's roughly
-  //     on the same 0-50 scale.
-  const isArbEvent = ['OPEN_OFFER','TENDER_OFFER','BUYBACK_TENDER','GOING_PRIVATE','MERGER_DEFINITIVE','ACQUISITION_PUBLIC'].includes(ev.event_type);
-  const catalystFallback = (ev.catalyst_score?.decay_score ?? 0) / 2;
-  const evScore = isArbEvent && expectedIRR != null
-    ? Math.max(0, expectedIRR)
-    : catalystFallback;
-
-  return {
-    filingTier,
-    lifecycleState,
-    lifecycleLabel: lcCfg.label,
-    lifecycleColor: lcCfg.color,
-    spreadPct,
-    daysToClose,
-    probability: probR.score,
-    probabilityLabel: probR.label.replace('_', ' '),
-    probabilityColor: probR.color,
-    annIRR,
-    expectedIRR,
-    evScore,
-    isArbEvent,
-    hasPlaybook: !!playbook,
-  };
-}
+// zzz1066 (audit S03): computeEventAnalytics (playbook spread × heuristic probability shown as a deal's EV) was removed.
+// Deal maths now live in lib/special-sit-analytics.ts: sourced terms / labelled illustration / historical prior.
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ALL SITUATIONS — pure data-driven event cards
@@ -1111,92 +889,184 @@ const EVENT_TYPE_META: Record<string, { icon: string; color: string }> = {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function BestRiskRewardBoard({ events }: { events: CanonicalEvent[] }) {
-  const ranked = useMemo(() => {
-    return events
-      .map(ev => {
-        const ageDays = (ev.age_hours ?? 0) / 24;
-        const a = computeEventAnalytics(ev as any, { ageDays });
-        return { ev, a };
-      })
-      // Drop events with no analytic signal at all
-      .filter(({ a }) => a.evScore > 0)
-      // Rank descending
-      .sort((x, y) => y.a.evScore - x.a.evScore)
-      .slice(0, 5);
-  }, [events]);
-
-  if (ranked.length === 0) return null;
-
+  // zzz1066 (S03): only events with ALL inputs established (live price, stated per-share consideration, stated completion date,
+  // downside assumption) are ranked. Playbook spreads × heuristic probabilities are no longer shown as a deal's return.
+  const ranked = useMemo(() => rankEstablished(events.map((ev) => ({ item: ev, a: computeDealAnalytics(dealInputOf(ev)) }))).slice(0, 5), [events]);
+  if (ranked.length === 0) {
+    return (
+      <div data-ss-rr-not-established style={{ marginBottom: 14, padding: '8px 12px', border: '1px dashed var(--mc-bg-4)', borderRadius: 8, fontSize: 11, color: 'var(--mc-text-3)', lineHeight: 1.5 }}>
+        <strong style={{ color: 'var(--mc-text-2)' }}>Risk / reward ranking: Not established.</strong> No event here has all four inputs — a live price, a stated
+        per-share consideration, a stated completion date and a downside if the deal fails. Typical spreads for an event type are shown on each
+        card as an illustration only. Enter real terms in the Acceptance / Deal Math tab to get a return.
+      </div>
+    );
+  }
   return (
     <div style={{ marginBottom: 14 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8 }}>
-        <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-warn)', letterSpacing: '0.5px' }}>
-          🏆 BEST RISK / REWARD
-        </span>
-        <span style={{ fontSize: 10, color: 'var(--mc-text-4)' }}>
-          ranked by probability-weighted annualized IRR · arb events first · catalyst-score fallback for non-arb
-        </span>
-      </div>
+      <div style={{ fontSize: 13, fontWeight: 900, color: 'var(--mc-warn)', letterSpacing: '0.5px', marginBottom: 8 }}>🏆 RISK / REWARD — established terms only</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 8 }}>
-        {ranked.map(({ ev, a }, idx) => {
-          const meta = EVENT_TYPE_META[ev.event_type] || EVENT_TYPE_META.UNCLASSIFIED;
-          const ticker = ev.tickers[0];
-          return (
-            <div key={ev.event_id}
-              style={{
-                backgroundColor: 'var(--mc-bg-1)',
-                border: '1px solid var(--mc-border-1)',
-                borderLeft: `3px solid ${a.lifecycleColor}`,
-                borderRadius: 8, padding: '10px 12px',
-                display: 'flex', flexDirection: 'column', gap: 6,
-              }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 10, fontWeight: 900, color: 'var(--mc-warn)',
-                  backgroundColor: 'color-mix(in srgb, var(--mc-warn) 9%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)',
-                  padding: '1px 6px', borderRadius: 3, fontFamily: 'ui-monospace, monospace' }}>
-                  #{idx + 1}
-                </span>
-                <span style={{ fontSize: 11, fontWeight: 700, color: meta.color }}>
-                  {meta.icon} {ev.event_type.replace(/_/g, ' ')}
-                </span>
-                {ticker && (
-                  <span style={{ fontSize: 11, fontWeight: 800, color: '#38A9E8', backgroundColor: 'color-mix(in srgb, var(--mc-accent) 13%, transparent)',
-                    border: '1px solid color-mix(in srgb, var(--mc-accent) 25%, transparent)', padding: '1px 6px', borderRadius: 3, fontFamily: 'ui-monospace, monospace' }}>
-                    {ticker}
-                  </span>
-                )}
-              </div>
-              <div style={{ fontSize: 11.5, color: 'var(--mc-text-1)', lineHeight: 1.35, overflow: 'hidden',
-                display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-                {ev.primary_filing.title}
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, fontSize: 10, fontFamily: 'ui-monospace, monospace' }}>
-                {a.expectedIRR != null && (
-                  <span style={{ color: 'var(--mc-warn)', fontWeight: 800, backgroundColor: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)',
-                    border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)', padding: '1px 5px', borderRadius: 3 }}
-                    title={`Expected IRR = annualized IRR (${a.annIRR?.toFixed(0)}%/yr) × probability (${a.probability}%)`}>
-                    EV {a.expectedIRR >= 0 ? '+' : ''}{a.expectedIRR.toFixed(1)}%/yr
-                  </span>
-                )}
-                {a.spreadPct != null && (
-                  <span style={{ color: a.spreadPct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)', fontWeight: 700 }}>
-                    sp {a.spreadPct >= 0 ? '+' : ''}{a.spreadPct.toFixed(1)}%
-                  </span>
-                )}
-                <span style={{ color: a.probabilityColor, fontWeight: 700 }} title={`Deal probability: ${a.probabilityLabel}`}>
-                  P {a.probability}%
-                </span>
-                <span style={{ color: 'var(--mc-text-3)' }}>~{a.daysToClose}d</span>
-                <span style={{ color: a.lifecycleColor, fontWeight: 700, padding: '0 4px',
-                  border: `1px solid ${a.lifecycleColor}40`, borderRadius: 3 }}
-                  title={LIFECYCLE_CONFIG[a.lifecycleState].description}>
-                  ▶ {a.lifecycleLabel}
-                </span>
-              </div>
+        {ranked.map(({ item: ev, a }, idx) => (
+          <div key={ev.event_id} style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-border-1)', borderRadius: 8, padding: '10px 12px', fontSize: 11 }}>
+            <div style={{ fontWeight: 800, color: 'var(--mc-text-1)' }}>#{idx + 1} {ev.final?.issuer.ticker || ev.final?.issuer.name || ev.primary_filing.title}</div>
+            <div style={{ color: 'var(--mc-text-3)', marginTop: 4 }}>
+              If completed: {a.live!.successPayoffPct.toFixed(1)}% in {a.live!.daysRemaining}d · if it fails: {a.live!.failurePayoffPct.toFixed(1)}% · break-even completion odds {a.live!.breakEvenProbabilityPct.toFixed(0)}%
             </div>
-          );
-        })}
+            <div style={{ color: 'var(--mc-text-4)', marginTop: 4, fontSize: 10 }}>Assumes: {a.live!.assumptions.join('; ')}</div>
+          </div>
+        ))}
       </div>
+    </div>
+  );
+}
+
+/** zzz1066 — the deal-maths input of an event: sourced terms from the final record, never the playbook. */
+function dealInputOf(ev: CanonicalEvent) {
+  return {
+    event_type: ev.event_type, title: ev.primary_filing?.title, description: ev.primary_filing?.description,
+    event_date: ev.final?.event_date || ev.primary_filing?.pub_date || null, region: ev.region,
+    terms_fields: ev.final?.terms_fields || null, terms_kind: ev.final?.terms_kind || null,
+    sec_form: /\bSC\s*TO-I\b/i.test(ev.primary_filing?.title || '') ? 'SC TO-I' : null,
+  };
+}
+
+// zzz1066 — event-card evidence UI (design row "Event card"): roles, source link, reported terms, missing fields, last checked
+const MARKET_FLAG: Record<string, string> = { IN: '🇮🇳 IN', US: '🇺🇸 US' };
+function IdentityChip({ id }: { id: SpecSitFinalMeta['issuer'] }) {
+  const resolved = id.state === 'RESOLVED' && !!id.ticker;
+  return (
+    <span data-ss-identity={id.state} title={`${resolved ? 'Listed security' : 'Unresolved issuer'} — ${id.basis}`}
+      style={{ fontSize: 11, fontWeight: 700, padding: '1px 6px', borderRadius: 3, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        color: resolved ? '#38A9E8' : 'var(--mc-text-3)', border: resolved ? '1px solid color-mix(in srgb, var(--mc-accent) 25%, transparent)' : '1px dashed var(--mc-bg-4)',
+        backgroundColor: resolved ? 'color-mix(in srgb, var(--mc-accent) 13%, transparent)' : 'transparent' }}>
+      {resolved ? id.ticker : 'UNRESOLVED'}{id.market ? ` · ${MARKET_FLAG[id.market]}` : ''}{!resolved && id.name ? ` · ${id.name}` : ''}
+    </span>
+  );
+}
+function EvidenceChips({ meta }: { meta: SpecSitFinalMeta }) {
+  const conf = meta.evidence_state === 'CONFIRMED';
+  const filed = meta.provenance === 'FILED';
+  return (
+    <>
+      <span data-ss-evidence={meta.evidence_state} title={meta.evidence_basis}
+        style={{ fontSize: 9.5, fontWeight: 800, padding: '1px 6px', borderRadius: 3, letterSpacing: 0.3, color: conf ? 'var(--mc-bullish)' : 'var(--mc-warn)', border: `1px solid ${conf ? 'color-mix(in srgb, var(--mc-bullish) 35%, transparent)' : 'color-mix(in srgb, var(--mc-warn) 35%, transparent)'}` }}>
+        {conf ? 'CONFIRMED' : 'PENDING CHECK'}
+      </span>
+      <span data-ss-provenance={meta.provenance} title={meta.provenance_basis}
+        style={{ fontSize: 9.5, fontWeight: 800, padding: '1px 6px', borderRadius: 3, letterSpacing: 0.3, color: filed ? 'var(--mc-bullish)' : 'var(--mc-state-persistent)', border: '1px solid var(--mc-bg-4)' }}>
+        {meta.provenance}
+      </span>
+    </>
+  );
+}
+function EvidenceBlock({ meta }: { meta: SpecSitFinalMeta }) {
+  const when = meta.last_checked ? new Date(meta.last_checked).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : null;
+  const row = { display: 'flex', gap: 6, flexWrap: 'wrap' as const, alignItems: 'baseline' };
+  return (
+    <div data-ss-evidence-block onClick={(e) => e.stopPropagation()} style={{ marginTop: 6, fontSize: 11, color: 'var(--mc-text-3)', display: 'flex', flexDirection: 'column', gap: 3, cursor: 'default' }}>
+      <div style={row}>
+        <span style={{ color: 'var(--mc-text-4)' }}>Issuer:</span><strong style={{ color: 'var(--mc-text-1)' }}>{meta.issuer.name || 'not identified'}</strong>
+        {meta.roles.acquirer && <><span style={{ color: 'var(--mc-text-4)' }}>· Acquirer:</span><span>{meta.roles.acquirer}</span></>}
+        {meta.roles.target && <><span style={{ color: 'var(--mc-text-4)' }}>· Target:</span><span>{meta.roles.target}</span></>}
+      </div>
+      <div style={row}>
+        <span style={{ color: 'var(--mc-text-4)' }}>Reported terms:</span>
+        {meta.reported_terms.length ? meta.reported_terms.map((t) => <span key={t.field} title={t.value}>{t.label}: <strong style={{ color: 'var(--mc-text-1)' }}>{t.value.length > 60 ? `${t.value.slice(0, 60)}…` : t.value}</strong></span>) : <span style={{ fontStyle: 'italic' }}>none stated in the source</span>}
+      </div>
+      {meta.missing_fields.length > 0 && (
+        <div style={row}><span style={{ color: 'var(--mc-text-4)' }}>Not stated:</span><span>{meta.missing_fields.join(' · ')}</span></div>
+      )}
+      <div style={row}>
+        <span style={{ color: 'var(--mc-text-4)' }}>Source:</span>
+        {meta.source_url ? <a href={meta.source_url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--mc-cyan)' }}>{meta.provenance === 'FILED' ? 'filing document' : meta.source_label || 'news report'} ↗</a> : <span>—</span>}
+        <span style={{ color: 'var(--mc-text-4)' }}>· Last checked:</span><span>{when || 'not checked yet'}</span>
+      </div>
+    </div>
+  );
+}
+function MilestoneLine({ m }: { m: NonNullable<DealAnalytics['milestone']> }) {
+  const d = new Date(`${m.date}T00:00:00Z`).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  return (
+    <div data-ss-milestone={m.overdue ? 'overdue' : m.kind} style={{ marginTop: 4, marginBottom: 6, fontSize: 11, color: 'var(--mc-text-3)', fontFamily: 'ui-monospace, monospace' }}>
+      <span style={{ color: m.overdue ? 'var(--mc-bearish)' : 'var(--mc-cyan)', fontWeight: 700, marginRight: 6 }}>→</span>
+      <span>{m.label}: {d}</span>
+      {m.overdue ? <span style={{ marginLeft: 8, color: 'var(--mc-bearish)', fontWeight: 700 }}>OVERDUE · {-m.daysOut}d past{m.kind === 'ESTIMATE' ? ' the typical date' : ''}</span>
+        : <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--mc-text-4)' }}>· in {m.daysOut}d</span>}
+    </div>
+  );
+}
+function DealMathsStrip({ deal, cmp, currency }: { deal: DealAnalytics; cmp: number | null; currency: string }) {
+  const t = deal.sourced;
+  const chip = { padding: '1px 6px', borderRadius: 3, border: '1px solid var(--mc-bg-4)' } as const;
+  return (
+    <div data-ss-deal-maths style={{ marginTop: 6, display: 'flex', gap: 6, fontSize: 10, flexWrap: 'wrap', alignItems: 'center', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', color: 'var(--mc-text-3)' }}>
+      {t.perShare && <span style={chip} title="Stated by the source">Per share (stated): <strong style={{ color: 'var(--mc-text-1)' }}>{t.perShare.text}</strong></span>}
+      {t.programmeSize && <span style={chip} title="Total size of the programme — not a per-share price">Programme size: <strong style={{ color: 'var(--mc-text-1)' }}>{t.programmeSize}</strong></span>}
+      {t.totalConsideration && <span style={chip}>Total value: <strong style={{ color: 'var(--mc-text-1)' }}>{t.totalConsideration}</strong></span>}
+      {t.acquiredStake && <span style={chip}>Stake: <strong style={{ color: 'var(--mc-text-1)' }}>{t.acquiredStake}</strong></span>}
+      {cmp != null && <span style={chip}>Price now: <strong style={{ color: 'var(--mc-text-1)' }}>{currency}{cmp.toLocaleString()}</strong></span>}
+      {deal.grossSpreadPct != null && <span style={chip} title="Stated per-share consideration vs price now, before costs">Gross spread: <strong style={{ color: deal.grossSpreadPct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{deal.grossSpreadPct >= 0 ? '+' : ''}{deal.grossSpreadPct.toFixed(2)}%</strong></span>}
+      {deal.live ? (
+        <span style={{ ...chip, color: 'var(--mc-warn)' }} title={`Assumes: ${deal.live.assumptions.join('; ')}`}>
+          If completed {deal.live.successPayoffPct.toFixed(1)}% · if it fails {deal.live.failurePayoffPct.toFixed(1)}% · break-even odds {deal.live.breakEvenProbabilityPct.toFixed(0)}%
+        </span>
+      ) : deal.notEstablished.length > 0 && !deal.notEstablished[0].startsWith('not a spread trade') ? (
+        <span data-ss-not-established style={{ ...chip, borderStyle: 'dashed' }} title="A live return needs all of: price now, stated per-share consideration, stated completion date, downside if the deal fails">
+          Return: Not established — missing {deal.notEstablished.join(', ')}
+        </span>
+      ) : null}
+      {deal.illustrative && (
+        <span style={{ ...chip, borderStyle: 'dotted', color: 'var(--mc-text-4)' }} title={deal.prior?.source || ''}>
+          Illustration (typical deal, not this one): spread {deal.illustrative.spreadPct}% over ~{deal.illustrative.closeDays}d
+        </span>
+      )}
+      {deal.prior && (
+        <span style={{ ...chip, color: 'var(--mc-text-4)' }} title={deal.prior.source}>
+          Prior (event type): {deal.prior.successRatePct}% completed · ~{deal.prior.avgCloseDays}d
+        </span>
+      )}
+    </div>
+  );
+}
+
+function EvidenceFilterBar({ value, onChange, counts, shown, total, filtersOn, region, focusEventId }: { value: EvidenceFilter; onChange: (f: EvidenceFilter) => void; counts: Record<EvidenceFilter, number>; shown: number; total: number; filtersOn: boolean; region: string; focusEventId: string | null }) {
+  const opts: Array<{ k: EvidenceFilter; label: string; tip: string; color: string }> = [
+    { k: 'ALL', label: 'All final', tip: 'Every event in the final set (confirmed + pending check)', color: 'var(--mc-text-2)' },
+    { k: 'CONFIRMED', label: 'Confirmed', tip: 'Checked: the company document or the primary source states it', color: 'var(--mc-bullish)' },
+    { k: 'PENDING', label: 'Pending check', tip: 'Shown while the check against the company document is still to run — not a confirmed hard catalyst', color: 'var(--mc-warn)' },
+    { k: 'ARCHIVED', label: 'Archived', tip: 'Held back from the final set: contradicted, closed unverified, not an equity event, or waiting for a check (not shown)', color: 'var(--mc-text-4)' },
+  ];
+  return (
+    <div data-ss-evidence-filter style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+      {opts.map((o) => {
+        const on = value === o.k;
+        return (
+          <button key={o.k} data-ss-evidence-chip={o.k} onClick={() => onChange(o.k)} title={o.tip}
+            style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer', color: on ? o.color : 'var(--mc-text-3)', border: `1px solid ${on ? o.color : 'var(--mc-bg-4)'}`, background: on ? 'var(--mc-bg-2)' : 'transparent' }}>
+            {o.label} ({counts[o.k]})
+          </button>
+        );
+      })}
+      <span data-ss-shown-of-total style={{ fontSize: 11, color: 'var(--mc-text-4)', marginLeft: 6 }}>
+        {focusEventId ? `One event (link from home) · ` : ''}Showing {shown} of {total}{value === 'ARCHIVED' ? ' archived' : ' final'} events{region !== 'ALL' ? ` · region ${region}` : ''}{filtersOn && shown !== total ? ' · filters on (tier / category / coverage)' : ''}
+      </span>
+    </div>
+  );
+}
+
+function ArchivedList({ events }: { events: CanonicalEvent[] }) {
+  const [limit, setLimit] = useState(50);
+  if (!events.length) return <div style={{ fontSize: 12, color: 'var(--mc-text-4)', padding: 12 }}>Nothing archived.</div>;
+  return (
+    <div data-ss-archived style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div style={{ fontSize: 11, color: 'var(--mc-text-4)', lineHeight: 1.5 }}>Archived = held back from the final set. These are never counted as Special Situations; each shows why it was held back.</div>
+      {events.slice(0, limit).map((e) => (
+        <a key={e.event_id} href={e.primary_filing?.link || '#'} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', gap: 8, fontSize: 11, padding: '5px 8px', border: '1px solid var(--mc-bg-4)', borderRadius: 4, textDecoration: 'none', color: 'var(--mc-text-2)' }}>
+          <span style={{ color: 'var(--mc-text-4)', minWidth: 170 }}>{(FEED_QUARANTINE_LABEL as Record<string, string>)[String(e.quarantine_reason)]?.split(':')[0] || String(e.quarantine_reason)}</span>
+          <span style={{ flex: 1 }}>{e.primary_filing?.title}</span>
+          <span style={{ color: 'var(--mc-text-4)' }}>{e.primary_filing?.source}</span>
+        </a>
+      ))}
+      <ShowMoreBar shown={Math.min(limit, events.length)} total={events.length} step={50} color="var(--mc-text-4)" onMore={() => setLimit((l) => l + 50)} onAll={() => setLimit(events.length)} />
     </div>
   );
 }
@@ -1272,39 +1142,6 @@ function CanonicalSection({ meta, color, events, defaultExpanded }: { meta: { la
   );
 }
 
-// PATCH 0128 — extract offer price / consideration from filing title text.
-// Returns USD or INR amount as a number, plus currency symbol.  Crude but
-// effective: regex catches '$23.50 per share', 'Rs 750', '₹1,250', '750/-'
-// patterns we see in tender / open-offer titles.
-function parseDealPrice(text: string): { amount: number; currency: string; unit?: string } | null {
-  if (!text) return null;
-  // Keep magnitude tokens (crore / lakh / billion / million) so deal VALUES
-  // like '₹15,000 crore' or '$1 billion' are not shown as bare per-share prices.
-  const magAfter = (src: string, m: RegExpMatchArray): string | undefined => {
-    const rest = src.slice((m.index ?? 0) + m[0].length).trimStart();
-    const mm = rest.match(/^[-–]?\s*(crores?|crs?\.?|lakhs?|lacs?|billions?|bn\b|b\b|millions?|mn\b|m\b)/i);
-    if (!mm) return undefined;
-    const r = mm[1].toLowerCase();
-    if (r.startsWith('cr')) return 'Cr';
-    if (r.startsWith('lakh') || r.startsWith('lac')) return 'L';
-    if (r.startsWith('b')) return 'B';
-    return 'M';
-  };
-  // USD: $XX.XX or USD XX.XX per share
-  let m = text.match(/(?:\$|USD\s*)\s*([\d,]+\.?\d*)\s*(?:per\s+share|\/share)?/i);
-  if (m) {
-    const n = Number(m[1].replace(/,/g, ''));
-    if (Number.isFinite(n) && n > 0 && n < 100000) return { amount: n, currency: '$', unit: magAfter(text, m) };
-  }
-  // INR: Rs / ₹ / INR
-  m = text.match(/(?:rs\.?|₹|inr)\s*([\d,]+\.?\d*)\s*(?:per\s+share|\/-?)?/i);
-  if (m) {
-    const n = Number(m[1].replace(/,/g, ''));
-    if (Number.isFinite(n) && n > 0 && n < 1000000) return { amount: n, currency: '₹', unit: magAfter(text, m) };
-  }
-  return null;
-}
-
 // PATCH 0128 — fetch a single quote for the first ticker on an event card.
 // Reuses the same /market/quotes endpoint other tabs use.  Returns null
 // when no ticker / no live quote available.
@@ -1332,15 +1169,17 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
   const ageLabel = ev.age_hours < 24 ? `${ev.age_hours}h` : `${Math.round(ev.age_hours / 24)}d`;
   // PATCH 0259 — decay color, 0258 — next catalyst, 0260 — india subcat
   const ageColor = ageColorFor(ev.event_type, ev.age_hours);
-  const nextCat = nextCatalystFor(ev as any);
   const indiaSubcat = ev.region === 'IN' ? inferIndiaSubcategory(ev.primary_filing?.title || '', ev.event_type) : null;
   // PATCH 0167 — Rejected reason persistence
   const [rejection, setRejection] = useState<RejectionRecord | null>(null);
   const [showRejectInput, setShowRejectInput] = useState(false);
   const [draftReason, setDraftReason] = useState('');
+  // zzz1066: notes saved against the pre-canonical id still show (legacy_ids)
+  const legacyIds = ev.final?.legacy_ids || (ev.legacy_event_id ? [ev.legacy_event_id] : []);
   useEffect(() => {
     const all = loadRejections();
-    setRejection(all[ev.event_id] || null);
+    setRejection(all[ev.event_id] || legacyIds.map((x) => all[x]).find(Boolean) || null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ev.event_id]);
   const saveRejection = () => {
     const txt = draftReason.trim();
@@ -1355,34 +1194,27 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
   const deleteRejection = () => {
     const all = loadRejections();
     delete all[ev.event_id];
+    for (const x of legacyIds) delete all[x];
     saveRejections(all);
     setRejection(null);
   };
-  // PATCH 0128 — inline deal spread + annualized return strip
-  const primaryTicker = ev.tickers[0];
-  const dealPrice = useMemo(() => parseDealPrice(ev.primary_filing.title), [ev.primary_filing.title]);
-  const { data: dealQuote } = useDealQuote(
-    ev.tier === 'TIER_1' || ev.tier === 'TIER_2' ? primaryTicker : undefined
-  );
+  // zzz1066 (audit S03): deal maths from SOURCED terms only. The card used to read "$10M" from a headline as a per-share
+  // offer, fill missing spreads / durations from the playbook, and multiply by a heuristic probability. Now: a live price
+  // is fetched only for a resolved issuer; spread / return show only when price, per-share consideration, completion date and
+  // a downside assumption all exist; the playbook appears as a labelled illustration + historical prior.
+  const identity = ev.final?.issuer || null;
+  const primaryTicker = identity && identity.state === 'RESOLVED' ? identity.ticker || undefined : undefined;
+  const dealIn = useMemo(() => ({
+    event_type: ev.event_type, title: ev.primary_filing?.title, description: ev.primary_filing?.description,
+    event_date: ev.final?.event_date || ev.primary_filing?.pub_date || null, region: ev.region,
+    terms_fields: ev.final?.terms_fields || null, terms_kind: ev.final?.terms_kind || null,
+    sec_form: /\bSC\s*TO-I\b/i.test(ev.primary_filing?.title || '') ? 'SC TO-I' : null,
+  }), [ev]);
+  const isArbType = ['OPEN_OFFER', 'TENDER_OFFER', 'GOING_PRIVATE', 'MERGER_DEFINITIVE', 'ACQUISITION_PUBLIC', 'BUYBACK_TENDER'].includes(effectiveEventType(dealIn));
+  const { data: dealQuote } = useDealQuote(isArbType && (ev.tier === 'TIER_1' || ev.tier === 'TIER_2') ? primaryTicker : undefined);
   const cmp = dealQuote?.price ?? null;
-  const offer = dealPrice?.amount ?? null;
-  const spreadPct = offer !== null && cmp !== null && cmp > 0 && !dealPrice?.unit ? ((offer - cmp) / cmp) * 100 : null; // a unit means deal VALUE, not a per-share price
-  // Crude time-to-close estimate: tender offers typically 30-60d, going-private
-  // ~120d, M&A definitive ~180d.  Fallback 60d if no event_type hint.
-  const daysToCloseGuess =
-    ev.event_type === 'TENDER_OFFER' || ev.event_type === 'BUYBACK_TENDER' ? 35 :
-    ev.event_type === 'OPEN_OFFER' || ev.event_type === 'GOING_PRIVATE'    ? 90 :
-    ev.event_type === 'MERGER_DEFINITIVE' || ev.event_type === 'ACQUISITION_PUBLIC' ? 180 :
-    ev.event_type === 'SPIN_OFF' || ev.event_type === 'DEMERGER_INDIA' || ev.event_type === 'IPO_SUBSIDIARY' ? 120 : 60;
-  const annualizedPct = spreadPct != null ? spreadPct * (365 / daysToCloseGuess) : null;
-  // PATCH 0353 — Per-row analytics bundle. Uses live CMP+offer when
-  // available, falls back to playbook prior. Drives the new prob /
-  // EV / lifecycle chips on the card header.
-  const analytics = useMemo(() => computeEventAnalytics(ev as any, {
-    cmp: cmp ?? undefined,
-    offer: offer ?? undefined,
-    ageDays: (ev.age_hours ?? 0) / 24,
-  }), [ev, cmp, offer]);
+  const deal = useMemo(() => computeDealAnalytics(dealIn, { cmp }), [dealIn, cmp]);
+  const alphaType = effectiveEventType(dealIn);
   return (
     <div style={{
       backgroundColor: rejection ? '#1A0E10' : 'var(--mc-bg-1)',
@@ -1425,11 +1257,13 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
             <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--mc-text-1)' }}>{ev.target_name}</span>
           )}
           <NotCheckedChip id={ev.event_id} />
-          {ev.tickers.slice(0, 4).map((t) => (
-            <span key={t} style={{ fontSize: 11, fontWeight: 700, color: '#38A9E8', backgroundColor: 'color-mix(in srgb, var(--mc-accent) 13%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-accent) 25%, transparent)', padding: '1px 6px', borderRadius: 3, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-              {t}
+          {/* zzz1066 (S02): issuer identity confirmed in a security list, or said to be unresolved — never a headline token */}
+          {identity ? <IdentityChip id={identity} /> : ev.tickers.slice(0, 4).map((t) => (
+            <span key={t} title="Ticker from the feed (older payload, not checked against a security list)" style={{ fontSize: 11, fontWeight: 700, color: 'var(--mc-text-3)', border: '1px dashed var(--mc-bg-4)', padding: '1px 6px', borderRadius: 3, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+              {t}?
             </span>
           ))}
+          {ev.final && <EvidenceChips meta={ev.final} />}
           {ev.amendment_count > 0 && (
             <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--mc-warn)', padding: '1px 7px', borderRadius: 3, backgroundColor: 'color-mix(in srgb, var(--mc-warn) 9%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)' }}>
               + {ev.amendment_count} amendment{ev.amendment_count > 1 ? 's' : ''}
@@ -1438,17 +1272,13 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
           {/* PATCH 0257 — '×N sources' chip when the event was deduplicated
               from multiple syndicated reports. Higher count = stronger
               corroboration. */}
-          {(() => {
-            const n = (ev as any).__source_count as number | undefined;
-            const srcs = (ev as any).__source_list as string[] | undefined;
-            if (!n || n < 2) return null;
-            return (
-              <span title={`Corroborated by ${n} sources: ${(srcs || []).join(', ')}`}
-                style={{ fontSize: 10, fontWeight: 700, color: 'var(--mc-cyan)', padding: '1px 7px', borderRadius: 3, backgroundColor: 'color-mix(in srgb, var(--mc-cyan) 9%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)' }}>
-                ×{n} sources
-              </span>
-            );
-          })()}
+          {/* zzz1066 (S04): linked records of THIS event (syndicated copies + amendments the server merged), not a collision bucket */}
+          {ev.final && ev.final.linked_records > 1 && (
+            <span title={`${ev.final.linked_records} linked records for this one event (syndicated copies, follow-ups and amendments merged by the server)`}
+              style={{ fontSize: 10, fontWeight: 700, color: 'var(--mc-cyan)', padding: '1px 7px', borderRadius: 3, backgroundColor: 'color-mix(in srgb, var(--mc-cyan) 9%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-cyan) 25%, transparent)' }}>
+              {ev.final.linked_records} linked records
+            </span>
+          )}
           {ev.lifecycle && ev.lifecycle !== 'unknown' && (
             <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--mc-text-3)', padding: '1px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-4)' }}>
               {ev.lifecycle}
@@ -1457,11 +1287,12 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
           {/* PATCH 0254 — Expected-alpha tag derived from event_type. Tells the
               user WHAT KIND of trade this is before they read the full card. */}
           {(() => {
-            const alpha = expectedAlphaFor(ev.event_type);
+            // zzz1066: a buyback is "spread + odd-lot capture" only when the source says it is a tender
+            const alpha = expectedAlphaFor(alphaType === 'BUYBACK_OPEN_MARKET' ? 'BUYBACK' : alphaType);
             if (!alpha) return null;
             // AUDIT_100 #74 — tooltip surfaces historical p25-p50-p75 IRR
             const tip = alpha.typicalIRR
-              ? `Expected alpha: ${alpha.label}. Typical net IRR: ${alpha.typicalIRR}`
+              ? `Usual source of return for this event type: ${alpha.label}. Historical prior (not this deal): ${alpha.typicalIRR}`
               : 'Expected source of alpha for this event type';
             return (
               <span title={tip}
@@ -1508,83 +1339,13 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
             <ExternalLink style={{ width: 11, height: 11 }} />
           </span>
         </div>
-        {/* PATCH 0258 — Next-catalyst chip on its own line for visibility */}
-        {nextCat && (
-          <div style={{ marginTop: 4, marginBottom: 6, fontSize: 11, color: 'var(--mc-text-3)', fontFamily: 'ui-monospace, monospace' }}>
-            <span style={{ color: 'var(--mc-cyan)', fontWeight: 700, marginRight: 6 }}>→</span>
-            <span>{nextCat.label}</span>
-            {nextCat.daysOut !== null && nextCat.daysOut >= 0 && (
-              <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--mc-text-4)' }}>· {nextCat.daysOut}d away</span>
-            )}
-          </div>
-        )}
+        {/* zzz1066 (S03): next milestone — a stated date, or an estimate anchored to the EVENT date; overdue says overdue */}
+        {deal.milestone && <MilestoneLine m={deal.milestone} />}
         <div style={{ display: 'none' }}>{/* placeholder to keep JSX shape from previous code */}
         </div>
         <div style={{ fontSize: 13, color: 'var(--mc-text-1)', fontWeight: 500, lineHeight: 1.4 }}>{ev.primary_filing.title}</div>
-        {/* PATCH 0128 — Inline deal spread / annualized return strip */}
-        {(offer != null || cmp != null) && (
-          <div style={{ marginTop: 6, display: 'flex', gap: 12, fontSize: 11, flexWrap: 'wrap', color: 'var(--mc-text-3)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-            {offer != null && (
-              <span><span style={{ color: 'var(--mc-text-4)' }}>Offer:</span> <strong style={{ color: 'var(--mc-text-1)' }}>{dealPrice?.currency}{offer.toLocaleString()}{dealPrice?.unit ? (dealPrice.unit === 'B' || dealPrice.unit === 'M' ? dealPrice.unit : ' ' + dealPrice.unit) : ''}</strong></span>
-            )}
-            {cmp != null && (
-              <span><span style={{ color: 'var(--mc-text-4)' }}>CMP:</span> <strong style={{ color: 'var(--mc-text-1)' }}>{dealPrice?.currency || (ev.region === 'IN' ? '₹' : '$')}{cmp.toLocaleString()}</strong></span>
-            )}
-            {spreadPct != null && (
-              <span><span style={{ color: 'var(--mc-text-4)' }}>Spread:</span> <strong style={{ color: spreadPct >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{spreadPct >= 0 ? '+' : ''}{spreadPct.toFixed(2)}%</strong></span>
-            )}
-            {annualizedPct != null && (
-              <span title={`Assumes ${daysToCloseGuess}d close`}><span style={{ color: 'var(--mc-text-4)' }}>Ann:</span> <strong style={{ color: annualizedPct >= 0 ? 'var(--mc-cyan)' : 'var(--mc-bearish)' }}>{annualizedPct >= 0 ? '+' : ''}{annualizedPct.toFixed(1)}%/yr</strong></span>
-            )}
-            {/* PATCH 0447 IMP-2 — Break-price downside. When the deal fails,
-                the stock typically reverts to its pre-announcement standalone
-                value. Heuristic break = offer minus 1.5× current spread (i.e.
-                if deal fails, the premium reverses + adds equal-sized
-                disappointment discount). Surfaces the asymmetric payoff. */}
-            {offer != null && cmp != null && spreadPct != null && (() => {
-              const breakPrice = cmp - Math.abs(offer - cmp) * 1.5;
-              const breakLoss = ((breakPrice - cmp) / cmp) * 100;
-              return (
-                <span title={`If deal fails: stock typically reverts to standalone value ≈ ₹${breakPrice.toFixed(2)} (estimated -${Math.abs(breakLoss).toFixed(1)}% from CMP). Heuristic = CMP − 1.5× current spread.`}
-                  style={{ color: 'var(--mc-text-4)' }}>
-                  Break: <strong style={{ color: 'var(--mc-bearish)' }}>{breakLoss.toFixed(1)}%</strong>
-                </span>
-              );
-            })()}
-            <span style={{ color: 'var(--mc-text-4)' }}>~{daysToCloseGuess}d est. close</span>
-          </div>
-        )}
-        {/* PATCH 0353 — Institutional analytics chip strip. Always rendered
-            (uses playbook priors when no live quote). Adds the per-row
-            equivalent of the BestRiskRewardBoard chips: probability,
-            lifecycle stage, EV. Lets the user grade an event without
-            expanding it. */}
-        <div style={{ marginTop: 6, display: 'flex', gap: 6, fontSize: 10, flexWrap: 'wrap', alignItems: 'center', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-          <span title={`Filing tier inferred from event_type: ${analytics.filingTier}. Deal-probability heuristic per lib/deal-probability.ts`}
-            style={{ color: analytics.probabilityColor, fontWeight: 800, padding: '1px 6px', borderRadius: 3,
-              border: `1px solid ${analytics.probabilityColor}40`, backgroundColor: `${analytics.probabilityColor}12` }}>
-            P {analytics.probability}% · {analytics.probabilityLabel.toLowerCase()}
-          </span>
-          <span title={`Inferred lifecycle stage. ${LIFECYCLE_CONFIG[analytics.lifecycleState].description}`}
-            style={{ color: analytics.lifecycleColor, fontWeight: 800, padding: '1px 6px', borderRadius: 3,
-              border: `1px solid ${analytics.lifecycleColor}40`, backgroundColor: `${analytics.lifecycleColor}12` }}>
-            ▶ {analytics.lifecycleLabel}
-          </span>
-          {analytics.expectedIRR != null && (
-            <span title={`Expected IRR = annualized IRR (${analytics.annIRR?.toFixed(0)}%/yr) × probability (${analytics.probability}%). Uses ${analytics.spreadPct != null && cmp != null ? 'LIVE spread + CMP' : 'playbook prior typical spread'}.`}
-              style={{ color: 'var(--mc-warn)', fontWeight: 800, padding: '1px 6px', borderRadius: 3,
-                border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)', backgroundColor: 'color-mix(in srgb, var(--mc-warn) 7%, transparent)' }}>
-              EV {analytics.expectedIRR >= 0 ? '+' : ''}{analytics.expectedIRR.toFixed(1)}%/yr
-            </span>
-          )}
-          {!analytics.expectedIRR && analytics.hasPlaybook && (
-            <span title="Non-arb event — using catalyst-score as EV proxy"
-              style={{ color: 'var(--mc-text-3)', fontWeight: 700, padding: '1px 6px', borderRadius: 3,
-                border: '1px solid color-mix(in srgb, var(--mc-text-3) 25%, transparent)', backgroundColor: 'color-mix(in srgb, var(--mc-text-3) 7%, transparent)' }}>
-              EV n/a (non-arb)
-            </span>
-          )}
-        </div>
+        {ev.final && <EvidenceBlock meta={ev.final} />}
+        <DealMathsStrip deal={deal} cmp={cmp} currency={deal.sourced.perShare?.currency || (identity?.market === 'IN' || ev.region === 'IN' ? '₹' : '$')} />
         {!expanded && (
           <div style={{ fontSize: 11, color: 'var(--mc-text-3)', marginTop: 4, fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ flex: 1 }}>{ev.tradability_rationale}</span>
@@ -1606,13 +1367,14 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
               this event type (avg close, success rate, typical spread,
               dominant failure modes, retail-overhang flag). */}
           {(() => {
-            const pb = getPlaybook(ev.event_type);
+            const pb = getPlaybook(alphaType);
             if (!pb) return null;
             return (
               <div style={{ backgroundColor: 'var(--mc-bg-0)', border: '1px solid var(--mc-bg-4)', borderLeft: '3px solid var(--mc-state-persistent)', borderRadius: 6, padding: '10px 14px' }}>
                 <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-state-persistent)', letterSpacing: '0.4px', marginBottom: 8 }}>
-                  📐 PLAYBOOK — {pb.label}
+                  📐 HISTORICAL PRIOR — {pb.label} (event type, not this deal)
                 </div>
+                <div style={{ fontSize: 10, color: 'var(--mc-text-4)', marginBottom: 8, lineHeight: 1.4 }}>{deal.prior?.source}</div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8, marginBottom: 8 }}>
                   <div style={{ backgroundColor: 'var(--mc-bg-1)', padding: '6px 10px', borderRadius: 4 }}>
                     <div style={{ fontSize: 9, color: 'var(--mc-text-4)', fontWeight: 700, letterSpacing: '0.5px' }}>AVG CLOSE</div>
@@ -2258,7 +2020,9 @@ function SpecsitAnalytics({ events, isLoading }: { events: CanonicalEvent[]; isL
       hurdles: hurdlesFor(ev),
       friendliness: 'FRIENDLY',
     });
-    const catalyst = nextCatalystFor(ev);
+    // zzz1066 (S03): milestone anchored to the event date (overdue = no countdown), never rolled forward to today
+    const ms = milestoneFor(dealInputOf(ev));
+    const catalyst = ms ? { label: ms.overdue ? `${ms.label} — overdue` : ms.label, daysOut: ms.overdue ? null : ms.daysOut } : null;
     const playbook = getPlaybook(ev.event_type);
     const lifecycle = ev.lifecycle as LifecycleState;
     const lifecycleMeta = LIFECYCLE_CONFIG[lifecycle] || null;
@@ -2270,16 +2034,8 @@ function SpecsitAnalytics({ events, isLoading }: { events: CanonicalEvent[]; isL
   // ── BEST RISK/REWARD ────────────────────────────────────────────────────
   // For events without a real spread we approximate EV via catalyst_score ×
   // probability / time-to-catalyst. Events ranked descending.
-  const ranked = useMemo(() => {
-    const scored = enriched.map((e) => {
-      const cat = e.ev.catalyst_score?.raw_score ?? 0;
-      const tttCat = e.catalyst?.daysOut ?? 90;
-      const ttcSafe = Math.max(7, Math.abs(tttCat));
-      const evScore = (cat * (e.prob.score / 100) * 365) / ttcSafe;
-      return { ...e, evScore };
-    });
-    return [...scored].sort((a, b) => b.evScore - a.evScore);
-  }, [enriched]);
+  // zzz1066 (S03): no synthetic EV. Ranked by the catalyst score (how definitive / fresh / sourced the event is), labelled as such.
+  const ranked = useMemo(() => [...enriched].map((e) => ({ ...e, evScore: e.ev.catalyst_score?.decay_score ?? 0 })).sort((a, b) => b.evScore - a.evScore), [enriched]);
 
   // ── BREAK-RISK FLAGS ────────────────────────────────────────────────────
   const breakRisk = useMemo(() => enriched
@@ -2423,7 +2179,7 @@ function SpecsitAnalytics({ events, isLoading }: { events: CanonicalEvent[]; isL
         }}
         title={[
           `Filing tier: ${e.tier}`,
-          `Probability: ${e.prob.score}/100 (${e.prob.label})`,
+          `Completion prior: ${e.prob.score}/100 (${e.prob.label}) — event-type heuristic, not this deal`,
           e.catalyst ? `Catalyst: ${e.catalyst.label}` : '',
           e.lifecycleMeta ? `Lifecycle: ${e.lifecycleMeta.label}` : '',
           `Source: ${e.ev.primary_filing?.source || '—'} (${e.sourceTier || 'UNK'})`,
@@ -2443,7 +2199,7 @@ function SpecsitAnalytics({ events, isLoading }: { events: CanonicalEvent[]; isL
             color: e.prob.color, background: `${e.prob.color}20`,
             border: `1px solid ${e.prob.color}40`, padding: '1px 5px', borderRadius: 3,
           }}>
-            P {e.prob.score}
+            prior {e.prob.score}
           </span>
           {extra}
         </div>
@@ -2506,21 +2262,21 @@ function SpecsitAnalytics({ events, isLoading }: { events: CanonicalEvent[]; isL
       <div style={{ ...cardStyle, borderColor: 'color-mix(in srgb, var(--mc-warn) 25%, transparent)', background: 'linear-gradient(180deg, color-mix(in srgb, var(--mc-warn) 6%, transparent) 0%, transparent 100%)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
           <div style={{ fontSize: 13, color: 'var(--mc-warn)', fontWeight: 800, letterSpacing: '0.4px' }}>
-            🎯 BEST RISK / REWARD ({ranked.slice(0, 12).length})
+            🎯 STRONGEST CATALYSTS ({ranked.slice(0, 12).length})
           </div>
           <span style={{ fontSize: 10, color: 'var(--mc-warn)', background: 'color-mix(in srgb, var(--mc-warn) 13%, transparent)', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>
-            EV-RANKED
+            CATALYST SCORE — NOT A RETURN
           </span>
         </div>
         <div style={{ fontSize: 11, color: 'var(--mc-text-4)', marginBottom: 10, lineHeight: 1.5 }}>
-          EV proxy = catalyst-score × probability × (365 ÷ days-to-catalyst). Higher = sooner + higher conviction.
-          When a deal carries a real offer/spot spread, use the Acceptance / Deal Math tab to get the exact IRR.
+          Ranked by catalyst score (definitive filing, named issuer, primary source, freshness). This is not an expected return:
+          a return needs a live price, a stated per-share consideration, a stated completion date and a downside — enter them in the Acceptance / Deal Math tab.
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(310px, 1fr))', gap: 6 }}>
           {ranked.slice(0, 12).map((e, i) => (
             <EventRow key={e.ev.event_id + i} e={e} accent="#F59E0B" extra={
               <span style={{ fontSize: 9, color: 'var(--mc-warn)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
-                EV {Math.round(e.evScore)}
+                score {Math.round(e.evScore)}
               </span>
             } />
           ))}

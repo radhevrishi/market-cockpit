@@ -56,6 +56,7 @@ import {
 // PATCH 0820 — pull BUCKET_COLOR + BUCKET_GLYPH for the new 9-bucket primary chip
 import { computeMoveQuality, QUALITY_COLOR, CONTINUATION_COLOR, BUCKET_COLOR as BUCKET_MQ_COLOR, getHistoricalOutcome } from '@/lib/move-quality';
 import { getConvictionTickers } from '@/lib/conviction-beats';
+import { homeRowsFromFinal } from '@/lib/special-sit-final';
 import { TV_MANIFEST_URL, tvFileUrl } from '@/lib/screener-data-loader';   // zzz1048 — own-screener replacement of the TradingView CSVs
 import { canonicalTicker } from '@/lib/ticker-normalize'; // PATCH 0721
 // PATCH 0715 — centralized IST helpers.
@@ -1004,155 +1005,15 @@ export default function HomeDashboard() {
             //     total, by_tier }
             const specialByTicker: Record<string, any> = {};
             const ssData = ssRes?.data || {};
-            const ssEvents: any[] = Array.isArray(ssData)
-              ? ssData
-              : (ssData.events || []);
-            // Also flatten by_category items as a richer fallback (87 items vs 31 events)
-            const byCategory = ssData.by_category || {};
-            const ssCategoryItems: any[] = [];
-            for (const [cat, items] of Object.entries(byCategory)) {
-              if (!Array.isArray(items)) continue;
-              for (const item of items as any[]) {
-                ssCategoryItems.push({ ...item, _category: cat });
-              }
+            // zzz1066 (audit S01 / S02): the home rail reads the server's ONE final set (`final_events`) — the same events, issuer
+            // identity, market and FILED / REPORTED label as the full Special Situations page. Held-back, contradicted, expired
+            // and merged copies never reach home; tickers are only those confirmed in a security list (no 'PTI' / 'CNBC' / 'SPV').
+            const ssFinal: any[] = Array.isArray(ssData.final_events) ? ssData.final_events : [];
+            const ssForHome = homeRowsFromFinal(ssFinal, 12);
+            for (const r of homeRowsFromFinal(ssFinal, 500)) {
+              if (!r.ticker || specialByTicker[r.ticker]) continue;
+              specialByTicker[r.ticker] = { ticker: r.ticker, market: r.market, event_type: r.event_type, announced_at: r.announced_at, headline: r.headline, source_url: r.source_url };
             }
-            const allSsItems: any[] = [...ssEvents, ...ssCategoryItems];
-
-            // Helper — extract ticker (events use tickers[], legacy items use ticker)
-            const extractTicker = (ev: any): string => {
-              if (Array.isArray(ev.tickers) && ev.tickers.length > 0) return String(ev.tickers[0]).toUpperCase().replace(/\.(NS|BO)$/i, '');
-              if (ev.ticker) return String(ev.ticker).toUpperCase().replace(/\.(NS|BO)$/i, '');
-              if (ev.target) return String(ev.target).toUpperCase().replace(/\.(NS|BO)$/i, '');
-              if (ev.symbol) return String(ev.symbol).toUpperCase().replace(/\.(NS|BO)$/i, '');
-              return '';
-            };
-            const extractHeadline = (ev: any): string => {
-              return ev.headline || ev.title || ev.primary_filing?.title || ev.why_tradable?.what_happened || '';
-            };
-            const extractEventType = (ev: any): string => {
-              return ev.event_type || ev.type || ev._category || ev.category || 'CORPORATE_ACTION';
-            };
-            const extractAnnouncedAt = (ev: any): string | null => {
-              return ev.announced_at || ev.date || ev.pub_date || ev.primary_filing?.pub_date || null;
-            };
-
-            for (const ev of allSsItems) {
-              const sym = extractTicker(ev);
-              if (!sym) continue;
-              if (specialByTicker[sym]) continue;
-              specialByTicker[sym] = {
-                ticker: sym,
-                event_type: extractEventType(ev),
-                sub_category: ev.sub_category || ev.category_label,
-                announced_at: extractAnnouncedAt(ev),
-                headline: extractHeadline(ev),
-                source_url: ev.source_url || ev.url || ev.link || ev.primary_filing?.link,
-              };
-            }
-
-            // PATCH 0859 — Home Special Situations rail: DIRECT-TRADE items only.
-            // Previously the rail dumped raw by_category items including law-court
-            // judgments (TURN bucket: 'Section 2(1)(e) of Arbitration Act…',
-            // 'Shaifali Steels vs ITO'). User correctly flagged: 'wired a raw
-            // law-judgment RSS dump straight into a Special Situations rail with
-            // almost no product thinking'. Now:
-            //   (a) PREFER the structured events[] stream (BUYBACK_TENDER /
-            //       OPEN_OFFER / SCHEME / DEMERGER / RIGHTS / etc with real tickers
-            //       extracted from filings).
-            //   (b) DROP law-judgment-shaped headlines (regex on title).
-            //   (c) DROP bogus ticker abbreviations (UBS/OTP/QIP/PLI class).
-            //   (d) DROP items with no real corporate-action keyword in title.
-            //   (e) DEDUP by canonical key.
-            //   (f) Cap top rail at 12.
-            // Heavier law-precedent items still flow to /special-situations full
-            // page; the home rail is curated.
-
-            // Heuristic: real listed-equity ticker pattern (2-12 uppercase letters,
-            // optional digits, no common abbreviation noise).
-            const NOISE_TICKERS = new Set(['OTP','UBS','QIP','PLI','SEBI','NCLT','RBI','GST','IBC','RERA','REAT','HC','SC','CIRP','NPA','OFS','OEM','MOU','LOA','LOI','PSU','NBFC','AMC','FII','DII','API','PAT','OPM','PBT','PBIT','EBITDA','NSE','BSE','MCA','SAT','IT','ITO','CIT','PCIT','AO','ITR','AT','GSTR']);
-            const isValidTicker = (t: string) => {
-              if (!t) return false;
-              const T = String(t).toUpperCase().trim();
-              if (NOISE_TICKERS.has(T)) return false;
-              return /^[A-Z][A-Z0-9&-]{1,11}$/.test(T);
-            };
-
-            // Heuristic: law-judgment / case-citation pattern.
-            const isLawJudgment = (title: string) => {
-              if (!title) return false;
-              const t = String(title);
-              // Case citation: 'X vs Y', 'X v. Y', 'X versus Y'
-              if (/\b(?:vs?\.?|versus)\s+[A-Z][A-Za-z]/.test(t)) return true;
-              // Section / Act / Article citations
-              if (/Section\s+\d+|Act,?\s*\d{4}|Article\s+\d+|Rule\s+\d+/i.test(t)) return true;
-              // Court / tribunal references
-              if (/\b(High Court|Supreme Court|Madras HC|Delhi HC|Mumbai HC|Bombay HC|Calcutta HC|NCLT|NCLAT|REAT|RERA Tribunal|SAT|ITAT|Tribunal\b)/i.test(t)) return true;
-              return false;
-            };
-
-            // Heuristic: corporate-action keywords (positive filter for home rail)
-            const CORP_ACTION_RE = /(?:buyback|tender|open offer|OFS|merger|demerger|scheme of arrangement|rights issue|preferential (?:allotment|issue)|delisting|spin-?off|split[- ]off|QIP|FPO|stake (?:sale|acquisition)|capital reduction|warrant conversion|bonus issue|share split|stock split)/i;
-
-            // Structured events FIRST — these are the institutional-grade rows.
-            const structuredEventTypes = new Set([
-              'BUYBACK_TENDER','OPEN_OFFER','SCHEME_OF_ARRANGEMENT','DEMERGER','MERGER','MA',
-              'RIGHTS_ISSUE','DELISTING','SPIN_OFF','PREFERENTIAL','QIP','FPO',
-              'STAKE_SALE','WARRANT_CONVERSION','BONUS','STOCK_SPLIT','CAPITAL_REDUCTION',
-            ]);
-
-            const _candidates: any[] = [];
-            for (const ev of allSsItems) {
-              const ticker = extractTicker(ev);
-              const headline = extractHeadline(ev);
-              const eventType = extractEventType(ev);
-              if (!ticker || !headline) continue;
-              // Drop noise tickers
-              if (!isValidTicker(ticker)) continue;
-              // Drop law-judgment headlines
-              if (isLawJudgment(headline)) continue;
-              // Direct-trade filter: structured event_type OR title contains real corp-action keyword
-              const isStructured = structuredEventTypes.has(String(eventType).toUpperCase());
-              const hasCorpAction = CORP_ACTION_RE.test(headline);
-              if (!isStructured && !hasCorpAction) continue;
-              // Tradeability tier
-              const tradeability = isStructured ? 'DIRECT_TRADE' : 'CORP_ACTION_NEWS';
-              _candidates.push({
-                ticker,
-                company: ev.company || ev.target_company || ev.acquirer,
-                event_type: eventType,
-                sub_category: ev.sub_category || ev.category_label,
-                announced_at: extractAnnouncedAt(ev),
-                next_catalyst_date: ev.next_catalyst_date,
-                headline: headline.replace(/\s+/g, ' ').trim().slice(0, 140),
-                source_url: ev.source_url || ev.url || ev.link || ev.primary_filing?.link,
-                expected_alpha: ev.expected_alpha,
-                source_tier: ev.source_tier || ev.tier,
-                region: ev.region,
-                lifecycle: ev.lifecycle,
-                tradeability,
-              });
-            }
-
-            // Dedup by canonical key: event_type + ticker + first-60-chars-of-headline.
-            const seen = new Set<string>();
-            const deduped = _candidates.filter((x) => {
-              const k = `${x.event_type}|${x.ticker}|${(x.headline || '').toLowerCase().slice(0, 60)}`;
-              if (seen.has(k)) return false;
-              seen.add(k);
-              return true;
-            });
-
-            // Sort: DIRECT_TRADE first, then by recency.
-            const ssForHome = deduped
-              .sort((a: any, b: any) => {
-                if (a.tradeability !== b.tradeability) {
-                  return a.tradeability === 'DIRECT_TRADE' ? -1 : 1;
-                }
-                const ta = new Date(a.announced_at || 0).getTime();
-                const tb = new Date(b.announced_at || 0).getTime();
-                return tb - ta;
-              })
-              .slice(0, 12);  // cap top rail per user spec
             setData((d) => ({ ...d, specialSituations: ssForHome } as any));
 
             // 4. News per ticker (parallel, bounded)
@@ -3851,19 +3712,7 @@ export default function HomeDashboard() {
               ACQUISITION:      'Acquisition',
               CORPORATE_ACTION: 'Corp. action',
             };
-            // Crude market inference: USA tickers are typically 1-4 chars
-            // ALL-CAPS without digits; Indian tickers can be 5-12 chars OR
-            // BSE 6-digit numeric codes.
-            const inferMarket = (tk: string): 'IN' | 'US' => {
-              const t = (tk || '').trim().toUpperCase();
-              if (/^\d{6}$/.test(t)) return 'IN';
-              if (t.length >= 5) return 'IN';
-              // 1-4 char alpha-only ticker → probably US (KMB, MDT, BIRK, MUFG, TCS overlap unfortunately)
-              // Override: known Indian short tickers
-              const INDIAN_SHORT = new Set(['TCS', 'LIC', 'IOC', 'ITC', 'BPCL', 'NTPC', 'ONGC', 'IRFC', 'CMS', 'IDFC', 'IGL', 'MGL', 'CGCL', 'HUL', 'SBI', 'GAIL', 'IDBI', 'OIL', 'GIC', 'IOB']);
-              if (INDIAN_SHORT.has(t)) return 'IN';
-              return /^[A-Z]{1,4}$/.test(t) ? 'US' : 'IN';
-            };
+            // zzz1066: market comes from the security list the issuer was found in (never from ticker length)
             // Try to parse a ₹ Cr / $ M figure from the headline
             const extractDealValue = (headline: string): string | null => {
               if (!headline) return null;
@@ -3885,40 +3734,34 @@ export default function HomeDashboard() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 {items.map((ev: any, i: number) => {
                   const evColor = EVENT_COLOR[ev.event_type] || '#94A3B8';
-                  const inUniverse = universeSet.has(ev.ticker);
+                  const inUniverse = !!ev.ticker && universeSet.has(ev.ticker);
                   // Days since announced + days to next catalyst (heuristic from lib/specsit-playbooks if data is missing)
                   let daysSince = '';
-                  let nextCatalyst = '';
                   if (ev.announced_at) {
                     const days = Math.max(0, Math.round((Date.now() - new Date(ev.announced_at).getTime()) / 86400000));
                     daysSince = days === 0 ? 'today' : `${days}d ago`;
                   }
-                  if (ev.next_catalyst_date) {
-                    const days = Math.round((new Date(ev.next_catalyst_date).getTime() - Date.now()) / 86400000);
-                    if (days >= 0) nextCatalyst = `→ ${days}d`;
-                    else nextCatalyst = `${-days}d past`;
-                  }
-                  const headline = ev.headline || ev.sub_category || ev.event_type;
+                  const headline = ev.headline || ev.event_type;
                   const evRaw = (ev.event_type || '').toString().toUpperCase();
                   const evLabel = EVENT_LABEL[evRaw] || evRaw.replace(/_/g, ' ').toLowerCase().replace(/^(.)/, (c: string) => c.toUpperCase());
-                  const market = inferMarket(ev.ticker || '');
+                  const market: 'IN' | 'US' | null = ev.market || null;
                   const dealValue = extractDealValue(headline);
                   return (
-                    <NavLink key={(ev.ticker || '') + i}
-                      href={`/stock-sheet?ticker=${encodeURIComponent(ev.ticker)}`}
+                    <NavLink key={ev.id || String(i)}
+                      href={ev.href}
+                      data-ss-home-row={ev.id}
                       title={[
-                        `${ev.ticker} (${market}) · ${evLabel}${ev.sub_category ? ' · ' + ev.sub_category : ''}`,
+                        `${ev.resolved ? `${ev.ticker} (${market || 'market unknown'})` : `Unresolved issuer${ev.name ? `: ${ev.name}` : ''}${market ? ` (${market})` : ''}`} · ${evLabel}`,
                         headline,
                         ev.announced_at ? `Announced: ${ev.announced_at} (${daysSince})` : '',
-                        ev.next_catalyst_date ? `Next catalyst: ${ev.next_catalyst_date} (${nextCatalyst})` : '',
-                        ev.expected_alpha ? `Expected alpha: ${ev.expected_alpha}` : '',
+                        ev.evidence === 'PENDING' ? 'Not checked yet against the company document' : '',
                         dealValue ? `Deal value: ${dealValue}` : '',
                       ].filter(Boolean).join('\n')}
                       style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', textDecoration: 'none', borderBottom: '1px solid var(--mc-bg-4)' }}>
                       {inUniverse && <span style={{ fontSize: 11, color: 'var(--mc-cyan)', flexShrink: 0 }} title="In your Watchlist/Portfolio/CB">👁</span>}
                       {/* PATCH 0902 — FILED vs REPORTED replaces DIRECT vs NEWS for clarity */}
-                      {ev.tradeability === 'DIRECT_TRADE' ? (
-                        <span title="Filed event — exchange-disclosed structured filing (OFS / buyback / open offer / scheme)"
+                      {ev.provenance === 'FILED' ? (
+                        <span title="Filed — the source is an exchange / SEC filing document"
                           style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, letterSpacing: 0.4, background: 'color-mix(in srgb, var(--mc-bullish) 13%, transparent)', color: 'var(--mc-bullish)', flexShrink: 0 }}>
                           FILED
                         </span>
@@ -3928,11 +3771,13 @@ export default function HomeDashboard() {
                           REPORTED
                         </span>
                       )}
-                      <span style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, flexShrink: 0, color: market === 'US' ? '#F87171' : 'var(--mc-cyan)', background: market === 'US' ? '#F8717122' : 'color-mix(in srgb, var(--mc-cyan) 13%, transparent)' }}>
-                        {market === 'US' ? '🇺🇸 US' : '🇮🇳 IN'}
-                      </span>
-                      <span style={{ fontSize: 12, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 78, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {ev.ticker}
+                      {market && (
+                        <span style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, flexShrink: 0, color: market === 'US' ? '#F87171' : 'var(--mc-cyan)', background: market === 'US' ? '#F8717122' : 'color-mix(in srgb, var(--mc-cyan) 13%, transparent)' }}>
+                          {market === 'US' ? '🇺🇸 US' : '🇮🇳 IN'}
+                        </span>
+                      )}
+                      <span title={ev.resolved ? 'Listed security' : 'Issuer not found in a security list'} style={{ fontSize: 12, color: ev.resolved ? TEXT : DIM, fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 78, maxWidth: 140, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontStyle: ev.resolved ? 'normal' : 'italic' }}>
+                        {ev.resolved ? ev.ticker : (ev.name || 'Unresolved')}
                       </span>
                       <span style={{
                         fontSize: 9.5, fontWeight: 800, padding: '2px 7px', borderRadius: 3, letterSpacing: 0.3, flexShrink: 0,
@@ -3960,7 +3805,7 @@ export default function HomeDashboard() {
                         </span>
                       )}
                       <span style={{ fontSize: 10, color: DIM, whiteSpace: 'nowrap', flexShrink: 0 }}>
-                        {daysSince}{nextCatalyst && <> · <span style={{ color: 'var(--mc-warn)' }}>{nextCatalyst}</span></>}
+                        {daysSince}
                       </span>
                     </NavLink>
                   );

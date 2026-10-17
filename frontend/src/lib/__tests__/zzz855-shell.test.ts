@@ -211,7 +211,7 @@ describe('capped lists', () => {
     assert.match(radar, /\{list\.length\}\{list\.length !== all\.length \? ` of \$\{all\.length\}` : ''\}/, 'bucket chip counts the full bucket');
     const ss = read('app/(dashboard)/special-situations/page.tsx');
     assert.match(ss, /const radarEvents: CanonicalEvent\[\] = useMemo\(/);
-    assert.equal((ss.match(/<ShowMoreBar /g) || []).length, 2);
+    assert.equal((ss.match(/<ShowMoreBar /g) || []).length, 3);   // zzz1066: + the Archived list
     assert.match(read('components/special-situations/RadarCard.tsx'), /<LazyDetails summary=/);
   });
 });
