@@ -148,6 +148,8 @@ export interface UsWhy {
   source: string | null;      // 'graded results' | 'SEC EDGAR' | publisher | 'sector'
   url: string | null;
   date: string | null;        // YYYY-MM-DD (ET)
+  /** zzz1067 (U02): the source's full time with its zone (ET offset) when known — shown in the row's evidence drawer */
+  at?: string | null;
   /** what was looked at for this name — so "no confirmed catalyst" says what was checked */
   checked: string[];
   /** zzz1059 — weak context lines shown beside the WHY ("earnings due Tue Oct 20", "also: industry move …") */
@@ -187,7 +189,9 @@ export interface UsFilingLite {
   /** zzz1059 — what the 8-K announced, read from its EX-99.1 headline / body (null = read, nothing stated; undefined = not read) */
   announced?: string | null;
 }
-export interface UsNewsLite { title: string; url: string; date: string; source: string | null }
+/** `date` = the ET calendar day; zzz1067: `at` = the full time with its zone (toEtIso, '2026-10-15T16:42:00-04:00') when the
+ *  source gave one, null / absent when it gave a date only. */
+export interface UsNewsLite { title: string; url: string; date: string; source: string | null; at?: string | null }
 
 export interface UsWhyInput {
   ticker: string;
@@ -248,15 +252,30 @@ export function earningsWhyText(e: UsEarningsLite, chg: number): string {
  *  the shown session = cannot explain it. A date with no time counts if it is the previous or the shown session. */
 export function inMoveWindow(dateIso: string | null | undefined, session: string, prevSession: string, closeEt = '16:00'): boolean {
   if (!dateIso) return false;
-  const d = dateIso.slice(0, 10);
-  const m = /T(\d{2}):(\d{2})/.exec(dateIso);
-  const hasTime = !!m && !/T00:00:00(?:\.000)?Z$/.test(dateIso);
-  if (!hasTime) return d === session || d === prevSession;
-  const hhmm = `${m![1]}:${m![2]}`;
-  if (d === prevSession) return hhmm >= '16:00';
+  const hasTime = /T\d{2}:\d{2}/.test(dateIso) && !/T00:00:00(?:\.000)?Z$/.test(dateIso);
+  if (!hasTime) { const d = dateIso.slice(0, 10); return d === session || d === prevSession; }
+  // zzz1067 (U02): a stamp with a zone ('Z' / '+05:30' / '-04:00') is converted to the New York clock first; a stamp without
+  // one is already ET (toEtIso). Then the two boundaries: the PREVIOUS session's own close (13:00 after a half day, not a
+  // fixed 16:00) and this session's close.
+  let d = dateIso.slice(0, 10), hhmm = dateIso.slice(11, 16);
+  if (/(?:Z|[+-]\d{2}:?\d{2})$/.test(dateIso)) {
+    const t = Date.parse(dateIso);
+    if (!Number.isFinite(t)) return false;
+    const e = etParts(new Date(t));
+    d = e.ymd; hhmm = e.hhmm;
+  }
+  if (d === prevSession) return hhmm >= minutesToHhmm(closeMinutes(prevSession));
   if (d > prevSession && d < session) return true;          // a weekend / holiday between the two sessions
   if (d === session) return hhmm < closeEt;
   return false;
+}
+const minutesToHhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+
+/** zzz1067 (U02): a news item is in the move window by its full timestamp when it has one (after-close news of the shown
+ *  session then counts for the NEXT session, not this one), by its ET date only when the source gave no time. */
+export function newsInMoveWindow(n: Pick<UsNewsLite, 'date' | 'at'>, session: string, prevSession: string, closeEt = '16:00'): boolean {
+  if (n.at) return inMoveWindow(n.at, session, prevSession, closeEt);
+  return n.date === session || n.date === prevSession || (n.date > prevSession && n.date <= session);
 }
 
 /** Strip the filing subject to its plain lead: "8-K: Material agreement signed [Item 1.01] · filed 07:02 ET …" → "Material agreement signed". */
@@ -288,7 +307,8 @@ export function filingWhy(filings: UsFilingLite[], chg: number, classify: (f: { 
   const { f, c } = cands[0];
   const form = (f.subject.split(/:| · /)[0] || '').trim().toUpperCase();
   const date = f.dateIso ? f.dateIso.slice(0, 10) : null;
-  const base = { source: 'SEC EDGAR', url: f.url, date };
+  const at = f.dateIso && /T\d{2}:\d{2}/.test(f.dateIso) && !/T00:00:00(?:\.000)?Z$/.test(f.dateIso) ? f.dateIso : null;
+  const base = { source: 'SEC EDGAR', url: f.url, date, at };
   if (c.category === 'dilution') {
     return { ...base, kind: 'DILUTION', confidence: 'HIGH', text: `⚠ offering / dilution filed (${form}) — ${(c.routineReason || 'new share supply').replace(/^[^—]+—\s*/, '')}` };
   }
@@ -321,7 +341,6 @@ const NON_REASON = new RegExp([
   /\bstocks? trade (?:up|down|higher|lower)\b|\bhere'?s what (?:you (?:should|need to) know|happened)\b|\bwhat you need to know\b|\banalysts? (?:predict|see|expect) (?:a |an )?[\d.]+%|\b(?:upside|downside) (?:in|for)\b|\bstill a (?:buy|sell)\b|\btime to (?:buy|sell)\b|\bwhat'?s next\b/.source,   // zzz1059: digest / clickbait
   /\b(?:stock|share) price (?:up|down|rises|falls)\b|\b(?:shares |stock )?gap(?:s|ped)? (?:up|down)\b|\bstock forecasts?\b|\bhistorical data\b|\bworth (?:examining|watching|buying)\b|\brated "?(?:hold|buy|sell|strong buy)"? by\b|\bconsensus (?:rating|recommendation)\b|\b(?:is|should you) (?:it )?(?:time to )?(?:buy|sell)\b/.source,   // quote-page / digest headlines
   /\bwithheld\b.{0,40}\bshares\b|\bvoting power\b|\bnot a market sale\b|\bmarket notice\b|\bbeneficial owner|\bvesting\b/.source,   // ownership paperwork
-  /\b(?:rall(?:y|ies|ied)|soar(?:s|ed)?|surg(?:es|ed|e)|jump(?:s|ed)?|plung(?:es|ed|e)|tumbl(?:es|ed|e)|sink(?:s)?|sank|slid(?:es|e)?|climb(?:s|ed)?|drop(?:s|ped)?|fall(?:s)?|fell|gain(?:s|ed)?|spik(?:es|ed|e)|skyrocket(?:s|ed)?|slump(?:s|ed)?)\s+(?:by\s+)?\d+(?:\.\d+)?\s?%/.source,   // "rallies 11%"
 ].join('|'), 'i');
 
 /** "US Critical Metals Corp. (CN:USCM) …" is about USCM, not CRML: a headline that tags a DIFFERENT ticker in exchange form
@@ -334,7 +353,25 @@ export function namesOtherTicker(title: string, ticker: string): boolean {
 }
 
 /** A headline that only describes the price ("XYZ stock soars 20%"), the ownership, a quote page or a schedule is not a reason. */
-export const isPriceTalk = (title: string): boolean => PRICE_TALK.test(String(title || '')) || NON_REASON.test(String(title || '').trim());
+export const isPriceTalk = (title: string): boolean => {
+  const t = String(title || '').trim();
+  return PRICE_TALK.test(t) || NON_REASON.test(t) || priceMoveOnly(t);
+};
+
+// zzz1067 (U02) — "Critical Metals Rises 4% …", "XYZ slips 3% in early trade", "XYZ hits 1-year high": a percent move with
+// a plain price verb is price commentary — UNLESS a business figure is what moved ("revenue rises 25%", "orders up 40%",
+// "deliveries jump 12%"), which is real news.
+const PRICE_VERB_PCT = /\b(?:rall(?:y|ies|ied)|soar(?:s|ed)?|surg(?:es|ed|e)|jump(?:s|ed)?|plung(?:es|ed|e)|tumbl(?:es|ed|e)|sink(?:s)?|sank|slid(?:es|e)?|climb(?:s|ed)?|drop(?:s|ped)?|fall(?:s)?|fell|gain(?:s|ed)?|spik(?:es|ed|e)|skyrocket(?:s|ed)?|slump(?:s|ed)?|ris(?:es|e|ing)|rose|advanc(?:es|ed|e)|edg(?:es|ed|e)\s+(?:up|down|higher|lower)|slip(?:s|ped)?|dip(?:s|ped)?|declin(?:es|ed|e)|shed(?:s)?|pop(?:s|ped)?|plummet(?:s|ed)?|retreat(?:s|ed)?|trad(?:es|ed|ing)\s+(?:up|down|higher|lower)|(?:is|are|was|were)\s+(?:up|down)|up|down|higher|lower)\s+(?:by\s+|about\s+|nearly\s+|over\s+|more than\s+)?\d+(?:\.\d+)?\s?%/i;
+const PRICE_MARK = /\b(?:hits?|touch(?:es|ed)?|sets?|reach(?:es|ed)?|marks?)\s+(?:a\s+|new\s+|fresh\s+)*(?:\d{1,2}[- ](?:year|month|week)|52[- ]week|12[- ]month|all[- ]time|multi[- ]year|record)\s+(?:high|low)s?\b/i;
+const BUSINESS_FIGURE = /\b(?:revenue|revenues|sales|earnings|eps|profit|profits|income|ebitda|margin|margins|orders?|bookings|backlog|guidance|outlook|forecast|dividend|production|output|volumes?|deliveries|shipments|subscribers|users|traffic|same[- ]store|comps?|enrollment|reserves|aum|assets|deposits|loans|premiums|rates?|prices? of|price target)\b/i;
+export function priceMoveOnly(title: string): boolean {
+  const t = String(title || '');
+  if (PRICE_MARK.test(t)) return true;
+  const m = PRICE_VERB_PCT.exec(t);
+  if (!m) return false;
+  // a business figure named before the verb ("Q3 revenue rises 25%") makes it real news
+  return !BUSINESS_FIGURE.test(t.slice(0, m.index));
+}
 
 /**
  * The WHY, best evidence first: graded earnings → SEC filing (with what it announced) → the most causal headline (direction
@@ -377,7 +414,7 @@ export function attributeUsMover(i: UsWhyInput, classify: (f: { subject: string 
   // (c) the most causal dated headline about the company (not price commentary, not pointing the other way)
   if (i.news) {
     checked.push('news');
-    const inWin = (x: UsNewsLite) => x.date === i.session || x.date === i.prevSession || (x.date > i.prevSession && x.date <= i.session);
+    const inWin = (x: UsNewsLite) => newsInMoveWindow(x, i.session, i.prevSession, i.closeEt);
     const { pick: n, rank } = pickHeadline(i.news, i.chg, (x) => inWin(x) && !isPriceTalk(x.title) && !PREVIEW_OR_TRANSCRIPT.test(x.title) && x.title.trim().split(/\s+/).length >= 5 && !namesOtherTicker(x.title, i.ticker));   // a bare company name is not a headline
     if (n) {
       const title = n.title.length > 140 ? `${n.title.slice(0, n.title.lastIndexOf(' ', 138) > 80 ? n.title.lastIndexOf(' ', 138) : 138)}…` : n.title;
@@ -386,8 +423,8 @@ export function attributeUsMover(i: UsWhyInput, classify: (f: { subject: string 
       if (rank >= 9 && !an && i.industry) context.push(`news: ${title}`);
       else if (rank === 3 && /\b(?:sells?|sold|buys?|bought)\b/i.test(title)) {
         // "TDR Capital sells $202M of Target Hospitality stock": a holder / insider trade, said as such
-        return done({ kind: 'INSIDER', confidence: 'MEDIUM', text: `holder / insider ${/\b(?:sells?|sold)\b/i.test(title) ? 'sale' : 'purchase'} — ${title}`, source: n.source || 'news', url: n.url, date: n.date });
-      } else return done({ kind: an ? 'ANALYST' : 'NEWS', confidence: 'MEDIUM', text: an || title, source: n.source || 'news', url: n.url, date: n.date });
+        return done({ kind: 'INSIDER', confidence: 'MEDIUM', text: `holder / insider ${/\b(?:sells?|sold)\b/i.test(title) ? 'sale' : 'purchase'} — ${title}`, source: n.source || 'news', url: n.url, date: n.date, at: n.at ?? null });
+      } else return done({ kind: an ? 'ANALYST' : 'NEWS', confidence: 'MEDIUM', text: an || title, source: n.source || 'news', url: n.url, date: n.date, at: n.at ?? null });
     }
   }
   if (weak) return done(weak);
@@ -588,6 +625,57 @@ export interface UsMoversPayload {
   notes: string[];
   /** zzz1059 — how long the build took (ms) */
   buildMs?: number;
+}
+
+/** zzz1067 (U02) — the status line: company evidence (earnings / filings / news / analyst / insider / dilution) is a catalyst
+ *  for THIS company; an industry or sector move is context (correlation, not a cause); NONE is unresolved. */
+export const COMPANY_KINDS: readonly UsWhyKind[] = ['EARNINGS', 'FILING', 'DILUTION', 'NEWS', 'ANALYST', 'INSIDER'];
+export const CONTEXT_KINDS: readonly UsWhyKind[] = ['INDUSTRY', 'SECTOR'];
+export function whyCoverageSplit(c: Partial<Record<UsWhyKind, number>> | null | undefined): { company: number; context: number; unresolved: number; text: string } {
+  const sum = (ks: readonly UsWhyKind[]) => ks.reduce((a, k) => a + (c?.[k] || 0), 0);
+  const company = sum(COMPANY_KINDS), context = sum(CONTEXT_KINDS), unresolved = c?.NONE || 0;
+  return { company, context, unresolved, text: `${company} company catalyst${company === 1 ? '' : 's'} · ${context} sector context · ${unresolved} unresolved` };
+}
+
+// ── 8. CLIENT REFRESH TIMING (zzz1067, U01) ────────────────────────────────
+
+/** Re-read cadence for the panel: every 3 min while the session is live, every 15 min otherwise (pre-market, after the
+ *  close, weekends) — so a panel opened before the open does not sit on last close all morning. */
+export const usMoversPollMs = (phase: UsPhase): number => (phase === 'regular' ? 3 * 60_000 : 15 * 60_000);
+
+/**
+ * Milliseconds until the next moment the panel should re-read on its own because the session changed: the 09:30 ET open
+ * (pre-market), one minute after the close (13:00 on half days), and 21 minutes after the close (after the server's second
+ * post-close prewarm). Null when nothing changes before the next poll (weekend, holiday, late evening).
+ */
+export function msToNextUsTransition(now: Date = new Date()): number | null {
+  const e = etParts(now);
+  if (!isNyseTradingDay(e.ymd)) return null;
+  const close = closeMinutes(e.ymd);
+  const secs = now.getUTCSeconds();
+  const targets = [9 * 60 + 30, close + 1, close + 21].filter((m) => m > e.minutes);
+  if (!targets.length) return null;
+  return Math.max(1_000, (targets[0] - e.minutes) * 60_000 - secs * 1_000 + 5_000);
+}
+
+/** "10:42 ET" for a timestamp — the time the shown moves were observed. */
+export function etClock(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  const e = etParts(new Date(t));
+  return `${e.hhmm} ET`;
+}
+
+/** "15 Oct 16:42 ET" from a zoned stamp; the bare date (+ "time not given") when only a date is known. */
+export function evidenceTime(at: string | null | undefined, date: string | null | undefined): string | null {
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const day = (ymd: string) => `${Number(ymd.slice(8, 10))} ${MON[Number(ymd.slice(5, 7)) - 1]} ${ymd.slice(0, 4)}`;
+  if (at && /T\d{2}:\d{2}/.test(at)) {
+    const t = Date.parse(at);
+    if (Number.isFinite(t)) { const e = etParts(new Date(t)); return `${day(e.ymd)} ${e.hhmm} ET`; }
+  }
+  return date && /^\d{4}-\d{2}-\d{2}/.test(date) ? `${day(date)} (time not given)` : null;
 }
 
 export function whyCoverage(rows: UsMoverRow[]): Record<UsWhyKind, number> {

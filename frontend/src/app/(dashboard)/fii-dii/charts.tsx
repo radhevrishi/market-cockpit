@@ -4,12 +4,12 @@
 'use client';
 
 import { useId, useMemo, useState } from 'react';
-import { fmtAxisCr, fmtCr, fmtDate, GREEN, RED } from './format';
+import { fmtAxisCr, fmtCr, fmtDate, GREEN, RED, FD } from './format';
 
-export interface HistPoint { date: string; fii: number | null; dii: number | null; fiiCum: number; fii20: number | null; dii20: number | null; nifty?: number | null; source: 'nse' | 'nsdl'; provisional: boolean }
+export interface HistPoint { date: string; fii: number | null; dii: number | null; fiiCum: number; fii20: number | null; dii20: number | null; nifty?: number | null; source: 'nse' | 'nsdl'; provisional: boolean; fiiNse?: number | null; fiiFinal?: number | null }
 
 const W = 900, H = 220, PL = 56, PR = 12, PT = 12, PB = 24;
-const FII_C = '#1d4ed8', DII_C = '#d97706', GRID = '#e2e8f0', SOFT = '#64748b', ZERO = '#94a3b8';
+const FII_C = '#2563eb', DII_C = '#d97706', GRID = FD.line, SOFT = FD.soft, ZERO = FD.faint, INK = FD.text;
 const GREEN_FILL = '#10b981', RED_FILL = '#ef4444';
 
 function niceStep(raw: number): number {
@@ -28,7 +28,7 @@ function scaleY(min: number, max: number, h = H, pt = PT, pb = PB) {
   return { y, ticks };
 }
 const xOf = (n: number) => (i: number) => PL + ((W - PL - PR) * (n <= 1 ? 0.5 : i / (n - 1)));
-const tipBox: React.CSSProperties = { position: 'absolute', top: 4, background: '#fff', border: `1px solid ${GRID}`, borderRadius: 6, padding: '6px 8px', fontSize: 12, pointerEvents: 'none', boxShadow: '0 2px 6px rgba(15,23,42,0.08)', whiteSpace: 'nowrap', zIndex: 2 };
+const tipBox: React.CSSProperties = { position: 'absolute', top: 4, background: FD.card, color: FD.text, border: `1px solid ${GRID}`, borderRadius: 6, padding: '6px 8px', fontSize: 12, pointerEvents: 'none', boxShadow: '0 2px 6px rgba(15,23,42,0.08)', whiteSpace: 'nowrap', zIndex: 2 };
 const signColor = (v: number | null | undefined) => (v == null ? SOFT : v >= 0 ? GREEN : RED);
 
 function hoverIndex(e: React.MouseEvent<SVGSVGElement>, n: number): number | null {
@@ -37,6 +37,23 @@ function hoverIndex(e: React.MouseEvent<SVGSVGElement>, n: number): number | nul
   const sx = ((e.clientX - r.left) / r.width) * W;
   const i = Math.round(((sx - PL) / (W - PL - PR)) * (n - 1));
   return Math.max(0, Math.min(n - 1, i));
+}
+
+/** zzz1067 — keyboard reading of a chart: Tab to focus, ← / → move one point, Home / End jump, Esc clears. */
+function keyNav(n: number, cur: number | null, set: (i: number | null) => void) {
+  return {
+    tabIndex: 0,
+    onFocus: () => { if (cur == null && n > 0) set(n - 1); },
+    onBlur: () => set(null),
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (n < 1) return;
+      const i = cur ?? n - 1;
+      const next = e.key === 'ArrowLeft' ? Math.max(0, i - 1) : e.key === 'ArrowRight' ? Math.min(n - 1, i + 1) : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : e.key === 'Escape' ? null : undefined;
+      if (next === undefined) return;
+      e.preventDefault();
+      set(next);
+    },
+  };
 }
 
 function Axis({ ticks, y, fmt = fmtAxisCr, zero = true }: { ticks: number[]; y: (v: number) => number; fmt?: (v: number) => string; zero?: boolean }) {
@@ -64,16 +81,16 @@ function Frame({ ticks, y, pts, children, onHover, hoverIdx, tip, fmt }: {
   const n = pts.length, x = xOf(n);
   return (
     <div style={{ position: 'relative' }}>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block', height: 'auto' }} role="img"
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block', height: 'auto' }} role="img" aria-label="Daily chart — focus it and use the left / right arrow keys to read each day" {...keyNav(n, hoverIdx, onHover)}
         onMouseLeave={() => onHover(null)} onMouseMove={(e) => onHover(hoverIndex(e, n))}>
         <Axis ticks={ticks} y={y} fmt={fmt} />
         <DateLabels pts={pts} />
         {children}
-        {hoverIdx != null && pts[hoverIdx] ? <line x1={x(hoverIdx)} x2={x(hoverIdx)} y1={PT} y2={H - PB} stroke="#0f172a" strokeOpacity={0.25} /> : null}
+        {hoverIdx != null && pts[hoverIdx] ? <line x1={x(hoverIdx)} x2={x(hoverIdx)} y1={PT} y2={H - PB} stroke={INK} strokeOpacity={0.25} /> : null}
       </svg>
       {hoverIdx != null && pts[hoverIdx] ? (
         <div style={{ ...tipBox, left: `${Math.min(70, Math.max(8, (x(hoverIdx) / W) * 100))}%` }}>
-          <div style={{ fontWeight: 600, marginBottom: 2 }}>{fmtDate(pts[hoverIdx].date)}{pts[hoverIdx].source === 'nsdl' ? ' · NSDL' : pts[hoverIdx].provisional ? ' · provisional' : ''}</div>
+          <div style={{ fontWeight: 600, marginBottom: 2 }}>{fmtDate(pts[hoverIdx].date)}{pts[hoverIdx].source === 'nsdl' ? ' · FII = NSDL final' : ' · FII = NSE provisional'}</div>
           {tip(pts[hoverIdx])}
         </div>
       ) : null}
@@ -105,7 +122,7 @@ export function CumulativeChart({ pts, showNifty = true }: { pts: HistPoint[]; s
   const hp = hover != null ? pts[hover] : null;
   return (
     <div style={{ position: 'relative' }}>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block', height: 'auto' }} role="img" aria-label="FII running total"
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block', height: 'auto' }} role="img" aria-label="FII running total — focus it and use the left / right arrow keys to read each day" {...keyNav(n, hover, setHover)}
         onMouseLeave={() => setHover(null)} onMouseMove={(e) => setHover(hoverIndex(e, n))}>
         <defs>
           <clipPath id={`${id}a`}><rect x={0} y={0} width={W} height={Math.max(0, g.z)} /></clipPath>
@@ -117,7 +134,7 @@ export function CumulativeChart({ pts, showNifty = true }: { pts: HistPoint[]; s
         <path d={g.area} fill={RED_FILL} fillOpacity={0.18} clipPath={`url(#${id}b)`} />
         <path d={g.line} fill="none" stroke={GREEN} strokeWidth={2} clipPath={`url(#${id}a)`} />
         <path d={g.line} fill="none" stroke={RED} strokeWidth={2} clipPath={`url(#${id}b)`} />
-        {hover != null ? <line x1={x(hover)} x2={x(hover)} y1={PT} y2={H - PB} stroke="#0f172a" strokeOpacity={0.25} /> : null}
+        {hover != null ? <line x1={x(hover)} x2={x(hover)} y1={PT} y2={H - PB} stroke={INK} strokeOpacity={0.25} /> : null}
       </svg>
       {hasNifty && g.ns ? (
         <>
@@ -131,14 +148,14 @@ export function CumulativeChart({ pts, showNifty = true }: { pts: HistPoint[]; s
               </g>
             ))}
             <DateLabels pts={pts} h={NH} />
-            <path d={g.nPath} fill="none" stroke="#334155" strokeWidth={2} />
-            {hover != null ? <line x1={x(hover)} x2={x(hover)} y1={8} y2={NH - 22} stroke="#0f172a" strokeOpacity={0.25} /> : null}
+            <path d={g.nPath} fill="none" stroke={INK} strokeOpacity={0.75} strokeWidth={2} />
+            {hover != null ? <line x1={x(hover)} x2={x(hover)} y1={8} y2={NH - 22} stroke={INK} strokeOpacity={0.25} /> : null}
           </svg>
         </>
       ) : null}
       {hp ? (
         <div style={{ ...tipBox, left: `${Math.min(70, Math.max(8, (x(hover!) / W) * 100))}%` }}>
-          <div style={{ fontWeight: 600, marginBottom: 2 }}>{fmtDate(hp.date)}{hp.source === 'nsdl' ? ' · NSDL' : hp.provisional ? ' · provisional' : ''}</div>
+          <div style={{ fontWeight: 600, marginBottom: 2 }}>{fmtDate(hp.date)}{hp.source === 'nsdl' ? ' · FII = NSDL final' : ' · FII = NSE provisional'}</div>
           <div>Running total: <b style={{ color: signColor(hp.fiiCum) }}>{fmtCr(hp.fiiCum, { signed: true })}</b></div>
           <div>That day: <b style={{ color: signColor(hp.fii) }}>{fmtCr(hp.fii, { signed: true })}</b></div>
           {hp.nifty != null ? <div>Nifty 50: <b>{hp.nifty.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</b></div> : null}
@@ -159,7 +176,8 @@ export function DailyBars({ pts }: { pts: HistPoint[] }) {
   const bw = Math.max(0.8, Math.min(9, slot * 0.4));
   return (
     <Frame ticks={ticks} y={y} pts={pts} onHover={setHover} hoverIdx={hover}
-      tip={(p) => <><div><span style={{ color: FII_C }}>■</span> FII: <b style={{ color: signColor(p.fii) }}>{fmtCr(p.fii, { signed: true })}</b></div><div><span style={{ color: DII_C }}>■</span> DII: <b style={{ color: signColor(p.dii) }}>{fmtCr(p.dii, { signed: true })}</b></div></>}>
+      tip={(p) => <><div><span style={{ color: FII_C }}>■</span> FII: <b style={{ color: signColor(p.fii) }}>{fmtCr(p.fii, { signed: true })}</b></div>
+        {p.fiiNse !== undefined ? <div style={{ fontSize: 11, color: SOFT }}>NSE provisional {fmtCr(p.fiiNse, { signed: true })} · NSDL final {fmtCr(p.fiiFinal, { signed: true })}</div> : null}<div><span style={{ color: DII_C }}>■</span> DII: <b style={{ color: signColor(p.dii) }}>{fmtCr(p.dii, { signed: true })}</b></div></>}>
       {pts.map((p, i) => {
         const z = y(0);
         const out: React.ReactNode[] = [];
@@ -186,7 +204,7 @@ export function RollingChart({ pts }: { pts: HistPoint[] }) {
   }, [pts]);
   return (
     <Frame ticks={ticks} y={y} pts={pts} onHover={setHover} hoverIdx={hover}
-      tip={(p) => <><div><span style={{ color: FII_C }}>━</span> FII 20 days: <b style={{ color: signColor(p.fii20) }}>{fmtCr(p.fii20, { signed: true })}</b></div><div><span style={{ color: DII_C }}>━</span> DII 20 days: <b style={{ color: signColor(p.dii20) }}>{fmtCr(p.dii20, { signed: true })}</b></div></>}>
+      tip={(p) => <><div><span style={{ color: FII_C }}>━</span> FII 20 sessions: <b style={{ color: signColor(p.fii20) }}>{fmtCr(p.fii20, { signed: true })}</b></div><div><span style={{ color: DII_C }}>━</span> DII 20 sessions: <b style={{ color: signColor(p.dii20) }}>{fmtCr(p.dii20, { signed: true })}</b></div></>}>
       <path d={fPath} fill="none" stroke={FII_C} strokeWidth={2} />
       <path d={dPath} fill="none" stroke={DII_C} strokeWidth={2} />
     </Frame>
@@ -195,7 +213,7 @@ export function RollingChart({ pts }: { pts: HistPoint[] }) {
 
 // ── monthly totals (FII and DII side by side, value labels) ──────────────────
 
-export interface MonthBar { month: string; fii: number; dii: number | null; days: number; diiDays: number }
+export interface MonthBar { month: string; fii: number; dii: number | null; days: number; diiDays: number; expected?: number | null; partial?: boolean; toDate?: boolean }
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const monLabel = (m: string) => `${MON[Number(m.slice(5, 7)) - 1]} ${m.slice(2, 4)}`;
 
@@ -215,7 +233,7 @@ export function MonthlyBars({ months }: { months: MonthBar[] }) {
   const showVals = n <= 14;
   return (
     <div style={{ position: 'relative' }}>
-      <svg viewBox={`0 0 ${W} ${MH}`} width="100%" style={{ display: 'block', height: 'auto' }} role="img" aria-label="Monthly net flows"
+      <svg viewBox={`0 0 ${W} ${MH}`} width="100%" style={{ display: 'block', height: 'auto' }} role="img" aria-label="Monthly net flows — focus it and use the left / right arrow keys to read each month" {...keyNav(n, hover, setHover)}
         onMouseLeave={() => setHover(null)}
         onMouseMove={(e) => { const r = e.currentTarget.getBoundingClientRect(); const sx = ((e.clientX - r.left) / r.width) * W; const i = Math.floor((sx - PL) / slot); setHover(i >= 0 && i < n ? i : null); }}>
         <Axis ticks={ticks} y={y} />
@@ -224,17 +242,18 @@ export function MonthlyBars({ months }: { months: MonthBar[] }) {
           if (m.dii != null) bars.push({ v: m.dii, c: DII_C, dx: 1, k: 'd' });
           return (
             <g key={m.month}>
-              {hover === i ? <rect x={cx(i) - slot / 2} y={MT} width={slot} height={MH - MT - MB} fill="#0f172a" fillOpacity={0.04} /> : null}
-              {bars.map((b) => { const t = y(b.v); return <rect key={b.k} x={cx(i) + b.dx} y={Math.min(t, z)} width={bw} height={Math.max(0.5, Math.abs(z - t))} rx={2} fill={b.c} fillOpacity={0.88} />; })}
-              {showVals ? bars.map((b) => <text key={`t${b.k}`} x={cx(i) + b.dx + bw / 2} y={b.v >= 0 ? y(b.v) - 4 : y(b.v) + 12} textAnchor="middle" fontSize={10} fill={signColor(b.v)}>{fmtAxisCr(b.v)}</text>) : null}
-              {(n <= 14 || i % 2 === (n - 1) % 2) ? <text x={cx(i)} y={MH - 10} textAnchor="middle" fontSize={11} fill={SOFT}>{monLabel(m.month)}</text> : null}
+              {hover === i ? <rect x={cx(i) - slot / 2} y={MT} width={slot} height={MH - MT - MB} fill={INK} fillOpacity={0.06} /> : null}
+              {bars.map((b) => { const t = y(b.v); return <rect key={b.k} x={cx(i) + b.dx} y={Math.min(t, z)} width={bw} height={Math.max(0.5, Math.abs(z - t))} rx={2} fill={b.c} fillOpacity={m.partial ? 0.4 : 0.88} stroke={m.partial ? b.c : undefined} strokeDasharray={m.partial ? '3 2' : undefined} />; })}
+              {showVals ? bars.map((b) => <text key={`t${b.k}`} x={cx(i) + b.dx + bw / 2} y={b.v >= 0 ? y(b.v) - 4 : y(b.v) + 12} textAnchor="middle" fontSize={10} fill={signColor(b.v)}>{fmtAxisCr(b.v)}{m.partial ? '*' : ''}</text>) : null}
+              {(n <= 14 || i % 2 === (n - 1) % 2) ? <text x={cx(i)} y={MH - 10} textAnchor="middle" fontSize={11} fill={SOFT}>{monLabel(m.month)}{m.partial ? '*' : ''}</text> : null}
             </g>
           );
         })}
       </svg>
       {hover != null && months[hover] ? (
         <div style={{ ...tipBox, left: `${Math.min(70, Math.max(8, (cx(hover) / W) * 100))}%` }}>
-          <div style={{ fontWeight: 600, marginBottom: 2 }}>{monLabel(months[hover].month)} · {months[hover].days} trading day{months[hover].days === 1 ? '' : 's'}</div>
+          <div style={{ fontWeight: 600, marginBottom: 2 }}>{monLabel(months[hover].month)} · {months[hover].days}{months[hover].expected != null ? ` of ${months[hover].expected}` : ''} trading day{months[hover].days === 1 ? '' : 's'}</div>
+          {months[hover].partial ? <div style={{ color: FD.warn, fontSize: 11 }}>{months[hover].toDate ? 'Month still running — total so far' : 'Partial month — some sessions have no stored figure'}</div> : null}
           <div><span style={{ color: FII_C }}>■</span> FII: <b style={{ color: signColor(months[hover].fii) }}>{fmtCr(months[hover].fii, { signed: true })}</b></div>
           {months[hover].dii != null ? <div><span style={{ color: DII_C }}>■</span> DII: <b style={{ color: signColor(months[hover].dii) }}>{fmtCr(months[hover].dii, { signed: true })}</b>{months[hover].diiDays < months[hover].days ? <span style={{ color: SOFT }}> ({months[hover].diiDays} days)</span> : null}</div> : null}
         </div>
@@ -254,7 +273,7 @@ export function LongPctChart({ series }: { series: Array<{ date: string; longPct
   const hp = hover != null ? series[hover] : null;
   return (
     <div style={{ position: 'relative' }}>
-      <svg viewBox={`0 0 ${W} ${LH}`} width="100%" style={{ display: 'block', height: 'auto' }} role="img" aria-label="FII index futures long percent"
+      <svg viewBox={`0 0 ${W} ${LH}`} width="100%" style={{ display: 'block', height: 'auto' }} role="img" aria-label="FII index futures long percent — focus it and use the left / right arrow keys to read each day" {...keyNav(n, hover, setHover)}
         onMouseLeave={() => setHover(null)} onMouseMove={(e) => setHover(hoverIndex(e, n))}>
         <rect x={PL} y={y(30)} width={W - PL - PR} height={y(0) - y(30)} fill={RED_FILL} fillOpacity={0.07} />
         <rect x={PL} y={y(100)} width={W - PL - PR} height={y(70) - y(100)} fill={GREEN_FILL} fillOpacity={0.08} />
@@ -268,8 +287,8 @@ export function LongPctChart({ series }: { series: Array<{ date: string; longPct
         <text x={W - PR - 4} y={y(70) + 12} textAnchor="end" fontSize={10} fill={GREEN}>above 70% = bullish</text>
         <DateLabels pts={series} h={LH} />
         <path d={path} fill="none" stroke={FII_C} strokeWidth={2} />
-        {n ? <circle cx={x(n - 1)} cy={y(series[n - 1].longPct)} r={4} fill={FII_C} stroke="#fff" strokeWidth={2} /> : null}
-        {hover != null ? <line x1={x(hover)} x2={x(hover)} y1={LT} y2={LH - LB} stroke="#0f172a" strokeOpacity={0.25} /> : null}
+        {n ? <circle cx={x(n - 1)} cy={y(series[n - 1].longPct)} r={4} fill={FII_C} stroke={FD.card} strokeWidth={2} /> : null}
+        {hover != null ? <line x1={x(hover)} x2={x(hover)} y1={LT} y2={LH - LB} stroke={INK} strokeOpacity={0.25} /> : null}
       </svg>
       {hp ? (
         <div style={{ ...tipBox, left: `${Math.min(70, Math.max(8, (x(hover!) / W) * 100))}%` }}>

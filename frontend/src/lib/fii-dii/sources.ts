@@ -5,7 +5,7 @@
 // host, .github/workflows/scrape-fii-dii.yml collects the same pages from GitHub and POSTs them to /api/v1/fii-dii.
 import { nseApiFetch } from '@/lib/nse';
 import { proxiedFetch } from '@/lib/proxy-fetch';
-import { parseNseFiiDii, participantOiUrl, type NseFiiDiiDay } from './parse';
+import { checkNseFiiDii, participantOiUrl, type NseFiiDiiDay } from './parse';
 import { fetchChart } from '@/lib/yahoo';
 
 export const NSE_FII_DII_PATH = '/api/fiidiiTradeReact';
@@ -16,22 +16,27 @@ export const NSDL_SECTOR_LIST_URL = 'https://www.fpi.nsdl.co.in/web/Reports/FPI_
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 
-export async function fetchNseFiiDii(): Promise<{ day: NseFiiDiiDay | null; via: string; error?: string }> {
+/** zzz1067 (F03): `rejected` lists why a recognised NSE file was not trusted (dates disagree, totals do not add up …). */
+export async function fetchNseFiiDii(): Promise<{ day: NseFiiDiiDay | null; via: string; error?: string; rejected?: string[] }> {
+  let rejected: string[] | undefined;
   try {
     const j = await nseApiFetch(NSE_FII_DII_PATH, 30_000);
-    const day = parseNseFiiDii(j);
-    if (day) return { day, via: 'nse' };
+    const c = checkNseFiiDii(j);
+    if (c.day) return { day: c.day, via: 'nse' };
+    if (c.problems.length) rejected = c.problems;
   } catch { /* fall through to the relay */ }
   try {
     const r = await proxiedFetch(NSE_FII_DII_URL, {
       headers: { 'User-Agent': UA, Accept: 'application/json', Referer: 'https://www.nseindia.com/reports/fii-dii' },
       signal: AbortSignal.timeout(15_000),
     });
-    if (!r.ok) return { day: null, via: 'relay', error: `HTTP ${r.status}` };
-    const day = parseNseFiiDii(await r.json());
-    return day ? { day, via: 'relay' } : { day: null, via: 'relay', error: 'unrecognised answer' };
+    if (!r.ok) return { day: null, via: 'relay', error: `HTTP ${r.status}`, rejected };
+    const c = checkNseFiiDii(await r.json());
+    if (c.day) return { day: c.day, via: 'relay' };
+    const bad = c.problems.length ? c.problems : rejected;
+    return { day: null, via: 'relay', error: bad?.length ? `rejected: ${bad.join('; ')}` : 'unrecognised answer', rejected: bad };
   } catch (e: any) {
-    return { day: null, via: 'relay', error: e?.message || 'network' };
+    return { day: null, via: 'relay', error: e?.message || 'network', rejected };
   }
 }
 

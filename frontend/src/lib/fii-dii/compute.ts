@@ -15,25 +15,74 @@ export interface DailyRow {
 }
 
 export type Dir = 'buy' | 'sell';
-export interface Streak { dir: Dir | null; days: number; totalCr: number; since: string | null }
+/**
+ * zzz1067 (F02) — `days` counts OBSERVED same-direction days. `continuous` says whether those days were back-to-back trading
+ * sessions: true = checked against the NSE holiday list and nothing is missing, false = `missing` sessions have no stored
+ * figure (the run may really have been broken), null = the calendar for that period is not known, so continuity is unproven.
+ */
+export interface Streak { dir: Dir | null; days: number; totalCr: number; since: string | null; continuous: boolean | null; missing: number }
 
-/** Consecutive trading days of net buying (or selling), counted back from the latest day that has a figure. A day with no
- *  figure (e.g. DII before NSE rows exist) ends the count; a net of exactly 0 ends it too. */
-export function streakOf(rows: readonly DailyRow[], pick: (r: DailyRow) => number | null): Streak {
+// ── zzz1067 (F02): the NSE session calendar ──────────────────────────────────
+
+/** Which weekdays are NSE holidays, and for which dates that is actually known (a year without a stored holiday list is not). */
+export interface SessionCalendar { isHoliday: (iso: string) => boolean; knows: (iso: string) => boolean }
+/** No calendar: every weekday could be a session, nothing is known — continuity is never claimed. */
+export const UNKNOWN_CALENDAR: SessionCalendar = { isHoliday: () => false, knows: () => false };
+/** A calendar from a holiday predicate and the years whose holiday list is stored. */
+export function sessionCalendar(isHoliday: (iso: string) => boolean, knownYears: Iterable<string>): SessionCalendar {
+  const years = new Set(knownYears);
+  return { isHoliday, knows: (iso) => years.has(iso.slice(0, 4)) };
+}
+
+export const addDaysIso = (iso: string, n: number): string => {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+const isWeekday = (iso: string) => { const wd = new Date(`${iso}T00:00:00Z`).getUTCDay(); return wd !== 0 && wd !== 6; };
+
+/** Sessions the calendar EXPECTS in [from, to] (weekdays that are not holidays, in years whose holidays are known). */
+export function expectedSessions(from: string, to: string, cal: SessionCalendar): string[] {
+  const out: string[] = [];
+  for (let d = from, i = 0; d <= to && i < 4000; d = addDaysIso(d, 1), i++) if (isWeekday(d) && cal.knows(d) && !cal.isHoliday(d)) out.push(d);
+  return out;
+}
+
+/** Between two observed days (exclusive): how many expected sessions have no row, and whether any day there is unknown. */
+export function gapBetween(a: string, b: string, cal: SessionCalendar, observed: ReadonlySet<string>): { missing: number; unknown: boolean } {
+  let missing = 0, unknown = false;
+  for (let d = addDaysIso(a, 1), i = 0; d < b && i < 400; d = addDaysIso(d, 1), i++) {
+    if (!isWeekday(d) || observed.has(d)) continue;
+    if (!cal.knows(d)) { unknown = true; continue; }
+    if (!cal.isHoliday(d)) missing++;
+  }
+  return { missing, unknown };
+}
+
+/** Consecutive OBSERVED days of net buying (or selling), counted back from the latest day that has a figure. A day with no
+ *  figure (e.g. DII before NSE rows exist) ends the count; a net of exactly 0 ends it too. zzz1067: sessions missing between
+ *  two observed days (on the NSE calendar) are counted in `missing` and make `continuous` false — the run is then "observed
+ *  days", not proven back-to-back sessions. */
+export function streakOf(rows: readonly DailyRow[], pick: (r: DailyRow) => number | null, cal: SessionCalendar = UNKNOWN_CALENDAR): Streak {
   const asc = [...rows].sort((a, b) => a.date.localeCompare(b.date));
+  const none: Streak = { dir: null, days: 0, totalCr: 0, since: null, continuous: null, missing: 0 };
   let i = asc.length - 1;
   while (i >= 0 && pick(asc[i]) == null) i--;
-  if (i < 0) return { dir: null, days: 0, totalCr: 0, since: null };
+  if (i < 0) return none;
   const first = pick(asc[i])!;
-  if (first === 0) return { dir: null, days: 0, totalCr: 0, since: null };
+  if (first === 0) return none;
   const dir: Dir = first > 0 ? 'buy' : 'sell';
-  let days = 0, total = 0, since: string | null = null;
+  const observed = new Set(asc.map((r) => r.date));
+  let days = 0, total = 0, since: string | null = null, missing = 0, unknown = false;
   for (; i >= 0; i--) {
     const v = pick(asc[i]);
     if (v == null || v === 0 || (v > 0) !== (dir === 'buy')) break;
+    if (since) { const g = gapBetween(asc[i].date, since, cal, observed); missing += g.missing; unknown = unknown || g.unknown; }
     days++; total += v; since = asc[i].date;
   }
-  return { dir, days, totalCr: Math.round(total * 100) / 100, since };
+  // no weekday between two observed days = certainly back-to-back, whatever the holiday list says
+  const continuous = missing > 0 ? false : unknown ? null : true;
+  return { dir, days, totalCr: Math.round(total * 100) / 100, since, continuous, missing };
 }
 
 /** Share of the day's turnover that was buying, in %. */
@@ -48,13 +97,21 @@ export function parseRange(s: unknown): Range {
   const t = String(s || '').toUpperCase();
   return (RANGES as readonly string[]).includes(t) ? (t as Range) : '3M';
 }
+/** zzz1067 (F02) — `iso` moved back `months` calendar months, the day clamped to the end of the target month:
+ *  31 Mar − 1 month = 28 Feb (29 in a leap year), never 3 Mar (JavaScript's Date overflow). */
+export function minusMonths(iso: string, months: number): string {
+  const y = Number(iso.slice(0, 4)), m = Number(iso.slice(5, 7)), d = Number(iso.slice(8, 10));
+  const total = y * 12 + (m - 1) - months;
+  const ty = Math.floor(total / 12), tm = total - ty * 12;           // tm 0–11
+  const last = new Date(Date.UTC(ty, tm + 1, 0)).getUTCDate();
+  return `${String(ty).padStart(4, '0')}-${String(tm + 1).padStart(2, '0')}-${String(Math.min(d, last)).padStart(2, '0')}`;
+}
+
 /** First date (inclusive) of a range ending at `latest`. ALL → null. */
 export function rangeStart(range: Range, latest: string): string | null {
   if (range === 'ALL') return null;
   const months = { '1M': 1, '3M': 3, '6M': 6, '1Y': 12, '3Y': 36 }[range];
-  const d = new Date(`${latest}T00:00:00Z`);
-  d.setUTCMonth(d.getUTCMonth() - months);
-  return d.toISOString().slice(0, 10);
+  return minusMonths(latest, months);
 }
 
 export interface CumPoint { date: string; daily: number; cum: number }
@@ -72,29 +129,60 @@ export function cumulativeSeries(rows: readonly DailyRow[], pick: (r: DailyRow) 
   return out;
 }
 
-/** Rolling n-trading-day sum of the picked net (null until n days with a figure exist). */
-export function rollingSum(rows: readonly DailyRow[], pick: (r: DailyRow) => number | null, n = 20): Array<{ date: string; sum: number | null }> {
-  const asc = [...rows].sort((a, b) => a.date.localeCompare(b.date)).filter((r) => pick(r) != null);
+/** The session list a rolling window walks: every stored day plus every session the calendar expects between the first and
+ *  the last stored day (a year without a holiday list adds nothing — there only stored days count). */
+export function sessionLine(rows: readonly DailyRow[], cal: SessionCalendar = UNKNOWN_CALENDAR): string[] {
+  const dates = [...new Set(rows.map((r) => r.date))].sort();
+  if (!dates.length) return [];
+  return [...new Set([...dates, ...expectedSessions(dates[0], dates[dates.length - 1], cal)])].sort();
+}
+
+/** zzz1067 (F02) — rolling n-SESSION sum of the picked net: the window is the last n trading sessions (calendar-aware, see
+ *  sessionLine), and the sum is null unless every one of those n sessions has a figure. A stored row without a figure (e.g.
+ *  DII before NSE rows exist) or a missing expected session therefore blanks the window — it is never "the last 20 days we
+ *  happen to know". Only stored days are returned. */
+export function rollingSum(rows: readonly DailyRow[], pick: (r: DailyRow) => number | null, n = 20, cal: SessionCalendar = UNKNOWN_CALENDAR): Array<{ date: string; sum: number | null }> {
+  const val = new Map<string, number | null>();
+  for (const r of rows) { const v = pick(r); if (!val.has(r.date) || v != null) val.set(r.date, v); }
+  const line = sessionLine(rows, cal);
   const out: Array<{ date: string; sum: number | null }> = [];
-  let win = 0;
-  for (let i = 0; i < asc.length; i++) {
-    win += pick(asc[i])!;
-    if (i >= n) win -= pick(asc[i - n])!;
-    out.push({ date: asc[i].date, sum: i >= n - 1 ? Math.round(win * 100) / 100 : null });
+  let win = 0, have = 0;
+  for (let i = 0; i < line.length; i++) {
+    const v = val.get(line[i]);
+    if (v != null) { win += v; have++; }
+    if (i >= n) { const o = val.get(line[i - n]); if (o != null) { win -= o; have--; } }
+    if (val.has(line[i])) out.push({ date: line[i], sum: i >= n - 1 && have === n ? Math.round(win * 100) / 100 : null });
   }
   return out;
 }
 
-/** Sum of the picked net over the last `days` calendar days ending at the latest row. */
-export function sumSince(rows: readonly DailyRow[], pick: (r: DailyRow) => number | null, from: string): { sum: number; days: number } {
-  let sum = 0, days = 0;
+/** zzz1067 (F02) — sessions in a row (ending at the latest session) that have a figure: "Need 20 sessions; N available". */
+export function trailingSessions(rows: readonly DailyRow[], pick: (r: DailyRow) => number | null, cal: SessionCalendar = UNKNOWN_CALENDAR): number {
+  const have = new Set(rows.filter((r) => pick(r) != null).map((r) => r.date));
+  const line = sessionLine(rows, cal);
+  let n = 0;
+  for (let i = line.length - 1; i >= 0 && have.has(line[i]); i--) n++;
+  return n;
+}
+
+/** Sum of the picked net from `from` to the latest row. zzz1067 (F02): `expected` = sessions the calendar expects in that
+ *  span (null when the calendar is not known there); `days` < `expected` means the sum is a PARTIAL period. */
+export function sumSince(rows: readonly DailyRow[], pick: (r: DailyRow) => number | null, from: string, cal: SessionCalendar = UNKNOWN_CALENDAR): { sum: number; days: number; expected: number | null } {
+  let sum = 0, days = 0, last: string | null = null;
   for (const r of rows) {
+    if (!last || r.date > last) last = r.date;
     if (r.date < from) continue;
     const v = pick(r);
     if (v == null) continue;
     sum += v; days++;
   }
-  return { sum: Math.round(sum * 100) / 100, days };
+  let expected: number | null = null;
+  if (last && last >= from && cal.knows(from) && cal.knows(last)) {
+    const known = new Set(expectedSessions(from, last, cal));
+    for (const r of rows) if (r.date >= from && r.date <= last && pick(r) != null) known.add(r.date);
+    expected = known.size;
+  }
+  return { sum: Math.round(sum * 100) / 100, days, expected };
 }
 
 // ── sectors ──────────────────────────────────────────────────────────────────

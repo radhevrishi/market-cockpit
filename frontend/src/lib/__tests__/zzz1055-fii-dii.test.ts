@@ -90,7 +90,8 @@ test('NSDL report list → newest first with absolute URLs (old misspelt file na
 test('streaks count consecutive net-buy / net-sell days back from the latest day', () => {
   const rows = [row('2026-10-07', 100, -50), row('2026-10-08', -10, 20), row('2026-10-09', -20, 30), row('2026-10-12', -30, 40), row('2026-10-13', -40, 50)];
   const fii = streakOf(rows, (r) => r.fiiNet);
-  assert.deepEqual(fii, { dir: 'sell', days: 4, totalCr: -100, since: '2026-10-08' });
+  // zzz1067: no weekday is missing between the observed days (9 Oct Fri → 12 Oct Mon), so the run is proven back-to-back
+  assert.deepEqual(fii, { dir: 'sell', days: 4, totalCr: -100, since: '2026-10-08', continuous: true, missing: 0 });
   const dii = streakOf(rows, (r) => r.diiNet);
   assert.equal(dii.dir, 'buy'); assert.equal(dii.days, 4);
   // a day without a figure (DII before NSE rows existed) ends the streak; an unsorted input is fine
@@ -149,9 +150,15 @@ test('API answer: today = latest NSE day (provisional until NSDL confirms), cove
   assert.equal(v.today!.provisional, true);
   assert.equal(v.today!.combinedNet, -100);
   assert.equal(v.today!.fii.buySharePct, 48.7);
-  assert.equal(v.streaks.fii.days, 3);
+  // zzz1067 (F01): sources are never joined. The headline streak is NSE's own (13 + 14 Oct); the charts use ONE series —
+  // here NSDL final (picked automatically because NSE history does not cover the range): −1,000 then −1,800, and 14 Oct has
+  // no final figure yet, so the running total stays flat instead of adding NSE's −500.
+  assert.equal(v.streaks.fii.days, 2);
+  assert.equal(v.streaks.fiiFinal.days, 2);
   assert.equal(v.streaks.dii.days, 2);
-  assert.deepEqual(v.history.map((h) => h.fiiCum), [-1000, -3000, -3500]);
+  assert.equal(v.basis, 'nsdl'); assert.equal(v.basisAuto, true);
+  assert.deepEqual(v.history.map((h) => h.fiiCum), [-1000, -2800, -2800]);
+  assert.deepEqual(v.history.map((h) => h.fiiNse), [null, -2000, -500]);
   assert.equal(v.coverage.firstNseDate, '2026-10-13');
   assert.equal(v.coverage.firstDate, '2026-10-12');
   assert.equal(buildView([], [], '3M').available, false);

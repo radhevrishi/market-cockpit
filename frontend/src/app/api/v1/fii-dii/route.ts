@@ -10,8 +10,10 @@
 //        ?run=1 — run the scheduler job now (all steps).
 import { NextRequest, NextResponse } from 'next/server';
 import { hasServiceKey } from '@/lib/site-auth';
-import { parseRange } from '@/lib/fii-dii/compute';
-import { buildView } from '@/lib/fii-dii/view';
+import { parseRange, sessionCalendar } from '@/lib/fii-dii/compute';
+import { buildView, parseBasis } from '@/lib/fii-dii/view';
+import { isNseHolidayDate, nseHolidayStatus } from '@/lib/market-hours';
+import { warmNseHolidays } from '@/lib/nse-holidays-server';
 import {
   storeReady, readDaily, readSectorRows, apiCache, readOi, readCloses, readMeta, latestOiDate, latestCloseDate, NIFTY_SYMBOL,
 } from '@/lib/fii-dii/store';
@@ -23,28 +25,40 @@ export const maxDuration = 300;
 const CACHE_MS = 3 * 60_000;
 const BROWSER_CACHE = 'public, max-age=120, stale-while-revalidate=600';
 
+/** zzz1067 (F03): a stored quarantine record, shaped for the page (anything else = none). */
+const quarantineOf = (v: any) => (v && typeof v === 'object' && typeof v.at === 'string' && Array.isArray(v.problems)
+  ? { at: v.at, problems: v.problems.map((p: unknown) => String(p).slice(0, 200)).slice(0, 6), via: typeof v.via === 'string' ? v.via : undefined, report: typeof v.report === 'string' ? v.report : undefined }
+  : null);
+
 export async function GET(req: NextRequest) {
   const range = parseRange(req.nextUrl.searchParams.get('range'));
-  const hit = apiCache.get(range);
+  const basis = parseBasis(req.nextUrl.searchParams.get('basis'));
+  const cacheKey = `${range}:${basis ?? 'auto'}`;
+  const hit = apiCache.get(cacheKey);
   if (hit && Date.now() - hit.at < CACHE_MS) return NextResponse.json(hit.body, { headers: { 'Cache-Control': BROWSER_CACHE, 'X-Cache': 'HIT' } });
   try {
     if (!(await storeReady())) {
       return NextResponse.json({ ok: false, available: false, error: 'The database is not available right now.' }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
     }
     const safe = <T,>(p: Promise<T>, d: T) => p.catch(() => d);   // zzz1060 extras never break the main answer
-    const [daily, sectors, oi, closes, dailyMeta, sectorMeta, oiMeta, oiLatest, niftyLatest] = await Promise.all([
+    const [daily, sectors, oi, closes, dailyMeta, sectorMeta, oiMeta, oiLatest, niftyLatest, nseQ, secQ, hol] = await Promise.all([
       readDaily(), readSectorRows(400), safe(readOi(400), []), safe(readCloses(NIFTY_SYMBOL), []),
       safe(readMeta<any>('daily_backfill'), null), safe(readMeta<any>('sector_backfill'), null), safe(readMeta<any>('oi_backfill'), null),
       safe(latestOiDate(), null), safe(latestCloseDate(NIFTY_SYMBOL), null),
+      safe(readMeta<any>('nse_quarantine'), null), safe(readMeta<any>('sector_quarantine'), null),
+      safe(warmNseHolidays(), null),
     ]);
     const status = {
       daily: dailyMeta ? { cursor: dailyMeta.cursor ?? null, done: !!dailyMeta.done } : null,
       sectors: sectorMeta ? { done: !!sectorMeta.done } : null,
       oi: oiMeta ? { cursor: oiMeta.cursor ?? null, done: !!oiMeta.done } : null,
       oiLatest, niftyLatest,
+      nseQuarantine: quarantineOf(nseQ), sectorQuarantine: quarantineOf(secQ),
     };
-    const body = buildView(daily, sectors, range, { oi, closes, status });
-    apiCache.set(range, { at: Date.now(), body });
+    // zzz1067 (F02): the NSE session calendar — only years whose holiday list is stored count as "known"
+    const calendar = sessionCalendar(isNseHolidayDate, (hol ?? nseHolidayStatus()).years);
+    const body = buildView(daily, sectors, range, { oi, closes, status, basis, calendar });
+    apiCache.set(cacheKey, { at: Date.now(), body });
     return NextResponse.json(body, { headers: { 'Cache-Control': BROWSER_CACHE, 'X-Cache': 'MISS' } });
   } catch (e: any) {
     return NextResponse.json({ ok: false, available: false, error: e?.message || 'failed' }, { status: 500, headers: { 'Cache-Control': 'no-store' } });

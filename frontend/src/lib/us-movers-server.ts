@@ -23,7 +23,7 @@
 import { classifyUsFiling, usItemsOf, usFormOf, isNyseTradingDay } from './ai-gainers/us-gainers';
 import { fetchEdgarResearch, fetchUsPressFallback, fetchEdgarDocuments, secRawHtml } from './ai-gainers/edgar-research';
 import { entityMatch } from './ai-gainers/news-context';
-import { etParts } from './ai-gainers/us-gainers';
+import { etParts, toEtIso } from './ai-gainers/us-gainers';
 import { loadSnapshot } from './screener/tv-replacement-server';
 import type { ScreenRow } from './screener/types';
 import {
@@ -188,8 +188,17 @@ async function newsFor(ticker: string, company: string): Promise<UsNewsLite[] | 
       ? p.items
         .filter((it) => it.title && entityMatch(it.title, ticker, company || null).ok)
         .map((it) => {
-          const t = it.date ? Date.parse(it.date) : NaN;
-          return { title: it.title.replace(/\s+-\s+[^-]{2,60}$/, '').trim(), url: it.url || '', date: Number.isFinite(t) ? etParts(new Date(t)).ymd : '', source: it.publisher || null };
+          // zzz1067 (U02): keep the full time (as an ET-offset stamp) when the source gave one; a bare 'YYYY-MM-DD' stays a
+          // date (parsing it as UTC midnight would have filed it under the PREVIOUS New York day)
+          const raw = String(it.date || '').trim();
+          const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(raw);
+          const t = raw && !dateOnly ? Date.parse(raw) : NaN;
+          const timed = Number.isFinite(t) && !/T00:00:00(?:\.000)?Z$/.test(raw);
+          return {
+            title: it.title.replace(/\s+-\s+[^-]{2,60}$/, '').trim(), url: it.url || '',
+            date: dateOnly ? raw : Number.isFinite(t) ? etParts(new Date(t)).ymd : '',
+            at: timed ? toEtIso(new Date(t)) : null, source: it.publisher || null,
+          };
         })
         .filter((n) => n.date)
       : (p.attempts.some((a) => a.ok) ? [] : null);

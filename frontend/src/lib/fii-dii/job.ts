@@ -3,8 +3,8 @@ import type { JobCtx, JobOutcome } from '@/lib/app-scheduler';
 import { isNseHolidayDate } from '@/lib/market-hours';
 import { warmNseHolidays } from '@/lib/nse-holidays-server';
 import {
-  parseNseFiiDii, parseNsdlDaily, nsdlTradeDates, parseSectorReportList, parseSectorReport, parseParticipantOi, parseNsdlAssetMix,
-  type NsdlDailyRow, type AssetMixRow,
+  checkNseFiiDii, parseNsdlDaily, nsdlTradeDates, parseSectorReportList, parseSectorReport, parseParticipantOi, parseNsdlAssetMix,
+  sectorReportProblems, type NsdlDailyRow, type AssetMixRow,
 } from './parse';
 import {
   expectedNseDate, expectedOiDate, planFiiDiiRun, backfillMonths, oiBackfillDates, SECTOR_BACKFILL_REPORTS, SECTOR_REPORTS_PER_RUN,
@@ -31,6 +31,10 @@ export interface FiiDiiRunReport {
 }
 
 const isHoliday = (iso: string) => isNseHolidayDate(iso);
+/** zzz1067 (F03): record (or clear, with null) a rejected source file — read by GET /api/v1/fii-dii for the error badge. Never throws. */
+async function writeQuarantine(key: 'nse_quarantine' | 'sector_quarantine', v: unknown): Promise<void> {
+  try { await writeMeta(key, v); clearApiCache(); } catch { /* the badge is best-effort */ }
+}
 const istToday = (now: Date) => new Date(now.getTime() + 330 * 60_000).toISOString().slice(0, 10);
 
 export interface DailyBackfillMeta { cursor: string | null; done: boolean }
@@ -68,8 +72,10 @@ export async function runFiiDii(opts: { slot: Date; now?: Date; deadline?: numbe
   // 1) NSE provisional
   if (plan.nse) {
     const r = await fetchNseFiiDii();
+    // zzz1067 (F03): a contradictory NSE file is quarantined (the page keeps the last verified day and shows an error badge)
+    if (r.rejected?.length) await writeQuarantine('nse_quarantine', { at: now.toISOString(), via: r.via, problems: r.rejected });
     if (r.day) {
-      if (r.day.date <= istToday(now)) { await upsertNseDay(r.day); wrote = true; }
+      if (r.day.date <= istToday(now)) { await upsertNseDay(r.day); wrote = true; await writeQuarantine('nse_quarantine', null); }
       rep.nse = { stored: r.day.date, via: r.via, waiting: r.day.date < expected };
       log(`NSE ${r.day.date} via ${r.via}${r.day.date < expected ? ` (waiting for ${expected})` : ''}`);
     } else {
@@ -128,6 +134,9 @@ export async function runFiiDii(opts: { slot: Date; now?: Date; deadline?: numbe
         if (!r.html) { errors.push(`${l.date}: ${r.error}`); continue; }
         const parsed = parseSectorReport(r.html);
         if (!parsed) { skip.add(l.date); errors.push(`${l.date}: layout not understood`); continue; }
+        // zzz1067 (F03): a report whose sectors do not add up to its own total is quarantined, not stored (tried again next run)
+        const bad = sectorReportProblems(parsed);
+        if (bad.length) { errors.push(`${l.date}: rejected — ${bad.join('; ')}`); await writeQuarantine('sector_quarantine', { at: now.toISOString(), report: l.date, problems: bad }); continue; }
         await upsertSectorReport(parsed);
         stored.push(parsed.reportDate); wrote = true;
       }
@@ -212,8 +221,10 @@ export async function ingestCollected(body: CollectedBody, now: Date = new Date(
   if (!(await storeReady())) return { ok: false, error: 'Postgres is not available', nse: null, nsdlRows: 0, sectors: [] };
   await warmNseHolidays().catch(() => null);
   let nse: string | null = null;
-  const day = body.nse != null ? parseNseFiiDii(body.nse) : null;
-  if (day && day.date <= istToday(now)) { await upsertNseDay(day); nse = day.date; }
+  const chk = body.nse != null ? checkNseFiiDii(body.nse) : null;
+  const day = chk?.day ?? null;
+  if (chk?.problems.length) await writeQuarantine('nse_quarantine', { at: now.toISOString(), via: 'collector', problems: chk.problems });
+  if (day && day.date <= istToday(now)) { await upsertNseDay(day); nse = day.date; await writeQuarantine('nse_quarantine', null); }
   const daily: NsdlDailyRow[] = [];
   const mix: AssetMixRow[] = [];
   for (const h of htmlList(body.nsdlDaily)) { daily.push(...parseNsdlDaily(h)); mix.push(...parseNsdlAssetMix(h)); }
@@ -253,6 +264,8 @@ export async function ingestCollected(body: CollectedBody, now: Date = new Date(
   const sectors: string[] = [];
   for (const h of htmlList(body.sectorReports)) {
     const rep = parseSectorReport(h);
+    const bad = rep ? sectorReportProblems(rep) : [];
+    if (rep && bad.length) { await writeQuarantine('sector_quarantine', { at: now.toISOString(), report: rep.reportDate, problems: bad }); continue; }
     if (rep) { await upsertSectorReport(rep); sectors.push(rep.reportDate); }
   }
   if (nse || nsdlRows || sectors.length || oiDays) clearApiCache();

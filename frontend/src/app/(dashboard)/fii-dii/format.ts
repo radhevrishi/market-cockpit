@@ -32,6 +32,23 @@ export function fmtDate(iso: string | null | undefined, short = false): string {
   return short ? `${d} ${MON[m - 1]}` : `${d} ${MON[m - 1]} ${y}`;
 }
 
-export const GREEN = '#047857';
-export const RED = '#b91c1c';
-export const flowColor = (v: number | null | undefined) => (v == null ? '#475569' : v >= 0 ? GREEN : RED);
+export const GREEN = 'var(--mc-bullish, #047857)';
+export const RED = 'var(--mc-bearish, #b91c1c)';
+
+/** zzz1067 — the page's colours as the app's shared light / dark tokens. The fallbacks are the light values, so a fresh
+ *  user (white theme) sees exactly the white page; the dark theme gets dark cards instead of hard-coded white. */
+export const FD = {
+  card: 'var(--mc-bg-1, #ffffff)',
+  page: 'var(--mc-bg-2, #f8fafc)',
+  subtle: 'var(--mc-bg-3, #f1f5f9)',
+  line: 'var(--mc-border-3, #e2e8f0)',
+  text: 'var(--mc-text-1, #0f172a)',
+  soft: 'var(--mc-text-3, #475569)',
+  faint: 'var(--mc-text-4, #94a3b8)',
+  accent: 'var(--mc-info, #1d4ed8)',
+  warn: 'var(--mc-warn, #b45309)',
+} as const;
+/** A soft tint of a token colour (badges, call-out boxes) that works on light and dark cards. */
+export const tint = (c: string, pct = 10) => `color-mix(in srgb, ${c} ${pct}%, transparent)`;
+
+export const flowColor = (v: number | null | undefined) => (v == null ? FD.soft : v >= 0 ? GREEN : RED);

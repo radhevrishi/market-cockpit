@@ -7,7 +7,8 @@
 //   • Sectors: a fortnight × sector grid (heatmap + sparklines), momentum, rotation call-outs (top in / out, flips).
 //   • Monthly totals, FII flow vs Nifty 50, the FPI equity / debt / hybrid split per month.
 //   • "What it means today": a short paragraph built from fixed rules over the figures above.
-import type { DailyRow, SectorFortnightRow, SectorLine } from './compute';
+import type { DailyRow, SectorFortnightRow, SectorLine, SessionCalendar } from './compute';
+import { UNKNOWN_CALENDAR, expectedSessions, addDaysIso, minusMonths } from './compute';
 
 const r1 = (v: number) => Math.round(v * 10) / 10;
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -242,20 +243,37 @@ export function rotation(lines: readonly SectorLine[], grid: SectorGrid, minFlip
 
 // ── monthly totals ───────────────────────────────────────────────────────────
 
-export interface MonthTotal { month: string; fii: number; dii: number | null; days: number; diiDays: number }
+/** zzz1067 (F02): `expected` = trading sessions the calendar expects in the month up to the latest stored day (null when the
+ *  holiday list for that year is unknown); `partial` = the month is not complete — fewer figures than expected, or the month is
+ *  still running. A partial month is labelled on the chart, never shown as a full-month total. */
+export interface MonthTotal { month: string; fii: number; dii: number | null; days: number; diiDays: number; expected?: number | null; partial?: boolean; toDate?: boolean }
 
 /** FII and DII net per calendar month, the last `months` months that have a figure (oldest first). */
-export function monthlyTotals(rows: readonly DailyRow[], months = 24): MonthTotal[] {
+export function monthlyTotals(rows: readonly DailyRow[], months = 24, cal: SessionCalendar = UNKNOWN_CALENDAR): MonthTotal[] {
   const m = new Map<string, MonthTotal>();
+  let last: string | null = null;
   for (const r of rows) {
     if (r.fiiNet == null && r.diiNet == null) continue;
+    if (!last || r.date > last) last = r.date;
     const k = r.date.slice(0, 7);
     if (!m.has(k)) m.set(k, { month: k, fii: 0, dii: null, days: 0, diiDays: 0 });
     const t = m.get(k)!;
     if (r.fiiNet != null) { t.fii = r2(t.fii + r.fiiNet); t.days++; }
     if (r.diiNet != null) { t.dii = r2((t.dii ?? 0) + r.diiNet); t.diiDays++; }
   }
-  return [...m.values()].sort((a, b) => a.month.localeCompare(b.month)).slice(-months);
+  const out = [...m.values()].sort((a, b) => a.month.localeCompare(b.month)).slice(-months);
+  for (const t of out) {
+    const first = `${t.month}-01`;
+    const monthEnd = addDaysIso(minusMonths(first, -1), -1);
+    const end = last && last < monthEnd ? last : monthEnd;
+    // still running: sessions (or, without a holiday list, weekdays) remain after the latest stored day
+    const after = last && last < monthEnd ? addDaysIso(last, 1) : null;
+    const anyWeekday = (a: string, b: string) => { for (let d = a; d <= b; d = addDaysIso(d, 1)) { const wd = new Date(`${d}T00:00:00Z`).getUTCDay(); if (wd !== 0 && wd !== 6) return true; } return false; };
+    t.toDate = !!after && last!.slice(0, 7) === t.month && (cal.knows(monthEnd) ? expectedSessions(after, monthEnd, cal).length > 0 : anyWeekday(after, monthEnd));
+    t.expected = cal.knows(first) ? expectedSessions(first, end, cal).length : null;
+    t.partial = t.toDate || (t.expected != null && Math.max(t.days, t.diiDays) < t.expected);
+  }
+  return out;
 }
 
 // ── FII flow vs the market ───────────────────────────────────────────────────

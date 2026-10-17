@@ -54,20 +54,55 @@ function side(o: any): Side | null {
   return { buy, sell, net };
 }
 
-/** NSE fiidiiTradeReact JSON → one day. Accepts the array or { data: [...] }. null when the shape is not recognised. */
-export function parseNseFiiDii(json: unknown): NseFiiDiiDay | null {
+/** zzz1067 (F03) — how far bought − sold may sit from the stated net: rounding to 2 decimals on each figure, plus a hair. */
+export const netTolerance = (buy: number, sell: number) => 0.05 + (Math.abs(buy) + Math.abs(sell)) * 0.00001;
+
+/** Gross figures must be ≥ 0 and bought − sold must match the stated net within rounding. Empty list = the side is sound. */
+export function sideProblems(label: string, s: Side): string[] {
+  const out: string[] = [];
+  if (s.buy < 0 || s.sell < 0) out.push(`${label}: negative bought / sold value`);
+  if (Math.abs(s.buy - s.sell - s.net) > netTolerance(s.buy, s.sell)) out.push(`${label}: bought − sold (${round2(s.buy - s.sell)}) does not match the stated net (${s.net})`);
+  return out;
+}
+
+export interface NseFiiDiiCheck { day: NseFiiDiiDay | null; problems: string[] }
+
+/**
+ * zzz1067 (F03) — NSE fiidiiTradeReact JSON → one day, with every reason it cannot be trusted. A payload is QUARANTINED
+ * (problems not empty, nothing stored) when the FII and DII rows carry different dates, a category appears twice, a gross
+ * figure is negative or bought − sold does not match the stated net. Unknown categories are ignored. `day` is null when the
+ * shape is not recognised or anything is wrong — the caller keeps the last verified day.
+ */
+export function checkNseFiiDii(json: unknown): NseFiiDiiCheck {
   const arr: any[] = Array.isArray(json) ? json : Array.isArray((json as any)?.data) ? (json as any).data : [];
-  if (!arr.length) return null;
-  let fii: Side | null = null, dii: Side | null = null, date: string | null = null;
+  if (!arr.length) return { day: null, problems: [] };
+  const problems: string[] = [];
+  let fii: Side | null = null, dii: Side | null = null;
+  let fiiSeen = 0, diiSeen = 0;
+  const dates = new Set<string>();
   for (const o of arr) {
     const cat = String(o?.category || '').toUpperCase();
+    const isFii = /FII|FPI/.test(cat), isDii = !isFii && /DII/.test(cat);
+    if (!isFii && !isDii) continue;
     const d = ddMonYyyyToIso(String(o?.date || ''));
-    if (d) date = date || d;
-    if (/FII|FPI/.test(cat)) fii = side(o);
-    else if (/DII/.test(cat)) dii = side(o);
+    if (d) dates.add(d);
+    else if (String(o?.date || '').trim()) problems.push(`${isFii ? 'FII' : 'DII'}: date "${String(o.date).slice(0, 20)}" is not a real date`);
+    const s = side(o);
+    if (s) problems.push(...sideProblems(isFii ? 'FII' : 'DII', s));
+    if (isFii) { fiiSeen++; fii = s; } else { diiSeen++; dii = s; }
   }
-  if (!date || (!fii && !dii)) return null;
-  return { date, fii, dii };
+  if (fiiSeen > 1) problems.push('FII category appears more than once');
+  if (diiSeen > 1) problems.push('DII category appears more than once');
+  if (dates.size > 1) problems.push(`categories carry different dates (${[...dates].sort().join(', ')})`);
+  const date = dates.size === 1 ? [...dates][0] : null;
+  if (!date || (!fii && !dii)) return { day: null, problems: date || dates.size > 1 ? problems : [] };
+  return { day: problems.length ? null : { date, fii, dii }, problems };
+}
+
+/** NSE fiidiiTradeReact JSON → one day. Accepts the array or { data: [...] }. null when the shape is not recognised or the
+ *  payload fails a check (checkNseFiiDii says why). */
+export function parseNseFiiDii(json: unknown): NseFiiDiiDay | null {
+  return checkNseFiiDii(json).day;
 }
 
 // ── tiny HTML table reader (NSDL pages are plain server-rendered tables) ─────────
@@ -103,6 +138,7 @@ export function parseNsdlDaily(html: string): NsdlDailyRow[] {
     if (!date || !/^equity$/i.test(c[1]) || !/stock\s*exchange/i.test(c[2])) continue;
     const buy = parseInNumber(c[3]), sell = parseInNumber(c[4]), net = parseInNumber(c[5]);
     if (buy == null || sell == null || net == null || seen.has(date)) continue;
+    if (sideProblems('NSDL', { buy, sell, net }).length) continue;   // zzz1067 (F03): an inconsistent row is not stored
     seen.add(date);
     out.push({ reportDate: date, buy, sell, net });
   }
@@ -196,6 +232,25 @@ export function parseSectorReport(html: string): SectorReport | null {
   }
   if (!sectors.length) return null;
   return { reportDate, fortnight, sectors, total };
+}
+
+/**
+ * zzz1067 (F03) — the sectors must add up to the report's own Grand Total (holding and fortnight net, within rounding).
+ * Returns the reasons a report is NOT consistent; an empty list = usable. A report without a Grand Total row cannot be checked
+ * and is accepted (older layouts). Negative holdings and a sector listed twice are never accepted.
+ */
+export function sectorReportProblems(rep: SectorReport): string[] {
+  const out: string[] = [];
+  if (rep.sectors.some((s) => s.aucCr < 0)) out.push('a sector has a negative holding');
+  if (new Set(rep.sectors.map((s) => s.sector)).size !== rep.sectors.length) out.push('a sector appears twice');
+  if (!rep.total) return out;
+  const auc = rep.sectors.reduce((a, s) => a + s.aucCr, 0);
+  const net = rep.sectors.reduce((a, s) => a + s.netCr, 0);
+  const aucTol = Math.max(100, Math.abs(rep.total.aucCr) * 0.005);
+  const netTol = Math.max(50, Math.abs(rep.total.netCr) * 0.02, Math.abs(rep.total.aucCr) * 0.0001);
+  if (Math.abs(auc - rep.total.aucCr) > aucTol) out.push(`sector holdings add up to ${round2(auc)}, the report total says ${rep.total.aucCr}`);
+  if (Math.abs(net - rep.total.netCr) > netTol) out.push(`sector net flows add up to ${round2(net)}, the report total says ${rep.total.netCr}`);
+  return out;
 }
 
 // ── zzz1060: NSE participant-wise open interest (daily archive CSV) ──────────────

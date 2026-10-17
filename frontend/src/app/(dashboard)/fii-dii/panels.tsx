@@ -2,18 +2,18 @@
 'use client';
 
 import { LongPctChart } from './charts';
-import { fmtCr, fmtDate, flowColor, GREEN, RED } from './format';
+import { fmtCr, fmtDate, flowColor, GREEN, RED, FD, tint } from './format';
 
 type Tone = 'very-bearish' | 'bearish' | 'neutral' | 'bullish' | 'very-bullish';
-const LINE = '#e2e8f0', SOFT = '#475569', FAINT = '#94a3b8';
+const LINE = FD.line, SOFT = FD.soft, FAINT = FD.faint, INK = FD.text;
 const TONE: Record<Tone, { fg: string; bg: string; bd: string }> = {
-  'very-bearish': { fg: RED, bg: '#fef2f2', bd: '#fecaca' },
-  bearish: { fg: '#c2410c', bg: '#fff7ed', bd: '#fed7aa' },
-  neutral: { fg: '#475569', bg: '#f8fafc', bd: LINE },
-  bullish: { fg: '#15803d', bg: '#f0fdf4', bd: '#bbf7d0' },
-  'very-bullish': { fg: GREEN, bg: '#ecfdf5', bd: '#a7f3d0' },
+  'very-bearish': { fg: RED, bg: tint(RED, 8), bd: tint(RED, 30) },
+  bearish: { fg: FD.warn, bg: tint(FD.warn, 8), bd: tint(FD.warn, 30) },
+  neutral: { fg: SOFT, bg: FD.subtle, bd: LINE },
+  bullish: { fg: GREEN, bg: tint(GREEN, 6), bd: tint(GREEN, 25) },
+  'very-bullish': { fg: GREEN, bg: tint(GREEN, 10), bd: tint(GREEN, 35) },
 };
-const box: React.CSSProperties = { background: '#fff', border: `1px solid ${LINE}`, borderRadius: 10, padding: 16 };
+const box: React.CSSProperties = { minWidth: 0, background: FD.card, border: `1px solid ${LINE}`, borderRadius: 10, padding: 16 };
 const H = ({ children, sub }: { children: React.ReactNode; sub?: React.ReactNode }) => (
   <div style={{ marginBottom: 8 }}>
     <div style={{ fontSize: 16, fontWeight: 700 }}>{children}</div>
@@ -27,9 +27,9 @@ const Pill = ({ tone, children }: { tone: Tone; children: React.ReactNode }) => 
 export function SummaryBox({ lines, date }: { lines: string[]; date: string | null }) {
   if (!lines.length) return null;
   return (
-    <div style={{ ...box, borderLeft: '4px solid #1d4ed8', background: '#f8fbff' }}>
-      <div style={{ fontSize: 13, fontWeight: 700, color: '#1d4ed8', marginBottom: 6 }}>What it means today{date ? ` · ${fmtDate(date)}` : ''}</div>
-      <div style={{ fontSize: 14, lineHeight: 1.65, color: '#0f172a' }}>{lines.join(' ')}</div>
+    <div style={{ ...box, borderLeft: `4px solid ${FD.accent}`, background: tint(FD.accent, 5) }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: FD.accent, marginBottom: 6 }}>What it means today{date ? ` · ${fmtDate(date)}` : ''}</div>
+      <div style={{ fontSize: 14, lineHeight: 1.65, color: INK }}>{lines.join(' ')}</div>
       <div style={{ fontSize: 11, color: FAINT, marginTop: 6 }}>Written by fixed rules from the figures on this page — no AI, no forecast.</div>
     </div>
   );
@@ -50,9 +50,9 @@ function Gauge({ pct }: { pct: number }) {
   return (
     <div style={{ position: 'relative', height: 34, marginTop: 6 }}>
       <div style={{ position: 'absolute', top: 8, left: 0, right: 0, height: 12, borderRadius: 6, overflow: 'hidden', display: 'flex', border: `1px solid ${LINE}` }}>
-        <div style={{ width: '30%', background: '#fee2e2' }} /><div style={{ width: '40%', background: '#f8fafc' }} /><div style={{ width: '30%', background: '#dcfce7' }} />
+        <div style={{ width: '30%', background: tint(RED, 18) }} /><div style={{ width: '40%', background: FD.subtle }} /><div style={{ width: '30%', background: tint(GREEN, 18) }} />
       </div>
-      <div style={{ position: 'absolute', top: 2, left: `calc(${Math.max(0, Math.min(100, pct))}% - 2px)`, width: 4, height: 24, background: '#0f172a', borderRadius: 2 }} />
+      <div style={{ position: 'absolute', top: 2, left: `calc(${Math.max(0, Math.min(100, pct))}% - 2px)`, width: 4, height: 24, background: INK, borderRadius: 2 }} />
       <div style={{ position: 'absolute', top: 22, left: 0, right: 0, display: 'flex', justifyContent: 'space-between', fontSize: 10, color: FAINT }}>
         <span>0% long</span><span style={{ marginLeft: '22%' }}>30%</span><span>50%</span><span style={{ marginRight: '22%' }}>70%</span><span>100%</span>
       </div>
@@ -76,7 +76,7 @@ export function PositioningPanel({ p }: { p: PositioningV | null | undefined }) 
             <Pill tone={p.verdict.tone}>{p.verdict.label}</Pill>
           </div>
           <Gauge pct={L.longPct} />
-          <div style={{ fontSize: 13, color: '#0f172a', marginTop: 8, lineHeight: 1.5 }}>{p.verdict.text}</div>
+          <div style={{ fontSize: 13, color: INK, marginTop: 8, lineHeight: 1.5 }}>{p.verdict.text}</div>
         </div>
         <div style={{ flex: '1 1 240px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           {[
@@ -87,7 +87,7 @@ export function PositioningPanel({ p }: { p: PositioningV | null | undefined }) 
             ['Contracts long / short', `${L.long.toLocaleString('en-IN')} / ${L.short.toLocaleString('en-IN')}`, 'Index futures contracts'],
             ['Retail (clients) long', L.clientLongPct != null ? `${L.clientLongPct}%` : '—', 'Retail is often on the other side of FIIs'],
           ].map(([k, v, t]) => (
-            <div key={k} title={t} style={{ background: '#f8fafc', border: `1px solid ${LINE}`, borderRadius: 8, padding: '6px 8px' }}>
+            <div key={k} title={t} style={{ background: FD.subtle, border: `1px solid ${LINE}`, borderRadius: 8, padding: '6px 8px' }}>
               <div style={{ fontSize: 11, color: SOFT }}>{k}</div>
               <div style={{ fontSize: 14, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{v}</div>
             </div>
@@ -95,7 +95,7 @@ export function PositioningPanel({ p }: { p: PositioningV | null | undefined }) 
         </div>
       </div>
       {p.series.length >= 5 ? <div style={{ marginTop: 12 }}><LongPctChart series={p.series} /></div> : null}
-      <div style={{ fontSize: 13, color: '#0f172a', marginTop: 8, padding: '8px 10px', borderRadius: 8, background: TONE[p.options.tone].bg, border: `1px solid ${TONE[p.options.tone].bd}` }}>{p.options.text}</div>
+      <div style={{ fontSize: 13, color: INK, marginTop: 8, padding: '8px 10px', borderRadius: 8, background: TONE[p.options.tone].bg, border: `1px solid ${TONE[p.options.tone].bd}` }}>{p.options.text}</div>
       <div style={{ fontSize: 11, color: FAINT, marginTop: 6 }}>Example: 9% long means for every 100 index-futures contracts FIIs hold, 9 gain if the market rises and 91 gain if it falls. Very one-sided readings have often come before sharp short-covering rallies — history, not a promise.</div>
     </div>
   );
@@ -117,9 +117,9 @@ export function AbsorptionPanel({ rows }: { rows: AbsorptionV[] | undefined }) {
             <span style={{ fontSize: 12, color: SOFT }}>FII <b style={{ color: flowColor(a.fii) }}>{fmtCr(a.fii, { signed: true })}</b> · DII <b style={{ color: flowColor(a.dii) }}>{fmtCr(a.dii, { signed: true })}</b></span>
           </div>
           {a.pct != null ? (
-            <div title={`DII ${fmtCr(a.dii, { signed: true })} ÷ FII selling ${fmtCr(Math.abs(a.fii))} = ${a.pct}%`} style={{ position: 'relative', height: 12, background: '#fee2e2', borderRadius: 6, marginTop: 6, overflow: 'hidden' }}>
+            <div title={`DII ${fmtCr(a.dii, { signed: true })} ÷ FII selling ${fmtCr(Math.abs(a.fii))} = ${a.pct}%`} style={{ position: 'relative', height: 12, background: tint(RED, 18), borderRadius: 6, marginTop: 6, overflow: 'hidden' }}>
               <div style={{ width: `${Math.max(0, Math.min(100, a.pct))}%`, height: 12, background: '#34d399' }} />
-              {a.pct > 100 ? <div style={{ position: 'absolute', right: 4, top: -1, fontSize: 10, color: '#065f46', fontWeight: 700 }}>{a.pct}%</div> : null}
+              {a.pct > 100 ? <div style={{ position: 'absolute', right: 4, top: -1, fontSize: 10, color: INK, fontWeight: 700 }}>{a.pct}%</div> : null}
             </div>
           ) : null}
           <div style={{ marginTop: 6 }}><Pill tone={a.tone}>{a.pct != null ? `${a.pct}% absorbed` : 'No selling'}</Pill> <span style={{ fontSize: 13 }}>{a.verdict}</span></div>
@@ -142,7 +142,7 @@ export function MarketPanel({ m }: { m: MarketV | null | undefined }) {
           ...(m.diiCr != null ? [['DII net', fmtCr(m.diiCr, { signed: true }), flowColor(m.diiCr)]] : []),
           ['Nifty 50', `${m.niftyPct > 0 ? '+' : m.niftyPct < 0 ? '−' : ''}${Math.abs(m.niftyPct)}%`, flowColor(m.niftyPct)],
         ].map(([k, v, c]) => (
-          <div key={k} style={{ flex: '1 1 90px', background: '#fff', border: `1px solid ${LINE}`, borderRadius: 8, padding: '6px 10px' }}>
+          <div key={k} style={{ flex: '1 1 90px', background: FD.card, border: `1px solid ${LINE}`, borderRadius: 8, padding: '6px 10px' }}>
             <div style={{ fontSize: 11, color: SOFT }}>{k}</div>
             <div style={{ fontSize: 18, fontWeight: 800, color: c }}>{v}</div>
           </div>
@@ -170,8 +170,8 @@ function RunBars({ runs, current, dir }: { runs: Run[]; current: Run | null; dir
         const isCur = current && r.from === current.from && r.dir === current.dir;
         return (
           <div key={r.from} title={`${fmtDate(r.from)} – ${fmtDate(r.to)} · ${fmtCr(r.totalCr, { signed: true })}`} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, padding: '2px 0' }}>
-            <span style={{ width: 128, color: isCur ? '#0f172a' : SOFT, fontWeight: isCur ? 700 : 400, whiteSpace: 'nowrap' }}>{isCur ? 'Now · ' : ''}{fmtDate(r.to)}</span>
-            <div style={{ flex: 1, height: 10, background: '#f1f5f9', borderRadius: 3 }}>
+            <span style={{ width: 128, color: isCur ? INK : SOFT, fontWeight: isCur ? 700 : 400, whiteSpace: 'nowrap' }}>{isCur ? 'Now · ' : ''}{fmtDate(r.to)}</span>
+            <div style={{ flex: 1, height: 10, background: FD.subtle, borderRadius: 3 }}>
               <div style={{ width: `${(r.days / max) * 100}%`, height: 10, background: c, opacity: isCur ? 1 : 0.6, borderRadius: 3 }} />
             </div>
             <span style={{ width: 52, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{r.days} d</span>
