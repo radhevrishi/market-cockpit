@@ -1246,6 +1246,15 @@ html[data-theme="light"] {
   color: #0f172a !important;
 }
 
+/* zzz1065 — Daily Signal Inbox: four lanes as 1 / 2 / 4 columns by the inbox's own width (never 3 + 1).
+   Breakpoints = lib/inbox-lanes.ts (INBOX_TWO_COLUMNS_FROM / INBOX_FOUR_COLUMNS_FROM); a test keeps them equal. */
+.mc-inbox-wrap { container-type: inline-size; container-name: mc-inbox; width: 100%; min-width: 0; }
+.mc-inbox-lanes { grid-template-columns: minmax(0, 1fr); }
+@container mc-inbox (min-width: 520px) { .mc-inbox-lanes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container mc-inbox (min-width: 980px) { .mc-inbox-lanes { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+/* zzz1065 — home: never scroll sideways (the phone rules are in the zzz796 phone section below) */
+.mc-home-root { overflow-x: clip; }
+
 /* ═══════════════════════════════════════════════════════════════════════════
    zzz796 — PHONE LAYOUT (360–430px, portrait). The installed app.
    ───────────────────────────────────────────────────────────────────────────
@@ -1521,6 +1530,22 @@ html[data-theme="light"] {
   }
   main [data-testid^="tally-row-"] > span:first-child { display: block !important; }
   main [data-testid^="tally-"][style*="padding-left: 78px"] { padding-left: 10px !important; }
+}
+
+/* zzz1065 — home on a phone: 16 px side gutter, no sideways scroll, >= 40 px tap targets, >= 14 px text in the
+   status strip, favourites and All tools drawer. */
+@media (max-width: 767px) {
+  .mc-home-root { padding: 12px 16px !important; }
+  .mc-home-status > * { min-height: 40px; font-size: 14px !important; white-space: normal !important; }
+  .mc-home-status { padding: 8px !important; }
+  .mc-tap { min-height: 40px !important; font-size: 14px !important; }
+  .mc-fav-grid[data-arranging="1"] { grid-template-columns: minmax(0, 1fr) !important; }
+  .mc-fav-grid > .mc-fav-item { display: flex !important; align-items: center; min-height: 44px; }
+  .mc-fav-grid > .mc-fav-item > a { flex: 1 1 auto; min-width: 0; min-height: 40px; font-size: 14px !important; white-space: normal !important; }
+  .mc-fav-grid > .mc-fav-item > button { min-width: 40px !important; min-height: 40px !important; }
+  .mc-fav-grid > a { font-size: 14px !important; }
+  .mc-tools-grid { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 8px !important; }
+  .mc-tools-grid > a { display: flex !important; align-items: center; min-height: 44px; font-size: 14px !important; white-space: normal !important; line-height: 1.25 !important; }
 }
 
 

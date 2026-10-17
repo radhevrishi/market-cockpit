@@ -9,6 +9,7 @@ import { Home, Star, Search, Menu as MenuIcon, Settings, LogOut, Smartphone } fr
 import { useInstallState } from './pwa-state';
 import s from './pwa.module.css';
 import { navPrefetch } from '@/lib/shell-fetch';
+import { filterMenuGroups } from '@/lib/home-tools';   // zzz1065 — phone Menu filter
 
 export interface MobileNavItem { href: string; label: string; icon: ReactNode }
 export interface MobileNavGroup { id: string; label: string; items: MobileNavItem[] }
@@ -45,9 +46,11 @@ export function favouriteEntries(groups: MobileNavGroup[], favs: string[]): Arra
 
 export default function MobileNav({ groups, favs, pathname, isActive, onToggleFav, onSearch, onSignOut }: Props) {
   const [open, setOpen] = useState<null | 'favs' | 'menu'>(null);
+  const [menuQuery, setMenuQuery] = useState('');   // zzz1065 — filter box in the phone Menu
   const install = useInstallState();
 
   useEffect(() => { setOpen(null); }, [pathname]);
+  useEffect(() => { if (open !== 'menu') setMenuQuery(''); }, [open]);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(null); };
@@ -56,6 +59,7 @@ export default function MobileNav({ groups, favs, pathname, isActive, onToggleFa
   }, [open]);
 
   const favList = useMemo(() => favouriteEntries(groups, favs), [groups, favs]);
+  const menuGroups = useMemo(() => filterMenuGroups(groups, menuQuery), [groups, menuQuery]);
   const homeActive = pathname === '/';
   const closeOnLink = (e: React.MouseEvent) => { if ((e.target as HTMLElement).closest('a')) setOpen(null); };
 
@@ -117,7 +121,14 @@ export default function MobileNav({ groups, favs, pathname, isActive, onToggleFa
             <button type="button" className={s.closeBtn} aria-label="Close" onClick={() => setOpen(null)}>✕</button>
           </div>
           <div className={s.sheetBody}>
-            {groups.map((g) => (
+            <div className={s.menuFilter}>
+              <input type="search" className={s.menuFilterInput} value={menuQuery} onChange={(e) => setMenuQuery(e.target.value)}
+                placeholder="Find a page…" aria-label="Find a page in the menu" autoComplete="off" />
+            </div>
+            {menuGroups.length === 0 && (
+              <div className={s.emptyNote}>No page matches “{menuQuery}”. Try the Search tab for companies.</div>
+            )}
+            {menuGroups.map((g) => (
               <div key={g.id}>
                 <div className={s.groupLabel}>{g.label}</div>
                 {g.items.map((it) => {

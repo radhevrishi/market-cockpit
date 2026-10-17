@@ -3,7 +3,11 @@
 // Before: every home panel fetched on load (~48 requests) even though most sit several screens down.
 // Once mounted a panel stays mounted (scrolling away never throws its data away). Without IntersectionObserver
 // (very old browsers) the panel mounts at once, exactly as before.
+// zzz1065 (H01) — the wrapper box always takes a full line (lib/lazy-panel-style.ts) so it can never collapse to width 0
+// inside a flex row, and it is KEPT after the panel mounts (data-lazy-panel goes "waiting" → "mounted"), so the observer
+// target, the size and the scroll position stay stable and the panel mounts exactly once.
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
+import { lazyPanelWrapperStyle } from '@/lib/lazy-panel-style';
 
 /** True once the element has come within `rootMargin` of the viewport (sticky: never goes back to false). */
 export function useNearViewport(ref: RefObject<Element | null>, rootMargin = '400px', enabled = true): boolean {
@@ -34,16 +38,19 @@ export interface LazyPanelProps {
   style?: CSSProperties;
   /** short name for the placeholder's accessible label */
   label?: string;
+  /** optional id for the wrapper (an in-page link target) */
+  id?: string;
 }
 
-export default function LazyPanel({ children, minHeight = 120, rootMargin = '400px', placeholder, style, label }: LazyPanelProps) {
+export default function LazyPanel({ children, minHeight = 120, rootMargin = '400px', placeholder, style, label, id }: LazyPanelProps) {
   const ref = useRef<HTMLDivElement | null>(null);
   const near = useNearViewport(ref, rootMargin);
-  if (near) return <>{children}</>;
+  const state = near ? 'mounted' : 'waiting';
   return (
-    <div ref={ref} data-lazy-panel="waiting" aria-busy="true" aria-label={label ? `${label} (loads when scrolled into view)` : undefined}
-      style={{ minHeight, ...style }}>
-      {placeholder ?? null}
+    <div ref={ref} id={id} data-lazy-panel={state} aria-busy={near ? undefined : true}
+      aria-label={!near && label ? `${label} (loads when scrolled into view)` : undefined}
+      style={{ ...lazyPanelWrapperStyle(state, minHeight), ...style }}>
+      {near ? children : (placeholder ?? null)}
     </div>
   );
 }

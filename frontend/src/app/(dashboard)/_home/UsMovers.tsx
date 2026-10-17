@@ -4,7 +4,7 @@
 // 👁 · ticker · % move · one-line WHY · Q score · trend arrow · chips. Loads only when scrolled into view; reads
 // /api/v1/us-movers (memory-cached on the server). Theme colours come from the --mc-* tokens (white in light mode).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Link from 'next/link';
+import NavLink from '@/components/NavLink';   // zzz1065 — no viewport prefetch (H03)
 import { usWatchKeys, usKey, type UsMoversPayload, type UsMoverRow, type UsMoversMode } from '@/lib/us-movers';
 
 const MODE_KEY = 'mc:home-us-movers-mode:v1';
@@ -49,7 +49,7 @@ function Row({ m, watch }: { m: UsMoverRow; watch: Set<string> }) {
   return (
     <div title={tip} style={{ display: 'flex', alignItems: 'baseline', gap: 6, padding: '4px 6px', borderBottom: '1px solid var(--mc-border-3)' }}>
       {watch.has(usKey(m.ticker)) && <span style={{ fontSize: 10, color: 'var(--mc-cyan)', flexShrink: 0 }} title="In your US watchlists / book / US Conviction Beats">👁</span>}
-      <Link href={`/charts?m=US&t=${encodeURIComponent(m.ticker)}`} style={{ fontSize: 11, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 58, textDecoration: 'none', whiteSpace: 'nowrap' }}>{m.ticker}</Link>
+      <NavLink href={`/charts?m=US&t=${encodeURIComponent(m.ticker)}`} style={{ fontSize: 11, color: TEXT, fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 58, textDecoration: 'none', whiteSpace: 'nowrap' }}>{m.ticker}</NavLink>
       <span style={{ fontSize: 11, color: c, fontWeight: 800, fontVariantNumeric: 'tabular-nums', minWidth: 52, textAlign: 'right' }}>{up ? '+' : ''}{m.chg.toFixed(1)}%</span>
       <span style={{ fontSize: 11, lineHeight: 1, flexShrink: 0, color: KIND_COLOR[m.why.kind] }} title={KIND_LABEL[m.why.kind]}>●</span>
       {m.why.url && /^https?:/.test(m.why.url) ? (
@@ -142,7 +142,7 @@ export function UsMovers() {
             </button>
           ))}
           <button onClick={() => void load(mode)} disabled={loading} title="Re-read (the server keeps one answer for 3 min while the session is live)" style={{ fontSize: 10, color: 'var(--mc-warn)', background: 'transparent', border: '1px solid var(--mc-warn)', borderRadius: 4, padding: '1px 6px', cursor: 'pointer' }}>{loading ? '…' : '🔄 Refresh'}</button>
-          <Link href="/ai-gainers?market=US" title="The full US gainers board with filing research" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open →</Link>
+          <NavLink href="/ai-gainers?market=US" title="The full US gainers board with filing research" style={{ fontSize: 10, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open →</NavLink>
         </span>
       </div>
       <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>

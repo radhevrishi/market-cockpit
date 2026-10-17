@@ -28,7 +28,6 @@
 
 import { istMonth, addMonthsYm } from '@/lib/calendar-dates';   // zzz897
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { useRouter } from 'next/navigation';
 // PATCH 1101p — Re-score restored multibagger rows on home page. The /multibagger
 // page re-scores on every load (initializer line 5024) so its display reflects
 // the latest scoring formula. The home page was reading the raw localStorage
@@ -84,7 +83,10 @@ import { DecisionTierBlock, HomeValuationQuickCheck, DailySignalInbox } from './
 import { PipelineHealth } from './_home/PipelineHealth';
 import { UsMovers } from './_home/UsMovers';
 import NavLink from '@/components/NavLink';            // zzz1052 — no viewport prefetch; prefetch on hover / focus / press
-import LazyPanel, { useNearViewport } from '@/components/LazyPanel';   // zzz1052 — below-the-fold panels mount when near
+import LazyPanel, { useNearViewport } from '@/components/LazyPanel';
+import { moveItem, mergeFavOrder, FAV_LONG_PRESS_MS } from '@/lib/home-tools';   // zzz1065 — favourites order
+import { HomeStatusStrip } from './_home/HomeStatusStrip';   // zzz1065 — status strip first
+import { ToolsDrawer } from './_home/ToolsDrawer';           // zzz1065 — searchable All tools drawer
 import { sessionMemo, peekSessionMemo } from '@/lib/session-memo';
 
 const HOME_TECH_TIERS_KEY = 'home:tech-tiers:v1';
@@ -1944,17 +1946,20 @@ export default function HomeDashboard() {
   const greeting = !now ? 'Good day' : now.getHours() < 12 ? 'Good morning' : now.getHours() < 18 ? 'Good afternoon' : 'Good evening';
 
   return (
-    <div style={{ minHeight: '100%', background: BG, color: TEXT, padding: '20px 24px' }}>
+    <div className="mc-home-root" style={{ minHeight: '100%', background: BG, color: TEXT, padding: '20px 24px' }}>
       <div style={{ maxWidth: 1400, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-        {/* HEADER */}
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+        {/* HEADER — zzz1065 (H01): ONE vertical column. It used to be a wrapping flex ROW holding every block below, and the
+            lazy panels (Daily Signal Inbox, Data freshness, Signal scoreboard) shrank to width 0 inside it and never loaded.
+            Order (owner: "app is not user friendly"): status strip → today's chips → Next actions → Signal Inbox →
+            Favourites → book / regime / sizing → feed health → All tools drawer. No panel was removed. */}
+        <div data-home-section="main-column" style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
+          {/* zzz1065 — status strip: India date + time (H02), market open / closed, data freshness, unread alerts */}
+          <HomeStatusStrip now={now} />
           <div>
-            {/* zzz241 — greeting header removed per user request. Date + status chips remain below. */}
+            {/* zzz241 — greeting header removed per user request. Status chips remain below. */}
+            {/* zzz1065 — the date + time moved into the status strip above (both in India time). */}
             <div style={{ marginTop: 0, fontSize: 12, color: DIM, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', rowGap: 6 }}>
-              <span>{now ? now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : '—'}</span>
-              <span>·</span>
-              <span>{now ? now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST' : '—:—'}</span>
               {/* PATCH 0622 — Stale-data nudge */}
               {typeof data.staleDataAgeDays === 'number' && data.staleDataAgeDays >= 14 && (
                 <NavLink href="/multibagger" style={{
@@ -2058,6 +2063,27 @@ export default function HomeDashboard() {
               })()}
             </div>
           </div>
+          {/* zzz524 — Next Best Actions: the top 3 things to do right now,
+              ranked across every engine. The ten-second open-and-know view. */}
+          <div style={{ marginBottom: 10 }}><NextBestActions /></div>
+
+          {/* PATCH 1104 — Daily Signal Inbox (⭐): today's actionable signals across feeds */}
+          {/* zzz1052 — mounts (and fetches its feeds) when it comes near the screen */}
+          <LazyPanel minHeight={220} rootMargin="300px" label="Daily Signal Inbox"><DailySignalInbox /></LazyPanel>
+
+          {/* ═══════════════ zzz239 — FAVOURITES ROW ═══════════════════════
+              User-pinned quick-access shortcuts, sits right below "Good morning".
+              These 11 items ALSO used to appear in the A-Z chip strip below —
+              they've been removed there to avoid duplicates. Edit list by
+              adjusting this block and the corresponding removal below.
+          */}
+          {/* zzz1065 — after Next actions + Signal Inbox; the ⭐ heading and the "↕ Arrange" switch live in FavouritesGrid */}
+          <div data-home-section="favourites" style={{ marginBottom: 6 }}>
+            {/* zzz526 — favourites are data-driven; zzz1065 — reorder only through the separate handle / Arrange mode */}
+            <FavouritesGrid />
+          </div>
+
+
           {/* zzz532 — Cockpit Hero: the "wow on open" band (book · regime · breadth · positions) */}
           <CockpitHero />
 
@@ -2174,33 +2200,13 @@ export default function HomeDashboard() {
             );
           })()}
 
-          {/* ═══════════════ zzz239 — FAVOURITES ROW ═══════════════════════
-              User-pinned quick-access shortcuts, sits right below "Good morning".
-              These 11 items ALSO used to appear in the A-Z chip strip below —
-              they've been removed there to avoid duplicates. Edit list by
-              adjusting this block and the corresponding removal below.
-          */}
-          <div style={{ marginBottom: 6 }}>
-            <div style={{ fontSize: 10, color: 'var(--mc-text-4)', fontWeight: 800, letterSpacing: '0.6px', textTransform: 'uppercase', marginBottom: 8 }}>⭐ Favourites</div>
-            {/* zzz526 — favourites are now data-driven + drag-to-reorder (order persists in localStorage) */}
-            <FavouritesGrid />
-          </div>
-
-          {/* zzz524 — Next Best Actions: the top 3 things to do right now,
-              ranked across every engine. The ten-second open-and-know view. */}
-          <div style={{ marginBottom: 10 }}><NextBestActions /></div>
-
-          {/* PATCH 1104 — Daily Signal Inbox (⭐): today's actionable signals across feeds */}
-          {/* zzz1052 — mounts (and fetches its feeds) when it comes near the screen */}
-          <LazyPanel minHeight={220} rootMargin="300px" label="Daily Signal Inbox"><DailySignalInbox /></LazyPanel>
-
           {/* PATCH 1105 — Pipeline Health: freshness of every data feed at a glance */}
           <PipelineHealth />
 
           {/* zzz524 — local-data freshness: YOUR synced uploads (technicals,
               multibagger, screener, bench) — the complement of PipelineHealth,
               which watches the server feeds. */}
-          <LazyPanel minHeight={40} label="Data freshness"><div style={{ marginBottom: 10 }}><FreshnessStrip /></div></LazyPanel>
+          <LazyPanel id="home-data-freshness" minHeight={40} label="Data freshness"><div style={{ marginBottom: 10 }}><FreshnessStrip /></div></LazyPanel>
 
           {/* zzz524 — the measurement layer: does the portal make money, and
               what should fire a notification. */}
@@ -2212,8 +2218,10 @@ export default function HomeDashboard() {
           </LazyPanel>
 
           {/* PATCH 0619/0635 — institutional chip strip. All in one row group,
-              uniform pill style, left-aligned, even row gap. */}
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-start', rowGap: 8, alignItems: 'center' }}>
+              uniform pill style, left-aligned, even row gap.
+              zzz1065 — inside a closed, searchable "All tools" drawer (the links are unchanged). */}
+          <ToolsDrawer>
+          <div className="mc-tools-grid" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-start', rowGap: 8, alignItems: 'center' }}>
             {/* zzz166 — Fully alphabetized by label (case-insensitive, ignoring emoji).
                 Adds 📈 India Technicals + 📈 USA Technicals deep-links to
                 /multibagger?tab=technicals-ind|usa. */}
@@ -2410,6 +2418,7 @@ export default function HomeDashboard() {
             <NavLink href="/watchlists"             style={navChip('#22D3EE')}>👁 Watchlist</NavLink>
             <NavLink href="/fundamentals?scope=watchlist" style={navChip('#2dd4bf')}>🔬 Watchlist Fundamentals</NavLink>
           </div>
+          </ToolsDrawer>
         </div>
 
         {/* ═══════════════ PATCH 0908 — HEATMAP + CONVICTION BEATS ROW ═══════
@@ -4439,81 +4448,122 @@ const FAVS: Array<{ href: string; label: string; color: string; ext?: boolean }>
 ];
 const FAV_ORDER_KEY = 'mc:favs:order:v1';
 
-/** zzz1052 — a drag that ended within 10 px of where it started was a click with a slightly moving hand. */
-function isTinyDrag(start: { x: number; y: number } | null, x: number, y: number): boolean {
-  if (!start) return false;
-  // Firefox reports 0,0 for dragend coordinates — unknown, so not treated as a click.
-  if (x === 0 && y === 0) return false;
-  return Math.hypot(x - start.x, y - start.y) < 10;
-}
-
+// zzz1065 — Favourites: a chip is ONLY a link (normal click, middle-click, ⌘-click, long-press menu all behave like
+// any link). Reordering is a separate, deliberate mode ("↕ Arrange"), where every favourite gets its own handle:
+//   • mouse: drag the ⠿ handle onto another favourite
+//   • keyboard: focus the handle, ← / → (or ↑ / ↓, Home / End) move it; Enter picks it up, Enter on another drops it
+//   • touch: press and hold the handle (FAV_LONG_PRESS_MS) to pick it up, then tap the handle where it should go
+//   • ◀ / ▶ buttons move one place
+// Before (zzz526/zzz1052) the chips themselves were draggable, so a press that moved a few pixels became a drag and
+// the link did not open. The saved order key and its merge rule are unchanged (lib/home-tools.ts mergeFavOrder).
 function FavouritesGrid() {
-  const [order, setOrder] = useState<string[]>(() => FAVS.map((f) => f.href));
+  const defaults = useMemo(() => FAVS.map((f) => f.href), []);
+  const [order, setOrder] = useState<string[]>(defaults);
+  const [arranging, setArranging] = useState(false);
   const [dragFrom, setDragFrom] = useState<number | null>(null);
-  // zzz1052 — chips are draggable (reorder), and a press that moves even a few pixels starts a drag instead of a click,
-  // so the link did not open ("click 4 times"). A "drag" that ends where it started (< 10 px) now opens the page.
-  const router = useRouter();
-  const dragStartAt = useRef<{ x: number; y: number } | null>(null);
+  const [picked, setPicked] = useState<number | null>(null);
+  const [announce, setAnnounce] = useState('');
+  const handleRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const focusAfter = useRef<number | null>(null);
+  const press = useRef<{ timer: ReturnType<typeof setTimeout> | null; x: number; y: number; type: string }>({ timer: null, x: 0, y: 0, type: '' });
 
   useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(FAV_ORDER_KEY) || 'null');
-      if (Array.isArray(saved) && saved.length) {
-        const known = new Set(FAVS.map((f) => f.href));
-        const kept = saved.filter((h: string) => known.has(h));
-        // zzz791 — a new favourite is placed right after its neighbour in the
-        // default list (e.g. US Portfolio Book beside My Book), not at the end
-        // of a saved order where it is easy to miss.
-        const next = [...kept];
-        const defaults = FAVS.map((f) => f.href);
-        defaults.forEach((h, i) => {
-          if (next.includes(h)) return;
-          const prev = defaults.slice(0, i).reverse().find((d) => next.includes(d));
-          const at = prev ? next.indexOf(prev) + 1 : 0;
-          next.splice(at, 0, h);
-        });
-        setOrder(next);
-      }
-    } catch { /* default order */ }
-  }, []);
+    try { setOrder(mergeFavOrder(JSON.parse(localStorage.getItem(FAV_ORDER_KEY) || 'null'), defaults)); } catch { /* default order */ }
+  }, [defaults]);
+  useEffect(() => {
+    if (focusAfter.current != null) { handleRefs.current[focusAfter.current]?.focus(); focusAfter.current = null; }
+  }, [order]);
+  useEffect(() => { if (!arranging) { setPicked(null); setDragFrom(null); } }, [arranging]);
 
   const items = order.map((h) => FAVS.find((f) => f.href === h)!).filter(Boolean);
+  const label = (i: number) => (items[i]?.label || '').replace(/^\W+\s*/u, '');
 
-  const onDrop = (to: number) => {
-    if (dragFrom == null || dragFrom === to) { setDragFrom(null); return; }
-    setOrder((prev) => {
-      const next = [...prev];
-      const [moved] = next.splice(dragFrom, 1);
-      next.splice(to, 0, moved);
-      try { localStorage.setItem(FAV_ORDER_KEY, JSON.stringify(next)); } catch { /* ignore */ }
-      return next;
-    });
-    setDragFrom(null);
+  const move = (from: number, to: number) => {
+    if (from === to || from < 0 || from >= order.length) return;
+    const dest = Math.max(0, Math.min(order.length - 1, to));
+    const next = moveItem(order, from, dest);
+    try { localStorage.setItem(FAV_ORDER_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    setAnnounce(`${label(from)} moved to place ${dest + 1} of ${next.length}`);
+    focusAfter.current = dest;
+    setOrder(next);
   };
+  const clearPress = () => { if (press.current.timer) clearTimeout(press.current.timer); press.current.timer = null; };
 
   return (
-    <div className="mc-fav-grid" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-start', rowGap: 8, alignItems: 'center' }}
-      title="Drag any chip to reorder — the order is remembered on this browser">
-      {items.map((f, i) => {
-        const st: React.CSSProperties = { ...navChip(f.color), opacity: dragFrom === i ? 0.4 : 1, cursor: 'pointer' };
-        const dragProps = {
-          draggable: true,
-          onDragStart: (e: React.DragEvent) => { dragStartAt.current = { x: e.clientX, y: e.clientY }; setDragFrom(i); },
-          onDragOver: (e: React.DragEvent) => e.preventDefault(),
-          onDrop: (e: React.DragEvent) => { e.preventDefault(); onDrop(i); },
-          onDragEnd: (e: React.DragEvent) => {
-            const s0 = dragStartAt.current;
-            dragStartAt.current = null;
-            setDragFrom(null);
-            if (!f.ext && isTinyDrag(s0, e.clientX, e.clientY)) router.push(f.href);
-          },
-        };
-        return f.ext ? (
-          <a key={f.href} className="mc-chip-hover" href={f.href} target="_blank" rel="noopener noreferrer" style={st} {...dragProps}>{f.label}</a>
-        ) : (
-          <NavLink key={f.href} className="mc-chip-hover" href={f.href} style={st} {...dragProps}>{f.label}</NavLink>
-        );
-      })}
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 11, color: 'var(--mc-text-4)', fontWeight: 800, letterSpacing: '0.6px', textTransform: 'uppercase' }}>⭐ Favourites</span>
+        <button type="button" aria-pressed={arranging} onClick={() => setArranging((v) => !v)} className="mc-tap"
+          style={{ fontSize: 12, fontWeight: 800, minHeight: 32, padding: '4px 10px', borderRadius: 8, cursor: 'pointer', border: '1px solid var(--mc-border-2)', background: arranging ? 'var(--mc-bg-3)' : 'transparent', color: 'var(--mc-text-2)' }}>
+          {arranging ? '✓ Done arranging' : '↕ Arrange'}
+        </button>
+        {arranging && (
+          <span style={{ fontSize: 12, color: 'var(--mc-text-3)' }}>
+            {picked != null ? `Moving “${label(picked)}” — tap or press Enter on the ⠿ where it should go (Esc cancels).` : 'Drag ⠿, hold ⠿ on a phone, or use ◀ ▶ / arrow keys.'}
+          </span>
+        )}
+      </div>
+      <span aria-live="polite" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>{announce}</span>
+      <div className="mc-fav-grid" data-arranging={arranging ? '1' : undefined} data-testid="home-favourites"
+        style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-start', rowGap: 8, alignItems: 'center' }}>
+        {items.map((f, i) => {
+          const st: React.CSSProperties = { ...navChip(f.color), cursor: 'pointer' };
+          const link = f.ext ? (
+            <a key={f.href} className="mc-chip-hover" href={f.href} target="_blank" rel="noopener noreferrer" style={st} draggable={false}>{f.label}</a>
+          ) : (
+            <NavLink key={f.href} className="mc-chip-hover" href={f.href} style={st} draggable={false}>{f.label}</NavLink>
+          );
+          if (!arranging) return link;
+          const ctl: React.CSSProperties = { minWidth: 32, minHeight: 32, padding: '0 6px', borderRadius: 6, border: '1px solid var(--mc-border-2)', background: 'var(--mc-bg-2)', color: 'var(--mc-text-2)', fontSize: 13, fontWeight: 800, cursor: 'pointer', touchAction: 'manipulation' };
+          return (
+            <span key={f.href} className="mc-fav-item" data-fav-index={i}
+              onDragOver={(e) => { if (dragFrom != null) e.preventDefault(); }}
+              onDrop={(e) => { e.preventDefault(); if (dragFrom != null) move(dragFrom, i); setDragFrom(null); }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: 2, borderRadius: 8, opacity: dragFrom === i ? 0.4 : 1, outline: picked === i ? '2px solid var(--mc-warn)' : 'none' }}>
+              <button type="button" className="mc-fav-handle" draggable
+                ref={(el) => { handleRefs.current[i] = el; }}
+                aria-label={`Move ${label(i)} (place ${i + 1} of ${items.length}). Drag, hold on a phone, or use the arrow keys.`}
+                aria-pressed={picked === i}
+                onDragStart={(e) => { setDragFrom(i); try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', f.href); } catch { /* old browsers */ } }}
+                onDragEnd={() => setDragFrom(null)}
+                onPointerDown={(e) => {
+                  press.current.type = e.pointerType; press.current.x = e.clientX; press.current.y = e.clientY;
+                  clearPress();
+                  if (e.pointerType === 'touch' && picked == null) {
+                    press.current.timer = setTimeout(() => {
+                      press.current.timer = null;
+                      setPicked(i);
+                      setAnnounce(`Picked up ${label(i)}. Tap the handle where it should go.`);
+                      try { navigator.vibrate?.(15); } catch { /* no vibration */ }
+                    }, FAV_LONG_PRESS_MS);
+                  }
+                }}
+                onPointerMove={(e) => { if (press.current.timer && Math.hypot(e.clientX - press.current.x, e.clientY - press.current.y) > 10) clearPress(); }}
+                onPointerUp={clearPress}
+                onPointerCancel={clearPress}
+                onContextMenu={(e) => { if (press.current.type === 'touch') e.preventDefault(); }}
+                onClick={() => {
+                  if (picked != null) { if (picked !== i) move(picked, i); setPicked(null); return; }
+                  // a touch tap alone does not pick up (needs the long press, so scrolling past cannot reorder)
+                  if (press.current.type !== 'touch') { setPicked(i); setAnnounce(`Picked up ${label(i)}. Move to another handle and press Enter to drop it.`); }
+                }}
+                onKeyDown={(e) => {
+                  const k = e.key;
+                  if (k === 'Escape') { setPicked(null); return; }
+                  const to = k === 'ArrowLeft' || k === 'ArrowUp' ? i - 1 : k === 'ArrowRight' || k === 'ArrowDown' ? i + 1 : k === 'Home' ? 0 : k === 'End' ? items.length - 1 : null;
+                  if (to == null) return;
+                  e.preventDefault();
+                  press.current.type = 'keyboard';
+                  move(i, to);
+                }}
+                style={{ ...ctl, cursor: 'grab', touchAction: 'manipulation', userSelect: 'none', WebkitUserSelect: 'none' }}>⠿</button>
+              {link}
+              <button type="button" aria-label={`Move ${label(i)} earlier`} disabled={i === 0} onClick={() => move(i, i - 1)} style={{ ...ctl, opacity: i === 0 ? 0.35 : 1 }}>◀</button>
+              <button type="button" aria-label={`Move ${label(i)} later`} disabled={i === items.length - 1} onClick={() => move(i, i + 1)} style={{ ...ctl, opacity: i === items.length - 1 ? 0.35 : 1 }}>▶</button>
+            </span>
+          );
+        })}
+      </div>
     </div>
   );
 }

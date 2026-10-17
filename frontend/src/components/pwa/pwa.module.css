@@ -287,6 +287,26 @@
   gap: 4px;
 }
 
+/* zzz1065 — filter box at the top of the phone Menu */
+.menuFilter {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 4px 0 8px;
+  background: var(--mc-bg-1, #0B1220);
+}
+.menuFilterInput {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 44px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--mc-border-2, #2A3A52);
+  background: var(--mc-bg-0, #060B14);
+  color: var(--mc-text-1, #E2E8F0);
+  font-size: 16px; /* 16 px stops iOS zooming into the field */
+}
+
 .menuLink {
   flex: 1 1 auto;
   min-width: 0;
@@ -468,4 +488,15 @@
 @media (max-width: 768px) {
   .updateText { display: none; }
   .updateDock { bottom: calc(68px + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* zzz1065 — the price-alerts bell stays visible on phones. The chip row may scroll sideways (it starts at the left
+   so nothing is cut off where it cannot be scrolled to); the bell is shown first, and its auto margin keeps the row
+   right-aligned when everything fits. It is a 40 px tap target. Selected by the bell's own accessible name, so
+   DashboardClient is unchanged. */
+@media (max-width: 768px) {
+  .chips { justify-content: flex-start; overflow-x: auto; scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chips > div:has(> button[aria-label^="Price alerts"]) { order: -1; margin-left: auto; flex-shrink: 0; }
+  .chips > div > button[aria-label^="Price alerts"] { min-width: 40px; min-height: 40px; }
 }

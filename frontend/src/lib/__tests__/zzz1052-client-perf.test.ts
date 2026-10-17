@@ -219,11 +219,12 @@ describe('charts: the open chart first', () => {
 });
 
 describe('favourites click reliably', () => {
-  test('a drag that did not move opens the page; chips no longer jump on hover', () => {
+  // zzz1065 — the chips are plain links now (never draggable); reordering moved to a separate handle in Arrange mode,
+  // so the zzz1052 "tiny drag = click" workaround is gone (see zzz1065-home-ux.test.ts).
+  test('a favourite is a plain link (not draggable); chips no longer jump on hover', () => {
     const home = read('app/(dashboard)/page.tsx');
-    assert.match(home, /function isTinyDrag\(/);
-    assert.match(home, /if \(!f\.ext && isTinyDrag\(s0, e\.clientX, e\.clientY\)\) router\.push\(f\.href\);/);
-    assert.match(home, /<NavLink key=\{f\.href\} className="mc-chip-hover"/);
+    assert.doesNotMatch(home, /function isTinyDrag\(/);
+    assert.match(home, /<NavLink key=\{f\.href\} className="mc-chip-hover" href=\{f\.href\} style=\{st\} draggable=\{false\}>/);
     const css = read('styles/design-system.css');
     const rule = css.slice(css.indexOf('.mc-chip-hover:hover'), css.indexOf('}', css.indexOf('.mc-chip-hover:hover')));
     assert.ok(rule.length > 0);
@@ -237,7 +238,8 @@ describe('Daily Signal Inbox without the Quality pullbacks lane', () => {
     assert.doesNotMatch(c, /QUALITY PULLBACKS|setPullbacks|pbSparks|passesQualityPreset|InboxPullback|logSignals\('pullback'/);
     assert.doesNotMatch(read('app/(dashboard)/_home/types.ts'), /InboxPullback/);
     assert.doesNotMatch(read('app/(dashboard)/_home/helpers.ts'), /passesQualityPreset/);
-    assert.match(c, /data-testid="inbox-lanes" style=\{\{ display: 'grid', gridTemplateColumns: 'repeat\(auto-fit, minmax\(230px, 1fr\)\)'/);
+    // zzz1065 — explicit 1 / 2 / 4 columns from CSS (no auto-fit 3 + 1)
+    assert.match(c, /data-testid="inbox-lanes" className="mc-inbox-lanes" style=\{\{ display: 'grid', gap: 10/);
   });
   test('renders the four lanes in one grid, no pullback section', async () => {
     const { DailySignalInbox } = await import('../../app/(dashboard)/_home/components');

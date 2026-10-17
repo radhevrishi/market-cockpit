@@ -441,7 +441,10 @@ export function DailySignalInbox() {
       {!collapsed && total > 0 && (
         // zzz1052 — the four lanes side by side (one row on a wide screen, 2 × 2 on a laptop, stacked on a phone);
         // each lane uses the width the old Quality-pullbacks column took.
-        <div data-testid="inbox-lanes" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 10, marginTop: 12, alignItems: 'start' }}>
+        // zzz1065 — explicit 1 / 2 / 4 columns by the inbox's own width (CSS container query `.mc-inbox-lanes` in
+        // globals.css, breakpoints in lib/inbox-lanes.ts). auto-fit could give 3 + 1 on a laptop.
+        <div className="mc-inbox-wrap">
+        <div data-testid="inbox-lanes" className="mc-inbox-lanes" style={{ display: 'grid', gap: 10, marginTop: 12, alignItems: 'start' }}>
             {lanes.map((lane) => {
               const laneSignals = signals.filter((s) => s.lane === lane).sort((a, b) => b.score - a.score);
               const meta = LANE_META[lane];
@@ -486,6 +489,7 @@ export function DailySignalInbox() {
                 </div>
               );
             })}
+        </div>
         </div>
       )}
 

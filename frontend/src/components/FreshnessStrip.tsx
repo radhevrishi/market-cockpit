@@ -14,9 +14,9 @@ import { readJsonMemo } from '@/lib/client-fetch';
 
 const MONO = 'ui-monospace, "SF Mono", Menlo, monospace';
 
-type Tone = 'fresh' | 'amber' | 'red' | 'dim';
+export type Tone = 'fresh' | 'amber' | 'red' | 'dim';
 
-interface Chip {
+export interface Chip {
   label: string;
   value: string;
   tone: Tone;
@@ -85,6 +85,63 @@ const TONE_STYLE: Record<Tone, { color: string; border: string; background: stri
   dim: { color: 'var(--mc-text-4)', border: '1px solid var(--mc-border-1)', background: 'var(--mc-bg-2)' },
 };
 
+/** zzz1065 — the chips that come from this browser's own stored uploads (no network): read synchronously so the
+ *  home status strip can summarise them without waiting for this panel to scroll into view. */
+export function localFreshnessChips(): Chip[] {
+  const out: Chip[] = [];
+
+  // ── 🇮🇳 Technicals ────────────────────────────────────────────────────
+  {
+    const rows = readJSON('mb_tech_rows_ind_v1');
+    const n = Array.isArray(rows) ? rows.length : 0;
+    const ts = parseDateish(readJSON('mb_tech_last_pulled_sync_v1') ?? localStorage.getItem('mb_tech_last_pulled_sync_v1'));
+    const title = 'India technicals universe. Re-upload TradingView export on India Technicals tab to refresh. Row count shown when no upload timestamp exists (presence = synced).';
+    if (ts != null) { const a = ageChip(ts); out.push({ label: '🇮🇳 Technicals', value: a.value, tone: a.tone, title }); }
+    else if (n > 0) out.push({ label: '🇮🇳 Technicals', value: `✓ ${n} rows`, tone: 'fresh', title });
+    else out.push({ label: '🇮🇳 Technicals', value: 'unknown', tone: 'dim', title });
+  }
+
+  // ── 🇺🇸 Technicals ────────────────────────────────────────────────────
+  {
+    const rows = readJSON('mb_tech_rows_usa_v1');
+    const n = Array.isArray(rows) ? rows.length : 0;
+    const ts = parseDateish(readJSON('mb_usa_uploaded_at_v1') ?? localStorage.getItem('mb_usa_uploaded_at_v1'));
+    const title = 'USA technicals universe. Re-upload TradingView export on USA Technicals tab to refresh.';
+    if (ts != null) { const a = ageChip(ts); out.push({ label: '🇺🇸 Technicals', value: a.value, tone: a.tone, title }); }
+    else if (n > 0) out.push({ label: '🇺🇸 Technicals', value: `✓ ${n} rows`, tone: 'fresh', title });
+    else out.push({ label: '🇺🇸 Technicals', value: 'unknown', tone: 'dim', title });
+  }
+
+  // ── 🚀 Multibagger scored sets (no per-row timestamps → counts) ───────
+  for (const [key, label, title] of [
+    ['mb_excel_scored_v2', '🚀 Multibagger IND', 'India multibagger scored set. Re-run the Excel scorer upload on the Multibagger tab to refresh. Count shown — presence = synced.'],
+    ['mb_usa_scored_v2', '🚀 Multibagger USA', 'USA multibagger scored set. Re-run the USA scorer upload on the Multibagger tab to refresh. Count shown — presence = synced.'],
+  ] as const) {
+    const rows = readJSON(key);
+    const n = Array.isArray(rows) ? rows.length : 0;
+    out.push(n > 0
+      ? { label, value: `✓ ${n} rows`, tone: 'fresh', title }
+      : { label, value: 'unknown', tone: 'dim', title });
+  }
+
+  // ── 🏆 Bench ──────────────────────────────────────────────────────────
+  {
+    const title = 'Conviction Beats bench. Add or refresh names on the Conviction tab. Count shown — presence = synced.';
+    let n = 0;
+    const stored = readJSON('mc:conviction-beats:v1');
+    if (Array.isArray(stored)) n = stored.length;
+    else if (stored && typeof stored === 'object' && Array.isArray((stored as any).entries)) n = (stored as any).entries.length;
+    if (!n) {
+      try { for (const v of getEngineViews().values()) if (v.bench) n++; } catch { /* silent */ }
+    }
+    out.push(n > 0
+      ? { label: '🏆 Bench', value: `✓ ${n} names`, tone: 'fresh', title }
+      : { label: '🏆 Bench', value: 'unknown', tone: 'dim', title });
+  }
+
+  return out;
+}
+
 export default function FreshnessStrip() {
   const [chips, setChips] = useState<Chip[]>([]);
 
@@ -92,40 +149,8 @@ export default function FreshnessStrip() {
     let alive = true;
     (async () => {
       const out: Chip[] = [];
-
-      // ── 🇮🇳 Technicals ────────────────────────────────────────────────────
-      {
-        const rows = readJSON('mb_tech_rows_ind_v1');
-        const n = Array.isArray(rows) ? rows.length : 0;
-        const ts = parseDateish(readJSON('mb_tech_last_pulled_sync_v1') ?? localStorage.getItem('mb_tech_last_pulled_sync_v1'));
-        const title = 'India technicals universe. Re-upload TradingView export on India Technicals tab to refresh. Row count shown when no upload timestamp exists (presence = synced).';
-        if (ts != null) { const a = ageChip(ts); out.push({ label: '🇮🇳 Technicals', value: a.value, tone: a.tone, title }); }
-        else if (n > 0) out.push({ label: '🇮🇳 Technicals', value: `✓ ${n} rows`, tone: 'fresh', title });
-        else out.push({ label: '🇮🇳 Technicals', value: 'unknown', tone: 'dim', title });
-      }
-
-      // ── 🇺🇸 Technicals ────────────────────────────────────────────────────
-      {
-        const rows = readJSON('mb_tech_rows_usa_v1');
-        const n = Array.isArray(rows) ? rows.length : 0;
-        const ts = parseDateish(readJSON('mb_usa_uploaded_at_v1') ?? localStorage.getItem('mb_usa_uploaded_at_v1'));
-        const title = 'USA technicals universe. Re-upload TradingView export on USA Technicals tab to refresh.';
-        if (ts != null) { const a = ageChip(ts); out.push({ label: '🇺🇸 Technicals', value: a.value, tone: a.tone, title }); }
-        else if (n > 0) out.push({ label: '🇺🇸 Technicals', value: `✓ ${n} rows`, tone: 'fresh', title });
-        else out.push({ label: '🇺🇸 Technicals', value: 'unknown', tone: 'dim', title });
-      }
-
-      // ── 🚀 Multibagger scored sets (no per-row timestamps → counts) ───────
-      for (const [key, label, title] of [
-        ['mb_excel_scored_v2', '🚀 Multibagger IND', 'India multibagger scored set. Re-run the Excel scorer upload on the Multibagger tab to refresh. Count shown — presence = synced.'],
-        ['mb_usa_scored_v2', '🚀 Multibagger USA', 'USA multibagger scored set. Re-run the USA scorer upload on the Multibagger tab to refresh. Count shown — presence = synced.'],
-      ] as const) {
-        const rows = readJSON(key);
-        const n = Array.isArray(rows) ? rows.length : 0;
-        out.push(n > 0
-          ? { label, value: `✓ ${n} rows`, tone: 'fresh', title }
-          : { label, value: 'unknown', tone: 'dim', title });
-      }
+      const local = localFreshnessChips();
+      out.push(...local.filter((c) => !c.label.startsWith('🏆')));
 
       // ── 🧾 Screener CSVs (manifest date, defensive) ───────────────────────
       {
@@ -142,20 +167,7 @@ export default function FreshnessStrip() {
         out.push({ label: '🧾 Screener CSVs', value: a.value, tone: a.tone, title });
       }
 
-      // ── 🏆 Bench ──────────────────────────────────────────────────────────
-      {
-        const title = 'Conviction Beats bench. Add or refresh names on the Conviction tab. Count shown — presence = synced.';
-        let n = 0;
-        const stored = readJSON('mc:conviction-beats:v1');
-        if (Array.isArray(stored)) n = stored.length;
-        else if (stored && typeof stored === 'object' && Array.isArray((stored as any).entries)) n = (stored as any).entries.length;
-        if (!n) {
-          try { for (const v of getEngineViews().values()) if (v.bench) n++; } catch { /* silent */ }
-        }
-        out.push(n > 0
-          ? { label: '🏆 Bench', value: `✓ ${n} names`, tone: 'fresh', title }
-          : { label: '🏆 Bench', value: 'unknown', tone: 'dim', title });
-      }
+      out.push(...local.filter((c) => c.label.startsWith('🏆')));
 
       if (alive) setChips(out);
     })();
