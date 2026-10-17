@@ -9,6 +9,11 @@
  *   - Everything else passes straight through: /api/*, login, POST requests,
  *     anything carrying an auth header, other sites.
  *
+ * zzz1064 — PHONE NOTIFICATIONS: 'push' shows the price alert as a phone / desktop notification (payload JSON
+ * {title, body, url, tag, eventId}); tapping it ('notificationclick') focuses an open Market Cockpit window and goes to the
+ * alert's page, or opens one. 'pushsubscriptionchange' signs the device up again with the server's key. Push never caches
+ * anything and never touches page requests.
+ *
  * Versioning: the page registers /sw.js?v=<deploy id>. A new deploy means a
  * new script URL, so the phone installs a new worker; the app then shows
  * "Update available — tap to reload". The new worker deletes older caches
@@ -161,5 +166,92 @@ self.addEventListener('fetch', function (event) {
         });
       });
     })
+  );
+});
+
+// ── zzz1064: phone notifications ─────────────────────────────────────────────
+
+/** Only same-site paths are opened from a notification ("/price-alerts", "/charts?…"); anything else → the alerts page. */
+function mcSafePath(u) {
+  var s = typeof u === 'string' ? u.trim() : '';
+  if (s.charAt(0) !== '/' || s.charAt(1) === '/' || s.charAt(1) === '\\') return '/price-alerts';
+  return s.slice(0, 500);
+}
+
+/**
+ * Turns the push payload into showNotification(title, options). Pure, so tests can call it.
+ * raw: the parsed JSON object, a plain string, or null.
+ */
+function mcPushNotice(raw) {
+  var d = raw && typeof raw === 'object' ? raw : { body: typeof raw === 'string' ? raw : '' };
+  var title = String(d.title || 'Market Cockpit alert').slice(0, 120);
+  var body = String(d.body || d.message || '').slice(0, 400);
+  var eventId = d.eventId != null ? String(d.eventId).slice(0, 40) : null;
+  var tag = d.tag ? String(d.tag).slice(0, 80) : (eventId ? 'mc-alert-' + eventId : 'mc-alert');
+  return {
+    title: title,
+    options: {
+      body: body,
+      tag: tag,
+      renotify: true,          // a newer alert with the same tag still buzzes the phone
+      icon: '/icon-192.png',
+      badge: '/icon-maskable-192.png',
+      timestamp: Date.now(),
+      data: { url: mcSafePath(d.url), eventId: eventId },
+    },
+  };
+}
+self.__mcPushNotice = mcPushNotice;
+self.__mcSafePath = mcSafePath;
+
+self.addEventListener('push', function (event) {
+  var raw = null;
+  try { raw = event.data ? event.data.json() : null; } catch (e) {
+    try { raw = event.data ? event.data.text() : null; } catch (e2) { raw = null; }
+  }
+  var n = mcPushNotice(raw);
+  // Always show something: a push with no notification is penalised by the browser.
+  event.waitUntil(self.registration.showNotification(n.title, n.options));
+});
+
+self.addEventListener('notificationclick', function (event) {
+  var note = event.notification;
+  var path = mcSafePath(note && note.data && note.data.url);
+  try { note.close(); } catch (e) { /* ignore */ }
+  var target = new URL(path, self.location.origin).href;
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (list) {
+      for (var i = 0; i < list.length; i++) {
+        var c = list[i];
+        var same = false;
+        try { same = new URL(c.url).origin === self.location.origin; } catch (e) { same = false; }
+        if (!same) continue;
+        return Promise.resolve(c.focus ? c.focus() : c).then(function (fc) {
+          var w = fc || c;
+          if (w.navigate && w.url !== target) return w.navigate(target).catch(function () { return self.clients.openWindow(target); });
+          return w;
+        });
+      }
+      return self.clients.openWindow ? self.clients.openWindow(target) : null;
+    })
+  );
+});
+
+// The browser renewed / dropped the subscription: sign up again with the server's key (best effort; the page also checks).
+self.addEventListener('pushsubscriptionchange', function (event) {
+  event.waitUntil(
+    fetch('/api/v1/push?view=key', { credentials: 'same-origin', cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+      if (!j || !j.ok || !j.publicKey) return;
+      var s = String(j.publicKey).replace(/-/g, '+').replace(/_/g, '/');
+      s += '===='.slice(0, (4 - (s.length % 4)) % 4);
+      var bin = atob(s), key = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) key[i] = bin.charCodeAt(i);
+      return self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }).then(function (sub) {
+        return fetch('/api/v1/push', {
+          method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'subscribe', subscription: sub.toJSON(), label: 'renewed device', replaces: event.oldSubscription ? event.oldSubscription.endpoint : null }),
+        });
+      });
+    }).catch(function () { /* the page will notice on the next visit */ })
   );
 });

@@ -32,6 +32,22 @@ const nextConfig = {
   async headers() {
     return [
       {
+        // zzz1064 — the service worker (phone notifications + offline page): always re-checked, scope = the whole site.
+        source: '/sw.js',
+        headers: [
+          { key: 'Content-Type', value: 'application/javascript; charset=utf-8' },
+          { key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' },
+          { key: 'Service-Worker-Allowed', value: '/' },
+        ],
+      },
+      {
+        source: '/manifest.json',
+        headers: [
+          { key: 'Content-Type', value: 'application/manifest+json; charset=utf-8' },
+          { key: 'Cache-Control', value: 'no-cache' },
+        ],
+      },
+      {
         // Only apply security headers to non-static paths
         source: '/((?!_next/static|_next/image|favicon.ico).*)',
         headers: [

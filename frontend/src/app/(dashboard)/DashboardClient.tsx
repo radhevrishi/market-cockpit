@@ -800,7 +800,6 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
               {/* PATCH 0074: theme cycler + PDF export — visible on every tab */}
               {/* ThemeSwitcher removed — light/pro themes were never wired to page styles */}
               {/* zzz825: ☀/🌙 — light (white, ink-friendly) screens via the --mc-* variable set */}
-              <AlertBell />{/* zzz1054 — price alerts: unread count, toasts */}
               <ScreenThemeToggle />
               <PdfExportButton />
 
@@ -853,6 +852,8 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
                 )}
               </div>
             </div>
+            {/* zzz1054 / zzz1064 — price alerts bell: OUTSIDE the chip row so it is never scrolled away on a narrow phone */}
+            <AlertBell />
           </div>
         </header>
 

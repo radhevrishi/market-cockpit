@@ -2,14 +2,15 @@
 // zzz1054 — "Create alert on …" dialog, modelled on TradingView's: target (one ticker or a whole list), conditions (AND,
 // "+ Add condition"), interval, trigger, session, expiration, message, notifications. White / light, plain English.
 // Saving waits for the server's answer: the dialog closes only when the alert is really saved.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   COND_TYPES, MA_LENGTHS, DEFAULT_MESSAGE, DEFAULT_EXPIRY_DAYS, condLabel, valueRange, targetKindLabel, toMid, parseMid, isSignalCond,
   type AlertCondition, type AlertTarget, type CondType, type PriceAlert, type TargetKind, type AlertInput, type PatternTf,
 } from '@/lib/alerts/types';
 import { renderMessage } from '@/lib/alerts/trigger';
 import { createAlertApi, updateAlertApi, loadChannels } from '@/lib/alerts/client';
-import { COND_GROUPS, condName, condHelp, ALERT_TEMPLATES } from '@/lib/alerts/dialog-meta';
+import { COND_GROUPS, condName, condHelp, ALERT_TEMPLATES, tickerFormFrom, tickerFormInput, tickerFormMarket, tickerFormMid, exchangeBadge, trapFocusTarget, type TickerForm } from '@/lib/alerts/dialog-meta';
+import { pushOnThisDevice } from '@/lib/push-client';
 
 export interface ChartListOption { id: string; name: string; count: number }
 export interface CreateAlertDialogProps {
@@ -77,15 +78,29 @@ const CSS = `
 .mcpa-chip{border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;border-radius:999px;padding:5px 10px;cursor:pointer;font-size:12px;font-weight:600}
 .mcpa-chip:hover{background:#dbeafe}
 .mcpa-prev{background:#f3f4f6;border-radius:6px;padding:6px 8px;font-size:12px;color:#374151}
-@media (max-width:520px){.mcpa-row{grid-template-columns:1fr}.mcpa-row>label{padding-top:0}}
+.mcpa-badge{display:inline-block;border:1px solid #c7d2fe;background:#eef2ff;color:#3730a3;border-radius:6px;padding:2px 7px;font-size:11px;font-weight:800;letter-spacing:.3px}
+@media (max-width:520px){
+  .mcpa-row{grid-template-columns:1fr}.mcpa-row>label{padding-top:0}
+  .mcpa-back{padding:0;align-items:stretch}
+  .mcpa{max-width:none;min-height:100%;border-radius:0;display:flex;flex-direction:column}
+  .mcpa-head{position:sticky;top:0;background:#fff;z-index:1;padding:12px 14px}
+  .mcpa-body{padding:12px 14px;flex:1}
+  .mcpa-foot{position:sticky;bottom:0;background:#fff;padding:10px 14px calc(10px + env(safe-area-inset-bottom,0px));flex-wrap:wrap}
+  .mcpa-foot .mcpa-btn{flex:1;min-height:44px}
+  .mcpa-err{flex-basis:100%}
+  .mcpa input,.mcpa select,.mcpa textarea{font-size:16px}
+  .mcpa-cond select{flex:1 1 100%}
+}
 `;
 
 export default function CreateAlertDialog({ onClose, onSaved, initialTarget, chartLists = [], currentTicker, editing }: CreateAlertDialogProps) {
   const curMid = currentTicker ? toMid(currentTicker.m, currentTicker.t, currentTicker.x) : null;
   const startTarget: AlertTarget = editing?.target || initialTarget || (curMid ? { kind: 'ticker', id: curMid } : chartLists[0] ? { kind: 'chart-list', id: chartLists[0].id, label: chartLists[0].name } : { kind: 'watchlist' });
   const [target, setTarget] = useState<AlertTarget>(startTarget);
-  const [tickerText, setTickerText] = useState(() => (startTarget.kind === 'ticker' ? parseMid(startTarget.id)?.ticker || '' : currentTicker?.t || ''));
-  const [tickerMkt, setTickerMkt] = useState<'IN' | 'US'>(() => (startTarget.kind === 'ticker' ? parseMid(startTarget.id)?.market || 'IN' : currentTicker?.m || 'IN'));
+  // zzz1064 (A04): one state for market + ticker + exchange, so a BSE pick stays BSE through edit and save
+  const [tform, setTform] = useState<TickerForm>(() => tickerFormFrom(startTarget, currentTicker));
+  const tickerText = tform.ticker;
+  const tickerMkt = tform.market;
   const [conds, setConds] = useState<AlertCondition[]>(editing?.conditions || [defaultCond('move_up_pct')]);
   const [interval, setInterval_] = useState<'D' | 'W'>(editing?.interval || 'D');
   const [trigger, setTrigger] = useState(editing?.trigger || 'per_bar');
@@ -94,7 +109,11 @@ export default function CreateAlertDialog({ onClose, onSaved, initialTarget, cha
   const [expiry, setExpiry] = useState(() => editing?.expiresAt ? editing.expiresAt.slice(0, 10) : ymd(new Date(Date.now() + DEFAULT_EXPIRY_DAYS * 86_400_000)));
   const [message, setMessage] = useState(editing?.message || DEFAULT_MESSAGE);
   const [name, setName] = useState(editing?.name || '');
-  const [notify, setNotify] = useState(editing?.notify || { app: true as const, toast: true, browser: false, telegram: false, email: false });
+  // zzz1064 — `push` (phone notifications): missing on older alerts = on. A NEW alert ticks it when this device has push on.
+  const [notify, setNotify] = useState<PriceAlert['notify'] & { push?: boolean }>(() => (editing?.notify
+    ? { ...editing.notify, push: (editing.notify as { push?: boolean }).push !== false }
+    : { app: true as const, toast: true, browser: false, telegram: false, email: false, push: pushOnThisDevice() }));
+  const dialogRef = useRef<HTMLDivElement>(null);
   const [channels, setChannels] = useState<{ telegram: boolean; email: boolean } | null>(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -106,21 +125,42 @@ export default function CreateAlertDialog({ onClose, onSaved, initialTarget, cha
       if (c && !editing) setNotify((n) => ({ ...n, telegram: n.telegram || c.telegram, email: n.email || c.email }));
     });
   }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  // zzz1064 — keyboard: Esc closes, Tab stays inside the dialog, focus goes back to the button that opened it.
+  const closeRef = useRef(onClose);
+  useEffect(() => { closeRef.current = onClose; }, [onClose]);
   useEffect(() => {
-    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onClose = () => closeRef.current();
+    const opener = typeof document !== 'undefined' ? (document.activeElement as HTMLElement | null) : null;
+    const box = dialogRef.current;
+    const focusables = () => (box ? Array.from(box.querySelectorAll<HTMLElement>('button:not([disabled]),select:not([disabled]),input:not([disabled]),textarea:not([disabled]),a[href],[tabindex]:not([tabindex="-1"])')).filter((el) => el.offsetParent !== null || el === document.activeElement) : []);
+    const first = box?.querySelector<HTMLElement>('#mcpa-target') || focusables()[0];
+    try { first?.focus(); } catch { /* ignore */ }
+    const k = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.stopPropagation(); onClose(); return; }
+      if (e.key !== 'Tab') return;
+      const items = focusables();
+      const next = trapFocusTarget(items, document.activeElement as HTMLElement | null, e.shiftKey);
+      if (next) { e.preventDefault(); next.focus(); }
+    };
     window.addEventListener('keydown', k);
-    return () => window.removeEventListener('keydown', k);
-  }, [onClose]);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', k);
+      document.body.style.overflow = prevOverflow;
+      try { if (opener && document.contains(opener)) opener.focus(); } catch { /* ignore */ }
+    };
+  }, []);
 
   const effectiveTarget: AlertTarget | null = useMemo(() => {
     if (target.kind !== 'ticker') return target;
-    const mid = toMid(tickerMkt, tickerText);
+    const mid = tickerFormMid(tform);
     return mid ? { kind: 'ticker', id: mid, label: parseMid(mid)?.ticker } : null;
-  }, [target, tickerMkt, tickerText]);
+  }, [target, tform]);
 
   const condText = conds.map((c) => condLabel(c, interval)).join(' and ');
   const previewTicker = effectiveTarget?.kind === 'ticker' ? parseMid(effectiveTarget.id)?.ticker || 'HAL' : 'HAL';
-  const preview = renderMessage(message, { ticker: previewTicker, name: null, price: null, change: null, condition: condText, list: effectiveTarget?.kind === 'ticker' ? null : effectiveTarget?.label || targetKindLabel(target.kind), time: new Date(), interval, exchange: tickerMkt === 'US' ? 'US' : 'NSE', market: tickerMkt });
+  const preview = renderMessage(message, { ticker: previewTicker, name: null, price: null, change: null, condition: condText, list: effectiveTarget?.kind === 'ticker' ? null : effectiveTarget?.label || targetKindLabel(target.kind), time: new Date(), interval, exchange: tickerMkt === 'US' ? 'US' : tform.exchange, market: tickerMkt });
 
   const onTargetChange = (v: string) => {
     if (v.startsWith('chart-list:')) { const id = v.slice(11); setTarget({ kind: 'chart-list', id, label: chartLists.find((l) => l.id === id)?.name }); }
@@ -165,7 +205,7 @@ export default function CreateAlertDialog({ onClose, onSaved, initialTarget, cha
   return (
     <div className="mcpa-back" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <style>{CSS}</style>
-      <div className="mcpa" role="dialog" aria-modal="true" aria-labelledby="mcpa-title">
+      <div className="mcpa" role="dialog" aria-modal="true" aria-labelledby="mcpa-title" ref={dialogRef}>
         <div className="mcpa-head">
           <h2 id="mcpa-title">{editing ? 'Edit alert' : 'Create alert'}</h2>
           <button type="button" className="mcpa-x" aria-label="Close" onClick={onClose}>✕</button>
@@ -190,9 +230,21 @@ export default function CreateAlertDialog({ onClose, onSaved, initialTarget, cha
                 </optgroup>
               </select>
               {target.kind === 'ticker' ? (
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <select aria-label="Market" value={tickerMkt} onChange={(e) => setTickerMkt(e.target.value as 'IN' | 'US')}><option value="IN">India</option><option value="US">USA</option></select>
-                  <input aria-label="Ticker" value={tickerText} onChange={(e) => setTickerText(e.target.value.toUpperCase())} placeholder={tickerMkt === 'IN' ? 'HAL' : 'NVDA'} style={{ flex: 1 }} />
+                <div style={{ display: 'grid', gap: 6 }}>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <select aria-label="Market" value={tickerMkt} onChange={(e) => setTform((f) => tickerFormMarket(f, e.target.value as 'IN' | 'US'))}><option value="IN">India</option><option value="US">USA</option></select>
+                    {tickerMkt === 'IN' && (
+                      <div className="mcpa-seg" role="group" aria-label="Exchange">
+                        <button type="button" aria-pressed={tform.exchange === 'NSE'} onClick={() => setTform((f) => ({ ...f, exchange: 'NSE' }))}>NSE</button>
+                        <button type="button" aria-pressed={tform.exchange === 'BSE'} onClick={() => setTform((f) => ({ ...f, exchange: 'BSE' }))}>BSE</button>
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <input aria-label="Ticker" value={tickerText} onChange={(e) => setTform((f) => tickerFormInput(f, e.target.value))} placeholder={tickerMkt === 'IN' ? (tform.exchange === 'BSE' ? 'TATVA or 543262' : 'HAL') : 'NVDA'} style={{ flex: 1 }} />
+                    <span className="mcpa-badge" title="The exchange this alert uses">{exchangeBadge(tform)}</span>
+                  </div>
+                  {effectiveTarget?.kind === 'ticker' && effectiveTarget.id && <span className="mcpa-hint">Saved as {effectiveTarget.id.replace(/^IN:BSE:/, 'BSE: ').replace(/^IN:/, 'NSE: ').replace(/^US:/, 'USA: ')}</span>}
                 </div>
               ) : (
                 <span className="mcpa-hint">A list alert follows the list as it is at each check: tickers you add later are watched too, removed ones stop.</span>
@@ -295,11 +347,13 @@ export default function CreateAlertDialog({ onClose, onSaved, initialTarget, cha
                 <label><input type="checkbox" checked={notify.browser} onChange={(e) => void askBrowser(e.target.checked)} /> Browser</label>
                 <label><input type="checkbox" checked={notify.telegram} onChange={(e) => setNotify((n) => ({ ...n, telegram: e.target.checked }))} /> Telegram</label>
                 <label><input type="checkbox" checked={notify.email} onChange={(e) => setNotify((n) => ({ ...n, email: e.target.checked }))} /> Email</label>
+                <label title="Phone notifications on every device where you turned them on (Price alerts page → Phone notifications)"><input type="checkbox" checked={notify.push !== false} onChange={(e) => setNotify((n) => ({ ...n, push: e.target.checked }))} /> 📱 Phone</label>
               </div>
+              {notify.push !== false && !pushOnThisDevice() && <span className="mcpa-hint">Phone notifications go to devices where you turned them on — open Price alerts → Phone notifications on your phone once.</span>}
               {channels && ((notify.telegram && !channels.telegram) || (notify.email && !channels.email)) && (
                 <span className="mcpa-hint" style={{ color: '#b45309' }}>{[notify.telegram && !channels.telegram ? 'Telegram' : '', notify.email && !channels.email ? 'Email' : ''].filter(Boolean).join(' and ')} is not set up on the server yet — the alert still shows in the app.</span>
               )}
-              <span className="mcpa-hint">Toast and browser notifications appear while a Market Cockpit tab is open; Telegram / email work with no tab open.</span>
+              <span className="mcpa-hint">Toast and browser notifications appear while a Market Cockpit tab is open; Phone, Telegram and email work with the app closed.</span>
             </div>
           </div>
         </div>
