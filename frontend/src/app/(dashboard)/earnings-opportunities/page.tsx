@@ -62,9 +62,8 @@ import { useIndiaEarningsWindow } from './useIndiaEarningsWindow';
 // zzz820 — what a card may honestly show (quarter label, year-ago base, margin
 // for lenders / "0.0%" unknowns, words instead of 0–100 numbers).
 import { checkQuarterLabel, growthView, marginView, driftWord, notRecordedNote, narrativeForDisplay, prepareDisplayPayload, yearAgoUnverified, stripGradeInputForStorage, UNCONFIRMED_LABEL, capReasonOf, caveatTagsForDisplay, liquidityView, decodeEntities, capBucket, capInBand, CAP_BUCKETS, cashTileView, type CashTileView, financialKindOfRow } from '@/lib/india-eo-card-data';
-import { DebtEquityContext, useDebtEquityIndex, useDebtEquityOf, FinFallbackContext, useFinFallbackIndex, useFinFallbackOf } from '@/lib/use-debt-equity';   // zzz1077 / zzz1089
+import { DebtEquityContext, useDebtEquityState, useDebtEquityOf, FinFallbackContext, useFinFallbackIndex, useFinFallbackOf } from '@/lib/use-debt-equity';   // zzz1077 / zzz1089
 import { deTileView } from '@/lib/de-tile';   // zzz1089
-import { finSubKind } from '@/lib/fin-kind';   // zzz1089
 import { deCell, TONE_COLOR } from '@/lib/cb-metric-view';   // zzz1077
 import type { CalendarPayload, EarningsTier, ParsedEarning, OpportunitiesPayload, ViewMode } from './types';
 import { TIER_ORDER, GRADED_ENGINE_LABEL } from './constants';
@@ -1787,7 +1786,9 @@ export default function EarningsOpportunitiesPage() {
   const view: OpportunitiesPayload = useMemo(() => prepareDisplayPayload(viewMerged), [viewMerged]);
   // zzz1077 — debt ÷ equity for every card on screen (window or single date), from the stock-screener snapshot
   const deTickers = useMemo(() => (windowOn ? win.rows.map((r: any) => r.ticker) : TIER_ORDER.flatMap((t) => (view.by_tier?.[t] || []).map((x: any) => x.ticker))), [windowOn, win.rows, view]);
-  const deIdx = useDebtEquityIndex(deTickers, 'IN');
+  // zzz1091 — `answered`: the snapshot has been asked about the ticker (a card is only sent to the company page AFTER that)
+  const { idx: deIdxRaw, answered: deAnswered } = useDebtEquityState(deTickers, 'IN');
+  const deIdx = useMemo(() => ({ ...deIdxRaw }), [deIdxRaw, Object.keys(deIdxRaw).length, deAnswered.size]);   // eslint-disable-line react-hooks/exhaustive-deps
   // zzz1089 — cards with no D/E in the snapshot, or no cash figures (non-banks), read the company's own screener.in page
   const fbTickers = useMemo(() => {
     const rowsAll: any[] = windowOn ? win.rows : TIER_ORDER.flatMap((t) => view.by_tier?.[t] || []);
@@ -1795,16 +1796,14 @@ export default function EarningsOpportunitiesPage() {
     const names: Record<string, string> = {};
     for (const r of rowsAll) {
       if (!r?.ticker) continue;
-      const fk = financialKindOfRow(r);
-      if (fk && finSubKind(r, true) === 'bank') continue;
       const t = String(r.ticker).toUpperCase().replace(/^(NSE|BSE):/, '');
-      const noDe = !deIdx[t];
+      const noDe = deAnswered.has(t) && !deIdx[t];   // zzz1091 — only once the snapshot answered for it
       const cv = cashTileView(r);
       const noCash = cv.text === '—' || cv.text.startsWith('n/a');
       if (noDe || noCash) { out.push(r.ticker); if (r.company) names[t] = String(r.company); }
     }
     return { out, names };
-  }, [windowOn, win.rows, view, deIdx]);
+  }, [windowOn, win.rows, view, deIdx, deAnswered.size]);   // eslint-disable-line react-hooks/exhaustive-deps
   const fbIdx = useFinFallbackIndex(fbTickers.out, fbTickers.names);
 
   // zzz814 — what the counts, filter chips, search and exports read: the

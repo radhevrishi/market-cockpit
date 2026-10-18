@@ -21,7 +21,7 @@ test('the colour rule and the words', () => {
 test('India Earnings Opportunities: a DEBT / EQUITY tile beside cash, fed for every card on screen', () => {
   const s = read('app/(dashboard)/earnings-opportunities/page.tsx');
   assert.match(s, /<DeTile stock=\{stock\} \/>/);   // zzz1089 — the tile reads the row (kind of financial company) + the page fallback
-  assert.match(s, /useDebtEquityIndex\(deTickers, 'IN'\)/);
+  assert.match(s, /useDebtEquityState\(deTickers, 'IN'\)/);   // zzz1091 — with the 'answered' set
   assert.match(s, /<DebtEquityContext\.Provider value=\{deIdx\}>/);
   assert.match(s, /label="DEBT \/ EQUITY"/);
 });
@@ -45,5 +45,5 @@ test('India Conviction Beats keeps its D/E on the card (same chip style as its o
 test('the lookup asks in chunks so a 60-day window (more than 300 names) is covered', () => {
   const h = read('lib/use-debt-equity.ts');
   assert.match(h, /const CHUNK = 300/);
-  assert.match(h, /chunks\.map/);
+  assert.match(h, /for \(const c of chunks\)/);   // zzz1091 — each chunk asked once, kept for the page's lifetime
 });

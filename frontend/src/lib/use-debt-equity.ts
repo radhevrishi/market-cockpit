@@ -19,22 +19,38 @@ export function withDebtEquity<T extends { ticker?: string }>(entries: T[], idx:
 export type DeIndex = Record<string, { de: number; basis: string }>;
 const CHUNK = 300;   // the slim stock-screener answer takes a few hundred tickers per call
 
-/** zzz1077 — ticker → D/E for a list of tickers (any length: asked in chunks of 300). Unknown tickers stay absent ("—"). */
-export function useDebtEquityIndex(tickers: ReadonlyArray<string | undefined | null>, market: 'IN' | 'US'): DeIndex {
-  const [idx, setIdx] = useState<DeIndex>({});
+/** zzz1077 — ticker → D/E for a list of tickers (any length: asked in chunks of 300). Unknown tickers stay absent ("—").
+ *  zzz1091 — answers are kept for the page's lifetime (module cache) and a request is never cancelled when the list grows
+ *  (the window loads a day at a time); `answered` says which tickers the snapshot has been asked about, so a caller can tell
+ *  "no D/E for this company" from "not asked yet". */
+const _deCache: Record<string, Record<string, { de: number; basis: string }>> = { IN: {}, US: {} };
+const _deAsked: Record<string, Set<string>> = { IN: new Set(), US: new Set() };
+const _deListeners = new Set<() => void>();
+function askDe(market: 'IN' | 'US', list: string[]): void {
+  const todo = list.filter((t) => !_deAsked[market].has(t));
+  if (!todo.length) return;
+  const chunks: string[][] = [];
+  for (let i = 0; i < todo.length; i += CHUNK) chunks.push(todo.slice(i, i + CHUNK));
+  for (const c of chunks) {
+    const pending = new Set(c);
+    fetch(`/api/v1/stock-screener?market=${market}&tickers=${encodeURIComponent(c.join(','))}`, { signal: AbortSignal.timeout(30_000) })
+      .then((r) => (r.ok ? r.json() : null)).then((j) => (j && Array.isArray(j.rows) ? deIndex(j.rows) : null)).catch(() => null)
+      .then((part) => {
+        if (part) { Object.assign(_deCache[market], part); for (const t of pending) _deAsked[market].add(t); }
+        for (const f of _deListeners) f();
+      });
+  }
+}
+export function useDebtEquityState(tickers: ReadonlyArray<string | undefined | null>, market: 'IN' | 'US'): { idx: DeIndex; answered: ReadonlySet<string> } {
+  const [, setTick] = useState(0);
   const key = useMemo(() => Array.from(new Set(tickers.map((t) => tick(t)).filter(Boolean))).sort().join(','), [tickers]);
-  useEffect(() => {
-    if (!key) return;
-    const ctrl = new AbortController();
-    const all = key.split(',');
-    const chunks: string[][] = [];
-    for (let i = 0; i < all.length; i += CHUNK) chunks.push(all.slice(i, i + CHUNK));
-    Promise.all(chunks.map((c) => fetch(`/api/v1/stock-screener?market=${market}&tickers=${encodeURIComponent(c.join(','))}`, { signal: ctrl.signal })
-      .then((r) => (r.ok ? r.json() : null)).then((j) => (j && Array.isArray(j.rows) ? deIndex(j.rows) : {})).catch(() => ({}))))
-      .then((parts) => { if (!ctrl.signal.aborted) setIdx(Object.assign({}, ...parts)); });
-    return () => ctrl.abort();
-  }, [key, market]);
-  return idx;
+  useEffect(() => { const f = () => setTick((x) => x + 1); _deListeners.add(f); return () => { _deListeners.delete(f); }; }, []);
+  useEffect(() => { if (key) askDe(market, key.split(',')); }, [key, market]);
+  return { idx: _deCache[market], answered: _deAsked[market] };
+}
+export function useDebtEquityIndex(tickers: ReadonlyArray<string | undefined | null>, market: 'IN' | 'US'): DeIndex {
+  const { idx } = useDebtEquityState(tickers, market);
+  return useMemo(() => ({ ...idx }), [idx, Object.keys(idx).length]);   // a new object when answers arrive (consumers memo on it)
 }
 
 export function useDebtEquityEntries<T extends { ticker?: string }>(entries: T[], market: 'IN' | 'US'): T[] {
@@ -59,34 +75,48 @@ export function useFinFallbackOf(ticker: string | undefined | null): FinFallback
   const idx = useContext(FinFallbackContext);
   return idx[tick(ticker)] || null;
 }
-const FB_CHUNK = 20;
-/** `tickers` = the India cards that need a fallback (worked out by the page). Pending entries are marked so the tile can say so. */
-export function useFinFallbackIndex(tickers: ReadonlyArray<string | undefined | null>, names?: Readonly<Record<string, string>>): FinFallbackIndex {
-  const [idx, setIdx] = useState<FinFallbackIndex>({});
-  const key = useMemo(() => Array.from(new Set(tickers.map((t) => tick(t)).filter(Boolean))).sort().join(','), [tickers]);
-  useEffect(() => {
-    if (!key) return;
-    const ctrl = new AbortController();
-    const all = key.split(',');
-    setIdx((p) => { const n = { ...p }; for (const t of all) if (!n[t]) n[t] = { de: null, deBasis: null, cfo: null, pat: null, fy: null, pending: true }; return n; });
-    (async () => {
-      for (let i = 0; i < all.length && !ctrl.signal.aborted; i += FB_CHUNK) {
-        const c = all.slice(i, i + FB_CHUNK);
-        const nm = c.map((t) => String(names?.[t] || '').replace(/[|,]/g, ' ')).join('|');
-        const j = await fetch(`/api/v1/fin-fallback?tickers=${encodeURIComponent(c.join(','))}${nm.replace(/\|/g, '') ? `&names=${encodeURIComponent(nm)}` : ''}`, { signal: ctrl.signal }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-        if (ctrl.signal.aborted) return;
-        setIdx((p) => {
-          const n = { ...p };
-          for (const t of c) {
-            const v = j?.results?.[t];
-            n[t] = v && !v.error ? { de: v.de ?? null, deBasis: v.deBasis ?? null, cfo: v.cfo ?? null, pat: v.pat ?? null, fy: v.fy ?? null }
-              : { de: null, deBasis: null, cfo: null, pat: null, fy: null, error: v?.error || (j ? 'not found' : 'could not be read') };
-          }
-          return n;
-        });
+const FB_CHUNK = 6;   // zzz1091 — small batches, two at a time, never cancelled
+const _fbCache = new Map<string, FinFallbackEntry & { at: number }>();
+const _fbInflight = new Set<string>();
+const _fbListeners = new Set<() => void>();
+function askFallback(list: string[], names?: Readonly<Record<string, string>>): void {
+  const now = Date.now();
+  const todo = list.filter((t) => !_fbInflight.has(t) && !(_fbCache.has(t) && (!_fbCache.get(t)!.error || now - _fbCache.get(t)!.at < 10 * 60_000)));
+  if (!todo.length) return;
+  for (const t of todo) _fbInflight.add(t);
+  const batches: string[][] = [];
+  for (let i = 0; i < todo.length; i += FB_CHUNK) batches.push(todo.slice(i, i + FB_CHUNK));
+  let next = 0;
+  const worker = async () => {
+    while (next < batches.length) {
+      const c = batches[next++];
+      const nm = c.map((t) => String(names?.[t] || '').replace(/[|,]/g, ' ')).join('|');
+      const j = await fetch(`/api/v1/fin-fallback?tickers=${encodeURIComponent(c.join(','))}${nm.replace(/\|/g, '') ? `&names=${encodeURIComponent(nm)}` : ''}`, { signal: AbortSignal.timeout(55_000) })
+        .then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      for (const t of c) {
+        const v = j?.results?.[t];
+        _fbCache.set(t, v && !v.error ? { de: v.de ?? null, deBasis: v.deBasis ?? null, cfo: v.cfo ?? null, pat: v.pat ?? null, fy: v.fy ?? null, at: Date.now() }
+          : { de: null, deBasis: null, cfo: null, pat: null, fy: null, error: v?.error || (j ? 'not found' : 'could not be read'), at: Date.now() });
+        _fbInflight.delete(t);
       }
-    })();
-    return () => ctrl.abort();
-  }, [key]);
-  return idx;
+      for (const f of _fbListeners) f();
+    }
+  };
+  void Promise.all([worker(), worker()]);
+}
+/** `tickers` = the India cards that need a fallback (worked out by the page). In-flight entries are marked pending. */
+export function useFinFallbackIndex(tickers: ReadonlyArray<string | undefined | null>, names?: Readonly<Record<string, string>>): FinFallbackIndex {
+  const [tickN, setTick] = useState(0);
+  const key = useMemo(() => Array.from(new Set(tickers.map((t) => tick(t)).filter(Boolean))).sort().join(','), [tickers]);
+  useEffect(() => { const f = () => setTick((x) => x + 1); _fbListeners.add(f); return () => { _fbListeners.delete(f); }; }, []);
+  useEffect(() => { if (key) askFallback(key.split(','), names); }, [key]);   // eslint-disable-line react-hooks/exhaustive-deps
+  return useMemo(() => {
+    const out: FinFallbackIndex = {};
+    for (const t of key ? key.split(',') : []) {
+      const c = _fbCache.get(t);
+      if (c) { const { at: _at, ...rest } = c; void _at; out[t] = rest; }
+      else if (_fbInflight.has(t)) out[t] = { de: null, deBasis: null, cfo: null, pat: null, fy: null, pending: true };
+    }
+    return out;
+  }, [key, tickN]);
 }

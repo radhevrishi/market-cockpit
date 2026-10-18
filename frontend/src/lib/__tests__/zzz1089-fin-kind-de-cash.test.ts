@@ -42,7 +42,11 @@ test('cash tile: asset manager gets the real ratio; NBFC / broker show their fig
 });
 
 test('D/E tile: bank n/a, NBFC as leverage, asset-light as a normal company, fallback when the snapshot has none', () => {
-  assert.equal(deTileView(AXIS, { de: 1.3, basis: 'fiscal year' }).text, 'n/a (bank)');
+  // zzz1091 — a bank shows its borrowings figure (deposits not counted), neutral; '—' only when there is none
+  assert.equal(deTileView(AXIS, { de: 1.3, basis: 'fiscal year' }).text, '1.30×');
+  assert.equal(deTileView(AXIS, { de: 1.3, basis: 'fiscal year' }).tone, 'none');
+  assert.match(deTileView(AXIS, { de: 1.3, basis: 'fiscal year' }).sub, /borrowings excl\. deposits/);
+  assert.equal(deTileView(AXIS, null, { de: null, deBasis: null, error: 'x' }).text, '—');
   const h = deTileView(HDBFS, { de: 4.8, basis: 'fiscal year' });
   assert.equal(h.text, '4.80×'); assert.equal(h.tone, 'warn'); assert.match(h.sub, /NBFC \/ lender leverage/);
   assert.equal(deTileView(CRAMC, { de: 0.02, basis: 'latest quarter' }).text, 'debt-free');
@@ -51,7 +55,10 @@ test('D/E tile: bank n/a, NBFC as leverage, asset-light as a normal company, fal
   assert.equal(deTileView({ company: 'X Ltd' }, null, { de: null, deBasis: null, pending: true }).text, '…');
   assert.equal(deTileView({ company: 'X Ltd' }, null, { de: null, deBasis: null, error: 'no answer' }).sub, 'no balance sheet found');
   assert.equal(deCellFor(4.8, 'fiscal year', HDBFS, true).text, '4.80× lev.');
-  assert.equal(deCellFor(0.5, 'fiscal year', AXIS, true).text, 'n/a (bank)');
+  assert.equal(deCellFor(0.5, 'fiscal year', AXIS, true).text, '0.50× bank');
+  assert.equal(deCellFor(null, 'fiscal year', AXIS, true).text, 'n/a (bank)');
+  // a bank's cash: the company-page figures are shown, never as a cash test
+  assert.match(cashTileView(AXIS, { cfo: -5000, pat: 26000, fy: 'Mar 2026' }).note, /bank: loans \/ client money move this cash — not a cash test/);
 });
 
 test('company-page reader: latest balance sheet and the same-year CFO / profit', () => {
@@ -92,4 +99,14 @@ test('1090: Technicals CSV split by exchange; offered as a company list in both 
   const pine = readFileSync(join(__dirname, '..', '..', 'components', 'pine-screener', 'PineScreener.tsx'), 'utf8');
   assert.match(pine, /<option value="tech">/);
   assert.match(readFileSync(join(__dirname, '..', '..', 'components', 'stock-screener', 'StockScreener.tsx'), 'utf8'), /loadTechListServer\(market/);
+});
+
+// zzz1091 — the page must not send cards to the company page before the snapshot answered, and requests are never cancelled
+test('1091: no fallback storm, no cancelled requests', () => {
+  const p = readFileSync(join(__dirname, '..', '..', 'app', '(dashboard)', 'earnings-opportunities', 'page.tsx'), 'utf8');
+  assert.match(p, /const noDe = deAnswered\.has\(t\) && !deIdx\[t\]/);
+  const h = readFileSync(join(__dirname, '..', 'use-debt-equity.ts'), 'utf8');
+  const fb = h.slice(h.indexOf('function askFallback'));
+  assert.doesNotMatch(fb, /ctrl\.abort\(\)/, 'fallback requests are not aborted when the card list grows');
+  assert.match(fb, /_fbInflight/);
 });
