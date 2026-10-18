@@ -16,6 +16,18 @@ export function extendedHoursPct(meta: any, nowMs: number): number | null {
   if (!inWin(p?.pre) && !inWin(p?.post)) return null;
   return (100 * (ext - reg)) / reg;
 }
+/** zzz1063 — the extended-hours PRICE itself and which session it belongs to (price alerts), with the same window rule as
+ *  extendedHoursPct. null when no extended session is live, or when the extended price equals the regular price (no extended
+ *  trade yet — e.g. at 08:00 ET Yahoo still shows yesterday's close). */
+export function extendedHoursQuote(meta: any, nowMs: number): { price: number; session: 'pre' | 'post' } | null {
+  const reg = Number(meta?.regularMarketPrice), ext = Number(meta?.fulldayPrice);
+  if (!(reg > 0) || !(ext > 0) || ext === reg) return null;
+  const p = meta?.currentTradingPeriod;
+  const inWin = (w: any) => !!w && Number.isFinite(Number(w.start)) && Number.isFinite(Number(w.end)) && nowMs >= Number(w.start) * 1000 && nowMs < Number(w.end) * 1000;
+  if (inWin(p?.pre)) return { price: ext, session: 'pre' };
+  if (inWin(p?.post)) return { price: ext, session: 'post' };
+  return null;
+}
 export type Timeframe = 'D' | 'W' | 'M';
 export type RangeKey = '1M' | '3M' | '6M' | 'YTD' | '1Y' | '5Y' | 'All';
 export const RANGE_KEYS: RangeKey[] = ['1M', '3M', '6M', 'YTD', '1Y', '5Y', 'All'];

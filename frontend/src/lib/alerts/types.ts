@@ -83,6 +83,8 @@ export interface AlertNotify {
   browser: boolean;
   telegram: boolean;
   email: boolean;
+  /** zzz1063 — Web Push to the owner's phones / browsers (lib/push). Missing = true (old alerts keep working and get push). */
+  push?: boolean;
 }
 
 export interface AlertInput {
@@ -106,6 +108,8 @@ export interface PriceAlert extends AlertInput {
   version: number;
   lastFiredAt: string | null;
   fireCount: number;
+  /** zzz1063 (A05) — activation generation for "once" alerts; raised only by the Rearm action (lib/alerts/trigger dedupeKey) */
+  armGen?: number;
 }
 
 export interface AlertEvent {
@@ -136,7 +140,7 @@ export const DEFAULT_EXPIRY_DAYS = 30;
 export const EVENT_RETENTION_DAYS = 180;
 export const EVENT_CAP = 50_000;
 export const DEFAULT_MESSAGE = '{{ticker}}, {{interval}} {{condition}}';
-export const DEFAULT_NOTIFY: AlertNotify = { app: true, toast: true, browser: false, telegram: false, email: false };
+export const DEFAULT_NOTIFY: AlertNotify = { app: true, toast: true, browser: false, telegram: false, email: false, push: true };
 
 // ── market-qualified ids ────────────────────────────────────────────────────
 
@@ -278,6 +282,7 @@ export function sanitizeAlertInput(raw: unknown, now: Date = new Date()): { ok: 
     browser: n.browser === true,
     telegram: n.telegram === true,
     email: n.email === true,
+    push: n.push !== false,   // zzz1063 — on unless the owner turned it off
   };
   const message = clean(r.message, MAX_MESSAGE) || DEFAULT_MESSAGE;
   const name = clean(r.name, 80) || `${tg.t.label || tg.t.id || targetKindLabel(tg.t.kind)} · ${conditions.map((c) => condLabel(c, interval)).join(' and ')}`.slice(0, 80);

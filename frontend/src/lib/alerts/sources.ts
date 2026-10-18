@@ -72,9 +72,14 @@ export async function fetchLiveQuotes(mids: readonly string[]): Promise<Map<stri
   for (const [sym, mid] of bySym) {
     const q = got.get(sym);
     if (!q || typeof q.lastPrice !== 'number' || !(q.lastPrice > 0)) continue;
+    // zzz1063 — quote contract (evaluate.ts priceForAlert): provider, fetch time, and the extended price dated by the fetch
+    // (basis 'fetched': Yahoo's spark gives no time for it; it is only set while Yahoo's own pre / post window is live)
+    const fetchedAt = q.fetchedAt ?? Date.now();
     out.set(mid, {
       price: q.lastPrice, prevClose: q.prevClose ?? null, volume: q.volume ?? null, dayHigh: q.dayHigh ?? null, dayLow: q.dayLow ?? null,
       marketTime: q.marketTime ?? null, name: q.companyName ?? null, extPct: q.extPct ?? null,
+      provider: 'yahoo-spark', fetchedAt,
+      ext: q.extPrice && q.extSession ? { price: q.extPrice, session: q.extSession, observedAt: fetchedAt, basis: 'fetched' } : null,
     });
   }
   return out;

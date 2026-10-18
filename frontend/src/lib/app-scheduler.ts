@@ -477,6 +477,16 @@ export const LIGHT_JOBS: readonly LightJob[] = [
       if (r.fired || r.error) console.log('[price-alerts]', JSON.stringify(r));
       return r.ok ? { ok: true, status: 200, error: r.skipped || null } : { ok: false, status: 503, error: r.error || 'failed' };
     } },
+  // zzz1063 — price-alert DELIVERY from the Postgres outbox (lib/alerts/delivery deliverDue): Telegram / email / phone push with
+  // retries (1, 5, 15, 60, 60 min), every minute of every day so retries finish outside market hours too. Reads Postgres only when
+  // something is due (earliest due time kept in memory; a full look every 5 min). No Redis; SKIP LOCKED keeps server copies apart.
+  { name: 'alert-delivery', crons: ['* * * * *'], heartbeatEveryMin: 60,
+    does: 'in-process: lib/alerts/delivery deliverDue (price_alert_outbox → Telegram / email / Web Push; Postgres only, no Redis)',
+    run: async () => {
+      const r = await (await import('./alerts/delivery')).deliverDue();
+      if (r.claimed || r.error) console.log('[alert-delivery]', JSON.stringify(r));
+      return r.ok ? { ok: true, status: 200, error: r.skipped || null } : { ok: false, status: 503, error: r.error || 'failed' };
+    } },
   // zzz1059 — US Top Movers prewarm (lib/us-movers-server prewarmUsMovers): builds the home panel's answer in this process's
   // memory 5 + 20 min after the NYSE close and at 09:45 ET, so the owner never waits for a ~35 s cold build. The crons cover
   // EDT and EST and early closes; usMoversPrewarmDue decides on the ET clock and every other minute returns at once (no I/O).

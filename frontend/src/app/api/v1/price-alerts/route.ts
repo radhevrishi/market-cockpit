@@ -2,10 +2,15 @@
 //   GET                         → alerts (+ current member count per alert), last check report, notification channels, unread
 //   GET ?view=channels          → which owner channels (Telegram / email) are set up on the server (names only)
 //   GET ?view=events            → fired alerts, newest first (&limit, &beforeId, &alertId, &ticker, &market=IN|US, &unread=1, &days)
+//                                  zzz1063: each event has delivery: { telegram?, email?, push? } = { state, attempts, error, at }
+//                                  (state: pending | sending | sent | failed | gave_up | skipped; a channel is absent when not ticked)
 //   GET ?view=bell&afterId=N    → unread count + events newer than N (the header bell polls this every 60 s while visible)
 //   POST {action:'create', alert}                 → saved alert (201)      — 503 when the database cannot save it
 //   POST {action:'update', id, version, alert}    → saved alert            — 409 when it changed elsewhere
 //   POST {action:'pause'|'resume', id, version}
+//   POST {action:'rearm', id, version}            → zzz1063: new "once" lifecycle (every ticker may fire once more)
+//   GET (no view) also has delivery: per channel { pending, sent, failed, gaveUp, skipped, lastError, lastErrorAt, lastSentAt }
+//   (last 7 days) and lastDelivery (the last delivery pass in this server process)
 //   POST {action:'delete', id}
 //   POST {action:'test', id}                      → one TEST event for the first ticker, sent on the alert's channels
 //   POST {action:'read', ids:[…] | 'all'}
@@ -14,13 +19,34 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sanitizeAlertInput } from '@/lib/alerts/types';
 import {
-  listAlerts, getAlert, createAlert, updateAlert, setAlertStatus, deleteAlert, listEvents, unreadSummary, markRead,
+  listAlerts, getAlert, createAlert, updateAlert, setAlertStatus, deleteAlert, listEvents, unreadSummary, markRead, rearmAlert,
+  deliveryFor, deliverySummary,
   AlertStoreUnavailable, AlertConflict, AlertLimit,
+  type DeliveryChannel, type ChannelDelivery, type ChannelSummary,
 } from '@/lib/alerts/store';
 
 export const dynamic = 'force-dynamic';
 const noStore = { 'Cache-Control': 'no-store' };
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: noStore });
+
+/** zzz1063 — per-event delivery for the page: `delivery` = simple state per ticked channel ('sent' | 'pending' | 'failed' |
+ *  'skipped'; sending → pending, gave_up → failed) and `deliveryDetail` = { state, attempts, error, at } as stored. */
+function eventDelivery(d: Partial<Record<DeliveryChannel, ChannelDelivery>> | undefined) {
+  const delivery: Partial<Record<DeliveryChannel, 'sent' | 'pending' | 'failed' | 'skipped'>> = {};
+  for (const [ch, v] of Object.entries(d || {}) as Array<[DeliveryChannel, ChannelDelivery]>) {
+    delivery[ch] = v.state === 'sending' ? 'pending' : v.state === 'gave_up' ? 'failed' : v.state;
+  }
+  return { delivery, deliveryDetail: d || {} };
+}
+/** zzz1063 — per channel: ok unless its latest outcome was an error (an error newer than the last success). */
+function channelHealthOf(s: Record<DeliveryChannel, ChannelSummary>) {
+  const out: Partial<Record<DeliveryChannel, { ok: boolean; lastError: string | null; lastSentAt: string | null }>> = {};
+  for (const [ch, v] of Object.entries(s) as Array<[DeliveryChannel, ChannelSummary]>) {
+    const bad = !!v.lastError && (!v.lastSentAt || (v.lastErrorAt || '') > v.lastSentAt);
+    out[ch] = { ok: !bad, lastError: bad ? v.lastError : null, lastSentAt: v.lastSentAt };
+  }
+  return out;
+}
 
 function fail(e: any) {
   if (e instanceof AlertStoreUnavailable) return json({ ok: false, saved: false, error: e.message }, 503);
@@ -37,10 +63,18 @@ export async function GET(req: NextRequest) {
       const raw = sp.get('afterId');
       const afterId = raw == null ? -1 : Number(raw);
       const s = await unreadSummary();
-      const events = Number.isFinite(afterId) && afterId >= 0 && s.latestId > afterId ? await listEvents({ afterId, limit: 20 }) : [];
-      return json({ ok: true, ...s, events });
+      // zzz1063 — &order=asc&limit=N (≤ 100): oldest first after the cursor, hasMore = more after the last one returned, so a
+      // client can advance its cursor only through events it actually consumed. Without order=asc: as before (newest 20).
+      const asc = sp.get('order') === 'asc';
+      const limit = Math.min(100, Math.max(1, Number(sp.get('limit') || 20) || 20));
+      let events = Number.isFinite(afterId) && afterId >= 0 && s.latestId > afterId
+        ? await listEvents({ afterId, limit: asc ? limit + 1 : limit, order: asc ? 'asc' : 'desc' }) : [];
+      const hasMore = asc ? events.length > limit : events.length >= limit && s.latestId > afterId && events.length > 0 && events[events.length - 1].id > afterId + 1;
+      if (asc && events.length > limit) events = events.slice(0, limit);
+      return json({ ok: true, ...s, events, hasMore, nextCursor: asc && events.length ? events[events.length - 1].id : null });
     }
     if (view === 'channels') {
+      await (await import('@/lib/push/server')).activePushCount().catch(() => 0);
       const { notifyChannels } = await import('@/lib/owner-notify');
       return json({ ok: true, channels: notifyChannels('ALERTS') });
     }
@@ -52,12 +86,15 @@ export async function GET(req: NextRequest) {
         market: market === 'IN' || market === 'US' ? market : undefined, unread: sp.get('unread') === '1',
         sinceDays: Number(sp.get('days') || 0) || undefined,
       });
-      return json({ ok: true, events });
+      const del = await deliveryFor(events.map((e) => e.id)).catch(() => null);
+      return json({ ok: true, events: events.map((e) => ({ ...e, ...eventDelivery(del?.get(e.id)) })) });
     }
     const alerts = await listAlerts();
-    const [{ expandAll }, { lastRunReport }, { notifyChannels }] = await Promise.all([
-      import('@/lib/alerts/sources'), import('@/lib/alerts/engine'), import('@/lib/owner-notify'),
+    const [{ expandAll }, { lastRunReport }, { notifyChannels }, { lastDeliveryReport }, { activePushCount }] = await Promise.all([
+      import('@/lib/alerts/sources'), import('@/lib/alerts/engine'), import('@/lib/owner-notify'), import('@/lib/alerts/delivery'), import('@/lib/push/server'),
     ]);
+    await activePushCount().catch(() => 0);
+    const delivery = await deliverySummary().catch(() => null);
     const exp = await expandAll(alerts.map((a) => a.target)).catch(() => null);
     const s = await unreadSummary();
     return json({
@@ -65,6 +102,8 @@ export async function GET(req: NextRequest) {
       alerts: alerts.map((a, i) => ({ ...a, members: exp ? exp[i].mids.length : null, membersLabel: exp ? exp[i].label : null, membersError: exp ? exp[i].error ?? null : 'lists could not be read' })),
       lastRun: lastRunReport(),
       channels: notifyChannels('ALERTS'),
+      channelHealth: delivery ? channelHealthOf(delivery) : null,
+      delivery, lastDelivery: lastDeliveryReport(),
       ...s,
     });
   } catch (e) { return fail(e); }
@@ -92,6 +131,10 @@ export async function POST(req: NextRequest) {
       case 'pause': case 'resume': {
         if (!id || !Number.isSafeInteger(version)) return json({ ok: false, error: 'id and version required' }, 400);
         return json({ ok: true, saved: true, alert: await setAlertStatus(id, action === 'pause' ? 'paused' : 'active', version) });
+      }
+      case 'rearm': {
+        if (!id || !Number.isSafeInteger(version)) return json({ ok: false, error: 'id and version required' }, 400);
+        return json({ ok: true, saved: true, alert: await rearmAlert(id, version) });
       }
       case 'delete': {
         if (!id) return json({ ok: false, error: 'id required' }, 400);

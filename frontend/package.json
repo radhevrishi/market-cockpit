@@ -44,6 +44,7 @@
     "react-dom": "19.2",
     "react-hot-toast": "^2.4.1",
     "tailwind-merge": "^2.4.0",
+    "web-push": "^3.6.7",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

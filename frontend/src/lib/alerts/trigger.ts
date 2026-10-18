@@ -6,11 +6,20 @@
 //   per_minute  — at most once per minute while the conditions hold.
 // The dedupe key is stored with each event under a unique index (alert, ticker, key), so two server copies can never send the
 // same alert twice — the database refuses the second insert.
+//
+// zzz1063 (A05) — REARM. A "once" alert's key carries its activation generation (price_alert.arm_gen): generation 0 keeps the
+// old key 'once' (events stored before this change still block), generation N > 0 is 'once:gN'. Only the explicit Rearm
+// action raises the generation, so only Rearm lets tickers that already fired fire again. Edits:
+//   • cosmetic (name, message, notifications, expiry) — nothing about firing changes; a triggered single-ticker alert stays
+//     triggered (it is not reactivated, so it does not look "watching" when it cannot fire);
+//   • conditions / target / interval / trigger / session — as before: the alert is watched again (status active), crossing
+//     state starts fresh (new version), and per-bar / per-minute keys work at once; under "once", tickers that already fired
+//     stay done until Rearm (new tickers on a list can fire).
 import { barKey } from './session';
 import type { AlertMarket, AlertInterval, TriggerMode, PriceAlert } from './types';
 
-export function dedupeKey(trigger: TriggerMode, market: AlertMarket, interval: AlertInterval, now: Date): string {
-  if (trigger === 'once') return 'once';
+export function dedupeKey(trigger: TriggerMode, market: AlertMarket, interval: AlertInterval, now: Date, armGen = 0): string {
+  if (trigger === 'once') return armGen > 0 ? `once:g${armGen}` : 'once';
   if (trigger === 'per_bar') return `bar:${barKey(market, interval, now)}`;
   return `min:${now.toISOString().slice(0, 16)}`;
 }

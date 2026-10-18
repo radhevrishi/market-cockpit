@@ -21,7 +21,7 @@ test('no channel settings → both skipped, no errors, no throw', async () => {
   const keep = { ...process.env };
   for (const k of Object.keys(process.env)) if (/^(TELEGRAM_|SMTP_|RESEND_|NOTIFY_EMAIL)/.test(k)) delete process.env[k];
   try {
-    assert.deepEqual(notifyChannels(), { telegram: false, email: false });
+    assert.deepEqual(notifyChannels(), { telegram: false, email: false, push: false });   // zzz1063: push = a device subscribed
     const r = await notifyOwner({ subject: 's', text: 't' });
     assert.equal(r.telegram, 'skipped'); assert.equal(r.email, 'skipped'); assert.deepEqual(r.errors, []);
   } finally { Object.assign(process.env, keep); }

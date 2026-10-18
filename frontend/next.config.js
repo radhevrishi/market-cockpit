@@ -13,7 +13,7 @@ const nextConfig = {
   reactStrictMode: false, // disable double-render in dev to avoid chunk race conditions
   // zzz883 (Next 16): swcMinify is always on; serverExternalPackages replaces experimental.serverComponentsExternalPackages;
   // instrumentation.ts is picked up without a flag.
-  serverExternalPackages: ['pdf-parse', 'mammoth', 'xlsx', 'pg', 'nodemailer'],
+  serverExternalPackages: ['pdf-parse', 'mammoth', 'xlsx', 'pg', 'nodemailer', 'web-push'],
   // PATCH 0122 — fix Vercel build failure (all 10 deploys 0112-0121 errored
   // at ~45s with webpack 'Module not found: pdf-parse / mammoth').  Both are
   // Node-only libraries (binary deps + fs reads); webpack cannot bundle them

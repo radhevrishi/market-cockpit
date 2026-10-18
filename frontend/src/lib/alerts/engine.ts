@@ -12,19 +12,31 @@
 //               once per process per alert and written only when a state or edge changes; results ≤ 2 Redis reads per market
 //               every 30 min, guidance 1 Postgres query every 30 min (signal-sources.ts).
 // Two server copies (during a deploy) never check the same minute: claimMinute() is an atomic compare-and-set in Postgres,
-// and every event row is unique per (alert, ticker, bar / minute), so nothing is ever sent twice.
+// and every event row is unique per (alert, ticker, bar / minute), so nothing is ever recorded twice.
+//
+// zzz1063 (A01/A02/A03/A05/A06):
+//   • quotes and daily figures pass the freshness contract in evaluate.ts (waits are counted per reason in the run report);
+//   • sessions come from lib/exchange-calendar (13:00 ET early closes, holidays, DST);
+//   • crossing states are loaded from Postgres once per alert version and written — with the events, their outbox rows and the
+//     fire counts — in ONE transaction (store.commitRun); memory moves on only after it committed;
+//   • Telegram / email / push go through the outbox (delivery.ts) with retries; the run delivers what it just fired at once.
 import { dbAvailable } from '@/lib/db';
-import { anySessionOpen, sessionOpen, marketDate, regularStarted } from './session';
-import { needsDaily, needsOpen, type DailyFigs } from './conditions';
-import { evaluateAlerts, firedKey, type EvalCtx } from './evaluate';
+import { anySessionOpen, sessionOpen, marketDate, regularStarted, expectedDailyAsOf } from './session';
+import { needsDaily, needsOpen, FIGS_VERSION, type DailyFigs } from './conditions';
+import { evaluateAlerts, firedKey, WAIT_TEXT, type EvalCtx, type WaitReason } from './evaluate';
 import { statusAfterFire, isLive } from './trigger';
 import { parseMid, type PriceAlert, type AlertEvent, type AlertMarket } from './types';
 import { sourcesFor, type SignalSource, type SignalState } from './signals';
 import type { Expanded } from './targets';
+import type { DeliveryChannel, NewEvent, CrossRow } from './store';
+import type { DeliveryReport } from './delivery';
+export { externalMessage } from './messages';
+import { externalMessage } from './messages';
 
 export const MAX_TICKERS_PER_RUN = 2500;
 export const DAILY_FETCH_PER_RUN = 60;
 const DAILY_RETRY_MS = 5 * 60_000;
+const STALE_REFETCH_MS = 30 * 60_000;
 
 interface Mem {
   prev: Map<string, Array<number | undefined>>;
@@ -38,6 +50,9 @@ interface Mem {
   /** zzz1061 — signal condition states (signals.ts), the alerts whose stored states were loaded, keys to write */
   sigStates?: Map<string, SignalState>;
   sigLoaded?: Set<string>;
+  /** zzz1063 — `${alertId}|${version}` whose crossing states were loaded from Postgres; last stored state per key */
+  crossLoaded?: Set<string>;
+  crossSaved?: Map<string, string>;
 }
 const g = globalThis as any;
 const mem: Mem = g.__MC_PRICE_ALERTS__ || (g.__MC_PRICE_ALERTS__ = {
@@ -50,6 +65,31 @@ export interface RunReport {
   /** zzz1061 — signal sources read this run (e.g. 'IN:screen') and signal states written */
   signalSources?: string[]; signalWrites?: number;
   notified?: { telegram: string; email: string } | null; listErrors?: string[]; capped?: boolean; ms?: number;
+  /** zzz1063 — why tickers waited (counts) and the same in words; outbox rows written; this run's delivery pass */
+  waitReasons?: Partial<Record<WaitReason, number>>; waitText?: string[]; outbox?: number; crossWrites?: number; delivery?: DeliveryReport | null;
+}
+
+/** Pure: a crossing state row is written only when its stored value changed (and it has at least one crossing side). */
+export function crossChanges(updates: ReadonlyArray<[string, Array<number | undefined>]>, saved: ReadonlyMap<string, string>): Array<{ key: string; json: string; row: CrossRow }> {
+  const out: Array<{ key: string; json: string; row: CrossRow }> = [];
+  for (const [key, states] of updates) {
+    if (!states.some((x) => x !== undefined)) continue;
+    const json = JSON.stringify(states.map((x) => (x === undefined ? null : x)));
+    if (saved.get(key) === json) continue;
+    const m = /^(.+?)\|(\d+)\|(.+)$/.exec(key);
+    if (!m) continue;
+    out.push({ key, json, row: { alertId: m[1], version: Number(m[2]), mid: m[3], states } });
+  }
+  return out;
+}
+/** Pure: the outbox channels of an alert's event (push: on unless turned off). */
+export function channelsOf(a: Pick<PriceAlert, 'notify'> | undefined): DeliveryChannel[] {
+  if (!a) return [];
+  const out: DeliveryChannel[] = [];
+  if (a.notify.telegram) out.push('telegram');
+  if (a.notify.email) out.push('email');
+  if (a.notify.push !== false) out.push('push');
+  return out;
 }
 export function lastRunReport(): RunReport | null { return mem.lastRun; }
 
@@ -59,6 +99,9 @@ export function dailyFetchPlan(
   have: Map<string, { fetchedDay: string; figs: DailyFigs }>,
   now: Date, lastTry: Map<string, number>, limit: number,
   started: (market: 'IN' | 'US') => boolean,
+  /** zzz1063 — the completed session the figures should end on; a set fetched today that still ends earlier is fetched again
+   *  (at most every 30 min) — Yahoo sometimes publishes yesterday's bar late */
+  expectedAsOf?: (market: 'IN' | 'US', today: string) => string,
 ): string[] {
   const rank: Array<[number, string]> = [];
   for (const [mid, n] of needs) {
@@ -68,7 +111,8 @@ export function dailyFetchPlan(
     const tried = lastTry.get(mid) || 0;
     if (now.getTime() - tried < DAILY_RETRY_MS) continue;
     const wantOpen = n.open && started(p.market) && h?.figs.day !== today;
-    if (h && h.fetchedDay === today && !wantOpen) continue;
+    const staleSet = !!h && !!expectedAsOf && h.figs.asOf < expectedAsOf(p.market, today) && now.getTime() - tried >= STALE_REFETCH_MS;
+    if (h && h.fetchedDay === today && !wantOpen && !staleSet) continue;
     rank.push([wantOpen ? 0 : !h ? 1 : 2, mid]);
   }
   rank.sort((a, b) => a[0] - b[0]);
@@ -142,10 +186,12 @@ export async function runPriceAlerts(opts: { now?: Date; force?: boolean } = {})
     const unseen = dailyMids.filter((m) => !mem.dbLoaded.has(m));
     if (unseen.length) {
       const got = await store.loadDaily(unseen).catch(() => new Map());
-      for (const m of unseen) { mem.dbLoaded.add(m); const r = got.get(m); if (r && !mem.daily.has(m)) mem.daily.set(m, r); }
+      // zzz1063 — figures stored before FIGS_VERSION (no history coverage) are fetched again
+      for (const m of unseen) { mem.dbLoaded.add(m); const r = got.get(m); if (r && r.figs?.v === FIGS_VERSION && !mem.daily.has(m)) mem.daily.set(m, r); }
     }
+    for (const m of dailyMids) { const d = mem.daily.get(m); if (d && d.figs.v !== FIGS_VERSION) mem.daily.delete(m); }
     const needs = new Map(dailyMids.map((m) => [m, { open: want.get(m)!.open }] as const));
-    const plan = dailyFetchPlan(needs, mem.daily, now, mem.lastTry, DAILY_FETCH_PER_RUN, (mk) => regularStarted(mk, now));
+    const plan = dailyFetchPlan(needs, mem.daily, now, mem.lastTry, DAILY_FETCH_PER_RUN, (mk) => regularStarted(mk, now), (mk, today) => expectedDailyAsOf(mk, today));
     const [quotes, fetched] = await Promise.all([
       fetchLiveQuotes(mids),
       pool(plan, 6, async (m) => {
@@ -165,7 +211,18 @@ export async function runPriceAlerts(opts: { now?: Date; force?: boolean } = {})
       // figures from an earlier day are still usable for everything except today's gap (conditions check the date)
       if (d) daily.set(m, d.figs);
     }
-    const ctx: EvalCtx = { now, quotes, daily, prev: mem.prev, firedKeys: mem.firedKeys, expansions };
+    // zzz1063 (A02) — crossing states from Postgres, once per alert version per process (a restart / deploy keeps them)
+    const crossLoaded = mem.crossLoaded || (mem.crossLoaded = new Set());
+    const crossSaved = mem.crossSaved || (mem.crossSaved = new Map());
+    const unloaded = alerts.filter((a) => !crossLoaded.has(`${a.id}|${a.version}`));
+    if (unloaded.length) {
+      const got = await store.loadCrossStates(unloaded.map((a) => ({ id: a.id, version: a.version }))).catch(() => null);
+      if (got) {
+        for (const a of unloaded) crossLoaded.add(`${a.id}|${a.version}`);
+        for (const [k, st] of got) { if (!mem.prev.has(k)) mem.prev.set(k, st); crossSaved.set(k, JSON.stringify(st.map((x) => (x === undefined ? null : x)))); }
+      }
+    }
+    const ctx: EvalCtx = { now, quotes, daily, prev: mem.prev, firedKeys: mem.firedKeys, expansions, deferState: true };
 
     // zzz1061 — the app's own signals: states (Postgres, once per process per alert) + the data views the alerts need
     let signalSources: string[] | undefined;
@@ -183,64 +240,51 @@ export async function runPriceAlerts(opts: { now?: Date; force?: boolean } = {})
       signalSources = [...sigNeeds].flatMap(([m, s]) => [...s].map((x) => `${m}:${x}${(feeds.get(m) as any)?.[x] ? '' : ' (unavailable)'}`));
     }
     const rep = evaluateAlerts(alerts, ctx);
-    let inserted: AlertEvent[];
-    try { inserted = await store.insertEvents(rep.events); }
-    catch (e) {
-      // not written → forget the "already sent" marks so the next minute tries again, and put used signal edges back
+    const alertById = new Map(alerts.map((a) => [a.id, a]));
+    const changes = crossChanges(rep.stateUpdates, crossSaved);
+    let inserted: AlertEvent[], outbox = 0;
+    try {
+      const r = await store.commitRun({
+        events: rep.events,
+        channelsFor: (e: NewEvent) => channelsOf(alertById.get(e.alertId)),
+        cross: changes.map((c) => c.row),
+        statusFor: (id) => statusAfterFire(alertById.get(id)!),
+      });
+      inserted = r.inserted; outbox = r.outbox;
+    } catch (e) {
+      // not written → crossing states are NOT moved on (the crossing is seen again next minute), the "already recorded"
+      // marks are forgotten so the next minute tries again, and used signal edges are put back
       for (const ev of rep.events) mem.firedKeys.delete(firedKey(ev.alertId, ev.mid, ev.dedupeKey));
       if (ctx.signals) for (const [k, st] of rep.consumed || []) ctx.signals.states.set(k, st);
       throw e;
     }
+    // committed: memory moves on
+    for (const [k, st] of rep.stateUpdates) mem.prev.set(k, st);
+    for (const c of changes) crossSaved.set(c.key, c.json);
     let signalWrites = 0;
     if (ctx.signals?.dirty.size) {
       const rows = [...ctx.signals.dirty].flatMap((k) => { const st = ctx.signals!.states.get(k); return st ? [[k, st] as [string, SignalState]] : []; });
       await store.saveSignalStates(rows).then(() => { signalWrites = rows.length; }).catch((e) => console.warn('[price-alerts] signal state save failed', e?.message || e));
     }
 
-    const byAlert = new Map<string, { count: number; status: 'active' | 'triggered' }>();
-    const alertById = new Map(alerts.map((a) => [a.id, a]));
-    for (const e of inserted) {
-      const a = alertById.get(e.alertId)!;
-      const cur = byAlert.get(e.alertId) || { count: 0, status: statusAfterFire(a) };
-      cur.count++; byAlert.set(e.alertId, cur);
+    let delivery: DeliveryReport | null = null;
+    if (outbox) {
+      const d = await import('./delivery');
+      d.noteOutboxWork();
+      delivery = await d.deliverDue();
     }
-    await store.recordFires(byAlert);
-    const notified = await sendExternal(inserted, alertById);
-    return done({ ok: true, alerts: alerts.length, tickers: mids.length, quotes: quotes.size, dailyFetched: fresh.length, checked: rep.checked, waiting: rep.waiting, fired: inserted.length, notified, listErrors: listErrors.slice(0, 10), capped, signalSources, signalWrites });
+    const notified = delivery ? { telegram: delivery.channels.telegram?.state ?? 'skipped', email: delivery.channels.email?.state ?? 'skipped' } : null;
+    const waitText = (Object.entries(rep.waitReasons) as Array<[WaitReason, number]>).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n} waiting: ${WAIT_TEXT[k]}`);
+    return done({ ok: true, alerts: alerts.length, tickers: mids.length, quotes: quotes.size, dailyFetched: fresh.length, checked: rep.checked, waiting: rep.waiting, fired: inserted.length, notified, listErrors: listErrors.slice(0, 10), capped, signalSources, signalWrites, waitReasons: rep.waitReasons, waitText, outbox, crossWrites: changes.length, delivery });
   } catch (e: any) {
     console.warn('[price-alerts] run failed', e?.message || e);
     return done({ ok: false, error: String(e?.message || e).slice(0, 300) });
   }
 }
 
-/** One Telegram / email message per run for the alerts that asked for it (≤ 30 lines). */
-export function externalMessage(events: readonly AlertEvent[]): { subject: string; text: string } | null {
-  if (!events.length) return null;
-  const lines = events.slice(0, 30).map((e) => `• ${e.message}${e.price != null ? ` — ${e.market === 'IN' ? '₹' : '$'}${e.price.toFixed(2)}` : ''}${e.list ? ` (${e.list})` : ''}`);
-  if (events.length > 30) lines.push(`… and ${events.length - 30} more — open Price alerts in Market Cockpit`);
-  return { subject: `🔔 ${events.length === 1 ? `${events[0].ticker}: ${events[0].condition}` : `${events.length} price alerts fired`}`, text: lines.join('\n') };
-}
-
-async function sendExternal(inserted: AlertEvent[], alerts: Map<string, PriceAlert>): Promise<{ telegram: string; email: string } | null> {
-  const tg = inserted.filter((e) => alerts.get(e.alertId)?.notify.telegram);
-  const em = inserted.filter((e) => alerts.get(e.alertId)?.notify.email);
-  if (!tg.length && !em.length) return null;
-  const { notifyOwnerVia } = await import('@/lib/owner-notify');
-  const res = { telegram: 'skipped', email: 'skipped' };
-  // the same set on both channels when both are chosen for the same events; otherwise one message each
-  const sameSet = tg.length === em.length && tg.every((e, i) => e.id === em[i].id);
-  if (sameSet) {
-    const m = externalMessage(tg)!;
-    const r = await notifyOwnerVia({ ...m, topic: 'ALERTS' }, { telegram: true, email: true });
-    return { telegram: r.telegram, email: r.email };
-  }
-  if (tg.length) res.telegram = (await notifyOwnerVia({ ...externalMessage(tg)!, topic: 'ALERTS' }, { telegram: true, email: false })).telegram;
-  if (em.length) res.email = (await notifyOwnerVia({ ...externalMessage(em)!, topic: 'ALERTS' }, { telegram: false, email: true })).email;
-  return res;
-}
-
-/** "Test" button: one event for the alert's first ticker with its live quote, sent on the alert's channels. */
-export async function testFire(a: PriceAlert): Promise<{ event: AlertEvent | null; notified: { telegram: string; email: string } | null; report?: string[]; error?: string }> {
+/** "Test" button: one event for the alert's first ticker with its live quote, sent on every set-up channel (not via the
+ *  outbox: a test reports delivery at once). zzz1063 — also a push to every saved phone / browser, with a result line. */
+export async function testFire(a: PriceAlert): Promise<{ event: AlertEvent | null; notified: { telegram: string; email: string; push?: string } | null; report?: string[]; error?: string }> {
   const { expandAll, fetchLiveQuotes } = await import('./sources');
   const store = await import('./store');
   const { renderMessage, exchangeOf } = await import('./trigger');
@@ -264,16 +308,38 @@ export async function testFire(a: PriceAlert): Promise<{ event: AlertEvent | nul
   const { notifyOwnerVia, notifyDiagnosis } = await import('@/lib/owner-notify');
   const diag = notifyDiagnosis('ALERTS');
   const via = { telegram: diag.telegram.ready, email: diag.email.ready };
-  const r = via.telegram || via.email ? await notifyOwnerVia({ ...externalMessage([ev])!, topic: 'ALERTS' }, via) : { telegram: 'skipped', email: 'skipped', errors: [] as string[] };
+  const [r, push] = await Promise.all([
+    via.telegram || via.email ? notifyOwnerVia({ ...externalMessage([ev])!, topic: 'ALERTS' }, via) : Promise.resolve({ telegram: 'skipped' as const, email: 'skipped' as const, errors: [] as string[] }),
+    import('@/lib/push/server').then((m) => m.sendPushToAll({ ...m.pushForEvents([ev])!, title: `TEST · ${m.pushForEvents([ev])!.title}`.slice(0, 120) })).catch((e) => ({ state: 'error' as const, error: String(e?.message || e), results: [] })),
+  ]);
   return {
     event: ev,
-    notified: { telegram: r.telegram, email: r.email },
-    report: testReport(r, diag, a.notify),
+    notified: { telegram: r.telegram, email: r.email, push: push.state },
+    report: testReport(r, diag, a.notify, push),
   };
 }
 
-/** zzz1062 — plain-English lines for the Test result. Exported for tests. */
+/** zzz1062 — plain-English lines for the Test result. Exported for tests. zzz1063 — a third line for push when given. */
 export function testReport(
+  r: { telegram: string; email: string; errors: string[] },
+  diag: { telegram: { ready: boolean; missing: string[] }; email: { ready: boolean; missing: string[]; toMasked: string | null } },
+  ticked: { telegram: boolean; email: boolean; push?: boolean },
+  push?: { state: string; error?: string; results: Array<{ ok: boolean; label: string | null; endpointShort: string; error: string | null }> },
+): string[] {
+  const lines = testReportTgEmail(r, diag, ticked);
+  if (push) lines.push(pushLine(push, ticked.push !== false));
+  return lines;
+}
+/** zzz1063 — the push line of a Test result. */
+export function pushLine(push: { state: string; error?: string; results: Array<{ ok: boolean; label: string | null; endpointShort: string; error: string | null }> }, isTicked = true): string {
+  const tick = isTicked ? '' : ' Note: Push is NOT ticked on this alert, so real alerts won\'t use it — press Edit and tick Push.';
+  if (push.state === 'skipped') return 'Push: no phone or browser has turned on push yet — open Price alerts on your phone and press "Turn on phone alerts".';
+  const ok = push.results.filter((x) => x.ok).length;
+  const bad = push.results.filter((x) => !x.ok).map((x) => `${x.label || x.endpointShort} (${x.error})`);
+  if (push.state === 'sent') return `Push: sent to ${ok} device${ok === 1 ? '' : 's'}${bad.length ? `; failed on ${bad.join(', ')}` : ''}.${tick}`;
+  return `Push: failed — ${bad.length ? bad.join(', ') : push.error || 'no reason given'}.${tick}`;
+}
+function testReportTgEmail(
   r: { telegram: string; email: string; errors: string[] },
   diag: { telegram: { ready: boolean; missing: string[] }; email: { ready: boolean; missing: string[]; toMasked: string | null } },
   ticked: { telegram: boolean; email: boolean },

@@ -21,6 +21,7 @@
 // Everything here is pure (no network, no KV) so each of those is a test.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { isNyseEarlyClose } from '../exchange-calendar';
 import type { AnnouncementLite, ClassifiedAnnouncement } from './catalyst-research';
 
 // ── 1. THE CAP BANDS ───────────────────────────────────────────────────────
@@ -234,7 +235,8 @@ export function prevNyseSession(ymd: string): string {
   for (let i = 0; i < 10 && !isNyseTradingDay(d); i++) d = addDays(d, -1);
   return d;
 }
-export const closeMinutes = (ymd: string) => (NYSE_EARLY_CLOSES.has(ymd) ? 13 * 60 : 16 * 60);
+// zzz1063 — early closes also come from the shared calendar (lib/exchange-calendar: rule-based, any year); the list stays as a floor.
+export const closeMinutes = (ymd: string) => (NYSE_EARLY_CLOSES.has(ymd) || isNyseEarlyClose(ymd) ? 13 * 60 : 16 * 60);
 
 export type UsPhase = 'pre_market' | 'regular' | 'after_hours' | 'closed_day';
 export function usPhaseAt(d: Date): UsPhase {

@@ -15,6 +15,8 @@ export interface NotifyMessage {
   text: string;              // plain text body (Telegram, and the email text part)
   html?: string;             // optional email HTML body
   topic?: NotifyTopic;
+  /** zzz1063 — provider idempotency key (Resend `Idempotency-Key`): a retry of the same send is not delivered twice */
+  idempotencyKey?: string;
 }
 
 const TIMEOUT_MS = 10_000;
@@ -80,7 +82,7 @@ async function sendEmail(m: NotifyMessage): Promise<[ChannelState, string?]> {
   const to = env('NOTIFY_EMAIL_TO') || env('SMTP_TO');
   if (resend && to) {
     try {
-      const r = await post('https://api.resend.com/emails', { from: env('NOTIFY_EMAIL_FROM') || 'Market Cockpit <onboarding@resend.dev>', to: to.split(',').map((s) => s.trim()).filter(Boolean), subject: m.subject.slice(0, 180), text: m.text, html: htmlOf(m) }, { Authorization: `Bearer ${resend}` });
+      const r = await post('https://api.resend.com/emails', { from: env('NOTIFY_EMAIL_FROM') || 'Market Cockpit <onboarding@resend.dev>', to: to.split(',').map((s) => s.trim()).filter(Boolean), subject: m.subject.slice(0, 180), text: m.text, html: htmlOf(m) }, { Authorization: `Bearer ${resend}`, ...(m.idempotencyKey ? { 'Idempotency-Key': m.idempotencyKey.slice(0, 256) } : {}) });
       if (r.ok) return ['sent'];
       const why = await providerReason(r, [resend]);
       return ['error', `email HTTP ${r.status}${why ? ` — ${why}` : ''}`];
@@ -97,11 +99,17 @@ async function sendEmail(m: NotifyMessage): Promise<[ChannelState, string?]> {
   } catch (e: any) { return ['error', `smtp send failed${e?.code ? ` (${String(e.code).slice(0, 40)})` : ''}`]; }
 }
 
-/** Which channels are set up (names only — never values). */
-export function notifyChannels(topic?: NotifyTopic): { telegram: boolean; email: boolean } {
+/** Which channels are set up (names only — never values).
+ *  zzz1063 — `push`: at least one phone / browser has push turned on (lib/push/server activePushCount publishes the last
+ *  known count on globalThis; false until it has been counted once in this process). */
+export function notifyChannels(topic?: NotifyTopic): { telegram: boolean; email: boolean; push: boolean } {
   const { token, chat } = tgCreds(topic);
   const emailTo = env('NOTIFY_EMAIL_TO') || env('SMTP_TO');
-  return { telegram: !!(token && chat), email: !!emailTo && (!!env('RESEND_API_KEY') || !!(env('SMTP_HOST') && env('SMTP_USER') && env('SMTP_PASS'))) };
+  return {
+    telegram: !!(token && chat),
+    email: !!emailTo && (!!env('RESEND_API_KEY') || !!(env('SMTP_HOST') && env('SMTP_USER') && env('SMTP_PASS'))),
+    push: Number((globalThis as any).__MC_PUSH_ACTIVE__ || 0) > 0,
+  };
 }
 
 /** zzz1062 — which settings are present / missing, by NAME only (never values), so the page can say exactly what to fix. */

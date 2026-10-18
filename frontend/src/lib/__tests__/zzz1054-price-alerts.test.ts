@@ -23,6 +23,10 @@ const closes = (n: number, f: (i: number) => number) => Array.from({ length: n }
 const figs = (over: Partial<DailyFigs> = {}): DailyFigs => ({ asOf: '2026-10-14', day: null, open: null, c: closes(260, (i) => 100 + i * 0.1), hi52: 150, lo52: 90, avgVol50: 1_000_000, wc: closes(60, (i) => 90 + i), ...over });
 const q = (price: number, over: Partial<LiveQuote> = {}): LiveQuote => ({ price, prevClose: 100, volume: 500_000, dayHigh: price, dayLow: price, ...over });
 const T = '2026-10-15';
+// zzz1063 — quotes must carry an exchange time (A01); these tests use quotes stamped one minute before each check
+const evalLive = (alerts: Parameters<typeof evaluateAlerts>[0], ctx: EvalCtx) => evaluateAlerts(alerts, {
+  ...ctx, quotes: new Map([...ctx.quotes].map(([k, v]) => [k, v.marketTime === undefined ? { ...v, marketTime: ctx.now.getTime() - 60_000 } : v])),
+});
 
 describe('conditions', () => {
   test('price crossing: first sighting only records; then up / down / either', () => {
@@ -230,11 +234,11 @@ describe('market-qualified ids — India and USA kept apart', () => {
       now: both, quotes: new Map([['IN:HAL', q(150)], ['US:HAL', q(50, { marketTime: both.getTime() })]]), daily: new Map(), prev: new Map(), firedKeys: new Set(),
       expansions: new Map([['a', { mids: ['IN:HAL'], label: 'HAL' }], ['b', { mids: ['US:HAL'], label: 'HAL' }]]), isNseHoliday: noHol,
     };
-    const r = evaluateAlerts([alert('a', 'IN:HAL'), alert('b', 'US:HAL')], ctx);
+    const r = evalLive([alert('a', 'IN:HAL'), alert('b', 'US:HAL')], ctx);
     assert.equal(r.events.length, 0, 'India closed; US:HAL at 50 is not above 100 (India\'s 150 never leaks in)');
     assert.equal(r.closed, 1);
     const india = at('2026-10-15T05:00:00Z');
-    const r2 = evaluateAlerts([alert('a', 'IN:HAL'), alert('b', 'US:HAL')], { ...ctx, now: india });
+    const r2 = evalLive([alert('a', 'IN:HAL'), alert('b', 'US:HAL')], { ...ctx, now: india });
     assert.deepEqual(r2.events.map((e) => e.mid), ['IN:HAL']);
     assert.equal(r2.events[0].market, 'IN');
   });
@@ -253,43 +257,45 @@ describe('evaluation pass: dedupe, sessions, stale quotes, lists', () => {
   });
   test('per bar: fires once per ticker per day; the list name and message are filled in', () => {
     const ctx = mk();
-    const r = evaluateAlerts([base()], ctx);
+    const r = evalLive([base()], ctx);
     assert.deepEqual(r.events.map((e) => e.mid), ['IN:HAL'], 'BEL only +0.5%; NVDA session closed (01:00 New York)');
     assert.equal(r.events[0].dedupeKey, 'bar:2026-10-15');
     assert.equal(r.events[0].message, 'HAL, 1D Moving Up 1% in 1 bar');
     assert.equal(r.events[0].list, 'Swing');
     assert.equal(r.closed, 1);
-    assert.equal(evaluateAlerts([base()], { ...ctx, now: at('2026-10-15T05:01:00Z') }).events.length, 0, 'same bar → no second event');
-    assert.equal(evaluateAlerts([base()], { ...ctx, now: at('2026-10-16T05:00:00Z') }).events.length, 1, 'next day fires again');
+    assert.equal(evalLive([base()], { ...ctx, now: at('2026-10-15T05:01:00Z') }).events.length, 0, 'same bar → no second event');
+    assert.equal(evalLive([base()], { ...ctx, now: at('2026-10-16T05:00:00Z') }).events.length, 1, 'next day fires again');
   });
   test('per minute: once a minute while true', () => {
     const ctx = mk();
     const a = base({ trigger: 'per_minute' });
-    assert.equal(evaluateAlerts([a], ctx).events.length, 1);
-    assert.equal(evaluateAlerts([a], ctx).events.length, 0, 'same minute');
-    assert.equal(evaluateAlerts([a], { ...ctx, now: at('2026-10-15T05:01:00Z') }).events.length, 1);
+    assert.equal(evalLive([a], ctx).events.length, 1);
+    assert.equal(evalLive([a], ctx).events.length, 0, 'same minute');
+    assert.equal(evalLive([a], { ...ctx, now: at('2026-10-15T05:01:00Z') }).events.length, 1);
     assert.ok(ctx.firedKeys.has(firedKey('a1', 'IN:HAL', 'min:2026-10-15T05:00')));
   });
   test('once: per ticker on a list; crossings remembered per alert version', () => {
     const ctx = mk();
     const a = base({ trigger: 'once', conditions: [{ type: 'price_cross_up', value: 101 }] });
-    assert.equal(evaluateAlerts([a], ctx).events.length, 0, 'first sighting');
+    assert.equal(evalLive([a], ctx).events.length, 0, 'first sighting');
     ctx.quotes.set('IN:BEL', q(101.5));
-    const r = evaluateAlerts([a], { ...ctx, now: at('2026-10-15T05:01:00Z') });
+    const r = evalLive([a], { ...ctx, now: at('2026-10-15T05:01:00Z') });
     assert.deepEqual(r.events.map((e) => [e.mid, e.dedupeKey]), [['IN:BEL', 'once']]);
     const edited = { ...a, version: 4 };
-    assert.equal(evaluateAlerts([edited], { ...ctx, now: at('2026-10-15T05:02:00Z') }).events.length, 0, 'an edit starts fresh (no remembered side)');
+    assert.equal(evalLive([edited], { ...ctx, now: at('2026-10-15T05:02:00Z') }).events.length, 0, 'an edit starts fresh (no remembered side)');
   });
   test('stale quote during the session waits; paused / expired alerts are skipped; extended US uses the pre/after price', () => {
     const old = mk({ quotes: new Map([['IN:HAL', q(102, { marketTime: now.getTime() - 25 * 60_000 })]]) });
-    const r = evaluateAlerts([base()], old);
+    const r = evalLive([base()], old);
     assert.equal(r.events.length, 0); assert.ok(r.waiting >= 1);
-    assert.equal(evaluateAlerts([base({ status: 'paused' })], mk()).events.length, 0);
-    assert.equal(evaluateAlerts([base({ expiresAt: '2026-10-01T00:00:00Z' })], mk()).events.length, 0);
+    assert.equal(evalLive([base({ status: 'paused' })], mk()).events.length, 0);
+    assert.equal(evalLive([base({ expiresAt: '2026-10-01T00:00:00Z' })], mk()).events.length, 0);
     const pre = at('2026-10-15T12:00:00Z');   // 08:00 New York: pre-market
-    const ext = mk({ now: pre, quotes: new Map([['US:NVDA', { ...q(100), extPct: 3 } as any]]), expansions: new Map([['a1', { mids: ['US:NVDA'], label: 'x' }]]) });
-    assert.equal(evaluateAlerts([base({ session: 'regular' })], ext).events.length, 0, 'regular session only');
-    const e = evaluateAlerts([base({ session: 'extended' })], ext).events;
+    // zzz1063 — the pre-market price comes with its own session + time; the regular close it follows is yesterday's (14 Oct)
+    const yclose = at('2026-10-14T20:00:00Z').getTime();
+    const ext = mk({ now: pre, quotes: new Map([['US:NVDA', { ...q(100), marketTime: yclose, ext: { price: 103, session: 'pre', observedAt: pre.getTime() - 30_000, basis: 'fetched' } } as any]]), expansions: new Map([['a1', { mids: ['US:NVDA'], label: 'x' }]]) });
+    assert.equal(evalLive([base({ session: 'regular' })], ext).events.length, 0, 'regular session only');
+    const e = evalLive([base({ session: 'extended' })], ext).events;
     assert.equal(e.length, 1); assert.ok(Math.abs(e[0].price! - 103) < 1e-9);
   });
 });

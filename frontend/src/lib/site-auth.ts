@@ -57,6 +57,7 @@ export const PROTECTED_API_PREFIXES = [
   '/api/v1/search',              // zzz1051 — document search (paid embeddings / rerank within small daily ceilings)
   '/api/v1/ai-runs',             // zzz1050 — AI call records (models, costs, outcomes, document ids)
   '/api/v1/price-alerts',        // zzz1054 — the owner's price alerts and what fired (personal data)
+  '/api/v1/push',                // zzz1063 — phone / browser push subscriptions and test pushes
 ] as const;
 
 /** Never gated: the login flow itself, and machine endpoints with their own auth. */

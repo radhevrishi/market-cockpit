@@ -3688,3 +3688,11 @@ Operational blockers remain: GitHub Actions jobs fail before steps run; account 
   other way); headlines direction-checked, previews/transcripts rejected, most causal wins, analyst actions labelled; what an 8-K
   announced (EX-99.1 headline → body "press release announcing …" → 1.01 counterparty); Form 4 open-market trades; "earnings due"
   context. Light job `us-movers-prewarm` (16:05 / 16:20 ET + 09:45 ET, `PREWARM_BUDGET`, memory only, no Redis).
+- zzz1063 — price alerts hardening + phone push (server). ONE exchange calendar `lib/exchange-calendar.ts` (NSE holidays, NYSE rule
+  holidays + one-offs, 13:00 ET early closes with after-hours to 17:00, DST via Intl); `alerts/session.ts` wraps it. Freshness
+  contract in `alerts/evaluate.ts` (`priceForAlert`, `dailyFreshness`; waits counted per reason in the run report). Migration 9:
+  `price_alert_cross` (crossing sides, written with the events in ONE transaction `store.commitRun`), `price_alert_outbox`
+  (per event × channel; claimed FOR UPDATE SKIP LOCKED; retries 1/5/15/60/60 min; light job `alert-delivery` every minute),
+  `push_subscription`, `push_vapid` (keys made once when VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY are not set), `price_alert.arm_gen`
+  (Rearm → dedupe key `once:gN`). Push server: `lib/push/{contract,server}.ts`, `/api/v1/push` (protected). `notify.push`
+  missing = on. 52-week / 50-day figures under a full lookback say "since listing, N sessions" (`FIGS_VERSION` 2).

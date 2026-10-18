@@ -272,6 +272,63 @@ export const MIGRATIONS: readonly Migration[] = [
         PRIMARY KEY (alert_id, mid, cond_idx)
       );`,
   },
+  {
+    // zzz1063 — price alerts that survive failures, and phone push.
+    //   price_alert.arm_gen     — activation generation of a "once" alert (raised only by Rearm; dedupe key 'once:gN').
+    //   price_alert_cross       — the remembered side (−1 / 0 / +1 per condition) of every crossing condition per alert + ticker,
+    //                             written in the same transaction as the run's events and only when a side changes, so a
+    //                             restart / deploy does not forget it and a failed insert does not lose a crossing.
+    //   price_alert_outbox      — one row per (event, channel): pending → sending (leased) → sent | failed (retried 1, 5, 15,
+    //                             60, 60 min later) | gave_up (6 failures) | skipped (channel not set up). Claimed with
+    //                             FOR UPDATE SKIP LOCKED so two server copies never send the same row.
+    //   push_subscription       — the owner's browsers / phones (Web Push endpoints + keys); disabled when the push service
+    //                             answers 404 / 410.
+    //   push_vapid              — the server's VAPID key pair when VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY are not set (made once).
+    id: 9, name: 'price_alert_delivery',
+    sql: `
+      ALTER TABLE price_alert ADD COLUMN IF NOT EXISTS arm_gen INTEGER NOT NULL DEFAULT 0;
+      CREATE TABLE IF NOT EXISTS price_alert_cross (
+        alert_id       TEXT NOT NULL,
+        mid            TEXT NOT NULL,
+        alert_version  INTEGER NOT NULL,
+        states         JSONB NOT NULL,
+        updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (alert_id, mid)
+      );
+      CREATE TABLE IF NOT EXISTS price_alert_outbox (
+        id               BIGSERIAL PRIMARY KEY,
+        event_id         BIGINT NOT NULL REFERENCES price_alert_event (id) ON DELETE CASCADE,
+        channel          TEXT NOT NULL CHECK (channel IN ('telegram', 'email', 'push')),
+        status           TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sending', 'sent', 'failed', 'gave_up', 'skipped')),
+        attempts         INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+        last_error       TEXT,
+        created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+        sent_at          TIMESTAMPTZ,
+        UNIQUE (event_id, channel)
+      );
+      CREATE INDEX IF NOT EXISTS price_alert_outbox_due_idx ON price_alert_outbox (next_attempt_at) WHERE status IN ('pending', 'failed', 'sending');
+      CREATE TABLE IF NOT EXISTS push_subscription (
+        id             BIGSERIAL PRIMARY KEY,
+        endpoint       TEXT NOT NULL UNIQUE,
+        p256dh         TEXT NOT NULL,
+        auth           TEXT NOT NULL,
+        label          TEXT,
+        user_agent     TEXT,
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+        last_ok_at     TIMESTAMPTZ,
+        last_error     TEXT,
+        last_error_at  TIMESTAMPTZ,
+        disabled       BOOLEAN NOT NULL DEFAULT false
+      );
+      CREATE TABLE IF NOT EXISTS push_vapid (
+        id           SMALLINT PRIMARY KEY CHECK (id = 1),
+        public_key   TEXT NOT NULL,
+        private_key  TEXT NOT NULL,
+        created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+      );`,
+  },
 ] as const;
 
 const LOCK_ID = 88_301_883;   // advisory-lock id for migrations

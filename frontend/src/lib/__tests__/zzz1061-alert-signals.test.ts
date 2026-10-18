@@ -19,6 +19,10 @@ import { MIGRATIONS, migrationsValid } from '../db-migrate';
 
 const at = (s: string) => new Date(s);
 const noHol = () => false;
+// zzz1063 — quotes must carry an exchange time (A01); these tests use quotes stamped one minute before each check
+const evalLive = (alerts: Parameters<typeof evaluateAlerts>[0], ctx: EvalCtx) => evaluateAlerts(alerts, {
+  ...ctx, quotes: new Map([...ctx.quotes].map(([k, v]) => [k, v.marketTime === undefined ? { ...v, marketTime: ctx.now.getTime() - 60_000 } : v])),
+});
 const BAR = '2026-10-15';
 const read = (v: number | null, version: string | null = 's1') => ({ v, version });
 
@@ -187,32 +191,32 @@ describe('evaluation pass with signals', () => {
     const book = newSignalBook();
     const s1 = new Map([['IN', { screen: view('snap:1', [{ t: 'HAL', twSt: 1 }, { t: 'BEL', twSt: 2 }]) }]]) as Map<'IN' | 'US', SignalFeeds>;
     const c1 = ctxOf(IN_OPEN, s1, book);
-    const r1 = evaluateAlerts([alert()], c1);
+    const r1 = evalLive([alert()], c1);
     assert.equal(r1.events.length, 0, 'BEL already Stage 2 when first seen: no fire');
     assert.equal(book.dirty.size, 2, 'first states written');
     const s2 = new Map([['IN', { screen: view('snap:2', [{ t: 'HAL', twSt: 2 }, { t: 'BEL', twSt: 2 }]) }]]) as Map<'IN' | 'US', SignalFeeds>;
     const c2 = ctxOf(at('2026-10-15T05:20:00Z'), s2, book);
-    const r2 = evaluateAlerts([alert()], c2);
+    const r2 = evalLive([alert()], c2);
     assert.deepEqual(r2.events.map((e) => e.mid), ['IN:HAL'], 'HAL turned Stage 2; BEL stayed');
     assert.equal(r2.events[0].condition, 'Stage changes to 2 (confirmed)');
     assert.equal(r2.consumed!.length, 1);
-    const r3 = evaluateAlerts([alert({ trigger: 'per_minute' })], { ...c2, now: at('2026-10-15T05:21:00Z'), firedKeys: new Set() });
+    const r3 = evalLive([alert({ trigger: 'per_minute' })], { ...c2, now: at('2026-10-15T05:21:00Z'), firedKeys: new Set() });
     assert.equal(r3.events.length, 0, 'the edge was used: no second fire for one change, even once-per-minute');
     // the snapshot rows change but builtAt does not → no work, no fire
     const s2b = new Map([['IN', { screen: view('snap:2', [{ t: 'HAL', twSt: 2 }, { t: 'BEL', twSt: 1 }]) }]]) as Map<'IN' | 'US', SignalFeeds>;
     book.dirty.clear();
-    assert.equal(evaluateAlerts([alert()], ctxOf(at('2026-10-15T05:22:00Z'), s2b, book)).events.length, 0);
+    assert.equal(evalLive([alert()], ctxOf(at('2026-10-15T05:22:00Z'), s2b, book)).events.length, 0);
     assert.equal(book.dirty.size, 0, 'nothing recomputed while builtAt is unchanged');
   });
   test('India and US are kept apart (same ticker, own snapshot, own state)', () => {
     const book = newSignalBook();
     const f1 = new Map([['IN', { screen: view('in:1', [{ t: 'HAL', accS: 60, accR: 3 }]) }], ['US', { screen: view('us:1', [{ t: 'HAL', accS: 60, accR: 3 }]) }]]) as Map<'IN' | 'US', SignalFeeds>;
     const a = alert({ conditions: [{ type: 'acc_ab' }] });
-    evaluateAlerts([a], ctxOf(IN_OPEN, f1, book));
-    evaluateAlerts([a], ctxOf(US_OPEN, f1, book));
+    evalLive([a], ctxOf(IN_OPEN, f1, book));
+    evalLive([a], ctxOf(US_OPEN, f1, book));
     // only the US snapshot changes: HAL (US) becomes grade A
     const f2 = new Map([['IN', { screen: view('in:1', [{ t: 'HAL', accS: 60, accR: 3 }]) }], ['US', { screen: view('us:2', [{ t: 'HAL', accS: 90, accR: 5 }]) }]]) as Map<'IN' | 'US', SignalFeeds>;
-    const us = evaluateAlerts([a], ctxOf(at('2026-10-15T15:20:00Z'), f2, book));
+    const us = evalLive([a], ctxOf(at('2026-10-15T15:20:00Z'), f2, book));
     assert.deepEqual(us.events.map((e) => [e.mid, e.market]), [['US:HAL', 'US']]);
     assert.ok(book.states.has(signalKey('a1', 'IN:HAL', 0)) && book.states.has(signalKey('a1', 'US:HAL', 0)), 'separate states per market');
     assert.equal(book.states.get(signalKey('a1', 'IN:HAL', 0))!.v, 0);
@@ -221,23 +225,23 @@ describe('evaluation pass with signals', () => {
     const book = newSignalBook();
     const a = alert({ conditions: [{ type: 'pattern_breakout', tf: 'D' }, { type: 'price_above', value: 105 }] });
     const f1 = new Map([['IN', { screen: view('s1', [{ t: 'HAL', scan: { st: 'no-pattern' } }]) }]]) as Map<'IN' | 'US', SignalFeeds>;
-    const r0 = evaluateAlerts([a], ctxOf(IN_OPEN, f1, book));
+    const r0 = evalLive([a], ctxOf(IN_OPEN, f1, book));
     assert.equal(r0.events.length, 0);
     assert.ok(r0.waiting >= 1, 'BEL / not in the snapshot → waits');
     const f2 = new Map([['IN', { screen: view('s2', [{ t: 'HAL', pat: [{ b: 'U', s: 'b', d: 1 }], scan: { st: 'ready' } }]) }]]) as Map<'IN' | 'US', SignalFeeds>;
     const c = ctxOf(at('2026-10-15T05:20:00Z'), f2, book);
-    assert.equal(evaluateAlerts([a], c).events.length, 0, 'breakout, but price 102 is not above 105');
+    assert.equal(evalLive([a], c).events.length, 0, 'breakout, but price 102 is not above 105');
     c.quotes.set('IN:HAL', q(106));
-    const r = evaluateAlerts([a], { ...c, now: at('2026-10-15T06:00:00Z') });
+    const r = evalLive([a], { ...c, now: at('2026-10-15T06:00:00Z') });
     assert.deepEqual(r.events.map((e) => e.mid), ['IN:HAL'], 'later the same day both hold');
     assert.match(r.events[0].condition, /Breaks out of a pattern \(daily\) and Price greater than 105/);
   });
   test('no signal data at all → the alert waits (never fires on a guess)', () => {
     const ctx = ctxOf(IN_OPEN, new Map());
-    const r = evaluateAlerts([alert()], ctx);
+    const r = evalLive([alert()], ctx);
     assert.equal(r.events.length, 0); assert.ok(r.waiting >= 2);
     const noBook = { ...ctx, signals: undefined };
-    assert.equal(evaluateAlerts([alert()], noBook).events.length, 0);
+    assert.equal(evalLive([alert()], noBook).events.length, 0);
   });
 });
 

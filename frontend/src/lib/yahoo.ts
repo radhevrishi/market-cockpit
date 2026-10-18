@@ -1,6 +1,6 @@
 // Yahoo Finance API utility for server-side data fetching
 // Uses the v8 chart API and v7 quote API
-import { extendedHoursPct } from './chart-math';   // zzz944 — pre / after-hours change for the /charts watchlist "Ext" column
+import { extendedHoursPct, extendedHoursQuote } from './chart-math';   // zzz944 — pre / after-hours change for the /charts watchlist "Ext" column
 
 const YF_BASE = 'https://query1.finance.yahoo.com';
 const YF_BASE2 = 'https://query2.finance.yahoo.com';
@@ -237,7 +237,7 @@ export async function fetchQuotes(symbols: string[]): Promise<any[]> {
 // returns 401 (crumb-gated). Returns price + chartPreviousClose + longName per symbol.
 // Use this as the price-fallback when the v7/quote batch comes back empty.
 // Shape: Map<base-symbol-without-.NS-suffix, { lastPrice, prevClose, pChange, companyName }>
-export interface SparkQuote { lastPrice: number | null; prevClose: number | null; pChange: number | null; companyName: string | null; extPct?: number | null; marketTime?: number | null; volume?: number | null; dayHigh?: number | null; dayLow?: number | null }
+export interface SparkQuote { lastPrice: number | null; prevClose: number | null; pChange: number | null; companyName: string | null; extPct?: number | null; marketTime?: number | null; volume?: number | null; dayHigh?: number | null; dayLow?: number | null; extPrice?: number | null; extSession?: 'pre' | 'post' | null; fetchedAt?: number }
 export async function fetchYahooSparkBatch(symbolsWithSuffix: string[], preserveExchange = false): Promise<Map<string, SparkQuote>> {
   const out = new Map<string, SparkQuote>();
   if (symbolsWithSuffix.length === 0) return out;
@@ -274,7 +274,10 @@ export async function fetchYahooSparkBatch(symbolsWithSuffix: string[], preserve
         const baseSym = sym.replace(/\.(NS|BO)$/i, '');
         const pos = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null);
         // zzz1054 — volume so far and the day's range (price alerts: relative volume, new 52-week high / low); null when not sent
-        const quote: SparkQuote = { lastPrice: price, prevClose, pChange, companyName, extPct: extendedHoursPct(meta, Date.now()), marketTime: typeof meta.regularMarketTime === 'number' ? meta.regularMarketTime * 1000 : null, volume: pos(meta.regularMarketVolume), dayHigh: pos(meta.regularMarketDayHigh), dayLow: pos(meta.regularMarketDayLow) };
+        // zzz1063 — extended price + session (price alerts) and the moment it was fetched (Yahoo gives no time for it)
+        const nowMs = Date.now();
+        const xq = extendedHoursQuote(meta, nowMs);
+        const quote: SparkQuote = { lastPrice: price, prevClose, pChange, companyName, extPct: extendedHoursPct(meta, nowMs), marketTime: typeof meta.regularMarketTime === 'number' ? meta.regularMarketTime * 1000 : null, volume: pos(meta.regularMarketVolume), dayHigh: pos(meta.regularMarketDayHigh), dayLow: pos(meta.regularMarketDayLow), extPrice: xq?.price ?? null, extSession: xq?.session ?? null, fetchedAt: nowMs };
         out.set(baseSym, quote);
         if (preserveExchange) out.set(sym, quote);   // opt in: existing consumers retain their base-symbol map
       }
