@@ -72,7 +72,7 @@ test('company-page reader: latest balance sheet and the same-year CFO / profit',
 
 test('wiring: page reads the fallback; route exists', () => {
   const p = readFileSync(join(__dirname, '..', '..', 'app', '(dashboard)', 'earnings-opportunities', 'page.tsx'), 'utf8');
-  assert.match(p, /useFinFallbackIndex\(fbTickers\)/);
+  assert.match(p, /useFinFallbackIndex\(fbTickers.out, fbTickers.names\)/);
   assert.match(readFileSync(join(__dirname, '..', '..', 'app', 'api', 'v1', 'fin-fallback', 'route.ts'), 'utf8'), /screener_store/);
 });
 

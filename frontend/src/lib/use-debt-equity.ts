@@ -61,7 +61,7 @@ export function useFinFallbackOf(ticker: string | undefined | null): FinFallback
 }
 const FB_CHUNK = 20;
 /** `tickers` = the India cards that need a fallback (worked out by the page). Pending entries are marked so the tile can say so. */
-export function useFinFallbackIndex(tickers: ReadonlyArray<string | undefined | null>): FinFallbackIndex {
+export function useFinFallbackIndex(tickers: ReadonlyArray<string | undefined | null>, names?: Readonly<Record<string, string>>): FinFallbackIndex {
   const [idx, setIdx] = useState<FinFallbackIndex>({});
   const key = useMemo(() => Array.from(new Set(tickers.map((t) => tick(t)).filter(Boolean))).sort().join(','), [tickers]);
   useEffect(() => {
@@ -72,7 +72,8 @@ export function useFinFallbackIndex(tickers: ReadonlyArray<string | undefined | 
     (async () => {
       for (let i = 0; i < all.length && !ctrl.signal.aborted; i += FB_CHUNK) {
         const c = all.slice(i, i + FB_CHUNK);
-        const j = await fetch(`/api/v1/fin-fallback?tickers=${encodeURIComponent(c.join(','))}`, { signal: ctrl.signal }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+        const nm = c.map((t) => String(names?.[t] || '').replace(/[|,]/g, ' ')).join('|');
+        const j = await fetch(`/api/v1/fin-fallback?tickers=${encodeURIComponent(c.join(','))}${nm.replace(/\|/g, '') ? `&names=${encodeURIComponent(nm)}` : ''}`, { signal: ctrl.signal }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
         if (ctrl.signal.aborted) return;
         setIdx((p) => {
           const n = { ...p };

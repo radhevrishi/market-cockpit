@@ -16,7 +16,7 @@ export const maxDuration = 45;
 const TICKER_RE = /^[A-Z0-9][A-Z0-9&\-]{0,19}$/;
 const _cache = new Map<string, { at: number; ttl: number; v: (FinFallback & { source: string }) | { error: string } }>();
 
-async function readOne(t: string, stored: InRaw | null): Promise<(FinFallback & { source: string }) | { error: string }> {
+async function readOne(t: string, stored: InRaw | null, name?: string): Promise<(FinFallback & { source: string }) | { error: string }> {
   if (stored) {
     const f = finFallbackFromRaw(stored);
     if (f.de != null || f.cfo != null) return { ...f, source: 'screener.in page (stored by the screener build)' };
@@ -30,10 +30,31 @@ async function readOne(t: string, stored: InRaw | null): Promise<(FinFallback & 
     if (f.de != null || f.cfo != null) return { ...f, source: `screener.in page (${basis}, read live)` };
     last = `no balance sheet on the ${basis} page`;
   }
-  return { error: last };
+  // zzz1090b — a BSE-only company has no page under its symbol (404): find its page with screener.in's company search
+  const words = String(name || '').replace(/&amp;/g, '&').replace(/\b(ltd|limited|pvt|private|the)\b\.?/gi, ' ').replace(/[^A-Za-z0-9& ]+/g, ' ').trim().split(/\s+/).slice(0, 4).join(' ');
+  const q = await fetchScreenerHtml(`https://www.screener.in/api/company/search/?q=${encodeURIComponent(words || t)}&v=3&fts=1`, 10_000);
+  try {
+    const hits = q.html ? JSON.parse(q.html) : [];
+    const url = Array.isArray(hits) ? hits.map((h: any) => String(h?.url || '')).find((u) => /^\/company\/[^/]+\/(consolidated\/)?$/.test(u)) : null;
+    if (url) {
+      for (const u of [url.replace(/consolidated\/$/, '') + 'consolidated/', url.replace(/consolidated\/$/, '')]) {
+        const got = await fetchScreenerHtml(`https://www.screener.in${u}`, 12_000);
+        if (!got.html) continue;
+        const f = finFallbackFromRaw(rawFromHtml(got.html, {}));
+        if (f.de != null || f.cfo != null) return { ...f, source: `screener.in page ${u} (found by search, read live)` };
+      }
+      last = `no balance sheet on ${url}`;
+    } else if (q.html) last = 'not found on screener.in';
+  } catch { /* keep the last reason */ }
+  return { error: last.split('\n')[0].slice(0, 120) };
 }
 
 export async function GET(req: NextRequest) {
+  // zzz1090b — optional company names (same order as tickers, '|' separated) to find a BSE-only company's page by name
+  const rawT = String(req.nextUrl.searchParams.get('tickers') || '').split(',');
+  const rawN = String(req.nextUrl.searchParams.get('names') || '').split('|');
+  const nameOf = new Map<string, string>();
+  rawT.forEach((t, i) => { const k = t.trim().toUpperCase().replace(/^(NSE|BSE):/, '').replace(/-(EQ|BE|SM|ST|BZ)$/, ''); if (rawN[i]) nameOf.set(k, rawN[i].slice(0, 80)); });
   const list = Array.from(new Set(String(req.nextUrl.searchParams.get('tickers') || '').split(',').map((s) => s.trim().toUpperCase().replace(/^(NSE|BSE):/, '').replace(/-(EQ|BE|SM|ST|BZ)$/, '')).filter((s) => TICKER_RE.test(s)))).slice(0, 20);
   if (!list.length) return NextResponse.json({ ok: false, error: 'tickers= is required (India symbols, comma separated).' }, { status: 400 });
   const now = Date.now();
@@ -46,7 +67,7 @@ export async function GET(req: NextRequest) {
         for (const r of rows) if (r?.payload?.raw) stored.set(String(r.ticker).toUpperCase(), r.payload.raw as InRaw);
       } catch { /* the page is read live instead */ }
     }
-    const results = await Promise.all(need.map(async (t) => [t, await readOne(t, stored.get(t) || null).catch((e) => ({ error: String(e?.message || e) }))] as const));
+    const results = await Promise.all(need.map(async (t) => [t, await readOne(t, stored.get(t) || null, nameOf.get(t)).catch((e) => ({ error: String(e?.message || e) }))] as const));
     for (const [t, v] of results) {
       if (_cache.size >= 2000) { const first = _cache.keys().next().value; if (first) _cache.delete(first); }
       _cache.set(t, { at: now, ttl: 'error' in v ? 3600_000 : 12 * 3600_000, v });

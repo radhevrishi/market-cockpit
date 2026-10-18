@@ -1792,6 +1792,7 @@ export default function EarningsOpportunitiesPage() {
   const fbTickers = useMemo(() => {
     const rowsAll: any[] = windowOn ? win.rows : TIER_ORDER.flatMap((t) => view.by_tier?.[t] || []);
     const out: string[] = [];
+    const names: Record<string, string> = {};
     for (const r of rowsAll) {
       if (!r?.ticker) continue;
       const fk = financialKindOfRow(r);
@@ -1800,11 +1801,11 @@ export default function EarningsOpportunitiesPage() {
       const noDe = !deIdx[t];
       const cv = cashTileView(r);
       const noCash = cv.text === '—' || cv.text.startsWith('n/a');
-      if (noDe || noCash) out.push(r.ticker);
+      if (noDe || noCash) { out.push(r.ticker); if (r.company) names[t] = String(r.company); }
     }
-    return out;
+    return { out, names };
   }, [windowOn, win.rows, view, deIdx]);
-  const fbIdx = useFinFallbackIndex(fbTickers);
+  const fbIdx = useFinFallbackIndex(fbTickers.out, fbTickers.names);
 
   // zzz814 — what the counts, filter chips, search and exports read: the
   // single date as before, or the merged window (one row per company).
