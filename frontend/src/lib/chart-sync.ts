@@ -7,6 +7,8 @@
 // Now each ticker carries its own save time; per ticker the newer save wins, a cleared ticker is remembered as a tombstone.
 import { sanitizeDrawings, type SavedDrawing } from './chart-math';
 import { CHART_LAYOUTS_KEY, mergeLayoutStores } from './chart-layouts';
+import { CHART_WATCHLISTS_KEY } from './chart-watchlist';
+import { mergeWatchlistStores } from './chart-watchlist-merge';
 
 export const CHART_DRAWINGS_KEY = 'mc:chart-drawings:v1';
 
@@ -77,7 +79,11 @@ function safeParse(s: string): unknown { try { return JSON.parse(s); } catch { r
 
 /** Keys whose two copies are merged instead of one replacing the other (used by the vault sync). Both values are the parsed
  *  JSON; the result is the merged value to keep on both sides. */
-export const VAULT_MERGERS: Record<string, (local: unknown, server: unknown) => unknown> = {
+export const VAULT_MERGERS: Record<string, (local: unknown, server: unknown, base?: unknown) => unknown> = {
   [CHART_DRAWINGS_KEY]: (l, s) => mergeDrawingStores(l, s),
   [CHART_LAYOUTS_KEY]: (l, s) => mergeLayoutStores(l, s),
+  // zzz1074 — three-way: needs the copy this device last synced (VAULT_BASE_KEYS), so a deletion is not undone by the merge
+  [CHART_WATCHLISTS_KEY]: (l, s, b) => mergeWatchlistStores(l, s, b),
 };
+/** zzz1074 — merged keys whose merge needs the last synced copy ("base"); the vault keeps it in mc:vault:base:<key>. */
+export const VAULT_BASE_KEYS: ReadonlySet<string> = new Set([CHART_WATCHLISTS_KEY]);

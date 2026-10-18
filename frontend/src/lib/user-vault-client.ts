@@ -8,7 +8,7 @@
 //   • local missing, server has it           → restore
 // Nothing is ever deleted on either side by this code; every server write is kept in history (last 60 versions per key).
 import { USER_STATE_KEYS_CLIENT, NOTES_PREFIX, NOTES_BUNDLE } from './user-vault-keys';
-import { VAULT_MERGERS } from './chart-sync';
+import { VAULT_MERGERS, VAULT_BASE_KEYS } from './chart-sync';
 
 const META_KEY = 'mc:vault:meta:v1';
 const DEVICE_KEY = 'mc:vault:device:v1';
@@ -58,10 +58,19 @@ export function unwrapVaultValue(v: any): unknown {
   if (typeof v.__raw === 'string') { try { return JSON.parse(v.__raw); } catch { return null; } }
   return null;
 }
+/** zzz1074 — the copy of a three-way-merged key that this device last synced (see VAULT_BASE_KEYS). */
+const BASE_PREFIX = 'mc:vault:base:';
+export function readVaultBase(key: string): unknown {
+  try { const raw = localStorage.getItem(BASE_PREFIX + key); return raw == null ? null : JSON.parse(raw); } catch { return null; }
+}
+function rememberBase(key: string, value: unknown): void {
+  if (!VAULT_BASE_KEYS.has(key)) return;
+  try { const v = unwrapVaultValue(value); if (v != null) localStorage.setItem(BASE_PREFIX + key, JSON.stringify(v)); } catch { /* quota: the next merge is a union */ }
+}
 /** zzz944 — for keys that are merged (chart drawings, chart layouts): combine both copies; say whether this device's copy
  *  changes and whether the server needs the merged copy. Pure. */
-export function mergeDecision(localParsed: unknown, serverParsed: unknown, merger: (l: unknown, s: unknown) => unknown): { merged: unknown; changedLocal: boolean; needPush: boolean } {
-  const merged = merger(localParsed, serverParsed);
+export function mergeDecision(localParsed: unknown, serverParsed: unknown, merger: (l: unknown, s: unknown, b?: unknown) => unknown, baseParsed?: unknown): { merged: unknown; changedLocal: boolean; needPush: boolean } {
+  const merged = merger(localParsed, serverParsed, baseParsed);
   const m = JSON.stringify(merged);
   return { merged, changedLocal: m !== JSON.stringify(localParsed), needPush: m !== JSON.stringify(serverParsed) };
 }
@@ -93,7 +102,7 @@ export async function syncVaultOnce(): Promise<{ pushed: string[]; pulled: strin
         if (!g.ok) continue;
         const gj = await g.json();
         if (!gj.found) continue;
-        const dec = mergeDecision(unwrapVaultValue(local), unwrapVaultValue(gj.value), merger);
+        const dec = mergeDecision(unwrapVaultValue(local), unwrapVaultValue(gj.value), merger, VAULT_BASE_KEYS.has(key) ? readVaultBase(key) : undefined);
         if (dec.changedLocal) {
           try { localStorage.setItem(`mc:vault:backup:${key}`, JSON.stringify({ at: new Date().toISOString(), value: local })); } catch { /* quota */ }
           writeLocal(key, { __raw: JSON.stringify(dec.merged) });
@@ -102,13 +111,16 @@ export async function syncVaultOnce(): Promise<{ pushed: string[]; pulled: strin
         const now = readLocal(key); const nh = localHashOf(now)!;
         if (dec.needPush && now != null) {
           const p = await fetch('/api/v1/user-state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, value: now, baseVersion: Number(gj.version), device }), signal: AbortSignal.timeout(20_000) });
-          if (p.ok) { const pj = await p.json(); meta[key] = { hash: nh, version: Number(pj.version) }; pushed.push(key); }
+          if (p.ok) { const pj = await p.json(); meta[key] = { hash: nh, version: Number(pj.version) }; pushed.push(key); rememberBase(key, now); }
         } else {
           meta[key] = { hash: nh, version: Number(gj.version) };
+          rememberBase(key, now);
         }
         continue;
       }
       const plan = vaultPlan(lh, meta[key], server[key]);
+      // zzz1074 — already in step and no base kept yet: this copy is the base for the next three-way merge
+      if (plan.kind === 'none' && local != null && VAULT_BASE_KEYS.has(key) && readVaultBase(key) == null && server[key]?.hash === lh) rememberBase(key, local);
       if (plan.kind === 'push' && local != null) {
         const p = await fetch('/api/v1/user-state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, value: local, baseVersion: meta[key]?.version ?? null, device }), signal: AbortSignal.timeout(20_000) });
         if (p.status === 409) {
@@ -120,7 +132,7 @@ export async function syncVaultOnce(): Promise<{ pushed: string[]; pulled: strin
         if (!p.ok) return { pushed, pulled, error: `save HTTP ${p.status}` };
         const pj = await p.json();
         if (!pj.ok) return { pushed, pulled, error: 'save was not confirmed' };
-        meta[key] = { hash: lh!, version: Number(pj.version) }; pushed.push(key);
+        meta[key] = { hash: lh!, version: Number(pj.version) }; pushed.push(key); rememberBase(key, local);
         localStorage.setItem(META_KEY, JSON.stringify(meta));
       } else if (plan.kind === 'pull') {
         if (local != null) { try { localStorage.setItem(`mc:vault:backup:${key}`, JSON.stringify({ at: new Date().toISOString(), value: local })); } catch { /* quota */ } }
@@ -130,7 +142,7 @@ export async function syncVaultOnce(): Promise<{ pushed: string[]; pulled: strin
           if (gj.found) {
             // The user may edit while the network request is in flight.
             if (localHashOf(readLocal(key)) !== lh) return { pushed, pulled, error: 'Local edit changed during sync; pull deferred' };
-            writeLocal(key, gj.value); meta[key] = { hash: localHashOf(readLocal(key)) || '', version: Number(gj.version) }; pulled.push(key);
+            writeLocal(key, gj.value); meta[key] = { hash: localHashOf(readLocal(key)) || '', version: Number(gj.version) }; pulled.push(key); rememberBase(key, readLocal(key));
             localStorage.setItem(META_KEY, JSON.stringify(meta));
           }
         }
@@ -172,6 +184,7 @@ export async function resolveVaultConflict(key: string, choice: 'local' | 'serve
   // A newer local edit during PUT must still be detected by the next sync.
   meta[key] = { hash: choice === 'local' ? hash : localHashOf(readLocal(key)), version };
   localStorage.setItem(META_KEY, JSON.stringify(meta));
+  rememberBase(key, choice === 'local' ? local : readLocal(key));
   window.dispatchEvent(new CustomEvent('mc:vault:restored', { detail: { keys: [key] } }));
 }
 

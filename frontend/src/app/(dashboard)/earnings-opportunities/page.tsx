@@ -3126,97 +3126,6 @@ Source label: ${coverageStats.source}`}
             </div>
           );
         })()}
-        {/* PATCH 0912 — SCHEDULED TODAY panel.
-            User complaint: "see lot of companies in one week reported but
-            you show only few companeis in graded tiers". Root cause: NSE
-            calendar shows ALL scheduled board meetings (118-208/day this
-            week), but graded tiers only include companies that have
-            ACTUALLY FILED + had financials parsed. We surface the gap
-            here so the user sees what's pending vs filed.
-
-            Logic: take calData.by_date[filterDate] (scheduled tickers
-            from hub for the selected date), subtract any ticker already
-            present in any of the 4 graded tiers, render the remainder as
-            clickable NSE filing-page chips. */}
-        {viewMode === 'GRADED' && filterDate && calData?.by_date?.[filterDate] && (() => {
-          const scheduled = calData.by_date[filterDate] || [];
-          const gradedTickers = new Set<string>(
-            TIER_ORDER.flatMap((t) => (view.by_tier[t] || []).map((s) => (s.ticker || '').toUpperCase()))
-          );
-          // zzz878 — a name already graded on an earlier day for the same quarter is not "pending" here
-          const shownElsewhere = new Set<string>(((view as any)?._dropped || []).filter((d: any) => /^already shown on /.test(String(d?.reason || ''))).map((d: any) => String(d.ticker || '').toUpperCase()));
-          const pending = scheduled.filter((it) => !gradedTickers.has((it.symbol || '').toUpperCase()) && !shownElsewhere.has((it.symbol || '').toUpperCase()));
-          if (pending.length === 0) return null;
-          const whyOf = pendingReasonMap(view);   // zzz879 — a short reason per name
-          const copyPending = async (txt: string) => {
-            try { await navigator.clipboard.writeText(txt); } catch {
-              try {
-                const ta = document.createElement('textarea');
-                ta.value = txt; ta.style.position = 'fixed'; ta.style.top = '-1000px';
-                document.body.appendChild(ta); ta.select(); document.execCommand('copy');
-                document.body.removeChild(ta);
-              } catch {}
-            }
-          };
-          return (
-            <div style={{ backgroundColor: 'color-mix(in srgb, var(--mc-warn) 6%, var(--mc-bg-1))', border: '1px solid color-mix(in srgb, var(--mc-warn) 30%, transparent)', borderLeft: '4px solid var(--mc-warn)', borderRadius: 'var(--mc-radius)', padding: '12px 14px' }}>
-              {/* Cohort reconciliation banner: makes the day's TRUE total
-                  unmistakable so a "1 graded" header never looks like a bug.
-                  filed = graded tiers count; pending = this block. */}
-              <div style={{ fontSize: 11.5, fontWeight: 800, color: 'var(--mc-warn)', marginBottom: 8, letterSpacing: '0.2px' }}>
-                {(() => {
-                  const filed = view.candidates_total || 0;
-                  const total = filed + pending.length;
-                  return `📊 ${total} ${total === 1 ? 'company' : 'companies'} on the calendar for ${filterDate} — ${filed} filed & graded below · ${pending.length} results still pending (shown here).`;
-                })()}
-              </div>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
-                <span style={{ fontSize: 16, fontWeight: 800, color: 'var(--mc-warn)' }}>📅 SCHEDULED TODAY · RESULTS PENDING</span>
-                <span style={{ fontSize: 12, color: 'var(--mc-warn)', fontWeight: 800 }}>{pending.length} {pending.length === 1 ? 'company' : 'companies'}</span>
-                <span style={{ fontSize: 11.5, color: 'var(--mc-text-4)' }}>
-                  · each name says why it is not a card yet (hover for the full reason)
-                </span>
-                <span style={{ display: 'inline-flex', gap: 4, marginLeft: 'auto' }}>
-                  <button
-                    onClick={() => copyPending(pending.map((p) => (p.symbol || '').toUpperCase()).join(','))}
-                    title="Copy pending tickers (CSV)"
-                    style={{ fontSize: 11.5, padding: '3px 8px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
-                  >📋 CSV</button>
-                  <button
-                    onClick={() => copyPending(pending.map((p) => `NSE:${(p.symbol || '').toUpperCase()}`).join(','))}
-                    title="Copy as NSE:TICKER for TradingView"
-                    style={{ fontSize: 11.5, padding: '3px 8px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
-                  >📊 TradingView</button>
-                </span>
-              </div>
-              <div style={{ fontSize: 13, color: 'var(--mc-text-3)', marginBottom: 8, lineHeight: 1.5 }}>
-                These companies announced a board meeting for {filterDate} but their results aren&apos;t in the parser yet.
-                Graded tiers below show only filings that have actually been published + parsed. As each company files
-                throughout the day, they&apos;ll move out of this list and into the appropriate grade tier.{' '}
-                <button onClick={() => refetch()} style={{ background: 'transparent', border: 'none', color: 'var(--mc-cyan)', cursor: 'pointer', fontSize: 11, fontWeight: 700, padding: 0, textDecoration: 'underline' }}>
-                  ↻ Refresh to pull latest filings
-                </button>
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                {pending.slice(0, 60).map((it, i) => {
-                  const why = whyOf.get(String(it.symbol || '').toUpperCase()) || pendingReasonWord(null);
-                  return (
-                  <a key={`${filterDate}::${it.symbol || 'nosym'}::${it.company || ''}::${i}`} href={it.source_url} target="_blank" rel="noopener noreferrer"
-                    title={`${it.company || it.symbol} · ${why.full} · click to open NSE filing page`}
-                    style={{ fontSize: 11.5, padding: '2px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-3)', color: 'var(--mc-text-3)', border: '1px solid #2A3550', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', textDecoration: 'none', fontWeight: 700 }}>
-                    {it.symbol}<span style={{ fontFamily: 'ui-sans-serif, system-ui', fontWeight: 600, color: why.color }}> · {why.word}</span>
-                  </a>
-                  );
-                })}
-                {pending.length > 60 && (
-                  <span style={{ fontSize: 11.5, color: 'var(--mc-text-4)', padding: '2px 6px' }}>
-                    +{pending.length - 60} more · use 📋 CSV to copy all
-                  </span>
-                )}
-              </div>
-            </div>
-          );
-        })()}
         {/* zzz818 — a tier chip that leaves nothing on this date says so. */}
         {viewMode === 'GRADED' && !windowOn && tierFilterOn && view.candidates_total > 0
           && TIER_ORDER.every((t) => !passesTier({ tier: t }, tierSel) || applyRowFilters(view.by_tier[t] || []).length === 0) && (
@@ -3405,9 +3314,10 @@ Source label: ${coverageStats.source}`}
                     <span style={{ color: 'var(--mc-text-3)', fontWeight: 600 }}> · {rows.length.toLocaleString('en-IN')} match your filters</span>
                   )}
                 </div>
-                <div style={{ fontSize: 12, color: p.done ? 'var(--mc-bullish)' : 'var(--mc-text-2)', fontWeight: 700 }}>
-                  {p.done && p.failed === 0 ? '✓ ' : ''}{p.line}
-                </div>
+                {/* zzz1073 — while days are loading, the progress stays here; every other note is in "Notes" at the end of the page. */}
+                {!p.done && (
+                  <div style={{ fontSize: 12, color: 'var(--mc-text-2)', fontWeight: 700 }}>{p.line}</div>
+                )}
                 {!p.done && (
                   <div className="mc-no-print" style={{ height: 4, borderRadius: 2, background: 'var(--mc-bg-3)', overflow: 'hidden' }}>
                     <div style={{ width: `${p.total ? Math.round((p.ready / p.total) * 100) : 0}%`, height: '100%', background: 'var(--mc-cyan)', transition: 'width 0.3s' }} />
@@ -3416,63 +3326,6 @@ Source label: ${coverageStats.source}`}
                 {(p.queued > 0 || p.grading) && (
                   <div style={{ fontSize: 13, color: 'var(--mc-text-4)', lineHeight: 1.5 }}>
                     Days already graded appear at once. Days never graded are graded here one at a time, newest first, through the same India path as a single date (NSE/BSE list + Screener enrichment, rate-limited) — typically 20–60 seconds each. Results show as each day lands; nothing is graded twice.
-                  </div>
-                )}
-                {staleDates.length > 0 && (
-                  <div style={{ fontSize: 13, color: 'var(--mc-warn)', lineHeight: 1.5 }}>
-                    {staleDates.length} {staleDates.length === 1 ? 'date was' : 'dates were'} graded under the previous rules ({Array.from(new Set(staleDates.map((d) => win.days.find((x) => x.date === d)?.engine).filter(Boolean))).join(', ')}; current {GRADED_ENGINE_LABEL}) and {staleDates.length === 1 ? 'is' : 'are'} shown as stored — every company on them is listed. {staleDates.length === 1 ? 'It is' : 'They are'} being rebuilt automatically under the current rules, oldest rules first, a few dates per run (several runs a day), so the older grades catch up over a few days. Open a single date to rebuild it now.
-                  </div>
-                )}
-                {failedDates.length > 0 && (
-                  <div style={{ fontSize: 11, color: 'var(--mc-bearish)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <span>⚠ Not loaded: {failedDates.map((d) => (
-                      <span key={d} title={win.errors[d] || ''} style={{ textDecoration: 'underline dotted', marginRight: 4 }}>{fmtShortDate(d)}</span>
-                    ))}</span>
-                    <button className="mc-no-print" onClick={win.retryFailed}
-                      style={{ padding: '3px 10px', borderRadius: 5, border: '1px solid var(--mc-bearish)', background: 'transparent', color: 'var(--mc-bearish)', fontSize: 11, fontWeight: 800, cursor: 'pointer' }}>
-                      ↻ Retry {failedDates.length}
-                    </button>
-                  </div>
-                )}
-                {/* zzz817 — nothing is dropped silently: companies that filed but
-                    could not be graded, cards without numbers or a price, and
-                    days read while the results feed was down are all counted. */}
-                {notGradedN > 0 && (
-                  <div className="eo-window-issues" style={{ fontSize: 13, color: 'var(--mc-warn)', lineHeight: 1.6 }}>
-                    ⚠ <strong>{notGradedN.toLocaleString('en-IN')} {notGradedN === 1 ? 'company' : 'companies'} filed but couldn&apos;t be graded</strong>
-                    {' '}({Object.entries(notGradedReasons).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k}: ${n}${lastCheckedByReason[k] ? ` (oldest check ${fmtShortDate(lastCheckedByReason[k])})` : ''}`).join(' · ')}) — each date is re-checked automatically about once a day while data is still missing; open a date to retry now:{' '}
-                    {Object.keys(notGradedByDate).sort().reverse().slice(0, 14).map((d) => (
-                      <button key={d} onClick={() => openDate(d)} title={notGradedByDate[d].join('\n')}
-                        style={{ background: 'none', border: 'none', padding: '0 6px 0 0', color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 700, cursor: 'pointer', textDecoration: 'underline dotted' }}>
-                        {fmtShortDate(d)} ({notGradedByDate[d].length})
-                      </button>
-                    ))}
-                    {Object.keys(notGradedByDate).length > 14 && <span>+{Object.keys(notGradedByDate).length - 14} more dates</span>}
-                  </div>
-                )}
-                {unconfirmedDrops.length > 0 && (
-                  <div style={{ fontSize: 13, color: 'var(--mc-text-3)', lineHeight: 1.5 }}
-                    title={Object.keys(unconfirmedByDate).sort().reverse().map((d) => `${fmtShortDate(d)}: ${unconfirmedByDate[d].join(', ')}`).join('\n')}>
-                    ⓘ {unconfirmedDrops.length.toLocaleString('en-IN')} {unconfirmedDrops.length === 1 ? 'company had' : 'companies had'} a results board meeting in the window but no confirmed results filing yet — not graded, not counted as a failure (hover for the list).
-                  </div>
-                )}
-                {(issues.noData.length > 0 || issues.noPrice > 0) && (
-                  <div style={{ fontSize: 13, color: 'var(--mc-text-3)', lineHeight: 1.5 }}>
-                    {issues.noData.length > 0 && <>ⓘ {issues.noData.length.toLocaleString('en-IN')} {issues.noData.length === 1 ? 'company is' : 'companies are'} listed without financial numbers yet (the card says so — open its date to retry). </>}
-                    {issues.noPrice > 0 && <>ⓘ {issues.noPrice.toLocaleString('en-IN')} {issues.noPrice === 1 ? 'card has' : 'cards have'} no share price yet.</>}
-                  </div>
-                )}
-                {issues.partialDays.length > 0 && (
-                  <div style={{ fontSize: 13, color: 'var(--mc-warn)', lineHeight: 1.5 }}>
-                    ⚠ {issues.partialDays.length} {issues.partialDays.length === 1 ? 'day was' : 'days were'} read while the results feed was down — the list for {issues.partialDays.length === 1 ? 'it' : 'them'} may be partial:{' '}
-                    {issues.partialDays.map((d) => (
-                      <button key={d} onClick={() => openDate(d)} style={{ background: 'none', border: 'none', padding: '0 6px 0 0', color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 700, cursor: 'pointer', textDecoration: 'underline dotted' }}>{fmtShortDate(d)}</button>
-                    ))}
-                  </div>
-                )}
-                {windowView === 'date' && !showAllInDay && foldedTotal > 0 && (
-                  <div className="mc-no-print" style={{ fontSize: 13, color: 'var(--mc-text-3)', lineHeight: 1.5 }}>
-                    Each day shows ⭐ BLOCKBUSTER and 🟢 STRONG first; its 🟡 MIXED and 🔴 AVOID are one click away under that day. To list only one tier across the whole window, click its chip above (⭐ 🟢 🟡 🔴).
                   </div>
                 )}
               </div>
@@ -3556,7 +3409,164 @@ Source label: ${coverageStats.source}`}
                   Show more — {windowRenderLimit} of {visibleTotal} cards shown
                 </button>
               )}
+
+              {/* zzz1073 — notes on the window, at the end of the page (the cards come first). */}
+              <div className="eo-window-notes" style={{ backgroundColor: 'var(--mc-bg-1)', border: '1px solid var(--mc-bg-4)', borderRadius: 'var(--mc-radius)', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--mc-text-3)', letterSpacing: '0.4px' }}>NOTES ON THIS WINDOW</div>
+                <div style={{ fontSize: 12, color: p.done ? 'var(--mc-bullish)' : 'var(--mc-text-2)', fontWeight: 700 }}>
+                  {p.done && p.failed === 0 ? '✓ ' : ''}{p.line}
+                </div>
+                {staleDates.length > 0 && (
+                  <div style={{ fontSize: 13, color: 'var(--mc-warn)', lineHeight: 1.5 }}>
+                    {staleDates.length} {staleDates.length === 1 ? 'date was' : 'dates were'} graded under the previous rules ({Array.from(new Set(staleDates.map((d) => win.days.find((x) => x.date === d)?.engine).filter(Boolean))).join(', ')}; current {GRADED_ENGINE_LABEL}) and {staleDates.length === 1 ? 'is' : 'are'} shown as stored — every company on them is listed. {staleDates.length === 1 ? 'It is' : 'They are'} being rebuilt automatically under the current rules, oldest rules first, a few dates per run (several runs a day), so the older grades catch up over a few days. Open a single date to rebuild it now.
+                  </div>
+                )}
+                {failedDates.length > 0 && (
+                  <div style={{ fontSize: 11, color: 'var(--mc-bearish)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <span>⚠ Not loaded: {failedDates.map((d) => (
+                      <span key={d} title={win.errors[d] || ''} style={{ textDecoration: 'underline dotted', marginRight: 4 }}>{fmtShortDate(d)}</span>
+                    ))}</span>
+                    <button className="mc-no-print" onClick={win.retryFailed}
+                      style={{ padding: '3px 10px', borderRadius: 5, border: '1px solid var(--mc-bearish)', background: 'transparent', color: 'var(--mc-bearish)', fontSize: 11, fontWeight: 800, cursor: 'pointer' }}>
+                      ↻ Retry {failedDates.length}
+                    </button>
+                  </div>
+                )}
+                {/* zzz817 — nothing is dropped silently: companies that filed but
+                    could not be graded, cards without numbers or a price, and
+                    days read while the results feed was down are all counted. */}
+                {notGradedN > 0 && (
+                  <div className="eo-window-issues" style={{ fontSize: 13, color: 'var(--mc-warn)', lineHeight: 1.6 }}>
+                    ⚠ <strong>{notGradedN.toLocaleString('en-IN')} {notGradedN === 1 ? 'company' : 'companies'} filed but couldn&apos;t be graded</strong>
+                    {' '}({Object.entries(notGradedReasons).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k}: ${n}${lastCheckedByReason[k] ? ` (oldest check ${fmtShortDate(lastCheckedByReason[k])})` : ''}`).join(' · ')}) — each date is re-checked automatically about once a day while data is still missing; open a date to retry now:{' '}
+                    {Object.keys(notGradedByDate).sort().reverse().slice(0, 14).map((d) => (
+                      <button key={d} onClick={() => openDate(d)} title={notGradedByDate[d].join('\n')}
+                        style={{ background: 'none', border: 'none', padding: '0 6px 0 0', color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 700, cursor: 'pointer', textDecoration: 'underline dotted' }}>
+                        {fmtShortDate(d)} ({notGradedByDate[d].length})
+                      </button>
+                    ))}
+                    {Object.keys(notGradedByDate).length > 14 && <span>+{Object.keys(notGradedByDate).length - 14} more dates</span>}
+                  </div>
+                )}
+                {unconfirmedDrops.length > 0 && (
+                  <div style={{ fontSize: 13, color: 'var(--mc-text-3)', lineHeight: 1.5 }}
+                    title={Object.keys(unconfirmedByDate).sort().reverse().map((d) => `${fmtShortDate(d)}: ${unconfirmedByDate[d].join(', ')}`).join('\n')}>
+                    ⓘ {unconfirmedDrops.length.toLocaleString('en-IN')} {unconfirmedDrops.length === 1 ? 'company had' : 'companies had'} a results board meeting in the window but no confirmed results filing yet — not graded, not counted as a failure (hover for the list).
+                  </div>
+                )}
+                {(issues.noData.length > 0 || issues.noPrice > 0) && (
+                  <div style={{ fontSize: 13, color: 'var(--mc-text-3)', lineHeight: 1.5 }}>
+                    {issues.noData.length > 0 && <>ⓘ {issues.noData.length.toLocaleString('en-IN')} {issues.noData.length === 1 ? 'company is' : 'companies are'} listed without financial numbers yet (the card says so — open its date to retry). </>}
+                    {issues.noPrice > 0 && <>ⓘ {issues.noPrice.toLocaleString('en-IN')} {issues.noPrice === 1 ? 'card has' : 'cards have'} no share price yet.</>}
+                  </div>
+                )}
+                {issues.partialDays.length > 0 && (
+                  <div style={{ fontSize: 13, color: 'var(--mc-warn)', lineHeight: 1.5 }}>
+                    ⚠ {issues.partialDays.length} {issues.partialDays.length === 1 ? 'day was' : 'days were'} read while the results feed was down — the list for {issues.partialDays.length === 1 ? 'it' : 'them'} may be partial:{' '}
+                    {issues.partialDays.map((d) => (
+                      <button key={d} onClick={() => openDate(d)} style={{ background: 'none', border: 'none', padding: '0 6px 0 0', color: 'var(--mc-cyan)', fontSize: 11, fontWeight: 700, cursor: 'pointer', textDecoration: 'underline dotted' }}>{fmtShortDate(d)}</button>
+                    ))}
+                  </div>
+                )}
+                {windowView === 'date' && !showAllInDay && foldedTotal > 0 && (
+                  <div className="mc-no-print" style={{ fontSize: 13, color: 'var(--mc-text-3)', lineHeight: 1.5 }}>
+                    Each day shows ⭐ BLOCKBUSTER and 🟢 STRONG first; its 🟡 MIXED and 🔴 AVOID are one click away under that day. To list only one tier across the whole window, click its chip above (⭐ 🟢 🟡 🔴).
+                  </div>
+                )}
+              </div>
             </>
+          );
+        })()}
+        {/* zzz1073 — at the end of the page: companies still waiting to file come after the graded cards. */}
+        {/* PATCH 0912 — SCHEDULED TODAY panel.
+            User complaint: "see lot of companies in one week reported but
+            you show only few companeis in graded tiers". Root cause: NSE
+            calendar shows ALL scheduled board meetings (118-208/day this
+            week), but graded tiers only include companies that have
+            ACTUALLY FILED + had financials parsed. We surface the gap
+            here so the user sees what's pending vs filed.
+
+            Logic: take calData.by_date[filterDate] (scheduled tickers
+            from hub for the selected date), subtract any ticker already
+            present in any of the 4 graded tiers, render the remainder as
+            clickable NSE filing-page chips. */}
+        {viewMode === 'GRADED' && filterDate && calData?.by_date?.[filterDate] && (() => {
+          const scheduled = calData.by_date[filterDate] || [];
+          const gradedTickers = new Set<string>(
+            TIER_ORDER.flatMap((t) => (view.by_tier[t] || []).map((s) => (s.ticker || '').toUpperCase()))
+          );
+          // zzz878 — a name already graded on an earlier day for the same quarter is not "pending" here
+          const shownElsewhere = new Set<string>(((view as any)?._dropped || []).filter((d: any) => /^already shown on /.test(String(d?.reason || ''))).map((d: any) => String(d.ticker || '').toUpperCase()));
+          const pending = scheduled.filter((it) => !gradedTickers.has((it.symbol || '').toUpperCase()) && !shownElsewhere.has((it.symbol || '').toUpperCase()));
+          if (pending.length === 0) return null;
+          const whyOf = pendingReasonMap(view);   // zzz879 — a short reason per name
+          const copyPending = async (txt: string) => {
+            try { await navigator.clipboard.writeText(txt); } catch {
+              try {
+                const ta = document.createElement('textarea');
+                ta.value = txt; ta.style.position = 'fixed'; ta.style.top = '-1000px';
+                document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+                document.body.removeChild(ta);
+              } catch {}
+            }
+          };
+          return (
+            <div style={{ backgroundColor: 'color-mix(in srgb, var(--mc-warn) 6%, var(--mc-bg-1))', border: '1px solid color-mix(in srgb, var(--mc-warn) 30%, transparent)', borderLeft: '4px solid var(--mc-warn)', borderRadius: 'var(--mc-radius)', padding: '12px 14px' }}>
+              {/* Cohort reconciliation banner: makes the day's TRUE total
+                  unmistakable so a "1 graded" header never looks like a bug.
+                  filed = graded tiers count; pending = this block. */}
+              <div style={{ fontSize: 11.5, fontWeight: 800, color: 'var(--mc-warn)', marginBottom: 8, letterSpacing: '0.2px' }}>
+                {(() => {
+                  const filed = view.candidates_total || 0;
+                  const total = filed + pending.length;
+                  return `📊 ${total} ${total === 1 ? 'company' : 'companies'} on the calendar for ${filterDate} — ${filed} filed & graded below · ${pending.length} results still pending (shown here).`;
+                })()}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+                <span style={{ fontSize: 16, fontWeight: 800, color: 'var(--mc-warn)' }}>📅 SCHEDULED TODAY · RESULTS PENDING</span>
+                <span style={{ fontSize: 12, color: 'var(--mc-warn)', fontWeight: 800 }}>{pending.length} {pending.length === 1 ? 'company' : 'companies'}</span>
+                <span style={{ fontSize: 11.5, color: 'var(--mc-text-4)' }}>
+                  · each name says why it is not a card yet (hover for the full reason)
+                </span>
+                <span style={{ display: 'inline-flex', gap: 4, marginLeft: 'auto' }}>
+                  <button
+                    onClick={() => copyPending(pending.map((p) => (p.symbol || '').toUpperCase()).join(','))}
+                    title="Copy pending tickers (CSV)"
+                    style={{ fontSize: 11.5, padding: '3px 8px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+                  >📋 CSV</button>
+                  <button
+                    onClick={() => copyPending(pending.map((p) => `NSE:${(p.symbol || '').toUpperCase()}`).join(','))}
+                    title="Copy as NSE:TICKER for TradingView"
+                    style={{ fontSize: 11.5, padding: '3px 8px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+                  >📊 TradingView</button>
+                </span>
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--mc-text-3)', marginBottom: 8, lineHeight: 1.5 }}>
+                These companies announced a board meeting for {filterDate} but their results aren&apos;t in the parser yet.
+                Graded tiers below show only filings that have actually been published + parsed. As each company files
+                throughout the day, they&apos;ll move out of this list and into the appropriate grade tier.{' '}
+                <button onClick={() => refetch()} style={{ background: 'transparent', border: 'none', color: 'var(--mc-cyan)', cursor: 'pointer', fontSize: 11, fontWeight: 700, padding: 0, textDecoration: 'underline' }}>
+                  ↻ Refresh to pull latest filings
+                </button>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {pending.slice(0, 60).map((it, i) => {
+                  const why = whyOf.get(String(it.symbol || '').toUpperCase()) || pendingReasonWord(null);
+                  return (
+                  <a key={`${filterDate}::${it.symbol || 'nosym'}::${it.company || ''}::${i}`} href={it.source_url} target="_blank" rel="noopener noreferrer"
+                    title={`${it.company || it.symbol} · ${why.full} · click to open NSE filing page`}
+                    style={{ fontSize: 11.5, padding: '2px 6px', borderRadius: 3, backgroundColor: 'var(--mc-bg-3)', color: 'var(--mc-text-3)', border: '1px solid #2A3550', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', textDecoration: 'none', fontWeight: 700 }}>
+                    {it.symbol}<span style={{ fontFamily: 'ui-sans-serif, system-ui', fontWeight: 600, color: why.color }}> · {why.word}</span>
+                  </a>
+                  );
+                })}
+                {pending.length > 60 && (
+                  <span style={{ fontSize: 11.5, color: 'var(--mc-text-4)', padding: '2px 6px' }}>
+                    +{pending.length - 60} more · use 📋 CSV to copy all
+                  </span>
+                )}
+              </div>
+            </div>
           );
         })()}
       </div>
