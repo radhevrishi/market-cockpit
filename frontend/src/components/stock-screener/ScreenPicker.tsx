@@ -1,22 +1,28 @@
 'use client';
 // zzz1006 — searchable screen picker: favourites, my screens, built-in USA / India, each with its market label. Picking a screen goes
 // through the page's own switch (which asks first when the open screen has unsaved filters). Saved definitions are not touched.
+// zzz1069 — shows ONLY the open market's screens (India → India screens, USA → USA screens); the other market is one click away.
 import { useMemo, useRef, useState } from 'react';
 import type { Screen } from '@/lib/screener/filters';
-import { pickerGroups, readFavScreens, toggleFav, writeFavScreens } from '@/lib/screener/screen-picker';
+import { otherMarketScreenCount, pickerGroups, readFavScreens, toggleFav, writeFavScreens } from '@/lib/screener/screen-picker';
 import { listKeys, usePopover } from './screener-ui';
 
-export default function ScreenPicker({ screens, builtInIds, currentId, currentName, currentMarket, dirty, onPick, hidden = [], onRemove, onRestore }: {
+export default function ScreenPicker({ screens, builtInIds, currentId, currentName, currentMarket, dirty, onPick, hidden = [], onRemove, onRestore, onSwitchMarket }: {
   screens: readonly Screen[]; builtInIds: ReadonlySet<string>; currentId: string; currentName: string; currentMarket: 'US' | 'IN'; dirty: boolean; onPick: (id: string) => void;
   /** zzz1043 — built-in screens taken off the list; `onRemove` deletes a screen the owner made / hides a built-in one; `onRestore` brings a hidden one back */
   hidden?: readonly string[]; onRemove?: (id: string) => void; onRestore?: (id: string) => void;
+  /** zzz1069 — open the other market (the page's own market switch) */
+  onSwitchMarket?: (m: 'US' | 'IN') => void;
 }) {
   const { open, setOpen, ref } = usePopover();
   const [q, setQ] = useState('');
   const [favs, setFavs] = useState<string[]>(() => (typeof window === 'undefined' ? [] : readFavScreens()));
-  const groups = useMemo(() => pickerGroups(screens, builtInIds, favs, q, hidden), [screens, builtInIds, favs, q, hidden]);
+  const groups = useMemo(() => pickerGroups(screens, builtInIds, favs, q, hidden, currentMarket), [screens, builtInIds, favs, q, hidden, currentMarket]);
+  const other: 'US' | 'IN' = currentMarket === 'US' ? 'IN' : 'US';
+  const mkName = (m: 'US' | 'IN') => (m === 'US' ? 'USA' : 'India');
+  const otherCount = useMemo(() => otherMarketScreenCount(screens, currentMarket, hidden), [screens, currentMarket, hidden]);
   const [showHidden, setShowHidden] = useState(false);
-  const hiddenScreens = useMemo(() => screens.filter((s) => hidden.includes(s.id)), [screens, hidden]);
+  const hiddenScreens = useMemo(() => screens.filter((s) => hidden.includes(s.id) && s.market === currentMarket), [screens, hidden, currentMarket]);
   const listRef = useRef<HTMLDivElement | null>(null);
   const star = (id: string) => setFavs((cur) => { const next = toggleFav(cur, id); writeFavScreens(next); return next; });
   const pick = (id: string) => { setOpen(false); setQ(''); onPick(id); };
@@ -32,7 +38,7 @@ export default function ScreenPicker({ screens, builtInIds, currentId, currentNa
       </button>
       {open ? (
         <div className="mcss-pop" role="dialog" aria-label="Choose a screen" style={{ width: 'min(420px, 92vw)' }}>
-          <input autoFocus className="mcss-input" style={{ width: '100%', boxSizing: 'border-box' }} placeholder="Find a screen — name, “usa”, “india”" aria-label="Find a screen" value={q}
+          <input autoFocus className="mcss-input" style={{ width: '100%', boxSizing: 'border-box' }} placeholder={`Find a ${mkName(currentMarket)} screen`} aria-label="Find a screen" value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'ArrowDown') { e.preventDefault(); listRef.current?.querySelector<HTMLElement>('.mcss-item')?.focus(); }
@@ -61,7 +67,7 @@ export default function ScreenPicker({ screens, builtInIds, currentId, currentNa
                 ))}
               </div>
             ))}
-            {!total ? <div className="mcss-dim" style={{ padding: 10 }}>No screen matches “{q}”.</div> : null}
+            {!total ? <div className="mcss-dim" style={{ padding: 10 }}>{q ? <>No {mkName(currentMarket)} screen matches “{q}”.</> : <>No {mkName(currentMarket)} screens yet.</>}</div> : null}
             {hiddenScreens.length && onRestore ? (
               <div role="group" aria-label="Hidden screens" style={{ borderTop: '1px solid var(--mc-border, rgba(127,127,127,.25))', marginTop: 4, paddingTop: 4 }}>
                 <button type="button" className="mcss-item" aria-expanded={showHidden} data-hidden-toggle onClick={() => setShowHidden((v) => !v)}>
@@ -79,6 +85,13 @@ export default function ScreenPicker({ screens, builtInIds, currentId, currentNa
               </div>
             ) : null}
           </div>
+          {otherCount && onSwitchMarket ? (
+            <div className="mcss-dim" data-other-market style={{ borderTop: '1px solid var(--mc-border, rgba(127,127,127,.25))', marginTop: 4, paddingTop: 6, fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span>Showing {mkName(currentMarket)} screens only · {otherCount} {mkName(other)} screen{otherCount === 1 ? '' : 's'}</span>
+              <span style={{ flex: 1 }} />
+              <button type="button" className="mcss-btn ghost sm" onClick={() => { setOpen(false); setQ(''); onSwitchMarket(other); }}>{other === 'US' ? '🇺🇸 Open USA' : '🇮🇳 Open India'}</button>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

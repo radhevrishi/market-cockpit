@@ -485,9 +485,18 @@ export function filterLabel(f: Filter, market: ScreenMarket): string {
   if (f.kind === 'pattern') return patternRuleLabel(f);
   const d = fieldOf(f.key); const name = d?.label || f.key;
   if (f.kind === 'date') return f.op === 'thisMonth' ? `${name}: this month` : `${name}: last ${f.v ?? 5} years`;
-  if (f.kind === 'near') return `${name} ${f.lo}–${f.hi}% above ${fieldOf(f.other)?.label || f.other}`;
+  if (f.kind === 'near') {
+    const lo = Math.min(f.lo, f.hi), hi = Math.max(f.lo, f.hi), oth = fieldOf(f.other)?.label || f.other;
+    if (hi <= 0) return hi === 0 ? `${name} within ${-lo}% below ${oth}` : `${name} ${-hi}–${-lo}% below ${oth}`;   // zzz1069
+    return `${name} ${f.lo}–${f.hi}% above ${oth}`;
+  }
   if (f.kind === 'cmp') return `${name} ${OPS[f.op]} ${fieldOf(f.other)?.label || f.other}`;
   const u = d?.unit || 'num';
+  if (f.key === 'accR' && f.op !== 'between' && Number.isInteger(f.v) && f.v >= 1 && f.v <= 5) {   // zzz1069 — grades as letters
+    const L = ['E', 'D', 'C', 'B', 'A'], at = (g: number) => L[g - 1];
+    const set = [1, 2, 3, 4, 5].filter((g) => (f.op === 'ge' ? g >= f.v : f.op === 'gt' ? g > f.v : f.op === 'le' ? g <= f.v : g < f.v)).reverse().map(at);
+    return set.length ? `Accumulation grade ${set.length === 1 ? set[0] : `${set.slice(0, -1).join(', ')} or ${set[set.length - 1]}`}` : 'Accumulation grade (none)';
+  }
   if (f.op === 'between') return `${name} ${fmtValue(f.v, u, market)} to ${fmtValue(f.v2 ?? f.v, u, market)}`;
   return `${name} ${OPS[f.op]} ${fmtValue(f.v, u, market)}`;
 }
@@ -586,6 +595,8 @@ const US_SCREENS: Screen[] = [
   RULE_OF_40('US'),
 ];
 
+/** zzz1069 — the plain explanation of the Volume Accumulation Leaders screen (both markets). */
+export const VOL_ACC_NOTE = 'Big money buying, confirmed by price and business. Accumulation grade A or B already means every volume check passed: at least 2 accumulation days and 2 more than distribution days in the last 25 sessions, 13-week money flow ≥ +0.10, up-day volume ≥ 1.3× down-day volume, On-Balance Volume rising, no distribution warning, close above its 50-session average and enough daily trading for institutions ($5 million / ₹3 crore a day). On top: an uptrend (50-day average above the 200-day, price above the 50-day), price within 25% of its 52-week high, RS Rating ≥ 70 and last quarter\'s sales up more than 10%. Open the "Volume" columns and sort by Accumulation score; a recent volume breakout or a quiet pullback is the entry to look for.';
 const DUAL_SCREENS: Screen[] = [
   ...dual('qullamaggie-leaders', 'Qualmaggie Leader Stocks in Bearmarket or Corrections', (m) => [
     sec(...S15), n('revQYoY', 'gt', 20), cap(m, 300e6, 500e9), n('px', 'ge', 5), cmp('px', 'ge', 'ema21'), cmp('px', 'ge', 'ema50'), cmp('sma50', 'above', 'sma200'),
@@ -604,6 +615,11 @@ const DUAL_SCREENS: Screen[] = [
     sec(...S15_IS), cap(m, 300e6, 10e12), n('rsi', 'ge', 55), n('px', 'ge', 10), cmp('px', 'ge', 'sma50'), n('avgVol60', 'gt', 500_000), n('perf6M', 'gt', 25), n('perf1Y', 'gt', 40),
     n('revQYoY', 'gt', 25), cmp('sma50', 'above', 'sma200'),
   ]),
+  // zzz1069 — built on the accumulation engine (lib/accumulation.ts): grade A / B already means every ACC_GATES condition passed.
+  ...dual('volume-accumulation', 'Volume Accumulation Leaders', (m) => [
+    n('accR', 'ge', 4), cmp('sma50', 'above', 'sma200'), cmp('px', 'ge', 'sma50'), near('px', 'hi52', -25, 0), n('rsR', 'ge', 70), n('revQYoY', 'gt', 10),
+    m === 'US' ? cap('US', 300e6, null) : cap('IN', 5e9, null), ...(m === 'US' ? [n('px', 'ge', 5)] : []),
+  ], { US: `${VOL_ACC_NOTE} Grade A / B is rare in the USA (about 30 companies on 18 Oct 2026), so this list is usually short.`, IN: `${VOL_ACC_NOTE} India: delivery % rising (the "Delivery % change" column) is extra confirmation.` }),
   ...dual('weekly-gainer-usa', 'Weekly Gainer Stocks USA', (m) => [
     sec(...S15_IS), n('chg1W', 'gt', 9), n('px', 'ge', 5), cap(m, 300e6, 10e12), cmp('px', 'ge', 'sma50'), n('avgVol10', 'gt', 900_000),
   ]),

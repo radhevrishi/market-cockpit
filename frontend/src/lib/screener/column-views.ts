@@ -3,7 +3,7 @@
 import { fieldOf, filterKeys, fmtValue, type FieldUnit, type Filter, type NumKey } from './filters';
 import type { ScreenMarket } from './types';
 
-export type ColumnView = 'screen' | 'overview' | 'growth' | 'valuation' | 'quality' | 'technicals';
+export type ColumnView = 'screen' | 'overview' | 'growth' | 'valuation' | 'quality' | 'technicals' | 'volume';
 export const COLUMN_VIEWS: ReadonlyArray<{ id: ColumnView; label: string; hint: string }> = [
   { id: 'screen', label: 'Screen', hint: 'Price, change, market cap and every figure the filters use' },
   { id: 'overview', label: 'Overview', hint: 'Price, change, market cap, 1-month performance, P/E, quarterly revenue growth' },
@@ -11,6 +11,7 @@ export const COLUMN_VIEWS: ReadonlyArray<{ id: ColumnView; label: string; hint: 
   { id: 'valuation', label: 'Valuation', hint: 'P/E, P/S, EV / revenue, price / cash' },
   { id: 'quality', label: 'Quality', hint: 'Margins, returns, FCF margin, debt / equity' },
   { id: 'technicals', label: 'Technicals', hint: 'RSI, performance, RS rating, stage, relative volume, ATR — and the chart-pattern column' },
+  { id: 'volume', label: 'Volume', hint: 'Accumulation grade and score, accumulation / distribution days, money flow, up / down volume, volume breakout, quiet pullback — India also delivery %' },   // zzz1069
 ];
 const BASE: NumKey[] = ['px', 'chg', 'mc'];
 const PRESET: Record<Exclude<ColumnView, 'screen'>, string[]> = {
@@ -19,6 +20,7 @@ const PRESET: Record<Exclude<ColumnView, 'screen'>, string[]> = {
   valuation: ['pe', 'ps', 'evRev', 'pcf'],
   quality: ['gmFY', 'opmTTM', 'nmTTM', 'roeTTM', 'roceTTM', 'fcfmTTM', 'de'],
   technicals: ['rsi', 'perf1M', 'perf3M', 'rsR', 'stage', 'rvol', 'atrP'],
+  volume: ['accR', 'accS', 'accD', 'disD', 'cmf65', 'udv', 'obvLead', 'vboD', 'vdu', 'rvol', 'dlv10', 'dlvChg'],   // zzz1069 (dlv* India only)
 };
 export const COLUMN_VIEW_KEY = 'mc:screener-colview:v1';
 
@@ -39,10 +41,12 @@ export function readColumnView(): ColumnView { try { return cleanColumnView(loca
 export function writeColumnView(v: ColumnView): void { try { localStorage.setItem(COLUMN_VIEW_KEY, v); } catch { /* display preference only */ } }
 
 const SIGNED = /^(chg|chgOpen|chg1W|perf)/;
+const ACC_LETTER: Readonly<Record<number, string>> = { 5: 'A', 4: 'B', 3: 'C', 2: 'D', 1: 'E' };
 /** Table / panel text for a figure (display only — filters, CSV and tooltips keep the exact value): percentages and multiples with
  *  one decimal so a column lines up, a sign on daily change and performance figures; everything else as fmtValue. */
 export function cellText(v: number | null | undefined, unit: FieldUnit, market: ScreenMarket, key?: string): string {
   if (typeof v !== 'number' || !Number.isFinite(v)) return '—';
+  if (key === 'accR' && Number.isInteger(v)) { const g = ACC_LETTER[v]; if (g) return g; }   // zzz1069 — the grade as its letter (5 = A … 1 = E)
   if (unit === '%') return `${key && SIGNED.test(key) && v > 0 ? '+' : ''}${v.toFixed(Math.abs(v) >= 1000 ? 0 : 1)}%`;
   if (unit === 'x') return Math.abs(v) >= 1000 ? Math.round(v).toLocaleString('en-US') : v.toFixed(1);
   return fmtValue(v, unit, market);

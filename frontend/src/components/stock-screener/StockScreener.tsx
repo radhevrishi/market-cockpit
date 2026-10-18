@@ -561,7 +561,7 @@ export default function StockScreener() {
         <span className="mcss-seg" role="group" aria-label="Market">
           {(['US', 'IN'] as const).map((m) => <button key={m} type="button" aria-pressed={market === m} title={m === market ? undefined : `Open your last ${m === 'US' ? 'USA' : 'India'} screen (use ⋯ → "Copy these rules to ${m === 'US' ? 'USA' : 'India'}" to carry this screen over)`} onClick={() => switchMarket(m)}>{m === 'US' ? '🇺🇸 USA' : '🇮🇳 India'}</button>)}
         </span>
-        <span className="pick"><ScreenPicker screens={screens} builtInIds={builtInIds} currentId={screenId} currentName={name} currentMarket={market} dirty={dirty} onPick={askSwitch} hidden={hiddenScreens} onRemove={removeScreen} onRestore={restoreScreen} /></span>
+        <span className="pick"><ScreenPicker screens={screens} builtInIds={builtInIds} currentId={screenId} currentName={name} currentMarket={market} dirty={dirty} onPick={askSwitch} hidden={hiddenScreens} onRemove={removeScreen} onRestore={restoreScreen} onSwitchMarket={switchMarket} /></span>
         <button type="button" className={`mcss-btn${dirty ? ' primary' : ''}`} onClick={() => save(false)} title={dirty ? 'Save the filter changes into this screen' : 'Save the filters into this screen'}>Save{dirty ? ' •' : ''}</button>
         <div ref={topRef} style={{ position: 'relative' }}>
           <button type="button" className="mcss-btn" aria-label="More screen options" aria-haspopup="menu" aria-expanded={topOpen} onClick={() => setTopOpen((v) => !v)} style={{ padding: '0 10px' }}><Icon d={DOTS} size={14} /></button>

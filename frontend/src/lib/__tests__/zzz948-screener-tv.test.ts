@@ -135,7 +135,7 @@ describe('filters', () => {
       }
     }
     const us = BUILT_IN_SCREENS.filter((s) => s.market === 'US').length, ind = BUILT_IN_SCREENS.filter((s) => s.market === 'IN').length;
-    assert.equal(us, 24); assert.equal(ind, 21);   // 40 TradingView screens (2 Europe ones left out), 5 of them on both markets, 2 identical pairs merged — + zzz999: Rule of 40 (moved from the Pine Screener) in both markets
+    assert.equal(us, 25); assert.equal(ind, 22);   // 40 TradingView screens (2 Europe ones left out), 5 of them on both markets, 2 identical pairs merged — + zzz999: Rule of 40 (moved from the Pine Screener) in both markets — + zzz1069: Volume Accumulation Leaders in both markets
     for (const nm of ['ZACHS SCREENER', 'ZACHS SCREENER India', 'Future Super Scalers like NBIS Full', 'PEAD India', 'DEBT REDUCTION', 'ATH Stocks', 'Minervni Stocks', 'Liquidity Leaders']) assert.ok(BUILT_IN_SCREENS.some((s) => s.name === nm), nm);
     const full = BUILT_IN_SCREENS.find((s) => s.id === 'us-super-scalers-full')!;
     assert.ok(full.filters.some((f) => f.kind === 'num' && f.key === 'bb' && f.op === 'gt' && f.v === -25));

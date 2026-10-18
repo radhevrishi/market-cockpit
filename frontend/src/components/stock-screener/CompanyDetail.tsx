@@ -13,6 +13,8 @@ import { tvSectorMapping } from '@/lib/screener/tv-sectors';
 import { cellText } from '@/lib/screener/column-views';
 import { ADD_GROUPS } from './AddFilterPanel';
 import { fieldMeta } from '@/lib/screener/field-meta';
+import { accExplainRow } from '@/lib/screener/acc-row';
+import { accLineTone, ACC_TONE_COLOR } from '@/lib/accumulation';
 
 export default function CompanyDetail({ row, market, filters, exactOnly, review, onReview, chartHref, onChart, onPine, onClose, position }: {
   row: ScreenRow; market: ScreenMarket; filters: Filter[]; exactOnly: boolean; review: ReviewState; onReview: (s: ReviewState) => void;
@@ -71,6 +73,11 @@ export default function CompanyDetail({ row, market, filters, exactOnly, review,
             ))}
           </ul>
         </>) : null}
+        {/* zzz1069 — the accumulation reading in plain words (same lines as the Pine Screener's detail) */}
+        <div className="mcss-h4">Volume &amp; accumulation — what it says</div>
+        <ul data-acc-explain style={{ margin: '4px 0 0', paddingLeft: 18, fontSize: 12.5, lineHeight: 1.5 }}>
+          {accExplainRow(row, market).map((line, i, all) => { const tone = accLineTone(line, i, all); return <li key={i} data-tone={tone} style={i === all.length - 1 && tone === 'dim' ? { color: 'var(--ss-ink-3)', fontSize: 11.5 } : { color: ACC_TONE_COLOR[tone], fontWeight: i === 0 ? 650 : tone === 'warn' ? 600 : undefined }}>{line}</li>; })}
+        </ul>
         {ADD_GROUPS.map((g) => {
           const items = FIELDS.filter((f) => g.of.includes(f.group) && f.markets.includes(market) && f.key !== 'px' && f.key !== 'chg' && f.key !== 'mc').map((f) => ({ f, v: val(f.key) })).filter((x) => x.v != null);
           if (!items.length) return null;
