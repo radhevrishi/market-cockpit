@@ -318,6 +318,9 @@ async function buildScreen(req: NextRequest, days: number, limit: number, minPat
 
   // zzz810 — never cache a scan of a feed that failed or came back empty;
   // the next open must retry the exchanges, not replay "0 in feed".
-  const feedHealthy = filings.length > 0 && (!feedStatus || feedStatus.state === 'OK' || feedStatus.state === 'EMPTY');
+  // zzz1070 — PARTIAL with NSE itself OK (BSE down / empty, e.g. 18 Oct 2026: NSE 30,597 announcements, BSE none) is a real scan
+  // and is kept (its feed_status says BSE is missing and being retried); otherwise every visit rescanned for 6–48 s.
+  const nseOk = feedStatus?.nse === 'OK';
+  const feedHealthy = filings.length > 0 && (!feedStatus || feedStatus.state === 'OK' || feedStatus.state === 'EMPTY' || (feedStatus.state === 'PARTIAL' && nseOk));
   return { payload, cacheable: feedHealthy };
 }

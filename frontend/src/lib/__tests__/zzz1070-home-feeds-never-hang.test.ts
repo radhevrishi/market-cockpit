@@ -95,3 +95,9 @@ test('home inbox: re-asks while building, says why a lane is empty, first radar 
   assert.match(warm, /warrant-feed\?days=45&force=1/, 'the warm job fills the home window');
   assert.match(warm, /transformation-screener\?days=60&limit=80&refresh=1/);
 });
+
+test('transform radar keeps a PARTIAL scan when NSE itself is OK (BSE down) — no rescan on every visit', () => {
+  const s = read('app/api/v1/concall-intel/transformation-screener/route.ts');
+  assert.match(s, /feedStatus\.state === 'PARTIAL' && nseOk/);
+  assert.match(s, /const nseOk = feedStatus\?\.nse === 'OK'/);
+});
