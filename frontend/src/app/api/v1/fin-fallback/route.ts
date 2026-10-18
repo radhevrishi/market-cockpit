@@ -8,6 +8,9 @@ import { fetchScreenerHtml } from '@/lib/earnings/screener-fetch';
 import { screenerSymbol } from '@/lib/earnings/screener-documents';
 import { rawFromHtml, type InRaw } from '@/lib/screener/in-assemble';
 import { finFallbackFromRaw, type FinFallback } from '@/lib/fin-fallback';
+import { kvGet } from '@/lib/kv';
+
+const SEARCH_HEADERS = { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36', Accept: 'application/json, text/plain, */*', 'Accept-Language': 'en-US,en;q=0.9', Referer: 'https://www.screener.in/' };
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,22 +33,32 @@ async function readOne(t: string, stored: InRaw | null, name?: string): Promise<
     if (f.de != null || f.cfo != null) return { ...f, source: `screener.in page (${basis}, read live)` };
     last = `no balance sheet on the ${basis} page`;
   }
-  // zzz1090b — a BSE-only company has no page under its symbol (404): find its page with screener.in's company search
-  const words = String(name || '').replace(/&amp;/g, '&').replace(/\b(ltd|limited|pvt|private|the)\b\.?/gi, ' ').replace(/[^A-Za-z0-9& ]+/g, ' ').trim().split(/\s+/).slice(0, 4).join(' ');
-  const q = await fetchScreenerHtml(`https://www.screener.in/api/company/search/?q=${encodeURIComponent(words || t)}&v=3&fts=1`, 10_000);
-  try {
-    const hits = q.html ? JSON.parse(q.html) : [];
-    const url = Array.isArray(hits) ? hits.map((h: any) => String(h?.url || '')).find((u) => /^\/company\/[^/]+\/(consolidated\/)?$/.test(u)) : null;
-    if (url) {
-      for (const u of [url.replace(/consolidated\/$/, '') + 'consolidated/', url.replace(/consolidated\/$/, '')]) {
-        const got = await fetchScreenerHtml(`https://www.screener.in${u}`, 12_000);
-        if (!got.html) continue;
-        const f = finFallbackFromRaw(rawFromHtml(got.html, {}));
-        if (f.de != null || f.cfo != null) return { ...f, source: `screener.in page ${u} (found by search, read live)` };
-      }
-      last = `no balance sheet on ${url}`;
-    } else if (q.html) last = 'not found on screener.in';
-  } catch { /* keep the last reason */ }
+  // zzz1090b — a BSE-only company has no page under its symbol: use the page slug the earnings engine already found for it
+  // (KV screener-slug:v3:<SYMBOL>, usually the BSE code), else ask screener.in's company search (direct, like the engine does)
+  let slug: string | null = null;
+  try { const c = await kvGet<string>(`screener-slug:v3:${t}`); if (c && c !== '-') slug = c; } catch { /* optional */ }
+  if (!slug) {
+    const words = String(name || '').replace(/&amp;/g, '&').replace(/\b(ltd|limited|pvt|private|the)\b\.?/gi, ' ').replace(/[^A-Za-z0-9& ]+/g, ' ').trim().split(/\s+/).slice(0, 4).join(' ');
+    for (const q of [t, words].filter(Boolean)) {
+      try {
+        const res = await fetch(`https://www.screener.in/api/company/search/?q=${encodeURIComponent(q)}`, { headers: SEARCH_HEADERS, signal: AbortSignal.timeout(6000) });
+        const list: any[] = res.ok ? await res.json().catch(() => []) : [];
+        const slugs = (Array.isArray(list) ? list : []).map((c) => /^\/company\/([^/]+)\//.exec(String(c?.url || ''))?.[1] || '').filter(Boolean);
+        slug = slugs.find((x) => x.toUpperCase() === t) || slugs[0] || null;
+        if (slug) break;
+        if (!res.ok) last = `company search HTTP ${res.status}`;
+      } catch { last = 'company search did not answer'; }
+    }
+  }
+  if (slug && slug.toUpperCase() !== t) {
+    for (const [basis, url] of [['consolidated', `https://www.screener.in/company/${encodeURIComponent(slug)}/consolidated/`], ['standalone', `https://www.screener.in/company/${encodeURIComponent(slug)}/`]] as const) {
+      const got = await fetchScreenerHtml(url, 12_000);
+      if (!got.html) continue;
+      const f = finFallbackFromRaw(rawFromHtml(got.html, {}));
+      if (f.de != null || f.cfo != null) return { ...f, source: `screener.in page ${slug} (${basis}, read live)` };
+      last = `no balance sheet on page ${slug}`;
+    }
+  }
   return { error: last.split('\n')[0].slice(0, 120) };
 }
 
