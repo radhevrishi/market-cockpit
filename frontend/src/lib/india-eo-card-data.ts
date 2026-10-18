@@ -1,5 +1,6 @@
 import { resolveFyYear } from '@/lib/calendar-dates';
 import { CASH_RATIO_HIGH, CASH_RULE_V } from './india-cash';  // zzz826
+import { finSubKind, FIN_KIND_WORD } from './fin-kind';   // zzz1089
 // ═══════════════════════════════════════════════════════════════════════════
 // INDIA EARNINGS OPPORTUNITIES — WHAT A CARD MAY HONESTLY SHOW  (zzz820)
 //
@@ -687,6 +688,10 @@ export interface CashTileView { text: string; note: string; color: 'good' | 'war
  *  real figures labelled with their fiscal year (`cash_fy`). Lenders never get one. Pure. */
 export function yearCashFigures(r: any): { ocf: number; pat: number; fy: string } | null {
   if (financialKindOfRow(r)) return null;
+  return rawYearCash(r);
+}
+/** zzz1089 — the same figures for ANY company (lenders included: shown as figures, never as a cash test). */
+export function rawYearCash(r: any): { ocf: number; pat: number; fy: string } | null {
   const gi = r?.grade_input || {};
   const fy = [r?.cash_fy, gi.cash_fy].find((x) => typeof x === 'string' && x.trim());
   const ocf = [r?.ocf_annual_cr, gi.ocf_annual_cr].find(fin);
@@ -708,19 +713,42 @@ export function fmtCrSigned(v: number): string {
  * (their operating cash flow is loan growth); the engine's cash basis
  * ("FY26 full year") shown under the ratio when present.
  */
-export function cashTileView(r: any): CashTileView {
+/** zzz1089 — figures read from the company's screener.in page when the feed has none (/api/v1/fin-fallback). */
+export interface CashFallback { cfo: number | null; pat: number | null; fy: string | null }
+
+const ratioNote = (v: number) => (v < 0 ? 'operations burned cash' : v < 0.6 ? 'below the divergence line' : v < 1 ? 'partly cash-backed'
+  : v >= CASH_RATIO_HIGH ? 'profit small vs cash' : 'earnings are cash-backed');
+
+export function cashTileView(r: any, fb?: CashFallback | null): CashTileView {
   const basis = typeof r?.cash_basis === 'string' && r.cash_basis.trim() ? r.cash_basis.trim()
     : (typeof r?.cash_fy === 'string' && r.cash_fy.trim() ? `${r.cash_fy.trim()} full year` : null);
-  if (financialKindOfRow(r)) return { text: '—', note: 'not meaningful for lenders', color: 'none', basis: null };
-  const v = [r?.ocf_to_pat_ratio, r?.cfo_to_pat_ratio].find(fin);
+  const fbYear = fb && fin(fb.cfo) && fin(fb.pat) && fb.fy ? { ocf: fb.cfo, pat: fb.pat, fy: fb.fy } : null;
+  const fk = financialKindOfRow(r);
+  if (fk) {
+    // zzz1089 — not every financial company is a lender: an asset manager / fintech / exchange gets the normal cash test; a bank,
+    // NBFC, broker or insurer gets its real figures shown (loan book and client money move its operating cash) instead of "—"
+    const sub = finSubKind(r, true);
+    const yr = rawYearCash(r) || fbYear;
+    const yb = yr ? `${yr.fy} full year` : basis;
+    if (sub === 'asset-light' && yr && yr.pat > 0) {
+      const v = Math.round((yr.ocf / yr.pat) * 100) / 100;
+      return { text: `${v.toFixed(2)}x`, note: `${ratioNote(v)} · not part of the grade`, color: v < 0.6 ? 'bad' : v < 1 ? 'warn' : 'good', basis: yb };
+    }
+    const word = FIN_KIND_WORD[sub || 'nbfc'];
+    if (yr) return { text: `CFO ${fmtCrSigned(yr.ocf)}`, note: `profit ${fmtCrSigned(yr.pat)} · ${word}: loans / client money move this cash — not a cash test`, color: 'none', basis: yb };
+    return { text: `n/a (${word})`, note: 'not meaningful for lenders', color: 'none', basis: null };
+  }
+  const v0 = [r?.ocf_to_pat_ratio, r?.cfo_to_pat_ratio].find(fin);
+  const v = v0 == null && fbYear && fbYear.pat > 0 && Math.abs(fbYear.ocf / fbYear.pat) <= 50 ? Math.round((fbYear.ocf / fbYear.pat) * 100) / 100 : v0;
+  if (v0 == null && v != null && fbYear) return { text: `${v.toFixed(2)}x`, note: ratioNote(v), color: v < 0.6 ? 'bad' : v < 1 ? 'warn' : 'good', basis: `${fbYear.fy} full year` };
   if (v == null || v === 0) {
     // zzz1068 — the figures ARE in the source; the ratio is refused because the year's profit was a
     // LOSS (19 of the 20 India non-lender gaps on 15–17 Oct: SOLARA, E2E, CROMPTON …) or tiny. Say so
     // and show the cash figure, instead of "not in source".
-    const yr = yearCashFigures(r);
+    const yr = yearCashFigures(r) || fbYear;
     if (yr) return yr.pat < 0
-      ? { text: `CFO ${fmtCrSigned(yr.ocf)}`, note: `loss year (${fmtCrSigned(yr.pat)}) — no ratio`, color: yr.ocf > 0 ? 'warn' : 'bad', basis }
-      : { text: `CFO ${fmtCrSigned(yr.ocf)}`, note: `profit ${fmtCrSigned(yr.pat)} too small for a ratio`, color: yr.ocf > 0 ? 'warn' : 'bad', basis };
+      ? { text: `CFO ${fmtCrSigned(yr.ocf)}`, note: `loss year (${fmtCrSigned(yr.pat)}) — no ratio`, color: yr.ocf > 0 ? 'warn' : 'bad', basis: basis || `${yr.fy} full year` }
+      : { text: `CFO ${fmtCrSigned(yr.ocf)}`, note: `profit ${fmtCrSigned(yr.pat)} too small for a ratio`, color: yr.ocf > 0 ? 'warn' : 'bad', basis: basis || `${yr.fy} full year` };
     return { text: '—', note: 'not in source', color: 'none', basis };
   }
   // zzz826 — ratios up to ±50x are real now (same-year figures); a very high

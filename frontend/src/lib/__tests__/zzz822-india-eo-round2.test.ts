@@ -101,7 +101,7 @@ describe('D4 · lenders / insurers (never tickers) and the cash tile', () => {
     const r = { company: 'Cholamandalam Financial Holdings Ltd', opm_pct: 16.1, ocf_to_pat_ratio: -16.79, sales_curr_cr: 9000, pat_curr_cr: 1300 };
     assert.equal(marginView(r).mode, 'net');
     const c = cashTileView(r);
-    assert.equal(c.text, '—'); assert.equal(c.note, 'not meaningful for lenders');
+    assert.equal(c.text, 'n/a (NBFC / lender)'); assert.equal(c.note, 'not meaningful for lenders');   // zzz1089 — says what it is, not a blank
   });
 });
 
@@ -115,7 +115,7 @@ describe('D5 · cash tile', () => {
   });
   test('page renders the basis line', () => {
     const page = PAGE();
-    assert.ok(page.includes('<CashTile v={cashTileView(stock)} />'));
+    assert.ok(page.includes('<CashTileFb stock={stock} />') && page.includes('cashTileView(stock, fb && !fb.pending ? fb : null)'));   // zzz1089
     assert.ok(page.includes('{v.basis && ('));
   });
 });

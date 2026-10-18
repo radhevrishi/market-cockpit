@@ -10,6 +10,7 @@ import { __cbFillRunning } from './ConvictionBeatsPanel';
 import { sectorColor } from './constants';
 import { cbDriftState } from './helpers';
 import { growthCell, returnCell, deCell, cashTone, pegTone, TONE_COLOR, type MetricCell } from '@/lib/cb-metric-view';   // zzz1068
+import { deCellFor } from '@/lib/de-tile';   // zzz1089 — banks n/a, NBFCs / brokers as leverage
 import { fmtCrSigned } from '@/lib/india-eo-card-data';
 
 // zzz1068 — one label / value style for every figure on the card metric line (light-theme friendly:
@@ -195,7 +196,7 @@ export function ConvictionTable({ entries, onRemove, sort, setSort, renderMark, 
                   <td key={g.label} style={{ ...td, textAlign: 'right', color: TONE_COLOR[g.tone] }} title={g.title}>{g.text}</td>))}
                 <td style={{ ...td, textAlign: 'right' }}>{typeof (e as any).opm_pct === 'number' ? `${(e as any).opm_pct.toFixed(1)}%` : '—'}</td>
                 <td style={{ ...td, textAlign: 'right', color: 'var(--mc-text-2)' }}>{fmtNum((e as any).pe) === '—' ? '—' : fmtNum((e as any).pe) + 'x'}</td>
-                {(() => { const dc = deCell((e as any).de_ratio, (e as any).de_basis, cbIsFinancial(e)); return (
+                {(() => { const dc = deCellFor((e as any).de_ratio, (e as any).de_basis, e, cbIsFinancial(e)); return (
                   <td style={{ ...td, textAlign: 'right', color: TONE_COLOR[dc.tone], fontWeight: 700 }} title={dc.title}>{dc.text}</td>); })()}
                 <td style={{ ...td, textAlign: 'right', color: pctColor((e as any).d1_pct) }}>{fmtPct((e as any).d1_pct)}</td>
                 <td style={{ ...td, textAlign: 'right', color: pctColor((e as any).move_pct), fontWeight: 700 }}>{fmtPct((e as any).move_pct)}</td>
@@ -582,7 +583,7 @@ export function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry, 
             <span style={{ color: 'var(--mc-text-4)', opacity: 0.4 }}>·</span>
             <MetricChip c={returnCell('ROE', roe, 18)} />
             <span style={{ color: 'var(--mc-text-4)', opacity: 0.4 }}>·</span>
-            <MetricChip testId="cb-de" c={deCell((entry as any).de_ratio, (entry as any).de_basis, cbIsFinancial(entry))} />
+            <MetricChip testId="cb-de" c={deCellFor((entry as any).de_ratio, (entry as any).de_basis, entry, cbIsFinancial(entry))} />
             {/* zzz360 — promoter-pledge chip. 0% = clean (green); any pledge = red
                 governance flag. Guarded on typeof number so unknown pledge omits. */}
             {typeof (entry as any).pledged_pct === 'number' && Number.isFinite((entry as any).pledged_pct) && (() => {

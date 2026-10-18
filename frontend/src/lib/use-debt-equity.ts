@@ -49,3 +49,43 @@ export function useDebtEquityOf(ticker: string | undefined | null): { de: number
   const idx = useContext(DebtEquityContext);
   return idx[tick(ticker)] || null;
 }
+
+// ── zzz1089 — figures from the company's own screener.in page for the cards that have none ────────────────────────────────
+// (D/E missing from the stock-screener snapshot, or no cash figures for a non-bank). /api/v1/fin-fallback, 20 tickers a call.
+export interface FinFallbackEntry { de: number | null; deBasis: string | null; cfo: number | null; pat: number | null; fy: string | null; pending?: boolean; error?: string | null }
+export type FinFallbackIndex = Record<string, FinFallbackEntry>;
+export const FinFallbackContext = createContext<FinFallbackIndex>({});
+export function useFinFallbackOf(ticker: string | undefined | null): FinFallbackEntry | null {
+  const idx = useContext(FinFallbackContext);
+  return idx[tick(ticker)] || null;
+}
+const FB_CHUNK = 20;
+/** `tickers` = the India cards that need a fallback (worked out by the page). Pending entries are marked so the tile can say so. */
+export function useFinFallbackIndex(tickers: ReadonlyArray<string | undefined | null>): FinFallbackIndex {
+  const [idx, setIdx] = useState<FinFallbackIndex>({});
+  const key = useMemo(() => Array.from(new Set(tickers.map((t) => tick(t)).filter(Boolean))).sort().join(','), [tickers]);
+  useEffect(() => {
+    if (!key) return;
+    const ctrl = new AbortController();
+    const all = key.split(',');
+    setIdx((p) => { const n = { ...p }; for (const t of all) if (!n[t]) n[t] = { de: null, deBasis: null, cfo: null, pat: null, fy: null, pending: true }; return n; });
+    (async () => {
+      for (let i = 0; i < all.length && !ctrl.signal.aborted; i += FB_CHUNK) {
+        const c = all.slice(i, i + FB_CHUNK);
+        const j = await fetch(`/api/v1/fin-fallback?tickers=${encodeURIComponent(c.join(','))}`, { signal: ctrl.signal }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+        if (ctrl.signal.aborted) return;
+        setIdx((p) => {
+          const n = { ...p };
+          for (const t of c) {
+            const v = j?.results?.[t];
+            n[t] = v && !v.error ? { de: v.de ?? null, deBasis: v.deBasis ?? null, cfo: v.cfo ?? null, pat: v.pat ?? null, fy: v.fy ?? null }
+              : { de: null, deBasis: null, cfo: null, pat: null, fy: null, error: v?.error || (j ? 'not found' : 'could not be read') };
+          }
+          return n;
+        });
+      }
+    })();
+    return () => ctrl.abort();
+  }, [key]);
+  return idx;
+}

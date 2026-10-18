@@ -20,7 +20,7 @@ test('the colour rule and the words', () => {
 
 test('India Earnings Opportunities: a DEBT / EQUITY tile beside cash, fed for every card on screen', () => {
   const s = read('app/(dashboard)/earnings-opportunities/page.tsx');
-  assert.match(s, /<DeTile ticker=\{stock\.ticker\} lender=\{!!financialKindOfRow\(stock\)\} \/>/);
+  assert.match(s, /<DeTile stock=\{stock\} \/>/);   // zzz1089 — the tile reads the row (kind of financial company) + the page fallback
   assert.match(s, /useDebtEquityIndex\(deTickers, 'IN'\)/);
   assert.match(s, /<DebtEquityContext\.Provider value=\{deIdx\}>/);
   assert.match(s, /label="DEBT \/ EQUITY"/);
