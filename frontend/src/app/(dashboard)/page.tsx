@@ -1959,6 +1959,11 @@ export default function HomeDashboard() {
               </div>
             )}
           </div>
+          {/* zzz1065 — zzz1082: right under In-Play News, before Signals (owner request); the ⭐ heading and the "↕ Arrange" switch live in FavouritesGrid */}
+          <div data-home-section="favourites" style={{ marginBottom: 6 }}>
+            {/* zzz526 — favourites are data-driven; zzz1065 — reorder only through the separate handle / Arrange mode */}
+            <FavouritesGrid />
+          </div>
           {/* zzz1075 — SIGNALS second on the home page (after In-Play News); same panel, same data. */}
           {/* SIGNALS — high-importance corporate news (PATCH 0865 — institutional font sizing) */}
           <div style={{ ...cardStyle, borderLeft: '3px solid var(--mc-cyan)', display: 'flex', flexDirection: 'column' }}>
@@ -2136,11 +2141,7 @@ export default function HomeDashboard() {
               they've been removed there to avoid duplicates. Edit list by
               adjusting this block and the corresponding removal below.
           */}
-          {/* zzz1065 — after Next actions + Signal Inbox; the ⭐ heading and the "↕ Arrange" switch live in FavouritesGrid */}
-          <div data-home-section="favourites" style={{ marginBottom: 6 }}>
-            {/* zzz526 — favourites are data-driven; zzz1065 — reorder only through the separate handle / Arrange mode */}
-            <FavouritesGrid />
-          </div>
+          {/* zzz1082 — Favourites moved up: now right under In-Play News (owner request). */}
 
 
           {/* zzz532 — Cockpit Hero: the "wow on open" band (book · regime · breadth · positions) */}

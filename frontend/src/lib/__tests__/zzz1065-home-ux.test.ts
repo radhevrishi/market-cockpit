@@ -303,10 +303,11 @@ describe('All tools drawer + favourites', () => {
     assert.ok(FAV_LONG_PRESS_MS >= 300 && FAV_LONG_PRESS_MS <= 800);
     assert.match(home, /const FAV_ORDER_KEY = 'mc:favs:order:v1';/, 'saved order key unchanged');
   });
-  test('home order: status strip → chips → Next actions → Signal Inbox → Favourites → hero → All tools', () => {
+  // zzz1082 — Favourites moved up to right under In-Play News (owner request); the rest keeps its order.
+  test('home order: status strip → Favourites → Next actions → Signal Inbox → hero → All tools', () => {
     const home = read(HOME);
     const at = (s: string) => { const i = home.indexOf(s); assert.ok(i > 0, s); return i; };
-    const seq = ['<HomeStatusStrip now={now} />', '<NextBestActions />', 'label="Daily Signal Inbox"', '<FavouritesGrid />', '<CockpitHero />', '<RiskRegimeCard />', '<PipelineHealth />', 'label="Data freshness"', 'label="Signal scoreboard and alerts"', '<ToolsDrawer>'];
+    const seq = ['<HomeStatusStrip now={now} />', '<FavouritesGrid />', '<NextBestActions />', 'label="Daily Signal Inbox"', '<CockpitHero />', '<RiskRegimeCard />', '<PipelineHealth />', 'label="Data freshness"', 'label="Signal scoreboard and alerts"', '<ToolsDrawer>'];
     for (let i = 1; i < seq.length; i++) assert.ok(at(seq[i - 1]) < at(seq[i]), `${seq[i - 1]} before ${seq[i]}`);
   });
 });

@@ -18,3 +18,12 @@ test('In-Play News, then Signals, come right after the status strip', () => {
   assert.equal(s.split('📡 SIGNALS (').length - 1, 1, 'one Signals panel');
   assert.equal(s.split('🔥 IN-PLAY NEWS — top').length - 1, 1, 'one In-Play panel');
 });
+
+test('zzz1082: Favourites sit right under In-Play News and before Signals', () => {
+  const s = readFileSync(join(__dirname, '..', '..', 'app', '(dashboard)', 'page.tsx'), 'utf8');
+  const inPlay = s.indexOf('🔥 IN-PLAY NEWS — top');
+  const fav = s.indexOf('data-home-section="favourites"');
+  const sig = s.indexOf('📡 SIGNALS (');
+  assert.ok(inPlay > 0 && fav > inPlay && sig > fav, 'order: In-Play → Favourites → Signals');
+  assert.equal(s.split('<FavouritesGrid />').length - 1, 1, 'shown once');
+});
