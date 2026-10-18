@@ -8,7 +8,7 @@
 //   • local missing, server has it           → restore
 // Nothing is ever deleted on either side by this code; every server write is kept in history (last 60 versions per key).
 import { USER_STATE_KEYS_CLIENT, NOTES_PREFIX, NOTES_BUNDLE } from './user-vault-keys';
-import { VAULT_MERGERS, VAULT_BASE_KEYS } from './chart-sync';
+import { VAULT_MERGERS, VAULT_BASE_KEYS, vaultMergeLost } from './chart-sync';
 
 const META_KEY = 'mc:vault:meta:v1';
 const DEVICE_KEY = 'mc:vault:device:v1';
@@ -102,7 +102,14 @@ export async function syncVaultOnce(): Promise<{ pushed: string[]; pulled: strin
         if (!g.ok) continue;
         const gj = await g.json();
         if (!gj.found) continue;
-        const dec = mergeDecision(unwrapVaultValue(local), unwrapVaultValue(gj.value), merger, VAULT_BASE_KEYS.has(key) ? readVaultBase(key) : undefined);
+        const baseV = VAULT_BASE_KEYS.has(key) ? readVaultBase(key) : undefined;
+        const dec = mergeDecision(unwrapVaultValue(local), unwrapVaultValue(gj.value), merger, baseV);
+        // zzz1078 (B03) — a limit reached during the merge: both copies are kept for recovery and the user is told
+        const lostMsg = vaultMergeLost(key, unwrapVaultValue(local), unwrapVaultValue(gj.value), baseV);
+        if (lostMsg) {
+          try { localStorage.setItem(`mc:vault:overflow:${key}`, JSON.stringify({ at: new Date().toISOString(), message: lostMsg, local: unwrapVaultValue(local), server: unwrapVaultValue(gj.value) })); } catch { /* quota */ }
+          window.dispatchEvent(new CustomEvent('mc:vault:overflow', { detail: { key, message: lostMsg } }));
+        }
         if (dec.changedLocal) {
           try { localStorage.setItem(`mc:vault:backup:${key}`, JSON.stringify({ at: new Date().toISOString(), value: local })); } catch { /* quota */ }
           writeLocal(key, { __raw: JSON.stringify(dec.merged) });

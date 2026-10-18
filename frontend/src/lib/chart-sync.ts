@@ -8,7 +8,7 @@
 import { sanitizeDrawings, type SavedDrawing } from './chart-math';
 import { CHART_LAYOUTS_KEY, mergeLayoutStores } from './chart-layouts';
 import { CHART_WATCHLISTS_KEY } from './chart-watchlist';
-import { mergeWatchlistStores } from './chart-watchlist-merge';
+import { mergeWatchlistStores, mergeWatchlistStoresDetailed, describeLost } from './chart-watchlist-merge';
 
 export const CHART_DRAWINGS_KEY = 'mc:chart-drawings:v1';
 
@@ -85,5 +85,11 @@ export const VAULT_MERGERS: Record<string, (local: unknown, server: unknown, bas
   // zzz1074 — three-way: needs the copy this device last synced (VAULT_BASE_KEYS), so a deletion is not undone by the merge
   [CHART_WATCHLISTS_KEY]: (l, s, b) => mergeWatchlistStores(l, s, b),
 };
+/** zzz1078 (B03) — what a merge could not keep (a list limit was reached), in plain words; null when everything fit. */
+export function vaultMergeLost(key: string, local: unknown, server: unknown, base?: unknown): string | null {
+  if (key !== CHART_WATCHLISTS_KEY) return null;
+  const r = mergeWatchlistStoresDetailed(local, server, base);
+  return r.lost.length ? describeLost(r.lost) : null;
+}
 /** zzz1074 — merged keys whose merge needs the last synced copy ("base"); the vault keeps it in mc:vault:base:<key>. */
 export const VAULT_BASE_KEYS: ReadonlySet<string> = new Set([CHART_WATCHLISTS_KEY]);
