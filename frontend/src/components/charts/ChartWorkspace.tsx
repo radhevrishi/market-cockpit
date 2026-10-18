@@ -38,7 +38,7 @@ import { useAutoLines } from './AutoLinesIndicator';
 import { OverlaySummary, useChartDisplay } from './OverlaySummary';
 import { readLegendPref, saveLegendPref, type OverlayId } from '@/lib/chart-display';
 import {
-  COLLAPSED_PANE_PX, analysisStale, barsNeeded, fitPaneHeights, isPaneCollapsed, legendCompact, paneBarsNeeded, readPaneCollapse, savePaneCollapse,
+  COLLAPSED_PANE_PX, analysisStale, barsNeeded, fitPaneHeights, isPaneCollapsed, legendCompact, paneBarsNeeded, readPaneCollapse, savePaneCollapse, setPanesCollapsed, paneMinFrac, readPaneMode, savePaneMode, type PaneMode,
   togglePaneCollapsed, transitionLabel, type LegendPref, type PaneCollapseStore,
 } from '@/lib/chart-readability';
 import { autoLinesOn, withAutoLines } from './auto-lines-view';
@@ -369,6 +369,9 @@ export default function ChartWorkspace() {
   const paneWantRef = useRef(new Map<string, number>());   // the height each pane asked for (its creator's setPaneOptions / a drag)
   const paneSetRef = useRef(new Map<string, number>());    // the height this page last gave it
   const [paneHandles, setPaneHandles] = useState<PaneHandle[]>([]);
+  // zzz1087 — "Price first" pane preset (price pane ≥ 70%) and collapse / expand all lower panes at once
+  const [paneMode, setPaneModeState] = useState<PaneMode>(() => readPaneMode());
+  const paneModeRef = useRef(paneMode);
   const placeHandles = useCallback(() => {
     const chart = chartRef.current, el = containerRef.current;
     if (!chart || !el) return;
@@ -402,7 +405,7 @@ export default function ChartWorkspace() {
     });
     if (reqs.length) {
       const axis = chart.getSize('x_axis_pane')?.height ?? 28;
-      const fit = fitPaneHeights(el.clientHeight, reqs, { axis });
+      const fit = fitPaneHeights(el.clientHeight, reqs, { axis, minFrac: paneMinFrac(paneModeRef.current) });
       for (const r of reqs) {
         const h = fit[r.id];
         if (h == null) continue;
@@ -421,6 +424,14 @@ export default function ChartWorkspace() {
     paneStoreRef.current = next;
     setPaneStore(next);
     savePaneCollapse(next);
+  }, []);
+  const setAllPanes = useCallback((collapsed: boolean) => {
+    const next = setPanesCollapsed(paneStoreRef.current, workingRef.current.id, paneHandles.map((h) => h.id), collapsed);
+    paneStoreRef.current = next; setPaneStore(next); savePaneCollapse(next);
+  }, [paneHandles]);
+  const togglePaneMode = useCallback(() => {
+    const m: PaneMode = paneModeRef.current === 'price' ? 'balanced' : 'price';
+    paneModeRef.current = m; setPaneModeState(m); savePaneMode(m); fitPanesRef.current();
   }, []);
   // collapsed panes are per layout: switching layouts (or collapsing one) refits
   useEffect(() => { paneStoreRef.current = paneStore; fitPanesRef.current(); }, [paneStore, L.working.id]);
@@ -1214,6 +1225,15 @@ export default function ChartWorkspace() {
               <span className="ct-spin" aria-hidden />{loadingWords.text}
             </div>
           )}
+          {/* zzz1087 — one control for all lower panes: Price first (price pane ≥ 70%) · collapse all / expand all */}
+          {paneHandles.length ? (() => { const allClosed = paneHandles.every((h) => h.collapsed); const top = Math.max(0, Math.min(...paneHandles.map((h) => h.top)) - 22); return (
+            <span className="ct-pane-all" data-testid="pane-all" style={{ top, right: paneHandles[0].right }}>
+              <button type="button" className="ct-pane-btn static" aria-pressed={paneMode === 'price'} data-testid="price-first" onClick={togglePaneMode}
+                title={paneMode === 'price' ? 'Price first is on: the price pane keeps at least 70% of the chart. Click for the normal split (45%).' : 'Price first: keep the price pane at least 70% of the chart; the lower panes share the rest.'}>{paneMode === 'price' ? '◉ Price first' : '○ Price first'}</button>
+              <button type="button" className="ct-pane-btn static" data-testid="panes-all" onClick={() => setAllPanes(!allClosed)}
+                title={allClosed ? 'Open every lower pane again' : 'Fold every lower pane to a thin strip (remembered for this layout)'}>{allClosed ? `▸ Expand ${paneHandles.length} panes` : `▾ Collapse ${paneHandles.length} panes`}</button>
+            </span>
+          ); })() : null}
           {/* zzz1045c — collapse / expand each lower pane (remembered per layout); the price pane always keeps its minimum height */}
           {paneHandles.map((h) => (
             <button key={h.id} type="button" className="ct-pane-btn" data-testid="pane-collapse" style={{ top: h.top, right: h.right }}

@@ -38,6 +38,7 @@ export default function ScreenPicker({ screens, builtInIds, currentId, currentNa
       </button>
       {open ? (
         <div className="mcss-pop" role="dialog" aria-label="Choose a screen" style={{ width: 'min(420px, 92vw)' }}>
+          <div className="mcss-dim" style={{ fontSize: 11.5, margin: '0 2px 4px' }}>☆ Star the screens you use most — they are listed first.</div>
           <input autoFocus className="mcss-input" style={{ width: '100%', boxSizing: 'border-box' }} placeholder={`Find a ${mkName(currentMarket)} screen`} aria-label="Find a screen" value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {
@@ -47,7 +48,7 @@ export default function ScreenPicker({ screens, builtInIds, currentId, currentNa
           <div ref={listRef} role="listbox" aria-label="Screens" onKeyDown={(e) => listKeys(e)} style={{ marginTop: 4 }}>
             {groups.map((g) => (
               <div key={g.id} role="group" aria-label={g.label}>
-                <div className="mcss-grp">{g.label} <span style={{ fontWeight: 400 }}>· {g.screens.length}</span></div>
+                <div className="mcss-grp" title={g.hint} data-family={g.id}>{g.label} <span style={{ fontWeight: 400 }}>· {g.screens.length}</span></div>
                 {g.screens.map((s) => (
                   <div key={s.id} style={{ display: 'flex', alignItems: 'center' }}>
                     <button type="button" role="option" aria-selected={s.id === currentId} className={`mcss-item${s.id === currentId ? ' cur' : ''}`} data-screen={s.id} onClick={() => pick(s.id)}>

@@ -15,8 +15,13 @@ import { ADD_GROUPS } from './AddFilterPanel';
 import { fieldMeta } from '@/lib/screener/field-meta';
 import { accExplainRow } from '@/lib/screener/acc-row';
 import { accLineTone, ACC_TONE_COLOR } from '@/lib/accumulation';
+import type { Fact } from '@/lib/screener/freshness';
 
-export default function CompanyDetail({ row, market, filters, exactOnly, review, onReview, chartHref, onChart, onPine, onClose, position }: {
+const FACT_COLOR: Record<Fact['tone'], string> = { ok: 'var(--ss-up)', warn: 'var(--ss-warn)', bad: 'var(--ss-down)', dim: 'var(--ss-ink-3)' };
+
+export default function CompanyDetail({ facts, row, market, filters, exactOnly, review, onReview, chartHref, onChart, onPine, onClose, position }: {
+  /** zzz1085 — price session · figures period · snapshot build */
+  facts?: Fact[];
   row: ScreenRow; market: ScreenMarket; filters: Filter[]; exactOnly: boolean; review: ReviewState; onReview: (s: ReviewState) => void;
   chartHref: string; onChart: (e: React.MouseEvent) => void; onPine: (e: React.MouseEvent) => void; onClose: () => void;
   /** "3 of 16" — the row's place in the result */
@@ -47,6 +52,11 @@ export default function CompanyDetail({ row, market, filters, exactOnly, review,
         <div className="mcss-dim" style={{ fontSize: 12, marginTop: 2 }} title={`Source: ${[row.sec, row.ind].filter(Boolean).join(' · ') || 'none'}\nTradingView sector ${map.note}`}>
           {row.tvSec || row.sec || 'Sector unknown'}{row.ind ? ` · ${row.ind}` : ''}
         </div>
+        {facts?.length ? (
+          <div data-freshness style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+            {facts.map((f) => <span key={f.label} title={f.title} data-tone={f.tone} style={{ fontSize: 11.5, lineHeight: '18px', padding: '1px 7px', borderRadius: 9, border: `1px solid color-mix(in srgb, ${FACT_COLOR[f.tone]} 40%, transparent)`, color: f.tone === 'ok' ? 'var(--ss-ink-2)' : FACT_COLOR[f.tone], whiteSpace: 'nowrap' }}><span aria-hidden style={{ color: FACT_COLOR[f.tone] }}>● </span><b style={{ fontWeight: 650 }}>{f.label}</b> {f.text}</span>)}
+          </div>
+        ) : null}
         <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
           <NavLink href={chartHref} className="mcss-btn primary sm" onClick={onChart}>Open chart</NavLink>
           <a href={`/pine-screener?from=stock&market=${market}`} className="mcss-btn sm" onClick={onPine} title="Opens the Pine Screener limited to this company">Pine Screener</a>

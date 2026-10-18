@@ -3,7 +3,46 @@
 import type { Screen } from './filters';
 import type { ScreenMarket } from './types';
 
-export interface PickerGroup { id: 'fav' | 'mine' | 'us' | 'in'; label: string; screens: Screen[] }
+export interface PickerGroup { id: string; label: string; hint?: string; screens: Screen[] }
+
+// zzz1086 — retest improvement 4: the built-in screens of the open market are listed in a few FAMILIES instead of one long list
+// (navigation only: screen IDs, rules, saved screens, favourites and links are untouched; no screen is merged or removed).
+export type StockFamilyId = 'start' | 'growth' | 'future' | 'momentum' | 'leaders' | 'volume' | 'short';
+export const STOCK_FAMILIES: ReadonlyArray<{ id: StockFamilyId; label: string; hint: string }> = [
+  { id: 'growth', label: 'Growth & quality', hint: 'Sales / profit growth, margins, Rule of 40, PEAD, balance sheet' },
+  { id: 'future', label: 'Future leaders', hint: 'Future NVDIA / Super Scalers recipes, IPO winners and the crash scenario' },
+  { id: 'leaders', label: 'Trend leaders', hint: 'Minervini, Qullamaggie and liquidity leaders — strong charts with growth' },
+  { id: 'momentum', label: 'Momentum & breakouts', hint: 'Gainers, breakouts, episodic pivots, all-time highs, RSI' },
+  { id: 'volume', label: 'Volume & accumulation', hint: 'Heavy buying read from price and volume' },
+  { id: 'short', label: 'Shorts & weakness', hint: 'Stage-analysis short set-ups' },
+  { id: 'start', label: 'Start points', hint: 'Every company, no or few rules — build your own screen from here' },
+];
+const STOCK_NAMED: Readonly<Record<string, StockFamilyId>> = {
+  'us-overall': 'start', 'in-reject': 'start',
+  'us-zachs': 'growth', 'in-zachs': 'growth', 'us-small-cap-crushed': 'growth', 'us-pead': 'growth', 'in-pead': 'growth', 'us-all-growth': 'growth',
+  'tv-rule-of-40': 'growth', 'tv-rule-of-40-in': 'growth', 'in-debt-reduction': 'growth', 'in-overall-good': 'growth', 'in-growth-margins': 'growth', 'in-growth-stocks': 'growth',
+  'us-future-nvda': 'future', 'us-future-nvda-india2': 'future', 'in-future-nvda-2': 'future', 'us-super-scalers-full': 'future', 'us-super-scalers-main': 'future',
+  'us-super-scalers': 'future', 'us-crash-nvda': 'future', 'in-ipo-winners': 'future',
+  'us-minervini': 'leaders', 'in-minervini': 'leaders', 'us-qullamaggie-leaders': 'leaders', 'in-qullamaggie-leaders': 'leaders', 'in-leaders-correction': 'leaders',
+  'us-liquidity-leaders': 'leaders', 'in-liquidity-leaders': 'leaders',
+  'us-daily-gainers': 'momentum', 'in-daily-gainers': 'momentum', 'us-weekly-gainer-usa': 'momentum', 'in-weekly-gainers': 'momentum', 'in-weekly-gainer-usa': 'momentum',
+  'us-momentum-bursts': 'momentum', 'us-breakout': 'momentum', 'in-breakout': 'momentum', 'us-episodic-pivot': 'momentum', 'in-episodic-pivot': 'momentum',
+  'us-bonde-ep': 'momentum', 'us-ath': 'momentum', 'in-rsi-55': 'momentum', 'in-rsi-m-over-w': 'momentum',
+  'us-volume-accumulation': 'volume', 'in-volume-accumulation': 'volume',
+  'us-stage-short': 'short', 'us-stage-ipo-shorts': 'short',
+};
+/** The family a built-in screen is listed under (always one): by id, else by words in its name, else Growth & quality. */
+export function stockFamilyOf(s: Pick<Screen, 'id' | 'name'>): StockFamilyId {
+  if (STOCK_NAMED[s.id]) return STOCK_NAMED[s.id];
+  const n = s.name.toLowerCase();
+  if (/short|stage 4|breakdown/.test(n)) return 'short';
+  if (/accumul|volume/.test(n)) return 'volume';
+  if (/minerv|qull|qual|leader/.test(n)) return 'leaders';
+  if (/gainer|breakout|pivot|momentum|\bath\b|rsi/.test(n)) return 'momentum';
+  if (/future|scaler|nvd|ipo/.test(n)) return 'future';
+  if (/overall|all companies|no filters/.test(n)) return 'start';
+  return 'growth';
+}
 export const FAV_SCREENS_KEY = 'mc:screener-fav-screens:v1';
 
 export function readFavScreens(): string[] {
@@ -39,9 +78,15 @@ export function pickerGroups(screens: readonly Screen[], builtInIds: ReadonlySet
   const groups: PickerGroup[] = [
     { id: 'fav', label: 'Favourites', screens: hit.filter((s) => fav.has(s.id)) },
     { id: 'mine', label: 'My screens', screens: hit.filter((s) => !builtInIds.has(s.id) && !fav.has(s.id)) },
-    { id: 'us', label: 'Built-in · USA', screens: hit.filter((s) => builtInIds.has(s.id) && s.market === 'US' && !fav.has(s.id)) },
-    { id: 'in', label: 'Built-in · India', screens: hit.filter((s) => builtInIds.has(s.id) && s.market === 'IN' && !fav.has(s.id)) },
   ];
+  const built = hit.filter((s) => builtInIds.has(s.id) && !fav.has(s.id));
+  if (market) {
+    // zzz1086 — one market open: its built-in screens by family
+    for (const f of STOCK_FAMILIES) groups.push({ id: `fam:${f.id}`, label: f.label, hint: f.hint, screens: built.filter((s) => stockFamilyOf(s) === f.id) });
+  } else {
+    groups.push({ id: 'us', label: 'Built-in · USA', screens: built.filter((s) => s.market === 'US') });
+    groups.push({ id: 'in', label: 'Built-in · India', screens: built.filter((s) => s.market === 'IN') });
+  }
   return groups.filter((g) => g.screens.length);
 }
 /** zzz1069 — how many visible (not hidden) screens the OTHER market has, for the picker's "switch market" line. */

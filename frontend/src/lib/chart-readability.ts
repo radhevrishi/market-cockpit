@@ -132,6 +132,28 @@ export function togglePaneCollapsed(s: PaneCollapseStore, layoutId: string, pane
   for (const k of keys.slice(0, Math.max(0, keys.length - MAX_LAYOUTS))) delete out[k];
   return out;
 }
+/** zzz1087 — collapse (or expand) every listed lower pane of one layout at once ("Collapse all lower panes"). */
+export function setPanesCollapsed(s: PaneCollapseStore, layoutId: string, paneIds: readonly string[], collapsed: boolean): PaneCollapseStore {
+  const cur = new Set(s[layoutId] || []);
+  for (const id of paneIds) { if (collapsed) cur.add(id); else cur.delete(id); }
+  const next = [...cur].slice(-MAX_PANES);
+  const out: PaneCollapseStore = {};
+  for (const [k, v] of Object.entries(s)) if (k !== layoutId) out[k] = v;
+  if (next.length) out[layoutId] = next;
+  const keys = Object.keys(out);
+  for (const k of keys.slice(0, Math.max(0, keys.length - MAX_LAYOUTS))) delete out[k];
+  return out;
+}
+
+/** zzz1087 — pane-height preset. 'balanced' = the price pane keeps ≥ 45% (the default); 'price' = PRICE FIRST: the price pane keeps
+ *  ≥ 70% and the open lower panes share the rest (each still ≥ MIN_PANE_PX). This browser only. */
+export type PaneMode = 'balanced' | 'price';
+export const PANE_MODE_KEY = 'mc:chart-pane-mode:v1';
+export const PRICE_FIRST_FRACTION = 0.7;
+export const paneMinFrac = (m: PaneMode) => (m === 'price' ? PRICE_FIRST_FRACTION : MIN_PRICE_FRACTION);
+export function readPaneMode(): PaneMode { try { return localStorage.getItem(PANE_MODE_KEY) === 'price' ? 'price' : 'balanced'; } catch { return 'balanced'; } }
+export function savePaneMode(m: PaneMode): void { try { localStorage.setItem(PANE_MODE_KEY, m); } catch { /* this visit only */ } }
+
 export function readPaneCollapse(): PaneCollapseStore {
   try { return parsePaneCollapse(localStorage.getItem(CHART_PANES_KEY)); } catch { return {}; }
 }

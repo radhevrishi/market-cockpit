@@ -136,6 +136,9 @@ kbd, .ct-kbd { display: inline-grid; place-items: center; min-width: 18px; heigh
   font-size: 11px; font-weight: 650; line-height: 1; cursor: pointer; border: 1px solid var(--mc-border-2); color: var(--mc-text-2);
   background: color-mix(in srgb, var(--mc-bg-0) 92%, transparent); }
 .ct-pane-btn:hover, .ct-pane-btn:focus-visible { color: var(--mc-text-0); border-color: var(--mc-accent); outline: none; }
+.ct-pane-all { position: absolute; z-index: 6; display: inline-flex; gap: 4px; }
+.ct-pane-btn.static { position: static; }
+.ct-pane-btn[aria-pressed="true"] { color: var(--mc-accent); border-color: var(--mc-accent); }
 .mc-scale-btn { min-width: 38px; height: 24px; padding: 0 8px; font-size: 12px; font-weight: 700; border-radius: 6px; cursor: pointer; letter-spacing: .01em;
   border: 1px solid var(--mc-border-2); background: color-mix(in srgb, var(--mc-bg-0) 94%, transparent); color: var(--mc-text-1); box-shadow: var(--ct-shadow); }
 .ct-ctx { min-width: 290px; }

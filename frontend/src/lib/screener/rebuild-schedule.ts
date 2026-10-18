@@ -58,6 +58,14 @@ export function nextRebuild(market: ScreenMarket, now: Date = new Date()): Date 
   return null;
 }
 
+/** zzz1085 — "16:45" when it is later today; "Mon 19 Oct, 16:45" on another day (the Sunday tooltip said "around 16:45" without
+ *  saying Monday). Local time of the viewer. */
+export function whenText(d: Date, now: Date = new Date()): string {
+  const hm = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  if (d.toDateString() === now.toDateString()) return hm;
+  return `${d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}, ${hm}`;
+}
+
 /** 'HH:MM' UTC. */
 export const hhmmUtc = (d: Date): string => d.toISOString().slice(11, 16);
 
@@ -68,7 +76,7 @@ export function refreshExplain(market: ScreenMarket, builtAt: Date | null, now: 
     'Refresh loads the stored snapshot again (quick). It does not rebuild the data.',
     builtAt ? `This snapshot was built ${builtAt.toLocaleString()}.` : 'Build time not known.',
     `${SCREENER_REBUILD_TEXT[market]}.`,
-    next ? `Next scheduled rebuild: about ${next.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} your time (${hhmmUtc(next)} UTC); a rebuild takes a few minutes.` : '',
+    next ? `Next scheduled rebuild: about ${whenText(next, now)} your time (${hhmmUtc(next)} UTC); a rebuild takes a few minutes.` : '',
   ].filter(Boolean).join('\n');
 }
 
@@ -78,10 +86,10 @@ export function nextFillText(market: ScreenMarket, now: Date = new Date()): stri
   const next = nextRebuild(market, now);
   const m = market === 'US' ? 'USA' : 'India';
   if (!next) return `filled by the next ${m} screener build`;
-  return `filled by the next ${m} screener build, about ${next.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} your time (${hhmmUtc(next)} UTC); a build reads as many companies as it can in a few minutes, the rest at the build after`;
+  return `filled by the next ${m} screener build, about ${whenText(next, now)} your time (${hhmmUtc(next)} UTC); a build reads as many companies as it can in a few minutes, the rest at the build after`;
 }
 /** Short form for a card: "next build ~20:45". */
 export function nextFillShort(market: ScreenMarket, now: Date = new Date()): string {
   const next = nextRebuild(market, now);
-  return next ? `not built yet · next build ~${next.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'not built yet';
+  return next ? `not built yet · next build ~${whenText(next, now)}` : 'not built yet';
 }

@@ -30,8 +30,13 @@ import AddFilterPanel from './AddFilterPanel';
 import ReviewBadge from './ReviewBadge';
 import CompanyDetail from './CompanyDetail';
 import ScreenCompare from './ScreenCompare';
-import { nextRebuild, refreshExplain } from '@/lib/screener/rebuild-schedule';
+import { nextRebuild, refreshExplain, whenText } from '@/lib/screener/rebuild-schedule';
 import { cellRuleLines } from '@/lib/screener/cell-rules';
+import { universeOptions, universeSet, applyUniverse, universeLine, readUniverse, writeUniverse } from '@/lib/screener/universe-scope';
+import { loadHoldings, localIndiaHoldings } from '@/lib/screener/portfolio-scope';
+import { getConvictionTickers } from '@/lib/conviction-beats';
+import { freshnessFacts, figuresOverdue } from '@/lib/screener/freshness';
+import { resultKey, type LatestResultIndex } from '@/lib/screener/latest-result';
 import {
   explainRow, naReason, closeConfirmed, stableOrder, exact, makeShortlist, cleanShortlists, diffShortlist, formulaImpact, changesSince, membership,
   FORMULA_VERSION, SHORTLISTS_KEY, SCREEN_RUNS_KEY, type Shortlist, type ScreenRun,
@@ -125,6 +130,8 @@ export default function StockScreener() {
   const togglePatCol = () => setPatCol((v) => { try { localStorage.setItem(PATCOL_KEY, v ? '0' : '1'); } catch { /* display preference only */ } return !v; });
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [detailT, setDetailT] = useState<string | null>(null);
+  // zzz1085 — the latest graded results, read once per market when a company's details are first opened (the filing check)
+  const [resIdx, setResIdx] = useState<Partial<Record<ScreenMarket, LatestResultIndex | 'error'>>>({});
   const [addFrom, setAddFrom] = useState<'scope' | 'selected'>('scope');
   const [showCoverage, setShowCoverage] = useState(false);
   const [showWhy, setShowWhy] = useState(false);
@@ -204,10 +211,41 @@ export default function StockScreener() {
   }, [rawRows]);
   const closeDayText = closeDay ? new Date(`${closeDay}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' }) : '';
   const rows = useMemo(() => (closeOnly ? rawRows.map(closeConfirmed) : rawRows), [rawRows, closeOnly]);
+  // zzz1083 — "Companies": all, or only one of the owner's lists (AND with the rules). Per market, this browser only.
+  const [universeBy, setUniverseBy] = useState<Record<ScreenMarket, string>>(() => ({ IN: readUniverse('IN'), US: readUniverse('US') }));
+  const universe = universeBy[market] || 'all';
+  const setUniverse = (id: string) => { setUniverseBy((p) => ({ ...p, [market]: id })); writeUniverse(market, id); };
+  const [standalone, setStandalone] = useState<string[]>([]);
+  const [cbList, setCbList] = useState<string[]>([]);
+  useEffect(() => {
+    const read = () => {
+      try { const a = JSON.parse(localStorage.getItem('mc_watchlist_tickers') || '[]'); setStandalone(Array.isArray(a) ? a.filter((x) => typeof x === 'string') : []); } catch { setStandalone([]); }
+      try { setCbList(Array.from(getConvictionTickers()).map(String)); } catch { setCbList([]); }
+    };
+    read();
+    const onStorage = (e: StorageEvent) => { if (!e.key || e.key === 'mc_watchlist_tickers' || e.key.startsWith('mc:conviction-beats')) read(); };
+    window.addEventListener('storage', onStorage); window.addEventListener('conviction-beats:updated', read); window.addEventListener('mc:vault:restored', read);
+    return () => { window.removeEventListener('storage', onStorage); window.removeEventListener('conviction-beats:updated', read); window.removeEventListener('mc:vault:restored', read); };
+  }, []);
+  const [holdingsBy, setHoldingsBy] = useState<Partial<Record<ScreenMarket, { tickers: string[]; error: string | null }>>>({});
+  const needHoldings = universe === 'pf' && !holdingsBy[market];
+  useEffect(() => {
+    if (!needHoldings) return;
+    const ctrl = new AbortController();
+    if (market === 'IN') { const local = localIndiaHoldings(); if (local.length) setHoldingsBy((p) => (p.IN ? p : { ...p, IN: { tickers: local, error: null } })); }
+    loadHoldings(market, ctrl.signal).then((h) => { if (!ctrl.signal.aborted) setHoldingsBy((p) => ({ ...p, [market]: { tickers: h.tickers, error: h.error } })); });
+    return () => ctrl.abort();
+  }, [needHoldings, market]);
+  const uSources = useMemo(() => ({ chartLists: watchlists ? watchlists.lists : null, standalone, portfolio: holdingsBy[market]?.tickers ?? null, portfolioError: holdingsBy[market]?.error ?? null, cb: cbList }), [watchlists, standalone, holdingsBy, market, cbList]);
+  const uOptions = useMemo(() => universeOptions(market, uSources), [market, uSources]);
+  const uSet = useMemo(() => universeSet(universe, market, uSources), [universe, market, uSources]);
+  const scoped = useMemo(() => applyUniverse(rows, uSet), [rows, uSet]);
+  const scopedRows = scoped.rows;
+  const uLine = universeLine(uSet, scoped, market);
   const valuationDropped = useMemo(() => (closeOnly ? rows.filter((r) => r.ccBasis === 'unavailable').length : 0), [rows, closeOnly]);
   const setSort = (s2: { key: string; dir: 1 | -1 }) => { setSortRaw(s2); writeViewState(screenId, { sort: s2 }); };
-  const result = useMemo(() => runScreen(rows, filters, new Date(), exactOnly), [rows, filters, exactOnly]);
-  const counts = useMemo(() => filterCounts(rows, filters, new Date(), exactOnly), [rows, filters, exactOnly]);
+  const result = useMemo(() => runScreen(scopedRows, filters, new Date(), exactOnly), [scopedRows, filters, exactOnly]);
+  const counts = useMemo(() => filterCounts(scopedRows, filters, new Date(), exactOnly), [scopedRows, filters, exactOnly]);
   // how many companies have each field yet (a field still filling shows a note on its filter)
   const known = useMemo(() => {
     const m = new Map<string, number>();
@@ -234,7 +272,7 @@ export default function StockScreener() {
   }, [result, sort]);
   // zzz969 — rows keep their places when new data arrives (the snapshot reloads every few minutes); "Re-sort now" re-orders
   const [resortTick, setResortTick] = useState(0);
-  const ctx = `${market}|${screenId}|${JSON.stringify(filters)}|${sort.key}|${sort.dir}|${exactOnly}|${closeOnly}|${resortTick}`;
+  const ctx = `${market}|${universe}|${screenId}|${JSON.stringify(filters)}|${sort.key}|${sort.dir}|${exactOnly}|${closeOnly}|${resortTick}`;
   const [frozen, setFrozen] = useState<{ ctx: string; keys: string[] } | null>(null);
   const ordered = useMemo(() => stableOrder(frozen && frozen.ctx === ctx ? frozen.keys : null, sorted, (r) => r.t), [sorted, ctx, frozen]);
   if (sorted.length && (!frozen || frozen.ctx !== ctx)) setFrozen({ ctx, keys: sorted.map((r) => r.t) });   // a new view: its own order
@@ -271,7 +309,7 @@ export default function StockScreener() {
   };
   /** zzz999 — "Open in Pine Screener": the companies the actions apply to go to the Pine Screener as its company list. */
   const openInPine = (e: React.MouseEvent, list: readonly ScreenRow[] = actRows, label = name) => {
-    const h = makeHandoff(market, label, list.map((r) => r.t));
+    const h = makeHandoff(market, uSet.set ? `${label} · ${uSet.label}` : label, list.map((r) => r.t));   // zzz1083 — the list scope rides along
     try { if (!h) throw new Error('empty'); sessionStorage.setItem(PINE_HANDOFF_KEY, JSON.stringify(h)); } catch { e.preventDefault(); setMsg('Could not hand the list over: browser storage is blocked.'); }
   };
   const pxVsMa = filters.some((f) => !f.off && (f.kind === 'cmp' || f.kind === 'near') && (f.key === 'px' || f.other === 'px'));
@@ -496,6 +534,17 @@ export default function StockScreener() {
   const showPatCol = (patternFilters.length > 0 || ((colView === 'technicals' || patCol) && hasPatternData));
   const fillingNote = filters.some((f) => filterKeys(f).some((k) => rows.length && !fieldOf(k)?.sparse?.[market] && (known.get(k) || 0) < rows.length * 0.5));
   const detailRow = detailT ? rows.find((r) => r.t === detailT) || null : null;
+  const nowDay = useMemo(() => new Date(), [snap]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const needRes = !!detailRow && !resIdx[market];
+  useEffect(() => {
+    if (!needRes) return;
+    const ctrl = new AbortController();
+    fetch(`/api/v1/pine-screener?market=${market}&results=1`, { cache: 'no-store', signal: ctrl.signal })
+      .then(async (r) => { const j = await r.json().catch(() => null); if (!r.ok || !j?.ok || !j.results || typeof j.results !== 'object') throw new Error('no results'); return j.results as LatestResultIndex; })
+      .then((idx) => setResIdx((p) => ({ ...p, [market]: idx })))
+      .catch(() => { if (!ctrl.signal.aborted) setResIdx((p) => ({ ...p, [market]: 'error' })); });
+    return () => ctrl.abort();
+  }, [needRes, market]);
   const detailIdx = detailRow ? narrowed.findIndex((r) => r.t === detailRow.t) : -1;
   const allShownTicked = shown.length > 0 && shown.every((r) => selected.has(r.t));
   const toggleRow = (t: string) => setSelected((cur) => { const n = new Set(cur); if (n.has(t)) n.delete(t); else n.add(t); return n; });
@@ -561,6 +610,11 @@ export default function StockScreener() {
         <span className="mcss-seg" role="group" aria-label="Market">
           {(['US', 'IN'] as const).map((m) => <button key={m} type="button" aria-pressed={market === m} title={m === market ? undefined : `Open your last ${m === 'US' ? 'USA' : 'India'} screen (use ⋯ → "Copy these rules to ${m === 'US' ? 'USA' : 'India'}" to carry this screen over)`} onClick={() => switchMarket(m)}>{m === 'US' ? '🇺🇸 USA' : '🇮🇳 India'}</button>)}
         </span>
+        <label className="mcss-dim" style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 12.5 }} title="Run this screen on every company, or only on one of your lists. A company must be in the list AND pass every rule.">Companies
+          <select data-universe value={uOptions.some((o) => o.id === universe) ? universe : 'all'} onChange={(e) => setUniverse(e.target.value)} className="mcss-input" style={{ height: 30, fontSize: 13, maxWidth: 240, borderColor: uSet.set ? C.amber : undefined }} aria-label="Companies to screen">
+            {uOptions.map((o) => <option key={o.id} value={o.id}>{o.label}{o.count != null ? ` (${o.count})` : ''}</option>)}
+          </select>
+        </label>
         <span className="pick"><ScreenPicker screens={screens} builtInIds={builtInIds} currentId={screenId} currentName={name} currentMarket={market} dirty={dirty} onPick={askSwitch} hidden={hiddenScreens} onRemove={removeScreen} onRestore={restoreScreen} onSwitchMarket={switchMarket} /></span>
         <button type="button" className={`mcss-btn${dirty ? ' primary' : ''}`} onClick={() => save(false)} title={dirty ? 'Save the filter changes into this screen' : 'Save the filters into this screen'}>Save{dirty ? ' •' : ''}</button>
         <div ref={topRef} style={{ position: 'relative' }}>
@@ -615,7 +669,7 @@ export default function StockScreener() {
           const sparse = keys.map((k) => fieldOf(k)?.sparse?.[market]).filter(Boolean).join(' · ');
           const filling = rows.length > 0 && !wrongMarket && !sparse && have < rows.length * 0.5;
           const pass = counts[i] ?? 0;
-          const tip = [f.off ? 'Paused — not applied. Click to change or turn back on.' : '', snap ? `${pass.toLocaleString('en-US')} of ${rows.length.toLocaleString('en-US')} companies pass this filter alone` : '', approx ? `Approximate — ${approx}` : '', sparse ? `${have} of ${rows.length} companies have this figure — ${sparse}` : '', wrongMarket ? 'Not available for this market' : '', filling ? `Data still filling: ${have} of ${rows.length} companies have this figure so far (the rest come in the next runs)` : '', 'Click to change'].filter(Boolean).join('\n');
+          const tip = [f.off ? 'Paused — not applied. Click to change or turn back on.' : '', snap ? `${pass.toLocaleString('en-US')} of ${scopedRows.length.toLocaleString('en-US')} companies${uSet.set ? ` in ${uSet.label}` : ''} pass this filter alone` : '', approx ? `Approximate — ${approx}` : '', sparse ? `${have} of ${rows.length} companies have this figure — ${sparse}` : '', wrongMarket ? 'Not available for this market' : '', filling ? `Data still filling: ${have} of ${rows.length} companies have this figure so far (the rest come in the next runs)` : '', 'Click to change'].filter(Boolean).join('\n');
           const [fName, fCond] = chipParts(f, filterLabel(f, market));
           return (
             <span key={i} className={`mcss-chip${editIdx === i ? ' editing' : ''}${f.off ? ' paused' : ''}${snap && !f.off && pass === 0 ? ' blocking' : ''}`} data-pass={pass}>
@@ -643,7 +697,7 @@ export default function StockScreener() {
       {/* ── data status: one line, details on request ──────────────────────────────────────────────────────────────── */}
       <div className="mcss-status">
         {builtAt ? <span className={`live${fresh ? '' : ' old'}`} title={refreshText}>Data built {builtAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{builtAt.toDateString() !== new Date().toDateString() ? `, ${builtAt.toLocaleDateString([], { day: 'numeric', month: 'short' })}` : ''}</span> : <span aria-busy={!err}>{err ? 'No data' : 'Loading…'}</span>}
-        {nextBuild ? <><span className="dot" /><span title={refreshText} data-next-rebuild>Next rebuild ~{nextBuild.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></> : null}
+        {nextBuild ? <><span className="dot" /><span title={refreshText} data-next-rebuild>Next rebuild ~{whenText(nextBuild)}</span></> : null}
         {snap ? <><span className="dot" /><span title={intradayRows ? `${intradayRows} companies were read during today's trading session` : `Every price is a completed-session close${closeDay ? ` (most from ${closeDay})` : ''}`}>{intradayRows ? (closeOnly ? 'Closing prices' : 'Quotes during session') : `Last close${closeDayText ? ` ${closeDayText}` : ''}`}</span></> : null}
         {latestQ ? <><span className="dot" /><span>Figures to {latestQ}</span></> : null}
         {snap ? <><span className="dot" /><button type="button" className="mcss-link" aria-expanded={showCoverage} onClick={() => setShowCoverage((v) => !v)}>Coverage details {showCoverage ? '▴' : '▾'}</button></> : null}
@@ -656,6 +710,7 @@ export default function StockScreener() {
         </label>
         <button type="button" className="mcss-btn sm" disabled={loading} onClick={() => setRefresh((v) => v + 1)} title={refreshText} aria-label={err ? 'Retry loading the stored snapshot' : 'Reload the stored snapshot (does not rebuild the data)'}>{loading ? 'Refreshing…' : err ? 'Retry' : 'Refresh'}</button>
       </div>
+      {uLine ? <div className="mcss-warn" data-universe-line style={{ color: uSet.error ? C.red : C.amber }}>◎ {uLine}{uSet.error ? ` (${uSet.error})` : ''} <button type="button" className="mcss-btn sm" onClick={() => setUniverse('all')}>Screen all companies</button></div> : null}
       {err ? <div role="alert" className="mcss-note" style={{ color: C.red, borderColor: 'color-mix(in srgb, var(--ss-down) 35%, transparent)', background: 'var(--ss-down-tint)' }}>{err}{snap ? ' — showing the last loaded snapshot' : ''}</div> : null}
       {intradayLine ? <div className="mcss-warn" style={{ color: closeOnly ? C.green : C.amber }} title={intradayTip}>{closeOnly ? '◉' : '◌'} {intradayLine}</div> : null}
       {fillingNote ? <div className="mcss-warn">⏳ marks a figure still being filled in (read a slice at a time) — fewer companies than TradingView can pass it until the reads finish. Hover a filter for how many have it.</div> : null}
@@ -733,7 +788,7 @@ export default function StockScreener() {
       {/* ── results: toolbar · readout · selection · table ─────────────────────────────────────────────────────────── */}
       <section className="mcss-frame" aria-label="Results">
         <div className="mcss-toolbar">
-          <span className="mcss-count" aria-live="polite">{snap ? <><span className="n">{result.length}</span>{` of ${rows.length} companies match`}</> : err ? 'No data' : 'Loading…'}</span>
+          <span className="mcss-count" aria-live="polite">{snap ? <><span className="n">{result.length}</span>{uSet.set ? ` of ${scopedRows.length} in ${uSet.label} match` : ` of ${rows.length} companies match`}</> : err ? 'No data' : 'Loading…'}</span>
           {snap ? <span className="mcss-dim" style={{ fontSize: 12.5 }} data-testid="result-counts">{countsLine(sCounts, searching)}</span> : <span aria-busy="true" className="mcss-dim">Loading counts…</span>}
           {searching ? (
             <label className="mcss-dim" style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 12.5 }} title="Which companies Copy tickers, Download CSV, Save shortlist and Add matches act on">Actions apply to
@@ -899,6 +954,7 @@ export default function StockScreener() {
                           <NavLink href={chartHref(r)} onClick={chartClick(r)} className="co" title="Open the chart — Next / Previous on the chart step through these results in this order">{r.t}</NavLink>
                           <button type="button" data-detail={r.t} className={`mcss-name${density === 'compact' ? ' inline' : ''}`} onClick={() => setDetailT(detailT === r.t ? null : r.t)} aria-expanded={detailT === r.t}
                             title="Show this company's figures, the filter checks and links">{r.n || 'Details'}</button>
+                          {(() => { const due = figuresOverdue(r.q, market, nowDay); return due ? <span data-figs-old title={`Figures are to ${r.q}; the next result was normally out by ${due}. Open the details to check it against the result files.`} style={{ marginLeft: 5, fontSize: 10.5, color: 'var(--ss-warn)', whiteSpace: 'nowrap' }}>⧗ {r.q}</span> : null; })()}
                         </div>
                       </div>
                     </td>
@@ -955,7 +1011,7 @@ export default function StockScreener() {
       </section>
       {pxDiffCount ? <div className="mcss-warn" title="Moving averages, RSI and patterns are worked out from the daily bars (scan close); the Price column is the latest quote, which can come from another source. Price-vs-average rules compare the quote.">† {pxDiffCount} matches: latest quote differs from the scan close the averages were read from</div> : null}
       {detailRow ? (
-        <CompanyDetail row={detailRow} market={market} filters={filters} exactOnly={exactOnly} review={reviewStates[reviewKey(market, detailRow.t)] || 'unreviewed'} onReview={(st) => setReview(detailRow.t, st)}
+        <CompanyDetail facts={freshnessFacts(detailRow, market, snap?.builtAt || null, new Date(), resIdx[market] && resIdx[market] !== 'error' ? (resIdx[market] as LatestResultIndex)[resultKey(detailRow.t)] : null, !!resIdx[market] && resIdx[market] !== 'error')} row={detailRow} market={market} filters={filters} exactOnly={exactOnly} review={reviewStates[reviewKey(market, detailRow.t)] || 'unreviewed'} onReview={(st) => setReview(detailRow.t, st)}
           chartHref={chartHref(detailRow)} onChart={chartClick(detailRow)} onPine={(e) => openInPine(e, [detailRow], `${name}: ${detailRow.t}`)}
           onClose={() => { const t = detailRow.t; setDetailT(null); requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-detail="${CSS.escape(t)}"]`)?.focus({ preventScroll: true })); }}
           position={detailIdx >= 0 ? `${detailIdx + 1} of ${narrowed.length}` : 'not in the result'} />

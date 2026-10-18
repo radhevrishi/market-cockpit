@@ -90,7 +90,7 @@ export async function GET(req: Request) {
   // zzz1008 (item 5) — timeframe-specific coverage (stale / rebuilding, too little history, provisional, rejected data) is no longer a
   // market-wide note: the page states it for the SELECTED timeframes within the current list, in that timeframe's own units
   // (lean.coverage carries the counts per timeframe). Only market-wide facts stay here.
-  if (lean.pxConflicts) notes.push(`${lean.pxConflicts} companies show a latest quote more than 2% from the close the patterns were read from (different price sources) — pattern distances use the scan close; the quote distance is shown apart.`);
+  if (lean.pxConflicts) notes.push(`Across the full ${market === 'IN' ? 'India' : 'USA'} universe (${lean.total} companies): ${lean.pxConflicts} companies show a latest quote more than 2% from the close the patterns were read from (different price sources) — pattern distances use the scan close; the quote distance is shown apart.`);
   const body = JSON.stringify({ ok: true, market, builtAt: found.builtAt, ...lean, building, notes });
   // keyed by the build state AFTER this request's kickBuild, so the next request finds it
   const finalKey = `${key}|${found.builtAt}|${building ? 'b' : ''}`;

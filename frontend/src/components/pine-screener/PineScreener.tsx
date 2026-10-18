@@ -36,6 +36,7 @@ import {
   type PineHandoff, type Workflow, type SetupCard, type PortfolioMode,
 } from '@/lib/screener/pine-view';
 import { loadHoldings, localIndiaHoldings } from '@/lib/screener/portfolio-scope';
+import { scopedNotes } from '@/lib/screener/scope-notes';   // zzz1084 — warnings say which companies they count
 import { pollWhenVisible } from '@/lib/client-fetch';
 import { useWorkspaceLight, workspaceThemeClass } from '@/lib/workspace-theme';
 import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
@@ -1159,7 +1160,7 @@ export default function PineScreener() {
                 </div>
               ) : null}
               {watchlistSaveError ? <div role="alert" style={{ color: C.amber }}>{watchlistSaveError} <button type="button" className="pnx-btn" onClick={retryWatchlistSave}>Retry watchlist save</button></div> : null}
-              {notScanned || snap?.notes.length || tfWarn.length ? <div data-testid="scan-notes" style={{ fontSize: 12.5, color: C.amber, display: 'grid', gap: 2 }}>{[...(snap?.notes.length ? snap.notes : notScanned ? ['Chart patterns are read during the screener build; the next build adds them.'] : []), ...tfWarn].map((n, i) => <div key={i}>⏳ {n}</div>)}</div> : null}
+              {notScanned || snap?.notes.length || tfWarn.length ? <div data-testid="scan-notes" style={{ fontSize: 12.5, color: C.amber, display: 'grid', gap: 2 }}>{[...(snap?.notes.length ? scopedNotes(snap.notes, rows, listTickers, scopeName, market) : notScanned ? ['Chart patterns are read during the screener build; the next build adds them.'] : []), ...tfWarn].map((n, i) => <div key={i}>⏳ {n}</div>)}</div> : null}
               {/* zzz994 (MC-07) — never "next build fills it" for a figure this page cannot receive */}
               {unsupported.length || pending.length || unscannedTfs.length || (notScanned && q.need !== 'any') ? (
                 <div role="status" className="pnx-callout" data-tone="warn">
