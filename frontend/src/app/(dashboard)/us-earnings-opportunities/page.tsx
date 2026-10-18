@@ -942,7 +942,7 @@ export default function UsEarningsOpportunitiesPage() {
   };
 
   return (
-    <div style={{ padding: '20px', maxWidth: 1500, margin: '0 auto' }}>
+    <div style={{ padding: '20px clamp(16px, 2.2vw, 36px)', maxWidth: 1880, margin: '0 auto' }}>   {/* zzz1072 — same wider frame as India */}
       {/* ── header ── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
         <Star className="w-5 h-5" style={{ color: '#F59E0B' }} />

@@ -1966,7 +1966,9 @@ export default function EarningsOpportunitiesPage() {
   })();
 
   return (
-    <div className="mc-flow-mobile" style={{ padding: '20px', maxWidth: 1500, margin: '0 auto' }}>
+    <div className="mc-flow-mobile" style={{ padding: '20px clamp(16px, 2.2vw, 36px)', maxWidth: 1880, margin: '0 auto' }}>
+      {/* zzz1072 — wider frame (was a fixed 1500px column, which left wide empty bands on large screens): up to 1880px with
+          side margins that scale with the screen, so the cards use most of the width but never touch the edges. */}
       {/* zzz981 — the page now uses the US Earnings Opportunities frame: a centred
           1500px column, a title row with pill badges, a grey subtitle, one
           bordered controls bar, then the tier / filter chips. Every India
@@ -1974,7 +1976,7 @@ export default function EarningsOpportunitiesPage() {
       {/* PATCH 0557 — backend-degraded banner. */}
       <DegradedBanner />
       {/* ── Header ──────────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
         <Star className="w-5 h-5" style={{ color: '#F59E0B' }} />
         <h1 style={{ fontSize: 'var(--mc-text-h3)', fontWeight: 800, color: 'var(--mc-text-0)', margin: 0 }}>Earnings Opportunities</h1>
         <span style={pillBadge()}>NSE · BSE</span>
@@ -2013,6 +2015,15 @@ export default function EarningsOpportunitiesPage() {
               </span>
             );
           })()}
+          {/* zzz1072 — the description sits on the title line (one compact row), "How it works" beside it. */}
+          <span style={{ color: 'var(--mc-text-3)', fontSize: 12.5, lineHeight: 1.4 }}>
+            Filed results graded into{' '}
+            <strong style={{ color: 'var(--mc-warn)' }}>BLOCKBUSTER</strong> · <strong style={{ color: 'var(--mc-bullish)' }}>STRONG</strong> · <strong style={{ color: 'color-mix(in srgb, #FACC15 60%, var(--mc-text-1))' }}>MIXED</strong> · <strong style={{ color: 'var(--mc-bearish)' }}>AVOID</strong>
+          </span>
+          <button onClick={() => setShowAbout((s) => !s)} aria-expanded={showAbout}
+            style={{ ...btn(showAbout), padding: '2px 10px' }}>
+            How it works {showAbout ? '▴' : '▾'}
+          </button>
           {/* PATCH 0698 — IST market-hours-aware label. During 09:15-15:30 IST
               (Mon-Fri) the pipeline is actively polling; outside those hours
               honestly say 'Market closed · historical data only' rather than
@@ -2032,14 +2043,7 @@ export default function EarningsOpportunitiesPage() {
             );
           })()}
       </div>
-      <p style={{ color: 'var(--mc-text-3)', fontSize: 13, margin: '0 0 16px', lineHeight: 1.55, maxWidth: 980 }}>
-        Yesterday&apos;s earnings, scored overnight — find the exceptional setups before the market opens.
-        Every Indian filing graded into one of four conviction tiers — from <strong style={{ color: 'var(--mc-warn)' }}>BLOCKBUSTER</strong> through <strong style={{ color: 'var(--mc-bullish)' }}>STRONG</strong>, <strong style={{ color: 'color-mix(in srgb, #FACC15 60%, var(--mc-text-1))' }}>MIXED</strong>, and <strong style={{ color: 'var(--mc-bearish)' }}>AVOID</strong>.{' '}
-        <button onClick={() => setShowAbout((s) => !s)} aria-expanded={showAbout}
-          style={{ ...btn(showAbout), padding: '2px 10px' }}>
-          How it works {showAbout ? '▴' : '▾'}
-        </button>
-      </p>
+
       {showAbout && (
             <div style={{ ...panel(), fontSize: 13, color: 'var(--mc-text-3)', lineHeight: 1.7 }}>
               {/* zzz227 — exact grading rules, mirrored from the grader code so the
