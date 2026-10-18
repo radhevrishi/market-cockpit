@@ -43,6 +43,7 @@ import { standaloneSource } from '@/lib/watchlist-compare';
 import { indexAverages, pctFrom, screenerKey, type AvgRow } from '@/lib/watchlist-averages';
 import { quoteTimeOf, quoteTimeSummary, unresolvedSymbols, tradedValue, buildReview, changesSinceReview, loadReview, saveReview, DEFAULT_REVIEW_THRESHOLD, type ReviewSnapshot } from '@/lib/watchlist-review';
 import { ComparePanel } from './ComparePanel';
+import { parseListSymbol, resolveListQuote } from '@/lib/instrument-id';   // zzz1076 (B01)
 import { fmtClock } from './components';
 import nextDynamic from 'next/dynamic';
 import { chartListOptions } from '@/lib/alerts/chart-lists';
@@ -348,8 +349,14 @@ export default function WatchlistsPage() {
       const bulkQuotes = [...india, ...us];
 
       // Step 2: Find tickers NOT in bulk response
-      const bulkTickers = new Set(bulkQuotes.map(q => q.ticker));
-      const missingTickers = tickers.filter(t => !bulkTickers.has(t));
+      const bulkTickers = new Set(bulkQuotes.map(q => `${q.market || 'IN'}:${q.ticker}`));
+      // zzz1076 (B01) — a "US:X" name is never sent to the NSE single-quote fallback; a bare name is missing only when
+      // neither market has it
+      const missingTickers = tickers.filter(t => {
+        const i = parseListSymbol(t);
+        if (i.m === 'US') return false;
+        return !bulkTickers.has(`IN:${i.t}`) && (i.m === 'IN' || !bulkTickers.has(`US:${i.t}`));
+      }).map(t => parseListSymbol(t).t);
 
       // Step 3: Fetch individual quotes for missing tickers (small/micro-cap)
       let allQuotes = bulkQuotes;
@@ -435,15 +442,18 @@ export default function WatchlistsPage() {
   }, [avgKey]);
   const watchlistItems = useMemo(() => {
     return tickers.map(ticker => {
-      const norm = normalize(ticker);
-      const quote = quotes.find(q => normalize(q.ticker) === norm);
+      // zzz1076 (B01) — by instrument: "US:HAL" takes only the USA quote, "NSE:HAL" only the India one; a bare name quoted
+      // in BOTH markets shows the India quote (as before) and is marked "market unclear"
+      const res = resolveListQuote(ticker, quotes, normalize);
+      const quote = res.quote;
       return {
         ticker,
+        marketAmbiguous: res.ambiguous,
         company: quote?.company || (quote as any)?.name || ticker, // PATCH 0691
         sector: quote?.sector || '—', // PATCH 0691
         // zzz1000 (CW-01) — unknown numbers stay null ('—' on screen, blank in the export); a real 0% change stays 0
         ...quoteNumbers(quote),
-        market: quote?.market,
+        market: res.ambiguous ? quote?.market : (res.market ?? quote?.market),
         flag: flagView(flagState, ticker).flag || null,
         flagStatus: flagView(flagState, ticker).status,   // zzz1044c (F09) — saving / not saved
         flagFailed: flagView(flagState, ticker).failedFlag,
@@ -487,7 +497,8 @@ export default function WatchlistsPage() {
   }, [watchlistItems]);
   const unresolved = useMemo(() => (quotes.length ? unresolvedSymbols(watchlistItems) : []), [quotes.length, watchlistItems]);
   const quoteSummary = useMemo(() => quoteTimeSummary(watchlistItems.map((i) => quoteTimeOf({ price: i.price, quoteTime: i.quoteTime, priceSource: i.priceSource, staleEOD: i.staleEOD }, fmtClock)), fmtClock), [watchlistItems]);
-  const marketOf = useCallback((t: string) => watchlistItems.find((i) => i.ticker === t)?.market, [watchlistItems]);
+  // zzz1076 (B01) — the market a name was priced in; undefined when it is not known or quoted in both markets (never guessed)
+  const marketOf = useCallback((t: string) => { const i = watchlistItems.find((x) => x.ticker === t); return i && !(i as any).marketAmbiguous ? i.market : undefined; }, [watchlistItems]);
   const sourceLine = standaloneSource({ ...listOrigin, savedAt: listSync.savedAt ?? null }, fmtClock);
 
   // Sort items
@@ -527,7 +538,9 @@ export default function WatchlistsPage() {
       .toUpperCase()
       .split(/[\s,;\n\r]+/)
       .map(t => t.replace(/^(NSE|BSE|BOM|MCX):/, '').trim())
-      .filter(t => t.length > 0 && t.length < 30 && /^[A-Z0-9&-]+$/.test(t));
+      // zzz1076 (B01) — a USA prefix keeps the market: NYSE:HAL / NASDAQ:X / AMEX:X / US:X are stored as "US:X"
+      .map(t => t.replace(/^(NYSE|NASDAQ|AMEX|ARCA|US):/, 'US:'))
+      .filter(t => t.length > 0 && t.length < 33 && /^(US:)?[A-Z0-9&.-]+$/.test(t));
 
     if (parsed.length === 0) {
       toast.error('No valid ticker symbols found');

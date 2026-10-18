@@ -218,7 +218,12 @@ export function WatchlistTable({
                 </td>
                 {/* zzz967 (WL-02) — the ticker opens the same instrument on Charts (India list → NSE) */}
                 <td>
-                  <a className="wlp-tk" href={`/charts?m=${item.market === 'US' ? 'US' : 'IN'}&t=${encodeURIComponent(item.ticker)}`} title={`Open ${item.ticker} on Charts`} aria-label={`Open ${item.ticker} chart`}>{item.ticker}<span aria-hidden className="go">↗</span></a>
+                  <a className="wlp-tk" href={`/charts?m=${item.market === 'US' ? 'US' : 'IN'}&t=${encodeURIComponent(item.ticker.replace(/^(US|NSE|BSE|BOM|NYSE|NASDAQ|AMEX):/, ''))}`} title={`Open ${item.ticker} on Charts`} aria-label={`Open ${item.ticker} chart`}>{item.ticker}<span aria-hidden className="go">↗</span></a>
+                  {(item as any).marketAmbiguous && (
+                    /* zzz1076 (B01) — the same symbol trades in India and the USA; the India quote is shown */
+                    <span className="wlp-mkt-q" title={`${item.ticker} is listed in India and the USA (different companies). The India quote is shown. To use the USA one, remove it and add US:${item.ticker}; to keep India, add NSE:${item.ticker}.`}
+                      style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 700, color: 'var(--mc-warn)', border: '1px solid currentColor', borderRadius: 4, padding: '0 4px' }}>India or USA?</span>
+                  )}
                   {item.reviewPct != null && (
                     <span className={`wlp-rv ${item.reviewPct >= 0 ? 'up' : 'down'}`} title="Price change since you last pressed “Mark reviewed”">
                       {item.reviewPct >= 0 ? '+' : ''}{item.reviewPct.toFixed(1)}% since review

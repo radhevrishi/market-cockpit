@@ -8,8 +8,9 @@
 // Nothing here copies anything by itself. compareWithChartList() builds a preview; the page copies only what the user
 // clicks. Symbols are never remapped: a BSE row stays BSE, an NSE symbol stays NSE, order is kept, and sections linked
 // to My Book are left out of the comparison and never written to (holdings are not touched).
-import { IN_TICKER_RE, US_TICKER_RE, type Market } from './chart-math';
+import { type Market } from './chart-math';
 import { addItem, findItem, itemKey, updateList, type WlItem, type WlList, type WlStore } from './chart-watchlist';
+import { parseListSymbol, listSymbolOf, instrumentKey, validFor } from './instrument-id';
 
 // ── where each list comes from ───────────────────────────────────────────────
 export type ChartListSourceKind = 'book' | 'chart' | 'telegram-name';
@@ -42,14 +43,10 @@ export function standaloneSource(opts: { readFrom: 'server' | 'browser-copy' | n
 }
 
 // ── compare ──────────────────────────────────────────────────────────────────
-/** True for a BSE row whose symbol is a letter symbol (BSE:RELIANCE). The /watchlists list has no exchange field, so it
- *  cannot hold this row without turning it into the NSE symbol — that would be a remap, so it is never copied. */
-const isBseLetterSymbol = (it: WlItem) => it.m === 'IN' && it.x === 'BSE' && !/^\d{6}$/.test(it.t);
 /** The matching key: a plain symbol, upper case, without an exchange prefix / suffix. BSE letter rows keep "BSE:". */
 export function compareKey(raw: string): string {
   return String(raw || '').trim().toUpperCase().replace(/^(NSE|BSE|BOM|NASDAQ|NYSE|AMEX):/, '').replace(/\.(NS|BO)$/, '');
 }
-const chartKey = (it: WlItem) => (isBseLetterSymbol(it) ? `BSE:${it.t}` : it.t);
 
 export interface ChartSideRow { item: WlItem; symbol: string; copyable: boolean; reason?: string }
 export interface CompareResult {
@@ -57,6 +54,9 @@ export interface CompareResult {
   onlyChart: ChartSideRow[];         // in the chart list, not in /watchlists (chart order: section by section)
   both: string[];                    // in both (standalone order)
   bookSectionsLeftOut: number;       // names in sections linked to My Book, not compared
+  /** zzz1076 (B01) — /watchlists names whose market is not known while the chart list has that symbol (or has it in
+   *  both markets): never matched by text, never copied — write NSE:X or US:X to say which */
+  unresolved: Array<{ symbol: string; reason: string }>;
 }
 
 /** The chart list's rows in screen order, without the sections linked to My Book. */
@@ -69,36 +69,67 @@ export function chartRowsForCompare(list: WlList): { items: WlItem[]; bookLeftOu
   return { items, bookLeftOut };
 }
 
-export function compareWithChartList(standalone: string[], list: WlList): CompareResult {
+const keyOfItem = (it: WlItem) => instrumentKey(it.m, it.x, it.t);
+const marketWord = (m: Market) => (m === 'IN' ? 'India' : 'USA');
+
+/** zzz1076 (B01) — compare by INSTRUMENT (market + exchange + symbol), not by text: NSE:HAL ≠ NYSE:HAL. A /watchlists
+ *  name without a prefix takes the market its quote came from (`marketOf`, from the page); without `marketOf` it matches
+ *  a chart row only when the chart list has that symbol in exactly one market. Unknown / two-market names are listed
+ *  under `unresolved` and never matched. */
+export function compareWithChartList(standalone: string[], list: WlList, marketOf?: (t: string) => Market | undefined): CompareResult {
   const { items, bookLeftOut } = chartRowsForCompare(list);
-  const chartKeys = new Set(items.map(chartKey));
-  const standaloneKeys = new Set(standalone.map(compareKey));
-  const onlyStandalone: string[] = []; const both: string[] = [];
+  const chartKeys = new Set(items.map(keyOfItem));
+  const marketsOfSymbol = new Map<string, Set<Market>>();
+  for (const it of items) { if (!marketsOfSymbol.has(it.t)) marketsOfSymbol.set(it.t, new Set()); marketsOfSymbol.get(it.t)!.add(it.m); }
+  const onlyStandalone: string[] = []; const both: string[] = []; const unresolved: CompareResult['unresolved'] = [];
+  const standaloneKeys = new Set<string>();
   const seen = new Set<string>();
-  for (const t of standalone) {
-    const k = compareKey(t);
-    if (!k || seen.has(k)) continue;
-    seen.add(k);
-    (chartKeys.has(k) ? both : onlyStandalone).push(t);
+  for (const raw of standalone) {
+    const inst = parseListSymbol(raw);
+    if (!inst.t) continue;
+    let m = inst.m ?? (marketOf ? marketOf(raw) : undefined) ?? null;
+    const chartMarkets = marketsOfSymbol.get(inst.t);
+    if (!m && !marketOf && chartMarkets && chartMarkets.size === 1) m = [...chartMarkets][0];
+    if (!m) {
+      const k = `?:${inst.t}`;
+      if (seen.has(k)) continue; seen.add(k);
+      if (chartMarkets && chartMarkets.size) {
+        unresolved.push({ symbol: raw, reason: chartMarkets.size > 1
+          ? `${inst.t} is in the chart list for both India and USA — write NSE:${inst.t} or US:${inst.t} to say which`
+          : `market of ${inst.t} not known here (quoted in both markets or not quoted) — write NSE:${inst.t} or US:${inst.t}` });
+      } else onlyStandalone.push(raw);
+      continue;
+    }
+    const k = instrumentKey(m, inst.x, inst.t);
+    if (seen.has(k)) continue;
+    seen.add(k); standaloneKeys.add(k);
+    (chartKeys.has(k) ? both : onlyStandalone).push(raw);
   }
+  const unresolvedSyms = new Set(unresolved.map((u) => parseListSymbol(u.symbol).t));
   const onlyChart: ChartSideRow[] = [];
   const seenChart = new Set<string>();
   for (const it of items) {
-    const k = chartKey(it);
+    const k = keyOfItem(it);
     if (seenChart.has(k) || standaloneKeys.has(k)) continue;
     seenChart.add(k);
-    if (isBseLetterSymbol(it)) onlyChart.push({ item: it, symbol: `BSE:${it.t}`, copyable: false, reason: 'BSE letter symbol: the Watchlists list has no exchange field, so it would turn into the NSE symbol' });
-    else onlyChart.push({ item: it, symbol: it.m === 'US' ? it.t : it.x === 'BSE' ? `BSE:${it.t}` : it.t, copyable: true });
+    const text = listSymbolOf(it);
+    const display = it.m === 'US' ? `US:${it.t}` : it.x === 'BSE' ? `BSE:${it.t}` : it.t;
+    if (text == null) onlyChart.push({ item: it, symbol: display, copyable: false, reason: 'BSE letter symbol: the Watchlists list has no exchange field, so it would turn into the NSE symbol' });
+    else if (unresolvedSyms.has(it.t)) onlyChart.push({ item: it, symbol: display, copyable: false, reason: `this list already has ${it.t} without a market — say which market it is first (NSE:${it.t} or US:${it.t})` });
+    else onlyChart.push({ item: it, symbol: display, copyable: true });
   }
-  return { onlyStandalone, onlyChart, both, bookSectionsLeftOut: bookLeftOut };
+  return { onlyStandalone, onlyChart, both, bookSectionsLeftOut: bookLeftOut, unresolved };
 }
 
-/** Names to add to /watchlists, in chart order. A BSE number code is added as the code (as the Watchlists add box does). */
+/** Names to add to /watchlists, in chart order. zzz1076 (B01): a USA row is written "US:HAL" so it stays a USA company
+ *  (a bare "HAL" would read as the NSE one); a BSE number code is added as the code (as the Watchlists add box does). */
 export function planCopyToStandalone(rows: ChartSideRow[]): string[] {
   const out: string[] = []; const seen = new Set<string>();
   for (const r of rows) {
-    if (!r.copyable || seen.has(r.item.t)) continue;
-    seen.add(r.item.t); out.push(r.item.t);
+    if (!r.copyable) continue;
+    const text = listSymbolOf(r.item);
+    if (!text || seen.has(text)) continue;
+    seen.add(text); out.push(text);
   }
   return out;
 }
@@ -106,8 +137,9 @@ export function planCopyToStandalone(rows: ChartSideRow[]): string[] {
 export interface CopyToChartResult { store: WlStore; added: string[]; skipped: Array<{ symbol: string; reason: string }>; sectionName: string | null }
 
 /** Add /watchlists names to a chart list: into its last section that is not linked to My Book (never a book section).
- *  `marketOf` says which market a name was quoted in (US or India); unknown → India. Nothing is remapped: the symbol is
- *  kept as typed; a 6-digit BSE code stays a code. */
+ *  zzz1076 (B01): the market comes from the name's prefix (NSE:/BSE:/US:/NYSE:…), else from `marketOf` (the market its
+ *  quote came from). Unknown or two-market → NOT copied, with the reason (never assumed India). Nothing is remapped:
+ *  the symbol is kept as typed; a 6-digit BSE code stays a code. */
 export function planCopyToChart(store: WlStore, listId: string, symbols: string[], marketOf: (t: string) => Market | undefined): CopyToChartResult {
   const list = store.lists.find((l) => l.id === listId);
   if (!list) return { store, added: [], skipped: symbols.map((s) => ({ symbol: s, reason: 'chart list not found' })), sectionName: null };
@@ -116,14 +148,16 @@ export function planCopyToChart(store: WlStore, listId: string, symbols: string[
   let next = list;
   const added: string[] = []; const skipped: Array<{ symbol: string; reason: string }> = [];
   for (const raw of symbols) {
-    const t = compareKey(raw);
-    const m: Market = marketOf(raw) === 'US' ? 'US' : 'IN';
-    if (!(m === 'IN' ? IN_TICKER_RE : US_TICKER_RE).test(t)) { skipped.push({ symbol: raw, reason: `not a valid ${m === 'IN' ? 'India' : 'US'} symbol for charts` }); continue; }
-    const item: WlItem = { m, t };
+    const inst = parseListSymbol(raw);
+    const m = inst.m ?? marketOf(raw);
+    if (!m) { skipped.push({ symbol: raw, reason: `market not known (no single quote) — write NSE:${inst.t} or US:${inst.t}` }); continue; }
+    const t = inst.t;
+    if (!validFor(m, t)) { skipped.push({ symbol: raw, reason: `not a valid ${marketWord(m)} symbol for charts` }); continue; }
+    const item: WlItem = { m, t, ...(m === 'IN' && inst.x === 'BSE' ? { x: 'BSE' } : {}) };
     if (findItem(next, itemKey(item))) { skipped.push({ symbol: raw, reason: 'already in this chart list' }); continue; }
     const after = addItem(next, target.id, item);
     if (after === next) { skipped.push({ symbol: raw, reason: 'chart list is full' }); continue; }
-    next = after; added.push(t);
+    next = after; added.push(m === 'US' ? `US:${t}` : t);
   }
   return { store: added.length ? updateList(store, listId, () => next) : store, added, skipped, sectionName: target.name || null };
 }

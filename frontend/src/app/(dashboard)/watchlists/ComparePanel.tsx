@@ -26,7 +26,7 @@ export function ComparePanel({ tickers, marketOf, onAddToStandalone, onClose }: 
   const [listId, setListId] = useState<string>('');
   const [msg, setMsg] = useState<string | null>(null);
   const list = store ? store.lists.find((l) => l.id === listId) || store.lists.find((l) => l.id === defaultCompareListId(store)) || null : null;
-  const cmp = useMemo(() => (list ? compareWithChartList(tickers, list) : null), [list, tickers]);
+  const cmp = useMemo(() => (list ? compareWithChartList(tickers, list, marketOf) : null), [list, tickers, marketOf]);   // zzz1076 (B01) — by market
 
   if (!store || !list || !cmp) {
     return (
@@ -61,7 +61,7 @@ export function ComparePanel({ tickers, marketOf, onAddToStandalone, onClose }: 
   return (
     <section className="wlp-cmp" aria-label="Compare with chart lists" data-testid="watchlist-compare">
       <h3>Compare with chart lists</h3>
-      <p style={{ margin: 0 }}>A preview only. Nothing is copied until you click a button. Symbols are copied exactly as they are; sections linked to My Book are left out.</p>
+      <p style={{ margin: 0 }}>A preview only. Nothing is copied until you click a button. Symbols are copied exactly as they are, by market (a USA name is written US:X here); sections linked to My Book are left out.</p>
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginTop: 10 }}>
         <label htmlFor="wlp-cmp-list" style={{ fontWeight: 600, color: 'var(--mc-text-1)' }}>Chart list</label>
         <select id="wlp-cmp-list" value={list.id} onChange={(e) => { setListId(e.target.value); setMsg(null); }}>
@@ -91,6 +91,12 @@ export function ComparePanel({ tickers, marketOf, onAddToStandalone, onClose }: 
         <div>
           <h4>In both ({cmp.both.length})</h4>
           <ul aria-label="In both lists">{cmp.both.map((t) => <li key={t}>{t}</li>)}</ul>
+          {cmp.unresolved.length > 0 && (<>
+            {/* zzz1076 (B01) — a name without a market is never matched or copied by its text alone */}
+            <h4 style={{ marginTop: 10 }}>Market unclear ({cmp.unresolved.length})</h4>
+            <ul aria-label="Market unclear">{cmp.unresolved.map((u) => <li key={u.symbol} className="off" title={u.reason}>{u.symbol}</li>)}</ul>
+            <p style={{ margin: '6px 0 0', fontSize: 11.5 }}>The same symbol can be two companies (NSE:HAL is Hindustan Aeronautics, NYSE:HAL is Halliburton). These are not compared or copied until the market is written: NSE:X or US:X.</p>
+          </>)}
         </div>
       </div>
       {msg && <p role="status" style={{ margin: '0 0 8px', color: 'var(--mc-text-1)' }}>{msg}</p>}

@@ -61,20 +61,22 @@ test('compare: only here / only in chart list / both; book sections left out; or
   // ZZBSEONE here is an NSE symbol; the chart row is BSE:ZZBSEONE — not the same listing, never merged
   // ZZHELD is only in the My Book section, which is not compared
   assert.deepEqual(r.onlyStandalone, ['ZZCHARLIE', 'ZZBSEONE', 'ZZHELD']);
-  assert.deepEqual(r.onlyChart.map((x) => x.symbol), ['BSE:ZZBSEONE', 'BSE:599001', 'ZZUS', 'ZZDELTA']);
+  assert.deepEqual(r.onlyChart.map((x) => x.symbol), ['BSE:ZZBSEONE', 'BSE:599001', 'US:ZZUS', 'ZZDELTA']);   // zzz1076: a USA row shows its market
   assert.equal(r.bookSectionsLeftOut, 1);
   assert.equal(r.onlyChart[0].copyable, false, 'a BSE letter symbol is not copied (it would become the NSE one)');
   assert.equal(r.onlyChart[1].copyable, true, 'a BSE number code is copied as the code');
-  assert.deepEqual(planCopyToStandalone(r.onlyChart), ['599001', 'ZZUS', 'ZZDELTA']);
+  assert.deepEqual(planCopyToStandalone(r.onlyChart), ['599001', 'US:ZZUS', 'ZZDELTA']);   // zzz1076 (B01): a USA row keeps its market
   assert.equal(compareKey('zzalpha.NS'), 'ZZALPHA');
 });
 
 test('copy to chart: into the last section that is not linked to My Book; flags, order and the book section untouched', () => {
   const s = storeOf();
   const before = JSON.stringify(s.lists[0].sections.find((x) => x.book));
-  const r = planCopyToChart(s, 'L1', ['ZZCHARLIE', 'ZZNEWUS', 'ZZALPHA', 'bad symbol!'], (t) => (t === 'ZZNEWUS' ? 'US' : undefined));
-  assert.deepEqual(r.added, ['ZZCHARLIE', 'ZZNEWUS']);
-  assert.deepEqual(r.skipped.map((x) => x.symbol), ['ZZALPHA', 'bad symbol!']);
+  // zzz1076 (B01): the market comes from the quote (or a prefix); an unknown market is skipped, never assumed India
+  const r = planCopyToChart(s, 'L1', ['ZZCHARLIE', 'ZZNEWUS', 'ZZALPHA', 'bad symbol!', 'ZZNOQUOTE'], (t) => (t === 'ZZNEWUS' ? 'US' : t === 'ZZNOQUOTE' ? undefined : 'IN'));
+  assert.deepEqual(r.added, ['ZZCHARLIE', 'US:ZZNEWUS']);
+  assert.deepEqual(r.skipped.map((x) => x.symbol), ['ZZALPHA', 'bad symbol!', 'ZZNOQUOTE']);
+  assert.match(r.skipped[2].reason, /market not known/);
   assert.equal(r.sectionName, 'Ideas');
   const l = r.store.lists.find((x) => x.id === 'L1')!;
   assert.deepEqual(l.sections[1].items.map((i) => `${i.m}:${i.t}`), ['US:ZZUS', 'IN:ZZDELTA', 'IN:ZZCHARLIE', 'US:ZZNEWUS']);
