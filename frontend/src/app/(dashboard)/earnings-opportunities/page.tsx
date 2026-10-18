@@ -304,6 +304,7 @@ export default function EarningsOpportunitiesPage() {
   const windowOn = windowDays > 1;
   const win = useIndiaEarningsWindow<ParsedEarning>({
     anchor: resolvedDateForGrading, sessions: windowDays, today: todayIso, enabled: windowOn,
+    seed: (d) => readLsCache(d),   // zzz1071 — saved days show at once, then the server's copy replaces them
   });
   const windowPayload: OpportunitiesPayload | null = useMemo(() => (windowOn ? {
     filing_date: resolvedDateForGrading || null,
@@ -935,7 +936,6 @@ export default function EarningsOpportunitiesPage() {
   // we fire force=1 against each of the past 7 weekdays so the server's KV
   // cache + the user's localStorage both refresh in one sweep.
   // Subsequent date changes within the same session only warm prev/next.
-  const sessionWarmedRef = useRef(false);
   useEffect(() => {
     if (!resolvedDateForGrading) return;
     const d = new Date(resolvedDateForGrading);
@@ -944,43 +944,14 @@ export default function EarningsOpportunitiesPage() {
     const prevIso = prev.toISOString().slice(0, 10);
     const nextIso = next.toISOString().slice(0, 10);
 
-    // PATCH 0482 — INVERTED from the weekday-only warming. Indian companies
-    // file results on weekends (especially Saturdays). We now warm the past
-    // 7 calendar days regardless of weekday so Sat/Sun filings get cached
-    // proactively.
-    const past7: string[] = [];
-    if (!sessionWarmedRef.current) {
-      const cursor = new Date(todayIso);
-      while (past7.length < 7) {
-        past7.push(cursor.toISOString().slice(0, 10));
-        cursor.setUTCDate(cursor.getUTCDate() - 1);
-        if (cursor < new Date('2026-01-01')) break;  // safety
-      }
-      sessionWarmedRef.current = true;
-    }
-
+    // zzz1071 — the first-visit sweep that FORCE-regraded the past 7 days (PATCH 0402 / 0482) and deleted their saved copies is
+    // gone: every page open made the server re-grade 7 days from NSE / Screener, which slowed the window read to 15–40 s and
+    // emptied the page while it ran. The server re-grades on its own schedule; "Force NSE+BSE" is still there by hand.
     const timer = setTimeout(() => {
       // Always warm immediate neighbours (lightweight cache touch, no force)
       fetch(`/api/v1/earnings/graded?date=${prevIso}`).catch(() => {});
       if (nextIso <= todayIso) fetch(`/api/v1/earnings/graded?date=${nextIso}`).catch(() => {});
 
-      // First-mount sweep: hit each past trading day with force=1 so any
-      // stale "all-AVOID-score-22 preview" cache snapshot gets rebuilt
-      // server-side. Stagger by 350ms each so we don't slam Vercel.
-      past7.forEach((iso, i) => {
-        setTimeout(() => {
-          fetch(`/api/v1/earnings/graded?date=${iso}&force=1`, { cache: 'no-store' })
-            .catch(() => {});
-          // Also wipe the matching localStorage entry so the next visit
-          // hydrates from the freshly-rebuilt server payload, not the
-          // stale snapshot.
-          try {
-            localStorage.removeItem('mc:graded:v10:' + iso);  // PATCH 0992
-            localStorage.removeItem('mc:graded:v9:' + iso);
-            localStorage.removeItem('mc:graded:v8:' + iso);
-          } catch {}
-        }, 1500 + i * 350);
-      });
     }, 800);  // delay so current date renders first
     return () => clearTimeout(timer);
   }, [resolvedDateForGrading, todayIso]);

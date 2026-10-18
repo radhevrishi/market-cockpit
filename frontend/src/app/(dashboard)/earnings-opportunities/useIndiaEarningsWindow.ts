@@ -25,7 +25,8 @@ import {
   type WindowEntry, type WindowBadRow,
 } from '@/lib/india-earnings-window';
 
-interface Entry<R extends WindowRowBase> { state: DayState; day?: WindowDay<R>; error?: string }
+/** `seeded` (zzz1071) — shown from this browser's saved copy while the graded store is read; replaced by the server's copy. */
+interface Entry<R extends WindowRowBase> { state: DayState; day?: WindowDay<R>; error?: string; seeded?: boolean }
 
 function payloadRows(p: any): number {
   if (!p?.by_tier) return 0;
@@ -73,8 +74,12 @@ export function useIndiaEarningsWindow<R extends WindowRowBase>(opts: {
   sessions: number;
   today: string;
   enabled: boolean;
+  /** zzz1071 — this browser's saved graded payload for a date (the page's own cache), shown at once while the store is read */
+  seed?: (date: string) => any | undefined;
 }): IndiaWindowState<R> {
   const { anchor, sessions, today, enabled } = opts;
+  const seedRef = useRef(opts.seed);
+  seedRef.current = opts.seed;
   const dates = useMemo(
     () => (enabled ? windowDates(anchor, sessions, today) : []),
     [enabled, anchor, sessions, today],
@@ -90,11 +95,23 @@ export function useIndiaEarningsWindow<R extends WindowRowBase>(opts: {
   useEffect(() => {
     if (!enabled || dates.length === 0) return;
     const store = storeRef.current;
+    // zzz1071 — days this browser already has are shown straight away (they used to wait for the store read, which took 15–40 s
+    // while the server was busy); the read below still replaces each with the server's copy.
+    let seeded = 0;
+    for (const d of dates) {
+      if (store.get(d)) continue;
+      try {
+        const p = seedRef.current?.(d);
+        if (p?.by_tier) { store.set(d, { state: 'ready', seeded: true, day: toDay<R>(d, p, false, null) }); seeded++; }
+      } catch { /* no saved copy */ }
+    }
+    if (seeded) bump();
     // Today is still filling up during the day, so it is re-read each time the
     // window is (re)opened; every other date is read once per page life.
     const need = dates.filter((d) => {
       const e = store.get(d);
       if (!e) return true;
+      if (e.seeded) return true;
       if (d === today && (e.state === 'ready' || e.state === 'stale')) return true;
       return false;
     });

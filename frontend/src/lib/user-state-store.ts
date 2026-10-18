@@ -25,8 +25,12 @@ export const USER_STATE_KEYS = [
   'mc:screen-shortlists:v1', 'mc:chart-drawing-sets:v1', 'mc:screen-review:v1',   // zzz969 — saved screener shortlists; named drawing sets per chart
 ] as const;
 export type UserStateKey = (typeof USER_STATE_KEYS)[number];
-export const MAX_VALUE_BYTES = 3_000_000;
+// zzz1071 — 8 MB (was 3 MB): the US Conviction Beats list (2.2 MB in the browser, over 3 MB once wrapped for sending) was refused
+// with 413 on every sync, so it was never backed up. Large values keep fewer old versions (HISTORY_KEEP_LARGE).
+export const MAX_VALUE_BYTES = 8_000_000;
 const HISTORY_KEEP = 60;
+const HISTORY_KEEP_LARGE = 10;
+const LARGE_VALUE_BYTES = 1_000_000;
 const kvKey = (k: string) => `user-state:v1:${k}`;
 
 export function isUserStateKey(k: unknown): k is UserStateKey { return typeof k === 'string' && (USER_STATE_KEYS as readonly string[]).includes(k); }
@@ -115,7 +119,7 @@ export async function putUserState(key: UserStateKey, value: unknown, opts: { ba
                      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, hash = EXCLUDED.hash, version = EXCLUDED.version, bytes = EXCLUDED.bytes, device = EXCLUDED.device, updated_at = now()`,
         [key, json, hash, version, bytes, device]);
       await c.query('INSERT INTO user_state_history (key, value, hash, version, device) VALUES ($1, $2::jsonb, $3, $4, $5)', [key, json, hash, version, device]);
-      await c.query(`DELETE FROM user_state_history WHERE key = $1 AND id NOT IN (SELECT id FROM user_state_history WHERE key = $1 ORDER BY saved_at DESC LIMIT ${HISTORY_KEEP})`, [key]);
+      await c.query(`DELETE FROM user_state_history WHERE key = $1 AND id NOT IN (SELECT id FROM user_state_history WHERE key = $1 ORDER BY saved_at DESC LIMIT ${bytes > LARGE_VALUE_BYTES ? HISTORY_KEEP_LARGE : HISTORY_KEEP})`, [key]);
       await c.query('COMMIT');
       store = 'postgres';
     } catch (e) { await c.query('ROLLBACK').catch(() => {}); throw e; } finally { c.release(); }
