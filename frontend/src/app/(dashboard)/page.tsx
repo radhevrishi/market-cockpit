@@ -1817,6 +1817,203 @@ export default function HomeDashboard() {
         <div data-home-section="main-column" style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
           {/* zzz1065 — status strip: India date + time (H02), market open / closed, data freshness, unread alerts */}
           <HomeStatusStrip now={now} />
+          {/* zzz1075 — IN-PLAY NEWS first on the home page, right under the status strip (owner request). */}
+          <div style={cardStyle}>
+            <button onClick={() => setShowInPlay(v => !v)} style={{
+              background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
+              fontSize: 13, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.4px',
+              display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+            }}>
+              {showInPlay ? '▾' : '▸'} 🔥 IN-PLAY NEWS — top {data.inPlay.length} <span style={{ fontSize: 9, fontWeight: 600, color: DIM, marginLeft: 4 }}>· active &lt;36h</span>
+              <span style={{ marginLeft: 'auto', fontSize: 10, color: DIM, fontWeight: 500 }}>
+                <NavLink href="/news" style={{ color: 'var(--mc-cyan)', textDecoration: 'none' }} onClick={(e) => e.stopPropagation()}>Full feed →</NavLink>
+              </span>
+            </button>
+            {netLoading.inPlay && !showInPlay && (
+              <div style={{ fontSize: 10, color: DIM, marginTop: 4, fontStyle: 'italic' }}>📡 Loading in-play news…</div>
+            )}
+            {showInPlay && netLoading.inPlay && (
+              <div style={{ fontSize: 11, color: DIM, marginTop: 8, fontStyle: 'italic' }}>📡 Loading…</div>
+            )}
+            {showInPlay && !netLoading.inPlay && data.inPlay.length === 0 && (
+              <div style={{ fontSize: 11, color: DIM, marginTop: 8, fontStyle: 'italic', lineHeight: 1.5 }}>
+                {data.inPlayDiag?.error
+                  ? `News feed unreachable (${data.inPlayDiag.error}${data.inPlayDiag.status ? ' / HTTP ' + data.inPlayDiag.status : ''}). Backend may be cold-starting.`
+                  : 'No live in-play news in last 24 hours.'}
+                {data.inPlayDiag && (
+                  <div style={{ fontSize: 10, color: DIM, marginTop: 6, fontFamily: 'ui-monospace, monospace' }}>
+                    Diagnostic: fetched {data.inPlayDiag.fetched} · within 24h {data.inPlayDiag.recent} · after structural filter {data.inPlayDiag.clean}
+                    {data.inPlayDiag.error && <span style={{ color: '#F87171' }}> · error: {data.inPlayDiag.error}</span>}
+                  </div>
+                )}
+                <button
+                  onClick={() => { window.location.reload(); }}
+                  style={{ marginTop: 8, fontSize: 10, padding: '4px 10px', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', background: 'transparent', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+                >
+                  🔄 RETRY
+                </button>
+              </div>
+            )}
+            {showInPlay && !netLoading.inPlay && data.inPlay.length > 0 && data.inPlayDiag?.fellBack && (
+              <div style={{ fontSize: 10, color: 'var(--mc-warn)', marginTop: 6, padding: '4px 8px', background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)', borderRadius: 4 }}>
+                ⚠ Only structural alerts available in last 24h — showing them anyway so the feed isn't empty.
+              </div>
+            )}
+            {showInPlay && !netLoading.inPlay && data.inPlay.length > 0 && (
+              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {data.inPlay.map((n, i) => {
+                  const title = n.title || n.headline || '(no headline)';
+                  // PATCH 1057: render IST timestamp + relative "Xm ago" chip per article
+                  // so the user knows when each item landed without leaving the page.
+                  const pubIso = n.published_at;
+                  let istChip = '';
+                  let relAge = '';
+                  if (pubIso) {
+                    try {
+                      const d = new Date(pubIso);
+                      if (!isNaN(d.getTime())) {
+                        // IST = UTC+5:30, formatted as "13 Jun · 3:33 PM"
+                        // PATCH 1057b: use Intl.DateTimeFormat.formatToParts for atomic
+                        // browser-portable formatting (avoids locale-string variance).
+                        const fmt = new Intl.DateTimeFormat('en-IN', {
+                          timeZone: 'Asia/Kolkata',
+                          day: '2-digit', month: 'short',
+                          hour: 'numeric', minute: '2-digit',
+                          hour12: true,
+                        });
+                        const parts = fmt.formatToParts(d);
+                        const get = (t: string) => parts.find((p) => p.type === t)?.value || '';
+                        istChip = `${get('day')} ${get('month')} · ${get('hour')}:${get('minute')} ${get('dayPeriod')}`.replace(/\s+/g, ' ').trim();
+                        const ageSec = Math.round((Date.now() - d.getTime()) / 1000);
+                        relAge = ageSec < 60 ? `${ageSec}s` :
+                                 ageSec < 3600 ? `${Math.round(ageSec / 60)}m` :
+                                 ageSec < 86400 ? `${Math.round(ageSec / 3600)}h` :
+                                 `${Math.round(ageSec / 86400)}d`;
+                      }
+                    } catch { /* swallow */ }
+                  }
+                  return (
+                    <a key={(n.id || '') + i} href={n.url || n.source_url || '#'} target="_blank" rel="noopener noreferrer"
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid var(--mc-bg-4)' }}>
+                      <span style={{ fontSize: 11, color: DIM, fontWeight: 700, minWidth: 22 }}>{i + 1}</span>
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: TEXT, fontWeight: 500, lineHeight: 1.4 }}>{title}</span>
+                      {istChip && (
+                        <span
+                          title={`Published ${istChip} IST · ${relAge} ago`}
+                          style={{ fontSize: 9, color: 'var(--mc-text-3)', whiteSpace: 'nowrap', fontFamily: 'ui-monospace, monospace', minWidth: 100, textAlign: 'right' }}
+                        >
+                          {istChip}{relAge ? ` · ${relAge}` : ''}
+                        </span>
+                      )}
+                      <span style={{ fontSize: 9, color: DIM, whiteSpace: 'nowrap' }}>{n.source_name || n.source || '—'}</span>
+                    </a>
+                  );
+                })}
+              </div>
+            )}
+            {/* PATCH 1096b — Recent Context tail: 36h–7d items, collapsed by
+                default. Kept on home so the user doesn't lose the older relevant
+                stories — they just don't crowd "in-play". */}
+            {showInPlay && !netLoading.inPlay && (data.inPlayRecent?.length || 0) > 0 && (
+              <div style={{ marginTop: 10, borderTop: '1px dashed var(--mc-bg-4)', paddingTop: 8 }}>
+                <button
+                  onClick={() => setShowInPlayRecent(v => !v)}
+                  style={{
+                    background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
+                    fontSize: 10, fontWeight: 700, color: DIM, letterSpacing: '0.4px',
+                    display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+                  }}
+                >
+                  {showInPlayRecent ? '▾' : '▸'} 🕰 RECENT CONTEXT — {data.inPlayRecent!.length} older stories (36h–7d)
+                </button>
+                {showInPlayRecent && (
+                  <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3, opacity: 0.78 }}>
+                    {data.inPlayRecent!.map((n, i) => {
+                      const title = n.title || n.headline || '(no headline)';
+                      const pubIso = n.published_at;
+                      let relAge = '';
+                      if (pubIso) {
+                        try {
+                          const d = new Date(pubIso);
+                          if (!isNaN(d.getTime())) {
+                            const ageSec = Math.round((Date.now() - d.getTime()) / 1000);
+                            relAge = ageSec < 86400 ? `${Math.round(ageSec / 3600)}h` : `${Math.round(ageSec / 86400)}d`;
+                          }
+                        } catch { /* swallow */ }
+                      }
+                      return (
+                        <a key={(n.id || '') + 'rc' + i} href={n.url || n.source_url || '#'} target="_blank" rel="noopener noreferrer"
+                          style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 6px', textDecoration: 'none' }}>
+                          <span style={{ fontSize: 10, color: DIM, fontWeight: 700, minWidth: 20 }}>{i + 1}</span>
+                          <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: 'var(--mc-text-3)', fontWeight: 500, lineHeight: 1.35 }}>{title}</span>
+                          {relAge && (
+                            <span style={{ fontSize: 9, color: DIM, fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap' }}>{relAge}</span>
+                          )}
+                          <span style={{ fontSize: 9, color: DIM, whiteSpace: 'nowrap' }}>{n.source_name || n.source || '—'}</span>
+                        </a>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          {/* zzz1075 — SIGNALS second on the home page (after In-Play News); same panel, same data. */}
+          {/* SIGNALS — high-importance corporate news (PATCH 0865 — institutional font sizing) */}
+          <div style={{ ...cardStyle, borderLeft: '3px solid var(--mc-cyan)', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.4px' }}>
+                📡 SIGNALS ({data.signals?.length || 0})
+              </span>
+              <NavLink href="/orders" style={{ fontSize: 12, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open →</NavLink>
+            </div>
+            <div style={{ fontSize: 11.5, color: DIM, marginBottom: 8 }}>
+              High-importance corporate actions and re-rating triggers · 👁 = in your universe
+            </div>
+            {!data.signals ? (
+              <div style={{ fontSize: 13, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
+            ) : data.signals.length === 0 ? (
+              <div style={{ fontSize: 13, color: DIM, fontStyle: 'italic' }}>No high-importance corporate items in last 24h.</div>
+            ) : (() => {
+              // Build user-universe set for 👁 chip + reorder (universe rows first)
+              const norm = (s: string) => (s || '').toString().toUpperCase().replace(/\.(NS|BO)$/i, '').trim();
+              const universeSet = new Set<string>();
+              try { (JSON.parse(localStorage.getItem('mc_watchlist_tickers') || '[]') || []).forEach((t: string) => universeSet.add(norm(t))); } catch {}
+              try { getConvictionTickers().forEach((t: string) => universeSet.add(norm(t))); } catch {}
+              try { (JSON.parse(localStorage.getItem('portfolioHoldings') || '[]') || []).forEach((h: any) => { if (h?.ticker) universeSet.add(norm(h.ticker)); }); } catch {}
+              const enriched = data.signals.slice().map((s: any) => {
+                const tk = norm(s.primary_ticker || (Array.isArray(s.ticker_symbols) && s.ticker_symbols[0]) || '');
+                return { ...s, _ticker: tk, _inUniverse: tk && universeSet.has(tk) };
+              });
+              // Sort: universe rows first, otherwise preserve relative order
+              enriched.sort((a: any, b: any) => {
+                if (a._inUniverse !== b._inUniverse) return a._inUniverse ? -1 : 1;
+                return 0;
+              });
+              const SHOWN = 30;  // PATCH 0900: restored 30 per user — 15 felt too short, 30 was right
+              const items = enriched.slice(0, SHOWN);
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1, minHeight: 0 }}>
+                  {items.map((s: any, i: number) => (
+                    <a key={(s.id || '') + i} href={(s as any).url || (s as any).source_url || '#'} target="_blank" rel="noopener noreferrer"
+                      style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 7px', textDecoration: 'none', borderBottom: '1px solid var(--mc-bg-4)' }}>
+                      {s._inUniverse && <span title="In your Watchlist/Portfolio/CB" style={{ fontSize: 13, color: 'var(--mc-cyan)', flexShrink: 0 }}>👁</span>}
+                      <span style={{ fontSize: 11.5, color: 'var(--mc-cyan)', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 68 }}>
+                        {(s._ticker || '').slice(0, 8) || '—'}
+                      </span>
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.4 }}>{s.title || s.headline}</span>
+                      <span style={{ fontSize: 11, color: DIM, whiteSpace: 'nowrap', maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.source_name || '—'}</span>
+                    </a>
+                  ))}
+                  {data.signals.length > SHOWN && (
+                    <NavLink href="/orders" style={{ fontSize: 12, color: 'var(--mc-cyan)', textAlign: 'center', padding: '8px 0', textDecoration: 'none', fontWeight: 700, marginTop: 6 }}>
+                      + {data.signals.length - SHOWN} more · Open Signals page →
+                    </NavLink>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
           <div>
             {/* zzz241 — greeting header removed per user request. Status chips remain below. */}
             {/* zzz1065 — the date + time moved into the status strip above (both in India time). */}
@@ -2580,148 +2777,6 @@ export default function HomeDashboard() {
           )}
         </div>
 
-        {/* ═══════════════ PATCH 0620 — IN-PLAY NEWS (MOVED TO TOP) ════════ */}
-        <div style={cardStyle}>
-          <button onClick={() => setShowInPlay(v => !v)} style={{
-            background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
-            fontSize: 13, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.4px',
-            display: 'flex', alignItems: 'center', gap: 6, width: '100%',
-          }}>
-            {showInPlay ? '▾' : '▸'} 🔥 IN-PLAY NEWS — top {data.inPlay.length} <span style={{ fontSize: 9, fontWeight: 600, color: DIM, marginLeft: 4 }}>· active &lt;36h</span>
-            <span style={{ marginLeft: 'auto', fontSize: 10, color: DIM, fontWeight: 500 }}>
-              <NavLink href="/news" style={{ color: 'var(--mc-cyan)', textDecoration: 'none' }} onClick={(e) => e.stopPropagation()}>Full feed →</NavLink>
-            </span>
-          </button>
-          {netLoading.inPlay && !showInPlay && (
-            <div style={{ fontSize: 10, color: DIM, marginTop: 4, fontStyle: 'italic' }}>📡 Loading in-play news…</div>
-          )}
-          {showInPlay && netLoading.inPlay && (
-            <div style={{ fontSize: 11, color: DIM, marginTop: 8, fontStyle: 'italic' }}>📡 Loading…</div>
-          )}
-          {showInPlay && !netLoading.inPlay && data.inPlay.length === 0 && (
-            <div style={{ fontSize: 11, color: DIM, marginTop: 8, fontStyle: 'italic', lineHeight: 1.5 }}>
-              {data.inPlayDiag?.error
-                ? `News feed unreachable (${data.inPlayDiag.error}${data.inPlayDiag.status ? ' / HTTP ' + data.inPlayDiag.status : ''}). Backend may be cold-starting.`
-                : 'No live in-play news in last 24 hours.'}
-              {data.inPlayDiag && (
-                <div style={{ fontSize: 10, color: DIM, marginTop: 6, fontFamily: 'ui-monospace, monospace' }}>
-                  Diagnostic: fetched {data.inPlayDiag.fetched} · within 24h {data.inPlayDiag.recent} · after structural filter {data.inPlayDiag.clean}
-                  {data.inPlayDiag.error && <span style={{ color: '#F87171' }}> · error: {data.inPlayDiag.error}</span>}
-                </div>
-              )}
-              <button
-                onClick={() => { window.location.reload(); }}
-                style={{ marginTop: 8, fontSize: 10, padding: '4px 10px', border: '1px solid color-mix(in srgb, var(--mc-cyan) 38%, transparent)', background: 'transparent', color: 'var(--mc-cyan)', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
-              >
-                🔄 RETRY
-              </button>
-            </div>
-          )}
-          {showInPlay && !netLoading.inPlay && data.inPlay.length > 0 && data.inPlayDiag?.fellBack && (
-            <div style={{ fontSize: 10, color: 'var(--mc-warn)', marginTop: 6, padding: '4px 8px', background: 'color-mix(in srgb, var(--mc-warn) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--mc-warn) 25%, transparent)', borderRadius: 4 }}>
-              ⚠ Only structural alerts available in last 24h — showing them anyway so the feed isn't empty.
-            </div>
-          )}
-          {showInPlay && !netLoading.inPlay && data.inPlay.length > 0 && (
-            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {data.inPlay.map((n, i) => {
-                const title = n.title || n.headline || '(no headline)';
-                // PATCH 1057: render IST timestamp + relative "Xm ago" chip per article
-                // so the user knows when each item landed without leaving the page.
-                const pubIso = n.published_at;
-                let istChip = '';
-                let relAge = '';
-                if (pubIso) {
-                  try {
-                    const d = new Date(pubIso);
-                    if (!isNaN(d.getTime())) {
-                      // IST = UTC+5:30, formatted as "13 Jun · 3:33 PM"
-                      // PATCH 1057b: use Intl.DateTimeFormat.formatToParts for atomic
-                      // browser-portable formatting (avoids locale-string variance).
-                      const fmt = new Intl.DateTimeFormat('en-IN', {
-                        timeZone: 'Asia/Kolkata',
-                        day: '2-digit', month: 'short',
-                        hour: 'numeric', minute: '2-digit',
-                        hour12: true,
-                      });
-                      const parts = fmt.formatToParts(d);
-                      const get = (t: string) => parts.find((p) => p.type === t)?.value || '';
-                      istChip = `${get('day')} ${get('month')} · ${get('hour')}:${get('minute')} ${get('dayPeriod')}`.replace(/\s+/g, ' ').trim();
-                      const ageSec = Math.round((Date.now() - d.getTime()) / 1000);
-                      relAge = ageSec < 60 ? `${ageSec}s` :
-                               ageSec < 3600 ? `${Math.round(ageSec / 60)}m` :
-                               ageSec < 86400 ? `${Math.round(ageSec / 3600)}h` :
-                               `${Math.round(ageSec / 86400)}d`;
-                    }
-                  } catch { /* swallow */ }
-                }
-                return (
-                  <a key={(n.id || '') + i} href={n.url || n.source_url || '#'} target="_blank" rel="noopener noreferrer"
-                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 6px', textDecoration: 'none', borderBottom: '1px solid var(--mc-bg-4)' }}>
-                    <span style={{ fontSize: 11, color: DIM, fontWeight: 700, minWidth: 22 }}>{i + 1}</span>
-                    <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: TEXT, fontWeight: 500, lineHeight: 1.4 }}>{title}</span>
-                    {istChip && (
-                      <span
-                        title={`Published ${istChip} IST · ${relAge} ago`}
-                        style={{ fontSize: 9, color: 'var(--mc-text-3)', whiteSpace: 'nowrap', fontFamily: 'ui-monospace, monospace', minWidth: 100, textAlign: 'right' }}
-                      >
-                        {istChip}{relAge ? ` · ${relAge}` : ''}
-                      </span>
-                    )}
-                    <span style={{ fontSize: 9, color: DIM, whiteSpace: 'nowrap' }}>{n.source_name || n.source || '—'}</span>
-                  </a>
-                );
-              })}
-            </div>
-          )}
-          {/* PATCH 1096b — Recent Context tail: 36h–7d items, collapsed by
-              default. Kept on home so the user doesn't lose the older relevant
-              stories — they just don't crowd "in-play". */}
-          {showInPlay && !netLoading.inPlay && (data.inPlayRecent?.length || 0) > 0 && (
-            <div style={{ marginTop: 10, borderTop: '1px dashed var(--mc-bg-4)', paddingTop: 8 }}>
-              <button
-                onClick={() => setShowInPlayRecent(v => !v)}
-                style={{
-                  background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
-                  fontSize: 10, fontWeight: 700, color: DIM, letterSpacing: '0.4px',
-                  display: 'flex', alignItems: 'center', gap: 6, width: '100%',
-                }}
-              >
-                {showInPlayRecent ? '▾' : '▸'} 🕰 RECENT CONTEXT — {data.inPlayRecent!.length} older stories (36h–7d)
-              </button>
-              {showInPlayRecent && (
-                <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3, opacity: 0.78 }}>
-                  {data.inPlayRecent!.map((n, i) => {
-                    const title = n.title || n.headline || '(no headline)';
-                    const pubIso = n.published_at;
-                    let relAge = '';
-                    if (pubIso) {
-                      try {
-                        const d = new Date(pubIso);
-                        if (!isNaN(d.getTime())) {
-                          const ageSec = Math.round((Date.now() - d.getTime()) / 1000);
-                          relAge = ageSec < 86400 ? `${Math.round(ageSec / 3600)}h` : `${Math.round(ageSec / 86400)}d`;
-                        }
-                      } catch { /* swallow */ }
-                    }
-                    return (
-                      <a key={(n.id || '') + 'rc' + i} href={n.url || n.source_url || '#'} target="_blank" rel="noopener noreferrer"
-                        style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 6px', textDecoration: 'none' }}>
-                        <span style={{ fontSize: 10, color: DIM, fontWeight: 700, minWidth: 20 }}>{i + 1}</span>
-                        <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: 'var(--mc-text-3)', fontWeight: 500, lineHeight: 1.35 }}>{title}</span>
-                        {relAge && (
-                          <span style={{ fontSize: 9, color: DIM, fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap' }}>{relAge}</span>
-                        )}
-                        <span style={{ fontSize: 9, color: DIM, whiteSpace: 'nowrap' }}>{n.source_name || n.source || '—'}</span>
-                      </a>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
         {/* ═══════════════ TIER 1 — IMMEDIATE ACTION ════════════════════ */}
         {/* PATCH 1101bb — Lens-filter banner. The "CONVICTION-ONLY" / "A+ ONLY"
             / sector lenses silently filtered Tier 1 from 10 → 2-3 stocks and
@@ -3194,7 +3249,7 @@ export default function HomeDashboard() {
 
         </div>
 
-        {/* ═══════════════ PATCH 0621 — TWO-COL: MOVERS + SIGNALS ═══════════ */}
+        {/* ═══════════════ PATCH 0621 — MOVERS (India + USA side by side; zzz1075: Signals moved to the top of the page) ═══ */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12 }}>
 
           {/* TOP 5 MOVERS + TOP 5 LOSERS (India) */}
@@ -3601,61 +3656,6 @@ export default function HomeDashboard() {
           </div>
 
           <UsMovers />{/* zzz1056 — US mirror of the India movers panel, beside it */}
-          {/* SIGNALS — high-importance corporate news (PATCH 0865 — institutional font sizing) */}
-          <div style={{ ...cardStyle, borderLeft: '3px solid var(--mc-cyan)', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
-              <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--mc-cyan)', letterSpacing: '0.4px' }}>
-                📡 SIGNALS ({data.signals?.length || 0})
-              </span>
-              <NavLink href="/orders" style={{ fontSize: 12, color: 'var(--mc-cyan)', textDecoration: 'none' }}>Open →</NavLink>
-            </div>
-            <div style={{ fontSize: 11.5, color: DIM, marginBottom: 8 }}>
-              High-importance corporate actions and re-rating triggers · 👁 = in your universe
-            </div>
-            {!data.signals ? (
-              <div style={{ fontSize: 13, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>
-            ) : data.signals.length === 0 ? (
-              <div style={{ fontSize: 13, color: DIM, fontStyle: 'italic' }}>No high-importance corporate items in last 24h.</div>
-            ) : (() => {
-              // Build user-universe set for 👁 chip + reorder (universe rows first)
-              const norm = (s: string) => (s || '').toString().toUpperCase().replace(/\.(NS|BO)$/i, '').trim();
-              const universeSet = new Set<string>();
-              try { (JSON.parse(localStorage.getItem('mc_watchlist_tickers') || '[]') || []).forEach((t: string) => universeSet.add(norm(t))); } catch {}
-              try { getConvictionTickers().forEach((t: string) => universeSet.add(norm(t))); } catch {}
-              try { (JSON.parse(localStorage.getItem('portfolioHoldings') || '[]') || []).forEach((h: any) => { if (h?.ticker) universeSet.add(norm(h.ticker)); }); } catch {}
-              const enriched = data.signals.slice().map((s: any) => {
-                const tk = norm(s.primary_ticker || (Array.isArray(s.ticker_symbols) && s.ticker_symbols[0]) || '');
-                return { ...s, _ticker: tk, _inUniverse: tk && universeSet.has(tk) };
-              });
-              // Sort: universe rows first, otherwise preserve relative order
-              enriched.sort((a: any, b: any) => {
-                if (a._inUniverse !== b._inUniverse) return a._inUniverse ? -1 : 1;
-                return 0;
-              });
-              const SHOWN = 30;  // PATCH 0900: restored 30 per user — 15 felt too short, 30 was right
-              const items = enriched.slice(0, SHOWN);
-              return (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1, minHeight: 0 }}>
-                  {items.map((s: any, i: number) => (
-                    <a key={(s.id || '') + i} href={(s as any).url || (s as any).source_url || '#'} target="_blank" rel="noopener noreferrer"
-                      style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 7px', textDecoration: 'none', borderBottom: '1px solid var(--mc-bg-4)' }}>
-                      {s._inUniverse && <span title="In your Watchlist/Portfolio/CB" style={{ fontSize: 13, color: 'var(--mc-cyan)', flexShrink: 0 }}>👁</span>}
-                      <span style={{ fontSize: 11.5, color: 'var(--mc-cyan)', fontWeight: 800, fontFamily: 'ui-monospace, monospace', minWidth: 68 }}>
-                        {(s._ticker || '').slice(0, 8) || '—'}
-                      </span>
-                      <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: TEXT, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.4 }}>{s.title || s.headline}</span>
-                      <span style={{ fontSize: 11, color: DIM, whiteSpace: 'nowrap', maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.source_name || '—'}</span>
-                    </a>
-                  ))}
-                  {data.signals.length > SHOWN && (
-                    <NavLink href="/orders" style={{ fontSize: 12, color: 'var(--mc-cyan)', textAlign: 'center', padding: '8px 0', textDecoration: 'none', fontWeight: 700, marginTop: 6 }}>
-                      + {data.signals.length - SHOWN} more · Open Signals page →
-                    </NavLink>
-                  )}
-                </div>
-              );
-            })()}
-          </div>
         </div>
 
         {/* ═══════════════ PATCH 0806 — SPECIAL SITUATIONS (below Signals) ═══════════ */}
