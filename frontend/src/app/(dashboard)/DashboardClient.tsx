@@ -167,6 +167,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/stock-screener', label: 'Stock Screener',  icon: <Filter className="w-4 h-4" /> },   // zzz938 — our own screener (USA + India)
       { href: '/pine-screener',  label: 'Pine Screener',   icon: <ScanSearch className="w-4 h-4" /> },   // zzz983 — chart patterns across every company
       { href: '/charts',         label: 'Charts',          icon: <LineChart className="w-4 h-4" /> },   // zzz937 — our own charts with drawings
+      { href: '/charts/grid',    label: 'Multi-chart · Intraday', icon: <LineChart className="w-4 h-4" /> },   // zzz1088 — 1/2/4 charts, 5m/15m/1h + VWAP
     ],
   },
   {
@@ -309,6 +310,7 @@ const _LEGACY_NAV: NavItem[] = [
   { href: '/stock-screener', label: 'Stock Screener',   icon: <Filter className="w-5 h-5" /> },
   { href: '/pine-screener',  label: 'Pine Screener',    icon: <ScanSearch className="w-5 h-5" /> },   // zzz983
   { href: '/charts',        label: 'Charts',             icon: <LineChart className="w-5 h-5" /> },
+  { href: '/charts/grid',   label: 'Multi-chart · Intraday', icon: <LineChart className="w-5 h-5" /> },   // zzz1088
   // PATCH 0168: Market Breadth Indicator
   { href: '/breadth',       label: 'Breadth',            icon: <BarChart3 className="w-5 h-5" /> },
   // PATCH 0096 / 0170: Live Input Cost → Equity Transmission

@@ -4171,6 +4171,7 @@ export default function HomeDashboard() {
                 { href: '/stock-screener', label: '🧮 Stock Screener' },
                 { href: '/pine-screener', label: '🧩 Pine Screener' },
                 { href: '/charts', label: '📈 Charts + Watchlist' },
+                { href: '/charts/grid', label: '⊞ Multi-chart · Intraday' },
                 { href: '/strategic-visibility', label: '⭐ Strategic Visibility' },
                 { href: '/transmission', label: '🔄 Transmission' },
                 { href: '/breadth', label: '📊 Breadth' },
