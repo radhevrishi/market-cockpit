@@ -10,17 +10,17 @@ describe('zzz879 — preset size floor', () => {
   test('three floors, all count as the preset', () => {
     for (const v of [3000, 500, null] as const) assert.equal(isIndiaPresetActive({ ...FILTER_DEFAULT, ...indiaPresetFilters(v) } as any), true, String(v));
     assert.equal(isIndiaPresetActive({ ...FILTER_DEFAULT, ...indiaPresetFilters(), mktCapMin: 1000 } as any), false);
-    assert.equal(indiaPresetFilters().mktCapMin, 3000, 'server / nothing saved → ₹3k Cr');
+    assert.equal(indiaPresetFilters().mktCapMin, null, 'zzz1068: server / nothing saved → Any size (was ₹3k Cr)');
   });
   test('saved value round-trips', () => {
-    assert.equal(parseCbCapFloor('500'), 500); assert.equal(parseCbCapFloor('none'), null); assert.equal(parseCbCapFloor(null), 3000); assert.equal(parseCbCapFloor('junk'), 3000);
+    assert.equal(parseCbCapFloor('500'), 500); assert.equal(parseCbCapFloor('none'), null); assert.equal(parseCbCapFloor(null), null); assert.equal(parseCbCapFloor('junk'), null); assert.equal(parseCbCapFloor('3000'), 3000);   // zzz1068: nothing saved = Any size
     assert.equal(cbCapFloorRaw(null), 'none'); assert.equal(cbCapFloorRaw(500), '500');
   });
   test('HIIL (≈₹1,140 Cr) passes at ₹500 Cr, not at ₹3k Cr; the bar text says which', () => {
     const hiil: any = { ticker: 'HIIL', tier: 'STRONG', market_cap_cr: 1140 };
     assert.equal(passesConvictionFilter(hiil, { ...FILTER_DEFAULT, mktCapMin: 500 } as any), true);
     assert.equal(passesConvictionFilter(hiil, { ...FILTER_DEFAULT, mktCapMin: 3000 } as any), false);
-    assert.match(presetBarText(500), /market cap ≥₹500 Cr/); assert.match(presetBarText(), /≥₹3k Cr/); assert.match(presetBarText(null), /any market cap/);
+    assert.match(presetBarText(500), /market cap ≥₹500 Cr/); assert.match(presetBarText(3000), /≥₹3k Cr/); assert.match(presetBarText(), /any market cap/);   // zzz1068 assert.match(presetBarText(null), /any market cap/);
   });
 });
 

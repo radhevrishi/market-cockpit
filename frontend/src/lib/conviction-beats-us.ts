@@ -45,6 +45,7 @@ import type { EarningsQuadrant } from '@/lib/earnings-grade-shared';
 import { runCriteriaCheck, type CriteriaCheck } from '@/lib/criteria-check';
 import { decodeHTMLEntities } from '@/lib/html-decode';
 import { US_ENGINE_VERSION } from '@/lib/us-engine-version';
+import { passesDeMax } from '@/lib/cb-metric-view';   // zzz1068
 
 export type ConvictionTier = 'BLOCKBUSTER' | 'STRONG';
 
@@ -2158,6 +2159,8 @@ export interface UsConvFilters {
   cfoPatMin: number | null;
   mktCapMin: number | null;      // $M
   peMax: number | null;
+  /** zzz1068 — max debt ÷ equity (stock-screener snapshot, `de_ratio`). Financials and an unknown D/E pass. */
+  deMax?: number | null;
   score: number | null;
   /** zzz661 — trend gates: price above its 50- / 200-day average. */
   aboveMa50?: boolean;
@@ -2337,6 +2340,7 @@ export function passesUsConvictionFilter(e: UsConvictionEntry, f: UsConvFilters,
   if (f.mktCapMin != null) {
     if (num(e.market_cap_musd) == null || (e.market_cap_musd as number) < f.mktCapMin) return false;
   }
+  if (f.deMax != null && !passesDeMax((e as any).de_ratio, !!(e as any).is_financial, f.deMax)) return false;   // zzz1068
   if (f.peMax != null) {
     const p = num(e.pe);
     if (p == null || p <= 0 || p > f.peMax) return false;
@@ -2529,6 +2533,16 @@ export function usCbMigrateU30(f: UsConvFilters): UsConvFilters {
   return (!f.cap || f.cap === 'all' || f.cap === 'smid') ? { ...f, cap: 'u30' } : f;
 }
 
+/** zzz1068 — the owner (17 Oct 2026): the preset accepts ANY SIZE. One-time move of a cap band
+ *  that is still on an automatic default (Under $30B or Small+Mid) back to All. Any other band
+ *  (small / mid / large / micro picked by hand) is kept. */
+export const US_CB_ALL_SIZE_FLAG_KEY = 'mc:us-cb:all-size-default:v1';
+export function usCbMigrateAllSize(f: UsConvFilters): UsConvFilters {
+  return (f.cap === 'u30' || f.cap === 'smid') ? { ...f, cap: 'all' } : f;
+}
+/** The cap band the preset carries (zzz1068: all sizes; was Under $30B). */
+export const US_PRESET_CAP = 'all';
+
 /** The page's useState initializer, verbatim: a saved set, migrated when it
  *  is an older edition of the preset (zzz662). Null when nothing is saved. */
 export function usCbSavedFilters(raw: string | null | undefined): UsConvFilters | null {
@@ -2556,11 +2570,11 @@ export function usCbFiltersForOwner(get: (key: string) => string | null): UsConv
   let f = usCbSavedFilters(get(US_CB_FILTERS_KEY)) || { ...US_FILTER_DEFAULT };
   if (get(US_CB_OPTOUT_KEY) !== '1') {
     if (f.sales == null && f.eps == null && f.pead == null && f.opmDelta == null && f.cfoPatMin == null && f.mktCapMin == null && f.verdicts == null) {
-      f = { ...usPresetFilters(), cap: 'u30' };
+      f = { ...usPresetFilters(), cap: US_PRESET_CAP };
     }
   }
-  if (get(US_CB_SMID_FLAG_KEY) !== '1' && isUsPresetActive(f) && (!f.cap || f.cap === 'all')) f = { ...f, cap: 'smid' };
-  if (get(US_CB_U30_FLAG_KEY) !== '1') f = usCbMigrateU30(f);
+  // zzz1068 — the old Small+Mid (zzz811) and Under $30B (zzz879) moves are retired; one move back to All instead
+  if (get(US_CB_ALL_SIZE_FLAG_KEY) !== '1') f = usCbMigrateAllSize(f);
   return f;
 }
 
@@ -2580,7 +2594,7 @@ export function usCbFailReasons(e: UsConvictionEntry, f: UsConvFilters, win?: Ne
     opmMin: () => `operating margin below ${f.opmMin}%`,
     cfoPatMin: () => { const cr = usCashRatio(e); return cr.lossMaking ? `a net loss${cr.basis === 'ttm' ? ' over the last twelve months' : ' this quarter'} — no earnings to turn into cash` : `operating cash ${usFmt(cr.ratio)}x net income, ${cr.basis === 'ttm' ? 'last twelve months' : 'this quarter'} (needs ${f.cfoPatMin}x)`; },
     mktCapMin: () => `market cap $${usFmt(x.market_cap_musd)}M (needs $${f.mktCapMin}M)`,
-    peMax: () => `P/E above ${f.peMax}`, score: () => 'composite below your threshold', opLev: () => `income growth not ${f.opLev}x revenue growth`,
+    peMax: () => `P/E above ${f.peMax}`, deMax: () => `debt ÷ equity ${usFmt((e as any).de_ratio)}× (needs ${f.deMax}× or less)`, score: () => 'composite below your threshold', opLev: () => `income growth not ${f.opLev}x revenue growth`,
     winMin: () => 'scorecard below your threshold', aboveMa50: () => 'price not above its 50-day average', aboveMa200: () => 'price not above its 200-day average',
     d1Bucket: () => 'day-one move outside your chip', driftBucket: () => 'move since results outside your chip',
     guidance: () => `guidance is not ${f.guidance}`, guideBeatOnly: () => 'did not beat its own prior guide', marginSlopeUp: () => 'margin not still widening',
@@ -2833,7 +2847,7 @@ export async function resyncUsBenchToEngine(fetchRows: (tickers: string[]) => Pr
 const US_CRITERION_WORDS: Record<string, string> = {
   sales: 'Revenue growth', eps: 'EPS growth', pat: 'Net income growth', pead: 'Post-results drift',
   opmDelta: 'Operating margin widening', opmMin: 'Operating margin level', cfoPatMin: 'Cash conversion',
-  mktCapMin: 'Market cap', cap: 'Size band', peMax: 'P/E ceiling', score: 'Engine rank', opLev: 'Operating leverage',
+  mktCapMin: 'Market cap', cap: 'Size band', peMax: 'P/E ceiling', deMax: 'Debt / equity ceiling', score: 'Engine rank', opLev: 'Operating leverage',
   winMin: 'Winners scorecard', aboveMa50: 'Above 50-day average', aboveMa200: 'Above 200-day average',
   d1Bucket: 'Day-one move', driftBucket: 'Move since results', guidance: 'Guidance', guideBeatOnly: 'Beat own guide',
   marginSlopeUp: 'Margin still widening', shareShrinkOnly: 'Share count falling', thesis: 'Thesis check',

@@ -93,7 +93,7 @@ describe('zzz823 — My book is the saved holdings, nothing else', () => {
 });
 
 describe('zzz823 — pass / fail / NOT CHECKED (unknown is not a fail)', () => {
-  const preset = cbFiltersForOwner(false);
+  const preset = { ...cbFiltersForOwner(false), mktCapMin: 3000 };   // zzz1068: floor picked (default is Any size)
 
   test('runner: fail wins over missing; only-missing is unknown; a combination fail is a fail', () => {
     assert.equal(runCriteriaCheck(['a'], true, () => false, () => [], (k) => k).state, 'pass');

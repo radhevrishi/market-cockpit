@@ -942,7 +942,11 @@ export async function GET(request: Request) {
         // CRITICAL FIX: only grade as filed (quality != Upcoming) when we
         // have explicit confirmation (outcomeAnn / financialResults / sub_cat
         // filing). Otherwise stays 'Upcoming' → Graded Tiers filters it out.
-        quality: (isPast && confirmed) ? rateQualityFromPriceMove(stockInfo?.changePercent || 0) : 'Upcoming',
+        // zzz1068 — TODAY counts too. `isPast` is false for a meeting held today, so a company that
+        // met AND filed today (KROSS, Sat 17 Oct 2026, filing at 18:00 IST) stayed 'Upcoming' — "board
+        // meeting only" — even with the confirming filing in hand. A confirmation for a meeting that
+        // has not happened yet (a future date) still cannot exist, so future meetings stay Upcoming.
+        quality: (confirmed && meetingDate.getTime() <= today.getTime()) ? rateQualityFromPriceMove(stockInfo?.changePercent || 0) : 'Upcoming',
         sector: normalizeSector(stockInfo?.industry) || '',
         industry: stockInfo?.industry || '',
         marketCap: getCapCategory(marketCapCr),

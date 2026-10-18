@@ -861,6 +861,15 @@ function TileRow({ r, gaapEpsY, opmD, adjEpsCur, adjEpsPrev, epsEst, surp, hasAd
             })()}`
           : 'net income not comparable'} />
     ) });
+  } else if ((r as any).cash_annual && !(r as any).is_financial) {
+    // zzz1068 — the 8-K has no cash-flow statement yet: the last 10-K's same-year CFO ÷ net income,
+    // labelled with its year so it is never read as this quarter's figure.
+    const ac = (r as any).cash_annual as { cfo_musd: number; ni_musd: number; ratio: number | null; basis: string };
+    parts.push({ w: ac.ratio != null && ac.ratio < 0.5 ? 26 : 5, node: (size) => (
+      <Tile key="cfo" label="CFO/NI" size={size} value={ac.ratio != null ? ac.ratio.toFixed(2) : ac.ni_musd < 0 ? 'loss yr' : '—'}
+        color={ac.ratio == null ? undefined : ac.ratio >= 1 ? 'var(--mc-bullish)' : ac.ratio >= 0.5 ? undefined : 'var(--mc-bearish)'}
+        sub={`CFO ${fmtUsdLevel(ac.cfo_musd)} · ${ac.basis} — quarter cash flow not filed yet`} />
+    ) });
   }
 
   if (!parts.length) return null;

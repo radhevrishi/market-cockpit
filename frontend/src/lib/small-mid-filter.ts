@@ -29,13 +29,22 @@ export function smallMidCounts<T>(rows: T[], capOf: (r: T) => unknown, maxCr: nu
   return { hiddenLarge, unknown };
 }
 
-/** Read the saved toggle (default ON). Never throws. */
-export function readSmallMidPref(key: string): boolean {
+/** zzz1068 — Earnings Opportunities (India + US) now open on ANY SIZE. The key moved from
+ *  v1 (default on) to v2 (default off) so the new default reaches every browser once. */
+export const EO_SMALL_MID_KEY = 'mc:eo:small-mid-only:v2';
+export const EO_SMALL_MID_DEFAULT = false;
+
+/** The saved toggle from a raw stored value; `dflt` when nothing is saved. Pure. */
+export function parseSmallMidPref(raw: string | null | undefined, dflt: boolean = true): boolean {
+  return raw == null ? dflt : raw !== '0';
+}
+
+/** Read the saved toggle (default ON unless `dflt` says otherwise). Never throws. */
+export function readSmallMidPref(key: string, dflt: boolean = true): boolean {
   try {
-    if (typeof window === 'undefined') return true;
-    const v = window.localStorage.getItem(key);
-    return v === null ? true : v !== '0';
-  } catch { return true; }
+    if (typeof window === 'undefined') return dflt;
+    return parseSmallMidPref(window.localStorage.getItem(key), dflt);
+  } catch { return dflt; }
 }
 
 export function writeSmallMidPref(key: string, on: boolean): void {

@@ -425,6 +425,8 @@ export interface WindowIssues {
 export function shortDropReason(reason: string | undefined | null): string {
   const s = String(reason || '').toLowerCase();
   if (/ghost/.test(s)) return 'no confirmed filing';
+  // zzz1068 — a confirmed results filing whose figures are still being read is a FILED company
+  if (/^filed\b|results filing (?:seen|confirmed)|figures being read/.test(s)) return 'filed — figures being read';
   // zzz820 — a scheduled board meeting with no confirmed filing is not a
   // company that "filed but couldn't be graded".
   if (/scheduled|upcoming/.test(s)) return 'board meeting only — filing not confirmed';

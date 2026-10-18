@@ -154,7 +154,7 @@ export function hiddenReportLine(r: HiddenReport): string {
 }
 
 /** The preset bar, in words (no 0–100 number, no buy / sell words). */
-export function presetBarText(capFloor: number | null = 3000): string {
+export function presetBarText(capFloor: number | null = null): string {   // zzz1068 — Any size by default
   const cap = capFloor == null ? 'any market cap' : `market cap ≥₹${capFloor >= 1000 ? `${capFloor / 1000}k` : capFloor} Cr`;
   return `Sales ≥20% · EPS ≥25% · PEAD 40 or more · margin not falling · margin ≥0% · cash ≥0.5x profit (same year) · ${cap} · no pledge · setup: Top / Good / Watch`;
 }
@@ -361,7 +361,7 @@ export function cbExportWords(e: any, verdictKey: string, peadScoreValue: number
     strength: cbStrengthWord(e?.composite_score),
     drift: cbPeadWord(peadScoreValue),
     setup: cbVerdictLabel(verdictKey),
-    cash: cv.state === 'ok' ? `${(cv.ratio as number).toFixed(2)}x (${cv.basis})` : cv.state === 'na' ? 'not meaningful (lender)' : 'not checked',
+    cash: cv.state === 'ok' ? `${(cv.ratio as number).toFixed(2)}x (${cv.basis})` : cv.state === 'na' ? 'not meaningful (lender)' : cv.state === 'loss' ? `loss year — CFO ₹${Math.round(cv.ocf as number)} Cr, loss ₹${Math.round(Math.abs(cv.pat as number))} Cr (${cv.basis})` : 'not checked',
     tierNow: tierNowLabel(e) || '',
   };
 }

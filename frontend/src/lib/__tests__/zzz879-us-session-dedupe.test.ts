@@ -64,10 +64,11 @@ describe('zzz879 — US Conviction Beats age + cap default', () => {
     assert.equal(usCbMigrateU30({ ...US_FILTER_DEFAULT, cap: 'smid' }).cap, 'u30');
     assert.equal(usCbMigrateU30({ ...US_FILTER_DEFAULT, cap: 'all' }).cap, 'u30');
     assert.equal(usCbMigrateU30({ ...US_FILTER_DEFAULT, cap: 'small' }).cap, 'small', 'a hand-picked band is kept');
-    assert.equal(usCbFiltersForOwner(() => null).cap, 'u30');
+    // zzz1068 — the owner's default is now ALL sizes (the zzz879 Under $30B move is retired; see zzz1068-eo-coverage)
+    assert.equal(usCbFiltersForOwner(() => null).cap, 'all');
     const saved = JSON.stringify({ ...US_FILTER_DEFAULT, cap: 'all' });
     const get = (flag: boolean) => (k: string) => (k === US_CB_U30_FLAG_KEY ? (flag ? '1' : null) : k === 'mc:us-cb:filters:v1' ? saved : k === 'mc:us-cb:preset:v1:optout' ? '1' : null);
-    assert.equal(usCbFiltersForOwner(get(false)).cap, 'u30');
-    assert.equal(usCbFiltersForOwner(get(true)).cap, 'all', 'after the move, All chosen by hand stays');
+    assert.equal(usCbFiltersForOwner(get(false)).cap, 'all');
+    assert.equal(usCbFiltersForOwner(get(true)).cap, 'all', 'All chosen by hand stays');
   });
 });

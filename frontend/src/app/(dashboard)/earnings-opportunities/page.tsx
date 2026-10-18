@@ -37,7 +37,8 @@ import { classifyGradedRow, ABFG_META, type AbfgPattern } from '@/lib/earnings/p
 // PATCH 0715 — centralized IST helpers.
 import { istToday as _istToday, isIndianMarketOpen as isIndianMarketOpenLocal } from '@/lib/market-hours';
 import { eoFallbackLabel } from '@/lib/eo-fallback-label'; // zzz898
-import { passesSmallMid, smallMidCounts, knownCapCr, readSmallMidPref, writeSmallMidPref, SMALL_MID_MAX_CR } from '@/lib/small-mid-filter'; // zzz898
+import { passesSmallMid, smallMidCounts, knownCapCr, readSmallMidPref, writeSmallMidPref, SMALL_MID_MAX_CR, EO_SMALL_MID_KEY } from '@/lib/small-mid-filter'; // zzz898 · zzz1068
+import { eoTodayPollMs, eoTodayPollLabel } from '@/lib/eo-poll';   // zzz1068
 import { gradeIndiaRow as gradeRow } from '@/lib/india-grade';
 // zzz975 — one guidance line per card; a lowered outlook moves a top-tier quarter to MIXED (server overlay, same pure rule here).
 import { IN_OVERLAY_VERSION, applyInGuideLine } from '@/lib/in-guide-line';
@@ -123,9 +124,11 @@ export default function EarningsOpportunitiesPage() {
   // PATCH 1022 — market-cap range filter (uses market_cap_cr in ₹ Cr)
   const [capFilter, setCapFilter] = useState<'all' | 'sweet' | 'mega' | 'large' | 'mid' | 'small' | 'micro'>('all');
   // zzz898 — "Small & mid only" (default on): hides names known to be ≥ ₹30,000 Cr; unknown size stays, labelled.
-  const [smallMidOnly, setSmallMidOnlyState] = useState<boolean>(true);
-  useEffect(() => { setSmallMidOnlyState(readSmallMidPref('mc:eo:small-mid-only:v1')); }, []);
-  const setSmallMidOnly = (on: boolean) => { setSmallMidOnlyState(on); writeSmallMidPref('mc:eo:small-mid-only:v1', on); };
+  // zzz1068 — default is now ANY SIZE (toggle off). The saved choice moved to a new key so the
+  // new default applies once for everyone; a choice made after that is remembered as before.
+  const [smallMidOnly, setSmallMidOnlyState] = useState<boolean>(false);
+  useEffect(() => { setSmallMidOnlyState(readSmallMidPref(EO_SMALL_MID_KEY, false)); }, []);
+  const setSmallMidOnly = (on: boolean) => { setSmallMidOnlyState(on); writeSmallMidPref(EO_SMALL_MID_KEY, on); };
   // PATCH zzz75 — Always default to ONE day before today (previous weekday,
   // skipping Sat/Sun backward to Fri). User explicitly wants the page to
   // start on yesterday, NOT auto-jump to a dense-earnings calendar date.
@@ -517,12 +520,8 @@ export default function EarningsOpportunitiesPage() {
     // PATCH 0646 — also poll past dates within last 3 trading days every
     // 10 min (backfill catch-up). Older than that, no poll (truly cold).
     refetchInterval: () => {
-      const now = new Date();
-      const istHours = (now.getUTCHours() + 5.5) % 24;
-      const inMarketHours = istHours >= 9 && istHours <= 17;
-      if (resolvedDateForGrading === todayIso) {
-        return inMarketHours ? 4 * 60_000 : false;
-      }
+      // zzz1068 — today polls through the results FILING window (09:00–24:00 IST, every day), not market hours
+      if (resolvedDateForGrading === todayIso) return eoTodayPollMs();
       // Past date — check if it's within last 3 days
       const daysOld = (Date.parse(todayIso) - Date.parse(resolvedDateForGrading)) / (1000 * 60 * 60 * 24);
       if (daysOld > 0 && daysOld <= 3) return 10 * 60_000;
@@ -2021,14 +2020,11 @@ export default function EarningsOpportunitiesPage() {
               refreshing every 4 min, with the last refresh timestamp so
               they can see freshness at a glance. */}
           {resolvedDateForGrading === todayIso && (() => {
-            const now = new Date();
-            const istHours = (now.getUTCHours() + 5.5) % 24;
-            const inMarketHours = istHours >= 9 && istHours <= 17;
+            const poll = eoTodayPollLabel();   // zzz1068 — results filing hours, weekends included
+            const inMarketHours = poll.live;
             const minutesAgo = Math.floor((Date.now() - lastAutoRefreshMs) / 60_000);
             return (
-              <span title={inMarketHours
-                ? 'Auto-refreshing every 4 min during Indian market hours (9 AM - 5 PM IST). New filings light up with NEW badges.'
-                : 'Market closed — manual refresh only. Re-opens 9 AM IST.'}
+              <span title={poll.title}
                 style={{
                   display: 'inline-flex', alignItems: 'center', gap: 5,
                   fontSize: 'var(--mc-text-xs)', fontWeight: 700,
@@ -2039,8 +2035,8 @@ export default function EarningsOpportunitiesPage() {
                   fontFamily: 'ui-monospace, monospace',
                 }}>
                 {inMarketHours
-                  ? <><span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: 3, backgroundColor: 'var(--mc-bullish)', animation: 'pulse 1.5s ease-in-out infinite' }} /> LIVE · auto-refresh 4m · last {minutesAgo}m ago</>
-                  : <>● MARKET CLOSED · manual refresh only</>
+                  ? <><span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: 3, backgroundColor: 'var(--mc-bullish)', animation: 'pulse 1.5s ease-in-out infinite' }} /> {poll.text} · last {minutesAgo}m ago</>
+                  : <>● {poll.text}</>
                 }
                 <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.35} }`}</style>
               </span>

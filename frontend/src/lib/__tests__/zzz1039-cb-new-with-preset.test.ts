@@ -9,7 +9,8 @@ const good: any = { ticker: 'GOODCO', tier: 'STRONG', composite_score: 80, filin
   opm_pct: 20, opm_prev_pct: 16, cfo_to_pat_ratio: 1.2, market_cap_cr: 9000, pe: 25, roce: 25, move_pct: 4, pead_score: 75, pledged_pct: 0 };
 const tiny: any = { ...good, ticker: 'TINY', market_cap_cr: 60 };
 const old: any = { ...good, ticker: 'OLDCO', filing_date: day(40) };
-const preset: ConvFilters = { ...FILTER_DEFAULT, ...indiaPresetFilters() };
+// zzz1068 — the preset's size floor is now Any size by default; these combinations test it with the ₹3k Cr floor picked
+const preset: ConvFilters = { ...FILTER_DEFAULT, ...indiaPresetFilters(3000) };
 const pass = (e: any, f: ConvFilters) => passesConvictionFilter(e, f);
 
 test('all four combinations', () => {

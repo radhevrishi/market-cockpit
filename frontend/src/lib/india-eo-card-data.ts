@@ -683,6 +683,25 @@ export function capInBand(cr: any, f: string): boolean {
 
 export interface CashTileView { text: string; note: string; color: 'good' | 'warn' | 'bad' | 'none'; basis: string | null }
 
+/** zzz1068 — the same-fiscal-year CFO and profit (₹ Cr) the ratio is built from, when both are
+ *  real figures labelled with their fiscal year (`cash_fy`). Lenders never get one. Pure. */
+export function yearCashFigures(r: any): { ocf: number; pat: number; fy: string } | null {
+  if (financialKindOfRow(r)) return null;
+  const gi = r?.grade_input || {};
+  const fy = [r?.cash_fy, gi.cash_fy].find((x) => typeof x === 'string' && x.trim());
+  const ocf = [r?.ocf_annual_cr, gi.ocf_annual_cr].find(fin);
+  const pat = [r?.pat_annual_cr, gi.pat_annual_cr].find(fin);
+  if (!fy || ocf == null || pat == null || ocf === 0 || pat === 0) return null;
+  return { ocf, pat, fy: String(fy).trim() };
+}
+
+/** "₹723 Cr" / "−₹231 Cr" (one decimal under 10). Pure. */
+export function fmtCrSigned(v: number): string {
+  const a = Math.abs(v);
+  const s = a < 10 ? (Math.round(a * 10) / 10).toString() : Math.round(a).toLocaleString('en-IN');
+  return `${v < 0 ? '−' : ''}₹${s} Cr`;
+}
+
 /**
  * The CFO/PAT tile. '—' when the ratio is missing or exactly 0.00 (the feed's
  * "no figure"); "not meaningful for lenders" for banks / NBFCs / insurers
@@ -694,7 +713,16 @@ export function cashTileView(r: any): CashTileView {
     : (typeof r?.cash_fy === 'string' && r.cash_fy.trim() ? `${r.cash_fy.trim()} full year` : null);
   if (financialKindOfRow(r)) return { text: '—', note: 'not meaningful for lenders', color: 'none', basis: null };
   const v = [r?.ocf_to_pat_ratio, r?.cfo_to_pat_ratio].find(fin);
-  if (v == null || v === 0) return { text: '—', note: 'not in source', color: 'none', basis };
+  if (v == null || v === 0) {
+    // zzz1068 — the figures ARE in the source; the ratio is refused because the year's profit was a
+    // LOSS (19 of the 20 India non-lender gaps on 15–17 Oct: SOLARA, E2E, CROMPTON …) or tiny. Say so
+    // and show the cash figure, instead of "not in source".
+    const yr = yearCashFigures(r);
+    if (yr) return yr.pat < 0
+      ? { text: `CFO ${fmtCrSigned(yr.ocf)}`, note: `loss year (${fmtCrSigned(yr.pat)}) — no ratio`, color: yr.ocf > 0 ? 'warn' : 'bad', basis }
+      : { text: `CFO ${fmtCrSigned(yr.ocf)}`, note: `profit ${fmtCrSigned(yr.pat)} too small for a ratio`, color: yr.ocf > 0 ? 'warn' : 'bad', basis };
+    return { text: '—', note: 'not in source', color: 'none', basis };
+  }
   // zzz826 — ratios up to ±50x are real now (same-year figures); a very high
   // one means profit is small next to cash flow, not "super cash-backed".
   const note = v < 0 ? 'operations burned cash' : v < 0.6 ? 'below the divergence line' : v < 1 ? 'partly cash-backed'

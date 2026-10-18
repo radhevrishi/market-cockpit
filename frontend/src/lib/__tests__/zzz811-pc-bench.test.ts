@@ -354,7 +354,7 @@ describe('zzz811 — US: his US Conviction Beats criteria are applied, price cri
 
   test('no saved filters and no opt-out → the preset + under $30B (zzz879; was small/mid), incl. the 50/200-day price legs', () => {
     const f = usCbFiltersForOwner(() => null);
-    assert.deepEqual(f, { ...usPresetFilters(), cap: 'u30' });
+    assert.deepEqual(f, { ...usPresetFilters(), cap: 'all' });   // zzz1068: the preset accepts any size (was under $30B)
     assert.equal(f.aboveMa50, true);
     assert.equal(US_CB_FILTERS_KEY, 'mc:us-cb:filters:v1');
     assert.equal(US_CB_OPTOUT_KEY, 'mc:us-cb:preset:v1:optout');
@@ -380,7 +380,7 @@ describe('zzz811 — US: his US Conviction Beats criteria are applied, price cri
 
   test('US opt-out with no saved filters → every name listed', () => {
     const f = usCbFiltersForOwner((k) => (k === US_CB_OPTOUT_KEY ? '1' : null));
-    assert.deepEqual(f, { ...US_FILTER_DEFAULT, cap: 'u30' }, 'zzz879: the default band is under $30B');
+    assert.deepEqual(f, { ...US_FILTER_DEFAULT, cap: 'all' }, 'zzz1068: the default band is all sizes');
     const win = computeUsNewWindow(LIST);
     assert.equal(LIST.filter((e: any) => passesUsConvictionFilter(e, f, win)).length, LIST.length);
   });

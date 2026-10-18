@@ -37,6 +37,7 @@ import { serverTiming } from '@/lib/server-timing';
 if (process.env.NEXT_PHASE !== 'phase-production-build') void prewarmInGuideIndex();
 import { swrGet, swrHeaders, privateCache, SwrUnusableError } from '@/lib/swr-cache';
 import { checkQuarterLabel, refetchTickers } from '@/lib/india-eo-card-data';  // zzz820 · zzz826
+import { filedFiguresPendingReason } from '@/lib/india-results-filing';   // zzz1068
 import { CAVEAT_PENALTY, CAVEAT_PENALTY_DEFAULT, marginQualityDelta, decideTier, marketReactionDelta, typicalDailyMovePct, thinFloatGate, quadrantForIndiaRow } from '@/lib/earnings-grade-shared';
 
 // zzz379 — derive the correct RESULT quarter from a filing date instead of the
@@ -198,6 +199,21 @@ function _olderThanScheduledQuarter(label: any, resultDate: any, e: any): string
   const filed = String(resultDate || '').slice(0, 10);
   if (!want || !have || !filed || want > filed) return null;
   return have < want ? `scheduled for ${String(label).trim()} (quarter ending ${want}); Screener's newest quarter is ${have}: results for ${String(label).trim()} not on Screener yet` : null;
+}
+
+// zzz1068 — a hub row that came from a BOARD MEETING ('Upcoming') becomes a confirmed filing
+// when the exchange feed shows the results themselves for the same company on that date.
+function upgradeToConfirmedByLiveFiling(dayList: any[], sym: string, f: any): boolean {
+  const m = dayList.find((r: any) => String(r?.ticker || '').toUpperCase() === sym);
+  if (!m) return false;
+  m.filing_confirmed = 'exchange-filing';
+  if (!m.filing_iso && f?.filing_iso) m.filing_iso = f.filing_iso;
+  if (!m.announcement_text && f?.subject) m.announcement_text = f.subject;
+  if (f?.attachment_url) m.source_url = f.attachment_url;
+  if (typeof f?.quarter_label === 'string' && f.quarter_label) { m.quarter = f.quarter_label; m.quarter_explicit = true; }
+  if (String(m.quality || '') !== 'Upcoming') return false;
+  m.quality = 'Confirmed';
+  return true;
 }
 
 // ─── gradeRow (server-side, mirrors page.tsx PATCH 0158) ───────────────────
@@ -858,15 +874,26 @@ async function gradedLegacyGET(req: Request) {
         const live: any = await liveRes.json();
         const liveFilings: any[] = Array.isArray(live?.filings) ? live.filings : [];
         const existingTickers = new Set<string>(dayList.map((r: any) => String(r.ticker || '').toUpperCase()));
-        let addedFromLive = 0;
+        let addedFromLive = 0, confirmedFromLive = 0;
         for (const f of liveFilings) {
           const sym = String(f.symbol || '').toUpperCase();
-          if (!sym || existingTickers.has(sym)) continue;
+          if (!sym) continue;
+          if (existingTickers.has(sym)) {
+            // zzz1068 — the hub lists this company from its BOARD MEETING ('Upcoming'); the exchange
+            // feed now shows the results filing itself. Before, the live filing was skipped because the
+            // ticker was already on the list, so a filed company stayed "board meeting only — results not
+            // out yet" until Screener.in added the quarter (KROSS, ICICIBANK, PSB … 17 Oct 2026).
+            const hit = upgradeToConfirmedByLiveFiling(dayList, sym, f);
+            if (hit) confirmedFromLive++;
+            continue;
+          }
           dayList.push({
             ticker: sym,
             company: f.company || sym,
             resultDate: date,
-            quarter: deriveQuarterLabel(date),  // zzz379 — was 'Q4'; derive from filing date
+            quarter: (typeof f.quarter_label === 'string' && f.quarter_label) || deriveQuarterLabel(date),  // zzz1068 — the quarter the filing names; zzz379 — else from the filing date
+            ...(typeof f.quarter_label === 'string' && f.quarter_label ? { quarter_explicit: true } : {}),
+            filing_confirmed: 'exchange-filing',
             sector: null,
             marketCap: null,
             quality: 'Confirmed',  // it's a real NSE filing, not a board-meeting forecast
@@ -886,7 +913,7 @@ async function gradedLegacyGET(req: Request) {
           existingTickers.add(sym);
           addedFromLive++;
         }
-        console.log(`[graded] ${date} (age=${dateAgeDays}d, sparse=${isHubSparse}): augmented dayList with ${addedFromLive} live NSE filings (hub had ${dayList.length - addedFromLive}, live total ${liveFilings.length})`);
+        console.log(`[graded] ${date} (age=${dateAgeDays}d, sparse=${isHubSparse}): ${confirmedFromLive} scheduled names confirmed filed by the exchange feed; augmented dayList with ${addedFromLive} live NSE filings (hub had ${dayList.length - addedFromLive}, live total ${liveFilings.length})`);
       }
     } catch (err) {
       console.warn(`[graded] today-live fetch failed for ${date}:`, (err as Error).message);
@@ -1314,8 +1341,16 @@ async function gradedLegacyGET(req: Request) {
         // a board meeting with NO confirmed filing (hub 'Upcoming') whose Screener numbers are older: the results are simply not out yet
         const _onlyScheduled = String(m.quality || '') === 'Upcoming';
         // zzz879 — a filing that NAMES its quarter and is not on Screener yet: the results PDF backup reads it after 2 days
-        if (m.quarter_explicit === true && !_alreadyGraded && !_onlyScheduled) _rpAdd(m, _quarterEndFromFyLabel(m.quarter));
-        if (m.quarter_explicit === true || _alreadyGraded || _onlyScheduled || !_scrLabel) { dropped.push({ ticker: m.ticker, reason: _alreadyGraded ? `${_older} (its ${_scrLabel} results are already shown on ${shownEarlier.get(`${String(m.ticker || '').toUpperCase()}|${_scrLabel!.toUpperCase()}`)})` : _older, source: m.__source }); continue; }
+        // zzz1068 — the exchange feed showed the results filing itself: never relabel it to Screener's older quarter
+        const _exchangeFiled = !!m.filing_confirmed && !_onlyScheduled;
+        if ((m.quarter_explicit === true || _exchangeFiled) && !_alreadyGraded && !_onlyScheduled) _rpAdd(m, _quarterEndFromFyLabel(m.quarter));
+        if (m.quarter_explicit === true || _exchangeFiled || _alreadyGraded || _onlyScheduled || !_scrLabel) {
+          // zzz1068 — a CONFIRMED filing is never described as "scheduled": it says filed, figures being read
+          const _reason = _alreadyGraded ? `${_older} (its ${_scrLabel} results are already shown on ${shownEarlier.get(`${String(m.ticker || '').toUpperCase()}|${_scrLabel!.toUpperCase()}`)})`
+            : _onlyScheduled ? _older
+            : filedFiguresPendingReason(m.quarter, m.resultDate, e?.latest_quarter_end_iso, m.filing_confirmed);
+          dropped.push({ ticker: m.ticker, reason: _reason, source: m.__source, ...(_onlyScheduled || _alreadyGraded ? {} : { filed: true }) } as any); continue;
+        }
         m.quarter = _scrLabel;
       }
     }

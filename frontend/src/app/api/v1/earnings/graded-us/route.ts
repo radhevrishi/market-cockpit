@@ -29,6 +29,7 @@
 
 import { resolveFyYear } from '@/lib/calendar-dates';   // zzz897
 import { guidesNextQuarterBelowThisOne } from '@/lib/us-guidance-figures';
+import { annualCashFromFacts } from '@/lib/us-annual-cash';   // zzz1068
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { sessionIndexOf, priorSessions, dropShownEarlier, US_SESSION_INDEX_KEY, US_SESSION_INDEX_TTL_S } from '@/lib/us-session-dedupe';
@@ -1824,6 +1825,8 @@ export async function GET(req: Request) {
       // sector so the client preset can skip that gate, exactly as India does
       // for NBFCs.
       (row as any).is_financial = isFinancialSic(p.f.sic);
+      // zzz1068 — no quarter cash flow yet (8-K only): the last 10-K's same-year CFO ÷ net income, labelled
+      if (row.cfo_curr_musd == null && !(row as any).is_financial) { const ac = annualCashFromFacts(p.facts, p.fundamentals?.q_end ?? null); if (ac) (row as any).cash_annual = ac; }
       (row as any).close_30d = p.t.close_30d;
       (row as any).reaction_date = p.t.reaction_date;
       // Consensus surprise (street basis, both sides) — tagged so it shows up
@@ -2324,6 +2327,7 @@ export async function GET(req: Request) {
         }
         (row as any).prelim = true;
         (row as any).is_financial = isFinancialSic(f.sic);
+        if (row.cfo_curr_musd == null && !(row as any).is_financial && facts0) { const ac = annualCashFromFacts(facts0, null); if (ac) (row as any).cash_annual = ac; }   // zzz1068
         (row as any).close_30d = t.close_30d;
         (row as any).reaction_date = t.reaction_date;
         if (adjNowP != null) {

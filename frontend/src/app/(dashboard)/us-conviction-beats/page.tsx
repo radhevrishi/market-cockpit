@@ -19,6 +19,8 @@
 // two markets silently overwriting each other. See lib/conviction-beats-us.ts.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { useDebtEquityEntries } from '@/lib/use-debt-equity';   // zzz1068
+import { deCell, TONE_COLOR, DE_MAX_OPTIONS } from '@/lib/cb-metric-view';
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { windowSessions } from '@/lib/us-merge';
@@ -27,8 +29,8 @@ import toast from 'react-hot-toast';
 import { Award, RefreshCw, X, Undo2, ExternalLink, Star, Copy } from 'lucide-react';
 import {
   getUsConvictionList, removeUsConviction, clearUsConviction, syncUsConviction,
-  restoreUsConvictionBin, readUsConvictionBin, hydrateUsConviction, usBenchPersistError, mergeServerUsBench, usCbSavedFilters, US_CB_OPTOUT_KEY, US_CB_FILTERS_KEY, US_CB_SMID_FLAG_KEY,
-  usFilingAgeDays, isUsBenchAged, US_BENCH_AGED_DAYS, US_CB_U30_FLAG_KEY, usCbMigrateU30, computeUsNewWindow, usVerdict, usRule40, usRoce,
+  restoreUsConvictionBin, readUsConvictionBin, hydrateUsConviction, usBenchPersistError, mergeServerUsBench, usCbSavedFilters, US_CB_OPTOUT_KEY, US_CB_FILTERS_KEY,
+  usFilingAgeDays, isUsBenchAged, US_BENCH_AGED_DAYS, US_CB_ALL_SIZE_FLAG_KEY, usCbMigrateAllSize, US_PRESET_CAP, computeUsNewWindow, usVerdict, usRule40, usRoce,
   passesUsConvictionFilter, usPresetFilters, isUsPresetActive, usCbCriteriaCheck,
   US_FILTER_DEFAULT, US_PRESET,
   // zzz828 — words not scores, same-period cash ratio, engine re-sync, hidden-names audit
@@ -98,7 +100,9 @@ function driftState(e: UsConvictionEntry): 'DRIFTING' | 'FADING' | 'HOLDING' | '
 }
 
 export default function UsConvictionBeatsPage() {
-  const [entries, setEntries] = useState<UsConvictionEntry[]>([]);
+  const [entriesRaw, setEntries] = useState<UsConvictionEntry[]>([]);
+  // zzz1068 — debt ÷ equity from the stock-screener snapshot on every entry (card chip, D/E filter, table, CSV)
+  const entries = useDebtEquityEntries(entriesRaw, 'US');
   // zzz703 — A/B/F/G pattern filter; independent of tier.
   const [patternOnly, setPatternOnly] = useState<AbfgPattern | null>(null);
   const [filters, setFilters] = useState<UsConvFilters>(() => {
@@ -262,18 +266,20 @@ export default function UsConvictionBeatsPage() {
         // Arista, which is the opposite of what turning it on was for. So
         // the preset now selects Small+Mid with it, exactly as if it were
         // one more of the preset's conditions.
-        ? { ...usPresetFilters(), cap: 'u30' } : prev
+        ? { ...usPresetFilters(), cap: US_PRESET_CAP } : prev   /* zzz1068 — any size */
     ));
   }, []);
 
   // zzz879 — the default cap band is now "Under $30B" (Rishi, 5 Oct 2026: 69 of
   // the 168 bench names were $10B or bigger, and Small+Mid also hid the $10–30B
   // names he does want). Runs once; a band picked by hand afterwards is kept.
+  // zzz1068 — the owner (17 Oct 2026): the preset accepts ANY SIZE. Runs once: a band still on
+  // the automatic Under $30B / Small+Mid default goes back to All; a hand-picked band is kept.
   useEffect(() => {
-    const K = US_CB_U30_FLAG_KEY;
+    const K = US_CB_ALL_SIZE_FLAG_KEY;
     try { if (localStorage.getItem(K) === '1') return; } catch { return; }
     try { localStorage.setItem(K, '1'); } catch { /* repeats harmlessly */ }
-    setFilters((prev) => usCbMigrateU30(prev));
+    setFilters((prev) => usCbMigrateAllSize(prev));
   }, []);
 
   // ── THE NEW DEFAULT HAS TO REACH AN EXISTING READER  (zzz612) ──────────
@@ -284,13 +290,7 @@ export default function UsConvictionBeatsPage() {
   // for the exact state that predates the change — preset on, cap untouched.
   // A flag records that it ran, so a reader who deliberately goes back to
   // "All" is never quietly narrowed again on their next visit.
-  useEffect(() => {
-    const K = US_CB_SMID_FLAG_KEY; // zzz811
-    try { if (localStorage.getItem(K) === '1') return; } catch { return; }
-    try { localStorage.setItem(K, '1'); } catch { /* the migration simply repeats */ }
-    setFilters((prev) => (isUsPresetActive(prev) && (!prev.cap || prev.cap === 'all')
-      ? { ...prev, cap: 'smid' } : prev));
-  }, []);
+  // zzz1068 — the zzz811 Small+Mid move is retired (the preset now accepts any size).
 
   // ── WHICH SESSIONS THIS BENCH IS ACTUALLY BUILT FROM ────────────────────
   //
@@ -941,7 +941,7 @@ export default function UsConvictionBeatsPage() {
       // Turning the preset ON narrows to small+mid with it; turning it off
       // leaves the cap where the reader put it, so an explicit choice is
       // never overwritten in the direction that hides names.
-      return { ...usPresetFilters(), cap: 'u30', q: prev.q };
+      return { ...usPresetFilters(), cap: US_PRESET_CAP, q: prev.q };   // zzz1068 — any size
     });
   };
 
@@ -984,7 +984,7 @@ export default function UsConvictionBeatsPage() {
     // quality / inflection / engine rank / drift / RS as words, the verdict
     // as its neutral label, the cash ratio on one period (basis stated).
     const head = ['Ticker', 'Company', 'Tier', 'Now under current rules', 'Quadrant', 'Quality', 'Inflection', 'Quality read', 'Engine rank', 'Quarter', 'Filed', 'Rev YoY %', 'NI YoY %', 'EPS YoY %',
-      'OPM %', 'OPM prev %', 'CFO/NI', 'CFO/NI period', 'Rule of 40', 'R40 basis', 'ROCE %', 'Post-results drift', 'Relative strength', 'Stage', '% from 52w high', 'ADDV $M', 'Mkt cap $M', 'Price', 'P/E',
+      'OPM %', 'OPM prev %', 'CFO/NI', 'CFO/NI period', 'Rule of 40', 'R40 basis', 'ROCE %', 'Post-results drift', 'Relative strength', 'Stage', '% from 52w high', 'ADDV $M', 'Mkt cap $M', 'Price', 'P/E', 'Debt / equity',
       'D1 %', 'Since %', 'Sector', 'Caveats', 'SEC'];
     const body = exportRows.map((e) => { const cr = usCashRatio(e); return [e.ticker, decodeHTMLEntities(e.company), e.tier, e.now_tier ?? '',
       e.quadrant ?? '', e.quality_score != null ? usScoreWord(e.quality_score) : '', e.inflection_score != null ? usScoreWord(e.inflection_score) : '',
@@ -994,6 +994,7 @@ export default function UsConvictionBeatsPage() {
       usRule40(e)?.score, usRule40(e)?.basis, usRoce(e)?.pct,
       e.pead_score != null ? usPeadWord(e.pead_score) : '', e.rs_rating != null ? usRsWord(e.rs_rating) : '', e.stage,
       e.pct_from_52w_high?.toFixed(1), e.addv_musd?.toFixed(1), e.market_cap_musd?.toFixed(0), e.price?.toFixed(2), e.pe,
+      e.is_financial ? 'n/a (financial)' : (typeof (e as any).de_ratio === 'number' ? ((e as any).de_ratio >= 99 ? 'negative equity' : (e as any).de_ratio.toFixed(2)) : ''),
       e.d1_pct?.toFixed(2), e.move_pct?.toFixed(2), e.sector, (e.caveat_tags || []).join(' | '), e.source_url].map(esc).join(','); });
     download(`us-conviction-beats-${etToday()}.csv`, [head.map(esc).join(','), ...body].join('\n'));
   };
@@ -1323,6 +1324,8 @@ export default function UsConvictionBeatsPage() {
           <ChipRow label="Engine rank at least" value={filters.score} opts={[60, 70, 78, 85]} fmt={(v) => (v >= 85 ? 'top' : v >= 78 ? 'very strong' : v >= 70 ? 'strong' : 'fair')} onSet={(v) => setFilters((p) => ({ ...p, score: v }))} count={(v) => countWith({ score: v })} />
           <ChipRow label="Mkt cap ≥" value={filters.mktCapMin} opts={[300, 1000, 2000, 5000, 10000]} fmt={(v) => (v >= 1000 ? `$${v / 1000}B` : `$${v}M`)} onSet={(v) => setFilters((p) => ({ ...p, mktCapMin: v }))} count={(v) => countWith({ mktCapMin: v })} />
           <ChipRow label="P/E ≤" value={filters.peMax} opts={[15, 20, 30, 40]} fmt={(v) => `${v}×`} onSet={(v) => setFilters((p) => ({ ...p, peMax: v }))} count={(v) => countWith({ peMax: v })} />
+          {/* zzz1068 — D/E MAX. Banks / insurers / REITs and an unknown D/E pass (not a fail). */}
+          <ChipRow label="D/E MAX" value={filters.deMax ?? null} opts={DE_MAX_OPTIONS.map((o) => o.v)} fmt={(v) => `≤${v}`} onSet={(v) => setFilters((p) => ({ ...p, deMax: v }))} count={(v) => countWith({ deMax: v })} />
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={rowLabel}>Quality read</span>
             {VERDICTS.map((v) => {
@@ -1955,6 +1958,9 @@ function BenchCard({ e, open, onToggle, onRemove, conf, mark }: {
           {ds && ds !== 'HOLDING' && (
             <Chip text={`${ds === 'DRIFTING' ? '⚠ ' : ''}${ds} ${fmtPct(e.move_pct, 0)}`} color={driftColor} />
           )}
+          {/* zzz1068 — debt ÷ equity beside the card's ROCE chip, same colour logic as the India cards */}
+          {(() => { const dc = deCell((e as any).de_ratio, (e as any).de_basis, !!e.is_financial); return (
+            <span title={dc.title}><Chip text={`D/E ${dc.text}`} color={TONE_COLOR[dc.tone]} /></span>); })()}
           {age != null && <Chip text={aged ? `OLD · ${age}d` : `·${age}d`} color={aged ? '#94A3B8' : undefined} />}
           {/* Tradeability. Two numbers, because a small cap that cannot be
               bought in size is not an opportunity however good the print was:
@@ -2006,7 +2012,7 @@ function BenchTable({ rows, sort, dir, onSort, onRemove, markOf }: { rows: UsCon
             <th style={th('R40')} title="Revenue growth % + FCF margin %, trailing twelve months. Blank where the filing does not support it.">R40</th>
             <th style={th('ROCE')} title="TTM operating income ÷ (total assets − current liabilities). Blank for a filer with no classified balance sheet.">ROCE</th>
             <H label="PEAD" k="pead" /><th style={th('RS')}>RS</th><th style={th('Stg')}>Stg</th>
-            <H label="$Vol/d" k="addv" /><H label="Mkt cap" k="mcap" /><H label="P/E" k="pe" /><th style={th('D1')}>D1</th>
+            <H label="$Vol/d" k="addv" /><H label="Mkt cap" k="mcap" /><H label="P/E" k="pe" /><th style={th('D/E')} title="Debt ÷ equity, from the stock-screener snapshot (latest quarter, else fiscal year). Green ≤ 0.5, amber 0.5–1, red above 1.">D/E</th><th style={th('D1')}>D1</th>
             <H label="Since" k="drift" /><H label="Filed" k="fresh" left />{markOf && <th style={th('Your mark', undefined, true)}>Your mark</th>}<th style={th('')} />
           </tr>
         </thead>
@@ -2067,6 +2073,7 @@ function BenchTable({ rows, sort, dir, onSort, onRemove, markOf }: { rows: UsCon
                 <td style={{ ...td, color: (e.addv_musd ?? 0) < 2 ? '#EF4444' : undefined }}>{e.addv_musd != null ? `$${e.addv_musd.toFixed(1)}M` : '—'}</td>
                 <td style={td}>{fmtUsd(e.market_cap_musd)}</td>
                 <td style={td}>{e.pe ?? '—'}</td>
+                {(() => { const dc = deCell((e as any).de_ratio, (e as any).de_basis, !!e.is_financial); return <td style={{ ...td, color: TONE_COLOR[dc.tone], fontWeight: 700 }} title={dc.title}>{dc.text}</td>; })()}
                 <td style={{ ...td, color: (e.d1_pct ?? 0) >= 0 ? '#10B981' : '#EF4444' }}>{fmtPct(e.d1_pct, 1)}</td>
                 <td style={{ ...td, color: ds === 'DRIFTING' ? '#EF4444' : ds === 'FADING' ? '#F59E0B' : (e.move_pct ?? 0) >= 0 ? '#10B981' : 'var(--mc-text-2)', fontWeight: ds === 'DRIFTING' ? 800 : undefined }}>{fmtPct(e.move_pct, 1)}</td>
                 <td style={{ ...td, textAlign: 'left', color: 'var(--mc-text-3)' }}>{e.filing_date}</td>

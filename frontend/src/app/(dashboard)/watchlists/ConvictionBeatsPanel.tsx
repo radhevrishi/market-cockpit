@@ -19,6 +19,8 @@ import { CbMarkControl, CbMarkBadge, CbMarkFilterRow, CbRejectedToggle, useDecis
 import { applyCbMarks, cbMarkReader, type CbMarkFilter } from '@/lib/cb-decisions';
 import { EarningsCardComponent, CoverageStatsBar, type EarningsScanCard } from '@/components/EarningsScanCard';
 import { ConvictionTable, ConvictionRow } from './ConvictionTable';
+import { useDebtEquityEntries } from '@/lib/use-debt-equity';   // zzz1068
+import { DE_MAX_OPTIONS } from '@/lib/cb-metric-view';
 import { HubFilterRail } from './HubFilterRail';
 import { HUB_FILTER_DEFAULT } from './constants';
 import { passesHubFilter, cbDriftState } from './helpers';
@@ -28,7 +30,9 @@ import { useEnrichedConvictionCards } from './useEnrichedConvictionCards';
 // zzz827 — true while a fill pass runs; a card says "Q-TRENDS loading…" only then.
 export let __cbFillRunning = false;
 
-export function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild, onShowAll, benchSince, seasonBusy }: { entries: ConvictionEntry[]; onRemove: (t: string) => void; onClearAll?: () => void; onRebuild?: (days: number) => void | Promise<void>; onShowAll?: () => void; benchSince?: string | null; seasonBusy?: boolean }) {
+export function ConvictionBeatsPanel({ entries: entriesIn, onRemove, onClearAll, onRebuild, onShowAll, benchSince, seasonBusy }: { entries: ConvictionEntry[]; onRemove: (t: string) => void; onClearAll?: () => void; onRebuild?: (days: number) => void | Promise<void>; onShowAll?: () => void; benchSince?: string | null; seasonBusy?: boolean }) {
+  // zzz1068 — debt ÷ equity from the stock-screener snapshot, on every entry (card, D/E MAX filter, table, Excel)
+  const entries = useDebtEquityEntries(entriesIn, 'IN');
   // PATCH zzz99 — bulk Clear All button for Conviction Beats.
   // User flow: starting fresh for next earnings cycle, drain the entire
   // bench at once instead of clicking × on every row. Guarded by
@@ -771,7 +775,7 @@ export function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild,
       // zzz827 — words, not 0–100 numbers; neutral setup labels; same-year cash.
       'Grade strength','Post-results drift','Setup','Sales YoY %','PAT YoY %','EPS YoY %','OPM %','OPM prev %','OPM Δ (pp)',
       'Cash from operations ÷ profit (same year)','Current grade note',
-      'P/E','Gap %','D1 %','D2 %','DRIFT %','Guidance','Guidance Score','Filing URL'
+      'P/E','Debt / equity','Gap %','D1 %','D2 %','DRIFT %','Guidance','Guidance Score','Filing URL'
     ];
     const rows: any[][] = [header];
     list.forEach((e: any, i: number) => {
@@ -800,6 +804,8 @@ export function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild,
         w.cash,
         w.tierNow,
         typeof e.pe === 'number' ? +e.pe.toFixed(2) : '',
+        // zzz1068 — D/E from the stock-screener snapshot; lenders "n/a (lender)", unknown blank (never invented)
+        cbIsFinancial(e) ? 'n/a (lender)' : (typeof e.de_ratio === 'number' ? (e.de_ratio >= 99 ? 'negative equity' : +e.de_ratio.toFixed(2)) : ''),
         typeof e.gap_pct === 'number' ? +e.gap_pct.toFixed(2) : '',
         typeof e.d1_pct === 'number' ? +e.d1_pct.toFixed(2) : '',
         typeof e.d2_pct === 'number' ? +e.d2_pct.toFixed(2) : '',
@@ -814,7 +820,7 @@ export function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild,
       {wch:4},{wch:12},{wch:12},{wch:32},{wch:11},{wch:11},{wch:16},{wch:14},
       {wch:12},{wch:12},{wch:12},{wch:11},{wch:11},{wch:11},{wch:8},{wch:11},{wch:10},
       {wch:26},{wch:26},
-      {wch:8},{wch:8},{wch:8},{wch:8},{wch:9},{wch:11},{wch:14},{wch:60}
+      {wch:8},{wch:13},{wch:8},{wch:8},{wch:8},{wch:9},{wch:11},{wch:14},{wch:60}
     ];
     ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: {r:0,c:0}, e: {r:rows.length-1,c:header.length-1} }) };
     (ws as any)['!freeze'] = { xSplit: 0, ySplit: 1, topLeftCell: 'A2', activePane: 'bottomLeft', state: 'frozen' };
@@ -1426,13 +1432,13 @@ export function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild,
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <button
                 onClick={handleToggle}
-                title="Your saved screen: sales growth at least 20% · EPS growth at least 25% · PEAD (post-results drift) 40 or more · operating margin not falling · operating margin 0% or more (unknown passes) · cash from operations at least half of profit (same fiscal year; not checked when the figure is missing; skipped for lenders) · market cap at least ₹3,000 Cr (your setting) · no promoter pledge (an unknown pledge is not a fail) · setup Top / Good / Watch. A missing figure is 'not checked', never a fail. Auto-applied on first visit; click to switch it off (remembered) or on again."
+                title="Your saved screen: sales growth at least 20% · EPS growth at least 25% · PEAD (post-results drift) 40 or more · operating margin not falling · operating margin 0% or more (unknown passes) · cash from operations at least half of profit (same fiscal year; not checked when the figure is missing; skipped for lenders) · any market cap unless you pick a size floor (your setting; no size ceiling) · no promoter pledge (an unknown pledge is not a fail) · setup Top / Good / Watch. A missing figure is 'not checked', never a fail. Auto-applied on first visit; click to switch it off (remembered) or on again."
                 style={presetActive
                   ? chipActive('#F59E0B')
                   : { ...chipBase, border: '1px solid #F59E0B', color: '#F59E0B', fontWeight: 800 }}>
-                ⚡ QUALITY PRESET · {presetBarText(presetActive ? (filters.mktCapMin as number | null) : 3000)} {presetActive ? '✓ ON' : '· OFF — click to enable'}
+                ⚡ QUALITY PRESET · {presetBarText(presetActive ? (filters.mktCapMin as number | null) : null)} {presetActive ? '✓ ON' : '· OFF — click to enable'}
               </button>
-              {/* zzz879 — the preset's size floor: ₹3k Cr (default), ₹500 Cr, or any size. Remembered. */}
+              {/* zzz879 — the preset's size floor; zzz1068: Any size is the default, ₹500 Cr / ₹3k Cr on request. Remembered. */}
               {presetActive && (
                 <span data-testid="cb-cap-floor" style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}
                   title="Smallest company size the preset shows. ₹500 Cr or Any size brings in the small caps a ₹3k Cr floor hides (HIIL is about ₹1,140 Cr). Your choice is remembered and Portfolio Catalysts uses it too.">
@@ -1488,6 +1494,8 @@ export function ConvictionBeatsPanel({ entries, onRemove, onClearAll, onRebuild,
         {renderChipGroup('PLEDGED MAX', '#EF4444', 'pledgedMax' as any, [
           { v: 0, lbl: '0%' }, { v: 1, lbl: '≤1%' }, { v: 5, lbl: '≤5%' },
         ])}
+        {/* zzz1068 — debt ÷ equity MAX chips. Lenders and an unknown D/E pass (not a fail). */}
+        {renderChipGroup('D/E MAX', '#0EA5E9', 'deMax' as any, [...DE_MAX_OPTIONS])}
         {/* zzz362 — VERDICT multi-select filter. Toggles membership in
             filters.verdicts. Count = currently-loaded bench entries whose
             cbComputeQuality verdict == that label. Custom row (not renderChipGroup)

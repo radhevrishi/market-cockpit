@@ -9,6 +9,21 @@ import { openPassport } from '@/lib/engines';
 import { __cbFillRunning } from './ConvictionBeatsPanel';
 import { sectorColor } from './constants';
 import { cbDriftState } from './helpers';
+import { growthCell, returnCell, deCell, cashTone, pegTone, TONE_COLOR, type MetricCell } from '@/lib/cb-metric-view';   // zzz1068
+import { fmtCrSigned } from '@/lib/india-eo-card-data';
+
+// zzz1068 — one label / value style for every figure on the card metric line (light-theme friendly:
+// muted small-caps label, bold tabular value in the shared tone colours).
+const METRIC_LABEL: React.CSSProperties = { color: 'var(--mc-text-4)', fontSize: 9.5, fontWeight: 700, letterSpacing: '0.4px', textTransform: 'uppercase' };
+const METRIC_VALUE: React.CSSProperties = { fontWeight: 800, fontVariantNumeric: 'tabular-nums' };
+export function MetricChip({ c, testId }: { c: MetricCell; testId?: string }) {
+  return (
+    <span data-testid={testId} title={c.title} style={{ whiteSpace: 'nowrap' }}>
+      <span style={METRIC_LABEL}>{c.label}</span>{' '}
+      <strong style={{ ...METRIC_VALUE, color: TONE_COLOR[c.tone] }}>{c.text}</strong>
+    </span>
+  );
+}
 
 // zzz254 — Mini progress bar for Composite / PEAD scores. Fixed 40px wide.
 // Colored by tier band: red < 50, amber 50-70, green >= 70.
@@ -112,6 +127,7 @@ export function ConvictionTable({ entries, onRemove, sort, setSort, renderMark, 
     { key: 'eps',       label: 'EPS',     align: 'right', get: (e) => e.eps_yoy_pct ?? -999 },
     { key: 'opm',       label: 'OPM',     align: 'right', get: (e) => e.opm_pct ?? -999 },
     { key: 'pe',        label: 'P/E',     align: 'right', get: (e) => e.pe ?? Infinity },
+    { key: 'de',        label: 'D/E',     align: 'right', get: (e) => (cbIsFinancial(e) ? Infinity : (e.de_ratio ?? Infinity)) },   // zzz1068
     { key: 'd1',        label: 'D1',      align: 'right', get: (e) => e.d1_pct ?? -999 },
     { key: 'drift',     label: 'DRIFT',   align: 'right', get: (e) => e.move_pct ?? -999 },
   ];
@@ -175,10 +191,12 @@ export function ConvictionTable({ entries, onRemove, sort, setSort, renderMark, 
                 <td style={{ ...td, textAlign: 'right', color: tierColor, fontWeight: 800 }}>{cbStrengthWord(e.composite_score)}</td>
                 <td style={{ ...td, textAlign: 'right', color: peadColor(peadScore(e).score), fontWeight: 700 }}>{cbPeadWord(peadScore(e).score)}</td>
                 <td style={{ ...td, textAlign: 'right', color: pctColor(e.sales_yoy_pct) }}>{cbGrowthText(e.sales_yoy_pct)}</td>
-                <td style={{ ...td, textAlign: 'right', color: pctColor(e.net_profit_yoy_pct) }}>{cbGrowthText(e.net_profit_yoy_pct)}</td>
-                <td style={{ ...td, textAlign: 'right', color: pctColor(e.eps_yoy_pct) }}>{cbGrowthText(e.eps_yoy_pct)}</td>
+                {[growthCell('PAT', e.net_profit_yoy_pct, (e as any).pat_curr_cr, (e as any).pat_prev_cr), growthCell('EPS', e.eps_yoy_pct, (e as any).eps_curr, (e as any).eps_prev)].map((g) => (
+                  <td key={g.label} style={{ ...td, textAlign: 'right', color: TONE_COLOR[g.tone] }} title={g.title}>{g.text}</td>))}
                 <td style={{ ...td, textAlign: 'right' }}>{typeof (e as any).opm_pct === 'number' ? `${(e as any).opm_pct.toFixed(1)}%` : '—'}</td>
                 <td style={{ ...td, textAlign: 'right', color: 'var(--mc-text-2)' }}>{fmtNum((e as any).pe) === '—' ? '—' : fmtNum((e as any).pe) + 'x'}</td>
+                {(() => { const dc = deCell((e as any).de_ratio, (e as any).de_basis, cbIsFinancial(e)); return (
+                  <td style={{ ...td, textAlign: 'right', color: TONE_COLOR[dc.tone], fontWeight: 700 }} title={dc.title}>{dc.text}</td>); })()}
                 <td style={{ ...td, textAlign: 'right', color: pctColor((e as any).d1_pct) }}>{fmtPct((e as any).d1_pct)}</td>
                 <td style={{ ...td, textAlign: 'right', color: pctColor((e as any).move_pct), fontWeight: 700 }}>{fmtPct((e as any).move_pct)}</td>
                 {renderMark && <td style={{ ...td, padding: '3px 8px' }}>{renderMark(e)}</td>}
@@ -371,11 +389,12 @@ export function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry, 
         }
         return (
           <div style={{ display: 'flex', gap: '6px 14px', fontSize: 10.5, flexWrap: 'wrap', alignItems: 'baseline' }}>
-            <span><span style={{ color: 'var(--mc-text-4)' }}>Sales</span> <strong style={{ color: (entry.sales_yoy_pct ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{pct(entry.sales_yoy_pct)}</strong></span>
+            {/* zzz1068 — one label/value style; a profit that TURNED from a loss reads "turned profitable" (green), never "—" */}
+            <MetricChip c={growthCell('Sales', entry.sales_yoy_pct, null, null)} />
             <span style={{ color: 'var(--mc-text-4)', opacity: 0.4 }}>·</span>
-            <span><span style={{ color: 'var(--mc-text-4)' }}>PAT</span> <strong style={{ color: (entry.net_profit_yoy_pct ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{pct(entry.net_profit_yoy_pct)}</strong></span>
+            <MetricChip c={growthCell('PAT', entry.net_profit_yoy_pct, (entry as any).pat_curr_cr, (entry as any).pat_prev_cr)} />
             <span style={{ color: 'var(--mc-text-4)', opacity: 0.4 }}>·</span>
-            <span><span style={{ color: 'var(--mc-text-4)' }}>EPS</span> <strong style={{ color: (entry.eps_yoy_pct ?? 0) >= 0 ? 'var(--mc-bullish)' : 'var(--mc-bearish)' }}>{pct(entry.eps_yoy_pct)}</strong></span>
+            <MetricChip c={growthCell('EPS', entry.eps_yoy_pct, (entry as any).eps_curr, (entry as any).eps_prev)} />
             <span style={{ color: 'var(--mc-text-4)', opacity: 0.4 }}>·</span>
             {/* zzz223 — OPM margin chip: latest OPM % + pp delta vs prior year */}
             {typeof (entry as any).opm_pct === 'number' && (() => {
@@ -419,6 +438,16 @@ export function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry, 
                   </span>
                 );
               }
+              if (cv.state === 'loss') {
+                // zzz1068 — the figures are there; the year was a loss, so there is no ratio to judge
+                return (
+                  <span data-testid="cb-cash-loss" title={`${cv.text}. A ratio of cash to a LOSS has no meaning, so the preset's cash test does not apply.`}>
+                    <span style={{ color: 'var(--mc-text-4)' }}>·</span>{' '}
+                    <MetricChip c={{ label: 'CASH', text: `CFO ${fmtCrSigned(cv.ocf as number)}`, tone: (cv.ocf as number) > 0 ? 'warn' : 'bad', title: cv.text }} />
+                    <span style={{ color: 'var(--mc-text-4)', fontSize: 9 }}> loss year ({cv.basis})</span>
+                  </span>
+                );
+              }
               if (cv.state === 'unknown' || cv.ratio == null) {
                 return (
                   <span data-testid="cb-cash-not-checked" title={`${cv.text}. The preset treats this as "not checked" — never a fail. The fill pass fetches the same-year figure.`}>
@@ -429,13 +458,13 @@ export function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry, 
                 );
               }
               const r = cv.ratio;
-              const col = r >= 0.8 ? 'var(--mc-bullish)' : r >= 0.5 ? '#F59E0B' : 'var(--mc-bearish)';
+              const col = TONE_COLOR[cashTone(r)];   // zzz1068 — shared tones
               const tag = r < 0 ? 'operations used cash' : r >= 8 ? 'profit small vs cash' : r >= 1 ? 'cash-backed' : r >= 0.8 ? 'mostly backed' : r >= 0.5 ? 'partly backed' : 'weak cash conversion';
               return (
                 <span data-testid="cb-cash" title={`Cash from operations ÷ net profit for the same fiscal year (${cv.basis}): ${r.toFixed(2)}×. Cash flow is published once a year, so this is a full-year figure, not this quarter's.`}>
                   <span style={{ color: 'var(--mc-text-4)' }}>·</span>{' '}
-                  <span style={{ color: 'var(--mc-text-4)' }}>CASH</span>{' '}
-                  <strong style={{ color: col }}>{r.toFixed(2)}×</strong>
+                  <span style={METRIC_LABEL}>CASH</span>{' '}
+                  <strong style={{ ...METRIC_VALUE, color: col }}>{r.toFixed(2)}×</strong>
                   <span style={{ color: col, opacity: 0.85 }}> {tag}</span>
                   <span style={{ color: 'var(--mc-text-4)', fontSize: 9 }}> ({cv.basis})</span>
                 </span>
@@ -453,18 +482,18 @@ export function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry, 
               if (secMed != null && secMed > 0) {
                 const ratio = pval / secMed;
                 if (ratio >= 1.5) { col = 'var(--mc-bearish)'; tip = `P/E ${pval.toFixed(1)}x is ${((ratio - 1) * 100).toFixed(0)}% above sector median (${secMed.toFixed(1)}x) — expensive vs peers.`; }
-                else if (ratio >= 1.15) { col = '#F59E0B'; tip = `P/E ${pval.toFixed(1)}x is ${((ratio - 1) * 100).toFixed(0)}% above sector median (${secMed.toFixed(1)}x) — richer than peers.`; }
+                else if (ratio >= 1.15) { col = TONE_COLOR.warn; tip = `P/E ${pval.toFixed(1)}x is ${((ratio - 1) * 100).toFixed(0)}% above sector median (${secMed.toFixed(1)}x) — richer than peers.`; }
                 else if (ratio >= 0.85) { col = 'var(--mc-text-2)'; tip = `P/E ${pval.toFixed(1)}x is in line with sector median (${secMed.toFixed(1)}x).`; }
                 else if (ratio >= 0.65) { col = 'var(--mc-bullish)'; tip = `P/E ${pval.toFixed(1)}x is ${((1 - ratio) * 100).toFixed(0)}% below sector median (${secMed.toFixed(1)}x) — cheaper than peers.`; }
                 else { col = 'var(--mc-bullish)'; tip = `P/E ${pval.toFixed(1)}x is ${((1 - ratio) * 100).toFixed(0)}% below sector median (${secMed.toFixed(1)}x) — deep value vs peers.`; }
               } else {
-                col = pval > 100 ? 'var(--mc-bearish)' : pval > 60 ? '#F59E0B' : pval > 30 ? 'var(--mc-text-2)' : 'var(--mc-bullish)';
+                col = pval > 100 ? 'var(--mc-bearish)' : pval > 60 ? TONE_COLOR.warn : pval > 30 ? 'var(--mc-text-2)' : 'var(--mc-bullish)';
                 tip = `Trailing P/E: ${pval.toFixed(1)}x. No sector peers in bench — using absolute band. Red > 100x, Amber 60-100x, Grey 30-60x, Green < 30x.`;
               }
               return (
                 <span title={tip}>
-                  <span style={{ color: 'var(--mc-text-4)' }}>P/E</span>{' '}
-                  <strong style={{ color: col }}>{pval.toFixed(1)}x</strong>
+                  <span style={METRIC_LABEL}>P/E</span>{' '}
+                  <strong style={{ ...METRIC_VALUE, color: col }}>{pval.toFixed(1)}x</strong>
                   {secMed != null && density !== 'ultra' && (
                     <span style={{ fontSize: 8.5, color: 'var(--mc-text-4)', marginLeft: 3 }}>(med {secMed.toFixed(1)})</span>
                   )}
@@ -483,12 +512,12 @@ export function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry, 
               const peg = pe / gVal;
               // zzz357/zzz358 — PEG < 0.15 is almost always a low-base optical artifact
               // (GNFC PEG 0.03, SFL PEG 0.04) not genuine deep value. Flag it as BASE EFFECT?.
-              const col = peg < 0.15 ? '#F59E0B' : peg < 0.5 ? 'var(--mc-bullish)' : peg < 1 ? 'var(--mc-bullish)' : peg < 2 ? '#F59E0B' : 'var(--mc-bearish)';
+              const col = TONE_COLOR[pegTone(peg)];   // zzz1068 — shared tones
               const label = peg < 0.15 ? 'BASE EFFECT?' : peg < 0.5 ? 'DEEP VALUE' : peg < 1 ? 'CHEAP vs growth' : peg < 2 ? 'FAIR' : 'RICH vs growth';
               return (
                 <span title={`PEG = P/E (${pe.toFixed(1)}) ÷ EPS YoY % (${g.toFixed(1)}%${gVal !== g ? `, capped at ${gVal.toFixed(0)}% for valuation` : ''}) = ${peg.toFixed(2)}. Traditional PEG: <1 undervalued, 1-2 fair, >2 overvalued. Verdict: ${label}.`}>
-                  <span style={{ color: 'var(--mc-text-4)' }}>PEG</span>{' '}
-                  <strong style={{ color: col }}>{peg.toFixed(2)}</strong>
+                  <span style={METRIC_LABEL}>PEG</span>{' '}
+                  <strong style={{ ...METRIC_VALUE, color: col }}>{peg.toFixed(2)}</strong>
                   <span style={{ marginLeft: 3, fontSize: 8.5, color: 'var(--mc-text-4)' }}>({label})</span>
                 </span>
               );
@@ -543,17 +572,17 @@ export function ConvictionRow({ entry, onRemove, density = 'comfy', radarEntry, 
       })()}
       {/* zzz254 — Institutional-quality row: ROCE, ROE, D/E. zzz255 — dropped RS/OCF
           because enrich API doesn't return them (only graded API does). Hidden in ultra. */}
-      {/* zzz260 — D/E removed per user request (data unreliable across sources). ROCE + ROE only. */}
+      {/* zzz260 — D/E was removed (Yahoo figure unreliable); zzz1068 — back, from the stock-screener snapshot balance sheet. */}
       {density !== 'ultra' && (() => {
         const roce = (entry as any).roce, roe = (entry as any).roe;
-        const qCol = (v: any, thr: number) => (typeof v === 'number' && Number.isFinite(v) && v >= thr) ? 'var(--mc-bullish)' : (typeof v === 'number' ? '#F59E0B' : 'var(--mc-text-4)');
-        // zzz827 — a missing ROCE / ROE says so ("n/a"), never a bare dash.
-        const val = (v: any, suffix = '') => (typeof v === 'number' && Number.isFinite(v)) ? (v.toFixed(1) + suffix) : 'n/a';
         return (
           <div style={{ display: 'flex', gap: '6px 14px', fontSize: 10, flexWrap: 'wrap', alignItems: 'baseline', color: 'var(--mc-text-3)', paddingTop: 2, borderTop: '1px dashed var(--mc-bg-3)', marginTop: 2 }}>
-            <span title={typeof roce === 'number' ? 'ROCE — return on capital employed. 25% or more = capital-efficient.' : 'ROCE not available yet — not in the source for this name (or not fetched yet). The quality check treats it as not checked, never a fail.'}><span style={{ color: 'var(--mc-text-4)' }}>ROCE</span> <strong style={{ color: qCol(roce, 25) }}>{val(roce, '%')}</strong></span>
+            {/* zzz1068 — ROCE · ROE · D/E in one style and one colour logic */}
+            <MetricChip c={returnCell('ROCE', roce, 25)} />
             <span style={{ color: 'var(--mc-text-4)', opacity: 0.4 }}>·</span>
-            <span title={typeof roe === 'number' ? 'ROE — return on equity. 18% or more = strong.' : 'ROE not available yet — not in the source for this name (or not fetched yet). Not a fail.'}><span style={{ color: 'var(--mc-text-4)' }}>ROE</span> <strong style={{ color: qCol(roe, 18) }}>{val(roe, '%')}</strong></span>
+            <MetricChip c={returnCell('ROE', roe, 18)} />
+            <span style={{ color: 'var(--mc-text-4)', opacity: 0.4 }}>·</span>
+            <MetricChip testId="cb-de" c={deCell((entry as any).de_ratio, (entry as any).de_basis, cbIsFinancial(entry))} />
             {/* zzz360 — promoter-pledge chip. 0% = clean (green); any pledge = red
                 governance flag. Guarded on typeof number so unknown pledge omits. */}
             {typeof (entry as any).pledged_pct === 'number' && Number.isFinite((entry as any).pledged_pct) && (() => {

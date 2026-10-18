@@ -21,7 +21,7 @@ test('screenerKey strips exchange prefixes / suffixes, keeps BSE codes', () => {
 test('wiring: slim endpoint, columns, page fetch', () => {
   const root = join(__dirname, '..', '..');
   const route = readFileSync(join(root, 'app/api/v1/stock-screener/route.ts'), 'utf8');
-  assert.match(route, /SLIM_KEYS = \['t', 'sma50', 'sma200', 'scanPx', 'scanAt'\]/);
+  assert.match(route, /SLIM_KEYS = \['t', 'sma50', 'sma200', 'scanPx', 'scanAt'(, 'de', 'deFY')?\]/);   // zzz1068: + D/E for the Conviction Beats cards
   assert.match(route, /slice\(0, 400\)/);
   const consts = readFileSync(join(root, 'app/(dashboard)/watchlists/constants.ts'), 'utf8');
   assert.match(consts, /% from 50-day average/);

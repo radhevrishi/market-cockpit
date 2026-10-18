@@ -20,13 +20,15 @@ import { istToday as _istToday } from '@/lib/market-hours';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { fetchBSEAnnouncements } from '@/lib/nse-bse-feed';
 import { resolveTicker } from '@/lib/bse-nse-mapping';
+import { isNseResultsAnnouncement, nseAnnouncementText, nseIstToIso, istDateOf, periodEndFromText, fyQuarterLabelForEnd } from '@/lib/india-results-filing';   // zzz1068
+import { nseApiFetch } from '@/lib/nse';
 
 export const dynamic = 'force-dynamic';
 // PATCH 0500 — bumped 25→40s to accommodate parallel NSE + BSE fetches with
 // BSE 3-page pagination. Vercel Pro allows up to 60s on Node runtime.
 export const maxDuration = 40;
 
-const KEY = (date: string) => `today-live:v1:${date}`;
+const KEY = (date: string) => `today-live:v2:${date}`;   // zzz1068: v1 held empty NSE answers (the scanner never read attchmntText)
 const CACHE_TTL_SECONDS = 3 * 60;  // 3 minutes — page auto-polls every 4
 
 // PATCH 0403 — POSITIVE patterns: subjects that genuinely indicate the
@@ -91,6 +93,9 @@ interface LiveFiling {
   filing_iso: string;
   filing_date: string;
   attachment_url: string | null;
+  /** zzz1068 — the quarter end the filing names ("…period ended September 30, 2026"), and its label. */
+  period_end?: string | null;
+  quarter_label?: string | null;
 }
 
 interface LiveResponse {
@@ -169,6 +174,8 @@ async function fetchBseFilings(date: string, signal?: AbortSignal): Promise<Live
         filing_iso: f.filing_datetime,
         filing_date: f.filing_datetime.slice(0, 10),
         attachment_url: attach,
+        period_end: periodEndFromText(f.subject),   // zzz1068
+        quarter_label: fyQuarterLabelForEnd(periodEndFromText(f.subject)),
       });
     }
     return out;
@@ -179,10 +186,10 @@ async function fetchBseFilings(date: string, signal?: AbortSignal): Promise<Live
 
 async function fetchNseAnnouncements(date: string, signal?: AbortSignal): Promise<LiveFiling[] | 'BLOCKED'> {
   const nseDate = isoToNseDate(date);
-  const url = `https://www.nseindia.com/api/corporate-announcements?index=equities&from_date=${nseDate}&to_date=${nseDate}`;
-
+  const path = `/api/corporate-announcements?index=equities&from_date=${nseDate}&to_date=${nseDate}`;
+  let json: any = null;
   try {
-    const res = await fetch(url, {
+    const res = await fetch(`https://www.nseindia.com${path}`, {
       signal,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
@@ -191,64 +198,48 @@ async function fetchNseAnnouncements(date: string, signal?: AbortSignal): Promis
         'Referer': 'https://www.nseindia.com/companies-listing/corporate-filings-announcements',
       },
     });
-    if (res.status === 401 || res.status === 403 || res.status === 429) {
-      return 'BLOCKED';
-    }
-    if (!res.ok) return 'BLOCKED';
-    const json: any = await res.json();
-    const entries: any[] = Array.isArray(json)
-      ? json
-      : Array.isArray(json?.data) ? json.data
-      : Array.isArray(json?.rows) ? json.rows
-      : [];
-
-    const out: LiveFiling[] = [];
-    const seenSymbols = new Set<string>();
-
-    for (const e of entries) {
-      const subject = String(e.subject || e.desc || e.title || '');
-      // PATCH 0403 — Hard blocklist first, then positive match.
-      // "Reply to Clarification- Financial results" was leaking through
-      // before this gate and producing ghost-filings (companies appearing
-      // on dates when they actually filed only an admin reply, not Q4).
-      if (SUBJECT_BLOCKLIST.some((re) => re.test(subject))) continue;
-      if (!RESULT_PATTERNS.some((re) => re.test(subject))) continue;
-      const symbol = String(e.symbol || e.scrip || '').trim().toUpperCase();
-      if (!symbol) continue;
-      // Keep only the most recent filing per symbol on this date
-      if (seenSymbols.has(symbol)) continue;
-
-      const ts = e.an_dt || e.sm_dt || e.dt || e.broadcastdt || e.broadcastDate;
-      let isoTs: string;
-      let isoDate: string;
-      if (ts) {
-        const d = new Date(ts);
-        if (Number.isFinite(d.getTime())) {
-          isoTs = d.toISOString();
-          isoDate = isoTs.slice(0, 10);
-        } else {
-          isoTs = new Date().toISOString();
-          isoDate = date;
-        }
-      } else {
-        isoTs = new Date().toISOString();
-        isoDate = date;
-      }
-
-      seenSymbols.add(symbol);
-      out.push({
-        symbol,
-        company: String(e.company_name || e.companyName || e.sm_name || symbol),
-        subject,
-        filing_iso: isoTs,
-        filing_date: isoDate,
-        attachment_url: e.attchmntFile || e.attachmentUrl || e.attachment_url || null,
-      });
-    }
-    return out;
-  } catch (err) {
-    return 'BLOCKED';
+    if (res.ok) json = await res.json().catch(() => null);
+  } catch { /* falls through to the cookie-aware fetch */ }
+  // zzz1068 — a plain request without NSE's session cookie is often refused; the shared
+  // cookie-aware fetcher (lib/nse) is tried before calling NSE blocked.
+  if (json == null) {
+    try { json = await nseApiFetch(path, 120_000); } catch { json = null; }
   }
+  if (json == null) return 'BLOCKED';
+  return nseResultFilingsFromFeed(json, date);
+}
+
+/** zzz1068 — NSE's feed → results filings. NSE has no `subject`: `desc` is the category and
+ *  `attchmntText` says what was filed, so both are read (lib/india-results-filing). */
+function nseResultFilingsFromFeed(json: any, date: string): LiveFiling[] {
+  const entries: any[] = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : Array.isArray(json?.rows) ? json.rows : [];
+  const out: LiveFiling[] = [];
+  const bySymbol = new Map<string, number>();
+  for (const e of entries) {
+    const symbol = String(e?.symbol || e?.scrip || '').trim().toUpperCase();
+    if (!symbol) continue;
+    const subject = nseAnnouncementText(e);
+    const legacy = !!e?.subject && !SUBJECT_BLOCKLIST.some((re) => re.test(String(e.subject))) && RESULT_PATTERNS.some((re) => re.test(String(e.subject)));
+    if (!legacy && !isNseResultsAnnouncement(e)) continue;
+    const isoTs = nseIstToIso(e.an_dt || e.exchdisstime || e.sort_date) || nseIstToIso(e.sort_date) || null;
+    const isoDate = isoTs ? istDateOf(isoTs) : date;
+    const pe = periodEndFromText(e.attchmntText || e.subject || '');
+    const f: LiveFiling = {
+      symbol,
+      company: String(e.company_name || e.companyName || e.sm_name || symbol),
+      subject,
+      filing_iso: isoTs || new Date().toISOString(),
+      filing_date: isoDate,
+      attachment_url: e.attchmntFile || e.attachmentUrl || e.attachment_url || null,
+      period_end: pe,
+      quarter_label: fyQuarterLabelForEnd(pe),
+    };
+    // One filing per symbol: the exchange's own results filing beats a press release about it.
+    const at = bySymbol.get(symbol);
+    if (at == null) { bySymbol.set(symbol, out.length); out.push(f); continue; }
+    if (/press release/i.test(out[at].subject) && !/press release/i.test(String(e?.desc || ''))) out[at] = f;
+  }
+  return out;
 }
 
 export async function GET(req: NextRequest) {

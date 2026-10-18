@@ -20,8 +20,9 @@ import { peadScore } from '@/lib/pead-score';
 import { INDIA_PRESET } from '@/lib/quality-preset';
 import type { ConvictionEntry } from '@/lib/conviction-beats';
 import { runCriteriaCheck, type CriteriaCheck } from '@/lib/criteria-check';
-import { decodeEntities, financialKindOfRow, driftBand } from '@/lib/india-eo-card-data';
+import { decodeEntities, financialKindOfRow, driftBand, fmtCrSigned } from '@/lib/india-eo-card-data';
 import { CASH_RATIO_MAX } from '@/lib/india-cash';
+import { passesDeMax } from '@/lib/cb-metric-view';   // zzz1068
 
 // zzz253 — hardcoded sector map for known NSE tickers. Backend enrichment
 // often returns null sector; this fallback ensures peer comparison + sector-
@@ -107,6 +108,8 @@ export type ConvFilters = {
   // zzz360 — max promoter-pledge % (null = no cap). 0 = only unpledged names.
   // Null pledged_pct passes (don't over-filter unknowns).
   pledgedMax?: number | null;
+  /** zzz1068 — max debt ÷ equity (stock-screener snapshot, `de_ratio`). Lenders and an unknown D/E pass. */
+  deMax?: number | null;
   // zzz362 — multi-select verdict filter. When a non-empty array, only entries
   // whose cbComputeQuality verdict label ∈ the array pass. Labels: STRONG BUY /
   // BUY / WATCH / AVOID / HIGH RISK. null = no filter.
@@ -179,21 +182,24 @@ export const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null
 // floors: ₹3k Cr (his saved setting, the default), ₹500 Cr, or any size. The
 // choice is remembered in this browser and Portfolio Catalysts reads the same
 // key through indiaPresetFilters(), so both apply the same floor.
-export const CB_PRESET_CAP_KEY = 'mc:cb:preset-cap:v1';
+// zzz1068 — the owner (17 Oct 2026): the preset accepts ANY SIZE. The ceiling is gone and the floor
+// opens on "Any size"; the key moved v1 → v2 so the new default reaches every browser once (a floor
+// picked after that is remembered as before).
+export const CB_PRESET_CAP_KEY = 'mc:cb:preset-cap:v2';
 /** zzz883 — small & mid only: India large cap from ₹30,000 Cr (same line as the guidance focus list). */
 export const CB_SMALL_MID_MAX_CR = 30_000;
 export type CbCapFloor = 3000 | 500 | null;
 export const CB_CAP_FLOORS: ReadonlyArray<{ v: CbCapFloor; label: string }> = [
-  { v: 3000, label: '≥₹3k Cr' }, { v: 500, label: '≥₹500 Cr' }, { v: null, label: 'Any size' },
+  { v: null, label: 'Any size' }, { v: 500, label: '≥₹500 Cr' }, { v: 3000, label: '≥₹3k Cr' },
 ];
 export function parseCbCapFloor(raw: string | null | undefined): CbCapFloor {
-  return raw === '500' ? 500 : raw === 'none' ? null : 3000;
+  return raw === '500' ? 500 : raw === '3000' ? 3000 : null;   // zzz1068 — nothing saved = Any size
 }
 export function cbCapFloorRaw(v: CbCapFloor): string { return v == null ? 'none' : String(v); }
-/** The saved floor in this browser; ₹3k Cr on the server or when nothing is saved. */
+/** The saved floor in this browser; Any size on the server or when nothing is saved (zzz1068). */
 export function readCbPresetCapFloor(): CbCapFloor {
-  if (typeof window === 'undefined') return INDIA_PRESET.mktCapMin as CbCapFloor;
-  try { return parseCbCapFloor(window.localStorage.getItem(CB_PRESET_CAP_KEY)); } catch { return 3000; }
+  if (typeof window === 'undefined') return null;
+  try { return parseCbCapFloor(window.localStorage.getItem(CB_PRESET_CAP_KEY)); } catch { return null; }
 }
 const isCapFloor = (v: unknown): boolean => v == null || v === 3000 || v === 500;
 
@@ -206,7 +212,7 @@ export const indiaPresetFilters = (floor: CbCapFloor = readCbPresetCapFloor()) =
   opmMin: INDIA_PRESET.opmMin,   // zzz893
   cfoPatMin: INDIA_PRESET.cfoPatMin,
   mktCapMin: floor,
-  mktCapMax: CB_SMALL_MID_MAX_CR,
+  mktCapMax: null as number | null,   // zzz1068 — no size ceiling in the preset (was ₹30,000 Cr, zzz883)
   pledgedMax: INDIA_PRESET.pledgedMax,
   verdicts: [...INDIA_PRESET.verdicts],
 });
@@ -490,8 +496,13 @@ export function cbIsFinancial(e: any): boolean {
 export interface CbCashView {
   /** Same-year CFO ÷ PAT, or null. */
   ratio: number | null;
-  /** 'ok' = a same-year ratio; 'unknown' = not checked; 'na' = not meaningful (lender). */
-  state: 'ok' | 'unknown' | 'na';
+  /** 'ok' = a same-year ratio; 'unknown' = not checked; 'na' = not meaningful (lender);
+   *  'loss' (zzz1068) = both same-year figures are there but the year's profit was a loss, so there is
+   *  no ratio to test — known, not "not checked"; the preset's cash gate does not apply to it. */
+  state: 'ok' | 'unknown' | 'na' | 'loss';
+  /** zzz1068 — the same-year figures (₹ Cr) when present. */
+  ocf?: number | null;
+  pat?: number | null;
   /** "FY26 full year" — the year the ratio is for. */
   basis: string | null;
   /** Plain words for the card / a tooltip. */
@@ -512,6 +523,10 @@ export function cbCashView(e: any): CbCashView {
   const ocf = finN(e?.ocf_annual_cr) && e.ocf_annual_cr !== 0 ? e.ocf_annual_cr : null;
   const pat = finN(e?.pat_annual_cr) && e.pat_annual_cr !== 0 ? e.pat_annual_cr : null;
   const r0 = [e?.ocf_to_pat_ratio, e?.cfo_to_pat_ratio].find((v) => finN(v) && v !== 0) as number | undefined;
+  // zzz1068 — a LOSS year: the figures are in the source, a ratio is not meaningful (SOLARA, E2E, CROMPTON).
+  if (ocf != null && pat != null && pat < 0) {
+    return { ratio: null, state: 'loss', basis, ocf, pat, text: `loss year (${basis || fy}): cash from operations ${fmtCrSigned(ocf)} against a loss of ${fmtCrSigned(pat)} — no ratio` };
+  }
   if (ocf == null || pat == null || r0 == null) return unknown(`no ${basis || fy} cash figure in the source`);
   // The stored ratio must be the ratio of its own two figures (an older
   // inflated ratio left on the row next to newer figures is not used).
@@ -763,6 +778,8 @@ export function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): bool
   }
   // zzz360 — max promoter-pledge % filter. Null pledged_pct passes (unknown ≠
   // fail — mirrors the zzz359 CFO/PAT null-safe philosophy). 0 = valid/good.
+  // zzz1068 — D/E MAX: a known debt ÷ equity above the limit fails; lenders and unknown pass.
+  if (f.deMax != null && !passesDeMax((e as any).de_ratio, cbIsFinancial(e), f.deMax)) return false;
   if (f.pledgedMax != null) {
     const p = (e as any).pledged_pct;
     if (typeof p === 'number' && Number.isFinite(p) && p > f.pledgedMax) return false;
@@ -1009,6 +1026,7 @@ export function cbFailReasons(e: ConvictionEntry, f: ConvFilters): string[] {
       : 'operating margin change not known'),
     cfoPatMin: () => `cash from operations ${finN(cash.ratio) ? cash.ratio.toFixed(2) : 'not known'}x profit${cash.basis ? `, ${cash.basis}` : ''} (needs ${f.cfoPatMin}x)`,
     pledgedMax: () => `promoter pledge ${fmtN(x.pledged_pct)}% (needs ${f.pledgedMax}% or less)`,
+    deMax: () => `debt ÷ equity ${fmtN(x.de_ratio)}× (needs ${f.deMax}× or less)`,
     mktCapMin: () => `market cap ₹${fmtN(x.market_cap_cr)} Cr (needs ₹${f.mktCapMin} Cr)`,
     mktCapMax: () => `market cap ₹${fmtN(x.market_cap_cr)} Cr (large cap — above ₹${fmtN(f.mktCapMax)} Cr)`,
     peMax: () => `P/E above ${f.peMax}`,
@@ -1046,7 +1064,11 @@ const has = (v: unknown) => typeof v === 'number' && Number.isFinite(v);
 /** The data words a preset criterion needed and this entry lacks. */
 function cbMissingFor(e: ConvictionEntry, k: string, f: ConvFilters): string[] {
   const x: any = e;
-  const need = (pairs: Array<[string, string]>) => pairs.filter(([field]) => !has(x[field])).map(([, word]) => word);
+  // zzz1068 — a profit / EPS that TURNED from a loss has no growth rate by definition (SOLARA, E2E,
+  // VIJIFIN): "turned profitable" is a known answer, never "profit growth missing".
+  const turnedOk = (field: string) => (field === 'net_profit_yoy_pct' && cbTurn(x.pat_curr_cr, x.pat_prev_cr) === 'turned')
+    || (field === 'eps_yoy_pct' && cbTurn(x.eps_curr, x.eps_prev) === 'turned');
+  const need = (pairs: Array<[string, string]>) => pairs.filter(([field]) => !has(x[field]) && !turnedOk(field)).map(([, word]) => word);
   switch (k) {
     case 'sales': return need([['sales_yoy_pct', 'sales growth']]);
     case 'eps': return cbTurn(x.eps_curr, x.eps_prev) ? [] : need([['eps_yoy_pct', 'EPS growth']]);

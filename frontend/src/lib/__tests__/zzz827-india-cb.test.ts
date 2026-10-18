@@ -23,7 +23,7 @@ import { driftWord } from '../india-eo-card-data';
 
 const read = (p: string) => readFileSync(join(__dirname, '..', '..', p), 'utf8');
 const readWatchlists = () => ['page.tsx', 'ConvictionBeatsPanel.tsx', 'ConvictionTable.tsx', 'HubFilterRail.tsx', 'EIEliteTab.tsx', 'components.tsx', 'useEnrichedConvictionCards.ts', 'helpers.ts', 'constants.ts', 'types.ts'].map((f) => read(`app/(dashboard)/watchlists/${f}`)).join('\n'); // zzz900 — page split into sibling modules
-const preset = cbFiltersForOwner(false);
+const preset = { ...cbFiltersForOwner(false), mktCapMin: 3000 };   // zzz1068: the size floor defaults to Any size now; these tests pick ₹3k Cr
 
 /** A synthetic entry that meets the whole preset on real, same-year data. */
 const good = (ticker: string, over: Record<string, any> = {}) => ({
