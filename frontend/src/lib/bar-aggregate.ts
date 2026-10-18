@@ -20,6 +20,8 @@
 //    that does not contain the open and close (widened to contain them) is REPAIRED and counted (`repaired`), so a caller can
 //    tell clean data from mended data (the screener marks a scan 'invalid-data' when too many bars were rejected).
 import type { PBar } from './chart-patterns';
+import { weekCloseMs } from './completed-weeks';
+import { rangeCloseUtc } from './exchange-calendar';
 
 export type AggTf = 'W' | 'M';
 export interface AggregateOptions {
@@ -27,6 +29,9 @@ export interface AggregateOptions {
   completedOnly?: boolean;
   /** the clock used to decide whether the latest period is complete (default: new Date()) */
   now?: Date;
+  /** zzz1079 (B04) — the exchange: the period is complete at the close of its LAST session (holidays and early closes from
+   *  lib/exchange-calendar — the same clock as the weekly stage / setups). Without it: 00:00 UTC after its last weekday. */
+  market?: 'IN' | 'US' | null;
 }
 export interface AggregateResult {
   bars: PBar[];
@@ -57,8 +62,17 @@ export function periodKey(t: number, tf: AggTf): number {
   return d.getUTCFullYear() * 12 + d.getUTCMonth();
 }
 
-/** The instant a period is complete: 00:00 UTC of the day after its last weekday. */
-export function periodCloseT(t: number, tf: AggTf): number {
+/** The instant a period is complete. With a market: the close of the period's last session on that exchange (a Friday
+ *  holiday → the Thursday close; a month ending on a holiday → its last trading day's close). Without: 00:00 UTC of the day
+ *  after its last weekday. */
+export function periodCloseT(t: number, tf: AggTf, market?: 'IN' | 'US' | null): number {
+  if (market === 'IN' || market === 'US') {
+    if (tf === 'W') return weekCloseMs(t, market);
+    const d = new Date(t);
+    const from = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).toISOString().slice(0, 10);
+    const to = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).toISOString().slice(0, 10);
+    return rangeCloseUtc(market, from, to);
+  }
   const day = Math.floor(t / DAY);
   if (tf === 'W') {
     const monday = (Math.floor((day + 3) / 7) * 7) - 3;   // day number of that week's Monday
@@ -114,7 +128,7 @@ export function aggregateBars(daily: PBar[], tf: AggTf, opts?: AggregateOptions)
   flush();
   let provisional = false, dropped = false;
   if (out.length) {
-    const lastOpen = now < periodCloseT(ends[ends.length - 1], tf);
+    const lastOpen = now < periodCloseT(ends[ends.length - 1], tf, opts?.market);
     if (lastOpen) {
       if (completedOnly) { out.pop(); ends.pop(); dropped = true; } else provisional = true;
     }

@@ -67,7 +67,7 @@ const NO_STATES: PatternStates = { base: '', byKey: {} };
 const fromResponse = (j: ShownResponse): Bar[] => { const b = j.bars!; return b.t.map((t, i) => ({ t, o: b.o[i], h: b.h[i], l: b.l[i], c: b.c[i], v: b.v[i] })); };
 
 /** zzz1015 — one analysis of DAILY bars on a timeframe, as an indicator state (zzz992 / zzz1009 rules unchanged). */
-function analyseAs(key: string, daily: Bar[], analysisTf: PatternTimeframe, includeCurrent: boolean, firstTradeT: number | null | undefined): PatternState {
+function analyseAs(key: string, daily: Bar[], analysisTf: PatternTimeframe, includeCurrent: boolean, firstTradeT: number | null | undefined, market?: string): PatternState {
   try {
     const ft = firstTradeT != null && Number.isFinite(firstTradeT) ? { firstTradeT } : undefined;
     // zzz1009 — `weak: true` also returns the weaker candidates and the expired structures (the qualifying hits are unchanged)
@@ -78,7 +78,7 @@ function analyseAs(key: string, daily: Bar[], analysisTf: PatternTimeframe, incl
       return { key, hits: r.hits, weak: r.weak, expired: r.expired, at: Date.now(), status: 'ready', periodEnd: lastT };
     }
     // weekly / monthly: aggregated from the daily history (completed periods unless the current one is included)
-    const r = analyzeDailyAs(daily, analysisTf, { ...ft, completedOnly: !includeCurrent, weak: true });
+    const r = analyzeDailyAs(daily, analysisTf, { ...ft, completedOnly: !includeCurrent, weak: true, ...(market === 'IN' || market === 'US' ? { market } : {}) });   // zzz1079 — exchange clock
     const w = TF_WORD[analysisTf];
     if (r.tooShort) return { key, hits: [], at: Date.now(), status: 'short', error: `Too little history (${r.usableBars} ${w} bar${r.usableBars === 1 ? '' : 's'})` };
     return { key, hits: r.hits, weak: r.weak, expired: r.expired, at: Date.now(), status: 'ready', provisional: r.provisional, periodEnd: r.periodEnd };
@@ -171,19 +171,19 @@ export function usePatternIndicator(a: PatternIndicatorArgs) {
     const wantM = analysisTf === 'A' || analysisTf === 'M';
     const timer = setTimeout(() => {
       const readM = (src: Promise<{ daily: Bar[]; firstTradeT: number | null | undefined }>) => src
-        .then(({ daily, firstTradeT }) => { if (!cancelled) put([analyseAs(keyOf('M'), daily, 'M', includeCurrent, firstTradeT)]); })
+        .then(({ daily, firstTradeT }) => { if (!cancelled) put([analyseAs(keyOf('M'), daily, 'M', includeCurrent, firstTradeT, market)]); })
         .catch((e) => failed(['M'], e));
       // 10 years already on screen, or M wanted and the 5 years are not: one history for all three timeframes
       if (use10 || (wantM && !use5)) {
         load(plan10.url, use10).then(({ daily, firstTradeT }) => {
           if (cancelled) return;
-          put((['D', 'W', 'M'] as PatternTimeframe[]).map((tf) => analyseAs(keyOf(tf), daily, tf, includeCurrent, firstTradeT)));
+          put((['D', 'W', 'M'] as PatternTimeframe[]).map((tf) => analyseAs(keyOf(tf), daily, tf, includeCurrent, firstTradeT, market)));
         }).catch((e) => failed(['D', 'W', 'M'], e));
         return;
       }
       load(plan5.url, use5).then(({ daily, firstTradeT }) => {
         if (cancelled) return;
-        const dw = (['D', 'W'] as PatternTimeframe[]).map((tf) => analyseAs(keyOf(tf), daily, tf, includeCurrent, firstTradeT));
+        const dw = (['D', 'W'] as PatternTimeframe[]).map((tf) => analyseAs(keyOf(tf), daily, tf, includeCurrent, firstTradeT, market));
         put(dw);
         // D / W explicit: the monthly read is only a pointer when neither has a current structure
         const anyCurrent = dw.some((st) => st.status === 'ready' && patternView({ hits: st.hits, weak: st.weak, expired: st.expired, tf: st.key === keyOf('W') ? 'W' : 'D' }).state === 'qualifying');

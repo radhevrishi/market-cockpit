@@ -175,11 +175,11 @@ export function monthlyNeedText(sc: Pick<ScanMeta, 'hist' | 'from' | 'need'> | n
   const parts = (Object.entries(sc.need) as Array<[PatternId, number]>).map(([id, n]) => `${PATTERN_META[id]?.label || id} needs ${n}`);
   return parts.length ? `${sc.hist ?? '?'} monthly bars${sc.from ? ` (from ${sc.from})` : ''}; ${parts.join(', ')} to be read at its longest (formation + prior trend)` : '';
 }
-export function periodPatternsFromBars(b: DailyBars, tf: 'W' | 'M', ipoD: number | null | undefined, now?: Date): { pat: ScreenPatternTag[]; scan: ScanMeta } {
+export function periodPatternsFromBars(b: DailyBars, tf: 'W' | 'M', ipoD: number | null | undefined, now?: Date, market?: string | null): { pat: ScreenPatternTag[]; scan: ScanMeta } {
   const n = b.c.length;
   if (!n) return { pat: [], scan: { st: 'insufficient-history', v: PATTERN_SCAN_VERSION, n: 0, tf } };
   try {
-    const a = analyzeDailyAs(toPBars(b), tf, { completedOnly: true, ...(now ? { now } : {}), ...(ipoD != null && Number.isFinite(ipoD) ? { firstTradeT: ipoD * DAY } : {}) });
+    const a = analyzeDailyAs(toPBars(b), tf, { completedOnly: true, ...(now ? { now } : {}), ...(market === 'IN' || market === 'US' ? { market } : {}), ...(ipoD != null && Number.isFinite(ipoD) ? { firstTradeT: ipoD * DAY } : {}) });   // zzz1079 — exchange clock
     const asOf = a.periodEnd != null && Number.isFinite(a.periodEnd) ? new Date(a.periodEnd).toISOString().slice(0, 10) : undefined;
     const lastBar = a.bars.length ? a.bars[a.bars.length - 1] : null;
     const r = scanResult(a, tf, asOf, a.bars.length, { rep: a.dailyRepaired, rej: a.dailyRejected, daily: a.dailySupplied, px: lastBar ? lastBar.c : null });
@@ -231,7 +231,7 @@ export function techEntry(bars: DailyBars, firstTradeSec: number | null, partial
   // zzz993 (MC-01) — the close every price figure of this entry was worked out from, and its date / source
   const scanPx = n && Number.isFinite(recent.c[n - 1]) ? Number(recent.c[n - 1].toPrecision(6)) : null;
   // zzz993 — weekly / monthly patterns from the same daily bars (completed periods only); zzz1003 — monthly from the full ~10 years
-  const w = periodPatternsFromBars(recent, 'W', ipoD, now), m = periodPatternsFromBars(bars, 'M', ipoD, now);
+  const w = periodPatternsFromBars(recent, 'W', ipoD, now, src?.market), m = periodPatternsFromBars(bars, 'M', ipoD, now, src?.market);
   return {
     ...techFigures(recent), ipoD, ...(cc ? { cc } : {}), pat: p.pat, patAt: p.patAt, patV: PATTERN_SCAN_VERSION, scan: p.scan, ...tv, ...st, ...acc,
     patW: w.pat, scanW: w.scan, patM: m.pat, scanM: m.scan,

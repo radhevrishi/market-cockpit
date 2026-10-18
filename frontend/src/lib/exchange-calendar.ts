@@ -169,3 +169,32 @@ export function currentOrLastTradingDay(market: Market, now: Date, isNseHoliday:
   const d = marketDate(market, now);
   return isTradingDay(market, d, isNseHoliday) ? d : prevTradingDay(market, d, isNseHoliday);
 }
+
+// ── zzz1079 (retest B04) — ONE completion clock for charts, patterns, stage and setups ─────────────────────────────────────
+/** New York summer time on a calendar date (second Sunday of March → first Sunday of November; the switch is on a Sunday). */
+function nyDst(date: string): boolean {
+  const [y, m0, d] = splitYmd(date);
+  const startD = nthWeekday(y, 2, 0, 2), endD = nthWeekday(y, 10, 0, 1);
+  const t = Date.UTC(y, m0, d);
+  return t >= Date.UTC(y, 2, startD) && t < Date.UTC(y, 10, endD);
+}
+/** The instant (UTC ms) the REGULAR session of `date` closed — 15:30 IST; 16:00 New York, 13:00 on an early close — or null
+ *  when the exchange had no session that day (weekend / holiday). */
+export function sessionCloseUtc(market: Market, date: string, isNseHoliday: HolidayFn = isNseHolidayDate): number | null {
+  const w = dayWindows(market, date, isNseHoliday);
+  if (!w) return null;
+  const midnight = Date.parse(`${date}T00:00:00Z`);
+  if (market === 'IN') return midnight + w.regular[1] * 60_000 - IST_MS;
+  return midnight + (w.regular[1] + (nyDst(date) ? 4 : 5) * 60) * 60_000;
+}
+/** The last trading day in [from, to] (inclusive), or null when the exchange did not trade in that range. */
+export function lastTradingDayIn(market: Market, from: string, to: string, isNseHoliday: HolidayFn = isNseHolidayDate): string | null {
+  for (let d = to, i = 0; d >= from && i < 40; d = addDays(d, -1), i++) if (isTradingDay(market, d, isNseHoliday)) return d;
+  return null;
+}
+/** When a period (any range of calendar dates) is complete on the exchange: the close of its last trading day; a range with no
+ *  trading day is complete from its first day (nothing can be added to it). */
+export function rangeCloseUtc(market: Market, from: string, to: string, isNseHoliday: HolidayFn = isNseHolidayDate): number {
+  const last = lastTradingDayIn(market, from, to, isNseHoliday);
+  return last ? (sessionCloseUtc(market, last, isNseHoliday) as number) : Date.parse(`${from}T00:00:00Z`);
+}

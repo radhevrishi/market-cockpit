@@ -1825,6 +1825,8 @@ export interface DailyAsOptions extends Omit<DetectOptions, 'timeframe'> {
   /** analyse completed weeks / months only (default true); false includes the current period, marked provisional */
   completedOnly?: boolean;
   now?: Date;
+  /** zzz1079 (B04) — the exchange, so a week / month completes at its last session's close (holidays, early closes) */
+  market?: 'IN' | 'US' | null;
 }
 export interface DailyAsAnalysis extends PatternAnalysis {
   /** the current, incomplete week / month is the last analysed bar (completedOnly = false) */
@@ -1844,14 +1846,14 @@ export interface DailyAsAnalysis extends PatternAnalysis {
  * (lib/bar-aggregate: ISO weeks / calendar months, completed periods only unless completedOnly = false).
  */
 export function analyzeDailyAs(daily: PBar[], tf: PatternTimeframe, opts?: DailyAsOptions): DailyAsAnalysis {
-  const { completedOnly, now, ...rest } = opts || {};
+  const { completedOnly, now, market, ...rest } = opts || {};
   if (tf === 'D') {
     const r = analyzePatterns(daily, rest);
     const lastT = r.usableBars ? cleanBars(daily).bars.slice(-1)[0]?.t ?? null : null;
     return { ...r, provisional: false, periodEnd: lastT, latestT: lastT, droppedProvisional: false, bars: daily,
       dailySupplied: (daily || []).length, dailyRejected: r.rejectedBars, dailyRepaired: r.repairedBars };
   }
-  const ag = aggregateBars(daily, tf, { completedOnly, now });
+  const ag = aggregateBars(daily, tf, { completedOnly, now, market });
   const r = analyzePatterns(ag.bars, { ...rest, timeframe: tf });
   return { ...r, provisional: ag.provisional, periodEnd: ag.periodEnd, latestT: ag.latestT, droppedProvisional: ag.droppedProvisional, bars: ag.bars,
     dailySupplied: ag.supplied, dailyRejected: ag.rejected, dailyRepaired: ag.repaired };

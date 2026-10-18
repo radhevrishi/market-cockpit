@@ -12,6 +12,13 @@
 // (the observation is in a later week). Before the Friday close, Monday–Friday bars of the current week are an UNFINISHED week.
 // An unknown market uses the later of the two closes (US), so it never calls a week complete too early.
 
+// zzz1079 (retest B04) — the session close and the week's end now come from the exchange calendar (lib/exchange-calendar):
+// a Friday holiday ends the week at the THURSDAY close, a 13:00 ET early close ends it at 13:00, NSE holidays count. Before,
+// a fixed Friday 16:00 ET / 15:30 IST was used, so a Good-Friday week or the day after Thanksgiving confirmed hours late,
+// and pattern bars (lib/bar-aggregate) waited until Saturday 00:00 UTC — three different clocks for the same week.
+// An unknown market still uses the later of the two (never confirms too early).
+import { sessionCloseUtc, rangeCloseUtc } from './exchange-calendar';
+
 export type WeekMarket = 'US' | 'IN';
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
@@ -26,6 +33,11 @@ export function usSummerTime(dayStart: number): boolean {
 /** The instant (UTC ms) the regular session of the UTC day starting `dayStart` closes: India 10:00 UTC; US 20:00 / 21:00 UTC. */
 export function sessionCloseMs(dayStart: number, market?: WeekMarket | string | null): number {
   const d0 = Math.floor(dayStart / DAY) * DAY;
+  const date = new Date(d0).toISOString().slice(0, 10);
+  if (market === 'IN' || market === 'US') {
+    const c = sessionCloseUtc(market, date);   // the real close (early closes included); null on a day without a session
+    if (c != null) return c;
+  }
   if (market === 'IN') return d0 + 10 * HOUR;
   return d0 + (usSummerTime(d0) ? 20 : 21) * HOUR;
 }
@@ -38,7 +50,10 @@ export function weekMondayMs(t: number): number {
 /** Monday key (YYYY-MM-DD) or any instant in the week → the close of that week's Friday session (UTC ms). */
 export function weekCloseMs(week: string | number, market?: WeekMarket | string | null): number {
   const t = typeof week === 'number' ? week : Date.parse(`${week.slice(0, 10)}T00:00:00Z`);
-  return sessionCloseMs(weekMondayMs(t) + 4 * DAY, market);
+  const mon = weekMondayMs(t);
+  const from = new Date(mon).toISOString().slice(0, 10), to = new Date(mon + 4 * DAY).toISOString().slice(0, 10);
+  if (market === 'IN' || market === 'US') return rangeCloseUtc(market, from, to);   // the close of the week's LAST session
+  return Math.max(rangeCloseUtc('IN', from, to), rangeCloseUtc('US', from, to));
 }
 /** Is the week complete at `now`? `laterData` = a bar from a later week exists in the input. */
 export function weekComplete(week: string | number, market: WeekMarket | string | null | undefined, now?: Date | number, laterData = false): boolean {
