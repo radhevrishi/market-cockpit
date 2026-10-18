@@ -75,3 +75,21 @@ test('wiring: page reads the fallback; route exists', () => {
   assert.match(p, /useFinFallbackIndex\(fbTickers\)/);
   assert.match(readFileSync(join(__dirname, '..', '..', 'app', 'api', 'v1', 'fin-fallback', 'route.ts'), 'utf8'), /screener_store/);
 });
+
+// zzz1090 — India / USA Technicals list as a company list in the Stock Screener and the Pine Screener
+import { techSymbolsFromCsv, csvCells } from '../screener/tech-lists';
+import { universeOptions, universeSet } from '../screener/universe-scope';
+test('1090: Technicals CSV split by exchange; offered as a company list in both screeners', () => {
+  assert.deepEqual(csvCells('a,"b, c",d'), ['a', 'b, c', 'd']);
+  const csv = 'Symbol,Exchange,Description\nNVDA,NASDAQ,"Nvidia, Corp"\nHAL,NSE,Hindustan Aero\nHAL,NYSE,Halliburton\nNSE:KPIL,NSE,x';
+  assert.deepEqual(techSymbolsFromCsv(csv, 'IN'), ['HAL', 'KPIL']);
+  assert.deepEqual(techSymbolsFromCsv(csv, 'US'), ['NVDA', 'HAL']);
+  const src = { chartLists: [], standalone: [], portfolio: [], cb: [], tech: ['HAL', 'KPIL'], techSource: 'tab' as const };
+  assert.ok(universeOptions('IN', src).some((o) => o.id === 'tech' && o.label === 'India Technicals list' && o.count === 2));
+  assert.ok(universeOptions('US', src).some((o) => o.id === 'tech' && o.label === 'USA Technicals list'));
+  assert.deepEqual([...universeSet('tech', 'IN', src).set!].sort(), ['HAL', 'KPIL']);
+  assert.equal(universeSet('tech', 'IN', { ...src, tech: null }).waiting, true);
+  const pine = readFileSync(join(__dirname, '..', '..', 'components', 'pine-screener', 'PineScreener.tsx'), 'utf8');
+  assert.match(pine, /<option value="tech">/);
+  assert.match(readFileSync(join(__dirname, '..', '..', 'components', 'stock-screener', 'StockScreener.tsx'), 'utf8'), /loadTechListServer\(market/);
+});

@@ -35,6 +35,7 @@ import { cellRuleLines } from '@/lib/screener/cell-rules';
 import { universeOptions, universeSet, applyUniverse, universeLine, readUniverse, writeUniverse } from '@/lib/screener/universe-scope';
 import { loadHoldings, localIndiaHoldings } from '@/lib/screener/portfolio-scope';
 import { getConvictionTickers } from '@/lib/conviction-beats';
+import { readTechListLocal, loadTechListServer, techRowsKey } from '@/lib/screener/tech-lists';   // zzz1090
 import { freshnessFacts, figuresOverdue } from '@/lib/screener/freshness';
 import { resultKey, type LatestResultIndex } from '@/lib/screener/latest-result';
 import {
@@ -236,7 +237,24 @@ export default function StockScreener() {
     loadHoldings(market, ctrl.signal).then((h) => { if (!ctrl.signal.aborted) setHoldingsBy((p) => ({ ...p, [market]: { tickers: h.tickers, error: h.error } })); });
     return () => ctrl.abort();
   }, [needHoldings, market]);
-  const uSources = useMemo(() => ({ chartLists: watchlists ? watchlists.lists : null, standalone, portfolio: holdingsBy[market]?.tickers ?? null, portfolioError: holdingsBy[market]?.error ?? null, cb: cbList }), [watchlists, standalone, holdingsBy, market, cbList]);
+  // zzz1090 — India / USA Technicals list: this browser's Technicals tab, else the server's Technicals files
+  const [techBy, setTechBy] = useState<Partial<Record<ScreenMarket, { tickers: string[]; source: 'tab' | 'server' | 'none' }>>>({});
+  useEffect(() => {
+    let ctrl: AbortController | null = null;
+    const read = () => {
+      const local = readTechListLocal(market);
+      if (local.length) { setTechBy((p) => ({ ...p, [market]: { tickers: local, source: 'tab' } })); return; }
+      ctrl?.abort(); ctrl = new AbortController();
+      const c = ctrl;
+      loadTechListServer(market, c.signal).then((t) => { if (!c.signal.aborted) setTechBy((p) => ({ ...p, [market]: { tickers: t.tickers, source: t.source } })); });
+    };
+    read();
+    const onStorage = (e: StorageEvent) => { if (!e.key || e.key === techRowsKey(market)) read(); };
+    window.addEventListener('storage', onStorage); window.addEventListener('mb-tech-updated', read);
+    return () => { ctrl?.abort(); window.removeEventListener('storage', onStorage); window.removeEventListener('mb-tech-updated', read); };
+  }, [market]);
+  const uSources = useMemo(() => ({ chartLists: watchlists ? watchlists.lists : null, standalone, portfolio: holdingsBy[market]?.tickers ?? null, portfolioError: holdingsBy[market]?.error ?? null, cb: cbList,
+    tech: techBy[market]?.tickers ?? null, techSource: techBy[market]?.source }), [watchlists, standalone, holdingsBy, market, cbList, techBy]);
   const uOptions = useMemo(() => universeOptions(market, uSources), [market, uSources]);
   const uSet = useMemo(() => universeSet(universe, market, uSources), [universe, market, uSources]);
   const scoped = useMemo(() => applyUniverse(rows, uSet), [rows, uSet]);

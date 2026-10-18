@@ -21,7 +21,11 @@ export interface UniverseSources {
   portfolioError?: string | null;
   /** Conviction Beats bench (India) */
   cb: readonly string[];
+  /** zzz1090 — the Technicals tab list of this market (null = still being read); where it came from */
+  tech?: readonly string[] | null;
+  techSource?: 'tab' | 'server' | 'none';
 }
+const TECH_LABEL = (m: ScreenMarket) => (m === 'IN' ? 'India Technicals list' : 'USA Technicals list');
 
 export interface UniverseOption { id: string; label: string; count: number | null }
 
@@ -30,6 +34,7 @@ export function universeOptions(market: ScreenMarket, src: UniverseSources): Uni
   const out: UniverseOption[] = [{ id: 'all', label: 'All companies', count: null }];
   out.push({ id: 'pf', label: 'My portfolio', count: src.portfolio ? new Set(src.portfolio.map(normTicker)).size : null });
   if (market === 'IN') out.push({ id: 'cb', label: 'Conviction Beats', count: new Set(src.cb.map(normTicker)).size });
+  out.push({ id: 'tech', label: TECH_LABEL(market), count: src.tech ? new Set(src.tech.map(normTicker)).size : null });
   out.push({ id: 'watch', label: 'Watchlists page list', count: standaloneFor(market, src.standalone).tickers.size });
   out.push({ id: 'flagged', label: 'Flagged in my chart lists', count: flaggedFor(market, src.chartLists).size });
   for (const l of src.chartLists || []) out.push({ id: `wl:${l.id}`, label: `Chart list: ${l.name}`, count: chartListFor(market, l).size });
@@ -76,6 +81,11 @@ export function universeSet(id: string, market: ScreenMarket, src: UniverseSourc
     return { set: new Set(src.portfolio.map(normTicker)), label: 'My portfolio', waiting: false, bare: [], error: src.portfolioError || null };
   }
   if (id === 'cb') return market === 'IN' ? { set: new Set(src.cb.map(normTicker)), label: 'Conviction Beats', waiting: false, bare: [], error: null } : none('Conviction Beats (India only)');
+  if (id === 'tech') {
+    if (!src.tech) return { set: new Set(), label: TECH_LABEL(market), waiting: true, bare: [], error: null };
+    const from = src.techSource === 'server' ? ' (server files)' : src.techSource === 'tab' ? '' : '';
+    return { set: new Set(src.tech.map(normTicker)), label: `${TECH_LABEL(market)}${from}`, waiting: false, bare: [], error: null };
+  }
   if (id === 'watch') { const s = standaloneFor(market, src.standalone); return { set: s.tickers, label: 'Watchlists page list', waiting: false, bare: s.bare, error: null }; }
   if (id === 'flagged') return { set: flaggedFor(market, src.chartLists), label: 'Flagged in my chart lists', waiting: !src.chartLists, bare: [], error: null };
   if (id.startsWith('wl:')) {

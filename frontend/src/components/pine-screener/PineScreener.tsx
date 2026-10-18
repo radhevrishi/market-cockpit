@@ -37,6 +37,7 @@ import {
 } from '@/lib/screener/pine-view';
 import { loadHoldings, localIndiaHoldings } from '@/lib/screener/portfolio-scope';
 import { scopedNotes } from '@/lib/screener/scope-notes';   // zzz1084 — warnings say which companies they count
+import { readTechListLocal, loadTechListServer, techRowsKey, TECH_LIST_LABEL } from '@/lib/screener/tech-lists';   // zzz1090
 import { pollWhenVisible } from '@/lib/client-fetch';
 import { useWorkspaceLight, workspaceThemeClass } from '@/lib/workspace-theme';
 import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
@@ -407,6 +408,22 @@ export default function PineScreener() {
     const ss = stockScreens.find((x) => `ss:${x.id}` === sc);
     return ss ? { sc, set: stockScreenTickers(sr, ss, market) } : null;
   }, [scopeSt.user, scope, stockScreens, stockData, market]);
+  // zzz1090 — India / USA Technicals list: this browser's Technicals tab, else the server's Technicals files
+  const [techBy, setTechBy] = useState<Partial<Record<ScreenMarket, { tickers: string[]; source: 'tab' | 'server' | 'none' }>>>({});
+  useEffect(() => {
+    let ctrl: AbortController | null = null;
+    const read = () => {
+      const local = readTechListLocal(market);
+      if (local.length) { setTechBy((p) => ({ ...p, [market]: { tickers: local, source: 'tab' } })); return; }
+      ctrl?.abort(); ctrl = new AbortController();
+      const c = ctrl;
+      loadTechListServer(market, c.signal).then((t) => { if (!c.signal.aborted) setTechBy((p) => ({ ...p, [market]: { tickers: t.tickers, source: t.source } })); });
+    };
+    read();
+    const onStorage = (e: StorageEvent) => { if (!e.key || e.key === techRowsKey(market)) read(); };
+    window.addEventListener('storage', onStorage); window.addEventListener('mb-tech-updated', read);
+    return () => { ctrl?.abort(); window.removeEventListener('storage', onStorage); window.removeEventListener('mb-tech-updated', read); };
+  }, [market]);
   const tickersFor = useCallback((sc: string): Set<string> | null => {
     void cbTick;
     switch (scopeKind(sc)) {
@@ -415,9 +432,10 @@ export default function PineScreener() {
       case 'portfolio': return new Set((hold?.tickers || []).map((t) => t.toUpperCase()));
       case 'stock': return sc === scope ? stockSet || new Set() : userStock && userStock.sc === sc ? userStock.set : new Set();
       case 'hand': return handoff && handoff.market === market ? new Set(handoff.tickers) : new Set();
+      case 'tech': return new Set(techBy[market]?.tickers || []);
       default: return wlSet(sc);
     }
-  }, [scope, market, cbTick, hold, stockSet, userStock, handoff, wlSet]);
+  }, [scope, market, cbTick, hold, stockSet, userStock, handoff, wlSet, techBy]);
   /** the list is still being read (counts on it are not known yet) */
   const waitingFor = useCallback((sc: string): boolean => {
     const k = scopeKind(sc);
@@ -427,8 +445,8 @@ export default function PineScreener() {
   }, [hold, scope, stockSet, userStock, stockData, market]);
   const listTickers = useMemo<Set<string> | null>(() => tickersFor(scope), [tickersFor, scope]);
   const scopeName = kind === 'cb' ? 'Conviction Beats' : kind === 'portfolio' ? 'My portfolio' : kind === 'stock' ? (stockScreen ? `Stock screen “${stockScreen.name}”` : 'a Stock screen')
-    : kind === 'hand' ? `From the Stock Screener: ${handoff?.label || ''}` : watchlists?.lists.find((x) => `wl:${x.id}` === scope)?.name || '';
-  const scopeWaiting = (kind === 'stock' && !stockSet && !stockData[market]?.error) || (kind === 'portfolio' && hold?.status === 'loading' && !hold.tickers.length);
+    : kind === 'tech' ? `${TECH_LIST_LABEL[market]}${techBy[market]?.source === 'server' ? ' (server files)' : ''}` : kind === 'hand' ? `From the Stock Screener: ${handoff?.label || ''}` : watchlists?.lists.find((x) => `wl:${x.id}` === scope)?.name || '';
+  const scopeWaiting = (kind === 'tech' && !techBy[market]) || (kind === 'stock' && !stockSet && !stockData[market]?.error) || (kind === 'portfolio' && hold?.status === 'loading' && !hold.tickers.length);
   // zzz994 (MC-07) — STRICT results (every rule evaluated and passed) + a separate provisional preview
   const run = useMemo(() => runPineFull(rows, q, market), [rows, q, market]);
   const hits = useMemo(() => onList(run.strict, listTickers), [run, listTickers]);
@@ -819,6 +837,7 @@ export default function PineScreener() {
               <option value="">All listed companies</option>
               <option value="pf">My portfolio{hold && hold.status !== 'loading' ? ` (${hold.tickers.length})` : ''}</option>
               <option value="cb">🏆 Conviction Beats</option>
+              <option value="tech">📈 {TECH_LIST_LABEL[market]}{techBy[market] ? ` (${techBy[market]!.tickers.length})` : ''}</option>
               {handoff && handoff.market === market ? <option value="hand">From the Stock Screener: {handoff.label} ({handoff.tickers.length})</option> : null}
               {watchlists ? <optgroup label="My watchlists">{watchlists.lists.map((l) => <option key={l.id} value={`wl:${l.id}`}>★ {l.name} ({listCount(l)})</option>)}</optgroup> : null}
               <optgroup label="Stock Screener screens (fundamentals)">{myStockScreens.map((s) => <option key={s.id} value={`ss:${s.id}`}>{s.name}</option>)}</optgroup>

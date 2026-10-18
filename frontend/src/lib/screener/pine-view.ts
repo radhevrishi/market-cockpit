@@ -101,12 +101,13 @@ export function setupCounts(rows: readonly ScreenRow[], market: ScreenMarket, li
 // ── the company list ("Companies") ─────────────────────────────────────────────────────────────────────────────────────
 /** '' every company · 'wl:<id>' a watchlist · 'cb' Conviction Beats · 'pf' my portfolio · 'ss:<id>' a Stock Screener screen ·
  *  'hand' the companies sent over from the Stock Screener ("Open these in Pine Screener"). */
-export type ScopeKind = 'all' | 'watchlist' | 'cb' | 'portfolio' | 'stock' | 'hand';
+export type ScopeKind = 'all' | 'watchlist' | 'cb' | 'portfolio' | 'stock' | 'hand' | 'tech';   // zzz1090 — 'tech' the Technicals tab list
 export function scopeKind(scope: string): ScopeKind {
   if (!scope) return 'all';
   if (scope === 'cb') return 'cb';
   if (scope === 'pf') return 'portfolio';
   if (scope === 'hand') return 'hand';
+  if (scope === 'tech') return 'tech';
   if (scope.startsWith('ss:')) return 'stock';
   if (scope.startsWith('wl:')) return 'watchlist';
   return 'all';
