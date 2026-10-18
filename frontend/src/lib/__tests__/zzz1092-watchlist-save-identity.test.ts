@@ -39,7 +39,7 @@ test('a mixed list with one invalid entry is refused whole — nothing changes, 
   assert.equal(r.status, 400); assert.equal(j.ok, false);
   assert.deepEqual(j.rejected.map((x: any) => x.symbol), ['LSE:VOD']);
   assert.deepEqual(await get(), before, 'nothing written');
-  assert.match(interpretWriteResponse(false, 400, j, ['TCS', 'US:NVDA', 'LSE:VOD']).error || '', /not saved — invalid: LSE:VOD/);
+  assert.match((interpretWriteResponse(false, 400, j, ['TCS', 'US:NVDA', 'LSE:VOD']) as any).error || '', /not saved — invalid: LSE:VOD/);
 });
 
 test('incremental add / remove keep qualified identities; a server that drops one is not "saved"', { skip: realKv }, async () => {
@@ -52,5 +52,5 @@ test('incremental add / remove keep qualified identities; a server that drops on
   assert.ok(!j.watchlist.includes('US:HAL') && !j.watchlist.includes('NYSE:HAL'), 'US:HAL and NYSE:HAL are the same US company');
   assert.ok(j.watchlist.includes('NSE:HAL'), 'the NSE listing stays');
   // client check: a reply that lost a requested symbol is a failure
-  assert.match(interpretWriteResponse(true, 200, { ok: true, watchlist: ['INFY'] }, ['INFY', 'US:HAL']).error || '', /did not keep US:HAL/);
+  assert.match((interpretWriteResponse(true, 200, { ok: true, watchlist: ['INFY'] }, ['INFY', 'US:HAL']) as any).error || '', /did not keep US:HAL/);
 });
