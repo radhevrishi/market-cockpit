@@ -30,6 +30,7 @@ import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header fi
 import { kvGet, kvSet, kvSetNX, kvSwap, kvDel } from '@/lib/kv';
 import { resolveScreenerSymbol } from '@/lib/symbolMaster';
 
+import { indiaListSymbols } from '@/lib/instrument-id';   // zzz1092 — India readers take the India entries of the list (US:… left out, NSE:… → bare)
 export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
 
@@ -545,7 +546,7 @@ async function ingestFromEarningsScan(): Promise<{
       }
       if (wRes?.ok) {
         const wd = await wRes.json();
-        symbols.push(...(wd.watchlist || []));
+        symbols.push(...indiaListSymbols(wd.watchlist || []));
       }
     } catch (e) {
       console.warn('[guidance/ingest] Failed to fetch symbols:', (e as Error).message);

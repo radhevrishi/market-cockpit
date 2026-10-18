@@ -5,7 +5,7 @@ import { interpretWriteResponse, type ListOp, type WriteResult } from '@/lib/wat
 
 const WRITE_TIMEOUT_MS = 20_000;
 
-async function postJson(payload: Record<string, unknown>): Promise<WriteResult> {
+async function postJson(payload: Record<string, unknown>, requested?: readonly string[]): Promise<WriteResult> {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), WRITE_TIMEOUT_MS);
   try {
@@ -18,7 +18,7 @@ async function postJson(payload: Record<string, unknown>): Promise<WriteResult> 
     });
     let body: unknown = null;
     try { body = await res.json(); } catch { body = null; }
-    return interpretWriteResponse(res.ok, res.status, body);
+    return interpretWriteResponse(res.ok, res.status, body, requested);
   } catch (e) {
     return { ok: false, error: (e as { name?: string })?.name === 'AbortError' ? 'timed out' : 'network error' };
   } finally {
@@ -28,7 +28,7 @@ async function postJson(payload: Record<string, unknown>): Promise<WriteResult> 
 
 /** Full-list write (the server replaces the list). */
 export function postWatchlistList(list: string[]): Promise<WriteResult> {
-  return postJson({ chatId: CHAT_ID, watchlist: list, secret: BOT_SECRET });
+  return postJson({ chatId: CHAT_ID, watchlist: list, secret: BOT_SECRET }, list);   // zzz1092 — checked against what was kept
 }
 
 /** One company's flag; '' clears it. Resolves true only when the server confirmed. */

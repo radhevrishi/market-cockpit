@@ -735,7 +735,9 @@ export function cashTileView(r: any, fb?: CashFallback | null): CashTileView {
       return { text: `${v.toFixed(2)}x`, note: `${ratioNote(v)} · not part of the grade`, color: v < 0.6 ? 'bad' : v < 1 ? 'warn' : 'good', basis: yb };
     }
     const word = FIN_KIND_WORD[sub || 'nbfc'];
-    if (yr) return { text: `CFO ${fmtCrSigned(yr.ocf)}`, note: `profit ${fmtCrSigned(yr.pat)} · ${word}: loans / client money move this cash — not a cash test`, color: 'none', basis: yb };
+    // zzz1094 — owner: a plain ratio like every other card ("−7.69x"), short note; grey (a lender's cash is loan growth)
+    if (yr && yr.pat > 0) { const v = Math.round((yr.ocf / yr.pat) * 100) / 100; return { text: `${v.toFixed(2)}x`, note: `${sub === 'bank' ? 'bank' : sub === 'broker' ? 'broker' : 'lender'} · not graded`, color: 'none', basis: yb }; }
+    if (yr) return { text: `CFO ${fmtCrSigned(yr.ocf)}`, note: `loss year · ${word}`, color: 'none', basis: yb };
     return { text: `n/a (${word})`, note: 'not meaningful for lenders', color: 'none', basis: null };
   }
   const v0 = [r?.ocf_to_pat_ratio, r?.cfo_to_pat_ratio].find(fin);
@@ -747,7 +749,7 @@ export function cashTileView(r: any, fb?: CashFallback | null): CashTileView {
     // and show the cash figure, instead of "not in source".
     const yr = yearCashFigures(r) || fbYear;
     if (yr) return yr.pat < 0
-      ? { text: `CFO ${fmtCrSigned(yr.ocf)}`, note: `loss year (${fmtCrSigned(yr.pat)}) — no ratio`, color: yr.ocf > 0 ? 'warn' : 'bad', basis: basis || `${yr.fy} full year` }
+      ? { text: `CFO ${fmtCrSigned(yr.ocf)}`, note: `loss year (${fmtCrSigned(yr.pat)})`, color: yr.ocf > 0 ? 'warn' : 'bad', basis: basis || `${yr.fy} full year` }
       : { text: `CFO ${fmtCrSigned(yr.ocf)}`, note: `profit ${fmtCrSigned(yr.pat)} too small for a ratio`, color: yr.ocf > 0 ? 'warn' : 'bad', basis: basis || `${yr.fy} full year` };
     return { text: '—', note: 'not in source', color: 'none', basis };
   }

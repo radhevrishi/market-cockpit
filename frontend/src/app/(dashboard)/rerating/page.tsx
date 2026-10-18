@@ -48,6 +48,7 @@ import api from '@/lib/api';
 // PATCH 0557 — BUG-AUDIT-2: backend-degraded banner.
 import DegradedBanner from '@/components/DegradedBanner';
 
+import { indiaListSymbols } from '@/lib/instrument-id';   // zzz1092 — India readers take the India entries of the list (US:… left out, NSE:… → bare)
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 type Tab = 'margin' | 'model' | 'multiple';
@@ -317,10 +318,7 @@ function useUniverseSymbols(choice: UniverseChoice, customCsv: string) {
       const addWatchlist = async () => {
         const data = await fetchWithTimeout(`/api/watchlist?chatId=${encodeURIComponent('5057319640')}`);
         const items = data?.watchlist || data?.items || data?.tickers || (Array.isArray(data) ? data : []);
-        for (const w of items) {
-          const s = typeof w === 'string' ? w : (w?.symbol || w?.ticker || w?.ticker_symbol);
-          if (s) out.add(String(s).toUpperCase());
-        }
+        for (const s of indiaListSymbols(items.map((w: any) => (typeof w === 'string' ? w : (w?.symbol || w?.ticker || w?.ticker_symbol))).filter(Boolean))) out.add(s);
       };
       const addMultibagger = () => {
         for (const s of readMultibaggerSymbols()) out.add(s);

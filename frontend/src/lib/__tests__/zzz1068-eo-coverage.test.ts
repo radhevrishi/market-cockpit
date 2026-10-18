@@ -101,7 +101,7 @@ describe('zzz1068 — CFO/PAT: the figures are there, the year was a loss', () =
     assert.equal(cashTileView({ ...crompton, ocf_annual_cr: -27, pat_annual_cr: -67 }).color, 'bad');
     assert.equal(cashTileView({ company: 'Aksh Optifibre Ltd', ocf_to_pat_ratio: 0 }).note, 'not in source', 'no figures → still says so');
     // zzz1089 — a bank's real figures are shown (never as a cash test), not a blank
-    assert.match(cashTileView({ company: 'HDFC Bank Ltd', industry: 'Private Sector Bank', ocf_annual_cr: 5, pat_annual_cr: -1, cash_fy: 'Mar 2026' }).note, /bank: loans \/ client money move this cash — not a cash test/);
+    assert.match(cashTileView({ company: 'HDFC Bank Ltd', industry: 'Private Sector Bank', ocf_annual_cr: 5, pat_annual_cr: -1, cash_fy: 'Mar 2026' }).note, /loss year · bank/);   // zzz1094 — short note
     assert.equal(yearCashFigures({ ocf_annual_cr: 10, pat_annual_cr: -2 }), null, 'no fiscal-year label → not used');
     assert.equal(fmtCrSigned(-0.78), '−₹0.8 Cr');
   });

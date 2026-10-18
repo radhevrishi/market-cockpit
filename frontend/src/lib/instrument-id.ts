@@ -58,3 +58,40 @@ export function resolveListQuote<Q extends { ticker: string; market?: Market }>(
   const q = inQ || usQ;
   return { quote: q, market: q ? (q.market || 'IN') : undefined, ambiguous: false };
 }
+
+// ── zzz1092 (retest R1) — ONE validator for a stored list symbol, used by the save route AND the page ─────────────────────────
+// Accepted, kept exactly as written (upper case, trimmed — never stripped back to a bare name):
+//   bare "HAL" / "BRK.B" / "532067" · "NSE:HAL" "BSE:532067" "BSE:RELIANCE" "BOM:…" · "US:HAL" "NYSE:HAL" "NASDAQ:NVDA" "AMEX:…" "ARCA:…"
+//   · ".NS" / ".BO" suffixes. Anything else is REJECTED with a reason (the route refuses the whole save — nothing silently dropped).
+const ANY_PREFIX = /^(NSE|BSE|BOM|US|NYSE|NASDAQ|AMEX|ARCA):/;
+const BARE_RE = /^[A-Z0-9][A-Z0-9&.\-]{0,23}$/;
+export type ListSymbolCheck = { ok: true; value: string } | { ok: false; value: string; reason: string };
+export function checkListSymbol(raw: unknown): ListSymbolCheck {
+  const value = String(raw ?? '').trim().toUpperCase();
+  if (!value) return { ok: false, value, reason: 'empty' };
+  if (/\s/.test(value)) return { ok: false, value, reason: 'contains a space' };
+  const colon = value.indexOf(':');
+  if (colon >= 0 && !ANY_PREFIX.test(value)) return { ok: false, value, reason: `unknown exchange "${value.slice(0, colon)}" (use NSE:, BSE:, US:, NYSE:, NASDAQ:)` };
+  const i = parseListSymbol(value);
+  if (!i.t || !BARE_RE.test(i.t)) return { ok: false, value, reason: 'not a ticker' };
+  if (i.m && !(validFor(i.m, i.t) || (i.m === 'IN' && /^\d{6}$/.test(i.t)))) return { ok: false, value, reason: `not a valid ${i.m === 'IN' ? 'India' : 'USA'} ticker` };
+  return { ok: true, value };
+}
+/** Same instrument? ("NSE:HAL" = "HAL.NS"; "US:HAL" = "NYSE:HAL"; bare "HAL" only equals bare "HAL"). */
+export function sameListSymbol(a: string, b: string): boolean {
+  const x = parseListSymbol(a), y = parseListSymbol(b);
+  return x.t === y.t && x.m === y.m;
+}
+/** The India symbols of a stored list, for readers that only know India (Telegram alerts, guidance ingest, India pages):
+ *  "NSE:HAL" → "HAL", "532067" stays, bare names stay (the list's old meaning), USA entries are left out. */
+export function indiaListSymbols(list: readonly unknown[]): string[] {
+  const out: string[] = [];
+  for (const raw of list) {
+    const c = checkListSymbol(raw);
+    if (!c.ok) continue;
+    const i = parseListSymbol(c.value);
+    if (i.m === 'US') continue;
+    out.push(i.t);
+  }
+  return Array.from(new Set(out));
+}

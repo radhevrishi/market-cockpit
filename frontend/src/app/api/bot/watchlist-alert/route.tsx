@@ -7,6 +7,7 @@ import React from 'react';
 import { kvGet, kvSet } from '@/lib/kv';
 import { fetchNifty500, fetchNiftyMidcap250, fetchNiftySmallcap250, fetchNiftyMicrocap250, fetchNiftyTotalMarket, fetchGainers, fetchLosers, nseApiFetch } from '@/lib/nse';
 
+import { indiaListSymbols } from '@/lib/instrument-id';   // zzz1092 — India readers take the India entries of the list (US:… left out, NSE:… → bare)
 export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
 
@@ -67,9 +68,10 @@ async function getWatchlist(chatId: string): Promise<string[]> {
   try {
     const stored = await kvGet<string[]>(`watchlist:${chatId}`);
     if (stored && Array.isArray(stored) && stored.length > 0) {
-      console.log(`[WATCHLIST] Loaded ${stored.length} stocks from Redis for ${chatId}`);
-      watchlistStorage[chatId] = { stocks: stored, addedAt: Date.now() };
-      return stored;
+      const india = indiaListSymbols(stored);
+      console.log(`[WATCHLIST] Loaded ${india.length} India stocks (of ${stored.length}) from Redis for ${chatId}`);
+      watchlistStorage[chatId] = { stocks: india, addedAt: Date.now() };
+      return india;
     }
   } catch (e) {
     console.warn('[WATCHLIST] Redis read failed:', e);

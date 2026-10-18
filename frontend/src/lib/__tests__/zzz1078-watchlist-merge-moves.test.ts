@@ -77,7 +77,7 @@ test('B03: 999 + one addition on each device → nothing vanishes silently', () 
 
 test('sync: a merge that hit a limit keeps a recovery copy and tells the user', () => {
   const v = readFileSync(join(__dirname, '..', 'user-vault-client.ts'), 'utf8');
-  assert.match(v, /mc:vault:overflow:\$\{key\}/);
+  assert.match(v, /storeOverflow\(localStorage, key,/);   // zzz1093 — written through the checked helper (mc:vault:overflow:<key>)
   assert.match(v, /new CustomEvent\('mc:vault:overflow'/);
   const n = readFileSync(join(__dirname, '..', '..', 'components', 'VaultSyncNotice.tsx'), 'utf8');
   assert.match(n, /Download recovery copy/);

@@ -62,12 +62,24 @@ export function decideInitialWatchlist(read: WatchlistReadResult): InitialWatchl
 export type WriteResult = { ok: true; list?: string[] } | { ok: false; error: string };
 
 /** A write counts as saved only when HTTP is ok AND the body says `ok: true`. */
-export function interpretWriteResponse(httpOk: boolean, status: number, body: unknown): WriteResult {
-  if (!httpOk) return { ok: false, error: `HTTP ${status}` };
+export function interpretWriteResponse(httpOk: boolean, status: number, body: unknown, requested?: readonly string[]): WriteResult {
+  if (!httpOk) {
+    // zzz1092 (R1) — the server names the symbols it refused (nothing was saved)
+    const rej = isPlainObject(body) && Array.isArray(body.rejected) ? (body.rejected as any[]).map((r) => `${r?.symbol ?? '?'} (${r?.reason ?? 'invalid'})`) : [];
+    return { ok: false, error: rej.length ? `not saved — invalid: ${rej.slice(0, 5).join(', ')}${rej.length > 5 ? ` +${rej.length - 5} more` : ''}` : `HTTP ${status}` };
+  }
   if (!isPlainObject(body) || body.ok !== true) return { ok: false, error: 'server did not confirm' };
   const list = body.watchlist;
-  if (Array.isArray(list) && list.every((t) => typeof t === 'string')) return { ok: true, list: [...list] };
-  return { ok: true };
+  if (Array.isArray(list) && list.every((t) => typeof t === 'string')) {
+    // zzz1092 (R1) — a save is only "saved" when every requested symbol is in the list the server kept
+    if (requested) {
+      const kept = new Set((list as string[]).map((t) => t.trim().toUpperCase()));
+      const lost = requested.map((t) => String(t).trim().toUpperCase()).filter((t) => t && !kept.has(t));
+      if (lost.length) return { ok: false, error: `server did not keep ${lost.slice(0, 5).join(', ')}${lost.length > 5 ? ` +${lost.length - 5} more` : ''}` };
+    }
+    return { ok: true, list: [...list] };
+  }
+  return requested && requested.length ? { ok: false, error: 'server did not return the saved list' } : { ok: true };
 }
 
 // ── F09: flags ────────────────────────────────────────────────────────────────

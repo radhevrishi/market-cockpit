@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { secretFromRequest } from '@/lib/request-secret';   // zzz883: header first, ?secret= only for old callers
 import { ImageResponse } from 'next/og';
 
+import { indiaListSymbols } from '@/lib/instrument-id';   // zzz1092 — India readers take the India entries of the list (US:… left out, NSE:… → bare)
 export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
 
@@ -374,7 +375,7 @@ export async function GET(request: Request) {
       const wlRes = await fetch(`${API_BASE}/api/watchlist?chatId=${WATCHLIST_CHAT_ID}`);
       if (wlRes.ok) {
         const wlData = await wlRes.json();
-        watchlistSymbols = new Set((wlData.watchlist || []).map((s: string) => s.toUpperCase()));
+        watchlistSymbols = new Set(indiaListSymbols(wlData.watchlist || []));
       }
     } catch {}
 

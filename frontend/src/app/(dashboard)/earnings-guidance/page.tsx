@@ -8,6 +8,7 @@ import { getConvictionTickers } from '@/lib/conviction-beats';
 // PATCH 0545 — AUDIT #95 debounced LS writes for the guidance history snapshot.
 import { debouncedSetItem, getItemSync } from '@/lib/debounced-storage';
 
+import { indiaListSymbols } from '@/lib/instrument-id';   // zzz1092 — India readers take the India entries of the list (US:… left out, NSE:… → bare)
 // PATCH 0294 — Q-over-Q score delta + sparkline (audit IMP-04).
 // We snapshot every (symbol, period) guidance score into localStorage on
 // every render. The first render where we see a NEW (symbol, period)
@@ -193,7 +194,7 @@ export default function EarningsGuidancePage() {
           }
           if (wRes.ok) {
             const wd = await wRes.json();
-            newSymbols.push(...(wd.watchlist || []));
+            newSymbols.push(...indiaListSymbols(wd.watchlist || []));
           }
         } catch {}
         symbols = [...new Set(newSymbols.map(s => s.trim().toUpperCase()).filter(s => s.length > 0))];

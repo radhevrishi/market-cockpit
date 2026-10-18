@@ -14,13 +14,14 @@ const CLEANUP_INTERVAL_MS = 60_000; // clean expired entries every minute
 
 // Periodically clean expired entries to prevent unbounded memory growth
 if (typeof setInterval !== 'undefined') {
-  setInterval(() => {
+  const t = setInterval(() => {
     const now = Date.now();
     for (const [key, entry] of store.entries()) {
       // Remove entries older than the longest possible window (60s)
       if (now - entry.windowStart > 60_000) store.delete(key);
     }
   }, CLEANUP_INTERVAL_MS);
+  (t as { unref?: () => void }).unref?.();   // zzz1092 — a cleanup timer never keeps a process (or a test) alive
 }
 
 /**

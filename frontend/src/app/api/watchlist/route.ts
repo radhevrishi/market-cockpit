@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { rateLimitResponse } from '@/lib/rateLimit';
+import { checkListSymbol, sameListSymbol } from '@/lib/instrument-id';   // zzz1092 (R1)
 
 export const dynamic = 'force-dynamic';
 
@@ -103,17 +104,25 @@ export async function POST(request: Request) {
 
     let updated: string[] = [];
 
+    // zzz1092 (retest R1) — every symbol is checked by the shared validator. Market prefixes (NSE:, BSE:, US:, NYSE:, NASDAQ:)
+    // and dotted US tickers (BRK.B) are KEPT as written. If any entry is invalid the WHOLE save is refused (HTTP 400, nothing
+    // written) and the bad entries are listed — never filtered out quietly behind ok:true.
+    const checkAll = (arr: unknown[]) => {
+      const checks = arr.map(checkListSymbol);
+      const rejected = checks.filter((c) => !c.ok).map((c) => ({ symbol: c.value, reason: (c as { reason: string }).reason }));
+      return { values: checks.filter((c) => c.ok).map((c) => c.value), rejected };
+    };
     if (body.watchlist && Array.isArray(body.watchlist)) {
       // Full replacement
-      updated = body.watchlist
-        .map((s: string) => String(s).trim().toUpperCase())
-        .filter((s: string) => s.length > 0 && /^[A-Z0-9&-]+$/.test(s));
+      const c = checkAll(body.watchlist);
+      if (c.rejected.length) return NextResponse.json({ ok: false, error: `Not saved: ${c.rejected.length} symbol${c.rejected.length === 1 ? '' : 's'} not valid`, rejected: c.rejected }, { status: 400 });
+      updated = [...new Set(c.values)];
     } else if (body.action === 'add' && Array.isArray(body.symbols)) {
       const current = await kvGet<string[]>(kvKey(chatId)) || [...DEFAULT_WATCHLIST];
-      const toAdd = body.symbols
-        .map((s: string) => String(s).trim().toUpperCase())
-        .filter((s: string) => s.length > 0 && /^[A-Z0-9&-]+$/.test(s));
-      updated = [...new Set([...current, ...toAdd])];
+      const c = checkAll(body.symbols);
+      if (c.rejected.length) return NextResponse.json({ ok: false, error: `Not saved: ${c.rejected.length} symbol${c.rejected.length === 1 ? '' : 's'} not valid`, rejected: c.rejected }, { status: 400 });
+      const toAdd = c.values.filter((v) => !current.some((x) => sameListSymbol(x, v)));
+      updated = [...current, ...toAdd];
 
       // Auto-set addedDate for new symbols
       const meta = await kvGet<WatchlistMeta>(kvMetaKey(chatId)) || { flags: {}, addedDates: {}, addedPrices: {} };
@@ -124,10 +133,8 @@ export async function POST(request: Request) {
       await kvSet(kvMetaKey(chatId), meta);
     } else if (body.action === 'remove' && Array.isArray(body.symbols)) {
       const current = await kvGet<string[]>(kvKey(chatId)) || [...DEFAULT_WATCHLIST];
-      const toRemove = new Set(
-        body.symbols.map((s: string) => String(s).trim().toUpperCase())
-      );
-      updated = current.filter((s: string) => !toRemove.has(s));
+      const toRemove = body.symbols.map((s: string) => String(s).trim().toUpperCase());
+      updated = current.filter((s: string) => !toRemove.some((r: string) => r === s || sameListSymbol(r, s)));
     } else {
       return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
     }

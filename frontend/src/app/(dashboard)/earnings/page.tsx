@@ -12,6 +12,7 @@ import { BG, CARD, CARD_BORDER, ACCENT, TEXT, TEXT_DIM, GREEN, YELLOW, RED, HEAD
 import { _cacheMonth, deriveCachePeriod, isValidGuidanceObject, aiTier, formatMcap, parseQuarterDate, isDataStale, generateEarningsCommentary, aiEligibilityReason, computeAggregation, usePostGapData, matchesDayOneFilter } from './helpers';
 import { type EarningsScanCard, type ScanResponse, type ViewMode, type AIForwardGuidance, type DayOneFilter } from './types';
 
+import { indiaListSymbols } from '@/lib/instrument-id';   // zzz1092 — India readers take the India entries of the list (US:… left out, NSE:… → bare)
 function GuidanceBadge({ guidance, score, ai }: { guidance?: string; score?: number; ai?: AIForwardGuidance | null }) {
   // PATCH zzz104 — AI Guidance UI removed per user request
   return null;
@@ -684,7 +685,7 @@ export default function EarningsPage() {
           .catch(e => { console.error('Watchlist fetch failed:', e); return null; }),
       ]);
       let portfolio: string[] = pData ? (pData.holdings || []).map((h: any) => h.symbol) : [];
-      let watchlist: string[] = wData ? (wData.watchlist || []) : [];
+      let watchlist: string[] = wData ? indiaListSymbols(wData.watchlist || []) : [];
       // PATCH 0946 — localStorage is now ALWAYS a fallback layer, not only
       // "if API failed". Several user-reported sessions showed Portfolio 0 /
       // Watchlist 0 even though localStorage had real tickers, because the

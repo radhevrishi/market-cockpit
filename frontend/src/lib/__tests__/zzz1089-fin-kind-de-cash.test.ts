@@ -32,7 +32,7 @@ test('cash tile: asset manager gets the real ratio; NBFC / broker show their fig
   const c = cashTileView(CRAMC);
   assert.equal(c.text, '0.84x'); assert.match(c.note, /partly cash-backed · not part of the grade/); assert.equal(c.basis, 'Mar 2026 full year');
   const h = cashTileView(HDBFS);
-  assert.equal(h.text, 'CFO −₹8,606 Cr'); assert.match(h.note, /profit ₹2,544 Cr · NBFC \/ lender: loans \/ client money move this cash — not a cash test/); assert.equal(h.color, 'none');
+  assert.equal(h.text, '-3.38x'); assert.equal(h.note, 'lender · not graded'); assert.equal(h.color, 'none');   // zzz1094 — a plain ratio like every card
   assert.match(cashTileView(GROWW).note, /broker/);
   assert.equal(cashTileView(AXIS).text, 'n/a (bank)');
   // fintech with nothing in the feed: the company page's figures fill it
@@ -58,7 +58,8 @@ test('D/E tile: bank n/a, NBFC as leverage, asset-light as a normal company, fal
   assert.equal(deCellFor(0.5, 'fiscal year', AXIS, true).text, '0.50× bank');
   assert.equal(deCellFor(null, 'fiscal year', AXIS, true).text, 'n/a (bank)');
   // a bank's cash: the company-page figures are shown, never as a cash test
-  assert.match(cashTileView(AXIS, { cfo: -5000, pat: 26000, fy: 'Mar 2026' }).note, /bank: loans \/ client money move this cash — not a cash test/);
+  assert.equal(cashTileView(AXIS, { cfo: -5000, pat: 26000, fy: 'Mar 2026' }).text, '-0.19x');
+  assert.equal(cashTileView(AXIS, { cfo: -5000, pat: 26000, fy: 'Mar 2026' }).note, 'bank · not graded');
 });
 
 test('company-page reader: latest balance sheet and the same-year CFO / profit', () => {
