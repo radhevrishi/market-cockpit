@@ -33,6 +33,7 @@ import { mergeDayPayloads, windowSessions, chunkRange, type DayPayload } from '@
 import { usEasternDate, snapshotFresh, encodeSelectedDate, restoreSelectedDate } from '@/lib/us-earnings-dates';
 // The card itself — shared with /us-conviction-beats so the two tabs can never
 // drift apart again. See src/components/us-earnings-card.tsx.
+import { DebtEquityContext, useDebtEquityIndex } from '@/lib/use-debt-equity';   // zzz1077
 import { UsEarningsCard, TIER_META, QUADRANT_META, rowKey, panelId, num, setAllAiSummaries, useAiSummaryQueue } from '@/components/us-earnings-card';
 import { CardBadgesToggle } from '@/components/card-badges';
 import { classifyGradedRow, ABFG_META, type AbfgPattern } from '@/lib/earnings/pattern-abfg';
@@ -675,6 +676,9 @@ export default function UsEarningsOpportunitiesPage() {
     if (!data?.by_tier) return [] as UsGradedRow[];
     return US_TIER_ORDER.flatMap((t) => data.by_tier[t] || []);
   }, [data]);
+  // zzz1077 — debt ÷ equity for every card (stock-screener snapshot: latest quarter's balance sheet, else the fiscal year)
+  const deTickers = useMemo(() => allRows.map((r) => r.ticker), [allRows]);
+  const deIdx = useDebtEquityIndex(deTickers, 'US');
 
   const passes = (r: UsGradedRow) => {
     if (minCap != null && (r.market_cap_musd == null || r.market_cap_musd < minCap)) return false;
@@ -942,6 +946,7 @@ export default function UsEarningsOpportunitiesPage() {
   };
 
   return (
+    <DebtEquityContext.Provider value={deIdx}>
     <div style={{ padding: '20px clamp(16px, 2.2vw, 36px)', maxWidth: 1880, margin: '0 auto' }}>   {/* zzz1072 — same wider frame as India */}
       {/* ── header ── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
@@ -1764,6 +1769,7 @@ export default function UsEarningsOpportunitiesPage() {
       </div>
       <style>{'@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}'}</style>
     </div>
+    </DebtEquityContext.Provider>
   );
 }
 

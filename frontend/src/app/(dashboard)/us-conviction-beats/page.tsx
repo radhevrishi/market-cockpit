@@ -19,7 +19,7 @@
 // two markets silently overwriting each other. See lib/conviction-beats-us.ts.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useDebtEquityEntries } from '@/lib/use-debt-equity';   // zzz1068
+import { useDebtEquityEntries, DebtEquityContext, type DeIndex } from '@/lib/use-debt-equity';   // zzz1068 · zzz1077
 import { deCell, TONE_COLOR, DE_MAX_OPTIONS } from '@/lib/cb-metric-view';
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -103,6 +103,12 @@ export default function UsConvictionBeatsPage() {
   const [entriesRaw, setEntries] = useState<UsConvictionEntry[]>([]);
   // zzz1068 — debt ÷ equity from the stock-screener snapshot on every entry (card chip, D/E filter, table, CSV)
   const entries = useDebtEquityEntries(entriesRaw, 'US');
+  // zzz1077 — the same figures for the card's DEBT / EQUITY tile (the shared US card reads them from this context)
+  const deIdx = useMemo<DeIndex>(() => {
+    const o: DeIndex = {};
+    for (const e of entries as any[]) if (typeof e.de_ratio === 'number') o[String(e.ticker || '').toUpperCase()] = { de: e.de_ratio, basis: e.de_basis || '' };
+    return o;
+  }, [entries]);
   // zzz703 — A/B/F/G pattern filter; independent of tier.
   const [patternOnly, setPatternOnly] = useState<AbfgPattern | null>(null);
   const [filters, setFilters] = useState<UsConvFilters>(() => {
@@ -1093,6 +1099,7 @@ export default function UsConvictionBeatsPage() {
   }, [exportRows, filtered.length, markRes.rejectedHidden.length, newWindow, entries.length]);
 
   return (
+    <DebtEquityContext.Provider value={deIdx}>
     <div style={{ padding: 20, maxWidth: 1500, margin: '0 auto', ...deskNumerals }}>
       {/* ═══ STATE FIRST, DOCUMENTATION SECOND  (zzz653) ═══════════════════
           A paragraph explaining what a bench is sat where the numbers should
@@ -1817,6 +1824,7 @@ export default function UsConvictionBeatsPage() {
 
       <style>{'@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}'}</style>
     </div>
+    </DebtEquityContext.Provider>
   );
 }
 
@@ -1958,9 +1966,7 @@ function BenchCard({ e, open, onToggle, onRemove, conf, mark }: {
           {ds && ds !== 'HOLDING' && (
             <Chip text={`${ds === 'DRIFTING' ? '⚠ ' : ''}${ds} ${fmtPct(e.move_pct, 0)}`} color={driftColor} />
           )}
-          {/* zzz1068 — debt ÷ equity beside the card's ROCE chip, same colour logic as the India cards */}
-          {(() => { const dc = deCell((e as any).de_ratio, (e as any).de_basis, !!e.is_financial); return (
-            <span title={dc.title}><Chip text={`D/E ${dc.text}`} color={TONE_COLOR[dc.tone]} /></span>); })()}
+          {/* zzz1077 — D/E is now a full DEBT / EQUITY tile on the card (shared US card), not a small chip */}
           {age != null && <Chip text={aged ? `OLD · ${age}d` : `·${age}d`} color={aged ? '#94A3B8' : undefined} />}
           {/* Tradeability. Two numbers, because a small cap that cannot be
               bought in size is not an opportunity however good the print was:

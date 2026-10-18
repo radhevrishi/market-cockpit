@@ -61,7 +61,9 @@ import { isTopTiersSel, toggleTopTiers, topTiersCount, tierEmptyMessage } from '
 import { useIndiaEarningsWindow } from './useIndiaEarningsWindow';
 // zzz820 — what a card may honestly show (quarter label, year-ago base, margin
 // for lenders / "0.0%" unknowns, words instead of 0–100 numbers).
-import { checkQuarterLabel, growthView, marginView, driftWord, notRecordedNote, narrativeForDisplay, prepareDisplayPayload, yearAgoUnverified, stripGradeInputForStorage, UNCONFIRMED_LABEL, capReasonOf, caveatTagsForDisplay, liquidityView, decodeEntities, capBucket, capInBand, CAP_BUCKETS, cashTileView, type CashTileView } from '@/lib/india-eo-card-data';
+import { checkQuarterLabel, growthView, marginView, driftWord, notRecordedNote, narrativeForDisplay, prepareDisplayPayload, yearAgoUnverified, stripGradeInputForStorage, UNCONFIRMED_LABEL, capReasonOf, caveatTagsForDisplay, liquidityView, decodeEntities, capBucket, capInBand, CAP_BUCKETS, cashTileView, type CashTileView, financialKindOfRow } from '@/lib/india-eo-card-data';
+import { DebtEquityContext, useDebtEquityIndex, useDebtEquityOf } from '@/lib/use-debt-equity';   // zzz1077
+import { deCell, TONE_COLOR } from '@/lib/cb-metric-view';   // zzz1077
 import type { CalendarPayload, EarningsTier, ParsedEarning, OpportunitiesPayload, ViewMode } from './types';
 import { TIER_ORDER, GRADED_ENGINE_LABEL } from './constants';
 import { useMarketEarnings, buildCalendarFromHub, dedupePayloadByCompany, istDaysAgoISO, todayISO, todayIstISO, deriveQuarterLabel, fmtCr, fmtPx, fmtPct } from './helpers';
@@ -1781,6 +1783,9 @@ export default function EarningsOpportunitiesPage() {
     };
   }, [baseView, forcedCards]);
   const view: OpportunitiesPayload = useMemo(() => prepareDisplayPayload(viewMerged), [viewMerged]);
+  // zzz1077 — debt ÷ equity for every card on screen (window or single date), from the stock-screener snapshot
+  const deTickers = useMemo(() => (windowOn ? win.rows.map((r: any) => r.ticker) : TIER_ORDER.flatMap((t) => (view.by_tier?.[t] || []).map((x: any) => x.ticker))), [windowOn, win.rows, view]);
+  const deIdx = useDebtEquityIndex(deTickers, 'IN');
 
   // zzz814 — what the counts, filter chips, search and exports read: the
   // single date as before, or the merged window (one row per company).
@@ -1966,6 +1971,7 @@ export default function EarningsOpportunitiesPage() {
   })();
 
   return (
+    <DebtEquityContext.Provider value={deIdx}>
     <div className="mc-flow-mobile" style={{ padding: '20px clamp(16px, 2.2vw, 36px)', maxWidth: 1880, margin: '0 auto' }}>
       {/* zzz1072 — wider frame (was a fixed 1500px column, which left wide empty bands on large screens): up to 1880px with
           side margins that scale with the screen, so the cards use most of the width but never touch the edges. */}
@@ -3571,6 +3577,7 @@ Source label: ${coverageStats.source}`}
         })()}
       </div>
     </div>
+    </DebtEquityContext.Provider>
   );
 }
 
@@ -3818,6 +3825,8 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
         {/* zzz694 — cash sits in the row, so the figure that decides the tier
             is on the card rather than only in the caveat pills. */}
         <CashTile v={cashTileView(stock)} />
+        {/* zzz1077 — debt ÷ equity beside cash: green ≤ 0.5×, amber to 1×, red above; lenders n/a */}
+        <DeTile ticker={stock.ticker} lender={!!financialKindOfRow(stock)} />
         {/* zzz820 — the 0–100 composite is no longer printed (owner rule: no
             visible scores). The tile says the grade in words instead. */}
         <Tile size="compact" label="GRADE" title={TIER_META[stock.tier].tagline}
@@ -3961,6 +3970,12 @@ function EarningsCard({ stock, isFresh, radar }: { stock: ParsedEarning; isFresh
 // zzz822 — driven by cashTileView(): 0.00x is missing data ('—'), lenders
 // and insurers read 'not meaningful for lenders', and the engine's cash basis
 // (e.g. 'FY26 full year') is shown under the ratio when it sends one.
+/** zzz1077 — DEBT / EQUITY tile (stock-screener snapshot: latest quarter when filed, else the fiscal year). */
+function DeTile({ ticker, lender }: { ticker: string; lender: boolean }) {
+  const v = useDebtEquityOf(ticker);
+  const c = deCell(v?.de, v?.basis, lender);
+  return <Tile label="DEBT / EQUITY" value={c.text} color={TONE_COLOR[c.tone] || 'var(--mc-text-3)'} sub={lender ? 'not meaningful for lenders' : v ? v.basis : 'not in source yet'} title={c.title} />;
+}
 function CashTile({ v }: { v: CashTileView }) {
   const color = v.color === 'good' ? 'var(--mc-bullish)' : v.color === 'warn' ? 'var(--mc-warn, #F59E0B)' : v.color === 'bad' ? 'var(--mc-bearish)' : 'var(--mc-text-3)';
   // zzz981 — a normal US tile; the cash basis (e.g. "FY26 full year") stays as a second line.

@@ -23,6 +23,8 @@
 
 'use client';
 
+import { useDebtEquityOf } from '@/lib/use-debt-equity';   // zzz1077
+import { deCell, TONE_COLOR } from '@/lib/cb-metric-view';   // zzz1077
 import { UsEstimateRevisionChip } from './us-estimate-revision-chip';   // zzz890
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, ExternalLink, Sparkles, FileText, Download } from 'lucide-react';
@@ -738,6 +740,7 @@ function TileRow({ r, gaapEpsY, opmD, adjEpsCur, adjEpsPrev, epsEst, surp, hasAd
   // into sizes once every tile is known, so emphasis is decided by the whole
   // quarter rather than by each figure in isolation.
   const parts: Array<{ node: (size: TileSize) => React.ReactNode; w: number }> = [];
+  const deV = useDebtEquityOf((r as any).ticker);   // zzz1077
 
   // ── REVENUE ────────────────────────────────────────────────────────────
   const revNow = num(r.revenue_curr_musd);
@@ -869,6 +872,17 @@ function TileRow({ r, gaapEpsY, opmD, adjEpsCur, adjEpsPrev, epsEst, surp, hasAd
       <Tile key="cfo" label="CFO/NI" size={size} value={ac.ratio != null ? ac.ratio.toFixed(2) : ac.ni_musd < 0 ? 'loss yr' : '—'}
         color={ac.ratio == null ? undefined : ac.ratio >= 1 ? 'var(--mc-bullish)' : ac.ratio >= 0.5 ? undefined : 'var(--mc-bearish)'}
         sub={`CFO ${fmtUsdLevel(ac.cfo_musd)} · ${ac.basis} — quarter cash flow not filed yet`} />
+    ) });
+  }
+
+  // ── DEBT / EQUITY (zzz1077) ─────────────────────────────────────────────
+  // A balance-sheet figure, not a quarter's growth: normal size unless debt is heavy (above 1×), when it is worth the eye.
+  if (parts.length) {
+    const lender = !!(r as any).is_financial;
+    const dc = deCell(deV?.de, deV?.basis, lender);
+    parts.push({ w: deV && deV.de > 1 && !lender ? 26 : 5, node: (size) => (
+      <Tile key="de" label="DEBT / EQUITY" size={size} value={dc.text} color={TONE_COLOR[dc.tone]}
+        sub={<span title={dc.title}>{lender ? 'not meaningful for lenders' : deV ? deV.basis : 'not in source yet'}</span>} />
     ) });
   }
 
