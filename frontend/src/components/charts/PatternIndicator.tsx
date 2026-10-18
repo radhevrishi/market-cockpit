@@ -11,7 +11,7 @@
 // "no pattern". The list is grouped by timeframe; the 10-year history for monthly is one shared request (lib/chart-load-cache).
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { Chart } from 'klinecharts';
-import { analyzeDailyAs, analyzePatterns, PATTERN_META, PATTERN_IDS, PATTERN_MIN_HISTORY, patternApplies, type PatternHit, type PatternTimeframe } from '@/lib/chart-patterns';
+import { analyzeDailyAs, analyzePatterns, PATTERN_META, PATTERN_IDS, PATTERN_MIN_HISTORY, patternApplies, type PatternHit, type PatternTimeframe, patternShortFor } from '@/lib/chart-patterns';
 import { cacheChart, freshChart, type CachedChart } from '@/lib/chart-refresh';
 import { chartFetch } from '@/lib/chart-load-cache';
 import type { Bar } from '@/lib/chart-math';
@@ -496,7 +496,7 @@ export function PatternBanner({ p, cur, light, onTurnOff, tf, dock }: { p: Patte
         </div>
         {why && <div style={{ paddingLeft: 22, marginTop: 2, color: 'var(--mc-text-2)', fontStyle: 'italic' }}>{why}</div>}
         <div style={{ paddingLeft: 22, marginTop: 2, color: 'var(--mc-text-3)' }}>{h.note}</div>
-        <div style={{ paddingLeft: 22, marginTop: 2, color: 'var(--mc-text-3)', fontStyle: 'italic' }}>{PATTERN_META[h.id].short}</div>
+        <div style={{ paddingLeft: 22, marginTop: 2, color: 'var(--mc-text-3)', fontStyle: 'italic' }}>{patternShortFor(h.id, h.timeframe as any)}</div>{/* zzz1080 (B06) */}
         {(ev.length > 0 || pw.length > 0) && (
           <div style={{ paddingLeft: 22, marginTop: 2 }}>
             <button type="button" onClick={(e) => { e.preventDefault(); setRulesOf(rules ? null : rk); }} aria-expanded={rules} style={small}>{rules ? 'Hide measured rules' : 'Measured rules ▸'}</button>

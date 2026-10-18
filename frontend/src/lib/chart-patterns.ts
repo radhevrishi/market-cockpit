@@ -285,6 +285,23 @@ const D_ONLY: PatternTimeframe[] = ['D'];
  *     base on base (4–26 weeks), IPO base (within 2 years of listing — shorter than the 24-month minimum history),
  *     ascending / descending triangle and falling / rising wedge (3–26 weeks).
  */
+/** zzz1080 (retest B06) — a pattern's description for the timeframe it was read on, from the detector's own limits (the
+ *  generic text is written in weeks for daily / weekly bars; a monthly cup is 6–16 monthly candles, not "7–65 weeks"). */
+const REVERSALS: ReadonlySet<PatternId> = new Set<PatternId>(['double_bottom', 'triple_bottom', 'inverse_hs', 'double_top', 'triple_top', 'head_shoulders']);
+export function patternShortFor(id: PatternId, tf: PatternTimeframe | null | undefined): string {
+  const base = PATTERN_META[id]?.short || '';
+  if (tf === 'M') {
+    const cupMax = Math.round(330 / TF_PROFILES.M.k);   // the classic-cup cap (330 sessions) in monthly candles
+    if (id === 'cup') return `On monthly bars: a rounded U-shaped base ${MONTHLY_MIN_SPAN}–${cupMax} monthly candles long, 12–33% deep (deeper, to 50%, scores lower), right side back near the left high. A handle cannot be read on monthly bars.`;
+    if (id === 'u_base') return `On monthly bars: a rounded, saucer-shaped base at least ${MONTHLY_MIN_SPAN} monthly candles long and up to ${LONG_BASE_MONTHS} (a multi-year base), without the classic cup proportions.`;
+    if (id === 'vcp') return `${base} On monthly bars it spans at least ${MONTHLY_MIN_SPAN} monthly candles.`;
+    if (REVERSALS.has(id)) return `${base} On monthly bars the turning points are at least ${MONTHLY_MIN_SPAN} monthly candles apart and the whole pattern fits within ${MONTHLY_REVERSAL_MAX} months.`;
+    return `${base} (read on monthly bars)`;
+  }
+  if (tf === 'W' && REVERSALS.has(id)) return `${base} On weekly bars the turning points are at least ${WEEKLY_REVERSAL_MIN_SPAN} weekly candles apart.`;
+  return base;
+}
+
 export const PATTERN_TIMEFRAMES: Record<PatternId, ReadonlyArray<PatternTimeframe>> = {
   flat_base: DW, u_base: ALL_TF, cup: ALL_TF, cup_handle: DW, ascending_base: DW, vcp: ALL_TF, base_on_base: DW, ipo_base: DW,
   bull_flag: D_ONLY, bull_pennant: D_ONLY, ascending_triangle: DW, double_bottom: ALL_TF, triple_bottom: ALL_TF, falling_wedge: DW,

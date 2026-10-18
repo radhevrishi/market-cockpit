@@ -14,7 +14,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import NavLink from '@/components/NavLink';   // zzz1052 — prefetch on hover / focus / press, not on scroll-into-view
 import type { ScreenMarket, ScreenRow } from '@/lib/screener/types';
-import { PATTERN_META, PATTERN_IDS, type PatternId } from '@/lib/chart-patterns';
+import { PATTERN_META, PATTERN_IDS, type PatternId, patternShortFor } from '@/lib/chart-patterns';
 import {
   DEFAULT_QUERY, LIKELIHOODS, OPTIONAL_COLS, PINE_SCREENS_KEY, STAGES, TIMEFRAMES, SHAPE_SCORE_LABEL, SHAPE_SCORE_TIP, cleanPineScreens, cleanQuery, dirDist,
   likelihoodWord, patternCounts, patternGroups, runPineFull, turnoverOf, onList, ruleCoverage, pineRuleFields, pineRuleMenu, tagLengthText,
@@ -992,7 +992,7 @@ export default function PineScreener() {
                       // ticked one stays clickable so it can be removed); its count is "n/a", never a zero
                       const ap = chipApplicability(id, q.tfs);
                       return (
-                        <button key={id} type="button" aria-pressed={on} disabled={ap.na && !on} onClick={() => toggleId(id)} title={ap.na ? ap.reason : `${PATTERN_META[id].short}${ap.reason ? `\n${ap.reason}` : ''}${qRebuild.state !== 'ok' ? `\n${qRebuild.text}` : ''}`}
+                        <button key={id} type="button" aria-pressed={on} disabled={ap.na && !on} onClick={() => toggleId(id)} title={ap.na ? ap.reason : `${q.tfs.length === 1 ? patternShortFor(id, q.tfs[0]) : PATTERN_META[id].short}${ap.reason ? `\n${ap.reason}` : ''}${qRebuild.state !== 'ok' ? `\n${qRebuild.text}` : ''}`}
                           className={`pnx-pat ${g.bias === 'bullish' ? 'pnx-up' : 'pnx-down'}`} data-zero={n === 0 && !ap.na} data-na={ap.na} data-pat={id}>
                           {PATTERN_META[id].label}<span className="pnx-n" aria-busy={n == null}>{ap.na ? `n/a on ${q.tfs.join('/')}` : n == null ? '…' : `${n}${more}`}</span>
                         </button>

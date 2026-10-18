@@ -144,7 +144,8 @@ function bigWeeks(b: VolBars, weekDone: ((mon: string) => boolean) | undefined):
   return { up, dn };
 }
 
-/** The grade for a score: A ≥ 80 heavy accumulation · B ≥ 65 · C ≥ 45 neutral · D ≥ 30 · E < 30 heavy distribution. */
+/** The SCORE band (before confirmation): ≥ 80 · ≥ 65 · ≥ 45 · ≥ 30 · below. The final grade A / B also needs ACC_GATES — see
+ *  accGradeRuleText() for the rule as users read it. */
 export function accGrade(s: number | null | undefined): AccGrade | null {
   if (!fin(s)) return null;
   return s >= 80 ? 'A' : s >= 65 ? 'B' : s >= 45 ? 'C' : s >= 30 ? 'D' : 'E';
@@ -240,6 +241,16 @@ export function accumulationFigures(b: VolBars, opts: { weekDone?: (mon: string)
   return out;
 }
 
+/** zzz1080 (retest B05) — the grade rule in plain words, written from ACC_GATES (so the help can never drift from the engine).
+ *  The score alone is not the grade: A and B also need every confirmation condition. */
+export function accGradeRuleText(): string {
+  const G = ACC_GATES;
+  return `A = score ≥ ${G.scoreA} with ≥ ${G.accDA} accumulation days, 13-week money flow ≥ +${G.cmf65A} and a close within ${Math.round((1 - G.nearHiA) * 100)}% of the 250-session high · `
+    + `B = score ≥ ${G.scoreB} · both A and B also need: ≥ ${G.accD} accumulation days and ${G.net} more than distribution days (last 25 sessions), 13-week money flow ≥ +${G.cmf65}, `
+    + `up / down volume ≥ ${G.udv50}, On-Balance Volume rising, no distribution warning, close above its 50-session average and ≥ $${G.minTurnover.US / 1e6} million / ₹${G.minTurnover.IN / 1e7} crore traded a day — `
+    + `a high score that misses any of these is C (the miss is listed) · C = score ≥ 45 neutral · D ≥ 30 · E below 30 heavy distribution`;
+}
+
 /** India delivery %: average of the last 10 known sessions and its change against the 40 before (needs ≥ 8 and ≥ 20 values). */
 export function deliveryFigures(dlv: VolBars['dlv']): { dlv10: number | null; dlvChg: number | null } {
   if (!dlv || !dlv.length) return { dlv10: null, dlvChg: null };
@@ -264,6 +275,8 @@ export function accExplain(f: AccFigures, bar = 'session', market?: 'US' | 'IN')
   const lines = [
     `Accumulation ${f.accG} (${ACC_GRADE_WORD[f.accG!]}) — score ${f.accS}/100`,
     f.accG === 'C' && f.accS >= 65 && f.accMiss?.length ? `Score is high but not graded A / B — not confirmed: ${f.accMiss.join(' · ')}` : '',
+    // zzz1080 (B05) — why a high-scoring B is not A (the score is not the grade)
+    f.accG === 'B' && f.accS >= 80 ? `Graded B, not A: A needs a score ≥ ${ACC_GATES.scoreA}, ≥ ${ACC_GATES.accDA} accumulation ${bar}s, 13-week money flow ≥ +${ACC_GATES.cmf65A} and a close within ${Math.round((1 - ACC_GATES.nearHiA) * 100)}% of the 250-${bar} high${f.accS < ACC_GATES.scoreA ? ` (score ${f.accS} is below ${ACC_GATES.scoreA})` : (f.accD != null && f.accD < ACC_GATES.accDA ? ` (${f.accD} accumulation ${bar}s)` : f.cmf65 != null && f.cmf65 < ACC_GATES.cmf65A ? ` (money flow ${f.cmf65})` : ' (the close is not near enough the high)')}` : '',
     `Last 25 ${bar}s: ${f.accD} accumulation ${bar}s (up ≥ 1% on ≥ 1.25× average volume) vs ${f.disD} distribution${f.chD ? ` (incl. ${f.chD} stalling)` : ''}${p ? ` · ${p.days}/20` : ''}`,
     f.cmf65 != null ? `Money flow 13 weeks ${sg(f.cmf65)}, 21 ${bar}s ${f.cmf21 != null ? sg(f.cmf21) : '—'} (closes near the high on volume = positive)${p ? ` · ${p.ad}/25` : ''}` : '',
     f.udv50 != null ? `Up-${bar} volume ÷ down-${bar} volume, 50 ${bar}s: ${f.udv50}${p ? ` · ${p.udv}/15` : ''}` : '',

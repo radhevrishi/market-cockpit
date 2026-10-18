@@ -56,6 +56,7 @@ import {
 // PATCH 0820 — pull BUCKET_COLOR + BUCKET_GLYPH for the new 9-bucket primary chip
 import { computeMoveQuality, QUALITY_COLOR, CONTINUATION_COLOR, BUCKET_COLOR as BUCKET_MQ_COLOR, getHistoricalOutcome } from '@/lib/move-quality';
 import { getConvictionTickers } from '@/lib/conviction-beats';
+import { moveSessionLabel, shortDay } from '@/lib/session-move-label';   // zzz1081 (B07)
 import { homeRowsFromFinal } from '@/lib/special-sit-final';
 import { TV_MANIFEST_URL, tvFileUrl } from '@/lib/screener-data-loader';   // zzz1048 — own-screener replacement of the TradingView CSVs
 import { canonicalTicker } from '@/lib/ticker-normalize'; // PATCH 0721
@@ -3828,7 +3829,7 @@ export default function HomeDashboard() {
             <div style={{ fontSize: 10, color: DIM, marginBottom: 6 }}>
               {_isIndianMarketOpen()
                 ? 'Small + Midcap watchlist names with ≥3% intraday move · with reason'
-                : '🕒 NSE closed · small + midcap last-close moves with attribution'}
+                : `🕒 NSE closed · small + midcap moves of the last session (${shortDay(moveSessionLabel('IN', new Date()).session)}) with attribution`}
             </div>
             {!data.watchlistPulse ? (
               <div style={{ fontSize: 11, color: DIM, fontStyle: 'italic' }}>📡 Loading…</div>

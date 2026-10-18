@@ -6,6 +6,7 @@ import NavLink from '@/components/NavLink';   // zzz1052 — prefetch on hover /
 import { getConvictionList } from '@/lib/conviction-beats';
 import { fetchQuoteAutofill, calculatePE } from '@/lib/valuation-calculators';
 import { getJson } from '@/lib/client-fetch';
+import { moveSessionLabel } from '@/lib/session-move-label';   // zzz1081 (B07)
 import type { TierAction, InboxSignal, LaneKey } from './types';
 import { HOME_QUOTES_INDIA_URL, TTL_QUOTES, TTL_FEED, TEXT, DIM, cardStyle } from './constants';
 import { readTransform } from './helpers';
@@ -320,8 +321,10 @@ export function DailySignalInbox() {
       if (quotes && Array.isArray(quotes.gainers)) {
         quotes.gainers.filter((g: any) => (g.changePercent || 0) >= 3 && (g.price || 0) >= 50).slice(0, 12).forEach((g: any) => {
           if (seen.has(g.ticker)) return; seen.add(g.ticker);
-          rows.push({ lane: 'MOMENTUM', symbol: g.ticker, company: g.company || '',
-            headline: `Price +${(g.changePercent || 0).toFixed(1)}% today`,
+          // zzz1081 (B07) — the move's own session: "today" only on a day NSE traded; else "last session · 16 Oct"
+          const sl = moveSessionLabel('IN', new Date(), g.quoteTime);
+          rows.push({ lane: 'MOMENTUM', symbol: g.ticker, company: g.company || '', note: sl.title,
+            headline: `Price +${(g.changePercent || 0).toFixed(1)}% ${sl.word}`,
             detail: `${g.sector || '—'} · ₹${(g.price || 0).toLocaleString('en-IN', { maximumFractionDigits: 1 })}`,
             score: (g.changePercent || 0), href: '/screener' });
         });

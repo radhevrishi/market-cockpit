@@ -36,6 +36,7 @@ const FCFM_T_US = 'USA: trailing 12 months — (operating cash flow − capex) o
 const R40_BLANK = '. Rule of 40 is left blank when revenue growth is above +300% or the FCF margin is outside −100%…+100% (a tiny sales base — the sum would mean nothing)';
 const FCFM_IN = 'India: a cash-flow proxy for the latest full fiscal year — (cash from operations + ALL cash from investing) ÷ sales. screener.in prints no capex line, and investing cash can include buying / selling investments or acquisitions; "Exact figures only" leaves these out';
 import { STAGE_HEALTH_NOTE } from '../stage-analysis';
+import { accGradeRuleText } from '../accumulation';   // zzz1080 (B05)
 const TW_NOTE = 'Our own version that follows the published rules of TheWrap Stage Analysis (weekly 10 / 30 / 40-week averages, 13-week closing range, 10-point SATA score) — not the original script; readings can differ from TradingView';
 /** zzz1020 — a trader-setup field: both markets, group 'Trader setups', the rule as its approx note, optional sparse note. */
 const SETUP_NOTE = 'our own version of the published rules';
@@ -145,7 +146,7 @@ export const FIELDS: readonly FieldDef[] = [
   ...setupField('csl', 'CANSLIM points (0–5)', 'num', 'O\'Neil: C quarterly EPS growth ≥ 25%, A TTM EPS growth ≥ 25%, N price ≥ 85% of the 52-week high, S up/down volume ≥ 1.2, L RS Rating ≥ 80 — M (the market\'s trend) is not counted'),
   // zzz1046a — volume & accumulation (lib/accumulation.ts): our own version of the published O'Neil / Wyckoff rules, completed sessions
   ...accField('accS', 'Accumulation score (0–100)', 'num', 'money flow 13 weeks /25 + accumulation − distribution days /20 + up/down volume /15 + On-Balance Volume /15 + big-volume weeks /15 + pullback volume /10; a part with no figure counts half'),
-  ...accField('accR', 'Accumulation grade (5 = A … 1 = E)', 'num', 'A score ≥ 80 heavy accumulation · B ≥ 65 · C ≥ 45 neutral · D ≥ 30 · E < 30 heavy distribution'),
+  ...accField('accR', 'Accumulation grade (5 = A … 1 = E)', 'num', accGradeRuleText()),   // zzz1080 (B05) — from the engine's own constants
   ...accField('accD', 'Accumulation days (last 25 sessions)', 'num', 'up ≥ 1% on at least 1.25× the 50-session average volume, closing in the upper half of the day\'s range (volume breakouts count too)'),
   ...accField('disD', 'Distribution days (last 25 sessions)', 'num', 'down ≥ 1% on at least 1.25× the 50-session average volume, closing in the lower half — stalling days included'),
   ...accField('chD', 'Stalling days (last 25 sessions)', 'num', 'price almost unchanged (under 0.5%) on at least 1.5× average volume, closing near the low — heavy selling into strength'),

@@ -4,7 +4,7 @@
 // a button to open the chart.
 import { accLineTone, ACC_TONE_COLOR } from '@/lib/accumulation';
 import React, { useEffect, useState } from 'react';
-import { PATTERN_META } from '@/lib/chart-patterns';
+import { PATTERN_META, patternShortFor } from '@/lib/chart-patterns';
 import { fcfmSourceText, likelihoodWord, pineFilters, r40Explain, R40_FORMULA, type PineHit, type PineQuery } from '@/lib/screener/pine';
 import { fmtPrice, type Filter } from '@/lib/screener/filters';
 import { explainRow } from '@/lib/screener/research';
@@ -80,7 +80,7 @@ export function HitDetail({ hit, q, market, onOpenChart, width, results }: { hit
         <h4>{b && meta ? `${meta.label} on ${tfWord(b.tf)} bars, ${stageWord(b)}` : 'Listed by the screen\'s rules'}</h4>
         {b && meta ? (
           <div style={{ display: 'grid', gap: 6 }}>
-            <div style={{ color: C.text2 }}>{meta.short}</div>
+            <div style={{ color: C.text2 }}>{patternShortFor(b!.id, b!.tf)}</div>{/* zzz1080 (B06) — in the units of the timeframe it was read on */}
             <ul>
               <li>Shape score <b>{b.c}</b>/100, {likelihoodWord(b.c)} (how closely the shape fits, not a probability)</li>
               <li>{b.b === 'U' ? 'Pivot (buy point)' : 'Breakdown level'} <b>{fmtPrice(b.p, market)}</b>; {tfWord(an.tf)} analysis close {dd == null ? 'distance unknown' : <b style={{ color: dd >= 0 ? (b.b === 'U' ? C.green : C.red) : C.text }}>{pct(dd)}</b>} {dd != null ? (dd < 0 ? 'short of it' : 'beyond it') : ''}{an.close == null && dd != null ? <span style={{ color: C.dim }}> (stored distance; the {tfWord(an.tf)} close it was measured from is not stored)</span> : null}</li>

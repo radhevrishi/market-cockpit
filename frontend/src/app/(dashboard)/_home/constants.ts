@@ -24,6 +24,7 @@ export const HOME_QUOTE_FIELDS = [
   'ticker', 'symbol', 'company', 'price', 'changePercent', 'previousClose', 'open', 'dayHigh', 'dayLow',
   'volume', 'vol20DAvg', 'volMultiple', 'deliveryPct', 'turnoverLacs', 'indexGroup', 'sector', 'industry',
   'marketCap', 'pctOf52wHigh', 'mom1M', 'week52High', 'staleEOD',
+  'quoteTime',   // zzz1081 (B07) — which session a move belongs to ("today" vs "last session · 16 Oct")
 ].join(',');
 
 export const HOME_QUOTES_INDIA_URL = `/api/market/quotes?market=india&fields=${HOME_QUOTE_FIELDS}`;
