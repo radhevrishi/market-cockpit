@@ -1088,7 +1088,7 @@ export default function ChartWorkspace() {
           ))}
         </span>
         {/* zzz1088 — intraday bars (5m / 15m / 1h) with session VWAP, and 1 / 2 / 4 charts side by side, live on /charts/grid */}
-        <a className="ct-btn" data-testid="open-grid" href={`/charts/grid?t=${market === 'IN' ? 'NSE:' : 'US:'}${encodeURIComponent(ticker)}`} title="Intraday charts (5 min · 15 min · 1 hour) with session VWAP, and up to 4 charts side by side">⊞ Intraday · grid</a>
+        <a className="ct-btn" data-testid="open-grid" href={`/charts/grid?t=${market === 'IN' ? (exchange === 'BSE' ? 'BSE:' : 'NSE:') : 'US:'}${encodeURIComponent(ticker)}`} title="Intraday charts (5 min · 15 min · 1 hour) with session VWAP, and up to 4 charts side by side">⊞ Intraday · grid</a>
         <span role="group" aria-label="Visible range" className="ct-seg">
           {RANGE_KEYS.map((r) => (
             <button key={r} type="button" aria-pressed={range === r} title={`Show ${r === 'All' ? 'all history' : r === 'YTD' ? 'the year to date' : `the last ${r}`}`} onClick={() => setRange(r)}>{r}</button>

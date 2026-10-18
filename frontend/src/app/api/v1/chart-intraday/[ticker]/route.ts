@@ -14,14 +14,14 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 const _cache = new Map<string, { at: number; body: unknown }>();
 const _inflight = new Map<string, Promise<IntradaySeries | null>>();
 
-async function load(symbols: string[], tf: IntradayTf): Promise<IntradaySeries | null> {
+async function load(symbols: string[], tf: IntradayTf, market: Market): Promise<IntradaySeries | null> {
   for (const sym of symbols) {
     for (const host of ['query1', 'query2']) {
       try {
         const url = `https://${host}.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=${INTRADAY_META[tf].range}&interval=${tf}&includePrePost=false`;
         const res = await fetch(url, { headers: { 'User-Agent': UA }, cache: 'no-store', signal: AbortSignal.timeout(8_000) });
         if (!res.ok) continue;
-        const s = parseYahooIntraday(await res.json(), tf);
+        const s = parseYahooIntraday(await res.json(), tf, Date.now(), market);
         if (s && (!s.granularity || s.granularity === tf)) return s;
       } catch { /* next host */ }
     }
@@ -44,7 +44,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ ticker: str
   const headers = { 'Cache-Control': `private, max-age=${Math.round(ttl / 1000)}` };
   if (hit && Date.now() - hit.at < ttl) return NextResponse.json(hit.body, { headers });
   let p = _inflight.get(key);
-  if (!p) { p = load(yahooSymbolsFor(market, ticker, exchange), interval).finally(() => _inflight.delete(key)); _inflight.set(key, p); }
+  if (!p) { p = load(yahooSymbolsFor(market, ticker, exchange), interval, market).finally(() => _inflight.delete(key)); _inflight.set(key, p); }
   const s = await p;
   if (!s) return NextResponse.json({ ok: false, error: `No ${INTRADAY_META[interval].label} bars found for ${ticker}. Intraday bars come from Yahoo and cover the ${INTRADAY_META[interval].days}; some small companies have none.` }, { status: 404 });
   const body = {

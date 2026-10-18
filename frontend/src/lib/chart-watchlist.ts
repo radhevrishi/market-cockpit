@@ -13,7 +13,9 @@ export interface WlItem { m: Market; t: string; flag?: Flag; x?: string }   // x
 /** zzz1042 — `book`: this section is kept in sync with My Book (India 'IN' / USA 'US'), see lib/watchlist-book-sync.ts */
 export type BookMarket = 'IN' | 'US';
 export interface WlSection { id: string; name: string; collapsed: boolean; items: WlItem[]; book?: BookMarket }
-export interface WlList { id: string; name: string; sections: WlSection[] }
+/** zzz1099 (retest R7) — `seed`: an EMPTY list made automatically on a first visit (not by the owner). A merge with the saved
+ *  lists drops it instead of letting it become the open list. Cleared as soon as the list has an item. */
+export interface WlList { id: string; name: string; sections: WlSection[]; seed?: true }
 /** `bookAuto`: the books whose section link was already set once (so the first-run link never comes back after an unlink) */
 export interface WlStore { lists: WlList[]; activeId: string; bookAuto?: BookMarket[] }
 
@@ -81,16 +83,17 @@ export function sanitizeStore(raw: unknown): WlStore {
       sections.push(sec);
     }
     if (!sections.length) sections.push({ id: newId('s'), name: '', collapsed: false, items: [] });
-    lists.push({ id, name: cleanName(l.name, 'Watchlist'), sections });
+    const isSeed = l.seed === true && sections.every((x) => !x.items.length);
+    lists.push({ id, name: cleanName(l.name, 'Watchlist'), sections, ...(isSeed ? { seed: true as const } : {}) });
   }
-  if (!lists.length) lists.push(emptyList('My Watchlist'));
+  if (!lists.length) lists.push(emptyList('My Watchlist', true));
   const activeId = lists.some((l) => l.id === r.activeId) ? String(r.activeId) : lists[0].id;
   const bookAuto = (['IN', 'US'] as const).filter((b) => Array.isArray(r.bookAuto) && r.bookAuto.includes(b));
   return bookAuto.length ? { lists, activeId, bookAuto } : { lists, activeId };
 }
 
-export function emptyList(name: string): WlList {
-  return { id: newId('l'), name: cleanName(name, 'Watchlist'), sections: [{ id: newId('s'), name: '', collapsed: false, items: [] }] };
+export function emptyList(name: string, seed = false): WlList {
+  return { id: newId('l'), name: cleanName(name, 'Watchlist'), sections: [{ id: newId('s'), name: '', collapsed: false, items: [] }], ...(seed ? { seed: true as const } : {}) };
 }
 
 /** First visit: "My Watchlist" from the site's watchlist (India tickers) and "Portfolio" from the India book, when present. */
@@ -108,7 +111,7 @@ export function seedStore(watchTickers: unknown, holdings: unknown): WlStore {
   const wl = toItems(Array.isArray(watchTickers) ? watchTickers.map((x: any) => (typeof x === 'string' ? x : x?.ticker || x?.symbol || '')) : []);
   const pf = toItems(Array.isArray(holdings) ? holdings.map((h: any) => (typeof h === 'string' ? h : h?.symbol || h?.ticker || '')) : []);
   const lists: WlList[] = [];
-  const my = emptyList('My Watchlist'); my.sections[0].items = wl; lists.push(my);
+  const my = emptyList('My Watchlist', !wl.length); my.sections[0].items = wl; lists.push(my);
   if (pf.length) { const p = emptyList('Portfolio'); p.sections[0].items = pf; lists.push(p); }
   return { lists, activeId: lists[0].id };
 }

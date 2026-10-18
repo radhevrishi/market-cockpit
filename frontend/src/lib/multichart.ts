@@ -8,7 +8,8 @@ export type GridTf = 'D' | 'W' | 'M' | IntradayTf;
 export const GRID_TFS: readonly GridTf[] = ['5m', '15m', '60m', 'D', 'W', 'M'];
 export const GRID_TF_LABEL: Record<GridTf, string> = { '5m': '5m', '15m': '15m', '60m': '1h', D: 'D', W: 'W', M: 'M' };
 export type GridCount = 1 | 2 | 4;
-export interface GridCell { t: string; m: Market; tf: GridTf; vwap: boolean }
+/** zzz1097 (retest R4) — `x`: the India listing (NSE / BSE). A BSE chart stays BSE through the grid, its data and links. */
+export interface GridCell { t: string; m: Market; tf: GridTf; vwap: boolean; x?: 'NSE' | 'BSE' }
 export interface GridState { n: GridCount; sync: boolean; cells: GridCell[] }
 export const MULTICHART_KEY = 'mc:multichart:v1';
 
@@ -32,7 +33,9 @@ export function cleanGrid(raw: unknown): GridState {
     const c = Array.isArray(x.cells) ? x.cells[i] : null;
     const m: Market = c?.m === 'IN' ? 'IN' : c?.m === 'US' ? 'US' : d.cells[i].m;
     const t = typeof c?.t === 'string' ? c.t.trim().toUpperCase() : '';
-    cells.push({ t: t && validFor(m, t) ? t : d.cells[i].t, m: t && validFor(m, t) ? m : d.cells[i].m, tf: isTf(c?.tf) ? c.tf : d.cells[i].tf, vwap: typeof c?.vwap === 'boolean' ? c.vwap : true });
+    const ok = !!t && validFor(m, t);
+    const ex: 'NSE' | 'BSE' | undefined = ok && m === 'IN' && (c?.x === 'BSE' || c?.x === 'NSE') ? c.x : undefined;
+    cells.push({ t: ok ? t : d.cells[i].t, m: ok ? m : d.cells[i].m, tf: isTf(c?.tf) ? c.tf : d.cells[i].tf, vwap: typeof c?.vwap === 'boolean' ? c.vwap : true, ...(ex ? { x: ex } : {}) });
   }
   return { n, sync: !!x.sync, cells };
 }
@@ -46,20 +49,26 @@ export function gridFromParams(base: GridState, tParam: string | null, mParam: s
   const cells = base.cells.map((c) => ({ ...c }));
   list.forEach((raw, i) => {
     let m: Market = def, t = raw;
+    let x: 'NSE' | 'BSE' | undefined;
     const p = raw.match(/^(NSE|BSE|US|NYSE|NASDAQ|AMEX):(.+)$/);
-    if (p) { m = p[1] === 'NSE' || p[1] === 'BSE' ? 'IN' : 'US'; t = p[2]; }
-    if (validFor(m, t)) cells[i] = { ...cells[i], t, m };
+    if (p) { m = p[1] === 'NSE' || p[1] === 'BSE' ? 'IN' : 'US'; t = p[2]; if (p[1] === 'NSE' || p[1] === 'BSE') x = p[1]; }
+    if (validFor(m, t)) { const { x: _old, ...rest } = cells[i]; void _old; cells[i] = { ...rest, t, m, ...(x ? { x } : {}) }; }
   });
   const n: GridCount = list.length >= 3 ? 4 : list.length === 2 ? Math.max(2, base.n) as GridCount : base.n;
   return { ...base, n, cells };
 }
 
 /** The data address for one chart. */
-export function cellUrl(c: Pick<GridCell, 't' | 'm' | 'tf'>): string {
+export function cellUrl(c: Pick<GridCell, 't' | 'm' | 'tf' | 'x'>): string {
   const t = encodeURIComponent(c.t);
-  if (isIntraday(c.tf)) return `/api/v1/chart-intraday/${t}?market=${c.m}&interval=${c.tf}`;
+  const ex = c.m === 'IN' && c.x ? `&exchange=${c.x}` : '';
+  if (isIntraday(c.tf)) return `/api/v1/chart-intraday/${t}?market=${c.m}&interval=${c.tf}${ex}`;
   const interval = c.tf === 'D' ? '1d' : c.tf === 'W' ? '1wk' : '1mo';
-  return `/api/v1/chart/${t}?market=${c.m}&interval=${interval}`;
+  return `/api/v1/chart/${t}?market=${c.m}&interval=${interval}${ex}`;
 }
+/** The instrument as words and the full-chart link, both keeping the listing. */
+export const cellLabel = (c: Pick<GridCell, 't' | 'm' | 'x'>) => (c.m === 'US' ? `US:${c.t}` : `${c.x || 'NSE'}:${c.t}`);
+export const fullChartHref = (c: Pick<GridCell, 't' | 'm' | 'x' | 'tf'>) =>
+  `/charts?t=${encodeURIComponent(c.t)}&m=${c.m}&tf=${isIntraday(c.tf) ? 'D' : c.tf}${c.m === 'IN' && c.x ? `&x=${c.x}` : ''}`;
 
 export const EXCHANGE_TZ: Record<Market, string> = { IN: 'Asia/Kolkata', US: 'America/New_York' };

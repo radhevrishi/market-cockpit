@@ -7,8 +7,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Chart, DeepPartial, KLineData, Styles } from 'klinecharts';
 import NavLink from '@/components/NavLink';
 import { pollWhenVisible } from '@/lib/client-fetch';
-import { cellUrl, cleanGrid, gridFromParams, EXCHANGE_TZ, GRID_TFS, GRID_TF_LABEL, MULTICHART_KEY, validFor, type GridCell, type GridCount, type GridState, type GridTf } from '@/lib/multichart';
-import { INTRADAY_META, isIntraday, sessionVwap } from '@/lib/intraday';
+import { cellUrl, cellLabel, fullChartHref, cleanGrid, gridFromParams, EXCHANGE_TZ, GRID_TFS, GRID_TF_LABEL, MULTICHART_KEY, validFor, type GridCell, type GridCount, type GridState, type GridTf } from '@/lib/multichart';
+import { INTRADAY_META, isIntraday, sessionVwap, intradayStatus, type IntradayTf } from '@/lib/intraday';
 import { useWorkspaceLight, workspaceThemeClass } from '@/lib/workspace-theme';
 import WorkspaceThemeToggle from '@/components/WorkspaceThemeToggle';
 
@@ -50,20 +50,30 @@ async function chartLib() {
   return kc;
 }
 
-interface Loaded { url: string; bars: KLineData[]; name: string | null; last: number | null; chg: number | null; live: boolean; asOf: string }
+/** zzz1098 (retest R5) — every loaded answer carries the request it answers (`url` = instrument + listing + timeframe). The header,
+ *  VWAP and candles are shown ONLY when that equals the current selection; while a new selection loads, nothing from the old one
+ *  is shown under the new name. */
+interface Loaded { url: string; label: string; bars: KLineData[]; name: string | null; last: number | null; chg: number | null; asOf: string }
 
 function ChartCell({ cell, index, onChange, light }: { cell: GridCell; index: number; onChange: (c: GridCell) => void; light: boolean }) {
   const elRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<Chart | null>(null);
   const kcRef = useRef<any>(null);
   const barsRef = useRef<KLineData[]>([]);
+  const barUpdateRef = useRef<((b: KLineData) => void) | null>(null);
+  const shownUrlRef = useRef('');          // the request whose candles are on the chart now
+  const wantUrlRef = useRef('');           // the request the cell wants now (answers for older requests are ignored)
   const [ready, setReady] = useState(false);
   const [data, setData] = useState<Loaded | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ url: string; text: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [input, setInput] = useState(cell.t);
+  const [nowTick, setNowTick] = useState(() => Date.now());
   useEffect(() => { setInput(cell.t); }, [cell.t]);
   const intraday = isIntraday(cell.tf);
+  const url = cellUrl(cell);
+  wantUrlRef.current = url;
+  const current = data && data.url === url ? data : null;   // only the answer for THIS selection is ever displayed
 
   // the chart: made once per cell
   useEffect(() => {
@@ -75,16 +85,20 @@ function ChartCell({ cell, index, onChange, light }: { cell: GridCell; index: nu
       if (disposed || !el) return;
       kcRef.current = kc;
       const chart = kc.init(el, { locale: 'en-US', timezone: EXCHANGE_TZ[cell.m], styles: styles(el.closest('.mc-mchart') || document.documentElement), layout: { barSpaceLimit: { min: 0.3, max: 40 } } });
-      if (!chart) { setError('The chart could not start in this browser.'); return; }
+      if (!chart) { setError({ url: '', text: 'The chart could not start in this browser.' }); return; }
       chartRef.current = chart;
-      chart.setDataLoader({ getBars: ({ type, callback }) => { callback(type === 'init' ? barsRef.current : [], false); } });
+      chart.setDataLoader({
+        getBars: ({ type, callback }) => { callback(type === 'init' ? barsRef.current : [], false); },
+        subscribeBar: ({ callback }) => { barUpdateRef.current = callback; },
+        unsubscribeBar: () => { barUpdateRef.current = null; },
+      });
       chart.createIndicator({ name: 'VOL', paneId: 'mc_vol', calcParams: [20], styles: { bars: [{ upColor: 'rgba(8,153,129,0.45)', downColor: 'rgba(242,54,69,0.45)', noChangeColor: 'rgba(120,123,134,0.45)' }] } as any });
       chart.setPaneOptions({ id: 'mc_vol', height: 70 });
       chart.createIndicator({ name: 'MC_EMA', paneId: 'candle_pane', calcParams: [21, 50], styles: { lines: [{ color: '#2962FF', size: 1.2 }, { color: '#F59E0B', size: 1.2 }] } as any });
       ro = new ResizeObserver(() => chart.resize());
       ro.observe(el);
       setReady(true);
-    })().catch(() => setError('The chart library failed to load.'));
+    })().catch(() => setError({ url: '', text: 'The chart library failed to load.' }));
     return () => { disposed = true; ro?.disconnect(); if (el && kcRef.current) kcRef.current.dispose(el); chartRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -92,55 +106,74 @@ function ChartCell({ cell, index, onChange, light }: { cell: GridCell; index: nu
   // white / dark: restyle
   useEffect(() => { const el = elRef.current; if (ready && chartRef.current && el) chartRef.current.setStyles(styles(el.closest('.mc-mchart') || document.documentElement)); }, [light, ready]);
 
+  // a new selection: the old candles leave the chart at once (never drawn under the new name)
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!ready || !chart || shownUrlRef.current === url) return;
+    barsRef.current = []; shownUrlRef.current = '';
+    chart.resetData();
+  }, [ready, url]);
+
   // VWAP on intraday only
   useEffect(() => {
     const chart = chartRef.current;
     if (!ready || !chart) return;
     chart.removeIndicator({ name: 'MC_VWAP' });
     if (intraday && cell.vwap) chart.createIndicator({ name: 'MC_VWAP', paneId: 'candle_pane', styles: { lines: [{ color: VWAP_COLOR, size: 1.6 }] } as any }, true);
-  }, [ready, intraday, cell.vwap, data?.url]);
+  }, [ready, intraday, cell.vwap, current?.url]);
 
-  const url = cellUrl(cell);
-  const load = useCallback(async (signal?: AbortSignal) => {
+  /** Load `forUrl`. A poll of the SAME request appends / updates the last candles in place (zoom and scroll stay); a new request
+   *  sets symbol + period and redraws. Answers for a request that is no longer wanted are dropped. */
+  const load = useCallback(async (forUrl: string, c: GridCell, signal?: AbortSignal) => {
     setLoading(true);
     try {
-      const r = await fetch(url, { cache: 'no-store', signal });
+      const r = await fetch(forUrl, { cache: 'no-store', signal });
       const j = await r.json().catch(() => null);
-      if (!r.ok || !j?.ok || !j.bars) throw new Error(j?.error || `Could not load ${cell.t} (HTTP ${r.status})`);
+      if (wantUrlRef.current !== forUrl) return;
+      if (!r.ok || !j?.ok || !j.bars) throw new Error(j?.error || `Could not load ${cellLabel(c)} (HTTP ${r.status})`);
       const b = j.bars;
       const bars: KLineData[] = b.t.map((t: number, i: number) => ({ timestamp: t, open: b.o[i], high: b.h[i], low: b.l[i], close: b.c[i], volume: b.v[i], ...(b.s ? { s: b.s[i] } : {}) }));
       const n = bars.length;
       const last = n ? bars[n - 1].close : null;
-      // change vs the previous session's last close (intraday) / the previous bar (D / W / M)
       let prev: number | null = null;
-      if (intraday && b.s) { const sess = b.s[n - 1]; for (let i = n - 2; i >= 0; i--) if (b.s[i] !== sess) { prev = b.c[i]; break; } }
+      const isIntra = isIntraday(c.tf);
+      if (isIntra && b.s) { const sess = b.s[n - 1]; for (let i = n - 2; i >= 0; i--) if (b.s[i] !== sess) { prev = b.c[i]; break; } }
       else if (n > 1) prev = bars[n - 2].close;
       const chart = chartRef.current;
-      const sameUrl = data?.url === url;
-      barsRef.current = bars;
       if (chart) {
-        if (!sameUrl) {
-          const per = intraday ? { type: cell.tf === '60m' ? 'hour' : 'minute', span: cell.tf === '60m' ? 1 : INTRADAY_META[cell.tf as '5m'].minutes } : { type: cell.tf === 'D' ? 'day' : cell.tf === 'W' ? 'week' : 'month', span: 1 };
-          try { chart.setTimezone(EXCHANGE_TZ[cell.m]); } catch { /* older engine */ }
+        const prior = barsRef.current;
+        if (shownUrlRef.current === forUrl && prior.length && barUpdateRef.current) {
+          // same request (a poll): only the changed tail is pushed — the view keeps its zoom / scroll
+          const from = prior.findIndex((x) => x.timestamp === bars[0]?.timestamp);
+          const sameHead = from === 0 && prior.slice(0, -1).every((x, i) => bars[i] && x.timestamp === bars[i].timestamp);
+          barsRef.current = bars;
+          if (sameHead) { for (const x of bars.slice(Math.max(0, prior.length - 1))) barUpdateRef.current(x); }
+          else chart.resetData();
+        } else {
+          barsRef.current = bars;
+          const per = isIntra ? { type: c.tf === '60m' ? 'hour' : 'minute', span: c.tf === '60m' ? 1 : INTRADAY_META[c.tf as '5m'].minutes } : { type: c.tf === 'D' ? 'day' : c.tf === 'W' ? 'week' : 'month', span: 1 };
+          try { chart.setTimezone(EXCHANGE_TZ[c.m]); } catch { /* older engine */ }
           chart.setPeriod(per as any);
-          chart.setSymbol({ ticker: `${cell.m}:${cell.t}:${cell.tf}`, pricePrecision: last != null && Math.abs(last) < 1 ? 4 : 2, volumePrecision: 0 });
+          chart.setSymbol({ ticker: `${cellLabel(c)}:${c.tf}`, pricePrecision: last != null && Math.abs(last) < 1 ? 4 : 2, volumePrecision: 0 });
+          chart.resetData();
+          shownUrlRef.current = forUrl;
         }
-        chart.resetData();
       }
-      setData({ url, bars, name: j.name || null, last, chg: last != null && prev ? ((last - prev) / prev) * 100 : null, live: !!j.lastLive, asOf: j.asOf || new Date().toISOString() });
+      setData({ url: forUrl, label: cellLabel(c), bars, name: j.name || null, last, chg: last != null && prev ? ((last - prev) / prev) * 100 : null, asOf: j.asOf || new Date().toISOString() });
       setError(null);
     } catch (e: any) {
-      if (signal?.aborted) return;
-      setError(String(e?.message || e));
-    } finally { if (!signal?.aborted) setLoading(false); }
-  }, [url, cell.t, cell.m, cell.tf, intraday, data?.url]);
+      if (signal?.aborted || wantUrlRef.current !== forUrl) return;
+      setError({ url: forUrl, text: String(e?.message || e) });
+    } finally { if (!signal?.aborted && wantUrlRef.current === forUrl) setLoading(false); }
+  }, []);
 
   useEffect(() => {
     if (!ready) return;
     let ctrl = new AbortController();
-    void load(ctrl.signal);
-    if (!intraday) return () => ctrl.abort();
-    const stop = pollWhenVisible(() => { ctrl.abort(); ctrl = new AbortController(); void load(ctrl.signal); }, 60_000, { runImmediately: false });
+    const c = cell;
+    void load(url, c, ctrl.signal);
+    if (!isIntraday(c.tf)) return () => ctrl.abort();
+    const stop = pollWhenVisible(() => { ctrl.abort(); ctrl = new AbortController(); setNowTick(Date.now()); void load(url, c, ctrl.signal); }, 60_000, { runImmediately: false });
     return () => { stop(); ctrl.abort(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, url]);
@@ -150,17 +183,23 @@ function ChartCell({ cell, index, onChange, light }: { cell: GridCell; index: nu
     const p = raw.match(/^(NSE|BSE|US|NYSE|NASDAQ|AMEX):(.+)$/);
     const m = p ? (p[1] === 'NSE' || p[1] === 'BSE' ? 'IN' : 'US') : cell.m;
     const t = p ? p[2] : raw;
-    if (!t || !validFor(m, t)) { setError(`“${raw}” does not look like a ${m === 'IN' ? 'NSE' : 'US'} symbol.`); return; }
-    onChange({ ...cell, t, m });
+    if (!t || !validFor(m, t)) { setError({ url, text: `“${raw}” does not look like a ${m === 'IN' ? 'NSE / BSE' : 'US'} symbol.` }); return; }
+    const x = p && (p[1] === 'NSE' || p[1] === 'BSE') ? p[1] : m === 'IN' ? cell.x : undefined;
+    const { x: _drop, ...rest } = cell; void _drop;
+    onChange({ ...rest, t, m, ...(m === 'IN' && x ? { x } : {}) });
   };
-  const vwapNow = intraday && cell.vwap && data && data.url === url ? (() => { const v = sessionVwap(data.bars.map((d) => ({ h: d.high, l: d.low, c: d.close, v: d.volume ?? 0, s: String(d.s ?? '') }))); return v[v.length - 1] ?? null; })() : null;
+  const vwapNow = intraday && cell.vwap && current ? (() => { const v = sessionVwap(current.bars.map((d) => ({ h: d.high, l: d.low, c: d.close, v: d.volume ?? 0, s: String(d.s ?? '') }))); return v[v.length - 1] ?? null; })() : null;
+  const lastBar = current && current.bars.length ? current.bars[current.bars.length - 1] : null;
+  const status = intraday && lastBar ? intradayStatus(cell.m, nowTick, { t: lastBar.timestamp, s: String(lastBar.s ?? '') }, cell.tf as IntradayTf) : null;
   const fmt = (x: number) => (Math.abs(x) < 1 ? x.toFixed(4) : x.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 }));
+  const err = error && (error.url === url || !error.url) ? error.text : null;
   return (
-    <section className="mc-mcell" aria-label={`Chart ${index + 1}: ${cell.t}`}>
+    <section className="mc-mcell" aria-label={`Chart ${index + 1}: ${cellLabel(cell)}`}>
       <header className="mc-mcell-hd">
         <form onSubmit={(e) => { e.preventDefault(); submit(); }} style={{ display: 'inline-flex', gap: 4 }}>
-          <select aria-label="Market" value={cell.m} onChange={(e) => onChange({ ...cell, m: e.target.value === 'IN' ? 'IN' : 'US' })} className="mc-min">
-            <option value="IN">IN</option><option value="US">US</option>
+          <select aria-label="Market and listing" value={cell.m === 'US' ? 'US' : cell.x === 'BSE' ? 'BSE' : 'NSE'} className="mc-min"
+            onChange={(e) => { const v = e.target.value; const { x: _d, ...rest } = cell; void _d; onChange(v === 'US' ? { ...rest, m: 'US' } : { ...rest, m: 'IN', ...(v === 'BSE' ? { x: 'BSE' as const } : {}) }); }}>
+            <option value="NSE">NSE</option><option value="BSE">BSE</option><option value="US">US</option>
           </select>
           <input aria-label="Symbol" value={input} onChange={(e) => setInput(e.target.value)} onBlur={() => { if (input.trim().toUpperCase() !== cell.t) submit(); }} className="mc-min" style={{ width: 110, fontWeight: 650 }} spellCheck={false} />
         </form>
@@ -169,19 +208,22 @@ function ChartCell({ cell, index, onChange, light }: { cell: GridCell; index: nu
         </span>
         {intraday ? <label className="mc-mchk" title="Session VWAP: average price weighted by volume since the session opened; resets every session (exchange time)"><input type="checkbox" checked={cell.vwap} onChange={(e) => onChange({ ...cell, vwap: e.target.checked })} /> VWAP</label> : null}
         <span style={{ flex: 1 }} />
-        <NavLink href={`/charts?t=${encodeURIComponent(cell.t)}&m=${cell.m}&tf=${intraday ? 'D' : cell.tf}`} className="mc-mlink" title="Open on the full chart page (drawings, studies, patterns)">Full chart ↗</NavLink>
+        <NavLink href={fullChartHref(cell)} className="mc-mlink" title="Open on the full chart page (drawings, studies, patterns) — same listing">Full chart ↗</NavLink>
       </header>
-      <div className="mc-mcell-info">
-        <b>{cell.t}</b>{data?.name ? <span className="dim"> {data.name}</span> : null}
-        {data?.last != null ? <span> · {fmt(data.last)}</span> : null}
-        {data?.chg != null ? <span style={{ color: data.chg >= 0 ? UP : DOWN }}> {data.chg >= 0 ? '+' : ''}{data.chg.toFixed(2)}%</span> : null}
-        {vwapNow != null && data?.last != null ? <span style={{ color: VWAP_COLOR }} title="Price vs the session VWAP"> · VWAP {fmt(vwapNow)} ({data.last >= vwapNow ? 'above' : 'below'})</span> : null}
-        <span className="dim"> · EMA 21 / 50{intraday ? ` · times in ${cell.m === 'IN' ? 'IST' : 'New York time'}` : ''}</span>
-        {intraday && data ? <span className="dim" title={`Loaded ${new Date(data.asOf).toLocaleTimeString()}`}> · {data.live ? 'live bar forming' : 'session closed'}{loading ? ' · updating…' : ''}</span> : loading ? <span className="dim"> · loading…</span> : null}
+      <div className="mc-mcell-info" data-identity={url}>
+        <b>{cellLabel(cell)}</b>
+        {current ? <>
+          {current.name ? <span className="dim"> {current.name}</span> : null}
+          {current.last != null ? <span> · {fmt(current.last)}</span> : null}
+          {current.chg != null ? <span style={{ color: current.chg >= 0 ? UP : DOWN }}> {current.chg >= 0 ? '+' : ''}{current.chg.toFixed(2)}%</span> : null}
+          {vwapNow != null && current.last != null ? <span style={{ color: VWAP_COLOR }} title="Price vs the session VWAP"> · VWAP {fmt(vwapNow)} ({current.last >= vwapNow ? 'above' : 'below'})</span> : null}
+          <span className="dim"> · EMA 21 / 50{intraday ? ` · times in ${cell.m === 'IN' ? 'IST' : 'New York time'}` : ''}</span>
+          {status ? <span className="dim" data-status={status.tone} title={`Loaded ${new Date(current.asOf).toLocaleTimeString()}`}> · {status.text}{loading ? ' · updating…' : ''}</span> : loading ? <span className="dim"> · updating…</span> : null}
+        </> : <span className="dim"> · {err ? 'not loaded' : 'loading…'}</span>}
       </div>
       <div className="mc-mcell-chart">
         <div ref={elRef} style={{ position: 'absolute', inset: 0 }} />
-        {error ? <div role="alert" className="mc-merr">{error} <button type="button" onClick={() => void load()}>Retry</button></div> : null}
+        {err ? <div role="alert" className="mc-merr">{cellLabel(cell)}: {err} <button type="button" onClick={() => void load(url, cell)}>Retry</button></div> : null}
       </div>
     </section>
   );

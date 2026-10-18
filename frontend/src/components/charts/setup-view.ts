@@ -68,11 +68,12 @@ export const serializeSetupPrefs = (p: SetupPrefs) => JSON.stringify({ v: 1, sho
 /** Is the last candle still forming at `now`? Daily: the bar's date is today and the market has not closed yet (US 16:00 New
  *  York = 20:00 UTC in summer time, 21:00 UTC in winter; India 15:30 IST = 10:00 UTC). Weekly (zzz1044a): the week's Friday
  *  close has not passed (lib/completed-weeks — the same rule as the weekly Stage Analysis and the screener's weekly setups).
- *  Monthly: the month has not ended (lib/bar-aggregate periodCloseT — 00:00 UTC after its last weekday). */
+ *  Monthly: the month's last trading session has closed (lib/bar-aggregate periodCloseT with the market — exchange calendar:
+ *  holidays, 13:00 ET early closes, DST; zzz1095 / retest R3: the market used to be left out, so the old midnight-UTC rule applied). */
 export function lastBarForming(lastT: number | null | undefined, tf: SetupChartTf, market: string, now: number = Date.now()): boolean {
   if (lastT == null || !Number.isFinite(lastT)) return false;
   if (tf === 'W') return !weekComplete(lastT, market, now);
-  if (tf === 'M') return now < periodCloseT(lastT, tf);
+  if (tf === 'M') return now < periodCloseT(lastT, tf, market === 'IN' || market === 'US' ? market : null);
   return now < sessionCloseMs(lastT, market);
 }
 /** The completed candles of the chart (a prefix of `bars`, so indexes match) and whether a forming last candle was left out. */

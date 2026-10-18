@@ -3,6 +3,7 @@
 // we ask for a short window so the request stays small. Each bar carries its SESSION date in the exchange's own time zone
 // (Asia/Kolkata for NSE / BSE, America/New_York for US) — that is what VWAP resets on, never the viewer's time zone.
 // Pure: no fetch here (the route does that).
+import { phaseAt, sessionCloseUtc, type Market } from './exchange-calendar';
 
 export type IntradayTf = '5m' | '15m' | '60m';
 export const INTRADAY_TFS: readonly IntradayTf[] = ['5m', '15m', '60m'];
@@ -30,7 +31,7 @@ export function sessionDate(ms: number, tz: string): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
 
-export function parseYahooIntraday(j: any, tf: IntradayTf, now = Date.now()): IntradaySeries | null {
+export function parseYahooIntraday(j: any, tf: IntradayTf, now = Date.now(), market?: Market): IntradaySeries | null {
   const r = j?.chart?.result?.[0];
   if (!r) return null;
   const m = r.meta || {};
@@ -55,7 +56,7 @@ export function parseYahooIntraday(j: any, tf: IntradayTf, now = Date.now()): In
   return {
     bars, tz, symbol: String(m.symbol || ''), name: m.longName || m.shortName || null, currency: m.currency || null,
     exchange: m.fullExchangeName || m.exchangeName || null, granularity: typeof m.dataGranularity === 'string' ? m.dataGranularity : null,
-    lastLive: now < last.t + INTRADAY_META[tf].minutes * 60_000,
+    lastLive: now < barEnd(last, tf, market),
   };
 }
 
@@ -79,4 +80,31 @@ export function lastSessions<T extends { s: string }>(bars: readonly T[], n: num
   for (let i = bars.length - 1; i >= 0 && days.length <= n; i--) if (days[days.length - 1] !== bars[i].s) days.push(bars[i].s);
   const keep = new Set(days.slice(0, n));
   return bars.filter((b) => keep.has(b.s));
+}
+
+/** zzz1096 (retest R6) — when an intraday bar ends: its interval, CLIPPED to the session close (a final 60-minute bar that starts
+ *  15:30 ET ends at the 16:00 close, not 16:30; 13:00 ET on early-close days; holidays and DST from the exchange calendar). */
+export function barEnd(bar: Pick<IBar, 't' | 's'>, tf: IntradayTf, market?: Market): number {
+  const end = bar.t + INTRADAY_META[tf].minutes * 60_000;
+  if (!market) return end;
+  const close = sessionCloseUtc(market, bar.s);
+  return close != null && close < end ? close : end;
+}
+
+/** Plain words for the grid's status line, keeping three facts apart: is the exchange in its regular session now, is the last
+ *  bar still forming, and how old the last bar is (a completed bar during an open session is NOT "session closed"). */
+export function intradayStatus(market: Market, now: number, last: Pick<IBar, 't' | 's'> | null, tf: IntradayTf): { text: string; tone: 'live' | 'ok' | 'warn' | 'closed' } {
+  if (!last) return { text: 'no bars', tone: 'warn' };
+  const tz = market === 'IN' ? 'Asia/Kolkata' : 'America/New_York';
+  const hm = (ms: number) => new Date(ms).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz });
+  const open = phaseAt(market, new Date(now)) === 'regular';
+  const end = barEnd(last, tf, market);
+  if (!open) {
+    const d = new Date(Date.parse(`${last.s}T12:00:00Z`)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+    return { text: `market closed · last session ${d}`, tone: 'closed' };
+  }
+  if (now < end) return { text: `market open · bar forming (from ${hm(last.t)})`, tone: 'live' };
+  const lagMin = (now - end) / 60_000;
+  if (lagMin > 2 * INTRADAY_META[tf].minutes + 5) return { text: `market open · data delayed — last bar ${hm(last.t)}`, tone: 'warn' };
+  return { text: `market open · last completed bar ${hm(last.t)}`, tone: 'ok' };
 }

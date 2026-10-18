@@ -152,8 +152,17 @@ export function mergeWatchlistStoresDetailed(localRaw: unknown, serverRaw: unkno
   const B = new Map((base?.lists || []).map((x) => [x.id, x]));
   const L = new Map(local.lists.map((x) => [x.id, x]));
   const S = new Map(server.lists.map((x) => [x.id, x]));
+  // zzz1099 (R7) — an automatic empty first-visit list on ONE side, with real lists on the other, is a bootstrap, not the owner's
+  // list: it is left out (an empty list the owner made is never marked seed, and keeps its place)
+  const isSeed = (x: WlList) => x.seed === true && x.sections.every((sc) => !sc.items.length);
+  const realOn = (st: typeof local) => st.lists.some((x) => !isSeed(x));
+  const dropSeed = new Set<string>();
+  for (const x of local.lists) if (isSeed(x) && !S.has(x.id) && realOn(server)) dropSeed.add(x.id);
+  for (const x of server.lists) if (isSeed(x) && !L.has(x.id) && realOn(local)) dropSeed.add(x.id);
+  // both sides only hold their own empty bootstrap list: keep the server's one, not two empty 'My Watchlist's
+  if (!realOn(local) && !realOn(server) && server.lists.length) for (const x of local.lists) if (isSeed(x) && !S.has(x.id)) dropSeed.add(x.id);
   const ids: string[] = [];
-  for (const x of [...server.lists, ...local.lists]) if (!ids.includes(x.id)) ids.push(x.id);
+  for (const x of [...server.lists, ...local.lists]) if (!ids.includes(x.id) && !dropSeed.has(x.id)) ids.push(x.id);
   let lists: WlList[] = [];
   for (const id of ids) {
     const b = B.get(id), l = L.get(id), s = S.get(id);
