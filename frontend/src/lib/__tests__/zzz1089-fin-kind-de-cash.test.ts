@@ -32,7 +32,7 @@ test('cash tile: asset manager gets the real ratio; NBFC / broker show their fig
   const c = cashTileView(CRAMC);
   assert.equal(c.text, '0.84x'); assert.match(c.note, /partly cash-backed · not part of the grade/); assert.equal(c.basis, 'Mar 2026 full year');
   const h = cashTileView(HDBFS);
-  assert.equal(h.text, '-3.38x'); assert.equal(h.note, 'lender · not graded'); assert.equal(h.color, 'none');   // zzz1094 — a plain ratio like every card
+  assert.equal(h.text, '-3.38x'); assert.equal(h.note, 'lender · not graded'); assert.equal(h.color, 'bad');   // zzz1100 — coloured like every card   // zzz1094 — a plain ratio like every card
   assert.match(cashTileView(GROWW).note, /broker/);
   assert.equal(cashTileView(AXIS).text, 'n/a (bank)');
   // fintech with nothing in the feed: the company page's figures fill it
@@ -44,7 +44,7 @@ test('cash tile: asset manager gets the real ratio; NBFC / broker show their fig
 test('D/E tile: bank n/a, NBFC as leverage, asset-light as a normal company, fallback when the snapshot has none', () => {
   // zzz1091 — a bank shows its borrowings figure (deposits not counted), neutral; '—' only when there is none
   assert.equal(deTileView(AXIS, { de: 1.3, basis: 'fiscal year' }).text, '1.30×');
-  assert.equal(deTileView(AXIS, { de: 1.3, basis: 'fiscal year' }).tone, 'none');
+  assert.equal(deTileView(AXIS, { de: 1.3, basis: 'fiscal year' }).tone, 'good');   // zzz1100 — coloured
   assert.match(deTileView(AXIS, { de: 1.3, basis: 'fiscal year' }).sub, /borrowings excl\. deposits/);
   assert.equal(deTileView(AXIS, null, { de: null, deBasis: null, error: 'x' }).text, '—');
   const h = deTileView(HDBFS, { de: 4.8, basis: 'fiscal year' });

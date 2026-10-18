@@ -22,7 +22,7 @@ export function deTileView(r: any, snap: { de: number; basis: string } | null | 
     return { text: '—', tone: 'none', sub: fb?.error ? 'no balance sheet found' : 'not in source yet', title: `Debt ÷ equity: neither the stock-screener snapshot nor the company's screener.in page has a balance sheet for this company${fb?.error ? ` (${fb.error})` : ''}. Not a fail.` };
   }
   // zzz1091 — a bank shows its borrowings (deposits NOT counted) ÷ equity, neutral colour: a figure, not a test
-  if (sub === 'bank') return { text: `${val.de.toFixed(2)}×`, tone: 'none', sub: `bank · borrowings excl. deposits · ${val.basis}`, title: `Borrowings ÷ equity ${val.de.toFixed(2)}× (${val.basis}; from ${val.src}). Customer deposits are not counted — they are a bank's raw material, so this is not a debt test; judge a bank on capital adequacy and asset quality.` };
+  if (sub === 'bank') return { text: `${val.de.toFixed(2)}×`, tone: leverageTone(val.de), sub: `bank · borrowings excl. deposits · ${val.basis}`, title: `Borrowings ÷ equity ${val.de.toFixed(2)}× (${val.basis}; from ${val.src}). Customer deposits are not counted — they are a bank's raw material, so this is not a debt test; judge a bank on capital adequacy and asset quality. Colour: green up to 3×, amber up to 6×, red above.` };
   if (sub === 'nbfc' || sub === 'broker' || sub === 'insurer') {
     const word = FIN_KIND_WORD[sub];
     if (val.de >= DE_NEG_EQUITY) return { text: 'negative equity', tone: 'bad', sub: val.basis, title: `Shareholders' equity is negative (${val.basis}).` };
@@ -38,7 +38,7 @@ export function deCellFor(de: unknown, basis: unknown, row: any, isFinancial: bo
   const sub = finSubKind(row, true);
   if (sub === 'asset-light') return deCell(de, basis, false);
   if (sub === 'bank') return fin(de) && de >= 0
-    ? { label: 'D/E', text: `${de.toFixed(2)}× bank`, tone: 'none', title: `Borrowings ÷ equity ${de.toFixed(2)}× — deposits not counted (a bank's raw material), so not a debt test.` }
+    ? { label: 'D/E', text: `${de.toFixed(2)}× bank`, tone: leverageTone(de), title: `Borrowings ÷ equity ${de.toFixed(2)}× — deposits not counted (a bank's raw material), so not a debt test.` }
     : { label: 'D/E', text: 'n/a (bank)', tone: 'none', title: 'Debt ÷ equity is not meaningful for a bank: customer deposits are its raw material.' };
   if (!fin(de) || de < 0) return { label: 'D/E', text: 'n/a', tone: 'none', title: 'Leverage (borrowings ÷ equity) is not in the source for this company yet. Not a fail.' };
   const word = FIN_KIND_WORD[sub || 'nbfc'];

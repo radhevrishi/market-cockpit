@@ -736,8 +736,9 @@ export function cashTileView(r: any, fb?: CashFallback | null): CashTileView {
     }
     const word = FIN_KIND_WORD[sub || 'nbfc'];
     // zzz1094 — owner: a plain ratio like every other card ("−7.69x"), short note; grey (a lender's cash is loan growth)
-    if (yr && yr.pat > 0) { const v = Math.round((yr.ocf / yr.pat) * 100) / 100; return { text: `${v.toFixed(2)}x`, note: `${sub === 'bank' ? 'bank' : sub === 'broker' ? 'broker' : 'lender'} · not graded`, color: 'none', basis: yb }; }
-    if (yr) return { text: `CFO ${fmtCrSigned(yr.ocf)}`, note: `loss year · ${word}`, color: 'none', basis: yb };
+    if (yr && yr.pat > 0) { const v = Math.round((yr.ocf / yr.pat) * 100) / 100; return { text: `${v.toFixed(2)}x`, note: `${sub === 'bank' ? 'bank' : sub === 'broker' ? 'broker' : 'lender'} · not graded`, color: v < 0.6 ? 'bad' : v < 1 ? 'warn' : 'good', basis: yb }; }
+    // zzz1100 — owner: same green / amber / red as every other card (colour only; it still does not count in the grade)
+    if (yr) return { text: `CFO ${fmtCrSigned(yr.ocf)}`, note: `loss year · ${word}`, color: yr.ocf > 0 ? 'warn' : 'bad', basis: yb };
     return { text: `n/a (${word})`, note: 'not meaningful for lenders', color: 'none', basis: null };
   }
   const v0 = [r?.ocf_to_pat_ratio, r?.cfo_to_pat_ratio].find(fin);
